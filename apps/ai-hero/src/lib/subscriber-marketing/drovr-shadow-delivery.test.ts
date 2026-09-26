@@ -431,3 +431,130 @@ describe('drovr event-not-live (409) is a retry, never a drop', () => {
 		})
 	})
 })
+
+/**
+ * The contact-sync push contract (§4): a refusal as event-not-live (or
+ * cold-start-unhandled) records nothing and leaves the key unconsumed, so
+ * the same event is retried unchanged after drovr's daily straggler pass.
+ * In `deferNotLive` mode the batch hands those events back instead of
+ * throwing, so the caller can schedule that retry; anything else keeps its
+ * meaning.
+ */
+describe('contact sync deferral of refusals (deferNotLive)', () => {
+	const profile = (contactId: string): DrovrShadowEvent => ({
+		tenantId: 'org-aihero',
+		contactId,
+		journeyId: 'contact-directory',
+		type: 'contact.profile.updated',
+		occurredAt: '2026-09-26T17:00:00.000Z',
+		idempotencyKey: `profile:${contactId}:1`,
+		payload: {
+			profileVersion: 1,
+			email: 'a@example.test',
+			firstName: null,
+			holds: [],
+		},
+	})
+	const [one, two, three] = [profile('c1'), profile('c2'), profile('c3')]
+	const answer = (
+		results: { index: number; status: string; detail?: string }[],
+	) =>
+		vi.fn().mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					accepted: results.filter((r) => r.status === 'accepted').length,
+					rejected: results.filter((r) => r.status === 'rejected').length,
+					failed: results.filter((r) => r.status === 'failed').length,
+					results,
+				}),
+				{ status: 200 },
+			),
+		)
+
+	it('hands back items refused as event-not-live or cold-start-unhandled, unchanged', async () => {
+		const warn = vi.fn()
+		const outcome = await deliverBatchOrThrow({
+			events: [one, two, three],
+			config,
+			fetcher: answer([
+				{ index: 0, status: 'accepted' },
+				{ index: 1, status: 'failed', detail: 'event-not-live: v1 actor' },
+				{
+					index: 2,
+					status: 'failed',
+					detail: 'cold-start-unhandled: no actor',
+				},
+			]),
+			warn,
+			deferNotLive: true,
+		})
+		expect(outcome).toEqual({
+			accepted: 1,
+			rejected: 0,
+			deferred: [
+				{ event: two, reason: 'event-not-live' },
+				{ event: three, reason: 'cold-start-unhandled' },
+			],
+		})
+		// No actor at all is an anomaly (the contract expects one): logged.
+		expect(warn).toHaveBeenCalledWith(
+			'drovr.contact_sync.cold_start_unhandled',
+			expect.objectContaining({ idempotencyKey: three.idempotencyKey }),
+		)
+	})
+
+	it('hands back the whole batch when the envelope answers 409 event-not-live', async () => {
+		const fetcher = vi
+			.fn()
+			.mockResolvedValue(
+				new Response(
+					JSON.stringify({ type: 'urn:drovr:problem:event-not-live' }),
+					{ status: 409 },
+				),
+			)
+		expect(
+			await deliverBatchOrThrow({
+				events: [one, two],
+				config,
+				fetcher,
+				warn: vi.fn(),
+				deferNotLive: true,
+			}),
+		).toEqual({
+			accepted: 0,
+			rejected: 0,
+			deferred: [
+				{ event: one, reason: 'event-not-live' },
+				{ event: two, reason: 'event-not-live' },
+			],
+		})
+	})
+
+	it('still throws for any other failed item, and keeps a rejection final', async () => {
+		await expect(
+			deliverBatchOrThrow({
+				events: [one, two],
+				config,
+				fetcher: answer([
+					{ index: 0, status: 'failed', detail: 'event-not-live: v1 actor' },
+					{ index: 1, status: 'failed', detail: 'actor busy' },
+				]),
+				deferNotLive: true,
+			}),
+		).rejects.toMatchObject({
+			name: 'DrovrBatchDeliveryFailedError',
+			failedKeys: [two.idempotencyKey],
+		})
+		expect(
+			await deliverBatchOrThrow({
+				events: [one],
+				config,
+				fetcher: answer([
+					{ index: 0, status: 'rejected', detail: 'bad shape' },
+				]),
+				warn: vi.fn(),
+				deferNotLive: true,
+			}),
+		).toEqual({ accepted: 0, rejected: 1 })
+	})
+})

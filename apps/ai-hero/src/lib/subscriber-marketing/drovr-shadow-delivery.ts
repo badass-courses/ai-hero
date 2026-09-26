@@ -79,7 +79,44 @@ export class DrovrBatchDeliveryFailedError extends Error {
 	}
 }
 
-export type DrovrBatchOutcome = { accepted: number; rejected: number }
+export type DrovrBatchOutcome = {
+	accepted: number
+	rejected: number
+	/** deferNotLive only: refusals to re-send unchanged after drovr's straggler pass. */
+	deferred?: DeferredDrovrEvent[]
+}
+
+export type DeferredDrovrEventReason = 'event-not-live' | 'cold-start-unhandled'
+
+export type DeferredDrovrEvent = {
+	event: DrovrShadowEvent
+	reason: DeferredDrovrEventReason
+}
+
+/**
+ * The contact-sync push contract (§4): event-not-live means the contact's
+ * directory actor is still v1; cold-start-unhandled that it has none. Either
+ * way nothing was recorded and the key is not consumed.
+ */
+function deferralReasonOf(
+	problem: unknown,
+): DeferredDrovrEventReason | undefined {
+	if (isEventNotLiveProblem(problem)) return 'event-not-live'
+	const text =
+		typeof problem === 'string'
+			? problem
+			: problem && typeof problem === 'object'
+				? [
+						(problem as { type?: unknown }).type,
+						(problem as { code?: unknown }).code,
+					]
+						.filter((value): value is string => typeof value === 'string')
+						.join(' ')
+				: ''
+	return text.includes('cold-start-unhandled')
+		? 'cold-start-unhandled'
+		: undefined
+}
 
 type BatchItemResult = {
 	index: number
@@ -148,6 +185,12 @@ export async function deliverBatchOrThrow(args: {
 	fetcher?: typeof fetch
 	warn?: typeof log.warn
 	timeoutMs?: number
+	/**
+	 * Contact sync: hand back items refused as event-not-live or
+	 * cold-start-unhandled (`deferred`) instead of throwing, for a retry of
+	 * the same event after drovr's daily straggler pass.
+	 */
+	deferNotLive?: boolean
 }): Promise<DrovrBatchOutcome> {
 	const fetcher = args.fetcher ?? fetch
 	const warn = args.warn ?? log.warn
@@ -182,6 +225,19 @@ export async function deliverBatchOrThrow(args: {
 		}
 		if (response.status >= 400 && response.status < 500) {
 			const problem = await boundedProblemBody(response)
+			const deferral =
+				response.status === 409 && args.deferNotLive
+					? deferralReasonOf(problem)
+					: undefined
+			if (deferral) {
+				if (deferral === 'cold-start-unhandled')
+					for (const event of args.events) await warnColdStart(warn, event)
+				return {
+					accepted: 0,
+					rejected: 0,
+					deferred: args.events.map((event) => ({ event, reason: deferral })),
+				}
+			}
 			if (response.status === 409 && isEventNotLiveProblem(problem)) {
 				throw new DrovrBatchDeliveryFailedError(
 					keys,
@@ -216,10 +272,21 @@ export async function deliverBatchOrThrow(args: {
 			)
 		}
 		const failedKeys: string[] = []
+		const deferred: DeferredDrovrEvent[] = []
 		let notLive = 0
+		let deferredRejected = 0
 		for (const item of body.results) {
 			const event = args.events[item.index]
-			if (
+			const deferral =
+				args.deferNotLive && item.status !== 'accepted'
+					? deferralReasonOf(item.detail)
+					: undefined
+			if (deferral && event) {
+				deferred.push({ event, reason: deferral })
+				if (item.status === 'rejected') deferredRejected += 1
+				if (deferral === 'cold-start-unhandled')
+					await warnColdStart(warn, event)
+			} else if (
 				item.status === 'failed' ||
 				(item.status === 'rejected' && isEventNotLiveProblem(item.detail))
 			) {
@@ -234,16 +301,32 @@ export async function deliverBatchOrThrow(args: {
 				})
 			}
 		}
-		if (body.failed > 0 || notLive > 0) {
+		if (failedKeys.length > 0) {
 			throw new DrovrBatchDeliveryFailedError(
 				failedKeys,
-				`${body.failed + notLive} of ${args.events.length} not taken by drovr (${notLive} event-not-live)`,
+				`${failedKeys.length} of ${args.events.length} not taken by drovr (${notLive} event-not-live)`,
 			)
 		}
-		return { accepted: body.accepted, rejected: body.rejected }
+		const rejected = body.rejected - deferredRejected
+		return deferred.length > 0
+			? { accepted: body.accepted, rejected, deferred }
+			: { accepted: body.accepted, rejected }
 	} finally {
 		clearTimeout(timeout)
 	}
+}
+
+async function warnColdStart(
+	warn: typeof log.warn,
+	event: DrovrShadowEvent,
+): Promise<void> {
+	// The contract expects an actor for every sending-journey contact; until
+	// mig-10 says how to birth one, it is retried daily like event-not-live.
+	await warnSafely(warn, 'drovr.contact_sync.cold_start_unhandled', {
+		contactId: event.contactId,
+		type: event.type,
+		idempotencyKey: event.idempotencyKey,
+	})
 }
 
 async function warnSafely(

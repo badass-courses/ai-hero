@@ -152,17 +152,18 @@ describe('contact sync reconcile', () => {
 		})
 	})
 
-	it('neither heartbeats nor advances when any push fails', async () => {
-		for (const failing of ['sync', 'stops', 'heartbeat'] as const) {
+	it('neither heartbeats nor advances when a late write, the stops or the heartbeat fail', async () => {
+		// A late write sits behind the watermark: nothing before it can move.
+		for (const failing of ['late-sync', 'stops', 'heartbeat'] as const) {
 			const boom = async () => {
 				throw new Error('drovr 503')
 			}
 			const p = ports(
 				{},
-				failing === 'sync'
+				failing === 'late-sync'
 					? {
 							syncContact: vi.fn(async (contactId: string) => {
-								if (contactId === 'c2') throw new Error('drovr 503')
+								if (contactId === 'c9') throw new Error('drovr 503')
 								return 'sent' as const
 							}),
 						}
@@ -174,6 +175,72 @@ describe('contact sync reconcile', () => {
 			expect(p.writeWatermark).not.toHaveBeenCalled()
 			if (failing !== 'heartbeat') expect(p.heartbeat).not.toHaveBeenCalled()
 		}
+	})
+
+	it('a failed fresh contact holds the heartbeat at the last instant before its first change (contract §3)', async () => {
+		const p = ports(
+			{},
+			{
+				syncContact: vi.fn(async (contactId: string) => {
+					if (contactId === 'c2') throw new Error('drovr 503')
+					p.order.push(`sync:${contactId}`)
+					return 'sent' as const
+				}),
+			},
+		)
+		const receipt = await runContactSyncReconcile(p)
+		// c2's first change is 17:50:00; everything before it was pushed.
+		const held = '2026-09-26T17:49:59.999Z'
+		expect(p.order).toEqual([
+			'sync:c9',
+			'sync:c1',
+			'sync:c3',
+			'stops',
+			`heartbeat:${held}`,
+			`watermark:${held}`,
+		])
+		expect(receipt).toEqual({
+			status: 'partial',
+			syncedThrough: held,
+			contacts: 4,
+			rotated: 1,
+			events: 4,
+			failed: ['c2'],
+		})
+	})
+
+	it('holds at the earliest first change among several failed contacts', async () => {
+		const p = ports(
+			{},
+			{
+				syncContact: vi.fn(async (contactId: string) => {
+					if (contactId === 'c2' || contactId === 'c1')
+						throw new Error('drovr 503')
+					return 'sent' as const
+				}),
+			},
+		)
+		const receipt = await runContactSyncReconcile(p)
+		// c1 first changed at 17:41:00, before c2 at 17:50.
+		expect(receipt).toMatchObject({
+			status: 'partial',
+			syncedThrough: '2026-09-26T17:40:59.999Z',
+			failed: ['c1', 'c2'],
+		})
+	})
+
+	it('neither heartbeats nor advances when the first failure is at the watermark itself', async () => {
+		const p = ports(
+			{ events: [event('c1', '2026-09-26T17:40:00.001Z')], rotations: [] },
+			{
+				syncContact: vi.fn(async () => {
+					throw new Error('drovr 503')
+				}),
+			},
+		)
+		await expect(runContactSyncReconcile(p)).rejects.toThrow('drovr 503')
+		expect(p.heartbeat).not.toHaveBeenCalled()
+		expect(p.writeWatermark).not.toHaveBeenCalled()
 	})
 
 	it('re-sends the stop events of every contact it synced, fresh or overlap', async () => {
@@ -414,13 +481,32 @@ describe('what a profile sync receipt means for the watermark', () => {
 				rejected: 0,
 			}),
 		).toBe('sent')
-		for (const reason of ['contact-missing', 'synthetic-principal'])
+		for (const reason of [
+			'contact-missing',
+			'synthetic-principal',
+			// Out of drovr's scope: nothing to push, so the watermark moves.
+			'no-sending-journey',
+			// drovr ignores a profile without an email; nothing to push.
+			'contact-email-missing',
+			// Contract §4: a rejection is final for that event, answered.
+			'drovr-rejected',
+		])
 			expect(reconcileSyncOutcome('c1', { status: 'skipped', reason })).toBe(
 				'skipped',
 			)
+		// Contract §3: a refusal as event-not-live does not hold the watermark;
+		// the same events are already scheduled for after the straggler pass.
+		for (const reason of ['event-not-live', 'cold-start-unhandled'] as const)
+			expect(
+				reconcileSyncOutcome('c1', {
+					status: 'deferred',
+					reason,
+					profileVersion: 2,
+					deferred: 1,
+				}),
+			).toBe('deferred')
 		for (const reason of [
 			'drovr-not-configured',
-			'drovr-rejected',
 			'AIH_DROVR_PROFILE_SYNC is not set',
 		])
 			expect(() =>

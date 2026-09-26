@@ -10,6 +10,7 @@ import {
 	type DrovrShadowEvent,
 } from './drovr-shadow-emitter'
 import type { CaptureMarketingRepository } from './capture-contact-event'
+import { DOI_REQUESTED_EVENT_TYPE } from './drovr-doi-signup'
 import { normalizeContactEvent } from './normalize-contact-event'
 import type { ContactEventRecord, Provider, SideEffectIntent } from './types'
 
@@ -170,6 +171,33 @@ export async function findJourneyOwnerAssignment(
 	return events.find(
 		(event) => journeyOwnerAssignmentJourneyId(event) === journeyId,
 	)
+}
+
+/**
+ * drovr's contact-sync scope (the push contract §1): a contact with an owner
+ * assignment for one of the three sending journeys (value path, evergreen
+ * offer, newsletter), or a double opt-in signup, which starts drovr's
+ * double-opt-in journey. drovr migrates only those contacts to the v2
+ * directory and refuses profile, link and offer events for anyone else.
+ */
+export async function isOnDrovrSendingJourney(
+	repository: OwnershipReadRepository,
+	contactId: string,
+): Promise<boolean> {
+	if (!repository.findContactEventsByType) return false
+	const events = await repository.findContactEventsByType(
+		contactId,
+		JOURNEY_OWNER_ASSIGNED_EVENT_TYPE,
+	)
+	const owned = events.some(
+		(event) => journeyOwnerAssignmentJourneyId(event) !== undefined,
+	)
+	if (owned) return true
+	const doubleOptIn = await repository.findContactEventsByType(
+		contactId,
+		DOI_REQUESTED_EVENT_TYPE,
+	)
+	return doubleOptIn.length > 0
 }
 
 export type JourneyOwnerResolution =
