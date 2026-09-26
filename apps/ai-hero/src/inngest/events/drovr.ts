@@ -98,7 +98,8 @@ export type DrovrEventsDeliverBulk = {
 }
 
 export type DrovrDeliverEventName =
-	typeof DROVR_EVENTS_DELIVER_EVENT | typeof DROVR_EVENTS_DELIVER_BULK_EVENT
+	| typeof DROVR_EVENTS_DELIVER_EVENT
+	| typeof DROVR_EVENTS_DELIVER_BULK_EVENT
 
 /** Sources whose batches travel on the bulk function. */
 export const BULK_DELIVERY_SOURCES: ReadonlySet<DrovrDeliverySource> =

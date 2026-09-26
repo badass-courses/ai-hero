@@ -117,6 +117,7 @@ integration('contact sync backfill scan on MySQL', () => {
 			id: 'b',
 			contactId: 'c2',
 			eventType: 'journey.owner.assigned',
+			providerEventId: 'b',
 			occurredAt: '2026-09-20T10:00:00.000Z',
 		})
 	})

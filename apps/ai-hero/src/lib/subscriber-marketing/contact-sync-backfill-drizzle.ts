@@ -31,6 +31,7 @@ export function createDrizzleBackfillScan(
 				id: contactEvent.id,
 				contactId: contactEvent.contactId,
 				eventType: contactEvent.eventType,
+				providerEventId: contactEvent.providerEventId,
 				occurredAt: contactEvent.occurredAt,
 			})
 			.from(contactEvent)

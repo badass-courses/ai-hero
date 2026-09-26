@@ -26,6 +26,8 @@ function world(
 			Record<(typeof BACKFILL_STOP_PHASES)[number], BackfillRow[]>
 		>
 		synthetic?: string[]
+		/** Owner assignments for a journey outside drovr's sending set. */
+		otherJourney?: string[]
 	} = {},
 ) {
 	const owners: BackfillRow[] = Array.from(
@@ -34,6 +36,7 @@ function world(
 			id: `e${String(index).padStart(5, '0')}`,
 			contactId: `c${String(index).padStart(5, '0')}`,
 			eventType: 'journey.owner.assigned',
+			providerEventId: `drovr-owner:c${String(index).padStart(5, '0')}:value-path-skills-course`,
 			occurredAt: `2026-09-2${index % 5}T00:00:00.000Z`,
 		}),
 	)
@@ -42,6 +45,16 @@ function world(
 				id: `s${index}`,
 				contactId,
 				eventType: 'journey.owner.assigned',
+				providerEventId: `drovr-owner:${contactId}:shadow-newsletter`,
+				occurredAt: '2026-09-26T00:00:00.000Z',
+			})),
+		)
+		.concat(
+			(fixture.otherJourney ?? []).map((contactId, index) => ({
+				id: `o${index}`,
+				contactId,
+				eventType: 'journey.owner.assigned',
+				providerEventId: `drovr-owner:${contactId}:some-retired-journey`,
 				occurredAt: '2026-09-26T00:00:00.000Z',
 			})),
 		)
@@ -204,6 +217,15 @@ describe('contact sync backfill', () => {
 		const { ports, stamps } = world({ owners: 2, synthetic: ['synthetic_x'] })
 		await drain(ports, 10)
 		expect(stamps.map((stamp) => stamp.contactId)).not.toContain('synthetic_x')
+	})
+
+	it('profiles only contacts on a drovr sending journey (drovr refuses anyone else)', async () => {
+		const { ports, stamps } = world({ owners: 2, otherJourney: ['c-other'] })
+		await drain(ports, 10)
+		expect(stamps.map((stamp) => stamp.contactId)).toEqual([
+			'c00000',
+			'c00001',
+		])
 	})
 
 	it('is idempotent: a re-run pushes the same versions and keys', async () => {

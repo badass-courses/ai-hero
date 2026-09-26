@@ -11,7 +11,10 @@ import {
 	contactProfileContentHash,
 	type ContactProfileSnapshot,
 } from './drovr-contact-profile-sync'
-import { JOURNEY_OWNER_ASSIGNED_EVENT_TYPE } from './drovr-ownership'
+import {
+	JOURNEY_OWNER_ASSIGNED_EVENT_TYPE,
+	journeyOwnerAssignmentJourneyId,
+} from './drovr-ownership'
 import {
 	DROVR_AUTHORITY_TENANT_ID,
 	DROVR_CONTACT_DIRECTORY_JOURNEY_ID,
@@ -50,6 +53,8 @@ export type BackfillRow = {
 	id: string
 	contactId: string
 	eventType: string
+	/** For an owner assignment, drovr-owner:<contact>:<journey>. */
+	providerEventId?: string
 	occurredAt: string
 }
 
@@ -120,6 +125,15 @@ export async function runContactSyncBackfillPage(
 		const owned = [
 			...new Set(
 				rows
+					// drovr's scope: only a sending journey's owners (value path,
+					// evergreen offer, newsletter) are in the v2 directory, and
+					// drovr refuses a profile for anyone else.
+					.filter(
+						(row) =>
+							journeyOwnerAssignmentJourneyId({
+								providerEventId: row.providerEventId ?? '',
+							}) !== undefined,
+					)
 					.map((row) => row.contactId)
 					.filter((contactId) => !isSyntheticPrincipalId(contactId)),
 			),
