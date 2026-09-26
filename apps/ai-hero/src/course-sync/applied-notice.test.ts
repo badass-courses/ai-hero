@@ -135,6 +135,24 @@ describe('course sync applied notice', () => {
 		)
 	})
 
+	it('redelivery retries the v5 entitlement trigger even when the applied Slack receipt was already claimed', async () => {
+		mocks.persisted.bindingId = syntheticCohortBinding.bindingId
+		mocks.claim.mockResolvedValueOnce(false)
+		await expect(
+			deliverCourseSyncAppliedNotice({
+				controlPlaneRunId: notification.controlPlaneRunId,
+				pollRunId: notification.runId,
+				notification,
+				planSha256: 'plan-sha',
+			}),
+		).resolves.toEqual({ delivered: false, reason: 'already-claimed' })
+		expect(mocks.entitlementSync).toHaveBeenCalledWith({
+			controlPlaneRunId: 'csr_run_1',
+			lifecycle: 'applied',
+		})
+		expect(mocks.sendNotification).not.toHaveBeenCalled()
+	})
+
 	it('still delivers the applied notice when the cohort trigger records a failure', async () => {
 		mocks.persisted.bindingId = syntheticCohortBinding.bindingId
 		mocks.entitlementSync.mockResolvedValueOnce({

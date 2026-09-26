@@ -10,6 +10,7 @@ import { sha256, stableJson } from './control-plane'
 import {
 	claimCourseSyncReviewNotification,
 	completeCourseSyncReviewNotification,
+	failCourseSyncReviewNotification,
 	courseSyncRevisionHeadWhere,
 	saveCourseSyncPollState,
 } from './detection-persistence'
@@ -39,9 +40,7 @@ describe('course-sync revision head persistence', () => {
 
 	it('excludes compensating rollback runs from successful head selection', () => {
 		const dialect = new MySqlDialect()
-		const condition = courseSyncRevisionHeadWhere(
-			'csb_ai_coding_crash_course',
-		)
+		const condition = courseSyncRevisionHeadWhere('csb_ai_coding_crash_course')
 		if (!condition) throw new Error('revision-head condition missing')
 		const query = dialect.sqlToQuery(condition.getSQL())
 
@@ -136,6 +135,30 @@ describe('course-sync revision head persistence', () => {
 				}),
 			)}`,
 		)
+
+		// A post-commit lookup failure uses the same applied receipt key. A
+		// duplicate operator apply with its original key can reclaim the failed
+		// row; started/succeeded rows remain protected from duplicate sends.
+		receipt.value = null
+		const appliedInput = { ...input, kind: 'applied' as const }
+		await expect(claimCourseSyncReviewNotification(appliedInput)).resolves.toBe(
+			true,
+		)
+		await failCourseSyncReviewNotification({
+			...appliedInput,
+			failureClass: 'APPLIED_NOTICE_BINDING_LOOKUP_FAILED',
+		})
+		expect(receipt.value).toMatchObject({
+			outcome: 'failed',
+			failureClass: 'APPLIED_NOTICE_BINDING_LOOKUP_FAILED',
+		})
+		await expect(claimCourseSyncReviewNotification(appliedInput)).resolves.toBe(
+			true,
+		)
+		expect(receipt.value).toMatchObject({
+			outcome: 'started',
+			metadata: expect.objectContaining({ deliveryAttempts: 2 }),
+		})
 	})
 
 	it('preserves a locked operator override across automatic failure saves', async () => {
