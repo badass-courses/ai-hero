@@ -7,10 +7,7 @@ import {
 import { courseSyncControlPlane } from '@/course-sync/runtime'
 import { requestCourseSyncAppliedNotice } from '@/course-sync/applied-notice-dispatch'
 import { deliverCourseSyncEntitlementSync } from '@/course-sync/cohort-entitlements'
-import {
-	COURSE_SYNC_BINDINGS,
-	getServerCourseSyncBinding,
-} from '@/course-sync/types'
+import { getCourseSyncRunBinding } from '@/course-sync/run-binding'
 import { CourseSyncError } from '@/course-sync/errors'
 
 function parseOperation(value: string) {
@@ -84,9 +81,7 @@ export async function POST(
 			})
 			if (
 				rolledBack.state === 'rolled_back' &&
-				rolledBack.bindingId &&
-				Object.hasOwn(COURSE_SYNC_BINDINGS, rolledBack.bindingId) &&
-				getServerCourseSyncBinding(rolledBack.bindingId).contractVersion === 5
+				(await getCourseSyncRunBinding(rolledBack.runId)).contractVersion === 5
 			) {
 				await deliverCourseSyncEntitlementSync({
 					controlPlaneRunId: rolledBack.runId,

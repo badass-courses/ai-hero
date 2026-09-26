@@ -1,11 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { syntheticCohortBinding } from './test-fixtures/cohort-binding'
 
 const mocks = vi.hoisted(() => ({
 	send: vi.fn(async (_event: unknown) => {}),
 	logError: vi.fn(async (_event: string, _data: unknown) => {}),
+	persisted: { bindingId: 'csb_ai_coding_crash_course' as string | null },
+	select: vi.fn(),
 }))
 
 vi.mock('@/inngest/inngest.server', () => ({ inngest: { send: mocks.send } }))
+vi.mock('@/db', () => ({ db: { select: mocks.select } }))
+vi.mock('./types', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('./types')>()
+	return {
+		...actual,
+		getServerCourseSyncBinding: (id: string) =>
+			id === syntheticCohortBinding.bindingId
+				? syntheticCohortBinding
+				: actual.getServerCourseSyncBinding(id),
+	}
+})
 vi.mock('@/server/logger', () => ({
 	log: { error: mocks.logError, info: vi.fn() },
 }))
@@ -22,6 +36,17 @@ describe('course sync applied notice dispatch', () => {
 		vi.clearAllMocks()
 		mocks.send.mockResolvedValue(undefined)
 		mocks.logError.mockResolvedValue(undefined)
+		mocks.persisted.bindingId = 'csb_ai_coding_crash_course'
+		mocks.select.mockImplementation(() => ({
+			from: () => ({
+				where: () => ({
+					limit: async () =>
+						mocks.persisted.bindingId
+							? [{ bindingId: mocks.persisted.bindingId }]
+							: [],
+				}),
+			}),
+		}))
 	})
 
 	it('sends the event once when the first attempt succeeds', async () => {
@@ -39,6 +64,32 @@ describe('course sync applied notice dispatch', () => {
 			}),
 		)
 		expect(mocks.logError).not.toHaveBeenCalled()
+	})
+
+	it('an operator v5 apply dispatches the persisted cohort binding, not the Crash Course default or a caller hint', async () => {
+		mocks.persisted.bindingId = syntheticCohortBinding.bindingId
+		const staleCallerHint = {
+			...input,
+			bindingId: 'csb_ai_coding_crash_course',
+		}
+		await requestCourseSyncAppliedNotice(staleCallerHint)
+		expect(mocks.send).toHaveBeenCalledWith(
+			expect.objectContaining({
+				data: expect.objectContaining({
+					bindingId: syntheticCohortBinding.bindingId,
+					controlPlaneRunId: 'csr_run_1',
+					requestedBy: 'operator',
+				}),
+			}),
+		)
+	})
+
+	it('throws when the persisted run is missing instead of sending a Crash Course notice', async () => {
+		mocks.persisted.bindingId = null
+		await expect(requestCourseSyncAppliedNotice(input)).rejects.toMatchObject({
+			code: 'RUN_NOT_FOUND',
+		})
+		expect(mocks.send).not.toHaveBeenCalled()
 	})
 
 	it('retries a transient send failure instead of losing the notice', async () => {

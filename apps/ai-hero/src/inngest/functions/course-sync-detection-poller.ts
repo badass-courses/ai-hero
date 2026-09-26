@@ -37,16 +37,12 @@ import { readDropboxCourseManifest } from '@/lib/dropbox-course-sync'
 import { COURSE_SYNC_POLL_REQUESTED_EVENT } from '../events/course-sync-poll'
 import { inngest } from '../inngest.server'
 
-async function notifyCourseSync(
-	notification: CourseSyncNotification,
-	bindingId: string,
-) {
+async function notifyCourseSync(notification: CourseSyncNotification) {
 	// Applied is a state, not an event of this poller. Every caller that moves a
 	// run to applied delivers through the same claimed path, so an operator
 	// apply and a poller apply produce one identical notice.
 	if (notification.kind === 'success') {
 		await deliverCourseSyncAppliedNotice({
-			bindingId,
 			controlPlaneRunId: notification.controlPlaneRunId,
 			pollRunId: notification.runId,
 			notification,
@@ -177,7 +173,7 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 					},
 					notify: async (notification) => {
 						await step.run('notify-course-sync-failure', () =>
-							notifyCourseSync(notification, bindingId),
+							notifyCourseSync(notification),
 						)
 					},
 				},
@@ -310,7 +306,7 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 				),
 			notify: async (notification) => {
 				await runTypedStep('notify-course-sync-completion', () =>
-					notifyCourseSync(notification, binding.bindingId),
+					notifyCourseSync(notification),
 				)
 			},
 		})

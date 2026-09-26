@@ -1,22 +1,31 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { syntheticCohortBinding } from './test-fixtures/cohort-binding'
 
-const { apply, rollback, entitlementSync, requestCourseSyncAppliedNotice } =
-	vi.hoisted(() => ({
-		apply: vi.fn(async () => ({ runId: 'run-1', state: 'applied' })),
-		rollback: vi.fn(async () => ({
-			runId: 'run-1',
-			state: 'rolled_back',
-			bindingId: 'csb_test_cohort',
-		})),
-		entitlementSync: vi.fn(
-			async (): Promise<{ triggered: boolean; reason?: string }> => ({
-				triggered: true,
-			}),
-		),
-		requestCourseSyncAppliedNotice: vi.fn(async () => {}),
-	}))
+const {
+	apply,
+	rollback,
+	entitlementSync,
+	requestCourseSyncAppliedNotice,
+	select,
+	persisted,
+} = vi.hoisted(() => ({
+	persisted: { bindingId: 'csb_test_cohort' as string | null },
+	select: vi.fn(),
+	apply: vi.fn(async () => ({ runId: 'run-1', state: 'applied' })),
+	rollback: vi.fn(async () => ({
+		runId: 'run-1',
+		state: 'rolled_back',
+		bindingId: 'csb_test_cohort',
+	})),
+	entitlementSync: vi.fn(
+		async (): Promise<{ triggered: boolean; reason?: string }> => ({
+			triggered: true,
+		}),
+	),
+	requestCourseSyncAppliedNotice: vi.fn(async () => {}),
+}))
 
+vi.mock('@/db', () => ({ db: { select } }))
 vi.mock('@/course-sync/cohort-entitlements', () => ({
 	deliverCourseSyncEntitlementSync: entitlementSync,
 }))
@@ -69,6 +78,15 @@ describe('course sync run operation route', () => {
 		requestCourseSyncAppliedNotice.mockClear()
 		rollback.mockClear()
 		entitlementSync.mockClear()
+		persisted.bindingId = syntheticCohortBinding.bindingId
+		select.mockImplementation(() => ({
+			from: () => ({
+				where: () => ({
+					limit: async () =>
+						persisted.bindingId ? [{ bindingId: persisted.bindingId }] : [],
+				}),
+			}),
+		}))
 	})
 
 	it('rejects worker bearer for operator-policy apply', async () => {
@@ -112,15 +130,41 @@ describe('course sync run operation route', () => {
 			lifecycle: 'rolled_back',
 		})
 		entitlementSync.mockClear()
+		persisted.bindingId = 'csb_ai_coding_crash_course'
 		rollback.mockResolvedValueOnce({
 			runId: 'run-1',
 			state: 'rolled_back',
-			bindingId: 'csb_ai_coding_crash_course',
+			bindingId: syntheticCohortBinding.bindingId,
 		})
 		expect(
 			(await POST(request('test-operator-token-1234567'), rollbackContext))
 				.status,
 		).toBe(200)
+		expect(entitlementSync).not.toHaveBeenCalled()
+	})
+
+	it('rollback uses the persisted v5 binding even if its returned run claims v4', async () => {
+		rollback.mockResolvedValueOnce({
+			runId: 'run-1',
+			state: 'rolled_back',
+			bindingId: 'csb_ai_coding_crash_course',
+		})
+		const response = await POST(request('test-operator-token-1234567'), {
+			params: Promise.resolve({ runOperation: 'run-1:rollback' }),
+		})
+		expect(response.status).toBe(200)
+		expect(entitlementSync).toHaveBeenCalledWith({
+			controlPlaneRunId: 'run-1',
+			lifecycle: 'rolled_back',
+		})
+	})
+
+	it('rollback refuses a missing persisted run rather than silently skipping cohort sync', async () => {
+		persisted.bindingId = null
+		const response = await POST(request('test-operator-token-1234567'), {
+			params: Promise.resolve({ runOperation: 'run-1:rollback' }),
+		})
+		expect(response.status).toBe(404)
 		expect(entitlementSync).not.toHaveBeenCalled()
 	})
 

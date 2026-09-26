@@ -17,7 +17,6 @@ export const courseSyncAppliedNotice = inngest.createFunction(
 	{ event: COURSE_SYNC_APPLIED_NOTICE_EVENT },
 	async ({ event, runId }) => {
 		return deliverCourseSyncAppliedNotice({
-			bindingId: event.data.bindingId,
 			controlPlaneRunId: event.data.controlPlaneRunId,
 			pollRunId: runId,
 		})
