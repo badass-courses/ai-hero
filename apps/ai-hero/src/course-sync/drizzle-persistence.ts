@@ -26,6 +26,7 @@ import {
 } from './control-plane'
 import {
 	chunkCourseSyncWrites,
+	courseSyncManagedParentIds,
 	courseSyncRollbackPointer,
 	resolveCourseSyncRollbackFields,
 	verifyCourseSyncActivation,
@@ -847,6 +848,10 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				.from(contentResourceResource)
 				.where(inArray(contentResourceResource.resourceId, resourceIds))
 				.for('update')
+			const managedParentIds = courseSyncManagedParentIds(
+				binding.anchorWorkshopId,
+				plan,
+			)
 			const relationsByResource = new Map<
 				string,
 				Array<(typeof relationRows)[number]>
@@ -1058,7 +1063,8 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 							{ category: 'lifecycle_conflict', retryable: false },
 						)
 					}
-					const relations = relationsByResource.get(item.targetResourceId) ?? []
+					const relations = (relationsByResource.get(item.targetResourceId) ?? [])
+						.filter((relation) => managedParentIds.has(relation.resourceOfId))
 					const activeRelations = relations.filter(
 						(relation) => relation.deletedAt === null,
 					)
@@ -1274,6 +1280,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				activatedResources,
 				activatedRelations,
 				expectedDeletedAtByResource,
+				courseSyncManagedParentIds(binding.anchorWorkshopId, plan, receipts),
 			)
 			if (!activation.ok) {
 				throw new CourseSyncError(
@@ -1344,7 +1351,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 	}) {
 		await db.transaction(async (trx) => {
 			const [lockedBinding] = await trx
-				.select({ bindingId: courseSyncBinding.bindingId })
+				.select({ bindingId: courseSyncBinding.bindingId, binding: courseSyncBinding.binding })
 				.from(courseSyncBinding)
 				.where(eq(courseSyncBinding.bindingId, bindingId))
 				.for('update')
@@ -1417,6 +1424,11 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			const versionsById = new Map(
 				lockedVersions.map((version) => [version.id, version]),
 			)
+			const managedParentIds = courseSyncManagedParentIds(
+				lockedBinding.binding.anchorWorkshopId,
+				original.plan,
+				receipts,
+			)
 			const versionsByResource = new Map<string, number>()
 			for (const version of lockedVersions) {
 				versionsByResource.set(
@@ -1436,7 +1448,8 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					receipt.contentResourceVersionId,
 				)
 				const relations = lockedRelations.filter(
-					(relation) => relation.resourceId === receipt.resourceId,
+					(relation) => relation.resourceId === receipt.resourceId &&
+						managedParentIds.has(relation.resourceOfId),
 				)
 				const activeRelations = relations.filter(
 					(relation) => relation.deletedAt === null,
@@ -1675,12 +1688,8 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				const verification = verifyCourseSyncRelations(
 					expectedRollbackRelations,
 					restoredRelations,
-					new Map(
-						expectedRollbackRelations
-							.filter((item) => item.detached)
-							.map((item) => [item.resourceId, now]),
-						),
-					'parent',
+					new Map(rollbackRelationIds.map((resourceId) => [resourceId, now])),
+					managedParentIds,
 				)
 				if (!verification.ok) {
 					throw new CourseSyncError(

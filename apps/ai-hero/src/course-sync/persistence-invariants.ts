@@ -184,35 +184,79 @@ export type CourseSyncExpectedRelation = {
 	detached: boolean
 }
 
-/** A shared relation check for apply and rollback, with rollback scoped to each parent. */
+// Only the anchor and parents represented by the managed plan/receipts belong
+// to sync. A resource may also be linked under an unrelated hand-curated parent.
+export function courseSyncManagedParentIds(
+	anchorWorkshopId: string,
+	plan: SyncPlan,
+	receipts: ReadonlyArray<{ previousParentResourceId?: string | null }> = [],
+): ReadonlySet<string> {
+	const parents = new Set([anchorWorkshopId])
+	for (const item of plan.resources) {
+		parents.add(item.targetResourceId)
+		parents.add(item.parentResourceId)
+		if (item.previousParentResourceId) parents.add(item.previousParentResourceId)
+	}
+	for (const receipt of receipts) {
+		if (receipt.previousParentResourceId) {
+			parents.add(receipt.previousParentResourceId)
+		}
+	}
+	return parents
+}
+
+/** Verify the complete relation set under sync-managed parents for each resource. */
 export function verifyCourseSyncRelations(
 	items: ReadonlyArray<CourseSyncExpectedRelation>,
 	relations: ReadonlyArray<CourseSyncRelationReadback>,
 	expectedDeletedAtByResource: ReadonlyMap<string, Date>,
-	scope: 'resource' | 'parent' = 'resource',
+	managedParentIds: ReadonlySet<string> = new Set(
+		relations.map((row) => row.resourceOfId),
+	),
 ): { ok: true } | { ok: false; resourceId: string; reason: string } {
-	for (const item of items) {
+	const resourceIds = new Set(items.map((item) => item.resourceId))
+	for (const resourceId of resourceIds) {
+		const expected = items.filter((item) => item.resourceId === resourceId)
 		const rows = relations.filter((relation) =>
-			relation.resourceId === item.resourceId &&
-			(scope === 'resource' || relation.resourceOfId === item.parentResourceId),
+			relation.resourceId === resourceId && managedParentIds.has(relation.resourceOfId),
 		)
+		const expectedLive = expected.filter((item) => !item.detached)
 		const live = rows.filter((relation) => relation.deletedAt === null)
-		const matchingDead = rows.filter((relation) =>
-			relation.deletedAt !== null &&
-			relation.resourceOfId === item.parentResourceId &&
-			relation.position === item.position,
-		)
-		// ContentResourceResource.deletedAt is TIMESTAMP(3), matching JS Date ms.
-		const expectedDeletedAt = expectedDeletedAtByResource.get(item.resourceId)
-		const matches = item.detached
-			? live.length === 0 && matchingDead.length === 1 &&
-				expectedDeletedAt !== undefined &&
-				matchingDead[0]?.deletedAt instanceof Date &&
-				matchingDead[0].deletedAt.getTime() === expectedDeletedAt.getTime()
-			: live.length === 1 &&
-				live[0]?.resourceOfId === item.parentResourceId &&
-				live[0]?.position === item.position
-		if (!matches) return { ok: false, resourceId: item.resourceId, reason: 'relation_mismatch' }
+		if (
+			expectedLive.length > 1 ||
+			live.length !== expectedLive.length
+		) {
+			return { ok: false, resourceId, reason: 'relation_count_mismatch' }
+		}
+		const writtenAt = expectedDeletedAtByResource.get(resourceId)
+		for (const item of expected) {
+			const atPosition = rows.filter((row) =>
+				row.resourceOfId === item.parentResourceId && row.position === item.position,
+			)
+			if (!item.detached) {
+				if (atPosition.filter((row) => row.deletedAt === null).length !== 1) {
+					return { ok: false, resourceId, reason: 'relation_mismatch' }
+				}
+				continue
+			}
+			// ContentResourceResource.deletedAt is TIMESTAMP(3), matching JS Date ms.
+			if (writtenAt === undefined || atPosition.filter((row) =>
+				row.deletedAt instanceof Date &&
+				row.deletedAt.getTime() === writtenAt.getTime(),
+			).length !== 1) {
+				return { ok: false, resourceId, reason: 'tombstone_mismatch' }
+			}
+		}
+		// Older tombstones record prior sync moves and are allowed. Only a
+		// tombstone from this transaction must match an expected detach.
+		for (const row of rows) {
+			if (writtenAt !== undefined && row.deletedAt instanceof Date &&
+				row.deletedAt.getTime() === writtenAt.getTime() &&
+				!expected.some((item) => item.detached &&
+					item.parentResourceId === row.resourceOfId && item.position === row.position)) {
+				return { ok: false, resourceId, reason: 'unexpected_tombstone' }
+			}
+		}
 	}
 	return { ok: true }
 }
@@ -227,6 +271,7 @@ export function verifyCourseSyncActivation(
 	}>,
 	relations: ReadonlyArray<CourseSyncRelationReadback>,
 	expectedDeletedAtByResource: ReadonlyMap<string, Date>,
+	managedParentIds?: ReadonlySet<string>,
 ): { ok: true } | { ok: false; resourceId: string; reason: string } {
 	if (resources.length !== plan.resources.length) {
 		return { ok: false, resourceId: '', reason: 'resource_count_mismatch' }
@@ -256,6 +301,7 @@ export function verifyCourseSyncActivation(
 		})),
 		relations,
 		expectedDeletedAtByResource,
+		managedParentIds,
 	)
 }
 

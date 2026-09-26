@@ -1,6 +1,7 @@
 import { resolveStoredCourseSyncBinding } from './binding-migration'
 import { CourseSyncError } from './errors'
 import {
+	courseSyncManagedParentIds,
 	resolveCourseSyncRollbackFields,
 	verifyCourseSyncActivation,
 	verifyCourseSyncRelations,
@@ -622,6 +623,8 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 					deletedAt: relation.detached ? (relation.deletedAt ?? null) : null,
 				})),
 			expectedDeletedAtByResource,
+			courseSyncManagedParentIds(binding.anchorWorkshopId, input.plan,
+				receipts.filter((receipt) => receipt.runId === input.runId)),
 		)
 		if (!activation.ok) {
 			throw new CourseSyncError(
@@ -844,9 +847,13 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 					deletedAt: relation?.detached ? (relation.deletedAt ?? null) : null,
 				}
 			}),
-			new Map(plannedRollbacks.filter((rollback) => rollback.relation.detached)
-				.map((rollback) => [rollback.resourceId, rollbackDeletedAt])),
-			'parent',
+			new Map(plannedRollbacks.map((rollback) =>
+				[rollback.resourceId, rollbackDeletedAt])),
+			courseSyncManagedParentIds(
+				this.bindings.get(input.bindingId)!.anchorWorkshopId,
+				original.plan!,
+				runReceipts,
+			),
 		)
 		if (!rollbackVerification.ok) {
 			throw new CourseSyncError(
