@@ -170,6 +170,105 @@ export function chunkCourseSyncWrites<T>(
 	return chunks
 }
 
+export type CourseSyncRelationReadback = {
+	resourceId: string
+	resourceOfId: string
+	position: number
+	deletedAt: Date | null
+	metadata?: Record<string, unknown> | null
+}
+
+export type CourseSyncExpectedRelation = {
+	resourceId: string
+	parentResourceId: string
+	position: number
+	detached: boolean
+}
+
+// Rows owned by this binding are tagged at AI_ContentResourceResource.metadata.bindingId.
+// The anchor tree covers known parents even if a row lost its tag. Retired parents
+// need not appear here: their tagged relation rows remain in scope by ownership.
+export function courseSyncAnchorTreeParentIds(
+	anchorWorkshopId: string,
+	plan: SyncPlan,
+): ReadonlySet<string> {
+	const parents = new Set([anchorWorkshopId])
+	for (const item of plan.resources) {
+		parents.add(item.targetResourceId)
+		parents.add(item.parentResourceId)
+		if (item.previousParentResourceId) parents.add(item.previousParentResourceId)
+	}
+	return parents
+}
+
+export type CourseSyncRelationScope = {
+	bindingId: string
+	anchorTreeParentIds: ReadonlySet<string>
+}
+
+export function isCourseSyncRelationInScope(
+	relation: Pick<CourseSyncRelationReadback, 'resourceOfId' | 'metadata'>,
+	scope: CourseSyncRelationScope,
+): boolean {
+	return relation.metadata?.bindingId === scope.bindingId ||
+		scope.anchorTreeParentIds.has(relation.resourceOfId)
+}
+
+/** Verify every binding-owned relation, including rows under retired parents. */
+export function verifyCourseSyncRelations(
+	items: ReadonlyArray<CourseSyncExpectedRelation>,
+	relations: ReadonlyArray<CourseSyncRelationReadback>,
+	expectedDeletedAtByResource: ReadonlyMap<string, Date>,
+	scope?: CourseSyncRelationScope,
+): { ok: true } | { ok: false; resourceId: string; reason: string } {
+	const resourceIds = new Set(items.map((item) => item.resourceId))
+	for (const resourceId of resourceIds) {
+		const expected = items.filter((item) => item.resourceId === resourceId)
+		const rows = relations.filter((relation) =>
+			relation.resourceId === resourceId &&
+			(scope === undefined || isCourseSyncRelationInScope(relation, scope)),
+		)
+		const expectedLive = expected.filter((item) => !item.detached)
+		const live = rows.filter((relation) => relation.deletedAt === null)
+		if (
+			expectedLive.length > 1 ||
+			live.length !== expectedLive.length
+		) {
+			return { ok: false, resourceId, reason: 'relation_count_mismatch' }
+		}
+		const writtenAt = expectedDeletedAtByResource.get(resourceId)
+		for (const item of expected) {
+			const atPosition = rows.filter((row) =>
+				row.resourceOfId === item.parentResourceId && row.position === item.position,
+			)
+			if (!item.detached) {
+				if (atPosition.filter((row) => row.deletedAt === null).length !== 1) {
+					return { ok: false, resourceId, reason: 'relation_mismatch' }
+				}
+				continue
+			}
+			// ContentResourceResource.deletedAt is TIMESTAMP(3), matching JS Date ms.
+			if (writtenAt === undefined || atPosition.filter((row) =>
+				row.deletedAt instanceof Date &&
+				row.deletedAt.getTime() === writtenAt.getTime(),
+			).length !== 1) {
+				return { ok: false, resourceId, reason: 'tombstone_mismatch' }
+			}
+		}
+		// Older tombstones record prior sync moves and are allowed. Only a
+		// tombstone from this transaction must match an expected detach.
+		for (const row of rows) {
+			if (writtenAt !== undefined && row.deletedAt instanceof Date &&
+				row.deletedAt.getTime() === writtenAt.getTime() &&
+				!expected.some((item) => item.detached &&
+					item.parentResourceId === row.resourceOfId && item.position === row.position)) {
+				return { ok: false, resourceId, reason: 'unexpected_tombstone' }
+			}
+		}
+	}
+	return { ok: true }
+}
+
 export function verifyCourseSyncActivation(
 	plan: SyncPlan,
 	receipts: ReadonlyArray<{ resourceId: string; contentResourceVersionId: string }>,
@@ -178,13 +277,9 @@ export function verifyCourseSyncActivation(
 		currentVersionId: string | null
 		fields: Record<string, unknown> | null
 	}>,
-	relations: ReadonlyArray<{
-		resourceId: string
-		resourceOfId: string
-		position: number
-		deletedAt: Date | null
-	}>,
+	relations: ReadonlyArray<CourseSyncRelationReadback>,
 	expectedDeletedAtByResource: ReadonlyMap<string, Date>,
+	scope?: CourseSyncRelationScope,
 ): { ok: true } | { ok: false; resourceId: string; reason: string } {
 	if (resources.length !== plan.resources.length) {
 		return { ok: false, resourceId: '', reason: 'resource_count_mismatch' }
@@ -204,31 +299,18 @@ export function verifyCourseSyncActivation(
 		if (stableJson(resource.fields ?? {}) !== stableJson(item.fields)) {
 			return { ok: false, resourceId, reason: 'fields_mismatch' }
 		}
-		const rows = relations.filter((relation) => relation.resourceId === resourceId)
-		const live = rows.filter((relation) => relation.deletedAt === null)
-		const matchingDead = rows.filter(
-			(relation) =>
-				relation.deletedAt !== null &&
-				relation.resourceOfId === item.parentResourceId &&
-				relation.position === item.position,
-		)
-		// The relation column is TIMESTAMP(3), matching JS Date millisecond precision.
-		// Compare the value promoted by this apply, not merely any old tombstone.
-		const expectedDeletedAt = expectedDeletedAtByResource.get(resourceId)
-		const relationMatches = item.detached
-			? live.length === 0 &&
-				matchingDead.length === 1 &&
-				expectedDeletedAt !== undefined &&
-				matchingDead[0]?.deletedAt instanceof Date &&
-				matchingDead[0].deletedAt.getTime() === expectedDeletedAt.getTime()
-			: live.length === 1 &&
-					live[0]?.resourceOfId === item.parentResourceId &&
-					live[0]?.position === item.position
-		if (!relationMatches) {
-			return { ok: false, resourceId, reason: 'relation_mismatch' }
-		}
 	}
-	return { ok: true }
+	return verifyCourseSyncRelations(
+		plan.resources.map((item) => ({
+			resourceId: item.targetResourceId,
+			parentResourceId: item.parentResourceId,
+			position: item.position,
+			detached: item.detached,
+		})),
+		relations,
+		expectedDeletedAtByResource,
+		scope,
+	)
 }
 
 export function assertManagedChildRelations(

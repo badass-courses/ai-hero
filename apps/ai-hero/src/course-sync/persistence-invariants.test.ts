@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { sha256, stableJson } from './control-plane'
 
 import {
 	AI_HERO_COURSE_SYNC_BINDING,
@@ -11,11 +12,19 @@ import {
 	summarizeCourseSyncPlanChanges,
 	assertManagedChildRelations,
 	chunkCourseSyncWrites,
+	courseSyncAnchorTreeParentIds,
 	courseSyncRollbackPointer,
 	evaluateCourseSyncBoundedAutoApply,
 	resolveCourseSyncRollbackFields,
 	verifyCourseSyncActivation,
+	verifyCourseSyncRelations,
 } from './persistence-invariants'
+
+function sealPlan(plan: SyncPlan): SyncPlan {
+	const { planSha256: _claimed, ...input } = plan
+	plan.planSha256 = sha256(stableJson(input))
+	return plan
+}
 
 function launchPlan(): SyncPlan {
 	let position = 0
@@ -51,7 +60,7 @@ function launchPlan(): SyncPlan {
 			}
 		}
 	}
-	return {
+	return sealPlan({
 		bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
 		sourceRevisionId: 'revision-launch',
 		courseVersionId: 'course-version-launch',
@@ -66,8 +75,8 @@ function launchPlan(): SyncPlan {
 			muxPlaybackId: `playback-${index}`,
 			duration: 60,
 		})),
-		planSha256: 'b'.repeat(64),
-	}
+		planSha256: '',
+	})
 }
 
 function activationFixture(detached = false) {
@@ -76,7 +85,7 @@ function activationFixture(detached = false) {
 		fields: { title: 'Activation fixture' },
 		detached,
 	}
-	const plan: SyncPlan = { ...launchPlan(), resources: [item], media: [] }
+	const plan: SyncPlan = sealPlan({ ...launchPlan(), resources: [item], media: [] })
 	const receipt = { resourceId: item.targetResourceId, contentResourceVersionId: 'version-after-apply' }
 	const resource = { id: item.targetResourceId, currentVersionId: receipt.contentResourceVersionId, fields: item.fields }
 	const deletedAt = detached ? new Date('2026-09-26T00:00:00.123Z') : null
@@ -99,7 +108,7 @@ function currentManifestPlan(): SyncPlan {
 		'update'
 	for (const media of plan.media) media.action = 'retain'
 	plan.media[0]!.action = 'update'
-	return plan
+	return sealPlan(plan)
 }
 
 function section(position: number) {
@@ -173,11 +182,125 @@ describe('course sync persistence invariants', () => {
 			})
 		}
 	})
+	it('verifies rollback tombstones and restored live relations together', () => {
+		const now = new Date('2026-09-26T01:00:00.123Z')
+		const expected = [
+			{ resourceId: 'detached', parentResourceId: 'parent-a', position: 1, detached: true },
+			{ resourceId: 'restored', parentResourceId: 'parent-b', position: 2, detached: false },
+		]
+		const rows = [
+			{ resourceId: 'detached', resourceOfId: 'parent-a', position: 1, deletedAt: now },
+			{ resourceId: 'restored', resourceOfId: 'parent-b', position: 2, deletedAt: null },
+		]
+		const marker = new Map([['detached', now], ['restored', now]])
+		const scope = { bindingId: 'binding-a', anchorTreeParentIds: new Set(['parent-a', 'parent-b']) }
+		expect(verifyCourseSyncRelations(expected, rows, marker, scope)).toEqual({ ok: true })
+		expect(verifyCourseSyncRelations(expected, rows.slice(1), marker, scope))
+			.toMatchObject({ ok: false, resourceId: 'detached' })
+		expect(verifyCourseSyncRelations(expected, [...rows,
+			{ resourceId: 'restored', resourceOfId: 'parent-a', position: 0, deletedAt: now },
+		], marker, scope)).toMatchObject({ ok: false, resourceId: 'restored' })
+		expect(verifyCourseSyncRelations(expected, [
+			{ ...rows[0]!, deletedAt: new Date('2020-01-01') }, rows[1]!,
+		], marker, scope)).toMatchObject({ ok: false, resourceId: 'detached' })
+		expect(verifyCourseSyncRelations(expected, [...rows, { ...rows[1]! }], marker, scope))
+			.toMatchObject({ ok: false, resourceId: 'restored' })
+	})
+
+	it('derives the known anchor tree without treating unrelated parents as managed', () => {
+		const plan = launchPlan()
+		plan.resources[0]!.previousParentResourceId = 'prior-plan-parent'
+		const parents = courseSyncAnchorTreeParentIds('anchor-workshop', plan)
+		for (const parent of ['anchor-workshop', 'prior-plan-parent',
+			plan.resources[0]!.targetResourceId, plan.resources[0]!.parentResourceId]) {
+			expect(parents.has(parent)).toBe(true)
+		}
+		expect(parents.has('hand-curated')).toBe(false)
+	})
+
+	it('rejects stray managed rollback relations but ignores unmanaged ones', () => {
+		const now = new Date('2026-09-26T01:00:00.123Z')
+		const expected = [
+			{ resourceId: 'moved', parentResourceId: 'old-managed', position: 1, detached: false },
+			{ resourceId: 'moved', parentResourceId: 'new-managed', position: 2, detached: true },
+		]
+		const rows = [
+			{ resourceId: 'moved', resourceOfId: 'old-managed', position: 1, deletedAt: null },
+			{ resourceId: 'moved', resourceOfId: 'new-managed', position: 2, deletedAt: now },
+		]
+		const marker = new Map([['moved', now]])
+		const scope = { bindingId: 'binding-a', anchorTreeParentIds: new Set(['old-managed', 'new-managed']) }
+		// A→B→C→B: the tagged A tombstone predates this rollback and is history.
+		expect(verifyCourseSyncRelations(expected, [...rows,
+			{ resourceId: 'moved', resourceOfId: 'retired-managed', position: 0,
+				deletedAt: new Date('2020-01-01'), metadata: { bindingId: 'binding-a' } },
+		], marker, scope)).toEqual({ ok: true })
+		expect(verifyCourseSyncRelations(expected, [...rows,
+			{ resourceId: 'moved', resourceOfId: 'retired-managed', position: 0,
+				deletedAt: null, metadata: { bindingId: 'binding-a' } },
+		], marker, scope)).toMatchObject({ ok: false, resourceId: 'moved' })
+		expect(verifyCourseSyncRelations(expected, [...rows,
+			{ resourceId: 'moved', resourceOfId: 'retired-managed', position: 0,
+				deletedAt: now, metadata: { bindingId: 'binding-a' } },
+		], marker, scope)).toMatchObject({ ok: false, resourceId: 'moved' })
+		expect(verifyCourseSyncRelations(expected, [...rows,
+			{ resourceId: 'moved', resourceOfId: 'hand-curated', position: 0, deletedAt: null },
+		], marker, scope)).toEqual({ ok: true })
+	})
+
+	it('rejects a tagged retired-section live edge on rollback, outside the current plan', () => {
+		const now = new Date('2026-09-26T01:00:00.123Z')
+		const expected = [{ resourceId: 'lesson', parentResourceId: 'current-section', position: 0, detached: false }]
+		const rows = [
+			{ resourceId: 'lesson', resourceOfId: 'current-section', position: 0, deletedAt: null,
+				metadata: { bindingId: 'binding-a' } },
+			{ resourceId: 'lesson', resourceOfId: 'retired-section', position: 1, deletedAt: null,
+				metadata: { bindingId: 'binding-a' } },
+		]
+		// Only the current section appears in the plan. The retired section must still count.
+		const currentParents = new Set(['anchor', 'current-section'])
+		expect(verifyCourseSyncRelations(expected, rows, new Map([['lesson', now]]),
+			{ bindingId: 'binding-a', anchorTreeParentIds: currentParents }))
+			.toMatchObject({ ok: false, resourceId: 'lesson' })
+	})
+
+	it('rejects a tagged retired-section live edge on apply but ignores an untagged list', () => {
+		const fixture = activationFixture()
+		const id = fixture.plan.resources[0]!.targetResourceId
+		const currentParents = new Set([fixture.relations[0]!.resourceOfId])
+		const extra = { resourceId: id, resourceOfId: 'retired-section', position: 2,
+			deletedAt: null, metadata: { bindingId: fixture.plan.bindingId } }
+		expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources,
+			[...fixture.relations, extra], fixture.expectedDeletedAtByResource,
+			{ bindingId: fixture.plan.bindingId, anchorTreeParentIds: currentParents }))
+			.toMatchObject({ ok: false, resourceId: id })
+		expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources,
+			[...fixture.relations, { ...extra, metadata: null }],
+			fixture.expectedDeletedAtByResource,
+			{ bindingId: fixture.plan.bindingId, anchorTreeParentIds: currentParents })).toEqual({ ok: true })
+	})
+
+	it.each([false, true])('applies detached=%s with an unmanaged relation but rejects another managed live relation', (detached) => {
+		const fixture = activationFixture(detached)
+		const extra = { ...fixture.relations[0]!, resourceOfId: 'hand-curated', deletedAt: null }
+		const scope = { bindingId: fixture.plan.bindingId,
+			anchorTreeParentIds: new Set([fixture.relations[0]!.resourceOfId, 'other-managed']) }
+		expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources,
+			[...fixture.relations, extra], fixture.expectedDeletedAtByResource, scope)).toEqual({ ok: true })
+		expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources,
+			[...fixture.relations, { ...extra, resourceOfId: 'other-managed' }],
+			fixture.expectedDeletedAtByResource, scope)).toMatchObject({ ok: false, resourceId: fixture.plan.resources[0]!.targetResourceId })
+	})
+
 	it('reads detached relations for apply verification rather than filtering dead rows', () => {
 		const applySource = readFileSync(new URL('./drizzle-persistence.ts', import.meta.url), 'utf8')
 		const readback = applySource.split('const activatedRelations = await trx')[1]?.split('const appliedAt = new Date()')[0]
 		expect(readback).toContain('deletedAt: contentResourceResource.deletedAt')
+		expect(readback).toContain('metadata: contentResourceResource.metadata')
 		expect(readback).not.toContain('isNull(contentResourceResource.deletedAt)')
+		const rollbackReadback = applySource.split('const restoredRelations = await trx')[1]
+			?.split('const verification = verifyCourseSyncRelations')[0]
+		expect(rollbackReadback).toContain('metadata: contentResourceResource.metadata')
 	})
 
 	it('creates the exact prefixed frozen-asset receipt table without masking drift', () => {
@@ -210,18 +333,16 @@ describe('course sync persistence invariants', () => {
 	})
 
 	it('treats the source manifest as authoritative for every plan shape', () => {
-		expect(evaluateCourseSyncBoundedAutoApply(launchPlan())).toEqual({
-			eligible: true,
-			planSha256: 'b'.repeat(64),
-		})
-		expect(evaluateCourseSyncBoundedAutoApply(currentManifestPlan())).toEqual({
-			eligible: true,
-			planSha256: 'b'.repeat(64),
-		})
+		for (const plan of [launchPlan(), currentManifestPlan()]) {
+			expect(evaluateCourseSyncBoundedAutoApply(plan)).toEqual({
+				eligible: true,
+				planSha256: plan.planSha256,
+			})
+		}
 	})
 
 	it('routes lesson regressions to operator review without marking the plan failed', () => {
-		const plan = { ...launchPlan(), lessonRegressions: ['lesson-1'] }
+		const plan = sealPlan({ ...launchPlan(), lessonRegressions: ['lesson-1'] })
 		expect(evaluateCourseSyncBoundedAutoApply(plan)).toEqual({
 			eligible: false,
 			planSha256: plan.planSha256,
@@ -234,6 +355,7 @@ describe('course sync persistence invariants', () => {
 		const plan = launchPlan()
 		const lesson = plan.resources.find((item) => item.sourceKind === 'lesson')!
 		lesson.fields = { courseSync: { lessonType: 'placeholder' } }
+		sealPlan(plan)
 		expect(evaluateCourseSyncBoundedAutoApply(plan)).toMatchObject({
 			eligible: false,
 			failureCode: 'LEGACY_PLACEHOLDER_PREVIEW_REVIEW_REQUIRED',
@@ -244,6 +366,7 @@ describe('course sync persistence invariants', () => {
 		const plan = { ...launchPlan(), lessonRegressions: [] }
 		const lesson = plan.resources.find((item) => item.sourceKind === 'lesson')!
 		lesson.fields = { courseSync: { lessonType: 'placeholder' } }
+		sealPlan(plan)
 		expect(evaluateCourseSyncBoundedAutoApply(plan)).toMatchObject({
 			eligible: true,
 			planSha256: plan.planSha256,
@@ -255,6 +378,7 @@ describe('course sync persistence invariants', () => {
 			const plan = launchPlan()
 			const child = plan.resources.find((item) => item.sourceKind === kind)!
 			child.detached = true
+			sealPlan(plan)
 			expect(evaluateCourseSyncBoundedAutoApply(plan)).toMatchObject({
 				eligible: false,
 				failureCode: 'LOST_VIDEO_REVIEW_REQUIRED',
@@ -318,9 +442,10 @@ describe('course sync persistence invariants', () => {
 	] as const)('applies %s without an operator gate', (_label, mutate) => {
 		const plan = launchPlan()
 		mutate(plan)
+		sealPlan(plan)
 		expect(evaluateCourseSyncBoundedAutoApply(plan)).toEqual({
 			eligible: true,
-			planSha256: 'b'.repeat(64),
+			planSha256: plan.planSha256,
 		})
 	})
 

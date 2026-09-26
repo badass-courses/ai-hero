@@ -14,6 +14,8 @@ import {
 	stableJson,
 } from './control-plane'
 import { InMemoryCourseSyncPersistence } from './in-memory-persistence'
+import { verifyCourseSyncActivation } from './persistence-invariants'
+import { assertCourseSyncTargetContract } from './target-contract'
 import { courseSyncRunMachine } from './run-machine'
 import {
 	AI_HERO_COURSE_SYNC_BINDING,
@@ -370,6 +372,54 @@ async function stagedAndPreviewed(
 	})
 	const previewed = await testHarness.controlPlane.preview(staged.runId)
 	return { staged, previewed }
+}
+
+function syllabusSections(
+	courseVersionId: string,
+	sections: ReadonlyArray<{ id: string; title?: string; empty?: boolean }>,
+): CourseJsonDocumentV3 {
+	return {
+		...fixture(courseVersionId),
+		schemaVersion: 4,
+		sections: sections.map((section) => ({
+			id: section.id,
+			title: section.title ?? section.id,
+			lessons: section.empty ? [] : [{
+				type: 'placeholder' as const,
+				id: `lesson-${section.id}`,
+				title: `Lesson ${section.id}`,
+			}],
+		})),
+	}
+}
+
+function liveSectionRelations(testHarness: ReturnType<typeof harness>) {
+	return [...testHarness.persistence.relations.values()]
+		.filter((relation) =>
+			relation.parentId === AI_HERO_COURSE_SYNC_BINDING.anchorWorkshopId &&
+			!relation.detached,
+		)
+		.sort((a, b) => a.position - b.position)
+}
+
+function assertNextTickTarget(testHarness: ReturnType<typeof harness>, expectedCount: number) {
+	const sections = liveSectionRelations(testHarness)
+	expect(sections.map((relation) => relation.position)).toEqual(
+		Array.from({ length: expectedCount }, (_, index) => index),
+	)
+	assertCourseSyncTargetContract(AI_HERO_COURSE_SYNC_BINDING, {
+		product: { id: AI_HERO_COURSE_SYNC_BINDING.productId, type: 'self-paced',
+			fields: { state: 'published', visibility: 'public' } },
+		workshop: { id: AI_HERO_COURSE_SYNC_BINDING.anchorWorkshopId, type: 'workshop',
+			fields: { state: 'published', visibility: 'public' }, deletedAt: null },
+		relation: { position: 0 }, otherProductRelations: [],
+		childRelations: sections.map((relation) => {
+			const resource = testHarness.persistence.resources.get(relation.childId)
+			return { position: relation.position, resource: resource
+				? { id: resource.resourceId, type: resource.type, fields: resource.fields }
+				: null }
+		}),
+	})
 }
 
 describe('draft course sync control plane', () => {
@@ -1195,6 +1245,39 @@ describe('draft course sync control plane', () => {
 		},
 	)
 
+	it.each(['apply', 'rollback'] as const)(
+		'rejects a tagged retired-parent live relation during in-memory %s verification', async (stage) => {
+			const testHarness = harness()
+			const first = await stagedAndPreviewed(testHarness, fixture('tag-first'))
+			await applyDirectly(testHarness, first.staged.runId, 'apply-tag-first')
+			const nextManifest = fixture('tag-next')
+			nextManifest.sections[0]!.title += ' updated'
+			const next = await stagedAndPreviewed(testHarness, nextManifest, 'stage-tag-next')
+			const plan = testHarness.persistence.runs.get(next.staged.runId)?.plan
+			const section = plan?.resources.find((item) => item.sourceKind === 'section' && item.action === 'update')
+			if (!section) throw new Error('updated section missing')
+			const stale = {
+				resourceId: section.targetResourceId, resourceOfId: 'retired-section-not-in-plan',
+				position: 9, deletedAt: null,
+				metadata: { bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId },
+			}
+			expect(plan?.resources.some((item) =>
+				item.targetResourceId === stale.resourceOfId)).toBe(false)
+			expect(plan?.bindingId).toBe(stale.metadata.bindingId)
+			if (stage === 'apply') {
+				testHarness.persistence.additionalRelations.push(stale)
+				await expect(applyDirectly(testHarness, next.staged.runId, 'apply-tag-next'))
+					.rejects.toMatchObject({ code: 'APPLY_WRITE_VERIFICATION_FAILED' })
+			} else {
+				await applyDirectly(testHarness, next.staged.runId, 'apply-tag-next')
+				testHarness.persistence.additionalRelations.push(stale)
+				await expect(testHarness.controlPlane.rollback({ runId: next.staged.runId,
+					idempotencyKey: 'rollback-tag-next' }))
+					.rejects.toMatchObject({ code: 'ROLLBACK_WRITE_VERIFICATION_FAILED' })
+			}
+		},
+	)
+
 	it('requires review when an explainer becomes a placeholder', async () => {
 		const testHarness = harness()
 		const source = fixture('filmed-explainer')
@@ -1246,6 +1329,188 @@ describe('draft course sync control plane', () => {
 		expect(await testHarness.controlPlane.evaluateBoundedAutoApply(next.staged.runId)).toMatchObject({
 			eligible: false, planSha256: next.previewed.planSha256,
 		})
+	})
+
+	it('detaches an interleaved placeholder section and renumbers live siblings', async () => {
+		const testHarness = harness()
+		const source = fixture('sections-before')
+		const syllabus: CourseJsonDocumentV3 = {
+			...source,
+			schemaVersion: 4,
+			sections: Array.from({ length: 4 }, (_, index) => ({
+				id: `syllabus-section-${index}`,
+				title: `Section ${index}`,
+				lessons: [{ type: 'placeholder' as const, id: `syllabus-lesson-${index}`, title: `Lesson ${index}` }],
+			})),
+		}
+		const baseline = await stagedAndPreviewed(testHarness, syllabus)
+		await applyDirectly(testHarness, baseline.staged.runId, 'apply-sections-before')
+		const removed = syllabus.sections[1]!
+		const changed: CourseJsonDocumentV3 = {
+			...syllabus,
+			courseVersionId: 'sections-after',
+			sections: syllabus.sections.filter((section) => section.id !== removed.id),
+		}
+		const next = await stagedAndPreviewed(testHarness, changed, 'stage-section-removal')
+		const plan = testHarness.persistence.runs.get(next.staged.runId)?.plan
+		expect(plan?.resources.find((item) => item.sourceId === removed.id)).toMatchObject({
+			sourceKind: 'section', action: 'update', detached: true,
+			position: 1, previousPosition: 1,
+		})
+		expect(plan?.resources.filter((item) => item.sourceKind === 'section' && !item.detached)
+			.map((item) => [item.sourceId, item.position, item.action])).toEqual([
+			['syllabus-section-0', 0, 'retain'],
+			['syllabus-section-2', 1, 'update'],
+			['syllabus-section-3', 2, 'update'],
+		])
+		expect(plan?.lessonRegressions).toEqual([])
+		expect(await testHarness.controlPlane.evaluateBoundedAutoApply(next.staged.runId)).toMatchObject({ eligible: true })
+		await applyDirectly(testHarness, next.staged.runId, 'auto-apply-section-removal')
+		const section = plan?.resources.find((item) => item.sourceId === removed.id)!
+		expect(testHarness.persistence.relations.get(section.targetResourceId)?.detached).toBe(true)
+		assertNextTickTarget(testHarness, 3)
+	})
+
+	it('detaches a trailing placeholder section without moving siblings', async () => {
+		const testHarness = harness()
+		const sections = Array.from({ length: 3 }, (_, index) => ({ id: `section-${index}` }))
+		const first = await stagedAndPreviewed(testHarness, syllabusSections('trailing-before', sections))
+		await applyDirectly(testHarness, first.staged.runId, 'apply-trailing-before')
+		const next = await stagedAndPreviewed(testHarness, syllabusSections('trailing-after', sections.slice(0, 2)), 'stage-trailing-after')
+		const plan = testHarness.persistence.runs.get(next.staged.runId)?.plan
+		expect(plan?.resources.find((item) => item.sourceId === 'section-2')).toMatchObject({
+			action: 'update', detached: true, previousPosition: 2,
+		})
+		expect(plan?.resources.filter((item) => item.sourceKind === 'section' && !item.detached)
+			.every((item) => item.action === 'retain')).toBe(true)
+		expect(await testHarness.controlPlane.evaluateBoundedAutoApply(next.staged.runId)).toMatchObject({ eligible: true })
+		await applyDirectly(testHarness, next.staged.runId, 'auto-apply-trailing-after')
+		assertNextTickTarget(testHarness, 2)
+	})
+
+	it('requires operator review when a removed section held a filmed lesson', async () => {
+		const testHarness = harness()
+		const source = fixture('filmed-section-before')
+		const filmed = source.sections[0]!.lessons[0]!
+		const firstManifest: CourseJsonDocumentV3 = {
+			...source,
+			sections: [
+				{ ...source.sections[0]!, lessons: [filmed] },
+				{ ...source.sections[1]!, lessons: [source.sections[1]!.lessons[0]!] },
+			],
+		}
+		const first = await stagedAndPreviewed(testHarness, firstManifest)
+		await applyDirectly(testHarness, first.staged.runId, 'apply-filmed-section')
+		const nextManifest: CourseJsonDocumentV3 = {
+			...firstManifest, courseVersionId: 'filmed-section-removed',
+			sections: firstManifest.sections.slice(1),
+		}
+		const next = await stagedAndPreviewed(testHarness, nextManifest, 'stage-filmed-section-removed')
+		const plan = testHarness.persistence.runs.get(next.staged.runId)?.plan
+		expect(plan?.resources.filter((item) => item.detached).map((item) => item.sourceKind)).toEqual([
+			'section', 'lesson', 'video',
+		])
+		expect(plan?.lessonRegressions).toEqual([filmed.id])
+		expect(await testHarness.controlPlane.evaluateBoundedAutoApply(next.staged.runId)).toMatchObject({
+			eligible: false, failureCode: 'LESSON_REGRESSION_REVIEW_REQUIRED',
+		})
+		expect(testHarness.persistence.runs.get(next.staged.runId)).toMatchObject({ state: 'previewed', failureCode: null })
+		await applyDirectly(testHarness, next.staged.runId, 'operator-apply-filmed-section-removal')
+		for (const item of plan?.resources.filter((item) => item.detached) ?? []) {
+			expect(testHarness.persistence.relations.get(item.targetResourceId)?.detached).toBe(true)
+		}
+		assertNextTickTarget(testHarness, 1)
+	})
+
+	it('detaches an empty section without a regression field', async () => {
+		const testHarness = harness()
+		const sections = [{ id: 'empty', empty: true }, { id: 'kept', empty: true }]
+		const first = await stagedAndPreviewed(testHarness, syllabusSections('empty-before', sections))
+		await applyDirectly(testHarness, first.staged.runId, 'apply-empty-before')
+		const next = await stagedAndPreviewed(testHarness, syllabusSections('empty-after', sections.slice(1)), 'stage-empty-after')
+		const plan = testHarness.persistence.runs.get(next.staged.runId)?.plan
+		expect(plan?.resources.filter((item) => item.detached).map((item) => item.sourceKind)).toEqual(['section'])
+		expect(plan).not.toHaveProperty('lessonRegressions')
+		expect(await testHarness.controlPlane.evaluateBoundedAutoApply(next.staged.runId)).toMatchObject({ eligible: true })
+		await applyDirectly(testHarness, next.staged.runId, 'auto-apply-empty-after')
+		assertNextTickTarget(testHarness, 1)
+	})
+
+	it('applies a section reorder and removal in the same revision', async () => {
+		const testHarness = harness()
+		const sections = Array.from({ length: 4 }, (_, index) => ({ id: `section-${index}` }))
+		const first = await stagedAndPreviewed(testHarness, syllabusSections('reorder-before', sections))
+		await applyDirectly(testHarness, first.staged.runId, 'apply-reorder-before')
+		const changed = [sections[3]!, sections[0]!, sections[2]!]
+		const next = await stagedAndPreviewed(testHarness, syllabusSections('reorder-after', changed), 'stage-reorder-after')
+		const plan = testHarness.persistence.runs.get(next.staged.runId)?.plan
+		expect(plan?.resources.find((item) => item.sourceId === 'section-1')).toMatchObject({ detached: true, previousPosition: 1 })
+		expect(plan?.resources.filter((item) => item.sourceKind === 'section' && !item.detached)
+			.map((item) => item.position)).toEqual([0, 1, 2])
+		await applyDirectly(testHarness, next.staged.runId, 'auto-apply-reorder-after')
+		assertNextTickTarget(testHarness, 3)
+	})
+
+	it('restores a removed section, its placeholders, and sibling positions on rollback', async () => {
+		const testHarness = harness()
+		const sections = Array.from({ length: 3 }, (_, index) => ({ id: `section-${index}` }))
+		const first = await stagedAndPreviewed(testHarness, syllabusSections('rollback-sections-before', sections))
+		await applyDirectly(testHarness, first.staged.runId, 'apply-rollback-sections-before')
+		const before = structuredClone([...testHarness.persistence.relations.entries()])
+		const fieldsBefore = structuredClone([...testHarness.persistence.resources.entries()])
+		const next = await stagedAndPreviewed(testHarness, syllabusSections('rollback-sections-after', [sections[0]!, sections[2]!]), 'stage-rollback-sections-after')
+		await applyDirectly(testHarness, next.staged.runId, 'apply-rollback-sections-after')
+		await expect(testHarness.controlPlane.rollback({ runId: next.staged.runId,
+			idempotencyKey: 'rollback-section-removal' })).resolves.toMatchObject({ state: 'rolled_back' })
+		for (const [id, { metadata: _metadata, ...relation }] of before) {
+			expect(testHarness.persistence.relations.get(id)).toMatchObject(relation)
+			expect(testHarness.persistence.relations.get(id)?.metadata?.bindingId)
+				.toBe(AI_HERO_COURSE_SYNC_BINDING.bindingId)
+		}
+		for (const [id, resource] of fieldsBefore) {
+			expect(testHarness.persistence.resources.get(id)?.fields).toEqual(resource.fields)
+		}
+		assertNextTickTarget(testHarness, 3)
+	})
+
+	it('auto-applies dropping eight Cohort 005 ARCHIVE sections with one interleaved', async () => {
+		const testHarness = harness()
+		const sections = Array.from({ length: 15 }, (_, index) => ({
+			id: `cohort-section-${index}`,
+			title: index === 5 || index >= 8 ? `ARCHIVE ${index}` : `Keep ${index}`,
+		}))
+		const first = await stagedAndPreviewed(testHarness, syllabusSections('cohort-before', sections))
+		await applyDirectly(testHarness, first.staged.runId, 'apply-cohort-before')
+		const kept = sections.filter((section) => !section.title.startsWith('ARCHIVE'))
+		expect(kept).toHaveLength(7)
+		const next = await stagedAndPreviewed(testHarness, syllabusSections('cohort-after', kept), 'stage-cohort-after')
+		const plan = testHarness.persistence.runs.get(next.staged.runId)?.plan
+		expect(plan?.resources.filter((item) => item.sourceKind === 'section' && item.detached)).toHaveLength(8)
+		expect(plan?.lessonRegressions).toEqual([])
+		expect(await testHarness.controlPlane.evaluateBoundedAutoApply(next.staged.runId)).toMatchObject({ eligible: true })
+		await applyDirectly(testHarness, next.staged.runId, 'auto-apply-cohort-after')
+		assertNextTickTarget(testHarness, 7)
+		const subsequent = await stagedAndPreviewed(testHarness,
+			syllabusSections('cohort-next-tick', kept), 'stage-cohort-next-tick')
+		expect(subsequent.previewed.state).toBe('previewed')
+		const resourceIds = new Set(plan?.resources.map((item) => item.targetResourceId))
+		const receipts = testHarness.persistence.receipts.filter((receipt) => receipt.runId === next.staged.runId)
+		const expectedDeletedAtByResource = new Map(
+			(plan?.resources ?? []).filter((item) => item.detached).map((item) => [
+				item.targetResourceId,
+				testHarness.persistence.relations.get(item.targetResourceId)!.deletedAt!,
+			]),
+		)
+		expect(verifyCourseSyncActivation(
+			plan!,
+			receipts.map((receipt) => ({ resourceId: receipt.resourceId, contentResourceVersionId: receipt.versionId })),
+			[...testHarness.persistence.resources.values()].filter((resource) => resourceIds.has(resource.resourceId))
+				.map((resource) => ({ id: resource.resourceId, currentVersionId: resource.currentVersionId, fields: resource.fields })),
+			[...testHarness.persistence.relations.values()].filter((relation) => resourceIds.has(relation.childId))
+				.map((relation) => ({ resourceId: relation.childId, resourceOfId: relation.parentId,
+					position: relation.position, deletedAt: relation.deletedAt ?? null })),
+			expectedDeletedAtByResource,
+		)).toEqual({ ok: true })
 	})
 
 	it('detaches a removed filmed explainer and its video for operator review', async () => {
@@ -1366,7 +1631,10 @@ describe('draft course sync control plane', () => {
 			runId: next.staged.runId, idempotencyKey: 'rollback-removed-explainer',
 		})).resolves.toMatchObject({ state: 'rolled_back' })
 		for (const [index, id] of ids.entries()) {
-			expect(testHarness.persistence.relations.get(id)).toEqual(relationsBefore[index])
+			const { metadata: _metadata, ...relation } = relationsBefore[index]!
+			expect(testHarness.persistence.relations.get(id)).toMatchObject(relation)
+			expect(testHarness.persistence.relations.get(id)?.metadata?.bindingId)
+				.toBe(AI_HERO_COURSE_SYNC_BINDING.bindingId)
 		}
 		expect(testHarness.persistence.resources.get(lesson.targetResourceId)?.fields).toEqual(fieldsBefore)
 	})
@@ -1586,6 +1854,25 @@ describe('draft course sync control plane', () => {
 		).toBe(true)
 	})
 
+	it('rejects a stale tombstone in the post-rollback readback', async () => {
+		const testHarness = harness()
+		const first = await stagedAndPreviewed(testHarness)
+		await applyDirectly(testHarness, first.staged.runId, 'apply-before-stale-rollback')
+		const section = testHarness.persistence.runs.get(first.staged.runId)?.plan?.resources.find(
+			(item) => item.sourceKind === 'section',
+		)
+		if (!section) throw new Error('section missing')
+		testHarness.persistence.beforeRollbackActivationReadback = (relations) => {
+			const relation = relations.get(section.targetResourceId)
+			if (relation) relation.deletedAt = new Date('2020-01-01T00:00:00.000Z')
+		}
+		await expect(testHarness.controlPlane.rollback({
+			runId: first.staged.runId,
+			idempotencyKey: 'rollback-with-stale-tombstone',
+		})).rejects.toMatchObject({ code: 'ROLLBACK_WRITE_VERIFICATION_FAILED' })
+		expect(testHarness.persistence.relations.get(section.targetResourceId)?.detached).toBe(false)
+	})
+
 	it('hashes a maximum-length rollback key into the compensating run column', async () => {
 		const testHarness = harness()
 		const { staged } = await stagedAndPreviewed(testHarness)
@@ -1711,7 +1998,12 @@ describe('draft course sync control plane', () => {
 		).toEqual(updatedBefore?.fields)
 		expect(
 			testHarness.persistence.relations.get(updatedItem.targetResourceId),
-		).toEqual(updatedRelationBefore)
+		).toMatchObject({
+			parentId: updatedRelationBefore?.parentId,
+			position: updatedRelationBefore?.position,
+			detached: updatedRelationBefore?.detached,
+			metadata: { bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId },
+		})
 		expect(
 			testHarness.persistence.resources.get(retainedItem.targetResourceId),
 		).toEqual(retainedBefore)

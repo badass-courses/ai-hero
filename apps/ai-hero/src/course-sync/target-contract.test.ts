@@ -58,6 +58,19 @@ describe('course sync target contract v4', () => {
 		).toEqual([])
 	})
 
+	it('accepts contiguous live sections when a detached child is excluded from the reader', () => {
+		const facts = validFacts()
+		const rows = [
+			{ position: 0, deletedAt: null, resource: facts.childRelations[0]!.resource },
+			{ position: 1, deletedAt: new Date(), resource: { ...facts.childRelations[0]!.resource!, id: 'removed' } },
+			{ position: 1, deletedAt: null, resource: { ...facts.childRelations[0]!.resource!, id: 'section-2' } },
+		]
+		facts.childRelations = rows.filter((row) => row.deletedAt === null)
+			.map(({ position, resource }) => ({ position, resource }))
+		expect(facts.childRelations.map((row) => row.position)).toEqual([0, 1])
+		expect(collectCourseSyncTargetViolations(AI_HERO_COURSE_SYNC_BINDING, facts)).toEqual([])
+	})
+
 	it('reports every expected and actual violation in one typed failure', () => {
 		const facts = validFacts()
 		facts.product!.fields = { state: 'draft', visibility: 'unlisted' }
