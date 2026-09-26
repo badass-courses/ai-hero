@@ -1,4 +1,7 @@
-import { CONTACT_SYNC_RETRY_EVENT } from '@/inngest/events/drovr'
+import {
+	CONTACT_SYNC_RETRY_EVENT,
+	type DrovrContactSyncRetryRequested,
+} from '@/inngest/events/drovr'
 
 import { parseDrovrProfileSyncConfig } from './drovr-contact-profile-sync-requests'
 import type {
@@ -29,7 +32,7 @@ export function contactSyncRetryRequest(
 	items: DeferredDrovrEvent[],
 	attempt: number,
 	nowMs: number,
-) {
+): DrovrContactSyncRetryRequested & { ts: number } {
 	return {
 		name: CONTACT_SYNC_RETRY_EVENT,
 		ts: nowMs + STRAGGLER_RETRY_DELAY_MS,
