@@ -1,7 +1,7 @@
 import { resolveStoredCourseSyncBinding } from './binding-migration'
 import { CourseSyncError } from './errors'
 import {
-	courseSyncManagedParentIds,
+	courseSyncAnchorTreeParentIds,
 	resolveCourseSyncRollbackFields,
 	verifyCourseSyncActivation,
 	verifyCourseSyncRelations,
@@ -12,6 +12,7 @@ import {
 	sha256,
 	stableJson,
 } from './control-plane'
+import type { CourseSyncRelationReadback } from './persistence-invariants'
 import type {
 	CourseSyncBinding,
 	CourseSyncPersistence,
@@ -67,8 +68,12 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 	readonly receipts: MemoryReceipt[] = []
 	readonly relations = new Map<
 		string,
-		{ parentId: string; childId: string; position: number; detached: boolean; deletedAt?: Date }
+		{ parentId: string; childId: string; position: number; detached: boolean; deletedAt?: Date;
+			metadata?: Record<string, unknown> | null }
 	>()
+	// Multi-parent readback seam: the primary map keeps the existing target model
+	// while tests can represent other tagged or hand-curated relation rows.
+	readonly additionalRelations: CourseSyncRelationReadback[] = []
 	targetValid = true
 	assertTargetCalls = 0
 	failAfterVersionWrites: number | null = null
@@ -386,6 +391,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 					parentId: item.parentResourceId,
 					childId: item.targetResourceId,
 					position: item.position,
+					metadata: { bindingId: input.plan.bindingId, sourceId: item.sourceId },
 					// Honor the plan rather than assuming attached. Recreating a
 					// question that was previously removed arrives as create +
 					// detached: true, and hard-coding false would silently make it
@@ -491,6 +497,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 				}
 				relation.parentId = item.parentResourceId
 				relation.position = item.position
+				relation.metadata = { bindingId: input.plan.bindingId, sourceId: item.sourceId }
 				relation.detached = item.detached
 				if (item.detached) {
 					const deletedAt = new Date()
@@ -621,10 +628,17 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 					resourceOfId: relation.parentId,
 					position: relation.position,
 					deletedAt: relation.detached ? (relation.deletedAt ?? null) : null,
-				})),
+					metadata: relation.metadata,
+				})).concat(
+					this.additionalRelations
+						.filter((relation) => resourceIds.has(relation.resourceId))
+						.map((relation) => ({ ...relation, metadata: relation.metadata ?? null })),
+				),
 			expectedDeletedAtByResource,
-			courseSyncManagedParentIds(binding.anchorWorkshopId, input.plan,
-				receipts.filter((receipt) => receipt.runId === input.runId)),
+			{
+				bindingId: input.plan.bindingId,
+				anchorTreeParentIds: courseSyncAnchorTreeParentIds(binding.anchorWorkshopId, input.plan),
+			},
 		)
 		if (!activation.ok) {
 			throw new CourseSyncError(
@@ -794,6 +808,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 									childId: receipt.resourceId,
 									position: receipt.previousPosition,
 									detached: planItem.previousDetached,
+									metadata: { bindingId: input.bindingId, rollbackOfRunId: input.runId },
 									...(planItem.previousDetached ? { deletedAt: rollbackDeletedAt } : {}),
 								}
 							: {
@@ -801,6 +816,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 									childId: receipt.resourceId,
 									position: planItem.position,
 									detached: true,
+									metadata: { bindingId: input.bindingId, rollbackOfRunId: input.runId },
 									deletedAt: rollbackDeletedAt,
 								},
 					receipt: {
@@ -845,15 +861,23 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 					resourceOfId: relation?.parentId ?? '',
 					position: relation?.position ?? -1,
 					deletedAt: relation?.detached ? (relation.deletedAt ?? null) : null,
+					metadata: relation?.metadata,
 				}
-			}),
+			}).concat(
+				this.additionalRelations
+					.filter((relation) => plannedRollbacks.some((rollback) =>
+						rollback.resourceId === relation.resourceId))
+					.map((relation) => ({ ...relation, metadata: relation.metadata ?? null })),
+			),
 			new Map(plannedRollbacks.map((rollback) =>
 				[rollback.resourceId, rollbackDeletedAt])),
-			courseSyncManagedParentIds(
-				this.bindings.get(input.bindingId)!.anchorWorkshopId,
-				original.plan!,
-				runReceipts,
-			),
+			{
+				bindingId: input.bindingId,
+				anchorTreeParentIds: courseSyncAnchorTreeParentIds(
+					this.bindings.get(input.bindingId)!.anchorWorkshopId,
+					original.plan!,
+				),
+			},
 		)
 		if (!rollbackVerification.ok) {
 			throw new CourseSyncError(

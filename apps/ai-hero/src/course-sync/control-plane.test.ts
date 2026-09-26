@@ -1245,6 +1245,39 @@ describe('draft course sync control plane', () => {
 		},
 	)
 
+	it.each(['apply', 'rollback'] as const)(
+		'rejects a tagged retired-parent live relation during in-memory %s verification', async (stage) => {
+			const testHarness = harness()
+			const first = await stagedAndPreviewed(testHarness, fixture('tag-first'))
+			await applyDirectly(testHarness, first.staged.runId, 'apply-tag-first')
+			const nextManifest = fixture('tag-next')
+			nextManifest.sections[0]!.title += ' updated'
+			const next = await stagedAndPreviewed(testHarness, nextManifest, 'stage-tag-next')
+			const plan = testHarness.persistence.runs.get(next.staged.runId)?.plan
+			const section = plan?.resources.find((item) => item.sourceKind === 'section' && item.action === 'update')
+			if (!section) throw new Error('updated section missing')
+			const stale = {
+				resourceId: section.targetResourceId, resourceOfId: 'retired-section-not-in-plan',
+				position: 9, deletedAt: null,
+				metadata: { bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId },
+			}
+			expect(plan?.resources.some((item) =>
+				item.targetResourceId === stale.resourceOfId)).toBe(false)
+			expect(plan?.bindingId).toBe(stale.metadata.bindingId)
+			if (stage === 'apply') {
+				testHarness.persistence.additionalRelations.push(stale)
+				await expect(applyDirectly(testHarness, next.staged.runId, 'apply-tag-next'))
+					.rejects.toMatchObject({ code: 'APPLY_WRITE_VERIFICATION_FAILED' })
+			} else {
+				await applyDirectly(testHarness, next.staged.runId, 'apply-tag-next')
+				testHarness.persistence.additionalRelations.push(stale)
+				await expect(testHarness.controlPlane.rollback({ runId: next.staged.runId,
+					idempotencyKey: 'rollback-tag-next' }))
+					.rejects.toMatchObject({ code: 'ROLLBACK_WRITE_VERIFICATION_FAILED' })
+			}
+		},
+	)
+
 	it('requires review when an explainer becomes a placeholder', async () => {
 		const testHarness = harness()
 		const source = fixture('filmed-explainer')
@@ -1429,7 +1462,11 @@ describe('draft course sync control plane', () => {
 		await applyDirectly(testHarness, next.staged.runId, 'apply-rollback-sections-after')
 		await expect(testHarness.controlPlane.rollback({ runId: next.staged.runId,
 			idempotencyKey: 'rollback-section-removal' })).resolves.toMatchObject({ state: 'rolled_back' })
-		for (const [id, relation] of before) expect(testHarness.persistence.relations.get(id)).toEqual(relation)
+		for (const [id, { metadata: _metadata, ...relation }] of before) {
+			expect(testHarness.persistence.relations.get(id)).toMatchObject(relation)
+			expect(testHarness.persistence.relations.get(id)?.metadata?.bindingId)
+				.toBe(AI_HERO_COURSE_SYNC_BINDING.bindingId)
+		}
 		for (const [id, resource] of fieldsBefore) {
 			expect(testHarness.persistence.resources.get(id)?.fields).toEqual(resource.fields)
 		}
@@ -1594,7 +1631,10 @@ describe('draft course sync control plane', () => {
 			runId: next.staged.runId, idempotencyKey: 'rollback-removed-explainer',
 		})).resolves.toMatchObject({ state: 'rolled_back' })
 		for (const [index, id] of ids.entries()) {
-			expect(testHarness.persistence.relations.get(id)).toEqual(relationsBefore[index])
+			const { metadata: _metadata, ...relation } = relationsBefore[index]!
+			expect(testHarness.persistence.relations.get(id)).toMatchObject(relation)
+			expect(testHarness.persistence.relations.get(id)?.metadata?.bindingId)
+				.toBe(AI_HERO_COURSE_SYNC_BINDING.bindingId)
 		}
 		expect(testHarness.persistence.resources.get(lesson.targetResourceId)?.fields).toEqual(fieldsBefore)
 	})
@@ -1958,7 +1998,12 @@ describe('draft course sync control plane', () => {
 		).toEqual(updatedBefore?.fields)
 		expect(
 			testHarness.persistence.relations.get(updatedItem.targetResourceId),
-		).toEqual(updatedRelationBefore)
+		).toMatchObject({
+			parentId: updatedRelationBefore?.parentId,
+			position: updatedRelationBefore?.position,
+			detached: updatedRelationBefore?.detached,
+			metadata: { bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId },
+		})
 		expect(
 			testHarness.persistence.resources.get(retainedItem.targetResourceId),
 		).toEqual(retainedBefore)

@@ -12,7 +12,7 @@ import {
 	summarizeCourseSyncPlanChanges,
 	assertManagedChildRelations,
 	chunkCourseSyncWrites,
-	courseSyncManagedParentIds,
+	courseSyncAnchorTreeParentIds,
 	courseSyncRollbackPointer,
 	evaluateCourseSyncBoundedAutoApply,
 	resolveCourseSyncRollbackFields,
@@ -193,29 +193,26 @@ describe('course sync persistence invariants', () => {
 			{ resourceId: 'restored', resourceOfId: 'parent-b', position: 2, deletedAt: null },
 		]
 		const marker = new Map([['detached', now], ['restored', now]])
-		const managed = new Set(['parent-a', 'parent-b'])
-		expect(verifyCourseSyncRelations(expected, rows, marker, managed)).toEqual({ ok: true })
-		expect(verifyCourseSyncRelations(expected, rows.slice(1), marker, managed))
+		const scope = { bindingId: 'binding-a', anchorTreeParentIds: new Set(['parent-a', 'parent-b']) }
+		expect(verifyCourseSyncRelations(expected, rows, marker, scope)).toEqual({ ok: true })
+		expect(verifyCourseSyncRelations(expected, rows.slice(1), marker, scope))
 			.toMatchObject({ ok: false, resourceId: 'detached' })
 		expect(verifyCourseSyncRelations(expected, [...rows,
 			{ resourceId: 'restored', resourceOfId: 'parent-a', position: 0, deletedAt: now },
-		], marker, managed)).toMatchObject({ ok: false, resourceId: 'restored' })
+		], marker, scope)).toMatchObject({ ok: false, resourceId: 'restored' })
 		expect(verifyCourseSyncRelations(expected, [
 			{ ...rows[0]!, deletedAt: new Date('2020-01-01') }, rows[1]!,
-		], marker, managed)).toMatchObject({ ok: false, resourceId: 'detached' })
-		expect(verifyCourseSyncRelations(expected, [...rows, { ...rows[1]! }], marker, managed))
+		], marker, scope)).toMatchObject({ ok: false, resourceId: 'detached' })
+		expect(verifyCourseSyncRelations(expected, [...rows, { ...rows[1]! }], marker, scope))
 			.toMatchObject({ ok: false, resourceId: 'restored' })
 	})
 
-	it('derives managed parents from the anchor, plan tree, and prior receipt parents', () => {
+	it('derives the known anchor tree without treating unrelated parents as managed', () => {
 		const plan = launchPlan()
 		plan.resources[0]!.previousParentResourceId = 'prior-plan-parent'
-		const parents = courseSyncManagedParentIds('anchor-workshop', plan, [
-			{ previousParentResourceId: 'receipt-before-parent' },
-		])
+		const parents = courseSyncAnchorTreeParentIds('anchor-workshop', plan)
 		for (const parent of ['anchor-workshop', 'prior-plan-parent',
-			'receipt-before-parent', plan.resources[0]!.targetResourceId,
-			plan.resources[0]!.parentResourceId]) {
+			plan.resources[0]!.targetResourceId, plan.resources[0]!.parentResourceId]) {
 			expect(parents.has(parent)).toBe(true)
 		}
 		expect(parents.has('hand-curated')).toBe(false)
@@ -232,39 +229,78 @@ describe('course sync persistence invariants', () => {
 			{ resourceId: 'moved', resourceOfId: 'new-managed', position: 2, deletedAt: now },
 		]
 		const marker = new Map([['moved', now]])
-		const managed = new Set(['old-managed', 'new-managed', 'other-managed'])
-		// A→B→C→B: the A tombstone predates this rollback and is history.
+		const scope = { bindingId: 'binding-a', anchorTreeParentIds: new Set(['old-managed', 'new-managed']) }
+		// A→B→C→B: the tagged A tombstone predates this rollback and is history.
 		expect(verifyCourseSyncRelations(expected, [...rows,
-			{ resourceId: 'moved', resourceOfId: 'other-managed', position: 0,
-				deletedAt: new Date('2020-01-01') },
-		], marker, managed)).toEqual({ ok: true })
+			{ resourceId: 'moved', resourceOfId: 'retired-managed', position: 0,
+				deletedAt: new Date('2020-01-01'), metadata: { bindingId: 'binding-a' } },
+		], marker, scope)).toEqual({ ok: true })
 		expect(verifyCourseSyncRelations(expected, [...rows,
-			{ resourceId: 'moved', resourceOfId: 'other-managed', position: 0, deletedAt: null },
-		], marker, managed)).toMatchObject({ ok: false, resourceId: 'moved' })
+			{ resourceId: 'moved', resourceOfId: 'retired-managed', position: 0,
+				deletedAt: null, metadata: { bindingId: 'binding-a' } },
+		], marker, scope)).toMatchObject({ ok: false, resourceId: 'moved' })
 		expect(verifyCourseSyncRelations(expected, [...rows,
-			{ resourceId: 'moved', resourceOfId: 'other-managed', position: 0, deletedAt: now },
-		], marker, managed)).toMatchObject({ ok: false, resourceId: 'moved' })
+			{ resourceId: 'moved', resourceOfId: 'retired-managed', position: 0,
+				deletedAt: now, metadata: { bindingId: 'binding-a' } },
+		], marker, scope)).toMatchObject({ ok: false, resourceId: 'moved' })
 		expect(verifyCourseSyncRelations(expected, [...rows,
 			{ resourceId: 'moved', resourceOfId: 'hand-curated', position: 0, deletedAt: null },
-		], marker, managed)).toEqual({ ok: true })
+		], marker, scope)).toEqual({ ok: true })
+	})
+
+	it('rejects a tagged retired-section live edge on rollback, outside the current plan', () => {
+		const now = new Date('2026-09-26T01:00:00.123Z')
+		const expected = [{ resourceId: 'lesson', parentResourceId: 'current-section', position: 0, detached: false }]
+		const rows = [
+			{ resourceId: 'lesson', resourceOfId: 'current-section', position: 0, deletedAt: null,
+				metadata: { bindingId: 'binding-a' } },
+			{ resourceId: 'lesson', resourceOfId: 'retired-section', position: 1, deletedAt: null,
+				metadata: { bindingId: 'binding-a' } },
+		]
+		// Only the current section appears in the plan. The retired section must still count.
+		const currentParents = new Set(['anchor', 'current-section'])
+		expect(verifyCourseSyncRelations(expected, rows, new Map([['lesson', now]]),
+			{ bindingId: 'binding-a', anchorTreeParentIds: currentParents }))
+			.toMatchObject({ ok: false, resourceId: 'lesson' })
+	})
+
+	it('rejects a tagged retired-section live edge on apply but ignores an untagged list', () => {
+		const fixture = activationFixture()
+		const id = fixture.plan.resources[0]!.targetResourceId
+		const currentParents = new Set([fixture.relations[0]!.resourceOfId])
+		const extra = { resourceId: id, resourceOfId: 'retired-section', position: 2,
+			deletedAt: null, metadata: { bindingId: fixture.plan.bindingId } }
+		expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources,
+			[...fixture.relations, extra], fixture.expectedDeletedAtByResource,
+			{ bindingId: fixture.plan.bindingId, anchorTreeParentIds: currentParents }))
+			.toMatchObject({ ok: false, resourceId: id })
+		expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources,
+			[...fixture.relations, { ...extra, metadata: null }],
+			fixture.expectedDeletedAtByResource,
+			{ bindingId: fixture.plan.bindingId, anchorTreeParentIds: currentParents })).toEqual({ ok: true })
 	})
 
 	it.each([false, true])('applies detached=%s with an unmanaged relation but rejects another managed live relation', (detached) => {
 		const fixture = activationFixture(detached)
 		const extra = { ...fixture.relations[0]!, resourceOfId: 'hand-curated', deletedAt: null }
-		const managed = new Set([fixture.relations[0]!.resourceOfId, 'other-managed'])
+		const scope = { bindingId: fixture.plan.bindingId,
+			anchorTreeParentIds: new Set([fixture.relations[0]!.resourceOfId, 'other-managed']) }
 		expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources,
-			[...fixture.relations, extra], fixture.expectedDeletedAtByResource, managed)).toEqual({ ok: true })
+			[...fixture.relations, extra], fixture.expectedDeletedAtByResource, scope)).toEqual({ ok: true })
 		expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources,
 			[...fixture.relations, { ...extra, resourceOfId: 'other-managed' }],
-			fixture.expectedDeletedAtByResource, managed)).toMatchObject({ ok: false, resourceId: fixture.plan.resources[0]!.targetResourceId })
+			fixture.expectedDeletedAtByResource, scope)).toMatchObject({ ok: false, resourceId: fixture.plan.resources[0]!.targetResourceId })
 	})
 
 	it('reads detached relations for apply verification rather than filtering dead rows', () => {
 		const applySource = readFileSync(new URL('./drizzle-persistence.ts', import.meta.url), 'utf8')
 		const readback = applySource.split('const activatedRelations = await trx')[1]?.split('const appliedAt = new Date()')[0]
 		expect(readback).toContain('deletedAt: contentResourceResource.deletedAt')
+		expect(readback).toContain('metadata: contentResourceResource.metadata')
 		expect(readback).not.toContain('isNull(contentResourceResource.deletedAt)')
+		const rollbackReadback = applySource.split('const restoredRelations = await trx')[1]
+			?.split('const verification = verifyCourseSyncRelations')[0]
+		expect(rollbackReadback).toContain('metadata: contentResourceResource.metadata')
 	})
 
 	it('creates the exact prefixed frozen-asset receipt table without masking drift', () => {

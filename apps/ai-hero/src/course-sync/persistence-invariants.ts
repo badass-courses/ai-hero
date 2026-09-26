@@ -175,6 +175,7 @@ export type CourseSyncRelationReadback = {
 	resourceOfId: string
 	position: number
 	deletedAt: Date | null
+	metadata?: Record<string, unknown> | null
 }
 
 export type CourseSyncExpectedRelation = {
@@ -184,12 +185,12 @@ export type CourseSyncExpectedRelation = {
 	detached: boolean
 }
 
-// Only the anchor and parents represented by the managed plan/receipts belong
-// to sync. A resource may also be linked under an unrelated hand-curated parent.
-export function courseSyncManagedParentIds(
+// Rows owned by this binding are tagged at AI_ContentResourceResource.metadata.bindingId.
+// The anchor tree covers known parents even if a row lost its tag. Retired parents
+// need not appear here: their tagged relation rows remain in scope by ownership.
+export function courseSyncAnchorTreeParentIds(
 	anchorWorkshopId: string,
 	plan: SyncPlan,
-	receipts: ReadonlyArray<{ previousParentResourceId?: string | null }> = [],
 ): ReadonlySet<string> {
 	const parents = new Set([anchorWorkshopId])
 	for (const item of plan.resources) {
@@ -197,28 +198,35 @@ export function courseSyncManagedParentIds(
 		parents.add(item.parentResourceId)
 		if (item.previousParentResourceId) parents.add(item.previousParentResourceId)
 	}
-	for (const receipt of receipts) {
-		if (receipt.previousParentResourceId) {
-			parents.add(receipt.previousParentResourceId)
-		}
-	}
 	return parents
 }
 
-/** Verify the complete relation set under sync-managed parents for each resource. */
+export type CourseSyncRelationScope = {
+	bindingId: string
+	anchorTreeParentIds: ReadonlySet<string>
+}
+
+export function isCourseSyncRelationInScope(
+	relation: Pick<CourseSyncRelationReadback, 'resourceOfId' | 'metadata'>,
+	scope: CourseSyncRelationScope,
+): boolean {
+	return relation.metadata?.bindingId === scope.bindingId ||
+		scope.anchorTreeParentIds.has(relation.resourceOfId)
+}
+
+/** Verify every binding-owned relation, including rows under retired parents. */
 export function verifyCourseSyncRelations(
 	items: ReadonlyArray<CourseSyncExpectedRelation>,
 	relations: ReadonlyArray<CourseSyncRelationReadback>,
 	expectedDeletedAtByResource: ReadonlyMap<string, Date>,
-	managedParentIds: ReadonlySet<string> = new Set(
-		relations.map((row) => row.resourceOfId),
-	),
+	scope?: CourseSyncRelationScope,
 ): { ok: true } | { ok: false; resourceId: string; reason: string } {
 	const resourceIds = new Set(items.map((item) => item.resourceId))
 	for (const resourceId of resourceIds) {
 		const expected = items.filter((item) => item.resourceId === resourceId)
 		const rows = relations.filter((relation) =>
-			relation.resourceId === resourceId && managedParentIds.has(relation.resourceOfId),
+			relation.resourceId === resourceId &&
+			(scope === undefined || isCourseSyncRelationInScope(relation, scope)),
 		)
 		const expectedLive = expected.filter((item) => !item.detached)
 		const live = rows.filter((relation) => relation.deletedAt === null)
@@ -271,7 +279,7 @@ export function verifyCourseSyncActivation(
 	}>,
 	relations: ReadonlyArray<CourseSyncRelationReadback>,
 	expectedDeletedAtByResource: ReadonlyMap<string, Date>,
-	managedParentIds?: ReadonlySet<string>,
+	scope?: CourseSyncRelationScope,
 ): { ok: true } | { ok: false; resourceId: string; reason: string } {
 	if (resources.length !== plan.resources.length) {
 		return { ok: false, resourceId: '', reason: 'resource_count_mismatch' }
@@ -301,7 +309,7 @@ export function verifyCourseSyncActivation(
 		})),
 		relations,
 		expectedDeletedAtByResource,
-		managedParentIds,
+		scope,
 	)
 }
 

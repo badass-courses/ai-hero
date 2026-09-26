@@ -26,8 +26,9 @@ import {
 } from './control-plane'
 import {
 	chunkCourseSyncWrites,
-	courseSyncManagedParentIds,
+	courseSyncAnchorTreeParentIds,
 	courseSyncRollbackPointer,
+	isCourseSyncRelationInScope,
 	resolveCourseSyncRollbackFields,
 	verifyCourseSyncActivation,
 	verifyCourseSyncRelations,
@@ -844,14 +845,18 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					resourceId: contentResourceResource.resourceId,
 					position: contentResourceResource.position,
 					deletedAt: contentResourceResource.deletedAt,
+					metadata: contentResourceResource.metadata,
 				})
 				.from(contentResourceResource)
 				.where(inArray(contentResourceResource.resourceId, resourceIds))
 				.for('update')
-			const managedParentIds = courseSyncManagedParentIds(
-				binding.anchorWorkshopId,
-				plan,
-			)
+			const relationScope = {
+				bindingId: plan.bindingId,
+				anchorTreeParentIds: courseSyncAnchorTreeParentIds(
+					binding.anchorWorkshopId,
+					plan,
+				),
+			}
 			const relationsByResource = new Map<
 				string,
 				Array<(typeof relationRows)[number]>
@@ -1064,7 +1069,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 						)
 					}
 					const relations = (relationsByResource.get(item.targetResourceId) ?? [])
-						.filter((relation) => managedParentIds.has(relation.resourceOfId))
+						.filter((relation) => isCourseSyncRelationInScope(relation, relationScope))
 					const activeRelations = relations.filter(
 						(relation) => relation.deletedAt === null,
 					)
@@ -1271,6 +1276,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					resourceId: contentResourceResource.resourceId,
 					position: contentResourceResource.position,
 					deletedAt: contentResourceResource.deletedAt,
+					metadata: contentResourceResource.metadata,
 				})
 				.from(contentResourceResource)
 				.where(inArray(contentResourceResource.resourceId, resourceIds))
@@ -1280,7 +1286,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				activatedResources,
 				activatedRelations,
 				expectedDeletedAtByResource,
-				courseSyncManagedParentIds(binding.anchorWorkshopId, plan, receipts),
+				relationScope,
 			)
 			if (!activation.ok) {
 				throw new CourseSyncError(
@@ -1424,11 +1430,13 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			const versionsById = new Map(
 				lockedVersions.map((version) => [version.id, version]),
 			)
-			const managedParentIds = courseSyncManagedParentIds(
-				lockedBinding.binding.anchorWorkshopId,
-				original.plan,
-				receipts,
-			)
+			const relationScope = {
+				bindingId,
+				anchorTreeParentIds: courseSyncAnchorTreeParentIds(
+					lockedBinding.binding.anchorWorkshopId,
+					original.plan,
+				),
+			}
 			const versionsByResource = new Map<string, number>()
 			for (const version of lockedVersions) {
 				versionsByResource.set(
@@ -1449,7 +1457,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				)
 				const relations = lockedRelations.filter(
 					(relation) => relation.resourceId === receipt.resourceId &&
-						managedParentIds.has(relation.resourceOfId),
+						isCourseSyncRelationInScope(relation, relationScope),
 				)
 				const activeRelations = relations.filter(
 					(relation) => relation.deletedAt === null,
@@ -1641,6 +1649,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					})
 			}
 			for (const batch of chunkCourseSyncWrites(relationTombstones)) {
+				// The row was tagged by apply; a tombstone update preserves metadata.bindingId.
 				await trx
 					.update(contentResourceResource)
 					.set({ deletedAt: now, updatedAt: now })
@@ -1682,6 +1691,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 						resourceOfId: contentResourceResource.resourceOfId,
 						position: contentResourceResource.position,
 						deletedAt: contentResourceResource.deletedAt,
+						metadata: contentResourceResource.metadata,
 					})
 					.from(contentResourceResource)
 					.where(inArray(contentResourceResource.resourceId, rollbackRelationIds))
@@ -1689,7 +1699,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					expectedRollbackRelations,
 					restoredRelations,
 					new Map(rollbackRelationIds.map((resourceId) => [resourceId, now])),
-					managedParentIds,
+					relationScope,
 				)
 				if (!verification.ok) {
 					throw new CourseSyncError(
