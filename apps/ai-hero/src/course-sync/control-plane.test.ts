@@ -1109,6 +1109,12 @@ describe('draft course sync control plane', () => {
 		}
 		const first = await stagedAndPreviewed(testHarness, filmed)
 		await applyDirectly(testHarness, first.staged.runId, 'apply-problem')
+		const originalRelations = new Map(
+			[...testHarness.persistence.relations.entries()].map(([id, relation]) => [
+				id,
+				structuredClone(relation),
+			]),
+		)
 		const placeholder: CourseJsonDocumentV3 = {
 			...filmed,
 			schemaVersion: 4,
@@ -1138,6 +1144,46 @@ describe('draft course sync control plane', () => {
 		for (const item of detached ?? []) {
 			expect(testHarness.persistence.relations.get(item.targetResourceId)?.detached).toBe(true)
 		}
+		await expect(testHarness.controlPlane.rollback({
+			runId: second.staged.runId,
+			idempotencyKey: 'rollback-placeholder-demotion',
+		})).resolves.toMatchObject({ state: 'rolled_back' })
+		for (const item of detached ?? []) {
+			const original = originalRelations.get(item.targetResourceId)
+			expect(original).toBeDefined()
+			expect(testHarness.persistence.relations.get(item.targetResourceId)).toMatchObject({
+				parentId: original?.parentId,
+				position: original?.position,
+				detached: false,
+			})
+		}
+	})
+
+	it('requires review when an explainer becomes a placeholder', async () => {
+		const testHarness = harness()
+		const source = fixture('filmed-explainer')
+		const explainer = source.sections[0]!.lessons[0]!
+		const filmed: CourseJsonDocumentV3 = {
+			...source,
+			sections: [{ ...source.sections[0]!, lessons: [explainer] }],
+		}
+		const first = await stagedAndPreviewed(testHarness, filmed)
+		await applyDirectly(testHarness, first.staged.runId, 'apply-filmed-explainer')
+		const placeholder: CourseJsonDocumentV3 = {
+			...filmed,
+			schemaVersion: 4,
+			courseVersionId: 'placeholder-explainer',
+			sections: [{ ...filmed.sections[0]!, lessons: [
+				{ type: 'placeholder', id: explainer.id, title: explainer.title },
+			] }],
+		}
+		const next = await stagedAndPreviewed(testHarness, placeholder, 'stage-placeholder-explainer')
+		const plan = testHarness.persistence.runs.get(next.staged.runId)?.plan
+		expect(plan?.lessonRegressions).toEqual([explainer.id])
+		expect(plan?.resources.filter((item) => item.sourceKind === 'video' && item.detached)).toHaveLength(1)
+		expect(await testHarness.controlPlane.evaluateBoundedAutoApply(next.staged.runId)).toMatchObject({
+			eligible: false, planSha256: next.previewed.planSha256,
+		})
 	})
 
 	it('requires review when a filmed lesson loses one video without becoming a placeholder', async () => {
@@ -1156,8 +1202,14 @@ describe('draft course sync control plane', () => {
 			}] }],
 		}
 		const next = await stagedAndPreviewed(testHarness, changed, 'stage-one-video')
-		expect(testHarness.persistence.runs.get(next.staged.runId)?.plan?.lessonRegressions).toEqual([problem.id])
-		expect(await testHarness.controlPlane.evaluateBoundedAutoApply(next.staged.runId)).toMatchObject({ eligible: false })
+		const plan = testHarness.persistence.runs.get(next.staged.runId)?.plan
+		expect(plan?.lessonRegressions).toEqual([problem.id])
+		expect(plan?.resources.filter((item) => item.sourceKind === 'solution' && item.detached)).toHaveLength(1)
+		expect(plan?.resources.filter((item) => item.sourceKind === 'video' && item.detached)).toHaveLength(1)
+		expect(plan?.resources.filter((item) => item.sourceKind === 'video' && !item.detached)).toHaveLength(1)
+		expect(await testHarness.controlPlane.evaluateBoundedAutoApply(next.staged.runId)).toMatchObject({
+			eligible: false, planSha256: next.previewed.planSha256,
+		})
 	})
 
 	it('reuses each successful freeze receipt after a later asset fails', async () => {

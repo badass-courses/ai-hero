@@ -5,6 +5,8 @@ import type {
 import { describe, expect, it, vi } from 'vitest'
 
 import { CourseSyncError } from './errors'
+import { evaluateCourseSyncBoundedAutoApply } from './persistence-invariants'
+import type { SyncPlan } from './types'
 import {
 	freezeCourseSyncAssetBatch,
 	type FreezeCourseSyncAsset,
@@ -449,14 +451,18 @@ describe('course sync detection poller', () => {
 		expect(test.state()).toMatchObject({ status: 'succeeded' })
 	})
 
-	it('leaves a lesson regression awaiting operator apply without a strike or hold', async () => {
+	it.each(['explainer-to-placeholder', 'problem-solution-removal'])(
+		'leaves %s awaiting operator apply without a strike or hold', async () => {
+		const plan: SyncPlan = {
+			bindingId: 'csb_ai_coding_crash_course',
+			sourceRevisionId: 'revision-2',
+			courseVersionId: 'version-2',
+			resources: [], media: [],
+			lessonRegressions: ['lesson-1'],
+			planSha256: 'plan-sha',
+		}
 		const test = harness({
-			evaluateBoundedAutoApply: async () => ({
-				eligible: false,
-				planSha256: 'plan-sha',
-				reason: 'Lesson regressions require operator review: lesson-1',
-				failureCode: 'LESSON_REGRESSION_REVIEW_REQUIRED',
-			}),
+			evaluateBoundedAutoApply: async () => evaluateCourseSyncBoundedAutoApply(plan),
 		})
 		await expect(test.poll('poll-regression')).resolves.toMatchObject({ outcome: 'awaiting-apply' })
 		expect(test.state()).toMatchObject({
@@ -465,7 +471,8 @@ describe('course sync detection poller', () => {
 		})
 		expect(test.apply).not.toHaveBeenCalled()
 		expect(test.notifications).toHaveLength(1)
-	})
+		},
+	)
 
 	it('auto-applies only a bounded eligible preview and verifies readback', async () => {
 		const test = harness({
