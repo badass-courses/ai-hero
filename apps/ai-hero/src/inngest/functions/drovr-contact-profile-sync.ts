@@ -27,8 +27,9 @@ export const drovrContactProfileSync = inngest.createFunction(
 				DROVR_AUTHORITY_TENANT_ID,
 				DROVR_SKILLS_COURSE_JOURNEY_ID,
 			},
-			{ findJourneyOwnerAssignment },
+			{ findJourneyOwnerAssignment, isOnDrovrSendingJourney },
 			{ SKILLS_WORKFLOW_VALUE_PATH },
+			{ createDirectoryBirth },
 		] = await Promise.all([
 			import('@/db'),
 			import('@/env.mjs'),
@@ -43,6 +44,7 @@ export const drovrContactProfileSync = inngest.createFunction(
 			import('@/lib/subscriber-marketing/drovr-shadow-emitter'),
 			import('@/lib/subscriber-marketing/drovr-ownership'),
 			import('@/lib/subscriber-marketing/skills-newsletter-path-entry'),
+			import('@/lib/subscriber-marketing/contact-sync-straggler-retry'),
 		])
 		const repository = new DrizzleCaptureMarketingRepository(db)
 		return runContactProfileSync({
@@ -75,8 +77,30 @@ export const drovrContactProfileSync = inngest.createFunction(
 				const apiKey = drovrApiKeyForTenant(DROVR_AUTHORITY_TENANT_ID)
 				if (!ingestUrl || !apiKey) return 'not-configured'
 				// One contact's events, well under drovr's 100 per batch.
-				return deliverBatchOrThrow({ events, config: { ingestUrl, apiKey } })
+				// Refusals come back deferred, for the straggler retry (§4).
+				return deliverBatchOrThrow({
+					events,
+					config: { ingestUrl, apiKey },
+					deferNotLive: true,
+				})
 			},
+			birth: createDirectoryBirth({
+				findContactById: (id) => repository.findContactById(id),
+				kitSubscriberIdFor: async (id) =>
+					(await findContactKitIdentity(db, id)).kitSubscriberId,
+				deliver: async (births) => {
+					const ingestUrl = env.DROVR_SHADOW_INGEST_URL
+					const apiKey = drovrApiKeyForTenant(DROVR_AUTHORITY_TENANT_ID)
+					if (!ingestUrl || !apiKey)
+						throw new Error('drovr is not configured for a directory birth')
+					return deliverBatchOrThrow({
+						events: births,
+						config: { ingestUrl, apiKey },
+					})
+				},
+			}),
+			onSendingJourney: (contactId) =>
+				isOnDrovrSendingJourney(repository, contactId),
 			ownedPath: async (contactId) =>
 				(await findJourneyOwnerAssignment(
 					repository,

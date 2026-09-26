@@ -5,6 +5,7 @@ import {
 	decideJourneyOwner,
 	fanOutOwnedEvents,
 	findJourneyOwnerAssignment,
+	isOnDrovrSendingJourney,
 	journeyOwnerAssignmentJourneyId,
 	journeyOwnerProviderEventId,
 	ownershipBucket,
@@ -336,5 +337,52 @@ describe('fan-out of owned facts to the authority tenant', () => {
 		).toEqual([
 			authority,
 		])
+	})
+})
+
+describe('the drovr sending-journey scope', () => {
+	const repositoryWith = (...journeyIds: string[]) => ({
+		findContactEventsByType: async (_contactId: string, eventType: string) =>
+			eventType === 'journey.owner.assigned'
+				? journeyIds.map(
+						(journeyId) =>
+							({
+								providerEventId: `drovr-owner:contact-1:${journeyId}`,
+							}) as never,
+					)
+				: [],
+	})
+
+	it.each([
+		'value-path-skills-course',
+		'crash-course-evergreen-offer',
+		'shadow-newsletter',
+	])('counts an owner assignment for %s', async (journeyId) => {
+		await expect(
+			isOnDrovrSendingJourney(repositoryWith(journeyId), 'contact-1'),
+		).resolves.toBe(true)
+	})
+
+	it('counts a double opt-in signup (drovr runs its double-opt-in journey)', async () => {
+		// A DOI signup has no owner assignment: its capture writes a
+		// skills-newsletter.doi-requested event and starts drovr's journey.
+		const repository = {
+			findContactEventsByType: async (_contactId: string, eventType: string) =>
+				eventType === 'skills-newsletter.doi-requested'
+					? [{ providerEventId: 'doi-request:form:ext-1' } as never]
+					: [],
+		}
+		await expect(
+			isOnDrovrSendingJourney(repository, 'contact-1'),
+		).resolves.toBe(true)
+	})
+
+	it('does not count a contact with no assignment, or one for another journey', async () => {
+		await expect(
+			isOnDrovrSendingJourney(repositoryWith(), 'contact-1'),
+		).resolves.toBe(false)
+		await expect(
+			isOnDrovrSendingJourney(repositoryWith('contact-directory'), 'contact-1'),
+		).resolves.toBe(false)
 	})
 })
