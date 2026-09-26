@@ -18,9 +18,13 @@ export async function triggerCohortEntitlementSync(
 			resourceId: string
 		}>
 	},
+	// A stable ID lets course-sync retry after a receipt failure without
+	// enqueueing duplicate cohort updates. Other callers keep fresh events.
+	eventId?: string,
 ) {
 	try {
 		await inngest.send({
+			...(eventId ? { id: eventId } : {}),
 			name: COHORT_UPDATED_EVENT,
 			data: {
 				cohortId,

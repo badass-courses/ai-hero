@@ -6,6 +6,11 @@ import {
 } from '@/course-sync/http'
 import { courseSyncControlPlane } from '@/course-sync/runtime'
 import { requestCourseSyncAppliedNotice } from '@/course-sync/applied-notice-dispatch'
+import { deliverCourseSyncEntitlementSync } from '@/course-sync/cohort-entitlements'
+import {
+	COURSE_SYNC_BINDINGS,
+	getServerCourseSyncBinding,
+} from '@/course-sync/types'
 import { CourseSyncError } from '@/course-sync/errors'
 
 function parseOperation(value: string) {
@@ -73,12 +78,22 @@ export async function POST(
 		}
 		if (parsed.operation === 'rollback') {
 			authorizeCourseSyncRequest(request, 'operator')
-			return courseSyncJson(
-				await courseSyncControlPlane.rollback({
-					runId: parsed.runId,
-					idempotencyKey: idempotencyKey(request),
-				}),
-			)
+			const rolledBack = await courseSyncControlPlane.rollback({
+				runId: parsed.runId,
+				idempotencyKey: idempotencyKey(request),
+			})
+			if (
+				rolledBack.state === 'rolled_back' &&
+				rolledBack.bindingId &&
+				Object.hasOwn(COURSE_SYNC_BINDINGS, rolledBack.bindingId) &&
+				getServerCourseSyncBinding(rolledBack.bindingId).contractVersion === 5
+			) {
+				await deliverCourseSyncEntitlementSync({
+					controlPlaneRunId: rolledBack.runId,
+					lifecycle: 'rolled_back',
+				})
+			}
+			return courseSyncJson(rolledBack)
 		}
 		throw new CourseSyncError(
 			'INVALID_RUN_OPERATION',

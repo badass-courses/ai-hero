@@ -7,6 +7,10 @@ import { db } from '@/db'
 import { courseSyncRun, courseSyncSourceRevision } from '@/db/schema'
 import { env } from '@/env.mjs'
 import { log } from '@/server/logger'
+import {
+	COURSE_SYNC_BINDINGS,
+	getServerCourseSyncBinding,
+} from '@/course-sync/types'
 
 import {
 	claimCourseSyncReviewNotification,
@@ -20,6 +24,7 @@ import {
 	type CourseSyncNotification,
 	type CourseSyncSlackNotificationPayload,
 } from './detection-poller'
+import { deliverCourseSyncEntitlementSync } from './cohort-entitlements'
 import { CourseSyncError } from './errors'
 import { COURSE_SYNC_AUTHOR_NAME, narrateCourseSyncApply } from './narrate'
 
@@ -163,6 +168,17 @@ export async function deliverCourseSyncAppliedNotice(
 		occurredAt: clock(),
 	}
 
+	// Independent lifecycle receipt: a duplicate applied-notice request can retry
+	// a failed entitlement trigger even after Slack's notice was claimed.
+	if (
+		Object.hasOwn(COURSE_SYNC_BINDINGS, input.bindingId) &&
+		getServerCourseSyncBinding(input.bindingId).contractVersion === 5
+	) {
+		await deliverCourseSyncEntitlementSync({
+			controlPlaneRunId: notification.controlPlaneRunId,
+			lifecycle: 'applied',
+		})
+	}
 	const claimed = await claimCourseSyncReviewNotification(receipt)
 	if (!claimed) return { delivered: false, reason: 'already-claimed' }
 

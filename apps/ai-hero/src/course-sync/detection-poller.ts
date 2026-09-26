@@ -276,11 +276,21 @@ function isLegacyAppliedHead(
 	)
 }
 
+function effectiveApplyPolicyOverride(
+	state: CourseSyncPollState | null,
+	binding: CourseSyncBinding,
+): 'operator' | null {
+	return courseSyncApplyPolicyOverride(state) ??
+		(state === null && binding.contractVersion === 5
+			? binding.initialApplyPolicyOverride
+			: null)
+}
+
 function effectiveApplyPolicy(
 	state: CourseSyncPollState | null,
 	binding: CourseSyncBinding,
 ) {
-	return courseSyncApplyPolicyOverride(state) ?? binding.applyPolicy
+	return effectiveApplyPolicyOverride(state, binding) ?? binding.applyPolicy
 }
 
 export function courseSyncFailureClass(error: unknown) {
@@ -706,7 +716,7 @@ export async function recordCourseSyncPollFailure(
 		consecutiveFailures: strikes,
 		controlPlaneRunId: state?.controlPlaneRunId ?? null,
 		failureClass: failureKind,
-		applyPolicyOverride: courseSyncApplyPolicyOverride(state),
+		applyPolicyOverride: effectiveApplyPolicyOverride(state, dependencies.binding),
 		updatedAt: occurredAt,
 	})
 	// Strike one always retries on its own; only page humans when the run
@@ -1016,7 +1026,7 @@ export function createCourseSyncDetectionPoller(
 					await dependencies.savePollState({
 						...state,
 						status: 'awaiting-apply',
-						applyPolicyOverride: courseSyncApplyPolicyOverride(state),
+						applyPolicyOverride: effectiveApplyPolicyOverride(state, dependencies.binding),
 						updatedAt: clock(),
 					})
 					await notifyReview(currentRun, 'awaiting-operator-apply')
@@ -1071,7 +1081,7 @@ export function createCourseSyncDetectionPoller(
 					await dependencies.savePollState({
 						...state,
 						status: 'applying',
-						applyPolicyOverride: courseSyncApplyPolicyOverride(state),
+						applyPolicyOverride: effectiveApplyPolicyOverride(state, dependencies.binding),
 						updatedAt: clock(),
 					})
 					await log({
@@ -1143,7 +1153,7 @@ export function createCourseSyncDetectionPoller(
 						status: held ? 'held' : 'failed',
 						consecutiveFailures: lifecycle.getSnapshot().context.strikes,
 						failureClass,
-						applyPolicyOverride: courseSyncApplyPolicyOverride(state),
+						applyPolicyOverride: effectiveApplyPolicyOverride(state, dependencies.binding),
 						updatedAt: clock(),
 					}
 					await log({
@@ -1288,7 +1298,7 @@ export function createCourseSyncDetectionPoller(
 					? (state?.controlPlaneRunId ?? null)
 					: null,
 				failureClass: null,
-				applyPolicyOverride: courseSyncApplyPolicyOverride(state),
+				applyPolicyOverride: effectiveApplyPolicyOverride(state, dependencies.binding),
 				updatedAt: clock(),
 			})
 			await log({
@@ -1329,7 +1339,7 @@ export function createCourseSyncDetectionPoller(
 					? (state?.controlPlaneRunId ?? null)
 					: null,
 				failureClass: null,
-				applyPolicyOverride: courseSyncApplyPolicyOverride(state),
+				applyPolicyOverride: effectiveApplyPolicyOverride(state, dependencies.binding),
 				updatedAt: clock(),
 			})
 			let syncRun = await dependencies.stage({
@@ -1463,7 +1473,7 @@ export function createCourseSyncDetectionPoller(
 					consecutiveFailures: 0,
 					controlPlaneRunId: syncRun.runId,
 					failureClass: null,
-					applyPolicyOverride: courseSyncApplyPolicyOverride(state),
+					applyPolicyOverride: effectiveApplyPolicyOverride(state, dependencies.binding),
 					updatedAt: clock(),
 				})
 				await log({
@@ -1674,7 +1684,7 @@ export function createCourseSyncDetectionPoller(
 				consecutiveFailures: strikes,
 				controlPlaneRunId,
 				failureClass: kind,
-				applyPolicyOverride: courseSyncApplyPolicyOverride(previousState),
+				applyPolicyOverride: effectiveApplyPolicyOverride(previousState, dependencies.binding),
 				updatedAt: clock(),
 			})
 			if (transitionedToHeld) {

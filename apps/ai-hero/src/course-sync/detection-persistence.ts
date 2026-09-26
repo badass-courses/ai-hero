@@ -177,7 +177,11 @@ export async function saveCourseSyncPollState(state: CourseSyncPollState) {
 // A notice is claimed per lifecycle state, not per caller. Both the poller and
 // an operator apply reach the same applied state, so both deliver through the
 // same claim and the reader sees exactly one message.
-export type CourseSyncNotificationKind = 'review' | 'applied'
+export type CourseSyncNotificationKind =
+	| 'review'
+	| 'applied'
+	| 'entitlement-applied'
+	| 'entitlement-rolled-back'
 
 export type CourseSyncReviewNotificationReceiptInput = {
 	kind?: CourseSyncNotificationKind
