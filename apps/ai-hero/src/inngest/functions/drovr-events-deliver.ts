@@ -24,12 +24,15 @@ import {
 	fanOutOwnedEvents,
 	isShadowNewsletterBirth,
 } from '@/lib/subscriber-marketing/drovr-ownership'
+import { parseDrovrProfileSyncConfig } from '@/lib/subscriber-marketing/drovr-contact-profile-sync-requests'
 import { resolveOwnedContactIds } from '@/lib/subscriber-marketing/drovr-ownership-live'
 import { withoutSyntheticContacts } from '@/lib/synthetic-principal'
 import { log } from '@/server/logger'
 import type { GetStepTools } from 'inngest'
 
 export type DrovrEventsDeliverReceipt = {
+	/** Backfill events dropped because contact sync was off. */
+	backfillDropped?: number
 	status: 'delivered' | 'skipped'
 	accepted: number
 	rejected: number
@@ -256,9 +259,29 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 		batchEvents: BULK_DELIVERY_BATCH,
 	},
 	{ event: DROVR_EVENTS_DELIVER_BULK_EVENT },
-	async ({ events, step }) =>
-		deliverBulk(
-			events.flatMap((bulkEvent) => bulkEvent.data.events),
+	async ({ events, step }) => {
+		// A drovr rollback turns AIH_DROVR_PROFILE_SYNC off; backfill pages
+		// already queued must not reach old drovr code, which burns their
+		// keys without an event-not-live guard. They are dropped, not held:
+		// the backfill is idempotent and re-runs once drovr is back.
+		const syncOn = parseDrovrProfileSyncConfig(process.env).enabled
+		const kept = syncOn
+			? events
+			: events.filter(
+					(bulkEvent) => bulkEvent.data.source !== 'contact-sync-backfill',
+				)
+		const backfillDropped = events
+			.filter((bulkEvent) => !kept.includes(bulkEvent))
+			.reduce((count, bulkEvent) => count + bulkEvent.data.events.length, 0)
+		if (backfillDropped > 0)
+			await log.warn('drovr.contact_sync.backfill_dropped', {
+				count: backfillDropped,
+				reason: 'AIH_DROVR_PROFILE_SYNC is off; re-run the backfill',
+			})
+		const receipt = await deliverBulk(
+			kept.flatMap((bulkEvent) => bulkEvent.data.events),
 			step,
-		),
+		)
+		return backfillDropped > 0 ? { ...receipt, backfillDropped } : receipt
+	},
 )

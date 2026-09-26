@@ -2,8 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
 	batchStepId: vi.fn(
-		(tenantId: string, chunkIndex: number) =>
-			`batch:${tenantId}:${chunkIndex}`,
+		(tenantId: string, chunkIndex: number) => `batch:${tenantId}:${chunkIndex}`,
 	),
 	createFunction: vi.fn(
 		(config: unknown, trigger: unknown, handler: unknown) => ({
@@ -172,10 +171,7 @@ describe('retired shadow tenant delivery', () => {
 				'contact.created',
 			),
 		]
-		mocks.fanOutOwnedEvents.mockReturnValue([
-			shadowBirth,
-			...authorityEvents,
-		])
+		mocks.fanOutOwnedEvents.mockReturnValue([shadowBirth, ...authorityEvents])
 
 		const receipt = await registered.handler({
 			event: { data: { source: 'live-contact', events: [shadowBirth] } },
@@ -204,7 +200,10 @@ describe('retired shadow tenant delivery', () => {
 
 	it('never delivers an event about a synthetic principal, on either lane', async () => {
 		const real = event('org-aihero', 'owner:answer')
-		const synthetic = { ...event('org-aihero', 'owner:synthetic'), contactId: 'synthetic_run-1' }
+		const synthetic = {
+			...event('org-aihero', 'owner:synthetic'),
+			contactId: 'synthetic_run-1',
+		}
 		mocks.fanOutOwnedEvents.mockReturnValue([synthetic, real])
 
 		const live = await registered.handler({
@@ -212,11 +211,16 @@ describe('retired shadow tenant delivery', () => {
 			step: createStep(),
 		})
 		expect(live).toMatchObject({ accepted: 1, discarded: 1 })
-		expect(mocks.deliverOrThrow.mock.calls.map(([args]) => args.event)).toEqual([real])
-		expect(mocks.log.info).toHaveBeenCalledWith('drovr.shadow.synthetic_discarded', {
-			count: 1,
-			deliveryLane: 'live',
-		})
+		expect(mocks.deliverOrThrow.mock.calls.map(([args]) => args.event)).toEqual(
+			[real],
+		)
+		expect(mocks.log.info).toHaveBeenCalledWith(
+			'drovr.shadow.synthetic_discarded',
+			{
+				count: 1,
+				deliveryLane: 'live',
+			},
+		)
 
 		const bulk = await registeredBulk.handler({
 			events: [{ data: { events: [synthetic, real] } }],
@@ -293,5 +297,66 @@ describe('retired shadow tenant delivery', () => {
 				deliveryLane: 'bulk',
 			},
 		)
+	})
+})
+
+describe('contact-sync backfill batches on the bulk lane', () => {
+	const backfillEvents = [
+		event(
+			'org-aihero',
+			'profile:contact-1:v1',
+			'contact-directory',
+			'contact.profile.updated',
+		),
+	]
+	const ingestEvents = [
+		event('org-aihero', 'directory:seed:contact-2', 'contact-directory'),
+	]
+
+	beforeEach(() => {
+		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
+	})
+
+	it('drops queued backfill batches while AIH_DROVR_PROFILE_SYNC is off, keeping other bulk sources', async () => {
+		// A drovr rollback turns the flag off; a page already queued must not
+		// reach the old code, which burns keys without an event-not-live guard.
+		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', '')
+		const receipt = await registeredBulk.handler({
+			events: [
+				{ data: { events: backfillEvents, source: 'contact-sync-backfill' } },
+				{ data: { events: ingestEvents, source: 'kit-directory-ingest' } },
+			],
+			step: createStep(),
+		})
+		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledOnce()
+		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledWith(
+			expect.objectContaining({ events: ingestEvents }),
+		)
+		expect(receipt).toMatchObject({ accepted: 1, backfillDropped: 1 })
+		expect(mocks.log.warn).toHaveBeenCalledWith(
+			'drovr.contact_sync.backfill_dropped',
+			expect.objectContaining({ count: 1 }),
+		)
+		vi.unstubAllEnvs()
+	})
+
+	it('delivers backfill batches while the flag is on', async () => {
+		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
+		const receipt = await registeredBulk.handler({
+			events: [
+				{ data: { events: backfillEvents, source: 'contact-sync-backfill' } },
+			],
+			step: createStep(),
+		})
+		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledWith(
+			expect.objectContaining({ events: backfillEvents }),
+		)
+		expect(receipt).toEqual({
+			status: 'delivered',
+			accepted: 1,
+			rejected: 0,
+			discarded: 0,
+		})
+		vi.unstubAllEnvs()
 	})
 })
