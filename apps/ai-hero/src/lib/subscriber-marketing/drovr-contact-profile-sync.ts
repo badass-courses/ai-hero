@@ -1,3 +1,12 @@
+import type { DrovrContactProfileSyncRequested } from '@/inngest/events/drovr'
+
+import { createHash } from 'node:crypto'
+
+import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
+
+import type { ContactProfileVersion } from './contact-profile-version'
+import { parseDrovrProfileSyncConfig } from './drovr-contact-profile-sync-requests'
+
 import {
 	findEvergreenOffer,
 	readContactSendStanding,
@@ -31,6 +40,7 @@ import type { ValuePathLinkAnchorStore } from './value-path-link-anchor'
 export {
 	offerProfileSyncRequests,
 	parseDrovrProfileSyncConfig,
+	requestContactProfileSync,
 	requestContactProfileSyncSafely,
 	type DrovrProfileSyncConfig,
 } from './drovr-contact-profile-sync-requests'
@@ -278,5 +288,134 @@ export async function readContactProfileSnapshot(args: {
 		offers: offer
 			? [{ journeyId: DROVR_EVERGREEN_OFFER_JOURNEY_ID, ...offer }]
 			: [],
+	}
+}
+
+/**
+ * What a sync would push, as one digest: the profile, every link window and
+ * its variables, and every offer, in a fixed order. When the snapshot was
+ * read and the order things came in do not count, so an unchanged contact
+ * hashes the same on every run.
+ */
+export function contactProfileContentHash(
+	snapshot: Pick<ContactProfileSnapshot, 'profile' | 'links' | 'offers'>,
+): string {
+	const byKey = <T>(items: readonly T[], key: (item: T) => string) =>
+		[...items].sort((left, right) => key(left).localeCompare(key(right)))
+	return createHash('sha256')
+		.update(
+			canonicalJson({
+				profile: snapshot.profile,
+				links: byKey(
+					snapshot.links,
+					(link) => `${link.journeyId}\u0000${link.emailKey}`,
+				),
+				offers: byKey(snapshot.offers, (offer) => offer.couponId),
+			}),
+		)
+		.digest('hex')
+}
+
+function canonicalJson(value: unknown): string {
+	if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+	if (value && typeof value === 'object') {
+		return `{${Object.keys(value)
+			.sort()
+			.map(
+				(key) =>
+					`${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`,
+			)
+			.join(',')}}`
+	}
+	return JSON.stringify(value ?? null)
+}
+
+export type ContactProfileSyncReceipt =
+	| { status: 'skipped'; reason: string }
+	| {
+			status: 'sent'
+			profileVersion: number
+			links: number
+			offers: number
+			accepted: number
+			rejected: number
+	  }
+
+type SyncStep = {
+	run: <T>(id: string, callback: () => Promise<T>) => Promise<unknown>
+}
+
+type DeliveryResult = { accepted: number; rejected: number } | 'not-configured'
+
+/**
+ * One contact's profile to drovr's contact directory: read it, version it by
+ * content, and post the events, answering `sent` only once drovr took them
+ * (the contact-sync reconcile's watermark relies on that). A new content
+ * moves the version; unchanged content re-sends the last version's exact
+ * events, which drovr dedupes. Events addressed to the authority tenant go
+ * straight to it: no owner fan-out. Read before versioning, so a missing
+ * contact spends no version; per-contact concurrency of one keeps a higher
+ * version carrying newer content. A 5xx, a network failure or drovr's 409
+ * event-not-live throws, and the step retries.
+ */
+export async function runContactProfileSync(args: {
+	event: Pick<DrovrContactProfileSyncRequested, 'data'>
+	step: SyncStep
+	env: Readonly<Record<string, string | undefined>>
+	readSnapshot: (request: {
+		contactId: string
+		valuePathSlug?: string
+	}) => Promise<ContactProfileSnapshot | undefined>
+	versionFor: (
+		contactId: string,
+		contentHash: string,
+	) => Promise<ContactProfileVersion>
+	deliver: (events: DrovrShadowEvent[]) => Promise<DeliveryResult>
+	/** The value path drovr owns for the contact, when a request names none. */
+	ownedPath: (contactId: string) => Promise<string | undefined>
+}): Promise<ContactProfileSyncReceipt> {
+	const config = parseDrovrProfileSyncConfig(args.env)
+	if (!config.enabled) return { status: 'skipped', reason: config.reason }
+	const { contactId, valuePathSlug } = args.event.data
+	if (isSyntheticPrincipalId(contactId)) {
+		return { status: 'skipped', reason: 'synthetic-principal' }
+	}
+	const snapshot = (await args.step.run('read-profile', async () =>
+		args.readSnapshot({
+			contactId,
+			valuePathSlug: valuePathSlug ?? (await args.ownedPath(contactId)),
+		}),
+	)) as ContactProfileSnapshot | undefined
+	if (!snapshot) return { status: 'skipped', reason: 'contact-missing' }
+	// Addressed by content: unchanged, this is the last version and when it
+	// was set, so the events below are byte-identical to the last push and
+	// drovr dedupes them for free.
+	const { profileVersion, since } = (await args.step.run(
+		'profile-version',
+		() => args.versionFor(contactId, contactProfileContentHash(snapshot)),
+	)) as ContactProfileVersion
+	const events = buildContactProfileEvents({
+		contactId,
+		profileVersion,
+		...snapshot,
+		occurredAt: since,
+	})
+	const delivered = (await args.step.run('deliver-profile', () =>
+		args.deliver(events),
+	)) as DeliveryResult
+	if (delivered === 'not-configured') {
+		return { status: 'skipped', reason: 'drovr-not-configured' }
+	}
+	// A final 4xx (a bad key, a refused event) is logged by the delivery;
+	// it must never read as synced, or the heartbeat would vouch for it.
+	if (delivered.rejected > 0) {
+		return { status: 'skipped', reason: 'drovr-rejected' }
+	}
+	return {
+		status: 'sent',
+		profileVersion,
+		links: snapshot.links.length,
+		offers: snapshot.offers.length,
+		...delivered,
 	}
 }

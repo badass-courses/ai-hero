@@ -5,6 +5,7 @@ import { providerIdentity } from '@/db/schema'
 import { env } from '@/env.mjs'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import { createDrizzleValuePathLinkAnchorStore } from '@/lib/subscriber-marketing/drizzle-value-path-link-anchor'
+import { requestContactProfileSync } from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
 import {
 	acceptDrovrIntent,
 	DrovrIntentSchema,
@@ -13,7 +14,7 @@ import {
 import { parseDrovrEvergreenConfig } from '@/lib/subscriber-marketing/drovr-evergreen'
 import {
 	createKitFormSubscriber,
-	linkKitSubscriberIdentity,
+	createKitSubscriberLinker,
 } from '@/lib/subscriber-marketing/drovr-list-subscribe'
 import { createKitUnsubscriber } from '@/lib/subscriber-marketing/drovr-list-unsubscribe'
 import {
@@ -213,32 +214,19 @@ export const POST = withSkill(async (request: NextRequest) => {
 		subscribeInKit: createKitFormSubscriber({
 			apiKey: env.KIT_V4_API_KEY ?? process.env.CONVERTKIT_V4_API_KEY,
 		}),
-		linkKitSubscriber: async (contactId, kitSubscriberId) => {
-			const linked = await linkKitSubscriberIdentity(
-				{
-					findProviderIdentity: (provider, externalId) =>
-						repository.findProviderIdentity(provider, externalId),
-					findKitSubscriberIdForContact: findKitSubscriberId,
-					createProviderIdentity: (input) =>
-						repository.createProviderIdentity(input),
-				},
-				contactId,
-				kitSubscriberId,
-				new Date().toISOString(),
-			).catch(async (error) => {
-				await log.warn('drovr.executor.kit_identity_link_failed', {
-					contactId,
-					error: error instanceof Error ? error.message : String(error),
-				})
-				return undefined
-			})
-			if (linked) {
-				await log.info('drovr.executor.kit_identity_link', {
-					contactId,
-					outcome: linked,
-				})
-			}
-		},
+		linkKitSubscriber: createKitSubscriberLinker({
+			repository: {
+				findProviderIdentity: (provider, externalId) =>
+					repository.findProviderIdentity(provider, externalId),
+				findKitSubscriberIdForContact: findKitSubscriberId,
+				createProviderIdentity: (input) =>
+					repository.createProviderIdentity(input),
+				createContactEvent: (input) => repository.createContactEvent(input),
+			},
+			requestSync: (request) => requestContactProfileSync(request),
+			info: log.info,
+			warn: log.warn,
+		}),
 		...sync,
 	})
 

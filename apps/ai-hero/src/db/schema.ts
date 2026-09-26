@@ -862,6 +862,7 @@ export const sideEffectIntent = mysqlTable(
 export { automationControl, emailCourseCommit } from './email-course-schema'
 export {
 	contactProfileVersion,
+	contactSyncCursor,
 	valuePathLinkAnchor,
 } from './contact-sync-schema'
 

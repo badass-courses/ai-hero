@@ -1,13 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { DROVR_EVENTS_DELIVER_EVENT } from '@/inngest/events/drovr'
 import type { ContactProfileSnapshot } from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
 
-vi.mock('@/inngest/inngest.server', () => ({
-	inngest: { createFunction: vi.fn(() => ({})) },
-}))
-
-const { runContactProfileSync } = await import('./drovr-contact-profile-sync')
+import {
+	contactProfileContentHash,
+	runContactProfileSync,
+} from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
 
 const snapshot: ContactProfileSnapshot = {
 	occurredAt: '2026-09-26T17:00:00.000Z',
@@ -20,7 +18,9 @@ function harness(
 	overrides: {
 		env?: Record<string, string>
 		contactId?: string
+		valuePathSlug?: string
 		snapshot?: ContactProfileSnapshot | undefined
+		delivered?: { accepted: number; rejected: number } | 'not-configured'
 	} = {},
 ) {
 	const order: string[] = []
@@ -29,30 +29,41 @@ function harness(
 			order.push(id)
 			return callback()
 		}),
-		sendEvent: vi.fn(async (id: string) => {
-			order.push(id)
-			return undefined
-		}),
 	}
 	const readSnapshot = vi.fn(async () =>
 		'snapshot' in overrides ? overrides.snapshot : snapshot,
 	)
-	const bump = vi.fn(async () => 4)
+	const versionFor = vi.fn(async () => ({
+		profileVersion: 4,
+		since: '2026-09-26T16:00:00.000Z',
+	}))
+	const deliver = vi.fn(async () =>
+		'delivered' in overrides
+			? overrides.delivered!
+			: { accepted: 1, rejected: 0 },
+	)
+	const ownedPath = vi.fn(async () => 'ai-hero-skills-workflow')
 	const run = () =>
 		runContactProfileSync({
 			event: {
 				data: {
 					contactId: overrides.contactId ?? 'contact-1',
 					reason: 'journey-entered',
-					valuePathSlug: 'ai-hero-skills-workflow',
+					...('valuePathSlug' in overrides
+						? overrides.valuePathSlug
+							? { valuePathSlug: overrides.valuePathSlug }
+							: {}
+						: { valuePathSlug: 'ai-hero-skills-workflow' }),
 				},
 			},
 			step,
 			env: overrides.env ?? { AIH_DROVR_PROFILE_SYNC: 'true' },
 			readSnapshot,
-			bump,
+			versionFor,
+			deliver,
+			ownedPath,
 		})
-	return { run, step, readSnapshot, bump, order }
+	return { run, step, readSnapshot, versionFor, deliver, ownedPath, order }
 }
 
 describe('drovr contact profile sync function', () => {
@@ -64,7 +75,7 @@ describe('drovr contact profile sync function', () => {
 		})
 		expect(h.readSnapshot).not.toHaveBeenCalled()
 		expect(h.step.run).not.toHaveBeenCalled()
-		expect(h.step.sendEvent).not.toHaveBeenCalled()
+		expect(h.deliver).not.toHaveBeenCalled()
 	})
 
 	it('never profiles a synthetic test principal', async () => {
@@ -82,41 +93,78 @@ describe('drovr contact profile sync function', () => {
 			status: 'skipped',
 			reason: 'contact-missing',
 		})
-		expect(h.bump).not.toHaveBeenCalled()
-		expect(h.step.sendEvent).not.toHaveBeenCalled()
+		expect(h.versionFor).not.toHaveBeenCalled()
+		expect(h.deliver).not.toHaveBeenCalled()
 	})
 
-	it('reads, then bumps once, then hands the events to the live delivery lane', async () => {
+	it('reads, bumps once, then delivers and answers sent only once drovr took it', async () => {
 		const h = harness()
 		await expect(h.run()).resolves.toEqual({
 			status: 'sent',
 			profileVersion: 4,
 			links: 0,
 			offers: 0,
+			accepted: 1,
+			rejected: 0,
 		})
 		expect(h.order).toEqual([
 			'read-profile',
-			'bump-profile-version',
+			'profile-version',
 			'deliver-profile',
 		])
 		expect(h.readSnapshot).toHaveBeenCalledWith({
 			contactId: 'contact-1',
 			valuePathSlug: 'ai-hero-skills-workflow',
 		})
-		expect(h.bump).toHaveBeenCalledTimes(1)
-		expect(h.step.sendEvent).toHaveBeenCalledWith('deliver-profile', {
-			name: DROVR_EVENTS_DELIVER_EVENT,
-			data: {
-				source: 'contact-profile-sync',
-				events: [
-					expect.objectContaining({
-						tenantId: 'org-aihero',
-						journeyId: 'contact-directory',
-						type: 'contact.profile.updated',
-						idempotencyKey: 'profile:contact-1:4',
-					}),
-				],
-			},
+		expect(h.versionFor).toHaveBeenCalledTimes(1)
+		expect(h.deliver).toHaveBeenCalledWith([
+			expect.objectContaining({
+				tenantId: 'org-aihero',
+				journeyId: 'contact-directory',
+				type: 'contact.profile.updated',
+				idempotencyKey: 'profile:contact-1:4',
+			}),
+		])
+	})
+
+	it('versions by content: the hash covers what drovr stores, and every event carries when that version was set', async () => {
+		const h = harness()
+		await h.run()
+		expect(h.versionFor).toHaveBeenCalledWith(
+			'contact-1',
+			contactProfileContentHash(snapshot),
+		)
+		expect(h.deliver).toHaveBeenCalledWith([
+			expect.objectContaining({
+				idempotencyKey: 'profile:contact-1:4',
+				occurredAt: '2026-09-26T16:00:00.000Z',
+			}),
+		])
+	})
+
+	it('reports drovr not configured, so the reconcile never counts it as pushed', async () => {
+		const h = harness({ delivered: 'not-configured' })
+		await expect(h.run()).resolves.toEqual({
+			status: 'skipped',
+			reason: 'drovr-not-configured',
+		})
+	})
+
+	it('reports a rejection, so the reconcile never counts a refused profile as pushed', async () => {
+		const h = harness({ delivered: { accepted: 2, rejected: 1 } })
+		await expect(h.run()).resolves.toEqual({
+			status: 'skipped',
+			reason: 'drovr-rejected',
+		})
+	})
+
+	it('issues the path drovr owns for the contact when the request names none', async () => {
+		const h = harness({ valuePathSlug: undefined })
+		await h.run()
+		expect(h.ownedPath).toHaveBeenCalledWith('contact-1')
+		expect(h.readSnapshot).toHaveBeenCalledWith({
+			contactId: 'contact-1',
+			valuePathSlug: 'ai-hero-skills-workflow',
 		})
 	})
 })

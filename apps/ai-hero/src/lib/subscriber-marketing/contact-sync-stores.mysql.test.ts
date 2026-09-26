@@ -68,6 +68,15 @@ integration('contact-sync stores on MySQL', () => {
 		await pool.query(migration)
 		// Rerunnable: the second apply skips all three tables.
 		await pool.query(migration)
+		const profileHash = await fs.readFile(
+			new URL(
+				'../../db/migrations/20260926_ai_hero_contact_profile_hash.sql',
+				import.meta.url,
+			),
+			'utf8',
+		)
+		await pool.query(profileHash)
+		await pool.query(profileHash)
 		const database = drizzle(pool, { schema: databaseSchema, mode: 'default' })
 		store = createDrizzleValuePathLinkAnchorStore(database)
 		versions = createDrizzleContactProfileVersionStore(database)
@@ -140,17 +149,38 @@ integration('contact-sync stores on MySQL', () => {
 		expect((rows as { n: number }[])[0]?.n).toBe(1)
 	})
 
-	it('counts a contact profile version up from 1 and never hands out one twice', async () => {
-		await expect(versions.bump('contact-v')).resolves.toBe(1)
-		await expect(versions.bump('contact-v')).resolves.toBe(2)
-		await expect(versions.bump('contact-w')).resolves.toBe(1)
+	it('versions a contact by content: same hash, same version and since; new hash, next version', async () => {
+		let clock = '2026-09-26T18:00:00.000Z'
+		const store = createDrizzleContactProfileVersionStore(
+			drizzle(pool, { schema: databaseSchema, mode: 'default' }),
+			{ now: () => clock },
+		)
+		await expect(store.versionFor('contact-v', 'hash-a')).resolves.toEqual({
+			profileVersion: 1,
+			since: '2026-09-26T18:00:00.000Z',
+		})
+		clock = '2026-09-26T18:15:00.000Z'
+		await expect(store.versionFor('contact-v', 'hash-a')).resolves.toEqual({
+			profileVersion: 1,
+			since: '2026-09-26T18:00:00.000Z',
+		})
+		await expect(store.versionFor('contact-v', 'hash-b')).resolves.toEqual({
+			profileVersion: 2,
+			since: '2026-09-26T18:15:00.000Z',
+		})
 		const concurrent = await Promise.all(
-			Array.from({ length: 6 }, () => versions.bump('contact-v')),
+			['c', 'd', 'e', 'f'].map((hash) =>
+				versions.versionFor('contact-v', hash),
+			),
 		)
-		expect([...concurrent].sort((a, b) => a - b)).toEqual([3, 4, 5, 6, 7, 8])
+		expect(
+			concurrent.map((version) => version.profileVersion).sort((a, b) => a - b),
+		).toEqual([3, 4, 5, 6])
 		const [rows] = await pool.query(
-			"SELECT profileVersion AS v FROM AI_ContactProfileVersion WHERE contactId = 'contact-v'",
+			"SELECT profileVersion AS v, profileHash AS h FROM AI_ContactProfileVersion WHERE contactId = 'contact-v'",
 		)
-		expect(Number((rows as { v: number }[])[0]?.v)).toBe(8)
+		const row = (rows as { v: number; h: string }[])[0]
+		expect(Number(row?.v)).toBe(6)
+		expect(row?.h).toMatch(/^[c-f]$/)
 	})
 })

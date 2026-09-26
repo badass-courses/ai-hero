@@ -16,6 +16,7 @@ import {
 	stateTransition,
 	valuePathCertificateShare,
 } from '@/db/schema'
+import { requestContactProfileSync } from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
 import { captureFrontQuickQuestionCsv } from '@/lib/subscriber-marketing/capture-front-quick-question-csv'
 import { captureFrontQuickQuestion } from '@/lib/subscriber-marketing/capture-quick-question'
 import {
@@ -1802,7 +1803,15 @@ async function buildValuePathContactStateInit(args: { allowWrite: boolean }) {
 			schemaVersion: CONTACT_STATE_SCHEMA_VERSION,
 			updatedAt: checkedAt,
 		}
-		if (args.allowWrite) await repository.upsertContactState(state)
+		if (args.allowWrite) {
+			await repository.upsertContactState(state)
+			// Creating a missing state clears the stale-state hold without a
+			// ContactEvent the contact-sync reconcile scans: ask for the sync.
+			await requestContactProfileSync({
+				contactId: contact.id,
+				reason: 'state-initialized',
+			})
+		}
 		results.push({
 			status: args.allowWrite ? 'created' : 'planned',
 			contactId: contact.id,

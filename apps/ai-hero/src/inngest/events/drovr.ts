@@ -47,7 +47,14 @@ export type DrovrContactProfileSyncRequested = {
 	name: typeof DROVR_CONTACT_PROFILE_SYNC_EVENT
 	data: {
 		contactId: string
-		reason: 'journey-entered' | 'offer-issued'
+		reason:
+			| 'journey-entered'
+			| 'offer-issued'
+			/** A contact's first Kit subscriber id: its answer links change. */
+			| 'kit-identity-linked'
+			/** An operator created a missing contact state (clears stale-state). */
+			| 'state-initialized'
+			| 'reconcile'
 		valuePathSlug?: string
 	}
 }
