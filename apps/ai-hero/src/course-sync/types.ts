@@ -1,10 +1,12 @@
+import { CourseSyncError } from './errors'
+
 import type {
 	CourseJsonDocumentV3,
 	CourseSyncResourceAction,
 	CourseSyncRunState,
 } from '@ai-hero/course-sync-schema'
 
-export type CourseSyncBinding = {
+export type WorkshopCourseSyncBinding = {
 	contractVersion: 4
 	bindingId: string
 	sourceCourseId: string
@@ -32,6 +34,68 @@ export type CourseSyncBinding = {
 	assetConnector: 'dropbox-shared-link'
 	sharedLinkSecretRef: 'DROPBOX_SYNC_SHARED_LINK'
 	status: 'active' | 'suspended' | 'revoked'
+}
+
+/** The cohort variant is type-only until the S5 binding is deliberately registered. */
+export type CohortCourseSyncBinding = {
+	contractVersion: 5
+	bindingId: string
+	status: 'active' | 'suspended' | 'revoked'
+	sourceCourseId: string
+	productId: string
+	anchorCohortId: string
+	targetContract: {
+		product: {
+			type: 'cohort'
+			state: 'draft' | 'published'
+			visibility: 'unlisted' | 'public'
+		}
+		cohort: {
+			type: 'cohort'
+			state: 'draft' | 'published'
+			visibility: 'unlisted' | 'public'
+		}
+		relation: { position: 0; exclusiveProduct: true }
+	}
+	managedChildContract: {
+		workshop: { state: 'draft' | 'published'; visibility: 'unlisted' }
+		lesson: { state: 'draft'; visibility: 'unlisted' }
+	}
+	applyPolicy: 'bounded-auto' | 'operator'
+	initialApplyPolicyOverride: 'operator' | null
+	sectionMappingPolicy: 'sections-as-cohort-workshops'
+	sharedLinkSecretRef: 'DROPBOX_SYNC_SHARED_LINK_COHORT_005'
+	assetConnector: WorkshopCourseSyncBinding['assetConnector']
+}
+
+export type CourseSyncBinding =
+	| WorkshopCourseSyncBinding
+	| CohortCourseSyncBinding
+
+export function anchorResourceId(binding: CourseSyncBinding): string {
+	return binding.contractVersion === 4
+		? binding.anchorWorkshopId
+		: binding.anchorCohortId
+}
+
+export function managedSectionKind(
+	binding: CourseSyncBinding,
+): 'section' | 'workshop' {
+	return binding.contractVersion === 4 ? 'section' : 'workshop'
+}
+
+export function managedChildContractFor(
+	binding: CourseSyncBinding,
+	kind: 'section' | 'workshop' | 'lesson',
+) {
+	if (binding.contractVersion === 4) {
+		return kind === 'section' ? binding.managedChildContract : null
+	}
+	return kind === 'workshop'
+		? binding.managedChildContract.workshop
+		: kind === 'lesson'
+			? binding.managedChildContract.lesson
+			: null
 }
 
 /** The only stored v1 value that may be migrated in place. */
@@ -132,7 +196,35 @@ export const AI_HERO_COURSE_SYNC_BINDING = {
 	assetConnector: 'dropbox-shared-link',
 	sharedLinkSecretRef: 'DROPBOX_SYNC_SHARED_LINK',
 	status: 'active',
-} as const satisfies CourseSyncBinding
+} as const satisfies WorkshopCourseSyncBinding
+
+// S4a intentionally registers only the live Crash Course binding. S5 adds Cohort 005.
+export const COURSE_SYNC_BINDINGS = {
+	[AI_HERO_COURSE_SYNC_BINDING.bindingId]: AI_HERO_COURSE_SYNC_BINDING,
+} as const satisfies Record<string, CourseSyncBinding>
+
+export function getServerCourseSyncBinding(
+	bindingId: string,
+	registry: Readonly<Record<string, CourseSyncBinding>> = COURSE_SYNC_BINDINGS,
+): CourseSyncBinding {
+	const binding = Object.hasOwn(registry, bindingId)
+		? registry[bindingId]
+		: undefined
+	if (!binding) {
+		throw new CourseSyncError(
+			'BINDING_NOT_FOUND',
+			'Sync binding not found.',
+			404,
+		)
+	}
+	return binding
+}
+
+export function activeCourseSyncBindings(): CourseSyncBinding[] {
+	return Object.values(COURSE_SYNC_BINDINGS).filter(
+		(binding) => binding.status === 'active',
+	)
+}
 
 export type FrozenSourceAsset = {
 	sourceVideoId: string
@@ -164,7 +256,13 @@ export type SourceRevisionRecord = {
 }
 
 export type ResourcePlanItem = {
-	sourceKind: 'section' | 'lesson' | 'solution' | 'question' | 'video'
+	sourceKind:
+		| 'section'
+		| 'workshop'
+		| 'lesson'
+		| 'solution'
+		| 'question'
+		| 'video'
 	sourceId: string
 	targetResourceId: string
 	/**
@@ -370,6 +468,8 @@ export interface CourseSyncPersistence {
 }
 
 export type CourseSyncControlPlaneDependencies = {
+	/** Test-only injection; production always uses COURSE_SYNC_BINDINGS. */
+	bindingRegistry?: Readonly<Record<string, CourseSyncBinding>>
 	persistence: CourseSyncPersistence
 	muxSourceResolver: CourseSyncMuxSourceResolver
 	muxClient: CourseSyncMuxClient

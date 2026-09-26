@@ -23,29 +23,34 @@ describe('course sync OpenAPI contract', () => {
 		const schema = stage.requestBody.content['application/json'].schema
 		expect(Object.keys(schema.properties)).toEqual(['manifest'])
 		expect(schema.additionalProperties).toBe(false)
-		expect(document.components.schemas.CourseJson.properties.schemaVersion).toEqual({ enum: [3, 4] })
+		expect(
+			document.components.schemas.CourseJson.properties.schemaVersion,
+		).toEqual({ enum: [3, 4] })
 		expect(
 			document.components.schemas.CourseJson.properties.sections,
 		).toMatchObject({ minItems: 1 })
 		expect(
-			'maxItems' in
-				document.components.schemas.CourseJson.properties.sections,
+			'maxItems' in document.components.schemas.CourseJson.properties.sections,
 		).toBe(false)
+		const [workshopBinding, cohortBinding] =
+			document.components.schemas.SyncBinding.oneOf
+		expect(workshopBinding.properties.contractVersion).toEqual({ const: 4 })
+		expect(cohortBinding.properties.contractVersion).toEqual({ const: 5 })
 		expect(
-			document.components.schemas.SyncBinding.properties.target.properties
-				.sectionMappingPolicy,
+			cohortBinding.properties.target.properties.sectionMappingPolicy,
+		).toEqual({ const: 'sections-as-cohort-workshops' })
+		expect(
+			workshopBinding.properties.target.properties.sectionMappingPolicy,
 		).toEqual({ const: 'sections-in-anchor-workshop' })
 		expect(
-			document.components.schemas.SyncBinding.properties.target.properties
-				.product.properties,
+			workshopBinding.properties.target.properties.product.properties,
 		).toMatchObject({
 			type: { const: 'self-paced' },
 			state: { const: 'published' },
 			visibility: { const: 'public' },
 		})
 		expect(
-			document.components.schemas.SyncBinding.properties.target.properties
-				.managedChildren.properties,
+			workshopBinding.properties.target.properties.managedChildren.properties,
 		).toEqual({
 			state: { const: 'draft' },
 			visibility: { const: 'unlisted' },

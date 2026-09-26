@@ -8,12 +8,10 @@ import {
 } from '@ai-hero/course-sync-schema'
 
 import { CourseSyncError, asCourseSyncError } from './errors'
-import {
-	evaluateCourseSyncBoundedAutoApply,
-} from './persistence-invariants'
+import { evaluateCourseSyncBoundedAutoApply } from './persistence-invariants'
 import { extractQuizQuestions } from './quiz-question-extraction'
 import {
-	AI_HERO_COURSE_SYNC_BINDING,
+	getServerCourseSyncBinding,
 	type CourseSyncBinding,
 	type CourseSyncControlPlaneDependencies,
 	type FrozenSourceAsset,
@@ -52,7 +50,7 @@ export function courseSyncRollbackStageIdempotencyKey(
 
 export function targetResourceId(
 	bindingId: string,
-	kind: 'section' | 'lesson' | 'solution' | 'question' | 'video',
+	kind: 'section' | 'workshop' | 'lesson' | 'solution' | 'question' | 'video',
 	sourceId: string,
 ): string {
 	return `sync_${kind}_${sha256(`${bindingId}:${kind}:${sourceId}`).slice(0, 24)}`
@@ -155,6 +153,13 @@ function assertManifestScope(
 }
 
 function publicBinding(binding: CourseSyncBinding): CourseSyncBindingSummary {
+	if (binding.contractVersion !== 4) {
+		throw new CourseSyncError(
+			'BINDING_VERSION_UNSUPPORTED',
+			'Cohort bindings require the S4b target implementation.',
+			409,
+		)
+	}
 	return {
 		bindingId: binding.bindingId,
 		contractVersion: binding.contractVersion,
@@ -186,10 +191,12 @@ function publicRun(run: SyncRunRecord, noOp = false): CourseSyncRunSummary {
 					resources: run.plan.resources
 						.filter(
 							(item) =>
-								item.sourceKind === 'section' || item.sourceKind === 'lesson',
+								item.sourceKind === 'section' ||
+								item.sourceKind === 'workshop' ||
+								item.sourceKind === 'lesson',
 						)
 						.map((item) => ({
-							sourceKind: item.sourceKind as 'section' | 'lesson',
+							sourceKind: item.sourceKind as 'section' | 'workshop' | 'lesson',
 							sourceId: item.sourceId,
 							action: item.action,
 							position: item.position,
@@ -221,6 +228,13 @@ function sourceResourceFields(
 	const frozenByVideo = new Map(
 		frozenAssets.map((asset) => [asset.sourceVideoId, asset] as const),
 	)
+	if (binding.contractVersion !== 4) {
+		throw new CourseSyncError(
+			'BINDING_VERSION_UNSUPPORTED',
+			'Cohort bindings require the S4b mapping implementation.',
+			409,
+		)
+	}
 	return manifest.sections.flatMap((section, sectionIndex) => {
 		const sectionId = targetResourceId(binding.bindingId, 'section', section.id)
 		const sectionItem = {
@@ -250,11 +264,12 @@ function sourceResourceFields(
 					: lesson.type === 'explainer'
 						? [lesson.explainer]
 						: [lesson.problem, ...(lesson.solution ? [lesson.solution] : [])]
-			const primary = lesson.type === 'placeholder'
-				? null
-				: lesson.type === 'explainer'
-					? lesson.explainer
-					: lesson.problem
+			const primary =
+				lesson.type === 'placeholder'
+					? null
+					: lesson.type === 'explainer'
+						? lesson.explainer
+						: lesson.problem
 			const lessonId = targetResourceId(binding.bindingId, 'lesson', lesson.id)
 			const solutionId =
 				lesson.type === 'problem' && lesson.solution
@@ -416,25 +431,29 @@ export function createCourseSyncControlPlane(
 		dependencies.makeId ?? ((prefix: string) => `${prefix}_${randomUUID()}`)
 	const persistence = dependencies.persistence
 
-	const assertServerBindingId = (bindingId: string) => {
-		if (bindingId !== AI_HERO_COURSE_SYNC_BINDING.bindingId) {
+	const serverBinding = (bindingId: string) => {
+		const binding = getServerCourseSyncBinding(
+			bindingId,
+			dependencies.bindingRegistry,
+		)
+		if (binding.contractVersion !== 4) {
 			throw new CourseSyncError(
-				'BINDING_NOT_FOUND',
-				'Sync binding not found.',
-				404,
+				'BINDING_VERSION_UNSUPPORTED',
+				'Cohort bindings require the S4b target implementation.',
+				409,
 			)
 		}
+		return binding
 	}
 
 	const ensureServerBinding = async (bindingId: string) => {
-		assertServerBindingId(bindingId)
-		return persistence.ensureBinding(AI_HERO_COURSE_SYNC_BINDING)
+		return persistence.ensureBinding(serverBinding(bindingId))
 	}
 
 	const requireBinding = async (bindingId: string) => {
-		assertServerBindingId(bindingId)
-		await persistence.assertTarget(AI_HERO_COURSE_SYNC_BINDING)
-		const binding = await persistence.ensureBinding(AI_HERO_COURSE_SYNC_BINDING)
+		const expected = serverBinding(bindingId)
+		await persistence.assertTarget(expected)
+		const binding = await persistence.ensureBinding(expected)
 		if (binding.status !== 'active') {
 			throw new CourseSyncError(
 				'BINDING_NOT_ACTIVE',
@@ -1035,7 +1054,9 @@ export function createCourseSyncControlPlane(
 				const lostVideo = previousVideos.some(
 					(video) =>
 						(
-							video.fields.courseSync as { sourceLessonId?: unknown } | undefined
+							video.fields.courseSync as
+								| { sourceLessonId?: unknown }
+								| undefined
 						)?.sourceLessonId === item.sourceId &&
 						!desiredVideoIds.has(video.targetResourceId),
 				)
@@ -1047,7 +1068,8 @@ export function createCourseSyncControlPlane(
 						previous.sourceKind !== 'lesson' ||
 						previous.detached ||
 						desiredIds.has(previous.targetResourceId)
-					) return []
+					)
+						return []
 					const previousType = (
 						previous.fields.courseSync as { lessonType?: unknown } | undefined
 					)?.lessonType

@@ -83,6 +83,13 @@ export function collectCourseSyncTargetViolations(
 	binding: CourseSyncBinding,
 	facts: CourseSyncTargetFacts,
 ): TargetViolation[] {
+	if (binding.contractVersion !== 4) {
+		throw new CourseSyncError(
+			'BINDING_VERSION_UNSUPPORTED',
+			'Cohort target checks require S4b.',
+			409,
+		)
+	}
 	const violations: TargetViolation[] = []
 	const productTarget = { kind: 'product', id: binding.productId }
 	const workshopTarget = { kind: 'workshop', id: binding.anchorWorkshopId }

@@ -73,6 +73,7 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 			const failedRunId = originalFailureRunId(event, runId)
 			await recordCourseSyncPollFailure(
 				{
+					binding: AI_HERO_COURSE_SYNC_BINDING,
 					getPollState: async (bindingId) => {
 						const state = await step.run(
 							'load-failed-course-sync-poll-state',
@@ -104,7 +105,11 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 						)
 					},
 				},
-				{ runId: failedRunId, failureClass: 'POLL_RUN_KILLED' },
+				{
+					bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
+					runId: failedRunId,
+					failureClass: 'POLL_RUN_KILLED',
+				},
 			)
 		},
 	},
@@ -126,6 +131,7 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 		}
 
 		const poll = createCourseSyncDetectionPoller({
+			binding: AI_HERO_COURSE_SYNC_BINDING,
 			readManifest: () =>
 				runTypedStep('detect-course-manifest', async () => {
 					const { config, missingConfig } = getDropboxSyncConfig({

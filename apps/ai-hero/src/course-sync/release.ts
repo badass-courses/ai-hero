@@ -1,7 +1,7 @@
 import type { CourseSyncPollState } from './detection-poller'
 import { CourseSyncError } from './errors'
 import { startCourseSyncPollLifecycle } from './poll-machine'
-import { AI_HERO_COURSE_SYNC_BINDING } from './types'
+import { getServerCourseSyncBinding, type CourseSyncBinding } from './types'
 
 export type CourseSyncPollReleaseInput = {
 	bindingId: string
@@ -20,6 +20,7 @@ export type CourseSyncPollReleaseDependencies = {
 export function releasedCourseSyncPollState(
 	state: CourseSyncPollState,
 	occurredAt: Date,
+	binding: CourseSyncBinding = getServerCourseSyncBinding(state.bindingId),
 ): CourseSyncPollState {
 	if (state.status !== 'held') {
 		throw new CourseSyncError(
@@ -32,7 +33,7 @@ export function releasedCourseSyncPollState(
 	const lifecycle = startCourseSyncPollLifecycle({
 		pollStatus: state.status,
 		strikes: state.consecutiveFailures,
-		applyPolicy: AI_HERO_COURSE_SYNC_BINDING.applyPolicy,
+		applyPolicy: binding.applyPolicy,
 	})
 	lifecycle.send({ type: 'OPERATOR.RELEASE' })
 	if (!lifecycle.getSnapshot().matches({ active: 'idle' })) {

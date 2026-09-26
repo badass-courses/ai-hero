@@ -193,62 +193,133 @@ export function buildCourseSyncOpenApiDocument(baseUrl: string) {
 					},
 				},
 				SyncBinding: {
-					type: 'object',
-					required: [
-						'bindingId',
-						'contractVersion',
-						'status',
-						'sourceCourseId',
-						'applyPolicy',
-						'target',
-					],
-					properties: {
-						bindingId: { type: 'string', minLength: 1 },
-						contractVersion: { const: 4 },
-						status: {
-							type: 'string',
-							enum: ['active', 'suspended', 'revoked'],
-						},
-						sourceCourseId: { type: 'string', minLength: 1 },
-						applyPolicy: { enum: ['bounded-auto', 'operator'] },
-						target: {
+					oneOf: [
+						{
 							type: 'object',
 							required: [
-								'product',
-								'workshop',
-								'managedChildren',
-								'sectionMappingPolicy',
+								'bindingId',
+								'contractVersion',
+								'status',
+								'sourceCourseId',
+								'applyPolicy',
+								'target',
 							],
 							properties: {
-								product: {
-									type: 'object',
-									properties: {
-										type: { const: 'self-paced' },
-										state: { const: 'published' },
-										visibility: { const: 'public' },
-									},
+								bindingId: { type: 'string', minLength: 1 },
+								contractVersion: { const: 4 },
+								status: {
+									type: 'string',
+									enum: ['active', 'suspended', 'revoked'],
 								},
-								workshop: {
+								sourceCourseId: { type: 'string', minLength: 1 },
+								applyPolicy: { enum: ['bounded-auto', 'operator'] },
+								target: {
 									type: 'object',
+									required: [
+										'product',
+										'workshop',
+										'managedChildren',
+										'sectionMappingPolicy',
+									],
 									properties: {
-										type: { const: 'workshop' },
-										state: { const: 'published' },
-										visibility: { const: 'public' },
+										product: {
+											type: 'object',
+											properties: {
+												type: { const: 'self-paced' },
+												state: { const: 'published' },
+												visibility: { const: 'public' },
+											},
+										},
+										workshop: {
+											type: 'object',
+											properties: {
+												type: { const: 'workshop' },
+												state: { const: 'published' },
+												visibility: { const: 'public' },
+											},
+										},
+										managedChildren: {
+											type: 'object',
+											properties: {
+												state: { const: 'draft' },
+												visibility: { const: 'unlisted' },
+											},
+										},
+										sectionMappingPolicy: {
+											const: 'sections-in-anchor-workshop',
+										},
 									},
-								},
-								managedChildren: {
-									type: 'object',
-									properties: {
-										state: { const: 'draft' },
-										visibility: { const: 'unlisted' },
-									},
-								},
-								sectionMappingPolicy: {
-									const: 'sections-in-anchor-workshop',
 								},
 							},
 						},
-					},
+						{
+							type: 'object',
+							required: [
+								'bindingId',
+								'contractVersion',
+								'status',
+								'sourceCourseId',
+								'applyPolicy',
+								'target',
+							],
+							properties: {
+								bindingId: { type: 'string', minLength: 1 },
+								contractVersion: { const: 5 },
+								status: { enum: ['active', 'suspended', 'revoked'] },
+								sourceCourseId: { type: 'string', minLength: 1 },
+								applyPolicy: { enum: ['bounded-auto', 'operator'] },
+								target: {
+									type: 'object',
+									required: [
+										'product',
+										'cohort',
+										'managedChildren',
+										'sectionMappingPolicy',
+									],
+									properties: {
+										product: {
+											type: 'object',
+											properties: {
+												type: { const: 'cohort' },
+												state: { enum: ['draft', 'published'] },
+												visibility: { enum: ['unlisted', 'public'] },
+											},
+										},
+										cohort: {
+											type: 'object',
+											properties: {
+												type: { const: 'cohort' },
+												state: { enum: ['draft', 'published'] },
+												visibility: { enum: ['unlisted', 'public'] },
+											},
+										},
+										managedChildren: {
+											type: 'object',
+											properties: {
+												workshop: {
+													type: 'object',
+													properties: {
+														state: { enum: ['draft', 'published'] },
+														visibility: { const: 'unlisted' },
+													},
+												},
+												lesson: {
+													type: 'object',
+													properties: {
+														state: { const: 'draft' },
+														visibility: { const: 'unlisted' },
+													},
+												},
+											},
+										},
+										sectionMappingPolicy: {
+											const: 'sections-as-cohort-workshops',
+										},
+									},
+								},
+							},
+						},
+					],
 				},
 				SyncRun: {
 					type: 'object',
