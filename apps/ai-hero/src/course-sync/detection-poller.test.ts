@@ -474,6 +474,42 @@ describe('course sync detection poller', () => {
 		},
 	)
 
+	it('holds the next tick when a filmed explainer was removed from the manifest', async () => {
+		// The source revision retains lesson-1; the prior applied plan also had lesson-0.
+		const removed: SyncPlan['resources'][number] = {
+			sourceKind: 'lesson', sourceId: 'lesson-0',
+			targetResourceId: 'sync_lesson_0', parentResourceId: 'sync_section_1',
+			position: 0, detached: true, previousDetached: false,
+			previousParentResourceId: 'sync_section_1', previousPosition: 0,
+			action: 'update', fields: { courseSync: { lessonType: 'explainer' } },
+			previousVersionId: 'version-1', previousFieldsSha256: 'a'.repeat(64),
+		}
+		const plan: SyncPlan = {
+			bindingId: 'csb_ai_coding_crash_course',
+			sourceRevisionId: 'revision-2', courseVersionId: 'version-2',
+			resources: [removed, {
+				...removed, sourceKind: 'video', sourceId: 'video-0',
+				targetResourceId: 'sync_video_0', parentResourceId: removed.targetResourceId,
+				previousParentResourceId: removed.targetResourceId,
+				fields: { courseSync: { sourceLessonId: 'lesson-0' } },
+			}],
+			media: [], lessonRegressions: ['lesson-0'], planSha256: 'plan-sha',
+		}
+		const test = harness({
+			head: { courseVersionId: 'version-1', providerRevision: 'dropbox-rev-1',
+				runId: 'sync-run-1', runState: 'applied' },
+			evaluateBoundedAutoApply: async () => evaluateCourseSyncBoundedAutoApply(plan),
+		})
+		await expect(test.poll('poll-removed-explainer')).resolves.toMatchObject({
+			outcome: 'awaiting-apply', controlPlaneRunId: 'sync-run-2',
+		})
+		expect(test.state()).toMatchObject({
+			status: 'awaiting-apply', applyPolicyOverride: 'operator',
+			consecutiveFailures: 0, failureClass: null,
+		})
+		expect(test.apply).not.toHaveBeenCalled()
+	})
+
 	it('auto-applies only a bounded eligible preview and verifies readback', async () => {
 		const test = harness({
 			head: {

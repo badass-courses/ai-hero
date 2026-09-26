@@ -1212,6 +1212,157 @@ describe('draft course sync control plane', () => {
 		})
 	})
 
+	it('detaches a removed filmed explainer and its video for operator review', async () => {
+		const testHarness = harness()
+		const filmed = fixture('explainer-before-removal')
+		const removed = filmed.sections[0]!.lessons[0]!
+		const first = await stagedAndPreviewed(testHarness, filmed)
+		await applyDirectly(testHarness, first.staged.runId, 'apply-explainer-before-removal')
+		const withoutLesson: CourseJsonDocumentV3 = {
+			...filmed,
+			courseVersionId: 'explainer-removed',
+			sections: [{ ...filmed.sections[0]!, lessons: filmed.sections[0]!.lessons.slice(1) }, ...filmed.sections.slice(1)],
+		}
+		const next = await stagedAndPreviewed(testHarness, withoutLesson, 'stage-explainer-removal')
+		const plan = testHarness.persistence.runs.get(next.staged.runId)?.plan
+		const removedItems = plan?.resources.filter((item) => item.sourceId === removed.id ||
+			(item.sourceKind === 'video' && item.parentResourceId === plan?.resources.find((candidate) => candidate.sourceId === removed.id)?.targetResourceId))
+		expect(removedItems?.map((item) => [item.sourceKind, item.action, item.detached])).toEqual([
+			['lesson', 'update', true], ['video', 'update', true],
+		])
+		expect(plan?.lessonRegressions).toEqual([removed.id])
+		expect(await testHarness.controlPlane.evaluateBoundedAutoApply(next.staged.runId)).toMatchObject({
+			eligible: false, failureCode: 'LESSON_REGRESSION_REVIEW_REQUIRED',
+		})
+		await applyDirectly(testHarness, next.staged.runId, 'operator-apply-explainer-removal')
+		for (const item of removedItems ?? []) {
+			expect(testHarness.persistence.relations.get(item.targetResourceId)?.detached).toBe(true)
+		}
+		const section = plan?.resources.find((item) => item.sourceKind === 'section' && item.sourceId === filmed.sections[0]!.id)
+		expect(testHarness.persistence.relations.get(section!.targetResourceId)?.detached).toBe(false)
+	})
+
+	it('detaches a removed filmed problem, its solution, and both videos', async () => {
+		const testHarness = harness()
+		const source = exactDeltaFixture('problem-before-removal')
+		const section = source.sections[0]!
+		const removed = section.lessons[0]!
+		const filmed: CourseJsonDocumentV3 = {
+			...source,
+			sections: [{ ...section, lessons: section.lessons.slice(0, 2) }],
+		}
+		const first = await stagedAndPreviewed(testHarness, filmed)
+		await applyDirectly(testHarness, first.staged.runId, 'apply-problem-before-removal')
+		const withoutLesson: CourseJsonDocumentV3 = {
+			...filmed,
+			courseVersionId: 'problem-removed',
+			sections: [{ ...filmed.sections[0]!, lessons: filmed.sections[0]!.lessons.slice(1) }],
+		}
+		const next = await stagedAndPreviewed(testHarness, withoutLesson, 'stage-problem-removal')
+		const plan = testHarness.persistence.runs.get(next.staged.runId)?.plan
+		const removedItems = plan?.resources.filter((item) => item.detached && item.action === 'update')
+		expect(removedItems?.filter((item) => item.sourceKind !== 'question')
+			.map((item) => item.sourceKind)).toEqual([
+			'lesson', 'video', 'solution', 'video',
+		])
+		expect(plan?.lessonRegressions).toEqual([removed.id])
+		expect(await testHarness.controlPlane.evaluateBoundedAutoApply(next.staged.runId)).toMatchObject({
+			eligible: false, failureCode: 'LESSON_REGRESSION_REVIEW_REQUIRED',
+		})
+		await applyDirectly(testHarness, next.staged.runId, 'operator-apply-problem-removal')
+		for (const item of removedItems ?? []) {
+			expect(testHarness.persistence.relations.get(item.targetResourceId)?.detached).toBe(true)
+		}
+	})
+
+	it('detaches a removed placeholder without requiring operator review', async () => {
+		const testHarness = harness()
+		const source = fixture('placeholder-before-removal')
+		const syllabus: CourseJsonDocumentV3 = {
+			...source,
+			schemaVersion: 4,
+			sections: [{ ...source.sections[0]!, lessons: [
+				{ type: 'placeholder', id: 'placeholder-1', title: 'Later' },
+				{ type: 'placeholder', id: 'placeholder-2', title: 'Still here' },
+			] }],
+		}
+		const first = await stagedAndPreviewed(testHarness, syllabus)
+		await applyDirectly(testHarness, first.staged.runId, 'apply-placeholder-before-removal')
+		const withoutLesson: CourseJsonDocumentV3 = {
+			...syllabus,
+			courseVersionId: 'placeholder-removed',
+			sections: [{ ...syllabus.sections[0]!, lessons: syllabus.sections[0]!.lessons.slice(1) }],
+		}
+		const next = await stagedAndPreviewed(testHarness, withoutLesson, 'stage-placeholder-removal')
+		const plan = testHarness.persistence.runs.get(next.staged.runId)?.plan
+		expect(plan?.resources.find((item) => item.sourceId === 'placeholder-1')).toMatchObject({
+			sourceKind: 'lesson', action: 'update', detached: true,
+		})
+		expect(plan?.lessonRegressions ?? []).toEqual([])
+		expect(await testHarness.controlPlane.evaluateBoundedAutoApply(next.staged.runId)).toMatchObject({ eligible: true })
+		await applyDirectly(testHarness, next.staged.runId, 'auto-apply-placeholder-removal')
+		const removed = plan?.resources.find((item) => item.sourceId === 'placeholder-1')!
+		expect(testHarness.persistence.relations.get(removed.targetResourceId)?.detached).toBe(true)
+	})
+
+	it('restores a removed explainer, its video, and the section relation on rollback', async () => {
+		const testHarness = harness()
+		const filmed = fixture('explainer-before-rollback')
+		const first = await stagedAndPreviewed(testHarness, filmed)
+		await applyDirectly(testHarness, first.staged.runId, 'apply-before-explainer-rollback')
+		const original = testHarness.persistence.runs.get(first.staged.runId)?.plan
+		const lesson = original?.resources.find((item) => item.sourceKind === 'lesson' && item.sourceId === 'lesson-1')!
+		const video = original?.resources.find((item) => item.sourceKind === 'video' && item.parentResourceId === lesson.targetResourceId)!
+		const section = original?.resources.find((item) => item.sourceKind === 'section' && item.sourceId === 'section-1')!
+		const ids = [section.targetResourceId, lesson.targetResourceId, video.targetResourceId]
+		const relationsBefore = ids.map((id) => structuredClone(testHarness.persistence.relations.get(id)))
+		const fieldsBefore = structuredClone(testHarness.persistence.resources.get(lesson.targetResourceId)?.fields)
+		const changed: CourseJsonDocumentV3 = {
+			...filmed,
+			courseVersionId: 'explainer-removed-before-rollback',
+			sections: [{ ...filmed.sections[0]!, lessons: filmed.sections[0]!.lessons.slice(1) }, ...filmed.sections.slice(1)],
+		}
+		const next = await stagedAndPreviewed(testHarness, changed, 'stage-removed-before-rollback')
+		await applyDirectly(testHarness, next.staged.runId, 'apply-removed-before-rollback')
+		expect(testHarness.persistence.relations.get(lesson.targetResourceId)?.detached).toBe(true)
+		expect(testHarness.persistence.relations.get(video.targetResourceId)?.detached).toBe(true)
+		await expect(testHarness.controlPlane.rollback({
+			runId: next.staged.runId, idempotencyKey: 'rollback-removed-explainer',
+		})).resolves.toMatchObject({ state: 'rolled_back' })
+		for (const [index, id] of ids.entries()) {
+			expect(testHarness.persistence.relations.get(id)).toEqual(relationsBefore[index])
+		}
+		expect(testHarness.persistence.resources.get(lesson.targetResourceId)?.fields).toEqual(fieldsBefore)
+	})
+
+	it('keeps an existing placeholder title edit tracked but auto-eligible', async () => {
+		const testHarness = harness()
+		const source = fixture('placeholder-title-before')
+		const syllabus: CourseJsonDocumentV3 = {
+			...source,
+			schemaVersion: 4,
+			sections: [{ ...source.sections[0]!, lessons: [
+				{ type: 'placeholder', id: 'placeholder-1', title: 'Coming soon' },
+			] }],
+		}
+		const first = await stagedAndPreviewed(testHarness, syllabus)
+		await applyDirectly(testHarness, first.staged.runId, 'apply-placeholder-title-before')
+		const changed: CourseJsonDocumentV3 = {
+			...syllabus,
+			courseVersionId: 'placeholder-title-after',
+			sections: [{ ...syllabus.sections[0]!, lessons: [
+				{ type: 'placeholder', id: 'placeholder-1', title: 'Now filming' },
+			] }],
+		}
+		const next = await stagedAndPreviewed(testHarness, changed, 'stage-placeholder-title')
+		const plan = testHarness.persistence.runs.get(next.staged.runId)?.plan
+		expect(plan?.resources.find((item) => item.sourceId === 'placeholder-1')).toMatchObject({
+			sourceKind: 'lesson', action: 'update',
+		})
+		expect(plan).toHaveProperty('lessonRegressions', [])
+		expect(await testHarness.controlPlane.evaluateBoundedAutoApply(next.staged.runId)).toMatchObject({ eligible: true })
+	})
+
 	it('reuses each successful freeze receipt after a later asset fails', async () => {
 		const testHarness = harness({ failMuxCreateAt: 2 })
 		const source = fixture()

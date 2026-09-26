@@ -937,7 +937,8 @@ export function createCourseSyncControlPlane(
 			const desiredIds = new Set(desired.map((item) => item.targetResourceId))
 			const removedChildren = [...previousByTarget.values()].filter(
 				(item) =>
-					(item.sourceKind === 'question' ||
+					(item.sourceKind === 'lesson' ||
+						item.sourceKind === 'question' ||
 						item.sourceKind === 'video' ||
 						item.sourceKind === 'solution') &&
 					!item.detached &&
@@ -1024,7 +1025,7 @@ export function createCourseSyncControlPlane(
 					.filter((item) => item.sourceKind === 'video')
 					.map((item) => item.targetResourceId),
 			)
-			const lessonRegressions = desired.flatMap((item) => {
+			const desiredLessonRegressions = desired.flatMap((item) => {
 				if (item.sourceKind !== 'lesson') return []
 				const previous = previousByTarget.get(item.targetResourceId)
 				if (!previous || previous.detached) return []
@@ -1046,13 +1047,41 @@ export function createCourseSyncControlPlane(
 				)
 				return demoted || lostVideo ? [item.sourceId] : []
 			})
+			const removedLessonRegressions = [...previousByTarget.values()].flatMap(
+				(previous) => {
+					if (
+						previous.sourceKind !== 'lesson' ||
+						previous.detached ||
+						desiredIds.has(previous.targetResourceId)
+					) return []
+					const previousType = (
+						previous.fields.courseSync as { lessonType?: unknown } | undefined
+					)?.lessonType
+					return previousType === 'explainer' || previousType === 'problem'
+						? [previous.sourceId]
+						: []
+				},
+			)
+			const lessonRegressions = [
+				...desiredLessonRegressions,
+				...removedLessonRegressions,
+			]
+			const hasPlaceholderLessonUpdate = resources.some(
+				(item) =>
+					item.sourceKind === 'lesson' &&
+					item.action !== 'create' &&
+					(item.fields.courseSync as { lessonType?: unknown } | undefined)
+						?.lessonType === 'placeholder',
+			)
 			const planInput = {
 				bindingId: binding.bindingId,
 				sourceRevisionId: revision.sourceRevisionId,
 				courseVersionId: revision.courseVersionId,
 				resources,
 				media,
-				...(lessonRegressions.length > 0 ? { lessonRegressions } : {}),
+				...(lessonRegressions.length > 0 || hasPlaceholderLessonUpdate
+					? { lessonRegressions }
+					: {}),
 			}
 			const plan: SyncPlan = {
 				...planInput,

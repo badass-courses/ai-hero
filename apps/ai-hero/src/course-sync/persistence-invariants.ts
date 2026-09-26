@@ -36,12 +36,41 @@ export type CourseSyncBoundedAutoApplyDecision =
 export function evaluateCourseSyncBoundedAutoApply(
 	plan: SyncPlan,
 ): CourseSyncBoundedAutoApplyDecision {
+	const placeholderUpdate = plan.resources.some(
+		(item) =>
+			item.sourceKind === 'lesson' &&
+			item.action !== 'create' &&
+			(item.fields.courseSync as { lessonType?: unknown } | undefined)
+				?.lessonType === 'placeholder',
+	)
+	const lostVideo = plan.resources.some(
+		(item) =>
+			(item.sourceKind === 'video' || item.sourceKind === 'solution') &&
+			item.detached === true &&
+			item.previousDetached !== true,
+	)
+	if (plan.lessonRegressions === undefined && placeholderUpdate) {
+		return {
+			eligible: false,
+			planSha256: plan.planSha256,
+			reason: 'Preview predates lesson regression tracking; re-preview or apply as operator.',
+			failureCode: 'LEGACY_PLACEHOLDER_PREVIEW_REVIEW_REQUIRED',
+		}
+	}
 	if (plan.lessonRegressions?.length) {
 		return {
 			eligible: false,
 			planSha256: plan.planSha256,
 			reason: `Lesson regressions require operator review: ${plan.lessonRegressions.join(', ')}`,
 			failureCode: 'LESSON_REGRESSION_REVIEW_REQUIRED',
+		}
+	}
+	if (lostVideo) {
+		return {
+			eligible: false,
+			planSha256: plan.planSha256,
+			reason: 'A managed video or solution is being detached.',
+			failureCode: 'LOST_VIDEO_REVIEW_REQUIRED',
 		}
 	}
 	return { eligible: true, planSha256: plan.planSha256 }
