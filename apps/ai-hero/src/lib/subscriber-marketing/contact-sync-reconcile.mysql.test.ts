@@ -198,6 +198,8 @@ integration('contact sync reconcile reads on MySQL', () => {
 		await anchor('rot-180', '2026-03-30 17:45:00.000') // 180 d
 		await anchor('edge-out', '2026-06-28 17:40:00.000') // == after - 90 d: out
 		await anchor('fresh', '2026-09-26 17:50:00.000') // first window
+		// Six steps (540 d) back: no fixed cap on how old an anchor may be.
+		await anchor('rot-540', '2025-04-04 17:55:00.000')
 		const window = {
 			after: '2026-09-26T17:40:00.000Z',
 			through: '2026-09-26T17:58:00.000Z',
@@ -208,6 +210,7 @@ integration('contact sync reconcile reads on MySQL', () => {
 		).resolves.toEqual([
 			{ contactId: 'rot-180', at: '2026-09-26T17:45:00.000Z' },
 			{ contactId: 'rot-90', at: '2026-09-26T17:50:00.000Z' },
+			{ contactId: 'rot-540', at: '2026-09-26T17:55:00.000Z' },
 		])
 		// At most limit + 1, so the reconcile can see it overflowed.
 		await expect(

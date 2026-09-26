@@ -274,8 +274,8 @@ export function reconcileSyncOutcome(
 /**
  * Links re-issue every 90 days from their first issue. A step fell in
  * (after, through] exactly when the first issue sits in (after, through]
- * moved back by a whole number of steps; five steps cover 450 days, past
- * which a path has long finished.
+ * moved back by a whole number of steps. The store asks for as many steps
+ * as its oldest anchor needs, so no anchor is too old to rotate.
  */
 export function linkRotationRanges(
 	args: { after: string; through: string },

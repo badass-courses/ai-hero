@@ -101,12 +101,24 @@ export function createDrizzleContactSyncStore(
 			}))
 		},
 		async rotatedContacts({ after, through, limit }) {
+			// As many 90-day steps as the oldest anchor needs: no fixed cap.
+			const [oldest] = (await db
+				.select({ firstIssue: min(valuePathLinkAnchor.issuedAt) })
+				.from(valuePathLinkAnchor)
+				.where(lte(valuePathLinkAnchor.issuedAt, sqlTimestamp(through)))
+				.limit(1)) as { firstIssue: string | null }[]
+			if (!oldest?.firstIssue) return []
+			const stepCount = Math.ceil(
+				(Date.parse(through) - Date.parse(isoOf(oldest.firstIssue))) /
+					ROTATION_STEP_MS,
+			)
+			if (stepCount < 1) return []
 			// Earliest step per contact, across the ranges, in time order.
 			const steps = new Map<string, number>()
-			for (const [index, range] of linkRotationRanges({
-				after,
-				through,
-			}).entries()) {
+			for (const [index, range] of linkRotationRanges(
+				{ after, through },
+				stepCount,
+			).entries()) {
 				const stepMs = (index + 1) * ROTATION_STEP_MS
 				const rows = (await db
 					.select({
