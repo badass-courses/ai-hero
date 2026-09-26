@@ -360,3 +360,59 @@ describe('contact-sync backfill batches on the bulk lane', () => {
 		vi.unstubAllEnvs()
 	})
 })
+
+describe('a rollback between retries of a mixed bulk run', () => {
+	it('still posts the other sources when the flag goes off after a backfill chunk completed', async () => {
+		// Inngest replays a completed step.run by id; model that memo.
+		const memo = new Map<string, unknown>()
+		const memoStep = (): Step => ({
+			run: vi.fn(async (id: string, operation: () => unknown) => {
+				if (memo.has(id)) return memo.get(id)
+				const result = await operation()
+				memo.set(id, result)
+				return result
+			}),
+		})
+		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
+		const backfill = Array.from({ length: 100 }, (_, index) =>
+			event(
+				'org-aihero',
+				`profile:contact-${index}:v1`,
+				'contact-directory',
+				'contact.profile.updated',
+			),
+		)
+		const ingest = [
+			event('org-aihero', 'directory:seed:contact-x', 'contact-directory'),
+		]
+		const run = () =>
+			registeredBulk.handler({
+				events: [
+					{ data: { events: backfill, source: 'contact-sync-backfill' } },
+					{ data: { events: ingest, source: 'kit-directory-ingest' } },
+				],
+				step: memoStep(),
+			})
+		const posted: unknown[][] = []
+		let calls = 0
+		mocks.deliverBatchOrThrow.mockImplementation(
+			async ({ events }: { events: unknown[] }) => {
+				calls += 1
+				// The second chunk of the first attempt fails.
+				if (calls === 2) throw new Error('drovr 503')
+				posted.push(events)
+				return { accepted: events.length, rejected: 0 }
+			},
+		)
+		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
+		await expect(run()).rejects.toThrow('drovr 503')
+		// drovr rolls back: the flag goes off before the retry.
+		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', '')
+		await run()
+		vi.unstubAllEnvs()
+		expect(posted).toContainEqual(ingest)
+		// And no backfill event reached drovr after the flag went off.
+		const afterOff = posted.slice(1).flat()
+		expect(afterOff.some((e) => backfill.includes(e as never))).toBe(false)
+	})
+})

@@ -235,6 +235,26 @@ export const drovrEventsDeliver = inngest.createFunction(
 	},
 )
 
+const withStepPrefix = (step: DeliverStep, prefix: string): DeliverStep =>
+	({
+		...step,
+		run: (id: string, operation: () => unknown) =>
+			step.run(`${prefix}${id}`, operation),
+	}) as DeliverStep
+
+const combineReceipts = (
+	receipts: DrovrEventsDeliverReceipt[],
+): DrovrEventsDeliverReceipt => {
+	const delivered = receipts.filter((receipt) => receipt.status === 'delivered')
+	if (receipts.length > 0 && delivered.length === 0) return receipts[0]!
+	return {
+		status: 'delivered',
+		accepted: delivered.reduce((sum, receipt) => sum + receipt.accepted, 0),
+		rejected: delivered.reduce((sum, receipt) => sum + receipt.rejected, 0),
+		discarded: delivered.reduce((sum, receipt) => sum + receipt.discarded, 0),
+	}
+}
+
 /**
  * Bulk producers' batches, on their own function and so their own queue.
  * Four slots: drovr folds a birth in about two seconds, and the live
@@ -260,28 +280,43 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 	},
 	{ event: DROVR_EVENTS_DELIVER_BULK_EVENT },
 	async ({ events, step }) => {
+		const isBackfill = (bulkEvent: (typeof events)[number]) =>
+			bulkEvent.data.source === 'contact-sync-backfill'
+		const others = events
+			.filter((bulkEvent) => !isBackfill(bulkEvent))
+			.flatMap((bulkEvent) => bulkEvent.data.events)
+		const backfill = events
+			.filter(isBackfill)
+			.flatMap((bulkEvent) => bulkEvent.data.events)
+		// Other sources keep today's step ids and chunk layout whatever the
+		// flag says, so a retry never shifts their events into a chunk whose
+		// memoized result would replay without posting them.
+		const receipts: DrovrEventsDeliverReceipt[] = []
+		if (others.length > 0 || backfill.length === 0)
+			receipts.push(await deliverBulk(others, step))
+		if (backfill.length === 0) return receipts[0]!
 		// A drovr rollback turns AIH_DROVR_PROFILE_SYNC off; backfill pages
-		// already queued must not reach old drovr code, which burns their
-		// keys without an event-not-live guard. They are dropped, not held:
-		// the backfill is idempotent and re-runs once drovr is back.
-		const syncOn = parseDrovrProfileSyncConfig(process.env).enabled
-		const kept = syncOn
-			? events
-			: events.filter(
-					(bulkEvent) => bulkEvent.data.source !== 'contact-sync-backfill',
-				)
-		const backfillDropped = events
-			.filter((bulkEvent) => !kept.includes(bulkEvent))
-			.reduce((count, bulkEvent) => count + bulkEvent.data.events.length, 0)
-		if (backfillDropped > 0)
+		// still queued (or retrying) must not reach old drovr code, which
+		// burns their keys without an event-not-live guard. They are
+		// dropped, not held, so nothing lands in the window: the backfill is
+		// idempotent and re-runs once drovr is back. Their own step ids
+		// keep them out of the other sources' chunks.
+		if (!parseDrovrProfileSyncConfig(process.env).enabled) {
 			await log.warn('drovr.contact_sync.backfill_dropped', {
-				count: backfillDropped,
+				count: backfill.length,
 				reason: 'AIH_DROVR_PROFILE_SYNC is off; re-run the backfill',
 			})
-		const receipt = await deliverBulk(
-			kept.flatMap((bulkEvent) => bulkEvent.data.events),
-			step,
+			return {
+				...combineReceipts(receipts),
+				backfillDropped: backfill.length,
+			}
+		}
+		receipts.push(
+			await deliverBulk(
+				backfill,
+				withStepPrefix(step, 'contact-sync-backfill:'),
+			),
 		)
-		return backfillDropped > 0 ? { ...receipt, backfillDropped } : receipt
+		return combineReceipts(receipts)
 	},
 )
