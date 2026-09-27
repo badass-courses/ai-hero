@@ -51,6 +51,9 @@ vi.mock('@/lib/subscriber-marketing/drovr-ownership-live', () => ({
 }))
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
 
+import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
+import type { DeferredDrovrEvent } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
+
 import {
 	drovrEventsDeliver,
 	drovrEventsDeliverBulk,
@@ -295,3 +298,215 @@ describe('retired shadow tenant delivery', () => {
 		)
 	})
 })
+
+describe('contact-sync backfill batches on the bulk lane', () => {
+	const backfillEvents = [
+		event(
+			'org-aihero',
+			'profile:contact-1:v1',
+			'contact-directory',
+			'contact.profile.updated',
+		),
+	]
+	const ingestEvents = [
+		event('org-aihero', 'directory:seed:contact-2', 'contact-directory'),
+	]
+
+	beforeEach(() => {
+		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
+	})
+
+	it('drops queued backfill batches while AIH_DROVR_PROFILE_SYNC is off, keeping other bulk sources', async () => {
+		// A drovr rollback turns the flag off; a page already queued must not
+		// reach the old code, which burns keys without an event-not-live guard.
+		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', '')
+		const receipt = await registeredBulk.handler({
+			events: [
+				{ data: { events: backfillEvents, source: 'contact-sync-backfill' } },
+				{ data: { events: ingestEvents, source: 'kit-directory-ingest' } },
+			],
+			step: createStep(),
+		})
+		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledOnce()
+		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledWith(
+			expect.objectContaining({ events: ingestEvents }),
+		)
+		expect(receipt).toMatchObject({ accepted: 1, backfillDropped: 1 })
+		expect(mocks.log.warn).toHaveBeenCalledWith(
+			'drovr.contact_sync.backfill_dropped',
+			expect.objectContaining({ count: 1 }),
+		)
+		vi.unstubAllEnvs()
+	})
+
+	it('delivers backfill batches while the flag is on', async () => {
+		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
+		const receipt = await registeredBulk.handler({
+			events: [
+				{ data: { events: backfillEvents, source: 'contact-sync-backfill' } },
+			],
+			step: createStep(),
+		})
+		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledWith(
+			expect.objectContaining({ events: backfillEvents }),
+		)
+		expect(receipt).toEqual({
+			status: 'delivered',
+			accepted: 1,
+			rejected: 0,
+			discarded: 0,
+		})
+		vi.unstubAllEnvs()
+	})
+})
+
+describe('a rollback between retries of a mixed bulk run', () => {
+	it('still posts the other sources when the flag goes off after a backfill chunk completed', async () => {
+		// Inngest replays a completed step.run by id; model that memo.
+		const memo = new Map<string, unknown>()
+		const memoStep = (): Step => ({
+			run: vi.fn(async (id: string, operation: () => unknown) => {
+				if (memo.has(id)) return memo.get(id)
+				const result = await operation()
+				memo.set(id, result)
+				return result
+			}),
+		})
+		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
+		const backfill = Array.from({ length: 100 }, (_, index) =>
+			event(
+				'org-aihero',
+				`profile:contact-${index}:v1`,
+				'contact-directory',
+				'contact.profile.updated',
+			),
+		)
+		const ingest = [
+			event('org-aihero', 'directory:seed:contact-x', 'contact-directory'),
+		]
+		const run = () =>
+			registeredBulk.handler({
+				events: [
+					{ data: { events: backfill, source: 'contact-sync-backfill' } },
+					{ data: { events: ingest, source: 'kit-directory-ingest' } },
+				],
+				step: memoStep(),
+			})
+		const posted: unknown[][] = []
+		let calls = 0
+		mocks.deliverBatchOrThrow.mockImplementation(
+			async ({ events }: { events: unknown[] }) => {
+				calls += 1
+				// The second chunk of the first attempt fails.
+				if (calls === 2) throw new Error('drovr 503')
+				posted.push(events)
+				return { accepted: events.length, rejected: 0 }
+			},
+		)
+		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
+		await expect(run()).rejects.toThrow('drovr 503')
+		// drovr rolls back: the flag goes off before the retry.
+		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', '')
+		await run()
+		vi.unstubAllEnvs()
+		expect(posted).toContainEqual(ingest)
+		// And no backfill event reached drovr after the flag went off.
+		const afterOff = posted.slice(1).flat()
+		expect(afterOff.some((e) => backfill.includes(e as never))).toBe(false)
+	})
+})
+
+describe('backfill refusals follow the push contract (§4)', () => {
+	const now = Date.parse('2026-10-01T12:00:00.000Z')
+	const profileEvent = (contactId: string) =>
+		event(
+			'org-aihero',
+			`profile:${contactId}:1`,
+			'contact-directory',
+			'contact.profile.updated',
+		)
+	const [notLive, cold, fine] = [
+		{ ...profileEvent('c2'), contactId: 'c2' },
+		{ ...profileEvent('c3'), contactId: 'c3' },
+		{ ...profileEvent('c1'), contactId: 'c1' },
+	]
+
+	it('hands refused backfill events to the straggler retry instead of throwing: event-not-live after 1 h, cold-start at once', async () => {
+		vi.useFakeTimers()
+		vi.setSystemTime(now)
+		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
+		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
+		mocks.deliverBatchOrThrow.mockResolvedValue({
+			accepted: 1,
+			rejected: 0,
+			deferred: [
+				{ event: notLive, reason: 'event-not-live' },
+				{ event: cold, reason: 'cold-start-unhandled' },
+			],
+		})
+		const sent: unknown[] = []
+		const receipt = await registeredBulk.handler({
+			events: [
+				{
+					data: {
+						events: [fine, notLive, cold],
+						source: 'contact-sync-backfill',
+					},
+				},
+			],
+			step: {
+				...createStep(),
+				sendEvent: vi.fn(async (_id: string, payload: unknown) => {
+					sent.push(payload)
+				}),
+			},
+		})
+		vi.useRealTimers()
+		vi.unstubAllEnvs()
+		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledWith(
+			expect.objectContaining({ deferNotLive: true }),
+		)
+		// The straggler retry's own request (its id, and 1 h for a refusal);
+		// a cold start goes at once, since the retry births the actor.
+		expect(sent).toEqual([
+			[
+				contactSyncRetryRequest(
+					[{ event: notLive, reason: 'event-not-live' }] as DeferredDrovrEvent[],
+					1,
+					now,
+				),
+				{
+					...contactSyncRetryRequest(
+						[
+							{ event: cold, reason: 'cold-start-unhandled' },
+						] as DeferredDrovrEvent[],
+						1,
+						now,
+					),
+					ts: now,
+				},
+			],
+		])
+		expect((sent[0] as { ts: number }[])[0]?.ts).toBe(now + 60 * 60 * 1000)
+		expect(receipt).toMatchObject({ accepted: 1, deferred: 2 })
+	})
+
+	it('keeps other bulk sources on the default delivery (no deferral)', async () => {
+		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
+		const ingest = [
+			event('org-aihero', 'directory:seed:contact-z', 'contact-directory'),
+		]
+		await registeredBulk.handler({
+			events: [{ data: { events: ingest, source: 'kit-directory-ingest' } }],
+			step: createStep(),
+		})
+		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledWith({
+			events: ingest,
+			config: {
+				ingestUrl: 'https://drovr.test/events',
+				apiKey: 'authority-key',
+			},
+		})
+	})
+})
+
