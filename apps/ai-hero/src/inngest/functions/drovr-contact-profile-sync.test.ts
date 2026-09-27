@@ -7,6 +7,7 @@ import {
 	contactProfileContentHash,
 	runContactProfileSync,
 } from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
+import { createMemoryContactProfileVersionStore } from '@/lib/subscriber-marketing/contact-profile-version'
 import type { DeferredDrovrEvent } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
 
 const now = Date.parse('2026-09-27T12:00:00.000Z')
@@ -32,6 +33,8 @@ function harness(
 			  }
 			| 'not-configured'
 		onSendingJourney?: boolean
+		reason?: 'journey-entered' | 'offer-issued' | 'reconcile'
+		acknowledged?: boolean
 	} = {},
 ) {
 	const order: string[] = []
@@ -52,7 +55,9 @@ function harness(
 	const versionFor = vi.fn(async () => ({
 		profileVersion: 4,
 		since: '2026-09-26T16:00:00.000Z',
+		acknowledged: overrides.acknowledged ?? false,
 	}))
+	const acknowledge = vi.fn(async () => {})
 	const deliver = vi.fn(async () =>
 		'delivered' in overrides
 			? overrides.delivered!
@@ -66,7 +71,7 @@ function harness(
 			event: {
 				data: {
 					contactId: overrides.contactId ?? 'contact-1',
-					reason: 'journey-entered',
+					reason: overrides.reason ?? 'journey-entered',
 					...('valuePathSlug' in overrides
 						? overrides.valuePathSlug
 							? { valuePathSlug: overrides.valuePathSlug }
@@ -83,10 +88,12 @@ function harness(
 			onSendingJourney,
 			now: () => now,
 			birth,
+			acknowledge,
 		})
 	return {
 		sent,
 		birth,
+		acknowledge,
 		run,
 		step,
 		readSnapshot,
@@ -188,10 +195,11 @@ describe('drovr contact profile sync function', () => {
 		})
 		expect(h.birth).toHaveBeenCalledWith(['contact-1'])
 		expect(h.deliver).toHaveBeenNthCalledWith(2, [profileEvent])
-		expect(h.order.slice(-3)).toEqual([
+		expect(h.order.slice(-4)).toEqual([
 			'deliver-profile',
 			'birth-directory',
 			'redeliver-after-birth',
+			'acknowledge-version',
 		])
 		expect(h.sent).toEqual([])
 	})
@@ -215,6 +223,94 @@ describe('drovr contact profile sync function', () => {
 		})
 		expect(h.versionFor).not.toHaveBeenCalled()
 		expect(h.deliver).not.toHaveBeenCalled()
+	})
+
+	it('a live writer skips an unchanged version drovr already acknowledged', async () => {
+		// The hawk (2026-09-27): signup, owner assignment and the like each
+		// re-pushed the same version; drovr deduped them, 2–4× the calls.
+		for (const reason of ['journey-entered', 'offer-issued'] as const) {
+			const h = harness({ reason, acknowledged: true })
+			await expect(h.run()).resolves.toEqual({
+				status: 'skipped',
+				reason: 'unchanged',
+			})
+			expect(h.deliver).not.toHaveBeenCalled()
+		}
+	})
+
+	it('the reconcile always re-states, acknowledged or not (confirmedAt keeps moving)', async () => {
+		const h = harness({ reason: 'reconcile', acknowledged: true })
+		await expect(h.run()).resolves.toMatchObject({ status: 'sent' })
+		expect(h.deliver).toHaveBeenCalledOnce()
+	})
+
+	it('acknowledges only a full accept', async () => {
+		const accepted = harness()
+		await accepted.run()
+		expect(accepted.acknowledge).toHaveBeenCalledWith('contact-1', 4)
+		expect(accepted.order.at(-1)).toBe('acknowledge-version')
+
+		const rejected = harness({ delivered: { accepted: 0, rejected: 1 } })
+		await rejected.run()
+		expect(rejected.acknowledge).not.toHaveBeenCalled()
+
+		const refused = harness({
+			delivered: {
+				accepted: 0,
+				rejected: 0,
+				deferred: [
+					{
+						event: {
+							tenantId: 'org-aihero',
+							contactId: 'contact-1',
+							journeyId: 'contact-directory',
+							type: 'contact.profile.updated',
+							occurredAt: '2026-09-26T16:00:00.000Z',
+							idempotencyKey: 'profile:contact-1:4',
+						},
+						reason: 'event-not-live',
+					},
+				],
+			},
+		})
+		await refused.run()
+		expect(refused.acknowledge).not.toHaveBeenCalled()
+	})
+
+	it('pushes again after a failed push: an offer is never skipped unless drovr took it', async () => {
+		// With the real store: a failed first push leaves the version
+		// unacknowledged, so the next offer-issued request still delivers.
+		const store = createMemoryContactProfileVersionStore()
+		const deliver = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('drovr 503'))
+			.mockResolvedValueOnce({ accepted: 1, rejected: 0 })
+			.mockResolvedValueOnce({ accepted: 1, rejected: 0 })
+		const run = () =>
+			runContactProfileSync({
+				event: { data: { contactId: 'contact-1', reason: 'offer-issued' } },
+				step: {
+					run: async (_id, callback) => callback(),
+					sendEvent: async () => undefined,
+				},
+				env: { AIH_DROVR_PROFILE_SYNC: 'true' },
+				readSnapshot: async () => snapshot,
+				versionFor: (contactId, hash) => store.versionFor(contactId, hash),
+				acknowledge: (contactId, version) =>
+					store.acknowledge(contactId, version),
+				deliver,
+				ownedPath: async () => undefined,
+				onSendingJourney: async () => true,
+				birth: async () => undefined,
+			})
+		await expect(run()).rejects.toThrow('drovr 503')
+		await expect(run()).resolves.toMatchObject({ status: 'sent' })
+		// Now acknowledged: an unchanged offer-issued request skips.
+		await expect(run()).resolves.toMatchObject({
+			status: 'skipped',
+			reason: 'unchanged',
+		})
+		expect(deliver).toHaveBeenCalledTimes(2)
 	})
 
 	it('spends no version on a contact ai-hero does not have', async () => {
@@ -242,6 +338,7 @@ describe('drovr contact profile sync function', () => {
 			'read-profile',
 			'profile-version',
 			'deliver-profile',
+			'acknowledge-version',
 		])
 		expect(h.readSnapshot).toHaveBeenCalledWith({
 			contactId: 'contact-1',

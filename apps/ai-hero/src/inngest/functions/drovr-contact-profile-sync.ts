@@ -72,6 +72,11 @@ export const drovrContactProfileSync = inngest.createFunction(
 					contactId,
 					contentHash,
 				),
+			acknowledge: (contactId, profileVersion) =>
+				createDrizzleContactProfileVersionStore(db).acknowledge(
+					contactId,
+					profileVersion,
+				),
 			deliver: async (events) => {
 				const ingestUrl = env.DROVR_SHADOW_INGEST_URL
 				const apiKey = drovrApiKeyForTenant(DROVR_AUTHORITY_TENANT_ID)

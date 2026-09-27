@@ -67,6 +67,7 @@ function world() {
 			},
 			onSendingJourney: async () => true,
 			birth: async () => undefined,
+			acknowledge: (id, version) => versions.acknowledge(id, version),
 			ownedPath: async () => undefined,
 		})
 
