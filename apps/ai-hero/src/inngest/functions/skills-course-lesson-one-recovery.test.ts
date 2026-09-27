@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
 	buildPersonalization: vi.fn(),
 	findContactById: vi.fn(),
+	findContactEventsByType: vi.fn(),
+	readDrovrDelivery: vi.fn(),
 	findProviderIdentity: vi.fn(),
 	findValuePathEmailSideEffectIntentsByContact: vi.fn(),
 	getAnswerPages: vi.fn(),
@@ -35,6 +37,7 @@ vi.mock('@/inngest/inngest.server', () => ({
 vi.mock('@/lib/subscriber-marketing/drizzle-capture-repository', () => ({
 	DrizzleCaptureMarketingRepository: class {
 		findContactById = mocks.findContactById
+		findContactEventsByType = mocks.findContactEventsByType
 		findProviderIdentity = mocks.findProviderIdentity
 		findValuePathEmailSideEffectIntentsByContact =
 			mocks.findValuePathEmailSideEffectIntentsByContact
@@ -51,6 +54,9 @@ vi.mock('@/lib/subscriber-marketing/value-path-email-executor', () => ({
 	buildValuePathEmailPersonalization: mocks.buildPersonalization,
 }))
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
+vi.mock('@/lib/subscriber-marketing/drovr-email-delivery', () => ({
+	readDrovrEmailDelivery: mocks.readDrovrDelivery,
+}))
 
 import { RetryAfterError } from 'inngest'
 
@@ -156,6 +162,8 @@ describe('skills course lesson-one recovery', () => {
 			canonicalIntent({ completedAt: '2026-08-20T10:00:00.000Z' }),
 		])
 		mocks.getAnswerPages.mockResolvedValue([])
+		// A legacy contact by default: no drovr owner assignment.
+		mocks.findContactEventsByType.mockResolvedValue([])
 		mocks.buildPersonalization.mockReturnValue({
 			passed: true,
 			fields: {
@@ -334,5 +342,110 @@ describe('skills course lesson-one recovery', () => {
 				to: 'learner@example.com',
 			}),
 		)
+	})
+
+	describe('a drovr-owned contact: verify-or-wait on drovr get_email_delivery (drovr #412)', () => {
+		const drovrOwned = () =>
+			mocks.findContactEventsByType.mockImplementation(
+				async (_contactId: string, eventType: string) =>
+					eventType === 'journey.owner.assigned'
+						? [
+								{
+									providerEventId:
+										'drovr-owner:contact-private-41:value-path-skills-course',
+								},
+							]
+						: [],
+			)
+		const delivery = (status: string, extra: Record<string, unknown> = {}) =>
+			mocks.readDrovrDelivery.mockResolvedValue({
+				ok: true,
+				delivery: {
+					status,
+					route: 'postshiba',
+					deliveredAt: null,
+					provider: null,
+					...extra,
+				},
+			})
+
+		it('is satisfied, with no send, once drovr delivered lesson one (even before the request)', async () => {
+			// cabzpvlx: PostShiba delivered at 15:07:42Z, the automatic
+			// recovery was requested at 15:07:49Z. No ai-hero intent exists.
+			drovrOwned()
+			delivery('delivered', {
+				deliveredAt: '2026-08-20T11:59:53.000Z',
+				provider: 'postshiba',
+			})
+			mocks.findValuePathEmailSideEffectIntentsByContact.mockResolvedValue([])
+			const { step } = createDurableStep()
+			await expect(fn.handler({ event, step })).resolves.toEqual({
+				success: true,
+				requestId: 'request-safe-1',
+				outcome: 'drovr-delivered',
+			})
+			expect(mocks.readDrovrDelivery).toHaveBeenCalledWith(
+				expect.objectContaining({
+					contactId: 'contact-private-41',
+					email: 'ai-hero-skills-workflow.email-0',
+				}),
+			)
+			expect(mocks.sendDelivery).not.toHaveBeenCalled()
+			expect(mocks.readDelivery).not.toHaveBeenCalled()
+		})
+
+		it.each([
+			['pending', 'drovr-send-pending'],
+			['not-started', 'drovr-send-not-started'],
+		])(
+			'waits (polls again later) while drovr answers %s, and never sends',
+			async (status, reason) => {
+				drovrOwned()
+				delivery(status)
+				const { step } = createDurableStep()
+				const attempt = await fn.handler({ event, step }).catch((e) => e)
+				expect(attempt).toBeInstanceOf(RetryAfterError)
+				expect(mocks.log.warn).toHaveBeenCalledWith(
+					'skills.course.lesson_one_recovery_retrying',
+					{ requestId: 'request-safe-1', reason },
+				)
+				expect(mocks.sendDelivery).not.toHaveBeenCalled()
+			},
+		)
+
+		it('retries the read when drovr is unreadable, never falling back to a send', async () => {
+			drovrOwned()
+			mocks.readDrovrDelivery.mockResolvedValue({
+				ok: false,
+				reason: 'drovr answered 503',
+			})
+			// Even though ai-hero's own intent would call for a resend.
+			const { step } = createDurableStep()
+			const attempt = await fn.handler({ event, step }).catch((e) => e)
+			expect(attempt).toBeInstanceOf(RetryAfterError)
+			expect(mocks.log.warn).toHaveBeenCalledWith(
+				'skills.course.lesson_one_recovery_retrying',
+				{ requestId: 'request-safe-1', reason: 'drovr-delivery-unreadable' },
+			)
+			expect(mocks.sendDelivery).not.toHaveBeenCalled()
+		})
+
+		it('keeps the existing path when drovr routes the contact to Kit (not-routed)', async () => {
+			drovrOwned()
+			delivery('not-routed', { route: 'kit' })
+			const { step } = createDurableStep()
+			// ai-hero's canonical email-0 completed before the click: resend.
+			await expect(fn.handler({ event, step })).resolves.toMatchObject({
+				success: true,
+			})
+			expect(mocks.sendDelivery).toHaveBeenCalledTimes(1)
+		})
+
+		it('never reads drovr for a legacy contact drovr does not own', async () => {
+			const { step } = createDurableStep()
+			await fn.handler({ event, step })
+			expect(mocks.readDrovrDelivery).not.toHaveBeenCalled()
+			expect(mocks.sendDelivery).toHaveBeenCalledTimes(1)
+		})
 	})
 })

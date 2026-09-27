@@ -2,6 +2,14 @@ import { env } from '@/env.mjs'
 import { SKILLS_COURSE_LESSON_ONE_RECOVERY_REQUESTED_EVENT } from '@/inngest/events/skills-newsletter'
 import { inngest } from '@/inngest/inngest.server'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
+import { readDrovrEmailDelivery } from '@/lib/subscriber-marketing/drovr-email-delivery'
+import { findJourneyOwnerAssignment } from '@/lib/subscriber-marketing/drovr-ownership'
+import {
+	DROVR_AUTHORITY_TENANT_ID,
+	DROVR_SKILLS_COURSE_JOURNEY_ID,
+	drovrApiKeyForTenant,
+} from '@/lib/subscriber-marketing/drovr-shadow-emitter'
+import { resolveDrovrApiBaseUrl } from '@/lib/subscriber-marketing/drovr-unsubscribe-page'
 import {
 	readSkillsCourseRecoveryDelivery,
 	sendSkillsCourseRecoveryDelivery,
@@ -66,6 +74,50 @@ export const skillsCourseLessonOneRecovery = inngest.createFunction(
 					return retryIdentity(event.data.requestId, 'identity-not-ready')
 				}
 
+				// A drovr-owned contact's lesson one may go out through PostShiba,
+				// where ai-hero holds no intent: ask drovr (#412). The automatic
+				// recovery verifies or waits, never resends on drovr's side, and
+				// never falls back to a send while drovr is unreadable. A legacy
+				// contact (drovr reads it as not-started) keeps the path below.
+				const drovrOwned = await findJourneyOwnerAssignment(
+					repository,
+					contact.id,
+					DROVR_SKILLS_COURSE_JOURNEY_ID,
+				)
+				if (drovrOwned) {
+					const read = await readDrovrEmailDelivery({
+						contactId: contact.id,
+						email: SKILLS_WORKFLOW_EMAIL_ZERO,
+						config: {
+							baseUrl: resolveDrovrApiBaseUrl({
+								DROVR_API_BASE_URL: process.env.DROVR_API_BASE_URL,
+								DROVR_SHADOW_INGEST_URL: process.env.DROVR_SHADOW_INGEST_URL,
+							}),
+							apiKey: drovrApiKeyForTenant(DROVR_AUTHORITY_TENANT_ID),
+						},
+					})
+					if (!read.ok) {
+						return retryIdentity(
+							event.data.requestId,
+							'drovr-delivery-unreadable',
+						)
+					}
+					if (read.delivery.status === 'delivered') {
+						return {
+							contactId: contact.id,
+							sendRequired: false,
+							outcome: 'drovr-delivered' as const,
+						}
+					}
+					if (read.delivery.status === 'pending') {
+						return retryIdentity(event.data.requestId, 'drovr-send-pending')
+					}
+					if (read.delivery.status === 'not-started') {
+						return retryIdentity(event.data.requestId, 'drovr-send-not-started')
+					}
+					// not-routed: the Kit path owns it, as below.
+				}
+
 				const intents =
 					await repository.findValuePathEmailSideEffectIntentsByContact(
 						contact.id,
@@ -101,16 +153,20 @@ export const skillsCourseLessonOneRecovery = inngest.createFunction(
 		)
 
 		if (!identity.sendRequired) {
+			const outcome =
+				'outcome' in identity && identity.outcome
+					? identity.outcome
+					: ('canonical-send-completed' as const)
 			await step.run('log-canonical-send-satisfied-recovery', () =>
 				log.info('skills.course.lesson_one_recovery_satisfied', {
 					requestId: event.data.requestId,
-					outcome: 'canonical-send-completed',
+					outcome,
 				}),
 			)
 			return {
 				success: true as const,
 				requestId: event.data.requestId,
-				outcome: 'canonical-send-completed' as const,
+				outcome,
 			}
 		}
 
@@ -214,7 +270,10 @@ async function retryIdentity(
 		| 'identity-not-ready'
 		| 'canonical-send-not-ready'
 		| 'canonical-send-pending'
-		| 'canonical-completion-unproven',
+		| 'canonical-completion-unproven'
+		| 'drovr-delivery-unreadable'
+		| 'drovr-send-pending'
+		| 'drovr-send-not-started',
 ): Promise<never> {
 	await log.warn('skills.course.lesson_one_recovery_retrying', {
 		requestId,
