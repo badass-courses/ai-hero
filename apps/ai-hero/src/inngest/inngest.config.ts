@@ -46,6 +46,7 @@ import { drovrContactProfileSync } from './functions/drovr-contact-profile-sync'
 import { drovrContactSyncBackfill } from './functions/drovr-contact-sync-backfill'
 import { drovrContactSyncRetry } from './functions/drovr-contact-sync-retry'
 import { drovrContactSyncReconcile } from './functions/drovr-contact-sync-reconcile'
+import { drovrOwnerBirthGuard } from './functions/drovr-owner-birth-guard'
 import { drovrEvergreenSender } from './functions/drovr-evergreen-sender'
 import { drovrSignupDeliver } from './functions/drovr-signup-deliver'
 import { kitDirectoryIngest } from './functions/kit-directory-ingest'
@@ -168,6 +169,7 @@ const allFunctions = [
 	drovrEvergreenSender,
 	drovrContactProfileSync,
 	drovrContactSyncReconcile,
+	drovrOwnerBirthGuard,
 	drovrContactSyncBackfill,
 	drovrContactSyncRetry,
 	drovrSignupDeliver,
