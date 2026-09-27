@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import {
 	CONTACT_SYNC_RETRY_EVENT,
 	type DrovrContactSyncRetryRequested,
@@ -28,13 +30,23 @@ export const STRAGGLER_RETRY_DELAY_MS = 25 * 60 * 60 * 1000
 /** A week of daily refusals is worth a look (the contract expects a day). */
 export const STRAGGLER_STUCK_AFTER_ATTEMPTS = 7
 
+/**
+ * The request is keyed by its events and attempt: Inngest drops a send
+ * whose id it saw within 24 h. A late joiner re-pushes its unchanged
+ * version (same keys) on every change until drovr migrates it, so this
+ * holds one pending retry per contact instead of one per change. The
+ * retry's own next attempt is a new id, and so is any changed content.
+ */
 export function contactSyncRetryRequest(
 	items: DeferredDrovrEvent[],
 	attempt: number,
 	nowMs: number,
-): DrovrContactSyncRetryRequested & { ts: number } {
+): DrovrContactSyncRetryRequested & { id: string; ts: number } {
+	const keys = items.map((item) => item.event.idempotencyKey).sort()
+	const digest = createHash('sha256').update(keys.join('\0')).digest('hex')
 	return {
 		name: CONTACT_SYNC_RETRY_EVENT,
+		id: `contact-sync-retry:${attempt}:${digest}`,
 		ts: nowMs + STRAGGLER_RETRY_DELAY_MS,
 		data: { items, attempt },
 	}
