@@ -114,7 +114,7 @@ describe('contact profile sync: the events drovr stores', () => {
 				type: 'contact.links.issued',
 				occurredAt,
 				idempotencyKey:
-					'links:contact-1:value-path-skills-course:ai-hero-skills-workflow.email-2:2026-09-26T16:49:05.594Z',
+					'links:contact-1:value-path-skills-course:ai-hero-skills-workflow.email-2:2026-09-26T16:49:05.594Z:v7',
 				payload: {
 					profileVersion: 7,
 					journeyId: 'value-path-skills-course',
@@ -131,7 +131,7 @@ describe('contact profile sync: the events drovr stores', () => {
 				journeyId: 'contact-directory',
 				type: 'contact.offer.issued',
 				occurredAt,
-				idempotencyKey: 'offer:contact-1:coupon-9',
+				idempotencyKey: 'offer:contact-1:coupon-9:v7',
 				payload: {
 					profileVersion: 7,
 					journeyId: 'crash-course-evergreen-offer',
@@ -139,6 +139,44 @@ describe('contact profile sync: the events drovr stores', () => {
 				},
 			},
 		])
+	})
+
+	it('re-sends an unchanged link and offer under a new key at the next version', () => {
+		// drovr's directory keeps a link or offer only at a higher version; an
+		// unchanged one re-sent at v+1 under its old key was deduped away, and
+		// drovr #435 then read the contact as stale forever.
+		const at = (profileVersion: number) =>
+			buildContactProfileEvents({
+				contactId: 'contact-1',
+				profileVersion,
+				occurredAt,
+				profile: { email: 'learner@example.test', firstName: 'Ada', holds: [] },
+				links: [
+					{
+						journeyId: 'value-path-skills-course',
+						emailKey: 'ai-hero-skills-workflow.email-2',
+						issuedAt: '2026-09-26T16:49:05.594Z',
+						expiresAt: '2027-01-24T16:49:05.594Z',
+						variables: {},
+						sendTimeFields: [],
+					},
+				],
+				offers: [
+					{
+						journeyId: 'crash-course-evergreen-offer',
+						couponId: 'coupon-9',
+						variables: {},
+					},
+				],
+			}).map((event) => event.idempotencyKey)
+		const [, linkAt7, offerAt7] = at(7)
+		const [, linkAt8, offerAt8] = at(8)
+		// A replay at the same version keeps its key: drovr still dedupes it.
+		expect(at(7)).toEqual(at(7))
+		expect(linkAt8).not.toBe(linkAt7)
+		expect(offerAt8).not.toBe(offerAt7)
+		expect(linkAt8).toMatch(/:v8$/)
+		expect(offerAt8).toMatch(/:v8$/)
 	})
 
 	it('names the send-time stamps drovr fills with the send dueAt, and keeps them out of the stored variables', () => {
