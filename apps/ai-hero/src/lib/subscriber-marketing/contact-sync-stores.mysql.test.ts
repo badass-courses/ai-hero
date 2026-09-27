@@ -77,6 +77,16 @@ integration('contact-sync stores on MySQL', () => {
 		)
 		await pool.query(profileHash)
 		await pool.query(profileHash)
+		// Additive, guarded: runs twice without error.
+		const acknowledged = await fs.readFile(
+			new URL(
+				'../../db/migrations/20260927_ai_hero_contact_profile_ack.sql',
+				import.meta.url,
+			),
+			'utf8',
+		)
+		await pool.query(acknowledged)
+		await pool.query(acknowledged)
 		const database = drizzle(pool, { schema: databaseSchema, mode: 'default' })
 		store = createDrizzleValuePathLinkAnchorStore(database)
 		versions = createDrizzleContactProfileVersionStore(database)
@@ -158,15 +168,18 @@ integration('contact-sync stores on MySQL', () => {
 		await expect(store.versionFor('contact-v', 'hash-a')).resolves.toEqual({
 			profileVersion: 1,
 			since: '2026-09-26T18:00:00.000Z',
+			acknowledged: false,
 		})
 		clock = '2026-09-26T18:15:00.000Z'
 		await expect(store.versionFor('contact-v', 'hash-a')).resolves.toEqual({
 			profileVersion: 1,
 			since: '2026-09-26T18:00:00.000Z',
+			acknowledged: false,
 		})
 		await expect(store.versionFor('contact-v', 'hash-b')).resolves.toEqual({
 			profileVersion: 2,
 			since: '2026-09-26T18:15:00.000Z',
+			acknowledged: false,
 		})
 		const concurrent = await Promise.all(
 			['c', 'd', 'e', 'f'].map((hash) =>
@@ -182,5 +195,43 @@ integration('contact-sync stores on MySQL', () => {
 		const row = (rows as { v: number; h: string }[])[0]
 		expect(Number(row?.v)).toBe(6)
 		expect(row?.h).toMatch(/^[c-f]$/)
+	})
+
+	it('acknowledges a version without moving when it was set (so re-statements stay byte-identical)', async () => {
+		const clock = '2026-09-26T18:00:00.000Z'
+		const store = createDrizzleContactProfileVersionStore(
+			drizzle(pool, { schema: databaseSchema, mode: 'default' }),
+			{ now: () => clock },
+		)
+		await store.versionFor('contact-a', 'hash-a')
+		// updatedAt has ON UPDATE CURRENT_TIMESTAMP and is the version's
+		// since; an acknowledgement must not bump it.
+		await new Promise((resolve) => setTimeout(resolve, 20))
+		await store.acknowledge('contact-a', 1)
+		await expect(store.versionFor('contact-a', 'hash-a')).resolves.toEqual({
+			profileVersion: 1,
+			since: '2026-09-26T18:00:00.000Z',
+			acknowledged: true,
+		})
+		const [rows] = await pool.query(
+			"SELECT acknowledgedVersion AS v, acknowledgedAt AS at FROM AI_ContactProfileVersion WHERE contactId = 'contact-a'",
+		)
+		const row = (rows as { v: number; at: unknown }[])[0]
+		expect(Number(row?.v)).toBe(1)
+		expect(row?.at).toBeTruthy()
+		// A stale acknowledgement (after the content moved on) is a no-op.
+		await expect(
+			store.versionFor('contact-a', 'hash-b'),
+		).resolves.toMatchObject({
+			profileVersion: 2,
+			acknowledged: false,
+		})
+		await store.acknowledge('contact-a', 1)
+		await expect(
+			store.versionFor('contact-a', 'hash-b'),
+		).resolves.toMatchObject({
+			profileVersion: 2,
+			acknowledged: false,
+		})
 	})
 })

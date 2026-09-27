@@ -49,6 +49,12 @@ export const contactProfileVersion = mysqlTable('ContactProfileVersion', {
 		.default(1),
 	/** sha256 of the content last pushed at this version (contactProfileContentHash). */
 	profileHash: varchar('profileHash', { length: 64 }),
+	/** The version drovr last fully accepted; live writers skip an unchanged, acknowledged one. */
+	acknowledgedVersion: bigint('acknowledgedVersion', {
+		mode: 'number',
+		unsigned: true,
+	}),
+	acknowledgedAt: timestamp('acknowledgedAt', { mode: 'string', fsp: 3 }),
 	updatedAt: timestamp('updatedAt', { mode: 'string', fsp: 3 })
 		.notNull()
 		.defaultNow()

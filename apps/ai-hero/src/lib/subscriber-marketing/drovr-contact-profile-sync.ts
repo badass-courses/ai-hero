@@ -397,6 +397,8 @@ export async function runContactProfileSync(args: {
 	now?: () => number
 	/** Births directory actors drovr answered cold-start-unhandled for (§4). */
 	birth: (contactIds: string[]) => Promise<void>
+	/** Records that drovr fully accepted this version (the version store). */
+	acknowledge: (contactId: string, profileVersion: number) => Promise<void>
 }): Promise<ContactProfileSyncReceipt> {
 	const config = parseDrovrProfileSyncConfig(args.env)
 	if (!config.enabled) return { status: 'skipped', reason: config.reason }
@@ -424,10 +426,15 @@ export async function runContactProfileSync(args: {
 	// Addressed by content: unchanged, this is the last version and when it
 	// was set, so the events below are byte-identical to the last push and
 	// drovr dedupes them for free.
-	const { profileVersion, since } = (await args.step.run(
+	const { profileVersion, since, acknowledged } = (await args.step.run(
 		'profile-version',
 		() => args.versionFor(contactId, contactProfileContentHash(snapshot)),
 	)) as ContactProfileVersion
+	// A live writer re-pushing a version drovr already took adds nothing
+	// (drovr dedupes it, but each is an actor call). The reconcile never
+	// skips: its one re-statement per run keeps drovr's confirmedAt moving.
+	if (acknowledged && args.event.data.reason !== 'reconcile')
+		return { status: 'skipped', reason: 'unchanged' }
 	const events = buildContactProfileEvents({
 		contactId,
 		profileVersion,
@@ -458,9 +465,15 @@ export async function runContactProfileSync(args: {
 		const at = (await args.step.run('defer-at', async () =>
 			(args.now ?? Date.now)(),
 		)) as number
+		// The retry may vouch for this version only if nothing was rejected.
 		await args.step.sendEvent(
 			'defer-refused',
-			contactSyncRetryRequest(deferred, 1, at),
+			contactSyncRetryRequest(
+				deferred,
+				1,
+				at,
+				rejected === 0 ? { contactId, profileVersion } : undefined,
+			),
 		)
 		return {
 			status: 'deferred',
@@ -474,6 +487,11 @@ export async function runContactProfileSync(args: {
 	if (rejected > 0) {
 		return { status: 'skipped', reason: 'drovr-rejected' }
 	}
+	// A full accept: nothing rejected or deferred. Only this vouches for
+	// the version, so a refused or failed push is pushed again.
+	await args.step.run('acknowledge-version', () =>
+		args.acknowledge(contactId, profileVersion),
+	)
 	return {
 		status: 'sent',
 		profileVersion,
