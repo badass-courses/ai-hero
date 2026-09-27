@@ -650,7 +650,7 @@ describe('an owner-copy stop drovr says never started its journey', () => {
 	// 2026-09-27: swg6e's unsubscribes were copied to value-path-skills-course,
 	// where it has no actor. drovr's 409 wedged the reconcile for two runs.
 	const ownerStop = (
-		type = 'contact.unsubscribed',
+		type: DrovrShadowEvent['type'] = 'contact.unsubscribed',
 	): DrovrShadowEvent => ({
 		tenantId: 'org-aihero',
 		contactId: 'swg6e',
@@ -682,7 +682,7 @@ describe('an owner-copy stop drovr says never started its journey', () => {
 			'contact.unsubscribed',
 			'contact.bounced',
 			'contact.complained',
-		]) {
+		] as const) {
 			expect(isNeverBornOwnerStop(ownerStop(type), neverBorn)).toBe(true)
 		}
 	})
