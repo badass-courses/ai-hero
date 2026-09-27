@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
 	),
 	drovrApiKeyForTenant: vi.fn(),
 	fanOutOwnedEvents: vi.fn(),
+	isNeverBornOwnerStop: vi.fn(),
 	isShadowNewsletterBirth: vi.fn(),
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 	resolveOwnedContactIds: vi.fn(),
@@ -36,6 +37,7 @@ vi.mock('@/lib/subscriber-marketing/drovr-shadow-delivery', () => ({
 	deliverOrThrow: mocks.deliverOrThrow,
 	deliveryStepId: mocks.deliveryStepId,
 	DROVR_BATCH_MAX: 100,
+	isNeverBornOwnerStop: mocks.isNeverBornOwnerStop,
 }))
 vi.mock('@/lib/subscriber-marketing/drovr-shadow-emitter', () => ({
 	drovrApiKeyForTenant: mocks.drovrApiKeyForTenant,
@@ -102,6 +104,7 @@ beforeEach(() => {
 		tenantId === 'org-aihero' ? 'authority-key' : undefined,
 	)
 	mocks.deliverOrThrow.mockResolvedValue({ status: 'accepted' })
+	mocks.isNeverBornOwnerStop.mockReturnValue(false)
 	mocks.deliverBatchOrThrow.mockImplementation(
 		({ events }: { events: unknown[] }) =>
 			Promise.resolve({ accepted: events.length, rejected: 0 }),
@@ -510,3 +513,77 @@ describe('backfill refusals follow the push contract (§4)', () => {
 	})
 })
 
+describe('owner-copy stops drovr says never started the journey', () => {
+	const neverBorn = {
+		status: 'rejected',
+		httpStatus: 409,
+		problem: { type: 'urn:drovr:problem:contact-never-born' },
+	}
+
+	it('counts them apart from the other rejections, so the reconcile can tell', async () => {
+		const directoryStop = event(
+			'org-aihero',
+			'aihero:contact-event:qp7rf',
+			'contact-directory',
+			'contact.unsubscribed',
+		)
+		const ownerCopy = event(
+			'org-aihero',
+			'owner:aihero:contact-event:qp7rf',
+			'value-path-skills-course',
+			'contact.unsubscribed',
+		)
+		mocks.fanOutOwnedEvents.mockReturnValue([directoryStop, ownerCopy])
+		mocks.deliverOrThrow.mockImplementation(
+			async ({ event: sent }: { event: { idempotencyKey: string } }) =>
+				sent === ownerCopy ? neverBorn : { status: 'accepted' },
+		)
+		mocks.isNeverBornOwnerStop.mockImplementation(
+			(sent: unknown, outcome: unknown) =>
+				sent === ownerCopy && outcome === neverBorn,
+		)
+
+		const receipt = await registered.handler({
+			event: { data: { source: 'contact-event', events: [directoryStop] } },
+			step: createStep(),
+		})
+
+		expect(receipt).toEqual({
+			status: 'delivered',
+			accepted: 1,
+			rejected: 1,
+			discarded: 0,
+			ownerStopsNeverBorn: 1,
+		})
+		expect(mocks.log.info).toHaveBeenCalledWith(
+			'drovr.shadow.owner_stop_never_born',
+			expect.objectContaining({
+				idempotencyKey: 'owner:aihero:contact-event:qp7rf',
+				journeyId: 'value-path-skills-course',
+			}),
+		)
+	})
+
+	it('leaves a rejected directory stop an ordinary rejection', async () => {
+		const directoryStop = event(
+			'org-aihero',
+			'aihero:contact-event:qp7rf',
+			'contact-directory',
+			'contact.unsubscribed',
+		)
+		mocks.fanOutOwnedEvents.mockReturnValue([directoryStop])
+		mocks.deliverOrThrow.mockResolvedValue(neverBorn)
+
+		const receipt = await registered.handler({
+			event: { data: { source: 'contact-event', events: [directoryStop] } },
+			step: createStep(),
+		})
+
+		expect(receipt).toEqual({
+			status: 'delivered',
+			accepted: 0,
+			rejected: 1,
+			discarded: 0,
+		})
+	})
+})

@@ -8,6 +8,7 @@ import {
 	deliveryStepId,
 	DrovrBatchDeliveryFailedError,
 	DrovrDeliveryFailedError,
+	isNeverBornOwnerStop,
 } from './drovr-shadow-delivery'
 import type { DrovrShadowEvent } from './drovr-shadow-emitter'
 
@@ -642,5 +643,72 @@ describe('a directory stop answered cold-start-unhandled is done', () => {
 				warn: vi.fn(),
 			}),
 		).toEqual({ accepted: 0, rejected: 1 })
+	})
+})
+
+describe('an owner-copy stop drovr says never started its journey', () => {
+	// 2026-09-27: swg6e's unsubscribes were copied to value-path-skills-course,
+	// where it has no actor. drovr's 409 wedged the reconcile for two runs.
+	const ownerStop = (
+		type: DrovrShadowEvent['type'] = 'contact.unsubscribed',
+	): DrovrShadowEvent => ({
+		tenantId: 'org-aihero',
+		contactId: 'swg6e',
+		journeyId: 'value-path-skills-course',
+		type,
+		occurredAt: '2026-09-27T13:47:16.000Z',
+		idempotencyKey: 'owner:aihero:contact-event:qp7rf',
+	})
+	const directoryStop: DrovrShadowEvent = {
+		tenantId: 'org-aihero',
+		contactId: 'swg6e',
+		journeyId: 'contact-directory',
+		type: 'contact.unsubscribed',
+		occurredAt: '2026-09-27T13:47:16.000Z',
+		idempotencyKey: 'aihero:contact-event:qp7rf',
+	}
+	const neverBorn = {
+		status: 'rejected' as const,
+		httpStatus: 409,
+		problem: {
+			type: 'urn:drovr:problem:contact-never-born',
+			title: 'Contact never started this journey',
+			status: 409,
+		},
+	}
+
+	it('is recognised for each stop type', () => {
+		for (const type of [
+			'contact.unsubscribed',
+			'contact.bounced',
+			'contact.complained',
+		] as const) {
+			expect(isNeverBornOwnerStop(ownerStop(type), neverBorn)).toBe(true)
+		}
+	})
+
+	it('never covers a directory stop: that is the suppression authority', () => {
+		expect(isNeverBornOwnerStop(directoryStop, neverBorn)).toBe(false)
+	})
+
+	it('never covers a non-stop owner copy', () => {
+		expect(
+			isNeverBornOwnerStop(ownerStop('value-path.answer-selected'), neverBorn),
+		).toBe(false)
+	})
+
+	it('needs the 409 contact-never-born problem exactly', () => {
+		expect(
+			isNeverBornOwnerStop(ownerStop(), {
+				...neverBorn,
+				problem: { type: 'urn:drovr:problem:event-not-live' },
+			}),
+		).toBe(false)
+		expect(
+			isNeverBornOwnerStop(ownerStop(), { ...neverBorn, httpStatus: 422 }),
+		).toBe(false)
+		expect(isNeverBornOwnerStop(ownerStop(), { status: 'accepted' })).toBe(
+			false,
+		)
 	})
 })
