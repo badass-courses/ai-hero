@@ -16,11 +16,7 @@ import {
 	JOURNEY_OWNER_ASSIGNED_EVENT_TYPE,
 	journeyOwnerAssignmentJourneyId,
 } from './drovr-ownership'
-import {
-	DROVR_AUTHORITY_TENANT_ID,
-	DROVR_CONTACT_DIRECTORY_JOURNEY_ID,
-	type DrovrShadowEvent,
-} from './drovr-shadow-emitter'
+import type { DrovrShadowEvent } from './drovr-shadow-emitter'
 
 /**
  * Contact sync, PR 4: the one-time backfill. It pushes a profile (with its
@@ -80,7 +76,7 @@ export type BackfillPorts = {
 		contactId: string,
 		contentHash: string,
 	): Promise<ContactProfileVersion>
-	/** The live dispatch's facts for these unsubscribes (stopFactsFor). */
+	/** The live dispatch's facts for these stops (stopFactsFor), directory stop included. */
 	liveStopFacts(rows: BackfillRow[]): Promise<DrovrShadowEvent[]>
 }
 
@@ -97,18 +93,6 @@ const PHASES: Exclude<BackfillPhase, 'done'>[] = [
 	'double-opt-in',
 	...BACKFILL_STOP_PHASES,
 ]
-
-/**
- * Stops without a live mapping take the Kit webhook's directory types: a
- * complaint is a bounce there.
- */
-const DIRECTORY_STOP_TYPE: Record<
-	'contact.bounced' | 'contact.complained',
-	DrovrShadowEvent['type']
-> = {
-	'contact.bounced': 'contact.bounced',
-	'contact.complained': 'contact.bounced',
-}
 
 export async function runContactSyncBackfillPage(
 	ports: BackfillPorts,
@@ -176,24 +160,14 @@ export async function runContactSyncBackfillPage(
 			contacts += 1
 		}
 		nextStampMs = stampBase + owned.length
-	} else if (phase === 'contact.unsubscribed') {
-		// The live facts, same keys: drovr dedupes what already landed.
+	} else {
+		// Every stop, owned or not: the live facts under the live keys. They
+		// include org-aihero's directory stop, from which drovr writes its
+		// suppression row (mig-10), so a backfill re-send dedupes against
+		// the live one.
 		const stopped = rows.filter((row) => !isSyntheticPrincipalId(row.contactId))
 		events.push(...(await ports.liveStopFacts(stopped)))
 		contacts += stopped.length
-	} else {
-		for (const row of rows) {
-			if (isSyntheticPrincipalId(row.contactId)) continue
-			events.push({
-				tenantId: DROVR_AUTHORITY_TENANT_ID,
-				contactId: row.contactId,
-				journeyId: DROVR_CONTACT_DIRECTORY_JOURNEY_ID,
-				type: DIRECTORY_STOP_TYPE[phase],
-				occurredAt: row.occurredAt,
-				idempotencyKey: `directory:backfill-stop:${row.id}:${phase.slice('contact.'.length)}`,
-			})
-			contacts += 1
-		}
 	}
 	const last = rows.at(-1)
 	const next: BackfillCursor =

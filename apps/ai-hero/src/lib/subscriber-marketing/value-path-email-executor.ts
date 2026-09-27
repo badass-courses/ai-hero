@@ -13,7 +13,12 @@ import {
 	isContentCompleteSkillsWorkflowEmailResourceId,
 	isTerminalSkillsWorkflowEmailResourceId,
 } from './skills-workflow-path'
-import type { ContactRecord, ContactState, SideEffectIntent } from './types'
+import type {
+	ContactEventRecord,
+	ContactRecord,
+	ContactState,
+	SideEffectIntent,
+} from './types'
 import { isValuePathIntentCompleted } from './value-path-completion'
 import { buildValuePathAnswerLinks } from './value-path-answer-links'
 import type { ValuePathAnswerPageResource } from './value-path-answer-page'
@@ -43,6 +48,11 @@ export type ValuePathEmailExecutorRepository = {
 	findCurrentContactState(
 		contactId: string,
 	): Promise<ContactState | undefined> | ContactState | undefined
+	/** The contact's stops, so the send gate refuses a stopped contact. */
+	findContactEventsByType?(
+		contactId: string,
+		eventType: string,
+	): Promise<ContactEventRecord[]> | ContactEventRecord[]
 	updateSideEffectIntent(
 		id: string,
 		patch: Pick<
@@ -226,6 +236,12 @@ async function executeClaimedValuePathEmailIntent(
 		findContactById: (id) => args.repository.findContactById(id),
 		findCurrentContactState: (contactId) =>
 			args.repository.findCurrentContactState(contactId),
+		...(args.repository.findContactEventsByType
+			? {
+					findContactEventsByType: (contactId: string, eventType: string) =>
+						args.repository.findContactEventsByType!(contactId, eventType),
+				}
+			: {}),
 		updateSideEffectIntent: async (id, patch) => {
 			if (id !== args.intent.id) {
 				return await args.repository.updateSideEffectIntent(id, patch)
@@ -329,6 +345,9 @@ export async function executeValuePathEmailIntent(args: {
 		: undefined
 	const email = contact?.email?.trim().toLowerCase()
 	const mode = args.config?.mode ?? metadata.mode
+	// A stopped contact is refused here, as live personalize refuses it
+	// (mig-10, 2026-09-27): contact-sync step 2 removes that other net.
+	const stops = await readContactStops(args.repository, intent.contactId)
 
 	const preflightReasons = [
 		...(contact ? [] : ['contact-missing']),
@@ -356,6 +375,9 @@ export async function executeValuePathEmailIntent(args: {
 			humanReview: shouldBlockValuePathForContactState(state),
 			lifecycle: state?.lifecycle,
 			reviewSignals: state?.reviewSignals,
+			unsubscribed: stops.unsubscribed,
+			bounced: stops.bounced,
+			complained: stops.complained,
 			allowlistedContactIds: args.config?.allowlistedContactIds,
 			allowlistedKitSubscriberIds: args.config?.allowlistedKitSubscriberIds,
 			allowlistedEmails: args.config?.allowlistedEmails,
@@ -1012,5 +1034,25 @@ function summarizeProviderResult(value: unknown) {
 		ok: true,
 		id: record.id,
 		email_address: record.email_address,
+	}
+}
+
+async function readContactStops(
+	repository: ValuePathEmailExecutorRepository,
+	contactId: string,
+): Promise<{ unsubscribed: boolean; bounced: boolean; complained: boolean }> {
+	if (!repository.findContactEventsByType)
+		return { unsubscribed: false, bounced: false, complained: false }
+	const [unsubscribed, bounced, complained] = await Promise.all(
+		['contact.unsubscribed', 'contact.bounced', 'contact.complained'].map(
+			async (eventType) =>
+				(await repository.findContactEventsByType!(contactId, eventType))
+					.length > 0,
+		),
+	)
+	return {
+		unsubscribed: unsubscribed ?? false,
+		bounced: bounced ?? false,
+		complained: complained ?? false,
 	}
 }

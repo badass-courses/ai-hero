@@ -558,3 +558,89 @@ describe('contact sync deferral of refusals (deferNotLive)', () => {
 		).toEqual({ accepted: 0, rejected: 1 })
 	})
 })
+
+/**
+ * mig-10 (2026-09-27): a directory stop for a contact with no directory
+ * actor answers 409 cold-start-unhandled ("rejected" in a batch), but drovr
+ * writes the suppression row before folding, so the stop's effect landed.
+ * Counting it as rejected would stall the reconcile, which throws on any
+ * rejection.
+ */
+describe('a directory stop answered cold-start-unhandled is done', () => {
+	const stop = (type: 'contact.unsubscribed' | 'contact.complained') => ({
+		tenantId: 'org-aihero' as const,
+		contactId: 'c9',
+		journeyId: 'contact-directory' as const,
+		type,
+		occurredAt: '2026-09-27T13:00:00.000Z',
+		idempotencyKey: `aihero:semantic:${type}:9`,
+	})
+	const profile: DrovrShadowEvent = {
+		tenantId: 'org-aihero',
+		contactId: 'c9',
+		journeyId: 'contact-directory',
+		type: 'contact.profile.updated',
+		occurredAt: '2026-09-27T13:00:00.000Z',
+		idempotencyKey: 'profile:c9:1',
+	}
+	const answer = (
+		results: { index: number; status: string; detail?: string }[],
+	) =>
+		vi.fn().mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					accepted: results.filter((r) => r.status === 'accepted').length,
+					rejected: results.filter((r) => r.status === 'rejected').length,
+					failed: results.filter((r) => r.status === 'failed').length,
+					results,
+				}),
+				{ status: 200 },
+			),
+		)
+	const coldStart = {
+		status: 'rejected',
+		detail: 'cold-start-unhandled: no directory actor',
+	}
+
+	it('counts it as accepted in the default mode (the live lane and the reconcile)', async () => {
+		const warn = vi.fn()
+		expect(
+			await deliverBatchOrThrow({
+				events: [stop('contact.unsubscribed'), stop('contact.complained')],
+				config,
+				fetcher: answer([
+					{ index: 0, ...coldStart },
+					{ index: 1, ...coldStart },
+				]),
+				warn,
+			}),
+		).toEqual({ accepted: 2, rejected: 0 })
+		expect(warn).not.toHaveBeenCalledWith(
+			'drovr.shadow.rejected',
+			expect.anything(),
+		)
+	})
+
+	it('counts it as accepted in deferNotLive mode too: no birth, no retry needed', async () => {
+		expect(
+			await deliverBatchOrThrow({
+				events: [stop('contact.unsubscribed')],
+				config,
+				fetcher: answer([{ index: 0, ...coldStart }]),
+				warn: vi.fn(),
+				deferNotLive: true,
+			}),
+		).toEqual({ accepted: 1, rejected: 0 })
+	})
+
+	it('keeps any other event answered cold-start-unhandled as before', async () => {
+		expect(
+			await deliverBatchOrThrow({
+				events: [profile],
+				config,
+				fetcher: answer([{ index: 0, ...coldStart }]),
+				warn: vi.fn(),
+			}),
+		).toEqual({ accepted: 0, rejected: 1 })
+	})
+})

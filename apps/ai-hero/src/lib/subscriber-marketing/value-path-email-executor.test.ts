@@ -102,6 +102,67 @@ describe('value path email executor', () => {
 		expect(result).toMatchObject([{ status: 'planned', intentId: 'intent-1' }])
 	})
 
+	it.each([
+		['contact.unsubscribed', 'unsubscribed'],
+		['contact.bounced', 'bounced'],
+		['contact.complained', 'complained'],
+	])('refuses a contact with a %s stop at the Kit send gate', async (stopType, reason) => {
+		// mig-10 (2026-09-27): the gate supports these, but the executor never
+		// passed them, so only live personalize stood between a stopped
+		// contact and a Kit send.
+		const subscribeToList = vi.fn()
+		const findContactEventsByType = vi.fn(
+			async (_contactId: string, eventType: string) =>
+				eventType === stopType ? [{ id: 'stop-1', eventType } as never] : [],
+		)
+		const result = await executePendingValuePathEmailIntents({
+			repository: {
+				findPendingValuePathEmailSideEffectIntents: vi
+					.fn()
+					.mockResolvedValue([valuePathIntent()]),
+				findContactById: vi.fn().mockResolvedValue({
+					id: 'contact-1',
+					email: 'learner@example.com',
+				}),
+				findCurrentContactState: vi.fn().mockResolvedValue({
+					id: 'state-1',
+					contactId: 'contact-1',
+					lifecycle: 'nurture-ready',
+					reviewSignals: [],
+					humanReview: false,
+				}),
+				findContactEventsByType,
+				updateSideEffectIntent: vi.fn(),
+				claimSideEffectIntentForSend: vi.fn(),
+				finishClaimedSideEffectIntent: vi.fn(),
+			},
+			emailListProvider: { subscribeToList },
+			config: {
+				allowWrite: false,
+				mode: 'scoped-live',
+				allowlistedContactIds: ['contact-1'],
+				allowlistedKitSubscriberIds: ['kit-1'],
+				allowlistedEmails: ['learner@example.com'],
+				enabledValuePathSlugs: ['ai-hero-skills-workflow'],
+				verifiedEmailResourceIds: ['ai-hero-skills-workflow.email-6'],
+				verifiedKitSequenceIds: ['2757205'],
+				allowedActions: ['send-path-emails'],
+			},
+		})
+		expect(result).toMatchObject([
+			{
+				status: 'blocked',
+				intentId: 'intent-1',
+				reviewReasons: expect.arrayContaining([reason]),
+			},
+		])
+		expect(subscribeToList).not.toHaveBeenCalled()
+		expect(findContactEventsByType).toHaveBeenCalledWith(
+			'contact-1',
+			stopType,
+		)
+	})
+
 	it('paces only between queued intents', async () => {
 		vi.useFakeTimers()
 		try {

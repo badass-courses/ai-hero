@@ -116,12 +116,14 @@ function world(
 		},
 		versionFor: (contactId, hash) => versions.versionFor(contactId, hash),
 		// The live dispatch's facts: stands in for stopFactsFor.
+		// Stands in for stopFactsFor: the live mapping's directory stop (every
+		// stop type, owned or not), under the live key.
 		liveStopFacts: async (rows) =>
 			rows.map((row) => ({
-				tenantId: 'org-aihero',
+				tenantId: 'org-aihero' as const,
 				contactId: row.contactId,
-				journeyId: DROVR_SKILLS_COURSE_JOURNEY_ID,
-				type: 'contact.unsubscribed' as const,
+				journeyId: 'contact-directory' as const,
+				type: row.eventType as 'contact.unsubscribed',
 				occurredAt: row.occurredAt,
 				idempotencyKey: `live:${row.id}`,
 			})),
@@ -189,14 +191,15 @@ describe('contact sync backfill', () => {
 		const stops = pages.flatMap((page) =>
 			page.events.filter((event) => event.type !== 'contact.profile.updated'),
 		)
-		// An unsubscribe re-sends the live facts (same keys: drovr dedupes what
-		// already landed); a bounce or complaint has no live mapping, so it
-		// takes the Kit webhook's directory shape, a complaint as a bounce.
+		// Every stop phase re-sends the live facts, under the live keys, for
+		// every stopped contact (owned or not). They include org-aihero's
+		// directory stop, which writes drovr's suppression row (mig-10), and a
+		// backfill re-send dedupes against the live one.
 		expect(stops).toEqual([
 			{
 				tenantId: 'org-aihero',
 				contactId: 'c00001',
-				journeyId: DROVR_SKILLS_COURSE_JOURNEY_ID,
+				journeyId: 'contact-directory',
 				type: 'contact.unsubscribed',
 				occurredAt: '2026-09-10T00:00:00.000Z',
 				idempotencyKey: 'live:u1',
@@ -205,9 +208,9 @@ describe('contact sync backfill', () => {
 				tenantId: 'org-aihero',
 				contactId: 'c00002',
 				journeyId: 'contact-directory',
-				type: 'contact.bounced',
+				type: 'contact.complained',
 				occurredAt: '2026-09-11T00:00:00.000Z',
-				idempotencyKey: 'directory:backfill-stop:k1:complained',
+				idempotencyKey: 'live:k1',
 			},
 		])
 	})
