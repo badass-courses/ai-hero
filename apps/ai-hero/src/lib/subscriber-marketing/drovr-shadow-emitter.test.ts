@@ -403,7 +403,11 @@ describe('drovr shadow fact mapper', () => {
 							'contact-directory',
 							'shadow-newsletter',
 						]
-					: ['value-path-skills-course', 'crash-course-evergreen-offer'],
+					: [
+							'value-path-skills-course',
+							'crash-course-evergreen-offer',
+							'contact-directory',
+						],
 			)
 			if (eventType === 'purchase.recorded') {
 				expect(events[0]?.payload).toEqual({ productId: 'product-ai-hero' })
@@ -417,6 +421,33 @@ describe('drovr shadow fact mapper', () => {
 			} else {
 				expect(events.every((item) => item.payload === undefined)).toBe(true)
 			}
+		},
+	)
+
+	it.each(['contact.unsubscribed', 'contact.bounced', 'contact.complained'])(
+		'sends every %s to org-aihero\'s directory, owned or not, so drovr writes its suppression row',
+		(eventType) => {
+			// mig-10 (2026-09-27): an ai-hero-origin stop only reached the
+			// shadow tenant, so an unowned contact's unsubscribe wrote no
+			// org-aihero suppression row. The directory stop, under the
+			// contact event's own key (drovr keys by tenant, contact, journey
+			// and key, so it never collides with the shadow copies).
+			const events = mapDrovrShadowFact({
+				kind: 'contact-event',
+				event: contactEvent(eventType),
+			})
+			expect(events).toContainEqual({
+				tenantId: 'org-aihero',
+				contactId: 'contact-1',
+				journeyId: 'contact-directory',
+				type: eventType,
+				occurredAt,
+				// The contact event's own key, the same one its shadow copies carry.
+				idempotencyKey: `aihero:semantic:${eventType}:1`,
+			})
+			expect(new Set(events.map((event) => event.idempotencyKey)).size).toBe(1)
+			if (eventType !== 'contact.unsubscribed')
+				expect(events).toHaveLength(1)
 		},
 	)
 

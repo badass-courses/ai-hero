@@ -74,6 +74,9 @@ export type ContactSyncReconcileReceipt = {
 /** ai-hero ContactEvents whose live mapping is a stop fact (drovr-shadow-emitter). */
 export const CONTACT_SYNC_STOP_EVENT_TYPES: ReadonlySet<string> = new Set([
 	'contact.unsubscribed',
+	// Directory stops only (mig-10, 2026-09-27): drovr's suppression row.
+	'contact.bounced',
+	'contact.complained',
 ])
 
 const SYNC_CHUNK = 10
