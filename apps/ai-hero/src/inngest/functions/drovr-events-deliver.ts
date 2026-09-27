@@ -12,6 +12,7 @@ import {
 	deliverOrThrow,
 	deliveryStepId,
 	DROVR_BATCH_MAX,
+	isNeverBornOwnerStop,
 } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
 import type {
 	DeferredDrovrEvent,
@@ -44,6 +45,11 @@ export type DrovrEventsDeliverReceipt = {
 	accepted: number
 	rejected: number
 	discarded: number
+	/**
+	 * Of `rejected`, stops' owner copies drovr refused because the contact
+	 * never started that journey. The directory stop carries the stop.
+	 */
+	ownerStopsNeverBorn?: number
 	reason?: string
 }
 
@@ -135,6 +141,7 @@ const deliverBatch = async (
 
 	let accepted = 0
 	let rejected = 0
+	let ownerStopsNeverBorn = 0
 	for (const drovrEvent of events) {
 		// One bearer key per drovr tenant; a tenant without a key is a
 		// configuration gap, final for this run and loud in the receipt.
@@ -153,8 +160,19 @@ const deliverBatch = async (
 		)
 		if (outcome.status === 'accepted') accepted += 1
 		if (outcome.status === 'rejected') rejected += 1
+		if (isNeverBornOwnerStop(drovrEvent, outcome)) {
+			ownerStopsNeverBorn += 1
+			await log.info('drovr.shadow.owner_stop_never_born', {
+				contactId: drovrEvent.contactId,
+				journeyId: drovrEvent.journeyId,
+				type: drovrEvent.type,
+				idempotencyKey: drovrEvent.idempotencyKey,
+			})
+		}
 	}
-	return { status: 'delivered', accepted, rejected, discarded }
+	return ownerStopsNeverBorn > 0
+		? { status: 'delivered', accepted, rejected, discarded, ownerStopsNeverBorn }
+		: { status: 'delivered', accepted, rejected, discarded }
 }
 
 /**

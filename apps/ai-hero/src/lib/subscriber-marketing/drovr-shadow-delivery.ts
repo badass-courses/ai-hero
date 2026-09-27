@@ -113,6 +113,32 @@ function isDirectoryStop(event: DrovrShadowEvent | undefined): boolean {
 	)
 }
 
+const CONTACT_NEVER_BORN_PROBLEM = 'urn:drovr:problem:contact-never-born'
+
+/**
+ * A stop's owner copy (the fan-out to a journey the contact is owned for)
+ * that drovr refused because the contact has no actor there, and the stop
+ * does not start one. The directory stop is the suppression authority and
+ * stays a real rejection; this copy can never land, so re-sending it only
+ * repeats the refusal (swg6e, 2026-09-27).
+ */
+export function isNeverBornOwnerStop(
+	event: DrovrShadowEvent,
+	outcome: DrovrDeliveryOutcome,
+): boolean {
+	if (outcome.status !== 'rejected' || outcome.httpStatus !== 409) return false
+	const problem = outcome.problem
+	return (
+		event.tenantId === 'org-aihero' &&
+		event.idempotencyKey.startsWith('owner:') &&
+		event.journeyId !== 'contact-directory' &&
+		DIRECTORY_STOP_TYPES.has(event.type) &&
+		typeof problem === 'object' &&
+		problem !== null &&
+		(problem as { type?: unknown }).type === CONTACT_NEVER_BORN_PROBLEM
+	)
+}
+
 /**
  * The contact-sync push contract (§4): event-not-live means the contact's
  * directory actor is still v1; cold-start-unhandled that it has none. Either

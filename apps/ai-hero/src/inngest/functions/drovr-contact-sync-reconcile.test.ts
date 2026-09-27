@@ -11,6 +11,7 @@ function harness(
 		env?: Record<string, string>
 		configured?: boolean
 		stopsRejected?: number
+		ownerStopsNeverBorn?: number
 	} = {},
 ) {
 	const order: string[] = []
@@ -35,6 +36,9 @@ function harness(
 						accepted: 2,
 						rejected: overrides.stopsRejected ?? 0,
 						discarded: 2,
+						...(overrides.ownerStopsNeverBorn === undefined
+							? {}
+							: { ownerStopsNeverBorn: overrides.ownerStopsNeverBorn }),
 					}
 		}),
 	}
@@ -137,6 +141,23 @@ describe('drovr contact sync reconcile function', () => {
 		const h = harness({ stopsRejected: 1 })
 		await expect(h.run()).rejects.toThrow(/stop re-send was not delivered/)
 		expect(h.heartbeat).not.toHaveBeenCalled()
+		expect(h.writeWatermark).not.toHaveBeenCalled()
+	})
+
+	it('advances past owner-copy stops drovr says never started the journey', async () => {
+		// The directory stop landed; the copy to a journey the contact never
+		// joined cannot, and re-sending it every run wedged the watermark.
+		const h = harness({ stopsRejected: 2, ownerStopsNeverBorn: 2 })
+		await expect(h.run()).resolves.toMatchObject({ status: 'synced' })
+		expect(h.heartbeat).toHaveBeenCalled()
+		expect(h.writeWatermark).toHaveBeenCalled()
+	})
+
+	it('still refuses when any other stop was rejected', async () => {
+		const h = harness({ stopsRejected: 2, ownerStopsNeverBorn: 1 })
+		await expect(h.run()).rejects.toThrow(
+			/stop re-send was not delivered: drovr rejected 1/,
+		)
 		expect(h.writeWatermark).not.toHaveBeenCalled()
 	})
 })

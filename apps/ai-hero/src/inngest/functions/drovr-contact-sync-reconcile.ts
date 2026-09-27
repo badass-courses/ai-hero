@@ -85,9 +85,12 @@ export async function reconcileContactSync(args: {
 			if (receipt.status !== 'delivered') {
 				throw new Error(`stop re-send was not delivered: ${receipt.reason}`)
 			}
-			if (receipt.rejected > 0) {
+			// An owner copy to a journey the contact never started cannot land;
+			// its directory stop did. Any other rejection holds the watermark.
+			const rejected = receipt.rejected - (receipt.ownerStopsNeverBorn ?? 0)
+			if (rejected > 0) {
 				throw new Error(
-					`stop re-send was not delivered: drovr rejected ${receipt.rejected}`,
+					`stop re-send was not delivered: drovr rejected ${rejected}`,
 				)
 			}
 		},
