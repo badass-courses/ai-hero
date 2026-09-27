@@ -395,6 +395,25 @@ describe('skills course lesson-one recovery', () => {
 		})
 
 		it.each([
+			["a Kit-pinned contact's old email-0", { route: 'kit', provider: null }],
+			['an unpinned legacy receipt', { route: null, provider: null }],
+		])('treats delivered as done on any route: %s', async (_label, shape) => {
+			// drovr step 101's live checks (the hawk, 2026-09-27): `delivered`
+			// comes back whenever a completion receipt exists, whatever the
+			// route or provider.
+			drovrOwned()
+			delivery('delivered', {
+				deliveredAt: '2026-08-20T11:00:00.000Z',
+				...shape,
+			})
+			const { step } = createDurableStep()
+			await expect(fn.handler({ event, step })).resolves.toMatchObject({
+				outcome: 'drovr-delivered',
+			})
+			expect(mocks.sendDelivery).not.toHaveBeenCalled()
+		})
+
+		it.each([
 			['pending', 'drovr-send-pending'],
 			['not-started', 'drovr-send-not-started'],
 		])(
