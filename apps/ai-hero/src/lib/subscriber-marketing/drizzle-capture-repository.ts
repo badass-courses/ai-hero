@@ -41,7 +41,11 @@ import {
 } from './course-sequence-exhaustion'
 import { AI_HERO_SKILLS_WORKFLOW_COURSE_V1 } from './email-course/definition'
 import { restoreCourseEmailIntent } from './email-course/restoration'
-import { dispatchDrovrShadowFactSafely } from './drovr-shadow-dispatch'
+import { JOURNEY_OWNER_ASSIGNED_EVENT_TYPE } from './drovr-ownership'
+import {
+	dispatchDrovrShadowFactAwaited,
+	dispatchDrovrShadowFactSafely,
+} from './drovr-shadow-dispatch'
 import { excludeLearnerFlowCanary } from './learner-flow-canary-exclusion'
 import {
 	canonicalCompletionForWrite,
@@ -351,7 +355,15 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 				occurredAt: new Date(record.occurredAt),
 				createdAt: new Date(record.createdAt),
 			})
-			dispatchDrovrShadowFactSafely({ kind: 'contact-event', event: record })
+			// A birth is awaited: nothing re-sends one lost to a frozen lambda.
+			if (record.eventType === JOURNEY_OWNER_ASSIGNED_EVENT_TYPE) {
+				await dispatchDrovrShadowFactAwaited({
+					kind: 'contact-event',
+					event: record,
+				})
+			} else {
+				dispatchDrovrShadowFactSafely({ kind: 'contact-event', event: record })
+			}
 			return record
 		} catch (cause) {
 			// The semantic key is the durable replay boundary. A concurrent or

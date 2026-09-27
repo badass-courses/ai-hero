@@ -564,6 +564,42 @@ describe('owner-copy stops drovr says never started the journey', () => {
 		)
 	})
 
+	it('logs each one once, however often Inngest replays the run', async () => {
+		const ownerCopy = event(
+			'org-aihero',
+			'owner:aihero:contact-event:qp7rf',
+			'value-path-skills-course',
+			'contact.unsubscribed',
+		)
+		mocks.fanOutOwnedEvents.mockReturnValue([ownerCopy])
+		mocks.deliverOrThrow.mockResolvedValue(neverBorn)
+		mocks.isNeverBornOwnerStop.mockReturnValue(true)
+		// Inngest memoizes a finished step: a replay gets its output back
+		// without running the body again.
+		const memo = new Map<string, unknown>()
+		const step: Step = {
+			run: vi.fn(async (id: string, operation: () => unknown) => {
+				if (!memo.has(id)) memo.set(id, await operation())
+				return memo.get(id)
+			}),
+		}
+		const input = {
+			event: { data: { source: 'contact-event', events: [ownerCopy] } },
+			step,
+		}
+
+		const first = await registered.handler(input)
+		const replay = await registered.handler(input)
+
+		expect(replay).toEqual(first)
+		expect(replay).toMatchObject({ rejected: 1, ownerStopsNeverBorn: 1 })
+		expect(
+			mocks.log.info.mock.calls.filter(
+				([message]) => message === 'drovr.shadow.owner_stop_never_born',
+			),
+		).toHaveLength(1)
+	})
+
 	it('leaves a rejected directory stop an ordinary rejection', async () => {
 		const directoryStop = event(
 			'org-aihero',

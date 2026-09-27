@@ -282,6 +282,24 @@ export async function dispatchDrovrShadowFact(
 	}
 }
 
+/**
+ * The dispatch, awaited, for a fact whose loss nothing downstream repairs:
+ * an owner assignment is the contact's only authority birth. Fired and
+ * forgotten, the hand-off can die with a lambda frozen before it lands
+ * (six value-path births, 2026-09-27). The fallback still runs, inside the
+ * await. Like the fire-and-forget form, it never throws into the host.
+ */
+export async function dispatchDrovrShadowFactAwaited(
+	fact: DrovrShadowFact,
+	options: DrovrShadowDispatchOptions = {},
+): Promise<void> {
+	try {
+		await dispatchDrovrShadowFact(fact, options)
+	} catch {
+		// Shadow telemetry must never escape into the authoritative host flow.
+	}
+}
+
 export function dispatchDrovrShadowFactSafely(fact: DrovrShadowFact): void {
 	try {
 		void dispatchDrovrShadowFact(fact).catch(() => undefined)
