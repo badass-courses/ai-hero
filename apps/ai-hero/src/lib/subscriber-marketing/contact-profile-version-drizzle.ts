@@ -1,6 +1,6 @@
 import { contactProfileVersion } from '@/db/contact-sync-schema'
 import { isMysqlDuplicateEntryError } from '@/lib/mysql-primary-key-retry'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 
 import type { ContactProfileVersionStore } from './contact-profile-version'
 
@@ -42,6 +42,7 @@ export function createDrizzleContactProfileVersionStore(
 					.select({
 						version: contactProfileVersion.profileVersion,
 						hash: contactProfileVersion.profileHash,
+						acknowledgedVersion: contactProfileVersion.acknowledgedVersion,
 						updatedAt: contactProfileVersion.updatedAt,
 					})
 					.from(contactProfileVersion)
@@ -49,6 +50,7 @@ export function createDrizzleContactProfileVersionStore(
 					.limit(1)) as {
 					version: number | string
 					hash: string | null
+					acknowledgedVersion: number | string | null
 					updatedAt: string | Date
 				}[]
 				const current = rows[0]
@@ -56,6 +58,9 @@ export function createDrizzleContactProfileVersionStore(
 					return {
 						profileVersion: Number(current.version),
 						since: isoOf(current.updatedAt),
+						acknowledged:
+							current.acknowledgedVersion !== null &&
+							Number(current.acknowledgedVersion) === Number(current.version),
 					}
 				}
 				const since = (options.now ?? (() => new Date().toISOString()))()
@@ -67,7 +72,7 @@ export function createDrizzleContactProfileVersionStore(
 							profileHash: contentHash,
 							updatedAt: sqlTimestamp(since),
 						})
-						return { profileVersion: 1, since }
+						return { profileVersion: 1, since, acknowledged: false }
 					} catch (error) {
 						if (isMysqlDuplicateEntryError(error)) continue
 						throw error
@@ -88,12 +93,31 @@ export function createDrizzleContactProfileVersionStore(
 						),
 					)
 				if (affectedRows(result) === 1) {
-					return { profileVersion: version + 1, since }
+					return { profileVersion: version + 1, since, acknowledged: false }
 				}
 			}
 			throw new Error(
 				`contact profile version for ${contactId} was contended ${BUMP_ATTEMPTS} times`,
 			)
+		},
+		async acknowledge(contactId, profileVersion) {
+			const at = (options.now ?? (() => new Date().toISOString()))()
+			// Only the version drovr took, and never a newer one. updatedAt
+			// is the version's since (and has ON UPDATE CURRENT_TIMESTAMP):
+			// assigning it to itself keeps every re-statement byte-identical.
+			await db
+				.update(contactProfileVersion)
+				.set({
+					acknowledgedVersion: profileVersion,
+					acknowledgedAt: sqlTimestamp(at),
+					updatedAt: sql`${contactProfileVersion.updatedAt}`,
+				})
+				.where(
+					and(
+						byContact(contactId),
+						eq(contactProfileVersion.profileVersion, profileVersion),
+					),
+				)
 		},
 	}
 }

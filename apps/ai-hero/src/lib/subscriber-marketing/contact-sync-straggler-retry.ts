@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import {
 	CONTACT_SYNC_RETRY_EVENT,
 	type DrovrContactSyncRetryRequested,
@@ -17,26 +19,43 @@ import type { ContactRecord } from './types'
 export { CONTACT_SYNC_RETRY_EVENT }
 
 /**
- * The contact-sync push contract (§4): an event drovr refused as
- * event-not-live (or cold-start-unhandled) recorded nothing and left its key
- * unconsumed. It is re-sent unchanged, same key, after drovr's daily
- * straggler pass has had a chance to migrate the contact, and again each
- * day until drovr takes it. Never dropped, never re-keyed.
+ * The contact-sync push contract (§4, revised 2026-09-27): an event drovr
+ * refused as event-not-live (or cold-start-unhandled) recorded nothing and
+ * left its key unconsumed. It is re-sent unchanged, same key, 1 h after the
+ * refusal and then every 2 h, matching drovr's 2-hourly straggler pass
+ * (worst case ~4 h). Never dropped, never re-keyed.
  */
-export const STRAGGLER_RETRY_DELAY_MS = 25 * 60 * 60 * 1000
+export function stragglerRetryDelayMs(attempt: number): number {
+	return (attempt <= 1 ? 1 : 2) * 60 * 60 * 1000
+}
 
-/** A week of daily refusals is worth a look (the contract expects a day). */
-export const STRAGGLER_STUCK_AFTER_ATTEMPTS = 7
+/** About a day of refusals (1 h + 11 × 2 h) is worth a look. */
+export const STRAGGLER_STUCK_AFTER_ATTEMPTS = 12
+
+/**
+ * The request is keyed by its events and attempt: Inngest drops a send
+ * whose id it saw within 24 h. A late joiner re-pushes its unchanged
+ * version (same keys) on every change until drovr migrates it, so this
+ * holds one pending retry per contact instead of one per change. The
+ * retry's own next attempt is a new id, and so is any changed content.
+ */
+export type RetryAcknowledgement = NonNullable<
+	DrovrContactSyncRetryRequested['data']['acknowledge']
+>
 
 export function contactSyncRetryRequest(
 	items: DeferredDrovrEvent[],
 	attempt: number,
 	nowMs: number,
-): DrovrContactSyncRetryRequested & { ts: number } {
+	acknowledge?: RetryAcknowledgement,
+): DrovrContactSyncRetryRequested & { id: string; ts: number } {
+	const keys = items.map((item) => item.event.idempotencyKey).sort()
+	const digest = createHash('sha256').update(keys.join('\0')).digest('hex')
 	return {
 		name: CONTACT_SYNC_RETRY_EVENT,
-		ts: nowMs + STRAGGLER_RETRY_DELAY_MS,
-		data: { items, attempt },
+		id: `contact-sync-retry:${attempt}:${digest}`,
+		ts: nowMs + stragglerRetryDelayMs(attempt),
+		data: acknowledge ? { items, attempt, acknowledge } : { items, attempt },
 	}
 }
 
@@ -134,7 +153,7 @@ export type ContactSyncRetryReceipt =
 	  }
 
 export async function runContactSyncStragglerRetry(args: {
-	event: { data: { items: DeferredDrovrEvent[]; attempt: number } }
+	event: { data: DrovrContactSyncRetryRequested['data'] }
 	step: RetryStep
 	env: Readonly<Record<string, string | undefined>>
 	now: () => number
@@ -143,21 +162,25 @@ export async function runContactSyncStragglerRetry(args: {
 	warn: (event: string, fields: Record<string, unknown>) => unknown
 	/** Births these contacts' directory actors (directoryBirthEvents). */
 	birth: (contactIds: string[]) => Promise<void>
+	/** Records that drovr fully accepted a profile version (the version store). */
+	acknowledge: (contactId: string, profileVersion: number) => Promise<void>
 }): Promise<ContactSyncRetryReceipt> {
-	const { items, attempt } = args.event.data
+	const { items, attempt, acknowledge } = args.event.data
 	const nowMs = (await args.step.run('now', async () => args.now())) as number
 	const config = parseDrovrProfileSyncConfig(args.env)
 	if (!config.enabled) {
 		// A drovr rollback turns the flag off: nothing may land in the
-		// window, and nothing is dropped either.
+		// window, and nothing is dropped either. Always the next attempt:
+		// the same attempt would reuse this event's id, which Inngest drops
+		// as a duplicate within 24 h.
 		await args.step.sendEvent(
 			'reschedule',
-			contactSyncRetryRequest(items, attempt, nowMs),
+			contactSyncRetryRequest(items, attempt + 1, nowMs, acknowledge),
 		)
 		return {
 			status: 'rescheduled',
 			deferred: items.length,
-			attempt,
+			attempt: attempt + 1,
 			reason: config.reason,
 		}
 	}
@@ -171,12 +194,20 @@ export async function runContactSyncStragglerRetry(args: {
 		deliver: args.deliver,
 	})
 	const refused = resolved.deferred
-	if (refused.length === 0)
+	const rejected = outcome.rejected + resolved.rejected
+	if (refused.length === 0) {
+		// drovr now holds every event of the version (Macroscope on #319):
+		// acknowledge it, so live writers stop re-pushing it unchanged.
+		if (acknowledge && rejected === 0)
+			await args.step.run('acknowledge-version', () =>
+				args.acknowledge(acknowledge.contactId, acknowledge.profileVersion),
+			)
 		return {
 			status: 'delivered',
 			accepted: outcome.accepted + resolved.accepted,
-			rejected: outcome.rejected + resolved.rejected,
+			rejected,
 		}
+	}
 	if (attempt >= STRAGGLER_STUCK_AFTER_ATTEMPTS)
 		await args.warn('drovr.contact_sync.straggler_stuck', {
 			attempt,
@@ -185,7 +216,7 @@ export async function runContactSyncStragglerRetry(args: {
 		})
 	await args.step.sendEvent(
 		'reschedule',
-		contactSyncRetryRequest(refused, attempt + 1, nowMs),
+		contactSyncRetryRequest(refused, attempt + 1, nowMs, acknowledge),
 	)
 	return {
 		status: 'rescheduled',

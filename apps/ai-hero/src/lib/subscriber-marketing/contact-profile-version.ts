@@ -10,6 +10,8 @@ export type ContactProfileVersion = {
 	profileVersion: number
 	/** When this version was set; every event of the version carries it. */
 	since: string
+	/** drovr fully accepted this exact version (acknowledge). */
+	acknowledged: boolean
 }
 
 export type ContactProfileVersionStore = {
@@ -17,6 +19,11 @@ export type ContactProfileVersionStore = {
 		contactId: string,
 		contentHash: string,
 	): Promise<ContactProfileVersion>
+	/**
+	 * Records that drovr fully accepted `profileVersion`. A no-op when the
+	 * contact has moved on to a newer version since.
+	 */
+	acknowledge(contactId: string, profileVersion: number): Promise<void>
 }
 
 export function createMemoryContactProfileVersionStore(
@@ -25,13 +32,22 @@ export function createMemoryContactProfileVersionStore(
 	const now = options.now ?? (() => new Date().toISOString())
 	const rows = new Map<
 		string,
-		ContactProfileVersion & { contentHash: string }
+		{
+			profileVersion: number
+			since: string
+			contentHash: string
+			acknowledgedVersion?: number
+		}
 	>()
 	return {
 		async versionFor(contactId, contentHash) {
 			const current = rows.get(contactId)
 			if (current?.contentHash === contentHash) {
-				return { profileVersion: current.profileVersion, since: current.since }
+				return {
+					profileVersion: current.profileVersion,
+					since: current.since,
+					acknowledged: current.acknowledgedVersion === current.profileVersion,
+				}
 			}
 			const next = {
 				profileVersion: (current?.profileVersion ?? 0) + 1,
@@ -39,7 +55,16 @@ export function createMemoryContactProfileVersionStore(
 				contentHash,
 			}
 			rows.set(contactId, next)
-			return { profileVersion: next.profileVersion, since: next.since }
+			return {
+				profileVersion: next.profileVersion,
+				since: next.since,
+				acknowledged: false,
+			}
+		},
+		async acknowledge(contactId, profileVersion) {
+			const current = rows.get(contactId)
+			if (current?.profileVersion === profileVersion)
+				current.acknowledgedVersion = profileVersion
 		},
 	}
 }
