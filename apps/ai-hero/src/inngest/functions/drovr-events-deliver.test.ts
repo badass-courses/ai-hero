@@ -51,6 +51,8 @@ vi.mock('@/lib/subscriber-marketing/drovr-ownership-live', () => ({
 }))
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
 
+import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
+
 import {
 	drovrEventsDeliver,
 	drovrEventsDeliverBulk,
@@ -428,7 +430,7 @@ describe('backfill refusals follow the push contract (§4)', () => {
 		{ ...profileEvent('c1'), contactId: 'c1' },
 	]
 
-	it('hands refused backfill events to the straggler retry instead of throwing: event-not-live a day out, cold-start at once', async () => {
+	it('hands refused backfill events to the straggler retry instead of throwing: event-not-live after 1 h, cold-start at once', async () => {
 		vi.useFakeTimers()
 		vi.setSystemTime(now)
 		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
@@ -463,26 +465,26 @@ describe('backfill refusals follow the push contract (§4)', () => {
 		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledWith(
 			expect.objectContaining({ deferNotLive: true }),
 		)
+		// The straggler retry's own request (its id, and 1 h for a refusal);
+		// a cold start goes at once, since the retry births the actor.
 		expect(sent).toEqual([
 			[
+				contactSyncRetryRequest(
+					[{ event: notLive, reason: 'event-not-live' }],
+					1,
+					now,
+				),
 				{
-					name: 'drovr/contact-sync.retry-requested',
-					ts: now + 25 * 60 * 60 * 1000,
-					data: {
-						items: [{ event: notLive, reason: 'event-not-live' }],
-						attempt: 1,
-					},
-				},
-				{
-					name: 'drovr/contact-sync.retry-requested',
+					...contactSyncRetryRequest(
+						[{ event: cold, reason: 'cold-start-unhandled' }],
+						1,
+						now,
+					),
 					ts: now,
-					data: {
-						items: [{ event: cold, reason: 'cold-start-unhandled' }],
-						attempt: 1,
-					},
 				},
 			],
 		])
+		expect((sent[0] as { ts: number }[])[0]?.ts).toBe(now + 60 * 60 * 1000)
 		expect(receipt).toMatchObject({ accepted: 1, deferred: 2 })
 	})
 
