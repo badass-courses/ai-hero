@@ -170,6 +170,11 @@ export async function buildValuePathJourneyLinks(args: {
  * offers it carries. drovr keeps the highest version per contact (and, for
  * links, per journey and email), so a replay or an out-of-order delivery
  * converges; each key is replay-safe on its own.
+ *
+ * Every key carries the version. drovr takes a link or offer only at a
+ * higher version, so an unchanged one re-sent at v+1 must be a new event:
+ * under a version-free key it was deduped, the directory kept it at v, and
+ * drovr's step 2 read the contact as stale for good.
  */
 export function buildContactProfileEvents(args: {
 	contactId: string
@@ -197,7 +202,7 @@ export function buildContactProfileEvents(args: {
 			(link): DrovrShadowEvent => ({
 				...base,
 				type: 'contact.links.issued',
-				idempotencyKey: `links:${args.contactId}:${link.journeyId}:${link.emailKey}:${link.issuedAt}`,
+				idempotencyKey: `links:${args.contactId}:${link.journeyId}:${link.emailKey}:${link.issuedAt}:v${profileVersion}`,
 				payload: { profileVersion, ...link },
 			}),
 		),
@@ -205,7 +210,7 @@ export function buildContactProfileEvents(args: {
 			({ couponId, ...offer }): DrovrShadowEvent => ({
 				...base,
 				type: 'contact.offer.issued',
-				idempotencyKey: `offer:${args.contactId}:${couponId}`,
+				idempotencyKey: `offer:${args.contactId}:${couponId}:v${profileVersion}`,
 				payload: { profileVersion, ...offer },
 			}),
 		),
