@@ -13,6 +13,11 @@ import {
 	deliveryStepId,
 	DROVR_BATCH_MAX,
 } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
+import type {
+	DeferredDrovrEvent,
+	DrovrBatchOutcome,
+} from '@/lib/subscriber-marketing/drovr-shadow-delivery'
+import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
 import {
 	drovrApiKeyForTenant,
 	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
@@ -24,12 +29,17 @@ import {
 	fanOutOwnedEvents,
 	isShadowNewsletterBirth,
 } from '@/lib/subscriber-marketing/drovr-ownership'
+import { parseDrovrProfileSyncConfig } from '@/lib/subscriber-marketing/drovr-contact-profile-sync-requests'
 import { resolveOwnedContactIds } from '@/lib/subscriber-marketing/drovr-ownership-live'
 import { withoutSyntheticContacts } from '@/lib/synthetic-principal'
 import { log } from '@/server/logger'
 import type { GetStepTools } from 'inngest'
 
 export type DrovrEventsDeliverReceipt = {
+	/** Backfill events drovr refused, handed to the straggler retry. */
+	deferred?: number
+	/** Backfill events dropped because contact sync was off. */
+	backfillDropped?: number
 	status: 'delivered' | 'skipped'
 	accepted: number
 	rejected: number
@@ -157,6 +167,11 @@ const deliverBatch = async (
 const deliverBulk = async (
 	batch: DrovrEventsDeliver['data']['events'],
 	step: DeliverStep,
+	options: {
+		/** Contact sync: refusals come back in `refused`, never thrown. */
+		deferNotLive?: boolean
+		refused?: DeferredDrovrEvent[]
+	} = {},
 ): Promise<DrovrEventsDeliverReceipt> => {
 	const ingestUrl = env.DROVR_SHADOW_INGEST_URL
 	if (!ingestUrl) return NOT_CONFIGURED
@@ -196,11 +211,16 @@ const deliverBulk = async (
 				chunkIndex * DROVR_BATCH_MAX,
 				(chunkIndex + 1) * DROVR_BATCH_MAX,
 			)
-			const outcome = await step.run(batchStepId(tenantId, chunkIndex), () =>
-				deliverBatchOrThrow({ events: chunk, config }),
-			)
+			const outcome = (await step.run(batchStepId(tenantId, chunkIndex), () =>
+				deliverBatchOrThrow(
+					options.deferNotLive
+						? { events: chunk, config, deferNotLive: true }
+						: { events: chunk, config },
+				),
+			)) as DrovrBatchOutcome
 			accepted += outcome.accepted
 			rejected += outcome.rejected
+			options.refused?.push(...(outcome.deferred ?? []))
 		}
 	}
 	return { status: 'delivered', accepted, rejected, discarded }
@@ -232,6 +252,26 @@ export const drovrEventsDeliver = inngest.createFunction(
 	},
 )
 
+const withStepPrefix = (step: DeliverStep, prefix: string): DeliverStep =>
+	({
+		...step,
+		run: (id: string, operation: () => unknown) =>
+			step.run(`${prefix}${id}`, operation),
+	}) as DeliverStep
+
+const combineReceipts = (
+	receipts: DrovrEventsDeliverReceipt[],
+): DrovrEventsDeliverReceipt => {
+	const delivered = receipts.filter((receipt) => receipt.status === 'delivered')
+	if (receipts.length > 0 && delivered.length === 0) return receipts[0]!
+	return {
+		status: 'delivered',
+		accepted: delivered.reduce((sum, receipt) => sum + receipt.accepted, 0),
+		rejected: delivered.reduce((sum, receipt) => sum + receipt.rejected, 0),
+		discarded: delivered.reduce((sum, receipt) => sum + receipt.discarded, 0),
+	}
+}
+
 /**
  * Bulk producers' batches, on their own function and so their own queue.
  * Four slots: drovr folds a birth in about two seconds, and the live
@@ -256,9 +296,65 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 		batchEvents: BULK_DELIVERY_BATCH,
 	},
 	{ event: DROVR_EVENTS_DELIVER_BULK_EVENT },
-	async ({ events, step }) =>
-		deliverBulk(
-			events.flatMap((bulkEvent) => bulkEvent.data.events),
-			step,
-		),
+	async ({ events, step }) => {
+		const isBackfill = (bulkEvent: (typeof events)[number]) =>
+			bulkEvent.data.source === 'contact-sync-backfill'
+		const others = events
+			.filter((bulkEvent) => !isBackfill(bulkEvent))
+			.flatMap((bulkEvent) => bulkEvent.data.events)
+		const backfill = events
+			.filter(isBackfill)
+			.flatMap((bulkEvent) => bulkEvent.data.events)
+		// Other sources keep today's step ids and chunk layout whatever the
+		// flag says, so a retry never shifts their events into a chunk whose
+		// memoized result would replay without posting them.
+		const receipts: DrovrEventsDeliverReceipt[] = []
+		if (others.length > 0 || backfill.length === 0)
+			receipts.push(await deliverBulk(others, step))
+		if (backfill.length === 0) return receipts[0]!
+		// A drovr rollback turns AIH_DROVR_PROFILE_SYNC off; backfill pages
+		// still queued (or retrying) must not reach old drovr code, which
+		// burns their keys without an event-not-live guard. They are
+		// dropped, not held, so nothing lands in the window: the backfill is
+		// idempotent and re-runs once drovr is back. Their own step ids
+		// keep them out of the other sources' chunks.
+		if (!parseDrovrProfileSyncConfig(process.env).enabled) {
+			await log.warn('drovr.contact_sync.backfill_dropped', {
+				count: backfill.length,
+				reason: 'AIH_DROVR_PROFILE_SYNC is off; re-run the backfill',
+			})
+			return {
+				...combineReceipts(receipts),
+				backfillDropped: backfill.length,
+			}
+		}
+		// Contract §4: refusals go to the straggler retry, unchanged and
+		// under their keys; cold-start at once (the retry births the actor
+		// and pushes again), event-not-live after drovr's daily pass.
+		const backfillStep = withStepPrefix(step, 'contact-sync-backfill:')
+		const refused: DeferredDrovrEvent[] = []
+		receipts.push(
+			await deliverBulk(backfill, backfillStep, {
+				deferNotLive: true,
+				refused,
+			}),
+		)
+		if (refused.length === 0) return combineReceipts(receipts)
+		const at = (await backfillStep.run('defer-at', async () =>
+			Date.now(),
+		)) as number
+		const notLive = refused.filter(
+			(item) => item.reason !== 'cold-start-unhandled',
+		)
+		const coldStart = refused.filter(
+			(item) => item.reason === 'cold-start-unhandled',
+		)
+		await step.sendEvent('contact-sync-backfill:defer-refused', [
+			...(notLive.length > 0 ? [contactSyncRetryRequest(notLive, 1, at)] : []),
+			...(coldStart.length > 0
+				? [{ ...contactSyncRetryRequest(coldStart, 1, at), ts: at }]
+				: []),
+		])
+		return { ...combineReceipts(receipts), deferred: refused.length }
+	},
 )

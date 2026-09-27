@@ -75,6 +75,7 @@ export type DrovrShadowEvent = {
 		| 'contact.created'
 		| 'contact.confirmed'
 		| 'contact.bounced'
+		| 'contact.complained'
 		| 'value-path.answer-selected'
 		| 'coupon.issued'
 		| 'coupon.failed'
@@ -371,6 +372,11 @@ function mapContactEvent(event: ContactEventRecord): DrovrShadowEvent[] {
 		}
 		case 'contact.unsubscribed':
 			return bothJourneys(base, 'contact.unsubscribed')
+		// No shadow journey takes these; the directory stop writes drovr's
+		// suppression row (mig-10, 2026-09-27).
+		case 'contact.bounced':
+		case 'contact.complained':
+			return [directoryStop(base, event.eventType)]
 		case 'purchase.recorded': {
 			const productId = purchaseProductId(event.payloadSummary.keywords)
 			if (!productId) return []
@@ -780,6 +786,11 @@ function bothJourneys(
 		type,
 		...(payload ? { payload } : {}),
 	}))
+	// Every stop also reaches org-aihero's directory, owned or not: drovr
+	// writes its scope-all suppression row from it before folding, and a
+	// contact that drovr owns only later is already suppressed.
+	if (type === 'contact.unsubscribed')
+		return [...shadowEvents, directoryStop(base, type)]
 	if (type !== 'purchase.recorded') return shadowEvents
 	return [
 		...shadowEvents,
@@ -791,6 +802,26 @@ function bothJourneys(
 			...(payload ? { payload } : {}),
 		},
 	]
+}
+
+/**
+ * A stop for org-aihero's contact directory under the contact event's own
+ * key (drovr keys events by tenant, contact, journey and key, so it never
+ * collides with the shadow copies). The live emitter and the contact-sync
+ * backfill both send exactly this, so a re-send dedupes.
+ */
+function directoryStop(
+	base: Pick<DrovrShadowEvent, 'contactId' | 'occurredAt' | 'idempotencyKey'>,
+	type: 'contact.unsubscribed' | 'contact.bounced' | 'contact.complained',
+): DrovrShadowEvent {
+	return {
+		tenantId: DROVR_AUTHORITY_TENANT_ID,
+		contactId: base.contactId,
+		journeyId: DROVR_CONTACT_DIRECTORY_JOURNEY_ID,
+		type,
+		occurredAt: base.occurredAt,
+		idempotencyKey: base.idempotencyKey,
+	}
 }
 
 function ownerAssignmentJourneyId(

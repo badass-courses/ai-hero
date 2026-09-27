@@ -312,13 +312,19 @@ describe('drovr shadow dispatch', () => {
 
 		const delivered = fallback.mock.calls[0]?.[0] as Array<{
 			tenantId: string
+			journeyId: string
 			type: string
 		}>
-		expect(delivered.map((event) => event.tenantId).sort()).toEqual([
-			'org-aihero',
-			'org-aihero',
-			'org-aihero-shadow',
-			'org-aihero-shadow',
+		// Two owner copies, plus the directory stop every unsubscribe carries
+		// (mig-10), which is authority-addressed already and never fanned out.
+		expect(
+			delivered.map((event) => `${event.tenantId}/${event.journeyId}`).sort(),
+		).toEqual([
+			'org-aihero-shadow/crash-course-evergreen-offer',
+			'org-aihero-shadow/value-path-skills-course',
+			'org-aihero/contact-directory',
+			'org-aihero/crash-course-evergreen-offer',
+			'org-aihero/value-path-skills-course',
 		])
 		expect(
 			delivered.every((event) => event.type === 'contact.unsubscribed'),

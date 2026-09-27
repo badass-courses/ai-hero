@@ -333,6 +333,7 @@ function bind(repository: InMemorySubscriberMarketingRepository) {
 		findContactById: repository.findContactById.bind(repository),
 		findCurrentContactState:
 			repository.findCurrentContactState.bind(repository),
+		findContactEventsByType: async () => [],
 		updateSideEffectIntent: repository.updateSideEffectIntent.bind(repository),
 		claimSideEffectIntentForSend:
 			repository.claimSideEffectIntentForSend.bind(repository),

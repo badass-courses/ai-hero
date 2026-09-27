@@ -33,6 +33,27 @@ export type DrovrEventsDeliver = {
 			| 'kit-directory-ingest'
 			/** A contact's synced profile for drovr (drovr-contact-profile-sync). */
 			| 'contact-profile-sync'
+			/** The one-time contact-sync backfill: the bulk lane. */
+			| 'contact-sync-backfill'
+	}
+}
+
+export const DROVR_CONTACT_SYNC_BACKFILL_EVENT =
+	'drovr/contact-sync.backfill-requested'
+
+/**
+ * Run (or continue) the one-time contact-sync backfill from `cursor`.
+ * Only on an explicit request; the backfill re-queues itself until done.
+ */
+export type DrovrContactSyncBackfillRequested = {
+	name: typeof DROVR_CONTACT_SYNC_BACKFILL_EVENT
+	data: {
+		cursor?: import('@/lib/subscriber-marketing/contact-sync-backfill').BackfillCursor
+		/**
+		 * Stop after this many pages and do not re-queue (the first run is a
+		 * one-page canary); the receipt's cursor resumes it.
+		 */
+		maxPages?: number
 	}
 }
 
@@ -102,7 +123,10 @@ export type DrovrDeliverEventName =
 
 /** Sources whose batches travel on the bulk function. */
 export const BULK_DELIVERY_SOURCES: ReadonlySet<DrovrDeliverySource> =
-	new Set<DrovrDeliverySource>(['kit-directory-ingest'])
+	new Set<DrovrDeliverySource>([
+		'kit-directory-ingest',
+		'contact-sync-backfill',
+	])
 
 export function deliverEventNameFor(
 	source: DrovrDeliverySource,

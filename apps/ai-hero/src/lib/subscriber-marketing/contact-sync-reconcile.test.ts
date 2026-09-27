@@ -264,6 +264,24 @@ describe('contact sync reconcile', () => {
 		expect(p.resendStops).toHaveBeenCalledWith([fresh, late])
 	})
 
+	it("re-sends bounces and complaints too (each writes drovr's suppression row)", async () => {
+		const bounce = event(
+			'c2',
+			'2026-09-26T17:50:00.000Z',
+			'b1',
+			'contact.bounced',
+		)
+		const complaint = event(
+			'c3',
+			'2026-09-26T17:51:00.000Z',
+			'k1',
+			'contact.complained',
+		)
+		const p = ports({ events: [bounce, complaint], rotations: [] })
+		await runContactSyncReconcile(p)
+		expect(p.resendStops).toHaveBeenCalledWith([bounce, complaint])
+	})
+
 	it('claims only what an overflowing fresh scan covered, stopping short of the split second', async () => {
 		const p = ports({
 			events: [

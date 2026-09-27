@@ -93,6 +93,26 @@ export type DeferredDrovrEvent = {
 	reason: DeferredDrovrEventReason
 }
 
+const DIRECTORY_STOP_TYPES: ReadonlySet<string> = new Set([
+	'contact.unsubscribed',
+	'contact.bounced',
+	'contact.complained',
+])
+
+/**
+ * A stop for org-aihero's contact directory. drovr writes its suppression
+ * row before folding, so a cold-start-unhandled answer (no directory actor)
+ * still means the stop landed (mig-10, 2026-09-27).
+ */
+function isDirectoryStop(event: DrovrShadowEvent | undefined): boolean {
+	return (
+		event !== undefined &&
+		event.tenantId === 'org-aihero' &&
+		event.journeyId === 'contact-directory' &&
+		DIRECTORY_STOP_TYPES.has(event.type)
+	)
+}
+
 /**
  * The contact-sync push contract (§4): event-not-live means the contact's
  * directory actor is still v1; cold-start-unhandled that it has none. Either
@@ -225,6 +245,13 @@ export async function deliverBatchOrThrow(args: {
 		}
 		if (response.status >= 400 && response.status < 500) {
 			const problem = await boundedProblemBody(response)
+			if (
+				response.status === 409 &&
+				deferralReasonOf(problem) === 'cold-start-unhandled' &&
+				args.events.every(isDirectoryStop)
+			) {
+				return { accepted: args.events.length, rejected: 0 }
+			}
 			const deferral =
 				response.status === 409 && args.deferNotLive
 					? deferralReasonOf(problem)
@@ -275,8 +302,20 @@ export async function deliverBatchOrThrow(args: {
 		const deferred: DeferredDrovrEvent[] = []
 		let notLive = 0
 		let deferredRejected = 0
+		let stopsLanded = 0
+		let stopsLandedRejected = 0
 		for (const item of body.results) {
 			const event = args.events[item.index]
+			if (
+				item.status !== 'accepted' &&
+				isDirectoryStop(event) &&
+				deferralReasonOf(item.detail) === 'cold-start-unhandled'
+			) {
+				// The suppression row is written; nothing to retry or defer.
+				stopsLanded += 1
+				if (item.status === 'rejected') stopsLandedRejected += 1
+				continue
+			}
 			const deferral =
 				args.deferNotLive && item.status !== 'accepted'
 					? deferralReasonOf(item.detail)
@@ -307,10 +346,11 @@ export async function deliverBatchOrThrow(args: {
 				`${failedKeys.length} of ${args.events.length} not taken by drovr (${notLive} event-not-live)`,
 			)
 		}
-		const rejected = body.rejected - deferredRejected
+		const rejected = body.rejected - deferredRejected - stopsLandedRejected
+		const accepted = body.accepted + stopsLanded
 		return deferred.length > 0
-			? { accepted: body.accepted, rejected, deferred }
-			: { accepted: body.accepted, rejected }
+			? { accepted, rejected, deferred }
+			: { accepted, rejected }
 	} finally {
 		clearTimeout(timeout)
 	}
