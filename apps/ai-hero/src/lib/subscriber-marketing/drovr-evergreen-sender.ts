@@ -20,8 +20,10 @@ import type { SideEffectIntent } from './types'
  *
  * Failures stay retryable: the row keeps `pending` with an attempt count
  * and the last error until the attempt budget is spent, then it is
- * `failed` and visible. Nothing here decides *whether* a message should
- * go: drovr decided that when it emitted the intent.
+ * `failed` and visible. drovr decides *whether* a message should go, with
+ * one exception this sender enforces itself: a contact ai-hero knows has
+ * stopped (an unsubscribe, bounce or complaint) is never enrolled, whatever
+ * drovr's gates said (qi0sd, 2026-09-27: drovr had no suppression row yet).
  */
 
 export type EvergreenSubscribe = (input: {
@@ -32,7 +34,8 @@ export type EvergreenSubscribe = (input: {
 
 export type EvergreenSenderRepository =
 	Pick<CaptureMarketingRepository, 'findContactById'> &
-	Partial<Pick<CaptureMarketingRepository, 'findContactEventsByType'>> &
+	// Required: the stop gate must never pass a contact by default.
+	Required<Pick<CaptureMarketingRepository, 'findContactEventsByType'>> &
 	Required<
 		Pick<
 			CaptureMarketingRepository,
@@ -137,6 +140,8 @@ async function sendOne(input: {
 	if (!contact?.email) {
 		return await giveUp(row, args.repository, now, 'contact-email-missing', dispatch)
 	}
+	const stop = await contactStop(args.repository, contact.id)
+	if (stop) return await giveUp(row, args.repository, now, stop, dispatch)
 	const attempts = numberField(row.metadata.attempts) + 1
 	const unclaimed = row.metadata
 	if (await isOwnedShadowNewsletterHandoff(row, args.repository)) {
@@ -207,14 +212,32 @@ async function sendOne(input: {
 	return { status: 'completed', intentId: row.id, kitSequenceId }
 }
 
+/**
+ * The contact's first stop, if any: an unsubscribe, bounce or complaint
+ * ai-hero recorded. Any one refuses the row before Kit (or a handoff).
+ */
+async function contactStop(
+	repository: EvergreenSenderRepository,
+	contactId: string,
+): Promise<'unsubscribed' | 'bounced' | 'complained' | undefined> {
+	for (const [eventType, reason] of [
+		['contact.unsubscribed', 'unsubscribed'],
+		['contact.bounced', 'bounced'],
+		['contact.complained', 'complained'],
+	] as const) {
+		const events = await repository.findContactEventsByType(contactId, eventType)
+		if (events.length > 0) return reason
+	}
+	return undefined
+}
+
 async function isOwnedShadowNewsletterHandoff(
 	row: SideEffectIntent,
 	repository: EvergreenSenderRepository,
 ): Promise<boolean> {
 	if (
 		row.type !== SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE ||
-		row.metadata.list !== 'shadow-newsletter' ||
-		!repository.findContactEventsByType
+		row.metadata.list !== 'shadow-newsletter'
 	) {
 		return false
 	}
