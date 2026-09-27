@@ -6,6 +6,11 @@ import {
 	type EvergreenSenderRepository,
 } from './drovr-evergreen-sender'
 import { mapDrovrShadowFact } from './drovr-shadow-emitter'
+import {
+	dryRunSubscriberMarketingFixture,
+	InMemorySubscriberMarketingRepository,
+} from './dry-run'
+import { codingWorkflowFixture } from './__fixtures__/quick-question-fixtures'
 import type { ContactEventRecord, ContactRecord, SideEffectIntent } from './types'
 
 const now = '2026-09-17T16:00:00.000Z'
@@ -14,6 +19,8 @@ class FakeRepository implements EvergreenSenderRepository {
 	contacts = new Map<string, ContactRecord>()
 	intents = new Map<string, SideEffectIntent>()
 	shadowNewsletterAssigned = false
+	/** Stop event types the contact has (contact.unsubscribed and so on). */
+	stops = new Set<string>()
 	findContactById(id: string) {
 		return this.contacts.get(id)
 	}
@@ -21,6 +28,9 @@ class FakeRepository implements EvergreenSenderRepository {
 		_contactId: string,
 		eventType: string,
 	): ContactEventRecord[] {
+		if (this.stops.has(eventType)) {
+			return [{ id: `stop-${eventType}`, eventType } as ContactEventRecord]
+		}
 		if (!this.shadowNewsletterAssigned || eventType !== 'journey.owner.assigned') {
 			return []
 		}
@@ -315,6 +325,134 @@ describe('executePendingEvergreenSends', () => {
 			status: 'failed',
 			error: 'contact-email-missing',
 		})
+	})
+
+	describe('never enrolls a stopped contact (qi0sd, 2026-09-27)', () => {
+		// A contact unsubscribed through Kit on 09-21 was added to a
+		// shadow-newsletter sequence on 09-24: drovr had no suppression row
+		// yet, and this sender never read ai-hero's own stops.
+		const types = [
+			['send-evergreen-email', '2887679'],
+			['send-shadow-newsletter-email', '2899143'],
+			['subscribe-evergreen-list', '2887700'],
+		] as const
+		const stops = [
+			['contact.unsubscribed', 'unsubscribed'],
+			['contact.bounced', 'bounced'],
+			['contact.complained', 'complained'],
+		] as const
+		for (const [type, sequence] of types)
+			for (const [stop, reason] of stops)
+				it(`refuses ${type} for a contact with ${stop}, never touching Kit`, async () => {
+					const repository = new FakeRepository()
+					repository.contacts.set('contact-1', contact())
+					repository.stops.add(stop)
+					repository.intents.set(
+						'row-1',
+						row({ type, metadata: { ...row().metadata, kitSequenceId: sequence } }),
+					)
+					let calls = 0
+					const dispatched: SideEffectIntent[] = []
+					const results = await executePendingEvergreenSends({
+						repository,
+						type,
+						subscribe: async () => {
+							calls += 1
+							return {}
+						},
+						limit: 10,
+						now: () => now,
+						dispatch: (intent) => dispatched.push(intent),
+					})
+					expect(calls).toBe(0)
+					expect(results).toEqual([
+						{ status: 'failed', intentId: 'row-1', error: reason },
+					])
+					expect(repository.intents.get('row-1')).toMatchObject({
+						status: 'failed',
+						reviewReasons: [reason],
+					})
+					expect(dispatched.map((d) => d.status)).toEqual(['failed'])
+				})
+
+		it('refuses a stopped contact\'s shadow-newsletter handoff too (no birth)', async () => {
+			const repository = new FakeRepository()
+			repository.contacts.set('contact-1', contact())
+			repository.shadowNewsletterAssigned = true
+			repository.stops.add('contact.unsubscribed')
+			repository.intents.set(
+				'row-1',
+				row({
+					type: 'subscribe-evergreen-list',
+					metadata: { ...row().metadata, list: 'shadow-newsletter' },
+				}),
+			)
+			const results = await executePendingEvergreenSends({
+				repository,
+				type: 'subscribe-evergreen-list',
+				subscribe: async () => ({}),
+				limit: 10,
+				now: () => now,
+				dispatch: () => {},
+			})
+			expect(results).toEqual([
+				{ status: 'failed', intentId: 'row-1', error: 'unsubscribed' },
+			])
+		})
+	})
+
+	it('refuses an unsubscribed contact with the production repository shape', async () => {
+		// The in-memory capture repository, as the sender runs on Drizzle's.
+		const repository = new InMemorySubscriberMarketingRepository()
+		const captured = await dryRunSubscriberMarketingFixture({
+			repository,
+			fixture: codingWorkflowFixture,
+			now: '2026-09-20T10:00:00.000Z',
+		})
+		repository.createContactEvent({
+			contactId: captured.contact.id,
+			providerIdentityId: captured.providerIdentity.id,
+			provider: 'kit',
+			providerEventId: 'email-preference-opt-out:newsletter:x',
+			providerReference: 'kit:email-preference:newsletter',
+			eventType: 'contact.unsubscribed',
+			occurredAt: '2026-09-21T11:19:09.000Z',
+			semanticIdempotencyKey: 'unsubscribe-newsletter',
+			privacyLevel: 'internal',
+			identityEvidence: captured.providerIdentity.evidence,
+			payloadSummary: {
+				summary: 'Unsubscribed',
+				keywords: ['contact-unsubscribed'],
+				restrictedPayloadStored: false,
+			},
+			schemaVersion: 1,
+			createdAt: '2026-09-21T11:19:09.000Z',
+		})
+		repository.createSideEffectIntent(
+			row({
+				id: 'shadow-send-1',
+				contactId: captured.contact.id,
+				type: 'send-shadow-newsletter-email',
+				metadata: { ...row().metadata, kitSequenceId: '2899143' },
+				createdAt: '2026-09-24T18:01:49.000Z',
+			}),
+		)
+		let calls = 0
+		const results = await executePendingEvergreenSends({
+			repository,
+			type: 'send-shadow-newsletter-email',
+			subscribe: async () => {
+				calls += 1
+				return {}
+			},
+			limit: 10,
+			now: () => '2026-09-24T18:26:49.000Z',
+			dispatch: () => {},
+		})
+		expect(calls).toBe(0)
+		expect(results).toEqual([
+			{ status: 'failed', intentId: 'shadow-send-1', error: 'unsubscribed' },
+		])
 	})
 
 	it('paces between rows and honours the limit', async () => {

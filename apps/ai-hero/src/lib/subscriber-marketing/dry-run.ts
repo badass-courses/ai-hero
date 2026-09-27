@@ -400,6 +400,15 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 			(intent) => intent.idempotencyKey === idempotencyKey,
 		)
 	}
+	/** The Drizzle repository's query: pending rows of one type, oldest first. */
+	findPendingSideEffectIntentsByType(type: SideEffectIntent['type'], limit: number) {
+		const safeLimit = Number.isFinite(limit) && limit >= 1 ? Math.floor(limit) : 0
+		return Array.from(this.sideEffectIntents.values())
+			.filter((intent) => intent.type === type && intent.status === 'pending')
+			.sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+			.slice(0, safeLimit)
+	}
+
 	createSideEffectIntent(input: SideEffectIntent) {
 		const record = {
 			...input,
