@@ -49,7 +49,7 @@ export type ValuePathEmailExecutorRepository = {
 		contactId: string,
 	): Promise<ContactState | undefined> | ContactState | undefined
 	/** The contact's stops, so the send gate refuses a stopped contact. */
-	findContactEventsByType?(
+	findContactEventsByType(
 		contactId: string,
 		eventType: string,
 	): Promise<ContactEventRecord[]> | ContactEventRecord[]
@@ -236,12 +236,8 @@ async function executeClaimedValuePathEmailIntent(
 		findContactById: (id) => args.repository.findContactById(id),
 		findCurrentContactState: (contactId) =>
 			args.repository.findCurrentContactState(contactId),
-		...(args.repository.findContactEventsByType
-			? {
-					findContactEventsByType: (contactId: string, eventType: string) =>
-						args.repository.findContactEventsByType!(contactId, eventType),
-				}
-			: {}),
+		findContactEventsByType: (contactId, eventType) =>
+			args.repository.findContactEventsByType(contactId, eventType),
 		updateSideEffectIntent: async (id, patch) => {
 			if (id !== args.intent.id) {
 				return await args.repository.updateSideEffectIntent(id, patch)
@@ -1041,12 +1037,10 @@ async function readContactStops(
 	repository: ValuePathEmailExecutorRepository,
 	contactId: string,
 ): Promise<{ unsubscribed: boolean; bounced: boolean; complained: boolean }> {
-	if (!repository.findContactEventsByType)
-		return { unsubscribed: false, bounced: false, complained: false }
 	const [unsubscribed, bounced, complained] = await Promise.all(
 		['contact.unsubscribed', 'contact.bounced', 'contact.complained'].map(
 			async (eventType) =>
-				(await repository.findContactEventsByType!(contactId, eventType))
+				(await repository.findContactEventsByType(contactId, eventType))
 					.length > 0,
 		),
 	)

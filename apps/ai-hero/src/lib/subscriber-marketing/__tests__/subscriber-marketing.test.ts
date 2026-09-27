@@ -2919,6 +2919,79 @@ describe('subscriber marketing value path foundation', () => {
 		})
 	})
 
+	it('refuses an unsubscribed contact at the Kit send gate, with the production repository shape', async () => {
+		// mig-10 R1 (2026-09-27): the executor repository must read the
+		// contact's stops; the in-memory repository has the production shape.
+		const repository = new InMemorySubscriberMarketingRepository()
+		const captured = await dryRunSubscriberMarketingFixture({
+			repository,
+			fixture: codingWorkflowFixture,
+			now: '2026-05-14T11:00:00.000Z',
+		})
+		repository.createContactEvent({
+			contactId: captured.contact.id,
+			providerIdentityId: captured.providerIdentity.id,
+			provider: 'kit',
+			providerEventId: 'kit-unsubscribe-1',
+			providerReference: 'kit-webhook',
+			eventType: 'contact.unsubscribed',
+			occurredAt: '2026-05-14T11:02:00.000Z',
+			semanticIdempotencyKey: 'kit-unsubscribe-1',
+			privacyLevel: 'internal',
+			identityEvidence: captured.providerIdentity.evidence,
+			payloadSummary: {
+				summary: 'Unsubscribed',
+				keywords: ['contact-unsubscribed'],
+				restrictedPayloadStored: false,
+			},
+			schemaVersion: 1,
+			createdAt: '2026-05-14T11:02:00.000Z',
+		})
+		const intent = repository.createSideEffectIntent({
+			id: 'intent_send_unsubscribed',
+			nextActionId: 'next_action_1',
+			contactId: captured.contact.id,
+			provider: 'kit',
+			type: 'send-value-path-email',
+			status: 'pending',
+			idempotencyKey:
+				'contact:fixture_contact_1:value-path:ai-hero-skills-workflow:email:ai-hero-skills-workflow.email-2:unsubscribed',
+			gates: [],
+			reviewReasons: [],
+			metadata: {
+				mode: 'allowlisted-test',
+				valuePathSlug: 'ai-hero-skills-workflow',
+				emailResourceId: 'ai-hero-skills-workflow.email-2',
+				kitSequenceId: '2757201',
+				kitSubscriberId: 'kit_123',
+				providerResult: null,
+			},
+			createdAt: '2026-05-14T11:05:00.000Z',
+		})
+		const subscribeToList = vi.fn()
+
+		const result = await executeValuePathEmailIntent({
+			repository,
+			intent,
+			emailListProvider: { subscribeToList },
+			config: {
+				mode: 'allowlisted-test',
+				allowlistedContactIds: [captured.contact.id],
+				baseUrl: 'https://www.aihero.dev',
+				pathTokenSecret: 'test-secret',
+				answerPages: [],
+			},
+			now: '2026-05-14T11:06:00.000Z',
+		})
+
+		expect(result).toMatchObject({
+			status: 'blocked',
+			intentId: 'intent_send_unsubscribed',
+			reviewReasons: expect.arrayContaining(['unsubscribed']),
+		})
+		expect(subscribeToList).not.toHaveBeenCalled()
+	})
+
 	it('marks transient Kit enrollment failures retryable and picks them up when due', async () => {
 		const repository = new InMemorySubscriberMarketingRepository()
 		const captured = await dryRunSubscriberMarketingFixture({
