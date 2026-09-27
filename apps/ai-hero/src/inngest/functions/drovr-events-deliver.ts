@@ -155,20 +155,23 @@ const deliverBatch = async (
 			continue
 		}
 		const config: DrovrDeliveryConfig = { ingestUrl, apiKey }
-		const outcome = await step.run(deliveryStepId(drovrEvent), () =>
-			deliverOrThrow({ event: drovrEvent, config }),
-		)
+		// The log sits in the step so a replay, which gets the memoized
+		// outcome back, does not repeat it.
+		const outcome = await step.run(deliveryStepId(drovrEvent), async () => {
+			const delivered = await deliverOrThrow({ event: drovrEvent, config })
+			if (isNeverBornOwnerStop(drovrEvent, delivered)) {
+				await log.info('drovr.shadow.owner_stop_never_born', {
+					contactId: drovrEvent.contactId,
+					journeyId: drovrEvent.journeyId,
+					type: drovrEvent.type,
+					idempotencyKey: drovrEvent.idempotencyKey,
+				})
+			}
+			return delivered
+		})
 		if (outcome.status === 'accepted') accepted += 1
 		if (outcome.status === 'rejected') rejected += 1
-		if (isNeverBornOwnerStop(drovrEvent, outcome)) {
-			ownerStopsNeverBorn += 1
-			await log.info('drovr.shadow.owner_stop_never_born', {
-				contactId: drovrEvent.contactId,
-				journeyId: drovrEvent.journeyId,
-				type: drovrEvent.type,
-				idempotencyKey: drovrEvent.idempotencyKey,
-			})
-		}
+		if (isNeverBornOwnerStop(drovrEvent, outcome)) ownerStopsNeverBorn += 1
 	}
 	return ownerStopsNeverBorn > 0
 		? { status: 'delivered', accepted, rejected, discarded, ownerStopsNeverBorn }

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
 	dispatchDrovrShadowFact,
+	dispatchDrovrShadowFactAwaited,
 	sendDrovrEventsDeliverViaInngestHttp,
 } from './drovr-shadow-dispatch'
 import {
@@ -529,5 +530,68 @@ describe('drovr shadow dispatch', () => {
 		)
 		expect(result).toBe('nothing')
 		expect(send).not.toHaveBeenCalled()
+	})
+})
+
+describe('the awaited dispatch (owner-assignment births)', () => {
+	const birth: DrovrShadowFact = {
+		kind: 'contact-event',
+		event: {
+			...contactEvent('journey.owner.assigned'),
+			providerEventId: 'drovr-owner:contact-1:value-path-skills-course',
+		},
+	}
+
+	it('is a real authority birth', () => {
+		expect(mapDrovrShadowFact(birth)).toMatchObject([
+			{ tenantId: 'org-aihero', type: 'contact.created' },
+		])
+	})
+
+	it('resolves only once the durable hand-off has landed', async () => {
+		let landed = false
+		const send = vi.fn(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 10))
+			landed = true
+			return { ids: ['evt-1'] }
+		})
+
+		await dispatchDrovrShadowFactAwaited(birth, { send, fallback: vi.fn() })
+
+		expect(send).toHaveBeenCalledOnce()
+		expect(landed).toBe(true)
+	})
+
+	it('runs the fallback, and finishes it, when queueing fails', async () => {
+		let posted = false
+		const fallback = vi.fn(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 10))
+			posted = true
+		})
+
+		await dispatchDrovrShadowFactAwaited(birth, {
+			send: vi.fn().mockRejectedValue(new Error('inngest unreachable')),
+			fallback,
+			warn: vi.fn(),
+			resolveOwners: async () => [],
+		})
+
+		expect(fallback).toHaveBeenCalledWith(mapDrovrShadowFact(birth))
+		expect(posted).toBe(true)
+	})
+
+	it('never throws into the write that recorded the fact', async () => {
+		await expect(
+			dispatchDrovrShadowFactAwaited(birth, {
+				send: vi.fn().mockRejectedValue(new Error('inngest unreachable')),
+				// Throws before it returns a promise, so the dispatch rejects.
+				fallback: vi.fn(() => {
+					throw new Error('drovr down')
+				}),
+				warn: vi.fn().mockRejectedValue(new Error('logger down')),
+				error: vi.fn().mockRejectedValue(new Error('logger down')),
+				resolveOwners: vi.fn().mockRejectedValue(new Error('db down')),
+			}),
+		).resolves.toBeUndefined()
 	})
 })
