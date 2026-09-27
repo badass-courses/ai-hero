@@ -1756,7 +1756,7 @@ function toEmailCourseEntryEventRecord(
 	}
 }
 
-function toContactEventRecord(row: any): ContactEventRecord {
+export function toContactEventRecord(row: any): ContactEventRecord {
 	return {
 		id: row.id,
 		contactId: row.contactId,
