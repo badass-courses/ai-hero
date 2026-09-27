@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
 	CONTACT_SYNC_RETRY_EVENT,
-	STRAGGLER_RETRY_DELAY_MS,
 	STRAGGLER_STUCK_AFTER_ATTEMPTS,
+	stragglerRetryDelayMs,
 	contactSyncRetryRequest,
 	createDirectoryBirth,
 	directoryBirthEvents,
@@ -52,15 +52,20 @@ function harness(delivered: {
 }
 
 describe('contact sync straggler retry', () => {
-	it('schedules the same events, unchanged, at least 24 h out', () => {
-		const request = contactSyncRetryRequest(deferred, 1, now)
-		expect(STRAGGLER_RETRY_DELAY_MS).toBeGreaterThanOrEqual(24 * 3600_000)
-		expect(request).toEqual({
+	it('schedules the same events, unchanged: 1 h after the refusal, then every 2 h (contract §4, 2026-09-27)', () => {
+		// drovr's straggler pass runs every 2 h, so the worst case is ~4 h.
+		expect(stragglerRetryDelayMs(1)).toBe(60 * 60_000)
+		expect(stragglerRetryDelayMs(2)).toBe(2 * 60 * 60_000)
+		expect(stragglerRetryDelayMs(9)).toBe(2 * 60 * 60_000)
+		expect(contactSyncRetryRequest(deferred, 1, now)).toEqual({
 			name: CONTACT_SYNC_RETRY_EVENT,
 			id: expect.stringMatching(/^contact-sync-retry:1:[0-9a-f]{64}$/),
-			ts: now + STRAGGLER_RETRY_DELAY_MS,
+			ts: now + 60 * 60_000,
 			data: { items: deferred, attempt: 1 },
 		})
+		expect(contactSyncRetryRequest(deferred, 3, now).ts).toBe(
+			now + 2 * 60 * 60_000,
+		)
 	})
 
 	it('keys the request by its events: one pending retry per contact, however often it changes', () => {
@@ -118,7 +123,10 @@ describe('contact sync straggler retry', () => {
 		])
 	})
 
-	it('while the flag is off (a drovr rollback) sends nothing and reschedules the same attempt', async () => {
+	it('while the flag is off (a drovr rollback) sends nothing and reschedules as the next attempt', async () => {
+		// The next attempt, never the same one: its id is new, so Inngest's
+		// 24 h same-id dedupe (#318) can't drop the reschedule, which a 2 h
+		// cadence would otherwise hit.
 		const h = harness({ accepted: 1, rejected: 0 })
 		const receipt = await runContactSyncStragglerRetry({
 			event: { data: { items: deferred, attempt: 2 } },
@@ -133,12 +141,17 @@ describe('contact sync straggler retry', () => {
 		expect(receipt).toEqual({
 			status: 'rescheduled',
 			deferred: 1,
-			attempt: 2,
+			attempt: 3,
 			reason: 'AIH_DROVR_PROFILE_SYNC is not set',
 		})
 		expect(h.sent).toEqual([
-			{ id: 'reschedule', payload: contactSyncRetryRequest(deferred, 2, now) },
+			{ id: 'reschedule', payload: contactSyncRetryRequest(deferred, 3, now) },
 		])
+	})
+
+	it('warns once a contact has been refused for about a day', () => {
+		// 1 h + 11 × 2 h ≈ 23 h at the 12th attempt.
+		expect(STRAGGLER_STUCK_AFTER_ATTEMPTS).toBe(12)
 	})
 
 	it('warns when a contact stays refused for a week', async () => {

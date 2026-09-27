@@ -19,16 +19,18 @@ import type { ContactRecord } from './types'
 export { CONTACT_SYNC_RETRY_EVENT }
 
 /**
- * The contact-sync push contract (§4): an event drovr refused as
- * event-not-live (or cold-start-unhandled) recorded nothing and left its key
- * unconsumed. It is re-sent unchanged, same key, after drovr's daily
- * straggler pass has had a chance to migrate the contact, and again each
- * day until drovr takes it. Never dropped, never re-keyed.
+ * The contact-sync push contract (§4, revised 2026-09-27): an event drovr
+ * refused as event-not-live (or cold-start-unhandled) recorded nothing and
+ * left its key unconsumed. It is re-sent unchanged, same key, 1 h after the
+ * refusal and then every 2 h, matching drovr's 2-hourly straggler pass
+ * (worst case ~4 h). Never dropped, never re-keyed.
  */
-export const STRAGGLER_RETRY_DELAY_MS = 25 * 60 * 60 * 1000
+export function stragglerRetryDelayMs(attempt: number): number {
+	return (attempt <= 1 ? 1 : 2) * 60 * 60 * 1000
+}
 
-/** A week of daily refusals is worth a look (the contract expects a day). */
-export const STRAGGLER_STUCK_AFTER_ATTEMPTS = 7
+/** About a day of refusals (1 h + 11 × 2 h) is worth a look. */
+export const STRAGGLER_STUCK_AFTER_ATTEMPTS = 12
 
 /**
  * The request is keyed by its events and attempt: Inngest drops a send
@@ -47,7 +49,7 @@ export function contactSyncRetryRequest(
 	return {
 		name: CONTACT_SYNC_RETRY_EVENT,
 		id: `contact-sync-retry:${attempt}:${digest}`,
-		ts: nowMs + STRAGGLER_RETRY_DELAY_MS,
+		ts: nowMs + stragglerRetryDelayMs(attempt),
 		data: { items, attempt },
 	}
 }
@@ -161,15 +163,17 @@ export async function runContactSyncStragglerRetry(args: {
 	const config = parseDrovrProfileSyncConfig(args.env)
 	if (!config.enabled) {
 		// A drovr rollback turns the flag off: nothing may land in the
-		// window, and nothing is dropped either.
+		// window, and nothing is dropped either. Always the next attempt:
+		// the same attempt would reuse this event's id, which Inngest drops
+		// as a duplicate within 24 h.
 		await args.step.sendEvent(
 			'reschedule',
-			contactSyncRetryRequest(items, attempt, nowMs),
+			contactSyncRetryRequest(items, attempt + 1, nowMs),
 		)
 		return {
 			status: 'rescheduled',
 			deferred: items.length,
-			attempt,
+			attempt: attempt + 1,
 			reason: config.reason,
 		}
 	}
