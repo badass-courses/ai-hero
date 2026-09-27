@@ -165,7 +165,11 @@ describe('drovr contact profile sync function', () => {
 		expect(h.sent).toEqual([
 			{
 				id: 'defer-refused',
-				payload: contactSyncRetryRequest(deferred, 1, now),
+				// Nothing was rejected, so the retry may vouch for version 4.
+				payload: contactSyncRetryRequest(deferred, 1, now, {
+					contactId: 'contact-1',
+					profileVersion: 4,
+				}),
 			},
 		])
 		// That actor exists, it is on v1: never a birth.

@@ -48,6 +48,11 @@ export type DrovrContactSyncRetryRequested = {
 	data: {
 		items: import('@/lib/subscriber-marketing/drovr-shadow-delivery').DeferredDrovrEvent[]
 		attempt: number
+		/**
+		 * The profile version to acknowledge once drovr takes every item: set
+		 * only when the original push had nothing rejected.
+		 */
+		acknowledge?: { contactId: string; profileVersion: number }
 	}
 }
 

@@ -28,6 +28,7 @@ export const drovrContactSyncRetry = inngest.createFunction(
 			{ drovrApiKeyForTenant, DROVR_AUTHORITY_TENANT_ID },
 			{ DrizzleCaptureMarketingRepository },
 			{ findContactKitIdentity },
+			{ createDrizzleContactProfileVersionStore },
 		] = await Promise.all([
 			import('@/db'),
 			import('@/env.mjs'),
@@ -36,6 +37,7 @@ export const drovrContactSyncRetry = inngest.createFunction(
 			import('@/lib/subscriber-marketing/drovr-shadow-emitter'),
 			import('@/lib/subscriber-marketing/drizzle-capture-repository'),
 			import('@/lib/subscriber-marketing/contact-kit-identity-drizzle'),
+			import('@/lib/subscriber-marketing/contact-profile-version-drizzle'),
 		])
 		const drovrConfig = () => {
 			const ingestUrl = env.DROVR_SHADOW_INGEST_URL
@@ -58,6 +60,11 @@ export const drovrContactSyncRetry = inngest.createFunction(
 					config: drovrConfig(),
 					deferNotLive: true,
 				}),
+			acknowledge: (contactId, profileVersion) =>
+				createDrizzleContactProfileVersionStore(db).acknowledge(
+					contactId,
+					profileVersion,
+				),
 			birth: createDirectoryBirth({
 				findContactById: (id) => repository.findContactById(id),
 				kitSubscriberIdFor: async (id) =>

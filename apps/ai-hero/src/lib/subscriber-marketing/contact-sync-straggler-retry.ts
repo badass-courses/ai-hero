@@ -39,10 +39,15 @@ export const STRAGGLER_STUCK_AFTER_ATTEMPTS = 12
  * holds one pending retry per contact instead of one per change. The
  * retry's own next attempt is a new id, and so is any changed content.
  */
+export type RetryAcknowledgement = NonNullable<
+	DrovrContactSyncRetryRequested['data']['acknowledge']
+>
+
 export function contactSyncRetryRequest(
 	items: DeferredDrovrEvent[],
 	attempt: number,
 	nowMs: number,
+	acknowledge?: RetryAcknowledgement,
 ): DrovrContactSyncRetryRequested & { id: string; ts: number } {
 	const keys = items.map((item) => item.event.idempotencyKey).sort()
 	const digest = createHash('sha256').update(keys.join('\0')).digest('hex')
@@ -50,7 +55,7 @@ export function contactSyncRetryRequest(
 		name: CONTACT_SYNC_RETRY_EVENT,
 		id: `contact-sync-retry:${attempt}:${digest}`,
 		ts: nowMs + stragglerRetryDelayMs(attempt),
-		data: { items, attempt },
+		data: acknowledge ? { items, attempt, acknowledge } : { items, attempt },
 	}
 }
 
@@ -148,7 +153,7 @@ export type ContactSyncRetryReceipt =
 	  }
 
 export async function runContactSyncStragglerRetry(args: {
-	event: { data: { items: DeferredDrovrEvent[]; attempt: number } }
+	event: { data: DrovrContactSyncRetryRequested['data'] }
 	step: RetryStep
 	env: Readonly<Record<string, string | undefined>>
 	now: () => number
@@ -157,8 +162,10 @@ export async function runContactSyncStragglerRetry(args: {
 	warn: (event: string, fields: Record<string, unknown>) => unknown
 	/** Births these contacts' directory actors (directoryBirthEvents). */
 	birth: (contactIds: string[]) => Promise<void>
+	/** Records that drovr fully accepted a profile version (the version store). */
+	acknowledge: (contactId: string, profileVersion: number) => Promise<void>
 }): Promise<ContactSyncRetryReceipt> {
-	const { items, attempt } = args.event.data
+	const { items, attempt, acknowledge } = args.event.data
 	const nowMs = (await args.step.run('now', async () => args.now())) as number
 	const config = parseDrovrProfileSyncConfig(args.env)
 	if (!config.enabled) {
@@ -168,7 +175,7 @@ export async function runContactSyncStragglerRetry(args: {
 		// as a duplicate within 24 h.
 		await args.step.sendEvent(
 			'reschedule',
-			contactSyncRetryRequest(items, attempt + 1, nowMs),
+			contactSyncRetryRequest(items, attempt + 1, nowMs, acknowledge),
 		)
 		return {
 			status: 'rescheduled',
@@ -187,12 +194,20 @@ export async function runContactSyncStragglerRetry(args: {
 		deliver: args.deliver,
 	})
 	const refused = resolved.deferred
-	if (refused.length === 0)
+	const rejected = outcome.rejected + resolved.rejected
+	if (refused.length === 0) {
+		// drovr now holds every event of the version (Macroscope on #319):
+		// acknowledge it, so live writers stop re-pushing it unchanged.
+		if (acknowledge && rejected === 0)
+			await args.step.run('acknowledge-version', () =>
+				args.acknowledge(acknowledge.contactId, acknowledge.profileVersion),
+			)
 		return {
 			status: 'delivered',
 			accepted: outcome.accepted + resolved.accepted,
-			rejected: outcome.rejected + resolved.rejected,
+			rejected,
 		}
+	}
 	if (attempt >= STRAGGLER_STUCK_AFTER_ATTEMPTS)
 		await args.warn('drovr.contact_sync.straggler_stuck', {
 			attempt,
@@ -201,7 +216,7 @@ export async function runContactSyncStragglerRetry(args: {
 		})
 	await args.step.sendEvent(
 		'reschedule',
-		contactSyncRetryRequest(refused, attempt + 1, nowMs),
+		contactSyncRetryRequest(refused, attempt + 1, nowMs, acknowledge),
 	)
 	return {
 		status: 'rescheduled',

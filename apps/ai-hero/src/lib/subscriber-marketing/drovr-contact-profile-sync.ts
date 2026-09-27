@@ -465,9 +465,15 @@ export async function runContactProfileSync(args: {
 		const at = (await args.step.run('defer-at', async () =>
 			(args.now ?? Date.now)(),
 		)) as number
+		// The retry may vouch for this version only if nothing was rejected.
 		await args.step.sendEvent(
 			'defer-refused',
-			contactSyncRetryRequest(deferred, 1, at),
+			contactSyncRetryRequest(
+				deferred,
+				1,
+				at,
+				rejected === 0 ? { contactId, profileVersion } : undefined,
+			),
 		)
 		return {
 			status: 'deferred',

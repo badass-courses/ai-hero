@@ -48,7 +48,8 @@ function harness(delivered: {
 	const deliver = vi.fn(async () => delivered)
 	const warn = vi.fn()
 	const birth = vi.fn(async () => {})
-	return { step, deliver, warn, sent, birth }
+	const acknowledge = vi.fn(async () => {})
+	return { step, deliver, warn, sent, birth, acknowledge }
 }
 
 describe('contact sync straggler retry', () => {
@@ -100,6 +101,7 @@ describe('contact sync straggler retry', () => {
 			deliver: h.deliver,
 			warn: h.warn,
 			birth: h.birth,
+			acknowledge: h.acknowledge,
 		})
 		expect(h.deliver).toHaveBeenCalledWith([profile])
 		expect(receipt).toEqual({ status: 'delivered', accepted: 1, rejected: 0 })
@@ -116,6 +118,7 @@ describe('contact sync straggler retry', () => {
 			deliver: h.deliver,
 			warn: h.warn,
 			birth: h.birth,
+			acknowledge: h.acknowledge,
 		})
 		expect(receipt).toEqual({ status: 'rescheduled', deferred: 1, attempt: 3 })
 		expect(h.sent).toEqual([
@@ -136,6 +139,7 @@ describe('contact sync straggler retry', () => {
 			deliver: h.deliver,
 			warn: h.warn,
 			birth: h.birth,
+			acknowledge: h.acknowledge,
 		})
 		expect(h.deliver).not.toHaveBeenCalled()
 		expect(receipt).toEqual({
@@ -166,6 +170,7 @@ describe('contact sync straggler retry', () => {
 			deliver: h.deliver,
 			warn: h.warn,
 			birth: h.birth,
+			acknowledge: h.acknowledge,
 		})
 		expect(h.warn).toHaveBeenCalledWith(
 			'drovr.contact_sync.straggler_stuck',
@@ -192,6 +197,7 @@ describe('contact sync straggler retry', () => {
 			deliver: h.deliver,
 			warn: h.warn,
 			birth: h.birth,
+			acknowledge: h.acknowledge,
 		})
 		expect(h.birth).toHaveBeenCalledWith(['c1'])
 		expect(h.deliver).toHaveBeenNthCalledWith(2, [profile])
@@ -209,6 +215,7 @@ describe('contact sync straggler retry', () => {
 			deliver: h.deliver,
 			warn: h.warn,
 			birth: h.birth,
+			acknowledge: h.acknowledge,
 		})
 		expect(h.birth).not.toHaveBeenCalled()
 		expect(h.deliver).toHaveBeenCalledTimes(1)
@@ -297,5 +304,64 @@ describe('createDirectoryBirth', () => {
 			deliver,
 		})(['gone'])
 		expect(deliver).not.toHaveBeenCalled()
+	})
+})
+
+describe('acknowledging a version the straggler retry lands (Macroscope on #319)', () => {
+	const ack = { contactId: 'c1', profileVersion: 3 }
+	const run = (
+		h: ReturnType<typeof harness>,
+		data: Record<string, unknown>,
+		env: Record<string, string> = { AIH_DROVR_PROFILE_SYNC: 'true' },
+	) =>
+		runContactSyncStragglerRetry({
+			event: { data: { items: deferred, attempt: 1, ...data } as never },
+			step: h.step,
+			env,
+			now: () => now,
+			deliver: h.deliver,
+			warn: h.warn,
+			birth: h.birth,
+			acknowledge: h.acknowledge,
+		})
+
+	it('carries the version to acknowledge, and acknowledges it once drovr takes every event', async () => {
+		expect(contactSyncRetryRequest(deferred, 1, now, ack).data).toEqual({
+			items: deferred,
+			attempt: 1,
+			acknowledge: ack,
+		})
+		const h = harness({ accepted: 1, rejected: 0 })
+		await run(h, { acknowledge: ack })
+		expect(h.acknowledge).toHaveBeenCalledWith('c1', 3)
+	})
+
+	it('does not acknowledge a rejection, or a request without a version to vouch for', async () => {
+		const rejected = harness({ accepted: 0, rejected: 1 })
+		await run(rejected, { acknowledge: ack })
+		expect(rejected.acknowledge).not.toHaveBeenCalled()
+		const plain = harness({ accepted: 1, rejected: 0 })
+		await run(plain, {})
+		expect(plain.acknowledge).not.toHaveBeenCalled()
+	})
+
+	it('carries it forward on every reschedule (refused again, or the flag off)', async () => {
+		const refused = harness({ accepted: 0, rejected: 0, deferred })
+		await run(refused, { acknowledge: ack })
+		expect(refused.acknowledge).not.toHaveBeenCalled()
+		expect(refused.sent).toEqual([
+			{
+				id: 'reschedule',
+				payload: contactSyncRetryRequest(deferred, 2, now, ack),
+			},
+		])
+		const off = harness({ accepted: 1, rejected: 0 })
+		await run(off, { acknowledge: ack }, {})
+		expect(off.sent).toEqual([
+			{
+				id: 'reschedule',
+				payload: contactSyncRetryRequest(deferred, 2, now, ack),
+			},
+		])
 	})
 })
