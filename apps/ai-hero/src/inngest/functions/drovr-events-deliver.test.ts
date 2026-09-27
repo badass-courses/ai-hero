@@ -52,6 +52,7 @@ vi.mock('@/lib/subscriber-marketing/drovr-ownership-live', () => ({
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
 
 import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
+import type { DeferredDrovrEvent } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
 
 import {
 	drovrEventsDeliver,
@@ -470,13 +471,15 @@ describe('backfill refusals follow the push contract (§4)', () => {
 		expect(sent).toEqual([
 			[
 				contactSyncRetryRequest(
-					[{ event: notLive, reason: 'event-not-live' }],
+					[{ event: notLive, reason: 'event-not-live' }] as DeferredDrovrEvent[],
 					1,
 					now,
 				),
 				{
 					...contactSyncRetryRequest(
-						[{ event: cold, reason: 'cold-start-unhandled' }],
+						[
+							{ event: cold, reason: 'cold-start-unhandled' },
+						] as DeferredDrovrEvent[],
 						1,
 						now,
 					),
