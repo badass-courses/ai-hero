@@ -57,9 +57,32 @@ describe('contact sync straggler retry', () => {
 		expect(STRAGGLER_RETRY_DELAY_MS).toBeGreaterThanOrEqual(24 * 3600_000)
 		expect(request).toEqual({
 			name: CONTACT_SYNC_RETRY_EVENT,
+			id: expect.stringMatching(/^contact-sync-retry:1:[0-9a-f]{64}$/),
 			ts: now + STRAGGLER_RETRY_DELAY_MS,
 			data: { items: deferred, attempt: 1 },
 		})
+	})
+
+	it('keys the request by its events: one pending retry per contact, however often it changes', () => {
+		// A late joiner re-pushes its unchanged version on every change (same
+		// idempotency keys); Inngest drops a same-id send within 24 h, so a
+		// second change adds no second retry (the hawk, 2026-09-27).
+		const second: DeferredDrovrEvent = {
+			event: { ...profile, idempotencyKey: 'links:c1:vp:email-0:t' },
+			reason: 'event-not-live',
+		}
+		const first = contactSyncRetryRequest([deferred[0]!, second], 1, now)
+		const later = contactSyncRetryRequest(
+			[second, deferred[0]!],
+			1,
+			now + 45 * 60_000,
+		)
+		expect(later.id).toBe(first.id)
+		// Different events, or the retry's own next attempt, are new requests.
+		expect(contactSyncRetryRequest(deferred, 1, now).id).not.toBe(first.id)
+		expect(contactSyncRetryRequest([deferred[0]!, second], 2, now).id).not.toBe(
+			first.id,
+		)
 	})
 
 	it('re-sends the same events with the same keys, and stops once drovr takes them', async () => {
