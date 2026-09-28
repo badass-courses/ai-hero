@@ -94,6 +94,27 @@ const PHASES: Exclude<BackfillPhase, 'done'>[] = [
 	...BACKFILL_STOP_PHASES,
 ]
 
+/**
+ * Where a run must stop: a phase it may not enter, or `stops` for all of
+ * the stop phases. The run ends `paused` on that phase's cursor and never
+ * re-queues, so a slice of the owners phase cannot flow on into the rest.
+ */
+export type BackfillStopBefore =
+	| Exclude<BackfillPhase, 'owners' | 'done'>
+	| 'stops'
+
+function stopIndexOf(stopBefore: BackfillStopBefore | undefined) {
+	if (stopBefore === undefined) return undefined
+	const index = PHASES.indexOf(
+		stopBefore === 'stops' ? BACKFILL_STOP_PHASES[0] : stopBefore,
+	)
+	if (index <= 0)
+		throw new Error(
+			`stopBeforePhase is not a phase after owners: ${stopBefore}`,
+		)
+	return index
+}
+
 export async function runContactSyncBackfillPage(
 	ports: BackfillPorts,
 	cursor: BackfillCursor,
@@ -221,7 +242,13 @@ export type BackfillReceipt =
  * its step limit.
  */
 export async function runContactSyncBackfill(args: {
-	event: { data: { cursor?: BackfillCursor; maxPages?: number } }
+	event: {
+		data: {
+			cursor?: BackfillCursor
+			maxPages?: number
+			stopBeforePhase?: BackfillStopBefore
+		}
+	}
 	step: BackfillStep
 	env: Readonly<Record<string, string | undefined>>
 	ports: BackfillPorts
@@ -233,9 +260,14 @@ export async function runContactSyncBackfill(args: {
 	// A capped run (the first one is a one-page canary) stops after its
 	// pages and never re-queues: an operator checks drovr, then sends the
 	// receipt's cursor back to go on.
-	const { maxPages } = args.event.data
+	const { maxPages, stopBeforePhase } = args.event.data
 	if (maxPages !== undefined && !(Number.isInteger(maxPages) && maxPages > 0))
 		throw new Error(`maxPages must be a positive whole number: ${maxPages}`)
+	const stopIndex = stopIndexOf(stopBeforePhase)
+	const atStop = (at: BackfillCursor) =>
+		stopIndex !== undefined &&
+		at.phase !== 'done' &&
+		PHASES.indexOf(at.phase) >= stopIndex
 	let cursor: BackfillCursor = args.event.data.cursor ?? { phase: 'owners' }
 	let pages = 0
 	let contacts = 0
@@ -243,7 +275,7 @@ export async function runContactSyncBackfill(args: {
 	const pagesPerRun = Math.min(args.pagesPerRun ?? 10, maxPages ?? Infinity)
 	for (
 		let index = 0;
-		index < pagesPerRun && cursor.phase !== 'done';
+		index < pagesPerRun && cursor.phase !== 'done' && !atStop(cursor);
 		index += 1
 	) {
 		const from = cursor
@@ -269,17 +301,21 @@ export async function runContactSyncBackfill(args: {
 		events += page.events.length
 		cursor = page.next
 	}
-	if (cursor.phase !== 'done' && maxPages === undefined) {
+	const stopped = atStop(cursor)
+	if (cursor.phase !== 'done' && maxPages === undefined && !stopped) {
 		await args.step.sendEvent('continue', {
 			name: DROVR_CONTACT_SYNC_BACKFILL_EVENT,
-			data: { cursor },
+			data:
+				stopBeforePhase === undefined
+					? { cursor }
+					: { cursor, stopBeforePhase },
 		})
 	}
 	return {
 		status:
 			cursor.phase === 'done'
 				? 'done'
-				: maxPages === undefined
+				: maxPages === undefined && !stopped
 					? 'continued'
 					: 'paused',
 		cursor,

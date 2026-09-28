@@ -433,3 +433,144 @@ describe('contact sync backfill run', () => {
 		}
 	})
 })
+
+describe('contact sync backfill: stopBeforePhase', () => {
+	const stopRow = (id: string): BackfillRow => ({
+		id,
+		contactId: `stopped-${id}`,
+		eventType: 'contact.unsubscribed',
+		occurredAt: '2026-09-26T00:00:00.000Z',
+	})
+	function slice(owners: number) {
+		const { ports } = world({
+			owners,
+			stops: { 'contact.unsubscribed': [stopRow('u1'), stopRow('u2')] },
+		})
+		const scanned: string[] = []
+		const scanEvents = ports.scanEvents
+		const spied: BackfillPorts = {
+			...ports,
+			scanEvents: async (args) => {
+				scanned.push(args.eventType)
+				return scanEvents(args)
+			},
+		}
+		const sent: { id: string; payload: unknown }[] = []
+		const step = {
+			run: vi.fn(async (_id: string, callback: () => Promise<unknown>) =>
+				callback(),
+			),
+			sendEvent: vi.fn(async (id: string, payload: unknown) => {
+				sent.push({ id, payload })
+			}),
+		}
+		return { ports: spied, step, scanned, sent }
+	}
+	const env = { AIH_DROVR_PROFILE_SYNC: 'true' }
+
+	it('with stopBeforePhase "stops", a run never enters the stop phases', async () => {
+		const h = slice(3)
+		const receipt = await runContactSyncBackfill({
+			event: { data: { stopBeforePhase: 'stops' } },
+			step: h.step,
+			env,
+			ports: h.ports,
+			pageSize: 10,
+			pagesPerRun: 10,
+		})
+		expect(h.scanned).not.toContain('contact.unsubscribed')
+		expect(
+			h.scanned.some((type) => BACKFILL_STOP_PHASES.includes(type as never)),
+		).toBe(false)
+		expect(receipt).toMatchObject({
+			status: 'paused',
+			contacts: 3,
+			cursor: { phase: 'contact.unsubscribed' },
+		})
+		expect(h.sent.map((entry) => entry.id)).not.toContain('continue')
+	})
+
+	it('with stopBeforePhase "double-opt-in", it stops exactly at the end of owners', async () => {
+		const h = slice(3)
+		const receipt = await runContactSyncBackfill({
+			event: { data: { stopBeforePhase: 'double-opt-in' } },
+			step: h.step,
+			env,
+			ports: h.ports,
+			pageSize: 10,
+			pagesPerRun: 10,
+		})
+		expect(h.scanned).toEqual(['journey.owner.assigned'])
+		expect(receipt).toMatchObject({
+			status: 'paused',
+			pages: 1,
+			cursor: { phase: 'double-opt-in' },
+		})
+	})
+
+	it('a slice that ends mid-phase is unchanged: paused on the owners cursor', async () => {
+		const h = slice(5)
+		const receipt = await runContactSyncBackfill({
+			event: { data: { maxPages: 1, stopBeforePhase: 'double-opt-in' } },
+			step: h.step,
+			env,
+			ports: h.ports,
+			pageSize: 2,
+		})
+		expect(receipt).toMatchObject({
+			status: 'paused',
+			pages: 1,
+			cursor: { phase: 'owners', afterId: expect.any(String) },
+		})
+	})
+
+	it('a re-queued run carries stopBeforePhase forward', async () => {
+		const h = slice(5)
+		const receipt = await runContactSyncBackfill({
+			event: { data: { stopBeforePhase: 'stops' } },
+			step: h.step,
+			env,
+			ports: h.ports,
+			pageSize: 2,
+			pagesPerRun: 1,
+		})
+		expect(receipt).toMatchObject({ status: 'continued' })
+		expect(h.sent.find((entry) => entry.id === 'continue')?.payload).toEqual({
+			name: DROVR_CONTACT_SYNC_BACKFILL_EVENT,
+			data: {
+				cursor: expect.objectContaining({ phase: 'owners' }),
+				stopBeforePhase: 'stops',
+			},
+		})
+	})
+
+	it('reads nothing when the cursor is already at the stop', async () => {
+		const h = slice(3)
+		const receipt = await runContactSyncBackfill({
+			event: {
+				data: {
+					cursor: { phase: 'contact.unsubscribed' },
+					stopBeforePhase: 'stops',
+				},
+			},
+			step: h.step,
+			env,
+			ports: h.ports,
+		})
+		expect(h.scanned).toEqual([])
+		expect(receipt).toMatchObject({ status: 'paused', pages: 0 })
+	})
+
+	it('refuses an unknown stopBeforePhase', async () => {
+		const h = slice(3)
+		await expect(
+			runContactSyncBackfill({
+				event: { data: { stopBeforePhase: 'owners' as never } },
+				step: h.step,
+				env,
+				ports: h.ports,
+			}),
+		).rejects.toThrow(/stopBeforePhase/)
+		expect(h.step.run).not.toHaveBeenCalled()
+	})
+})
