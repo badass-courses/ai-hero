@@ -67,7 +67,13 @@ export function stopSignalOfEvent(event: {
 	return { kind, at }
 }
 
-/** Whole seconds: AI_ContactEvent.occurredAt stores no fraction. */
+/**
+ * Whole seconds: AI_ContactEvent.occurredAt is TIMESTAMP(0), which rounds a
+ * fraction on write, while this floors. Both are monotonic and a rounded
+ * stored time is never below the floored one, so for an unsubscribe after
+ * a confirmation round(u) >= floor(u) >= floor(c): a mismatch can only turn
+ * a lift into a tie (a stop), never lift early.
+ */
 const wholeSeconds = (iso: string | undefined): number | undefined => {
 	const ms = Date.parse(iso ?? '')
 	return Number.isFinite(ms) ? Math.floor(ms / 1000) : undefined
