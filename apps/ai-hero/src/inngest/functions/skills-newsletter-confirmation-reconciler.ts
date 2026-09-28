@@ -6,9 +6,16 @@ export const skillsNewsletterConfirmationReconciler = inngest.createFunction(
 		id: 'skills-newsletter-confirmation-reconciler',
 		name: 'Skills Newsletter Confirmation Reconciler',
 		retries: 2,
+		// One run at a time: a run that outlasts its quarter queues the next
+		// instead of overlapping it. A replay is safe anyway: each event's id is
+		// skills-confirmed:<form>:<subscriber>, which Inngest dedupes.
 		concurrency: 1,
 	},
-	{ cron: '17 * * * *' },
+	// Every 15 minutes, off the quarter hours (the contact-sync reconcile)
+	// and :40 (the owner-birth guard). Kit has no confirmation webhook here,
+	// so this poll is the whole wait between a learner confirming and their
+	// entry; a run is ~51 Kit GETs over ~10 min, far inside 120 a minute.
+	{ cron: '2,17,32,47 * * * *' },
 	async ({ step, logger }) => {
 		const plan = await step.run('scan-confirmed-signup-gap', () =>
 			buildSignupConfirmationReconciliationBatch(),
