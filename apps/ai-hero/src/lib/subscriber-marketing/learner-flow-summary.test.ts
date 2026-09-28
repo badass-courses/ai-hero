@@ -2,7 +2,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import type { LearnerFlowRecord } from "./drizzle-capture-repository";
-import { summarizeLearnerFlowRecordPages } from "./learner-flow-summary";
+import {
+  summarizeLearnerFlowRecordPages,
+  summarizeLearnerFlowRecords,
+} from "./learner-flow-summary";
 import type { SideEffectIntent } from "./types";
 
 const now = "2026-08-13T12:00:00.000Z";
@@ -108,5 +111,33 @@ describe("learner-flow aggregate summary", () => {
 
     expect(source).not.toContain("@/server/logger");
     expect(source).not.toContain("log[");
+  });
+});
+
+describe("learner-flow aggregate summary: a lifted unsubscribe (DOI Q5)", () => {
+  it("settles a lifted mid-course path as terminal, and keeps an active stop stuck", () => {
+    const stopped = () => [
+      intent("x", {
+        status: "blocked",
+        reviewReasons: ["unsubscribed"],
+        createdAt: "2026-08-10T00:00:00.000Z",
+      }),
+    ];
+    const { summary } = summarizeLearnerFlowRecords({
+      records: [
+        record("lifted", stopped(), {
+          stopEvents: [
+            {
+              eventType: "contact.resubscribed",
+              occurredAt: "2026-08-12T00:00:00.000Z",
+            },
+          ],
+        }),
+        record("still-stopped", stopped()),
+      ],
+      now,
+    });
+    expect(summary.counts).toMatchObject({ total: 2, terminal: 1, stuck: 1 });
+    expect(summary.causeCounts).toEqual({ unsubscribed: 1 });
   });
 });

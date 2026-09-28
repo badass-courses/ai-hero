@@ -1089,7 +1089,8 @@ async function courseEnteredAt(
 			)
 			.map((owner) => owner.occurredAt),
 	].filter((at) => Number.isFinite(Date.parse(at)))
-	return times.reduce((earliest, at) =>
-		Date.parse(at) < Date.parse(earliest) ? at : earliest,
+	return times.reduce<string>(
+		(earliest, at) => (Date.parse(at) < Date.parse(earliest) ? at : earliest),
+		times[0] ?? intent.createdAt,
 	)
 }

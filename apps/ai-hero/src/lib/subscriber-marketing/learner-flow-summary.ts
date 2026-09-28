@@ -56,6 +56,8 @@ type LearnerFlowSummaryRecord = Pick<LearnerFlowRecord, "contactId"> & {
       "eventType" | "occurredAt" | "providerReference"
     >
   >;
+  /** The stop-rule events, so a lifted unsubscribe settles (contact-stop-rule). */
+  stopEvents?: LearnerFlowContactInput["stopEvents"];
 };
 
 function addLearnerFlowRecords(
@@ -70,6 +72,7 @@ function addLearnerFlowRecords(
       contactState: record.contactState,
       intents: record.intents,
       entryEvents: record.entryEvents,
+      stopEvents: record.stopEvents,
       now,
     }),
   }));
