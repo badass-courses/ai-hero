@@ -6,8 +6,10 @@ import type { ContactEventRecord, SideEffectIntent } from './types'
  *
  * - An unsubscribe is lifted by a later fresh double opt-in confirmation,
  *   recorded as a `contact.resubscribed` ContactEvent at the confirm
- *   (drovr-list-subscribe). A later unsubscribe applies again.
+ *   (drovr-list-subscribe). A later unsubscribe applies again, and a stop
+ *   wins a tie (whole seconds).
  * - A bounce or a complaint never lifts.
+ * - A lift never revives work planned before it: no course restarts.
  *
  * Every reader of stop evidence goes through here, so no reader can treat
  * an unsubscribe as permanent again (contact-stop-rule.test.ts pins it).
@@ -65,14 +67,25 @@ export function stopSignalOfEvent(event: {
 	return { kind, at }
 }
 
+/** Whole seconds: AI_ContactEvent.occurredAt stores no fraction. */
+const wholeSeconds = (iso: string | undefined): number | undefined => {
+	const ms = Date.parse(iso ?? '')
+	return Number.isFinite(ms) ? Math.floor(ms / 1000) : undefined
+}
+
 /**
- * The rule. An unsubscribe is active unless a lift happened at or after
- * the latest unsubscribe (drovr's rule too: a stop at or before lifted_at
- * is history). An unreadable unsubscribe time keeps it active; an
- * unreadable lift time lifts nothing.
+ * The rule, in whole seconds. An unsubscribe is active unless a lift came
+ * strictly after the latest unsubscribe: a stop fact wins a tie. An
+ * unreadable unsubscribe time keeps it active; an unreadable lift time
+ * lifts nothing.
+ *
+ * With `plannedAt` (when a piece of work was planned), a lift revives only
+ * work planned at or after it: work planned before the lift stays stopped,
+ * so a re-subscriber's old course never restarts (Joel, 2026-09-28).
  */
 export function activeContactStops(
 	signals: Iterable<ContactStopSignal>,
+	plannedAt?: string,
 ): ActiveContactStops {
 	let latestUnsubscribe: number | undefined
 	let unsubscribeUnreadable = false
@@ -83,21 +96,29 @@ export function activeContactStops(
 		complained: false,
 	}
 	for (const signal of signals) {
-		const at = Date.parse(signal.at)
+		const at = wholeSeconds(signal.at)
 		if (signal.kind === 'resubscribed') {
-			if (Number.isFinite(at))
+			if (at !== undefined)
 				latestLift = latestLift === undefined ? at : Math.max(latestLift, at)
 		} else if (signal.kind === 'unsubscribed') {
-			if (!Number.isFinite(at)) unsubscribeUnreadable = true
+			if (at === undefined) unsubscribeUnreadable = true
 			else
 				latestUnsubscribe =
 					latestUnsubscribe === undefined ? at : Math.max(latestUnsubscribe, at)
 		} else stops[signal.kind] = true
 	}
-	stops.unsubscribed =
-		unsubscribeUnreadable ||
-		(latestUnsubscribe !== undefined &&
-			(latestLift === undefined || latestUnsubscribe > latestLift))
+	const hadUnsubscribe =
+		unsubscribeUnreadable || latestUnsubscribe !== undefined
+	const lifted =
+		!unsubscribeUnreadable &&
+		latestUnsubscribe !== undefined &&
+		latestLift !== undefined &&
+		latestLift > latestUnsubscribe
+	const planned = plannedAt === undefined ? undefined : wholeSeconds(plannedAt)
+	const revives =
+		plannedAt === undefined ||
+		(planned !== undefined && latestLift !== undefined && planned >= latestLift)
+	stops.unsubscribed = hadUnsubscribe && !(lifted && revives)
 	return stops
 }
 
@@ -167,10 +188,13 @@ export async function readContactStopSignals(
 export async function readActiveContactStops(
 	repository: ContactStopEventReader,
 	contactId: string,
-	extra: readonly ContactStopSignal[] = [],
+	options: { extra?: readonly ContactStopSignal[]; plannedAt?: string } = {},
 ): Promise<ActiveContactStops> {
 	const { signals } = await readContactStopSignals(repository, contactId)
-	return activeContactStops([...signals, ...extra])
+	return activeContactStops(
+		[...signals, ...(options.extra ?? [])],
+		options.plannedAt,
+	)
 }
 
 /** The rule per key (a contact id, usually) over batch-read rows. */

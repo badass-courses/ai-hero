@@ -358,26 +358,14 @@ export async function acceptListSubscribe(args: {
 		return retry('kit-subscribe-in-flight')
 	}
 
-	// The confirmation is fresh consent: it lifts an earlier unsubscribe
-	// (contact-stop-rule) whatever Kit does next, so it is recorded first.
-	// Idempotent per intent, so a retry or a blocked row re-records nothing.
-	if (!args.recordResubscribe) {
+	if (row.status === 'blocked') return blockedFor(row)
+	const recordResubscribe = args.recordResubscribe
+	if (!recordResubscribe) {
 		return retry(
 			'resubscribe-lift-not-configured',
 			KIT_SUBSCRIBE_UNCONFIGURED_RETRY_MS,
 		)
 	}
-	try {
-		await args.recordResubscribe({
-			contactId: contact.id,
-			confirmedAt,
-			intentKey: intent.idempotencyKey,
-		})
-	} catch {
-		return retry('resubscribe-lift-failed')
-	}
-
-	if (row.status === 'blocked') return blockedFor(row)
 	// No provider write (or completion) without an atomic claim and a guarded finish.
 	if (
 		!args.repository.claimSideEffectIntentForSend ||
@@ -413,6 +401,32 @@ export async function acceptListSubscribe(args: {
 		})
 		return finished ? blockedFor(finished) : afterLostClaim()
 	}
+	// The confirmation is fresh consent: it lifts an earlier unsubscribe
+	// (contact-stop-rule) whatever Kit does next, so it is recorded before
+	// any Kit call, idempotent per intent. A confirmation older than a later
+	// unsubscribe lifts nothing and never reaches Kit, retries included.
+	let lift: Awaited<ReturnType<ResubscribeRecorder>>
+	try {
+		lift = await recordResubscribe({
+			contactId: contact.id,
+			confirmedAt,
+			intentKey: intent.idempotencyKey,
+		})
+	} catch {
+		const failed = await finish(args.repository, row, {
+			status: 'failed',
+			metadata: { retryReason: 'resubscribe-lift-failed' },
+			now: args.now,
+		})
+		return failed ? retry('resubscribe-lift-failed') : afterLostClaim()
+	}
+	if (lift === 'unsubscribed-after-confirmation') {
+		return blocked('unsubscribed-after-confirmation')
+	}
+	if (lift === 'no-provider-identity') {
+		return blocked('resubscribe-lift-no-provider-identity')
+	}
+
 	const email = contact.email?.trim()
 	if (!email) return blocked('contact-email-missing')
 
@@ -472,15 +486,21 @@ export type ResubscribeRecorder = (confirmation: {
 	/** drovr's lifted_at: the lift's time under the shared rule. */
 	confirmedAt: string
 	intentKey: string
-}) => Promise<'lifted' | 'not-unsubscribed'>
+}) => Promise<
+	| 'lifted'
+	| 'not-unsubscribed'
+	| 'unsubscribed-after-confirmation'
+	/** Nothing to hang the lift on; a retry would never find one. */
+	| 'no-provider-identity'
+>
 
 export const resubscribeProviderEventId = (intentKey: string) =>
 	`doi-resubscribed:${createHash('sha256').update(intentKey).digest('hex').slice(0, 40)}`
 
 /**
  * The executor's `recordResubscribe`: when the contact's unsubscribe is
- * still active, record a `contact.resubscribed` ContactEvent at the
- * confirmation time. Under contact-stop-rule it lifts the unsubscribe, a
+ * still active and no unsubscribe came after the confirmation, record a
+ * `contact.resubscribed` ContactEvent at the confirmation time. Under contact-stop-rule it lifts the unsubscribe, a
  * later unsubscribe applies again, and a bounce or complaint never lifts.
  * It maps to no drovr fact (drovr holds its own lift); a profile sync
  * follows so the synced standing drops `unsubscribed`.
@@ -511,20 +531,21 @@ export function createResubscribeRecorder(deps: {
 			readContactStopSignals(deps.repository, contactId),
 			deps.repository.findValuePathEmailSideEffectIntentsByContact(contactId),
 		])
-		const stops = activeContactStops([
-			...signals,
-			...stopSignalsOfIntents(intents),
-		])
-		if (!stops.unsubscribed) return 'not-unsubscribed'
+		const known = [...signals, ...stopSignalsOfIntents(intents)]
+		if (!activeContactStops(known).unsubscribed) return 'not-unsubscribed'
+		// An unsubscribe after the confirmation wins: nothing to record.
+		if (
+			activeContactStops([...known, { kind: 'resubscribed', at: confirmedAt }])
+				.unsubscribed
+		)
+			return 'unsubscribed-after-confirmation'
 		const providerIdentityId =
 			events.find(
 				(event) => event.eventType === CONTACT_UNSUBSCRIBED_EVENT_TYPE,
 			)?.providerIdentityId ??
 			events[0]?.providerIdentityId ??
 			(await deps.findProviderIdentityId(contactId))
-		if (!providerIdentityId) {
-			throw new Error('resubscribe lift: the contact has no provider identity')
-		}
+		if (!providerIdentityId) return 'no-provider-identity'
 		const providerEventId = resubscribeProviderEventId(intentKey)
 		await deps.repository.createContactEvent({
 			...normalizeContactEvent({

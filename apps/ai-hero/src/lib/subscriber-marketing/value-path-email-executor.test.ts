@@ -202,7 +202,72 @@ describe('value path email executor', () => {
 				repository: {
 					findPendingValuePathEmailSideEffectIntents: vi
 						.fn()
-						.mockResolvedValue([valuePathIntent()]),
+						.mockResolvedValue([
+							valuePathIntent({ createdAt: '2026-09-04T00:00:00.000Z' }),
+						]),
+					findContactById: vi.fn().mockResolvedValue({
+						id: 'contact-1',
+						email: 'learner@example.com',
+					}),
+					findCurrentContactState: vi.fn().mockResolvedValue({
+						id: 'state-1',
+						contactId: 'contact-1',
+						lifecycle: 'nurture-ready',
+						reviewSignals: [],
+						humanReview: false,
+					}),
+					findContactEventsByType,
+					updateSideEffectIntent: vi.fn(),
+					claimSideEffectIntentForSend: vi.fn(),
+					finishClaimedSideEffectIntent: vi.fn(),
+				},
+				emailListProvider: { subscribeToList: vi.fn() },
+				config: {
+					allowWrite: false,
+					mode: 'scoped-live',
+					allowlistedContactIds: ['contact-1'],
+					allowlistedKitSubscriberIds: ['kit-1'],
+					allowlistedEmails: ['learner@example.com'],
+					enabledValuePathSlugs: ['ai-hero-skills-workflow'],
+					verifiedEmailResourceIds: ['ai-hero-skills-workflow.email-6'],
+					verifiedKitSequenceIds: ['2757205'],
+					allowedActions: ['send-path-emails'],
+				},
+			})
+			const reasons =
+				(result[0] as { reviewReasons?: string[] }).reviewReasons ?? []
+			expect(reasons.includes('unsubscribed')).toBe(stopped)
+		},
+	)
+
+	it.each([
+		['2026-09-01T00:00:00.000Z', true],
+		['2026-09-03T00:00:00.000Z', false],
+	] as const)(
+		'never revives course work planned before a lifted unsubscribe (no restart): created %s stops=%s',
+		async (createdAt, stopped) => {
+			const events = [
+				['contact.unsubscribed', '2026-09-01T12:00:00.000Z'],
+				['contact.resubscribed', '2026-09-02T00:00:00.000Z'],
+			] as const
+			const findContactEventsByType = vi.fn(
+				async (_contactId: string, eventType: string) =>
+					events
+						.filter(([type]) => type === eventType)
+						.map(
+							([type, occurredAt]) =>
+								({
+									id: `${type}:${occurredAt}`,
+									eventType: type,
+									occurredAt,
+								}) as never,
+						),
+			)
+			const result = await executePendingValuePathEmailIntents({
+				repository: {
+					findPendingValuePathEmailSideEffectIntents: vi
+						.fn()
+						.mockResolvedValue([valuePathIntent({ createdAt })]),
 					findContactById: vi.fn().mockResolvedValue({
 						id: 'contact-1',
 						email: 'learner@example.com',

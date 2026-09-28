@@ -258,3 +258,67 @@ describe('learner-flow classifier', () => {
 		expect(result).toMatchObject({ state: 'stuck', cause: 'classifier-gap' })
 	})
 })
+
+describe('learner-flow classifier: a lifted unsubscribe (DOI Q5, no restart)', () => {
+	const unsubscribedIntent = () =>
+		intent({
+			status: 'blocked',
+			reviewReasons: ['unsubscribed'],
+			createdAt: '2026-07-10T11:00:00.000Z',
+		})
+
+	it('keeps an active unsubscribe stuck', () => {
+		expect(
+			classify({ contactId: 'contact-1', intents: [unsubscribedIntent()] }),
+		).toMatchObject({ state: 'stuck', cause: 'unsubscribed' })
+	})
+
+	it('settles a course path whose unsubscribe a later confirmation lifted as terminal, never repaired', () => {
+		expect(
+			classify({
+				contactId: 'contact-1',
+				intents: [unsubscribedIntent()],
+				stopEvents: [
+					{
+						eventType: 'contact.resubscribed',
+						occurredAt: '2026-07-12T00:00:00.000Z',
+					},
+				],
+			}),
+		).toMatchObject({ state: 'terminal' })
+	})
+
+	it('is stuck again after a later unsubscribe', () => {
+		expect(
+			classify({
+				contactId: 'contact-1',
+				intents: [unsubscribedIntent()],
+				stopEvents: [
+					{
+						eventType: 'contact.resubscribed',
+						occurredAt: '2026-07-12T00:00:00.000Z',
+					},
+					{
+						eventType: 'contact.unsubscribed',
+						occurredAt: '2026-07-13T00:00:00.000Z',
+					},
+				],
+			}),
+		).toMatchObject({ state: 'stuck', cause: 'unsubscribed' })
+	})
+
+	it('never lifts a bounce', () => {
+		expect(
+			classify({
+				contactId: 'contact-1',
+				intents: [intent({ status: 'blocked', reviewReasons: ['bounced'] })],
+				stopEvents: [
+					{
+						eventType: 'contact.resubscribed',
+						occurredAt: '2026-07-16T00:00:00.000Z',
+					},
+				],
+			}),
+		).toMatchObject({ state: 'stuck', cause: 'bounced' })
+	})
+})

@@ -293,6 +293,66 @@ describe('learner flow reconciler', () => {
 		})
 	})
 
+	it('never nudges a mid-course re-subscriber after the lift (no restart, Joel 2026-09-28)', async () => {
+		const record = (
+			contactId: string,
+			options: { unsubscribed: boolean; lifted: boolean },
+		) => ({
+			contactId,
+			entryEvents: [],
+			intents: [
+				// Would be drip-starved, so nudged, with no stop.
+				courseIntent({
+					contactId,
+					id: `${contactId}-0`,
+					status: 'completed',
+					completedAt: '2026-07-16T20:00:00.000Z',
+					emailResourceId: 'ai-hero-skills-workflow.email-6',
+					kitSequenceId: '2757205',
+				}),
+				...(options.unsubscribed
+					? [
+							{
+								...courseIntent({
+									contactId,
+									id: `${contactId}-stop`,
+									status: 'blocked',
+									createdAt: '2026-07-16T21:00:00.000Z',
+									emailResourceId: 'ai-hero-skills-workflow.email-6',
+									kitSequenceId: '2757205',
+								}),
+								reviewReasons: ['unsubscribed'],
+							},
+						]
+					: []),
+			],
+			stopEvents: options.lifted
+				? [
+						{
+							eventType: 'contact.resubscribed',
+							occurredAt: '2026-07-17T10:00:00.000Z',
+						},
+					]
+				: [],
+		})
+		const plan = await buildLearnerFlowReconcilerPlan({
+			repository: new BrakeOnlyRepository([
+				record('control', { unsubscribed: false, lifted: false }),
+				record('stopped', { unsubscribed: true, lifted: false }),
+				record('resubscribed', { unsubscribed: true, lifted: true }),
+			]),
+			allowlist: rollingAllowlist(),
+			now,
+		})
+		const planned = plan.candidates.map((candidate) => candidate.contactId)
+		expect(planned).toContain('control')
+		expect(planned).not.toContain('stopped')
+		expect(planned).not.toContain('resubscribed')
+		expect(
+			plan.tier2.map((ask: { contactId: string }) => ask.contactId),
+		).not.toContain('resubscribed')
+	})
+
 	it('plans the existing-finisher email-7 wave as normal reconciler work', async () => {
 		const records = Array.from({ length: 300 }, (_, index) => {
 			const contactId = `contact-${index}`

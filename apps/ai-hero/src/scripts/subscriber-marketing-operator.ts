@@ -1103,6 +1103,7 @@ async function buildLearnerFlowStuckList() {
 			contactState: record.contactState,
 			intents: record.intents,
 			entryEvents: record.entryEvents,
+			stopEvents: record.stopEvents,
 			now: generatedAt,
 		})
 		return {

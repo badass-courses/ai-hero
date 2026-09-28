@@ -36,6 +36,13 @@ const intentRow = (contactId: string) => ({
   createdAt: "2026-08-13T11:00:00.000Z",
 });
 
+/** The stop-rule event read selects no providerReference; entry reads do. */
+const isStopEventSelection = (selection: unknown) =>
+  typeof selection === "object" &&
+  selection !== null &&
+  "eventType" in selection &&
+  !("providerReference" in selection);
+
 describe("learner-flow summary pagination", () => {
   it("bounds the learner-id and related-row selects for every page", async () => {
     const firstIds = Array.from({ length: LEARNER_FLOW_RECORD_PAGE_SIZE }, (_, index) => ({
@@ -56,6 +63,7 @@ describe("learner-flow summary pagination", () => {
       selection: Record<string, unknown> | undefined;
     }> = [];
     const eventQueries: Array<{ condition: unknown; limit: number }> = [];
+    const stopQueries: Array<{ condition: unknown; limit: number }> = [];
     const intentQueries: Array<{
       condition: unknown;
       limit: number;
@@ -86,6 +94,16 @@ describe("learner-flow summary pagination", () => {
                       intentQueries.push({ condition, limit, selection });
                       const ids = idPages[hydrationPage] ?? [];
                       return ids.map(({ contactId }) => intentRow(contactId));
+                    },
+                  }),
+                };
+              }
+              if (table === contactEvent && isStopEventSelection(selection)) {
+                return {
+                  orderBy: () => ({
+                    limit: (limit: number) => {
+                      stopQueries.push({ condition, limit });
+                      return [];
                     },
                   }),
                 };
@@ -146,6 +164,9 @@ describe("learner-flow summary pagination", () => {
     expect(thirdIdQuery.params).toContain(secondIds[LEARNER_FLOW_RECORD_PAGE_SIZE - 1]?.contactId);
     expect(intentQueries).toHaveLength(3);
     expect(intentQueries.every(({ limit }) => limit === 5000)).toBe(true);
+    // The stop-rule events (contact-stop-rule) ride the same bounded pages.
+    expect(stopQueries).toHaveLength(3);
+    expect(stopQueries.every(({ limit }) => limit === 5000)).toBe(true);
     for (const query of intentQueries) {
       const selected = Object.keys(query.selection ?? {}).sort();
       expect(selected).not.toContain("metadata");
@@ -530,6 +551,9 @@ describe("learner-flow summary pagination", () => {
         from: (table: unknown) => ({
           where: (condition: unknown) => {
             if (table === sideEffectIntent) {
+              return { orderBy: () => ({ limit: () => [] }) };
+            }
+            if (table === contactEvent && isStopEventSelection(selection)) {
               return { orderBy: () => ({ limit: () => [] }) };
             }
             if (table === contactEvent) {

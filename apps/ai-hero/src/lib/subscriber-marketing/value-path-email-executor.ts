@@ -344,7 +344,12 @@ export async function executeValuePathEmailIntent(args: {
 	const mode = args.config?.mode ?? metadata.mode
 	// A stopped contact is refused here, as live personalize refuses it
 	// (mig-10, 2026-09-27): contact-sync step 2 removes that other net.
-	const stops = await readContactStops(args.repository, intent.contactId)
+	// A lift revives only work planned after it: an old course never restarts.
+	const stops = await readContactStops(
+		args.repository,
+		intent.contactId,
+		intent.createdAt,
+	)
 
 	const preflightReasons = [
 		...(contact ? [] : ['contact-missing']),
@@ -1034,10 +1039,14 @@ function summarizeProviderResult(value: unknown) {
 	}
 }
 
-/** Active stops under the shared rule: a fresh double opt-in lifts an unsubscribe. */
+/**
+ * Active stops under the shared rule: a fresh double opt-in lifts an
+ * unsubscribe, but only for work planned at or after the lift.
+ */
 async function readContactStops(
 	repository: ValuePathEmailExecutorRepository,
 	contactId: string,
+	plannedAt: string,
 ): Promise<{ unsubscribed: boolean; bounced: boolean; complained: boolean }> {
-	return await readActiveContactStops(repository, contactId)
+	return await readActiveContactStops(repository, contactId, { plannedAt })
 }

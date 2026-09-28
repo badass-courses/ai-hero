@@ -662,6 +662,116 @@ describe('a confirmation lifts an earlier unsubscribe (DOI Q5)', () => {
 		).resolves.toBe('lifted')
 	})
 
+	it('blocks, with no lift and no Kit call, a confirmation older than a later unsubscribe', async () => {
+		// Confirmed at `now`, then unsubscribed again before the intent arrived.
+		const f = lifting([
+			event('contact.unsubscribed', unsubscribedAt),
+			event('contact.unsubscribed', '2026-09-25T07:00:00.000Z'),
+		])
+		const result = await acceptDrovrIntent({
+			repository: setup(),
+			intent: confirmation(),
+			now,
+			subscribeInKit: f.subscribeInKit,
+			recordResubscribe: f.recorder,
+		})
+		expect(result).toMatchObject({
+			status: 'blocked',
+			reviewReasons: ['unsubscribed-after-confirmation'],
+		})
+		expect(f.order).toEqual([])
+		expect(
+			f.events.filter((row) => row.eventType === 'contact.resubscribed'),
+		).toHaveLength(0)
+	})
+
+	it('blocks a confirmation with an unsubscribe in the same second (a stop wins a tie)', async () => {
+		const f = lifting([
+			event('contact.unsubscribed', unsubscribedAt),
+			// Stored at whole seconds: the same second as confirmedAt (06:30:00).
+			event('contact.unsubscribed', '2026-09-25T06:30:00.000Z'),
+		])
+		const result = await acceptDrovrIntent({
+			repository: setup(),
+			intent: confirmation({
+				payload: {
+					confirmedAt: '2026-09-25T06:30:00.250Z',
+					formId: 'skills-newsletter',
+					kitFormId: 9376133,
+					reason: 'double-opt-in-confirmed',
+				},
+			}),
+			now,
+			subscribeInKit: f.subscribeInKit,
+			recordResubscribe: f.recorder,
+		})
+		expect(result).toMatchObject({
+			status: 'blocked',
+			reviewReasons: ['unsubscribed-after-confirmation'],
+		})
+		expect(f.order).toEqual([])
+	})
+
+	it('blocks, not retries forever, when the contact has no provider identity', async () => {
+		const recorder = createResubscribeRecorder({
+			repository: {
+				findContactEventsByType: () => [],
+				findValuePathEmailSideEffectIntentsByContact: () => [
+					{
+						completedAt: unsubscribedAt,
+						createdAt: unsubscribedAt,
+						metadata: { providerResult: { unsubscribed: true } },
+					} as never,
+				],
+				createContactEvent: async () => undefined,
+			},
+			findProviderIdentityId: async () => undefined,
+			requestSync: async () => undefined,
+			info: () => undefined,
+		})
+		const subscribeInKit = kit()
+		const result = await acceptDrovrIntent({
+			repository: setup(),
+			intent: confirmation(),
+			now,
+			subscribeInKit,
+			recordResubscribe: recorder,
+		})
+		expect(result).toMatchObject({
+			status: 'blocked',
+			reviewReasons: ['resubscribe-lift-no-provider-identity'],
+		})
+		expect(subscribeInKit).not.toHaveBeenCalled()
+	})
+
+	it('blocks a Kit retry of a lifted confirmation after a later unsubscribe', async () => {
+		const f = lifting([event('contact.unsubscribed', unsubscribedAt)])
+		const repository = setup()
+		const first = await acceptDrovrIntent({
+			repository,
+			intent: confirmation(),
+			now,
+			subscribeInKit: kit(async () => {
+				throw new KitV4Error(503, 'down')
+			}),
+			recordResubscribe: f.recorder,
+		})
+		expect(first).toMatchObject({ status: 'retry' })
+		f.events.push(event('contact.unsubscribed', '2026-09-25T07:00:00.000Z'))
+		const retried = await acceptDrovrIntent({
+			repository,
+			intent: confirmation(),
+			now: '2026-09-25T08:00:00.000Z',
+			subscribeInKit: f.subscribeInKit,
+			recordResubscribe: f.recorder,
+		})
+		expect(retried).toMatchObject({
+			status: 'blocked',
+			reviewReasons: ['unsubscribed-after-confirmation'],
+		})
+		expect(f.order).toEqual(['lift'])
+	})
+
 	it('falls back to any provider identity of the contact', async () => {
 		const f = lifting([])
 		const recorder = createResubscribeRecorder({

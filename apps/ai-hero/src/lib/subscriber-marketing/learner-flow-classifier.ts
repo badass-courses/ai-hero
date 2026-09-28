@@ -1,3 +1,4 @@
+import { activeContactStops, stopSignalOfEvent } from './contact-stop-rule'
 import { isCleanedLearnerFlowFixtureIntent } from './learner-flow-fixture'
 import {
 	isTerminalSkillsWorkflowEmailResourceId,
@@ -70,6 +71,11 @@ export type LearnerFlowContactInput = {
 		ContactEventRecord,
 		'eventType' | 'occurredAt' | 'providerReference'
 	>[]
+	/**
+	 * The contact's stop-rule ContactEvents (CONTACT_STOP_RULE_EVENT_TYPES),
+	 * so a lifted unsubscribe settles the path instead of leaving it stuck.
+	 */
+	stopEvents?: Pick<ContactEventRecord, 'eventType' | 'occurredAt'>[]
 	dripScheduleEvidence?: { timezone?: string }
 	now: string
 }
@@ -106,8 +112,26 @@ export function classifyLearnerFlowContact(
 		return { state: 'terminal', stage }
 	}
 
+	// The shared rule (contact-stop-rule): the path's own stop signals plus
+	// the contact's stop events. An unsubscribe a later confirmation lifted
+	// ends the path here: a re-subscriber's course never restarts (Joel,
+	// 2026-09-28), so it is settled, never repaired or nudged.
+	const stops = activeContactStops([
+		...pathIntents.flatMap((intent) =>
+			(['bounced', 'complained', 'unsubscribed'] as const)
+				.filter((cause) => hasSignal(intent, cause))
+				.map((kind) => ({ kind, at: intent.completedAt || intent.createdAt })),
+		),
+		...(input.stopEvents ?? []).flatMap(
+			(event) => stopSignalOfEvent(event) ?? [],
+		),
+	])
 	for (const cause of ['bounced', 'complained', 'unsubscribed'] as const) {
-		if (pathIntents.some((intent) => hasSignal(intent, cause))) {
+		if (!pathIntents.some((intent) => hasSignal(intent, cause))) continue
+		if (cause === 'unsubscribed' && !stops.unsubscribed) {
+			return { state: 'terminal', stage }
+		}
+		if (stops[cause]) {
 			return stuck({
 				stage,
 				cause,

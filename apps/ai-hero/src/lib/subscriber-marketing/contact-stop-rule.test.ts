@@ -44,12 +44,56 @@ describe('the contact stop rule', () => {
 		).toBe(true)
 	})
 
-	it('lifts on a tie, as drovr does (a stop at or before lifted_at is history)', () => {
+	it('keeps a tie stopped: a stop fact wins (whole seconds, as MySQL stores them)', () => {
 		expect(
 			activeContactStops([
 				unsub('2026-09-02T00:00:00Z'),
 				lift('2026-09-02T00:00:00Z'),
 			]).unsubscribed,
+		).toBe(true)
+		// An unsubscribe later in the same second as the confirmation.
+		expect(
+			activeContactStops([
+				lift('2026-09-02T00:00:00.400Z'),
+				unsub('2026-09-02T00:00:00.900Z'),
+			]).unsubscribed,
+		).toBe(true)
+		// Stored truncated: the same second, still stopped.
+		expect(
+			activeContactStops([
+				unsub('2026-09-02T00:00:00.000Z'),
+				lift('2026-09-02T00:00:00.400Z'),
+			]).unsubscribed,
+		).toBe(true)
+		expect(
+			activeContactStops([
+				unsub('2026-09-02T00:00:00.900Z'),
+				lift('2026-09-02T00:00:01.000Z'),
+			]).unsubscribed,
+		).toBe(false)
+	})
+
+	it('never lets a lift revive work planned before it', () => {
+		const signals = [
+			unsub('2026-09-02T00:00:00Z'),
+			lift('2026-09-05T00:00:00Z'),
+		]
+		expect(
+			activeContactStops(signals, '2026-09-01T00:00:00Z').unsubscribed,
+		).toBe(true)
+		expect(
+			activeContactStops(signals, '2026-09-03T00:00:00Z').unsubscribed,
+		).toBe(true)
+		expect(
+			activeContactStops(signals, '2026-09-05T00:00:00Z').unsubscribed,
+		).toBe(false)
+		expect(
+			activeContactStops(signals, '2026-09-06T00:00:00Z').unsubscribed,
+		).toBe(false)
+		// No unsubscribe: planning time changes nothing.
+		expect(
+			activeContactStops([lift('2026-09-05T00:00:00Z')], '2026-09-01T00:00:00Z')
+				.unsubscribed,
 		).toBe(false)
 	})
 
@@ -180,7 +224,36 @@ describe('the contact stop rule pin', () => {
 		expect(offenders).toEqual([])
 	})
 
+	it('lets no reader use the stop constants or intent stop flags without the rule', () => {
+		// Textual, like the literal pin: it catches the plain forms (a stop
+		// constant or a provider flag read in a file that never applies the
+		// rule), not every indirection. Projections that only carry the data
+		// to a rule-applying reader are listed with the reason.
+		const projectionOnly: Record<string, string> = {
+			'lib/subscriber-marketing/drizzle-capture-repository.ts':
+				'projection: loads stop events and intent flags for learner-flow-classifier',
+		}
+		const stopConstant =
+			/\bCONTACT_(?:UNSUBSCRIBED|BOUNCED|COMPLAINED|RESUBSCRIBED)_EVENT_TYPE\b|\bCONTACT_STOP(?:_RULE)?_EVENT_TYPES\b/
+		const intentFlag =
+			/providerResult[\s\S]{0,400}(?:unsubscribed|bounced|complained)|(?:unsubscribed|bounced|complained)[\s\S]{0,400}providerResult/
+		const appliesRule =
+			/\b(?:readActiveContactStops|activeContactStops|activeContactStopsByKey|readContactStopSignals|stopSignalsOfIntents)\b/
+		const offenders = sourceFiles(SRC)
+			.map((file) => path.relative(SRC, file).split(path.sep).join('/'))
+			.filter((file) => {
+				if (file in LITERAL_ALLOWED || file in projectionOnly) return false
+				const source = fs.readFileSync(path.join(SRC, file), 'utf8')
+				return (
+					(stopConstant.test(source) || intentFlag.test(source)) &&
+					!appliesRule.test(source)
+				)
+			})
+		expect(offenders).toEqual([])
+	})
+
 	it.each([
+		'lib/subscriber-marketing/learner-flow-classifier.ts',
 		'lib/subscriber-marketing/drovr-personalize.ts',
 		'lib/subscriber-marketing/drovr-evergreen-sender.ts',
 		'lib/subscriber-marketing/value-path-email-executor.ts',
