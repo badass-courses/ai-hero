@@ -54,6 +54,11 @@ export type DrovrContactSyncBackfillRequested = {
 		 * one-page canary); the receipt's cursor resumes it.
 		 */
 		maxPages?: number
+		/**
+		 * A phase the run may not enter (or `stops` for every stop phase):
+		 * it ends paused there, and never re-queues past it.
+		 */
+		stopBeforePhase?: import('@/lib/subscriber-marketing/contact-sync-backfill').BackfillStopBefore
 	}
 }
 
