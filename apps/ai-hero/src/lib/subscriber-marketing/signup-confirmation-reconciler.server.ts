@@ -35,8 +35,9 @@ export const SKILLS_NEWSLETTER_FORM_ID = 9376133
 export const SKILLS_CONFIRMATION_RECONCILIATION_START =
 	'2026-09-25T00:00:00.000Z'
 /**
- * Every replayed confirmation of a new signup is a birth in drovr, so the
- * hourly run stays small and a backlog drains over a few runs.
+ * Every replayed confirmation of a new signup is a birth in drovr, so each
+ * run (four an hour) stays small and a backlog drains over a few runs: at
+ * most 200 births an hour.
  */
 export const SKILLS_CONFIRMATION_RECONCILIATION_LIMIT = 50
 
