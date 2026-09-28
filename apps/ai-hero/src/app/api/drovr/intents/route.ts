@@ -15,6 +15,7 @@ import { parseDrovrEvergreenConfig } from '@/lib/subscriber-marketing/drovr-ever
 import {
 	createKitFormSubscriber,
 	createKitSubscriberLinker,
+	createResubscribeRecorder,
 } from '@/lib/subscriber-marketing/drovr-list-subscribe'
 import { createKitUnsubscriber } from '@/lib/subscriber-marketing/drovr-list-unsubscribe'
 import {
@@ -78,6 +79,17 @@ const bearerMatches = (header: string | null, secret: string): boolean => {
 	const a = Buffer.from(token)
 	const b = Buffer.from(secret)
 	return a.length === b.length && timingSafeEqual(a, b)
+}
+
+const findAnyProviderIdentityId = async (
+	contactId: string,
+): Promise<string | undefined> => {
+	const rows = await db
+		.select({ id: providerIdentity.id })
+		.from(providerIdentity)
+		.where(eq(providerIdentity.contactId, contactId))
+		.limit(1)
+	return rows[0]?.id
 }
 
 const findKitSubscriberId = async (
@@ -213,6 +225,18 @@ export const POST = withSkill(async (request: NextRequest) => {
 		}),
 		subscribeInKit: createKitFormSubscriber({
 			apiKey: env.KIT_V4_API_KEY ?? process.env.CONVERTKIT_V4_API_KEY,
+		}),
+		recordResubscribe: createResubscribeRecorder({
+			repository: {
+				findContactEventsByType: (contactId, eventType) =>
+					repository.findContactEventsByType(contactId, eventType),
+				findValuePathEmailSideEffectIntentsByContact: (contactId) =>
+					repository.findValuePathEmailSideEffectIntentsByContact(contactId),
+				createContactEvent: (input) => repository.createContactEvent(input),
+			},
+			findProviderIdentityId: findAnyProviderIdentityId,
+			requestSync: (request) => requestContactProfileSync(request),
+			info: log.info,
 		}),
 		linkKitSubscriber: createKitSubscriberLinker({
 			repository: {

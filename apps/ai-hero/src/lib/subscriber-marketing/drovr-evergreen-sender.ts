@@ -1,4 +1,9 @@
 import type { CaptureMarketingRepository } from './capture-contact-event'
+import {
+	firstActiveStop,
+	readActiveContactStops,
+	type ContactStopReason,
+} from './contact-stop-rule'
 import { findJourneyOwnerAssignment } from './drovr-ownership'
 import {
 	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
@@ -213,22 +218,15 @@ async function sendOne(input: {
 }
 
 /**
- * The contact's first stop, if any: an unsubscribe, bounce or complaint
- * ai-hero recorded. Any one refuses the row before Kit (or a handoff).
+ * The contact's first active stop, if any: an unsubscribe (unless a later
+ * fresh double opt-in lifted it), a bounce or a complaint ai-hero recorded
+ * (contact-stop-rule). Any one refuses the row before Kit (or a handoff).
  */
 async function contactStop(
 	repository: EvergreenSenderRepository,
 	contactId: string,
-): Promise<'unsubscribed' | 'bounced' | 'complained' | undefined> {
-	for (const [eventType, reason] of [
-		['contact.unsubscribed', 'unsubscribed'],
-		['contact.bounced', 'bounced'],
-		['contact.complained', 'complained'],
-	] as const) {
-		const events = await repository.findContactEventsByType(contactId, eventType)
-		if (events.length > 0) return reason
-	}
-	return undefined
+): Promise<ContactStopReason | undefined> {
+	return firstActiveStop(await readActiveContactStops(repository, contactId))
 }
 
 async function isOwnedShadowNewsletterHandoff(

@@ -5,6 +5,11 @@ import {
 	DOUBLE_OPT_IN_RESUBSCRIBE_AFTER_UNSUBSCRIBE,
 } from './drovr-list-subscribe'
 
+import {
+	activeContactStops,
+	readContactStopSignals,
+	stopSignalsOfIntents,
+} from './contact-stop-rule'
 import { CouponIssuePayload, offerFieldsFor } from './drovr-evergreen-coupon'
 import { evergreenSequenceForMessage } from './drovr-evergreen'
 import {
@@ -189,43 +194,26 @@ export async function readContactSendStanding(args: {
 	const { repository } = args
 	const contact = await repository.findContactById(args.contactId)
 	if (!contact) return undefined
-	const [state, unsubscribed, bounced, complained, priorIntents] =
-		await Promise.all([
-			repository.findCurrentContactState(contact.id),
-			repository.findContactEventsByType(contact.id, 'contact.unsubscribed'),
-			repository.findContactEventsByType(contact.id, 'contact.bounced'),
-			repository.findContactEventsByType(contact.id, 'contact.complained'),
-			repository.findValuePathEmailSideEffectIntentsByContact(contact.id),
-		])
+	const [state, { signals }, priorIntents] = await Promise.all([
+		repository.findCurrentContactState(contact.id),
+		readContactStopSignals(repository, contact.id),
+		repository.findValuePathEmailSideEffectIntentsByContact(contact.id),
+	])
+	// A provider-reported stop on an earlier send counts like a stop event,
+	// and a fresh double opt-in lifts either (contact-stop-rule).
+	const stops = activeContactStops([
+		...signals,
+		...stopSignalsOfIntents(priorIntents),
+	])
 	const reasons: string[] = []
 	const flags: string[] = []
 	if (!state || state.lifecycle === 'stale' || contact.lifecycle === 'stale')
 		reasons.push('stale-state')
 	if (state?.lifecycle === 'suppressed' || contact.lifecycle === 'suppressed')
 		reasons.push('suppressed')
-	if (
-		unsubscribed.length > 0 ||
-		priorIntents.some(
-			(row) =>
-				row.metadata.unsubscribed === true || providerFlag(row, 'unsubscribed'),
-		)
-	)
-		reasons.push('unsubscribed')
-	if (
-		bounced.length > 0 ||
-		priorIntents.some(
-			(row) => row.metadata.bounced === true || providerFlag(row, 'bounced'),
-		)
-	)
-		reasons.push('bounced')
-	if (
-		complained.length > 0 ||
-		priorIntents.some(
-			(row) =>
-				row.metadata.complained === true || providerFlag(row, 'complained'),
-		)
-	)
-		reasons.push('complained')
+	if (stops.unsubscribed) reasons.push('unsubscribed')
+	if (stops.bounced) reasons.push('bounced')
+	if (stops.complained) reasons.push('complained')
 	if (args.identityConflict) reasons.push('identity-conflict')
 	if (contact.isProvisional) flags.push('contact-provisional')
 	if (state?.reviewSignals.includes('support')) reasons.push('support-intent')
@@ -273,13 +261,4 @@ export async function findEvergreenOffer(args: {
 			origin: args.origin,
 		}),
 	}
-}
-
-function providerFlag(row: SideEffectIntent, flag: string): boolean {
-	const result = row.metadata.providerResult
-	return (
-		typeof result === 'object' &&
-		result !== null &&
-		(result as Record<string, unknown>)[flag] === true
-	)
 }

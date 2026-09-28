@@ -12,6 +12,14 @@ import type {
 import type { DrovrShadowEvent, DrovrTenantId } from './drovr-shadow-emitter'
 import { isMysqlDuplicateEntryError } from '@/lib/mysql-primary-key-retry'
 
+import {
+	activeContactStops,
+	CONTACT_RESUBSCRIBED_EVENT_TYPE,
+	CONTACT_UNSUBSCRIBED_EVENT_TYPE,
+	readContactStopSignals,
+	stopSignalsOfIntents,
+	type ContactStopEventReader,
+} from './contact-stop-rule'
 import { normalizeContactEvent } from './normalize-contact-event'
 import type {
 	ContactEventRecord,
@@ -67,6 +75,9 @@ export const ListSubscribePayload = z.object({
 	formId: z.string().min(1),
 	kitFormId: z.number().int().positive(),
 	reason: z.literal(DOUBLE_OPT_IN_CONFIRMED_REASON),
+	/** drovr lifted an unsubscribe with this confirmation (optional, additive). */
+	resubscribe: z.boolean().optional(),
+	liftedScopes: z.array(z.string()).optional(),
 })
 
 export type KitSubscribeOutcome = {
@@ -221,6 +232,12 @@ export async function acceptListSubscribe(args: {
 	now: string
 	subscribeInKit?: KitFormSubscriber
 	/**
+	 * Records the confirmation as a lift of the contact's unsubscribe
+	 * (createResubscribeRecorder), before any Kit call. Required for a
+	 * confirmation to reach Kit: without it the intent retries.
+	 */
+	recordResubscribe?: ResubscribeRecorder
+	/**
 	 * Records the Kit subscriber as the contact's Kit identity, so later
 	 * course sends find it. Best effort: a failure never undoes the write.
 	 */
@@ -341,6 +358,25 @@ export async function acceptListSubscribe(args: {
 		return retry('kit-subscribe-in-flight')
 	}
 
+	// The confirmation is fresh consent: it lifts an earlier unsubscribe
+	// (contact-stop-rule) whatever Kit does next, so it is recorded first.
+	// Idempotent per intent, so a retry or a blocked row re-records nothing.
+	if (!args.recordResubscribe) {
+		return retry(
+			'resubscribe-lift-not-configured',
+			KIT_SUBSCRIBE_UNCONFIGURED_RETRY_MS,
+		)
+	}
+	try {
+		await args.recordResubscribe({
+			contactId: contact.id,
+			confirmedAt,
+			intentKey: intent.idempotencyKey,
+		})
+	} catch {
+		return retry('resubscribe-lift-failed')
+	}
+
 	if (row.status === 'blocked') return blockedFor(row)
 	// No provider write (or completion) without an atomic claim and a guarded finish.
 	if (
@@ -428,6 +464,91 @@ export async function acceptListSubscribe(args: {
 			.catch(() => undefined)
 	}
 	return completed ? completionFor(completed) : afterLostClaim()
+}
+
+/** Records a confirmation's lift; throws when it could not be recorded. */
+export type ResubscribeRecorder = (confirmation: {
+	contactId: string
+	/** drovr's lifted_at: the lift's time under the shared rule. */
+	confirmedAt: string
+	intentKey: string
+}) => Promise<'lifted' | 'not-unsubscribed'>
+
+export const resubscribeProviderEventId = (intentKey: string) =>
+	`doi-resubscribed:${createHash('sha256').update(intentKey).digest('hex').slice(0, 40)}`
+
+/**
+ * The executor's `recordResubscribe`: when the contact's unsubscribe is
+ * still active, record a `contact.resubscribed` ContactEvent at the
+ * confirmation time. Under contact-stop-rule it lifts the unsubscribe, a
+ * later unsubscribe applies again, and a bounce or complaint never lifts.
+ * It maps to no drovr fact (drovr holds its own lift); a profile sync
+ * follows so the synced standing drops `unsubscribed`.
+ */
+export function createResubscribeRecorder(deps: {
+	repository: ContactStopEventReader &
+		Pick<
+			DrovrExecutorRepository,
+			'findValuePathEmailSideEffectIntentsByContact'
+		> & {
+			createContactEvent(
+				input: Omit<ContactEventRecord, 'id' | 'createdAt'> & {
+					createdAt?: string
+				},
+			): Promise<unknown>
+		}
+	/** Any provider identity of the contact, for a contact with no stop event. */
+	findProviderIdentityId(contactId: string): Promise<string | undefined>
+	requestSync: (request: {
+		contactId: string
+		reason: 'contact-resubscribed'
+	}) => Promise<unknown>
+	info: (event: string, fields: Record<string, unknown>) => unknown
+	now?: () => string
+}): ResubscribeRecorder {
+	return async ({ contactId, confirmedAt, intentKey }) => {
+		const [{ signals, events }, intents] = await Promise.all([
+			readContactStopSignals(deps.repository, contactId),
+			deps.repository.findValuePathEmailSideEffectIntentsByContact(contactId),
+		])
+		const stops = activeContactStops([
+			...signals,
+			...stopSignalsOfIntents(intents),
+		])
+		if (!stops.unsubscribed) return 'not-unsubscribed'
+		const providerIdentityId =
+			events.find(
+				(event) => event.eventType === CONTACT_UNSUBSCRIBED_EVENT_TYPE,
+			)?.providerIdentityId ??
+			events[0]?.providerIdentityId ??
+			(await deps.findProviderIdentityId(contactId))
+		if (!providerIdentityId) {
+			throw new Error('resubscribe lift: the contact has no provider identity')
+		}
+		const providerEventId = resubscribeProviderEventId(intentKey)
+		await deps.repository.createContactEvent({
+			...normalizeContactEvent({
+				provider: 'ai-hero',
+				providerEventId,
+				eventType: CONTACT_RESUBSCRIBED_EVENT_TYPE,
+				occurredAt: confirmedAt,
+				externalId: contactId,
+				message: 'A fresh double opt-in confirmation lifted the unsubscribe',
+				privacyLevel: 'internal',
+			}),
+			contactId,
+			providerIdentityId,
+			createdAt: deps.now?.() ?? new Date().toISOString(),
+		})
+		await deps.info('drovr.executor.contact_resubscribed', {
+			contactId,
+			confirmedAt,
+		})
+		await deps
+			.requestSync({ contactId, reason: 'contact-resubscribed' })
+			.catch(() => undefined)
+		return 'lifted'
+	}
 }
 
 type KitSubscriberLinkRepository = Omit<

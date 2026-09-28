@@ -1,6 +1,12 @@
 import { contactEvent } from '@/db/schema'
 import { and, asc, eq, gt, gte, inArray, like, lte, or } from 'drizzle-orm'
 
+import {
+	activeContactStopsByKey,
+	CONTACT_STOP_RULE_EVENT_TYPES,
+	isContactStopped,
+	stopSignalOfEvent,
+} from './contact-stop-rule'
 import { toContactEventRecord } from './drizzle-capture-repository'
 import { JOURNEY_OWNER_ASSIGNED_EVENT_TYPE } from './drovr-ownership'
 import {
@@ -16,12 +22,6 @@ import type { ContactEventRecord } from './types'
  * ever. It maps to no drovr event.
  */
 export const OWNER_BIRTH_REPOSTED_EVENT_TYPE = 'drovr.owner-birth.reposted'
-
-const STOP_EVENT_TYPES = [
-	'contact.unsubscribed',
-	'contact.bounced',
-	'contact.complained',
-] as const
 
 export const ownerBirthRepostProviderEventId = (ownerEventId: string) =>
 	`drovr-owner-birth-repost:${ownerEventId}`
@@ -110,15 +110,30 @@ export function createDrizzleOwnerBirthGuardStore(
 		async stoppedContactIds(contactIds) {
 			if (contactIds.length === 0) return new Set()
 			const rows = (await db
-				.select({ contactId: contactEvent.contactId })
+				.select({
+					contactId: contactEvent.contactId,
+					eventType: contactEvent.eventType,
+					occurredAt: contactEvent.occurredAt,
+				})
 				.from(contactEvent)
 				.where(
 					and(
 						inArray(contactEvent.contactId, [...contactIds]),
-						inArray(contactEvent.eventType, [...STOP_EVENT_TYPES]),
+						inArray(contactEvent.eventType, [...CONTACT_STOP_RULE_EVENT_TYPES]),
 					),
-				)) as { contactId: string }[]
-			return new Set(rows.map((row) => row.contactId))
+				)) as { contactId: string; eventType: string; occurredAt: Date }[]
+			// A fresh double opt-in lifts an unsubscribe (contact-stop-rule).
+			const stops = activeContactStopsByKey(
+				rows.map((row) => ({
+					key: row.contactId,
+					signal: stopSignalOfEvent(row),
+				})),
+			)
+			return new Set(
+				[...stops]
+					.filter(([, active]) => isContactStopped(active))
+					.map(([id]) => id),
+			)
 		},
 		async repostedOwnerEventIds(owners) {
 			if (owners.length === 0) return new Set()

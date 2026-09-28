@@ -40,6 +40,7 @@ import {
 	DOUBLE_OPT_IN_JOURNEY_ID,
 	LIST_SUBSCRIBE_INTENT_KIND,
 	type KitFormSubscriber,
+	type ResubscribeRecorder,
 } from './drovr-list-subscribe'
 import {
 	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
@@ -249,6 +250,8 @@ export async function acceptDrovrIntent(args: {
 	unsubscribeInKit?: KitUnsubscriber
 	/** Mirrors a double opt-in confirmation into Kit; absent answers retry. */
 	subscribeInKit?: KitFormSubscriber
+	/** Records a confirmation's lift of an unsubscribe; absent answers retry. */
+	recordResubscribe?: ResubscribeRecorder
 	/** Links the confirmed Kit subscriber to the contact; best effort. */
 	linkKitSubscriber?: (
 		contactId: string,
@@ -311,6 +314,7 @@ export async function acceptDrovrIntent(args: {
 			tenantId,
 			now,
 			subscribeInKit: args.subscribeInKit,
+			recordResubscribe: args.recordResubscribe,
 			linkKitSubscriber: args.linkKitSubscriber,
 		})
 	}

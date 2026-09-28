@@ -1,5 +1,6 @@
 import { and, eq, inArray } from 'drizzle-orm'
 
+import { readActiveContactStops } from './contact-stop-rule'
 import { log } from '@/server/logger'
 
 import { normalizeEmail } from './contact-email-equivalence'
@@ -47,29 +48,25 @@ export async function enterEvergreenPitchFromLiveDatabase(args: {
 				const contact = await repository.findContactById(contactId)
 				if (!contact?.email) return undefined
 				const normalizedEmail = normalizeEmail(contact.email)
-				const [state, unsubscribeEvents, identities, links] = await Promise.all(
-					[
-						repository.findCurrentContactState(contactId),
-						repository.findContactEventsByType(
-							contactId,
-							'contact.unsubscribed',
-						),
-						db
-							.select()
-							.from(schema.providerIdentity)
-							.where(
-								and(
-									eq(schema.providerIdentity.contactId, contactId),
-									inArray(schema.providerIdentity.provider, ['kit', 'ai-hero']),
-								),
-							)
-							.limit(2),
-						db
-							.select({ userId: schema.contactLink.userId })
-							.from(schema.contactLink)
-							.where(eq(schema.contactLink.contactId, contactId)),
-					],
-				)
+				const [state, stops, identities, links] = await Promise.all([
+					repository.findCurrentContactState(contactId),
+					// A fresh double opt-in lifts an unsubscribe (contact-stop-rule).
+					readActiveContactStops(repository, contactId),
+					db
+						.select()
+						.from(schema.providerIdentity)
+						.where(
+							and(
+								eq(schema.providerIdentity.contactId, contactId),
+								inArray(schema.providerIdentity.provider, ['kit', 'ai-hero']),
+							),
+						)
+						.limit(2),
+					db
+						.select({ userId: schema.contactLink.userId })
+						.from(schema.contactLink)
+						.where(eq(schema.contactLink.contactId, contactId)),
+				])
 				const identityRow =
 					identities.find((identity) => identity.provider === 'kit') ??
 					identities[0]
@@ -143,7 +140,7 @@ export async function enterEvergreenPitchFromLiveDatabase(args: {
 						})),
 					}),
 					unsubscribed:
-						unsubscribeEvents.length > 0 ||
+						stops.unsubscribed ||
 						isSuppressedLifecycle(contact.lifecycle) ||
 						isSuppressedLifecycle(state?.lifecycle),
 				}

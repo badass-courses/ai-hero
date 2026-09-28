@@ -166,6 +166,78 @@ describe('value path email executor', () => {
 		)
 	})
 
+	it.each([
+		[
+			[
+				['contact.unsubscribed', '2026-09-01T00:00:00.000Z'],
+				['contact.resubscribed', '2026-09-02T00:00:00.000Z'],
+			],
+			false,
+		],
+		[
+			[
+				['contact.unsubscribed', '2026-09-01T00:00:00.000Z'],
+				['contact.resubscribed', '2026-09-02T00:00:00.000Z'],
+				['contact.unsubscribed', '2026-09-03T00:00:00.000Z'],
+			],
+			true,
+		],
+	] as const)(
+		'applies the shared stop rule: %j stops=%s',
+		async (events, stopped) => {
+			const findContactEventsByType = vi.fn(
+				async (_contactId: string, eventType: string) =>
+					events
+						.filter(([type]) => type === eventType)
+						.map(
+							([type, occurredAt]) =>
+								({
+									id: `${type}:${occurredAt}`,
+									eventType: type,
+									occurredAt,
+								}) as never,
+						),
+			)
+			const result = await executePendingValuePathEmailIntents({
+				repository: {
+					findPendingValuePathEmailSideEffectIntents: vi
+						.fn()
+						.mockResolvedValue([valuePathIntent()]),
+					findContactById: vi.fn().mockResolvedValue({
+						id: 'contact-1',
+						email: 'learner@example.com',
+					}),
+					findCurrentContactState: vi.fn().mockResolvedValue({
+						id: 'state-1',
+						contactId: 'contact-1',
+						lifecycle: 'nurture-ready',
+						reviewSignals: [],
+						humanReview: false,
+					}),
+					findContactEventsByType,
+					updateSideEffectIntent: vi.fn(),
+					claimSideEffectIntentForSend: vi.fn(),
+					finishClaimedSideEffectIntent: vi.fn(),
+				},
+				emailListProvider: { subscribeToList: vi.fn() },
+				config: {
+					allowWrite: false,
+					mode: 'scoped-live',
+					allowlistedContactIds: ['contact-1'],
+					allowlistedKitSubscriberIds: ['kit-1'],
+					allowlistedEmails: ['learner@example.com'],
+					enabledValuePathSlugs: ['ai-hero-skills-workflow'],
+					verifiedEmailResourceIds: ['ai-hero-skills-workflow.email-6'],
+					verifiedKitSequenceIds: ['2757205'],
+					allowedActions: ['send-path-emails'],
+				},
+			})
+			const reasons =
+				(result[0] as { reviewReasons?: string[] }).reviewReasons ?? []
+			expect(reasons.includes('unsubscribed')).toBe(stopped)
+		},
+	)
+
 	it('paces only between queued intents', async () => {
 		vi.useFakeTimers()
 		try {

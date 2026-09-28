@@ -8,12 +8,18 @@ import {
 } from './drovr-executor'
 import {
 	createKitFormSubscriber,
+	createResubscribeRecorder,
 	DOUBLE_OPT_IN_RESUBSCRIBE_AFTER_UNSUBSCRIBE,
+	resubscribeProviderEventId,
 	KIT_SUBSCRIBE_RETRY_MS,
 	linkKitSubscriberIdentity,
 	type KitFormSubscriber,
 } from './drovr-list-subscribe'
-import type { ContactRecord, SideEffectIntent } from './types'
+import type {
+	ContactEventRecord,
+	ContactRecord,
+	SideEffectIntent,
+} from './types'
 
 const now = '2026-09-25T06:30:00.000Z'
 
@@ -104,6 +110,13 @@ const kit = (
 	}),
 ) => vi.fn<Parameters<KitFormSubscriber>, ReturnType<KitFormSubscriber>>(impl)
 
+/** The executor with a lift recorder that finds nothing to lift, unless given one. */
+const accept = (args: Parameters<typeof acceptDrovrIntent>[0]) =>
+	acceptDrovrIntent({
+		recordResubscribe: async () => 'not-unsubscribed',
+		...args,
+	})
+
 function setup() {
 	const repository = new FakeRepository()
 	repository.contacts.set('contact-1', contact)
@@ -116,7 +129,7 @@ describe('drovr list.subscribe (double opt-in confirmation Kit mirror)', () => {
 		const subscribeInKit = kit()
 		const linkKitSubscriber = vi.fn(async () => undefined)
 
-		const result = await acceptDrovrIntent({
+		const result = await accept({
 			repository,
 			intent: confirmation(),
 			now,
@@ -156,13 +169,13 @@ describe('drovr list.subscribe (double opt-in confirmation Kit mirror)', () => {
 	it('is idempotent: a redrive answers the same completion without a second Kit call', async () => {
 		const repository = setup()
 		const subscribeInKit = kit()
-		const first = await acceptDrovrIntent({
+		const first = await accept({
 			repository,
 			intent: confirmation(),
 			now,
 			subscribeInKit,
 		})
-		const second = await acceptDrovrIntent({
+		const second = await accept({
 			repository,
 			intent: confirmation(),
 			now,
@@ -176,13 +189,13 @@ describe('drovr list.subscribe (double opt-in confirmation Kit mirror)', () => {
 	it('writes again for a new drovr intent, e.g. a later confirmation after an unsubscribe', async () => {
 		const repository = setup()
 		const subscribeInKit = kit()
-		await acceptDrovrIntent({
+		await accept({
 			repository,
 			intent: confirmation(),
 			now,
 			subscribeInKit,
 		})
-		const later = await acceptDrovrIntent({
+		const later = await accept({
 			repository,
 			intent: confirmation({
 				idempotencyKey: 'doi:org-aihero:contact-1:skills-newsletter:kit:2',
@@ -204,7 +217,7 @@ describe('drovr list.subscribe (double opt-in confirmation Kit mirror)', () => {
 
 	it('names a block, never a success, when Kit keeps the subscriber inactive', async () => {
 		const repository = setup()
-		const result = await acceptDrovrIntent({
+		const result = await accept({
 			repository,
 			intent: confirmation(),
 			now,
@@ -230,7 +243,7 @@ describe('drovr list.subscribe (double opt-in confirmation Kit mirror)', () => {
 				{ status: 'blocked', reviewReasons: ['kit-subscribe-refused:422'] },
 			],
 		] as const) {
-			const result = await acceptDrovrIntent({
+			const result = await accept({
 				repository: setup(),
 				intent: confirmation(),
 				now,
@@ -240,7 +253,7 @@ describe('drovr list.subscribe (double opt-in confirmation Kit mirror)', () => {
 			})
 			expect(result).toMatchObject(expected)
 		}
-		const result = await acceptDrovrIntent({
+		const result = await accept({
 			repository: setup(),
 			intent: confirmation(),
 			now,
@@ -252,7 +265,7 @@ describe('drovr list.subscribe (double opt-in confirmation Kit mirror)', () => {
 	})
 
 	it('retries without a Kit key and never answers 202', async () => {
-		const result = await acceptDrovrIntent({
+		const result = await accept({
 			repository: setup(),
 			intent: confirmation(),
 			now,
@@ -284,7 +297,7 @@ describe('drovr list.subscribe (double opt-in confirmation Kit mirror)', () => {
 				},
 			}),
 		]) {
-			const result = await acceptDrovrIntent({
+			const result = await accept({
 				repository: setup(),
 				intent,
 				now,
@@ -296,7 +309,7 @@ describe('drovr list.subscribe (double opt-in confirmation Kit mirror)', () => {
 	})
 
 	it('answers contact-missing for an unknown contact', async () => {
-		const result = await acceptDrovrIntent({
+		const result = await accept({
 			repository: new FakeRepository(),
 			intent: confirmation(),
 			now,
@@ -509,5 +522,214 @@ describe('linkKitSubscriberIdentity', () => {
 			).resolves.toBe(outcome)
 			expect(repository.createProviderIdentity).not.toHaveBeenCalled()
 		}
+	})
+})
+
+describe('a confirmation lifts an earlier unsubscribe (DOI Q5)', () => {
+	const unsubscribedAt = '2026-09-01T00:00:00.000Z'
+	const event = (
+		eventType: string,
+		occurredAt: string,
+		extra: Partial<ContactEventRecord> = {},
+	) =>
+		({
+			id: `${eventType}:${occurredAt}`,
+			contactId: 'contact-1',
+			providerIdentityId: 'identity-kit',
+			eventType,
+			occurredAt,
+			...extra,
+		}) as ContactEventRecord
+
+	function lifting(initial: ContactEventRecord[]) {
+		const events = [...initial]
+		const order: string[] = []
+		const requestSync = vi.fn(async () => undefined)
+		const recorder = createResubscribeRecorder({
+			repository: {
+				findContactEventsByType: (_, type) =>
+					events.filter((row) => row.eventType === type),
+				findValuePathEmailSideEffectIntentsByContact: () => [],
+				async createContactEvent(input) {
+					order.push('lift')
+					if (
+						events.some(
+							(row) =>
+								row.semanticIdempotencyKey === input.semanticIdempotencyKey,
+						)
+					)
+						return
+					events.push({ ...input, id: `e${events.length}` } as never)
+				},
+			},
+			findProviderIdentityId: async () => 'identity-any',
+			requestSync,
+			info: () => undefined,
+			now: () => now,
+		})
+		const subscribeInKit = kit(async () => {
+			order.push('kit')
+			return {
+				kitSubscriberId: '4310000001',
+				state: 'active',
+				unsubscribeTagRemoved: true,
+			}
+		})
+		return { events, order, recorder, requestSync, subscribeInKit }
+	}
+
+	it('records contact.resubscribed at confirmedAt before any Kit call', async () => {
+		const f = lifting([event('contact.unsubscribed', unsubscribedAt)])
+		const result = await acceptDrovrIntent({
+			repository: setup(),
+			intent: confirmation(),
+			now,
+			subscribeInKit: f.subscribeInKit,
+			recordResubscribe: f.recorder,
+		})
+		expect(result.status).toBe('completed')
+		expect(f.order).toEqual(['lift', 'kit'])
+		const lift = f.events.find(
+			(row) => row.eventType === 'contact.resubscribed',
+		)
+		expect(lift).toMatchObject({
+			contactId: 'contact-1',
+			provider: 'ai-hero',
+			providerEventId: resubscribeProviderEventId(
+				confirmation().idempotencyKey,
+			),
+			occurredAt: now,
+			providerIdentityId: 'identity-kit',
+		})
+		expect(f.requestSync).toHaveBeenCalledWith({
+			contactId: 'contact-1',
+			reason: 'contact-resubscribed',
+		})
+	})
+
+	it('keeps the lift when Kit then blocks a Kit-cancelled subscriber', async () => {
+		const f = lifting([event('contact.unsubscribed', unsubscribedAt)])
+		const result = await acceptDrovrIntent({
+			repository: setup(),
+			intent: confirmation(),
+			now,
+			subscribeInKit: kit(async () => ({
+				kitSubscriberId: '4310000001',
+				state: 'cancelled',
+				unsubscribeTagRemoved: true,
+			})),
+			recordResubscribe: f.recorder,
+		})
+		expect(result).toMatchObject({
+			status: 'blocked',
+			reviewReasons: ['kit-subscriber-not-active:cancelled'],
+		})
+		expect(
+			f.events.filter((row) => row.eventType === 'contact.resubscribed'),
+		).toHaveLength(1)
+	})
+
+	it('records nothing for a contact with no active unsubscribe', async () => {
+		for (const initial of [
+			[],
+			[
+				event('contact.unsubscribed', unsubscribedAt),
+				event('contact.resubscribed', '2026-09-02T00:00:00.000Z'),
+			],
+			[event('contact.bounced', unsubscribedAt)],
+		]) {
+			const f = lifting(initial)
+			await expect(
+				f.recorder({
+					contactId: 'contact-1',
+					confirmedAt: now,
+					intentKey: 'k',
+				}),
+			).resolves.toBe('not-unsubscribed')
+			expect(f.events).toHaveLength(initial.length)
+			expect(f.requestSync).not.toHaveBeenCalled()
+		}
+	})
+
+	it('lifts again after a later unsubscribe, with a new intent', async () => {
+		const f = lifting([
+			event('contact.unsubscribed', unsubscribedAt),
+			event('contact.resubscribed', '2026-09-02T00:00:00.000Z'),
+			event('contact.unsubscribed', '2026-09-03T00:00:00.000Z'),
+		])
+		await expect(
+			f.recorder({ contactId: 'contact-1', confirmedAt: now, intentKey: 'k2' }),
+		).resolves.toBe('lifted')
+	})
+
+	it('falls back to any provider identity of the contact', async () => {
+		const f = lifting([])
+		const recorder = createResubscribeRecorder({
+			repository: {
+				findContactEventsByType: () => [],
+				findValuePathEmailSideEffectIntentsByContact: () => [
+					{
+						completedAt: unsubscribedAt,
+						createdAt: unsubscribedAt,
+						metadata: { providerResult: { unsubscribed: true } },
+					} as never,
+				],
+				createContactEvent: async (input) => {
+					f.events.push(input as never)
+				},
+			},
+			findProviderIdentityId: async () => 'identity-any',
+			requestSync: async () => undefined,
+			info: () => undefined,
+		})
+		await recorder({ contactId: 'contact-1', confirmedAt: now, intentKey: 'k' })
+		expect(f.events[0]).toMatchObject({ providerIdentityId: 'identity-any' })
+	})
+
+	it('retries, with no Kit call, when the lift cannot be recorded or is not wired', async () => {
+		const subscribeInKit = kit()
+		const failed = await acceptDrovrIntent({
+			repository: setup(),
+			intent: confirmation(),
+			now,
+			subscribeInKit,
+			recordResubscribe: async () => {
+				throw new Error('db down')
+			},
+		})
+		expect(failed).toMatchObject({
+			status: 'retry',
+			reason: 'resubscribe-lift-failed',
+		})
+		const unwired = await acceptDrovrIntent({
+			repository: setup(),
+			intent: confirmation(),
+			now,
+			subscribeInKit,
+		})
+		expect(unwired).toMatchObject({
+			status: 'retry',
+			reason: 'resubscribe-lift-not-configured',
+		})
+		expect(subscribeInKit).not.toHaveBeenCalled()
+	})
+
+	it("accepts drovr's optional resubscribe fields on the payload", async () => {
+		const result = await accept({
+			repository: setup(),
+			intent: confirmation({
+				payload: {
+					confirmedAt: now,
+					formId: 'skills-newsletter',
+					kitFormId: 9376133,
+					reason: 'double-opt-in-confirmed',
+					resubscribe: true,
+					liftedScopes: ['all'],
+				},
+			}),
+			now,
+			subscribeInKit: kit(),
+		})
+		expect(result.status).toBe('completed')
 	})
 })

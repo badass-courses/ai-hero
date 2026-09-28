@@ -154,6 +154,56 @@ integration('owner-birth guard store on MySQL', () => {
 		expect(await store.stoppedContactIds([])).toEqual(new Set())
 	})
 
+	it('applies the shared stop rule: a later fresh double opt-in lifts an unsubscribe, never a bounce', async () => {
+		// c1 lifted; c2 lifted then unsubscribed again; c3 bounced then "lifted".
+		await contactEvent(
+			'u1',
+			'c1',
+			'contact.unsubscribed',
+			'2026-09-26 10:00:00',
+		)
+		await contactEvent(
+			'r1',
+			'c1',
+			'contact.resubscribed',
+			'2026-09-26 11:00:00',
+		)
+		await contactEvent(
+			'u2',
+			'c2',
+			'contact.unsubscribed',
+			'2026-09-26 10:00:00',
+		)
+		await contactEvent(
+			'r2',
+			'c2',
+			'contact.resubscribed',
+			'2026-09-26 11:00:00',
+		)
+		await contactEvent(
+			'u2b',
+			'c2',
+			'contact.unsubscribed',
+			'2026-09-26 12:00:00',
+		)
+		await contactEvent('b3', 'c3', 'contact.bounced', '2026-09-26 10:00:00')
+		await contactEvent(
+			'r3',
+			'c3',
+			'contact.resubscribed',
+			'2026-09-26 11:00:00',
+		)
+		await contactEvent(
+			'r4',
+			'c4',
+			'contact.resubscribed',
+			'2026-09-26 11:00:00',
+		)
+		expect(await store.stoppedContactIds(['c1', 'c2', 'c3', 'c4'])).toEqual(
+			new Set(['c2', 'c3']),
+		)
+	})
+
 	it('finds the owners the guard already re-posted, by its marker', async () => {
 		await owner('a', 'c1', '2026-09-26 10:00:00')
 		await owner('b', 'c2', '2026-09-26 10:00:00')

@@ -1,5 +1,6 @@
 import type { EmailListConfig } from '@coursebuilder/core/providers'
 
+import { readActiveContactStops } from './contact-stop-rule'
 import { dispatchDrovrShadowFactSafely } from './drovr-shadow-dispatch'
 import {
 	resolveValuePathLinkAnchor,
@@ -1033,20 +1034,10 @@ function summarizeProviderResult(value: unknown) {
 	}
 }
 
+/** Active stops under the shared rule: a fresh double opt-in lifts an unsubscribe. */
 async function readContactStops(
 	repository: ValuePathEmailExecutorRepository,
 	contactId: string,
 ): Promise<{ unsubscribed: boolean; bounced: boolean; complained: boolean }> {
-	const [unsubscribed, bounced, complained] = await Promise.all(
-		['contact.unsubscribed', 'contact.bounced', 'contact.complained'].map(
-			async (eventType) =>
-				(await repository.findContactEventsByType(contactId, eventType))
-					.length > 0,
-		),
-	)
-	return {
-		unsubscribed: unsubscribed ?? false,
-		bounced: bounced ?? false,
-		complained: complained ?? false,
-	}
+	return await readActiveContactStops(repository, contactId)
 }

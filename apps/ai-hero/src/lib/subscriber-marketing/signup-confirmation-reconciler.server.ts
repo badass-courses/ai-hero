@@ -6,6 +6,13 @@ import {
 	sideEffectIntent,
 } from '@/db/schema'
 import { AI_HERO_SKILLS_EXCLUSION_TAG_IDS } from '@/lib/kit-broadcasts'
+import {
+	activeContactStopsByKey,
+	CONTACT_STOP_RULE_EVENT_TYPES,
+	isContactStopped,
+	stopSignalOfEvent,
+	type ContactStopSignal,
+} from '@/lib/subscriber-marketing/contact-stop-rule'
 import { UNSUBSCRIBE_KIT_LIST_INTENT_TYPE } from '@/lib/subscriber-marketing/drovr-list-unsubscribe'
 import { JOURNEY_OWNER_ASSIGNED_EVENT_TYPE } from '@/lib/subscriber-marketing/drovr-ownership'
 import { DROVR_SKILLS_COURSE_JOURNEY_ID } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
@@ -55,12 +62,65 @@ export function skillsConfirmationReconciliationLimit(
 	return Math.min(Number(raw), SKILLS_CONFIRMATION_RECONCILIATION_LIMIT)
 }
 
-/** Opt-out evidence recorded locally: Kit webhooks and drovr list unsubscribes. */
-const OPT_OUT_EVENT_TYPES: string[] = [
-	'contact.unsubscribed',
-	'contact.bounced',
-	'contact.complained',
-]
+/**
+ * Opt-out evidence recorded locally: Kit webhooks and drovr list
+ * unsubscribes. The shared rule decides which is still active: a fresh
+ * double opt-in lifts an unsubscribe (contact-stop-rule).
+ */
+const OPT_OUT_EVENT_TYPES: string[] = [...CONTACT_STOP_RULE_EVENT_TYPES]
+
+type OptOutEvidenceRow<Key> = {
+	key: Key | null
+	contactId: string
+	eventType: string
+	occurredAt: Date
+}
+type OptOutIntentRow<Key> = {
+	key: Key | null
+	contactId: string
+	type: string
+	createdAt: Date
+}
+
+/**
+ * The keys (an email or a Kit id) with at least one contact whose stop is
+ * still active. A drovr list.unsubscribe row counts as an unsubscribe at
+ * the row's creation (drovr's intent arrived then).
+ */
+function stoppedKeys<Key>(
+	events: OptOutEvidenceRow<Key>[],
+	intents: OptOutIntentRow<Key>[],
+): Set<Key> {
+	const keysByContact = new Map<string, Set<Key>>()
+	const signals: { key: string; signal: ContactStopSignal | undefined }[] = []
+	const note = (contactId: string, key: Key | null) => {
+		if (key === null) return
+		const keys = keysByContact.get(contactId) ?? new Set<Key>()
+		keys.add(key)
+		keysByContact.set(contactId, keys)
+	}
+	for (const row of events) {
+		note(row.contactId, row.key)
+		signals.push({ key: row.contactId, signal: stopSignalOfEvent(row) })
+	}
+	for (const row of intents) {
+		if (row.type !== UNSUBSCRIBE_KIT_LIST_INTENT_TYPE) continue
+		note(row.contactId, row.key)
+		signals.push({
+			key: row.contactId,
+			signal: {
+				kind: 'unsubscribed',
+				at: row.createdAt.toISOString(),
+			},
+		})
+	}
+	const stopped = new Set<Key>()
+	for (const [contactId, active] of activeContactStopsByKey(signals)) {
+		if (!isContactStopped(active)) continue
+		for (const key of keysByContact.get(contactId) ?? []) stopped.add(key)
+	}
+	return stopped
+}
 
 /** A legacy or drovr send of any course email; each ran through the executor. */
 const SEND_VALUE_PATH_EMAIL_INTENT_TYPE = 'send-value-path-email'
@@ -194,7 +254,12 @@ async function fetchIdentityMatches(
 		// A contact Kit knows under another subscriber id still carries its
 		// opt-out and its course history by address.
 		const optOutEventRows = await database
-			.select({ emailKey: contact.emailKey })
+			.select({
+				emailKey: contact.emailKey,
+				contactId: contact.id,
+				eventType: contactEvent.eventType,
+				occurredAt: contactEvent.occurredAt,
+			})
 			.from(contact)
 			.innerJoin(contactEvent, eq(contactEvent.contactId, contact.id))
 			.where(
@@ -204,7 +269,12 @@ async function fetchIdentityMatches(
 				),
 			)
 		const intentRows = await database
-			.select({ emailKey: contact.emailKey, type: sideEffectIntent.type })
+			.select({
+				emailKey: contact.emailKey,
+				contactId: contact.id,
+				type: sideEffectIntent.type,
+				createdAt: sideEffectIntent.createdAt,
+			})
 			.from(contact)
 			.innerJoin(sideEffectIntent, eq(sideEffectIntent.contactId, contact.id))
 			.where(
@@ -216,18 +286,17 @@ async function fetchIdentityMatches(
 					]),
 				),
 			)
-		for (const row of optOutEventRows) {
-			const email = row.emailKey ? emailByKey.get(row.emailKey) : undefined
-			if (email) optedOutEmails.add(email)
-		}
+		const emailOf = (row: { emailKey: string | null }) =>
+			(row.emailKey ? emailByKey.get(row.emailKey) : undefined) ?? null
+		for (const email of stoppedKeys(
+			optOutEventRows.map((row) => ({ ...row, key: emailOf(row) })),
+			intentRows.map((row) => ({ ...row, key: emailOf(row) })),
+		))
+			optedOutEmails.add(email)
 		for (const row of intentRows) {
-			const email = row.emailKey ? emailByKey.get(row.emailKey) : undefined
-			if (!email) continue
-			if (row.type === UNSUBSCRIBE_KIT_LIST_INTENT_TYPE) {
-				optedOutEmails.add(email)
-			} else {
+			const email = emailOf(row)
+			if (email && row.type !== UNSUBSCRIBE_KIT_LIST_INTENT_TYPE)
 				courseHistoryEmails.add(email)
-			}
 		}
 	}
 	for (const idChunk of chunk(subscriberIds, 500)) {
@@ -279,7 +348,12 @@ async function fetchIdentityMatches(
 		}
 
 		const optOutEventRows = await database
-			.select({ externalId: providerIdentity.externalId })
+			.select({
+				externalId: providerIdentity.externalId,
+				contactId: providerIdentity.contactId,
+				eventType: contactEvent.eventType,
+				occurredAt: contactEvent.occurredAt,
+			})
 			.from(providerIdentity)
 			.innerJoin(
 				contactEvent,
@@ -295,7 +369,9 @@ async function fetchIdentityMatches(
 		const intentRows = await database
 			.select({
 				externalId: providerIdentity.externalId,
+				contactId: providerIdentity.contactId,
 				type: sideEffectIntent.type,
+				createdAt: sideEffectIntent.createdAt,
 			})
 			.from(providerIdentity)
 			.innerJoin(
@@ -312,15 +388,14 @@ async function fetchIdentityMatches(
 					]),
 				),
 			)
-		for (const row of optOutEventRows) {
-			optedOutKitSubscriberIds.add(row.externalId)
-		}
+		for (const id of stoppedKeys(
+			optOutEventRows.map((row) => ({ ...row, key: row.externalId })),
+			intentRows.map((row) => ({ ...row, key: row.externalId })),
+		))
+			optedOutKitSubscriberIds.add(id)
 		for (const row of intentRows) {
-			if (row.type === UNSUBSCRIBE_KIT_LIST_INTENT_TYPE) {
-				optedOutKitSubscriberIds.add(row.externalId)
-			} else {
+			if (row.type !== UNSUBSCRIBE_KIT_LIST_INTENT_TYPE)
 				courseHistoryKitSubscriberIds.add(row.externalId)
-			}
 		}
 	}
 

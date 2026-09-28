@@ -356,6 +356,62 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 		})
 	})
 
+	it('applies the shared stop rule: a later fresh double opt-in lifts an unsubscribe, never a bounce', async () => {
+		const at = (row: KitRow, minutes: number) =>
+			new Date(Date.parse(row.addedAt) + minutes * 60_000)
+		const stamp = (
+			row: KitRow,
+			eventType: string,
+			providerEventId: string,
+			minutes: number,
+		) =>
+			pool.query(
+				"INSERT INTO AI_ContactEvent (id, contactId, providerIdentityId, provider, providerEventId, providerReference, eventType, semanticIdempotencyKey, privacyLevel, identityEvidence, payloadSummary, schemaVersion, occurredAt) VALUES (?, ?, ?, 'kit', ?, ?, ?, ?, 'internal', '{}', '{}', 1, ?)",
+				[
+					randomUUID(),
+					`contact-${row.id}`,
+					`identity-${row.id}`,
+					providerEventId,
+					`kit:${providerEventId}`,
+					eventType,
+					`kit:${eventType}:${row.id}:${providerEventId}`,
+					at(row, minutes),
+				],
+			)
+		// Lifted: an unsubscribe event, then a confirmation.
+		const lifted = confirmed('4101')
+		await captured(lifted)
+		await stamp(lifted, 'contact.unsubscribed', 'u-4101', 1)
+		await stamp(lifted, 'contact.resubscribed', 'r-4101', 2)
+		// Lifted: a drovr list unsubscribe row, then a confirmation.
+		const liftedList = confirmed('4102')
+		await captured(liftedList)
+		await pool.query(
+			"INSERT INTO AI_SideEffectIntent (id, nextActionId, contactId, provider, type, status, idempotencyKey, gates, reviewReasons, metadata, createdAt) VALUES (?, ?, 'contact-4102', 'kit', 'unsubscribe-kit-list', 'completed', ?, '{}', '[]', '{}', ?)",
+			[randomUUID(), randomUUID(), randomUUID(), at(liftedList, 1)],
+		)
+		await stamp(liftedList, 'contact.resubscribed', 'r-4102', 2)
+		// Unsubscribed again after the lift.
+		const again = confirmed('4103')
+		await captured(again)
+		await stamp(again, 'contact.unsubscribed', 'u-4103', 1)
+		await stamp(again, 'contact.resubscribed', 'r-4103', 2)
+		await stamp(again, 'contact.unsubscribed', 'u2-4103', 3)
+		// A bounce never lifts.
+		const bounced = confirmed('4104')
+		await captured(bounced)
+		await stamp(bounced, 'contact.bounced', 'b-4104', 1)
+		await stamp(bounced, 'contact.resubscribed', 'r-4104', 2)
+
+		const plan = await buildSignupConfirmationReconciliationBatch({
+			to: TO,
+			database,
+		})
+
+		expect([...plannedIds(plan)].sort()).toEqual(['4101', '4102'])
+		expect(plan.counts).toMatchObject({ excludedOptedOut: 2 })
+	})
+
 	it('never restarts the course for someone who already got course email', async () => {
 		// In email 0's Kit sequence (individual or team path).
 		kitSequences.set('2757199', [confirmed('6001').id])
