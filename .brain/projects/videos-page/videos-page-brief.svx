@@ -150,7 +150,11 @@ lessons); an owner of four cohorts plus AI SDK v6 = 272 (219 lessons before the
   rows) — awaiting Vojta's call.
 - Add `- [Videos](/videos)` under Explore in the CMS `hub-sidebar` page once
   the PR is merged and live (Vojta; the fallback MDX already has it).
-- First production reconcile run before the page ships (approved by Vojta).
+- Video facts were written to `content_production` on 2026-09-29, before
+  merge, with Vojta's approval: 557 docs updated, 0 failed, a second pass
+  clean, and the anonymous filter returning 75. The 89 never-indexed course
+  lessons need the save path, so the first hourly reconcile after deploy
+  rebuilds them — check its `reindexedCount` in the logs.
 
 ## Later
 
