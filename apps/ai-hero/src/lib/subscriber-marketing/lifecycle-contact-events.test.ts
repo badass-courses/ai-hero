@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest'
 
-import type { ContactEventRecord } from './contact-event-normalizer-preview'
-
 import {
 	EMAIL_COURSE_ENTRY_PAYLOAD_FORMAT,
 	deadlineTimeZoneEvidenceFromHeader,
@@ -22,6 +20,7 @@ import {
 	writePurchaseRecordedContactEvents,
 	type PurchaseRecordedSource,
 } from './lifecycle-contact-events'
+import type { ContactEventRecord } from './types'
 
 const NOW = '2026-08-29T10:00:00.000Z'
 
