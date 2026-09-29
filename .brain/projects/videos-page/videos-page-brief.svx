@@ -29,7 +29,10 @@ mid-build (see the ledger). Ships as **one PR**.
   `duration_seconds`, `container_title`, `mux_playback_id`, `thumbnail_time`.
 - Controls: search, `Newest · Popular`, `Hide watched` (once something is
   watched), and `All · My courses` (only for someone who owns a course), all
-  URL-synced. Preview sound and captions live on the cards, not the toolbar.
+  URL-synced. Both also only FILTER for such a viewer: a shared
+  `?access=owned` link, or a failed viewer status, shows the free videos
+  instead of an empty grid. Preview sound and captions live on the cards, not
+  the toolbar.
 - The derived fields self-heal: an hourly Inngest reconcile
   (`typesense-video-facts-reconcile`, :17 past each hour) recomputes them,
   updates only changed docs, and rebuilds through the save path (up to 100 a
