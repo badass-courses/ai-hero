@@ -3,10 +3,10 @@ import { createTRPCRouter, publicProcedure } from '@/trpc/api/trpc'
 
 export const videosRouter = createTRPCRouter({
 	/**
-	 * The viewer's watched, progress and owned ids for /videos, fetched once
-	 * after the static grid renders. Anonymous visitors get the empty status
-	 * without a database read; the query always runs because the email-course
-	 * `ck_subscriber` cookie is httpOnly and the client cannot see it.
+	 * The viewer's state for /videos, fetched once after the static grid
+	 * renders: watched ids for signed-in and Kit-verified email-course viewers;
+	 * owned courses and their paid lessons' playback for signed-in ones only.
+	 * Anonymous visitors get the empty status without a database read.
 	 */
 	viewerStatus: publicProcedure.query(() => getVideoViewerStatus()),
 })

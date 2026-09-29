@@ -77,9 +77,23 @@ mid-build (see the ledger). Ships as **one PR**.
   `course_ids` is written as `null`, never `[]`: auto-typing cannot type an
   empty array. Until the first reconcile writes `has_video`, the page's filter
   errors — run the reconcile before the page ships.
-- `ck_subscriber` is httpOnly, so `videos.viewerStatus` always runs; anonymous
-  visitors get the empty status without a DB read. The cookie may reveal what a
-  viewer watched (as module progress already does) but never what they own.
+- **The search index is public.** The browser queries Typesense with
+  `NEXT_PUBLIC_TYPESENSE_API_KEY`, so every doc — unlisted lessons included —
+  is readable by anyone, whatever `/videos` filters. And Mux playback ids play
+  without a token. So a paid lesson's playback id must never be indexed:
+  `mux_playback_id` / `thumbnail_time` are written for free videos only, owners
+  get their paid lessons' playback from `videos.viewerStatus`
+  (`ownedVideoPlayback`), and `deriveResourceImage` only falls back to a Mux
+  still (whose URL carries the id) for posts. Found by the PR #333 bot review;
+  on 2026-09-29 300 paid docs' playback ids (exposed for a few hours by the
+  pre-merge write) and 44 pre-existing lesson/solution Mux `image` URLs were
+  cleared from `content_production`, verified zero left.
+- **Viewer identity.** A signed-in session gets watched, owned and owned-lesson
+  playback. The email-course `ck_subscriber` cookie is client-settable, so it
+  is resolved only through its Kit subscriber id — Kit says which email the id
+  belongs to, the cookie's email is never trusted (Vojta's call) — and yields
+  watch history only. Anonymous visitors get the empty status without a DB
+  read.
 - Hover previews and sound: hovering is not a user gesture, so browsers refuse
   unmuted autoplay until the visitor has clicked or typed on the page.
   MuxPlayer's `autoPlay="any"` tries with sound and falls back to muted; the
@@ -138,6 +152,8 @@ Mid-build calls (Vojta, 2026-09-29):
 17. "More like YouTube": hover previews play with subtitles and, once unmuted,
     sound; controls sit on the thumbnail; the homepage keeps its silent loop.
 18. Clicking a card after watching its preview opens the video at that point.
+19. Email-course viewers are identified by their Kit subscriber id, verified
+    against Kit, never by the cookie's email; they get watch history only.
 
 Verified 2026-09-29 against a clone of `content_production`
 (`content_vojta_videos_test`): anonymous = 75 videos (53 posts, 22 free
@@ -155,6 +171,8 @@ lessons); an owner of four cohorts plus AI SDK v6 = 272 (219 lessons before the
   clean, and the anonymous filter returning 75. The 89 never-indexed course
   lessons need the save path, so the first hourly reconcile after deploy
   rebuilds them — check its `reindexedCount` in the logs.
+- After deploy, re-scan lesson/solution docs for `image.mux.com` images: the
+  pre-merge save path still wrote them on any lesson save until #333 shipped.
 
 ## Later
 

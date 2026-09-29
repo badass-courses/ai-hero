@@ -61,18 +61,25 @@ export type VideoFacts = {
 	container_title: string | null
 	/**
 	 * The video itself, so a card can show its still (lessons are indexed
-	 * without an image) and preview it on hover.
+	 * without an image) and preview it on hover. **Free videos only**: the
+	 * browser searches this index with a public key, and a Mux playback id
+	 * plays without a token, so a paid lesson's id here would give its video
+	 * away. Owners get those through `computeVideoPlayback`, server-side.
 	 */
 	mux_playback_id: string | null
-	/** Seconds into that video for the still. */
+	/** Seconds into that video for the still. Free videos only, as above. */
 	thumbnail_time: number | null
 }
 
+export type VideoPlayback = { playbackId: string; thumbnailTime: number | null }
+
 const CONTAINER_TYPES = new Set(['cohort', 'workshop', 'section', 'list', 'tutorial'])
-/** Resources that are a video themselves. Solutions ride on their exercise. */
-const LEAF_TYPES = new Set(['post', 'lesson', 'exercise', 'tip', 'talk'])
-/** Leaves readable by anyone regardless of placement (see ability rules). */
-const ALWAYS_FREE_LEAF_TYPES = new Set(['post', 'tip', 'talk'])
+/**
+ * Resources that are a video themselves. The ability also knows exercises,
+ * tips and talks, but AI Hero has none; they come back with a route to open
+ * them.
+ */
+const LEAF_TYPES = new Set(['post', 'lesson'])
 /** Parents whose join-row tier grants free access, mirroring the ability. */
 const MODULE_TYPES = new Set(['workshop', 'tutorial', 'list'])
 
@@ -98,25 +105,76 @@ export function computeVideoFacts(
 			? (positive(node.duration) ?? positive(video.duration))
 			: undefined
 		const courseIds = video ? openCourseIds(node.id, parents, nodes, isOpen) : []
+		const free = isFreeLeaf(node, parents, nodes, isOpen)
+		const playback = free && video ? toPlayback(node, video) : null
 
 		facts.set(node.id, {
 			has_video: Boolean(video),
-			free: isFreeLeaf(node, parents, nodes, isOpen),
+			free,
 			course_ids: courseIds.length > 0 ? courseIds : null,
 			duration_seconds: seconds === undefined ? null : Math.round(seconds),
 			container_title:
 				node.type === 'post'
 					? null
 					: rootContainerTitle(node.id, parents, nodes, isOpen),
-			mux_playback_id: video?.muxPlaybackId ?? null,
-			// Whole seconds: the index auto-types this field from the first value
-			// it sees, and a float after an int would be refused.
-			thumbnail_time: video
-				? roundOrNull(node.thumbnailTime ?? video.thumbnailTime)
-				: null,
+			mux_playback_id: playback?.playbackId ?? null,
+			thumbnail_time: playback?.thumbnailTime ?? null,
 		})
 	}
 	return facts
+}
+
+/**
+ * Playback for the given videos, whatever their price — for the server to
+ * hand a viewer the lessons they own. Never write this to the index.
+ */
+export function computeVideoPlayback(
+	graph: VideoGraph,
+	ids: ReadonlySet<string>,
+): Map<string, VideoPlayback> {
+	const nodes = new Map(graph.nodes.map((node) => [node.id, node]))
+	const children = new Map<string, VideoGraphEdge[]>()
+	for (const edge of graph.edges) {
+		if (ids.has(edge.parentId)) push(children, edge.parentId, edge)
+	}
+	const playback = new Map<string, VideoPlayback>()
+	for (const id of ids) {
+		const node = nodes.get(id)
+		const video = node && findPlayableVideo(node, nodes, children.get(id))
+		if (node && video) playback.set(id, toPlayback(node, video))
+	}
+	return playback
+}
+
+/**
+ * Playback for the paid videos the viewer's courses open — the ids the index
+ * withholds (see `VideoFacts.mux_playback_id`). Free videos already carry
+ * theirs in the index.
+ */
+export function ownedVideoPlayback(
+	graph: VideoGraph,
+	ownedIds: ReadonlyArray<string>,
+	now: Date = new Date(),
+): Record<string, VideoPlayback> {
+	if (ownedIds.length === 0) return {}
+	const owned = new Set(ownedIds)
+	const ids = new Set<string>()
+	for (const [id, facts] of computeVideoFacts(graph, now)) {
+		if (facts.free || !facts.course_ids?.some((course) => owned.has(course))) {
+			continue
+		}
+		ids.add(id)
+	}
+	return Object.fromEntries(computeVideoPlayback(graph, ids))
+}
+
+function toPlayback(node: VideoGraphNode, video: VideoGraphNode): VideoPlayback {
+	return {
+		playbackId: video.muxPlaybackId!,
+		// Whole seconds: the index auto-types this field from the first value
+		// it sees, and a float after an int would be refused.
+		thumbnailTime: roundOrNull(node.thumbnailTime ?? video.thumbnailTime),
+	}
 }
 
 /**
@@ -168,8 +226,8 @@ function openCourseIds(
 }
 
 /**
- * Posts, tips and talks are free wherever they sit. A lesson is free when an
- * open module places it — directly or through a section — with `tier: 'free'`.
+ * Posts are free wherever they sit. A lesson is free when an open module
+ * places it — directly or through a section — with `tier: 'free'`.
  */
 function isFreeLeaf(
 	node: VideoGraphNode,
@@ -177,7 +235,7 @@ function isFreeLeaf(
 	nodes: Map<string, VideoGraphNode>,
 	isOpen: (node: VideoGraphNode) => boolean,
 ): boolean {
-	if (ALWAYS_FREE_LEAF_TYPES.has(node.type)) return true
+	if (node.type === 'post') return true
 
 	const isFreeModuleEdge = (edge: VideoGraphEdge) => {
 		const module = nodes.get(edge.parentId)

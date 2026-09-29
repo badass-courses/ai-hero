@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { buildVideoSearchFilter, parseVideoAccess } from './video-search-filter'
 
 const BASE =
-	'has_video:=true && ((visibility:=public && state:=published) || type:=[lesson,exercise])'
+	'has_video:=true && ((visibility:=public && state:=published) || type:=lesson)'
 
 describe('buildVideoSearchFilter', () => {
 	it('shows everyone the free videos, free-tier lessons included', () => {

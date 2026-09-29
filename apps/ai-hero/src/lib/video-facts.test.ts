@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
 	computeVideoFacts,
+	computeVideoPlayback,
+	ownedVideoPlayback,
 	type VideoGraphEdge,
 	type VideoGraphNode,
 } from './video-facts'
@@ -193,6 +195,65 @@ describe('computeVideoFacts', () => {
 				course_ids: null,
 			})
 		})
+	})
+
+	// The index is searchable with a public key and Mux ids play without a
+	// token: a paid lesson's playback id there would give the video away.
+	it('keeps a paid lesson playback id out of the index facts', () => {
+		const graph = {
+			nodes: [
+				node('workshop', 'workshop'),
+				node('paid', 'lesson'),
+				node('free', 'lesson'),
+				video('v-paid', { thumbnailTime: 9 }),
+				video('v-free'),
+			],
+			edges: [
+				edge('workshop', 'paid', 'standard'),
+				edge('workshop', 'free', 'free'),
+				edge('paid', 'v-paid'),
+				edge('free', 'v-free'),
+			],
+		}
+		const facts = computeVideoFacts(graph, now)
+
+		expect(facts.get('paid')).toMatchObject({
+			has_video: true,
+			mux_playback_id: null,
+			thumbnail_time: null,
+		})
+		expect(facts.get('free')?.mux_playback_id).toBe('playback-v-free')
+		expect(computeVideoPlayback(graph, new Set(['paid']))).toEqual(
+			new Map([['paid', { playbackId: 'playback-v-paid', thumbnailTime: 9 }]]),
+		)
+	})
+
+	it('hands an owner the playback of paid lessons in their courses only', () => {
+		const graph = {
+			nodes: [
+				node('mine', 'workshop'),
+				node('theirs', 'workshop'),
+				node('owned', 'lesson'),
+				node('other', 'lesson'),
+				node('preview', 'lesson'),
+				video('v1'),
+				video('v2'),
+				video('v3'),
+			],
+			edges: [
+				edge('mine', 'owned', 'standard'),
+				edge('theirs', 'other', 'standard'),
+				edge('mine', 'preview', 'free'),
+				edge('owned', 'v1'),
+				edge('other', 'v2'),
+				edge('preview', 'v3'),
+			],
+		}
+
+		expect(ownedVideoPlayback(graph, ['mine'], now)).toEqual({
+			owned: { playbackId: 'playback-v1', thumbnailTime: null },
+		})
+		expect(ownedVideoPlayback(graph, [], now)).toEqual({})
 	})
 
 	it('opens nothing through a draft workshop', () => {

@@ -26,14 +26,18 @@ export function VideoCard({
 	/** `null` until the viewer's status arrives; the card keeps its shape. */
 	status: VideoViewerStatus | null
 }) {
-	const isLesson = hit.type === 'lesson' || hit.type === 'exercise'
+	const isLesson = hit.type === 'lesson'
 	const watched = status?.watchedIds.includes(hit.id) ?? false
 	const fromOwnedCourse =
 		hit.course_ids?.some((id) => status?.ownedIds.includes(id)) ?? false
-	const playbackId = hit.mux_playback_id ?? undefined
+	// Free videos carry their playback in the index; a paid lesson's comes only
+	// from the owner's status, since the index is publicly searchable.
+	const ownedPlayback = status?.playback[hit.id]
+	const playbackId = hit.mux_playback_id ?? ownedPlayback?.playbackId
+	const thumbnailTime = hit.thumbnail_time ?? ownedPlayback?.thumbnailTime
 	const image =
 		hit.image ??
-		(playbackId ? muxThumbnailUrl(playbackId, hit.thumbnail_time) : undefined)
+		(playbackId ? muxThumbnailUrl(playbackId, thumbnailTime) : undefined)
 
 	return (
 		<ResourceCard
@@ -41,7 +45,7 @@ export function VideoCard({
 			href={videoHref(hit)}
 			image={image}
 			muxPlaybackId={playbackId}
-			thumbnailTime={hit.thumbnail_time ?? undefined}
+			thumbnailTime={thumbnailTime ?? undefined}
 			inlinePlayback
 			overlay={
 				<>
@@ -85,7 +89,7 @@ export function VideoCard({
 
 /** Lessons live under their workshop; alone they would route to a bare slug. */
 function videoHref(hit: TypesenseResource) {
-	if (hit.type === 'lesson' || hit.type === 'exercise') {
+	if (hit.type === 'lesson') {
 		const workshop = hit.parentResources?.find((p) => p.type === 'workshop')
 		if (workshop) {
 			return getResourcePath('lesson', hit.slug, 'view', {

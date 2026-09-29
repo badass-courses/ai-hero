@@ -15,7 +15,10 @@ import {
 	parseVideoAccess,
 	type VideoAccess,
 } from '@/lib/video-search-filter'
-import type { VideoViewerStatus } from '@/lib/video-viewer-status'
+import {
+	EMPTY_VIDEO_VIEWER_STATUS,
+	type VideoViewerStatus,
+} from '@/lib/video-viewer-status'
 import { api } from '@/trpc/react'
 import {
 	TYPESENSE_COLLECTION_NAME,
@@ -32,13 +35,17 @@ import { cn } from '@coursebuilder/ui/utils/cn'
 import { VideoCard } from './video-card'
 import { VideoGrid } from './video-grid'
 
+// Relevance is what a typed search switches to (as on /posts), so it has to
+// be a listed option or the button reads "Sort by..." mid-search.
 const SORT_ITEMS = [
 	{ value: NEWEST_SORT_VALUE, label: 'Newest first' },
 	{ value: MOST_POPULAR_SORT_VALUE, label: 'Most Popular' },
+	{ value: RELEVANCE_SORT_VALUE, label: 'Relevance' },
 ]
 const SORT_KEY_TO_VALUE: Record<string, string> = {
 	newest: NEWEST_SORT_VALUE,
 	popular: MOST_POPULAR_SORT_VALUE,
+	relevance: RELEVANCE_SORT_VALUE,
 }
 const SORT_VALUE_TO_KEY: Record<string, string> = Object.fromEntries(
 	Object.entries(SORT_KEY_TO_VALUE).map(([key, value]) => [value, key]),
@@ -91,11 +98,14 @@ function VideoSearchState() {
 	)
 	const access = parseVideoAccess(accessParam)
 
-	const { data: status = null } = api.videos.viewerStatus.useQuery(undefined, {
+	const { data, isError } = api.videos.viewerStatus.useQuery(undefined, {
 		staleTime: 60_000,
 		refetchOnWindowFocus: false,
 		retry: 1,
 	})
+	// A failed status is an empty one: "My courses" and "Hide watched" would
+	// otherwise wait forever on ids that are never coming.
+	const status = data ?? (isError ? EMPTY_VIDEO_VIEWER_STATUS : null)
 
 	const filters = buildVideoSearchFilter({
 		access,

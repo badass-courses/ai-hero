@@ -82,6 +82,12 @@ async function deriveResourceImage(
 		readImageUrl(post.fields, 'image')
 	if (fromFields) return fromFields
 
+	// A Mux still's URL carries the playback id, and Mux ids play without a
+	// token. The browser searches this index with a public key, so only posts —
+	// free to watch anyway — may borrow their video's still; a lesson's or
+	// solution's would give a paid video away.
+	if (post.type !== 'post') return undefined
+
 	const videoResourceId =
 		readString(post.fields, 'videoResourceId') ||
 		(post as any)?.resources?.find(

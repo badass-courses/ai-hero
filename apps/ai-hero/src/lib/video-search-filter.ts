@@ -37,7 +37,7 @@ export function buildVideoSearchFilter({
 }): string {
 	const parts = [
 		'has_video:=true',
-		'((visibility:=public && state:=published) || type:=[lesson,exercise])',
+		'((visibility:=public && state:=published) || type:=lesson)',
 	]
 	const owned = ownedIds && ownedIds.length > 0 ? ownedIds : null
 	const ownedClause = (ids: ReadonlyArray<string>) =>

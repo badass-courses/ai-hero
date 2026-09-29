@@ -1,6 +1,7 @@
 import { db } from '@/db'
 import { contentResource, contentResourceResource } from '@/db/schema'
 import { and, inArray, isNull, sql } from 'drizzle-orm'
+import { unstable_cache } from 'next/cache'
 
 import {
 	computeVideoFacts,
@@ -16,9 +17,6 @@ const GRAPH_TYPES = [
 	'tutorial',
 	'post',
 	'lesson',
-	'exercise',
-	'tip',
-	'talk',
 	'videoResource',
 ]
 
@@ -88,3 +86,13 @@ export async function getVideoFactsForResource(
 	const facts = computeVideoFacts(await loadVideoGraph())
 	return facts.get(resourceId) ?? null
 }
+
+/**
+ * The graph for per-viewer reads (an owner's lesson playback on /videos). Ten
+ * minutes stale is fine there: the index beside it is reconciled hourly.
+ */
+export const getCachedVideoGraph = unstable_cache(
+	loadVideoGraph,
+	['video-graph'],
+	{ revalidate: 600, tags: ['video-graph'] },
+)
