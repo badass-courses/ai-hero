@@ -1,5 +1,6 @@
 import type { EmailListConfig } from '@coursebuilder/core/providers'
 
+import { activeContactStops, readContactStopSignals } from './contact-stop-rule'
 import { dispatchDrovrShadowFactSafely } from './drovr-shadow-dispatch'
 import {
 	resolveValuePathLinkAnchor,
@@ -343,7 +344,9 @@ export async function executeValuePathEmailIntent(args: {
 	const mode = args.config?.mode ?? metadata.mode
 	// A stopped contact is refused here, as live personalize refuses it
 	// (mig-10, 2026-09-27): contact-sync step 2 removes that other net.
-	const stops = await readContactStops(args.repository, intent.contactId)
+	// A lift revives only a course entered after it: a course entered before
+	// the unsubscribe never restarts or resumes, whenever a step was planned.
+	const stops = await readContactStops(args.repository, intent, metadata)
 
 	const preflightReasons = [
 		...(contact ? [] : ['contact-missing']),
@@ -1033,20 +1036,61 @@ function summarizeProviderResult(value: unknown) {
 	}
 }
 
+/**
+ * Active stops under the shared rule. A fresh double opt-in lifts an
+ * unsubscribe only for a course entered at or after the lift (Joel,
+ * 2026-09-28: no restart, no resume), so a lifted contact's plannedAt is
+ * the course-entry time, not the step's.
+ */
 async function readContactStops(
 	repository: ValuePathEmailExecutorRepository,
-	contactId: string,
+	intent: SideEffectIntent,
+	metadata: { valuePathSlug?: string },
 ): Promise<{ unsubscribed: boolean; bounced: boolean; complained: boolean }> {
-	const [unsubscribed, bounced, complained] = await Promise.all(
-		['contact.unsubscribed', 'contact.bounced', 'contact.complained'].map(
-			async (eventType) =>
-				(await repository.findContactEventsByType(contactId, eventType))
-					.length > 0,
-		),
+	const { signals } = await readContactStopSignals(repository, intent.contactId)
+	const lifted = signals.some((signal) => signal.kind === 'resubscribed')
+	return activeContactStops(
+		signals,
+		lifted
+			? await courseEnteredAt(repository, intent, metadata)
+			: intent.createdAt,
 	)
-	return {
-		unsubscribed: unsubscribed ?? false,
-		bounced: bounced ?? false,
-		complained: complained ?? false,
-	}
+}
+
+/**
+ * When the contact entered this course: the earliest of the path's
+ * `value-path.entered` events, a skills-course owner assignment, and the
+ * intent itself. Unreadable times are skipped.
+ */
+async function courseEnteredAt(
+	repository: ValuePathEmailExecutorRepository,
+	intent: SideEffectIntent,
+	metadata: { valuePathSlug?: string },
+): Promise<string> {
+	const [entries, owners] = await Promise.all([
+		repository.findContactEventsByType(intent.contactId, 'value-path.entered'),
+		repository.findContactEventsByType(
+			intent.contactId,
+			'journey.owner.assigned',
+		),
+	])
+	const times = [
+		intent.createdAt,
+		...entries
+			.filter(
+				(entry) =>
+					!metadata.valuePathSlug ||
+					entry.providerReference === `value-path:${metadata.valuePathSlug}`,
+			)
+			.map((entry) => entry.occurredAt),
+		...owners
+			.filter((owner) =>
+				owner.providerEventId?.endsWith(':value-path-skills-course'),
+			)
+			.map((owner) => owner.occurredAt),
+	].filter((at) => Number.isFinite(Date.parse(at)))
+	return times.reduce<string>(
+		(earliest, at) => (Date.parse(at) < Date.parse(earliest) ? at : earliest),
+		times[0] ?? intent.createdAt,
+	)
 }

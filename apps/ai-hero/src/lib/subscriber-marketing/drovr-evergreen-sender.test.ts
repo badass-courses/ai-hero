@@ -455,6 +455,89 @@ describe('executePendingEvergreenSends', () => {
 		])
 	})
 
+	describe('a fresh double opt-in lifts an unsubscribe (DOI Q5)', () => {
+		async function sendsWith(stops: [string, string][]) {
+			const repository = new InMemorySubscriberMarketingRepository()
+			const captured = await dryRunSubscriberMarketingFixture({
+				repository,
+				fixture: codingWorkflowFixture,
+				now: '2026-09-20T10:00:00.000Z',
+			})
+			for (const [eventType, occurredAt] of stops)
+				repository.createContactEvent({
+					contactId: captured.contact.id,
+					providerIdentityId: captured.providerIdentity.id,
+					provider: 'kit',
+					providerEventId: `${eventType}:${occurredAt}`,
+					providerReference: `kit:${eventType}`,
+					eventType,
+					occurredAt,
+					semanticIdempotencyKey: `${eventType}:${occurredAt}`,
+					privacyLevel: 'internal',
+					identityEvidence: captured.providerIdentity.evidence,
+					payloadSummary: {
+						summary: eventType,
+						keywords: [],
+						restrictedPayloadStored: false,
+					},
+					schemaVersion: 1,
+					createdAt: occurredAt,
+				})
+			repository.createSideEffectIntent(
+				row({
+					id: 'send-1',
+					contactId: captured.contact.id,
+					type: 'send-evergreen-email',
+					metadata: { ...row().metadata, kitSequenceId: '2887679' },
+					createdAt: '2026-09-24T18:01:49.000Z',
+				}),
+			)
+			let calls = 0
+			const results = await executePendingEvergreenSends({
+				repository,
+				type: 'send-evergreen-email',
+				subscribe: async () => {
+					calls += 1
+					return {}
+				},
+				limit: 10,
+				now: () => '2026-09-24T18:26:49.000Z',
+				dispatch: () => {},
+			})
+			return { calls, results }
+		}
+
+		it('sends to a contact whose unsubscribe a later confirmation lifted', async () => {
+			const { calls, results } = await sendsWith([
+				['contact.unsubscribed', '2026-09-21T11:19:09.000Z'],
+				['contact.resubscribed', '2026-09-22T09:00:00.000Z'],
+			])
+			expect(calls).toBe(1)
+			expect(results).toMatchObject([{ status: 'completed' }])
+		})
+
+		it('refuses again after a later unsubscribe', async () => {
+			const { calls, results } = await sendsWith([
+				['contact.unsubscribed', '2026-09-21T11:19:09.000Z'],
+				['contact.resubscribed', '2026-09-22T09:00:00.000Z'],
+				['contact.unsubscribed', '2026-09-23T09:00:00.000Z'],
+			])
+			expect(calls).toBe(0)
+			expect(results).toMatchObject([
+				{ status: 'failed', error: 'unsubscribed' },
+			])
+		})
+
+		it('never lifts a bounce', async () => {
+			const { calls, results } = await sendsWith([
+				['contact.bounced', '2026-09-21T11:19:09.000Z'],
+				['contact.resubscribed', '2026-09-22T09:00:00.000Z'],
+			])
+			expect(calls).toBe(0)
+			expect(results).toMatchObject([{ status: 'failed', error: 'bounced' }])
+		})
+	})
+
 	it('paces between rows and honours the limit', async () => {
 		const repository = new FakeRepository()
 		repository.contacts.set('contact-1', contact())

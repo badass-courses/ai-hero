@@ -1,4 +1,5 @@
 import { courseSequenceContactEvent } from '@/db/course-sequence-exhaustion-schema'
+import { CONTACT_STOP_RULE_EVENT_TYPES } from './contact-stop-rule'
 import { contactEmailWriteValues } from './contact-email-equivalence'
 import {
 	contact,
@@ -94,12 +95,37 @@ type LearnerFlowSummaryEntryEvent = Pick<
 	'id' | 'contactId' | 'eventType' | 'providerReference' | 'occurredAt'
 >
 
+/** The contact's stop-rule events, for the classifier (contact-stop-rule). */
+type LearnerFlowStopEvent = Pick<ContactEventRecord, 'eventType' | 'occurredAt'>
+type LearnerFlowStopEventRow = {
+	contactId: string
+	eventType: string
+	occurredAt: Date
+}
+
+function groupStopEvents(
+	rows: LearnerFlowStopEventRow[],
+): Map<string, LearnerFlowStopEvent[]> {
+	const byContact = new Map<string, LearnerFlowStopEvent[]>()
+	for (const row of rows) {
+		const current = byContact.get(row.contactId) ?? []
+		current.push({
+			eventType: row.eventType,
+			occurredAt: toIso(row.occurredAt),
+		})
+		byContact.set(row.contactId, current)
+	}
+	return byContact
+}
+
 export type LearnerFlowRecord = {
 	contactId: string
 	contact?: ContactRecord
 	contactState?: ContactState
 	intents: SideEffectIntent[]
 	entryEvents: ContactEventRecord[]
+	/** Absent reads as no lift: a stop stays stuck (fails safe). */
+	stopEvents?: LearnerFlowStopEvent[]
 }
 
 type LearnerFlowSummaryRecord = {
@@ -107,6 +133,8 @@ type LearnerFlowSummaryRecord = {
 	contactState?: Pick<ContactState, 'lifecycle' | 'humanReview'>
 	intents: LearnerFlowSummaryIntent[]
 	entryEvents: LearnerFlowSummaryEntryEvent[]
+	/** Absent reads as no lift: a stop stays stuck (fails safe). */
+	stopEvents?: LearnerFlowStopEvent[]
 }
 
 export class DrizzleCaptureMarketingRepository implements CaptureMarketingRepository {
@@ -903,22 +931,25 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 				offset,
 				offset + LEARNER_FLOW_RECORD_PAGE_SIZE,
 			)
-			const [intentRows, entryEventRows, contacts, states] = await Promise.all([
-				this.selectValuePathIntentRowsPaged(
-					inArray(sideEffectIntent.contactId, contactIds),
-				),
-				this.selectLearnerFlowRepairEntryRowsPaged(contactIds),
-				this.database
-					.select()
-					.from(contact)
-					.where(inArray(contact.id, contactIds)),
-				this.database
-					.select()
-					.from(contactState)
-					.where(inArray(contactState.contactId, contactIds)),
-			])
+			const [intentRows, entryEventRows, contacts, states, stopEventRows] =
+				await Promise.all([
+					this.selectValuePathIntentRowsPaged(
+						inArray(sideEffectIntent.contactId, contactIds),
+					),
+					this.selectLearnerFlowRepairEntryRowsPaged(contactIds),
+					this.database
+						.select()
+						.from(contact)
+						.where(inArray(contact.id, contactIds)),
+					this.database
+						.select()
+						.from(contactState)
+						.where(inArray(contactState.contactId, contactIds)),
+					this.selectLearnerFlowStopEventRows(contactIds),
+				])
 			yield assembleLearnerFlowRecords({
 				contactIds,
+				stopEventRows,
 				intentRows,
 				entryEventRows,
 				contacts,
@@ -995,7 +1026,11 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		)
 		if (contactIds.length === 0) return []
 
-		const [contacts, states]: [any[], any[]] = await Promise.all([
+		const [contacts, states, stopEventRows]: [
+			any[],
+			any[],
+			LearnerFlowStopEventRow[],
+		] = await Promise.all([
 			this.database
 				.select()
 				.from(contact)
@@ -1004,9 +1039,11 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 				.select()
 				.from(contactState)
 				.where(inArray(contactState.contactId, contactIds)),
+			this.selectLearnerFlowStopEventRows(contactIds),
 		])
 		return assembleLearnerFlowRecords({
 			contactIds,
+			stopEventRows,
 			intentRows,
 			entryEventRows,
 			contacts,
@@ -1018,25 +1055,64 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		contactIds: string[],
 	): Promise<LearnerFlowSummaryRecord[]> {
 		if (contactIds.length === 0) return []
-		const [intentRows, entryEventRows, states]: [any[], any[], any[]] =
-			await Promise.all([
-				this.selectLearnerFlowIntentRowsPaged(contactIds),
-				this.selectLearnerFlowEntryEventRowsPaged(contactIds),
-				this.database
-					.select({
-						contactId: contactState.contactId,
-						lifecycle: contactState.lifecycle,
-						humanReview: contactState.humanReview,
-					})
-					.from(contactState)
-					.where(inArray(contactState.contactId, contactIds)),
-			])
+		const [intentRows, entryEventRows, states, stopEventRows]: [
+			any[],
+			any[],
+			any[],
+			LearnerFlowStopEventRow[],
+		] = await Promise.all([
+			this.selectLearnerFlowIntentRowsPaged(contactIds),
+			this.selectLearnerFlowEntryEventRowsPaged(contactIds),
+			this.database
+				.select({
+					contactId: contactState.contactId,
+					lifecycle: contactState.lifecycle,
+					humanReview: contactState.humanReview,
+				})
+				.from(contactState)
+				.where(inArray(contactState.contactId, contactIds)),
+			this.selectLearnerFlowStopEventRows(contactIds),
+		])
 		return assembleLearnerFlowSummaryRecords({
 			contactIds,
 			intentRows,
 			entryEventRows,
 			states,
+			stopEventRows,
 		})
+	}
+
+	/** Stop-rule events (a lift included) for the classifier, keyset-paged. */
+	private async selectLearnerFlowStopEventRows(
+		contactIds: string[],
+	): Promise<LearnerFlowStopEventRow[]> {
+		const collected: LearnerFlowStopEventRow[] = []
+		let cursor: string | undefined
+		for (;;) {
+			const rows: Array<LearnerFlowStopEventRow & { id: string }> =
+				await this.database
+					.select({
+						id: contactEvent.id,
+						contactId: contactEvent.contactId,
+						eventType: contactEvent.eventType,
+						occurredAt: contactEvent.occurredAt,
+					})
+					.from(contactEvent)
+					.where(
+						and(
+							inArray(contactEvent.contactId, contactIds),
+							inArray(contactEvent.eventType, [
+								...CONTACT_STOP_RULE_EVENT_TYPES,
+							]),
+							cursor === undefined ? undefined : gt(contactEvent.id, cursor),
+						),
+					)
+					.orderBy(asc(contactEvent.id))
+					.limit(LEARNER_FLOW_ENTRY_EVENT_PAGE_SIZE)
+			collected.push(...rows)
+			if (rows.length < LEARNER_FLOW_ENTRY_EVENT_PAGE_SIZE) return collected
+			cursor = rows[rows.length - 1]!.id
+		}
 	}
 
 	private async selectLearnerFlowIntentRowsPaged(contactIds: string[]) {
@@ -1278,6 +1354,7 @@ function affectedRowsOf(result: unknown): number {
 
 function assembleLearnerFlowSummaryRecords(args: {
 	contactIds: string[]
+	stopEventRows: LearnerFlowStopEventRow[]
 	intentRows: any[]
 	entryEventRows: any[]
 	states: any[]
@@ -1310,6 +1387,7 @@ function assembleLearnerFlowSummaryRecords(args: {
 		current.push(event)
 		entryEventsByContactId.set(event.contactId, current)
 	}
+	const stopEventsByContactId = groupStopEvents(args.stopEventRows)
 	return args.contactIds
 		.map((contactId) => ({
 			contactId,
@@ -1320,6 +1398,7 @@ function assembleLearnerFlowSummaryRecords(args: {
 					left.id.localeCompare(right.id),
 			),
 			entryEvents: entryEventsByContactId.get(contactId) ?? [],
+			stopEvents: stopEventsByContactId.get(contactId) ?? [],
 		}))
 		.filter(
 			(record) => record.intents.length > 0 || record.entryEvents.length > 0,
@@ -1366,6 +1445,7 @@ function gateDStatusMetadataProjection() {
 
 function assembleLearnerFlowRecords(args: {
 	contactIds: string[]
+	stopEventRows: LearnerFlowStopEventRow[]
 	intentRows: any[]
 	entryEventRows: any[]
 	contacts: any[]
@@ -1396,6 +1476,7 @@ function assembleLearnerFlowRecords(args: {
 		current.push(event)
 		entryEventsByContactId.set(event.contactId, current)
 	}
+	const stopEventsByContactId = groupStopEvents(args.stopEventRows)
 	return args.contactIds
 		.map((contactId) => ({
 			contactId,
@@ -1405,6 +1486,7 @@ function assembleLearnerFlowRecords(args: {
 				intentsByContactId.get(contactId) ?? [],
 			),
 			entryEvents: entryEventsByContactId.get(contactId) ?? [],
+			stopEvents: stopEventsByContactId.get(contactId) ?? [],
 		}))
 		.filter(
 			(record) => record.intents.length > 0 || record.entryEvents.length > 0,

@@ -25,6 +25,7 @@ it('bounds repair hydration and retains full entry evidence across row pages', a
 		limit?: number
 		selection: unknown
 	}> = []
+	const stopCalls: Array<{ params: unknown[]; limit: number }> = []
 	const database = {
 		selectDistinct: () => ({
 			from: () => ({
@@ -39,6 +40,22 @@ it('bounds repair hydration and retains full entry evidence across row pages', a
 			from: (table: unknown) => ({
 				where: (condition?: SQL) => {
 					const params = condition ? dialect.sqlToQuery(condition).params : []
+					// The stop-rule event read (contact-stop-rule): bounded, empty here.
+					if (
+						table === contactEvent &&
+						typeof selection === 'object' &&
+						selection !== null &&
+						!('providerReference' in selection)
+					) {
+						return {
+							orderBy: () => ({
+								limit: (limit: number) => {
+									stopCalls.push({ params, limit })
+									return []
+								},
+							}),
+						}
+					}
 					if (table === contact || table === contactState) {
 						calls.push({ table, params, selection })
 						return []
@@ -111,5 +128,14 @@ it('bounds repair hydration and retains full entry evidence across row pages', a
 		}
 		if (call.table === contactEvent || call.table === sideEffectIntent)
 			expect(call.limit).toBe(5000)
+	}
+	expect(stopCalls).toHaveLength(2)
+	for (const call of stopCalls) {
+		expect(call.limit).toBe(5000)
+		expect(
+			call.params.filter(
+				(value) => typeof value === 'string' && value.startsWith('c-'),
+			).length,
+		).toBeLessThanOrEqual(LEARNER_FLOW_RECORD_PAGE_SIZE)
 	}
 })

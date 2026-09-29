@@ -98,6 +98,8 @@ export type DrovrContactProfileSyncRequested = {
 			| 'offer-issued'
 			/** A contact's first Kit subscriber id: its answer links change. */
 			| 'kit-identity-linked'
+			/** A fresh double opt-in lifted an unsubscribe: the standing changes. */
+			| 'contact-resubscribed'
 			/** An operator created a missing contact state (clears stale-state). */
 			| 'state-initialized'
 			| 'reconcile'

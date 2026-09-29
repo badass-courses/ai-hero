@@ -63,18 +63,21 @@ function fixture() {
 	let currentState: ContactState | undefined = state
 	let identityConflict = false
 	const events = new Map<string, number>()
+	const dated = new Map<string, { occurredAt: string }[]>()
 	const prior: SideEffectIntent[] = []
 	const coupons = new Map<string, SideEffectIntent>()
 	const repository: DrovrPersonalizeRepository = {
 		findContactById: () => currentContact,
 		findCurrentContactState: () => currentState,
-		findContactEventsByType: (_, type) => Array(events.get(type) ?? 0).fill({}),
+		findContactEventsByType: (_, type) =>
+			(dated.get(type) ?? Array(events.get(type) ?? 0).fill({})) as never,
 		findValuePathEmailSideEffectIntentsByContact: () => prior,
 		findSideEffectIntentByIdempotencyKey: (key) => coupons.get(key),
 	}
 	return {
 		repository,
 		events,
+		dated,
 		prior,
 		coupons,
 		setContact: (value: ContactRecord | undefined) => {
@@ -465,5 +468,56 @@ describe('double opt-in confirmation personalization', () => {
 		expect(
 			await wrongKey.answer({ ...doi, emailKey: 'ai-hero-confirm.email-9' }),
 		).toMatchObject({ sendable: false, reasons: ['email-resource-missing'] })
+	})
+})
+
+describe('drovr personalization: a fresh double opt-in lifts an unsubscribe (DOI Q5)', () => {
+	const at = (iso: string) => [{ occurredAt: iso }]
+
+	it('sends the course to a contact who unsubscribed, then confirmed a fresh double opt-in', async () => {
+		const f = fixture()
+		f.dated.set('contact.unsubscribed', at('2026-09-01T00:00:00.000Z'))
+		f.dated.set('contact.resubscribed', at('2026-09-20T00:00:00.000Z'))
+		expect(await f.answer()).toMatchObject({ sendable: true, reasons: [] })
+	})
+
+	it('blocks again after a later unsubscribe', async () => {
+		const f = fixture()
+		f.dated.set('contact.unsubscribed', [
+			{ occurredAt: '2026-09-01T00:00:00.000Z' },
+			{ occurredAt: '2026-09-22T00:00:00.000Z' },
+		])
+		f.dated.set('contact.resubscribed', at('2026-09-20T00:00:00.000Z'))
+		expect(await f.answer()).toMatchObject({
+			sendable: false,
+			reasons: ['unsubscribed'],
+		})
+	})
+
+	it.each([
+		['contact.bounced', 'bounced'],
+		['contact.complained', 'complained'],
+	] as const)('never lifts %s', async (eventType, reason) => {
+		const f = fixture()
+		f.dated.set(eventType, at('2026-09-01T00:00:00.000Z'))
+		f.dated.set('contact.resubscribed', at('2026-09-20T00:00:00.000Z'))
+		expect(await f.answer()).toMatchObject({
+			sendable: false,
+			reasons: [reason],
+		})
+	})
+
+	it('lifts a provider-reported unsubscribe on an earlier course send too', async () => {
+		const f = fixture()
+		f.prior.push({
+			id: 'prior-1',
+			status: 'completed',
+			completedAt: '2026-09-01T00:00:00.000Z',
+			createdAt: '2026-09-01T00:00:00.000Z',
+			metadata: { providerResult: { unsubscribed: true } },
+		} as never)
+		expect((await f.answer())?.reasons).toContain('unsubscribed')
+		f.dated.set('contact.resubscribed', at('2026-09-20T00:00:00.000Z'))
+		expect(await f.answer()).toMatchObject({ sendable: true, reasons: [] })
 	})
 })
