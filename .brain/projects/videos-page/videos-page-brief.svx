@@ -41,9 +41,10 @@ mid-build (see the ledger). Ships as **one PR**.
 - **video** — a resource that is a video itself: a post, lesson, exercise, tip
   or talk with a ready Mux `videoResource`. Solutions ride on their exercise and
   are not listed.
-- **free** — watchable without a purchase: posts, tips and talks anywhere; a
-  lesson whose join row (or its section's) in an open module carries
-  `metadata.tier === 'free'`.
+- **free** — watchable without a purchase: a post that is published and
+  public or unlisted (a draft post is not — and "free" is what puts a playback
+  id in the public index); a lesson whose join row (or its section's) in an
+  open module carries `metadata.tier === 'free'`.
 - **course_ids** — every course that currently opens a video: its open
   workshops and the cohorts or lists around them. "Videos from courses you own"
   is `course_ids ∩ ownedIds`, so the filter carries a handful of course ids
@@ -51,6 +52,8 @@ mid-build (see the ledger). Ships as **one PR**.
 - **open** — a workshop is open when it is `published` and its `startsAt` has
   passed (`isWorkshopAvailable`). Cohort days are published ahead and open on
   schedule; the hourly reconcile moves a lesson into its courses within the hour.
+  A list or tutorial is open when `published`; a cohort does not gate (its
+  day-workshops do).
 - **free preview** — a free lesson shown to someone who does not own its course.
 
 ## Notes

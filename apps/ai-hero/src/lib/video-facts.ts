@@ -203,6 +203,11 @@ function toPlayback(node: VideoGraphNode, video: VideoGraphNode): VideoPlayback 
  * Coding Crash Course is sixty `draft` lessons.
  */
 function isOpenAt(node: VideoGraphNode, now: Date): boolean {
+	// A draft or archived list or tutorial opens nothing either. Cohorts do not
+	// gate here: their day-workshops carry the state and schedule.
+	if (node.type === 'list' || node.type === 'tutorial') {
+		return node.state === 'published'
+	}
 	if (node.type !== 'workshop') return true
 	if (node.state !== 'published') return false
 	if (!node.startsAt) return true
@@ -245,7 +250,9 @@ function openCourseIds(
 }
 
 /**
- * Posts are free wherever they sit. A lesson is free when an open module
+ * A post is free when anyone can open it: published, and public or unlisted
+ * (reachable by link). A draft post is not — and "free" is what puts its
+ * playback id in the public index. A lesson is free when an open module
  * places it — directly or through a section — with `tier: 'free'`.
  */
 function isFreeLeaf(
@@ -254,7 +261,12 @@ function isFreeLeaf(
 	nodes: Map<string, VideoGraphNode>,
 	isOpen: (node: VideoGraphNode) => boolean,
 ): boolean {
-	if (node.type === 'post') return true
+	if (node.type === 'post') {
+		return (
+			node.state === 'published' &&
+			(node.visibility === 'public' || node.visibility === 'unlisted')
+		)
+	}
 
 	const isFreeModuleEdge = (edge: VideoGraphEdge) => {
 		const module = nodes.get(edge.parentId)
@@ -386,8 +398,9 @@ function positive(value: number | null | undefined): number | undefined {
 		: undefined
 }
 
+/** Whole, non-negative seconds, or null: a bad value must not fail the doc. */
 function roundOrNull(value: number | null | undefined): number | null {
-	return typeof value === 'number' && Number.isFinite(value)
+	return typeof value === 'number' && Number.isFinite(value) && value >= 0
 		? Math.round(value)
 		: null
 }

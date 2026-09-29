@@ -98,7 +98,7 @@ function VideoSearchState() {
 	)
 	const access = parseVideoAccess(accessParam)
 
-	const { data, isError } = api.videos.viewerStatus.useQuery(undefined, {
+	const { data, isError, refetch } = api.videos.viewerStatus.useQuery(undefined, {
 		staleTime: 60_000,
 		refetchOnWindowFocus: false,
 		retry: 1,
@@ -110,7 +110,7 @@ function VideoSearchState() {
 	const filters = buildVideoSearchFilter({
 		access,
 		ownedIds: status?.ownedIds ?? null,
-		hiddenIds: hideWatched ? (status?.watchedIds ?? []) : [],
+		hiddenIds: hideWatched ? (status?.watchedIds ?? null) : [],
 	})
 	const statusPending = status === null && (access === 'owned' || hideWatched)
 
@@ -149,6 +149,8 @@ function VideoSearchState() {
 				statusPending={statusPending}
 				hideWatched={hideWatched}
 				onHideWatchedChange={(value) => setHideWatched(value || null)}
+				statusFailed={isError}
+				onRetryStatus={() => void refetch()}
 			/>
 		</InstantSearchNext>
 	)
@@ -162,6 +164,8 @@ function VideoSearchContent({
 	statusPending,
 	hideWatched,
 	onHideWatchedChange,
+	statusFailed,
+	onRetryStatus,
 }: {
 	filters: string
 	access: VideoAccess
@@ -170,6 +174,8 @@ function VideoSearchContent({
 	statusPending: boolean
 	hideWatched: boolean
 	onHideWatchedChange: (value: boolean) => void
+	statusFailed: boolean
+	onRetryStatus: () => void
 }) {
 	const { refresh, uiState, setIndexUiState } = useInstantSearch()
 
@@ -252,6 +258,25 @@ function VideoSearchContent({
 					)}
 				</div>
 			</div>
+			{statusFailed && (
+				<p
+					role="status"
+					className={cn(
+						TYPE.metaProse,
+						'text-muted-foreground px-[18px] pt-6 sm:px-11',
+					)}
+				>
+					Your courses and progress did not load, so only free videos are
+					showing.{' '}
+					<button
+						type="button"
+						onClick={onRetryStatus}
+						className="text-foreground underline underline-offset-4"
+					>
+						Try again
+					</button>
+				</p>
+			)}
 			<VideoGrid
 				renderHit={(hit) => (
 					<VideoCard hit={hit} status={status} />

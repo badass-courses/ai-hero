@@ -33,6 +33,12 @@ describe('buildVideoSearchFilter', () => {
 		)
 	})
 
+	it('matches nothing under Hide watched until the watched ids arrive', () => {
+		expect(
+			buildVideoSearchFilter({ access: 'all', ownedIds: null, hiddenIds: null }),
+		).toBe(`${BASE} && free:=true && id:=[\`__pending__\`]`)
+	})
+
 	it('drops watched ids when hiding watched', () => {
 		expect(
 			buildVideoSearchFilter({

@@ -21,7 +21,7 @@ function video(id: string, overrides: Partial<VideoGraphNode> = {}) {
 }
 
 function node(id: string, type: string, overrides: Partial<VideoGraphNode> = {}) {
-	return { id, type, title: id, state: 'published', ...overrides }
+	return { id, type, title: id, state: 'published', visibility: 'public', ...overrides }
 }
 
 function edge(parentId: string, childId: string, tier?: string): VideoGraphEdge {
@@ -290,6 +290,62 @@ describe('computeVideoFacts', () => {
 
 		expect(facts.get('lesson')?.workshop_slug).toBe('z-free')
 		expect(facts.get('other')?.workshop_slug).toBeNull()
+	})
+
+	it.each([
+		['draft', { state: 'draft' }],
+		['archived', { state: 'archived' }],
+		['private', { visibility: 'private' }],
+	])('keeps a %s post and its playback id out of the free set', (_label, overrides) => {
+		const facts = computeVideoFacts(
+			{
+				nodes: [node('post', 'post', { visibility: 'public', ...overrides }), video('v1')],
+				edges: [edge('post', 'v1')],
+			},
+			now,
+		)
+
+		expect(facts.get('post')).toMatchObject({ free: false, mux_playback_id: null })
+	})
+
+	it('counts an unlisted published post as free: it opens by link', () => {
+		const facts = computeVideoFacts(
+			{
+				nodes: [node('post', 'post', { visibility: 'unlisted' }), video('v1')],
+				edges: [edge('post', 'v1')],
+			},
+			now,
+		)
+
+		expect(facts.get('post')?.free).toBe(true)
+	})
+
+	it('opens nothing through a draft or archived list', () => {
+		const facts = computeVideoFacts(
+			{
+				nodes: [
+					node('list', 'list', { state: 'archived' }),
+					node('lesson', 'lesson'),
+					video('v1'),
+				],
+				edges: [edge('list', 'lesson', 'free'), edge('lesson', 'v1')],
+			},
+			now,
+		)
+
+		expect(facts.get('lesson')).toMatchObject({ free: false, course_ids: null })
+	})
+
+	it('drops a negative thumbnail time instead of failing the doc', () => {
+		const facts = computeVideoFacts(
+			{
+				nodes: [node('post', 'post', { visibility: 'public', thumbnailTime: -1 }), video('v1')],
+				edges: [edge('post', 'v1')],
+			},
+			now,
+		)
+
+		expect(facts.get('post')?.thumbnail_time).toBeNull()
 	})
 
 	it('opens nothing through a draft workshop', () => {

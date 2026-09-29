@@ -9,8 +9,9 @@ export function parseVideoAccess(value: string | null | undefined): VideoAccess 
 
 /**
  * Stands in for an id list the viewer's status has not delivered yet, so a
- * "My courses" view renders empty-and-loading instead of briefly showing
- * everything. Typesense has no literal for "match nothing".
+ * "My courses" or "Hide watched" view renders empty-and-loading instead of
+ * briefly showing the wrong videos. Typesense has no literal for "match
+ * nothing".
  */
 const NO_MATCH_ID = '__pending__'
 
@@ -33,7 +34,12 @@ export function buildVideoSearchFilter({
 	access: VideoAccess
 	/** `null` while the viewer's status is still loading. */
 	ownedIds: ReadonlyArray<string> | null
-	hiddenIds?: ReadonlyArray<string>
+	/**
+	 * Ids to leave out ("Hide watched"). `null` while they are still loading,
+	 * which matches nothing: better an empty moment than showing the watched
+	 * videos and then pulling them out.
+	 */
+	hiddenIds?: ReadonlyArray<string> | null
 }): string {
 	const parts = [
 		'has_video:=true',
@@ -49,7 +55,9 @@ export function buildVideoSearchFilter({
 		parts.push(owned ? `(free:=true || ${ownedClause(owned)})` : 'free:=true')
 	}
 
-	if (hiddenIds.length > 0) {
+	if (hiddenIds === null) {
+		parts.push(`id:=[${escapeFilterValue(NO_MATCH_ID)}]`)
+	} else if (hiddenIds.length > 0) {
 		parts.push(`id:!=[${hiddenIds.map(escapeFilterValue).join(',')}]`)
 	}
 
