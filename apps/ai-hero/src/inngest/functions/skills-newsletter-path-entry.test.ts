@@ -231,6 +231,31 @@ describe('skills newsletter path entry', () => {
 		)
 	})
 
+	it.each([
+		[undefined, false],
+		['false', false],
+		['true', true],
+	] as const)(
+		'zone capture follows AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED=%s alone',
+		async (value, expected) => {
+			const before = process.env.AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED
+			if (value === undefined)
+				delete process.env.AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED
+			else process.env.AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED = value
+			try {
+				const { step } = createDurableStep()
+				await runAttempt(step, 0)
+				expect(mocks.enterSkillsNewsletterSubscriber).toHaveBeenCalledWith(
+					expect.objectContaining({ deadlineTimeZoneCaptureEnabled: expected }),
+				)
+			} finally {
+				if (before === undefined)
+					delete process.env.AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED
+				else process.env.AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED = before
+			}
+		},
+	)
+
 	it('persists the sequence probe before running the fallback tag step', async () => {
 		mocks.subscribeToKitListWithoutFields.mockRejectedValueOnce(
 			convertKitError(400),

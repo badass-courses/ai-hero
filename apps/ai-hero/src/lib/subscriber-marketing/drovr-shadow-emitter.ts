@@ -699,7 +699,8 @@ function fallbackPinnedTimezone(): DrovrPinnedTimezonePayload {
 	}
 }
 
-function pinnedTimezonePayloadFromUnknown(
+/** The zone evidence a record carries, directly or on a known nested key. */
+export function pinnedTimezonePayloadFromUnknown(
 	value: unknown,
 ): DrovrPinnedTimezonePayload | undefined {
 	if (!value || typeof value !== 'object') return undefined

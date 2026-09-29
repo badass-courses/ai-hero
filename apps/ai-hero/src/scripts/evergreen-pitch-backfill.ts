@@ -21,8 +21,11 @@ import {
 } from "@/lib/subscriber-marketing/drovr-shadow-dispatch";
 import {
   DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+  pinnedTimezonePayloadFromUnknown,
+  type DrovrPinnedTimezonePayload,
   type DrovrShadowFact,
 } from "@/lib/subscriber-marketing/drovr-shadow-emitter";
+import { deadlineTimeZoneCaptureEnabled } from "@/lib/subscriber-marketing/course-sequence-exhaustion";
 import { getSkillsWorkflowEmailStep } from "@/lib/subscriber-marketing/skills-workflow-path";
 
 export const DEFAULT_BACKFILL_FLOOR = "2026-08-26T00:00:00.000Z";
@@ -39,12 +42,15 @@ export type BackfillPopulationRow = {
   completedAt: string;
   emailResourceId: string;
   valuePathSlug: string;
+  /** The zone evidence the terminal email's intent carried forward. */
+  timezone?: DrovrPinnedTimezonePayload;
 };
 
 export type BackfillCandidate = {
   contactId: string;
   completedAt: string;
   valuePathSlug: string;
+  timezone?: DrovrPinnedTimezonePayload;
 };
 
 export type BackfillRefusalReason =
@@ -247,6 +253,7 @@ export function selectBackfillPopulation(args: {
       contactId: row.contactId,
       completedAt: row.completedAt,
       valuePathSlug: row.valuePathSlug,
+      ...(row.timezone ? { timezone: row.timezone } : {}),
     });
     if (selected.length === args.limit) break;
   }
@@ -260,6 +267,12 @@ export async function runEvergreenPitchBackfill(args: {
   limit: number;
   apply: boolean;
   birthInstant: string;
+  /**
+   * Forward the terminal intent's zone evidence to drovr's birth. Only under
+   * AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED; off, every birth takes the Pacific
+   * fallback exactly as before.
+   */
+  carryTimeZone: boolean;
   logRefusal?: (args: {
     contactId: string;
     reason: BackfillRefusalReason;
@@ -351,6 +364,10 @@ export async function runEvergreenPitchBackfill(args: {
         contactId: candidate.contactId,
         valuePathSlug: candidate.valuePathSlug,
         completedAt: candidate.completedAt,
+        // Without it drovr pins every backfilled actor to the Pacific fallback.
+        ...(args.carryTimeZone && candidate.timezone
+          ? { timezone: candidate.timezone }
+          : {}),
         backfill: {
           occurredAt: args.birthInstant,
           idempotencyKey,
@@ -480,6 +497,7 @@ export async function createLiveEvergreenPitchBackfillRepository(args: {
         const metadataSlug = stringValue(row.metadata.valuePathSlug);
         const valuePathSlug = metadataSlug ?? step?.valuePathSlug;
         if (!valuePathSlug) return [];
+        const timezone = pinnedTimezonePayloadFromUnknown(row.metadata);
         return [
           {
             intentId: row.intentId,
@@ -487,6 +505,7 @@ export async function createLiveEvergreenPitchBackfillRepository(args: {
             completedAt: new Date(row.completedAt).toISOString(),
             emailResourceId: row.emailResourceId,
             valuePathSlug,
+            ...(timezone ? { timezone } : {}),
           },
         ];
       });
@@ -613,6 +632,7 @@ async function main() {
       limit: args.limit,
       apply: args.apply,
       birthInstant,
+      carryTimeZone: deadlineTimeZoneCaptureEnabled(process.env),
       logRefusal: (refusal) => {
         console.error(JSON.stringify({ type: "refusal", ...refusal }));
       },

@@ -122,10 +122,12 @@ describe('tagSubscriberAsSkills', () => {
 		)
 		mocks.getServerAuthSession.mockResolvedValue(null)
 		process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED = 'true'
+		process.env.AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED = 'true'
 	})
 
 	afterEach(() => {
 		delete process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED
+		delete process.env.AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED
 	})
 
 	// A signed-in reader is identified without a Kit cookie. Before this they
@@ -205,6 +207,21 @@ describe('tagSubscriberAsSkills', () => {
 			}),
 		)
 		expect(mocks.inngestSend).not.toHaveBeenCalled()
+	})
+
+	it('exhaustion on, capture unset: no evidence Kit call and no zone', async () => {
+		delete process.env.AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED
+		mocks.reconcile.mockResolvedValue({ status: 'confirmation-required' })
+
+		await tagSubscriberAsSkills('skills-post')
+
+		expect(mocks.setSubscriberFields).not.toHaveBeenCalledWith(
+			expect.objectContaining({
+				fields: expect.objectContaining({
+					aih_course_entry_evidence: expect.anything(),
+				}),
+			}),
+		)
 	})
 
 	it('logs a reader signed in as that address whom Kit still holds unconfirmed', async () => {

@@ -22,6 +22,12 @@ import {
 } from './evergreen-offer-journey/primitives'
 import type { DeadlineTimeZoneEvidence } from './course-sequence-exhaustion'
 import { dispatchDrovrShadowFactSafely } from './drovr-shadow-dispatch'
+import {
+	evergreenDeadlineFormat,
+	formatOfferDeadline,
+	offerDeadlineFromEvidence,
+	type EvergreenDeadlineFormat,
+} from './offer-deadline'
 import type { SideEffectIntent } from './types'
 
 /**
@@ -38,6 +44,7 @@ export const ISSUE_EVERGREEN_COUPON_INTENT_TYPE =
 
 export const EVERGREEN_OFFER_FIELD_KEYS = {
 	deadlineDisplay: 'aih_evergreen_deadline_display',
+	deadlineShort: 'aih_evergreen_deadline_short',
 	discountAmount: 'aih_evergreen_discount_amount',
 	offerPrice: 'aih_evergreen_offer_price',
 	offerUrl: 'aih_evergreen_offer_url',
@@ -130,6 +137,14 @@ export function issueIntentFor(
 export const money = (cents: number): string =>
 	`$${Math.round(cents / 100).toLocaleString('en-US')}`
 
+/** The offer deadline an issued coupon payload promises, in its pinned zone. */
+export function offerDeadlineForPayload(payload: CouponIssuePayload) {
+	return offerDeadlineFromEvidence(
+		payload.expiresAt,
+		deadlineEvidenceFromPayload(payload),
+	)
+}
+
 export function deadlineDisplay(expiresAt: string, timeZone: string): string {
 	return new Intl.DateTimeFormat('en-US', {
 		timeZone,
@@ -154,11 +169,36 @@ export function evergreenOfferUrl(origin: string, couponId: string): string {
 	return url.toString()
 }
 
+function deadlineFieldsFor(
+	payload: CouponIssuePayload,
+	format: EvergreenDeadlineFormat,
+): Record<string, string> {
+	if (format === 'legacy') {
+		return {
+			[EVERGREEN_OFFER_FIELD_KEYS.deadlineDisplay]: deadlineDisplay(
+				payload.expiresAt,
+				payload.timezone,
+			),
+		}
+	}
+	const deadline = offerDeadlineForPayload(payload)
+	return {
+		[EVERGREEN_OFFER_FIELD_KEYS.deadlineDisplay]: formatOfferDeadline(deadline),
+		[EVERGREEN_OFFER_FIELD_KEYS.deadlineShort]: formatOfferDeadline(
+			deadline,
+			'short',
+		),
+	}
+}
+
 export function offerFieldsFor(input: {
 	couponId: string
 	payload: CouponIssuePayload
 	origin: string
+	/** Defaults to the AIH_EVERGREEN_DEADLINE_FORMAT_V2_ENABLED switch. */
+	deadlineFormat?: EvergreenDeadlineFormat
 }): Record<string, string> {
+	const format = input.deadlineFormat ?? evergreenDeadlineFormat(process.env)
 	return {
 		[EVERGREEN_OFFER_FIELD_KEYS.offerUrl]: evergreenOfferUrl(
 			input.origin,
@@ -173,10 +213,7 @@ export function offerFieldsFor(input: {
 		[EVERGREEN_OFFER_FIELD_KEYS.discountAmount]: money(
 			input.payload.amountOffCents,
 		),
-		[EVERGREEN_OFFER_FIELD_KEYS.deadlineDisplay]: deadlineDisplay(
-			input.payload.expiresAt,
-			input.payload.timezone,
-		),
+		...deadlineFieldsFor(input.payload, format),
 	}
 }
 

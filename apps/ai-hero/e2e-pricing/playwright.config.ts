@@ -1,5 +1,10 @@
 import { defineConfig, devices } from '@playwright/test'
 
+// Specs may import app modules to build fixtures (the evergreen notice spec
+// issues a coupon row through the real authority). Those modules read
+// `@/env.mjs`, but the Node side of these specs runs no app server.
+process.env.SKIP_ENV_VALIDATION ??= '1'
+
 // Self-contained CI check for the workshop CTAs: builds the fixture page with
 // Vite, serves it statically and answers every API call from page.route.
 export default defineConfig({
