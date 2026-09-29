@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
+import type { ContactEventRecord } from './contact-event-normalizer-preview'
+
 import {
 	EMAIL_COURSE_ENTRY_PAYLOAD_FORMAT,
 	deadlineTimeZoneEvidenceFromHeader,
@@ -301,6 +303,25 @@ describe('purchase.recorded lifecycle contact events', () => {
  * once to the right contact but never delivered (the dispatch pin lives in
  * drizzle-capture-repository-birth-dispatch.test.ts).
  */
+class DyingDispatchRepository extends InMemorySubscriberMarketingRepository {
+	dieAfterInsert = true
+	redispatched: ContactEventRecord[] = []
+
+	createContactEvent(
+		input: Parameters<
+			InMemorySubscriberMarketingRepository['createContactEvent']
+		>[0],
+	) {
+		const event = super.createContactEvent(input)
+		if (this.dieAfterInsert) throw new Error('lambda died before the dispatch')
+		return event
+	}
+
+	redispatchContactEvent(record: ContactEventRecord) {
+		this.redispatched.push(record)
+	}
+}
+
 describe('evergreen coupon purchases (row 194)', () => {
 	const COUPON_ID = `eoj-coupon:${'c'.repeat(64)}`
 
@@ -570,6 +591,128 @@ describe('evergreen coupon purchases (row 194)', () => {
 			identityResolutionPath: 'user-id-existing-ai-hero-provider-identity',
 		})
 		expect(eventsFor(repository, buyerContact.id)[0]?.domainPayload).toBeUndefined()
+	})
+
+	describe('a purchase.recorded whose drovr dispatch died (row 194b)', () => {
+		const dyingRepository = () => {
+			const repository = new DyingDispatchRepository()
+			seedKitContact(repository, {
+				email: 'buyer@example.com',
+				kitSubscriberId: 'kit-123',
+			})
+			return repository
+		}
+
+		it('re-dispatches the record the insert left behind when the step retries, and writes nothing new', async () => {
+			const repository = dyingRepository()
+			await expect(
+				writePurchaseRecordedContactEvents({
+					repository,
+					rows: [purchaseSource()],
+					now: NOW,
+					redispatchDuplicates: true,
+				}),
+			).rejects.toThrow('lambda died before the dispatch')
+			expect(repository.redispatched).toEqual([])
+			const [inserted] = [...repository.contactEvents.values()]
+			repository.dieAfterInsert = false
+
+			const retry = await writePurchaseRecordedContactEvents({
+				repository,
+				rows: [purchaseSource()],
+				now: NOW,
+				redispatchDuplicates: true,
+			})
+
+			expect(retry.counts.written).toBe(0)
+			expect(repository.contactEvents.size).toBe(1)
+			expect(repository.redispatched).toEqual([inserted])
+			expect(inserted?.semanticIdempotencyKey).toBe(
+				purchaseRecordedSemanticKey('purchase-1'),
+			)
+		})
+
+		it('re-dispatches nothing when the flag is off, as a backfill runs', async () => {
+			const repository = dyingRepository()
+			repository.dieAfterInsert = false
+			await writePurchaseRecordedContactEvents({
+				repository,
+				rows: [purchaseSource()],
+				now: NOW,
+			})
+
+			await writePurchaseRecordedContactEvents({
+				repository,
+				rows: [purchaseSource()],
+				now: NOW,
+			})
+
+			expect(repository.redispatched).toEqual([])
+		})
+
+		it('re-dispatches each record of an evergreen coupon purchase once: the offer contact and the buyer copy', async () => {
+			const repository = new DyingDispatchRepository()
+			repository.dieAfterInsert = false
+			const offerContact = seedOfferContact(repository)
+			seedUserContact(repository, {
+				email: 'buyer@example.com',
+				userId: 'user-1',
+			})
+			const row = purchaseSource({
+				productId: 'product-ma254',
+				evergreenOffer: { couponId: COUPON_ID, contactId: offerContact.id },
+			})
+			await writePurchaseRecordedContactEvents({
+				repository,
+				rows: [row],
+				now: NOW,
+			})
+
+			await writePurchaseRecordedContactEvents({
+				repository,
+				rows: [row],
+				now: NOW,
+				redispatchDuplicates: true,
+			})
+
+			expect(
+				repository.redispatched
+				.map((event) => event.semanticIdempotencyKey)
+				.sort(),
+			).toEqual([
+				purchaseRecordedSemanticKey('purchase-1'),
+				purchaseRecordedBuyerSemanticKey('purchase-1'),
+			])
+		})
+
+		it('re-dispatches nothing for a pre-fix record that sits on the buyer contact while the purchase now targets the offer contact', async () => {
+			const repository = new DyingDispatchRepository()
+			repository.dieAfterInsert = false
+			const offerContact = seedOfferContact(repository)
+			seedUserContact(repository, {
+				email: 'buyer@example.com',
+				userId: 'user-1',
+			})
+			await writePurchaseRecordedContactEvents({
+				repository,
+				rows: [purchaseSource({ productId: 'product-ma254' })],
+				now: NOW,
+			})
+
+			await writePurchaseRecordedContactEvents({
+				repository,
+				rows: [
+					purchaseSource({
+						productId: 'product-ma254',
+						evergreenOffer: { couponId: COUPON_ID, contactId: offerContact.id },
+					}),
+				],
+				now: NOW,
+				redispatchDuplicates: true,
+			})
+
+			expect(repository.redispatched).toEqual([])
+		})
 	})
 })
 

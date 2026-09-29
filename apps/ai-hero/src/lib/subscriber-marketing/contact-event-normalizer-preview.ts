@@ -66,6 +66,7 @@ export type ContactEventWriteRepository = ContactEventPreviewRepository & {
 			createdAt?: string
 		},
 	): ContactEventRecord | Promise<ContactEventRecord>
+	redispatchContactEvent?(record: ContactEventRecord): void | Promise<void>
 }
 
 export type ContentReadContactEventSource = {

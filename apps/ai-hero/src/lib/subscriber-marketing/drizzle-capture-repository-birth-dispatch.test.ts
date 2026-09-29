@@ -127,3 +127,23 @@ describe("the owner-assignment (birth) dispatch", () => {
     expect(dispatch.awaited).not.toHaveBeenCalled();
   });
 });
+
+describe("a re-dispatch of a record a dead attempt left behind (row 194b)", () => {
+  it("hands the stored record to the awaited drovr dispatch, unchanged", async () => {
+    dispatch.awaited.mockResolvedValue(undefined);
+    const record: ContactEventRecord = {
+      ...contactEventInput("purchase.recorded"),
+      id: "contact_event_1",
+      createdAt: "2026-09-27T14:00:01.000Z",
+    };
+
+    await repository().redispatchContactEvent(record);
+
+    expect(dispatch.awaited).toHaveBeenCalledTimes(1);
+    expect(dispatch.awaited).toHaveBeenCalledWith({
+      kind: "contact-event",
+      event: record,
+    });
+    expect(dispatch.safely).not.toHaveBeenCalled();
+  });
+});

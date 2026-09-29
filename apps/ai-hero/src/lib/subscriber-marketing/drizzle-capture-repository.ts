@@ -413,6 +413,13 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		}
 	}
 
+	async redispatchContactEvent(record: ContactEventRecord) {
+		await dispatchDrovrShadowFactAwaited({
+			kind: 'contact-event',
+			event: record,
+		})
+	}
+
 	async createEmailCourseEntryEvent(
 		input: Omit<EmailCourseEntryEventRecord, 'id' | 'createdAt'> & {
 			createdAt?: string

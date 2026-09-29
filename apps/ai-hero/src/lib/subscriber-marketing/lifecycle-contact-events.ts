@@ -92,6 +92,7 @@ export type LifecycleContactEventDecision =
 				| 'no-identity-evidence'
 				| 'duplicate-semantic-key'
 			detail: string
+			existing?: ContactEventRecord
 	  }
 
 export type LifecycleContactEventSummary = {
@@ -443,6 +444,7 @@ async function decideLifecycleContactEvent(args: {
 			sourceId: args.sourceId,
 			reason: 'duplicate-semantic-key',
 			detail: `Contact Event already exists for ${event.semanticIdempotencyKey}`,
+			...(existing.contactId === resolved.contact.id ? { existing } : {}),
 		}
 	}
 	return {
@@ -666,6 +668,22 @@ async function writeLifecycleDecisions(args: {
 	return { written, createdProviderIdentities }
 }
 
+async function redispatchDuplicateDecisions(
+	repository: ContactEventWriteRepository,
+	decisions: LifecycleContactEventDecision[],
+) {
+	if (!repository.redispatchContactEvent) return
+	for (const decision of decisions) {
+		if (
+			decision.status === 'skipped' &&
+			decision.reason === 'duplicate-semantic-key' &&
+			decision.existing
+		) {
+			await repository.redispatchContactEvent(decision.existing)
+		}
+	}
+}
+
 export async function previewPurchaseRecordedContactEvents(args: {
 	repository: ContactEventPreviewRepository
 	rows: PurchaseRecordedSource[]
@@ -683,6 +701,7 @@ export async function writePurchaseRecordedContactEvents(args: {
 	repository: ContactEventWriteRepository
 	rows: PurchaseRecordedSource[]
 	now?: string
+	redispatchDuplicates?: boolean
 }): Promise<LifecycleContactEventSummary> {
 	const now = args.now ?? new Date().toISOString()
 	const decisions: LifecycleContactEventDecision[] = []
@@ -696,6 +715,9 @@ export async function writePurchaseRecordedContactEvents(args: {
 		decisions,
 		now,
 	})
+	if (args.redispatchDuplicates) {
+		await redispatchDuplicateDecisions(args.repository, decisions)
+	}
 	return summarize('write', decisions, written, createdProviderIdentities)
 }
 
