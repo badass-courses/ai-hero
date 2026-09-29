@@ -12,6 +12,7 @@ describe('buildCollapsedSidebarSections', () => {
 					{ label: 'Map', href: '/learn' },
 					{ label: 'Skills', href: '/skills' },
 					{ label: 'Open source', href: '/open-source' },
+					{ label: 'Videos', href: '/videos' },
 				],
 			},
 			{

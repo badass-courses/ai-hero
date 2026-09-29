@@ -13,6 +13,7 @@ const RAIL_DESTINATIONS = new Set([
 	'/principles',
 	'/skills',
 	'/open-source',
+	'/videos',
 	'/llm-fundamentals',
 	'/ai-engineer-roadmap',
 	'/ai-coding-dictionary',
