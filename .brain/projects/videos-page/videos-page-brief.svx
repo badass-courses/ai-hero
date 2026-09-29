@@ -177,8 +177,16 @@ lessons); an owner of four cohorts plus AI SDK v6 = 272 (219 lessons before the
 - Video facts were written to `content_production` on 2026-09-29, before
   merge, with Vojta's approval: 557 docs updated, 0 failed, a second pass
   clean, and the anonymous filter returning 75. The 89 never-indexed course
-  lessons need the save path, so the first hourly reconcile after deploy
-  rebuilds them — check its `reindexedCount` in the logs.
+  lessons were rebuilt the same day, before merge, by running the reconcile's
+  reindex step once inside the local Next dev server (a temporary, uncommitted
+  route — the save path only runs inside Next, and starting the local Inngest
+  dev server instead would have run every cron against the production DB):
+  88 indexed, 0 paid playback ids or Mux images after.
+- `lesson-c5bac` ("The Prototype Skill", Day 6 HITL of AI Coding for Real
+  Engineers) has no `fields.state` at all (and `visibility: public`, unlike its
+  unlisted siblings), which the index schema rejects. Saving it once in the CMS
+  fixes it; until then the hourly reconcile retries it and logs
+  `typesense.resource.validate.error`.
 - After deploy, re-scan lesson/solution docs for `image.mux.com` images: the
   pre-merge save path still wrote them on any lesson save until #333 shipped.
 
