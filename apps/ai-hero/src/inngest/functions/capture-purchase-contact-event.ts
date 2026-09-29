@@ -8,6 +8,7 @@ import { inngest } from '@/inngest/inngest.server'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import {
 	evergreenCouponIdOf,
+	evergreenCouponLogId,
 	readEvergreenOfferCoupon,
 } from '@/lib/subscriber-marketing/evergreen-offer-purchase'
 import {
@@ -98,7 +99,7 @@ export const capturePurchaseContactEvent = inngest.createFunction(
 			// Falls back to the buyer's contact, which is what ran before row 194.
 			await log.warn('contact_event.purchase_recorded.evergreen_coupon_refused', {
 				purchaseId: purchase.id,
-				couponId: evergreenOffer.couponId,
+				couponId: evergreenCouponLogId(evergreenOffer.couponId),
 				reason: evergreenOffer.reason,
 			})
 		}
@@ -147,7 +148,9 @@ export const capturePurchaseContactEvent = inngest.createFunction(
 			written: summary.counts.written,
 			skippedByReason: summary.counts.skippedByReason,
 			identityResolutionPath: summary.identityResolutionPath,
-			evergreenCouponId,
+			evergreenCouponId: evergreenCouponId
+				? evergreenCouponLogId(evergreenCouponId)
+				: null,
 		})
 
 		return {

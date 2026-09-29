@@ -32,6 +32,14 @@ export function evergreenCouponIdOf(
 	)
 }
 
+/**
+ * Until redemption is written back, a redeemed coupon id stays a working
+ * checkout link until it expires. Logs carry only a prefix.
+ */
+export function evergreenCouponLogId(couponId: string) {
+	return couponId.slice(0, EVERGREEN_COUPON_PREFIX.length + 12)
+}
+
 export type EvergreenOfferCouponRead =
 	| { status: 'redeemed'; redemption: EvergreenOfferRedemption }
 	| { status: 'refused'; couponId: string; reason: string }
@@ -60,9 +68,15 @@ export function readEvergreenOfferCoupon(
 			redemption: { couponId: coupon.couponId, contactId: coupon.contactId },
 		}
 	} catch (error) {
-		if (error instanceof CouponAuthorityFailure) {
-			return { status: 'refused', couponId, reason: error.failure.reason }
+		// Any failure falls back to the buyer's contact: recording the purchase
+		// somewhere must never depend on the coupon row being well formed.
+		return {
+			status: 'refused',
+			couponId,
+			reason:
+				error instanceof CouponAuthorityFailure
+					? error.failure.reason
+					: `coupon-read-failed: ${error instanceof Error ? error.message : String(error)}`,
 		}
-		throw error
 	}
 }

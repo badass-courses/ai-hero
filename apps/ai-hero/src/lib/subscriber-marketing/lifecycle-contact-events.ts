@@ -550,6 +550,22 @@ async function previewPurchaseRecordedDecisions(
 		}),
 	]
 	if (buyer.status === 'resolved' && buyer.contact.id !== offer.contact.id) {
+		// Before row 194 the unsuffixed record went on the buyer's contact. A
+		// replay of such a purchase finds it there: that contact already heard,
+		// and a :buyer copy would record the one purchase twice on it.
+		const prior = await repository.findContactEventBySemanticKey(
+			purchaseRecordedSemanticKey(row.purchaseId),
+		)
+		if (prior && prior.contactId === buyer.contact.id) {
+			decisions.push({
+				status: 'skipped',
+				source: 'purchase-recorded',
+				sourceId: `${row.purchaseId}:buyer`,
+				reason: 'duplicate-semantic-key',
+				detail: `The pre-fix record for ${row.purchaseId} is already on the buyer's contact.`,
+			})
+			return decisions
+		}
 		decisions.push(
 			await decideLifecycleContactEvent({
 				repository,

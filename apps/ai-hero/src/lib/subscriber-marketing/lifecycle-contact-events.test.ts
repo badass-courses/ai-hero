@@ -432,6 +432,15 @@ describe('evergreen coupon purchases (row 194)', () => {
 			},
 		})
 		expect(buyerEvent?.domainPayload).toBeUndefined()
+		// Literal keys: ContactEvent_semanticIdempotencyKey_uq would swallow a
+		// buyer copy that reused the offer record's key (the in-memory
+		// repository enforces it too).
+		expect(offerEvent?.semanticIdempotencyKey).toBe(
+			'ai-hero:purchase.recorded:purchase:purchase-1',
+		)
+		expect(buyerEvent?.semanticIdempotencyKey).toBe(
+			'ai-hero:purchase.recorded:purchase:purchase-1:buyer',
+		)
 
 		const again = await writePurchaseRecordedContactEvents({
 			repository,
@@ -447,6 +456,43 @@ describe('evergreen coupon purchases (row 194)', () => {
 			written: 0,
 			skippedByReason: { 'duplicate-semantic-key': 2 },
 		})
+	})
+
+	// A pre-fix purchase replayed after deploy (a manual re-send past the
+	// function's idempotency window): its unsuffixed record already sits on
+	// the buyer's contact. Nothing is written, and the offer contact is not
+	// repaired: no replay fixes the five, by design.
+	it('writes nothing when a pre-fix purchase is replayed', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const offerContact = seedOfferContact(repository)
+		const buyerContact = seedUserContact(repository, {
+			email: 'buyer@example.com',
+			userId: 'user-1',
+		})
+		await writePurchaseRecordedContactEvents({
+			repository,
+			rows: [purchaseSource({ productId: 'product-ma254' })],
+			now: NOW,
+		})
+		expect(eventsFor(repository, buyerContact.id)).toHaveLength(1)
+
+		const replay = await writePurchaseRecordedContactEvents({
+			repository,
+			rows: [
+				purchaseSource({
+					productId: 'product-ma254',
+					evergreenOffer: { couponId: COUPON_ID, contactId: offerContact.id },
+				}),
+			],
+			now: NOW,
+		})
+
+		expect(replay.counts).toMatchObject({
+			written: 0,
+			skippedByReason: { 'duplicate-semantic-key': 2 },
+		})
+		expect(eventsFor(repository, buyerContact.id)).toHaveLength(1)
+		expect(eventsFor(repository, offerContact.id)).toHaveLength(0)
 	})
 
 	it('records it once when the buyer is the coupon contact', async () => {

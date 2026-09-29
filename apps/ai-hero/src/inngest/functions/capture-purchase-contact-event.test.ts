@@ -108,7 +108,11 @@ describe('capture purchase contact event (row 194)', () => {
 		expect(source).not.toHaveProperty('evergreenOffer')
 		expect(mocks.log.warn).toHaveBeenCalledWith(
 			'contact_event.purchase_recorded.evergreen_coupon_refused',
-			{ purchaseId: 'purch_1', couponId, reason: 'coupon-missing' },
+			{
+				purchaseId: 'purch_1',
+				couponId: 'eoj-coupon:dddddddddddd',
+				reason: 'coupon-missing',
+			},
 		)
 	})
 

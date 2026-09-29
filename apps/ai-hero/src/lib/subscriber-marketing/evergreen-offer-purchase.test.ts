@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { issuedRow, offerPayload } from './evergreen-offer-status.fixtures'
 import {
 	evergreenCouponIdOf,
+	evergreenCouponLogId,
 	readEvergreenOfferCoupon,
 } from './evergreen-offer-purchase'
 
@@ -39,6 +40,20 @@ describe('readEvergreenOfferCoupon', () => {
 		expect(
 			readEvergreenOfferCoupon(couponId, { ...row, usedCount: 1, status: 0 }),
 		).toMatchObject({ status: 'redeemed' })
+	})
+
+	it('refuses, never throws, on any other failure: the buyer fallback must still run', async () => {
+		const { row, couponId } = await issuedRow(offerPayload())
+		const broken = { ...row, createdAt: 'not-a-date' as unknown as Date }
+		const read = readEvergreenOfferCoupon(couponId, broken)
+		expect(read).toMatchObject({ status: 'refused', couponId })
+		expect(read.status === 'refused' && read.reason).toMatch(
+			/^coupon-read-failed: /,
+		)
+	})
+
+	it('logs only a prefix of the coupon id, which stays a working link', () => {
+		expect(evergreenCouponLogId(EVERGREEN)).toBe('eoj-coupon:cccccccccccc')
 	})
 
 	it('refuses a missing row, a different row, or one the journey did not issue', async () => {
