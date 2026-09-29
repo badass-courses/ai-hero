@@ -203,7 +203,10 @@ export const WorkshopSidebarMobile = ({
 	teamOptionsHref?: string
 }) => {
 	const { fields } = workshop ?? {}
-	// The team path, beside the buy button as on the card.
+	// The team path. On the card it is the buy button's outline twin, but a
+	// phone bar has no room for two buttons AND the title: side by side they
+	// crushed the title to "A…". So here it demotes to a text link under the
+	// title, in the byline's place, and the gold buy stands alone.
 	const showTeamLink =
 		Boolean(teamOptionsHref) && !interestCapture && !purchased
 
@@ -233,20 +236,19 @@ export const WorkshopSidebarMobile = ({
 				<h3 className="font-heading truncate text-sm font-semibold">
 					{fields?.title}
 				</h3>
-				<Contributor className="gap-1 text-sm [&_img]:w-5" />
-			</div>
-			{/* The two asks together on the right, as on the card: the outline
-			    twin first, the gold buy last. */}
-			<div className="ml-auto flex shrink-0 items-center gap-2">
-				{showTeamLink && (
+				{showTeamLink ? (
 					<Link
 						href={teamOptionsHref!}
-						className="border-input hover:bg-foreground/[0.04] inline-flex h-11 shrink-0 items-center gap-1.5 rounded-[9px] border px-3.5 text-sm font-semibold transition-colors"
+						className="text-muted-foreground hover:text-foreground inline-flex min-h-6 w-fit items-center gap-1 text-sm underline underline-offset-4 transition-colors"
 					>
 						For your team
 						<ArrowUpRight className="size-3.5" aria-hidden="true" />
 					</Link>
+				) : (
+					<Contributor className="gap-1 text-sm [&_img]:w-5" />
 				)}
+			</div>
+			<div className="ml-auto flex shrink-0 items-center">
 				{interestCapture ? (
 					<Button
 						className={cn(WORKSHOP_CTA_BUTTON, 'h-11 shrink-0 gap-2 text-sm')}
