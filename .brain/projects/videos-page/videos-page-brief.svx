@@ -81,10 +81,15 @@ mid-build (see the ledger). Ships as **one PR**.
   `NEXT_PUBLIC_TYPESENSE_API_KEY`, so every doc — unlisted lessons included —
   is readable by anyone, whatever `/videos` filters. And Mux playback ids play
   without a token. So a paid lesson's playback id must never be indexed:
-  `mux_playback_id` / `thumbnail_time` are written for free videos only, owners
-  get their paid lessons' playback from `videos.viewerStatus`
-  (`ownedVideoPlayback`), and `deriveResourceImage` only falls back to a Mux
-  still (whose URL carries the id) for posts. Found by the PR #333 bot review;
+  `mux_playback_id` is written for free videos only, owners get their paid
+  lessons' playback from `videos.viewerStatus` (`ownedVideoPlayback`), and
+  `deriveResourceImage` only falls back to a Mux still (whose URL carries the
+  id) for posts. Card stills go through the existing `/api/thumbnails?
+  videoResourceId=…&width=720` proxy (bytes, never a redirect; width
+  allowlisted), fed by the indexed `video_resource_id`, which is not sensitive
+  — the lesson page's poster URL carries it. The URL is absolute
+  (`NEXT_PUBLIC_URL`), as on the lesson page: Next 16 refuses a local
+  next/image src with a query string unless `images.localPatterns` lists it. Found by the PR #333 bot review;
   on 2026-09-29 300 paid docs' playback ids (exposed for a few hours by the
   pre-merge write) and 44 pre-existing lesson/solution Mux `image` URLs were
   cleared from `content_production`, verified zero left.
@@ -154,6 +159,9 @@ Mid-build calls (Vojta, 2026-09-29):
 18. Clicking a card after watching its preview opens the video at that point.
 19. Email-course viewers are identified by their Kit subscriber id, verified
     against Kit, never by the cookie's email; they get watch history only.
+20. Stills are proxied server-side by reusing `/api/thumbnails`. No Mux signed
+    playback: rejected by Vojta. An id reaches a browser only for a free video
+    or for an owner's own lesson — the same rule the lesson page follows.
 
 Verified 2026-09-29 against a clone of `content_production`
 (`content_vojta_videos_test`): anonymous = 75 videos (53 posts, 22 free

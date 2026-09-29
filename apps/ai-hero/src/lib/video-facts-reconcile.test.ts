@@ -12,8 +12,9 @@ const lessonFacts: VideoFacts = {
 	course_ids: ['cohort-1', 'workshop-1'],
 	duration_seconds: null,
 	container_title: 'Personal Assistant',
-	mux_playback_id: 'playback-1',
+	video_resource_id: 'video-1',
 	thumbnail_time: null,
+	mux_playback_id: null,
 }
 
 describe('diffVideoFacts', () => {

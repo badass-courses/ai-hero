@@ -5,6 +5,12 @@ import { getVideoResource } from '@/lib/video-resource-query'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
 
+/**
+ * Widths a caller may ask for: the lesson poster's default, and /videos cards.
+ * An allowlist, so the proxy cannot be driven to fetch arbitrary variants.
+ */
+const THUMBNAIL_WIDTHS = new Set(['320', '720'])
+
 const corsHeaders = {
 	'Access-Control-Allow-Origin': '*',
 	'Access-Control-Allow-Methods': 'GET, OPTIONS',
@@ -21,6 +27,8 @@ const getThumbnailHandler = async (request: NextRequest) => {
 		// const searchParams = request.nextUrl.searchParams
 		const videoResourceId = searchParams.get('videoResourceId')
 		const time = searchParams.get('time')
+		const requestedWidth = searchParams.get('width') ?? '320'
+		const width = THUMBNAIL_WIDTHS.has(requestedWidth) ? requestedWidth : '320'
 		const params = { videoResourceId }
 		if (!params.videoResourceId) {
 			return NextResponse.json(
@@ -47,7 +55,7 @@ const getThumbnailHandler = async (request: NextRequest) => {
 			)
 		}
 		const thumbnailTime = time || fields.thumbnailTime || 0
-		const thumbnailUrl = `https://image.mux.com/${muxPlaybackId}/thumbnail.png?time=${thumbnailTime}&width=320`
+		const thumbnailUrl = `https://image.mux.com/${muxPlaybackId}/thumbnail.png?time=${thumbnailTime}&width=${width}`
 
 		const thumbnailResponse = await fetch(thumbnailUrl)
 		if (!thumbnailResponse.ok) {

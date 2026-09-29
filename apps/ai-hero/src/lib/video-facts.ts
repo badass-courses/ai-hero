@@ -60,15 +60,20 @@ export type VideoFacts = {
 	/** Lessons only: the course the lesson belongs to, as a buyer knows it. */
 	container_title: string | null
 	/**
-	 * The video itself, so a card can show its still (lessons are indexed
-	 * without an image) and preview it on hover. **Free videos only**: the
-	 * browser searches this index with a public key, and a Mux playback id
-	 * plays without a token, so a paid lesson's id here would give its video
-	 * away. Owners get those through `computeVideoPlayback`, server-side.
+	 * The `videoResource` id, for the still: `/api/thumbnails` resolves it to
+	 * a Mux image server-side. Not sensitive — the lesson page's poster URL
+	 * carries it already.
+	 */
+	video_resource_id: string | null
+	/** Seconds into the video for the still. */
+	thumbnail_time: number | null
+	/**
+	 * For the hover preview. **Free videos only**: the browser searches this
+	 * index with a public key, and a Mux playback id plays without a token, so
+	 * a paid lesson's id here would give its video away. Owners get those
+	 * through `ownedVideoPlayback`, server-side.
 	 */
 	mux_playback_id: string | null
-	/** Seconds into that video for the still. Free videos only, as above. */
-	thumbnail_time: number | null
 }
 
 export type VideoPlayback = { playbackId: string; thumbnailTime: number | null }
@@ -106,7 +111,7 @@ export function computeVideoFacts(
 			: undefined
 		const courseIds = video ? openCourseIds(node.id, parents, nodes, isOpen) : []
 		const free = isFreeLeaf(node, parents, nodes, isOpen)
-		const playback = free && video ? toPlayback(node, video) : null
+		const playback = video ? toPlayback(node, video) : null
 
 		facts.set(node.id, {
 			has_video: Boolean(video),
@@ -117,8 +122,9 @@ export function computeVideoFacts(
 				node.type === 'post'
 					? null
 					: rootContainerTitle(node.id, parents, nodes, isOpen),
-			mux_playback_id: playback?.playbackId ?? null,
+			video_resource_id: video?.id ?? null,
 			thumbnail_time: playback?.thumbnailTime ?? null,
+			mux_playback_id: free ? (playback?.playbackId ?? null) : null,
 		})
 	}
 	return facts
@@ -324,11 +330,6 @@ function findPlayableVideo(
 		}
 	}
 	return null
-}
-
-/** The still Mux renders for a video, sized for a 16:9 card. */
-export function muxThumbnailUrl(playbackId: string, time?: number | null) {
-	return `https://image.mux.com/${playbackId}/thumbnail.jpg?width=720&height=405&fit_mode=smartcrop&time=${time ?? 0}`
 }
 
 function positive(value: number | null | undefined): number | undefined {

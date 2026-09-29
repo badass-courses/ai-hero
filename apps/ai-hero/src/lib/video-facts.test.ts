@@ -44,8 +44,9 @@ describe('computeVideoFacts', () => {
 			course_ids: null,
 			duration_seconds: 312,
 			container_title: null,
-			mux_playback_id: 'playback-v1',
+			video_resource_id: 'v1',
 			thumbnail_time: null,
+			mux_playback_id: 'playback-v1',
 		})
 	})
 
@@ -217,10 +218,13 @@ describe('computeVideoFacts', () => {
 		}
 		const facts = computeVideoFacts(graph, now)
 
+		// The still still works: it goes through /api/thumbnails by video
+		// resource id, which is not sensitive.
 		expect(facts.get('paid')).toMatchObject({
 			has_video: true,
 			mux_playback_id: null,
-			thumbnail_time: null,
+			video_resource_id: 'v-paid',
+			thumbnail_time: 9,
 		})
 		expect(facts.get('free')?.mux_playback_id).toBe('playback-v-free')
 		expect(computeVideoPlayback(graph, new Set(['paid']))).toEqual(

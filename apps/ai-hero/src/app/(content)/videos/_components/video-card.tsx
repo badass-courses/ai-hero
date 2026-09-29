@@ -3,8 +3,8 @@
 import * as React from 'react'
 import { ResourceCard } from '@/components/landing/resource-card'
 import { BADGE_OUTLINE, BADGE_SOLID, TYPE } from '@/components/landing/type'
+import { env } from '@/env.mjs'
 import type { TypesenseResource } from '@/lib/typesense'
-import { muxThumbnailUrl } from '@/lib/video-facts'
 import type { VideoViewerStatus } from '@/lib/video-viewer-status'
 import { getResourcePath } from '@/utils/resource-paths'
 import { Check } from 'lucide-react'
@@ -31,13 +31,19 @@ export function VideoCard({
 	const fromOwnedCourse =
 		hit.course_ids?.some((id) => status?.ownedIds.includes(id)) ?? false
 	// Free videos carry their playback in the index; a paid lesson's comes only
-	// from the owner's status, since the index is publicly searchable.
-	const ownedPlayback = status?.playback[hit.id]
-	const playbackId = hit.mux_playback_id ?? ownedPlayback?.playbackId
-	const thumbnailTime = hit.thumbnail_time ?? ownedPlayback?.thumbnailTime
+	// from the owner's status, since the index is publicly searchable. Neither
+	// is needed for the still: `/api/thumbnails` resolves the video resource to
+	// a Mux image server-side, so a card never needs a playback id to show one.
+	const playbackId =
+		hit.mux_playback_id ?? status?.playback[hit.id]?.playbackId
+	const thumbnailTime = hit.thumbnail_time ?? 0
 	const image =
 		hit.image ??
-		(playbackId ? muxThumbnailUrl(playbackId, thumbnailTime) : undefined)
+		(hit.video_resource_id
+			? // Absolute, like the lesson page's poster: next/image refuses a local
+				// src with a query string unless images.localPatterns lists it.
+				`${env.NEXT_PUBLIC_URL}/api/thumbnails?videoResourceId=${encodeURIComponent(hit.video_resource_id)}&time=${thumbnailTime}&width=720`
+			: undefined)
 
 	return (
 		<ResourceCard
@@ -45,7 +51,7 @@ export function VideoCard({
 			href={videoHref(hit)}
 			image={image}
 			muxPlaybackId={playbackId}
-			thumbnailTime={thumbnailTime ?? undefined}
+			thumbnailTime={thumbnailTime}
 			inlinePlayback
 			overlay={
 				<>

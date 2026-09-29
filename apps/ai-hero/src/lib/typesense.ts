@@ -23,8 +23,9 @@ export const TypesenseResourceSchema = z.object({
 	course_ids: z.array(z.string()).nullish(),
 	duration_seconds: z.number().int().nonnegative().nullish(),
 	container_title: z.string().nullish(),
-	mux_playback_id: z.string().nullish(),
+	video_resource_id: z.string().nullish(),
 	thumbnail_time: z.number().int().nonnegative().nullish(),
+	mux_playback_id: z.string().nullish(),
 	tags: z.array(TagSchema).nullish(),
 	parentResources: z
 		.array(
@@ -61,8 +62,9 @@ export const attributeLabelMap: {
 	course_ids: 'Course IDs',
 	duration_seconds: 'Duration (s)',
 	container_title: 'Container Title',
-	mux_playback_id: 'Mux Playback ID',
+	video_resource_id: 'Video Resource ID',
 	thumbnail_time: 'Thumbnail Time',
+	mux_playback_id: 'Mux Playback ID',
 	tags: 'Tags',
 	parentResources: 'Parent Resources',
 } as const

@@ -8,8 +8,9 @@ export const VIDEO_FACT_FIELDS = [
 	'course_ids',
 	'duration_seconds',
 	'container_title',
-	'mux_playback_id',
+	'video_resource_id',
 	'thumbnail_time',
+	'mux_playback_id',
 ] as const satisfies ReadonlyArray<keyof VideoFacts>
 
 type IndexedVideoFacts = {
