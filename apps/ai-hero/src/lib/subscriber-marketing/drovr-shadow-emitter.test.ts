@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { fanOutOwnedEvents } from './drovr-ownership'
 import type { ContactEventRecord, SideEffectIntent } from './types'
 import {
 	emitDrovrShadowEvents,
@@ -412,6 +413,39 @@ describe('drovr shadow fact mapper', () => {
 		expect(byJourney['contact-directory']).toEqual({
 			productId: 'product-ma254',
 		})
+	})
+
+	// The shadow-tenant original is discarded at delivery; what reaches drovr
+	// is the owner copy fanOutOwnedEvents makes for a drovr-owned contact
+	// (every evergreen coupon contact is). The copy must keep the coupon.
+	it('keeps couponId and sameOffer on the owner copy an owned contact gets', () => {
+		const couponId = `eoj-coupon:${'a'.repeat(64)}`
+		const mapped = mapDrovrShadowFact({
+			kind: 'contact-event',
+			event: contactEvent('purchase.recorded', {
+				payloadSummary: {
+					summary: 'purchase',
+					keywords: ['purchase-recorded', 'product-ma254', 'status-valid'],
+					restrictedPayloadStored: false,
+				},
+				domainPayload: { evergreenOffer: { couponId, sameOffer: true } },
+			}),
+		})
+		const authorityEvergreen = (owned: string[]) =>
+			fanOutOwnedEvents(mapped, new Set(owned), new Set()).filter(
+				(item) =>
+					item.tenantId === 'org-aihero' &&
+					item.journeyId === 'crash-course-evergreen-offer',
+			)
+
+		expect(authorityEvergreen(['contact-1'])).toEqual([
+			expect.objectContaining({
+				type: 'purchase.recorded',
+				payload: { productId: 'product-ma254', couponId, sameOffer: true },
+			}),
+		])
+		// An unowned contact's evergreen fact never reaches the authority tenant.
+		expect(authorityEvergreen([])).toEqual([])
 	})
 
 	it.each([
