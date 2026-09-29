@@ -44,6 +44,7 @@ const RAIL_ICONS: Record<string, React.ComponentType<NavIconProps>> = {
 	'/principles': NAV_ICONS['/principles']!,
 	'/skills': NAV_ICONS['/skills']!,
 	'/open-source': NAV_ICONS['/open-source']!,
+	'/videos': NAV_ICONS['/videos']!,
 	'/llm-fundamentals': lucideIcon(BookOpenText),
 	'/ai-engineer-roadmap': lucideIcon(Route),
 	'/ai-coding-dictionary': lucideIcon(BookA),
