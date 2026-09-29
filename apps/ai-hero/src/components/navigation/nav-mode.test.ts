@@ -41,6 +41,7 @@ describe('getNavMode', () => {
 	it('returns hub for the new (not-yet-built) learning routes', () => {
 		expect(getNavMode('/learn')).toBe('hub')
 		expect(getNavMode('/open-source')).toBe('hub')
+		expect(getNavMode('/videos')).toBe('hub')
 		expect(getNavMode('/principles')).toBe('hub')
 	})
 

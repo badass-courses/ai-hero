@@ -91,6 +91,7 @@ const HUB_PREFIXES = [
 	'/open-source',
 	'/principles',
 	'/topics',
+	'/videos',
 ] as const
 
 /** Strip query/hash and trailing slash, lowercase. Always returns a leading slash. */

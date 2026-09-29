@@ -162,6 +162,19 @@ function collectionSchema(
 		{ name: 'created_at_timestamp', type: 'int64', optional: true, sort: true },
 	]
 
+	// Video facts (src/lib/video-facts.ts). Declared rather than left to `.*`
+	// so a rebuilt collection keeps them filterable with the right types even
+	// before the first document carrying them is imported.
+	fields.push(
+		{ name: 'has_video', type: 'bool', optional: true },
+		{ name: 'free', type: 'bool', optional: true },
+		{ name: 'course_ids', type: 'string[]', optional: true },
+		{ name: 'duration_seconds', type: 'int32', optional: true },
+		{ name: 'container_title', type: 'string', optional: true },
+		{ name: 'mux_playback_id', type: 'string', optional: true, index: false },
+		{ name: 'thumbnail_time', type: 'int32', optional: true, index: false },
+	)
+
 	if (hasField(documents, 'productType')) {
 		fields.push({
 			name: 'productType',

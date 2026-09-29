@@ -24,6 +24,8 @@ import { getPostTags } from './posts-query'
 import { getLessonForSolution } from './solutions-query'
 import { TypesenseResourceSchema } from './typesense'
 import { selectTypesenseRecommendation } from './typesense-recommendations'
+import { computeVideoFacts, type VideoFacts } from './video-facts'
+import { getVideoFactsForResource, loadVideoGraph } from './video-facts-query'
 import { getVideoResource } from './video-resource-query'
 import { getWorkshopsForLesson } from './workshops-query'
 
@@ -117,6 +119,11 @@ export type TypesenseUpsertResult =
 export async function upsertPostToTypeSense(
 	post: ContentResource,
 	action: PostAction,
+	/**
+	 * Facts a batch caller already derived from one graph read; without them
+	 * each call reads the whole graph itself.
+	 */
+	precomputed?: { videoFacts: VideoFacts | null },
 ): Promise<TypesenseUpsertResult> {
 	try {
 		void log.debug('typesense.upsert.init', {
@@ -221,6 +228,17 @@ export async function upsertPostToTypeSense(
 		})
 
 		const image = await deriveResourceImage(post)
+		// On failure the doc keeps whatever facts it had (emplace), and the
+		// hourly reconcile repairs them.
+		const videoFacts = precomputed
+			? precomputed.videoFacts
+			: await getVideoFactsForResource(post.id).catch((err) => {
+					void log.warn('typesense.video-facts.failed', {
+						postId: post.id,
+						error: getErrorMessage(err),
+					})
+					return null
+				})
 
 		void log.debug('typesense.resource.validate', {
 			postId: post.id,
@@ -240,6 +258,7 @@ export async function upsertPostToTypeSense(
 			created_at_timestamp: post.createdAt?.getTime() ?? Date.now(),
 			published_at_timestamp: readTimestamp(post.fields, 'publishedAt'),
 			updated_at_timestamp: post.updatedAt?.getTime() ?? Date.now(),
+			...videoFacts,
 			...(tags.length > 0 && { tags: tags.map((tag) => tag) }),
 			...(parentResources && {
 				parentResources: parentResources.map((resource) => {
@@ -404,6 +423,17 @@ export async function indexAllContentToTypeSense(
 			resource.type === 'list',
 	)
 
+	// Computed once for the whole run: every resource's facts come from the
+	// same graph read.
+	const videoFacts: Map<string, VideoFacts> | null = await loadVideoGraph()
+		.then(computeVideoFacts)
+		.catch((err) => {
+			void log.warn('typesense.index-all.video-facts.failed', {
+				error: getErrorMessage(err),
+			})
+			return null
+		})
+
 	const buildDocument = async (resource: ContentResource) => {
 		const image = await deriveResourceImage(resource).catch((err) => {
 			void log.warn('typesense.index-all.image.failed', {
@@ -427,6 +457,7 @@ export async function indexAllContentToTypeSense(
 			state: resource?.fields?.state,
 			created_at_timestamp: resource.createdAt?.getTime() ?? now,
 			updated_at_timestamp: resource.updatedAt?.getTime() ?? now,
+			...videoFacts?.get(resource.id),
 		})
 
 		if (!parsedResource.success) {
