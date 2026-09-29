@@ -1,5 +1,6 @@
 'use client'
 
+import type { ReactNode } from 'react'
 import {
 	PostNewsletterCell,
 	PostNewsletterCellSkeleton,
@@ -12,7 +13,14 @@ import { useSession } from 'next-auth/react'
  * Reader-dependent half of an article's closing grid. Subscriber and session
  * checks run after hydration so the shared post HTML remains prerenderable.
  */
-export function PostClosingNewsletter({ postSlug }: { postSlug: string }) {
+export function PostClosingNewsletter({
+	postSlug,
+	subscriberCount,
+}: {
+	postSlug: string
+	/** Server-rendered `<SubscriberCount />`, passed through to the cell. */
+	subscriberCount: ReactNode
+}) {
 	const { subscriber, isResolved } = useCtaGate()
 	const { data: session, status: sessionStatus } = useSession()
 
@@ -24,6 +32,7 @@ export function PostClosingNewsletter({ postSlug }: { postSlug: string }) {
 
 	return (
 		<PostNewsletterCell
+			subscriberCount={subscriberCount}
 			trackParams={{ post: postSlug, location: 'post' }}
 			knownIdentity={
 				subscriber?.hasIdentity === true || Boolean(session?.user?.email)

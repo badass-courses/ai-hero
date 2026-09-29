@@ -1,7 +1,6 @@
 import * as React from 'react'
 import { CompleteOnNavigateLink } from '@/components/complete-on-navigate-link'
 import { TYPE } from '@/components/landing/type'
-import { SubscriberCount } from '@/components/subscriber-count'
 import { ArrowRight } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
@@ -177,9 +176,16 @@ function NewsletterCell({ children }: { children: React.ReactNode }) {
  * prerenderable while this one cell is resolved per reader.
  */
 export function PostNewsletterCell({
+	subscriberCount,
 	trackParams,
 	knownIdentity = false,
 }: {
+	/**
+	 * The live count, rendered on the server (`<SubscriberCount />`) and passed
+	 * in. This cell renders inside a client component after hydration, where
+	 * the async server component cannot run.
+	 */
+	subscriberCount: React.ReactNode
 	/** Merged into the `subscribed` track call, e.g. `{ post, location }`. */
 	trackParams?: Record<string, string>
 	/** Server-resolved: this reader's address is already known, so the cell
@@ -191,7 +197,7 @@ export function PostNewsletterCell({
 			{/* No eyebrow. "Keep learning" over "Join N developers" carried no fact
 			    the heading does not already have. */}
 			<h2 className={cn(TYPE.panelTitle, 'mb-2 text-balance')}>
-				Join <SubscriberCount /> developers
+				Join {subscriberCount} developers
 			</h2>
 			<p
 				className={cn(

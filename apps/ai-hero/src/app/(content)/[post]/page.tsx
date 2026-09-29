@@ -12,6 +12,7 @@ import { MdxErrorBoundary } from '@/components/mdx/mdx-error-boundary'
 import { PROSE_MEASURE } from '@/components/mdx/prose'
 import { PlayerContainerSkeleton } from '@/components/player-skeleton'
 import { Share } from '@/components/share'
+import { SubscriberCount } from '@/components/subscriber-count'
 import { courseBuilderAdapter } from '@/db'
 import { getAiCodingDictionary } from '@/lib/ai-coding-dictionary'
 import { getCachedAllLists, getCachedListForPost } from '@/lib/lists-query'
@@ -378,7 +379,10 @@ export default async function PostPage(props: {
 									// used to read.
 									resolvedCta.kind === 'course' ? null : (
 										<Suspense fallback={<PostNewsletterCellSkeleton />}>
-											<PostClosingNewsletter postSlug={post.fields.slug} />
+											<PostClosingNewsletter
+												postSlug={post.fields.slug}
+												subscriberCount={<SubscriberCount />}
+											/>
 										</Suspense>
 									)
 								}

@@ -8,8 +8,14 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/app/(content)/_components/post-related-newsletter', () => ({
-	PostNewsletterCell: ({ knownIdentity }: { knownIdentity: boolean }) => (
-		<div data-known={String(knownIdentity)}>newsletter</div>
+	PostNewsletterCell: ({
+		knownIdentity,
+		subscriberCount,
+	}: {
+		knownIdentity: boolean
+		subscriberCount: React.ReactNode
+	}) => (
+		<div data-known={String(knownIdentity)}>newsletter {subscriberCount}</div>
 	),
 	PostNewsletterCellSkeleton: () => <div>newsletter skeleton</div>,
 }))
@@ -25,7 +31,9 @@ vi.mock('next-auth/react', () => ({
 import { PostClosingNewsletter } from './post-closing-newsletter'
 
 const render = () =>
-	renderToStaticMarkup(<PostClosingNewsletter postSlug="static-post" />)
+	renderToStaticMarkup(
+		<PostClosingNewsletter postSlug="static-post" subscriberCount="12,300+" />,
+	)
 
 describe('PostClosingNewsletter', () => {
 	beforeEach(() => {
@@ -55,5 +63,12 @@ describe('PostClosingNewsletter', () => {
 		mocks.session = { data: null, status: 'unauthenticated' }
 
 		expect(render()).toContain('data-known="true"')
+	})
+
+	it('shows the count the server rendered', () => {
+		mocks.gate = { subscriber: null, isResolved: true }
+		mocks.session = { data: null, status: 'unauthenticated' }
+
+		expect(render()).toContain('newsletter 12,300+')
 	})
 })
