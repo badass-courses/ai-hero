@@ -10,6 +10,7 @@ import {
 	contactUnsubscribedSemanticKey,
 	previewContactUnsubscribedContactEvents,
 	previewPurchaseRecordedContactEvents,
+	purchaseRecordedBuyerSemanticKey,
 	purchaseRecordedSemanticKey,
 	writeContactUnsubscribedContactEvents,
 	writePurchaseRecordedContactEvents,
@@ -289,6 +290,286 @@ describe('purchase.recorded lifecycle contact events', () => {
 		}
 		expect(repository.contactEvents.size).toBe(0)
 		expect(repository.providerIdentities.size).toBe(identitiesBefore)
+	})
+})
+
+/**
+ * Row 194 (09-24 coupon cohort): five buyers redeemed their evergreen
+ * coupon and were still sent "Final notice… ends tonight". The purchase was
+ * resolved through the buyer's user, never the coupon: twice to no contact
+ * at all (skipped), twice to another contact with no evergreen actor, and
+ * once to the right contact but never delivered (the dispatch pin lives in
+ * drizzle-capture-repository-birth-dispatch.test.ts).
+ */
+describe('evergreen coupon purchases (row 194)', () => {
+	const COUPON_ID = `eoj-coupon:${'c'.repeat(64)}`
+
+	function seedUserContact(
+		repository: InMemorySubscriberMarketingRepository,
+		args: { email: string; userId: string },
+	) {
+		const contact = repository.createContact({
+			userId: args.userId,
+			email: args.email,
+			name: null,
+			lifecycle: 'classified',
+			isProvisional: false,
+			createdAt: NOW,
+			updatedAt: NOW,
+		})
+		repository.createProviderIdentity({
+			contactId: contact.id,
+			provider: 'ai-hero',
+			externalId: args.userId,
+			evidence: {
+				userId: args.userId,
+				providerIdentity: { provider: 'ai-hero', externalId: args.userId },
+				source: 'ai-hero',
+				strength: 'strong',
+			},
+			createdAt: NOW,
+			updatedAt: NOW,
+		})
+		return contact
+	}
+
+	function seedOfferContact(repository: InMemorySubscriberMarketingRepository) {
+		return seedKitContact(repository, {
+			email: 'course-signup@example.com',
+			kitSubscriberId: 'kit-offer',
+		})
+	}
+
+	function eventsFor(
+		repository: InMemorySubscriberMarketingRepository,
+		contactId: string,
+	) {
+		return Array.from(repository.contactEvents.values()).filter(
+			(event) => event.contactId === contactId,
+		)
+	}
+
+	it.each([
+		['a user with no contact', { userId: 'user-new', email: 'new@example.com' }],
+		['an unknown email and no user', { userId: null, email: 'new@example.com' }],
+	])(
+		'records the purchase on the coupon contact when the buyer is %s (was skipped)',
+		async (_label, buyer) => {
+			const repository = new InMemorySubscriberMarketingRepository()
+			const offerContact = seedOfferContact(repository)
+
+			const summary = await writePurchaseRecordedContactEvents({
+				repository,
+				rows: [
+					purchaseSource({
+						...buyer,
+						productId: 'product-ma254',
+						evergreenOffer: { couponId: COUPON_ID, contactId: offerContact.id },
+					}),
+				],
+				now: NOW,
+			})
+
+			expect(summary.counts).toMatchObject({ written: 1, skipped: 0 })
+			const decision = summary.decisions[0]!
+			expect(decision).toMatchObject({
+				status: 'eligible',
+				contactId: offerContact.id,
+				identityResolutionPath: 'evergreen-coupon-issue-contact',
+			})
+			const [event] = eventsFor(repository, offerContact.id)
+			expect(event).toMatchObject({
+				eventType: 'purchase.recorded',
+				semanticIdempotencyKey: purchaseRecordedSemanticKey('purchase-1'),
+				domainPayload: {
+					evergreenOffer: { couponId: COUPON_ID, sameOffer: true },
+				},
+			})
+			// The buyer's user is not linked to the offer contact on the coupon's say-so.
+			expect(repository.contacts.size).toBe(1)
+			expect(
+				await repository.findProviderIdentity('ai-hero', 'user-new'),
+			).toBeUndefined()
+		},
+	)
+
+	it('records it on the coupon contact AND on the buyer contact when they differ (was folded onto the buyer contact only)', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const offerContact = seedOfferContact(repository)
+		const buyerContact = seedUserContact(repository, {
+			email: 'buyer@example.com',
+			userId: 'user-1',
+		})
+
+		const summary = await writePurchaseRecordedContactEvents({
+			repository,
+			rows: [
+				purchaseSource({
+					productId: 'product-ma254',
+					evergreenOffer: { couponId: COUPON_ID, contactId: offerContact.id },
+				}),
+			],
+			now: NOW,
+		})
+
+		expect(summary.counts.written).toBe(2)
+		const [offerEvent] = eventsFor(repository, offerContact.id)
+		const [buyerEvent] = eventsFor(repository, buyerContact.id)
+		expect(offerEvent).toMatchObject({
+			semanticIdempotencyKey: purchaseRecordedSemanticKey('purchase-1'),
+			domainPayload: {
+				evergreenOffer: { couponId: COUPON_ID, sameOffer: true },
+			},
+		})
+		// The buyer's own contact still hears it, so any pitch there stops too,
+		// but it is not the offer that converted.
+		expect(buyerEvent).toMatchObject({
+			eventType: 'purchase.recorded',
+			semanticIdempotencyKey: purchaseRecordedBuyerSemanticKey('purchase-1'),
+			providerEventId: 'purchase:purchase-1:buyer',
+			payloadSummary: {
+				keywords: ['purchase-recorded', 'product-ma254', 'status-valid'],
+			},
+		})
+		expect(buyerEvent?.domainPayload).toBeUndefined()
+		// Literal keys: ContactEvent_semanticIdempotencyKey_uq would swallow a
+		// buyer copy that reused the offer record's key (the in-memory
+		// repository enforces it too).
+		expect(offerEvent?.semanticIdempotencyKey).toBe(
+			'ai-hero:purchase.recorded:purchase:purchase-1',
+		)
+		expect(buyerEvent?.semanticIdempotencyKey).toBe(
+			'ai-hero:purchase.recorded:purchase:purchase-1:buyer',
+		)
+
+		const again = await writePurchaseRecordedContactEvents({
+			repository,
+			rows: [
+				purchaseSource({
+					productId: 'product-ma254',
+					evergreenOffer: { couponId: COUPON_ID, contactId: offerContact.id },
+				}),
+			],
+			now: NOW,
+		})
+		expect(again.counts).toMatchObject({
+			written: 0,
+			skippedByReason: { 'duplicate-semantic-key': 2 },
+		})
+	})
+
+	// A pre-fix purchase replayed after deploy (a manual re-send past the
+	// function's idempotency window): its unsuffixed record already sits on
+	// the buyer's contact. Nothing is written, and the offer contact is not
+	// repaired: no replay fixes the five, by design.
+	it('writes nothing when a pre-fix purchase is replayed', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const offerContact = seedOfferContact(repository)
+		const buyerContact = seedUserContact(repository, {
+			email: 'buyer@example.com',
+			userId: 'user-1',
+		})
+		await writePurchaseRecordedContactEvents({
+			repository,
+			rows: [purchaseSource({ productId: 'product-ma254' })],
+			now: NOW,
+		})
+		expect(eventsFor(repository, buyerContact.id)).toHaveLength(1)
+
+		const replay = await writePurchaseRecordedContactEvents({
+			repository,
+			rows: [
+				purchaseSource({
+					productId: 'product-ma254',
+					evergreenOffer: { couponId: COUPON_ID, contactId: offerContact.id },
+				}),
+			],
+			now: NOW,
+		})
+
+		expect(replay.counts).toMatchObject({
+			written: 0,
+			skippedByReason: { 'duplicate-semantic-key': 2 },
+		})
+		expect(eventsFor(repository, buyerContact.id)).toHaveLength(1)
+		expect(eventsFor(repository, offerContact.id)).toHaveLength(0)
+	})
+
+	it('records it once when the buyer is the coupon contact', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const contact = seedUserContact(repository, {
+			email: 'buyer@example.com',
+			userId: 'user-1',
+		})
+
+		const summary = await writePurchaseRecordedContactEvents({
+			repository,
+			rows: [
+				purchaseSource({
+					productId: 'product-ma254',
+					evergreenOffer: { couponId: COUPON_ID, contactId: contact.id },
+				}),
+			],
+			now: NOW,
+		})
+
+		expect(summary.counts.written).toBe(1)
+		expect(summary.counts.createdProviderIdentities).toBe(0)
+		expect(eventsFor(repository, contact.id)).toEqual([
+			expect.objectContaining({
+				semanticIdempotencyKey: purchaseRecordedSemanticKey('purchase-1'),
+				domainPayload: {
+					evergreenOffer: { couponId: COUPON_ID, sameOffer: true },
+				},
+			}),
+		])
+	})
+
+	it('falls back to the buyer when the coupon contact no longer exists', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const buyerContact = seedUserContact(repository, {
+			email: 'buyer@example.com',
+			userId: 'user-1',
+		})
+
+		const summary = await writePurchaseRecordedContactEvents({
+			repository,
+			rows: [
+				purchaseSource({
+					evergreenOffer: { couponId: COUPON_ID, contactId: 'gone' },
+				}),
+			],
+			now: NOW,
+		})
+
+		expect(summary.counts.written).toBe(1)
+		const [event] = eventsFor(repository, buyerContact.id)
+		expect(event).toMatchObject({
+			semanticIdempotencyKey: purchaseRecordedSemanticKey('purchase-1'),
+		})
+		expect(event?.domainPayload).toBeUndefined()
+	})
+
+	it('keeps the buyer path unchanged for a purchase without an evergreen coupon', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		seedOfferContact(repository)
+		const buyerContact = seedUserContact(repository, {
+			email: 'buyer@example.com',
+			userId: 'user-1',
+		})
+
+		const summary = await writePurchaseRecordedContactEvents({
+			repository,
+			rows: [purchaseSource({ productId: 'product-ma254' })],
+			now: NOW,
+		})
+
+		expect(summary.counts.written).toBe(1)
+		expect(summary.decisions[0]).toMatchObject({
+			contactId: buyerContact.id,
+			identityResolutionPath: 'user-id-existing-ai-hero-provider-identity',
+		})
+		expect(eventsFor(repository, buyerContact.id)[0]?.domainPayload).toBeUndefined()
 	})
 })
 

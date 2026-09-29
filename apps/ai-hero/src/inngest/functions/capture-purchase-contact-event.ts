@@ -1,7 +1,16 @@
 import { db } from '@/db'
-import { purchases as purchasesTable, users as usersTable } from '@/db/schema'
+import {
+	coupon as couponTable,
+	purchases as purchasesTable,
+	users as usersTable,
+} from '@/db/schema'
 import { inngest } from '@/inngest/inngest.server'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
+import {
+	evergreenCouponIdOf,
+	evergreenCouponLogId,
+	readEvergreenOfferCoupon,
+} from '@/lib/subscriber-marketing/evergreen-offer-purchase'
 import {
 	writePurchaseRecordedContactEvents,
 	type PurchaseRecordedSource,
@@ -17,6 +26,10 @@ import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/events/commerce'
  * marketing history replays can see that the contact bought. Runs beside the
  * post-purchase workflow, never inside it: a failure here cannot touch
  * checkout, entitlements, or welcome emails.
+ *
+ * An evergreen coupon purchase is recorded on the contact the coupon was
+ * issued to, not only the buyer's (row 194): that contact's offer is the one
+ * still pitching.
  */
 export const capturePurchaseContactEvent = inngest.createFunction(
 	{
@@ -48,6 +61,7 @@ export const capturePurchaseContactEvent = inngest.createFunction(
 				status: row.status,
 				totalAmount: String(row.totalAmount),
 				purchasedAt: new Date(row.createdAt).toISOString(),
+				evergreenCouponId: evergreenCouponIdOf(row) ?? null,
 			}
 		})
 		if (!purchase) {
@@ -70,6 +84,26 @@ export const capturePurchaseContactEvent = inngest.createFunction(
 				})
 			: null
 
+		const evergreenCouponId = purchase.evergreenCouponId
+		const evergreenOffer = evergreenCouponId
+			? await step.run('load evergreen coupon', async () => {
+					const [row] = await db
+						.select()
+						.from(couponTable)
+						.where(eq(couponTable.id, evergreenCouponId))
+						.limit(1)
+					return readEvergreenOfferCoupon(evergreenCouponId, row ?? null)
+				})
+			: null
+		if (evergreenOffer?.status === 'refused') {
+			// Falls back to the buyer's contact, which is what ran before row 194.
+			await log.warn('contact_event.purchase_recorded.evergreen_coupon_refused', {
+				purchaseId: purchase.id,
+				couponId: evergreenCouponLogId(evergreenOffer.couponId),
+				reason: evergreenOffer.reason,
+			})
+		}
+
 		const source: PurchaseRecordedSource = {
 			purchaseId: purchase.id,
 			userId: purchase.userId,
@@ -81,6 +115,9 @@ export const capturePurchaseContactEvent = inngest.createFunction(
 			status: purchase.status,
 			totalAmount: purchase.totalAmount,
 			purchasedAt: purchase.purchasedAt,
+			...(evergreenOffer?.status === 'redeemed'
+				? { evergreenOffer: evergreenOffer.redemption }
+				: {}),
 		}
 
 		// Only counts and the log string leave the step: the full summary's
@@ -111,6 +148,9 @@ export const capturePurchaseContactEvent = inngest.createFunction(
 			written: summary.counts.written,
 			skippedByReason: summary.counts.skippedByReason,
 			identityResolutionPath: summary.identityResolutionPath,
+			evergreenCouponId: evergreenCouponId
+				? evergreenCouponLogId(evergreenCouponId)
+				: null,
 		})
 
 		return {

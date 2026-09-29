@@ -87,6 +87,38 @@ describe("the owner-assignment (birth) dispatch", () => {
     expect(returned).toBe(true);
   });
 
+  // Row 194, 2026-09-27: a coupon buyer's purchase.recorded was written but
+  // never reached drovr, so the offer went on to send "ends tonight" to a
+  // customer. Same fire-and-forget loss as the births above.
+  it("awaits a purchase.recorded too: the write does not return before the hand-off", async () => {
+    let release!: () => void;
+    dispatch.awaited.mockReturnValue(
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+    let returned = false;
+    const write = repository()
+      .createContactEvent(contactEventInput("purchase.recorded"))
+      .then((record) => {
+        returned = true;
+        return record;
+      });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(returned).toBe(false);
+    expect(dispatch.awaited).toHaveBeenCalledWith({
+      kind: "contact-event",
+      event: expect.objectContaining({ eventType: "purchase.recorded" }),
+    });
+    expect(dispatch.safely).not.toHaveBeenCalled();
+
+    release();
+    await expect(write).resolves.toMatchObject({
+      eventType: "purchase.recorded",
+    });
+  });
+
   it("leaves every other contact event on the fire-and-forget path", async () => {
     await repository().createContactEvent(
       contactEventInput("skills-newsletter.subscribed"),

@@ -216,6 +216,13 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 			createdAt?: string
 		},
 	) {
+		// Mirrors ContactEvent_semanticIdempotencyKey_uq and the Drizzle
+		// repository's lost-race read: a second insert under a key returns the
+		// row already there instead of writing another.
+		const existing = this.findContactEventBySemanticKey(
+			input.semanticIdempotencyKey,
+		)
+		if (existing) return existing
 		const event = {
 			id: this.id('event'),
 			createdAt: input.createdAt ?? new Date().toISOString(),
