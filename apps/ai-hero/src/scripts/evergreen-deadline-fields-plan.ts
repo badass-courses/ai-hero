@@ -92,10 +92,14 @@ async function main() {
 				eq(sideEffectIntent.status, 'completed'),
 			),
 		)
-	console.log(
-		JSON.stringify(planDeadlineFieldRewrite(rows, new Date().toISOString()), null, 2),
+	const plan = JSON.stringify(
+		planDeadlineFieldRewrite(rows, new Date().toISOString()),
+		null,
+		2,
 	)
-	process.exit(0)
+	// The database pool keeps the process alive; exit once stdout has flushed,
+	// so piped JSON is never truncated.
+	process.stdout.write(`${plan}\n`, () => process.exit(0))
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {

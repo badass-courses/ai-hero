@@ -55,9 +55,10 @@ export function offerDeadlineFromEvidence(
 /**
  * Short zone names, keyed by the long name Intl gives in en-US. Intl's own
  * short names are US-centric: outside North America it prints "GMT+2" where a
- * reader expects "CEST". Abbreviations shared by two regions (China's and
- * America's "CST", the Philippines' "PST") stay out; those zones print their
- * UTC offset instead.
+ * reader expects "CEST". Keying on the long name keeps a shared abbreviation
+ * with the zone its readers know it for: "Pacific Standard Time" is PST and
+ * "Central Standard Time" is CST, while China Standard Time and Philippine
+ * Standard Time are absent and print their UTC offset instead.
  */
 const SHORT_ZONE_NAMES: Readonly<Record<string, string>> = {
 	'Hawaii-Aleutian Standard Time': 'HST',
