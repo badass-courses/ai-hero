@@ -119,6 +119,8 @@ export async function enterSkillsNewsletterSubscriber(args: {
 	input: SkillsNewsletterPathEntryInput
 	allowWrite: boolean
 	sequenceExhaustionEnabled?: boolean
+	/** Keep the signup's zone as course entry evidence (see deadlineTimeZoneCaptureEnabled). */
+	deadlineTimeZoneCaptureEnabled?: boolean
 	shadowObserver?: SkillsNewsletterShadowObserver
 	/** Rollout of journey ownership to drovr; absent means nobody. */
 	drovrOwnership?: DrovrOwnershipConfig
@@ -230,7 +232,8 @@ export async function enterSkillsNewsletterSubscriber(args: {
 			args.input.source === 'learner-flow-unstick' ||
 			args.input.source === 'kit-confirmation-reconciler',
 	})
-	const deadlineTimeZone = args.sequenceExhaustionEnabled
+	const deadlineTimeZone =
+		args.sequenceExhaustionEnabled || args.deadlineTimeZoneCaptureEnabled
 		? (restoreDeadlineTimeZoneEvidence(args.input.deadlineTimeZone) ??
 			(fallbackDeadline.ok ? fallbackDeadline.value : undefined))
 		: undefined

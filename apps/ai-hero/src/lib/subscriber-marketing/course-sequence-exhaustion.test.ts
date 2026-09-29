@@ -10,6 +10,8 @@ import {
 	deadlineTimeZoneEvidenceFromHeader,
 	AIH_COURSE_ENTRY_EVIDENCE_FIELD,
 	parseCourseSequenceExhaustionEnabled,
+	DEADLINE_TIMEZONE_CAPTURE_DEFAULT,
+	deadlineTimeZoneCaptureEnabled,
 	parseStashedDeadlineTimeZoneEvidence,
 	readCoursePayload,
 	restoreCourseSequenceExhaustedPayload,
@@ -297,5 +299,23 @@ describe('course sequence exhaustion evidence', () => {
 		expect(parseCourseSequenceExhaustionEnabled(undefined)).toBe(false)
 		expect(parseCourseSequenceExhaustionEnabled('false')).toBe(false)
 		expect(parseCourseSequenceExhaustionEnabled('true')).toBe(true)
+	})
+
+	it('keeps zone capture off by default, on its own switch or under exhaustion', () => {
+		expect(DEADLINE_TIMEZONE_CAPTURE_DEFAULT).toBe(false)
+		expect(deadlineTimeZoneCaptureEnabled({})).toBe(false)
+		expect(
+			deadlineTimeZoneCaptureEnabled({ AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED: 'true' }),
+		).toBe(true)
+		expect(
+			deadlineTimeZoneCaptureEnabled({ AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED: 'yes' }),
+		).toBe(false)
+		// Exhaustion reads the evidence, so it keeps capture on.
+		expect(
+			deadlineTimeZoneCaptureEnabled({
+				AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED: 'false',
+				AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED: 'true',
+			}),
+		).toBe(true)
 	})
 })

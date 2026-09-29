@@ -5,7 +5,10 @@ import {
   type EvergreenPitchEntryEvidence,
   type EvergreenPitchEntryRepository,
 } from "@/lib/subscriber-marketing/drovr-pitch-entry";
-import { mapDrovrShadowFact } from "@/lib/subscriber-marketing/drovr-shadow-emitter";
+import {
+  mapDrovrShadowFact,
+  pinnedTimezonePayloadFromUnknown,
+} from "@/lib/subscriber-marketing/drovr-shadow-emitter";
 import type { ContactEventRecord } from "@/lib/subscriber-marketing/types";
 
 import {
@@ -128,6 +131,52 @@ describe("evergreen pitch backfill population", () => {
       candidate("at-floor", "2026-08-26T00:00:00.000Z"),
     ]);
   });
+
+  it("carries the terminal intent's zone evidence onto the candidate", () => {
+    const timezone = {
+      timezone: "Asia/Kolkata",
+      timezoneSource: "vercel-header" as const,
+    };
+    expect(
+      selectBackfillPopulation({
+        rows: [row("kolkata", "2026-09-17T12:00:00.000Z", { timezone })],
+        floor,
+        enableInstant,
+        limit: 10,
+        alreadyEnteredContactIds: new Set(),
+        purchaserContactIds: new Set(),
+      }),
+    ).toEqual([{ ...candidate("kolkata"), timezone }]);
+  });
+});
+
+describe("the terminal intent's zone evidence", () => {
+  it("reads courseDeadlineTimeZone off the intent metadata the population loads", () => {
+    expect(
+      pinnedTimezonePayloadFromUnknown({
+        valuePathSlug: "ai-hero-skills-workflow",
+        courseDeadlineTimeZone: {
+          type: "BrowserEntryHeader",
+          headerName: "x-vercel-ip-timezone",
+          timeZone: "Europe/Berlin",
+          capturedAt: "2026-09-01T00:00:00.000Z",
+        },
+      }),
+    ).toEqual({ timezone: "Europe/Berlin", timezoneSource: "vercel-header" });
+    expect(
+      pinnedTimezonePayloadFromUnknown({
+        courseDeadlineTimeZone: {
+          type: "ExplicitFallback",
+          reason: "legacy-entry",
+          timeZone: "America/Los_Angeles",
+          capturedAt: "2026-09-01T00:00:00.000Z",
+        },
+      }),
+    ).toEqual({ timezone: "America/Los_Angeles", timezoneSource: "fallback" });
+    expect(
+      pinnedTimezonePayloadFromUnknown({ valuePathSlug: "x" }),
+    ).toBeUndefined();
+  });
 });
 
 describe("evergreen pitch backfill run", () => {
@@ -163,6 +212,35 @@ describe("evergreen pitch backfill run", () => {
       entered: 1,
       enteredContactIds: ["contact-1"],
       errors: [],
+    });
+  });
+
+  it("sends the zone the terminal intent carried, so drovr pins it instead of Pacific", async () => {
+    const repository = fakeRepository({
+      population: [
+        {
+          ...candidate("berlin"),
+          timezone: {
+            timezone: "Europe/Berlin",
+            timezoneSource: "vercel-header",
+          },
+        },
+        candidate("no-evidence"),
+      ],
+    });
+
+    await runEvergreenPitchBackfill(runArgs(repository));
+
+    const [berlin, noEvidence] = repository.dispatchFact.mock.calls.map(
+      ([fact]) => mapDrovrShadowFact(fact)[0]!.payload,
+    );
+    expect(berlin).toMatchObject({
+      timezone: "Europe/Berlin",
+      timezoneSource: "vercel-header",
+    });
+    expect(noEvidence).toMatchObject({
+      timezone: "America/Los_Angeles",
+      timezoneSource: "fallback",
     });
   });
 

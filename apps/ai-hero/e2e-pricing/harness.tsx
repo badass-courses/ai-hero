@@ -7,6 +7,7 @@ import {
 	WorkshopInlineBuyButton,
 	WorkshopPricingClient,
 } from '@/app/(content)/workshops/_components/workshop-pricing'
+import { EvergreenOfferEndedNotice } from '@/components/evergreen-offer-ended-notice'
 import { api } from '@/trpc/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { httpLink } from '@trpc/client'
@@ -38,6 +39,7 @@ function Fixture() {
 		<QueryClientProvider client={queryClient}>
 			<api.Provider client={trpcClient} queryClient={queryClient}>
 				<main>
+					<EvergreenOfferEndedNotice endpoint="/api/evergreen/offer-status" />
 					<section data-testid="sidebar-cta">
 						<WorkshopPricingClient
 							product={product}

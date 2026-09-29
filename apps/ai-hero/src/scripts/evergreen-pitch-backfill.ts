@@ -21,6 +21,8 @@ import {
 } from "@/lib/subscriber-marketing/drovr-shadow-dispatch";
 import {
   DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+  pinnedTimezonePayloadFromUnknown,
+  type DrovrPinnedTimezonePayload,
   type DrovrShadowFact,
 } from "@/lib/subscriber-marketing/drovr-shadow-emitter";
 import { getSkillsWorkflowEmailStep } from "@/lib/subscriber-marketing/skills-workflow-path";
@@ -39,12 +41,15 @@ export type BackfillPopulationRow = {
   completedAt: string;
   emailResourceId: string;
   valuePathSlug: string;
+  /** The zone evidence the terminal email's intent carried forward. */
+  timezone?: DrovrPinnedTimezonePayload;
 };
 
 export type BackfillCandidate = {
   contactId: string;
   completedAt: string;
   valuePathSlug: string;
+  timezone?: DrovrPinnedTimezonePayload;
 };
 
 export type BackfillRefusalReason =
@@ -247,6 +252,7 @@ export function selectBackfillPopulation(args: {
       contactId: row.contactId,
       completedAt: row.completedAt,
       valuePathSlug: row.valuePathSlug,
+      ...(row.timezone ? { timezone: row.timezone } : {}),
     });
     if (selected.length === args.limit) break;
   }
@@ -351,6 +357,8 @@ export async function runEvergreenPitchBackfill(args: {
         contactId: candidate.contactId,
         valuePathSlug: candidate.valuePathSlug,
         completedAt: candidate.completedAt,
+        // Without it drovr pins every backfilled actor to the Pacific fallback.
+        ...(candidate.timezone ? { timezone: candidate.timezone } : {}),
         backfill: {
           occurredAt: args.birthInstant,
           idempotencyKey,
@@ -480,6 +488,7 @@ export async function createLiveEvergreenPitchBackfillRepository(args: {
         const metadataSlug = stringValue(row.metadata.valuePathSlug);
         const valuePathSlug = metadataSlug ?? step?.valuePathSlug;
         if (!valuePathSlug) return [];
+        const timezone = pinnedTimezonePayloadFromUnknown(row.metadata);
         return [
           {
             intentId: row.intentId,
@@ -487,6 +496,7 @@ export async function createLiveEvergreenPitchBackfillRepository(args: {
             completedAt: new Date(row.completedAt).toISOString(),
             emailResourceId: row.emailResourceId,
             valuePathSlug,
+            ...(timezone ? { timezone } : {}),
           },
         ];
       });

@@ -14,7 +14,7 @@ import { reconcileAiHeroEmailOptInWithKit } from '@/lib/subscriber-marketing/ai-
 import {
 	AIH_COURSE_ENTRY_EVIDENCE_FIELD,
 	deadlineTimeZoneEvidenceFromHeader,
-	parseCourseSequenceExhaustionEnabled,
+	deadlineTimeZoneCaptureEnabled,
 	serializeDeadlineTimeZoneEvidenceForKit,
 } from '@/lib/subscriber-marketing/course-sequence-exhaustion'
 import {
@@ -140,15 +140,13 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 		if (Number(body.listId) === 9376133) {
 			try {
 				const subscribedAt = new Date().toISOString()
-				const sequenceExhaustionEnabled = parseCourseSequenceExhaustionEnabled(
-					process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED,
-				)
 				const deadlineTimeZoneResult = deadlineTimeZoneEvidenceFromHeader({
 					headerValue: req.headers.get('x-vercel-ip-timezone'),
 					capturedAt: subscribedAt,
 				})
 				const deadlineTimeZone =
-					sequenceExhaustionEnabled && deadlineTimeZoneResult.ok
+					deadlineTimeZoneCaptureEnabled(process.env) &&
+					deadlineTimeZoneResult.ok
 						? deadlineTimeZoneResult.value
 						: undefined
 				const optIn = await reconcileAiHeroEmailOptInWithKit({
@@ -170,29 +168,41 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 					const serializedCourseEntryEvidence = deadlineTimeZone
 						? serializeDeadlineTimeZoneEvidenceForKit(deadlineTimeZone)
 						: undefined
-					if (serialized || serializedCourseEntryEvidence) {
+					const stashFields = async (fields: Record<string, string>) => {
+						const { setConvertkitSubscriberFields } =
+							await import('@coursebuilder/core/providers/convertkit')
+						await setConvertkitSubscriberFields({
+							subscriber: { id: subscriber.id, fields: subscriber.fields },
+							fields,
+							convertkitApiSecret: env.CONVERTKIT_API_SECRET,
+							convertkitApiKey: env.CONVERTKIT_API_KEY,
+						})
+					}
+					if (serialized) {
 						try {
-							const { setConvertkitSubscriberFields } =
-								await import('@coursebuilder/core/providers/convertkit')
-							await setConvertkitSubscriberFields({
-								subscriber: { id: subscriber.id, fields: subscriber.fields },
-								fields: {
-									...(serialized
-										? { [AIH_OPTIN_ATTRIBUTION_FIELD]: serialized }
-										: {}),
-									...(serializedCourseEntryEvidence
-										? {
-												[AIH_COURSE_ENTRY_EVIDENCE_FIELD]:
-													serializedCourseEntryEvidence,
-											}
-										: {}),
-								},
-								convertkitApiSecret: env.CONVERTKIT_API_SECRET,
-								convertkitApiKey: env.CONVERTKIT_API_KEY,
-							})
+							await stashFields({ [AIH_OPTIN_ATTRIBUTION_FIELD]: serialized })
 							attributionStashed = true
 						} catch (stashError) {
 							await log.error('skills.newsletter.attribution.stash.failed', {
+								formId: 9376133,
+								kitSubscriberId: String(subscriber.id),
+								error:
+									stashError instanceof Error
+										? stashError.message
+										: String(stashError),
+							})
+						}
+					}
+					// Its own Kit call: a refused evidence field must never take
+					// the attribution stash down with it.
+					if (serializedCourseEntryEvidence) {
+						try {
+							await stashFields({
+								[AIH_COURSE_ENTRY_EVIDENCE_FIELD]:
+									serializedCourseEntryEvidence,
+							})
+						} catch (stashError) {
+							await log.error('skills.course-entry-evidence.stash.failed', {
 								formId: 9376133,
 								kitSubscriberId: String(subscriber.id),
 								error:

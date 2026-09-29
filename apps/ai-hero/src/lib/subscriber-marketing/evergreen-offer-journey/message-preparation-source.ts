@@ -20,6 +20,11 @@ import {
 import { createMessagePreparationGate } from './message-preparation-gate'
 import type { MessagePreparationStore } from './message-preparation-store'
 import type { MessageFieldsTransport } from './message-preparation-fields'
+import {
+	evergreenDeadlineFormat,
+	formatOfferDeadline,
+	offerDeadlineFromEvidence,
+} from '../offer-deadline'
 
 /** Public Price.unitAmount is decimal dollars in the installed adapter. This is
  * its getPriceForProduct source, NOT formatPricesForProduct's upgrade-adjusted
@@ -138,17 +143,25 @@ export function createTrustedMessagePreparation(options: {
 			authority.expiresAt = issued.expiresAt
 			authority.timeZone = issued.deadlineTimeZone.timeZone
 			values.DISCOUNT_AMOUNT = money(actual.amountDiscount)
-			values.DEADLINE_DISPLAY = new Intl.DateTimeFormat('en-US', {
-				timeZone: authority.timeZone,
-				weekday: 'long',
-				year: 'numeric',
-				month: 'long',
-				day: 'numeric',
-				hour: 'numeric',
-				minute: '2-digit',
-				second: '2-digit',
-				timeZoneName: 'long',
-			}).format(new Date(issued.expiresAt))
+			values.DEADLINE_DISPLAY =
+				evergreenDeadlineFormat(process.env) === 'absolute'
+					? formatOfferDeadline(
+							offerDeadlineFromEvidence(
+								issued.expiresAt,
+								issued.deadlineTimeZone,
+							),
+						)
+					: new Intl.DateTimeFormat('en-US', {
+							timeZone: authority.timeZone,
+							weekday: 'long',
+							year: 'numeric',
+							month: 'long',
+							day: 'numeric',
+							hour: 'numeric',
+							minute: '2-digit',
+							second: '2-digit',
+							timeZoneName: 'long',
+						}).format(new Date(issued.expiresAt))
 		}
 		const compiled = compileMessageTemplate(template, values)
 		return preparationSnapshotSchema.parse({

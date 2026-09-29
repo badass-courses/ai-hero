@@ -25,8 +25,8 @@ import { log } from '@/server/logger'
 import { reconcileAiHeroEmailOptInWithKit } from '@/lib/subscriber-marketing/ai-hero-email-opt-in.server'
 import {
 	AIH_COURSE_ENTRY_EVIDENCE_FIELD,
+	deadlineTimeZoneCaptureEnabled,
 	deadlineTimeZoneEvidenceFromHeader,
-	parseCourseSequenceExhaustionEnabled,
 	serializeDeadlineTimeZoneEvidenceForKit,
 } from '@/lib/subscriber-marketing/course-sequence-exhaustion'
 import {
@@ -201,9 +201,7 @@ async function captureAndStashCourseEntryEvidence(input: unknown) {
 		capturedAt,
 	})
 	const deadlineTimeZone =
-		parseCourseSequenceExhaustionEnabled(
-			process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED,
-		) && deadlineTimeZoneResult.ok
+		deadlineTimeZoneCaptureEnabled(process.env) && deadlineTimeZoneResult.ok
 			? deadlineTimeZoneResult.value
 			: undefined
 	if (deadlineTimeZone) {

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => {
 	const reconcile = vi.fn()
 	const cookieGet = vi.fn()
 	const resolveDoi = vi.fn()
+	const setFields = vi.fn().mockResolvedValue(undefined)
 	const env: Record<string, string | undefined> = {
 		CONVERTKIT_API_SECRET: 'secret',
 		CONVERTKIT_API_KEY: 'key',
@@ -29,10 +30,18 @@ const mocks = vi.hoisted(() => {
 		reconcile,
 		cookieGet,
 		resolveDoi,
+		setFields,
 		env,
 		log,
 	}
 })
+
+vi.mock('@coursebuilder/core/providers/convertkit', async (importOriginal) => ({
+	...(await importOriginal<
+		typeof import('@coursebuilder/core/providers/convertkit')
+	>()),
+	setConvertkitSubscriberFields: mocks.setFields,
+}))
 
 vi.mock('next/headers', () => ({
 	cookies: async () => ({
@@ -164,6 +173,7 @@ beforeEach(() => {
 	mocks.createShortlinkAttribution.mockResolvedValue(undefined)
 	mocks.inngestSend.mockResolvedValue(undefined)
 	mocks.issueRecoveryToken.mockResolvedValue(undefined)
+	mocks.setFields.mockReset().mockResolvedValue(undefined)
 	mocks.cookieGet.mockImplementation((name: string) => {
 		if (name === 'ft_attr') {
 			return {
@@ -180,6 +190,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	delete process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED
+	delete process.env.AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED
 })
 
 describe('subscribe-to-list convertkit route attribution', () => {
@@ -281,6 +292,108 @@ describe('subscribe-to-list convertkit route attribution', () => {
 				data: expect.not.objectContaining({ deadlineTimeZone: expect.anything() }),
 			}),
 		)
+	})
+
+	it('captures the zone on its own switch, with the exhaustion flag off', async () => {
+		delete process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED
+		process.env.AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED = 'true'
+		mocks.courseBuilderPOST.mockResolvedValue(
+			subscriberResponse({
+				id: 102,
+				email_address: 'capture@example.com',
+				state: 'active',
+				fields: {},
+			}),
+		)
+		mocks.reconcile.mockResolvedValue({ status: 'active' })
+
+		const response = await POST(
+			request({
+				email: 'capture@example.com',
+				listId: 9376133,
+				fields: { source: 'aihero_skills_page' },
+			}),
+		)
+
+		expect(response.status).toBe(200)
+		expect(mocks.inngestSend).toHaveBeenCalledWith(
+			expect.objectContaining({
+				data: expect.objectContaining({
+					deadlineTimeZone: expect.objectContaining({
+						type: 'BrowserEntryHeader',
+						timeZone: 'Asia/Tokyo',
+					}),
+				}),
+			}),
+		)
+	})
+
+	it('stashes the evidence in its own Kit call: a refusal leaves the attribution stash intact', async () => {
+		delete process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED
+		process.env.AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED = 'true'
+		mocks.courseBuilderPOST.mockResolvedValue(
+			subscriberResponse({
+				id: 103,
+				email_address: 'unconfirmed@example.com',
+				state: 'inactive',
+				fields: {},
+			}),
+		)
+		mocks.reconcile.mockResolvedValue({ status: 'confirmation-required' })
+		mocks.setFields.mockImplementation(
+			async ({ fields }: { fields: Record<string, string> }) => {
+				if ('aih_course_entry_evidence' in fields)
+					throw new Error('Kit refused the field')
+			},
+		)
+
+		const response = await POST(
+			request({
+				email: 'unconfirmed@example.com',
+				listId: 9376133,
+				fields: { source: 'aihero_skills_page' },
+			}),
+		)
+
+		expect(response.status).toBe(200)
+		expect(mocks.setFields).toHaveBeenCalledTimes(2)
+		expect(
+			mocks.setFields.mock.calls.map(([args]) => Object.keys(args.fields)),
+		).toEqual([['aih_optin_attribution'], ['aih_course_entry_evidence']])
+		expect(mocks.log.info).toHaveBeenCalledWith(
+			'skills.newsletter.confirmation.required',
+			expect.objectContaining({ attributionStashed: true }),
+		)
+		expect(mocks.log.error).toHaveBeenCalledWith(
+			'skills.course-entry-evidence.stash.failed',
+			expect.objectContaining({ error: 'Kit refused the field' }),
+		)
+		expect(mocks.inngestSend).not.toHaveBeenCalled()
+	})
+
+	it('writes no evidence field while capture is off', async () => {
+		delete process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED
+		mocks.courseBuilderPOST.mockResolvedValue(
+			subscriberResponse({
+				id: 104,
+				email_address: 'off@example.com',
+				state: 'inactive',
+				fields: {},
+			}),
+		)
+		mocks.reconcile.mockResolvedValue({ status: 'confirmation-required' })
+
+		await POST(
+			request({
+				email: 'off@example.com',
+				listId: 9376133,
+				fields: { source: 'aihero_skills_page' },
+			}),
+		)
+
+		expect(
+			mocks.setFields.mock.calls.map(([args]) => Object.keys(args.fields)),
+		).toEqual([['aih_optin_attribution']])
 	})
 
 	it.each([

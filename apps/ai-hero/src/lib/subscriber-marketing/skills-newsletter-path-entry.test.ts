@@ -79,6 +79,62 @@ describe('Skills newsletter path entry schedule evidence', () => {
 		})
 	})
 
+	it('pins the zone on the capture switch alone, with exhaustion off', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const deadline = deadlineTimeZoneEvidenceFromHeader({
+			headerValue: 'Europe/Berlin',
+			capturedAt: subscribedAt,
+		})
+		if (!deadline.ok) throw new Error(deadline.error.detail)
+
+		const result = await enterSkillsNewsletterSubscriber({
+			repository,
+			allowlist: rollingAllowlist(),
+			allowWrite: true,
+			sequenceExhaustionEnabled: false,
+			deadlineTimeZoneCaptureEnabled: true,
+			input: {
+				kitSubscriberId: 'kit-capture',
+				email: 'capture@example.com',
+				formId: 9376133,
+				source: 'aihero_skills_page',
+				subscribedAt,
+				deadlineTimeZone: deadline.value,
+			},
+		})
+		const emailZero = valuePathEmailIntents(repository)[0]
+
+		expect(result.status).toBe('planned')
+		expect(emailZero?.metadata.courseDeadlineTimeZone).toEqual(deadline.value)
+	})
+
+	it('drops the zone while both capture and exhaustion are off', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const deadline = deadlineTimeZoneEvidenceFromHeader({
+			headerValue: 'Europe/Berlin',
+			capturedAt: subscribedAt,
+		})
+		if (!deadline.ok) throw new Error(deadline.error.detail)
+
+		await enterSkillsNewsletterSubscriber({
+			repository,
+			allowlist: rollingAllowlist(),
+			allowWrite: true,
+			input: {
+				kitSubscriberId: 'kit-off',
+				email: 'off@example.com',
+				formId: 9376133,
+				source: 'aihero_skills_page',
+				subscribedAt,
+				deadlineTimeZone: deadline.value,
+			},
+		})
+
+		expect(
+			valuePathEmailIntents(repository)[0]?.metadata,
+		).not.toHaveProperty('courseDeadlineTimeZone')
+	})
+
 	it('uses explicit Pacific fallback for confirmation or replay events', async () => {
 		const repository = new InMemorySubscriberMarketingRepository()
 		await enterSkillsNewsletterSubscriber({

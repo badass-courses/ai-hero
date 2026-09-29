@@ -11,6 +11,7 @@ import {
 	type CouponIssuePayload,
 	type CouponIssuerRepository,
 } from './drovr-evergreen-coupon'
+import { evergreenDeadlineFormat } from './offer-deadline'
 import type { EffectApplicationError } from './evergreen-offer-journey/ports'
 import type { ContactRecord, SideEffectIntent } from './types'
 
@@ -196,6 +197,71 @@ describe('issue intent and offer fields', () => {
 			aih_evergreen_discount_amount: '$100',
 			aih_evergreen_deadline_display:
 				'Monday, September 14, 2026 at 11:59 PM PDT',
+		})
+	})
+})
+
+describe('the deadline format switch', () => {
+	const fields = (
+		deadlineFormat?: 'legacy' | 'absolute',
+		overrides: Partial<CouponIssuePayload> = {},
+	) =>
+		offerFieldsFor({
+			couponId: 'c1',
+			payload: { ...payload, ...overrides },
+			origin: 'https://www.aihero.dev',
+			...(deadlineFormat ? { deadlineFormat } : {}),
+		})
+
+	it('reads only an exact "true"; anything else keeps today\'s text', () => {
+		expect(evergreenDeadlineFormat({})).toBe('legacy')
+		expect(
+			evergreenDeadlineFormat({ AIH_EVERGREEN_DEADLINE_FORMAT_V2_ENABLED: '1' }),
+		).toBe('legacy')
+		expect(
+			evergreenDeadlineFormat({
+				AIH_EVERGREEN_DEADLINE_FORMAT_V2_ENABLED: ' true ',
+			}),
+		).toBe('absolute')
+	})
+
+	it('off (the deploy default): the Kit fields are byte-for-byte today\'s', () => {
+		const before = process.env.AIH_EVERGREEN_DEADLINE_FORMAT_V2_ENABLED
+		delete process.env.AIH_EVERGREEN_DEADLINE_FORMAT_V2_ENABLED
+		try {
+			expect(fields()).toEqual(fields('legacy'))
+			expect(fields()).not.toHaveProperty('aih_evergreen_deadline_short')
+			expect(fields().aih_evergreen_deadline_display).toBe(
+				deadlineDisplay(payload.expiresAt, payload.timezone),
+			)
+		} finally {
+			if (before !== undefined)
+				process.env.AIH_EVERGREEN_DEADLINE_FORMAT_V2_ENABLED = before
+		}
+	})
+
+	it('on: the long field follows the copy rule and the short field feeds the preview', () => {
+		expect(fields('absolute')).toMatchObject({
+			aih_evergreen_deadline_display:
+				'Monday, September 14, 2026 at 11:59 PM Pacific Daylight Time',
+			aih_evergreen_deadline_short: 'Mon Sep 14, 11:59 PM PDT',
+			aih_evergreen_offer_price: '$199',
+		})
+		expect(
+			fields('absolute', { timezoneSource: 'fallback' })
+				.aih_evergreen_deadline_display,
+		).toBe(
+			"Monday, September 14, 2026 at 11:59 PM Pacific Daylight Time (that's Tuesday, September 15 at 6:59 AM UTC)",
+		)
+		expect(
+			fields('absolute', {
+				expiresAt: '2026-10-05T21:59:59.000Z',
+				timezone: 'Europe/Berlin',
+			}),
+		).toMatchObject({
+			aih_evergreen_deadline_display:
+				'Monday, October 5, 2026 at 11:59 PM Central European Summer Time',
+			aih_evergreen_deadline_short: 'Mon Oct 5, 11:59 PM CEST',
 		})
 	})
 })

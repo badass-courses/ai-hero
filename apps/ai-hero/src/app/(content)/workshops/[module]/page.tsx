@@ -12,6 +12,7 @@ import { TeamWelcomeVideo } from '@/app/(content)/workshops/_components/team-wel
 import { WorkshopActionsBar } from '@/app/(content)/workshops/_components/workshop-user-actions'
 import { Contributor } from '@/components/contributor'
 import { EvergreenClaimPanel } from '@/components/evergreen-claim-panel'
+import { EvergreenOfferEndedNotice } from '@/components/evergreen-offer-ended-notice'
 import { DiscountDeadline } from '@/components/pricing/discount-deadline'
 import { PricingInline } from '@/components/pricing/pricing-inline'
 import { TYPE } from '@/components/landing/type'
@@ -276,11 +277,17 @@ export default async function ModulePage(props: Props) {
 		<LayoutClient withContainer>
 			{params.module === 'ai-coding-crash-course' &&
 				product?.id === 'product-ma254' && (
-					<EvergreenClaimPanel
-						pilotOnly
-						endpoint="/api/evergreen/claim"
-						productPath="/workshops/ai-coding-crash-course"
-					/>
+					<>
+						{/* An expired offer link says so instead of a silent full price. */}
+						<React.Suspense fallback={null}>
+							<EvergreenOfferEndedNotice endpoint="/api/evergreen/offer-status" />
+						</React.Suspense>
+						<EvergreenClaimPanel
+							pilotOnly
+							endpoint="/api/evergreen/claim"
+							productPath="/workshops/ai-coding-crash-course"
+						/>
+					</>
 				)}
 			<main className="flex min-h-screen w-full flex-col">
 				{isPreLaunch && (
