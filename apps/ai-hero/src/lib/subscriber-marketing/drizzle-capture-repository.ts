@@ -74,6 +74,11 @@ import {
 
 type AiHeroWriteDatabase = any
 
+const AWAITED_DISPATCH_EVENT_TYPES: ReadonlySet<string> = new Set([
+	JOURNEY_OWNER_ASSIGNED_EVENT_TYPE,
+	'purchase.recorded',
+])
+
 // ~5k rows of intent payload (metadata/gates included) is ~5MB on the wire,
 // far under vtgate's 64MiB gRPC response cap.
 const contactId = customAlphabet(
@@ -383,8 +388,10 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 				occurredAt: new Date(record.occurredAt),
 				createdAt: new Date(record.createdAt),
 			})
-			// A birth is awaited: nothing re-sends one lost to a frozen lambda.
-			if (record.eventType === JOURNEY_OWNER_ASSIGNED_EVENT_TYPE) {
+			// A birth or a purchase is awaited: nothing re-sends one lost to a
+			// frozen lambda, and a lost purchase keeps pitching someone who
+			// already bought (row 194, 2026-09-27).
+			if (AWAITED_DISPATCH_EVENT_TYPES.has(record.eventType)) {
 				await dispatchDrovrShadowFactAwaited({
 					kind: 'contact-event',
 					event: record,

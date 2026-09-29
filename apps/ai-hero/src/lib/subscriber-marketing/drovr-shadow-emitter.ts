@@ -101,6 +101,7 @@ export type DrovrShadowEvent = {
 		| { scope: 'course' | 'all' }
 		| { formId: string; kitFormId: number }
 		| { productId: string }
+		| { productId: string; couponId: string; sameOffer: true }
 		| DrovrPinnedTimezonePayload
 		| DrovrContactDirectoryBirthPayload
 		| DrovrContactProfilePayload
@@ -380,8 +381,20 @@ function mapContactEvent(event: ContactEventRecord): DrovrShadowEvent[] {
 		case 'purchase.recorded': {
 			const productId = purchaseProductId(event.payloadSummary.keywords)
 			if (!productId) return []
+			// Only the evergreen journey hears which offer converted: value-path's
+			// purchaseIsSameOffer guard reads sameOffer as its own offer's.
+			const evergreenOffer = evergreenOfferRedemption(event.domainPayload)
 			return [
-				...bothJourneys(base, 'purchase.recorded', { productId }),
+				...bothJourneys(base, 'purchase.recorded', { productId }).map(
+					(shadowEvent) =>
+						evergreenOffer &&
+						shadowEvent.journeyId === DROVR_EVERGREEN_OFFER_JOURNEY_ID
+							? {
+									...shadowEvent,
+									payload: { productId, ...evergreenOffer },
+								}
+							: shadowEvent,
+				),
 				shadowNewsletterBirth({
 					contactId: event.contactId,
 					occurredAt: event.occurredAt,
@@ -863,6 +876,20 @@ function canonicalSkillsEmailResourceId(value: string) {
 	const position = Number(match[1])
 	if (!Number.isSafeInteger(position) || position < 0) return undefined
 	return `ai-hero-skills-workflow.email-${position}`
+}
+
+function evergreenOfferRedemption(
+	domainPayload: unknown,
+): { couponId: string; sameOffer: true } | undefined {
+	if (!domainPayload || typeof domainPayload !== 'object') return undefined
+	const offer = (domainPayload as Record<string, unknown>).evergreenOffer
+	if (!offer || typeof offer !== 'object') return undefined
+	const { couponId, sameOffer } = offer as Record<string, unknown>
+	return typeof couponId === 'string' &&
+		couponId.startsWith('eoj-coupon:') &&
+		sameOffer === true
+		? { couponId, sameOffer }
+		: undefined
 }
 
 function purchaseProductId(keywords: string[]) {

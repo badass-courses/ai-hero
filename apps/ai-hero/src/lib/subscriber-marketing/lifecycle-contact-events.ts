@@ -38,6 +38,24 @@ export type PurchaseRecordedSource = {
 	purchasedAt: string
 	/** Captured at course entry when the purchase path can recover it. */
 	deadlineTimeZone?: DeadlineTimeZoneEvidence
+	/**
+	 * The evergreen coupon this purchase redeemed, read from the coupon row.
+	 * The coupon names the contact the offer was pitched to, which can differ
+	 * from the contact behind the buyer's user (row 194).
+	 */
+	evergreenOffer?: EvergreenOfferRedemption
+}
+
+export type EvergreenOfferRedemption = {
+	couponId: string
+	/** AI_Coupon.fields.evergreenOffer.issue.contactId */
+	contactId: string
+}
+
+/** Carried on the offer contact's purchase.recorded as domainPayload. */
+export type PurchaseRecordedEvergreenOfferPayload = {
+	couponId: string
+	sameOffer: true
 }
 
 export type ContactUnsubscribedSource = {
@@ -99,6 +117,15 @@ export function purchaseRecordedSemanticKey(purchaseId: string) {
 	return `ai-hero:purchase.recorded:purchase:${purchaseId}`.toLowerCase()
 }
 
+/**
+ * The second record of an evergreen coupon purchase, on the contact behind
+ * the buyer's user when that is not the offer contact. That contact may be
+ * mid-pitch on its own journey, and must hear about the purchase too.
+ */
+export function purchaseRecordedBuyerSemanticKey(purchaseId: string) {
+	return `${purchaseRecordedSemanticKey(purchaseId)}:buyer`
+}
+
 export function contactUnsubscribedSemanticKey(
 	email: string,
 	preferenceKey: string,
@@ -115,14 +142,28 @@ export function contactUnsubscribedSemanticKey(
 export function buildPurchaseRecordedEvent(
 	source: PurchaseRecordedSource,
 	evidence: ContactIdentityEvidence,
+	options: {
+		/** Set only on the offer contact's record, never on the buyer copy. */
+		evergreenOffer?: PurchaseRecordedEvergreenOfferPayload
+		buyerCopy?: boolean
+	} = {},
 ): NormalizedContactEvent {
+	const suffix = options.buyerCopy ? ':buyer' : ''
+	const domainPayload = {
+		...(source.deadlineTimeZone
+			? { deadlineTimeZone: source.deadlineTimeZone }
+			: {}),
+		...(options.evergreenOffer ? { evergreenOffer: options.evergreenOffer } : {}),
+	}
 	return {
 		provider: 'ai-hero',
-		providerEventId: `purchase:${source.purchaseId}`,
+		providerEventId: `purchase:${source.purchaseId}${suffix}`,
 		providerReference: `ai-hero:purchase:${source.purchaseId}`,
 		eventType: 'purchase.recorded',
 		occurredAt: source.purchasedAt,
-		semanticIdempotencyKey: purchaseRecordedSemanticKey(source.purchaseId),
+		semanticIdempotencyKey: options.buyerCopy
+			? purchaseRecordedBuyerSemanticKey(source.purchaseId)
+			: purchaseRecordedSemanticKey(source.purchaseId),
 		privacyLevel: 'internal',
 		identityEvidence: evidence,
 		payloadSummary: {
@@ -134,9 +175,7 @@ export function buildPurchaseRecordedEvent(
 			],
 			restrictedPayloadStored: false,
 		},
-		...(source.deadlineTimeZone
-			? { domainPayload: { deadlineTimeZone: source.deadlineTimeZone } }
-			: {}),
+		...(Object.keys(domainPayload).length > 0 ? { domainPayload } : {}),
 		schemaVersion: CONTACT_EVENT_SCHEMA_VERSION,
 	}
 }
@@ -280,17 +319,37 @@ async function resolveLifecycleIdentity(
 		}
 	}
 
-	// The contact exists but lacks a trusted identity row for this evidence.
-	// Follow the linkAiHeroUserIdentities convention: key the ai-hero identity
-	// by userId when known so later userId lookups resolve, else by contact id.
-	// (provider, externalId) is unique, so an externalId already claimed by a
-	// different contact falls back to the contact-id key instead of colliding.
-	const path = input.userId
-		? 'contact-by-user-id-link-ai-hero-identity'
-		: 'contact-by-email-link-ai-hero-identity'
-	for (const externalId of Array.from(
-		new Set([input.userId ?? contact.userId ?? contact.id, contact.id]),
-	)) {
+	return linkExistingContact(repository, {
+		contact,
+		firstKey: input.userId ?? contact.userId ?? contact.id,
+		path: input.userId
+			? 'contact-by-user-id-link-ai-hero-identity'
+			: 'contact-by-email-link-ai-hero-identity',
+		evidenceFor,
+	})
+}
+
+/**
+ * The contact exists but lacks a trusted identity row for this evidence.
+ * Follow the linkAiHeroUserIdentities convention: key the ai-hero identity
+ * by userId when known so later userId lookups resolve, else by contact id.
+ * (provider, externalId) is unique, so an externalId already claimed by a
+ * different contact falls back to the contact-id key instead of colliding.
+ */
+async function linkExistingContact(
+	repository: ContactEventPreviewRepository,
+	args: {
+		contact: ContactRecord
+		firstKey: string
+		path: string
+		evidenceFor: (
+			contact: ContactRecord,
+			providerIdentity: { provider: 'ai-hero'; externalId: string },
+		) => ContactIdentityEvidence
+	},
+): Promise<LifecycleIdentityResolution> {
+	const { contact, path, evidenceFor } = args
+	for (const externalId of Array.from(new Set([args.firstKey, contact.id]))) {
 		const existingAiHeroIdentity = await repository.findProviderIdentity(
 			'ai-hero',
 			externalId,
@@ -321,17 +380,49 @@ async function resolveLifecycleIdentity(
 	}
 }
 
+/**
+ * The contact an evergreen coupon was issued to. Only that contact's own
+ * keys are candidates: the buyer's userId may belong to another contact, and
+ * linking it here would merge two people on a coupon's say-so.
+ */
+async function resolveEvergreenOfferContact(
+	repository: ContactEventPreviewRepository,
+	contactId: string,
+): Promise<LifecycleIdentityResolution> {
+	const contact = await repository.findContactById(contactId)
+	if (!contact) {
+		return {
+			status: 'skipped',
+			reason: 'no-existing-contact',
+			detail: `Evergreen coupon contact ${contactId} does not exist.`,
+		}
+	}
+	return linkExistingContact(repository, {
+		contact,
+		firstKey: contact.userId ?? contact.id,
+		path: 'evergreen-coupon-issue-contact',
+		evidenceFor: (resolved, providerIdentity) => ({
+			email: resolved.email ?? undefined,
+			name: resolved.name ?? undefined,
+			userId: resolved.userId ?? undefined,
+			providerIdentity,
+			source: providerIdentity.provider,
+			strength: 'strong',
+		}),
+	})
+}
+
 async function decideLifecycleContactEvent(args: {
 	repository: ContactEventPreviewRepository
 	source: LifecycleContactEventSourceKind
 	sourceId: string
-	identity: LifecycleIdentityInput
+	resolved: LifecycleIdentityResolution
 	build: (
 		evidence: ContactIdentityEvidence,
 		contactId: string,
 	) => NormalizedContactEvent | Promise<NormalizedContactEvent>
 }): Promise<LifecycleContactEventDecision> {
-	const resolved = await resolveLifecycleIdentity(args.repository, args.identity)
+	const { resolved } = args
 	if (resolved.status === 'skipped') {
 		return {
 			status: 'skipped',
@@ -398,32 +489,81 @@ async function findContactDeadlineTimeZone(
 	return candidates[0]?.deadlineTimeZone
 }
 
-async function previewPurchaseRecordedDecision(
+/**
+ * A purchase is recorded on the contact that bought. An evergreen coupon
+ * purchase is recorded on the contact the coupon was issued to, whatever
+ * user checked out: that contact's offer is the one still pitching (row 194:
+ * five coupon buyers got "ends tonight" after they had bought). When the
+ * buyer's user resolves to another contact, that contact gets its own
+ * record too, so a pitch there stops as it did before.
+ */
+async function previewPurchaseRecordedDecisions(
 	repository: ContactEventPreviewRepository,
 	row: PurchaseRecordedSource,
-) {
-	return decideLifecycleContactEvent({
-		repository,
-		source: 'purchase-recorded',
-		sourceId: row.purchaseId,
-		identity: {
-			userId: row.userId,
-			email: row.email,
-			name: row.name,
-		},
-		build: async (evidence, contactId) => {
+): Promise<LifecycleContactEventDecision[]> {
+	const build =
+		(options: Parameters<typeof buildPurchaseRecordedEvent>[2]) =>
+		async (evidence: ContactIdentityEvidence, contactId: string) => {
 			const deadlineTimeZone =
 				row.deadlineTimeZone ??
 				(await findContactDeadlineTimeZone(repository, contactId))
 			return buildPurchaseRecordedEvent(
 				deadlineTimeZone ? { ...row, deadlineTimeZone } : row,
 				evidence,
+				options,
 			)
-		},
+		}
+	const buyer = await resolveLifecycleIdentity(repository, {
+		userId: row.userId,
+		email: row.email,
+		name: row.name,
 	})
+	const offer = row.evergreenOffer
+		? await resolveEvergreenOfferContact(
+				repository,
+				row.evergreenOffer.contactId,
+			)
+		: undefined
+	if (!row.evergreenOffer || !offer || offer.status !== 'resolved') {
+		return [
+			await decideLifecycleContactEvent({
+				repository,
+				source: 'purchase-recorded',
+				sourceId: row.purchaseId,
+				resolved: buyer,
+				build: build({}),
+			}),
+		]
+	}
+	const decisions = [
+		await decideLifecycleContactEvent({
+			repository,
+			source: 'purchase-recorded',
+			sourceId: row.purchaseId,
+			resolved: offer,
+			build: build({
+				evergreenOffer: {
+					couponId: row.evergreenOffer.couponId,
+					sameOffer: true,
+				},
+			}),
+		}),
+	]
+	if (buyer.status === 'resolved' && buyer.contact.id !== offer.contact.id) {
+		decisions.push(
+			await decideLifecycleContactEvent({
+				repository,
+				source: 'purchase-recorded',
+				sourceId: `${row.purchaseId}:buyer`,
+				resolved: buyer,
+				build: build({ buyerCopy: true }),
+			}),
+		)
+	}
+	return decisions
 }
 
-function previewContactUnsubscribedDecision(
+async function previewContactUnsubscribedDecision(
 	repository: ContactEventPreviewRepository,
 	row: ContactUnsubscribedSource,
 ) {
@@ -431,10 +571,10 @@ function previewContactUnsubscribedDecision(
 		repository,
 		source: 'contact-unsubscribed',
 		sourceId: `${row.email.trim().toLowerCase()}:${row.preferenceKey}`,
-		identity: {
+		resolved: await resolveLifecycleIdentity(repository, {
 			kitSubscriberId: row.kitSubscriberId,
 			email: row.email,
-		},
+		}),
 		build: (evidence) => buildContactUnsubscribedEvent(row, evidence),
 	})
 }
@@ -516,7 +656,9 @@ export async function previewPurchaseRecordedContactEvents(args: {
 }): Promise<LifecycleContactEventSummary> {
 	const decisions: LifecycleContactEventDecision[] = []
 	for (const row of args.rows) {
-		decisions.push(await previewPurchaseRecordedDecision(args.repository, row))
+		decisions.push(
+			...(await previewPurchaseRecordedDecisions(args.repository, row)),
+		)
 	}
 	return summarize('preview', decisions, [], 0)
 }
@@ -529,7 +671,9 @@ export async function writePurchaseRecordedContactEvents(args: {
 	const now = args.now ?? new Date().toISOString()
 	const decisions: LifecycleContactEventDecision[] = []
 	for (const row of args.rows) {
-		decisions.push(await previewPurchaseRecordedDecision(args.repository, row))
+		decisions.push(
+			...(await previewPurchaseRecordedDecisions(args.repository, row)),
+		)
 	}
 	const { written, createdProviderIdentities } = await writeLifecycleDecisions({
 		repository: args.repository,

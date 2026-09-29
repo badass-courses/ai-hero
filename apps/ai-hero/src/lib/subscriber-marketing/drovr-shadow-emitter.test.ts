@@ -380,6 +380,65 @@ describe('drovr shadow fact mapper', () => {
 		})
 	})
 
+	// Row 194: drovr counted every Crash Course purchase in the offer as the
+	// offer converting. The coupon names the conversion; only the evergreen
+	// journey hears it, because value-path's purchaseIsSameOffer guard reads
+	// sameOffer as its own offer's.
+	it('tells only the evergreen journey which coupon converted', () => {
+		const couponId = `eoj-coupon:${'a'.repeat(64)}`
+		const events = mapDrovrShadowFact({
+			kind: 'contact-event',
+			event: contactEvent('purchase.recorded', {
+				payloadSummary: {
+					summary: 'purchase',
+					keywords: ['purchase-recorded', 'product-ma254', 'status-valid'],
+					restrictedPayloadStored: false,
+				},
+				domainPayload: { evergreenOffer: { couponId, sameOffer: true } },
+			}),
+		})
+
+		const byJourney = Object.fromEntries(
+			events.map((item) => [item.journeyId, item.payload]),
+		)
+		expect(byJourney['crash-course-evergreen-offer']).toEqual({
+			productId: 'product-ma254',
+			couponId,
+			sameOffer: true,
+		})
+		expect(byJourney['value-path-skills-course']).toEqual({
+			productId: 'product-ma254',
+		})
+		expect(byJourney['contact-directory']).toEqual({
+			productId: 'product-ma254',
+		})
+	})
+
+	it.each([
+		['a non-evergreen coupon', { couponId: 'coupon-1', sameOffer: true }],
+		['no sameOffer', { couponId: `eoj-coupon:${'a'.repeat(64)}` }],
+		[
+			'sameOffer not true',
+			{ couponId: `eoj-coupon:${'a'.repeat(64)}`, sameOffer: 'true' },
+		],
+	])('drops an evergreen offer payload with %s', (_label, evergreenOffer) => {
+		const events = mapDrovrShadowFact({
+			kind: 'contact-event',
+			event: contactEvent('purchase.recorded', {
+				payloadSummary: {
+					summary: 'purchase',
+					keywords: ['purchase-recorded', 'product-ma254', 'status-valid'],
+					restrictedPayloadStored: false,
+				},
+				domainPayload: { evergreenOffer },
+			}),
+		})
+		expect(
+			events.find((item) => item.journeyId === 'crash-course-evergreen-offer')
+				?.payload,
+		).toEqual({ productId: 'product-ma254' })
+	})
+
 	it.each(['contact.unsubscribed', 'purchase.recorded'])(
 		'forwards %s to both journeys',
 		(eventType) => {
