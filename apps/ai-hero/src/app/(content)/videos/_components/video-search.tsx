@@ -92,20 +92,30 @@ function VideoSearchState() {
 	const [query, setQuery] = useQueryState('q')
 	const [sort, setSort] = useQueryState('sort')
 	const [accessParam, setAccessParam] = useQueryState('access')
-	const [hideWatched, setHideWatched] = useQueryState(
+	const [hideWatchedParam, setHideWatched] = useQueryState(
 		'hide-watched',
 		parseAsBoolean.withDefault(false),
 	)
-	const access = parseVideoAccess(accessParam)
 
 	const { data, isError, refetch } = api.videos.viewerStatus.useQuery(undefined, {
 		staleTime: 60_000,
 		refetchOnWindowFocus: false,
 		retry: 1,
 	})
-	// A failed status is an empty one: "My courses" and "Hide watched" would
-	// otherwise wait forever on ids that are never coming.
-	const status = data ?? (isError ? EMPTY_VIDEO_VIEWER_STATUS : null)
+	// A failed status is an empty one, so the page degrades to what an
+	// anonymous visitor sees rather than waiting on ids that are never coming.
+	const statusFailed = isError && !data
+	const status = data ?? (statusFailed ? EMPTY_VIDEO_VIEWER_STATUS : null)
+	// "My courses" and "Hide watched" only apply once the viewer is known to own
+	// or have watched something. Otherwise a shared `?access=owned` link, or a
+	// failed status, filters everything out and the grid calls it "watched".
+	// Both stay in the URL, so a successful retry restores them.
+	const access =
+		status && status.ownedIds.length === 0
+			? 'all'
+			: parseVideoAccess(accessParam)
+	const hideWatched =
+		hideWatchedParam && (status === null || status.watchedIds.length > 0)
 
 	const filters = buildVideoSearchFilter({
 		access,
@@ -149,7 +159,7 @@ function VideoSearchState() {
 				statusPending={statusPending}
 				hideWatched={hideWatched}
 				onHideWatchedChange={(value) => setHideWatched(value || null)}
-				statusFailed={isError}
+				statusFailed={statusFailed}
 				onRetryStatus={() => void refetch()}
 			/>
 		</InstantSearchNext>
