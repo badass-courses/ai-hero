@@ -4,7 +4,7 @@ import { and, eq } from 'drizzle-orm'
 import { contact, providerIdentity, prices, coupon } from '@/db/schema'
 import type { EvergreenOfferJourneyDatabase } from './drizzle-ledger'
 import type { JourneyLedger } from './ports'
-import type { SendMessageIntent } from './domain'
+import type { IssuedCoupon, SendMessageIntent } from './domain'
 import type { AttemptEvidence } from './attempt-evidence'
 import { EVERGREEN_OFFER_PRODUCT_ID } from './domain'
 import { revisionOf } from './revision-scope'
@@ -42,6 +42,30 @@ const money = (cents: number) =>
 		currency: 'USD',
 		maximumFractionDigits: cents % 100 ? 2 : 0,
 	}).format(cents / 100)
+/**
+ * The pilot's DEADLINE_DISPLAY. Legacy (the switch off) is the text it has
+ * always printed; the switch on uses the one offer-deadline formatter.
+ */
+export function pilotDeadlineDisplay(
+	issued: Pick<IssuedCoupon, 'expiresAt' | 'deadlineTimeZone'>,
+	env: Record<string, string | undefined>,
+): string {
+	if (evergreenDeadlineFormat(env) === 'absolute')
+		return formatOfferDeadline(
+			offerDeadlineFromEvidence(issued.expiresAt, issued.deadlineTimeZone),
+		)
+	return new Intl.DateTimeFormat('en-US', {
+		timeZone: issued.deadlineTimeZone.timeZone,
+		weekday: 'long',
+		year: 'numeric',
+		month: 'long',
+		day: 'numeric',
+		hour: 'numeric',
+		minute: '2-digit',
+		second: '2-digit',
+		timeZoneName: 'long',
+	}).format(new Date(issued.expiresAt))
+}
 export function createTrustedMessagePreparation(options: {
 	database: Pick<EvergreenOfferJourneyDatabase, 'select'>
 	ledger: JourneyLedger
@@ -143,25 +167,7 @@ export function createTrustedMessagePreparation(options: {
 			authority.expiresAt = issued.expiresAt
 			authority.timeZone = issued.deadlineTimeZone.timeZone
 			values.DISCOUNT_AMOUNT = money(actual.amountDiscount)
-			values.DEADLINE_DISPLAY =
-				evergreenDeadlineFormat(process.env) === 'absolute'
-					? formatOfferDeadline(
-							offerDeadlineFromEvidence(
-								issued.expiresAt,
-								issued.deadlineTimeZone,
-							),
-						)
-					: new Intl.DateTimeFormat('en-US', {
-							timeZone: authority.timeZone,
-							weekday: 'long',
-							year: 'numeric',
-							month: 'long',
-							day: 'numeric',
-							hour: 'numeric',
-							minute: '2-digit',
-							second: '2-digit',
-							timeZoneName: 'long',
-						}).format(new Date(issued.expiresAt))
+			values.DEADLINE_DISPLAY = pilotDeadlineDisplay(issued, process.env)
 		}
 		const compiled = compileMessageTemplate(template, values)
 		return preparationSnapshotSchema.parse({

@@ -69,6 +69,11 @@ describe('evergreenOfferStatus', () => {
 		)
 	})
 
+	it('fails closed on an unreadable clock: none, never ended', async () => {
+		const { row } = await issuedRow(offerPayload())
+		expect(evergreenOfferStatus(row, 'not-a-date')).toEqual({ status: 'none' })
+	})
+
 	it('says nothing for a missing row or a coupon the journey does not own', async () => {
 		const { row } = await issuedRow(offerPayload())
 		expect(evergreenOfferStatus(null, '2026-10-07T00:00:00.000Z')).toEqual({

@@ -87,6 +87,7 @@ function runArgs(
     limit: 25,
     apply: true,
     birthInstant,
+    carryTimeZone: false,
     ...overrides,
   };
 }
@@ -215,6 +216,34 @@ describe("evergreen pitch backfill run", () => {
     });
   });
 
+  it.each([
+    [true, "Europe/Berlin", "vercel-header"],
+    [false, "America/Los_Angeles", "fallback"],
+  ] as const)(
+    "capture switch %s: the Berlin intent's birth pins %s",
+    async (carryTimeZone, timezone, timezoneSource) => {
+      const repository = fakeRepository({
+        population: [
+          {
+            ...candidate("berlin"),
+            timezone: {
+              timezone: "Europe/Berlin",
+              timezoneSource: "vercel-header",
+            },
+          },
+        ],
+      });
+
+      await runEvergreenPitchBackfill(runArgs(repository, { carryTimeZone }));
+
+      const fact = repository.dispatchFact.mock.calls[0]![0];
+      expect(mapDrovrShadowFact(fact)[0]!.payload).toMatchObject({
+        timezone,
+        timezoneSource,
+      });
+    },
+  );
+
   it("sends the zone the terminal intent carried, so drovr pins it instead of Pacific", async () => {
     const repository = fakeRepository({
       population: [
@@ -229,7 +258,9 @@ describe("evergreen pitch backfill run", () => {
       ],
     });
 
-    await runEvergreenPitchBackfill(runArgs(repository));
+    await runEvergreenPitchBackfill(
+      runArgs(repository, { carryTimeZone: true }),
+    );
 
     const [berlin, noEvidence] = repository.dispatchFact.mock.calls.map(
       ([fact]) => mapDrovrShadowFact(fact)[0]!.payload,

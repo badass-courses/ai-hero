@@ -34,6 +34,11 @@ export function evergreenOfferStatus(
 		// Not a journey-owned coupon, or its terms no longer match: say nothing.
 		return { status: 'none' }
 	}
-	if (Date.parse(now) < Date.parse(coupon.expiresAt)) return { status: 'open' }
+	const nowMs = Date.parse(now)
+	const expiresMs = Date.parse(coupon.expiresAt)
+	// An unreadable clock says nothing rather than "ended".
+	if (!Number.isFinite(nowMs) || !Number.isFinite(expiresMs))
+		return { status: 'none' }
+	if (nowMs < expiresMs) return { status: 'open' }
 	return { status: 'ended', deadline: issuedCouponDeadline(coupon) }
 }

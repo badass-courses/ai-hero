@@ -25,6 +25,7 @@ import {
   type DrovrPinnedTimezonePayload,
   type DrovrShadowFact,
 } from "@/lib/subscriber-marketing/drovr-shadow-emitter";
+import { deadlineTimeZoneCaptureEnabled } from "@/lib/subscriber-marketing/course-sequence-exhaustion";
 import { getSkillsWorkflowEmailStep } from "@/lib/subscriber-marketing/skills-workflow-path";
 
 export const DEFAULT_BACKFILL_FLOOR = "2026-08-26T00:00:00.000Z";
@@ -266,6 +267,12 @@ export async function runEvergreenPitchBackfill(args: {
   limit: number;
   apply: boolean;
   birthInstant: string;
+  /**
+   * Forward the terminal intent's zone evidence to drovr's birth. Only under
+   * AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED; off, every birth takes the Pacific
+   * fallback exactly as before.
+   */
+  carryTimeZone: boolean;
   logRefusal?: (args: {
     contactId: string;
     reason: BackfillRefusalReason;
@@ -358,7 +365,9 @@ export async function runEvergreenPitchBackfill(args: {
         valuePathSlug: candidate.valuePathSlug,
         completedAt: candidate.completedAt,
         // Without it drovr pins every backfilled actor to the Pacific fallback.
-        ...(candidate.timezone ? { timezone: candidate.timezone } : {}),
+        ...(args.carryTimeZone && candidate.timezone
+          ? { timezone: candidate.timezone }
+          : {}),
         backfill: {
           occurredAt: args.birthInstant,
           idempotencyKey,
@@ -623,6 +632,7 @@ async function main() {
       limit: args.limit,
       apply: args.apply,
       birthInstant,
+      carryTimeZone: deadlineTimeZoneCaptureEnabled(process.env),
       logRefusal: (refusal) => {
         console.error(JSON.stringify({ type: "refusal", ...refusal }));
       },

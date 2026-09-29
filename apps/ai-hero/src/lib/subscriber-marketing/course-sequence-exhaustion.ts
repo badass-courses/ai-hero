@@ -279,15 +279,16 @@ export function parseCourseSequenceExhaustionEnabled(value?: string) {
 
 /**
  * Whether signup captures the reader's zone (`x-vercel-ip-timezone`) as
- * course entry evidence. That evidence rides every value-path intent to the
- * evergreen birth, where drovr pins the offer deadline to it; without it every
- * contact is pinned Pacific. Capture used to hang off the exhaustion flag,
- * which is off in production, so no signup carried a zone.
+ * course entry evidence, and whether the evergreen backfill forwards that
+ * evidence. It rides every value-path intent to the evergreen birth, where
+ * drovr pins the offer deadline to it; without it every contact is pinned
+ * Pacific. Capture used to hang off the exhaustion flag, which is off in
+ * production, so no signup carried a zone.
  *
  * Capture changes the signup path: a Kit field write per signup and the typed
- * course entry event. `AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED` turns it on or
- * off without a deploy; unset, the default below decides. Exhaustion still
- * needs the evidence, so it keeps capture on whatever this switch says.
+ * course entry event. `AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED` is its only
+ * switch (the exhaustion flag does not turn it on); unset, the default below
+ * decides.
  */
 export const DEADLINE_TIMEZONE_CAPTURE_DEFAULT = false
 
@@ -295,18 +296,11 @@ export function deadlineTimeZoneCaptureEnabled(
 	env: Record<string, string | undefined>,
 ): boolean {
 	const value = env.AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED?.trim().toLowerCase()
-	const capture =
-		value === 'true'
-			? true
-			: value === 'false'
-				? false
-				: DEADLINE_TIMEZONE_CAPTURE_DEFAULT
-	return (
-		capture ||
-		parseCourseSequenceExhaustionEnabled(
-			env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED,
-		)
-	)
+	return value === 'true'
+		? true
+		: value === 'false'
+			? false
+			: DEADLINE_TIMEZONE_CAPTURE_DEFAULT
 }
 
 export function deadlineTimeZoneEvidenceFromHeader(args: {

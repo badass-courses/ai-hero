@@ -301,7 +301,7 @@ describe('course sequence exhaustion evidence', () => {
 		expect(parseCourseSequenceExhaustionEnabled('true')).toBe(true)
 	})
 
-	it('keeps zone capture off by default, on its own switch or under exhaustion', () => {
+	it('keeps zone capture off by default, on its own switch only, never under exhaustion', () => {
 		expect(DEADLINE_TIMEZONE_CAPTURE_DEFAULT).toBe(false)
 		expect(deadlineTimeZoneCaptureEnabled({})).toBe(false)
 		expect(
@@ -310,12 +310,11 @@ describe('course sequence exhaustion evidence', () => {
 		expect(
 			deadlineTimeZoneCaptureEnabled({ AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED: 'yes' }),
 		).toBe(false)
-		// Exhaustion reads the evidence, so it keeps capture on.
+		// One switch: the exhaustion flag never turns capture on.
 		expect(
 			deadlineTimeZoneCaptureEnabled({
-				AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED: 'false',
 				AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED: 'true',
 			}),
-		).toBe(true)
+		).toBe(false)
 	})
 })

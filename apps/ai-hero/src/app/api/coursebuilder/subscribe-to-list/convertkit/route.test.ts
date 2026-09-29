@@ -169,6 +169,7 @@ function useRealCourseBuilderFailureBoundary(error: Error) {
 beforeEach(() => {
 	vi.clearAllMocks()
 	process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED = 'true'
+	process.env.AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED = 'true'
 	mocks.recordSignupAttribution.mockResolvedValue('captured')
 	mocks.createShortlinkAttribution.mockResolvedValue(undefined)
 	mocks.inngestSend.mockResolvedValue(undefined)
@@ -266,8 +267,8 @@ describe('subscribe-to-list convertkit route attribution', () => {
 		})
 	})
 
-	it('keeps course-entry evidence inactive until the rollout flag is enabled', async () => {
-		delete process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED
+	it('keeps course-entry evidence inactive while the capture switch is unset, even with exhaustion on', async () => {
+		delete process.env.AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED
 		mocks.courseBuilderPOST.mockResolvedValue(
 			subscriberResponse({
 				id: 101,
@@ -371,8 +372,9 @@ describe('subscribe-to-list convertkit route attribution', () => {
 		expect(mocks.inngestSend).not.toHaveBeenCalled()
 	})
 
-	it('writes no evidence field while capture is off', async () => {
-		delete process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED
+	it('writes no evidence field while capture is off, even with exhaustion on', async () => {
+		delete process.env.AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED
+		expect(process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED).toBe('true')
 		mocks.courseBuilderPOST.mockResolvedValue(
 			subscriberResponse({
 				id: 104,
