@@ -128,6 +128,7 @@ export const capturePurchaseContactEvent = inngest.createFunction(
 				const result = await writePurchaseRecordedContactEvents({
 					repository: new DrizzleCaptureMarketingRepository(db),
 					rows: [source],
+					redispatchDuplicates: true,
 				})
 				return {
 					counts: result.counts,

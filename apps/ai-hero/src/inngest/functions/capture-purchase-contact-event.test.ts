@@ -116,6 +116,16 @@ describe('capture purchase contact event (row 194)', () => {
 		)
 	})
 
+	it('asks the writer to re-dispatch a record a dead attempt left behind (row 194b)', async () => {
+		mocks.findPurchase.mockResolvedValue(purchaseRow('ppp-coupon'))
+
+		await run()
+
+		expect(mocks.write).toHaveBeenCalledWith(
+			expect.objectContaining({ redispatchDuplicates: true }),
+		)
+	})
+
 	it('reads no coupon for any other purchase', async () => {
 		mocks.findPurchase.mockResolvedValue(purchaseRow('ppp-coupon'))
 
