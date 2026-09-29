@@ -186,8 +186,11 @@ lessons); an owner of four cohorts plus AI SDK v6 = 272 (219 lessons before the
 
 - Duration backfill from Mux into `videoResource.fields.duration` (~700 prod
   rows) — awaiting Vojta's call.
-- Add `- [Videos](/videos)` under Explore in the CMS `hub-sidebar` page once
-  the PR is merged and live (Vojta; the fallback MDX already has it).
+- The CMS `hub-sidebar` page (`page-f4md6`) lists `- [Videos](/videos)` under
+  Explore since 2026-09-29, written right after #333 deployed (Vojta asked
+  for it post-merge). The Explore icons and the collapsed rail are code, not
+  CMS: until #335 merges, Videos shows without an icon and is missing from
+  the rail.
 - Video facts were written to `content_production` on 2026-09-29, before
   merge, with Vojta's approval: 557 docs updated, 0 failed, a second pass
   clean, and the anonymous filter returning 75. The 89 never-indexed course
@@ -200,9 +203,11 @@ lessons); an owner of four cohorts plus AI SDK v6 = 272 (219 lessons before the
   Engineers) has no `fields.state` at all (and `visibility: public`, unlike its
   unlisted siblings), which the index schema rejects. Saving it once in the CMS
   fixes it; until then the hourly reconcile retries it and logs
-  `typesense.resource.validate.error`.
-- After deploy, re-scan lesson/solution docs for `image.mux.com` images: the
-  pre-merge save path still wrote them on any lesson save until #333 shipped.
+  `typesense.resource.validate.error`. The first production run (13:17 UTC,
+  2026-09-29) showed exactly this: 980 docs checked, 0 facts changed, 1
+  flagged for reindex, 0 rebuilt.
+- The post-deploy re-scan on 2026-09-29 found no `image.mux.com` images and no
+  paid playback ids among 622 lesson, solution and exercise docs.
 
 ## Later
 
