@@ -44,6 +44,7 @@ export async function loadVideoGraph(): Promise<VideoGraph> {
 				id: contentResource.id,
 				type: contentResource.type,
 				title: jsonString('title'),
+				slug: jsonString('slug'),
 				state: jsonString('state'),
 				visibility: jsonString('visibility'),
 				startsAt: jsonString('startsAt'),

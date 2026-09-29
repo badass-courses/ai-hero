@@ -93,16 +93,18 @@ export function VideoCard({
 	)
 }
 
-/** Lessons live under their workshop; alone they would route to a bare slug. */
+/**
+ * Lessons live under their workshop; alone they would route to a bare slug.
+ * `workshop_slug` is derived and reconciled, unlike the doc's
+ * `parentResources`, which keep a workshop's old slug after a rename (and a
+ * renamed workshop's lesson URL redirects to the workshop, not the lesson).
+ */
 function videoHref(hit: TypesenseResource) {
-	if (hit.type === 'lesson') {
-		const workshop = hit.parentResources?.find((p) => p.type === 'workshop')
-		if (workshop) {
-			return getResourcePath('lesson', hit.slug, 'view', {
-				parentType: 'workshop',
-				parentSlug: workshop.slug,
-			})
-		}
+	if (hit.type === 'lesson' && hit.workshop_slug) {
+		return getResourcePath('lesson', hit.slug, 'view', {
+			parentType: 'workshop',
+			parentSlug: hit.workshop_slug,
+		})
 	}
 	return getResourcePath(hit.type, hit.slug, 'view')
 }

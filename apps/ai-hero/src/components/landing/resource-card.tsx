@@ -53,20 +53,24 @@ export function ResourceCard({
 	const [hovered, setHovered] = React.useState(false)
 	const inline = inlinePlayback && hasPreview
 	// Where the preview got to: the next hover continues from it, and a click
-	// opens the video there, like YouTube.
+	// opens the video there, playing, like YouTube.
 	const previewPosition = React.useRef<number | null>(null)
+	// Seconds actually played, summed from the playhead's small forward steps
+	// — not position minus thumbnailTime, which breaks when the still's time is
+	// past the end of the video and the preview starts at zero.
+	const previewWatched = React.useRef(0)
 	const [resumeAt, setResumeAt] = React.useState<number | undefined>()
 	const router = useRouter()
 
 	const openAtPreviewPosition = (event: React.MouseEvent) => {
 		const seconds = previewPosition.current
-		const watched = seconds !== null && seconds - (thumbnailTime ?? 0) >= 3
+		const watched = seconds !== null && previewWatched.current >= 3
 		// Without a real look at the preview, let the page choose (a lesson
 		// resumes from its saved position; `t` would override that).
 		if (!watched || event.button !== 0) return
 		if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
 		event.preventDefault()
-		router.push(withStartTime(href, seconds))
+		router.push(continueFrom(href, seconds))
 	}
 
 	const link = (
@@ -99,6 +103,10 @@ export function ResourceCard({
 							captions: prefs.captions,
 							resumeAt,
 							onTimeChange: (seconds: number) => {
+								const last = previewPosition.current
+								if (last !== null && seconds > last && seconds - last < 2) {
+									previewWatched.current += seconds - last
+								}
 								previewPosition.current = seconds
 							},
 						})}
@@ -176,8 +184,11 @@ export function ResourceCard({
 	)
 }
 
-/** Both video players read `?t=<seconds>` as the start time. */
-function withStartTime(href: string, seconds: number) {
+/**
+ * Where the preview left off: both video players start at `t`, and a link
+ * with `t` plays on load (`play-from-link.ts`).
+ */
+function continueFrom(href: string, seconds: number) {
 	return `${href}${href.includes('?') ? '&' : '?'}t=${Math.floor(seconds)}`
 }
 

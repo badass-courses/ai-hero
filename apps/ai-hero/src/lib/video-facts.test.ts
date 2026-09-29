@@ -44,6 +44,7 @@ describe('computeVideoFacts', () => {
 			course_ids: null,
 			duration_seconds: 312,
 			container_title: null,
+			workshop_slug: null,
 			video_resource_id: 'v1',
 			thumbnail_time: null,
 			mux_playback_id: 'playback-v1',
@@ -258,6 +259,37 @@ describe('computeVideoFacts', () => {
 			owned: { playbackId: 'playback-v1', thumbnailTime: null },
 		})
 		expect(ownedVideoPlayback(graph, [], now)).toEqual({})
+	})
+
+	// Regression: lesson docs' parentResources kept `ai-sdk-v5-crash-course`
+	// after the workshop was renamed, and that URL redirects to the workshop.
+	it('links a lesson through an open workshop, a free one first', () => {
+		const facts = computeVideoFacts(
+			{
+				nodes: [
+					node('paid-ws', 'workshop', { slug: 'a-paid' }),
+					node('free-ws', 'workshop', { slug: 'z-free' }),
+					node('closed-ws', 'workshop', { slug: 'closed', state: 'draft' }),
+					node('section', 'section'),
+					node('lesson', 'lesson'),
+					node('other', 'lesson'),
+					video('v1'),
+					video('v2'),
+				],
+				edges: [
+					edge('paid-ws', 'lesson', 'standard'),
+					edge('free-ws', 'section', 'free'),
+					edge('section', 'lesson'),
+					edge('closed-ws', 'other', 'free'),
+					edge('lesson', 'v1'),
+					edge('other', 'v2'),
+				],
+			},
+			now,
+		)
+
+		expect(facts.get('lesson')?.workshop_slug).toBe('z-free')
+		expect(facts.get('other')?.workshop_slug).toBeNull()
 	})
 
 	it('opens nothing through a draft workshop', () => {

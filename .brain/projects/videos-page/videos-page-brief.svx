@@ -111,9 +111,16 @@ mid-build (see the ledger). Ships as **one PR**.
   with `clip-path: inset(0 round 10px)`. The player stays invisible until
   `playing` and fades in over the still, so there is never an empty box.
 - Both players read `?t=<seconds>` (`PostPlayer`, and `AuthedVideoPlayer`
-  where it beats the saved resume position). A card only adds `t` after 3+
-  seconds of preview, so an untouched lesson still resumes where the viewer
-  left it.
+  where it beats the saved resume position), and a link with `t` now plays on
+  load (`play-from-link.ts`; muted fallback if the browser refuses audio),
+  like YouTube's timestamp links (Vojta). A card only adds `t` after 3+
+  seconds of preview actually played — counted from playhead steps, not
+  position minus `thumbnail_time`, since some still times lie past the end of
+  the video — so an untouched lesson still resumes where the viewer left it.
+- Lesson links use the derived `workshop_slug`, not the doc's
+  `parentResources`, which keep a workshop's old slug after a rename (every AI
+  SDK lesson pointed at `ai-sdk-v5-crash-course`, which redirects to the
+  workshop page).
 - Matt's YouTube uploads and live streams are not content resources and are not
   on this page.
 - Gotchas carried from [[typesense-index-paths]]: both index paths call the
@@ -162,6 +169,7 @@ Mid-build calls (Vojta, 2026-09-29):
 20. Stills are proxied server-side by reusing `/api/thumbnails`. No Mux signed
     playback: rejected by Vojta. An id reaches a browser only for a free video
     or for an owner's own lesson — the same rule the lesson page follows.
+21. A link with `t` autoplays, so a clicked preview carries on playing.
 
 Verified 2026-09-29 against a clone of `content_production`
 (`content_vojta_videos_test`): anonymous = 75 videos (53 posts, 22 free

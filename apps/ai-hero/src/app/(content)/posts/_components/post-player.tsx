@@ -3,6 +3,7 @@
 import * as React from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { AutoPlayToggle } from '@/app/(content)/_components/autoplay-toggle'
+import { playFromLink } from '@/app/(content)/_components/play-from-link'
 import { PlayerGestureShell } from '@/components/player/player-gesture-shell'
 import Spinner from '@/components/spinner'
 import { useMuxChapters } from '@/components/video-chapters/use-mux-chapters'
@@ -110,6 +111,8 @@ export function PostPlayer({
 
 			if (autoplay) {
 				playerRef.current?.play().catch(console.warn)
+			} else if (time) {
+				playFromLink(playerRef.current)
 			}
 		},
 		onEnded: async () => {

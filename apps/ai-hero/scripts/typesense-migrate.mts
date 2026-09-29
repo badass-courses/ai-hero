@@ -171,6 +171,7 @@ function collectionSchema(
 		{ name: 'course_ids', type: 'string[]', optional: true },
 		{ name: 'duration_seconds', type: 'int32', optional: true },
 		{ name: 'container_title', type: 'string', optional: true },
+		{ name: 'workshop_slug', type: 'string', optional: true, index: false },
 		{ name: 'video_resource_id', type: 'string', optional: true, index: false },
 		{ name: 'thumbnail_time', type: 'int32', optional: true, index: false },
 		{ name: 'mux_playback_id', type: 'string', optional: true, index: false },

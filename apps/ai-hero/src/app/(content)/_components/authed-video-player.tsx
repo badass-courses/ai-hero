@@ -51,6 +51,7 @@ import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
 import { revalidateModuleLesson } from '../actions'
 import { useWorkshopNavigation } from '../workshops/_components/workshop-navigation-provider'
+import { playFromLink } from './play-from-link'
 import { AutoPlayToggle } from './autoplay-toggle'
 import { useModuleProgress } from './module-progress-provider'
 
@@ -210,6 +211,8 @@ export function AuthedVideoPlayer({
 
 			if (bingeMode) {
 				playerRef?.current?.play().catch(console.warn)
+			} else if (time) {
+				playFromLink(playerRef.current)
 			}
 		},
 		onSeeked: () => {

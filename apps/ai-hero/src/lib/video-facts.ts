@@ -19,6 +19,7 @@ export type VideoGraphNode = {
 	id: string
 	type: string
 	title?: string | null
+	slug?: string | null
 	state?: string | null
 	visibility?: string | null
 	/** `fields.startsAt` — a cohort workshop stays shut until then. */
@@ -59,6 +60,14 @@ export type VideoFacts = {
 	duration_seconds: number | null
 	/** Lessons only: the course the lesson belongs to, as a buyer knows it. */
 	container_title: string | null
+	/**
+	 * Lessons only: the workshop a link should open it in — one that is open
+	 * and, when there is one, places it free, so a non-owner lands where they
+	 * can watch. Derived rather than read from the doc's `parentResources`,
+	 * which are only as fresh as the lesson's last save and outlive a workshop
+	 * rename.
+	 */
+	workshop_slug: string | null
 	/**
 	 * The `videoResource` id, for the still: `/api/thumbnails` resolves it to
 	 * a Mux image server-side. Not sensitive — the lesson page's poster URL
@@ -122,6 +131,10 @@ export function computeVideoFacts(
 				node.type === 'post'
 					? null
 					: rootContainerTitle(node.id, parents, nodes, isOpen),
+			workshop_slug:
+				node.type === 'lesson'
+					? lessonWorkshopSlug(node.id, parents, nodes, isOpen)
+					: null,
 			video_resource_id: video?.id ?? null,
 			thumbnail_time: playback?.thumbnailTime ?? null,
 			mux_playback_id: free ? (playback?.playbackId ?? null) : null,
@@ -262,6 +275,41 @@ function isFreeLeaf(
 			(parents.get(parent.id) ?? []).some(isFreeModuleEdge)
 		)
 	})
+}
+
+/**
+ * The open workshop to link a lesson through: free placements first, then
+ * any, directly or through a section; ties broken by slug so it is stable.
+ */
+function lessonWorkshopSlug(
+	leafId: string,
+	parents: Map<string, VideoGraphEdge[]>,
+	nodes: Map<string, VideoGraphNode>,
+	isOpen: (node: VideoGraphNode) => boolean,
+): string | null {
+	const placements: Array<{ workshop: VideoGraphNode; free: boolean }> = []
+	const addIfWorkshop = (edge: VideoGraphEdge) => {
+		const workshop = nodes.get(edge.parentId)
+		if (workshop?.type === 'workshop' && workshop.slug && isOpen(workshop)) {
+			placements.push({ workshop, free: edge.tier === 'free' })
+		}
+	}
+
+	for (const edge of parents.get(leafId) ?? []) {
+		addIfWorkshop(edge)
+		if (nodes.get(edge.parentId)?.type === 'section') {
+			for (const sectionEdge of parents.get(edge.parentId) ?? []) {
+				addIfWorkshop(sectionEdge)
+			}
+		}
+	}
+
+	placements.sort(
+		(a, b) =>
+			Number(b.free) - Number(a.free) ||
+			a.workshop.slug!.localeCompare(b.workshop.slug!),
+	)
+	return placements[0]?.workshop.slug ?? null
 }
 
 /**
