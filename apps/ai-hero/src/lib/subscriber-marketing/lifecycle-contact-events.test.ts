@@ -8,6 +8,10 @@ import {
 } from './course-sequence-exhaustion'
 import { InMemorySubscriberMarketingRepository } from './dry-run'
 import {
+	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+	mapDrovrShadowFact,
+} from './drovr-shadow-emitter'
+import {
 	buildPurchaseRecordedEvent,
 	contactUnsubscribedSemanticKey,
 	previewContactUnsubscribedContactEvents,
@@ -315,6 +319,13 @@ class DyingDispatchRepository extends InMemorySubscriberMarketingRepository {
 		const event = super.createContactEvent(input)
 		if (this.dieAfterInsert) throw new Error('lambda died before the dispatch')
 		return event
+	}
+
+	findContactEventBySemanticKey(key: string) {
+		const found = super.findContactEventBySemanticKey(key)
+		if (!found) return found
+		const { domainPayload: _notStored, ...stored } = found
+		return stored
 	}
 
 	redispatchContactEvent(record: ContactEventRecord) {
@@ -632,7 +643,65 @@ describe('evergreen coupon purchases (row 194)', () => {
 			)
 		})
 
-		it('re-dispatches nothing when the flag is off, as a backfill runs', async () => {
+		it('re-sends the evergreen coupon evidence and the same drovr keys as the first attempt, though the row read back from MySQL has no domainPayload', async () => {
+		const repository = new DyingDispatchRepository()
+		const offerContact = seedOfferContact(repository)
+		seedUserContact(repository, {
+			email: 'buyer@example.com',
+			userId: 'user-1',
+		})
+		const row = purchaseSource({
+			productId: 'product-ma254',
+			evergreenOffer: { couponId: COUPON_ID, contactId: offerContact.id },
+		})
+		await expect(
+			writePurchaseRecordedContactEvents({
+				repository,
+				rows: [row],
+				now: NOW,
+				redispatchDuplicates: true,
+			}),
+		).rejects.toThrow('lambda died before the dispatch')
+		const [inserted] = [...repository.contactEvents.values()]
+		if (!inserted) throw new Error('the insert left no record')
+		expect(inserted.domainPayload).toMatchObject({
+			evergreenOffer: { couponId: COUPON_ID, sameOffer: true },
+		})
+		repository.dieAfterInsert = false
+
+		await writePurchaseRecordedContactEvents({
+			repository,
+			rows: [row],
+			now: NOW,
+			redispatchDuplicates: true,
+		})
+
+		const [resent] = repository.redispatched
+		if (!resent) throw new Error('nothing was re-dispatched')
+		const firstAttempt = mapDrovrShadowFact({
+			kind: 'contact-event',
+			event: inserted,
+		})
+		const secondAttempt = mapDrovrShadowFact({
+			kind: 'contact-event',
+			event: resent,
+		})
+		expect(
+			secondAttempt.find(
+				(event) => event.journeyId === DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+			)?.payload,
+		).toEqual({
+			productId: 'product-ma254',
+			couponId: COUPON_ID,
+			sameOffer: true,
+		})
+		expect(secondAttempt).toEqual(firstAttempt)
+		expect(secondAttempt.map((event) => event.idempotencyKey)).toEqual(
+			firstAttempt.map((event) => event.idempotencyKey),
+		)
+	})
+
+	it('re-dispatches nothing when the flag is off, as a backfill runs', async () => {
 			const repository = dyingRepository()
 			repository.dieAfterInsert = false
 			await writePurchaseRecordedContactEvents({

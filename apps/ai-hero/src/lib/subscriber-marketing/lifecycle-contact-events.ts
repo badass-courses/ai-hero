@@ -444,7 +444,16 @@ async function decideLifecycleContactEvent(args: {
 			sourceId: args.sourceId,
 			reason: 'duplicate-semantic-key',
 			detail: `Contact Event already exists for ${event.semanticIdempotencyKey}`,
-			...(existing.contactId === resolved.contact.id ? { existing } : {}),
+			...(existing.contactId === resolved.contact.id
+				? {
+						existing: {
+							...existing,
+							...(event.domainPayload === undefined
+								? {}
+								: { domainPayload: event.domainPayload }),
+						},
+					}
+				: {}),
 		}
 	}
 	return {
@@ -668,17 +677,13 @@ async function writeLifecycleDecisions(args: {
 	return { written, createdProviderIdentities }
 }
 
-async function redispatchDuplicateDecisions(
+async function redispatchDuplicatePurchases(
 	repository: ContactEventWriteRepository,
 	decisions: LifecycleContactEventDecision[],
 ) {
 	if (!repository.redispatchContactEvent) return
 	for (const decision of decisions) {
-		if (
-			decision.status === 'skipped' &&
-			decision.reason === 'duplicate-semantic-key' &&
-			decision.existing
-		) {
+		if (decision.status === 'skipped' && decision.existing) {
 			await repository.redispatchContactEvent(decision.existing)
 		}
 	}
@@ -716,7 +721,7 @@ export async function writePurchaseRecordedContactEvents(args: {
 		now,
 	})
 	if (args.redispatchDuplicates) {
-		await redispatchDuplicateDecisions(args.repository, decisions)
+		await redispatchDuplicatePurchases(args.repository, decisions)
 	}
 	return summarize('write', decisions, written, createdProviderIdentities)
 }
