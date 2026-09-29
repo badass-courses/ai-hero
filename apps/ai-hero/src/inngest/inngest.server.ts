@@ -84,6 +84,10 @@ import {
 	TypesensePopularitySyncRequested,
 } from '@/inngest/events/typesense-popularity'
 import {
+	TYPESENSE_VIDEO_FACTS_RECONCILE_REQUESTED_EVENT,
+	type TypesenseVideoFactsReconcileRequested,
+} from '@/inngest/events/typesense-video-facts'
+import {
 	CONTACT_SYNC_RETRY_EVENT,
 	DROVR_CONTACT_PROFILE_SYNC_EVENT,
 	DROVR_CONTACT_SYNC_BACKFILL_EVENT,
@@ -269,6 +273,7 @@ export type Events = {
 	[CONTACT_UNSUBSCRIBED_EVENT]: ContactUnsubscribed
 	[WORKSHOP_INTEREST_REQUESTED_EVENT]: WorkshopInterestRequested
 	[TYPESENSE_POPULARITY_SYNC_REQUESTED_EVENT]: TypesensePopularitySyncRequested
+	[TYPESENSE_VIDEO_FACTS_RECONCILE_REQUESTED_EVENT]: TypesenseVideoFactsReconcileRequested
 	[SLACK_ARTWORK_GENERATE_REQUESTED_EVENT]: SlackArtworkGenerateRequested
 	[SLACK_ARTWORK_REGENERATE_REQUESTED_EVENT]: SlackArtworkRegenerateRequested
 	[SLACK_ARTWORK_PICK_REQUESTED_EVENT]: SlackArtworkPickRequested

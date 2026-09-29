@@ -55,7 +55,7 @@ type PurchasedResource = {
  * twice (a personal seat plus a team seat), so rows are deduped on the resource
  * they grant.
  */
-async function getPurchasedResources(
+export async function getPurchasedResources(
 	userId: string,
 ): Promise<PurchasedResource[]> {
 	const rows = await db

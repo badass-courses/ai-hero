@@ -20,13 +20,15 @@ import { sortOptions } from './sort-options'
 
 export { sortOptions }
 
-export function SortBy() {
-	const { refine, currentRefinement } = useSortBy({
-		items: sortOptions,
-	})
+export function SortBy({
+	items = sortOptions,
+}: {
+	items?: typeof sortOptions
+} = {}) {
+	const { refine, currentRefinement } = useSortBy({ items })
 	const [open, setOpen] = React.useState(false)
 
-	const currentLabel = sortOptions.find(
+	const currentLabel = items.find(
 		(option) => option.value === currentRefinement,
 	)?.label
 
@@ -53,7 +55,7 @@ export function SortBy() {
 				<Command>
 					<CommandList>
 						<CommandGroup>
-							{sortOptions.map((option) => {
+							{items.map((option) => {
 								const isSelected = currentRefinement === option.value
 
 								return (

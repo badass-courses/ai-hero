@@ -1,0 +1,211 @@
+---
+title: "Videos page"
+type: "brief"
+status: "active"
+created_at: "2026-09-29"
+privacy: "private"
+---
+
+# Videos page
+
+## Finish line
+
+Pinned 2026-09-29 in a grilling session with Vojta, then reshaped the same day
+mid-build (see the ledger). Ships as **one PR**.
+
+- `/videos` is a hub page listing **every video the viewer can watch**, one
+  card per video: free posts and free-tier lessons for everyone, plus every
+  lesson a course they own opens. No cohort, workshop or tutorial cards.
+- Cards are the homepage posts-grid card (`ResourceCard`) with YouTube-style
+  inline playback on hover (`inlinePlayback`): the Mux HLS stream with its
+  subtitles on, muted until the viewer unmutes (speaker and CC buttons on the
+  thumbnail, remembered across cards and visits), a progress bar, and a click
+  that opens the video where the preview got to (`?t=`). Runtime on the
+  thumbnail when known, ✓ Watched, and for lessons "From <course>" plus a
+  `Free preview` badge when it is a free lesson from a course the viewer does
+  not own. No Post/Article labels.
+- The grid runs on Typesense with index fields derived from resource relations,
+  never hand-set (`src/lib/video-facts.ts`): `has_video`, `free`, `course_ids`,
+  `duration_seconds`, `container_title`, `mux_playback_id`, `thumbnail_time`.
+- Controls: search, `Newest · Popular`, `Hide watched` (once something is
+  watched), and `All · My courses` (only for someone who owns a course), all
+  URL-synced. Both also only FILTER for such a viewer: a shared
+  `?access=owned` link, or a failed viewer status, shows the free videos
+  instead of an empty grid. Preview sound and captions live on the cards, not
+  the toolbar.
+- The derived fields self-heal: an hourly Inngest reconcile
+  (`typesense-video-facts-reconcile`, :17 past each hour) recomputes them,
+  updates only changed docs, and rebuilds through the save path (up to 100 a
+  run) any watchable video missing from the index or with drifted
+  `visibility` / `state`.
+
+## Vocabulary
+
+- **video** — a resource that is a video itself: a post, lesson, exercise, tip
+  or talk with a ready Mux `videoResource`. Solutions ride on their exercise and
+  are not listed.
+- **free** — watchable without a purchase: a post that is published and
+  public or unlisted (a draft post is not — and "free" is what puts a playback
+  id in the public index); a lesson whose join row (or its section's) in an
+  open module carries `metadata.tier === 'free'`.
+- **course_ids** — every course that currently opens a video: its open
+  workshops and the cohorts or lists around them. "Videos from courses you own"
+  is `course_ids ∩ ownedIds`, so the filter carries a handful of course ids
+  rather than hundreds of lesson ids.
+- **open** — a workshop is open when it is `published` and its `startsAt` has
+  passed (`isWorkshopAvailable`). Cohort days are published ahead and open on
+  schedule; the hourly reconcile moves a lesson into its courses within the hour.
+  A list or tutorial is open when `published`; a cohort does not gate (its
+  day-workshops do).
+- **free preview** — a free lesson shown to someone who does not own its course.
+
+## Notes
+
+- Content shape on 2026-09-29 (prod DB): 63 posts and 411 lessons with a ready
+  video; 23 lessons free-tier (5 in the Personal Assistant cohort's "Before We
+  Start", 18 in `ai-sdk-v6-crash-course`'s two free sections); 317 lessons
+  opened by some course. No two lessons share a Mux playback id, so owners of
+  several cohort runs see no duplicates.
+- **Lesson state gates nothing inside a course.** The live, sold AI Coding
+  Crash Course is 60 `draft` lessons. Workshop state and schedule gate; post
+  state gates. So the filter never requires a lesson to be published — `free`
+  and `course_ids` already require an open course.
+- Tier lives on the `ContentResourceResource` join (`metadata.tier`), not on the
+  lesson. Tier changes go through the CMS workshop reorder, which never
+  reindexes — hence the reconcile.
+- 89 course lessons had never been indexed on 2026-09-29; the first production
+  reconcile rebuilds them.
+- Runtimes are mostly unknown: 17 of 55 published video posts and 0 of 147
+  published video lessons had a duration (course-sync stamps it; the old Mux
+  path never did). Runtime badges show only when known.
+- The prod collection has a `.*` auto field, so the new fields need no schema
+  migration; they are declared in `scripts/typesense-migrate.mts` for rebuilds.
+  `course_ids` is written as `null`, never `[]`: auto-typing cannot type an
+  empty array. Until the first reconcile writes `has_video`, the page's filter
+  errors — run the reconcile before the page ships.
+- **The search index is public.** The browser queries Typesense with
+  `NEXT_PUBLIC_TYPESENSE_API_KEY`, so every doc — unlisted lessons included —
+  is readable by anyone, whatever `/videos` filters. And Mux playback ids play
+  without a token. So a paid lesson's playback id must never be indexed:
+  `mux_playback_id` is written for free videos only, owners get their paid
+  lessons' playback from `videos.viewerStatus` (`ownedVideoPlayback`), and
+  `deriveResourceImage` only falls back to a Mux still (whose URL carries the
+  id) for posts. Card stills go through the existing `/api/thumbnails?
+  videoResourceId=…&width=720` proxy (bytes, never a redirect; width
+  allowlisted), fed by the indexed `video_resource_id`, which is not sensitive
+  — the lesson page's poster URL carries it. The URL is absolute
+  (`NEXT_PUBLIC_URL`), as on the lesson page: Next 16 refuses a local
+  next/image src with a query string unless `images.localPatterns` lists it. Found by the PR #333 bot review;
+  on 2026-09-29 300 paid docs' playback ids (exposed for a few hours by the
+  pre-merge write) and 44 pre-existing lesson/solution Mux `image` URLs were
+  cleared from `content_production`, verified zero left.
+- **Viewer identity.** A signed-in session gets watched, owned and owned-lesson
+  playback. The email-course `ck_subscriber` cookie is client-settable, so it
+  is resolved only through its Kit subscriber id — Kit says which email the id
+  belongs to, the cookie's email is never trusted (Vojta's call) — and yields
+  watch history only. Anonymous visitors get the empty status without a DB
+  read.
+- Hover previews and sound: hovering is not a user gesture, so browsers refuse
+  unmuted autoplay until the visitor has clicked or typed on the page.
+  MuxPlayer's `autoPlay="any"` tries with sound and falls back to muted; the
+  speaker button's own click is the gesture that makes sound work. Subtitles
+  exist only in the HLS stream (Mux text tracks), not in the `low.mp4` the
+  homepage preview loops, so inline playback uses HLS. `disableTracking` keeps
+  hover previews out of Mux Data views.
+- A playing video is its own compositing layer and escapes a rounded
+  `overflow-hidden` clip (square corners, a light edge). The thumbnail clips
+  with `clip-path: inset(0 round 10px)`. The player stays invisible until
+  `playing` and fades in over the still, so there is never an empty box.
+- Both players read `?t=<seconds>` (`PostPlayer`, and `AuthedVideoPlayer`
+  where it beats the saved resume position), and a link with `t` now plays on
+  load (`play-from-link.ts`; muted fallback if the browser refuses audio),
+  like YouTube's timestamp links (Vojta). A card only adds `t` after 3+
+  seconds of preview actually played — counted from playhead steps, not
+  position minus `thumbnail_time`, since some still times lie past the end of
+  the video — so an untouched lesson still resumes where the viewer left it.
+- Lesson links use the derived `workshop_slug`, not the doc's
+  `parentResources`, which keep a workshop's old slug after a rename (every AI
+  SDK lesson pointed at `ai-sdk-v5-crash-course`, which redirects to the
+  workshop page).
+- Matt's YouTube uploads and live streams are not content resources and are not
+  on this page.
+- Gotchas carried from [[typesense-index-paths]]: both index paths call the
+  same derivation; the bulk script does not run under plain `tsx`; check which
+  collection `.env` targets before any write.
+
+## Decision ledger
+
+Settled 2026-09-29 by Vojta in the grilling session:
+
+1. ~~Card unit — standalone videos as cards; a container is one card.~~
+   Superseded by 14.
+2. ~~Container card links out to the container page.~~ Superseded by 14.
+3. Free = watchable without buying (see Vocabulary).
+4. ~~Paid unit is the cohort.~~ Superseded by 14.
+5. Data source is Typesense, with facts derived from relations by one shared
+   function both index paths call.
+6. Freshness: derive at save time + hourly reconcile. Rejected: hooking every
+   relation-write path (the CMS kit is shared with three other apps and a miss
+   is silent).
+7. v1 personalization is card status only. "Continue watching" is the next
+   layer and needs `PostPlayer` to save playback position first.
+8. Viewer status loads in one tRPC query after the session resolves; Hide
+   watched goes to Typesense as `id:!=[…]`.
+9. ~~Every cohort with video shows to everyone.~~ Superseded by 14.
+10. ~~Cards reuse the `/posts` hit card.~~ Superseded by 15.
+11. No type or topic facets in v1.
+12. Hub page via `HUB_PREFIXES`, linked under **Explore** in the CMS
+    `hub-sidebar` page and `hub-sidebar-fallback.ts`. Primary nav unchanged.
+13. One PR. Verify indexed counts against the DB before merge.
+
+Mid-build calls (Vojta, 2026-09-29):
+
+14. **Show every video the viewer has access to, one card per video.**
+    Containers on the grid read as weird. Anonymous viewers see free videos;
+    owners also see their courses' lessons. Replaces the All/Free/Owned control
+    with `All · My courses`.
+15. Cards are the homepage posts-grid card with hover autoplay. `ResourceCard`
+    gained optional `badges` / `overlay` / `meta` slots so both pages share it.
+16. No Post/Article labels: on this page everything is a video.
+17. "More like YouTube": hover previews play with subtitles and, once unmuted,
+    sound; controls sit on the thumbnail; the homepage keeps its silent loop.
+18. Clicking a card after watching its preview opens the video at that point.
+19. Email-course viewers are identified by their Kit subscriber id, verified
+    against Kit, never by the cookie's email; they get watch history only.
+20. Stills are proxied server-side by reusing `/api/thumbnails`. No Mux signed
+    playback: rejected by Vojta. An id reaches a browser only for a free video
+    or for an owner's own lesson — the same rule the lesson page follows.
+21. A link with `t` autoplays, so a clicked preview carries on playing.
+
+Verified 2026-09-29 against a clone of `content_production`
+(`content_vojta_videos_test`): anonymous = 75 videos (53 posts, 22 free
+lessons); an owner of four cohorts plus AI SDK v6 = 272 (219 lessons before the
+89 missing ones are indexed); a second reconcile pass writes 0 docs.
+
+## Open
+
+- Duration backfill from Mux into `videoResource.fields.duration` (~700 prod
+  rows) — awaiting Vojta's call.
+- Add `- [Videos](/videos)` under Explore in the CMS `hub-sidebar` page once
+  the PR is merged and live (Vojta; the fallback MDX already has it).
+- Video facts were written to `content_production` on 2026-09-29, before
+  merge, with Vojta's approval: 557 docs updated, 0 failed, a second pass
+  clean, and the anonymous filter returning 75. The 89 never-indexed course
+  lessons were rebuilt the same day, before merge, by running the reconcile's
+  reindex step once inside the local Next dev server (a temporary, uncommitted
+  route — the save path only runs inside Next, and starting the local Inngest
+  dev server instead would have run every cron against the production DB):
+  88 indexed, 0 paid playback ids or Mux images after.
+- `lesson-c5bac` ("The Prototype Skill", Day 6 HITL of AI Coding for Real
+  Engineers) has no `fields.state` at all (and `visibility: public`, unlike its
+  unlisted siblings), which the index schema rejects. Saving it once in the CMS
+  fixes it; until then the hourly reconcile retries it and logs
+  `typesense.resource.validate.error`.
+- After deploy, re-scan lesson/solution docs for `image.mux.com` images: the
+  pre-merge save path still wrote them on any lesson save until #333 shipped.
+
+## Later
+
+- Continue watching (needs `PostPlayer` playback-position saving).
+- Type / topic facets.
+- Primary nav promotion if usage earns it.

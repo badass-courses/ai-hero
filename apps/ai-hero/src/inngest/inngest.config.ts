@@ -88,6 +88,7 @@ import { computeVideoSplitPoints } from './functions/split_video'
 import { persistPurchaseGeo } from './functions/persist-purchase-geo'
 import { stripeSubscriptionCheckoutSessionComplete } from './functions/stripe/event-subscription-checkout-session-completed'
 import { typesensePopularitySync } from './functions/typesense-popularity-sync'
+import { typesenseVideoFactsReconcile } from './functions/typesense-video-facts-reconcile'
 import { learnerFlowReconciler } from './functions/learner-flow-reconciler'
 import { valuePathEmailExecutor } from './functions/value-path-email-executor'
 import {
@@ -162,6 +163,7 @@ const allFunctions = [
 	courseSyncDetectionPoller,
 	courseSyncPollScheduler,
 	typesensePopularitySync,
+	typesenseVideoFactsReconcile,
 	valuePathEmailExecutor,
 	learnerFlowReconciler,
 	drovrEventsDeliver,

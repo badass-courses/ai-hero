@@ -1,0 +1,412 @@
+/**
+ * What the videos page needs to know about each watchable resource (a post or
+ * lesson with its own video) — whether anyone can watch it, which courses
+ * grant it, how long it runs — derived from the resource graph instead of
+ * stored by hand.
+ *
+ * Nothing on a resource says "I am a video" or "I am free". Video is a joined
+ * `videoResource`; free is a `tier: 'free'` on the join that places a lesson
+ * (or its section) in a workshop — the same rule the ability uses in
+ * `src/ability/index.ts`. These values depend on rows other than the one being
+ * saved, and on the clock (cohort days open on a schedule), which is why the
+ * index is both stamped at save time and reconciled hourly.
+ *
+ * Pure and dependency-free so the rules are unit-testable; the DB read lives
+ * in `video-facts-query.ts`.
+ */
+
+export type VideoGraphNode = {
+	id: string
+	type: string
+	title?: string | null
+	slug?: string | null
+	state?: string | null
+	visibility?: string | null
+	/** `fields.startsAt` — a cohort workshop stays shut until then. */
+	startsAt?: string | null
+	/** `fields.videoResourceId` — older posts point at their video this way. */
+	videoResourceId?: string | null
+	/** `fields.duration` — a post-level stamp that wins over the video's own. */
+	duration?: number | null
+	/** `videoResource` only. */
+	muxPlaybackId?: string | null
+	/** Seconds into the video for its thumbnail; a leaf's own value wins. */
+	thumbnailTime?: number | null
+}
+
+export type VideoGraphEdge = {
+	parentId: string
+	childId: string
+	/** `metadata.tier` on the join row. */
+	tier?: string | null
+}
+
+export type VideoGraph = {
+	nodes: VideoGraphNode[]
+	edges: VideoGraphEdge[]
+}
+
+export type VideoFacts = {
+	has_video: boolean
+	/** Watchable without a purchase. */
+	free: boolean
+	/**
+	 * Every course (workshop, cohort, list) that currently opens this video —
+	 * what "videos from courses you own" filters on. `null` rather than `[]`:
+	 * the index auto-types this field and cannot type an empty array.
+	 */
+	course_ids: string[] | null
+	/** Runtime, when known. */
+	duration_seconds: number | null
+	/** Lessons only: the course the lesson belongs to, as a buyer knows it. */
+	container_title: string | null
+	/**
+	 * Lessons only: the workshop a link should open it in — one that is open
+	 * and, when there is one, places it free, so a non-owner lands where they
+	 * can watch. Derived rather than read from the doc's `parentResources`,
+	 * which are only as fresh as the lesson's last save and outlive a workshop
+	 * rename.
+	 */
+	workshop_slug: string | null
+	/**
+	 * The `videoResource` id, for the still: `/api/thumbnails` resolves it to
+	 * a Mux image server-side. Not sensitive — the lesson page's poster URL
+	 * carries it already.
+	 */
+	video_resource_id: string | null
+	/** Seconds into the video for the still. */
+	thumbnail_time: number | null
+	/**
+	 * For the hover preview. **Free videos only**: the browser searches this
+	 * index with a public key, and a Mux playback id plays without a token, so
+	 * a paid lesson's id here would give its video away. Owners get those
+	 * through `ownedVideoPlayback`, server-side.
+	 */
+	mux_playback_id: string | null
+}
+
+export type VideoPlayback = { playbackId: string; thumbnailTime: number | null }
+
+const CONTAINER_TYPES = new Set(['cohort', 'workshop', 'section', 'list', 'tutorial'])
+/**
+ * Resources that are a video themselves. The ability also knows exercises,
+ * tips and talks, but AI Hero has none; they come back with a route to open
+ * them.
+ */
+const LEAF_TYPES = new Set(['post', 'lesson'])
+/** Parents whose join-row tier grants free access, mirroring the ability. */
+const MODULE_TYPES = new Set(['workshop', 'tutorial', 'list'])
+
+export function computeVideoFacts(
+	graph: VideoGraph,
+	now: Date = new Date(),
+): Map<string, VideoFacts> {
+	const nodes = new Map(graph.nodes.map((node) => [node.id, node]))
+	const children = new Map<string, VideoGraphEdge[]>()
+	const parents = new Map<string, VideoGraphEdge[]>()
+	for (const edge of graph.edges) {
+		if (!nodes.has(edge.parentId) || !nodes.has(edge.childId)) continue
+		push(children, edge.parentId, edge)
+		push(parents, edge.childId, edge)
+	}
+	const isOpen = (node: VideoGraphNode) => isOpenAt(node, now)
+
+	const facts = new Map<string, VideoFacts>()
+	for (const node of graph.nodes) {
+		if (!LEAF_TYPES.has(node.type)) continue
+		const video = findPlayableVideo(node, nodes, children.get(node.id))
+		const seconds = video
+			? (positive(node.duration) ?? positive(video.duration))
+			: undefined
+		const courseIds = video ? openCourseIds(node.id, parents, nodes, isOpen) : []
+		const free = isFreeLeaf(node, parents, nodes, isOpen)
+		const playback = video ? toPlayback(node, video) : null
+
+		facts.set(node.id, {
+			has_video: Boolean(video),
+			free,
+			course_ids: courseIds.length > 0 ? courseIds : null,
+			duration_seconds: seconds === undefined ? null : Math.round(seconds),
+			container_title:
+				node.type === 'post'
+					? null
+					: rootContainerTitle(node.id, parents, nodes, isOpen),
+			workshop_slug:
+				node.type === 'lesson'
+					? lessonWorkshopSlug(node.id, parents, nodes, isOpen)
+					: null,
+			video_resource_id: video?.id ?? null,
+			thumbnail_time: playback?.thumbnailTime ?? null,
+			mux_playback_id: free ? (playback?.playbackId ?? null) : null,
+		})
+	}
+	return facts
+}
+
+/**
+ * Playback for the given videos, whatever their price — for the server to
+ * hand a viewer the lessons they own. Never write this to the index.
+ */
+export function computeVideoPlayback(
+	graph: VideoGraph,
+	ids: ReadonlySet<string>,
+): Map<string, VideoPlayback> {
+	const nodes = new Map(graph.nodes.map((node) => [node.id, node]))
+	const children = new Map<string, VideoGraphEdge[]>()
+	for (const edge of graph.edges) {
+		if (ids.has(edge.parentId)) push(children, edge.parentId, edge)
+	}
+	const playback = new Map<string, VideoPlayback>()
+	for (const id of ids) {
+		const node = nodes.get(id)
+		const video = node && findPlayableVideo(node, nodes, children.get(id))
+		if (node && video) playback.set(id, toPlayback(node, video))
+	}
+	return playback
+}
+
+/**
+ * Playback for the paid videos the viewer's courses open — the ids the index
+ * withholds (see `VideoFacts.mux_playback_id`). Free videos already carry
+ * theirs in the index.
+ */
+export function ownedVideoPlayback(
+	graph: VideoGraph,
+	ownedIds: ReadonlyArray<string>,
+	now: Date = new Date(),
+): Record<string, VideoPlayback> {
+	if (ownedIds.length === 0) return {}
+	const owned = new Set(ownedIds)
+	const ids = new Set<string>()
+	for (const [id, facts] of computeVideoFacts(graph, now)) {
+		if (facts.free || !facts.course_ids?.some((course) => owned.has(course))) {
+			continue
+		}
+		ids.add(id)
+	}
+	return Object.fromEntries(computeVideoPlayback(graph, ids))
+}
+
+function toPlayback(node: VideoGraphNode, video: VideoGraphNode): VideoPlayback {
+	return {
+		playbackId: video.muxPlaybackId!,
+		// Whole seconds: the index auto-types this field from the first value
+		// it sees, and a float after an int would be refused.
+		thumbnailTime: roundOrNull(node.thumbnailTime ?? video.thumbnailTime),
+	}
+}
+
+/**
+ * Whether a container lets a learner through right now. Workshop state and
+ * schedule are what gate a course (`isWorkshopAvailable`): cohort days are
+ * published ahead and open on `startsAt`. Lesson state is not — the live AI
+ * Coding Crash Course is sixty `draft` lessons.
+ */
+function isOpenAt(node: VideoGraphNode, now: Date): boolean {
+	// A draft or archived list or tutorial opens nothing either. Cohorts do not
+	// gate here: their day-workshops carry the state and schedule.
+	if (node.type === 'list' || node.type === 'tutorial') {
+		return node.state === 'published'
+	}
+	if (node.type !== 'workshop') return true
+	if (node.state !== 'published') return false
+	if (!node.startsAt) return true
+	const startsAt = Date.parse(node.startsAt)
+	// An unparseable date is authoring noise, not an embargo (fails open, like
+	// `isWorkshopAvailable`).
+	return Number.isNaN(startsAt) || startsAt <= now.getTime()
+}
+
+/**
+ * The courses that open a leaf, walking up through sections, open workshops
+ * and the cohorts or lists around them. A closed workshop stops the walk: its
+ * lessons are not watchable through it, even by someone who owns the cohort.
+ */
+function openCourseIds(
+	leafId: string,
+	parents: Map<string, VideoGraphEdge[]>,
+	nodes: Map<string, VideoGraphNode>,
+	isOpen: (node: VideoGraphNode) => boolean,
+): string[] {
+	const courses = new Set<string>()
+	const visited = new Set<string>()
+	const queue = [leafId]
+
+	while (queue.length > 0) {
+		const id = queue.shift()!
+		for (const edge of parents.get(id) ?? []) {
+			if (visited.has(edge.parentId)) continue
+			visited.add(edge.parentId)
+			const parent = nodes.get(edge.parentId)
+			if (!parent || !CONTAINER_TYPES.has(parent.type) || !isOpen(parent)) {
+				continue
+			}
+			if (parent.type !== 'section') courses.add(parent.id)
+			queue.push(parent.id)
+		}
+	}
+
+	return Array.from(courses).sort()
+}
+
+/**
+ * A post is free when anyone can open it: published, and public or unlisted
+ * (reachable by link). A draft post is not — and "free" is what puts its
+ * playback id in the public index. A lesson is free when an open module
+ * places it — directly or through a section — with `tier: 'free'`.
+ */
+function isFreeLeaf(
+	node: VideoGraphNode,
+	parents: Map<string, VideoGraphEdge[]>,
+	nodes: Map<string, VideoGraphNode>,
+	isOpen: (node: VideoGraphNode) => boolean,
+): boolean {
+	if (node.type === 'post') {
+		return (
+			node.state === 'published' &&
+			(node.visibility === 'public' || node.visibility === 'unlisted')
+		)
+	}
+
+	const isFreeModuleEdge = (edge: VideoGraphEdge) => {
+		const module = nodes.get(edge.parentId)
+		return (
+			edge.tier === 'free' &&
+			Boolean(module) &&
+			MODULE_TYPES.has(module!.type) &&
+			isOpen(module!)
+		)
+	}
+
+	return (parents.get(node.id) ?? []).some((edge) => {
+		if (isFreeModuleEdge(edge)) return true
+		// A section is free when its own placement in a module is free-tier.
+		const parent = nodes.get(edge.parentId)
+		return (
+			parent?.type === 'section' &&
+			(parents.get(parent.id) ?? []).some(isFreeModuleEdge)
+		)
+	})
+}
+
+/**
+ * The open workshop to link a lesson through: free placements first, then
+ * any, directly or through a section; ties broken by slug so it is stable.
+ */
+function lessonWorkshopSlug(
+	leafId: string,
+	parents: Map<string, VideoGraphEdge[]>,
+	nodes: Map<string, VideoGraphNode>,
+	isOpen: (node: VideoGraphNode) => boolean,
+): string | null {
+	const placements: Array<{ workshop: VideoGraphNode; free: boolean }> = []
+	const addIfWorkshop = (edge: VideoGraphEdge) => {
+		const workshop = nodes.get(edge.parentId)
+		if (workshop?.type === 'workshop' && workshop.slug && isOpen(workshop)) {
+			placements.push({ workshop, free: edge.tier === 'free' })
+		}
+	}
+
+	for (const edge of parents.get(leafId) ?? []) {
+		addIfWorkshop(edge)
+		if (nodes.get(edge.parentId)?.type === 'section') {
+			for (const sectionEdge of parents.get(edge.parentId) ?? []) {
+				addIfWorkshop(sectionEdge)
+			}
+		}
+	}
+
+	placements.sort(
+		(a, b) =>
+			Number(b.free) - Number(a.free) ||
+			a.workshop.slug!.localeCompare(b.workshop.slug!),
+	)
+	return placements[0]?.workshop.slug ?? null
+}
+
+/**
+ * The course a lesson belongs to, named the way a buyer knows it: the cohort
+ * when the lesson sits in a cohort's day-workshop, otherwise the workshop.
+ */
+function rootContainerTitle(
+	leafId: string,
+	parents: Map<string, VideoGraphEdge[]>,
+	nodes: Map<string, VideoGraphNode>,
+	isOpen: (node: VideoGraphNode) => boolean,
+): string | null {
+	let best: VideoGraphNode | null = null
+	let bestRank = -1
+	const visited = new Set<string>()
+	const queue = [leafId]
+
+	while (queue.length > 0) {
+		const id = queue.shift()!
+		for (const edge of parents.get(id) ?? []) {
+			if (visited.has(edge.parentId)) continue
+			visited.add(edge.parentId)
+			const parent = nodes.get(edge.parentId)
+			if (!parent || !CONTAINER_TYPES.has(parent.type) || !isOpen(parent)) {
+				continue
+			}
+			queue.push(parent.id)
+			if (parent.type === 'section') continue
+			const rank = containerRank(parent)
+			if (rank > bestRank) {
+				best = parent
+				bestRank = rank
+			}
+		}
+	}
+
+	return best?.title?.trim() || null
+}
+
+/** Prefer published, public, outermost containers. */
+function containerRank(node: VideoGraphNode): number {
+	const outer = node.type === 'cohort' ? 2 : 1
+	const published = node.state === 'published' ? 4 : 0
+	const isPublic = node.visibility === 'public' ? 8 : 0
+	return outer + published + isPublic
+}
+
+function findPlayableVideo(
+	node: VideoGraphNode,
+	nodes: Map<string, VideoGraphNode>,
+	childEdges: VideoGraphEdge[] | undefined,
+): VideoGraphNode | null {
+	const candidates = [
+		node.videoResourceId,
+		...(childEdges ?? []).map((edge) => edge.childId),
+	]
+	for (const id of candidates) {
+		if (!id) continue
+		const video = nodes.get(id)
+		if (
+			video?.type === 'videoResource' &&
+			video.state === 'ready' &&
+			video.muxPlaybackId
+		) {
+			return video
+		}
+	}
+	return null
+}
+
+function positive(value: number | null | undefined): number | undefined {
+	return typeof value === 'number' && Number.isFinite(value) && value > 0
+		? value
+		: undefined
+}
+
+/** Whole, non-negative seconds, or null: a bad value must not fail the doc. */
+function roundOrNull(value: number | null | undefined): number | null {
+	return typeof value === 'number' && Number.isFinite(value) && value >= 0
+		? Math.round(value)
+		: null
+}
+
+function push<K, V>(map: Map<K, V[]>, key: K, value: V) {
+	const list = map.get(key)
+	if (list) list.push(value)
+	else map.set(key, [value])
+}
