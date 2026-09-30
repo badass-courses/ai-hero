@@ -83,5 +83,12 @@ export const drovrOutbox = mysqlTable(
 			table.status,
 			table.deliveredAt,
 		),
+		// A contact's open births and stops (the replay's gate, row 204b's
+		// live path). The migration declares the same; a MySQL test pins it.
+		contactIdx: index('DrovrOutbox_contact_idx').on(
+			table.target,
+			table.contactId,
+			table.status,
+		),
 	}),
 )
