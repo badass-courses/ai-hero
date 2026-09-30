@@ -64,7 +64,16 @@ export const UNINDEXED_KEY_CLEANUP = {
 	'AI_MerchantCharge.userId': 'never-written',
 	// Written for a purchase or a Kit subscribe only; both refused here.
 	'AI_ShortlinkAttribution.userId': 'never-written',
-} as const satisfies Record<string, 'content-read-semantic-key' | 'never-written'>
+	// The drovr outbox (row 204) leads its index with target, so this is a
+	// scan, of a table kept small: delivered rows are purged after 7 days
+	// and more than 25 pending alerts. A test principal's signup can land
+	// here during a drovr 5xx (the signup path has no synthetic filter), so
+	// it is deleted, not skipped: the plain equality delete below.
+	'AI_DrovrOutbox.contactId': 'bounded-table',
+} as const satisfies Record<
+	string,
+	'content-read-semantic-key' | 'never-written' | 'bounded-table'
+>
 
 /** Indexed in prod outside the Drizzle schema (idx_OrganizationMembership_on_userId). */
 const PROD_ONLY_INDEXED_KEYS = new Set(['AI_OrganizationMembership.userId'])

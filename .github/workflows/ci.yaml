@@ -61,7 +61,9 @@ jobs:
       # argument as a substring of the test path, so a new drovr-*,
       # *evergreen* or subscriber-marketing suite runs with no edit here.
       # A named list let 28 of the 32 suites that #336-#340 touched merge
-      # without CI, and #340 with a failing test. *.mysql.test.ts suites
+      # without CI, and #340 with a failing test.
+      # test-principals rides along: its cleanup reads every contact-keyed
+      # table, so a new drovr or subscriber table changes it. *.mysql.test.ts suites
       # skip here without a server URL; evergreen-journey-mysql runs them.
       # evergreen-claim-composition is excluded: it fails on main since
       # 2026-09-08 (next-auth imports next/server without its extension,
@@ -77,6 +79,7 @@ jobs:
           capture-purchase-contact-event
           subscribe-to-list
           kit-custom-fields-check
+          src/lib/test-principals/
 
       - name: Workshop pricing actor contract
         run: pnpm --filter ai-hero exec vitest run -c vitest.config.ts "src/app/(content)/workshops/_components/workshop-pricing.mounted.test.tsx"

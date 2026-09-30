@@ -21,11 +21,13 @@ describe('test principal cleanup coverage', () => {
 			  "AI_ContactEvent.contactId",
 			  "AI_ContactLink.contactId",
 			  "AI_ContactLink.userId",
+			  "AI_ContactProfileVersion.contactId",
 			  "AI_ContactState.contactId",
 			  "AI_ContentContribution.userId",
 			  "AI_ContentRead.contactId",
 			  "AI_ContentRead.userId",
 			  "AI_DeviceAccessToken.userId",
+			  "AI_DrovrOutbox.contactId",
 			  "AI_Entitlement.userId",
 			  "AI_GoogleAdsSignupConversionUpload.contactId",
 			  "AI_MerchantCharge.userId",
@@ -46,6 +48,7 @@ describe('test principal cleanup coverage', () => {
 			  "AI_UserPrefs.userId",
 			  "AI_UserRole.userId",
 			  "AI_ValuePathCertificateShare.contactId",
+			  "AI_ValuePathLinkAnchor.contactId",
 			]
 		`)
 	})
