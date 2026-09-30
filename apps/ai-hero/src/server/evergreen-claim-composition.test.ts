@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { GET, POST } from '@/app/api/evergreen/claim/route'
+import { env } from '@/env.mjs'
+import {
+	drovrEvergreenClaimEnabled,
+	drovrEvergreenClaimHandler,
+} from '@/server/drovr-evergreen-claim'
+import { log } from '@/server/logger'
 
 import { composeEvergreenClaim } from './evergreen-claim-composition'
 
@@ -15,6 +21,8 @@ const drovrOn = () => {
 	vi.stubEnv('AIH_DROVR_EVERGREEN_ENABLED', 'true')
 	vi.stubEnv('DROVR_SHADOW_INGEST_URL', 'https://drovr.test')
 	vi.stubEnv('DROVR_API_KEY_ORG_AIHERO', 'test-authority-key')
+	// A parser that later wants more config fails here, not as 401 vs 404.
+	expect(drovrEvergreenClaimEnabled()).toBe(true)
 }
 
 describe('the evergreen claim route: which handler answers', () => {
@@ -59,6 +67,27 @@ describe('the evergreen claim route: which handler answers', () => {
 			const response = await GET(new Request(`${claimUrl}?coupon=probe`))
 			expect(response.status).toBe(400)
 			expect(await response.json()).toEqual({ status: 'unavailable' })
+		})
+
+		it('fails closed to the 404 when the drovr claim cannot compose, and says why', async () => {
+			drovrOn()
+			const error = vi.spyOn(log, 'error').mockResolvedValue(undefined as never)
+			const mutable = env as { NEXTAUTH_SECRET?: string }
+			const secret = mutable.NEXTAUTH_SECRET
+			mutable.NEXTAUTH_SECRET = ''
+			try {
+				for (const handler of [GET, drovrEvergreenClaimHandler]) {
+					const response = await handler(new Request(claimUrl))
+					expect(response.status).toBe(404)
+					expect(response.headers.get('cache-control')).toContain('no-store')
+				}
+			} finally {
+				mutable.NEXTAUTH_SECRET = secret
+			}
+			expect(error).toHaveBeenCalledWith('drovr.evergreen.claim_unavailable', {
+				error: 'Claim CSRF secret required',
+			})
+			error.mockRestore()
 		})
 
 		it('refuses a POST from another origin: 403 unavailable', async () => {
