@@ -30,7 +30,7 @@ export const drovrContactSyncRetry = inngest.createFunction(
 			{ DrizzleCaptureMarketingRepository },
 			{ findContactKitIdentity },
 			{ createDrizzleContactProfileVersionStore },
-			{ contactSyncSendOrOutbox },
+			{ contactSyncSendOrOutbox, settleOrHoldStragglerStops },
 		] = await Promise.all([
 			import('@/db'),
 			import('@/env.mjs'),
@@ -59,13 +59,18 @@ export const drovrContactSyncRetry = inngest.createFunction(
 			env: process.env,
 			now: () => Date.now(),
 			warn: log.warn,
+			// Row 204c: a stop a backfill outboxed while it waited is settled
+			// when this send lands it, or held if drovr refused it.
 			deliver: (events) =>
-				outboxing(events, () =>
-					deliverBatchOrThrow({
+				outboxing(events, async () =>
+					settleOrHoldStragglerStops(
 						events,
-						config: drovrConfig(),
-						deferNotLive: true,
-					}),
+						await deliverBatchOrThrow({
+							events,
+							config: drovrConfig(),
+							deferNotLive: true,
+						}),
+					),
 				),
 			acknowledge: (contactId, profileVersion) =>
 				createDrizzleContactProfileVersionStore(db).acknowledge(

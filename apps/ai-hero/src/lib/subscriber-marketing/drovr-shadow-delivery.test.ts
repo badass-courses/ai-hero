@@ -248,7 +248,11 @@ describe('drovr batch delivery step', () => {
 			warn,
 		})
 
-		expect(outcome).toEqual({ accepted: 1, rejected: 1 })
+		expect(outcome).toMatchObject({
+			accepted: 1,
+			rejected: 1,
+			refused: [expect.objectContaining({ problem: expect.anything() })],
+		})
 		expect(warn).toHaveBeenCalledTimes(1)
 		expect(warn).toHaveBeenCalledWith(
 			'drovr.shadow.rejected',
@@ -273,7 +277,14 @@ describe('drovr batch delivery step', () => {
 				fetcher: unauthorized,
 				warn,
 			}),
-		).toEqual({ accepted: 0, rejected: 2 })
+		).toMatchObject({
+			accepted: 0,
+			rejected: 2,
+			refused: [
+				expect.objectContaining({ httpStatus: 401 }),
+				expect.objectContaining({ httpStatus: 401 }),
+			],
+		})
 		expect(warn).toHaveBeenCalledWith(
 			'drovr.shadow.batch_rejected',
 			expect.objectContaining({ status: 401, count: 2 }),
@@ -572,7 +583,7 @@ describe('contact sync deferral of refusals (deferNotLive)', () => {
 				warn: vi.fn(),
 				deferNotLive: true,
 			}),
-		).toEqual({ accepted: 0, rejected: 1 })
+		).toMatchObject({ accepted: 0, rejected: 1, refused: [expect.anything()] })
 	})
 })
 
@@ -658,7 +669,7 @@ describe('a directory stop answered cold-start-unhandled is done', () => {
 				fetcher: answer([{ index: 0, ...coldStart }]),
 				warn: vi.fn(),
 			}),
-		).toEqual({ accepted: 0, rejected: 1 })
+		).toMatchObject({ accepted: 0, rejected: 1, refused: [expect.anything()] })
 	})
 })
 
@@ -713,7 +724,7 @@ describe('an owner-copy stop drovr says never started its journey', () => {
 		).toBe(false)
 	})
 
-	it('needs the 409 contact-never-born problem exactly', () => {
+	it('needs the contact-never-born problem exactly: the typed problem decides, as it does for a batch item', () => {
 		expect(
 			isNeverBornOwnerStop(ownerStop(), {
 				...neverBorn,
@@ -721,7 +732,10 @@ describe('an owner-copy stop drovr says never started its journey', () => {
 			}),
 		).toBe(false)
 		expect(
-			isNeverBornOwnerStop(ownerStop(), { ...neverBorn, httpStatus: 422 }),
+			isNeverBornOwnerStop(ownerStop(), {
+				...neverBorn,
+				problem: { type: 'urn:drovr:problem:contact-not-found' },
+			}),
 		).toBe(false)
 		expect(isNeverBornOwnerStop(ownerStop(), { status: 'accepted' })).toBe(
 			false,

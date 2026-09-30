@@ -186,8 +186,8 @@ const LITERAL_ALLOWED: Record<string, string> = {
 		'writer: records contact.unsubscribed',
 	'lib/subscriber-marketing/drovr-shadow-emitter.ts':
 		'mapper: stop events to drovr facts',
-	'lib/subscriber-marketing/drovr-shadow-delivery.ts':
-		'mapper: which drovr facts are directory stops',
+	'lib/subscriber-marketing/drovr-stop-verdict.ts':
+		'mapper: which drovr facts are directory stops (row 204c)',
 	'lib/subscriber-marketing/drovr-outbox.ts':
 		'gate: which outbox rows are stops later rows wait behind (row 204b)',
 	'lib/subscriber-marketing/contact-sync-reconcile.ts':

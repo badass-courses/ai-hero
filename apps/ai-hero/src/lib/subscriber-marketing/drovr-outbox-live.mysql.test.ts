@@ -32,6 +32,7 @@ vi.mock('@/server/logger', () => ({
 
 import {
 	captureDrovrOutboxLive,
+	holdDrovrStopsLive,
 	settleDrovrOutboxLive,
 } from './drovr-outbox-live'
 
@@ -189,6 +190,31 @@ integration('the live outbox wrappers on MySQL (row 204b round 3)', () => {
 		expect(after.get('elsewhere:1')!.nextAttemptAt.getTime()).toBe(
 			windowEnd.getTime(),
 		)
+	})
+
+	it('holds a refused stop: an early-captured one moves from pending to held, a new one is written held (row 204c)', async () => {
+		const early = entry('purchase:1', 'purchase.recorded')
+		await captureDrovrOutboxLive([early], new Error('503'), {
+			nextAttemptAt: new Date(Date.now() + 60 * 60_000),
+		})
+		const captured = await holdDrovrStopsLive(
+			[early, entry('unsubscribe:1', 'contact.unsubscribed')],
+			'drovr refused the stop (404): unknown-route',
+			404,
+		)
+		expect(captured).toEqual({ status: 'outboxed', count: 2 })
+		const after = await rows()
+		expect(after.get('purchase:1')).toMatchObject({
+			status: 'held',
+			lastError: 'drovr refused the stop (404): unknown-route',
+		})
+		expect(after.get('unsubscribe:1')).toMatchObject({
+			status: 'held',
+			target: 'production',
+		})
+		// A later settle (a retry that did land) never reopens a held stop.
+		expect(await settleDrovrOutboxLive([early], 'delivered')).toBe(0)
+		expect((await rows()).get('purchase:1')?.status).toBe('held')
 	})
 
 	it('settles only this deployment target', async () => {

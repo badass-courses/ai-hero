@@ -92,6 +92,20 @@ describe('drovr status and Retry-After reach the retry decision (row 204)', () =
 		expect(unsent.map((sent) => sent.idempotencyKey)).toEqual(['down'])
 	})
 
+	it('the direct sender answers a refused stop too, so it is outboxed and its gate closes (row 204c)', async () => {
+		const stop = {
+			...event('stop'),
+			type: 'contact.unsubscribed',
+		} as DrovrShadowEvent
+		const unsent = await deliverDrovrShadowEventsDirect([event('fact'), stop], {
+			config: { ingestUrl: config.ingestUrl, authorityApiKey: 'k' },
+			fetch: vi.fn(async () => new Response('{}', { status: 404 })) as never,
+			warn: vi.fn(),
+			info: vi.fn(),
+		})
+		expect(unsent.map((sent) => sent.idempotencyKey)).toEqual(['stop'])
+	})
+
 	it('the direct sender answers a network failure as unsent', async () => {
 		const unsent = await deliverDrovrShadowEventsDirect([event('net')], {
 			config: { ingestUrl: config.ingestUrl, authorityApiKey: 'k' },

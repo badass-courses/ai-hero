@@ -355,40 +355,53 @@ integration('drovr outbox store on MySQL (row 204)', () => {
 			const now = '2026-09-30T12:00:00.000Z'
 			const later = '2026-09-30T13:15:00.000Z'
 			const earlier = '2026-09-30T11:55:00.000Z'
-			const moved = row({
+			// Rows the gate moved behind a stop carry its note (row 204c).
+			const behind = (overrides: Partial<DrovrOutboxRow>) =>
+				row({
+					lastError: 'held behind a stop the outbox still owes',
+					...overrides,
+				})
+			const moved = behind({
 				contactId: 'c1',
 				eventType: 'email.completed',
 				nextAttemptAt: later,
 			})
-			const due = row({
+			const due = behind({
 				contactId: 'c1',
 				eventType: 'email.completed',
 				nextAttemptAt: earlier,
 			})
-			const stop = row({
+			const stop = behind({
 				contactId: 'c1',
 				eventType: 'purchase.recorded',
 				nextAttemptAt: later,
 			})
-			const held = row({
+			const held = behind({
 				contactId: 'c1',
 				eventType: 'email.completed',
 				status: 'held',
 				nextAttemptAt: later,
 			})
-			const otherContact = row({
+			const otherContact = behind({
 				contactId: 'c2',
 				eventType: 'email.completed',
 				nextAttemptAt: later,
 			})
-			const otherTarget = row({
+			const otherTarget = behind({
 				contactId: 'c1',
 				eventType: 'email.completed',
 				target: PREVIEW,
 				nextAttemptAt: later,
 			})
+			// Waiting out its own backoff (drovr's Retry-After): keeps its time.
+			const ownBackoff = row({
+				contactId: 'c1',
+				eventType: 'email.completed',
+				nextAttemptAt: later,
+			})
 			await store.insertIgnore([
 				moved,
+				ownBackoff,
 				due,
 				stop,
 				held,
@@ -407,6 +420,7 @@ integration('drovr outbox store on MySQL (row 204)', () => {
 				),
 			).toEqual({
 				[moved.id]: now,
+				[ownBackoff.id]: later,
 				[due.id]: earlier,
 				[stop.id]: later,
 				[held.id]: later,
@@ -446,6 +460,83 @@ integration('drovr outbox store on MySQL (row 204)', () => {
 				sent[0]!.params,
 			)) as unknown as [{ key: string | null }[]]
 			expect(plan[0]?.key).toBe('DrovrOutbox_contact_idx')
+		})
+
+		it('holds only pending rows of this target by dedupe key: drovr refused the stop (row 204c)', async () => {
+			const pending = row({ eventType: 'purchase.recorded' })
+			const delivered = row({
+				eventType: 'purchase.recorded',
+				status: 'delivered',
+			})
+			const elsewhere = row({ eventType: 'purchase.recorded', target: PREVIEW })
+			await store.insertIgnore([pending, delivered, elsewhere])
+			const held = await store.holdPending({
+				target: PROD,
+				dedupeKeys: [
+					pending.dedupeKey,
+					delivered.dedupeKey,
+					elsewhere.dedupeKey,
+				],
+				at: '2026-09-30T12:00:00.000Z',
+				note: 'drovr refused the stop (404)',
+				httpStatus: 404,
+			})
+			expect(held).toBe(1)
+			const [rows] = (await pool.query(
+				`SELECT id, status, lastError, lastStatus, lastAttemptAt FROM AI_DrovrOutbox ORDER BY id`,
+			)) as unknown as [
+				{
+					id: string
+					status: string
+					lastError: string
+					lastStatus: number
+					lastAttemptAt: Date
+				}[],
+			]
+			expect(Object.fromEntries(rows.map((r) => [r.id, r.status]))).toEqual({
+				[pending.id]: 'held',
+				[delivered.id]: 'delivered',
+				[elsewhere.id]: 'pending',
+			})
+			expect(rows.find((r) => r.id === pending.id)).toMatchObject({
+				lastError: 'drovr refused the stop (404)',
+				lastStatus: 404,
+			})
+			expect(
+				rows.find((r) => r.id === pending.id)?.lastAttemptAt.toISOString(),
+			).toBe('2026-09-30T12:00:00.000Z')
+			expect(
+				await store.holdPending({
+					target: PROD,
+					dedupeKeys: [],
+					at: '2026-09-30T12:00:00.000Z',
+					note: null,
+					httpStatus: null,
+				}),
+			).toBe(0)
+		})
+
+		it('reads held stops and deferred stops apart from the owed ones (row 204c)', async () => {
+			const stop = (overrides: Partial<DrovrOutboxRow>) =>
+				row({ eventType: 'contact.unsubscribed', ...overrides })
+			await store.insertIgnore([
+				stop({ firstFailedAt: '2026-09-30T08:00:00.000Z', status: 'held' }),
+				stop({ firstFailedAt: '2026-09-30T09:00:00.000Z', status: 'held' }),
+				stop({
+					firstFailedAt: '2026-09-30T07:00:00.000Z',
+					source: 'contactSync',
+				}),
+				stop({ firstFailedAt: '2026-09-30T10:00:00.000Z' }),
+				stop({ firstFailedAt: '2026-09-30T06:00:00.000Z', target: PREVIEW }),
+				row({ firstFailedAt: '2026-09-30T05:00:00.000Z', status: 'held' }),
+			])
+			expect(await store.depth(PROD)).toMatchObject({
+				held: 3,
+				heldStops: 2,
+				oldestHeldStopFailedAt: '2026-09-30T08:00:00.000Z',
+				oldestDeferredStopFailedAt: '2026-09-30T07:00:00.000Z',
+				oldestOpenStopFailedAt: '2026-09-30T10:00:00.000Z',
+			})
 		})
 
 		it('settles only pending rows of this target by dedupe key: a retry landed (row 204b)', async () => {
@@ -526,6 +617,9 @@ integration('drovr outbox store on MySQL (row 204)', () => {
 				held: 1,
 				rejected: 1,
 				oldestOpenStopFailedAt: null,
+				oldestDeferredStopFailedAt: null,
+				heldStops: 0,
+				oldestHeldStopFailedAt: null,
 			})
 			const [updated] = await store.due({
 				target: PROD,
