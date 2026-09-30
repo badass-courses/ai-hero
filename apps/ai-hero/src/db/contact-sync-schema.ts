@@ -1,5 +1,11 @@
 import { mysqlTable } from '@/db/mysql-table'
-import { bigint, timestamp, uniqueIndex, varchar } from 'drizzle-orm/mysql-core'
+import {
+	bigint,
+	index,
+	timestamp,
+	uniqueIndex,
+	varchar,
+} from 'drizzle-orm/mysql-core'
 
 /**
  * Contact sync (2026-09-26): drovr keeps a synced contact profile instead of
@@ -35,6 +41,11 @@ export const valuePathLinkAnchor = mysqlTable(
 	},
 	(table) => ({
 		anchorUq: uniqueIndex('ValuePathLinkAnchor_anchor_uq').on(table.anchorKey),
+		// In the migration and in prod (information_schema, 2026-09-30); the
+		// schema now says so too, so test-principal cleanup sees it indexed.
+		contactIdx: index('ValuePathLinkAnchor_contact_idx').on(table.contactId),
+		// 20260926_ai_hero_link_anchor_issued_at_index.sql, also in prod.
+		issuedAtIdx: index('ValuePathLinkAnchor_issuedAt_idx').on(table.issuedAt),
 	}),
 )
 

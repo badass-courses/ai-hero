@@ -40,8 +40,12 @@ describe('the drovr outbox migration (row 204)', () => {
 		expect(migration).toContain(
 			'KEY `DrovrOutbox_delivered_idx` (`status`, `deliveredAt`)',
 		)
+		expect(migration).toContain(
+			'KEY `DrovrOutbox_contact_idx` (`target`, `contactId`, `status`)',
+		)
 		const indexNames = config.indexes.map((index) => index.config.name)
 		expect(indexNames.sort()).toEqual([
+			'DrovrOutbox_contact_idx',
 			'DrovrOutbox_dedupe_uq',
 			'DrovrOutbox_delivered_idx',
 			'DrovrOutbox_due_idx',
