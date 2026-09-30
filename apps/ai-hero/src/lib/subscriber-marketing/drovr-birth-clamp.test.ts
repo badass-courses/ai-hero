@@ -57,7 +57,7 @@ const directoryBirth = event({
 	idempotencyKey: 'directory:seed:contact-1',
 })
 
-describe('row 201g: a sending-journey birth is never older than 5 minutes when it reaches drovr', () => {
+describe('row 201g: a sending-journey birth is never older than 5 minutes at its first send', () => {
 	it('names the births it clamps: contact.created off the directory, and the evergreen offer start', () => {
 		expect(isSendingJourneyBirth(valuePathBirth)).toBe(true)
 		expect(isSendingJourneyBirth(newsletterBirth)).toBe(true)

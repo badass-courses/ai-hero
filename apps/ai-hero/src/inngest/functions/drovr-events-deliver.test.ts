@@ -2080,6 +2080,37 @@ describe('row 201g (#345 S1): a run clamps its births at its first send, on ever
 		)
 	})
 
+	it('the contact-sync backfill chunk (deferNotLive) sends the first instant too', async () => {
+		// Its events are directory events today, which are never clamped; if
+		// a birth ever rides it, its retry must still post the same bytes.
+		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
+		const { step, ran } = memoStep()
+		const backfill = (attempt: number) =>
+			registeredBulk
+				.handler({
+					events: [
+						{ data: { source: 'contact-sync-backfill', events: [birth] } },
+					],
+					step,
+					attempt,
+					maxAttempts: 9,
+				})
+				.catch(() => undefined)
+		mocks.deliverBatchOrThrow.mockRejectedValue(drovrFailure(503))
+		await backfill(0)
+		vi.setSystemTime(FIRST + TEN_MINUTES)
+		await backfill(1)
+		vi.unstubAllEnvs()
+		const calls = mocks.deliverBatchOrThrow.mock.calls.map(
+			([args]) => args as { clampAt: number; deferNotLive?: boolean },
+		)
+		expect(calls.map(({ deferNotLive }) => deferNotLive)).toEqual([true, true])
+		expect(calls.map(({ clampAt }) => clampAt)).toEqual([FIRST, FIRST])
+		expect(
+			ran.filter((id) => id.endsWith(DROVR_CLAMP_INSTANT_STEP)),
+		).toHaveLength(1)
+	})
+
 	it('takes no step for a run with no sending-journey birth', async () => {
 		const { step, ran } = memoStep()
 		await registered.handler({

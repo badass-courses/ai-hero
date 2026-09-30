@@ -8,7 +8,9 @@ import type { DrovrShadowEvent } from './drovr-shadow-emitter'
  * `occurredAt`, so a birth sent late with its original time fires every
  * drip it missed at once: a paced backfill whose events share one instant,
  * or an outage backlog, becomes a one-instant wave. Clamped, each birth
- * starts no earlier than 5 minutes before it reaches drovr.
+ * starts no earlier than 5 minutes before its FIRST send. A retry or a
+ * replay posts those same bytes (see `clampBirths`), so a birth replayed
+ * hours later is hours old.
  */
 export const DROVR_BIRTH_CLAMP_SKEW_MS = 5 * 60_000
 
@@ -52,8 +54,14 @@ export type ClampedBirths = {
  * append was a duplicate (apps/api `events.ts`), so a retry re-clamped to
  * a later instant after an ambiguous first post would fold an `occurredAt`
  * the log does not hold. Where each path fixes it:
- * - the Inngest lanes: one memoized step per run (`drovrClampInstant`);
+ * - the Inngest lanes: one memoized step per run (`drovrClampInstant`).
+ *   It is the run's instant, so a birth whose step waits on an earlier
+ *   event's retries goes out up to that retry span old: bounded by one
+ *   run, and cheaper than a step per birth;
  * - the dispatch fallback's direct post: one instant before it posts;
+ * - the owner-birth guard: its run's start. The one exception: a re-post
+ *   of a birth drovr logged but never folded carries the guard's instant,
+ *   not the first send's, until drovr row 209 folds the stored event;
  * - the outbox: an entry captured after a failed send carries that send's
  *   instant as its row's `firstFailedAt`, and the replay clamps at
  *   `firstFailedAt`, so a row posts the same bytes on every replay.
@@ -77,7 +85,8 @@ export function clampBirths(
 /**
  * One line per send that clamped anything, so an outage backlog or a
  * backfill's queue wait shows up in Axiom: `count` sums the clamps, and
- * `lagSeconds` carries each birth's original lag.
+ * `lagSeconds` carries each birth's original lag. It is logged on every
+ * attempt, so a retried send repeats its line: count sends, not births.
  */
 export async function logClampedBirths(
 	clamped: ClampedBirths,
