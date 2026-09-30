@@ -12,9 +12,12 @@ import {
 	enterEvergreenPitchFromLiveDatabase,
 	resolveOwnedContactIds,
 } from './drovr-ownership-live'
+import { outboxEntryForEvent } from './drovr-outbox'
+import { captureDrovrOutboxLive } from './drovr-outbox-live'
+import type { DrovrOutboxCaptureFn } from './drovr-outbox-step'
 import {
+	deliverDrovrShadowEventsDirect,
 	drovrShadowFactContactId,
-	emitDrovrShadowEvents,
 	mapDrovrShadowFact,
 	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
 	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
@@ -95,8 +98,15 @@ export async function sendDrovrEventsDeliverViaInngestHttp(
 
 type DrovrShadowDispatchOptions = {
 	send?: DrovrShadowSend
-	/** Direct sender for the fallback; receives the fanned-out batch. */
-	fallback?: (events: readonly DrovrShadowEvent[]) => Promise<void>
+	/**
+	 * Direct sender for the fallback; receives the fanned-out batch and
+	 * answers with the events drovr did not take, which go to the outbox.
+	 */
+	fallback?: (
+		events: readonly DrovrShadowEvent[],
+	) => Promise<readonly DrovrShadowEvent[]>
+	/** Where unsent events go (row 204). Defaults to the live outbox. */
+	outbox?: DrovrOutboxCaptureFn
 	/** Test seam for the live eligibility read and ownership stamp. */
 	enterPitch?: (args: {
 		contactId: string
@@ -117,7 +127,7 @@ type DrovrShadowDispatchOptions = {
 export async function dispatchDrovrShadowFact(
 	fact: DrovrShadowFact,
 	options: DrovrShadowDispatchOptions = {},
-): Promise<'queued' | 'requeued' | 'fallback' | 'nothing'> {
+): Promise<'queued' | 'requeued' | 'outboxed' | 'fallback' | 'nothing'> {
 	// Before the evergreen entry below writes anything for the contact.
 	if (isSyntheticPrincipalId(drovrShadowFactContactId(fact))) return 'nothing'
 	const evergreenEnabled =
@@ -233,6 +243,36 @@ export async function dispatchDrovrShadowFact(
 				resolveOwnedContactIds(births, {
 					journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
 				}))
+		const outbox = options.outbox ?? captureDrovrOutboxLive
+		// Row 204: what the fallback cannot deliver goes to the outbox, whose
+		// replay posts it under the same keys; only an absent outbox leaves
+		// the error log as the last word.
+		const toOutbox = async (
+			unsent: readonly DrovrShadowEvent[],
+			reason: unknown,
+			needsFanOut: boolean,
+		): Promise<boolean> => {
+			try {
+				const captured = await outbox(
+					unsent.map((event) =>
+						outboxEntryForEvent(event, 'fallback', { needsFanOut }),
+					),
+					reason,
+				)
+				return captured.status === 'outboxed'
+			} catch (outboxError) {
+				await reportError('drovr.outbox.capture_failed', {
+					source,
+					eventCount: unsent.length,
+					error:
+						outboxError instanceof Error
+							? outboxError.message
+							: String(outboxError),
+					idempotencyKeys: unsent.map((event) => event.idempotencyKey),
+				})
+				return false
+			}
+		}
 		let owned: string[] = []
 		let newsletterOwned: string[] = []
 		try {
@@ -260,24 +300,35 @@ export async function dispatchDrovrShadowFact(
 				...(requeued ? {} : { idempotencyKeys }),
 			})
 			if (requeued) return 'requeued'
+			// Unfanned, so the replay reads the owners once it can.
+			if (await toOutbox(events, resolveError, true)) return 'outboxed'
 		}
-		const fallback =
-			options.fallback ??
-			((batch: readonly DrovrShadowEvent[]) =>
-				emitDrovrShadowEvents(batch, { rethrow: true }))
-		await fallback(
-			fanOutOwnedEvents(events, new Set(owned), new Set(newsletterOwned)),
-		).catch(async (fallbackError: unknown) => {
-			await reportError('drovr.shadow.fallback_failed', {
-				source,
-				eventCount: events.length,
-				error:
-					fallbackError instanceof Error
-						? fallbackError.message
-						: String(fallbackError),
-				idempotencyKeys,
-			})
-		})
+		const fallback = options.fallback ?? deliverDrovrShadowEventsDirect
+		const fannedOut = fanOutOwnedEvents(
+			events,
+			new Set(owned),
+			new Set(newsletterOwned),
+		)
+		let unsent: readonly DrovrShadowEvent[]
+		let fallbackError: unknown
+		try {
+			const answered: unknown = await fallback(fannedOut)
+			unsent = Array.isArray(answered) ? answered : []
+		} catch (error) {
+			unsent = fannedOut
+			fallbackError = error
+		}
+		if (unsent.length > 0) {
+			const reason =
+				fallbackError ?? new Error('drovr did not take the direct post')
+			if (!(await toOutbox(unsent, reason, false)))
+				await reportError('drovr.shadow.fallback_failed', {
+					source,
+					eventCount: unsent.length,
+					error: reason instanceof Error ? reason.message : String(reason),
+					idempotencyKeys: unsent.map((event) => event.idempotencyKey),
+				})
+		}
 		return 'fallback'
 	}
 }

@@ -89,7 +89,7 @@ export type EvergreenPitchBackfillRepository = {
   }): Promise<EvergreenPitchEntryResult>;
   dispatchFact(
     fact: Extract<DrovrShadowFact, { kind: "course-completed" }>,
-  ): Promise<"queued" | "requeued" | "fallback" | "nothing">;
+  ): Promise<"queued" | "requeued" | "outboxed" | "fallback" | "nothing">;
 };
 
 export type EvergreenPitchBackfillArgs = {
@@ -130,7 +130,7 @@ export function createBackfillFactDispatcher(args: {
       // A rejected HTTP handoff is terminal for this run. Do not bypass the
       // durable path with the direct drovr fallback used by the live host.
       resolveOwners: async () => [],
-      fallback: async () => undefined,
+      fallback: async () => [],
     });
 }
 

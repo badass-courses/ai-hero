@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
 	isShadowNewsletterBirth: vi.fn(),
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 	resolveOwnedContactIds: vi.fn(),
+	capture: vi.fn(),
 }))
 
 vi.mock('@/env.mjs', () => ({
@@ -52,6 +53,9 @@ vi.mock('@/lib/subscriber-marketing/drovr-ownership-live', () => ({
 	resolveOwnedContactIds: mocks.resolveOwnedContactIds,
 }))
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
+vi.mock('@/lib/subscriber-marketing/drovr-outbox-live', () => ({
+	captureDrovrOutboxLive: mocks.capture,
+}))
 
 import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
 import type { DeferredDrovrEvent } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
@@ -59,6 +63,7 @@ import type { DeferredDrovrEvent } from '@/lib/subscriber-marketing/drovr-shadow
 import {
 	drovrEventsDeliver,
 	drovrEventsDeliverBulk,
+	outboxFailedRun,
 } from './drovr-events-deliver'
 
 type Step = {
@@ -68,6 +73,8 @@ type Step = {
 type Registered = {
 	config: {
 		id: string
+		retries?: number
+		onFailure?: (input: Record<string, unknown>) => Promise<unknown>
 		concurrency: Array<{ key?: string; limit: number }>
 		batchEvents?: { maxSize: number; timeout: string }
 	}
@@ -621,5 +628,240 @@ describe('owner-copy stops drovr says never started the journey', () => {
 			rejected: 1,
 			discarded: 0,
 		})
+	})
+})
+
+/** drovr's answer as DrovrDeliveryFailedError carries it. */
+const drovrFailure = (httpStatus: number, retryAfterMs?: number) =>
+	Object.assign(new Error(`drovr answered ${httpStatus}`), {
+		name: 'DrovrDeliveryFailedError',
+		httpStatus,
+		...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+	})
+
+// Inngest: retries 8 is nine attempts; attempt 8 is the last.
+const LAST = { attempt: 8, maxAttempts: 9 }
+
+describe('row 204: a drovr 5xx never loses a live or bulk event', () => {
+	beforeEach(() => {
+		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
+		mocks.capture.mockImplementation(async (entries: unknown[]) => ({
+			status: 'outboxed',
+			count: entries.length,
+		}))
+	})
+
+	it('gives both drovr-send functions a retry budget of 8', () => {
+		expect(registered.config.retries).toBe(8)
+		expect(registeredBulk.config.retries).toBe(8)
+	})
+
+	it.each([500, 503])(
+		'retries a live %i with RetryAfterError, never under the backoff table',
+		async (httpStatus) => {
+			// drovr asks for 5 s; the table says 60 s on the third attempt.
+			mocks.deliverOrThrow.mockRejectedValue(drovrFailure(httpStatus, 5_000))
+			const error = await registered
+				.handler({
+					event: {
+						data: {
+							source: 'live-contact',
+							events: [event('org-aihero', 'owner:answer')],
+						},
+					},
+					step: createStep(),
+					attempt: 2,
+					maxAttempts: 9,
+				})
+				.catch((thrown: unknown) => thrown)
+			expect(error).toMatchObject({ name: 'RetryAfterError', retryAfter: '60' })
+			expect(mocks.capture).not.toHaveBeenCalled()
+		},
+	)
+
+	it('honours a Retry-After longer than the table, capped at 10 minutes', async () => {
+		mocks.deliverOrThrow.mockRejectedValue(drovrFailure(503, 3_600_000))
+		const error = await registered
+			.handler({
+				event: {
+					data: {
+						source: 'live-contact',
+						events: [event('org-aihero', 'owner:answer')],
+					},
+				},
+				step: createStep(),
+				attempt: 0,
+				maxAttempts: 9,
+			})
+			.catch((thrown: unknown) => thrown)
+		expect(error).toMatchObject({ name: 'RetryAfterError', retryAfter: '600' })
+	})
+
+	it.each([500, 503])(
+		'outboxes a live event on the last attempt of a %i and completes the run',
+		async (httpStatus) => {
+			const answer = event('org-aihero', 'owner:answer')
+			const accepted = event('org-aihero', 'owner:accepted')
+			mocks.deliverOrThrow.mockImplementation(
+				async ({ event: sent }: { event: { idempotencyKey: string } }) => {
+					if (sent.idempotencyKey === 'owner:answer')
+						throw drovrFailure(httpStatus)
+					return { status: 'accepted' }
+				},
+			)
+			const receipt = await registered.handler({
+				event: {
+					data: { source: 'live-contact', events: [answer, accepted] },
+				},
+				step: createStep(),
+				...LAST,
+			})
+			expect(receipt).toEqual({
+				status: 'delivered',
+				accepted: 1,
+				rejected: 0,
+				discarded: 0,
+				outboxed: 1,
+			})
+			expect(mocks.capture).toHaveBeenCalledOnce()
+			expect(mocks.capture.mock.calls[0]![0]).toEqual([
+				expect.objectContaining({
+					endpoint: 'events',
+					idempotencyKey: 'owner:answer',
+					body: answer,
+					source: 'live',
+					needsFanOut: false,
+				}),
+			])
+		},
+	)
+
+	it('keeps the old failure when the outbox table is not there yet', async () => {
+		mocks.capture.mockResolvedValue({ status: 'unavailable' })
+		mocks.deliverOrThrow.mockRejectedValue(drovrFailure(503))
+		await expect(
+			registered.handler({
+				event: {
+					data: {
+						source: 'live-contact',
+						events: [event('org-aihero', 'owner:answer')],
+					},
+				},
+				step: createStep(),
+				...LAST,
+			}),
+		).rejects.toThrow('drovr answered 503')
+	})
+
+	it.each([500, 503])(
+		'outboxes a whole bulk chunk on the last attempt of a %i',
+		async (httpStatus) => {
+			const chunk = [
+				event(
+					'org-aihero',
+					'kit:birth:1',
+					'contact-directory',
+					'contact.created',
+				),
+				event(
+					'org-aihero',
+					'kit:birth:2',
+					'contact-directory',
+					'contact.created',
+				),
+			]
+			mocks.deliverBatchOrThrow.mockRejectedValue(drovrFailure(httpStatus))
+			const receipt = await registeredBulk.handler({
+				events: [{ data: { source: 'kit-directory-ingest', events: chunk } }],
+				step: createStep(),
+				...LAST,
+			})
+			expect(receipt).toMatchObject({ accepted: 0, outboxed: 2 })
+			expect(
+				(
+					mocks.capture.mock.calls[0]![0] as {
+						idempotencyKey: string
+						source: string
+					}[]
+				).map((entry) => [entry.idempotencyKey, entry.source]),
+			).toEqual([
+				['kit:birth:1', 'bulk'],
+				['kit:birth:2', 'bulk'],
+			])
+		},
+	)
+
+	it('outboxes the unfanned batch when the owner read runs out of retries', async () => {
+		mocks.resolveOwnedContactIds.mockRejectedValue(
+			new Error('Vitess: connection reset'),
+		)
+		const stop = event(
+			'org-aihero-shadow',
+			'stop:contact-1',
+			'value-path-skills-course',
+			'contact.unsubscribed',
+		)
+		const kept = event('org-aihero', 'owner:answer')
+		const receipt = await registered.handler({
+			event: { data: { source: 'contact-event', events: [stop, kept] } },
+			step: createStep(),
+			...LAST,
+		})
+		expect(receipt).toMatchObject({ outboxed: 1 })
+		expect(mocks.deliverOrThrow).not.toHaveBeenCalled()
+		// The retired shadow tenant's event is not kept; the rest is, unfanned.
+		expect(mocks.capture.mock.calls[0]![0]).toEqual([
+			expect.objectContaining({
+				idempotencyKey: 'owner:answer',
+				needsFanOut: true,
+			}),
+		])
+	})
+
+	it('backstops a dead live run from onFailure with its unfanned events', async () => {
+		const answer = event('org-aihero', 'owner:answer')
+		await registered.config.onFailure!({
+			event: {
+				data: { event: { data: { source: 'live-contact', events: [answer] } } },
+			},
+			error: new Error('boom'),
+		})
+		expect(mocks.capture.mock.calls[0]![0]).toEqual([
+			expect.objectContaining({
+				idempotencyKey: 'owner:answer',
+				source: 'onFailure',
+				needsFanOut: true,
+			}),
+		])
+	})
+
+	it('never outboxes a bulk source from the live onFailure', async () => {
+		await outboxFailedRun(
+			{
+				source: 'kit-directory-ingest',
+				events: [event('org-aihero', 'kit:birth:1')],
+			} as never,
+			new Error('boom'),
+			mocks.capture,
+		)
+		expect(mocks.capture).not.toHaveBeenCalled()
+	})
+
+	it('logs, and does not throw, when the onFailure capture fails', async () => {
+		mocks.capture.mockRejectedValue(new Error('db down'))
+		await expect(
+			outboxFailedRun(
+				{
+					source: 'live-contact',
+					events: [event('org-aihero', 'owner:answer')],
+				} as never,
+				new Error('boom'),
+				mocks.capture,
+			),
+		).resolves.toBeUndefined()
+		expect(mocks.log.error).toHaveBeenCalledWith(
+			'drovr.outbox.on_failure_capture_failed',
+			expect.objectContaining({ idempotencyKeys: ['owner:answer'] }),
+		)
 	})
 })

@@ -4,6 +4,7 @@ import { log } from '@/server/logger'
 
 import { parseIanaTimeZone } from './evergreen-offer-journey/primitives'
 import { drovrFailureReason } from './drovr-failure'
+import { parseRetryAfterMs } from './drovr-retry-after'
 import type { ContactEventRecord, SideEffectIntent } from './types'
 import { valuePathIntentCompletedAt } from './value-path-completion'
 import { SHADOW_NEWSLETTER_JOURNEY_ID } from './drovr-shadow-newsletter'
@@ -315,6 +316,76 @@ export async function emitDrovrShadowEvents(
 		})
 		if (options.rethrow) throw error
 	}
+}
+
+/**
+ * The dispatch fallback's direct post (row 204): like emitDrovrShadowEvents,
+ * but it answers with the events drovr did not take (5xx, 409
+ * event-not-live, network, timeout), so the caller can outbox them instead
+ * of losing them. A 4xx stays final and warned. Never throws.
+ */
+export async function deliverDrovrShadowEventsDirect(
+	events: readonly DrovrShadowEvent[],
+	options: DrovrShadowEmitterOptions = {},
+): Promise<DrovrShadowEvent[]> {
+	const config = options.config ?? {
+		ingestUrl: env.DROVR_SHADOW_INGEST_URL,
+		authorityApiKey: env.DROVR_API_KEY_ORG_AIHERO,
+	}
+	const ingestUrl = config.ingestUrl
+	if (!ingestUrl || events.length === 0) return []
+	const info = options.info ?? log.info
+	const warn = options.warn ?? log.warn
+	// Synthetic test principals never reach drovr, on any road.
+	const deliverableEvents = withoutSyntheticContacts(events).kept.filter(
+		(event) => event.tenantId !== DROVR_SHADOW_TENANT_ID,
+	)
+	const discarded = events.length - deliverableEvents.length
+	if (discarded > 0) {
+		await infoWithoutThrow(info, 'drovr.shadow.events_discarded', {
+			tenantId: DROVR_SHADOW_TENANT_ID,
+			count: discarded,
+			deliveryLane: 'direct',
+		})
+	}
+	const unsent: DrovrShadowEvent[] = []
+	await Promise.all(
+		deliverableEvents.map(async (event) => {
+			const apiKey = drovrApiKeyForTenant(event.tenantId, config)
+			if (!apiKey) {
+				await warnWithoutThrow(warn, 'drovr.shadow.tenant_key_missing', {
+					tenantId: event.tenantId,
+					idempotencyKey: event.idempotencyKey,
+				})
+				return
+			}
+			const outcome = await deliverDrovrShadowEvent({
+				event,
+				config: { ingestUrl, apiKey },
+				fetcher: options.fetch,
+				timeoutMs: options.timeoutMs ?? 3000,
+			})
+			if (outcome.status === 'failed') {
+				await warnWithoutThrow(warn, 'drovr.shadow.unaccepted_response', {
+					status: outcome.httpStatus,
+					reason: outcome.reason,
+					journeyId: event.journeyId,
+					type: event.type,
+					idempotencyKey: event.idempotencyKey,
+				})
+				unsent.push(event)
+			}
+			if (outcome.status === 'rejected')
+				await warnWithoutThrow(warn, 'drovr.shadow.rejected', {
+					status: outcome.httpStatus,
+					journeyId: event.journeyId,
+					type: event.type,
+					idempotencyKey: event.idempotencyKey,
+					problem: outcome.problem,
+				})
+		}),
+	)
+	return unsent
 }
 
 export function emitDrovrShadowFactSafely(fact: DrovrShadowFact): void {
@@ -1014,7 +1085,13 @@ function stringValue(value: unknown) {
 export type DrovrDeliveryOutcome =
 	| { status: 'accepted' }
 	| { status: 'rejected'; httpStatus: number; problem: unknown }
-	| { status: 'failed'; reason: string; httpStatus?: number }
+	| {
+			status: 'failed'
+			reason: string
+			httpStatus?: number
+			/** drovr's Retry-After on a 5xx, in milliseconds. */
+			retryAfterMs?: number
+	  }
 
 export type DrovrDeliveryConfig = { ingestUrl: string; apiKey: string }
 
@@ -1059,10 +1136,15 @@ export async function deliverDrovrShadowEvent(args: {
 			}
 			return { status: 'rejected', httpStatus: response.status, problem }
 		}
+		const retryAfterMs = parseRetryAfterMs(
+			response.headers?.get?.('retry-after'),
+			Date.now(),
+		)
 		return {
 			status: 'failed',
 			httpStatus: response.status,
 			reason: `drovr answered ${response.status}`,
+			...(retryAfterMs === undefined ? {} : { retryAfterMs }),
 		}
 	} catch (error) {
 		return {

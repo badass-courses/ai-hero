@@ -1,16 +1,17 @@
 import { DROVR_CONTACT_PROFILE_SYNC_EVENT } from '@/inngest/events/drovr'
 import { inngest } from '@/inngest/inngest.server'
+import { DROVR_SEND_RETRIES } from '@/lib/subscriber-marketing/drovr-outbox'
 import { runContactProfileSync } from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
 
 export const drovrContactProfileSync = inngest.createFunction(
 	{
 		id: 'drovr-contact-profile-sync-v1',
 		name: 'drovr: sync one contact profile',
-		retries: 6,
+		retries: DROVR_SEND_RETRIES,
 		concurrency: [{ key: 'event.data.contactId', limit: 1 }],
 	},
 	{ event: DROVR_CONTACT_PROFILE_SYNC_EVENT },
-	async ({ event, step }) => {
+	async ({ event, step, attempt, maxAttempts }) => {
 		const [
 			{ db },
 			{ env },
@@ -30,6 +31,7 @@ export const drovrContactProfileSync = inngest.createFunction(
 			{ findJourneyOwnerAssignment, isOnDrovrSendingJourney },
 			{ SKILLS_WORKFLOW_VALUE_PATH },
 			{ createDirectoryBirth },
+			{ contactSyncSendOrOutbox },
 		] = await Promise.all([
 			import('@/db'),
 			import('@/env.mjs'),
@@ -45,7 +47,10 @@ export const drovrContactProfileSync = inngest.createFunction(
 			import('@/lib/subscriber-marketing/drovr-ownership'),
 			import('@/lib/subscriber-marketing/skills-newsletter-path-entry'),
 			import('@/lib/subscriber-marketing/contact-sync-straggler-retry'),
+			import('@/lib/subscriber-marketing/drovr-outbox-contact-sync'),
 		])
+		// Row 204: the last failed attempt outboxes the events.
+		const outboxing = contactSyncSendOrOutbox({ attempt, maxAttempts })
 		const repository = new DrizzleCaptureMarketingRepository(db)
 		return runContactProfileSync({
 			event,
@@ -83,11 +88,13 @@ export const drovrContactProfileSync = inngest.createFunction(
 				if (!ingestUrl || !apiKey) return 'not-configured'
 				// One contact's events, well under drovr's 100 per batch.
 				// Refusals come back deferred, for the straggler retry (§4).
-				return deliverBatchOrThrow({
-					events,
-					config: { ingestUrl, apiKey },
-					deferNotLive: true,
-				})
+				return outboxing(events, () =>
+					deliverBatchOrThrow({
+						events,
+						config: { ingestUrl, apiKey },
+						deferNotLive: true,
+					}),
+				)
 			},
 			birth: createDirectoryBirth({
 				findContactById: (id) => repository.findContactById(id),
@@ -98,10 +105,12 @@ export const drovrContactProfileSync = inngest.createFunction(
 					const apiKey = drovrApiKeyForTenant(DROVR_AUTHORITY_TENANT_ID)
 					if (!ingestUrl || !apiKey)
 						throw new Error('drovr is not configured for a directory birth')
-					return deliverBatchOrThrow({
-						events: births,
-						config: { ingestUrl, apiKey },
-					})
+					return outboxing(births, () =>
+						deliverBatchOrThrow({
+							events: births,
+							config: { ingestUrl, apiKey },
+						}),
+					)
 				},
 			}),
 			onSendingJourney: (contactId) =>

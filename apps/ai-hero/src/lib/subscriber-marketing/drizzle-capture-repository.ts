@@ -1881,7 +1881,7 @@ function isDueRetryableIntent(intent: SideEffectIntent, now: string) {
 	return !nextRetryAt || nextRetryAt <= now
 }
 
-function toSideEffectIntentRecord(row: any): SideEffectIntent {
+export function toSideEffectIntentRecord(row: any): SideEffectIntent {
 	return {
 		id: row.id,
 		nextActionId: row.nextActionId,

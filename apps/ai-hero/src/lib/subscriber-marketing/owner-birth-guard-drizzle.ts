@@ -1,4 +1,4 @@
-import { contactEvent } from '@/db/schema'
+import { contactEvent, sideEffectIntent } from '@/db/schema'
 import { and, asc, eq, gt, gte, inArray, like, lte, or } from 'drizzle-orm'
 
 import {
@@ -7,13 +7,49 @@ import {
 	isContactStopped,
 	stopSignalOfEvent,
 } from './contact-stop-rule'
-import { toContactEventRecord } from './drizzle-capture-repository'
-import { JOURNEY_OWNER_ASSIGNED_EVENT_TYPE } from './drovr-ownership'
 import {
-	OWNER_BIRTH_GUARD_JOURNEY_ID,
+	toContactEventRecord,
+	toSideEffectIntentRecord,
+} from './drizzle-capture-repository'
+import { SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE } from './drovr-evergreen'
+import {
+	fanOutOwnedEvents,
+	isShadowNewsletterBirth,
+	JOURNEY_OWNER_ASSIGNED_EVENT_TYPE,
+	journeyOwnerProviderEventId,
+} from './drovr-ownership'
+import {
+	DROVR_AUTHORITY_TENANT_ID,
+	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+	mapDrovrShadowFact,
+	type DrovrShadowEvent,
+} from './drovr-shadow-emitter'
+import {
+	OWNER_BIRTH_GUARD_OWNER_JOURNEY_IDS,
 	type OwnerBirthGuardPorts,
+	type OwnerBirthSubject,
 	type RepostOutcome,
 } from './owner-birth-guard'
+import type { SideEffectIntent } from './types'
+
+/**
+ * The newsletter birth the live dispatch sent for a completed
+ * shadow-newsletter list intent of a newsletter-owned contact: the owner
+ * copy of the mapped birth (same key, same zone).
+ */
+export function newsletterOwnerBirthOf(
+	intent: SideEffectIntent,
+): DrovrShadowEvent | undefined {
+	const births = mapDrovrShadowFact({
+		kind: 'side-effect-intent-completed',
+		intent,
+	}).filter(isShadowNewsletterBirth)
+	return fanOutOwnedEvents(births, new Set(), new Set([intent.contactId])).find(
+		(event) =>
+			event.tenantId === DROVR_AUTHORITY_TENANT_ID &&
+			event.journeyId === DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+	)
+}
 import type { ContactEventRecord } from './types'
 
 /**
@@ -74,7 +110,10 @@ export function createDrizzleOwnerBirthGuardStore(
 	database: unknown,
 ): Pick<
 	OwnerBirthGuardPorts,
-	'scanOwners' | 'stoppedContactIds' | 'repostedOwnerEventIds'
+	| 'scanOwners'
+	| 'scanNewsletterBirths'
+	| 'stoppedContactIds'
+	| 'repostedOwnerEventIds'
 > {
 	const db = database as Select
 	return {
@@ -97,15 +136,97 @@ export function createDrizzleOwnerBirthGuardStore(
 									),
 								)
 							: undefined,
-						like(
-							contactEvent.providerEventId,
-							`%:${OWNER_BIRTH_GUARD_JOURNEY_ID}`,
+						or(
+							...OWNER_BIRTH_GUARD_OWNER_JOURNEY_IDS.map((journeyId) =>
+								like(contactEvent.providerEventId, `%:${journeyId}`),
+							),
 						),
 					),
 				)
 				.orderBy(asc(contactEvent.occurredAt), asc(contactEvent.id))
 				.limit(limit)
 			return rows.map(toContactEventRecord)
+		},
+		// Rides SideEffectIntent_provider_type_status_idx; the intents carry
+		// the zone the birth was built with.
+		async scanNewsletterBirths({ from, to, after, limit }) {
+			const cursor = after ? new Date(after.occurredAt) : undefined
+			const rows = (await db
+				.select()
+				.from(sideEffectIntent)
+				.where(
+					and(
+						eq(sideEffectIntent.provider, 'kit'),
+						eq(sideEffectIntent.type, SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE),
+						eq(sideEffectIntent.status, 'completed'),
+						gte(sideEffectIntent.completedAt, new Date(from)),
+						lte(sideEffectIntent.completedAt, new Date(to)),
+						cursor && after
+							? or(
+									gt(sideEffectIntent.completedAt, cursor),
+									and(
+										eq(sideEffectIntent.completedAt, cursor),
+										gt(sideEffectIntent.id, after.id),
+									),
+								)
+							: undefined,
+					),
+				)
+				.orderBy(asc(sideEffectIntent.completedAt), asc(sideEffectIntent.id))
+				.limit(limit)) as unknown[]
+			const intents = rows.map(toSideEffectIntentRecord)
+			const last = intents.at(-1)
+			const next =
+				rows.length === limit && last?.completedAt
+					? { occurredAt: last.completedAt, id: last.id }
+					: undefined
+			const withBirth = intents
+				.map((intent) => ({ intent, birth: newsletterOwnerBirthOf(intent) }))
+				.filter(
+					(
+						item,
+					): item is { intent: SideEffectIntent; birth: DrovrShadowEvent } =>
+						item.birth !== undefined,
+				)
+			if (withBirth.length === 0)
+				return { subjects: [], ...(next ? { next } : {}) }
+			// Only newsletter-owned contacts have an authority birth at all.
+			const owners = (
+				await db
+					.select()
+					.from(contactEvent)
+					.where(
+						and(
+							eq(contactEvent.eventType, JOURNEY_OWNER_ASSIGNED_EVENT_TYPE),
+							inArray(
+								contactEvent.providerEventId,
+								withBirth.map(({ intent }) =>
+									journeyOwnerProviderEventId(
+										intent.contactId,
+										DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+									),
+								),
+							),
+						),
+					)
+			).map(toContactEventRecord)
+			const ownerByContact = new Map(
+				owners.map((owner) => [owner.contactId, owner]),
+			)
+			const subjects: OwnerBirthSubject[] = []
+			const seen = new Set<string>()
+			for (const { intent, birth } of withBirth) {
+				const owner = ownerByContact.get(intent.contactId)
+				// One newsletter birth per contact, whatever intent repeats it.
+				if (!owner || seen.has(owner.id)) continue
+				seen.add(owner.id)
+				subjects.push({
+					owner,
+					journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+					birth,
+				})
+			}
+			return { subjects, ...(next ? { next } : {}) }
 		},
 		async stoppedContactIds(contactIds) {
 			if (contactIds.length === 0) return new Set()

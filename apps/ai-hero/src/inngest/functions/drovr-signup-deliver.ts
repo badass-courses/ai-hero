@@ -5,25 +5,73 @@ import {
 	DrovrSignupRefusedError,
 	parseDrovrSignupDeliveryConfig,
 	postDrovrSignup,
+	type DrovrSignupRequest,
+	type DrovrSignupStatus,
 } from '@/lib/subscriber-marketing/drovr-doi-signup'
+import {
+	DROVR_SEND_RETRIES,
+	outboxEntryForSignup,
+} from '@/lib/subscriber-marketing/drovr-outbox'
+import { captureDrovrOutboxLive } from '@/lib/subscriber-marketing/drovr-outbox-live'
+import {
+	sendOrOutbox,
+	type DrovrOutboxCaptureFn,
+} from '@/lib/subscriber-marketing/drovr-outbox-step'
 import { log } from '@/server/logger'
 import { NonRetriableError } from 'inngest'
 
+type PostSignupStep =
+	| { status: DrovrSignupStatus }
+	| { refused: number; reason: string }
+	| { outboxed: true }
+
+/**
+ * The signup function's onFailure (row 204): a run that died before its
+ * post could outbox it. A refusal is final and never outboxed.
+ */
+export async function outboxFailedSignup(
+	request: DrovrSignupRequest,
+	error: { name?: string } | undefined,
+	capture: DrovrOutboxCaptureFn = captureDrovrOutboxLive,
+): Promise<void> {
+	if (error?.name === 'NonRetriableError') return
+	try {
+		await capture(
+			[{ ...outboxEntryForSignup(request), source: 'onFailure' }],
+			error,
+		)
+	} catch (captureError) {
+		await log.error('drovr.outbox.on_failure_capture_failed', {
+			count: 1,
+			error:
+				captureError instanceof Error
+					? captureError.message
+					: String(captureError),
+			idempotencyKeys: [request.submissionId],
+		})
+	}
+}
+
 /**
  * Records a double opt-in signup with drovr. This function owns the retry
- * (6 attempts with Inngest's backoff); the POST itself does not retry, and
- * drovr is idempotent on the submission id. A permanent refusal (4xx) is
- * logged and ends the run; the reader's page already said to check email.
+ * (8 retries, Retry-After honoured over the backoff table); the POST itself
+ * does not retry, and drovr is idempotent on the submission id. The last
+ * failed attempt hands the signup to the drovr outbox (row 204). A
+ * permanent refusal (4xx) is logged and ends the run; the reader's page
+ * already said to check email.
  */
 export const drovrSignupDeliver = inngest.createFunction(
 	{
 		id: 'drovr-signup-deliver-v1',
 		name: 'drovr: record a double opt-in signup',
-		retries: 6,
+		retries: DROVR_SEND_RETRIES,
 		concurrency: [{ limit: 4 }],
+		onFailure: async ({ event, error }) => {
+			await outboxFailedSignup(event.data.event.data, error)
+		},
 	},
 	{ event: DROVR_SIGNUP_REQUESTED_EVENT },
-	async ({ event, step }) => {
+	async ({ event, step, attempt, maxAttempts }) => {
 		// Not the intake flag: a queued signup is delivered even after
 		// DROVR_DOI_FORMS is turned off.
 		const config = parseDrovrSignupDeliveryConfig(env)
@@ -34,22 +82,32 @@ export const drovrSignupDeliver = inngest.createFunction(
 				'drovr double opt-in is not configured on this deployment',
 			)
 		}
-		const status = await step.run('post-signup', async () => {
-			try {
-				return await postDrovrSignup(event.data, config)
-			} catch (error) {
-				if (error instanceof DrovrSignupRefusedError) {
-					await log.error('drovr.signup.refused', {
-						contactId: event.data.contactId,
-						formId: event.data.formId,
-						httpStatus: error.httpStatus,
-						reason: error.message,
-					})
-					throw new NonRetriableError(error.message)
-				}
-				throw error
-			}
-		})
+		const posted = (await step.run('post-signup', () =>
+			sendOrOutbox<PostSignupStep>({
+				attempt: { attempt, maxAttempts },
+				send: async () => {
+					try {
+						return { status: await postDrovrSignup(event.data, config) }
+					} catch (error) {
+						if (!(error instanceof DrovrSignupRefusedError)) throw error
+						await log.error('drovr.signup.refused', {
+							contactId: event.data.contactId,
+							formId: event.data.formId,
+							httpStatus: error.httpStatus,
+							reason: error.message,
+						})
+						// Final: returned, not thrown, so no retry and no outbox.
+						return { refused: error.httpStatus, reason: error.message }
+					}
+				},
+				unsent: () => [outboxEntryForSignup(event.data)],
+				capture: captureDrovrOutboxLive,
+				outboxed: () => ({ outboxed: true }),
+			}),
+		)) as PostSignupStep
+		if ('refused' in posted) throw new NonRetriableError(posted.reason)
+		if ('outboxed' in posted) return { status: 'outboxed' as const }
+		const { status } = posted
 		await log.info('drovr.signup.recorded', {
 			contactId: event.data.contactId,
 			formId: event.data.formId,

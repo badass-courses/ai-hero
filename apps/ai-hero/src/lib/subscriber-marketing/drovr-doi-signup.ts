@@ -5,6 +5,7 @@ import {
 	type CaptureMarketingRepository,
 } from './capture-contact-event'
 import { emailEquivalenceKey } from './contact-email-equivalence'
+import { parseRetryAfterMs } from './drovr-retry-after'
 import { DROVR_AUTHORITY_TENANT_ID } from './drovr-shadow-emitter'
 import { normalizeContactEvent } from './normalize-contact-event'
 import type { OptInAttribution } from './opt-in-attribution'
@@ -239,10 +240,13 @@ export type DrovrSignupStatus = z.infer<typeof SignupReply>['status']
 /** drovr could not take the signup now; the caller's durable delivery retries. */
 export class DrovrSignupRetryableError extends Error {
 	readonly httpStatus?: number
-	constructor(detail: string, httpStatus?: number) {
+	/** drovr's Retry-After, in milliseconds. */
+	readonly retryAfterMs?: number
+	constructor(detail: string, httpStatus?: number, retryAfterMs?: number) {
 		super(`drovr signup not recorded yet: ${detail}`)
 		this.name = 'DrovrSignupRetryableError'
 		this.httpStatus = httpStatus
+		this.retryAfterMs = retryAfterMs
 	}
 }
 
@@ -318,6 +322,7 @@ export async function postDrovrSignup(
 			throw new DrovrSignupRetryableError(
 				`HTTP ${response.status}`,
 				response.status,
+				parseRetryAfterMs(response.headers?.get?.('retry-after'), Date.now()),
 			)
 		}
 		const body: unknown = await Promise.race([

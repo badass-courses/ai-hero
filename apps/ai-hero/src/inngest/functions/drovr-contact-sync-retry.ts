@@ -1,5 +1,6 @@
 import { CONTACT_SYNC_RETRY_EVENT } from '@/inngest/events/drovr'
 import { inngest } from '@/inngest/inngest.server'
+import { DROVR_SEND_RETRIES } from '@/lib/subscriber-marketing/drovr-outbox'
 import {
 	createDirectoryBirth,
 	runContactSyncStragglerRetry,
@@ -15,11 +16,11 @@ export const drovrContactSyncRetry = inngest.createFunction(
 	{
 		id: 'drovr-contact-sync-retry-v1',
 		name: 'drovr: retry refused contact sync events',
-		retries: 6,
+		retries: DROVR_SEND_RETRIES,
 		concurrency: [{ limit: 4 }],
 	},
 	{ event: CONTACT_SYNC_RETRY_EVENT },
-	async ({ event, step }) => {
+	async ({ event, step, attempt, maxAttempts }) => {
 		const [
 			{ db },
 			{ env },
@@ -29,6 +30,7 @@ export const drovrContactSyncRetry = inngest.createFunction(
 			{ DrizzleCaptureMarketingRepository },
 			{ findContactKitIdentity },
 			{ createDrizzleContactProfileVersionStore },
+			{ contactSyncSendOrOutbox },
 		] = await Promise.all([
 			import('@/db'),
 			import('@/env.mjs'),
@@ -38,7 +40,10 @@ export const drovrContactSyncRetry = inngest.createFunction(
 			import('@/lib/subscriber-marketing/drizzle-capture-repository'),
 			import('@/lib/subscriber-marketing/contact-kit-identity-drizzle'),
 			import('@/lib/subscriber-marketing/contact-profile-version-drizzle'),
+			import('@/lib/subscriber-marketing/drovr-outbox-contact-sync'),
 		])
+		// Row 204: the last failed attempt outboxes the events.
+		const outboxing = contactSyncSendOrOutbox({ attempt, maxAttempts })
 		const drovrConfig = () => {
 			const ingestUrl = env.DROVR_SHADOW_INGEST_URL
 			const apiKey = drovrApiKeyForTenant(DROVR_AUTHORITY_TENANT_ID)
@@ -55,11 +60,13 @@ export const drovrContactSyncRetry = inngest.createFunction(
 			now: () => Date.now(),
 			warn: log.warn,
 			deliver: (events) =>
-				deliverBatchOrThrow({
-					events,
-					config: drovrConfig(),
-					deferNotLive: true,
-				}),
+				outboxing(events, () =>
+					deliverBatchOrThrow({
+						events,
+						config: drovrConfig(),
+						deferNotLive: true,
+					}),
+				),
 			acknowledge: (contactId, profileVersion) =>
 				createDrizzleContactProfileVersionStore(db).acknowledge(
 					contactId,
@@ -70,7 +77,9 @@ export const drovrContactSyncRetry = inngest.createFunction(
 				kitSubscriberIdFor: async (id) =>
 					(await findContactKitIdentity(db, id)).kitSubscriberId,
 				deliver: (births) =>
-					deliverBatchOrThrow({ events: births, config: drovrConfig() }),
+					outboxing(births, () =>
+						deliverBatchOrThrow({ events: births, config: drovrConfig() }),
+					),
 			}),
 		})
 	},
