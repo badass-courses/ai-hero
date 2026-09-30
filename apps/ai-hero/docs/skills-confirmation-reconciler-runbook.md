@@ -19,12 +19,14 @@ The scan is bounded by tiers, never by dropping anyone (row 211, the hawk).
 
 1. **The form:** every state of form 9376133 since the tier's start, the states read in parallel. That's 5 Kit requests.
 2. **Local evidence:** entries, local opt-outs, value-path sends, and the completion field. **If nobody is left, the run ends here, and Kit is not asked for any list.** Most polls end here.
-3. **Email 0 and the opt-out tags:** the two email 0 sequences and the AI Hero and AI Skills unsubscribe tags (8244351, 19251081). All four are read only for the days on which the remaining subscribers' Kit records were created, padded a day each side, in one batch. Slices are half-open (`created_after` inclusive, `created_before` exclusive, measured 2026-09-30 on a sequence and on both tags) and at most 7 days long; they're read in parallel.
-   - A subscriber in either sequence already got course email and is never entered.
-   - A subscriber with either tag opted out and is never entered. A Kit-tag opt-out is never recorded locally, so it's excluded here, before the per-candidate checks and their cap. That way 100 opt-outs can never starve an older consenting subscriber.
-4. **Per candidate, newest signup first:** one more, fresh `GET /v4/subscribers/{id}/tags`, which catches a tag applied since the scan. If the subscriber is clear, their `skills-newsletter.subscribed` event is sent **at once**, in its own step. Then the next candidate.
-5. **At most 50 sends a run** (`AIH_SKILLS_CONFIRMATION_RECONCILIATION_LIMIT` can pause it with 0 or lower it, never raise it). The limit counts sends, not checks.
-6. **At most 100 tag checks a run,** so a run stays inside its slot and Inngest's step cap. Opt-outs never reach the checks (step 3), so only a subscriber Kit answers 404 for, or one whose check keeps failing, can use the cap. The rest are counted `deferred` and go next run. A daily run that ends with anyone deferred logs `subscriber_funnel.confirmation_daily_deferred` at warn; a monitor on it is a follow-up.
+3. **The opt-out tags first,** the AI Hero and AI Skills unsubscribe tags (8244351, 19251081). A subscriber with either tag opted out and is never entered. A Kit-tag opt-out is never recorded locally, so it stays a candidate every poll; it's excluded here, before email 0 and before the per-candidate checks and their cap. That way opt-outs cost neither, and 100 of them can never starve an older consenting subscriber.
+   - **In slices** while the candidates fit in at most **7** creation-day slices: 2 requests a slice. Slices are half-open (`created_after` inclusive, `created_before` exclusive, measured 2026-09-30 on a sequence and on both tags), padded a day each side, overlapping days merged, and at most 7 days long; they're read in parallel.
+   - **Whole** past that: about 14 pages today (11,608 and 1,482 members on 2026-09-30, ~5 s a page). So piled-up opt-outs cost at most that, however many.
+   - Each run logs `tagRead` (`none`, `sliced` or `whole`).
+4. **Email 0,** over the rest only: the two email 0 sequences in the same kind of slices, **at most 20 a run.** Candidates take slices in order; anyone who'd need a 21st waits a run (`deferredBySliceLimit`). A subscriber in either sequence already got course email and is never entered.
+5. **Per candidate, newest signup first:** one more, fresh `GET /v4/subscribers/{id}/tags`, which catches a tag applied since the scan. If the subscriber is clear, their `skills-newsletter.subscribed` event is sent **at once**, in its own step. Then the next candidate.
+6. **At most 50 sends a run** (`AIH_SKILLS_CONFIRMATION_RECONCILIATION_LIMIT` can pause it with 0 or lower it, never raise it). The limit counts sends, not checks.
+7. **At most 100 tag checks a run,** so a run stays inside its slot and Inngest's step cap. Opt-outs never reach the checks (step 3), so only a subscriber Kit answers 404 for, or one whose check keeps failing, can use the cap. The rest are counted `deferred` and go next run. A daily run that ends with anyone deferred (by the send limit, the check cap or the slice limit) logs `subscriber_funnel.confirmation_daily_deferred` at warn; a monitor on it is a follow-up.
 
 Each event's id is `skills-confirmed:<form>:<subscriber>`, which is its idempotency key. Inngest drops a repeat, so a rerun, a retried step, or the daily tier overlapping the recent one enters a subscriber once.
 
@@ -36,7 +38,12 @@ Kit allows an API key **120 requests per rolling minute**, shared with everythin
 - **A failed read stops its batch.** Once one email 0 or tag slice fails, no queued or waiting slice read of that run reaches Kit.
 - **5xx or no answer:** 3 attempts, then fail closed.
 - **The 429 wait lives in one step's reader.** If a step fails and Inngest retries it, the new reader starts at once. So 429 exhaustion plus 2 step retries is at most 12 requests at a throttled key. That's bounded, and it still sends nothing.
-- **A run's cost** (`kit.calls` on each run's receipt): an empty run is 5 requests. A run with candidates adds 4 per slice (2 sequences and 2 tags; usually 1 slice), plus 1 per candidate checked: about 12–15 at 2–6 confirmations a poll. The old run, before row 211, was about 51 (every tag and sequence list in full) and took ~7 min.
+- **A run's cost** (`kit.calls` on each run's receipt):
+  - an empty run is 5 requests;
+  - a run with candidates adds 2 per tag slice (or ~14 whole), 2 per email 0 slice (at most 20), and 1 per candidate checked;
+  - a typical poll (1 slice, 2–6 confirmations) is about 12–15; the worst is about 5 + 14 + 40 + 100 (plus paging);
+  - a run above ~100 calls is worth a look (an alert on it is a follow-up).
+- **Each request has 20 s.** A request Kit hasn't answered by then is abandoned and counted as no answer (3 attempts, then fail closed), so a stalled read can't hold a step, or the polls queued behind it. The old run, before row 211, was about 51 (every tag and sequence list in full) and took ~7 min.
 
 ## Fail closed
 
@@ -53,8 +60,8 @@ Nobody is entered on partial evidence.
 Axiom, dataset `vercel`, project `ai-hero`.
 - **Each send:** `subscriber_funnel.confirmation_reconciled` with `formId`, `kitSubscriberId`, `eventId`.
 - **Each run:** `subscriber_funnel.confirmation_reconciliation_completed` with:
-  - `tier` (`recent` or `daily`) and its `window`;
-  - the tier's counts: `kitFormSubscribersFetched`, `inWindow`, `unconfirmed`, `withExistingCourseEntry`, `excludedOptedOut` (local plus tags), `excludedByTag` (at the scan plus at the fresh check), `excludedByFreshTagCheck`, `excludedCourseHistory` (local, the completion field and email 0), `candidates`, `tagChecked`, `notInKit`, `tagFailed`, `planned` (sent), `deferred`;
+  - `tier` (`recent` or `daily`) and its `window`, and `tagRead`;
+  - the tier's counts: `kitFormSubscribersFetched`, `inWindow`, `unconfirmed`, `withExistingCourseEntry`, `excludedOptedOut` (local plus tags), `excludedByTag` (at the scan), `excludedByFreshTagCheck`, `excludedByTagTotal` (both), `deferredBySliceLimit`, `excludedCourseHistory` (local, the completion field and email 0), `candidates`, `tagChecked`, `notInKit`, `tagFailed`, `planned` (sent), `deferred`;
   - `plannedOlderThanRecentTier`: sent by the daily tier, who joined the form more than 14 days before. It's the daily tier's catch;
   - `kit.calls` (every Kit request, retries included) and `kit.throttled` (the 429s among them).
 - **Each skipped tag check:** `subscriber_funnel.confirmation_tag_check_failed` with `kitSubscriberId` and `reason`. The same subscriber failing run after run is a bad record to look at in Kit.

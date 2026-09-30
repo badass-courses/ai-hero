@@ -6,7 +6,9 @@ import {
 	reconcileSkillsConfirmations,
 	ReconcilerEvidenceUnavailableError,
 	SKILLS_CONFIRMATION_RECENT_TIER_DAYS,
+	SKILLS_CONFIRMATION_EMAIL_ZERO_SLICE_LIMIT,
 	SKILLS_CONFIRMATION_TAG_CHECKS_PER_RUN,
+	SKILLS_CONFIRMATION_TAG_SLICE_LIMIT,
 	scanSkillsConfirmations,
 	SKILLS_NEWSLETTER_FORM_ID,
 	type SkillsConfirmationEvent,
@@ -74,8 +76,13 @@ function fakeKit(
 		}
 		const tag = /\/v4\/tags\/(\d+)\/subscribers$/.exec(url.pathname)?.[1]
 		if (sequence || tag) {
-			const after = Date.parse(url.searchParams.get('created_after')!)
-			const before = Date.parse(url.searchParams.get('created_before')!)
+			// No created filters: the whole list.
+			const after = Date.parse(
+				url.searchParams.get('created_after') ?? '1970-01-01T00:00:00Z',
+			)
+			const before = Date.parse(
+				url.searchParams.get('created_before') ?? '9999-01-01T00:00:00Z',
+			)
 			return Response.json({
 				subscribers: subscribers
 					.filter(
@@ -430,7 +437,8 @@ describe('row 211: Kit is read only as far as it must be', () => {
 		expect((await receipt).counts).toMatchObject({
 			candidates: 3,
 			excludedByFreshTagCheck: 2,
-			excludedByTag: 2,
+			excludedByTag: 0,
+			excludedByTagTotal: 2,
 			planned: 1,
 		})
 		expect(sentIds(sent)).toEqual(['2'])
@@ -715,5 +723,84 @@ describe('row 211: the form read fails closed (Sonnet 2’s gaps, adopted)', () 
 		await expect(scan(answer)).rejects.toBeInstanceOf(
 			ReconcilerEvidenceUnavailableError,
 		)
+	})
+})
+
+describe('row 211 round 3: opt-outs and old records cost a bounded amount of Kit', () => {
+	/** Candidates whose Kit records were created 10 days apart, newest first. */
+	const spread = (
+		count: number,
+		extra: Partial<FakeSubscriber> = {},
+	): FakeSubscriber[] =>
+		Array.from({ length: count }, (_, index) => ({
+			id: index + 1,
+			createdAt: daysBefore(index * 10, 5),
+			addedAt: daysBefore(0, index + 1),
+			...extra,
+		}))
+	const tagReads = (kit: ReturnType<typeof fakeKit>) =>
+		kit.requests.filter((url) => url.pathname.startsWith('/v4/tags/'))
+	const sequenceReads = (kit: ReturnType<typeof fakeKit>) =>
+		kit.requests.filter((url) => url.pathname.startsWith('/v4/sequences/'))
+
+	it('reads the tags in slices up to 7 creation-day slices, and whole at 8', async () => {
+		expect(SKILLS_CONFIRMATION_TAG_SLICE_LIMIT).toBe(7)
+		const seven = fakeKit(spread(7))
+		const sliced = await run('daily', seven).receipt
+		expect(sliced.tagRead).toBe('sliced')
+		expect(tagReads(seven)).toHaveLength(2 * 7)
+		expect(
+			tagReads(seven).every((url) => url.searchParams.has('created_after')),
+		).toBe(true)
+
+		const eight = fakeKit(spread(8))
+		const whole = await run('daily', eight).receipt
+		expect(whole.tagRead).toBe('whole')
+		expect(
+			tagReads(eight)
+				.map((url) => url.pathname)
+				.sort(),
+		).toEqual(['/v4/tags/19251081/subscribers', '/v4/tags/8244351/subscribers'])
+		for (const url of tagReads(eight)) {
+			expect(url.searchParams.has('created_after')).toBe(false)
+			expect(url.searchParams.get('status')).toBe('all')
+		}
+		expect(sliced.counts.planned).toBe(7)
+		expect(whole.counts.planned).toBe(8)
+	})
+
+	it('costs 100 opt-outs 10 days apart the tag lists and nothing more: no email 0 read, no check (Sonnet 2’s 405-call case)', async () => {
+		const kit = fakeKit(spread(100, { tags: [8244351] }))
+		const receipt = await run('daily', kit).receipt
+		expect(receipt).toMatchObject({
+			tagRead: 'whole',
+			counts: { candidates: 0, excludedByTag: 100, tagChecked: 0 },
+		})
+		expect(sequenceReads(kit)).toEqual([])
+		// 5 form reads and the two tag lists, one page each here.
+		expect(receipt.kit.calls).toBe(7)
+	})
+
+	it('reads email 0 in at most 20 slices; candidates needing more wait a run, counted', async () => {
+		expect(SKILLS_CONFIRMATION_EMAIL_ZERO_SLICE_LIMIT).toBe(20)
+		const subscribers = spread(25)
+		// A later candidate on a day already covered still fits.
+		subscribers.push({
+			id: 26,
+			createdAt: subscribers[0]!.createdAt,
+			addedAt: daysBefore(0, 30),
+		})
+		const kit = fakeKit(subscribers)
+		const { receipt, sent } = run('daily', kit)
+		expect((await receipt).counts).toMatchObject({
+			deferredBySliceLimit: 5,
+			candidates: 21,
+			planned: 21,
+			deferred: 5,
+		})
+		// Two sequences, 20 slices each.
+		expect(sequenceReads(kit)).toHaveLength(2 * 20)
+		expect(sentIds(sent)).not.toContain('21')
+		expect(sentIds(sent)).toContain('26')
 	})
 })

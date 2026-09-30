@@ -17,6 +17,13 @@ export const KIT_READER_THROTTLE_ATTEMPTS = 4
 export const KIT_READER_MAX_RETRY_AFTER_MS = 60_000
 /** Attempts for one request that Kit answers 5xx or never answers. */
 export const KIT_READER_SERVER_ATTEMPTS = 3
+/**
+ * A request Kit hasn't answered in 20 s (its 1000-row pages take up to
+ * ~11 s, measured 2026-09-30) is abandoned and counted as no answer, so a
+ * stalled read can't hold a step, and under `concurrency: 1` the polls
+ * behind it (Macroscope 4143598831).
+ */
+export const KIT_READER_REQUEST_TIMEOUT_MS = 20_000
 const KIT_READER_SERVER_BACKOFF_MS = 250
 const KIT_READER_THROTTLE_BACKOFF_MS = 1_000
 
@@ -59,6 +66,7 @@ export type KitReaderOptions = {
 	now?: () => number
 	maxConcurrent?: number
 	minStartIntervalMs?: number
+	requestTimeoutMs?: number
 }
 
 export type KitReader = {
@@ -111,6 +119,7 @@ export function createKitReader(
 	const maxConcurrent = options.maxConcurrent ?? KIT_READER_MAX_CONCURRENT
 	const interval =
 		options.minStartIntervalMs ?? KIT_READER_MIN_START_INTERVAL_MS
+	const timeout = options.requestTimeoutMs ?? KIT_READER_REQUEST_TIMEOUT_MS
 	const stats: KitReadStats = { calls: 0, throttled: 0 }
 	let active = 0
 	const waiting: Array<() => void> = []
@@ -152,7 +161,10 @@ export function createKitReader(
 			throw new KitReadUnavailableError(path, 'cancelled: another read failed')
 		stats.calls += 1
 		try {
-			return await doFetch(url, { headers: { 'X-Kit-Api-Key': apiKey } })
+			return await doFetch(url, {
+				headers: { 'X-Kit-Api-Key': apiKey },
+				signal: AbortSignal.timeout(timeout),
+			})
 		} catch {
 			return undefined
 		}
@@ -284,7 +296,7 @@ const KIT_SLICE_PAGE_CAP = 100
 export async function fetchKitMemberIdsInSlices(
 	reader: KitReader,
 	resources: readonly string[],
-	slices: ReadonlyArray<{ after: string; before: string }>,
+	slices: ReadonlyArray<{ after: string; before: string } | 'whole'>,
 ): Promise<Set<string>> {
 	const byResource = await fetchKitMemberIdsByResource(
 		reader,
@@ -295,13 +307,13 @@ export async function fetchKitMemberIdsInSlices(
 }
 
 /**
- * The same read, the ids kept per resource, so one batch can carry both
- * email 0's sequences and the opt-out tags: one failure fails them all.
+ * The same read, the ids kept per resource. A `'whole'` slice reads the
+ * resource's whole list, unfiltered.
  */
 export async function fetchKitMemberIdsByResource(
 	reader: KitReader,
 	resources: readonly string[],
-	slices: ReadonlyArray<{ after: string; before: string }>,
+	slices: ReadonlyArray<{ after: string; before: string } | 'whole'>,
 ): Promise<Map<string, Set<string>>> {
 	const byResource = new Map(
 		resources.map((resource) => [resource, new Set<string>()]),
@@ -309,7 +321,7 @@ export async function fetchKitMemberIdsByResource(
 	let failed = false
 	const readSlice = async (
 		resource: string,
-		slice: { after: string; before: string },
+		slice: { after: string; before: string } | 'whole',
 	) => {
 		let cursor: string | undefined
 		for (let page = 0; ; page++) {
@@ -317,15 +329,16 @@ export async function fetchKitMemberIdsByResource(
 			if (page >= KIT_SLICE_PAGE_CAP)
 				throw new KitReadUnavailableError(
 					resource,
-					`more than ${KIT_SLICE_PAGE_CAP} pages in ${slice.after}..${slice.before}`,
+					`more than ${KIT_SLICE_PAGE_CAP} pages in ${slice === 'whole' ? 'the whole list' : `${slice.after}..${slice.before}`}`,
 				)
 			const response = await reader.get(
 				`${resource}/subscribers`,
 				{
 					status: 'all',
 					per_page: '1000',
-					created_after: slice.after,
-					created_before: slice.before,
+					...(slice === 'whole'
+						? {}
+						: { created_after: slice.after, created_before: slice.before }),
 					...(cursor ? { after: cursor } : {}),
 				},
 				{ cancelled: () => failed },

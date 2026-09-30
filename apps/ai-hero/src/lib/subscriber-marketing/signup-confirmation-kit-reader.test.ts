@@ -8,6 +8,7 @@ import {
 	KIT_READER_MAX_CONCURRENT,
 	KIT_READER_MAX_RETRY_AFTER_MS,
 	KIT_READER_MIN_START_INTERVAL_MS,
+	KIT_READER_REQUEST_TIMEOUT_MS,
 	KIT_READER_THROTTLE_ATTEMPTS,
 	KitReadUnavailableError,
 	retryAfterMs,
@@ -219,6 +220,28 @@ describe('the Kit reader keeps well under Kit’s limit (row 211, the hawk)', ()
 			calls: KIT_READER_THROTTLE_ATTEMPTS,
 			throttled: KIT_READER_THROTTLE_ATTEMPTS,
 		})
+	})
+
+	it('abandons a request Kit doesn’t answer within the timeout, counts it as no answer, and fails closed after 3 (Macroscope 4143598831)', async () => {
+		expect(KIT_READER_REQUEST_TIMEOUT_MS).toBe(20_000)
+		const signals: AbortSignal[] = []
+		const reader = createKitReader('key', {
+			sleep: async () => {},
+			minStartIntervalMs: 0,
+			requestTimeoutMs: 20,
+			// A Kit that never answers, until the request is abandoned.
+			fetch: ((_: URL, init?: RequestInit) =>
+				new Promise<Response>((_, reject) => {
+					signals.push(init!.signal!)
+					init!.signal!.addEventListener('abort', () =>
+						reject(init!.signal!.reason),
+					)
+				})) as typeof fetch,
+		})
+		await expect(reader.get('a', {})).rejects.toThrow('no answer after 3')
+		expect(signals).toHaveLength(3)
+		expect(signals.every((signal) => signal.aborted)).toBe(true)
+		expect(reader.stats()).toEqual({ calls: 3, throttled: 0 })
 	})
 
 	it('retries a 5xx or no answer three times, then fails closed; hands any other 4xx back', async () => {

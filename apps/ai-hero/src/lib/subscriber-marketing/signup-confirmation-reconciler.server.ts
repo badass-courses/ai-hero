@@ -20,7 +20,7 @@ import {
 	addKitReadStats,
 	createdDaySlices,
 	createKitReader,
-	fetchKitMemberIdsByResource,
+	fetchKitMemberIdsInSlices,
 	fetchKitSubscriberTagIds,
 	KitReadUnavailableError,
 	type KitReader,
@@ -208,11 +208,42 @@ export type SkillsConfirmationScan = {
 		excludedOptedOut: number
 		/** Of them, by an AI Hero or AI Skills unsubscribe tag in Kit. */
 		excludedByTag: number
+		/** Left for the next run: they'd have needed a 21st email 0 slice. */
+		deferredBySliceLimit: number
 		excludedCourseHistory: number
 		candidates: number
 	}
 	events: SkillsConfirmationEvent[]
+	/** How the opt-out tags were read: in slices, whole, or not at all. */
+	tagRead: 'none' | 'sliced' | 'whole'
 	kit: KitReadStats
+}
+
+/**
+ * Up to this many creation-day slices, the opt-out tags are read in slices
+ * (2 requests each); past it, whole (about 14 pages today, measured
+ * 2026-09-30: 11,608 and 1,482 members).
+ */
+export const SKILLS_CONFIRMATION_TAG_SLICE_LIMIT = 7
+/** At most this many email 0 slices a run (2 requests each, and paging). */
+export const SKILLS_CONFIRMATION_EMAIL_ZERO_SLICE_LIMIT = 20
+
+/**
+ * The candidates, in order, that fit in `limit` creation-day slices, and
+ * how many are left beyond them. A later candidate whose day is already
+ * covered still fits.
+ */
+function withinSliceLimit<T extends { createdAt: string }>(
+	candidates: readonly T[],
+	limit: number,
+): { within: T[]; beyond: number } {
+	const within: T[] = []
+	for (const candidate of candidates) {
+		const trial = [...within, candidate]
+		if (createdDaySlices(trial.map((each) => each.createdAt)).length <= limit)
+			within.push(candidate)
+	}
+	return { within, beyond: candidates.length - within.length }
 }
 
 /**
@@ -220,10 +251,11 @@ export type SkillsConfirmationScan = {
  * local evidence (entries, opt-outs, course sends) and the completion
  * field. Only if someone is left does it read Kit's email 0 sequences, and
  * then only for the days those subscribers' Kit records were created
- * (`createdDaySlices`), in parallel slices under the reader's limits, with
- * the two opt-out tags in the same slices. Each remaining candidate's tags
- * are read once more, fresh, just before its send
- * (`checkSkillsConfirmationTags`).
+ * (`createdDaySlices`), in parallel slices under the reader's limits. The
+ * two opt-out tags are read first (in slices, or whole past a few), and a
+ * tagged candidate never reaches email 0's slices or the checks. Each
+ * remaining candidate's tags are read once more, fresh, just before its
+ * send (`checkSkillsConfirmationTags`).
  */
 export async function scanSkillsConfirmations(args: {
 	tier: SkillsConfirmationTier
@@ -268,31 +300,51 @@ export async function scanSkillsConfirmations(args: {
 		let candidates = replayableNewestFirst(preview.candidates)
 		let inEmailZero = 0
 		let taggedOptOut = 0
+		let deferredBySliceLimit = 0
+		let tagRead: 'none' | 'sliced' | 'whole' = 'none'
 		// Most polls end here: nobody new, so no Kit list is read at all.
 		if (candidates.length > 0) {
-			// Email 0's sequences and the opt-out tags, all in one batch of
-			// slices over the candidates' creation days: one failure fails it.
-			// A Kit-tag opt-out is never recorded locally, so it is excluded
-			// here, before the check loop and its cap (Sonnet 2, #348 round 2).
-			const sequences = SKILLS_EMAIL_ZERO_KIT_SEQUENCE_IDS.map(
-				(id) => `sequences/${id}`,
+			// 1. The opt-out tags. A Kit-tag opt-out is never recorded locally,
+			// so it stays a candidate every poll: it's excluded here, before the
+			// check loop and before email 0's slices, so it costs neither
+			// (Sonnet 2, #348 rounds 2 and 3). Sliced while the candidates fit
+			// in a few creation-day slices; past that, the two lists whole, so
+			// piled-up opt-outs cost at most their 14 or so pages.
+			const tagSlices = createdDaySlices(
+				candidates.map((candidate) => candidate.createdAt),
 			)
-			const tags = AI_HERO_SKILLS_EXCLUSION_TAG_IDS.map((id) => `tags/${id}`)
-			const members = await fetchKitMemberIdsByResource(
+			tagRead =
+				tagSlices.length <= SKILLS_CONFIRMATION_TAG_SLICE_LIMIT
+					? 'sliced'
+					: 'whole'
+			const tagged = await fetchKitMemberIdsInSlices(
 				reader,
-				[...sequences, ...tags],
-				createdDaySlices(candidates.map((candidate) => candidate.createdAt)),
+				AI_HERO_SKILLS_EXCLUSION_TAG_IDS.map((id) => `tags/${id}`),
+				tagRead === 'sliced' ? tagSlices : ['whole'],
 			)
-			const inAny = (resources: string[], id: string) =>
-				resources.some((resource) => members.get(resource)?.has(id))
-			const remaining = candidates.filter(
-				(candidate) => !inAny(sequences, candidate.kitSubscriberId),
+			const consenting = candidates.filter(
+				(candidate) => !tagged.has(candidate.kitSubscriberId),
 			)
-			inEmailZero = candidates.length - remaining.length
-			candidates = remaining.filter(
-				(candidate) => !inAny(tags, candidate.kitSubscriberId),
+			taggedOptOut = candidates.length - consenting.length
+			// 2. Email 0, over the rest only, in at most 20 slices: candidates
+			// take slices in order, and anyone who'd need a 21st waits a run.
+			const { within, beyond } = withinSliceLimit(
+				consenting,
+				SKILLS_CONFIRMATION_EMAIL_ZERO_SLICE_LIMIT,
 			)
-			taggedOptOut = remaining.length - candidates.length
+			deferredBySliceLimit = beyond
+			const members =
+				within.length > 0
+					? await fetchKitMemberIdsInSlices(
+							reader,
+							SKILLS_EMAIL_ZERO_KIT_SEQUENCE_IDS.map((id) => `sequences/${id}`),
+							createdDaySlices(within.map((candidate) => candidate.createdAt)),
+						)
+					: new Set<string>()
+			candidates = within.filter(
+				(candidate) => !members.has(candidate.kitSubscriberId),
+			)
+			inEmailZero = within.length - candidates.length
 		}
 		await reader.settle()
 		return {
@@ -309,10 +361,12 @@ export async function scanSkillsConfirmations(args: {
 				excludedSynthetic: preview.counts.excludedSynthetic,
 				excludedOptedOut: preview.counts.excludedOptedOut + taggedOptOut,
 				excludedByTag: taggedOptOut,
+				deferredBySliceLimit,
 				excludedCourseHistory:
 					preview.counts.excludedCourseHistory + inEmailZero,
 				candidates: candidates.length,
 			},
+			tagRead,
 			events: candidates.map((candidate) =>
 				signupConfirmationEvent({
 					candidate,
@@ -401,6 +455,11 @@ export type SkillsConfirmationReceipt = {
 	counts: SkillsConfirmationScan['counts'] & {
 		/** Candidates whose tags were read this run. */
 		tagChecked: number
+		/**
+		 * Every Kit-tag opt-out of the run: at the scan (`excludedByTag`)
+		 * plus at the fresh check (`excludedByFreshTagCheck`).
+		 */
+		excludedByTagTotal: number
 		/** Tagged since the scan: caught by the fresh check before the send. */
 		excludedByFreshTagCheck: number
 		/** Of them, gone from Kit (404). */
@@ -409,11 +468,13 @@ export type SkillsConfirmationReceipt = {
 		tagFailed: number
 		/** Sent this run, each as soon as its tags cleared. */
 		planned: number
-		/** Left for the next run by the send limit or the check cap. */
+		/** Left for the next run by the send limit, the check cap or the slice limit. */
 		deferred: number
 		/** Sent, and joined the form before the recent tier's window: the daily tier's catch. */
 		plannedOlderThanRecentTier: number
 	}
+	/** How the opt-out tags were read this run. */
+	tagRead: SkillsConfirmationScan['tagRead']
 	/** Every Kit request of the run, retries included, and the 429s among them. */
 	kit: KitReadStats
 }
@@ -501,16 +562,18 @@ export async function reconcileSkillsConfirmations(args: {
 		formId: scan.formId,
 		window: scan.window,
 		limit: scan.limit,
+		tagRead: scan.tagRead,
 		counts: {
 			...scan.counts,
 			excludedOptedOut: scan.counts.excludedOptedOut + excludedByFreshTagCheck,
-			excludedByTag: scan.counts.excludedByTag + excludedByFreshTagCheck,
+			excludedByTagTotal: scan.counts.excludedByTag + excludedByFreshTagCheck,
 			tagChecked,
 			excludedByFreshTagCheck,
 			notInKit,
 			tagFailed,
 			planned,
-			deferred: scan.events.length - tagChecked,
+			deferred:
+				scan.events.length - tagChecked + scan.counts.deferredBySliceLimit,
 			plannedOlderThanRecentTier,
 		},
 		kit,
