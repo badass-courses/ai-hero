@@ -839,6 +839,83 @@ describe('row 204 round 2: births gate their contact, and only drovr being down 
 		)
 	})
 
+	it('resets the breaker on a delivery: drovr is answering (#339 delta)', async () => {
+		const outcomes: DrovrOutboxPostOutcome[] = [
+			failedTransient,
+			failedTransient,
+			{ kind: 'delivered' },
+			failedTransient,
+			failedTransient,
+			{ kind: 'delivered' },
+		]
+		const pending = outcomes.map((_, i) =>
+			row({
+				body: event(`d${i}`, {
+					contactId: `d${i}`,
+					occurredAt: minutesAgo(60 - i),
+				}),
+			}),
+		)
+		for (const r of pending) {
+			r.contactId = r.body.contactId
+			r.occurredAt = r.body.occurredAt
+		}
+		const { store } = memoryStore(pending)
+		let call = 0
+		const post = vi.fn(async () => outcomes[call++]!)
+		const receipt = await replay(store, post).run
+		expect(post).toHaveBeenCalledTimes(6)
+		expect(receipt.circuitOpen).toBe(false)
+	})
+
+	it('counts a thrown post as transient: three open the circuit (#339 delta)', async () => {
+		const pending = Array.from({ length: 5 }, (_, i) =>
+			row({ body: event(`t${i}`, { contactId: `t${i}` }) }),
+		)
+		for (const r of pending) r.contactId = r.body.contactId
+		const { store, rows } = memoryStore(pending)
+		const post = vi.fn(async () => {
+			throw new TypeError('fetch failed')
+		})
+		const receipt = await replay(store, post).run
+		expect(post).toHaveBeenCalledTimes(3)
+		expect(receipt.circuitOpen).toBe(true)
+		expect([...rows.values()].filter((r) => r.attempts === 1)).toHaveLength(3)
+	})
+
+	it.each([
+		['failed', failedTransient],
+		['rejected', { kind: 'rejected' as const, httpStatus: 422, detail: 'bad' }],
+	])(
+		"holds a contact's later rows back for the rest of the run once one is %s, and posts them next run (#339 delta)",
+		async (_label, first) => {
+			const earlier = row({
+				body: event('first', { occurredAt: minutesAgo(20) }),
+			})
+			const later = row({
+				body: event('second', { occurredAt: minutesAgo(10) }),
+			})
+			earlier.occurredAt = earlier.body.occurredAt
+			later.occurredAt = later.body.occurredAt
+			const { store, rows } = memoryStore([earlier, later])
+			const posted: string[] = []
+			const post = vi.fn(async (r: DrovrOutboxRow) => {
+				posted.push(r.idempotencyKey)
+				return r.idempotencyKey === 'first'
+					? (first as DrovrOutboxPostOutcome)
+					: { kind: 'delivered' as const }
+			})
+			const receipt = await replay(store, post).run
+			// Within the run, the contact's order holds: the later row waits.
+			expect(posted).toEqual(['first'])
+			expect(receipt.skippedBehindBirth).toBe(1)
+			expect(rows.get(later.id)?.attempts).toBe(0)
+			// Neither is a birth, so nothing gates the next run: it goes out.
+			await replay(store, post).run
+			expect(rows.get(later.id)?.status).toBe('delivered')
+		},
+	)
+
 	it('counts a settled row as settled, not delivered', async () => {
 		const { store, rows } = memoryStore([row()])
 		const receipt = await replay(store, async () => ({

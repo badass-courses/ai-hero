@@ -257,6 +257,60 @@ describe('postDrovrOutboxRow', () => {
 		).toEqual({ kind: 'delivered', httpStatus: 200 })
 	})
 
+	it('is rejected, naming the refused copy, when one owner copy lands and another is refused (#339 delta: a refusal outranks an acceptance)', async () => {
+		const second = {
+			...authorityCopy,
+			journeyId: 'crash-course-evergreen-offer' as const,
+			idempotencyKey: 'owner:aihero:stop:1:evergreen',
+		}
+		const p = ports({
+			fanOut: vi.fn(async (events) => [
+				...events,
+				authorityCopy,
+				second as never,
+			]),
+			deliver: vi.fn(async ({ event }) =>
+				event.idempotencyKey === second.idempotencyKey
+					? {
+							status: 'rejected' as const,
+							httpStatus: 422,
+							problem: { type: 'invalid' },
+						}
+					: { status: 'accepted' as const },
+			),
+		})
+		expect(await postDrovrOutboxRow(shadowRow(), p)).toEqual({
+			kind: 'rejected',
+			httpStatus: 422,
+			detail: { type: 'invalid' },
+			idempotencyKey: second.idempotencyKey,
+		})
+		// The accepted copy did go out first.
+		expect(
+			vi
+				.mocked(p.deliver)
+				.mock.calls.map(([args]) => args.event.idempotencyKey),
+		).toEqual(['owner:aihero:stop:1', second.idempotencyKey])
+	})
+
+	it.each([408, 429])(
+		'counts a %i from drovr as transient (drovr busy, not a verdict)',
+		async (httpStatus) => {
+			expect(
+				await postDrovrOutboxRow(
+					asRow(outboxEntryForEvent(authorityCopy, 'live')),
+					ports({
+						deliver: async () => ({
+							status: 'failed',
+							httpStatus,
+							reason: `drovr answered ${httpStatus}`,
+						}),
+					}),
+				),
+			).toMatchObject({ kind: 'failed', transient: true, httpStatus })
+		},
+	)
+
 	describe('signups', () => {
 		const request = {
 			tenantId: 'org-aihero' as const,
@@ -297,6 +351,18 @@ describe('postDrovrOutboxRow', () => {
 				retryAfterMs: 20_000,
 			})
 		})
+
+		it.each([408, 429])(
+			'answers a %i as a transient failure',
+			async (httpStatus) => {
+				const post = vi.fn(async () => {
+					throw new DrovrSignupRetryableError(`HTTP ${httpStatus}`, httpStatus)
+				})
+				expect(
+					await postDrovrOutboxRow(row, ports({ signup: { post } })),
+				).toMatchObject({ kind: 'failed', transient: true, httpStatus })
+			},
+		)
 
 		it('answers rejected on a refusal', async () => {
 			const post = vi.fn(async () => {
