@@ -27,6 +27,16 @@ const mocks = vi.hoisted(() => ({
 	openStops: vi.fn(),
 	settle: vi.fn(),
 	hold: vi.fn(),
+	valuePathBulkFreeze: vi.fn(),
+}))
+
+// The freeze window's calendar is pinned in drovr-bulk-freeze.test.ts; here
+// it is a switch, so no test here turns on the date it runs.
+vi.mock('@/lib/subscriber-marketing/drovr-bulk-freeze', async (original) => ({
+	...(await original<
+		typeof import('@/lib/subscriber-marketing/drovr-bulk-freeze')
+	>()),
+	valuePathBulkFreeze: mocks.valuePathBulkFreeze,
 }))
 
 vi.mock('@/env.mjs', () => ({
@@ -138,6 +148,7 @@ const createStep = (): Step => ({
 
 beforeEach(() => {
 	vi.clearAllMocks()
+	mocks.valuePathBulkFreeze.mockReturnValue({ frozen: false })
 	mocks.openStops.mockResolvedValue([])
 	mocks.resolveOwnedContactIds.mockResolvedValue([])
 	mocks.isShadowNewsletterBirth.mockReturnValue(false)
@@ -375,6 +386,87 @@ describe('retired shadow tenant delivery', () => {
 				deliveryLane: 'bulk',
 			},
 		)
+	})
+})
+
+describe('row 201g: the bulk lane refuses value-path births in the 201e window', () => {
+	const valuePathBirth = event(
+		'org-aihero',
+		'owner:birth:contact-1',
+		'value-path-skills-course',
+		'contact.created',
+	)
+	const directoryBirth = {
+		...event(
+			'org-aihero',
+			'directory:seed:contact-2',
+			'contact-directory',
+			'contact.created',
+		),
+		contactId: 'contact-2',
+	}
+	const run = () =>
+		registeredBulk.handler({
+			events: [
+				{
+					data: {
+						events: [valuePathBirth, directoryBirth],
+						source: 'kit-directory-ingest',
+					},
+				},
+			],
+			step: createStep(),
+		})
+
+	beforeEach(() => {
+		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
+	})
+
+	it('refuses them without a sign-off, loudly, and still delivers the rest', async () => {
+		mocks.valuePathBulkFreeze.mockReturnValue({
+			frozen: true,
+			reason: 'AIH_DROVR_VALUE_PATH_BULK_FREEZE is on',
+		})
+		const receipt = await run()
+		const sent = mocks.deliverBatchOrThrow.mock.calls.flatMap(([args]) =>
+			(args as { events: { idempotencyKey: string }[] }).events.map(
+				(e) => e.idempotencyKey,
+			),
+		)
+		expect(sent).toEqual(['directory:seed:contact-2'])
+		expect(receipt).toMatchObject({ accepted: 1, valuePathBirthsRefused: 1 })
+		expect(mocks.log.error).toHaveBeenCalledWith(
+			'drovr.bulk.value_path_births_refused',
+			{
+				count: 1,
+				reason: 'AIH_DROVR_VALUE_PATH_BULK_FREEZE is on',
+				idempotencyKeys: ['owner:birth:contact-1'],
+			},
+		)
+	})
+
+	it("lets them through with the hawk's sign-off, and records who signed", async () => {
+		mocks.valuePathBulkFreeze.mockReturnValue({
+			frozen: false,
+			signedOffBy: 'hawk 2026-10-20',
+		})
+		const receipt = await run()
+		expect(receipt).toMatchObject({ accepted: 2 })
+		expect(receipt).not.toHaveProperty('valuePathBirthsRefused')
+		expect(mocks.log.warn).toHaveBeenCalledWith(
+			'drovr.bulk.value_path_births_signed_off',
+			{ count: 1, signedOffBy: 'hawk 2026-10-20' },
+		)
+	})
+
+	it('refuses nothing outside the window, and decides from the environment and the clock', async () => {
+		const receipt = await run()
+		expect(mocks.valuePathBulkFreeze).toHaveBeenCalledWith(
+			process.env,
+			expect.any(Number),
+		)
+		expect(receipt).toMatchObject({ accepted: 2 })
+		expect(mocks.log.error).not.toHaveBeenCalled()
 	})
 })
 

@@ -24,6 +24,11 @@ import type {
 	RefusedDrovrEvent,
 } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
 import type { DrovrDeliveryOutcome } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
+import {
+	isValuePathBirth,
+	valuePathBulkFreeze,
+	type ValuePathBulkFreeze,
+} from '@/lib/subscriber-marketing/drovr-bulk-freeze'
 import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
 import {
 	drovrApiKeyForTenant,
@@ -74,6 +79,11 @@ export type DrovrEventsDeliverReceipt = {
 	deferred?: number
 	/** Backfill events dropped because contact sync was off. */
 	backfillDropped?: number
+	/**
+	 * Value-path births the bulk lane refused inside the 201e freeze
+	 * window, with no sign-off (row 201g).
+	 */
+	valuePathBirthsRefused?: number
 	status: 'delivered' | 'skipped'
 	accepted: number
 	rejected: number
@@ -904,12 +914,41 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 		}
 		const isBackfill = (bulkEvent: (typeof events)[number]) =>
 			bulkEvent.data.source === 'contact-sync-backfill'
-		const others = events
-			.filter((bulkEvent) => !isBackfill(bulkEvent))
+		// Row 201g: inside the 201e window a value-path birth never rides the
+		// bulk lane without the hawk's sign-off. Decided once per run, so a
+		// retry keeps the same chunks.
+		const freeze = (await step.run('value-path-bulk-freeze', async () =>
+			valuePathBulkFreeze(process.env, Date.now()),
+		)) as ValuePathBulkFreeze
+		const valuePathBirths = events
 			.flatMap((bulkEvent) => bulkEvent.data.events)
-		const backfill = events
-			.filter(isBackfill)
-			.flatMap((bulkEvent) => bulkEvent.data.events)
+			.filter(isValuePathBirth)
+		const admitted = (list: DrovrShadowEvent[]) =>
+			freeze.frozen ? list.filter((event) => !isValuePathBirth(event)) : list
+		if (valuePathBirths.length > 0) {
+			if (freeze.frozen)
+				await log.error('drovr.bulk.value_path_births_refused', {
+					count: valuePathBirths.length,
+					reason: freeze.reason,
+					idempotencyKeys: valuePathBirths
+						.slice(0, 20)
+						.map((event) => event.idempotencyKey),
+				})
+			else if (freeze.signedOffBy)
+				await log.warn('drovr.bulk.value_path_births_signed_off', {
+					count: valuePathBirths.length,
+					signedOffBy: freeze.signedOffBy,
+				})
+		}
+		const others = admitted(
+			events
+				.filter((bulkEvent) => !isBackfill(bulkEvent))
+				.flatMap((bulkEvent) => bulkEvent.data.events),
+		)
+		const backfill = admitted(
+			events.filter(isBackfill).flatMap((bulkEvent) => bulkEvent.data.events),
+		)
+		const valuePathBirthsRefused = freeze.frozen ? valuePathBirths.length : 0
 		// Each source keeps its own step ids and chunk layout whatever the
 		// flag says, so a retry never shifts events into a chunk whose
 		// memoized result would replay without posting them. The backfill
@@ -975,6 +1014,7 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 			...combined,
 			...(backfillDropped > 0 ? { backfillDropped } : {}),
 			...(refused.length > 0 ? { deferred: refused.length } : {}),
+			...(valuePathBirthsRefused > 0 ? { valuePathBirthsRefused } : {}),
 		}
 	},
 )

@@ -19,6 +19,15 @@ A **bulk birth** is any job that births more than 1,000 contacts into a drip or 
 5. **Watch:** drovr's D1 query time per minute (the shed line is about 7.3 s a minute), `overload` log lines, and the queue vital. **Pause the Inngest function at the first overload line.** The job's cursor resumes where it stopped.
 6. **Don't backdate births into drip journeys.** ai-hero enforces this at the send (below). The directory seed backdates only the contact directory, which sends nothing. Check which journeys a job's events name.
 
+## No bulk value-path births in the 201e window
+
+**From 201e PR A's deploy (10-18 at the latest) until PR B's deploy (the spread window W raised, at least 7 days later), no bulk value-path births.** At W = 30 with anchored drips, every wave is concentrated (the hawk, 201e S2 guard 1).
+- The bulk lane enforces it (`drovr-bulk-freeze.ts`). Inside the window, it drops every value-path `contact.created` from a bulk run, logs `drovr.bulk.value_path_births_refused` at error with the count and up to 20 keys, and counts `valuePathBirthsRefused` in the run's receipt. The rest of the run is delivered.
+- The window opens at `DROVR_VALUE_PATH_BULK_FREEZE.from`, 2026-10-18 00:00Z. If PR A deploys earlier, set `AIH_DROVR_VALUE_PATH_BULK_FREEZE=on` on prod at its deploy.
+- PR B closes it by setting `DROVR_VALUE_PATH_BULK_FREEZE.until` to its deploy instant. Until then the window stays open, so the guard fails closed.
+- **A value-path import inside the window needs the hawk's sign-off.** Set `AIH_DROVR_VALUE_PATH_BULK_SIGNOFF` to the hawk's name and the date, run the import, then unset it. Each run it lets through logs `drovr.bulk.value_path_births_signed_off` with who signed.
+- A refused birth is not outboxed. Re-run the import after the window, or with the sign-off.
+
 ## The clamp at the send
 
 Every event leaves ai-hero through `deliverDrovrShadowEvent` (the single post, the replay and the fallback) or `deliverBatchOrThrow` (the bulk lane and the straggler retry). Both clamp a **sending-journey birth** to at most 5 minutes before the send:
