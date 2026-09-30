@@ -139,6 +139,30 @@ describe('drovr shadow dispatch', () => {
 		)
 	})
 
+	it('sends the evergreen pitch backfill down the paced bulk lane, and a live completion down the live one (row 201g)', async () => {
+		const send = vi.fn().mockResolvedValue({ ids: ['evt-1'] })
+		await dispatchDrovrShadowFact(courseCompleted, {
+			send,
+			evergreenEnabled: false,
+		})
+		await dispatchDrovrShadowFact(
+			{
+				...courseCompleted,
+				backfill: {
+					occurredAt: '2026-09-30T06:00:00.000Z',
+					idempotencyKey: 'aihero:backfill:contact-1:x:2026-09-30',
+				},
+			},
+			{ send, evergreenEnabled: false },
+		)
+		expect(
+			send.mock.calls.map(([payload]) => [payload.name, payload.data.source]),
+		).toEqual([
+			['drovr/events.deliver', 'course-completed'],
+			['drovr/events.deliver.bulk', 'evergreen-pitch-backfill'],
+		])
+	})
+
 	it('posts the exact durable event through Inngest HTTP', async () => {
 		const fetchImpl = vi
 			.fn()
@@ -205,7 +229,9 @@ describe('drovr shadow dispatch', () => {
 			eventCount: 1,
 			error: 'inngest unreachable',
 		})
-		expect(fallback).toHaveBeenCalledWith(mapDrovrShadowFact(signup))
+		expect(fallback).toHaveBeenCalledWith(mapDrovrShadowFact(signup), {
+			clampAt: expect.any(Number),
+		})
 	})
 
 	it('hands the fact back to the durable path when the fallback cannot read owners', async () => {
@@ -274,7 +300,9 @@ describe('drovr shadow dispatch', () => {
 			}),
 		)
 		// No owner copies (unknown), but the rest still goes out.
-		expect(fallback).toHaveBeenCalledWith(mapDrovrShadowFact(unsubscribe))
+		expect(fallback).toHaveBeenCalledWith(mapDrovrShadowFact(unsubscribe), {
+			clampAt: expect.any(Number),
+		})
 	})
 
 	it('surfaces a failed direct post at error instead of swallowing it', async () => {
@@ -583,7 +611,9 @@ describe('the awaited dispatch (owner-assignment births)', () => {
 			resolveOwners: async () => [],
 		})
 
-		expect(fallback).toHaveBeenCalledWith(mapDrovrShadowFact(birth))
+		expect(fallback).toHaveBeenCalledWith(mapDrovrShadowFact(birth), {
+			clampAt: expect.any(Number),
+		})
 		expect(posted).toBe(true)
 	})
 

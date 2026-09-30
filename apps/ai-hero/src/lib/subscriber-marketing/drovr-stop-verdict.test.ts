@@ -249,6 +249,7 @@ const quiet = vi.fn()
 
 const single = async (event: DrovrShadowEvent, answer: Answer) => {
 	const outcome = await deliverDrovrShadowEvent({
+		clampAt: Date.now(),
 		event,
 		config,
 		fetcher: fetcherFor(answer),
@@ -276,6 +277,7 @@ const batch = async (
 	try {
 		return readBatch(
 			await deliverBatchOrThrow({
+				clampAt: Date.now(),
 				events: [event],
 				config,
 				fetcher,
@@ -339,6 +341,7 @@ const straggler = async (event: DrovrShadowEvent, answer: Answer) => {
 	let answered: DrovrBatchOutcome
 	try {
 		answered = await deliverBatchOrThrow({
+			clampAt: Date.now(),
 			events: [event],
 			config,
 			fetcher: itemFetcherFor(answer, event),
@@ -405,12 +408,14 @@ describe('row 204c: one stop rule on every path', () => {
 			{ status: 409, problem: COLD_START },
 		]) {
 			const outcome = await deliverDrovrShadowEvent({
+				clampAt: Date.now(),
 				event: fact,
 				config,
 				fetcher: fetcherFor(answer),
 			})
 			expect(outcome.status).toBe('rejected')
 			const answered = await deliverBatchOrThrow({
+				clampAt: Date.now(),
 				events: [fact],
 				config,
 				fetcher: fetcherFor(answer),
@@ -429,6 +434,7 @@ describe('row 204c: one stop rule on every path', () => {
 		}
 		await expect(
 			deliverBatchOrThrow({
+				clampAt: Date.now(),
 				events: [fact, ownerPurchase],
 				config,
 				fetcher: fetcherFor({ status: 429 }),
@@ -436,6 +442,7 @@ describe('row 204c: one stop rule on every path', () => {
 			}),
 		).rejects.toThrow('429')
 		const answered = await deliverBatchOrThrow({
+			clampAt: Date.now(),
 			events: [directoryUnsubscribe, fact],
 			config,
 			fetcher: fetcherFor({ status: 409, problem: COLD_START }),
@@ -454,6 +461,7 @@ describe('row 204c: one stop rule on every path', () => {
 			idempotencyKey: 'aihero:fact:1',
 		}
 		const answered = await deliverBatchOrThrow({
+			clampAt: Date.now(),
 			events: [fact, ownerPurchase, directoryUnsubscribe],
 			config,
 			fetcher: fetcherFor({ status: 409, problem: COLD_START }),
@@ -495,6 +503,7 @@ describe('row 204c: one stop rule on every path', () => {
 		"releases drovr's real never-born item (the 09-27 prod string) for an owner copy of $type, in bulk and on the straggler",
 		async (event) => {
 			const answered = await deliverBatchOrThrow({
+				clampAt: Date.now(),
 				events: [event],
 				config,
 				fetcher: prodItemFetcher(event),
@@ -510,6 +519,7 @@ describe('row 204c: one stop rule on every path', () => {
 			await settleOrHoldStragglerStops(
 				[event],
 				await deliverBatchOrThrow({
+					clampAt: Date.now(),
 					events: [event],
 					config,
 					fetcher: prodItemFetcher(event),
@@ -528,6 +538,7 @@ describe('row 204c: one stop rule on every path', () => {
 
 	it("holds drovr's real never-born item for a directory stop: it is the suppression authority", async () => {
 		const answered = await deliverBatchOrThrow({
+			clampAt: Date.now(),
 			events: [directoryUnsubscribe],
 			config,
 			fetcher: prodItemFetcher(directoryUnsubscribe),
@@ -538,6 +549,7 @@ describe('row 204c: one stop rule on every path', () => {
 
 	it("carries drovr's Retry-After on a stop's 429", async () => {
 		const outcome = await deliverDrovrShadowEvent({
+			clampAt: Date.now(),
 			event: ownerPurchase,
 			config,
 			fetcher: vi.fn(

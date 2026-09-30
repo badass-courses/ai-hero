@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
 	batchIngestUrl,
@@ -23,15 +23,35 @@ const event: DrovrShadowEvent = {
 
 const config = { ingestUrl: 'https://drovr.test/events', apiKey: 'test-key' }
 
+/**
+ * The event is a value-path birth, which the send clamps to 5 minutes before
+ * now (row 201g): pin the clock to its instant so the posted body is the
+ * event as built.
+ */
+const atTheBirth = () => {
+	vi.useFakeTimers({ toFake: ['Date'] })
+	vi.setSystemTime(new Date(event.occurredAt))
+}
+
+afterEach(() => {
+	vi.useRealTimers()
+})
+
 describe('drovr durable delivery step', () => {
 	it('returns accepted on 200 and posts the event with bearer auth', async () => {
+		atTheBirth()
 		const fetcher = vi
 			.fn()
 			.mockResolvedValue(
 				new Response(JSON.stringify({ appended: true }), { status: 200 }),
 			)
 
-		const outcome = await deliverOrThrow({ event, config, fetcher })
+		const outcome = await deliverOrThrow({
+			clampAt: Date.now(),
+			event,
+			config,
+			fetcher,
+		})
 
 		expect(outcome).toEqual({ status: 'accepted' })
 		expect(fetcher).toHaveBeenCalledWith(
@@ -56,7 +76,13 @@ describe('drovr durable delivery step', () => {
 		)
 		const warn = vi.fn()
 
-		const outcome = await deliverOrThrow({ event, config, fetcher, warn })
+		const outcome = await deliverOrThrow({
+			clampAt: Date.now(),
+			event,
+			config,
+			fetcher,
+			warn,
+		})
 
 		expect(outcome.status).toBe('rejected')
 		expect(warn).toHaveBeenCalledWith(
@@ -74,16 +100,16 @@ describe('drovr durable delivery step', () => {
 			.fn()
 			.mockResolvedValue(new Response('upstream sad', { status: 503 }))
 
-		await expect(deliverOrThrow({ event, config, fetcher })).rejects.toThrow(
-			DrovrDeliveryFailedError,
-		)
+		await expect(
+			deliverOrThrow({ clampAt: Date.now(), event, config, fetcher }),
+		).rejects.toThrow(DrovrDeliveryFailedError)
 	})
 
 	it('throws on a network failure so the step retries', async () => {
 		const fetcher = vi.fn().mockRejectedValue(new Error('network down'))
 
 		await expect(
-			deliverOrThrow({ event, config, fetcher }),
+			deliverOrThrow({ clampAt: Date.now(), event, config, fetcher }),
 		).rejects.toMatchObject({
 			name: 'DrovrDeliveryFailedError',
 			idempotencyKey: event.idempotencyKey,
@@ -114,7 +140,13 @@ describe('drovr 4xx body handling', () => {
 			.mockResolvedValue(new Response(huge, { status: 422 }))
 		const warn = vi.fn()
 
-		const outcome = await deliverOrThrow({ event, config, fetcher, warn })
+		const outcome = await deliverOrThrow({
+			clampAt: Date.now(),
+			event,
+			config,
+			fetcher,
+			warn,
+		})
 
 		expect(outcome.status).toBe('rejected')
 		const problem = warn.mock.calls[0]?.[1]?.problem
@@ -133,6 +165,7 @@ describe('drovr 4xx body handling', () => {
 			.mockResolvedValue(new Response(body, { status: 404 }))
 
 		const outcome = await deliverOrThrow({
+			clampAt: Date.now(),
 			event,
 			config,
 			fetcher,
@@ -164,6 +197,7 @@ describe('drovr batch delivery step', () => {
 		})
 
 	it('posts the chunk to /events/batch and returns the counts', async () => {
+		atTheBirth()
 		const fetcher = vi.fn().mockResolvedValue(
 			new Response(
 				batchBody([
@@ -175,6 +209,7 @@ describe('drovr batch delivery step', () => {
 		)
 
 		const outcome = await deliverBatchOrThrow({
+			clampAt: Date.now(),
 			events: [event, second],
 			config,
 			fetcher,
@@ -206,7 +241,12 @@ describe('drovr batch delivery step', () => {
 		)
 
 		await expect(
-			deliverBatchOrThrow({ events: [event, second], config, fetcher }),
+			deliverBatchOrThrow({
+				clampAt: Date.now(),
+				events: [event, second],
+				config,
+				fetcher,
+			}),
 		).rejects.toMatchObject({
 			name: 'DrovrBatchDeliveryFailedError',
 			failedKeys: [second.idempotencyKey],
@@ -226,6 +266,7 @@ describe('drovr batch delivery step', () => {
 		const warn = vi.fn()
 
 		const outcome = await deliverBatchOrThrow({
+			clampAt: Date.now(),
 			events: [event, second],
 			config,
 			fetcher,
@@ -256,6 +297,7 @@ describe('drovr batch delivery step', () => {
 			)
 		expect(
 			await deliverBatchOrThrow({
+				clampAt: Date.now(),
 				events: [event, second],
 				config,
 				fetcher: unauthorized,
@@ -278,7 +320,12 @@ describe('drovr batch delivery step', () => {
 			.fn()
 			.mockResolvedValue(new Response('upstream sad', { status: 503 }))
 		await expect(
-			deliverBatchOrThrow({ events: [event], config, fetcher: sad }),
+			deliverBatchOrThrow({
+				clampAt: Date.now(),
+				events: [event],
+				config,
+				fetcher: sad,
+			}),
 		).rejects.toThrow(DrovrBatchDeliveryFailedError)
 
 		// A drovr without the batch route yet is a retry, never a drop.
@@ -286,7 +333,12 @@ describe('drovr batch delivery step', () => {
 			.fn()
 			.mockResolvedValue(new Response('not found', { status: 404 }))
 		await expect(
-			deliverBatchOrThrow({ events: [event], config, fetcher: missing }),
+			deliverBatchOrThrow({
+				clampAt: Date.now(),
+				events: [event],
+				config,
+				fetcher: missing,
+			}),
 		).rejects.toThrow(/no batch ingress/)
 	})
 
@@ -300,7 +352,12 @@ describe('drovr batch delivery step', () => {
 			}),
 		)
 		await expect(
-			deliverBatchOrThrow({ events: [event, second], config, fetcher: short }),
+			deliverBatchOrThrow({
+				clampAt: Date.now(),
+				events: [event, second],
+				config,
+				fetcher: short,
+			}),
 		).rejects.toThrow(/1 result\(s\) for 2 event\(s\)/)
 
 		const duplicate = vi.fn().mockResolvedValue(
@@ -314,6 +371,7 @@ describe('drovr batch delivery step', () => {
 		)
 		await expect(
 			deliverBatchOrThrow({
+				clampAt: Date.now(),
 				events: [event, second],
 				config,
 				fetcher: duplicate,
@@ -371,6 +429,7 @@ describe('drovr event-not-live (409) is a retry, never a drop', () => {
 		const warn = vi.fn()
 		await expect(
 			deliverOrThrow({
+				clampAt: Date.now(),
 				event: profileEvent,
 				config,
 				fetcher: vi.fn().mockResolvedValue(notLive()),
@@ -392,6 +451,7 @@ describe('drovr event-not-live (409) is a retry, never a drop', () => {
 			{ status: 409 },
 		)
 		const outcome = await deliverOrThrow({
+			clampAt: Date.now(),
 			event: profileEvent,
 			config,
 			fetcher: vi.fn().mockResolvedValue(conflict),
@@ -404,6 +464,7 @@ describe('drovr event-not-live (409) is a retry, never a drop', () => {
 		const warn = vi.fn()
 		await expect(
 			deliverBatchOrThrow({
+				clampAt: Date.now(),
 				events: [profileEvent],
 				config,
 				fetcher: vi.fn().mockResolvedValue(notLive()),
@@ -436,7 +497,12 @@ describe('drovr event-not-live (409) is a retry, never a drop', () => {
 			),
 		)
 		await expect(
-			deliverBatchOrThrow({ events: [profileEvent, other], config, fetcher }),
+			deliverBatchOrThrow({
+				clampAt: Date.now(),
+				events: [profileEvent, other],
+				config,
+				fetcher,
+			}),
 		).rejects.toMatchObject({
 			name: 'DrovrBatchDeliveryFailedError',
 			failedKeys: [other.idempotencyKey],
@@ -486,6 +552,7 @@ describe('contact sync deferral of refusals (deferNotLive)', () => {
 	it('hands back items refused as event-not-live or cold-start-unhandled, unchanged', async () => {
 		const warn = vi.fn()
 		const outcome = await deliverBatchOrThrow({
+			clampAt: Date.now(),
 			events: [one, two, three],
 			config,
 			fetcher: answer([
@@ -526,6 +593,7 @@ describe('contact sync deferral of refusals (deferNotLive)', () => {
 			)
 		expect(
 			await deliverBatchOrThrow({
+				clampAt: Date.now(),
 				events: [one, two],
 				config,
 				fetcher,
@@ -545,6 +613,7 @@ describe('contact sync deferral of refusals (deferNotLive)', () => {
 	it('still throws for any other failed item, and keeps a rejection final', async () => {
 		await expect(
 			deliverBatchOrThrow({
+				clampAt: Date.now(),
 				events: [one, two],
 				config,
 				fetcher: answer([
@@ -559,6 +628,7 @@ describe('contact sync deferral of refusals (deferNotLive)', () => {
 		})
 		expect(
 			await deliverBatchOrThrow({
+				clampAt: Date.now(),
 				events: [one],
 				config,
 				fetcher: answer([
@@ -618,6 +688,7 @@ describe('a directory stop answered cold-start-unhandled is done', () => {
 		const warn = vi.fn()
 		expect(
 			await deliverBatchOrThrow({
+				clampAt: Date.now(),
 				events: [stop('contact.unsubscribed'), stop('contact.complained')],
 				config,
 				fetcher: answer([
@@ -636,6 +707,7 @@ describe('a directory stop answered cold-start-unhandled is done', () => {
 	it('counts it as accepted in deferNotLive mode too: no birth, no retry needed', async () => {
 		expect(
 			await deliverBatchOrThrow({
+				clampAt: Date.now(),
 				events: [stop('contact.unsubscribed')],
 				config,
 				fetcher: answer([{ index: 0, ...coldStart }]),
@@ -648,6 +720,7 @@ describe('a directory stop answered cold-start-unhandled is done', () => {
 	it('keeps any other event answered cold-start-unhandled as before', async () => {
 		expect(
 			await deliverBatchOrThrow({
+				clampAt: Date.now(),
 				events: [profile],
 				config,
 				fetcher: answer([{ index: 0, ...coldStart }]),

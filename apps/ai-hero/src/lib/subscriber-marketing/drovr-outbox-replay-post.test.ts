@@ -82,6 +82,8 @@ describe('postDrovrOutboxRow', () => {
 				apiKey: 'authority-key',
 			},
 			timeoutMs: DROVR_OUTBOX_POST_TIMEOUT_MS,
+			// Row 201g: births clamp at the row's first failed send.
+			clampAt: Date.parse('2026-09-30T11:00:00.000Z'),
 		})
 		expect(p.fanOut).not.toHaveBeenCalled()
 	})

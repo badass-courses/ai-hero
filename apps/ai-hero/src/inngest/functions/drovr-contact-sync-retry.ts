@@ -69,6 +69,9 @@ export const drovrContactSyncRetry = inngest.createFunction(
 							events,
 							config: drovrConfig(),
 							deferNotLive: true,
+							// Contact-directory events only: nothing is clamped (row
+							// 201g), so any instant posts the same bytes.
+							clampAt: Date.now(),
 						}),
 					),
 				),
@@ -83,7 +86,12 @@ export const drovrContactSyncRetry = inngest.createFunction(
 					(await findContactKitIdentity(db, id)).kitSubscriberId,
 				deliver: (births) =>
 					outboxing(births, () =>
-						deliverBatchOrThrow({ events: births, config: drovrConfig() }),
+						deliverBatchOrThrow({
+							events: births,
+							config: drovrConfig(),
+							// Directory births are never clamped (row 201g).
+							clampAt: Date.now(),
+						}),
 					),
 			}),
 		})

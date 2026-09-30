@@ -16,6 +16,7 @@ import {
 import {
 	DROVR_OUTBOX_BEHIND_STOP_NOTE,
 	DrovrOutboxUnavailableError,
+	DROVR_OUTBOX_EVERGREEN_START,
 	DROVR_OUTBOX_STOP_EVENT_TYPES,
 	type DrovrOutboxOpenGate,
 	type DrovrOutboxRow,
@@ -205,6 +206,16 @@ export function createDrizzleDrovrOutboxStore(
 									or(
 										eq(drovrOutbox.eventType, 'contact.created'),
 										eq(drovrOutbox.endpoint, 'signups'),
+										and(
+											eq(
+												drovrOutbox.eventType,
+												DROVR_OUTBOX_EVERGREEN_START.eventType,
+											),
+											eq(
+												drovrOutbox.journeyId,
+												DROVR_OUTBOX_EVERGREEN_START.journeyId,
+											),
+										),
 									),
 								),
 								// A stop still owed; a refused one fails closed.

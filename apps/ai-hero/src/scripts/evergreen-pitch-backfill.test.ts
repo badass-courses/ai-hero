@@ -14,6 +14,7 @@ import type { ContactEventRecord } from "@/lib/subscriber-marketing/types";
 import {
   createBackfillFactDispatcher,
   DEFAULT_BACKFILL_FLOOR,
+  EVERGREEN_BACKFILL_DISPATCH_PAUSE_MS,
   EVERGREEN_PITCH_ENABLE_INSTANT,
   parseEvergreenPitchBackfillArgs,
   resolveBackfillApplyInngestEventKey,
@@ -87,6 +88,8 @@ function runArgs(
     limit: 25,
     apply: true,
     birthInstant,
+    now: () => birthInstant,
+    pause: async () => {},
     carryTimeZone: false,
     ...overrides,
   };
@@ -243,6 +246,48 @@ describe("evergreen pitch backfill run", () => {
       });
     },
   );
+
+  it("births each contact at its own instant, read at dispatch, shared by ai-hero's entry and drovr's birth (row 201g)", async () => {
+    const repository = fakeRepository({
+      population: [
+        candidate("contact-1", "2026-09-17T12:00:00.000Z"),
+        candidate("contact-2", "2026-09-17T12:00:00.000Z"),
+      ],
+    });
+    const instants = ["2026-09-30T06:00:00.000Z", "2026-09-30T06:00:08.571Z"];
+    let calls = 0;
+    const now = (): string => instants[calls++]!;
+    const pause = vi.fn(async () => {});
+
+    const summary = await runEvergreenPitchBackfill(
+      runArgs(repository, { now, pause }),
+    );
+
+    // Paced between births, not before the first: at most 600 a minute.
+    expect(pause).toHaveBeenCalledTimes(1);
+    expect(EVERGREEN_BACKFILL_DISPATCH_PAUSE_MS).toBe(100);
+
+    expect(
+      repository.enterEvergreenPitch.mock.calls.map(
+        ([args]) => args.completedAt,
+      ),
+    ).toEqual(instants);
+    expect(
+      repository.dispatchFact.mock.calls.map(
+        ([fact]) => mapDrovrShadowFact(fact)[0]?.occurredAt,
+      ),
+    ).toEqual(instants);
+    // The run keeps one id and one key day.
+    expect(summary.birthInstant).toBe(birthInstant);
+    expect(
+      repository.dispatchFact.mock.calls.map(
+        ([fact]) => fact.backfill?.idempotencyKey,
+      ),
+    ).toEqual([
+      "aihero:backfill:contact-1:ai-hero-skills-workflow:2026-09-18",
+      "aihero:backfill:contact-2:ai-hero-skills-workflow:2026-09-18",
+    ]);
+  });
 
   it("sends the zone the terminal intent carried, so drovr pins it instead of Pacific", async () => {
     const repository = fakeRepository({
@@ -478,10 +523,11 @@ describe("evergreen pitch backfill run", () => {
       headers: { "content-type": "application/json" },
     });
     expect(JSON.parse(String(init?.body))).toEqual({
-      name: "drovr/events.deliver",
+      // Row 201g: the backfill rides the paced bulk lane.
+      name: "drovr/events.deliver.bulk",
       data: {
         events: mapDrovrShadowFact(fact),
-        source: "course-completed",
+        source: "evergreen-pitch-backfill",
       },
     });
   });

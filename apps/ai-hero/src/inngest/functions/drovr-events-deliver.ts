@@ -24,6 +24,12 @@ import type {
 	RefusedDrovrEvent,
 } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
 import type { DrovrDeliveryOutcome } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
+import {
+	isValuePathBirth,
+	valuePathBulkFreeze,
+	type ValuePathBulkFreeze,
+} from '@/lib/subscriber-marketing/drovr-bulk-freeze'
+import { isSendingJourneyBirth } from '@/lib/subscriber-marketing/drovr-birth-clamp'
 import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
 import {
 	drovrApiKeyForTenant,
@@ -74,6 +80,11 @@ export type DrovrEventsDeliverReceipt = {
 	deferred?: number
 	/** Backfill events dropped because contact sync was off. */
 	backfillDropped?: number
+	/**
+	 * Value-path births the bulk lane refused inside the 201e freeze
+	 * window, with no sign-off (row 201g).
+	 */
+	valuePathBirthsRefused?: number
 	status: 'delivered' | 'skipped'
 	accepted: number
 	rejected: number
@@ -159,6 +170,26 @@ const ownerReadUnsent = (
  * concurrency-blocked items). A separate function is a separate queue.
  */
 type DeliverStep = GetStepTools<typeof inngest>
+
+/**
+ * Row 201g (the hawk, #345 S1): the instant this run clamps its births at,
+ * fixed by a memoized step before its first send. Every retry of a
+ * delivery step posts the same bytes, and what runs out of retries is
+ * outboxed with it (`firstFailedAt`), so the replay posts them too. drovr
+ * forwards a request's event to the actor even when its log already holds
+ * the key, so a re-clamped retry would fold an `occurredAt` the log does
+ * not keep. A run with no sending-journey birth takes no step: nothing in
+ * it is clamped, so any instant posts the same bytes.
+ */
+export const DROVR_CLAMP_INSTANT_STEP = 'drovr-birth-clamp-instant'
+
+const drovrClampInstant = async (
+	events: readonly DrovrShadowEvent[],
+	step: DeliverStep,
+): Promise<number> =>
+	events.some(isSendingJourneyBirth)
+		? ((await step.run(DROVR_CLAMP_INSTANT_STEP, () => Date.now())) as number)
+		: Date.now()
 
 const NOT_CONFIGURED: DrovrEventsDeliverReceipt = {
 	status: 'skipped',
@@ -248,7 +279,11 @@ const isStopEvent = (event: DrovrShadowEvent) =>
 	isOutboxStop({ eventType: event.type })
 
 const isBirthEvent = (event: DrovrShadowEvent) =>
-	isOutboxBirth({ endpoint: 'events', eventType: event.type })
+	isOutboxBirth({
+		endpoint: 'events',
+		eventType: event.type,
+		journeyId: event.journeyId,
+	})
 
 /**
  * Row 204b: deliver in the order things happened, so a stop that fails is
@@ -434,6 +469,7 @@ const deliverBatch = async (
 	const { discarded } = shadowFiltered
 	const gate = await holdBehindOpenStops(shadowFiltered.events, step, context)
 	const events = inDeliveryOrder(gate.events)
+	const clampAt = await drovrClampInstant(events, step)
 
 	let accepted = 0
 	let rejected = 0
@@ -469,7 +505,11 @@ const deliverBatch = async (
 			>({
 				attempt: context.attempt,
 				send: async () => {
-					const delivered = await deliverOrThrow({ event: drovrEvent, config })
+					const delivered = await deliverOrThrow({
+						event: drovrEvent,
+						config,
+						clampAt,
+					})
 					if (isNeverBornOwnerStop(drovrEvent, delivered)) {
 						await log.info('drovr.shadow.owner_stop_never_born', {
 							contactId: drovrEvent.contactId,
@@ -491,7 +531,9 @@ const deliverBatch = async (
 					}
 					return delivered
 				},
-				unsent: () => [outboxEntryForEvent(drovrEvent, context.lane)],
+				unsent: () => [
+					outboxEntryForEvent(drovrEvent, context.lane, { sentAt: clampAt }),
+				],
 				capture: context.capture,
 				outboxed: () => ({ status: 'outboxed' }),
 				early: earlyStops([drovrEvent], context, (outcome) =>
@@ -586,6 +628,7 @@ const deliverBulk = async (
 	// is discarded only the authority tenant is left, so that order is the
 	// whole batch's.
 	const events = inDeliveryOrder(gate.events)
+	const clampAt = await drovrClampInstant(events, step)
 
 	// One key per tenant, so one batch stream per tenant.
 	const byTenant = new Map<DrovrShadowEvent['tenantId'], DrovrShadowEvent[]>()
@@ -646,8 +689,8 @@ const deliverBulk = async (
 					send: async () => {
 						const answer = await deliverBatchOrThrow(
 							options.deferNotLive
-								? { events: chunk, config, deferNotLive: true }
-								: { events: chunk, config },
+								? { events: chunk, config, clampAt, deferNotLive: true }
+								: { events: chunk, config, clampAt },
 						)
 						const { refused = [], ...counts } = answer
 						const gatedKeys: string[] = []
@@ -710,7 +753,9 @@ const deliverBulk = async (
 						}
 					},
 					unsent: () =>
-						chunk.map((event) => outboxEntryForEvent(event, context.lane)),
+						chunk.map((event) =>
+							outboxEntryForEvent(event, context.lane, { sentAt: clampAt }),
+						),
 					capture: context.capture,
 					outboxed: (count) => ({ accepted: 0, rejected: 0, outboxed: count }),
 					// Held and deferred stops left pending are not touched: the
@@ -867,6 +912,18 @@ const combineReceipts = (
  */
 export const BULK_DELIVERY_BATCH = { maxSize: 100, timeout: '10s' } as const
 
+/**
+ * Row 201g: the bulk lane is the paced path for births (the hawk,
+ * 2026-09-30). Inngest's throttle counts run starts, not events, and a run
+ * folds up to BULK_DELIVERY_BATCH.maxSize bulk events, so 7 runs a minute
+ * is at most 700 bulk events a minute (under the 750 births/min bulk cap).
+ * Run starts are spaced evenly through the minute. A producer that puts one
+ * birth in each bulk event (the evergreen pitch backfill) is paced at 700
+ * births a minute; the Kit ingest and the contact-sync backfill carry
+ * directory events, which cost the birth minute but start no drips.
+ */
+export const BULK_DELIVERY_THROTTLE = { limit: 7, period: '1m' } as const
+
 export const drovrEventsDeliverBulk = inngest.createFunction(
 	{
 		id: 'drovr-events-deliver-bulk-v1',
@@ -874,6 +931,7 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 		retries: DROVR_SEND_RETRIES,
 		concurrency: [{ limit: 4 }],
 		batchEvents: BULK_DELIVERY_BATCH,
+		throttle: BULK_DELIVERY_THROTTLE,
 	},
 	{ event: DROVR_EVENTS_DELIVER_BULK_EVENT },
 	async ({ events, step, attempt, maxAttempts }) => {
@@ -887,12 +945,44 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 		}
 		const isBackfill = (bulkEvent: (typeof events)[number]) =>
 			bulkEvent.data.source === 'contact-sync-backfill'
-		const others = events
-			.filter((bulkEvent) => !isBackfill(bulkEvent))
+		// Row 201g: inside the 201e window a value-path birth never rides the
+		// bulk lane without the hawk's sign-off. Decided once per run, so a
+		// retry keeps the same chunks.
+		// Its lines are logged inside the step, so a run logs them once, not
+		// once per step its handler replays through.
+		const valuePathBirths = events
 			.flatMap((bulkEvent) => bulkEvent.data.events)
-		const backfill = events
-			.filter(isBackfill)
-			.flatMap((bulkEvent) => bulkEvent.data.events)
+			.filter(isValuePathBirth)
+		const freeze = (await step.run('value-path-bulk-freeze', async () => {
+			const decided = valuePathBulkFreeze(process.env, Date.now())
+			if (valuePathBirths.length > 0) {
+				if (decided.frozen)
+					await log.error('drovr.bulk.value_path_births_refused', {
+						count: valuePathBirths.length,
+						reason: decided.reason,
+						idempotencyKeys: valuePathBirths
+							.slice(0, 20)
+							.map((event) => event.idempotencyKey),
+					})
+				else if (decided.signedOffBy)
+					await log.warn('drovr.bulk.value_path_births_signed_off', {
+						count: valuePathBirths.length,
+						signedOffBy: decided.signedOffBy,
+					})
+			}
+			return decided
+		})) as ValuePathBulkFreeze
+		const admitted = (list: DrovrShadowEvent[]) =>
+			freeze.frozen ? list.filter((event) => !isValuePathBirth(event)) : list
+		const others = admitted(
+			events
+				.filter((bulkEvent) => !isBackfill(bulkEvent))
+				.flatMap((bulkEvent) => bulkEvent.data.events),
+		)
+		const backfill = admitted(
+			events.filter(isBackfill).flatMap((bulkEvent) => bulkEvent.data.events),
+		)
+		const valuePathBirthsRefused = freeze.frozen ? valuePathBirths.length : 0
 		// Each source keeps its own step ids and chunk layout whatever the
 		// flag says, so a retry never shifts events into a chunk whose
 		// memoized result would replay without posting them. The backfill
@@ -958,6 +1048,7 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 			...combined,
 			...(backfillDropped > 0 ? { backfillDropped } : {}),
 			...(refused.length > 0 ? { deferred: refused.length } : {}),
+			...(valuePathBirthsRefused > 0 ? { valuePathBirthsRefused } : {}),
 		}
 	},
 )

@@ -71,8 +71,14 @@ export const drovrOwnerBirthGuard = inngest.createFunction(
 					}),
 				readActor: (contactId, journeyId) =>
 					readDrovrContactActor({ contactId, journeyId, config: readConfig }),
+				// Row 201g: births clamp at the run's memoized start, so a retry of
+				// a re-post's step posts the same bytes.
 				post: (event) =>
-					deliverOrThrow({ event, config: { ingestUrl, apiKey } }),
+					deliverOrThrow({
+						event,
+						config: { ingestUrl, apiKey },
+						clampAt: startedAtMs,
+					}),
 				recordRepost: async (owner, outcome) => {
 					await repository.createContactEvent(
 						ownerBirthRepostMarker(owner, outcome, new Date().toISOString()),

@@ -260,13 +260,30 @@ export function selectBackfillPopulation(args: {
   return selected;
 }
 
+/** 100 ms between births: at most 600 a minute, under the bulk lane's 700. */
+export const EVERGREEN_BACKFILL_DISPATCH_PAUSE_MS = 100;
+
 export async function runEvergreenPitchBackfill(args: {
   repository: EvergreenPitchBackfillRepository;
   floor: string;
   enableInstant: string;
   limit: number;
   apply: boolean;
+  /** The run's start: its id and date (the idempotency key's day). */
   birthInstant: string;
+  /**
+   * Each contact's own birth instant, read as it is dispatched (row 201g).
+   * One instant for the whole run put every contact's P1–P5 at the same
+   * clock time however the sends were paced.
+   */
+  now?: () => string;
+  /**
+   * Waits between dispatches, so a birth never queues behind the bulk
+   * lane's throttle long enough for drovr's clamp to move it off the
+   * instant ai-hero's entry recorded (row 201g). Default: 100 ms, at most
+   * 600 a minute against the lane's 700.
+   */
+  pause?: () => Promise<void>;
   /**
    * Forward the terminal intent's zone evidence to drovr's birth. Only under
    * AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED; off, every birth takes the Pacific
@@ -320,12 +337,23 @@ export async function runEvergreenPitchBackfill(args: {
   }
   if (!args.apply) return summary;
 
+  const now = args.now ?? (() => new Date().toISOString());
+  const pause =
+    args.pause ??
+    (() =>
+      new Promise<void>((resolve) =>
+        setTimeout(resolve, EVERGREEN_BACKFILL_DISPATCH_PAUSE_MS),
+      ));
+  let dispatched = 0;
   for (const candidate of population) {
+    if (dispatched > 0) await pause();
+    // The actor is born now, never at historic completion, and at its own
+    // instant: ai-hero's entry and drovr's birth share it.
+    const bornAt = now();
     try {
       const entry = await args.repository.enterEvergreenPitch({
         contactId: candidate.contactId,
-        // The actor is born into this run, never at historic completion.
-        completedAt: args.birthInstant,
+        completedAt: bornAt,
       });
       if (entry.status === "already-entered") {
         recordRefusal(
@@ -369,13 +397,14 @@ export async function runEvergreenPitchBackfill(args: {
           ? { timezone: candidate.timezone }
           : {}),
         backfill: {
-          occurredAt: args.birthInstant,
+          occurredAt: bornAt,
           idempotencyKey,
         },
       });
       if (delivery !== "queued") {
         throw new Error(`backfill dispatch returned ${delivery}`);
       }
+      dispatched += 1;
       summary.entered += 1;
     } catch (error) {
       summary.errors.push(

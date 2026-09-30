@@ -162,9 +162,17 @@ export type DrovrOutboxEntry = {
 	/** Captured before the owner fan-out: the replay fans it out. */
 	needsFanOut: boolean
 	source: DrovrOutboxSource
+	/**
+	 * Row 201g: the instant a failed send clamped its births at. The row's
+	 * `firstFailedAt` takes it, and the replay clamps at `firstFailedAt`,
+	 * so every replay posts what the first send did. Absent for an entry
+	 * never sent (held behind a stop, an owner read that failed): its
+	 * capture instant is used instead, the same on every replay.
+	 */
+	firstSentAt?: string
 }
 
-export type DrovrOutboxRow = DrovrOutboxEntry & {
+export type DrovrOutboxRow = Omit<DrovrOutboxEntry, 'firstSentAt'> & {
 	id: string
 	dedupeKey: string
 	target: string
@@ -183,7 +191,11 @@ export type DrovrOutboxRow = DrovrOutboxEntry & {
 export function outboxEntryForEvent(
 	event: DrovrShadowEvent,
 	source: DrovrOutboxSource,
-	options: { needsFanOut?: boolean } = {},
+	options: {
+		needsFanOut?: boolean
+		/** The failed send's clamp instant (row 201g). */
+		sentAt?: number
+	} = {},
 ): DrovrOutboxEntry {
 	return {
 		endpoint: 'events',
@@ -196,6 +208,9 @@ export function outboxEntryForEvent(
 		occurredAt: event.occurredAt,
 		needsFanOut: options.needsFanOut ?? false,
 		source,
+		...(options.sentAt === undefined
+			? {}
+			: { firstSentAt: new Date(options.sentAt).toISOString() }),
 	}
 }
 
@@ -448,22 +463,25 @@ export async function captureDrovrOutbox(args: {
 	}
 	const target = args.target
 	const now = args.now.toISOString()
-	const rows: DrovrOutboxRow[] = args.entries.map((entry) => ({
-		...entry,
-		id: randomUUID(),
-		dedupeKey: drovrOutboxDedupeKey(target, entry),
-		target,
-		status: args.status ?? 'pending',
-		attempts: 0,
-		lastStatus: args.httpStatus ?? null,
-		lastError: reason,
-		firstFailedAt: now,
-		nextAttemptAt: args.nextAttemptAt?.toISOString() ?? now,
-		lastAttemptAt: args.status === 'held' ? now : null,
-		deliveredAt: null,
-		releasedAt: null,
-		createdAt: now,
-	}))
+	const rows: DrovrOutboxRow[] = args.entries.map(
+		({ firstSentAt, ...entry }) => ({
+			...entry,
+			id: randomUUID(),
+			dedupeKey: drovrOutboxDedupeKey(target, entry),
+			target,
+			status: args.status ?? 'pending',
+			attempts: 0,
+			lastStatus: args.httpStatus ?? null,
+			lastError: reason,
+			// Row 201g: the replay clamps births at this instant.
+			firstFailedAt: firstSentAt ?? now,
+			nextAttemptAt: args.nextAttemptAt?.toISOString() ?? now,
+			lastAttemptAt: args.status === 'held' ? now : null,
+			deliveredAt: null,
+			releasedAt: null,
+			createdAt: now,
+		}),
+	)
 	await logSafely(args.log.warn, 'drovr.outbox.capturing', summary)
 	const sleep = args.sleep ?? pause
 	for (let attempt = 1; ; attempt += 1) {
@@ -627,10 +645,27 @@ export type DrovrOutboxReplayReceipt = {
 	alert: string[]
 }
 
-/** A birth: a contact.created event, or a signup (its directory birth). */
+/**
+ * The evergreen offer's start: its `course.sequence-exhausted` births the
+ * journey, so it is a birth here too (row 201g, the hawk 2026-09-30): held
+ * after a day like any birth, and it gates its journey's later rows.
+ */
+export const DROVR_OUTBOX_EVERGREEN_START = {
+	eventType: 'course.sequence-exhausted',
+	journeyId: 'crash-course-evergreen-offer',
+} as const
+
+/**
+ * A birth: a contact.created event, a signup (its directory birth), or the
+ * evergreen offer's start.
+ */
 export const isOutboxBirth = (
-	row: Pick<DrovrOutboxRow, 'endpoint' | 'eventType'>,
-) => row.endpoint === 'signups' || row.eventType === 'contact.created'
+	row: Pick<DrovrOutboxRow, 'endpoint' | 'eventType' | 'journeyId'>,
+) =>
+	row.endpoint === 'signups' ||
+	row.eventType === 'contact.created' ||
+	(row.eventType === DROVR_OUTBOX_EVERGREEN_START.eventType &&
+		row.journeyId === DROVR_OUTBOX_EVERGREEN_START.journeyId)
 
 /**
  * The stops (row 204b): once one is owed, nothing the contact did after it

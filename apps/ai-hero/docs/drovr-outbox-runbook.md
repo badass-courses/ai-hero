@@ -57,6 +57,16 @@ ORDER BY occurredAt;
 3. **Retire** it only when the stop is truly moot (see "Retire a row"). A purchase is never retired.
 4. Post the row ids, the decision and the reason to the desk as a `done` item: that is the audit trail. Delivered rows are purged after 7 days.
 
+## A birth held over 24 hours: check drovr first (row 201g)
+
+A released row posts its first send's bytes, so a birth released after a long hold is backdated by the hold. An evergreen start backdated by days fires every passed slot at the next due check and shortens the offer window. So before releasing a held birth (`contact.created`, or the evergreen `course.sequence-exhausted`):
+1. **Ask whether drovr FOLDED the birth, not whether it logged it.** Read the actor: `GET /contacts?contact=<contactId>&journey=<journeyId>` (MCP `get_contact`). On these journeys only the birth creates the actor, so an actor means the birth folded, and `404 contact-not-found` means it didn't.
+   - **Don't decide from the trace's facts.** They are rows of drovr's event log (`contact-trace.ts`), not folds. A birth whose append landed but whose forward failed is in the log with no actor. Releasing it would forward the first send's bytes and birth the contact backdated by the whole hold, which is the harm this check prevents.
+   - The trace is still useful to see what happened. Pass `since` at least an hour before the row's `occurredAt`: facts are filtered on `occurredAt`, and the default window is the last 24 hours (`DEFAULT_SINCE_MS`, 31 days at most). An answer from the default window means nothing.
+2. **Folded (an actor on the journey):** release it as below. That's a no-op, since drovr keeps the first write, and it lifts the gate on the rows behind it.
+3. **Not folded (404), even if the key is in the log:** don't release it. Re-issue it as a **new** event: a new idempotency key (the old one plus `:reissued:<UTC date>`), clamped at the re-issue. Close the old row as superseded (see "Retire a row", with `lastError` = `superseded by <new key>`), and post both to the desk.
+   - No tool mints the re-issue yet (it's follow-up row 201g-f1). Don't hand-write one: the row's `dedupeKey` is a sha256 of a JSON array. Until the tool exists, ask the owner.
+
 ## Release a held or rejected row
 
 It posts at the next run; drovr dedupes by key if it already has it.

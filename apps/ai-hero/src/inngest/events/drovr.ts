@@ -35,6 +35,11 @@ export type DrovrEventsDeliver = {
 			| 'contact-profile-sync'
 			/** The one-time contact-sync backfill: the bulk lane. */
 			| 'contact-sync-backfill'
+			/**
+			 * The evergreen pitch backfill's births (row 201g): the bulk lane,
+			 * whose throttle paces them.
+			 */
+			| 'evergreen-pitch-backfill'
 	}
 }
 
@@ -133,6 +138,7 @@ export const BULK_DELIVERY_SOURCES: ReadonlySet<DrovrDeliverySource> =
 	new Set<DrovrDeliverySource>([
 		'kit-directory-ingest',
 		'contact-sync-backfill',
+		'evergreen-pitch-backfill',
 	])
 
 export function deliverEventNameFor(

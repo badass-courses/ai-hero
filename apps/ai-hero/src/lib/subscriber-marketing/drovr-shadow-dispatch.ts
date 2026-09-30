@@ -1,5 +1,6 @@
 import { deliverEventNameFor } from '@/inngest/events/drovr'
 import type {
+	DrovrDeliverySource,
 	DrovrEventsDeliver,
 	DrovrEventsDeliverBulk,
 } from '@/inngest/events/drovr'
@@ -104,6 +105,7 @@ type DrovrShadowDispatchOptions = {
 	 */
 	fallback?: (
 		events: readonly DrovrShadowEvent[],
+		options: { clampAt: number },
 	) => Promise<readonly DrovrShadowEvent[]>
 	/** Where unsent events go (row 204). Defaults to the live outbox. */
 	outbox?: DrovrOutboxCaptureFn
@@ -198,10 +200,12 @@ export async function dispatchDrovrShadowFact(
 	// The source keys the delivery sub-queue (#257) and picks the function:
 	// a bulk producer that creates contacts names itself and its batches go
 	// to the bulk function's own queue, so live signups never wait on them.
-	const source =
+	const source: DrovrDeliverySource =
 		fact.kind === 'contact-created' && fact.deliverySource !== undefined
 			? fact.deliverySource
-			: fact.kind
+			: fact.kind === 'course-completed' && fact.backfill
+				? 'evergreen-pitch-backfill'
+				: fact.kind
 	const payload = {
 		name: deliverEventNameFor(source),
 		data: { events, source },
@@ -251,11 +255,12 @@ export async function dispatchDrovrShadowFact(
 			unsent: readonly DrovrShadowEvent[],
 			reason: unknown,
 			needsFanOut: boolean,
+			sentAt?: number,
 		): Promise<boolean> => {
 			try {
 				const captured = await outbox(
 					unsent.map((event) =>
-						outboxEntryForEvent(event, 'fallback', { needsFanOut }),
+						outboxEntryForEvent(event, 'fallback', { needsFanOut, sentAt }),
 					),
 					reason,
 				)
@@ -311,8 +316,11 @@ export async function dispatchDrovrShadowFact(
 		)
 		let unsent: readonly DrovrShadowEvent[]
 		let fallbackError: unknown
+		// Row 201g: the direct post clamps births at this instant, and the
+		// replay of what it could not send clamps them there too.
+		const clampAt = Date.now()
 		try {
-			const answered: unknown = await fallback(fannedOut)
+			const answered: unknown = await fallback(fannedOut, { clampAt })
 			unsent = Array.isArray(answered) ? answered : []
 		} catch (error) {
 			unsent = fannedOut
@@ -321,7 +329,7 @@ export async function dispatchDrovrShadowFact(
 		if (unsent.length > 0) {
 			const reason =
 				fallbackError ?? new Error('drovr did not take the direct post')
-			if (!(await toOutbox(unsent, reason, false)))
+			if (!(await toOutbox(unsent, reason, false, clampAt)))
 				await reportError('drovr.shadow.fallback_failed', {
 					source,
 					eventCount: unsent.length,
