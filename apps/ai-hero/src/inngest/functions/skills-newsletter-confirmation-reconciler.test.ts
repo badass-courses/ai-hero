@@ -97,6 +97,9 @@ describe('the daily tier’s leftovers are loud (row 211 round 2, option d)', ()
 			tier,
 			counts: {
 				deferred,
+				deferredBySliceLimit: deferred,
+				deferredByCheckCap: 0,
+				deferredBySendLimit: 0,
 				tagChecked: 100,
 				notInKit: 100,
 				tagFailed: 0,
@@ -117,12 +120,20 @@ describe('the daily tier’s leftovers are loud (row 211 round 2, option d)', ()
 			step: { run: async (_: string, work: () => unknown) => work() },
 			logger,
 		})
-		return logger.warn.mock.calls.map(([name]) => name)
+		return logger.warn.mock.calls.map(([name, fields]) => [name, fields])
 	}
 
 	it('warns when a daily run leaves anyone deferred', async () => {
 		expect(await runWith('daily', 5)).toEqual([
-			'subscriber_funnel.confirmation_daily_deferred',
+			[
+				'subscriber_funnel.confirmation_daily_deferred',
+				expect.objectContaining({
+					deferred: 5,
+					deferredBySliceLimit: 5,
+					deferredByCheckCap: 0,
+					deferredBySendLimit: 0,
+				}),
+			],
 		])
 	})
 

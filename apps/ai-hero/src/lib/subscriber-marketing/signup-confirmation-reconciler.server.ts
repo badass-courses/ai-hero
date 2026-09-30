@@ -229,21 +229,53 @@ export const SKILLS_CONFIRMATION_TAG_SLICE_LIMIT = 7
 export const SKILLS_CONFIRMATION_EMAIL_ZERO_SLICE_LIMIT = 20
 
 /**
- * The candidates, in order, that fit in `limit` creation-day slices, and
- * how many are left beyond them. A later candidate whose day is already
- * covered still fits.
+ * The candidates that fit in `limit` creation-day slices, in their own
+ * order, and how many are left beyond them. A candidate whose day is
+ * already covered always fits.
+ *
+ * When they don't all fit, who goes first rotates by `runIndex` (one step
+ * a run), so a candidate left beyond is never left for good: candidates
+ * that stay candidates every run without being sent (an email 0 member
+ * Kit alone knows about, a 404, a failing tag check) can't hold the same
+ * slices run after run (the hawk, #348). Within the limit, the order is
+ * untouched.
  */
-function withinSliceLimit<T extends { createdAt: string }>(
+export function withinSliceLimit<T extends { createdAt: string }>(
 	candidates: readonly T[],
 	limit: number,
+	runIndex: number,
 ): { within: T[]; beyond: number } {
-	const within: T[] = []
-	for (const candidate of candidates) {
-		const trial = [...within, candidate]
-		if (createdDaySlices(trial.map((each) => each.createdAt)).length <= limit)
-			within.push(candidate)
+	const all = candidates.map((candidate) => candidate.createdAt)
+	if (createdDaySlices(all).length <= limit)
+		return { within: [...candidates], beyond: 0 }
+	const offset =
+		((runIndex % candidates.length) + candidates.length) % candidates.length
+	const rotated = [...candidates.slice(offset), ...candidates.slice(0, offset)]
+	const chosen = new Set<T>()
+	const days: string[] = []
+	for (const candidate of rotated) {
+		if (createdDaySlices([...days, candidate.createdAt]).length > limit)
+			continue
+		chosen.add(candidate)
+		days.push(candidate.createdAt)
 	}
-	return { within, beyond: candidates.length - within.length }
+	return {
+		within: candidates.filter((candidate) => chosen.has(candidate)),
+		beyond: candidates.length - chosen.size,
+	}
+}
+
+/**
+ * One step a run: a day for the daily tier, a quarter hour for the recent
+ * one. It picks who goes first when the email 0 slices run out.
+ */
+export function skillsConfirmationRunIndex(
+	tier: SkillsConfirmationTier,
+	to: string,
+): number {
+	return Math.floor(
+		Date.parse(to) / (tier === 'daily' ? DAY_MS : 15 * 60 * 1000),
+	)
 }
 
 /**
@@ -326,11 +358,12 @@ export async function scanSkillsConfirmations(args: {
 				(candidate) => !tagged.has(candidate.kitSubscriberId),
 			)
 			taggedOptOut = candidates.length - consenting.length
-			// 2. Email 0, over the rest only, in at most 20 slices: candidates
-			// take slices in order, and anyone who'd need a 21st waits a run.
+			// 2. Email 0, over the rest only, in at most 20 slices. Anyone who'd
+			// need a 21st waits a run; who goes first rotates run to run.
 			const { within, beyond } = withinSliceLimit(
 				consenting,
 				SKILLS_CONFIRMATION_EMAIL_ZERO_SLICE_LIMIT,
+				skillsConfirmationRunIndex(args.tier, to),
 			)
 			deferredBySliceLimit = beyond
 			const members =
@@ -468,8 +501,15 @@ export type SkillsConfirmationReceipt = {
 		tagFailed: number
 		/** Sent this run, each as soon as its tags cleared. */
 		planned: number
-		/** Left for the next run by the send limit, the check cap or the slice limit. */
+		/**
+		 * Left for the next run, every cause: `deferredBySendLimit` +
+		 * `deferredByCheckCap` + `deferredBySliceLimit` + `tagFailed`.
+		 */
 		deferred: number
+		/** Left because the run already sent its limit. */
+		deferredBySendLimit: number
+		/** Left because the run already checked 100. */
+		deferredByCheckCap: number
 		/** Sent, and joined the form before the recent tier's window: the daily tier's catch. */
 		plannedOlderThanRecentTier: number
 	}
@@ -512,10 +552,17 @@ export async function reconcileSkillsConfirmations(args: {
 	const recentFrom = Date.parse(
 		skillsConfirmationTierWindow('recent', scan.window.to).from,
 	)
+	let stoppedBy: 'send-limit' | 'check-cap' | undefined
 	for (const event of scan.events) {
 		// The limit counts sends; the cap counts checks.
-		if (planned >= scan.limit) break
-		if (tagChecked >= SKILLS_CONFIRMATION_TAG_CHECKS_PER_RUN) break
+		if (planned >= scan.limit) {
+			stoppedBy = 'send-limit'
+			break
+		}
+		if (tagChecked >= SKILLS_CONFIRMATION_TAG_CHECKS_PER_RUN) {
+			stoppedBy = 'check-cap'
+			break
+		}
 		const { kitSubscriberId } = event.data
 		const checked = await args.steps.run(
 			`check-opt-out-tags:${kitSubscriberId}`,
@@ -555,6 +602,7 @@ export async function reconcileSkillsConfirmations(args: {
 			plannedOlderThanRecentTier += 1
 		args.onSent?.(event)
 	}
+	const unchecked = scan.events.length - tagChecked
 	return {
 		mode: 'signup-confirmation-reconciliation',
 		tier: scan.tier,
@@ -572,8 +620,9 @@ export async function reconcileSkillsConfirmations(args: {
 			notInKit,
 			tagFailed,
 			planned,
-			deferred:
-				scan.events.length - tagChecked + scan.counts.deferredBySliceLimit,
+			deferred: unchecked + scan.counts.deferredBySliceLimit + tagFailed,
+			deferredBySendLimit: stoppedBy === 'send-limit' ? unchecked : 0,
+			deferredByCheckCap: stoppedBy === 'check-cap' ? unchecked : 0,
 			plannedOlderThanRecentTier,
 		},
 		kit,

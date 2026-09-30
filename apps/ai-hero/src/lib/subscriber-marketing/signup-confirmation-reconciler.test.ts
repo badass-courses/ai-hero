@@ -9,6 +9,8 @@ import {
 	SKILLS_CONFIRMATION_EMAIL_ZERO_SLICE_LIMIT,
 	SKILLS_CONFIRMATION_TAG_CHECKS_PER_RUN,
 	SKILLS_CONFIRMATION_TAG_SLICE_LIMIT,
+	skillsConfirmationRunIndex,
+	withinSliceLimit,
 	scanSkillsConfirmations,
 	SKILLS_NEWSLETTER_FORM_ID,
 	type SkillsConfirmationEvent,
@@ -128,6 +130,7 @@ function run(
 	kit: ReturnType<typeof fakeKit>,
 	options: {
 		limit?: number
+		to?: string
 		sleeps?: number[]
 		onTagCheckFailed?: (failure: {
 			kitSubscriberId: string
@@ -137,10 +140,10 @@ function run(
 ) {
 	const stepIds: string[] = []
 	const sent: Array<{ id: string; event: SkillsConfirmationEvent }> = []
-	let clockMs = Date.parse(TO)
+	let clockMs = Date.parse(options.to ?? TO)
 	const receipt = reconcileSkillsConfirmations({
 		tier,
-		to: TO,
+		to: options.to ?? TO,
 		limit: options.limit ?? 50,
 		database: emptyDatabase(),
 		onTagCheckFailed: options.onTagCheckFailed,
@@ -285,6 +288,8 @@ describe('row 211: each confirmed subscriber is sent as found', () => {
 			notInKit: 1,
 			planned: 1,
 			deferred: 1,
+			deferredBySendLimit: 1,
+			deferredByCheckCap: 0,
 		})
 		expect(sentIds(sent)).toEqual(['2'])
 	})
@@ -309,6 +314,8 @@ describe('row 211: each confirmed subscriber is sent as found', () => {
 			tagChecked: 100,
 			notInKit: 100,
 			deferred: 5,
+			deferredByCheckCap: 5,
+			deferredBySendLimit: 0,
 		})
 		expect(sent).toEqual([])
 	})
@@ -555,6 +562,20 @@ describe('row 211: no decision on partial evidence', () => {
 					pagination: { has_next_page: true, end_cursor: null },
 				}),
 		],
+		// A body that fails is never read as "no tags" (Opus S1, round 5).
+		['a body that is not JSON', () => new Response('<html>')],
+		[
+			'a body that breaks off mid-read (the timeout firing after the headers)',
+			() =>
+				new Response(
+					new ReadableStream({
+						start(controller) {
+							controller.enqueue(new TextEncoder().encode('{"tags":['))
+							controller.error(new DOMException('aborted', 'TimeoutError'))
+						},
+					}),
+				),
+		],
 	])(
 		'skips only the candidate whose tag check fails on %s: unsent, counted, and the older ones still go (the owner’s test c, Sonnet 2 S2)',
 		async (_, answer) => {
@@ -569,6 +590,12 @@ describe('row 211: no decision on partial evidence', () => {
 				tagChecked: 2,
 				tagFailed: 1,
 				planned: 1,
+				// A failed check is left for the next run too (Macroscope
+				// 4143734314).
+				deferred: 1,
+				deferredBySendLimit: 0,
+				deferredByCheckCap: 0,
+				deferredBySliceLimit: 0,
 			})
 			// The newest failed its check and is never sent; the older one is.
 			expect(sentIds(sent)).toEqual(['2'])
@@ -769,6 +796,29 @@ describe('row 211 round 3: opt-outs and old records cost a bounded amount of Kit
 		expect(whole.counts.planned).toBe(8)
 	})
 
+	it('reads every page of a whole tag list: an opt-out only on page 2 is still excluded (Opus W4)', async () => {
+		const subscribers = spread(8)
+		const kit = fakeKit(subscribers, (url) => {
+			if (url.pathname !== '/v4/tags/8244351/subscribers') return undefined
+			expect(url.searchParams.has('created_after')).toBe(false)
+			return url.searchParams.get('after') === 'page-2'
+				? Response.json({
+						subscribers: [{ id: 8 }],
+						pagination: { has_next_page: false, end_cursor: null },
+					})
+				: Response.json({
+						subscribers: [{ id: 999 }],
+						pagination: { has_next_page: true, end_cursor: 'page-2' },
+					})
+		})
+		const { receipt, sent } = run('daily', kit)
+		expect(await receipt).toMatchObject({
+			tagRead: 'whole',
+			counts: { excludedByTag: 1, planned: 7 },
+		})
+		expect(sentIds(sent)).not.toContain('8')
+	})
+
 	it('costs 100 opt-outs 10 days apart the tag lists and nothing more: no email 0 read, no check (Sonnet 2’s 405-call case)', async () => {
 		const kit = fakeKit(spread(100, { tags: [8244351] }))
 		const receipt = await run('daily', kit).receipt
@@ -794,13 +844,98 @@ describe('row 211 round 3: opt-outs and old records cost a bounded amount of Kit
 		const { receipt, sent } = run('daily', kit)
 		expect((await receipt).counts).toMatchObject({
 			deferredBySliceLimit: 5,
+			deferredBySendLimit: 0,
+			deferredByCheckCap: 0,
 			candidates: 21,
 			planned: 21,
 			deferred: 5,
 		})
 		// Two sequences, 20 slices each.
 		expect(sequenceReads(kit)).toHaveLength(2 * 20)
-		expect(sentIds(sent)).not.toContain('21')
-		expect(sentIds(sent)).toContain('26')
+		// 26 shares 1's creation day: they go together.
+		expect(sentIds(sent).includes('26')).toBe(sentIds(sent).includes('1'))
+	})
+
+	it('carries a candidate left beyond the slices to the next run, never drops them (the hawk): run 1 defers, run 2 sends', async () => {
+		// 20 email 0 members Kit alone knows about stay candidates every run
+		// without being sent, each on its own creation day; an older
+		// consenting subscriber needs a 21st slice.
+		const subscribers: FakeSubscriber[] = [
+			...Array.from({ length: 20 }, (_, index) => ({
+				id: index + 1,
+				createdAt: daysBefore(index * 10, 5),
+				addedAt: `2026-09-26T0${Math.floor(index / 10)}:${String((index % 10) * 5).padStart(2, '0')}:00.000Z`,
+				sequences: ['2757199'],
+			})),
+			{
+				id: 21,
+				createdAt: daysBefore(400, 5),
+				addedAt: '2026-09-25T12:00:00.000Z',
+			},
+		]
+		// A daily run whose turn puts 21 last (its day index is a multiple of
+		// 21), then the next day's.
+		const today = Math.floor(Date.parse(TO) / DAY)
+		const first = (today - (today % 21)) * DAY + 5 * 60 * 60 * 1000
+		const runOn = async (at: number) => {
+			const kit = fakeKit(subscribers)
+			const { receipt, sent } = run('daily', kit, {
+				to: new Date(at).toISOString(),
+			})
+			return { counts: (await receipt).counts, sent: sentIds(sent) }
+		}
+		const one = await runOn(first)
+		expect(one.counts).toMatchObject({
+			deferredBySliceLimit: 1,
+			deferred: 1,
+			planned: 0,
+		})
+		const two = await runOn(first + DAY)
+		expect(two.sent).toEqual(['21'])
+		expect(two.counts).toMatchObject({ planned: 1, deferredBySliceLimit: 1 })
+	})
+})
+
+describe('row 211 round 5: nobody is left beyond the slices for good', () => {
+	const at = (day: number) => ({
+		createdAt: new Date(Date.UTC(2025, 0, 1) + day * 10 * DAY).toISOString(),
+		day,
+	})
+
+	it('keeps the order untouched while everyone fits', () => {
+		const candidates = [at(3), at(1), at(2)]
+		expect(withinSliceLimit(candidates, 20, 7)).toEqual({
+			within: candidates,
+			beyond: 0,
+		})
+	})
+
+	it('rotates who goes first run to run, so over as many runs as candidates everyone is within at least once', () => {
+		const candidates = Array.from({ length: 25 }, (_, day) => at(day))
+		const seen = new Set<number>()
+		for (let runIndex = 0; runIndex < candidates.length; runIndex++) {
+			const { within, beyond } = withinSliceLimit(candidates, 20, runIndex)
+			expect(within).toHaveLength(20)
+			expect(beyond).toBe(5)
+			// Kept in the candidates' own order.
+			expect(within.map(({ day }) => day)).toEqual(
+				[...within.map(({ day }) => day)].sort((a, b) => a - b),
+			)
+			for (const { day } of within) seen.add(day)
+		}
+		expect(seen.size).toBe(25)
+	})
+
+	it('steps once a run: a day on the daily tier, a quarter hour on the recent one', () => {
+		const to = '2026-10-20T05:09:00.000Z'
+		const next = (ms: number) => new Date(Date.parse(to) + ms).toISOString()
+		expect(
+			skillsConfirmationRunIndex('daily', next(DAY)) -
+				skillsConfirmationRunIndex('daily', to),
+		).toBe(1)
+		expect(
+			skillsConfirmationRunIndex('recent', next(15 * 60 * 1000)) -
+				skillsConfirmationRunIndex('recent', to),
+		).toBe(1)
 	})
 })

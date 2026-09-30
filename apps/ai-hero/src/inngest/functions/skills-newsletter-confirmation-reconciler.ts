@@ -71,17 +71,20 @@ export const skillsNewsletterConfirmationReconciler = inngest.createFunction(
 				...receipt,
 			})
 			// The daily tier reads to the floor; anyone it leaves waits a day
-			// at least. Deferral comes from the send limit (a backlog over 50),
-			// the check cap (404s and failing tag checks) or the email 0 slice
-			// limit. A monitor on it is a follow-up.
+			// at least. `deferred` counts every cause, split below: the send
+			// limit (a backlog over 50), the check cap (404s and failing checks),
+			// the email 0 slice limit, and failed tag checks (Macroscope
+			// 4143734314). A monitor on it is a follow-up.
 			if (receipt.tier === 'daily' && receipt.counts.deferred > 0)
 				logger.warn('subscriber_funnel.confirmation_daily_deferred', {
 					funnel: 'skills-newsletter',
 					deferred: receipt.counts.deferred,
+					deferredBySliceLimit: receipt.counts.deferredBySliceLimit,
+					deferredByCheckCap: receipt.counts.deferredByCheckCap,
+					deferredBySendLimit: receipt.counts.deferredBySendLimit,
 					tagChecked: receipt.counts.tagChecked,
 					notInKit: receipt.counts.notInKit,
 					tagFailed: receipt.counts.tagFailed,
-					deferredBySliceLimit: receipt.counts.deferredBySliceLimit,
 					planned: receipt.counts.planned,
 				})
 		})
