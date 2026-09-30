@@ -22,6 +22,7 @@ export type DrovrOutboxPostPorts = {
 		event: DrovrShadowEvent
 		config: DrovrDeliveryConfig
 		timeoutMs: number
+		clampAt: number
 	}): Promise<DrovrDeliveryOutcome>
 	/** An unfanned row's events with their owner copies (the live fan-out). */
 	fanOut(events: readonly DrovrShadowEvent[]): Promise<DrovrShadowEvent[]>
@@ -87,6 +88,11 @@ async function postSignup(
  * settled (no owner copy owed). drovr dedupes any copy an earlier try
  * already landed, so a failure part-way is simply tried again whole.
  *
+ * Births are clamped at the row's `firstFailedAt` (row 201g): the first
+ * failed send's instant, or the capture's for a row never sent. So every
+ * replay of a row posts identical bytes, and an owner copy the fan-out
+ * makes is clamped as its original was.
+ *
  * The row's verdict: a failure → failed (transient for a 5xx, a timeout or
  * no answer; not for a missing key or a 409 event-not-live); else any
  * refusal of the row or of an owner copy → rejected, with that event's
@@ -121,6 +127,7 @@ export async function postDrovrOutboxRow(
 			event,
 			config: { ingestUrl: ports.ingestUrl, apiKey },
 			timeoutMs: DROVR_OUTBOX_POST_TIMEOUT_MS,
+			clampAt: Date.parse(row.firstFailedAt),
 		})
 		if (outcome.status === 'failed')
 			return {

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
 	batchStepId: vi.fn(
@@ -82,8 +82,10 @@ import {
 } from '@/inngest/events/drovr'
 
 import {
+	DROVR_CLAMP_INSTANT_STEP,
 	drovrEventsDeliver,
 	drovrEventsDeliverBulk,
+	inDeliveryOrder,
 	outboxFailedRun,
 } from './drovr-events-deliver'
 
@@ -376,6 +378,7 @@ describe('retired shadow tenant delivery', () => {
 				ingestUrl: 'https://drovr.test/events',
 				apiKey: 'authority-key',
 			},
+			clampAt: expect.any(Number),
 		})
 		expect(mocks.log.info).toHaveBeenCalledOnce()
 		expect(mocks.log.info).toHaveBeenCalledWith(
@@ -677,6 +680,7 @@ describe('backfill refusals follow the push contract (§4)', () => {
 				ingestUrl: 'https://drovr.test/events',
 				apiKey: 'authority-key',
 			},
+			clampAt: expect.any(Number),
 		})
 	})
 })
@@ -1956,5 +1960,255 @@ describe('row 204c: a backfill stop that is owed gates the run, whatever the sou
 		)
 		const receipt = await bulkRun()
 		expect(receipt).toMatchObject({ accepted: 1, backfillDropped: 1 })
+	})
+})
+
+/**
+ * Inngest's replay: a step that returned is memoized for every later
+ * attempt of the run; one that threw runs again.
+ */
+const memoStep = () => {
+	const done = new Map<string, unknown>()
+	const ran: string[] = []
+	const step: Step = {
+		run: vi.fn(async (id: string, operation: () => unknown) => {
+			if (done.has(id)) return done.get(id)
+			ran.push(id)
+			const result = await operation()
+			done.set(id, result)
+			return result
+		}),
+	}
+	return { step, ran }
+}
+
+describe('row 201g (#345 S1): a run clamps its births at its first send, on every attempt', () => {
+	const FIRST = Date.parse('2026-09-30T12:00:00.000Z')
+	const TEN_MINUTES = 10 * 60_000
+	const birth = {
+		...event(
+			'org-aihero',
+			'owner:birth:contact-1',
+			'value-path-skills-course',
+			'contact.created',
+		),
+		occurredAt: '2026-09-30T11:59:00.000Z',
+	}
+
+	beforeEach(() => {
+		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
+		mocks.capture.mockImplementation(async (entries: unknown[]) => ({
+			status: 'outboxed',
+			count: entries.length,
+		}))
+		vi.useFakeTimers({ toFake: ['Date'] })
+		vi.setSystemTime(FIRST)
+	})
+	afterEach(() => {
+		vi.useRealTimers()
+	})
+
+	it('the live lane: a retry 10 minutes on, and the last attempt, send the first instant, and the outbox carries it', async () => {
+		const { step, ran } = memoStep()
+		const live = (attempt: number) =>
+			registered
+				.handler({
+					event: { data: { source: 'live-contact', events: [birth] } },
+					step,
+					attempt,
+					maxAttempts: 9,
+				})
+				.catch(() => undefined)
+		mocks.deliverOrThrow.mockRejectedValue(drovrFailure(503))
+		await live(0)
+		vi.setSystemTime(FIRST + TEN_MINUTES)
+		await live(1)
+		vi.setSystemTime(FIRST + 3 * 60 * 60_000)
+		await live(LAST.attempt)
+		expect(
+			mocks.deliverOrThrow.mock.calls.map(
+				([args]) => (args as { clampAt: number }).clampAt,
+			),
+		).toEqual([FIRST, FIRST, FIRST])
+		expect(ran.filter((id) => id === DROVR_CLAMP_INSTANT_STEP)).toHaveLength(1)
+		expect(mocks.capture).toHaveBeenCalledWith(
+			[
+				expect.objectContaining({
+					idempotencyKey: 'owner:birth:contact-1',
+					body: birth,
+					occurredAt: birth.occurredAt,
+					firstSentAt: new Date(FIRST).toISOString(),
+				}),
+			],
+			expect.anything(),
+		)
+	})
+
+	it('the bulk lane: a chunk retried 10 minutes on, and its last attempt, send the first instant, and the outbox carries it', async () => {
+		const { step, ran } = memoStep()
+		const bulk = (attempt: number) =>
+			registeredBulk
+				.handler({
+					events: [
+						{ data: { source: 'evergreen-pitch-backfill', events: [birth] } },
+					],
+					step,
+					attempt,
+					maxAttempts: 9,
+				})
+				.catch(() => undefined)
+		mocks.deliverBatchOrThrow.mockRejectedValue(drovrFailure(503))
+		await bulk(0)
+		vi.setSystemTime(FIRST + TEN_MINUTES)
+		await bulk(1)
+		vi.setSystemTime(FIRST + 3 * 60 * 60_000)
+		await bulk(LAST.attempt)
+		expect(
+			mocks.deliverBatchOrThrow.mock.calls.map(
+				([args]) => (args as { clampAt: number }).clampAt,
+			),
+		).toEqual([FIRST, FIRST, FIRST])
+		expect(ran.filter((id) => id === DROVR_CLAMP_INSTANT_STEP)).toHaveLength(1)
+		expect(mocks.capture).toHaveBeenCalledWith(
+			[
+				expect.objectContaining({
+					idempotencyKey: 'owner:birth:contact-1',
+					firstSentAt: new Date(FIRST).toISOString(),
+				}),
+			],
+			expect.anything(),
+		)
+	})
+
+	it('takes no step for a run with no sending-journey birth', async () => {
+		const { step, ran } = memoStep()
+		await registered.handler({
+			event: {
+				data: {
+					source: 'live-contact',
+					events: [event('org-aihero', 'owner:answer')],
+				},
+			},
+			step,
+			attempt: 0,
+			maxAttempts: 9,
+		})
+		expect(mocks.deliverOrThrow).toHaveBeenCalledOnce()
+		expect(ran).not.toContain(DROVR_CLAMP_INSTANT_STEP)
+	})
+})
+
+describe('row 201g: the freeze is decided once per run, on every bulk source (Sonnet 2 S1, S2)', () => {
+	const valuePathBirth = event(
+		'org-aihero',
+		'owner:birth:contact-1',
+		'value-path-skills-course',
+		'contact.created',
+	)
+
+	beforeEach(() => {
+		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
+		mocks.deliverBatchOrThrow.mockImplementation(
+			async ({ events }: { events: unknown[] }) => ({
+				accepted: events.length,
+				rejected: 0,
+			}),
+		)
+	})
+
+	it("keeps a run's first decision on its retry, so the chunks never shift, and logs it once", async () => {
+		const { step } = memoStep()
+		const run = () =>
+			registeredBulk.handler({
+				events: [
+					{
+						data: { events: [valuePathBirth], source: 'kit-directory-ingest' },
+					},
+				],
+				step,
+			})
+		mocks.valuePathBulkFreeze.mockReturnValue({
+			frozen: false,
+			signedOffBy: 'hawk 2026-10-20',
+		})
+		const first = await run()
+		// The window opens, or the sign-off is unset, before the retry.
+		mocks.valuePathBulkFreeze.mockReturnValue({
+			frozen: true,
+			reason: 'now frozen',
+		})
+		const retry = await run()
+		expect(first).toMatchObject({ accepted: 1 })
+		expect(retry).toMatchObject({ accepted: 1 })
+		expect(retry).not.toHaveProperty('valuePathBirthsRefused')
+		expect(mocks.valuePathBulkFreeze).toHaveBeenCalledOnce()
+		expect(mocks.log.warn).toHaveBeenCalledOnce()
+		expect(mocks.log.error).not.toHaveBeenCalled()
+	})
+
+	it('refuses a value-path birth under the contact-sync-backfill source too', async () => {
+		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
+		mocks.valuePathBulkFreeze.mockReturnValue({ frozen: true, reason: 'x' })
+		const receipt = await registeredBulk.handler({
+			events: [
+				{
+					data: { events: [valuePathBirth], source: 'contact-sync-backfill' },
+				},
+			],
+			step: createStep(),
+		})
+		vi.unstubAllEnvs()
+		const sent = mocks.deliverBatchOrThrow.mock.calls.flatMap(
+			([args]) => (args as { events: unknown[] }).events,
+		)
+		expect(sent).toEqual([])
+		expect(receipt).toMatchObject({ valuePathBirthsRefused: 1 })
+	})
+})
+
+describe('delivery order: the evergreen start is a birth, so it goes before its journey (Sonnet 2 nit 3)', () => {
+	const on = (
+		journeyId: string,
+		type: string,
+		occurredAt: string,
+		key: string,
+	) => ({ ...event('org-aihero', key, journeyId, type), occurredAt })
+
+	it('puts the evergreen start before an earlier evergreen fact of the contact', () => {
+		const coupon = on(
+			'crash-course-evergreen-offer',
+			'evergreen.coupon-issued',
+			'2026-09-30T10:00:00.000Z',
+			'coupon',
+		)
+		const start = on(
+			'crash-course-evergreen-offer',
+			'course.sequence-exhausted',
+			'2026-09-30T11:00:00.000Z',
+			'start',
+		)
+		expect(
+			inDeliveryOrder([coupon, start] as never).map((e) => e.idempotencyKey),
+		).toEqual(['start', 'coupon'])
+	})
+
+	it('keeps the skills course exhaustion, a fact there, in time order', () => {
+		const answer = on(
+			'value-path-skills-course',
+			'value-path.answer-selected',
+			'2026-09-30T10:00:00.000Z',
+			'answer',
+		)
+		const exhausted = on(
+			'value-path-skills-course',
+			'course.sequence-exhausted',
+			'2026-09-30T11:00:00.000Z',
+			'exhausted',
+		)
+		expect(
+			inDeliveryOrder([exhausted, answer] as never).map(
+				(e) => e.idempotencyKey,
+			),
+		).toEqual(['answer', 'exhausted'])
 	})
 })

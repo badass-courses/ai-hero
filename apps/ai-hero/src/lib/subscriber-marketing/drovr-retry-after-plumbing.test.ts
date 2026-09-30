@@ -35,6 +35,7 @@ describe('drovr status and Retry-After reach the retry decision (row 204)', () =
 		async (status) => {
 			expect(
 				await deliverDrovrShadowEvent({
+					clampAt: Date.now(),
 					event: event('k'),
 					config,
 					fetcher: answer(status, { 'retry-after': '30' }),
@@ -46,6 +47,7 @@ describe('drovr status and Retry-After reach the retry decision (row 204)', () =
 				retryAfterMs: 30_000,
 			})
 			const error = await deliverOrThrow({
+				clampAt: Date.now(),
 				event: event('k'),
 				config,
 				fetcher: answer(status, { 'retry-after': '30' }),
@@ -59,6 +61,7 @@ describe('drovr status and Retry-After reach the retry decision (row 204)', () =
 		'a batch post keeps a %i and its Retry-After',
 		async (status) => {
 			const error = await deliverBatchOrThrow({
+				clampAt: Date.now(),
 				events: [event('a'), event('b')],
 				config,
 				fetcher: answer(status, { 'retry-after': '45' }),

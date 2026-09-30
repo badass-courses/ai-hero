@@ -40,25 +40,35 @@ export type ClampedBirths = {
 
 /**
  * The events as they go to drovr: a sending-journey birth whose
- * `occurredAt` is older than `now - skew` is moved up to `now - skew`.
- * Nothing else changes, the idempotency key included. drovr's event log is
- * first-write-wins by key (adapter-d1 `event-log.ts` `EventLog.append`:
- * a duplicate returns the stored event, with no body compare), so a retry
- * clamped to a later instant dedupes against the first post, never
- * conflicts with it. An `occurredAt` that does not parse is left alone:
- * drovr refuses it as malformed, which is its call.
+ * `occurredAt` is older than `clampAt - skew` is moved up to
+ * `clampAt - skew`. Nothing else changes, the idempotency key included. An
+ * `occurredAt` that does not parse is left alone: drovr refuses it as
+ * malformed, which is its call.
+ *
+ * `clampAt` is the event's FIRST send, fixed once and reused by every
+ * retry and replay, so each attempt posts identical bytes (the hawk,
+ * #345 S1). drovr's log keeps the first write of a key, but its
+ * `deliverEvent` forwards the REQUEST's event to the actor even when the
+ * append was a duplicate (apps/api `events.ts`), so a retry re-clamped to
+ * a later instant after an ambiguous first post would fold an `occurredAt`
+ * the log does not hold. Where each path fixes it:
+ * - the Inngest lanes: one memoized step per run (`drovrClampInstant`);
+ * - the dispatch fallback's direct post: one instant before it posts;
+ * - the outbox: an entry captured after a failed send carries that send's
+ *   instant as its row's `firstFailedAt`, and the replay clamps at
+ *   `firstFailedAt`, so a row posts the same bytes on every replay.
  */
 export function clampBirths(
 	events: readonly DrovrShadowEvent[],
-	nowMs: number,
+	clampAt: number,
 ): ClampedBirths {
-	const floorMs = nowMs - DROVR_BIRTH_CLAMP_SKEW_MS
+	const floorMs = clampAt - DROVR_BIRTH_CLAMP_SKEW_MS
 	const lagSeconds: number[] = []
 	const clamped = events.map((event) => {
 		if (!isSendingJourneyBirth(event)) return event
 		const at = Date.parse(event.occurredAt)
 		if (Number.isNaN(at) || at >= floorMs) return event
-		lagSeconds.push(Math.floor((nowMs - at) / 1000))
+		lagSeconds.push(Math.floor((clampAt - at) / 1000))
 		return { ...event, occurredAt: new Date(floorMs).toISOString() }
 	})
 	return { events: clamped, lagSeconds }

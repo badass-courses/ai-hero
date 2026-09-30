@@ -57,6 +57,14 @@ ORDER BY occurredAt;
 3. **Retire** it only when the stop is truly moot (see "Retire a row"). A purchase is never retired.
 4. Post the row ids, the decision and the reason to the desk as a `done` item: that is the audit trail. Delivered rows are purged after 7 days.
 
+## A birth held over 24 hours: check drovr first (row 201g)
+
+A released row posts its first send's bytes, so a birth released after a long hold is backdated by the hold. An evergreen start backdated by days fires every passed slot at the next due check and shortens the offer window. So before releasing a held birth (`contact.created`, or the evergreen `course.sequence-exhausted`):
+1. **Look up its key in drovr.** Use `GET /contacts/trace?contact=<contactId>&journey=<journeyId>` (or MCP `trace_contact`) and find `idempotencyKey` among its facts.
+2. **In drovr:** release it as below. That's a no-op, since drovr keeps the first write, and it lifts the gate on the rows behind it.
+3. **Not in drovr:** don't release it. Re-issue it as a **new** event: a new idempotency key (the old one plus `:reissued:<UTC date>`), clamped at the re-issue. Close the old row as superseded (see "Retire a row", with `lastError` = `superseded by <new key>`), and post both to the desk.
+   - No tool mints the re-issue yet (it's follow-up row 201g-f1). Don't hand-write one: the row's `dedupeKey` is a sha256 of a JSON array. Until the tool exists, ask the owner.
+
 ## Release a held or rejected row
 
 It posts at the next run; drovr dedupes by key if it already has it.

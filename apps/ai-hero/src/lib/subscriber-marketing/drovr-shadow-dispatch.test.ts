@@ -229,7 +229,9 @@ describe('drovr shadow dispatch', () => {
 			eventCount: 1,
 			error: 'inngest unreachable',
 		})
-		expect(fallback).toHaveBeenCalledWith(mapDrovrShadowFact(signup))
+		expect(fallback).toHaveBeenCalledWith(mapDrovrShadowFact(signup), {
+			clampAt: expect.any(Number),
+		})
 	})
 
 	it('hands the fact back to the durable path when the fallback cannot read owners', async () => {
@@ -298,7 +300,9 @@ describe('drovr shadow dispatch', () => {
 			}),
 		)
 		// No owner copies (unknown), but the rest still goes out.
-		expect(fallback).toHaveBeenCalledWith(mapDrovrShadowFact(unsubscribe))
+		expect(fallback).toHaveBeenCalledWith(mapDrovrShadowFact(unsubscribe), {
+			clampAt: expect.any(Number),
+		})
 	})
 
 	it('surfaces a failed direct post at error instead of swallowing it', async () => {
@@ -607,7 +611,9 @@ describe('the awaited dispatch (owner-assignment births)', () => {
 			resolveOwners: async () => [],
 		})
 
-		expect(fallback).toHaveBeenCalledWith(mapDrovrShadowFact(birth))
+		expect(fallback).toHaveBeenCalledWith(mapDrovrShadowFact(birth), {
+			clampAt: expect.any(Number),
+		})
 		expect(posted).toBe(true)
 	})
 

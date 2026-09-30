@@ -47,11 +47,14 @@ export async function deliverOrThrow(args: {
 	config: DrovrDeliveryConfig
 	fetcher?: typeof fetch
 	warn?: typeof log.warn
+	/** The event's first send (row 201g): the same on every retry. */
+	clampAt: number
 }): Promise<DrovrDeliveryOutcome> {
 	const outcome = await deliverDrovrShadowEvent({
 		event: args.event,
 		config: args.config,
 		fetcher: args.fetcher,
+		clampAt: args.clampAt,
 	})
 	if (outcome.status === 'failed') {
 		throw new DrovrDeliveryFailedError(
@@ -237,15 +240,19 @@ export async function deliverBatchOrThrow(args: {
 	 * the same event after drovr's daily straggler pass.
 	 */
 	deferNotLive?: boolean
-	now?: () => number
+	/**
+	 * Row 201g: a sending-journey birth reaches drovr dated no earlier than
+	 * 5 minutes before this instant: the chunk's first send, the same on
+	 * every retry (see `clampBirths`).
+	 */
+	clampAt: number
 	info?: typeof log.info
 }): Promise<DrovrBatchOutcome> {
 	const fetcher = args.fetcher ?? fetch
 	const warn = args.warn ?? log.warn
-	// Row 201g: a sending-journey birth never reaches drovr dated more than
-	// 5 minutes before its send. Items are read back by index, so the
-	// clamped copies stand in only for the body.
-	const clamped = clampBirths(args.events, (args.now ?? Date.now)())
+	// Items are read back by index, so the clamped copies stand in only for
+	// the body.
+	const clamped = clampBirths(args.events, args.clampAt)
 	await logClampedBirths(clamped, 'batch', args.info)
 	const keys = args.events.map((event) => event.idempotencyKey)
 	const controller = new AbortController()

@@ -211,6 +211,12 @@ type DrovrShadowEmitterOptions = {
 	 * every other caller keeps the swallow.
 	 */
 	rethrow?: boolean
+	/**
+	 * The instant births are clamped at (row 201g). The dispatch fallback
+	 * fixes it before it posts and captures the unsent with it, so the
+	 * outbox replay posts the same bytes. Default: when this call starts.
+	 */
+	clampAt?: number
 }
 
 export function mapDrovrShadowFact(fact: DrovrShadowFact): DrovrShadowEvent[] {
@@ -295,10 +301,13 @@ export async function emitDrovrShadowEvents(
 		})
 	}
 	if (deliverableEvents.length === 0) return
+	// Row 201g: one attempt, clamped at its start like every other road.
+	const clamped = clampBirths(deliverableEvents, options.clampAt ?? Date.now())
+	await logClampedBirths(clamped, 'single', info)
 
 	try {
 		await Promise.all(
-			deliverableEvents.map(async (event) => {
+			clamped.events.map(async (event) => {
 				const apiKey = drovrApiKeyForTenant(event.tenantId, config)
 				if (!apiKey) {
 					await warnWithoutThrow(warn, 'drovr.shadow.tenant_key_missing', {
@@ -344,6 +353,7 @@ export async function deliverDrovrShadowEventsDirect(
 	}
 	const ingestUrl = config.ingestUrl
 	if (!ingestUrl || events.length === 0) return []
+	const clampAt = options.clampAt ?? Date.now()
 	const info = options.info ?? log.info
 	const warn = options.warn ?? log.warn
 	// Synthetic test principals never reach drovr, on any road.
@@ -374,6 +384,8 @@ export async function deliverDrovrShadowEventsDirect(
 				config: { ingestUrl, apiKey },
 				fetcher: options.fetch,
 				timeoutMs: options.timeoutMs ?? 3000,
+				clampAt,
+				info,
 			})
 			if (outcome.status === 'failed') {
 				await warnWithoutThrow(warn, 'drovr.shadow.unaccepted_response', {
@@ -1117,13 +1129,16 @@ export async function deliverDrovrShadowEvent(args: {
 	config: DrovrDeliveryConfig
 	fetcher?: typeof fetch
 	timeoutMs?: number
-	now?: () => number
+	/**
+	 * Row 201g: a sending-journey birth reaches drovr dated no earlier than
+	 * 5 minutes before this instant: the event's first send, the same on
+	 * every retry and replay (see `clampBirths`).
+	 */
+	clampAt: number
 	info?: typeof log.info
 }): Promise<DrovrDeliveryOutcome> {
 	const fetcher = args.fetcher ?? fetch
-	// Row 201g: a sending-journey birth never reaches drovr dated more than
-	// 5 minutes before its send.
-	const clamped = clampBirths([args.event], (args.now ?? Date.now)())
+	const clamped = clampBirths([args.event], args.clampAt)
 	await logClampedBirths(clamped, 'single', args.info)
 	const controller = new AbortController()
 	const timeout = setTimeout(() => controller.abort(), args.timeoutMs ?? 10_000)

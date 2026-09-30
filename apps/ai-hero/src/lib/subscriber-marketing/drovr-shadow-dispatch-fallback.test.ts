@@ -63,7 +63,9 @@ describe('the production fallback post (row 204)', () => {
 		})
 
 		expect(result).toBe('fallback')
-		expect(mocks.direct).toHaveBeenCalledWith(events)
+		expect(mocks.direct).toHaveBeenCalledWith(events, {
+			clampAt: expect.any(Number),
+		})
 		expect(mocks.capture).toHaveBeenCalledWith(
 			events.map((event) =>
 				expect.objectContaining({
@@ -80,6 +82,28 @@ describe('the production fallback post (row 204)', () => {
 			'drovr.shadow.fallback_failed',
 			expect.anything(),
 		)
+	})
+
+	it('outboxes the unsent with the instant the direct post clamped at, so the replay posts the same bytes (row 201g)', async () => {
+		const events = mapDrovrShadowFact(signup)
+		mocks.direct.mockResolvedValue(events)
+		mocks.capture.mockResolvedValue({ status: 'outboxed', count: 1 })
+		await dispatchDrovrShadowFact(signup, {
+			send: vi.fn().mockRejectedValue(new Error('inngest unreachable')),
+			warn: vi.fn(),
+			error: vi.fn(),
+			resolveOwners: async () => [],
+		})
+		const [, { clampAt }] = mocks.direct.mock.calls[0] as [
+			unknown,
+			{ clampAt: number },
+		]
+		const [entries] = mocks.capture.mock.calls[0] as [
+			{ firstSentAt?: string }[],
+		]
+		expect(entries.length).toBeGreaterThan(0)
+		for (const entry of entries)
+			expect(entry.firstSentAt).toBe(new Date(clampAt).toISOString())
 	})
 
 	it('reports a failed direct post at error with its replay keys when there is no outbox yet', async () => {

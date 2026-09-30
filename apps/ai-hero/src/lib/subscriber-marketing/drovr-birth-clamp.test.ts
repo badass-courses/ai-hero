@@ -4,9 +4,19 @@ import {
 	clampBirths,
 	DROVR_BIRTH_CLAMP_SKEW_MS,
 	isSendingJourneyBirth,
+	logClampedBirths,
 } from './drovr-birth-clamp'
+import {
+	captureDrovrOutbox,
+	outboxEntryForEvent,
+	type DrovrOutboxRow,
+	type DrovrOutboxStore,
+} from './drovr-outbox'
+import { postDrovrOutboxRow } from './drovr-outbox-replay-post'
 import { deliverBatchOrThrow } from './drovr-shadow-delivery'
 import {
+	deliverDrovrShadowEventsDirect,
+	emitDrovrShadowEvents,
 	DROVR_CONTACT_DIRECTORY_JOURNEY_ID,
 	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
 	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
@@ -121,7 +131,7 @@ describe('row 201g: a sending-journey birth is never older than 5 minutes when i
 			event: valuePathBirth,
 			config,
 			fetcher,
-			now: () => NOW,
+			clampAt: NOW,
 			info,
 		})
 		const posted = JSON.parse(
@@ -143,7 +153,7 @@ describe('row 201g: a sending-journey birth is never older than 5 minutes when i
 			event: directoryBirth,
 			config,
 			fetcher,
-			now: () => NOW,
+			clampAt: NOW,
 			info,
 		})
 		const posted = JSON.parse(
@@ -179,7 +189,7 @@ describe('row 201g: a sending-journey birth is never older than 5 minutes when i
 			config,
 			fetcher,
 			warn: vi.fn(),
-			now: () => NOW,
+			clampAt: NOW,
 			info,
 		})
 		expect(answer).toMatchObject({ accepted: 3, rejected: 0 })
@@ -199,29 +209,284 @@ describe('row 201g: a sending-journey birth is never older than 5 minutes when i
 			lagSeconds: [3600],
 		})
 	})
+})
 
-	it('relies on drovr being first-write-wins by key: a retry posts a later instant under the same key', async () => {
-		// drovr adapter-d1 event-log.ts EventLog.append: a duplicate key
-		// returns the stored event ({ appended: false, event: existing }), with
-		// no body compare. So the retry below dedupes against the first post
-		// instead of conflicting with it. If drovr ever compares bodies, this
-		// clamp must move to capture time.
-		const fetcher = vi.fn(async () => new Response('{}', { status: 202 }))
-		for (const at of [NOW, NOW + 10 * 60_000])
-			await deliverDrovrShadowEvent({
+const bodyOf = (call: unknown) => (call as [string, { body: string }])[1].body
+
+const batchAnswer = (statuses: string[]) =>
+	new Response(
+		JSON.stringify({
+			accepted: statuses.filter((status) => status === 'accepted').length,
+			rejected: statuses.filter((status) => status === 'rejected').length,
+			failed: statuses.filter((status) => status === 'failed').length,
+			results: statuses.map((status, index) =>
+				status === 'rejected'
+					? { index, status, detail: { title: 'bad' } }
+					: { index, status },
+			),
+		}),
+		{ status: 200 },
+	)
+
+describe("row 201g (#345 S1): every retry and replay posts the first send's bytes", () => {
+	// drovr's log keeps the first write of a key, but deliverEvent forwards
+	// the REQUEST's event to the actor even on a duplicate append (apps/api
+	// events.ts). So after an ambiguous first post (the append landed, the
+	// answer did not), a retry must post byte-identical, or the actor folds
+	// an occurredAt the log does not hold.
+	const TEN_MINUTES = 10 * 60_000
+
+	it('the single path: an ambiguous first post, then a retry 10 minutes later, posts identical bytes', async () => {
+		let calls = 0
+		const fetcher = vi.fn(async () => {
+			calls += 1
+			if (calls === 1) throw new Error('timeout')
+			return new Response('{}', { status: 202 })
+		})
+		vi.useFakeTimers({ toFake: ['Date'] })
+		try {
+			vi.setSystemTime(NOW)
+			const first = await deliverDrovrShadowEvent({
 				event: valuePathBirth,
 				config,
 				fetcher,
-				now: () => at,
+				clampAt: NOW,
 				info: vi.fn(),
 			})
-		const [first, retry] = fetcher.mock.calls.map(
-			(call) =>
-				JSON.parse(
-					(call as unknown as [string, { body: string }])[1].body,
-				) as DrovrShadowEvent,
+			vi.setSystemTime(NOW + TEN_MINUTES)
+			const retry = await deliverDrovrShadowEvent({
+				event: valuePathBirth,
+				config,
+				fetcher,
+				clampAt: NOW,
+				info: vi.fn(),
+			})
+			expect(first.status).toBe('failed')
+			expect(retry.status).toBe('accepted')
+		} finally {
+			vi.useRealTimers()
+		}
+		const [firstBody, retryBody] = fetcher.mock.calls.map(bodyOf)
+		expect(retryBody).toBe(firstBody)
+		expect(JSON.parse(firstBody!).occurredAt).toBe('2026-09-30T05:55:00.000Z')
+	})
+
+	it('the batch path: a failed chunk, then its retry 10 minutes later, posts identical bytes', async () => {
+		const fetcher = vi
+			.fn()
+			.mockResolvedValueOnce(new Response('{}', { status: 503 }))
+			.mockResolvedValueOnce(batchAnswer(['accepted', 'accepted']))
+		vi.useFakeTimers({ toFake: ['Date'] })
+		try {
+			vi.setSystemTime(NOW)
+			await expect(
+				deliverBatchOrThrow({
+					events: [evergreenBirth, directoryBirth],
+					config,
+					fetcher,
+					warn: vi.fn(),
+					clampAt: NOW,
+					info: vi.fn(),
+				}),
+			).rejects.toThrow()
+			vi.setSystemTime(NOW + TEN_MINUTES)
+			await deliverBatchOrThrow({
+				events: [evergreenBirth, directoryBirth],
+				config,
+				fetcher,
+				warn: vi.fn(),
+				clampAt: NOW,
+				info: vi.fn(),
+			})
+		} finally {
+			vi.useRealTimers()
+		}
+		const [firstBody, retryBody] = fetcher.mock.calls.map(bodyOf)
+		expect(retryBody).toBe(firstBody)
+	})
+
+	it("the replay: a row captured after a failed send posts that send's bytes, on every replay", async () => {
+		// The live send at NOW fails; the last attempt captures the event with
+		// the send's instant, which becomes the row's firstFailedAt.
+		const firstSend = vi.fn(async () => new Response('{}', { status: 503 }))
+		await deliverDrovrShadowEvent({
+			event: valuePathBirth,
+			config,
+			fetcher: firstSend,
+			clampAt: NOW,
+			info: vi.fn(),
+		})
+		const rows: DrovrOutboxRow[] = []
+		await captureDrovrOutbox({
+			store: {
+				insertIgnore: async (inserted: DrovrOutboxRow[]) => {
+					rows.push(...inserted)
+				},
+			} as unknown as DrovrOutboxStore,
+			target: 'production',
+			entries: [outboxEntryForEvent(valuePathBirth, 'live', { sentAt: NOW })],
+			reason: new Error('drovr answered 503'),
+			httpStatus: 503,
+			// Captured on the last attempt, well after the first send.
+			now: new Date(NOW + 2 * 60 * 60_000),
+			log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+		})
+		const [row] = rows
+		expect(row!.firstFailedAt).toBe(new Date(NOW).toISOString())
+		expect(row).not.toHaveProperty('firstSentAt')
+		// The row keeps the event as built; the clamp is the replay's.
+		expect(row!.body).toEqual(valuePathBirth)
+		expect(row!.occurredAt).toBe(valuePathBirth.occurredAt)
+
+		const replayed = vi.fn(async () => new Response('{}', { status: 202 }))
+		vi.useFakeTimers({ toFake: ['Date'] })
+		try {
+			for (const minutes of [79, 240]) {
+				vi.setSystemTime(NOW + minutes * 60_000)
+				await postDrovrOutboxRow(row!, {
+					ingestUrl: config.ingestUrl,
+					apiKeyFor: () => config.apiKey,
+					deliver: (args) =>
+						deliverDrovrShadowEvent({ ...args, fetcher: replayed }),
+					fanOut: async (events) => [...events],
+					isNeverBornOwnerStop: () => false,
+				})
+			}
+		} finally {
+			vi.useRealTimers()
+		}
+		const first = bodyOf(firstSend.mock.calls[0])
+		expect(replayed.mock.calls.map(bodyOf)).toEqual([first, first])
+	})
+
+	it('a row never sent is clamped at its capture, the same on every replay', async () => {
+		const rows: DrovrOutboxRow[] = []
+		const capturedAt = NOW + 30 * 60_000
+		await captureDrovrOutbox({
+			store: {
+				insertIgnore: async (inserted: DrovrOutboxRow[]) => {
+					rows.push(...inserted)
+				},
+			} as unknown as DrovrOutboxStore,
+			target: 'production',
+			entries: [outboxEntryForEvent(valuePathBirth, 'live')],
+			reason: new Error('held behind an owed stop'),
+			now: new Date(capturedAt),
+			log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+		})
+		expect(rows[0]!.firstFailedAt).toBe(new Date(capturedAt).toISOString())
+		const replayed = vi.fn(async () => new Response('{}', { status: 202 }))
+		for (let replay = 0; replay < 2; replay += 1)
+			await postDrovrOutboxRow(rows[0]!, {
+				ingestUrl: config.ingestUrl,
+				apiKeyFor: () => config.apiKey,
+				deliver: (args) =>
+					deliverDrovrShadowEvent({ ...args, fetcher: replayed }),
+				fanOut: async (events) => [...events],
+				isNeverBornOwnerStop: () => false,
+			})
+		const bodies = replayed.mock.calls.map(bodyOf)
+		expect(bodies[1]).toBe(bodies[0])
+		expect(JSON.parse(bodies[0]!).occurredAt).toBe(
+			new Date(capturedAt - DROVR_BIRTH_CLAMP_SKEW_MS).toISOString(),
 		)
-		expect(first!.occurredAt).not.toBe(retry!.occurredAt)
-		expect({ ...retry, occurredAt: first!.occurredAt }).toEqual(first)
+	})
+})
+
+describe("row 201g: the clamp's edges (Sonnet 2 X1 to X3)", () => {
+	const birth = (n: number, at: string) =>
+		event({ contactId: `c-${n}`, occurredAt: at, idempotencyKey: `k:${n}` })
+
+	it('reports each lag floored to whole seconds, and the largest as maxLagSeconds', async () => {
+		const births = [
+			birth(1, '2026-09-30T05:30:00.000Z'),
+			birth(2, '2026-09-30T05:00:00.000Z'),
+			birth(3, new Date(NOW - 400_999).toISOString()),
+		]
+		expect(clampBirths(births, NOW).lagSeconds).toEqual([1800, 3600, 400])
+		const info = vi.fn()
+		await logClampedBirths(clampBirths(births, NOW), 'batch', info)
+		expect(info).toHaveBeenCalledWith('drovr.birth.clamped', {
+			path: 'batch',
+			count: 3,
+			maxLagSeconds: 3600,
+			lagSeconds: [1800, 3600, 400],
+		})
+	})
+
+	it('hands a refused birth back with its own occurredAt, never the clamped one', async () => {
+		const fetcher = vi.fn(async () => batchAnswer(['rejected']))
+		const answer = await deliverBatchOrThrow({
+			events: [valuePathBirth],
+			config,
+			fetcher,
+			warn: vi.fn(),
+			clampAt: NOW,
+			info: vi.fn(),
+		})
+		expect(JSON.stringify(answer)).toContain(valuePathBirth.occurredAt)
+		expect(JSON.stringify(answer)).not.toContain('05:55:00')
+	})
+
+	it('never lets a throwing logger stop a clamped send, single or batch', async () => {
+		const info = vi.fn(async () => {
+			throw new Error('axiom down')
+		})
+		const single = vi.fn(async () => new Response('{}', { status: 202 }))
+		await expect(
+			deliverDrovrShadowEvent({
+				event: valuePathBirth,
+				config,
+				fetcher: single,
+				clampAt: NOW,
+				info,
+			}),
+		).resolves.toMatchObject({ status: 'accepted' })
+		expect(single).toHaveBeenCalledOnce()
+		const batch = vi.fn(async () => batchAnswer(['accepted']))
+		await expect(
+			deliverBatchOrThrow({
+				events: [valuePathBirth],
+				config,
+				fetcher: batch,
+				warn: vi.fn(),
+				clampAt: NOW,
+				info,
+			}),
+		).resolves.toMatchObject({ accepted: 1 })
+		expect(batch).toHaveBeenCalledOnce()
+	})
+
+	it("clamps the dispatch fallback's direct post at the instant it is given", async () => {
+		const fetcher = vi.fn(async () => new Response('{}', { status: 503 }))
+		const unsent = await deliverDrovrShadowEventsDirect([valuePathBirth], {
+			config: { ingestUrl: config.ingestUrl, authorityApiKey: config.apiKey },
+			fetch: fetcher,
+			info: vi.fn(),
+			warn: vi.fn(),
+			clampAt: NOW,
+		})
+		expect(JSON.parse(bodyOf(fetcher.mock.calls[0])).occurredAt).toBe(
+			'2026-09-30T05:55:00.000Z',
+		)
+		// Handed back as built: the outbox entry carries the instant instead.
+		expect(unsent).toEqual([valuePathBirth])
+	})
+
+	it('clamps the legacy emit road too (emitDrovrShadowEvents), so no post skips it', async () => {
+		const fetcher = vi.fn(
+			async () =>
+				new Response(JSON.stringify({ appended: true }), { status: 202 }),
+		)
+		await emitDrovrShadowEvents([valuePathBirth], {
+			config: { ingestUrl: config.ingestUrl, authorityApiKey: config.apiKey },
+			fetch: fetcher,
+			info: vi.fn(),
+			warn: vi.fn(),
+			clampAt: NOW,
+		})
+		expect(JSON.parse(bodyOf(fetcher.mock.calls[0])).occurredAt).toBe(
+			'2026-09-30T05:55:00.000Z',
+		)
 	})
 })

@@ -29,6 +29,7 @@ import {
 	valuePathBulkFreeze,
 	type ValuePathBulkFreeze,
 } from '@/lib/subscriber-marketing/drovr-bulk-freeze'
+import { isSendingJourneyBirth } from '@/lib/subscriber-marketing/drovr-birth-clamp'
 import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
 import {
 	drovrApiKeyForTenant,
@@ -169,6 +170,26 @@ const ownerReadUnsent = (
  * concurrency-blocked items). A separate function is a separate queue.
  */
 type DeliverStep = GetStepTools<typeof inngest>
+
+/**
+ * Row 201g (the hawk, #345 S1): the instant this run clamps its births at,
+ * fixed by a memoized step before its first send. Every retry of a
+ * delivery step posts the same bytes, and what runs out of retries is
+ * outboxed with it (`firstFailedAt`), so the replay posts them too. drovr
+ * forwards a request's event to the actor even when its log already holds
+ * the key, so a re-clamped retry would fold an `occurredAt` the log does
+ * not keep. A run with no sending-journey birth takes no step: nothing in
+ * it is clamped, so any instant posts the same bytes.
+ */
+export const DROVR_CLAMP_INSTANT_STEP = 'drovr-birth-clamp-instant'
+
+const drovrClampInstant = async (
+	events: readonly DrovrShadowEvent[],
+	step: DeliverStep,
+): Promise<number> =>
+	events.some(isSendingJourneyBirth)
+		? ((await step.run(DROVR_CLAMP_INSTANT_STEP, () => Date.now())) as number)
+		: Date.now()
 
 const NOT_CONFIGURED: DrovrEventsDeliverReceipt = {
 	status: 'skipped',
@@ -448,6 +469,7 @@ const deliverBatch = async (
 	const { discarded } = shadowFiltered
 	const gate = await holdBehindOpenStops(shadowFiltered.events, step, context)
 	const events = inDeliveryOrder(gate.events)
+	const clampAt = await drovrClampInstant(events, step)
 
 	let accepted = 0
 	let rejected = 0
@@ -483,7 +505,11 @@ const deliverBatch = async (
 			>({
 				attempt: context.attempt,
 				send: async () => {
-					const delivered = await deliverOrThrow({ event: drovrEvent, config })
+					const delivered = await deliverOrThrow({
+						event: drovrEvent,
+						config,
+						clampAt,
+					})
 					if (isNeverBornOwnerStop(drovrEvent, delivered)) {
 						await log.info('drovr.shadow.owner_stop_never_born', {
 							contactId: drovrEvent.contactId,
@@ -505,7 +531,9 @@ const deliverBatch = async (
 					}
 					return delivered
 				},
-				unsent: () => [outboxEntryForEvent(drovrEvent, context.lane)],
+				unsent: () => [
+					outboxEntryForEvent(drovrEvent, context.lane, { sentAt: clampAt }),
+				],
 				capture: context.capture,
 				outboxed: () => ({ status: 'outboxed' }),
 				early: earlyStops([drovrEvent], context, (outcome) =>
@@ -600,6 +628,7 @@ const deliverBulk = async (
 	// is discarded only the authority tenant is left, so that order is the
 	// whole batch's.
 	const events = inDeliveryOrder(gate.events)
+	const clampAt = await drovrClampInstant(events, step)
 
 	// One key per tenant, so one batch stream per tenant.
 	const byTenant = new Map<DrovrShadowEvent['tenantId'], DrovrShadowEvent[]>()
@@ -660,8 +689,8 @@ const deliverBulk = async (
 					send: async () => {
 						const answer = await deliverBatchOrThrow(
 							options.deferNotLive
-								? { events: chunk, config, deferNotLive: true }
-								: { events: chunk, config },
+								? { events: chunk, config, clampAt, deferNotLive: true }
+								: { events: chunk, config, clampAt },
 						)
 						const { refused = [], ...counts } = answer
 						const gatedKeys: string[] = []
@@ -724,7 +753,9 @@ const deliverBulk = async (
 						}
 					},
 					unsent: () =>
-						chunk.map((event) => outboxEntryForEvent(event, context.lane)),
+						chunk.map((event) =>
+							outboxEntryForEvent(event, context.lane, { sentAt: clampAt }),
+						),
 					capture: context.capture,
 					outboxed: (count) => ({ accepted: 0, rejected: 0, outboxed: count }),
 					// Held and deferred stops left pending are not touched: the
@@ -917,29 +948,32 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 		// Row 201g: inside the 201e window a value-path birth never rides the
 		// bulk lane without the hawk's sign-off. Decided once per run, so a
 		// retry keeps the same chunks.
-		const freeze = (await step.run('value-path-bulk-freeze', async () =>
-			valuePathBulkFreeze(process.env, Date.now()),
-		)) as ValuePathBulkFreeze
+		// Its lines are logged inside the step, so a run logs them once, not
+		// once per step its handler replays through.
 		const valuePathBirths = events
 			.flatMap((bulkEvent) => bulkEvent.data.events)
 			.filter(isValuePathBirth)
+		const freeze = (await step.run('value-path-bulk-freeze', async () => {
+			const decided = valuePathBulkFreeze(process.env, Date.now())
+			if (valuePathBirths.length > 0) {
+				if (decided.frozen)
+					await log.error('drovr.bulk.value_path_births_refused', {
+						count: valuePathBirths.length,
+						reason: decided.reason,
+						idempotencyKeys: valuePathBirths
+							.slice(0, 20)
+							.map((event) => event.idempotencyKey),
+					})
+				else if (decided.signedOffBy)
+					await log.warn('drovr.bulk.value_path_births_signed_off', {
+						count: valuePathBirths.length,
+						signedOffBy: decided.signedOffBy,
+					})
+			}
+			return decided
+		})) as ValuePathBulkFreeze
 		const admitted = (list: DrovrShadowEvent[]) =>
 			freeze.frozen ? list.filter((event) => !isValuePathBirth(event)) : list
-		if (valuePathBirths.length > 0) {
-			if (freeze.frozen)
-				await log.error('drovr.bulk.value_path_births_refused', {
-					count: valuePathBirths.length,
-					reason: freeze.reason,
-					idempotencyKeys: valuePathBirths
-						.slice(0, 20)
-						.map((event) => event.idempotencyKey),
-				})
-			else if (freeze.signedOffBy)
-				await log.warn('drovr.bulk.value_path_births_signed_off', {
-					count: valuePathBirths.length,
-					signedOffBy: freeze.signedOffBy,
-				})
-		}
 		const others = admitted(
 			events
 				.filter((bulkEvent) => !isBackfill(bulkEvent))

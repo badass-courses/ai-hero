@@ -662,7 +662,7 @@ describe('runDrovrOutboxReplay', () => {
 				deliver: (args) =>
 					deliverDrovrShadowEvent({
 						...args,
-						now: () => NOW.getTime(),
+						clampAt: NOW.getTime(),
 						info: vi.fn(),
 						fetcher: vi.fn(async (_url, init) => {
 							posted.push(JSON.parse(String(init?.body)))
