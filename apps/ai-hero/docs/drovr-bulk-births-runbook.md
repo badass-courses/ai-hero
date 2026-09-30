@@ -17,7 +17,7 @@ A **bulk birth** is any job that births more than 1,000 contacts into a drip or 
 3. **Calendar journeys don't spread by pacing.** Evergreen and the shadow newsletter send at local calendar instants, so births paced over hours on one day still fire together.
    - Keep **≤ 60k births per local slot per UTC offset** at a 90-minute spread window, and ≤ 20k while the window is 30 minutes. Split the job across days to stay under.
    - The shadow slot counts every `contact.created`.
-4. **Canary first:** a real one-page run that WRITES: the contact-sync backfill's `maxPages: 1` (it stops and doesn't re-queue), or the evergreen backfill's `--apply --limit 25` (a per-run cap). Without `--apply` the backfill is a dry run that posts nothing, and the checks below would pass without testing anything. Then check drovr, and resume only if all three hold:
+4. **Canary first:** a real one-page run that WRITES: the contact-sync backfill's `maxPages: 1` (it stops and doesn't re-queue), or the evergreen backfill's `--apply --limit 25 --out <report.json>` (a per-run cap; the script refuses to start without `--out`). Without `--apply` the backfill is a dry run that posts nothing, and the checks below would pass without testing anything. Then check drovr, and resume only if all three hold:
    - zero `overload` log lines in Axiom since the canary started;
    - `GET /status` with STUCK green;
    - no hold you didn't expect.
@@ -34,11 +34,12 @@ A **bulk birth** is any job that births more than 1,000 contacts into a drip or 
 
 A gate, not code (Sonnet 2's review of #345). On dev or stage Inngest, send **at least 1,000** bulk events to `drovr-events-deliver-bulk-v1` in one burst, and count the run starts per minute.
 - **Why 1,000:** at up to 100 events a run, that is 10 or more runs. So an unthrottled lane must start 8 or more in the first minute and fail. With 300 (3 runs), the gate could not fail.
-- **Expected for 1,000:** about 10 run starts in all, **at most 7 in any minute**, with the backlog draining over **at least 2 minutes** (7, then 3). Each run takes up to 100 events.
-- **Pass:** both hold: at most 7 starts in every minute, and the drain spans at least 2 minutes.
-- **Fail:** there's no pacing, and only the clamp is left. Don't run the backfill; tell the owner.
+- **Expected for 1,000:** about 10 run starts in all, **at most 7 in any minute**, with the starts falling **in at least 2 separate minutes** (7, then 3). Evenly spaced starts can put all 10 within about 80 seconds, so count minutes, not the span. Each run takes up to 100 events.
+- **It counts only on a fast stage.** The bulk function's own `concurrency: 4` caps starts by itself: four runs at a time, each taking *d* seconds, start at most 4 × 60 / *d* a minute, which is 7 or fewer once runs take about 34 s. On a slow stage, the throttle-shaped result then shows up whether or not the throttle exists. So also read each run's duration: **the result counts only if the median run took ≤ 10 s** (then concurrency alone would allow 24 or more starts a minute). A slower median makes it **inconclusive**, not a pass: re-run it on a faster stage.
+- **Pass:** all three hold: the median run took ≤ 10 s, at most 7 starts in every minute, and starts in at least 2 separate minutes.
+- **Fail:** 8 or more starts in a minute. There's no pacing, and only the clamp is left. Don't run the backfill; tell the owner.
 
-Record the result (the environment, the minute counts, the date) on the row before the prod run.
+Record the result (the environment, the median run duration, the minute counts, the date) on the row before the prod run.
 
 ## No bulk value-path births in the 201e window
 
@@ -65,7 +66,7 @@ Every event leaves ai-hero through `deliverDrovrShadowEvent` (the single post, t
   - **Within one run, a birth can be up to the run's retry span old.** The live lane sends one step per event, so a birth whose step runs after an earlier event's retries goes out dated up to that span before its send (Macroscope 4141816662). It's a handful of births per run, bounded by one retry schedule, not a wave; a per-event instant would cost one step per birth.
   - **The one gap:** the live function's `onFailure` backstop (a run that died before its own steps could outbox) captures its batch without the run's instant. Those rows are clamped at capture, so a birth that had already posted in that run replays with different bytes. This is narrow, and drovr row 209 removes the consequence.
   - **The outbox:** an event captured after a failed send keeps that send's instant as its row's `firstFailedAt`, and the replay clamps at `firstFailedAt`. A row never sent (held behind a stop, or an owner read that failed) is clamped at its capture, the same on every replay. So the 24 h hold is counted from the first send.
-- **Every clamp is logged:** `drovr.birth.clamped` carries `path`, `count`, `maxLagSeconds` and each birth's `lagSeconds`. A burst of these lines with large lags is an outage backlog, or a backfill queued behind the throttle.
+- **Every clamp is logged:** `drovr.birth.clamped` carries `path`, `count`, `maxLagSeconds`, and each birth's `lagSeconds` and `journeyIds` (in the same order). A burst of these lines with large lags is an outage backlog, or a backfill queued behind the throttle.
   - **Logged per attempt:** a retried send logs its line again with the same lags. So summing `count` over-counts under retries; read it as sends, not births.
 - **It composes with the outbox.** A birth that has failed for more than 24 hours is held for a human, never sent (`drovr-outbox-runbook.md`).
   - **A released held birth posts its first send's bytes,** so it is backdated by its hold time. On each journey:

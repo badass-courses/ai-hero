@@ -21,8 +21,13 @@ import {
 	type DrovrShadowEvent,
 } from './drovr-shadow-emitter'
 import {
+	DROVR_IDEMPOTENCY_KEY_CONFLICT,
+	drovrProblemCodes,
 	drovrStopVerdict,
+	isColdStartUnhandledProblem,
+	isEventNotLiveProblem,
 	isHeldStopRefusal,
+	isIdempotencyKeyConflictProblem,
 	type DrovrStopVerdict,
 } from './drovr-stop-verdict'
 
@@ -70,7 +75,16 @@ const purchase = stop(
 	'aihero:ai-hero:purchase.recorded:1',
 )
 
-type Answer = { status: number | 'timeout'; problem?: Record<string, unknown> }
+/**
+ * `error` is served text: drovr puts it in an actor body's `error` (a batch
+ * item's detail) and here in the single route's title and detail. The rule
+ * must never read it.
+ */
+type Answer = {
+	status: number | 'timeout'
+	problem?: Record<string, unknown>
+	error?: string
+}
 
 const problem = (slug: string, status: number) => ({
 	type: `urn:drovr:problem:${slug}`,
@@ -79,6 +93,11 @@ const problem = (slug: string, status: number) => ({
 const NEVER_BORN = problem('contact-never-born', 409)
 const COLD_START = problem('cold-start-unhandled', 409)
 const NOT_LIVE = problem('event-not-live', 409)
+// drovr #635 (row 209): the key already holds another event type.
+const KEY_CONFLICT = problem(DROVR_IDEMPOTENCY_KEY_CONFLICT, 409)
+// drovr #635's conflict text echoes the key.
+const echoedKey = (token: string) =>
+	`The idempotencyKey owner:aihero:${token}:1 already holds a contact.created event, and this one is contact.unsubscribed.`
 
 const CASES: [string, DrovrShadowEvent, Answer, DrovrStopVerdict][] = [
 	['202', ownerPurchase, { status: 202 }, 'landed'],
@@ -137,6 +156,20 @@ const CASES: [string, DrovrShadowEvent, Answer, DrovrStopVerdict][] = [
 		{ status: 409, problem: NEVER_BORN },
 		'held',
 	],
+	// Held by its code on every path, the directory stop included (whose
+	// cold-start lands), and never released as an owner copy's never-born.
+	[
+		'409 idempotency-key conflict',
+		directoryUnsubscribe,
+		{ status: 409, problem: KEY_CONFLICT },
+		'held',
+	],
+	[
+		'409 idempotency-key conflict',
+		ownerPurchase,
+		{ status: 409, problem: KEY_CONFLICT },
+		'held',
+	],
 	[
 		'404 contact-not-found',
 		purchase,
@@ -161,15 +194,55 @@ const CASES: [string, DrovrShadowEvent, Answer, DrovrStopVerdict][] = [
 		{ status: 422, problem: problem('unprocessable', 422) },
 		'held',
 	],
+	// Poisoned text (Sonnet 2, 201g-f2 round 2): a served text naming
+	// another code, as drovr's conflict echoes a key, picks no rule on any
+	// path. Before, the batch item and the straggler released, landed or
+	// retried these by a substring.
+	...(
+		[
+			[ownerUnsubscribe, 'cold-start-never-born'],
+			[directoryUnsubscribe, 'cold-start-unhandled'],
+			[ownerUnsubscribe, 'event-not-live'],
+		] as const
+	).map(
+		([event, token]): [string, DrovrShadowEvent, Answer, DrovrStopVerdict] => [
+			`409 idempotency-key conflict whose key contains ${token}`,
+			event,
+			{ status: 409, problem: KEY_CONFLICT, error: echoedKey(token) },
+			'held',
+		],
+	),
+	...(
+		[
+			[ownerUnsubscribe, 'cold-start-never-born'],
+			[directoryUnsubscribe, 'cold-start-unhandled'],
+			[ownerPurchase, 'event-not-live'],
+		] as const
+	).map(
+		([event, token]): [string, DrovrShadowEvent, Answer, DrovrStopVerdict] => [
+			`400 malformed whose text says ${token}`,
+			event,
+			{
+				status: 400,
+				problem: problem('malformed-event', 400),
+				error: `not a ${token}: the event is malformed`,
+			},
+			'held',
+		],
+	),
 ]
 
 const fetcherFor = (answer: Answer) =>
 	vi.fn(async () => {
 		if (answer.status === 'timeout')
 			throw new Error('The operation was aborted')
-		return new Response(JSON.stringify(answer.problem ?? {}), {
-			status: answer.status,
-		})
+		return new Response(
+			JSON.stringify({
+				...answer.problem,
+				...(answer.error ? { title: answer.error, detail: answer.error } : {}),
+			}),
+			{ status: answer.status },
+		)
 	})
 
 /**
@@ -184,10 +257,12 @@ const ACTOR_CODES: Record<string, string> = {
 	'cold-start-unhandled': 'cold-start-unhandled',
 }
 
-const actorBody = (code: string, event: DrovrShadowEvent) =>
+const actorBody = (code: string, event: DrovrShadowEvent, error?: string) =>
 	JSON.stringify({
 		code,
-		error: `Contact ${event.contactId} has no actor on journey ${event.journeyId}, and ${event.type} does not start one; refusing the cold start`,
+		error:
+			error ??
+			`Contact ${event.contactId} has no actor on journey ${event.journeyId}, and ${event.type} does not start one; refusing the cold start`,
 	})
 
 const drovrItemFor = (answer: Answer, event: DrovrShadowEvent) => {
@@ -219,7 +294,7 @@ const drovrItemFor = (answer: Answer, event: DrovrShadowEvent) => {
 	return {
 		index: 0,
 		status: 'rejected',
-		detail: actorBody(ACTOR_CODES[slug] ?? slug, event),
+		detail: actorBody(ACTOR_CODES[slug] ?? slug, event, answer.error),
 	}
 }
 
@@ -424,6 +499,134 @@ describe('row 204c: one stop rule on every path', () => {
 			expect(answered).toMatchObject({ accepted: 0, rejected: 1 })
 			expect(isHeldStopRefusal(answered.refused![0]!)).toBe(false)
 		}
+	})
+
+	it.each([
+		['its own text', undefined],
+		// A key echoing a deferral reason must not defer it (Sonnet 2).
+		['text echoing event-not-live', echoedKey('event-not-live')],
+		['text echoing cold-start-unhandled', echoedKey('cold-start-unhandled')],
+	])(
+		'refuses a fact whose key holds another event (drovr #635), with %s, final on every path: never retried, deferred or delivered',
+		async (_, error) => {
+			const fact: DrovrShadowEvent = {
+				...ownerPurchase,
+				type: 'contact.created',
+				idempotencyKey: 'aihero:fact:conflict',
+			}
+			const answer: Answer = { status: 409, problem: KEY_CONFLICT, error }
+			const outcome = await deliverDrovrShadowEvent({
+				clampAt: Date.now(),
+				event: fact,
+				config,
+				fetcher: fetcherFor(answer),
+			})
+			expect(outcome.status).toBe('rejected')
+			for (const fetcher of [
+				fetcherFor(answer),
+				itemFetcherFor(answer, fact),
+			]) {
+				const answered = await deliverBatchOrThrow({
+					clampAt: Date.now(),
+					events: [fact],
+					config,
+					fetcher,
+					warn: quiet,
+					deferNotLive: true,
+				})
+				expect(answered).toMatchObject({ accepted: 0, rejected: 1 })
+				expect(answered).not.toHaveProperty('deferred')
+				expect(
+					isIdempotencyKeyConflictProblem(answered.refused![0]!.problem),
+				).toBe(true)
+			}
+			const replayed = await postDrovrOutboxRow(
+				{
+					...outboxEntryForEvent(fact, 'live'),
+					firstFailedAt: '2026-09-30T05:00:00.000Z',
+				} as DrovrOutboxRow,
+				{
+					ingestUrl: config.ingestUrl,
+					apiKeyFor: () => config.apiKey,
+					deliver: (args) =>
+						deliverDrovrShadowEvent({ ...args, fetcher: fetcherFor(answer) }),
+					fanOut: async (events) => [...events],
+					isNeverBornOwnerStop,
+				},
+			)
+			expect(replayed).toMatchObject({ kind: 'rejected', httpStatus: 409 })
+		},
+	)
+
+	it("holds a stop by the conflict's code: served text naming another code can't release or land it", () => {
+		// A batch item's detail is a string; every rule reads only its code.
+		const detail = (error: string) =>
+			JSON.stringify({ code: DROVR_IDEMPOTENCY_KEY_CONFLICT, error })
+		expect(
+			drovrStopVerdict(ownerUnsubscribe, {
+				httpStatus: 409,
+				problem: detail(
+					'not a cold-start-never-born: the key holds another event',
+				),
+			}),
+		).toBe('held')
+		expect(
+			drovrStopVerdict(directoryUnsubscribe, {
+				httpStatus: 409,
+				problem: detail(
+					'not a cold-start-unhandled: the key holds another event',
+				),
+			}),
+		).toBe('held')
+	})
+
+	it('reads a problem by its code only: the type slug, the code, or a batch detail string, never its title, detail or hint', () => {
+		expect(drovrProblemCodes(KEY_CONFLICT)).toEqual([
+			DROVR_IDEMPOTENCY_KEY_CONFLICT,
+		])
+		expect(drovrProblemCodes({ code: DROVR_IDEMPOTENCY_KEY_CONFLICT })).toEqual(
+			[DROVR_IDEMPOTENCY_KEY_CONFLICT],
+		)
+		expect(
+			drovrProblemCodes(
+				JSON.stringify({ code: DROVR_IDEMPOTENCY_KEY_CONFLICT, error: 'x' }),
+			),
+		).toEqual([DROVR_IDEMPOTENCY_KEY_CONFLICT])
+		expect(drovrProblemCodes(` ${DROVR_IDEMPOTENCY_KEY_CONFLICT} `)).toEqual([
+			DROVR_IDEMPOTENCY_KEY_CONFLICT,
+		])
+		// drovr's `<code>: <reason>` item detail: the code is the text before
+		// the first colon, and nothing after it is read.
+		expect(
+			drovrProblemCodes('event-not-live: contact.unsubscribed is not live'),
+		).toEqual(['event-not-live'])
+		expect(
+			isEventNotLiveProblem('event-not-live: contact.unsubscribed is not live'),
+		).toBe(true)
+		expect(
+			isColdStartUnhandledProblem('cold-start-unhandled: no directory actor'),
+		).toBe(true)
+		expect(
+			isEventNotLiveProblem('malformed-event: not an event-not-live'),
+		).toBe(false)
+		expect(isEventNotLiveProblem('the key event-not-live:1 is taken')).toBe(
+			false,
+		)
+		expect(
+			isColdStartUnhandledProblem({
+				type: 'urn:drovr:problem:malformed-event',
+				detail: 'cold-start-unhandled',
+			}),
+		).toBe(false)
+		const servedText = {
+			type: 'urn:drovr:problem:malformed-event',
+			title: DROVR_IDEMPOTENCY_KEY_CONFLICT,
+			detail: `the key holds another event (${DROVR_IDEMPOTENCY_KEY_CONFLICT})`,
+			hint: DROVR_IDEMPOTENCY_KEY_CONFLICT,
+		}
+		expect(isIdempotencyKeyConflictProblem(servedText)).toBe(false)
+		expect(drovrProblemCodes(null)).toEqual([])
+		expect(drovrProblemCodes(42)).toEqual([])
 	})
 
 	it("retries a whole chunk when any stop in it is still owed, and counts a directory stop's cold-start as landed beside a refused fact", async () => {

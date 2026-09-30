@@ -411,7 +411,7 @@ describe('drovr event-not-live (409) is a retry, never a drop', () => {
 	const notLive = () =>
 		new Response(
 			JSON.stringify({
-				type: 'https://drovr.dev/problems/event-not-live',
+				type: 'urn:drovr:problem:event-not-live',
 				title: 'Event type not live for this actor',
 				status: 409,
 				detail: 'contact-directory v1 does not take contact.profile.updated',

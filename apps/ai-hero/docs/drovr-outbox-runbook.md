@@ -26,6 +26,7 @@
   - **Released, nothing owed:** an owner copy drovr answers `contact-never-born`, for every stop kind, a purchase included. The contact was never on that journey. The directory stop itself is never released this way.
   - **Pending, retried:** a 5xx, a timeout or network error, 408, 429 and 409 `event-not-live`, and nothing else. It still gates.
   - **Held for a human:** every other 4xx, including 409 `cold-start-unhandled` on any stop but a directory one (drovr says not to retry it; the hawk, 2026-09-30). Nothing releases it but a human (below). Failing closed costs a missed pitch; failing open can pitch a buyer or someone who unsubscribed.
+  - **Answers are read by their code only** (`drovrProblemCodes`): a problem's `type` slug and `code`; a batch item's detail as the actor's JSON `code`, or the text before the first colon in drovr's `event-not-live: <reason>` form. Never a title, detail, hint or error text, so a key or message that names another code picks no rule (201g-f2).
   - The one exception is a whole-batch 404 or 405. That means drovr has no batch ingress, not an answer about the events, so the chunk retries and the replay later posts the stop alone. The gate is closed throughout.
   - Facts and births keep their own rules: a fact's 4xx other than `event-not-live` is rejected.
   - The dispatch fallback (a direct post when Inngest is unreachable) outboxes a refused stop as pending. The replay's re-post then holds it within 5 minutes.
@@ -52,6 +53,7 @@ ORDER BY occurredAt;
    - A 404 `unknown-journey` is a journey that isn't live yet.
    - A 400 `malformed-event` is an ai-hero bug.
    - A 410 `tenant-retired` is a drovr decision.
+   - A 409 `idempotency-key-holds-another-event` (drovr #635) means drovr already holds a different event type under this key, so nothing was recorded. It's an ai-hero key bug. Re-sending the same key is refused again, so fix the key and re-issue the stop under a new one. A fact that meets it is refused and logged at `drovr.outbox.rejected`.
    - A 409 `cold-start-unhandled` means the contact has no actor on that journey, and the stop does not start one. Find out why the contact isn't there (a missing birth, or a journey the contact was never on) before re-sending.
 2. Fix the cause first, then **re-send** it with the statement under "Release a held or rejected row". Put who and why in `lastError`, as that statement does.
 3. **Retire** it only when the stop is truly moot (see "Retire a row"). A purchase is never retired.
