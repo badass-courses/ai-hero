@@ -172,39 +172,77 @@ const fetcherFor = (answer: Answer) =>
 		})
 	})
 
-/** A batch 200 whose one item carries the answer. */
-const itemFetcherFor = (answer: Answer) =>
+/**
+ * drovr's own item for the answer, as `deliverBatchItem` (drovr
+ * apps/api/src/events.ts:780-816) builds it. An actor refusal's `detail` is
+ * the actor's `{code, error}` body as a string, with no status; only the
+ * single route turns the code into a problem object. event-not-live and an
+ * ingress transient (drovr's 408/429 for one item) come back `failed`.
+ */
+const ACTOR_CODES: Record<string, string> = {
+	'contact-never-born': 'cold-start-never-born',
+	'cold-start-unhandled': 'cold-start-unhandled',
+}
+
+const actorBody = (code: string, event: DrovrShadowEvent) =>
+	JSON.stringify({
+		code,
+		error: `Contact ${event.contactId} has no actor on journey ${event.journeyId}, and ${event.type} does not start one; refusing the cold start`,
+	})
+
+const drovrItemFor = (answer: Answer, event: DrovrShadowEvent) => {
+	if (answer.status === 'timeout') throw new Error('unreachable')
+	if (answer.status < 300) return { index: 0, status: 'accepted' }
+	if (answer.status >= 500)
+		return {
+			index: 0,
+			status: 'failed',
+			detail: `actor answered ${answer.status}`,
+		}
+	if (answer.status === 408 || answer.status === 429)
+		return {
+			index: 0,
+			status: 'failed',
+			detail:
+				'the platform failed this event for a moment (ingress-transient); replay it after 5 seconds',
+		}
+	const slug = String(answer.problem?.type ?? '').replace(
+		'urn:drovr:problem:',
+		'',
+	)
+	if (slug === 'event-not-live')
+		return {
+			index: 0,
+			status: 'failed',
+			detail: `event-not-live: ${event.type} is not live on this actor`,
+		}
+	return {
+		index: 0,
+		status: 'rejected',
+		detail: actorBody(ACTOR_CODES[slug] ?? slug, event),
+	}
+}
+
+/** A batch 200 whose one item carries drovr's real item for the answer. */
+const itemFetcherFor = (answer: Answer, event: DrovrShadowEvent) =>
 	vi.fn(async () => {
 		if (answer.status === 'timeout')
 			throw new Error('The operation was aborted')
-		const status =
-			answer.status < 300
-				? 'accepted'
-				: answer.status >= 500
-					? 'failed'
-					: 'rejected'
+		const item = drovrItemFor(answer, event)
 		return new Response(
 			JSON.stringify({
-				accepted: status === 'accepted' ? 1 : 0,
-				rejected: status === 'rejected' ? 1 : 0,
-				failed: status === 'failed' ? 1 : 0,
-				results: [
-					{
-						index: 0,
-						status,
-						...(answer.status >= 300
-							? { detail: answer.problem ?? { status: answer.status } }
-							: {}),
-					},
-				],
+				accepted: item.status === 'accepted' ? 1 : 0,
+				rejected: item.status === 'rejected' ? 1 : 0,
+				failed: item.status === 'failed' ? 1 : 0,
+				results: [item],
 			}),
 			{ status: 200 },
 		)
 	})
 
-const wholeBatchFetcherFor = (answer: Answer) =>
+const wholeBatchFetcherFor = (answer: Answer, event: DrovrShadowEvent) =>
 	answer.status !== 'timeout' && answer.status < 300
-		? itemFetcherFor(answer)
+		? itemFetcherFor(answer, event)
 		: fetcherFor(answer)
 
 const quiet = vi.fn()
@@ -303,7 +341,7 @@ const straggler = async (event: DrovrShadowEvent, answer: Answer) => {
 		answered = await deliverBatchOrThrow({
 			events: [event],
 			config,
-			fetcher: itemFetcherFor(answer),
+			fetcher: itemFetcherFor(answer, event),
 			warn: quiet,
 			deferNotLive: true,
 		})
@@ -334,8 +372,8 @@ describe('row 204c: one stop rule on every path', () => {
 				).toBe(expected)
 			expect({
 				single: await single(event, answer),
-				wholeBatch: await batch(event, wholeBatchFetcherFor(answer)),
-				batchItem: await batch(event, itemFetcherFor(answer)),
+				wholeBatch: await batch(event, wholeBatchFetcherFor(answer, event)),
+				batchItem: await batch(event, itemFetcherFor(answer, event)),
 				replay: await replay(event, answer),
 				straggler: await straggler(event, answer),
 			}).toEqual({
@@ -429,6 +467,72 @@ describe('row 204c: one stop rule on every path', () => {
 		expect(answered.refused?.map(({ event }) => event.idempotencyKey)).toEqual([
 			ownerPurchase.idempotencyKey,
 		])
+		expect(isHeldStopRefusal(answered.refused![0]!)).toBe(true)
+	})
+
+	// Opus (delta 519bde41) M1: 86 owner-copy unsubscribes on 09-27 came back
+	// from the batch as exactly this item. A string, no type, no status.
+	const PROD_NEVER_BORN_ITEM = (event: DrovrShadowEvent) => ({
+		index: 0,
+		status: 'rejected',
+		detail: `{"code":"cold-start-never-born","error":"Contact ${event.contactId} has no actor on journey ${event.journeyId}, and ${event.type} does not start one; refusing the cold start"}`,
+	})
+	const prodItemFetcher = (event: DrovrShadowEvent) =>
+		vi.fn(
+			async () =>
+				new Response(
+					JSON.stringify({
+						accepted: 0,
+						rejected: 1,
+						failed: 0,
+						results: [PROD_NEVER_BORN_ITEM(event)],
+					}),
+					{ status: 200 },
+				),
+		)
+
+	it.each([ownerUnsubscribe, ownerPurchase])(
+		"releases drovr's real never-born item (the 09-27 prod string) for an owner copy of $type, in bulk and on the straggler",
+		async (event) => {
+			const answered = await deliverBatchOrThrow({
+				events: [event],
+				config,
+				fetcher: prodItemFetcher(event),
+				warn: quiet,
+			})
+			expect(answered.refused).toHaveLength(1)
+			expect(isHeldStopRefusal(answered.refused![0]!)).toBe(false)
+			const hold = vi.fn()
+			const settle = vi.fn(async () => ({
+				status: 'settled' as const,
+				count: 1,
+			}))
+			await settleOrHoldStragglerStops(
+				[event],
+				await deliverBatchOrThrow({
+					events: [event],
+					config,
+					fetcher: prodItemFetcher(event),
+					warn: quiet,
+					deferNotLive: true,
+				}),
+				{ hold: hold as never, settle: settle as never },
+			)
+			expect(hold).not.toHaveBeenCalled()
+			expect(settle).toHaveBeenCalledWith(
+				[expect.objectContaining({ idempotencyKey: event.idempotencyKey })],
+				DROVR_RELEASED_BY_STRAGGLER,
+			)
+		},
+	)
+
+	it("holds drovr's real never-born item for a directory stop: it is the suppression authority", async () => {
+		const answered = await deliverBatchOrThrow({
+			events: [directoryUnsubscribe],
+			config,
+			fetcher: prodItemFetcher(directoryUnsubscribe),
+			warn: quiet,
+		})
 		expect(isHeldStopRefusal(answered.refused![0]!)).toBe(true)
 	})
 

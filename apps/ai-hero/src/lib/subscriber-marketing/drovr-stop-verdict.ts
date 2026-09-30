@@ -54,6 +54,24 @@ export function isDirectoryStop(event: DrovrShadowEvent | undefined): boolean {
 const CONTACT_NEVER_BORN_PROBLEM = 'urn:drovr:problem:contact-never-born'
 
 /**
+ * drovr's never-born answer in either form it sends: the single route's
+ * problem (`urn:drovr:problem:contact-never-born`), or a batch item's
+ * `detail`, which is the actor's own body as a string,
+ * `{"code":"cold-start-never-born","error":"…"}` (drovr events.ts
+ * deliverBatchItem; ACTOR_REFUSAL_CODES.neverBorn). An item carries no
+ * status, so neither form needs one.
+ */
+function isNeverBornProblem(problem: unknown): boolean {
+	if (
+		typeof problem === 'object' &&
+		problem !== null &&
+		(problem as { type?: unknown }).type === CONTACT_NEVER_BORN_PROBLEM
+	)
+		return true
+	return problemText(problem).includes('cold-start-never-born')
+}
+
+/**
  * A stop's owner copy (the fan-out to a journey the contact is owned for)
  * that drovr refused because the contact has no actor there, and the stop
  * does not start one. Every stop kind counts, a purchase included: the
@@ -70,9 +88,7 @@ export function isNeverBornOwnerStopProblem(
 		event.idempotencyKey.startsWith('owner:') &&
 		event.journeyId !== 'contact-directory' &&
 		isOutboxStop({ eventType: event.type }) &&
-		typeof problem === 'object' &&
-		problem !== null &&
-		(problem as { type?: unknown }).type === CONTACT_NEVER_BORN_PROBLEM
+		isNeverBornProblem(problem)
 	)
 }
 

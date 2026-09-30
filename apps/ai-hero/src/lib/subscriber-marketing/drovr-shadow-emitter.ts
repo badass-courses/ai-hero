@@ -1151,8 +1151,8 @@ export async function deliverDrovrShadowEvent(args: {
 				}
 			}
 			// Row 204c: a stop's answer goes through the one stop rule. A stop
-			// still owed (408, 429, a cold-start off the directory) is a failure
-			// to retry; a directory stop's cold-start landed.
+			// still owed (408, 429) is a failure to retry; a directory stop's
+			// cold-start landed.
 			if (isStopEvent(args.event)) {
 				const verdict = drovrStopVerdict(args.event, {
 					httpStatus: response.status,

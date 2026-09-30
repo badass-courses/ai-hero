@@ -1696,16 +1696,27 @@ describe('row 204c: a backfill stop that is owed gates the run, whatever the sou
 			contactId: 'contact-3',
 			occurredAt: at(7),
 		}
+		const thirdStop = {
+			...event(
+				'org-aihero',
+				'backfill:complaint',
+				'contact-directory',
+				'contact.complained',
+			),
+			contactId: 'contact-4',
+			occurredAt: at(8),
+		}
 		mocks.deliverBatchOrThrow.mockImplementation(
 			async ({ events }: { events: { idempotencyKey: string }[] }) =>
 				events.some((e) => e.idempotencyKey === 'backfill:unsubscribe')
 					? {
 							accepted: 0,
-							rejected: 3,
+							rejected: 4,
 							refused: [
 								{ event: unsubscribe, httpStatus: 404, problem: { type: 'a' } },
-								{ event: otherStop, httpStatus: 422, problem: { type: 'b' } },
-								{ event: fact, httpStatus: 422, problem: { type: 'b' } },
+								{ event: otherStop, httpStatus: 404, problem: { type: 'b' } },
+								{ event: fact, httpStatus: 404, problem: { type: 'b' } },
+								{ event: thirdStop, httpStatus: 404, problem: { type: 'b' } },
 							],
 						}
 					: { accepted: events.length, rejected: 0 },
@@ -1715,7 +1726,7 @@ describe('row 204c: a backfill stop that is owed gates the run, whatever the sou
 				{
 					data: {
 						source: 'contact-sync-backfill',
-						events: [unsubscribe, otherStop, fact],
+						events: [unsubscribe, otherStop, fact, thirdStop],
 					},
 				},
 			],
@@ -1730,9 +1741,14 @@ describe('row 204c: a backfill stop that is owed gates the run, whatever the sou
 		])
 		expect(held).toEqual([
 			[['backfill:unsubscribe'], expect.stringContaining('(404)')],
-			[['backfill:bounce'], expect.stringContaining('(422)')],
+			// The same status, a different problem: its own group (Opus V8).
+			// Two stops under one answer: one hold, counted twice (Sonnet 2).
+			[
+				['backfill:bounce', 'backfill:complaint'],
+				expect.stringContaining('"type":"b"'),
+			],
 		])
-		expect(receipt).toMatchObject({ heldStops: 2, rejected: 1 })
+		expect(receipt).toMatchObject({ heldStops: 3, rejected: 1 })
 	})
 
 	it('holds a backfill stop drovr refused with a 4xx, and a later fact of that contact from another source waits behind it', async () => {

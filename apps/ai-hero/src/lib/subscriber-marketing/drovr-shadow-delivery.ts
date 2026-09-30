@@ -317,8 +317,8 @@ export async function deliverBatchOrThrow(args: {
 					'drovr does not take this event type yet (409 event-not-live)',
 				)
 			}
-			// A stop still owed (408, 429, a cold-start off the directory):
-			// drovr recorded nothing for the chunk, so the whole chunk retries.
+			// A stop still owed (408, 429): drovr recorded nothing for the
+			// chunk, so the whole chunk retries.
 			if (verdicts.includes('pending')) {
 				throw new DrovrBatchDeliveryFailedError(
 					keys,
