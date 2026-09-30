@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
 	captureDrovrOutbox,
+	DROVR_OUTBOX_BEHIND_STOP_NOTE,
 	DROVR_OUTBOX_CAPTURE_TRIES,
 	DROVR_OUTBOX_DELIVERED_RETENTION_MS,
 	DROVR_OUTBOX_HELD_BIRTH_WAIT_MS,
@@ -12,6 +13,7 @@ import {
 	DrovrOutboxUnavailableError,
 	drovrReplayDelayMs,
 	drovrRetryDelayMs,
+	holdDrovrStops,
 	isOutboxBirth,
 	isOutboxStop,
 	outboxEntryForEvent,
@@ -103,11 +105,49 @@ function memoryStore(initial: DrovrOutboxRow[] = []) {
 						.filter(
 							(row) =>
 								(row.status === 'pending' || row.status === 'rejected') &&
+								row.source !== 'contactSync' &&
 								isOutboxStop(row),
 						)
 						.map((row) => row.firstFailedAt)
 						.sort()[0] ?? null,
+				oldestDeferredStopFailedAt:
+					mine
+						.filter(
+							(row) =>
+								row.status === 'pending' &&
+								row.source === 'contactSync' &&
+								isOutboxStop(row),
+						)
+						.map((row) => row.firstFailedAt)
+						.sort()[0] ?? null,
+				heldStops: mine.filter(
+					(row) => row.status === 'held' && isOutboxStop(row),
+				).length,
+				oldestHeldStopFailedAt:
+					mine
+						.filter((row) => row.status === 'held' && isOutboxStop(row))
+						.map((row) => row.firstFailedAt)
+						.sort()[0] ?? null,
 			}
+		},
+		async holdPending({ target, dedupeKeys, at, note, httpStatus }) {
+			let held = 0
+			for (const [id, row] of rows)
+				if (
+					row.target === target &&
+					row.status === 'pending' &&
+					dedupeKeys.includes(row.dedupeKey)
+				) {
+					rows.set(id, {
+						...row,
+						status: 'held',
+						lastAttemptAt: at,
+						lastError: note,
+						lastStatus: httpStatus,
+					})
+					held += 1
+				}
+			return held
 		},
 		async settlePending({ target, dedupeKeys, at, note }) {
 			let settled = 0
@@ -136,6 +176,7 @@ function memoryStore(initial: DrovrOutboxRow[] = []) {
 					contactIds.includes(row.contactId) &&
 					row.status === 'pending' &&
 					row.nextAttemptAt > now &&
+					row.lastError === DROVR_OUTBOX_BEHIND_STOP_NOTE &&
 					!isOutboxStop(row)
 				) {
 					rows.set(id, { ...row, nextAttemptAt: now })
@@ -1724,5 +1765,222 @@ describe('row 204b round 2: the two gates never deadlock, and every queue drains
 			}
 		}
 		expect(byKey.size).toBe(queue.length)
+	})
+})
+
+describe('row 204c: a stop drovr refused is held for a human, never rejected', () => {
+	const stopRow = (
+		id: string,
+		overrides: Omit<Partial<DrovrOutboxRow>, 'body'> = {},
+		type = 'purchase.recorded',
+	) =>
+		row({
+			id,
+			body: event(id, {
+				journeyId: 'crash-course-evergreen-offer',
+				type: type as DrovrShadowEvent['type'],
+				occurredAt: minutesAgo(30),
+			}),
+			...overrides,
+		})
+	const refused = async () => ({
+		kind: 'rejected' as const,
+		httpStatus: 404,
+		detail: { type: 'urn:drovr:problem:unknown-route' },
+	})
+
+	it('the replay holds a stop drovr refuses, which still gates its contact, alerts `held`, and shows on the depth line', async () => {
+		const stop = stopRow('stop')
+		const later = row({
+			id: 'later',
+			body: event('later', { occurredAt: minutesAgo(5) }),
+		})
+		const { store, rows: stored } = memoryStore([stop, later])
+		const posted: string[] = []
+		const { run, logger } = replay(store, async (r) => {
+			posted.push(r.idempotencyKey)
+			return r.idempotencyKey === 'stop'
+				? refused()
+				: { kind: 'delivered' as const }
+		})
+		const receipt = await run
+		expect(stored.get('stop')).toMatchObject({
+			status: 'held',
+			lastStatus: 404,
+			attempts: 1,
+		})
+		expect(posted).toEqual(['stop'])
+		expect(stored.get('later')?.status).toBe('pending')
+		expect(receipt).toMatchObject({ held: 1, rejected: 0 })
+		expect(receipt.alert).toContain('held')
+		expect(receipt.alert).not.toContain('stop')
+		expect(receipt.depth).toMatchObject({ heldStops: 1 })
+		expect(logger.warn).toHaveBeenCalledWith(
+			'drovr.outbox.stop_held',
+			expect.objectContaining({ httpStatus: 404 }),
+		)
+		expect(logger.info).toHaveBeenCalledWith(
+			'drovr.outbox.depth',
+			expect.objectContaining({ heldStops: 1, oldestHeldStopAgeMin: 10 }),
+		)
+	})
+
+	it('a fact drovr refuses on replay is still rejected: only stops are held', async () => {
+		const fact = row({ id: 'fact', body: event('fact') })
+		const { store, rows: stored } = memoryStore([fact])
+		await replay(store, refused).run
+		expect(stored.get('fact')?.status).toBe('rejected')
+	})
+
+	it('holdDrovrStops holds a new stop, moves an early-captured one from pending to held, and leaves non-stops out', async () => {
+		const early = stopRow('early', { nextAttemptAt: minutesAgo(-70) })
+		const { store, rows: stored } = memoryStore([early])
+		const logger = log()
+		const captured = await holdDrovrStops({
+			store,
+			target: PROD,
+			entries: [
+				outboxEntryForEvent(early.body as DrovrShadowEvent, 'live'),
+				outboxEntryForEvent(
+					event('new-stop', { type: 'contact.unsubscribed' }),
+					'live',
+				),
+				outboxEntryForEvent(event('a-fact'), 'live'),
+			],
+			reason: 'drovr refused the stop (403)',
+			httpStatus: 403,
+			now: NOW,
+			log: logger,
+		})
+		expect(captured).toEqual({ status: 'outboxed', count: 2 })
+		const all = [...stored.values()]
+		expect(
+			all.map((r) => [r.idempotencyKey, r.status, r.lastStatus]).sort(),
+		).toEqual([
+			['early', 'held', 403],
+			['new-stop', 'held', 403],
+		])
+		expect(logger.warn).toHaveBeenCalledWith(
+			'drovr.outbox.stop_held',
+			expect.objectContaining({
+				count: 2,
+				idempotencyKeys: ['early', 'new-stop'],
+			}),
+		)
+	})
+
+	it('holdDrovrStops writes a new stop held from the start: never a pending moment the replay could post, even if the flip of captured rows fails', async () => {
+		const { store, rows: stored } = memoryStore()
+		store.holdPending = async () => {
+			throw new Error('database went away')
+		}
+		await expect(
+			holdDrovrStops({
+				store,
+				target: PROD,
+				entries: [
+					outboxEntryForEvent(
+						event('new-stop', { type: 'purchase.recorded' }),
+						'live',
+					),
+				],
+				reason: 'drovr refused the stop (404)',
+				httpStatus: 404,
+				now: NOW,
+				log: log(),
+			}),
+		).rejects.toThrow('database went away')
+		expect([...stored.values()].map((r) => r.status)).toEqual(['held'])
+	})
+
+	it('holdDrovrStops with no stops writes nothing', async () => {
+		const { store, rows: stored } = memoryStore()
+		const captured = await holdDrovrStops({
+			store,
+			target: PROD,
+			entries: [outboxEntryForEvent(event('a-fact'), 'live')],
+			reason: 'x',
+			now: NOW,
+			log: log(),
+		})
+		expect(captured).toEqual({ status: 'outboxed', count: 0 })
+		expect(stored.size).toBe(0)
+	})
+
+	it('a settled stop pulls forward only the facts that waited behind it, not one waiting out its own backoff (the round 3 nit)', async () => {
+		const stop = stopRow('stop', {
+			nextAttemptAt: minutesAgo(-70),
+			source: 'live',
+		})
+		const behind = row({
+			id: 'behind',
+			body: event('behind', { occurredAt: minutesAgo(5) }),
+			nextAttemptAt: minutesAgo(-70),
+			lastError: DROVR_OUTBOX_BEHIND_STOP_NOTE,
+		})
+		const ownBackoff = row({
+			id: 'own',
+			body: event('own', { occurredAt: minutesAgo(5) }),
+			nextAttemptAt: minutesAgo(-30),
+			lastError: 'drovr answered 503',
+		})
+		const { store, rows: stored } = memoryStore([stop, behind, ownBackoff])
+		await settleDrovrOutbox({
+			store,
+			target: PROD,
+			entries: [stored.get('stop')!],
+			note: 'delivered by an Inngest retry',
+			now: NOW,
+			log: log(),
+		})
+		expect(stored.get('behind')?.nextAttemptAt).toBe(NOW.toISOString())
+		expect(stored.get('own')?.nextAttemptAt).toBe(minutesAgo(-30))
+	})
+
+	it('the replay marks a fact it moves behind a stop, so a settle can find it', async () => {
+		const stop = stopRow('stop', { nextAttemptAt: minutesAgo(-70) })
+		const fact = row({
+			id: 'fact',
+			body: event('fact', { occurredAt: minutesAgo(5) }),
+		})
+		const { store, rows: stored } = memoryStore([stop, fact])
+		await replay(store, async () => ({ kind: 'delivered' as const })).run
+		expect(stored.get('fact')).toMatchObject({
+			nextAttemptAt: minutesAgo(-70),
+			lastError: DROVR_OUTBOX_BEHIND_STOP_NOTE,
+		})
+	})
+
+	it('a stop the straggler retry owns does not page `stop` while it waits, only after 48 h', async () => {
+		const waiting = stopRow(
+			'deferred',
+			{
+				source: 'contactSync',
+				firstFailedAt: minutesAgo(47 * 60),
+				nextAttemptAt: minutesAgo(-60),
+			},
+			'contact.unsubscribed',
+		)
+		const quiet = await replay(memoryStore([waiting]).store, refused).run
+		expect(quiet.alert).not.toContain('stop')
+		expect(quiet.depth.oldestDeferredStopFailedAt).toBe(minutesAgo(47 * 60))
+		const overdue = stopRow(
+			'overdue',
+			{
+				source: 'contactSync',
+				firstFailedAt: minutesAgo(48 * 60 + 1),
+				nextAttemptAt: minutesAgo(-60),
+			},
+			'contact.unsubscribed',
+		)
+		const loud = await replay(memoryStore([overdue]).store, refused).run
+		expect(loud.alert).toContain('stop')
+		// Any other owed stop still pages at 10 minutes.
+		const live = stopRow('live', {
+			firstFailedAt: minutesAgo(11),
+			nextAttemptAt: minutesAgo(-60),
+		})
+		const paged = await replay(memoryStore([live]).store, refused).run
+		expect(paged.alert).toContain('stop')
 	})
 })

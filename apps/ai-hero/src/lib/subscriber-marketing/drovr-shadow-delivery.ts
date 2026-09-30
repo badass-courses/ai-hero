@@ -94,6 +94,19 @@ export type DrovrBatchOutcome = {
 	rejected: number
 	/** deferNotLive only: refusals to re-send unchanged after drovr's straggler pass. */
 	deferred?: DeferredDrovrEvent[]
+	/**
+	 * The items drovr refused for good (a 4xx that is not event-not-live or
+	 * a deferral), counted in `rejected`: the caller holds the stops among
+	 * them (row 204c).
+	 */
+	refused?: RefusedDrovrEvent[]
+}
+
+export type RefusedDrovrEvent = {
+	event: DrovrShadowEvent
+	/** The whole batch's status, or the item's problem status (else 400). */
+	httpStatus: number
+	problem: unknown
 }
 
 export type DeferredDrovrEventReason = 'event-not-live' | 'cold-start-unhandled'
@@ -137,7 +150,14 @@ export function isNeverBornOwnerStop(
 	outcome: DrovrDeliveryOutcome,
 ): boolean {
 	if (outcome.status !== 'rejected' || outcome.httpStatus !== 409) return false
-	const problem = outcome.problem
+	return isNeverBornOwnerStopProblem(event, outcome.problem)
+}
+
+/** isNeverBornOwnerStop for a batch item, whose answer is its problem alone. */
+export function isNeverBornOwnerStopProblem(
+	event: DrovrShadowEvent,
+	problem: unknown,
+): boolean {
 	return (
 		event.tenantId === 'org-aihero' &&
 		event.idempotencyKey.startsWith('owner:') &&
@@ -313,7 +333,15 @@ export async function deliverBatchOrThrow(args: {
 				tenantId: args.events[0]?.tenantId,
 				problem,
 			})
-			return { accepted: 0, rejected: args.events.length }
+			return {
+				accepted: 0,
+				rejected: args.events.length,
+				refused: args.events.map((event) => ({
+					event,
+					httpStatus: response.status,
+					problem,
+				})),
+			}
 		}
 		if (response.status !== 200) {
 			throw new DrovrBatchDeliveryFailedError(
@@ -338,6 +366,7 @@ export async function deliverBatchOrThrow(args: {
 		}
 		const failedKeys: string[] = []
 		const deferred: DeferredDrovrEvent[] = []
+		const refused: RefusedDrovrEvent[] = []
 		let notLive = 0
 		let deferredRejected = 0
 		let stopsLanded = 0
@@ -370,6 +399,12 @@ export async function deliverBatchOrThrow(args: {
 				if (item.status === 'rejected') notLive += 1
 				if (event) failedKeys.push(event.idempotencyKey)
 			} else if (item.status === 'rejected') {
+				if (event)
+					refused.push({
+						event,
+						httpStatus: problemStatusOf(item.detail) ?? 400,
+						problem: item.detail,
+					})
 				await warnSafely(warn, 'drovr.shadow.rejected', {
 					journeyId: event?.journeyId,
 					type: event?.type,
@@ -386,12 +421,22 @@ export async function deliverBatchOrThrow(args: {
 		}
 		const rejected = body.rejected - deferredRejected - stopsLandedRejected
 		const accepted = body.accepted + stopsLanded
-		return deferred.length > 0
-			? { accepted, rejected, deferred }
-			: { accepted, rejected }
+		return {
+			accepted,
+			rejected,
+			...(deferred.length > 0 ? { deferred } : {}),
+			...(refused.length > 0 ? { refused } : {}),
+		}
 	} finally {
 		clearTimeout(timeout)
 	}
+}
+
+const problemStatusOf = (problem: unknown): number | undefined => {
+	const status = (problem as { status?: unknown } | null)?.status
+	return typeof status === 'number' && Number.isInteger(status)
+		? status
+		: undefined
 }
 
 async function warnColdStart(

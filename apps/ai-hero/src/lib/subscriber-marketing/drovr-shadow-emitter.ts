@@ -4,6 +4,7 @@ import { log } from '@/server/logger'
 
 import { parseIanaTimeZone } from './evergreen-offer-journey/primitives'
 import { drovrFailureReason } from './drovr-failure'
+import { isOutboxStop } from './drovr-outbox'
 import { parseRetryAfterMs } from './drovr-retry-after'
 import type { ContactEventRecord, SideEffectIntent } from './types'
 import { valuePathIntentCompletedAt } from './value-path-completion'
@@ -322,7 +323,10 @@ export async function emitDrovrShadowEvents(
  * The dispatch fallback's direct post (row 204): like emitDrovrShadowEvents,
  * but it answers with the events drovr did not take (5xx, 409
  * event-not-live, network, timeout), so the caller can outbox them instead
- * of losing them. A 4xx stays final and warned. Never throws.
+ * of losing them. A 4xx stays final and warned, except for a stop (row
+ * 204c): a refused stop is answered too, so it is outboxed (its gate closes
+ * at once) and the replay's re-post holds it for a human, or settles it if
+ * it was an owner copy never born there. Never throws.
  */
 export async function deliverDrovrShadowEventsDirect(
 	events: readonly DrovrShadowEvent[],
@@ -375,7 +379,7 @@ export async function deliverDrovrShadowEventsDirect(
 				})
 				unsent.push(event)
 			}
-			if (outcome.status === 'rejected')
+			if (outcome.status === 'rejected') {
 				await warnWithoutThrow(warn, 'drovr.shadow.rejected', {
 					status: outcome.httpStatus,
 					journeyId: event.journeyId,
@@ -383,6 +387,8 @@ export async function deliverDrovrShadowEventsDirect(
 					idempotencyKey: event.idempotencyKey,
 					problem: outcome.problem,
 				})
+				if (isOutboxStop({ eventType: event.type })) unsent.push(event)
+			}
 		}),
 	)
 	return unsent
