@@ -20,7 +20,9 @@ import { cn } from '@coursebuilder/ui/utils/cn'
 /** `6:11`, `1:02:03`, or bare seconds like `371`. */
 export function parseStartAt(input: string): number | null {
 	const trimmed = input.trim()
-	return /^\d+$/.test(trimmed) ? Number(trimmed) : parseTimecode(trimmed)
+	if (!/^\d+$/.test(trimmed)) return parseTimecode(trimmed)
+	const seconds = Number(trimmed)
+	return Number.isFinite(seconds) ? seconds : null
 }
 
 export const Share = ({
@@ -278,7 +280,15 @@ export const Share = ({
 								onChange={(event) => setStartAtDraft(event.target.value)}
 								onBlur={commitStartAt}
 								onKeyDown={(event) => {
-									if (event.key === 'Enter') event.currentTarget.blur()
+									// Enter that confirms an IME composition is not a commit. Safari
+									// reports that keystroke as keyCode 229 with isComposing false.
+									if (
+										event.key === 'Enter' &&
+										!event.nativeEvent.isComposing &&
+										event.nativeEvent.keyCode !== 229
+									) {
+										event.currentTarget.blur()
+									}
 								}}
 								className="border-input focus:border-foreground w-20 border-b bg-transparent px-0.5 tabular-nums outline-none disabled:border-transparent disabled:text-[color:var(--ah-fg-muted)]"
 							/>

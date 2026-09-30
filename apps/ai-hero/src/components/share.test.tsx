@@ -41,6 +41,8 @@ describe('parseStartAt', () => {
 		expect(parseStartAt('abc')).toBeNull()
 		expect(parseStartAt('6:75')).toBeNull()
 		expect(parseStartAt('-5')).toBeNull()
+		// Digits past Number's range would otherwise become ?t=Infinity.
+		expect(parseStartAt('9'.repeat(400))).toBeNull()
 	})
 })
 
