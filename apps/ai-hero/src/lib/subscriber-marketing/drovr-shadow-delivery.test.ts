@@ -557,7 +557,13 @@ describe('contact sync deferral of refusals (deferNotLive)', () => {
 			config,
 			fetcher: answer([
 				{ index: 0, status: 'accepted' },
-				{ index: 1, status: 'failed', detail: 'event-not-live: v1 actor' },
+				{
+					index: 1,
+					status: 'failed',
+					// drovr's real sentence, with a second colon (engine-core).
+					detail:
+						"event-not-live: Contact contact-1's contact-directory actor is pinned to version 1, which does not handle contact.profile.updated; version 2 does. Nothing was recorded: send the same event again after this actor migrates",
+				},
 				{
 					index: 2,
 					status: 'failed',

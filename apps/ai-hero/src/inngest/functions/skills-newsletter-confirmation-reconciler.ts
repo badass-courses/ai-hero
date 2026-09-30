@@ -1,5 +1,30 @@
 import { inngest } from '@/inngest/inngest.server'
-import { buildSignupConfirmationReconciliationBatch } from '@/lib/subscriber-marketing/signup-confirmation-reconciler.server'
+import {
+	reconcileSkillsConfirmations,
+	type SkillsConfirmationSteps,
+	type SkillsConfirmationTier,
+} from '@/lib/subscriber-marketing/signup-confirmation-reconciler.server'
+
+/**
+ * The recent tier: every 15 minutes, off the quarter hours (the
+ * contact-sync reconcile) and :40 (the owner-birth guard). Kit has no
+ * confirmation webhook here, so this poll is the whole wait between a
+ * learner confirming and their entry.
+ */
+export const SKILLS_CONFIRMATION_POLL_CRON = '2,17,32,47 * * * *'
+/**
+ * The daily tier: every signup since the floor, once a day at 05:09Z, off
+ * the quarter hours, the fives and :40. A run still going queues it.
+ */
+export const SKILLS_CONFIRMATION_DAILY_CRON = '9 5 * * *'
+
+export function skillsConfirmationTierOf(event: {
+	data?: { cron?: unknown }
+}): SkillsConfirmationTier {
+	return event.data?.cron === SKILLS_CONFIRMATION_DAILY_CRON
+		? 'daily'
+		: 'recent'
+}
 
 export const skillsNewsletterConfirmationReconciler = inngest.createFunction(
 	{
@@ -11,45 +36,57 @@ export const skillsNewsletterConfirmationReconciler = inngest.createFunction(
 		// skills-confirmed:<form>:<subscriber>, which Inngest dedupes.
 		concurrency: 1,
 	},
-	// Every 15 minutes, off the quarter hours (the contact-sync reconcile)
-	// and :40 (the owner-birth guard). Kit has no confirmation webhook here,
-	// so this poll is the whole wait between a learner confirming and their
-	// entry; a run is ~51 Kit GETs over ~10 min, far inside 120 a minute.
-	{ cron: '2,17,32,47 * * * *' },
-	async ({ step, logger }) => {
-		const plan = await step.run('scan-confirmed-signup-gap', () =>
-			buildSignupConfirmationReconciliationBatch(),
-		)
-
-		if (plan.events.length > 0) {
-			await step.sendEvent('enqueue-confirmed-subscribers', plan.events)
-			await step.run('log-confirmed-entry-receipts', async () => {
-				for (const event of plan.events) {
-					logger.info('subscriber_funnel.confirmation_reconciled', {
-						funnel: 'skills-newsletter',
-						formId: event.data.formId,
-						kitSubscriberId: event.data.kitSubscriberId,
-						source: event.data.source,
-						eventId: event.id,
-					})
-				}
-				return { logged: plan.events.length }
-			})
+	[
+		{ cron: SKILLS_CONFIRMATION_POLL_CRON },
+		{ cron: SKILLS_CONFIRMATION_DAILY_CRON },
+	],
+	async ({ event, step, logger }) => {
+		const steps: SkillsConfirmationSteps = {
+			run: (id, work) => step.run(id, work) as never,
+			send: (id, confirmed) => step.sendEvent(id, confirmed),
 		}
-
-		const receipt = {
-			mode: 'signup-confirmation-reconciliation' as const,
-			generatedAt: plan.generatedAt,
-			formId: plan.formId,
-			window: plan.window,
-			limit: plan.limit,
-			counts: plan.counts,
-		}
+		// Each confirmed subscriber is sent in its own step as soon as its
+		// tags clear, and logged then (Inngest's logger skips memoized steps).
+		const receipt = await reconcileSkillsConfirmations({
+			tier: skillsConfirmationTierOf(event),
+			steps,
+			onSent: (confirmed) =>
+				logger.info('subscriber_funnel.confirmation_reconciled', {
+					funnel: 'skills-newsletter',
+					formId: confirmed.data.formId,
+					kitSubscriberId: confirmed.data.kitSubscriberId,
+					source: confirmed.data.source,
+					eventId: confirmed.id,
+				}),
+			// Skipped, unsent, and checked again next poll.
+			onTagCheckFailed: (failure) =>
+				logger.warn('subscriber_funnel.confirmation_tag_check_failed', {
+					funnel: 'skills-newsletter',
+					...failure,
+				}),
+		})
 		await step.run('log-confirmation-run-receipt', async () => {
 			logger.info('subscriber_funnel.confirmation_reconciliation_completed', {
 				funnel: 'skills-newsletter',
 				...receipt,
 			})
+			// The daily tier reads to the floor; anyone it leaves waits a day
+			// at least. `deferred` counts every cause, split below: the send
+			// limit (a backlog over 50), the check cap (404s and failing checks),
+			// the email 0 slice limit, and failed tag checks (Macroscope
+			// 4143734314). A monitor on it is a follow-up.
+			if (receipt.tier === 'daily' && receipt.counts.deferred > 0)
+				logger.warn('subscriber_funnel.confirmation_daily_deferred', {
+					funnel: 'skills-newsletter',
+					deferred: receipt.counts.deferred,
+					deferredBySliceLimit: receipt.counts.deferredBySliceLimit,
+					deferredByCheckCap: receipt.counts.deferredByCheckCap,
+					deferredBySendLimit: receipt.counts.deferredBySendLimit,
+					tagChecked: receipt.counts.tagChecked,
+					notInKit: receipt.counts.notInKit,
+					tagFailed: receipt.counts.tagFailed,
+					planned: receipt.counts.planned,
+				})
 		})
 		return receipt
 	},

@@ -70,7 +70,7 @@ Every event leaves ai-hero through `deliverDrovrShadowEvent` (the single post, t
   - **Logged per attempt:** a retried send logs its line again with the same lags. So summing `count` over-counts under retries; read it as sends, not births.
 - **It composes with the outbox.** A birth that has failed for more than 24 hours is held for a human, never sent (`drovr-outbox-runbook.md`).
   - **A released held birth posts its first send's bytes,** so it is backdated by its hold time. On each journey:
-    - **Value-path (V2):** it sends email 0 at once, then paces normally: V2's 24 h wait counts from `email.completed`, not from the birth (drovr `journey-value-path` `waiting`). Once 201e PR A is live, its anchored drips are floored at 18 h.
+    - **Value-path (V2):** it sends email 0 at once, then paces normally: V2's 24 h wait counts from `email.completed`, not from the birth (drovr `journey-value-path` `waiting`). v7 to v9 (201e PR A, drovr #636, merged 2026-09-30) anchor the drips: each is due at `max(dripCompletedAt + 18 h, anchor + 24 h)`, where `dripCompletedAt` is the previous email's completion and the anchor is the `occurredAt` of the event that entered that email's step (the birth, for email 0). So a backdated birth still waits at least 18 h after each completion.
     - **Evergreen:** every slot already passed fires at the next due check, and the offer window is shorter by the hold.
     - **The shadow newsletter:** a first Thursday already passed goes at the next due check.
   - **So check whether drovr FOLDED it before releasing one** (the hawk, `drovr-outbox-runbook.md`, "A birth held over 24 hours"). Read the actor with `GET /contacts?contact=&journey=` (`get_contact`).

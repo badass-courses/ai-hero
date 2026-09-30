@@ -19,11 +19,12 @@ import { validateMySqlIntegrationServerUrl } from '@/lib/team-purchase-mysql-tes
 
 import { contactEmailWriteValues } from './contact-email-equivalence'
 import {
-	buildSignupConfirmationReconciliationBatch,
+	reconcileSkillsConfirmations,
 	ReconcilerEvidenceUnavailableError,
 	SKILLS_CONFIRMATION_RECONCILIATION_LIMIT,
 	SKILLS_CONFIRMATION_RECONCILIATION_START,
 	SKILLS_NEWSLETTER_FORM_ID,
+	type SkillsConfirmationEvent,
 } from './signup-confirmation-reconciler.server'
 
 // The real reconciler query against disposable MySQL: which confirmed Kit
@@ -108,6 +109,15 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 			const url = new URL(String(input))
 			const overridden = kitOverride?.(url)
 			if (overridden) return overridden
+			// One subscriber's tags (row 211 reads them per candidate).
+			const tagsOf = /\/v4\/subscribers\/(\d+)\/tags$/.exec(url.pathname)?.[1]
+			if (tagsOf)
+				return Response.json({
+					tags: [...kitTagged]
+						.filter(([, ids]) => ids.includes(tagsOf))
+						.map(([id]) => ({ id: Number(id), name: id, tagged_at: TO })),
+					pagination: { has_next_page: false, end_cursor: null },
+				})
 			const tag = /\/v4\/tags\/(\d+)\/subscribers$/.exec(url.pathname)?.[1]
 			const sequence = /\/v4\/sequences\/(\d+)\/subscribers$/.exec(
 				url.pathname,
@@ -242,6 +252,27 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 		events: Array<{ data: { kitSubscriberId: string } }>
 	}) => plan.events.map((event) => event.data.kitSubscriberId)
 
+	/** One daily-tier run, sent events collected, Kit's pacing not waited. */
+	async function reconcile(args: {
+		to: string
+		limit?: number
+		database: Parameters<typeof reconcileSkillsConfirmations>[0]['database']
+	}) {
+		const events: SkillsConfirmationEvent[] = []
+		const receipt = await reconcileSkillsConfirmations({
+			...args,
+			tier: 'daily',
+			kit: { sleep: async () => {}, minStartIntervalMs: 0 },
+			steps: {
+				run: (_, work) => work(),
+				send: async (_, event) => {
+					events.push(event)
+				},
+			},
+		})
+		return { ...receipt, events }
+	}
+
 	it('skips drovr-owned contacts, so a confirmation at the back of the list is replayed', async () => {
 		// The first Kit page is full of contacts drovr already owns; the
 		// newest confirmations sit behind them.
@@ -252,7 +283,7 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 		await captured(confirmed('1006'))
 		confirmed('1007')
 
-		const plan = await buildSignupConfirmationReconciliationBatch({
+		const plan = await reconcile({
 			to: TO,
 			limit: 3,
 			database,
@@ -260,7 +291,7 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 
 		expect(plannedIds(plan)).toEqual(['1007', '1006', '1005'])
 		expect(plan.counts).toMatchObject({
-			replayable: 3,
+			candidates: 3,
 			planned: 3,
 			deferred: 0,
 		})
@@ -279,7 +310,7 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 		capturedBeforeFloor.addedAt = '2026-09-24T12:00:00.000Z'
 		confirmed('9003')
 
-		const plan = await buildSignupConfirmationReconciliationBatch({
+		const plan = await reconcile({
 			to: TO,
 			database,
 		})
@@ -301,7 +332,7 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 			'drovr-owner:contact-2001:value-path-skills-course',
 		)
 
-		const plan = await buildSignupConfirmationReconciliationBatch({
+		const plan = await reconcile({
 			to: TO,
 			database,
 		})
@@ -343,14 +374,17 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 		kitTagged.set('19251081', [skillsTagged.id])
 		confirmed('4007')
 
-		const plan = await buildSignupConfirmationReconciliationBatch({
+		const plan = await reconcile({
 			to: TO,
 			database,
 		})
 
 		expect(plannedIds(plan)).toEqual(['4007'])
+		// The two tagged ones are excluded at the scan, by the tags read in
+		// their creation-day slices (row 211).
 		expect(plan.counts).toMatchObject({
-			replayable: 1,
+			candidates: 1,
+			excludedByTag: 2,
 			excludedOptedOut: 7,
 			planned: 1,
 		})
@@ -403,7 +437,7 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 		await stamp(bounced, 'contact.bounced', 'b-4104', 1)
 		await stamp(bounced, 'contact.resubscribed', 'r-4104', 2)
 
-		const plan = await buildSignupConfirmationReconciliationBatch({
+		const plan = await reconcile({
 			to: TO,
 			database,
 		})
@@ -430,14 +464,14 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 		await intent('contact-sent-other-id', 'send-value-path-email')
 		confirmed('6006')
 
-		const plan = await buildSignupConfirmationReconciliationBatch({
+		const plan = await reconcile({
 			to: TO,
 			database,
 		})
 
 		expect(plannedIds(plan)).toEqual(['6006'])
 		expect(plan.counts).toMatchObject({
-			replayable: 1,
+			candidates: 1,
 			excludedCourseHistory: 5,
 		})
 	})
@@ -449,7 +483,7 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 		)
 
 		await expect(
-			buildSignupConfirmationReconciliationBatch({
+			reconcile({
 				to: TO,
 				database,
 			}),
@@ -484,23 +518,26 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 		['a body that is not JSON', () => new Response('<html>', { status: 200 })],
 	])('fails closed on %s from a consent or history list', async (_, page) => {
 		confirmed('8001')
-		for (const resource of ['tags/8244351', 'sequences/2757199']) {
-			kitOverride = (url) =>
-				url.pathname === `/v4/${resource}/subscribers` ? page() : undefined
-			await expect(
-				buildSignupConfirmationReconciliationBatch({
-					to: TO,
-					database,
-				}),
-			).rejects.toThrow(ReconcilerEvidenceUnavailableError)
-		}
+		// Email 0's list failing fails the run: nobody is sent.
+		kitOverride = (url) =>
+			url.pathname === '/v4/sequences/2757199/subscribers' ? page() : undefined
+		await expect(reconcile({ to: TO, database })).rejects.toThrow(
+			ReconcilerEvidenceUnavailableError,
+		)
+		// The subscriber's own tags failing skips that subscriber, unsent, and
+		// the run goes on (Sonnet 2, #348 S2).
+		kitOverride = (url) =>
+			url.pathname === '/v4/subscribers/8001/tags' ? page() : undefined
+		const plan = await reconcile({ to: TO, database })
+		expect(plannedIds(plan)).toEqual([])
+		expect(plan.counts).toMatchObject({ tagFailed: 1, planned: 0 })
 	})
 
 	it('stops or slows on AIH_SKILLS_CONFIRMATION_RECONCILIATION_LIMIT, never above 50', async () => {
 		for (let index = 0; index < 60; index++) confirmed(String(5000 + index))
 		const planned = async (limit: string) => {
 			vi.stubEnv('AIH_SKILLS_CONFIRMATION_RECONCILIATION_LIMIT', limit)
-			const plan = await buildSignupConfirmationReconciliationBatch({
+			const plan = await reconcile({
 				to: TO,
 				database,
 			})
@@ -517,13 +554,13 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 		expect(SKILLS_CONFIRMATION_RECONCILIATION_LIMIT).toBe(50)
 		for (let index = 0; index < 55; index++) confirmed(String(3000 + index))
 
-		const plan = await buildSignupConfirmationReconciliationBatch({
+		const plan = await reconcile({
 			to: TO,
 			database,
 		})
 
 		expect(plan.counts).toMatchObject({
-			replayable: 55,
+			candidates: 55,
 			planned: 50,
 			deferred: 5,
 		})
