@@ -65,6 +65,11 @@ export const DROVR_OUTBOX_BEHIND_STOP_NOTE =
 export const DROVR_OUTBOX_DEFERRED_STOP_ALERT_MS = 48 * 60 * 60_000
 /** How long the straggler retry owns a deferred stop before the replay may post it. */
 export const DROVR_OUTBOX_DEFERRED_STOP_WAIT_MS = 24 * 60 * 60_000
+/**
+ * A held stop nobody has decided on for this long pages (the held-stop
+ * monitor counts `drovr.outbox.stop_held_overdue`, row 204c).
+ */
+export const DROVR_OUTBOX_HELD_STOP_PAGE_MS = 24 * 60 * 60_000
 /** Capture tries before the step gives up (the keys are logged first). */
 export const DROVR_OUTBOX_CAPTURE_TRIES = 3
 /** Delivered rows are deleted after this: the inline body holds contact data. */
@@ -1075,6 +1080,19 @@ export async function runDrovrOutboxReplay(args: {
 		purged: receipt.purged,
 	}
 	await logSafely(args.log.info, 'drovr.outbox.depth', depthFields)
+	// Row 204c: drovr's monitors count one exact event per query, so a held
+	// stop has its own lines on every run: standing (warn) while any is held,
+	// and overdue (page) once the oldest has waited a day.
+	if (receipt.depth.heldStops > 0) {
+		const held = {
+			target: args.target,
+			heldStops: receipt.depth.heldStops,
+			oldestHeldStopAgeMin: depthFields.oldestHeldStopAgeMin,
+		}
+		await logSafely(args.log.warn, 'drovr.outbox.stop_held_standing', held)
+		if (heldStopAgeMs > DROVR_OUTBOX_HELD_STOP_PAGE_MS)
+			await logSafely(args.log.error, 'drovr.outbox.stop_held_overdue', held)
+	}
 	if (receipt.alert.length > 0)
 		await logSafely(args.log.error, 'drovr.outbox.alert', {
 			...depthFields,

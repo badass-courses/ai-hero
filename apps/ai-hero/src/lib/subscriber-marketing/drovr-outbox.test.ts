@@ -1825,6 +1825,49 @@ describe('row 204c: a stop drovr refused is held for a human, never rejected', (
 		)
 	})
 
+	it('logs a standing line on every run while a stop is held, and an overdue line once the oldest has waited more than a day (the monitors count these)', async () => {
+		const quiet = replay(
+			memoryStore([row({ id: 'fact', body: event('fact') })]).store,
+			refused,
+		)
+		await quiet.run
+		const events = (logger: ReturnType<typeof log>) =>
+			[...logger.warn.mock.calls, ...logger.error.mock.calls].map(
+				([name]) => name as string,
+			)
+		expect(events(quiet.logger)).not.toContain(
+			'drovr.outbox.stop_held_standing',
+		)
+
+		const fresh = replay(
+			memoryStore([
+				stopRow('held', { status: 'held', firstFailedAt: minutesAgo(24 * 60) }),
+			]).store,
+			refused,
+		)
+		await fresh.run
+		expect(fresh.logger.warn).toHaveBeenCalledWith(
+			'drovr.outbox.stop_held_standing',
+			{ target: PROD, heldStops: 1, oldestHeldStopAgeMin: 24 * 60 },
+		)
+		expect(events(fresh.logger)).not.toContain('drovr.outbox.stop_held_overdue')
+
+		const old = replay(
+			memoryStore([
+				stopRow('held', {
+					status: 'held',
+					firstFailedAt: minutesAgo(24 * 60 + 1),
+				}),
+			]).store,
+			refused,
+		)
+		await old.run
+		expect(old.logger.error).toHaveBeenCalledWith(
+			'drovr.outbox.stop_held_overdue',
+			{ target: PROD, heldStops: 1, oldestHeldStopAgeMin: 24 * 60 + 1 },
+		)
+	})
+
 	it('a fact drovr refuses on replay is still rejected: only stops are held', async () => {
 		const fact = row({ id: 'fact', body: event('fact') })
 		const { store, rows: stored } = memoryStore([fact])

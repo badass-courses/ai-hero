@@ -5,9 +5,9 @@
 ## What to watch
 
 - `drovr.outbox.depth` every 5 minutes: `pending`, `held`, `rejected`, `oldestPendingAgeMin`, `oldestOpenStopAgeMin`, `oldestDeferredStopAgeMin`, `heldStops`, `oldestHeldStopAgeMin`.
-- **Held stops** (row 204c) have their own Axiom monitor, `aihero-drovr-outbox-held-stop`, which reads `heldStops` and `oldestHeldStopAgeMin` from the depth line:
-  - it warns (email) while any stop is held;
-  - it pages once a held stop is more than 24 hours old (by `firstFailedAt`);
+- **Held stops** (row 204c) have their own lines on every replay run, which drovr's Axiom monitors count:
+  - `drovr.outbox.stop_held_standing` (warn) while any stop is held. The monitor `aihero-drovr-outbox-held-stop` emails.
+  - `drovr.outbox.stop_held_overdue` (error) once the oldest held stop is more than 24 hours old, by `firstFailedAt`. The monitor `aihero-drovr-outbox-held-stop-overdue` pages.
   - the 10-minute agent check picks up the warning, and a stop still held after 30 minutes becomes a desk item for Joel.
 - `drovr.outbox.alert` with `reasons`. It fires on every run until the cause is gone; the Axiom monitor `aihero-drovr-outbox` counts it:
   - `pending`: more than 25 rows waiting;
