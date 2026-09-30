@@ -17,7 +17,12 @@ A **bulk birth** is any job that births more than 1,000 contacts into a drip or 
 3. **Calendar journeys don't spread by pacing.** Evergreen and the shadow newsletter send at local calendar instants, so births paced over hours on one day still fire together.
    - Keep **≤ 60k births per local slot per UTC offset** at a 90-minute spread window, and ≤ 20k while the window is 30 minutes. Split the job across days to stay under.
    - The shadow slot counts every `contact.created`.
-4. **Canary first:** one page (`maxPages: 1`, or `--limit 25`). Check drovr `/status` (overload 0, STUCK green), then resume.
+4. **Canary first:** a real one-page run: the contact-sync backfill's `maxPages: 1` (it stops and doesn't re-queue), or the evergreen backfill's `--limit 25` (a per-run cap). Then check drovr, and resume only if all three hold:
+   - zero `overload` log lines in Axiom since the canary started;
+   - `GET /status` with STUCK green;
+   - no hold you didn't expect.
+
+   `/status` has no overload field (it reports flow, holds, served and stuck), so the overload check is the log line.
 5. **Watch:** drovr's D1 query time per minute (the shed line is about 7.3 s a minute), `overload` log lines, and the queue vital. **At the first overload line, stop the producer:** the import or backfill script, or the Kit bulk action. Its cursor resumes where it stopped. What is already queued drains at ≤ 700 a minute; a failed send retries and then outboxes.
    - **Never pause the Inngest function.** Inngest SKIPS events that arrive while a function is paused, and doesn't reprocess them unless someone runs a manual Replay (which ignores event idempotency). The producers' cursors have already moved past them, and the bulk lane carries directory stops.
    - If it was paused anyway, resume it, then Replay its "Skipped" runs for the paused window.
