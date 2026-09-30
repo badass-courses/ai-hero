@@ -61,17 +61,15 @@ jobs:
       # argument as a substring of the test path, so a new drovr-*,
       # *evergreen* or subscriber-marketing suite runs with no edit here.
       # A named list let 28 of the 32 suites that #336-#340 touched merge
-      # without CI, and #340 with a failing test.
-      # test-principals rides along: its cleanup reads every contact-keyed
-      # table, so a new drovr or subscriber table changes it. *.mysql.test.ts suites
-      # skip here without a server URL; evergreen-journey-mysql runs them.
-      # evergreen-claim-composition is excluded: it fails on main since
-      # 2026-09-08 (next-auth imports next/server without its extension,
-      # which Node's ESM resolver refuses); row 205 fixes it and removes this.
+      # without CI, and #340 with a failing test. test-principals rides
+      # along: its cleanup reads every contact-keyed table, so a new drovr
+      # or subscriber table changes it. *.mysql.test.ts suites skip here
+      # without a server URL (evergreen-journey-mysql runs them), and so
+      # must any future server-bound suite these filters pull in: it needs
+      # its own describe.skipIf on its server's env, or it fails here.
       - name: drovr, subscriber-marketing and evergreen unit suites
         run: >-
           pnpm --filter ai-hero exec vitest run -c vitest.config.ts
-          --exclude src/server/evergreen-claim-composition.test.ts
           src/lib/subscriber-marketing/
           drovr
           evergreen
