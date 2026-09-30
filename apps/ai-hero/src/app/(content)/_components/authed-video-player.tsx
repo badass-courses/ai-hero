@@ -211,7 +211,7 @@ export function AuthedVideoPlayer({
 
 			if (bingeMode) {
 				playerRef?.current?.play().catch(console.warn)
-			} else if (time) {
+			} else if (normalizePlaybackPosition(time) !== null) {
 				playFromLink(playerRef.current)
 			}
 		},
