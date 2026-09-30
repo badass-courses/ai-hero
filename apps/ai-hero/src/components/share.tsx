@@ -3,13 +3,27 @@
 import React from 'react'
 import { usePathname } from 'next/navigation'
 import { AdminShortlinkCreator } from '@/components/admin-shortlink-creator'
+import { TYPE } from '@/components/landing/type'
+import {
+	formatSeconds,
+	parseTimecode,
+} from '@/components/video-chapters/chapter-utils'
 import config from '@/config'
 import { env } from '@/env.mjs'
+import { useMuxPlayer } from '@/hooks/use-mux-player'
 import { track } from '@/utils/analytics'
 import { Check, Copy, Linkedin, Mail } from 'lucide-react'
 
-import { Button, useToast } from '@coursebuilder/ui'
+import { Button, Checkbox, useToast } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
+
+/** `6:11`, `1:02:03`, or bare seconds like `371`. */
+export function parseStartAt(input: string): number | null {
+	const trimmed = input.trim()
+	if (!/^\d+$/.test(trimmed)) return parseTimecode(trimmed)
+	const seconds = Number(trimmed)
+	return Number.isFinite(seconds) ? seconds : null
+}
 
 export const Share = ({
 	className,
@@ -21,9 +35,41 @@ export const Share = ({
 	variant?: 'inline' | 'dialog' | 'rail'
 }) => {
 	const pathname = usePathname()
-	const url = env.NEXT_PUBLIC_URL + pathname
+	const pageUrl = env.NEXT_PUBLIC_URL + pathname
 	const { toast } = useToast()
 	const [copied, setCopied] = React.useState(false)
+
+	// The dialog mounts when it opens, so this reads the playhead at the moment
+	// the reader asked to share, like YouTube's "Start at". Null when the page
+	// has no registered player, which hides the row entirely.
+	const { muxPlayerRef } = useMuxPlayer()
+	const [startAtSeconds, setStartAtSeconds] = React.useState<number | null>(
+		() => {
+			const player = variant === 'dialog' ? muxPlayerRef?.current : null
+			return player ? Math.floor(player.currentTime || 0) : null
+		},
+	)
+	const [startAtDraft, setStartAtDraft] = React.useState(() =>
+		formatSeconds(startAtSeconds ?? 0),
+	)
+	const [startAtEnabled, setStartAtEnabled] = React.useState(false)
+	const startAtId = React.useId()
+
+	const commitStartAt = () => {
+		if (startAtSeconds === null) return
+		const parsed = parseStartAt(startAtDraft)
+		const duration = muxPlayerRef?.current?.duration
+		const max =
+			duration && Number.isFinite(duration) ? Math.floor(duration) : Infinity
+		const next = parsed === null ? startAtSeconds : Math.min(parsed, max)
+		setStartAtSeconds(next)
+		setStartAtDraft(formatSeconds(next))
+	}
+
+	const url =
+		startAtEnabled && startAtSeconds
+			? `${pageUrl}?t=${startAtSeconds}`
+			: pageUrl
 
 	const handleShare = async (
 		platform: 'bluesky' | 'x' | 'linkedin' | 'email' | 'copy',
@@ -150,7 +196,10 @@ export const Share = ({
 	if (variant === 'dialog') {
 		return (
 			<div className={cn('flex min-w-0 flex-col gap-6', className)}>
-				<div className="-mx-1 flex gap-4 overflow-x-auto px-1 pb-1">
+				{/* Equal columns that share whatever width the dialog has. Fixed 80px
+				    columns overflowed the 512px dialog and drew a scrollbar under the
+				    icons. */}
+				<div className="grid auto-cols-fr grid-flow-col gap-1">
 					{shareOptions.map((option) => (
 						<a
 							key={option.label}
@@ -158,54 +207,93 @@ export const Share = ({
 							target="_blank"
 							rel="noopener noreferrer"
 							onClick={() => handleShare(option.platform)}
-							className="group flex min-w-20 flex-col items-center gap-2 text-center"
+							className="group flex min-w-0 flex-col items-center gap-2 text-center"
 						>
 							<span
 								className={cn(
-									'flex size-16 items-center justify-center rounded-full',
+									'flex size-12 items-center justify-center rounded-full sm:size-16',
 									option.className,
 								)}
 							>
 								{option.icon}
 							</span>
-							<span className="text-sm leading-tight">{option.label}</span>
+							<span className={TYPE.metaSm}>{option.label}</span>
 						</a>
 					))}
 					<button
 						type="button"
 						onClick={copyUrl}
-						className="group flex min-w-20 flex-col items-center gap-2 text-center"
+						className="group flex min-w-0 flex-col items-center gap-2 text-center"
 					>
-						<span className="bg-muted text-foreground flex size-16 items-center justify-center rounded-full">
+						<span className="bg-muted text-foreground flex size-12 items-center justify-center rounded-full sm:size-16">
 							{copied ? (
 								<Check className="size-6" aria-hidden="true" />
 							) : (
 								<Copy className="size-6" aria-hidden="true" />
 							)}
 						</span>
-						<span className="text-sm leading-tight">
+						<span className={TYPE.metaSm}>
 							{copied ? 'Copied' : 'Copy'}
 						</span>
 					</button>
 				</div>
-				<div className="bg-background flex min-w-0 items-center gap-3 rounded-full border p-2 pl-4">
-					<input
-						readOnly
-						value={url}
-						aria-label="Share URL"
-						className="min-w-0 flex-1 truncate bg-transparent text-sm outline-none selection:bg-primary selection:text-primary-foreground sm:text-base"
-						onFocus={(event) => event.currentTarget.select()}
-						onClick={(event) => event.currentTarget.select()}
-					/>
-					<Button
-						type="button"
-						variant="secondary"
-						size="sm"
-						className="shrink-0 rounded-full"
-						onClick={copyUrl}
-					>
-						{copied ? 'Copied' : 'Copy'}
-					</Button>
+				<div className="flex min-w-0 flex-col gap-4">
+					<div className="bg-background flex min-w-0 items-center gap-3 rounded-full border p-2 pl-4">
+						<input
+							readOnly
+							value={url}
+							aria-label="Share URL"
+							className="min-w-0 flex-1 truncate bg-transparent text-sm outline-none selection:bg-primary selection:text-primary-foreground sm:text-base"
+							onFocus={(event) => event.currentTarget.select()}
+							onClick={(event) => event.currentTarget.select()}
+						/>
+						<Button
+							type="button"
+							variant="secondary"
+							size="sm"
+							className="shrink-0 rounded-full"
+							onClick={copyUrl}
+						>
+							{copied ? 'Copied' : 'Copy'}
+						</Button>
+					</div>
+					{startAtSeconds !== null && (
+						<div className={cn(TYPE.meta, 'flex items-center gap-2.5 pl-4')}>
+							<Checkbox
+								id={startAtId}
+								checked={startAtEnabled}
+								onCheckedChange={(checked) =>
+									setStartAtEnabled(checked === true)
+								}
+								className="rounded-[4px]"
+							/>
+							<label
+								htmlFor={startAtId}
+								className="cursor-pointer select-none"
+							>
+								Start at
+							</label>
+							<input
+								value={startAtDraft}
+								disabled={!startAtEnabled}
+								aria-label="Start time"
+								onChange={(event) => setStartAtDraft(event.target.value)}
+								onBlur={commitStartAt}
+								onKeyDown={(event) => {
+									// Enter that confirms an IME composition is not a commit. Safari
+									// reports that keystroke as keyCode 229 with isComposing false.
+									if (
+										event.key === 'Enter' &&
+										!event.nativeEvent.isComposing &&
+										event.nativeEvent.keyCode !== 229
+									) {
+										event.currentTarget.blur()
+									}
+								}}
+								className="border-input focus:border-foreground w-20 border-b bg-transparent px-0.5 tabular-nums outline-none disabled:border-transparent disabled:text-[color:var(--ah-fg-muted)]"
+							/>
+						</div>
+					)}
 				</div>
 				<AdminShortlinkCreator url={url} />
 			</div>

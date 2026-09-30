@@ -15,6 +15,7 @@ import {
 	setPreferredTextTrack,
 } from '@/hooks/use-mux-player-prefs'
 import { muxMinResolutionForPrefs } from '@/lib/mux-player-prefs'
+import { normalizePlaybackPosition } from '@/lib/playback-position'
 import { setProgressForResource } from '@/lib/progress'
 import { track } from '@/utils/analytics'
 import {
@@ -68,7 +69,7 @@ export function PostPlayer({
 	const chapters = videoResource?.chapters ?? null
 	useMuxChapters(playerRef, chapters)
 	const searchParams = useSearchParams()
-	const time = searchParams.get('t')
+	const linkStartTime = normalizePlaybackPosition(searchParams.get('t'))
 
 	const { addLessonProgress: addOptimisticLessonProgress } = useProgress()
 	const { list } = useList()
@@ -90,7 +91,7 @@ export function PostPlayer({
 		maxResolution: '2160p',
 		minResolution,
 		accentColor: '#DD9637',
-		currentTime: time ? Number(time) : 0,
+		currentTime: linkStartTime ?? 0,
 		playbackRate,
 		onRateChange: (evt: Event) => {
 			const target = evt.target as HTMLVideoElement
@@ -111,7 +112,7 @@ export function PostPlayer({
 
 			if (autoplay) {
 				playerRef.current?.play().catch(console.warn)
-			} else if (time) {
+			} else if (linkStartTime !== null) {
 				playFromLink(playerRef.current)
 			}
 		},
