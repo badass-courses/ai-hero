@@ -132,6 +132,7 @@ describe('the daily tier’s leftovers are loud (row 211 round 2, option d)', ()
 					deferredBySliceLimit: 5,
 					deferredByCheckCap: 0,
 					deferredBySendLimit: 0,
+					tagFailed: 0,
 				}),
 			],
 		])

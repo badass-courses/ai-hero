@@ -24,7 +24,9 @@ The scan is bounded by tiers, never by dropping anyone (row 211, the hawk).
    - **Whole** past that: about 14 pages today (11,608 and 1,482 members on 2026-09-30, ~5 s a page). So piled-up opt-outs cost at most that, however many.
    - Each run logs `tagRead` (`none`, `sliced` or `whole`).
 4. **Email 0,** over the rest only: the two email 0 sequences in the same kind of slices, **at most 20 a run.** A subscriber in either sequence already got course email and is never entered.
-   - When the candidates need more than 20 slices, anyone beyond waits a run (`deferredBySliceLimit`). Who goes first rotates one step a run (a day on the daily tier), so nobody is left beyond for good.
+   - When the candidates need more than 20 slices, anyone beyond waits a run (`deferredBySliceLimit`).
+   - **The recent tier** takes them newest signup first, always, so a fresh confirmer takes the first slice however many stand behind them.
+   - **The daily tier** moves its start on by 20 places a day, so for a stable set of standing candidates everyone is in within ⌈n / 20⌉ daily runs (100 standing: 5 days). Candidates arriving or leaving shift that; the daily warn shows anyone left.
    - A **standing candidate** keeps its slice every run: someone in Kit's email 0 list with no local record, a 404 on tags, or a check that keeps failing. That's fine while it's visible: the daily warn splits its count by cause.
 5. **Per candidate, newest signup first:** one more, fresh `GET /v4/subscribers/{id}/tags`, which catches a tag applied since the scan. If the subscriber is clear, their `skills-newsletter.subscribed` event is sent **at once**, in its own step. Then the next candidate.
 6. **At most 50 sends a run** (`AIH_SKILLS_CONFIRMATION_RECONCILIATION_LIMIT` can pause it with 0 or lower it, never raise it). The limit counts sends, not checks.

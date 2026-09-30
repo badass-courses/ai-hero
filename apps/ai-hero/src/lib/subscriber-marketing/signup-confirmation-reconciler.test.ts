@@ -9,7 +9,7 @@ import {
 	SKILLS_CONFIRMATION_EMAIL_ZERO_SLICE_LIMIT,
 	SKILLS_CONFIRMATION_TAG_CHECKS_PER_RUN,
 	SKILLS_CONFIRMATION_TAG_SLICE_LIMIT,
-	skillsConfirmationRunIndex,
+	skillsConfirmationDailyRunIndex,
 	withinSliceLimit,
 	scanSkillsConfirmations,
 	SKILLS_NEWSLETTER_FORM_ID,
@@ -339,6 +339,24 @@ describe('row 211: each confirmed subscriber is sent as found', () => {
 			deferred: 0,
 		})
 		expect(sentIds(sent)).toEqual(['101'])
+	})
+
+	it('checks the send limit before the check cap: when both are reached together, the leftovers count as the send limit’s', async () => {
+		const kit = fakeKit(
+			Array.from({ length: 101 }, (_, index) => ({
+				id: index + 1,
+				createdAt: daysBefore(0, index + 1),
+				addedAt: daysBefore(0, index + 1),
+			})),
+		)
+		const { receipt } = run('recent', kit, { limit: 100 })
+		expect((await receipt).counts).toMatchObject({
+			tagChecked: 100,
+			planned: 100,
+			deferred: 1,
+			deferredBySendLimit: 1,
+			deferredByCheckCap: 0,
+		})
 	})
 
 	it('stops at the limit and leaves the rest for the next run', async () => {
@@ -910,6 +928,63 @@ describe('row 211 round 5: nobody is left beyond the slices for good', () => {
 		})
 	})
 
+	it('moves on by 20 a run: 100 standing candidates are all in within 5 runs, from any run (Opus, round 5)', () => {
+		const candidates = Array.from({ length: 100 }, (_, day) => at(day))
+		for (const start of [0, 1, 7, 13, 19_990]) {
+			const seen = new Set<number>()
+			for (let runIndex = start; runIndex < start + 5; runIndex++)
+				for (const { day } of withinSliceLimit(candidates, 20, runIndex).within)
+					seen.add(day)
+			expect(seen.size).toBe(100)
+		}
+	})
+
+	it('strides over candidates, not slices: two sharing a slice across the stride boundary are both in, and nobody is skipped', () => {
+		// 40 candidates, each on its own day, except 19 and 20 (across the
+		// boundary of the first two runs' blocks) share one.
+		const candidates = Array.from({ length: 40 }, (_, index) =>
+			at(index === 20 ? 19 : index),
+		).map((candidate, index) => ({ ...candidate, index }))
+		const seen = new Set<number>()
+		for (const runIndex of [0, 1]) {
+			const { within } = withinSliceLimit(candidates, 20, runIndex)
+			for (const { index } of within) seen.add(index)
+		}
+		expect(seen.size).toBe(40)
+		// Run 0 takes 0–19 and 20 too, whose day 19 already covers.
+		expect(
+			withinSliceLimit(candidates, 20, 0).within.map(({ index }) => index),
+		).toContain(20)
+	})
+
+	it('covers everyone within ⌈n / 20⌉ runs however the candidates share slices (each adds at most one slice)', () => {
+		let seed = 211
+		const random = () => {
+			seed = (seed * 1_103_515_245 + 12_345) % 2 ** 31
+			return seed / 2 ** 31
+		}
+		for (let trial = 0; trial < 200; trial++) {
+			const n = 21 + Math.floor(random() * 80)
+			// Days drawn from a range where some share, some sit alone, and
+			// neighbours merge into longer ranges.
+			const span = 1 + Math.floor(random() * 300)
+			const candidates = Array.from({ length: n }, (_, index) => ({
+				index,
+				createdAt: new Date(
+					Date.UTC(2025, 0, 1) + Math.floor(random() * span) * DAY,
+				).toISOString(),
+			}))
+			const runs = Math.ceil(n / 20)
+			const start = Math.floor(random() * 10_000)
+			const seen = new Set<number>()
+			for (let runIndex = start; runIndex < start + runs; runIndex++)
+				for (const { index } of withinSliceLimit(candidates, 20, runIndex)
+					.within)
+					seen.add(index)
+			expect(seen.size).toBe(n)
+		}
+	})
+
 	it('rotates who goes first run to run, so over as many runs as candidates everyone is within at least once', () => {
 		const candidates = Array.from({ length: 25 }, (_, day) => at(day))
 		const seen = new Set<number>()
@@ -926,16 +1001,81 @@ describe('row 211 round 5: nobody is left beyond the slices for good', () => {
 		expect(seen.size).toBe(25)
 	})
 
-	it('steps once a run: a day on the daily tier, a quarter hour on the recent one', () => {
+	it('steps the daily index once a day, and a daily run queued late keeps its day', () => {
 		const to = '2026-10-20T05:09:00.000Z'
-		const next = (ms: number) => new Date(Date.parse(to) + ms).toISOString()
+		const later = (ms: number) => new Date(Date.parse(to) + ms).toISOString()
 		expect(
-			skillsConfirmationRunIndex('daily', next(DAY)) -
-				skillsConfirmationRunIndex('daily', to),
+			skillsConfirmationDailyRunIndex(later(24 * 60 * 60 * 1000)) -
+				skillsConfirmationDailyRunIndex(to),
 		).toBe(1)
-		expect(
-			skillsConfirmationRunIndex('recent', next(15 * 60 * 1000)) -
-				skillsConfirmationRunIndex('recent', to),
-		).toBe(1)
+		expect(skillsConfirmationDailyRunIndex(later(40 * 60 * 1000))).toBe(
+			skillsConfirmationDailyRunIndex(to),
+		)
+	})
+
+	it('takes candidates newest first, with no rotation, when no run index is given (the recent tier)', () => {
+		const candidates = Array.from({ length: 25 }, (_, day) => at(day))
+		const { within, beyond } = withinSliceLimit(candidates, 20)
+		expect(within.map(({ day }) => day)).toEqual(
+			Array.from({ length: 20 }, (_, day) => day),
+		)
+		expect(beyond).toBe(5)
+	})
+
+	it('passes over a candidate that doesn’t fit and goes on: a later one on a day already in still fits (Y5)', () => {
+		const candidates = [
+			...Array.from({ length: 20 }, (_, day) => at(day)),
+			at(40),
+			{ ...at(3), day: 103 },
+		]
+		const { within, beyond } = withinSliceLimit(candidates, 20)
+		expect(within.map(({ day }) => day)).toContain(103)
+		expect(within.map(({ day }) => day)).not.toContain(40)
+		expect(beyond).toBe(1)
+	})
+})
+
+describe('row 211 round 6: fresh confirmers go first on the recent tier (Sonnet 2’s MUST)', () => {
+	const DAY_MS = 24 * 60 * 60 * 1000
+	const created = (day: number) =>
+		new Date(Date.UTC(2024, 0, 1) + day * 10 * DAY_MS).toISOString()
+
+	it.each([21, 25, 40])(
+		'with %i standing candidates and 1 fresh confirmer a run, every fresh one is in on its first recent run, for 400 runs',
+		(standingCount) => {
+			const standing = Array.from({ length: standingCount }, (_, index) => ({
+				id: `standing-${index}`,
+				createdAt: created(index),
+			}))
+			for (let run = 0; run < 400; run++) {
+				// The fresh confirmer joined the form last: head of the list.
+				const fresh = { id: `fresh-${run}`, createdAt: created(1_000 + run) }
+				const { within } = withinSliceLimit([fresh, ...standing], 20)
+				expect(within[0]).toBe(fresh)
+			}
+		},
+	)
+
+	it('sends the fresh confirmer on its first recent run behind 25 standing email 0 members, on every day of a month of runs', async () => {
+		for (let day = 0; day < 30; day++) {
+			const to = Date.parse(TO) + day * DAY
+			const before = (days: number, minutes = 0) =>
+				new Date(to - days * DAY - minutes * 60_000).toISOString()
+			const subscribers: FakeSubscriber[] = [
+				{ id: 1000 + day, createdAt: before(0, 5), addedAt: before(0, 5) },
+				...Array.from({ length: 25 }, (_, index) => ({
+					id: index + 1,
+					createdAt: before(100 + index * 10, 5),
+					addedAt: before(1, index),
+					sequences: ['2757199'],
+				})),
+			]
+			const kit = fakeKit(subscribers)
+			const { receipt, sent } = run('recent', kit, {
+				to: new Date(to).toISOString(),
+			})
+			expect((await receipt).counts.deferredBySliceLimit).toBe(6)
+			expect(sentIds(sent)).toEqual([String(1000 + day)])
+		}
 	})
 })

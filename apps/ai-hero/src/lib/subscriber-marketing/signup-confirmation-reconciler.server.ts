@@ -229,27 +229,33 @@ export const SKILLS_CONFIRMATION_TAG_SLICE_LIMIT = 7
 export const SKILLS_CONFIRMATION_EMAIL_ZERO_SLICE_LIMIT = 20
 
 /**
- * The candidates that fit in `limit` creation-day slices, in their own
- * order, and how many are left beyond them. A candidate whose day is
- * already covered always fits.
+ * The candidates that fit in `limit` creation-day slices, and how many are
+ * left beyond them, in the candidates' own order. A candidate created on
+ * the same UTC day as one already in always fits (the same padded window).
+ * A candidate that doesn't fit is passed over, not a stop: a later one on
+ * a day already in still fits.
  *
- * When they don't all fit, who goes first rotates by `runIndex` (one step
- * a run), so a candidate left beyond is never left for good: candidates
- * that stay candidates every run without being sent (an email 0 member
- * Kit alone knows about, a 404, a failing tag check) can't hold the same
- * slices run after run (the hawk, #348). Within the limit, the order is
- * untouched.
+ * Without `rotateBy`, candidates are taken in order, newest signup first:
+ * the recent tier, so a fresh confirmer always takes the first slice
+ * (Sonnet 2, #348: rotating there starved fresh confirmers).
+ *
+ * With `rotateBy` (the daily tier's run index), when they don't all fit,
+ * the start moves on by `limit` places a run. Standing candidates (an
+ * email 0 member Kit alone knows about, a 404, a failing tag check) then
+ * can't hold the same slices day after day (the hawk, #348). For a stable
+ * set, everyone is in within ⌈n / limit⌉ daily runs: adding a candidate
+ * adds at most one slice, so the next `limit` in line always fit.
  */
 export function withinSliceLimit<T extends { createdAt: string }>(
 	candidates: readonly T[],
 	limit: number,
-	runIndex: number,
+	rotateBy?: number,
 ): { within: T[]; beyond: number } {
 	const all = candidates.map((candidate) => candidate.createdAt)
 	if (createdDaySlices(all).length <= limit)
 		return { within: [...candidates], beyond: 0 }
-	const offset =
-		((runIndex % candidates.length) + candidates.length) % candidates.length
+	const n = candidates.length
+	const offset = rotateBy === undefined ? 0 : (((rotateBy * limit) % n) + n) % n
 	const rotated = [...candidates.slice(offset), ...candidates.slice(0, offset)]
 	const chosen = new Set<T>()
 	const days: string[] = []
@@ -266,16 +272,11 @@ export function withinSliceLimit<T extends { createdAt: string }>(
 }
 
 /**
- * One step a run: a day for the daily tier, a quarter hour for the recent
- * one. It picks who goes first when the email 0 slices run out.
+ * The daily tier's run index: one step a day. A daily run queued late
+ * behind a poll keeps its day's index.
  */
-export function skillsConfirmationRunIndex(
-	tier: SkillsConfirmationTier,
-	to: string,
-): number {
-	return Math.floor(
-		Date.parse(to) / (tier === 'daily' ? DAY_MS : 15 * 60 * 1000),
-	)
+export function skillsConfirmationDailyRunIndex(to: string): number {
+	return Math.floor(Date.parse(to) / DAY_MS)
 }
 
 /**
@@ -359,11 +360,12 @@ export async function scanSkillsConfirmations(args: {
 			)
 			taggedOptOut = candidates.length - consenting.length
 			// 2. Email 0, over the rest only, in at most 20 slices. Anyone who'd
-			// need a 21st waits a run; who goes first rotates run to run.
+			// need a 21st waits a run: newest first on the recent tier, and a
+			// start that moves on day by day on the daily tier.
 			const { within, beyond } = withinSliceLimit(
 				consenting,
 				SKILLS_CONFIRMATION_EMAIL_ZERO_SLICE_LIMIT,
-				skillsConfirmationRunIndex(args.tier, to),
+				args.tier === 'daily' ? skillsConfirmationDailyRunIndex(to) : undefined,
 			)
 			deferredBySliceLimit = beyond
 			const members =
