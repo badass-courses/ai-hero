@@ -26,7 +26,9 @@ The scan is bounded by tiers, never by dropping anyone (row 211, the hawk).
 4. **Email 0,** over the rest only: the two email 0 sequences in the same kind of slices, **at most 20 a run.** A subscriber in either sequence already got course email and is never entered.
    - When the candidates need more than 20 slices, anyone beyond waits a run (`deferredBySliceLimit`).
    - **The recent tier** takes them newest signup first, always, so a fresh confirmer takes the first slice however many stand behind them.
-   - **The daily tier** moves its start on by 20 places a day, so for a stable set of standing candidates everyone is in within ⌈n / 20⌉ daily runs (100 standing: 5 days). Candidates arriving or leaving shift that; the daily warn shows anyone left.
+   - **A late confirmer** (signed up days ago, confirmed only now) sorts by signup, so on the recent tier they sit behind every newer standing candidate. If those fill the 20 slices, they wait for the daily tier's rotation: up to ⌈n / 20⌉ days. On 2026-09-30, the first live runs had n = 0 on both tiers (every candidate was sent), so nobody waited. Re-read n from the receipts if `deferredBySliceLimit` shows up.
+   - **The daily tier** moves its start on by 20 places a day, so for a stable set of standing candidates everyone is in within ⌈n / 20⌉ daily runs (100 standing: 5 days).
+   - That bound holds only for a stable set, and only if the daily run runs every day. Candidates arriving or leaving shift it, and the daily warn shows anyone left. A daily run that fails closed or is skipped holds everyone a day more: that's an outage, so treat a day with no `tier: "daily"` completed line as one.
    - A **standing candidate** keeps its slice every run: someone in Kit's email 0 list with no local record, a 404 on tags, or a check that keeps failing. That's fine while it's visible: the daily warn splits its count by cause.
 5. **Per candidate, newest signup first:** one more, fresh `GET /v4/subscribers/{id}/tags`, which catches a tag applied since the scan. If the subscriber is clear, their `skills-newsletter.subscribed` event is sent **at once**, in its own step. Then the next candidate.
 6. **At most 50 sends a run** (`AIH_SKILLS_CONFIRMATION_RECONCILIATION_LIMIT` can pause it with 0 or lower it, never raise it). The limit counts sends, not checks.
@@ -41,11 +43,14 @@ Kit allows an API key **120 requests per rolling minute**, shared with everythin
 - **429:** the reader waits out `Retry-After` (seconds or a date, at most 60 s; 1 s, 2 s, 4 s without one), and every request of the reader waits with it, including one that had already reserved its start slot. Only requests already on the wire when the 429 comes back can't be recalled: at most 3, since at most 4 run at once. **Still 429 after 4 attempts: fail closed.**
 - **A failed read stops its batch.** Once one email 0 or tag slice fails, no queued or waiting slice read of that run reaches Kit.
 - **5xx or no answer:** 3 attempts, then fail closed.
-- **The 429 wait lives in one step's reader.** If a step fails and Inngest retries it, the new reader starts at once. So 429 exhaustion plus 2 step retries is at most 12 requests at a throttled key. That's bounded, and it still sends nothing.
+- **The 429 wait lives in one step's reader.** If a step fails and Inngest retries it, the new reader starts at once. What that costs at a throttled key (Macroscope 4144061150):
+  - **The scan step:** the 5 form-state reads run in parallel, and one read giving up doesn't cancel the others, so each can make all 4 attempts: **20 requests**. If the form reads get through (5) and the throttling starts at the slices, the slice reads are cancelled before their next attempt once one gives up, so at most 4 in flight make at most 16. So a scan attempt is at most **21**, and **63** with Inngest's 2 retries.
+  - **A tag-check step:** one request, 4 attempts, then the run stops: at most **12** with the retries.
+  - Either way it's bounded, and it sends nothing.
 - **A run's cost** (`kit.calls` on each run's receipt):
   - an empty run is 5 requests;
   - a run with candidates adds 2 per tag slice (or ~14 whole), 2 per email 0 slice (at most 20), and 1 per candidate checked;
-  - a typical poll (1 slice, 2–6 confirmations) is about 12–15; the worst is about 5 + 14 + 40 + 100 (plus paging);
+  - a typical poll (1 slice, 2–6 confirmations) is about 12–15 (13–14 on the first live polls, 2026-09-30); the worst is about 5 + 14 + 40 + 100 (plus paging);
   - a run above ~100 calls is worth a look (an alert on it is a follow-up).
 - **A body that breaks off** after the headers (the timeout firing mid-read) isn't retried: the page reads as malformed and fails closed. A slice fails the run; a tag check skips that subscriber.
 - **Each request has 20 s.** A request Kit hasn't answered by then is abandoned and counted as no answer (3 attempts, then fail closed), so a stalled read can't hold a step, or the polls queued behind it. The old run, before row 211, was about 51 (every tag and sequence list in full) and took ~7 min.
@@ -64,6 +69,8 @@ Nobody is entered on partial evidence.
 
 Axiom, dataset `vercel`, project `ai-hero`.
 - **Each send:** `subscriber_funnel.confirmation_reconciled` with `formId`, `kitSubscriberId`, `eventId`.
+  - **It can be logged twice for one send** (Macroscope 4143394594). Inngest's logger turns back on when a re-run reaches its last already-recorded step. If the step after a send fails and retries, the re-run finds that send recorded last and logs it again. The send isn't repeated: it's recorded, and its event id dedupes. `confirmation_tag_check_failed` can repeat the same way.
+  - **Count sends by distinct `eventId`,** never by lines. The downstream `subscriber_funnel.entry_result` with a `skills-confirmed:` event id is one per entry.
 - **Each run:** `subscriber_funnel.confirmation_reconciliation_completed` with:
   - `tier` (`recent` or `daily`) and its `window`, and `tagRead`;
   - the tier's counts: `kitFormSubscribersFetched`, `inWindow`, `unconfirmed`, `withExistingCourseEntry`, `excludedOptedOut` (local plus tags), `excludedByTag` (at the scan), `excludedByFreshTagCheck`, `excludedByTagTotal` (both), `deferredBySliceLimit`, `excludedCourseHistory` (local, the completion field and email 0), `candidates`, `tagChecked`, `notInKit`, `tagFailed`, `planned` (sent), `deferred` (every cause) with `deferredBySendLimit` and `deferredByCheckCap`;
