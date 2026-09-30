@@ -1,9 +1,22 @@
 import { drovrOutbox } from '@/db/drovr-outbox-schema'
-import { and, asc, count, eq, inArray, lte, min, or, sql } from 'drizzle-orm'
+import {
+	and,
+	asc,
+	count,
+	eq,
+	gt,
+	inArray,
+	lte,
+	min,
+	notInArray,
+	or,
+	sql,
+} from 'drizzle-orm'
 
 import {
 	DrovrOutboxUnavailableError,
-	type DrovrOutboxOpenBirth,
+	DROVR_OUTBOX_STOP_EVENT_TYPES,
+	type DrovrOutboxOpenGate,
 	type DrovrOutboxRow,
 	type DrovrOutboxStore,
 } from './drovr-outbox'
@@ -103,6 +116,15 @@ function fromStored(row: StoredRow): DrovrOutboxRow {
  * deploy request is applied. The due read rides DrovrOutbox_due_idx, the
  * purge DrovrOutbox_delivered_idx.
  */
+/** Rows a write touched, from either driver's result shape. */
+const affectedRows = (result: unknown): number => {
+	const affected = Array.isArray(result)
+		? (result[0] as { affectedRows?: number } | undefined)?.affectedRows
+		: ((result as { rowsAffected?: number; affectedRows?: number })
+				?.rowsAffected ?? (result as { affectedRows?: number })?.affectedRows)
+	return Number(affected ?? 0)
+}
+
 export function createDrizzleDrovrOutboxStore(
 	// The same shape the capture repository takes; drizzle's MySqlDatabase
 	// generics are unwieldy here.
@@ -155,42 +177,64 @@ export function createDrizzleDrovrOutboxStore(
 					.limit(limit)) as StoredRow[]
 				return rows.map(fromStored)
 			}),
-		openBirths: ({ target, contactIds }) =>
+		// Rides DrovrOutbox_contact_idx (target, contactId, status).
+		openGates: ({ target, contactIds }) =>
 			guarded(async () => {
 				if (contactIds.length === 0) return []
 				const rows = (await db
 					.select({
+						id: drovrOutbox.id,
 						contactId: drovrOutbox.contactId,
 						journeyId: drovrOutbox.journeyId,
 						endpoint: drovrOutbox.endpoint,
+						eventType: drovrOutbox.eventType,
 						status: drovrOutbox.status,
 						nextAttemptAt: drovrOutbox.nextAttemptAt,
+						occurredAt: drovrOutbox.occurredAt,
 					})
 					.from(drovrOutbox)
 					.where(
 						and(
 							eq(drovrOutbox.target, target),
-							inArray(drovrOutbox.status, ['pending', 'held']),
 							inArray(drovrOutbox.contactId, [...contactIds]),
 							or(
-								eq(drovrOutbox.eventType, 'contact.created'),
-								eq(drovrOutbox.endpoint, 'signups'),
+								// A birth still owed.
+								and(
+									inArray(drovrOutbox.status, ['pending', 'held']),
+									or(
+										eq(drovrOutbox.eventType, 'contact.created'),
+										eq(drovrOutbox.endpoint, 'signups'),
+									),
+								),
+								// A stop still owed; a refused one fails closed.
+								and(
+									inArray(drovrOutbox.status, ['pending', 'held', 'rejected']),
+									inArray(drovrOutbox.eventType, [
+										...DROVR_OUTBOX_STOP_EVENT_TYPES,
+									]),
+								),
 							),
 						),
 					)) as {
+					id: string
 					contactId: string
 					journeyId: string
 					endpoint: string
+					eventType: string
 					status: string
 					nextAttemptAt: string | Date
+					occurredAt: string | Date
 				}[]
 				return rows.map(
-					(row): DrovrOutboxOpenBirth => ({
+					(row): DrovrOutboxOpenGate => ({
+						id: row.id,
 						contactId: row.contactId,
 						journeyId: row.journeyId,
-						endpoint: row.endpoint as DrovrOutboxOpenBirth['endpoint'],
-						status: row.status as DrovrOutboxOpenBirth['status'],
+						endpoint: row.endpoint as DrovrOutboxOpenGate['endpoint'],
+						eventType: row.eventType,
+						status: row.status as DrovrOutboxOpenGate['status'],
 						nextAttemptAt: isoOf(row.nextAttemptAt),
+						occurredAt: isoOf(row.occurredAt),
 					}),
 				)
 			}),
@@ -234,12 +278,68 @@ export function createDrizzleDrovrOutboxStore(
 				}[]
 				const of = (status: string) => rows.find((row) => row.status === status)
 				const pending = of('pending')
+				// Pending and rejected only: a stop a human held was a decision,
+				// already counted in `held`, and must not page every 5 minutes.
+				const [stop] = (await db
+					.select({ oldest: min(drovrOutbox.firstFailedAt) })
+					.from(drovrOutbox)
+					.where(
+						and(
+							eq(drovrOutbox.target, target),
+							inArray(drovrOutbox.status, ['pending', 'rejected']),
+							inArray(drovrOutbox.eventType, [
+								...DROVR_OUTBOX_STOP_EVENT_TYPES,
+							]),
+						),
+					)) as { oldest: string | Date | null }[]
 				return {
 					pending: Number(pending?.count ?? 0),
 					oldestPendingFailedAt: pending?.oldest ? isoOf(pending.oldest) : null,
 					held: Number(of('held')?.count ?? 0),
 					rejected: Number(of('rejected')?.count ?? 0),
+					oldestOpenStopFailedAt: stop?.oldest ? isoOf(stop.oldest) : null,
 				}
+			}),
+		// Rides DrovrOutbox_dedupe_uq.
+		settlePending: ({ target, dedupeKeys, at, note }) =>
+			guarded(async () => {
+				if (dedupeKeys.length === 0) return 0
+				const result = await db
+					.update(drovrOutbox)
+					.set({
+						status: 'delivered',
+						deliveredAt: toSqlTimestamp(at),
+						lastAttemptAt: toSqlTimestamp(at),
+						lastError: note,
+					})
+					.where(
+						and(
+							inArray(drovrOutbox.dedupeKey, [...dedupeKeys]),
+							eq(drovrOutbox.target, target),
+							eq(drovrOutbox.status, 'pending'),
+						),
+					)
+				return affectedRows(result)
+			}),
+		// Rides DrovrOutbox_contact_idx (target, contactId, status).
+		pullForward: ({ target, contactIds, now }) =>
+			guarded(async () => {
+				if (contactIds.length === 0) return 0
+				const result = await db
+					.update(drovrOutbox)
+					.set({ nextAttemptAt: toSqlTimestamp(now) })
+					.where(
+						and(
+							eq(drovrOutbox.target, target),
+							inArray(drovrOutbox.contactId, [...contactIds]),
+							eq(drovrOutbox.status, 'pending'),
+							gt(drovrOutbox.nextAttemptAt, toSqlTimestamp(now)),
+							notInArray(drovrOutbox.eventType, [
+								...DROVR_OUTBOX_STOP_EVENT_TYPES,
+							]),
+						),
+					)
+				return affectedRows(result)
 			}),
 		deleteDeliveredBefore: (before, limit) =>
 			guarded(async () => {
@@ -252,12 +352,7 @@ export function createDrizzleDrovrOutboxStore(
 						),
 					)
 					.limit(limit)
-				const affected = Array.isArray(result)
-					? (result[0] as { affectedRows?: number } | undefined)?.affectedRows
-					: ((result as { rowsAffected?: number; affectedRows?: number })
-							?.rowsAffected ??
-						(result as { affectedRows?: number })?.affectedRows)
-				return Number(affected ?? 0)
+				return affectedRows(result)
 			}),
 	}
 }

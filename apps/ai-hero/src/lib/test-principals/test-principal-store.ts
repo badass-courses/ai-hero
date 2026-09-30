@@ -1,4 +1,14 @@
-import { and, eq, getTableColumns, is, like, lt, lte, sql } from 'drizzle-orm'
+import {
+	and,
+	eq,
+	getTableColumns,
+	inArray,
+	is,
+	like,
+	lt,
+	lte,
+	sql,
+} from 'drizzle-orm'
 import {
 	getTableConfig,
 	MySqlTable,
@@ -12,6 +22,7 @@ import {
 	contactState,
 	contentRead,
 	coupon,
+	drovrOutbox,
 	signupAttribution,
 	users,
 	verificationTokens,
@@ -64,15 +75,14 @@ export const UNINDEXED_KEY_CLEANUP = {
 	'AI_MerchantCharge.userId': 'never-written',
 	// Written for a purchase or a Kit subscribe only; both refused here.
 	'AI_ShortlinkAttribution.userId': 'never-written',
-	// The drovr outbox (row 204) leads its index with target, so this is a
-	// scan, of a table kept small: delivered rows are purged after 7 days
-	// and more than 25 pending alerts. A test principal's signup can land
-	// here during a drovr 5xx (the signup path has no synthetic filter), so
-	// it is deleted, not skipped: the plain equality delete below.
-	'AI_DrovrOutbox.contactId': 'bounded-table',
+	// The drovr outbox (row 204) indexes (target, contactId, status). Every
+	// writer drops synthetic principals since row 204b, so only a row from
+	// before it could exist; it is deleted on that index, target by target
+	// (drovr-outbox-by-target below), never by a scan on contactId.
+	'AI_DrovrOutbox.contactId': 'drovr-outbox-by-target',
 } as const satisfies Record<
 	string,
-	'content-read-semantic-key' | 'never-written' | 'bounded-table'
+	'content-read-semantic-key' | 'never-written' | 'drovr-outbox-by-target'
 >
 
 /** Indexed in prod outside the Drizzle schema (idx_OrganizationMembership_on_userId). */
@@ -316,6 +326,28 @@ async function deletePrincipalRows(
 						),
 					),
 			)
+			continue
+		}
+		if (strategy === 'drovr-outbox-by-target') {
+			await attempt(name, async () => {
+				// The distinct targets are the index's first column (a loose
+				// scan); then an equality delete per contact that rides it.
+				const targets = (
+					await database
+						.selectDistinct({ target: drovrOutbox.target })
+						.from(drovrOutbox)
+				).map((row) => row.target)
+				// No targets: an empty table, nothing to delete.
+				if (targets.length === 0) return { rowsAffected: 0 }
+				return database
+					.delete(drovrOutbox)
+					.where(
+						and(
+							inArray(drovrOutbox.target, targets),
+							eq(drovrOutbox.contactId, id),
+						),
+					)
+			})
 			continue
 		}
 		await attempt(name, () => database.delete(table).where(eq(key, id)))

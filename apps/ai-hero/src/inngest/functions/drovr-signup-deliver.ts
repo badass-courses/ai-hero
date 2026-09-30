@@ -17,6 +17,7 @@ import {
 	sendOrOutbox,
 	type DrovrOutboxCaptureFn,
 } from '@/lib/subscriber-marketing/drovr-outbox-step'
+import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
 import { log } from '@/server/logger'
 import { NonRetriableError } from 'inngest'
 
@@ -35,6 +36,7 @@ export async function outboxFailedSignup(
 	capture: DrovrOutboxCaptureFn = captureDrovrOutboxLive,
 ): Promise<void> {
 	if (error?.name === 'NonRetriableError') return
+	if (isSyntheticPrincipalId(request.contactId)) return
 	try {
 		await capture(
 			[{ ...outboxEntryForSignup(request), source: 'onFailure' }],
@@ -72,6 +74,16 @@ export const drovrSignupDeliver = inngest.createFunction(
 	},
 	{ event: DROVR_SIGNUP_REQUESTED_EVENT },
 	async ({ event, step, attempt, maxAttempts }) => {
+		// A synthetic test principal never reaches drovr, like every other
+		// drovr send (withoutSyntheticContacts), so it never reaches the
+		// outbox either (row 204b).
+		if (isSyntheticPrincipalId(event.data.contactId)) {
+			await log.info('drovr.signup.synthetic_skipped', {
+				contactId: event.data.contactId,
+				formId: event.data.formId,
+			})
+			return { status: 'skipped' as const, reason: 'synthetic-principal' }
+		}
 		// Not the intake flag: a queued signup is delivered even after
 		// DROVR_DOI_FORMS is turned off.
 		const config = parseDrovrSignupDeliveryConfig(env)

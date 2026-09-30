@@ -115,6 +115,7 @@ integration('test principals on disposable MySQL with real Auth.js', () => {
 			'20260831_ai_hero_email_course_evergreen_schema.sql',
 			'20260907_evergreen_admission_attempts.sql',
 			'20260511_ai_hero_content_read.sql',
+			'20260930_ai_hero_drovr_outbox.sql',
 		])
 			await pool.query(
 				await fs.readFile(
@@ -520,6 +521,15 @@ integration('test principals on disposable MySQL with real Auth.js', () => {
 			)
 		await read('read-synthetic', principalId)
 		await read('read-real', 'user-real')
+		// A drovr outbox row from before row 204b's synthetic filter, and a
+		// real contact's on another target.
+		const outboxRow = (id: string, target: string, contactId: string) =>
+			pool.query(
+				"INSERT INTO AI_DrovrOutbox (id, dedupeKey, target, endpoint, tenantId, contactId, journeyId, eventType, idempotencyKey, body, source, status, occurredAt, firstFailedAt, nextAttemptAt, createdAt) VALUES (?, ?, ?, 'signups', 'org-aihero', ?, 'signup:skills', 'signup', ?, '{}', 'live', 'pending', UTC_TIMESTAMP(), UTC_TIMESTAMP(), UTC_TIMESTAMP(), UTC_TIMESTAMP())",
+				[id, id, target, contactId, id],
+			)
+		await outboxRow('outbox-synthetic', 'production', principalId)
+		await outboxRow('outbox-real', 'preview:x', 'contact-real')
 
 		// Every cleanup statement can use an index; none is a table scan by design.
 		const explain = async (statement: string, params: unknown[]) => {
@@ -548,8 +558,46 @@ integration('test principals on disposable MySQL with real Auth.js', () => {
 			),
 		).toContain('ContentRead_semanticIdempotencyKey_uq')
 
-		const deleted = await deleteTestPrincipalRecords(database, principalId)
-		expect(deleted?.removed).toMatchObject({ AI_ContentRead: 1, AI_User: 1 })
+		// The outbox: its distinct targets off the index's first column, then
+		// a delete that rides (target, contactId, status).
+		const [[distinct]] = (await pool.query(
+			'EXPLAIN SELECT DISTINCT target FROM AI_DrovrOutbox',
+		)) as unknown as [[{ key: string | null }]]
+		expect(distinct.key).toBe('DrovrOutbox_contact_idx')
+		expect(
+			await explain(
+				'DELETE FROM AI_DrovrOutbox WHERE target IN (?, ?) AND contactId = ?',
+				['production', 'preview:x', principalId],
+			),
+		).toContain('DrovrOutbox_contact_idx')
+
+		// Record what the cleanup really sends, not just what could be sent:
+		// the same pool, through a handle whose logger keeps every statement.
+		const sent: string[] = []
+		const logged = drizzle(pool, {
+			mode: 'planetscale',
+			logger: { logQuery: (statement: string) => void sent.push(statement) },
+		})
+		const deleted = await deleteTestPrincipalRecords(
+			logged as unknown as typeof database,
+			principalId,
+		)
+		const outboxDeletes = sent.filter((statement) =>
+			/^delete from `AI_DrovrOutbox`/i.test(statement.trim()),
+		)
+		expect(outboxDeletes).toHaveLength(1)
+		expect(outboxDeletes[0]).toMatch(/`target` in \(/i)
+		expect(outboxDeletes[0]).toMatch(/`contactId` = \?/i)
+		expect(deleted?.removed).toMatchObject({
+			AI_ContentRead: 1,
+			AI_DrovrOutbox: 1,
+			AI_User: 1,
+		})
+		const [outboxLeft] = (await pool.query(
+			'SELECT id FROM AI_DrovrOutbox ORDER BY id',
+		)) as unknown as [{ id: string }[]]
+		expect(outboxLeft.map((row) => row.id)).toEqual(['outbox-real'])
+		await pool.query("DELETE FROM AI_DrovrOutbox WHERE id = 'outbox-real'")
 		const [[reads]] = (await pool.query(
 			'SELECT COUNT(*) AS n FROM AI_ContentRead WHERE id IN (?, ?)',
 			['read-synthetic', 'read-real'],

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 
+import { CONTACT_STOP_EVENT_TYPES } from './contact-stop-rule'
 import type { DrovrSignupRequest } from './drovr-doi-signup'
 import type { DrovrShadowEvent } from './drovr-shadow-emitter'
 
@@ -11,6 +12,8 @@ import type { DrovrShadowEvent } from './drovr-shadow-emitter'
  * its exact body. The replay cron re-posts it under the same drovr
  * idempotency key until drovr answers 2xx; drovr dedupes a repeat, so
  * re-posting one that did land is harmless.
+ *
+ * Releasing and retiring rows by hand: apps/ai-hero/docs/drovr-outbox-runbook.md.
  */
 
 /** Inngest retries on every drovr-send function (was 6). */
@@ -40,6 +43,14 @@ export const DROVR_OUTBOX_REPLAY_MAX_BACKOFF_MS = 60 * 60_000
 export const DROVR_OUTBOX_AUTO_REPLAY_MAX_AGE_MS = 24 * 60 * 60_000
 /** How long a fact waits when its birth is held (a human decides). */
 export const DROVR_OUTBOX_HELD_BIRTH_WAIT_MS = 60 * 60_000
+/**
+ * How far a fact behind a rejected stop moves each run. The stop stays
+ * rejected until a human releases or retires it (a purchase is never
+ * retired: see the runbook), so the fact keeps waiting.
+ */
+export const DROVR_OUTBOX_REJECTED_STOP_WAIT_MS = 60 * 60_000
+/** A stop still owed after this long alerts (two replay runs), row 204b. */
+export const DROVR_OUTBOX_STOP_ALERT_MS = 10 * 60_000
 /** Capture tries before the step gives up (the keys are logged first). */
 export const DROVR_OUTBOX_CAPTURE_TRIES = 3
 /** Delivered rows are deleted after this: the inline body holds contact data. */
@@ -70,6 +81,26 @@ export function drovrRetryDelayMs(
 			? 0
 			: Math.min(Math.max(retryAfterMs, 0), DROVR_RETRY_AFTER_STEP_CAP_MS)
 	return Math.max(floor, hinted)
+}
+
+/**
+ * How long Inngest may still spend retrying a send that just failed on the
+ * zero-indexed `attempt` of `maxAttempts`: this retry's delay (Retry-After
+ * honoured) plus the table's floor for every retry after it. A stop captured
+ * on its first failure waits this long before the replay may post it.
+ */
+export function drovrRetryWindowMs(
+	attempt: number,
+	maxAttempts: number,
+	retryAfterMs?: number,
+): number {
+	let window = 0
+	for (let index = Math.max(attempt, 0); index < maxAttempts - 1; index += 1)
+		window += drovrRetryDelayMs(
+			index,
+			index === attempt ? retryAfterMs : undefined,
+		)
+	return window
 }
 
 /** A replay's next attempt, after `attempts` failed posts. */
@@ -222,12 +253,24 @@ export type DrovrOutboxDepth = {
 	oldestPendingFailedAt: string | null
 	held: number
 	rejected: number
+	/** The oldest stop still owed (pending or rejected), row 204b. */
+	oldestOpenStopFailedAt: string | null
 }
 
-/** A birth row still owed (pending or held): later facts wait for it. */
-export type DrovrOutboxOpenBirth = Pick<
+/**
+ * A row later rows wait for: a birth still owed (pending or held), or a
+ * stop still owed (pending, held or rejected: a refused stop fails closed).
+ */
+export type DrovrOutboxOpenGate = Pick<
 	DrovrOutboxRow,
-	'contactId' | 'journeyId' | 'endpoint' | 'status' | 'nextAttemptAt'
+	| 'id'
+	| 'contactId'
+	| 'journeyId'
+	| 'endpoint'
+	| 'eventType'
+	| 'status'
+	| 'nextAttemptAt'
+	| 'occurredAt'
 >
 
 export type DrovrOutboxStore = {
@@ -239,11 +282,14 @@ export type DrovrOutboxStore = {
 		now: string
 		limit: number
 	}): Promise<DrovrOutboxRow[]>
-	/** This target's pending or held births for these contacts. */
-	openBirths(args: {
+	/**
+	 * This target's open gates for these contacts: pending or held births,
+	 * and pending, held or rejected stops.
+	 */
+	openGates(args: {
 		target: string
 		contactIds: readonly string[]
-	}): Promise<DrovrOutboxOpenBirth[]>
+	}): Promise<DrovrOutboxOpenGate[]>
 	update(
 		id: string,
 		patch: Partial<
@@ -262,6 +308,27 @@ export type DrovrOutboxStore = {
 	depth(target: string): Promise<DrovrOutboxDepth>
 	/** Delivered rows only; held and rejected rows stay until resolved. */
 	deleteDeliveredBefore(before: string, limit: number): Promise<number>
+	/**
+	 * Mark these rows delivered if they are still pending: a stop captured
+	 * on its first failure whose later Inngest retry landed. Returns how many.
+	 */
+	settlePending(args: {
+		target: string
+		dedupeKeys: readonly string[]
+		at: string
+		note: string | null
+	}): Promise<number>
+	/**
+	 * Make these contacts' pending rows due now if they wait for later:
+	 * what the replay moved behind a stop that has since landed. Stops keep
+	 * their time (one may still be inside Inngest's retries). Returns how
+	 * many moved.
+	 */
+	pullForward(args: {
+		target: string
+		contactIds: readonly string[]
+		now: string
+	}): Promise<number>
 }
 
 type OutboxLog = {
@@ -311,6 +378,11 @@ export async function captureDrovrOutbox(args: {
 	reason: unknown
 	httpStatus?: number
 	now: Date
+	/**
+	 * When the replay may take the rows; now by default. A stop captured on
+	 * its first failure passes the end of Inngest's retry window.
+	 */
+	nextAttemptAt?: Date
 	log: OutboxLog
 	sleep?: (ms: number) => Promise<void>
 }): Promise<DrovrOutboxCapture> {
@@ -345,7 +417,7 @@ export async function captureDrovrOutbox(args: {
 		lastStatus: args.httpStatus ?? null,
 		lastError: reason,
 		firstFailedAt: now,
-		nextAttemptAt: now,
+		nextAttemptAt: args.nextAttemptAt?.toISOString() ?? now,
 		lastAttemptAt: null,
 		deliveredAt: null,
 		releasedAt: null,
@@ -380,6 +452,56 @@ export async function captureDrovrOutbox(args: {
 	return { status: 'outboxed', count: rows.length }
 }
 
+/**
+ * A stop captured on its first failure, then delivered by a later Inngest
+ * retry: its row is marked delivered, so the gate opens and the replay never
+ * posts it. The facts the replay moved behind it (to the end of the retry
+ * window) are made due now, so they follow on the next run instead of up to
+ * 79 minutes later. A failure here is logged, not thrown: the send did land,
+ * and a row left pending is only re-posted later, which drovr dedupes by key.
+ */
+export async function settleDrovrOutbox(args: {
+	store: DrovrOutboxStore
+	target: string | undefined
+	entries: readonly DrovrOutboxEntry[]
+	note: string | null
+	now: Date
+	log: OutboxLog
+}): Promise<number> {
+	if (!args.target || args.entries.length === 0) return 0
+	const target = args.target
+	try {
+		const settled = await args.store.settlePending({
+			target,
+			dedupeKeys: args.entries.map((entry) =>
+				drovrOutboxDedupeKey(target, entry),
+			),
+			at: args.now.toISOString(),
+			note: args.note,
+		})
+		if (settled === 0) return 0
+		const released = await args.store.pullForward({
+			target,
+			contactIds: [...new Set(args.entries.map((entry) => entry.contactId))],
+			now: args.now.toISOString(),
+		})
+		await logSafely(args.log.info, 'drovr.outbox.settled_by_retry', {
+			count: settled,
+			released,
+			idempotencyKeys: args.entries.map((entry) => entry.idempotencyKey),
+		})
+		return settled
+	} catch (error) {
+		if (!(error instanceof DrovrOutboxUnavailableError))
+			await logSafely(args.log.error, 'drovr.outbox.settle_failed', {
+				count: args.entries.length,
+				idempotencyKeys: args.entries.map((entry) => entry.idempotencyKey),
+				error: errorText(error),
+			})
+		return 0
+	}
+}
+
 export type DrovrOutboxPostOutcome =
 	| { kind: 'delivered'; httpStatus?: number }
 	/** A 4xx for the row or one of its owner copies: final, alerted. */
@@ -409,6 +531,7 @@ export type DrovrOutboxReplayReceipt = {
 	failed: number
 	held: number
 	skippedBehindBirth: number
+	skippedBehindStop: number
 	circuitOpen: boolean
 	budgetSpent: boolean
 	purged: number
@@ -422,6 +545,48 @@ export const isOutboxBirth = (
 ) => row.endpoint === 'signups' || row.eventType === 'contact.created'
 
 /**
+ * The stops (row 204b): once one is owed, nothing the contact did after it
+ * may reach drovr first. Unsubscribe, bounce and complaint are also refused
+ * at send time by ai-hero (contact-stop-rule) and by Kit; a purchase is
+ * refused by nothing but drovr knowing, so it is the one that matters most.
+ * The evergreen same-offer purchase is a `purchase.recorded` too.
+ */
+export const DROVR_OUTBOX_STOP_EVENT_TYPES = [
+	...CONTACT_STOP_EVENT_TYPES,
+	'purchase.recorded',
+] as const
+
+export const isOutboxStop = (row: Pick<DrovrOutboxRow, 'eventType'>) =>
+	(DROVR_OUTBOX_STOP_EVENT_TYPES as readonly string[]).includes(row.eventType)
+
+/** An instant, or -Infinity for one that does not parse: it sorts first. */
+const instantOf = (occurredAt: string) => {
+	const at = Date.parse(occurredAt)
+	return Number.isNaN(at) ? Number.NEGATIVE_INFINITY : at
+}
+
+/**
+ * The open stop a row waits behind: the contact's earliest stop still owed
+ * that happened at or before it (a tie waits), on any journey. A stop never
+ * waits behind a stop, and an earlier row never waits for a later stop. An
+ * instant that does not parse fails closed: such a row waits behind every
+ * owed stop, and such a stop holds every row.
+ */
+export function openStopBefore<S extends Pick<DrovrOutboxRow, 'occurredAt'>>(
+	row: Pick<DrovrOutboxRow, 'eventType' | 'occurredAt'>,
+	stops: readonly S[] | undefined,
+): S | undefined {
+	if (!stops || isOutboxStop(row)) return undefined
+	const at = Date.parse(row.occurredAt)
+	return stops
+		.filter((stop) => {
+			const stopAt = Date.parse(stop.occurredAt)
+			return Number.isNaN(at) || Number.isNaN(stopAt) || stopAt <= at
+		})
+		.sort((a, b) => instantOf(a.occurredAt) - instantOf(b.occurredAt))[0]
+}
+
+/**
  * What a birth row gates: facts on its journey, or, for a signup, every
  * row of the contact.
  */
@@ -432,17 +597,46 @@ const birthGateKey = (
 		? `${birth.contactId}|*`
 		: `${birth.contactId}|${birth.journeyId}`
 
+/** Whether a birth gates a row: its journey's, or any row for a signup. */
+const birthGates = (
+	birth: Pick<DrovrOutboxRow, 'contactId' | 'journeyId' | 'endpoint'>,
+	row: Pick<
+		DrovrOutboxRow,
+		'contactId' | 'journeyId' | 'endpoint' | 'eventType'
+	>,
+) =>
+	!isOutboxBirth(row) &&
+	birth.contactId === row.contactId &&
+	(birth.endpoint === 'signups' || birth.journeyId === row.journeyId)
+
 /**
- * Order a run: oldest first, and a contact's birth before its later facts
- * when they share an instant.
+ * Order a run: oldest first. A birth moves up to just ahead of the earliest
+ * due row it gates, a fact or a stop (row 204b): nothing it gates can post
+ * before it, and it must not wait behind a stop that waits for it. On a
+ * shared instant such a birth goes first, then stops, then other births,
+ * then facts, so a fact tied with its stop or birth posts after it in the
+ * same run. The live batch keeps the same order (`inDeliveryOrder`).
  */
 export function replayOrder(rows: readonly DrovrOutboxRow[]): DrovrOutboxRow[] {
-	return [...rows].sort(
-		(a, b) =>
-			a.occurredAt.localeCompare(b.occurredAt) ||
-			Number(isOutboxBirth(b)) - Number(isOutboxBirth(a)) ||
-			a.id.localeCompare(b.id),
-	)
+	const placed = new Map<string, { at: string; rank: number }>()
+	for (const row of rows) {
+		let at = row.occurredAt
+		let rank = isOutboxBirth(row) ? 2 : isOutboxStop(row) ? 1 : 3
+		if (isOutboxBirth(row))
+			for (const gated of rows)
+				if (birthGates(row, gated) && gated.occurredAt.localeCompare(at) <= 0) {
+					at = gated.occurredAt
+					rank = 0
+				}
+		placed.set(row.id, { at, rank })
+	}
+	return [...rows].sort((a, b) => {
+		const x = placed.get(a.id)!
+		const y = placed.get(b.id)!
+		return (
+			x.at.localeCompare(y.at) || x.rank - y.rank || a.id.localeCompare(b.id)
+		)
+	})
 }
 
 /**
@@ -454,6 +648,20 @@ export function replayOrder(rows: readonly DrovrOutboxRow[]): DrovrOutboxRow[] {
  *   signup) posts while the birth is pending or held, in this run or any
  *   later one, so a fact never overtakes its birth into drovr's 409
  *   contact-never-born. A gated fact is moved to its birth's next attempt.
+ * - A stop gates its contact (row 204b): nothing that happened at or after
+ *   an owed stop (pending, or rejected until a human acts) posts, on any
+ *   journey, in this run or a later one. A gated row moves to the stop's
+ *   next attempt, or an hour on behind a rejected stop. A stop owed for
+ *   over 10 minutes alerts.
+ * - The one exception, which keeps the two gates from ever deadlocking: a
+ *   birth does not wait behind a stop that is itself waiting for a birth
+ *   (drovr takes no stop for a contact it never saw born, so the birth has
+ *   to go first). The waits-for edges are then fact → birth, fact → stop,
+ *   stop → birth, and birth → a stop that waits for no birth; that stop
+ *   waits for nothing (a stop never waits behind a stop), so every chain
+ *   ends within three hops and no cycle can form. `replayOrder` puts such a
+ *   birth just ahead of its stop, so both post in the same run and the
+ *   stop still lands before any later fact.
  * - Once one of a contact's rows fails, its later rows wait for the next
  *   run.
  * - Three consecutive transient failures (5xx, timeout, no answer) open the
@@ -486,27 +694,66 @@ export async function runDrovrOutboxReplay(args: {
 		failed: 0,
 		held: 0,
 		skippedBehindBirth: 0,
+		skippedBehindStop: 0,
 		circuitOpen: false,
 		budgetSpent: false,
 		purged: 0,
-		depth: { pending: 0, oldestPendingFailedAt: null, held: 0, rejected: 0 },
+		depth: {
+			pending: 0,
+			oldestPendingFailedAt: null,
+			held: 0,
+			rejected: 0,
+			oldestOpenStopFailedAt: null,
+		},
 		alert: [],
 	}
-	// Every birth still owed for these contacts, due now or not.
-	const openBirths = new Map<string, DrovrOutboxOpenBirth>()
-	const births =
+	// Every birth and stop still owed for these contacts, due now or not.
+	const openBirths = new Map<string, DrovrOutboxOpenGate>()
+	const openStops = new Map<
+		string,
+		(DrovrOutboxOpenGate & { key?: string })[]
+	>()
+	const gates =
 		due.length === 0
 			? []
-			: await args.store.openBirths({
+			: await args.store.openGates({
 					target: args.target,
 					contactIds: [...new Set(due.map((row) => row.contactId))],
 				})
-	for (const birth of births) openBirths.set(birthGateKey(birth), birth)
-	const gateOf = (row: DrovrOutboxRow) =>
+	for (const gate of gates) {
+		if (isOutboxStop(gate)) {
+			const list = openStops.get(gate.contactId) ?? []
+			list.push(gate)
+			openStops.set(gate.contactId, list)
+		} else if (isOutboxBirth(gate)) openBirths.set(birthGateKey(gate), gate)
+	}
+	// This run's own stops, by row: an outcome updates the gate they left.
+	const stopOf = (row: DrovrOutboxRow) =>
+		openStops.get(row.contactId)?.find((stop) => stop.id === row.id)
+	const settleStop = (row: DrovrOutboxRow) => {
+		const stop = stopOf(row)
+		if (!stop) return
+		const list = openStops.get(row.contactId)!
+		list.splice(list.indexOf(stop), 1)
+	}
+	const gateOf = (
+		row: Pick<
+			DrovrOutboxRow,
+			'contactId' | 'journeyId' | 'endpoint' | 'eventType'
+		>,
+	) =>
 		isOutboxBirth(row)
 			? undefined
 			: (openBirths.get(birthGateKey(row)) ??
 				openBirths.get(`${row.contactId}|*`))
+	// The stops a row waits behind. A birth skips a stop that waits for a
+	// birth itself: that is the deadlock break (see above).
+	const stopsFor = (row: DrovrOutboxRow) => {
+		const stops = openStops.get(row.contactId)
+		return isOutboxBirth(row)
+			? stops?.filter((stop) => gateOf(stop) === undefined)
+			: stops
+	}
 
 	const blockedContacts = new Set<string>()
 	let consecutiveFailures = 0
@@ -554,6 +801,28 @@ export async function runDrovrOutboxReplay(args: {
 					: gate.nextAttemptAt
 			if (after > row.nextAttemptAt)
 				await args.store.update(row.id, { nextAttemptAt: after })
+			if (isOutboxStop(row)) {
+				const stop = stopOf(row)
+				if (stop && after > stop.nextAttemptAt) stop.nextAttemptAt = after
+			}
+			continue
+		}
+		const stop = openStopBefore(row, stopsFor(row))
+		if (stop) {
+			receipt.skippedBehindStop += 1
+			const after =
+				stop.status === 'pending'
+					? stop.nextAttemptAt
+					: new Date(
+							now.getTime() + DROVR_OUTBOX_REJECTED_STOP_WAIT_MS,
+						).toISOString()
+			if (after > row.nextAttemptAt)
+				await args.store.update(row.id, { nextAttemptAt: after })
+			await logSafely(args.log.info, 'drovr.outbox.behind_stop', {
+				...fields,
+				stopEventType: stop.eventType,
+				stopStatus: stop.status,
+			})
 			continue
 		}
 		if (blockedContacts.has(row.contactId)) {
@@ -572,6 +841,7 @@ export async function runDrovrOutboxReplay(args: {
 			consecutiveFailures = 0
 			receipt[outcome.kind] += 1
 			if (isOutboxBirth(row)) openBirths.delete(birthGateKey(row))
+			if (isOutboxStop(row)) settleStop(row)
 			await args.store.update(row.id, {
 				status: 'delivered',
 				attempts,
@@ -591,6 +861,10 @@ export async function runDrovrOutboxReplay(args: {
 			consecutiveFailures = 0
 			receipt.rejected += 1
 			blockedContacts.add(row.contactId)
+			if (isOutboxStop(row)) {
+				const stop = stopOf(row)
+				if (stop) stop.status = 'rejected'
+			}
 			await args.store.update(row.id, {
 				status: 'rejected',
 				attempts,
@@ -617,6 +891,10 @@ export async function runDrovrOutboxReplay(args: {
 		).toISOString()
 		if (isOutboxBirth(row) && openBirths.has(birthGateKey(row)))
 			openBirths.set(birthGateKey(row), { ...row, nextAttemptAt })
+		if (isOutboxStop(row)) {
+			const stop = stopOf(row)
+			if (stop) stop.nextAttemptAt = nextAttemptAt
+		}
 		await args.store.update(row.id, {
 			attempts,
 			lastStatus: outcome.httpStatus ?? null,
@@ -651,18 +929,24 @@ export async function runDrovrOutboxReplay(args: {
 	if (oldestAgeMs > DROVR_OUTBOX_ALERT_OLDEST_MS) receipt.alert.push('oldest')
 	if (receipt.held > 0) receipt.alert.push('held')
 	if (receipt.rejected > 0) receipt.alert.push('rejected')
+	const openStopAgeMs = receipt.depth.oldestOpenStopFailedAt
+		? now.getTime() - Date.parse(receipt.depth.oldestOpenStopFailedAt)
+		: 0
+	if (openStopAgeMs > DROVR_OUTBOX_STOP_ALERT_MS) receipt.alert.push('stop')
 	const depthFields = {
 		target: args.target,
 		pending: receipt.depth.pending,
 		oldestPendingAgeMin: Math.round(oldestAgeMs / 60_000),
 		held: receipt.depth.held,
 		rejected: receipt.depth.rejected,
+		oldestOpenStopAgeMin: Math.round(openStopAgeMs / 60_000),
 		ranDelivered: receipt.delivered,
 		ranSettled: receipt.settled,
 		ranFailed: receipt.failed,
 		ranHeld: receipt.held,
 		ranRejected: receipt.rejected,
 		ranSkippedBehindBirth: receipt.skippedBehindBirth,
+		ranSkippedBehindStop: receipt.skippedBehindStop,
 		circuitOpen: receipt.circuitOpen,
 		purged: receipt.purged,
 	}

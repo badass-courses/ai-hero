@@ -23,6 +23,8 @@ vi.mock('@/lib/subscriber-marketing/drovr-outbox-live', () => ({
 	captureDrovrOutboxLive: mocks.capture,
 }))
 
+import { SYNTHETIC_PRINCIPAL_ID_PREFIX } from '@/lib/synthetic-principal'
+
 import { drovrSignupDeliver, outboxFailedSignup } from './drovr-signup-deliver'
 
 type Handler = (input: {
@@ -203,6 +205,35 @@ describe('row 204: a drovr 5xx never loses a signup', () => {
 		await outboxFailedSignup(
 			event.data as never,
 			{ name: 'NonRetriableError' },
+			mocks.capture,
+		)
+		expect(mocks.capture).not.toHaveBeenCalled()
+	})
+})
+
+describe('row 204b: a synthetic test principal never reaches drovr or the outbox', () => {
+	const synthetic = {
+		data: { ...event.data, contactId: `${SYNTHETIC_PRINCIPAL_ID_PREFIX}run-1` },
+	}
+
+	it('skips the post, even on the last attempt, and outboxes nothing', async () => {
+		const fetch = vi.fn()
+		vi.stubGlobal('fetch', fetch)
+		await expect(
+			handler({ event: synthetic, step, attempt: 8, maxAttempts: 9 }),
+		).resolves.toEqual({ status: 'skipped', reason: 'synthetic-principal' })
+		expect(fetch).not.toHaveBeenCalled()
+		expect(mocks.capture).not.toHaveBeenCalled()
+		expect(mocks.log.info).toHaveBeenCalledWith(
+			'drovr.signup.synthetic_skipped',
+			expect.objectContaining({ contactId: synthetic.data.contactId }),
+		)
+	})
+
+	it('never backstops a synthetic signup from onFailure', async () => {
+		await outboxFailedSignup(
+			synthetic.data as never,
+			{ name: 'Error' },
 			mocks.capture,
 		)
 		expect(mocks.capture).not.toHaveBeenCalled()
