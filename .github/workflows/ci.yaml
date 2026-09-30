@@ -67,7 +67,7 @@ jobs:
       # skip here without a server URL; evergreen-journey-mysql runs them.
       # evergreen-claim-composition is excluded: it fails on main since
       # 2026-09-08 (next-auth imports next/server without its extension,
-      # which Node's ESM resolver refuses); a follow-up fixes and restores it.
+      # which Node's ESM resolver refuses); row 205 fixes it and removes this.
       - name: drovr, subscriber-marketing and evergreen unit suites
         run: >-
           pnpm --filter ai-hero exec vitest run -c vitest.config.ts
