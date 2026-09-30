@@ -19,8 +19,8 @@ import { createDrizzleDrovrOutboxStore } from './drovr-outbox-drizzle'
 const serverUrl = process.env.AIH_EVERGREEN_JOURNEY_MYSQL_TEST_SERVER_URL
 const integration = describe.skipIf(!serverUrl)
 
-const PROD = 'https://drovr.example#production'
-const PREVIEW = 'https://drovr-stage.example#preview:worker/x'
+const PROD = 'production'
+const PREVIEW = 'preview:worker/x'
 
 integration('drovr outbox store on MySQL (row 204)', () => {
 	let server: Pool | undefined
@@ -139,6 +139,74 @@ integration('drovr outbox store on MySQL (row 204)', () => {
 			})
 			expect(due).toHaveLength(1)
 			expect(due[0]).toEqual(first)
+		})
+
+		it('absorbs only a duplicate: a value that does not fit fails instead of being truncated', async () => {
+			const first = row()
+			await store.insertIgnore([first])
+			await store.insertIgnore([
+				{ ...first, id: 'row-dup', lastError: 'second' },
+			])
+			const [kept] = (await pool.query(
+				'SELECT id, lastError FROM AI_DrovrOutbox',
+			)) as unknown as [{ id: string; lastError: string }[]]
+			expect(kept).toEqual([{ id: first.id, lastError: first.lastError }])
+			await expect(
+				store.insertIgnore([row({ idempotencyKey: 'k'.repeat(501) })]),
+			).rejects.toThrow()
+		})
+
+		it("reads this target's pending and held births for the given contacts", async () => {
+			const birth = (overrides: Partial<DrovrOutboxRow>) =>
+				row({ eventType: 'contact.created', ...overrides })
+			const open = birth({
+				contactId: 'c1',
+				journeyId: 'value-path-skills-course',
+			})
+			const held = birth({
+				contactId: 'c2',
+				status: 'held',
+				journeyId: 'crash-course-evergreen-offer',
+			})
+			const signup = row({
+				contactId: 'c3',
+				endpoint: 'signups',
+				eventType: 'signup',
+				journeyId: 'signup:form-1',
+			})
+			await store.insertIgnore([
+				open,
+				held,
+				signup,
+				birth({
+					contactId: 'c1',
+					status: 'delivered',
+					deliveredAt: '2026-09-30T11:30:00.000Z',
+				}),
+				birth({ contactId: 'c1', target: PREVIEW }),
+				birth({ contactId: 'c9' }),
+				// A fact is not a birth.
+				row({ contactId: 'c1', eventType: 'value-path.answer-selected' }),
+			])
+			const births = await store.openBirths({
+				target: PROD,
+				contactIds: ['c1', 'c2', 'c3'],
+			})
+			expect(
+				births
+					.map((b) => `${b.contactId}|${b.journeyId}|${b.endpoint}|${b.status}`)
+					.sort(),
+			).toEqual([
+				'c1|value-path-skills-course|events|pending',
+				'c2|crash-course-evergreen-offer|events|held',
+				'c3|signup:form-1|signups|pending',
+			])
+			expect(births.find((b) => b.contactId === 'c1')?.nextAttemptAt).toBe(
+				open.nextAttemptAt,
+			)
+			expect(await store.openBirths({ target: PROD, contactIds: [] })).toEqual(
+				[],
+			)
 		})
 
 		it("takes only this target's pending rows that are due", async () => {

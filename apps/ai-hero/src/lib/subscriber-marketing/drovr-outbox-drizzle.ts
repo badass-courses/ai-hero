@@ -1,8 +1,9 @@
 import { drovrOutbox } from '@/db/drovr-outbox-schema'
-import { and, asc, count, eq, inArray, lte, min } from 'drizzle-orm'
+import { and, asc, count, eq, inArray, lte, min, or, sql } from 'drizzle-orm'
 
 import {
 	DrovrOutboxUnavailableError,
+	type DrovrOutboxOpenBirth,
 	type DrovrOutboxRow,
 	type DrovrOutboxStore,
 } from './drovr-outbox'
@@ -117,9 +118,11 @@ export function createDrizzleDrovrOutboxStore(
 		insertIgnore: (rows) =>
 			guarded(async () => {
 				if (rows.length === 0) return
+				// Only a duplicate dedupeKey is absorbed (the row stays as it
+				// is); unlike INSERT IGNORE, a value that does not fit still
+				// fails instead of being truncated.
 				await db
 					.insert(drovrOutbox)
-					.ignore()
 					.values(
 						rows.map((row) => ({
 							...row,
@@ -132,6 +135,9 @@ export function createDrizzleDrovrOutboxStore(
 							createdAt: toSqlTimestamp(row.createdAt),
 						})),
 					)
+					.onDuplicateKeyUpdate({
+						set: { dedupeKey: sql`${drovrOutbox.dedupeKey}` },
+					})
 			}),
 		due: ({ target, now, limit }) =>
 			guarded(async () => {
@@ -148,6 +154,45 @@ export function createDrizzleDrovrOutboxStore(
 					.orderBy(asc(drovrOutbox.nextAttemptAt), asc(drovrOutbox.id))
 					.limit(limit)) as StoredRow[]
 				return rows.map(fromStored)
+			}),
+		openBirths: ({ target, contactIds }) =>
+			guarded(async () => {
+				if (contactIds.length === 0) return []
+				const rows = (await db
+					.select({
+						contactId: drovrOutbox.contactId,
+						journeyId: drovrOutbox.journeyId,
+						endpoint: drovrOutbox.endpoint,
+						status: drovrOutbox.status,
+						nextAttemptAt: drovrOutbox.nextAttemptAt,
+					})
+					.from(drovrOutbox)
+					.where(
+						and(
+							eq(drovrOutbox.target, target),
+							inArray(drovrOutbox.status, ['pending', 'held']),
+							inArray(drovrOutbox.contactId, [...contactIds]),
+							or(
+								eq(drovrOutbox.eventType, 'contact.created'),
+								eq(drovrOutbox.endpoint, 'signups'),
+							),
+						),
+					)) as {
+					contactId: string
+					journeyId: string
+					endpoint: string
+					status: string
+					nextAttemptAt: string | Date
+				}[]
+				return rows.map(
+					(row): DrovrOutboxOpenBirth => ({
+						contactId: row.contactId,
+						journeyId: row.journeyId,
+						endpoint: row.endpoint as DrovrOutboxOpenBirth['endpoint'],
+						status: row.status as DrovrOutboxOpenBirth['status'],
+						nextAttemptAt: isoOf(row.nextAttemptAt),
+					}),
+				)
 			}),
 		update: (id, patch) =>
 			guarded(async () => {

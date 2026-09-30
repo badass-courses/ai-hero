@@ -88,14 +88,18 @@ const isOutboxed = (value: unknown): value is Outboxed =>
 /**
  * What an owner read that ran out of retries leaves for the outbox: the
  * batch before its fan-out, which the replay fans out once it can read.
+ * The shadow-addressed events are kept: they are the fan-out candidates,
+ * the only road to an owned contact's owner copies (the replay drops the
+ * shadow originals after fanning out, as live delivery does). Only
+ * synthetic principals are left out.
  */
 const ownerReadUnsent = (
 	batch: readonly DrovrShadowEvent[],
 	lane: DeliverContext['lane'],
 ) =>
-	withoutSyntheticContacts(batch)
-		.kept.filter((event) => event.tenantId !== DROVR_SHADOW_TENANT_ID)
-		.map((event) => outboxEntryForEvent(event, lane, { needsFanOut: true }))
+	withoutSyntheticContacts(batch).kept.map((event) =>
+		outboxEntryForEvent(event, lane, { needsFanOut: true }),
+	)
 
 /**
  * Durable delivery of drovr events. Each event is its own step keyed by

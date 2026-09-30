@@ -4,7 +4,6 @@ import { httpStatusOf, type DrovrOutboxCaptureFn } from './drovr-outbox-step'
 /** This deployment's outbox target (drovrOutboxTarget). */
 export const drovrOutboxTargetFromEnv = () =>
 	drovrOutboxTarget({
-		DROVR_SHADOW_INGEST_URL: process.env.DROVR_SHADOW_INGEST_URL,
 		VERCEL_ENV: process.env.VERCEL_ENV,
 		VERCEL_GIT_COMMIT_REF: process.env.VERCEL_GIT_COMMIT_REF,
 	})

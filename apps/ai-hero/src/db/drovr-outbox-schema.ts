@@ -47,7 +47,7 @@ export const drovrOutbox = mysqlTable(
 		body: json('body').notNull(),
 		/** Captured before the owner fan-out: replay sends it back through it. */
 		needsFanOut: boolean('needsFanOut').notNull().default(false),
-		/** live | bulk | signup | fallback | onFailure | guard */
+		/** live | bulk | signup | fallback | onFailure | contactSync */
 		source: varchar('source', { length: 20 }).notNull(),
 		/** pending | delivered | rejected | held */
 		status: varchar('status', { length: 20 }).notNull(),

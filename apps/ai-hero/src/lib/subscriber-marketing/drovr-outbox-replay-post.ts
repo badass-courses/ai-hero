@@ -5,10 +5,11 @@ import {
 	type DrovrSignupStatus,
 } from './drovr-doi-signup'
 import type { DrovrOutboxPostOutcome, DrovrOutboxRow } from './drovr-outbox'
-import type {
-	DrovrDeliveryConfig,
-	DrovrDeliveryOutcome,
-	DrovrShadowEvent,
+import {
+	DROVR_SHADOW_TENANT_ID,
+	type DrovrDeliveryConfig,
+	type DrovrDeliveryOutcome,
+	type DrovrShadowEvent,
 } from './drovr-shadow-emitter'
 
 /** A replay post waits this long for drovr before it counts as failed. */
@@ -34,12 +35,23 @@ export type DrovrOutboxPostPorts = {
 	}
 }
 
+/** drovr down or unreachable, as opposed to a verdict or a config gap. */
+const isTransientStatus = (httpStatus: number | undefined) =>
+	httpStatus === undefined ||
+	httpStatus >= 500 ||
+	httpStatus === 408 ||
+	httpStatus === 429
+
 async function postSignup(
 	row: DrovrOutboxRow,
 	ports: DrovrOutboxPostPorts,
 ): Promise<DrovrOutboxPostOutcome> {
 	if (!ports.signup)
-		return { kind: 'failed', reason: 'drovr signups are not configured' }
+		return {
+			kind: 'failed',
+			transient: false,
+			reason: 'drovr signups are not configured',
+		}
 	try {
 		await ports.signup.post(row.body as DrovrSignupRequest)
 		return { kind: 'delivered', httpStatus: 200 }
@@ -49,10 +61,12 @@ async function postSignup(
 				kind: 'rejected',
 				httpStatus: error.httpStatus,
 				detail: error.message,
+				idempotencyKey: row.idempotencyKey,
 			}
 		if (error instanceof DrovrSignupRetryableError)
 			return {
 				kind: 'failed',
+				transient: isTransientStatus(error.httpStatus),
 				reason: error.message,
 				...(error.httpStatus === undefined
 					? {}
@@ -67,8 +81,17 @@ async function postSignup(
 
 /**
  * One outbox row, re-posted under its own key(s). An unfanned row is fanned
- * out first; drovr dedupes any copy an earlier try already landed, so a
- * failure part-way is simply tried again whole.
+ * out first, and then, as live delivery does, every event addressed to the
+ * retired shadow tenant is dropped: drovr has no key for it, and what the
+ * row owes is its owner copies. A row with nothing deliverable left is
+ * settled (no owner copy owed). drovr dedupes any copy an earlier try
+ * already landed, so a failure part-way is simply tried again whole.
+ *
+ * The row's verdict: a failure → failed (transient for a 5xx, a timeout or
+ * no answer; not for a missing key or a 409 event-not-live); else any
+ * refusal of the row or of an owner copy → rejected, with that event's
+ * key; else anything accepted → delivered; else (owner stops for contacts
+ * never born there) → settled.
  */
 export async function postDrovrOutboxRow(
 	row: DrovrOutboxRow,
@@ -76,14 +99,22 @@ export async function postDrovrOutboxRow(
 ): Promise<DrovrOutboxPostOutcome> {
 	if (row.endpoint === 'signups') return postSignup(row, ports)
 	const base = row.body as DrovrShadowEvent
-	const events = row.needsFanOut ? await ports.fanOut([base]) : [base]
-	let baseRejected: { httpStatus: number; detail: unknown } | undefined
-	let settled: string | undefined
+	const fanned = row.needsFanOut ? await ports.fanOut([base]) : [base]
+	const events = fanned.filter(
+		(event) => event.tenantId !== DROVR_SHADOW_TENANT_ID,
+	)
+	if (events.length === 0)
+		return { kind: 'settled', detail: 'nothing-deliverable' }
+	let accepted = 0
+	let rejected:
+		| { httpStatus: number; detail: unknown; idempotencyKey: string }
+		| undefined
 	for (const event of events) {
 		const apiKey = ports.apiKeyFor(event.tenantId)
 		if (!apiKey)
 			return {
 				kind: 'failed',
+				transient: false,
 				reason: `no drovr key for tenant ${event.tenantId}`,
 			}
 		const outcome = await ports.deliver({
@@ -94,6 +125,7 @@ export async function postDrovrOutboxRow(
 		if (outcome.status === 'failed')
 			return {
 				kind: 'failed',
+				transient: isTransientStatus(outcome.httpStatus),
 				reason: outcome.reason,
 				...(outcome.httpStatus === undefined
 					? {}
@@ -102,25 +134,18 @@ export async function postDrovrOutboxRow(
 					? {}
 					: { retryAfterMs: outcome.retryAfterMs }),
 			}
-		if (outcome.status !== 'rejected') continue
-		if (ports.isNeverBornOwnerStop(event, outcome)) {
-			settled = 'owner-stop-never-born'
+		if (outcome.status === 'accepted') {
+			accepted += 1
 			continue
 		}
-		// The row's own event decides; a refused owner copy is logged by the
-		// caller's rejection path only when it is the row itself.
-		if (
-			event.tenantId === base.tenantId &&
-			event.journeyId === base.journeyId &&
-			event.idempotencyKey === base.idempotencyKey
-		)
-			baseRejected = {
-				httpStatus: outcome.httpStatus,
-				detail: outcome.problem,
-			}
+		if (ports.isNeverBornOwnerStop(event, outcome)) continue
+		rejected ??= {
+			httpStatus: outcome.httpStatus,
+			detail: outcome.problem,
+			idempotencyKey: event.idempotencyKey,
+		}
 	}
-	if (baseRejected) return { kind: 'rejected', ...baseRejected }
-	if (settled && !row.needsFanOut)
-		return { kind: 'settled', httpStatus: 409, detail: settled }
-	return { kind: 'delivered', httpStatus: 200 }
+	if (rejected) return { kind: 'rejected', ...rejected }
+	if (accepted > 0) return { kind: 'delivered', httpStatus: 200 }
+	return { kind: 'settled', httpStatus: 409, detail: 'owner-stop-never-born' }
 }

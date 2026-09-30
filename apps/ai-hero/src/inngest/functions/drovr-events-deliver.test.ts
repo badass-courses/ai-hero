@@ -807,10 +807,17 @@ describe('row 204: a drovr 5xx never loses a live or bulk event', () => {
 			step: createStep(),
 			...LAST,
 		})
-		expect(receipt).toMatchObject({ outboxed: 1 })
+		expect(receipt).toMatchObject({ outboxed: 2 })
 		expect(mocks.deliverOrThrow).not.toHaveBeenCalled()
-		// The retired shadow tenant's event is not kept; the rest is, unfanned.
+		// MUST 1 (#339 round 2): the shadow-addressed stop is KEPT. It is the
+		// fan-out candidate, the only road to the owned contact's owner copy;
+		// the replay fans it out and then drops the shadow original.
 		expect(mocks.capture.mock.calls[0]![0]).toEqual([
+			expect.objectContaining({
+				tenantId: 'org-aihero-shadow',
+				idempotencyKey: 'stop:contact-1',
+				needsFanOut: true,
+			}),
 			expect.objectContaining({
 				idempotencyKey: 'owner:answer',
 				needsFanOut: true,
@@ -818,21 +825,49 @@ describe('row 204: a drovr 5xx never loses a live or bulk event', () => {
 		])
 	})
 
-	it('backstops a dead live run from onFailure with its unfanned events', async () => {
+	it('backstops a dead live run from onFailure with its unfanned events, shadow candidates included', async () => {
 		const answer = event('org-aihero', 'owner:answer')
+		const stop = event(
+			'org-aihero-shadow',
+			'stop:contact-1',
+			'value-path-skills-course',
+			'contact.unsubscribed',
+		)
 		await registered.config.onFailure!({
 			event: {
-				data: { event: { data: { source: 'live-contact', events: [answer] } } },
+				data: {
+					event: { data: { source: 'live-contact', events: [stop, answer] } },
+				},
 			},
 			error: new Error('boom'),
 		})
 		expect(mocks.capture.mock.calls[0]![0]).toEqual([
+			expect.objectContaining({
+				idempotencyKey: 'stop:contact-1',
+				source: 'onFailure',
+				needsFanOut: true,
+			}),
 			expect.objectContaining({
 				idempotencyKey: 'owner:answer',
 				source: 'onFailure',
 				needsFanOut: true,
 			}),
 		])
+	})
+
+	it('still leaves synthetic principals out of an owner-read capture', async () => {
+		mocks.resolveOwnedContactIds.mockRejectedValue(new Error('down'))
+		const synthetic = {
+			...event('org-aihero-shadow', 'stop:synthetic'),
+			contactId: 'synthetic_test',
+		}
+		await registered.handler({
+			event: { data: { source: 'contact-event', events: [synthetic] } },
+			step: createStep(),
+			...LAST,
+		})
+		const captured = (mocks.capture.mock.calls[0]?.[0] ?? []) as unknown[]
+		expect(captured).toEqual([])
 	})
 
 	it('never outboxes a bulk source from the live onFailure', async () => {

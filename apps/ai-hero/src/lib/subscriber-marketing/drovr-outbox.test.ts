@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
 	captureDrovrOutbox,
+	DROVR_OUTBOX_CAPTURE_TRIES,
 	DROVR_OUTBOX_DELIVERED_RETENTION_MS,
+	DROVR_OUTBOX_HELD_BIRTH_WAIT_MS,
 	DROVR_SEND_BACKOFF_MS,
 	DROVR_SEND_RETRIES,
 	drovrOutboxDedupeKey,
@@ -20,10 +22,11 @@ import {
 	type DrovrOutboxRow,
 	type DrovrOutboxStore,
 } from './drovr-outbox'
+import { postDrovrOutboxRow } from './drovr-outbox-replay-post'
 import type { DrovrShadowEvent } from './drovr-shadow-emitter'
 
-const PROD = 'https://drovr.example#production'
-const PREVIEW = 'https://drovr-stage.example#preview:worker/x'
+const PROD = 'production'
+const PREVIEW = 'preview:worker/x'
 
 /** The table's contract in memory: dedupeKey is unique, insert ignores. */
 function memoryStore(initial: DrovrOutboxRow[] = []) {
@@ -45,6 +48,23 @@ function memoryStore(initial: DrovrOutboxRow[] = []) {
 				.sort((a, b) => a.nextAttemptAt.localeCompare(b.nextAttemptAt))
 				.slice(0, limit)
 				.map((row) => ({ ...row }))
+		},
+		async openBirths({ target, contactIds }) {
+			return [...rows.values()]
+				.filter(
+					(row) =>
+						row.target === target &&
+						(row.status === 'pending' || row.status === 'held') &&
+						contactIds.includes(row.contactId) &&
+						(row.eventType === 'contact.created' || row.endpoint === 'signups'),
+				)
+				.map(({ contactId, journeyId, endpoint, status, nextAttemptAt }) => ({
+					contactId,
+					journeyId,
+					endpoint,
+					status,
+					nextAttemptAt,
+				}))
 		},
 		async update(id, patch) {
 			rows.set(id, { ...rows.get(id)!, ...patch })
@@ -143,30 +163,26 @@ function replay(
 }
 
 describe('drovr outbox target', () => {
-	it('is the drovr origin plus the Vercel environment', () => {
+	it('is the Vercel environment, whatever drovr URL the deployment posts to', () => {
+		expect(drovrOutboxTarget({ VERCEL_ENV: 'production' })).toBe(PROD)
+		// The stage proof moves the ingest URL to a stub origin and back: the
+		// target, and so the rows it can see, stay the same.
 		expect(
 			drovrOutboxTarget({
-				DROVR_SHADOW_INGEST_URL: 'https://drovr.example/events',
 				VERCEL_ENV: 'production',
-			}),
+				DROVR_SHADOW_INGEST_URL: 'https://stub.example/events',
+			} as never),
 		).toBe(PROD)
 	})
 
 	it('scopes a preview to its branch, so no preview replays another one', () => {
 		expect(
 			drovrOutboxTarget({
-				DROVR_SHADOW_INGEST_URL: 'https://drovr-stage.example/events',
 				VERCEL_ENV: 'preview',
 				VERCEL_GIT_COMMIT_REF: 'worker/x',
 			}),
 		).toBe(PREVIEW)
-	})
-
-	it('has no target without an ingest URL', () => {
-		expect(drovrOutboxTarget({ VERCEL_ENV: 'production' })).toBeUndefined()
-		expect(
-			drovrOutboxTarget({ DROVR_SHADOW_INGEST_URL: 'not a url' }),
-		).toBeUndefined()
+		expect(drovrOutboxTarget({})).toBe('development')
 	})
 
 	it('keys a row by target too: the same event on two targets is two rows', () => {
@@ -302,22 +318,80 @@ describe('captureDrovrOutbox', () => {
 		).toEqual({ status: 'unconfigured' })
 	})
 
-	it('throws any other store error, so the step retries the capture', async () => {
+	it('logs the keys first, retries a store error in place, then fails loudly with the keys', async () => {
+		const logger = log()
+		const insertIgnore = vi.fn(async () => {
+			throw new Error('Vitess: connection reset')
+		})
+		const sleep = vi.fn(async () => undefined)
 		await expect(
 			captureDrovrOutbox({
-				store: {
-					...memoryStore().store,
-					insertIgnore: async () => {
-						throw new Error('Vitess: connection reset')
-					},
-				},
+				store: { ...memoryStore().store, insertIgnore },
+				target: PROD,
+				entries: [outboxEntryForEvent(event('k'), 'bulk')],
+				reason: 'drovr answered 503',
+				now: NOW,
+				log: logger,
+				sleep,
+			}),
+		).rejects.toThrow('Vitess')
+		expect(insertIgnore).toHaveBeenCalledTimes(DROVR_OUTBOX_CAPTURE_TRIES)
+		expect(logger.warn).toHaveBeenCalledWith(
+			'drovr.outbox.capturing',
+			expect.objectContaining({ count: 1, idempotencyKeys: ['k'] }),
+		)
+		expect(logger.warn.mock.invocationCallOrder[0]).toBeLessThan(
+			insertIgnore.mock.invocationCallOrder[0]!,
+		)
+		expect(logger.error).toHaveBeenCalledWith(
+			'drovr.outbox.capture_failed',
+			expect.objectContaining({
+				tries: DROVR_OUTBOX_CAPTURE_TRIES,
+				idempotencyKeys: ['k'],
+			}),
+		)
+	})
+
+	it('keeps the rows when a retried store error clears', async () => {
+		const { store, rows } = memoryStore()
+		let failures = 1
+		const flaky: DrovrOutboxStore = {
+			...store,
+			insertIgnore: async (inserted) => {
+				if (failures-- > 0) throw new Error('Vitess: connection reset')
+				await store.insertIgnore(inserted)
+			},
+		}
+		expect(
+			await captureDrovrOutbox({
+				store: flaky,
 				target: PROD,
 				entries: [outboxEntryForEvent(event('k'), 'live')],
 				reason: 'x',
 				now: NOW,
 				log: log(),
+				sleep: async () => undefined,
 			}),
-		).rejects.toThrow('Vitess')
+		).toEqual({ status: 'outboxed', count: 1 })
+		expect(rows.size).toBe(1)
+	})
+
+	it('logs an empty capture with its count of 0', async () => {
+		const logger = log()
+		expect(
+			await captureDrovrOutbox({
+				store: memoryStore().store,
+				target: PROD,
+				entries: [],
+				reason: 'owner read failed',
+				now: NOW,
+				log: logger,
+			}),
+		).toEqual({ status: 'outboxed', count: 0 })
+		expect(logger.warn).toHaveBeenCalledWith(
+			'drovr.outbox.captured',
+			expect.objectContaining({ count: 0 }),
+		)
 	})
 
 	it('keeps a signup under its submission id', () => {
@@ -362,6 +436,7 @@ describe('runDrovrOutboxReplay', () => {
 			const { store, rows } = memoryStore([pending])
 			const { run } = replay(store, async () => ({
 				kind: 'failed',
+				transient: true,
 				httpStatus,
 				reason: `drovr answered ${httpStatus}`,
 				retryAfterMs: 10 * 60_000,
@@ -408,15 +483,14 @@ describe('runDrovrOutboxReplay', () => {
 		expect(rows.get(pending.id)?.status).toBe('delivered')
 	})
 
-	it('holds a row older than 24 hours for a human, unposted, and alerts', async () => {
+	it('holds a birth that has failed to land for 24 hours, unposted, and alerts', async () => {
 		const stale = row({
-			body: event('old', { occurredAt: minutesAgo(24 * 60 + 1) }),
+			body: event('old-birth', { type: 'contact.created' }),
+			firstFailedAt: minutesAgo(24 * 60 + 1),
 		})
-		stale.occurredAt = stale.body.occurredAt
 		const { store, rows } = memoryStore([stale])
 		const post = vi.fn()
-		const { run } = replay(store, post)
-		const receipt = await run
+		const receipt = await replay(store, post).run
 		expect(post).not.toHaveBeenCalled()
 		expect(receipt.held).toBe(1)
 		expect(receipt.alert).toContain('held')
@@ -424,23 +498,41 @@ describe('runDrovrOutboxReplay', () => {
 		expect(rows.get(stale.id)?.status).toBe('held')
 	})
 
-	it('replays a row of up to 24 hours automatically', async () => {
-		const young = row({
-			body: event('young', { occurredAt: minutesAgo(24 * 60 - 1) }),
+	it('holds by how long the birth has failed, not by when it happened', async () => {
+		// A directory birth replayed from an old Kit createdAt: first failed
+		// minutes ago, so it posts.
+		const backfill = row({
+			body: event('kit-birth', {
+				type: 'contact.created',
+				journeyId: 'contact-directory',
+				occurredAt: minutesAgo(400 * 24 * 60),
+			}),
+			firstFailedAt: minutesAgo(10),
 		})
-		young.occurredAt = young.body.occurredAt
-		const { store } = memoryStore([young])
+		const { store } = memoryStore([backfill])
 		const post = vi.fn(async () => ({ kind: 'delivered' as const }))
 		await replay(store, post).run
 		expect(post).toHaveBeenCalledOnce()
 	})
 
-	it('posts a released held row despite its age', async () => {
+	it('never holds a fact: a late stop or purchase is still right to deliver', async () => {
+		const stop = row({
+			body: event('late-stop', { type: 'contact.unsubscribed' }),
+			firstFailedAt: minutesAgo(3 * 24 * 60),
+		})
+		const { store, rows } = memoryStore([stop])
+		const post = vi.fn(async () => ({ kind: 'delivered' as const }))
+		await replay(store, post).run
+		expect(post).toHaveBeenCalledOnce()
+		expect(rows.get(stop.id)?.status).toBe('delivered')
+	})
+
+	it('posts a released held birth despite its age', async () => {
 		const released = row({
-			body: event('old', { occurredAt: minutesAgo(3 * 24 * 60) }),
+			body: event('old', { type: 'contact.created' }),
+			firstFailedAt: minutesAgo(3 * 24 * 60),
 			releasedAt: minutesAgo(5),
 		})
-		released.occurredAt = released.body.occurredAt
 		const { store } = memoryStore([released])
 		const post = vi.fn(async () => ({ kind: 'delivered' as const }))
 		await replay(store, post).run
@@ -466,6 +558,7 @@ describe('runDrovrOutboxReplay', () => {
 		const { store, rows } = memoryStore([fact, birth])
 		const post = vi.fn(async (_row: DrovrOutboxRow) => ({
 			kind: 'failed' as const,
+			transient: true,
 			httpStatus: 503,
 			reason: 'drovr answered 503',
 		}))
@@ -484,6 +577,7 @@ describe('runDrovrOutboxReplay', () => {
 		const { store } = memoryStore(pending)
 		const post = vi.fn(async () => ({
 			kind: 'failed' as const,
+			transient: true,
 			httpStatus: 503,
 			reason: 'down',
 		}))
@@ -570,5 +664,238 @@ describe('runDrovrOutboxReplay', () => {
 			expect.objectContaining({ pending: 0, held: 0, rejected: 0 }),
 		)
 		expect(logger.error).not.toHaveBeenCalled()
+	})
+})
+
+describe('row 204 round 2: births gate their contact, and only drovr being down trips the breaker', () => {
+	const failedTransient = {
+		kind: 'failed' as const,
+		transient: true,
+		httpStatus: 503,
+		reason: 'drovr answered 503',
+	}
+
+	it('never lets a fact overtake its birth, however many runs the birth keeps failing', async () => {
+		const at = minutesAgo(30)
+		const birth = row({
+			body: event('birth', { type: 'contact.created', occurredAt: at }),
+		})
+		const fact = row({ body: event('answer', { occurredAt: at }) })
+		const { store, rows } = memoryStore([birth, fact])
+		let clock = NOW.getTime()
+		let drovrUp = false
+		const posted: string[] = []
+		const post = vi.fn(async (r: DrovrOutboxRow) => {
+			posted.push(r.idempotencyKey)
+			return drovrUp ? { kind: 'delivered' as const } : failedTransient
+		})
+		// Six runs an hour apart: the birth's backoff grows past the fact's
+		// own nextAttemptAt, which is exactly when a fact used to post alone.
+		for (let run = 0; run < 6; run += 1) {
+			await replay(store, post, { now: () => new Date(clock) }).run
+			clock += 60 * 60_000
+		}
+		expect(posted.every((key) => key === 'birth')).toBe(true)
+		expect(rows.get(fact.id)?.attempts).toBe(0)
+		// Once the birth lands, the fact follows (at the birth's next attempt).
+		drovrUp = true
+		for (let run = 0; run < 3; run += 1) {
+			await replay(store, post, { now: () => new Date(clock) }).run
+			clock += 60 * 60_000
+		}
+		expect(rows.get(birth.id)?.status).toBe('delivered')
+		expect(rows.get(fact.id)?.status).toBe('delivered')
+		expect(posted.indexOf('answer')).toBeGreaterThan(
+			posted.lastIndexOf('birth'),
+		)
+	})
+
+	it("keeps a held birth's facts back and moves them an hour on", async () => {
+		const birth = row({
+			body: event('birth', { type: 'contact.created' }),
+			firstFailedAt: minutesAgo(25 * 60),
+		})
+		const fact = row({ body: event('answer') })
+		const { store, rows } = memoryStore([birth, fact])
+		const post = vi.fn(async () => ({ kind: 'delivered' as const }))
+		const receipt = await replay(store, post).run
+		expect(post).not.toHaveBeenCalled()
+		expect(receipt).toMatchObject({ held: 1, skippedBehindBirth: 1 })
+		expect(rows.get(fact.id)?.nextAttemptAt).toBe(
+			new Date(NOW.getTime() + DROVR_OUTBOX_HELD_BIRTH_WAIT_MS).toISOString(),
+		)
+		// Next run: the held birth is not due, and still gates the fact.
+		await replay(store, post, {
+			now: () => new Date(NOW.getTime() + DROVR_OUTBOX_HELD_BIRTH_WAIT_MS),
+		}).run
+		expect(post).not.toHaveBeenCalled()
+	})
+
+	it('gates only the birth journey, and a signup gates every row of its contact', async () => {
+		const birth = row({
+			body: event('evergreen-birth', {
+				type: 'contact.created',
+				journeyId: 'crash-course-evergreen-offer',
+			}),
+			nextAttemptAt: new Date(NOW.getTime() + 60_000).toISOString(),
+		})
+		const otherJourney = row({ body: event('skills-answer') })
+		const { store } = memoryStore([birth, otherJourney])
+		const post = vi.fn(async () => ({ kind: 'delivered' as const }))
+		await replay(store, post).run
+		expect(post).toHaveBeenCalledOnce()
+
+		const signupEntry = outboxEntryForSignup({
+			tenantId: 'org-aihero',
+			contactId: 'contact-1',
+			formId: 'form-1',
+			occurredAt: minutesAgo(30),
+			submissionId: 'submission-1',
+			source: { page: '/' },
+		})
+		const signup: DrovrOutboxRow = {
+			...row(),
+			...signupEntry,
+			dedupeKey: drovrOutboxDedupeKey(PROD, signupEntry),
+			nextAttemptAt: new Date(NOW.getTime() + 60_000).toISOString(),
+		}
+		const gated = memoryStore([signup, row({ body: event('skills-answer-2') })])
+		const post2 = vi.fn(async () => ({ kind: 'delivered' as const }))
+		const receipt = await replay(gated.store, post2).run
+		expect(post2).not.toHaveBeenCalled()
+		expect(receipt.skippedBehindBirth).toBe(1)
+	})
+
+	it('never counts a missing key, a 409 event-not-live or a 4xx toward the breaker', async () => {
+		const stuck = Array.from({ length: 5 }, (_, i) =>
+			row({ body: event(`no-key-${i}`, { contactId: `stuck-${i}` }) }),
+		)
+		for (const r of stuck) r.contactId = r.body.contactId
+		const good = row({
+			body: event('good', { contactId: 'fine', occurredAt: minutesAgo(1) }),
+		})
+		good.contactId = 'fine'
+		good.occurredAt = good.body.occurredAt
+		const { store, rows } = memoryStore([...stuck, good])
+		const post = vi.fn(async (r: DrovrOutboxRow) =>
+			r.contactId === 'fine'
+				? { kind: 'delivered' as const }
+				: {
+						kind: 'failed' as const,
+						transient: false,
+						reason: 'no drovr key for tenant org-aihero-shadow',
+					},
+		)
+		const receipt = await replay(store, post).run
+		expect(receipt.circuitOpen).toBe(false)
+		expect(rows.get(good.id)?.status).toBe('delivered')
+	})
+
+	it('resets the breaker on a rejection: drovr answered', async () => {
+		const outcomes: DrovrOutboxPostOutcome[] = [
+			failedTransient,
+			failedTransient,
+			{ kind: 'rejected', httpStatus: 422, detail: 'bad' },
+			failedTransient,
+			failedTransient,
+			{ kind: 'delivered' },
+		]
+		const pending = outcomes.map((_, i) =>
+			row({
+				body: event(`k${i}`, {
+					contactId: `c${i}`,
+					occurredAt: minutesAgo(60 - i),
+				}),
+			}),
+		)
+		for (const r of pending) {
+			r.contactId = r.body.contactId
+			r.occurredAt = r.body.occurredAt
+		}
+		const { store } = memoryStore(pending)
+		let call = 0
+		const post = vi.fn(async () => outcomes[call++]!)
+		const receipt = await replay(store, post).run
+		expect(post).toHaveBeenCalledTimes(6)
+		expect(receipt.circuitOpen).toBe(false)
+	})
+
+	it('logs a refused owner copy with its own key (S5)', async () => {
+		const pending = row()
+		const { store } = memoryStore([pending])
+		const { run, logger } = replay(store, async () => ({
+			kind: 'rejected',
+			httpStatus: 422,
+			detail: { type: 'invalid' },
+			idempotencyKey: `owner:${pending.idempotencyKey}`,
+		}))
+		expect((await run).rejected).toBe(1)
+		expect(logger.error).toHaveBeenCalledWith(
+			'drovr.outbox.rejected',
+			expect.objectContaining({
+				idempotencyKey: pending.idempotencyKey,
+				rejectedCopyKey: `owner:${pending.idempotencyKey}`,
+			}),
+		)
+	})
+
+	it('counts a settled row as settled, not delivered', async () => {
+		const { store, rows } = memoryStore([row()])
+		const receipt = await replay(store, async () => ({
+			kind: 'settled',
+			detail: 'nothing-deliverable',
+		})).run
+		expect(receipt).toMatchObject({ settled: 1, delivered: 0 })
+		expect([...rows.values()][0]?.status).toBe('delivered')
+	})
+})
+
+describe('row 204 round 2: shadow rows never poison the replay (MUST 2)', () => {
+	it("settles shadow rows with nothing owed and still posts the good row, with prod's keys", async () => {
+		const shadowStop = (i: number) => {
+			const body = event(`aihero:stop:${i}`, {
+				tenantId: 'org-aihero-shadow' as never,
+				contactId: `unowned-${i}`,
+				type: 'contact.unsubscribed',
+				occurredAt: minutesAgo(60 - i),
+			})
+			const entry = outboxEntryForEvent(body, 'fallback', { needsFanOut: true })
+			return row({
+				...entry,
+				body,
+				dedupeKey: drovrOutboxDedupeKey(PROD, entry),
+			})
+		}
+		const poison = [shadowStop(1), shadowStop(2), shadowStop(3)]
+		const good = row({
+			body: event('owner:answer', {
+				contactId: 'owned',
+				occurredAt: minutesAgo(10),
+			}),
+		})
+		good.contactId = 'owned'
+		good.occurredAt = good.body.occurredAt
+		const { store, rows } = memoryStore([...poison, good])
+		const deliver = vi.fn(async () => ({ status: 'accepted' as const }))
+		const receipt = await replay(store, (r) =>
+			postDrovrOutboxRow(r, {
+				ingestUrl: 'https://drovr.example/events',
+				apiKeyFor: (tenantId) =>
+					tenantId === 'org-aihero' ? 'authority-key' : undefined,
+				deliver,
+				// Nobody owns the three: the fan-out adds no owner copy.
+				fanOut: async (events) => [...events],
+				isNeverBornOwnerStop: () => false,
+			}),
+		).run
+		expect(receipt).toMatchObject({
+			settled: 3,
+			delivered: 1,
+			failed: 0,
+			circuitOpen: false,
+		})
+		expect(deliver).toHaveBeenCalledOnce()
+		expect(rows.get(good.id)?.status).toBe('delivered')
+		for (const r of poison) expect(rows.get(r.id)?.status).toBe('delivered')
 	})
 })

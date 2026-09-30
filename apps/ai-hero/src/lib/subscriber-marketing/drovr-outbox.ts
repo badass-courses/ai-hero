@@ -31,8 +31,17 @@ export const DROVR_RETRY_AFTER_STEP_CAP_MS = 10 * 60_000
 export const DROVR_RETRY_AFTER_REPLAY_CAP_MS = 15 * 60_000
 export const DROVR_OUTBOX_REPLAY_MAX_BACKOFF_MS = 60 * 60_000
 
-/** Older rows are held for a human instead of replayed (the hawk, 09-29). */
+/**
+ * A birth that has failed to land for longer than this is held for a human
+ * instead of replayed (the hawk, 09-29): a days-late birth would start a
+ * journey's emails days late. Facts (stops, purchases, answers) are never
+ * held: delivered late they are still right.
+ */
 export const DROVR_OUTBOX_AUTO_REPLAY_MAX_AGE_MS = 24 * 60 * 60_000
+/** How long a fact waits when its birth is held (a human decides). */
+export const DROVR_OUTBOX_HELD_BIRTH_WAIT_MS = 60 * 60_000
+/** Capture tries before the step gives up (the keys are logged first). */
+export const DROVR_OUTBOX_CAPTURE_TRIES = 3
 /** Delivered rows are deleted after this: the inline body holds contact data. */
 export const DROVR_OUTBOX_DELIVERED_RETENTION_MS = 7 * 24 * 60 * 60_000
 export const DROVR_OUTBOX_REPLAY_BATCH = 50
@@ -158,30 +167,22 @@ export function outboxEntryForSignup(
 }
 
 /**
- * Which deployment's rows these are: the drovr origin plus the Vercel
- * environment (and a preview's branch). Previews share this database, so a
- * replay only ever takes its own target's rows: a preview never posts prod
- * rows to stage, nor prod a preview's rows to prod.
+ * Which deployment's rows these are: the Vercel environment, and a
+ * preview's branch. Previews share this database, so a replay only ever
+ * takes its own target's rows: a preview never posts prod rows, nor prod a
+ * preview's. The drovr URL is deliberately not part of it: an ingest URL
+ * change (the stage proof's stub origin and back) must not orphan rows.
  */
 export function drovrOutboxTarget(env: {
-	DROVR_SHADOW_INGEST_URL?: string
 	VERCEL_ENV?: string
 	VERCEL_GIT_COMMIT_REF?: string
-}): string | undefined {
-	const ingestUrl = env.DROVR_SHADOW_INGEST_URL?.trim()
-	if (!ingestUrl) return undefined
-	let origin: string
-	try {
-		origin = new URL(ingestUrl).origin
-	} catch {
-		return undefined
-	}
+}): string {
 	const vercelEnv = env.VERCEL_ENV?.trim() || 'development'
 	const scope =
 		vercelEnv === 'preview' && env.VERCEL_GIT_COMMIT_REF?.trim()
 			? `preview:${env.VERCEL_GIT_COMMIT_REF.trim()}`
 			: vercelEnv
-	return `${origin}#${scope}`.slice(0, 255)
+	return scope.slice(0, 255)
 }
 
 /** One row per (target, endpoint, tenant, contact, journey, key). */
@@ -223,15 +224,26 @@ export type DrovrOutboxDepth = {
 	rejected: number
 }
 
+/** A birth row still owed (pending or held): later facts wait for it. */
+export type DrovrOutboxOpenBirth = Pick<
+	DrovrOutboxRow,
+	'contactId' | 'journeyId' | 'endpoint' | 'status' | 'nextAttemptAt'
+>
+
 export type DrovrOutboxStore = {
-	/** Insert, ignoring a row whose dedupeKey is already there. */
+	/** Insert; a row whose dedupeKey is already there is left as it is. */
 	insertIgnore(rows: readonly DrovrOutboxRow[]): Promise<void>
-	/** Pending rows of this target due by `now`, oldest occurredAt first. */
+	/** Pending rows of this target due by `now`, oldest nextAttemptAt first. */
 	due(args: {
 		target: string
 		now: string
 		limit: number
 	}): Promise<DrovrOutboxRow[]>
+	/** This target's pending or held births for these contacts. */
+	openBirths(args: {
+		target: string
+		contactIds: readonly string[]
+	}): Promise<DrovrOutboxOpenBirth[]>
 	update(
 		id: string,
 		patch: Partial<
@@ -276,15 +288,21 @@ const bounded = (text: string, max = 1000) =>
 const errorText = (error: unknown) =>
 	error instanceof Error ? error.message : String(error)
 
+const pause = (ms: number) =>
+	new Promise<void>((resolve) => setTimeout(resolve, ms))
+
 export type DrovrOutboxCapture =
 	| { status: 'outboxed'; count: number }
 	| { status: 'unavailable' }
 	| { status: 'unconfigured' }
 
 /**
- * Keep unsent drovr sends. `unavailable` (no table yet) and `unconfigured`
- * (no target) tell the caller to keep its previous behaviour; any other
- * store error throws, so a step retries the capture.
+ * Keep unsent drovr sends. The keys are logged before the write, so even a
+ * capture that fails for good leaves them in the logs; a store error is
+ * retried in place (DROVR_OUTBOX_CAPTURE_TRIES) and then thrown, so the
+ * step fails loudly. `unavailable` (no table yet) and `unconfigured` (no
+ * target) tell the caller to keep its previous behaviour. An empty capture
+ * is logged too, with its count of 0.
  */
 export async function captureDrovrOutbox(args: {
 	store: DrovrOutboxStore
@@ -294,19 +312,29 @@ export async function captureDrovrOutbox(args: {
 	httpStatus?: number
 	now: Date
 	log: OutboxLog
+	sleep?: (ms: number) => Promise<void>
 }): Promise<DrovrOutboxCapture> {
-	if (args.entries.length === 0) return { status: 'outboxed', count: 0 }
 	const keys = args.entries.map((entry) => entry.idempotencyKey)
+	const reason = bounded(errorText(args.reason))
+	const summary = {
+		count: args.entries.length,
+		source: args.entries[0]?.source,
+		endpoint: args.entries[0]?.endpoint,
+		needsFanOut: args.entries.filter((entry) => entry.needsFanOut).length,
+		httpStatus: args.httpStatus,
+		reason,
+		idempotencyKeys: keys,
+	}
+	if (args.entries.length === 0) {
+		await logSafely(args.log.warn, 'drovr.outbox.captured', summary)
+		return { status: 'outboxed', count: 0 }
+	}
 	if (!args.target) {
-		await logSafely(args.log.error, 'drovr.outbox.unconfigured', {
-			count: args.entries.length,
-			idempotencyKeys: keys,
-		})
+		await logSafely(args.log.error, 'drovr.outbox.unconfigured', summary)
 		return { status: 'unconfigured' }
 	}
 	const target = args.target
 	const now = args.now.toISOString()
-	const lastError = bounded(errorText(args.reason))
 	const rows: DrovrOutboxRow[] = args.entries.map((entry) => ({
 		...entry,
 		id: randomUUID(),
@@ -315,7 +343,7 @@ export async function captureDrovrOutbox(args: {
 		status: 'pending',
 		attempts: 0,
 		lastStatus: args.httpStatus ?? null,
-		lastError,
+		lastError: reason,
 		firstFailedAt: now,
 		nextAttemptAt: now,
 		lastAttemptAt: null,
@@ -323,36 +351,50 @@ export async function captureDrovrOutbox(args: {
 		releasedAt: null,
 		createdAt: now,
 	}))
-	try {
-		await args.store.insertIgnore(rows)
-	} catch (error) {
-		if (!(error instanceof DrovrOutboxUnavailableError)) throw error
-		await logSafely(args.log.error, 'drovr.outbox.unavailable', {
-			count: rows.length,
-			source: rows[0]?.source,
-			error: error.message,
-			idempotencyKeys: keys,
-		})
-		return { status: 'unavailable' }
+	await logSafely(args.log.warn, 'drovr.outbox.capturing', summary)
+	const sleep = args.sleep ?? pause
+	for (let attempt = 1; ; attempt += 1) {
+		try {
+			await args.store.insertIgnore(rows)
+			break
+		} catch (error) {
+			if (error instanceof DrovrOutboxUnavailableError) {
+				await logSafely(args.log.error, 'drovr.outbox.unavailable', {
+					...summary,
+					error: error.message,
+				})
+				return { status: 'unavailable' }
+			}
+			if (attempt >= DROVR_OUTBOX_CAPTURE_TRIES) {
+				await logSafely(args.log.error, 'drovr.outbox.capture_failed', {
+					...summary,
+					tries: attempt,
+					error: errorText(error),
+				})
+				throw error
+			}
+			await sleep(250 * attempt)
+		}
 	}
-	await logSafely(args.log.warn, 'drovr.outbox.captured', {
-		count: rows.length,
-		source: rows[0]?.source,
-		endpoint: rows[0]?.endpoint,
-		httpStatus: args.httpStatus,
-		reason: lastError,
-		idempotencyKeys: keys,
-	})
+	await logSafely(args.log.warn, 'drovr.outbox.captured', summary)
 	return { status: 'outboxed', count: rows.length }
 }
 
 export type DrovrOutboxPostOutcome =
 	| { kind: 'delivered'; httpStatus?: number }
-	| { kind: 'rejected'; httpStatus: number; detail: unknown }
-	/** Final and expected: drovr answered, nothing to retry or alert on. */
-	| { kind: 'settled'; httpStatus: number; detail: string }
+	/** A 4xx for the row or one of its owner copies: final, alerted. */
+	| {
+			kind: 'rejected'
+			httpStatus: number
+			detail: unknown
+			idempotencyKey?: string
+	  }
+	/** Final and expected: nothing owed, nothing to retry or alert on. */
+	| { kind: 'settled'; detail: string; httpStatus?: number }
 	| {
 			kind: 'failed'
+			/** A 5xx, a timeout or no answer: the only failures the breaker counts. */
+			transient: boolean
 			httpStatus?: number
 			reason: string
 			retryAfterMs?: number
@@ -362,6 +404,7 @@ export type DrovrOutboxReplayReceipt = {
 	status: 'replayed'
 	due: number
 	delivered: number
+	settled: number
 	rejected: number
 	failed: number
 	held: number
@@ -373,8 +416,21 @@ export type DrovrOutboxReplayReceipt = {
 	alert: string[]
 }
 
-const isBirth = (row: DrovrOutboxRow) =>
-	row.endpoint === 'signups' || row.eventType === 'contact.created'
+/** A birth: a contact.created event, or a signup (its directory birth). */
+export const isOutboxBirth = (
+	row: Pick<DrovrOutboxRow, 'endpoint' | 'eventType'>,
+) => row.endpoint === 'signups' || row.eventType === 'contact.created'
+
+/**
+ * What a birth row gates: facts on its journey, or, for a signup, every
+ * row of the contact.
+ */
+const birthGateKey = (
+	birth: Pick<DrovrOutboxRow, 'contactId' | 'journeyId' | 'endpoint'>,
+) =>
+	birth.endpoint === 'signups'
+		? `${birth.contactId}|*`
+		: `${birth.contactId}|${birth.journeyId}`
 
 /**
  * Order a run: oldest first, and a contact's birth before its later facts
@@ -384,17 +440,25 @@ export function replayOrder(rows: readonly DrovrOutboxRow[]): DrovrOutboxRow[] {
 	return [...rows].sort(
 		(a, b) =>
 			a.occurredAt.localeCompare(b.occurredAt) ||
-			Number(isBirth(b)) - Number(isBirth(a)) ||
+			Number(isOutboxBirth(b)) - Number(isOutboxBirth(a)) ||
 			a.id.localeCompare(b.id),
 	)
 }
 
 /**
- * One replay run over this target's due rows. A row older than 24 hours
- * (by its occurredAt) that nobody released is held for a human instead of
- * posted. Once one of a contact's rows fails, the contact's later rows wait
- * for the next run, so no fact overtakes its birth. Three consecutive
- * failures open the circuit: drovr is down and the run stops asking.
+ * One replay run over this target's due rows.
+ *
+ * - A birth that has failed to land for over 24 hours (firstFailedAt) and
+ *   that nobody released is held for a human instead of posted.
+ * - A birth gates its contact: no fact on its journey (every row, for a
+ *   signup) posts while the birth is pending or held, in this run or any
+ *   later one, so a fact never overtakes its birth into drovr's 409
+ *   contact-never-born. A gated fact is moved to its birth's next attempt.
+ * - Once one of a contact's rows fails, its later rows wait for the next
+ *   run.
+ * - Three consecutive transient failures (5xx, timeout, no answer) open the
+ *   circuit: drovr is down and the run stops asking. A missing key, a 409
+ *   event-not-live or a 4xx is not drovr being down and never counts.
  */
 export async function runDrovrOutboxReplay(args: {
 	store: DrovrOutboxStore
@@ -417,6 +481,7 @@ export async function runDrovrOutboxReplay(args: {
 		status: 'replayed',
 		due: due.length,
 		delivered: 0,
+		settled: 0,
 		rejected: 0,
 		failed: 0,
 		held: 0,
@@ -427,6 +492,22 @@ export async function runDrovrOutboxReplay(args: {
 		depth: { pending: 0, oldestPendingFailedAt: null, held: 0, rejected: 0 },
 		alert: [],
 	}
+	// Every birth still owed for these contacts, due now or not.
+	const openBirths = new Map<string, DrovrOutboxOpenBirth>()
+	const births =
+		due.length === 0
+			? []
+			: await args.store.openBirths({
+					target: args.target,
+					contactIds: [...new Set(due.map((row) => row.contactId))],
+				})
+	for (const birth of births) openBirths.set(birthGateKey(birth), birth)
+	const gateOf = (row: DrovrOutboxRow) =>
+		isOutboxBirth(row)
+			? undefined
+			: (openBirths.get(birthGateKey(row)) ??
+				openBirths.get(`${row.contactId}|*`))
+
 	const blockedContacts = new Set<string>()
 	let consecutiveFailures = 0
 	for (const row of due) {
@@ -447,17 +528,32 @@ export async function runDrovrOutboxReplay(args: {
 			source: row.source,
 		}
 		if (
+			isOutboxBirth(row) &&
 			!row.releasedAt &&
-			now.getTime() - Date.parse(row.occurredAt) >
+			now.getTime() - Date.parse(row.firstFailedAt) >
 				DROVR_OUTBOX_AUTO_REPLAY_MAX_AGE_MS
 		) {
 			await args.store.update(row.id, { status: 'held' })
+			openBirths.set(birthGateKey(row), { ...row, status: 'held' })
 			receipt.held += 1
 			blockedContacts.add(row.contactId)
 			await logSafely(args.log.warn, 'drovr.outbox.held', {
 				...fields,
-				occurredAt: row.occurredAt,
+				firstFailedAt: row.firstFailedAt,
 			})
+			continue
+		}
+		const gate = gateOf(row)
+		if (gate) {
+			receipt.skippedBehindBirth += 1
+			const after =
+				gate.status === 'held'
+					? new Date(
+							now.getTime() + DROVR_OUTBOX_HELD_BIRTH_WAIT_MS,
+						).toISOString()
+					: gate.nextAttemptAt
+			if (after > row.nextAttemptAt)
+				await args.store.update(row.id, { nextAttemptAt: after })
 			continue
 		}
 		if (blockedContacts.has(row.contactId)) {
@@ -468,13 +564,14 @@ export async function runDrovrOutboxReplay(args: {
 		try {
 			outcome = await args.post(row)
 		} catch (error) {
-			outcome = { kind: 'failed', reason: errorText(error) }
+			outcome = { kind: 'failed', transient: true, reason: errorText(error) }
 		}
 		const attempts = row.attempts + 1
 		const at = args.now().toISOString()
 		if (outcome.kind === 'delivered' || outcome.kind === 'settled') {
 			consecutiveFailures = 0
-			receipt.delivered += 1
+			receipt[outcome.kind] += 1
+			if (isOutboxBirth(row)) openBirths.delete(birthGateKey(row))
 			await args.store.update(row.id, {
 				status: 'delivered',
 				attempts,
@@ -505,24 +602,32 @@ export async function runDrovrOutboxReplay(args: {
 				...fields,
 				httpStatus: outcome.httpStatus,
 				detail: outcome.detail,
+				...(outcome.idempotencyKey &&
+				outcome.idempotencyKey !== row.idempotencyKey
+					? { rejectedCopyKey: outcome.idempotencyKey }
+					: {}),
 			})
 			continue
 		}
-		consecutiveFailures += 1
+		if (outcome.transient) consecutiveFailures += 1
 		receipt.failed += 1
 		blockedContacts.add(row.contactId)
+		const nextAttemptAt = new Date(
+			Date.parse(at) + drovrReplayDelayMs(attempts, outcome.retryAfterMs),
+		).toISOString()
+		if (isOutboxBirth(row) && openBirths.has(birthGateKey(row)))
+			openBirths.set(birthGateKey(row), { ...row, nextAttemptAt })
 		await args.store.update(row.id, {
 			attempts,
 			lastStatus: outcome.httpStatus ?? null,
 			lastError: bounded(outcome.reason),
 			lastAttemptAt: at,
-			nextAttemptAt: new Date(
-				Date.parse(at) + drovrReplayDelayMs(attempts, outcome.retryAfterMs),
-			).toISOString(),
+			nextAttemptAt,
 		})
 		await logSafely(args.log.warn, 'drovr.outbox.retry_later', {
 			...fields,
 			attempts,
+			transient: outcome.transient,
 			httpStatus: outcome.httpStatus,
 			reason: outcome.reason,
 		})
@@ -553,9 +658,11 @@ export async function runDrovrOutboxReplay(args: {
 		held: receipt.depth.held,
 		rejected: receipt.depth.rejected,
 		ranDelivered: receipt.delivered,
+		ranSettled: receipt.settled,
 		ranFailed: receipt.failed,
 		ranHeld: receipt.held,
 		ranRejected: receipt.rejected,
+		ranSkippedBehindBirth: receipt.skippedBehindBirth,
 		circuitOpen: receipt.circuitOpen,
 		purged: receipt.purged,
 	}

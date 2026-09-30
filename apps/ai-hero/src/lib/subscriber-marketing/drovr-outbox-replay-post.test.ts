@@ -50,16 +50,22 @@ const asRow = (
 	createdAt: '2026-09-30T11:00:00.000Z',
 })
 
+// As on prod: only the authority tenant has a key. The retired shadow
+// tenant has none, which a blanket stub used to hide.
 const ports = (
 	overrides: Partial<DrovrOutboxPostPorts> = {},
 ): DrovrOutboxPostPorts => ({
 	ingestUrl: 'https://drovr.example/events',
-	apiKeyFor: (tenantId) => `key:${tenantId}`,
+	apiKeyFor: (tenantId) =>
+		tenantId === 'org-aihero' ? 'authority-key' : undefined,
 	deliver: vi.fn(async () => ({ status: 'accepted' as const })),
 	fanOut: vi.fn(async (events) => [...events, authorityCopy]),
 	isNeverBornOwnerStop: () => false,
 	...overrides,
 })
+
+const shadowRow = () =>
+	asRow(outboxEntryForEvent(unsubscribe, 'onFailure', { needsFanOut: true }))
 
 describe('postDrovrOutboxRow', () => {
 	it('re-posts the exact body under its key, with a 10 second deadline', async () => {
@@ -73,15 +79,38 @@ describe('postDrovrOutboxRow', () => {
 			event: authorityCopy,
 			config: {
 				ingestUrl: 'https://drovr.example/events',
-				apiKey: 'key:org-aihero',
+				apiKey: 'authority-key',
 			},
 			timeoutMs: DROVR_OUTBOX_POST_TIMEOUT_MS,
 		})
 		expect(p.fanOut).not.toHaveBeenCalled()
 	})
 
+	it("fans a shadow row out and posts only its owner copy, with prod's keys", async () => {
+		const p = ports()
+		expect(await postDrovrOutboxRow(shadowRow(), p)).toEqual({
+			kind: 'delivered',
+			httpStatus: 200,
+		})
+		expect(p.fanOut).toHaveBeenCalledWith([unsubscribe])
+		expect(
+			vi
+				.mocked(p.deliver)
+				.mock.calls.map(([args]) => args.event.idempotencyKey),
+		).toEqual(['owner:aihero:stop:1'])
+	})
+
+	it('settles a shadow row with no owner copy owed: nothing deliverable, nothing posted', async () => {
+		const p = ports({ fanOut: vi.fn(async (events) => [...events]) })
+		expect(await postDrovrOutboxRow(shadowRow(), p)).toEqual({
+			kind: 'settled',
+			detail: 'nothing-deliverable',
+		})
+		expect(p.deliver).not.toHaveBeenCalled()
+	})
+
 	it.each([500, 503])(
-		'answers failed with drovr status and Retry-After on a %i',
+		'answers a transient failure with drovr status and Retry-After on a %i',
 		async (httpStatus) => {
 			const outcome = await postDrovrOutboxRow(
 				asRow(outboxEntryForEvent(authorityCopy, 'live')),
@@ -96,12 +125,46 @@ describe('postDrovrOutboxRow', () => {
 			)
 			expect(outcome).toEqual({
 				kind: 'failed',
+				transient: true,
 				httpStatus,
 				reason: `drovr answered ${httpStatus}`,
 				retryAfterMs: 30_000,
 			})
 		},
 	)
+
+	it('answers a timeout or no answer as transient', async () => {
+		expect(
+			await postDrovrOutboxRow(
+				asRow(outboxEntryForEvent(authorityCopy, 'live')),
+				ports({
+					deliver: async () => ({ status: 'failed', reason: 'aborted' }),
+				}),
+			),
+		).toEqual({ kind: 'failed', transient: true, reason: 'aborted' })
+	})
+
+	it('answers a 409 event-not-live and a missing key as not transient', async () => {
+		expect(
+			await postDrovrOutboxRow(
+				asRow(outboxEntryForEvent(authorityCopy, 'live')),
+				ports({
+					deliver: async () => ({
+						status: 'failed',
+						httpStatus: 409,
+						reason:
+							'drovr does not take this event type yet (409 event-not-live)',
+					}),
+				}),
+			),
+		).toMatchObject({ kind: 'failed', transient: false, httpStatus: 409 })
+		expect(
+			await postDrovrOutboxRow(
+				asRow(outboxEntryForEvent(authorityCopy, 'live')),
+				ports({ apiKeyFor: () => undefined }),
+			),
+		).toMatchObject({ kind: 'failed', transient: false })
+	})
 
 	it('answers rejected on a 4xx for the row itself', async () => {
 		expect(
@@ -119,13 +182,34 @@ describe('postDrovrOutboxRow', () => {
 			kind: 'rejected',
 			httpStatus: 422,
 			detail: { type: 'invalid' },
+			idempotencyKey: authorityCopy.idempotencyKey,
 		})
 	})
 
-	it('settles a stop for a contact never born on that journey', async () => {
+	it('answers rejected, naming the copy, when drovr refuses an owner copy', async () => {
 		expect(
 			await postDrovrOutboxRow(
-				asRow(outboxEntryForEvent(authorityCopy, 'live')),
+				shadowRow(),
+				ports({
+					deliver: async () => ({
+						status: 'rejected',
+						httpStatus: 422,
+						problem: { type: 'invalid' },
+					}),
+				}),
+			),
+		).toEqual({
+			kind: 'rejected',
+			httpStatus: 422,
+			detail: { type: 'invalid' },
+			idempotencyKey: 'owner:aihero:stop:1',
+		})
+	})
+
+	it('settles an owner stop for a contact never born there, on a fanned row too', async () => {
+		expect(
+			await postDrovrOutboxRow(
+				shadowRow(),
 				ports({
 					deliver: async () => ({
 						status: 'rejected',
@@ -142,29 +226,35 @@ describe('postDrovrOutboxRow', () => {
 		})
 	})
 
-	it('fans an unfanned row out and posts every copy', async () => {
-		const p = ports()
-		await postDrovrOutboxRow(
-			asRow(
-				outboxEntryForEvent(unsubscribe, 'onFailure', { needsFanOut: true }),
-			),
-			p,
-		)
-		expect(p.fanOut).toHaveBeenCalledWith([unsubscribe])
-		expect(
-			vi
-				.mocked(p.deliver)
-				.mock.calls.map(([args]) => args.event.idempotencyKey),
-		).toEqual(['aihero:stop:1', 'owner:aihero:stop:1'])
-	})
-
-	it('answers failed without a key for the tenant', async () => {
+	it('is delivered when one copy lands and another is a never-born stop', async () => {
+		const second = {
+			...authorityCopy,
+			journeyId: 'crash-course-evergreen-offer' as const,
+			idempotencyKey: 'owner:aihero:stop:1:evergreen',
+		}
+		let call = 0
 		expect(
 			await postDrovrOutboxRow(
-				asRow(outboxEntryForEvent(authorityCopy, 'live')),
-				ports({ apiKeyFor: () => undefined }),
+				shadowRow(),
+				ports({
+					fanOut: vi.fn(async (events) => [
+						...events,
+						authorityCopy,
+						second as never,
+					]),
+					deliver: async () =>
+						call++ === 0
+							? { status: 'accepted' as const }
+							: {
+									status: 'rejected' as const,
+									httpStatus: 409,
+									problem: { type: 'contact-never-born' },
+								},
+					isNeverBornOwnerStop: (event) =>
+						event.idempotencyKey === second.idempotencyKey,
+				}),
 			),
-		).toMatchObject({ kind: 'failed' })
+		).toEqual({ kind: 'delivered', httpStatus: 200 })
 	})
 
 	describe('signups', () => {
@@ -201,6 +291,7 @@ describe('postDrovrOutboxRow', () => {
 				await postDrovrOutboxRow(row, ports({ signup: { post } })),
 			).toEqual({
 				kind: 'failed',
+				transient: true,
 				reason: `drovr signup not recorded yet: HTTP ${httpStatus}`,
 				httpStatus,
 				retryAfterMs: 20_000,
