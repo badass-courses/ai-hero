@@ -1220,6 +1220,49 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 		expect(mocks.settle).not.toHaveBeenCalled()
 	})
 
+	it('records a stop drovr refused on a retry as refused, not delivered (round 3 nit)', async () => {
+		mocks.deliverOrThrow.mockResolvedValue({ status: 'rejected' })
+		await run([stopEvent('owner:purchase', 'purchase.recorded', 10)], {
+			attempt: 3,
+			maxAttempts: 9,
+		})
+		expect(mocks.settle).toHaveBeenCalledWith(
+			[expect.objectContaining({ idempotencyKey: 'owner:purchase' })],
+			'refused by drovr on an Inngest retry: final, counted rejected',
+		)
+	})
+
+	it("records a bulk chunk's stops by what its retry's answer says", async () => {
+		const bulk = (attempt: number) =>
+			registeredBulk.handler({
+				events: [
+					{
+						data: {
+							source: 'kit-directory-ingest',
+							events: [
+								stopEvent('owner:unsubscribe', 'contact.unsubscribed', 10),
+							],
+						},
+					},
+				],
+				step: createStep(),
+				attempt,
+				maxAttempts: 9,
+			})
+		mocks.deliverBatchOrThrow.mockResolvedValue({ accepted: 1, rejected: 0 })
+		await bulk(2)
+		expect(mocks.settle).toHaveBeenLastCalledWith(
+			[expect.objectContaining({ idempotencyKey: 'owner:unsubscribe' })],
+			'delivered by an Inngest retry',
+		)
+		mocks.deliverBatchOrThrow.mockResolvedValue({ accepted: 0, rejected: 1 })
+		await bulk(2)
+		expect(mocks.settle).toHaveBeenLastCalledWith(
+			[expect.objectContaining({ idempotencyKey: 'owner:unsubscribe' })],
+			'settled by an Inngest retry: its chunk was answered, and drovr refused 1 item(s), final and counted rejected',
+		)
+	})
+
 	it("captures only a bulk chunk's stops on its first failure", async () => {
 		mocks.deliverBatchOrThrow.mockRejectedValue(drovrFailure(503))
 		await expect(
@@ -1288,6 +1331,71 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 		expect(
 			(step.run as ReturnType<typeof vi.fn>).mock.calls.map(([id]) => id),
 		).toContain('by-time:batch:org-aihero:0')
+	})
+
+	it("posts a birth ahead of its own contact's earlier stop, as the replay does: [birth 12:20, purchase 12:10] → birth first, nothing refused (Sonnet S6, round 3)", async () => {
+		const born = new Set<string>()
+		mocks.deliverOrThrow.mockImplementation(
+			async ({
+				event: e,
+			}: {
+				event: { type: string; contactId: string; journeyId: string }
+			}) => {
+				const key = `${e.contactId}|${e.journeyId}`
+				if (e.type === 'contact.created') born.add(key)
+				else if (!born.has(key)) return { status: 'rejected' }
+				return { status: 'accepted' }
+			},
+		)
+		const birth = {
+			...event(
+				'org-aihero',
+				'owner:birth',
+				'crash-course-evergreen-offer',
+				'contact.created',
+			),
+			occurredAt: at(20),
+		}
+		const receipt = await run([
+			birth,
+			stopEvent('owner:purchase', 'purchase.recorded', 10),
+		])
+		expect(
+			mocks.deliverOrThrow.mock.calls.map(
+				([args]) =>
+					(args as { event: { idempotencyKey: string } }).event.idempotencyKey,
+			),
+		).toEqual(['owner:birth', 'owner:purchase'])
+		expect(receipt).toMatchObject({ accepted: 2, rejected: 0 })
+	})
+
+	it('moves a birth up only for its own contact and journey', async () => {
+		const birth = {
+			...event(
+				'org-aihero',
+				'owner:birth',
+				'crash-course-evergreen-offer',
+				'contact.created',
+			),
+			occurredAt: at(20),
+		}
+		await run([
+			birth,
+			{
+				...fact('owner:other-contact', 10, 'contact-2'),
+				journeyId: 'crash-course-evergreen-offer',
+			},
+			{
+				...fact('owner:other-journey', 15),
+				journeyId: 'value-path-skills-course',
+			},
+		])
+		expect(
+			mocks.deliverOrThrow.mock.calls.map(
+				([args]) =>
+					(args as { event: { idempotencyKey: string } }).event.idempotencyKey,
+			),
+		).toEqual(['owner:other-contact', 'owner:other-journey', 'owner:birth'])
 	})
 
 	it('holds a later fact in a later chunk behind a stop an earlier chunk outboxed', async () => {

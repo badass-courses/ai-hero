@@ -10,13 +10,15 @@
   - `oldest`: a row waiting for more than 60 minutes;
   - `held` / `rejected`: a birth newly held, or a 4xx on replay;
   - `stop`: a stop (unsubscribe, bounce, complaint, purchase) still owed after 10 minutes, pending or rejected. A stop a human set to `held` gates its facts but does not page.
+    - A stop is captured on its first live failure, so this also fires while Inngest is still retrying it: drovr has refused it for 10 minutes. If a retry then lands, the row is settled and the alert clears on the next run with nothing to do.
 
 ## The gates
 
 - **A birth** (`contact.created`, or a signup) that is pending or held holds that contact's rows on its journey; a signup holds every row of the contact.
 - **A stop** that is pending, held or **rejected** holds every row of its contact that happened at or after it, on any journey. A refused stop fails closed: its facts wait an hour at a time until a human acts.
 - **A birth never waits behind a stop that is itself waiting for a birth.** drovr takes no stop for a contact it never saw born, so the birth goes first and the stop right after it, in the same run. That is what keeps the two gates from deadlocking.
-- **A stop is captured on its first live failure**, not after Inngest's retries. Its row is pending with a `nextAttemptAt` about 79 minutes out (the rest of the retry ladder). The replay leaves it alone until then, but it gates at once. A retry that lands marks it delivered (`drovr.outbox.settled_by_retry`).
+- **A stop is captured on its first live failure**, not after Inngest's retries. Its row is pending with a `nextAttemptAt` about 79 minutes out (the rest of the retry ladder). The replay leaves it alone until then, but it gates at once. A retry that lands marks it delivered (`drovr.outbox.settled_by_retry`), and makes its contact's held facts due again, so they post on the next run instead of at the window's end. The contact's other stops keep their windows.
+  - The window counts this attempt's Retry-After and the backoff table after it. If drovr sends long Retry-After hints on later attempts too, Inngest's retries can run past the window by up to the sum of those hints. The replay may then post the stop while a retry does too, and drovr dedupes the second post by its idempotency key.
 - **Live delivery reads this table once per batch** (the stop gate, on `DrovrOutbox_contact_idx`). A failed read retries; on the last attempt the whole batch goes to the outbox, never posted unchecked. If the database is down past the retry ladder, the capture fails too: the events are then only in the logs (`drovr.outbox.capture_failed`, with their keys).
 
 ## What a row is holding back (read-only)
@@ -58,4 +60,4 @@ A purchase drovr keeps refusing is a drovr bug: fix it there, then release the r
 ## Limits
 
 - Holding later facts stops new email that an overtaking fact would start. It can't stop timers drovr already scheduled; only delivering the stop does. Hence the `stop` alert.
-- If Inngest runs a stop's retries later than its table, the replay may post the stop while a retry does too. drovr dedupes the second post by its idempotency key.
+- If Inngest runs a stop's retries later than its window (its own queueing, or later Retry-After hints), the replay may post the stop while a retry does too. drovr dedupes the second post by its idempotency key.

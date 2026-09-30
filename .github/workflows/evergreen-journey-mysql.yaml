@@ -147,3 +147,4 @@ jobs:
           src/lib/subscriber-marketing/contact-sync-backfill.mysql.test.ts
           src/lib/subscriber-marketing/owner-birth-guard.mysql.test.ts
           src/lib/subscriber-marketing/drovr-outbox-drizzle.mysql.test.ts
+          src/lib/subscriber-marketing/drovr-outbox-live.mysql.test.ts

@@ -1,5 +1,17 @@
 import { drovrOutbox } from '@/db/drovr-outbox-schema'
-import { and, asc, count, eq, inArray, lte, min, or, sql } from 'drizzle-orm'
+import {
+	and,
+	asc,
+	count,
+	eq,
+	gt,
+	inArray,
+	lte,
+	min,
+	notInArray,
+	or,
+	sql,
+} from 'drizzle-orm'
 
 import {
 	DrovrOutboxUnavailableError,
@@ -305,6 +317,26 @@ export function createDrizzleDrovrOutboxStore(
 							inArray(drovrOutbox.dedupeKey, [...dedupeKeys]),
 							eq(drovrOutbox.target, target),
 							eq(drovrOutbox.status, 'pending'),
+						),
+					)
+				return affectedRows(result)
+			}),
+		// Rides DrovrOutbox_contact_idx (target, contactId, status).
+		pullForward: ({ target, contactIds, now }) =>
+			guarded(async () => {
+				if (contactIds.length === 0) return 0
+				const result = await db
+					.update(drovrOutbox)
+					.set({ nextAttemptAt: toSqlTimestamp(now) })
+					.where(
+						and(
+							eq(drovrOutbox.target, target),
+							inArray(drovrOutbox.contactId, [...contactIds]),
+							eq(drovrOutbox.status, 'pending'),
+							gt(drovrOutbox.nextAttemptAt, toSqlTimestamp(now)),
+							notInArray(drovrOutbox.eventType, [
+								...DROVR_OUTBOX_STOP_EVENT_TYPES,
+							]),
 						),
 					)
 				return affectedRows(result)

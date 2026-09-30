@@ -318,6 +318,17 @@ export type DrovrOutboxStore = {
 		at: string
 		note: string | null
 	}): Promise<number>
+	/**
+	 * Make these contacts' pending rows due now if they wait for later:
+	 * what the replay moved behind a stop that has since landed. Stops keep
+	 * their time (one may still be inside Inngest's retries). Returns how
+	 * many moved.
+	 */
+	pullForward(args: {
+		target: string
+		contactIds: readonly string[]
+		now: string
+	}): Promise<number>
 }
 
 type OutboxLog = {
@@ -444,8 +455,10 @@ export async function captureDrovrOutbox(args: {
 /**
  * A stop captured on its first failure, then delivered by a later Inngest
  * retry: its row is marked delivered, so the gate opens and the replay never
- * posts it. A failure here is logged, not thrown: the send did land, and a
- * row left pending is only re-posted later, which drovr dedupes by key.
+ * posts it. The facts the replay moved behind it (to the end of the retry
+ * window) are made due now, so they follow on the next run instead of up to
+ * 79 minutes later. A failure here is logged, not thrown: the send did land,
+ * and a row left pending is only re-posted later, which drovr dedupes by key.
  */
 export async function settleDrovrOutbox(args: {
 	store: DrovrOutboxStore
@@ -466,11 +479,17 @@ export async function settleDrovrOutbox(args: {
 			at: args.now.toISOString(),
 			note: args.note,
 		})
-		if (settled > 0)
-			await logSafely(args.log.info, 'drovr.outbox.settled_by_retry', {
-				count: settled,
-				idempotencyKeys: args.entries.map((entry) => entry.idempotencyKey),
-			})
+		if (settled === 0) return 0
+		const released = await args.store.pullForward({
+			target,
+			contactIds: [...new Set(args.entries.map((entry) => entry.contactId))],
+			now: args.now.toISOString(),
+		})
+		await logSafely(args.log.info, 'drovr.outbox.settled_by_retry', {
+			count: settled,
+			released,
+			idempotencyKeys: args.entries.map((entry) => entry.idempotencyKey),
+		})
 		return settled
 	} catch (error) {
 		if (!(error instanceof DrovrOutboxUnavailableError))
@@ -591,22 +610,22 @@ const birthGates = (
 	(birth.endpoint === 'signups' || birth.journeyId === row.journeyId)
 
 /**
- * Order a run: oldest first. On a shared instant a birth that gates a stop
- * goes first, then stops, then other births, then facts, so a fact tied
- * with its stop or birth posts after it in the same run. A birth that gates
- * a due stop moves up to just ahead of that stop (row 204b): the stop can't
- * post before its birth, and the birth must not wait behind it.
+ * Order a run: oldest first. A birth moves up to just ahead of the earliest
+ * due row it gates, a fact or a stop (row 204b): nothing it gates can post
+ * before it, and it must not wait behind a stop that waits for it. On a
+ * shared instant such a birth goes first, then stops, then other births,
+ * then facts, so a fact tied with its stop or birth posts after it in the
+ * same run. The live batch keeps the same order (`inDeliveryOrder`).
  */
 export function replayOrder(rows: readonly DrovrOutboxRow[]): DrovrOutboxRow[] {
-	const stops = rows.filter(isOutboxStop)
 	const placed = new Map<string, { at: string; rank: number }>()
 	for (const row of rows) {
 		let at = row.occurredAt
 		let rank = isOutboxBirth(row) ? 2 : isOutboxStop(row) ? 1 : 3
 		if (isOutboxBirth(row))
-			for (const stop of stops)
-				if (birthGates(row, stop) && stop.occurredAt.localeCompare(at) <= 0) {
-					at = stop.occurredAt
+			for (const gated of rows)
+				if (birthGates(row, gated) && gated.occurredAt.localeCompare(at) <= 0) {
+					at = gated.occurredAt
 					rank = 0
 				}
 		placed.set(row.id, { at, rank })

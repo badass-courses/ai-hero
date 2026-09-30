@@ -327,6 +327,103 @@ integration('drovr outbox store on MySQL (row 204)', () => {
 			expect(plan[0]?.key).toBe('DrovrOutbox_contact_idx')
 		})
 
+		it("pulls a contact's pending non-stop rows waiting for later back to now, on the contact index (round 3)", async () => {
+			const now = '2026-09-30T12:00:00.000Z'
+			const later = '2026-09-30T13:15:00.000Z'
+			const earlier = '2026-09-30T11:55:00.000Z'
+			const moved = row({
+				contactId: 'c1',
+				eventType: 'email.completed',
+				nextAttemptAt: later,
+			})
+			const due = row({
+				contactId: 'c1',
+				eventType: 'email.completed',
+				nextAttemptAt: earlier,
+			})
+			const stop = row({
+				contactId: 'c1',
+				eventType: 'purchase.recorded',
+				nextAttemptAt: later,
+			})
+			const held = row({
+				contactId: 'c1',
+				eventType: 'email.completed',
+				status: 'held',
+				nextAttemptAt: later,
+			})
+			const otherContact = row({
+				contactId: 'c2',
+				eventType: 'email.completed',
+				nextAttemptAt: later,
+			})
+			const otherTarget = row({
+				contactId: 'c1',
+				eventType: 'email.completed',
+				target: PREVIEW,
+				nextAttemptAt: later,
+			})
+			await store.insertIgnore([
+				moved,
+				due,
+				stop,
+				held,
+				otherContact,
+				otherTarget,
+			])
+			expect(
+				await store.pullForward({ target: PROD, contactIds: ['c1'], now }),
+			).toBe(1)
+			const [found] = (await pool.query(
+				'SELECT id, nextAttemptAt FROM AI_DrovrOutbox',
+			)) as unknown as [{ id: string; nextAttemptAt: Date }[]]
+			expect(
+				Object.fromEntries(
+					found.map((r) => [r.id, r.nextAttemptAt.toISOString()]),
+				),
+			).toEqual({
+				[moved.id]: now,
+				[due.id]: earlier,
+				[stop.id]: later,
+				[held.id]: later,
+				[otherContact.id]: later,
+				[otherTarget.id]: later,
+			})
+			expect(
+				await store.pullForward({ target: PROD, contactIds: [], now }),
+			).toBe(0)
+			// The statement the store really sends, EXPLAINed over an outage's
+			// worth of other contacts' rows, all waiting for later: the case
+			// where scanning by time would read them all.
+			await store.insertIgnore(
+				Array.from({ length: 2_000 }, (_, i) =>
+					row({
+						contactId: `other-${i}`,
+						eventType: 'email.completed',
+						nextAttemptAt: later,
+					}),
+				),
+			)
+			await pool.query('ANALYZE TABLE AI_DrovrOutbox')
+			const sent: { query: string; params: unknown[] }[] = []
+			await createDrizzleDrovrOutboxStore(
+				drizzle(pool, {
+					schema: databaseSchema,
+					mode: 'default',
+					logger: {
+						logQuery: (query: string, params: unknown[]) =>
+							void sent.push({ query, params }),
+					},
+				}),
+			).pullForward({ target: PROD, contactIds: ['c1'], now })
+			expect(sent).toHaveLength(1)
+			const [plan] = (await pool.query(
+				`EXPLAIN ${sent[0]!.query}`,
+				sent[0]!.params,
+			)) as unknown as [{ key: string | null }[]]
+			expect(plan[0]?.key).toBe('DrovrOutbox_contact_idx')
+		})
+
 		it('settles only pending rows of this target by dedupe key: a retry landed (row 204b)', async () => {
 			const pending = row({ eventType: 'purchase.recorded' })
 			const refused = row({

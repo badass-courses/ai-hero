@@ -48,10 +48,12 @@ import {
 	type DrovrOutboxOpenStopsFn,
 } from '@/lib/subscriber-marketing/drovr-outbox-live'
 import {
+	DROVR_SETTLED_BY_RETRY,
 	sendOrOutbox,
 	type DrovrOutboxCaptureFn,
 	type DrovrOutboxSettleFn,
 	type DrovrSendAttempt,
+	type DrovrStopsEarly,
 } from '@/lib/subscriber-marketing/drovr-outbox-step'
 import { withoutSyntheticContacts } from '@/lib/synthetic-principal'
 import { log } from '@/server/logger'
@@ -222,14 +224,18 @@ const stopMarkOf = (event: DrovrShadowEvent): StopMark => ({
 const isStopEvent = (event: DrovrShadowEvent) =>
 	isOutboxStop({ eventType: event.type })
 
+const isBirthEvent = (event: DrovrShadowEvent) =>
+	isOutboxBirth({ endpoint: 'events', eventType: event.type })
+
 /**
  * Row 204b: deliver in the order things happened, so a stop that fails is
- * never behind a later fact that already posted. On a shared instant a
- * birth goes first (drovr takes nothing for a contact it never saw born),
- * then stops, then facts. Stable, so a retry sees the same order. An
- * instant that does not parse fails closed: such a stop goes first, so it
- * holds everything after it if it fails, and any other event goes last,
- * behind every stop of the batch.
+ * never behind a later fact that already posted, with the replay's one
+ * exception (`replayOrder`): a birth moves up to just ahead of the earliest
+ * event of its contact and journey, since drovr takes nothing for a contact
+ * it never saw born. On a shared instant a birth goes first, then stops,
+ * then facts. Stable, so a retry sees the same order. An instant that does
+ * not parse fails closed: such a stop goes first, so it holds everything
+ * after it if it fails, and any other event goes last, behind every stop.
  */
 export function inDeliveryOrder(
 	events: readonly DrovrShadowEvent[],
@@ -241,34 +247,40 @@ export function inDeliveryOrder(
 			? Number.NEGATIVE_INFINITY
 			: Number.POSITIVE_INFINITY
 	}
-	const rank = (event: DrovrShadowEvent) =>
-		isOutboxBirth({ endpoint: 'events', eventType: event.type })
-			? 0
-			: isStopEvent(event)
-				? 1
-				: 2
-	return events
-		.map((event, index) => ({ event, index }))
-		.sort(
-			(a, b) =>
-				instant(a.event) - instant(b.event) ||
-				rank(a.event) - rank(b.event) ||
-				a.index - b.index,
-		)
+	const placed = events.map((event, index) => {
+		let at = instant(event)
+		if (isBirthEvent(event))
+			for (const other of events)
+				if (
+					!isBirthEvent(other) &&
+					other.contactId === event.contactId &&
+					other.journeyId === event.journeyId
+				)
+					at = Math.min(at, instant(other))
+		const rank = isBirthEvent(event) ? 0 : isStopEvent(event) ? 1 : 2
+		return { event, index, at, rank }
+	})
+	return placed
+		.sort((a, b) => a.at - b.at || a.rank - b.rank || a.index - b.index)
 		.map(({ event }) => event)
 }
 
 /** The stops among these events, for their capture on a first failure. */
-const earlyStops = (
+const earlyStops = <T>(
 	events: readonly DrovrShadowEvent[],
 	context: DeliverContext,
-) => ({
+	noteFor: (result: T) => string,
+): DrovrStopsEarly<T> => ({
 	stops: () =>
 		events
 			.filter(isStopEvent)
 			.map((event) => outboxEntryForEvent(event, context.lane)),
 	settle: context.settle,
+	noteFor,
 })
+
+const SETTLED_REFUSED =
+	'refused by drovr on an Inngest retry: final, counted rejected'
 
 const isBehind = (
 	event: DrovrShadowEvent,
@@ -424,7 +436,11 @@ const deliverBatch = async (
 				unsent: () => [outboxEntryForEvent(drovrEvent, context.lane)],
 				capture: context.capture,
 				outboxed: () => ({ status: 'outboxed' }),
-				early: earlyStops([drovrEvent], context),
+				early: earlyStops([drovrEvent], context, (outcome) =>
+					outcome.status === 'rejected'
+						? SETTLED_REFUSED
+						: DROVR_SETTLED_BY_RETRY,
+				),
 			}),
 		)
 		if (outcome.status === 'outboxed') {
@@ -549,7 +565,11 @@ const deliverBulk = async (
 						chunk.map((event) => outboxEntryForEvent(event, context.lane)),
 					capture: context.capture,
 					outboxed: (count) => ({ accepted: 0, rejected: 0, outboxed: count }),
-					early: earlyStops(chunk, context),
+					early: earlyStops(chunk, context, (outcome) =>
+						outcome.rejected > 0
+							? `settled by an Inngest retry: its chunk was answered, and drovr refused ${outcome.rejected} item(s), final and counted rejected`
+							: DROVR_SETTLED_BY_RETRY,
+					),
 				}),
 			)) as DrovrBatchOutcome & Partial<Outboxed>
 			accepted += outcome.accepted

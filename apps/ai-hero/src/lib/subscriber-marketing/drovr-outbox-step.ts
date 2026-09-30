@@ -28,10 +28,14 @@ export type DrovrOutboxSettleFn = (
  * reads only the outbox, so a stop still inside Inngest's retries would
  * not hold another run's later facts; captured at once, it does.
  */
-export type DrovrStopsEarly = {
+export type DrovrStopsEarly<T = unknown> = {
 	stops: () => readonly DrovrOutboxEntry[]
 	settle: DrovrOutboxSettleFn
+	/** What the settled rows record; by default "delivered by an Inngest retry". */
+	noteFor?: (result: T) => string
 }
+
+export const DROVR_SETTLED_BY_RETRY = 'delivered by an Inngest retry'
 
 /** The step's last try: Inngest will not retry what this throws. */
 export function isFinalDrovrSendAttempt({
@@ -82,7 +86,9 @@ export const httpStatusOf = (error: unknown): number | undefined => {
  * post by its idempotency key. A retry that lands marks the rows delivered,
  * which opens the gate; the last attempt's capture finds them already
  * there (one row per dedupe key). A failed early capture is logged by the
- * capture and the step retries as before.
+ * capture and the step retries as before. The window uses this attempt's
+ * Retry-After and the table after it, so later attempts' hints can stretch
+ * Inngest's tail past it by up to their sum; any overlap is deduped.
  */
 export async function sendOrOutbox<T>(args: {
 	attempt: DrovrSendAttempt
@@ -90,7 +96,7 @@ export async function sendOrOutbox<T>(args: {
 	unsent: () => readonly DrovrOutboxEntry[]
 	capture: DrovrOutboxCaptureFn
 	outboxed: (count: number) => T
-	early?: DrovrStopsEarly
+	early?: DrovrStopsEarly<T>
 	now?: () => Date
 }): Promise<T> {
 	const now = args.now ?? (() => new Date())
@@ -130,7 +136,10 @@ export async function sendOrOutbox<T>(args: {
 	if (args.early && attemptIndex(args.attempt.attempt) > 0) {
 		const stops = args.early.stops()
 		if (stops.length > 0)
-			await args.early.settle(stops, 'delivered by an Inngest retry')
+			await args.early.settle(
+				stops,
+				args.early.noteFor?.(result) ?? DROVR_SETTLED_BY_RETRY,
+			)
 	}
 	return result
 }

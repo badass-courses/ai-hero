@@ -61,7 +61,8 @@ function memoryStore(initial: DrovrOutboxRow[] = []) {
 						(((row.status === 'pending' || row.status === 'held') &&
 							(row.eventType === 'contact.created' ||
 								row.endpoint === 'signups')) ||
-							(row.status !== 'delivered' && isOutboxStop(row))),
+							(['pending', 'held', 'rejected'].includes(row.status) &&
+								isOutboxStop(row))),
 				)
 				.map(
 					({
@@ -126,6 +127,21 @@ function memoryStore(initial: DrovrOutboxRow[] = []) {
 					settled += 1
 				}
 			return settled
+		},
+		async pullForward({ target, contactIds, now }) {
+			let moved = 0
+			for (const [id, row] of rows)
+				if (
+					row.target === target &&
+					contactIds.includes(row.contactId) &&
+					row.status === 'pending' &&
+					row.nextAttemptAt > now &&
+					!isOutboxStop(row)
+				) {
+					rows.set(id, { ...row, nextAttemptAt: now })
+					moved += 1
+				}
+			return moved
 		},
 		async deleteDeliveredBefore(before, limit) {
 			let deleted = 0
@@ -1390,6 +1406,16 @@ describe('row 204b round 2: the two gates never deadlock, and every queue drains
 		expect(posted).toEqual(['birth-j', 'stop-j', 'birth-k', 'stop-k', 'fact-j'])
 	})
 
+	it('posts a birth ahead of an earlier fact it gates, so both land in one run (round 3)', async () => {
+		const fact = ev('fact', 'c15', EVERGREEN, 'email.completed', 30)
+		const birth = ev('birth', 'c15', EVERGREEN, 'contact.created', 20)
+		const { store } = memoryStore([fact, birth])
+		const { posted, post } = keysPosted()
+		const receipt = await replay(store, post).run
+		expect(posted).toEqual(['birth', 'fact'])
+		expect(receipt.skippedBehindBirth).toBe(0)
+	})
+
 	it('still holds a birth behind a stop that waits for no birth: the exception is only the cycle', async () => {
 		const stop = ev('stop', 'c4', EVERGREEN, 'purchase.recorded', 30)
 		const birth = ev('birth', 'c4', NEWSLETTER, 'contact.created', 20)
@@ -1549,14 +1575,23 @@ describe('row 204b round 2: the two gates never deadlock, and every queue drains
 		},
 	)
 
-	it('holds a later fact behind a stop captured on its first failure, then lets it go once a retry settles the stop', async () => {
+	it('holds a later fact behind a stop captured on its first failure; when a retry lands, the fact follows on the next run, not at the window end (round 3)', async () => {
 		const retryWindowEnd = new Date(NOW.getTime() + 78 * 60_000).toISOString()
 		const stop = ev('stop', 'c13', EVERGREEN, 'purchase.recorded', 5, {
 			nextAttemptAt: retryWindowEnd,
 			source: 'live',
 		})
 		const fact = ev('fact', 'c13', EVERGREEN, 'email.completed', 2)
-		const { store, rows: stored } = memoryStore([stop, fact])
+		// Another stop of the contact, still inside its own Inngest retries.
+		const otherStop = ev(
+			'other-stop',
+			'c13',
+			NEWSLETTER,
+			'contact.unsubscribed',
+			1,
+			{ nextAttemptAt: retryWindowEnd, source: 'live' },
+		)
+		const { store, rows: stored } = memoryStore([stop, fact, otherStop])
 		const posted: string[] = []
 		const post = async (r: DrovrOutboxRow) => {
 			posted.push(r.idempotencyKey)
@@ -1566,20 +1601,27 @@ describe('row 204b round 2: the two gates never deadlock, and every queue drains
 		await replay(store, post).run
 		expect(posted).toEqual([])
 		expect(stored.get('fact')?.nextAttemptAt).toBe(retryWindowEnd)
-		// A retry lands: the stop is settled, never posted by the replay.
+		// A retry lands a minute later: the stop is settled, never posted by
+		// the replay, and the fact it held is due again.
+		const aMinuteOn = new Date(NOW.getTime() + 60_000)
 		const settled = await settleDrovrOutbox({
 			store,
 			target: PROD,
 			entries: [stored.get('stop')!],
 			note: 'delivered by an Inngest retry',
-			now: NOW,
+			now: aMinuteOn,
 			log: log(),
 		})
 		expect(settled).toBe(1)
 		expect(stored.get('stop')?.status).toBe('delivered')
-		const later = new Date(NOW.getTime() + 79 * 60_000)
-		await replay(store, post, { now: () => later }).run
+		expect(stored.get('fact')?.nextAttemptAt).toBe(aMinuteOn.toISOString())
+		// The other stop keeps its window: pulling it in would race Inngest.
+		expect(stored.get('other-stop')?.nextAttemptAt).toBe(retryWindowEnd)
+		// The next run, five minutes on, posts the fact; nothing pages oldest.
+		const nextRun = new Date(NOW.getTime() + 5 * 60_000)
+		const receipt = await replay(store, post, { now: () => nextRun }).run
 		expect(posted).toEqual(['fact'])
+		expect(receipt.alert).not.toContain('oldest')
 	})
 
 	it("drains a mixed queue completely once drovr is back, in a legal order (the hawk's pin b)", async () => {
