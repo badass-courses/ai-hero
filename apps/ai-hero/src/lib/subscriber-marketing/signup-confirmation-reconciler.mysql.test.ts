@@ -380,9 +380,10 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 		})
 
 		expect(plannedIds(plan)).toEqual(['4007'])
-		// The two tagged ones are found by their own tag check (row 211).
+		// The two tagged ones are excluded at the scan, by the tags read in
+		// their creation-day slices (row 211).
 		expect(plan.counts).toMatchObject({
-			candidates: 3,
+			candidates: 1,
 			excludedByTag: 2,
 			excludedOptedOut: 7,
 			planned: 1,

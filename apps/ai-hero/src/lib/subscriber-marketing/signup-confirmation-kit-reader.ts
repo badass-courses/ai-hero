@@ -286,7 +286,26 @@ export async function fetchKitMemberIdsInSlices(
 	resources: readonly string[],
 	slices: ReadonlyArray<{ after: string; before: string }>,
 ): Promise<Set<string>> {
-	const ids = new Set<string>()
+	const byResource = await fetchKitMemberIdsByResource(
+		reader,
+		resources,
+		slices,
+	)
+	return new Set([...byResource.values()].flatMap((ids) => [...ids]))
+}
+
+/**
+ * The same read, the ids kept per resource, so one batch can carry both
+ * email 0's sequences and the opt-out tags: one failure fails them all.
+ */
+export async function fetchKitMemberIdsByResource(
+	reader: KitReader,
+	resources: readonly string[],
+	slices: ReadonlyArray<{ after: string; before: string }>,
+): Promise<Map<string, Set<string>>> {
+	const byResource = new Map(
+		resources.map((resource) => [resource, new Set<string>()]),
+	)
 	let failed = false
 	const readSlice = async (
 		resource: string,
@@ -322,6 +341,7 @@ export async function fetchKitMemberIdsInSlices(
 			)
 			if (!parsed.success)
 				throw new KitReadUnavailableError(resource, 'malformed page')
+			const ids = byResource.get(resource)!
 			for (const subscriber of parsed.data.subscribers)
 				ids.add(String(subscriber.id))
 			if (!parsed.data.pagination.has_next_page) return
@@ -343,7 +363,7 @@ export async function fetchKitMemberIdsInSlices(
 			),
 		),
 	)
-	return ids
+	return byResource
 }
 
 const KitTagPage = z.object({

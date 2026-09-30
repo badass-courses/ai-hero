@@ -155,6 +155,34 @@ describe('the Kit reader keeps well under Kit’s limit (row 211, the hawk)', ()
 		expect(b[1] - t0).toBeGreaterThanOrEqual(7_000)
 	})
 
+	it('a step whose read got a 429 then a 200 settles past the hold, so the next step’s first start honours it (Opus N10)', async () => {
+		const time = clock()
+		let calls = 0
+		const first = createKitReader('key', {
+			...time,
+			fetch: (async () =>
+				calls++ === 0
+					? new Response('', { status: 429, headers: { 'retry-after': '7' } })
+					: page([])) as typeof fetch,
+		})
+		const t0 = time.now()
+		expect((await first.get('a', {})).status).toBe(200)
+		await first.settle()
+		// The next step's reader starts fresh, and only after this.
+		let secondStart = 0
+		const second = createKitReader('key', {
+			...time,
+			fetch: (async () => {
+				secondStart = time.now()
+				return page([])
+			}) as typeof fetch,
+		})
+		await second.get('b', {})
+		expect(secondStart - t0).toBeGreaterThanOrEqual(
+			7_000 + KIT_READER_MIN_START_INTERVAL_MS,
+		)
+	})
+
 	it('reads Retry-After as seconds or an HTTP date, and caps it at 60 s', async () => {
 		const now = Date.parse('2026-09-30T06:00:00.000Z')
 		expect(retryAfterMs('12', now)).toBe(12_000)

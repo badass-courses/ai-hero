@@ -20,7 +20,7 @@ import {
 	addKitReadStats,
 	createdDaySlices,
 	createKitReader,
-	fetchKitMemberIdsInSlices,
+	fetchKitMemberIdsByResource,
 	fetchKitSubscriberTagIds,
 	KitReadUnavailableError,
 	type KitReader,
@@ -206,6 +206,8 @@ export type SkillsConfirmationScan = {
 		withExistingCourseEntry: number
 		excludedSynthetic: number
 		excludedOptedOut: number
+		/** Of them, by an AI Hero or AI Skills unsubscribe tag in Kit. */
+		excludedByTag: number
 		excludedCourseHistory: number
 		candidates: number
 	}
@@ -218,9 +220,10 @@ export type SkillsConfirmationScan = {
  * local evidence (entries, opt-outs, course sends) and the completion
  * field. Only if someone is left does it read Kit's email 0 sequences, and
  * then only for the days those subscribers' Kit records were created
- * (`createdDaySlices`), in parallel slices under the reader's limits. The
- * exclusion tags are read per candidate afterwards
- * (`checkSkillsConfirmationTags`), fresh, just before each send.
+ * (`createdDaySlices`), in parallel slices under the reader's limits, with
+ * the two opt-out tags in the same slices. Each remaining candidate's tags
+ * are read once more, fresh, just before its send
+ * (`checkSkillsConfirmationTags`).
  */
 export async function scanSkillsConfirmations(args: {
 	tier: SkillsConfirmationTier
@@ -264,18 +267,32 @@ export async function scanSkillsConfirmations(args: {
 		})
 		let candidates = replayableNewestFirst(preview.candidates)
 		let inEmailZero = 0
+		let taggedOptOut = 0
 		// Most polls end here: nobody new, so no Kit list is read at all.
 		if (candidates.length > 0) {
-			const members = await fetchKitMemberIdsInSlices(
+			// Email 0's sequences and the opt-out tags, all in one batch of
+			// slices over the candidates' creation days: one failure fails it.
+			// A Kit-tag opt-out is never recorded locally, so it is excluded
+			// here, before the check loop and its cap (Sonnet 2, #348 round 2).
+			const sequences = SKILLS_EMAIL_ZERO_KIT_SEQUENCE_IDS.map(
+				(id) => `sequences/${id}`,
+			)
+			const tags = AI_HERO_SKILLS_EXCLUSION_TAG_IDS.map((id) => `tags/${id}`)
+			const members = await fetchKitMemberIdsByResource(
 				reader,
-				SKILLS_EMAIL_ZERO_KIT_SEQUENCE_IDS.map((id) => `sequences/${id}`),
+				[...sequences, ...tags],
 				createdDaySlices(candidates.map((candidate) => candidate.createdAt)),
 			)
+			const inAny = (resources: string[], id: string) =>
+				resources.some((resource) => members.get(resource)?.has(id))
 			const remaining = candidates.filter(
-				(candidate) => !members.has(candidate.kitSubscriberId),
+				(candidate) => !inAny(sequences, candidate.kitSubscriberId),
 			)
 			inEmailZero = candidates.length - remaining.length
-			candidates = remaining
+			candidates = remaining.filter(
+				(candidate) => !inAny(tags, candidate.kitSubscriberId),
+			)
+			taggedOptOut = remaining.length - candidates.length
 		}
 		await reader.settle()
 		return {
@@ -290,7 +307,8 @@ export async function scanSkillsConfirmations(args: {
 				unconfirmed: preview.counts.unconfirmed,
 				withExistingCourseEntry: preview.counts.withExistingCourseEntry,
 				excludedSynthetic: preview.counts.excludedSynthetic,
-				excludedOptedOut: preview.counts.excludedOptedOut,
+				excludedOptedOut: preview.counts.excludedOptedOut + taggedOptOut,
+				excludedByTag: taggedOptOut,
 				excludedCourseHistory:
 					preview.counts.excludedCourseHistory + inEmailZero,
 				candidates: candidates.length,
@@ -383,8 +401,8 @@ export type SkillsConfirmationReceipt = {
 	counts: SkillsConfirmationScan['counts'] & {
 		/** Candidates whose tags were read this run. */
 		tagChecked: number
-		/** Of them, carrying an AI Hero or AI Skills unsubscribe tag. */
-		excludedByTag: number
+		/** Tagged since the scan: caught by the fresh check before the send. */
+		excludedByFreshTagCheck: number
 		/** Of them, gone from Kit (404). */
 		notInKit: number
 		/** Of them, whose tags Kit would not give: skipped, checked again next poll. */
@@ -424,7 +442,7 @@ export async function reconcileSkillsConfirmations(args: {
 	)
 	let kit = scan.kit
 	let tagChecked = 0
-	let excludedByTag = 0
+	let excludedByFreshTagCheck = 0
 	let notInKit = 0
 	let tagFailed = 0
 	let failedInARow = 0
@@ -460,7 +478,7 @@ export async function reconcileSkillsConfirmations(args: {
 		}
 		failedInARow = 0
 		if (checked.verdict === 'opted-out') {
-			excludedByTag += 1
+			excludedByFreshTagCheck += 1
 			continue
 		}
 		if (checked.verdict === 'not-in-kit') {
@@ -485,9 +503,10 @@ export async function reconcileSkillsConfirmations(args: {
 		limit: scan.limit,
 		counts: {
 			...scan.counts,
-			excludedOptedOut: scan.counts.excludedOptedOut + excludedByTag,
+			excludedOptedOut: scan.counts.excludedOptedOut + excludedByFreshTagCheck,
+			excludedByTag: scan.counts.excludedByTag + excludedByFreshTagCheck,
 			tagChecked,
-			excludedByTag,
+			excludedByFreshTagCheck,
 			notInKit,
 			tagFailed,
 			planned,

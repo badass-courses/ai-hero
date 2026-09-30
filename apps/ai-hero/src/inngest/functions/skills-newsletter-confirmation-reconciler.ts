@@ -70,6 +70,18 @@ export const skillsNewsletterConfirmationReconciler = inngest.createFunction(
 				funnel: 'skills-newsletter',
 				...receipt,
 			})
+			// The daily tier reads to the floor; anyone it leaves is waiting a
+			// day at least. Only 404s and failing tag checks can use the check
+			// cap now, so this should stay 0 (a monitor on it is a follow-up).
+			if (receipt.tier === 'daily' && receipt.counts.deferred > 0)
+				logger.warn('subscriber_funnel.confirmation_daily_deferred', {
+					funnel: 'skills-newsletter',
+					deferred: receipt.counts.deferred,
+					tagChecked: receipt.counts.tagChecked,
+					notInKit: receipt.counts.notInKit,
+					tagFailed: receipt.counts.tagFailed,
+					planned: receipt.counts.planned,
+				})
 		})
 		return receipt
 	},

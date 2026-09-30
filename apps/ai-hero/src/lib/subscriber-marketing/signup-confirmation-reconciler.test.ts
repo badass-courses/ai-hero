@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { KIT_READER_MIN_START_INTERVAL_MS } from './signup-confirmation-kit-reader'
 import {
+	checkSkillsConfirmationTags,
 	reconcileSkillsConfirmations,
 	ReconcilerEvidenceUnavailableError,
 	SKILLS_CONFIRMATION_RECENT_TIER_DAYS,
@@ -39,8 +41,9 @@ type FakeSubscriber = {
 }
 
 /**
- * Kit's form, sequence and subscriber-tags reads, with the edges measured
- * on 2026-09-30: `created_after` inclusive, `created_before` exclusive.
+ * Kit's form, sequence, tag and subscriber-tags reads, with the edges
+ * measured on 2026-09-30: `created_after` inclusive, `created_before`
+ * exclusive.
  */
 function fakeKit(
 	subscribers: FakeSubscriber[],
@@ -69,14 +72,17 @@ function fakeKit(
 				pagination: { has_next_page: false, end_cursor: null },
 			})
 		}
-		if (sequence) {
+		const tag = /\/v4\/tags\/(\d+)\/subscribers$/.exec(url.pathname)?.[1]
+		if (sequence || tag) {
 			const after = Date.parse(url.searchParams.get('created_after')!)
 			const before = Date.parse(url.searchParams.get('created_before')!)
 			return Response.json({
 				subscribers: subscribers
 					.filter(
 						(subscriber) =>
-							subscriber.sequences?.includes(sequence) &&
+							(sequence
+								? subscriber.sequences?.includes(sequence)
+								: subscriber.tags?.includes(Number(tag))) &&
 							Date.parse(subscriber.createdAt) >= after &&
 							Date.parse(subscriber.createdAt) < before,
 					)
@@ -254,21 +260,22 @@ describe('row 211: each confirmed subscriber is sent as found', () => {
 		expect(ids(daily.sent)).toEqual(ids(first.sent))
 	})
 
-	it('counts sends, not checks, against the limit: an opted-out candidate ahead of it does not use a send', async () => {
-		const kit = fakeKit([
-			{
-				id: 1,
-				createdAt: daysBefore(0, 10),
-				addedAt: daysBefore(0, 10),
-				tags: [8244351],
-			},
-			{ id: 2, createdAt: daysBefore(0, 20), addedAt: daysBefore(0, 20) },
-			{ id: 3, createdAt: daysBefore(0, 30), addedAt: daysBefore(0, 30) },
-		])
+	it('counts sends, not checks, against the limit: a candidate skipped at its check does not use a send', async () => {
+		const kit = fakeKit(
+			[
+				{ id: 1, createdAt: daysBefore(0, 10), addedAt: daysBefore(0, 10) },
+				{ id: 2, createdAt: daysBefore(0, 20), addedAt: daysBefore(0, 20) },
+				{ id: 3, createdAt: daysBefore(0, 30), addedAt: daysBefore(0, 30) },
+			],
+			(url) =>
+				url.pathname === '/v4/subscribers/1/tags'
+					? Response.json({}, { status: 404 })
+					: undefined,
+		)
 		const { receipt, sent } = run('recent', kit, { limit: 1 })
 		expect((await receipt).counts).toMatchObject({
 			tagChecked: 2,
-			excludedByTag: 1,
+			notInKit: 1,
 			planned: 1,
 			deferred: 1,
 		})
@@ -276,24 +283,48 @@ describe('row 211: each confirmed subscriber is sent as found', () => {
 	})
 
 	it('checks at most 100 candidates a run, so skipped ones can’t outgrow the run', async () => {
+		expect(SKILLS_CONFIRMATION_TAG_CHECKS_PER_RUN).toBe(100)
+		// 105 candidates Kit answers 404 for at their check: only the cap
+		// ends the loop.
 		const kit = fakeKit(
-			Array.from(
-				{ length: SKILLS_CONFIRMATION_TAG_CHECKS_PER_RUN + 5 },
-				(_, index) => ({
-					id: index + 1,
-					createdAt: daysBefore(0, index + 1),
-					addedAt: daysBefore(0, index + 1),
-					tags: [19251081],
-				}),
-			),
+			Array.from({ length: 105 }, (_, index) => ({
+				id: index + 1,
+				createdAt: daysBefore(0, index + 1),
+				addedAt: daysBefore(0, index + 1),
+			})),
+			(url) =>
+				url.pathname.endsWith('/tags')
+					? Response.json({}, { status: 404 })
+					: undefined,
 		)
 		const { receipt, sent } = run('recent', kit)
 		expect((await receipt).counts).toMatchObject({
-			tagChecked: SKILLS_CONFIRMATION_TAG_CHECKS_PER_RUN,
-			excludedByTag: SKILLS_CONFIRMATION_TAG_CHECKS_PER_RUN,
+			tagChecked: 100,
+			notInKit: 100,
 			deferred: 5,
 		})
 		expect(sent).toEqual([])
+	})
+
+	it('never starves a consenting subscriber behind Kit-tag opt-outs: 100 opted out ahead of 1 older consenting, sent on the first poll (Sonnet 2, round 2)', async () => {
+		const kit = fakeKit([
+			...Array.from({ length: 100 }, (_, index) => ({
+				id: index + 1,
+				createdAt: daysBefore(0, index + 1),
+				addedAt: daysBefore(0, index + 1),
+				tags: [index % 2 ? 8244351 : 19251081],
+			})),
+			{ id: 101, createdAt: daysBefore(0, 200), addedAt: daysBefore(0, 200) },
+		])
+		const { receipt, sent } = run('recent', kit)
+		expect((await receipt).counts).toMatchObject({
+			candidates: 1,
+			excludedByTag: 100,
+			tagChecked: 1,
+			planned: 1,
+			deferred: 0,
+		})
+		expect(sentIds(sent)).toEqual(['101'])
 	})
 
 	it('stops at the limit and leaves the rest for the next run', async () => {
@@ -321,7 +352,7 @@ describe('row 211: Kit is read only as far as it must be', () => {
 		expect(receipt.counts).toMatchObject({ unconfirmed: 1, candidates: 0 })
 	})
 
-	it('checks the opt-out tags per candidate, never by listing a tag', async () => {
+	it('excludes Kit-tag opt-outs at the scan, by the tags read in the creation-day slices, and still checks each remaining candidate fresh', async () => {
 		const kit = fakeKit([
 			{ id: 1, createdAt: daysBefore(0, 10), addedAt: daysBefore(0, 10) },
 			{
@@ -339,16 +370,70 @@ describe('row 211: Kit is read only as far as it must be', () => {
 		])
 		const { receipt, sent } = run('recent', kit)
 		expect(await receipt).toMatchObject({
-			counts: { tagChecked: 3, excludedByTag: 2, excludedOptedOut: 2 },
+			counts: {
+				candidates: 1,
+				excludedByTag: 2,
+				excludedOptedOut: 2,
+				tagChecked: 1,
+				excludedByFreshTagCheck: 0,
+			},
 		})
 		expect(sentIds(sent)).toEqual(['1'])
-		const paths = kitPaths(kit)
-		expect(paths.filter((path) => path.startsWith('tags/'))).toEqual([])
-		expect(paths.filter((path) => path.endsWith('/tags'))).toEqual([
-			'subscribers/1/tags',
-			'subscribers/2/tags',
-			'subscribers/3/tags',
+		const tagReads = kit.requests.filter((url) =>
+			url.pathname.startsWith('/v4/tags/'),
+		)
+		expect(tagReads.map((url) => url.pathname).sort()).toEqual([
+			'/v4/tags/19251081/subscribers',
+			'/v4/tags/8244351/subscribers',
 		])
+		for (const url of tagReads) {
+			expect(url.searchParams.get('created_after')).toBe(
+				'2026-10-19T00:00:00.000Z',
+			)
+			expect(url.searchParams.get('created_before')).toBe(
+				'2026-10-22T00:00:00.000Z',
+			)
+			expect(url.searchParams.get('status')).toBe('all')
+		}
+		expect(
+			kitPaths(kit).filter((path) => path.startsWith('subscribers/')),
+		).toEqual(['subscribers/1/tags'])
+	})
+
+	it('catches a tag applied between the scan and the send by the fresh check', async () => {
+		const kit = fakeKit(
+			[
+				{
+					id: 1,
+					createdAt: daysBefore(0, 10),
+					addedAt: daysBefore(0, 10),
+					tags: [8244351],
+				},
+				{ id: 2, createdAt: daysBefore(0, 20), addedAt: daysBefore(0, 20) },
+				{
+					id: 3,
+					createdAt: daysBefore(0, 30),
+					addedAt: daysBefore(0, 30),
+					tags: [19251081],
+				},
+			],
+			// At the scan, neither tag is on subscribers 1 and 3 yet.
+			(url) =>
+				url.pathname.startsWith('/v4/tags/')
+					? Response.json({
+							subscribers: [],
+							pagination: { has_next_page: false, end_cursor: null },
+						})
+					: undefined,
+		)
+		const { receipt, sent } = run('recent', kit)
+		expect((await receipt).counts).toMatchObject({
+			candidates: 3,
+			excludedByFreshTagCheck: 2,
+			excludedByTag: 2,
+			planned: 1,
+		})
+		expect(sentIds(sent)).toEqual(['2'])
 	})
 
 	it('reads email 0 only around the candidates’ creation days, and never sends someone in it', async () => {
@@ -423,6 +508,19 @@ describe('row 211: no decision on partial evidence', () => {
 			],
 			override,
 		)
+
+	it('fails the run closed when an opt-out tag slice fails: nobody is sent', async () => {
+		const kit = two((url) =>
+			url.pathname === '/v4/tags/19251081/subscribers'
+				? Response.json({ error: 'nope' }, { status: 403 })
+				: undefined,
+		)
+		const { receipt, sent } = run('recent', kit)
+		await expect(receipt).rejects.toBeInstanceOf(
+			ReconcilerEvidenceUnavailableError,
+		)
+		expect(sent).toEqual([])
+	})
 
 	it('fails the run closed when an email 0 slice fails: nobody is sent (the owner’s test b)', async () => {
 		const kit = two((url) =>
@@ -530,6 +628,31 @@ describe('row 211: no decision on partial evidence', () => {
 		expect((await receipt).counts).toMatchObject({ tagFailed: 4, planned: 1 })
 		expect(sentIds(sent)).toEqual(['3'])
 	})
+
+	it.each([
+		[
+			'answers',
+			() => Response.json({ tags: [], pagination: { has_next_page: false } }),
+		],
+		['fails', () => Response.json({ error: 'nope' }, { status: 403 })],
+	])(
+		'keeps the pace when a tag check %s: the step settles before it ends, so the next check waits its turn',
+		async (_, answer) => {
+			let clockMs = Date.parse(TO)
+			const checked = await checkSkillsConfirmationTags({
+				kitSubscriberId: '1',
+				kit: {
+					fetch: (async () => answer()) as typeof fetch,
+					now: () => clockMs,
+					sleep: async (milliseconds) => {
+						clockMs += milliseconds
+					},
+				},
+			})
+			expect(checked.kit.calls).toBe(1)
+			expect(clockMs - Date.parse(TO)).toBe(KIT_READER_MIN_START_INTERVAL_MS)
+		},
+	)
 
 	it('skips a subscriber Kit no longer has (404), unsent, and goes on', async () => {
 		const kit = two((url) =>

@@ -13,9 +13,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/inngest/inngest.server', () => ({
 	inngest: { createFunction: mocks.createFunction },
 }))
+const reconcile = vi.hoisted(() => vi.fn())
 vi.mock(
 	'@/lib/subscriber-marketing/signup-confirmation-reconciler.server',
-	() => ({ reconcileSkillsConfirmations: vi.fn() }),
+	() => ({ reconcileSkillsConfirmations: reconcile }),
 )
 
 const {
@@ -28,6 +29,7 @@ const {
 type Registered = {
 	config: { id: string; concurrency: unknown }
 	trigger: Array<{ cron: string }>
+	handler: (context: unknown) => Promise<unknown>
 }
 const registered =
 	skillsNewsletterConfirmationReconciler as unknown as Registered
@@ -86,5 +88,46 @@ describe('skills newsletter confirmation reconciler registration', () => {
 			id: 'skills-newsletter-confirmation-reconciler',
 			concurrency: 1,
 		})
+	})
+})
+
+describe('the daily tier’s leftovers are loud (row 211 round 2, option d)', () => {
+	const runWith = async (tier: 'daily' | 'recent', deferred: number) => {
+		reconcile.mockResolvedValueOnce({
+			tier,
+			counts: {
+				deferred,
+				tagChecked: 100,
+				notInKit: 100,
+				tagFailed: 0,
+				planned: 0,
+			},
+			kit: { calls: 105, throttled: 0 },
+		})
+		const logger = { info: vi.fn(), warn: vi.fn() }
+		await registered.handler({
+			event: {
+				data: {
+					cron:
+						tier === 'daily'
+							? SKILLS_CONFIRMATION_DAILY_CRON
+							: SKILLS_CONFIRMATION_POLL_CRON,
+				},
+			},
+			step: { run: async (_: string, work: () => unknown) => work() },
+			logger,
+		})
+		return logger.warn.mock.calls.map(([name]) => name)
+	}
+
+	it('warns when a daily run leaves anyone deferred', async () => {
+		expect(await runWith('daily', 5)).toEqual([
+			'subscriber_funnel.confirmation_daily_deferred',
+		])
+	})
+
+	it('stays quiet for a daily run with nobody left, and for any recent run', async () => {
+		expect(await runWith('daily', 0)).toEqual([])
+		expect(await runWith('recent', 5)).toEqual([])
 	})
 })
