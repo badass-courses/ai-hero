@@ -311,14 +311,21 @@ export async function scanSkillsConfirmations(args: {
 /**
  * The fresh opt-out check for one candidate, just before its send: its own
  * Kit tags (`GET /v4/subscribers/{id}/tags`), against the AI Hero and AI
- * Skills unsubscribe tags. A Kit failure throws, so nothing is sent without
- * the evidence. A subscriber Kit no longer has (404) is not sent either.
+ * Skills unsubscribe tags. Nothing is sent without that evidence:
+ * - a subscriber Kit no longer has (404) is `not-in-kit`;
+ * - any other failure for this subscriber (a 4xx, a malformed or endless
+ *   page, a 5xx or no answer after the retries) is `tag-check-failed`: this
+ *   one is skipped and checked again next poll, so one bad record never
+ *   holds back the older confirmers behind it (Sonnet 2, #348);
+ * - Kit still throttling the key (429 after the backoff) throws: that is
+ *   not about this subscriber, and the run stops.
  */
 export async function checkSkillsConfirmationTags(args: {
 	kitSubscriberId: string
 	kit?: KitReaderOptions
 }): Promise<{
-	verdict: 'consenting' | 'opted-out' | 'not-in-kit'
+	verdict: 'consenting' | 'opted-out' | 'not-in-kit' | 'tag-check-failed'
+	reason?: string
 	kit: KitReadStats
 }> {
 	const reader = createKitReader(kitApiKey(), args.kit)
@@ -335,9 +342,30 @@ export async function checkSkillsConfirmationTags(args: {
 					: 'consenting'
 		return { verdict, kit: reader.stats() }
 	} catch (error) {
+		if (error instanceof KitReadUnavailableError && error.statusCode !== 429) {
+			await reader.settle()
+			return {
+				verdict: 'tag-check-failed',
+				reason: error.reason,
+				kit: reader.stats(),
+			}
+		}
 		throw asEvidenceError(error)
 	}
 }
+
+/**
+ * At most this many tag checks a run (each is a step and a Kit request),
+ * so candidates skipped every run (a Kit-tag opt-out is never recorded
+ * locally) can't push a run past its slot or Inngest's step cap. The rest
+ * are deferred to the next run.
+ */
+export const SKILLS_CONFIRMATION_TAG_CHECKS_PER_RUN = 100
+/**
+ * This many tag checks failing in a row means Kit, not the subscribers:
+ * the run stops, closed, instead of trying everyone.
+ */
+export const SKILLS_CONFIRMATION_TAG_FAILURES_IN_A_ROW = 3
 
 /** How a run steps: Inngest's `step.run` and `step.sendEvent`, or direct. */
 export type SkillsConfirmationSteps = {
@@ -359,9 +387,11 @@ export type SkillsConfirmationReceipt = {
 		excludedByTag: number
 		/** Of them, gone from Kit (404). */
 		notInKit: number
+		/** Of them, whose tags Kit would not give: skipped, checked again next poll. */
+		tagFailed: number
 		/** Sent this run, each as soon as its tags cleared. */
 		planned: number
-		/** Left for the next run by the limit. */
+		/** Left for the next run by the send limit or the check cap. */
 		deferred: number
 		/** Sent, and joined the form before the recent tier's window: the daily tier's catch. */
 		plannedOlderThanRecentTier: number
@@ -384,6 +414,10 @@ export async function reconcileSkillsConfirmations(args: {
 	database?: ReconcilerDatabase
 	kit?: KitReaderOptions
 	onSent?: (event: SkillsConfirmationEvent) => void
+	onTagCheckFailed?: (failure: {
+		kitSubscriberId: string
+		reason: string
+	}) => void
 }): Promise<SkillsConfirmationReceipt> {
 	const scan = await args.steps.run('scan-confirmation-candidates', () =>
 		scanSkillsConfirmations(args),
@@ -392,13 +426,17 @@ export async function reconcileSkillsConfirmations(args: {
 	let tagChecked = 0
 	let excludedByTag = 0
 	let notInKit = 0
+	let tagFailed = 0
+	let failedInARow = 0
 	let planned = 0
 	let plannedOlderThanRecentTier = 0
 	const recentFrom = Date.parse(
 		skillsConfirmationTierWindow('recent', scan.window.to).from,
 	)
 	for (const event of scan.events) {
+		// The limit counts sends; the cap counts checks.
 		if (planned >= scan.limit) break
+		if (tagChecked >= SKILLS_CONFIRMATION_TAG_CHECKS_PER_RUN) break
 		const { kitSubscriberId } = event.data
 		const checked = await args.steps.run(
 			`check-opt-out-tags:${kitSubscriberId}`,
@@ -406,6 +444,21 @@ export async function reconcileSkillsConfirmations(args: {
 		)
 		tagChecked += 1
 		kit = addKitReadStats(kit, checked.kit)
+		if (checked.verdict === 'tag-check-failed') {
+			tagFailed += 1
+			failedInARow += 1
+			args.onTagCheckFailed?.({
+				kitSubscriberId,
+				reason: checked.reason ?? 'unknown',
+			})
+			if (failedInARow >= SKILLS_CONFIRMATION_TAG_FAILURES_IN_A_ROW)
+				throw new ReconcilerEvidenceUnavailableError(
+					'subscriber tags',
+					`${failedInARow} tag checks failed in a row`,
+				)
+			continue
+		}
+		failedInARow = 0
 		if (checked.verdict === 'opted-out') {
 			excludedByTag += 1
 			continue
@@ -436,6 +489,7 @@ export async function reconcileSkillsConfirmations(args: {
 			tagChecked,
 			excludedByTag,
 			notInKit,
+			tagFailed,
 			planned,
 			deferred: scan.events.length - tagChecked,
 			plannedOlderThanRecentTier,
@@ -740,8 +794,11 @@ async function fetchKitFormSubscribers(
 		if (!payload) throw new KitReadUnavailableError(resource, 'malformed page')
 		subscribers.push(...parseKitFormSubscribers(payload))
 		const pagination = asRecord(payload.pagination)
-		cursor = stringField(pagination?.end_cursor)
-		if (!cursor || pagination?.has_next_page === false) return subscribers
+		if (pagination?.has_next_page !== true) return subscribers
+		cursor = stringField(pagination.end_cursor)
+		// A next page without a cursor would be a short list: fail instead.
+		if (!cursor)
+			throw new KitReadUnavailableError(resource, 'next page without a cursor')
 	}
 	throw new KitReadUnavailableError(resource, 'more than 100 pages')
 }

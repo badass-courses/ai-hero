@@ -119,9 +119,12 @@ describe('the Kit reader keeps well under Kit’s limit (row 211, the hawk)', ()
 		const [a, b] = await Promise.all([reader.get('a', {}), reader.get('b', {})])
 		expect([a.status, b.status]).toEqual([200, 200])
 		expect(reader.stats()).toEqual({ calls: 3, throttled: 1 })
-		// b started before the 429 came back; a's retry waits the 7 s out.
+		// a's retry waits the 7 s out, and so does b, whose start slot was
+		// reserved before the 429 came back (Macroscope 4143156056).
 		const retry = starts.filter(([path]) => path.endsWith('/a'))[1]!
 		expect(retry[1] - t0).toBeGreaterThanOrEqual(7_000)
+		const bStart = starts.find(([path]) => path.endsWith('/b'))!
+		expect(bStart[1] - t0).toBeGreaterThanOrEqual(7_000)
 	})
 
 	it('holds every later request of the reader until the Retry-After has passed, not only the throttled one', async () => {
@@ -373,9 +376,38 @@ describe('the email 0 slices (row 211, the owner’s test a)', () => {
 		expect(requests).toBeLessThan(20)
 	})
 
+	it('never sends a queued or waiting slice read once another slice failed (Macroscope 4143156021)', async () => {
+		// Eight slices, four at a time: the first read fails, and none of the
+		// other seven, reserved or queued, reaches Kit.
+		const slices = createdDaySlices(
+			Array.from({ length: 8 }, (_, index) =>
+				new Date(
+					at('2026-06-01T10:00:00.000Z') + index * 10 * DAY,
+				).toISOString(),
+			),
+		)
+		expect(slices).toHaveLength(8)
+		let requests = 0
+		const reader = createKitReader('key', {
+			...clock(),
+			fetch: (async () => {
+				requests += 1
+				return Response.json({ error: 'nope' }, { status: 403 })
+			}) as typeof fetch,
+		})
+		await expect(
+			fetchKitMemberIdsInSlices(reader, ['sequences/2757199'], slices),
+		).rejects.toBeInstanceOf(KitReadUnavailableError)
+		await new Promise((resolve) => setTimeout(resolve, 50))
+		expect(requests).toBe(1)
+		expect(reader.stats().calls).toBe(1)
+	})
+
 	it.each([
 		['a malformed page', () => Response.json({ subscribers: [{ id: 'x' }] })],
-		['a next page without a cursor', () => page([1], '')],
+		// An empty cursor is refused by the page schema; the null cursor has
+		// its own test below.
+		['an empty cursor', () => page([1], '')],
 		['a body that is not JSON', () => new Response('<html>')],
 	])('fails a slice closed on %s', async (_, answer) => {
 		const reader = createKitReader('key', {
@@ -432,5 +464,67 @@ describe("one subscriber's tags", () => {
 		await expect(fetchKitSubscriberTagIds(malformed, '42')).rejects.toThrow(
 			KitReadUnavailableError,
 		)
+	})
+})
+
+describe('pagers fail closed at their edges (Sonnet 2’s gaps, adopted)', () => {
+	const fast = (fetcher: typeof fetch) =>
+		createKitReader('key', {
+			fetch: fetcher,
+			sleep: async () => {},
+			minStartIntervalMs: 0,
+		})
+	const oneSlice = createdDaySlices(['2026-09-30T10:00:00.000Z'])
+
+	it('a slice page with a next page but a null cursor: a truncated email 0 list must never read as complete', async () => {
+		await expect(
+			fetchKitMemberIdsInSlices(
+				fast((async () =>
+					Response.json({
+						subscribers: [{ id: 1 }],
+						pagination: { has_next_page: true, end_cursor: null },
+					})) as typeof fetch),
+				['sequences/2757199'],
+				oneSlice,
+			),
+		).rejects.toThrow('next page without a cursor')
+	})
+
+	it('a slice pager that never ends fails at the cap', async () => {
+		let n = 0
+		await expect(
+			fetchKitMemberIdsInSlices(
+				fast((async () => page([++n], String(n))) as typeof fetch),
+				['sequences/2757199'],
+				oneSlice,
+			),
+		).rejects.toThrow('more than 100 pages')
+	})
+
+	it('a tags page with a next page but a null cursor: a missed unsubscribe tag on page 2 must never read as none', async () => {
+		await expect(
+			fetchKitSubscriberTagIds(
+				fast((async () =>
+					Response.json({
+						tags: [{ id: 1 }],
+						pagination: { has_next_page: true, end_cursor: null },
+					})) as typeof fetch),
+				'5',
+			),
+		).rejects.toThrow('next page without a cursor')
+	})
+
+	it('a tags pager that never ends fails at the cap', async () => {
+		let n = 0
+		await expect(
+			fetchKitSubscriberTagIds(
+				fast((async () =>
+					Response.json({
+						tags: [{ id: ++n }],
+						pagination: { has_next_page: true, end_cursor: String(n) },
+					})) as typeof fetch),
+				'5',
+			),
+		).rejects.toThrow('more than 20 pages')
 	})
 })

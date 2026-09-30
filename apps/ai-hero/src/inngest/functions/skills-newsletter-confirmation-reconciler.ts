@@ -58,6 +58,12 @@ export const skillsNewsletterConfirmationReconciler = inngest.createFunction(
 					source: confirmed.data.source,
 					eventId: confirmed.id,
 				}),
+			// Skipped, unsent, and checked again next poll.
+			onTagCheckFailed: (failure) =>
+				logger.warn('subscriber_funnel.confirmation_tag_check_failed', {
+					funnel: 'skills-newsletter',
+					...failure,
+				}),
 		})
 		await step.run('log-confirmation-run-receipt', async () => {
 			logger.info('subscriber_funnel.confirmation_reconciliation_completed', {

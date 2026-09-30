@@ -4,6 +4,8 @@ import {
 	reconcileSkillsConfirmations,
 	ReconcilerEvidenceUnavailableError,
 	SKILLS_CONFIRMATION_RECENT_TIER_DAYS,
+	SKILLS_CONFIRMATION_TAG_CHECKS_PER_RUN,
+	scanSkillsConfirmations,
 	SKILLS_NEWSLETTER_FORM_ID,
 	type SkillsConfirmationEvent,
 	type SkillsConfirmationTier,
@@ -111,19 +113,31 @@ function fakeKit(
 function run(
 	tier: SkillsConfirmationTier,
 	kit: ReturnType<typeof fakeKit>,
-	options: { limit?: number; sleeps?: number[] } = {},
+	options: {
+		limit?: number
+		sleeps?: number[]
+		onTagCheckFailed?: (failure: {
+			kitSubscriberId: string
+			reason: string
+		}) => void
+	} = {},
 ) {
 	const stepIds: string[] = []
 	const sent: Array<{ id: string; event: SkillsConfirmationEvent }> = []
+	let clockMs = Date.parse(TO)
 	const receipt = reconcileSkillsConfirmations({
 		tier,
 		to: TO,
 		limit: options.limit ?? 50,
 		database: emptyDatabase(),
+		onTagCheckFailed: options.onTagCheckFailed,
 		kit: {
 			fetch: kit.fetcher,
+			// A fake clock: sleeping moves it, so pacing is never waited.
+			now: () => clockMs,
 			sleep: async (milliseconds) => {
 				options.sleeps?.push(milliseconds)
+				clockMs += milliseconds
 			},
 		},
 		steps: {
@@ -238,6 +252,48 @@ describe('row 211: each confirmed subscriber is sent as found', () => {
 		const daily = run('daily', kit)
 		await daily.receipt
 		expect(ids(daily.sent)).toEqual(ids(first.sent))
+	})
+
+	it('counts sends, not checks, against the limit: an opted-out candidate ahead of it does not use a send', async () => {
+		const kit = fakeKit([
+			{
+				id: 1,
+				createdAt: daysBefore(0, 10),
+				addedAt: daysBefore(0, 10),
+				tags: [8244351],
+			},
+			{ id: 2, createdAt: daysBefore(0, 20), addedAt: daysBefore(0, 20) },
+			{ id: 3, createdAt: daysBefore(0, 30), addedAt: daysBefore(0, 30) },
+		])
+		const { receipt, sent } = run('recent', kit, { limit: 1 })
+		expect((await receipt).counts).toMatchObject({
+			tagChecked: 2,
+			excludedByTag: 1,
+			planned: 1,
+			deferred: 1,
+		})
+		expect(sentIds(sent)).toEqual(['2'])
+	})
+
+	it('checks at most 100 candidates a run, so skipped ones can’t outgrow the run', async () => {
+		const kit = fakeKit(
+			Array.from(
+				{ length: SKILLS_CONFIRMATION_TAG_CHECKS_PER_RUN + 5 },
+				(_, index) => ({
+					id: index + 1,
+					createdAt: daysBefore(0, index + 1),
+					addedAt: daysBefore(0, index + 1),
+					tags: [19251081],
+				}),
+			),
+		)
+		const { receipt, sent } = run('recent', kit)
+		expect((await receipt).counts).toMatchObject({
+			tagChecked: SKILLS_CONFIRMATION_TAG_CHECKS_PER_RUN,
+			excludedByTag: SKILLS_CONFIRMATION_TAG_CHECKS_PER_RUN,
+			deferred: 5,
+		})
+		expect(sent).toEqual([])
 	})
 
 	it('stops at the limit and leaves the rest for the next run', async () => {
@@ -385,23 +441,38 @@ describe('row 211: no decision on partial evidence', () => {
 		['a 403', () => Response.json({ error: 'nope' }, { status: 403 })],
 		['a 5xx after the retries', () => new Response('', { status: 503 })],
 		['a malformed answer', () => Response.json({ tags: 'nope' })],
-		['429 after the backoff', () => new Response('', { status: 429 })],
+		[
+			'a next page without a cursor',
+			() =>
+				Response.json({
+					tags: [],
+					pagination: { has_next_page: true, end_cursor: null },
+				}),
+		],
 	])(
-		'fails a tag check closed on %s: that subscriber is not sent, nor any after (the owner’s test c)',
+		'skips only the candidate whose tag check fails on %s: unsent, counted, and the older ones still go (the owner’s test c, Sonnet 2 S2)',
 		async (_, answer) => {
+			const failures: Array<{ kitSubscriberId: string; reason: string }> = []
 			const kit = two((url) =>
-				url.pathname === '/v4/subscribers/2/tags' ? answer() : undefined,
+				url.pathname === '/v4/subscribers/1/tags' ? answer() : undefined,
 			)
-			const { receipt, sent } = run('recent', kit)
-			await expect(receipt).rejects.toBeInstanceOf(
-				ReconcilerEvidenceUnavailableError,
-			)
-			// Subscriber 1 cleared first and was sent; 2 never is.
-			expect(sentIds(sent)).toEqual(['1'])
+			const { receipt, sent } = run('recent', kit, {
+				onTagCheckFailed: (failure) => failures.push(failure),
+			})
+			expect((await receipt).counts).toMatchObject({
+				tagChecked: 2,
+				tagFailed: 1,
+				planned: 1,
+			})
+			// The newest failed its check and is never sent; the older one is.
+			expect(sentIds(sent)).toEqual(['2'])
+			expect(failures.map(({ kitSubscriberId }) => kitSubscriberId)).toEqual([
+				'1',
+			])
 		},
 	)
 
-	it('sends nobody when the first tag check fails', async () => {
+	it('stops the run, closed, on 429 after the backoff: the key is throttled, not the subscriber', async () => {
 		const kit = two((url) =>
 			url.pathname === '/v4/subscribers/1/tags'
 				? new Response('', { status: 429 })
@@ -412,6 +483,52 @@ describe('row 211: no decision on partial evidence', () => {
 			ReconcilerEvidenceUnavailableError,
 		)
 		expect(sent).toEqual([])
+		// No further candidate was checked.
+		expect(
+			kitPaths(kit).filter((path) => path === 'subscribers/2/tags'),
+		).toEqual([])
+	})
+
+	it('stops the run, closed, after 3 tag checks fail in a row: that is Kit, not the subscribers', async () => {
+		const kit = fakeKit(
+			[1, 2, 3, 4].map((id) => ({
+				id,
+				createdAt: daysBefore(0, id * 10),
+				addedAt: daysBefore(0, id * 10),
+			})),
+			(url) =>
+				url.pathname.endsWith('/tags')
+					? new Response('', { status: 502 })
+					: undefined,
+		)
+		const { receipt, sent } = run('recent', kit)
+		await expect(receipt).rejects.toThrow('3 tag checks failed in a row')
+		expect(sent).toEqual([])
+		expect(
+			kitPaths(kit).filter((path) => path === 'subscribers/4/tags'),
+		).toEqual([])
+	})
+
+	it('resets the failures-in-a-row count on a check that answers', async () => {
+		const kit = fakeKit(
+			[1, 2, 3, 4, 5].map((id) => ({
+				id,
+				createdAt: daysBefore(0, id * 10),
+				addedAt: daysBefore(0, id * 10),
+			})),
+			(url) =>
+				[
+					'/v4/subscribers/1/tags',
+					'/v4/subscribers/2/tags',
+					'/v4/subscribers/4/tags',
+					'/v4/subscribers/5/tags',
+				].includes(url.pathname)
+					? new Response('', { status: 403 })
+					: undefined,
+		)
+		const { receipt, sent } = run('recent', kit)
+		expect((await receipt).counts).toMatchObject({ tagFailed: 4, planned: 1 })
+		expect(sentIds(sent)).toEqual(['3'])
 	})
 
 	it('skips a subscriber Kit no longer has (404), unsent, and goes on', async () => {
@@ -436,5 +553,44 @@ describe('row 211: no decision on partial evidence', () => {
 			ReconcilerEvidenceUnavailableError,
 		)
 		expect(sent).toEqual([])
+	})
+})
+
+describe('row 211: the form read fails closed (Sonnet 2’s gaps, adopted)', () => {
+	const scan = (answer: () => Response) =>
+		scanSkillsConfirmations({
+			tier: 'recent',
+			to: TO,
+			database: emptyDatabase(),
+			kit: {
+				fetch: (async () => answer()) as typeof fetch,
+				sleep: async () => {},
+				minStartIntervalMs: 0,
+			},
+		})
+
+	it.each([
+		['a 403', () => Response.json({ error: 'no' }, { status: 403 })],
+		['a body that is not JSON', () => new Response('<html>')],
+		[
+			'a pager that never ends',
+			() =>
+				Response.json({
+					subscribers: [],
+					pagination: { has_next_page: true, end_cursor: 'c' },
+				}),
+		],
+		[
+			'a next page without a cursor (a short list, before)',
+			() =>
+				Response.json({
+					subscribers: [],
+					pagination: { has_next_page: true, end_cursor: null },
+				}),
+		],
+	])('fails the scan on %s', async (_, answer) => {
+		await expect(scan(answer)).rejects.toBeInstanceOf(
+			ReconcilerEvidenceUnavailableError,
+		)
 	})
 })

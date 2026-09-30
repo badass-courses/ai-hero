@@ -67,7 +67,17 @@ export type KitReader = {
 	 * is not a 429 for the caller to judge. Throws `KitReadUnavailableError`
 	 * when Kit still throttles, fails or doesn't answer after the retries.
 	 */
-	get(path: string, params: Record<string, string>): Promise<Response>
+	get(
+		path: string,
+		params: Record<string, string>,
+		options?: {
+			/**
+			 * Checked just before each request goes out: a queued read whose
+			 * batch already failed never reaches Kit (Macroscope 4143156021).
+			 */
+			cancelled?: () => boolean
+		},
+	): Promise<Response>
 	stats(): KitReadStats
 	/**
 	 * Wait until the next request could start. A step calls it last, so the
@@ -115,16 +125,31 @@ export function createKitReader(
 		active -= 1
 		waiting.shift()?.()
 	}
-	/** Reserve the next start slot, then wait for it. */
+	/** A Retry-After hold: no request of the reader starts before it. */
+	let holdUntil = 0
+	/**
+	 * Reserve the next start slot in call order, then wait for it. A
+	 * Retry-After hold set while waiting (by another request's 429) holds
+	 * this one too: it re-reserves after the hold (Macroscope 4143156056).
+	 */
 	const paced = async () => {
-		const at = Math.max(now(), nextStartAt)
-		nextStartAt = at + interval
-		const delay = at - now()
-		if (delay > 0) await sleep(delay)
+		for (;;) {
+			const at = Math.max(now(), nextStartAt, holdUntil)
+			nextStartAt = at + interval
+			const delay = at - now()
+			if (delay > 0) await sleep(delay)
+			if (holdUntil <= now()) return
+		}
 	}
 
-	const attempt = async (url: URL): Promise<Response | undefined> => {
+	const attempt = async (
+		url: URL,
+		path: string,
+		cancelled?: () => boolean,
+	): Promise<Response | undefined> => {
 		await paced()
+		if (cancelled?.())
+			throw new KitReadUnavailableError(path, 'cancelled: another read failed')
 		stats.calls += 1
 		try {
 			return await doFetch(url, { headers: { 'X-Kit-Api-Key': apiKey } })
@@ -134,7 +159,7 @@ export function createKitReader(
 	}
 
 	return {
-		async get(path, params) {
+		async get(path, params, options) {
 			const url = new URL(`${KIT_API_BASE}/${path}`)
 			for (const [key, value] of Object.entries(params))
 				url.searchParams.set(key, value)
@@ -143,7 +168,7 @@ export function createKitReader(
 				let throttles = 0
 				let failures = 0
 				for (;;) {
-					const response = await attempt(url)
+					const response = await attempt(url, path, options?.cancelled)
 					if (response?.status === 429) {
 						stats.throttled += 1
 						throttles += 1
@@ -160,7 +185,7 @@ export function createKitReader(
 						)
 						// Kit throttles the key, not this request: every request of
 						// the reader waits it out.
-						nextStartAt = Math.max(nextStartAt, now() + delay)
+						holdUntil = Math.max(holdUntil, now() + delay)
 						continue
 					}
 					if (response && response.status < 500) return response
@@ -181,7 +206,7 @@ export function createKitReader(
 		},
 		stats: () => ({ ...stats }),
 		async settle() {
-			const delay = nextStartAt - now()
+			const delay = Math.max(nextStartAt, holdUntil) - now()
 			if (delay > 0) await sleep(delay)
 		},
 	}
@@ -275,13 +300,17 @@ export async function fetchKitMemberIdsInSlices(
 					resource,
 					`more than ${KIT_SLICE_PAGE_CAP} pages in ${slice.after}..${slice.before}`,
 				)
-			const response = await reader.get(`${resource}/subscribers`, {
-				status: 'all',
-				per_page: '1000',
-				created_after: slice.after,
-				created_before: slice.before,
-				...(cursor ? { after: cursor } : {}),
-			})
+			const response = await reader.get(
+				`${resource}/subscribers`,
+				{
+					status: 'all',
+					per_page: '1000',
+					created_after: slice.after,
+					created_before: slice.before,
+					...(cursor ? { after: cursor } : {}),
+				},
+				{ cancelled: () => failed },
+			)
 			if (!response.ok)
 				throw new KitReadUnavailableError(
 					resource,

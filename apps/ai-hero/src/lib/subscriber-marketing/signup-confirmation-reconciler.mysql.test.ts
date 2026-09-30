@@ -262,7 +262,7 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 		const receipt = await reconcileSkillsConfirmations({
 			...args,
 			tier: 'daily',
-			kit: { sleep: async () => {} },
+			kit: { sleep: async () => {}, minStartIntervalMs: 0 },
 			steps: {
 				run: (_, work) => work(),
 				send: async (_, event) => {
@@ -517,19 +517,19 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 		['a body that is not JSON', () => new Response('<html>', { status: 200 })],
 	])('fails closed on %s from a consent or history list', async (_, page) => {
 		confirmed('8001')
-		for (const resource of ['subscribers/8001/tags', 'sequences/2757199']) {
-			kitOverride = (url) =>
-				url.pathname === `/v4/${resource}` ||
-				url.pathname === `/v4/${resource}/subscribers`
-					? page()
-					: undefined
-			await expect(
-				reconcile({
-					to: TO,
-					database,
-				}),
-			).rejects.toThrow(ReconcilerEvidenceUnavailableError)
-		}
+		// Email 0's list failing fails the run: nobody is sent.
+		kitOverride = (url) =>
+			url.pathname === '/v4/sequences/2757199/subscribers' ? page() : undefined
+		await expect(reconcile({ to: TO, database })).rejects.toThrow(
+			ReconcilerEvidenceUnavailableError,
+		)
+		// The subscriber's own tags failing skips that subscriber, unsent, and
+		// the run goes on (Sonnet 2, #348 S2).
+		kitOverride = (url) =>
+			url.pathname === '/v4/subscribers/8001/tags' ? page() : undefined
+		const plan = await reconcile({ to: TO, database })
+		expect(plannedIds(plan)).toEqual([])
+		expect(plan.counts).toMatchObject({ tagFailed: 1, planned: 0 })
 	})
 
 	it('stops or slows on AIH_SKILLS_CONFIRMATION_RECONCILIATION_LIMIT, never above 50', async () => {
