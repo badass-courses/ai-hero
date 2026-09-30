@@ -17,22 +17,25 @@ A **bulk birth** is any job that births more than 1,000 contacts into a drip or 
 3. **Calendar journeys don't spread by pacing.** Evergreen and the shadow newsletter send at local calendar instants, so births paced over hours on one day still fire together.
    - Keep **≤ 60k births per local slot per UTC offset** at a 90-minute spread window, and ≤ 20k while the window is 30 minutes. Split the job across days to stay under.
    - The shadow slot counts every `contact.created`.
-4. **Canary first:** a real one-page run: the contact-sync backfill's `maxPages: 1` (it stops and doesn't re-queue), or the evergreen backfill's `--limit 25` (a per-run cap). Then check drovr, and resume only if all three hold:
+4. **Canary first:** a real one-page run that WRITES: the contact-sync backfill's `maxPages: 1` (it stops and doesn't re-queue), or the evergreen backfill's `--apply --limit 25` (a per-run cap). Without `--apply` the backfill is a dry run that posts nothing, and the checks below would pass without testing anything. Then check drovr, and resume only if all three hold:
    - zero `overload` log lines in Axiom since the canary started;
    - `GET /status` with STUCK green;
    - no hold you didn't expect.
 
    `/status` has no overload field (it reports flow, holds, served and stuck), so the overload check is the log line.
-5. **Watch:** drovr's D1 query time per minute (the shed line is about 7.3 s a minute), `overload` log lines, and the queue vital. **At the first overload line, stop the producer:** the import or backfill script, or the Kit bulk action. Its cursor resumes where it stopped. What is already queued drains at ≤ 700 a minute; a failed send retries and then outboxes.
+5. **Watch:** drovr's D1 query time per minute (the shed line is about 7.3 s a minute), `overload` log lines, and the queue vital. **At the first overload line, stop the producer:** the import or backfill script, or the Kit bulk action. Its cursor resumes where it stopped. What is already queued drains at ≤ 700 a minute.
+   - A send that fails (a 5xx, 429 or timeout) retries, then outboxes. A stop drovr refuses with a 4xx is held for a human (row 204c; `drovr-outbox-runbook.md`).
    - **Never pause the Inngest function.** Inngest SKIPS events that arrive while a function is paused, and doesn't reprocess them unless someone runs a manual Replay (which ignores event idempotency). The producers' cursors have already moved past them, and the bulk lane carries directory stops.
-   - If it was paused anyway, resume it, then Replay its "Skipped" runs for the paused window.
+   - If it was paused anyway, resume it, then Replay its "Skipped" runs for the paused window. Also Replay its "Canceled" runs if the pause cancelled them, or if it lasted more than 7 days.
    - To stop sends on one journey right now, `hold_journey` on drovr parks dispatch; nothing is lost.
 6. **Don't backdate births into drip journeys.** ai-hero enforces this at the send (below). The directory seed backdates only the contact directory, which sends nothing. Check which journeys a job's events name.
 
 ## Before the first prod backfill: measure the lane
 
-A gate, not code (Sonnet 2's review of #345). On dev or stage Inngest, send 300 bulk events to `drovr-events-deliver-bulk-v1` and count the run starts per minute.
-- **Pass:** at most 7 runs start in any minute, and each run takes up to 100 events.
+A gate, not code (Sonnet 2's review of #345). On dev or stage Inngest, send **at least 1,000** bulk events to `drovr-events-deliver-bulk-v1` in one burst, and count the run starts per minute.
+- **Why 1,000:** at up to 100 events a run, that is 10 or more runs. So an unthrottled lane must start 8 or more in the first minute and fail. With 300 (3 runs), the gate could not fail.
+- **Expected for 1,000:** about 10 run starts in all, **at most 7 in any minute**, with the backlog draining over **at least 2 minutes** (7, then 3). Each run takes up to 100 events.
+- **Pass:** both hold: at most 7 starts in every minute, and the drain spans at least 2 minutes.
 - **Fail:** there's no pacing, and only the clamp is left. Don't run the backfill; tell the owner.
 
 Record the result (the environment, the minute counts, the date) on the row before the prod run.
@@ -44,6 +47,9 @@ Record the result (the environment, the minute counts, the date) on the row befo
 - The window opens at `DROVR_VALUE_PATH_BULK_FREEZE.from`, 2026-10-18 00:00Z. If PR A deploys earlier, set `AIH_DROVR_VALUE_PATH_BULK_FREEZE=on` on prod first, before its deploy.
 - PR B closes it by setting `DROVR_VALUE_PATH_BULK_FREEZE.until` to its deploy instant. Until then the window stays open, so the guard fails closed.
 - **A value-path import inside the window needs the hawk's sign-off.** Set `AIH_DROVR_VALUE_PATH_BULK_SIGNOFF` to the hawk's name and the date, run the import, then unset it. Each run it lets through logs `drovr.bulk.value_path_births_signed_off` with who signed.
+  - **The sign-off is lane-wide:** while it's set, every bulk run admits its value-path births. So run ONE value-path import at a time, with every other bulk producer stopped and the lane's queue empty before you set it.
+  - **Unset it only after the lane drains.** Each run decides the freeze when it starts, so runs still queued behind the throttle when you unset it drop their value-path births. Wait until the import's runs have all finished and the queue is empty.
+  - Vercel applies an env change at the next deploy, so redeploy after setting it and after unsetting it.
 - A refused birth is not outboxed. Re-run the import after the window, or with the sign-off.
 
 ## The clamp at the send
@@ -66,7 +72,9 @@ Every event leaves ai-hero through `deliverDrovrShadowEvent` (the single post, t
     - **Value-path (V2):** it sends email 0 at once, then paces normally: V2's 24 h wait counts from `email.completed`, not from the birth (drovr `journey-value-path` `waiting`). Once 201e PR A is live, its anchored drips are floored at 18 h.
     - **Evergreen:** every slot already passed fires at the next due check, and the offer window is shorter by the hold.
     - **The shadow newsletter:** a first Thursday already passed goes at the next due check.
-  - **So check drovr before releasing one** (the hawk, `drovr-outbox-runbook.md`, "A birth held over 24 hours"). If drovr has the key, release it: drovr keeps the first write, so nothing changes. If drovr doesn't, re-issue it as a new event with a fresh clamp; don't release it.
+  - **So check whether drovr FOLDED it before releasing one** (the hawk, `drovr-outbox-runbook.md`, "A birth held over 24 hours"). Read the actor with `GET /contacts?contact=&journey=` (`get_contact`).
+    - **An actor on the journey:** the birth folded, so release it. drovr keeps the first write, so nothing changes.
+    - **`404 contact-not-found`:** re-issue it as a new event with a fresh clamp, even if the key is in drovr's log. Don't release it: a logged-but-unfolded key would be forwarded and born backdated by the hold.
 - **Its effect on a calendar journey:** a clamped shadow-newsletter birth can move its first eligible Thursday a week later, never earlier. A clamped evergreen start moves the offer's slots later by the clamp, never earlier. The offer's `completedAt` in the payload keeps the real completion.
 
 ## The evergreen pitch backfill
