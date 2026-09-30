@@ -188,6 +188,8 @@ const LITERAL_ALLOWED: Record<string, string> = {
 		'mapper: stop events to drovr facts',
 	'lib/subscriber-marketing/drovr-shadow-delivery.ts':
 		'mapper: which drovr facts are directory stops',
+	'lib/subscriber-marketing/drovr-outbox.ts':
+		'gate: which outbox rows are stops later rows wait behind (row 204b)',
 	'lib/subscriber-marketing/contact-sync-reconcile.ts':
 		'mapper: which events carry a stop fact to drovr',
 	'lib/subscriber-marketing/contact-sync-backfill.ts':

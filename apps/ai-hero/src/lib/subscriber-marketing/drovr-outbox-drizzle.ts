@@ -3,7 +3,8 @@ import { and, asc, count, eq, inArray, lte, min, or, sql } from 'drizzle-orm'
 
 import {
 	DrovrOutboxUnavailableError,
-	type DrovrOutboxOpenBirth,
+	DROVR_OUTBOX_STOP_EVENT_TYPES,
+	type DrovrOutboxOpenGate,
 	type DrovrOutboxRow,
 	type DrovrOutboxStore,
 } from './drovr-outbox'
@@ -155,7 +156,8 @@ export function createDrizzleDrovrOutboxStore(
 					.limit(limit)) as StoredRow[]
 				return rows.map(fromStored)
 			}),
-		openBirths: ({ target, contactIds }) =>
+		// Rides DrovrOutbox_contact_idx (target, contactId, status).
+		openGates: ({ target, contactIds }) =>
 			guarded(async () => {
 				if (contactIds.length === 0) return []
 				const rows = (await db
@@ -163,34 +165,52 @@ export function createDrizzleDrovrOutboxStore(
 						contactId: drovrOutbox.contactId,
 						journeyId: drovrOutbox.journeyId,
 						endpoint: drovrOutbox.endpoint,
+						eventType: drovrOutbox.eventType,
 						status: drovrOutbox.status,
 						nextAttemptAt: drovrOutbox.nextAttemptAt,
+						occurredAt: drovrOutbox.occurredAt,
 					})
 					.from(drovrOutbox)
 					.where(
 						and(
 							eq(drovrOutbox.target, target),
-							inArray(drovrOutbox.status, ['pending', 'held']),
 							inArray(drovrOutbox.contactId, [...contactIds]),
 							or(
-								eq(drovrOutbox.eventType, 'contact.created'),
-								eq(drovrOutbox.endpoint, 'signups'),
+								// A birth still owed.
+								and(
+									inArray(drovrOutbox.status, ['pending', 'held']),
+									or(
+										eq(drovrOutbox.eventType, 'contact.created'),
+										eq(drovrOutbox.endpoint, 'signups'),
+									),
+								),
+								// A stop still owed; a refused one fails closed.
+								and(
+									inArray(drovrOutbox.status, ['pending', 'held', 'rejected']),
+									inArray(drovrOutbox.eventType, [
+										...DROVR_OUTBOX_STOP_EVENT_TYPES,
+									]),
+								),
 							),
 						),
 					)) as {
 					contactId: string
 					journeyId: string
 					endpoint: string
+					eventType: string
 					status: string
 					nextAttemptAt: string | Date
+					occurredAt: string | Date
 				}[]
 				return rows.map(
-					(row): DrovrOutboxOpenBirth => ({
+					(row): DrovrOutboxOpenGate => ({
 						contactId: row.contactId,
 						journeyId: row.journeyId,
-						endpoint: row.endpoint as DrovrOutboxOpenBirth['endpoint'],
-						status: row.status as DrovrOutboxOpenBirth['status'],
+						endpoint: row.endpoint as DrovrOutboxOpenGate['endpoint'],
+						eventType: row.eventType,
+						status: row.status as DrovrOutboxOpenGate['status'],
 						nextAttemptAt: isoOf(row.nextAttemptAt),
+						occurredAt: isoOf(row.occurredAt),
 					}),
 				)
 			}),
@@ -234,11 +254,24 @@ export function createDrizzleDrovrOutboxStore(
 				}[]
 				const of = (status: string) => rows.find((row) => row.status === status)
 				const pending = of('pending')
+				const [stop] = (await db
+					.select({ oldest: min(drovrOutbox.firstFailedAt) })
+					.from(drovrOutbox)
+					.where(
+						and(
+							eq(drovrOutbox.target, target),
+							inArray(drovrOutbox.status, ['pending', 'held', 'rejected']),
+							inArray(drovrOutbox.eventType, [
+								...DROVR_OUTBOX_STOP_EVENT_TYPES,
+							]),
+						),
+					)) as { oldest: string | Date | null }[]
 				return {
 					pending: Number(pending?.count ?? 0),
 					oldestPendingFailedAt: pending?.oldest ? isoOf(pending.oldest) : null,
 					held: Number(of('held')?.count ?? 0),
 					rejected: Number(of('rejected')?.count ?? 0),
+					oldestOpenStopFailedAt: stop?.oldest ? isoOf(stop.oldest) : null,
 				}
 			}),
 		deleteDeliveredBefore: (before, limit) =>

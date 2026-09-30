@@ -225,7 +225,7 @@ integration('drovr outbox store on MySQL (row 204)', () => {
 				// A fact is not a birth.
 				row({ contactId: 'c1', eventType: 'value-path.answer-selected' }),
 			])
-			const births = await store.openBirths({
+			const births = await store.openGates({
 				target: PROD,
 				contactIds: ['c1', 'c2', 'c3'],
 			})
@@ -241,9 +241,56 @@ integration('drovr outbox store on MySQL (row 204)', () => {
 			expect(births.find((b) => b.contactId === 'c1')?.nextAttemptAt).toBe(
 				open.nextAttemptAt,
 			)
-			expect(await store.openBirths({ target: PROD, contactIds: [] })).toEqual(
+			expect(await store.openGates({ target: PROD, contactIds: [] })).toEqual(
 				[],
 			)
+		})
+
+		it("reads this target's open stops too, a refused one included, over the contact index (row 204b)", async () => {
+			const stop = (overrides: Partial<DrovrOutboxRow>) =>
+				row({ eventType: 'purchase.recorded', ...overrides })
+			await store.insertIgnore([
+				stop({ contactId: 'c1', firstFailedAt: '2026-09-30T10:30:00.000Z' }),
+				stop({
+					contactId: 'c1',
+					eventType: 'contact.unsubscribed',
+					status: 'rejected',
+					firstFailedAt: '2026-09-30T10:00:00.000Z',
+				}),
+				stop({ contactId: 'c2', eventType: 'contact.bounced', status: 'held' }),
+				stop({
+					contactId: 'c1',
+					eventType: 'contact.complained',
+					status: 'delivered',
+					deliveredAt: '2026-09-30T11:30:00.000Z',
+					firstFailedAt: '2026-09-30T08:00:00.000Z',
+				}),
+				stop({ contactId: 'c1', target: PREVIEW }),
+				// A refused birth is not a gate; a refused stop is.
+				row({ contactId: 'c1', status: 'rejected' }),
+				// A fact is neither.
+				row({ contactId: 'c1', eventType: 'value-path.answer-selected' }),
+			])
+			const gates = await store.openGates({
+				target: PROD,
+				contactIds: ['c1', 'c2'],
+			})
+			expect(
+				gates.map((g) => `${g.contactId}|${g.eventType}|${g.status}`).sort(),
+			).toEqual([
+				'c1|contact.unsubscribed|rejected',
+				'c1|purchase.recorded|pending',
+				'c2|contact.bounced|held',
+			])
+			expect(gates[0]?.occurredAt).toBe('2026-09-30T10:00:00.000Z')
+			expect((await store.depth(PROD)).oldestOpenStopFailedAt).toBe(
+				'2026-09-30T10:00:00.000Z',
+			)
+			const [plan] = (await pool.query(
+				`EXPLAIN SELECT id FROM AI_DrovrOutbox WHERE target = ? AND contactId IN (?, ?) AND status IN ('pending', 'held', 'rejected')`,
+				[PROD, 'c1', 'c2'],
+			)) as unknown as [{ possible_keys: string | null }[]]
+			expect(plan[0]?.possible_keys ?? '').toContain('DrovrOutbox_contact_idx')
 		})
 
 		it("takes only this target's pending rows that are due", async () => {
@@ -282,6 +329,7 @@ integration('drovr outbox store on MySQL (row 204)', () => {
 				oldestPendingFailedAt: '2026-09-30T09:00:00.000Z',
 				held: 1,
 				rejected: 1,
+				oldestOpenStopFailedAt: null,
 			})
 			const [updated] = await store.due({
 				target: PROD,

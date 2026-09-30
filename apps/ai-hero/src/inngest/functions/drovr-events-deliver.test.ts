@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 	resolveOwnedContactIds: vi.fn(),
 	capture: vi.fn(),
+	openStops: vi.fn(),
 }))
 
 vi.mock('@/env.mjs', () => ({
@@ -55,6 +56,7 @@ vi.mock('@/lib/subscriber-marketing/drovr-ownership-live', () => ({
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
 vi.mock('@/lib/subscriber-marketing/drovr-outbox-live', () => ({
 	captureDrovrOutboxLive: mocks.capture,
+	openDrovrOutboxStopsLive: mocks.openStops,
 }))
 
 import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
@@ -105,6 +107,7 @@ const createStep = (): Step => ({
 
 beforeEach(() => {
 	vi.clearAllMocks()
+	mocks.openStops.mockResolvedValue([])
 	mocks.resolveOwnedContactIds.mockResolvedValue([])
 	mocks.isShadowNewsletterBirth.mockReturnValue(false)
 	mocks.drovrApiKeyForTenant.mockImplementation((tenantId: string) =>
@@ -898,5 +901,237 @@ describe('row 204: a drovr 5xx never loses a live or bulk event', () => {
 			'drovr.outbox.on_failure_capture_failed',
 			expect.objectContaining({ idempotencyKeys: ['owner:answer'] }),
 		)
+	})
+})
+
+describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still owes', () => {
+	const at = (minute: number) =>
+		`2026-09-21T12:${String(minute).padStart(2, '0')}:00.000Z`
+	const fact = (key: string, minute: number, contactId = 'contact-1') => ({
+		...event('org-aihero', key),
+		contactId,
+		occurredAt: at(minute),
+	})
+	const stopEvent = (key: string, type: string, minute: number) => ({
+		...event('org-aihero', key, 'crash-course-evergreen-offer', type),
+		occurredAt: at(minute),
+	})
+	const owedPurchase = {
+		contactId: 'contact-1',
+		eventType: 'purchase.recorded',
+		occurredAt: at(10),
+		status: 'pending',
+	}
+	const run = (
+		events: unknown[],
+		attempt: { attempt: number; maxAttempts: number } = {
+			attempt: 0,
+			maxAttempts: 9,
+		},
+	) =>
+		registered.handler({
+			event: { data: { source: 'live-contact', events } },
+			step: createStep(),
+			...attempt,
+		})
+
+	beforeEach(() => {
+		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
+		mocks.capture.mockImplementation(async (entries: unknown[]) => ({
+			status: 'outboxed',
+			count: entries.length,
+		}))
+		mocks.deliverOrThrow.mockResolvedValue({ status: 'accepted' })
+	})
+
+	it('a pending stop → the later fact goes to the outbox behind it, not to drovr; others still post', async () => {
+		mocks.openStops.mockResolvedValue([owedPurchase])
+		const later = fact('owner:later', 20)
+		const earlier = fact('owner:earlier', 5)
+		const otherContact = fact('owner:other', 20, 'contact-2')
+		const receipt = await run([earlier, later, otherContact])
+		expect(mocks.openStops).toHaveBeenCalledWith(['contact-1', 'contact-2'])
+		expect(receipt).toEqual({
+			status: 'delivered',
+			accepted: 2,
+			rejected: 0,
+			discarded: 0,
+			outboxed: 1,
+			heldBehindStop: 1,
+		})
+		const posted = mocks.deliverOrThrow.mock.calls.map(
+			([args]) =>
+				(args as { event: { idempotencyKey: string } }).event.idempotencyKey,
+		)
+		expect(posted).toEqual(['owner:earlier', 'owner:other'])
+		expect(mocks.capture.mock.calls[0]![0]).toEqual([
+			expect.objectContaining({
+				idempotencyKey: 'owner:later',
+				source: 'live',
+				needsFanOut: false,
+			}),
+		])
+		expect(mocks.log.info).toHaveBeenCalledWith(
+			'drovr.outbox.held_behind_stop',
+			expect.objectContaining({ count: 1, idempotencyKeys: ['owner:later'] }),
+		)
+	})
+
+	it('holds nothing behind a refused stop any less: a rejected stop fails closed', async () => {
+		mocks.openStops.mockResolvedValue([{ ...owedPurchase, status: 'rejected' }])
+		await run([fact('owner:later', 20)])
+		expect(mocks.deliverOrThrow).not.toHaveBeenCalled()
+	})
+
+	it('never holds a stop behind a stop', async () => {
+		mocks.openStops.mockResolvedValue([owedPurchase])
+		await run([stopEvent('owner:unsubscribe', 'contact.unsubscribed', 20)])
+		expect(mocks.deliverOrThrow).toHaveBeenCalledOnce()
+		expect(mocks.capture).not.toHaveBeenCalled()
+	})
+
+	it('retries a failed stop read and posts nothing meanwhile', async () => {
+		mocks.openStops.mockRejectedValue(new Error('Vitess: connection reset'))
+		const error = await run([fact('owner:later', 20)]).catch(
+			(thrown: unknown) => thrown,
+		)
+		expect(error).toMatchObject({ name: 'RetryAfterError' })
+		expect(mocks.deliverOrThrow).not.toHaveBeenCalled()
+		expect(mocks.capture).not.toHaveBeenCalled()
+	})
+
+	it('outboxes the whole batch when the stop read fails on the last attempt: never posted unchecked', async () => {
+		mocks.openStops.mockRejectedValue(new Error('Vitess: connection reset'))
+		const receipt = await run(
+			[fact('owner:a', 20), fact('owner:b', 21, 'contact-2')],
+			LAST,
+		)
+		expect(receipt).toMatchObject({ accepted: 0, outboxed: 2 })
+		expect(mocks.deliverOrThrow).not.toHaveBeenCalled()
+		expect(
+			(mocks.capture.mock.calls[0]![0] as { idempotencyKey: string }[]).map(
+				(entry) => entry.idempotencyKey,
+			),
+		).toEqual(['owner:a', 'owner:b'])
+	})
+
+	it('fails the step, never posts, when the held fact cannot be outboxed', async () => {
+		mocks.openStops.mockResolvedValue([owedPurchase])
+		mocks.capture.mockResolvedValue({ status: 'unavailable' })
+		const error = await run([fact('owner:later', 20)]).catch(
+			(thrown: unknown) => thrown,
+		)
+		expect(error).toMatchObject({ name: 'RetryAfterError' })
+		expect(mocks.deliverOrThrow).not.toHaveBeenCalled()
+	})
+
+	it('holds a later fact behind a stop this same run outboxed', async () => {
+		mocks.deliverOrThrow.mockImplementation(
+			async ({ event: sent }: { event: { idempotencyKey: string } }) => {
+				if (sent.idempotencyKey === 'owner:purchase') throw drovrFailure(503)
+				return { status: 'accepted' }
+			},
+		)
+		const receipt = await run(
+			[
+				stopEvent('owner:purchase', 'purchase.recorded', 10),
+				fact('owner:later', 20),
+			],
+			LAST,
+		)
+		expect(receipt).toMatchObject({
+			accepted: 0,
+			outboxed: 2,
+			heldBehindStop: 1,
+		})
+		const posted = mocks.deliverOrThrow.mock.calls.map(
+			([args]) =>
+				(args as { event: { idempotencyKey: string } }).event.idempotencyKey,
+		)
+		expect(posted).toEqual(['owner:purchase'])
+		expect(
+			mocks.capture.mock.calls.map((call) =>
+				(call[0] as { idempotencyKey: string }[]).map((e) => e.idempotencyKey),
+			),
+		).toEqual([['owner:purchase'], ['owner:later']])
+	})
+
+	it('gates the bulk lane too', async () => {
+		mocks.openStops.mockResolvedValue([owedPurchase])
+		mocks.deliverBatchOrThrow.mockImplementation(
+			async ({ events }: { events: unknown[] }) => ({
+				accepted: events.length,
+				rejected: 0,
+			}),
+		)
+		const receipt = await registeredBulk.handler({
+			events: [
+				{
+					data: {
+						source: 'kit-directory-ingest',
+						events: [
+							fact('owner:later', 20),
+							fact('owner:other', 20, 'contact-2'),
+						],
+					},
+				},
+			],
+			step: createStep(),
+			attempt: 0,
+			maxAttempts: 9,
+		})
+		expect(receipt).toMatchObject({
+			accepted: 1,
+			outboxed: 1,
+			heldBehindStop: 1,
+		})
+		const sent = mocks.deliverBatchOrThrow.mock.calls.flatMap(([args]) =>
+			(args as { events: { idempotencyKey: string }[] }).events.map(
+				(e) => e.idempotencyKey,
+			),
+		)
+		expect(sent).toEqual(['owner:other'])
+	})
+
+	it('holds a later fact in a later chunk behind a stop an earlier chunk outboxed', async () => {
+		const fillers = Array.from({ length: 99 }, (_, i) =>
+			fact(`owner:filler-${i}`, 15, `contact-f${i}`),
+		)
+		mocks.deliverBatchOrThrow.mockImplementation(
+			async ({ events }: { events: { idempotencyKey: string }[] }) => {
+				if (events.some((e) => e.idempotencyKey === 'owner:purchase'))
+					throw drovrFailure(503)
+				return { accepted: events.length, rejected: 0 }
+			},
+		)
+		const receipt = await registeredBulk.handler({
+			events: [
+				{
+					data: {
+						source: 'kit-directory-ingest',
+						events: [
+							stopEvent('owner:purchase', 'purchase.recorded', 10),
+							...fillers,
+							fact('owner:later', 20),
+						],
+					},
+				},
+			],
+			step: createStep(),
+			...LAST,
+		})
+		// Chunk 0 (the stop and 99 others) is outboxed whole; chunk 1 held only
+		// the later fact, so it is never posted and goes to the outbox too.
+		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledOnce()
+		expect(receipt).toMatchObject({
+			accepted: 0,
+			outboxed: 101,
+			heldBehindStop: 1,
+		})
+		expect(
+			(mocks.capture.mock.calls.at(-1)![0] as { idempotencyKey: string }[]).map(
+				(e) => e.idempotencyKey,
+			),
+		).toEqual(['owner:later'])
 	})
 })

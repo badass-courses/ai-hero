@@ -12,6 +12,7 @@ import {
 	DrovrOutboxUnavailableError,
 	drovrReplayDelayMs,
 	drovrRetryDelayMs,
+	isOutboxStop,
 	outboxEntryForEvent,
 	outboxEntryForSignup,
 	parseRetryAfterMs,
@@ -49,22 +50,36 @@ function memoryStore(initial: DrovrOutboxRow[] = []) {
 				.slice(0, limit)
 				.map((row) => ({ ...row }))
 		},
-		async openBirths({ target, contactIds }) {
+		async openGates({ target, contactIds }) {
 			return [...rows.values()]
 				.filter(
 					(row) =>
 						row.target === target &&
-						(row.status === 'pending' || row.status === 'held') &&
 						contactIds.includes(row.contactId) &&
-						(row.eventType === 'contact.created' || row.endpoint === 'signups'),
+						(((row.status === 'pending' || row.status === 'held') &&
+							(row.eventType === 'contact.created' ||
+								row.endpoint === 'signups')) ||
+							(row.status !== 'delivered' && isOutboxStop(row))),
 				)
-				.map(({ contactId, journeyId, endpoint, status, nextAttemptAt }) => ({
-					contactId,
-					journeyId,
-					endpoint,
-					status,
-					nextAttemptAt,
-				}))
+				.map(
+					({
+						contactId,
+						journeyId,
+						endpoint,
+						eventType,
+						status,
+						nextAttemptAt,
+						occurredAt,
+					}) => ({
+						contactId,
+						journeyId,
+						endpoint,
+						eventType,
+						status,
+						nextAttemptAt,
+						occurredAt,
+					}),
+				)
 		},
 		async update(id, patch) {
 			rows.set(id, { ...rows.get(id)!, ...patch })
@@ -78,6 +93,11 @@ function memoryStore(initial: DrovrOutboxRow[] = []) {
 					pending.map((row) => row.firstFailedAt).sort()[0] ?? null,
 				held: mine.filter((row) => row.status === 'held').length,
 				rejected: mine.filter((row) => row.status === 'rejected').length,
+				oldestOpenStopFailedAt:
+					mine
+						.filter((row) => row.status !== 'delivered' && isOutboxStop(row))
+						.map((row) => row.firstFailedAt)
+						.sort()[0] ?? null,
 			}
 		},
 		async deleteDeliveredBefore(before, limit) {
@@ -975,4 +995,211 @@ describe('row 204 round 2: shadow rows never poison the replay (MUST 2)', () => 
 		expect(rows.get(good.id)?.status).toBe('delivered')
 		for (const r of poison) expect(rows.get(r.id)?.status).toBe('delivered')
 	})
+})
+
+describe('row 204b: an owed stop holds its contact back', () => {
+	const failedTransient = {
+		kind: 'failed' as const,
+		transient: true,
+		httpStatus: 503,
+		reason: 'drovr answered 503',
+	}
+	const inAnHour = new Date(NOW.getTime() + 60 * 60_000).toISOString()
+	const stopRow = (
+		key: string,
+		type: string,
+		occurredAt: string,
+		overrides: Omit<Partial<DrovrOutboxRow>, 'body'> = {},
+	) =>
+		row({
+			body: event(key, {
+				type: type as DrovrShadowEvent['type'],
+				journeyId: 'crash-course-evergreen-offer',
+				occurredAt,
+			}),
+			...overrides,
+		})
+
+	it('a pending stop → the later fact waits, however many runs the stop keeps failing, then follows it', async () => {
+		const stop = stopRow('stop', 'purchase.recorded', minutesAgo(30))
+		const fact = row({ body: event('answer', { occurredAt: minutesAgo(20) }) })
+		const { store, rows } = memoryStore([stop, fact])
+		let clock = NOW.getTime()
+		let drovrUp = false
+		const posted: string[] = []
+		const post = vi.fn(async (r: DrovrOutboxRow) => {
+			posted.push(r.idempotencyKey)
+			return drovrUp ? { kind: 'delivered' as const } : failedTransient
+		})
+		for (let run = 0; run < 6; run += 1) {
+			await replay(store, post, { now: () => new Date(clock) }).run
+			clock += 60 * 60_000
+		}
+		expect(posted.every((key) => key === 'stop')).toBe(true)
+		expect(rows.get(fact.id)?.attempts).toBe(0)
+		drovrUp = true
+		for (let run = 0; run < 3; run += 1) {
+			await replay(store, post, { now: () => new Date(clock) }).run
+			clock += 60 * 60_000
+		}
+		expect(rows.get(stop.id)?.status).toBe('delivered')
+		expect(rows.get(fact.id)?.status).toBe('delivered')
+		expect(posted.indexOf('answer')).toBeGreaterThan(posted.lastIndexOf('stop'))
+	})
+
+	it('holds a later fact behind a stop that is not due this run, moves it to the stop, and logs why', async () => {
+		const stop = stopRow('stop', 'purchase.recorded', minutesAgo(30), {
+			nextAttemptAt: inAnHour,
+		})
+		const fact = row({ body: event('answer', { occurredAt: minutesAgo(20) }) })
+		const { store, rows } = memoryStore([stop, fact])
+		const post = vi.fn(async () => ({ kind: 'delivered' as const }))
+		const { run, logger } = replay(store, post)
+		const receipt = await run
+		expect(post).not.toHaveBeenCalled()
+		expect(receipt.skippedBehindStop).toBe(1)
+		expect(rows.get(fact.id)?.nextAttemptAt).toBe(inAnHour)
+		expect(logger.info).toHaveBeenCalledWith(
+			'drovr.outbox.behind_stop',
+			expect.objectContaining({
+				idempotencyKey: 'answer',
+				stopEventType: 'purchase.recorded',
+				stopStatus: 'pending',
+			}),
+		)
+	})
+
+	it('still posts a fact from before the stop: it happened first', async () => {
+		const stop = stopRow('stop', 'contact.unsubscribed', minutesAgo(20), {
+			nextAttemptAt: inAnHour,
+		})
+		const earlier = row({
+			body: event('answer', { occurredAt: minutesAgo(30) }),
+		})
+		const { store, rows } = memoryStore([stop, earlier])
+		await replay(store, async () => ({ kind: 'delivered' })).run
+		expect(rows.get(earlier.id)?.status).toBe('delivered')
+	})
+
+	it('never holds a stop behind another stop', async () => {
+		const purchase = stopRow('purchase', 'purchase.recorded', minutesAgo(30), {
+			nextAttemptAt: inAnHour,
+		})
+		const unsubscribe = stopRow(
+			'unsubscribe',
+			'contact.unsubscribed',
+			minutesAgo(20),
+		)
+		const { store, rows } = memoryStore([purchase, unsubscribe])
+		await replay(store, async () => ({ kind: 'delivered' })).run
+		expect(rows.get(unsubscribe.id)?.status).toBe('delivered')
+	})
+
+	it('fails closed behind a refused stop: the fact waits an hour at a time until a human retires the stop', async () => {
+		const stop = stopRow('stop', 'purchase.recorded', minutesAgo(30), {
+			status: 'rejected',
+		})
+		const fact = row({ body: event('answer', { occurredAt: minutesAgo(20) }) })
+		const { store, rows } = memoryStore([stop, fact])
+		const post = vi.fn(async () => ({ kind: 'delivered' as const }))
+		const receipt = await replay(store, post).run
+		expect(post).not.toHaveBeenCalled()
+		expect(receipt.skippedBehindStop).toBe(1)
+		expect(rows.get(fact.id)?.nextAttemptAt).toBe(inAnHour)
+		// Retired by hand (the runbook): the fact follows at its next run.
+		await store.update(stop.id, {
+			status: 'delivered',
+			deliveredAt: minutesAgo(0),
+		})
+		await replay(store, post, { now: () => new Date(inAnHour) }).run
+		expect(rows.get(fact.id)?.status).toBe('delivered')
+	})
+
+	it('holds a fact refused this very run behind the stop from then on', async () => {
+		const stop = stopRow('stop', 'purchase.recorded', minutesAgo(30))
+		const fact = row({
+			body: event('answer', { occurredAt: minutesAgo(20) }),
+			nextAttemptAt: minutesAgo(0),
+		})
+		const { store, rows } = memoryStore([stop, fact])
+		const post = vi.fn(async (r: DrovrOutboxRow) =>
+			r.idempotencyKey === 'stop'
+				? { kind: 'rejected' as const, httpStatus: 422, detail: 'bad' }
+				: { kind: 'delivered' as const },
+		)
+		await replay(store, post).run
+		// Refused in this run, the stop now holds the fact an hour at a time.
+		expect(rows.get(fact.id)?.nextAttemptAt).toBe(inAnHour)
+		// A later run, the fact due again: the refused stop still holds it.
+		await replay(store, post, {
+			now: () => new Date(NOW.getTime() + 10 * 60_000),
+		}).run
+		expect(post.mock.calls.map(([r]) => r.idempotencyKey)).toEqual(['stop'])
+		expect(rows.get(fact.id)?.attempts).toBe(0)
+	})
+
+	it.each([
+		'contact.unsubscribed',
+		'contact.bounced',
+		'contact.complained',
+		'purchase.recorded',
+	])('gates on a %s, on every journey of the contact', async (type) => {
+		expect(isOutboxStop({ eventType: type })).toBe(true)
+		const stop = stopRow('stop', type, minutesAgo(30), {
+			nextAttemptAt: inAnHour,
+		})
+		const otherJourney = row({
+			body: event('answer', {
+				journeyId: 'value-path-skills-course',
+				occurredAt: minutesAgo(20),
+			}),
+		})
+		const otherContact = row({
+			body: event('other', {
+				contactId: 'contact-2',
+				occurredAt: minutesAgo(20),
+			}),
+		})
+		otherContact.contactId = 'contact-2'
+		const { store, rows } = memoryStore([stop, otherJourney, otherContact])
+		await replay(store, async () => ({ kind: 'delivered' })).run
+		expect(rows.get(otherJourney.id)?.attempts).toBe(0)
+		expect(rows.get(otherContact.id)?.status).toBe('delivered')
+	})
+
+	it('posts the later fact in the same run once the stop lands first', async () => {
+		const stop = stopRow('stop', 'purchase.recorded', minutesAgo(30))
+		const fact = row({ body: event('answer', { occurredAt: minutesAgo(20) }) })
+		const { store, rows } = memoryStore([stop, fact])
+		const posted: string[] = []
+		await replay(store, async (r) => {
+			posted.push(r.idempotencyKey)
+			return { kind: 'delivered' }
+		}).run
+		expect(posted).toEqual(['stop', 'answer'])
+		expect(rows.get(fact.id)?.status).toBe('delivered')
+	})
+
+	it.each([
+		['pending', 11, true],
+		['pending', 9, false],
+		['rejected', 11, true],
+	] as const)(
+		'alerts on a %s stop owed for %i minutes: %s',
+		async (status, minutes, alerts) => {
+			const stop = stopRow('stop', 'contact.unsubscribed', minutesAgo(60), {
+				status,
+				firstFailedAt: minutesAgo(minutes),
+				nextAttemptAt: inAnHour,
+			})
+			const { store } = memoryStore([stop])
+			const { run, logger } = replay(store, async () => ({ kind: 'delivered' }))
+			const receipt = await run
+			expect(receipt.alert.includes('stop')).toBe(alerts)
+			expect(logger.info).toHaveBeenCalledWith(
+				'drovr.outbox.depth',
+				expect.objectContaining({ oldestOpenStopAgeMin: minutes }),
+			)
+		},
+	)
 })

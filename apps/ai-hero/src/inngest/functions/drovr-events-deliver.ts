@@ -35,10 +35,16 @@ import { parseDrovrProfileSyncConfig } from '@/lib/subscriber-marketing/drovr-co
 import { resolveOwnedContactIds } from '@/lib/subscriber-marketing/drovr-ownership-live'
 import {
 	DROVR_SEND_RETRIES,
+	isOutboxStop,
+	openStopBefore,
 	outboxEntryForEvent,
 	type DrovrOutboxSource,
 } from '@/lib/subscriber-marketing/drovr-outbox'
-import { captureDrovrOutboxLive } from '@/lib/subscriber-marketing/drovr-outbox-live'
+import {
+	captureDrovrOutboxLive,
+	openDrovrOutboxStopsLive,
+	type DrovrOutboxOpenStopsFn,
+} from '@/lib/subscriber-marketing/drovr-outbox-live'
 import {
 	sendOrOutbox,
 	type DrovrOutboxCaptureFn,
@@ -67,6 +73,11 @@ export type DrovrEventsDeliverReceipt = {
 	 * replay delivers them (row 204).
 	 */
 	outboxed?: number
+	/**
+	 * Of `outboxed`, facts held behind a stop the outbox still owes, so
+	 * they never reach drovr ahead of it (row 204b).
+	 */
+	heldBehindStop?: number
 	reason?: string
 }
 
@@ -75,6 +86,8 @@ export type DeliverContext = {
 	attempt: DrovrSendAttempt
 	lane: Extract<DrovrOutboxSource, 'live' | 'bulk'>
 	capture: DrovrOutboxCaptureFn
+	/** The outbox's owed stops for these contacts (row 204b). */
+	openStops: DrovrOutboxOpenStopsFn
 }
 
 type Outboxed = { outboxed: number }
@@ -190,6 +203,105 @@ const fanOut = async (
 	)
 }
 
+/** One event's identity across tenants and journeys (the dedupe inputs). */
+const eventIdentity = (event: DrovrShadowEvent) =>
+	`${event.tenantId}|${event.journeyId}|${event.idempotencyKey}`
+
+type StopMark = { eventType: string; occurredAt: string }
+
+const stopMarkOf = (event: DrovrShadowEvent): StopMark => ({
+	eventType: event.type,
+	occurredAt: event.occurredAt,
+})
+
+const isBehind = (
+	event: DrovrShadowEvent,
+	stops: ReadonlyMap<string, StopMark[]>,
+) => openStopBefore(stopMarkOf(event), stops.get(event.contactId)) !== undefined
+
+/**
+ * Row 204b: a fact that happened at or after a stop the outbox still owes
+ * goes to the outbox behind that stop instead of to drovr, where it could
+ * start email the stop exists to prevent (a purchase is refused at send
+ * time by nothing but drovr knowing). One read per batch. A read that
+ * fails is retried; on the last attempt the whole batch goes to the
+ * outbox, so a failed read never posts.
+ */
+const holdBehindOpenStops = async (
+	events: DrovrShadowEvent[],
+	step: DeliverStep,
+	context: DeliverContext,
+): Promise<{ events: DrovrShadowEvent[]; held: number; outboxed: number }> => {
+	if (events.length === 0) return { events, held: 0, outboxed: 0 }
+	const result = await step.run('drovr-outbox-stop-gate', () =>
+		sendOrOutbox<{ heldIdentities: string[] } | Outboxed>({
+			attempt: context.attempt,
+			send: async () => {
+				const stops = new Map<string, StopMark[]>()
+				for (const stop of await context.openStops([
+					...new Set(events.map((event) => event.contactId)),
+				])) {
+					const list = stops.get(stop.contactId) ?? []
+					list.push(stop)
+					stops.set(stop.contactId, list)
+				}
+				const behind = events.filter((event) => isBehind(event, stops))
+				if (behind.length === 0) return { heldIdentities: [] }
+				await holdInOutbox(behind, context)
+				return { heldIdentities: behind.map(eventIdentity) }
+			},
+			unsent: () =>
+				events.map((event) => outboxEntryForEvent(event, context.lane)),
+			capture: context.capture,
+			outboxed: (outboxed) => ({ outboxed }),
+		}),
+	)
+	if (isOutboxed(result))
+		return { events: [], held: 0, outboxed: result.outboxed }
+	const held = new Set(result.heldIdentities)
+	return {
+		events: events.filter((event) => !held.has(eventIdentity(event))),
+		held: held.size,
+		outboxed: held.size,
+	}
+}
+
+/** Put held events in the outbox; anything short of that fails the step. */
+const holdInOutbox = async (
+	behind: readonly DrovrShadowEvent[],
+	context: DeliverContext,
+) => {
+	const captured = await context.capture(
+		behind.map((event) => outboxEntryForEvent(event, context.lane)),
+		new Error('held behind a stop the outbox still owes'),
+	)
+	if (captured.status !== 'outboxed')
+		throw new Error(
+			`could not hold ${behind.length} drovr events behind an owed stop: outbox ${captured.status}`,
+		)
+	await log.info('drovr.outbox.held_behind_stop', {
+		count: behind.length,
+		deliveryLane: context.lane,
+		idempotencyKeys: behind.map((event) => event.idempotencyKey),
+	})
+}
+
+/**
+ * Events this run held behind a stop it outboxed itself (a stop that ran
+ * out of retries earlier in the same run), in one step at the end.
+ */
+const holdLate = async (
+	late: readonly DrovrShadowEvent[],
+	step: DeliverStep,
+	context: DeliverContext,
+): Promise<number> => {
+	if (late.length === 0) return 0
+	await step.run('drovr-outbox-hold-behind-outboxed-stop', () =>
+		holdInOutbox(late, context),
+	)
+	return late.length
+}
+
 const deliverBatch = async (
 	batch: DrovrEventsDeliver['data']['events'],
 	step: DeliverStep,
@@ -206,16 +318,24 @@ const deliverBatch = async (
 			discarded: 0,
 			outboxed: fanOutEvents.outboxed,
 		}
-	const { events, discarded } = await discardShadowTenantEvents(
-		fanOutEvents,
-		'live',
-	)
+	const shadowFiltered = await discardShadowTenantEvents(fanOutEvents, 'live')
+	const { discarded } = shadowFiltered
+	const gate = await holdBehindOpenStops(shadowFiltered.events, step, context)
+	const events = gate.events
 
 	let accepted = 0
 	let rejected = 0
 	let ownerStopsNeverBorn = 0
-	let outboxed = 0
+	let outboxed = gate.outboxed
+	let heldBehindStop = gate.held
+	// Stops this run outboxed: their contacts' later events wait behind them.
+	const outboxedStops = new Map<string, StopMark[]>()
+	const late: DrovrShadowEvent[] = []
 	for (const drovrEvent of events) {
+		if (isBehind(drovrEvent, outboxedStops)) {
+			late.push(drovrEvent)
+			continue
+		}
 		// One bearer key per drovr tenant; a tenant without a key is a
 		// configuration gap, final for this run and loud in the receipt.
 		const apiKey = drovrApiKeyForTenant(drovrEvent.tenantId)
@@ -252,12 +372,20 @@ const deliverBatch = async (
 		)
 		if (outcome.status === 'outboxed') {
 			outboxed += 1
+			if (isOutboxStop({ eventType: drovrEvent.type })) {
+				const list = outboxedStops.get(drovrEvent.contactId) ?? []
+				list.push(stopMarkOf(drovrEvent))
+				outboxedStops.set(drovrEvent.contactId, list)
+			}
 			continue
 		}
 		if (outcome.status === 'accepted') accepted += 1
 		if (outcome.status === 'rejected') rejected += 1
 		if (isNeverBornOwnerStop(drovrEvent, outcome)) ownerStopsNeverBorn += 1
 	}
+	const heldLate = await holdLate(late, step, context)
+	outboxed += heldLate
+	heldBehindStop += heldLate
 	return {
 		status: 'delivered',
 		accepted,
@@ -265,6 +393,7 @@ const deliverBatch = async (
 		discarded,
 		...(ownerStopsNeverBorn > 0 ? { ownerStopsNeverBorn } : {}),
 		...(outboxed > 0 ? { outboxed } : {}),
+		...(heldBehindStop > 0 ? { heldBehindStop } : {}),
 	}
 }
 
@@ -296,10 +425,10 @@ const deliverBulk = async (
 			discarded: 0,
 			outboxed: fanOutEvents.outboxed,
 		}
-	const { events, discarded } = await discardShadowTenantEvents(
-		fanOutEvents,
-		'bulk',
-	)
+	const shadowFiltered = await discardShadowTenantEvents(fanOutEvents, 'bulk')
+	const { discarded } = shadowFiltered
+	const gate = await holdBehindOpenStops(shadowFiltered.events, step, context)
+	const events = gate.events
 
 	// One key per tenant, so one batch stream per tenant.
 	const byTenant = new Map<DrovrShadowEvent['tenantId'], DrovrShadowEvent[]>()
@@ -311,7 +440,12 @@ const deliverBulk = async (
 
 	let accepted = 0
 	let rejected = 0
-	let outboxed = 0
+	let outboxed = gate.outboxed
+	let heldBehindStop = gate.held
+	// Stops in a chunk this run outboxed hold their contacts' later events
+	// in the chunks after it.
+	const outboxedStops = new Map<string, StopMark[]>()
+	const late: DrovrShadowEvent[] = []
 	for (const [tenantId, tenantEvents] of byTenant) {
 		const apiKey = drovrApiKeyForTenant(tenantId)
 		if (!apiKey) {
@@ -328,10 +462,13 @@ const deliverBulk = async (
 			chunkIndex * DROVR_BATCH_MAX < tenantEvents.length;
 			chunkIndex += 1
 		) {
-			const chunk = tenantEvents.slice(
+			const sliced = tenantEvents.slice(
 				chunkIndex * DROVR_BATCH_MAX,
 				(chunkIndex + 1) * DROVR_BATCH_MAX,
 			)
+			const chunk = sliced.filter((event) => !isBehind(event, outboxedStops))
+			late.push(...sliced.filter((event) => isBehind(event, outboxedStops)))
+			if (chunk.length === 0) continue
 			// A chunk that runs out of retries goes to the outbox whole:
 			// drovr dedupes the items that did land when the replay re-posts.
 			const outcome = (await step.run(batchStepId(tenantId, chunkIndex), () =>
@@ -353,14 +490,25 @@ const deliverBulk = async (
 			rejected += outcome.rejected
 			outboxed += outcome.outboxed ?? 0
 			options.refused?.push(...(outcome.deferred ?? []))
+			if (outcome.outboxed)
+				for (const event of chunk)
+					if (isOutboxStop({ eventType: event.type })) {
+						const list = outboxedStops.get(event.contactId) ?? []
+						list.push(stopMarkOf(event))
+						outboxedStops.set(event.contactId, list)
+					}
 		}
 	}
+	const heldLate = await holdLate(late, step, context)
+	outboxed += heldLate
+	heldBehindStop += heldLate
 	return {
 		status: 'delivered',
 		accepted,
 		rejected,
 		discarded,
 		...(outboxed > 0 ? { outboxed } : {}),
+		...(heldBehindStop > 0 ? { heldBehindStop } : {}),
 	}
 }
 
@@ -395,6 +543,7 @@ export const drovrEventsDeliver = inngest.createFunction(
 			attempt: { attempt, maxAttempts },
 			lane: 'live',
 			capture: captureDrovrOutboxLive,
+			openStops: openDrovrOutboxStopsLive,
 		})
 	},
 )
@@ -450,6 +599,14 @@ const combineReceipts = (
 					),
 				}
 			: {}),
+		...(delivered.some((receipt) => receipt.heldBehindStop)
+			? {
+					heldBehindStop: delivered.reduce(
+						(sum, receipt) => sum + (receipt.heldBehindStop ?? 0),
+						0,
+					),
+				}
+			: {}),
 	}
 }
 
@@ -482,6 +639,7 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 			attempt: { attempt, maxAttempts },
 			lane: 'bulk',
 			capture: captureDrovrOutboxLive,
+			openStops: openDrovrOutboxStopsLive,
 		}
 		const isBackfill = (bulkEvent: (typeof events)[number]) =>
 			bulkEvent.data.source === 'contact-sync-backfill'
