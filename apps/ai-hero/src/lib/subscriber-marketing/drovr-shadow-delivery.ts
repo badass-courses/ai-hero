@@ -5,11 +5,22 @@ import { parseRetryAfterMs } from './drovr-retry-after'
 import {
 	boundedProblemBody,
 	deliverDrovrShadowEvent,
-	isEventNotLiveProblem,
 	type DrovrDeliveryConfig,
 	type DrovrDeliveryOutcome,
 	type DrovrShadowEvent,
 } from './drovr-shadow-emitter'
+import {
+	drovrStopVerdict,
+	isColdStartUnhandledProblem,
+	isEventNotLiveProblem,
+	isHeldStopRefusal,
+	isNeverBornOwnerStopProblem,
+	isStopEvent,
+	refusalsByAnswer,
+	type DrovrStopVerdict,
+} from './drovr-stop-verdict'
+
+export { isHeldStopRefusal, isNeverBornOwnerStopProblem, refusalsByAnswer }
 
 export class DrovrDeliveryFailedError extends Error {
 	constructor(
@@ -94,6 +105,19 @@ export type DrovrBatchOutcome = {
 	rejected: number
 	/** deferNotLive only: refusals to re-send unchanged after drovr's straggler pass. */
 	deferred?: DeferredDrovrEvent[]
+	/**
+	 * The items drovr refused for good (a 4xx that is not event-not-live or
+	 * a deferral), counted in `rejected`: the caller holds the stops among
+	 * them (row 204c).
+	 */
+	refused?: RefusedDrovrEvent[]
+}
+
+export type RefusedDrovrEvent = {
+	event: DrovrShadowEvent
+	/** The whole batch's status, or the item's problem status (else 400). */
+	httpStatus: number
+	problem: unknown
 }
 
 export type DeferredDrovrEventReason = 'event-not-live' | 'cold-start-unhandled'
@@ -103,49 +127,18 @@ export type DeferredDrovrEvent = {
 	reason: DeferredDrovrEventReason
 }
 
-const DIRECTORY_STOP_TYPES: ReadonlySet<string> = new Set([
-	'contact.unsubscribed',
-	'contact.bounced',
-	'contact.complained',
-])
-
 /**
- * A stop for org-aihero's contact directory. drovr writes its suppression
- * row before folding, so a cold-start-unhandled answer (no directory actor)
- * still means the stop landed (mig-10, 2026-09-27).
- */
-function isDirectoryStop(event: DrovrShadowEvent | undefined): boolean {
-	return (
-		event !== undefined &&
-		event.tenantId === 'org-aihero' &&
-		event.journeyId === 'contact-directory' &&
-		DIRECTORY_STOP_TYPES.has(event.type)
-	)
-}
-
-const CONTACT_NEVER_BORN_PROBLEM = 'urn:drovr:problem:contact-never-born'
-
-/**
- * A stop's owner copy (the fan-out to a journey the contact is owned for)
- * that drovr refused because the contact has no actor there, and the stop
- * does not start one. The directory stop is the suppression authority and
- * stays a real rejection; this copy can never land, so re-sending it only
- * repeats the refusal (swg6e, 2026-09-27).
+ * A single post's answer was a never-born owner copy of a stop: released,
+ * nothing owed (drovrStopVerdict).
  */
 export function isNeverBornOwnerStop(
 	event: DrovrShadowEvent,
 	outcome: DrovrDeliveryOutcome,
 ): boolean {
-	if (outcome.status !== 'rejected' || outcome.httpStatus !== 409) return false
-	const problem = outcome.problem
 	return (
-		event.tenantId === 'org-aihero' &&
-		event.idempotencyKey.startsWith('owner:') &&
-		event.journeyId !== 'contact-directory' &&
-		DIRECTORY_STOP_TYPES.has(event.type) &&
-		typeof problem === 'object' &&
-		problem !== null &&
-		(problem as { type?: unknown }).type === CONTACT_NEVER_BORN_PROBLEM
+		outcome.status === 'rejected' &&
+		isStopEvent(event) &&
+		drovrStopVerdict(event, outcome) === 'released'
 	)
 }
 
@@ -158,21 +151,17 @@ function deferralReasonOf(
 	problem: unknown,
 ): DeferredDrovrEventReason | undefined {
 	if (isEventNotLiveProblem(problem)) return 'event-not-live'
-	const text =
-		typeof problem === 'string'
-			? problem
-			: problem && typeof problem === 'object'
-				? [
-						(problem as { type?: unknown }).type,
-						(problem as { code?: unknown }).code,
-					]
-						.filter((value): value is string => typeof value === 'string')
-						.join(' ')
-				: ''
-	return text.includes('cold-start-unhandled')
+	return isColdStartUnhandledProblem(problem)
 		? 'cold-start-unhandled'
 		: undefined
 }
+
+/** A stop's verdict for a batch answer; undefined for a fact or a birth. */
+const stopVerdictOf = (
+	event: DrovrShadowEvent | undefined,
+	answer: { httpStatus?: number; problem?: unknown },
+): DrovrStopVerdict | undefined =>
+	event && isStopEvent(event) ? drovrStopVerdict(event, answer) : undefined
 
 type BatchItemResult = {
 	index: number
@@ -281,24 +270,45 @@ export async function deliverBatchOrThrow(args: {
 		}
 		if (response.status >= 400 && response.status < 500) {
 			const problem = await boundedProblemBody(response)
-			if (
-				response.status === 409 &&
-				deferralReasonOf(problem) === 'cold-start-unhandled' &&
-				args.events.every(isDirectoryStop)
-			) {
-				return { accepted: args.events.length, rejected: 0 }
-			}
+			// Row 204c: every stop in the chunk gets the one stop rule. A
+			// directory stop's cold-start landed (the suppression row is
+			// written), whatever else the chunk carries.
+			const verdicts = args.events.map((event) =>
+				stopVerdictOf(event, { httpStatus: response.status, problem }),
+			)
+			const stopsLanded = verdicts.filter((v) => v === 'landed').length
+			const rest = args.events.filter((_, i) => verdicts[i] !== 'landed')
+			if (rest.length === 0) return { accepted: stopsLanded, rejected: 0 }
 			const deferral =
 				response.status === 409 && args.deferNotLive
 					? deferralReasonOf(problem)
 					: undefined
 			if (deferral) {
+				// A stop the rule holds (a cold-start off the directory) is
+				// refused, never deferred to a retry.
+				const isHeld = (event: DrovrShadowEvent) =>
+					verdicts[args.events.indexOf(event)] === 'held'
+				const later = rest.filter((event) => !isHeld(event))
+				const held = rest.filter(isHeld)
 				if (deferral === 'cold-start-unhandled')
-					for (const event of args.events) await warnColdStart(warn, event)
+					for (const event of later) await warnColdStart(warn, event)
 				return {
-					accepted: 0,
-					rejected: 0,
-					deferred: args.events.map((event) => ({ event, reason: deferral })),
+					accepted: stopsLanded,
+					rejected: held.length,
+					...(later.length > 0
+						? {
+								deferred: later.map((event) => ({ event, reason: deferral })),
+							}
+						: {}),
+					...(held.length > 0
+						? {
+								refused: held.map((event) => ({
+									event,
+									httpStatus: response.status,
+									problem,
+								})),
+							}
+						: {}),
 				}
 			}
 			if (response.status === 409 && isEventNotLiveProblem(problem)) {
@@ -307,13 +317,31 @@ export async function deliverBatchOrThrow(args: {
 					'drovr does not take this event type yet (409 event-not-live)',
 				)
 			}
+			// A stop still owed (408, 429): drovr recorded nothing for the
+			// chunk, so the whole chunk retries.
+			if (verdicts.includes('pending')) {
+				throw new DrovrBatchDeliveryFailedError(
+					keys,
+					`drovr has not taken the chunk's stops yet (${response.status})`,
+					response.status,
+					parseRetryAfterMs(response.headers?.get?.('retry-after'), Date.now()),
+				)
+			}
 			await warnSafely(warn, 'drovr.shadow.batch_rejected', {
 				status: response.status,
-				count: args.events.length,
+				count: rest.length,
 				tenantId: args.events[0]?.tenantId,
 				problem,
 			})
-			return { accepted: 0, rejected: args.events.length }
+			return {
+				accepted: stopsLanded,
+				rejected: rest.length,
+				refused: rest.map((event) => ({
+					event,
+					httpStatus: response.status,
+					problem,
+				})),
+			}
 		}
 		if (response.status !== 200) {
 			throw new DrovrBatchDeliveryFailedError(
@@ -338,38 +366,53 @@ export async function deliverBatchOrThrow(args: {
 		}
 		const failedKeys: string[] = []
 		const deferred: DeferredDrovrEvent[] = []
+		const refused: RefusedDrovrEvent[] = []
 		let notLive = 0
 		let deferredRejected = 0
 		let stopsLanded = 0
 		let stopsLandedRejected = 0
 		for (const item of body.results) {
 			const event = args.events[item.index]
-			if (
-				item.status !== 'accepted' &&
-				isDirectoryStop(event) &&
-				deferralReasonOf(item.detail) === 'cold-start-unhandled'
-			) {
+			if (item.status === 'accepted') continue
+			// Row 204c: a stop's item answer goes through the one stop rule.
+			const verdict = stopVerdictOf(
+				event,
+				item.status === 'failed'
+					? {}
+					: {
+							httpStatus: problemStatusOf(item.detail) ?? 400,
+							problem: item.detail,
+						},
+			)
+			if (verdict === 'landed') {
 				// The suppression row is written; nothing to retry or defer.
 				stopsLanded += 1
 				if (item.status === 'rejected') stopsLandedRejected += 1
 				continue
 			}
-			const deferral =
-				args.deferNotLive && item.status !== 'accepted'
-					? deferralReasonOf(item.detail)
-					: undefined
-			if (deferral && event) {
+			const deferral = args.deferNotLive
+				? deferralReasonOf(item.detail)
+				: undefined
+			if (deferral && event && verdict !== 'held') {
 				deferred.push({ event, reason: deferral })
 				if (item.status === 'rejected') deferredRejected += 1
 				if (deferral === 'cold-start-unhandled')
 					await warnColdStart(warn, event)
 			} else if (
 				item.status === 'failed' ||
-				(item.status === 'rejected' && isEventNotLiveProblem(item.detail))
+				verdict === 'pending' ||
+				isEventNotLiveProblem(item.detail)
 			) {
-				if (item.status === 'rejected') notLive += 1
+				if (item.status === 'rejected' && isEventNotLiveProblem(item.detail))
+					notLive += 1
 				if (event) failedKeys.push(event.idempotencyKey)
 			} else if (item.status === 'rejected') {
+				if (event)
+					refused.push({
+						event,
+						httpStatus: problemStatusOf(item.detail) ?? 400,
+						problem: item.detail,
+					})
 				await warnSafely(warn, 'drovr.shadow.rejected', {
 					journeyId: event?.journeyId,
 					type: event?.type,
@@ -386,12 +429,22 @@ export async function deliverBatchOrThrow(args: {
 		}
 		const rejected = body.rejected - deferredRejected - stopsLandedRejected
 		const accepted = body.accepted + stopsLanded
-		return deferred.length > 0
-			? { accepted, rejected, deferred }
-			: { accepted, rejected }
+		return {
+			accepted,
+			rejected,
+			...(deferred.length > 0 ? { deferred } : {}),
+			...(refused.length > 0 ? { refused } : {}),
+		}
 	} finally {
 		clearTimeout(timeout)
 	}
+}
+
+const problemStatusOf = (problem: unknown): number | undefined => {
+	const status = (problem as { status?: unknown } | null)?.status
+	return typeof status === 'number' && Number.isInteger(status)
+		? status
+		: undefined
 }
 
 async function warnColdStart(

@@ -14,9 +14,14 @@ import {
 	DROVR_BATCH_MAX,
 	isNeverBornOwnerStop,
 } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
+import {
+	isHeldStopRefusal,
+	refusalsByAnswer,
+} from '@/lib/subscriber-marketing/drovr-stop-verdict'
 import type {
 	DeferredDrovrEvent,
 	DrovrBatchOutcome,
+	RefusedDrovrEvent,
 } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
 import type { DrovrDeliveryOutcome } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
 import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
@@ -34,15 +39,19 @@ import {
 import { parseDrovrProfileSyncConfig } from '@/lib/subscriber-marketing/drovr-contact-profile-sync-requests'
 import { resolveOwnedContactIds } from '@/lib/subscriber-marketing/drovr-ownership-live'
 import {
+	DROVR_OUTBOX_BEHIND_STOP_NOTE,
+	DROVR_OUTBOX_DEFERRED_STOP_WAIT_MS,
 	DROVR_SEND_RETRIES,
 	isOutboxBirth,
 	isOutboxStop,
 	openStopBefore,
 	outboxEntryForEvent,
+	type DrovrOutboxEntry,
 	type DrovrOutboxSource,
 } from '@/lib/subscriber-marketing/drovr-outbox'
 import {
 	captureDrovrOutboxLive,
+	holdDrovrStopsLive,
 	openDrovrOutboxStopsLive,
 	settleDrovrOutboxLive,
 	type DrovrOutboxOpenStopsFn,
@@ -51,6 +60,7 @@ import {
 	DROVR_SETTLED_BY_RETRY,
 	sendOrOutbox,
 	type DrovrOutboxCaptureFn,
+	type DrovrOutboxHoldFn,
 	type DrovrOutboxSettleFn,
 	type DrovrSendAttempt,
 	type DrovrStopsEarly,
@@ -83,6 +93,17 @@ export type DrovrEventsDeliverReceipt = {
 	 * they never reach drovr ahead of it (row 204b).
 	 */
 	heldBehindStop?: number
+	/**
+	 * Stops drovr refused with a 4xx that is not "never born", held in the
+	 * outbox for a human instead of counted rejected (row 204c). They gate
+	 * their contacts' later events like any owed stop.
+	 */
+	heldStops?: number
+	/**
+	 * Backfill stops drovr answered event-not-live: handed to the straggler
+	 * retry, and also outboxed so they gate meanwhile (row 204c).
+	 */
+	deferredStopsGated?: number
 	reason?: string
 }
 
@@ -95,6 +116,8 @@ export type DeliverContext = {
 	openStops: DrovrOutboxOpenStopsFn
 	/** Marks stops captured on a first failure delivered once a retry lands. */
 	settle: DrovrOutboxSettleFn
+	/** Holds stops drovr refused with a 4xx, for a human (row 204c). */
+	hold: DrovrOutboxHoldFn
 }
 
 type Outboxed = { outboxed: number }
@@ -269,7 +292,8 @@ export function inDeliveryOrder(
 const earlyStops = <T>(
 	events: readonly DrovrShadowEvent[],
 	context: DeliverContext,
-	noteFor: (result: T) => string,
+	noteFor: (result: T) => string | null,
+	landed?: DrovrStopsEarly<T>['landed'],
 ): DrovrStopsEarly<T> => ({
 	stops: () =>
 		events
@@ -277,10 +301,30 @@ const earlyStops = <T>(
 			.map((event) => outboxEntryForEvent(event, context.lane)),
 	settle: context.settle,
 	noteFor,
+	...(landed ? { landed } : {}),
 })
 
+/** A chunk's stops less those its answer held or deferred (row 204c). */
+const landedStops = (
+	outcome: { gatedKeys?: string[]; deferred?: DeferredDrovrEvent[] },
+	stops: readonly DrovrOutboxEntry[],
+) => {
+	const owed = new Set([
+		...(outcome.gatedKeys ?? []),
+		...(outcome.deferred ?? []).map(({ event }) => event.idempotencyKey),
+	])
+	return stops.filter((stop) => !owed.has(stop.idempotencyKey))
+}
+
 const SETTLED_REFUSED =
-	'refused by drovr on an Inngest retry: final, counted rejected'
+	'refused by drovr on an Inngest retry: never born there, nothing owed'
+
+/** The stops among drovr's final refusals that must be held (row 204c). */
+const stopsToHold = (refused: readonly RefusedDrovrEvent[]) =>
+	refused.filter(isHeldStopRefusal)
+
+const refusalReason = (httpStatus: number, problem: unknown) =>
+	`drovr refused the stop (${httpStatus}): ${JSON.stringify(problem ?? null)}`
 
 const isBehind = (
 	event: DrovrShadowEvent,
@@ -341,7 +385,7 @@ const holdInOutbox = async (
 ) => {
 	const captured = await context.capture(
 		behind.map((event) => outboxEntryForEvent(event, context.lane)),
-		new Error('held behind a stop the outbox still owes'),
+		new Error(DROVR_OUTBOX_BEHIND_STOP_NOTE),
 	)
 	if (captured.status !== 'outboxed')
 		throw new Error(
@@ -394,6 +438,7 @@ const deliverBatch = async (
 	let accepted = 0
 	let rejected = 0
 	let ownerStopsNeverBorn = 0
+	let heldStops = 0
 	let outboxed = gate.outboxed
 	let heldBehindStop = gate.held
 	// Stops this run outboxed: their contacts' later events wait behind them.
@@ -419,7 +464,9 @@ const deliverBatch = async (
 		// The log sits in the step so a replay, which gets the memoized
 		// outcome back, does not repeat it.
 		const outcome = await step.run(deliveryStepId(drovrEvent), () =>
-			sendOrOutbox<DrovrDeliveryOutcome | { status: 'outboxed' }>({
+			sendOrOutbox<
+				DrovrDeliveryOutcome | { status: 'outboxed' } | { status: 'held' }
+			>({
 				attempt: context.attempt,
 				send: async () => {
 					const delivered = await deliverOrThrow({ event: drovrEvent, config })
@@ -430,6 +477,17 @@ const deliverBatch = async (
 							type: drovrEvent.type,
 							idempotencyKey: drovrEvent.idempotencyKey,
 						})
+						return delivered
+					}
+					// Row 204c: a stop refused for any other reason is held for a
+					// human, on this attempt or a retry, never counted as sent.
+					if (delivered.status === 'rejected' && isStopEvent(drovrEvent)) {
+						const held = await context.hold(
+							[outboxEntryForEvent(drovrEvent, context.lane)],
+							refusalReason(delivered.httpStatus, delivered.problem),
+							delivered.httpStatus,
+						)
+						if (held.status === 'outboxed') return { status: 'held' as const }
 					}
 					return delivered
 				},
@@ -437,12 +495,21 @@ const deliverBatch = async (
 				capture: context.capture,
 				outboxed: () => ({ status: 'outboxed' }),
 				early: earlyStops([drovrEvent], context, (outcome) =>
-					outcome.status === 'rejected'
-						? SETTLED_REFUSED
-						: DROVR_SETTLED_BY_RETRY,
+					outcome.status === 'held'
+						? null
+						: outcome.status === 'rejected'
+							? SETTLED_REFUSED
+							: DROVR_SETTLED_BY_RETRY,
 				),
 			}),
 		)
+		if (outcome.status === 'held') {
+			heldStops += 1
+			const list = outboxedStops.get(drovrEvent.contactId) ?? []
+			list.push(stopMarkOf(drovrEvent))
+			outboxedStops.set(drovrEvent.contactId, list)
+			continue
+		}
 		if (outcome.status === 'outboxed') {
 			outboxed += 1
 			if (isStopEvent(drovrEvent)) {
@@ -467,6 +534,7 @@ const deliverBatch = async (
 		...(ownerStopsNeverBorn > 0 ? { ownerStopsNeverBorn } : {}),
 		...(outboxed > 0 ? { outboxed } : {}),
 		...(heldBehindStop > 0 ? { heldBehindStop } : {}),
+		...(heldStops > 0 ? { heldStops } : {}),
 	}
 }
 
@@ -477,6 +545,14 @@ const deliverBatch = async (
  * function keeps one step per event: a signup's welcome should not wait
  * on its neighbours, and dual-journey facts need their per-journey step.
  */
+/** A chunk's memoized answer: the counts, and which of its stops now gate. */
+type ChunkOutcome = Omit<DrovrBatchOutcome, 'refused'> & {
+	heldStops?: number
+	deferredStopsGated?: number
+	/** Stops held or deferred and outboxed: they gate the chunks after. */
+	gatedKeys?: string[]
+}
+
 const deliverBulk = async (
 	batch: DrovrEventsDeliver['data']['events'],
 	step: DeliverStep,
@@ -485,6 +561,11 @@ const deliverBulk = async (
 		/** Contact sync: refusals come back in `refused`, never thrown. */
 		deferNotLive?: boolean
 		refused?: DeferredDrovrEvent[]
+		/**
+		 * The run's owed stops by contact, shared across calls, so a stop one
+		 * call outboxed or held holds the other call's later events (row 204c).
+		 */
+		gate?: Map<string, StopMark[]>
 	} = {},
 ): Promise<DrovrEventsDeliverReceipt> => {
 	const ingestUrl = env.DROVR_SHADOW_INGEST_URL
@@ -516,11 +597,18 @@ const deliverBulk = async (
 
 	let accepted = 0
 	let rejected = 0
+	let heldStops = 0
+	let deferredStopsGated = 0
 	let outboxed = gate.outboxed
 	let heldBehindStop = gate.held
-	// Stops in a chunk this run outboxed hold their contacts' later events
-	// in the chunks after it.
-	const outboxedStops = new Map<string, StopMark[]>()
+	// Stops in a chunk this run outboxed, held or deferred hold their
+	// contacts' later events in the chunks after it.
+	const outboxedStops = options.gate ?? new Map<string, StopMark[]>()
+	const gateOn = (event: DrovrShadowEvent) => {
+		const list = outboxedStops.get(event.contactId) ?? []
+		list.push(stopMarkOf(event))
+		outboxedStops.set(event.contactId, list)
+	}
 	const late: DrovrShadowEvent[] = []
 	for (const [tenantId, tenantEvents] of byTenant) {
 		const apiKey = drovrApiKeyForTenant(tenantId)
@@ -553,36 +641,103 @@ const deliverBulk = async (
 			// other events.
 			const stepId = `by-time:${batchStepId(tenantId, chunkIndex)}`
 			const outcome = (await step.run(stepId, () =>
-				sendOrOutbox<DrovrBatchOutcome & Partial<Outboxed>>({
+				sendOrOutbox<ChunkOutcome & Partial<Outboxed>>({
 					attempt: context.attempt,
-					send: () =>
-						deliverBatchOrThrow(
+					send: async () => {
+						const answer = await deliverBatchOrThrow(
 							options.deferNotLive
 								? { events: chunk, config, deferNotLive: true }
 								: { events: chunk, config },
-						),
+						)
+						const { refused = [], ...counts } = answer
+						const gatedKeys: string[] = []
+						// Row 204c: a stop drovr refused for good (not "never born")
+						// is held for a human, not counted rejected.
+						let held = 0
+						for (const group of refusalsByAnswer(stopsToHold(refused))) {
+							const { httpStatus, problem } = group[0]!
+							const captured = await context.hold(
+								group.map(({ event }) =>
+									outboxEntryForEvent(event, context.lane),
+								),
+								refusalReason(httpStatus, problem),
+								httpStatus,
+							)
+							if (captured.status === 'outboxed') {
+								held += group.length
+								gatedKeys.push(
+									...group.map(({ event }) => event.idempotencyKey),
+								)
+							}
+						}
+						// A backfill stop drovr answered event-not-live goes to the
+						// straggler retry, and to the outbox too, so it gates its
+						// contact until it lands (row 204c). The straggler owns it
+						// for a day; the replay after that.
+						const deferredStops = (counts.deferred ?? []).filter(({ event }) =>
+							isStopEvent(event),
+						)
+						let deferredGated = 0
+						if (deferredStops.length > 0) {
+							const captured = await context.capture(
+								deferredStops.map(({ event }) =>
+									outboxEntryForEvent(event, 'contactSync'),
+								),
+								new Error(
+									'drovr answered event-not-live: the contact-sync straggler retry owns it',
+								),
+								{
+									nextAttemptAt: new Date(
+										Date.now() + DROVR_OUTBOX_DEFERRED_STOP_WAIT_MS,
+									),
+								},
+							)
+							if (captured.status === 'outboxed') {
+								deferredGated = deferredStops.length
+								gatedKeys.push(
+									...deferredStops.map(({ event }) => event.idempotencyKey),
+								)
+							}
+						}
+						return {
+							...counts,
+							rejected: counts.rejected - held,
+							...(held > 0 ? { heldStops: held } : {}),
+							...(deferredGated > 0
+								? { deferredStopsGated: deferredGated }
+								: {}),
+							...(gatedKeys.length > 0 ? { gatedKeys } : {}),
+						}
+					},
 					unsent: () =>
 						chunk.map((event) => outboxEntryForEvent(event, context.lane)),
 					capture: context.capture,
 					outboxed: (count) => ({ accepted: 0, rejected: 0, outboxed: count }),
-					early: earlyStops(chunk, context, (outcome) =>
-						outcome.rejected > 0
-							? `settled by an Inngest retry: its chunk was answered, and drovr refused ${outcome.rejected} item(s), final and counted rejected`
-							: DROVR_SETTLED_BY_RETRY,
+					// Held and deferred stops left pending are not touched: the
+					// settle moves only pending rows, and those two are held or
+					// owned by the straggler retry.
+					early: earlyStops<ChunkOutcome & Partial<Outboxed>>(
+						chunk,
+						context,
+						(outcome) =>
+							outcome.rejected > 0
+								? `settled by an Inngest retry: its chunk was answered, and drovr refused ${outcome.rejected} item(s) that are not stops (or never born there), final and counted rejected`
+								: DROVR_SETTLED_BY_RETRY,
+						landedStops,
 					),
 				}),
-			)) as DrovrBatchOutcome & Partial<Outboxed>
+			)) as ChunkOutcome & Partial<Outboxed>
 			accepted += outcome.accepted
 			rejected += outcome.rejected
 			outboxed += outcome.outboxed ?? 0
+			heldStops += outcome.heldStops ?? 0
+			deferredStopsGated += outcome.deferredStopsGated ?? 0
 			options.refused?.push(...(outcome.deferred ?? []))
 			if (outcome.outboxed)
-				for (const event of chunk)
-					if (isStopEvent(event)) {
-						const list = outboxedStops.get(event.contactId) ?? []
-						list.push(stopMarkOf(event))
-						outboxedStops.set(event.contactId, list)
-					}
+				for (const event of chunk) if (isStopEvent(event)) gateOn(event)
+			const gated = new Set(outcome.gatedKeys ?? [])
+			for (const event of chunk)
+				if (gated.has(event.idempotencyKey)) gateOn(event)
 		}
 	}
 	const heldLate = await holdLate(late, step, context)
@@ -595,6 +750,8 @@ const deliverBulk = async (
 		discarded,
 		...(outboxed > 0 ? { outboxed } : {}),
 		...(heldBehindStop > 0 ? { heldBehindStop } : {}),
+		...(heldStops > 0 ? { heldStops } : {}),
+		...(deferredStopsGated > 0 ? { deferredStopsGated } : {}),
 	}
 }
 
@@ -631,6 +788,7 @@ export const drovrEventsDeliver = inngest.createFunction(
 			capture: captureDrovrOutboxLive,
 			openStops: openDrovrOutboxStopsLive,
 			settle: settleDrovrOutboxLive,
+			hold: holdDrovrStopsLive,
 		})
 	},
 )
@@ -673,27 +831,24 @@ const combineReceipts = (
 ): DrovrEventsDeliverReceipt => {
 	const delivered = receipts.filter((receipt) => receipt.status === 'delivered')
 	if (receipts.length > 0 && delivered.length === 0) return receipts[0]!
+	const sumOf = (
+		field: 'outboxed' | 'heldBehindStop' | 'heldStops' | 'deferredStopsGated',
+	) => {
+		const total = delivered.reduce(
+			(sum, receipt) => sum + (receipt[field] ?? 0),
+			0,
+		)
+		return total > 0 ? { [field]: total } : {}
+	}
 	return {
 		status: 'delivered',
 		accepted: delivered.reduce((sum, receipt) => sum + receipt.accepted, 0),
 		rejected: delivered.reduce((sum, receipt) => sum + receipt.rejected, 0),
 		discarded: delivered.reduce((sum, receipt) => sum + receipt.discarded, 0),
-		...(delivered.some((receipt) => receipt.outboxed)
-			? {
-					outboxed: delivered.reduce(
-						(sum, receipt) => sum + (receipt.outboxed ?? 0),
-						0,
-					),
-				}
-			: {}),
-		...(delivered.some((receipt) => receipt.heldBehindStop)
-			? {
-					heldBehindStop: delivered.reduce(
-						(sum, receipt) => sum + (receipt.heldBehindStop ?? 0),
-						0,
-					),
-				}
-			: {}),
+		...sumOf('outboxed'),
+		...sumOf('heldBehindStop'),
+		...sumOf('heldStops'),
+		...sumOf('deferredStopsGated'),
 	}
 }
 
@@ -728,6 +883,7 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 			capture: captureDrovrOutboxLive,
 			openStops: openDrovrOutboxStopsLive,
 			settle: settleDrovrOutboxLive,
+			hold: holdDrovrStopsLive,
 		}
 		const isBackfill = (bulkEvent: (typeof events)[number]) =>
 			bulkEvent.data.source === 'contact-sync-backfill'
@@ -737,56 +893,71 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 		const backfill = events
 			.filter(isBackfill)
 			.flatMap((bulkEvent) => bulkEvent.data.events)
-		// Other sources keep today's step ids and chunk layout whatever the
-		// flag says, so a retry never shifts their events into a chunk whose
-		// memoized result would replay without posting them.
+		// Each source keeps its own step ids and chunk layout whatever the
+		// flag says, so a retry never shifts events into a chunk whose
+		// memoized result would replay without posting them. The backfill
+		// goes first, and one stop map is shared, so a backfill stop that is
+		// owed (outboxed, held or deferred) holds a later event of the same
+		// contact from another source in the same run (row 204c).
+		const gate = new Map<string, StopMark[]>()
 		const receipts: DrovrEventsDeliverReceipt[] = []
-		if (others.length > 0 || backfill.length === 0)
-			receipts.push(await deliverBulk(others, step, context))
-		if (backfill.length === 0) return receipts[0]!
-		// A drovr rollback turns AIH_DROVR_PROFILE_SYNC off; backfill pages
-		// still queued (or retrying) must not reach old drovr code, which
-		// burns their keys without an event-not-live guard. They are
-		// dropped, not held, so nothing lands in the window: the backfill is
-		// idempotent and re-runs once drovr is back. Their own step ids
-		// keep them out of the other sources' chunks.
-		if (!parseDrovrProfileSyncConfig(process.env).enabled) {
-			await log.warn('drovr.contact_sync.backfill_dropped', {
-				count: backfill.length,
-				reason: 'AIH_DROVR_PROFILE_SYNC is off; re-run the backfill',
-			})
-			return {
-				...combineReceipts(receipts),
-				backfillDropped: backfill.length,
+		const refused: DeferredDrovrEvent[] = []
+		let backfillDropped = 0
+		if (backfill.length > 0) {
+			// A drovr rollback turns AIH_DROVR_PROFILE_SYNC off; backfill pages
+			// still queued (or retrying) must not reach old drovr code, which
+			// burns their keys without an event-not-live guard. They are
+			// dropped, not held, so nothing lands in the window: the backfill
+			// is idempotent and re-runs once drovr is back. Their own step ids
+			// keep them out of the other sources' chunks.
+			if (!parseDrovrProfileSyncConfig(process.env).enabled) {
+				await log.warn('drovr.contact_sync.backfill_dropped', {
+					count: backfill.length,
+					reason: 'AIH_DROVR_PROFILE_SYNC is off; re-run the backfill',
+				})
+				backfillDropped = backfill.length
+			} else {
+				// Contract §4: refusals go to the straggler retry, unchanged and
+				// under their keys; cold-start at once (the retry births the
+				// actor and pushes again), event-not-live after drovr's daily
+				// pass.
+				const backfillStep = withStepPrefix(step, 'contact-sync-backfill:')
+				receipts.push(
+					await deliverBulk(backfill, backfillStep, context, {
+						deferNotLive: true,
+						refused,
+						gate,
+					}),
+				)
+				if (refused.length > 0) {
+					const at = (await backfillStep.run('defer-at', async () =>
+						Date.now(),
+					)) as number
+					const notLive = refused.filter(
+						(item) => item.reason !== 'cold-start-unhandled',
+					)
+					const coldStart = refused.filter(
+						(item) => item.reason === 'cold-start-unhandled',
+					)
+					await step.sendEvent('contact-sync-backfill:defer-refused', [
+						...(notLive.length > 0
+							? [contactSyncRetryRequest(notLive, 1, at)]
+							: []),
+						...(coldStart.length > 0
+							? [{ ...contactSyncRetryRequest(coldStart, 1, at), ts: at }]
+							: []),
+					])
+				}
 			}
 		}
-		// Contract §4: refusals go to the straggler retry, unchanged and
-		// under their keys; cold-start at once (the retry births the actor
-		// and pushes again), event-not-live after drovr's daily pass.
-		const backfillStep = withStepPrefix(step, 'contact-sync-backfill:')
-		const refused: DeferredDrovrEvent[] = []
-		receipts.push(
-			await deliverBulk(backfill, backfillStep, context, {
-				deferNotLive: true,
-				refused,
-			}),
-		)
-		if (refused.length === 0) return combineReceipts(receipts)
-		const at = (await backfillStep.run('defer-at', async () =>
-			Date.now(),
-		)) as number
-		const notLive = refused.filter(
-			(item) => item.reason !== 'cold-start-unhandled',
-		)
-		const coldStart = refused.filter(
-			(item) => item.reason === 'cold-start-unhandled',
-		)
-		await step.sendEvent('contact-sync-backfill:defer-refused', [
-			...(notLive.length > 0 ? [contactSyncRetryRequest(notLive, 1, at)] : []),
-			...(coldStart.length > 0
-				? [{ ...contactSyncRetryRequest(coldStart, 1, at), ts: at }]
-				: []),
-		])
-		return { ...combineReceipts(receipts), deferred: refused.length }
+		if (others.length > 0 || backfill.length === 0)
+			receipts.push(await deliverBulk(others, step, context, { gate }))
+		const combined =
+			receipts.length === 1 ? receipts[0]! : combineReceipts(receipts)
+		return {
+			...combined,
+			...(backfillDropped > 0 ? { backfillDropped } : {}),
+			...(refused.length > 0 ? { deferred: refused.length } : {}),
+		}
 	},
 )

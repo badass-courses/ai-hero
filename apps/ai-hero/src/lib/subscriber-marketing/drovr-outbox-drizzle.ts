@@ -14,6 +14,7 @@ import {
 } from 'drizzle-orm'
 
 import {
+	DROVR_OUTBOX_BEHIND_STOP_NOTE,
 	DrovrOutboxUnavailableError,
 	DROVR_OUTBOX_STOP_EVENT_TYPES,
 	type DrovrOutboxOpenGate,
@@ -278,26 +279,63 @@ export function createDrizzleDrovrOutboxStore(
 				}[]
 				const of = (status: string) => rows.find((row) => row.status === status)
 				const pending = of('pending')
-				// Pending and rejected only: a stop a human held was a decision,
-				// already counted in `held`, and must not page every 5 minutes.
-				const [stop] = (await db
-					.select({ oldest: min(drovrOutbox.firstFailedAt) })
+				// The owed stops by status and source. A held stop was a decision
+				// (a human's, or a 4xx drovr gave, row 204c): it has its own count
+				// and age, for the held-stop monitor, and never pages as `stop`.
+				// A stop the contact-sync straggler retry owns waits a day by
+				// design, so it has its own age too.
+				const stops = (await db
+					.select({
+						status: drovrOutbox.status,
+						source: drovrOutbox.source,
+						count: count(),
+						oldest: min(drovrOutbox.firstFailedAt),
+					})
 					.from(drovrOutbox)
 					.where(
 						and(
 							eq(drovrOutbox.target, target),
-							inArray(drovrOutbox.status, ['pending', 'rejected']),
+							inArray(drovrOutbox.status, ['pending', 'held', 'rejected']),
 							inArray(drovrOutbox.eventType, [
 								...DROVR_OUTBOX_STOP_EVENT_TYPES,
 							]),
 						),
-					)) as { oldest: string | Date | null }[]
+					)
+					.groupBy(drovrOutbox.status, drovrOutbox.source)) as {
+					status: string
+					source: string
+					count: number | string
+					oldest: string | Date | null
+				}[]
+				const oldestOf = (
+					match: (row: { status: string; source: string }) => boolean,
+				) => {
+					const instants = stops
+						.filter(match)
+						.map((row) => (row.oldest ? isoOf(row.oldest) : null))
+						.filter((at): at is string => at !== null)
+						.sort()
+					return instants[0] ?? null
+				}
+				const deferred = (row: { source: string }) =>
+					row.source === 'contactSync'
 				return {
 					pending: Number(pending?.count ?? 0),
 					oldestPendingFailedAt: pending?.oldest ? isoOf(pending.oldest) : null,
 					held: Number(of('held')?.count ?? 0),
 					rejected: Number(of('rejected')?.count ?? 0),
-					oldestOpenStopFailedAt: stop?.oldest ? isoOf(stop.oldest) : null,
+					oldestOpenStopFailedAt: oldestOf(
+						(row) =>
+							(row.status === 'pending' || row.status === 'rejected') &&
+							!deferred(row),
+					),
+					oldestDeferredStopFailedAt: oldestOf(
+						(row) => row.status === 'pending' && deferred(row),
+					),
+					heldStops: stops
+						.filter((row) => row.status === 'held')
+						.reduce((sum, row) => sum + Number(row.count), 0),
+					oldestHeldStopFailedAt: oldestOf((row) => row.status === 'held'),
 				}
 			}),
 		// Rides DrovrOutbox_dedupe_uq.
@@ -321,6 +359,27 @@ export function createDrizzleDrovrOutboxStore(
 					)
 				return affectedRows(result)
 			}),
+		// Rides DrovrOutbox_dedupe_uq.
+		holdPending: ({ target, dedupeKeys, at, note, httpStatus }) =>
+			guarded(async () => {
+				if (dedupeKeys.length === 0) return 0
+				const result = await db
+					.update(drovrOutbox)
+					.set({
+						status: 'held',
+						lastAttemptAt: toSqlTimestamp(at),
+						lastError: note,
+						lastStatus: httpStatus,
+					})
+					.where(
+						and(
+							inArray(drovrOutbox.dedupeKey, [...dedupeKeys]),
+							eq(drovrOutbox.target, target),
+							eq(drovrOutbox.status, 'pending'),
+						),
+					)
+				return affectedRows(result)
+			}),
 		// Rides DrovrOutbox_contact_idx (target, contactId, status).
 		pullForward: ({ target, contactIds, now }) =>
 			guarded(async () => {
@@ -334,6 +393,7 @@ export function createDrizzleDrovrOutboxStore(
 							inArray(drovrOutbox.contactId, [...contactIds]),
 							eq(drovrOutbox.status, 'pending'),
 							gt(drovrOutbox.nextAttemptAt, toSqlTimestamp(now)),
+							eq(drovrOutbox.lastError, DROVR_OUTBOX_BEHIND_STOP_NOTE),
 							notInArray(drovrOutbox.eventType, [
 								...DROVR_OUTBOX_STOP_EVENT_TYPES,
 							]),

@@ -4,7 +4,13 @@ import { log } from '@/server/logger'
 
 import { parseIanaTimeZone } from './evergreen-offer-journey/primitives'
 import { drovrFailureReason } from './drovr-failure'
+import { isOutboxStop } from './drovr-outbox'
 import { parseRetryAfterMs } from './drovr-retry-after'
+import {
+	drovrStopVerdict,
+	isEventNotLiveProblem,
+	isStopEvent,
+} from './drovr-stop-verdict'
 import type { ContactEventRecord, SideEffectIntent } from './types'
 import { valuePathIntentCompletedAt } from './value-path-completion'
 import { SHADOW_NEWSLETTER_JOURNEY_ID } from './drovr-shadow-newsletter'
@@ -322,7 +328,10 @@ export async function emitDrovrShadowEvents(
  * The dispatch fallback's direct post (row 204): like emitDrovrShadowEvents,
  * but it answers with the events drovr did not take (5xx, 409
  * event-not-live, network, timeout), so the caller can outbox them instead
- * of losing them. A 4xx stays final and warned. Never throws.
+ * of losing them. A 4xx stays final and warned, except for a stop (row
+ * 204c): a refused stop is answered too, so it is outboxed (its gate closes
+ * at once) and the replay's re-post holds it for a human, or settles it if
+ * it was an owner copy never born there. Never throws.
  */
 export async function deliverDrovrShadowEventsDirect(
 	events: readonly DrovrShadowEvent[],
@@ -375,7 +384,7 @@ export async function deliverDrovrShadowEventsDirect(
 				})
 				unsent.push(event)
 			}
-			if (outcome.status === 'rejected')
+			if (outcome.status === 'rejected') {
 				await warnWithoutThrow(warn, 'drovr.shadow.rejected', {
 					status: outcome.httpStatus,
 					journeyId: event.journeyId,
@@ -383,6 +392,8 @@ export async function deliverDrovrShadowEventsDirect(
 					idempotencyKey: event.idempotencyKey,
 					problem: outcome.problem,
 				})
+				if (isOutboxStop({ eventType: event.type })) unsent.push(event)
+			}
 		}),
 	)
 	return unsent
@@ -1125,6 +1136,11 @@ export async function deliverDrovrShadowEvent(args: {
 			// into a retried one.
 			return { status: 'accepted' }
 		}
+		const retryAfterMs = parseRetryAfterMs(
+			response.headers?.get?.('retry-after'),
+			Date.now(),
+		)
+		const retryAfter = retryAfterMs === undefined ? {} : { retryAfterMs }
 		if (response.status >= 400 && response.status < 500) {
 			const problem = await boundedProblemBody(response)
 			if (response.status === 409 && isEventNotLiveProblem(problem)) {
@@ -1134,17 +1150,31 @@ export async function deliverDrovrShadowEvent(args: {
 					reason: 'drovr does not take this event type yet (409 event-not-live)',
 				}
 			}
+			// Row 204c: a stop's answer goes through the one stop rule. A stop
+			// still owed (408, 429) is a failure to retry; a directory stop's
+			// cold-start landed.
+			if (isStopEvent(args.event)) {
+				const verdict = drovrStopVerdict(args.event, {
+					httpStatus: response.status,
+					problem,
+				})
+				if (verdict === 'landed') return { status: 'accepted' }
+				if (verdict === 'pending')
+					return {
+						status: 'failed',
+						httpStatus: response.status,
+						reason: `drovr has not taken the stop yet (${response.status})`,
+						...retryAfter,
+					}
+				return { status: 'rejected', httpStatus: response.status, problem }
+			}
 			return { status: 'rejected', httpStatus: response.status, problem }
 		}
-		const retryAfterMs = parseRetryAfterMs(
-			response.headers?.get?.('retry-after'),
-			Date.now(),
-		)
 		return {
 			status: 'failed',
 			httpStatus: response.status,
 			reason: `drovr answered ${response.status}`,
-			...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+			...retryAfter,
 		}
 	} catch (error) {
 		return {
@@ -1156,20 +1186,7 @@ export async function deliverDrovrShadowEvent(args: {
 	}
 }
 
-/**
- * drovr (#346): an actor whose release does not take an event type yet
- * answers 409 `event-not-live`, saves nothing and leaves the key unused. The
- * only right answer is a retry later: every other 4xx stays final, but
- * dropping this one would lose the event for good.
- */
-export function isEventNotLiveProblem(problem: unknown): boolean {
-	if (typeof problem === 'string') return problem.includes('event-not-live')
-	if (!problem || typeof problem !== 'object') return false
-	const { type, code } = problem as { type?: unknown; code?: unknown }
-	return [type, code].some(
-		(value) => typeof value === 'string' && value.includes('event-not-live'),
-	)
-}
+export { isEventNotLiveProblem }
 
 const PROBLEM_BODY_LIMIT_BYTES = 4096
 

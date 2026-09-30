@@ -1,5 +1,6 @@
 import {
 	captureDrovrOutbox,
+	holdDrovrStops,
 	settleDrovrOutbox,
 	drovrOutboxTarget,
 	DrovrOutboxUnavailableError,
@@ -9,6 +10,7 @@ import {
 import {
 	httpStatusOf,
 	type DrovrOutboxCaptureFn,
+	type DrovrOutboxHoldFn,
 	type DrovrOutboxSettleFn,
 } from './drovr-outbox-step'
 
@@ -62,6 +64,29 @@ export const settleDrovrOutboxLive: DrovrOutboxSettleFn = async (
 		target: drovrOutboxTargetFromEnv(),
 		entries,
 		note,
+		now: new Date(),
+		log,
+	})
+}
+
+/** holdDrovrStops against this deployment's database and target (row 204c). */
+export const holdDrovrStopsLive: DrovrOutboxHoldFn = async (
+	entries,
+	reason,
+	httpStatus,
+) => {
+	const [{ db }, { log }, { createDrizzleDrovrOutboxStore }] =
+		await Promise.all([
+			import('@/db'),
+			import('@/server/logger'),
+			import('./drovr-outbox-drizzle'),
+		])
+	return holdDrovrStops({
+		store: createDrizzleDrovrOutboxStore(db),
+		target: drovrOutboxTargetFromEnv(),
+		entries,
+		reason,
+		...(httpStatus === undefined ? {} : { httpStatus }),
 		now: new Date(),
 		log,
 	})

@@ -51,6 +51,25 @@ export const DROVR_OUTBOX_HELD_BIRTH_WAIT_MS = 60 * 60_000
 export const DROVR_OUTBOX_REJECTED_STOP_WAIT_MS = 60 * 60_000
 /** A stop still owed after this long alerts (two replay runs), row 204b. */
 export const DROVR_OUTBOX_STOP_ALERT_MS = 10 * 60_000
+/**
+ * A row's lastError while it waits behind an owed stop (live or replay).
+ * pullForward moves only these, so a row on its own backoff keeps it.
+ */
+export const DROVR_OUTBOX_BEHIND_STOP_NOTE =
+	'held behind a stop the outbox still owes'
+/**
+ * A stop the contact-sync straggler retry owns (drovr answered it
+ * event-not-live, row 204c) waits for drovr's daily straggler pass, so it
+ * alerts only after two of them.
+ */
+export const DROVR_OUTBOX_DEFERRED_STOP_ALERT_MS = 48 * 60 * 60_000
+/** How long the straggler retry owns a deferred stop before the replay may post it. */
+export const DROVR_OUTBOX_DEFERRED_STOP_WAIT_MS = 24 * 60 * 60_000
+/**
+ * A held stop nobody has decided on for this long pages (the held-stop
+ * monitor counts `drovr.outbox.stop_held_overdue`, row 204c).
+ */
+export const DROVR_OUTBOX_HELD_STOP_PAGE_MS = 24 * 60 * 60_000
 /** Capture tries before the step gives up (the keys are logged first). */
 export const DROVR_OUTBOX_CAPTURE_TRIES = 3
 /** Delivered rows are deleted after this: the inline body holds contact data. */
@@ -253,8 +272,16 @@ export type DrovrOutboxDepth = {
 	oldestPendingFailedAt: string | null
 	held: number
 	rejected: number
-	/** The oldest stop still owed (pending or rejected), row 204b. */
+	/**
+	 * The oldest stop still owed (pending or rejected), row 204b, leaving
+	 * out the stops the straggler retry owns.
+	 */
 	oldestOpenStopFailedAt: string | null
+	/** The oldest pending stop the contact-sync straggler retry owns (row 204c). */
+	oldestDeferredStopFailedAt: string | null
+	/** Stops held for a human: drovr refused them with a 4xx (row 204c). */
+	heldStops: number
+	oldestHeldStopFailedAt: string | null
 }
 
 /**
@@ -319,9 +346,21 @@ export type DrovrOutboxStore = {
 		note: string | null
 	}): Promise<number>
 	/**
-	 * Make these contacts' pending rows due now if they wait for later:
-	 * what the replay moved behind a stop that has since landed. Stops keep
-	 * their time (one may still be inside Inngest's retries). Returns how
+	 * Hold these pending rows of this target (row 204c): a stop captured on
+	 * its first failure that drovr then refused with a 4xx. Returns how many.
+	 */
+	holdPending(args: {
+		target: string
+		dedupeKeys: readonly string[]
+		at: string
+		note: string | null
+		httpStatus: number | null
+	}): Promise<number>
+	/**
+	 * Make these contacts' pending rows due now if they wait for later
+	 * behind a stop (lastError DROVR_OUTBOX_BEHIND_STOP_NOTE) that has since
+	 * landed. Stops keep their time (one may still be inside Inngest's
+	 * retries), and so does a row waiting out its own backoff. Returns how
 	 * many moved.
 	 */
 	pullForward(args: {
@@ -383,6 +422,8 @@ export async function captureDrovrOutbox(args: {
 	 * its first failure passes the end of Inngest's retry window.
 	 */
 	nextAttemptAt?: Date
+	/** `held`: a stop drovr refused, for a human (holdDrovrStops). */
+	status?: 'pending' | 'held'
 	log: OutboxLog
 	sleep?: (ms: number) => Promise<void>
 }): Promise<DrovrOutboxCapture> {
@@ -412,13 +453,13 @@ export async function captureDrovrOutbox(args: {
 		id: randomUUID(),
 		dedupeKey: drovrOutboxDedupeKey(target, entry),
 		target,
-		status: 'pending',
+		status: args.status ?? 'pending',
 		attempts: 0,
 		lastStatus: args.httpStatus ?? null,
 		lastError: reason,
 		firstFailedAt: now,
 		nextAttemptAt: args.nextAttemptAt?.toISOString() ?? now,
-		lastAttemptAt: null,
+		lastAttemptAt: args.status === 'held' ? now : null,
 		deliveredAt: null,
 		releasedAt: null,
 		createdAt: now,
@@ -450,6 +491,53 @@ export async function captureDrovrOutbox(args: {
 	}
 	await logSafely(args.log.warn, 'drovr.outbox.captured', summary)
 	return { status: 'outboxed', count: rows.length }
+}
+
+/**
+ * Row 204c: drovr refused a stop with a 4xx that is not "never born". The
+ * stop is held for a human, never counted as sent or as finally refused: a
+ * held stop gates its contact's later events like a pending one, and pages
+ * only if nobody decides within a day (the held-stop monitor). The same on
+ * the first attempt (a new held row), after an early capture (the pending
+ * row is held) and on the replay. Only stops: anything else in `entries`
+ * is left out. Like a capture, `unavailable` and `unconfigured` tell the
+ * caller to keep its previous behaviour, and any other store failure is
+ * thrown after the capture's retries, so the step retries.
+ */
+export async function holdDrovrStops(args: {
+	store: DrovrOutboxStore
+	target: string | undefined
+	entries: readonly DrovrOutboxEntry[]
+	reason: unknown
+	httpStatus?: number
+	now: Date
+	log: OutboxLog
+	sleep?: (ms: number) => Promise<void>
+}): Promise<DrovrOutboxCapture> {
+	const stops = args.entries.filter(isOutboxStop)
+	if (stops.length === 0) return { status: 'outboxed', count: 0 }
+	const captured = await captureDrovrOutbox({
+		...args,
+		entries: stops,
+		status: 'held',
+	})
+	if (captured.status !== 'outboxed' || !args.target) return captured
+	const target = args.target
+	const reason = bounded(errorText(args.reason))
+	await args.store.holdPending({
+		target,
+		dedupeKeys: stops.map((entry) => drovrOutboxDedupeKey(target, entry)),
+		at: args.now.toISOString(),
+		note: reason,
+		httpStatus: args.httpStatus ?? null,
+	})
+	await logSafely(args.log.warn, 'drovr.outbox.stop_held', {
+		count: stops.length,
+		httpStatus: args.httpStatus,
+		reason,
+		idempotencyKeys: stops.map((entry) => entry.idempotencyKey),
+	})
+	return captured
 }
 
 /**
@@ -704,6 +792,9 @@ export async function runDrovrOutboxReplay(args: {
 			held: 0,
 			rejected: 0,
 			oldestOpenStopFailedAt: null,
+			oldestDeferredStopFailedAt: null,
+			heldStops: 0,
+			oldestHeldStopFailedAt: null,
 		},
 		alert: [],
 	}
@@ -817,7 +908,10 @@ export async function runDrovrOutboxReplay(args: {
 							now.getTime() + DROVR_OUTBOX_REJECTED_STOP_WAIT_MS,
 						).toISOString()
 			if (after > row.nextAttemptAt)
-				await args.store.update(row.id, { nextAttemptAt: after })
+				await args.store.update(row.id, {
+					nextAttemptAt: after,
+					lastError: DROVR_OUTBOX_BEHIND_STOP_NOTE,
+				})
 			await logSafely(args.log.info, 'drovr.outbox.behind_stop', {
 				...fields,
 				stopEventType: stop.eventType,
@@ -857,14 +951,36 @@ export async function runDrovrOutboxReplay(args: {
 			})
 			continue
 		}
+		// Row 204c: a refused stop is held for a human, not rejected. It
+		// gates the same, and the held-stop monitor watches it.
+		if (outcome.kind === 'rejected' && isOutboxStop(row)) {
+			consecutiveFailures = 0
+			receipt.held += 1
+			blockedContacts.add(row.contactId)
+			const stop = stopOf(row)
+			if (stop) stop.status = 'held'
+			await args.store.update(row.id, {
+				status: 'held',
+				attempts,
+				lastStatus: outcome.httpStatus,
+				lastError: bounded(JSON.stringify(outcome.detail ?? null)),
+				lastAttemptAt: at,
+			})
+			await logSafely(args.log.warn, 'drovr.outbox.stop_held', {
+				...fields,
+				httpStatus: outcome.httpStatus,
+				detail: outcome.detail,
+				...(outcome.idempotencyKey &&
+				outcome.idempotencyKey !== row.idempotencyKey
+					? { rejectedCopyKey: outcome.idempotencyKey }
+					: {}),
+			})
+			continue
+		}
 		if (outcome.kind === 'rejected') {
 			consecutiveFailures = 0
 			receipt.rejected += 1
 			blockedContacts.add(row.contactId)
-			if (isOutboxStop(row)) {
-				const stop = stopOf(row)
-				if (stop) stop.status = 'rejected'
-			}
 			await args.store.update(row.id, {
 				status: 'rejected',
 				attempts,
@@ -932,7 +1048,17 @@ export async function runDrovrOutboxReplay(args: {
 	const openStopAgeMs = receipt.depth.oldestOpenStopFailedAt
 		? now.getTime() - Date.parse(receipt.depth.oldestOpenStopFailedAt)
 		: 0
-	if (openStopAgeMs > DROVR_OUTBOX_STOP_ALERT_MS) receipt.alert.push('stop')
+	const deferredStopAgeMs = receipt.depth.oldestDeferredStopFailedAt
+		? now.getTime() - Date.parse(receipt.depth.oldestDeferredStopFailedAt)
+		: 0
+	if (
+		openStopAgeMs > DROVR_OUTBOX_STOP_ALERT_MS ||
+		deferredStopAgeMs > DROVR_OUTBOX_DEFERRED_STOP_ALERT_MS
+	)
+		receipt.alert.push('stop')
+	const heldStopAgeMs = receipt.depth.oldestHeldStopFailedAt
+		? now.getTime() - Date.parse(receipt.depth.oldestHeldStopFailedAt)
+		: 0
 	const depthFields = {
 		target: args.target,
 		pending: receipt.depth.pending,
@@ -940,6 +1066,9 @@ export async function runDrovrOutboxReplay(args: {
 		held: receipt.depth.held,
 		rejected: receipt.depth.rejected,
 		oldestOpenStopAgeMin: Math.round(openStopAgeMs / 60_000),
+		oldestDeferredStopAgeMin: Math.round(deferredStopAgeMs / 60_000),
+		heldStops: receipt.depth.heldStops,
+		oldestHeldStopAgeMin: Math.round(heldStopAgeMs / 60_000),
 		ranDelivered: receipt.delivered,
 		ranSettled: receipt.settled,
 		ranFailed: receipt.failed,
@@ -951,6 +1080,19 @@ export async function runDrovrOutboxReplay(args: {
 		purged: receipt.purged,
 	}
 	await logSafely(args.log.info, 'drovr.outbox.depth', depthFields)
+	// Row 204c: drovr's monitors count one exact event per query, so a held
+	// stop has its own lines on every run: standing (warn) while any is held,
+	// and overdue (page) once the oldest has waited a day.
+	if (receipt.depth.heldStops > 0) {
+		const held = {
+			target: args.target,
+			heldStops: receipt.depth.heldStops,
+			oldestHeldStopAgeMin: depthFields.oldestHeldStopAgeMin,
+		}
+		await logSafely(args.log.warn, 'drovr.outbox.stop_held_standing', held)
+		if (heldStopAgeMs > DROVR_OUTBOX_HELD_STOP_PAGE_MS)
+			await logSafely(args.log.error, 'drovr.outbox.stop_held_overdue', held)
+	}
 	if (receipt.alert.length > 0)
 		await logSafely(args.log.error, 'drovr.outbox.alert', {
 			...depthFields,

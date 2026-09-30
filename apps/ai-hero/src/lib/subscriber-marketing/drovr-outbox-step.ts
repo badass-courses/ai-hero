@@ -17,6 +17,16 @@ export type DrovrOutboxCaptureFn = (
 	options?: { nextAttemptAt?: Date },
 ) => Promise<DrovrOutboxCapture>
 
+/**
+ * Hold stops drovr refused with a 4xx (holdDrovrStops, row 204c): new rows
+ * held, captured ones moved from pending to held.
+ */
+export type DrovrOutboxHoldFn = (
+	entries: readonly DrovrOutboxEntry[],
+	reason: unknown,
+	httpStatus?: number,
+) => Promise<DrovrOutboxCapture>
+
 /** Mark captured rows delivered if still pending (settleDrovrOutbox). */
 export type DrovrOutboxSettleFn = (
 	entries: readonly DrovrOutboxEntry[],
@@ -31,8 +41,19 @@ export type DrovrOutboxSettleFn = (
 export type DrovrStopsEarly<T = unknown> = {
 	stops: () => readonly DrovrOutboxEntry[]
 	settle: DrovrOutboxSettleFn
-	/** What the settled rows record; by default "delivered by an Inngest retry". */
-	noteFor?: (result: T) => string
+	/**
+	 * What the settled rows record; by default "delivered by an Inngest
+	 * retry". Null: nothing to settle (the stops were held, row 204c).
+	 */
+	noteFor?: (result: T) => string | null
+	/**
+	 * Which stops the answer delivered, when not all of them: a stop the
+	 * answer deferred or held stays owed (row 204c).
+	 */
+	landed?: (
+		result: T,
+		stops: readonly DrovrOutboxEntry[],
+	) => readonly DrovrOutboxEntry[]
 }
 
 export const DROVR_SETTLED_BY_RETRY = 'delivered by an Inngest retry'
@@ -134,12 +155,12 @@ export async function sendOrOutbox<T>(args: {
 	}
 	// An earlier attempt failed and may have captured the stops.
 	if (args.early && attemptIndex(args.attempt.attempt) > 0) {
-		const stops = args.early.stops()
-		if (stops.length > 0)
-			await args.early.settle(
-				stops,
-				args.early.noteFor?.(result) ?? DROVR_SETTLED_BY_RETRY,
-			)
+		const all = args.early.stops()
+		const stops = args.early.landed ? args.early.landed(result, all) : all
+		const note = args.early.noteFor
+			? args.early.noteFor(result)
+			: DROVR_SETTLED_BY_RETRY
+		if (stops.length > 0 && note !== null) await args.early.settle(stops, note)
 	}
 	return result
 }
