@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
 	clampBirths,
 	DROVR_BIRTH_CLAMP_SKEW_MS,
+	DROVR_CLAMP_LOG_SAMPLE,
 	isSendingJourneyBirth,
 	logClampedBirths,
 } from './drovr-birth-clamp'
@@ -147,6 +148,7 @@ describe('row 201g: a sending-journey birth is never older than 5 minutes at its
 			path: 'single',
 			count: 1,
 			maxLagSeconds: 3600,
+			journeyCounts: { [DROVR_SKILLS_COURSE_JOURNEY_ID]: 1 },
 			lagSeconds: [3600],
 			journeyIds: [DROVR_SKILLS_COURSE_JOURNEY_ID],
 		})
@@ -212,6 +214,7 @@ describe('row 201g: a sending-journey birth is never older than 5 minutes at its
 			path: 'batch',
 			count: 1,
 			maxLagSeconds: 3600,
+			journeyCounts: { [DROVR_EVERGREEN_OFFER_JOURNEY_ID]: 1 },
 			lagSeconds: [3600],
 			journeyIds: [DROVR_EVERGREEN_OFFER_JOURNEY_ID],
 		})
@@ -417,12 +420,35 @@ describe("row 201g: the clamp's edges (Sonnet 2 X1 to X3)", () => {
 			path: 'batch',
 			count: 3,
 			maxLagSeconds: 3600,
+			journeyCounts: { [DROVR_SKILLS_COURSE_JOURNEY_ID]: 3 },
 			lagSeconds: [1800, 3600, 400],
 			journeyIds: [
 				DROVR_SKILLS_COURSE_JOURNEY_ID,
 				DROVR_SKILLS_COURSE_JOURNEY_ID,
 				DROVR_SKILLS_COURSE_JOURNEY_ID,
 			],
+		})
+	})
+
+	it('lists only the first 10 lags and journeys, and counts and maxes them all', async () => {
+		const births = Array.from({ length: 25 }, (_, n) =>
+			birth(n, new Date(NOW - (n + 1) * 600_000).toISOString()),
+		)
+		const info = vi.fn()
+		await logClampedBirths(clampBirths(births, NOW), 'batch', info)
+		expect(info).toHaveBeenCalledWith('drovr.birth.clamped', {
+			path: 'batch',
+			count: 25,
+			maxLagSeconds: 25 * 600,
+			journeyCounts: { [DROVR_SKILLS_COURSE_JOURNEY_ID]: 25 },
+			lagSeconds: Array.from(
+				{ length: DROVR_CLAMP_LOG_SAMPLE },
+				(_, n) => (n + 1) * 600,
+			),
+			journeyIds: Array.from(
+				{ length: DROVR_CLAMP_LOG_SAMPLE },
+				() => DROVR_SKILLS_COURSE_JOURNEY_ID,
+			),
 		})
 	})
 

@@ -16,7 +16,12 @@ export const DROVR_IDEMPOTENCY_KEY_CONFLICT =
  * A problem's codes, and only those: the slug of its `type` and its
  * `code`. Never its title, detail or hint, which are served text and can
  * change without notice (the hawk, 201g-f2). A batch item's `detail`
- * string is read as JSON when it parses, else as a bare code.
+ * string comes in two forms: the actor's body as JSON
+ * (`{"code":"cold-start-never-born","error":"…"}`), read for its `code`,
+ * or `<code>: <reason>` (drovr events.ts deliverBatchItem writes
+ * `event-not-live: <reason>`), read as the text before the first colon. A
+ * string with neither is one bare code. Nothing is ever searched for a
+ * token, so words in a key or a message can't pick a rule.
  */
 export function drovrProblemCodes(problem: unknown): string[] {
 	let value = problem
@@ -24,7 +29,9 @@ export function drovrProblemCodes(problem: unknown): string[] {
 		try {
 			value = JSON.parse(problem)
 		} catch {
-			return problem.trim() ? [problem.trim()] : []
+			const colon = problem.indexOf(':')
+			const code = (colon === -1 ? problem : problem.slice(0, colon)).trim()
+			return code ? [code] : []
 		}
 	}
 	if (!value || typeof value !== 'object') return []
@@ -51,7 +58,7 @@ export function isIdempotencyKeyConflictProblem(problem: unknown): boolean {
  * dropping this one would lose the event for good.
  */
 export function isEventNotLiveProblem(problem: unknown): boolean {
-	return problemText(problem).includes('event-not-live')
+	return drovrProblemCodes(problem).includes('event-not-live')
 }
 
 /**
@@ -60,17 +67,7 @@ export function isEventNotLiveProblem(problem: unknown): boolean {
  * consumed.
  */
 export function isColdStartUnhandledProblem(problem: unknown): boolean {
-	return problemText(problem).includes('cold-start-unhandled')
-}
-
-/** A problem's type and code, or the problem itself when it is a string. */
-function problemText(problem: unknown): string {
-	if (typeof problem === 'string') return problem
-	if (!problem || typeof problem !== 'object') return ''
-	const { type, code } = problem as { type?: unknown; code?: unknown }
-	return [type, code]
-		.filter((value): value is string => typeof value === 'string')
-		.join(' ')
+	return drovrProblemCodes(problem).includes('cold-start-unhandled')
 }
 
 const DIRECTORY_STOP_TYPES: ReadonlySet<string> = new Set([
@@ -110,7 +107,7 @@ function isNeverBornProblem(problem: unknown): boolean {
 		(problem as { type?: unknown }).type === CONTACT_NEVER_BORN_PROBLEM
 	)
 		return true
-	return problemText(problem).includes('cold-start-never-born')
+	return drovrProblemCodes(problem).includes('cold-start-never-born')
 }
 
 /**

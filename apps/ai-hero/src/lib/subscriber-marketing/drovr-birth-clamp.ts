@@ -86,12 +86,18 @@ export function clampBirths(
 	return { events: clamped, lagSeconds, journeyIds }
 }
 
+/** The clamp line lists at most this many births' lags and journeys. */
+export const DROVR_CLAMP_LOG_SAMPLE = 10
+
 /**
  * One line per send that clamped anything, so an outage backlog or a
- * backfill's queue wait shows up in Axiom: `count` sums the clamps, and
- * `lagSeconds` carries each birth's original lag, and `journeyIds` each
- * one's journey, in the same order. It is logged on every
- * attempt, so a retried send repeats its line: count sends, not births.
+ * backfill's queue wait shows up in Axiom: `count` sums the clamps,
+ * `maxLagSeconds` is the largest of them all, and `journeyCounts` counts
+ * them by journey. `lagSeconds` and `journeyIds` carry the first
+ * `DROVR_CLAMP_LOG_SAMPLE` births' original lags and journeys, in the same
+ * order, so a 100-event batch doesn't log 100 of each. It is logged on
+ * every attempt, so a retried send repeats its line: count sends, not
+ * births.
  */
 export async function logClampedBirths(
 	clamped: ClampedBirths,
@@ -104,10 +110,17 @@ export async function logClampedBirths(
 			path,
 			count: clamped.lagSeconds.length,
 			maxLagSeconds: Math.max(...clamped.lagSeconds),
-			lagSeconds: clamped.lagSeconds,
-			journeyIds: clamped.journeyIds,
+			journeyCounts: countBy(clamped.journeyIds),
+			lagSeconds: clamped.lagSeconds.slice(0, DROVR_CLAMP_LOG_SAMPLE),
+			journeyIds: clamped.journeyIds.slice(0, DROVR_CLAMP_LOG_SAMPLE),
 		})
 	} catch {
 		// Logging cannot change what is sent.
 	}
+}
+
+function countBy(values: readonly string[]): Record<string, number> {
+	const counts: Record<string, number> = {}
+	for (const value of values) counts[value] = (counts[value] ?? 0) + 1
+	return counts
 }

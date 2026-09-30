@@ -26,6 +26,7 @@
   - **Released, nothing owed:** an owner copy drovr answers `contact-never-born`, for every stop kind, a purchase included. The contact was never on that journey. The directory stop itself is never released this way.
   - **Pending, retried:** a 5xx, a timeout or network error, 408, 429 and 409 `event-not-live`, and nothing else. It still gates.
   - **Held for a human:** every other 4xx, including 409 `cold-start-unhandled` on any stop but a directory one (drovr says not to retry it; the hawk, 2026-09-30). Nothing releases it but a human (below). Failing closed costs a missed pitch; failing open can pitch a buyer or someone who unsubscribed.
+  - **Answers are read by their code only** (`drovrProblemCodes`): a problem's `type` slug and `code`; a batch item's detail as the actor's JSON `code`, or the text before the first colon in drovr's `event-not-live: <reason>` form. Never a title, detail, hint or error text, so a key or message that names another code picks no rule (201g-f2).
   - The one exception is a whole-batch 404 or 405. That means drovr has no batch ingress, not an answer about the events, so the chunk retries and the replay later posts the stop alone. The gate is closed throughout.
   - Facts and births keep their own rules: a fact's 4xx other than `event-not-live` is rejected.
   - The dispatch fallback (a direct post when Inngest is unreachable) outboxes a refused stop as pending. The replay's re-post then holds it within 5 minutes.

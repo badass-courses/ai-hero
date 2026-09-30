@@ -40,7 +40,14 @@ import type { ContactEventRecord } from './types'
 
 export const OWNER_BIRTH_GUARD_REPOST_CAP = 25
 
-/** The problem code a re-post refused for a suppressed contact carries. */
+/**
+ * Reserved: drovr sends no such code today. `/events` accepts an event for
+ * a suppressed contact and blocks it at the send gate, and its only
+ * suppression slug is `confirm-suppressed`, on `/confirm`. So `suppressed`
+ * never counts yet (the guard skips a suppressed contact by the
+ * directory's state before posting); this reads the code once drovr sends
+ * one.
+ */
 export const DROVR_CONTACT_SUPPRESSED = 'contact-suppressed'
 export const OWNER_BIRTH_GUARD_MIN_AGE_MS = 60 * 60 * 1000
 export const OWNER_BIRTH_GUARD_MAX_AGE_MS = 72 * 60 * 60 * 1000

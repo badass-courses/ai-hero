@@ -35,11 +35,11 @@ A **bulk birth** is any job that births more than 1,000 contacts into a drip or 
 A gate, not code (Sonnet 2's review of #345). On dev or stage Inngest, send **at least 1,000** bulk events to `drovr-events-deliver-bulk-v1` in one burst, and count the run starts per minute.
 - **Why 1,000:** at up to 100 events a run, that is 10 or more runs. So an unthrottled lane must start 8 or more in the first minute and fail. With 300 (3 runs), the gate could not fail.
 - **Expected for 1,000:** about 10 run starts in all, **at most 7 in any minute**, with the starts falling **in at least 2 separate minutes** (7, then 3). Evenly spaced starts can put all 10 within about 80 seconds, so count minutes, not the span. Each run takes up to 100 events.
-- **Pass:** both hold: at most 7 starts in every minute, and starts in at least 2 separate minutes.
-- **Reading it:** the bulk function's own `concurrency: 4` can also slow starts, on a slow stage. So "at most 7 in any minute" is the pass condition, and "8 or more in the first minute" is the fail signal only when runs are short.
-- **Fail:** there's no pacing, and only the clamp is left. Don't run the backfill; tell the owner.
+- **It counts only on a fast stage.** The bulk function's own `concurrency: 4` caps starts by itself: four runs at a time, each taking *d* seconds, start at most 4 × 60 / *d* a minute, which is 7 or fewer once runs take about 34 s. On a slow stage, the throttle-shaped result then shows up whether or not the throttle exists. So also read each run's duration: **the result counts only if the median run took ≤ 10 s** (then concurrency alone would allow 24 or more starts a minute). A slower median makes it **inconclusive**, not a pass: re-run it on a faster stage.
+- **Pass:** all three hold: the median run took ≤ 10 s, at most 7 starts in every minute, and starts in at least 2 separate minutes.
+- **Fail:** 8 or more starts in a minute. There's no pacing, and only the clamp is left. Don't run the backfill; tell the owner.
 
-Record the result (the environment, the minute counts, the date) on the row before the prod run.
+Record the result (the environment, the median run duration, the minute counts, the date) on the row before the prod run.
 
 ## No bulk value-path births in the 201e window
 
