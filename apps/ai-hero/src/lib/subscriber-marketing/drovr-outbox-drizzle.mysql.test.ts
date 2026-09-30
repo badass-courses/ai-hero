@@ -2,8 +2,10 @@ import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 
 import * as databaseSchema from '@/db/schema'
+import { drovrOutbox } from '@/db/drovr-outbox-schema'
 import { preserveQueryResultShape } from '@/db/mysql-query-client'
 import { drizzle } from 'drizzle-orm/mysql2'
+import { getTableConfig } from 'drizzle-orm/mysql-core'
 import mysql, { type Pool } from 'mysql2/promise'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -126,6 +128,41 @@ integration('drovr outbox store on MySQL (row 204)', () => {
 		})
 		beforeEach(async () => {
 			await pool.query('DELETE FROM AI_DrovrOutbox')
+		})
+
+		it('has exactly the indexes the Drizzle schema declares (no drift from the deploy request)', async () => {
+			const [rows] = (await pool.query(
+				`SELECT INDEX_NAME AS name, NON_UNIQUE AS nonUnique, COLUMN_NAME AS col
+				 FROM information_schema.STATISTICS
+				 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'AI_DrovrOutbox'
+				 ORDER BY INDEX_NAME, SEQ_IN_INDEX`,
+			)) as unknown as [
+				{ name: string; nonUnique: number | string; col: string }[],
+			]
+			const live = new Map<string, { unique: boolean; columns: string[] }>()
+			for (const r of rows) {
+				if (r.name === 'PRIMARY') continue
+				const entry = live.get(r.name) ?? {
+					unique: Number(r.nonUnique) === 0,
+					columns: [],
+				}
+				entry.columns.push(r.col)
+				live.set(r.name, entry)
+			}
+			const declared = new Map(
+				getTableConfig(drovrOutbox).indexes.map((i) => [
+					i.config.name,
+					{
+						unique: Boolean(i.config.unique),
+						columns: i.config.columns.map((c) => (c as { name: string }).name),
+					},
+				]),
+			)
+			expect(Object.fromEntries(live)).toEqual(Object.fromEntries(declared))
+			expect(live.get('DrovrOutbox_contact_idx')).toEqual({
+				unique: false,
+				columns: ['target', 'contactId', 'status'],
+			})
 		})
 
 		it('keeps the exact body and ignores a second capture of the same send', async () => {

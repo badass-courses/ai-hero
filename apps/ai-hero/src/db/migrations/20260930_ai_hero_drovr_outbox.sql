@@ -12,6 +12,10 @@
 -- target only (previews share this database). Delivered rows are deleted
 -- after 7 days: the inline body can hold contact data.
 --
+-- DrovrOutbox_contact_idx serves the per-contact gate reads (a contact's open
+-- births and stops, on the replay and, from row 204b, on the live path).
+-- Added before DR 42 deployed, so the table ships with it in one CREATE.
+--
 -- The app tolerates the table being absent: the outbox write logs
 -- drovr.outbox.unavailable and the caller keeps its previous behaviour. So the
 -- code deploys first and this applies after.
@@ -52,7 +56,8 @@ SET @ddl_drovr_outbox = (
        PRIMARY KEY (`id`),
        UNIQUE KEY `DrovrOutbox_dedupe_uq` (`dedupeKey`),
        KEY `DrovrOutbox_due_idx` (`status`, `target`, `nextAttemptAt`),
-       KEY `DrovrOutbox_delivered_idx` (`status`, `deliveredAt`)
+       KEY `DrovrOutbox_delivered_idx` (`status`, `deliveredAt`),
+       KEY `DrovrOutbox_contact_idx` (`target`, `contactId`, `status`)
      ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
   )
 );
