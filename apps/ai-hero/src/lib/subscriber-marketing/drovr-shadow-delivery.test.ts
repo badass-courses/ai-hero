@@ -708,7 +708,7 @@ describe('an owner-copy stop drovr says never started its journey', () => {
 		).toBe(false)
 	})
 
-	it('needs the 409 contact-never-born problem exactly', () => {
+	it('needs the contact-never-born problem exactly: the typed problem decides, as it does for a batch item', () => {
 		expect(
 			isNeverBornOwnerStop(ownerStop(), {
 				...neverBorn,
@@ -716,7 +716,10 @@ describe('an owner-copy stop drovr says never started its journey', () => {
 			}),
 		).toBe(false)
 		expect(
-			isNeverBornOwnerStop(ownerStop(), { ...neverBorn, httpStatus: 422 }),
+			isNeverBornOwnerStop(ownerStop(), {
+				...neverBorn,
+				problem: { type: 'urn:drovr:problem:contact-not-found' },
+			}),
 		).toBe(false)
 		expect(isNeverBornOwnerStop(ownerStop(), { status: 'accepted' })).toBe(
 			false,

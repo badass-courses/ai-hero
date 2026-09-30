@@ -13,8 +13,11 @@ import {
 	deliveryStepId,
 	DROVR_BATCH_MAX,
 	isNeverBornOwnerStop,
-	isNeverBornOwnerStopProblem,
 } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
+import {
+	isHeldStopRefusal,
+	refusalsByAnswer,
+} from '@/lib/subscriber-marketing/drovr-stop-verdict'
 import type {
 	DeferredDrovrEvent,
 	DrovrBatchOutcome,
@@ -318,10 +321,7 @@ const SETTLED_REFUSED =
 
 /** The stops among drovr's final refusals that must be held (row 204c). */
 const stopsToHold = (refused: readonly RefusedDrovrEvent[]) =>
-	refused.filter(
-		({ event, problem }) =>
-			isStopEvent(event) && !isNeverBornOwnerStopProblem(event, problem),
-	)
+	refused.filter(isHeldStopRefusal)
 
 const refusalReason = (httpStatus: number, problem: unknown) =>
 	`drovr refused the stop (${httpStatus}): ${JSON.stringify(problem ?? null)}`
@@ -653,21 +653,20 @@ const deliverBulk = async (
 						const gatedKeys: string[] = []
 						// Row 204c: a stop drovr refused for good (not "never born")
 						// is held for a human, not counted rejected.
-						const toHold = stopsToHold(refused)
 						let held = 0
-						if (toHold.length > 0) {
-							const first = toHold[0]!
+						for (const group of refusalsByAnswer(stopsToHold(refused))) {
+							const { httpStatus, problem } = group[0]!
 							const captured = await context.hold(
-								toHold.map(({ event }) =>
+								group.map(({ event }) =>
 									outboxEntryForEvent(event, context.lane),
 								),
-								refusalReason(first.httpStatus, first.problem),
-								first.httpStatus,
+								refusalReason(httpStatus, problem),
+								httpStatus,
 							)
 							if (captured.status === 'outboxed') {
-								held = toHold.length
+								held += group.length
 								gatedKeys.push(
-									...toHold.map(({ event }) => event.idempotencyKey),
+									...group.map(({ event }) => event.idempotencyKey),
 								)
 							}
 						}

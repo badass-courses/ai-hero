@@ -20,7 +20,6 @@ const mocks = vi.hoisted(() => ({
 	drovrApiKeyForTenant: vi.fn(),
 	fanOutOwnedEvents: vi.fn(),
 	isNeverBornOwnerStop: vi.fn(),
-	isNeverBornOwnerStopProblem: vi.fn(),
 	isShadowNewsletterBirth: vi.fn(),
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 	resolveOwnedContactIds: vi.fn(),
@@ -43,7 +42,6 @@ vi.mock('@/lib/subscriber-marketing/drovr-shadow-delivery', () => ({
 	deliveryStepId: mocks.deliveryStepId,
 	DROVR_BATCH_MAX: 100,
 	isNeverBornOwnerStop: mocks.isNeverBornOwnerStop,
-	isNeverBornOwnerStopProblem: mocks.isNeverBornOwnerStopProblem,
 }))
 vi.mock('@/lib/subscriber-marketing/drovr-shadow-emitter', () => ({
 	drovrApiKeyForTenant: mocks.drovrApiKeyForTenant,
@@ -121,7 +119,6 @@ beforeEach(() => {
 	)
 	mocks.deliverOrThrow.mockResolvedValue({ status: 'accepted' })
 	mocks.isNeverBornOwnerStop.mockReturnValue(false)
-	mocks.isNeverBornOwnerStopProblem.mockReturnValue(false)
 	mocks.hold.mockImplementation(async (entries: unknown[]) => ({
 		status: 'outboxed',
 		count: entries.length,
@@ -1080,6 +1077,42 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 		).toEqual([['owner:purchase'], ['owner:later']])
 	})
 
+	it('holds a later fact behind a stop this same run held for a human (Opus S2, Sonnet M11)', async () => {
+		mocks.deliverOrThrow.mockImplementation(
+			async ({ event: sent }: { event: { idempotencyKey: string } }) =>
+				sent.idempotencyKey === 'owner:purchase'
+					? { status: 'rejected', httpStatus: 422, problem: { type: 'x' } }
+					: { status: 'accepted' },
+		)
+		const receipt = await run([
+			stopEvent('owner:purchase', 'purchase.recorded', 10),
+			fact('owner:later', 20),
+			fact('owner:other', 20, 'contact-2'),
+		])
+		expect(receipt).toMatchObject({
+			accepted: 1,
+			heldStops: 1,
+			heldBehindStop: 1,
+		})
+		const posted = mocks.deliverOrThrow.mock.calls.map(
+			([args]) =>
+				(args as { event: { idempotencyKey: string } }).event.idempotencyKey,
+		)
+		expect(posted).toEqual(['owner:purchase', 'owner:other'])
+	})
+
+	it('never holds a fact drovr refused on the single path: it is rejected (Sonnet M02)', async () => {
+		mocks.deliverOrThrow.mockResolvedValue({
+			status: 'rejected',
+			httpStatus: 404,
+			problem: { type: 'x' },
+		})
+		const receipt = await run([fact('owner:later', 20)])
+		expect(mocks.hold).not.toHaveBeenCalled()
+		expect(receipt).toMatchObject({ rejected: 1 })
+		expect(receipt).not.toHaveProperty('heldStops')
+	})
+
 	it('gates the bulk lane too', async () => {
 		mocks.openStops.mockResolvedValue([owedPurchase])
 		mocks.deliverBatchOrThrow.mockImplementation(
@@ -1615,28 +1648,91 @@ describe('row 204c: a backfill stop that is owed gates the run, whatever the sou
 		})
 	})
 
-	it('counts a bulk owner stop drovr says was never born there as rejected, and never holds it', async () => {
-		mocks.isNeverBornOwnerStopProblem.mockReturnValue(true)
+	it.each(['contact.unsubscribed', 'purchase.recorded'])(
+		'counts a bulk owner copy of a %s drovr says was never born there as rejected, and never holds it (the prod shape: a purchase)',
+		async (type) => {
+			const ownerCopy = {
+				...unsubscribe,
+				idempotencyKey: `owner:aihero:crash-course-evergreen-offer:${type}:x`,
+				journeyId: 'crash-course-evergreen-offer',
+				type,
+			}
+			mocks.deliverBatchOrThrow.mockImplementation(
+				async ({ events }: { events: { idempotencyKey: string }[] }) =>
+					events.some((e) => e.idempotencyKey === 'backfill:unsubscribe')
+						? {
+								accepted: 0,
+								rejected: 1,
+								refused: [
+									{
+										event: ownerCopy,
+										httpStatus: 409,
+										problem: { type: 'urn:drovr:problem:contact-never-born' },
+									},
+								],
+							}
+						: { accepted: events.length, rejected: 0 },
+			)
+			const receipt = await bulkRun()
+			expect(mocks.hold).not.toHaveBeenCalled()
+			expect(receipt).toMatchObject({ rejected: 1, accepted: 1 })
+			expect(receipt).not.toHaveProperty('heldStops')
+		},
+	)
+
+	it('holds only the stops of a chunk drovr refused, never a fact, and each group of refusals under its own cause', async () => {
+		const otherStop = {
+			...event(
+				'org-aihero',
+				'backfill:bounce',
+				'contact-directory',
+				'contact.bounced',
+			),
+			contactId: 'contact-2',
+			occurredAt: at(6),
+		}
+		const fact = {
+			...event('org-aihero', 'backfill:fact'),
+			contactId: 'contact-3',
+			occurredAt: at(7),
+		}
 		mocks.deliverBatchOrThrow.mockImplementation(
 			async ({ events }: { events: { idempotencyKey: string }[] }) =>
 				events.some((e) => e.idempotencyKey === 'backfill:unsubscribe')
 					? {
 							accepted: 0,
-							rejected: 1,
+							rejected: 3,
 							refused: [
-								{
-									event: unsubscribe,
-									httpStatus: 409,
-									problem: { type: 'urn:drovr:problem:contact-never-born' },
-								},
+								{ event: unsubscribe, httpStatus: 404, problem: { type: 'a' } },
+								{ event: otherStop, httpStatus: 422, problem: { type: 'b' } },
+								{ event: fact, httpStatus: 422, problem: { type: 'b' } },
 							],
 						}
 					: { accepted: events.length, rejected: 0 },
 		)
-		const receipt = await bulkRun()
-		expect(mocks.hold).not.toHaveBeenCalled()
-		expect(receipt).toMatchObject({ rejected: 1, accepted: 1 })
-		expect(receipt).not.toHaveProperty('heldStops')
+		const receipt = await registeredBulk.handler({
+			events: [
+				{
+					data: {
+						source: 'contact-sync-backfill',
+						events: [unsubscribe, otherStop, fact],
+					},
+				},
+			],
+			step: { ...createStep(), sendEvent: vi.fn(async () => undefined) },
+			attempt: 0,
+			maxAttempts: 9,
+		})
+		expect(mocks.hold).toHaveBeenCalledTimes(2)
+		const held = mocks.hold.mock.calls.map(([entries, reason]) => [
+			(entries as { idempotencyKey: string }[]).map((e) => e.idempotencyKey),
+			reason,
+		])
+		expect(held).toEqual([
+			[['backfill:unsubscribe'], expect.stringContaining('(404)')],
+			[['backfill:bounce'], expect.stringContaining('(422)')],
+		])
+		expect(receipt).toMatchObject({ heldStops: 2, rejected: 1 })
 	})
 
 	it('holds a backfill stop drovr refused with a 4xx, and a later fact of that contact from another source waits behind it', async () => {

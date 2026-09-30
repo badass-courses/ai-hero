@@ -7,6 +7,7 @@ vi.mock('./drovr-outbox-live', () => ({
 }))
 
 import {
+	DROVR_RELEASED_BY_STRAGGLER,
 	DROVR_SETTLED_BY_STRAGGLER,
 	settleOrHoldStragglerStops,
 } from './drovr-outbox-contact-sync'
@@ -75,7 +76,7 @@ describe('the straggler retry settles or holds the stops it re-sends (row 204c)'
 		})
 	})
 
-	it('settles an owner stop drovr says never started the journey, never holds it', async () => {
+	it('releases an owner stop drovr says never started the journey: settled at once, never held', async () => {
 		const p = ports()
 		const ownerStop = event(
 			'owner:unsubscribe',
@@ -98,7 +99,11 @@ describe('the straggler retry settles or holds the stops it re-sends (row 204c)'
 			p,
 		)
 		expect(p.hold).not.toHaveBeenCalled()
-		expect(p.settle).not.toHaveBeenCalled()
+		// Released now, not after the replay's day-long wait (Opus N5).
+		expect(p.settle).toHaveBeenCalledWith(
+			[expect.objectContaining({ idempotencyKey: 'owner:unsubscribe' })],
+			DROVR_RELEASED_BY_STRAGGLER,
+		)
 	})
 
 	it('touches nothing for a batch with no stops', async () => {

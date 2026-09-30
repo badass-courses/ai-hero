@@ -11,11 +11,9 @@ import {
 	type DrovrOutboxSettleFn,
 	type DrovrSendAttempt,
 } from './drovr-outbox-step'
-import {
-	isNeverBornOwnerStopProblem,
-	type DrovrBatchOutcome,
-} from './drovr-shadow-delivery'
+import type { DrovrBatchOutcome } from './drovr-shadow-delivery'
 import type { DrovrShadowEvent } from './drovr-shadow-emitter'
+import { isHeldStopRefusal, refusalsByAnswer } from './drovr-stop-verdict'
 
 /**
  * Contact sync's batch sends (the straggler retry, the profile sync, and
@@ -44,6 +42,9 @@ export function contactSyncSendOrOutbox(
 export const DROVR_SETTLED_BY_STRAGGLER =
 	'delivered by the contact-sync straggler retry'
 
+export const DROVR_RELEASED_BY_STRAGGLER =
+	'refused by drovr on the contact-sync straggler retry: never born there, nothing owed'
+
 /**
  * Row 204c: after a straggler retry's send, the stops it carried that a
  * backfill outboxed while they waited (pending, source contactSync) are
@@ -69,20 +70,29 @@ export async function settleOrHoldStragglerStops(
 	const deferredKeys = new Set(
 		(answer.deferred ?? []).map(({ event }) => event.idempotencyKey),
 	)
-	const toHold = refused.filter(
-		({ event, problem }) =>
-			isOutboxStop({ eventType: event.type }) &&
-			!isNeverBornOwnerStopProblem(event, problem),
-	)
-	const refusedKeys = new Set(refused.map(({ event }) => event.idempotencyKey))
-	if (toHold.length > 0) {
-		const first = toHold[0]!
+	const toHold = refused.filter(isHeldStopRefusal)
+	for (const group of refusalsByAnswer(toHold)) {
+		const { httpStatus, problem } = group[0]!
 		await ports.hold(
-			toHold.map(({ event }) => outboxEntryForEvent(event, 'contactSync')),
-			`drovr refused the stop (${first.httpStatus}): ${JSON.stringify(first.problem ?? null)}`,
-			first.httpStatus,
+			group.map(({ event }) => outboxEntryForEvent(event, 'contactSync')),
+			`drovr refused the stop (${httpStatus}): ${JSON.stringify(problem ?? null)}`,
+			httpStatus,
 		)
 	}
+	// A never-born owner copy is released: its row settles now, not after
+	// the replay's day-long wait (row 204c).
+	const refusedKeys = new Set(refused.map(({ event }) => event.idempotencyKey))
+	const heldKeys = new Set(toHold.map(({ event }) => event.idempotencyKey))
+	const released = refused.filter(
+		({ event }) =>
+			isOutboxStop({ eventType: event.type }) &&
+			!heldKeys.has(event.idempotencyKey),
+	)
+	if (released.length > 0)
+		await ports.settle(
+			released.map(({ event }) => outboxEntryForEvent(event, 'contactSync')),
+			DROVR_RELEASED_BY_STRAGGLER,
+		)
 	const landed = stops.filter(
 		(event) =>
 			!deferredKeys.has(event.idempotencyKey) &&

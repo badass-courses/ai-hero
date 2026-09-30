@@ -7,7 +7,7 @@
 - `drovr.outbox.depth` every 5 minutes: `pending`, `held`, `rejected`, `oldestPendingAgeMin`, `oldestOpenStopAgeMin`, `oldestDeferredStopAgeMin`, `heldStops`, `oldestHeldStopAgeMin`.
 - **Held stops** (row 204c) have their own lines on every replay run, which drovr's Axiom monitors count:
   - `drovr.outbox.stop_held_standing` (warn) while any stop is held. The monitor `aihero-drovr-outbox-held-stop` emails.
-  - `drovr.outbox.stop_held_overdue` (error) once the oldest held stop is more than 24 hours old, by `firstFailedAt`. The monitor `aihero-drovr-outbox-held-stop-overdue` pages.
+  - `drovr.outbox.stop_held_overdue` (error) once the oldest held stop is more than 24 hours old, by `firstFailedAt`. The monitor `aihero-drovr-outbox-held-stop-overdue` pages. The clock starts at the stop's first failure, not when it was held, so a stop that waited in the outbox (a deferred backfill stop) and is then refused can page on the next run.
   - the 10-minute agent check picks up the warning, and a stop still held after 30 minutes becomes a desk item for Joel.
 - `drovr.outbox.alert` with `reasons`. It fires on every run until the cause is gone; the Axiom monitor `aihero-drovr-outbox` counts it:
   - `pending`: more than 25 rows waiting;
@@ -21,9 +21,13 @@
 
 - **A birth** (`contact.created`, or a signup) that is pending or held holds that contact's rows on its journey; a signup holds every row of the contact.
 - **A stop** that is pending, held or rejected holds every row of its contact that happened at or after it, on any journey. Its facts wait an hour at a time until a human acts.
-- **A stop drovr refuses is held for a human** (row 204c). That covers any 4xx except an owner copy drovr says was never born there, which is settled because nothing is owed. It happens on the first live attempt, on an Inngest retry, in a bulk chunk, after a straggler retry, and on the replay alike, so one answer gets one behaviour everywhere.
-  - A 5xx, 408, 429, a timeout, 409 `event-not-live` and 409 `cold-start-unhandled` are not refusals: the stop stays pending and is retried.
-  - Nothing releases a held stop but a human (below). Failing closed costs a missed pitch; failing open can pitch a buyer or someone who unsubscribed.
+- **One rule decides drovr's answer to a stop** (row 204c, `drovrStopVerdict` in `drovr-stop-verdict.ts`). The single post, a whole batch, a batch item, the straggler retry and the replay all call it, and `drovr-stop-verdict.test.ts` pins each answer on each path.
+  - **Landed:** a 2xx, or a directory stop's 409 `cold-start-unhandled` (drovr writes the suppression row first, mig-10).
+  - **Released, nothing owed:** an owner copy drovr answers `contact-never-born`, for every stop kind, a purchase included. The contact was never on that journey. The directory stop itself is never released this way.
+  - **Pending, retried:** a 5xx, a timeout or network error, 408, 429 and 409 `event-not-live`, and nothing else. It still gates.
+  - **Held for a human:** every other 4xx, including 409 `cold-start-unhandled` on any stop but a directory one (drovr says not to retry it; the hawk, 2026-09-30). Nothing releases it but a human (below). Failing closed costs a missed pitch; failing open can pitch a buyer or someone who unsubscribed.
+  - The one exception is a whole-batch 404 or 405. That means drovr has no batch ingress, not an answer about the events, so the chunk retries and the replay later posts the stop alone. The gate is closed throughout.
+  - Facts and births keep their own rules: a fact's 4xx other than `event-not-live` is rejected.
   - The dispatch fallback (a direct post when Inngest is unreachable) outboxes a refused stop as pending. The replay's re-post then holds it within 5 minutes.
 - **A backfill stop drovr answers `event-not-live`** goes to the contact-sync straggler retry, and is also outboxed (pending, source `contactSync`, due in 24 hours) so it gates its contact while it waits. The straggler retry settles it when drovr takes it, or holds it if drovr refuses it. After a day the replay posts it too; drovr dedupes by key.
 - **A birth never waits behind a stop that is itself waiting for a birth.** drovr takes no stop for a contact it never saw born, so the birth goes first and the stop right after it, in the same run. That is what keeps the two gates from deadlocking.
@@ -48,7 +52,8 @@ ORDER BY occurredAt;
    - A 404 `unknown-journey` is a journey that isn't live yet.
    - A 400 `malformed-event` is an ai-hero bug.
    - A 410 `tenant-retired` is a drovr decision.
-2. Fix the cause first, then **re-send** it with the statement under "Release a held or rejected row". Put who and why in `lastError`, for example `lastError = CONCAT('released by <name> <ISO time>: <why>; was: ', lastError)`.
+   - A 409 `cold-start-unhandled` means the contact has no actor on that journey, and the stop does not start one. Find out why the contact isn't there (a missing birth, or a journey the contact was never on) before re-sending.
+2. Fix the cause first, then **re-send** it with the statement under "Release a held or rejected row". Put who and why in `lastError`, as that statement does.
 3. **Retire** it only when the stop is truly moot (see "Retire a row"). A purchase is never retired.
 4. Post the row ids, the decision and the reason to the desk as a `done` item: that is the audit trail. Delivered rows are purged after 7 days.
 
@@ -58,9 +63,11 @@ It posts at the next run; drovr dedupes by key if it already has it.
 
 ```sql
 UPDATE AI_DrovrOutbox SET status = 'pending', releasedAt = NOW(3), nextAttemptAt = NOW(3),
-  lastError = CONCAT('released by <name> <ISO time>: <why>; was: ', COALESCE(lastError, ''))
+  lastError = LEFT(CONCAT('released by <name> <ISO time>: <why>; was: ', COALESCE(lastError, '')), 1000)
 WHERE status IN ('held', 'rejected') AND id IN (…);
 ```
+
+`lastError` is `varchar(1000)`, and a refusal already fills it, so the `LEFT` keeps the update from failing (MySQL error 1406). Double any `'` in `<why>`.
 
 Then send `drovr/outbox.replay-requested`, or wait for the next :x2/:x7 tick. A row drovr refuses for good is refused again, so release alone won't end the hold: read `lastError` first.
 
@@ -75,13 +82,14 @@ UPDATE AI_DrovrOutbox SET status = 'delivered', deliveredAt = NOW(3), lastError 
 WHERE status IN ('held', 'rejected') AND eventType <> 'purchase.recorded' AND id IN (…);
 ```
 
-A purchase drovr keeps refusing is a drovr bug: fix it there, then release the row. Until then it stays held, its facts stay held, and the held-stop monitor pages after a day, which is right: the buyer must not be pitched.
+A purchase drovr keeps refusing is a drovr bug: fix it there, then release the row. The exception is drovr's `contact-never-born` on an owner copy, which is the correct answer and is released on its own; it is never held. Until then it stays held, its facts stay held, and the held-stop monitor pages after a day, which is right: the buyer must not be pitched.
 
 - **Unsubscribe, bounce and complaint** are also refused at send time by Kit and by ai-hero's `contact-stop-rule`, so retiring one of those loses less. It still leaves drovr's own record wrong.
-- **A retired birth** releases the rows behind it. A stop that waited for it then posts alone, and drovr answers never-born (the replay settles it).
+- **A retired birth** releases the rows behind it. A stop that waited for it then posts alone. If drovr answers never-born, an owner copy is released; a directory stop is held, since it is the suppression authority.
 
 ## Limits
 
+- **Source `contactSync` is not always deferred:** the stop alert gives every pending `contactSync` stop 48 hours, including a straggler or profile-sync stop captured because drovr was down, which is due now. The `oldest` alert (60 minutes) still fires for it.
 - **A stop deferred again on a bulk retry:** a stop first captured on a 5xx (source `bulk`), whose retry is then answered `event-not-live`, keeps its 10-minute `stop` alert. It gates correctly and the straggler retry settles it, but it can page for a while before that.
 
 - Holding later facts stops new email that an overtaking fact would start. It can't stop timers drovr already scheduled; only delivering the stop does. Hence the `stop` alert.
