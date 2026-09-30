@@ -11,6 +11,12 @@ import {
 } from './drovr-shadow-emitter'
 import type { ContactEventRecord } from './types'
 
+// Before the outbox table exists the live capture answers unavailable: the
+// pre-row-204 behaviour, which the older pins below keep asserting.
+vi.mock('./drovr-outbox-live', () => ({
+	captureDrovrOutboxLive: vi.fn(async () => ({ status: 'unavailable' })),
+}))
+
 const occurredAt = '2026-09-16T12:00:00.000Z'
 
 function contactEvent(eventType: string): ContactEventRecord {
@@ -567,6 +573,7 @@ describe('the awaited dispatch (owner-assignment births)', () => {
 		const fallback = vi.fn(async () => {
 			await new Promise((resolve) => setTimeout(resolve, 10))
 			posted = true
+			return []
 		})
 
 		await dispatchDrovrShadowFactAwaited(birth, {
@@ -593,5 +600,149 @@ describe('the awaited dispatch (owner-assignment births)', () => {
 				resolveOwners: vi.fn().mockRejectedValue(new Error('db down')),
 			}),
 		).resolves.toBeUndefined()
+	})
+})
+
+describe('row 204: the fallback never drops what drovr did not take', () => {
+	const unsubscribe: DrovrShadowFact = {
+		kind: 'contact-event',
+		event: contactEvent('contact.unsubscribed'),
+	}
+	const outboxed = () =>
+		vi.fn(async (entries: readonly unknown[]) => ({
+			status: 'outboxed' as const,
+			count: entries.length,
+		}))
+
+	it.each([500, 503])(
+		'outboxes the events a direct post got %i for, and not the ones it delivered',
+		async (httpStatus) => {
+			const events = mapDrovrShadowFact(signup)
+			const outbox = outboxed()
+			const error = vi.fn()
+			const result = await dispatchDrovrShadowFact(signup, {
+				send: vi.fn().mockRejectedValue(new Error('inngest unreachable')),
+				// drovr answered this status for every event of the batch.
+				fallback: vi.fn(async (batch) => {
+					expect(httpStatus).toBeGreaterThanOrEqual(500)
+					return batch
+				}),
+				outbox,
+				warn: vi.fn(),
+				error,
+				resolveOwners: async () => [],
+			})
+			expect(result).toBe('fallback')
+			expect(outbox).toHaveBeenCalledTimes(1)
+			const entries = outbox.mock.calls[0]![0] as Array<{
+				idempotencyKey: string
+				source: string
+				needsFanOut: boolean
+				body: unknown
+			}>
+			expect(entries.map((entry) => entry.idempotencyKey)).toEqual(
+				events.map((event) => event.idempotencyKey),
+			)
+			expect(entries.every((entry) => entry.source === 'fallback')).toBe(true)
+			expect(entries.every((entry) => !entry.needsFanOut)).toBe(true)
+			expect(entries.map((entry) => entry.body)).toEqual(events)
+			// Outboxed is not lost: no fallback_failed.
+			expect(error).not.toHaveBeenCalledWith(
+				'drovr.shadow.fallback_failed',
+				expect.anything(),
+			)
+		},
+	)
+
+	it('outboxes the whole fanned-out batch when the direct post throws', async () => {
+		const outbox = outboxed()
+		await dispatchDrovrShadowFact(unsubscribe, {
+			send: vi.fn().mockRejectedValue(new Error('inngest unreachable')),
+			fallback: vi.fn().mockRejectedValue(new Error('fetch failed')),
+			outbox,
+			warn: vi.fn(),
+			error: vi.fn(),
+			resolveOwners: async () => ['contact-1'],
+		})
+		const entries = outbox.mock.calls[0]![0] as Array<{ tenantId: string }>
+		// The owner copy for the authority tenant is kept too.
+		expect(entries.length).toBeGreaterThan(
+			mapDrovrShadowFact(unsubscribe).length,
+		)
+	})
+
+	it('outboxes nothing when the direct post delivered everything', async () => {
+		const outbox = outboxed()
+		await dispatchDrovrShadowFact(signup, {
+			send: vi.fn().mockRejectedValue(new Error('inngest unreachable')),
+			fallback: vi.fn(async () => []),
+			outbox,
+			warn: vi.fn(),
+			error: vi.fn(),
+			resolveOwners: async () => [],
+		})
+		expect(outbox).not.toHaveBeenCalled()
+	})
+
+	it('outboxes the unfanned batch when owners are unreadable and the requeue failed', async () => {
+		const outbox = outboxed()
+		const fallback = vi.fn(async () => [])
+		const result = await dispatchDrovrShadowFact(unsubscribe, {
+			send: vi.fn().mockRejectedValue(new Error('inngest unreachable')),
+			fallback,
+			outbox,
+			warn: vi.fn(),
+			error: vi.fn(),
+			resolveOwners: async () => {
+				throw new Error('Vitess: connection reset')
+			},
+		})
+		expect(result).toBe('outboxed')
+		expect(fallback).not.toHaveBeenCalled()
+		const entries = outbox.mock.calls[0]![0] as Array<{ needsFanOut: boolean }>
+		expect(entries).toHaveLength(mapDrovrShadowFact(unsubscribe).length)
+		expect(entries.every((entry) => entry.needsFanOut)).toBe(true)
+	})
+
+	it('keeps the error log as the last word when the outbox is unavailable', async () => {
+		const error = vi.fn()
+		await dispatchDrovrShadowFact(signup, {
+			send: vi.fn().mockRejectedValue(new Error('inngest unreachable')),
+			fallback: vi.fn(async (batch) => batch),
+			outbox: vi.fn(async () => ({ status: 'unavailable' as const })),
+			warn: vi.fn(),
+			error,
+			resolveOwners: async () => [],
+		})
+		expect(error).toHaveBeenCalledWith(
+			'drovr.shadow.fallback_failed',
+			expect.objectContaining({
+				idempotencyKeys: mapDrovrShadowFact(signup).map(
+					(event) => event.idempotencyKey,
+				),
+			}),
+		)
+	})
+
+	it('reports a throwing outbox at error and keeps the batch keys', async () => {
+		const error = vi.fn()
+		await dispatchDrovrShadowFact(signup, {
+			send: vi.fn().mockRejectedValue(new Error('inngest unreachable')),
+			fallback: vi.fn(async (batch) => batch),
+			outbox: vi.fn(async () => {
+				throw new Error('Vitess: connection reset')
+			}),
+			warn: vi.fn(),
+			error,
+			resolveOwners: async () => [],
+		})
+		expect(error).toHaveBeenCalledWith(
+			'drovr.outbox.capture_failed',
+			expect.objectContaining({ error: 'Vitess: connection reset' }),
+		)
+		expect(error).toHaveBeenCalledWith(
+			'drovr.shadow.fallback_failed',
+			expect.anything(),
+		)
 	})
 })

@@ -18,6 +18,7 @@ import type {
 	DeferredDrovrEvent,
 	DrovrBatchOutcome,
 } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
+import type { DrovrDeliveryOutcome } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
 import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
 import {
 	drovrApiKeyForTenant,
@@ -32,6 +33,17 @@ import {
 } from '@/lib/subscriber-marketing/drovr-ownership'
 import { parseDrovrProfileSyncConfig } from '@/lib/subscriber-marketing/drovr-contact-profile-sync-requests'
 import { resolveOwnedContactIds } from '@/lib/subscriber-marketing/drovr-ownership-live'
+import {
+	DROVR_SEND_RETRIES,
+	outboxEntryForEvent,
+	type DrovrOutboxSource,
+} from '@/lib/subscriber-marketing/drovr-outbox'
+import { captureDrovrOutboxLive } from '@/lib/subscriber-marketing/drovr-outbox-live'
+import {
+	sendOrOutbox,
+	type DrovrOutboxCaptureFn,
+	type DrovrSendAttempt,
+} from '@/lib/subscriber-marketing/drovr-outbox-step'
 import { withoutSyntheticContacts } from '@/lib/synthetic-principal'
 import { log } from '@/server/logger'
 import type { GetStepTools } from 'inngest'
@@ -50,8 +62,44 @@ export type DrovrEventsDeliverReceipt = {
 	 * never started that journey. The directory stop carries the stop.
 	 */
 	ownerStopsNeverBorn?: number
+	/**
+	 * Events that ran out of retries and went to the drovr outbox, whose
+	 * replay delivers them (row 204).
+	 */
+	outboxed?: number
 	reason?: string
 }
+
+/** How this run delivers: its attempt, its lane, and where unsent go. */
+export type DeliverContext = {
+	attempt: DrovrSendAttempt
+	lane: Extract<DrovrOutboxSource, 'live' | 'bulk'>
+	capture: DrovrOutboxCaptureFn
+}
+
+type Outboxed = { outboxed: number }
+
+const isOutboxed = (value: unknown): value is Outboxed =>
+	typeof value === 'object' &&
+	value !== null &&
+	!Array.isArray(value) &&
+	'outboxed' in value
+
+/**
+ * What an owner read that ran out of retries leaves for the outbox: the
+ * batch before its fan-out, which the replay fans out once it can read.
+ * The shadow-addressed events are kept: they are the fan-out candidates,
+ * the only road to an owned contact's owner copies (the replay drops the
+ * shadow originals after fanning out, as live delivery does). Only
+ * synthetic principals are left out.
+ */
+const ownerReadUnsent = (
+	batch: readonly DrovrShadowEvent[],
+	lane: DeliverContext['lane'],
+) =>
+	withoutSyntheticContacts(batch).kept.map((event) =>
+		outboxEntryForEvent(event, lane, { needsFanOut: true }),
+	)
 
 /**
  * Durable delivery of drovr events. Each event is its own step keyed by
@@ -105,21 +153,36 @@ const discardShadowTenantEvents = async (
 
 // Facts about drovr-owned contacts also reach the authority tenant.
 // Ownership is read here, off the host's write path, once per batch.
+// An owner read that runs out of retries sends the batch, unfanned, to the
+// outbox instead of failing the run.
 const fanOut = async (
 	batch: DrovrEventsDeliver['data']['events'],
 	step: DeliverStep,
-): Promise<DrovrShadowEvent[]> => {
+	context: DeliverContext,
+): Promise<DrovrShadowEvent[] | Outboxed> => {
+	const readOwners = (read: () => Promise<string[]>) =>
+		sendOrOutbox<string[] | Outboxed>({
+			attempt: context.attempt,
+			send: read,
+			unsent: () => ownerReadUnsent(batch, context.lane),
+			capture: context.capture,
+			outboxed: (outboxed) => ({ outboxed }),
+		})
 	const ownedContactIds = await step.run('resolve-drovr-owners', () =>
-		resolveOwnedContactIds(batch),
+		readOwners(() => resolveOwnedContactIds(batch)),
 	)
+	if (isOutboxed(ownedContactIds)) return ownedContactIds
 	const newsletterEvents = batch.filter(isShadowNewsletterBirth)
 	const newsletterOwnedContactIds = newsletterEvents.length
 		? await step.run('resolve-newsletter-owners', () =>
-				resolveOwnedContactIds(newsletterEvents, {
-					journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
-				}),
+				readOwners(() =>
+					resolveOwnedContactIds(newsletterEvents, {
+						journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+					}),
+				),
 			)
 		: []
+	if (isOutboxed(newsletterOwnedContactIds)) return newsletterOwnedContactIds
 	return fanOutOwnedEvents(
 		batch,
 		new Set(ownedContactIds),
@@ -130,10 +193,19 @@ const fanOut = async (
 const deliverBatch = async (
 	batch: DrovrEventsDeliver['data']['events'],
 	step: DeliverStep,
+	context: DeliverContext,
 ): Promise<DrovrEventsDeliverReceipt> => {
 	const ingestUrl = env.DROVR_SHADOW_INGEST_URL
 	if (!ingestUrl) return NOT_CONFIGURED
-	const fanOutEvents = await fanOut(batch, step)
+	const fanOutEvents = await fanOut(batch, step, context)
+	if (isOutboxed(fanOutEvents))
+		return {
+			status: 'delivered',
+			accepted: 0,
+			rejected: 0,
+			discarded: 0,
+			outboxed: fanOutEvents.outboxed,
+		}
 	const { events, discarded } = await discardShadowTenantEvents(
 		fanOutEvents,
 		'live',
@@ -142,6 +214,7 @@ const deliverBatch = async (
 	let accepted = 0
 	let rejected = 0
 	let ownerStopsNeverBorn = 0
+	let outboxed = 0
 	for (const drovrEvent of events) {
 		// One bearer key per drovr tenant; a tenant without a key is a
 		// configuration gap, final for this run and loud in the receipt.
@@ -157,25 +230,42 @@ const deliverBatch = async (
 		const config: DrovrDeliveryConfig = { ingestUrl, apiKey }
 		// The log sits in the step so a replay, which gets the memoized
 		// outcome back, does not repeat it.
-		const outcome = await step.run(deliveryStepId(drovrEvent), async () => {
-			const delivered = await deliverOrThrow({ event: drovrEvent, config })
-			if (isNeverBornOwnerStop(drovrEvent, delivered)) {
-				await log.info('drovr.shadow.owner_stop_never_born', {
-					contactId: drovrEvent.contactId,
-					journeyId: drovrEvent.journeyId,
-					type: drovrEvent.type,
-					idempotencyKey: drovrEvent.idempotencyKey,
-				})
-			}
-			return delivered
-		})
+		const outcome = await step.run(deliveryStepId(drovrEvent), () =>
+			sendOrOutbox<DrovrDeliveryOutcome | { status: 'outboxed' }>({
+				attempt: context.attempt,
+				send: async () => {
+					const delivered = await deliverOrThrow({ event: drovrEvent, config })
+					if (isNeverBornOwnerStop(drovrEvent, delivered)) {
+						await log.info('drovr.shadow.owner_stop_never_born', {
+							contactId: drovrEvent.contactId,
+							journeyId: drovrEvent.journeyId,
+							type: drovrEvent.type,
+							idempotencyKey: drovrEvent.idempotencyKey,
+						})
+					}
+					return delivered
+				},
+				unsent: () => [outboxEntryForEvent(drovrEvent, context.lane)],
+				capture: context.capture,
+				outboxed: () => ({ status: 'outboxed' }),
+			}),
+		)
+		if (outcome.status === 'outboxed') {
+			outboxed += 1
+			continue
+		}
 		if (outcome.status === 'accepted') accepted += 1
 		if (outcome.status === 'rejected') rejected += 1
 		if (isNeverBornOwnerStop(drovrEvent, outcome)) ownerStopsNeverBorn += 1
 	}
-	return ownerStopsNeverBorn > 0
-		? { status: 'delivered', accepted, rejected, discarded, ownerStopsNeverBorn }
-		: { status: 'delivered', accepted, rejected, discarded }
+	return {
+		status: 'delivered',
+		accepted,
+		rejected,
+		discarded,
+		...(ownerStopsNeverBorn > 0 ? { ownerStopsNeverBorn } : {}),
+		...(outboxed > 0 ? { outboxed } : {}),
+	}
 }
 
 /**
@@ -188,6 +278,7 @@ const deliverBatch = async (
 const deliverBulk = async (
 	batch: DrovrEventsDeliver['data']['events'],
 	step: DeliverStep,
+	context: DeliverContext,
 	options: {
 		/** Contact sync: refusals come back in `refused`, never thrown. */
 		deferNotLive?: boolean
@@ -196,7 +287,15 @@ const deliverBulk = async (
 ): Promise<DrovrEventsDeliverReceipt> => {
 	const ingestUrl = env.DROVR_SHADOW_INGEST_URL
 	if (!ingestUrl) return NOT_CONFIGURED
-	const fanOutEvents = await fanOut(batch, step)
+	const fanOutEvents = await fanOut(batch, step, context)
+	if (isOutboxed(fanOutEvents))
+		return {
+			status: 'delivered',
+			accepted: 0,
+			rejected: 0,
+			discarded: 0,
+			outboxed: fanOutEvents.outboxed,
+		}
 	const { events, discarded } = await discardShadowTenantEvents(
 		fanOutEvents,
 		'bulk',
@@ -212,6 +311,7 @@ const deliverBulk = async (
 
 	let accepted = 0
 	let rejected = 0
+	let outboxed = 0
 	for (const [tenantId, tenantEvents] of byTenant) {
 		const apiKey = drovrApiKeyForTenant(tenantId)
 		if (!apiKey) {
@@ -232,30 +332,52 @@ const deliverBulk = async (
 				chunkIndex * DROVR_BATCH_MAX,
 				(chunkIndex + 1) * DROVR_BATCH_MAX,
 			)
+			// A chunk that runs out of retries goes to the outbox whole:
+			// drovr dedupes the items that did land when the replay re-posts.
 			const outcome = (await step.run(batchStepId(tenantId, chunkIndex), () =>
-				deliverBatchOrThrow(
-					options.deferNotLive
-						? { events: chunk, config, deferNotLive: true }
-						: { events: chunk, config },
-				),
-			)) as DrovrBatchOutcome
+				sendOrOutbox<DrovrBatchOutcome & Partial<Outboxed>>({
+					attempt: context.attempt,
+					send: () =>
+						deliverBatchOrThrow(
+							options.deferNotLive
+								? { events: chunk, config, deferNotLive: true }
+								: { events: chunk, config },
+						),
+					unsent: () =>
+						chunk.map((event) => outboxEntryForEvent(event, context.lane)),
+					capture: context.capture,
+					outboxed: (count) => ({ accepted: 0, rejected: 0, outboxed: count }),
+				}),
+			)) as DrovrBatchOutcome & Partial<Outboxed>
 			accepted += outcome.accepted
 			rejected += outcome.rejected
+			outboxed += outcome.outboxed ?? 0
 			options.refused?.push(...(outcome.deferred ?? []))
 		}
 	}
-	return { status: 'delivered', accepted, rejected, discarded }
+	return {
+		status: 'delivered',
+		accepted,
+		rejected,
+		discarded,
+		...(outboxed > 0 ? { outboxed } : {}),
+	}
 }
 
 export const drovrEventsDeliver = inngest.createFunction(
 	{
 		id: 'drovr-events-deliver-v1',
 		name: 'drovr: deliver events durably',
-		retries: 6,
+		retries: DROVR_SEND_RETRIES,
 		concurrency: [{ limit: 8 }],
+		// The backstop: a run that died before its sends could outbox them
+		// (row 204). Its events go unfanned; the replay fans them out.
+		onFailure: async ({ event, error }) => {
+			await outboxFailedRun(event.data.event.data, error)
+		},
 	},
 	{ event: DROVR_EVENTS_DELIVER_EVENT },
-	async ({ event, step }) => {
+	async ({ event, step, attempt, maxAttempts }) => {
 		// A bulk source can only reach this function as a leftover from
 		// before the bulk function existed (2026-09-21: ~8,000 Kit births
 		// queued ahead of live facts). Answer it in milliseconds instead of
@@ -269,9 +391,39 @@ export const drovrEventsDeliver = inngest.createFunction(
 				reason: 'bulk source on the live function',
 			}
 		}
-		return deliverBatch(event.data.events, step)
+		return deliverBatch(event.data.events, step, {
+			attempt: { attempt, maxAttempts },
+			lane: 'live',
+			capture: captureDrovrOutboxLive,
+		})
 	},
 )
+
+/** The live function's onFailure: its whole batch, unfanned, to the outbox. */
+export async function outboxFailedRun(
+	data: DrovrEventsDeliver['data'],
+	error: unknown,
+	capture: DrovrOutboxCaptureFn = captureDrovrOutboxLive,
+): Promise<void> {
+	if (BULK_DELIVERY_SOURCES.has(data.source)) return
+	const entries = ownerReadUnsent(data.events, 'live').map((entry) => ({
+		...entry,
+		source: 'onFailure' as const,
+	}))
+	if (entries.length === 0) return
+	try {
+		await capture(entries, error)
+	} catch (captureError) {
+		await log.error('drovr.outbox.on_failure_capture_failed', {
+			count: entries.length,
+			error:
+				captureError instanceof Error
+					? captureError.message
+					: String(captureError),
+			idempotencyKeys: entries.map((entry) => entry.idempotencyKey),
+		})
+	}
+}
 
 const withStepPrefix = (step: DeliverStep, prefix: string): DeliverStep =>
 	({
@@ -290,6 +442,14 @@ const combineReceipts = (
 		accepted: delivered.reduce((sum, receipt) => sum + receipt.accepted, 0),
 		rejected: delivered.reduce((sum, receipt) => sum + receipt.rejected, 0),
 		discarded: delivered.reduce((sum, receipt) => sum + receipt.discarded, 0),
+		...(delivered.some((receipt) => receipt.outboxed)
+			? {
+					outboxed: delivered.reduce(
+						(sum, receipt) => sum + (receipt.outboxed ?? 0),
+						0,
+					),
+				}
+			: {}),
 	}
 }
 
@@ -312,12 +472,17 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 	{
 		id: 'drovr-events-deliver-bulk-v1',
 		name: 'drovr: deliver bulk events durably',
-		retries: 6,
+		retries: DROVR_SEND_RETRIES,
 		concurrency: [{ limit: 4 }],
 		batchEvents: BULK_DELIVERY_BATCH,
 	},
 	{ event: DROVR_EVENTS_DELIVER_BULK_EVENT },
-	async ({ events, step }) => {
+	async ({ events, step, attempt, maxAttempts }) => {
+		const context: DeliverContext = {
+			attempt: { attempt, maxAttempts },
+			lane: 'bulk',
+			capture: captureDrovrOutboxLive,
+		}
 		const isBackfill = (bulkEvent: (typeof events)[number]) =>
 			bulkEvent.data.source === 'contact-sync-backfill'
 		const others = events
@@ -331,7 +496,7 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 		// memoized result would replay without posting them.
 		const receipts: DrovrEventsDeliverReceipt[] = []
 		if (others.length > 0 || backfill.length === 0)
-			receipts.push(await deliverBulk(others, step))
+			receipts.push(await deliverBulk(others, step, context))
 		if (backfill.length === 0) return receipts[0]!
 		// A drovr rollback turns AIH_DROVR_PROFILE_SYNC off; backfill pages
 		// still queued (or retrying) must not reach old drovr code, which
@@ -355,7 +520,7 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 		const backfillStep = withStepPrefix(step, 'contact-sync-backfill:')
 		const refused: DeferredDrovrEvent[] = []
 		receipts.push(
-			await deliverBulk(backfill, backfillStep, {
+			await deliverBulk(backfill, backfillStep, context, {
 				deferNotLive: true,
 				refused,
 			}),

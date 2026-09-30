@@ -866,6 +866,8 @@ export {
 	valuePathLinkAnchor,
 } from './contact-sync-schema'
 
+export { drovrOutbox } from './drovr-outbox-schema'
+
 export {
 	evergreenOfferJourneyAttempt,
 	evergreenOfferJourneyIntent,

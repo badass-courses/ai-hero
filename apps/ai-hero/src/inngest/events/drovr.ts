@@ -155,3 +155,15 @@ export type DrovrSignupRequested = {
 	name: typeof DROVR_SIGNUP_REQUESTED_EVENT
 	data: import('@/lib/subscriber-marketing/drovr-doi-signup').DrovrSignupRequest
 }
+
+/**
+ * Row 204: run the drovr outbox replay now instead of at the next cron
+ * tick (the stage proof, or after an operator released held rows).
+ */
+export const DROVR_OUTBOX_REPLAY_REQUESTED_EVENT =
+	'drovr/outbox.replay-requested'
+
+export type DrovrOutboxReplayRequested = {
+	name: typeof DROVR_OUTBOX_REPLAY_REQUESTED_EVENT
+	data: { reason?: string }
+}

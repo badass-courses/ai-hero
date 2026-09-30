@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { DrovrEmailDeliveryRead } from './drovr-email-delivery'
 import {
+	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
 	mapDrovrShadowFact,
 	type DrovrShadowEvent,
 } from './drovr-shadow-emitter'
@@ -420,5 +422,178 @@ describe('the re-post marker', () => {
 				event: { ...marker, id: 'x', createdAt: marker.occurredAt },
 			}),
 		).toEqual([])
+	})
+})
+
+describe('row 204: the guard covers evergreen and newsletter births', () => {
+	const evergreenOwner = (contactId: string) =>
+		owner(
+			contactId,
+			'2026-09-27T12:00:00.000Z',
+			DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+		)
+	const newsletterOwner = (contactId: string) =>
+		owner(
+			contactId,
+			'2026-09-20T12:00:00.000Z',
+			DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+		)
+	const newsletterBirth = (contactId: string): DrovrShadowEvent => ({
+		tenantId: 'org-aihero',
+		contactId,
+		journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+		type: 'contact.created',
+		occurredAt: '2026-09-27T12:00:00.000Z',
+		idempotencyKey: `owner:contact:org-aihero-shadow:${contactId}:shadow-newsletter:birth`,
+		payload: {
+			timezone: 'Asia/Tokyo',
+			timezoneSource: 'vercel-header',
+		} as never,
+	})
+	const withNewsletter = (
+		h: ReturnType<typeof harness>,
+		contactIds: string[],
+	) => {
+		h.ports.scanNewsletterBirths = vi.fn(async () => ({
+			subjects: contactIds.map((contactId) => ({
+				owner: newsletterOwner(contactId),
+				journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+				birth: newsletterBirth(contactId),
+			})),
+		}))
+		return h
+	}
+
+	it("re-posts a lost evergreen birth once, exactly as the owner's dispatch built it", async () => {
+		const lost = evergreenOwner('e1')
+		const h = harness({ owners: [lost] })
+		const receipt = await h.run()
+		expect(h.posted).toEqual([birthOf(lost)])
+		expect(h.posted[0]).toMatchObject({
+			tenantId: 'org-aihero',
+			journeyId: DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+			type: 'contact.created',
+		})
+		expect(receipt).toMatchObject({
+			reposted: 1,
+			candidatesByJourney: { [DROVR_EVERGREEN_OFFER_JOURNEY_ID]: 1 },
+		})
+		// Judged by its actor alone: no lesson-one read for evergreen.
+		expect(h.ports.readDelivery).not.toHaveBeenCalled()
+		expect(h.readActor).toHaveBeenCalledWith(
+			'e1',
+			DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+		)
+		// Never twice.
+		await h.run(50, { fresh: true })
+		expect(h.posted).toHaveLength(1)
+	})
+
+	it('leaves an evergreen birth whose actor exists', async () => {
+		const h = harness({
+			owners: [evergreenOwner('e1')],
+			valuePathActor: {
+				e1: { ok: true, found: true, stateName: 'pitchOne' },
+			},
+		})
+		const receipt = await h.run()
+		expect(h.posted).toEqual([])
+		expect(receipt).toMatchObject({ born: 1, candidates: 0 })
+	})
+
+	it('does not re-post an evergreen birth for a contact drovr has stopped', async () => {
+		const h = harness({
+			owners: [evergreenOwner('e1')],
+			directoryActor: {
+				e1: { ok: true, found: true, stateName: 'unsubscribed' },
+			},
+		})
+		expect((await h.run()).skippedSuppressed).toBe(1)
+		expect(h.posted).toEqual([])
+	})
+
+	it('re-posts a lost newsletter birth once, rebuilt from its intent', async () => {
+		const h = withNewsletter(harness({ owners: [] }), ['n1'])
+		const receipt = await h.run()
+		expect(h.posted).toEqual([newsletterBirth('n1')])
+		expect(h.recorded).toEqual([
+			{ ownerEventId: newsletterOwner('n1').id, outcome: 'accepted' },
+		])
+		expect(receipt.candidatesByJourney).toEqual({
+			[DROVR_SHADOW_NEWSLETTER_JOURNEY_ID]: 1,
+		})
+		expect(h.readActor).toHaveBeenCalledWith(
+			'n1',
+			DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+		)
+		await h.run(50, { fresh: true })
+		expect(h.posted).toHaveLength(1)
+	})
+
+	it('leaves a newsletter birth whose actor exists', async () => {
+		const h = withNewsletter(
+			harness({
+				owners: [],
+				valuePathActor: {
+					n1: { ok: true, found: true, stateName: 'subscribed' },
+				},
+			}),
+			['n1'],
+		)
+		expect(await h.run()).toMatchObject({ born: 1, candidates: 0 })
+		expect(h.posted).toEqual([])
+	})
+
+	it('logs candidates against the cap on every run, capHit or not (the hawk, 09-30)', async () => {
+		const quiet = harness({ owners: [] })
+		await quiet.run()
+		const calm = (
+			logged(quiet.info as never, 'drovr.owner_birth_guard.summary') as [
+				string,
+				Record<string, unknown>,
+			][]
+		)[0]![1]
+		expect(calm).toMatchObject({ candidates: 0, capHit: false, overCap: 0 })
+
+		const busy = withNewsletter(
+			harness({
+				owners: Array.from({ length: OWNER_BIRTH_GUARD_REPOST_CAP }, (_, i) =>
+					evergreenOwner(`e${i}`),
+				),
+			}),
+			['n1', 'n2'],
+		)
+		const receipt = await busy.run()
+		expect(receipt).toMatchObject({
+			candidates: OWNER_BIRTH_GUARD_REPOST_CAP + 2,
+			capHit: true,
+			overCap: 2,
+			candidatesByJourney: {
+				[DROVR_EVERGREEN_OFFER_JOURNEY_ID]: OWNER_BIRTH_GUARD_REPOST_CAP,
+				[DROVR_SHADOW_NEWSLETTER_JOURNEY_ID]: 2,
+			},
+		})
+		expect(busy.posted).toHaveLength(OWNER_BIRTH_GUARD_REPOST_CAP)
+		const summary = (
+			logged(busy.info as never, 'drovr.owner_birth_guard.summary') as [
+				string,
+				Record<string, unknown>,
+			][]
+		)[0]![1]
+		expect(summary).toMatchObject({
+			candidates: OWNER_BIRTH_GUARD_REPOST_CAP + 2,
+			capHit: true,
+		})
+		expect(
+			logged(busy.warn as never, 'drovr.owner_birth_guard.cap_hit'),
+		).toEqual([
+			[
+				'drovr.owner_birth_guard.cap_hit',
+				expect.objectContaining({
+					overCap: 2,
+					candidatesByJourney: expect.any(Object),
+				}),
+			],
+		])
 	})
 })

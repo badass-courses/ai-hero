@@ -1,5 +1,7 @@
 import { log } from '@/server/logger'
 
+import { parseRetryAfterMs } from './drovr-retry-after'
+
 import {
 	boundedProblemBody,
 	deliverDrovrShadowEvent,
@@ -13,6 +15,9 @@ export class DrovrDeliveryFailedError extends Error {
 	constructor(
 		readonly idempotencyKey: string,
 		readonly reason: string,
+		readonly httpStatus?: number,
+		/** drovr's Retry-After, in milliseconds. */
+		readonly retryAfterMs?: number,
 	) {
 		super(`drovr delivery failed for ${idempotencyKey}: ${reason}`)
 		this.name = 'DrovrDeliveryFailedError'
@@ -40,6 +45,8 @@ export async function deliverOrThrow(args: {
 		throw new DrovrDeliveryFailedError(
 			args.event.idempotencyKey,
 			outcome.reason,
+			outcome.httpStatus,
+			outcome.retryAfterMs,
 		)
 	}
 	if (outcome.status === 'rejected') {
@@ -71,6 +78,9 @@ export class DrovrBatchDeliveryFailedError extends Error {
 	constructor(
 		readonly failedKeys: readonly string[],
 		readonly reason: string,
+		readonly httpStatus?: number,
+		/** drovr's Retry-After, in milliseconds. */
+		readonly retryAfterMs?: number,
 	) {
 		super(
 			`drovr batch delivery failed for ${failedKeys.length} event(s): ${reason}`,
@@ -309,6 +319,8 @@ export async function deliverBatchOrThrow(args: {
 			throw new DrovrBatchDeliveryFailedError(
 				keys,
 				`drovr answered ${response.status}`,
+				response.status,
+				parseRetryAfterMs(response.headers?.get?.('retry-after'), Date.now()),
 			)
 		}
 		const body: unknown = await response.json()

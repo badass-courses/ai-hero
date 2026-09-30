@@ -105,11 +105,13 @@ integration('owner-birth guard store on MySQL', () => {
 		to: '2026-09-27T00:00:00.000Z',
 	}
 
-	it('pages value-path owner assignments in the window by (occurredAt, id), ties included', async () => {
+	it('pages value-path and evergreen owner assignments in the window by (occurredAt, id), ties included', async () => {
 		await owner('a', 'c1', '2026-09-26 10:00:00')
 		await owner('b', 'c2', '2026-09-26 10:00:00')
 		await owner('c', 'c3', '2026-09-26 11:00:00')
-		// Out of scope: another journey, before and after the window, another type.
+		// Out of scope: the newsletter owner (its birth is scanned by its
+		// list intent), before and after the window, another type. Row 204
+		// brings the evergreen owner in.
 		await owner('n', 'c4', '2026-09-26 10:30:00', 'shadow-newsletter')
 		await owner(
 			'e',
@@ -135,7 +137,77 @@ integration('owner-birth guard store on MySQL', () => {
 			after: { occurredAt: first[0]!.occurredAt, id: first[0]!.id },
 			limit: 5,
 		})
-		expect(rest.map((row) => row.id)).toEqual(['b', 'c'])
+		expect(rest.map((row) => row.id)).toEqual(['b', 'e', 'c'])
+	})
+
+	const listIntent = (
+		id: string,
+		contactId: string,
+		completedAt: string,
+		list = 'shadow-newsletter',
+		status = 'completed',
+	) =>
+		pool.query(
+			`INSERT INTO AI_SideEffectIntent (id, nextActionId, contactId, provider, type, status, completedAt, idempotencyKey, gates, reviewReasons, metadata)
+			 VALUES (?, 'next', ?, 'kit', 'subscribe-evergreen-list', ?, ?, ?, '[]', '[]', ?)`,
+			[
+				id,
+				contactId,
+				status,
+				completedAt,
+				`intent:${id}`,
+				JSON.stringify({
+					list,
+					timezone: 'Asia/Tokyo',
+					timezoneSource: 'vercel-header',
+					drovr: {
+						tenantId: 'org-aihero',
+						intentKey: `drovr:${id}`,
+						journeyId: 'crash-course-evergreen-offer',
+					},
+				}),
+			],
+		)
+
+	it('scans newsletter births by their completed list intents, owned contacts only (row 204)', async () => {
+		await pool.query('DELETE FROM AI_SideEffectIntent')
+		await owner('own1', 'c1', '2026-09-01 10:00:00', 'shadow-newsletter')
+		await owner('own2', 'c2', '2026-09-01 10:00:00', 'shadow-newsletter')
+		await listIntent('i1', 'c1', '2026-09-26 10:00:00')
+		await listIntent('i2', 'c2', '2026-09-26 11:00:00')
+		// Not owned: no authority birth to guard.
+		await listIntent('i3', 'c3', '2026-09-26 12:00:00')
+		// Out of scope: another list, not completed, outside the window.
+		await listIntent('i4', 'c1', '2026-09-26 12:30:00', 'crash-course')
+		await listIntent(
+			'i5',
+			'c2',
+			'2026-09-26 13:00:00',
+			'shadow-newsletter',
+			'pending',
+		)
+		await listIntent('i6', 'c1', '2026-09-24 23:00:00')
+
+		const first = await store.scanNewsletterBirths!({ ...window, limit: 1 })
+		expect(first.subjects).toEqual([
+			expect.objectContaining({
+				owner: expect.objectContaining({ id: 'own1', contactId: 'c1' }),
+				journeyId: 'shadow-newsletter',
+				birth: expect.objectContaining({
+					tenantId: 'org-aihero',
+					idempotencyKey:
+						'owner:contact:org-aihero-shadow:c1:shadow-newsletter:birth',
+					payload: { timezone: 'Asia/Tokyo', timezoneSource: 'vercel-header' },
+				}),
+			}),
+		])
+		const rest = await store.scanNewsletterBirths!({
+			...window,
+			after: first.next,
+			limit: 10,
+		})
+		expect(rest.subjects.map((subject) => subject.owner.id)).toEqual(['own2'])
+		expect(rest.next).toBeUndefined()
 	})
 
 	it('finds the contacts with any stop', async () => {

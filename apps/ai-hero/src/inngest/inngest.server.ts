@@ -93,6 +93,7 @@ import {
 	DROVR_CONTACT_SYNC_BACKFILL_EVENT,
 	DROVR_EVENTS_DELIVER_BULK_EVENT,
 	DROVR_EVENTS_DELIVER_EVENT,
+	DROVR_OUTBOX_REPLAY_REQUESTED_EVENT,
 	DROVR_SIGNUP_REQUESTED_EVENT,
 } from '@/inngest/events/drovr'
 import type {
@@ -102,6 +103,7 @@ import type {
 	DrovrEventsDeliver,
 	DrovrEventsDeliverBulk,
 	DrovrSignupRequested,
+	DrovrOutboxReplayRequested,
 } from '@/inngest/events/drovr'
 import {
 	KIT_DIRECTORY_INGEST_EVENT,
@@ -285,6 +287,7 @@ export type Events = {
 	[DROVR_EVENTS_DELIVER_EVENT]: DrovrEventsDeliver
 	[DROVR_EVENTS_DELIVER_BULK_EVENT]: DrovrEventsDeliverBulk
 	[DROVR_SIGNUP_REQUESTED_EVENT]: DrovrSignupRequested
+	[DROVR_OUTBOX_REPLAY_REQUESTED_EVENT]: DrovrOutboxReplayRequested
 	[DROVR_CONTACT_PROFILE_SYNC_EVENT]: DrovrContactProfileSyncRequested
 	[DROVR_CONTACT_SYNC_BACKFILL_EVENT]: DrovrContactSyncBackfillRequested
 	[CONTACT_SYNC_RETRY_EVENT]: DrovrContactSyncRetryRequested

@@ -49,6 +49,7 @@ import { drovrContactSyncReconcile } from './functions/drovr-contact-sync-reconc
 import { drovrOwnerBirthGuard } from './functions/drovr-owner-birth-guard'
 import { drovrEvergreenSender } from './functions/drovr-evergreen-sender'
 import { drovrSignupDeliver } from './functions/drovr-signup-deliver'
+import { drovrOutboxReplay } from './functions/drovr-outbox-replay'
 import { kitDirectoryIngest } from './functions/kit-directory-ingest'
 import { newsletterVeteransAssign } from './functions/newsletter-veterans'
 import { createPPPCreditCouponsForPurchasers } from './functions/coupon/create-ppp-credit-coupons-for-purchasers'
@@ -175,6 +176,7 @@ const allFunctions = [
 	drovrContactSyncBackfill,
 	drovrContactSyncRetry,
 	drovrSignupDeliver,
+	drovrOutboxReplay,
 	kitDirectoryIngest,
 	newsletterVeteransAssign,
 	googleAdsConversionUpload,
