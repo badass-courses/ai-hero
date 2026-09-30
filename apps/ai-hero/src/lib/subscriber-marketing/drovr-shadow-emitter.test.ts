@@ -10,6 +10,106 @@ import {
 
 const occurredAt = '2026-08-30T12:00:00.000Z'
 
+describe('additive purchase facts', () => {
+	const couponId = `eoj-coupon:${'a'.repeat(64)}`
+	const facts = {
+		purchaseId: 'purch_1',
+		couponId,
+		priceClass: 'coupon',
+		amountCents: 19900,
+		currency: 'usd',
+		couponIssueContactId: 'offer-contact',
+	}
+	const row: Partial<ContactEventRecord> = {
+		payloadSummary: {
+			summary: 'order',
+			keywords: ['purchase-recorded', 'product-ma254'],
+			restrictedPayloadStored: false,
+		},
+	}
+	it('adds facts to existing journeys and directory but keeps sameOffer only on evergreen primary', () => {
+		const events = mapDrovrShadowFact({
+			kind: 'contact-event',
+			event: contactEvent('purchase.recorded', {
+				...row,
+				domainPayload: {
+					purchaseFacts: facts,
+					evergreenOffer: { couponId, sameOffer: true },
+				},
+			}),
+		})
+		const purchases = events.filter(
+			(event) => event.type === 'purchase.recorded',
+		)
+		expect(purchases).toHaveLength(3)
+		for (const event of purchases) {
+			expect(event.contactId).toBe('contact-1')
+			expect(event.payload).toMatchObject(facts)
+			if (event.journeyId === 'crash-course-evergreen-offer')
+				expect(event.payload).toHaveProperty('sameOffer', true)
+			else expect(event.payload).not.toHaveProperty('sameOffer')
+		}
+	})
+	it('buyer copy keeps attribution recipient without gaining sameOffer or changing target', () => {
+		const events = mapDrovrShadowFact({
+			kind: 'contact-event',
+			event: contactEvent('purchase.recorded', {
+				...row,
+				contactId: 'buyer-contact',
+				domainPayload: { purchaseFacts: facts },
+			}),
+		})
+		for (const event of events.filter(
+			(event) => event.type === 'purchase.recorded',
+		)) {
+			expect(event.contactId).toBe('buyer-contact')
+			expect(event.payload).toMatchObject(facts)
+			expect(event.payload).not.toHaveProperty('sameOffer')
+		}
+	})
+	it('drops malformed optional facts without dropping product-stop', () => {
+		const events = mapDrovrShadowFact({
+			kind: 'contact-event',
+			event: contactEvent('purchase.recorded', {
+				...row,
+				domainPayload: { purchaseFacts: { amountCents: -1 } },
+			}),
+		})
+		expect(
+			events
+				.filter((event) => event.type === 'purchase.recorded')
+				.map((event) => event.payload),
+		).toEqual([
+			{ productId: 'product-ma254' },
+			{ productId: 'product-ma254' },
+			{ productId: 'product-ma254' },
+		])
+	})
+	it('routes succeeded refund fact to authority directory only, with no birth/stop/fan-out', () => {
+		const refundFacts = {
+			purchaseId: 'purch_1',
+			refundId: 're_1',
+			amountCents: 1995,
+			currency: 'usd',
+		}
+		const events = mapDrovrShadowFact({
+			kind: 'contact-event',
+			event: contactEvent('purchase.refunded', { domainPayload: refundFacts }),
+		})
+		expect(events).toEqual([
+			expect.objectContaining({
+				tenantId: 'org-aihero',
+				journeyId: 'contact-directory',
+				type: 'purchase.refunded',
+				payload: refundFacts,
+			}),
+		])
+		expect(
+			fanOutOwnedEvents(events, new Set(['contact-1']), new Set()),
+		).toEqual(events)
+	})
+})
+
 function contactEvent(
 	eventType: string,
 	overrides: Partial<ContactEventRecord> = {},

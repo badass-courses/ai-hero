@@ -90,7 +90,7 @@ describe("the owner-assignment (birth) dispatch", () => {
   // Row 194, 2026-09-27: a coupon buyer's purchase.recorded was written but
   // never reached drovr, so the offer went on to send "ends tonight" to a
   // customer. Same fire-and-forget loss as the births above.
-  it("awaits a purchase.recorded too: the write does not return before the hand-off", async () => {
+  it.each(["purchase.recorded", "purchase.refunded"])("awaits %s: the write does not return before the hand-off", async (eventType) => {
     let release!: () => void;
     dispatch.awaited.mockReturnValue(
       new Promise<void>((resolve) => {
@@ -99,7 +99,7 @@ describe("the owner-assignment (birth) dispatch", () => {
     );
     let returned = false;
     const write = repository()
-      .createContactEvent(contactEventInput("purchase.recorded"))
+      .createContactEvent(contactEventInput(eventType))
       .then((record) => {
         returned = true;
         return record;
@@ -109,14 +109,12 @@ describe("the owner-assignment (birth) dispatch", () => {
     expect(returned).toBe(false);
     expect(dispatch.awaited).toHaveBeenCalledWith({
       kind: "contact-event",
-      event: expect.objectContaining({ eventType: "purchase.recorded" }),
+      event: expect.objectContaining({ eventType }),
     });
     expect(dispatch.safely).not.toHaveBeenCalled();
 
     release();
-    await expect(write).resolves.toMatchObject({
-      eventType: "purchase.recorded",
-    });
+    await expect(write).resolves.toMatchObject({ eventType });
   });
 
   it("leaves every other contact event on the fire-and-forget path", async () => {
