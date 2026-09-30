@@ -2,6 +2,48 @@ import { isOutboxStop } from './drovr-outbox'
 import type { RefusedDrovrEvent } from './drovr-shadow-delivery'
 import type { DrovrShadowEvent } from './drovr-shadow-emitter'
 
+const DROVR_PROBLEM_TYPE_PREFIX = 'urn:drovr:problem:'
+
+/**
+ * drovr #635 (row 209): a duplicate idempotency key whose stored event is
+ * of another TYPE is refused 409, and nothing is recorded under it. Final
+ * for a fact; a stop that meets it is held for a human.
+ */
+export const DROVR_IDEMPOTENCY_KEY_CONFLICT =
+	'idempotency-key-holds-another-event'
+
+/**
+ * A problem's codes, and only those: the slug of its `type` and its
+ * `code`. Never its title, detail or hint, which are served text and can
+ * change without notice (the hawk, 201g-f2). A batch item's `detail`
+ * string is read as JSON when it parses, else as a bare code.
+ */
+export function drovrProblemCodes(problem: unknown): string[] {
+	let value = problem
+	if (typeof problem === 'string') {
+		try {
+			value = JSON.parse(problem)
+		} catch {
+			return problem.trim() ? [problem.trim()] : []
+		}
+	}
+	if (!value || typeof value !== 'object') return []
+	const { type, code } = value as { type?: unknown; code?: unknown }
+	const codes: string[] = []
+	if (typeof type === 'string')
+		codes.push(
+			type.startsWith(DROVR_PROBLEM_TYPE_PREFIX)
+				? type.slice(DROVR_PROBLEM_TYPE_PREFIX.length)
+				: type,
+		)
+	if (typeof code === 'string') codes.push(code)
+	return codes
+}
+
+export function isIdempotencyKeyConflictProblem(problem: unknown): boolean {
+	return drovrProblemCodes(problem).includes(DROVR_IDEMPOTENCY_KEY_CONFLICT)
+}
+
 /**
  * drovr (#346): an actor whose release does not take an event type yet
  * answers 409 `event-not-live`, saves nothing and leaves the key unused. The
@@ -121,6 +163,9 @@ export function drovrStopVerdict(
 	const { httpStatus, problem } = answer
 	if (httpStatus === undefined || httpStatus >= 500) return 'pending'
 	if (httpStatus >= 200 && httpStatus < 300) return 'landed'
+	// Named, so it is held by its code, never by falling through: the key
+	// holds another event, and no retry or release can land this one.
+	if (isIdempotencyKeyConflictProblem(problem)) return 'held'
 	if (isColdStartUnhandledProblem(problem))
 		return isDirectoryStop(event) ? 'landed' : 'held'
 	if (isNeverBornOwnerStopProblem(event, problem)) return 'released'

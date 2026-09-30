@@ -309,6 +309,42 @@ describe('the owner-without-birth guard (row 110)', () => {
 		expect(receipt).toMatchObject({ reposted: 0, suppressedOnPost: 1 })
 	})
 
+	it.each([
+		['its type', { type: 'urn:drovr:problem:contact-suppressed' }],
+		['its code', { code: 'contact-suppressed' }],
+		['a detail string', JSON.stringify({ code: 'contact-suppressed' })],
+	])('reads suppressed from %s only', async (_name, problem) => {
+		const h = harness({
+			owners: [owner('sup')],
+			post: async () => ({ status: 'rejected', httpStatus: 409, problem }),
+		})
+		await h.run()
+		expect(h.recorded).toEqual([
+			{ ownerEventId: 'owner-sup', outcome: 'suppressed' },
+		])
+	})
+
+	it("never reads suppressed from a problem's served text (201g-f2: a wording change must not flip the label)", async () => {
+		const h = harness({
+			owners: [owner('x')],
+			post: async () => ({
+				status: 'rejected',
+				httpStatus: 409,
+				problem: {
+					type: 'urn:drovr:problem:idempotency-key-holds-another-event',
+					title: 'Suppressed? No: the key holds another event',
+					detail: 'This contact may be suppressed elsewhere.',
+					hint: 'Check the suppression list, then use a new key.',
+				},
+			}),
+		})
+		const receipt = await h.run()
+		expect(h.recorded).toEqual([
+			{ ownerEventId: 'owner-x', outcome: 'rejected' },
+		])
+		expect(receipt).toMatchObject({ suppressedOnPost: 0 })
+	})
+
 	it(`re-posts at most ${OWNER_BIRTH_GUARD_REPOST_CAP} a run and says the cap was hit`, async () => {
 		const owners = Array.from(
 			{ length: OWNER_BIRTH_GUARD_REPOST_CAP + 5 },

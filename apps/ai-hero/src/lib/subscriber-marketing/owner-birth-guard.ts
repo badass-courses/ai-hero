@@ -9,6 +9,7 @@ import {
 	type DrovrDeliveryOutcome,
 	type DrovrShadowEvent,
 } from './drovr-shadow-emitter'
+import { drovrProblemCodes } from './drovr-stop-verdict'
 import type { ContactEventRecord } from './types'
 
 /**
@@ -38,6 +39,9 @@ import type { ContactEventRecord } from './types'
  */
 
 export const OWNER_BIRTH_GUARD_REPOST_CAP = 25
+
+/** The problem code a re-post refused for a suppressed contact carries. */
+export const DROVR_CONTACT_SUPPRESSED = 'contact-suppressed'
 export const OWNER_BIRTH_GUARD_MIN_AGE_MS = 60 * 60 * 1000
 export const OWNER_BIRTH_GUARD_MAX_AGE_MS = 72 * 60 * 60 * 1000
 export const OWNER_BIRTH_GUARD_JOURNEY_ID = DROVR_SKILLS_COURSE_JOURNEY_ID
@@ -387,12 +391,17 @@ async function checkSubjects(
 	return { ...counts, candidates, ...(next ? { next } : {}) }
 }
 
+/**
+ * By the problem's code or type only (the hawk, 201g-f2): a regex over the
+ * whole problem also read its title, detail and hint, which are served
+ * text, so a wording change could flip a refusal's label.
+ */
 function repostOutcomeOf(outcome: DrovrDeliveryOutcome): RepostOutcome {
 	if (outcome.status === 'accepted') return 'accepted'
-	const problem = outcome.status === 'rejected' ? outcome.problem : undefined
-	const text =
-		typeof problem === 'string' ? problem : JSON.stringify(problem ?? '')
-	return /suppress/i.test(text) ? 'suppressed' : 'rejected'
+	return outcome.status === 'rejected' &&
+		drovrProblemCodes(outcome.problem).includes(DROVR_CONTACT_SUPPRESSED)
+		? 'suppressed'
+		: 'rejected'
 }
 
 type GuardStep = {

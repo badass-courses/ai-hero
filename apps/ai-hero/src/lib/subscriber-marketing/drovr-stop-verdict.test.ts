@@ -21,8 +21,11 @@ import {
 	type DrovrShadowEvent,
 } from './drovr-shadow-emitter'
 import {
+	DROVR_IDEMPOTENCY_KEY_CONFLICT,
+	drovrProblemCodes,
 	drovrStopVerdict,
 	isHeldStopRefusal,
+	isIdempotencyKeyConflictProblem,
 	type DrovrStopVerdict,
 } from './drovr-stop-verdict'
 
@@ -79,6 +82,8 @@ const problem = (slug: string, status: number) => ({
 const NEVER_BORN = problem('contact-never-born', 409)
 const COLD_START = problem('cold-start-unhandled', 409)
 const NOT_LIVE = problem('event-not-live', 409)
+// drovr #635 (row 209): the key already holds another event type.
+const KEY_CONFLICT = problem(DROVR_IDEMPOTENCY_KEY_CONFLICT, 409)
 
 const CASES: [string, DrovrShadowEvent, Answer, DrovrStopVerdict][] = [
 	['202', ownerPurchase, { status: 202 }, 'landed'],
@@ -135,6 +140,20 @@ const CASES: [string, DrovrShadowEvent, Answer, DrovrStopVerdict][] = [
 			idempotencyKey: 'owner:aihero:stop:unsubscribe:1',
 		},
 		{ status: 409, problem: NEVER_BORN },
+		'held',
+	],
+	// Held by its code on every path, the directory stop included (whose
+	// cold-start lands), and never released as an owner copy's never-born.
+	[
+		'409 idempotency-key conflict',
+		directoryUnsubscribe,
+		{ status: 409, problem: KEY_CONFLICT },
+		'held',
+	],
+	[
+		'409 idempotency-key conflict',
+		ownerPurchase,
+		{ status: 409, problem: KEY_CONFLICT },
 		'held',
 	],
 	[
@@ -424,6 +443,101 @@ describe('row 204c: one stop rule on every path', () => {
 			expect(answered).toMatchObject({ accepted: 0, rejected: 1 })
 			expect(isHeldStopRefusal(answered.refused![0]!)).toBe(false)
 		}
+	})
+
+	it('refuses a fact whose key holds another event (drovr #635), final on every path: never retried, deferred or delivered', async () => {
+		const fact: DrovrShadowEvent = {
+			...ownerPurchase,
+			type: 'contact.created',
+			idempotencyKey: 'aihero:fact:conflict',
+		}
+		const answer = { status: 409, problem: KEY_CONFLICT }
+		const outcome = await deliverDrovrShadowEvent({
+			clampAt: Date.now(),
+			event: fact,
+			config,
+			fetcher: fetcherFor(answer),
+		})
+		expect(outcome.status).toBe('rejected')
+		for (const fetcher of [fetcherFor(answer), itemFetcherFor(answer, fact)]) {
+			const answered = await deliverBatchOrThrow({
+				clampAt: Date.now(),
+				events: [fact],
+				config,
+				fetcher,
+				warn: quiet,
+				deferNotLive: true,
+			})
+			expect(answered).toMatchObject({ accepted: 0, rejected: 1 })
+			expect(answered).not.toHaveProperty('deferred')
+			expect(
+				isIdempotencyKeyConflictProblem(answered.refused![0]!.problem),
+			).toBe(true)
+		}
+		const replayed = await postDrovrOutboxRow(
+			{
+				...outboxEntryForEvent(fact, 'live'),
+				firstFailedAt: '2026-09-30T05:00:00.000Z',
+			} as DrovrOutboxRow,
+			{
+				ingestUrl: config.ingestUrl,
+				apiKeyFor: () => config.apiKey,
+				deliver: (args) =>
+					deliverDrovrShadowEvent({ ...args, fetcher: fetcherFor(answer) }),
+				fanOut: async (events) => [...events],
+				isNeverBornOwnerStop,
+			},
+		)
+		expect(replayed).toMatchObject({ kind: 'rejected', httpStatus: 409 })
+	})
+
+	it("holds a stop by the conflict's code before any substring rule: served text naming another code can't release or land it", () => {
+		// A batch item's detail is a string, and the older rules search it
+		// whole; the named check reads only its code.
+		const detail = (error: string) =>
+			JSON.stringify({ code: DROVR_IDEMPOTENCY_KEY_CONFLICT, error })
+		expect(
+			drovrStopVerdict(ownerUnsubscribe, {
+				httpStatus: 409,
+				problem: detail(
+					'not a cold-start-never-born: the key holds another event',
+				),
+			}),
+		).toBe('held')
+		expect(
+			drovrStopVerdict(directoryUnsubscribe, {
+				httpStatus: 409,
+				problem: detail(
+					'not a cold-start-unhandled: the key holds another event',
+				),
+			}),
+		).toBe('held')
+	})
+
+	it('reads a problem by its code only: the type slug, the code, or a batch detail string, never its title, detail or hint', () => {
+		expect(drovrProblemCodes(KEY_CONFLICT)).toEqual([
+			DROVR_IDEMPOTENCY_KEY_CONFLICT,
+		])
+		expect(drovrProblemCodes({ code: DROVR_IDEMPOTENCY_KEY_CONFLICT })).toEqual(
+			[DROVR_IDEMPOTENCY_KEY_CONFLICT],
+		)
+		expect(
+			drovrProblemCodes(
+				JSON.stringify({ code: DROVR_IDEMPOTENCY_KEY_CONFLICT, error: 'x' }),
+			),
+		).toEqual([DROVR_IDEMPOTENCY_KEY_CONFLICT])
+		expect(drovrProblemCodes(` ${DROVR_IDEMPOTENCY_KEY_CONFLICT} `)).toEqual([
+			DROVR_IDEMPOTENCY_KEY_CONFLICT,
+		])
+		const servedText = {
+			type: 'urn:drovr:problem:malformed-event',
+			title: DROVR_IDEMPOTENCY_KEY_CONFLICT,
+			detail: `the key holds another event (${DROVR_IDEMPOTENCY_KEY_CONFLICT})`,
+			hint: DROVR_IDEMPOTENCY_KEY_CONFLICT,
+		}
+		expect(isIdempotencyKeyConflictProblem(servedText)).toBe(false)
+		expect(drovrProblemCodes(null)).toEqual([])
+		expect(drovrProblemCodes(42)).toEqual([])
 	})
 
 	it("retries a whole chunk when any stop in it is still owed, and counts a directory stop's cold-start as landed beside a refused fact", async () => {

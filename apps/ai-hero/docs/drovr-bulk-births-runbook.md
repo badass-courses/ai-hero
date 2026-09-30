@@ -17,7 +17,7 @@ A **bulk birth** is any job that births more than 1,000 contacts into a drip or 
 3. **Calendar journeys don't spread by pacing.** Evergreen and the shadow newsletter send at local calendar instants, so births paced over hours on one day still fire together.
    - Keep **≤ 60k births per local slot per UTC offset** at a 90-minute spread window, and ≤ 20k while the window is 30 minutes. Split the job across days to stay under.
    - The shadow slot counts every `contact.created`.
-4. **Canary first:** a real one-page run that WRITES: the contact-sync backfill's `maxPages: 1` (it stops and doesn't re-queue), or the evergreen backfill's `--apply --limit 25` (a per-run cap). Without `--apply` the backfill is a dry run that posts nothing, and the checks below would pass without testing anything. Then check drovr, and resume only if all three hold:
+4. **Canary first:** a real one-page run that WRITES: the contact-sync backfill's `maxPages: 1` (it stops and doesn't re-queue), or the evergreen backfill's `--apply --limit 25 --out <report.json>` (a per-run cap; the script refuses to start without `--out`). Without `--apply` the backfill is a dry run that posts nothing, and the checks below would pass without testing anything. Then check drovr, and resume only if all three hold:
    - zero `overload` log lines in Axiom since the canary started;
    - `GET /status` with STUCK green;
    - no hold you didn't expect.
@@ -34,8 +34,9 @@ A **bulk birth** is any job that births more than 1,000 contacts into a drip or 
 
 A gate, not code (Sonnet 2's review of #345). On dev or stage Inngest, send **at least 1,000** bulk events to `drovr-events-deliver-bulk-v1` in one burst, and count the run starts per minute.
 - **Why 1,000:** at up to 100 events a run, that is 10 or more runs. So an unthrottled lane must start 8 or more in the first minute and fail. With 300 (3 runs), the gate could not fail.
-- **Expected for 1,000:** about 10 run starts in all, **at most 7 in any minute**, with the backlog draining over **at least 2 minutes** (7, then 3). Each run takes up to 100 events.
-- **Pass:** both hold: at most 7 starts in every minute, and the drain spans at least 2 minutes.
+- **Expected for 1,000:** about 10 run starts in all, **at most 7 in any minute**, with the starts falling **in at least 2 separate minutes** (7, then 3). Evenly spaced starts can put all 10 within about 80 seconds, so count minutes, not the span. Each run takes up to 100 events.
+- **Pass:** both hold: at most 7 starts in every minute, and starts in at least 2 separate minutes.
+- **Reading it:** the bulk function's own `concurrency: 4` can also slow starts, on a slow stage. So "at most 7 in any minute" is the pass condition, and "8 or more in the first minute" is the fail signal only when runs are short.
 - **Fail:** there's no pacing, and only the clamp is left. Don't run the backfill; tell the owner.
 
 Record the result (the environment, the minute counts, the date) on the row before the prod run.

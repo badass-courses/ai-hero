@@ -52,6 +52,7 @@ ORDER BY occurredAt;
    - A 404 `unknown-journey` is a journey that isn't live yet.
    - A 400 `malformed-event` is an ai-hero bug.
    - A 410 `tenant-retired` is a drovr decision.
+   - A 409 `idempotency-key-holds-another-event` (drovr #635) means drovr already holds a different event type under this key, so nothing was recorded. It's an ai-hero key bug. Re-sending the same key is refused again, so fix the key and re-issue the stop under a new one. A fact that meets it is refused and logged at `drovr.outbox.rejected`.
    - A 409 `cold-start-unhandled` means the contact has no actor on that journey, and the stop does not start one. Find out why the contact isn't there (a missing birth, or a journey the contact was never on) before re-sending.
 2. Fix the cause first, then **re-send** it with the statement under "Release a held or rejected row". Put who and why in `lastError`, as that statement does.
 3. **Retire** it only when the stop is truly moot (see "Retire a row"). A purchase is never retired.
