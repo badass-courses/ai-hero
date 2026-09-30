@@ -289,7 +289,9 @@ const drovrItemFor = (answer: Answer, event: DrovrShadowEvent) => {
 		return {
 			index: 0,
 			status: 'failed',
-			detail: `event-not-live: ${event.type} is not live on this actor`,
+			// drovr's real reason (engine-core EventNotLiveError) carries a colon
+			// of its own: the code is only what comes before the first one.
+			detail: `event-not-live: Contact ${event.contactId}'s ${event.journeyId} actor is pinned to version 1, which does not handle ${event.type}; version 2 does. Nothing was recorded: send the same event again after this actor migrates`,
 		}
 	return {
 		index: 0,

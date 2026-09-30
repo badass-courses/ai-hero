@@ -17,10 +17,21 @@ import { UNSUBSCRIBE_KIT_LIST_INTENT_TYPE } from '@/lib/subscriber-marketing/dro
 import { JOURNEY_OWNER_ASSIGNED_EVENT_TYPE } from '@/lib/subscriber-marketing/drovr-ownership'
 import { DROVR_SKILLS_COURSE_JOURNEY_ID } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
 import {
-	buildSignupConfirmationReconciliationPlan,
+	addKitReadStats,
+	createdDaySlices,
+	createKitReader,
+	fetchKitMemberIdsInSlices,
+	fetchKitSubscriberTagIds,
+	KitReadUnavailableError,
+	type KitReader,
+	type KitReaderOptions,
+	type KitReadStats,
+} from '@/lib/subscriber-marketing/signup-confirmation-kit-reader'
+import {
 	buildSignupGapPreview,
-	fetchKitSignupGapPageWithRetry,
 	normalizeSignupGapEmail,
+	replayableNewestFirst,
+	signupConfirmationEvent,
 	type SignupConfirmationReconciliationPlan,
 	type SignupGapKitSubscriber,
 	type SignupGapKitSubscriberState,
@@ -30,7 +41,6 @@ import { AIH_COURSE_COMPLETED_AT_FIELD } from '@/lib/subscriber-marketing/value-
 import { emailEquivalenceKey } from '@/lib/subscriber-marketing/contact-email-equivalence'
 import { SKILLS_WORKFLOW_EMAIL_STEPS } from '@/lib/subscriber-marketing/skills-workflow-path'
 import { and, eq, inArray, or, sql } from 'drizzle-orm'
-import { z } from 'zod'
 
 export const SKILLS_NEWSLETTER_FORM_ID = 9376133
 /**
@@ -135,9 +145,6 @@ export const SKILLS_EMAIL_ZERO_KIT_SEQUENCE_IDS =
 		step.emailResourceId.endsWith('-0'),
 	).map((step) => step.kitSequenceId)
 
-/** Kit lists evidence 1000 to a page; this bounds a run at 100k ids a list. */
-const KIT_EVIDENCE_PAGE_CAP = 100
-
 const KIT_SUBSCRIBER_STATES = [
 	'active',
 	'inactive',
@@ -152,55 +159,295 @@ type KitFormSubscriberRecord = SignupGapKitSubscriber & {
 
 type ReconcilerDatabase = Pick<typeof db, 'select'>
 
-export async function buildSignupConfirmationReconciliationBatch(args?: {
+/**
+ * The scan's two tiers (row 211, the hawk): the last 14 days of form
+ * signups on every 15-minute poll, and every signup since the floor once a
+ * day. Nobody is dropped: a learner who confirms on day 20 is entered by
+ * the next daily run, just later.
+ */
+export type SkillsConfirmationTier = 'recent' | 'daily'
+export const SKILLS_CONFIRMATION_RECENT_TIER_DAYS = 14
+const DAY_MS = 24 * 60 * 60 * 1000
+
+export function skillsConfirmationTierWindow(
+	tier: SkillsConfirmationTier,
+	to: string,
+): { from: string; to: string } {
+	const floor = Date.parse(SKILLS_CONFIRMATION_RECONCILIATION_START)
+	const toMs = Date.parse(to)
+	const from =
+		tier === 'daily'
+			? floor
+			: Math.max(floor, toMs - SKILLS_CONFIRMATION_RECENT_TIER_DAYS * DAY_MS)
+	return {
+		from: new Date(from).toISOString(),
+		to: new Date(toMs).toISOString(),
+	}
+}
+
+export type SkillsConfirmationEvent =
+	SignupConfirmationReconciliationPlan['events'][number]
+
+/**
+ * What the scan found: the confirmed, unentered subscribers with no local
+ * opt-out and no course history, newest signups first. Each still needs
+ * its fresh Kit tag check before it is sent.
+ */
+export type SkillsConfirmationScan = {
+	tier: SkillsConfirmationTier
+	generatedAt: string
+	formId: number
+	window: { from: string; to: string }
+	limit: number
+	counts: {
+		kitFormSubscribersFetched: number
+		inWindow: number
+		unconfirmed: number
+		withExistingCourseEntry: number
+		excludedSynthetic: number
+		excludedOptedOut: number
+		excludedCourseHistory: number
+		candidates: number
+	}
+	events: SkillsConfirmationEvent[]
+	kit: KitReadStats
+}
+
+/**
+ * Scan one tier (row 211). Cheapest first: the form's subscribers, then
+ * local evidence (entries, opt-outs, course sends) and the completion
+ * field. Only if someone is left does it read Kit's email 0 sequences, and
+ * then only for the days those subscribers' Kit records were created
+ * (`createdDaySlices`), in parallel slices under the reader's limits. The
+ * exclusion tags are read per candidate afterwards
+ * (`checkSkillsConfirmationTags`), fresh, just before each send.
+ */
+export async function scanSkillsConfirmations(args: {
+	tier: SkillsConfirmationTier
 	to?: string
 	limit?: number
 	database?: ReconcilerDatabase
-}): Promise<SignupConfirmationReconciliationPlan> {
-	const to = new Date(args?.to ?? new Date().toISOString()).toISOString()
-	const subscribers = await fetchKitFormSubscribersForStates({
-		formId: SKILLS_NEWSLETTER_FORM_ID,
-		addedAfter: SKILLS_CONFIRMATION_RECONCILIATION_START,
-		states: KIT_SUBSCRIBER_STATES,
-	})
-	const [identityMatches, taggedOptOuts, emailZeroMembers] = await Promise.all([
-		fetchIdentityMatches(subscribers, args?.database ?? db),
-		fetchKitSubscriberIdsFrom(
-			AI_HERO_SKILLS_EXCLUSION_TAG_IDS.map((tagId) => `tags/${tagId}`),
-		),
-		fetchKitSubscriberIdsFrom(
-			SKILLS_EMAIL_ZERO_KIT_SEQUENCE_IDS.map((id) => `sequences/${id}`),
-		),
-	])
-	const courseCompleted = subscribers
-		.filter((subscriber) => {
-			const value = subscriber.fields?.[AIH_COURSE_COMPLETED_AT_FIELD]
-			return value != null && String(value).trim() !== ''
+	kit?: KitReaderOptions
+}): Promise<SkillsConfirmationScan> {
+	const to = new Date(args.to ?? new Date().toISOString()).toISOString()
+	const window = skillsConfirmationTierWindow(args.tier, to)
+	const reader = createKitReader(kitApiKey(), args.kit)
+	try {
+		const subscribers = await fetchKitFormSubscribersForStates(reader, {
+			formId: SKILLS_NEWSLETTER_FORM_ID,
+			addedAfter: window.from,
+			states: KIT_SUBSCRIBER_STATES,
 		})
-		.map((subscriber) => subscriber.kitSubscriberId)
-	const preview = buildSignupGapPreview({
-		subscribers,
-		identityMatches: {
-			...identityMatches,
-			optedOutKitSubscriberIds: new Set([
-				...identityMatches.optedOutKitSubscriberIds,
-				...taggedOptOuts,
-			]),
-			courseHistoryKitSubscriberIds: new Set([
-				...identityMatches.courseHistoryKitSubscriberIds,
-				...emailZeroMembers,
-				...courseCompleted,
-			]),
+		const identityMatches = await fetchIdentityMatches(
+			subscribers,
+			args.database ?? db,
+		)
+		const courseCompleted = subscribers
+			.filter((subscriber) => {
+				const value = subscriber.fields?.[AIH_COURSE_COMPLETED_AT_FIELD]
+				return value != null && String(value).trim() !== ''
+			})
+			.map((subscriber) => subscriber.kitSubscriberId)
+		const preview = buildSignupGapPreview({
+			subscribers,
+			identityMatches: {
+				...identityMatches,
+				courseHistoryKitSubscriberIds: new Set([
+					...identityMatches.courseHistoryKitSubscriberIds,
+					...courseCompleted,
+				]),
+			},
+			formId: SKILLS_NEWSLETTER_FORM_ID,
+			from: window.from,
+			to,
+			now: to,
+		})
+		let candidates = replayableNewestFirst(preview.candidates)
+		let inEmailZero = 0
+		// Most polls end here: nobody new, so no Kit list is read at all.
+		if (candidates.length > 0) {
+			const members = await fetchKitMemberIdsInSlices(
+				reader,
+				SKILLS_EMAIL_ZERO_KIT_SEQUENCE_IDS.map((id) => `sequences/${id}`),
+				createdDaySlices(candidates.map((candidate) => candidate.createdAt)),
+			)
+			const remaining = candidates.filter(
+				(candidate) => !members.has(candidate.kitSubscriberId),
+			)
+			inEmailZero = candidates.length - remaining.length
+			candidates = remaining
+		}
+		await reader.settle()
+		return {
+			tier: args.tier,
+			generatedAt: preview.generatedAt,
+			formId: SKILLS_NEWSLETTER_FORM_ID,
+			window,
+			limit: args.limit ?? skillsConfirmationReconciliationLimit(),
+			counts: {
+				kitFormSubscribersFetched: preview.counts.kitFormSubscribersFetched,
+				inWindow: preview.counts.inWindow,
+				unconfirmed: preview.counts.unconfirmed,
+				withExistingCourseEntry: preview.counts.withExistingCourseEntry,
+				excludedSynthetic: preview.counts.excludedSynthetic,
+				excludedOptedOut: preview.counts.excludedOptedOut,
+				excludedCourseHistory:
+					preview.counts.excludedCourseHistory + inEmailZero,
+				candidates: candidates.length,
+			},
+			events: candidates.map((candidate) =>
+				signupConfirmationEvent({
+					candidate,
+					formId: SKILLS_NEWSLETTER_FORM_ID,
+				}),
+			),
+			kit: reader.stats(),
+		}
+	} catch (error) {
+		throw asEvidenceError(error)
+	}
+}
+
+/**
+ * The fresh opt-out check for one candidate, just before its send: its own
+ * Kit tags (`GET /v4/subscribers/{id}/tags`), against the AI Hero and AI
+ * Skills unsubscribe tags. A Kit failure throws, so nothing is sent without
+ * the evidence. A subscriber Kit no longer has (404) is not sent either.
+ */
+export async function checkSkillsConfirmationTags(args: {
+	kitSubscriberId: string
+	kit?: KitReaderOptions
+}): Promise<{
+	verdict: 'consenting' | 'opted-out' | 'not-in-kit'
+	kit: KitReadStats
+}> {
+	const reader = createKitReader(kitApiKey(), args.kit)
+	try {
+		const tagIds = await fetchKitSubscriberTagIds(reader, args.kitSubscriberId)
+		await reader.settle()
+		const verdict =
+			tagIds === 'not-found'
+				? 'not-in-kit'
+				: AI_HERO_SKILLS_EXCLUSION_TAG_IDS.some((tagId) =>
+							tagIds.has(String(tagId)),
+					  )
+					? 'opted-out'
+					: 'consenting'
+		return { verdict, kit: reader.stats() }
+	} catch (error) {
+		throw asEvidenceError(error)
+	}
+}
+
+/** How a run steps: Inngest's `step.run` and `step.sendEvent`, or direct. */
+export type SkillsConfirmationSteps = {
+	run: <T>(id: string, work: () => Promise<T>) => Promise<T>
+	send: (id: string, event: SkillsConfirmationEvent) => Promise<unknown>
+}
+
+export type SkillsConfirmationReceipt = {
+	mode: 'signup-confirmation-reconciliation'
+	tier: SkillsConfirmationTier
+	generatedAt: string
+	formId: number
+	window: { from: string; to: string }
+	limit: number
+	counts: SkillsConfirmationScan['counts'] & {
+		/** Candidates whose tags were read this run. */
+		tagChecked: number
+		/** Of them, carrying an AI Hero or AI Skills unsubscribe tag. */
+		excludedByTag: number
+		/** Of them, gone from Kit (404). */
+		notInKit: number
+		/** Sent this run, each as soon as its tags cleared. */
+		planned: number
+		/** Left for the next run by the limit. */
+		deferred: number
+		/** Sent, and joined the form before the recent tier's window: the daily tier's catch. */
+		plannedOlderThanRecentTier: number
+	}
+	/** Every Kit request of the run, retries included, and the 429s among them. */
+	kit: KitReadStats
+}
+
+/**
+ * One reconciler run (row 211): scan the tier, then for each candidate,
+ * newest first, check its tags and send its event at once, in its own
+ * steps. A rerun or an overlapping tier sends the same event ids
+ * (`skills-confirmed:<form>:<subscriber>`), which Inngest drops.
+ */
+export async function reconcileSkillsConfirmations(args: {
+	tier: SkillsConfirmationTier
+	steps: SkillsConfirmationSteps
+	to?: string
+	limit?: number
+	database?: ReconcilerDatabase
+	kit?: KitReaderOptions
+	onSent?: (event: SkillsConfirmationEvent) => void
+}): Promise<SkillsConfirmationReceipt> {
+	const scan = await args.steps.run('scan-confirmation-candidates', () =>
+		scanSkillsConfirmations(args),
+	)
+	let kit = scan.kit
+	let tagChecked = 0
+	let excludedByTag = 0
+	let notInKit = 0
+	let planned = 0
+	let plannedOlderThanRecentTier = 0
+	const recentFrom = Date.parse(
+		skillsConfirmationTierWindow('recent', scan.window.to).from,
+	)
+	for (const event of scan.events) {
+		if (planned >= scan.limit) break
+		const { kitSubscriberId } = event.data
+		const checked = await args.steps.run(
+			`check-opt-out-tags:${kitSubscriberId}`,
+			() => checkSkillsConfirmationTags({ kitSubscriberId, kit: args.kit }),
+		)
+		tagChecked += 1
+		kit = addKitReadStats(kit, checked.kit)
+		if (checked.verdict === 'opted-out') {
+			excludedByTag += 1
+			continue
+		}
+		if (checked.verdict === 'not-in-kit') {
+			notInKit += 1
+			continue
+		}
+		await args.steps.send(
+			`enqueue-confirmed-subscriber:${kitSubscriberId}`,
+			event,
+		)
+		planned += 1
+		if (Date.parse(event.data.subscribedAt ?? '') < recentFrom)
+			plannedOlderThanRecentTier += 1
+		args.onSent?.(event)
+	}
+	return {
+		mode: 'signup-confirmation-reconciliation',
+		tier: scan.tier,
+		generatedAt: scan.generatedAt,
+		formId: scan.formId,
+		window: scan.window,
+		limit: scan.limit,
+		counts: {
+			...scan.counts,
+			excludedOptedOut: scan.counts.excludedOptedOut + excludedByTag,
+			tagChecked,
+			excludedByTag,
+			notInKit,
+			planned,
+			deferred: scan.events.length - tagChecked,
+			plannedOlderThanRecentTier,
 		},
-		formId: SKILLS_NEWSLETTER_FORM_ID,
-		from: SKILLS_CONFIRMATION_RECONCILIATION_START,
-		to,
-		now: to,
-	})
-	return buildSignupConfirmationReconciliationPlan({
-		preview,
-		limit: args?.limit ?? skillsConfirmationReconciliationLimit(),
-	})
+		kit,
+	}
+}
+
+function asEvidenceError(error: unknown) {
+	return error instanceof KitReadUnavailableError
+		? new ReconcilerEvidenceUnavailableError(error.resource, error.reason)
+		: error
 }
 
 async function fetchIdentityMatches(
@@ -413,7 +660,8 @@ async function fetchIdentityMatches(
 /**
  * Consent or course-history evidence that could not be read completely.
  * The run fails rather than enter anyone on partial evidence; the Inngest
- * function's retries own the retry (the page fetch retries only 5xx).
+ * function's retries own the retry (the Kit reader retries only a 5xx, no
+ * answer, and a 429 after its Retry-After).
  */
 export class ReconcilerEvidenceUnavailableError extends Error {
 	readonly source: string
@@ -429,76 +677,6 @@ export class ReconcilerEvidenceUnavailableError extends Error {
 	}
 }
 
-const KitSubscriberIdPage = z.object({
-	subscribers: z.array(
-		z.object({
-			id: z.union([
-				z.number().int().positive(),
-				z.string().regex(/^[1-9]\d*$/),
-			]),
-		}),
-	),
-	pagination: z.object({
-		has_next_page: z.boolean(),
-		end_cursor: z.string().min(1).nullable().optional(),
-	}),
-})
-
-/**
- * Every subscriber id (any state) listed under these Kit resources, e.g.
- * `tags/8244351` or `sequences/2757199`. Parsed strictly at the boundary:
- * an HTTP failure, a malformed page or a next page without a cursor
- * throws, never yields a shorter list.
- */
-async function fetchKitSubscriberIdsFrom(resources: readonly string[]) {
-	const apiKey = kitApiKey()
-	const ids = new Set<string>()
-	for (const resource of resources) {
-		let cursor: string | undefined
-		for (let page = 0; ; page++) {
-			if (page >= KIT_EVIDENCE_PAGE_CAP) {
-				throw new ReconcilerEvidenceUnavailableError(
-					resource,
-					`more than ${KIT_EVIDENCE_PAGE_CAP} pages`,
-				)
-			}
-			const url = new URL(
-				`https://api.convertkit.com/v4/${resource}/subscribers`,
-			)
-			url.searchParams.set('status', 'all')
-			url.searchParams.set('per_page', '1000')
-			if (cursor) url.searchParams.set('after', cursor)
-			const response = await fetchKitSignupGapPageWithRetry({
-				request: () => fetch(url, { headers: { 'X-Kit-Api-Key': apiKey } }),
-			})
-			if (!response.ok) {
-				throw new ReconcilerEvidenceUnavailableError(
-					resource,
-					`HTTP ${response.status}`,
-				)
-			}
-			const parsed = KitSubscriberIdPage.safeParse(
-				await response.json().catch(() => undefined),
-			)
-			if (!parsed.success) {
-				throw new ReconcilerEvidenceUnavailableError(resource, 'malformed page')
-			}
-			for (const subscriber of parsed.data.subscribers) {
-				ids.add(String(subscriber.id))
-			}
-			if (!parsed.data.pagination.has_next_page) break
-			cursor = parsed.data.pagination.end_cursor ?? undefined
-			if (!cursor) {
-				throw new ReconcilerEvidenceUnavailableError(
-					resource,
-					'next page without a cursor',
-				)
-			}
-		}
-	}
-	return ids
-}
-
 function kitApiKey() {
 	const apiKey =
 		process.env.CONVERTKIT_V4_API_KEY ?? process.env.CONVERTKIT_API_KEY
@@ -510,63 +688,62 @@ function kitApiKey() {
 	return apiKey
 }
 
-async function fetchKitFormSubscribersForStates(args: {
-	formId: number
-	addedAfter: string
-	states: readonly SignupGapKitSubscriberState[]
-}) {
-	const records: KitFormSubscriberRecord[] = []
-	for (const state of args.states) {
-		records.push(
-			...(await fetchKitFormSubscribers({
-				formId: args.formId,
-				addedAfter: args.addedAfter,
-				state,
-			})),
-		)
-	}
+/** The form's subscribers in every state, the states read in parallel. */
+async function fetchKitFormSubscribersForStates(
+	reader: KitReader,
+	args: {
+		formId: number
+		addedAfter: string
+		states: readonly SignupGapKitSubscriberState[]
+	},
+) {
+	const pages = await Promise.all(
+		args.states.map((state) =>
+			fetchKitFormSubscribers(reader, { ...args, state }),
+		),
+	)
 	return Array.from(
-		new Map(records.map((record) => [record.kitSubscriberId, record])).values(),
+		new Map(
+			pages.flat().map((record) => [record.kitSubscriberId, record]),
+		).values(),
 	)
 }
 
-async function fetchKitFormSubscribers(args: {
-	formId: number
-	addedAfter: string
-	state: SignupGapKitSubscriberState
-}) {
-	const apiKey = kitApiKey()
+async function fetchKitFormSubscribers(
+	reader: KitReader,
+	args: {
+		formId: number
+		addedAfter: string
+		state: SignupGapKitSubscriberState
+	},
+) {
+	const resource = `forms/${args.formId}/subscribers`
 	const subscribers: KitFormSubscriberRecord[] = []
 	let cursor: string | undefined
 	for (let page = 0; page < 100; page++) {
-		const url = new URL(
-			`https://api.convertkit.com/v4/forms/${args.formId}/subscribers`,
-		)
-		url.searchParams.set('status', args.state)
-		url.searchParams.set('per_page', '1000')
-		url.searchParams.set(
-			'added_after',
-			new Date(args.addedAfter).toISOString().slice(0, 10),
-		)
-		if (cursor) url.searchParams.set('after', cursor)
-		const response = await fetchKitSignupGapPageWithRetry({
-			request: () =>
-				fetch(url, {
-					headers: { 'X-Kit-Api-Key': apiKey },
-				}),
+		const response = await reader.get(resource, {
+			status: args.state,
+			per_page: '1000',
+			added_after: new Date(args.addedAfter).toISOString().slice(0, 10),
+			...(cursor ? { after: cursor } : {}),
 		})
-		const payload = (await response.json()) as Record<string, unknown>
 		if (!response.ok) {
-			throw new Error(
-				`Kit confirmation reconciliation failed with HTTP ${response.status}`,
+			throw new KitReadUnavailableError(
+				resource,
+				`HTTP ${response.status}`,
+				response.status,
 			)
 		}
+		const payload = (await response.json().catch(() => undefined)) as
+			| Record<string, unknown>
+			| undefined
+		if (!payload) throw new KitReadUnavailableError(resource, 'malformed page')
 		subscribers.push(...parseKitFormSubscribers(payload))
 		const pagination = asRecord(payload.pagination)
 		cursor = stringField(pagination?.end_cursor)
 		if (!cursor || pagination?.has_next_page === false) return subscribers
 	}
-	throw new Error('Kit confirmation reconciliation exceeded the 100-page cap')
+	throw new KitReadUnavailableError(resource, 'more than 100 pages')
 }
 
 function parseKitFormSubscribers(payload: unknown): KitFormSubscriberRecord[] {

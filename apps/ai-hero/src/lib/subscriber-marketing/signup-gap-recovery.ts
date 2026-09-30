@@ -368,17 +368,7 @@ export function buildSignupConfirmationReconciliationPlan(args: {
 			'Confirmation reconciliation limit must be a non-negative integer',
 		)
 	}
-	// Newest form signups first. Kit exposes no confirmation time, so this
-	// orders by when they joined the form: a recent signup confirming now is
-	// not queued behind an old backlog. An old signup confirming late can
-	// still wait behind newer unresolved ones until they enter.
-	const replayable = args.preview.candidates
-		.filter((candidate) => !candidate.excludedSynthetic)
-		.sort(
-			(left, right) =>
-				right.addedAt.localeCompare(left.addedAt) ||
-				left.kitSubscriberId.localeCompare(right.kitSubscriberId),
-		)
+	const replayable = replayableNewestFirst(args.preview.candidates)
 	const planned = replayable.slice(0, args.limit)
 	return {
 		mode: 'signup-confirmation-reconciliation-plan',
@@ -395,24 +385,63 @@ export function buildSignupConfirmationReconciliationPlan(args: {
 			planned: planned.length,
 			deferred: Math.max(0, replayable.length - planned.length),
 		},
-		events: planned.map((candidate) => ({
-			id: `skills-confirmed:${args.preview.formId}:${candidate.kitSubscriberId}`,
-			name: SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
-			data: {
-				kitSubscriberId: candidate.kitSubscriberId,
-				email: candidate.email,
-				name: candidate.firstName,
+		events: planned.map((candidate) =>
+			signupConfirmationEvent({
+				candidate,
 				formId: args.preview.formId,
-				source: args.source ?? 'kit-confirmation-reconciler',
-				subscribedAt: candidate.addedAt,
-				...(candidate.optInAttribution
-					? { optInAttribution: candidate.optInAttribution }
-					: {}),
-				...(candidate.deadlineTimeZone
-					? { deadlineTimeZone: candidate.deadlineTimeZone }
-					: {}),
-			},
-		})),
+				source: args.source,
+			}),
+		),
+	}
+}
+
+/**
+ * The candidates to replay (synthetic addresses left out), newest form
+ * signups first. Kit exposes no confirmation time, so this orders by when
+ * they joined the form: a recent signup confirming now is not queued behind
+ * an old backlog. An old signup confirming late can still wait behind newer
+ * unresolved ones until they enter.
+ */
+export function replayableNewestFirst(
+	candidates: readonly SignupGapPreviewCandidate[],
+): SignupGapPreviewCandidate[] {
+	return candidates
+		.filter((candidate) => !candidate.excludedSynthetic)
+		.sort(
+			(left, right) =>
+				right.addedAt.localeCompare(left.addedAt) ||
+				left.kitSubscriberId.localeCompare(right.kitSubscriberId),
+		)
+}
+
+/**
+ * A confirmed subscriber's entry event. Its id,
+ * `skills-confirmed:<form>:<subscriber>`, is the idempotency key: Inngest
+ * drops a repeat, so a subscriber seen by two runs or two tiers enters once.
+ */
+export function signupConfirmationEvent(args: {
+	candidate: SignupGapPreviewCandidate
+	formId: number
+	source?: string
+}): SkillsNewsletterSubscribed & { id: string } {
+	const { candidate } = args
+	return {
+		id: `skills-confirmed:${args.formId}:${candidate.kitSubscriberId}`,
+		name: SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
+		data: {
+			kitSubscriberId: candidate.kitSubscriberId,
+			email: candidate.email,
+			name: candidate.firstName,
+			formId: args.formId,
+			source: args.source ?? 'kit-confirmation-reconciler',
+			subscribedAt: candidate.addedAt,
+			...(candidate.optInAttribution
+				? { optInAttribution: candidate.optInAttribution }
+				: {}),
+			...(candidate.deadlineTimeZone
+				? { deadlineTimeZone: candidate.deadlineTimeZone }
+				: {}),
+		},
 	}
 }
 
