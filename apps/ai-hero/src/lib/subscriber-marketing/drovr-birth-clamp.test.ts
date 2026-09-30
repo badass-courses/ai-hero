@@ -77,13 +77,18 @@ describe('row 201g: a sending-journey birth is never older than 5 minutes at its
 	})
 
 	it('moves an old birth up to now minus 5 minutes, and reports its lag in whole seconds', () => {
-		const { events, lagSeconds } = clampBirths(
+		const { events, lagSeconds, journeyIds } = clampBirths(
 			[valuePathBirth, newsletterBirth, evergreenBirth],
 			NOW,
 		)
 		const floor = new Date(NOW - DROVR_BIRTH_CLAMP_SKEW_MS).toISOString()
 		expect(events.map((e) => e.occurredAt)).toEqual([floor, floor, floor])
 		expect(lagSeconds).toEqual([3600, 3600, 3600])
+		expect(journeyIds).toEqual([
+			DROVR_SKILLS_COURSE_JOURNEY_ID,
+			DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+			DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+		])
 		expect(DROVR_BIRTH_CLAMP_SKEW_MS).toBe(5 * 60_000)
 	})
 
@@ -143,6 +148,7 @@ describe('row 201g: a sending-journey birth is never older than 5 minutes at its
 			count: 1,
 			maxLagSeconds: 3600,
 			lagSeconds: [3600],
+			journeyIds: [DROVR_SKILLS_COURSE_JOURNEY_ID],
 		})
 	})
 
@@ -207,6 +213,7 @@ describe('row 201g: a sending-journey birth is never older than 5 minutes at its
 			count: 1,
 			maxLagSeconds: 3600,
 			lagSeconds: [3600],
+			journeyIds: [DROVR_EVERGREEN_OFFER_JOURNEY_ID],
 		})
 	})
 })
@@ -411,6 +418,11 @@ describe("row 201g: the clamp's edges (Sonnet 2 X1 to X3)", () => {
 			count: 3,
 			maxLagSeconds: 3600,
 			lagSeconds: [1800, 3600, 400],
+			journeyIds: [
+				DROVR_SKILLS_COURSE_JOURNEY_ID,
+				DROVR_SKILLS_COURSE_JOURNEY_ID,
+				DROVR_SKILLS_COURSE_JOURNEY_ID,
+			],
 		})
 	})
 

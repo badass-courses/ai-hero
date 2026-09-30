@@ -38,6 +38,8 @@ export type ClampedBirths = {
 	events: DrovrShadowEvent[]
 	/** Each clamped birth's original lag behind the send, in whole seconds. */
 	lagSeconds: number[]
+	/** Each clamped birth's journey, in the same order as `lagSeconds`. */
+	journeyIds: string[]
 }
 
 /**
@@ -72,20 +74,23 @@ export function clampBirths(
 ): ClampedBirths {
 	const floorMs = clampAt - DROVR_BIRTH_CLAMP_SKEW_MS
 	const lagSeconds: number[] = []
+	const journeyIds: string[] = []
 	const clamped = events.map((event) => {
 		if (!isSendingJourneyBirth(event)) return event
 		const at = Date.parse(event.occurredAt)
 		if (Number.isNaN(at) || at >= floorMs) return event
 		lagSeconds.push(Math.floor((clampAt - at) / 1000))
+		journeyIds.push(event.journeyId)
 		return { ...event, occurredAt: new Date(floorMs).toISOString() }
 	})
-	return { events: clamped, lagSeconds }
+	return { events: clamped, lagSeconds, journeyIds }
 }
 
 /**
  * One line per send that clamped anything, so an outage backlog or a
  * backfill's queue wait shows up in Axiom: `count` sums the clamps, and
- * `lagSeconds` carries each birth's original lag. It is logged on every
+ * `lagSeconds` carries each birth's original lag, and `journeyIds` each
+ * one's journey, in the same order. It is logged on every
  * attempt, so a retried send repeats its line: count sends, not births.
  */
 export async function logClampedBirths(
@@ -100,6 +105,7 @@ export async function logClampedBirths(
 			count: clamped.lagSeconds.length,
 			maxLagSeconds: Math.max(...clamped.lagSeconds),
 			lagSeconds: clamped.lagSeconds,
+			journeyIds: clamped.journeyIds,
 		})
 	} catch {
 		// Logging cannot change what is sent.
