@@ -1,11 +1,16 @@
 import {
 	captureDrovrOutbox,
+	settleDrovrOutbox,
 	drovrOutboxTarget,
 	DrovrOutboxUnavailableError,
 	isOutboxStop,
 	type DrovrOutboxOpenGate,
 } from './drovr-outbox'
-import { httpStatusOf, type DrovrOutboxCaptureFn } from './drovr-outbox-step'
+import {
+	httpStatusOf,
+	type DrovrOutboxCaptureFn,
+	type DrovrOutboxSettleFn,
+} from './drovr-outbox-step'
 
 /** This deployment's outbox target (drovrOutboxTarget). */
 export const drovrOutboxTargetFromEnv = () =>
@@ -21,6 +26,7 @@ export const drovrOutboxTargetFromEnv = () =>
 export const captureDrovrOutboxLive: DrovrOutboxCaptureFn = async (
 	entries,
 	reason,
+	options,
 ) => {
 	const [{ db }, { log }, { createDrizzleDrovrOutboxStore }] =
 		await Promise.all([
@@ -35,6 +41,28 @@ export const captureDrovrOutboxLive: DrovrOutboxCaptureFn = async (
 		reason,
 		httpStatus: httpStatusOf(reason),
 		now: new Date(),
+		...(options?.nextAttemptAt ? { nextAttemptAt: options.nextAttemptAt } : {}),
+		log,
+	})
+}
+
+/** settleDrovrOutbox against this deployment's database and target. */
+export const settleDrovrOutboxLive: DrovrOutboxSettleFn = async (
+	entries,
+	note,
+) => {
+	const [{ db }, { log }, { createDrizzleDrovrOutboxStore }] =
+		await Promise.all([
+			import('@/db'),
+			import('@/server/logger'),
+			import('./drovr-outbox-drizzle'),
+		])
+	return settleDrovrOutbox({
+		store: createDrizzleDrovrOutboxStore(db),
+		target: drovrOutboxTargetFromEnv(),
+		entries,
+		note,
+		now: new Date(),
 		log,
 	})
 }
@@ -42,7 +70,7 @@ export const captureDrovrOutboxLive: DrovrOutboxCaptureFn = async (
 /** A stop the outbox still owes, as the live gate reads it (row 204b). */
 export type DrovrOutboxOpenStop = Pick<
 	DrovrOutboxOpenGate,
-	'contactId' | 'eventType' | 'occurredAt' | 'status'
+	'id' | 'contactId' | 'eventType' | 'occurredAt' | 'status'
 >
 
 export type DrovrOutboxOpenStopsFn = (

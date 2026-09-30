@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
 	resolveOwnedContactIds: vi.fn(),
 	capture: vi.fn(),
 	openStops: vi.fn(),
+	settle: vi.fn(),
 }))
 
 vi.mock('@/env.mjs', () => ({
@@ -57,6 +58,7 @@ vi.mock('@/server/logger', () => ({ log: mocks.log }))
 vi.mock('@/lib/subscriber-marketing/drovr-outbox-live', () => ({
 	captureDrovrOutboxLive: mocks.capture,
 	openDrovrOutboxStopsLive: mocks.openStops,
+	settleDrovrOutboxLive: mocks.settle,
 }))
 
 import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
@@ -204,8 +206,10 @@ describe('retired shadow tenant delivery', () => {
 			rejected: 0,
 			discarded: 1,
 		})
+		// One instant: the births go first (row 204b's delivery order).
+		const [answer, birth, completion, newsletterBirth] = authorityEvents
 		expect(mocks.deliverOrThrow.mock.calls.map(([args]) => args.event)).toEqual(
-			authorityEvents,
+			[birth, newsletterBirth, answer, completion],
 		)
 		expect(mocks.log.info).toHaveBeenCalledOnce()
 		expect(mocks.log.info).toHaveBeenCalledWith(
@@ -294,7 +298,8 @@ describe('retired shadow tenant delivery', () => {
 		})
 		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledOnce()
 		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledWith({
-			events: authorityEvents,
+			// One instant: the birth goes first (row 204b's delivery order).
+			events: [authorityEvents[1], authorityEvents[0]],
 			config: {
 				ingestUrl: 'https://drovr.test/events',
 				apiKey: 'authority-key',
@@ -1091,6 +1096,198 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 			),
 		)
 		expect(sent).toEqual(['owner:other'])
+	})
+
+	it('delivers a batch in time order: a later fact listed before its failing stop is held, not posted (Sonnet S2, Macroscope 334)', async () => {
+		mocks.deliverOrThrow.mockImplementation(
+			async ({ event: e }: { event: { idempotencyKey: string } }) => {
+				if (e.idempotencyKey === 'owner:purchase') throw drovrFailure(503)
+				return { status: 'accepted' }
+			},
+		)
+		const receipt = await run(
+			[
+				fact('owner:later', 20),
+				stopEvent('owner:purchase', 'purchase.recorded', 10),
+			],
+			LAST,
+		)
+		const posted = mocks.deliverOrThrow.mock.calls.map(
+			([args]) =>
+				(args as { event: { idempotencyKey: string } }).event.idempotencyKey,
+		)
+		expect(posted).toEqual(['owner:purchase'])
+		expect(receipt).toMatchObject({
+			accepted: 0,
+			outboxed: 2,
+			heldBehindStop: 1,
+		})
+	})
+
+	it('posts a stop before a fact that shares its instant, and a birth before both', async () => {
+		const birth = {
+			...event(
+				'org-aihero',
+				'owner:birth',
+				'crash-course-evergreen-offer',
+				'contact.created',
+			),
+			occurredAt: at(10),
+		}
+		await run([
+			fact('owner:tied', 10),
+			stopEvent('owner:purchase', 'purchase.recorded', 10),
+			birth,
+		])
+		expect(
+			mocks.deliverOrThrow.mock.calls.map(
+				([args]) =>
+					(args as { event: { idempotencyKey: string } }).event.idempotencyKey,
+			),
+		).toEqual(['owner:birth', 'owner:purchase', 'owner:tied'])
+	})
+
+	it.each([
+		['a garbled fact goes after the stop', 'fact'],
+		['a garbled stop goes before the fact', 'stop'],
+	] as const)(
+		'fails closed on an instant that does not parse in the batch order: %s',
+		async (_case, garbled) => {
+			mocks.deliverOrThrow.mockImplementation(
+				async ({ event: e }: { event: { idempotencyKey: string } }) => {
+					if (e.idempotencyKey === 'owner:purchase') throw drovrFailure(503)
+					return { status: 'accepted' }
+				},
+			)
+			const theFact = fact('owner:answer', 20)
+			const theStop = stopEvent('owner:purchase', 'purchase.recorded', 10)
+			await run(
+				garbled === 'fact'
+					? [{ ...theFact, occurredAt: 'not-a-date' }, theStop]
+					: [theFact, { ...theStop, occurredAt: 'not-a-date' }],
+				LAST,
+			)
+			expect(
+				mocks.deliverOrThrow.mock.calls.map(
+					([args]) =>
+						(args as { event: { idempotencyKey: string } }).event
+							.idempotencyKey,
+				),
+			).toEqual(['owner:purchase'])
+		},
+	)
+
+	it('holds a fact whose instant does not parse behind an owed stop (fails closed)', async () => {
+		mocks.openStops.mockResolvedValue([owedPurchase])
+		await run([{ ...fact('owner:garbled', 20), occurredAt: 'not-a-date' }])
+		expect(mocks.deliverOrThrow).not.toHaveBeenCalled()
+	})
+
+	it("captures a live stop on its first failure, due when Inngest's retries run out; a fact is not captured early", async () => {
+		mocks.deliverOrThrow.mockRejectedValue(drovrFailure(503))
+		await expect(
+			run([stopEvent('owner:purchase', 'purchase.recorded', 10)]),
+		).rejects.toMatchObject({ name: 'RetryAfterError' })
+		expect(mocks.capture).toHaveBeenCalledOnce()
+		const [entries, , options] = mocks.capture.mock.calls[0]! as [
+			{ idempotencyKey: string }[],
+			unknown,
+			{ nextAttemptAt: Date },
+		]
+		expect(entries.map((e) => e.idempotencyKey)).toEqual(['owner:purchase'])
+		const window = options.nextAttemptAt.getTime() - Date.now()
+		expect(window).toBeGreaterThan(78 * 60_000)
+		expect(window).toBeLessThanOrEqual(78.75 * 60_000)
+
+		mocks.capture.mockClear()
+		await expect(run([fact('owner:answer', 10)])).rejects.toMatchObject({
+			name: 'RetryAfterError',
+		})
+		expect(mocks.capture).not.toHaveBeenCalled()
+	})
+
+	it('settles a live stop when a later retry delivers it', async () => {
+		await run([stopEvent('owner:purchase', 'purchase.recorded', 10)], {
+			attempt: 3,
+			maxAttempts: 9,
+		})
+		expect(mocks.settle).toHaveBeenCalledWith(
+			[expect.objectContaining({ idempotencyKey: 'owner:purchase' })],
+			'delivered by an Inngest retry',
+		)
+		mocks.settle.mockClear()
+		await run([fact('owner:answer', 10)], { attempt: 3, maxAttempts: 9 })
+		expect(mocks.settle).not.toHaveBeenCalled()
+	})
+
+	it("captures only a bulk chunk's stops on its first failure", async () => {
+		mocks.deliverBatchOrThrow.mockRejectedValue(drovrFailure(503))
+		await expect(
+			registeredBulk.handler({
+				events: [
+					{
+						data: {
+							source: 'kit-directory-ingest',
+							events: [
+								fact('owner:answer', 20),
+								stopEvent('owner:unsubscribe', 'contact.unsubscribed', 10),
+							],
+						},
+					},
+				],
+				step: createStep(),
+				attempt: 0,
+				maxAttempts: 9,
+			}),
+		).rejects.toMatchObject({ name: 'RetryAfterError' })
+		expect(
+			(mocks.capture.mock.calls[0]![0] as { idempotencyKey: string }[]).map(
+				(e) => e.idempotencyKey,
+			),
+		).toEqual(['owner:unsubscribe'])
+	})
+
+	it('holds a later fact listed in an earlier bulk chunk behind a stop listed last (time order across chunks)', async () => {
+		const fillers = Array.from({ length: 99 }, (_, i) =>
+			fact(`owner:filler-${i}`, 15, `contact-f${i}`),
+		)
+		mocks.deliverBatchOrThrow.mockImplementation(
+			async ({ events }: { events: { idempotencyKey: string }[] }) => {
+				if (events.some((e) => e.idempotencyKey === 'owner:purchase'))
+					throw drovrFailure(503)
+				return { accepted: events.length, rejected: 0 }
+			},
+		)
+		const step = createStep()
+		const receipt = await registeredBulk.handler({
+			events: [
+				{
+					data: {
+						source: 'kit-directory-ingest',
+						events: [
+							fact('owner:later', 20),
+							...fillers,
+							stopEvent('owner:purchase', 'purchase.recorded', 10),
+						],
+					},
+				},
+			],
+			step,
+			...LAST,
+		})
+		const sent = mocks.deliverBatchOrThrow.mock.calls.flatMap(([args]) =>
+			(args as { events: { idempotencyKey: string }[] }).events.map(
+				(e) => e.idempotencyKey,
+			),
+		)
+		expect(sent).not.toContain('owner:later')
+		expect(receipt).toMatchObject({ heldBehindStop: 1 })
+		// The chunk layout changed with the order: new step ids, so a run in
+		// flight across the deploy re-posts (drovr dedupes) instead of
+		// replaying a memoized chunk that now holds other events.
+		expect(
+			(step.run as ReturnType<typeof vi.fn>).mock.calls.map(([id]) => id),
+		).toContain('by-time:batch:org-aihero:0')
 	})
 
 	it('holds a later fact in a later chunk behind a stop an earlier chunk outboxed', async () => {

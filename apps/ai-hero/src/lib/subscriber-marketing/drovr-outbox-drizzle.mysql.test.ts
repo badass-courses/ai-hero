@@ -257,7 +257,13 @@ integration('drovr outbox store on MySQL (row 204)', () => {
 					status: 'rejected',
 					firstFailedAt: '2026-09-30T10:00:00.000Z',
 				}),
-				stop({ contactId: 'c2', eventType: 'contact.bounced', status: 'held' }),
+				// Held by a human: still a gate, but not the alert's oldest stop.
+				stop({
+					contactId: 'c2',
+					eventType: 'contact.bounced',
+					status: 'held',
+					firstFailedAt: '2026-09-30T09:00:00.000Z',
+				}),
 				stop({
 					contactId: 'c1',
 					eventType: 'contact.complained',
@@ -283,14 +289,83 @@ integration('drovr outbox store on MySQL (row 204)', () => {
 				'c2|contact.bounced|held',
 			])
 			expect(gates[0]?.occurredAt).toBe('2026-09-30T10:00:00.000Z')
+			// Each gate carries its row id: the replay tells two stops apart by it.
+			const [ids] = (await pool.query(
+				`SELECT id FROM AI_DrovrOutbox WHERE target = ? AND contactId IN ('c1', 'c2') AND eventType IN ('purchase.recorded', 'contact.unsubscribed', 'contact.bounced') AND status <> 'delivered'`,
+				[PROD],
+			)) as unknown as [{ id: string }[]]
+			expect(gates.map((g) => g.id).sort()).toEqual(ids.map((r) => r.id).sort())
 			expect((await store.depth(PROD)).oldestOpenStopFailedAt).toBe(
 				'2026-09-30T10:00:00.000Z',
 			)
+			// The statement the store really sends, EXPLAINed over a table of
+			// other contacts (an empty table makes any index look as good): it
+			// picks the contact index.
+			await store.insertIgnore(
+				Array.from({ length: 2_000 }, (_, i) =>
+					row({ contactId: `other-${i}`, eventType: 'purchase.recorded' }),
+				),
+			)
+			await pool.query('ANALYZE TABLE AI_DrovrOutbox')
+			const sent: { query: string; params: unknown[] }[] = []
+			const logged = createDrizzleDrovrOutboxStore(
+				drizzle(pool, {
+					schema: databaseSchema,
+					mode: 'default',
+					logger: {
+						logQuery: (query: string, params: unknown[]) =>
+							void sent.push({ query, params }),
+					},
+				}),
+			)
+			await logged.openGates({ target: PROD, contactIds: ['c1', 'c2'] })
+			expect(sent).toHaveLength(1)
 			const [plan] = (await pool.query(
-				`EXPLAIN SELECT id FROM AI_DrovrOutbox WHERE target = ? AND contactId IN (?, ?) AND status IN ('pending', 'held', 'rejected')`,
-				[PROD, 'c1', 'c2'],
-			)) as unknown as [{ possible_keys: string | null }[]]
-			expect(plan[0]?.possible_keys ?? '').toContain('DrovrOutbox_contact_idx')
+				`EXPLAIN ${sent[0]!.query}`,
+				sent[0]!.params,
+			)) as unknown as [{ key: string | null }[]]
+			expect(plan[0]?.key).toBe('DrovrOutbox_contact_idx')
+		})
+
+		it('settles only pending rows of this target by dedupe key: a retry landed (row 204b)', async () => {
+			const pending = row({ eventType: 'purchase.recorded' })
+			const refused = row({
+				eventType: 'purchase.recorded',
+				status: 'rejected',
+			})
+			const elsewhere = row({ eventType: 'purchase.recorded', target: PREVIEW })
+			await store.insertIgnore([pending, refused, elsewhere])
+			const settled = await store.settlePending({
+				target: PROD,
+				dedupeKeys: [pending.dedupeKey, refused.dedupeKey, elsewhere.dedupeKey],
+				at: '2026-09-30T12:00:00.000Z',
+				note: 'delivered by an Inngest retry',
+			})
+			expect(settled).toBe(1)
+			const [rows] = (await pool.query(
+				`SELECT id, status, lastError FROM AI_DrovrOutbox ORDER BY id`,
+			)) as unknown as [{ id: string; status: string; lastError: string }[]]
+			expect(Object.fromEntries(rows.map((r) => [r.id, r.status]))).toEqual({
+				[pending.id]: 'delivered',
+				[refused.id]: 'rejected',
+				[elsewhere.id]: 'pending',
+			})
+			expect(rows.find((r) => r.id === pending.id)?.lastError).toBe(
+				'delivered by an Inngest retry',
+			)
+			expect(
+				await store.settlePending({
+					target: PROD,
+					dedupeKeys: [],
+					at: '2026-09-30T12:00:00.000Z',
+					note: null,
+				}),
+			).toBe(0)
+			const [plan] = (await pool.query(
+				`EXPLAIN UPDATE AI_DrovrOutbox SET status = 'delivered' WHERE dedupeKey IN (?) AND target = ? AND status = 'pending'`,
+				[pending.dedupeKey, PROD],
+			)) as unknown as [{ key: string | null }[]]
+			expect(plan[0]?.key).toBe('DrovrOutbox_dedupe_uq')
 		})
 
 		it("takes only this target's pending rows that are due", async () => {

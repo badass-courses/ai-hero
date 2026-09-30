@@ -104,6 +104,15 @@ function fromStored(row: StoredRow): DrovrOutboxRow {
  * deploy request is applied. The due read rides DrovrOutbox_due_idx, the
  * purge DrovrOutbox_delivered_idx.
  */
+/** Rows a write touched, from either driver's result shape. */
+const affectedRows = (result: unknown): number => {
+	const affected = Array.isArray(result)
+		? (result[0] as { affectedRows?: number } | undefined)?.affectedRows
+		: ((result as { rowsAffected?: number; affectedRows?: number })
+				?.rowsAffected ?? (result as { affectedRows?: number })?.affectedRows)
+	return Number(affected ?? 0)
+}
+
 export function createDrizzleDrovrOutboxStore(
 	// The same shape the capture repository takes; drizzle's MySqlDatabase
 	// generics are unwieldy here.
@@ -162,6 +171,7 @@ export function createDrizzleDrovrOutboxStore(
 				if (contactIds.length === 0) return []
 				const rows = (await db
 					.select({
+						id: drovrOutbox.id,
 						contactId: drovrOutbox.contactId,
 						journeyId: drovrOutbox.journeyId,
 						endpoint: drovrOutbox.endpoint,
@@ -194,6 +204,7 @@ export function createDrizzleDrovrOutboxStore(
 							),
 						),
 					)) as {
+					id: string
 					contactId: string
 					journeyId: string
 					endpoint: string
@@ -204,6 +215,7 @@ export function createDrizzleDrovrOutboxStore(
 				}[]
 				return rows.map(
 					(row): DrovrOutboxOpenGate => ({
+						id: row.id,
 						contactId: row.contactId,
 						journeyId: row.journeyId,
 						endpoint: row.endpoint as DrovrOutboxOpenGate['endpoint'],
@@ -254,13 +266,15 @@ export function createDrizzleDrovrOutboxStore(
 				}[]
 				const of = (status: string) => rows.find((row) => row.status === status)
 				const pending = of('pending')
+				// Pending and rejected only: a stop a human held was a decision,
+				// already counted in `held`, and must not page every 5 minutes.
 				const [stop] = (await db
 					.select({ oldest: min(drovrOutbox.firstFailedAt) })
 					.from(drovrOutbox)
 					.where(
 						and(
 							eq(drovrOutbox.target, target),
-							inArray(drovrOutbox.status, ['pending', 'held', 'rejected']),
+							inArray(drovrOutbox.status, ['pending', 'rejected']),
 							inArray(drovrOutbox.eventType, [
 								...DROVR_OUTBOX_STOP_EVENT_TYPES,
 							]),
@@ -274,6 +288,27 @@ export function createDrizzleDrovrOutboxStore(
 					oldestOpenStopFailedAt: stop?.oldest ? isoOf(stop.oldest) : null,
 				}
 			}),
+		// Rides DrovrOutbox_dedupe_uq.
+		settlePending: ({ target, dedupeKeys, at, note }) =>
+			guarded(async () => {
+				if (dedupeKeys.length === 0) return 0
+				const result = await db
+					.update(drovrOutbox)
+					.set({
+						status: 'delivered',
+						deliveredAt: toSqlTimestamp(at),
+						lastAttemptAt: toSqlTimestamp(at),
+						lastError: note,
+					})
+					.where(
+						and(
+							inArray(drovrOutbox.dedupeKey, [...dedupeKeys]),
+							eq(drovrOutbox.target, target),
+							eq(drovrOutbox.status, 'pending'),
+						),
+					)
+				return affectedRows(result)
+			}),
 		deleteDeliveredBefore: (before, limit) =>
 			guarded(async () => {
 				const result = await db
@@ -285,12 +320,7 @@ export function createDrizzleDrovrOutboxStore(
 						),
 					)
 					.limit(limit)
-				const affected = Array.isArray(result)
-					? (result[0] as { affectedRows?: number } | undefined)?.affectedRows
-					: ((result as { rowsAffected?: number; affectedRows?: number })
-							?.rowsAffected ??
-						(result as { affectedRows?: number })?.affectedRows)
-				return Number(affected ?? 0)
+				return affectedRows(result)
 			}),
 	}
 }

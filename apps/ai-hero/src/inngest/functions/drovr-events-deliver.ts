@@ -35,6 +35,7 @@ import { parseDrovrProfileSyncConfig } from '@/lib/subscriber-marketing/drovr-co
 import { resolveOwnedContactIds } from '@/lib/subscriber-marketing/drovr-ownership-live'
 import {
 	DROVR_SEND_RETRIES,
+	isOutboxBirth,
 	isOutboxStop,
 	openStopBefore,
 	outboxEntryForEvent,
@@ -43,11 +44,13 @@ import {
 import {
 	captureDrovrOutboxLive,
 	openDrovrOutboxStopsLive,
+	settleDrovrOutboxLive,
 	type DrovrOutboxOpenStopsFn,
 } from '@/lib/subscriber-marketing/drovr-outbox-live'
 import {
 	sendOrOutbox,
 	type DrovrOutboxCaptureFn,
+	type DrovrOutboxSettleFn,
 	type DrovrSendAttempt,
 } from '@/lib/subscriber-marketing/drovr-outbox-step'
 import { withoutSyntheticContacts } from '@/lib/synthetic-principal'
@@ -88,6 +91,8 @@ export type DeliverContext = {
 	capture: DrovrOutboxCaptureFn
 	/** The outbox's owed stops for these contacts (row 204b). */
 	openStops: DrovrOutboxOpenStopsFn
+	/** Marks stops captured on a first failure delivered once a retry lands. */
+	settle: DrovrOutboxSettleFn
 }
 
 type Outboxed = { outboxed: number }
@@ -214,6 +219,57 @@ const stopMarkOf = (event: DrovrShadowEvent): StopMark => ({
 	occurredAt: event.occurredAt,
 })
 
+const isStopEvent = (event: DrovrShadowEvent) =>
+	isOutboxStop({ eventType: event.type })
+
+/**
+ * Row 204b: deliver in the order things happened, so a stop that fails is
+ * never behind a later fact that already posted. On a shared instant a
+ * birth goes first (drovr takes nothing for a contact it never saw born),
+ * then stops, then facts. Stable, so a retry sees the same order. An
+ * instant that does not parse fails closed: such a stop goes first, so it
+ * holds everything after it if it fails, and any other event goes last,
+ * behind every stop of the batch.
+ */
+export function inDeliveryOrder(
+	events: readonly DrovrShadowEvent[],
+): DrovrShadowEvent[] {
+	const instant = (event: DrovrShadowEvent) => {
+		const at = Date.parse(event.occurredAt)
+		if (!Number.isNaN(at)) return at
+		return isStopEvent(event)
+			? Number.NEGATIVE_INFINITY
+			: Number.POSITIVE_INFINITY
+	}
+	const rank = (event: DrovrShadowEvent) =>
+		isOutboxBirth({ endpoint: 'events', eventType: event.type })
+			? 0
+			: isStopEvent(event)
+				? 1
+				: 2
+	return events
+		.map((event, index) => ({ event, index }))
+		.sort(
+			(a, b) =>
+				instant(a.event) - instant(b.event) ||
+				rank(a.event) - rank(b.event) ||
+				a.index - b.index,
+		)
+		.map(({ event }) => event)
+}
+
+/** The stops among these events, for their capture on a first failure. */
+const earlyStops = (
+	events: readonly DrovrShadowEvent[],
+	context: DeliverContext,
+) => ({
+	stops: () =>
+		events
+			.filter(isStopEvent)
+			.map((event) => outboxEntryForEvent(event, context.lane)),
+	settle: context.settle,
+})
+
 const isBehind = (
 	event: DrovrShadowEvent,
 	stops: ReadonlyMap<string, StopMark[]>,
@@ -321,7 +377,7 @@ const deliverBatch = async (
 	const shadowFiltered = await discardShadowTenantEvents(fanOutEvents, 'live')
 	const { discarded } = shadowFiltered
 	const gate = await holdBehindOpenStops(shadowFiltered.events, step, context)
-	const events = gate.events
+	const events = inDeliveryOrder(gate.events)
 
 	let accepted = 0
 	let rejected = 0
@@ -368,11 +424,12 @@ const deliverBatch = async (
 				unsent: () => [outboxEntryForEvent(drovrEvent, context.lane)],
 				capture: context.capture,
 				outboxed: () => ({ status: 'outboxed' }),
+				early: earlyStops([drovrEvent], context),
 			}),
 		)
 		if (outcome.status === 'outboxed') {
 			outboxed += 1
-			if (isOutboxStop({ eventType: drovrEvent.type })) {
+			if (isStopEvent(drovrEvent)) {
 				const list = outboxedStops.get(drovrEvent.contactId) ?? []
 				list.push(stopMarkOf(drovrEvent))
 				outboxedStops.set(drovrEvent.contactId, list)
@@ -428,7 +485,10 @@ const deliverBulk = async (
 	const shadowFiltered = await discardShadowTenantEvents(fanOutEvents, 'bulk')
 	const { discarded } = shadowFiltered
 	const gate = await holdBehindOpenStops(shadowFiltered.events, step, context)
-	const events = gate.events
+	// In time order, so chunks go out oldest first. After the shadow tenant
+	// is discarded only the authority tenant is left, so that order is the
+	// whole batch's.
+	const events = inDeliveryOrder(gate.events)
 
 	// One key per tenant, so one batch stream per tenant.
 	const byTenant = new Map<DrovrShadowEvent['tenantId'], DrovrShadowEvent[]>()
@@ -471,7 +531,12 @@ const deliverBulk = async (
 			if (chunk.length === 0) continue
 			// A chunk that runs out of retries goes to the outbox whole:
 			// drovr dedupes the items that did land when the replay re-posts.
-			const outcome = (await step.run(batchStepId(tenantId, chunkIndex), () =>
+			// `by-time:` since the chunks follow time order (row 204b): a run
+			// in flight across that deploy re-posts its chunks, which drovr
+			// dedupes, instead of replaying a memoized chunk that now holds
+			// other events.
+			const stepId = `by-time:${batchStepId(tenantId, chunkIndex)}`
+			const outcome = (await step.run(stepId, () =>
 				sendOrOutbox<DrovrBatchOutcome & Partial<Outboxed>>({
 					attempt: context.attempt,
 					send: () =>
@@ -484,6 +549,7 @@ const deliverBulk = async (
 						chunk.map((event) => outboxEntryForEvent(event, context.lane)),
 					capture: context.capture,
 					outboxed: (count) => ({ accepted: 0, rejected: 0, outboxed: count }),
+					early: earlyStops(chunk, context),
 				}),
 			)) as DrovrBatchOutcome & Partial<Outboxed>
 			accepted += outcome.accepted
@@ -492,7 +558,7 @@ const deliverBulk = async (
 			options.refused?.push(...(outcome.deferred ?? []))
 			if (outcome.outboxed)
 				for (const event of chunk)
-					if (isOutboxStop({ eventType: event.type })) {
+					if (isStopEvent(event)) {
 						const list = outboxedStops.get(event.contactId) ?? []
 						list.push(stopMarkOf(event))
 						outboxedStops.set(event.contactId, list)
@@ -544,6 +610,7 @@ export const drovrEventsDeliver = inngest.createFunction(
 			lane: 'live',
 			capture: captureDrovrOutboxLive,
 			openStops: openDrovrOutboxStopsLive,
+			settle: settleDrovrOutboxLive,
 		})
 	},
 )
@@ -640,6 +707,7 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 			lane: 'bulk',
 			capture: captureDrovrOutboxLive,
 			openStops: openDrovrOutboxStopsLive,
+			settle: settleDrovrOutboxLive,
 		}
 		const isBackfill = (bulkEvent: (typeof events)[number]) =>
 			bulkEvent.data.source === 'contact-sync-backfill'
