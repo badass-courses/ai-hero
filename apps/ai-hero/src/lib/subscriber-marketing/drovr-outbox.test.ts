@@ -26,7 +26,10 @@ import {
 	type DrovrOutboxStore,
 } from './drovr-outbox'
 import { postDrovrOutboxRow } from './drovr-outbox-replay-post'
-import type { DrovrShadowEvent } from './drovr-shadow-emitter'
+import {
+	deliverDrovrShadowEvent,
+	type DrovrShadowEvent,
+} from './drovr-shadow-emitter'
 
 const PROD = 'production'
 const PREVIEW = 'preview:worker/x'
@@ -605,6 +608,87 @@ describe('runDrovrOutboxReplay', () => {
 		expect(receipt.alert).toContain('held')
 		expect(receipt.depth.held).toBe(1)
 		expect(rows.get(stale.id)?.status).toBe('held')
+	})
+
+	it('row 201g composes with row 204: a birth failing for over a day is held, never clamped and sent; a younger one posts clamped', async () => {
+		const posted: DrovrShadowEvent[] = []
+		const post = (row: DrovrOutboxRow) =>
+			postDrovrOutboxRow(row, {
+				ingestUrl: 'https://drovr.test/events',
+				apiKeyFor: () => 'k',
+				fanOut: async (events) => [...events],
+				isNeverBornOwnerStop: () => false,
+				deliver: (args) =>
+					deliverDrovrShadowEvent({
+						...args,
+						now: () => NOW.getTime(),
+						info: vi.fn(),
+						fetcher: vi.fn(async (_url, init) => {
+							posted.push(JSON.parse(String(init?.body)))
+							return new Response('{}', { status: 202 })
+						}),
+					}),
+			})
+		const stale = row({
+			body: event('stale-birth', {
+				type: 'contact.created',
+				occurredAt: minutesAgo(25 * 60),
+			}),
+			firstFailedAt: minutesAgo(24 * 60 + 1),
+		})
+		const young = row({
+			body: event('young-birth', {
+				type: 'contact.created',
+				contactId: 'contact-2',
+				occurredAt: minutesAgo(23 * 60),
+			}),
+			firstFailedAt: minutesAgo(23 * 60),
+		})
+		const { store, rows } = memoryStore([stale, young])
+		await replay(store, post).run
+		expect(rows.get(stale.id)?.status).toBe('held')
+		expect(posted.map((e) => [e.idempotencyKey, e.occurredAt])).toEqual([
+			['young-birth', minutesAgo(5)],
+		])
+	})
+
+	it('holds an evergreen start failing for over a day like any birth, and gates its journey behind it (row 201g, the hawk)', async () => {
+		const start = row({
+			body: event('evergreen-start', {
+				type: 'course.sequence-exhausted',
+				journeyId: 'crash-course-evergreen-offer',
+				occurredAt: minutesAgo(25 * 60),
+			}),
+			firstFailedAt: minutesAgo(24 * 60 + 1),
+		})
+		const later = row({
+			body: event('evergreen-coupon', {
+				type: 'coupon.issued',
+				journeyId: 'crash-course-evergreen-offer',
+				occurredAt: minutesAgo(20),
+			}),
+		})
+		const skills = row({
+			body: event('skills-exhausted', {
+				type: 'course.sequence-exhausted',
+				contactId: 'contact-2',
+				occurredAt: minutesAgo(25 * 60),
+			}),
+			firstFailedAt: minutesAgo(3 * 24 * 60),
+		})
+		const { store, rows } = memoryStore([start, later, skills])
+		const post = vi.fn(async (_row: DrovrOutboxRow) => ({
+			kind: 'delivered' as const,
+		}))
+		const receipt = await replay(store, post).run
+		expect(rows.get(start.id)?.status).toBe('held')
+		expect(receipt.held).toBe(1)
+		expect(receipt.skippedBehindBirth).toBe(1)
+		expect(rows.get(later.id)?.status).toBe('pending')
+		// The skills course's exhaustion is a fact: late, it is still right.
+		expect(post.mock.calls.map(([r]) => r.idempotencyKey)).toEqual([
+			'skills-exhausted',
+		])
 	})
 
 	it('holds by how long the birth has failed, not by when it happened', async () => {

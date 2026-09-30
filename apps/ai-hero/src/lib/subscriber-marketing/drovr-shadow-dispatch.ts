@@ -1,5 +1,6 @@
 import { deliverEventNameFor } from '@/inngest/events/drovr'
 import type {
+	DrovrDeliverySource,
 	DrovrEventsDeliver,
 	DrovrEventsDeliverBulk,
 } from '@/inngest/events/drovr'
@@ -198,10 +199,12 @@ export async function dispatchDrovrShadowFact(
 	// The source keys the delivery sub-queue (#257) and picks the function:
 	// a bulk producer that creates contacts names itself and its batches go
 	// to the bulk function's own queue, so live signups never wait on them.
-	const source =
+	const source: DrovrDeliverySource =
 		fact.kind === 'contact-created' && fact.deliverySource !== undefined
 			? fact.deliverySource
-			: fact.kind
+			: fact.kind === 'course-completed' && fact.backfill
+				? 'evergreen-pitch-backfill'
+				: fact.kind
 	const payload = {
 		name: deliverEventNameFor(source),
 		data: { events, source },

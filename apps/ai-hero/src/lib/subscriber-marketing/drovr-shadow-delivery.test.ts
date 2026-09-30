@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
 	batchIngestUrl,
@@ -23,8 +23,23 @@ const event: DrovrShadowEvent = {
 
 const config = { ingestUrl: 'https://drovr.test/events', apiKey: 'test-key' }
 
+/**
+ * The event is a value-path birth, which the send clamps to 5 minutes before
+ * now (row 201g): pin the clock to its instant so the posted body is the
+ * event as built.
+ */
+const atTheBirth = () => {
+	vi.useFakeTimers({ toFake: ['Date'] })
+	vi.setSystemTime(new Date(event.occurredAt))
+}
+
+afterEach(() => {
+	vi.useRealTimers()
+})
+
 describe('drovr durable delivery step', () => {
 	it('returns accepted on 200 and posts the event with bearer auth', async () => {
+		atTheBirth()
 		const fetcher = vi
 			.fn()
 			.mockResolvedValue(
@@ -164,6 +179,7 @@ describe('drovr batch delivery step', () => {
 		})
 
 	it('posts the chunk to /events/batch and returns the counts', async () => {
+		atTheBirth()
 		const fetcher = vi.fn().mockResolvedValue(
 			new Response(
 				batchBody([

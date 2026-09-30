@@ -67,6 +67,8 @@ describe('drovr-signup-deliver (owns the retry of POST /signups)', () => {
 			retries: 8,
 		})
 		expect(fn.trigger).toEqual({ event: 'drovr/signup.requested' })
+		// A DOI signup never waits behind the bulk lane's throttle (201g).
+		expect(fn.config).not.toHaveProperty('throttle')
 	})
 
 	it('records the signup and logs drovr answer, without the address', async () => {

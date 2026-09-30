@@ -225,7 +225,11 @@ const isStopEvent = (event: DrovrShadowEvent) =>
 	isOutboxStop({ eventType: event.type })
 
 const isBirthEvent = (event: DrovrShadowEvent) =>
-	isOutboxBirth({ endpoint: 'events', eventType: event.type })
+	isOutboxBirth({
+		endpoint: 'events',
+		eventType: event.type,
+		journeyId: event.journeyId,
+	})
 
 /**
  * Row 204b: deliver in the order things happened, so a stop that fails is
@@ -712,6 +716,18 @@ const combineReceipts = (
  */
 export const BULK_DELIVERY_BATCH = { maxSize: 100, timeout: '10s' } as const
 
+/**
+ * Row 201g: the bulk lane is the paced path for births (the hawk,
+ * 2026-09-30). Inngest's throttle counts run starts, not events, and a run
+ * folds up to BULK_DELIVERY_BATCH.maxSize bulk events, so 7 runs a minute
+ * is at most 700 bulk events a minute (under the 750 births/min bulk cap).
+ * Run starts are spaced evenly through the minute. A producer that puts one
+ * birth in each bulk event (the evergreen pitch backfill) is paced at 700
+ * births a minute; the Kit ingest and the contact-sync backfill carry
+ * directory events, which cost the birth minute but start no drips.
+ */
+export const BULK_DELIVERY_THROTTLE = { limit: 7, period: '1m' } as const
+
 export const drovrEventsDeliverBulk = inngest.createFunction(
 	{
 		id: 'drovr-events-deliver-bulk-v1',
@@ -719,6 +735,7 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 		retries: DROVR_SEND_RETRIES,
 		concurrency: [{ limit: 4 }],
 		batchEvents: BULK_DELIVERY_BATCH,
+		throttle: BULK_DELIVERY_THROTTLE,
 	},
 	{ event: DROVR_EVENTS_DELIVER_BULK_EVENT },
 	async ({ events, step, attempt, maxAttempts }) => {

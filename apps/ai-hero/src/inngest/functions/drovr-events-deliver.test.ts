@@ -65,10 +65,36 @@ import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync
 import type { DeferredDrovrEvent } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
 
 import {
+	deliverEventNameFor,
+	type DrovrDeliverySource,
+} from '@/inngest/events/drovr'
+
+import {
 	drovrEventsDeliver,
 	drovrEventsDeliverBulk,
 	outboxFailedRun,
 } from './drovr-events-deliver'
+
+/** Every delivery source; the type check below fails if one is missing. */
+const DELIVERY_SOURCES = [
+	'contact-created',
+	'contact-event',
+	'kit-webhook',
+	'side-effect-intent-completed',
+	'side-effect-intent-failed',
+	'course-completed',
+	'course-exhausted',
+	'newsletter-veteran',
+	'kit-directory-ingest',
+	'contact-profile-sync',
+	'contact-sync-backfill',
+	'evergreen-pitch-backfill',
+] as const satisfies readonly DrovrDeliverySource[]
+const everySourceListed: [
+	Exclude<DrovrDeliverySource, (typeof DELIVERY_SOURCES)[number]>,
+] extends [never]
+	? true
+	: false = true
 
 type Step = {
 	run: (id: string, operation: () => unknown) => Promise<unknown>
@@ -81,6 +107,7 @@ type Registered = {
 		onFailure?: (input: Record<string, unknown>) => Promise<unknown>
 		concurrency: Array<{ key?: string; limit: number }>
 		batchEvents?: { maxSize: number; timeout: string }
+		throttle?: { limit: number; period: string }
 	}
 	trigger: { event: string }
 	handler: (input: Record<string, unknown>) => Promise<unknown>
@@ -124,6 +151,34 @@ beforeEach(() => {
 })
 
 describe('drovr events deliver registration', () => {
+	it('never puts a live single-contact path behind the bulk throttle: only the three bulk sources reach the throttled function (the hawk, 201g)', () => {
+		expect(everySourceListed).toBe(true)
+		const bulk = DELIVERY_SOURCES.filter(
+			(source) => deliverEventNameFor(source) === 'drovr/events.deliver.bulk',
+		)
+		expect(bulk).toEqual([
+			'kit-directory-ingest',
+			'contact-sync-backfill',
+			'evergreen-pitch-backfill',
+		])
+		// Signups, Kit webhooks (a DOI confirm, an unsubscribe), captured
+		// purchases and every other live fact go to the live function, which
+		// has its own queue and no throttle, so a running backfill of any
+		// size waits alone. Inngest throttles per function.
+		expect(registered.trigger).toEqual({ event: 'drovr/events.deliver' })
+		expect(registered.config.throttle).toBeUndefined()
+	})
+
+	it('paces the bulk lane at 7 runs a minute of up to 100 events, 700 a minute, and never the live lane (row 201g)', () => {
+		expect(registeredBulk.config.throttle).toEqual({ limit: 7, period: '1m' })
+		const perMinute =
+			registeredBulk.config.throttle!.limit *
+			registeredBulk.config.batchEvents!.maxSize
+		expect(perMinute).toBe(700)
+		expect(perMinute).toBeLessThanOrEqual(750)
+		expect(registered.config.throttle).toBeUndefined()
+	})
+
 	it('keeps live and bulk work on their existing isolated queues', () => {
 		expect(registered.config).toMatchObject({
 			id: 'drovr-events-deliver-v1',

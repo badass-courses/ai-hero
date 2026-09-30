@@ -246,6 +246,30 @@ integration('drovr outbox store on MySQL (row 204)', () => {
 			)
 		})
 
+		it("reads a pending evergreen start as a birth, and no other journey's exhaustion (row 201g)", async () => {
+			const start = row({
+				contactId: 'e1',
+				eventType: 'course.sequence-exhausted',
+				journeyId: 'crash-course-evergreen-offer',
+			})
+			await store.insertIgnore([
+				start,
+				// The skills course's exhaustion is a fact there.
+				row({
+					contactId: 'e2',
+					eventType: 'course.sequence-exhausted',
+					journeyId: 'value-path-skills-course',
+				}),
+			])
+			const gates = await store.openGates({
+				target: PROD,
+				contactIds: ['e1', 'e2'],
+			})
+			expect(
+				gates.map((g) => `${g.contactId}|${g.journeyId}|${g.eventType}`),
+			).toEqual(['e1|crash-course-evergreen-offer|course.sequence-exhausted'])
+		})
+
 		it("reads this target's open stops too, a refused one included, over the contact index (row 204b)", async () => {
 			const stop = (overrides: Partial<DrovrOutboxRow>) =>
 				row({ eventType: 'purchase.recorded', ...overrides })

@@ -539,10 +539,27 @@ export type DrovrOutboxReplayReceipt = {
 	alert: string[]
 }
 
-/** A birth: a contact.created event, or a signup (its directory birth). */
+/**
+ * The evergreen offer's start: its `course.sequence-exhausted` births the
+ * journey, so it is a birth here too (row 201g, the hawk 2026-09-30): held
+ * after a day like any birth, and it gates its journey's later rows.
+ */
+export const DROVR_OUTBOX_EVERGREEN_START = {
+	eventType: 'course.sequence-exhausted',
+	journeyId: 'crash-course-evergreen-offer',
+} as const
+
+/**
+ * A birth: a contact.created event, a signup (its directory birth), or the
+ * evergreen offer's start.
+ */
 export const isOutboxBirth = (
-	row: Pick<DrovrOutboxRow, 'endpoint' | 'eventType'>,
-) => row.endpoint === 'signups' || row.eventType === 'contact.created'
+	row: Pick<DrovrOutboxRow, 'endpoint' | 'eventType' | 'journeyId'>,
+) =>
+	row.endpoint === 'signups' ||
+	row.eventType === 'contact.created' ||
+	(row.eventType === DROVR_OUTBOX_EVERGREEN_START.eventType &&
+		row.journeyId === DROVR_OUTBOX_EVERGREEN_START.journeyId)
 
 /**
  * The stops (row 204b): once one is owed, nothing the contact did after it

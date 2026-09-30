@@ -3,6 +3,7 @@ import { withoutSyntheticContacts } from '@/lib/synthetic-principal'
 import { log } from '@/server/logger'
 
 import { parseIanaTimeZone } from './evergreen-offer-journey/primitives'
+import { clampBirths, logClampedBirths } from './drovr-birth-clamp'
 import { drovrFailureReason } from './drovr-failure'
 import { parseRetryAfterMs } from './drovr-retry-after'
 import type { ContactEventRecord, SideEffectIntent } from './types'
@@ -1105,8 +1106,14 @@ export async function deliverDrovrShadowEvent(args: {
 	config: DrovrDeliveryConfig
 	fetcher?: typeof fetch
 	timeoutMs?: number
+	now?: () => number
+	info?: typeof log.info
 }): Promise<DrovrDeliveryOutcome> {
 	const fetcher = args.fetcher ?? fetch
+	// Row 201g: a sending-journey birth never reaches drovr dated more than
+	// 5 minutes before its send.
+	const clamped = clampBirths([args.event], (args.now ?? Date.now)())
+	await logClampedBirths(clamped, 'single', args.info)
 	const controller = new AbortController()
 	const timeout = setTimeout(() => controller.abort(), args.timeoutMs ?? 10_000)
 	try {
@@ -1116,7 +1123,7 @@ export async function deliverDrovrShadowEvent(args: {
 				authorization: `Bearer ${args.config.apiKey}`,
 				'content-type': 'application/json',
 			},
-			body: JSON.stringify(args.event),
+			body: JSON.stringify(clamped.events[0]),
 			signal: controller.signal,
 		})
 		if (response.status === 200 || response.status === 202) {

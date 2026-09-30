@@ -139,6 +139,30 @@ describe('drovr shadow dispatch', () => {
 		)
 	})
 
+	it('sends the evergreen pitch backfill down the paced bulk lane, and a live completion down the live one (row 201g)', async () => {
+		const send = vi.fn().mockResolvedValue({ ids: ['evt-1'] })
+		await dispatchDrovrShadowFact(courseCompleted, {
+			send,
+			evergreenEnabled: false,
+		})
+		await dispatchDrovrShadowFact(
+			{
+				...courseCompleted,
+				backfill: {
+					occurredAt: '2026-09-30T06:00:00.000Z',
+					idempotencyKey: 'aihero:backfill:contact-1:x:2026-09-30',
+				},
+			},
+			{ send, evergreenEnabled: false },
+		)
+		expect(
+			send.mock.calls.map(([payload]) => [payload.name, payload.data.source]),
+		).toEqual([
+			['drovr/events.deliver', 'course-completed'],
+			['drovr/events.deliver.bulk', 'evergreen-pitch-backfill'],
+		])
+	})
+
 	it('posts the exact durable event through Inngest HTTP', async () => {
 		const fetchImpl = vi
 			.fn()
