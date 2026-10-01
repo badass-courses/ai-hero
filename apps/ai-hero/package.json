@@ -50,6 +50,7 @@
 		"billing-admins:backfill": "tsx -r dotenv/config src/scripts/billing-admins-backfill.ts",
 		"billing-admins:synthetic-proof": "tsx -r dotenv/config src/scripts/billing-admins-synthetic-proof.ts",
 		"team-purchases:repair-links": "tsx -r dotenv/config src/scripts/team-purchase-link-repair.ts",
+		"team-purchases:repair-memberless": "tsx -r dotenv/config src/scripts/team-purchase-memberless-repair.ts",
 		"kit:fields:check": "tsx -r dotenv/config src/scripts/kit-custom-fields-check.ts",
 		"evergreen:deadline-fields:plan": "tsx -r dotenv/config src/scripts/evergreen-deadline-fields-plan.ts",
 		"checkout:recover": "tsx -r dotenv/config src/scripts/checkout-recovery.ts",

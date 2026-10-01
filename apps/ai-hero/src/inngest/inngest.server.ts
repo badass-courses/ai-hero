@@ -1,4 +1,7 @@
-import { emailProvider } from '@/coursebuilder/email-provider'
+import {
+	emailProvider,
+	magicLinkIdentity as provisionedIdentity,
+} from '@/coursebuilder/email-provider'
 import { slackProvider } from '@/coursebuilder/slack-provider'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { courseBuilderAdapter } from '@/db'
@@ -302,8 +305,12 @@ export type Events = {
 const callbackBase =
 	env.NODE_ENV === 'production' ? env.UPLOADTHING_URL : env.NEXT_PUBLIC_URL
 
+const commerceIdentity: typeof courseBuilderAdapter = provisionedIdentity
+
 const middleware = createInngestMiddleware({
-	db: courseBuilderAdapter,
+	// Checkout and invoice handlers mint users outside Auth.js. Use the same
+	// lazy app identity boundary as magic links, not the bare database adapter.
+	db: commerceIdentity,
 	siteRootUrl: env.NEXT_PUBLIC_URL,
 	mediaUploadProvider: new UTApi(),
 	openaiProvider: OpenAIProvider({
