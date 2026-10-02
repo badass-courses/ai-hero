@@ -5,6 +5,11 @@ import {
 	veteranNewsletterBirth,
 	type NewsletterVeteransSend,
 } from './newsletter-veterans'
+import {
+	DROVR_AUTHORITY_TENANT_ID,
+	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+	type DrovrShadowEvent,
+} from './drovr-shadow-emitter'
 import { DROVR_EVENTS_DELIVER_EVENT } from '@/inngest/events/drovr'
 import {
 	readOldSequenceMembership,
@@ -106,11 +111,23 @@ export async function replayNewsletterExitReceipt(args: {
 					id: `newsletter-exit-replay:${args.contactId}:${args.receiptId}`,
 				})
 			})
+		const isVeteran =
+			held.payloadSummary?.source === 'newsletter-veteran'
+		const birth: DrovrShadowEvent = isVeteran
+			? veteranNewsletterBirth(args.contactId, args.now)
+			: {
+					tenantId: DROVR_AUTHORITY_TENANT_ID,
+					contactId: args.contactId,
+					journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+					type: 'contact.created',
+					occurredAt: args.now,
+					idempotencyKey: `aihero:newsletter-signup:${args.contactId}`,
+				}
 		await send({
 			name: DROVR_EVENTS_DELIVER_EVENT,
 			data: {
-				events: [veteranNewsletterBirth(args.contactId, args.now)],
-				source: 'newsletter-veteran',
+				events: [birth],
+				source: isVeteran ? 'newsletter-veteran' : 'drovr-owned-signup',
 			},
 		})
 		await args.repository.createContactEvent({

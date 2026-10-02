@@ -334,6 +334,7 @@ describe('skills newsletter path entry', () => {
 			email: 'learner@example.com',
 			name: 'Learner',
 			occurredAt: '2026-08-07T12:00:00.000Z',
+			source: 'drovr-owned-signup',
 		})
 		expect(mocks.log.info).toHaveBeenCalledWith(
 			'subscriber_funnel.legacy_newsletter_enrollment_skipped',

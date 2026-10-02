@@ -254,6 +254,7 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 					email: event.data.email,
 					name: event.data.name,
 					occurredAt: event.data.subscribedAt,
+					source: 'drovr-owned-signup',
 				})
 			})
 			if (assignment?.eventType === 'newsletter.admission.held') {

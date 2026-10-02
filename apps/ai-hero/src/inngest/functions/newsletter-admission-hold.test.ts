@@ -56,7 +56,9 @@ import { skillsNewsletterPathEntry } from './skills-newsletter-path-entry'
 import { newsletterExitReplay } from './newsletter-exit-replay'
 import { ensureShadowNewsletterOwnershipAssignment } from '@/lib/subscriber-marketing/skills-newsletter-path-entry'
 
-afterEach(() => { vi.unstubAllEnvs() })
+afterEach(() => {
+	vi.unstubAllEnvs()
+})
 it('H1 the Inngest refused branch returns with a durable hold, using real assignment code', async () => {
 	vi.stubEnv('AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY', '')
 	const repository = new InMemorySubscriberMarketingRepository()
@@ -80,6 +82,21 @@ it('H1 the Inngest refused branch returns with a durable hold, using real assign
 			message: 'Signup',
 			privacyLevel: 'internal',
 		}),
+	})
+	repository.createContactEvent({
+		...normalizeContactEvent({
+			provider: 'kit',
+			externalId: '123',
+			email: data.email,
+			providerEventId: 'legacy-enrollment',
+			eventType: 'newsletter.old-sequence.enrollment-requested',
+			occurredAt: data.subscribedAt,
+			message: 'Legacy enrollment',
+			privacyLevel: 'internal',
+		}),
+		contactId: capture.contact.id,
+		providerIdentityId: capture.providerIdentity.id,
+		providerReference: 'kit:sequence:2625552',
 	})
 	mocks.enter.mockResolvedValue({
 		status: 'drovr-owned',

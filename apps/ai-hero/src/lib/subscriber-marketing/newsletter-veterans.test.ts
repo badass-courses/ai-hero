@@ -147,6 +147,7 @@ describe('assignNewsletterVeteransBatch', () => {
 			email: 'veteran@example.test',
 			name: 'Veteran',
 			occurredAt: NOW,
+			source: 'newsletter-veteran',
 		})
 		expect(send).toHaveBeenCalledWith({
 			name: 'drovr/events.deliver',

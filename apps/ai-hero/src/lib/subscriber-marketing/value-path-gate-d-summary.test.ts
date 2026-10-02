@@ -131,6 +131,7 @@ it('retains every status field across page boundaries and arbitrary event types'
 			contacts: 2,
 			intents: 6,
 			pending: 1,
+			heldForExit: 0,
 			completed: 1,
 			blocked: 1,
 			stale: 1,

@@ -15,7 +15,7 @@ import {
 import { SEND_SHADOW_NEWSLETTER_EMAIL_INTENT_TYPE } from './drovr-shadow-newsletter'
 import { dispatchDrovrShadowFactSafely } from './drovr-shadow-dispatch'
 import type { SideEffectIntent } from './types'
-import { createOldNewsletterExitGate, requiresOldNewsletterExit, type OldNewsletterExitGate } from './old-newsletter-exit'
+import { createOldNewsletterExitGate, OldNewsletterExitRefusedError, requiresOldNewsletterExit, type OldNewsletterExitGate } from './old-newsletter-exit'
 
 /**
  * The sequence sender: drains the evergreen and shadow-newsletter rows the
@@ -163,12 +163,13 @@ async function sendOne(input: {
 		})
 		try {
 			if (gated && row.type === SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE && !ownedHandoff) {
-				throw new Error('newsletter-admission-not-yet-assigned')
+				throw new OldNewsletterExitRefusedError('newsletter-admission-not-yet-assigned')
 			}
 			if (gated) await (args.oldNewsletterExit ?? createOldNewsletterExitGate({ repository: args.repository }))({
 				contactId: contact.id, email: contact.email,
 			})
-		} catch {
+		} catch (cause) {
+			if (!(cause instanceof OldNewsletterExitRefusedError) || cause.reason === 'membership-or-exit-unavailable') throw cause
 			// Separate state: held readers cannot occupy the active queue's LIMIT.
 			// Only a persisted exit receipt can re-arm them; no send attempts spent.
 			const error = 'old-newsletter-exit-unconfirmed'

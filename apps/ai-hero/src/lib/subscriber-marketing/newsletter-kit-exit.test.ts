@@ -287,7 +287,7 @@ describe('local membership proof and exit port', () => {
 		).toBe('present')
 	})
 
-	it('refuses failed local reads and failed exit requests retryably', async () => {
+	it('distinguishes retryable local read failure from escaping tag transport failure', async () => {
 		const { repository, admission } = await reader()
 		const gate = createOldNewsletterExitGate({
 			repository,
@@ -295,7 +295,7 @@ describe('local membership proof and exit port', () => {
 				throw new Error('provider failed')
 			},
 		})
-		await expect(gate(admission)).rejects.toMatchObject({ retryable: true })
+		await expect(gate(admission)).rejects.toThrow('provider failed')
 		vi.spyOn(repository, 'findContactEventsByType').mockImplementation(() => {
 			throw new Error('db down')
 		})

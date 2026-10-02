@@ -1,6 +1,9 @@
 import type { CaptureMarketingRepository } from './capture-contact-event'
 import type { ContactEventRecord } from './types'
 import { normalizeContactEvent } from './normalize-contact-event'
+import { parseNewsletterExitFlag } from './newsletter-exit-flags.mjs'
+
+export const OLD_NEWSLETTER_ABSENT = 'newsletter.old-sequence.absent'
 
 export const OLD_NEWSLETTER_ENROLLMENT_REQUESTED =
 	'newsletter.old-sequence.enrollment-requested'
@@ -34,7 +37,9 @@ export async function requiresOldNewsletterExit(args: {
 			),
 		) ||
 		(args.existingReader &&
-			process.env.AIH_SHADOW_NEWSLETTER_EXISTING_EXIT_GATE_ENABLED === 'true')
+			parseNewsletterExitFlag(
+				process.env.AIH_SHADOW_NEWSLETTER_EXISTING_EXIT_GATE_ENABLED,
+			))
 	)
 }
 
@@ -71,7 +76,11 @@ export async function veteranCohortProtection(
 }
 
 export type OldNewsletterReader = { contactId: string; email: string }
-export type OldNewsletterMembership = 'present' | 'exited' | 'unknown'
+export type OldNewsletterMembership =
+	| 'present'
+	| 'exited'
+	| 'absent'
+	| 'unknown'
 export type OldNewsletterExitGate = (
 	reader: OldNewsletterReader,
 ) => Promise<void>
@@ -91,14 +100,14 @@ export class OldNewsletterExitRefusedError extends Error {
 	}
 }
 
-/** Only a sequence-specific confirmed-exit receipt is proof. Ownership, absence
- * of historical enrollment records, and an acknowledged exit-tag write are not. */
+/** A bound exit receipt or explicit app-owned-signup absence fact is proof.
+ * Missing history alone and an acknowledged tag write never establish absence. */
 export async function readOldSequenceMembership(
 	repository: OldNewsletterRepository,
 	contactId: string,
 ): Promise<OldNewsletterMembership> {
 	if (!repository.findContactEventsByType) return 'unknown'
-	const [subscriptions, requests, exits] = await Promise.all([
+	const [subscriptions, requests, exits, absent] = await Promise.all([
 		repository.findContactEventsByType(contactId, OLD_NEWSLETTER_SUBSCRIBED),
 		repository.findContactEventsByType(
 			contactId,
@@ -108,6 +117,7 @@ export async function readOldSequenceMembership(
 			contactId,
 			OLD_NEWSLETTER_EXIT_CONFIRMED,
 		),
+		repository.findContactEventsByType(contactId, OLD_NEWSLETTER_ABSENT),
 	])
 	const latest = (events: ContactEventRecord[], type: string): number =>
 		events.reduce((time, event) => {
@@ -125,8 +135,23 @@ export async function readOldSequenceMembership(
 		latest(subscriptions, OLD_NEWSLETTER_SUBSCRIBED),
 		latest(requests, OLD_NEWSLETTER_ENROLLMENT_REQUESTED),
 	)
+	const malformedEnrollment = [...subscriptions, ...requests].some(
+		(event) =>
+			event.contactId === contactId &&
+			event.provider === 'kit' &&
+			event.providerReference === OLD_NEWSLETTER_REFERENCE &&
+			!Number.isFinite(Date.parse(event.occurredAt)),
+	)
+	if (malformedEnrollment) return 'unknown'
 	const exitedAt = latest(exits, OLD_NEWSLETTER_EXIT_CONFIRMED)
+	const absentAt = latest(
+		absent.filter(
+			(event) => event.payloadSummary?.source === 'drovr-owned-signup',
+		),
+		OLD_NEWSLETTER_ABSENT,
+	)
 	if (exitedAt > subscribedAt) return 'exited'
+	if (absentAt > subscribedAt) return 'absent'
 	return subscribedAt > -Infinity ? 'present' : 'unknown'
 }
 
@@ -167,37 +192,95 @@ export async function recordOldNewsletterEnrollmentRequest(args: {
 	})
 }
 
+/** Only the branch that skips all legacy enrollment may attest app absence.
+ * Veterans, prior unknown admissions, and any legacy history remain gated. */
+export async function recordOldNewsletterSignupAbsence(args: {
+	repository: Pick<
+		CaptureMarketingRepository,
+		'findContactEventsByType' | 'createContactEvent'
+	>
+	contactId: string
+	providerIdentityId: string
+	kitSubscriberId: string
+	email: string
+	now: string
+}) {
+	const read = args.repository.findContactEventsByType
+	if (!read) return
+	const types = [
+		OLD_NEWSLETTER_SUBSCRIBED,
+		OLD_NEWSLETTER_ENROLLMENT_REQUESTED,
+		NEWSLETTER_PROTECTED_COHORT,
+		NEWSLETTER_COHORT_CLEAR,
+	]
+	const [histories, markers, signupHistory] = await Promise.all([
+		Promise.all(
+			types.map((type) => read.call(args.repository, args.contactId, type)),
+		),
+		read.call(args.repository, args.contactId, NEWSLETTER_EXIT_REQUIRED),
+		read.call(args.repository, args.contactId, 'skills-newsletter.subscribed'),
+	])
+	if (
+		histories.some((rows) => rows.length > 0) ||
+		signupHistory.some(
+			(event) =>
+				!Number.isFinite(Date.parse(event.occurredAt)) ||
+				Date.parse(event.occurredAt) < Date.parse(args.now),
+		) ||
+		markers.some(
+			(event) => event.payloadSummary?.source !== 'drovr-owned-signup',
+		)
+	)
+		return
+	const event = normalizeContactEvent({
+		provider: 'kit',
+		externalId: args.kitSubscriberId,
+		email: args.email,
+		providerEventId: `sequence:2625552:absent:drovr-owned-signup:${args.contactId}`,
+		eventType: OLD_NEWSLETTER_ABSENT,
+		occurredAt: args.now,
+		message: 'Legacy newsletter absent at app-owned signup',
+		privacyLevel: 'internal',
+	})
+	return args.repository.createContactEvent({
+		...event,
+		payloadSummary: { ...event.payloadSummary, source: 'drovr-owned-signup' },
+		contactId: args.contactId,
+		providerIdentityId: args.providerIdentityId,
+		providerReference: OLD_NEWSLETTER_REFERENCE,
+		createdAt: args.now,
+	})
+}
+
 export function createOldNewsletterExitGate(args: {
 	repository: OldNewsletterRepository
 	/** Admission only. Send/replay checks never request exits for the held cohort. */
 	endOldSequenceMembership?: EndOldSequenceMembership
 }): OldNewsletterExitGate {
 	return async (reader) => {
-		try {
-			const membership = await readOldSequenceMembership(
-				args.repository,
-				reader.contactId,
-			)
-			if (membership === 'exited') return
-			if (args.endOldSequenceMembership) {
-				const outcome = await args.endOldSequenceMembership(reader)
-				if (outcome === 'unsupported')
-					throw new OldNewsletterExitRefusedError('exit-rule-pending')
-				// Kit accepted the tag, not the rule's unsubscribe action. Require
-				// an independent receipt, including on retries of the tag write.
-				if (
-					(await readOldSequenceMembership(
-						args.repository,
-						reader.contactId,
-					)) === 'exited'
+		const readMembership = async () => {
+			try {
+				return await readOldSequenceMembership(
+					args.repository,
+					reader.contactId,
 				)
-					return
+			} catch {
+				throw new OldNewsletterExitRefusedError(
+					'membership-or-exit-unavailable',
+				)
 			}
-			throw new OldNewsletterExitRefusedError(`membership-${membership}`)
-		} catch (error) {
-			if (error instanceof OldNewsletterExitRefusedError) throw error
-			throw new OldNewsletterExitRefusedError('membership-or-exit-unavailable')
 		}
+		const membership = await readMembership()
+		if (membership === 'exited' || membership === 'absent') return
+		// Transport failures from the tag port escape unchanged for Inngest retry.
+		if (args.endOldSequenceMembership) {
+			const outcome = await args.endOldSequenceMembership(reader)
+			if (outcome === 'unsupported')
+				throw new OldNewsletterExitRefusedError('exit-rule-pending')
+			// A tag acknowledgement is not proof; read the independent receipt.
+			if ((await readMembership()) === 'exited') return
+		}
+		throw new OldNewsletterExitRefusedError(`membership-${membership}`)
 	}
 }
 
@@ -209,8 +292,12 @@ export const endOldSequenceMembership: EndOldSequenceMembership = async (
 ) => {
 	const tagId = process.env.KIT_SHADOW_NEWSLETTER_EXIT_TAG_ID?.trim()
 	if (
-		process.env.AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY !== 'true' ||
-		process.env.AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY !== 'true' ||
+		!parseNewsletterExitFlag(
+			process.env.AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY,
+		) ||
+		!parseNewsletterExitFlag(
+			process.env.AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY,
+		) ||
 		!tagId ||
 		!/^[1-9]\d*$/.test(tagId) ||
 		['23763332', '22309615'].includes(tagId)

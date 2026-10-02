@@ -176,6 +176,7 @@ export async function assignNewsletterVeteransBatch(args: {
 			if (!dryRun) {
 				const assignment = await ensureShadowNewsletterOwnershipAssignment({
 					repository: args.repository, contactId: veteran.contactId,
+					source: 'newsletter-veteran',
 					providerIdentityId: identity.id, kitSubscriberId: veteran.kitSubscriberId,
 					email: contact.email, occurredAt: now,
 					...(args.oldNewsletterExit ? { oldNewsletterExit: args.oldNewsletterExit } : {}),
@@ -192,6 +193,7 @@ export async function assignNewsletterVeteransBatch(args: {
 		const assignment = await ensureShadowNewsletterOwnershipAssignment({
 			repository: args.repository,
 			contactId: veteran.contactId,
+			source: 'newsletter-veteran',
 			providerIdentityId: identity.id,
 			kitSubscriberId: veteran.kitSubscriberId,
 			email: contact.email,

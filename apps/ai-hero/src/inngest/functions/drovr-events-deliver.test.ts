@@ -99,6 +99,7 @@ const DELIVERY_SOURCES = [
 	'course-completed',
 	'course-exhausted',
 	'newsletter-veteran',
+	'drovr-owned-signup',
 	'kit-directory-ingest',
 	'contact-profile-sync',
 	'contact-sync-backfill',

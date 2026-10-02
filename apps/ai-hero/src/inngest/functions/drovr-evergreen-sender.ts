@@ -126,6 +126,10 @@ export const drovrEvergreenSender = inngest.createFunction(
 				problems: shadowReadback.problems,
 			})
 		}
+		const newsletterQueue = await step.run('count-newsletter-send-queue', () => {
+			const repository = new DrizzleCaptureMarketingRepository(db)
+			return repository.findNewsletterSendQueueCounts()
+		})
 		const readback = await step.run('readback-kit-sequences', () =>
 			readbackEvergreenSequences({
 				apiKey: process.env.KIT_V4_API_KEY,
@@ -139,7 +143,7 @@ export const drovrEvergreenSender = inngest.createFunction(
 			return {
 				status: 'not-ready',
 				problems: readback.problems,
-				counts: { lists: tally(lists), shadow: tally(shadowSends) },
+				counts: { lists: tally(lists), shadow: tally(shadowSends), newsletterQueue },
 			}
 		}
 		const results = await step.run('send-pending-evergreen-emails', () =>
@@ -198,6 +202,7 @@ export const drovrEvergreenSender = inngest.createFunction(
 			sends: tally(results),
 			lists: tally(lists),
 			shadow: tally(shadowSends),
+			newsletterQueue,
 		}
 		await log.info('drovr.evergreen.sender_run', counts)
 		return { status: 'ran', counts, results, coupons, lists, shadowSends }

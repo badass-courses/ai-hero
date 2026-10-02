@@ -416,6 +416,13 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 			.slice(0, safeLimit)
 	}
 
+	findNewsletterSendQueueCounts() {
+		const rows = [...this.sideEffectIntents.values()].filter(row => row.provider === 'kit' &&
+			(row.type === 'send-shadow-newsletter-email' || row.type === 'subscribe-evergreen-list'))
+		return { pending: rows.filter(row => row.status === 'pending').length,
+			heldForExit: rows.filter(row => row.status === 'held-for-exit').length }
+	}
+
 	findExitHeldSideEffectIntentsByContact(contactId: string) {
 		return Array.from(this.sideEffectIntents.values()).filter((row) =>
 			row.contactId === contactId && row.status === 'held-for-exit' &&

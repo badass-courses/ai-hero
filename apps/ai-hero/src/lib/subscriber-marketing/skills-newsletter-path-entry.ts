@@ -1,5 +1,5 @@
 import { captureNormalizedContactEvent } from './capture-contact-event'
-import { createOldNewsletterExitGate, endOldSequenceMembership, requiresOldNewsletterExit, NEWSLETTER_EXIT_REQUIRED, NEWSLETTER_ADMISSION_HELD, OldNewsletterExitRefusedError, type OldNewsletterExitGate } from './old-newsletter-exit'
+import { createOldNewsletterExitGate, endOldSequenceMembership, recordOldNewsletterSignupAbsence, requiresOldNewsletterExit, NEWSLETTER_EXIT_REQUIRED, NEWSLETTER_ADMISSION_HELD, OldNewsletterExitRefusedError, type OldNewsletterExitGate } from './old-newsletter-exit'
 import {
 	DROVR_OWNERSHIP_OFF,
 	isHeldSignup,
@@ -86,6 +86,8 @@ export async function ensureShadowNewsletterOwnershipAssignment(args: {
 	name?: string
 	occurredAt: string
 	oldNewsletterExit?: OldNewsletterExitGate
+	/** Only the live branch that skips legacy enrollment may attest absence. */
+	source?: 'drovr-owned-signup' | 'newsletter-veteran'
 }) {
 	const existing = await findJourneyOwnerAssignment(
 		args.repository,
@@ -93,14 +95,20 @@ export async function ensureShadowNewsletterOwnershipAssignment(args: {
 		DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
 	)
 	if (existing && !await requiresOldNewsletterExit({ repository: args.repository, contactId: args.contactId, existingReader: true })) return existing
-	const recordAdmission = (eventType: string) => args.repository.createContactEvent({
-		...normalizeContactEvent({
+	if (!existing && args.source === 'drovr-owned-signup') {
+		await recordOldNewsletterSignupAbsence({ ...args, now: args.occurredAt })
+	}
+	const recordAdmission = (eventType: string) => {
+		const event = normalizeContactEvent({
 			provider: 'kit', externalId: args.kitSubscriberId, email: args.email, name: args.name,
 			providerEventId: `newsletter-admission:${args.contactId}:${eventType}`,
 			eventType, occurredAt: args.occurredAt, message: 'Newsletter admission awaiting old-sequence exit', privacyLevel: 'internal',
-		}),
-		contactId: args.contactId, providerIdentityId: args.providerIdentityId, createdAt: args.occurredAt,
-	})
+		})
+		return args.repository.createContactEvent({ ...event,
+			payloadSummary: { ...event.payloadSummary, ...(args.source ? { source: args.source } : {}) },
+			contactId: args.contactId, providerIdentityId: args.providerIdentityId, createdAt: args.occurredAt,
+		})
+	}
 	if (!existing) await recordAdmission(NEWSLETTER_EXIT_REQUIRED)
 	try {
 		await (args.oldNewsletterExit ?? createOldNewsletterExitGate({
@@ -108,7 +116,7 @@ export async function ensureShadowNewsletterOwnershipAssignment(args: {
 			...(existing ? {} : { endOldSequenceMembership }),
 		}))({ contactId: args.contactId, email: args.email })
 	} catch (error) {
-		if (!(error instanceof OldNewsletterExitRefusedError)) throw error
+		if (!(error instanceof OldNewsletterExitRefusedError) || error.reason === 'membership-or-exit-unavailable') throw error
 		// The hold is the durable replay boundary, not an Inngest retry failure.
 		return recordAdmission(NEWSLETTER_ADMISSION_HELD)
 	}

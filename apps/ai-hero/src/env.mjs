@@ -1,5 +1,8 @@
 import { createEnv } from '@t3-oss/env-nextjs'
 import { z } from 'zod'
+import { parseNewsletterExitFlag } from './lib/subscriber-marketing/newsletter-exit-flags.mjs'
+
+const newsletterExitFlag = z.string().optional().transform(value => parseNewsletterExitFlag(value) ? 'true' : 'false')
 
 export const env = createEnv({
 	/**
@@ -151,9 +154,9 @@ export const env = createEnv({
 		AIH_DROVR_OWNER_HOLD_EMAILS: z.string().optional(),
 		AIH_DROVR_EVERGREEN_ENABLED: z.string().optional(),
 		// Producer before rule; existing-cohort gate stays off until ruling B.
-		AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY: z.enum(['true', 'false']).default('false'),
-		AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY: z.enum(['true', 'false']).default('false'),
-		AIH_SHADOW_NEWSLETTER_EXISTING_EXIT_GATE_ENABLED: z.enum(['true', 'false']).default('false'),
+		AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY: newsletterExitFlag,
+		AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY: newsletterExitFlag,
+		AIH_SHADOW_NEWSLETTER_EXISTING_EXIT_GATE_ENABLED: newsletterExitFlag,
 		KIT_SHADOW_NEWSLETTER_EXIT_TAG_ID: z.string().optional(),
 		KIT_V4_API_KEY: z.string().optional(),
 		KIT_WEBHOOK_SECRET: z.string().optional(),
