@@ -2,6 +2,16 @@
 
 Deploy changes nothing for existing Shadow readers or new drovr-owned signups. Fresh app-owned signups skip legacy enrollment and receive a bound app-absence fact, so their normal Stage 3 birth and Shadow send continue. Readers with app legacy enrollment history, veterans, and genuinely unknown admissions remain gated; policy refusals persist a hold rather than failing or dropping the signup. The Kit rule and independent proof producer remain pending Joel/account owner. No live Kit changes, cleanup, merge, or deploy are part of this PR.
 
+## Final review qualifications
+
+### G1: app absence is not Kit absence
+
+The `newsletter.old-sequence.absent` fact means **the app never enrolled this reader**. It does **not** mean the reader is absent from Kit sequence `2625552`. Its source is the app-owned signup branch that skips legacy enrollment, not a provider membership read. Kit forms, automations and manual adds can enroll a reader outside that branch. Covering those enrollments and invalidating local proof remains a producer requirement (M3).
+
+### G2: returning signups can still be held
+
+A returning drovr signup with a legacy enrollment record but no Shadow owner is now held at admission. It does not get the fresh-signup absence fact. The hold is durable, but its current operational visibility is only the `subscriber_funnel.newsletter_admission_held` log. Send-queue `held-for-exit` counts do not include an admission that has not created a send intent. There is no admission-hold dashboard or sweep in this change.
+
 ## Rulings and scope
 
 - Each new drovr newsletter admission gets a `newsletter.exit-required` marker before any exit request. Only these readers enter the default send gate.
