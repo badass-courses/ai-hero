@@ -15,6 +15,7 @@ import {
 import { SEND_SHADOW_NEWSLETTER_EMAIL_INTENT_TYPE } from './drovr-shadow-newsletter'
 import { dispatchDrovrShadowFactSafely } from './drovr-shadow-dispatch'
 import type { SideEffectIntent } from './types'
+import { createOldNewsletterExitGate, type OldNewsletterExitGate } from './old-newsletter-exit'
 
 /**
  * The sequence sender: drains the evergreen and shadow-newsletter rows the
@@ -88,6 +89,7 @@ function kitFailureVerdict(error: unknown): {
 export async function executePendingEvergreenSends(args: {
 	repository: EvergreenSenderRepository
 	subscribe: EvergreenSubscribe
+	oldNewsletterExit?: OldNewsletterExitGate
 	limit: number
 	now?: () => string
 	pacingMs?: number
@@ -131,7 +133,7 @@ async function sendOne(input: {
 	row: SideEffectIntent
 	args: Pick<
 		Parameters<typeof executePendingEvergreenSends>[0],
-		'repository' | 'subscribe'
+		'repository' | 'subscribe' | 'oldNewsletterExit'
 	>
 	now: string
 	dispatch: (intent: SideEffectIntent) => void
@@ -149,7 +151,35 @@ async function sendOne(input: {
 	if (stop) return await giveUp(row, args.repository, now, stop, dispatch)
 	const attempts = numberField(row.metadata.attempts) + 1
 	const unclaimed = row.metadata
-	if (await isOwnedShadowNewsletterHandoff(row, args.repository)) {
+	if (row.type === SEND_SHADOW_NEWSLETTER_EMAIL_INTENT_TYPE ||
+		(row.type === SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE && row.metadata.list === 'shadow-newsletter')) {
+		try {
+			await (args.oldNewsletterExit ?? createOldNewsletterExitGate({ repository: args.repository }))({
+				contactId: contact.id, email: contact.email,
+			})
+		} catch {
+			// An exit hold does not spend the provider send retry budget. Keep it
+			// pending indefinitely and visible; never dispatch a completion/birth.
+			const error = 'old-newsletter-exit-unconfirmed'
+			await args.repository.updateSideEffectIntent(row.id, {
+				status: 'pending', completedAt: null, gates: row.gates,
+				reviewReasons: [...new Set([...row.reviewReasons, error])],
+				metadata: { ...unclaimed, lastError: error, exitHeldAt: now },
+			})
+			return { status: 'retry', intentId: row.id, attempts: numberField(unclaimed.attempts), error }
+		}
+	}
+	const ownedHandoff = await isOwnedShadowNewsletterHandoff(row, args.repository)
+	if (row.type === SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE && row.metadata.list === 'shadow-newsletter' && !ownedHandoff) {
+		const error = 'shadow-newsletter-owner-missing'
+		await args.repository.updateSideEffectIntent(row.id, {
+			status: 'pending', completedAt: null, gates: row.gates,
+			reviewReasons: [...new Set([...row.reviewReasons, error])],
+			metadata: { ...unclaimed, lastError: error, exitHeldAt: now },
+		})
+		return { status: 'retry', intentId: row.id, attempts: numberField(unclaimed.attempts), error }
+	}
+	if (ownedHandoff) {
 		const completed = await args.repository.updateSideEffectIntent(row.id, {
 			status: 'completed',
 			completedAt: now,

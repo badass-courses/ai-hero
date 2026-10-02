@@ -4,6 +4,7 @@ import {
 	KitSubscribeError,
 	subscribeToKitListWithoutFields,
 } from '@/coursebuilder/email-list-provider'
+import { recordOldNewsletterEnrollmentRequest } from '@/lib/subscriber-marketing/old-newsletter-exit'
 import { kitWriteRetrySchedule } from '@/coursebuilder/kit-write-retry'
 import { SKILLS_NEWSLETTER_SUBSCRIBED_EVENT } from '@/inngest/events/skills-newsletter'
 import { inngest } from '@/inngest/inngest.server'
@@ -263,6 +264,16 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 			})
 			return entryResult
 		}
+
+		await step.run('record-old-newsletter-enrollment-request', () =>
+			recordOldNewsletterEnrollmentRequest({
+				repository: new DrizzleCaptureMarketingRepository(db),
+				contactId: entryResult.contactId, kitSubscriberId: event.data.kitSubscriberId,
+				email: event.data.email,
+				eventId: event.id ?? `skills-form:${event.data.formId}:subscriber:${event.data.kitSubscriberId}`,
+				now: new Date().toISOString(),
+			}),
+		)
 
 		const user = {
 			email: event.data.email,

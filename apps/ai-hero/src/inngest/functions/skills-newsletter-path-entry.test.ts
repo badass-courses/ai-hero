@@ -44,6 +44,7 @@ vi.mock('@/lib/subscriber-marketing/drizzle-capture-repository', () => ({
 		findProviderIdentity() {
 			return { id: 'identity_1', contactId: 'contact_1' }
 		}
+		createContactEvent(input: unknown) { return input }
 	},
 }))
 

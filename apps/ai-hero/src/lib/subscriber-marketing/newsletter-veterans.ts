@@ -103,6 +103,7 @@ export async function assignNewsletterVeteransBatch(args: {
 	dryRun?: boolean
 	now?: string
 	send?: NewsletterVeteransSend
+	oldNewsletterExit?: import('./old-newsletter-exit').OldNewsletterExitGate
 }): Promise<NewsletterVeteransResult> {
 	if (args.batch.length > NEWSLETTER_VETERANS_BATCH_SIZE) {
 		throw new Error(
@@ -156,7 +157,15 @@ export async function assignNewsletterVeteransBatch(args: {
 		)
 		if (existing) {
 			counts.alreadyAssigned += 1
-			if (!dryRun) births.push(veteranNewsletterBirth(veteran.contactId, now))
+			if (!dryRun) {
+				await ensureShadowNewsletterOwnershipAssignment({
+					repository: args.repository, contactId: veteran.contactId,
+					providerIdentityId: identity.id, kitSubscriberId: veteran.kitSubscriberId,
+					email: contact.email, occurredAt: now,
+					...(args.oldNewsletterExit ? { oldNewsletterExit: args.oldNewsletterExit } : {}),
+				})
+				births.push(veteranNewsletterBirth(veteran.contactId, now))
+			}
 			continue
 		}
 		if (dryRun) {
@@ -171,6 +180,7 @@ export async function assignNewsletterVeteransBatch(args: {
 			email: contact.email,
 			name: contact.name ?? undefined,
 			occurredAt: now,
+			...(args.oldNewsletterExit ? { oldNewsletterExit: args.oldNewsletterExit } : {}),
 		})
 		counts.assigned += 1
 		births.push(veteranNewsletterBirth(veteran.contactId, now))

@@ -192,7 +192,7 @@ describe('assignNewsletterVeteransBatch', () => {
 		expect(send.mock.calls[0]?.[0]).toMatchObject({
 			data: { events: [veteranNewsletterBirth('c1', NOW)], source: 'newsletter-veteran' },
 		})
-		expect(mocks.ensureShadowNewsletterOwnershipAssignment).not.toHaveBeenCalled()
+		expect(mocks.ensureShadowNewsletterOwnershipAssignment).toHaveBeenCalledTimes(1)
 	})
 
 	it('batches the births into one delivery and counts a failed send instead of throwing', async () => {

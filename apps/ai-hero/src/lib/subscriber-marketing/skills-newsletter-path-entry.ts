@@ -1,4 +1,5 @@
 import { captureNormalizedContactEvent } from './capture-contact-event'
+import { createOldNewsletterExitGate, endOldSequenceMembership, type OldNewsletterExitGate } from './old-newsletter-exit'
 import {
 	DROVR_OWNERSHIP_OFF,
 	isHeldSignup,
@@ -69,9 +70,9 @@ export type SkillsNewsletterShadowObserver = (observation: {
 
 /**
  * Mark the legacy newsletter boundary explicitly for a drovr-owned signup.
- * This runs at the exact branch where the Kit probe is skipped, rather than
- * treating skills-course ownership as newsletter ownership. Veterans never
- * get this assignment, so later shadow births cannot migrate them.
+ * This runs at the branch where the legacy enrollment is skipped. Confirm
+ * old-sequence exit before writing (or replaying) the newsletter birth;
+ * skills-course ownership alone is not exit evidence.
  */
 export async function ensureShadowNewsletterOwnershipAssignment(args: {
 	repository: Pick<
@@ -84,12 +85,18 @@ export async function ensureShadowNewsletterOwnershipAssignment(args: {
 	email: string
 	name?: string
 	occurredAt: string
+	oldNewsletterExit?: OldNewsletterExitGate
 }) {
 	const existing = await findJourneyOwnerAssignment(
 		args.repository,
 		args.contactId,
 		DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
 	)
+	await (args.oldNewsletterExit ?? createOldNewsletterExitGate({
+		repository: args.repository,
+		// Ruling B: existing owners are checked, never retagged for cleanup.
+		...(existing ? {} : { endOldSequenceMembership }),
+	}))({ contactId: args.contactId, email: args.email })
 	if (existing) return existing
 	return recordJourneyOwnerAssigned({
 		repository: args.repository,
