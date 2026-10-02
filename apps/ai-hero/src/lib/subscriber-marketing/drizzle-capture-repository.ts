@@ -372,6 +372,15 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		return rows.map(toContactEventRecord)
 	}
 
+	async findExitHeldSideEffectIntentsByContact(contactId: string) {
+		const rows = await this.database.select().from(sideEffectIntent).where(and(
+			eq(sideEffectIntent.contactId, contactId),
+			eq(sideEffectIntent.status, 'held-for-exit'),
+			inArray(sideEffectIntent.type, ['send-shadow-newsletter-email', 'subscribe-evergreen-list']),
+		))
+		return rows.map(toSideEffectIntentRecord)
+	}
+
 	async createContactEvent(
 		input: Omit<ContactEventRecord, 'id' | 'createdAt'> & {
 			createdAt?: string

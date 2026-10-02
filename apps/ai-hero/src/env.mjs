@@ -150,6 +150,11 @@ export const env = createEnv({
 		// Captured-but-held signups (phase 1 split); see drovr-ownership.ts.
 		AIH_DROVR_OWNER_HOLD_EMAILS: z.string().optional(),
 		AIH_DROVR_EVERGREEN_ENABLED: z.string().optional(),
+		// Producer before rule; existing-cohort gate stays off until ruling B.
+		AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY: z.enum(['true', 'false']).default('false'),
+		AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY: z.enum(['true', 'false']).default('false'),
+		AIH_SHADOW_NEWSLETTER_EXISTING_EXIT_GATE_ENABLED: z.enum(['true', 'false']).default('false'),
+		KIT_SHADOW_NEWSLETTER_EXIT_TAG_ID: z.string().optional(),
 		KIT_V4_API_KEY: z.string().optional(),
 		KIT_WEBHOOK_SECRET: z.string().optional(),
 		LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).optional(),
@@ -304,6 +309,10 @@ export const env = createEnv({
 		AIH_DROVR_OWNER_EMAILS: process.env.AIH_DROVR_OWNER_EMAILS,
 		AIH_DROVR_OWNER_HOLD_EMAILS: process.env.AIH_DROVR_OWNER_HOLD_EMAILS,
 		AIH_DROVR_EVERGREEN_ENABLED: process.env.AIH_DROVR_EVERGREEN_ENABLED,
+		AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY: process.env.AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY,
+		AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY: process.env.AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY,
+		AIH_SHADOW_NEWSLETTER_EXISTING_EXIT_GATE_ENABLED: process.env.AIH_SHADOW_NEWSLETTER_EXISTING_EXIT_GATE_ENABLED,
+		KIT_SHADOW_NEWSLETTER_EXIT_TAG_ID: process.env.KIT_SHADOW_NEWSLETTER_EXIT_TAG_ID,
 		KIT_V4_API_KEY: process.env.KIT_V4_API_KEY,
 		KIT_WEBHOOK_SECRET: process.env.KIT_WEBHOOK_SECRET,
 		LOG_LEVEL: process.env.LOG_LEVEL,

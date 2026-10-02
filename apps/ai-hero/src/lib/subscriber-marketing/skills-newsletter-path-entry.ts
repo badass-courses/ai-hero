@@ -1,5 +1,5 @@
 import { captureNormalizedContactEvent } from './capture-contact-event'
-import { createOldNewsletterExitGate, endOldSequenceMembership, type OldNewsletterExitGate } from './old-newsletter-exit'
+import { createOldNewsletterExitGate, endOldSequenceMembership, requiresOldNewsletterExit, NEWSLETTER_EXIT_REQUIRED, NEWSLETTER_ADMISSION_HELD, OldNewsletterExitRefusedError, type OldNewsletterExitGate } from './old-newsletter-exit'
 import {
 	DROVR_OWNERSHIP_OFF,
 	isHeldSignup,
@@ -71,8 +71,8 @@ export type SkillsNewsletterShadowObserver = (observation: {
 /**
  * Mark the legacy newsletter boundary explicitly for a drovr-owned signup.
  * This runs at the branch where the legacy enrollment is skipped. Confirm
- * old-sequence exit before writing (or replaying) the newsletter birth;
- * skills-course ownership alone is not exit evidence.
+ * old-sequence exit before a NEW newsletter birth, or persist its hold.
+ * Existing owners remain exempt by default; course ownership is not proof.
  */
 export async function ensureShadowNewsletterOwnershipAssignment(args: {
 	repository: Pick<
@@ -92,11 +92,26 @@ export async function ensureShadowNewsletterOwnershipAssignment(args: {
 		args.contactId,
 		DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
 	)
-	await (args.oldNewsletterExit ?? createOldNewsletterExitGate({
-		repository: args.repository,
-		// Ruling B: existing owners are checked, never retagged for cleanup.
-		...(existing ? {} : { endOldSequenceMembership }),
-	}))({ contactId: args.contactId, email: args.email })
+	if (existing && !await requiresOldNewsletterExit({ repository: args.repository, contactId: args.contactId, existingReader: true })) return existing
+	const recordAdmission = (eventType: string) => args.repository.createContactEvent({
+		...normalizeContactEvent({
+			provider: 'kit', externalId: args.kitSubscriberId, email: args.email, name: args.name,
+			providerEventId: `newsletter-admission:${args.contactId}:${eventType}`,
+			eventType, occurredAt: args.occurredAt, message: 'Newsletter admission awaiting old-sequence exit', privacyLevel: 'internal',
+		}),
+		contactId: args.contactId, providerIdentityId: args.providerIdentityId, createdAt: args.occurredAt,
+	})
+	if (!existing) await recordAdmission(NEWSLETTER_EXIT_REQUIRED)
+	try {
+		await (args.oldNewsletterExit ?? createOldNewsletterExitGate({
+			repository: args.repository,
+			...(existing ? {} : { endOldSequenceMembership }),
+		}))({ contactId: args.contactId, email: args.email })
+	} catch (error) {
+		if (!(error instanceof OldNewsletterExitRefusedError)) throw error
+		// The hold is the durable replay boundary, not an Inngest retry failure.
+		return recordAdmission(NEWSLETTER_ADMISSION_HELD)
+	}
 	if (existing) return existing
 	return recordJourneyOwnerAssigned({
 		repository: args.repository,

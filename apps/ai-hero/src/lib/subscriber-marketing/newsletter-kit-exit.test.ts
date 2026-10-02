@@ -5,6 +5,7 @@ import { InMemorySubscriberMarketingRepository } from './dry-run'
 import { captureNormalizedContactEvent } from './capture-contact-event'
 import { normalizeContactEvent } from './normalize-contact-event'
 import { recordJourneyOwnerAssigned } from './drovr-ownership'
+import { replayNewsletterExitReceipt } from './newsletter-exit-replay'
 import { executePendingEvergreenSends } from './drovr-evergreen-sender'
 import {
 	createOldNewsletterExitGate,
@@ -72,16 +73,21 @@ describe('newsletter admission requires confirmed legacy exit', () => {
 	it('does not birth a new entrant without confirmed legacy exit', async () => {
 		vi.stubEnv('AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY', '')
 		const { repository, admission } = await reader()
-		const create = vi.spyOn(repository, 'createContactEvent')
 		await expect(
 			ensureShadowNewsletterOwnershipAssignment(admission),
-		).rejects.toMatchObject({ retryable: true })
-		expect(create).not.toHaveBeenCalled()
+		).resolves.toMatchObject({ eventType: 'newsletter.admission.held' })
+		expect(
+			repository.findContactEventsByType(
+				admission.contactId,
+				'journey.owner.assigned',
+			),
+		).toHaveLength(0)
 	})
 
 	it('does not birth a veteran without confirmed legacy exit', async () => {
 		vi.stubEnv('AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY', '')
-		const { repository, admission } = await reader()
+		const { repository, admission, receipt } = await reader()
+		receipt('newsletter.shadow.cohort-clear')
 		await recordJourneyOwnerAssigned({
 			...admission,
 			journeyId: 'value-path-skills-course',
@@ -95,7 +101,7 @@ describe('newsletter admission requires confirmed legacy exit', () => {
 				now,
 				send,
 			}),
-		).rejects.toMatchObject({ retryable: true })
+		).resolves.toMatchObject({ counts: { held: 1, birthsQueued: 0 } })
 		expect(send).not.toHaveBeenCalled()
 	})
 
@@ -104,7 +110,8 @@ describe('newsletter admission requires confirmed legacy exit', () => {
 		async (path) => {
 			const { repository, admission, receipt } = await reader()
 			if (path === 'veteran') receipt(OLD_NEWSLETTER_SUBSCRIBED)
-			// Existing pending intents can predate this fix. Check at send time too.
+			receipt('newsletter.exit-required')
+			// Only readers newly taken by drovr enter the send gate.
 			repository.createSideEffectIntent({
 				id: 'send-shadow-1',
 				nextActionId: 'drovr:shadow-1',
@@ -134,14 +141,16 @@ describe('newsletter admission requires confirmed legacy exit', () => {
 					dispatch,
 					type: 'send-shadow-newsletter-email',
 				})
-				expect(results).toMatchObject([
-					{ status: 'retry', error: 'old-newsletter-exit-unconfirmed' },
-				])
+				if (retry === 0)
+					expect(results).toMatchObject([
+						{ status: 'retry', error: 'old-newsletter-exit-unconfirmed' },
+					])
+				else expect(results).toEqual([])
 			}
 			expect(subscribe).not.toHaveBeenCalled()
 			expect(dispatch).not.toHaveBeenCalled()
 			expect(repository.sideEffectIntents.get('send-shadow-1')).toMatchObject({
-				status: 'pending',
+				status: 'held-for-exit',
 				metadata: { attempts: 6, lastError: 'old-newsletter-exit-unconfirmed' },
 			})
 		},
@@ -149,6 +158,7 @@ describe('newsletter admission requires confirmed legacy exit', () => {
 
 	it('confirms from app records, admits once, and repairs a lost veteran birth', async () => {
 		const { repository, admission, receipt } = await reader()
+		receipt('newsletter.shadow.cohort-clear')
 		receipt(OLD_NEWSLETTER_SUBSCRIBED, '2026-10-01T12:00:00.000Z')
 		receipt(OLD_NEWSLETTER_EXIT_CONFIRMED)
 		const first = await ensureShadowNewsletterOwnershipAssignment(admission)
@@ -178,6 +188,7 @@ describe('newsletter admission requires confirmed legacy exit', () => {
 		'holds %s then completes idempotently only after independent exit proof',
 		async (type) => {
 			const { repository, admission, receipt } = await reader()
+			receipt('newsletter.exit-required')
 			await recordJourneyOwnerAssigned({
 				...admission,
 				journeyId: 'shadow-newsletter',
@@ -213,7 +224,14 @@ describe('newsletter admission requires confirmed legacy exit', () => {
 			expect(await drain()).toMatchObject([{ status: 'retry' }])
 			expect(subscribe).not.toHaveBeenCalled()
 			expect(dispatch).not.toHaveBeenCalled()
-			receipt(OLD_NEWSLETTER_EXIT_CONFIRMED)
+			const proof = receipt(OLD_NEWSLETTER_EXIT_CONFIRMED)
+			await replayNewsletterExitReceipt({
+				repository,
+				contactId: admission.contactId,
+				receiptId: proof.id,
+				now,
+				send: async () => undefined,
+			})
 			expect(await drain()).toMatchObject([{ status: 'completed' }])
 			expect(await drain()).toEqual([])
 			expect(subscribe).toHaveBeenCalledTimes(
@@ -235,7 +253,7 @@ describe('newsletter admission requires confirmed legacy exit', () => {
 		vi.stubEnv('KIT_SHADOW_NEWSLETTER_EXIT_TAG_ID', '999999')
 		await expect(
 			ensureShadowNewsletterOwnershipAssignment(admission),
-		).rejects.toMatchObject({ retryable: true })
+		).resolves.toMatchObject({ eventType: 'journey.owner.assigned' })
 		expect(fetch).not.toHaveBeenCalled()
 	})
 })
@@ -306,6 +324,7 @@ describe('local membership proof and exit port', () => {
 		const fetch = vi.fn(async () => new Response('{}', { status: 201 }))
 		vi.stubGlobal('fetch', fetch)
 		vi.stubEnv('KIT_V4_API_KEY', 'fake-test-key')
+		vi.stubEnv('AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY', 'true')
 		vi.stubEnv('AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY', 'true')
 		vi.stubEnv('KIT_SHADOW_NEWSLETTER_EXIT_TAG_ID', '999999')
 		await expect(

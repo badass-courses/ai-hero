@@ -68,7 +68,9 @@ function repository(args: {
 				args.identities?.[externalId],
 		),
 		findContactEventsByType: vi.fn(
-			async (contactId: string) => args.assignments?.[contactId] ?? [],
+			async (contactId: string, eventType: string) => eventType === 'newsletter.shadow.cohort-clear'
+				? [{ contactId, eventType }]
+				: args.assignments?.[contactId] ?? [],
 		),
 		createContactEvent: vi.fn(async () => assignment('unused', 'unused')),
 	} as unknown as NewsletterVeteransRepository
@@ -84,6 +86,9 @@ const emptyCounts = {
 	missingContact: 0,
 	identityMismatch: 0,
 	notCourseOwned: 0,
+	protectedCohort: 0,
+	cohortUnknown: 0,
+	held: 0,
 }
 
 const send = vi.fn<[DrovrEventsDeliver], Promise<unknown>>(

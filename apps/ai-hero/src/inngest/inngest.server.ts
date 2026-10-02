@@ -112,6 +112,7 @@ import {
 	KIT_DIRECTORY_INGEST_EVENT,
 	type KitDirectoryIngest,
 } from '@/inngest/events/kit-directory'
+import { NEWSLETTER_EXIT_CONFIRMED_EVENT, type NewsletterExitConfirmed } from '@/inngest/events/newsletter-exit'
 import {
 	NEWSLETTER_VETERANS_ASSIGN_EVENT,
 	type NewsletterVeteransAssign,
@@ -296,6 +297,7 @@ export type Events = {
 	[CONTACT_SYNC_RETRY_EVENT]: DrovrContactSyncRetryRequested
 	[KIT_DIRECTORY_INGEST_EVENT]: KitDirectoryIngest
 	[NEWSLETTER_VETERANS_ASSIGN_EVENT]: NewsletterVeteransAssign
+	[NEWSLETTER_EXIT_CONFIRMED_EVENT]: NewsletterExitConfirmed
 	// Operator lever: fire one learner-flow reconcile outside the hourly cron.
 	'subscriber_funnel.reconciler_run_requested': {
 		data: { requestedBy?: string; reason?: string }

@@ -15,7 +15,7 @@ import {
 import { SEND_SHADOW_NEWSLETTER_EMAIL_INTENT_TYPE } from './drovr-shadow-newsletter'
 import { dispatchDrovrShadowFactSafely } from './drovr-shadow-dispatch'
 import type { SideEffectIntent } from './types'
-import { createOldNewsletterExitGate, type OldNewsletterExitGate } from './old-newsletter-exit'
+import { createOldNewsletterExitGate, requiresOldNewsletterExit, type OldNewsletterExitGate } from './old-newsletter-exit'
 
 /**
  * The sequence sender: drains the evergreen and shadow-newsletter rows the
@@ -151,33 +151,34 @@ async function sendOne(input: {
 	if (stop) return await giveUp(row, args.repository, now, stop, dispatch)
 	const attempts = numberField(row.metadata.attempts) + 1
 	const unclaimed = row.metadata
-	if (row.type === SEND_SHADOW_NEWSLETTER_EMAIL_INTENT_TYPE ||
-		(row.type === SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE && row.metadata.list === 'shadow-newsletter')) {
+	const ownedHandoff = await isOwnedShadowNewsletterHandoff(row, args.repository)
+	const newsletterRow = row.type === SEND_SHADOW_NEWSLETTER_EMAIL_INTENT_TYPE ||
+		(row.type === SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE && row.metadata.list === 'shadow-newsletter')
+	if (newsletterRow) {
+		// A scope read failure is infrastructure failure, not exit refusal.
+		// Leave the row pending for the next cron; do not strand exempt readers.
+		const gated = await requiresOldNewsletterExit({
+			repository: args.repository, contactId: contact.id,
+			existingReader: row.type === SEND_SHADOW_NEWSLETTER_EMAIL_INTENT_TYPE || ownedHandoff,
+		})
 		try {
-			await (args.oldNewsletterExit ?? createOldNewsletterExitGate({ repository: args.repository }))({
+			if (gated && row.type === SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE && !ownedHandoff) {
+				throw new Error('newsletter-admission-not-yet-assigned')
+			}
+			if (gated) await (args.oldNewsletterExit ?? createOldNewsletterExitGate({ repository: args.repository }))({
 				contactId: contact.id, email: contact.email,
 			})
 		} catch {
-			// An exit hold does not spend the provider send retry budget. Keep it
-			// pending indefinitely and visible; never dispatch a completion/birth.
+			// Separate state: held readers cannot occupy the active queue's LIMIT.
+			// Only a persisted exit receipt can re-arm them; no send attempts spent.
 			const error = 'old-newsletter-exit-unconfirmed'
 			await args.repository.updateSideEffectIntent(row.id, {
-				status: 'pending', completedAt: null, gates: row.gates,
+				status: 'held-for-exit', completedAt: null, gates: row.gates,
 				reviewReasons: [...new Set([...row.reviewReasons, error])],
-				metadata: { ...unclaimed, lastError: error, exitHeldAt: now },
+				metadata: { ...unclaimed, lastError: error, exitHeldAt: unclaimed.exitHeldAt ?? now },
 			})
 			return { status: 'retry', intentId: row.id, attempts: numberField(unclaimed.attempts), error }
 		}
-	}
-	const ownedHandoff = await isOwnedShadowNewsletterHandoff(row, args.repository)
-	if (row.type === SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE && row.metadata.list === 'shadow-newsletter' && !ownedHandoff) {
-		const error = 'shadow-newsletter-owner-missing'
-		await args.repository.updateSideEffectIntent(row.id, {
-			status: 'pending', completedAt: null, gates: row.gates,
-			reviewReasons: [...new Set([...row.reviewReasons, error])],
-			metadata: { ...unclaimed, lastError: error, exitHeldAt: now },
-		})
-		return { status: 'retry', intentId: row.id, attempts: numberField(unclaimed.attempts), error }
 	}
 	if (ownedHandoff) {
 		const completed = await args.repository.updateSideEffectIntent(row.id, {

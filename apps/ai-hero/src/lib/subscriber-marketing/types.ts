@@ -18,6 +18,7 @@ export type SideEffectIntentStatus =
 	| 'blocked'
 	| 'pending'
 	| 'sending'
+	| 'held-for-exit'
 	| 'completed'
 	| 'failed'
 	| 'skipped'

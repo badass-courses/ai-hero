@@ -9,6 +9,66 @@ export const OLD_NEWSLETTER_EXIT_CONFIRMED =
 	'newsletter.old-sequence.exit-confirmed'
 export const OLD_NEWSLETTER_REFERENCE = 'kit:sequence:2625552'
 export const OLD_NEWSLETTER_EXIT_TAG = 'shadow-exit-2625552'
+export const NEWSLETTER_EXIT_REQUIRED = 'newsletter.exit-required'
+export const NEWSLETTER_ADMISSION_HELD = 'newsletter.admission.held'
+export const NEWSLETTER_PROTECTED_COHORT = 'newsletter.shadow.protected-cohort'
+export const NEWSLETTER_COHORT_CLEAR = 'newsletter.shadow.cohort-clear'
+
+/** New admissions have an explicit marker; pre-existing readers are exempt
+ * until ruling B is satisfied and the operator explicitly enables their gate. */
+export async function requiresOldNewsletterExit(args: {
+	repository: OldNewsletterRepository
+	contactId: string
+	existingReader: boolean
+}): Promise<boolean> {
+	const markers = await args.repository.findContactEventsByType?.(
+		args.contactId,
+		NEWSLETTER_EXIT_REQUIRED,
+	)
+	return (
+		Boolean(
+			markers?.some(
+				(event) =>
+					event.contactId === args.contactId &&
+					event.eventType === NEWSLETTER_EXIT_REQUIRED,
+			),
+		) ||
+		(args.existingReader &&
+			process.env.AIH_SHADOW_NEWSLETTER_EXISTING_EXIT_GATE_ENABLED === 'true')
+	)
+}
+
+/** A complete account-owner cohort snapshot must attest clear membership.
+ * Missing exclusion data is not permission to tag a pre-gate veteran. */
+export async function veteranCohortProtection(
+	repository: OldNewsletterRepository,
+	contactId: string,
+): Promise<'protected' | 'clear' | 'unknown'> {
+	if (!repository.findContactEventsByType) return 'unknown'
+	const protectedRows = await repository.findContactEventsByType(
+		contactId,
+		NEWSLETTER_PROTECTED_COHORT,
+	)
+	if (
+		protectedRows.some(
+			(event) =>
+				event.contactId === contactId &&
+				event.eventType === NEWSLETTER_PROTECTED_COHORT,
+		)
+	)
+		return 'protected'
+	const clearRows = await repository.findContactEventsByType(
+		contactId,
+		NEWSLETTER_COHORT_CLEAR,
+	)
+	return clearRows.some(
+		(event) =>
+			event.contactId === contactId &&
+			event.eventType === NEWSLETTER_COHORT_CLEAR,
+	)
+		? 'clear'
+		: 'unknown'
+}
 
 export type OldNewsletterReader = { contactId: string; email: string }
 export type OldNewsletterMembership = 'present' | 'exited' | 'unknown'
@@ -150,6 +210,7 @@ export const endOldSequenceMembership: EndOldSequenceMembership = async (
 	const tagId = process.env.KIT_SHADOW_NEWSLETTER_EXIT_TAG_ID?.trim()
 	if (
 		process.env.AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY !== 'true' ||
+		process.env.AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY !== 'true' ||
 		!tagId ||
 		!/^[1-9]\d*$/.test(tagId) ||
 		['23763332', '22309615'].includes(tagId)

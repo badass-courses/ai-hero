@@ -234,7 +234,7 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 		// durable Stage 3 handoffs. Do not probe Kit's paused legacy sequence or
 		// apply its backfill tag for them; both would create a second owner.
 		if (entryResult.status === 'drovr-owned') {
-			await step.run('assign-shadow-newsletter-owner', async () => {
+			const assignment = await step.run('assign-shadow-newsletter-owner', async () => {
 				const repository = new DrizzleCaptureMarketingRepository(db)
 				const providerIdentity = await repository.findProviderIdentity(
 					'kit',
@@ -256,6 +256,12 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 					occurredAt: event.data.subscribedAt,
 				})
 			})
+			if (assignment?.eventType === 'newsletter.admission.held') {
+				await log.info('subscriber_funnel.newsletter_admission_held', {
+					contactId: entryResult.contactId, holdEventId: assignment.id,
+				})
+				return { ...entryResult, newsletter: 'held' as const }
+			}
 			await log.info('subscriber_funnel.legacy_newsletter_enrollment_skipped', {
 				funnel: 'skills-newsletter',
 				eventId: event.id,

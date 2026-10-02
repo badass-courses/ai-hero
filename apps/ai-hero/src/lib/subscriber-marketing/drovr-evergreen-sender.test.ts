@@ -663,10 +663,10 @@ describe('executePendingEvergreenSends', () => {
 			dispatch: () => {},
 		})
 		expect(results.map((r) => [r.intentId, r.status])).toEqual([
-			['row-2', 'retry'],
+			['row-2', 'completed'],
 		])
-		expect(subscribes).toEqual([])
+		expect(subscribes).toMatchObject([{ listId: '2625552' }])
 		expect(repository.intents.get('row-1')?.status).toBe('pending')
-		expect(repository.intents.get('row-2')?.status).toBe('pending')
+		expect(repository.intents.get('row-2')?.status).toBe('completed')
 	})
 })

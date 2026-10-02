@@ -1,48 +1,68 @@
-# Shadow Newsletter: old-sequence exit gate
+# Shadow Newsletter: exit gate for new admissions
 
-The send gate is implemented. The Kit exit rule and its completion-proof importer are **not** implemented or approved by this change. Until the app has a verified exit receipt, every reader with present or unknown old-sequence membership is held. This can hold all existing Shadow sends; it is not a claim that newsletter delivery is ready.
+Deploy changes nothing for existing Shadow readers. Ruling A applies to readers drovr takes from this change onward. New admissions with present or unknown membership in `2625552` are durably held, not failed or dropped. The Kit rule and independent proof producer remain pending Joel/account owner. No live Kit changes, cleanup, merge, or deploy are part of this PR.
 
-## Ruling A: refuse before exit proof
+## Rulings and scope
 
-Before a new newsletter ownership assignment, a veteran birth, an existing-owner birth replay, a Shadow email enrollment, or an owned list handoff completion, check the app's local sequence receipts.
+- Each new drovr newsletter admission gets a `newsletter.exit-required` marker before any exit request. Only these readers enter the default send gate.
+- Existing owners/readers without that marker keep sending exactly as before. `AIH_SHADOW_NEWSLETTER_EXISTING_EXIT_GATE_ENABLED` defaults off and **must stay off** until ruling B is satisfied and the operator explicitly approves the existing-reader migration.
+- Unowned list handoffs retain the prior legacy subscription/backfill behavior and close the evergreen journey. A newly taken reader's marker prevents that legacy enrollment while admission is held.
+- Veteran batches check protected-cohort evidence before any ownership write or tag request, even if an overlap reader has no newsletter owner row. `newsletter.shadow.protected-cohort` always excludes the reader. A trusted complete snapshot must attest `newsletter.shadow.cohort-clear` before a veteran may be taken. Missing snapshot evidence is counted as `cohortUnknown` and skipped, never treated as clear. This change imports no cohort data.
 
-- An old enrollment/subscription record means present until a newer confirmed exit exists.
-- Missing history means unknown, not absent. Ownership and a tag-write acknowledgement do not prove exit.
-- Present or unknown membership refuses admission with a retryable error. No newsletter birth is written or queued.
-- At send time, refusal leaves the intent `pending`, records `old-newsletter-exit-unconfirmed` in `lastError` and `reviewReasons`, and returns `retry`. It never spends the provider-send attempt budget, dispatches a completion, or drops the row.
-- A list handoff cannot re-add the reader to `2625552`. Without newsletter ownership it stays pending; with ownership and exit proof it completes without a Kit enrollment.
+## Durable state machine
 
-The membership check reads three event types from the local repository. It makes **zero Kit membership reads**. Kit documents no subscriber-to-sequences read. Its sequence list supports at most 1,000 subscribers per page, so confirming one reader's absence would require a complete sequence scan. There is no such scan or membership cache in this implementation.
+The transition sketch uses XState v5 vocabulary; persisted events/statuses are the actual runtime state, not a second in-memory engine:
 
-## Exit request adapter, pending account-owner approval
+```ts
+createMachine({
+  initial: 'unassigned',
+  states: {
+    unassigned: { on: { ADMIT: [
+      { guard: 'independentExitProof', target: 'owned' },
+      { target: 'admissionHeld' },
+    ] } },
+    admissionHeld: { on: { EXIT_RECEIPT: {
+      guard: 'persistedCurrentProof', target: 'owned',
+    } } },
+    owned: { on: { SEND: [
+      { guard: 'exemptOrProven', target: 'completed' },
+      { target: 'sendHeld' },
+    ] } },
+    sendHeld: { on: { EXIT_RECEIPT: {
+      guard: 'persistedCurrentProof', target: 'owned',
+    } } },
+    completed: { type: 'final' },
+  },
+})
+```
 
-`endOldSequenceMembership` requests the NEW tag `shadow-exit-2625552` through the existing `addSubscriberToKitTag` client. The account owner must create/verify the tag and configure the UI-only rule that removes tagged readers from sequence `2625552`.
+Admission refusal writes the idempotent `newsletter.admission.held` contact event and returns normally. The signup Inngest function returns `newsletter: 'held'`; veteran batches count `held` and continue. No policy refusal burns an Inngest retry budget or births a newsletter actor.
 
-The adapter defaults to `unsupported`. It writes nothing until both are configured:
+Send refusal sets `status: 'held-for-exit'`, records `lastError`, `reviewReasons`, and the **first** `exitHeldAt`, and spends no provider-send attempt. The active sender queries only `pending`, so held readers cannot occupy its batch limit or starve a proven reader.
 
-- `AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY=true`, after approval and a verified rule readback.
-- `KIT_SHADOW_NEWSLETTER_EXIT_TAG_ID`, the verified id of **shadow-exit-2625552**.
+After persisting an independent exit receipt, the producer emits `newsletter/old-sequence.exit-confirmed` with `contactId` and `receiptId`. The registered Inngest replay function verifies that exact receipt and current local membership. It replays any held admission using the saved identity, queues an idempotent authority newsletter birth, and re-arms that contact's exit-held intents to `pending`. Duplicate/stale notifications cannot fabricate proof or repeat completed sends. The producer must reliably retry notification delivery after the DB write; persisting proof without the notification is not a completed producer operation.
 
-It rejects the existing `drovr-newsletter` tag (`23763332`) and legacy backfill tag (`22309615`). It does not create tags, configure rules, globally unsubscribe readers, or call an invented sequence-member DELETE.
+## Producer before rule flag: hard rollout gate
 
-Even a successful exit-tag write only means `requested`. The gate rereads the app receipts and still refuses unless independent completion proof exists. No default tag-write path creates that proof.
+The new exit adapter requires **both**:
 
-## Local receipt contract
+1. `AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY=true`, only after the independent proof producer, receipt replay notification, and recovery behavior are verified.
+2. `AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY=true`, only after Joel/account-owner approval and verified UI-rule readback.
 
-All sequence receipts bind `contactId`, `provider: 'kit'`, and `providerReference: 'kit:sequence:2625552'`.
+Set/verify the producer first. Never enable the rule flag ahead of the producer. Configure `KIT_SHADOW_NEWSLETTER_EXIT_TAG_ID` to the verified **new** `shadow-exit-2625552` tag. The adapter defaults to `unsupported`, never creates/configures Kit objects, and rejects the old `drovr-newsletter` and legacy backfill tag ids.
 
-- `newsletter.old-sequence.subscribed`: historical confirmed legacy enrollment.
-- `newsletter.old-sequence.enrollment-requested`: conservatively recorded before the legacy signup path can attempt enrollment. Failed or ambiguous enrollment still invalidates older exit proof.
-- `newsletter.old-sequence.exit-confirmed`: independent proof that the reader left the old sequence. Its `occurredAt` must be newer than every local subscription/enrollment request.
+The existing Kit tag client acknowledges only a request. A tag-added webhook or successful tag write is **not** proof of sequence removal and must not produce an exit-confirmed receipt. Existing readers/send-time checks never call this adapter.
 
-This change **does not** add a completion-proof producer, import old memberships, or manufacture absence from missing records. The future verified rule-completion/readback importer owns that proof. A tag-added webhook or tag acknowledgement alone must never write `exit-confirmed`.
+## Proof contract and stale-proof producer requirement (M3)
 
-## Ruling B: no retroactive cleanup
+Proof binds `contactId`, `provider: 'kit'`, and `providerReference: 'kit:sequence:2625552'`. `newsletter.old-sequence.exit-confirmed` must be newer than any `newsletter.old-sequence.subscribed` or `newsletter.old-sequence.enrollment-requested` record. Unknown history is not absence. The legacy signup path records an enrollment request before touching the provider, so failed/ambiguous enrollments invalidate older proof too.
 
-Existing newsletter owners and send-time checks never call the exit request adapter. They read app records and hold unproven sends. Only a new admission may request the approved exit tag. No sweep, backfill, existing-cohort retagging, merge, or deployment is part of this change.
+**Before enabling the producer**, inventory every path that can enroll `2625552`: app signups, the `22309615` backfill, Kit forms/automations, and manual adds. They must either record authoritative enrollment receipts that invalidate exit proof or exclude readers with an exit receipt. The producer must reconcile provider-side re-enrollments before claiming that its local receipt remains current. Without that coverage, stale local proof can allow duplicate delivery. No new importer, backfill behavior, or Kit-side enrollment instrumentation ships in this change.
 
-## Tests and rollout
+## Cost and tests
 
-The new-entrant and veteran RED admissions now throw retryable refusals without births. Their Shadow-send regressions leave visible pending rows. Tests also cover repeated holds past the send attempt budget, successful independent proof, idempotent delivery, owner replay, list handoffs, failed reads/exit requests, tag acknowledgements without proof, and rejection of the old tags.
+Checks use local event records only. There are zero per-send Kit membership reads. Kit documents no subscriber-to-sequences read; absence via its sequence list would require every page, at most 1,000 readers per page. No such scan or cache was added.
 
-Open for review, not deployment approval. Account-owner approval, rule setup/readback, the completion-proof importer, Opus review, and the application READY deploy gate still apply.
+RED-first regressions cover non-throwing Inngest admission using the real assignment code, queue starvation with more than the batch limit held, existing-reader delivery with no proof, producer/rule flag ordering, unchanged unowned handoffs, and protected-cohort exclusion without an owner row. Receipt tests cover verified replay, re-arming, duplicates and stale/misbound proof.
+
+Ready for review is not deployment approval. Opus review, application gates, producer verification, Kit rule approval/readback, and AI Hero's READY deploy gate remain required.
