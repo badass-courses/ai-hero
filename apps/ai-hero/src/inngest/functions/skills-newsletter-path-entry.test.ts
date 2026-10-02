@@ -44,6 +44,7 @@ vi.mock('@/lib/subscriber-marketing/drizzle-capture-repository', () => ({
 		findProviderIdentity() {
 			return { id: 'identity_1', contactId: 'contact_1' }
 		}
+		createContactEvent(input: unknown) { return input }
 	},
 }))
 
@@ -333,6 +334,7 @@ describe('skills newsletter path entry', () => {
 			email: 'learner@example.com',
 			name: 'Learner',
 			occurredAt: '2026-08-07T12:00:00.000Z',
+			source: 'drovr-owned-signup',
 		})
 		expect(mocks.log.info).toHaveBeenCalledWith(
 			'subscriber_funnel.legacy_newsletter_enrollment_skipped',

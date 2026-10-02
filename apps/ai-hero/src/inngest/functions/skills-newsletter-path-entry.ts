@@ -4,6 +4,7 @@ import {
 	KitSubscribeError,
 	subscribeToKitListWithoutFields,
 } from '@/coursebuilder/email-list-provider'
+import { recordOldNewsletterEnrollmentRequest } from '@/lib/subscriber-marketing/old-newsletter-exit'
 import { kitWriteRetrySchedule } from '@/coursebuilder/kit-write-retry'
 import { SKILLS_NEWSLETTER_SUBSCRIBED_EVENT } from '@/inngest/events/skills-newsletter'
 import { inngest } from '@/inngest/inngest.server'
@@ -233,7 +234,7 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 		// durable Stage 3 handoffs. Do not probe Kit's paused legacy sequence or
 		// apply its backfill tag for them; both would create a second owner.
 		if (entryResult.status === 'drovr-owned') {
-			await step.run('assign-shadow-newsletter-owner', async () => {
+			const assignment = await step.run('assign-shadow-newsletter-owner', async () => {
 				const repository = new DrizzleCaptureMarketingRepository(db)
 				const providerIdentity = await repository.findProviderIdentity(
 					'kit',
@@ -253,8 +254,15 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 					email: event.data.email,
 					name: event.data.name,
 					occurredAt: event.data.subscribedAt,
+					source: 'drovr-owned-signup',
 				})
 			})
+			if (assignment?.eventType === 'newsletter.admission.held') {
+				await log.info('subscriber_funnel.newsletter_admission_held', {
+					contactId: entryResult.contactId, holdEventId: assignment.id,
+				})
+				return { ...entryResult, newsletter: 'held' as const }
+			}
 			await log.info('subscriber_funnel.legacy_newsletter_enrollment_skipped', {
 				funnel: 'skills-newsletter',
 				eventId: event.id,
@@ -263,6 +271,16 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 			})
 			return entryResult
 		}
+
+		await step.run('record-old-newsletter-enrollment-request', () =>
+			recordOldNewsletterEnrollmentRequest({
+				repository: new DrizzleCaptureMarketingRepository(db),
+				contactId: entryResult.contactId, kitSubscriberId: event.data.kitSubscriberId,
+				email: event.data.email,
+				eventId: event.id ?? `skills-form:${event.data.formId}:subscriber:${event.data.kitSubscriberId}`,
+				now: new Date().toISOString(),
+			}),
+		)
 
 		const user = {
 			email: event.data.email,

@@ -25,6 +25,8 @@ export type DrovrEventsDeliver = {
 			| 'course-exhausted'
 			/** Pre-gate veterans' newsletter births, sent by the veterans function. */
 			| 'newsletter-veteran'
+			/** A held live signup resumed after verified legacy exit. */
+			| 'drovr-owned-signup'
 			/**
 			 * Directory births for contacts the Kit ingest creates. Their own lane:
 			 * as `contact-created` they queued live signups behind a bulk page

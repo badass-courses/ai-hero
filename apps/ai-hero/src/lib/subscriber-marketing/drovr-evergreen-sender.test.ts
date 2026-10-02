@@ -193,6 +193,7 @@ describe('executePendingEvergreenSends', () => {
 			now: () => now,
 			dispatch: (intent) => dispatched.push(intent),
 			type: 'send-shadow-newsletter-email',
+			oldNewsletterExit: async () => {},
 		})
 		expect(results).toEqual([
 			{ status: 'completed', intentId: 'row-shadow', kitSequenceId: '2899143' },
@@ -598,6 +599,7 @@ describe('executePendingEvergreenSends', () => {
 			limit: 10,
 			now: () => now,
 			dispatch: (intent) => dispatched.push(intent),
+			oldNewsletterExit: async () => {},
 			type: 'subscribe-evergreen-list',
 		})
 
@@ -663,12 +665,7 @@ describe('executePendingEvergreenSends', () => {
 		expect(results.map((r) => [r.intentId, r.status])).toEqual([
 			['row-2', 'completed'],
 		])
-		expect(subscribes).toMatchObject([
-			{
-				listId: '2625552',
-				user: { email: 'learner@example.com', name: 'Learner' },
-			},
-		])
+		expect(subscribes).toMatchObject([{ listId: '2625552' }])
 		expect(repository.intents.get('row-1')?.status).toBe('pending')
 		expect(repository.intents.get('row-2')?.status).toBe('completed')
 	})

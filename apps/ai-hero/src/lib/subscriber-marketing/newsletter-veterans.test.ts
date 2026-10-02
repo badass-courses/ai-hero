@@ -68,7 +68,9 @@ function repository(args: {
 				args.identities?.[externalId],
 		),
 		findContactEventsByType: vi.fn(
-			async (contactId: string) => args.assignments?.[contactId] ?? [],
+			async (contactId: string, eventType: string) => eventType === 'newsletter.shadow.cohort-clear'
+				? [{ contactId, eventType }]
+				: args.assignments?.[contactId] ?? [],
 		),
 		createContactEvent: vi.fn(async () => assignment('unused', 'unused')),
 	} as unknown as NewsletterVeteransRepository
@@ -84,6 +86,9 @@ const emptyCounts = {
 	missingContact: 0,
 	identityMismatch: 0,
 	notCourseOwned: 0,
+	protectedCohort: 0,
+	cohortUnknown: 0,
+	held: 0,
 }
 
 const send = vi.fn<[DrovrEventsDeliver], Promise<unknown>>(
@@ -142,6 +147,7 @@ describe('assignNewsletterVeteransBatch', () => {
 			email: 'veteran@example.test',
 			name: 'Veteran',
 			occurredAt: NOW,
+			source: 'newsletter-veteran',
 		})
 		expect(send).toHaveBeenCalledWith({
 			name: 'drovr/events.deliver',
@@ -192,7 +198,7 @@ describe('assignNewsletterVeteransBatch', () => {
 		expect(send.mock.calls[0]?.[0]).toMatchObject({
 			data: { events: [veteranNewsletterBirth('c1', NOW)], source: 'newsletter-veteran' },
 		})
-		expect(mocks.ensureShadowNewsletterOwnershipAssignment).not.toHaveBeenCalled()
+		expect(mocks.ensureShadowNewsletterOwnershipAssignment).toHaveBeenCalledTimes(1)
 	})
 
 	it('batches the births into one delivery and counts a failed send instead of throwing', async () => {

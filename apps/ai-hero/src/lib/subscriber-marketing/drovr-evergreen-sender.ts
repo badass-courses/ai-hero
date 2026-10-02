@@ -15,6 +15,7 @@ import {
 import { SEND_SHADOW_NEWSLETTER_EMAIL_INTENT_TYPE } from './drovr-shadow-newsletter'
 import { dispatchDrovrShadowFactSafely } from './drovr-shadow-dispatch'
 import type { SideEffectIntent } from './types'
+import { createOldNewsletterExitGate, OldNewsletterExitRefusedError, requiresOldNewsletterExit, type OldNewsletterExitGate } from './old-newsletter-exit'
 
 /**
  * The sequence sender: drains the evergreen and shadow-newsletter rows the
@@ -88,6 +89,7 @@ function kitFailureVerdict(error: unknown): {
 export async function executePendingEvergreenSends(args: {
 	repository: EvergreenSenderRepository
 	subscribe: EvergreenSubscribe
+	oldNewsletterExit?: OldNewsletterExitGate
 	limit: number
 	now?: () => string
 	pacingMs?: number
@@ -131,7 +133,7 @@ async function sendOne(input: {
 	row: SideEffectIntent
 	args: Pick<
 		Parameters<typeof executePendingEvergreenSends>[0],
-		'repository' | 'subscribe'
+		'repository' | 'subscribe' | 'oldNewsletterExit'
 	>
 	now: string
 	dispatch: (intent: SideEffectIntent) => void
@@ -149,7 +151,37 @@ async function sendOne(input: {
 	if (stop) return await giveUp(row, args.repository, now, stop, dispatch)
 	const attempts = numberField(row.metadata.attempts) + 1
 	const unclaimed = row.metadata
-	if (await isOwnedShadowNewsletterHandoff(row, args.repository)) {
+	const ownedHandoff = await isOwnedShadowNewsletterHandoff(row, args.repository)
+	const newsletterRow = row.type === SEND_SHADOW_NEWSLETTER_EMAIL_INTENT_TYPE ||
+		(row.type === SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE && row.metadata.list === 'shadow-newsletter')
+	if (newsletterRow) {
+		// A scope read failure is infrastructure failure, not exit refusal.
+		// Leave the row pending for the next cron; do not strand exempt readers.
+		const gated = await requiresOldNewsletterExit({
+			repository: args.repository, contactId: contact.id,
+			existingReader: row.type === SEND_SHADOW_NEWSLETTER_EMAIL_INTENT_TYPE || ownedHandoff,
+		})
+		try {
+			if (gated && row.type === SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE && !ownedHandoff) {
+				throw new OldNewsletterExitRefusedError('newsletter-admission-not-yet-assigned')
+			}
+			if (gated) await (args.oldNewsletterExit ?? createOldNewsletterExitGate({ repository: args.repository }))({
+				contactId: contact.id, email: contact.email,
+			})
+		} catch (cause) {
+			if (!(cause instanceof OldNewsletterExitRefusedError) || cause.reason === 'membership-or-exit-unavailable') throw cause
+			// Separate state: held readers cannot occupy the active queue's LIMIT.
+			// Only a persisted exit receipt can re-arm them; no send attempts spent.
+			const error = 'old-newsletter-exit-unconfirmed'
+			await args.repository.updateSideEffectIntent(row.id, {
+				status: 'held-for-exit', completedAt: null, gates: row.gates,
+				reviewReasons: [...new Set([...row.reviewReasons, error])],
+				metadata: { ...unclaimed, lastError: error, exitHeldAt: unclaimed.exitHeldAt ?? now },
+			})
+			return { status: 'retry', intentId: row.id, attempts: numberField(unclaimed.attempts), error }
+		}
+	}
+	if (ownedHandoff) {
 		const completed = await args.repository.updateSideEffectIntent(row.id, {
 			status: 'completed',
 			completedAt: now,

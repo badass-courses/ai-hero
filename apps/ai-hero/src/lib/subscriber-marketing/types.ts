@@ -18,6 +18,7 @@ export type SideEffectIntentStatus =
 	| 'blocked'
 	| 'pending'
 	| 'sending'
+	| 'held-for-exit'
 	| 'completed'
 	| 'failed'
 	| 'skipped'
@@ -47,6 +48,8 @@ export type ContactIdentityEvidence = {
 }
 
 export type PayloadSummary = {
+	/** App-authored newsletter admission provenance, persisted in the JSON summary. */
+	source?: 'drovr-owned-signup' | 'newsletter-veteran'
 	summary: string
 	keywords: string[]
 	restrictedPayloadStored: false

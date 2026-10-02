@@ -52,6 +52,7 @@ import { drovrSignupDeliver } from './functions/drovr-signup-deliver'
 import { drovrOutboxReplay } from './functions/drovr-outbox-replay'
 import { kitDirectoryIngest } from './functions/kit-directory-ingest'
 import { newsletterVeteransAssign } from './functions/newsletter-veterans'
+import { newsletterExitReplay } from './functions/newsletter-exit-replay'
 import { createPPPCreditCouponsForPurchasers } from './functions/coupon/create-ppp-credit-coupons-for-purchasers'
 import { grantCouponEntitlements } from './functions/coupon/grant-coupon-entitlements'
 import { grantCouponEntitlementsForPurchase } from './functions/coupon/grant-coupon-entitlements-for-purchase'
@@ -179,6 +180,7 @@ const allFunctions = [
 	drovrOutboxReplay,
 	kitDirectoryIngest,
 	newsletterVeteransAssign,
+	newsletterExitReplay,
 	googleAdsConversionUpload,
 	invoiceShortfallReconciliation,
 	syncGithubSourcedPosts,

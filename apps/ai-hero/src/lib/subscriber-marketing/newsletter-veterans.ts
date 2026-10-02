@@ -13,6 +13,7 @@ import {
 	type DrovrShadowEvent,
 } from './drovr-shadow-emitter'
 import { ensureShadowNewsletterOwnershipAssignment } from './skills-newsletter-path-entry'
+import { veteranCohortProtection, NEWSLETTER_ADMISSION_HELD } from './old-newsletter-exit'
 
 /**
  * Small on purpose: every batch is one delivery event whose births fold
@@ -38,6 +39,9 @@ export type NewsletterVeteransCounts = {
 	identityMismatch: number
 	/** Not drovr-owned for the course, so not a veteran; the cohort row is wrong. */
 	notCourseOwned: number
+	protectedCohort: number
+	cohortUnknown: number
+	held: number
 }
 
 export type NewsletterVeteransResult = {
@@ -89,9 +93,10 @@ const sendThroughInngest: NewsletterVeteransSend = async (payload) => {
 /**
  * Gives contacts that drovr already owns for the course the newsletter
  * ownership assignment they would have received at signup had the gate
- * existed, then hands drovr the newsletter births for the whole batch in
- * one durable delivery. Nothing here touches Kit: moving the contact off
- * Kit's weekly sequence is a separate tag write once the actor exists.
+ * existed, after the protected-cohort snapshot attests they are clear.
+ * A new admission may request the approved exit tag; refusal persists a
+ * held event instead of losing the batch to retries. Existing owners are
+ * exempt until ruling B is satisfied. Births queue only after admission.
  *
  * Reruns are safe: an existing assignment is kept and its birth is sent
  * again (drovr dedupes on the key), so a batch whose delivery was lost is
@@ -103,6 +108,7 @@ export async function assignNewsletterVeteransBatch(args: {
 	dryRun?: boolean
 	now?: string
 	send?: NewsletterVeteransSend
+	oldNewsletterExit?: import('./old-newsletter-exit').OldNewsletterExitGate
 }): Promise<NewsletterVeteransResult> {
 	if (args.batch.length > NEWSLETTER_VETERANS_BATCH_SIZE) {
 		throw new Error(
@@ -122,6 +128,9 @@ export async function assignNewsletterVeteransBatch(args: {
 		missingContact: 0,
 		identityMismatch: 0,
 		notCourseOwned: 0,
+		protectedCohort: 0,
+		cohortUnknown: 0,
+		held: 0,
 	}
 	const births: DrovrShadowEvent[] = []
 
@@ -149,6 +158,14 @@ export async function assignNewsletterVeteransBatch(args: {
 			counts.notCourseOwned += 1
 			continue
 		}
+		// Check the protected snapshot before any assignment/tag, even when
+		// an overlap reader lacks an ownership row. Unknown means no mutation.
+		const protection = await veteranCohortProtection(args.repository, veteran.contactId)
+		if (protection !== 'clear') {
+			if (protection === 'protected') counts.protectedCohort += 1
+			else counts.cohortUnknown += 1
+			continue
+		}
 		const existing = await findJourneyOwnerAssignment(
 			args.repository,
 			veteran.contactId,
@@ -156,22 +173,38 @@ export async function assignNewsletterVeteransBatch(args: {
 		)
 		if (existing) {
 			counts.alreadyAssigned += 1
-			if (!dryRun) births.push(veteranNewsletterBirth(veteran.contactId, now))
+			if (!dryRun) {
+				const assignment = await ensureShadowNewsletterOwnershipAssignment({
+					repository: args.repository, contactId: veteran.contactId,
+					source: 'newsletter-veteran',
+					providerIdentityId: identity.id, kitSubscriberId: veteran.kitSubscriberId,
+					email: contact.email, occurredAt: now,
+					...(args.oldNewsletterExit ? { oldNewsletterExit: args.oldNewsletterExit } : {}),
+				})
+				if (assignment?.eventType === NEWSLETTER_ADMISSION_HELD) counts.held += 1
+				else births.push(veteranNewsletterBirth(veteran.contactId, now))
+			}
 			continue
 		}
 		if (dryRun) {
 			counts.wouldAssign += 1
 			continue
 		}
-		await ensureShadowNewsletterOwnershipAssignment({
+		const assignment = await ensureShadowNewsletterOwnershipAssignment({
 			repository: args.repository,
 			contactId: veteran.contactId,
+			source: 'newsletter-veteran',
 			providerIdentityId: identity.id,
 			kitSubscriberId: veteran.kitSubscriberId,
 			email: contact.email,
 			name: contact.name ?? undefined,
 			occurredAt: now,
+			...(args.oldNewsletterExit ? { oldNewsletterExit: args.oldNewsletterExit } : {}),
 		})
+		if (assignment?.eventType === NEWSLETTER_ADMISSION_HELD) {
+			counts.held += 1
+			continue
+		}
 		counts.assigned += 1
 		births.push(veteranNewsletterBirth(veteran.contactId, now))
 	}

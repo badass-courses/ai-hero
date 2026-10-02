@@ -75,6 +75,7 @@ export async function summarizeGateDStatus(args: {
 		contacts: args.contactIds.length,
 		intents: 0,
 		pending: 0,
+		heldForExit: 0,
 		completed: 0,
 		blocked: 0,
 		stale: 0,
@@ -101,7 +102,9 @@ export async function summarizeGateDStatus(args: {
 			const complete = isValuePathIntentCompleted(intent)
 			totals.intents++
 			if (complete) totals.completed++
-			if (!complete && intent.status === 'pending') totals.pending++
+			// Pending here is awaiting delivery, including policy-held rows.
+			if (!complete && ['pending', 'held-for-exit'].includes(intent.status)) totals.pending++
+			if (intent.status === 'held-for-exit') totals.heldForExit++
 			if (intent.status === 'blocked') totals.blocked++
 			if (intent.status === 'stale') totals.stale++
 			increment(

@@ -372,6 +372,30 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		return rows.map(toContactEventRecord)
 	}
 
+	/** Queue receipts include isolated policy holds, without scanning contacts. */
+	async findNewsletterSendQueueCounts() {
+		const rows = await this.database.select({ status: sideEffectIntent.status, count: sql<number>`count(*)` })
+			.from(sideEffectIntent).where(and(eq(sideEffectIntent.provider, 'kit'),
+				inArray(sideEffectIntent.type, ['send-shadow-newsletter-email', 'subscribe-evergreen-list']),
+				inArray(sideEffectIntent.status, ['pending', 'held-for-exit'])))
+			.groupBy(sideEffectIntent.status)
+		const totals = { pending: 0, heldForExit: 0 }
+		for (const row of rows) {
+			if (row.status === 'pending') totals.pending = Number(row.count)
+			if (row.status === 'held-for-exit') totals.heldForExit = Number(row.count)
+		}
+		return totals
+	}
+
+	async findExitHeldSideEffectIntentsByContact(contactId: string) {
+		const rows = await this.database.select().from(sideEffectIntent).where(and(
+			eq(sideEffectIntent.contactId, contactId),
+			eq(sideEffectIntent.status, 'held-for-exit'),
+			inArray(sideEffectIntent.type, ['send-shadow-newsletter-email', 'subscribe-evergreen-list']),
+		))
+		return rows.map(toSideEffectIntentRecord)
+	}
+
 	async createContactEvent(
 		input: Omit<ContactEventRecord, 'id' | 'createdAt'> & {
 			createdAt?: string

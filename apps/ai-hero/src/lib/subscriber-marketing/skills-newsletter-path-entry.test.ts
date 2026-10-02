@@ -320,9 +320,11 @@ describe('Skills newsletter path entry: drovr ownership', () => {
 			kitSubscriberId: input.kitSubscriberId,
 			email: input.email,
 			name: 'Owned Learner',
+			oldNewsletterExit: async () => {},
 			occurredAt: input.subscribedAt,
 		})
 		const replay = await ensureShadowNewsletterOwnershipAssignment({
+			oldNewsletterExit: async () => {},
 			repository,
 			contactId: result.contactId,
 			providerIdentityId: identity.id,
