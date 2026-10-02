@@ -1,9 +1,11 @@
 import { db } from '@/db'
 import {
 	coupon as couponTable,
+	merchantCharge as merchantChargeTable,
 	purchases as purchasesTable,
 	users as usersTable,
 } from '@/db/schema'
+import { env } from '@/env.mjs'
 import { inngest } from '@/inngest/inngest.server'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import {
@@ -15,8 +17,10 @@ import {
 	writePurchaseRecordedContactEvents,
 	type PurchaseRecordedSource,
 } from '@/lib/subscriber-marketing/lifecycle-contact-events'
+import { purchaseFacts } from '@/lib/subscriber-marketing/purchase-facts'
 import { log } from '@/server/logger'
 import { eq } from 'drizzle-orm'
+import Stripe from 'stripe'
 
 import { FULL_PRICE_COUPON_REDEEMED_EVENT } from '@coursebuilder/core/events/commerce'
 import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/events/commerce'
@@ -62,6 +66,10 @@ export const capturePurchaseContactEvent = inngest.createFunction(
 				totalAmount: String(row.totalAmount),
 				purchasedAt: new Date(row.createdAt).toISOString(),
 				evergreenCouponId: evergreenCouponIdOf(row) ?? null,
+				couponId: row.couponId ?? null,
+				bulkCouponId: row.bulkCouponId ?? null,
+				redeemedBulkCouponId: row.redeemedBulkCouponId ?? null,
+				merchantChargeId: row.merchantChargeId ?? null,
 			}
 		})
 		if (!purchase) {
@@ -97,12 +105,53 @@ export const capturePurchaseContactEvent = inngest.createFunction(
 			: null
 		if (evergreenOffer?.status === 'refused') {
 			// Falls back to the buyer's contact, which is what ran before row 194.
-			await log.warn('contact_event.purchase_recorded.evergreen_coupon_refused', {
-				purchaseId: purchase.id,
-				couponId: evergreenCouponLogId(evergreenOffer.couponId),
-				reason: evergreenOffer.reason,
-			})
+			await log.warn(
+				'contact_event.purchase_recorded.evergreen_coupon_refused',
+				{
+					purchaseId: purchase.id,
+					couponId: evergreenCouponLogId(evergreenOffer.couponId),
+					reason: evergreenOffer.reason,
+				},
+			)
 		}
+
+		const facts = await step.run(
+			'read purchase attribution facts',
+			async () => {
+				let charge: unknown
+				if (purchase.merchantChargeId && !purchase.redeemedBulkCouponId) {
+					try {
+						const row = await db.query.merchantCharge.findFirst({
+							where: eq(merchantChargeTable.id, purchase.merchantChargeId),
+						})
+						if (row?.identifier) {
+							const stripe = new Stripe(env.STRIPE_SECRET_TOKEN, {
+								apiVersion: '2024-06-20',
+								timeout: 5000,
+								maxNetworkRetries: 1,
+							})
+							charge = await stripe.charges.retrieve(row.identifier)
+						}
+					} catch {
+						try {
+							await log.warn('contact_event.purchase_recorded.charge_unknown', {
+								purchaseId: purchase.id,
+							})
+						} catch {
+							// Optional telemetry must not block the existing buyer stop.
+						}
+					}
+				}
+				return purchaseFacts({
+					...purchase,
+					purchaseId: purchase.id,
+					charge,
+					...(evergreenOffer?.status === 'redeemed'
+						? { evergreenOffer: evergreenOffer.redemption }
+						: {}),
+				})
+			},
+		)
 
 		const source: PurchaseRecordedSource = {
 			purchaseId: purchase.id,
@@ -115,6 +164,7 @@ export const capturePurchaseContactEvent = inngest.createFunction(
 			status: purchase.status,
 			totalAmount: purchase.totalAmount,
 			purchasedAt: purchase.purchasedAt,
+			purchaseFacts: facts,
 			...(evergreenOffer?.status === 'redeemed'
 				? { evergreenOffer: evergreenOffer.redemption }
 				: {}),
