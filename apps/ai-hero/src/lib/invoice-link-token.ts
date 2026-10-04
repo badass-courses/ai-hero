@@ -9,6 +9,17 @@ export type InvoiceLinkTokenInput = {
 
 export const INVOICE_LINK_COOKIE = '__Secure-aihero-invoice-link'
 
+/** Fail closed on missing, blank or short UTF-8 secrets. */
+export function invoiceLinkSecretUsable(
+	secret: string | undefined,
+): secret is string {
+	return (
+		typeof secret === 'string' &&
+		secret.trim().length > 0 &&
+		Buffer.byteLength(secret, 'utf8') >= 32
+	)
+}
+
 const validVersion = (version: number) =>
 	Number.isInteger(version) && version >= 1 && version <= 4294967295
 
@@ -32,7 +43,8 @@ export function createInvoiceLinkToken({
 	ttlDays,
 	nowSeconds = Math.floor(Date.now() / 1000),
 }: InvoiceLinkTokenInput & { ttlDays?: string }): string {
-	if (!secret?.trim()) throw new Error('Invoice sharing is not configured')
+	if (!invoiceLinkSecretUsable(secret))
+		throw new Error('Invoice sharing is not configured')
 	const expiresAt = nowSeconds + invoiceLinkTtlDays(ttlDays) * 86400
 	if (
 		!chargeId ||
@@ -73,7 +85,7 @@ export function verifyInvoiceLinkToken({
 	nowSeconds = Math.floor(Date.now() / 1000),
 }: InvoiceLinkTokenInput & { token: unknown }): boolean {
 	if (
-		!secret?.trim() ||
+		!invoiceLinkSecretUsable(secret) ||
 		!validVersion(linkVersion) ||
 		!Number.isSafeInteger(nowSeconds)
 	)

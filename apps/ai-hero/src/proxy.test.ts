@@ -98,6 +98,13 @@ describe('roleless organization routing', () => {
 		},
 	)
 
+	it('returns 404 for a malformed escape in an invoice path', async () => {
+		const response = await runProxy(rolelessRequest('/invoices/%E0%A4%A'))
+		expect(response.status).toBe(404)
+		expect(response.headers.get('location')).toBeNull()
+		expect(response.headers.get('referrer-policy')).toBe('no-referrer')
+		expect(response.headers.get('cache-control')).toBe('private, no-store')
+	})
 	it('removes an invalid query token before organization routing or rendering', async () => {
 		const response = await runProxy(
 			rolelessRequest('/invoices/mc_synthetic?t=garbage'),

@@ -32,6 +32,52 @@ describe('signed invoice token', () => {
 			}),
 		).toBe(true)
 	})
+	it('refuses minting with a 31-byte secret', () => {
+		expect(() =>
+			createInvoiceLinkToken({
+				chargeId,
+				linkVersion: 1,
+				secret: 's'.repeat(31),
+				nowSeconds,
+			}),
+		).toThrow('not configured')
+	})
+	it('refuses verification with a 31-byte secret even for its matching HMAC', () => {
+		const shortSecret = 's'.repeat(31)
+		const expiresAt = nowSeconds + 86400
+		const signature = createHmac('sha256', shortSecret)
+			.update(`${chargeId}|1|${expiresAt}`)
+			.digest('base64url')
+		expect(
+			verifyInvoiceLinkToken({
+				token: `1.${expiresAt}.${signature}`,
+				chargeId,
+				linkVersion: 1,
+				secret: shortSecret,
+				nowSeconds,
+			}),
+		).toBe(false)
+	})
+	it.each(['s'.repeat(32), 'é'.repeat(16)])(
+		'accepts a secret at the 32-byte UTF-8 boundary',
+		(boundarySecret) => {
+			const token = createInvoiceLinkToken({
+				chargeId,
+				linkVersion: 1,
+				secret: boundarySecret,
+				nowSeconds,
+			})
+			expect(
+				verifyInvoiceLinkToken({
+					token,
+					chargeId,
+					linkVersion: 1,
+					secret: boundarySecret,
+					nowSeconds,
+				}),
+			).toBe(true)
+		},
+	)
 	it('uses the configured TTL in whole days', () => {
 		const token = createInvoiceLinkToken({
 			chargeId,

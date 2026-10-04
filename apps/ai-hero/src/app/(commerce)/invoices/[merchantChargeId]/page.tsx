@@ -17,6 +17,7 @@ import {
 } from '@/lib/invoice-links'
 import {
 	INVOICE_LINK_COOKIE,
+	invoiceLinkSecretUsable,
 	verifyInvoiceLinkToken,
 } from '@/lib/invoice-link-token'
 import { InvoiceShareControls } from './_components/invoice-share-controls'
@@ -151,7 +152,7 @@ const Invoice = async (props: {
 	if (!canEditInvoice) {
 		const token = (await cookies()).get(INVOICE_LINK_COOKIE)?.value
 		const { secret } = invoiceLinkConfiguration()
-		if (!secret?.trim() || !token) redirect('/invoices')
+		if (!invoiceLinkSecretUsable(secret) || !token) redirect('/invoices')
 		const linkVersion = await drizzleInvoiceLinkDataSource.loadVersion(
 			chargeDetails.result.purchaseId,
 			params.merchantChargeId,
@@ -173,11 +174,12 @@ const Invoice = async (props: {
 	const isBillingOwner = Boolean(
 		viewerUserId && viewerUserId === chargeDetails.result.billingUserId,
 	)
-	const purchaseUserTransfers = isPurchaseOwner
-		? await getPurchaseTransferForPurchaseId({
-				id: chargeDetails.result.purchaseId,
-			})
-		: []
+	const purchaseUserTransfers =
+		canEditInvoice && isPurchaseOwner
+			? await getPurchaseTransferForPurchaseId({
+					id: chargeDetails.result.purchaseId,
+				})
+			: []
 
 	if (chargeDetails?.state !== 'SUCCESS') {
 		return null
@@ -400,7 +402,8 @@ const Invoice = async (props: {
 							</div>
 						</div>
 					</InvoiceDetails>
-					{isPurchaseOwner &&
+					{canEditInvoice &&
+					isPurchaseOwner &&
 					!bulkCoupon &&
 					purchaseUserTransfers.length > 0 ? (
 						<div className="py-16 print:hidden">

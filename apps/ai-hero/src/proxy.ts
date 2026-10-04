@@ -157,8 +157,21 @@ export default auth(async function middleware(req) {
 	// Exchange bearer links before HTML/analytics, and leave invoice billing
 	// authorization to the page instead of the organization-routing policy.
 	const invoiceMatch = /^\/invoices\/([^/]+)\/?$/.exec(pathname)
-	if (invoiceMatch?.[1])
-		return invoiceLinkResponse(req, decodeURIComponent(invoiceMatch[1]))
+	if (invoiceMatch?.[1]) {
+		let chargeId: string
+		try {
+			chargeId = decodeURIComponent(invoiceMatch[1])
+		} catch {
+			return new NextResponse(null, {
+				status: 404,
+				headers: {
+					'Referrer-Policy': 'no-referrer',
+					'Cache-Control': 'private, no-store',
+				},
+			})
+		}
+		return invoiceLinkResponse(req, chargeId)
+	}
 	if (!user) return NextResponse.next()
 
 	const currentOrgId = req.cookies.get('organizationId')?.value

@@ -129,6 +129,20 @@ describe('invoice link authorization and revocation', () => {
 		)
 		expect(rotations).toBe(0)
 	})
+	it('refuses mint and rotation with a 31-byte secret before any write', async () => {
+		const input = { merchantChargeId: charge, viewerUserId: 'payer' }
+		const short = { secret: 's'.repeat(31) }
+		expect(
+			(await mintInvoiceLinkForViewer(input, dataSource, short)).state,
+		).toBe('unavailable')
+		expect(
+			(await rotateInvoiceLinkForViewer(input, dataSource, short)).state,
+		).toBe('unavailable')
+		expect((await mintSupportInvoiceLink(input, dataSource, short)).state).toBe(
+			'unavailable',
+		)
+		expect(rotations).toBe(0)
+	})
 	it('refuses invalid TTL before changing the version', async () => {
 		const input = { merchantChargeId: charge, viewerUserId: 'payer' }
 		expect(

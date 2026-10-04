@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 	merchantSession: vi.fn(),
 	transfers: vi.fn(),
 	cookie: vi.fn(),
+	readOnlyProps: vi.fn(),
 }))
 
 vi.mock('@/server/auth', () => ({ getServerAuthSession: mocks.auth }))
@@ -42,6 +43,21 @@ vi.mock('next/headers', () => ({
 	headers: vi.fn(async () => new Headers()),
 	cookies: async () => ({ get: mocks.cookie }),
 }))
+vi.mock('./_components/invoice-details-editor', async (importOriginal) => {
+	const actual =
+		await importOriginal<
+			typeof import('./_components/invoice-details-editor')
+		>()
+	return {
+		...actual,
+		InvoiceDetailsReadOnly: (
+			props: React.ComponentProps<typeof actual.InvoiceDetailsReadOnly>,
+		) => {
+			mocks.readOnlyProps(props)
+			return <actual.InvoiceDetailsReadOnly {...props} />
+		},
+	}
+})
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
 vi.mock('next/navigation', () => ({
 	redirect: (path: string) => {
@@ -243,6 +259,11 @@ describe('signed shareable invoice', () => {
 		vi.stubEnv('INVOICE_LINK_SECRET', '')
 		await expect(renderInvoice()).rejects.toThrow('redirect:/invoices')
 	})
+	it('refuses a 31-byte secret before reading the link version', async () => {
+		vi.stubEnv('INVOICE_LINK_SECRET', 's'.repeat(31))
+		await expect(renderInvoice()).rejects.toThrow('redirect:/invoices')
+		expect(drizzleInvoiceLinkDataSource.loadVersion).not.toHaveBeenCalled()
+	})
 	it('keeps the payer editor when the secret is missing and token is invalid', async () => {
 		vi.stubEnv('INVOICE_LINK_SECRET', '')
 		mocks.auth.mockResolvedValue({ session: { user: { id: 'payer' } } })
@@ -271,7 +292,15 @@ describe('signed shareable invoice', () => {
 		const tree = await Invoice({
 			params: Promise.resolve({ merchantChargeId: CHARGE }),
 		})
-		expect(JSON.stringify(collectProps(tree))).not.toContain('private-')
+		renderToStaticMarkup(tree)
+		expect(mocks.readOnlyProps).toHaveBeenCalledOnce()
+		const props = mocks.readOnlyProps.mock.calls[0]?.[0]
+		expect(Object.keys(props.initialSettings).sort()).toEqual(
+			['recipientName', 'companyName', 'address', 'taxId', 'notes'].sort(),
+		)
+		expect(JSON.stringify([...collectProps(tree), props])).not.toContain(
+			'private-',
+		)
 	})
 
 	it('falls back to the charge billing recipient on the read-only paper', async () => {
@@ -283,6 +312,15 @@ describe('signed shareable invoice', () => {
 		expect(markup).not.toMatch(/<form|<input|<textarea/)
 	})
 
+	it('keeps a transferred learner with a valid token strictly read-only', async () => {
+		mocks.auth.mockResolvedValue({ session: { user: { id: 'learner' } } })
+		mocks.purchase.mockResolvedValue({
+			id: 'purchase-synthetic',
+			userId: 'learner',
+			productId: 'product-synthetic',
+		})
+		expectReadOnly(await renderInvoice())
+	})
 	it('retains the editor and owner-only transfers for the payer', async () => {
 		mocks.auth.mockResolvedValue({ session: { user: { id: 'payer' } } })
 		const markup = await renderInvoice()

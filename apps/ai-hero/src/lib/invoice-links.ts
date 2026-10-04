@@ -2,6 +2,7 @@ import 'server-only'
 import {
 	createInvoiceLinkToken,
 	invoiceLinkTtlDays,
+	invoiceLinkSecretUsable,
 	parseInvoiceLinkToken,
 	verifyInvoiceLinkToken,
 } from '@/lib/invoice-link-token'
@@ -36,7 +37,7 @@ export function invoiceLinkConfiguration(): InvoiceLinkConfiguration {
 }
 
 function configured(config: InvoiceLinkConfiguration): boolean {
-	if (!config.secret?.trim()) return false
+	if (!invoiceLinkSecretUsable(config.secret)) return false
 	try {
 		return Number.isSafeInteger(
 			Math.floor(Date.now() / 1000) +
