@@ -89,22 +89,6 @@ describe('roleless organization routing', () => {
 		expect(response.headers.get('location')).toBeNull()
 	})
 
-	it.each(['/invoices/charge-123', '/invoices/charge-123/'])(
-		'lets a roleless viewer open the exact invoice URL %s',
-		async (path) => {
-			const response = await runProxy(rolelessRequest(path))
-			expect(response.headers.get('x-middleware-next')).toBe('1')
-			expect(response.headers.get('location')).toBeNull()
-		},
-	)
-
-	it('does not bypass organization routing on the invoice list', async () => {
-		const response = await runProxy(rolelessRequest('/invoices'))
-		expect(response.headers.get('location')).toBe(
-			'https://www.aihero.dev/organization-list',
-		)
-	})
-
 	it('still sends a roleless buyer from the team page to the organization list', async () => {
 		const response = await runProxy(rolelessRequest('/team'))
 

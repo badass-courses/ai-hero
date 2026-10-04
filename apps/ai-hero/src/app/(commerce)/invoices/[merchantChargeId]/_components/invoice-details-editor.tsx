@@ -66,13 +66,11 @@ export function resolveLegacyImport({
 	return Object.keys(patch).length > 0 ? patch : null
 }
 
-export type PrintableInvoiceSettings = Pick<
-	InvoiceSettings,
-	'recipientName' | 'companyName' | 'address' | 'taxId' | 'notes'
->
-
 function settingsToForm(
-	settings: PrintableInvoiceSettings | null,
+	settings: Pick<
+		InvoiceSettings,
+		'recipientName' | 'companyName' | 'address' | 'taxId' | 'notes'
+	> | null,
 	fallbackRecipient: string,
 ): InvoiceDetailsFormValues {
 	return {
@@ -164,7 +162,7 @@ export function InvoiceDetailsEditor({
 	children,
 }: {
 	merchantChargeId: string
-	initialSettings: PrintableInvoiceSettings | null
+	initialSettings: InvoiceSettings | null
 	/** Billing name + email from the charge, used when nothing is saved yet. */
 	defaultRecipient: string
 	/** The invoice paper; its "Invoice For" block reads live values via context. */
@@ -299,25 +297,6 @@ export function InvoiceDetailsEditor({
 					</div>
 				</form>
 			</section>
-			{children}
-		</InvoiceDetailsContext.Provider>
-	)
-}
-
-/** Read-only paper: no editor, save handler, or localStorage import. */
-export function InvoiceDetailsReadOnly({
-	initialSettings,
-	defaultRecipient,
-	children,
-}: {
-	initialSettings: PrintableInvoiceSettings | null
-	defaultRecipient: string
-	children?: React.ReactNode
-}) {
-	return (
-		<InvoiceDetailsContext.Provider
-			value={settingsToForm(initialSettings, defaultRecipient)}
-		>
 			{children}
 		</InvoiceDetailsContext.Provider>
 	)
