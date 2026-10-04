@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { invoiceLinkResponse } from './lib/invoice-link-http'
 
 import {
 	AI_CODING_COHORT_SLUG,
@@ -152,6 +153,24 @@ export default auth(async function middleware(req) {
 		} else if (pathname === '/admin') {
 			return NextResponse.redirect(new URL('/admin/dashboard', req.url))
 		}
+	}
+	// Exchange bearer links before HTML/analytics, and leave invoice billing
+	// authorization to the page instead of the organization-routing policy.
+	const invoiceMatch = /^\/invoices\/([^/]+)\/?$/.exec(pathname)
+	if (invoiceMatch?.[1]) {
+		let chargeId: string
+		try {
+			chargeId = decodeURIComponent(invoiceMatch[1])
+		} catch {
+			return new NextResponse(null, {
+				status: 404,
+				headers: {
+					'Referrer-Policy': 'no-referrer',
+					'Cache-Control': 'private, no-store',
+				},
+			})
+		}
+		return invoiceLinkResponse(req, chargeId)
 	}
 	if (!user) return NextResponse.next()
 

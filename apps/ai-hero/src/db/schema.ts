@@ -1113,6 +1113,8 @@ export const sideEffectIntentRelations = relations(
 export const invoiceSettings = mysqlTable(
 	'InvoiceSettings',
 	{
+		// Revocation counter. Details saves must never overwrite this field.
+		linkVersion: int('linkVersion', { unsigned: true }).notNull().default(1),
 		purchaseId: varchar('purchaseId', { length: 255 }).notNull(),
 		merchantChargeId: varchar('merchantChargeId', { length: 255 }).notNull(),
 		recipientName: varchar('recipientName', { length: 255 }),

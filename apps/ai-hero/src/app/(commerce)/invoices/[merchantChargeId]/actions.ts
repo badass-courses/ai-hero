@@ -8,6 +8,11 @@ import {
 	type InvoiceSettingsInput,
 	type SaveInvoiceSettingsResult,
 } from '@/lib/invoice-settings'
+import {
+	mintInvoiceLinkForViewer,
+	rotateInvoiceLinkForViewer,
+	type InvoiceLinkResult,
+} from '@/lib/invoice-links'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 
@@ -43,5 +48,28 @@ export async function saveInvoiceSettingsAction(
 		})
 	}
 
+	return result
+}
+
+/** Every invocation rechecks the signed-in billing owner or team manager. */
+export async function copyInvoiceShareLinkAction(
+	merchantChargeId: string,
+): Promise<InvoiceLinkResult> {
+	const { session } = await getServerAuthSession()
+	return mintInvoiceLinkForViewer({
+		merchantChargeId,
+		viewerUserId: session?.user?.id,
+	})
+}
+
+export async function rotateInvoiceShareLinkAction(
+	merchantChargeId: string,
+): Promise<InvoiceLinkResult> {
+	const { session } = await getServerAuthSession()
+	const result = await rotateInvoiceLinkForViewer({
+		merchantChargeId,
+		viewerUserId: session?.user?.id,
+	})
+	if (result.state === 'minted') revalidatePath(`/invoices/${merchantChargeId}`)
 	return result
 }
