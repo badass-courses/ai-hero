@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { redirect } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
 import { getInvoicePurchasesForUser } from '@/lib/invoice-access'
 import { invoiceEditPath } from '@/lib/invoice-paths'
@@ -10,6 +11,7 @@ import { Button } from '@coursebuilder/ui'
 
 const Invoices = async () => {
 	const { session } = await getServerAuthSession()
+	if (!session?.user?.id) redirect('/login')
 
 	const purchases = await getInvoicePurchasesForUser(session?.user?.id)
 	return (
