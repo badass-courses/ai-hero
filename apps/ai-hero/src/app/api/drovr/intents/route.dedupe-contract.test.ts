@@ -6,8 +6,10 @@ import type {
   DrovrIntent,
 } from "@/lib/subscriber-marketing/drovr-executor";
 import type {
+  ContactEventRecord,
   ContactRecord,
   ContactState,
+  ProviderIdentityRecord,
   SideEffectIntent,
 } from "@/lib/subscriber-marketing/types";
 import type { ValuePathEmailExecutorConfig } from "@/lib/subscriber-marketing/value-path-email-executor";
@@ -19,6 +21,7 @@ import type { ValuePathEmailExecutorConfig } from "@/lib/subscriber-marketing/va
 const boundary = vi.hoisted(() => ({
   repository: undefined as DrovrExecutorRepository | undefined,
   sync: false,
+  hasInitialKitIdentity: true,
   after: vi.fn<[callback: () => Promise<void>], void>(),
   provider: vi.fn(),
   dispatch: vi.fn(),
@@ -46,9 +49,10 @@ vi.mock("@/db", () => ({
       return {
         from: () => ({
           where: () => ({
-            limit: async () => [
-              { id: "contract-identity", externalId: "contract-kit-id" },
-            ],
+            limit: async () =>
+              boundary.hasInitialKitIdentity
+                ? [{ id: "contract-identity", externalId: "contract-kit-id" }]
+                : [],
           }),
         }),
       };
@@ -173,6 +177,11 @@ const EMAIL = "contract@synthetic.aihero.invalid";
 
 class MemoryRepository implements DrovrExecutorRepository {
   readonly intents = new Map<string, SideEffectIntent>();
+  readonly events = new Map<string, ContactEventRecord>();
+  readonly identities = new Map<string, ProviderIdentityRecord>();
+  eventCreates = 0;
+  identityCreates = 0;
+  finishes = 0;
   creates = 0;
   claims = 0;
   writes = 0;
@@ -210,8 +219,54 @@ class MemoryRepository implements DrovrExecutorRepository {
       updatedAt: NOW,
     };
   }
-  findContactEventsByType() {
-    return [];
+  findContactEventsByType(contactId: string, eventType: string) {
+    return [...this.events.values()].filter(
+      (event) => event.contactId === contactId && event.eventType === eventType,
+    );
+  }
+  createContactEvent(
+    input: Omit<ContactEventRecord, "id" | "createdAt"> & {
+      createdAt?: string;
+    },
+  ) {
+    if (this.events.has(input.semanticIdempotencyKey))
+      throw new Error("synthetic contact-event unique-key collision");
+    this.eventCreates++;
+    const event = {
+      ...input,
+      id: `contract-event-${this.eventCreates}`,
+      createdAt: input.createdAt ?? NOW,
+    };
+    this.events.set(input.semanticIdempotencyKey, event);
+    return event;
+  }
+  findProviderIdentity(provider: string, externalId: string) {
+    return this.identities.get(`${provider}:${externalId}`);
+  }
+  createProviderIdentity(input: Omit<ProviderIdentityRecord, "id">) {
+    const key = `${input.provider}:${input.externalId}`;
+    if (this.identities.has(key))
+      throw new Error("synthetic provider-identity unique-key collision");
+    this.identityCreates++;
+    const identity = {
+      ...input,
+      id: `contract-identity-${this.identityCreates}`,
+    };
+    this.identities.set(key, identity);
+    return identity;
+  }
+  finishClaimedSideEffectIntent(
+    id: string,
+    claimedAt: string,
+    patch: Parameters<
+      NonNullable<DrovrExecutorRepository["finishClaimedSideEffectIntent"]>
+    >[2],
+  ) {
+    const row = this.intents.get(id);
+    if (row?.status !== "sending" || row.metadata.claimedAt !== claimedAt)
+      return undefined;
+    this.finishes++;
+    return this.updateSideEffectIntent(id, patch);
   }
   findPendingValuePathEmailSideEffectIntents() {
     return [...this.intents.values()].filter((row) => row.status === "pending");
@@ -404,6 +459,7 @@ beforeEach(() => {
   repository = new MemoryRepository();
   boundary.repository = repository;
   boundary.sync = false;
+  boundary.hasInitialKitIdentity = true;
   for (const transport of [
     boundary.provider,
     boundary.formSubscribe,
@@ -571,6 +627,197 @@ describe("same-key re-ask through the real POST and executor", () => {
     });
     expect(repository.row().metadata.drovr).toEqual(row.metadata.drovr);
     expect(counts(repository)).toEqual(completedCounts);
+  });
+
+  it("inline double opt-in: an in-flight re-ask retries without another form subscription", async () => {
+    let releaseProvider: (() => void) | undefined;
+    let providerReached: (() => void) | undefined;
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+    const reached = new Promise<void>((resolve) => {
+      providerReached = resolve;
+    });
+    boundary.formSubscribe.mockImplementation(async () => {
+      providerReached?.();
+      await providerGate;
+      return {
+        kitSubscriberId: "contract-kit-id",
+        state: "active",
+        unsubscribeTagRemoved: false,
+      };
+    });
+    // Only the real linker's post-commit profile sync is opted in. Inline DOI
+    // returns its completion directly; it does not dispatch a second fact.
+    boundary.profileSync.mockResolvedValue(undefined);
+    boundary.hasInitialKitIdentity = false;
+    const claim = vi.spyOn(repository, "claimSideEffectIntentForSend");
+    const intent: DrovrIntent = {
+      tenantId: "org-aihero",
+      contactId: "contract-contact",
+      journeyId: "double-opt-in",
+      kind: "list.subscribe",
+      idempotencyKey: "contract-transition:double-opt-in",
+      dueAt: NOW,
+      payload: {
+        confirmedAt: NOW,
+        formId: "skills-newsletter",
+        kitFormId: 9376133,
+        reason: "double-opt-in-confirmed",
+      },
+    };
+    const snapshot = () => ({
+      ...counts(repository),
+      finishes: repository.finishes,
+      claimAttempts: claim.mock.calls.length,
+      events: repository.events.size,
+      eventCreates: repository.eventCreates,
+      identities: repository.identities.size,
+      identityCreates: repository.identityCreates,
+    });
+    let firstSettled = false;
+    const firstPending = Promise.resolve(post(intent)).then((response) => {
+      firstSettled = true;
+      return response;
+    });
+    // Positive control: failure to reach the injected form provider fails,
+    // rather than accepting a row-only path as evidence of in-flight safety.
+    await reached;
+    expect(firstSettled).toBe(false);
+    expect(boundary.formSubscribe).toHaveBeenCalledTimes(1);
+    expect(boundary.formSubscribe).toHaveBeenCalledWith({
+      email: EMAIL,
+      firstName: "Contract",
+      kitFormId: 9376133,
+    });
+    const row = repository.row();
+    expect(row).toMatchObject({
+      status: "sending",
+      type: "subscribe-kit-form",
+      metadata: {
+        claimedAt: NOW,
+        drovr: {
+          tenantId: intent.tenantId,
+          journeyId: intent.journeyId,
+          intentKey: intent.idempotencyKey,
+          dueAt: NOW,
+        },
+      },
+    });
+    const owned = structuredClone(row);
+    const firstCounts = snapshot();
+    expect(firstCounts).toEqual({
+      rows: 1,
+      creates: 1,
+      claims: 1,
+      writes: 0,
+      provider: 0,
+      formSubscribe: 1,
+      unsubscribe: 0,
+      dispatch: 0,
+      after: 0,
+      profileSync: 0,
+      observer: 0,
+      budget: 0,
+      refund: 0,
+      identityReads: 0,
+      finishes: 0,
+      claimAttempts: 1,
+      events: 0,
+      eventCreates: 0,
+      identities: 0,
+      identityCreates: 0,
+    });
+    // A different timestamp cannot complete the first request's claim.
+    expect(
+      repository.finishClaimedSideEffectIntent(
+        row.id,
+        "2026-10-08T16:59:59.000Z",
+        {
+          status: "completed",
+          completedAt: NOW,
+          gates: [],
+          reviewReasons: [],
+          metadata: row.metadata,
+        },
+      ),
+    ).toBeUndefined();
+    expect(repository.row()).toEqual(owned);
+    expect(snapshot()).toEqual(firstCounts);
+
+    const second = await post(intent);
+    expect(second.status).toBe(200);
+    expect(await second.json()).toEqual({
+      status: "retry",
+      intentId: row.id,
+      retryAfterMs: 60_000,
+      reason: "kit-subscribe-in-flight",
+    });
+    expect(firstSettled).toBe(false);
+    expect(repository.row()).toEqual(owned);
+    // The re-ask tries and loses the claim, but writes nothing and does no
+    // additional provider/event/dispatch/after work.
+    expect(snapshot()).toEqual({ ...firstCounts, claimAttempts: 2 });
+
+    if (!releaseProvider) throw new Error("inline provider gate not captured");
+    releaseProvider();
+    const first = await firstPending;
+    const completion = {
+      status: "completed",
+      intentId: row.id,
+      completion: {
+        tenantId: intent.tenantId,
+        contactId: intent.contactId,
+        journeyId: "double-opt-in",
+        type: "list.subscribed",
+        occurredAt: NOW,
+        idempotencyKey: `completion:${intent.idempotencyKey}`,
+        payload: { formId: "skills-newsletter", kitFormId: 9376133 },
+      },
+    };
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual(completion);
+    expect(repository.row()).toMatchObject({
+      id: row.id,
+      status: "completed",
+      completedAt: NOW,
+      metadata: { kitSubscriberId: "contract-kit-id", kitState: "active" },
+    });
+    expect(repository.row().metadata.drovr).toEqual(owned.metadata.drovr);
+    expect([...repository.events.values()]).toMatchObject([
+      {
+        eventType: "kit-identity.linked",
+        contactId: intent.contactId,
+        provider: "kit",
+        providerIdentityId: "contract-identity-1",
+      },
+    ]);
+    expect(boundary.profileSync).toHaveBeenCalledTimes(1);
+    expect(boundary.profileSync).toHaveBeenCalledWith({
+      contactId: intent.contactId,
+      reason: "kit-identity-linked",
+    });
+    const completedCounts = {
+      ...firstCounts,
+      claimAttempts: 2,
+      writes: 1,
+      finishes: 1,
+      events: 1,
+      eventCreates: 1,
+      identities: 1,
+      identityCreates: 1,
+      identityReads: 1,
+      profileSync: 1,
+    };
+    expect(snapshot()).toEqual(completedCounts);
+    const completedRow = structuredClone(repository.row());
+    const completedEvents = structuredClone([...repository.events.values()]);
+    const third = await post(intent);
+    expect(third.status).toBe(200);
+    expect(await third.json()).toEqual(completion);
+    expect(snapshot()).toEqual(completedCounts);
+    expect(repository.row()).toEqual(completedRow);
+    expect([...repository.events.values()]).toEqual(completedEvents);
   });
 
   it("sync send: 202 plus after() keeps the first claim; immediate re-ask does not send or schedule again", async () => {
