@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { invoiceLinkResponse } from './lib/invoice-link-http'
 
 import {
 	AI_CODING_COHORT_SLUG,
@@ -153,6 +154,11 @@ export default auth(async function middleware(req) {
 			return NextResponse.redirect(new URL('/admin/dashboard', req.url))
 		}
 	}
+	// Exchange bearer links before HTML/analytics, and leave invoice billing
+	// authorization to the page instead of the organization-routing policy.
+	const invoiceMatch = /^\/invoices\/([^/]+)\/?$/.exec(pathname)
+	if (invoiceMatch?.[1])
+		return invoiceLinkResponse(req, decodeURIComponent(invoiceMatch[1]))
 	if (!user) return NextResponse.next()
 
 	const currentOrgId = req.cookies.get('organizationId')?.value

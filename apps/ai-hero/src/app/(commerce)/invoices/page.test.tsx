@@ -1,35 +1,28 @@
 import * as React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
-	getServerAuthSession: vi.fn(async () => ({
-		session: { user: { id: 'user_1' } },
-	})),
-	getPurchasesForUser: vi.fn(async () => [
-		{
-			id: 'purchase_1',
-			merchantChargeId: 'mch_123',
-			totalAmount: 199,
-			createdAt: '2026-08-20T00:00:00.000Z',
-			product: { name: 'AI Coding Crash Course' },
-		},
-		{
-			// No merchant charge, so no invoice and no edit action.
-			id: 'purchase_2',
-			merchantChargeId: null,
-			totalAmount: 0,
-			createdAt: '2026-08-21T00:00:00.000Z',
-			product: { name: 'Free thing' },
-		},
-	]),
+	getServerAuthSession: vi.fn(),
+	findCharges: vi.fn(),
+	findPurchases: vi.fn(),
 }))
 
 vi.mock('@/server/auth', () => ({
 	getServerAuthSession: mocks.getServerAuthSession,
 }))
 vi.mock('@/db', () => ({
-	courseBuilderAdapter: { getPurchasesForUser: mocks.getPurchasesForUser },
+	db: {
+		query: {
+			merchantCharge: { findMany: mocks.findCharges },
+			purchases: { findMany: mocks.findPurchases },
+		},
+	},
+}))
+vi.mock('next/navigation', () => ({
+	redirect: (path: string) => {
+		throw new Error(`redirect:${path}`)
+	},
 }))
 vi.mock('@/components/layout-client', () => ({
 	default: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
@@ -55,8 +48,6 @@ vi.mock('@coursebuilder/commerce-next/invoices/invoice-card', () => ({
 		</div>
 	),
 }))
-vi.mock('@coursebuilder/core/schemas', () => ({}))
-
 vi.mock('next/link', () => ({
 	default: ({
 		href,
@@ -88,7 +79,52 @@ vi.mock('next/link.js', () => ({
 
 import Invoices from './page'
 
+beforeEach(() => {
+	vi.resetAllMocks()
+	mocks.getServerAuthSession.mockResolvedValue({
+		session: { user: { id: 'user_1' } },
+	})
+	mocks.findCharges.mockResolvedValue([{ id: 'mch_123' }])
+	mocks.findPurchases.mockResolvedValue([
+		{
+			id: 'purchase_1',
+			merchantChargeId: 'mch_123',
+			totalAmount: 199,
+			createdAt: new Date('2026-08-20'),
+			productId: 'product_1',
+			product: {
+				id: 'product_1',
+				name: 'AI Coding Crash Course',
+				fields: { slug: 'synthetic-course' },
+				createdAt: null,
+			},
+		},
+		// No merchant charge, so no invoice or edit action.
+		{
+			id: 'purchase_2',
+			merchantChargeId: null,
+			totalAmount: 0,
+			createdAt: new Date('2026-08-21'),
+			productId: 'product_2',
+			product: {
+				id: 'product_2',
+				name: 'Free thing',
+				fields: { slug: 'synthetic-free' },
+				createdAt: null,
+			},
+		},
+	])
+})
+
 describe('invoices list', () => {
+	it('redirects an anonymous visitor to sign in without querying personal invoices', async () => {
+		mocks.getServerAuthSession.mockResolvedValue({ session: null })
+		await expect(Invoices()).rejects.toThrow(
+			'redirect:/login?callbackUrl=%2Finvoices',
+		)
+		expect(mocks.findCharges).not.toHaveBeenCalled()
+		expect(mocks.findPurchases).not.toHaveBeenCalled()
+	})
 	it('shows an obvious Edit invoice details action for each invoice', async () => {
 		const markup = renderToStaticMarkup(await Invoices())
 		const editActions = markup.match(/Edit invoice details/g) ?? []

@@ -89,6 +89,27 @@ describe('roleless organization routing', () => {
 		expect(response.headers.get('location')).toBeNull()
 	})
 
+	it.each(['/invoices/mc_synthetic'])(
+		'leaves single invoice authorization to the page for %s',
+		async (path) => {
+			const response = await runProxy(rolelessRequest(path))
+			expect(response.headers.get('x-middleware-next')).toBe('1')
+			expect(response.headers.get('location')).toBeNull()
+		},
+	)
+
+	it('removes an invalid query token before organization routing or rendering', async () => {
+		const response = await runProxy(
+			rolelessRequest('/invoices/mc_synthetic?t=garbage'),
+		)
+		expect(response.status).toBe(307)
+		expect(response.headers.get('location')).toBe(
+			'https://www.aihero.dev/invoices/mc_synthetic',
+		)
+		expect(response.headers.get('referrer-policy')).toBe('no-referrer')
+		expect(response.headers.get('cache-control')).toBe('private, no-store')
+	})
+
 	it('still sends a roleless buyer from the team page to the organization list', async () => {
 		const response = await runProxy(rolelessRequest('/team'))
 
@@ -130,9 +151,7 @@ describe('static route handler OPTIONS', () => {
 		)
 
 		expect(response.headers.get('allow')).toBeNull()
-		expect(response.headers.get('x-middleware-rewrite')).toContain(
-			'/not-found',
-		)
+		expect(response.headers.get('x-middleware-rewrite')).toContain('/not-found')
 	})
 })
 
