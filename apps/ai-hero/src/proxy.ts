@@ -153,6 +153,9 @@ export default auth(async function middleware(req) {
 			return NextResponse.redirect(new URL('/admin/dashboard', req.url))
 		}
 	}
+	// Shared invoice URLs do not require an organization context. The page
+	// still gates edits and owner-only extras; the invoice list stays private.
+	if (/^\/invoices\/[^/]+\/?$/.test(pathname)) return NextResponse.next()
 	if (!user) return NextResponse.next()
 
 	const currentOrgId = req.cookies.get('organizationId')?.value

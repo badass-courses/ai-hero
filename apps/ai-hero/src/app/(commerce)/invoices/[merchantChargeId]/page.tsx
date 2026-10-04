@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { Suspense } from 'react'
+import type { Metadata } from 'next'
 import { revalidatePath } from 'next/cache'
 import { headers } from 'next/headers'
 import Link from 'next/link'
@@ -23,6 +24,7 @@ import { getServerAuthSession } from '@/server/auth'
 import {
 	InvoiceDetailsDisplay,
 	InvoiceDetailsEditor,
+	InvoiceDetailsReadOnly,
 } from './_components/invoice-details-editor'
 import { format, fromUnixTime } from 'date-fns'
 import { eq } from 'drizzle-orm'
@@ -32,6 +34,10 @@ import Stripe from 'stripe'
 import { InvoicePrintButton } from '@coursebuilder/commerce-next/invoices/invoice-print-button'
 import * as PurchaseTransfer from '@coursebuilder/commerce-next/post-purchase/purchase-transfer'
 import { Button } from '@coursebuilder/ui'
+
+export const metadata: Metadata = {
+	robots: { index: false, follow: false },
+}
 
 const stripe = new Stripe(env.STRIPE_SECRET_TOKEN!, {
 	apiVersion: '2024-06-20',
@@ -84,7 +90,7 @@ async function getChargeDetails(merchantChargeId: string) {
 			? await getProduct(purchase?.productId)
 			: null
 
-		if (product && charge && purchase) {
+		if (product && charge.status === 'succeeded' && purchase) {
 			return {
 				state: 'SUCCESS' as const,
 				result: {
@@ -121,22 +127,26 @@ const Invoice = async (props: {
 	const managedTeamPurchases = viewerUserId
 		? await getTeamPurchasesForMember(viewerUserId)
 		: []
-	if (
-		!canViewPurchaseInvoice(
-			viewerUserId,
-			{
-				id: chargeDetails.result.purchaseId,
-				userId: chargeDetails.result.purchaseUserId,
-				billingUserId: chargeDetails.result.billingUserId,
-			},
-			managedTeamPurchases,
-		)
-	) {
-		redirect('/invoices')
-	}
+	// The exact URL grants read-only access, not permission to edit.
+	const canEditInvoice = canViewPurchaseInvoice(
+		viewerUserId,
+		{
+			id: chargeDetails.result.purchaseId,
+			userId: chargeDetails.result.purchaseUserId,
+			billingUserId: chargeDetails.result.billingUserId,
+		},
+		managedTeamPurchases,
+	)
+	const InvoiceDetails = canEditInvoice
+		? InvoiceDetailsEditor
+		: InvoiceDetailsReadOnly
 
-	const isPurchaseOwner = viewerUserId === chargeDetails.result.purchaseUserId
-	const isBillingOwner = viewerUserId === chargeDetails.result.billingUserId
+	const isPurchaseOwner = Boolean(
+		viewerUserId && viewerUserId === chargeDetails.result.purchaseUserId,
+	)
+	const isBillingOwner = Boolean(
+		viewerUserId && viewerUserId === chargeDetails.result.billingUserId,
+	)
 	const purchaseUserTransfers = isPurchaseOwner
 		? await getPurchaseTransferForPurchaseId({
 				id: chargeDetails.result.purchaseId,
@@ -155,7 +165,16 @@ const Invoice = async (props: {
 			params.merchantChargeId,
 		)
 
-	const customer = charge.customer as Stripe.Customer
+	// Only printed values cross the client boundary, never account/audit IDs.
+	const printableSettings = savedInvoiceSettings
+		? {
+				recipientName: savedInvoiceSettings.recipientName,
+				companyName: savedInvoiceSettings.companyName,
+				address: savedInvoiceSettings.address,
+				taxId: savedInvoiceSettings.taxId,
+				notes: savedInvoiceSettings.notes,
+			}
+		: null
 	const formatUsd = (amount: number) => {
 		return Intl.NumberFormat('en-US', {
 			style: 'currency',
@@ -177,13 +196,15 @@ const Invoice = async (props: {
 			<div className="container px-5 print:max-w-none">
 				<main className="max-w-(--breakpoint-md) mx-auto w-full">
 					<div className="flex flex-col justify-between pb-5 pt-10 print:hidden">
-						<Link
-							href={isPurchaseOwner || isBillingOwner ? '/invoices' : '/team'}
-							className="mb-5 inline-flex items-center gap-1 text-sm opacity-75 transition hover:opacity-100"
-						>
-							<ChevronLeft className="h-3 w-3" />{' '}
-							{isPurchaseOwner || isBillingOwner ? 'Invoices' : 'Team'}
-						</Link>
+						{canEditInvoice && (
+							<Link
+								href={isPurchaseOwner || isBillingOwner ? '/invoices' : '/team'}
+								className="mb-5 inline-flex items-center gap-1 text-sm opacity-75 transition hover:opacity-100"
+							>
+								<ChevronLeft className="h-3 w-3" />{' '}
+								{isPurchaseOwner || isBillingOwner ? 'Invoices' : 'Team'}
+							</Link>
+						)}
 						<h1 className="font-text text-center text-lg font-medium leading-tight sm:text-left sm:text-xl">
 							Your Invoice for {product.name}
 						</h1>
@@ -191,7 +212,7 @@ const Invoice = async (props: {
 							<Suspense>
 								<InvoicePrintButton />
 							</Suspense>
-							{emailData && (
+							{canEditInvoice && emailData && (
 								<Button asChild variant="secondary">
 									<a href={emailData}>
 										<span className="pr-2">Send via email</span>
@@ -201,9 +222,9 @@ const Invoice = async (props: {
 							)}
 						</div>
 					</div>
-					<InvoiceDetailsEditor
+					<InvoiceDetails
 						merchantChargeId={params.merchantChargeId}
-						initialSettings={savedInvoiceSettings}
+						initialSettings={printableSettings}
 						defaultRecipient={[
 							charge.billing_details.name,
 							charge.billing_details.email,
@@ -328,7 +349,7 @@ const Invoice = async (props: {
 								</div>
 							</div>
 						</div>
-					</InvoiceDetailsEditor>
+					</InvoiceDetails>
 					{isPurchaseOwner &&
 					!bulkCoupon &&
 					purchaseUserTransfers.length > 0 ? (
