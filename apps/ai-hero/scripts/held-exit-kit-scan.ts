@@ -72,20 +72,33 @@ export function readKitExitMembership(options: {
 			if (cursor) url.searchParams.set('after', cursor)
 			const raw = yield* Effect.tryPromise({
 				try: async (signal) => {
-					const response = await options.fetch(url.toString(), {
-						method: 'GET',
-						redirect: 'error',
-						signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
-						headers: { 'X-Kit-Api-Key': options.apiKey.trim() },
-					})
-					if (
-						response.status !== 200 ||
-						response.redirected ||
-						(response.url && response.url !== url.toString())
-					)
-						throw new Error('provider-unavailable')
-					const body: unknown = await response.json()
-					return body
+					// Next's DOM types support timeout, but not AbortSignal.any.
+					const controller = new AbortController()
+					const timeout = AbortSignal.timeout(15_000)
+					const cancel = () => controller.abort(signal.reason)
+					const expire = () => controller.abort(timeout.reason)
+					signal.addEventListener('abort', cancel, { once: true })
+					timeout.addEventListener('abort', expire, { once: true })
+					if (signal.aborted) cancel()
+					try {
+						const response = await options.fetch(url.toString(), {
+							method: 'GET',
+							redirect: 'error',
+							signal: controller.signal,
+							headers: { 'X-Kit-Api-Key': options.apiKey.trim() },
+						})
+						if (
+							response.status !== 200 ||
+							response.redirected ||
+							(response.url && response.url !== url.toString())
+						)
+							throw new Error('provider-unavailable')
+						const body: unknown = await response.json()
+						return body
+					} finally {
+						signal.removeEventListener('abort', cancel)
+						timeout.removeEventListener('abort', expire)
+					}
 				},
 				catch: () => new RecoveryRefused({ reason: 'provider-unavailable' }),
 			})
