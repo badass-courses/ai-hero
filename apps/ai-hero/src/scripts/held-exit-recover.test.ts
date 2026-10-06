@@ -31,6 +31,7 @@ function runtime(): RecoveryRuntime & { repository: InMemorySubscriberMarketingR
 	const repository = new InMemorySubscriberMarketingRepository()
 	return {
 		repository,
+		approvalScope: 'fixture-scope',
 		now: () => contact.createdAt,
 		readback: async (row) => ({ eventDerivable: Boolean(row.completedAt), outbox: [] }),
 		currentMembership: async (id) => readOldSequenceMembership(repository, id),
@@ -176,6 +177,29 @@ describe('read-only Kit exit proof', () => {
 })
 
 describe('single-contact held exit recovery', () => {
+	it('binds the approval hash to the execution environment, not only the contact snapshot', async () => {
+		const ports = runtime()
+		const planned = await Effect.runPromise(runHeldExitRecovery(dryRun, ports))
+		if (!planned.planHash) throw new Error('Missing test plan')
+		ports.approvalScope = 'fixture-other-database-and-provider-account'
+		const result = await Effect.runPromise(runHeldExitRecovery({ ...dryRun, mode: 'write', approval: 'fixture-approval', planHash: planned.planHash }, ports))
+		expect(result).toMatchObject({ status: 'refused', reason: 'plan-hash-mismatch' })
+		expect(ports.persist).not.toHaveBeenCalled()
+		expect(ports.notify).not.toHaveBeenCalled()
+	})
+	it.each(['stale-receipt', 'notification-error'])('preserves proof-written evidence and refuses %s without claiming replay completed', async (scenario) => {
+		const ports = runtime()
+		const planned = await Effect.runPromise(runHeldExitRecovery(dryRun, ports))
+		if (!planned.planHash) throw new Error('Missing test plan')
+		if (scenario === 'stale-receipt') ports.currentMembership = async () => 'present'
+		else ports.notify = vi.fn(async () => { throw new Error(`private ${contact.email}`) })
+		const result = await Effect.runPromise(runHeldExitRecovery({ ...dryRun, mode: 'write', approval: 'fixture-approval', planHash: planned.planHash }, ports))
+		expect(result).toMatchObject({ status: 'refused', reason: scenario === 'stale-receipt' ? 'receipt-not-current' : 'notification-unavailable',
+			counts: { exitReceipts: 1, notifications: 0 } })
+		expect(ports.persist).toHaveBeenCalledOnce()
+		if (scenario === 'stale-receipt') expect(ports.notify).not.toHaveBeenCalled()
+		expect(JSON.stringify(result)).not.toContain(contact.email)
+	})
 	it.each(['absent', 'pending', 'delivered'])('reads completion and %s outbox evidence without confusing an empty outbox with success', async (scenario) => {
 		const ports = runtime()
 		const state = await ports.inspect(contact.id)
@@ -271,11 +295,13 @@ describe('single-contact held exit recovery', () => {
 		if (scenario === 'member') ports.scan = async () => ({ ...scan, membership: 'present' })
 		if (scenario === 'wrong-sequence') ports.scan = async () => ({ ...scan, sequenceId: 2757199 })
 		if (scenario === 'error') ports.scan = async () => { throw new Error(`private ${contact.email}`) }
-		const result = await Effect.runPromise(runHeldExitRecovery(dryRun, ports))
-		expect(result).toMatchObject({ status: 'refused', reason, counts: { exitReceipts: 0, notifications: 0 } })
-		expect(ports.persist).not.toHaveBeenCalled()
-		expect(ports.notify).not.toHaveBeenCalled()
-		expect(JSON.stringify(result)).not.toContain(contact.email)
+		for (const args of [dryRun, { ...dryRun, mode: 'write' as const, approval: 'fixture-approval', planHash: '0'.repeat(64) }]) {
+			const result = await Effect.runPromise(runHeldExitRecovery(args, ports))
+			expect(result).toMatchObject({ status: 'refused', reason, counts: { exitReceipts: 0, notifications: 0 } })
+			expect(ports.persist).not.toHaveBeenCalled()
+			expect(ports.notify).not.toHaveBeenCalled()
+			expect(JSON.stringify(result)).not.toContain(contact.email)
+		}
 	})
 	it('plans one receipt and one replay wakeup without writing or exposing contact data', async () => {
 		const ports = runtime()

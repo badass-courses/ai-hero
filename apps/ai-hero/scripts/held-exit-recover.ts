@@ -4,6 +4,7 @@ import { Data, Effect } from 'effect'
 import { z } from 'zod'
 import { normalizeContactEvent } from '../src/lib/subscriber-marketing/normalize-contact-event'
 import { OLD_NEWSLETTER_EXIT_CONFIRMED, OLD_NEWSLETTER_REFERENCE } from '../src/lib/subscriber-marketing/old-newsletter-exit'
+import { NEWSLETTER_EXIT_CONFIRMED_EVENT } from '../src/inngest/events/newsletter-exit'
 import type { ContactRecord, ContactEventRecord, SideEffectIntent } from '../src/lib/subscriber-marketing/types'
 
 export type RecoveryArgs = {
@@ -28,6 +29,7 @@ export type MembershipScan = {
 	completedAt: string
 }
 export type RecoveryRuntime = {
+	approvalScope: string
 	findContactById: (id: string) => Promise<ContactRecord | undefined>
 	inspect: (contactId: string) => Promise<RecoverySnapshot>
 	scan: (subscriberId: string) => Promise<MembershipScan>
@@ -70,6 +72,7 @@ export type RecoveryEnvelope = {
 	status: 'refused' | 'planned' | 'requested' | 'readback'
 	reason: string | null
 	planHash: string | null
+	notificationEvent: typeof NEWSLETTER_EXIT_CONFIRMED_EVENT
 	counts: { exitReceipts: number; notifications: number }
 	checks: { contactResolved: boolean; exactlyOneHeld: boolean; oldSequenceAbsent: boolean }
 	scans: MembershipScan[]
@@ -132,7 +135,7 @@ export function persistRecoveryExitReceipt(input: {
  * -> notificationRequested. A notification is only a wakeup, never completion. */
 export function runHeldExitRecovery(args: RecoveryArgs, runtime: RecoveryRuntime) {
 	const envelope: RecoveryEnvelope = { version: 1, mode: args.mode, status: 'refused',
-		reason: null, planHash: null, counts: { exitReceipts: 0, notifications: 0 },
+		reason: null, planHash: null, notificationEvent: NEWSLETTER_EXIT_CONFIRMED_EVENT, counts: { exitReceipts: 0, notifications: 0 },
 		checks: { contactResolved: false, exactlyOneHeld: false, oldSequenceAbsent: false }, scans: [] }
 	return Effect.gen(function* () {
 		if (args.mode === 'write' && !args.approval.trim())
@@ -250,7 +253,7 @@ export function parseHeldRecoveryArgs(argv: readonly string[]): RecoveryArgs {
 export type RecoveryRuntimeLoader = (args: RecoveryArgs) => Promise<{ runtime: RecoveryRuntime; close: () => Promise<void> }>
 export function runHeldRecoveryCommand(argv: readonly string[], load: RecoveryRuntimeLoader) {
 	let result: RecoveryEnvelope = { version: 1, mode: 'dry-run', status: 'refused',
-		reason: null, planHash: null, counts: { exitReceipts: 0, notifications: 0 },
+		reason: null, planHash: null, notificationEvent: NEWSLETTER_EXIT_CONFIRMED_EVENT, counts: { exitReceipts: 0, notifications: 0 },
 		checks: { contactResolved: false, exactlyOneHeld: false, oldSequenceAbsent: false }, scans: [] }
 	return Effect.gen(function* () {
 		const args = yield* Effect.try({ try: () => parseHeldRecoveryArgs(argv),
@@ -275,3 +278,17 @@ export async function resolveRecoveryContact(
 	const contact = await findContactById(input.contactId)
 	return contact?.id === input.contactId ? contact : undefined
 }
+
+/** The only process entrypoint. Importing the module never creates live clients. */
+async function main() {
+	const result = await Effect.runPromise(runHeldRecoveryCommand(process.argv.slice(2), async (args) => {
+		const { createProductionHeldRecoveryRuntime } = await import('./held-exit-recover-runtime')
+		return createProductionHeldRecoveryRuntime(args)
+	}))
+	await Effect.runPromise(Effect.sync(() => {
+		process.stdout.write(`${JSON.stringify(result)}\n`)
+		process.exitCode = result.status === 'refused' ? 1 : 0
+	}))
+}
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) void main()
+

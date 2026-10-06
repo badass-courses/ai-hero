@@ -1,7 +1,9 @@
+import { and, eq, sql } from 'drizzle-orm'
 import { Effect } from 'effect'
 import { z } from 'zod'
 import type { CaptureMarketingRepository } from '../src/lib/subscriber-marketing/capture-contact-event'
-import type { RecoveryRuntime, RecoverySnapshot } from './held-exit-recover'
+import type { RecoveryArgs, RecoveryRuntime, RecoverySnapshot } from './held-exit-recover'
+import { drovrOutboxTarget } from '../src/lib/subscriber-marketing/drovr-outbox'
 import { RecoveryRefused } from './held-exit-recover'
 import { readKitExitMembership } from './held-exit-kit-scan'
 import { NEWSLETTER_EXIT_CONFIRMED_EVENT } from '../src/inngest/events/newsletter-exit'
@@ -14,6 +16,47 @@ import {
 	mapDrovrShadowFact, DROVR_AUTHORITY_TENANT_ID, DROVR_SHADOW_TENANT_ID,
 	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
 } from '../src/lib/subscriber-marketing/drovr-shadow-emitter'
+
+const outboxRowsSchema = z.array(z.object({ status: z.enum(['pending', 'delivered', 'rejected', 'held']), attempts: z.number().int().nonnegative() }))
+
+/** Lazy, operator-only loader. Never import or call this factory in a dry fixture.
+ * The readonly modes issue SELECTs only. The only write port is createContactEvent. */
+export async function createProductionHeldRecoveryRuntime(args: RecoveryArgs) {
+	const apiKey = (process.env.KIT_V4_API_KEY ?? process.env.CONVERTKIT_V4_API_KEY ?? '').trim()
+	const eventKey = process.env.INNGEST_EVENT_KEY?.trim() ?? ''
+	if ((args.mode !== 'readback' && !apiKey) || (args.mode === 'write' && !eventKey))
+		throw new RecoveryRefused({ reason: 'runtime-unavailable' })
+	const [{ db, closeDatabasePool }, schema, { DrizzleCaptureMarketingRepository, toSideEffectIntentRecord }] = await Promise.all([
+		import('../src/db'), import('../src/db/schema'),
+		import('../src/lib/subscriber-marketing/drizzle-capture-repository'),
+	])
+	const repository = new DrizzleCaptureMarketingRepository(db)
+	const target = drovrOutboxTarget({ VERCEL_ENV: process.env.VERCEL_ENV, VERCEL_GIT_COMMIT_REF: process.env.VERCEL_GIT_COMMIT_REF })
+	const runtime = createHeldRecoveryPorts({ repository, apiKey, eventKey, fetch, now: () => new Date().toISOString(),
+		findRows: async (contactId) => {
+			// Two is enough to prove ambiguity; never silently choose a row.
+			const rows = await db.select().from(schema.sideEffectIntent).where(and(
+				eq(schema.sideEffectIntent.contactId, contactId),
+				eq(schema.sideEffectIntent.type, 'subscribe-evergreen-list'),
+				sql`JSON_UNQUOTE(JSON_EXTRACT(${schema.sideEffectIntent.metadata}, '$.list')) = ${'shadow-newsletter'}`,
+			)).limit(2)
+			return rows.map(toSideEffectIntentRecord)
+		},
+		findKitIdentities: (contactId) => db.select({ id: schema.providerIdentity.id,
+			contactId: schema.providerIdentity.contactId, externalId: schema.providerIdentity.externalId,
+		}).from(schema.providerIdentity).where(and(eq(schema.providerIdentity.contactId, contactId),
+			eq(schema.providerIdentity.provider, 'kit'))).limit(2),
+		readOutbox: async (lookup) => {
+			const rows = await db.select({ status: schema.drovrOutbox.status, attempts: schema.drovrOutbox.attempts })
+				.from(schema.drovrOutbox).where(and(eq(schema.drovrOutbox.target, target),
+					eq(schema.drovrOutbox.contactId, lookup.contactId), eq(schema.drovrOutbox.endpoint, 'events'),
+					eq(schema.drovrOutbox.tenantId, lookup.tenantId), eq(schema.drovrOutbox.journeyId, lookup.journeyId),
+					eq(schema.drovrOutbox.eventType, 'shadow.entered'), eq(schema.drovrOutbox.idempotencyKey, lookup.idempotencyKey)))
+			return outboxRowsSchema.parse(rows)
+		},
+	})
+	return { runtime, close: closeDatabasePool }
+}
 
 export type RecoveryPortOptions = {
 	repository: Pick<CaptureMarketingRepository, 'findContactById' | 'createContactEvent'> &
@@ -41,6 +84,7 @@ const historyTypes = [OLD_NEWSLETTER_ABSENT, OLD_NEWSLETTER_SUBSCRIBED,
  * existing library, not alternate persistence or a second replay implementation. */
 export function createHeldRecoveryPorts(options: RecoveryPortOptions): RecoveryRuntime {
 	return {
+		approvalScope: 'not-yet-bound',
 		now: options.now,
 		findContactById: async (id) => options.repository.findContactById(id),
 		inspect: async (contactId) => {

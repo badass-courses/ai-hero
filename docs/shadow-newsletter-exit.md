@@ -1,6 +1,6 @@
 # Shadow Newsletter: exit gate for new admissions
 
-Deploy changes nothing for existing Shadow readers or new drovr-owned signups. Fresh app-owned signups skip legacy enrollment and receive a bound app-absence fact, so their normal Stage 3 birth and Shadow send continue. Readers with app legacy enrollment history, veterans, and genuinely unknown admissions remain gated; policy refusals persist a hold rather than failing or dropping the signup. The Kit rule and independent proof producer remain pending Joel/account owner. No live Kit changes, cleanup, merge, or deploy are part of this PR.
+Deploy changes nothing for existing Shadow readers or new drovr-owned signups. Fresh app-owned signups skip legacy enrollment and receive a bound app-absence fact, so their normal Stage 3 birth and Shadow send continue. Readers with app legacy enrollment history, veterans, and genuinely unknown admissions remain gated; policy refusals persist a hold rather than failing or dropping the signup. The Kit rule and independent automatic proof producer remain pending the account owner. A guarded, operator-invoked single-contact producer exists for held evergreen handoffs. It does not enable either readiness flag or change the automatic admission path.
 
 ## Final review qualifications
 
@@ -53,6 +53,28 @@ Send refusal sets `status: 'held-for-exit'`, records `lastError`, `reviewReasons
 
 After persisting an independent exit receipt, the producer emits `newsletter/old-sequence.exit-confirmed` with `contactId` and `receiptId`. The registered Inngest replay function verifies that exact receipt and current local membership. It replays any held admission using the saved identity, queues an idempotent authority newsletter birth with the saved admission provenance (signup, not veteran, for live signups), and re-arms that contact's exit-held intents to `pending`. Duplicate/stale notifications cannot fabricate proof or repeat completed sends. The producer must reliably retry notification delivery after the DB write; persisting proof without the notification is not a completed producer operation.
 
+## Single-contact operator recovery
+
+Run from `apps/ai-hero` with the intended deployment's environment loaded. Keep the same database, Kit account, Inngest application and `VERCEL_ENV` for the plan, write and readback. `--drovr-contact-id` is an alternative to `--contact-id`: the delivery path carries the AI Hero contact identifier unchanged. There is no email lookup or new identity link.
+
+```sh
+pnpm exec tsx -r dotenv/config scripts/held-exit-recover.ts --contact-id <contact-id>
+pnpm exec tsx -r dotenv/config scripts/held-exit-recover.ts --contact-id <contact-id> --write --approval <ref> --plan-hash <dry-run-hash>
+pnpm exec tsx -r dotenv/config scripts/held-exit-recover.ts --contact-id <contact-id> --readback
+```
+
+Dry-run is the default. It requires exactly one Kit-backed, exit-held `subscribe-evergreen-list` row for `shadow-newsletter`, its canonical contact/list key, and one bound Kit identity. Unknown identities, missing or ambiguous holds, and already-recovered rows refuse without writes. The JSON envelope reports counts, booleans, fixed operation/status labels, scan times and a plan hash, never contact identifiers, addresses, names, approval references or provider errors.
+
+The Kit read uses `GET /v4/sequences/2625552/subscribers?status=all`, because there is no documented per-subscriber sequence-membership GET. The signup's `probe-shadow-newsletter-sequence` is an enrollment POST and is not reused. Every page must complete before absence can be established. Missing or repeating cursors, malformed pages, duplicate subscriber records, provider errors and page-cap exhaustion refuse. The scan has a 500-page cap, 1,000 records per page, a 15-second request timeout and a five-minute freshness limit. Any membership, including cancelled or inactive subscribers, requires a human instead.
+
+Write requires a nonempty approval reference and the exact dry-run hash. It repeats the identity, row and provider checks, then re-reads the contact and local gate history before persistence. It uses the existing `normalizeContactEvent` and `createContactEvent` writer for `newsletter.old-sequence.exit-confirmed`, bound to `kit:sequence:2625552`. The proof instant is the start of the scan, not a fabricated provider removal time. The persisted summary records the approval reference, hash, sequence, page/record counts and scan times without an address. The current local exit guard must accept the proof before the script emits `newsletter/old-sequence.exit-confirmed` with the persisted receipt. The notification has a deterministic receipt-based event key. Only the existing replay function assigns admission and re-arms held work; the script does not directly change ownership, enroll in Kit, rearm rows or fabricate `shadow.entered`.
+
+`requested` means Inngest accepted the wakeup, not that recovery completed. A refusal after receipt persistence reports that persisted proof separately; it does not pretend the write was rolled back. If notification delivery fails, obtain a fresh plan and approval before another write. A recovered row refuses without a new receipt or notification.
+
+Readback performs no Kit read or writes. It reports row status, `completedAt`, and outbox counts scoped to the deployment, contact, tenant, journey, `shadow.entered` type and `completion:<original intent key>`. It uses the sender's completion mapper. A delivered outbox record confirms dispatch; a recorded attempt reports attempted; no durable receipt reports unknown. A completed row and empty outbox do not prove direct delivery. Resolve unknown dispatch with independent delivery evidence before declaring recovery proven.
+
+This command does not replace the automatic producer, inventory provider-side re-enrollment paths, configure Kit rules, or authorize a production run. Those rollout gates remain below.
+
 ## Producer before rule flag: hard rollout gate
 
 The new exit adapter requires **both**:
@@ -74,7 +96,7 @@ Proof binds `contactId`, `provider: 'kit'`, and `providerReference: 'kit:sequenc
 
 ## Cost and tests
 
-Checks use local event records only. There are zero per-send Kit membership reads. Kit documents no subscriber-to-sequences read; absence via its sequence list would require every page, at most 1,000 readers per page. No such scan or cache was added.
+Checks use local event records only. There are zero per-send Kit membership reads. Kit documents no subscriber-to-sequences read; absence via its sequence list would require every page, at most 1,000 readers per page. There is no per-send scan or cache. The operator recovery above performs a bounded, one-contact absence scan only when invoked.
 
 RED-first regressions also cover fresh app-owned signup absence/birth/send, legacy and veteran holds, tag transport retry, membership read retry, lenient env schemas, signup replay provenance, and visible held counts. Earlier regressions cover non-throwing Inngest admission using the real assignment code, queue starvation with more than the batch limit held, existing-reader delivery with no proof, producer/rule flag ordering, unchanged unowned handoffs, and protected-cohort exclusion without an owner row. Receipt tests cover verified replay, re-arming, duplicates and stale/misbound proof.
 
