@@ -694,6 +694,7 @@ describe('single-contact held exit recovery', () => {
 	it.each([
 		['zero', 'held-row-count'],
 		['multiple', 'held-row-count'],
+		['mixed-targets', 'held-row-count'],
 		['unknown', 'membership-unknown'],
 		['partial', 'membership-unknown'],
 		['member', 'old-sequence-member'],
@@ -706,6 +707,8 @@ describe('single-contact held exit recovery', () => {
 		if (scenario === 'zero') original.rows = []
 		if (scenario === 'multiple')
 			original.rows.push({ ...held, id: 'fixture-other-row' })
+		if (scenario === 'mixed-targets')
+			original.rows.push({ ...held, id: 'fixture-other-row', status: 'completed', completedAt: contact.createdAt })
 		if (scenario === 'recovered')
 			original.rows = [
 				{ ...held, status: 'completed', completedAt: contact.createdAt },
