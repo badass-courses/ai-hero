@@ -708,7 +708,12 @@ describe('single-contact held exit recovery', () => {
 		if (scenario === 'multiple')
 			original.rows.push({ ...held, id: 'fixture-other-row' })
 		if (scenario === 'mixed-targets')
-			original.rows.push({ ...held, id: 'fixture-other-row', status: 'completed', completedAt: contact.createdAt })
+			original.rows.push({
+				...held,
+				id: 'fixture-other-row',
+				status: 'completed',
+				completedAt: contact.createdAt,
+			})
 		if (scenario === 'recovered')
 			original.rows = [
 				{ ...held, status: 'completed', completedAt: contact.createdAt },

@@ -274,6 +274,15 @@ export function runHeldExitRecovery(
 				row.type === 'subscribe-evergreen-list' &&
 				row.metadata.list === 'shadow-newsletter',
 		)
+		// inspect is target-scoped and capped at two: a second row proves ambiguity,
+		// irrespective of its status or whether its metadata passes our filters.
+		if (state.rows.length > 1)
+			return yield* Effect.fail(
+				new RecoveryRefused({
+					reason:
+						args.mode === 'readback' ? 'readback-row-count' : 'held-row-count',
+				}),
+			)
 		if (args.mode === 'readback') {
 			const row = candidates[0]
 			if (candidates.length !== 1 || !row || row.contactId !== contact.id)
