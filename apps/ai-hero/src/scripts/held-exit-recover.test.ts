@@ -174,10 +174,18 @@ describe('recovery runtime adapters', () => {
 			runHeldExitRecovery({ ...dryRun, mode: 'readback' }, ports),
 		)
 		expect(readback.readback?.completionDispatch).toBe('confirmed')
-		expect(readback).toMatchObject({ readback: { fingerprints: {
-			originalIntentKey: createHash('sha256').update('fixture-original-intent').digest('hex'),
-			completionKey: createHash('sha256').update('completion:fixture-original-intent').digest('hex'),
-		} } })
+		expect(readback).toMatchObject({
+			readback: {
+				fingerprints: {
+					originalIntentKey: createHash('sha256')
+						.update('fixture-original-intent')
+						.digest('hex'),
+					completionKey: createHash('sha256')
+						.update('completion:fixture-original-intent')
+						.digest('hex'),
+				},
+			},
+		})
 		expect(readOutbox).toHaveBeenCalledOnce()
 		expect(fetcher).toHaveBeenCalledTimes(3)
 		for (const value of [

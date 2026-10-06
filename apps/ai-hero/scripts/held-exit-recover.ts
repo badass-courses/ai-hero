@@ -118,6 +118,7 @@ export type RecoveryEnvelope = {
 		completedAt: string | null
 		completionEventDerivable: boolean
 		completionDispatch: 'confirmed' | 'attempted' | 'unknown'
+		fingerprints: { originalIntentKey: string; completionKey: string }
 		outbox: {
 			pending: number
 			delivered: number
@@ -283,6 +284,9 @@ export function runHeldExitRecovery(
 				runtime.readback(row),
 			)
 			const decoded = outboxReadbackSchema.safeParse(raw)
+			const owner = z
+				.object({ intentKey: z.string().min(1) })
+				.safeParse(row.metadata.drovr)
 			const timestamp = z
 				.string()
 				.datetime({ offset: true })
@@ -301,7 +305,12 @@ export function runHeldExitRecovery(
 					'skipped',
 				])
 				.safeParse(row.status)
-			if (!decoded.success || !timestamp.success || !status.success)
+			if (
+				!decoded.success ||
+				!owner.success ||
+				!timestamp.success ||
+				!status.success
+			)
 				return yield* Effect.fail(
 					new RecoveryRefused({ reason: 'readback-unavailable' }),
 				)
@@ -311,6 +320,14 @@ export function runHeldExitRecovery(
 				rowStatus: status.data,
 				completedAt: timestamp.data,
 				completionEventDerivable: decoded.data.eventDerivable,
+				fingerprints: {
+					originalIntentKey: createHash('sha256')
+						.update(owner.data.intentKey)
+						.digest('hex'),
+					completionKey: createHash('sha256')
+						.update(`completion:${owner.data.intentKey}`)
+						.digest('hex'),
+				},
 				completionDispatch:
 					outbox.delivered > 0
 						? 'confirmed'
