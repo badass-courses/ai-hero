@@ -249,10 +249,12 @@ export async function readbackEvergreenSequences(options: {
 
 export class KitV4Error extends Error {
 	readonly status: number
-	constructor(status: number, detail: string) {
+	readonly retryAfter?: string
+	constructor(status: number, detail: string, retryAfter?: string) {
 		super(`kit v4 answered ${status}: ${detail}`)
 		this.name = 'KitV4Error'
 		this.status = status
+		this.retryAfter = retryAfter
 	}
 }
 
@@ -272,6 +274,9 @@ export async function addSubscriberToKitSequence(options: {
 	sequenceId: string | number
 	email: string
 	timeoutMs?: number
+	/** Only the explicitly opted-in newsletter transport recognizes refusal
+	 * at headers. Other callers retain their existing body/error semantics. */
+	newsletter429?: boolean
 }): Promise<KitSequenceAddOutcome> {
 	const apiKey = options.apiKey?.trim()
 	if (!apiKey) throw new Error('Kit v4 API key is not configured')
@@ -295,6 +300,20 @@ export async function addSubscriberToKitSequence(options: {
 		)
 		if (response.status === 201) return 'added'
 		if (response.status === 200) return 'already-added'
+		if (options.newsletter429 && response.status === 429) {
+			const refusal = new KitV4Error(
+				429, 'newsletter enrollment refused',
+				response.headers.get('retry-after') ?? undefined,
+			)
+			// Do not consume the error body, which can fail and erase known429.
+			// Best-effort resource release cannot alter the refusal classification.
+			try {
+				void response.body?.cancel().catch(() => undefined)
+			} catch {
+				// Even a synchronous cleanup failure cannot erase known headers.
+			}
+			throw refusal
+		}
 		throw new KitV4Error(response.status, (await response.text()).slice(0, 200))
 	} finally {
 		clearTimeout(timer)

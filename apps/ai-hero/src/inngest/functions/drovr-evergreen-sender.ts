@@ -28,6 +28,8 @@ import {
 import { log } from '@/server/logger'
 
 import { evergreenSenderPacingMs } from './evergreen-sender-pacing'
+import { NewsletterSenderConfigError, parseNewsletterSenderConfig } from './newsletter-sender-config'
+import { createNewsletterProviderPause, NewsletterPauseUnavailableError } from './newsletter-provider-pause'
 
 /**
  * Sends drovr's evergreen and shadow-newsletter sequence enrollments. Off
@@ -103,23 +105,55 @@ export const drovrEvergreenSender = inngest.createFunction(
 				}),
 		)
 		const shadowSends = shadowReadback.ready
-			? await step.run('send-pending-shadow-newsletter-emails', () =>
-					executePendingEvergreenSends({
-						repository: new DrizzleCaptureMarketingRepository(db),
-						type: SEND_SHADOW_NEWSLETTER_EMAIL_INTENT_TYPE,
-						subscribe: (input) =>
-							addSubscriberToKitSequence({
-								apiKey: process.env.KIT_V4_API_KEY,
-								fetch,
-								sequenceId: input.listId,
-								email: input.user.email,
-							}),
-						limit: senderLimit(
-							process.env.AIH_DROVR_EVERGREEN_SENDER_LIMIT,
-						),
-						pacingMs: evergreenSenderPacingMs(process.env),
-					}),
-				)
+			? await step.run('send-pending-shadow-newsletter-emails', async () => {
+					// State sketch: legacy/opt-in -> sent; config/storage failure ->
+					// newsletter-only failed; any unrelated failure -> throw.
+					// Keep the durable step's array shape, including legacy replays.
+					try {
+						const newsletter = parseNewsletterSenderConfig({
+							pacingMs: process.env.AIH_DROVR_NEWSLETTER_PACING_MS,
+							limit: process.env.AIH_DROVR_NEWSLETTER_LIMIT,
+							inheritLimit: () => senderLimit(process.env.AIH_DROVR_EVERGREEN_SENDER_LIMIT),
+							inheritPacingMs: () => evergreenSenderPacingMs(process.env),
+						})
+						const newsletterPause = newsletter.mode === 'opt-in'
+							? createNewsletterProviderPause({
+									store: {
+										eval: async (script, keys, args) => {
+											// Existing persistence, lazy and unreachable in legacy mode.
+											const { redis } = await import('@/server/redis-client')
+											return redis.eval(script, keys, args)
+										},
+									},
+								})
+							: undefined
+						return await executePendingEvergreenSends({
+							repository: new DrizzleCaptureMarketingRepository(db),
+							type: SEND_SHADOW_NEWSLETTER_EMAIL_INTENT_TYPE,
+							subscribe: (input) =>
+								addSubscriberToKitSequence({
+									apiKey: process.env.KIT_V4_API_KEY,
+									fetch,
+									sequenceId: input.listId,
+									email: input.user.email,
+									...(newsletter.mode === 'opt-in' ? { newsletter429: true } : {}),
+								}),
+							limit: newsletter.mode === 'opt-in' ? newsletter.limit : senderLimit(
+								process.env.AIH_DROVR_EVERGREEN_SENDER_LIMIT,
+							),
+							pacingMs: newsletter.mode === 'opt-in' ? newsletter.pacingMs : evergreenSenderPacingMs(process.env),
+							...(newsletterPause ? { newsletter: newsletterPause } : {}),
+						})
+					} catch (error) {
+						if (error instanceof NewsletterSenderConfigError) {
+							return [{ status: 'newsletter-config-failed' as const }]
+						}
+						if (error instanceof NewsletterPauseUnavailableError) {
+							return [{ status: 'newsletter-storage-failed' as const }]
+						}
+						throw error
+					}
+				})
 			: []
 		if (!shadowReadback.ready) {
 			await log.warn('drovr.shadow_newsletter.not_ready', {

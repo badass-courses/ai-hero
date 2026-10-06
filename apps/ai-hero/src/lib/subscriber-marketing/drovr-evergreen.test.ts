@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
 	addSubscriberToKitSequence,
@@ -359,5 +359,34 @@ describe('subscribeToEvergreenList', () => {
 		await expect(
 			subscribeToEvergreenList({ ...input, fetch: make(503) }),
 		).rejects.toMatchObject({ status: 503 })
+	})
+})
+
+describe('explicit newsletter429 header recognition', () => {
+	it('known429 survives unreadable body and carries only Retry-After metadata', async () => {
+		const response = new Response('private body not persisted', { status: 429, headers: { 'Retry-After': '180' } })
+		const bodyRead = vi.spyOn(response, 'text').mockRejectedValue(new Error('body failed'))
+		const fake: typeof fetch = async () => response
+		await expect(addSubscriberToKitSequence({ apiKey: 'synthetic', fetch: fake,
+			sequenceId: 'synthetic-sequence', email: 'synthetic@aih.test.invalid', newsletter429: true,
+		})).rejects.toMatchObject({ status: 429, retryAfter: '180', message: 'kit v4 answered 429: newsletter enrollment refused' })
+		expect(bodyRead).not.toHaveBeenCalled()
+	})
+	it('legacy/nonnewsletter body failure still escapes unchanged without opt-in', async () => {
+		const response = new Response('private body', { status: 429 })
+		const failure = new Error('legacy body failure')
+		vi.spyOn(response, 'text').mockRejectedValue(failure)
+		const fake: typeof fetch = async () => response
+		await expect(addSubscriberToKitSequence({ apiKey: 'synthetic', fetch: fake,
+			sequenceId: 'synthetic-sequence', email: 'synthetic@aih.test.invalid',
+		})).rejects.toBe(failure)
+	})
+	it.each([200, 201, 422, 503])('other status%s keeps existing outcome semantics when opted in', async status => {
+		const fake: typeof fetch = async () => new Response('{}', { status })
+		const call = addSubscriberToKitSequence({ apiKey: 'synthetic', fetch: fake,
+			sequenceId: 'synthetic-sequence', email: 'synthetic@aih.test.invalid', newsletter429: true,
+		})
+		if (status === 200 || status === 201) await expect(call).resolves.toBe(status === 200 ? 'already-added' : 'added')
+		else await expect(call).rejects.toMatchObject({ status })
 	})
 })
