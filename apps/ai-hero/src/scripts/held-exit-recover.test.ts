@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { Effect } from 'effect'
 import { readKitExitMembership } from '../../scripts/held-exit-kit-scan'
 import { buildDrovrSignupRequest } from '../lib/subscriber-marketing/drovr-doi-signup'
-import { resolveRecoveryContact, runHeldExitRecovery, type RecoveryRuntime } from '../../scripts/held-exit-recover'
+import { parseHeldRecoveryArgs, runHeldRecoveryCommand, resolveRecoveryContact, runHeldExitRecovery, type RecoveryRuntime } from '../../scripts/held-exit-recover'
 import type { SideEffectIntent } from '../lib/subscriber-marketing/types'
 import { InMemorySubscriberMarketingRepository } from '../lib/subscriber-marketing/dry-run'
 import { readOldSequenceMembership, OLD_NEWSLETTER_EXIT_CONFIRMED, OLD_NEWSLETTER_REFERENCE } from '../lib/subscriber-marketing/old-newsletter-exit'
@@ -41,6 +41,43 @@ function runtime(): RecoveryRuntime & { repository: InMemorySubscriberMarketingR
 	}
 }
 const dryRun = { mode: 'dry-run' as const, namespace: 'ai-hero' as const, contactId: contact.id }
+
+describe('recovery process boundary', () => {
+	it('defaults to dry-run, accepts exactly one AIH or drovr identity, and closes the runtime', async () => {
+		expect(parseHeldRecoveryArgs(['--contact-id', contact.id])).toEqual(dryRun)
+		expect(parseHeldRecoveryArgs(['--drovr-contact-id', contact.id])).toEqual({ ...dryRun, namespace: 'drovr' })
+		expect(parseHeldRecoveryArgs(['--contact-id', contact.id, '--readback'])).toEqual({ ...dryRun, mode: 'readback' })
+		const close = vi.fn(async () => {})
+		const load = vi.fn(async () => ({ runtime: runtime(), close }))
+		expect(await Effect.runPromise(runHeldRecoveryCommand(['--contact-id', contact.id], load))).toMatchObject({ status: 'planned' })
+		expect(load).toHaveBeenCalledOnce()
+		expect(close).toHaveBeenCalledOnce()
+	})
+
+	it.each([
+		[], ['--contact-id'], ['--contact-id', contact.id, '--drovr-contact-id', contact.id],
+		['--contact-id', contact.id, '--write'],
+		['--contact-id', contact.id, '--write', '--approval', 'fixture', '--plan-hash', 'wrong'],
+		['--contact-id', contact.id, '--write', '--readback'],
+		['--contact-id', contact.id, '--approval', 'fixture'],
+		['--contact-id', contact.email!], ['--unknown', 'private@example.test'],
+	])('refuses malformed argv without opening any clients: %j', async (...argv) => {
+		const load = vi.fn(async () => ({ runtime: runtime(), close: async () => {} }))
+		const result = await Effect.runPromise(runHeldRecoveryCommand(argv, load))
+		expect(result.status).toBe('refused')
+		expect(load).not.toHaveBeenCalled()
+		for (const value of [contact.id, contact.email!, 'private@example.test']) expect(JSON.stringify(result)).not.toContain(value)
+	})
+
+	it('contains startup and cleanup errors in the same PII-free JSON envelope', async () => {
+		const startup = await Effect.runPromise(runHeldRecoveryCommand(['--contact-id', contact.id], async () => { throw new Error(contact.email!) }))
+		expect(startup).toMatchObject({ version: 1, status: 'refused', reason: 'runtime-unavailable' })
+		const cleanup = await Effect.runPromise(runHeldRecoveryCommand(['--contact-id', contact.id], async () => ({ runtime: runtime(),
+			close: async () => { throw new Error(contact.email!) } })))
+		expect(cleanup).toMatchObject({ version: 1, status: 'refused', reason: 'runtime-close-failed' })
+		expect(JSON.stringify([startup, cleanup])).not.toContain(contact.email)
+	})
+})
 
 describe('read-only Kit exit proof', () => {
 	it.each(['missing-cursor', 'loop', 'malformed', 'http', 'cap', 'late'])('never converts %s scans into absence', async (scenario) => {

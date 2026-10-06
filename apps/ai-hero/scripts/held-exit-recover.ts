@@ -210,6 +210,17 @@ export function runHeldExitRecovery(args: RecoveryArgs, runtime: RecoveryRuntime
 		status: 'refused' as const })))
 }
 
+export function parseHeldRecoveryArgs(argv: readonly string[]): RecoveryArgs {
+	throw new RecoveryRefused({ reason: 'arguments-invalid' })
+}
+
+export type RecoveryRuntimeLoader = (args: RecoveryArgs) => Promise<{ runtime: RecoveryRuntime; close: () => Promise<void> }>
+export function runHeldRecoveryCommand(argv: readonly string[], load: RecoveryRuntimeLoader) {
+	return Effect.succeed<RecoveryEnvelope>({ version: 1, mode: 'dry-run', status: 'refused',
+		reason: 'arguments-invalid', planHash: null, counts: { exitReceipts: 0, notifications: 0 },
+		checks: { contactResolved: false, exactlyOneHeld: false, oldSequenceAbsent: false }, scans: [] })
+}
+
 /** drovr's delivery payload carries the AI Hero contact id unchanged. */
 export async function resolveRecoveryContact(
 	input: { namespace: 'ai-hero' | 'drovr'; contactId: string },
