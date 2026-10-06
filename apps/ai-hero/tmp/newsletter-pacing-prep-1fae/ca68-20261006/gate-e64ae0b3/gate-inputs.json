@@ -1,0 +1,133 @@
+{
+  "schema": "aih.newsletter.e64.sealed-inputs.v1",
+  "authority": "desk-e64ae0b3",
+  "base": "85c65f7845d89b141e8890551c77d355a79b31be",
+  "sourceRows": [
+    {
+      "path": "apps/ai-hero/src/inngest/functions/drovr-evergreen-sender.ts",
+      "sha256": "05f18ff7b9918f32451b7851a87281fe42ed9cb2d76137167dd1bcdd458e556d"
+    },
+    {
+      "path": "apps/ai-hero/src/lib/subscriber-marketing/drovr-evergreen-sender.ts",
+      "sha256": "a072cf2719db7bd46d893697ca1881adeefcfd407cda0c43ae8b3969dc948478"
+    },
+    {
+      "path": "apps/ai-hero/src/lib/subscriber-marketing/drovr-evergreen-sender.test.ts",
+      "sha256": "814e695440a230702ed0a394ae022dcb2a4cea6125c6c9b6a43986df1c899b2b"
+    },
+    {
+      "path": "apps/ai-hero/src/lib/subscriber-marketing/drovr-evergreen.ts",
+      "sha256": "fb80c88a1afe82c9c50be9ae5f3fa884cbabf4694b9afbb4442466fe93108b41"
+    },
+    {
+      "path": "apps/ai-hero/src/lib/subscriber-marketing/drovr-evergreen.test.ts",
+      "sha256": "78d03af9ca654c21faf5c49c18e7680ab15c8f731548269b07a48f18ba82bc5c"
+    },
+    {
+      "path": "apps/ai-hero/src/inngest/functions/evergreen-sender-pacing.test.ts",
+      "sha256": "27abb1029b3a6117eff05fb1ec780d0168132c2064f6c7075da35551ded9f19c"
+    },
+    {
+      "path": "apps/ai-hero/src/inngest/functions/newsletter-sender-config.ts",
+      "sha256": "651b6973ce47daf944de7cf37f613f25a477fd318ab86201bc17d60965c54651"
+    },
+    {
+      "path": "apps/ai-hero/src/inngest/functions/newsletter-sender-config.test.ts",
+      "sha256": "b43f6a47554329d2fd9e9af5dee03a6662aa2f336e9cf7bd648dec6bced82d38"
+    },
+    {
+      "path": "apps/ai-hero/src/inngest/functions/newsletter-provider-pause.ts",
+      "sha256": "c812702471e5fb937cbf4534b9ab8583da59bf7bdbc72da295c77c0314bfe881"
+    },
+    {
+      "path": "apps/ai-hero/src/inngest/functions/newsletter-provider-pause.test.ts",
+      "sha256": "57da19ab2f1cc73a7cb9ffb8e121e4b61e91f10b45f83d8ad0013f3bdc81eb4a"
+    },
+    {
+      "path": "apps/ai-hero/src/inngest/functions/drovr-evergreen-sender.newsletter-pacing.test.ts",
+      "sha256": "e35df41beec539eca84318468d9a9eb4fd4de0ef063b19ff73641d0811f034da"
+    }
+  ],
+  "scratchRows": [
+    {
+      "path": "selected-paths.json",
+      "sha256": "8328bdf9e40dbe23aa7b16115d943a2b3f658165a8e490d4e3b83ccdccfdf5c4"
+    },
+    {
+      "path": "full-guards.ts",
+      "sha256": "202520cbfc575dd3549d8f36b61a440a8ee36cb966d331edf51029c8a7479ef9"
+    },
+    {
+      "path": "db-guard-state.ts",
+      "sha256": "2dd7912cb7a888be80bb2c18d96ef87aff3ac69c0e31847633127f0d1edb91ac"
+    },
+    {
+      "path": "database-stub.ts",
+      "sha256": "f491c48214c933950a02a47ae0ab33b2157518025655ea6035229ac6ec5e97ee"
+    },
+    {
+      "path": "schema-stub.ts",
+      "sha256": "ea010bdf1a2f8a92ba0ef259521075213a20e3b5b7ab043255850d07437c3a3d"
+    },
+    {
+      "path": "candidate-full.diff",
+      "sha256": "ab7b48cb396dacc361a2e3e9dcbbaef669ece62836673375dd7c753c2dacf26f"
+    },
+    {
+      "path": "full.vitest.config.ts",
+      "sha256": "18665a4353f0984806767a4207dde68538c4637bb7fdafad71ca1d057a00a2b0"
+    },
+    {
+      "path": "baseline-diagnostic-lines.json",
+      "sha256": "a5ff871fcb0896ace7b14ba74d62d04891eaebdeda9e07e172e551054869a877"
+    },
+    {
+      "path": "remote-check.mjs",
+      "sha256": "39fa3d93b872b1e327d79522e99b8b1d65d6f620f9a799f3fd2c93662d0d55a5"
+    }
+  ],
+  "baselineDiagnosticSha256": "53015e69847f320c1b4c754b8202d9e23f81a61369d73bca2c080159140a84a8",
+  "executorSha256": "c7aaee2b48e24de2e692decda154455ce636bf21ead6c1af1bf1bab5f209a5f0",
+  "candidateFullDiffSha256": "ab7b48cb396dacc361a2e3e9dcbbaef669ece62836673375dd7c753c2dacf26f",
+  "configAdaptation": "Exactly one extra parent in app-root URL; every assertion/mock/guard/include unchanged",
+  "phases": [
+    "full",
+    "candidate-if-full-qualified"
+  ],
+  "fullAudit": "All15 inclusion,15 unique audits,0 calls",
+  "perPhaseAttempts": 1,
+  "childrenEnvironment": {
+    "PATH": "/usr/bin:/bin",
+    "HOME": "new empty owned home-phase under transported scratch",
+    "GOMEMLIMIT": "3GiB"
+  },
+  "fullCommand": [
+    "node",
+    "remote-check.mjs",
+    "full"
+  ],
+  "typesCommand": [
+    "node",
+    "remote-check.mjs",
+    "candidate",
+    "qualified-full-gate-runId"
+  ],
+  "compilerArguments": [
+    "--noEmit",
+    "--singleThreaded",
+    "--pretty",
+    "false",
+    "--incremental",
+    "false",
+    "-p",
+    "tsconfig.typecheck.json"
+  ],
+  "expectedVersions": {
+    "node": "v24.18.0",
+    "effect": "3.21.3",
+    "repoPnpm": "11.1.2",
+    "kitPnpm": "11.3.0"
+  },
+  "softwareGuardsNotOsSandbox": true,
+  "preservedFocusedSha256": "96d00f6fa517b6101ed6cb7529b6f32f7cf66020119573bbbbf7695986118635"
+}

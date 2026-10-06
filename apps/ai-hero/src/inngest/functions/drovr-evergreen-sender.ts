@@ -28,6 +28,8 @@ import {
 import { log } from '@/server/logger'
 
 import { evergreenSenderPacingMs } from './evergreen-sender-pacing'
+import { parseNewsletterSenderConfig } from './newsletter-sender-config'
+import { createNewsletterProviderPause } from './newsletter-provider-pause'
 
 /**
  * Sends drovr's evergreen and shadow-newsletter sequence enrollments. Off
@@ -58,6 +60,24 @@ export const drovrEvergreenSender = inngest.createFunction(
 		if (!config.enabled) {
 			return { status: 'off', reason: config.reason }
 		}
+		const newsletter = parseNewsletterSenderConfig({
+			pacingMs: process.env.AIH_DROVR_NEWSLETTER_PACING_MS,
+			limit: process.env.AIH_DROVR_NEWSLETTER_LIMIT,
+			inheritLimit: () => senderLimit(process.env.AIH_DROVR_EVERGREEN_SENDER_LIMIT),
+			inheritPacingMs: () => evergreenSenderPacingMs(process.env),
+		})
+		const newsletterPause = newsletter.mode === 'opt-in'
+			? createNewsletterProviderPause({
+					store: {
+						eval: async (script, keys, args) => {
+							// Existing app persistence only, lazy and unreachable in legacy
+							// mode. Unit tests inject a fake; never bootstrap real Redis.
+							const { redis } = await import('@/server/redis-client')
+							return redis.eval(script, keys, args)
+						},
+					},
+				})
+			: undefined
 		// The list handoff has its own gate and runs first: the newsletter
 		// sequence must be active and non-repeating (a re-add to a repeating
 		// sequence would replay the newsletter; a held one falls back to the
@@ -113,11 +133,13 @@ export const drovrEvergreenSender = inngest.createFunction(
 								fetch,
 								sequenceId: input.listId,
 								email: input.user.email,
+								...(newsletter.mode === 'opt-in' ? { newsletter429: true } : {}),
 							}),
-						limit: senderLimit(
+						limit: newsletter.mode === 'opt-in' ? newsletter.limit : senderLimit(
 							process.env.AIH_DROVR_EVERGREEN_SENDER_LIMIT,
 						),
-						pacingMs: evergreenSenderPacingMs(process.env),
+						pacingMs: newsletter.mode === 'opt-in' ? newsletter.pacingMs : evergreenSenderPacingMs(process.env),
+						...(newsletterPause ? { newsletter: newsletterPause } : {}),
 					}),
 				)
 			: []

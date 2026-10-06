@@ -49,7 +49,13 @@ export type EvergreenSenderRepository =
 		>
 	>
 
+export interface NewsletterSendPause {
+	isPaused(): Promise<boolean>
+	pause(retryAfter: string | undefined): Promise<void>
+}
+
 export type EvergreenSendResult =
+	| { status: 'newsletter-paused'; intentId: string; reason: 'kit-429' | 'active-pause' }
 	| { status: 'completed'; intentId: string; kitSequenceId: string }
 	| { status: 'retry'; intentId: string; attempts: number; error: string }
 	| { status: 'failed'; intentId: string; error: string }
@@ -95,6 +101,8 @@ export async function executePendingEvergreenSends(args: {
 	pacingMs?: number
 	sleep?: (ms: number) => Promise<void>
 	dispatch?: (intent: SideEffectIntent) => void
+	/** Explicit newsletter-only opt-in. Omitted means legacy error/attempt behavior. */
+	newsletter?: NewsletterSendPause
 	/** Row type to drain; list handoffs and shadow rows add to a Kit
 	 * sequence the same way an evergreen message send does. */
 	type?:
@@ -115,6 +123,10 @@ export async function executePendingEvergreenSends(args: {
 					: 'side-effect-intent-completed',
 				intent,
 			}))
+	const newsletter = args.type === SEND_SHADOW_NEWSLETTER_EMAIL_INTENT_TYPE
+		? args.newsletter
+		: undefined
+	if (newsletter && await newsletter.isPaused()) return []
 	const rows = await args.repository.findPendingSideEffectIntentsByType(
 		args.type ?? SEND_EVERGREEN_EMAIL_INTENT_TYPE,
 		args.limit,
@@ -124,7 +136,9 @@ export async function executePendingEvergreenSends(args: {
 	for (const row of rows) {
 		if (!first && args.pacingMs) await sleep(args.pacingMs)
 		first = false
-		results.push(await sendOne({ row, args, now: now(), dispatch }))
+		const result = await sendOne({ row, args: { ...args, newsletter }, now: now(), dispatch })
+		results.push(result)
+		if (result.status === 'newsletter-paused') break
 	}
 	return results
 }
@@ -133,7 +147,7 @@ async function sendOne(input: {
 	row: SideEffectIntent
 	args: Pick<
 		Parameters<typeof executePendingEvergreenSends>[0],
-		'repository' | 'subscribe' | 'oldNewsletterExit'
+		'repository' | 'subscribe' | 'oldNewsletterExit' | 'newsletter'
 	>
 	now: string
 	dispatch: (intent: SideEffectIntent) => void
@@ -196,6 +210,10 @@ async function sendOne(input: {
 		dispatch(completed)
 		return { status: 'completed', intentId: row.id, kitSequenceId }
 	}
+	// Storage failures escape BEFORE enrollment and are not provider attempts.
+	if (args.newsletter && await args.newsletter.isPaused()) {
+		return { status: 'newsletter-paused', intentId: row.id, reason: 'active-pause' }
+	}
 	try {
 		await args.subscribe({
 			listId: kitSequenceId,
@@ -205,6 +223,15 @@ async function sendOne(input: {
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error)
 		const failure = kitFailureVerdict(error)
+		if (args.newsletter && failure.code === '429') {
+			const retryAfter = error && typeof error === 'object' &&
+				'retryAfter' in error && typeof error.retryAfter === 'string'
+				? error.retryAfter : undefined
+			// Refusal spends no attempt allowance and mutates no intent. A marker
+			// write failure escapes, stopping this invocation, never intent.failed.
+			await args.newsletter.pause(retryAfter)
+			return { status: 'newsletter-paused', intentId: row.id, reason: 'kit-429' }
+		}
 		if (failure.verdict === 'terminal') {
 			const failed = await args.repository.updateSideEffectIntent(row.id, {
 				status: 'failed',

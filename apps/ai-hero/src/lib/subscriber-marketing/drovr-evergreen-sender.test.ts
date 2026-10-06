@@ -670,3 +670,104 @@ describe('executePendingEvergreenSends', () => {
 		expect(repository.intents.get('row-2')?.status).toBe('completed')
 	})
 })
+
+describe('explicit newsletter-only first429/pause mode', () => {
+	const fixture = (attempts = 0) => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', { ...contact(), email: 'newsletter-synthetic@aih.test.invalid' })
+		for (const id of ['a', 'b', 'c']) repository.intents.set(id, row({
+			id, type: 'send-shadow-newsletter-email',
+			createdAt: `2026-09-17T15:59:0${id === 'a' ? 0 : id === 'b' ? 1 : 2}.000Z`,
+			metadata: { ...row().metadata, attempts },
+		}))
+		return repository
+	}
+	const run = (repository: FakeRepository, extra: Partial<Parameters<typeof executePendingEvergreenSends>[0]> = {}) =>
+		executePendingEvergreenSends({ repository, type: 'send-shadow-newsletter-email',
+			limit: 120, now: () => now, sleep: async () => {}, dispatch: () => {}, subscribe: async () => 'added', ...extra,
+		})
+	it.each([0, EVERGREEN_SEND_MAX_ATTEMPTS - 1, EVERGREEN_SEND_MAX_ATTEMPTS, 10])(
+		'first429 after success stops remaining rows and spends no attempt, prior=%s', async attempts => {
+			const repository = fixture(attempts)
+			const beforeB = repository.intents.get('b'); const beforeC = repository.intents.get('c')
+			const calls: string[] = []; const facts: SideEffectIntent[] = []; const pauses: (string | undefined)[] = []
+			const results = await run(repository, {
+				newsletter: { isPaused: async () => false, pause: async value => { pauses.push(value) } },
+				subscribe: async () => {
+					calls.push('subscribe')
+					if (calls.length === 2) throw Object.assign(new Error('known refusal'), { status: 429, retryAfter: '180' })
+					return 'added'
+				}, dispatch: intent => { facts.push(intent) },
+			})
+			expect(calls).toHaveLength(2); expect(pauses).toEqual(['180'])
+			expect(results.map(result => result.status)).toEqual(['completed', 'newsletter-paused'])
+			expect(repository.intents.get('b')).toEqual(beforeB); expect(repository.intents.get('c')).toEqual(beforeC)
+			expect(facts.map(fact => fact.status)).toEqual(['completed'])
+		},
+	)
+	it('fresh run/reexecution honors active pause before row selection or provider; expiry permits', async () => {
+		const repository = fixture(); let clock = 0; let expires = 0; let calls = 0
+		const newsletter = { isPaused: async () => expires > clock, pause: async () => { expires = clock + 120000 } }
+		const subscribe = async () => { calls += 1; throw Object.assign(new Error('refused'), { status: 429 }) }
+		expect((await run(repository, { newsletter, subscribe }))[0]?.status).toBe('newsletter-paused')
+		expect(calls).toBe(1)
+		expect(await run(repository, { newsletter, subscribe })).toEqual([])
+		expect(calls).toBe(1)
+		clock = 120000
+		// Explicit boundary: absent saved step result, expiry permits old-run
+		// reexecution too. TTL alone is not indefinite rest-of-run protection.
+		await run(repository, { newsletter, subscribe }); expect(calls).toBe(2)
+	})
+	it('a pause arriving during work is checked immediately before each enrollment', async () => {
+		const repository = fixture(); let paused = false; let calls = 0
+		const results = await run(repository, {
+			newsletter: { isPaused: async () => paused, pause: async () => {} },
+			subscribe: async () => { calls += 1; paused = true; return 'added' },
+		})
+		expect(calls).toBe(1); expect(results.map(result => result.status)).toEqual(['completed', 'newsletter-paused'])
+		expect(repository.intents.get('b')?.metadata.attempts).toBe(0)
+	})
+	it('marker read failure aborts without provider calls', async () => {
+		const repository = fixture(); let calls = 0
+		await expect(run(repository, {
+			newsletter: { isPaused: async () => { throw new Error('storage unavailable') }, pause: async () => {} },
+			subscribe: async () => { calls += 1 },
+		})).rejects.toThrow('storage unavailable')
+		expect(calls).toBe(0); expect(repository.intents.get('a')?.metadata.attempts).toBe(0)
+	})
+	it('marker write failure propagates once, with no intent/attempt mutation or later calls', async () => {
+		const repository = fixture(6); let calls = 0; let writes = 0; let facts = 0
+		await expect(run(repository, {
+			newsletter: { isPaused: async () => false, pause: async () => { writes += 1; throw new Error('storage unavailable') } },
+			subscribe: async () => { calls += 1; throw Object.assign(new Error('refusal'), { status: 429 }) },
+			dispatch: () => { facts += 1 },
+		})).rejects.toThrow('storage unavailable')
+		expect([calls, writes, facts]).toEqual([1, 1, 0])
+		expect(repository.intents.get('a')).toMatchObject({ status: 'pending', metadata: { attempts: 6 } })
+	})
+	it('legacy newsletter mode still retries/counts429 and continues the batch', async () => {
+		const repository = fixture(); let calls = 0
+		const results = await run(repository, { subscribe: async () => { calls += 1; throw Object.assign(new Error('429'), { status: 429 }) } })
+		expect(calls).toBe(3); expect(results.map(result => result.status)).toEqual(['retry', 'retry', 'retry'])
+		expect(repository.intents.get('a')?.metadata.attempts).toBe(1)
+	})
+	it('nonnewsletter callers ignore even an injected newsletter port', async () => {
+		const repository = fixture(); let pauseReads = 0
+		for (const [id, intent] of repository.intents) repository.intents.set(id, { ...intent, type: 'send-evergreen-email' })
+		const results = await run(repository, {
+			type: 'send-evergreen-email', newsletter: { isPaused: async () => { pauseReads += 1; return true }, pause: async () => {} },
+			subscribe: async () => { throw Object.assign(new Error('429'), { status: 429 }) },
+		})
+		expect(pauseReads).toBe(0); expect(results.map(result => result.status)).toEqual(['retry', 'retry', 'retry'])
+	})
+	it.each([503, 422, undefined])('opt-in preserves existing non429 error semantics for %s', async status => {
+		const repository = fixture(); let pauses = 0
+		const results = await run(repository, {
+			newsletter: { isPaused: async () => false, pause: async () => { pauses += 1 } },
+			subscribe: async () => { throw Object.assign(new Error('unchanged failure'), { status }) },
+		})
+		expect(pauses).toBe(0)
+		expect(results.map(result => result.status)).toEqual(Array(3).fill(status === 422 ? 'failed' : 'retry'))
+		expect(repository.intents.get('a')?.metadata.attempts).toBe(1)
+	})
+})
