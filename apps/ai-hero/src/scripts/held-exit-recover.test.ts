@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Effect } from 'effect'
+import { readKitExitMembership } from '../../scripts/held-exit-kit-scan'
 import { buildDrovrSignupRequest } from '../lib/subscriber-marketing/drovr-doi-signup'
 import { resolveRecoveryContact, runHeldExitRecovery, type RecoveryRuntime } from '../../scripts/held-exit-recover'
 import type { SideEffectIntent } from '../lib/subscriber-marketing/types'
@@ -39,6 +40,31 @@ function runtime(): RecoveryRuntime & { repository: InMemorySubscriberMarketingR
 	}
 }
 const dryRun = { mode: 'dry-run' as const, namespace: 'ai-hero' as const, contactId: contact.id }
+
+describe('read-only Kit exit proof', () => {
+	it('establishes absence only after every status=all sequence page, stripping provider PII', async () => {
+		const fetcher: typeof fetch = vi.fn(async () => new Response(JSON.stringify({
+			subscribers: [{ id: 456, email_address: 'private@example.test', first_name: 'Private' }],
+			pagination: { has_next_page: false, end_cursor: null },
+		})))
+		vi.mocked(fetcher).mockResolvedValueOnce(new Response(JSON.stringify({
+			subscribers: [{ id: 789 }], pagination: { has_next_page: true, end_cursor: 'cursor-one' },
+		})))
+		const result = await Effect.runPromise(readKitExitMembership({ apiKey: 'fixture-key',
+			subscriberId: '123', fetch: fetcher, now: () => contact.createdAt }))
+		expect(result).toMatchObject({ membership: 'absent', complete: true, sequenceId: 2625552, pages: 2, subscribers: 2 })
+		expect(fetcher).toHaveBeenCalledTimes(2)
+		const second = new URL(String(vi.mocked(fetcher).mock.calls[1]?.[0]))
+		expect(second.searchParams.get('after')).toBe('cursor-one')
+		for (const [url, init] of vi.mocked(fetcher).mock.calls) {
+			expect(new URL(String(url)).pathname).toBe('/v4/sequences/2625552/subscribers')
+			expect(new URL(String(url)).searchParams.get('status')).toBe('all')
+			expect(init?.method).toBe('GET')
+		}
+		for (const value of ['private@example.test', 'Private', 'fixture-key', 'cursor-one', '123', '456', '789'])
+			expect(JSON.stringify(result)).not.toContain(value)
+	})
+})
 
 describe('single-contact held exit recovery', () => {
 	it('writes the established current exit proof before its replay notification, then refuses a recovered row', async () => {
