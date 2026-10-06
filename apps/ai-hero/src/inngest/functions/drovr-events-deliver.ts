@@ -29,6 +29,8 @@ import {
 	valuePathBulkFreeze,
 	type ValuePathBulkFreeze,
 } from '@/lib/subscriber-marketing/drovr-bulk-freeze'
+import { admitValuePathBirths } from '@/lib/subscriber-marketing/drovr-value-path-birth-admission'
+import { readUnsubscribedValuePathContactIds } from '@/lib/subscriber-marketing/drovr-value-path-birth-admission-live'
 import { isSendingJourneyBirth } from '@/lib/subscriber-marketing/drovr-birth-clamp'
 import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
 import {
@@ -85,6 +87,8 @@ export type DrovrEventsDeliverReceipt = {
 	 * window, with no sign-off (row 201g).
 	 */
 	valuePathBirthsRefused?: number
+	/** Value-path births skipped because AI Hero records an active opt-out. */
+	valuePathBirthsSkippedUnsubscribed?: number
 	status: 'delivered' | 'skipped'
 	accepted: number
 	rejected: number
@@ -449,6 +453,22 @@ const holdLate = async (
 	return late.length
 }
 
+// Memoize the admitted list before chunking: a retry never shifts events
+// into another chunk whose send step already completed. No birth, no read.
+const admitBirths = async (
+	events: readonly DrovrShadowEvent[],
+	step: DeliverStep,
+) =>
+	events.some(isValuePathBirth)
+		? await step.run('value-path-birth-admission', () =>
+				admitValuePathBirths({
+					events,
+					read: readUnsubscribedValuePathContactIds,
+					info: log.info,
+				}),
+			)
+		: { events: [...events], skipped: 0 }
+
 const deliverBatch = async (
 	batch: DrovrEventsDeliver['data']['events'],
 	step: DeliverStep,
@@ -467,7 +487,8 @@ const deliverBatch = async (
 		}
 	const shadowFiltered = await discardShadowTenantEvents(fanOutEvents, 'live')
 	const { discarded } = shadowFiltered
-	const gate = await holdBehindOpenStops(shadowFiltered.events, step, context)
+	const admitted = await admitBirths(shadowFiltered.events, step)
+	const gate = await holdBehindOpenStops(admitted.events, step, context)
 	const events = inDeliveryOrder(gate.events)
 	const clampAt = await drovrClampInstant(events, step)
 
@@ -573,6 +594,9 @@ const deliverBatch = async (
 		accepted,
 		rejected,
 		discarded,
+		...(admitted.skipped > 0
+			? { valuePathBirthsSkippedUnsubscribed: admitted.skipped }
+			: {}),
 		...(ownerStopsNeverBorn > 0 ? { ownerStopsNeverBorn } : {}),
 		...(outboxed > 0 ? { outboxed } : {}),
 		...(heldBehindStop > 0 ? { heldBehindStop } : {}),
@@ -623,7 +647,8 @@ const deliverBulk = async (
 		}
 	const shadowFiltered = await discardShadowTenantEvents(fanOutEvents, 'bulk')
 	const { discarded } = shadowFiltered
-	const gate = await holdBehindOpenStops(shadowFiltered.events, step, context)
+	const admitted = await admitBirths(shadowFiltered.events, step)
+	const gate = await holdBehindOpenStops(admitted.events, step, context)
 	// In time order, so chunks go out oldest first. After the shadow tenant
 	// is discarded only the authority tenant is left, so that order is the
 	// whole batch's.
@@ -797,6 +822,9 @@ const deliverBulk = async (
 		...(heldBehindStop > 0 ? { heldBehindStop } : {}),
 		...(heldStops > 0 ? { heldStops } : {}),
 		...(deferredStopsGated > 0 ? { deferredStopsGated } : {}),
+		...(admitted.skipped > 0
+			? { valuePathBirthsSkippedUnsubscribed: admitted.skipped }
+			: {}),
 	}
 }
 
@@ -877,7 +905,12 @@ const combineReceipts = (
 	const delivered = receipts.filter((receipt) => receipt.status === 'delivered')
 	if (receipts.length > 0 && delivered.length === 0) return receipts[0]!
 	const sumOf = (
-		field: 'outboxed' | 'heldBehindStop' | 'heldStops' | 'deferredStopsGated',
+		field:
+			| 'outboxed'
+			| 'heldBehindStop'
+			| 'heldStops'
+			| 'deferredStopsGated'
+			| 'valuePathBirthsSkippedUnsubscribed',
 	) => {
 		const total = delivered.reduce(
 			(sum, receipt) => sum + (receipt[field] ?? 0),
@@ -894,6 +927,7 @@ const combineReceipts = (
 		...sumOf('heldBehindStop'),
 		...sumOf('heldStops'),
 		...sumOf('deferredStopsGated'),
+		...sumOf('valuePathBirthsSkippedUnsubscribed'),
 	}
 }
 

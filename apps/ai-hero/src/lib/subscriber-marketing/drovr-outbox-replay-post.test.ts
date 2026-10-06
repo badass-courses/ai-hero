@@ -61,6 +61,8 @@ const ports = (
 	deliver: vi.fn(async () => ({ status: 'accepted' as const })),
 	fanOut: vi.fn(async (events) => [...events, authorityCopy]),
 	isNeverBornOwnerStop: () => false,
+	readBirthOptOuts: vi.fn(async () => []),
+	info: vi.fn(),
 	...overrides,
 })
 
@@ -68,6 +70,19 @@ const shadowRow = () =>
 	asRow(outboxEntryForEvent(unsubscribe, 'onFailure', { needsFanOut: true }))
 
 describe('postDrovrOutboxRow', () => {
+	it('settles an outboxed value-path birth for a recorded opt-out without posting it', async () => {
+		const p = ports({ readBirthOptOuts: async () => ['contact-1'] })
+		const birth = { ...authorityCopy, type: 'contact.created' as const }
+		expect(
+			await postDrovrOutboxRow(asRow(outboxEntryForEvent(birth, 'live')), p),
+		).toEqual({ kind: 'settled', detail: 'value-path-birth-unsubscribed' })
+		expect(p.deliver).not.toHaveBeenCalled()
+		expect(p.info).toHaveBeenCalledWith(
+			'drovr.value_path.births_skipped_unsubscribed',
+			{ count: 1, contactIds: ['contact-1'] },
+		)
+	})
+
 	it('re-posts the exact body under its key, with a 10 second deadline', async () => {
 		const p = ports()
 		const outcome = await postDrovrOutboxRow(

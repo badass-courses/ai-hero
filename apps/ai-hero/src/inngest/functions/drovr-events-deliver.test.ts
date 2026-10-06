@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
 	settle: vi.fn(),
 	hold: vi.fn(),
 	valuePathBulkFreeze: vi.fn(),
+	readBirthOptOuts: vi.fn(),
 }))
 
 // The freeze window's calendar is pinned in drovr-bulk-freeze.test.ts; here
@@ -65,6 +66,12 @@ vi.mock('@/lib/subscriber-marketing/drovr-ownership', () => ({
 vi.mock('@/lib/subscriber-marketing/drovr-ownership-live', () => ({
 	resolveOwnedContactIds: mocks.resolveOwnedContactIds,
 }))
+vi.mock(
+	'@/lib/subscriber-marketing/drovr-value-path-birth-admission-live',
+	() => ({
+		readUnsubscribedValuePathContactIds: mocks.readBirthOptOuts,
+	}),
+)
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
 vi.mock('@/lib/subscriber-marketing/drovr-outbox-live', () => ({
 	captureDrovrOutboxLive: mocks.capture,
@@ -153,6 +160,7 @@ beforeEach(() => {
 	vi.clearAllMocks()
 	mocks.valuePathBulkFreeze.mockReturnValue({ frozen: false })
 	mocks.openStops.mockResolvedValue([])
+	mocks.readBirthOptOuts.mockResolvedValue([])
 	mocks.resolveOwnedContactIds.mockResolvedValue([])
 	mocks.isShadowNewsletterBirth.mockReturnValue(false)
 	mocks.drovrApiKeyForTenant.mockImplementation((tenantId: string) =>
@@ -168,6 +176,78 @@ beforeEach(() => {
 		({ events }: { events: unknown[] }) =>
 			Promise.resolve({ accepted: events.length, rejected: 0 }),
 	)
+})
+
+describe('value-path birth admission', () => {
+	it.each(['live', 'bulk'])(
+		'keeps active births in a mixed %s batch and never posts a recorded opt-out',
+		async (lane) => {
+			mocks.fanOutOwnedEvents.mockImplementation((events) => events)
+			mocks.readBirthOptOuts.mockResolvedValue(['stopped'])
+			const stopped = {
+				...event(
+					'org-aihero',
+					'birth:stopped',
+					'value-path-skills-course',
+					'contact.created',
+				),
+				contactId: 'stopped',
+				payload: { email: 'private@example.test' },
+			}
+			const active = {
+				...stopped,
+				contactId: 'active',
+				idempotencyKey: 'birth:active',
+				payload: undefined,
+			}
+			const data = { source: 'contact-event', events: [stopped, active] }
+			const receipt =
+				lane === 'live'
+					? await registered.handler({ event: { data }, step: createStep() })
+					: await registeredBulk.handler({
+							events: [{ data }],
+							step: createStep(),
+						})
+			expect(receipt).toMatchObject({
+				accepted: 1,
+				valuePathBirthsSkippedUnsubscribed: 1,
+			})
+			if (lane === 'live')
+				expect(
+					mocks.deliverOrThrow.mock.calls.map(([args]) => args.event),
+				).toEqual([active])
+			else
+				expect(
+					mocks.deliverBatchOrThrow.mock.calls.flatMap(([args]) => args.events),
+				).toEqual([active])
+			expect(mocks.readBirthOptOuts).toHaveBeenCalledWith(['stopped', 'active'])
+			expect(JSON.stringify(mocks.log.info.mock.calls)).not.toContain('@')
+		},
+	)
+
+	it('fails closed when the recorded opt-out read fails', async () => {
+		mocks.fanOutOwnedEvents.mockImplementation((events) => events)
+		mocks.readBirthOptOuts.mockRejectedValue(new Error('read unavailable'))
+		await expect(
+			registered.handler({
+				event: {
+					data: {
+						source: 'contact-event',
+						events: [
+							event(
+								'org-aihero',
+								'birth',
+								'value-path-skills-course',
+								'contact.created',
+							),
+						],
+					},
+				},
+				step: createStep(),
+			}),
+		).rejects.toThrow('read unavailable')
+		expect(mocks.deliverOrThrow).not.toHaveBeenCalled()
+	})
 })
 
 describe('drovr events deliver registration', () => {

@@ -390,6 +390,8 @@ const asRow = (event: DrovrShadowEvent): DrovrOutboxRow => {
 
 const replay = async (event: DrovrShadowEvent, answer: Answer) => {
 	const outcome = await postDrovrOutboxRow(asRow(event), {
+		readBirthOptOuts: async () => [],
+		info: vi.fn(),
 		ingestUrl: config.ingestUrl,
 		apiKeyFor: () => config.apiKey,
 		deliver: (args) =>
@@ -548,6 +550,8 @@ describe('row 204c: one stop rule on every path', () => {
 					firstFailedAt: '2026-09-30T05:00:00.000Z',
 				} as DrovrOutboxRow,
 				{
+					readBirthOptOuts: async () => [],
+					info: vi.fn(),
 					ingestUrl: config.ingestUrl,
 					apiKeyFor: () => config.apiKey,
 					deliver: (args) =>

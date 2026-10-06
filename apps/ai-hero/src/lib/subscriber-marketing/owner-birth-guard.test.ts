@@ -63,12 +63,32 @@ const delivery = (
 type World = {
 	owners: ContactEventRecord[]
 	stopped?: string[]
+	birthOptOuts?: string[]
 	reposted?: string[]
 	delivery?: Record<string, DrovrEmailDeliveryRead>
 	valuePathActor?: Record<string, DrovrActorRead>
 	directoryActor?: Record<string, DrovrActorRead>
 	post?: (event: DrovrShadowEvent) => Promise<unknown>
 }
+
+it('never re-posts a value-path birth skipped for recorded tag/state opt-out, while other journeys behave as before', async () => {
+	const h = harness({
+		owners: [
+			owner('tagged'),
+			owner('cancelled'),
+			owner('active'),
+			owner('evergreen', undefined, DROVR_EVERGREEN_OFFER_JOURNEY_ID),
+		],
+		birthOptOuts: ['tagged', 'cancelled', 'evergreen'],
+	})
+	const result = await h.run()
+	expect(result).toMatchObject({ skippedStopped: 2, reposted: 2 })
+	expect(h.posted.map((event) => event.contactId)).toEqual([
+		'active',
+		'evergreen',
+	])
+	expect(JSON.stringify(h.info.mock.calls)).not.toContain('@')
+})
 
 const NO_ACTOR: DrovrActorRead = { ok: true, found: false }
 
@@ -116,6 +136,9 @@ function harness(world: World) {
 	const ports: OwnerBirthGuardPorts = {
 		scanOwners,
 		stoppedContactIds: vi.fn(async () => new Set(world.stopped ?? [])),
+		unsubscribedValuePathContactIds: vi.fn(
+			async () => new Set(world.birthOptOuts ?? []),
+		),
 		repostedOwnerEventIds: vi.fn(
 			async () =>
 				new Set([

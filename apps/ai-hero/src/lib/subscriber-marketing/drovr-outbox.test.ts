@@ -655,6 +655,8 @@ describe('runDrovrOutboxReplay', () => {
 		const posted: DrovrShadowEvent[] = []
 		const post = (row: DrovrOutboxRow) =>
 			postDrovrOutboxRow(row, {
+				readBirthOptOuts: async () => [],
+				info: vi.fn(),
 				ingestUrl: 'https://drovr.test/events',
 				apiKeyFor: () => 'k',
 				fanOut: async (events) => [...events],
@@ -1190,6 +1192,8 @@ describe('row 204 round 2: shadow rows never poison the replay (MUST 2)', () => 
 		const deliver = vi.fn(async () => ({ status: 'accepted' as const }))
 		const receipt = await replay(store, (r) =>
 			postDrovrOutboxRow(r, {
+				readBirthOptOuts: async () => [],
+				info: vi.fn(),
 				ingestUrl: 'https://drovr.example/events',
 				apiKeyFor: (tenantId) =>
 					tenantId === 'org-aihero' ? 'authority-key' : undefined,

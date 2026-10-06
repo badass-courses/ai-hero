@@ -1,3 +1,4 @@
+import { admitValuePathBirths } from './drovr-value-path-birth-admission'
 import {
 	DrovrSignupRefusedError,
 	DrovrSignupRetryableError,
@@ -17,6 +18,8 @@ export const DROVR_OUTBOX_POST_TIMEOUT_MS = 10_000
 
 export type DrovrOutboxPostPorts = {
 	ingestUrl: string
+	readBirthOptOuts(contactIds: readonly string[]): Promise<readonly string[]>
+	info(event: string, fields: Record<string, unknown>): unknown
 	apiKeyFor(tenantId: string): string | undefined
 	deliver(args: {
 		event: DrovrShadowEvent
@@ -106,11 +109,20 @@ export async function postDrovrOutboxRow(
 	if (row.endpoint === 'signups') return postSignup(row, ports)
 	const base = row.body as DrovrShadowEvent
 	const fanned = row.needsFanOut ? await ports.fanOut([base]) : [base]
-	const events = fanned.filter(
-		(event) => event.tenantId !== DROVR_SHADOW_TENANT_ID,
-	)
+	const admitted = await admitValuePathBirths({
+		events: fanned.filter((event) => event.tenantId !== DROVR_SHADOW_TENANT_ID),
+		read: ports.readBirthOptOuts,
+		info: ports.info,
+	})
+	const events = admitted.events
 	if (events.length === 0)
-		return { kind: 'settled', detail: 'nothing-deliverable' }
+		return {
+			kind: 'settled',
+			detail:
+				admitted.skipped > 0
+					? 'value-path-birth-unsubscribed'
+					: 'nothing-deliverable',
+		}
 	let accepted = 0
 	let rejected:
 		| { httpStatus: number; detail: unknown; idempotencyKey: string }
