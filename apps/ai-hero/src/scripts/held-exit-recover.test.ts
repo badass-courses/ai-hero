@@ -17,7 +17,7 @@ const held: SideEffectIntent = {
 	idempotencyKey: `contact:${contact.id}:evergreen:list:shadow-newsletter`,
 	createdAt: contact.createdAt, gates: [], reviewReasons: ['old-newsletter-exit-unconfirmed'],
 	metadata: { list: 'shadow-newsletter', source: 'drovr', drovr: {
-		tenantId: 'org_aihero', journeyId: 'evergreen-offer', intentKey: 'fixture-original-intent' } },
+		tenantId: 'org-aihero', journeyId: 'crash-course-evergreen-offer', intentKey: 'fixture-original-intent' } },
 }
 const scan = { membership: 'absent' as const, complete: true, sequenceId: 2625552,
 	pages: 2, subscribers: 12, startedAt: contact.createdAt, completedAt: contact.createdAt }
@@ -34,6 +34,29 @@ function runtime(): RecoveryRuntime {
 const dryRun = { mode: 'dry-run' as const, namespace: 'ai-hero' as const, contactId: contact.id }
 
 describe('single-contact held exit recovery', () => {
+	it.each([
+		['zero', 'held-row-count'], ['multiple', 'held-row-count'],
+		['unknown', 'membership-unknown'], ['partial', 'membership-unknown'],
+		['member', 'old-sequence-member'], ['error', 'provider-unavailable'],
+		['recovered', 'already-recovered'], ['wrong-sequence', 'membership-unknown'],
+	])('refuses %s evidence without any writes', async (scenario, reason) => {
+		const ports = runtime()
+		const original = await ports.inspect(contact.id)
+		if (scenario === 'zero') original.rows = []
+		if (scenario === 'multiple') original.rows.push({ ...held, id: 'fixture-other-row' })
+		if (scenario === 'recovered') original.rows = [{ ...held, status: 'completed', completedAt: contact.createdAt }]
+		ports.inspect = async () => original
+		if (scenario === 'unknown') ports.scan = async () => ({ ...scan, membership: 'unknown' })
+		if (scenario === 'partial') ports.scan = async () => ({ ...scan, complete: false })
+		if (scenario === 'member') ports.scan = async () => ({ ...scan, membership: 'present' })
+		if (scenario === 'wrong-sequence') ports.scan = async () => ({ ...scan, sequenceId: 2757199 })
+		if (scenario === 'error') ports.scan = async () => { throw new Error(`private ${contact.email}`) }
+		const result = await Effect.runPromise(runHeldExitRecovery(dryRun, ports))
+		expect(result).toMatchObject({ status: 'refused', reason, counts: { exitReceipts: 0, notifications: 0 } })
+		expect(ports.persist).not.toHaveBeenCalled()
+		expect(ports.notify).not.toHaveBeenCalled()
+		expect(JSON.stringify(result)).not.toContain(contact.email)
+	})
 	it('plans one receipt and one replay wakeup without writing or exposing contact data', async () => {
 		const ports = runtime()
 		const result = await Effect.runPromise(runHeldExitRecovery(dryRun, ports))
