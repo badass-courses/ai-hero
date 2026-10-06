@@ -5,5 +5,6 @@ export async function resolveRecoveryContact(
 	input: { namespace: 'ai-hero' | 'drovr'; contactId: string },
 	findContactById: (id: string) => Promise<ContactRecord | undefined>,
 ): Promise<ContactRecord | undefined> {
-	throw new Error('Recovery identity resolver is not implemented')
+	const contact = await findContactById(input.contactId)
+	return contact?.id === input.contactId ? contact : undefined
 }
