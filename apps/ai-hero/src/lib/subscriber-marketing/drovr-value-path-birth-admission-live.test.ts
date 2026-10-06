@@ -1,13 +1,13 @@
 import { expect, it, vi } from 'vitest'
-import { contactEvent } from '@/db/schema'
+import { MySqlDialect } from 'drizzle-orm/mysql-core'
 import { readUnsubscribedValuePathContactIds } from './drovr-value-path-birth-admission-live'
 
 // The only stand-in is the database boundary. No Kit or network calls.
-function database(rows: unknown[], importedStates: unknown[] = []) {
-	const where = vi.fn(async () => rows)
-	const from = vi.fn((table: unknown) => ({
-		where: table === contactEvent ? where : vi.fn(async () => importedStates),
-	}))
+function database(rows: unknown[]) {
+	const where = vi.fn(
+		async (_condition: Parameters<MySqlDialect['sqlToQuery']>[0]) => rows,
+	)
+	const from = vi.fn(() => ({ where }))
 	const select = vi.fn((_fields: unknown) => ({ from }))
 	// SAFETY: this stand-in implements the SELECT/from/where chain used by this reader.
 	const db = { select } as unknown as NonNullable<
@@ -17,22 +17,22 @@ function database(rows: unknown[], importedStates: unknown[] = []) {
 }
 
 it('reads only liftable ContactEvents, not stale imported Kit state', async () => {
-	const d = database(
-		[],
-		[
-			{
-				contactId: 'c',
-				subscriberState: 'cancelled',
-				recordedAt: new Date('2026-10-05T10:00:00Z'),
-			},
-		],
-	)
+	const d = database([])
 	expect(await readUnsubscribedValuePathContactIds(['c'], d.db)).toEqual([])
 	expect(d.select).toHaveBeenCalledTimes(1)
 	expect(Object.keys(d.select.mock.calls[0]?.[0] ?? {})).toEqual([
 		'contactId',
 		'eventType',
 		'occurredAt',
+	])
+	const condition = d.where.mock.calls[0]?.[0]
+	if (!condition) throw new Error('Missing stop-event predicate')
+	expect(new MySqlDialect().sqlToQuery(condition).params).toEqual([
+		'c',
+		'contact.unsubscribed',
+		'contact.bounced',
+		'contact.complained',
+		'contact.resubscribed',
 	])
 })
 

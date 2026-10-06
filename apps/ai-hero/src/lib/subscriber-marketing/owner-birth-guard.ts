@@ -96,7 +96,7 @@ export type OwnerBirthGuardPorts = {
 	}): Promise<ContactEventRecord[]>
 	/** Contacts with an unsubscribe, bounce, or complaint ContactEvent. */
 	stoppedContactIds(contactIds: readonly string[]): Promise<ReadonlySet<string>>
-	/** Recorded unsubscribe evidence, including Kit directory-import state. */
+	/** Recorded, liftable contact.unsubscribed evidence; no import snapshot. */
 	unsubscribedValuePathContactIds(
 		contactIds: readonly string[],
 	): Promise<ReadonlySet<string>>
