@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { Data, Effect } from 'effect'
+import { z } from 'zod'
 import { normalizeContactEvent } from '../src/lib/subscriber-marketing/normalize-contact-event'
 import { OLD_NEWSLETTER_EXIT_CONFIRMED, OLD_NEWSLETTER_REFERENCE } from '../src/lib/subscriber-marketing/old-newsletter-exit'
 import type { ContactRecord, ContactEventRecord, SideEffectIntent } from '../src/lib/subscriber-marketing/types'
@@ -33,6 +34,20 @@ export type RecoveryRuntime = {
 	notify: (input: { contactId: string; receiptId: string }) => Promise<number>
 	currentMembership: (contactId: string) => Promise<'present' | 'exited' | 'absent' | 'unknown'>
 	now: () => string
+}
+
+export const OLD_SEQUENCE_ID = Number(OLD_NEWSLETTER_REFERENCE.split(':')[2])
+export const MAX_SCAN_AGE_MS = 5 * 60_000
+const scanSchema = z.object({
+	membership: z.enum(['absent', 'present', 'unknown']), sequenceId: z.literal(2625552),
+	complete: z.boolean(), pages: z.number().int().nonnegative(), subscribers: z.number().int().nonnegative(),
+	startedAt: z.string().datetime({ offset: true }), completedAt: z.string().datetime({ offset: true }),
+})
+function freshAbsence(scan: MembershipScan, now: string) {
+	const start = Date.parse(scan.startedAt), end = Date.parse(scan.completedAt), current = Date.parse(now)
+	return scan.membership === 'absent' && scan.complete && scan.pages > 0 &&
+		scan.sequenceId === OLD_SEQUENCE_ID && Number.isFinite(start) && Number.isFinite(end) && Number.isFinite(current) &&
+		start <= end && end <= current && current - start <= MAX_SCAN_AGE_MS
 }
 
 export class RecoveryRefused extends Data.TaggedError('RecoveryRefused')<{
@@ -76,7 +91,7 @@ export function persistRecoveryExitReceipt(input: {
 	planHash: string
 }, runtime: RecoveryRuntime) {
 	return Effect.gen(function* () {
-		if (input.scan.membership !== 'absent' || !input.scan.complete || input.scan.sequenceId !== 2625552)
+		if (!scanSchema.safeParse(input.scan).success || !freshAbsence(input.scan, runtime.now()))
 			return yield* Effect.fail(new RecoveryRefused({ reason: 'membership-unknown' }))
 		const normalized = normalizeContactEvent({ provider: 'kit', externalId: input.identity.externalId,
 			providerEventId: `sequence:2625552:operator-exit:${input.planHash}`,
@@ -114,18 +129,25 @@ export function runHeldExitRecovery(args: RecoveryArgs, runtime: RecoveryRuntime
 		if (held.length === 0 && state.rows.some((row) => row.status !== 'held-for-exit'))
 			return yield* Effect.fail(new RecoveryRefused({ reason: 'already-recovered' }))
 		if (held.length !== 1) return yield* Effect.fail(new RecoveryRefused({ reason: 'held-row-count' }))
+		const row = held[0]
+		if (!row || row.contactId !== contact.id || row.provider !== 'kit' || row.completedAt ||
+			row.idempotencyKey !== `contact:${contact.id}:evergreen:list:shadow-newsletter` ||
+			!row.reviewReasons.includes('old-newsletter-exit-unconfirmed'))
+			return yield* Effect.fail(new RecoveryRefused({ reason: 'invalid-held-row' }))
 		envelope.checks.exactlyOneHeld = true
 		const identity = state.identities[0]
-		if (state.identities.length !== 1 || !identity || identity.contactId !== contact.id)
+		if (state.identities.length !== 1 || !identity || identity.contactId !== contact.id ||
+			!/^[1-9]\d*$/.test(identity.externalId) || !Number.isSafeInteger(Number(identity.externalId)))
 			return yield* Effect.fail(new RecoveryRefused({ reason: 'identity-unproven' }))
-		const scan = yield* boundary('provider-unavailable', () => runtime.scan(identity.externalId))
-		envelope.scans = [{ membership: scan.membership, sequenceId: scan.sequenceId,
-			complete: scan.complete, pages: scan.pages, subscribers: scan.subscribers,
-			startedAt: scan.startedAt, completedAt: scan.completedAt }]
-		if (scan.sequenceId !== 2625552 || !scan.complete || scan.membership === 'unknown')
-			return yield* Effect.fail(new RecoveryRefused({ reason: 'membership-unknown' }))
+		const rawScan = yield* boundary('provider-unavailable', () => runtime.scan(identity.externalId))
+		const decodedScan = scanSchema.safeParse(rawScan)
+		if (!decodedScan.success) return yield* Effect.fail(new RecoveryRefused({ reason: 'membership-unknown' }))
+		const scan = decodedScan.data
+		envelope.scans = [scan]
 		if (scan.membership === 'present')
 			return yield* Effect.fail(new RecoveryRefused({ reason: 'old-sequence-member' }))
+		if (!freshAbsence(scan, runtime.now()))
+			return yield* Effect.fail(new RecoveryRefused({ reason: 'membership-unknown' }))
 		envelope.checks.oldSequenceAbsent = true
 		envelope.planHash = hashSnapshot(contact, state)
 		if (args.mode === 'write') {

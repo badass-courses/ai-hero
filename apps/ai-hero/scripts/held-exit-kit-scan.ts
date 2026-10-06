@@ -1,10 +1,6 @@
 import { Effect } from 'effect'
 import { z } from 'zod'
-import { OLD_NEWSLETTER_REFERENCE } from '../src/lib/subscriber-marketing/old-newsletter-exit'
-import { RecoveryRefused, type MembershipScan } from './held-exit-recover'
-
-export const OLD_SEQUENCE_ID = Number(OLD_NEWSLETTER_REFERENCE.split(':')[2])
-export const MAX_SCAN_AGE_MS = 5 * 60_000
+import { MAX_SCAN_AGE_MS, OLD_SEQUENCE_ID, RecoveryRefused, type MembershipScan } from './held-exit-recover'
 const pageSchema = z.object({
 	subscribers: z.array(z.object({ id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) })).max(1000),
 	pagination: z.object({ has_next_page: z.boolean(), end_cursor: z.string().nullable().optional() }),
@@ -63,7 +59,12 @@ export function readKitExitMembership(options: {
 				if (seenIds.has(member.id)) return result('unknown')
 				seenIds.add(member.id)
 			}
-			if (!page.data.pagination.has_next_page) return result('absent', true)
+			if (!page.data.pagination.has_next_page) {
+				const completed = result('absent', true)
+				if (Date.parse(completed.completedAt) - Date.parse(startedAt) > MAX_SCAN_AGE_MS)
+					return { ...completed, membership: 'unknown' as const, complete: false }
+				return completed
+			}
 			const next = page.data.pagination.end_cursor
 			if (!next || cursors.has(next) || page.data.subscribers.length === 0) return result('unknown')
 			cursors.add(next)
