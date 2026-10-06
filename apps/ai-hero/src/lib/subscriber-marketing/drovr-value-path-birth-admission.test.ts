@@ -31,7 +31,7 @@ const recordedOptOut = (contactId: string, source: string) => ({
 			source,
 			occurredAt: at,
 		},
-		{ email: 'private@example.test' },
+		{ email: 'private@example.test', source: 'kit', strength: 'strong' },
 	),
 })
 
