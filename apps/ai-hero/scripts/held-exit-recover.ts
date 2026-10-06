@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { pathToFileURL } from 'node:url'
 import { Data, Effect } from 'effect'
 import { z } from 'zod'
 import { normalizeContactEvent } from '../src/lib/subscriber-marketing/normalize-contact-event'
@@ -211,14 +212,59 @@ export function runHeldExitRecovery(args: RecoveryArgs, runtime: RecoveryRuntime
 }
 
 export function parseHeldRecoveryArgs(argv: readonly string[]): RecoveryArgs {
-	throw new RecoveryRefused({ reason: 'arguments-invalid' })
+	let selector: { namespace: 'ai-hero' | 'drovr'; contactId: string } | undefined
+	let mode: RecoveryArgs['mode'] = 'dry-run'
+	let approval: string | undefined, planHash: string | undefined
+	let modeSelected = false
+	const seen = new Set<string>()
+	const invalid = () => new RecoveryRefused({ reason: 'arguments-invalid' })
+	for (let index = 0; index < argv.length; index++) {
+		const flag = argv[index]
+		if (!flag || seen.has(flag)) throw invalid()
+		seen.add(flag)
+		if (flag === '--write' || flag === '--readback' || flag === '--dry-run') {
+			if (modeSelected) throw invalid()
+			modeSelected = true
+			mode = flag === '--write' ? 'write' : flag === '--readback' ? 'readback' : 'dry-run'
+			continue
+		}
+		if (!['--contact-id', '--drovr-contact-id', '--approval', '--plan-hash'].includes(flag)) throw invalid()
+		const value = argv[++index]
+		if (!value || value.startsWith('--')) throw invalid()
+		if (flag === '--contact-id' || flag === '--drovr-contact-id') {
+			if (selector || !/^[A-Za-z0-9][A-Za-z0-9:_-]{0,254}$/.test(value)) throw invalid()
+			selector = { namespace: flag === '--contact-id' ? 'ai-hero' : 'drovr', contactId: value }
+		} else if (flag === '--approval') approval = value.trim()
+		else planHash = value
+	}
+	if (!selector) throw invalid()
+	if (mode === 'write') {
+		if (!approval) throw new RecoveryRefused({ reason: 'approval-required' })
+		if (!planHash || !/^[a-f0-9]{64}$/.test(planHash)) throw invalid()
+		return { ...selector, mode, approval, planHash }
+	}
+	if (approval !== undefined || planHash !== undefined) throw invalid()
+	return { ...selector, mode }
 }
 
 export type RecoveryRuntimeLoader = (args: RecoveryArgs) => Promise<{ runtime: RecoveryRuntime; close: () => Promise<void> }>
 export function runHeldRecoveryCommand(argv: readonly string[], load: RecoveryRuntimeLoader) {
-	return Effect.succeed<RecoveryEnvelope>({ version: 1, mode: 'dry-run', status: 'refused',
-		reason: 'arguments-invalid', planHash: null, counts: { exitReceipts: 0, notifications: 0 },
-		checks: { contactResolved: false, exactlyOneHeld: false, oldSequenceAbsent: false }, scans: [] })
+	let result: RecoveryEnvelope = { version: 1, mode: 'dry-run', status: 'refused',
+		reason: null, planHash: null, counts: { exitReceipts: 0, notifications: 0 },
+		checks: { contactResolved: false, exactlyOneHeld: false, oldSequenceAbsent: false }, scans: [] }
+	return Effect.gen(function* () {
+		const args = yield* Effect.try({ try: () => parseHeldRecoveryArgs(argv),
+			catch: (error) => error instanceof RecoveryRefused ? error : new RecoveryRefused({ reason: 'arguments-invalid' }) })
+		result.mode = args.mode
+		yield* Effect.acquireUseRelease(boundary('runtime-unavailable', () => load(args)),
+			({ runtime }) => runHeldExitRecovery(args, runtime).pipe(Effect.tap((value) => Effect.sync(() => { result = value }))),
+			({ close }) => boundary('runtime-close-failed', close).pipe(Effect.catchAll((error) => Effect.sync(() => {
+				result = { ...result, status: 'refused', reason: error.reason }
+			}))))
+		return result
+	}).pipe(Effect.catchAll((error) => Effect.succeed({ ...result, status: 'refused' as const, reason: error.reason })),
+		// Final process fence only: never print an unexpected defect, SQL text or provider body.
+		Effect.catchAllCause(() => Effect.succeed({ ...result, status: 'refused' as const, reason: 'internal-error' })))
 }
 
 /** drovr's delivery payload carries the AI Hero contact id unchanged. */
