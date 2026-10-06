@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Effect } from 'effect'
 import { readKitExitMembership } from '../../scripts/held-exit-kit-scan'
+import { createHeldRecoveryPorts } from '../../scripts/held-exit-recover-runtime'
+import { NEWSLETTER_EXIT_CONFIRMED_EVENT } from '../inngest/events/newsletter-exit'
+import { mapDrovrShadowFact } from '../lib/subscriber-marketing/drovr-shadow-emitter'
 import { buildDrovrSignupRequest } from '../lib/subscriber-marketing/drovr-doi-signup'
 import { parseHeldRecoveryArgs, runHeldRecoveryCommand, resolveRecoveryContact, runHeldExitRecovery, type RecoveryRuntime } from '../../scripts/held-exit-recover'
 import type { SideEffectIntent } from '../lib/subscriber-marketing/types'
@@ -41,6 +44,48 @@ function runtime(): RecoveryRuntime & { repository: InMemorySubscriberMarketingR
 	}
 }
 const dryRun = { mode: 'dry-run' as const, namespace: 'ai-hero' as const, contactId: contact.id }
+
+describe('recovery runtime adapters', () => {
+	it('uses real GET proof, existing receipt writer, exact replay event and original completion key', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		let row = structuredClone(held)
+		const fetcher: typeof fetch = vi.fn(async (_url, init) => {
+			if (init?.method === 'GET') return new Response(JSON.stringify({ subscribers: [], pagination: { has_next_page: false } }))
+			const payload: unknown = JSON.parse(String(init?.body))
+			const proof = repository.findContactEventsByType(contact.id, OLD_NEWSLETTER_EXIT_CONFIRMED)[0]
+			expect(proof).toBeDefined()
+			expect(payload).toMatchObject({ name: NEWSLETTER_EXIT_CONFIRMED_EVENT,
+				data: { contactId: contact.id, receiptId: proof?.id } })
+			return new Response(JSON.stringify({ status: 200, ids: ['fixture-notification'] }))
+		})
+		const readOutbox = vi.fn(async (lookup: { idempotencyKey: string }) => {
+			const mapped = mapDrovrShadowFact({ kind: 'side-effect-intent-completed', intent: row })
+			expect(mapped[0]).toMatchObject({ type: 'shadow.entered', idempotencyKey: lookup.idempotencyKey })
+			expect(lookup.idempotencyKey).toBe('completion:fixture-original-intent')
+			return [{ status: 'delivered' as const, attempts: 1 }]
+		})
+		const ports = createHeldRecoveryPorts({ repository: {
+			findContactById: async () => contact,
+			createContactEvent: (input) => repository.createContactEvent(input),
+			findContactEventsByType: (id, type) => repository.findContactEventsByType(id, type),
+		}, findRows: async () => [row], findKitIdentities: async () => [
+			{ id: 'fixture-identity', contactId: contact.id, externalId: '123' }],
+			readOutbox, apiKey: 'fixture-kit-key', eventKey: 'fixture-inngest-key', fetch: fetcher, now: () => contact.createdAt })
+		const planned = await Effect.runPromise(runHeldExitRecovery(dryRun, ports))
+		if (!planned.planHash) throw new Error('Missing test plan')
+		expect(fetcher).toHaveBeenCalledTimes(1)
+		const requested = await Effect.runPromise(runHeldExitRecovery({ ...dryRun, mode: 'write', approval: 'fixture-approval', planHash: planned.planHash }, ports))
+		expect(requested.status).toBe('requested')
+		expect(fetcher).toHaveBeenCalledTimes(3)
+		row = { ...row, status: 'completed', completedAt: contact.createdAt }
+		const readback = await Effect.runPromise(runHeldExitRecovery({ ...dryRun, mode: 'readback' }, ports))
+		expect(readback.readback?.completionDispatch).toBe('confirmed')
+		expect(readOutbox).toHaveBeenCalledOnce()
+		expect(fetcher).toHaveBeenCalledTimes(3)
+		for (const value of [contact.id, contact.email!, 'fixture-notification', 'fixture-kit-key', 'fixture-inngest-key'])
+			expect(JSON.stringify([planned, requested, readback])).not.toContain(value)
+	})
+})
 
 describe('recovery process boundary', () => {
 	it('defaults to dry-run, accepts exactly one AIH or drovr identity, and closes the runtime', async () => {
