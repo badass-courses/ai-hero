@@ -19,7 +19,7 @@ describe('newsletter opt-in configuration', () => {
 		expect(parseNewsletterSenderConfig({ ...base, pacingMs: '2000' })).toEqual({ mode: 'opt-in', pacingMs: 2000, limit: 25 })
 	})
 	it('only limit activates the pause and preserves inherited pacing, including zero', () => {
-		for (const inherited of [0, 3000, 10_000]) {
+		for (const inherited of [0, 3000, 5000]) {
 			expect(parseNewsletterSenderConfig({ ...base, limit: '120', inheritPacingMs: () => inherited })).toEqual({ mode: 'opt-in', pacingMs: inherited, limit: 120 })
 		}
 	})
@@ -27,6 +27,13 @@ describe('newsletter opt-in configuration', () => {
 		expect(parseNewsletterSenderConfig({ ...base, limit: ' 120 ', pacingMs: '2000',
 			inheritLimit: () => { throw new Error('unused') }, inheritPacingMs: () => { throw new Error('unused') },
 		})).toEqual({ mode: 'opt-in', pacingMs: 2000, limit: 120 })
+	})
+	it('bounds the sum of inter-row sleeps at600s, with a200s route margin', () => {
+		expect(parseNewsletterSenderConfig({ ...base, limit: '11', pacingMs: '60000' })).toEqual({ mode: 'opt-in', limit: 11, pacingMs: 60000 })
+		expect(() => parseNewsletterSenderConfig({ ...base, limit: '12', pacingMs: '60000' })).toThrow('batch pacing exceeds')
+		expect(() => parseNewsletterSenderConfig({ ...base, limit: '120', pacingMs: '10000' })).toThrow('batch pacing exceeds')
+		expect(() => parseNewsletterSenderConfig({ ...base, limit: '120' })).toThrow('batch pacing exceeds')
+		expect(parseNewsletterSenderConfig({ ...base, limit: '1', pacingMs: '60000' })).toEqual({ mode: 'opt-in', limit: 1, pacingMs: 60000 })
 	})
 	it('refuses inherited limit above120 on partial opt-in, without clamping', () => {
 		expect(() => parseNewsletterSenderConfig({ ...base, pacingMs: '2000', inheritLimit: () => 220 })).toThrow('Set AIH_DROVR_NEWSLETTER_LIMIT explicitly')

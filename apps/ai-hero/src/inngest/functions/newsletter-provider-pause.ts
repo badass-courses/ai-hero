@@ -24,6 +24,14 @@ export class NewsletterPauseStorageError extends Data.TaggedError(
 	readonly reason: 'unavailable' | 'invalid-ttl'
 }> {}
 
+/** Distinct boundary error: only pause persistence failures may be contained
+ * by the combined cron's newsletter lane. Keep other sender errors visible. */
+export class NewsletterPauseUnavailableError extends NonRetriableError {
+	constructor(error: NewsletterPauseStorageError) {
+		super(`newsletter provider pause ${error.operation}: ${error.reason}`)
+	}
+}
+
 export const READ_NEWSLETTER_PAUSE = "return redis.call('PTTL', KEYS[1])"
 /** Atomic server-side max of remaining TTL and requested duration. SET+PX
  * creates the marker and its TTL together. No shorter update can shorten a
@@ -83,9 +91,7 @@ export function createNewsletterProviderPause(options: {
 	const run = async (work: Effect.Effect<number, NewsletterPauseStorageError>) => {
 		const result = await Effect.runPromise(Effect.either(work))
 		if (result._tag === 'Left') {
-			throw new NonRetriableError(
-				`newsletter provider pause ${result.left.operation}: ${result.left.reason}`,
-			)
+			throw new NewsletterPauseUnavailableError(result.left)
 		}
 		return result.right
 	}

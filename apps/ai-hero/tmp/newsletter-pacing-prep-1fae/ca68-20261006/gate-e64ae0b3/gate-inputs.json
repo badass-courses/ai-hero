@@ -5,7 +5,7 @@
   "sourceRows": [
     {
       "path": "apps/ai-hero/src/inngest/functions/drovr-evergreen-sender.ts",
-      "sha256": "05f18ff7b9918f32451b7851a87281fe42ed9cb2d76137167dd1bcdd458e556d"
+      "sha256": "2f2e0c2d84e882d96205b3f5f48a1a7338ebe9a6f2f22df25a2bc5111595d567"
     },
     {
       "path": "apps/ai-hero/src/lib/subscriber-marketing/drovr-evergreen-sender.ts",
@@ -29,15 +29,15 @@
     },
     {
       "path": "apps/ai-hero/src/inngest/functions/newsletter-sender-config.ts",
-      "sha256": "651b6973ce47daf944de7cf37f613f25a477fd318ab86201bc17d60965c54651"
+      "sha256": "8d3726c467bd26ffe72bb3df4568c04309d7b985abf4a311343bacd72603fe69"
     },
     {
       "path": "apps/ai-hero/src/inngest/functions/newsletter-sender-config.test.ts",
-      "sha256": "b43f6a47554329d2fd9e9af5dee03a6662aa2f336e9cf7bd648dec6bced82d38"
+      "sha256": "0012b92e169977309609d761c63dbc60e1fd2b053e53c74257a737a9ff277c15"
     },
     {
       "path": "apps/ai-hero/src/inngest/functions/newsletter-provider-pause.ts",
-      "sha256": "c812702471e5fb937cbf4534b9ab8583da59bf7bdbc72da295c77c0314bfe881"
+      "sha256": "0532717c77322097bbb695e0283f0385a0a9be6f2d80ce3df657253f30f2c17a"
     },
     {
       "path": "apps/ai-hero/src/inngest/functions/newsletter-provider-pause.test.ts",
@@ -45,7 +45,7 @@
     },
     {
       "path": "apps/ai-hero/src/inngest/functions/drovr-evergreen-sender.newsletter-pacing.test.ts",
-      "sha256": "371aa6c977f2ef3e757ddf6a95e1d00406111958239980fd1215bf112bbc8549"
+      "sha256": "73be8a7ee20ca6fa0aae40979457abbf7729eb12737fbde4b3f8d53ae3466fdc"
     }
   ],
   "scratchRows": [

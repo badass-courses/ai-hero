@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { executePendingEvergreenSends } from '@/lib/subscriber-marketing/drovr-evergreen-sender'
 import type { addSubscriberToKitSequence, updateKitSubscriberFields } from '@/lib/subscriber-marketing/drovr-evergreen'
 import type { executePendingEvergreenCoupons } from '@/lib/subscriber-marketing/drovr-evergreen-coupon'
+import { createNewsletterProviderPause } from './newsletter-provider-pause'
 
 type SendArgs = Parameters<typeof executePendingEvergreenSends>[0]
 type Handler = (input: { step: {
@@ -15,7 +16,11 @@ const control = vi.hoisted(() => {
 	const fields: Parameters<typeof updateKitSubscriberFields>[0][] = []
 	const couponLimits: number[] = []
 	const reads: string[] = []
-	return { sends, posts, fields, couponLimits, reads, stopped: false,
+	const steps: string[] = []
+	const events: { id: string; value: unknown }[] = []
+	const failures: { storage?: 'read' | 'write'; unexpected?: boolean } = {}
+	return { sends, posts, fields, couponLimits, reads, steps, events, failures,
+		storageCalls: 0, profileSync: false, stopped: false,
 		setHandler: (next: Handler) => { handler = next }, handler: () => handler }
 })
 vi.mock('@/inngest/inngest.server', () => ({ inngest: { createFunction: (_options: unknown, _trigger: unknown, handler: Handler) => { control.setHandler(handler); return handler } } }))
@@ -24,7 +29,7 @@ vi.mock('@/lib/subscriber-marketing/drizzle-capture-repository', () => ({ Drizzl
 vi.mock('@/lib/subscriber-marketing/evergreen-offer-journey/coupon-authority-mysql', () => ({ couponCommerceSchema: {}, createMySqlCouponCommerceStore: () => ({}) }))
 vi.mock('@/lib/subscriber-marketing/evergreen-offer-journey/coupon-authority', () => ({ createCouponAuthority: () => ({}) }))
 vi.mock('@/lib/subscriber-marketing/evergreen-merchant-evidence', () => ({ resolveEvergreenMerchantEvidence: async () => ({}) }))
-vi.mock('@/lib/subscriber-marketing/drovr-contact-profile-sync-requests', () => ({ offerProfileSyncRequests: () => [], parseDrovrProfileSyncConfig: () => ({}) }))
+vi.mock('@/lib/subscriber-marketing/drovr-contact-profile-sync-requests', () => ({ offerProfileSyncRequests: () => control.profileSync ? [{ name: 'synthetic-profile-sync', data: { synthetic: true } }] : [], parseDrovrProfileSyncConfig: () => ({}) }))
 vi.mock('@/lib/subscriber-marketing/drovr-evergreen', () => ({
 	SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE: 'subscribe-evergreen-list',
 	EVERGREEN_LIST_SEQUENCES: { 'shadow-newsletter': { backfillTagId: 'synthetic-tag' } },
@@ -42,6 +47,19 @@ vi.mock('@/lib/subscriber-marketing/drovr-shadow-newsletter', () => ({
 vi.mock('@/lib/subscriber-marketing/drovr-evergreen-sender', () => ({
 	executePendingEvergreenSends: async (args: SendArgs) => {
 		control.sends.push(args)
+		if (args.type === 'send-shadow-newsletter-email') {
+			if (control.failures.unexpected) throw new Error('synthetic sender failure')
+			if (control.failures.storage) {
+				// Real pause error mapping, fake storage only. Never invoke the
+				// cron's lazy production Redis adapter or a global denying proxy.
+				const pause = createNewsletterProviderPause({ store: { eval: async () => {
+					control.storageCalls += 1
+					throw new Error('synthetic private transport detail')
+				} } })
+				if (control.failures.storage === 'read') await pause.isPaused()
+				else await pause.pause('120')
+			}
+		}
 		if (args.type === 'send-shadow-newsletter-email' && control.stopped) return [{ status: 'newsletter-paused', intentId: 'synthetic', reason: 'kit-429' }]
 		await args.subscribe({ listId: 'synthetic-sequence', listType: 'sequence', user: { email: 'synthetic@aih.test.invalid' } })
 		return []
@@ -61,9 +79,10 @@ const invoke = async (cache?: Map<string, unknown>) => {
 	if (!handler) throw new Error('No fake handler registered')
 	return handler({ step: {
 		run: async (id, work) => {
+			control.steps.push(id)
 			if (cache?.has(id)) return cache.get(id)
 			const value = await work(); cache?.set(id, value); return value
-		}, sendEvent: async () => {},
+		}, sendEvent: async (id, value) => { control.events.push({ id, value }) },
 	} })
 }
 const newsletter = () => control.sends.find(args => args.type === 'send-shadow-newsletter-email')
@@ -71,6 +90,8 @@ const newsletter = () => control.sends.find(args => args.type === 'send-shadow-n
 beforeEach(() => {
 	control.sends.length = 0; control.posts.length = 0; control.fields.length = 0
 	control.couponLimits.length = 0; control.reads.length = 0; control.stopped = false
+	control.steps.length = 0; control.events.length = 0; control.storageCalls = 0; control.profileSync = false
+	delete control.failures.storage; delete control.failures.unexpected
 	vi.stubEnv('AIH_DROVR_EVERGREEN_SENDER_LIMIT', '25')
 	vi.stubEnv('AIH_DROVR_EVERGREEN_SENDER_PACING_MS', '3000')
 })
@@ -99,15 +120,52 @@ describe('combined cron, fake import closure: newsletter-only config/result inje
 		expect(control.couponLimits).toEqual([25]); expect(control.fields).toHaveLength(1)
 		expect(control.reads).toEqual(['lists', 'shadow', 'evergreen'])
 	})
-	it.each(['', 'bad', '121'])('invalid explicit LIMIT %j refuses before any fake provider/readback', async value => {
+	it.each(['', 'bad', '121'])('invalid explicit LIMIT %j fails only the newsletter step', async value => {
 		vi.stubEnv('AIH_DROVR_NEWSLETTER_LIMIT', value)
-		await expect(invoke()).rejects.toThrow('AIH_DROVR_NEWSLETTER_LIMIT')
-		expect(control.reads).toEqual([]); expect(control.sends).toEqual([]); expect(control.posts).toEqual([])
+		expect(await invoke()).toMatchObject({ counts: { shadow: { 'newsletter-config-failed': 1 } } })
+		expect(newsletter()).toBeUndefined()
+		expect(control.reads).toEqual(['lists', 'shadow', 'evergreen'])
+		expect(control.sends).toHaveLength(2); expect(control.couponLimits).toEqual([25]); expect(control.fields).toHaveLength(1)
+		expect(control.posts).toHaveLength(1); expect(control.posts[0]).not.toHaveProperty('newsletter429')
 	})
-	it('pacing-only inherited limit>120 refuses before HTTP with an explicit LIMIT instruction', async () => {
+	it.each(['', 'bad', '1999', '60001'])('invalid PACING %j does not halt list/evergreen/coupons', async value => {
+		vi.stubEnv('AIH_DROVR_NEWSLETTER_PACING_MS', value)
+		expect(await invoke()).toMatchObject({ counts: { shadow: { 'newsletter-config-failed': 1 } } })
+		expect(newsletter()).toBeUndefined(); expect(control.sends).toHaveLength(2)
+		expect(control.reads).toEqual(['lists', 'shadow', 'evergreen']); expect(control.fields).toHaveLength(1)
+	})
+	it('pacing-only inherited limit>120 fails newsletter without changing other lane limits', async () => {
 		vi.stubEnv('AIH_DROVR_NEWSLETTER_PACING_MS', '2000'); vi.stubEnv('AIH_DROVR_EVERGREEN_SENDER_LIMIT', '220')
-		await expect(invoke()).rejects.toThrow('Set AIH_DROVR_NEWSLETTER_LIMIT explicitly')
-		expect(control.reads).toEqual([])
+		expect(await invoke()).toMatchObject({ counts: { shadow: { 'newsletter-config-failed': 1 } } })
+		expect(newsletter()).toBeUndefined(); expect(control.sends.map(args => args.limit)).toEqual([220, 220])
+		expect(control.reads).toEqual(['lists', 'shadow', 'evergreen']); expect(control.couponLimits).toEqual([220])
+	})
+	it('over-budget pacing refuses newsletter sends while the combined cron continues', async () => {
+		vi.stubEnv('AIH_DROVR_NEWSLETTER_LIMIT', '120'); vi.stubEnv('AIH_DROVR_NEWSLETTER_PACING_MS', '10000')
+		expect(await invoke()).toMatchObject({ counts: { shadow: { 'newsletter-config-failed': 1 } } })
+		expect(newsletter()).toBeUndefined(); expect(control.sends).toHaveLength(2); expect(control.fields).toHaveLength(1)
+	})
+	it.each(['read', 'write'] as const)('thrown pause-store %s failure stays newsletter-only and permits profile sync', async operation => {
+		vi.stubEnv('AIH_DROVR_NEWSLETTER_LIMIT', '120'); control.failures.storage = operation; control.profileSync = true
+		expect(await invoke()).toMatchObject({ counts: { shadow: { 'newsletter-storage-failed': 1 } } })
+		expect(control.storageCalls).toBe(1); expect(control.sends).toHaveLength(3)
+		expect(control.reads).toEqual(['lists', 'shadow', 'evergreen'])
+		expect(control.steps).toContain('count-newsletter-send-queue')
+		expect(control.couponLimits).toEqual([25]); expect(control.fields).toHaveLength(1)
+		expect(control.posts).toHaveLength(1); expect(control.posts[0]).not.toHaveProperty('newsletter429')
+		expect(control.events).toEqual([{ id: 'request-offer-profile-syncs', value: [{ name: 'synthetic-profile-sync', data: { synthetic: true } }] }])
+	})
+	it('persists a caught storage failure in the step checkpoint without retrying the fake store', async () => {
+		vi.stubEnv('AIH_DROVR_NEWSLETTER_LIMIT', '120'); control.failures.storage = 'read'
+		const cache = new Map<string, unknown>()
+		await invoke(cache); await invoke(cache)
+		expect(cache.get('send-pending-shadow-newsletter-emails')).toEqual([{ status: 'newsletter-storage-failed' }])
+		expect(control.storageCalls).toBe(1); expect(control.sends).toHaveLength(3); expect(control.fields).toHaveLength(1)
+	})
+	it('does not swallow unrelated thrown sender errors', async () => {
+		vi.stubEnv('AIH_DROVR_NEWSLETTER_LIMIT', '120'); control.failures.unexpected = true
+		await expect(invoke()).rejects.toThrow('synthetic sender failure')
+		expect(control.storageCalls).toBe(0); expect(control.couponLimits).toEqual([])
 	})
 	it('stopped newsletter result leaves later evergreen/coupon/readback calls intact', async () => {
 		vi.stubEnv('AIH_DROVR_NEWSLETTER_LIMIT', '120'); control.stopped = true

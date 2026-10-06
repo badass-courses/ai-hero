@@ -3,6 +3,9 @@ import { Data, Effect } from 'effect'
 export const NEWSLETTER_LIMIT_CAP = 120
 export const MIN_NEWSLETTER_PACING_MS = 2_000
 export const MAX_NEWSLETTER_PACING_MS = 60_000
+// Bound scheduled sleeps, leaving 200s under the route's 800s duration.
+// Provider/DB latency and other lanes are not a proven total-runtime bound.
+export const MAX_NEWSLETTER_BATCH_PACING_MS = 600_000
 
 export class NewsletterSenderConfigError extends Data.TaggedError(
 	'NewsletterSenderConfigError',
@@ -55,6 +58,11 @@ export function parseNewsletterSenderConfig(input: {
 		const pacingMs = explicitPacing ?? (yield* inherited(input.inheritPacingMs, 'AIH_DROVR_NEWSLETTER_PACING_MS'))
 		if (!Number.isSafeInteger(pacingMs) || pacingMs < 0) {
 			return yield* Effect.fail(new NewsletterSenderConfigError({ message: 'AIH_DROVR_NEWSLETTER_PACING_MS: inherited pacing is invalid' }))
+		}
+		if ((limit - 1) * pacingMs > MAX_NEWSLETTER_BATCH_PACING_MS) {
+			return yield* Effect.fail(new NewsletterSenderConfigError({
+				message: 'Newsletter batch pacing exceeds 600000ms; reduce AIH_DROVR_NEWSLETTER_LIMIT or AIH_DROVR_NEWSLETTER_PACING_MS',
+			}))
 		}
 		return { mode: 'opt-in', limit, pacingMs } as const
 	})))
