@@ -74,7 +74,7 @@ beforeEach(() => {
 	vi.stubEnv('AIH_DROVR_EVERGREEN_SENDER_LIMIT', '25')
 	vi.stubEnv('AIH_DROVR_EVERGREEN_SENDER_PACING_MS', '3000')
 })
-afterEach(() => vi.unstubAllEnvs())
+afterEach(() => { vi.unstubAllEnvs() })
 
 describe('combined cron, fake import closure: newsletter-only config/result injection', () => {
 	it('both unset preserves inherited numbers, uncapped, no pause port or header mode', async () => {
