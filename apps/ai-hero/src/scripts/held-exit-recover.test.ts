@@ -284,6 +284,107 @@ describe('recovery process boundary', () => {
 })
 
 describe('read-only Kit exit proof', () => {
+	it('proves absence without the newer AbortSignal.any platform API', async () => {
+		const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any')
+		Reflect.deleteProperty(AbortSignal, 'any')
+		try {
+			const result = await Effect.runPromise(
+				readKitExitMembership({
+					apiKey: 'fixture-key',
+					subscriberId: '123',
+					now: () => contact.createdAt,
+					fetch: vi.fn(
+						async () =>
+							new Response(
+								JSON.stringify({
+									subscribers: [],
+									pagination: { has_next_page: false },
+								}),
+							),
+					),
+				}),
+			)
+			expect(result).toMatchObject({ membership: 'absent', complete: true })
+		} finally {
+			if (descriptor) Object.defineProperty(AbortSignal, 'any', descriptor)
+		}
+	})
+
+	it('refuses provider evidence when the per-request timeout aborts', async () => {
+		const timeout = new AbortController()
+		const timeoutFactory = vi
+			.spyOn(AbortSignal, 'timeout')
+			.mockReturnValue(timeout.signal)
+		const fetcher: typeof fetch = vi.fn()
+		const observed: AbortSignal[] = []
+		vi.mocked(fetcher).mockImplementation(async (_url, init) => {
+			const signal = init?.signal
+			if (!signal) throw new Error('Expected request signal')
+			observed.push(signal)
+			return new Promise<Response>((_resolve, reject) => {
+				signal.addEventListener('abort', () => reject(signal.reason), {
+					once: true,
+				})
+				timeout.abort(new DOMException('Fixture deadline', 'TimeoutError'))
+			})
+		})
+		try {
+			const result = await Effect.runPromise(
+				Effect.either(
+					readKitExitMembership({
+						apiKey: 'fixture-key',
+						subscriberId: '123',
+						fetch: fetcher,
+						now: () => contact.createdAt,
+					}),
+				),
+			)
+			expect(result).toMatchObject({
+				_tag: 'Left',
+				left: { reason: 'provider-unavailable' },
+			})
+			expect(observed[0]?.aborted).toBe(true)
+			expect(observed[0]?.reason).toBe(timeout.signal.reason)
+			expect(timeoutFactory).toHaveBeenCalledWith(15_000)
+		} finally {
+			timeoutFactory.mockRestore()
+		}
+	})
+
+	it('aborts the active GET when the caller cancels the Effect', async () => {
+		const caller = new AbortController()
+		let began = () => {}
+		const started = new Promise<void>((resolve) => {
+			began = resolve
+		})
+		const observed: AbortSignal[] = []
+		const fetcher: typeof fetch = vi.fn()
+		vi.mocked(fetcher).mockImplementation(async (_url, init) => {
+			const signal = init?.signal
+			if (!signal) throw new Error('Expected request signal')
+			observed.push(signal)
+			return new Promise<Response>((_resolve, reject) => {
+				signal.addEventListener('abort', () => reject(signal.reason), {
+					once: true,
+				})
+				began()
+			})
+		})
+		const running = Effect.runPromise(
+			readKitExitMembership({
+				apiKey: 'fixture-key',
+				subscriberId: '123',
+				fetch: fetcher,
+				now: () => contact.createdAt,
+			}),
+			{ signal: caller.signal },
+		)
+		const interrupted = expect(running).rejects.toBeDefined()
+		await started
+		caller.abort()
+		await interrupted
+		expect(observed[0]?.aborted).toBe(true)
+	})
 	it.each(['missing-cursor', 'loop', 'malformed', 'http', 'cap', 'late'])(
 		'never converts %s scans into absence',
 		async (scenario) => {
