@@ -29,6 +29,8 @@ export type RecoveryRuntime = {
 	scan: (subscriberId: string) => Promise<MembershipScan>
 	persist: (input: Omit<ContactEventRecord, 'id'>) => Promise<ContactEventRecord>
 	notify: (input: { contactId: string; receiptId: string }) => Promise<number>
+	currentMembership: (contactId: string) => Promise<'present' | 'exited' | 'absent' | 'unknown'>
+	now: () => string
 }
 
 export class RecoveryRefused extends Data.TaggedError('RecoveryRefused')<{
