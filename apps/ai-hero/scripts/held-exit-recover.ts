@@ -73,14 +73,22 @@ export function runHeldExitRecovery(args: RecoveryArgs, runtime: RecoveryRuntime
 		const state = yield* boundary('database-unavailable', () => runtime.inspect(contact.id))
 		const held = state.rows.filter((row) => row.status === 'held-for-exit' &&
 			row.type === 'subscribe-evergreen-list' && row.metadata.list === 'shadow-newsletter')
+		if (held.length === 0 && state.rows.some((row) => row.status !== 'held-for-exit'))
+			return yield* Effect.fail(new RecoveryRefused({ reason: 'already-recovered' }))
 		if (held.length !== 1) return yield* Effect.fail(new RecoveryRefused({ reason: 'held-row-count' }))
 		envelope.checks.exactlyOneHeld = true
 		const identity = state.identities[0]
 		if (state.identities.length !== 1 || !identity || identity.contactId !== contact.id)
 			return yield* Effect.fail(new RecoveryRefused({ reason: 'identity-unproven' }))
 		const scan = yield* boundary('provider-unavailable', () => runtime.scan(identity.externalId))
-		envelope.scans = [scan]
-		envelope.checks.oldSequenceAbsent = scan.membership === 'absent'
+		envelope.scans = [{ membership: scan.membership, sequenceId: scan.sequenceId,
+			complete: scan.complete, pages: scan.pages, subscribers: scan.subscribers,
+			startedAt: scan.startedAt, completedAt: scan.completedAt }]
+		if (scan.sequenceId !== 2625552 || !scan.complete || scan.membership === 'unknown')
+			return yield* Effect.fail(new RecoveryRefused({ reason: 'membership-unknown' }))
+		if (scan.membership === 'present')
+			return yield* Effect.fail(new RecoveryRefused({ reason: 'old-sequence-member' }))
+		envelope.checks.oldSequenceAbsent = true
 		envelope.planHash = hashSnapshot(contact, state)
 		envelope.status = 'planned'
 		envelope.counts = { exitReceipts: 1, notifications: 1 }
