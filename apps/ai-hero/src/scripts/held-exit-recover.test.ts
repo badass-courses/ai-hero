@@ -29,6 +29,7 @@ function runtime(): RecoveryRuntime & { repository: InMemorySubscriberMarketingR
 	return {
 		repository,
 		now: () => contact.createdAt,
+		readback: async (row) => ({ eventDerivable: Boolean(row.completedAt), outbox: [] }),
 		currentMembership: async (id) => readOldSequenceMembership(repository, id),
 		findContactById: async (id) => id === contact.id ? contact : undefined,
 		inspect: async () => ({ rows: [structuredClone(held)], identities: [
@@ -93,6 +94,27 @@ describe('read-only Kit exit proof', () => {
 })
 
 describe('single-contact held exit recovery', () => {
+	it.each(['absent', 'pending', 'delivered'])('reads completion and %s outbox evidence without confusing an empty outbox with success', async (scenario) => {
+		const ports = runtime()
+		const state = await ports.inspect(contact.id)
+		const completed = { ...held, status: 'completed' as const, completedAt: contact.createdAt }
+		ports.inspect = async () => ({ ...state, rows: [completed] })
+		ports.readback = vi.fn(async (row) => {
+			expect(row.metadata.drovr).toMatchObject({ intentKey: 'fixture-original-intent' })
+			return { eventDerivable: true, outbox: scenario === 'absent' ? [] : [
+				{ status: scenario === 'delivered' ? 'delivered' as const : 'pending' as const, attempts: 1 }] }
+		})
+		ports.scan = vi.fn(async () => { throw new Error('Readback must not call Kit') })
+		const result = await Effect.runPromise(runHeldExitRecovery({ ...dryRun, mode: 'readback' }, ports))
+		expect(result).toMatchObject({ status: 'readback', readback: { rowStatus: 'completed',
+			completedAt: contact.createdAt, completionEventDerivable: true,
+			completionDispatch: scenario === 'delivered' ? 'confirmed' : scenario === 'pending' ? 'attempted' : 'unknown',
+			outbox: { pending: scenario === 'pending' ? 1 : 0, delivered: scenario === 'delivered' ? 1 : 0, rejected: 0, held: 0 } } })
+		expect(ports.scan).not.toHaveBeenCalled()
+		expect(ports.persist).not.toHaveBeenCalled()
+		expect(ports.notify).not.toHaveBeenCalled()
+		for (const value of [contact.id, contact.email!, 'fixture-original-intent']) expect(JSON.stringify(result)).not.toContain(value)
+	})
 	it.each(['stale', 'future', 'bad-row', 'ambiguous-identity'])('refuses unsafe %s write evidence', async (scenario) => {
 		const ports = runtime()
 		const original = await ports.inspect(contact.id)

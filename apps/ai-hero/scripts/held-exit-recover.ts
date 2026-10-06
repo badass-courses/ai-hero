@@ -34,6 +34,10 @@ export type RecoveryRuntime = {
 	notify: (input: { contactId: string; receiptId: string }) => Promise<number>
 	currentMembership: (contactId: string) => Promise<'present' | 'exited' | 'absent' | 'unknown'>
 	now: () => string
+	readback: (row: SideEffectIntent) => Promise<{
+		eventDerivable: boolean
+		outbox: { status: 'pending' | 'delivered' | 'rejected' | 'held'; attempts: number }[]
+	}>
 }
 
 export const OLD_SEQUENCE_ID = Number(OLD_NEWSLETTER_REFERENCE.split(':')[2])
@@ -63,6 +67,13 @@ export type RecoveryEnvelope = {
 	counts: { exitReceipts: number; notifications: number }
 	checks: { contactResolved: boolean; exactlyOneHeld: boolean; oldSequenceAbsent: boolean }
 	scans: MembershipScan[]
+	readback?: {
+		rowStatus: SideEffectIntent['status']
+		completedAt: string | null
+		completionEventDerivable: boolean
+		completionDispatch: 'confirmed' | 'attempted' | 'unknown'
+		outbox: { pending: number; delivered: number; rejected: number; held: number }
+	}
 }
 const boundary = <A>(reason: string, action: () => Promise<A>) =>
 	Effect.tryPromise({ try: action, catch: () => new RecoveryRefused({ reason }) })
