@@ -42,6 +42,11 @@ export type RecoveryRuntime = {
 
 export const OLD_SEQUENCE_ID = Number(OLD_NEWSLETTER_REFERENCE.split(':')[2])
 export const MAX_SCAN_AGE_MS = 5 * 60_000
+const outboxReadbackSchema = z.object({
+	eventDerivable: z.boolean(),
+	outbox: z.array(z.object({ status: z.enum(['pending', 'delivered', 'rejected', 'held']),
+		attempts: z.number().int().nonnegative() })),
+})
 const scanSchema = z.object({
 	membership: z.enum(['absent', 'present', 'unknown']), sequenceId: z.literal(2625552),
 	complete: z.boolean(), pages: z.number().int().nonnegative(), subscribers: z.number().int().nonnegative(),
@@ -135,8 +140,26 @@ export function runHeldExitRecovery(args: RecoveryArgs, runtime: RecoveryRuntime
 		if (!contact) return yield* Effect.fail(new RecoveryRefused({ reason: 'contact-missing' }))
 		envelope.checks.contactResolved = true
 		const state = yield* boundary('database-unavailable', () => runtime.inspect(contact.id))
-		const held = state.rows.filter((row) => row.status === 'held-for-exit' &&
-			row.type === 'subscribe-evergreen-list' && row.metadata.list === 'shadow-newsletter')
+		const candidates = state.rows.filter((row) => row.type === 'subscribe-evergreen-list' && row.metadata.list === 'shadow-newsletter')
+		if (args.mode === 'readback') {
+			const row = candidates[0]
+			if (candidates.length !== 1 || !row || row.contactId !== contact.id)
+				return yield* Effect.fail(new RecoveryRefused({ reason: 'readback-row-count' }))
+			const raw = yield* boundary('database-unavailable', () => runtime.readback(row))
+			const decoded = outboxReadbackSchema.safeParse(raw)
+			const timestamp = z.string().datetime({ offset: true }).nullable().safeParse(row.completedAt ?? null)
+			const status = z.enum(['dry-run', 'gated', 'blocked', 'pending', 'sending', 'held-for-exit', 'completed', 'failed', 'skipped']).safeParse(row.status)
+			if (!decoded.success || !timestamp.success || !status.success)
+				return yield* Effect.fail(new RecoveryRefused({ reason: 'readback-unavailable' }))
+			const outbox = { pending: 0, delivered: 0, rejected: 0, held: 0 }
+			for (const entry of decoded.data.outbox) outbox[entry.status] += 1
+			envelope.readback = { rowStatus: status.data, completedAt: timestamp.data,
+				completionEventDerivable: decoded.data.eventDerivable,
+				completionDispatch: outbox.delivered > 0 ? 'confirmed' : decoded.data.outbox.some((entry) => entry.attempts > 0) ? 'attempted' : 'unknown', outbox }
+			envelope.status = 'readback'
+			return envelope
+		}
+		const held = candidates.filter((row) => row.status === 'held-for-exit')
 		if (held.length === 0 && state.rows.some((row) => row.status !== 'held-for-exit'))
 			return yield* Effect.fail(new RecoveryRefused({ reason: 'already-recovered' }))
 		if (held.length !== 1) return yield* Effect.fail(new RecoveryRefused({ reason: 'held-row-count' }))
