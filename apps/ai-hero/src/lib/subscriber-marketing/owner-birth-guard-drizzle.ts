@@ -1,3 +1,5 @@
+import { readUnsubscribedValuePathContactIds } from './drovr-value-path-birth-admission-live'
+import type { db as liveDatabase } from '@/db'
 import { contactEvent, sideEffectIntent } from '@/db/schema'
 import { and, asc, eq, gt, gte, inArray, like, lte, or } from 'drizzle-orm'
 
@@ -113,6 +115,7 @@ export function createDrizzleOwnerBirthGuardStore(
 	| 'scanOwners'
 	| 'scanNewsletterBirths'
 	| 'stoppedContactIds'
+	| 'unsubscribedValuePathContactIds'
 	| 'repostedOwnerEventIds'
 > {
 	const db = database as Select
@@ -227,6 +230,15 @@ export function createDrizzleOwnerBirthGuardStore(
 				})
 			}
 			return { subjects, ...(next ? { next } : {}) }
+		},
+		async unsubscribedValuePathContactIds(contactIds) {
+			// SAFETY: the caller supplies the same Drizzle db used by all reads here.
+			return new Set(
+				await readUnsubscribedValuePathContactIds(
+					contactIds,
+					database as Pick<typeof liveDatabase, 'select'>,
+				),
+			)
 		},
 		async stoppedContactIds(contactIds) {
 			if (contactIds.length === 0) return new Set()

@@ -354,6 +354,8 @@ describe("row 201g (#345 S1): every retry and replay posts the first send's byte
 			for (const minutes of [79, 240]) {
 				vi.setSystemTime(NOW + minutes * 60_000)
 				await postDrovrOutboxRow(row!, {
+					readBirthOptOuts: async () => [],
+					info: vi.fn(),
 					ingestUrl: config.ingestUrl,
 					apiKeyFor: () => config.apiKey,
 					deliver: (args) =>
@@ -388,6 +390,8 @@ describe("row 201g (#345 S1): every retry and replay posts the first send's byte
 		const replayed = vi.fn(async () => new Response('{}', { status: 202 }))
 		for (let replay = 0; replay < 2; replay += 1)
 			await postDrovrOutboxRow(rows[0]!, {
+				readBirthOptOuts: async () => [],
+				info: vi.fn(),
 				ingestUrl: config.ingestUrl,
 				apiKeyFor: () => config.apiKey,
 				deliver: (args) =>
@@ -498,6 +502,7 @@ describe("row 201g: the clamp's edges (Sonnet 2 X1 to X3)", () => {
 	it("clamps the dispatch fallback's direct post at the instant it is given", async () => {
 		const fetcher = vi.fn(async () => new Response('{}', { status: 503 }))
 		const unsent = await deliverDrovrShadowEventsDirect([valuePathBirth], {
+			readBirthOptOuts: async () => [],
 			config: { ingestUrl: config.ingestUrl, authorityApiKey: config.apiKey },
 			fetch: fetcher,
 			info: vi.fn(),
@@ -517,6 +522,7 @@ describe("row 201g: the clamp's edges (Sonnet 2 X1 to X3)", () => {
 				new Response(JSON.stringify({ appended: true }), { status: 202 }),
 		)
 		await emitDrovrShadowEvents([valuePathBirth], {
+			readBirthOptOuts: async () => [],
 			config: { ingestUrl: config.ingestUrl, authorityApiKey: config.apiKey },
 			fetch: fetcher,
 			info: vi.fn(),

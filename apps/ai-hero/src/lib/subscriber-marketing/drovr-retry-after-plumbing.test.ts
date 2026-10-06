@@ -85,6 +85,7 @@ describe('drovr status and Retry-After reach the retry decision (row 204)', () =
 		const unsent = await deliverDrovrShadowEventsDirect(
 			[event('ok'), event('down'), event('bad')],
 			{
+				readBirthOptOuts: async () => [],
 				config: { ingestUrl: config.ingestUrl, authorityApiKey: 'k' },
 				fetch: fetcher,
 				warn: vi.fn(),
@@ -101,6 +102,7 @@ describe('drovr status and Retry-After reach the retry decision (row 204)', () =
 			type: 'contact.unsubscribed',
 		} as DrovrShadowEvent
 		const unsent = await deliverDrovrShadowEventsDirect([event('fact'), stop], {
+			readBirthOptOuts: async () => [],
 			config: { ingestUrl: config.ingestUrl, authorityApiKey: 'k' },
 			fetch: vi.fn(async () => new Response('{}', { status: 404 })) as never,
 			warn: vi.fn(),
@@ -111,6 +113,7 @@ describe('drovr status and Retry-After reach the retry decision (row 204)', () =
 
 	it('the direct sender answers a network failure as unsent', async () => {
 		const unsent = await deliverDrovrShadowEventsDirect([event('net')], {
+			readBirthOptOuts: async () => [],
 			config: { ingestUrl: config.ingestUrl, authorityApiKey: 'k' },
 			fetch: vi.fn(async () => {
 				throw new TypeError('fetch failed')

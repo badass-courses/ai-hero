@@ -96,6 +96,10 @@ export type OwnerBirthGuardPorts = {
 	}): Promise<ContactEventRecord[]>
 	/** Contacts with an unsubscribe, bounce, or complaint ContactEvent. */
 	stoppedContactIds(contactIds: readonly string[]): Promise<ReadonlySet<string>>
+	/** Recorded, liftable contact.unsubscribed evidence; no import snapshot. */
+	unsubscribedValuePathContactIds(
+		contactIds: readonly string[],
+	): Promise<ReadonlySet<string>>
 	/** Ids of the owner events the guard already re-posted (its marker). */
 	repostedOwnerEventIds(
 		owners: readonly Pick<ContactEventRecord, 'id' | 'contactId'>[],
@@ -319,7 +323,25 @@ async function checkSubjects(
 	const reposted = await ports.repostedOwnerEventIds(
 		real.map((subject) => subject.owner),
 	)
-	const live = real.filter((subject) => !stopped.has(subject.owner.contactId))
+	const valuePathIds = [
+		...new Set(
+			real
+				.filter((subject) => subject.journeyId.startsWith('value-path-'))
+				.map((subject) => subject.owner.contactId),
+		),
+	]
+	const birthOptOuts =
+		valuePathIds.length > 0
+			? await ports.unsubscribedValuePathContactIds(valuePathIds)
+			: new Set<string>()
+	const live = real.filter(
+		(subject) =>
+			!stopped.has(subject.owner.contactId) &&
+			!(
+				subject.journeyId.startsWith('value-path-') &&
+				birthOptOuts.has(subject.owner.contactId)
+			),
+	)
 	counts.skippedStopped = real.length - live.length
 
 	const verdicts = await mapInBatches(

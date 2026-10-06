@@ -1,5 +1,6 @@
 import { DROVR_OUTBOX_REPLAY_REQUESTED_EVENT } from '@/inngest/events/drovr'
 import { inngest } from '@/inngest/inngest.server'
+import { readUnsubscribedValuePathContactIds } from '@/lib/subscriber-marketing/drovr-value-path-birth-admission-live'
 
 /**
  * Row 204: re-posts what the drovr outbox holds for this deployment's
@@ -80,6 +81,9 @@ export const drovrOutboxReplay = inngest.createFunction(
 					post: (row) =>
 						postDrovrOutboxRow(row, {
 							ingestUrl,
+							readBirthOptOuts: (ids) =>
+								readUnsubscribedValuePathContactIds(ids, db),
+							info: log.info,
 							apiKeyFor: (tenantId) =>
 								drovrApiKeyForTenant(
 									tenantId as Parameters<typeof drovrApiKeyForTenant>[0],

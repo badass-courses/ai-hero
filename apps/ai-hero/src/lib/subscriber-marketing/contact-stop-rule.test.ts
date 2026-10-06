@@ -232,6 +232,8 @@ describe('the contact stop rule pin', () => {
 		// rule), not every indirection. Projections that only carry the data
 		// to a rule-applying reader are listed with the reason.
 		const projectionOnly: Record<string, string> = {
+			'lib/subscriber-marketing/drovr-value-path-birth-admission-live.ts':
+				'projection: loads local stop/import evidence for the rule-applying birth admission reader',
 			'lib/subscriber-marketing/drizzle-capture-repository.ts':
 				'projection: loads stop events and intent flags for learner-flow-classifier',
 		}

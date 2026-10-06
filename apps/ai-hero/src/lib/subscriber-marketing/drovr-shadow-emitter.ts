@@ -1,3 +1,4 @@
+import { admitValuePathBirths } from './drovr-value-path-birth-admission'
 import { env } from '@/env.mjs'
 import { withoutSyntheticContacts } from '@/lib/synthetic-principal'
 import { log } from '@/server/logger'
@@ -178,6 +179,13 @@ export type DrovrShadowFact =
 			timezone: DrovrPinnedTimezonePayload
 	  }
 
+// Lazy to keep database imports off pure fact mapping and host writes.
+const readBirthOptOuts = async (contactIds: readonly string[]) => {
+	const { readUnsubscribedValuePathContactIds } =
+		await import('./drovr-value-path-birth-admission-live')
+	return readUnsubscribedValuePathContactIds(contactIds)
+}
+
 type DrovrShadowEmitterConfig = {
 	ingestUrl?: string
 	/** Bearer key for the authority tenant. */
@@ -200,6 +208,10 @@ export function drovrApiKeyForTenant(
 }
 
 type DrovrShadowEmitterOptions = {
+	/** Batch local opt-out read; never a Kit API request. */
+	readBirthOptOuts?: (
+		contactIds: readonly string[],
+	) => Promise<readonly string[]>
 	config?: DrovrShadowEmitterConfig
 	fetch?: typeof fetch
 	info?: typeof log.info
@@ -302,7 +314,12 @@ export async function emitDrovrShadowEvents(
 	}
 	if (deliverableEvents.length === 0) return
 	// Row 201g: one attempt, clamped at its start like every other road.
-	const clamped = clampBirths(deliverableEvents, options.clampAt ?? Date.now())
+	const admitted = await admitValuePathBirths({
+		events: deliverableEvents,
+		read: options.readBirthOptOuts ?? readBirthOptOuts,
+		info,
+	})
+	const clamped = clampBirths(admitted.events, options.clampAt ?? Date.now())
 	await logClampedBirths(clamped, 'single', info)
 
 	try {
@@ -341,7 +358,8 @@ export async function emitDrovrShadowEvents(
  * of losing them. A 4xx stays final and warned, except for a stop (row
  * 204c): a refused stop is answered too, so it is outboxed (its gate closes
  * at once) and the replay's re-post holds it for a human, or settles it if
- * it was an owner copy never born there. Never throws.
+ * it was an owner copy never born there. A failed birth-admission read throws
+ * before posting; dispatch catches it and outboxes the batch for recovery.
  */
 export async function deliverDrovrShadowEventsDirect(
 	events: readonly DrovrShadowEvent[],
@@ -368,9 +386,14 @@ export async function deliverDrovrShadowEventsDirect(
 			deliveryLane: 'direct',
 		})
 	}
+	const admitted = await admitValuePathBirths({
+		events: deliverableEvents,
+		read: options.readBirthOptOuts ?? readBirthOptOuts,
+		info,
+	})
 	const unsent: DrovrShadowEvent[] = []
 	await Promise.all(
-		deliverableEvents.map(async (event) => {
+		admitted.events.map(async (event) => {
 			const apiKey = drovrApiKeyForTenant(event.tenantId, config)
 			if (!apiKey) {
 				await warnWithoutThrow(warn, 'drovr.shadow.tenant_key_missing', {
