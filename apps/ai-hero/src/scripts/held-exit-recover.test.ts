@@ -42,6 +42,32 @@ function runtime(): RecoveryRuntime & { repository: InMemorySubscriberMarketingR
 const dryRun = { mode: 'dry-run' as const, namespace: 'ai-hero' as const, contactId: contact.id }
 
 describe('read-only Kit exit proof', () => {
+	it.each(['missing-cursor', 'loop', 'malformed', 'http', 'cap', 'late'])('never converts %s scans into absence', async (scenario) => {
+		const fetcher: typeof fetch = vi.fn(async () => new Response(JSON.stringify(
+			scenario === 'malformed' ? { subscribers: [], pagination: {} } : {
+				subscribers: [{ id: 456 }], pagination: { has_next_page: scenario !== 'late',
+					end_cursor: scenario === 'missing-cursor' ? null : 'same-cursor' },
+			}), { status: scenario === 'http' ? 503 : 200 }))
+		let clockReads = 0
+		const clock = () => scenario === 'late' && ++clockReads > 2 ? '2026-10-06T12:06:00.000Z' : contact.createdAt
+		const result = await Effect.runPromise(Effect.either(readKitExitMembership({ apiKey: 'fixture-key',
+			subscriberId: '123', fetch: fetcher, now: clock, maxPages: scenario === 'cap' ? 1 : 3 })))
+		if (scenario === 'http') expect(result).toMatchObject({ _tag: 'Left', left: { reason: 'provider-unavailable' } })
+		else expect(result).toMatchObject({ _tag: 'Right', right: { membership: 'unknown', complete: false } })
+	})
+
+	it('refuses a subscriber found on a later page even when their global state is cancelled', async () => {
+		const fetcher: typeof fetch = vi.fn(async () => new Response(JSON.stringify({ subscribers: [{ id: 123, state: 'cancelled' }],
+			pagination: { has_next_page: false } })))
+		vi.mocked(fetcher).mockResolvedValueOnce(new Response(JSON.stringify({ subscribers: [{ id: 456 }],
+			pagination: { has_next_page: true, end_cursor: 'one' } })))
+		const result = await Effect.runPromise(readKitExitMembership({ apiKey: 'fixture-key', subscriberId: '123', fetch: fetcher, now: () => contact.createdAt }))
+		expect(result.membership).toBe('present')
+		const ports = runtime()
+		ports.scan = async () => result
+		expect(await Effect.runPromise(runHeldExitRecovery(dryRun, ports))).toMatchObject({ status: 'refused', reason: 'old-sequence-member' })
+		expect(ports.persist).not.toHaveBeenCalled()
+	})
 	it('establishes absence only after every status=all sequence page, stripping provider PII', async () => {
 		const fetcher: typeof fetch = vi.fn(async () => new Response(JSON.stringify({
 			subscribers: [{ id: 456, email_address: 'private@example.test', first_name: 'Private' }],
@@ -67,6 +93,20 @@ describe('read-only Kit exit proof', () => {
 })
 
 describe('single-contact held exit recovery', () => {
+	it.each(['stale', 'future', 'bad-row', 'ambiguous-identity'])('refuses unsafe %s write evidence', async (scenario) => {
+		const ports = runtime()
+		const original = await ports.inspect(contact.id)
+		if (scenario === 'stale') ports.now = () => '2026-10-06T12:06:00.000Z'
+		if (scenario === 'future') ports.scan = async () => ({ ...scan, startedAt: '2026-10-07T12:00:00.000Z', completedAt: '2026-10-07T12:00:00.000Z' })
+		if (scenario === 'bad-row') original.rows[0] = { ...held, contactId: 'fixture-wrong-contact' }
+		if (scenario === 'ambiguous-identity') original.identities.push({ ...original.identities[0]!, id: 'fixture-second-identity' })
+		ports.inspect = async () => original
+		const result = await Effect.runPromise(runHeldExitRecovery(dryRun, ports))
+		expect(result).toMatchObject({ status: 'refused', reason:
+			scenario === 'ambiguous-identity' ? 'identity-unproven' : scenario === 'bad-row' ? 'invalid-held-row' : 'membership-unknown' })
+		expect(ports.persist).not.toHaveBeenCalled()
+		expect(ports.notify).not.toHaveBeenCalled()
+	})
 	it('writes the established current exit proof before its replay notification, then refuses a recovered row', async () => {
 		const ports = runtime()
 		const planned = await Effect.runPromise(runHeldExitRecovery(dryRun, ports))
