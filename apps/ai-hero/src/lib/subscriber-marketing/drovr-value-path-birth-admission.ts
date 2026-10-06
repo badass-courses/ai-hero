@@ -1,4 +1,4 @@
-import { activeContactStopsByKey, CONTACT_UNSUBSCRIBED_EVENT_TYPE, stopSignalOfEvent } from './contact-stop-rule'
+import { activeContactStopsByKey, stopSignalOfEvent } from './contact-stop-rule'
 import { isValuePathBirth } from './drovr-bulk-freeze'
 import type { DrovrShadowEvent } from './drovr-shadow-emitter'
 
@@ -6,7 +6,6 @@ export type RecordedBirthOptOut = {
 	contactId: string
 	eventType: string
 	occurredAt: string | Date
-	identityEvidence?: Record<string, unknown>
 }
 
 export function unsubscribedBirthContactIds(
@@ -15,14 +14,7 @@ export function unsubscribedBirthContactIds(
 	const stops = activeContactStopsByKey(
 		rows.map((row) => ({
 			key: row.contactId,
-			// Directory import preserves Kit state in identityEvidence. It is an
-			// unsubscribe signal at import's occurredAt, so only fresh DOI lifts it.
-			signal:
-				row.eventType === 'kit.directory-imported' &&
-				(row.identityEvidence?.state === 'cancelled' ||
-					row.identityEvidence?.state === 'unsubscribed')
-					? stopSignalOfEvent({ ...row, eventType: CONTACT_UNSUBSCRIBED_EVENT_TYPE })
-					: stopSignalOfEvent(row),
+			signal: stopSignalOfEvent(row),
 		})),
 	)
 	return new Set(

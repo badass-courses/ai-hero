@@ -5,7 +5,7 @@ import { and, inArray } from 'drizzle-orm'
 import { CONTACT_STOP_RULE_EVENT_TYPES } from './contact-stop-rule'
 import { unsubscribedBirthContactIds } from './drovr-value-path-birth-admission'
 
-/** One indexed local read per slice, no Kit calls. Reads only recorded evidence. */
+/** One indexed local read per slice, no Kit calls. Recorded, liftable events only. */
 export async function readUnsubscribedValuePathContactIds(
 	contactIds: readonly string[],
 	database?: Pick<typeof liveDatabase, 'select'>,
@@ -20,32 +20,18 @@ export async function readUnsubscribedValuePathContactIds(
 				contactId: contactEvent.contactId,
 				eventType: contactEvent.eventType,
 				occurredAt: contactEvent.occurredAt,
-				createdAt: contactEvent.createdAt,
-				identityEvidence: contactEvent.identityEvidence,
 			})
 			.from(contactEvent)
 			.where(
 				and(
 					inArray(contactEvent.contactId, ids.slice(start, start + 500)),
-					inArray(contactEvent.eventType, [
-						...CONTACT_STOP_RULE_EVENT_TYPES,
-						'kit.directory-imported',
-					]),
+					inArray(contactEvent.eventType, [...CONTACT_STOP_RULE_EVENT_TYPES]),
 				),
 			)
-		stopped.push(
-			...unsubscribedBirthContactIds(
-				rows.map((row) => ({
-					...row,
-					// Imports' occurredAt is the original Kit signup, not the state
-					// observation. A confirmation before this import cannot lift it.
-					occurredAt:
-						row.eventType === 'kit.directory-imported'
-							? row.createdAt
-							: row.occurredAt,
-				})),
-			),
-		)
+		// Directory state is a stale snapshot without a production lift path.
+		// Tag-only changes and drovr unsubscribe intents have no event mirror;
+		// they remain guarded by drovr's own suppression, not this admission.
+		stopped.push(...unsubscribedBirthContactIds(rows))
 	}
 	return stopped
 }

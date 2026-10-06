@@ -225,6 +225,31 @@ describe('value-path birth admission', () => {
 		},
 	)
 
+	it.each(['live', 'bulk'])(
+		'a same-contact orphan fact in %s is final when drovr rejects it, never retried or outboxed',
+		async (lane) => {
+			mocks.fanOutOwnedEvents.mockImplementation((events) => events)
+			mocks.readBirthOptOuts.mockResolvedValue(['contact-1'])
+			const birth = event('org-aihero', 'birth:stopped', 'value-path-skills-course', 'contact.created')
+			const fact = event('org-aihero', 'orphan:answer')
+			mocks.deliverOrThrow.mockResolvedValue({ status: 'rejected' })
+			mocks.deliverBatchOrThrow.mockResolvedValue({ accepted: 0, rejected: 1 })
+			const { step } = memoStep()
+			const data = { source: 'contact-event', events: [birth, fact] }
+			const run = () => lane === 'live'
+				? registered.handler({ event: { data }, step })
+				: registeredBulk.handler({ events: [{ data }], step })
+			expect(await run()).toMatchObject({ rejected: 1, valuePathBirthsSkippedUnsubscribed: 1 })
+			expect(await run()).toMatchObject({ rejected: 1, valuePathBirthsSkippedUnsubscribed: 1 })
+			const posted = lane === 'live'
+				? mocks.deliverOrThrow.mock.calls.map(([args]) => args.event)
+				: mocks.deliverBatchOrThrow.mock.calls.flatMap(([args]) => args.events)
+			expect(posted).toEqual([fact])
+			expect(mocks.capture).not.toHaveBeenCalled()
+			expect(mocks.hold).not.toHaveBeenCalled()
+		},
+	)
+
 	it('fails closed when the recorded opt-out read fails', async () => {
 		mocks.fanOutOwnedEvents.mockImplementation((events) => events)
 		mocks.readBirthOptOuts.mockRejectedValue(new Error('read unavailable'))

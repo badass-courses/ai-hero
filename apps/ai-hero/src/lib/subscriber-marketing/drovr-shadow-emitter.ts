@@ -358,7 +358,8 @@ export async function emitDrovrShadowEvents(
  * of losing them. A 4xx stays final and warned, except for a stop (row
  * 204c): a refused stop is answered too, so it is outboxed (its gate closes
  * at once) and the replay's re-post holds it for a human, or settles it if
- * it was an owner copy never born there. Never throws.
+ * it was an owner copy never born there. A failed birth-admission read throws
+ * before posting; dispatch catches it and outboxes the batch for recovery.
  */
 export async function deliverDrovrShadowEventsDirect(
 	events: readonly DrovrShadowEvent[],
