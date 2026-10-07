@@ -523,8 +523,91 @@ describe('executePendingEvergreenCoupons', () => {
 		},
 	)
 
-	it.each([undefined, 'invalid-time'])(
-		'does not infer Kit-field proof from an unmarked/malformed legacy coupon (%s)',
+	const legacyCoupon = (coupon: SideEffectIntent): SideEffectIntent => {
+		const metadata = { ...coupon.metadata }
+		delete metadata.kitOfferFieldsWrittenAt
+		delete metadata.kitOfferFieldsEmail
+		return { ...coupon, metadata }
+	}
+
+	it.each(
+		EVERGREEN_KIT_SEQUENCES.filter((sequence) => sequence.slot.startsWith('P')),
+	)(
+		'accepts legacy proof with matching current Kit identity at $slot and enrolls once',
+		async ({ messageId }) => {
+			const out = await run({ issue: () => Effect.succeed(issued) })
+			const legacy = legacyCoupon(out.row)
+			out.repository.intents.set(legacy.id, legacy)
+			const identity = vi.fn(async () => '4298556847')
+			expect(
+				await acceptDrovrIntent({
+					repository: out.repository,
+					intent: pitchIntent(messageId),
+					now,
+					evergreen: { enabled: true },
+					findKitSubscriberId: identity,
+				}),
+			).toMatchObject({ status: 'accepted' })
+			expect(identity).toHaveBeenCalledOnce()
+			expect(identity).toHaveBeenCalledWith('contact-1')
+			const subscribe = vi.fn(async () => 'synthetic accepted')
+			expect(
+				await executePendingEvergreenSends({
+					repository: out.repository,
+					subscribe,
+					limit: 10,
+					dispatch: () => {},
+				}),
+			).toMatchObject([{ status: 'completed' }])
+			expect(
+				await executePendingEvergreenSends({
+					repository: out.repository,
+					subscribe,
+					limit: 10,
+					dispatch: () => {},
+				}),
+			).toEqual([])
+			expect(subscribe).toHaveBeenCalledOnce()
+			expect(out.repository.intents.get(legacy.id)).toEqual(legacy)
+			expect(
+				Object.prototype.hasOwnProperty.call(
+					legacy.metadata,
+					'kitOfferFieldsWrittenAt',
+				),
+			).toBe(false)
+		},
+	)
+
+	it.each([
+		{ stored: '4298556847', current: 'different-kit-id' },
+		{ stored: '4298556847', current: undefined },
+		{ stored: undefined, current: '4298556847' },
+		{ stored: '', current: '4298556847' },
+	])(
+		'blocks legacy proof with missing/drifted Kit identity ($stored / $current)',
+		async ({ stored, current }) => {
+			const out = await run({ issue: () => Effect.succeed(issued) })
+			const legacy = legacyCoupon(out.row)
+			legacy.metadata.kitSubscriberId = stored
+			out.repository.intents.set(legacy.id, legacy)
+			expect(
+				await acceptDrovrIntent({
+					repository: out.repository,
+					intent: pitchIntent('pitch_open_product_origin_v1'),
+					now,
+					evergreen: { enabled: true },
+					findKitSubscriberId: async () => current,
+				}),
+			).toMatchObject({
+				status: 'blocked',
+				reviewReasons: ['evergreen-offer-fields-not-in-kit'],
+			})
+			expect(out.repository.intents.size).toBe(1)
+		},
+	)
+
+	it.each([undefined, null, 'invalid-time'])(
+		'blocks a present invalid marker (%s), even with matching Kit identity',
 		async (marker) => {
 			const out = await run({ issue: () => Effect.succeed(issued) })
 			out.repository.intents.set(out.row.id, {
@@ -537,6 +620,7 @@ describe('executePendingEvergreenCoupons', () => {
 					intent: pitchIntent('pitch_open_product_origin_v1'),
 					now,
 					evergreen: { enabled: true },
+					findKitSubscriberId: async () => '4298556847',
 				}),
 			).toMatchObject({
 				status: 'blocked',
