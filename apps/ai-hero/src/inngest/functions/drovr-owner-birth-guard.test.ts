@@ -61,7 +61,7 @@ type Registered = {
 	}) => Promise<unknown>
 }
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => { vi.restoreAllMocks() })
 
 describe('the owner birth guard clamps a re-post at its run start (row 201g)', () => {
 	it.each([
