@@ -1,4 +1,5 @@
 import {
+	BIRTH_FEED_MAX_CALLS,
 	BirthFeedCheckpointSchema,
 	BirthFeedFailure,
 	type BirthFeedStore,
@@ -8,6 +9,12 @@ export interface BirthFeedRedis {
 	eval(script: string, keys: string[], args: string[]): Promise<unknown>
 }
 const READY = '\u0000birth-feed-ready:v1'
+/** No TTL: a resumed run must not receive another ten-call allowance. */
+export const RESERVE_BIRTH_FEED_CALL = `
+local calls = redis.call('INCR', KEYS[1])
+if calls > tonumber(ARGV[1]) then return 0 end
+return 1
+`
 export const LOAD_BIRTH_FEED = `
 local checkpoint = redis.call('GET', KEYS[1])
 if checkpoint and redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 0 then return 'cache-lost' end
@@ -62,6 +69,16 @@ export function createRedisBirthFeedStore(options: {
 		}
 	}
 	return {
+		async reserveCall(runId) {
+			if (!runId) throw new BirthFeedFailure('run-id-unavailable')
+			const key = `aih:birth-feed:{${encodeURIComponent(options.tenantId)}:run}:v1:${encodeURIComponent(runId)}:budget`
+			const result = await evaluate(
+				RESERVE_BIRTH_FEED_CALL,
+				[key],
+				[String(BIRTH_FEED_MAX_CALLS)],
+			)
+			if (result !== 1) throw new BirthFeedFailure('page-cap-exceeded')
+		},
 		async load(journeyId) {
 			const value = await evaluate(LOAD_BIRTH_FEED, keys(journeyId), [READY])
 			if (value === null) return null

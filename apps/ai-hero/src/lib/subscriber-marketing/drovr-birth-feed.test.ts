@@ -68,7 +68,12 @@ function harness() {
 			return cache.get(id)
 		},
 	}
+	let quota = 0
 	const store: BirthFeedStore = {
+		reserveCall: vi.fn(async () => {
+			if (++quota > BIRTH_FEED_MAX_CALLS)
+				throw new BirthFeedFailure('page-cap-exceeded')
+		}),
 		load: vi.fn(async (id) => checkpoints.get(id) ?? null),
 		consume: vi.fn(async ({ journeyId, checkpoint, contactIds }) => {
 			const seen = memberships.get(journeyId) ?? new Set<string>()
@@ -98,8 +103,16 @@ function harness() {
 		answer: (fn: typeof answer) => {
 			answer = fn
 		},
-		run: () => prepareBirthFeed({ step, store, read, startedAtMs: NOW }),
+		run: () =>
+			prepareBirthFeed({
+				step,
+				store,
+				read,
+				startedAtMs: NOW,
+				runId: 'fixture-run',
+			}),
 		newRun: () => {
+			quota = 0
 			cache.clear()
 		},
 	}
@@ -207,6 +220,28 @@ describe('GET /births boundary', () => {
 	})
 })
 describe('bounded durable feed preparation', () => {
+	it('a lost SDK read result spends durable quota again: physical request 11 never starts', async () => {
+		const h = harness()
+		h.answer(() => ({ ...empty('opaque-next'), nextCursor: 'opaque-next' }))
+		const step = {
+			async run<T>(id: string, op: () => Promise<T>) {
+				if (id.startsWith('birth-feed-read-')) await op() // simulate a lost result
+				return op()
+			},
+		}
+		await expect(
+			prepareBirthFeed({
+				step,
+				store: h.store,
+				read: h.read,
+				startedAtMs: NOW,
+				runId: 'lost-result-run',
+			}),
+		).rejects.toThrow('page-cap-exceeded')
+		expect(h.read).toHaveBeenCalledTimes(10)
+		expect(h.store.reserveCall).toHaveBeenCalledTimes(11)
+	})
+
 	it('never requests page 11, fails loudly and persists only fully consumed pages', async () => {
 		const h = harness()
 		h.answer(() => {

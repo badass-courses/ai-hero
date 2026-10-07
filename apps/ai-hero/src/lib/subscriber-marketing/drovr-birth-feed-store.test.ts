@@ -4,6 +4,7 @@ import {
 	LOAD_BIRTH_FEED,
 	CONSUME_BIRTH_FEED,
 	MEMBERS_BIRTH_FEED,
+	RESERVE_BIRTH_FEED_CALL,
 } from './drovr-birth-feed-store'
 import type { BirthFeedCheckpoint } from './drovr-birth-feed'
 vi.mock('@/env.mjs', () => ({ env: {} }))
@@ -31,6 +32,25 @@ function harness(value: unknown) {
 	}
 }
 describe('birth feed durable boundary', () => {
+	it('reserves from one tenant/run quota, independent of journey, with no expiry', async () => {
+		const h = harness(1)
+		await h.store.reserveCall('run/+id')
+		expect(h.evalScript).toHaveBeenCalledWith(
+			RESERVE_BIRTH_FEED_CALL,
+			[expect.stringContaining('run%2F%2Bid:budget')],
+			['10'],
+		)
+		expect(RESERVE_BIRTH_FEED_CALL).not.toContain('EXPIRE')
+	})
+	it.each([0, null, '1'])(
+		'closed quota result %s forbids another GET',
+		async (value) => {
+			await expect(harness(value).store.reserveCall('run')).rejects.toThrow(
+				'page-cap-exceeded',
+			)
+		},
+	)
+
 	it.each([checkpoint, JSON.stringify(checkpoint)])(
 		'parses SDK-deserialized or serialized metadata without interpreting the cursor',
 		async (value) => {

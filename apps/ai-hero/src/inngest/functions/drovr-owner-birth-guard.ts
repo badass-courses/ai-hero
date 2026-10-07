@@ -19,7 +19,7 @@ export const drovrOwnerBirthGuard = inngest.createFunction(
 		singleton: { mode: 'skip' },
 	},
 	{ cron: '40 * * * *' },
-	async ({ step }) => {
+	async ({ step, runId }) => {
 		const startedAtMs = (await step.run('started-at', async () =>
 			Date.now(),
 		)) as number
@@ -84,6 +84,7 @@ export const drovrOwnerBirthGuard = inngest.createFunction(
 				feed = await prepareBirthFeed({
 					step,
 					startedAtMs,
+					runId,
 					store: createRedisBirthFeedStore({
 						redis,
 						tenantId: DROVR_AUTHORITY_TENANT_ID,

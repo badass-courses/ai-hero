@@ -141,6 +141,9 @@ export async function readDrovrBirths(args: {
 }
 
 export interface BirthFeedStore {
+	/** Called inside every physical read callback, never in a separate cached
+	 * step: lost SDK results/re-execution must also spend the shared quota. */
+	reserveCall(runId: string): Promise<void>
 	load(journeyId: string): Promise<BirthFeedCheckpoint | null>
 	consume(args: {
 		journeyId: string
@@ -172,6 +175,7 @@ export async function prepareBirthFeed(args: {
 	step: FeedStep
 	store: BirthFeedStore
 	startedAtMs: number
+	runId: string
 	read: (request: BirthFeedRequest) => Promise<BirthFeedPageRead>
 }): Promise<BirthFeedPreparation> {
 	let calls = 0
@@ -195,6 +199,7 @@ export async function prepareBirthFeed(args: {
 			const read = (await args.step.run(
 				`birth-feed-read-${index}`,
 				async () => {
+					await args.store.reserveCall(args.runId)
 					try {
 						return await args.read(request)
 					} catch {
