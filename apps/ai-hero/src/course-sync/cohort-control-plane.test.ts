@@ -144,7 +144,7 @@ describe('synthetic cohort-anchored syllabus (S4b)', () => {
 		expect(first.plan.media).toEqual([])
 		expect(
 			await test.plane.evaluateBoundedAutoApply(first.run.runId),
-		).toMatchObject({ eligible: true })
+		).toMatchObject({ eligible: false, failureCode: 'WORKSHOP_CREATE_REVIEW_REQUIRED' })
 		for (const workshop of workshops) {
 			expect(workshop.fields).not.toHaveProperty('startsAt')
 			expect(workshop.fields).not.toHaveProperty('endsAt')

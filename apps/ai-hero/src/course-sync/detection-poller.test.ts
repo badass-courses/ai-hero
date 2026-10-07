@@ -653,6 +653,35 @@ describe('course sync detection poller', () => {
 		})
 	})
 
+	it('parks an undated workshop create for operator release after the initial cohort hold has cleared', async () => {
+		const plan: SyncPlan = {
+			bindingId: syntheticCohortBinding.bindingId, sourceRevisionId: 'revision-2', courseVersionId: 'version-2',
+			resources: [{
+				sourceKind: 'workshop', sourceId: 'new-section', targetResourceId: 'new-workshop',
+				parentResourceId: syntheticCohortBinding.anchorCohortId, position: 1, detached: false, previousDetached: false,
+				previousParentResourceId: null, previousPosition: null, previousVersionId: null, previousFieldsSha256: null,
+				action: 'create', fields: { title: 'Undated workshop', state: 'draft', visibility: 'unlisted' },
+			}], media: [], lessonRegressions: [], planSha256: 'plan-sha',
+		}
+		const test = harness({
+			binding: { ...syntheticCohortBinding, applyPolicy: 'bounded-auto' },
+			manifest: { ...manifest, courseId: syntheticCohortBinding.sourceCourseId },
+			head: { courseVersionId: 'version-1', providerRevision: 'dropbox-rev-1', runId: 'sync-run-1', runState: 'applied' },
+			state: {
+				bindingId: syntheticCohortBinding.bindingId, courseVersionId: 'version-1', providerRevision: 'dropbox-rev-1',
+				status: 'succeeded', consecutiveFailures: 0, controlPlaneRunId: 'sync-run-1', failureClass: null,
+				applyPolicyOverride: null, updatedAt: new Date('2026-07-24T17:00:00.000Z'),
+			},
+			evaluateBoundedAutoApply: async () => evaluateCourseSyncBoundedAutoApply(plan),
+		})
+		await expect(test.poll('poll-new-workshop')).resolves.toMatchObject({ outcome: 'awaiting-apply' })
+		expect(test.evaluateBoundedAutoApply).toHaveBeenCalledOnce()
+		expect(test.apply).not.toHaveBeenCalled()
+		expect(test.verifyApplied).not.toHaveBeenCalled()
+		expect(test.state()).toMatchObject({ status: 'awaiting-apply', applyPolicyOverride: 'operator', consecutiveFailures: 0, failureClass: null })
+		expect(test.notifications).toEqual([expect.objectContaining({ kind: 'review', autoApplyReason: 'New workshops require operator scheduling and release.' })])
+	})
+
 	it('auto-applies only a bounded eligible preview and verifies readback', async () => {
 		const test = harness({
 			head: {

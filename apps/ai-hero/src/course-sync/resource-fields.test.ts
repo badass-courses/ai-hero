@@ -61,19 +61,29 @@ describe('course-sync field ownership', () => {
 		).toEqual({ ...schedule, ...fields })
 	})
 
-	it('takes operator edits and deletions from the row, never from stale plan fields', () => {
+	it('takes operator edits and deletions from the row, never from the source plan', () => {
 		expect(
 			mergeCourseSyncResourceFields(
-				{
-					sourceKind: 'workshop',
-					fields: {
-						title: 'Updated',
-						startsAt: 'stale',
-						operatorNote: 'deleted',
-					},
-				},
+				{ sourceKind: 'workshop', fields: { title: 'Updated' } },
 				{ title: 'Before', startsAt: null, timezone: 'UTC' },
 			),
 		).toEqual({ title: 'Updated', startsAt: null, timezone: 'UTC' })
+	})
+
+	it('throws instead of silently dropping an unmapped produced key', () => {
+		expect(() =>
+			mergeCourseSyncResourceFields(
+				{
+					sourceKind: 'workshop',
+					fields: { title: 'Updated', newlyProducedField: 'Do not lose' },
+				},
+				schedule,
+			),
+		).toThrowError(
+			expect.objectContaining({
+				code: 'SOURCE_FIELD_OWNERSHIP_MISMATCH',
+				retryable: false,
+			}),
+		)
 	})
 })

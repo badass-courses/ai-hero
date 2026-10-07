@@ -10,7 +10,7 @@ import {
 import { CourseSyncError, asCourseSyncError } from './errors'
 import { evaluateCourseSyncBoundedAutoApply } from './persistence-invariants'
 import { extractQuizQuestions } from './quiz-question-extraction'
-import { courseSyncSourceFields } from './resource-fields'
+import { assertCourseSyncSourceFields, courseSyncSourceFields } from './resource-fields'
 import {
 	anchorResourceId,
 	getServerCourseSyncBinding,
@@ -219,7 +219,7 @@ function publicRun(run: SyncRunRecord, noOp = false): CourseSyncRunSummary {
 	}
 }
 
-function sourceResourceFields(
+export function sourceResourceFields(
 	binding: CourseSyncBinding,
 	manifest: CourseJsonDocumentV3,
 	frozenAssets: ReadonlyArray<FrozenSourceAsset>,
@@ -236,7 +236,7 @@ function sourceResourceFields(
 	const frozenByVideo = new Map(
 		frozenAssets.map((asset) => [asset.sourceVideoId, asset] as const),
 	)
-	return manifest.sections.flatMap((section, sectionIndex) => {
+	const resources = manifest.sections.flatMap((section, sectionIndex) => {
 		const sectionKind = managedSectionKind(binding)
 		const sectionId = targetResourceId(binding.bindingId, sectionKind, section.id)
 		const sectionItem = {
@@ -423,6 +423,10 @@ function sourceResourceFields(
 		})
 		return [sectionItem, ...lessonItems]
 	})
+	// A generator/map mismatch is a code defect, not an operator field. Fail
+	// during preview even when the resulting resource would otherwise retain.
+	for (const resource of resources) assertCourseSyncSourceFields(resource)
+	return resources
 }
 
 export function createCourseSyncControlPlane(

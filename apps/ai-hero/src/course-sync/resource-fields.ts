@@ -1,13 +1,13 @@
 import { QuestionResourceSchema } from '@coursebuilder/survey/types'
 
+import { CourseSyncError } from './errors'
 import type { ResourcePlanItem } from './types'
 
 // Keep ownership aligned with sourceResourceFields. Everything else belongs to
 // the operator, including startsAt, endsAt, timezone and future scheduling keys.
 const commonFields = ['state', 'visibility', 'courseSync']
-const sourceFieldsByKind: Record<
-	ResourcePlanItem['sourceKind'],
-	readonly string[]
+export const sourceFieldsByKind: Readonly<
+	Record<ResourcePlanItem['sourceKind'], readonly string[]>
 > = {
 	section: [...commonFields, 'title', 'slug'],
 	workshop: [...commonFields, 'title', 'slug'],
@@ -42,15 +42,31 @@ export function courseSyncSourceFields(
 	)
 }
 
+export function assertCourseSyncSourceFields(
+	item: Pick<ResourcePlanItem, 'sourceKind' | 'fields'>,
+): void {
+	const owned = new Set(sourceFieldsByKind[item.sourceKind])
+	const unowned = Object.keys(item.fields).filter((key) => !owned.has(key))
+	if (unowned.length > 0) {
+		throw new CourseSyncError(
+			'SOURCE_FIELD_OWNERSHIP_MISMATCH',
+			`Sync produced unmapped ${item.sourceKind} fields: ${unowned.join(', ')}`,
+			500,
+			{ category: 'internal', retryable: false },
+		)
+	}
+}
+
 export function mergeCourseSyncResourceFields(
 	item: Pick<ResourcePlanItem, 'sourceKind' | 'fields'>,
 	existingFields: Record<string, unknown> = {},
 ): Record<string, unknown> {
+	assertCourseSyncSourceFields(item)
 	const owned = new Set(sourceFieldsByKind[item.sourceKind])
 	return {
 		...Object.fromEntries(
 			Object.entries(existingFields).filter(([key]) => !owned.has(key)),
 		),
-		...courseSyncSourceFields(item.sourceKind, item.fields),
+		...item.fields,
 	}
 }

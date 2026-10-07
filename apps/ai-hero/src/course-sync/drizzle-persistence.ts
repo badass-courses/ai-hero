@@ -1494,8 +1494,9 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					!current ||
 					!appliedVersion ||
 					current.currentVersionId !== receipt.contentResourceVersionId ||
-					stableJson(current.fields ?? {}) !==
-						stableJson(appliedVersion.fields ?? {}) ||
+					(receipt.action !== 'retain' &&
+						stableJson(courseSyncSourceFields(planItem.sourceKind, current.fields ?? {})) !==
+							stableJson(courseSyncSourceFields(planItem.sourceKind, appliedVersion.fields ?? {}))) ||
 					!relationMatches
 				) {
 					throw new CourseSyncError(
