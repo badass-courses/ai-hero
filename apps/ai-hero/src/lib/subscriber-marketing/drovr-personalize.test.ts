@@ -5,7 +5,20 @@ import {
 	type DrovrPersonalizeRepository,
 	type DrovrPersonalizeRequest,
 } from './drovr-personalize'
-import type { ContactRecord, ContactState, SideEffectIntent } from './types'
+import type {
+	ContactEventRecord,
+	ContactRecord,
+	ContactState,
+	SideEffectIntent,
+} from './types'
+import { normalizeContactEvent } from './normalize-contact-event'
+import {
+	OLD_NEWSLETTER_ABSENT,
+	OLD_NEWSLETTER_EXIT_CONFIRMED,
+	OLD_NEWSLETTER_SUBSCRIBED,
+	OLD_NEWSLETTER_REFERENCE,
+} from './old-newsletter-exit'
+import { SHADOW_NEWSLETTER_KIT_SEQUENCES } from './drovr-shadow-newsletter'
 import { DOUBLE_OPT_IN_RESUBSCRIBE_AFTER_UNSUBSCRIBE } from './drovr-list-subscribe'
 import {
 	createMemoryValuePathLinkAnchorStore,
@@ -66,11 +79,14 @@ function fixture() {
 	const dated = new Map<string, { occurredAt: string }[]>()
 	const prior: SideEffectIntent[] = []
 	const coupons = new Map<string, SideEffectIntent>()
+	const legacyEvents = new Map<string, ContactEventRecord[]>()
 	const repository: DrovrPersonalizeRepository = {
 		findContactById: () => currentContact,
 		findCurrentContactState: () => currentState,
 		findContactEventsByType: (_, type) =>
-			(dated.get(type) ?? Array(events.get(type) ?? 0).fill({})) as never,
+			(legacyEvents.get(type) ??
+				dated.get(type) ??
+				Array(events.get(type) ?? 0).fill({})) as never,
 		findValuePathEmailSideEffectIntentsByContact: () => prior,
 		findSideEffectIntentByIdempotencyKey: (key) => coupons.get(key),
 	}
@@ -80,6 +96,7 @@ function fixture() {
 		dated,
 		prior,
 		coupons,
+		legacyEvents,
 		setContact: (value: ContactRecord | undefined) => {
 			currentContact = value
 		},
@@ -520,4 +537,150 @@ describe('drovr personalization: a fresh double opt-in lifts an unsubscribe (DOI
 		f.dated.set('contact.resubscribed', at('2026-09-20T00:00:00.000Z'))
 		expect(await f.answer()).toMatchObject({ sendable: true, reasons: [] })
 	})
+})
+
+function oldNewsletterEvent(
+	eventType: string,
+	occurredAt = dueAt,
+): ContactEventRecord {
+	return {
+		...normalizeContactEvent({
+			provider: 'kit',
+			externalId: 'kit-1',
+			email: contact.email!,
+			providerEventId: `synthetic:${eventType}:${occurredAt}`,
+			eventType,
+			occurredAt,
+			message: 'Synthetic legacy receipt',
+			privacyLevel: 'internal',
+		}),
+		contactId: contact.id,
+		providerIdentityId: 'identity-1',
+		providerReference: OLD_NEWSLETTER_REFERENCE,
+		createdAt: occurredAt,
+	}
+}
+
+describe('shadow newsletter personalization requires positive old-sequence exit proof', () => {
+	const newsletter = {
+		journeyId: 'shadow-newsletter',
+		emailKey: SHADOW_NEWSLETTER_KIT_SEQUENCES[0].messageId,
+	}
+	it.each(SHADOW_NEWSLETTER_KIT_SEQUENCES)(
+		'serves confirmed-exit catalog message $messageId without Kit writes',
+		async ({ messageId }) => {
+			const f = fixture()
+			f.legacyEvents.set(OLD_NEWSLETTER_EXIT_CONFIRMED, [
+				oldNewsletterEvent(OLD_NEWSLETTER_EXIT_CONFIRMED),
+			])
+			const read = vi.spyOn(f.repository, 'findContactEventsByType')
+			expect(
+				await f.answer({ ...newsletter, emailKey: messageId }),
+			).toMatchObject({
+				email: 'ada@example.com',
+				firstName: 'Ada',
+				sendable: true,
+				variables: {},
+				reasons: [],
+			})
+			expect(read).toHaveBeenCalledWith(
+				contact.id,
+				OLD_NEWSLETTER_EXIT_CONFIRMED,
+			)
+		},
+	)
+	it('holds an unmarked existing reader with unknown legacy membership too', async () => {
+		expect(await fixture().answer(newsletter)).toMatchObject({
+			sendable: false,
+			variables: {},
+			reasons: ['old-newsletter-exit-unconfirmed'],
+		})
+	})
+	it('holds a reader still subscribed to the old sequence', async () => {
+		const f = fixture()
+		f.legacyEvents.set(OLD_NEWSLETTER_SUBSCRIBED, [
+			oldNewsletterEvent(OLD_NEWSLETTER_SUBSCRIBED),
+		])
+		expect(await f.answer(newsletter)).toMatchObject({
+			sendable: false,
+			reasons: ['old-newsletter-exit-unconfirmed'],
+		})
+	})
+	it('holds when a new legacy enrollment follows the exit', async () => {
+		const f = fixture()
+		f.legacyEvents.set(OLD_NEWSLETTER_EXIT_CONFIRMED, [
+			oldNewsletterEvent(
+				OLD_NEWSLETTER_EXIT_CONFIRMED,
+				'2026-09-23T18:00:00.000Z',
+			),
+		])
+		f.legacyEvents.set(OLD_NEWSLETTER_SUBSCRIBED, [
+			oldNewsletterEvent(OLD_NEWSLETTER_SUBSCRIBED),
+		])
+		expect(await f.answer(newsletter)).toMatchObject({
+			sendable: false,
+			reasons: ['old-newsletter-exit-unconfirmed'],
+		})
+	})
+	it("accepts only the shared gate's app-owned signup absence proof", async () => {
+		const f = fixture()
+		const absent = oldNewsletterEvent(OLD_NEWSLETTER_ABSENT)
+		f.legacyEvents.set(OLD_NEWSLETTER_ABSENT, [absent])
+		expect((await f.answer(newsletter))?.sendable).toBe(false)
+		f.legacyEvents.set(OLD_NEWSLETTER_ABSENT, [
+			{ ...absent, payloadSummary: { source: 'drovr-owned-signup' } },
+		])
+		expect(await f.answer(newsletter)).toMatchObject({
+			sendable: true,
+			reasons: [],
+		})
+	})
+	it('does not let an exit for another contact or sequence authorize a send', async () => {
+		const f = fixture()
+		const exit = oldNewsletterEvent(OLD_NEWSLETTER_EXIT_CONFIRMED)
+		f.legacyEvents.set(OLD_NEWSLETTER_EXIT_CONFIRMED, [
+			{ ...exit, contactId: 'other-contact' },
+			{ ...exit, providerReference: 'kit:sequence:other' },
+		])
+		expect((await f.answer(newsletter))?.reasons).toEqual([
+			'old-newsletter-exit-unconfirmed',
+		])
+	})
+	it('lets membership read failures escape as infrastructure rather than a sendable answer or reader refusal', async () => {
+		const f = fixture()
+		const read = f.repository.findContactEventsByType
+		vi.spyOn(f.repository, 'findContactEventsByType').mockImplementation(
+			(id, type) => {
+				if (type === OLD_NEWSLETTER_EXIT_CONFIRMED)
+					throw new Error('storage unavailable')
+				return read(id, type)
+			},
+		)
+		await expect(f.answer(newsletter)).rejects.toMatchObject({
+			reason: 'membership-or-exit-unavailable',
+		})
+	})
+	it('still refuses an unknown newsletter email key even with confirmed exit', async () => {
+		const f = fixture()
+		f.legacyEvents.set(OLD_NEWSLETTER_EXIT_CONFIRMED, [
+			oldNewsletterEvent(OLD_NEWSLETTER_EXIT_CONFIRMED),
+		])
+		expect(
+			await f.answer({ ...newsletter, emailKey: 'unknown-message' }),
+		).toMatchObject({ sendable: false, reasons: ['email-resource-missing'] })
+	})
+	it.each(['contact.unsubscribed', 'contact.bounced', 'contact.complained'])(
+		'retains the %s stop after confirmed exit',
+		async (eventType) => {
+			const f = fixture()
+			f.legacyEvents.set(OLD_NEWSLETTER_EXIT_CONFIRMED, [
+				oldNewsletterEvent(OLD_NEWSLETTER_EXIT_CONFIRMED),
+			])
+			f.events.set(eventType, 1)
+			expect(await f.answer(newsletter)).toMatchObject({
+				sendable: false,
+				variables: {},
+			})
+		},
+	)
 })
