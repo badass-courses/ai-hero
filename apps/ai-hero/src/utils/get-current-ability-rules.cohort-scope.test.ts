@@ -125,7 +125,7 @@ describe('loaded cohort entitlement scope', () => {
 			},
 		)
 	})
-	afterEach(() => vi.useRealTimers())
+	afterEach(() => { vi.useRealTimers() })
 
 	it('loads active team membership-linked rows across organizations, excluding expired, deleted and foreign memberships', async () => {
 		const rows = await getAllUserEntitlements('synthetic-viewer')

@@ -20,7 +20,7 @@ describe('cohort lesson contentIds scope', () => {
 		vi.useFakeTimers()
 		vi.setSystemTime(new Date('2026-11-10T00:00:00.000Z'))
 	})
-	afterEach(() => vi.useRealTimers())
+	afterEach(() => { vi.useRealTimers() })
 
 	it.each([undefined, '2026-11-09T08:01:00.000Z', '2026-12-09T08:01:00.000Z'])(
 		'denies an unrelated cohort holder for a direct lesson at startsAt=%s',

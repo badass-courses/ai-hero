@@ -55,7 +55,7 @@ export function cohortAbilityFixture(
 		fields: { title: 'Section' },
 		resources: [edge(lesson, 'section')],
 	})
-	const module = WorkshopSchema.parse({
+	const workshop = WorkshopSchema.parse({
 		...baseResource,
 		id: 'requested-workshop',
 		type: 'workshop',
@@ -90,12 +90,12 @@ export function cohortAbilityFixture(
 	})
 	const input: Parameters<typeof defineRulesForPurchases>[0] = {
 		user,
-		module,
+		module: workshop,
 		lesson,
 		entitlementTypes,
 		purchases: [],
-		allModuleResourceIds: getWorkshopResourceIds(module),
+		allModuleResourceIds: getWorkshopResourceIds(workshop),
 		...(options.layout === 'section' ? { section } : {}),
 	}
-	return { input, user, module, lesson, section }
+	return { input, user, module: workshop, lesson, section }
 }
