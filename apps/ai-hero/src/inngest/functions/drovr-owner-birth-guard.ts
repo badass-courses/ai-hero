@@ -6,12 +6,16 @@ import { newsletterPauseDurationMs } from './newsletter-provider-pause'
  * the :15 reconcile and the :00/:30 bulk runs), one run at a time. See
  * owner-birth-guard.ts for what it reads and when it re-posts.
  */
+export const OWNER_BIRTH_GUARD_MAX_COOLDOWN_MS = 50 * 60_000
+
 export const drovrOwnerBirthGuard = inngest.createFunction(
 	{
 		id: 'drovr-owner-birth-guard-v1',
 		name: 'drovr: re-post a value-path owner birth that never landed',
 		retries: 3,
 		concurrency: [{ limit: 1 }],
+		// Drop overlapping hourly ticks, including during durable sleep.
+		singleton: { mode: 'skip' },
 	},
 	{ cron: '40 * * * *' },
 	async ({ step }) => {
@@ -64,14 +68,20 @@ export const drovrOwnerBirthGuard = inngest.createFunction(
 			startedAtMs,
 			ports: {
 				...createDrizzleOwnerBirthGuardStore(db),
-				readDelivery: (contactId) =>
+				readDelivery: (contactId, timeoutMs) =>
 					readDrovrEmailDelivery({
 						contactId,
 						email: SKILLS_WORKFLOW_EMAIL_ZERO,
+						timeoutMs,
 						config: readConfig,
 					}),
-				readActor: (contactId, journeyId) =>
-					readDrovrContactActor({ contactId, journeyId, config: readConfig }),
+				readActor: (contactId, journeyId, timeoutMs) =>
+					readDrovrContactActor({
+						contactId,
+						journeyId,
+						timeoutMs,
+						config: readConfig,
+					}),
 				// Row 201g: births clamp at the run's memoized start, so a retry of
 				// a re-post's step posts the same bytes.
 				post: (event) =>
@@ -89,12 +99,12 @@ export const drovrOwnerBirthGuard = inngest.createFunction(
 			},
 		})
 		if (receipt?.backpressure) {
-			// The scan has stopped, with zero reposts. A durable cooldown holds
-			// concurrency:1 so a queued run cannot immediately hammer the API.
-			// Existing parser bounds valid Retry-After at 24h; invalid =>120s.
-			const cooldownMs = newsletterPauseDurationMs(
-				receipt.backpressure.retryAfter,
-				Date.now(),
+			// The scan has stopped, with zero reposts. Reuse the parser, but
+			// bound this caller's cooldown below the cron period. Singleton skip
+			// drops ticks during a long scan/sleep instead of queuing a burst.
+			const cooldownMs = Math.min(
+				OWNER_BIRTH_GUARD_MAX_COOLDOWN_MS,
+				newsletterPauseDurationMs(receipt.backpressure.retryAfter, Date.now()),
 			)
 			await step.sleep('shed-read-cooldown', `${cooldownMs}ms`)
 			return { ...receipt, cooldownMs }

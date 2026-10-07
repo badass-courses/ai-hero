@@ -9,6 +9,7 @@ import {
 } from './drovr-shadow-emitter'
 import {
 	OWNER_BIRTH_GUARD_REPOST_CAP,
+	OWNER_BIRTH_GUARD_PAGE_BUDGET_MS,
 	runOwnerBirthGuard,
 	type DrovrActorRead,
 	type OwnerBirthGuardPorts,
@@ -201,27 +202,109 @@ beforeEach(() => {
 })
 
 describe('the owner-without-birth guard (row 110)', () => {
-	it.each([429, 503] as const)('stops the whole sweep on %s delivery shedding, with no reads/reposts after it', async (status) => {
-		const h = harness({ owners: [owner('a'), owner('b')] })
-		h.ports.readDelivery = vi.fn(async () => ({ ok: false as const, reason: `drovr answered ${status}`, backpressure: { status, retryAfter: '10' } }))
-		h.ports.scanNewsletterBirths = vi.fn(async () => ({ subjects: [] }))
-		expect(await h.run()).toMatchObject({ status: 'deferred', backpressure: { status, retryAfter: '10' }, unreadable: 1, reposted: 0, truncated: true })
-		expect(h.ports.readDelivery).toHaveBeenCalledOnce()
-		expect(h.readActor).not.toHaveBeenCalled()
-		expect(h.ports.scanNewsletterBirths).not.toHaveBeenCalled()
+	it('memoizes a deferred page under the wall budget instead of retrying 50 slow subjects forever', async () => {
+		const h = harness({
+			owners: Array.from({ length: 50 }, (_, i) => owner(`slow${i}`)),
+		})
+		let clock = NOW
+		h.ports.nowMs = () => clock
+		const original = h.ports.readDelivery
+		h.ports.readDelivery = vi.fn(async (id, timeoutMs) => {
+			const result = await original(id, timeoutMs)
+			clock += 10_000
+			return result
+		})
+		const first = await h.run()
+		expect(OWNER_BIRTH_GUARD_PAGE_BUDGET_MS).toBeLessThan(800_000)
+		expect(clock - NOW).toBe(OWNER_BIRTH_GUARD_PAGE_BUDGET_MS)
+		expect(first).toMatchObject({
+			status: 'deferred',
+			backpressure: { status: 'page-budget' },
+			reposted: 0,
+			truncated: true,
+		})
+		expect(h.ports.readDelivery).toHaveBeenCalledTimes(30)
 		expect(h.posted).toEqual([])
 		expect(h.recorded).toEqual([])
+		expect(await h.run()).toEqual(first)
+		expect(h.ports.readDelivery).toHaveBeenCalledTimes(30)
 	})
 
-	it.each(['journey', 'directory'] as const)('defers already-proven candidates when the later %s actor read is shed, without reposting or probing the next owner', async (where) => {
-		const shed: DrovrActorRead = { ok: false, reason: 'drovr answered 503', backpressure: { status: 503, retryAfter: '5' } }
-		const h = harness({ owners: [owner('a'), owner('b'), owner('c')], ...(where === 'journey' ? { valuePathActor: { b: shed } } : { directoryActor: { b: shed } }) })
-		expect(await h.run(1)).toMatchObject({ status: 'deferred', candidates: 1, reposted: 0, truncated: true })
-		expect(h.ports.readDelivery).toHaveBeenCalledTimes(2)
-		expect(h.readActor.mock.calls.some(([id]) => id === 'c')).toBe(false)
+	it('bounds the next read by the remaining page time and never starts the directory read after expiry', async () => {
+		const h = harness({ owners: [owner('near-deadline')] })
+		let clock = NOW
+		h.ports.nowMs = () => clock
+		const original = h.ports.readDelivery
+		h.ports.readDelivery = async (id, timeoutMs) => {
+			const result = await original(id, timeoutMs)
+			clock += OWNER_BIRTH_GUARD_PAGE_BUDGET_MS - 1_500
+			return result
+		}
+		h.ports.readActor = vi.fn(async (_id, _journey, timeoutMs) => {
+			expect(timeoutMs).toBe(1_500)
+			clock += 1_500
+			return { ok: true as const, found: false as const }
+		})
+		expect(await h.run()).toMatchObject({
+			status: 'deferred',
+			backpressure: { status: 'page-budget' },
+			reposted: 0,
+		})
+		expect(h.ports.readActor).toHaveBeenCalledOnce()
 		expect(h.posted).toEqual([])
-		expect(h.recorded).toEqual([])
 	})
+
+	it.each([429, 502, 503, 504, 'timeout'] as const)(
+		'stops the whole sweep on %s delivery shedding, with no reads/reposts after it',
+		async (status) => {
+			const h = harness({ owners: [owner('a'), owner('b')] })
+			h.ports.readDelivery = vi.fn(async () => ({
+				ok: false as const,
+				reason: `drovr answered ${status}`,
+				backpressure: { status, retryAfter: '10' },
+			}))
+			h.ports.scanNewsletterBirths = vi.fn(async () => ({ subjects: [] }))
+			expect(await h.run()).toMatchObject({
+				status: 'deferred',
+				backpressure: { status, retryAfter: '10' },
+				unreadable: 1,
+				reposted: 0,
+				truncated: true,
+			})
+			expect(h.ports.readDelivery).toHaveBeenCalledOnce()
+			expect(h.readActor).not.toHaveBeenCalled()
+			expect(h.ports.scanNewsletterBirths).not.toHaveBeenCalled()
+			expect(h.posted).toEqual([])
+			expect(h.recorded).toEqual([])
+		},
+	)
+
+	it.each(['journey', 'directory'] as const)(
+		'defers already-proven candidates when the later %s actor read is shed, without reposting or probing the next owner',
+		async (where) => {
+			const shed: DrovrActorRead = {
+				ok: false,
+				reason: 'drovr answered 503',
+				backpressure: { status: 503, retryAfter: '5' },
+			}
+			const h = harness({
+				owners: [owner('a'), owner('b'), owner('c')],
+				...(where === 'journey'
+					? { valuePathActor: { b: shed } }
+					: { directoryActor: { b: shed } }),
+			})
+			expect(await h.run(1)).toMatchObject({
+				status: 'deferred',
+				candidates: 1,
+				reposted: 0,
+				truncated: true,
+			})
+			expect(h.ports.readDelivery).toHaveBeenCalledTimes(2)
+			expect(h.readActor.mock.calls.some(([id]) => id === 'c')).toBe(false)
+			expect(h.posted).toEqual([])
+			expect(h.recorded).toEqual([])
+		},
+	)
 
 	it('reads owners assigned between 72 h and 1 h ago', async () => {
 		const h = harness({ owners: [] })
@@ -564,6 +647,7 @@ describe('row 204: the guard covers evergreen and newsletter births', () => {
 		expect(h.readActor).toHaveBeenCalledWith(
 			'e1',
 			DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+			10_000,
 		)
 		// Never twice.
 		await h.run(50, { fresh: true })
@@ -606,6 +690,7 @@ describe('row 204: the guard covers evergreen and newsletter births', () => {
 		expect(h.readActor).toHaveBeenCalledWith(
 			'n1',
 			DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+			10_000,
 		)
 		await h.run(50, { fresh: true })
 		expect(h.posted).toHaveLength(1)

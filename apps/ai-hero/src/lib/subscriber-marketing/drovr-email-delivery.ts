@@ -73,7 +73,10 @@ export async function readDrovrEmailDelivery(args: {
 			return {
 				ok: false,
 				reason: `drovr answered ${response.status}`,
-				...(response.status === 429 || response.status === 503
+				...(response.status === 429 ||
+				response.status === 502 ||
+				response.status === 503 ||
+				response.status === 504
 					? {
 							backpressure: {
 								status: response.status,
@@ -102,6 +105,11 @@ export async function readDrovrEmailDelivery(args: {
 		return {
 			ok: false,
 			reason: error instanceof Error ? error.message : String(error),
+			...(controller.signal.aborted ||
+			(error instanceof Error &&
+				(error.name === 'AbortError' || error.name === 'TimeoutError'))
+				? { backpressure: { status: 'timeout' as const } }
+				: {}),
 		}
 	} finally {
 		clearTimeout(timeout)

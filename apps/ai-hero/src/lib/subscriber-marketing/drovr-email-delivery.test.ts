@@ -67,7 +67,7 @@ describe('drovr get_email_delivery read (drovr #412)', () => {
 		}
 	})
 
-	it.each([429, 503])(
+	it.each([429, 502, 503, 504])(
 		'keeps %s and Retry-After unknown even with a not-started-looking body',
 		async (status) => {
 			const fetcher = vi.fn(
@@ -91,6 +91,46 @@ describe('drovr get_email_delivery read (drovr #412)', () => {
 			})
 		},
 	)
+
+	it.each(['AbortError', 'TimeoutError'])(
+		'treats %s as shedding, never absence',
+		async (name) => {
+			const fetcher = vi
+				.fn()
+				.mockRejectedValue(new DOMException('read timed out', name))
+			expect(
+				await readDrovrEmailDelivery({
+					contactId: 'c1',
+					email: 'email-zero',
+					config,
+					fetcher,
+					timeoutMs: 5,
+				}),
+			).toMatchObject({ ok: false, backpressure: { status: 'timeout' } })
+		},
+	)
+
+	it('turns its real abort deadline into shedding even when the fetch error has a generic name', async () => {
+		const fetcher = vi.fn<typeof fetch>(
+			(_input, init) =>
+				new Promise<Response>((_resolve, reject) => {
+					init?.signal?.addEventListener(
+						'abort',
+						() => reject(new Error('owned read timed out')),
+						{ once: true },
+					)
+				}),
+		)
+		expect(
+			await readDrovrEmailDelivery({
+				contactId: 'c1',
+				email: 'email-zero',
+				config,
+				fetcher,
+				timeoutMs: 5,
+			}),
+		).toMatchObject({ ok: false, backpressure: { status: 'timeout' } })
+	})
 
 	it('never guesses: an error, a refusal, an unknown shape or no config is unreadable', async () => {
 		const read = (fetcher: typeof fetch, cfg = config) =>

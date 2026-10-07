@@ -75,7 +75,7 @@ describe("drovr's contact actor read (GET /contacts)", () => {
 		expect(read.ok).toBe(false)
 	})
 
-	it.each([429, 503])(
+	it.each([429, 502, 503, 504])(
 		'preserves Retry-After on %s, never interpreting a missing-looking body as absence',
 		async (status) => {
 			const fetcher = vi.fn(
@@ -99,6 +99,62 @@ describe("drovr's contact actor read (GET /contacts)", () => {
 			})
 		},
 	)
+
+	it.each(['AbortError', 'TimeoutError'])(
+		'treats %s as shedding, never absence',
+		async (name) => {
+			const fetcher = vi
+				.fn()
+				.mockRejectedValue(new DOMException('read timed out', name))
+			expect(
+				await readDrovrContactActor({
+					contactId: 'c1',
+					journeyId: 'journey',
+					config,
+					fetcher,
+					timeoutMs: 5,
+				}),
+			).toMatchObject({ ok: false, backpressure: { status: 'timeout' } })
+		},
+	)
+
+	it('turns its real abort deadline into shedding even when the fetch error has a generic name', async () => {
+		const fetcher = vi.fn<typeof fetch>(
+			(_input, init) =>
+				new Promise<Response>((_resolve, reject) => {
+					init?.signal?.addEventListener(
+						'abort',
+						() => reject(new Error('owned read timed out')),
+						{ once: true },
+					)
+				}),
+		)
+		expect(
+			await readDrovrContactActor({
+				contactId: 'c1',
+				journeyId: 'journey',
+				config,
+				fetcher,
+				timeoutMs: 5,
+			}),
+		).toMatchObject({ ok: false, backpressure: { status: 'timeout' } })
+	})
+
+	it('does not swallow an abort while decoding a success body', async () => {
+		const response = new Response('{}', { status: 200 })
+		vi.spyOn(response, 'json').mockRejectedValue(
+			new DOMException('body timed out', 'AbortError'),
+		)
+		const fetcher = vi.fn(async () => response)
+		expect(
+			await readDrovrContactActor({
+				contactId: 'c1',
+				journeyId: 'journey',
+				config,
+				fetcher,
+			}),
+		).toMatchObject({ ok: false, backpressure: { status: 'timeout' } })
+	})
 
 	it('is unreadable without configuration', async () => {
 		const fetcher = vi.fn()
