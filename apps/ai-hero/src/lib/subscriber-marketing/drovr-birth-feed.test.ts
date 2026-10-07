@@ -29,7 +29,7 @@ const request: BirthFeedRequest = {
 	since: new Date(NOW - 72 * 3600_000).toISOString(),
 	limit: 1000,
 }
-const row = (id: string, journeyId = JOURNEY) => ({
+const row = (id: string, journeyId: string = JOURNEY) => ({
 	contactId: id,
 	journeyId,
 	version: 3,
