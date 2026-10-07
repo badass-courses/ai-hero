@@ -1,5 +1,6 @@
 import { NonRetriableError } from 'inngest'
 import { z } from 'zod'
+import { newsletterPauseDurationMs } from '@/inngest/functions/newsletter-provider-pause'
 
 import {
 	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
@@ -41,13 +42,34 @@ export const BirthFeedPageSchema = z
 		(page) => page.nextCursor === null || page.nextCursor === page.resumeCursor,
 	)
 export type BirthFeedPage = z.infer<typeof BirthFeedPageSchema>
-export const BirthFeedCheckpointSchema = z.object({
-	schemaVersion: z.literal(1),
-	since: instant,
-	resumeCursor: opaqueCursor,
-	asOf: instant.nullable(),
-	phase: z.enum(['paging', 'caught-up']),
-})
+export const BirthFeedCheckpointSchema = z
+	.object({
+		schemaVersion: z.literal(1),
+		since: instant,
+		resumeCursor: opaqueCursor.nullable(),
+		asOf: instant.nullable(),
+		phase: z.enum(['bootstrap', 'paging', 'caught-up']),
+		// Scheduling metadata only: it neither advances a cursor nor proves absence.
+		retry: z
+			.object({
+				notBefore: instant,
+				status: z.union([
+					z.literal(429),
+					z.literal(502),
+					z.literal(503),
+					z.literal(504),
+					z.literal('timeout'),
+					z.literal('page-budget'),
+					z.literal('5xx'),
+				]),
+			})
+			.optional(),
+	})
+	.refine((checkpoint) =>
+		checkpoint.phase === 'bootstrap'
+			? checkpoint.resumeCursor === null && checkpoint.asOf === null
+			: checkpoint.resumeCursor !== null,
+	)
 export type BirthFeedCheckpoint = z.infer<typeof BirthFeedCheckpointSchema>
 export type BirthFeedPageRead =
 	| { kind: 'page'; page: BirthFeedPage }
@@ -179,45 +201,112 @@ export type BirthFeedPreparation =
 	| { kind: 'ready'; calls: number; proof: BirthFeedProof }
 	| { kind: 'shed'; calls: number; backpressure: DrovrReadBackpressure }
 
-/** load -> page -> consume -> page/caught-up -> proof; shed/fatal never reach
- * reposting. One global budget across all journeys, not ten per journey. */
+/** Load all positions -> wait if held -> read -> consume page or persist a
+ * shed hold at the unchanged position. The next run repeats that request.
+ * Shed/fatal never reach reposting. One shared physical ten-call budget. */
 export async function prepareBirthFeed(args: {
 	step: FeedStep
 	store: BirthFeedStore
 	startedAtMs: number
 	runId: string
 	read: (request: BirthFeedRequest) => Promise<BirthFeedPageRead>
+	nowMs?: () => number
 }): Promise<BirthFeedPreparation> {
+	const now = args.nowMs ?? Date.now
+	const held = (
+		checkpoint: BirthFeedCheckpoint | null,
+	): DrovrReadBackpressure | undefined => {
+		if (!checkpoint?.retry) return
+		const remaining = Date.parse(checkpoint.retry.notBefore) - now()
+		if (remaining > 0)
+			return {
+				status: checkpoint.retry.status,
+				retryAfter: String(Math.ceil(remaining / 1000)),
+			}
+	}
 	let calls = 0
 	const caughtUp = new Map<string, BirthFeedCheckpoint>()
 	const since = new Date(
 		args.startedAtMs - OWNER_BIRTH_GUARD_MAX_AGE_MS - BIRTH_FEED_GRACE_MS,
 	).toISOString()
+	// Inspect every journey's hold before reading ANY journey. A 24h header
+	// must survive the wrapper's <=50m sleep and suppress the next hourly tick.
+	const loaded = new Map<string, BirthFeedCheckpoint | null>()
 	for (const journeyId of BIRTH_FEED_JOURNEYS) {
-		// SAFETY: outputs are produced by the validated store/read boundary in
-		// these memoized steps; SDK JSON preserves their plain data shape.
-		let checkpoint = (await args.step.run(`birth-feed-load-${journeyId}`, () =>
-			args.store.load(journeyId),
+		// SAFETY: validated store outputs retain their plain shape through SDK JSON.
+		const checkpoint = (await args.step.run(
+			`birth-feed-load-${journeyId}`,
+			() => args.store.load(journeyId),
 		)) as BirthFeedCheckpoint | null
+		loaded.set(journeyId, checkpoint)
+	}
+	for (const checkpoint of loaded.values()) {
+		const backpressure = held(checkpoint)
+		if (backpressure) return { kind: 'shed', calls, backpressure }
+	}
+	for (const journeyId of BIRTH_FEED_JOURNEYS) {
+		let checkpoint = loaded.get(journeyId) ?? null
 		for (;;) {
 			if (calls >= BIRTH_FEED_MAX_CALLS)
 				throw new BirthFeedFailure('page-cap-exceeded')
 			const index = calls++
-			const request: BirthFeedRequest = checkpoint
-				? { journeyId, cursor: checkpoint.resumeCursor, limit: 1000 }
-				: { journeyId, since, limit: 1000 }
+			const request: BirthFeedRequest =
+				checkpoint && checkpoint.resumeCursor !== null
+					? { journeyId, cursor: checkpoint.resumeCursor, limit: 1000 }
+					: { journeyId, since: checkpoint?.since ?? since, limit: 1000 }
 			const read = (await args.step.run(
 				`birth-feed-read-${index}`,
 				async () => {
+					// A lost SDK result must not repeat a shed GET before its hold.
+					const current = await args.store.load(journeyId)
+					if (!current && checkpoint)
+						throw new BirthFeedFailure('checkpoint-lost-before-read')
+					if (
+						current &&
+						(current.resumeCursor !== null
+							? current.resumeCursor !== request.cursor
+							: current.since !== request.since)
+					)
+						throw new BirthFeedFailure('checkpoint-conflict-before-read')
+					const backpressure = held(current)
+					if (backpressure)
+						return { kind: 'shed', backpressure } satisfies BirthFeedPageRead
 					await args.store.reserveCall(args.runId)
+					let result: BirthFeedPageRead
 					try {
-						return await args.read(request)
+						result = await args.read(request)
 					} catch {
-						return {
-							kind: 'fatal',
-							reason: 'unavailable',
-						} satisfies BirthFeedPageRead
+						result = { kind: 'fatal', reason: 'unavailable' }
 					}
+					if (result.kind === 'shed') {
+						const at = now()
+						await args.store.consume({
+							journeyId,
+							previous: current,
+							checkpoint: {
+								...(current ??
+									({
+										schemaVersion: 1,
+										since,
+										resumeCursor: null,
+										asOf: null,
+										phase: 'bootstrap',
+									} satisfies BirthFeedCheckpoint)),
+								retry: {
+									notBefore: new Date(
+										at +
+											newsletterPauseDurationMs(
+												result.backpressure.retryAfter,
+												at,
+											),
+									).toISOString(),
+									status: result.backpressure.status,
+								},
+							},
+							contactIds: [],
+						})
+					}
+					return result
 				},
 			)) as BirthFeedPageRead
 			if (read.kind === 'shed') return { ...read, calls }

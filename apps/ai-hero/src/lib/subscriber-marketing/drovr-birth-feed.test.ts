@@ -61,6 +61,7 @@ function subject(
 	}
 }
 function harness() {
+	let clock = NOW
 	const checkpoints = new Map<string, BirthFeedCheckpoint>()
 	const memberships = new Map<string, Set<string>>()
 	const deferred = new Map<string, Set<string>>()
@@ -127,12 +128,14 @@ function harness() {
 				step,
 				store,
 				read,
-				startedAtMs: NOW,
+				startedAtMs: clock,
+				nowMs: () => clock,
 				runId: 'fixture-run',
 			}),
-		newRun: () => {
+		newRun: (at = clock) => {
 			quota = 0
 			cache.clear()
+			clock = at
 		},
 	}
 }
@@ -370,6 +373,135 @@ describe('bounded durable feed preparation', () => {
 		expect(verdicts.get(present)).toBe('born')
 		expect(verdicts.get(other)).toBe('missing')
 	})
+	it('persists bootstrap since before returning 503; next hour repeats the exact first-page request', async () => {
+		const h = harness()
+		h.read.mockResolvedValueOnce({
+			kind: 'shed',
+			backpressure: { status: 503, retryAfter: '10' },
+		})
+		expect(await h.run()).toMatchObject({ kind: 'shed', calls: 1 })
+		const first = h.read.mock.calls[0]![0]
+		expect(h.checkpoints.get(JOURNEY)).toMatchObject({
+			phase: 'bootstrap',
+			since: first.since,
+			resumeCursor: null,
+			retry: { notBefore: new Date(NOW + 10_000).toISOString() },
+		})
+		h.newRun(NOW + 3600_000)
+		expect(await h.run()).toMatchObject({ kind: 'ready' })
+		expect(h.read.mock.calls[1]![0]).toEqual(first)
+		expect(h.checkpoints.get(JOURNEY)?.retry).toBeUndefined()
+		h.newRun(NOW + 2 * 3600_000)
+		await h.run()
+		expect(h.read.mock.calls[4]![0]).toEqual({
+			journeyId: JOURNEY,
+			cursor: 'opaque-end',
+			limit: 1000,
+		})
+	})
+	it('cursor-page 503 preserves the exact cursor and consumes no new membership until the retry', async () => {
+		const h = harness()
+		await h.run()
+		const before = h.checkpoints.get(JOURNEY)!
+		h.newRun()
+		h.read.mockResolvedValueOnce({
+			kind: 'shed',
+			backpressure: { status: 503, retryAfter: '9' },
+		})
+		expect(await h.run()).toMatchObject({ kind: 'shed' })
+		expect(h.checkpoints.get(JOURNEY)).toMatchObject(before)
+		const request = h.read.mock.calls[3]![0]
+		expect(request).not.toHaveProperty('since')
+		h.newRun(NOW + 3600_000)
+		await h.run()
+		expect(h.read.mock.calls[4]![0]).toEqual(request)
+	})
+	it('honors a 24h hold across runs and across journeys, even when wrapper sleep is capped at 50m', async () => {
+		const h = harness()
+		h.read.mockResolvedValueOnce({ kind: 'page', page: empty() })
+		h.read.mockResolvedValueOnce({
+			kind: 'shed',
+			backpressure: { status: 503, retryAfter: '86400' },
+		})
+		expect(await h.run()).toMatchObject({ kind: 'shed', calls: 2 })
+		const failed = h.read.mock.calls[1]![0]
+		h.newRun(NOW + 3600_000)
+		expect(await h.run()).toMatchObject({
+			kind: 'shed',
+			calls: 0,
+			backpressure: { status: 503, retryAfter: '82800' },
+		})
+		expect(h.read).toHaveBeenCalledTimes(2)
+		h.newRun(NOW + 86400_000)
+		expect(await h.run()).toMatchObject({ kind: 'ready' })
+		expect(h.read.mock.calls[3]![0]).toEqual(failed)
+	})
+	it('a lost SDK shed result repeats neither HTTP nor the deadline write before Retry-After', async () => {
+		const h = harness()
+		h.read.mockResolvedValueOnce({
+			kind: 'shed',
+			backpressure: { status: 503, retryAfter: '10' },
+		})
+		const step = {
+			async run<T>(id: string, op: () => Promise<T>) {
+				if (id.startsWith('birth-feed-read-')) await op()
+				return op()
+			},
+		}
+		expect(
+			await prepareBirthFeed({
+				step,
+				store: h.store,
+				read: h.read,
+				startedAtMs: NOW,
+				runId: 'lost-shed',
+				nowMs: () => NOW,
+			}),
+		).toMatchObject({ kind: 'shed', calls: 1 })
+		expect(h.read).toHaveBeenCalledOnce()
+		expect(h.store.reserveCall).toHaveBeenCalledOnce()
+		expect(h.store.consume).toHaveBeenCalledOnce()
+	})
+	it('cache loss between the memoized load and physical read cannot rebase a saved request', async () => {
+		const h = harness()
+		await h.run()
+		h.newRun()
+		const load = vi.mocked(h.store.load)
+		for (const id of BIRTH_FEED_JOURNEYS)
+			load.mockResolvedValueOnce(h.checkpoints.get(id)!)
+		load.mockResolvedValueOnce(null)
+		await expect(h.run()).rejects.toThrow('checkpoint-lost-before-read')
+		expect(h.read).toHaveBeenCalledTimes(3)
+	})
+	it('a failed retry checkpoint write remains terminal and never reaches another read or proof', async () => {
+		const h = harness()
+		h.read.mockResolvedValueOnce({
+			kind: 'shed',
+			backpressure: { status: 503, retryAfter: '10' },
+		})
+		vi.mocked(h.store.consume).mockRejectedValueOnce(
+			new BirthFeedFailure('cache-unavailable'),
+		)
+		await expect(h.run()).rejects.toThrow('cache-unavailable')
+		expect(h.read).toHaveBeenCalledOnce()
+	})
+	it.each([-1, 0, BIRTH_FEED_GRACE_MS - 1, BIRTH_FEED_GRACE_MS])(
+		'only own-event-plus-grace coverage can permit a potential miss (offset %s)',
+		async (delta) => {
+			const h = harness()
+			const event = NOW - 2 * 3600_000
+			h.answer(() => ({
+				...empty(),
+				asOf: new Date(event + delta).toISOString(),
+			}))
+			const ready = await h.run()
+			if (ready.kind !== 'ready') throw new Error('fixture not ready')
+			const item = subject('watermark', new Date(event).toISOString())
+			expect((await ready.proof.judge([item])).get(item)).toBe(
+				delta === BIRTH_FEED_GRACE_MS ? 'missing' : 'unknown',
+			)
+		},
+	)
 	it('shedding stops before later calls; refusal/network exceptions become terminal, not retrying read steps', async () => {
 		const h = harness()
 		h.read.mockResolvedValueOnce({
@@ -377,7 +509,15 @@ describe('bounded durable feed preparation', () => {
 			backpressure: { status: 503, retryAfter: '10' },
 		})
 		expect(await h.run()).toMatchObject({ kind: 'shed', calls: 1 })
-		expect(h.store.consume).not.toHaveBeenCalled()
+		expect(h.store.consume).toHaveBeenCalledWith(
+			expect.objectContaining({
+				contactIds: [],
+				checkpoint: expect.objectContaining({
+					phase: 'bootstrap',
+					resumeCursor: null,
+				}),
+			}),
+		)
 		expect(h.read).toHaveBeenCalledOnce()
 		const f = harness()
 		f.read.mockRejectedValueOnce(new Error('private transport cause'))

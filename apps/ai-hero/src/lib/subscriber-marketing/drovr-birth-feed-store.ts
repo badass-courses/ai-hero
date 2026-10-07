@@ -33,19 +33,25 @@ return 1
 `
 export const LOAD_BIRTH_FEED = `
 local checkpoint = redis.call('GET', KEYS[1])
+if not checkpoint and redis.call('EXISTS', KEYS[2]) == 1 then return 'cache-lost' end
 if checkpoint and redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 0 then return 'cache-lost' end
 return checkpoint
 `
 /** Membership and checkpoint advance atomically, only through a consumed page.
- * Compare metadata rather than ordering/decoding the opaque provider cursor.
- * Idempotent replay may repeat a write; a stale writer cannot rewind the feed. */
+ * A shed hold may save bootstrap since or retry metadata at an UNCHANGED cursor.
+ * Compare metadata rather than interpreting opaque cursors. Retry deadlines
+ * participate in CAS so stale writers cannot silently clear an active hold. */
 export const CONSUME_BIRTH_FEED = `
 local raw = redis.call('GET', KEYS[1])
 local expected = cjson.decode(ARGV[1])
 local desired = cjson.decode(ARGV[2])
+local function retryEqual(a,b)
+  if a == nil or b == nil then return a == b end
+  return a.notBefore == b.notBefore and a.status == b.status
+end
 local function equal(a,b)
   if a == cjson.null or b == cjson.null then return a == b end
-  return a.schemaVersion == b.schemaVersion and a.since == b.since and a.resumeCursor == b.resumeCursor and a.asOf == b.asOf and a.phase == b.phase
+  return a.schemaVersion == b.schemaVersion and a.since == b.since and a.resumeCursor == b.resumeCursor and a.asOf == b.asOf and a.phase == b.phase and retryEqual(a.retry,b.retry)
 end
 local current = raw and cjson.decode(raw) or cjson.null
 if raw and redis.call('SISMEMBER', KEYS[2], ARGV[3]) == 0 then return -1 end

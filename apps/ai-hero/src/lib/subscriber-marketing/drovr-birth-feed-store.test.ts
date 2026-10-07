@@ -133,6 +133,19 @@ describe('birth feed durable boundary', () => {
 			)
 		},
 	)
+	it('loads a retry-only bootstrap without inventing a cursor or watermark', async () => {
+		const bootstrap = {
+			...checkpoint,
+			phase: 'bootstrap',
+			resumeCursor: null,
+			asOf: null,
+			retry: { notBefore: '2026-10-08T00:00:00Z', status: 503 },
+		}
+		expect(
+			await harness(JSON.stringify(bootstrap)).store.load('journey'),
+		).toEqual(bootstrap)
+		expect(CONSUME_BIRTH_FEED).toContain('retryEqual(a.retry,b.retry)')
+	})
 	it('null means bootstrap, never a fabricated checkpoint', async () => {
 		expect(await harness(null).store.load('journey')).toBeNull()
 	})
@@ -141,6 +154,14 @@ describe('birth feed durable boundary', () => {
 		{},
 		{ ...checkpoint, phase: 'other' },
 		{ ...checkpoint, asOf: 'bad' },
+		{ ...checkpoint, resumeCursor: null },
+		{ ...checkpoint, phase: 'bootstrap' },
+		{ ...checkpoint, phase: 'bootstrap', resumeCursor: null },
+		{ ...checkpoint, retry: { notBefore: 'bad', status: 503 } },
+		{
+			...checkpoint,
+			retry: { notBefore: '2026-10-08T00:00:00Z', status: 200 },
+		},
 	])('invalid/lost cache fails closed', async (value) => {
 		await expect(harness(value).store.load('journey')).rejects.toThrow(
 			'invalid-checkpoint',
