@@ -1218,7 +1218,9 @@ async function acceptEvergreenListSubscribe(args: {
 					dueAt: intent.dueAt,
 				},
 				list: sequence.list,
+				// Retain the legacy target for receipt compatibility, never enroll.
 				kitSequenceId: String(sequence.sequenceId),
+				kitSkipped: 'kit-exit-handoff',
 				...(typeof intent.payload?.timezone === 'string'
 					? { timezone: intent.payload.timezone }
 					: {}),

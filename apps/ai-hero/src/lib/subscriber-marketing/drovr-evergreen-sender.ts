@@ -19,9 +19,10 @@ import { createOldNewsletterExitGate, OldNewsletterExitRefusedError, requiresOld
 
 /**
  * The sequence sender: drains the evergreen and shadow-newsletter rows the
- * drovr executor endpoint accepted and adds each contact to the row's Kit
- * sequence. One Kit write per row, sequential with pacing, exactly like the
- * skills-course sender. A completed row dispatches its completion fact, which
+ * drovr executor endpoint accepted. Message rows add the contact to the row's
+ * Kit sequence, sequential with pacing like the skills-course sender. Shadow
+ * newsletter handoffs complete without legacy enrollment after their gates.
+ * A completed row dispatches its completion fact, which
  * the emitter routes to the owning drovr actor.
  *
  * Failures stay retryable: the row keeps `pending` with an attempt count
@@ -104,7 +105,7 @@ export async function executePendingEvergreenSends(args: {
 	/** Explicit newsletter-only opt-in. Omitted means legacy error/attempt behavior. */
 	newsletter?: NewsletterSendPause
 	/** Row type to drain; list handoffs and shadow rows add to a Kit
-	 * sequence the same way an evergreen message send does. */
+	 * sequence; shadow-newsletter list handoffs complete without enrollment. */
 	type?:
 		| typeof SEND_EVERGREEN_EMAIL_INTENT_TYPE
 		| typeof SEND_SHADOW_NEWSLETTER_EMAIL_INTENT_TYPE
@@ -166,8 +167,8 @@ async function sendOne(input: {
 	const attempts = numberField(row.metadata.attempts) + 1
 	const unclaimed = row.metadata
 	const ownedHandoff = await isOwnedShadowNewsletterHandoff(row, args.repository)
-	const newsletterRow = row.type === SEND_SHADOW_NEWSLETTER_EMAIL_INTENT_TYPE ||
-		(row.type === SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE && row.metadata.list === 'shadow-newsletter')
+	const shadowHandoff = row.type === SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE && row.metadata.list === 'shadow-newsletter'
+	const newsletterRow = row.type === SEND_SHADOW_NEWSLETTER_EMAIL_INTENT_TYPE || shadowHandoff
 	if (newsletterRow) {
 		// A scope read failure is infrastructure failure, not exit refusal.
 		// Leave the row pending for the next cron; do not strand exempt readers.
@@ -195,7 +196,9 @@ async function sendOne(input: {
 			return { status: 'retry', intentId: row.id, attempts: numberField(unclaimed.attempts), error }
 		}
 	}
-	if (ownedHandoff) {
+	// Complete the handoff only after the existing contact/admission/exit gates.
+	// Apply this to old pending rows too: none may re-enroll in the legacy weekly.
+	if (ownedHandoff || shadowHandoff) {
 		const completed = await args.repository.updateSideEffectIntent(row.id, {
 			status: 'completed',
 			completedAt: now,
@@ -204,7 +207,7 @@ async function sendOne(input: {
 			metadata: {
 				...unclaimed,
 				completedAt: now,
-				kitSkipped: 'shadow-newsletter-owner-assignment',
+				kitSkipped: ownedHandoff ? 'shadow-newsletter-owner-assignment' : 'kit-exit-handoff',
 			},
 		})
 		dispatch(completed)

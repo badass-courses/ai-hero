@@ -1436,7 +1436,7 @@ describe('acceptDrovrIntent: evergreen coupon issue', () => {
 		expect(repository.intents.get(result.intentId)).toMatchObject({
 			type: 'subscribe-evergreen-list',
 			idempotencyKey: 'contact:contact-1:evergreen:list:shadow-newsletter',
-			metadata: { list: 'shadow-newsletter', kitSequenceId: '2625552' },
+			metadata: { list: 'shadow-newsletter', kitSequenceId: '2625552', kitSkipped: 'kit-exit-handoff' },
 		})
 		const row = repository.intents.get(result.intentId)!
 		repository.intents.set(row.id, {

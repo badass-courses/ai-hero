@@ -628,7 +628,7 @@ describe('executePendingEvergreenSends', () => {
 		)
 	})
 
-	it('drains subscribe-evergreen-list rows when asked for that type and leaves sends alone', async () => {
+	it('completes an unassigned legacy handoff without Kit, dispatches its birth once, and leaves sends alone', async () => {
 		const repository = new FakeRepository()
 		repository.contacts.set('contact-1', contact())
 		repository.intents.set('row-1', row())
@@ -651,23 +651,30 @@ describe('executePendingEvergreenSends', () => {
 			}),
 		)
 		const subscribes: unknown[] = []
-		const results = await executePendingEvergreenSends({
+		const dispatched: SideEffectIntent[] = []
+		const args = {
 			repository,
-			type: 'subscribe-evergreen-list',
-			subscribe: async (input) => {
+			type: 'subscribe-evergreen-list' as const,
+			subscribe: async (input: Parameters<Parameters<typeof executePendingEvergreenSends>[0]['subscribe']>[0]) => {
 				subscribes.push(input)
-				return 'already-added'
+				throw new Error('legacy Kit enrollment forbidden')
 			},
 			limit: 10,
 			now: () => now,
-			dispatch: () => {},
-		})
+			dispatch: (intent: SideEffectIntent) => { dispatched.push(intent) },
+		}
+		const results = await executePendingEvergreenSends(args)
 		expect(results.map((r) => [r.intentId, r.status])).toEqual([
 			['row-2', 'completed'],
 		])
-		expect(subscribes).toMatchObject([{ listId: '2625552' }])
+		expect(subscribes).toEqual([])
 		expect(repository.intents.get('row-1')?.status).toBe('pending')
-		expect(repository.intents.get('row-2')?.status).toBe('completed')
+		expect(repository.intents.get('row-2')).toMatchObject({ status: 'completed', metadata: { kitSkipped: 'kit-exit-handoff' } })
+		expect(dispatched).toHaveLength(1)
+		expect(mapDrovrShadowFact({ kind: 'side-effect-intent-completed', intent: dispatched[0]! })).toEqual(expect.arrayContaining([expect.objectContaining({ journeyId: 'shadow-newsletter', type: 'contact.created' })]))
+		expect(await executePendingEvergreenSends(args)).toEqual([])
+		expect(dispatched).toHaveLength(1)
+		expect(subscribes).toEqual([])
 	})
 })
 
