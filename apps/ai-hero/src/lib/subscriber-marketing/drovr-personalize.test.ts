@@ -554,6 +554,7 @@ function oldNewsletterEvent(
 			message: 'Synthetic legacy receipt',
 			privacyLevel: 'internal',
 		}),
+		id: `synthetic:${eventType}:${occurredAt}`,
 		contactId: contact.id,
 		providerIdentityId: 'identity-1',
 		providerReference: OLD_NEWSLETTER_REFERENCE,
@@ -628,7 +629,7 @@ describe('shadow newsletter personalization requires positive old-sequence exit 
 		f.legacyEvents.set(OLD_NEWSLETTER_ABSENT, [absent])
 		expect((await f.answer(newsletter))?.sendable).toBe(false)
 		f.legacyEvents.set(OLD_NEWSLETTER_ABSENT, [
-			{ ...absent, payloadSummary: { source: 'drovr-owned-signup' } },
+			{ ...absent, payloadSummary: { ...absent.payloadSummary, source: 'drovr-owned-signup' } },
 		])
 		expect(await f.answer(newsletter)).toMatchObject({
 			sendable: true,
