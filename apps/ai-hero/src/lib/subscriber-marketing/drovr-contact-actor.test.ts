@@ -119,8 +119,8 @@ describe("drovr's contact actor read (GET /contacts)", () => {
 	)
 
 	it('turns its real abort deadline into shedding even when the fetch error has a generic name', async () => {
-		const fetcher = vi.fn<typeof fetch>(
-			(_input, init) =>
+		const fetcher = vi.fn(
+			(_input: unknown, init?: { signal?: AbortSignal | null }) =>
 				new Promise<Response>((_resolve, reject) => {
 					init?.signal?.addEventListener(
 						'abort',
