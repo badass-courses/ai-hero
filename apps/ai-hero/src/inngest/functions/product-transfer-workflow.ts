@@ -22,7 +22,10 @@ import {
 } from '@/lib/entitlements'
 import { createResourceEntitlements } from '@/lib/entitlements-query'
 import { getWorkshop } from '@/lib/workshops-query'
-import { transferIncludedProductEntitlements } from '@/lib/included-product-entitlements'
+import {
+	hasIncludedProductEntitlements,
+	transferIncludedProductEntitlements,
+} from '@/lib/included-product-entitlements'
 import {
 	listRequiredContentResourceIds,
 	readContentIds,
@@ -644,6 +647,19 @@ export async function handleProductTransfer({
 			: {}
 
 	const isTeamPurchase = Boolean(purchase.bulkCouponId)
+
+	// Reject before moving organizations or adding memberships. The bundle
+	// policy never makes billing orders or redeemed team seats transferable.
+	if (
+		hasIncludedProductEntitlements(purchase.productId) &&
+		(isTeamPurchase ||
+			purchase.redeemedBulkCouponId ||
+			priorTransferState !== 'VERIFIED')
+	) {
+		throw new Error(
+			'Included-product transfer requires a verified individual purchase',
+		)
+	}
 
 	// Set when the full individual-transfer path runs; drives the
 	// completion invariant gate below.

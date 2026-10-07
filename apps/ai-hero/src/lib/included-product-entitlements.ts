@@ -378,6 +378,10 @@ async function reconcileIncludedProducts(
 	return grants
 }
 
+export function hasIncludedProductEntitlements(productId: string): boolean {
+	return Boolean(INCLUDED_PRODUCTS[productId]?.length)
+}
+
 export function grantIncludedProductEntitlements(context: LearnerContext) {
 	return reconcileIncludedProducts(context, { kind: 'fulfill' })
 }

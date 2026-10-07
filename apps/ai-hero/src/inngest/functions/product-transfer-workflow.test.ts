@@ -30,6 +30,7 @@ type World = {
 		organizationId: string
 		status: string
 		bulkCouponId: string | null
+		redeemedBulkCouponId?: string | null
 		productId: string
 	}
 	productType: string
@@ -342,6 +343,8 @@ vi.mock('@/lib/entitlements-query', () => ({
 	createResourceEntitlements: mocks.createResourceEntitlements,
 }))
 vi.mock('@/lib/included-product-entitlements', () => ({
+	hasIncludedProductEntitlements: (productId: string) =>
+		productId === 'product-s00zs',
 	transferIncludedProductEntitlements: mocks.transferIncluded,
 }))
 vi.mock('@coursebuilder/organizations', () => ({
@@ -527,6 +530,25 @@ beforeEach(() => {
 })
 
 describe('included-product transfer wiring', () => {
+	it.each(['billing-order', 'redeemed-seat', 'unverified'])(
+		'rejects %s before any organization moves',
+		async (variant) => {
+			mocks.state.world.purchase.productId = 'product-s00zs'
+			if (variant === 'billing-order')
+				mocks.state.world.purchase.bulkCouponId = 'bulk-coupon'
+			if (variant === 'redeemed-seat')
+				mocks.state.world.purchase.redeemedBulkCouponId = 'bulk-coupon'
+			if (variant === 'unverified')
+				mocks.state.world.transferState = 'INITIATED'
+			await expect(runWorkflow()).rejects.toThrow(
+				'verified individual purchase',
+			)
+			expect(mocks.ensurePersonalOrganization).not.toHaveBeenCalled()
+			expect(mocks.transferIncluded).not.toHaveBeenCalled()
+			expect(mocks.state.world.purchase.organizationId).toBe('org_a')
+		},
+	)
+
 	it('calls the bundle transfer after membership and includes its access in the completion gate', async () => {
 		mocks.state.world.purchase.productId = 'product-s00zs'
 		mocks.transferIncluded.mockImplementation(async () => {
