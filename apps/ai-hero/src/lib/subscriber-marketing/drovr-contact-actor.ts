@@ -46,6 +46,15 @@ export async function readDrovrContactActor(args: {
 					retryAfter: response.headers.get('retry-after') ?? undefined,
 				},
 			}
+		if (response.status >= 500 && response.status < 600)
+			return {
+				ok: false,
+				reason: `drovr answered ${response.status}`,
+				backpressure: {
+					status: '5xx',
+					retryAfter: response.headers.get('retry-after') ?? undefined,
+				},
+			}
 		const body: unknown = await response.json()
 		const record =
 			body && typeof body === 'object' ? (body as Record<string, unknown>) : {}

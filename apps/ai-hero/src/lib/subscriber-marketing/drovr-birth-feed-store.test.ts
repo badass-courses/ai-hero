@@ -5,6 +5,8 @@ import {
 	CONSUME_BIRTH_FEED,
 	MEMBERS_BIRTH_FEED,
 	RESERVE_BIRTH_FEED_CALL,
+	OBSERVE_BIRTH_FEED,
+	BIRTH_FEED_QUOTA_TTL_SECONDS,
 } from './drovr-birth-feed-store'
 import type { BirthFeedCheckpoint } from './drovr-birth-feed'
 vi.mock('@/env.mjs', () => ({ env: {} }))
@@ -32,15 +34,41 @@ function harness(value: unknown) {
 	}
 }
 describe('birth feed durable boundary', () => {
-	it('reserves from one tenant/run quota, independent of journey, with no expiry', async () => {
+	it('confirmation reads share a separate 25-call budget across journeys, not another births allowance', async () => {
+		const h = harness(1)
+		await h.store.reserveConfirmation('run')
+		expect(h.evalScript).toHaveBeenCalledWith(
+			RESERVE_BIRTH_FEED_CALL,
+			[expect.stringContaining('confirm-budget')],
+			['25', String(BIRTH_FEED_QUOTA_TTL_SECONDS)],
+		)
+	})
+	it('confirmed old actors become positive membership without advancing the cursor', async () => {
+		const h = harness(1)
+		await h.store.observeBorn('journey', 'old-actor')
+		expect(h.evalScript).toHaveBeenCalledWith(
+			OBSERVE_BIRTH_FEED,
+			[expect.stringContaining(':members')],
+			['__aih_birth_feed_ready_v1__', 'old-actor'],
+		)
+		expect(OBSERVE_BIRTH_FEED).not.toContain('checkpoint')
+		await expect(
+			harness(0).store.observeBorn('journey', 'old-actor'),
+		).rejects.toThrow('membership-unavailable')
+	})
+
+	it('reserves one tenant/run quota with retention exceeding the bounded run', async () => {
 		const h = harness(1)
 		await h.store.reserveCall('run/+id')
 		expect(h.evalScript).toHaveBeenCalledWith(
 			RESERVE_BIRTH_FEED_CALL,
 			[expect.stringContaining('run%2F%2Bid:budget')],
-			['10'],
+			['10', String(BIRTH_FEED_QUOTA_TTL_SECONDS)],
 		)
-		expect(RESERVE_BIRTH_FEED_CALL).not.toContain('EXPIRE')
+		expect(BIRTH_FEED_QUOTA_TTL_SECONDS).toBeGreaterThanOrEqual(24 * 3600)
+		expect(RESERVE_BIRTH_FEED_CALL).toContain(
+			"calls == 1 then redis.call('EXPIRE'",
+		)
 	})
 	it.each([0, null, '1'])(
 		'closed quota result %s forbids another GET',

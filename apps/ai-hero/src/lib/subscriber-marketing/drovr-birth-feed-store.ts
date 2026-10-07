@@ -4,14 +4,18 @@ import {
 	BirthFeedFailure,
 	type BirthFeedStore,
 } from './drovr-birth-feed'
+import { OWNER_BIRTH_GUARD_CONFIRMATION_CAP } from './owner-birth-guard'
 
 export interface BirthFeedRedis {
 	eval(script: string, keys: string[], args: string[]): Promise<unknown>
 }
-const READY = '\u0000birth-feed-ready:v1'
-/** No TTL: a resumed run must not receive another ten-call allowance. */
+const READY = '__aih_birth_feed_ready_v1__'
+export const BIRTH_FEED_QUOTA_TTL_SECONDS = 48 * 60 * 60
+/** Finish is bounded at 55m. Retention is much longer, so active retries
+ * cannot gain quota from expiration; old run counters do not accumulate. */
 export const RESERVE_BIRTH_FEED_CALL = `
 local calls = redis.call('INCR', KEYS[1])
+if calls == 1 then redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2])) end
 if calls > tonumber(ARGV[1]) then return 0 end
 return 1
 `
@@ -37,6 +41,11 @@ if not equal(current, expected) and not equal(current, desired) then return 0 en
 redis.call('SADD', KEYS[2], ARGV[3])
 for i=4,#ARGV do redis.call('SADD', KEYS[2], ARGV[i]) end
 redis.call('SET', KEYS[1], ARGV[2])
+return 1
+`
+export const OBSERVE_BIRTH_FEED = `
+if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 0 then return 0 end
+redis.call('SADD', KEYS[1], ARGV[2])
 return 1
 `
 export const MEMBERS_BIRTH_FEED = `
@@ -75,9 +84,34 @@ export function createRedisBirthFeedStore(options: {
 			const result = await evaluate(
 				RESERVE_BIRTH_FEED_CALL,
 				[key],
-				[String(BIRTH_FEED_MAX_CALLS)],
+				[String(BIRTH_FEED_MAX_CALLS), String(BIRTH_FEED_QUOTA_TTL_SECONDS)],
 			)
 			if (result !== 1) throw new BirthFeedFailure('page-cap-exceeded')
+		},
+		async reserveConfirmation(runId) {
+			if (!runId) throw new BirthFeedFailure('run-id-unavailable')
+			const key = `aih:birth-feed:{${encodeURIComponent(options.tenantId)}:run}:v1:${encodeURIComponent(runId)}:confirm-budget`
+			if (
+				(await evaluate(
+					RESERVE_BIRTH_FEED_CALL,
+					[key],
+					[
+						String(OWNER_BIRTH_GUARD_CONFIRMATION_CAP),
+						String(BIRTH_FEED_QUOTA_TTL_SECONDS),
+					],
+				)) !== 1
+			)
+				throw new BirthFeedFailure('confirmation-cap-exceeded')
+		},
+		async observeBorn(journeyId, contactId) {
+			if (
+				(await evaluate(
+					OBSERVE_BIRTH_FEED,
+					[keys(journeyId)[1]!],
+					[READY, contactId],
+				)) !== 1
+			)
+				throw new BirthFeedFailure('membership-unavailable')
 		},
 		async load(journeyId) {
 			const value = await evaluate(LOAD_BIRTH_FEED, keys(journeyId), [READY])

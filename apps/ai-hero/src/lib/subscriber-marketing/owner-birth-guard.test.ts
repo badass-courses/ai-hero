@@ -189,7 +189,17 @@ function harness(world: World) {
 			...(options.maxPages === undefined ? {} : { maxPages: options.maxPages }),
 		})
 	}
-	return { run, ports, posted, recorded, info, warn, scanOwners, readActor }
+	return {
+		run,
+		step,
+		ports,
+		posted,
+		recorded,
+		info,
+		warn,
+		scanOwners,
+		readActor,
+	}
 }
 
 const logged = (
@@ -202,6 +212,173 @@ beforeEach(() => {
 })
 
 describe('the owner-without-birth guard (row 110)', () => {
+	it('lost confirmation step results still cannot perform physical target read 26', async () => {
+		const h = harness({
+			owners: Array.from({ length: 30 }, (_, i) => owner(`lost${i}`)),
+		})
+		let physical = 0
+		h.ports.birthFeed = {
+			reserveConfirmation: async () => {
+				if (++physical > 25) throw new Error('confirmation cap exceeded')
+			},
+			observeBorn: vi.fn(async () => {}),
+			judge: async (subjects) =>
+				new Map(subjects.map((item) => [item, 'missing'])),
+		}
+		h.step.run.mockImplementation(async (id, operation) => {
+			if (id.startsWith('feed-confirm-')) await operation() // simulate lost result
+			return operation()
+		})
+		await expect(h.run()).rejects.toThrow('confirmation cap exceeded')
+		expect(
+			h.readActor.mock.calls.filter((call) => call[1] !== 'contact-directory'),
+		).toHaveLength(25)
+		expect(h.posted).toEqual([])
+		expect(h.recorded).toEqual([])
+	})
+
+	it('an actor older than bootstrap is confirmed and cached, never reposted', async () => {
+		const h = harness({
+			owners: [owner('old-actor')],
+			valuePathActor: {
+				'old-actor': { ok: true, found: true, stateName: 'lessonTwelve' },
+			},
+		})
+		const observed = new Set<string>()
+		const observeBorn = vi.fn(async (_journey: string, id: string) => {
+			observed.add(id)
+		})
+		h.ports.birthFeed = {
+			reserveConfirmation: vi.fn(async () => {}),
+			observeBorn,
+			judge: async (subjects) =>
+				new Map(
+					subjects.map((item) => [
+						item,
+						observed.has(item.owner.contactId) ? 'born' : 'missing',
+					]),
+				),
+		}
+		expect(await h.run()).toMatchObject({
+			born: 1,
+			reposted: 0,
+			birthConfirmations: 1,
+		})
+		expect(observeBorn).toHaveBeenCalledWith(
+			'value-path-skills-course',
+			'old-actor',
+		)
+		expect(h.readActor).toHaveBeenCalledTimes(1)
+		expect(h.posted).toEqual([])
+		expect(h.recorded).toEqual([])
+		await h.run(50, { fresh: true })
+		expect(h.readActor).toHaveBeenCalledTimes(1)
+	})
+
+	it('only 25 feed candidates across pages and journeys are confirmed; no read 26', async () => {
+		const h = withNewsletter(
+			harness({
+				owners: Array.from({ length: 30 }, (_, i) =>
+					owner(
+						`c${String(i).padStart(2, '0')}`,
+						undefined,
+						i % 2
+							? DROVR_EVERGREEN_OFFER_JOURNEY_ID
+							: 'value-path-skills-course',
+					),
+				),
+			}),
+			['n1'],
+		)
+		const reserveConfirmation = vi.fn(async () => {})
+		h.ports.birthFeed = {
+			reserveConfirmation,
+			observeBorn: vi.fn(async () => {}),
+			judge: async (subjects) =>
+				new Map(subjects.map((item) => [item, 'missing'])),
+		}
+		const result = await h.run(10)
+		expect(result).toMatchObject({
+			birthConfirmations: 25,
+			reposted: 25,
+			capHit: true,
+		})
+		expect(
+			h.readActor.mock.calls.filter((call) => call[1] !== 'contact-directory'),
+		).toHaveLength(25)
+		expect(reserveConfirmation).toHaveBeenCalledTimes(25)
+		await h.run(10)
+		expect(reserveConfirmation).toHaveBeenCalledTimes(25)
+	})
+
+	it.each([429, 502, 503, 504, '5xx', 'timeout'] as const)(
+		'a shed %s target confirmation defers all earlier candidates without posts/markers',
+		async (status) => {
+			const h = harness({
+				owners: [owner('a'), owner('b')],
+				valuePathActor: {
+					b: {
+						ok: false,
+						reason: 'unknown',
+						backpressure: { status, retryAfter: '7' },
+					},
+				},
+			})
+			h.ports.birthFeed = {
+				reserveConfirmation: vi.fn(async () => {}),
+				observeBorn: vi.fn(async () => {}),
+				judge: async (subjects) =>
+					new Map(subjects.map((item) => [item, 'missing'])),
+			}
+			expect(await h.run()).toMatchObject({
+				status: 'deferred',
+				reposted: 0,
+				birthConfirmations: 2,
+				backpressure: { status },
+			})
+			expect(h.posted).toEqual([])
+			expect(h.recorded).toEqual([])
+			expect(
+				h.readActor.mock.calls.filter((call) => call[0] === 'b'),
+			).toHaveLength(1)
+		},
+	)
+
+	it('an unreadable target confirmation is never inferred absent or handed to directory', async () => {
+		const h = harness({
+			owners: [owner('unknown')],
+			valuePathActor: { unknown: { ok: false, reason: 'bad shape' } },
+		})
+		h.ports.birthFeed = {
+			reserveConfirmation: vi.fn(async () => {}),
+			observeBorn: vi.fn(async () => {}),
+			judge: async (subjects) =>
+				new Map(subjects.map((item) => [item, 'missing'])),
+		}
+		expect(await h.run()).toMatchObject({
+			unreadable: 1,
+			reposted: 0,
+			birthConfirmations: 1,
+		})
+		expect(h.readActor).toHaveBeenCalledOnce()
+		expect(h.posted).toEqual([])
+	})
+
+	it('a durable confirmation reservation denied before HTTP prevents any repost', async () => {
+		const h = harness({ owners: [owner('lost')] })
+		h.ports.birthFeed = {
+			reserveConfirmation: async () => {
+				throw new Error('confirmation cap exceeded')
+			},
+			observeBorn: vi.fn(async () => {}),
+			judge: async (subjects) =>
+				new Map(subjects.map((item) => [item, 'missing'])),
+		}
+		await expect(h.run()).rejects.toThrow('confirmation cap exceeded')
+		expect(h.readActor).not.toHaveBeenCalled()
+		expect(h.posted).toEqual([])
+	})
+
 	it('feed presence skips per-contact birth/delivery reads; covered absence still checks directory, stops and opt-outs', async () => {
 		const h = harness({
 			owners: [
@@ -219,6 +396,8 @@ describe('the owner-without-birth guard (row 110)', () => {
 			},
 		})
 		h.ports.birthFeed = {
+			reserveConfirmation: vi.fn(async () => {}),
+			observeBorn: vi.fn(async () => {}),
 			judge: async (subjects) =>
 				new Map(
 					subjects.map((item) => [
@@ -241,9 +420,12 @@ describe('the owner-without-birth guard (row 110)', () => {
 		})
 		expect(h.posted.map((event) => event.contactId)).toEqual(['lost'])
 		expect(h.ports.readDelivery).not.toHaveBeenCalled()
-		expect(h.readActor).toHaveBeenCalledTimes(2)
-		for (const call of h.readActor.mock.calls)
-			expect(call[1]).toBe('contact-directory')
+		expect(h.readActor).toHaveBeenCalledTimes(4)
+		expect(
+			h.readActor.mock.calls
+				.filter((call) => call[1] !== 'contact-directory')
+				.map((call) => call[0]),
+		).toEqual(['lost', 'suppressed'])
 	})
 
 	it('a shed directory read in feed mode still suppresses all earlier candidates and markers', async () => {
@@ -254,13 +436,16 @@ describe('the owner-without-birth guard (row 110)', () => {
 			},
 		})
 		h.ports.birthFeed = {
+			reserveConfirmation: vi.fn(async () => {}),
+			observeBorn: vi.fn(async () => {}),
 			judge: async (subjects) =>
 				new Map(subjects.map((item) => [item, 'missing'])),
 		}
 		expect(await h.run()).toMatchObject({
 			status: 'deferred',
 			reposted: 0,
-			candidates: 1,
+			candidates: 2,
+			birthConfirmations: 2,
 		})
 		expect(h.posted).toEqual([])
 		expect(h.recorded).toEqual([])
@@ -269,6 +454,8 @@ describe('the owner-without-birth guard (row 110)', () => {
 	it('cache/membership failure does not switch to per-contact reads or enter reposting', async () => {
 		const h = harness({ owners: [owner('lost')] })
 		h.ports.birthFeed = {
+			reserveConfirmation: vi.fn(async () => {}),
+			observeBorn: vi.fn(async () => {}),
 			judge: async () => {
 				throw new Error('membership unavailable')
 			},
@@ -282,6 +469,8 @@ describe('the owner-without-birth guard (row 110)', () => {
 	it('known repost markers consume no directory reads in feed mode', async () => {
 		const h = harness({ owners: [owner('lost')], reposted: ['owner-lost'] })
 		h.ports.birthFeed = {
+			reserveConfirmation: vi.fn(async () => {}),
+			observeBorn: vi.fn(async () => {}),
 			judge: async (subjects) =>
 				new Map(subjects.map((item) => [item, 'missing'])),
 		}

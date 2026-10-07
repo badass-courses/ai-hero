@@ -208,7 +208,11 @@ describe('the owner birth guard clamps a re-post at its run start (row 201g)', (
 
 	it('registers singleton skip with concurrency one so overlapping cron ticks are dropped, not queued', () => {
 		expect(drovrOwnerBirthGuard).toMatchObject({
-			config: { concurrency: [{ limit: 1 }], singleton: { mode: 'skip' } },
+			config: {
+				concurrency: [{ limit: 1 }],
+				singleton: { mode: 'skip' },
+				timeouts: { finish: '55m' },
+			},
 			trigger: { cron: '40 * * * *' },
 		})
 	})

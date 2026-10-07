@@ -17,6 +17,7 @@ export const drovrOwnerBirthGuard = inngest.createFunction(
 		concurrency: [{ limit: 1 }],
 		// Drop overlapping hourly ticks, including during durable sleep.
 		singleton: { mode: 'skip' },
+		timeouts: { finish: '55m' },
 	},
 	{ cron: '40 * * * *' },
 	async ({ step, runId }) => {

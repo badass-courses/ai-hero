@@ -74,6 +74,10 @@ function harness() {
 			if (++quota > BIRTH_FEED_MAX_CALLS)
 				throw new BirthFeedFailure('page-cap-exceeded')
 		}),
+		reserveConfirmation: vi.fn(async () => {}),
+		observeBorn: vi.fn(async (journeyId, contactId) => {
+			memberships.get(journeyId)?.add(contactId)
+		}),
 		load: vi.fn(async (id) => checkpoints.get(id) ?? null),
 		consume: vi.fn(async ({ journeyId, checkpoint, contactIds }) => {
 			const seen = memberships.get(journeyId) ?? new Set<string>()

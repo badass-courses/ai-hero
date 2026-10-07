@@ -144,6 +144,8 @@ export interface BirthFeedStore {
 	/** Called inside every physical read callback, never in a separate cached
 	 * step: lost SDK results/re-execution must also spend the shared quota. */
 	reserveCall(runId: string): Promise<void>
+	reserveConfirmation(runId: string): Promise<void>
+	observeBorn(journeyId: string, contactId: string): Promise<void>
 	load(journeyId: string): Promise<BirthFeedCheckpoint | null>
 	consume(args: {
 		journeyId: string
@@ -158,6 +160,8 @@ export interface BirthFeedStore {
 }
 export type BirthFeedVerdict = 'born' | 'missing' | 'unknown'
 export interface BirthFeedProof {
+	reserveConfirmation(): Promise<void>
+	observeBorn(journeyId: string, contactId: string): Promise<void>
 	judge(
 		subjects: readonly OwnerBirthSubject[],
 	): Promise<ReadonlyMap<OwnerBirthSubject, BirthFeedVerdict>>
@@ -247,6 +251,9 @@ export async function prepareBirthFeed(args: {
 		kind: 'ready',
 		calls,
 		proof: {
+			reserveConfirmation: () => args.store.reserveConfirmation(args.runId),
+			observeBorn: (journeyId, contactId) =>
+				args.store.observeBorn(journeyId, contactId),
 			async judge(subjects) {
 				const result = new Map<OwnerBirthSubject, BirthFeedVerdict>()
 				for (const [journeyId, checkpoint] of caughtUp) {
