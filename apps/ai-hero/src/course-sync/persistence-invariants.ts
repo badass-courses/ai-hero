@@ -1,5 +1,6 @@
 import { stableJson } from './control-plane'
 import { CourseSyncError } from './errors'
+import { mergeCourseSyncResourceFields } from './resource-fields'
 import {
 	managedChildContractFor,
 	managedSectionKind,
@@ -124,7 +125,12 @@ export function resolveCourseSyncRollbackFields(input: {
 				{ category: 'lifecycle_conflict', retryable: false },
 			)
 		}
-		return input.previousVersionFields
+		// Roll back sync-owned content, not operator scheduling. The parent
+		// version can predate an operator edit made through PUT /api/resources.
+		return mergeCourseSyncResourceFields(
+			{ sourceKind: input.sourceKind, fields: input.previousVersionFields },
+			input.currentFields,
+		)
 	}
 	const courseSync = input.currentFields.courseSync as
 		| Record<string, unknown>

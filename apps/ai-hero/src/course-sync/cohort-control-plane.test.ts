@@ -234,8 +234,13 @@ describe('synthetic cohort-anchored syllabus (S4b)', () => {
 			timezone: 'America/Los_Angeles',
 			operatorNote: 'Keep this too',
 		})
-		const source = syllabus('title-after')
-		source.sections[0]!.title = 'Updated title'
+		const originalSource = syllabus('title-after')
+		const source: CourseJsonDocumentV3 = {
+			...originalSource,
+			sections: originalSource.sections.map((section, index) =>
+				index === 0 ? { ...section, title: 'Updated title' } : section,
+			),
+		}
 		const next = await test.stage(source, 'after')
 		expect(
 			next.plan.resources.find(
@@ -260,6 +265,21 @@ describe('synthetic cohort-anchored syllabus (S4b)', () => {
 		expect(
 			test.persistence.versions.get(applied.currentVersionId!)?.fields,
 		).toEqual(applied.fields)
+		// The parent version predates the operator's scheduling edits. Restoring
+		// the source title must not restore its missing or outdated dates.
+		await test.plane.rollback({
+			runId: next.run.runId,
+			idempotencyKey: 'rollback-after',
+		})
+		const restored = test.persistence.resources.get(workshop.targetResourceId)!
+		expect(restored.fields).toMatchObject({
+			title: 'Keep 0',
+			startsAt: '2026-12-09T08:01:00.000Z',
+			endsAt: null,
+			timezone: 'America/Los_Angeles',
+			releasePolicy: { mode: 'scheduled' },
+		})
+		expect(restored.fields).not.toHaveProperty('operatorNote')
 	})
 
 	it('still rejects source-owned title edits after preview', async () => {
