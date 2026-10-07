@@ -281,6 +281,7 @@ export function verifyCourseSyncActivation(
 	relations: ReadonlyArray<CourseSyncRelationReadback>,
 	expectedDeletedAtByResource: ReadonlyMap<string, Date>,
 	scope?: CourseSyncRelationScope,
+	expectedFieldsByResource?: ReadonlyMap<string, Record<string, unknown>>,
 ): { ok: true } | { ok: false; resourceId: string; reason: string } {
 	if (resources.length !== plan.resources.length) {
 		return { ok: false, resourceId: '', reason: 'resource_count_mismatch' }
@@ -297,7 +298,8 @@ export function verifyCourseSyncActivation(
 		if (resource.currentVersionId !== receipt.contentResourceVersionId) {
 			return { ok: false, resourceId, reason: 'pointer_mismatch' }
 		}
-		if (stableJson(resource.fields ?? {}) !== stableJson(item.fields)) {
+		const expectedFields = expectedFieldsByResource?.get(resourceId) ?? item.fields
+		if (stableJson(resource.fields ?? {}) !== stableJson(expectedFields)) {
 			return { ok: false, resourceId, reason: 'fields_mismatch' }
 		}
 	}

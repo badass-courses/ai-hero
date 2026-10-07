@@ -169,6 +169,12 @@ describe('synthetic cohort-anchored syllabus (S4b)', () => {
 			).toBe(true)
 		}
 		await test.apply(first.run.runId, 'apply-first')
+		for (const workshop of workshops) {
+			const fields = test.persistence.resources.get(workshop.targetResourceId)!.fields
+			expect(fields).not.toHaveProperty('startsAt')
+			expect(fields).not.toHaveProperty('endsAt')
+			expect(fields).not.toHaveProperty('timezone')
+		}
 		expect(() =>
 			assertCourseSyncTargetContract(binding, test.targetFacts()),
 		).not.toThrow()
@@ -179,6 +185,77 @@ describe('synthetic cohort-anchored syllabus (S4b)', () => {
 		expect(
 			nextTick.plan.resources.every((item) => item.action === 'retain'),
 		).toBe(true)
+	})
+
+	it('retains scheduled workshops without reporting operator-only edits as source changes', async () => {
+		const test = harness()
+		const first = await test.stage(syllabus('schedule-before'), 'before')
+		await test.apply(first.run.runId, 'apply-before')
+		const workshop = first.plan.resources.find((item) => item.sourceKind === 'workshop')!
+		const resource = test.persistence.resources.get(workshop.targetResourceId)!
+		const versionId = resource.currentVersionId
+		const schedule = {
+			startsAt: '2026-11-09T08:01:00.000Z',
+			endsAt: '2026-11-10T08:01:00.000Z',
+			timezone: 'America/Los_Angeles',
+			publishedAt: '2026-11-01T00:00:00.000Z',
+			releasePolicy: { mode: 'scheduled' },
+		}
+		Object.assign(resource.fields, schedule)
+		const next = await test.stage(syllabus('schedule-after'), 'after')
+		expect(next.plan.resources.every((item) => item.action === 'retain')).toBe(true)
+		expect(next.preview.resourceCounts).toMatchObject({ update: 0 })
+		// Even a scheduling edit after preview must not require another stage.
+		resource.fields.startsAt = '2026-12-09T08:01:00.000Z'
+		const expectedSchedule = { ...schedule, startsAt: resource.fields.startsAt }
+		await test.apply(next.run.runId, 'apply-after')
+		const applied = test.persistence.resources.get(workshop.targetResourceId)!
+		expect(applied.fields).toMatchObject(expectedSchedule)
+		expect(applied.currentVersionId).toBe(versionId)
+	})
+
+	it('merges the latest operator fields when a source title changes and versions the merged fields', async () => {
+		const test = harness()
+		const first = await test.stage(syllabus('title-before'), 'before')
+		await test.apply(first.run.runId, 'apply-before')
+		const workshop = first.plan.resources.find((item) => item.sourceKind === 'workshop')!
+		const resource = test.persistence.resources.get(workshop.targetResourceId)!
+		Object.assign(resource.fields, {
+			startsAt: '2026-11-09T08:01:00.000Z',
+			endsAt: '2026-11-10T08:01:00.000Z',
+			timezone: 'America/Los_Angeles',
+			operatorNote: 'Keep this too',
+		})
+		const source = syllabus('title-after')
+		source.sections[0]!.title = 'Updated title'
+		const next = await test.stage(source, 'after')
+		expect(next.plan.resources.find((item) => item.targetResourceId === workshop.targetResourceId)?.action).toBe('update')
+		// Resolve additions, edits and removals from the row at apply time.
+		resource.fields.startsAt = '2026-12-09T08:01:00.000Z'
+		resource.fields.endsAt = null
+		delete resource.fields.operatorNote
+		resource.fields.releasePolicy = { mode: 'scheduled' }
+		await test.apply(next.run.runId, 'apply-after')
+		const applied = test.persistence.resources.get(workshop.targetResourceId)!
+		expect(applied.fields).toMatchObject({
+			title: 'Updated title',
+			startsAt: '2026-12-09T08:01:00.000Z',
+			endsAt: null,
+			timezone: 'America/Los_Angeles',
+			releasePolicy: { mode: 'scheduled' },
+		})
+		expect(applied.fields).not.toHaveProperty('operatorNote')
+		expect(test.persistence.versions.get(applied.currentVersionId!)?.fields).toEqual(applied.fields)
+	})
+
+	it('still rejects source-owned title edits after preview', async () => {
+		const test = harness()
+		const first = await test.stage(syllabus('drift-before'), 'before')
+		await test.apply(first.run.runId, 'apply-before')
+		const next = await test.stage(syllabus('drift-after'), 'after')
+		const workshop = next.plan.resources.find((item) => item.sourceKind === 'workshop')!
+		test.persistence.resources.get(workshop.targetResourceId)!.fields.title = 'Unexpected manual title'
+		await expect(test.apply(next.run.runId, 'apply-after')).rejects.toMatchObject({ code: 'APPLY_TARGET_CHANGED' })
 	})
 
 	it('drops eight ARCHIVE workshops and their placeholder lessons, compacts to seven (T10)', async () => {

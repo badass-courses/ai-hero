@@ -10,6 +10,7 @@ import {
 import { CourseSyncError, asCourseSyncError } from './errors'
 import { evaluateCourseSyncBoundedAutoApply } from './persistence-invariants'
 import { extractQuizQuestions } from './quiz-question-extraction'
+import { courseSyncSourceFields } from './resource-fields'
 import {
 	anchorResourceId,
 	getServerCourseSyncBinding,
@@ -961,8 +962,10 @@ export function createCourseSyncControlPlane(
 				const action = !snapshot
 					? 'create'
 					: !previous ||
-						  stableJson(previous.fields) !== stableJson(item.fields) ||
-						  stableJson(snapshot.fields) !== stableJson(item.fields) ||
+						  stableJson(courseSyncSourceFields(item.sourceKind, previous.fields)) !==
+							  stableJson(courseSyncSourceFields(item.sourceKind, item.fields)) ||
+						  stableJson(courseSyncSourceFields(item.sourceKind, snapshot.fields)) !==
+							  stableJson(courseSyncSourceFields(item.sourceKind, item.fields)) ||
 						  previous.parentResourceId !== item.parentResourceId ||
 						  previous.position !== item.position ||
 						  previous.detached !== item.detached
@@ -977,7 +980,7 @@ export function createCourseSyncControlPlane(
 						snapshot?.currentVersionId ??
 						null,
 					previousFieldsSha256: snapshot
-						? sha256(stableJson(snapshot.fields))
+						? sha256(stableJson(courseSyncSourceFields(item.sourceKind, snapshot.fields)))
 						: null,
 					previousParentResourceId: previous?.parentResourceId ?? null,
 					previousPosition: previous?.position ?? null,

@@ -34,6 +34,7 @@ import {
 	verifyCourseSyncRelations,
 } from './persistence-invariants'
 import { assertAdoptableSolutionResource } from './solution-adoption'
+import { courseSyncSourceFields, mergeCourseSyncResourceFields } from './resource-fields'
 import { assertCourseSyncTargetContract } from './target-contract'
 import { anchorResourceId, getServerCourseSyncBinding } from './types'
 import type {
@@ -956,9 +957,13 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			> = []
 			const expectedDeletedAtByResource = new Map<string, Date>()
 			const pointerPromotions: Array<typeof contentResource.$inferInsert> = []
+			const expectedFieldsByResource = new Map<string, Record<string, unknown>>()
 
 			for (const item of plan.resources) {
 				const existing = existingById.get(item.targetResourceId)
+				// Resolve operator fields from the locked row, not the staged plan.
+				const appliedFields = mergeCourseSyncResourceFields(item, existing?.fields ?? {})
+				expectedFieldsByResource.set(item.targetResourceId, appliedFields)
 				if (item.action === 'create') {
 					if (existing) {
 						throw new CourseSyncError(
@@ -1060,7 +1065,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 							: item.previousVersionId
 					if (
 						existing.currentVersionId !== expectedCurrentVersionId ||
-						sha256(stableJson(existing.fields ?? {})) !==
+						sha256(stableJson(courseSyncSourceFields(item.sourceKind, existing.fields ?? {}))) !==
 							item.previousFieldsSha256
 					) {
 						throw new CourseSyncError(
@@ -1136,7 +1141,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 						stableJson({
 							runId,
 							resourceId: item.targetResourceId,
-							fields: item.fields,
+							fields: appliedFields,
 						}),
 					)}`
 					versions.push({
@@ -1144,14 +1149,14 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 						resourceId: item.targetResourceId,
 						parentVersionId,
 						versionNumber: nextVersionNumber,
-						fields: item.fields,
+						fields: appliedFields,
 						createdById,
 					})
 					pointerPromotions.push({
 						id: item.targetResourceId,
 						type: resourceType(item.sourceKind),
 						createdById,
-						fields: item.fields,
+						fields: appliedFields,
 						currentVersionId: contentResourceVersionId,
 					})
 				} else if (!contentResourceVersionId) {
@@ -1289,6 +1294,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				activatedRelations,
 				expectedDeletedAtByResource,
 				relationScope,
+				expectedFieldsByResource,
 			)
 			if (!activation.ok) {
 				throw new CourseSyncError(
