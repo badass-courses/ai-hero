@@ -1,5 +1,9 @@
 import { Effect } from 'effect'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { findEvergreenOffer } from './drovr-personalize'
+import { acceptDrovrIntent, type DrovrIntent } from './drovr-executor'
+import { executePendingEvergreenSends } from './drovr-evergreen-sender'
+import { EVERGREEN_KIT_SEQUENCES } from './drovr-evergreen'
 
 import {
 	deadlineDisplay,
@@ -35,6 +39,23 @@ class FakeRepository implements CouponIssuerRepository {
 	intents = new Map<string, SideEffectIntent>()
 	findContactById(id: string) {
 		return this.contacts.get(id)
+	}
+	findSideEffectIntentByIdempotencyKey(key: string) {
+		return [...this.intents.values()].find(
+			(intent) => intent.idempotencyKey === key,
+		)
+	}
+	createSideEffectIntent(input: SideEffectIntent) {
+		if (this.findSideEffectIntentByIdempotencyKey(input.idempotencyKey))
+			throw new Error('synthetic unique-key collision')
+		this.intents.set(input.id, input)
+		return input
+	}
+	findValuePathEmailSideEffectIntentsByContact() {
+		return []
+	}
+	findContactEventsByType() {
+		return []
 	}
 	findPendingSideEffectIntentsByType(
 		type: SideEffectIntent['type'],
@@ -150,7 +171,9 @@ describe('issue intent and offer fields', () => {
 
 	it('accepts a drovr-pinned UTC+14 zone even when its source is fallback', () => {
 		const acceptedByIntl = 'Pacific/Kiritimati'
-		expect(() => new Intl.DateTimeFormat('en-US', { timeZone: acceptedByIntl })).not.toThrow()
+		expect(
+			() => new Intl.DateTimeFormat('en-US', { timeZone: acceptedByIntl }),
+		).not.toThrow()
 		expect(
 			issueIntentFor('contact-1', {
 				...payload,
@@ -216,7 +239,9 @@ describe('the deadline format switch', () => {
 	it('reads only an exact "true"; anything else keeps today\'s text', () => {
 		expect(evergreenDeadlineFormat({})).toBe('legacy')
 		expect(
-			evergreenDeadlineFormat({ AIH_EVERGREEN_DEADLINE_FORMAT_V2_ENABLED: '1' }),
+			evergreenDeadlineFormat({
+				AIH_EVERGREEN_DEADLINE_FORMAT_V2_ENABLED: '1',
+			}),
 		).toBe('legacy')
 		expect(
 			evergreenDeadlineFormat({
@@ -225,7 +250,7 @@ describe('the deadline format switch', () => {
 		).toBe('absolute')
 	})
 
-	it('off (the deploy default): the Kit fields are byte-for-byte today\'s', () => {
+	it("off (the deploy default): the Kit fields are byte-for-byte today's", () => {
 		const before = process.env.AIH_EVERGREEN_DEADLINE_FORMAT_V2_ENABLED
 		delete process.env.AIH_EVERGREEN_DEADLINE_FORMAT_V2_ENABLED
 		try {
@@ -268,19 +293,26 @@ describe('the deadline format switch', () => {
 
 describe('executePendingEvergreenCoupons', () => {
 	const run = async (input: {
-		issue: () => Effect.Effect<typeof issued, EffectApplicationError>
+		issue: (
+			intent: ReturnType<typeof issueIntentFor>,
+		) => Effect.Effect<typeof issued, EffectApplicationError>
 		writeFields?: () => Promise<void>
 		attempts?: number
+		kitIdentity?: 'present' | 'absent'
 	}) => {
 		const repository = new FakeRepository()
 		repository.contacts.set('contact-1', contact())
 		repository.intents.set(
 			'row-1',
-			row(
-				input.attempts === undefined
-					? {}
-					: { metadata: { ...row().metadata, attempts: input.attempts } },
-			),
+			row({
+				metadata: {
+					...row().metadata,
+					...(input.attempts === undefined ? {} : { attempts: input.attempts }),
+					...(input.kitIdentity === 'absent'
+						? { kitSubscriberId: undefined }
+						: {}),
+				},
+			}),
 		)
 		const written: unknown[] = []
 		const dispatched: SideEffectIntent[] = []
@@ -298,6 +330,7 @@ describe('executePendingEvergreenCoupons', () => {
 			dispatch: (intent) => dispatched.push(intent),
 		})
 		return {
+			repository,
 			results,
 			row: repository.intents.get('row-1')!,
 			written,
@@ -329,9 +362,346 @@ describe('executePendingEvergreenCoupons', () => {
 		expect(out.row).toMatchObject({
 			status: 'completed',
 			completedAt: now,
-			metadata: { couponId: 'eoj-coupon:abc', expiresAt: payload.expiresAt },
+			metadata: {
+				couponId: 'eoj-coupon:abc',
+				expiresAt: payload.expiresAt,
+				kitOfferFieldsWrittenAt: now,
+				kitOfferFieldsEmail: 'learner@example.com',
+			},
 		})
 		expect(out.dispatched.map((d) => d.status)).toEqual(['completed'])
+	})
+
+	it('issues without Kit identity, keeps contact-based authority identity, and serves the completed offer', async () => {
+		const issue = vi.fn(() => Effect.succeed(issued))
+		const out = await run({
+			issue,
+			kitIdentity: 'absent',
+			writeFields: async () => {
+				throw new Error('Kit must not be called')
+			},
+		})
+		expect(out.results).toMatchObject([
+			{ status: 'completed', couponId: 'eoj-coupon:abc' },
+		])
+		expect(issue).toHaveBeenCalledWith(
+			expect.objectContaining({
+				contactId: 'contact-1',
+				idempotencyKey: 'evergreen-offer:drovr:contact-1:coupon.issue',
+			}),
+		)
+		expect(out.row.metadata.kitSubscriberId).toBeUndefined()
+		expect(out.row.metadata.kitOfferFieldsWrittenAt).toBeNull()
+		expect(out.row.metadata.kitOfferFieldsEmail).toBeNull()
+		expect(out.dispatched).toEqual([out.row])
+		expect(
+			await findEvergreenOffer({
+				repository: {
+					findSideEffectIntentByIdempotencyKey: (key) =>
+						key === out.row.idempotencyKey ? out.row : undefined,
+				},
+				contactId: 'contact-1',
+				origin: 'https://www.aihero.dev',
+			}),
+		).toMatchObject({
+			couponId: 'eoj-coupon:abc',
+			variables: { aih_evergreen_offer_price: '$199' },
+		})
+	})
+
+	it('keeps authority transient retries without Kit identity and never attempts Kit fields', async () => {
+		const fields = vi.fn(async () => {
+			throw new Error('Kit must not be called')
+		})
+		const out = await run({
+			kitIdentity: 'absent',
+			writeFields: fields,
+			issue: () =>
+				Effect.fail({
+					type: 'EffectTransientUnavailable',
+					reason: 'clock-unavailable',
+				}),
+		})
+		expect(out.results).toMatchObject([{ status: 'retry', attempts: 1 }])
+		expect(out.dispatched).toEqual([])
+		expect(fields).not.toHaveBeenCalled()
+	})
+
+	it.each(['EffectPermanentRefusal', 'EffectAmbiguous'] as const)(
+		'keeps %s without Kit identity',
+		async (type) => {
+			const out = await run({
+				kitIdentity: 'absent',
+				issue: () =>
+					Effect.fail({
+						type,
+						reason:
+							type === 'EffectAmbiguous'
+								? 'commerce-transaction-unresolved'
+								: 'merchant-coupon-conflict',
+					}),
+			})
+			expect(out.row).toMatchObject({
+				status: 'failed',
+				reviewReasons: [`coupon-${type}`],
+			})
+		},
+	)
+
+	it('does not reissue or redispatch a completed no-Kit row on a second drain', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		repository.intents.set(
+			'row-1',
+			row({ metadata: { ...row().metadata, kitSubscriberId: undefined } }),
+		)
+		const issue = vi.fn(() => Effect.succeed(issued))
+		const writeFields = vi.fn(async () => {
+			throw new Error('Kit must not be called')
+		})
+		const dispatch = vi.fn()
+		const args = {
+			repository,
+			authority: { issue },
+			writeFields,
+			dispatch,
+			origin: 'https://www.aihero.dev',
+			limit: 10,
+			now: () => now,
+		}
+		expect(await executePendingEvergreenCoupons(args)).toMatchObject([
+			{ status: 'completed' },
+		])
+		expect(await executePendingEvergreenCoupons(args)).toEqual([])
+		expect(issue).toHaveBeenCalledOnce()
+		expect(dispatch).toHaveBeenCalledOnce()
+		expect(writeFields).not.toHaveBeenCalled()
+	})
+
+	const pitchIntent = (messageId: string): DrovrIntent => ({
+		tenantId: 'org-aihero',
+		contactId: 'contact-1',
+		journeyId: 'crash-course-evergreen-offer',
+		kind: 'email.send',
+		idempotencyKey: `pitch-test:${messageId}`,
+		dueAt: now,
+		payload: { messageId },
+	})
+
+	it.each(
+		EVERGREEN_KIT_SEQUENCES.filter((sequence) => sequence.slot.startsWith('P')),
+	)(
+		'blocks a blank no-Kit pitch at $slot before creating or enrolling a send',
+		async ({ messageId }) => {
+			const out = await run({
+				kitIdentity: 'absent',
+				issue: () => Effect.succeed(issued),
+			})
+			const result = await acceptDrovrIntent({
+				repository: out.repository,
+				intent: pitchIntent(messageId),
+				now,
+				evergreen: { enabled: true },
+			})
+			expect(result).toEqual({
+				status: 'blocked',
+				reviewReasons: ['evergreen-offer-fields-not-in-kit'],
+			})
+			expect(out.repository.intents.size).toBe(1)
+			const subscribe = vi.fn(async () => {
+				throw new Error('blank Kit pitch forbidden')
+			})
+			expect(
+				await executePendingEvergreenSends({
+					repository: out.repository,
+					subscribe,
+					limit: 10,
+					dispatch: () => {},
+				}),
+			).toEqual([])
+			expect(subscribe).not.toHaveBeenCalled()
+		},
+	)
+
+	const legacyCoupon = (coupon: SideEffectIntent): SideEffectIntent => {
+		const metadata = { ...coupon.metadata }
+		delete metadata.kitOfferFieldsWrittenAt
+		delete metadata.kitOfferFieldsEmail
+		return { ...coupon, metadata }
+	}
+
+	it.each(
+		EVERGREEN_KIT_SEQUENCES.filter((sequence) => sequence.slot.startsWith('P')),
+	)(
+		'accepts legacy proof with matching current Kit identity at $slot and enrolls once',
+		async ({ messageId }) => {
+			const out = await run({ issue: () => Effect.succeed(issued) })
+			const legacy = legacyCoupon(out.row)
+			out.repository.intents.set(legacy.id, legacy)
+			const identity = vi.fn(async () => '4298556847')
+			expect(
+				await acceptDrovrIntent({
+					repository: out.repository,
+					intent: pitchIntent(messageId),
+					now,
+					evergreen: { enabled: true },
+					findKitSubscriberId: identity,
+				}),
+			).toMatchObject({ status: 'accepted' })
+			expect(identity).toHaveBeenCalledOnce()
+			expect(identity).toHaveBeenCalledWith('contact-1')
+			const subscribe = vi.fn(async () => 'synthetic accepted')
+			expect(
+				await executePendingEvergreenSends({
+					repository: out.repository,
+					subscribe,
+					limit: 10,
+					dispatch: () => {},
+				}),
+			).toMatchObject([{ status: 'completed' }])
+			expect(
+				await executePendingEvergreenSends({
+					repository: out.repository,
+					subscribe,
+					limit: 10,
+					dispatch: () => {},
+				}),
+			).toEqual([])
+			expect(subscribe).toHaveBeenCalledOnce()
+			expect(out.repository.intents.get(legacy.id)).toEqual(legacy)
+			expect(
+				Object.prototype.hasOwnProperty.call(
+					legacy.metadata,
+					'kitOfferFieldsWrittenAt',
+				),
+			).toBe(false)
+		},
+	)
+
+	it.each([
+		{ stored: '4298556847', current: 'different-kit-id' },
+		{ stored: '4298556847', current: undefined },
+		{ stored: undefined, current: '4298556847' },
+		{ stored: '', current: '4298556847' },
+	])(
+		'blocks legacy proof with missing/drifted Kit identity ($stored / $current)',
+		async ({ stored, current }) => {
+			const out = await run({ issue: () => Effect.succeed(issued) })
+			const legacy = legacyCoupon(out.row)
+			legacy.metadata.kitSubscriberId = stored
+			out.repository.intents.set(legacy.id, legacy)
+			expect(
+				await acceptDrovrIntent({
+					repository: out.repository,
+					intent: pitchIntent('pitch_open_product_origin_v1'),
+					now,
+					evergreen: { enabled: true },
+					findKitSubscriberId: async () => current,
+				}),
+			).toMatchObject({
+				status: 'blocked',
+				reviewReasons: ['evergreen-offer-fields-not-in-kit'],
+			})
+			expect(out.repository.intents.size).toBe(1)
+		},
+	)
+
+	it.each([undefined, null, 'invalid-time'])(
+		'blocks a present invalid marker (%s), even with matching Kit identity',
+		async (marker) => {
+			const out = await run({ issue: () => Effect.succeed(issued) })
+			out.repository.intents.set(out.row.id, {
+				...out.row,
+				metadata: { ...out.row.metadata, kitOfferFieldsWrittenAt: marker },
+			})
+			expect(
+				await acceptDrovrIntent({
+					repository: out.repository,
+					intent: pitchIntent('pitch_open_product_origin_v1'),
+					now,
+					evergreen: { enabled: true },
+					findKitSubscriberId: async () => '4298556847',
+				}),
+			).toMatchObject({
+				status: 'blocked',
+				reviewReasons: ['evergreen-offer-fields-not-in-kit'],
+			})
+		},
+	)
+
+	it('blocks a pitch after the contact email changes away from the Kit field write', async () => {
+		const out = await run({ issue: () => Effect.succeed(issued) })
+		out.repository.contacts.set('contact-1', {
+			...contact(),
+			email: 'other@example.test',
+		})
+		expect(
+			await acceptDrovrIntent({
+				repository: out.repository,
+				intent: pitchIntent('pitch_open_product_origin_v1'),
+				now,
+				evergreen: { enabled: true },
+			}),
+		).toMatchObject({ status: 'blocked' })
+	})
+
+	it('accepts and sends a Kit pitch only after the coupon successfully wrote matching Kit fields', async () => {
+		const out = await run({ issue: () => Effect.succeed(issued) })
+		expect(
+			await acceptDrovrIntent({
+				repository: out.repository,
+				intent: pitchIntent('pitch_open_product_origin_v1'),
+				now,
+				evergreen: { enabled: true },
+			}),
+		).toMatchObject({ status: 'accepted' })
+		const subscribe = vi.fn(async () => 'synthetic accepted')
+		expect(
+			await executePendingEvergreenSends({
+				repository: out.repository,
+				subscribe,
+				limit: 10,
+				dispatch: () => {},
+			}),
+		).toMatchObject([{ status: 'completed', kitSequenceId: '2887682' }])
+		expect(subscribe).toHaveBeenCalledOnce()
+		// A settled send only replays its receipt, even if later field proof is lost.
+		out.repository.intents.set(out.row.id, {
+			...out.row,
+			metadata: { ...out.row.metadata, kitOfferFieldsWrittenAt: null },
+		})
+		expect(
+			await acceptDrovrIntent({
+				repository: out.repository,
+				intent: pitchIntent('pitch_open_product_origin_v1'),
+				now,
+				evergreen: { enabled: true },
+			}),
+		).toMatchObject({ status: 'completed' })
+		expect(
+			await executePendingEvergreenSends({
+				repository: out.repository,
+				subscribe,
+				limit: 10,
+				dispatch: () => {},
+			}),
+		).toEqual([])
+		expect(subscribe).toHaveBeenCalledOnce()
+	})
+
+	it('still accepts bridge messages without Kit offer fields', async () => {
+		const out = await run({
+			kitIdentity: 'absent',
+			issue: () => Effect.succeed(issued),
+		})
+		expect(
+			await acceptDrovrIntent({
+				repository: out.repository,
+				intent: pitchIntent('bridge_can_engineer_v1'),
+				now,
+				evergreen: { enabled: true },
+			}),
+		).toMatchObject({ status: 'accepted' })
 	})
 
 	it('goes terminal on a permanent refusal and on an ambiguous outcome', async () => {
@@ -377,9 +747,10 @@ describe('executePendingEvergreenCoupons', () => {
 			},
 		})
 		expect(kitDown.dispatched).toEqual([])
+		expect(kitDown.row.metadata.kitOfferFieldsWrittenAt).toBeUndefined()
 	})
 
-	it('fails a row without a Kit subscriber or with an unreadable offer', async () => {
+	it('fails a row without a contact email or with an unreadable offer', async () => {
 		const repository = new FakeRepository()
 		repository.intents.set(
 			'row-1',
@@ -403,7 +774,7 @@ describe('executePendingEvergreenCoupons', () => {
 		})
 		expect(results.map((r) => r.status)).toEqual(['failed', 'failed'])
 		expect(repository.intents.get('row-1')?.reviewReasons).toEqual([
-			'kit-subscriber-missing',
+			'contact-email-missing',
 		])
 		expect(repository.intents.get('row-2')?.reviewReasons).toEqual([
 			'coupon-offer-payload-invalid',

@@ -930,11 +930,34 @@ async function acceptEvergreenSend(args: {
 
 	const existing =
 		await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
+	// Already settled sends only replay their receipt; they cannot send again.
+	if (existing && (existing.status === 'completed' || existing.status === 'failed')) return existingResult(existing)
+	let kitSubscriberId: string | undefined
+	if (sequence.slot.startsWith('P')) {
+		const refused: DrovrExecutorResult = { status: 'blocked', ...(existing ? { intentId: existing.id } : {}), reviewReasons: ['evergreen-offer-fields-not-in-kit'] }
+		const coupon = await args.repository.findSideEffectIntentByIdempotencyKey(`contact:${contact.id}:evergreen:coupon`)
+		const couponKitId = stringField(coupon?.metadata.kitSubscriberId)
+		if (
+			coupon?.status !== 'completed' ||
+			coupon.type !== ISSUE_EVERGREEN_COUPON_INTENT_TYPE ||
+			coupon.contactId !== contact.id ||
+			!contact.email?.trim() ||
+			!couponKitId
+		) return refused
+
+		if (Object.prototype.hasOwnProperty.call(coupon.metadata, 'kitOfferFieldsWrittenAt')) {
+			const writtenAt = stringField(coupon.metadata.kitOfferFieldsWrittenAt)
+			if (!writtenAt || !Number.isFinite(Date.parse(writtenAt)) || coupon.metadata.kitOfferFieldsEmail !== contact.email.trim().toLowerCase()) return refused
+		} else {
+			// Pre-C1 completion required a successful Kit field write. Trust that
+			// legacy proof only while the original subscriber identity still matches.
+			kitSubscriberId = await args.findKitSubscriberId?.(contact.id)
+			if (kitSubscriberId !== couponKitId) return refused
+		}
+	}
 	if (existing) return existingResult(existing)
 
-	const kitSubscriberId = args.findKitSubscriberId
-		? await args.findKitSubscriberId(contact.id)
-		: undefined
+	kitSubscriberId ??= await args.findKitSubscriberId?.(contact.id)
 	let created: SideEffectIntent
 	try {
 		created = await args.repository.createSideEffectIntent({
