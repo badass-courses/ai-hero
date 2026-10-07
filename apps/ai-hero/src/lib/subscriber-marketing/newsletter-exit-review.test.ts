@@ -193,20 +193,27 @@ describe('Opus newsletter lifecycle regressions', () => {
 		expect(fetch).not.toHaveBeenCalled()
 	})
 
-	it('M2 unowned list handoffs retain the prior subscribe/backfill completion', async () => {
+	it('M2 unowned legacy list handoffs record completion without Kit subscribe/backfill writes', async () => {
+		vi.stubEnv('AIH_SHADOW_NEWSLETTER_EXISTING_EXIT_GATE_ENABLED', '')
 		const { repository, admission } = await fixture()
 		row(repository, admission.contactId, 'unowned', 'subscribe-evergreen-list')
-		const subscribe = vi.fn(async () => 'backfilled')
-		expect(
-			await executePendingEvergreenSends({
-				repository,
-				subscribe,
-				dispatch: () => {},
-				limit: 2,
-				type: 'subscribe-evergreen-list',
-			}),
-		).toMatchObject([{ status: 'completed' }])
-		expect(subscribe).toHaveBeenCalledTimes(1)
+		const subscribe = vi.fn(async () => { throw new Error('legacy Kit subscribe/backfill write forbidden') })
+		const dispatch = vi.fn()
+		const drain = () => executePendingEvergreenSends({
+			repository, subscribe, dispatch, limit: 2,
+			type: 'subscribe-evergreen-list', now: () => now,
+		})
+		expect(await drain()).toMatchObject([{ status: 'completed', intentId: 'unowned', kitSequenceId: '2625552' }])
+		const completed = repository.sideEffectIntents.get('unowned')
+		expect(completed).toMatchObject({
+			status: 'completed', completedAt: now, reviewReasons: [],
+			metadata: { list: 'shadow-newsletter', kitSequenceId: '2625552', kitSkipped: 'kit-exit-handoff' },
+		})
+		expect(dispatch).toHaveBeenCalledOnce()
+		expect(dispatch).toHaveBeenCalledWith(completed)
+		expect(await drain()).toEqual([])
+		expect(dispatch).toHaveBeenCalledOnce()
+		expect(subscribe).not.toHaveBeenCalled()
 	})
 
 	it('M4 missing cohort snapshot is not permission to take a veteran', async () => {
