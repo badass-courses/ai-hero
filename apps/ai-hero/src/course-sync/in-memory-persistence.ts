@@ -24,6 +24,11 @@ import type {
 	TargetResourceSnapshot,
 } from './types'
 
+import {
+	courseSyncSourceFields,
+	mergeCourseSyncResourceFields,
+} from './resource-fields'
+
 type MemoryVersion = {
 	id: string
 	resourceId: string
@@ -369,9 +374,12 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 		const receipts = structuredClone(this.receipts)
 		const pointers: Array<{ resourceId: string; versionId: string }> = []
 		const expectedDeletedAtByResource = new Map<string, Date>()
+		const expectedFieldsByResource = new Map<string, Record<string, unknown>>()
 		let writes = 0
 		for (const item of input.plan.resources) {
 			let resource = resources.get(item.targetResourceId)
+			const appliedFields = mergeCourseSyncResourceFields(item, resource?.fields)
+			expectedFieldsByResource.set(item.targetResourceId, appliedFields)
 			if (item.action === 'create') {
 				if (resource)
 					throw new CourseSyncError(
@@ -382,7 +390,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 				resource = {
 					resourceId: item.targetResourceId,
 					currentVersionId: null,
-					fields: structuredClone(item.fields),
+					fields: structuredClone(appliedFields),
 					type: item.sourceKind === 'video' ? 'videoResource' : item.sourceKind,
 				}
 				resources.set(item.targetResourceId, resource)
@@ -475,7 +483,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 						409,
 					)
 				}
-				if (sha256(stableJson(resource.fields)) !== item.previousFieldsSha256) {
+				if (sha256(stableJson(courseSyncSourceFields(item.sourceKind, resource.fields))) !== item.previousFieldsSha256) {
 					throw new CourseSyncError(
 						'APPLY_TARGET_CHANGED',
 						'Resource fields changed after preview.',
@@ -556,7 +564,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 				stableJson({
 					runId: input.runId,
 					resourceId: item.targetResourceId,
-					fields: item.fields,
+					fields: appliedFields,
 				}),
 			)}`
 			versions.set(versionId, {
@@ -566,7 +574,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 				versionNumber:
 					priorVersions.length +
 					(item.solutionAdoption?.createBaselineVersion ? 2 : 1),
-				fields: structuredClone(item.fields),
+				fields: structuredClone(appliedFields),
 			})
 			receipts.push({
 				runId: input.runId,
@@ -640,6 +648,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 				bindingId: input.plan.bindingId,
 				anchorTreeParentIds: courseSyncAnchorTreeParentIds(anchorResourceId(binding), input.plan),
 			},
+			expectedFieldsByResource,
 		)
 		if (!activation.ok) {
 			throw new CourseSyncError(

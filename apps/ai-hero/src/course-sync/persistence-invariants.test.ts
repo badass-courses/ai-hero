@@ -342,6 +342,26 @@ describe('course sync persistence invariants', () => {
 		}
 	})
 
+	it('requires operator review for a new workshop, even alongside ordinary updates', () => {
+		const plan = launchPlan()
+		plan.resources = [
+			...plan.resources,
+			{ ...plan.resources[0]!, sourceKind: 'workshop', action: 'create', fields: { title: 'Undated workshop' } },
+		]
+		sealPlan(plan)
+		expect(evaluateCourseSyncBoundedAutoApply(plan)).toMatchObject({
+			eligible: false, failureCode: 'WORKSHOP_CREATE_REVIEW_REQUIRED', planSha256: plan.planSha256,
+		})
+	})
+
+	it.each(['retain', 'update'] as const)('keeps a workshop %s eligible for bounded auto-apply', (action) => {
+		const plan = launchPlan()
+		plan.resources[0]!.sourceKind = 'workshop'
+		plan.resources[0]!.action = action
+		sealPlan(plan)
+		expect(evaluateCourseSyncBoundedAutoApply(plan)).toEqual({ eligible: true, planSha256: plan.planSha256 })
+	})
+
 	it('routes lesson regressions to operator review without marking the plan failed', () => {
 		const plan = sealPlan({ ...launchPlan(), lessonRegressions: ['lesson-1'] })
 		expect(evaluateCourseSyncBoundedAutoApply(plan)).toEqual({

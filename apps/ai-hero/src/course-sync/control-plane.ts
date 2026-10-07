@@ -10,6 +10,7 @@ import {
 import { CourseSyncError, asCourseSyncError } from './errors'
 import { evaluateCourseSyncBoundedAutoApply } from './persistence-invariants'
 import { extractQuizQuestions } from './quiz-question-extraction'
+import { assertCourseSyncSourceFields, courseSyncSourceFields } from './resource-fields'
 import {
 	anchorResourceId,
 	getServerCourseSyncBinding,
@@ -218,7 +219,7 @@ function publicRun(run: SyncRunRecord, noOp = false): CourseSyncRunSummary {
 	}
 }
 
-function sourceResourceFields(
+export function sourceResourceFields(
 	binding: CourseSyncBinding,
 	manifest: CourseJsonDocumentV3,
 	frozenAssets: ReadonlyArray<FrozenSourceAsset>,
@@ -235,7 +236,7 @@ function sourceResourceFields(
 	const frozenByVideo = new Map(
 		frozenAssets.map((asset) => [asset.sourceVideoId, asset] as const),
 	)
-	return manifest.sections.flatMap((section, sectionIndex) => {
+	const resources = manifest.sections.flatMap((section, sectionIndex) => {
 		const sectionKind = managedSectionKind(binding)
 		const sectionId = targetResourceId(binding.bindingId, sectionKind, section.id)
 		const sectionItem = {
@@ -422,6 +423,10 @@ function sourceResourceFields(
 		})
 		return [sectionItem, ...lessonItems]
 	})
+	// A generator/map mismatch is a code defect, not an operator field. Fail
+	// during preview even when the resulting resource would otherwise retain.
+	for (const resource of resources) assertCourseSyncSourceFields(resource)
+	return resources
 }
 
 export function createCourseSyncControlPlane(
@@ -961,8 +966,10 @@ export function createCourseSyncControlPlane(
 				const action = !snapshot
 					? 'create'
 					: !previous ||
-						  stableJson(previous.fields) !== stableJson(item.fields) ||
-						  stableJson(snapshot.fields) !== stableJson(item.fields) ||
+						  stableJson(courseSyncSourceFields(item.sourceKind, previous.fields)) !==
+							  stableJson(courseSyncSourceFields(item.sourceKind, item.fields)) ||
+						  stableJson(courseSyncSourceFields(item.sourceKind, snapshot.fields)) !==
+							  stableJson(courseSyncSourceFields(item.sourceKind, item.fields)) ||
 						  previous.parentResourceId !== item.parentResourceId ||
 						  previous.position !== item.position ||
 						  previous.detached !== item.detached
@@ -977,7 +984,7 @@ export function createCourseSyncControlPlane(
 						snapshot?.currentVersionId ??
 						null,
 					previousFieldsSha256: snapshot
-						? sha256(stableJson(snapshot.fields))
+						? sha256(stableJson(courseSyncSourceFields(item.sourceKind, snapshot.fields)))
 						: null,
 					previousParentResourceId: previous?.parentResourceId ?? null,
 					previousPosition: previous?.position ?? null,

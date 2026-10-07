@@ -1,5 +1,6 @@
 import { stableJson } from './control-plane'
 import { CourseSyncError } from './errors'
+import { courseSyncSourceFields, mergeCourseSyncResourceFields } from './resource-fields'
 import {
 	managedChildContractFor,
 	managedSectionKind,
@@ -33,11 +34,20 @@ export type CourseSyncBoundedAutoApplyDecision =
  * every media item was rejected at stage and preview time unless its Mux
  * asset, playback id and duration were present. Course shape is the author's
  * decision, so ordinary creates, updates, moves and detaches apply without a
- * human gate. A lesson demotion or lost video requires operator review.
+ * human gate, except workshop creates: undated workshops can grant access.
+ * A new workshop, lesson demotion or lost video requires operator review.
  */
 export function evaluateCourseSyncBoundedAutoApply(
 	plan: SyncPlan,
 ): CourseSyncBoundedAutoApplyDecision {
+	if (plan.resources.some((item) => item.sourceKind === 'workshop' && item.action === 'create')) {
+		return {
+			eligible: false,
+			planSha256: plan.planSha256,
+			reason: 'New workshops require operator scheduling and release.',
+			failureCode: 'WORKSHOP_CREATE_REVIEW_REQUIRED',
+		}
+	}
 	const placeholderUpdate = plan.resources.some(
 		(item) =>
 			item.sourceKind === 'lesson' &&
@@ -124,7 +134,15 @@ export function resolveCourseSyncRollbackFields(input: {
 				{ category: 'lifecycle_conflict', retryable: false },
 			)
 		}
-		return input.previousVersionFields
+		// Roll back sync-owned content, not operator scheduling. The parent
+		// version can predate an operator edit made through PUT /api/resources.
+		return mergeCourseSyncResourceFields(
+			{
+				sourceKind: input.sourceKind,
+				fields: courseSyncSourceFields(input.sourceKind, input.previousVersionFields),
+			},
+			input.currentFields,
+		)
 	}
 	const courseSync = input.currentFields.courseSync as
 		| Record<string, unknown>
@@ -281,6 +299,7 @@ export function verifyCourseSyncActivation(
 	relations: ReadonlyArray<CourseSyncRelationReadback>,
 	expectedDeletedAtByResource: ReadonlyMap<string, Date>,
 	scope?: CourseSyncRelationScope,
+	expectedFieldsByResource?: ReadonlyMap<string, Record<string, unknown>>,
 ): { ok: true } | { ok: false; resourceId: string; reason: string } {
 	if (resources.length !== plan.resources.length) {
 		return { ok: false, resourceId: '', reason: 'resource_count_mismatch' }
@@ -297,7 +316,8 @@ export function verifyCourseSyncActivation(
 		if (resource.currentVersionId !== receipt.contentResourceVersionId) {
 			return { ok: false, resourceId, reason: 'pointer_mismatch' }
 		}
-		if (stableJson(resource.fields ?? {}) !== stableJson(item.fields)) {
+		const expectedFields = expectedFieldsByResource?.get(resourceId) ?? item.fields
+		if (stableJson(resource.fields ?? {}) !== stableJson(expectedFields)) {
 			return { ok: false, resourceId, reason: 'fields_mismatch' }
 		}
 	}
