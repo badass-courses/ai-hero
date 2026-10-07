@@ -389,6 +389,9 @@ async function issueOne(input: {
 			couponId: coupon.couponId,
 			expiresAt: coupon.expiresAt,
 			issuedAt: coupon.issuedAt,
+			// Only a successful Kit field write can authorize a Kit pitch.
+			kitOfferFieldsWrittenAt: subscriberId ? now : null,
+			kitOfferFieldsEmail: subscriberId ? contact.email.trim().toLowerCase() : null,
 		},
 	})
 	dispatch(completed)

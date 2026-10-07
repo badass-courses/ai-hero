@@ -930,6 +930,23 @@ async function acceptEvergreenSend(args: {
 
 	const existing =
 		await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
+	// Already settled sends only replay their receipt; they cannot send again.
+	if (existing && (existing.status === 'completed' || existing.status === 'failed')) return existingResult(existing)
+	if (sequence.slot.startsWith('P')) {
+		const coupon = await args.repository.findSideEffectIntentByIdempotencyKey(`contact:${contact.id}:evergreen:coupon`)
+		const writtenAt = stringField(coupon?.metadata.kitOfferFieldsWrittenAt)
+		if (
+			coupon?.status !== 'completed' ||
+			coupon.type !== ISSUE_EVERGREEN_COUPON_INTENT_TYPE ||
+			coupon.contactId !== contact.id ||
+			!contact.email?.trim() ||
+			!stringField(coupon.metadata.kitSubscriberId) ||
+			!writtenAt || !Number.isFinite(Date.parse(writtenAt)) ||
+			coupon.metadata.kitOfferFieldsEmail !== contact.email?.trim().toLowerCase()
+		) {
+			return { status: 'blocked', ...(existing ? { intentId: existing.id } : {}), reviewReasons: ['evergreen-offer-fields-not-in-kit'] }
+		}
+	}
 	if (existing) return existingResult(existing)
 
 	const kitSubscriberId = args.findKitSubscriberId
