@@ -1,5 +1,6 @@
 import { Effect } from 'effect'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { findEvergreenOffer } from './drovr-personalize'
 
 import {
 	deadlineDisplay,
@@ -150,7 +151,9 @@ describe('issue intent and offer fields', () => {
 
 	it('accepts a drovr-pinned UTC+14 zone even when its source is fallback', () => {
 		const acceptedByIntl = 'Pacific/Kiritimati'
-		expect(() => new Intl.DateTimeFormat('en-US', { timeZone: acceptedByIntl })).not.toThrow()
+		expect(
+			() => new Intl.DateTimeFormat('en-US', { timeZone: acceptedByIntl }),
+		).not.toThrow()
 		expect(
 			issueIntentFor('contact-1', {
 				...payload,
@@ -216,7 +219,9 @@ describe('the deadline format switch', () => {
 	it('reads only an exact "true"; anything else keeps today\'s text', () => {
 		expect(evergreenDeadlineFormat({})).toBe('legacy')
 		expect(
-			evergreenDeadlineFormat({ AIH_EVERGREEN_DEADLINE_FORMAT_V2_ENABLED: '1' }),
+			evergreenDeadlineFormat({
+				AIH_EVERGREEN_DEADLINE_FORMAT_V2_ENABLED: '1',
+			}),
 		).toBe('legacy')
 		expect(
 			evergreenDeadlineFormat({
@@ -225,7 +230,7 @@ describe('the deadline format switch', () => {
 		).toBe('absolute')
 	})
 
-	it('off (the deploy default): the Kit fields are byte-for-byte today\'s', () => {
+	it("off (the deploy default): the Kit fields are byte-for-byte today's", () => {
 		const before = process.env.AIH_EVERGREEN_DEADLINE_FORMAT_V2_ENABLED
 		delete process.env.AIH_EVERGREEN_DEADLINE_FORMAT_V2_ENABLED
 		try {
@@ -268,19 +273,26 @@ describe('the deadline format switch', () => {
 
 describe('executePendingEvergreenCoupons', () => {
 	const run = async (input: {
-		issue: () => Effect.Effect<typeof issued, EffectApplicationError>
+		issue: (
+			intent: ReturnType<typeof issueIntentFor>,
+		) => Effect.Effect<typeof issued, EffectApplicationError>
 		writeFields?: () => Promise<void>
 		attempts?: number
+		kitIdentity?: 'present' | 'absent'
 	}) => {
 		const repository = new FakeRepository()
 		repository.contacts.set('contact-1', contact())
 		repository.intents.set(
 			'row-1',
-			row(
-				input.attempts === undefined
-					? {}
-					: { metadata: { ...row().metadata, attempts: input.attempts } },
-			),
+			row({
+				metadata: {
+					...row().metadata,
+					...(input.attempts === undefined ? {} : { attempts: input.attempts }),
+					...(input.kitIdentity === 'absent'
+						? { kitSubscriberId: undefined }
+						: {}),
+				},
+			}),
 		)
 		const written: unknown[] = []
 		const dispatched: SideEffectIntent[] = []
@@ -334,6 +346,104 @@ describe('executePendingEvergreenCoupons', () => {
 		expect(out.dispatched.map((d) => d.status)).toEqual(['completed'])
 	})
 
+	it('issues without Kit identity, keeps contact-based authority identity, and serves the completed offer', async () => {
+		const issue = vi.fn(() => Effect.succeed(issued))
+		const out = await run({
+			issue,
+			kitIdentity: 'absent',
+			writeFields: async () => {
+				throw new Error('Kit must not be called')
+			},
+		})
+		expect(out.results).toMatchObject([
+			{ status: 'completed', couponId: 'eoj-coupon:abc' },
+		])
+		expect(issue).toHaveBeenCalledWith(
+			expect.objectContaining({
+				contactId: 'contact-1',
+				idempotencyKey: 'evergreen-offer:drovr:contact-1:coupon.issue',
+			}),
+		)
+		expect(out.row.metadata.kitSubscriberId).toBeUndefined()
+		expect(out.dispatched).toEqual([out.row])
+		expect(
+			await findEvergreenOffer({
+				repository: {
+					findSideEffectIntentByIdempotencyKey: (key) =>
+						key === out.row.idempotencyKey ? out.row : undefined,
+				},
+				contactId: 'contact-1',
+				origin: 'https://www.aihero.dev',
+			}),
+		).toMatchObject({
+			couponId: 'eoj-coupon:abc',
+			variables: { aih_evergreen_offer_price: '$199' },
+		})
+	})
+
+	it('keeps authority transient retries without Kit identity and never attempts Kit fields', async () => {
+		const fields = vi.fn(async () => {
+			throw new Error('Kit must not be called')
+		})
+		const out = await run({
+			kitIdentity: 'absent',
+			writeFields: fields,
+			issue: () =>
+				Effect.fail({
+					type: 'EffectTransientUnavailable',
+					reason: 'clock-unavailable',
+				}),
+		})
+		expect(out.results).toMatchObject([{ status: 'retry', attempts: 1 }])
+		expect(out.dispatched).toEqual([])
+		expect(fields).not.toHaveBeenCalled()
+	})
+
+	it('keeps permanent authority refusal without Kit identity', async () => {
+		const out = await run({
+			kitIdentity: 'absent',
+			issue: () =>
+				Effect.fail({
+					type: 'EffectPermanentRefusal',
+					reason: 'merchant-coupon-conflict',
+				}),
+		})
+		expect(out.row).toMatchObject({
+			status: 'failed',
+			reviewReasons: ['coupon-EffectPermanentRefusal'],
+		})
+	})
+
+	it('does not reissue or redispatch a completed no-Kit row on a second drain', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		repository.intents.set(
+			'row-1',
+			row({ metadata: { ...row().metadata, kitSubscriberId: undefined } }),
+		)
+		const issue = vi.fn(() => Effect.succeed(issued))
+		const writeFields = vi.fn(async () => {
+			throw new Error('Kit must not be called')
+		})
+		const dispatch = vi.fn()
+		const args = {
+			repository,
+			authority: { issue },
+			writeFields,
+			dispatch,
+			origin: 'https://www.aihero.dev',
+			limit: 10,
+			now: () => now,
+		}
+		expect(await executePendingEvergreenCoupons(args)).toMatchObject([
+			{ status: 'completed' },
+		])
+		expect(await executePendingEvergreenCoupons(args)).toEqual([])
+		expect(issue).toHaveBeenCalledOnce()
+		expect(dispatch).toHaveBeenCalledOnce()
+		expect(writeFields).not.toHaveBeenCalled()
+	})
+
 	it('goes terminal on a permanent refusal and on an ambiguous outcome', async () => {
 		for (const failure of [
 			{ type: 'EffectPermanentRefusal', reason: 'merchant-coupon-conflict' },
@@ -379,7 +489,7 @@ describe('executePendingEvergreenCoupons', () => {
 		expect(kitDown.dispatched).toEqual([])
 	})
 
-	it('fails a row without a Kit subscriber or with an unreadable offer', async () => {
+	it('fails a row without a contact email or with an unreadable offer', async () => {
 		const repository = new FakeRepository()
 		repository.intents.set(
 			'row-1',
@@ -403,7 +513,7 @@ describe('executePendingEvergreenCoupons', () => {
 		})
 		expect(results.map((r) => r.status)).toEqual(['failed', 'failed'])
 		expect(repository.intents.get('row-1')?.reviewReasons).toEqual([
-			'kit-subscriber-missing',
+			'contact-email-missing',
 		])
 		expect(repository.intents.get('row-2')?.reviewReasons).toEqual([
 			'coupon-offer-payload-invalid',

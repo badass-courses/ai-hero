@@ -248,7 +248,9 @@ const stringField = (value: unknown): string | undefined =>
 /**
  * Drain pending coupon rows: issue through the authority (idempotent on the
  * semantic key, so a retry reads the same coupon back), publish the offer
- * fields to Kit, complete the row, and dispatch `coupon.issued` to drovr.
+ * fields to Kit when the contact has a Kit identity, complete the row, and
+ * dispatch `coupon.issued` to drovr. Without Kit, the completed row supplies
+ * the offer to live personalization; no Kit field write is needed.
  *
  * Authority verdicts map straight onto the row: a permanent refusal is
  * terminal; transient unavailability retries; an ambiguous outcome is
@@ -315,7 +317,6 @@ async function issueOne(input: {
 	const payload = CouponIssuePayload.safeParse(row.metadata.offer)
 	if (!payload.success) return await fail('coupon-offer-payload-invalid')
 	const subscriberId = stringField(row.metadata.kitSubscriberId)
-	if (!subscriberId) return await fail('kit-subscriber-missing')
 	const contact = await args.repository.findContactById(row.contactId)
 	if (!contact?.email) return await fail('contact-email-missing')
 	const attempts = numberField(row.metadata.attempts) + 1
@@ -346,15 +347,17 @@ async function issueOne(input: {
 	}
 	const { coupon } = outcome.right
 	try {
-		await args.writeFields({
-			subscriberId,
-			email: contact.email,
-			fields: offerFieldsFor({
-				couponId: coupon.couponId,
-				payload: payload.data,
-				origin: args.origin,
-			}),
-		})
+		if (subscriberId) {
+			await args.writeFields({
+				subscriberId,
+				email: contact.email,
+				fields: offerFieldsFor({
+					couponId: coupon.couponId,
+					payload: payload.data,
+					origin: args.origin,
+				}),
+			})
+		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error)
 		if (attempts >= EVERGREEN_COUPON_MAX_ATTEMPTS) {
