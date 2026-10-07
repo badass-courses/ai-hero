@@ -486,6 +486,31 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("evergreen held-exit wire contract through real POST", () => {
+  it.each(["old-newsletter-exit-unconfirmed", "some-other-hold"])(
+    "maps only the supported hold reason: %s",
+    async (reason) => {
+      const scenario = cases.find((item) => item.name === "list.subscribe");
+      if (!scenario) throw new Error("handoff fixture missing");
+      const intent = requestFor(scenario);
+      const first = await post(intent);
+      expect(first.status).toBe(202);
+      expect(await first.json()).toMatchObject({ status: "accepted", created: true });
+      const row = repository.row();
+      const held: SideEffectIntent = { ...row, status: "held-for-exit", reviewReasons: [reason] };
+      repository.intents.set(row.id, held);
+      const before = counts(repository);
+      const response = await post(intent);
+      expect(response.status).toBe(reason === "old-newsletter-exit-unconfirmed" ? 200 : 202);
+      expect(await response.json()).toEqual(reason === "old-newsletter-exit-unconfirmed"
+        ? { status: "blocked", intentId: row.id, reviewReasons: ["evergreen-held-for-exit: old-newsletter-exit-unconfirmed"] }
+        : accepted(row, false));
+      expect(repository.row()).toEqual(held);
+      expect(counts(repository)).toEqual(before);
+    },
+  );
+});
+
 describe("same-key re-ask through the real POST and executor", () => {
   it.each(cases)(
     "$name: interrupted acceptance has one row and zero second-call effects",
