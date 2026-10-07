@@ -31,7 +31,22 @@ export async function readDrovrContactActor(args: {
 			},
 			signal: controller.signal,
 		})
-		const body: unknown = await response.json().catch(() => undefined)
+		// Shed status is authoritative even if the body is malformed or stalls.
+		if (
+			response.status === 429 ||
+			response.status === 502 ||
+			response.status === 503 ||
+			response.status === 504
+		)
+			return {
+				ok: false,
+				reason: `drovr answered ${response.status}`,
+				backpressure: {
+					status: response.status,
+					retryAfter: response.headers.get('retry-after') ?? undefined,
+				},
+			}
+		const body: unknown = await response.json()
 		const record =
 			body && typeof body === 'object' ? (body as Record<string, unknown>) : {}
 		if (response.status === 404 && record.type === CONTACT_NOT_FOUND)
@@ -45,6 +60,11 @@ export async function readDrovrContactActor(args: {
 		return {
 			ok: false,
 			reason: error instanceof Error ? error.message : String(error),
+			...(controller.signal.aborted ||
+			(error instanceof Error &&
+				(error.name === 'AbortError' || error.name === 'TimeoutError'))
+				? { backpressure: { status: 'timeout' as const } }
+				: {}),
 		}
 	} finally {
 		clearTimeout(timeout)

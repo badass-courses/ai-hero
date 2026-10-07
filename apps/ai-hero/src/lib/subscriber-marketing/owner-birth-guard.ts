@@ -39,6 +39,8 @@ import type { ContactEventRecord } from './types'
  */
 
 export const OWNER_BIRTH_GUARD_REPOST_CAP = 25
+/** Leaves ample headroom beneath the route's 800s invocation limit. */
+export const OWNER_BIRTH_GUARD_PAGE_BUDGET_MS = 5 * 60_000
 
 /**
  * Reserved: drovr sends no such code today. `/events` accepts an event for
@@ -59,15 +61,23 @@ export const OWNER_BIRTH_GUARD_OWNER_JOURNEY_IDS = [
 ] as const
 const DIRECTORY_JOURNEY_ID = 'contact-directory'
 const MAX_PAGES = 200
-const READS_IN_FLIGHT = 10
 
 /** A directory actor in any stop state: drovr's suppression is written. */
 const STOPPED_DIRECTORY_STATE = /unsubscrib|bounce|complain|suppress|stop/i
 
+export type DrovrReadBackpressure = {
+	status: 429 | 502 | 503 | 504 | 'timeout' | 'page-budget'
+	retryAfter?: string
+}
+export type DrovrReadFailure = {
+	ok: false
+	reason: string
+	backpressure?: DrovrReadBackpressure
+}
 export type DrovrActorRead =
 	| { ok: true; found: false }
 	| { ok: true; found: true; stateName: string }
-	| { ok: false; reason: string }
+	| DrovrReadFailure
 
 export type OwnerCursor = { occurredAt: string; id: string }
 
@@ -116,8 +126,18 @@ export type OwnerBirthGuardPorts = {
 		after?: OwnerCursor
 		limit: number
 	}): Promise<{ subjects: OwnerBirthSubject[]; next?: OwnerCursor }>
-	readDelivery(contactId: string): Promise<DrovrEmailDeliveryRead>
-	readActor(contactId: string, journeyId: string): Promise<DrovrActorRead>
+	/** Read adapters must honor the supplied remaining page timeout. */
+	readDelivery(
+		contactId: string,
+		timeoutMs?: number,
+	): Promise<DrovrEmailDeliveryRead>
+	readActor(
+		contactId: string,
+		journeyId: string,
+		timeoutMs?: number,
+	): Promise<DrovrActorRead>
+	/** Wall clock for page deadlines, independent of memoized run start. */
+	nowMs?: () => number
 	/** One event to drovr; throws on a transient failure (the step retries). */
 	post(event: DrovrShadowEvent): Promise<DrovrDeliveryOutcome>
 	/** The durable marker: this owner's birth was posted once, with this outcome. */
@@ -150,10 +170,16 @@ type PageCounts = {
 	unmappable: number
 }
 
-type PageResult = PageCounts & { candidates: Candidate[]; next?: OwnerCursor }
+type PageResult = PageCounts & {
+	candidates: Candidate[]
+	next?: OwnerCursor
+	backpressure?: DrovrReadBackpressure
+}
 
 export type OwnerBirthGuardReceipt = PageCounts & {
-	status: 'checked'
+	status: 'checked' | 'deferred'
+	/** Unknown read, not absence; no births are re-posted in this run. */
+	backpressure?: DrovrReadBackpressure
 	from: string
 	to: string
 	pages: number
@@ -197,64 +223,98 @@ async function logSafely(
 	}
 }
 
-async function mapInBatches<T, R>(
-	items: readonly T[],
-	size: number,
-	operation: (item: T) => Promise<R>,
-): Promise<R[]> {
-	const results: R[] = []
-	for (let start = 0; start < items.length; start += size)
-		results.push(
-			...(await Promise.all(items.slice(start, start + size).map(operation))),
-		)
-	return results
-}
-
 type Verdict =
 	| { kind: 'delivered' | 'pending' | 'notRouted' | 'born' }
 	| { kind: 'unreadable'; reason: string }
+	| { kind: 'shed'; backpressure: DrovrReadBackpressure }
 	| { kind: 'actorWithoutSend'; stateName: string }
 	| { kind: 'suppressed'; stateName: string }
 	| { kind: 'lost' }
+
+/** Each read is capped by its normal 10s timeout and the page's remaining
+ * wall budget. An exhausted budget is unknown, never absence. */
+async function pageRead<T extends DrovrActorRead | DrovrEmailDeliveryRead>(
+	ports: OwnerBirthGuardPorts,
+	deadlineMs: number,
+	operation: (timeoutMs: number) => Promise<T>,
+): Promise<T | DrovrReadFailure> {
+	const now = ports.nowMs ?? Date.now
+	const remaining = deadlineMs - now()
+	if (!Number.isFinite(remaining) || remaining <= 0)
+		return {
+			ok: false,
+			reason: 'page wall budget exhausted',
+			backpressure: { status: 'page-budget' },
+		}
+	const result = await operation(Math.min(10_000, remaining))
+	// Preserve a shed response's Retry-After even at the deadline boundary.
+	if (!result.ok && result.backpressure) return result
+	if (now() >= deadlineMs)
+		return {
+			ok: false,
+			reason: 'page wall budget exhausted',
+			backpressure: { status: 'page-budget' },
+		}
+	return result
+}
 
 async function judge(
 	ports: OwnerBirthGuardPorts,
 	contactId: string,
 	journeyId: string,
+	deadlineMs: number,
 ): Promise<Verdict> {
 	if (journeyId !== OWNER_BIRTH_GUARD_JOURNEY_ID) {
 		// No lesson one to ask about: the actor snapshot alone says whether
 		// the birth landed.
-		const actor = await ports.readActor(contactId, journeyId)
+		const actor = await pageRead(ports, deadlineMs, (timeoutMs) =>
+			ports.readActor(contactId, journeyId, timeoutMs),
+		)
 		if (!actor.ok)
-			return { kind: 'unreadable', reason: `actor: ${actor.reason}` }
+			return actor.backpressure
+				? { kind: 'shed', backpressure: actor.backpressure }
+				: { kind: 'unreadable', reason: `actor: ${actor.reason}` }
 		if (actor.found) return { kind: 'born' }
-		return judgeLost(ports, contactId)
+		return judgeLost(ports, contactId, deadlineMs)
 	}
-	const read = await ports.readDelivery(contactId)
+	const read = await pageRead(ports, deadlineMs, (timeoutMs) =>
+		ports.readDelivery(contactId, timeoutMs),
+	)
 	if (!read.ok)
-		return { kind: 'unreadable', reason: `delivery: ${read.reason}` }
+		return read.backpressure
+			? { kind: 'shed', backpressure: read.backpressure }
+			: { kind: 'unreadable', reason: `delivery: ${read.reason}` }
 	const status = read.delivery.status
 	if (status === 'delivered') return { kind: 'delivered' }
 	if (status === 'pending') return { kind: 'pending' }
 	if (status === 'not-routed') return { kind: 'notRouted' }
 	// not-started: no value-path receipt. Only an absent actor snapshot
 	// (404 contact-not-found) proves the birth itself is missing.
-	const actor = await ports.readActor(contactId, OWNER_BIRTH_GUARD_JOURNEY_ID)
-	if (!actor.ok) return { kind: 'unreadable', reason: `actor: ${actor.reason}` }
+	const actor = await pageRead(ports, deadlineMs, (timeoutMs) =>
+		ports.readActor(contactId, OWNER_BIRTH_GUARD_JOURNEY_ID, timeoutMs),
+	)
+	if (!actor.ok)
+		return actor.backpressure
+			? { kind: 'shed', backpressure: actor.backpressure }
+			: { kind: 'unreadable', reason: `actor: ${actor.reason}` }
 	if (actor.found)
 		return { kind: 'actorWithoutSend', stateName: actor.stateName }
-	return judgeLost(ports, contactId)
+	return judgeLost(ports, contactId, deadlineMs)
 }
 
 /** No actor on the journey: lost, unless drovr's directory holds a stop. */
 async function judgeLost(
 	ports: OwnerBirthGuardPorts,
 	contactId: string,
+	deadlineMs: number,
 ): Promise<Verdict> {
-	const directory = await ports.readActor(contactId, DIRECTORY_JOURNEY_ID)
+	const directory = await pageRead(ports, deadlineMs, (timeoutMs) =>
+		ports.readActor(contactId, DIRECTORY_JOURNEY_ID, timeoutMs),
+	)
 	if (!directory.ok)
-		return { kind: 'unreadable', reason: `directory: ${directory.reason}` }
+		return directory.backpressure
+			? { kind: 'shed', backpressure: directory.backpressure }
+			: { kind: 'unreadable', reason: `directory: ${directory.reason}` }
 	if (directory.found && STOPPED_DIRECTORY_STATE.test(directory.stateName))
 		return { kind: 'suppressed', stateName: directory.stateName }
 	return { kind: 'lost' }
@@ -282,6 +342,8 @@ async function checkOwnerPage(
 	after: OwnerCursor | undefined,
 	pageSize: number,
 ): Promise<PageResult> {
+	const deadlineMs =
+		(ports.nowMs ?? Date.now)() + OWNER_BIRTH_GUARD_PAGE_BUDGET_MS
 	const rows = await ports.scanOwners({ ...window, after, limit: pageSize })
 	const last = rows.at(-1)
 	return checkSubjects(
@@ -290,6 +352,7 @@ async function checkOwnerPage(
 		rows.length === pageSize && last
 			? { occurredAt: last.occurredAt, id: last.id }
 			: undefined,
+		deadlineMs,
 	)
 }
 
@@ -299,16 +362,19 @@ async function checkNewsletterPage(
 	after: OwnerCursor | undefined,
 	pageSize: number,
 ): Promise<PageResult> {
+	const deadlineMs =
+		(ports.nowMs ?? Date.now)() + OWNER_BIRTH_GUARD_PAGE_BUDGET_MS
 	const page = ports.scanNewsletterBirths
 		? await ports.scanNewsletterBirths({ ...window, after, limit: pageSize })
 		: { subjects: [] }
-	return checkSubjects(ports, page.subjects, page.next)
+	return checkSubjects(ports, page.subjects, page.next, deadlineMs)
 }
 
 async function checkSubjects(
 	ports: OwnerBirthGuardPorts,
 	subjects: readonly OwnerBirthSubject[],
 	next: OwnerCursor | undefined,
+	deadlineMs: number,
 ): Promise<PageResult> {
 	const counts = zeroCounts()
 	counts.owners = subjects.length
@@ -344,15 +410,21 @@ async function checkSubjects(
 	)
 	counts.skippedStopped = real.length - live.length
 
-	const verdicts = await mapInBatches(
-		live,
-		READS_IN_FLIGHT,
-		async (subject) => ({
-			subject,
-			verdict: await judge(ports, subject.owner.contactId, subject.journeyId),
-		}),
-	)
+	// Serial evaluation stops before starting the next contact on shedding.
+	// This is an early-stop fence, not a read-rate limiter.
+	const verdicts: { subject: OwnerBirthSubject; verdict: Verdict }[] = []
+	for (const subject of live) {
+		const verdict = await judge(
+			ports,
+			subject.owner.contactId,
+			subject.journeyId,
+			deadlineMs,
+		)
+		verdicts.push({ subject, verdict })
+		if (verdict.kind === 'shed') break
+	}
 	const candidates: Candidate[] = []
+	let backpressure: DrovrReadBackpressure | undefined
 	for (const { subject, verdict } of verdicts) {
 		const row = subject.owner
 		const fields = {
@@ -367,6 +439,10 @@ async function checkSubjects(
 			case 'notRouted':
 			case 'born':
 				counts[verdict.kind] += 1
+				break
+			case 'shed':
+				counts.unreadable += 1
+				backpressure = verdict.backpressure
 				break
 			case 'unreadable':
 				counts.unreadable += 1
@@ -417,7 +493,12 @@ async function checkSubjects(
 			}
 		}
 	}
-	return { ...counts, candidates, ...(next ? { next } : {}) }
+	return {
+		...counts,
+		candidates,
+		...(next ? { next } : {}),
+		...(backpressure ? { backpressure } : {}),
+	}
 }
 
 /**
@@ -466,6 +547,7 @@ export async function runOwnerBirthGuard(args: {
 	let after: OwnerCursor | undefined
 	let pages = 0
 	let truncated = false
+	let backpressure: DrovrReadBackpressure | undefined
 	for (;;) {
 		if (pages === maxPages) {
 			truncated = true
@@ -479,13 +561,18 @@ export async function runOwnerBirthGuard(args: {
 		for (const key of Object.keys(counts) as (keyof PageCounts)[])
 			counts[key] += page[key] ?? 0
 		candidates.push(...page.candidates)
+		if (page.backpressure) {
+			backpressure = page.backpressure
+			truncated = true
+			break
+		}
 		if (!page.next) break
 		after = page.next
 	}
 	// Newsletter births, by their list intents: their own pages and steps.
 	let newsletterPages = 0
 	let newsletterAfter: OwnerCursor | undefined
-	while (ports.scanNewsletterBirths) {
+	while (!backpressure && ports.scanNewsletterBirths) {
 		if (newsletterPages === maxPages) {
 			truncated = true
 			break
@@ -498,6 +585,11 @@ export async function runOwnerBirthGuard(args: {
 		for (const key of Object.keys(counts) as (keyof PageCounts)[])
 			counts[key] += page[key] ?? 0
 		candidates.push(...page.candidates)
+		if (page.backpressure) {
+			backpressure = page.backpressure
+			truncated = true
+			break
+		}
 		if (!page.next) break
 		newsletterAfter = page.next
 	}
@@ -507,7 +599,7 @@ export async function runOwnerBirthGuard(args: {
 			(candidatesByJourney[candidate.journeyId] ?? 0) + 1
 
 	const outcomes: RepostOutcome[] = []
-	for (const { owner, birth } of candidates.slice(0, cap)) {
+	for (const { owner, birth } of candidates.slice(0, backpressure ? 0 : cap)) {
 		outcomes.push(
 			(await step.run(`repost-${owner.id}`, async () => {
 				const outcome = repostOutcomeOf(await ports.post(birth))
@@ -518,7 +610,8 @@ export async function runOwnerBirthGuard(args: {
 	}
 	const overCap = Math.max(0, candidates.length - cap)
 	const receipt: OwnerBirthGuardReceipt = {
-		status: 'checked',
+		status: backpressure ? 'deferred' : 'checked',
+		...(backpressure ? { backpressure } : {}),
 		...window,
 		pages,
 		...counts,
@@ -550,7 +643,20 @@ export async function runOwnerBirthGuard(args: {
 				candidatesByJourney,
 				overCap,
 			})
-		await logSafely(ports.log.info, 'drovr.owner_birth_guard.summary', receipt)
+		if (backpressure)
+			await logSafely(ports.log.warn, 'drovr.owner_birth_guard.read_shed', {
+				status: backpressure.status,
+				pages,
+				newsletterPages,
+				candidatesDeferred: candidates.length,
+			})
+		// Do not log arbitrary provider header text.
+		await logSafely(ports.log.info, 'drovr.owner_birth_guard.summary', {
+			...receipt,
+			...(backpressure
+				? { backpressure: { status: backpressure.status } }
+				: {}),
+		})
 		return true
 	})
 	return receipt
