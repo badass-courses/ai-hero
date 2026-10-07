@@ -110,6 +110,9 @@ vi.mock('../../../_components/lesson-body', () => ({
 }))
 
 import { LessonPage } from './shared-page'
+import { createAppAbility, defineRulesForPurchases } from '@/ability'
+import { cohortAbilityFixture } from '@/ability/test-fixtures/cohort-content-scope'
+import { subject } from '@casl/ability'
 
 const lesson = {
 	id: 'lesson-1',
@@ -246,6 +249,45 @@ describe('LessonPage office-hours authorization context', () => {
 		expect(mocks.getPlaybackPositionForResource).not.toHaveBeenCalled()
 		expect(mocks.commerce).not.toHaveBeenCalled()
 		expect(mocks.player).not.toHaveBeenCalled()
+	})
+
+	it.each([
+		['undated direct module', { contentIds: ['unrelated-workshop'] }],
+		['started direct module', { contentIds: ['unrelated-workshop'], startsAt: '2000-01-01T00:00:00.000Z' }],
+		['future direct module', { contentIds: ['unrelated-workshop'], startsAt: '2999-01-01T00:00:00.000Z' }],
+		['section-shaped module', { contentIds: ['unrelated-workshop'], layout: 'section' }],
+	] as const)('redirects an unrelated cohort holder in %s using actual rules', async (_, options) => {
+		const fixture = cohortAbilityFixture({ ...options, contentIds: [...options.contentIds] })
+		const ability = createAppAbility(defineRulesForPurchases(fixture.input))
+		mocks.getAbilityForResource.mockResolvedValue({
+			...baseAbility,
+			canViewLesson: ability.can('read', subject('Content', { id: fixture.lesson.id })),
+			canViewWorkshop: ability.can('read', subject('Content', { id: fixture.module.id })),
+			isPendingOpenAccess: ability.can('read', 'PendingOpenAccess'),
+		})
+		await expect(LessonPage({ lesson: fixture.lesson, workshop: fixture.module,
+			params: { module: fixture.module.id, lesson: fixture.lesson.id }, searchParams: {} })).rejects.toThrow('NEXT_REDIRECT')
+		expect(mocks.redirect).toHaveBeenCalledWith('/workshops/requested-workshop')
+		expect(mocks.getAiCodingDictionary).not.toHaveBeenCalled()
+		expect(mocks.compileMDX).not.toHaveBeenCalled()
+		expect(mocks.getLessonVideoPlaybackResource).not.toHaveBeenCalled()
+		expect(mocks.player).not.toHaveBeenCalled()
+	})
+
+	it('renders a legitimately scoped cohort lesson using actual rules', async () => {
+		const fixture = cohortAbilityFixture({ contentIds: ['requested-workshop'], startsAt: '2000-01-01T00:00:00.000Z' })
+		const ability = createAppAbility(defineRulesForPurchases(fixture.input))
+		mocks.getAbilityForResource.mockResolvedValue({
+			...baseAbility,
+			canViewLesson: ability.can('read', subject('Content', { id: fixture.lesson.id })),
+			canViewWorkshop: ability.can('read', subject('Content', { id: fixture.module.id })),
+		})
+		await resolveServerTree(await LessonPage({ lesson: fixture.lesson, workshop: fixture.module,
+			params: { module: fixture.module.id, lesson: fixture.lesson.id }, searchParams: {} }))
+		expect(mocks.redirect).not.toHaveBeenCalled()
+		expect(mocks.compileMDX).toHaveBeenCalledOnce()
+		expect(mocks.getLessonVideoPlaybackResource).toHaveBeenCalledWith(fixture.lesson.id)
+		expect(mocks.player).toHaveBeenCalledOnce()
 	})
 
 	it('waits for authorization before starting protected work', async () => {

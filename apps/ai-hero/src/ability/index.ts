@@ -67,6 +67,13 @@ export type User = z.infer<typeof UserSchema>
 type UserOrganizationRole = NonNullable<User['organizationRoles']>[number]
 type UserEntitlement = NonNullable<User['entitlements']>[number]
 
+function cohortContentIds(entitlement: UserEntitlement): string[] {
+	const contentIds: unknown = entitlement.metadata?.contentIds
+	return Array.isArray(contentIds)
+		? contentIds.filter((id): id is string => typeof id === 'string')
+		: []
+}
+
 interface OrganizationBilling {
 	organizationId: string
 }
@@ -370,11 +377,16 @@ export function defineRulesForPurchases(
 	// check workshop in cohort
 	if (user?.entitlements && module?.id) {
 		user.entitlements.forEach((entitlement: UserEntitlement) => {
-			if (entitlement.type === cohortEntitlementType?.id) {
-				// Grant access to the workshop itself
-				can('read', 'Content', {
-					id: { $in: entitlement.metadata.contentIds },
-				})
+			if (
+				cohortEntitlementType &&
+				entitlement.type === cohortEntitlementType.id
+			) {
+				const contentIds = cohortContentIds(entitlement)
+				// Grant access only to explicitly named workshops. Persisted metadata
+				// is not a guarantee that contentIds is an array of resource IDs.
+				if (contentIds.length) {
+					can('read', 'Content', { id: { $in: contentIds } })
+				}
 
 				// Check module start date
 				const moduleStartsAt = module?.fields?.startsAt
@@ -382,7 +394,7 @@ export function defineRulesForPurchases(
 					!moduleStartsAt || new Date(moduleStartsAt) < new Date()
 
 				// If user has access to this specific workshop, grant access to lessons only if started
-				if (entitlement.metadata.contentIds?.includes(module.id)) {
+				if (contentIds.includes(module.id)) {
 					if (moduleStarted) {
 						can('read', 'Content', {
 							id: { $in: allModuleResourceIds },
@@ -466,25 +478,27 @@ export function defineRulesForPurchases(
 		}
 	}
 
-	// lesson check
-	// TODO: validate
+	// Direct-lesson access must use the same module scope as the cohort rule.
 	const lessonModule = module?.resources?.find(
 		(resource) => resource.resourceId === lesson?.id,
 	)
-	if (user?.entitlements && lessonModule) {
+	if (user?.entitlements && lessonModule && module?.id) {
 		const moduleStartsAt = module?.fields?.startsAt
 		const moduleStarted =
 			!moduleStartsAt || new Date(moduleStartsAt) < new Date()
 
 		user.entitlements.forEach((entitlement: UserEntitlement) => {
-			if (entitlement.type === cohortEntitlementType?.id && moduleStarted) {
+			if (
+				!cohortEntitlementType ||
+				entitlement.type !== cohortEntitlementType.id ||
+				!cohortContentIds(entitlement).includes(module.id)
+			)
+				return
+			if (moduleStarted) {
 				can('read', 'Content', {
 					id: { $in: allModuleResourceIds },
 				})
-			} else if (
-				entitlement.type === cohortEntitlementType?.id &&
-				!moduleStarted
-			) {
+			} else {
 				can('read', 'PendingOpenAccess')
 			}
 		})
