@@ -1,4 +1,5 @@
 import { inngest } from '@/inngest/inngest.server'
+import type { BirthFeedPreparation } from '@/lib/subscriber-marketing/drovr-birth-feed'
 import { newsletterPauseDurationMs } from './newsletter-provider-pause'
 
 /**
@@ -63,41 +64,91 @@ export const drovrOwnerBirthGuard = inngest.createFunction(
 		}
 		const repository = new DrizzleCaptureMarketingRepository(db)
 		const readConfig = { baseUrl, apiKey }
-		const receipt = await runOwnerBirthGuard({
-			step,
-			startedAtMs,
-			ports: {
-				...createDrizzleOwnerBirthGuardStore(db),
-				readDelivery: (contactId, timeoutMs) =>
-					readDrovrEmailDelivery({
-						contactId,
-						email: SKILLS_WORKFLOW_EMAIL_ZERO,
-						timeoutMs,
-						config: readConfig,
+		// Freeze mode for the run: a flag change must not mix cached contact
+		// and feed pages on retry. Absent/off leaves the deployed A path intact.
+		const mode = await step.run('birth-feed-mode-v1', async () =>
+			env.AIH_DROVR_BIRTH_FEED_ENABLED === 'true' ? 'feed' : 'contact',
+		)
+		let feed: BirthFeedPreparation | undefined
+		if (mode === 'feed') {
+			const [
+				{ prepareBirthFeed, readDrovrBirths, BirthFeedFailure },
+				{ createRedisBirthFeedStore },
+				{ redis },
+			] = await Promise.all([
+				import('@/lib/subscriber-marketing/drovr-birth-feed'),
+				import('@/lib/subscriber-marketing/drovr-birth-feed-store'),
+				import('@/server/redis-client'),
+			])
+			try {
+				feed = await prepareBirthFeed({
+					step,
+					startedAtMs,
+					store: createRedisBirthFeedStore({
+						redis,
+						tenantId: DROVR_AUTHORITY_TENANT_ID,
 					}),
-				readActor: (contactId, journeyId, timeoutMs) =>
-					readDrovrContactActor({
-						contactId,
-						journeyId,
-						timeoutMs,
-						config: readConfig,
-					}),
-				// Row 201g: births clamp at the run's memoized start, so a retry of
-				// a re-post's step posts the same bytes.
-				post: (event) =>
-					deliverOrThrow({
-						event,
-						config: { ingestUrl, apiKey },
-						clampAt: startedAtMs,
-					}),
-				recordRepost: async (owner, outcome) => {
-					await repository.createContactEvent(
-						ownerBirthRepostMarker(owner, outcome, new Date().toISOString()),
-					)
-				},
-				log: { info: log.info, warn: log.warn },
-			},
-		})
+					read: (request) => readDrovrBirths({ request, config: readConfig }),
+				})
+			} catch (error) {
+				await log.error('drovr.owner_birth_guard.feed_failed', {
+					reason:
+						error instanceof BirthFeedFailure
+							? error.reason
+							: 'feed-unavailable',
+				})
+				throw error
+			}
+		}
+		const receipt =
+			feed?.kind === 'shed'
+				? {
+						status: 'deferred' as const,
+						reposted: 0,
+						truncated: true,
+						backpressure: feed.backpressure,
+						birthFeedCalls: feed.calls,
+					}
+				: await runOwnerBirthGuard({
+						step,
+						startedAtMs,
+						ports: {
+							...createDrizzleOwnerBirthGuardStore(db),
+							...(feed?.kind === 'ready' ? { birthFeed: feed.proof } : {}),
+							readDelivery: (contactId, timeoutMs) =>
+								readDrovrEmailDelivery({
+									contactId,
+									email: SKILLS_WORKFLOW_EMAIL_ZERO,
+									timeoutMs,
+									config: readConfig,
+								}),
+							readActor: (contactId, journeyId, timeoutMs) =>
+								readDrovrContactActor({
+									contactId,
+									journeyId,
+									timeoutMs,
+									config: readConfig,
+								}),
+							// Row 201g: births clamp at the run's memoized start, so a retry of
+							// a re-post's step posts the same bytes.
+							post: (event) =>
+								deliverOrThrow({
+									event,
+									config: { ingestUrl, apiKey },
+									clampAt: startedAtMs,
+								}),
+							recordRepost: async (owner, outcome) => {
+								await repository.createContactEvent(
+									ownerBirthRepostMarker(
+										owner,
+										outcome,
+										new Date().toISOString(),
+									),
+								)
+							},
+							log: { info: log.info, warn: log.warn },
+						},
+					})
 		if (receipt?.backpressure) {
 			// The scan has stopped, with zero reposts. Reuse the parser, but
 			// bound this caller's cooldown below the cron period. Singleton skip
@@ -109,6 +160,6 @@ export const drovrOwnerBirthGuard = inngest.createFunction(
 			await step.sleep('shed-read-cooldown', `${cooldownMs}ms`)
 			return { ...receipt, cooldownMs }
 		}
-		return receipt
+		return feed ? { ...receipt, birthFeedCalls: feed.calls } : receipt
 	},
 )

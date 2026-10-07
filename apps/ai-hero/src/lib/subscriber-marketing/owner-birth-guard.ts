@@ -1,5 +1,6 @@
 import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
 
+import type { BirthFeedProof } from './drovr-birth-feed'
 import type { DrovrEmailDeliveryRead } from './drovr-email-delivery'
 import {
 	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
@@ -94,6 +95,8 @@ export type OwnerBirthSubject = {
 }
 
 export type OwnerBirthGuardPorts = {
+	/** Present only after every feed journey reached EOF. Never fail over on error. */
+	birthFeed?: BirthFeedProof
 	/**
 	 * Skills-course and evergreen owner assignments in [from, to], by
 	 * (occurredAt, id).
@@ -413,13 +416,22 @@ async function checkSubjects(
 	// Serial evaluation stops before starting the next contact on shedding.
 	// This is an early-stop fence, not a read-rate limiter.
 	const verdicts: { subject: OwnerBirthSubject; verdict: Verdict }[] = []
+	const feed = ports.birthFeed ? await ports.birthFeed.judge(live) : undefined
 	for (const subject of live) {
-		const verdict = await judge(
-			ports,
-			subject.owner.contactId,
-			subject.journeyId,
-			deadlineMs,
-		)
+		const verdict: Verdict = feed
+			? feed.get(subject) === 'born'
+				? { kind: 'born' }
+				: feed.get(subject) === 'missing'
+					? reposted.has(subject.owner.id)
+						? { kind: 'lost' }
+						: await judgeLost(ports, subject.owner.contactId, deadlineMs)
+					: { kind: 'unreadable', reason: 'birth feed coverage is unknown' }
+			: await judge(
+					ports,
+					subject.owner.contactId,
+					subject.journeyId,
+					deadlineMs,
+				)
 		verdicts.push({ subject, verdict })
 		if (verdict.kind === 'shed') break
 	}
@@ -554,8 +566,9 @@ export async function runOwnerBirthGuard(args: {
 			break
 		}
 		const from = after
-		const page = (await step.run(`page-${pages}`, () =>
-			checkOwnerPage(ports, window, from, pageSize),
+		const page = (await step.run(
+			`${ports.birthFeed ? 'feed-' : ''}page-${pages}`,
+			() => checkOwnerPage(ports, window, from, pageSize),
 		)) as PageResult
 		pages += 1
 		for (const key of Object.keys(counts) as (keyof PageCounts)[])
@@ -578,8 +591,9 @@ export async function runOwnerBirthGuard(args: {
 			break
 		}
 		const from = newsletterAfter
-		const page = (await step.run(`newsletter-page-${newsletterPages}`, () =>
-			checkNewsletterPage(ports, window, from, pageSize),
+		const page = (await step.run(
+			`${ports.birthFeed ? 'feed-' : ''}newsletter-page-${newsletterPages}`,
+			() => checkNewsletterPage(ports, window, from, pageSize),
 		)) as PageResult
 		newsletterPages += 1
 		for (const key of Object.keys(counts) as (keyof PageCounts)[])

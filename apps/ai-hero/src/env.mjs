@@ -153,6 +153,8 @@ export const env = createEnv({
 		// Captured-but-held signups (phase 1 split); see drovr-ownership.ts.
 		AIH_DROVR_OWNER_HOLD_EMAILS: z.string().optional(),
 		AIH_DROVR_EVERGREEN_ENABLED: z.string().optional(),
+		// Default off; retain contact reads until /births rollout proof.
+		AIH_DROVR_BIRTH_FEED_ENABLED: z.string().optional(),
 		// Producer before rule; existing-cohort gate stays off until ruling B.
 		AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY: newsletterExitFlag,
 		AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY: newsletterExitFlag,
@@ -315,6 +317,7 @@ export const env = createEnv({
 		AIH_DROVR_OWNER_EMAILS: process.env.AIH_DROVR_OWNER_EMAILS,
 		AIH_DROVR_OWNER_HOLD_EMAILS: process.env.AIH_DROVR_OWNER_HOLD_EMAILS,
 		AIH_DROVR_EVERGREEN_ENABLED: process.env.AIH_DROVR_EVERGREEN_ENABLED,
+		AIH_DROVR_BIRTH_FEED_ENABLED: process.env.AIH_DROVR_BIRTH_FEED_ENABLED,
 		AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY: process.env.AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY,
 		AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY: process.env.AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY,
 		AIH_SHADOW_NEWSLETTER_EXISTING_EXIT_GATE_ENABLED: process.env.AIH_SHADOW_NEWSLETTER_EXISTING_EXIT_GATE_ENABLED,

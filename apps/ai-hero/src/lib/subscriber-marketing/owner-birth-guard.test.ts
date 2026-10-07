@@ -202,6 +202,93 @@ beforeEach(() => {
 })
 
 describe('the owner-without-birth guard (row 110)', () => {
+	it('feed presence skips per-contact birth/delivery reads; covered absence still checks directory, stops and opt-outs', async () => {
+		const h = harness({
+			owners: [
+				owner('born'),
+				owner('lost'),
+				owner('stopped'),
+				owner('unknown'),
+				owner('tagged'),
+				owner('suppressed'),
+			],
+			stopped: ['stopped'],
+			birthOptOuts: ['tagged'],
+			directoryActor: {
+				suppressed: { ok: true, found: true, stateName: 'unsubscribed' },
+			},
+		})
+		h.ports.birthFeed = {
+			judge: async (subjects) =>
+				new Map(
+					subjects.map((item) => [
+						item,
+						item.owner.contactId === 'born'
+							? 'born'
+							: item.owner.contactId === 'unknown'
+								? 'unknown'
+								: 'missing',
+					]),
+				),
+		}
+		const receipt = await h.run()
+		expect(receipt).toMatchObject({
+			born: 1,
+			unreadable: 1,
+			skippedStopped: 2,
+			skippedSuppressed: 1,
+			reposted: 1,
+		})
+		expect(h.posted.map((event) => event.contactId)).toEqual(['lost'])
+		expect(h.ports.readDelivery).not.toHaveBeenCalled()
+		expect(h.readActor).toHaveBeenCalledTimes(2)
+		for (const call of h.readActor.mock.calls)
+			expect(call[1]).toBe('contact-directory')
+	})
+
+	it('a shed directory read in feed mode still suppresses all earlier candidates and markers', async () => {
+		const h = harness({
+			owners: [owner('a'), owner('b')],
+			directoryActor: {
+				b: { ok: false, reason: 'shed', backpressure: { status: 503 } },
+			},
+		})
+		h.ports.birthFeed = {
+			judge: async (subjects) =>
+				new Map(subjects.map((item) => [item, 'missing'])),
+		}
+		expect(await h.run()).toMatchObject({
+			status: 'deferred',
+			reposted: 0,
+			candidates: 1,
+		})
+		expect(h.posted).toEqual([])
+		expect(h.recorded).toEqual([])
+	})
+
+	it('cache/membership failure does not switch to per-contact reads or enter reposting', async () => {
+		const h = harness({ owners: [owner('lost')] })
+		h.ports.birthFeed = {
+			judge: async () => {
+				throw new Error('membership unavailable')
+			},
+		}
+		await expect(h.run()).rejects.toThrow('membership unavailable')
+		expect(h.readActor).not.toHaveBeenCalled()
+		expect(h.ports.readDelivery).not.toHaveBeenCalled()
+		expect(h.posted).toEqual([])
+	})
+
+	it('known repost markers consume no directory reads in feed mode', async () => {
+		const h = harness({ owners: [owner('lost')], reposted: ['owner-lost'] })
+		h.ports.birthFeed = {
+			judge: async (subjects) =>
+				new Map(subjects.map((item) => [item, 'missing'])),
+		}
+		expect(await h.run()).toMatchObject({ repostNoEffect: 1, reposted: 0 })
+		expect(h.readActor).not.toHaveBeenCalled()
+	})
+
 	it('memoizes a deferred page under the wall budget instead of retrying 50 slow subjects forever', async () => {
 		const h = harness({
 			owners: Array.from({ length: 50 }, (_, i) => owner(`slow${i}`)),

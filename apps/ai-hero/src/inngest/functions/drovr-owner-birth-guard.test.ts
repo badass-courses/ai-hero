@@ -10,14 +10,33 @@ const mocks = vi.hoisted(() => ({
 	runOwnerBirthGuard: vi.fn(),
 	readActor: vi.fn(),
 	readDelivery: vi.fn(),
+	prepareBirthFeed: vi.fn(),
+	readBirths: vi.fn(),
+	createFeedStore: vi.fn(() => ({})),
+	env: {
+		DROVR_SHADOW_INGEST_URL: 'https://drovr.test/events',
+		AIH_DROVR_BIRTH_FEED_ENABLED: '',
+	},
 }))
 
 vi.mock('@/inngest/inngest.server', () => ({
 	inngest: { createFunction: mocks.createFunction },
 }))
 vi.mock('@/db', () => ({ db: {} }))
+vi.mock('@/server/redis-client', () => ({ redis: {} }))
+vi.mock('@/lib/subscriber-marketing/drovr-birth-feed', async () => {
+	const { NonRetriableError } = await import('inngest')
+	return {
+		prepareBirthFeed: mocks.prepareBirthFeed,
+		readDrovrBirths: mocks.readBirths,
+		BirthFeedFailure: NonRetriableError,
+	}
+})
+vi.mock('@/lib/subscriber-marketing/drovr-birth-feed-store', () => ({
+	createRedisBirthFeedStore: mocks.createFeedStore,
+}))
 vi.mock('@/env.mjs', () => ({
-	env: { DROVR_SHADOW_INGEST_URL: 'https://drovr.test/events' },
+	env: mocks.env,
 }))
 vi.mock('@/server/logger', () => ({
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -65,6 +84,79 @@ type Registered = {
 
 afterEach(() => {
 	vi.restoreAllMocks()
+	mocks.env.AIH_DROVR_BIRTH_FEED_ENABLED = ''
+})
+
+describe('feed rollout boundary', () => {
+	it.each(['', 'false', '1'])(
+		'defaults to contact mode for flag=%s with no feed calls/store',
+		async (flag) => {
+			mocks.env.AIH_DROVR_BIRTH_FEED_ENABLED = flag
+			mocks.prepareBirthFeed.mockClear()
+			mocks.createFeedStore.mockClear()
+			mocks.runOwnerBirthGuard.mockResolvedValue({ status: 'checked' })
+			await (drovrOwnerBirthGuard as unknown as Registered).handler({
+				step: { run: async (_id, op) => op() },
+			})
+			expect(mocks.prepareBirthFeed).not.toHaveBeenCalled()
+			expect(mocks.createFeedStore).not.toHaveBeenCalled()
+		},
+	)
+	it('only a fully prepared proof enters guard evaluation', async () => {
+		mocks.env.AIH_DROVR_BIRTH_FEED_ENABLED = 'true'
+		const proof = { judge: vi.fn() }
+		mocks.prepareBirthFeed.mockResolvedValue({ kind: 'ready', calls: 3, proof })
+		mocks.runOwnerBirthGuard.mockResolvedValue({
+			status: 'checked',
+			reposted: 0,
+		})
+		expect(
+			await (drovrOwnerBirthGuard as unknown as Registered).handler({
+				step: { run: async (_id, op) => op() },
+			}),
+		).toMatchObject({ birthFeedCalls: 3 })
+		expect(mocks.runOwnerBirthGuard).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				ports: expect.objectContaining({ birthFeed: proof }),
+			}),
+		)
+		expect(mocks.createFeedStore).toHaveBeenLastCalledWith(
+			expect.objectContaining({ tenantId: 'org-aihero' }),
+		)
+	})
+	it('shed feed stops before local scan and performs one bounded durable cooldown', async () => {
+		mocks.env.AIH_DROVR_BIRTH_FEED_ENABLED = 'true'
+		mocks.runOwnerBirthGuard.mockClear()
+		mocks.prepareBirthFeed.mockResolvedValue({
+			kind: 'shed',
+			calls: 2,
+			backpressure: { status: 503, retryAfter: '86400' },
+		})
+		const sleep = vi.fn(async () => {})
+		expect(
+			await (drovrOwnerBirthGuard as unknown as Registered).handler({
+				step: { run: async (_id, op) => op(), sleep },
+			}),
+		).toMatchObject({ status: 'deferred', reposted: 0, birthFeedCalls: 2 })
+		expect(sleep).toHaveBeenCalledWith('shed-read-cooldown', '3000000ms')
+		expect(mocks.runOwnerBirthGuard).not.toHaveBeenCalled()
+	})
+	it('cap failure remains terminal and loud, never entering contact fallback', async () => {
+		mocks.env.AIH_DROVR_BIRTH_FEED_ENABLED = 'true'
+		mocks.runOwnerBirthGuard.mockClear()
+		mocks.prepareBirthFeed.mockRejectedValue(new Error('page cap'))
+		await expect(
+			(drovrOwnerBirthGuard as unknown as Registered).handler({
+				step: { run: async (_id, op) => op() },
+			}),
+		).rejects.toThrow('page cap')
+		expect(mocks.runOwnerBirthGuard).not.toHaveBeenCalled()
+		const { log } = await import('@/server/logger')
+		expect(log.error).toHaveBeenCalledWith(
+			'drovr.owner_birth_guard.feed_failed',
+			expect.any(Object),
+		)
+	})
 })
 
 describe('the owner birth guard clamps a re-post at its run start (row 201g)', () => {
