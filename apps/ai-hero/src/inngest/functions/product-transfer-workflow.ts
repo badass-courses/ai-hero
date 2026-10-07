@@ -22,6 +22,7 @@ import {
 } from '@/lib/entitlements'
 import { createResourceEntitlements } from '@/lib/entitlements-query'
 import { getWorkshop } from '@/lib/workshops-query'
+import { transferIncludedProductEntitlements } from '@/lib/included-product-entitlements'
 import {
 	listRequiredContentResourceIds,
 	readContentIds,
@@ -754,6 +755,27 @@ export async function handleProductTransfer({
 		completionContext = {
 			organizationId: targetUserOrganization.id,
 			membershipId: targetUserOrgMembership.id,
+		}
+
+		const includedGrants = await step.run(
+			'transfer included product entitlements',
+			async () => {
+				return transferIncludedProductEntitlements({
+					purchaseId: purchase.id,
+					productId: product.id,
+					userId: targetUser.id,
+					organizationId: targetUserOrganization.id,
+					organizationMembershipId: targetUserOrgMembership.id,
+					transferId: event.data.purchaseUserTransferId,
+					sourceUserId: sourceUser.id,
+				})
+			},
+		)
+		for (const grant of includedGrants) {
+			requiredTargetAccess.push({
+				entitlementTypeId: grant.entitlementTypeId,
+				resourceId: grant.resourceId,
+			})
 		}
 
 		if (archiveProduct) {

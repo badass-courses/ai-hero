@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => {
 		updateSet,
 		updateWhere,
 		findEntitlementType: vi.fn(),
+		grantIncluded: vi.fn(async () => []),
 		log: {
 			info: vi.fn(),
 			warn: vi.fn(),
@@ -65,7 +66,10 @@ vi.mock('@/lib/entitlements', () => ({
 	EntitlementSourceType: { COUPON: 'COUPON' },
 }))
 vi.mock('@/lib/entitlements-query', () => ({
-	createResourceEntitlements: vi.fn(),
+	createResourceEntitlements: vi.fn(async () => []),
+}))
+vi.mock('@/lib/included-product-entitlements', () => ({
+	grantIncludedProductEntitlements: mocks.grantIncluded,
 }))
 vi.mock('@/lib/personal-organization-service', () => ({
 	ensurePersonalOrganizationWithLearnerRole: vi.fn(),
@@ -78,11 +82,31 @@ vi.mock('@coursebuilder/utils/send-an-email', () => ({
 	sendAnEmail: vi.fn(),
 }))
 vi.mock('../config/product-types', () => ({
-	ENTITLEMENT_CONFIG: { 'self-paced': { resourceType: 'workshop' } },
-	gatherResourceContexts: vi.fn(),
+	ENTITLEMENT_CONFIG: {
+		'self-paced': { resourceType: 'workshop' },
+		cohort: { resourceType: 'cohort' },
+	},
+	gatherResourceContexts: vi.fn(async () => [
+		{
+			resourceId: 'cohort-test',
+			resourceType: 'cohort',
+			productType: 'cohort',
+		},
+	]),
 	getDiscordRoleId: vi.fn(),
-	getResourceData: vi.fn(),
-	PRODUCT_TYPE_CONFIG: {},
+	getResourceData: vi.fn(async () => ({
+		id: 'cohort-test',
+		type: 'cohort',
+		fields: { title: 'Test' },
+		resources: [],
+	})),
+	PRODUCT_TYPE_CONFIG: {
+		cohort: {
+			logPrefix: 'cohort',
+			contentAccess: 'cohort_content_access',
+			discordRole: 'cohort_discord_role',
+		},
+	},
 	ProductType: {},
 }))
 vi.mock('../events/grant-coupon-entitlements-for-purchase', () => ({
@@ -99,18 +123,21 @@ vi.mock('../events/post-purchase-async', () => ({
 		'post-purchase/welcome-email-requested',
 }))
 
-import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/events/commerce'
+import {
+	FULL_PRICE_COUPON_REDEEMED_EVENT,
+	NEW_PURCHASE_CREATED_EVENT,
+} from '@coursebuilder/core/events/commerce'
 
 import { postPurchaseWorkflow } from './post-purchase-workflow'
 
 type Handler = (args: {
 	event: {
-		name: typeof NEW_PURCHASE_CREATED_EVENT
+		name: string
 		data: {
 			purchaseId: string
 			checkoutSessionId: string | null
 			invoiceId?: string
-			productType: 'self-paced'
+			productType: 'self-paced' | 'cohort'
 			quantity?: number
 		}
 	}
@@ -133,22 +160,25 @@ type Handler = (args: {
 	runId: string
 }) => Promise<unknown>
 
-const handler = (postPurchaseWorkflow as unknown as { handler: Handler }).handler
+const handler = (postPurchaseWorkflow as unknown as { handler: Handler })
+	.handler
 const stopAfterConsumption = new Error('stop after entitlement consumption')
 
 function createRun(results: unknown[]) {
 	const adapter = {
-		getPurchase: vi.fn(async (): Promise<unknown> => ({
-			id: 'purchase_contract',
-			userId: 'user_contract',
-			productId: 'product_ai_coding_crash_course',
-			status: 'Valid',
-			totalAmount: 99,
-			bulkCouponId: null,
-			redeemedBulkCouponId: null,
-			organizationId: null,
-			createdAt: new Date('2026-08-17T00:00:00.000Z'),
-		})),
+		getPurchase: vi.fn(
+			async (): Promise<unknown> => ({
+				id: 'purchase_contract',
+				userId: 'user_contract',
+				productId: 'product_ai_coding_crash_course',
+				status: 'Valid',
+				totalAmount: 99,
+				bulkCouponId: null,
+				redeemedBulkCouponId: null,
+				organizationId: null,
+				createdAt: new Date('2026-08-17T00:00:00.000Z'),
+			}),
+		),
 		getProduct: vi.fn(async () => ({
 			id: 'product_ai_coding_crash_course',
 			name: 'AI Coding Crash Course',
@@ -225,5 +255,76 @@ describe('post-purchase exclusive-credit consumption contract', () => {
 			expect.objectContaining({ deletedAt: expect.any(Date) }),
 		)
 	})
+})
 
+// Invoke the real shared handler for both fulfillment triggers. The policy's
+// authoritative database checks are covered separately, not mocked here as proof.
+describe('included-product workflow integration', () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+		mocks.grantIncluded.mockResolvedValue([])
+		mocks.findEntitlementType.mockResolvedValue({
+			id: 'cohort-access',
+			name: 'cohort_content_access',
+		})
+	})
+
+	it.each([NEW_PURCHASE_CREATED_EVENT, FULL_PRICE_COUPON_REDEEMED_EVENT])(
+		'calls the policy after membership on %s',
+		async (name) => {
+			const run = createRun([])
+			const redeemed = name === FULL_PRICE_COUPON_REDEEMED_EVENT
+			run.adapter.getPurchase.mockResolvedValue({
+				id: 'c5-learner',
+				userId: 'user_contract',
+				productId: 'product-s00zs',
+				status: 'Restricted',
+				organizationId: 'team-org',
+				bulkCouponId: null,
+				redeemedBulkCouponId: redeemed ? 'seat-coupon' : null,
+			})
+			const executed: string[] = []
+			run.step.run.mockImplementation(async (id, callback) => {
+				executed.push(id)
+				if (id === 'get product') return { id: 'product-s00zs', type: 'cohort' }
+				if (id === 'get bulk coupon data') return null
+				if (id === 'mark entitlement coupons as used') return null
+				if (id === 'ensure org membership')
+					return {
+						organizationId: 'team-org',
+						orgMembership: { id: 'team-member' },
+					}
+				return callback()
+			})
+			await handler({
+				event: {
+					name,
+					data: {
+						purchaseId: 'c5-learner',
+						checkoutSessionId: null,
+						productType: 'cohort',
+					},
+				},
+				step: run.step,
+				db: run.adapter,
+				paymentProvider: run.paymentProvider,
+				runId: 'c5-run',
+			})
+			expect(mocks.grantIncluded).toHaveBeenCalledOnce()
+			expect(mocks.grantIncluded).toHaveBeenCalledWith({
+				purchaseId: 'c5-learner',
+				productId: 'product-s00zs',
+				userId: 'user_contract',
+				organizationId: 'team-org',
+				organizationMembershipId: 'team-member',
+			})
+			expect(
+				executed.indexOf('grant included product entitlements'),
+			).toBeGreaterThan(executed.indexOf('ensure org membership'))
+			if (!redeemed)
+				expect(mocks.grantIncluded.mock.invocationCallOrder[0]).toBeLessThan(
+					run.step.sendEvent.mock.invocationCallOrder.at(-1)!,
+				)
+		},
+	)
 })

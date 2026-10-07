@@ -134,6 +134,15 @@ const mocks = vi.hoisted(() => {
 		DISCORD_TYPE: 'cohort_discord_role',
 		log: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 		createResourceEntitlements: vi.fn(),
+		transferIncluded: vi.fn(
+			async (): Promise<
+				{
+					entitlementId: string
+					entitlementTypeId: string
+					resourceId: string
+				}[]
+			> => [],
+		),
 		createEntitlement: vi.fn(),
 		removeDiscordRole: vi.fn(),
 		getCreditEntitlementsForSourcePurchase: vi.fn(),
@@ -332,6 +341,9 @@ vi.mock('@/lib/entitlements', () => ({
 vi.mock('@/lib/entitlements-query', () => ({
 	createResourceEntitlements: mocks.createResourceEntitlements,
 }))
+vi.mock('@/lib/included-product-entitlements', () => ({
+	transferIncludedProductEntitlements: mocks.transferIncluded,
+}))
 vi.mock('@coursebuilder/organizations', () => ({
 	createPersonalOrganizationService: () => ({
 		ensurePersonalOrganization: mocks.ensurePersonalOrganization,
@@ -404,7 +416,7 @@ function createAdapter() {
 	return {
 		getPurchase: vi.fn(async () => ({ ...mocks.state.world.purchase })),
 		getProduct: vi.fn(async () => ({
-			id: PRODUCT_ID,
+			id: mocks.state.world.purchase.productId,
 			type: mocks.state.world.productType,
 			resources: [{ resource: { id: 'cohort_1', type: 'cohort' } }],
 		})),
@@ -442,6 +454,7 @@ async function runWorkflow(memo?: Map<string, unknown>) {
 }
 
 beforeEach(() => {
+	mocks.transferIncluded.mockResolvedValue([])
 	vi.clearAllMocks()
 	mocks.state.world = freshWorld()
 	mocks.getCreditEntitlementsForSourcePurchase.mockResolvedValue([])
@@ -511,6 +524,48 @@ beforeEach(() => {
 			mocks.state.world.entitlements.push({ ...values, deletedAt: null })
 		},
 	)
+})
+
+describe('included-product transfer wiring', () => {
+	it('calls the bundle transfer after membership and includes its access in the completion gate', async () => {
+		mocks.state.world.purchase.productId = 'product-s00zs'
+		mocks.transferIncluded.mockImplementation(async () => {
+			mocks.state.world.entitlements.push({
+				id: 'target-bundle',
+				userId: 'user_b',
+				entitlementType: 'workshop_content_access',
+				sourceType: 'PURCHASE',
+				sourceId: PURCHASE_ID,
+				deletedAt: null,
+				organizationId: 'org_b',
+				organizationMembershipId: 'member_b',
+				metadata: { contentIds: ['workshop-2ozd9'] },
+			})
+			return [
+				{
+					entitlementId: 'target-bundle',
+					entitlementTypeId: 'workshop_content_access',
+					resourceId: 'workshop-2ozd9',
+				},
+			]
+		})
+		const { harness } = await runWorkflow()
+		expect(mocks.transferIncluded).toHaveBeenCalledWith({
+			purchaseId: PURCHASE_ID,
+			productId: 'product-s00zs',
+			userId: 'user_b',
+			organizationId: 'org_b',
+			organizationMembershipId: 'member_b',
+			transferId: 'put_1',
+			sourceUserId: 'user_a',
+		})
+		expect(
+			harness.executed.indexOf('transfer included product entitlements'),
+		).toBeGreaterThan(
+			harness.executed.indexOf('get target user org membership'),
+		)
+		expect(mocks.state.world.transferState).toBe('COMPLETED')
+	})
 })
 
 describe('happy path', () => {

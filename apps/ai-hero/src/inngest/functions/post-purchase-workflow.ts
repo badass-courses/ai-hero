@@ -19,6 +19,7 @@ import {
 import { EntitlementSourceType } from '@/lib/entitlements'
 import { createResourceEntitlements } from '@/lib/entitlements-query'
 import type { WorkshopAvailability } from '@/lib/get-workshop-availability'
+import { grantIncludedProductEntitlements } from '@/lib/included-product-entitlements'
 import { log } from '@/server/logger'
 import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 
@@ -692,6 +693,16 @@ export const postPurchaseWorkflow = inngest.createFunction(
 					userId: user.id,
 					organizationId,
 					organizationMembershipId: orgMembership.id,
+				})
+
+				await step.run('grant included product entitlements', async () => {
+					return grantIncludedProductEntitlements({
+						purchaseId: purchase.id,
+						productId: product.id,
+						userId: user.id,
+						organizationId,
+						organizationMembershipId: orgMembership.id,
+					})
 				})
 
 				// Process each resource context
