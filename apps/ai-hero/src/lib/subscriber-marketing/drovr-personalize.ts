@@ -17,6 +17,15 @@ import {
 	DROVR_SKILLS_COURSE_JOURNEY_ID,
 } from './drovr-shadow-emitter'
 import { getSkillsWorkflowEmailStep } from './skills-workflow-path'
+import {
+	SHADOW_NEWSLETTER_JOURNEY_ID,
+	SHADOW_NEWSLETTER_CATALOG_REVISION,
+	shadowNewsletterSequenceForMessage,
+} from './drovr-shadow-newsletter'
+import {
+	createOldNewsletterExitGate,
+	OldNewsletterExitRefusedError,
+} from './old-newsletter-exit'
 import type { ValuePathAnswerPageResource } from './value-path-answer-page'
 import type { ValuePathLinkAnchorStore } from './value-path-link-anchor'
 import { personalizeValuePathEmailWithAnchoredLinks } from './value-path-email-executor'
@@ -141,6 +150,31 @@ export async function personalizeDrovrIntent(args: {
 			})
 			if (!offer) reasons.push('offer-fields-missing')
 			else variables = offer.variables
+		}
+	} else if (request.journeyId === SHADOW_NEWSLETTER_JOURNEY_ID) {
+		if (
+			!shadowNewsletterSequenceForMessage(
+				SHADOW_NEWSLETTER_CATALOG_REVISION,
+				request.emailKey,
+			)
+		) {
+			reasons.push('email-resource-missing')
+		} else {
+			try {
+				// PostShiba bypasses the Kit sender; require the same positive exit
+				// proof here without requesting an exit or writing any provider state.
+				await createOldNewsletterExitGate({ repository })({
+					contactId: contact.id,
+					email,
+				})
+			} catch (cause) {
+				if (
+					!(cause instanceof OldNewsletterExitRefusedError) ||
+					cause.reason === 'membership-or-exit-unavailable'
+				)
+					throw cause
+				reasons.push('old-newsletter-exit-unconfirmed')
+			}
 		}
 	} else if (request.journeyId === DOUBLE_OPT_IN_JOURNEY_ID) {
 		if (request.emailKey !== DOUBLE_OPT_IN_CONFIRM_EMAIL_KEY)
