@@ -15,6 +15,8 @@ import {
 	type OwnerBirthGuardPorts,
 } from './owner-birth-guard'
 import type { ContactEventRecord } from './types'
+import { prepareBirthFeed, type BirthFeedStore } from './drovr-birth-feed'
+import { BIRTH_CONFIRMATION_COOLDOWN_SECONDS } from './drovr-birth-feed-store'
 
 vi.mock('@/env.mjs', () => ({ env: {} }))
 
@@ -222,6 +224,7 @@ describe('the owner-without-birth guard (row 110)', () => {
 				if (++physical > 25) throw new Error('confirmation cap exceeded')
 			},
 			observeBorn: vi.fn(async () => {}),
+			deferConfirmation: vi.fn(async () => {}),
 			judge: async (subjects) =>
 				new Map(subjects.map((item) => [item, 'missing'])),
 		}
@@ -235,6 +238,90 @@ describe('the owner-without-birth guard (row 110)', () => {
 		).toHaveLength(25)
 		expect(h.posted).toEqual([])
 		expect(h.recorded).toEqual([])
+	})
+
+	it('25 oldest suppressed/unreadable confirmations cannot starve a later birth and expire for recheck', async () => {
+		const old = Array.from(
+			{ length: 25 },
+			(_, i) => `c${String(i).padStart(2, '0')}`,
+		)
+		const h = harness({
+			owners: [...old, 'later'].map((id) => owner(id)),
+			valuePathActor: Object.fromEntries(
+				old
+					.filter((_id, i) => i % 2)
+					.map((id) => [
+						id,
+						{ ok: false, reason: 'malformed response' } as DrovrActorRead,
+					]),
+			),
+			directoryActor: Object.fromEntries(
+				old
+					.filter((_id, i) => !(i % 2))
+					.map((id) => [
+						id,
+						{
+							ok: true,
+							found: true,
+							stateName: 'unsubscribed',
+						} as DrovrActorRead,
+					]),
+			),
+		})
+		let clock = NOW
+		const deferred = new Map<string, number>()
+		const deferKey = (journey: string, id: string) => `${journey}:${id}`
+		const store: BirthFeedStore = {
+			reserveCall: vi.fn(async () => {}),
+			reserveConfirmation: vi.fn(async () => {}),
+			observeBorn: vi.fn(async () => {}),
+			load: vi.fn(async () => null),
+			consume: vi.fn(async () => {}),
+			members: vi.fn(async () => new Set<string>()),
+			deferConfirmation: vi.fn(async (journey, id) => {
+				const key = deferKey(journey, id)
+				if ((deferred.get(key) ?? 0) <= clock)
+					deferred.set(key, clock + BIRTH_CONFIRMATION_COOLDOWN_SECONDS * 1000)
+			}),
+			deferredConfirmations: vi.fn(
+				async (journey, ids) =>
+					new Set(
+						ids.filter(
+							(id) => (deferred.get(deferKey(journey, id)) ?? 0) > clock,
+						),
+					),
+			),
+		}
+		const run = async () => {
+			const feed = await prepareBirthFeed({
+				store,
+				step: { run: async (_id, op) => op() },
+				startedAtMs: NOW,
+				runId: 'hol-fixture',
+				read: async () => ({
+					kind: 'page',
+					page: {
+						births: [],
+						asOf: new Date(NOW).toISOString(),
+						nextCursor: null,
+						resumeCursor: 'end',
+					},
+				}),
+			})
+			if (feed.kind !== 'ready') throw new Error('fixture not ready')
+			h.ports.birthFeed = feed.proof
+			return h.run(10, { fresh: true })
+		}
+		expect(await run()).toMatchObject({ birthConfirmations: 25, reposted: 0 })
+		expect(store.deferConfirmation).toHaveBeenCalledTimes(25)
+		const originalExpiry = [...deferred.values()]
+		clock += 3600_000
+		expect(await run()).toMatchObject({ birthConfirmations: 1, reposted: 1 })
+		expect(h.posted.map((event) => event.contactId)).toEqual(['later'])
+		expect([...deferred.values()]).toEqual(originalExpiry)
+		clock = NOW + BIRTH_CONFIRMATION_COOLDOWN_SECONDS * 1000 + 1
+		expect(await run()).toMatchObject({ birthConfirmations: 25, reposted: 0 })
+		expect(store.deferConfirmation).toHaveBeenCalledTimes(50)
 	})
 
 	it('an actor older than bootstrap is confirmed and cached, never reposted', async () => {
@@ -251,6 +338,7 @@ describe('the owner-without-birth guard (row 110)', () => {
 		h.ports.birthFeed = {
 			reserveConfirmation: vi.fn(async () => {}),
 			observeBorn,
+			deferConfirmation: vi.fn(async () => {}),
 			judge: async (subjects) =>
 				new Map(
 					subjects.map((item) => [
@@ -310,6 +398,7 @@ describe('the owner-without-birth guard (row 110)', () => {
 		h.ports.birthFeed = {
 			reserveConfirmation,
 			observeBorn: vi.fn(async () => {}),
+			deferConfirmation: vi.fn(async () => {}),
 			judge: async (subjects) =>
 				new Map(subjects.map((item) => [item, 'missing'])),
 		}
@@ -343,6 +432,7 @@ describe('the owner-without-birth guard (row 110)', () => {
 			h.ports.birthFeed = {
 				reserveConfirmation: vi.fn(async () => {}),
 				observeBorn: vi.fn(async () => {}),
+				deferConfirmation: vi.fn(async () => {}),
 				judge: async (subjects) =>
 					new Map(subjects.map((item) => [item, 'missing'])),
 			}
@@ -368,6 +458,7 @@ describe('the owner-without-birth guard (row 110)', () => {
 		h.ports.birthFeed = {
 			reserveConfirmation: vi.fn(async () => {}),
 			observeBorn: vi.fn(async () => {}),
+			deferConfirmation: vi.fn(async () => {}),
 			judge: async (subjects) =>
 				new Map(subjects.map((item) => [item, 'missing'])),
 		}
@@ -387,6 +478,7 @@ describe('the owner-without-birth guard (row 110)', () => {
 				throw new Error('confirmation cap exceeded')
 			},
 			observeBorn: vi.fn(async () => {}),
+			deferConfirmation: vi.fn(async () => {}),
 			judge: async (subjects) =>
 				new Map(subjects.map((item) => [item, 'missing'])),
 		}
@@ -414,6 +506,7 @@ describe('the owner-without-birth guard (row 110)', () => {
 		h.ports.birthFeed = {
 			reserveConfirmation: vi.fn(async () => {}),
 			observeBorn: vi.fn(async () => {}),
+			deferConfirmation: vi.fn(async () => {}),
 			judge: async (subjects) =>
 				new Map(
 					subjects.map((item) => [
@@ -454,6 +547,7 @@ describe('the owner-without-birth guard (row 110)', () => {
 		h.ports.birthFeed = {
 			reserveConfirmation: vi.fn(async () => {}),
 			observeBorn: vi.fn(async () => {}),
+			deferConfirmation: vi.fn(async () => {}),
 			judge: async (subjects) =>
 				new Map(subjects.map((item) => [item, 'missing'])),
 		}
@@ -472,6 +566,7 @@ describe('the owner-without-birth guard (row 110)', () => {
 		h.ports.birthFeed = {
 			reserveConfirmation: vi.fn(async () => {}),
 			observeBorn: vi.fn(async () => {}),
+			deferConfirmation: vi.fn(async () => {}),
 			judge: async () => {
 				throw new Error('membership unavailable')
 			},
@@ -487,6 +582,7 @@ describe('the owner-without-birth guard (row 110)', () => {
 		h.ports.birthFeed = {
 			reserveConfirmation: vi.fn(async () => {}),
 			observeBorn: vi.fn(async () => {}),
+			deferConfirmation: vi.fn(async () => {}),
 			judge: async (subjects) =>
 				new Map(subjects.map((item) => [item, 'missing'])),
 		}

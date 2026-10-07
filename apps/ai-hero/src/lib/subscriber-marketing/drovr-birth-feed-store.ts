@@ -11,6 +11,18 @@ export interface BirthFeedRedis {
 }
 const READY = '__aih_birth_feed_ready_v1__'
 export const BIRTH_FEED_QUOTA_TTL_SECONDS = 48 * 60 * 60
+export const BIRTH_CONFIRMATION_COOLDOWN_SECONDS = 6 * 60 * 60
+/** Temporary scheduling hint only; never evidence of birth or absence.
+ * NX makes retry/replay idempotent without extending the original cooldown. */
+export const DEFER_BIRTH_CONFIRMATION = `
+redis.call('SET', KEYS[1], '1', 'EX', tonumber(ARGV[1]), 'NX')
+return 1
+`
+export const DEFERRED_BIRTH_CONFIRMATIONS = `
+local result = {}
+for i=1,#KEYS do result[i] = redis.call('EXISTS', KEYS[i]) end
+return result
+`
 /** Finish is bounded at 55m. Retention is much longer, so active retries
  * cannot gain quota from expiration; old run counters do not accumulate. */
 export const RESERVE_BIRTH_FEED_CALL = `
@@ -66,6 +78,8 @@ export function createRedisBirthFeedStore(options: {
 		const prefix = `aih:birth-feed:{${encodeURIComponent(options.tenantId)}:${encodeURIComponent(journeyId)}}:v1`
 		return [`${prefix}:checkpoint`, `${prefix}:members`]
 	}
+	const deferKey = (journeyId: string, ownerId: string) =>
+		`${keys(journeyId)[0]!.replace(/:checkpoint$/, '')}:confirm-cooldown:${encodeURIComponent(ownerId)}`
 	const evaluate = async (
 		script: string,
 		keyList: string[],
@@ -112,6 +126,31 @@ export function createRedisBirthFeedStore(options: {
 				)) !== 1
 			)
 				throw new BirthFeedFailure('membership-unavailable')
+		},
+		async deferConfirmation(journeyId, ownerId) {
+			if (
+				(await evaluate(
+					DEFER_BIRTH_CONFIRMATION,
+					[deferKey(journeyId, ownerId)],
+					[String(BIRTH_CONFIRMATION_COOLDOWN_SECONDS)],
+				)) !== 1
+			)
+				throw new BirthFeedFailure('confirmation-cooldown-unavailable')
+		},
+		async deferredConfirmations(journeyId, ownerIds) {
+			if (!ownerIds.length) return new Set<string>()
+			const result = await evaluate(
+				DEFERRED_BIRTH_CONFIRMATIONS,
+				ownerIds.map((id) => deferKey(journeyId, id)),
+				[],
+			)
+			if (
+				!Array.isArray(result) ||
+				result.length !== ownerIds.length ||
+				result.some((value) => value !== 0 && value !== 1)
+			)
+				throw new BirthFeedFailure('confirmation-cooldown-unavailable')
+			return new Set(ownerIds.filter((_id, index) => result[index] === 1))
 		},
 		async load(journeyId) {
 			const value = await evaluate(LOAD_BIRTH_FEED, keys(journeyId), [READY])

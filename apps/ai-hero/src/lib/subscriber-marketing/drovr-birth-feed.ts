@@ -146,6 +146,11 @@ export interface BirthFeedStore {
 	reserveCall(runId: string): Promise<void>
 	reserveConfirmation(runId: string): Promise<void>
 	observeBorn(journeyId: string, contactId: string): Promise<void>
+	deferConfirmation(journeyId: string, ownerId: string): Promise<void>
+	deferredConfirmations(
+		journeyId: string,
+		ownerIds: string[],
+	): Promise<ReadonlySet<string>>
 	load(journeyId: string): Promise<BirthFeedCheckpoint | null>
 	consume(args: {
 		journeyId: string
@@ -162,6 +167,7 @@ export type BirthFeedVerdict = 'born' | 'missing' | 'unknown'
 export interface BirthFeedProof {
 	reserveConfirmation(): Promise<void>
 	observeBorn(journeyId: string, contactId: string): Promise<void>
+	deferConfirmation(journeyId: string, ownerId: string): Promise<void>
 	judge(
 		subjects: readonly OwnerBirthSubject[],
 	): Promise<ReadonlyMap<OwnerBirthSubject, BirthFeedVerdict>>
@@ -254,6 +260,8 @@ export async function prepareBirthFeed(args: {
 			reserveConfirmation: () => args.store.reserveConfirmation(args.runId),
 			observeBorn: (journeyId, contactId) =>
 				args.store.observeBorn(journeyId, contactId),
+			deferConfirmation: (journeyId, ownerId) =>
+				args.store.deferConfirmation(journeyId, ownerId),
 			async judge(subjects) {
 				const result = new Map<OwnerBirthSubject, BirthFeedVerdict>()
 				for (const [journeyId, checkpoint] of caughtUp) {
@@ -267,6 +275,9 @@ export async function prepareBirthFeed(args: {
 							...new Set(group.map((subject) => subject.owner.contactId)),
 						],
 					})
+					const deferred = await args.store.deferredConfirmations(journeyId, [
+						...new Set(group.map((subject) => subject.owner.id)),
+					])
 					for (const subject of group) {
 						// Newsletter signup/owner assignment may be weeks before birth.
 						const eventMs = Date.parse(
@@ -276,12 +287,15 @@ export async function prepareBirthFeed(args: {
 							subject,
 							members.has(subject.owner.contactId)
 								? 'born'
-								: Number.isFinite(eventMs) &&
-									  eventMs >= Date.parse(checkpoint.since) &&
-									  checkpoint.asOf !== null &&
-									  Date.parse(checkpoint.asOf) >= eventMs + BIRTH_FEED_GRACE_MS
-									? 'missing'
-									: 'unknown',
+								: deferred.has(subject.owner.id)
+									? 'unknown' // Soft cooldown is not absence or permanent birth proof.
+									: Number.isFinite(eventMs) &&
+										  eventMs >= Date.parse(checkpoint.since) &&
+										  checkpoint.asOf !== null &&
+										  Date.parse(checkpoint.asOf) >=
+												eventMs + BIRTH_FEED_GRACE_MS
+										? 'missing'
+										: 'unknown',
 						)
 					}
 				}

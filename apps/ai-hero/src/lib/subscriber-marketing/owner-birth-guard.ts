@@ -643,13 +643,21 @@ export async function runOwnerBirthGuard(args: {
 							timeoutMs,
 						),
 					)
-					if (!actor.ok)
-						return actor.backpressure
-							? { kind: 'shed' as const, backpressure: actor.backpressure }
-							: {
-									kind: 'unreadable' as const,
-									reason: 'birth confirmation unavailable',
-								}
+					if (!actor.ok) {
+						if (actor.backpressure)
+							return {
+								kind: 'shed' as const,
+								backpressure: actor.backpressure,
+							}
+						await birthFeed.deferConfirmation(
+							candidate.journeyId,
+							candidate.owner.id,
+						)
+						return {
+							kind: 'unreadable' as const,
+							reason: 'birth confirmation unavailable',
+						}
+					}
 					if (actor.found) {
 						await birthFeed.observeBorn(
 							candidate.journeyId,
@@ -657,7 +665,17 @@ export async function runOwnerBirthGuard(args: {
 						)
 						return { kind: 'born' as const }
 					}
-					return judgeLost(ports, candidate.owner.contactId, deadline)
+					const result = await judgeLost(
+						ports,
+						candidate.owner.contactId,
+						deadline,
+					)
+					if (result.kind === 'suppressed' || result.kind === 'unreadable')
+						await birthFeed.deferConfirmation(
+							candidate.journeyId,
+							candidate.owner.id,
+						)
+					return result
 				},
 			)) as Verdict
 			birthConfirmations += 1

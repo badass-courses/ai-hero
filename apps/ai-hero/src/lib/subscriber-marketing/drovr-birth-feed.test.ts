@@ -42,7 +42,11 @@ function subject(
 	birthAt = eventAt,
 ): OwnerBirthSubject {
 	// SAFETY: proof reads only contactId/occurredAt; full guard fixtures cover mapping.
-	const owner = { contactId: id, occurredAt: eventAt } as ContactEventRecord
+	const owner = {
+		id: `owner-${id}`,
+		contactId: id,
+		occurredAt: eventAt,
+	} as ContactEventRecord
 	return {
 		owner,
 		journeyId,
@@ -59,6 +63,7 @@ function subject(
 function harness() {
 	const checkpoints = new Map<string, BirthFeedCheckpoint>()
 	const memberships = new Map<string, Set<string>>()
+	const deferred = new Map<string, Set<string>>()
 	const requests: BirthFeedRequest[] = []
 	const cache = new Map<string, unknown>()
 	const step = {
@@ -75,6 +80,15 @@ function harness() {
 				throw new BirthFeedFailure('page-cap-exceeded')
 		}),
 		reserveConfirmation: vi.fn(async () => {}),
+		deferConfirmation: vi.fn(async (journeyId, ownerId) => {
+			const group = deferred.get(journeyId) ?? new Set<string>()
+			group.add(ownerId)
+			deferred.set(journeyId, group)
+		}),
+		deferredConfirmations: vi.fn(
+			async (journeyId, ownerIds) =>
+				new Set(ownerIds.filter((id) => deferred.get(journeyId)?.has(id))),
+		),
 		observeBorn: vi.fn(async (journeyId, contactId) => {
 			memberships.get(journeyId)?.add(contactId)
 		}),
@@ -99,6 +113,7 @@ function harness() {
 	)
 	return {
 		checkpoints,
+		deferred,
 		memberships,
 		requests,
 		store,
@@ -224,6 +239,19 @@ describe('GET /births boundary', () => {
 	})
 })
 describe('bounded durable feed preparation', () => {
+	it('cooldowns yield unknown, never absence, and positive membership still wins', async () => {
+		const h = harness()
+		const result = await h.run()
+		if (result.kind !== 'ready') throw new Error('fixture not ready')
+		const a = subject('a')
+		await result.proof.deferConfirmation(JOURNEY, a.owner.id)
+		expect((await result.proof.judge([a])).get(a)).toBe('unknown')
+		expect(h.store.deferredConfirmations).toHaveBeenCalledWith(JOURNEY, [
+			'owner-a',
+		])
+		await result.proof.observeBorn(JOURNEY, 'a')
+		expect((await result.proof.judge([a])).get(a)).toBe('born')
+	})
 	it('a lost SDK read result spends durable quota again: physical request 11 never starts', async () => {
 		const h = harness()
 		h.answer(() => ({ ...empty('opaque-next'), nextCursor: 'opaque-next' }))

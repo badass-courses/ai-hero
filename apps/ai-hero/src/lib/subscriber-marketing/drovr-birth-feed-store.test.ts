@@ -7,6 +7,9 @@ import {
 	RESERVE_BIRTH_FEED_CALL,
 	OBSERVE_BIRTH_FEED,
 	BIRTH_FEED_QUOTA_TTL_SECONDS,
+	BIRTH_CONFIRMATION_COOLDOWN_SECONDS,
+	DEFER_BIRTH_CONFIRMATION,
+	DEFERRED_BIRTH_CONFIRMATIONS,
 } from './drovr-birth-feed-store'
 import type { BirthFeedCheckpoint } from './drovr-birth-feed'
 vi.mock('@/env.mjs', () => ({ env: {} }))
@@ -34,6 +37,45 @@ function harness(value: unknown) {
 	}
 }
 describe('birth feed durable boundary', () => {
+	it('cooldowns are owner-event/journey scoped, expire, and never renew on retry or lookup', async () => {
+		const h = harness(1)
+		await h.store.deferConfirmation('journey', 'owner/+id')
+		expect(h.evalScript).toHaveBeenCalledWith(
+			DEFER_BIRTH_CONFIRMATION,
+			[
+				expect.stringContaining(
+					'org-aihero:journey}:v1:confirm-cooldown:owner%2F%2Bid',
+				),
+			],
+			[String(BIRTH_CONFIRMATION_COOLDOWN_SECONDS)],
+		)
+		expect(BIRTH_CONFIRMATION_COOLDOWN_SECONDS).toBe(6 * 3600)
+		expect(DEFER_BIRTH_CONFIRMATION).toContain("'NX'")
+		const lookup = harness([1, 0])
+		expect(
+			await lookup.store.deferredConfirmations('journey', ['a', 'b']),
+		).toEqual(new Set(['a']))
+		expect(lookup.evalScript.mock.calls[0]?.[0]).toBe(
+			DEFERRED_BIRTH_CONFIRMATIONS,
+		)
+		expect(DEFERRED_BIRTH_CONFIRMATIONS).not.toMatch(/EXPIRE|SET|TTL/)
+		expect(await lookup.store.deferredConfirmations('journey', [])).toEqual(
+			new Set(),
+		)
+	})
+	it.each([{ value: null }, { value: [1] }, { value: ['1', 0] }])(
+		'invalid cooldown lookup $value fails closed',
+		async ({ value }) => {
+			await expect(
+				harness(value).store.deferredConfirmations('journey', ['a', 'b']),
+			).rejects.toThrow('confirmation-cooldown-unavailable')
+		},
+	)
+	it('failed cooldown write cannot silently continue into reposting', async () => {
+		await expect(
+			harness(0).store.deferConfirmation('journey', 'a'),
+		).rejects.toThrow('confirmation-cooldown-unavailable')
+	})
 	it('confirmation reads share a separate 25-call budget across journeys, not another births allowance', async () => {
 		const h = harness(1)
 		await h.store.reserveConfirmation('run')
