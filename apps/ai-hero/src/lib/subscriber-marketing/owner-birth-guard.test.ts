@@ -276,20 +276,36 @@ describe('the owner-without-birth guard (row 110)', () => {
 	})
 
 	it('only 25 feed candidates across pages and journeys are confirmed; no read 26', async () => {
-		const h = withNewsletter(
-			harness({
-				owners: Array.from({ length: 30 }, (_, i) =>
-					owner(
-						`c${String(i).padStart(2, '0')}`,
-						undefined,
-						i % 2
-							? DROVR_EVERGREEN_OFFER_JOURNEY_ID
-							: 'value-path-skills-course',
-					),
+		const h = harness({
+			owners: Array.from({ length: 30 }, (_, i) =>
+				owner(
+					`c${String(i).padStart(2, '0')}`,
+					undefined,
+					i % 2 ? DROVR_EVERGREEN_OFFER_JOURNEY_ID : 'value-path-skills-course',
 				),
-			}),
-			['n1'],
+			),
+		})
+		const newsletterOwner = owner(
+			'n1',
+			undefined,
+			DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
 		)
+		h.ports.scanNewsletterBirths = async () => ({
+			subjects: [
+				{
+					owner: newsletterOwner,
+					journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+					birth: {
+						tenantId: 'org-aihero',
+						contactId: 'n1',
+						journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+						type: 'contact.created',
+						occurredAt: newsletterOwner.occurredAt,
+						idempotencyKey: 'fixture-newsletter-birth:n1',
+					},
+				},
+			],
+		})
 		const reserveConfirmation = vi.fn(async () => {})
 		h.ports.birthFeed = {
 			reserveConfirmation,
