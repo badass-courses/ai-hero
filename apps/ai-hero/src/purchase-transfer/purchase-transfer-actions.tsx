@@ -337,8 +337,14 @@ export async function acceptPurchaseTransfer(input: {
 		throw new Error('No user found')
 	}
 
+	const purchase = purchaseUserTransfer
+		? await db.query.purchases.findFirst({
+				where: eq(purchaseTable.id, purchaseUserTransfer.purchaseId),
+			})
+		: null
 	const decision = evaluateAccept({
 		transfer: purchaseUserTransfer,
+		purchase,
 		actorUserId: user.id,
 	})
 
@@ -382,7 +388,11 @@ export async function acceptPurchaseTransfer(input: {
 			// else (cancel won, retarget) is a real denial with no side
 			// effects — Stripe has not been touched.
 			const latest = await getPurchaseUserTransferById({ id: transfer.id })
-			const retry = evaluateAccept({ transfer: latest, actorUserId: user.id })
+			const retry = evaluateAccept({
+				transfer: latest,
+				purchase,
+				actorUserId: user.id,
+			})
 			if (retry.ok && retry.kind === 'resume') {
 				return completeVerifiedTransfer(transfer, user)
 			}
@@ -460,10 +470,16 @@ export async function initiatePurchaseTransfer(input: {
 			})
 		: []
 
+	const purchase = purchaseUserTransfer
+		? await db.query.purchases.findFirst({
+				where: eq(purchaseTable.id, purchaseUserTransfer.purchaseId),
+			})
+		: null
 	// Authorization and state checks run before any side effect (including
-	// target user creation).
+	// target user creation, Stripe, ownership and outbox writes).
 	const preDecision = evaluateInitiate({
 		transfer: purchaseUserTransfer,
+		purchase,
 		actorUserId,
 		actorEmail,
 		targetEmail: parsedEmail,
@@ -478,11 +494,11 @@ export async function initiatePurchaseTransfer(input: {
 
 	const transfer = purchaseUserTransfer!
 
-	const { user: toUser } =
-		await findOrCreateUserWithPersonalOrg(parsedEmail)
+	const { user: toUser } = await findOrCreateUserWithPersonalOrg(parsedEmail)
 
 	const decision = evaluateInitiate({
 		transfer,
+		purchase,
 		actorUserId,
 		targetUserId: toUser.id,
 		inFlightCountForPurchase: inFlight.length,

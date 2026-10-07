@@ -1,4 +1,4 @@
-import { db } from '@/db'
+import { db, type DbExecutor } from '@/db'
 import {
 	entitlements,
 	entitlementTypes,
@@ -276,29 +276,32 @@ export async function createCohortEntitlement({
  * Use for purchase, transfer, redeem, etc.
  * @returns The ID of the created entitlement
  */
-export async function createWorkshopEntitlement({
-	id,
-	userId,
-	resourceId,
-	organizationId,
-	organizationMembershipId,
-	entitlementType,
-	sourceId,
-	sourceType,
-	expiresAt,
-	metadata = {},
-}: {
-	id?: string
-	userId: string
-	resourceId?: string
-	organizationId: string
-	organizationMembershipId: string
-	entitlementType: string
-	sourceId: string
-	sourceType: string
-	expiresAt?: Date
-	metadata?: Record<string, any>
-}): Promise<string> {
+export async function createWorkshopEntitlement(
+	{
+		id,
+		userId,
+		resourceId,
+		organizationId,
+		organizationMembershipId,
+		entitlementType,
+		sourceId,
+		sourceType,
+		expiresAt,
+		metadata = {},
+	}: {
+		id?: string
+		userId: string
+		resourceId?: string
+		organizationId: string
+		organizationMembershipId: string
+		entitlementType: string
+		sourceId: string
+		sourceType: string
+		expiresAt?: Date
+		metadata?: Record<string, any>
+	},
+	executor: DbExecutor = db,
+): Promise<string> {
 	const entitlementId =
 		id ?? (resourceId ? `${resourceId}-${guid()}` : `entitlement-${guid()}`)
 
@@ -308,7 +311,7 @@ export async function createWorkshopEntitlement({
 		...(resourceId && { contentIds: [resourceId] }),
 	}
 
-	await db.insert(entitlements).values({
+	await executor.insert(entitlements).values({
 		id: entitlementId,
 		entitlementType,
 		userId,

@@ -9,6 +9,14 @@
  * a terminal state.
  */
 
+import { hasIncludedProductEntitlements } from '@/lib/included-product-policy'
+
+type TransferPurchase = {
+	productId: string
+	bulkCouponId?: string | null
+	redeemedBulkCouponId?: string | null
+}
+
 export const TRANSFER_STATES = [
 	'AVAILABLE',
 	'INITIATED',
@@ -82,6 +90,7 @@ export type TransferDenialCode =
 	| 'expired'
 	| 'self_transfer'
 	| 'transfer_in_flight'
+	| 'included_team_purchase'
 
 export type TransferDenial = {
 	ok: false
@@ -109,6 +118,8 @@ export type AcceptDecision =
 
 export const TRANSFER_DENIAL_MESSAGES: Record<TransferDenialCode, string> = {
 	not_found: 'No purchaseUserTransfer found',
+	included_team_purchase:
+		'Team orders and redeemed seats cannot be transferred.',
 	not_authenticated: 'You must be signed in',
 	not_source_owner: 'Only the purchase owner can manage this transfer',
 	not_target_user: 'You are not the target user',
@@ -121,6 +132,7 @@ export const TRANSFER_DENIAL_MESSAGES: Record<TransferDenialCode, string> = {
 }
 
 export function evaluateInitiate(params: {
+	purchase: TransferPurchase | null | undefined
 	transfer: TransferSnapshot | null | undefined
 	actorUserId: string | null | undefined
 	targetUserId?: string | null
@@ -134,6 +146,8 @@ export function evaluateInitiate(params: {
 	if (!transfer) return { ok: false, code: 'not_found' }
 	if (transfer.sourceUserId !== actorUserId)
 		return { ok: false, code: 'not_source_owner' }
+	const purchaseDenial = evaluatePurchasePolicy(params.purchase)
+	if (purchaseDenial) return purchaseDenial
 	if (transfer.transferState !== 'AVAILABLE')
 		return { ok: false, code: 'invalid_state' }
 	if (isTransferExpired(transfer, now))
@@ -168,6 +182,7 @@ export function evaluateCancel(params: {
 }
 
 export function evaluateAccept(params: {
+	purchase: TransferPurchase | null | undefined
 	transfer: TransferSnapshot | null | undefined
 	actorUserId: string | null | undefined
 	now?: Date
@@ -177,6 +192,8 @@ export function evaluateAccept(params: {
 	if (!transfer) return { ok: false, code: 'not_found' }
 	if (transfer.targetUserId !== actorUserId)
 		return { ok: false, code: 'not_target_user' }
+	const purchaseDenial = evaluatePurchasePolicy(params.purchase)
+	if (purchaseDenial) return purchaseDenial
 	if (transfer.transferState === 'VERIFIED') {
 		return { ok: true, kind: 'resume' }
 	}
@@ -188,6 +205,18 @@ export function evaluateAccept(params: {
 	if (isTransferExpired(transfer, now))
 		return { ok: false, code: 'expired', markExpired: true }
 	return { ok: true, kind: 'accept' }
+}
+
+function evaluatePurchasePolicy(
+	purchase: TransferPurchase | null | undefined,
+): TransferDenial | null {
+	if (!purchase) return { ok: false, code: 'not_found' }
+	if (
+		hasIncludedProductEntitlements(purchase.productId) &&
+		(purchase.bulkCouponId || purchase.redeemedBulkCouponId)
+	)
+		return { ok: false, code: 'included_team_purchase' }
+	return null
 }
 
 export function transferDenialError(denial: TransferDenial): Error {

@@ -30,10 +30,12 @@ type World = {
 		organizationId: string
 		status: string
 		bulkCouponId: string | null
+		redeemedBulkCouponId?: string | null
 		productId: string
 	}
 	productType: string
 	transferState: string
+	legacyTransferCount?: number
 	completedWrites: number
 	entitlements: EntitlementRow[]
 	learnerRoleAdded: boolean
@@ -134,6 +136,15 @@ const mocks = vi.hoisted(() => {
 		DISCORD_TYPE: 'cohort_discord_role',
 		log: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 		createResourceEntitlements: vi.fn(),
+		transferIncluded: vi.fn(
+			async (): Promise<
+				{
+					entitlementId: string
+					entitlementTypeId: string
+					resourceId: string
+				}[]
+			> => [],
+		),
 		createEntitlement: vi.fn(),
 		removeDiscordRole: vi.fn(),
 		getCreditEntitlementsForSourcePurchase: vi.fn(),
@@ -280,6 +291,18 @@ vi.mock('@/db', () => ({
 				}),
 			},
 			purchaseUserTransfer: {
+				findMany: vi.fn(async ({ where }: { where?: Predicate }) =>
+					Array.from(
+						{ length: mocks.state.world.legacyTransferCount ?? 1 },
+						(_, index) => ({
+							id: index ? 'ambiguous-put' : 'put_1',
+							purchaseId: PURCHASE_ID,
+							sourceUserId: 'user_a',
+							targetUserId: 'user_b',
+							transferState: mocks.state.world.transferState,
+						}),
+					).filter((row) => mocks.matches(row, where)),
+				),
 				findFirst: vi.fn(async () => ({
 					id: 'put_1',
 					transferState: mocks.state.world.transferState,
@@ -309,6 +332,9 @@ vi.mock('@/db/schema', () => ({
 	purchases: mocks.columns('purchases', ['id', 'userId', 'organizationId']),
 	purchaseUserTransfer: mocks.columns('purchaseUserTransfer', [
 		'id',
+		'purchaseId',
+		'sourceUserId',
+		'targetUserId',
 		'transferState',
 	]),
 }))
@@ -331,6 +357,11 @@ vi.mock('@/lib/entitlements', () => ({
 }))
 vi.mock('@/lib/entitlements-query', () => ({
 	createResourceEntitlements: mocks.createResourceEntitlements,
+}))
+vi.mock('@/lib/included-product-entitlements', () => ({
+	hasIncludedProductEntitlements: (productId: string) =>
+		productId === 'product-s00zs',
+	transferIncludedProductEntitlements: mocks.transferIncluded,
 }))
 vi.mock('@coursebuilder/organizations', () => ({
 	createPersonalOrganizationService: () => ({
@@ -404,7 +435,7 @@ function createAdapter() {
 	return {
 		getPurchase: vi.fn(async () => ({ ...mocks.state.world.purchase })),
 		getProduct: vi.fn(async () => ({
-			id: PRODUCT_ID,
+			id: mocks.state.world.purchase.productId,
 			type: mocks.state.world.productType,
 			resources: [{ resource: { id: 'cohort_1', type: 'cohort' } }],
 		})),
@@ -430,10 +461,13 @@ const event = {
 	},
 }
 
-async function runWorkflow(memo?: Map<string, unknown>) {
+async function runWorkflow(
+	memo?: Map<string, unknown>,
+	deliveredEvent = event,
+) {
 	const harness = createStepHarness(memo)
 	const result = await handleProductTransfer({
-		event,
+		event: deliveredEvent,
 		step: harness.step,
 		db: createAdapter(),
 		transferSource: 'ui',
@@ -442,6 +476,7 @@ async function runWorkflow(memo?: Map<string, unknown>) {
 }
 
 beforeEach(() => {
+	mocks.transferIncluded.mockResolvedValue([])
 	vi.clearAllMocks()
 	mocks.state.world = freshWorld()
 	mocks.getCreditEntitlementsForSourcePurchase.mockResolvedValue([])
@@ -511,6 +546,91 @@ beforeEach(() => {
 			mocks.state.world.entitlements.push({ ...values, deletedAt: null })
 		},
 	)
+})
+
+describe('included-product transfer wiring', () => {
+	it.each([0, 2])(
+		'rejects missing-ID events with %i matching transfers before side effects',
+		async (count) => {
+			mocks.state.world.purchase.productId = 'product-s00zs'
+			mocks.state.world.legacyTransferCount = count
+			await expect(
+				runWorkflow(undefined, {
+					data: { ...event.data, purchaseUserTransferId: '' },
+				}),
+			).rejects.toThrow('verified individual')
+			expect(mocks.ensurePersonalOrganization).not.toHaveBeenCalled()
+			expect(mocks.state.world.transferState).toBe('VERIFIED')
+		},
+	)
+	it('resolves a legacy event without its transfer ID to the unique verified row and completes it', async () => {
+		mocks.state.world.purchase.productId = 'product-s00zs'
+		const legacy = { data: { ...event.data, purchaseUserTransferId: '' } }
+		await runWorkflow(undefined, legacy)
+		expect(mocks.transferIncluded).toHaveBeenCalledWith(
+			expect.objectContaining({ transferId: 'put_1' }),
+		)
+		expect(mocks.state.world.transferState).toBe('COMPLETED')
+	})
+
+	it.each(['billing-order', 'redeemed-seat', 'unverified'])(
+		'rejects %s before any organization moves',
+		async (variant) => {
+			mocks.state.world.purchase.productId = 'product-s00zs'
+			if (variant === 'billing-order')
+				mocks.state.world.purchase.bulkCouponId = 'bulk-coupon'
+			if (variant === 'redeemed-seat')
+				mocks.state.world.purchase.redeemedBulkCouponId = 'bulk-coupon'
+			if (variant === 'unverified')
+				mocks.state.world.transferState = 'INITIATED'
+			await expect(runWorkflow()).rejects.toThrow(
+				'verified individual purchase',
+			)
+			expect(mocks.ensurePersonalOrganization).not.toHaveBeenCalled()
+			expect(mocks.transferIncluded).not.toHaveBeenCalled()
+			expect(mocks.state.world.purchase.organizationId).toBe('org_a')
+		},
+	)
+
+	it('calls the bundle transfer after membership and includes its access in the completion gate', async () => {
+		mocks.state.world.purchase.productId = 'product-s00zs'
+		mocks.transferIncluded.mockImplementation(async () => {
+			mocks.state.world.entitlements.push({
+				id: 'target-bundle',
+				userId: 'user_b',
+				entitlementType: 'workshop_content_access',
+				sourceType: 'PURCHASE',
+				sourceId: PURCHASE_ID,
+				deletedAt: null,
+				organizationId: 'org_b',
+				organizationMembershipId: 'member_b',
+				metadata: { contentIds: ['workshop-2ozd9'] },
+			})
+			return [
+				{
+					entitlementId: 'target-bundle',
+					entitlementTypeId: 'workshop_content_access',
+					resourceId: 'workshop-2ozd9',
+				},
+			]
+		})
+		const { harness } = await runWorkflow()
+		expect(mocks.transferIncluded).toHaveBeenCalledWith({
+			purchaseId: PURCHASE_ID,
+			productId: 'product-s00zs',
+			userId: 'user_b',
+			organizationId: 'org_b',
+			organizationMembershipId: 'member_b',
+			transferId: 'put_1',
+			sourceUserId: 'user_a',
+		})
+		expect(
+			harness.executed.indexOf('transfer included product entitlements'),
+		).toBeGreaterThan(
+			harness.executed.indexOf('get target user org membership'),
+		)
+		expect(mocks.state.world.transferState).toBe('COMPLETED')
+	})
 })
 
 describe('happy path', () => {
