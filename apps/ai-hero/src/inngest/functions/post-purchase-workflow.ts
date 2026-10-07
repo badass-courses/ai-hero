@@ -19,7 +19,11 @@ import {
 import { EntitlementSourceType } from '@/lib/entitlements'
 import { createResourceEntitlements } from '@/lib/entitlements-query'
 import type { WorkshopAvailability } from '@/lib/get-workshop-availability'
-import { grantIncludedProductEntitlements } from '@/lib/included-product-entitlements'
+import {
+	grantIncludedProductEntitlements,
+	hasIncludedProductEntitlements,
+} from '@/lib/included-product-entitlements'
+import { INCLUDED_PRODUCT_ENTITLEMENTS_RETRY_EVENT } from '@/inngest/events/included-product-entitlements'
 import { log } from '@/server/logger'
 import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 
@@ -695,16 +699,6 @@ export const postPurchaseWorkflow = inngest.createFunction(
 					organizationMembershipId: orgMembership.id,
 				})
 
-				await step.run('grant included product entitlements', async () => {
-					return grantIncludedProductEntitlements({
-						purchaseId: purchase.id,
-						productId: product.id,
-						userId: user.id,
-						organizationId,
-						organizationMembershipId: orgMembership.id,
-					})
-				})
-
 				// Process each resource context
 				for (const context of resourceContexts) {
 					const resourceData = resourceDataMap[context.resourceId]
@@ -908,6 +902,50 @@ export const postPurchaseWorkflow = inngest.createFunction(
 						resourceType: context.resourceType,
 						resourceProductType: context.productType,
 					})
+				}
+
+				// Core product grants have completed. Bundle failure is observable
+				// but gets its own retry budget, never the cohort's failure path.
+				if (hasIncludedProductEntitlements(product.id)) {
+					const includedContext = {
+						purchaseId: purchase.id,
+						productId: product.id,
+						userId: user.id,
+						organizationId,
+						organizationMembershipId: orgMembership.id,
+					}
+					const outcome = await step.run(
+						'grant included product entitlements',
+						async () => {
+							try {
+								await grantIncludedProductEntitlements(includedContext)
+								return 'granted'
+							} catch {
+								await log.error('included_product.grant_failed', {
+									purchaseId: purchase.id,
+									productId: product.id,
+									userId: user.id,
+									status: 'retry_requested',
+								})
+								return 'retry_requested'
+							}
+						},
+					)
+					if (outcome === 'retry_requested') {
+						try {
+							await step.sendEvent('retry included product entitlements', {
+								name: INCLUDED_PRODUCT_ENTITLEMENTS_RETRY_EVENT,
+								data: includedContext,
+							})
+						} catch {
+							await log.error('included_product.grant_failed', {
+								purchaseId: purchase.id,
+								productId: product.id,
+								userId: user.id,
+								status: 'retry_enqueue_failed',
+							})
+						}
+					}
 				}
 
 				await tracePostPurchase('individual_purchase_fulfillment.completed', {

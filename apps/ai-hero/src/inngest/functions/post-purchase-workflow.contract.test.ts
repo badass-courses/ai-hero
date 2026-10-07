@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => {
 		updateWhere,
 		findEntitlementType: vi.fn(),
 		grantIncluded: vi.fn(async () => []),
+		grantCore: vi.fn(async () => []),
 		log: {
 			info: vi.fn(),
 			warn: vi.fn(),
@@ -66,10 +67,12 @@ vi.mock('@/lib/entitlements', () => ({
 	EntitlementSourceType: { COUPON: 'COUPON' },
 }))
 vi.mock('@/lib/entitlements-query', () => ({
-	createResourceEntitlements: vi.fn(async () => []),
+	createResourceEntitlements: mocks.grantCore,
 }))
 vi.mock('@/lib/included-product-entitlements', () => ({
 	grantIncludedProductEntitlements: mocks.grantIncluded,
+	hasIncludedProductEntitlements: (productId: string) =>
+		productId === 'product-s00zs',
 }))
 vi.mock('@/lib/personal-organization-service', () => ({
 	ensurePersonalOrganizationWithLearnerRole: vi.fn(),
@@ -143,7 +146,7 @@ type Handler = (args: {
 	}
 	step: {
 		run: (id: string, callback: () => Promise<unknown>) => Promise<unknown>
-		sendEvent: (id: string, event: unknown) => Promise<unknown>
+		sendEvent: (id: string, event: { name: string; data?: unknown }) => Promise<unknown>
 	}
 	db: {
 		getPurchase: (id: string) => Promise<unknown>
@@ -209,7 +212,10 @@ function createRun(results: unknown[]) {
 			if (id === 'mark entitlement coupons as used') results.push(result)
 			return result
 		}),
-		sendEvent: vi.fn(async () => undefined),
+		sendEvent: vi.fn(
+			async (_id: string, _payload: { name: string; data?: unknown }) =>
+				undefined,
+		),
 	}
 
 	return { adapter, paymentProvider, step }
@@ -263,15 +269,22 @@ describe('included-product workflow integration', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mocks.grantIncluded.mockResolvedValue([])
+		mocks.grantCore.mockResolvedValue([])
 		mocks.findEntitlementType.mockResolvedValue({
 			id: 'cohort-access',
 			name: 'cohort_content_access',
 		})
 	})
 
-	it.each([NEW_PURCHASE_CREATED_EVENT, FULL_PRICE_COUPON_REDEEMED_EVENT])(
-		'calls the policy after membership on %s',
-		async (name) => {
+	it.each([
+		{ name: NEW_PURCHASE_CREATED_EVENT, failure: 'none' },
+		{ name: FULL_PRICE_COUPON_REDEEMED_EVENT, failure: 'none' },
+		{ name: NEW_PURCHASE_CREATED_EVENT, failure: 'bundle' },
+		{ name: FULL_PRICE_COUPON_REDEEMED_EVENT, failure: 'bundle' },
+		{ name: FULL_PRICE_COUPON_REDEEMED_EVENT, failure: 'enqueue' },
+	])(
+		'preserves the core grant on $name with $failure failure',
+		async ({ name, failure }) => {
 			const run = createRun([])
 			const redeemed = name === FULL_PRICE_COUPON_REDEEMED_EVENT
 			run.adapter.getPurchase.mockResolvedValue({
@@ -296,6 +309,16 @@ describe('included-product workflow integration', () => {
 					}
 				return callback()
 			})
+			if (failure !== 'none')
+				mocks.grantIncluded.mockRejectedValue(new Error('broken bundle'))
+			if (failure === 'enqueue')
+				run.step.sendEvent.mockImplementation(async (_id, payload) => {
+					if (
+						payload.name ===
+						'commerce/included-product-entitlements-retry-requested'
+					)
+						throw new Error('transport down')
+				})
 			await handler({
 				event: {
 					name,
@@ -310,6 +333,26 @@ describe('included-product workflow integration', () => {
 				paymentProvider: run.paymentProvider,
 				runId: 'c5-run',
 			})
+			if (failure !== 'none') {
+				expect(mocks.log.error).toHaveBeenCalledWith(
+					'included_product.grant_failed',
+					expect.objectContaining({
+						status: 'retry_requested',
+						purchaseId: 'c5-learner',
+					}),
+				)
+				expect(run.step.sendEvent).toHaveBeenCalledWith(
+					'retry included product entitlements',
+					expect.objectContaining({
+						name: 'commerce/included-product-entitlements-retry-requested',
+					}),
+				)
+			}
+			if (failure === 'enqueue')
+				expect(mocks.log.error).toHaveBeenCalledWith(
+					'included_product.grant_failed',
+					expect.objectContaining({ status: 'retry_enqueue_failed' }),
+				)
 			expect(mocks.grantIncluded).toHaveBeenCalledOnce()
 			expect(mocks.grantIncluded).toHaveBeenCalledWith({
 				purchaseId: 'c5-learner',
@@ -321,6 +364,9 @@ describe('included-product workflow integration', () => {
 			expect(
 				executed.indexOf('grant included product entitlements'),
 			).toBeGreaterThan(executed.indexOf('ensure org membership'))
+			expect(mocks.grantCore.mock.invocationCallOrder[0]).toBeLessThan(
+				mocks.grantIncluded.mock.invocationCallOrder[0]!,
+			)
 			if (!redeemed)
 				expect(mocks.grantIncluded.mock.invocationCallOrder[0]).toBeLessThan(
 					run.step.sendEvent.mock.invocationCallOrder.at(-1)!,

@@ -35,6 +35,7 @@ type World = {
 	}
 	productType: string
 	transferState: string
+	legacyTransferCount?: number
 	completedWrites: number
 	entitlements: EntitlementRow[]
 	learnerRoleAdded: boolean
@@ -290,6 +291,18 @@ vi.mock('@/db', () => ({
 				}),
 			},
 			purchaseUserTransfer: {
+				findMany: vi.fn(async ({ where }: { where?: Predicate }) =>
+					Array.from(
+						{ length: mocks.state.world.legacyTransferCount ?? 1 },
+						(_, index) => ({
+							id: index ? 'ambiguous-put' : 'put_1',
+							purchaseId: PURCHASE_ID,
+							sourceUserId: 'user_a',
+							targetUserId: 'user_b',
+							transferState: mocks.state.world.transferState,
+						}),
+					).filter((row) => mocks.matches(row, where)),
+				),
 				findFirst: vi.fn(async () => ({
 					id: 'put_1',
 					transferState: mocks.state.world.transferState,
@@ -319,6 +332,9 @@ vi.mock('@/db/schema', () => ({
 	purchases: mocks.columns('purchases', ['id', 'userId', 'organizationId']),
 	purchaseUserTransfer: mocks.columns('purchaseUserTransfer', [
 		'id',
+		'purchaseId',
+		'sourceUserId',
+		'targetUserId',
 		'transferState',
 	]),
 }))
@@ -445,10 +461,13 @@ const event = {
 	},
 }
 
-async function runWorkflow(memo?: Map<string, unknown>) {
+async function runWorkflow(
+	memo?: Map<string, unknown>,
+	deliveredEvent = event,
+) {
 	const harness = createStepHarness(memo)
 	const result = await handleProductTransfer({
-		event,
+		event: deliveredEvent,
 		step: harness.step,
 		db: createAdapter(),
 		transferSource: 'ui',
@@ -530,6 +549,30 @@ beforeEach(() => {
 })
 
 describe('included-product transfer wiring', () => {
+	it.each([0, 2])(
+		'rejects missing-ID events with %i matching transfers before side effects',
+		async (count) => {
+			mocks.state.world.purchase.productId = 'product-s00zs'
+			mocks.state.world.legacyTransferCount = count
+			await expect(
+				runWorkflow(undefined, {
+					data: { ...event.data, purchaseUserTransferId: '' },
+				}),
+			).rejects.toThrow('verified individual')
+			expect(mocks.ensurePersonalOrganization).not.toHaveBeenCalled()
+			expect(mocks.state.world.transferState).toBe('VERIFIED')
+		},
+	)
+	it('resolves a legacy event without its transfer ID to the unique verified row and completes it', async () => {
+		mocks.state.world.purchase.productId = 'product-s00zs'
+		const legacy = { data: { ...event.data, purchaseUserTransferId: '' } }
+		await runWorkflow(undefined, legacy)
+		expect(mocks.transferIncluded).toHaveBeenCalledWith(
+			expect.objectContaining({ transferId: 'put_1' }),
+		)
+		expect(mocks.state.world.transferState).toBe('COMPLETED')
+	})
+
 	it.each(['billing-order', 'redeemed-seat', 'unverified'])(
 		'rejects %s before any organization moves',
 		async (variant) => {

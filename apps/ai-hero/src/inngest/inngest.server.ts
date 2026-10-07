@@ -230,7 +230,10 @@ import {
 import { inngestTelemetryMiddleware } from './inngest-telemetry-middleware'
 
 // Create a client to send and receive events
+import { INCLUDED_PRODUCT_ENTITLEMENTS_RETRY_EVENT, type IncludedProductEntitlementsRetry } from './events/included-product-entitlements'
+
 export type Events = {
+	[INCLUDED_PRODUCT_ENTITLEMENTS_RETRY_EVENT]: IncludedProductEntitlementsRetry
 	[USER_CREATED_EVENT]: UserCreated
 	[AI_CODING_DICTIONARY_SOURCE_CHANGED_EVENT]: AiCodingDictionarySourceChanged
 	[CONTENT_RESOURCE_INDEX_REQUESTED_EVENT]: ContentResourceIndexRequested

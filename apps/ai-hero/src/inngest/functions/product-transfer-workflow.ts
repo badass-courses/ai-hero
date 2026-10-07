@@ -504,16 +504,35 @@ export async function handleProductTransfer({
 	// at least once, and a replayed accept can legitimately re-send one. A
 	// terminal transfer row means a previous run already finished, so the
 	// entitlement machinery must not run again.
-	const priorTransferState = await step.run(
+	const priorTransfer = await step.run(
 		`check transfer replay state`,
 		async () => {
-			if (!event.data.purchaseUserTransferId) return null
-			const row = await db.query.purchaseUserTransfer.findFirst({
-				where: eq(purchaseUserTransfer.id, event.data.purchaseUserTransferId),
+			if (event.data.purchaseUserTransferId) {
+				return (
+					(await db.query.purchaseUserTransfer.findFirst({
+						where: eq(
+							purchaseUserTransfer.id,
+							event.data.purchaseUserTransferId,
+						),
+					})) ?? null
+				)
+			}
+			// Heal legacy events missing the ID only when exactly one VERIFIED
+			// row proves this purchase/source/target. Never guess authorization.
+			const candidates = await db.query.purchaseUserTransfer.findMany({
+				where: and(
+					eq(purchaseUserTransfer.purchaseId, event.data.purchaseId),
+					eq(purchaseUserTransfer.sourceUserId, event.data.sourceUserId),
+					eq(purchaseUserTransfer.targetUserId, event.data.targetUserId),
+					eq(purchaseUserTransfer.transferState, 'VERIFIED'),
+				),
 			})
-			return row?.transferState ?? null
+			return candidates.length === 1 ? candidates[0]! : null
 		},
 	)
+	const resolvedTransferId =
+		priorTransfer?.id ?? event.data.purchaseUserTransferId
+	const priorTransferState = priorTransfer?.transferState ?? null
 
 	if (
 		priorTransferState &&
@@ -782,7 +801,7 @@ export async function handleProductTransfer({
 					userId: targetUser.id,
 					organizationId: targetUserOrganization.id,
 					organizationMembershipId: targetUserOrgMembership.id,
-					transferId: event.data.purchaseUserTransferId,
+					transferId: resolvedTransferId,
 					sourceUserId: sourceUser.id,
 				})
 			},
@@ -1059,7 +1078,7 @@ export async function handleProductTransfer({
 	// organization, and active entitlements. A mismatch throws so Inngest
 	// retries and the failure stays visible instead of silently completing.
 	await step.run(`verify transfer completion invariants`, async () => {
-		if (!event.data.purchaseUserTransferId) return { skipped: true }
+		if (!resolvedTransferId) return { skipped: true }
 
 		const freshPurchase = await db.query.purchases.findFirst({
 			where: eq(purchases.id, purchase.id),
@@ -1227,7 +1246,7 @@ export async function handleProductTransfer({
 	})
 
 	await step.run(`mark transfer completed`, async () => {
-		if (!event.data.purchaseUserTransferId) return
+		if (!resolvedTransferId) return
 
 		// Compare-and-swap from VERIFIED so a crash-replay or duplicate event
 		// can never resurrect a terminal transfer.
@@ -1239,7 +1258,7 @@ export async function handleProductTransfer({
 			})
 			.where(
 				and(
-					eq(purchaseUserTransfer.id, event.data.purchaseUserTransferId),
+					eq(purchaseUserTransfer.id, resolvedTransferId),
 					eq(purchaseUserTransfer.transferState, 'VERIFIED'),
 				),
 			)
@@ -1249,7 +1268,7 @@ export async function handleProductTransfer({
 		}
 
 		const current = await db.query.purchaseUserTransfer.findFirst({
-			where: eq(purchaseUserTransfer.id, event.data.purchaseUserTransferId),
+			where: eq(purchaseUserTransfer.id, resolvedTransferId),
 		})
 
 		if (current?.transferState === 'COMPLETED') {

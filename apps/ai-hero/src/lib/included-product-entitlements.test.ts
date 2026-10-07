@@ -39,7 +39,7 @@ function executor() {
 			from: (table: Parameters<typeof getTableName>[0]) => ({
 				where: (predicate: SQL) => ({
 					for: async (mode: string) => {
-						expect(mode).toBe('update')
+						expect(['update', 'share']).toContain(mode)
 						fake.locks.push(dialect.sqlToQuery(predicate).sql)
 						return rows(table)
 							.filter((row) => matches(row, predicate))
@@ -325,8 +325,43 @@ describe('included product fulfillment policy', () => {
 			context.purchaseId,
 			later.purchaseId,
 		])
-		expect(fake.locks[1]).toContain('bulkCouponId')
-		expect(fake.locks[2]).toContain('`AI_Purchase`.`id`')
+		expect(fake.locks[1]).toContain('`AI_Purchase`.`id`')
+		expect(fake.locks.every((sql) => !sql.includes('bulkCouponId'))).toBe(true)
+	})
+	it.each([
+		'invoice-no-org',
+		'multi-parent',
+		'one-parent-refunded',
+		'all-parents-refunded',
+		'changed-parent-coupon',
+	])('checks the coupon chain for %s', async (variant) => {
+		seat()
+		const parent = rows(purchases)[1]!
+		parent.organizationId = null
+		rows(coupon)[0]!.organizationId = null
+		if (variant !== 'invoice-no-org')
+			seed(purchases, { ...parent, id: 'added-seats' })
+		if (variant === 'one-parent-refunded') parent.status = 'Refunded'
+		if (variant === 'all-parents-refunded')
+			for (const row of rows(purchases).slice(1)) row.status = 'Refunded'
+		if (variant === 'changed-parent-coupon')
+			fake.beforeTransaction = () => {
+				for (const row of rows(purchases).slice(1))
+					row.bulkCouponId = 'different-coupon'
+			}
+		if (
+			variant === 'all-parents-refunded' ||
+			variant === 'changed-parent-coupon'
+		) {
+			await expect(grantIncludedProductEntitlements(context)).rejects.toThrow(
+				'seat origin',
+			)
+			expect(active()).toHaveLength(0)
+		} else {
+			await grantIncludedProductEntitlements(context)
+			expect(active()).toHaveLength(1)
+		}
+		expect(fake.locks.every((sql) => !sql.includes('bulkCouponId'))).toBe(true)
 	})
 	it('does not grant a billing buyer without a redeemed seat', async () => {
 		purchase().bulkCouponId = 'bulk-coupon'
@@ -407,23 +442,16 @@ describe('included product fulfillment policy', () => {
 	it.each([
 		'parent-status',
 		'parent-product',
-		'parent-org',
 		'coupon-product',
-		'coupon-org',
 		'parent-missing',
-		'parent-duplicate',
 	])('fails closed on invalid seat %s', async (variant) => {
 		seat()
 		const parent = rows(purchases)[1]!
 		if (variant === 'parent-status') parent.status = 'Refunded'
 		if (variant === 'parent-product') parent.productId = 'other'
-		if (variant === 'parent-org') parent.organizationId = 'other'
 		if (variant === 'coupon-product')
 			rows(coupon)[0]!.restrictedToProductId = 'other'
-		if (variant === 'coupon-org') rows(coupon)[0]!.organizationId = 'other'
 		if (variant === 'parent-missing') rows(purchases).pop()
-		if (variant === 'parent-duplicate')
-			seed(purchases, { ...parent, id: 'ambiguous-parent' })
 		await expect(grantIncludedProductEntitlements(context)).rejects.toThrow(
 			'seat origin',
 		)
@@ -558,6 +586,65 @@ describe('included product individual transfer', () => {
 		expect(active().map((row) => row.id)).toEqual([bundleId()])
 	})
 
+	it('does not restore an operator-revoked row on transfer back', async () => {
+		await grantIncludedProductEntitlements(context)
+		await softDeleteEntitlementsForPurchase(context.purchaseId)
+		const first = target()
+		await transferIncludedProductEntitlements(first)
+		rows(purchaseUserTransfer)[0]!.transferState = 'COMPLETED'
+		purchase().userId = context.userId
+		purchase().organizationId = context.organizationId
+		seed(purchaseUserTransfer, {
+			id: 'back',
+			purchaseId: context.purchaseId,
+			sourceUserId: 'target',
+			targetUserId: context.userId,
+			transferState: 'VERIFIED',
+		})
+		await expect(
+			transferIncludedProductEntitlements({
+				...context,
+				transferId: 'back',
+				sourceUserId: 'target',
+			}),
+		).rejects.toThrow('revoked')
+		expect(active().map((row) => row.id)).toEqual([bundleId('target')])
+	})
+	it.each(['INITIATED', 'wrong-owner', 'wrong-purchase'])(
+		'rejects a retirement marker pointing to %s',
+		async (variant) => {
+			await grantIncludedProductEntitlements(context)
+			await transferIncludedProductEntitlements(target())
+			const retirement = rows(purchaseUserTransfer)[0]!
+			retirement.transferState =
+				variant === 'INITIATED' ? 'INITIATED' : 'COMPLETED'
+			if (variant === 'wrong-owner') retirement.sourceUserId = 'other'
+			if (variant === 'wrong-purchase') retirement.purchaseId = 'other'
+			purchase().userId = context.userId
+			purchase().organizationId = context.organizationId
+			seed(purchaseUserTransfer, {
+				id: 'back',
+				purchaseId: context.purchaseId,
+				sourceUserId: 'target',
+				targetUserId: context.userId,
+				transferState: 'VERIFIED',
+			})
+			await expect(
+				transferIncludedProductEntitlements({
+					...context,
+					transferId: 'back',
+					sourceUserId: 'target',
+				}),
+			).rejects.toThrow('revoked')
+		},
+	)
+	it('documents the pre-existing individual soft-delete-before-status window with no tombstone', async () => {
+		await softDeleteEntitlementsForPurchase(context.purchaseId)
+		await grantIncludedProductEntitlements(context)
+		// No durable refund marker exists yet; fixing the global refund order is
+		// separate work. This is a limitation, not a no-resurrection proof.
+		expect(active()).toHaveLength(1)
+	})
 	it('rolls back source revocation if target insertion fails', async () => {
 		await grantIncludedProductEntitlements(context)
 		fake.insertFailure = new Error('insertion failed')

@@ -157,6 +157,9 @@ const transferRow = (overrides: Record<string, unknown> = {}) => ({
 
 const purchaseRow = (overrides: Record<string, unknown> = {}) => ({
 	id: 'purchase_1',
+	productId: 'product-standard',
+	bulkCouponId: null,
+	redeemedBulkCouponId: null,
 	userId: 'user_a',
 	organizationId: 'org_a',
 	merchantCharge: {
@@ -197,6 +200,59 @@ beforeEach(() => {
 	mocks.inngestSend.mockResolvedValue({})
 	mocks.sendServerEmail.mockResolvedValue(undefined)
 	process.env.INNGEST_EVENT_KEY = 'test-key'
+})
+
+describe('included-product team transfer policy before side effects', () => {
+	it.each(['bulkCouponId', 'redeemedBulkCouponId'])(
+		'rejects initiate for %s before writes or user creation',
+		async (kind) => {
+			mocks.getServerAuthSession.mockResolvedValue(
+				sessionFor({ id: 'user_a', email: 'a@example.test' }),
+			)
+			mocks.getPurchaseUserTransferById.mockResolvedValue(transferRow())
+			mocks.purchasesFindFirst.mockResolvedValue(
+				purchaseRow({ productId: 'product-s00zs', [kind]: 'coupon-team' }),
+			)
+			await expect(
+				initiatePurchaseTransfer({
+					purchaseUserTransferId: 'put_1',
+					email: 'b@example.test',
+				}),
+			).rejects.toThrow('cannot be transferred')
+			expect(mocks.findOrCreateUser).not.toHaveBeenCalled()
+			expect(mocks.dbState.updates).toEqual([])
+			expect(mocks.dbState.inserts).toEqual([])
+			expect(mocks.sendServerEmail).not.toHaveBeenCalled()
+		},
+	)
+	it.each(['bulkCouponId', 'redeemedBulkCouponId'])(
+		'rejects accept and resume for %s before Stripe, claim, ownership or outbox writes',
+		async (kind) => {
+			for (const state of ['INITIATED', 'VERIFIED']) {
+				mocks.getServerAuthSession.mockResolvedValue(
+					sessionFor({ id: 'user_b', email: 'b@example.test' }),
+				)
+				mocks.getUserById.mockResolvedValue({
+					id: 'user_b',
+					email: 'b@example.test',
+				})
+				mocks.getPurchaseUserTransferById.mockResolvedValue(
+					transferRow({ targetUserId: 'user_b', transferState: state }),
+				)
+				mocks.purchasesFindFirst.mockResolvedValue(
+					purchaseRow({ productId: 'product-s00zs', [kind]: 'coupon-team' }),
+				)
+				await expect(
+					acceptPurchaseTransfer({ purchaseUserTransferId: 'put_1' }),
+				).rejects.toThrow('cannot be transferred')
+			}
+			expect(mocks.stripeGetCustomer).not.toHaveBeenCalled()
+			expect(mocks.stripeUpdateCustomer).not.toHaveBeenCalled()
+			expect(mocks.dbState.updates).toEqual([])
+			expect(mocks.dbState.inserts).toEqual([])
+			expect(mocks.inngestSend).not.toHaveBeenCalled()
+		},
+	)
 })
 
 describe('getPurchaseTransferForPurchaseId', () => {

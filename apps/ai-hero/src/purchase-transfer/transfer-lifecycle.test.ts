@@ -2,14 +2,30 @@ import { describe, expect, it } from 'vitest'
 
 import {
 	canTransitionTransfer,
-	evaluateAccept,
+	evaluateAccept as decideAccept,
 	evaluateCancel,
-	evaluateInitiate,
+	evaluateInitiate as decideInitiate,
 	isTerminalTransferState,
 	isTransferExpired,
 	TRANSFER_STATES,
 	type TransferSnapshot,
 } from './transfer-lifecycle'
+
+type InitiateParams = Parameters<typeof decideInitiate>[0]
+type AcceptParams = Parameters<typeof decideAccept>[0]
+const standardPurchase = {
+	productId: 'product-standard',
+	bulkCouponId: null,
+	redeemedBulkCouponId: null,
+}
+const evaluateInitiate = (
+	params: Omit<InitiateParams, 'purchase'> &
+		Partial<Pick<InitiateParams, 'purchase'>>,
+) => decideInitiate({ purchase: standardPurchase, ...params })
+const evaluateAccept = (
+	params: Omit<AcceptParams, 'purchase'> &
+		Partial<Pick<AcceptParams, 'purchase'>>,
+) => decideAccept({ purchase: standardPurchase, ...params })
 
 const NOW = new Date('2026-08-24T12:00:00.000Z')
 const FUTURE = new Date('2026-09-01T00:00:00.000Z')
@@ -25,6 +41,58 @@ const baseTransfer = (
 	transferState: 'AVAILABLE',
 	expiresAt: FUTURE,
 	...overrides,
+})
+
+describe('included purchase transfer policy', () => {
+	it.each(['bulkCouponId', 'redeemedBulkCouponId'])(
+		'denies %s even on expired/verified team rows before a state mutation',
+		(field) => {
+			const purchase = {
+				...standardPurchase,
+				productId: 'product-s00zs',
+				[field]: 'team-coupon',
+			}
+			expect(
+				evaluateInitiate({
+					transfer: baseTransfer({ expiresAt: PAST }),
+					purchase,
+					actorUserId: 'user_source',
+					inFlightCountForPurchase: 0,
+					now: NOW,
+				}),
+			).toEqual({ ok: false, code: 'included_team_purchase' })
+			expect(
+				evaluateAccept({
+					transfer: baseTransfer({
+						transferState: 'VERIFIED',
+						targetUserId: 'target',
+					}),
+					purchase,
+					actorUserId: 'target',
+				}),
+			).toEqual({ ok: false, code: 'included_team_purchase' })
+		},
+	)
+	it('does not broaden the new policy to another product billing-order handoff', () => {
+		expect(
+			evaluateInitiate({
+				transfer: baseTransfer(),
+				actorUserId: 'user_source',
+				purchase: { productId: 'other', bulkCouponId: 'coupon' },
+				inFlightCountForPurchase: 0,
+				now: NOW,
+			}),
+		).toEqual({ ok: true })
+	})
+	it('fails closed when the authoritative purchase is missing', () => {
+		expect(
+			evaluateAccept({
+				transfer: baseTransfer({ targetUserId: 'target' }),
+				actorUserId: 'target',
+				purchase: null,
+			}),
+		).toEqual({ ok: false, code: 'not_found' })
+	})
 })
 
 describe('transition table', () => {

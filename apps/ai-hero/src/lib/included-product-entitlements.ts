@@ -20,27 +20,8 @@ import {
 import { log } from '@/server/logger'
 import { and, eq, isNull } from 'drizzle-orm'
 
-// Inclusion is fulfillment policy, not a course-sync resource relation.
-const INCLUDED_PRODUCTS: Readonly<
-	Record<
-		string,
-		readonly {
-			productId: string
-			workshopId: string
-			bundlePolicy: string
-			idPrefix: string
-		}[]
-	>
-> = {
-	'product-s00zs': [
-		{
-			productId: 'product-ma254',
-			workshopId: 'workshop-2ozd9',
-			bundlePolicy: 'c5-includes-crash-course-v1',
-			idPrefix: 'c5_cc_',
-		},
-	],
-}
+import { INCLUDED_PRODUCTS } from './included-product-policy'
+export { hasIncludedProductEntitlements } from './included-product-policy'
 
 type LearnerContext = {
 	purchaseId: string
@@ -116,10 +97,11 @@ function verifyRow(
 /**
  * State path: unconfigured -> no-op; locked -> validated -> existing | created.
  * Fulfillment never restores revoked rows. Only a verified individual transfer
- * can restore a prior owner's row when that owner explicitly receives it back.
+ * can restore a row retired by a completed transfer from that same owner.
  * Inngest owns retry/checkpoint state; MySQL owns serialization and rollback.
- * Parent-before-learner locks serialize against refund status updates. Current
- * locking reads (not repeatable-read snapshots) prevent delayed event grants.
+ * Parent-before-learner PK locks serialize against refund status updates.
+ * This does not close the existing individual-refund window where entitlement
+ * removal precedes the status webhook and no bundle tombstone exists yet.
  */
 async function reconcileIncludedProducts(
 	context: LearnerContext,
@@ -134,6 +116,22 @@ async function reconcileIncludedProducts(
 	})
 	if (!routingPurchase) throw new Error('Included-product purchase not found')
 
+	// Discover IDs without locking the unindexed bulkCouponId predicate. Each
+	// parent is then locked by PRIMARY KEY and its coupon/product/status rechecked.
+	const parentIds = routingPurchase.redeemedBulkCouponId
+		? (
+				await db.query.purchases.findMany({
+					where: eq(
+						purchases.bulkCouponId,
+						routingPurchase.redeemedBulkCouponId,
+					),
+					columns: { id: true },
+				})
+			)
+				.map((parent) => parent.id)
+				.sort()
+		: []
+
 	const grants = await db.transaction(async (tx) => {
 		const redeemedCouponId = routingPurchase.redeemedBulkCouponId
 		if (redeemedCouponId) {
@@ -141,21 +139,27 @@ async function reconcileIncludedProducts(
 				.select()
 				.from(coupon)
 				.where(eq(coupon.id, redeemedCouponId))
-				.for('update')
-			const parents = await tx
-				.select()
-				.from(purchases)
-				.where(eq(purchases.bulkCouponId, redeemedCouponId))
-				.for('update')
-			const parent = parents[0]
+				.for('share')
+			let hasValidParent = false
+			for (const parentId of parentIds) {
+				const [parent] = await tx
+					.select()
+					.from(purchases)
+					.where(eq(purchases.id, parentId))
+					.for('update')
+				if (
+					parent?.bulkCouponId === redeemedCouponId &&
+					parent.productId === context.productId &&
+					['Valid', 'Restricted'].includes(parent.status)
+				)
+					hasValidParent = true
+			}
+			// Add-seat orders reuse the coupon. A refunded parent does not
+			// invalidate every seat while another paid C5 parent remains valid.
+			// Invoice coupons/parents may have no org; membership is checked below.
 			if (
-				parents.length !== 1 ||
-				!parent ||
+				!hasValidParent ||
 				!seatCoupon ||
-				!['Valid', 'Restricted'].includes(parent.status) ||
-				parent.productId !== context.productId ||
-				parent.organizationId !== context.organizationId ||
-				seatCoupon.organizationId !== context.organizationId ||
 				seatCoupon.restrictedToProductId !== context.productId
 			)
 				throw new Error('Invalid included-product seat origin')
@@ -182,7 +186,7 @@ async function reconcileIncludedProducts(
 			.select({ id: users.id })
 			.from(users)
 			.where(eq(users.id, context.userId))
-			.for('update')
+			.for('share')
 		const [membership] = await tx
 			.select()
 			.from(organizationMemberships)
@@ -192,7 +196,7 @@ async function reconcileIncludedProducts(
 			.select()
 			.from(organization)
 			.where(eq(organization.id, context.organizationId))
-			.for('update')
+			.for('share')
 		if (
 			!user ||
 			!membership ||
@@ -226,7 +230,7 @@ async function reconcileIncludedProducts(
 			.select()
 			.from(entitlementTypes)
 			.where(eq(entitlementTypes.name, 'workshop_content_access'))
-			.for('update')
+			.for('share')
 		if (!type)
 			throw new Error('Missing workshop_content_access entitlement type')
 
@@ -236,7 +240,7 @@ async function reconcileIncludedProducts(
 				.select()
 				.from(products)
 				.where(eq(products.id, policy.productId))
-				.for('update')
+				.for('share')
 			const [resource] = await tx
 				.select()
 				.from(contentResource)
@@ -246,7 +250,7 @@ async function reconcileIncludedProducts(
 						isNull(contentResource.deletedAt),
 					),
 				)
-				.for('update')
+				.for('share')
 			const [relation] = await tx
 				.select()
 				.from(contentResourceProduct)
@@ -257,7 +261,7 @@ async function reconcileIncludedProducts(
 						isNull(contentResourceProduct.deletedAt),
 					),
 				)
-				.for('update')
+				.for('share')
 			if (
 				!includedProduct ||
 				includedProduct.type !== 'self-paced' ||
@@ -293,7 +297,13 @@ async function reconcileIncludedProducts(
 					verifyRow(source, { ...contract, userId: operation.sourceUserId })
 					await tx
 						.update(entitlements)
-						.set({ deletedAt: new Date() })
+						.set({
+							deletedAt: new Date(),
+							metadata: {
+								...source.metadata,
+								retiredByTransferId: operation.transferId,
+							},
+						})
 						.where(
 							and(
 								eq(entitlements.id, sourceId),
@@ -348,12 +358,29 @@ async function reconcileIncludedProducts(
 				if (operation.kind !== 'transfer') {
 					throw new Error('Included-product grant is revoked')
 				}
-				// A new, verified transfer back to a prior owner is not an old
-				// fulfillment replay. Ownership and the transfer row are locked
-				// and checked above; source retirement and restoration commit together.
+				const retiredBy = row.metadata?.retiredByTransferId
+				if (typeof retiredBy !== 'string')
+					throw new Error('Included-product grant is revoked')
+				const [retirement] = await tx
+					.select()
+					.from(purchaseUserTransfer)
+					.where(eq(purchaseUserTransfer.id, retiredBy))
+					.for('share')
+				if (
+					!retirement ||
+					retirement.transferState !== 'COMPLETED' ||
+					retirement.purchaseId !== purchase.id ||
+					retirement.sourceUserId !== context.userId
+				)
+					throw new Error('Included-product grant is revoked')
+				// Only a completed transfer retirement may be undone. Clear the
+				// marker so a later refund/operator revocation cannot reuse its proof.
 				await tx
 					.update(entitlements)
-					.set({ deletedAt: null })
+					.set({
+						deletedAt: null,
+						metadata: { ...row.metadata, retiredByTransferId: null },
+					})
 					.where(eq(entitlements.id, id))
 			}
 			result.push({
@@ -376,10 +403,6 @@ async function reconcileIncludedProducts(
 		})
 	}
 	return grants
-}
-
-export function hasIncludedProductEntitlements(productId: string): boolean {
-	return Boolean(INCLUDED_PRODUCTS[productId]?.length)
 }
 
 export function grantIncludedProductEntitlements(context: LearnerContext) {
