@@ -67,6 +67,31 @@ describe('drovr get_email_delivery read (drovr #412)', () => {
 		}
 	})
 
+	it.each([429, 503])(
+		'keeps %s and Retry-After unknown even with a not-started-looking body',
+		async (status) => {
+			const fetcher = vi.fn(
+				async () =>
+					new Response(JSON.stringify({ status: 'not-started' }), {
+						status,
+						headers: { 'retry-after': '8' },
+					}),
+			)
+			expect(
+				await readDrovrEmailDelivery({
+					contactId: 'c1',
+					email: 'email-zero',
+					config,
+					fetcher,
+				}),
+			).toEqual({
+				ok: false,
+				reason: `drovr answered ${status}`,
+				backpressure: { status, retryAfter: '8' },
+			})
+		},
+	)
+
 	it('never guesses: an error, a refusal, an unknown shape or no config is unreadable', async () => {
 		const read = (fetcher: typeof fetch, cfg = config) =>
 			readDrovrEmailDelivery({

@@ -31,6 +31,16 @@ export async function readDrovrContactActor(args: {
 			},
 			signal: controller.signal,
 		})
+		// Shed status is authoritative even if the body is malformed or stalls.
+		if (response.status === 429 || response.status === 503)
+			return {
+				ok: false,
+				reason: `drovr answered ${response.status}`,
+				backpressure: {
+					status: response.status,
+					retryAfter: response.headers.get('retry-after') ?? undefined,
+				},
+			}
 		const body: unknown = await response.json().catch(() => undefined)
 		const record =
 			body && typeof body === 'object' ? (body as Record<string, unknown>) : {}

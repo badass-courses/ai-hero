@@ -201,6 +201,28 @@ beforeEach(() => {
 })
 
 describe('the owner-without-birth guard (row 110)', () => {
+	it.each([429, 503] as const)('stops the whole sweep on %s delivery shedding, with no reads/reposts after it', async (status) => {
+		const h = harness({ owners: [owner('a'), owner('b')] })
+		h.ports.readDelivery = vi.fn(async () => ({ ok: false as const, reason: `drovr answered ${status}`, backpressure: { status, retryAfter: '10' } }))
+		h.ports.scanNewsletterBirths = vi.fn(async () => ({ subjects: [] }))
+		expect(await h.run()).toMatchObject({ status: 'deferred', backpressure: { status, retryAfter: '10' }, unreadable: 1, reposted: 0, truncated: true })
+		expect(h.ports.readDelivery).toHaveBeenCalledOnce()
+		expect(h.readActor).not.toHaveBeenCalled()
+		expect(h.ports.scanNewsletterBirths).not.toHaveBeenCalled()
+		expect(h.posted).toEqual([])
+		expect(h.recorded).toEqual([])
+	})
+
+	it.each(['journey', 'directory'] as const)('defers already-proven candidates when the later %s actor read is shed, without reposting or probing the next owner', async (where) => {
+		const shed: DrovrActorRead = { ok: false, reason: 'drovr answered 503', backpressure: { status: 503, retryAfter: '5' } }
+		const h = harness({ owners: [owner('a'), owner('b'), owner('c')], ...(where === 'journey' ? { valuePathActor: { b: shed } } : { directoryActor: { b: shed } }) })
+		expect(await h.run(1)).toMatchObject({ status: 'deferred', candidates: 1, reposted: 0, truncated: true })
+		expect(h.ports.readDelivery).toHaveBeenCalledTimes(2)
+		expect(h.readActor.mock.calls.some(([id]) => id === 'c')).toBe(false)
+		expect(h.posted).toEqual([])
+		expect(h.recorded).toEqual([])
+	})
+
 	it('reads owners assigned between 72 h and 1 h ago', async () => {
 		const h = harness({ owners: [] })
 		await h.run()

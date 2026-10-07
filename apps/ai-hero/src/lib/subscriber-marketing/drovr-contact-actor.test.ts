@@ -75,6 +75,31 @@ describe("drovr's contact actor read (GET /contacts)", () => {
 		expect(read.ok).toBe(false)
 	})
 
+	it.each([429, 503])(
+		'preserves Retry-After on %s, never interpreting a missing-looking body as absence',
+		async (status) => {
+			const fetcher = vi.fn(
+				async () =>
+					new Response(
+						JSON.stringify({ type: 'urn:drovr:problem:contact-not-found' }),
+						{ status, headers: { 'retry-after': '7' } },
+					),
+			)
+			expect(
+				await readDrovrContactActor({
+					contactId: 'c1',
+					journeyId: 'value-path-skills-course',
+					config,
+					fetcher,
+				}),
+			).toEqual({
+				ok: false,
+				reason: `drovr answered ${status}`,
+				backpressure: { status, retryAfter: '7' },
+			})
+		},
+	)
+
 	it('is unreadable without configuration', async () => {
 		const fetcher = vi.fn()
 		await expect(

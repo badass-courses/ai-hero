@@ -13,6 +13,8 @@
  * never guessed into an answer.
  */
 
+import type { DrovrReadFailure } from './owner-birth-guard'
+
 export type DrovrEmailDeliveryStatus =
 	| 'delivered'
 	| 'pending'
@@ -28,7 +30,7 @@ export type DrovrEmailDelivery = {
 
 export type DrovrEmailDeliveryRead =
 	| { ok: true; delivery: DrovrEmailDelivery }
-	| { ok: false; reason: string }
+	| DrovrReadFailure
 
 export type DrovrEmailDeliveryConfig = {
 	baseUrl: string | undefined
@@ -68,7 +70,18 @@ export async function readDrovrEmailDelivery(args: {
 			signal: controller.signal,
 		})
 		if (response.status !== 200) {
-			return { ok: false, reason: `drovr answered ${response.status}` }
+			return {
+				ok: false,
+				reason: `drovr answered ${response.status}`,
+				...(response.status === 429 || response.status === 503
+					? {
+							backpressure: {
+								status: response.status,
+								retryAfter: response.headers.get('retry-after') ?? undefined,
+							},
+						}
+					: {}),
+			}
 		}
 		const body: unknown = await response.json()
 		const record =

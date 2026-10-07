@@ -1,4 +1,5 @@
 import { inngest } from '@/inngest/inngest.server'
+import { newsletterPauseDurationMs } from './newsletter-provider-pause'
 
 /**
  * Hawk row 110: every value-path owner gets born. Hourly at :40 (clear of
@@ -58,7 +59,7 @@ export const drovrOwnerBirthGuard = inngest.createFunction(
 		}
 		const repository = new DrizzleCaptureMarketingRepository(db)
 		const readConfig = { baseUrl, apiKey }
-		return runOwnerBirthGuard({
+		const receipt = await runOwnerBirthGuard({
 			step,
 			startedAtMs,
 			ports: {
@@ -87,5 +88,17 @@ export const drovrOwnerBirthGuard = inngest.createFunction(
 				log: { info: log.info, warn: log.warn },
 			},
 		})
+		if (receipt?.backpressure) {
+			// The scan has stopped, with zero reposts. A durable cooldown holds
+			// concurrency:1 so a queued run cannot immediately hammer the API.
+			// Existing parser bounds valid Retry-After at 24h; invalid =>120s.
+			const cooldownMs = newsletterPauseDurationMs(
+				receipt.backpressure.retryAfter,
+				Date.now(),
+			)
+			await step.sleep('shed-read-cooldown', `${cooldownMs}ms`)
+			return { ...receipt, cooldownMs }
+		}
+		return receipt
 	},
 )
