@@ -34,7 +34,10 @@ import {
 	verifyCourseSyncRelations,
 } from './persistence-invariants'
 import { assertAdoptableSolutionResource } from './solution-adoption'
-import { courseSyncSourceFields, mergeCourseSyncResourceFields } from './resource-fields'
+import {
+	courseSyncSourceFields,
+	mergeCourseSyncResourceFields,
+} from './resource-fields'
 import { assertCourseSyncTargetContract } from './target-contract'
 import { anchorResourceId, getServerCourseSyncBinding } from './types'
 import type {
@@ -962,7 +965,10 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			for (const item of plan.resources) {
 				const existing = existingById.get(item.targetResourceId)
 				// Resolve operator fields from the locked row, not the staged plan.
-				const appliedFields = mergeCourseSyncResourceFields(item, existing?.fields ?? {})
+				const appliedFields = mergeCourseSyncResourceFields(
+					item,
+					existing?.fields ?? {},
+				)
 				expectedFieldsByResource.set(item.targetResourceId, appliedFields)
 				if (item.action === 'create') {
 					if (existing) {
@@ -985,7 +991,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 						id: item.targetResourceId,
 						type: resourceType(item.sourceKind),
 						createdById,
-						fields: item.fields,
+						fields: appliedFields,
 						currentVersionId: null,
 					})
 				} else {

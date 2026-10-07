@@ -24,7 +24,10 @@ import type {
 	TargetResourceSnapshot,
 } from './types'
 
-import { courseSyncSourceFields, mergeCourseSyncResourceFields } from './resource-fields'
+import {
+	courseSyncSourceFields,
+	mergeCourseSyncResourceFields,
+} from './resource-fields'
 
 type MemoryVersion = {
 	id: string
@@ -387,7 +390,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 				resource = {
 					resourceId: item.targetResourceId,
 					currentVersionId: null,
-					fields: structuredClone(item.fields),
+					fields: structuredClone(appliedFields),
 					type: item.sourceKind === 'video' ? 'videoResource' : item.sourceKind,
 				}
 				resources.set(item.targetResourceId, resource)
