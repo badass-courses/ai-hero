@@ -133,6 +133,12 @@ function terminalFailureResult(row: SideEffectIntent): DrovrExecutorResult {
 	return { status: 'failed', intentId: row.id, ...drovrFailureReason(row) }
 }
 
+/** A durable exit hold is a named wire block, not a queued Kit acceptance. */
+function heldEvergreenExitResult(row: SideEffectIntent): DrovrExecutorResult | undefined {
+	if (row.status !== 'held-for-exit' || !row.reviewReasons.includes('old-newsletter-exit-unconfirmed')) return undefined
+	return { status: 'blocked', intentId: row.id, reviewReasons: ['evergreen-held-for-exit: old-newsletter-exit-unconfirmed'] }
+}
+
 export type DrovrExecutorResult =
 	| { status: 'unsupported'; reason: string; hint: string }
 	| { status: 'contact-missing' }
@@ -922,11 +928,12 @@ async function acceptEvergreenSend(args: {
 		},
 	})
 	const existingResult = (row: SideEffectIntent): DrovrExecutorResult =>
+		heldEvergreenExitResult(row) ?? (
 		row.status === 'completed'
 			? completionFor(row)
 			: row.status === 'failed'
 				? terminalFailureResult(row)
-				: { status: 'accepted', intentId: row.id, idempotencyKey, created: false }
+				: { status: 'accepted', intentId: row.id, idempotencyKey, created: false })
 
 	const existing =
 		await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
@@ -1189,11 +1196,12 @@ async function acceptEvergreenListSubscribe(args: {
 		},
 	})
 	const existingResult = (row: SideEffectIntent): DrovrExecutorResult =>
+		heldEvergreenExitResult(row) ?? (
 		row.status === 'completed'
 			? completionFor(row)
 			: row.status === 'failed'
 				? terminalFailureResult(row)
-				: { status: 'accepted', intentId: row.id, idempotencyKey, created: false }
+				: { status: 'accepted', intentId: row.id, idempotencyKey, created: false })
 	const existing =
 		await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
 	if (existing) return existingResult(existing)
