@@ -93,8 +93,9 @@ async function postSignup(
  *
  * Births are clamped at the row's `firstFailedAt` (row 201g): the first
  * failed send's instant, or the capture's for a row never sent. So every
- * replay of a row posts identical bytes, and an owner copy the fan-out
- * makes is clamped as its original was.
+ * replay keeps that first instant, and an owner copy the fan-out makes is
+ * clamped as its original was. Directory births recheck stop standing and
+ * may upgrade a provisional payload to stopped, without changing its key.
  *
  * The row's verdict: a failure → failed (transient for a 5xx, a timeout or
  * no answer; not for a missing key or a 409 event-not-live); else any

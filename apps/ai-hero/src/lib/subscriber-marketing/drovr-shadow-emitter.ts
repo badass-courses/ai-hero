@@ -45,7 +45,7 @@ export type DrovrPinnedTimezonePayload = {
 export type DrovrContactDirectoryBirthPayload = {
 	createdAt: string
 	kitSubscriberId?: string
-	lifecycle: 'provisional'
+	lifecycle: 'provisional' | 'unsubscribed' | 'bounced'
 	source: 'ai-hero'
 	sourceLifecycle?: string
 }

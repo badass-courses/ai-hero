@@ -59,6 +59,8 @@ export type PurchaseRecordedEvergreenOfferPayload = {
 }
 
 export type ContactUnsubscribedSource = {
+	/** Stable provider action key; preserves distinct opt-outs after a fresh opt-in. */
+	idempotencyKey?: string
 	email: string
 	kitSubscriberId?: string | null
 	preferenceKey: string
@@ -192,10 +194,9 @@ export function buildContactUnsubscribedEvent(
 		providerReference: `kit:email-preference:${source.preferenceKey}`,
 		eventType: 'contact.unsubscribed',
 		occurredAt: source.occurredAt,
-		semanticIdempotencyKey: contactUnsubscribedSemanticKey(
-			email,
-			source.preferenceKey,
-		),
+		semanticIdempotencyKey:
+			source.idempotencyKey ??
+			contactUnsubscribedSemanticKey(email, source.preferenceKey),
 		privacyLevel: 'internal',
 		identityEvidence: evidence,
 		payloadSummary: {

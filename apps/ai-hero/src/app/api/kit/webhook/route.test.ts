@@ -177,6 +177,131 @@ describe('POST /api/kit/webhook', () => {
 		)
 	})
 
+	it.each(['subscriber.tag_added', 'subscriber.tag_add'])(
+		'relays an active subscriber carrying the unsubscribe tag (%s)',
+		async (type) => {
+			const tagged = {
+				...event(type, {
+					id: 42,
+					email_address: 'tagged@example.com',
+					state: 'active',
+				}),
+				data: {
+					subscriber: {
+						id: 42,
+						email_address: 'tagged@example.com',
+						state: 'active',
+					},
+					tag: { id: 8244351 },
+				},
+			}
+			const raw = JSON.stringify({ events: [tagged] })
+			await expect((await post(raw, sign(raw))).json()).resolves.toEqual({
+				captured: 1,
+				ignored: 0,
+			})
+			const preferences = mocks.inngestSend.mock.calls[0]![0]
+			expect(preferences).toHaveLength(2)
+			expect(
+				preferences.map(
+					(e: { data: { preferenceKey: string } }) => e.data.preferenceKey,
+				),
+			).toEqual(['newsletter', 'ai-skills'])
+			expect(preferences[0]).toMatchObject({
+				id: 'kit-webhook:tag:8244351:42:2026-09-19T16:00:00.000Z:newsletter',
+				data: {
+					idempotencyKey:
+						'kit-webhook:tag:8244351:42:2026-09-19T16:00:00.000Z:newsletter',
+				},
+			})
+			expect(mocks.inngestSend.mock.calls[1]![0].data.events[0]).toMatchObject({
+				type: 'contact.unsubscribed',
+				journeyId: 'contact-directory',
+			})
+		},
+	)
+
+	it('dedupes retries and re-emitted tag UUIDs on subscriber and action time, not delivery time', async () => {
+		const subscriber = {
+			id: 42,
+			email_address: 'tagged@example.com',
+			state: 'active',
+		}
+		const makeRaw = (id: string, created = '2026-09-19T16:00:00Z') =>
+			JSON.stringify({
+				events: [
+					{
+						...event('subscriber.tag_added', subscriber, id),
+						created,
+						data: { subscriber, tag: { id: '8244351' } },
+					},
+				],
+			})
+		const accepted = new Map<string, unknown>()
+		mocks.inngestSend.mockImplementation(async (batch) => {
+			for (const item of Array.isArray(batch) ? batch : [batch]) {
+				if (!accepted.has(item.id)) accepted.set(item.id, item)
+			}
+		})
+		for (const raw of [
+			makeRaw('first'),
+			makeRaw('first'),
+			makeRaw('re-emitted'),
+		])
+			await post(raw, sign(raw))
+		expect(accepted.size).toBe(3) // two preferences and the directory stop, only once each
+		const raw = makeRaw('later-action', '2026-09-20T16:00:00Z')
+		await post(raw, sign(raw))
+		expect(accepted.size).toBe(6)
+		mocks.inngestSend.mockResolvedValue(undefined)
+	})
+
+	it.each([123, undefined])(
+		'ignores tag_add for another or missing tag (%s)',
+		async (tagId) => {
+			const subscriber = {
+				id: 42,
+				email_address: 'tagged@example.com',
+				state: 'active',
+			}
+			const raw = JSON.stringify({
+				events: [
+					{
+						...event('subscriber.tag_added', subscriber),
+						data: { subscriber, tag: { id: tagId } },
+					},
+				],
+			})
+			await expect((await post(raw, sign(raw))).json()).resolves.toEqual({
+				captured: 0,
+				ignored: 1,
+			})
+			expect(mocks.inngestSend).not.toHaveBeenCalled()
+		},
+	)
+
+	it.each(['', 'not-a-time'])(
+		'rejects an unsubscribe tag with an unstable action time (%s)',
+		async (created) => {
+			const subscriber = {
+				id: 42,
+				email_address: 'tagged@example.com',
+				state: 'active',
+			}
+			const raw = JSON.stringify({
+				events: [
+					{
+						...event('subscriber.tag_added', subscriber),
+						created,
+						data: { subscriber, tag: { id: 8244351 } },
+					},
+				],
+			})
+			expect((await post(raw, sign(raw))).status).toBe(400)
+			expect(mocks.inngestSend).not.toHaveBeenCalled()
+		},
+	)
+
 	it('walks a batched delivery, skipping events that are not stopping events or still active', async () => {
 		const raw = JSON.stringify({
 			delivery_id: 7,

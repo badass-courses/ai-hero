@@ -1,4 +1,8 @@
 import { activeContactStopsByKey, stopSignalOfEvent } from './contact-stop-rule'
+import {
+	prepareDirectoryBirths,
+	type DirectoryBirthStandingReader,
+} from './drovr-directory-birth-standing'
 import { isValuePathBirth } from './drovr-bulk-freeze'
 import type { DrovrShadowEvent } from './drovr-shadow-emitter'
 
@@ -26,14 +30,19 @@ export async function admitValuePathBirths(args: {
 	events: readonly DrovrShadowEvent[]
 	read: (contactIds: readonly string[]) => Promise<readonly string[]>
 	info: (event: string, fields: Record<string, unknown>) => unknown
+	readDirectoryStanding?: DirectoryBirthStandingReader
 }): Promise<{ events: DrovrShadowEvent[]; skipped: number }> {
-	const births = args.events.filter(isValuePathBirth)
-	if (births.length === 0) return { events: [...args.events], skipped: 0 }
+	const prepared = await prepareDirectoryBirths(
+		args.events,
+		args.readDirectoryStanding,
+	)
+	const births = prepared.filter(isValuePathBirth)
+	if (births.length === 0) return { events: prepared, skipped: 0 }
 	// A failed read throws, never admits an uncertain birth.
 	const stopped = new Set(
 		await args.read([...new Set(births.map((event) => event.contactId))]),
 	)
-	const events = args.events.filter(
+	const events = prepared.filter(
 		(event) => !isValuePathBirth(event) || !stopped.has(event.contactId),
 	)
 	const skipped = args.events.length - events.length

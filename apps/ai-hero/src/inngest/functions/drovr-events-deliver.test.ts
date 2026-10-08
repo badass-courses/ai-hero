@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => ({
 	hold: vi.fn(),
 	valuePathBulkFreeze: vi.fn(),
 	readBirthOptOuts: vi.fn(),
+	readDirectoryStanding: vi.fn(),
 }))
 
 // The freeze window's calendar is pinned in drovr-bulk-freeze.test.ts; here
@@ -57,7 +58,11 @@ vi.mock('@/lib/subscriber-marketing/drovr-shadow-delivery', () => ({
 vi.mock('@/lib/subscriber-marketing/drovr-shadow-emitter', () => ({
 	drovrApiKeyForTenant: mocks.drovrApiKeyForTenant,
 	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID: 'shadow-newsletter',
+	DROVR_CONTACT_DIRECTORY_JOURNEY_ID: 'contact-directory',
 	DROVR_SHADOW_TENANT_ID: 'org-aihero-shadow',
+}))
+vi.mock('@/lib/subscriber-marketing/drovr-directory-birth-standing-live', () => ({
+	readDirectoryBirthStanding: mocks.readDirectoryStanding,
 }))
 vi.mock('@/lib/subscriber-marketing/drovr-ownership', () => ({
 	fanOutOwnedEvents: mocks.fanOutOwnedEvents,
@@ -161,6 +166,9 @@ beforeEach(() => {
 	mocks.valuePathBulkFreeze.mockReturnValue({ frozen: false })
 	mocks.openStops.mockResolvedValue([])
 	mocks.readBirthOptOuts.mockResolvedValue([])
+	mocks.readDirectoryStanding.mockImplementation(async (births: Array<{ contactId: string }>) =>
+		new Map(births.map((birth) => [birth.contactId, 'provisional'])),
+	)
 	mocks.resolveOwnedContactIds.mockResolvedValue([])
 	mocks.isShadowNewsletterBirth.mockReturnValue(false)
 	mocks.drovrApiKeyForTenant.mockImplementation((tenantId: string) =>
@@ -176,6 +184,29 @@ beforeEach(() => {
 		({ events }: { events: unknown[] }) =>
 			Promise.resolve({ accepted: events.length, rejected: 0 }),
 	)
+})
+
+describe('directory birth standing', () => {
+	it.each(['live', 'bulk'])('posts a tagged contact directory birth as stopped on %s, without any value-path birth', async (lane) => {
+		mocks.fanOutOwnedEvents.mockImplementation((events) => events)
+		mocks.readDirectoryStanding.mockResolvedValue(new Map([['contact-1', 'unsubscribed']]))
+		const birth = { ...event('org-aihero', 'directory:seed:contact-1', 'contact-directory', 'contact.created'), payload: { lifecycle: 'provisional', createdAt: '2026-09-21T12:00:00.000Z', source: 'ai-hero', kitSubscriberId: '42' } }
+		const data = { source: 'contact-created', events: [birth] }
+		if (lane === 'live') await registered.handler({ event: { data }, step: createStep() })
+		else await registeredBulk.handler({ events: [{ data }], step: createStep() })
+		const sent = lane === 'live' ? mocks.deliverOrThrow.mock.calls.map(([args]) => args.event) : mocks.deliverBatchOrThrow.mock.calls.flatMap(([args]) => args.events)
+		expect(sent).toHaveLength(1)
+		expect(sent[0]).toMatchObject({ idempotencyKey: birth.idempotencyKey, payload: { lifecycle: 'unsubscribed' } })
+		expect(mocks.readDirectoryStanding).toHaveBeenCalledWith([birth])
+		expect(mocks.readBirthOptOuts).not.toHaveBeenCalled()
+	})
+
+	it('does not post a provisional birth when the standing read fails', async () => {
+		mocks.fanOutOwnedEvents.mockImplementation((events) => events)
+		mocks.readDirectoryStanding.mockRejectedValue(new Error('Kit read unavailable'))
+		await expect(registered.handler({ event: { data: { source: 'contact-created', events: [event('org-aihero', 'directory:seed:contact-1', 'contact-directory', 'contact.created')] } }, step: createStep() })).rejects.toThrow('Kit read unavailable')
+		expect(mocks.deliverOrThrow).not.toHaveBeenCalled()
+	})
 })
 
 describe('value-path birth admission', () => {

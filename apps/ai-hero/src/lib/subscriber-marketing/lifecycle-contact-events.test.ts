@@ -818,6 +818,21 @@ describe('contact.unsubscribed lifecycle contact events', () => {
 		expect(repository.sideEffectIntents.size).toBe(0)
 	})
 
+	it('dedupes a tag action durably but records a later tag opt-out again', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		seedKitContact(repository, { email: 'reader@example.com', kitSubscriberId: 'kit-777' })
+		const row = { email: 'reader@example.com', kitSubscriberId: 'kit-777', preferenceKey: 'newsletter', source: 'kit-webhook:subscriber.tag_added', occurredAt: NOW, idempotencyKey: `kit-webhook:tag:8244351:kit-777:${NOW}:newsletter` }
+		const first = await writeContactUnsubscribedContactEvents({ repository, rows: [row], now: NOW })
+		const duplicate = await writeContactUnsubscribedContactEvents({ repository, rows: [row], now: NOW })
+		const later = await writeContactUnsubscribedContactEvents({ repository, rows: [{ ...row, occurredAt: '2026-10-08T00:00:00Z', idempotencyKey: 'kit-webhook:tag:8244351:kit-777:2026-10-08T00:00:00.000Z:newsletter' }], now: NOW })
+		expect(first.counts.written).toBe(1)
+		expect(first.written[0]?.semanticIdempotencyKey).toBe(row.idempotencyKey)
+		expect(duplicate.counts.written).toBe(0)
+		expect(duplicate.counts.skippedByReason['duplicate-semantic-key']).toBe(1)
+		expect(later.counts.written).toBe(1)
+		expect(repository.contactEvents.size).toBe(2)
+	})
+
 	it('dedupes the same opt-out arriving from different sources', async () => {
 		const repository = new InMemorySubscriberMarketingRepository()
 		seedKitContact(repository, {

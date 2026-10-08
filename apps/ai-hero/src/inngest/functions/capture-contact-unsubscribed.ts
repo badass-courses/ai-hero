@@ -27,6 +27,7 @@ export const captureContactUnsubscribed = inngest.createFunction(
 					repository: new DrizzleCaptureMarketingRepository(db),
 					rows: [
 						{
+							idempotencyKey: event.data.idempotencyKey,
 							email: event.data.email,
 							kitSubscriberId: event.data.kitSubscriberId,
 							preferenceKey: event.data.preferenceKey,

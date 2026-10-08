@@ -30,6 +30,7 @@ import {
 	type ValuePathBulkFreeze,
 } from '@/lib/subscriber-marketing/drovr-bulk-freeze'
 import { admitValuePathBirths } from '@/lib/subscriber-marketing/drovr-value-path-birth-admission'
+import { isDirectoryBirth } from '@/lib/subscriber-marketing/drovr-directory-birth-standing'
 import { readUnsubscribedValuePathContactIds } from '@/lib/subscriber-marketing/drovr-value-path-birth-admission-live'
 import { isSendingJourneyBirth } from '@/lib/subscriber-marketing/drovr-birth-clamp'
 import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
@@ -459,7 +460,7 @@ const admitBirths = async (
 	events: readonly DrovrShadowEvent[],
 	step: DeliverStep,
 ) =>
-	events.some(isValuePathBirth)
+	events.some((event) => isValuePathBirth(event) || isDirectoryBirth(event))
 		? await step.run('value-path-birth-admission', () =>
 				admitValuePathBirths({
 					events,

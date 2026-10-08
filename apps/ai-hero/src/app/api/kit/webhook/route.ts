@@ -7,6 +7,7 @@ import {
 	DROVR_EVENTS_DELIVER_EVENT,
 	type DrovrEventsDeliver,
 } from '@/inngest/events/drovr'
+import { AI_HERO_UNSUBSCRIBED_TAG_ID } from '@/lib/subscriber-marketing/ai-hero-email-opt-in'
 import { CONTACT_UNSUBSCRIBED_EVENT } from '@/inngest/events/contact-unsubscribed'
 import { inngest } from '@/inngest/inngest.server'
 import {
@@ -51,7 +52,8 @@ const DIRECTORY_EVENT_TYPES = {
 	'subscriber.confirmed': 'contact.confirmed',
 	'subscriber.unsubscribed': 'contact.unsubscribed',
 } as const satisfies Record<string, DrovrShadowEvent['type']>
-type DirectoryEventType = (typeof DIRECTORY_EVENT_TYPES)[keyof typeof DIRECTORY_EVENT_TYPES]
+type DirectoryEventType =
+	(typeof DIRECTORY_EVENT_TYPES)[keyof typeof DIRECTORY_EVENT_TYPES]
 
 /** A Kit unsubscribe is account-wide: every preference the site knows goes with it. */
 const PREFERENCE_KEYS = ['newsletter', 'ai-skills'] as const
@@ -65,6 +67,7 @@ type KitEvent = {
 	created: string
 	data: {
 		subscriber?: { id?: unknown; email_address?: unknown; state?: unknown }
+		tag?: { id?: unknown }
 	}
 }
 
@@ -118,7 +121,12 @@ const eventsFromBody = (body: unknown): KitEvent[] | undefined => {
 		parsed.push({
 			id,
 			type,
-			created: typeof created === 'string' ? created : new Date().toISOString(),
+			created:
+				typeof created === 'string'
+					? created
+					: type === 'subscriber.tag_added' || type === 'subscriber.tag_add'
+						? ''
+						: new Date().toISOString(),
 			data:
 				typeof data === 'object' && data !== null
 					? (data as KitEvent['data'])
@@ -127,6 +135,11 @@ const eventsFromBody = (body: unknown): KitEvent[] | undefined => {
 	}
 	return parsed
 }
+
+const isUnsubscribeTag = (event: KitEvent): boolean =>
+	(event.type === 'subscriber.tag_added' ||
+		event.type === 'subscriber.tag_add') &&
+	String(event.data.tag?.id) === AI_HERO_UNSUBSCRIBED_TAG_ID
 
 const subscriberOf = (event: KitEvent) => {
 	const subscriber = event.data.subscriber
@@ -207,16 +220,27 @@ export const POST = withSkill(async (req: NextRequest) => {
 	const skipped: string[] = []
 	for (const event of events) {
 		const subscriber = subscriberOf(event)
-		const stopping = isStoppingEvent(event.type)
-		const directoryType = directoryEventTypeFor(event.type)
+		const tagged = isUnsubscribeTag(event)
+		// Never invent a time for a tag stop: it is part of the durable key.
+		if (tagged && !Number.isFinite(Date.parse(event.created))) {
+			return Response.json({ error: 'invalid tag event time' }, { status: 400 })
+		}
+		const relayId =
+			tagged && subscriber
+				? `tag:${AI_HERO_UNSUBSCRIBED_TAG_ID}:${subscriber.id}:${new Date(event.created).toISOString()}`
+				: event.id
+		const stopping = tagged || isStoppingEvent(event.type)
+		const directoryType = tagged
+			? 'contact.unsubscribed'
+			: directoryEventTypeFor(event.type)
 		const canCapturePreference =
 			stopping &&
 			subscriber?.email !== undefined &&
-			subscriber.state !== 'active'
+			(tagged || subscriber.state !== 'active')
 		const canCaptureDirectory =
 			subscriber !== undefined &&
 			directoryType !== undefined &&
-			(!stopping || subscriber.state !== 'active')
+			(!stopping || tagged || subscriber.state !== 'active')
 
 		if (!canCapturePreference && !canCaptureDirectory) {
 			skipped.push(event.id)
@@ -224,18 +248,13 @@ export const POST = withSkill(async (req: NextRequest) => {
 		}
 
 		let queued = false
-		if (
-			stopping &&
-			subscriber &&
-			typeof subscriber.email === 'string' &&
-			subscriber.state !== 'active'
-		) {
+		if (canCapturePreference && subscriber) {
 			// Inngest dedupes on `id`, so a retried delivery or a re-emitted event
 			// cannot unsubscribe twice.
-			const email = subscriber.email
+			const email = subscriber.email!
 			await inngest.send(
 				PREFERENCE_KEYS.map((preferenceKey) => ({
-					id: `kit-webhook:${event.id}:${preferenceKey}`,
+					id: `kit-webhook:${relayId}:${preferenceKey}`,
 					name: CONTACT_UNSUBSCRIBED_EVENT,
 					data: {
 						email,
@@ -243,6 +262,9 @@ export const POST = withSkill(async (req: NextRequest) => {
 						preferenceKey,
 						source: `kit-webhook:${event.type}`,
 						occurredAt: event.created,
+						...(tagged
+							? { idempotencyKey: `kit-webhook:${relayId}:${preferenceKey}` }
+							: {}),
 					},
 				})),
 			)
@@ -253,13 +275,13 @@ export const POST = withSkill(async (req: NextRequest) => {
 			const contactId = await findDirectoryContactId(subscriber.id)
 			if (contactId) {
 				const directoryEvent = directoryEventFor({
-					event,
+					event: { ...event, id: relayId },
 					subscriber,
 					contactId,
 					type: directoryType,
 				})
 				const delivery: DrovrEventsDeliver & { id: string } = {
-					id: `kit-directory:${event.id}:${directoryEvent.type}`,
+					id: `kit-directory:${relayId}:${directoryEvent.type}`,
 					name: DROVR_EVENTS_DELIVER_EVENT,
 					data: {
 						events: [directoryEvent],

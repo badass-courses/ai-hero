@@ -4,6 +4,7 @@ export const CONTACT_UNSUBSCRIBED_EVENT =
 export type ContactUnsubscribed = {
 	name: typeof CONTACT_UNSUBSCRIBED_EVENT
 	data: {
+		idempotencyKey?: string
 		email: string
 		kitSubscriberId?: string
 		preferenceKey: string
