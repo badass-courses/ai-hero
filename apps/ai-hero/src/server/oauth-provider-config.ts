@@ -23,6 +23,9 @@ export function getDiscordProviderConfig({
 	return {
 		clientId,
 		clientSecret,
+		// Discord may return an ID token even for OAuth. Auth.js validates its
+		// issuer before our sign-in callback; its fallback is https://authjs.dev.
+		issuer: 'https://discord.com',
 		allowDangerousEmailAccountLinking: true,
 		authorization:
 			'https://discord.com/api/oauth2/authorize?scope=identify+email+guilds.join+guilds',
