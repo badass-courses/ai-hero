@@ -12,6 +12,10 @@ import { coupon } from '@/db/schema'
 import { env } from '@/env.mjs'
 import { drizzleInvoiceSettingsDataSource } from '@/lib/invoice-settings'
 import {
+	formatInvoiceAmount,
+	getInvoicePresentment,
+} from '@/lib/invoice-amounts'
+import {
 	drizzleInvoiceLinkDataSource,
 	invoiceLinkConfiguration,
 } from '@/lib/invoice-links'
@@ -227,16 +231,13 @@ const Invoice = async (props: {
 				{children}
 			</InvoiceDetailsReadOnly>
 		)
-	const formatUsd = (amount: number) => {
-		return Intl.NumberFormat('en-US', {
-			style: 'currency',
-			currency: 'USD',
-		}).format(amount)
-	}
+	const formatChargeAmount = (amount: number) =>
+		formatInvoiceAmount(amount, charge.currency)
+	const presentment = getInvoicePresentment(charge)
 	const created = fromUnixTime(charge.created)
 	const date = format(created, 'MMMM d, y')
-	const amountRefunded = charge.amount_refunded / 100
-	const amount = (charge.amount - charge.amount_refunded) / 100
+	const amountRefunded = charge.amount_refunded
+	const amount = charge.amount - amountRefunded
 
 	const instructorName = `${process.env.NEXT_PUBLIC_PARTNER_FIRST_NAME} ${process.env.NEXT_PUBLIC_PARTNER_LAST_NAME}`
 	const productName = `${process.env.NEXT_PUBLIC_SITE_TITLE} by ${instructorName}`
@@ -333,6 +334,12 @@ const Invoice = async (props: {
 									</div>
 								</div>
 								<h2 className="sr-only">Purchase details</h2>
+								{presentment && (
+									<p>
+										Line items{amountRefunded > 0 ? ' and refunds' : ''} are
+										shown in {charge.currency.toUpperCase()}.
+									</p>
+								)}
 								<table className="w-full table-auto text-left print:break-inside-avoid">
 									<thead className="table-header-group">
 										<tr className="table-row">
@@ -350,15 +357,13 @@ const Invoice = async (props: {
 												<td className="pr-5">{product.name}</td>
 												<td className="pr-5">
 													{charge.currency.toUpperCase()}{' '}
-													{formatUsd(charge.amount / 100 / quantity)}
+													{formatChargeAmount(charge.amount / quantity)}
 												</td>
 												<td className="pr-5">{quantity}</td>
 												<td className="text-right">
 													{amount === null
 														? `${charge.currency.toUpperCase()} 0.00`
-														: `${charge.currency.toUpperCase()} ${formatUsd(
-																amount + amountRefunded,
-															)}`}
+														: `${charge.currency.toUpperCase()} ${formatChargeAmount(amount + amountRefunded)}`}
 												</td>
 											</tr>
 										) : (
@@ -366,15 +371,13 @@ const Invoice = async (props: {
 												<td>{product.name}</td>
 												<td>
 													{charge.currency.toUpperCase()}{' '}
-													{formatUsd(charge.amount / 100)}
+													{formatChargeAmount(charge.amount)}
 												</td>
 												<td>1</td>
 												<td className="text-right">
 													{amount === null
 														? `${charge.currency.toUpperCase()} 0.00`
-														: `${charge.currency.toUpperCase()} ${formatUsd(
-																amount + amountRefunded,
-															)}`}
+														: `${charge.currency.toUpperCase()} ${formatChargeAmount(amount + amountRefunded)}`}
 												</td>
 											</tr>
 										)}
@@ -385,19 +388,50 @@ const Invoice = async (props: {
 												<td></td>
 												<td className="text-right text-red-600">
 													{charge.currency.toUpperCase()} -
-													{formatUsd(amountRefunded)}
+													{formatChargeAmount(amountRefunded)}
 												</td>
 											</tr>
 										)}
 									</tbody>
 								</table>
 								<div className="flex flex-col items-end py-16 print:py-6">
-									<div>
-										<span className="mr-3">Total</span>
-										<strong className="text-lg">
-											{charge.currency.toUpperCase()} {formatUsd(amount)}
-										</strong>
-									</div>
+									{presentment ? (
+										<>
+											<div>
+												<span className="mr-3">Amount paid</span>
+												<strong className="text-lg">
+													{presentment.currency}{' '}
+													{formatInvoiceAmount(
+														presentment.amount,
+														presentment.currency,
+													)}
+												</strong>
+											</div>
+											<div>
+												<span className="mr-3">
+													Amount received
+													{amountRefunded > 0 ? ' after refunds' : ''}
+												</span>
+												<span>
+													{charge.currency.toUpperCase()}{' '}
+													{formatChargeAmount(amount)}
+												</span>
+											</div>
+											{amountRefunded > 0 && (
+												<p>
+													Amount paid is the original payment before refunds.
+												</p>
+											)}
+										</>
+									) : (
+										<div>
+											<span className="mr-3">Total</span>
+											<strong className="text-lg">
+												{charge.currency.toUpperCase()}{' '}
+												{formatChargeAmount(amount)}
+											</strong>
+										</div>
+									)}
 								</div>
 							</div>
 						</div>
