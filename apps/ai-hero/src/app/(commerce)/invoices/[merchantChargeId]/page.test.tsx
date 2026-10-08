@@ -227,6 +227,120 @@ function collectProps(node: React.ReactNode): unknown[] {
 	return [node.props, ...collectProps(node.props.children)]
 }
 
+describe('invoice currency presentment', () => {
+	async function chargeWith(patch: Record<string, unknown>) {
+		mocks.charge.mockResolvedValue({ ...(await mocks.charge()), ...patch })
+	}
+
+	it('keeps USD markup unchanged, including same-currency presentment', async () => {
+		const original = await renderInvoice()
+		expect(original).toContain(
+			'<span class="mr-3">Total</span><strong class="text-lg">USD $199.00</strong>',
+		)
+		expect(original).not.toContain('Amount paid')
+		expect(original).not.toContain('Amount received')
+		expect(original).not.toContain('Line items')
+		await chargeWith({
+			presentment_details: {
+				presentment_amount: 19900,
+				presentment_currency: 'usd',
+			},
+		})
+		expect(await renderInvoice()).toBe(original)
+	})
+
+	it('renders EUR paid with the USD amount received on a signed public invoice', async () => {
+		await chargeWith({
+			amount: 29900,
+			presentment_details: {
+				presentment_amount: 27806,
+				presentment_currency: 'eur',
+			},
+		})
+		const markup = await renderInvoice()
+		expectReadOnly(markup)
+		expect(markup).toContain(
+			'<span class="mr-3">Amount paid</span><strong class="text-lg">EUR €278.06</strong>',
+		)
+		expect(markup).toContain(
+			'<span class="mr-3">Amount received</span><span>USD $299.00</span>',
+		)
+		expect(markup).toContain('Line items are shown in USD.')
+		expect(markup.match(/USD \$299\.00/g)).toHaveLength(3)
+		expect(mocks.charge).toHaveBeenLastCalledWith('ch_synthetic', {
+			expand: ['refunds'],
+		})
+	})
+
+	it('renders zero-decimal JPY without dividing by 100 or adding decimals', async () => {
+		await chargeWith({
+			presentment_details: {
+				presentment_amount: 42000,
+				presentment_currency: 'jpy',
+			},
+		})
+		const markup = await renderInvoice()
+		expect(markup).toContain('JPY ¥42,000</strong>')
+		expect(markup).not.toContain('¥420.00')
+		expect(markup).toContain('Amount received</span><span>USD $199.00')
+	})
+
+	it('keeps discounted bulk line items in USD without inventing a local unit price', async () => {
+		await chargeWith({
+			amount: 29900,
+			presentment_details: {
+				presentment_amount: 27806,
+				presentment_currency: 'eur',
+			},
+		})
+		mocks.purchase.mockResolvedValue({
+			id: 'purchase-synthetic',
+			userId: 'payer',
+			productId: 'product-synthetic',
+			merchantSessionId: 'session-synthetic',
+		})
+		mocks.merchantSession.mockResolvedValue({ identifier: 'cs_synthetic' })
+		mocks.checkoutSession.mockResolvedValue({
+			line_items: { data: [{ quantity: 2 }] },
+		})
+		const markup = await renderInvoice()
+		expect(markup).toContain('Line items are shown in USD.')
+		expect(markup).toContain('USD $149.50</td><td class="pr-5">2</td>')
+		expect(markup).toContain('EUR €278.06</strong>')
+		expect(markup.match(/EUR/g)).toHaveLength(1)
+	})
+
+	it.each([5000, 29900])(
+		'keeps original local payment and net USD separate after a %i-cent refund',
+		async (refunded) => {
+			await chargeWith({
+				amount: 29900,
+				amount_refunded: refunded,
+				refunded: refunded === 29900,
+				presentment_details: {
+					presentment_amount: 27806,
+					presentment_currency: 'eur',
+				},
+			})
+			const markup = await renderInvoice()
+			expect(markup).toContain('Line items and refunds are shown in USD.')
+			expect(markup).toContain('EUR €278.06</strong>')
+			expect(markup).toContain(
+				`Amount received after refunds</span><span>USD $${refunded === 29900 ? '0.00' : '249.00'}`,
+			)
+			expect(markup).toContain(
+				'Amount paid is the original payment before refunds.',
+			)
+		},
+	)
+
+	it('ignores incomplete presentment details without breaking the invoice', async () => {
+		const original = await renderInvoice()
+		await chargeWith({ presentment_details: { presentment_currency: 'eur' } })
+		expect(await renderInvoice()).toBe(original)
+	})
+})
+
 describe('signed shareable invoice', () => {
 	it('redirects an anonymous bare link', async () => {
 		await expect(renderInvoice('')).rejects.toThrow('redirect:/invoices')
