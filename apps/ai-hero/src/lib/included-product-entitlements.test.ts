@@ -12,6 +12,8 @@ const fake = vi.hoisted(() => ({
 	beforeTransaction: undefined as (() => void) | undefined,
 	insertFailure: undefined as unknown,
 	updateFailure: undefined as unknown,
+	updateCalls: 0,
+	failUpdateAt: 0,
 	createFunction: vi.fn((config, triggers, handler) => ({
 		config,
 		triggers,
@@ -25,27 +27,36 @@ function matches(row: Record<string, unknown>, predicate?: SQL) {
 	if (!predicate) return true
 	const { sql, params } = dialect.sqlToQuery(predicate)
 	let parameter = 0
-	return [...sql.matchAll(/`[^`]+`\.`([^`]+)` (= \?|is null)/g)].every(
-		(match) => {
-			const key = match[1]!
-			return match[2] === 'is null'
-				? row[key] == null
-				: row[key] === params[parameter++]
-		},
-	)
+	return [
+		...sql.matchAll(/`[^`]+`\.`([^`]+)` (= \?|is null|in \([?, ]+\))/g),
+	].every((match) => {
+		const key = match[1]!
+		if (match[2] === 'is null') return row[key] == null
+		if (match[2]!.startsWith('in ')) {
+			const size = [...match[2]!.matchAll(/\?/g)].length
+			const values = params.slice(parameter, parameter + size)
+			parameter += size
+			return values.includes(row[key])
+		}
+		return row[key] === params[parameter++]
+	})
 }
 function rows(table: Parameters<typeof getTableName>[0]) {
 	const name = getTableName(table)
 	if (!fake.tables.has(name)) fake.tables.set(name, [])
 	return fake.tables.get(name)!
 }
-function executor() {
+function executor(inTransaction = false) {
 	return {
 		select: () => ({
 			from: (table: Parameters<typeof getTableName>[0]) => ({
 				where: (predicate: SQL) => ({
 					for: async (mode: string) => {
 						expect(['update', 'share']).toContain(mode)
+						if (dialect.sqlToQuery(predicate).sql.includes('`bulkCouponId`')) {
+							expect(mode).toBe('update')
+							expect(inTransaction).toBe(true)
+						}
 						fake.locks.push(dialect.sqlToQuery(predicate).sql)
 						return rows(table)
 							.filter((row) => matches(row, predicate))
@@ -71,9 +82,20 @@ function executor() {
 				})
 			},
 		}),
+		delete: (table: Parameters<typeof getTableName>[0]) => ({
+			where: async (predicate: SQL) => {
+				fake.tables.set(
+					getTableName(table),
+					rows(table).filter((row) => !matches(row, predicate)),
+				)
+			},
+		}),
 		update: (table: Parameters<typeof getTableName>[0]) => ({
 			set: (values: Record<string, unknown>) => ({
 				where: async (predicate: SQL) => {
+					fake.updateCalls++
+					if (fake.failUpdateAt === fake.updateCalls)
+						throw new Error('review: failure after parent deletion')
 					if (fake.updateFailure) throw fake.updateFailure
 					let rowsAffected = 0
 					for (const row of rows(table))
@@ -98,6 +120,9 @@ vi.mock('@/db', () => ({
 		get update() {
 			return executor().update
 		},
+		get delete() {
+			return executor().delete
+		},
 		query: {
 			purchases: {
 				findFirst: async ({ where }: { where: SQL }) =>
@@ -105,7 +130,10 @@ vi.mock('@/db', () => ({
 				findMany: async ({ where }: { where: SQL }) =>
 					rows(purchases).filter((row) => matches(row, where)),
 			},
-			organizationMemberships: { findFirst: async () => undefined },
+			organizationMemberships: {
+				findFirst: async ({ where }: { where: SQL }) =>
+					rows(organizationMemberships).find((row) => matches(row, where)),
+			},
 			entitlementTypes: { findFirst: async () => undefined },
 			entitlements: {
 				findMany: async ({ where }: { where: SQL }) =>
@@ -129,7 +157,7 @@ vi.mock('@/db', () => ({
 			fake.beforeTransaction = undefined
 			const snapshot = structuredClone(fake.tables)
 			try {
-				return await work(executor())
+				return await work(executor(true))
 			} catch (error) {
 				fake.tables = snapshot
 				throw error
@@ -166,6 +194,8 @@ import {
 	RefundProcessedEventSchema,
 } from '@coursebuilder/core/events/commerce'
 import { softDeleteEntitlementsForPurchase } from '@/lib/entitlements'
+import { db } from '@/db'
+import { and, eq, sql } from 'drizzle-orm'
 import {
 	grantIncludedProductEntitlements,
 	transferIncludedProductEntitlements,
@@ -248,6 +278,9 @@ beforeEach(() => {
 	fake.beforeTransaction = undefined
 	fake.insertFailure = undefined
 	fake.updateFailure = undefined
+	fake.updateCalls = 0
+	fake.failUpdateAt = 0
+	vi.restoreAllMocks()
 	fake.duplicateRow = undefined
 	vi.clearAllMocks()
 	seed(purchases, {
@@ -751,6 +784,285 @@ describe('refund event boundary', () => {
 			).toMatchObject({ entitlementsDeleted: 1 })
 		},
 	)
+	it.each([100, 50])(
+		'review: real commerce charge.refunded with %s cents refunded',
+		async (amountRefunded) => {
+			await grantIncludedProductEntitlements(context)
+			purchase().merchantChargeId = 'synthetic-merchant-charge'
+			const { processStripeWebhook } =
+				await import('@coursebuilder/commerce/process-stripe-webhook')
+			const sent: any[] = []
+			const options = {
+				adapter: {
+					getMerchantAccount: async () => undefined,
+					getPurchaseForStripeCharge: async () => ({ ...purchase() }),
+					getMerchantCharge: async () => ({ id: 'synthetic-merchant-charge' }),
+					updatePurchaseStatusForCharge: async (
+						_id: string,
+						status: string,
+					) => {
+						purchase().status = status
+					},
+				},
+				provider: { options: { paymentsAdapter: {} } },
+				inngest: {
+					send: async (event: any) => {
+						sent.push(event)
+					},
+				},
+			}
+			await processStripeWebhook(
+				{
+					id: 'synthetic-stripe-event',
+					type: 'charge.refunded',
+					data: {
+						object: {
+							id: 'synthetic-charge',
+							amount: 100,
+							amount_refunded: amountRefunded,
+						},
+					},
+				},
+				options as any,
+			)
+			if (amountRefunded === 100) {
+				expect(sent).toEqual([
+					{
+						name: PURCHASE_STATUS_UPDATED_EVENT,
+						data: { stripeChargeId: 'synthetic-charge', status: 'Refunded' },
+					},
+				])
+				expect(await dispatch(sent[0].name, sent[0].data.status)).toMatchObject(
+					{ entitlementsDeleted: 1 },
+				)
+			} else {
+				expect(sent).toEqual([])
+				expect(purchase().status).toBe('Valid')
+				expect(active()).toHaveLength(1)
+			}
+		},
+	)
+	it.each(['Disputed', 'Banned', 'Valid', 'Restricted'])(
+		'review: status %s never invokes content deletion',
+		async (status) => {
+			await grantIncludedProductEntitlements(context)
+			purchase().status = status
+			expect(await dispatch(PURCHASE_STATUS_UPDATED_EVENT, status)).toBeNull()
+			expect(await dispatch(REFUND_PROCESSED_EVENT)).toMatchObject({
+				reason: 'purchase_not_refunded',
+			})
+			expect(active()).toHaveLength(1)
+		},
+	)
+	it('review: preserves another user purchase-source grant', async () => {
+		await grantIncludedProductEntitlements(context)
+		seed(entitlements, {
+			id: 'other-user',
+			userId: 'other-user',
+			sourceId: 'other-user-purchase',
+			sourceType: 'PURCHASE',
+			deletedAt: null,
+		})
+		purchase().status = 'Refunded'
+		await dispatch(PURCHASE_STATUS_UPDATED_EVENT, 'Refunded')
+		expect(active().map((row) => row.id)).toEqual(['other-user'])
+	})
+	it('review: bulk retry after parent deletion keeps unrelated grants', async () => {
+		seat()
+		await grantIncludedProductEntitlements(context)
+		const parent = rows(purchases)[1]!
+		parent.status = 'Refunded'
+		seed(
+			entitlements,
+			{
+				id: 'parent-grant',
+				sourceId: parent.id,
+				sourceType: 'PURCHASE',
+				deletedAt: null,
+			},
+			{
+				id: 'unrelated',
+				sourceId: 'paid-elsewhere',
+				sourceType: 'PURCHASE',
+				deletedAt: null,
+			},
+			{
+				id: 'manual',
+				sourceId: parent.id,
+				sourceType: 'MANUAL',
+				deletedAt: null,
+			},
+		)
+		fake.updateCalls = 0
+		fake.failUpdateAt = 3
+		await expect(
+			dispatch(PURCHASE_STATUS_UPDATED_EVENT, 'Refunded', parent),
+		).rejects.toThrow('failure after parent deletion')
+		expect(
+			rows(entitlements).find((row) => row.id === 'parent-grant')!.deletedAt,
+		).not.toBeNull()
+		expect(active().map((row) => row.id)).toEqual([
+			bundleId(),
+			'unrelated',
+			'manual',
+		])
+		fake.failUpdateAt = 0
+		await dispatch(PURCHASE_STATUS_UPDATED_EVENT, 'Refunded', parent)
+		await dispatch(REFUND_PROCESSED_EVENT, undefined, parent)
+		expect(active().map((row) => row.id)).toEqual(['unrelated', 'manual'])
+	})
+	it.each([undefined, 'Valid', 'Restricted', 'Refunded'])(
+		'coupon credits revoke only without surviving eligibility (%s)',
+		async (status) => {
+			await grantIncludedProductEntitlements(context)
+			seed(entitlements, {
+				id: 'coupon-credit',
+				userId: context.userId,
+				sourceId: 'other-credit-coupon',
+				sourceType: 'COUPON',
+				entitlementType: 'special-credit',
+				metadata: { eligibilityProductId: context.productId },
+				deletedAt: null,
+			})
+			vi.spyOn(db.query.entitlementTypes, 'findFirst').mockResolvedValue({
+				id: 'special-credit',
+			} as any)
+			vi.spyOn(db.query.entitlements, 'findMany').mockImplementation(
+				({ where }: any) => {
+					const predicate = where(entitlements, { and, eq, sql })
+					const query = dialect.sqlToQuery(predicate)
+					expect(query.params).toEqual([
+						context.userId,
+						'special-credit',
+						'COUPON',
+						context.productId,
+					])
+					expect(query.sql).not.toContain('`sourceId`')
+					return Promise.resolve(
+						rows(entitlements).filter((row) => matches(row, predicate)),
+					) as any
+				},
+			)
+			seed(
+				purchases,
+				{
+					id: 'different-user',
+					userId: 'different-user',
+					productId: context.productId,
+					status: 'Valid',
+				},
+				{
+					id: 'different-product',
+					userId: context.userId,
+					productId: 'different-product',
+					status: 'Valid',
+				},
+			)
+			if (status)
+				seed(purchases, {
+					id: 'other-eligible-purchase',
+					userId: context.userId,
+					productId: context.productId,
+					status,
+				})
+			purchase().status = 'Refunded'
+			await dispatch(PURCHASE_STATUS_UPDATED_EVENT, 'Refunded')
+			const credit = rows(entitlements).find(
+				(row) => row.id === 'coupon-credit',
+			)!
+			if (status === 'Valid' || status === 'Restricted')
+				expect(credit.deletedAt).toBeNull()
+			else expect(credit.deletedAt).toBeInstanceOf(Date)
+		},
+	)
+	it.each([
+		'content',
+		'manual',
+		'Valid',
+		'Restricted',
+		'none',
+		'expired',
+		'deleted',
+	])(
+		'bulk membership survives only while other access needs it (%s)',
+		async (remaining) => {
+			seat()
+			await grantIncludedProductEntitlements(context)
+			const parent = rows(purchases)[1]!
+			parent.status = 'Refunded'
+			if (remaining === 'Valid' || remaining === 'Restricted') {
+				seed(purchases, {
+					id: 'separate-paid-purchase',
+					userId: context.userId,
+					organizationId: context.organizationId,
+					status: remaining,
+				})
+			} else if (remaining !== 'none') {
+				seed(entitlements, {
+					id: 'separate-content',
+					sourceId: 'separate-paid-purchase',
+					sourceType: remaining === 'manual' ? 'MANUAL' : 'PURCHASE',
+					organizationMembershipId: context.organizationMembershipId,
+					deletedAt: remaining === 'deleted' ? new Date() : null,
+					expiresAt: remaining === 'expired' ? new Date(0) : null,
+				})
+			}
+			await dispatch(PURCHASE_STATUS_UPDATED_EVENT, 'Refunded', parent)
+			const membership = rows(organizationMemberships).find(
+				(row) => row.id === context.organizationMembershipId,
+			)
+			if (['none', 'expired', 'deleted'].includes(remaining))
+				expect(membership).toBeUndefined()
+			else expect(membership).toBeDefined()
+		},
+	)
+	it.each([
+		['Valid', 'discovery'],
+		['Restricted', 'discovery'],
+		['Valid', 'transaction'],
+		['Restricted', 'transaction'],
+	])('seats survive a %s parent created after %s', async (status, boundary) => {
+		seat()
+		await grantIncludedProductEntitlements(context)
+		const parent = rows(purchases)[1]!
+		parent.status = 'Refunded'
+		const addParent = () =>
+			seed(purchases, { ...parent, id: 'new-valid-parent', status })
+		if (boundary === 'transaction') fake.beforeTransaction = addParent
+		else
+			fake.log.info.mockImplementation(async (name) => {
+				if (name === 'bulk_refund.starting_refund') addParent()
+			})
+		await dispatch(PURCHASE_STATUS_UPDATED_EVENT, 'Refunded', parent)
+		expect(
+			rows(purchases).find((row) => row.id === 'new-valid-parent')!.status,
+		).toBe(status)
+		expect(purchase().status).toBe('Valid')
+		expect(active().map((row) => row.id)).toContain(bundleId())
+		expect(
+			rows(organizationMemberships).find(
+				(row) => row.id === context.organizationMembershipId,
+			),
+		).toBeDefined()
+		expect(fake.locks).toContainEqual(expect.stringContaining('`bulkCouponId`'))
+	})
+	it('seat grant deletion rolls back when the seat status update fails', async () => {
+		seat()
+		await grantIncludedProductEntitlements(context)
+		const parent = rows(purchases)[1]!
+		parent.status = 'Refunded'
+		fake.updateCalls = 0
+		fake.failUpdateAt = 4 // parent deletion/status, then seat deletion/status
+		await expect(
+			dispatch(PURCHASE_STATUS_UPDATED_EVENT, 'Refunded', parent),
+		).rejects.toThrow('failure after parent deletion')
+		expect(purchase().status).toBe('Valid')
+		expect(active().map((row) => row.id)).toContain(bundleId())
+		fake.failUpdateAt = 0
+		await dispatch(PURCHASE_STATUS_UPDATED_EVENT, 'Refunded', parent)
+		expect(purchase().status).toBe('Refunded')
+		expect(active()).toHaveLength(0)
+	})
 })
 
 describe('included product individual transfer', () => {

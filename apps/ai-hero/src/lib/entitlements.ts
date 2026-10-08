@@ -51,8 +51,11 @@ export async function softDeleteEntitlementsForUser(userId: string) {
  * @param purchaseId - The ID of the purchase whose entitlements should be soft deleted
  * @returns The number of entitlements that were soft deleted
  */
-export async function softDeleteEntitlementsForPurchase(purchaseId: string) {
-	const result = await db
+export async function softDeleteEntitlementsForPurchase(
+	purchaseId: string,
+	executor: DbExecutor = db,
+) {
+	const result = await executor
 		.update(entitlements)
 		.set({
 			deletedAt: new Date(),

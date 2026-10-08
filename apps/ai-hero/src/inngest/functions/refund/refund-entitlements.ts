@@ -1,4 +1,7 @@
+import { db } from '@/db'
+import { purchases } from '@/db/schema'
 import { inngest } from '@/inngest/inngest.server'
+import { and, eq, inArray } from 'drizzle-orm'
 import {
 	isBulkPurchase,
 	refundBulkPurchaseEntitlements,
@@ -48,10 +51,20 @@ async function handleCreditEntitlementsRefund(
 		}
 	}
 
-	// Check if this is a SOURCE purchase (granted credits)
-	// Find credit entitlements that were granted by THIS SPECIFIC purchase/product
-	// Note: This only returns credits attached to this product (via eligibilityProductId),
-	// not all credits the user has from other products
+	// Coupon credits record product eligibility, not a funding purchase ID.
+	// Revoke them only when this refund removes the user's last paid eligibility.
+	const survivingPurchase = await db.query.purchases.findFirst({
+		where: and(
+			eq(purchases.userId, purchase.userId),
+			eq(purchases.productId, purchase.productId),
+			inArray(purchases.status, ['Valid', 'Restricted']),
+		),
+	})
+	if (survivingPurchase) {
+		return { type: 'none', reason: 'surviving_product_eligibility' }
+	}
+
+	// Only credits for this eligibility product are candidates for revocation.
 	const sourceCredits = await getCreditEntitlementsForSourcePurchase(
 		purchase.productId,
 		purchase.userId,

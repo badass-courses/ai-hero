@@ -1,4 +1,4 @@
-import { db } from '@/db'
+import { db, type DbExecutor } from '@/db'
 import {
 	coupon,
 	entitlements,
@@ -10,7 +10,7 @@ import {
 	softDeleteEntitlementsForPurchase,
 } from '@/lib/entitlements'
 import { log } from '@/server/logger'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, eq, inArray, isNull } from 'drizzle-orm'
 
 /**
  * Get all purchases related to a bulk purchase (original + all redeemed seats)
@@ -98,6 +98,31 @@ export async function removeOrganizationMembership(
 				membershipId: membership.id,
 			})
 			return { removed: false, reason: 'is_owner' }
+		}
+
+		// Session access is loaded through membership. Preserve it for any live
+		// grant (including manual grants) or paid purchase in this organization.
+		const remainingEntitlements = await db.query.entitlements.findMany({
+			where: and(
+				eq(entitlements.organizationMembershipId, membership.id),
+				isNull(entitlements.deletedAt),
+			),
+		})
+		const remainingPurchase = await db.query.purchases.findFirst({
+			where: and(
+				eq(purchases.userId, userId),
+				eq(purchases.organizationId, organizationId),
+				inArray(purchases.status, ['Valid', 'Restricted']),
+			),
+		})
+		if (
+			remainingPurchase ||
+			remainingEntitlements.some(
+				(entitlement) =>
+					!entitlement.expiresAt || entitlement.expiresAt > new Date(),
+			)
+		) {
+			return { removed: false, reason: 'surviving_access' }
 		}
 
 		// Remove the organization membership
@@ -202,20 +227,48 @@ export async function refundBulkPurchaseEntitlements(originalPurchase: any) {
 		const entitlementResults = []
 		const purchaseStatusResults = []
 
+		const refundedPurchases = []
 		for (const purchase of allPurchases) {
-			// Remove entitlements
-			const result = await softDeleteEntitlementsForPurchase(purchase.id)
+			const cleanup = async (executor: DbExecutor) => {
+				if (purchase.id !== originalPurchase.id) {
+					// Lock every parent sharing the coupon in the same transaction as
+					// seat deletion/status update. Discovery alone is not authoritative.
+					const parents = await executor
+						.select()
+						.from(purchases)
+						.where(eq(purchases.bulkCouponId, originalPurchase.bulkCouponId))
+						.for('update')
+					if (
+						parents.some(
+							(parent) =>
+								parent.id !== originalPurchase.id &&
+								(parent.status === 'Valid' || parent.status === 'Restricted'),
+						)
+					)
+						return null
+				}
+				const result = await softDeleteEntitlementsForPurchase(
+					purchase.id,
+					executor,
+				)
+				const statusResult = await executor
+					.update(purchases)
+					.set({ status: 'Refunded' })
+					.where(eq(purchases.id, purchase.id))
+				return { result, statusResult }
+			}
+			const cleaned =
+				purchase.id === originalPurchase.id
+					? await cleanup(db)
+					: await db.transaction(cleanup)
+			if (!cleaned) continue
+			refundedPurchases.push(purchase)
+			const { result, statusResult } = cleaned
 			entitlementResults.push({
 				purchaseId: purchase.id,
 				userId: purchase.userId,
 				rowsAffected: result.rowsAffected || 0,
 			})
-
-			// Update purchase status to 'Refunded'
-			const statusResult = await db
-				.update(purchases)
-				.set({ status: 'Refunded' })
-				.where(eq(purchases.id, purchase.id))
 
 			purchaseStatusResults.push({
 				purchaseId: purchase.id,
@@ -230,7 +283,7 @@ export async function refundBulkPurchaseEntitlements(originalPurchase: any) {
 		// Step 3: Remove organization memberships for redeemed users only
 		// Keep the original purchaser in their organization (it might be their personal org)
 		const membershipResults = []
-		const redeemedPurchases = allPurchases.filter(
+		const redeemedPurchases = refundedPurchases.filter(
 			(p) => p.id !== originalPurchase.id,
 		)
 
@@ -294,23 +347,23 @@ export async function refundBulkPurchaseEntitlements(originalPurchase: any) {
 			originalPurchaseId: originalPurchase.id,
 			bulkCouponId: originalPurchase.bulkCouponId,
 			duration: Date.now() - startTime,
-			totalPurchasesRefunded: allPurchases.length,
+			totalPurchasesRefunded: refundedPurchases.length,
 			totalEntitlementsRemoved,
 			totalMembershipsRemoved,
 			totalPurchasesMarkedRefunded,
 			couponRevoked,
-			affectedUsers: allPurchases.length,
+			affectedUsers: refundedPurchases.length,
 		})
 
 		return {
 			success: true,
 			originalPurchaseId: originalPurchase.id,
-			totalPurchasesRefunded: allPurchases.length,
+			totalPurchasesRefunded: refundedPurchases.length,
 			totalEntitlementsRemoved,
 			totalMembershipsRemoved,
 			totalPurchasesMarkedRefunded,
 			couponRevoked,
-			affectedUsers: allPurchases.map((p) => ({
+			affectedUsers: refundedPurchases.map((p) => ({
 				userId: p.userId,
 				purchaseId: p.id,
 				email: p.user?.email,
