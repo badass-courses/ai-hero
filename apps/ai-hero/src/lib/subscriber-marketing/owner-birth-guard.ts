@@ -1,5 +1,6 @@
 import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
 
+import type { BirthFeedProof } from './drovr-birth-feed'
 import type { DrovrEmailDeliveryRead } from './drovr-email-delivery'
 import {
 	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
@@ -39,6 +40,7 @@ import type { ContactEventRecord } from './types'
  */
 
 export const OWNER_BIRTH_GUARD_REPOST_CAP = 25
+export const OWNER_BIRTH_GUARD_CONFIRMATION_CAP = 25
 /** Leaves ample headroom beneath the route's 800s invocation limit. */
 export const OWNER_BIRTH_GUARD_PAGE_BUDGET_MS = 5 * 60_000
 
@@ -66,7 +68,7 @@ const MAX_PAGES = 200
 const STOPPED_DIRECTORY_STATE = /unsubscrib|bounce|complain|suppress|stop/i
 
 export type DrovrReadBackpressure = {
-	status: 429 | 502 | 503 | 504 | 'timeout' | 'page-budget'
+	status: 429 | 502 | 503 | 504 | '5xx' | 'timeout' | 'page-budget'
 	retryAfter?: string
 }
 export type DrovrReadFailure = {
@@ -94,6 +96,8 @@ export type OwnerBirthSubject = {
 }
 
 export type OwnerBirthGuardPorts = {
+	/** Present only after every feed journey reached EOF. Never fail over on error. */
+	birthFeed?: BirthFeedProof
 	/**
 	 * Skills-course and evergreen owner assignments in [from, to], by
 	 * (occurredAt, id).
@@ -194,6 +198,8 @@ export type OwnerBirthGuardReceipt = PageCounts & {
 	/** Candidates per journey, before the cap (the hawk, 09-30). */
 	candidatesByJourney: Record<string, number>
 	newsletterPages: number
+	/** Feed absence is only potential: target actor must confirm it. */
+	birthConfirmations?: number
 }
 
 const zeroCounts = (): PageCounts => ({
@@ -413,13 +419,20 @@ async function checkSubjects(
 	// Serial evaluation stops before starting the next contact on shedding.
 	// This is an early-stop fence, not a read-rate limiter.
 	const verdicts: { subject: OwnerBirthSubject; verdict: Verdict }[] = []
+	const feed = ports.birthFeed ? await ports.birthFeed.judge(live) : undefined
 	for (const subject of live) {
-		const verdict = await judge(
-			ports,
-			subject.owner.contactId,
-			subject.journeyId,
-			deadlineMs,
-		)
+		const verdict: Verdict = feed
+			? feed.get(subject) === 'born'
+				? { kind: 'born' }
+				: feed.get(subject) === 'missing'
+					? { kind: 'lost' } // potential only; bounded confirmation phase below
+					: { kind: 'unreadable', reason: 'birth feed coverage is unknown' }
+			: await judge(
+					ports,
+					subject.owner.contactId,
+					subject.journeyId,
+					deadlineMs,
+				)
 		verdicts.push({ subject, verdict })
 		if (verdict.kind === 'shed') break
 	}
@@ -484,10 +497,16 @@ async function checkSubjects(
 					counts.unmappable += 1
 					break
 				}
-				await logSafely(ports.log.warn, 'drovr.owner_without_birth', {
-					...fields,
-					idempotencyKey: birth.idempotencyKey,
-				})
+				await logSafely(
+					ports.log.warn,
+					ports.birthFeed
+						? 'drovr.owner_birth_guard.feed_candidate'
+						: 'drovr.owner_without_birth',
+					{
+						...fields,
+						idempotencyKey: birth.idempotencyKey,
+					},
+				)
 				candidates.push({ owner: row, journeyId: subject.journeyId, birth })
 				break
 			}
@@ -554,8 +573,9 @@ export async function runOwnerBirthGuard(args: {
 			break
 		}
 		const from = after
-		const page = (await step.run(`page-${pages}`, () =>
-			checkOwnerPage(ports, window, from, pageSize),
+		const page = (await step.run(
+			`${ports.birthFeed ? 'feed-' : ''}page-${pages}`,
+			() => checkOwnerPage(ports, window, from, pageSize),
 		)) as PageResult
 		pages += 1
 		for (const key of Object.keys(counts) as (keyof PageCounts)[])
@@ -578,8 +598,9 @@ export async function runOwnerBirthGuard(args: {
 			break
 		}
 		const from = newsletterAfter
-		const page = (await step.run(`newsletter-page-${newsletterPages}`, () =>
-			checkNewsletterPage(ports, window, from, pageSize),
+		const page = (await step.run(
+			`${ports.birthFeed ? 'feed-' : ''}newsletter-page-${newsletterPages}`,
+			() => checkNewsletterPage(ports, window, from, pageSize),
 		)) as PageResult
 		newsletterPages += 1
 		for (const key of Object.keys(counts) as (keyof PageCounts)[])
@@ -598,8 +619,79 @@ export async function runOwnerBirthGuard(args: {
 		candidatesByJourney[candidate.journeyId] =
 			(candidatesByJourney[candidate.journeyId] ?? 0) + 1
 
+	let birthConfirmations = 0
+	let eligible = candidates.slice(0, backpressure ? 0 : cap)
+	const birthFeed = ports.birthFeed
+	if (birthFeed && !backpressure) {
+		eligible = []
+		for (const candidate of candidates.slice(
+			0,
+			Math.min(cap, OWNER_BIRTH_GUARD_CONFIRMATION_CAP),
+		)) {
+			// SAFETY: this step produces a plain, typed Verdict. Reserve inside
+			// the callback so lost SDK results cannot exceed 25 physical reads.
+			const verdict = (await step.run(
+				`feed-confirm-${candidate.owner.id}`,
+				async () => {
+					await birthFeed.reserveConfirmation()
+					const deadline =
+						(ports.nowMs ?? Date.now)() + OWNER_BIRTH_GUARD_PAGE_BUDGET_MS
+					const actor = await pageRead(ports, deadline, (timeoutMs) =>
+						ports.readActor(
+							candidate.owner.contactId,
+							candidate.journeyId,
+							timeoutMs,
+						),
+					)
+					if (!actor.ok) {
+						if (actor.backpressure)
+							return {
+								kind: 'shed' as const,
+								backpressure: actor.backpressure,
+							}
+						await birthFeed.deferConfirmation(
+							candidate.journeyId,
+							candidate.owner.id,
+						)
+						return {
+							kind: 'unreadable' as const,
+							reason: 'birth confirmation unavailable',
+						}
+					}
+					if (actor.found) {
+						await birthFeed.observeBorn(
+							candidate.journeyId,
+							candidate.owner.contactId,
+						)
+						return { kind: 'born' as const }
+					}
+					const result = await judgeLost(
+						ports,
+						candidate.owner.contactId,
+						deadline,
+					)
+					if (result.kind === 'suppressed' || result.kind === 'unreadable')
+						await birthFeed.deferConfirmation(
+							candidate.journeyId,
+							candidate.owner.id,
+						)
+					return result
+				},
+			)) as Verdict
+			birthConfirmations += 1
+			if (verdict.kind === 'shed') {
+				backpressure = verdict.backpressure
+				truncated = true
+				break
+			}
+			if (verdict.kind === 'lost') eligible.push(candidate)
+			else if (verdict.kind === 'born') counts.born += 1
+			else if (verdict.kind === 'suppressed') counts.skippedSuppressed += 1
+			else counts.unreadable += 1
+		}
+	}
 	const outcomes: RepostOutcome[] = []
-	for (const { owner, birth } of candidates.slice(0, backpressure ? 0 : cap)) {
+	for (const { owner, birth } of backpressure ? [] : eligible) {
 		outcomes.push(
 			(await step.run(`repost-${owner.id}`, async () => {
 				const outcome = repostOutcomeOf(await ports.post(birth))
@@ -625,6 +717,7 @@ export async function runOwnerBirthGuard(args: {
 		truncated,
 		candidatesByJourney,
 		newsletterPages,
+		...(ports.birthFeed ? { birthConfirmations } : {}),
 	}
 	await step.run('summary', async () => {
 		// Each run rescans the whole window oldest-first, so what a cap or a

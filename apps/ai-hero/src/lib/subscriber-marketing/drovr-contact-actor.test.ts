@@ -156,6 +156,29 @@ describe("drovr's contact actor read (GET /contacts)", () => {
 		).toMatchObject({ ok: false, backpressure: { status: 'timeout' } })
 	})
 
+	it.each([500, 501, 520, 599])(
+		'every other 5xx (%s) is shed before decoding',
+		async (status) => {
+			const response = new Response('bad body', {
+				status,
+				headers: { 'retry-after': '8' },
+			})
+			const json = vi.spyOn(response, 'json')
+			expect(
+				await readDrovrContactActor({
+					contactId: 'c1',
+					journeyId: 'journey',
+					config,
+					fetcher: vi.fn(async () => response),
+				}),
+			).toMatchObject({
+				ok: false,
+				backpressure: { status: '5xx', retryAfter: '8' },
+			})
+			expect(json).not.toHaveBeenCalled()
+		},
+	)
+
 	it('is unreadable without configuration', async () => {
 		const fetcher = vi.fn()
 		await expect(
