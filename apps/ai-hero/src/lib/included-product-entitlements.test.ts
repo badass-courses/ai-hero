@@ -11,6 +11,12 @@ const fake = vi.hoisted(() => ({
 	queue: Promise.resolve(),
 	beforeTransaction: undefined as (() => void) | undefined,
 	insertFailure: undefined as unknown,
+	updateFailure: undefined as unknown,
+	createFunction: vi.fn((config, triggers, handler) => ({
+		config,
+		triggers,
+		handler,
+	})),
 	duplicateRow: undefined as Record<string, unknown> | undefined,
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
@@ -68,6 +74,7 @@ function executor() {
 		update: (table: Parameters<typeof getTableName>[0]) => ({
 			set: (values: Record<string, unknown>) => ({
 				where: async (predicate: SQL) => {
+					if (fake.updateFailure) throw fake.updateFailure
 					let rowsAffected = 0
 					for (const row of rows(table))
 						if (matches(row, predicate)) {
@@ -99,6 +106,7 @@ vi.mock('@/db', () => ({
 					rows(purchases).filter((row) => matches(row, where)),
 			},
 			organizationMemberships: { findFirst: async () => undefined },
+			entitlementTypes: { findFirst: async () => undefined },
 			entitlements: {
 				findMany: async ({ where }: { where: SQL }) =>
 					rows(entitlements).filter((row) => matches(row, where)),
@@ -132,6 +140,9 @@ vi.mock('@/db', () => ({
 	},
 }))
 vi.mock('@/server/logger', () => ({ log: fake.log }))
+vi.mock('@/inngest/inngest.server', () => ({
+	inngest: { createFunction: fake.createFunction },
+}))
 
 import {
 	contentResource,
@@ -147,6 +158,13 @@ import {
 	users,
 } from '@/db/schema'
 import { refundBulkPurchaseEntitlements } from '@/lib/bulk-purchase-refund'
+import { refundEntitlements } from '@/inngest/functions/refund/refund-entitlements'
+import {
+	PURCHASE_STATUS_UPDATED_EVENT,
+	REFUND_PROCESSED_EVENT,
+	PurchaseStatusUpdatedEventSchema,
+	RefundProcessedEventSchema,
+} from '@coursebuilder/core/events/commerce'
 import { softDeleteEntitlementsForPurchase } from '@/lib/entitlements'
 import {
 	grantIncludedProductEntitlements,
@@ -229,6 +247,7 @@ beforeEach(() => {
 	fake.queue = Promise.resolve()
 	fake.beforeTransaction = undefined
 	fake.insertFailure = undefined
+	fake.updateFailure = undefined
 	fake.duplicateRow = undefined
 	vi.clearAllMocks()
 	seed(purchases, {
@@ -535,6 +554,203 @@ describe('included product fulfillment policy', () => {
 			'seat origin',
 		)
 	})
+})
+
+describe('refund event boundary', () => {
+	// Real source-deletion and bulk helpers; fake transport and database only.
+	const workflow = refundEntitlements as unknown as {
+		triggers: { event: string; if?: string }[]
+		handler: (context: any) => Promise<any>
+	}
+	function dispatch(
+		name: string,
+		status?: string,
+		source = purchase(),
+		step?: any,
+	) {
+		const trigger = workflow.triggers.find((trigger) => trigger.event === name)
+		if (!trigger || (trigger.if && status !== 'Refunded'))
+			return Promise.resolve(null)
+		return workflow.handler({
+			event: {
+				name,
+				data:
+					name === PURCHASE_STATUS_UPDATED_EVENT
+						? PurchaseStatusUpdatedEventSchema.parse({
+								stripeChargeId: 'synthetic-charge',
+								status,
+							})
+						: RefundProcessedEventSchema.parse({
+								merchantChargeId: 'synthetic-charge',
+							}),
+			},
+			step: step ?? {
+				run: async (_name: string, work: () => unknown) => work(),
+			},
+			db: { getPurchaseForStripeCharge: async () => ({ ...source }) },
+		})
+	}
+	it('registers both producers and filters status events to full refunds', () => {
+		expect(workflow.triggers).toEqual([
+			{ event: REFUND_PROCESSED_EVENT },
+			{
+				event: PURCHASE_STATUS_UPDATED_EVENT,
+				if: 'event.data.status == "Refunded"',
+			},
+		])
+	})
+	it('deletes all 17 source grants including C5 bundled Crash Course, preserves unrelated grants and dedupes both producers', async () => {
+		await grantIncludedProductEntitlements(context)
+		for (let i = 0; i < 15; i++)
+			seed(entitlements, {
+				id: `cohort-${i}`,
+				sourceId: context.purchaseId,
+				sourceType: 'PURCHASE',
+				deletedAt: null,
+			})
+		seed(
+			entitlements,
+			{
+				id: 'discord',
+				sourceId: context.purchaseId,
+				sourceType: 'PURCHASE',
+				deletedAt: null,
+			},
+			{
+				id: 'standalone',
+				sourceId: 'other-purchase',
+				sourceType: 'PURCHASE',
+				deletedAt: null,
+			},
+			{
+				id: 'manual',
+				sourceId: context.purchaseId,
+				sourceType: 'MANUAL',
+				deletedAt: null,
+			},
+		)
+		purchase().status = 'Refunded'
+		expect(
+			await dispatch(PURCHASE_STATUS_UPDATED_EVENT, 'Refunded'),
+		).toMatchObject({ entitlementsDeleted: 17 })
+		const deletedAt = rows(entitlements)[0]!.deletedAt
+		expect(await dispatch(REFUND_PROCESSED_EVENT)).toMatchObject({
+			entitlementsDeleted: 0,
+		})
+		expect(
+			await dispatch(PURCHASE_STATUS_UPDATED_EVENT, 'Refunded'),
+		).toMatchObject({ entitlementsDeleted: 0 })
+		expect(rows(entitlements)[0]!.deletedAt).toBe(deletedAt)
+		expect(active().map((row) => row.id)).toEqual(['standalone', 'manual'])
+		await expect(grantIncludedProductEntitlements(context)).rejects.toThrow()
+	})
+	it('legacy full refunds still clean up and partial refunds do not revoke', async () => {
+		await grantIncludedProductEntitlements(context)
+		expect(await dispatch(PURCHASE_STATUS_UPDATED_EVENT, 'Valid')).toBeNull()
+		expect(await dispatch(REFUND_PROCESSED_EVENT)).toMatchObject({
+			reason: 'purchase_not_refunded',
+		})
+		expect(active()).toHaveLength(1)
+		purchase().status = 'Refunded'
+		expect(await dispatch(REFUND_PROCESSED_EVENT)).toMatchObject({
+			entitlementsDeleted: 1,
+		})
+	})
+	it('retries a fresh purchase read when cleanup beats the status listener', async () => {
+		await grantIncludedProductEntitlements(context)
+		const completed = new Map<string, unknown>()
+		const step = {
+			run: async (name: string, work: () => Promise<unknown>) => {
+				if (completed.has(name)) return completed.get(name)
+				const result = await work()
+				completed.set(name, result)
+				return result
+			},
+		}
+		await expect(
+			dispatch(PURCHASE_STATUS_UPDATED_EVENT, 'Refunded', purchase(), step),
+		).rejects.toThrow('not yet persisted')
+		expect(active()).toHaveLength(1)
+		expect(completed.size).toBe(0)
+		purchase().status = 'Refunded'
+		expect(
+			await dispatch(
+				PURCHASE_STATUS_UPDATED_EVENT,
+				'Refunded',
+				purchase(),
+				step,
+			),
+		).toMatchObject({ entitlementsDeleted: 1 })
+	})
+	it.each(['Valid', 'Restricted'])(
+		'preserves seats and coupon funded by another %s bulk parent',
+		async (status) => {
+			seat()
+			await grantIncludedProductEntitlements(context)
+			const parent = rows(purchases)[1]!
+			parent.status = 'Refunded'
+			seed(purchases, { ...parent, id: 'other-parent', status })
+			seed(
+				entitlements,
+				{
+					id: 'parent-grant',
+					sourceId: parent.id,
+					sourceType: 'PURCHASE',
+					deletedAt: null,
+				},
+				{
+					id: 'other-parent-grant',
+					sourceId: 'other-parent',
+					sourceType: 'PURCHASE',
+					deletedAt: null,
+				},
+			)
+			rows(coupon)[0]!.status = 1
+			expect(
+				await dispatch(PURCHASE_STATUS_UPDATED_EVENT, 'Refunded', parent),
+			).toMatchObject({ entitlementsDeleted: 1, totalPurchasesRefunded: 1 })
+			expect(purchase().status).toBe('Valid')
+			expect(rows(coupon)[0]!.status).toBe(1)
+			expect(active().map((row) => row.id)).toEqual([
+				bundleId(),
+				'other-parent-grant',
+			])
+			expect(
+				await dispatch(REFUND_PROCESSED_EVENT, undefined, parent),
+			).toMatchObject({ entitlementsDeleted: 0 })
+		},
+	)
+	it('revokes claimed-seat bundles when the last bulk parent is refunded', async () => {
+		seat()
+		await grantIncludedProductEntitlements(context)
+		const parent = rows(purchases)[1]!
+		parent.status = 'Refunded'
+		expect(
+			await dispatch(PURCHASE_STATUS_UPDATED_EVENT, 'Refunded', parent),
+		).toMatchObject({ entitlementsDeleted: 1, totalPurchasesRefunded: 2 })
+		expect(active()).toEqual([])
+		expect(
+			await dispatch(REFUND_PROCESSED_EVENT, undefined, parent),
+		).toMatchObject({ entitlementsDeleted: 0 })
+	})
+	it.each(['individual', 'bulk'])(
+		'surfaces %s cleanup failures for retry',
+		async (kind) => {
+			await grantIncludedProductEntitlements(context)
+			if (kind === 'bulk') seat()
+			const source = kind === 'bulk' ? rows(purchases)[1]! : purchase()
+			source.status = 'Refunded'
+			fake.updateFailure = new Error('synthetic cleanup failure')
+			await expect(
+				dispatch(PURCHASE_STATUS_UPDATED_EVENT, 'Refunded', source),
+			).rejects.toThrow('synthetic cleanup failure')
+			expect(active()).toHaveLength(1)
+			fake.updateFailure = undefined
+			expect(
+				await dispatch(PURCHASE_STATUS_UPDATED_EVENT, 'Refunded', source),
+			).toMatchObject({ entitlementsDeleted: 1 })
+		},
+	)
 })
 
 describe('included product individual transfer', () => {

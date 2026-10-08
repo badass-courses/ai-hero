@@ -23,6 +23,12 @@ export async function getAllRelatedPurchases(originalPurchase: any) {
 		return [originalPurchase]
 	}
 
+	// Add-seat purchases can share a coupon. A surviving paid parent still
+	// funds the claimed seats, so only revoke this parent's own grants.
+	if (await hasSurvivingBulkParent(originalPurchase)) {
+		return [originalPurchase]
+	}
+
 	// Find all purchases that redeemed this bulk coupon
 	const redeemedPurchases = await db.query.purchases.findMany({
 		where: eq(purchases.redeemedBulkCouponId, originalPurchase.bulkCouponId),
@@ -39,6 +45,18 @@ export async function getAllRelatedPurchases(originalPurchase: any) {
 	})
 
 	return [originalPurchase, ...redeemedPurchases]
+}
+
+async function hasSurvivingBulkParent(originalPurchase: any) {
+	if (!originalPurchase.bulkCouponId) return false
+	const parents = await db.query.purchases.findMany({
+		where: eq(purchases.bulkCouponId, originalPurchase.bulkCouponId),
+	})
+	return parents.some(
+		(parent) =>
+			parent.id !== originalPurchase.id &&
+			(parent.status === 'Valid' || parent.status === 'Restricted'),
+	)
 }
 
 /**
@@ -205,14 +223,8 @@ export async function refundBulkPurchaseEntitlements(originalPurchase: any) {
 				statusUpdated: (statusResult.rowsAffected || 0) > 0,
 			})
 
-			// Also remove Discord role entitlements specifically
-			if (originalPurchase.organizationId && originalPurchase.productId) {
-				await removeDiscordRoleEntitlements(
-					purchase.userId,
-					originalPurchase.organizationId,
-					originalPurchase.productId,
-				)
-			}
+			// Source-scoped deletion above already includes Discord grants.
+			// Do not widen deletion to other purchases in the organization.
 		}
 
 		// Step 3: Remove organization memberships for redeemed users only
@@ -248,7 +260,10 @@ export async function refundBulkPurchaseEntitlements(originalPurchase: any) {
 
 		// Step 4: Revoke bulk coupon to prevent further invitations
 		let couponRevoked = false
-		if (originalPurchase.bulkCouponId) {
+		if (
+			originalPurchase.bulkCouponId &&
+			!(await hasSurvivingBulkParent(originalPurchase))
+		) {
 			try {
 				const revokeResult = await revokeBulkCouponInviteAbility(
 					originalPurchase.bulkCouponId,
@@ -260,7 +275,7 @@ export async function refundBulkPurchaseEntitlements(originalPurchase: any) {
 					bulkCouponId: originalPurchase.bulkCouponId,
 					error: error instanceof Error ? error.message : String(error),
 				})
-				// Don't fail the entire refund if coupon revocation fails
+				throw error
 			}
 		}
 

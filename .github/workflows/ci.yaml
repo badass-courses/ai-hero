@@ -43,6 +43,9 @@ jobs:
       - name: Checkout recovery patch contract
         run: pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/lib/checkout-recovery-adopt.test.ts
 
+      - name: Refund entitlement event boundary and included-product contracts
+        run: pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/lib/included-product-entitlements.test.ts
+
       # Every PR, no path filter: a coupon or checkout policy change must meet
       # these unit contracts (the MySQL workflow runs only *.mysql.test.ts, so
       # #274 shipped with coupon-authority.test.ts still asserting the old rule).

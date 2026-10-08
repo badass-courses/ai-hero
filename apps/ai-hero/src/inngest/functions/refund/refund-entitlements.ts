@@ -1,4 +1,3 @@
-import { db } from '@/db'
 import { inngest } from '@/inngest/inngest.server'
 import {
 	isBulkPurchase,
@@ -11,7 +10,10 @@ import {
 } from '@/lib/entitlements'
 import { log } from '@/server/logger'
 
-import { REFUND_PROCESSED_EVENT } from '@coursebuilder/core/events/commerce'
+import {
+	PURCHASE_STATUS_UPDATED_EVENT,
+	REFUND_PROCESSED_EVENT,
+} from '@coursebuilder/core/events/commerce'
 
 type CreditRefundResult =
 	| {
@@ -137,12 +139,20 @@ export const refundEntitlements = inngest.createFunction(
 		id: 'refund-entitlements',
 		name: 'Refund Entitlements',
 	},
-	{
-		event: REFUND_PROCESSED_EVENT,
-	},
-	async ({ event, step, db: adapter, paymentProvider }) => {
+	[
+		{ event: REFUND_PROCESSED_EVENT },
+		{
+			event: PURCHASE_STATUS_UPDATED_EVENT,
+			if: 'event.data.status == "Refunded"',
+		},
+	],
+	async ({ event, step, db: adapter }) => {
 		const startTime = Date.now()
-		const chargeId = event.data.stripeChargeId || event.data.merchantChargeId
+		const chargeId =
+			event.data.stripeChargeId ||
+			('merchantChargeId' in event.data
+				? event.data.merchantChargeId
+				: undefined)
 		if (!chargeId) throw new Error('No chargeId provided')
 
 		try {
@@ -150,7 +160,17 @@ export const refundEntitlements = inngest.createFunction(
 			const purchase = await step.run(
 				'get purchase for stripe charge',
 				async () => {
-					return adapter.getPurchaseForStripeCharge(chargeId)
+					const current = await adapter.getPurchaseForStripeCharge(chargeId)
+					// The status listener runs independently. Keep this check inside
+					// the step so a retry reads fresh state rather than a cached Valid row.
+					if (
+						event.name === PURCHASE_STATUS_UPDATED_EVENT &&
+						event.data.status === 'Refunded' &&
+						(!current || current.status !== 'Refunded')
+					) {
+						throw new Error('Refunded purchase status is not yet persisted')
+					}
+					return current
 				},
 			)
 
@@ -162,6 +182,20 @@ export const refundEntitlements = inngest.createFunction(
 				return {
 					entitlementsDeleted: 0,
 					reason: 'purchase_not_found',
+					stripeChargeId: chargeId,
+				}
+			}
+
+			// A partial refund or stale legacy event must not revoke access.
+			if (
+				purchase.status !== 'Refunded' ||
+				(event.name === PURCHASE_STATUS_UPDATED_EVENT &&
+					event.data.status !== 'Refunded')
+			) {
+				return {
+					purchaseId: purchase.id,
+					entitlementsDeleted: 0,
+					reason: 'purchase_not_refunded',
 					stripeChargeId: chargeId,
 				}
 			}
@@ -225,14 +259,8 @@ export const refundEntitlements = inngest.createFunction(
 							purchaseId: purchase.id,
 							userId: purchase.userId,
 							error: error instanceof Error ? error.message : String(error),
-							message:
-								'Credit entitlement handling failed, but main refund will continue',
 						})
-						return {
-							type: 'none' as const,
-							error: error instanceof Error ? error.message : String(error),
-							summary: 'Credit handling failed - check logs for details',
-						}
+						throw error
 					}
 				},
 			)
@@ -243,7 +271,11 @@ export const refundEntitlements = inngest.createFunction(
 				result = await step.run(
 					'refund bulk purchase entitlements',
 					async () => {
-						return refundBulkPurchaseEntitlements(purchase)
+						const bulkResult = await refundBulkPurchaseEntitlements(purchase)
+						if (!bulkResult.success) {
+							throw new Error(bulkResult.error || 'Bulk refund cleanup failed')
+						}
+						return bulkResult
 					},
 				)
 			} else {
@@ -316,12 +348,7 @@ export const refundEntitlements = inngest.createFunction(
 				error: error instanceof Error ? error.message : String(error),
 				duration: Date.now() - startTime,
 			})
-			return {
-				reason: 'error',
-				stripeChargeId: chargeId,
-				error: error instanceof Error ? error.message : String(error),
-				entitlementsDeleted: 0,
-			}
+			throw error
 		}
 	},
 )
