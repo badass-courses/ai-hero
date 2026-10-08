@@ -3,6 +3,8 @@ import {
 	BIRTH_FEED_MAX_CALLS,
 	BIRTH_FEED_JOURNEYS,
 	BIRTH_FEED_GRACE_MS,
+	birthFeedRetryDurationMs,
+	BIRTH_FEED_RETRY_CAP_MS,
 	prepareBirthFeed,
 	readDrovrBirths,
 	BirthFeedFailure,
@@ -62,6 +64,7 @@ function subject(
 }
 function harness() {
 	let clock = NOW
+	let startedAt = NOW
 	const checkpoints = new Map<string, BirthFeedCheckpoint>()
 	const memberships = new Map<string, Set<string>>()
 	const deferred = new Map<string, Set<string>>()
@@ -94,7 +97,13 @@ function harness() {
 			memberships.get(journeyId)?.add(contactId)
 		}),
 		load: vi.fn(async (id) => checkpoints.get(id) ?? null),
-		consume: vi.fn(async ({ journeyId, checkpoint, contactIds }) => {
+		consume: vi.fn(async ({ journeyId, previous, checkpoint, contactIds }) => {
+			const actual = checkpoints.get(journeyId) ?? null
+			if (
+				JSON.stringify(actual) !== JSON.stringify(previous) &&
+				JSON.stringify(actual) !== JSON.stringify(checkpoint)
+			)
+				throw new BirthFeedFailure('checkpoint-conflict-or-cache-loss')
 			const seen = memberships.get(journeyId) ?? new Set<string>()
 			contactIds.forEach((id) => seen.add(id))
 			memberships.set(journeyId, seen)
@@ -128,17 +137,54 @@ function harness() {
 				step,
 				store,
 				read,
-				startedAtMs: clock,
+				startedAtMs: startedAt,
 				nowMs: () => clock,
 				runId: 'fixture-run',
 			}),
+		advanceClock: (at: number) => {
+			clock = at
+		},
 		newRun: (at = clock) => {
 			quota = 0
 			cache.clear()
-			clock = at
+			startedAt = clock = at
 		},
 	}
 }
+describe('feed Retry-After scheduling', () => {
+	it.each([
+		'86400',
+		'86401',
+		'90000',
+		'9999999999999999999999999999999999999999',
+		'Thu, 08 Oct 2026 17:40:00 GMT',
+	])(
+		'clamps valid large header %s at 24h instead of falling back',
+		(header) => {
+			expect(birthFeedRetryDurationMs(header, NOW)).toBe(
+				BIRTH_FEED_RETRY_CAP_MS,
+			)
+		},
+	)
+	it.each([
+		undefined,
+		'',
+		'bad',
+		'0',
+		'-1',
+		'1.5',
+		'Wed, 07 Oct 2026 16:40:00 GMT',
+		'Tue, 06 Oct 2026 16:40:00 GMT',
+	])('uses 120s only for missing/invalid/zero/past header %s', (header) => {
+		expect(birthFeedRetryDurationMs(header, NOW)).toBe(120_000)
+	})
+	it('preserves normal seconds and future dates', () => {
+		expect(birthFeedRetryDurationMs('9', NOW)).toBe(9000)
+		expect(birthFeedRetryDurationMs('Wed, 07 Oct 2026 16:40:15 GMT', NOW)).toBe(
+			15000,
+		)
+	})
+})
 describe('GET /births boundary', () => {
 	it('uses bearer authority, first since and unchanged opaque cursors without a tenant parameter', async () => {
 		const fetcher = vi.fn(
@@ -242,6 +288,64 @@ describe('GET /births boundary', () => {
 	})
 })
 describe('bounded durable feed preparation', () => {
+	it('replays the same held memo after cooldown with shed and zero reads, then allows the next hourly run', async () => {
+		const h = harness()
+		h.checkpoints.set(JOURNEY, {
+			schemaVersion: 1,
+			since: request.since!,
+			resumeCursor: null,
+			asOf: null,
+			phase: 'bootstrap',
+			retry: {
+				status: 503,
+				notBefore: new Date(NOW + 40 * 60_000).toISOString(),
+			},
+		})
+		const first = await h.run()
+		expect(first).toMatchObject({
+			kind: 'shed',
+			calls: 0,
+			backpressure: { retryAfter: '2400' },
+		})
+		h.advanceClock(NOW + 45 * 60_000)
+		expect(await h.run()).toEqual(first)
+		expect(h.read).not.toHaveBeenCalled()
+		expect(h.store.reserveCall).not.toHaveBeenCalled()
+		h.newRun(NOW + 60 * 60_000)
+		expect(await h.run()).toMatchObject({ kind: 'ready' })
+		expect(h.read).toHaveBeenCalledTimes(3)
+	})
+	it.each(['86401', '90000'])(
+		'persists a capped deadline for excessive Retry-After %s',
+		async (header) => {
+			const h = harness()
+			h.read.mockResolvedValueOnce({
+				kind: 'shed',
+				backpressure: { status: 503, retryAfter: header },
+			})
+			await h.run()
+			expect(h.checkpoints.get(JOURNEY)?.retry?.notBefore).toBe(
+				new Date(NOW + BIRTH_FEED_RETRY_CAP_MS).toISOString(),
+			)
+		},
+	)
+	it('consumes against current metadata observed inside the read, not the stale memoized retry fields', async () => {
+		const h = harness()
+		await h.run()
+		h.newRun()
+		const memo = h.checkpoints.get(JOURNEY)!
+		const current: BirthFeedCheckpoint = {
+			...memo,
+			retry: { status: 503, notBefore: new Date(NOW - 1).toISOString() },
+		}
+		h.checkpoints.set(JOURNEY, current)
+		vi.mocked(h.store.load).mockResolvedValueOnce(memo)
+		expect(await h.run()).toMatchObject({ kind: 'ready' })
+		expect(h.store.consume).toHaveBeenCalledWith(
+			expect.objectContaining({ journeyId: JOURNEY, previous: current }),
+		)
+		expect(h.checkpoints.get(JOURNEY)?.retry).toBeUndefined()
+	})
 	it('cooldowns yield unknown, never absence, and positive membership still wins', async () => {
 		const h = harness()
 		const result = await h.run()
@@ -461,6 +565,35 @@ describe('bounded durable feed preparation', () => {
 		expect(h.read).toHaveBeenCalledOnce()
 		expect(h.store.reserveCall).toHaveBeenCalledOnce()
 		expect(h.store.consume).toHaveBeenCalledOnce()
+	})
+	it('a lost shed result stays held in the same run even if the callback replays after its deadline', async () => {
+		const h = harness()
+		let clock = NOW
+		h.read.mockResolvedValueOnce({
+			kind: 'shed',
+			backpressure: { status: 503, retryAfter: '10' },
+		})
+		const step = {
+			async run<T>(id: string, op: () => Promise<T>) {
+				if (id.startsWith('birth-feed-read-')) {
+					await op()
+					clock = NOW + 15 * 60_000
+				}
+				return op()
+			},
+		}
+		expect(
+			await prepareBirthFeed({
+				step,
+				store: h.store,
+				read: h.read,
+				startedAtMs: NOW,
+				runId: 'lost-expired-shed',
+				nowMs: () => clock,
+			}),
+		).toMatchObject({ kind: 'shed' })
+		expect(h.read).toHaveBeenCalledOnce()
+		expect(h.store.reserveCall).toHaveBeenCalledOnce()
 	})
 	it('cache loss between the memoized load and physical read cannot rebase a saved request', async () => {
 		const h = harness()

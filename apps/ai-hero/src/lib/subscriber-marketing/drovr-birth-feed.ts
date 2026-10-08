@@ -1,6 +1,5 @@
 import { NonRetriableError } from 'inngest'
 import { z } from 'zod'
-import { newsletterPauseDurationMs } from '@/inngest/functions/newsletter-provider-pause'
 
 import {
 	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
@@ -15,6 +14,28 @@ import {
 
 export const BIRTH_FEED_MAX_CALLS = 10
 export const BIRTH_FEED_GRACE_MS = 5 * 60_000
+export const BIRTH_FEED_RETRY_CAP_MS = 24 * 60 * 60_000
+export const BIRTH_FEED_RETRY_FALLBACK_MS = 120_000
+/** Feed scheduling: valid excessive delays saturate at the cap, not 120s.
+ * This intentionally differs from the newsletter provider-pause policy. */
+export function birthFeedRetryDurationMs(
+	retryAfter: string | undefined,
+	nowMs: number,
+): number {
+	if (!Number.isFinite(nowMs)) return BIRTH_FEED_RETRY_FALLBACK_MS
+	const raw = retryAfter?.trim() ?? ''
+	let delay = NaN
+	if (/^\d+$/.test(raw)) delay = Number(raw) * 1000
+	else if (
+		/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(
+			raw,
+		)
+	)
+		delay = Date.parse(raw) - nowMs
+	return delay > 0
+		? Math.min(delay, BIRTH_FEED_RETRY_CAP_MS)
+		: BIRTH_FEED_RETRY_FALLBACK_MS
+}
 export const BIRTH_FEED_JOURNEYS = [
 	DROVR_SKILLS_COURSE_JOURNEY_ID,
 	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
@@ -217,7 +238,9 @@ export async function prepareBirthFeed(args: {
 		checkpoint: BirthFeedCheckpoint | null,
 	): DrovrReadBackpressure | undefined => {
 		if (!checkpoint?.retry) return
-		const remaining = Date.parse(checkpoint.retry.notBefore) - now()
+		// Freeze every hold decision for this run, including replay after sleep.
+		// A fresh callback-side hold also fences a lost shed result for this run.
+		const remaining = Date.parse(checkpoint.retry.notBefore) - args.startedAtMs
 		if (remaining > 0)
 			return {
 				status: checkpoint.retry.status,
@@ -254,7 +277,7 @@ export async function prepareBirthFeed(args: {
 				checkpoint && checkpoint.resumeCursor !== null
 					? { journeyId, cursor: checkpoint.resumeCursor, limit: 1000 }
 					: { journeyId, since: checkpoint?.since ?? since, limit: 1000 }
-			const read = (await args.step.run(
+			const readStep = (await args.step.run(
 				`birth-feed-read-${index}`,
 				async () => {
 					// A lost SDK result must not repeat a shed GET before its hold.
@@ -270,7 +293,10 @@ export async function prepareBirthFeed(args: {
 						throw new BirthFeedFailure('checkpoint-conflict-before-read')
 					const backpressure = held(current)
 					if (backpressure)
-						return { kind: 'shed', backpressure } satisfies BirthFeedPageRead
+						return {
+							read: { kind: 'shed', backpressure } satisfies BirthFeedPageRead,
+							current,
+						}
 					await args.store.reserveCall(args.runId)
 					let result: BirthFeedPageRead
 					try {
@@ -295,7 +321,7 @@ export async function prepareBirthFeed(args: {
 								retry: {
 									notBefore: new Date(
 										at +
-											newsletterPauseDurationMs(
+											birthFeedRetryDurationMs(
 												result.backpressure.retryAfter,
 												at,
 											),
@@ -306,26 +332,28 @@ export async function prepareBirthFeed(args: {
 							contactIds: [],
 						})
 					}
-					return result
+					return { read: result, current }
 				},
-			)) as BirthFeedPageRead
+			)) as { read: BirthFeedPageRead; current: BirthFeedCheckpoint | null }
+			const { read, current } = readStep
 			if (read.kind === 'shed') return { ...read, calls }
 			if (read.kind === 'fatal') throw new BirthFeedFailure(read.reason)
 			const page = read.page
 			if (
-				checkpoint?.asOf &&
-				(page.asOf === null ||
-					Date.parse(page.asOf) < Date.parse(checkpoint.asOf))
+				current?.asOf &&
+				(page.asOf === null || Date.parse(page.asOf) < Date.parse(current.asOf))
 			)
 				throw new BirthFeedFailure('watermark-regressed')
 			const next: BirthFeedCheckpoint = {
 				schemaVersion: 1,
-				since: checkpoint?.since ?? since,
+				since: current?.since ?? since,
 				resumeCursor: page.resumeCursor,
 				asOf: page.asOf,
 				phase: page.nextCursor === null ? 'caught-up' : 'paging',
 			}
-			const previous = checkpoint
+			// Use the metadata actually observed by this memoized read, not its
+			// earlier load snapshot (which may differ only in retry metadata).
+			const previous = current
 			await args.step.run(`birth-feed-consume-${index}`, async () => {
 				await args.store.consume({
 					journeyId,

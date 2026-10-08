@@ -144,7 +144,120 @@ describe('birth feed durable boundary', () => {
 		expect(
 			await harness(JSON.stringify(bootstrap)).store.load('journey'),
 		).toEqual(bootstrap)
-		expect(CONSUME_BIRTH_FEED).toContain('retryEqual(a.retry,b.retry)')
+	})
+	it('executes consume against a stateful CAS fake: stale holds cannot clear or rewind, replay is idempotent', async () => {
+		// Stateful Redis boundary fake, not a Lua interpreter. The separate
+		// source-Lua proof also executes these cases against an owned engine.
+		let raw: string | undefined
+		const members = new Set<string>()
+		const identity = (value: BirthFeedCheckpoint | null) =>
+			value === null
+				? null
+				: [
+						value.schemaVersion,
+						value.since,
+						value.resumeCursor,
+						value.asOf,
+						value.phase,
+						value.retry?.notBefore,
+						value.retry?.status,
+					]
+		const evalScript = vi.fn(
+			async (
+				script: string,
+				_keys: string[],
+				args: string[],
+			): Promise<unknown> => {
+				if (script === LOAD_BIRTH_FEED)
+					return (!raw && members.size) || (raw && !members.has(args[0]!))
+						? 'cache-lost'
+						: (raw ?? null)
+				if (script !== CONSUME_BIRTH_FEED)
+					throw new Error('unsupported fixture script')
+				const current: BirthFeedCheckpoint | null = raw ? JSON.parse(raw) : null
+				const previous: BirthFeedCheckpoint | null = JSON.parse(args[0]!)
+				const desired: BirthFeedCheckpoint = JSON.parse(args[1]!)
+				if (raw && !members.has(args[2]!)) return -1
+				const actual = JSON.stringify(identity(current))
+				if (
+					actual !== JSON.stringify(identity(previous)) &&
+					actual !== JSON.stringify(identity(desired))
+				)
+					return 0
+				for (const id of args.slice(2)) members.add(id)
+				raw = args[1]!
+				return 1
+			},
+		)
+		const store = createRedisBirthFeedStore({
+			redis: { eval: evalScript },
+			tenantId: 'fixture',
+		})
+		const hold: BirthFeedCheckpoint = {
+			...checkpoint,
+			retry: { status: 503, notBefore: '2026-10-08T12:00:00Z' },
+		}
+		const consumed: BirthFeedCheckpoint = {
+			...checkpoint,
+			resumeCursor: 'opaque-after',
+		}
+		await store.consume({
+			journeyId: 'j',
+			previous: null,
+			checkpoint: hold,
+			contactIds: ['retained'],
+		})
+		await expect(
+			store.consume({
+				journeyId: 'j',
+				previous: null,
+				checkpoint: consumed,
+				contactIds: ['wrong-null'],
+			}),
+		).rejects.toThrow('checkpoint-conflict-or-cache-loss')
+		await expect(
+			store.consume({
+				journeyId: 'j',
+				previous: {
+					...hold,
+					retry: { status: 503, notBefore: '2026-10-08T11:00:00Z' },
+				},
+				checkpoint: consumed,
+				contactIds: ['wrong-deadline'],
+			}),
+		).rejects.toThrow('checkpoint-conflict-or-cache-loss')
+		expect(await store.load('j')).toEqual(hold)
+		await store.consume({
+			journeyId: 'j',
+			previous: hold,
+			checkpoint: consumed,
+			contactIds: ['new'],
+		})
+		await store.consume({
+			journeyId: 'j',
+			previous: hold,
+			checkpoint: consumed,
+			contactIds: ['new'],
+		})
+		await expect(
+			store.consume({
+				journeyId: 'j',
+				previous: null,
+				checkpoint: hold,
+				contactIds: ['rewind'],
+			}),
+		).rejects.toThrow('checkpoint-conflict-or-cache-loss')
+		expect(await store.load('j')).toEqual(consumed)
+		expect(members.has('retained')).toBe(true)
+		expect(members.has('new')).toBe(true)
+		expect(
+			['wrong-null', 'wrong-deadline', 'rewind'].some((id) => members.has(id)),
+		).toBe(false)
+		expect(evalScript).toHaveBeenCalledWith(
+			CONSUME_BIRTH_FEED,
+			expect.any(Array),
+			expect.any(Array),
+		)
 	})
 	it('null means bootstrap, never a fabricated checkpoint', async () => {
 		expect(await harness(null).store.load('journey')).toBeNull()
