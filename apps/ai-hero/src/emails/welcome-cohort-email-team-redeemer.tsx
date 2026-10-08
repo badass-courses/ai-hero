@@ -1,4 +1,6 @@
 import * as React from 'react'
+import CohortWelcomeShort from './cohort-welcome-short'
+import type { CohortWelcomeDetails } from '@/lib/cohort-welcome-details'
 import type {
 	UpcomingGroup,
 	WorkshopSummary,
@@ -16,6 +18,7 @@ import {
 } from '@react-email/components'
 
 export interface WelcomeCohortEmailTeamRedeemerProps {
+	welcomeDetails?: CohortWelcomeDetails
 	cohortTitle: string
 	url: string
 	userFirstName?: string
@@ -29,6 +32,7 @@ export interface WelcomeCohortEmailTeamRedeemerProps {
 }
 
 export default function WelcomeCohortEmailForTeamRedeemer({
+	welcomeDetails,
 	cohortTitle,
 	url,
 	userFirstName,
@@ -38,6 +42,15 @@ export default function WelcomeCohortEmailForTeamRedeemer({
 	benefitTitles = [],
 	isZeroDayAccess = false,
 }: WelcomeCohortEmailTeamRedeemerProps) {
+	if (welcomeDetails)
+		return (
+			<CohortWelcomeShort
+				details={welcomeDetails}
+				variant="seat"
+				url={url}
+				userFirstName={userFirstName}
+			/>
+		)
 	if (process.env.LOG_LEVEL === 'debug') {
 		console.debug('Rendering WelcomeCohortEmailForTeamRedeemer', {
 			cohortTitle,

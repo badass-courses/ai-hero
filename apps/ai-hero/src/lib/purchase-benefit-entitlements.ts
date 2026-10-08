@@ -12,6 +12,8 @@ import {
 } from '@/db/schema'
 import BasicEmail from '@/emails/basic-email'
 import WelcomeCohortEmailForTeamRedeemer from '@/emails/welcome-cohort-email-team-redeemer'
+import { getCohortWelcomeDetails } from './cohort-welcome-details-query'
+import { cohortWelcomeSubject } from './cohort-welcome-details'
 import { env } from '@/env.mjs'
 import { getWorkshopAvailability } from '@/lib/get-workshop-availability'
 import { personalOrganizations } from '@/server/personal-organizations'
@@ -656,9 +658,14 @@ export async function sendTeamSeatRedemptionWelcomeEmail(input: {
 				type: 'transactional',
 			})
 		} else {
+			const welcomeDetails = await getCohortWelcomeDetails(
+				parsedResource.id,
+				redeemedPurchase.userId,
+			)
 			await sendAnEmail({
 				Component: WelcomeCohortEmailForTeamRedeemer,
 				componentProps: {
+					welcomeDetails,
 					cohortTitle:
 						parsedResource.fields?.title || parsedResource.fields?.slug,
 					url: contentUrl,
@@ -667,7 +674,9 @@ export async function sendTeamSeatRedemptionWelcomeEmail(input: {
 					benefitTitles,
 					userFirstName: user.name?.split(' ')[0],
 				},
-				Subject: `Welcome to ${parsedResource.fields?.title || config.defaultTitle}!`,
+				Subject: welcomeDetails
+					? cohortWelcomeSubject(welcomeDetails, 'seat')
+					: `Welcome to ${parsedResource.fields?.title || config.defaultTitle}!`,
 				To: user.email,
 				ReplyTo: env.NEXT_PUBLIC_SUPPORT_EMAIL,
 				From: env.NEXT_PUBLIC_SUPPORT_EMAIL,
