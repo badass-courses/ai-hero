@@ -312,6 +312,7 @@ function createPaymentsAdapter() {
 		createPrice: vi.fn(async () => ({}) as never),
 		createProduct: vi.fn(async () => ({}) as never),
 		getSubscription: vi.fn(async () => ({}) as never),
+		getInvoice: vi.fn(async () => ({}) as never),
 		getBillingPortalUrl: vi.fn(async () => 'https://example.test/billing'),
 		updateSubscriptionItemQuantity: vi.fn(async () => ({}) as never),
 	}
