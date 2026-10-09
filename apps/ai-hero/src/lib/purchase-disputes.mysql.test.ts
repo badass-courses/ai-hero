@@ -551,6 +551,7 @@ suite('purchase disputes: real MySQL 8', () => {
 				kind: 'synced',
 				roleId: 'role-1',
 				result: 'removed',
+				verified: true,
 			})
 			expect(discord.calls).toEqual(['remove role-1'])
 			expect((await record())!.discordSync).toEqual({
@@ -610,6 +611,33 @@ suite('purchase disputes: real MySQL 8', () => {
 			}
 			await expect(syncRole(discord.client)).rejects.toThrow('503')
 			expect((await record())!.discordSync).toEqual({})
+		})
+
+		it('a removal Discord accepted is recorded even when the readback fails', async () => {
+			await apply('opened')
+			const discord = fakeDiscord()
+			const lookup = discord.client.lookupMember
+			let lookups = 0
+			discord.client.lookupMember = async (userId) => {
+				if (++lookups === 2)
+					throw new Error('discord member lookup failed: 429')
+				return lookup(userId)
+			}
+			await expect(syncRole(discord.client)).resolves.toMatchObject({
+				result: 'removed',
+				verified: false,
+			})
+			expect((await record())!.discordSync['role-1']).toEqual({
+				result: 'removed',
+				at: NOW.toISOString(),
+				unverified: true,
+			})
+			// A retry or a win still knows the dispute took the role.
+			await apply('won')
+			await expect(syncRole(discord.client)).resolves.toMatchObject({
+				result: 'restored',
+			})
+			expect(discord.roles.has('role-1')).toBe(true)
 		})
 
 		it('an unconfirmed removal throws', async () => {

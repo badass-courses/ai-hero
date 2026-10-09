@@ -493,7 +493,12 @@ export async function markPurchaseDisputeRefunded(
 
 export type DiscordRoleSync =
 	| { kind: 'skipped'; reason: string }
-	| { kind: 'synced'; roleId: string; result: DiscordRoleSyncResult }
+	| {
+			kind: 'synced'
+			roleId: string
+			result: DiscordRoleSyncResult
+			verified: boolean
+	  }
 
 /**
  * Bring one Discord role tied to a dispute in line with the database as it
@@ -555,6 +560,7 @@ export async function syncDisputeDiscordRole({
 		)
 
 		let result: DiscordRoleSyncResult
+		let verified = true
 		if (grant && !removedByDispute) {
 			result = 'kept'
 		} else {
@@ -572,10 +578,17 @@ export async function syncDisputeDiscordRole({
 				result = 'removed'
 			}
 			if (result === 'restored' || result === 'removed') {
-				const after = await discord.lookupMember(purchase.userId)
+				// Discord acknowledged the change, so record it even if the
+				// readback itself fails: rolling back would make a retry see the
+				// role gone and forget this dispute removed it. A readback that
+				// contradicts the change still throws and retries.
+				const after = await discord
+					.lookupMember(purchase.userId)
+					.catch(() => null)
+				verified = Boolean(after)
 				const holds =
-					after.kind === 'member' && after.roles.includes(discordRoleId)
-				if (holds !== (result === 'restored'))
+					after?.kind === 'member' && after.roles.includes(discordRoleId)
+				if (after && holds !== (result === 'restored'))
 					throw new Error(`discord role ${result} not confirmed by readback`)
 			}
 		}
@@ -593,12 +606,16 @@ export async function syncDisputeDiscordRole({
 					...record,
 					discordSync: {
 						...record.discordSync,
-						[discordRoleId]: { result: stored, at: now.toISOString() },
+						[discordRoleId]: {
+							result: stored,
+							at: now.toISOString(),
+							...(!verified && { unverified: true }),
+						},
 					},
 				}),
 			})
 			.where(eq(purchases.id, purchaseId))
-		return { kind: 'synced', roleId: discordRoleId, result }
+		return { kind: 'synced', roleId: discordRoleId, result, verified }
 	})
 }
 

@@ -72,7 +72,15 @@ export type PurchaseDisputeRecord = {
 	/** Discord roles granted by the revoked rows. */
 	discordRoleIds: string[]
 	/** What happened to each role in Discord, separate from the rows. */
-	discordSync: Record<string, { result: DiscordRoleSyncResult; at: string }>
+	discordSync: Record<
+		string,
+		{
+			result: DiscordRoleSyncResult
+			at: string
+			/** Discord accepted the change but the readback could not run. */
+			unverified?: true
+		}
+	>
 	buyer?: BuyerBlockOutcome
 }
 
