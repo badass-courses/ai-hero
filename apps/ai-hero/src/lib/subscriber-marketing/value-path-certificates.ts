@@ -2,7 +2,6 @@ import { db } from '@/db'
 import { contact, providerIdentity, sideEffectIntent } from '@/db/schema'
 import { and, eq } from 'drizzle-orm'
 
-import { readDrovrCertificateCompletion } from './drovr-certificate-completion'
 import { valuePathIntentCompletedAt } from './value-path-completion'
 
 export const SKILLS_WORKFLOW_CERTIFICATE_RESOURCE =
@@ -29,10 +28,7 @@ export type ValuePathCertificateEligibility = {
 	learnerName?: string | null
 	learnerEmail?: string | null
 	completedAt?: Date | null
-	reason?:
-		| 'contact-not-found'
-		| 'value-path-not-complete'
-		| 'completion-evidence-unavailable'
+	reason?: string
 }
 
 export async function checkSkillsWorkflowValuePathCertificateEligibility(input: {
@@ -59,41 +55,31 @@ export async function checkSkillsWorkflowValuePathCertificateEligibility(input: 
 	})
 	const completedTerminalIntent = pathIntents.find(
 		(intent) =>
-			intent.status === 'completed' &&
 			valuePathIntentCompletedAt(intent) &&
-			new Date(valuePathIntentCompletedAt(intent)!).getTime() <= Date.now() &&
-			(intent.metadata?.emailResourceId === 'ai-hero-skills-workflow.email-6' ||
+			(intent.metadata?.emailResourceId ===
+				'ai-hero-skills-workflow.email-6' ||
 				intent.metadata?.emailResourceId ===
 					'ai-hero-skills-team-workflow.team-email-6'),
 	)
 
-	const learner = {
-		resourceIdOrSlug: SKILLS_WORKFLOW_CERTIFICATE_RESOURCE,
-		contactId: resolvedContact.id,
-		learnerName: resolvedContact.name || resolvedContact.email,
-		learnerEmail: resolvedContact.email,
-	} as const
-	if (completedTerminalIntent) {
+	if (!completedTerminalIntent) {
 		return {
-			...learner,
-			eligible: true,
-			completedAt: new Date(
-				valuePathIntentCompletedAt(completedTerminalIntent)!,
-			),
+			eligible: false,
+			resourceIdOrSlug: SKILLS_WORKFLOW_CERTIFICATE_RESOURCE,
+			contactId: resolvedContact.id,
+			learnerName: resolvedContact.name,
+			learnerEmail: resolvedContact.email,
+			reason: 'value-path-not-complete',
 		}
 	}
 
-	const delivery = await readDrovrCertificateCompletion(resolvedContact.id)
-	if (delivery.status === 'completed') {
-		return { ...learner, eligible: true, completedAt: delivery.completedAt }
-	}
 	return {
-		...learner,
-		eligible: false,
-		reason:
-			delivery.status === 'unavailable'
-				? 'completion-evidence-unavailable'
-				: 'value-path-not-complete',
+		eligible: true,
+		resourceIdOrSlug: SKILLS_WORKFLOW_CERTIFICATE_RESOURCE,
+		contactId: resolvedContact.id,
+		learnerName: resolvedContact.name,
+		learnerEmail: resolvedContact.email,
+		completedAt: new Date(valuePathIntentCompletedAt(completedTerminalIntent)!),
 	}
 }
 

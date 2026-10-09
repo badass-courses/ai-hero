@@ -57,7 +57,7 @@ export async function GET(request: Request) {
 			!publicShare &&
 			Boolean(
 				resourceSlugOrID &&
-				isSkillsWorkflowCertificateResource(resourceSlugOrID),
+					isSkillsWorkflowCertificateResource(resourceSlugOrID),
 			)
 		const resource =
 			publicShare || valuePathCertificate || !resourceSlugOrID
@@ -97,14 +97,6 @@ export async function GET(request: Request) {
 				await checkSkillsWorkflowValuePathCertificateEligibility({
 					contactId: userId,
 				})
-			if (eligibility.reason === 'completion-evidence-unavailable') {
-				return new Response(
-					JSON.stringify({
-						error: 'Certificate completion evidence unavailable',
-					}),
-					{ status: 503, headers: { 'Content-Type': 'application/json' } },
-				)
-			}
 			isEligible = eligibility.eligible
 			completedAt = eligibility.completedAt
 			certificateTitle = 'AI Hero Skills Workflow'

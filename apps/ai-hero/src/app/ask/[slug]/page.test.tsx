@@ -108,10 +108,7 @@ const answerPage = {
 beforeEach(() => {
 	vi.clearAllMocks()
 	vi.stubEnv('AI_HERO_VALUE_PATH_TOKEN_SECRET', 'test-value-path-token-secret')
-	mocks.verifyValuePathToken.mockReturnValue({
-		valid: true,
-		payload: tokenPayload,
-	})
+	mocks.verifyValuePathToken.mockReturnValue({ valid: true, payload: tokenPayload })
 	mocks.getValuePathAnswerPageBySlug.mockResolvedValue(answerPage)
 	mocks.readActiveGateDRuntimeAllowlist.mockResolvedValue({
 		passed: true,
@@ -255,10 +252,7 @@ describe('answer link GET records nothing (mail gateways fetch links)', () => {
 	})
 
 	it('records nothing for an invalid pt and offers no confirm', async () => {
-		mocks.verifyValuePathToken.mockReturnValue({
-			valid: false,
-			reason: 'tampered',
-		})
+		mocks.verifyValuePathToken.mockReturnValue({ valid: false, reason: 'tampered' })
 		mocks.getValuePathAnswerPageBySlug.mockResolvedValue(genericAnswerPage)
 		const markup = await render('skills-workflow-email-3-correct', {
 			pt: 'bad-token',
@@ -360,20 +354,6 @@ describe('confirmed Email 7 certificate view (read-only)', () => {
 
 		expect(markup).toContain('data-value-path-certificate="share-unavailable"')
 		expect(markup).toContain('Try again')
-		expect(markup).not.toContain('/api/certificates?')
-	})
-
-	it('keeps delivery-provider outages on the unavailable view without a share', async () => {
-		mocks.checkSkillsWorkflowValuePathCertificateEligibility.mockResolvedValue({
-			eligible: false,
-			reason: 'completion-evidence-unavailable',
-		})
-		const markup = await confirmedCertificate()
-		expect(markup).toContain(
-			'data-value-path-certificate="eligibility-unavailable"',
-		)
-		expect(mocks.findSkillsWorkflowCertificateShare).not.toHaveBeenCalled()
-		expectNothingRecorded()
 		expect(markup).not.toContain('/api/certificates?')
 	})
 
