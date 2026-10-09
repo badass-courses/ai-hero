@@ -16,6 +16,23 @@ import {
 } from '@/lib/purchase-disputes'
 import { log } from '@/server/logger'
 
+function discordRoleRemoval(revocation: DisputeRevocation) {
+	if (
+		(revocation.kind === 'revoked' || revocation.kind === 'already-revoked') &&
+		revocation.userId
+	)
+		return { userId: revocation.userId, roles: revocation.discordRoles }
+	return { userId: null, roles: [] }
+}
+
+/** Throw so Inngest retries the step; a skipped removal is not a failure. */
+async function removeRoleOrThrow(userId: string, discordRoleId: string) {
+	const result = await removeDiscordRole(userId, discordRoleId)
+	if (result.status === 'error')
+		throw new Error(`discord role removal failed: ${result.reason}`)
+	return result
+}
+
 async function logRevocation(revocation: DisputeRevocation) {
 	if (revocation.kind === 'revoked' && revocation.isBulk) {
 		// Seat holders keep their own seat purchases; an operator decides.
@@ -49,12 +66,11 @@ export const purchaseDisputeOpened = inngest.createFunction(
 					previousStatus: event.data.previousStatus,
 				}),
 		)
-		if (revocation.kind === 'revoked' && revocation.userId) {
-			for (const role of revocation.discordRoles) {
-				await step.run(`remove discord role ${role.entitlementId}`, () =>
-					removeDiscordRole(revocation.userId!, role.discordRoleId),
-				)
-			}
+		const removal = discordRoleRemoval(revocation)
+		for (const role of removal.roles) {
+			await step.run(`remove discord role ${role.entitlementId}`, () =>
+				removeRoleOrThrow(removal.userId!, role.discordRoleId),
+			)
 		}
 		await logRevocation(revocation)
 		return revocation
@@ -117,12 +133,10 @@ export const purchaseDisputeClosed = inngest.createFunction(
 		)
 		if (loss.kind === 'blocked') {
 			const revocation = loss.revocation as DisputeRevocation
-			if (revocation.kind === 'revoked') {
-				for (const role of revocation.discordRoles) {
-					await step.run(`remove discord role ${role.entitlementId}`, () =>
-						removeDiscordRole(loss.userId, role.discordRoleId),
-					)
-				}
+			for (const role of discordRoleRemoval(revocation).roles) {
+				await step.run(`remove discord role ${role.entitlementId}`, () =>
+					removeRoleOrThrow(loss.userId, role.discordRoleId),
+				)
 			}
 			await logRevocation(revocation)
 		}

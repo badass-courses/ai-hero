@@ -77,10 +77,12 @@ async function waitForReadback(
 	const deadline = Date.now() + timeoutMs
 	for (;;) {
 		const preview = await previewLostDispute(input)
+		// A Refunded or Banned purchase already lost access and records nothing;
+		// the block alone proves the event ran.
 		const done =
 			preview.kind === 'planned' &&
-			preview.alreadyRevoked &&
-			preview.userAlreadyBlocked
+			preview.userAlreadyBlocked &&
+			(preview.alreadyRevoked || preview.restoreStatus === null)
 		if (done || Date.now() > deadline) return { done, preview }
 		await new Promise((resolve) => setTimeout(resolve, 3_000))
 	}

@@ -61,7 +61,10 @@ export type DisputeRevocation =
 	| {
 			kind: 'already-revoked'
 			purchaseId: string
+			userId: string | null
 			record: PurchaseDisputeRecord
+			/** Roles to (re)remove; empty once a win restored them. */
+			discordRoles: DiscordRoleGrant[]
 	  }
 	| { kind: 'skipped'; purchaseId: string; reason: string }
 	| { kind: 'purchase-not-found'; purchaseId: string }
@@ -325,7 +328,26 @@ export async function revokeDisputedPurchaseAccess({
 
 		const existing = readDisputeRecord(purchase.fields)
 		if (existing?.stripeDisputeId === stripeDisputeId) {
-			return { kind: 'already-revoked', purchaseId, record: existing }
+			// A retry after a later step failed must still be able to remove the
+			// roles; removal is a no-op for a role the user no longer holds.
+			const recorded =
+				existing.outcome !== 'won' && existing.revokedEntitlementIds.length
+					? await tx
+							.select({
+								id: entitlements.id,
+								entitlementType: entitlements.entitlementType,
+								metadata: entitlements.metadata,
+							})
+							.from(entitlements)
+							.where(inArray(entitlements.id, existing.revokedEntitlementIds))
+					: []
+			return {
+				kind: 'already-revoked',
+				purchaseId,
+				userId: purchase.userId,
+				record: existing,
+				discordRoles: discordRolesFor(recorded, await discordRoleTypeIds(tx)),
+			}
 		}
 
 		const restoreTo = restoreStatusFor(purchase.status, previousStatus)

@@ -231,7 +231,10 @@ suite('purchase disputes: real MySQL 8', () => {
 				stripeDisputeId: 'du_1',
 				now: LATER,
 			}),
-		).resolves.toMatchObject({ kind: 'already-revoked' })
+		).resolves.toMatchObject({
+			kind: 'already-revoked',
+			discordRoles: [{ entitlementId: 'discord', discordRoleId: 'role-1' }],
+		})
 		expect(
 			readDisputeRecord((await purchase('disputed'))!.fields)!.revokedAt,
 		).toBe(NOW.toISOString())
@@ -311,6 +314,14 @@ suite('purchase disputes: real MySQL 8', () => {
 				stripeDisputeId: 'du_1',
 			}),
 		).resolves.toMatchObject({ kind: 'skipped', reason: 'closed-won' })
+		// A late duplicate open event must not take back the restored roles.
+		await expect(
+			revokeDisputedPurchaseAccess({
+				purchaseId: 'disputed',
+				stripeDisputeId: 'du_1',
+			}),
+		).resolves.toMatchObject({ kind: 'already-revoked', discordRoles: [] })
+		expect((await purchase('disputed'))!.status).toBe('Restricted')
 		expect(await isUserBlockedFromPurchasing('buyer')).toBe(false)
 	})
 

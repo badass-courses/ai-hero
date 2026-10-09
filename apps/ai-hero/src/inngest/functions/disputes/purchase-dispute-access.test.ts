@@ -82,6 +82,7 @@ const revoked = {
 describe('purchase dispute access functions', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		mocks.removeDiscordRole.mockResolvedValue({ status: 'success' })
 	})
 
 	it('subscribes to the commerce dispute events', () => {
@@ -109,15 +110,28 @@ describe('purchase dispute access functions', () => {
 		expect(mocks.removeDiscordRole).toHaveBeenCalledWith('buyer', 'role-1')
 	})
 
-	it('created retry: an already revoked dispute removes nothing', async () => {
+	it('created retry after a win: an already revoked dispute with no roles left removes nothing', async () => {
 		mocks.revoke.mockResolvedValue({
 			kind: 'already-revoked',
 			purchaseId: base.purchaseId,
-			record,
+			userId: 'buyer',
+			record: { ...record, outcome: 'won' },
+			discordRoles: [],
 		})
 		await run(purchaseDisputeOpened, { ...base, previousStatus: 'Disputed' })
 			.result
 		expect(mocks.removeDiscordRole).not.toHaveBeenCalled()
+	})
+
+	it('throws on a failed Discord removal so Inngest retries the step', async () => {
+		mocks.revoke.mockResolvedValue(revoked)
+		mocks.removeDiscordRole.mockResolvedValue({
+			status: 'error',
+			reason: 'discord 503',
+		})
+		await expect(
+			run(purchaseDisputeOpened, { ...base, previousStatus: 'Valid' }).result,
+		).rejects.toThrow('discord role removal failed: discord 503')
 	})
 
 	it('won: restores access and re-adds the Discord roles it took', async () => {
@@ -152,6 +166,36 @@ describe('purchase dispute access functions', () => {
 				},
 			},
 		])
+	})
+
+	it('lost retry: removes recorded roles even when the revocation already committed', async () => {
+		mocks.removeDiscordRole.mockResolvedValue({ status: 'skipped' })
+		mocks.lose.mockResolvedValue({
+			kind: 'blocked',
+			purchaseId: base.purchaseId,
+			userId: 'buyer',
+			revocation: {
+				kind: 'already-revoked',
+				purchaseId: base.purchaseId,
+				userId: 'buyer',
+				record,
+				discordRoles: revoked.discordRoles,
+			},
+			block: {
+				reason: 'chargeback_lost',
+				purchaseId: base.purchaseId,
+				stripeDisputeId: base.stripeDisputeId,
+				blockedAt: '2026-10-09T12:00:00.000Z',
+			},
+			alreadyBlocked: true,
+		})
+		await run(purchaseDisputeClosed, {
+			...base,
+			previousStatus: 'Disputed',
+			disputeStatus: 'lost',
+			outcome: 'lost',
+		}).result
+		expect(mocks.removeDiscordRole).toHaveBeenCalledWith('buyer', 'role-1')
 	})
 
 	it('lost: keeps the cut, blocks the buyer, and removes roles the late revocation took', async () => {
