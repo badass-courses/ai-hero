@@ -14,7 +14,9 @@ export const removePurchaseRoleDiscord = inngest.createFunction(
 	{ id: `remove-purchase-role-discord`, name: 'Remove Purchase Role Discord' },
 	{
 		event: PURCHASE_STATUS_UPDATED_EVENT,
-		if: 'event.data.status == "Refunded" || event.data.status == "Disputed" || event.data.status == "Banned"',
+		// Disputes remove their own Discord roles (purchase-dispute-access) so a
+		// won dispute can restore exactly the roles it took.
+		if: 'event.data.status == "Refunded" || event.data.status == "Banned"',
 	},
 	async ({ event, step, db: adapter }) => {
 		const purchase = await step.run('get purchase', async () => {

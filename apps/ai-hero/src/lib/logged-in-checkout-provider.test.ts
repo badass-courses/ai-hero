@@ -8,6 +8,10 @@ import type {
 } from '@/lib/checkout-login-handoff-store'
 import { createLoggedInCheckoutSession } from '@/lib/logged-in-checkout-provider'
 
+vi.mock('@/lib/purchase-disputes', () => ({
+	isUserBlockedFromPurchasing: vi.fn(async () => false),
+}))
+
 import type { CommerceAdapter } from '@coursebuilder/commerce'
 import StripeProvider, {
 	mockStripeAdapter,
@@ -185,6 +189,37 @@ describe('logged-in checkout provider boundary', () => {
 		expect(createCheckoutSession).not.toHaveBeenCalled()
 	})
 
+	it('refuses a buyer blocked after a lost chargeback before Stripe', async () => {
+		const handoffStore = store()
+		const createCheckoutSession = vi.fn()
+		const isPurchaseBlocked = vi.fn(async () => true)
+
+		const result = await createLoggedInCheckoutSession({
+			provider: provider({
+				...mockStripeAdapter,
+				getPrice: vi.fn(async () => ({ recurring: null }) as never),
+				createCheckoutSession,
+			} satisfies PaymentsAdapter),
+			adapter: courseAdapter(),
+			handoffStore,
+			claim,
+			handoffPayload,
+			checkoutParams,
+			isPurchaseBlocked,
+		})
+
+		expect(isPurchaseBlocked).toHaveBeenCalledWith(claim.userId)
+		expect(result).toEqual({
+			kind: 'failure',
+			failure: { code: 'purchase-blocked', retryable: false },
+		})
+		expect(createCheckoutSession).not.toHaveBeenCalled()
+		expect(handoffStore.failTerminal).toHaveBeenCalledWith({
+			claim,
+			failureCode: 'purchase-blocked',
+		})
+		expect(handoffStore.complete).not.toHaveBeenCalled()
+	})
 	it('does not complete when the real Course Builder provider reports failure', async () => {
 		const handoffStore = store()
 		const paymentsAdapter = {

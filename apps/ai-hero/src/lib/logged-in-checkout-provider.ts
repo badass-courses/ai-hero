@@ -7,6 +7,8 @@ import type {
 	CheckoutLoginHandoffClaim,
 	CheckoutLoginHandoffStore,
 } from '@/lib/checkout-login-handoff-store'
+import { PURCHASE_BLOCKED } from '@/lib/purchase-block'
+import { isUserBlockedFromPurchasing } from '@/lib/purchase-disputes'
 import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
 
 import type { CommerceAdapter } from '@coursebuilder/commerce'
@@ -47,6 +49,7 @@ export async function createLoggedInCheckoutSession({
 	claim,
 	handoffPayload,
 	checkoutParams,
+	isPurchaseBlocked = isUserBlockedFromPurchasing,
 }: {
 	provider: StripePaymentsProviderConfig
 	adapter: CommerceAdapter
@@ -54,6 +57,7 @@ export async function createLoggedInCheckoutSession({
 	claim?: CheckoutLoginHandoffClaim
 	handoffPayload?: CheckoutLoginHandoffPayload
 	checkoutParams: CheckoutParams
+	isPurchaseBlocked?: (userId: string) => Promise<boolean>
 }): Promise<CheckoutSessionResult> {
 	if (claim && !handoffPayload) {
 		throw new Error('missing-checkout-login-handoff-payload')
@@ -77,6 +81,26 @@ export async function createLoggedInCheckoutSession({
 		return {
 			kind: 'failure',
 			failure: { code: SYNTHETIC_CHECKOUT_REFUSED, retryable: false },
+		}
+	}
+
+	// A buyer who lost a chargeback never gets a new Stripe session.
+	if (
+		checkoutParams.userId &&
+		(await isPurchaseBlocked(checkoutParams.userId))
+	) {
+		if (
+			claim &&
+			!(await handoffStore.failTerminal({
+				claim,
+				failureCode: PURCHASE_BLOCKED,
+			}))
+		) {
+			throw new Error('checkout-login-handoff-failure-write-failed')
+		}
+		return {
+			kind: 'failure',
+			failure: { code: PURCHASE_BLOCKED, retryable: false },
 		}
 	}
 
