@@ -55,7 +55,7 @@ export default function CohortWelcomeShort({
 						<Text>
 							{variant === 'seat'
 								? `You're in. You've claimed your team seat for ${details.title}.`
-								: `You bought ${details.title}. You're in.`}
+								: `You're in for ${details.title}.`}
 						</Text>
 					)}
 					<Text>{details.schedule}</Text>
