@@ -2,7 +2,10 @@ import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { db } from '@/db'
 import type { FrontDeskHooks } from '@ai-hero/front-desk-support'
 import type { StripePaymentAdapter } from '@coursebuilder/commerce/stripe-provider'
+import { Effect } from 'effect'
 import { integration } from '../support/integration'
+import { buyerPricingFacts } from './pricing-facts'
+import { pricingFactsSourceLayer } from './pricing-facts-source'
 
 const stripe = (stripeProvider.options.paymentsAdapter as StripePaymentAdapter)
 	.stripe
@@ -103,5 +106,13 @@ export const hooks: FrontDeskHooks = {
 			presentmentAmount: presentment?.presentment_amount ?? null,
 			presentmentCurrency: presentment?.presentment_currency ?? null,
 		}
+	},
+	// Evidence only. front-desk prices it on its side.
+	pricingFacts(request) {
+		return Effect.runPromise(
+			buyerPricingFacts(request).pipe(
+				Effect.provide(pricingFactsSourceLayer((id) => hooks.chargeState(id))),
+			),
+		)
 	},
 }

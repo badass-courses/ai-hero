@@ -17,7 +17,7 @@
 	"scripts": {
 		"build": "node build.mjs && tsc -p tsconfig.build.json && node test/bundle.test.mjs",
 		"typecheck": "tsc --noEmit",
-		"test": "tsx --test test/handler.test.ts"
+		"test": "tsx --test test/handler.test.ts test/pricing-facts.test.ts"
 	},
 	"devDependencies": {
 		"effect": "4.0.2",

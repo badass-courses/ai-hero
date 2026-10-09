@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
 	lookupUser: vi.fn(),
 	purchases: vi.fn(),
+	coupons: vi.fn(),
+	prices: vi.fn(),
 	charge: vi.fn(),
 	refunds: vi.fn(),
 	disputes: vi.fn(),
@@ -11,7 +13,13 @@ vi.mock('../support/integration', () => ({
 	integration: { lookupUser: mocks.lookupUser },
 }))
 vi.mock('@/db', () => ({
-	db: { query: { purchases: { findMany: mocks.purchases } } },
+	db: {
+		query: {
+			purchases: { findMany: mocks.purchases },
+			coupon: { findMany: mocks.coupons },
+			prices: { findMany: mocks.prices },
+		},
+	},
 }))
 vi.mock('@/coursebuilder/stripe-provider', () => ({
 	stripeProvider: {
@@ -145,6 +153,113 @@ describe('front-desk read hooks', () => {
 			presentmentCurrency: null,
 		})
 		expect(mocks.disputes).not.toHaveBeenCalled()
+	})
+	it('builds pricing facts from read-only DB rows and the settled Stripe charge', async () => {
+		mocks.lookupUser.mockResolvedValue({
+			id: 'test-user',
+			email: 'buyer@example.test',
+		})
+		mocks.prices.mockResolvedValue([
+			{ id: 'price-test', unitAmount: '1000.00' },
+		])
+		mocks.purchases.mockResolvedValue([
+			{
+				id: 'cc',
+				productId: 'product-ma254',
+				status: 'Valid',
+				totalAmount: '199.00',
+				couponId: 'coupon-test',
+				bulkCouponId: null,
+				redeemedBulkCouponId: null,
+				merchantCharge: { identifier: 'ch_test' },
+			},
+			{
+				id: 'c4',
+				productId: 'product-pqkk5',
+				status: 'Valid',
+				totalAmount: 0,
+				merchantCharge: null,
+			},
+			{
+				id: 'team',
+				productId: 'product-s00zs',
+				status: 'Valid',
+				totalAmount: '4000.00',
+				bulkCouponId: 'bulk-test',
+				bulkCoupon: { maxUses: 4 },
+				merchantCharge: { identifier: 'pi_test' },
+			},
+		])
+		mocks.coupons.mockResolvedValue([
+			{ id: 'coupon-test', merchantCoupon: { type: 'special' } },
+		])
+		mocks.charge.mockResolvedValue({
+			id: 'ch_test',
+			amount: 25000,
+			currency: 'usd',
+			amount_refunded: 0,
+			disputed: false,
+		})
+		mocks.refunds.mockResolvedValue({ data: [], has_more: false })
+		const facts = await hooks.pricingFacts({
+			email: 'buyer@example.test',
+			productId: 'product-s00zs',
+			quantity: 1,
+			orderKind: 'individual',
+		})
+		expect(facts).toEqual({
+			product: {
+				appProductId: 'product-s00zs',
+				merchantPriceId: 'price-test',
+				merchantUnit: 100000,
+				sourceRefs: ['ai-hero:price:price-test'],
+			},
+			buyer: { userId: 'test-user', sourceRefs: ['ai-hero:user:test-user'] },
+			quantity: 1,
+			facts: {
+				order: { value: 'individual', sourceRefs: ['request:orderKind'] },
+				legend: { gap: 'FactsUnavailable' },
+				ppp: { gap: 'FactsUnavailable' },
+				alumni: { value: 'c4', sourceRefs: ['ai-hero:purchase:c4'] },
+				credit: {
+					value: { paid: 25000, source: 'cc' },
+					sourceRefs: ['ai-hero:purchase:cc', 'stripe:charge:ch_test'],
+				},
+				creditUse: {
+					value: 'available',
+					sourceRefs: [
+						'ai-hero:purchases:user:test-user',
+						'ai-hero:credit-redemption-ledger:none-yet',
+					],
+				},
+				existingSeats: { value: 4, sourceRefs: ['ai-hero:purchase:team'] },
+			},
+		})
+		expect(mocks.charge).toHaveBeenCalledWith('ch_test')
+		expect(mocks.coupons).toHaveBeenCalledTimes(1)
+	})
+	it('fails pricing facts when the merchant price is not exactly one active price', async () => {
+		mocks.prices.mockResolvedValue([])
+		await expect(
+			hooks.pricingFacts({
+				email: 'buyer@example.test',
+				productId: 'product-s00zs',
+				quantity: 1,
+				orderKind: 'team',
+			}),
+		).rejects.toThrow()
+		expect(mocks.purchases).not.toHaveBeenCalled()
+	})
+	it('returns null pricing facts for a product it does not support', async () => {
+		expect(
+			await hooks.pricingFacts({
+				email: 'buyer@example.test',
+				productId: 'product-ma254',
+				quantity: 1,
+				orderKind: 'individual',
+			}),
+		).toBeNull()
+		expect(mocks.prices).not.toHaveBeenCalled()
 	})
 	it('returns null only for a missing Stripe resource, and propagates other failures to the facade', async () => {
 		mocks.charge

@@ -34,10 +34,65 @@ export interface ChargeState {
 	readonly presentmentAmount: number | null
 	readonly presentmentCurrency: string | null
 }
+
+// Buyer facts are a structural copy of the fields front-desk's pricing engine
+// reads, and nothing else. Prices are computed in front-desk, never here.
+// `_SameShape` below fails typecheck if these types and the schemas drift.
+export type FactGap =
+	| 'FactsUnavailable'
+	| 'IdentityUnverified'
+	| 'PaymentAmbiguous'
+export type PricingFact<A> =
+	| { readonly value: A; readonly sourceRefs: readonly string[] }
+	| { readonly gap: FactGap }
+export interface PricingBuyerFacts {
+	readonly alumni: PricingFact<'none' | 'c3' | 'c4' | 'both'>
+	/** USD cents actually paid for the one qualifying Crash Course purchase. */
+	readonly credit: PricingFact<{
+		readonly paid: number
+		readonly source: string
+	} | null>
+	readonly creditUse: PricingFact<
+		'available' | 'reserved-by-this-attempt' | 'spent'
+	>
+	readonly existingSeats: PricingFact<number>
+	readonly legend: PricingFact<'no' | 'verified'>
+	readonly order: PricingFact<'individual' | 'team'>
+	readonly ppp: PricingFact<{
+		readonly accepted: boolean
+		readonly percent: number
+	} | null>
+}
+export interface PricingRequest {
+	readonly email: string
+	readonly productId: string
+	readonly quantity: number
+	readonly orderKind: 'individual' | 'team'
+}
+/** Evidence about one buyer and product. front-desk prices it. */
+export interface PricingFacts {
+	readonly product: {
+		readonly appProductId: string
+		/** The single active merchant price row for the product. */
+		readonly merchantPriceId: string
+		/** Authoritative retail unit price, whole US cents. */
+		readonly merchantUnit: number
+		readonly sourceRefs: readonly string[]
+	}
+	readonly buyer: {
+		readonly userId: string | null
+		readonly sourceRefs: readonly string[]
+	}
+	readonly quantity: number
+	readonly facts: PricingBuyerFacts
+}
+
 export interface FrontDeskHooks {
 	customerByEmail(email: string): Promise<Customer | null>
 	purchasesForUser(userId: string): Promise<readonly Purchase[]>
 	chargeState(stripeChargeId: string): Promise<ChargeState | null>
+	/** Null when the app reports no pricing facts for the product. */
+	pricingFacts(request: PricingRequest): Promise<PricingFacts | null>
 }
 export interface FrontDeskOptions {
 	readonly apiKey?: string
@@ -76,13 +131,77 @@ const ChargeSchema = Schema.Struct({
 	presentmentAmount: Schema.NullOr(Schema.Int),
 	presentmentCurrency: Schema.NullOr(Schema.String),
 })
-const Failure = Schema.Struct({
-	code: Schema.Literals([
-		'HOOK_FAILED',
-		'INVALID_HOOK_RESULT',
-		'INVALID_REQUEST',
-	]),
+const FAILURE_CODES = [
+	'HOOK_FAILED',
+	'INVALID_HOOK_RESULT',
+	'PRODUCT_NOT_SUPPORTED',
+	'INVALID_REQUEST',
+] as const
+type FailureCode = (typeof FAILURE_CODES)[number]
+const Failure = Schema.Struct({ code: Schema.Literals(FAILURE_CODES) })
+
+const Cents = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
+const Quantity = Schema.Int.check(
+	Schema.isBetween({ minimum: 1, maximum: 10_000 }),
+)
+const SourceRefs = Schema.Array(Schema.NonEmptyString)
+const FactGapSchema = Schema.Literals([
+	'FactsUnavailable',
+	'IdentityUnverified',
+	'PaymentAmbiguous',
+])
+const fact = <S extends Schema.Top>(value: S) =>
+	Schema.Union([
+		Schema.Struct({ value, sourceRefs: SourceRefs }),
+		Schema.Struct({ gap: FactGapSchema }),
+	])
+const BuyerFactsSchema = Schema.Struct({
+	alumni: fact(Schema.Literals(['none', 'c3', 'c4', 'both'])),
+	credit: fact(
+		Schema.NullOr(
+			Schema.Struct({ paid: Cents, source: Schema.NonEmptyString }),
+		),
+	),
+	creditUse: fact(
+		Schema.Literals(['available', 'reserved-by-this-attempt', 'spent']),
+	),
+	existingSeats: fact(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+	legend: fact(Schema.Literals(['no', 'verified'])),
+	order: fact(Schema.Literals(['individual', 'team'])),
+	ppp: fact(
+		Schema.NullOr(
+			Schema.Struct({
+				accepted: Schema.Boolean,
+				percent: Schema.Int.check(
+					Schema.isBetween({ minimum: 0, maximum: 100 }),
+				),
+			}),
+		),
+	),
 })
+const PricingFactsSchema = Schema.Struct({
+	product: Schema.Struct({
+		appProductId: Schema.NonEmptyString,
+		merchantPriceId: Schema.NonEmptyString,
+		merchantUnit: Cents,
+		sourceRefs: SourceRefs,
+	}),
+	buyer: Schema.Struct({
+		userId: Schema.NullOr(Schema.String),
+		sourceRefs: SourceRefs,
+	}),
+	quantity: Quantity,
+	facts: BuyerFactsSchema,
+})
+const MaybePricingFacts = Schema.NullOr(PricingFactsSchema)
+
+type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
+type Assert<T extends true> = T
+type _SameShape = [
+	Assert<Same<typeof BuyerFactsSchema.Encoded, PricingBuyerFacts>>,
+	Assert<Same<typeof PricingFactsSchema.Encoded, PricingFacts>>,
+]
+
 const Customers = Schema.NullOr(CustomerSchema)
 const Purchases = Schema.Array(PurchaseSchema)
 const Charges = Schema.NullOr(ChargeSchema)
@@ -102,7 +221,19 @@ const Group = RpcGroup.make(
 		success: Charges,
 		error: Failure,
 	}),
+	Rpc.make('pricingFacts', {
+		payload: {
+			email: Schema.NonEmptyString,
+			productId: Schema.NonEmptyString,
+			quantity: Quantity,
+			orderKind: Schema.Literals(['individual', 'team']),
+		},
+		success: PricingFactsSchema,
+		error: Failure,
+	}),
 )
+
+const fail = (code: FailureCode) => Effect.fail({ code })
 
 function read<S extends Schema.Constraint>(
 	schema: S,
@@ -132,6 +263,22 @@ export function createFrontDeskHandler(
 			read(Purchases, () => hooks.purchasesForUser(userId)),
 		chargeState: ({ stripeChargeId }) =>
 			read(Charges, () => hooks.chargeState(stripeChargeId)),
+		// Read-only evidence. No price, grant, reservation, coupon or checkout.
+		pricingFacts: (request) =>
+			Effect.gen(function* () {
+				const facts = yield* read(MaybePricingFacts, () =>
+					hooks.pricingFacts({ ...request }),
+				)
+				if (!facts) return yield* fail('PRODUCT_NOT_SUPPORTED')
+				const { order } = facts.facts
+				if (
+					facts.product.appProductId !== request.productId ||
+					facts.quantity !== request.quantity ||
+					('value' in order && order.value !== request.orderKind)
+				)
+					return yield* fail('INVALID_HOOK_RESULT')
+				return facts
+			}),
 	})
 	const app = Effect.scoped(
 		RpcServer.toHttpEffect(Group, { disableTracing: true }).pipe(
@@ -171,12 +318,10 @@ export function createFrontDeskHandler(
 				return Response.json({ code: 'INVALID_REQUEST' }, { status: 400 })
 			const safe = messages.map((message) => {
 				if (message._tag === 'Exit' && message.exit?._tag === 'Failure') {
-					const cause = message.exit.cause
-					const code = JSON.stringify(cause).includes('INVALID_HOOK_RESULT')
-						? 'INVALID_HOOK_RESULT'
-						: JSON.stringify(cause).includes('HOOK_FAILED')
-							? 'HOOK_FAILED'
-							: 'INVALID_REQUEST'
+					const cause = JSON.stringify(message.exit.cause)
+					const code =
+						FAILURE_CODES.find((candidate) => cause.includes(candidate)) ??
+						'INVALID_REQUEST'
 					return {
 						_tag: 'Exit',
 						requestId: message.requestId,
