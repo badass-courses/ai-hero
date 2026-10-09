@@ -20,10 +20,19 @@ const C5 = 'product-s00zs'
 const CC = 'product-ma254'
 const C3 = 'product-7t9ek'
 const C4 = 'product-pqkk5'
+const legendProducts = [
+	'product-3vfob',
+	'product-9wdta',
+	'product-wdhub',
+	C3,
+	C4,
+	CC,
+]
+const legendRefs = legendProducts.map((id) => `product:${id}`)
 
 interface SyntheticDb {
 	users?: Record<string, string>
-	purchases?: PricingPurchaseRow[]
+	purchases?: (PricingPurchaseRow & { userId?: string })[]
 	coupons?: Record<string, string | null>
 	prices?: { id: string; unitAmountCents: number }[]
 	settlements?: Record<string, PricingSettlement>
@@ -120,8 +129,10 @@ function synthetic(data: SyntheticDb) {
 			down('purchases')
 				? fail('purchases')
 				: Effect.succeed(
-						(data.purchases ?? []).filter((row) =>
-							productIds.includes(row.productId),
+						(data.purchases ?? []).filter(
+							(row) =>
+								(row.userId ?? 'user-test') === userId &&
+								productIds.includes(row.productId),
 						),
 					),
 		transfers: (userId) =>
@@ -182,7 +193,7 @@ describe('buyerPricingFacts', () => {
 		).toBeNull()
 	})
 
-	it('keeps legend and PPP as gaps, with the product, quantity and order from the request', async () => {
+	it('computes legend and keeps PPP as a gap, with the product, quantity and order from the request', async () => {
 		const { facts } = await run(buyer, {
 			...ask,
 			orderKind: 'team',
@@ -204,7 +215,7 @@ describe('buyerPricingFacts', () => {
 			'product',
 			'quantity',
 		])
-		expect(facts.facts.legend).toEqual({ gap: 'FactsUnavailable' })
+		expect(facts.facts.legend).toEqual({ value: 'no', sourceRefs: legendRefs })
 		expect(facts.facts.ppp).toEqual({ gap: 'FactsUnavailable' })
 		expect(facts.facts.order).toEqual({
 			value: 'team',
@@ -241,6 +252,7 @@ describe('buyerPricingFacts', () => {
 			sourceRefs: ['ai-hero:user:none-for-email'],
 		})
 		for (const field of [
+			'legend',
 			'alumni',
 			'credit',
 			'creditUse',
@@ -256,6 +268,7 @@ describe('buyerPricingFacts', () => {
 		async (source) => {
 			const { facts } = await run({ ...buyer, down: [source] })
 			for (const field of [
+				'legend',
 				'alumni',
 				'credit',
 				'creditUse',
@@ -289,6 +302,106 @@ describe('buyerPricingFacts', () => {
 			buyerPricingFacts(ask).pipe(Effect.provide(layer)),
 		)
 		expect(JSON.stringify(exit)).toContain('MerchantPriceUnavailable')
+	})
+})
+
+describe('legend', () => {
+	const all = legendProducts.map((productId, index) =>
+		purchase({ id: `legend-${index}`, productId }),
+	)
+	const legendOf = async (data: SyntheticDb) =>
+		(await run({ ...buyer, ...data })).facts.facts.legend
+
+	it('verifies all six individual courses with exactly the manifest refs', async () => {
+		expect(await legendOf({ purchases: all })).toEqual({
+			value: 'verified',
+			sourceRefs: legendRefs,
+		})
+	})
+
+	it.each(legendProducts)(
+		'requires %s, even with workshop ownership and duplicates',
+		async (missing) => {
+			expect(
+				await legendOf({
+					purchases: [
+						...all.filter((row) => row.productId !== missing),
+						purchase({ id: 'workshop', productId: 'product-qocpc' }),
+						purchase({ id: 'duplicate', productId: missing === C3 ? C4 : C3 }),
+					],
+				}),
+			).toEqual({ value: 'no', sourceRefs: legendRefs })
+		},
+	)
+
+	it.each([
+		['a redeemed team seat', { redeemedBulkCouponId: 'bulk' }],
+		['a bulk purchase', { bulkCouponId: 'bulk', bulkSeats: 5 }],
+		['a refunded purchase', { status: 'Refunded' }],
+		['a banned purchase', { status: 'Banned' }],
+	] as const)('does not count %s', async (_, over) => {
+		expect(
+			await legendOf({
+				purchases: all.map((row, index) =>
+					index === 0 ? { ...row, ...over } : row,
+				),
+			}),
+		).toEqual({ value: 'no', sourceRefs: legendRefs })
+	})
+
+	it('counts Restricted and free ownership without settlement evidence', async () => {
+		const { facts, stripeReads } = await run({
+			...buyer,
+			purchases: all.map((row) => ({
+				...row,
+				status: 'Restricted',
+				totalAmountCents: 0,
+				stripeChargeId: null,
+			})),
+			down: ['settlement', 'coupons', 'transfers'],
+		})
+		expect(facts.facts.legend).toEqual({
+			value: 'verified',
+			sourceRefs: legendRefs,
+		})
+		expect(stripeReads).toEqual([])
+	})
+
+	it('does not count a course transferred out, even with its transfer history', async () => {
+		expect(
+			await legendOf({
+				purchases: all.map((row, index) => ({
+					...row,
+					userId: index === 0 ? 'user-recipient' : 'user-test',
+				})),
+				transfers: [
+					{
+						id: 'transfer-out',
+						purchaseId: all[0]!.id,
+						sourceUserId: 'user-test',
+						targetUserId: 'user-recipient',
+						purchase: all[0]!,
+					},
+				],
+			}),
+		).toEqual({ value: 'no', sourceRefs: legendRefs })
+	})
+
+	it('still counts current ownership with an unaccepted transfer offer', async () => {
+		expect(
+			await legendOf({
+				purchases: all,
+				transfers: [
+					{
+						id: 'transfer-offer',
+						purchaseId: all[0]!.id,
+						sourceUserId: 'user-test',
+						targetUserId: null,
+						purchase: all[0]!,
+					},
+				],
+			}),
+		).toEqual({ value: 'verified', sourceRefs: legendRefs })
 	})
 })
 

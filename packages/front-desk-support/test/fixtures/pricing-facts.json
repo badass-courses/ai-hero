@@ -27,7 +27,17 @@
 			"value": 0,
 			"sourceRefs": ["ai-hero:purchases:user:user-test"]
 		},
-		"legend": { "gap": "FactsUnavailable" },
+		"legend": {
+			"value": "no",
+			"sourceRefs": [
+				"product:product-3vfob",
+				"product:product-9wdta",
+				"product:product-wdhub",
+				"product:product-7t9ek",
+				"product:product-pqkk5",
+				"product:product-ma254"
+			]
+		},
 		"order": { "value": "individual", "sourceRefs": ["request:orderKind"] },
 		"ppp": { "gap": "FactsUnavailable" }
 	}

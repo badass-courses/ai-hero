@@ -17,6 +17,15 @@ import { Context, Data, Effect, Either } from 'effect'
 /** Products this app reports pricing facts for. */
 export const FACT_PRODUCTS: ReadonlySet<string> = new Set(['product-s00zs'])
 export const CRASH_COURSE_PRODUCT = 'product-ma254'
+/** All six paid courses. Workshop ownership is not part of this fact. */
+export const LEGEND_PRODUCTS = [
+	'product-3vfob',
+	'product-9wdta',
+	'product-wdhub',
+	'product-7t9ek',
+	'product-pqkk5',
+	'product-ma254',
+] as const
 export const ALUMNI_PRODUCTS = {
 	'product-7t9ek': 'c3',
 	'product-pqkk5': 'c4',
@@ -145,6 +154,25 @@ const gap = <A>(reason: FactGap): PricingFact<A> => ({ gap: reason })
 const purchaseRef = (id: string) => `ai-hero:purchase:${id}`
 const individual = (row: PricingPurchaseRow) =>
 	!row.bulkCouponId && !row.redeemedBulkCouponId
+
+/** Current individual ownership, not payment or historical ownership.
+ * The source scans only purchases currently held by this exact-email account.
+ * Cite exactly the checked manifest, even for a negative result. */
+export function legendFact(
+	rows: readonly PricingPurchaseRow[],
+): PricingBuyerFacts['legend'] {
+	const owned = new Set(
+		rows
+			.filter((row) => CURRENT.has(row.status) && individual(row))
+			.map((row) => row.productId),
+	)
+	return known(
+		LEGEND_PRODUCTS.every((productId) => owned.has(productId))
+			? 'verified'
+			: 'no',
+		LEGEND_PRODUCTS.map((productId) => `product:${productId}`),
+	)
+}
 
 /** C3/C4 purchases that are current and the buyer's own, not a team seat. */
 export function alumniFact(
@@ -438,8 +466,8 @@ export const buyerPricingFacts = (
 		if (!FACT_PRODUCTS.has(request.productId)) return null
 		const source = yield* PricingFactsSource
 		const merchant = yield* merchantUnitFor(request.productId)
-		// No reviewed legend list exists, and the support read carries no
-		// trusted country or consent, so both stay gaps.
+		// The support read carries no trusted country or consent for PPP.
+		// Legend stays unavailable until the exact account's purchases are read.
 		const pending = {
 			order: known(request.orderKind, ['request:orderKind']),
 			legend: gap<'no' | 'verified'>('FactsUnavailable'),
@@ -475,6 +503,7 @@ export const buyerPricingFacts = (
 				{ userId: null, sourceRefs: ['ai-hero:user:none-for-email'] },
 				{
 					...pending,
+					legend: gap('IdentityUnverified'),
 					alumni: gap('IdentityUnverified'),
 					credit: gap('IdentityUnverified'),
 					creditUse: gap('IdentityUnverified'),
@@ -483,11 +512,7 @@ export const buyerPricingFacts = (
 			)
 		const userId = user.right.id
 		const buyer = { userId, sourceRefs: [`ai-hero:user:${userId}`] }
-		const productIds = [
-			request.productId,
-			CRASH_COURSE_PRODUCT,
-			...Object.keys(ALUMNI_PRODUCTS),
-		]
+		const productIds = [...new Set([request.productId, ...LEGEND_PRODUCTS])]
 		const rows = yield* Effect.either(source.purchases(userId, productIds))
 		if (Either.isLeft(rows)) return result(buyer, unavailable)
 		const scanRef = `ai-hero:purchases:user:${userId}`
@@ -516,6 +541,7 @@ export const buyerPricingFacts = (
 				}
 		return result(buyer, {
 			...pending,
+			legend: legendFact(rows.right),
 			alumni: alumniFact(rows.right, scanRef),
 			...ownership,
 			existingSeats: existingSeatsFact(rows.right, request.productId, scanRef),

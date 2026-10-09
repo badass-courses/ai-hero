@@ -451,7 +451,17 @@ describe('front-desk read hooks', () => {
 			quantity: 1,
 			facts: {
 				order: { value: 'individual', sourceRefs: ['request:orderKind'] },
-				legend: { gap: 'FactsUnavailable' },
+				legend: {
+					value: 'no',
+					sourceRefs: [
+						'product:product-3vfob',
+						'product:product-9wdta',
+						'product:product-wdhub',
+						'product:product-7t9ek',
+						'product:product-pqkk5',
+						'product:product-ma254',
+					],
+				},
 				ppp: { gap: 'FactsUnavailable' },
 				alumni: { value: 'c4', sourceRefs: ['ai-hero:purchase:c4'] },
 				credit: {
@@ -477,7 +487,32 @@ describe('front-desk read hooks', () => {
 		expect(mocks.session).toHaveBeenCalledWith('cs_test')
 		expect(mocks.lineItems).toHaveBeenCalledWith('cs_test', { limit: 100 })
 		expect(mocks.coupons).toHaveBeenCalledTimes(1)
-		expect(mocks.purchases.mock.calls[0]![0].with).toEqual({
+		const query = mocks.purchases.mock.calls[0]![0]
+		expect(
+			query.where(
+				{ userId: 'owner', productId: 'product' },
+				{
+					eq: (column: string, value: string) => ({ column, value }),
+					inArray: (column: string, values: string[]) => ({ column, values }),
+					and: (...clauses: unknown[]) => clauses,
+				},
+			),
+		).toEqual([
+			{ column: 'owner', value: 'test-user' },
+			{
+				column: 'product',
+				values: [
+					'product-s00zs',
+					'product-3vfob',
+					'product-9wdta',
+					'product-wdhub',
+					'product-7t9ek',
+					'product-pqkk5',
+					'product-ma254',
+				],
+			},
+		])
+		expect(query.with).toEqual({
 			bulkCoupon: true,
 			merchantCharge: { with: { merchantProduct: true } },
 			merchantSession: true,
@@ -490,6 +525,7 @@ describe('front-desk read hooks', () => {
 		])
 		const facts = await hooks.pricingFacts(askC5)
 		expect(facts?.facts).toMatchObject({
+			legend: { gap: 'IdentityUnverified' },
 			alumni: { gap: 'IdentityUnverified' },
 			credit: { gap: 'IdentityUnverified' },
 			creditUse: { gap: 'IdentityUnverified' },

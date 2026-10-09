@@ -52,6 +52,8 @@ export const pricingFactsSourceLayer = (deps: {
 			}),
 		purchases: (userId, productIds) =>
 			attempt('purchases', async () => {
+				// Current owner only. Transfer history must not restore purchases
+				// transferred out, and an unaccepted transfer offer changes nothing.
 				const rows = await db.query.purchases.findMany({
 					where: (purchase, { and, eq, inArray }) =>
 						and(
