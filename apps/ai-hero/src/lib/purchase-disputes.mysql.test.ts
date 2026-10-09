@@ -85,6 +85,13 @@ suite('purchase disputes: real MySQL 8', () => {
 			throw new Error(
 				'Only the loopback purchase_disputes_test fixture is allowed',
 			)
+		const server = new URL(uri!)
+		server.pathname = '/'
+		const bootstrap = await mysql.createConnection({ uri: server.toString() })
+		await bootstrap.query(
+			'CREATE DATABASE IF NOT EXISTS purchase_disputes_test',
+		)
+		await bootstrap.end()
 		pool = preserveQueryResultShape(
 			mysql.createPool({ uri: uri!, connectionLimit: 4, timezone: 'Z' }),
 		)
