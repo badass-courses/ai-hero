@@ -36,6 +36,7 @@ const hooks: FrontDeskHooks = {
 	customerByEmail: async () => customer,
 	purchasesForUser: async () => [purchase],
 	chargeState: async () => charge,
+	pricingFacts: async () => null,
 }
 function request(
 	tag = 'customerByEmail',

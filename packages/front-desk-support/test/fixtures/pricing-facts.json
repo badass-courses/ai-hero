@@ -1,0 +1,34 @@
+{
+	"product": {
+		"appProductId": "product-test",
+		"merchantPriceId": "price-test",
+		"merchantUnit": 100000,
+		"sourceRefs": ["ai-hero:price:price-test"]
+	},
+	"buyer": {
+		"userId": "user-test",
+		"sourceRefs": ["ai-hero:user:user-test"]
+	},
+	"quantity": 1,
+	"facts": {
+		"alumni": {
+			"value": "c4",
+			"sourceRefs": ["ai-hero:purchase:purchase-c4"]
+		},
+		"credit": {
+			"value": { "paid": 12345, "source": "purchase-cc" },
+			"sourceRefs": ["ai-hero:purchase:purchase-cc", "stripe:charge:ch_test"]
+		},
+		"creditUse": {
+			"value": "available",
+			"sourceRefs": ["ai-hero:purchases:user:user-test"]
+		},
+		"existingSeats": {
+			"value": 0,
+			"sourceRefs": ["ai-hero:purchases:user:user-test"]
+		},
+		"legend": { "gap": "FactsUnavailable" },
+		"order": { "value": "individual", "sourceRefs": ["request:orderKind"] },
+		"ppp": { "gap": "FactsUnavailable" }
+	}
+}
