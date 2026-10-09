@@ -297,59 +297,18 @@ describe('AI Hero Support Integration', () => {
 	// ── transferPurchase ───────────────────────────────────────────
 
 	describe('transferPurchase', () => {
-		it('transfers purchase successfully', async () => {
-			mockAdapter.findOrCreateUser.mockResolvedValue({
-				user: { id: 'user-2', email: 'recipient@example.com' },
-			})
-			mockAdapter.transferPurchaseToUser.mockResolvedValue({
-				id: 'transfer-1',
-			})
-
+		it('refuses the legacy direct adapter path before provisioning or moving ownership', async () => {
 			const result = await integration.transferPurchase!({
 				purchaseId: 'purchase-1',
 				fromUserId: 'user-1',
 				toEmail: 'recipient@example.com',
 			})
-
-			expect(result).toEqual({ success: true })
-			expect(mockAdapter.transferPurchaseToUser).toHaveBeenCalledWith({
-				purchaseId: 'purchase-1',
-				sourceUserId: 'user-1',
-				targetUserId: 'user-2',
-			})
-		})
-
-		it('fails when target user cannot be created', async () => {
-			mockAdapter.findOrCreateUser.mockResolvedValue({ user: null })
-
-			const result = await integration.transferPurchase!({
-				purchaseId: 'purchase-1',
-				fromUserId: 'user-1',
-				toEmail: 'bad@example.com',
-			})
-
 			expect(result).toEqual({
 				success: false,
-				error: 'Failed to find or create user',
+				error: 'Use the signed support purchase-transfer invitation endpoint',
 			})
-		})
-
-		it('fails when transfer operation fails', async () => {
-			mockAdapter.findOrCreateUser.mockResolvedValue({
-				user: { id: 'user-2' },
-			})
-			mockAdapter.transferPurchaseToUser.mockResolvedValue(null)
-
-			const result = await integration.transferPurchase!({
-				purchaseId: 'purchase-1',
-				fromUserId: 'user-1',
-				toEmail: 'recipient@example.com',
-			})
-
-			expect(result).toEqual({
-				success: false,
-				error: 'Transfer failed',
-			})
+			expect(mockAdapter.findOrCreateUser).not.toHaveBeenCalled()
+			expect(mockAdapter.transferPurchaseToUser).not.toHaveBeenCalled()
 		})
 	})
 

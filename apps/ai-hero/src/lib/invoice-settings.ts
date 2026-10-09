@@ -103,6 +103,7 @@ export type InvoiceSettingsDataSource = {
 	loadPurchaseByMerchantChargeId(merchantChargeId: string): Promise<{
 		id: string
 		userId: string | null
+		billingUserId?: string | null
 		merchantChargeId: string | null
 	} | null>
 	loadSettings(
@@ -307,7 +308,11 @@ export async function saveInvoiceSettingsForViewer(
 	if (
 		!canViewPurchaseInvoice(
 			viewerUserId,
-			{ id: purchase.id, userId: purchase.userId },
+			{
+				id: purchase.id,
+				userId: purchase.userId,
+				billingUserId: purchase.billingUserId,
+			},
 			managedTeamPurchases,
 		)
 	) {
@@ -639,16 +644,23 @@ function settingsToRow(settings: InvoiceSettings) {
 export const drizzleInvoiceSettingsDataSource: InvoiceSettingsDataSource = {
 	async loadPurchaseByMerchantChargeId(merchantChargeId) {
 		const { db } = await import('@/db')
-		const { purchases } = await import('@/db/schema')
+		const { merchantCharge, purchases } = await import('@/db/schema')
 		const { eq } = await import('drizzle-orm')
-		const purchase = await db.query.purchases.findFirst({
-			where: eq(purchases.merchantChargeId, merchantChargeId),
-			columns: { id: true, userId: true, merchantChargeId: true },
-		})
+		const [purchase, charge] = await Promise.all([
+			db.query.purchases.findFirst({
+				where: eq(purchases.merchantChargeId, merchantChargeId),
+				columns: { id: true, userId: true, merchantChargeId: true },
+			}),
+			db.query.merchantCharge.findFirst({
+				where: eq(merchantCharge.id, merchantChargeId),
+				columns: { userId: true },
+			}),
+		])
 		return purchase
 			? {
 					id: purchase.id,
 					userId: purchase.userId,
+					billingUserId: charge?.userId ?? null,
 					merchantChargeId: purchase.merchantChargeId,
 				}
 			: null

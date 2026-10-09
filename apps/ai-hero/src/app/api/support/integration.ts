@@ -6,7 +6,6 @@ import {
 	isArchiveProductType,
 	summarizeArchiveEntitlements,
 } from '@/lib/archive-entitlements'
-import { findOrCreateUserWithPersonalOrg } from '@/lib/find-or-create-user'
 import { log } from '@/server/logger'
 import { TYPESENSE_COLLECTION_NAME } from '@/utils/typesense-instantsearch-adapter'
 import type {
@@ -115,46 +114,14 @@ export const integration: SupportIntegration = {
 	},
 
 	/**
-	 * Transfer purchase to new owner
+	 * Fail closed: this legacy action marked the transfer COMPLETED without
+	 * granting target entitlements. The SDK ActionResult has no pending state.
+	 * Support must use the signed invitation endpoint, then verify completion.
 	 */
-	async transferPurchase({
-		purchaseId,
-		fromUserId,
-		toEmail,
-	}: {
-		purchaseId: string
-		fromUserId: string
-		toEmail: string
-	}): Promise<ActionResult> {
-		try {
-			// Find or create the target user through the provisioning boundary.
-			// Lowercased to match the purchase-transfer path — a mixed-case address
-			// would otherwise mint a second user row for the same person.
-			const { user: toUser } = await findOrCreateUserWithPersonalOrg(
-				toEmail.toLowerCase(),
-			)
-
-			if (!toUser) {
-				return { success: false, error: 'Failed to find or create user' }
-			}
-
-			// Use adapter to transfer the purchase
-			const transfer = await courseBuilderAdapter.transferPurchaseToUser({
-				purchaseId,
-				sourceUserId: fromUserId,
-				targetUserId: toUser.id,
-			})
-
-			if (!transfer) {
-				return { success: false, error: 'Transfer failed' }
-			}
-
-			return { success: true }
-		} catch (error) {
-			return {
-				success: false,
-				error: error instanceof Error ? error.message : 'Unknown error',
-			}
+	async transferPurchase(): Promise<ActionResult> {
+		return {
+			success: false,
+			error: 'Use the signed support purchase-transfer invitation endpoint',
 		}
 	},
 

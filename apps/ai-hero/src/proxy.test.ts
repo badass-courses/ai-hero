@@ -74,6 +74,31 @@ describe('proxy matcher', () => {
 	})
 })
 
+describe('roleless organization routing', () => {
+	const rolelessRequest = (path: string) =>
+		Object.assign(new NextRequest(`https://www.aihero.dev${path}`), {
+			auth: { user: { id: 'buyer', roles: [], organizationRoles: [] } },
+		})
+
+	it('lets a roleless buyer load the organization list instead of redirecting to itself', async () => {
+		const response = await runProxy(
+			rolelessRequest('/organization-list#my-courses'),
+		)
+
+		expect(response.headers.get('x-middleware-next')).toBe('1')
+		expect(response.headers.get('location')).toBeNull()
+	})
+
+	it('still sends a roleless buyer from the team page to the organization list', async () => {
+		const response = await runProxy(rolelessRequest('/team'))
+
+		expect(response.status).toBe(307)
+		expect(response.headers.get('location')).toBe(
+			'https://www.aihero.dev/organization-list',
+		)
+	})
+})
+
 describe('static route handler OPTIONS', () => {
 	it.each(['/skills.md', '/md/skills', '/rss.xml', '/sitemap.md'])(
 		'answers OPTIONS %s at the edge with 200 instead of a 204',

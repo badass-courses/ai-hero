@@ -94,6 +94,7 @@ async function getChargeDetails(merchantChargeId: string) {
 					bulkCoupon,
 					purchaseId: purchase.id,
 					purchaseUserId: purchase.userId,
+					billingUserId: merchantCharge.userId,
 				},
 			}
 		}
@@ -126,6 +127,7 @@ const Invoice = async (props: {
 			{
 				id: chargeDetails.result.purchaseId,
 				userId: chargeDetails.result.purchaseUserId,
+				billingUserId: chargeDetails.result.billingUserId,
 			},
 			managedTeamPurchases,
 		)
@@ -134,6 +136,7 @@ const Invoice = async (props: {
 	}
 
 	const isPurchaseOwner = viewerUserId === chargeDetails.result.purchaseUserId
+	const isBillingOwner = viewerUserId === chargeDetails.result.billingUserId
 	const purchaseUserTransfers = isPurchaseOwner
 		? await getPurchaseTransferForPurchaseId({
 				id: chargeDetails.result.purchaseId,
@@ -175,11 +178,11 @@ const Invoice = async (props: {
 				<main className="max-w-(--breakpoint-md) mx-auto w-full">
 					<div className="flex flex-col justify-between pb-5 pt-10 print:hidden">
 						<Link
-							href={isPurchaseOwner ? '/invoices' : '/team'}
+							href={isPurchaseOwner || isBillingOwner ? '/invoices' : '/team'}
 							className="mb-5 inline-flex items-center gap-1 text-sm opacity-75 transition hover:opacity-100"
 						>
 							<ChevronLeft className="h-3 w-3" />{' '}
-							{isPurchaseOwner ? 'Invoices' : 'Team'}
+							{isPurchaseOwner || isBillingOwner ? 'Invoices' : 'Team'}
 						</Link>
 						<h1 className="font-text text-center text-lg font-medium leading-tight sm:text-left sm:text-xl">
 							Your Invoice for {product.name}

@@ -164,10 +164,14 @@ describe('team purchase authorization', () => {
 })
 
 describe('team invoice authorization', () => {
-	it('allows the purchaser or an org manager and rejects unrelated users', () => {
-		const target = purchase('purchase-a', 'org-a', { userId: 'owner-a' })
+	it('allows the original payer or an org manager without granting the transferred learner billing access', () => {
+		const target = {
+			...purchase('purchase-a', 'org-a', { userId: 'learner-a' }),
+			billingUserId: 'payer-a',
+		}
 
-		expect(canViewPurchaseInvoice('owner-a', target, [])).toBe(true)
+		expect(canViewPurchaseInvoice('learner-a', target, [])).toBe(false)
+		expect(canViewPurchaseInvoice('payer-a', target, [])).toBe(true)
 		expect(
 			canViewPurchaseInvoice('manager-a', target, [
 				purchase('purchase-a', 'org-a'),
