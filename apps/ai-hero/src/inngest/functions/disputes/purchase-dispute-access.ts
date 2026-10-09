@@ -2,53 +2,81 @@ import {
 	PURCHASE_DISPUTE_CLOSED_EVENT,
 	PURCHASE_DISPUTE_OPENED_EVENT,
 } from '@/inngest/events/purchase-dispute'
-import {
-	USER_ADDED_TO_COHORT_EVENT,
-	USER_ADDED_TO_WORKSHOP_EVENT,
-} from '@/inngest/functions/discord/add-discord-role-workflow'
 import { inngest } from '@/inngest/inngest.server'
-import { removeDiscordRole } from '@/lib/discord-utils'
 import {
-	applyLostDispute,
-	restoreDisputedPurchaseAccess,
-	revokeDisputedPurchaseAccess,
-	type DisputeRevocation,
+	applyDisputeEvent,
+	syncDisputeDiscordRole,
+	type DisputeResult,
 } from '@/lib/purchase-disputes'
 import { log } from '@/server/logger'
 
-function discordRoleRemoval(revocation: DisputeRevocation) {
-	if (
-		(revocation.kind === 'revoked' || revocation.kind === 'already-revoked') &&
-		revocation.userId
-	)
-		return { userId: revocation.userId, roles: revocation.discordRoles }
-	return { userId: null, roles: [] }
+type Step = {
+	run: (id: string, work: () => Promise<unknown>) => Promise<unknown>
 }
 
-/** Throw so Inngest retries the step; a skipped removal is not a failure. */
-async function removeRoleOrThrow(userId: string, discordRoleId: string) {
-	const result = await removeDiscordRole(userId, discordRoleId)
-	if (result.status === 'error')
-		throw new Error(`discord role removal failed: ${result.reason}`)
-	return result
+/**
+ * Each role is its own step and reads the database when it runs, so a step
+ * retried after a later win or loss acts on the current state, not on the
+ * role list this run cached.
+ */
+async function syncDiscordRoles(
+	step: Step,
+	result: DisputeResult,
+	stripeDisputeId: string,
+) {
+	if (!('record' in result) || !result.record) return []
+	const synced = []
+	for (const discordRoleId of result.record.discordRoleIds) {
+		synced.push(
+			await step.run(`sync discord role ${discordRoleId}`, () =>
+				syncDisputeDiscordRole({
+					purchaseId: result.purchaseId,
+					stripeDisputeId,
+					discordRoleId,
+				}),
+			),
+		)
+	}
+	return synced
 }
 
-async function logRevocation(revocation: DisputeRevocation) {
-	if (revocation.kind === 'revoked' && revocation.isBulk) {
+async function logResult(event: string, result: DisputeResult) {
+	const applied =
+		result.kind === 'applied' ||
+		result.kind === 'repaired' ||
+		result.kind === 'unchanged'
+	if (applied && result.isBulk && result.from === null) {
 		// Seat holders keep their own seat purchases; an operator decides.
 		await log.warn('purchase_dispute.bulk_seats_retained', {
-			purchaseId: revocation.purchaseId,
+			purchaseId: result.purchaseId,
 		})
 	}
-	await log.info('purchase_dispute.access_revoked', {
-		purchaseId: revocation.purchaseId,
-		result: revocation.kind,
-		...(revocation.kind === 'revoked' && {
-			previousStatus: revocation.record.previousStatus,
-			entitlementsRevoked: revocation.record.revokedEntitlementIds.length,
-			discordRoles: revocation.discordRoles.length,
+	if (applied && result.statusHeld) {
+		await log.warn('purchase_dispute.status_held', {
+			purchaseId: result.purchaseId,
+			reason: result.statusHeld,
+		})
+	}
+	if (result.buyerOutcome?.status === 'held') {
+		await log.warn('purchase_dispute.buyer_block_held', {
+			purchaseId: result.purchaseId,
+			reason: result.buyerOutcome.reason,
+		})
+	}
+	await log.info(`purchase_dispute.${event}`, {
+		purchaseId: result.purchaseId,
+		result: result.kind,
+		...('reason' in result && result.reason && { reason: result.reason }),
+		...(applied && {
+			from: result.from,
+			to: result.to,
+			status: result.status,
+			plannedStatus: result.plannedStatus,
+			entitlementsCut:
+				result.cutEntitlementIds.length + result.cutCreditEntitlementIds.length,
+			entitlementsRestored: result.restoreEntitlementIds.length,
 		}),
-		...(revocation.kind === 'skipped' && { reason: revocation.reason }),
+		...(result.buyerOutcome && { buyer: result.buyerOutcome.status }),
 	})
 }
 
@@ -57,95 +85,52 @@ export const purchaseDisputeOpened = inngest.createFunction(
 	{ id: 'purchase-dispute-opened', name: 'Purchase Dispute Opened' },
 	{ event: PURCHASE_DISPUTE_OPENED_EVENT },
 	async ({ event, step }) => {
-		const revocation: DisputeRevocation = await step.run(
-			'revoke disputed purchase access',
-			() =>
-				revokeDisputedPurchaseAccess({
-					purchaseId: event.data.purchaseId,
-					stripeDisputeId: event.data.stripeDisputeId,
-					previousStatus: event.data.previousStatus,
-				}),
+		const { purchaseId, stripeDisputeId, previousStatus } = event.data
+		const result: DisputeResult = await step.run('apply dispute opened', () =>
+			applyDisputeEvent({
+				purchaseId,
+				stripeDisputeId,
+				previousStatus,
+				event: 'opened',
+			}),
 		)
-		const removal = discordRoleRemoval(revocation)
-		for (const role of removal.roles) {
-			await step.run(`remove discord role ${role.entitlementId}`, () =>
-				removeRoleOrThrow(removal.userId!, role.discordRoleId),
-			)
-		}
-		await logRevocation(revocation)
-		return revocation
+		const discord = await syncDiscordRoles(step, result, stripeDisputeId)
+		await logResult('opened', result)
+		return { result, discord }
 	},
 )
 
 /**
- * Won: restore the recorded status and rows. Lost: keep the cut (revoking now
- * if the open event never arrived) and block the buyer from future checkouts.
+ * Won: restore what the cut recorded. Lost: keep the cut (cutting now if the
+ * open event never arrived) and block the paying buyer. Either way, check
+ * again after racing status writes have landed and repair the status.
  */
 export const purchaseDisputeClosed = inngest.createFunction(
 	{ id: 'purchase-dispute-closed', name: 'Purchase Dispute Closed' },
 	{ event: PURCHASE_DISPUTE_CLOSED_EVENT },
 	async ({ event, step }) => {
 		const { purchaseId, stripeDisputeId, previousStatus, outcome } = event.data
-
-		if (outcome === 'won') {
-			const restoration = await step.run(
-				'restore disputed purchase access',
-				() => restoreDisputedPurchaseAccess({ purchaseId, stripeDisputeId }),
-			)
-			if (restoration.kind === 'restored' && restoration.userId) {
-				for (const role of restoration.discordRoles) {
-					await step.sendEvent(
-						`restore discord role ${role.entitlementId}`,
-						role.kind === 'cohort'
-							? {
-									name: USER_ADDED_TO_COHORT_EVENT,
-									data: {
-										cohortId: purchaseId,
-										userId: restoration.userId,
-										discordRoleId: role.discordRoleId,
-									},
-								}
-							: {
-									name: USER_ADDED_TO_WORKSHOP_EVENT,
-									data: {
-										workshopId: purchaseId,
-										userId: restoration.userId,
-										discordRoleId: role.discordRoleId,
-									},
-								},
-					)
-				}
-			}
-			await log.info('purchase_dispute.access_restored', {
-				purchaseId,
-				result: restoration.kind,
-				...(restoration.kind === 'restored' && {
-					restoredStatus: restoration.record.previousStatus,
-					entitlementsRestored: restoration.restoredEntitlementIds.length,
+		const result: DisputeResult = await step.run(
+			`apply dispute ${outcome}`,
+			() =>
+				applyDisputeEvent({
+					purchaseId,
+					stripeDisputeId,
+					previousStatus,
+					event: outcome,
 				}),
-				...(restoration.kind === 'skipped' && { reason: restoration.reason }),
-			})
-			return restoration
-		}
-
-		const loss = await step.run('apply lost dispute', () =>
-			applyLostDispute({ purchaseId, stripeDisputeId, previousStatus }),
 		)
-		if (loss.kind === 'blocked') {
-			const revocation = loss.revocation as DisputeRevocation
-			for (const role of discordRoleRemoval(revocation).roles) {
-				await step.run(`remove discord role ${role.entitlementId}`, () =>
-					removeRoleOrThrow(loss.userId, role.discordRoleId),
-				)
-			}
-			await logRevocation(revocation)
-		}
-		await log.info('purchase_dispute.buyer_blocked', {
-			purchaseId,
-			result: loss.kind,
-			...(loss.kind === 'blocked' && { alreadyBlocked: loss.alreadyBlocked }),
-			...(loss.kind === 'skipped' && { reason: loss.reason }),
-		})
-		return loss
+		const discord = await syncDiscordRoles(step, result, stripeDisputeId)
+		await logResult(outcome, result)
+
+		if (result.kind === 'purchase-not-found' || result.kind === 'ignored')
+			return { result, discord }
+
+		await step.sleep('let racing status writes land', '15m')
+		const reconciled: DisputeResult = await step.run('reconcile dispute', () =>
+			applyDisputeEvent({ purchaseId, stripeDisputeId, event: 'reconcile' }),
+		)
+		if (reconciled.kind === 'repaired') await logResult('repaired', reconciled)
+		return { result, discord, reconciled }
 	},
 )

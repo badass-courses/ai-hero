@@ -1,10 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
-	revoke: vi.fn(),
-	restore: vi.fn(),
-	lose: vi.fn(),
-	removeDiscordRole: vi.fn(),
+	apply: vi.fn(),
+	syncRole: vi.fn(),
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 
@@ -18,16 +16,8 @@ vi.mock('@/inngest/inngest.server', () => ({
 	},
 }))
 vi.mock('@/lib/purchase-disputes', () => ({
-	revokeDisputedPurchaseAccess: mocks.revoke,
-	restoreDisputedPurchaseAccess: mocks.restore,
-	applyLostDispute: mocks.lose,
-}))
-vi.mock('@/lib/discord-utils', () => ({
-	removeDiscordRole: mocks.removeDiscordRole,
-}))
-vi.mock('@/inngest/functions/discord/add-discord-role-workflow', () => ({
-	USER_ADDED_TO_COHORT_EVENT: 'cohort/user-added',
-	USER_ADDED_TO_WORKSHOP_EVENT: 'workshop/user-added',
+	applyDisputeEvent: mocks.apply,
+	syncDisputeDiscordRole: mocks.syncRole,
 }))
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
 
@@ -43,18 +33,21 @@ import {
 
 type Handler = (args: Record<string, unknown>) => Promise<unknown>
 const run = (fn: unknown, data: Record<string, unknown>) => {
-	const sent: unknown[] = []
+	const steps: string[] = []
 	const step = {
-		run: async (_id: string, work: () => Promise<unknown>) => work(),
-		sendEvent: async (_id: string, payload: unknown) => {
-			sent.push(payload)
+		run: async (id: string, work: () => Promise<unknown>) => {
+			steps.push(id)
+			return work()
+		},
+		sleep: async (id: string) => {
+			steps.push(id)
 		},
 	}
 	const result = (fn as { handler: Handler }).handler({
 		event: { data },
 		step,
 	})
-	return { result, sent }
+	return { result, steps }
 }
 
 const base = {
@@ -62,30 +55,28 @@ const base = {
 	stripeDisputeId: 'du_fixture',
 	purchaseId: 'purchase-fixture',
 }
-const record = {
-	stripeDisputeId: 'du_fixture',
-	previousStatus: 'Valid',
-	revokedAt: '2026-10-09T12:00:00.000Z',
-	revokedEntitlementIds: ['content', 'discord'],
-}
-const revoked = {
-	kind: 'revoked',
+const applied = (overrides: Record<string, unknown> = {}) => ({
+	kind: 'applied',
 	purchaseId: base.purchaseId,
-	userId: 'buyer',
-	record,
-	discordRoles: [
-		{ entitlementId: 'discord', discordRoleId: 'role-1', kind: 'cohort' },
-	],
+	from: null,
+	to: 'open',
+	status: 'Valid',
+	plannedStatus: 'Disputed',
+	cutEntitlementIds: ['content', 'discord'],
+	cutCreditEntitlementIds: [],
+	restoreEntitlementIds: [],
 	isBulk: false,
-}
+	record: { discordRoleIds: ['role-1', 'role-2'] },
+	...overrides,
+})
 
-describe('purchase dispute access functions', () => {
+describe('purchase dispute functions', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
-		mocks.removeDiscordRole.mockResolvedValue({ status: 'success' })
+		mocks.syncRole.mockResolvedValue({ kind: 'synced', result: 'removed' })
 	})
 
-	it('subscribes to the commerce dispute events', () => {
+	it('subscribe to the commerce lifecycle events', () => {
 		expect((purchaseDisputeOpened as any).trigger).toEqual({
 			event: PURCHASE_DISPUTE_OPENED_EVENT,
 		})
@@ -94,143 +85,106 @@ describe('purchase dispute access functions', () => {
 		})
 	})
 
-	it('created: revokes access with the status commerce read and removes Discord roles', async () => {
-		mocks.revoke.mockResolvedValue(revoked)
-		const { result } = run(purchaseDisputeOpened, {
+	it('opened applies the event, then syncs each recorded role in its own step', async () => {
+		mocks.apply.mockResolvedValue(applied())
+		const { result, steps } = run(purchaseDisputeOpened, {
 			...base,
 			previousStatus: 'Restricted',
 		})
-
-		await expect(result).resolves.toBe(revoked)
-		expect(mocks.revoke).toHaveBeenCalledWith({
-			purchaseId: base.purchaseId,
-			stripeDisputeId: base.stripeDisputeId,
-			previousStatus: 'Restricted',
-		})
-		expect(mocks.removeDiscordRole).toHaveBeenCalledWith('buyer', 'role-1')
-	})
-
-	it('created retry after a win: an already revoked dispute with no roles left removes nothing', async () => {
-		mocks.revoke.mockResolvedValue({
-			kind: 'already-revoked',
-			purchaseId: base.purchaseId,
-			userId: 'buyer',
-			record: { ...record, outcome: 'won' },
-			discordRoles: [],
-		})
-		await run(purchaseDisputeOpened, { ...base, previousStatus: 'Disputed' })
-			.result
-		expect(mocks.removeDiscordRole).not.toHaveBeenCalled()
-	})
-
-	it('throws on a failed Discord removal so Inngest retries the step', async () => {
-		mocks.revoke.mockResolvedValue(revoked)
-		mocks.removeDiscordRole.mockResolvedValue({
-			status: 'error',
-			reason: 'discord 503',
-		})
-		await expect(
-			run(purchaseDisputeOpened, { ...base, previousStatus: 'Valid' }).result,
-		).rejects.toThrow('discord role removal failed: discord 503')
-	})
-
-	it('won: restores access and re-adds the Discord roles it took', async () => {
-		mocks.restore.mockResolvedValue({
-			kind: 'restored',
-			purchaseId: base.purchaseId,
-			userId: 'buyer',
-			record: { ...record, outcome: 'won' },
-			restoredEntitlementIds: ['content', 'discord'],
-			discordRoles: revoked.discordRoles,
-		})
-		const { result, sent } = run(purchaseDisputeClosed, {
-			...base,
-			previousStatus: 'Disputed',
-			disputeStatus: 'won',
-			outcome: 'won',
-		})
-
 		await result
-		expect(mocks.restore).toHaveBeenCalledWith({
+		expect(mocks.apply).toHaveBeenCalledWith({
 			purchaseId: base.purchaseId,
 			stripeDisputeId: base.stripeDisputeId,
+			previousStatus: 'Restricted',
+			event: 'opened',
 		})
-		expect(mocks.lose).not.toHaveBeenCalled()
-		expect(sent).toEqual([
-			{
-				name: 'cohort/user-added',
-				data: {
-					cohortId: base.purchaseId,
-					userId: 'buyer',
-					discordRoleId: 'role-1',
-				},
-			},
+		expect(steps).toEqual([
+			'apply dispute opened',
+			'sync discord role role-1',
+			'sync discord role role-2',
 		])
+		expect(mocks.syncRole).toHaveBeenCalledWith({
+			purchaseId: base.purchaseId,
+			stripeDisputeId: base.stripeDisputeId,
+			discordRoleId: 'role-1',
+		})
 	})
 
-	it('lost retry: removes recorded roles even when the revocation already committed', async () => {
-		mocks.removeDiscordRole.mockResolvedValue({ status: 'skipped' })
-		mocks.lose.mockResolvedValue({
-			kind: 'blocked',
-			purchaseId: base.purchaseId,
-			userId: 'buyer',
-			revocation: {
-				kind: 'already-revoked',
-				purchaseId: base.purchaseId,
-				userId: 'buyer',
-				record,
-				discordRoles: revoked.discordRoles,
-			},
-			block: {
-				reason: 'chargeback_lost',
+	it('a failed role sync fails the step so Inngest retries it', async () => {
+		mocks.apply.mockResolvedValue(applied())
+		mocks.syncRole.mockRejectedValue(
+			new Error('discord remove role failed: 503'),
+		)
+		await expect(run(purchaseDisputeOpened, base).result).rejects.toThrow('503')
+	})
+
+	it.each(['won', 'lost'] as const)(
+		'%s applies the outcome, syncs roles, then reconciles after racing writes land',
+		async (outcome) => {
+			mocks.apply
+				.mockResolvedValueOnce(applied({ from: 'open', to: outcome }))
+				.mockResolvedValueOnce(applied({ kind: 'unchanged', to: outcome }))
+			const { result, steps } = run(purchaseDisputeClosed, {
+				...base,
+				previousStatus: 'Disputed',
+				disputeStatus: outcome,
+				outcome,
+			})
+			await result
+			expect(steps).toEqual([
+				`apply dispute ${outcome}`,
+				'sync discord role role-1',
+				'sync discord role role-2',
+				'let racing status writes land',
+				'reconcile dispute',
+			])
+			expect(mocks.apply).toHaveBeenLastCalledWith({
 				purchaseId: base.purchaseId,
 				stripeDisputeId: base.stripeDisputeId,
-				blockedAt: '2026-10-09T12:00:00.000Z',
-			},
-			alreadyBlocked: true,
-		})
+				event: 'reconcile',
+			})
+		},
+	)
+
+	it('logs held buyer blocks, held statuses and bulk purchases for an operator', async () => {
+		mocks.apply
+			.mockResolvedValueOnce(
+				applied({
+					to: 'lost',
+					isBulk: true,
+					statusHeld: 'original-status-unknown',
+					buyerOutcome: { status: 'held', reason: 'transfer-chain-ambiguous' },
+				}),
+			)
+			.mockResolvedValueOnce(applied({ kind: 'unchanged', to: 'lost' }))
 		await run(purchaseDisputeClosed, {
 			...base,
-			previousStatus: 'Disputed',
+			previousStatus: 'Valid',
 			disputeStatus: 'lost',
 			outcome: 'lost',
 		}).result
-		expect(mocks.removeDiscordRole).toHaveBeenCalledWith('buyer', 'role-1')
+		const warnings = mocks.log.warn.mock.calls.map(([name]) => name)
+		expect(warnings).toEqual([
+			'purchase_dispute.bulk_seats_retained',
+			'purchase_dispute.status_held',
+			'purchase_dispute.buyer_block_held',
+		])
 	})
 
-	it('lost: keeps the cut, blocks the buyer, and removes roles the late revocation took', async () => {
-		mocks.lose.mockResolvedValue({
-			kind: 'blocked',
+	it('an ignored event syncs nothing and skips the reconcile', async () => {
+		mocks.apply.mockResolvedValue({
+			kind: 'ignored',
 			purchaseId: base.purchaseId,
-			userId: 'buyer',
-			revocation: revoked,
-			block: {
-				reason: 'chargeback_lost',
-				purchaseId: base.purchaseId,
-				stripeDisputeId: base.stripeDisputeId,
-				blockedAt: '2026-10-09T12:00:00.000Z',
-			},
-			alreadyBlocked: false,
+			reason: 'different-dispute',
 		})
-		const { result, sent } = run(purchaseDisputeClosed, {
+		const { result, steps } = run(purchaseDisputeClosed, {
 			...base,
 			previousStatus: 'Valid',
-			disputeStatus: 'lost',
-			outcome: 'lost',
+			disputeStatus: 'won',
+			outcome: 'won',
 		})
-
 		await result
-		expect(mocks.lose).toHaveBeenCalledWith({
-			purchaseId: base.purchaseId,
-			stripeDisputeId: base.stripeDisputeId,
-			previousStatus: 'Valid',
-		})
-		expect(mocks.restore).not.toHaveBeenCalled()
-		expect(mocks.removeDiscordRole).toHaveBeenCalledWith('buyer', 'role-1')
-		expect(sent).toEqual([])
-		expect(mocks.log.info).toHaveBeenCalledWith(
-			'purchase_dispute.buyer_blocked',
-			expect.objectContaining({ result: 'blocked', alreadyBlocked: false }),
-		)
+		expect(steps).toEqual(['apply dispute won'])
+		expect(mocks.syncRole).not.toHaveBeenCalled()
 	})
 })

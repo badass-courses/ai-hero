@@ -1,8 +1,26 @@
 import { db, type DbExecutor } from '@/db'
-import { entitlements, entitlementTypes, purchases, users } from '@/db/schema'
-import { and, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm'
+import {
+	entitlements,
+	entitlementTypes,
+	purchases,
+	purchaseUserTransfer,
+	users,
+} from '@/db/schema'
+import { and, asc, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm'
 
+import { discordRoleClient, type DiscordRoleClient } from './discord-utils'
 import { EntitlementSourceType } from './entitlements'
+import {
+	ACCESS_STATUSES,
+	decideDisputeTransition,
+	readDisputeRecord,
+	type BuyerBlockOutcome,
+	type DiscordRoleSyncResult,
+	type DisputeEventType,
+	type DisputeState,
+	type PurchaseDisputeRecord,
+	type PurchaseStatus,
+} from './purchase-dispute-machine'
 
 /**
  * Chargeback policy (Joel, 2026-10-09): an open dispute cuts the purchase's
@@ -10,31 +28,17 @@ import { EntitlementSourceType } from './entitlements'
  * the buyer from future purchases.
  *
  * Access is entitlement rows, not purchase status, so revoking means soft
- * deleting rows. The exact rows and the pre-dispute status are recorded on
- * `purchase.fields.dispute` so a win can restore precisely what was taken.
- * The purchase block lives on `user.fields.purchaseBlock`; the existing
- * `Banned` purchase status is not reused because it already marks unrelated
- * seat redemptions.
+ * deleting rows. `purchase-dispute-machine.ts` decides which transitions are
+ * legal; this file applies one decision per event under a purchase row lock
+ * and records it on `purchase.fields.dispute`. The purchase block lives on
+ * `user.fields.purchaseBlock`; the existing `Banned` purchase status is not
+ * reused because it already marks unrelated seat redemptions.
  */
 
 export { PURCHASE_BLOCKED } from './purchase-block'
-
-const RESTORABLE_STATUSES = ['Valid', 'Restricted'] as const
-type RestorableStatus = (typeof RESTORABLE_STATUSES)[number]
-
-const isRestorableStatus = (status: unknown): status is RestorableStatus =>
-	RESTORABLE_STATUSES.includes(status as RestorableStatus)
+export { readDisputeRecord, type PurchaseDisputeRecord }
 
 const DISCORD_ROLE_TYPES = ['cohort_discord_role', 'workshop_discord_role']
-
-export type PurchaseDisputeRecord = {
-	stripeDisputeId: string
-	previousStatus: RestorableStatus
-	revokedAt: string
-	revokedEntitlementIds: string[]
-	outcome?: 'won' | 'lost'
-	closedAt?: string
-}
 
 export type PurchaseBlock = {
 	reason: 'chargeback_lost'
@@ -43,75 +47,15 @@ export type PurchaseBlock = {
 	blockedAt: string
 }
 
-export type DiscordRoleGrant = {
-	entitlementId: string
-	discordRoleId: string
-	kind: 'cohort' | 'workshop'
-}
-
-export type DisputeRevocation =
-	| {
-			kind: 'revoked'
-			purchaseId: string
-			userId: string | null
-			record: PurchaseDisputeRecord
-			discordRoles: DiscordRoleGrant[]
-			isBulk: boolean
-	  }
-	| {
-			kind: 'already-revoked'
-			purchaseId: string
-			userId: string | null
-			record: PurchaseDisputeRecord
-			/** Roles to (re)remove; empty once a win restored them. */
-			discordRoles: DiscordRoleGrant[]
-	  }
-	| { kind: 'skipped'; purchaseId: string; reason: string }
-	| { kind: 'purchase-not-found'; purchaseId: string }
-
-export type DisputeRestoration =
-	| {
-			kind: 'restored'
-			purchaseId: string
-			userId: string | null
-			record: PurchaseDisputeRecord
-			restoredEntitlementIds: string[]
-			discordRoles: DiscordRoleGrant[]
-	  }
-	| { kind: 'skipped'; purchaseId: string; reason: string }
-	| { kind: 'purchase-not-found'; purchaseId: string }
-
-export type DisputeLoss =
-	| {
-			kind: 'blocked'
-			purchaseId: string
-			userId: string
-			revocation: DisputeRevocation
-			block: PurchaseBlock
-			alreadyBlocked: boolean
-	  }
-	| { kind: 'skipped'; purchaseId: string; reason: string }
-
 type DisputeInput = {
 	purchaseId: string
 	stripeDisputeId: string
+	event: DisputeEventType
+	/** What commerce read before writing `Disputed`, from the event. */
+	previousStatus?: string
 }
 
-export function readDisputeRecord(
-	fields: unknown,
-): PurchaseDisputeRecord | undefined {
-	const record = (fields as { dispute?: unknown } | null | undefined)?.dispute
-	if (!record || typeof record !== 'object') return undefined
-	const candidate = record as Partial<PurchaseDisputeRecord>
-	if (
-		typeof candidate.stripeDisputeId !== 'string' ||
-		!isRestorableStatus(candidate.previousStatus) ||
-		typeof candidate.revokedAt !== 'string' ||
-		!Array.isArray(candidate.revokedEntitlementIds)
-	)
-		return undefined
-	return candidate as PurchaseDisputeRecord
-}
+type PurchaseRow = typeof purchases.$inferSelect
 
 export function readPurchaseBlock(fields: unknown): PurchaseBlock | undefined {
 	const block = (fields as { purchaseBlock?: unknown } | null | undefined)
@@ -129,28 +73,15 @@ const setJsonField = (
 
 async function discordRoleTypeIds(executor: DbExecutor) {
 	const rows = await executor
-		.select({ id: entitlementTypes.id, name: entitlementTypes.name })
+		.select({ id: entitlementTypes.id })
 		.from(entitlementTypes)
 		.where(inArray(entitlementTypes.name, DISCORD_ROLE_TYPES))
-	return new Map(
-		rows.map((row) => [
-			row.id,
-			row.name === 'cohort_discord_role' ? 'cohort' : 'workshop',
-		]),
-	) as Map<string, DiscordRoleGrant['kind']>
+	return rows.map((row) => row.id)
 }
 
-function discordRolesFor(
-	rows: { id: string; entitlementType: string; metadata: unknown }[],
-	roleTypes: Map<string, DiscordRoleGrant['kind']>,
-): DiscordRoleGrant[] {
-	return rows.flatMap((row) => {
-		const kind = roleTypes.get(row.entitlementType)
-		const discordRoleId = (row.metadata as { discordRoleId?: unknown } | null)
-			?.discordRoleId
-		if (!kind || typeof discordRoleId !== 'string' || !discordRoleId) return []
-		return [{ entitlementId: row.id, discordRoleId, kind }]
-	})
+function discordRoleIdOf(metadata: unknown) {
+	const roleId = (metadata as { discordRoleId?: unknown } | null)?.discordRoleId
+	return typeof roleId === 'string' && roleId ? roleId : undefined
 }
 
 /**
@@ -159,7 +90,7 @@ function discordRolesFor(
  */
 async function unusedCreditIdsToRevoke(
 	executor: DbExecutor,
-	purchase: { id: string; userId: string | null; productId: string },
+	purchase: PurchaseRow,
 ) {
 	if (!purchase.userId) return []
 	const surviving = await executor
@@ -170,7 +101,7 @@ async function unusedCreditIdsToRevoke(
 				eq(purchases.userId, purchase.userId),
 				eq(purchases.productId, purchase.productId),
 				ne(purchases.id, purchase.id),
-				inArray(purchases.status, [...RESTORABLE_STATUSES]),
+				inArray(purchases.status, [...ACCESS_STATUSES]),
 			),
 		)
 		.limit(1)
@@ -196,25 +127,10 @@ async function unusedCreditIdsToRevoke(
 	return credits.map((credit) => credit.id)
 }
 
-/**
- * The status a win restores, or undefined when the purchase already lost
- * access another way (Refunded, Banned) and must not be touched.
- */
-function restoreStatusFor(
-	status: string,
-	previousStatus: string | undefined,
-): RestorableStatus | undefined {
-	if (isRestorableStatus(status)) return status
-	// Commerce marked it Disputed before telling us; trust what it read.
-	if (status === 'Disputed')
-		return isRestorableStatus(previousStatus) ? previousStatus : 'Valid'
-	return undefined
-}
-
-async function revocationTargets(
+async function cutTargets(
 	executor: DbExecutor,
-	purchase: { id: string; userId: string | null; productId: string },
-	lock = true,
+	purchase: PurchaseRow,
+	lock: boolean,
 ) {
 	const query = executor
 		.select({
@@ -233,212 +149,161 @@ async function revocationTargets(
 		.orderBy(entitlements.id)
 	const active = lock ? await query.for('update') : await query
 	const creditIds = await unusedCreditIdsToRevoke(executor, purchase)
+	const roleTypes = await discordRoleTypeIds(executor)
+	const discordRoleIds = [
+		...new Set(
+			active.flatMap((row) => {
+				const roleId = roleTypes.includes(row.entitlementType)
+					? discordRoleIdOf(row.metadata)
+					: undefined
+				return roleId ? [roleId] : []
+			}),
+		),
+	]
 	return {
-		active,
+		entitlementIds: active.map((row) => row.id),
 		creditIds,
-		revokedEntitlementIds: [...active.map((row) => row.id), ...creditIds],
+		discordRoleIds,
 	}
 }
 
-export type LostDisputePreview =
+export type DisputeBuyer =
+	| { kind: 'resolved'; userId: string; transferred: boolean }
+	| { kind: 'held'; reason: string }
+
+/**
+ * The user who paid, which is not always the current owner: a transfer moves
+ * the purchase (and its merchant charge and customer) to the recipient. Each
+ * completed transfer leaves a `purchaseUserTransfer` row, so the buyer is the
+ * first source of an unbroken chain ending at the current owner. Anything
+ * else is ambiguous and holds the block for an operator.
+ */
+export async function resolveDisputeBuyer(
+	executor: DbExecutor,
+	purchase: Pick<PurchaseRow, 'id' | 'userId'>,
+): Promise<DisputeBuyer> {
+	if (!purchase.userId) return { kind: 'held', reason: 'no-owner' }
+	const transfers = await executor
+		.select({
+			sourceUserId: purchaseUserTransfer.sourceUserId,
+			targetUserId: purchaseUserTransfer.targetUserId,
+			completedAt: purchaseUserTransfer.completedAt,
+		})
+		.from(purchaseUserTransfer)
+		.where(
+			and(
+				eq(purchaseUserTransfer.purchaseId, purchase.id),
+				eq(purchaseUserTransfer.transferState, 'COMPLETED'),
+			),
+		)
+		.orderBy(
+			asc(purchaseUserTransfer.completedAt),
+			asc(purchaseUserTransfer.createdAt),
+		)
+	if (transfers.length === 0)
+		return { kind: 'resolved', userId: purchase.userId, transferred: false }
+
+	const chained = transfers.every(
+		(transfer, index) =>
+			transfer.completedAt &&
+			transfer.targetUserId &&
+			(index === 0 ||
+				transfer.sourceUserId === transfers[index - 1]!.targetUserId),
+	)
+	if (!chained || transfers.at(-1)!.targetUserId !== purchase.userId)
+		return { kind: 'held', reason: 'transfer-chain-ambiguous' }
+	return {
+		kind: 'resolved',
+		userId: transfers[0]!.sourceUserId,
+		transferred: true,
+	}
+}
+
+async function blockBuyer(
+	tx: DbExecutor,
+	buyer: DisputeBuyer,
+	block: PurchaseBlock,
+): Promise<BuyerBlockOutcome> {
+	if (buyer.kind === 'held') return { status: 'held', reason: buyer.reason }
+	const [user] = await tx
+		.select({ id: users.id, fields: users.fields })
+		.from(users)
+		.where(eq(users.id, buyer.userId))
+		.for('update')
+	if (!user) return { status: 'held', reason: 'buyer-not-found' }
+	const alreadyBlocked = Boolean(readPurchaseBlock(user.fields))
+	if (!alreadyBlocked) {
+		await tx
+			.update(users)
+			.set({ fields: setJsonField(users.fields, '$.purchaseBlock', block) })
+			.where(eq(users.id, user.id))
+	}
+	return { status: 'blocked', userId: user.id, alreadyBlocked }
+}
+
+export type DisputePlan =
 	| { kind: 'purchase-not-found'; purchaseId: string }
 	| {
-			kind: 'planned'
+			kind: 'ignored'
 			purchaseId: string
 			userId: string | null
-			status: string
-			plannedStatus: string
-			restoreStatus: RestorableStatus | null
-			alreadyRevoked: boolean
-			revokeEntitlementIds: string[]
-			revokeCreditEntitlementIds: string[]
-			discordRoleEntitlementIds: string[]
-			userAlreadyBlocked: boolean
+			status: PurchaseStatus
+			reason: string
+	  }
+	| {
+			kind: 'applied' | 'repaired' | 'unchanged'
+			purchaseId: string
+			userId: string | null
+			reason?: string
+			status: PurchaseStatus
+			plannedStatus: PurchaseStatus
+			statusHeld?: string
+			from: DisputeState | null
+			to: DisputeState
+			originalStatus: string | null
+			cutEntitlementIds: string[]
+			cutCreditEntitlementIds: string[]
+			restoreEntitlementIds: string[]
+			discordRoleIds: string[]
+			buyer: DisputeBuyer | null
+			isBulk: boolean
 	  }
 
-/**
- * Read-only plan of what `applyLostDispute` would change, from the same
- * selection rules. Writes nothing and takes no locks.
- */
-export async function previewLostDispute(
-	{
-		purchaseId,
-		stripeDisputeId,
-		previousStatus,
-	}: DisputeInput & { previousStatus?: string },
-	executor: DbExecutor = db,
-): Promise<LostDisputePreview> {
-	const [purchase] = await executor
-		.select()
-		.from(purchases)
-		.where(eq(purchases.id, purchaseId))
-	if (!purchase) return { kind: 'purchase-not-found', purchaseId }
-
-	const alreadyRevoked =
-		readDisputeRecord(purchase.fields)?.stripeDisputeId === stripeDisputeId
-	const restoreStatus = alreadyRevoked
-		? null
-		: (restoreStatusFor(purchase.status, previousStatus) ?? null)
-	const targets = restoreStatus
-		? await revocationTargets(executor, purchase, false)
-		: { active: [], creditIds: [] }
-	const roleTypes = await discordRoleTypeIds(executor)
-
-	return {
-		kind: 'planned',
-		purchaseId,
-		userId: purchase.userId,
-		status: purchase.status,
-		plannedStatus: restoreStatus ? 'Disputed' : purchase.status,
-		restoreStatus,
-		alreadyRevoked,
-		revokeEntitlementIds: targets.active.map((row) => row.id),
-		revokeCreditEntitlementIds: targets.creditIds,
-		discordRoleEntitlementIds: discordRolesFor(targets.active, roleTypes).map(
-			(role) => role.entitlementId,
-		),
-		userAlreadyBlocked: await isUserBlockedFromPurchasing(
-			purchase.userId,
-			executor,
-		),
-	}
-}
-
-/**
- * Cut a disputed purchase's access and record what was cut. Idempotent per
- * dispute: a retry or a later lost-close for the same dispute is a no-op.
- *
- * A `Valid` or `Restricted` purchase is marked `Disputed` here too, so a
- * dispute opened before the commerce fix (never marked) is handled the same
- * way. `Refunded` and `Banned` purchases already lost access and are skipped.
- */
-export async function revokeDisputedPurchaseAccess({
-	purchaseId,
-	stripeDisputeId,
-	previousStatus,
-	now = new Date(),
-}: DisputeInput & { previousStatus?: string; now?: Date }) {
-	return db.transaction(async (tx): Promise<DisputeRevocation> => {
-		const [purchase] = await tx
-			.select()
-			.from(purchases)
-			.where(eq(purchases.id, purchaseId))
-			.for('update')
-		if (!purchase) return { kind: 'purchase-not-found', purchaseId }
-
-		const existing = readDisputeRecord(purchase.fields)
-		if (existing?.stripeDisputeId === stripeDisputeId) {
-			// A retry after a later step failed must still be able to remove the
-			// roles; removal is a no-op for a role the user no longer holds.
-			const recorded =
-				existing.outcome !== 'won' && existing.revokedEntitlementIds.length
-					? await tx
-							.select({
-								id: entitlements.id,
-								entitlementType: entitlements.entitlementType,
-								metadata: entitlements.metadata,
-							})
-							.from(entitlements)
-							.where(inArray(entitlements.id, existing.revokedEntitlementIds))
-					: []
-			return {
-				kind: 'already-revoked',
-				purchaseId,
-				userId: purchase.userId,
-				record: existing,
-				discordRoles: discordRolesFor(recorded, await discordRoleTypeIds(tx)),
-			}
-		}
-
-		const restoreTo = restoreStatusFor(purchase.status, previousStatus)
-		if (!restoreTo) {
-			return {
-				kind: 'skipped',
-				purchaseId,
-				reason: `status-${purchase.status}`,
-			}
-		}
-
-		const { active, revokedEntitlementIds } = await revocationTargets(
-			tx,
-			purchase,
-		)
-
-		if (revokedEntitlementIds.length > 0) {
-			await tx
-				.update(entitlements)
-				.set({ deletedAt: now })
-				.where(
-					and(
-						inArray(entitlements.id, revokedEntitlementIds),
-						isNull(entitlements.deletedAt),
-					),
-				)
-		}
-
-		const record: PurchaseDisputeRecord = {
-			stripeDisputeId,
-			previousStatus: restoreTo,
-			revokedAt: now.toISOString(),
-			revokedEntitlementIds,
-		}
-		await tx
-			.update(purchases)
-			.set({
-				status: 'Disputed',
-				fields: setJsonField(purchases.fields, '$.dispute', record),
-			})
-			.where(eq(purchases.id, purchase.id))
-
-		return {
-			kind: 'revoked',
-			purchaseId,
-			userId: purchase.userId,
-			record,
-			discordRoles: discordRolesFor(active, await discordRoleTypeIds(tx)),
-			isBulk: Boolean(purchase.bulkCouponId),
-		}
+/** One decision plus the rows it touches. Shared by apply and preview. */
+async function planDisputeEvent(
+	executor: DbExecutor,
+	purchase: PurchaseRow,
+	input: DisputeInput,
+	lock: boolean,
+): Promise<{ plan: DisputePlan; record: PurchaseDisputeRecord | undefined }> {
+	const record = readDisputeRecord(purchase.fields)
+	const decision = decideDisputeTransition({
+		record,
+		event: input.event,
+		stripeDisputeId: input.stripeDisputeId,
+		purchaseStatus: purchase.status,
+		eventPreviousStatus: input.previousStatus,
 	})
-}
+	if (decision.kind === 'ignored')
+		return {
+			record,
+			plan: {
+				kind: 'ignored',
+				purchaseId: purchase.id,
+				userId: purchase.userId,
+				status: purchase.status,
+				reason: decision.reason,
+			},
+		}
 
-/**
- * A won dispute puts back exactly what the revocation recorded: the
- * pre-dispute status and the soft-deleted entitlement rows.
- */
-export async function restoreDisputedPurchaseAccess({
-	purchaseId,
-	stripeDisputeId,
-	now = new Date(),
-}: DisputeInput & { now?: Date }) {
-	return db.transaction(async (tx): Promise<DisputeRestoration> => {
-		const [purchase] = await tx
-			.select()
-			.from(purchases)
-			.where(eq(purchases.id, purchaseId))
-			.for('update')
-		if (!purchase) return { kind: 'purchase-not-found', purchaseId }
-
-		const record = readDisputeRecord(purchase.fields)
-		if (!record) return { kind: 'skipped', purchaseId, reason: 'no-record' }
-		if (record.stripeDisputeId !== stripeDisputeId)
-			return { kind: 'skipped', purchaseId, reason: 'different-dispute' }
-		if (record.outcome)
-			return { kind: 'skipped', purchaseId, reason: `closed-${record.outcome}` }
-		if (purchase.status !== 'Disputed')
-			return {
-				kind: 'skipped',
-				purchaseId,
-				reason: `status-${purchase.status}`,
-			}
-
-		const restorable =
-			record.revokedEntitlementIds.length > 0
-				? await tx
-						.select({
-							id: entitlements.id,
-							entitlementType: entitlements.entitlementType,
-							metadata: entitlements.metadata,
-						})
+	const cut = decision.cut
+		? await cutTargets(executor, purchase, lock)
+		: { entitlementIds: [], creditIds: [], discordRoleIds: [] }
+	const restoreEntitlementIds =
+		decision.restore && record && record.revokedEntitlementIds.length > 0
+			? (
+					await executor
+						.select({ id: entitlements.id })
 						.from(entitlements)
 						.where(
 							and(
@@ -446,117 +311,360 @@ export async function restoreDisputedPurchaseAccess({
 								isNotNull(entitlements.deletedAt),
 							),
 						)
-						.for('update')
-				: []
-		const restoredEntitlementIds = restorable.map((row) => row.id)
-		if (restoredEntitlementIds.length > 0) {
+				).map((row) => row.id)
+			: []
+
+	return {
+		record,
+		plan: {
+			kind: decision.kind,
+			purchaseId: purchase.id,
+			userId: purchase.userId,
+			...(decision.reason && { reason: decision.reason }),
+			status: purchase.status,
+			plannedStatus: decision.status ?? purchase.status,
+			...(decision.statusHeld && { statusHeld: decision.statusHeld }),
+			from: decision.from,
+			to: decision.to,
+			originalStatus: decision.originalStatus,
+			cutEntitlementIds: cut.entitlementIds,
+			cutCreditEntitlementIds: cut.creditIds,
+			restoreEntitlementIds,
+			discordRoleIds: record?.discordRoleIds ?? cut.discordRoleIds,
+			buyer: decision.blockBuyer
+				? await resolveDisputeBuyer(executor, purchase)
+				: null,
+			isBulk: Boolean(purchase.bulkCouponId),
+		},
+	}
+}
+
+export type DisputeResult = DisputePlan & {
+	record?: PurchaseDisputeRecord
+	buyerOutcome?: BuyerBlockOutcome
+}
+
+/**
+ * Apply one dispute event to a purchase: decide the legal transition, cut or
+ * restore rows, persist the record, repair the status and block the buyer, all
+ * in one transaction holding the purchase row lock. Safe to replay and to
+ * deliver in any order.
+ */
+export async function applyDisputeEvent({
+	now = new Date(),
+	...input
+}: DisputeInput & { now?: Date }): Promise<DisputeResult> {
+	return db.transaction(async (tx): Promise<DisputeResult> => {
+		const [purchase] = await tx
+			.select()
+			.from(purchases)
+			.where(eq(purchases.id, input.purchaseId))
+			.for('update')
+		if (!purchase)
+			return { kind: 'purchase-not-found', purchaseId: input.purchaseId }
+
+		const { plan, record } = await planDisputeEvent(tx, purchase, input, true)
+		if (plan.kind === 'ignored' || plan.kind === 'purchase-not-found')
+			return { ...plan, ...(record && { record }) }
+		if (plan.kind === 'unchanged') return { ...plan, record }
+
+		const at = now.toISOString()
+		const cutIds = [...plan.cutEntitlementIds, ...plan.cutCreditEntitlementIds]
+		if (cutIds.length > 0) {
+			await tx
+				.update(entitlements)
+				.set({ deletedAt: now })
+				.where(
+					and(inArray(entitlements.id, cutIds), isNull(entitlements.deletedAt)),
+				)
+		}
+		if (plan.restoreEntitlementIds.length > 0) {
 			await tx
 				.update(entitlements)
 				.set({ deletedAt: null })
-				.where(inArray(entitlements.id, restoredEntitlementIds))
+				.where(inArray(entitlements.id, plan.restoreEntitlementIds))
 		}
 
-		const closed: PurchaseDisputeRecord = {
-			...record,
-			outcome: 'won',
-			closedAt: now.toISOString(),
+		const refunded =
+			plan.status === 'Refunded' || plan.plannedStatus === 'Refunded'
+		let next: PurchaseDisputeRecord = record
+			? {
+					...record,
+					state: plan.to,
+					...(plan.to !== plan.from && { closedAt: at }),
+					...(refunded && !record.refundedAt && { refundedAt: at }),
+				}
+			: {
+					stripeDisputeId: input.stripeDisputeId,
+					state: plan.to,
+					originalStatus:
+						plan.originalStatus as PurchaseDisputeRecord['originalStatus'],
+					openedAt: at,
+					...(plan.to !== 'open' && { closedAt: at }),
+					...(refunded && { refundedAt: at }),
+					revokedEntitlementIds: cutIds,
+					discordRoleIds: plan.discordRoleIds,
+					discordSync: {},
+				}
+
+		let buyerOutcome: BuyerBlockOutcome | undefined
+		if (plan.buyer) {
+			buyerOutcome = await blockBuyer(tx, plan.buyer, {
+				reason: 'chargeback_lost',
+				purchaseId: purchase.id,
+				stripeDisputeId: input.stripeDisputeId,
+				blockedAt: at,
+			})
+			next = { ...next, buyer: buyerOutcome }
 		}
+
 		await tx
 			.update(purchases)
 			.set({
-				status: record.previousStatus,
-				fields: setJsonField(purchases.fields, '$.dispute', closed),
+				...(plan.plannedStatus !== purchase.status && {
+					status: plan.plannedStatus,
+				}),
+				fields: setJsonField(purchases.fields, '$.dispute', next),
 			})
 			.where(eq(purchases.id, purchase.id))
 
-		return {
-			kind: 'restored',
-			purchaseId,
-			userId: purchase.userId,
-			record: closed,
-			restoredEntitlementIds,
-			discordRoles: discordRolesFor(restorable, await discordRoleTypeIds(tx)),
-		}
+		return { ...plan, record: next, ...(buyerOutcome && { buyerOutcome }) }
 	})
 }
 
 /**
- * A lost dispute keeps the purchase cut off (revoking first if the open event
- * never arrived) and blocks the purchasing user from future checkouts.
+ * Read-only plan of what `applyDisputeEvent` would change, from the same
+ * planner. Writes nothing and takes no locks.
  */
-export async function applyLostDispute({
-	purchaseId,
-	stripeDisputeId,
-	previousStatus,
-	now = new Date(),
-}: DisputeInput & {
-	previousStatus?: string
-	now?: Date
-}): Promise<DisputeLoss> {
-	const revocation = await revokeDisputedPurchaseAccess({
-		purchaseId,
-		stripeDisputeId,
-		previousStatus,
-		now,
-	})
-	if (revocation.kind === 'purchase-not-found')
-		return { kind: 'skipped', purchaseId, reason: 'purchase-not-found' }
+export async function previewDisputeEvent(
+	input: DisputeInput,
+	executor: DbExecutor = db,
+): Promise<DisputePlan & { buyerAlreadyBlocked?: boolean }> {
+	const [purchase] = await executor
+		.select()
+		.from(purchases)
+		.where(eq(purchases.id, input.purchaseId))
+	if (!purchase)
+		return { kind: 'purchase-not-found', purchaseId: input.purchaseId }
+	const { plan } = await planDisputeEvent(executor, purchase, input, false)
+	if (
+		plan.kind !== 'purchase-not-found' &&
+		plan.kind !== 'ignored' &&
+		plan.buyer?.kind === 'resolved'
+	)
+		return {
+			...plan,
+			buyerAlreadyBlocked: await isUserBlockedFromPurchasing(
+				plan.buyer.userId,
+				executor,
+			),
+		}
+	return plan
+}
 
-	return db.transaction(async (tx): Promise<DisputeLoss> => {
+/**
+ * Record a refund on an existing dispute so it overrides any later outcome,
+ * even if a replayed event overwrites the `Refunded` status afterwards.
+ */
+export async function markPurchaseDisputeRefunded(
+	purchaseId: string,
+	now = new Date(),
+) {
+	return db.transaction(async (tx) => {
 		const [purchase] = await tx
-			.select()
+			.select({ fields: purchases.fields })
 			.from(purchases)
 			.where(eq(purchases.id, purchaseId))
 			.for('update')
-		if (!purchase?.userId)
-			return { kind: 'skipped', purchaseId, reason: 'no-user' }
-
-		const record = readDisputeRecord(purchase.fields)
-		if (record?.stripeDisputeId === stripeDisputeId && !record.outcome) {
-			await tx
-				.update(purchases)
-				.set({
-					fields: setJsonField(purchases.fields, '$.dispute', {
-						...record,
-						outcome: 'lost',
-						closedAt: now.toISOString(),
-					}),
-				})
-				.where(eq(purchases.id, purchase.id))
-		}
-
-		const [user] = await tx
-			.select({ id: users.id, fields: users.fields })
-			.from(users)
-			.where(eq(users.id, purchase.userId))
-			.for('update')
-		if (!user) return { kind: 'skipped', purchaseId, reason: 'user-not-found' }
-
-		const existingBlock = readPurchaseBlock(user.fields)
-		const block: PurchaseBlock = existingBlock ?? {
-			reason: 'chargeback_lost',
-			purchaseId,
-			stripeDisputeId,
-			blockedAt: now.toISOString(),
-		}
-		if (!existingBlock) {
-			await tx
-				.update(users)
-				.set({
-					fields: setJsonField(users.fields, '$.purchaseBlock', block),
-				})
-				.where(eq(users.id, user.id))
-		}
-
-		return {
-			kind: 'blocked',
-			purchaseId,
-			userId: user.id,
-			revocation,
-			block,
-			alreadyBlocked: Boolean(existingBlock),
-		}
+		const record = readDisputeRecord(purchase?.fields)
+		if (!record || record.refundedAt) return { marked: false }
+		await tx
+			.update(purchases)
+			.set({
+				fields: setJsonField(purchases.fields, '$.dispute', {
+					...record,
+					refundedAt: now.toISOString(),
+				}),
+			})
+			.where(eq(purchases.id, purchaseId))
+		return { marked: true }
 	})
+}
+
+export type DiscordRoleSync =
+	| { kind: 'skipped'; reason: string }
+	| { kind: 'synced'; roleId: string; result: DiscordRoleSyncResult }
+
+/**
+ * Bring one Discord role tied to a dispute in line with the database as it
+ * stands now, not with a list cached when an earlier step ran:
+ *
+ * - No live entitlement grants the role: remove it.
+ * - A live grant exists and this dispute removed the role: put it back.
+ * - A live grant exists otherwise (another purchase): leave it alone.
+ *
+ * The purchase row lock is held across the Discord calls so a concurrent win
+ * or loss cannot change the answer between the read and the write. Discord
+ * failures throw, roll back the result record, and let Inngest retry.
+ */
+export async function syncDisputeDiscordRole({
+	purchaseId,
+	stripeDisputeId,
+	discordRoleId,
+	now = new Date(),
+	discord = discordRoleClient,
+}: {
+	purchaseId: string
+	stripeDisputeId: string
+	discordRoleId: string
+	now?: Date
+	discord?: DiscordRoleClient
+}): Promise<DiscordRoleSync> {
+	return db.transaction(async (tx): Promise<DiscordRoleSync> => {
+		const [purchase] = await tx
+			.select({ userId: purchases.userId, fields: purchases.fields })
+			.from(purchases)
+			.where(eq(purchases.id, purchaseId))
+			.for('update')
+		const record = readDisputeRecord(purchase?.fields)
+		if (
+			!purchase?.userId ||
+			record?.stripeDisputeId !== stripeDisputeId ||
+			!record.discordRoleIds.includes(discordRoleId)
+		)
+			return { kind: 'skipped', reason: 'role-not-tracked' }
+
+		const roleTypes = await discordRoleTypeIds(tx)
+		const [grant] = roleTypes.length
+			? await tx
+					.select({ id: entitlements.id })
+					.from(entitlements)
+					.where(
+						and(
+							eq(entitlements.userId, purchase.userId),
+							inArray(entitlements.entitlementType, roleTypes),
+							isNull(entitlements.deletedAt),
+							sql`JSON_UNQUOTE(JSON_EXTRACT(${entitlements.metadata}, '$.discordRoleId')) = ${discordRoleId}`,
+						),
+					)
+					.limit(1)
+			: []
+		const removedByDispute = ['removed', 'restored'].includes(
+			record.discordSync[discordRoleId]?.result ?? '',
+		)
+
+		let result: DiscordRoleSyncResult
+		if (grant && !removedByDispute) {
+			result = 'kept'
+		} else {
+			const member = await discord.lookupMember(purchase.userId)
+			if (member.kind !== 'member') {
+				result = 'no-account'
+			} else if (grant) {
+				if (!member.roles.includes(discordRoleId))
+					await discord.addRole(member.discordAccountId, discordRoleId)
+				result = 'restored'
+			} else if (!member.roles.includes(discordRoleId)) {
+				result = 'absent'
+			} else {
+				await discord.removeRole(member.discordAccountId, discordRoleId)
+				result = 'removed'
+			}
+			if (result === 'restored' || result === 'removed') {
+				const after = await discord.lookupMember(purchase.userId)
+				const holds =
+					after.kind === 'member' && after.roles.includes(discordRoleId)
+				if (holds !== (result === 'restored'))
+					throw new Error(`discord role ${result} not confirmed by readback`)
+			}
+		}
+
+		// `absent` after a removal keeps the record of what the dispute took.
+		const stored =
+			result === 'absent' &&
+			record.discordSync[discordRoleId]?.result === 'removed'
+				? 'removed'
+				: result
+		await tx
+			.update(purchases)
+			.set({
+				fields: setJsonField(purchases.fields, '$.dispute', {
+					...record,
+					discordSync: {
+						...record.discordSync,
+						[discordRoleId]: { result: stored, at: now.toISOString() },
+					},
+				}),
+			})
+			.where(eq(purchases.id, purchaseId))
+		return { kind: 'synced', roleId: discordRoleId, result }
+	})
+}
+
+export type DisputeReadback = {
+	purchaseId: string
+	status: PurchaseStatus | null
+	record: PurchaseDisputeRecord | null
+	/** Rows the record says were cut that are live again. */
+	liveCutEntitlementIds: string[]
+	buyerBlocked: boolean | null
+	/** Discord roles with no recorded sync result yet. */
+	discordPending: string[]
+}
+
+/** Fresh state of a dispute for post-apply readback. */
+export async function readDisputeState(
+	purchaseId: string,
+	executor: DbExecutor = db,
+): Promise<DisputeReadback> {
+	const [purchase] = await executor
+		.select({ status: purchases.status, fields: purchases.fields })
+		.from(purchases)
+		.where(eq(purchases.id, purchaseId))
+	const record = readDisputeRecord(purchase?.fields) ?? null
+	const live =
+		record && record.revokedEntitlementIds.length > 0
+			? await executor
+					.select({ id: entitlements.id })
+					.from(entitlements)
+					.where(
+						and(
+							inArray(entitlements.id, record.revokedEntitlementIds),
+							isNull(entitlements.deletedAt),
+						),
+					)
+			: []
+	return {
+		purchaseId,
+		status: purchase?.status ?? null,
+		record,
+		liveCutEntitlementIds: live.map((row) => row.id),
+		buyerBlocked:
+			record?.buyer?.status === 'blocked'
+				? await isUserBlockedFromPurchasing(record.buyer.userId, executor)
+				: null,
+		discordPending: (record?.discordRoleIds ?? []).filter(
+			(roleId) => !record?.discordSync[roleId],
+		),
+	}
+}
+
+/** Exact proof the lost event ran, not just a pre-existing block. */
+export function lostDisputeConfirmed(
+	readback: DisputeReadback,
+	stripeDisputeId: string,
+) {
+	const { record } = readback
+	return Boolean(
+		record &&
+		record.stripeDisputeId === stripeDisputeId &&
+		record.state === 'lost' &&
+		(readback.status === 'Disputed' || readback.status === 'Refunded') &&
+		readback.liveCutEntitlementIds.length === 0 &&
+		record.buyer &&
+		(record.buyer.status === 'held' || readback.buyerBlocked === true) &&
+		readback.discordPending.length === 0,
+	)
 }
 
 /** True when the user lost a chargeback and may not start a new checkout. */

@@ -11,6 +11,7 @@ import {
 	softDeleteCreditEntitlements,
 	softDeleteEntitlementsForPurchase,
 } from '@/lib/entitlements'
+import { markPurchaseDisputeRefunded } from '@/lib/purchase-disputes'
 import { log } from '@/server/logger'
 
 import {
@@ -300,6 +301,12 @@ export const refundEntitlements = inngest.createFunction(
 					},
 				)
 			}
+
+			// A refund overrides any dispute outcome. Recording it on the dispute
+			// keeps a later replayed status write from restoring access.
+			await step.run('mark dispute refunded', () =>
+				markPurchaseDisputeRefunded(purchase.id),
+			)
 
 			if (isBulk) {
 				const bulkResult = result as any // Type assertion since we know it's from refundBulkPurchaseEntitlements
