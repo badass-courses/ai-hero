@@ -19,6 +19,7 @@ vi.mock('@/lib/purchase-disputes', () => ({
 	applyDisputeEvent: mocks.apply,
 	syncDisputeDiscordRole: mocks.syncRole,
 }))
+vi.mock('@/lib/discord-utils', () => ({ discordRoleClient: 'discord-client' }))
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
 
 import {
@@ -107,6 +108,7 @@ describe('purchase dispute functions', () => {
 			purchaseId: base.purchaseId,
 			stripeDisputeId: base.stripeDisputeId,
 			discordRoleId: 'role-1',
+			discord: 'discord-client',
 		})
 	})
 

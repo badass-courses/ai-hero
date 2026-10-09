@@ -8,7 +8,7 @@ import {
 } from '@/db/schema'
 import { and, asc, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm'
 
-import { discordRoleClient, type DiscordRoleClient } from './discord-utils'
+import type { DiscordRoleClient } from './discord-utils'
 import { EntitlementSourceType } from './entitlements'
 import {
 	ACCESS_STATUSES,
@@ -512,13 +512,14 @@ export async function syncDisputeDiscordRole({
 	stripeDisputeId,
 	discordRoleId,
 	now = new Date(),
-	discord = discordRoleClient,
+	discord,
 }: {
 	purchaseId: string
 	stripeDisputeId: string
 	discordRoleId: string
 	now?: Date
-	discord?: DiscordRoleClient
+	/** Passed in so scripts can import this module outside the Next server. */
+	discord: DiscordRoleClient
 }): Promise<DiscordRoleSync> {
 	return db.transaction(async (tx): Promise<DiscordRoleSync> => {
 		const [purchase] = await tx

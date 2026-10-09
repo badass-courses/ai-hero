@@ -3,6 +3,7 @@ import {
 	PURCHASE_DISPUTE_OPENED_EVENT,
 } from '@/inngest/events/purchase-dispute'
 import { inngest } from '@/inngest/inngest.server'
+import { discordRoleClient } from '@/lib/discord-utils'
 import {
 	applyDisputeEvent,
 	syncDisputeDiscordRole,
@@ -33,6 +34,7 @@ async function syncDiscordRoles(
 					purchaseId: result.purchaseId,
 					stripeDisputeId,
 					discordRoleId,
+					discord: discordRoleClient,
 				}),
 			),
 		)
