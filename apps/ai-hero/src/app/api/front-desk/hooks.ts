@@ -111,7 +111,12 @@ export const hooks: FrontDeskHooks = {
 	pricingFacts(request) {
 		return Effect.runPromise(
 			buyerPricingFacts(request).pipe(
-				Effect.provide(pricingFactsSourceLayer((id) => hooks.chargeState(id))),
+				Effect.provide(
+					pricingFactsSourceLayer({
+						chargeState: (id) => hooks.chargeState(id),
+						stripe,
+					}),
+				),
 			),
 		)
 	},

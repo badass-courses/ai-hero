@@ -1,6 +1,5 @@
 import {
 	createFrontDeskHandler,
-	type ChargeState,
 	type PricingFacts,
 	type PricingRequest,
 } from '@ai-hero/front-desk-support'
@@ -11,6 +10,7 @@ import {
 	PricingFactsSource,
 	SourceUnavailable,
 	type PricingPurchaseRow,
+	type PricingSettlement,
 } from './pricing-facts'
 
 // Synthetic database: plain rows behind the same source port the live layer
@@ -25,9 +25,10 @@ interface SyntheticDb {
 	purchases?: PricingPurchaseRow[]
 	coupons?: Record<string, string | null>
 	prices?: { id: string; unitAmountCents: number }[]
-	charges?: Record<string, ChargeState>
+	settlements?: Record<string, PricingSettlement>
 	down?: SourceUnavailable['source'][]
 }
+type Session = NonNullable<PricingSettlement['session']>
 const purchase = (
 	over: Partial<PricingPurchaseRow> & Pick<PricingPurchaseRow, 'id'>,
 ): PricingPurchaseRow => ({
@@ -39,26 +40,59 @@ const purchase = (
 	couponId: null,
 	totalAmountCents: 25_000,
 	stripeChargeId: `ch_${over.id}`,
+	checkoutSessionId: `cs_${over.id}`,
+	stripeProductId: 'prod_cc',
 	...over,
 })
+/** A settled charge whose own session has one Crash Course line. */
 const charge = (
 	id: string,
-	over: Partial<ChargeState> = {},
-): [string, ChargeState] => [
-	`ch_${id}`,
-	{
-		stripeChargeId: `ch_${id}`,
-		amount: 25_000,
-		currency: 'usd',
-		amountRefunded: 0,
-		refundCount: 0,
-		disputed: false,
-		disputeStatus: null,
-		presentmentAmount: null,
-		presentmentCurrency: null,
-		...over,
-	},
-]
+	over: Partial<PricingSettlement['charge']> & {
+		session?: Partial<Session> | null
+		line?: Partial<Session['lines'][number]>
+	} = {},
+): [string, PricingSettlement] => {
+	const { session, line, ...charged } = over
+	return [
+		`ch_${id}`,
+		{
+			charge: {
+				id: `ch_${id}`,
+				amount: 25_000,
+				currency: 'usd',
+				paid: true,
+				captured: true,
+				status: 'succeeded',
+				amountRefunded: 0,
+				refundCount: 0,
+				disputed: false,
+				paymentIntentId: `pi_${id}`,
+				...charged,
+			},
+			session:
+				session === null
+					? null
+					: {
+							id: `cs_${id}`,
+							status: 'complete',
+							paymentStatus: 'paid',
+							paymentIntentId: `pi_${id}`,
+							linesComplete: true,
+							lines: [
+								{
+									stripeProductId: 'prod_cc',
+									quantity: 1,
+									currency: 'usd',
+									amountTotal: charged.amount ?? 25_000,
+									amountTax: 0,
+									...line,
+								},
+							],
+							...session,
+						},
+		},
+	]
+}
 const email = 'buyer@example.test'
 const ask: PricingRequest = {
 	email,
@@ -68,7 +102,7 @@ const ask: PricingRequest = {
 }
 
 function synthetic(data: SyntheticDb) {
-	const chargeReads: string[] = []
+	const stripeReads: string[] = []
 	const down = (source: SourceUnavailable['source']) =>
 		data.down?.includes(source)
 	const fail = (source: SourceUnavailable['source']) =>
@@ -106,20 +140,20 @@ function synthetic(data: SyntheticDb) {
 				: Effect.succeed(
 						data.prices ?? [{ id: 'price-test', unitAmountCents: 100_000 }],
 					),
-		chargeState: (id) => {
-			chargeReads.push(id)
-			return down('charge')
-				? fail('charge')
-				: Effect.succeed(data.charges?.[id] ?? null)
+		settlement: ({ stripeChargeId }) => {
+			stripeReads.push(stripeChargeId)
+			return down('settlement')
+				? fail('settlement')
+				: Effect.succeed(data.settlements?.[stripeChargeId] ?? null)
 		},
 	})
-	return { layer, chargeReads }
+	return { layer, stripeReads }
 }
 const run = (data: SyntheticDb, request: PricingRequest = ask) => {
-	const { layer, chargeReads } = synthetic(data)
+	const { layer, stripeReads } = synthetic(data)
 	return Effect.runPromise(
 		buyerPricingFacts(request).pipe(Effect.provide(layer)),
-	).then((facts) => ({ facts: facts!, chargeReads }))
+	).then((facts) => ({ facts: facts!, stripeReads }))
 }
 const buyer = { users: { [email]: 'user-test' } }
 const creditOf = async (data: SyntheticDb) =>
@@ -179,25 +213,31 @@ describe('buyerPricingFacts', () => {
 					stripeChargeId: null,
 				}),
 			],
-			charges: Object.fromEntries([charge('cc')]),
+			settlements: Object.fromEntries([charge('cc')]),
 		})
 		for (const fact of Object.values(facts.facts))
 			if ('value' in fact) expect(fact.sourceRefs.length).toBeGreaterThan(0)
 		expect(JSON.stringify(facts)).not.toContain(email)
 	})
 
-	it('an email with no account is a new buyer by evidence, not a gap', async () => {
-		const { facts } = await run({})
+	it('an email with no exact account match is IdentityUnverified, not an empty history', async () => {
+		const { facts, stripeReads } = await run({
+			users: { 'other@example.test': 'user-other' },
+			purchases: [purchase({ id: 'cc' })],
+		})
 		expect(facts.buyer).toEqual({
 			userId: null,
 			sourceRefs: ['ai-hero:user:none-for-email'],
 		})
-		expect(facts.facts).toMatchObject({
-			alumni: { value: 'none' },
-			credit: { value: null },
-			creditUse: { value: 'available' },
-			existingSeats: { value: 0 },
-		})
+		for (const field of [
+			'alumni',
+			'credit',
+			'creditUse',
+			'existingSeats',
+		] as const)
+			expect(facts.facts[field]).toEqual({ gap: 'IdentityUnverified' })
+		expect(facts.facts.order).toMatchObject({ value: 'individual' })
+		expect(stripeReads).toEqual([])
 	})
 
 	it.each(['user', 'purchases'] as const)(
@@ -285,29 +325,53 @@ describe('alumni', () => {
 })
 
 describe('Crash Course credit', () => {
-	it('is the settled USD charge amount, not the purchase total or presentment', async () => {
+	it('is the product line on the purchase session less tax, never the gross charge or Purchase total', async () => {
+		const [id, settled] = charge('cc', { amount: 30_000 })
+		const session = settled.session!
+		const withOtherLine: PricingSettlement = {
+			...settled,
+			session: {
+				...session,
+				lines: [
+					{ ...session.lines[0]!, amountTotal: 27_000, amountTax: 2_000 },
+					{
+						...session.lines[0]!,
+						stripeProductId: 'prod_other',
+						amountTotal: 3_000,
+					},
+				],
+			},
+		}
 		expect(
 			await creditOf({
-				purchases: [purchase({ id: 'cc', totalAmountCents: 25_000 })],
-				charges: Object.fromEntries([
-					charge('cc', {
-						amount: 25_000,
-						presentmentAmount: 18_000,
-						presentmentCurrency: 'eur',
-					}),
-				]),
+				purchases: [purchase({ id: 'cc', totalAmountCents: 26_000 })],
+				settlements: { [id]: withOtherLine },
 			}),
 		).toEqual({
 			value: { paid: 25_000, source: 'cc' },
-			sourceRefs: ['ai-hero:purchase:cc', 'stripe:charge:ch_cc'],
+			sourceRefs: [
+				'ai-hero:purchase:cc',
+				'stripe:charge:ch_cc',
+				'stripe:checkout-session:cs_cc#product:prod_cc',
+			],
 		})
+	})
+
+	it('accepts a coupon verified as special', async () => {
+		expect(
+			await creditOf({
+				purchases: [purchase({ id: 'cc', couponId: 'coupon-special' })],
+				coupons: { 'coupon-special': 'special' },
+				settlements: Object.fromEntries([charge('cc', { amount: 20_000 })]),
+			}),
+		).toMatchObject({ value: { paid: 20_000, source: 'cc' } })
 	})
 
 	it('takes one highest credit, never a sum', async () => {
 		expect(
 			await creditOf({
 				purchases: [purchase({ id: 'low' }), purchase({ id: 'high' })],
-				charges: Object.fromEntries([
+				settlements: Object.fromEntries([
 					charge('low', { amount: 12_300 }),
 					charge('high', { amount: 45_600 }),
 				]),
@@ -328,7 +392,7 @@ describe('Crash Course credit', () => {
 		['a bulk coupon', { couponId: 'coupon-bulk' }, 'bulk-coupon'],
 		['zero-paid', { totalAmountCents: 0, stripeChargeId: null }, 'zero-paid'],
 	] as const)('excludes %s without asking Stripe', async (_, over, why) => {
-		const { facts, chargeReads } = await run({
+		const { facts, stripeReads } = await run({
 			...buyer,
 			purchases: [purchase({ id: 'cc', ...over })],
 			coupons: { 'coupon-ppp': 'ppp', 'coupon-bulk': 'bulk' },
@@ -337,7 +401,7 @@ describe('Crash Course credit', () => {
 			value: null,
 			sourceRefs: [`ai-hero:purchase:cc#excluded:${why}`],
 		})
-		expect(chargeReads).toEqual([])
+		expect(stripeReads).toEqual([])
 	})
 
 	it.each([
@@ -351,7 +415,7 @@ describe('Crash Course credit', () => {
 		expect(
 			await creditOf({
 				purchases: [purchase({ id: 'cc' })],
-				charges: Object.fromEntries([charge('cc', over)]),
+				settlements: Object.fromEntries([charge('cc', over)]),
 			}),
 		).toEqual({
 			value: null,
@@ -363,7 +427,7 @@ describe('Crash Course credit', () => {
 		[
 			'partly refunded',
 			{
-				charges: Object.fromEntries([
+				settlements: Object.fromEntries([
 					charge('cc', { amountRefunded: 5_000, refundCount: 1 }),
 				]),
 			},
@@ -371,16 +435,16 @@ describe('Crash Course credit', () => {
 		],
 		[
 			'disputed',
-			{ charges: Object.fromEntries([charge('cc', { disputed: true })]) },
+			{ settlements: Object.fromEntries([charge('cc', { disputed: true })]) },
 			'PaymentAmbiguous',
 		],
 		[
 			'not USD',
-			{ charges: Object.fromEntries([charge('cc', { currency: 'eur' })]) },
+			{ settlements: Object.fromEntries([charge('cc', { currency: 'eur' })]) },
 			'PaymentAmbiguous',
 		],
-		['missing at Stripe', { charges: {} }, 'PaymentAmbiguous'],
-		['unreadable at Stripe', { down: ['charge'] }, 'FactsUnavailable'],
+		['missing at Stripe', { settlements: {} }, 'PaymentAmbiguous'],
+		['unreadable at Stripe', { down: ['settlement'] }, 'FactsUnavailable'],
 	] as const)('holds a charge that is %s', async (_, data, reason) => {
 		expect(
 			await creditOf({
@@ -388,6 +452,67 @@ describe('Crash Course credit', () => {
 				...data,
 			} as SyntheticDb),
 		).toEqual({ gap: reason })
+	})
+
+	it.each([
+		['not paid', { paid: false }],
+		['not captured', { captured: false }],
+		['pending', { status: 'pending' }],
+		['failed', { status: 'failed' }],
+		['without a payment intent', { paymentIntentId: null }],
+		['without its checkout session at Stripe', { session: null }],
+		['on an open session', { session: { status: 'open' } }],
+		['on an unpaid session', { session: { paymentStatus: 'unpaid' } }],
+		['on a different session', { session: { id: 'cs_other' } }],
+		[
+			'on a session for another payment',
+			{ session: { paymentIntentId: 'pi_other' } },
+		],
+		['with unread session lines', { session: { linesComplete: false } }],
+		['with no product line', { line: { stripeProductId: 'prod_other' } }],
+		['with no line product', { line: { stripeProductId: null } }],
+		['with a quantity other than one', { line: { quantity: 2 } }],
+		['with a non-USD line', { line: { currency: 'eur' } }],
+		['with a line above the charge', { line: { amountTotal: 30_000 } }],
+		[
+			'with tax above the line',
+			{ line: { amountTotal: 1_000, amountTax: 2_000 } },
+		],
+		[
+			'with two product lines',
+			{
+				session: {
+					lines: [1, 2].map(() => ({
+						stripeProductId: 'prod_cc',
+						quantity: 1,
+						currency: 'usd',
+						amountTotal: 10_000,
+						amountTax: 0,
+					})),
+				},
+			},
+		],
+	] as const)('holds a charge %s', async (_, over) => {
+		expect(
+			await creditOf({
+				purchases: [purchase({ id: 'cc' })],
+				settlements: Object.fromEntries([charge('cc', over as any)]),
+			}),
+		).toEqual({ gap: 'PaymentAmbiguous' })
+	})
+
+	it('excludes a zero product line', async () => {
+		expect(
+			await creditOf({
+				purchases: [purchase({ id: 'cc' })],
+				settlements: Object.fromEntries([
+					charge('cc', { line: { amountTotal: 0 } }),
+				]),
+			}),
+		).toEqual({
+			value: null,
+			sourceRefs: ['ai-hero:purchase:cc#excluded:zero-paid'],
+		})
 	})
 
 	it.each([
@@ -400,10 +525,31 @@ describe('Crash Course credit', () => {
 			'money but no Stripe charge',
 			purchase({ id: 'cc', stripeChargeId: null }),
 		],
-	])('holds a purchase with %s', async (_, row) => {
-		expect(await creditOf({ purchases: [row] })).toEqual({
-			gap: 'PaymentAmbiguous',
+		[
+			'a coupon with no MerchantCoupon or type',
+			purchase({ id: 'cc', couponId: 'coupon-untyped' }),
+		],
+		[
+			'a coupon type it does not recognize',
+			purchase({ id: 'cc', couponId: 'coupon-new' }),
+		],
+		[
+			'no checkout session link',
+			purchase({ id: 'cc', checkoutSessionId: null }),
+		],
+		[
+			'no Stripe product on its charge',
+			purchase({ id: 'cc', stripeProductId: null }),
+		],
+	])('holds a purchase with %s, without asking Stripe', async (_, row) => {
+		const { facts, stripeReads } = await run({
+			...buyer,
+			purchases: [row],
+			coupons: { 'coupon-untyped': null, 'coupon-new': 'mystery' },
+			settlements: Object.fromEntries([charge('cc')]),
 		})
+		expect(facts.facts.credit).toEqual({ gap: 'PaymentAmbiguous' })
+		expect(stripeReads).toEqual([])
 	})
 
 	it('holds when the coupon source is down', async () => {
@@ -419,7 +565,7 @@ describe('Crash Course credit', () => {
 		expect(
 			await creditOf({
 				purchases: [purchase({ id: 'good' }), purchase({ id: 'bad' })],
-				charges: Object.fromEntries([
+				settlements: Object.fromEntries([
 					charge('good'),
 					charge('bad', { disputed: true }),
 				]),
@@ -467,6 +613,22 @@ describe('team seats and credit use', () => {
 		expect(facts.facts.existingSeats).toMatchObject({ value: seats })
 	})
 
+	it('holds a seat total above front-desk bounds', async () => {
+		const { facts } = await run({
+			...buyer,
+			purchases: [
+				bulk('a', { bulkSeats: 60_000 }),
+				bulk('b', { bulkCouponId: 'bulk-b', bulkSeats: 40_001 }),
+			],
+		})
+		expect(facts.facts.existingSeats).toEqual({ gap: 'PaymentAmbiguous' })
+		const max = await run({
+			...buyer,
+			purchases: [bulk('a', { bulkSeats: 100_000 })],
+		})
+		expect(max.facts.facts.existingSeats).toMatchObject({ value: 100_000 })
+	})
+
 	it('holds seat counts it cannot read', async () => {
 		const { facts } = await run({
 			...buyer,
@@ -475,12 +637,26 @@ describe('team seats and credit use', () => {
 		expect(facts.facts.existingSeats).toEqual({ gap: 'PaymentAmbiguous' })
 	})
 
-	it('holds credit use once the buyer already owns the product, until a redemption ledger exists', async () => {
-		const owns = await run({
-			...buyer,
-			purchases: [purchase({ id: 'mine', productId: C5 })],
+	it.each(['Valid', 'Restricted', 'Refunded', 'Banned', 'Disputed'])(
+		'holds credit use for any individual target purchase, even %s, until a redemption ledger exists',
+		async (status) => {
+			const { facts } = await run({
+				...buyer,
+				purchases: [purchase({ id: 'mine', productId: C5, status })],
+			})
+			expect(facts.facts.creditUse).toEqual({ gap: 'FactsUnavailable' })
+		},
+	)
+
+	it('allows credit use only with no individual target purchase history', async () => {
+		const none = await run({ ...buyer, purchases: [purchase({ id: 'cc' })] })
+		expect(none.facts.facts.creditUse).toEqual({
+			value: 'available',
+			sourceRefs: [
+				'ai-hero:purchases:user:user-test',
+				'ai-hero:credit-redemption-ledger:none-yet',
+			],
 		})
-		expect(owns.facts.facts.creditUse).toEqual({ gap: 'FactsUnavailable' })
 		const seat = await run({
 			...buyer,
 			purchases: [
@@ -541,7 +717,7 @@ describe('through the front-desk facade', () => {
 					bulkSeats: 4,
 				}),
 			],
-			charges: Object.fromEntries([charge('cc')]),
+			settlements: Object.fromEntries([charge('cc')]),
 		}
 		const exit = await read(data, ask)
 		expect(exit._tag).toBe('Success')

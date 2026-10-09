@@ -20,7 +20,15 @@ export const { GET, POST } = createFrontDeskHandler(hooks, {
 
 This repo computes no price and holds no pricing policy. front-desk owns the rules and calls this RPC. The `PricingBuyerFacts` type is a structural copy of the fields front-desk reads, nothing more. The facade decodes hook output against it, drops anything extra, and fails with `INVALID_HOOK_RESULT` if the facts answer a different product, quantity, or order kind. A product the app reports no facts for fails with `PRODUCT_NOT_SUPPORTED`.
 
-`test/fixtures/pricing-facts.json` is the shared compatibility fixture. `test/pricing-facts.test.ts` decodes it here, and front-desk decodes the same file with its own `BuyerFacts` schema.
+Bounds match front-desk's refinements: credit cents are nonnegative safe integers, order quantity is 1 to 10,000, existing seats are 0 to 100,000, and a PPP percent is 0 to 100.
+
+The shared compatibility fixtures are `test/fixtures/pricing-facts.json`, one full response, and `test/fixtures/buyer-facts-boundaries.json`, cases marked `valid` or not. They cover max seats, every gap kind, unavailable facts, and out-of-range values. `test/pricing-facts.test.ts` checks both here, and front-desk can decode each `facts` with its own `BuyerFacts` schema.
+
+The app reports facts only where it has evidence:
+
+- An email with no exact account match is `IdentityUnverified` for ownership facts. It is never treated as an empty history.
+- A Crash Course credit is the matching product line on the purchase's own Checkout Session, less tax, from a paid, captured, succeeded charge. If any link is missing, the credit is `PaymentAmbiguous`.
+- Credit use holds for any individual purchase of the target product until a redemption ledger exists.
 
 Wire format, one request per POST:
 

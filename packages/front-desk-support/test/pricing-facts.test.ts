@@ -15,6 +15,18 @@ const fixture: PricingFacts = JSON.parse(
 		'utf8',
 	),
 )
+const boundaries: {
+	readonly cases: readonly {
+		readonly name: string
+		readonly valid: boolean
+		readonly facts: PricingFacts['facts']
+	}[]
+} = JSON.parse(
+	await readFile(
+		new URL('./fixtures/buyer-facts-boundaries.json', import.meta.url),
+		'utf8',
+	),
+)
 const key = 'synthetic-test-key'
 const ask = {
 	email: 'buyer@example.test',
@@ -113,6 +125,24 @@ test('rejects facts outside the structural BuyerFacts shape', async () => {
 			JSON.stringify(facts),
 		)
 		assert.doesNotMatch(JSON.stringify(result), /c9|101|Unknown/)
+	}
+})
+
+test('shared boundary cases decode exactly when front-desk would accept them', async () => {
+	assert.ok(boundaries.cases.some((c) => c.valid))
+	assert.ok(boundaries.cases.some((c) => !c.valid))
+	for (const boundary of boundaries.cases) {
+		const { order } = boundary.facts
+		const orderKind = 'value' in order ? order.value : 'individual'
+		const result = await exit(
+			async () => ({ ...fixture, facts: boundary.facts }),
+			{ ...ask, orderKind },
+		)
+		if (boundary.valid) {
+			assert.equal(result._tag, 'Success', boundary.name)
+			assert.deepEqual(result.value.facts, boundary.facts, boundary.name)
+		} else
+			assert.equal(failureCode(result), 'INVALID_HOOK_RESULT', boundary.name)
 	}
 })
 

@@ -1,5 +1,4 @@
 import type {
-	ChargeState,
 	FactGap,
 	PricingBuyerFacts,
 	PricingFact,
@@ -22,6 +21,10 @@ export const ALUMNI_PRODUCTS = {
 	'product-7t9ek': 'c3',
 	'product-pqkk5': 'c4',
 } as const
+/** MerchantCoupon types that prove a coupon was neither PPP nor bulk. */
+export const VERIFIED_COUPON_TYPES: ReadonlySet<string> = new Set(['special'])
+/** front-desk's upper bound for the existingSeats fact. */
+export const MAX_EXISTING_SEATS = 100_000
 
 export interface PricingPurchaseRow {
 	readonly id: string
@@ -35,6 +38,41 @@ export interface PricingPurchaseRow {
 	readonly totalAmountCents: number
 	/** MerchantCharge identifier, only when it is a Stripe charge id. */
 	readonly stripeChargeId: string | null
+	/** The purchase's own MerchantSession identifier, when it is a Checkout Session. */
+	readonly checkoutSessionId: string | null
+	/** Stripe product of the purchase's MerchantCharge, when it maps to this product. */
+	readonly stripeProductId: string | null
+}
+/** Settlement evidence for one charge and the Checkout Session that made it. */
+export interface PricingSettlement {
+	readonly charge: {
+		readonly id: string
+		readonly amount: number
+		readonly currency: string
+		readonly paid: boolean
+		readonly captured: boolean
+		readonly status: string
+		readonly amountRefunded: number
+		readonly refundCount: number
+		readonly disputed: boolean
+		readonly paymentIntentId: string | null
+	}
+	/** Null when Stripe has no such session. */
+	readonly session: {
+		readonly id: string
+		readonly status: string | null
+		readonly paymentStatus: string
+		readonly paymentIntentId: string | null
+		/** False when Stripe has more lines than were read. */
+		readonly linesComplete: boolean
+		readonly lines: readonly {
+			readonly stripeProductId: string | null
+			readonly quantity: number | null
+			readonly currency: string
+			readonly amountTotal: number
+			readonly amountTax: number
+		}[]
+	} | null
 }
 export interface PricingPriceRow {
 	readonly id: string
@@ -42,7 +80,7 @@ export interface PricingPriceRow {
 }
 
 export class SourceUnavailable extends Data.TaggedError('SourceUnavailable')<{
-	readonly source: 'user' | 'purchases' | 'coupons' | 'price' | 'charge'
+	readonly source: 'user' | 'purchases' | 'coupons' | 'price' | 'settlement'
 }> {}
 /** No single active price, so no merchant unit to price against. */
 export class MerchantPriceUnavailable extends Data.TaggedError(
@@ -57,16 +95,19 @@ export interface PricingFactsSourceShape {
 		userId: string,
 		productIds: readonly string[],
 	) => Effect.Effect<readonly PricingPurchaseRow[], SourceUnavailable>
-	/** MerchantCoupon type per coupon id. A missing coupon has no entry. */
+	/** MerchantCoupon type per coupon id. A missing coupon has no entry; a
+	 * missing MerchantCoupon or type is null. */
 	readonly couponTypes: (
 		couponIds: readonly string[],
 	) => Effect.Effect<ReadonlyMap<string, string | null>, SourceUnavailable>
 	readonly activePrices: (
 		productId: string,
 	) => Effect.Effect<readonly PricingPriceRow[], SourceUnavailable>
-	readonly chargeState: (
-		stripeChargeId: string,
-	) => Effect.Effect<ChargeState | null, SourceUnavailable>
+	/** Null when Stripe has no such charge. */
+	readonly settlement: (input: {
+		readonly stripeChargeId: string
+		readonly checkoutSessionId: string
+	}) => Effect.Effect<PricingSettlement | null, SourceUnavailable>
 }
 export class PricingFactsSource extends Context.Tag(
 	'ai-hero/front-desk/PricingFactsSource',
@@ -124,23 +165,26 @@ export function existingSeatsFact(
 	for (const row of bulk) seats.set(row.bulkCouponId!, row.bulkSeats)
 	if ([...seats.values()].some((count) => count === null || count < 0))
 		return gap('PaymentAmbiguous')
+	const total = [...seats.values()].reduce<number>(
+		(sum, count) => sum + (count ?? 0),
+		0,
+	)
+	if (total > MAX_EXISTING_SEATS) return gap('PaymentAmbiguous')
 	return known(
-		[...seats.values()].reduce<number>((sum, count) => sum + (count ?? 0), 0),
+		total,
 		bulk.length ? bulk.map((row) => purchaseRef(row.id)) : [scanRef],
 	)
 }
 
-/** There is no credit redemption ledger yet. An existing individual purchase
- * of this product may already have used a credit, so it holds. */
+/** There is no credit redemption ledger yet. Any individual purchase of this
+ * product, in any status, may have spent a credit. A refund does not unspend
+ * it, so the fact holds until a ledger can say. */
 export function creditUseFact(
 	rows: readonly PricingPurchaseRow[],
 	productId: string,
 	scanRef: string,
 ): PricingBuyerFacts['creditUse'] {
-	return rows.some(
-		(row) =>
-			row.productId === productId && CURRENT.has(row.status) && individual(row),
-	)
+	return rows.some((row) => row.productId === productId && individual(row))
 		? gap('FactsUnavailable')
 		: known('available', [scanRef, 'ai-hero:credit-redemption-ledger:none-yet'])
 }
@@ -160,13 +204,19 @@ const excluded = (row: PricingPurchaseRow, why: string): CreditCandidate => ({
 	ref: `${purchaseRef(row.id)}#excluded:${why}`,
 })
 
+const ambiguous: CreditCandidate = { kind: 'unknown', gap: 'PaymentAmbiguous' }
+
 /** DB checks for one Crash Course purchase. Only a survivor needs Stripe. */
 export function purchaseCandidate(
 	row: PricingPurchaseRow,
 	couponType: string | null | undefined,
 ):
 	| CreditCandidate
-	| { readonly kind: 'charge'; readonly stripeChargeId: string } {
+	| {
+			readonly kind: 'charge'
+			readonly stripeChargeId: string
+			readonly checkoutSessionId: string
+	  } {
 	if (row.status === 'Restricted') return excluded(row, 'restricted-ppp')
 	if (row.status === 'Refunded') return excluded(row, 'refunded')
 	if (row.status === 'Banned') return excluded(row, 'banned')
@@ -175,45 +225,81 @@ export function purchaseCandidate(
 	if (row.bulkCouponId) return excluded(row, 'bulk')
 	if (row.redeemedBulkCouponId) return excluded(row, 'redeemed-bulk-seat')
 	if (row.couponId) {
-		if (couponType === undefined)
-			return { kind: 'unknown', gap: 'PaymentAmbiguous' }
 		// Never infer PPP from the amount. Only the coupon's own type counts.
 		if (couponType === 'ppp') return excluded(row, 'ppp-coupon')
 		if (couponType === 'bulk') return excluded(row, 'bulk-coupon')
+		// A missing coupon, MerchantCoupon or type proves nothing about origin.
+		if (!couponType || !VERIFIED_COUPON_TYPES.has(couponType)) return ambiguous
 	}
 	if (!row.stripeChargeId)
-		return row.totalAmountCents === 0
-			? excluded(row, 'zero-paid')
-			: { kind: 'unknown', gap: 'PaymentAmbiguous' }
-	return { kind: 'charge', stripeChargeId: row.stripeChargeId }
+		return row.totalAmountCents === 0 ? excluded(row, 'zero-paid') : ambiguous
+	if (!row.checkoutSessionId || !row.stripeProductId) return ambiguous
+	return {
+		kind: 'charge',
+		stripeChargeId: row.stripeChargeId,
+		checkoutSessionId: row.checkoutSessionId,
+	}
 }
 
-/** The settled Stripe charge behind a purchase that passed the DB checks. */
+/**
+ * The product money a purchase that passed the DB checks actually settled.
+ * The charge must be paid, captured and succeeded, and the amount is the one
+ * Crash Course line on the purchase's own Checkout Session, less its tax.
+ * Never the gross charge, and never the rounded Purchase total.
+ */
 export function chargeCandidate(
 	row: PricingPurchaseRow,
-	charge: Either.Either<ChargeState | null, SourceUnavailable>,
+	settlement: Either.Either<PricingSettlement | null, SourceUnavailable>,
 ): CreditCandidate {
-	if (Either.isLeft(charge)) return { kind: 'unknown', gap: 'FactsUnavailable' }
-	const state = charge.right
+	if (Either.isLeft(settlement))
+		return { kind: 'unknown', gap: 'FactsUnavailable' }
+	if (!settlement.right) return ambiguous
+	const { charge, session } = settlement.right
 	if (
-		!state ||
-		state.stripeChargeId !== row.stripeChargeId ||
-		state.currency !== 'usd' ||
-		state.disputed
+		charge.id !== row.stripeChargeId ||
+		charge.currency !== 'usd' ||
+		charge.disputed
 	)
-		return { kind: 'unknown', gap: 'PaymentAmbiguous' }
-	if (state.amount === 0) return excluded(row, 'zero-paid')
-	if (state.amountRefunded >= state.amount) return excluded(row, 'refunded')
+		return ambiguous
+	if (charge.amount === 0) return excluded(row, 'zero-paid')
+	if (charge.amountRefunded >= charge.amount) return excluded(row, 'refunded')
 	// A partial refund leaves no clean paid amount to credit.
-	if (state.amountRefunded > 0 || state.refundCount > 0)
-		return { kind: 'unknown', gap: 'PaymentAmbiguous' }
-	// Settled USD product money. Checkout collects no tax, and presentment
-	// currency is ignored on purpose.
+	if (charge.amountRefunded > 0 || charge.refundCount > 0) return ambiguous
+	if (!charge.paid || !charge.captured || charge.status !== 'succeeded')
+		return ambiguous
+	if (
+		!session ||
+		session.id !== row.checkoutSessionId ||
+		session.status !== 'complete' ||
+		session.paymentStatus !== 'paid' ||
+		!charge.paymentIntentId ||
+		session.paymentIntentId !== charge.paymentIntentId ||
+		!session.linesComplete
+	)
+		return ambiguous
+	const lines = session.lines.filter(
+		(line) => line.stripeProductId === row.stripeProductId,
+	)
+	const [line] = lines
+	if (lines.length !== 1 || !line || line.quantity !== 1) return ambiguous
+	const paid = line.amountTotal - line.amountTax
+	if (
+		line.currency !== 'usd' ||
+		!Number.isSafeInteger(paid) ||
+		paid < 0 ||
+		paid > charge.amount
+	)
+		return ambiguous
+	if (paid === 0) return excluded(row, 'zero-paid')
 	return {
 		kind: 'eligible',
-		paid: state.amount,
+		paid,
 		purchaseId: row.id,
-		refs: [purchaseRef(row.id), `stripe:charge:${state.stripeChargeId}`],
+		refs: [
+			purchaseRef(row.id),
+			`stripe:charge:${charge.id}`,
+			`stripe:checkout-session:${session.id}#product:${row.stripeProductId}`,
+		],
 	}
 }
 
@@ -263,8 +349,8 @@ const creditFor = (
 				row.couponId ? types.right.get(row.couponId) : null,
 			)
 			return checked.kind === 'charge'
-				? Effect.either(source.chargeState(checked.stripeChargeId)).pipe(
-						Effect.map((charge) => chargeCandidate(row, charge)),
+				? Effect.either(source.settlement(checked)).pipe(
+						Effect.map((settlement) => chargeCandidate(row, settlement)),
 					)
 				: Effect.succeed(checked)
 		})
@@ -334,19 +420,20 @@ export const buyerPricingFacts = (
 		const user = yield* Effect.either(source.userByEmail(request.email))
 		if (Either.isLeft(user))
 			return result({ userId: null, sourceRefs: [] }, unavailable)
-		if (!user.right) {
-			const none = ['ai-hero:user:none-for-email']
+		// An exact-email account match stands for that account. A miss is not a
+		// verified new buyer: the person may own history under another address.
+		// No alias guessing.
+		if (!user.right)
 			return result(
-				{ userId: null, sourceRefs: none },
+				{ userId: null, sourceRefs: ['ai-hero:user:none-for-email'] },
 				{
 					...pending,
-					alumni: known('none', none),
-					credit: known(null, none),
-					creditUse: known('available', none),
-					existingSeats: known(0, none),
+					alumni: gap('IdentityUnverified'),
+					credit: gap('IdentityUnverified'),
+					creditUse: gap('IdentityUnverified'),
+					existingSeats: gap('IdentityUnverified'),
 				},
 			)
-		}
 		const userId = user.right.id
 		const buyer = { userId, sourceRefs: [`ai-hero:user:${userId}`] }
 		const productIds = [

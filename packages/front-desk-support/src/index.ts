@@ -140,7 +140,12 @@ const FAILURE_CODES = [
 type FailureCode = (typeof FAILURE_CODES)[number]
 const Failure = Schema.Struct({ code: Schema.Literals(FAILURE_CODES) })
 
-const Cents = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
+// Bounds match front-desk's own refinements: whole nonnegative safe-integer
+// cents, 1 to 10,000 seats per order, 0 to 100,000 existing seats, 0 to 100.
+const Cents = Schema.Int.check(
+	Schema.isGreaterThanOrEqualTo(0),
+	Schema.makeFilter(Number.isSafeInteger),
+)
 const Quantity = Schema.Int.check(
 	Schema.isBetween({ minimum: 1, maximum: 10_000 }),
 )
@@ -165,7 +170,9 @@ const BuyerFactsSchema = Schema.Struct({
 	creditUse: fact(
 		Schema.Literals(['available', 'reserved-by-this-attempt', 'spent']),
 	),
-	existingSeats: fact(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+	existingSeats: fact(
+		Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100_000 })),
+	),
 	legend: fact(Schema.Literals(['no', 'verified'])),
 	order: fact(Schema.Literals(['individual', 'team'])),
 	ppp: fact(
