@@ -160,6 +160,72 @@ describe('decideDisputeTransition', () => {
 		})
 	})
 
+	it('an opened payload upgrades an unknown original status, a closed one never does', () => {
+		const unknown = record({ originalStatus: null })
+		expect(
+			decide({
+				event: 'opened',
+				record: unknown,
+				purchaseStatus: 'Disputed',
+				eventPreviousStatus: 'Restricted',
+			}),
+		).toMatchObject({ kind: 'repaired', originalStatus: 'Restricted' })
+		expect(
+			decide({
+				event: 'opened',
+				record: record({ state: 'won', originalStatus: null }),
+				purchaseStatus: 'Disputed',
+				eventPreviousStatus: 'Restricted',
+			}),
+		).toMatchObject({ status: 'Restricted' })
+		expect(
+			decide({
+				event: 'won',
+				record: unknown,
+				purchaseStatus: 'Disputed',
+				eventPreviousStatus: 'Valid',
+			}),
+		).toMatchObject({
+			originalStatus: null,
+			statusHeld: 'original-status-unknown',
+		})
+	})
+
+	it('a Banned status during a dispute stops restoration and status writes', () => {
+		expect(
+			decide({ event: 'won', record: record(), purchaseStatus: 'Banned' }),
+		).toMatchObject({
+			to: 'won',
+			restore: false,
+			restoreHeld: 'banned',
+			status: null,
+			markBanned: true,
+		})
+		expect(
+			decide({
+				event: 'won',
+				record: record({ bannedAt: '2026-10-10T00:00:00.000Z' }),
+				purchaseStatus: 'Disputed',
+			}),
+		).toMatchObject({ restore: false, status: null })
+		expect(
+			decide({ event: 'opened', record: record(), purchaseStatus: 'Banned' }),
+		).toMatchObject({ status: null })
+	})
+
+	it('retries a held buyer block on later events', () => {
+		expect(
+			decide({
+				event: 'reconcile',
+				record: record({
+					state: 'lost',
+					buyer: { status: 'held', reason: 'transfer-chain-ambiguous' },
+				}),
+				purchaseStatus: 'Disputed',
+			}),
+		).toMatchObject({ kind: 'applied', blockBuyer: true })
+	})
+
 	it('ignores other disputes, Banned purchases and reconcile without a record', () => {
 		expect(
 			decide({ event: 'won', record: record({ stripeDisputeId: 'du_2' }) }),

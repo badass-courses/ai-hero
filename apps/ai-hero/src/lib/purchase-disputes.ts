@@ -2,11 +2,12 @@ import { db, type DbExecutor } from '@/db'
 import {
 	entitlements,
 	entitlementTypes,
+	merchantCharge,
 	purchases,
 	purchaseUserTransfer,
 	users,
 } from '@/db/schema'
-import { and, asc, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm'
 
 import type { DiscordRoleClient } from './discord-utils'
 import { EntitlementSourceType } from './entitlements'
@@ -171,50 +172,86 @@ export type DisputeBuyer =
 	| { kind: 'resolved'; userId: string; transferred: boolean }
 	| { kind: 'held'; reason: string }
 
+/** Transfer states in which ownership has moved to the target. */
+const HANDOFF_TRANSFER_STATES = ['VERIFIED', 'CONFIRMED', 'COMPLETED']
+/** Transfer states in which ownership has not moved. */
+const NON_HANDOFF_TRANSFER_STATES = [
+	'AVAILABLE',
+	'INITIATED',
+	'CANCELED',
+	'EXPIRED',
+]
+
 /**
  * The user who paid, which is not always the current owner: a transfer moves
- * the purchase (and its merchant charge and customer) to the recipient. Each
- * completed transfer leaves a `purchaseUserTransfer` row, so the buyer is the
- * first source of an unbroken chain ending at the current owner. Anything
- * else is ambiguous and holds the block for an operator.
+ * the purchase to the recipient. Support transfers commit the new owner with
+ * a VERIFIED row and mark it COMPLETED later; legacy rows carry CONFIRMED.
+ * All three are handoffs. The buyer is the first source of an unbroken chain
+ * of handoffs ending at the current owner.
+ *
+ * Every transfer row is read and classified, so a filter can never turn
+ * history into "no history". With no rows at all, the owner is the buyer
+ * only if the merchant charge still names them. Anything else holds the
+ * block for an operator, and a held block is retried on later events.
  */
 export async function resolveDisputeBuyer(
 	executor: DbExecutor,
-	purchase: Pick<PurchaseRow, 'id' | 'userId'>,
+	purchase: Pick<PurchaseRow, 'id' | 'userId' | 'merchantChargeId'>,
 ): Promise<DisputeBuyer> {
 	if (!purchase.userId) return { kind: 'held', reason: 'no-owner' }
-	const transfers = await executor
+	const rows = await executor
 		.select({
+			transferState: purchaseUserTransfer.transferState,
 			sourceUserId: purchaseUserTransfer.sourceUserId,
 			targetUserId: purchaseUserTransfer.targetUserId,
+			createdAt: purchaseUserTransfer.createdAt,
+			confirmedAt: purchaseUserTransfer.confirmedAt,
 			completedAt: purchaseUserTransfer.completedAt,
 		})
 		.from(purchaseUserTransfer)
-		.where(
-			and(
-				eq(purchaseUserTransfer.purchaseId, purchase.id),
-				eq(purchaseUserTransfer.transferState, 'COMPLETED'),
-			),
-		)
-		.orderBy(
-			asc(purchaseUserTransfer.completedAt),
-			asc(purchaseUserTransfer.createdAt),
-		)
-	if (transfers.length === 0)
-		return { kind: 'resolved', userId: purchase.userId, transferred: false }
+		.where(eq(purchaseUserTransfer.purchaseId, purchase.id))
 
-	const chained = transfers.every(
-		(transfer, index) =>
-			transfer.completedAt &&
-			transfer.targetUserId &&
-			(index === 0 ||
-				transfer.sourceUserId === transfers[index - 1]!.targetUserId),
+	if (
+		rows.some(
+			(row) =>
+				!HANDOFF_TRANSFER_STATES.includes(row.transferState) &&
+				!NON_HANDOFF_TRANSFER_STATES.includes(row.transferState),
+		)
 	)
-	if (!chained || transfers.at(-1)!.targetUserId !== purchase.userId)
+		return { kind: 'held', reason: 'transfer-state-unknown' }
+
+	const handoffs = rows
+		.filter((row) => HANDOFF_TRANSFER_STATES.includes(row.transferState))
+		.map((row) => ({
+			...row,
+			at: (row.completedAt ?? row.confirmedAt ?? row.createdAt)?.getTime(),
+		}))
+		.sort((a, b) => (a.at ?? 0) - (b.at ?? 0))
+
+	if (handoffs.length === 0) {
+		if (rows.length === 0 && purchase.merchantChargeId) {
+			const [charge] = await executor
+				.select({ userId: merchantCharge.userId })
+				.from(merchantCharge)
+				.where(eq(merchantCharge.id, purchase.merchantChargeId))
+			if (!charge || charge.userId !== purchase.userId)
+				return { kind: 'held', reason: 'charge-owner-mismatch' }
+		}
+		return { kind: 'resolved', userId: purchase.userId, transferred: false }
+	}
+
+	const chained = handoffs.every(
+		(handoff, index) =>
+			handoff.at !== undefined &&
+			handoff.targetUserId &&
+			(index === 0 ||
+				handoff.sourceUserId === handoffs[index - 1]!.targetUserId),
+	)
+	if (!chained || handoffs.at(-1)!.targetUserId !== purchase.userId)
 		return { kind: 'held', reason: 'transfer-chain-ambiguous' }
 	return {
 		kind: 'resolved',
-		userId: transfers[0]!.sourceUserId,
+		userId: handoffs[0]!.sourceUserId,
 		transferred: true,
 	}
 }
@@ -258,6 +295,7 @@ export type DisputePlan =
 			status: PurchaseStatus
 			plannedStatus: PurchaseStatus
 			statusHeld?: string
+			restoreHeld?: string
 			from: DisputeState | null
 			to: DisputeState
 			originalStatus: string | null
@@ -324,6 +362,7 @@ async function planDisputeEvent(
 			status: purchase.status,
 			plannedStatus: decision.status ?? purchase.status,
 			...(decision.statusHeld && { statusHeld: decision.statusHeld }),
+			...(decision.restoreHeld && { restoreHeld: decision.restoreHeld }),
 			from: decision.from,
 			to: decision.to,
 			originalStatus: decision.originalStatus,
@@ -391,8 +430,11 @@ export async function applyDisputeEvent({
 			? {
 					...record,
 					state: plan.to,
+					originalStatus:
+						plan.originalStatus as PurchaseDisputeRecord['originalStatus'],
 					...(plan.to !== plan.from && { closedAt: at }),
 					...(refunded && !record.refundedAt && { refundedAt: at }),
+					...(plan.status === 'Banned' && !record.bannedAt && { bannedAt: at }),
 				}
 			: {
 					stripeDisputeId: input.stripeDisputeId,
@@ -500,6 +542,65 @@ export type DiscordRoleSync =
 			verified: boolean
 	  }
 
+/** What the database says one role should be, read under the row lock. */
+async function discordRolePlan(
+	tx: DbExecutor,
+	purchaseId: string,
+	stripeDisputeId: string,
+	discordRoleId: string,
+) {
+	const [purchase] = await tx
+		.select({ userId: purchases.userId, fields: purchases.fields })
+		.from(purchases)
+		.where(eq(purchases.id, purchaseId))
+		.for('update')
+	const record = readDisputeRecord(purchase?.fields)
+	if (
+		!purchase?.userId ||
+		record?.stripeDisputeId !== stripeDisputeId ||
+		!record.discordRoleIds.includes(discordRoleId)
+	)
+		return null
+
+	const roleTypes = await discordRoleTypeIds(tx)
+	const [grant] = roleTypes.length
+		? await tx
+				.select({ id: entitlements.id })
+				.from(entitlements)
+				.where(
+					and(
+						eq(entitlements.userId, purchase.userId),
+						inArray(entitlements.entitlementType, roleTypes),
+						isNull(entitlements.deletedAt),
+						sql`JSON_UNQUOTE(JSON_EXTRACT(${entitlements.metadata}, '$.discordRoleId')) = ${discordRoleId}`,
+					),
+				)
+				.limit(1)
+		: []
+	// A recorded removal, or an attempted one whose outcome was never recorded.
+	const removedByDispute =
+		['removed', 'restored'].includes(
+			record.discordSync[discordRoleId]?.result ?? '',
+		) || record.discordAttempts?.[discordRoleId]?.action === 'remove'
+	return {
+		userId: purchase.userId,
+		record,
+		granted: Boolean(grant),
+		removedByDispute,
+	}
+}
+
+async function writeDisputeRecord(
+	tx: DbExecutor,
+	purchaseId: string,
+	record: PurchaseDisputeRecord,
+) {
+	await tx
+		.update(purchases)
+		.set({ fields: setJsonField(purchases.fields, '$.dispute', record) })
+		.where(eq(purchases.id, purchaseId))
+}
+
 /**
  * Bring one Discord role tied to a dispute in line with the database as it
  * stands now, not with a list cached when an earlier step ran:
@@ -508,9 +609,13 @@ export type DiscordRoleSync =
  * - A live grant exists and this dispute removed the role: put it back.
  * - A live grant exists otherwise (another purchase): leave it alone.
  *
- * The purchase row lock is held across the Discord calls so a concurrent win
- * or loss cannot change the answer between the read and the write. Discord
- * failures throw, roll back the result record, and let Inngest retry.
+ * Discord is outside the database transaction, so a change is recorded as an
+ * attempt and committed before the remote call. If Discord applies it and
+ * anything after fails, the retry still knows this dispute removed the role.
+ * The result is written in a fresh locked transaction that rechecks the plan;
+ * if a win or loss landed meanwhile it throws, and the retry converges.
+ * A failed readback after an accepted change records the result as
+ * unverified, which stays pending until a later sync verifies it.
  */
 export async function syncDisputeDiscordRole({
 	purchaseId,
@@ -526,97 +631,102 @@ export async function syncDisputeDiscordRole({
 	/** Passed in so scripts can import this module outside the Next server. */
 	discord: DiscordRoleClient
 }): Promise<DiscordRoleSync> {
-	return db.transaction(async (tx): Promise<DiscordRoleSync> => {
-		const [purchase] = await tx
-			.select({ userId: purchases.userId, fields: purchases.fields })
-			.from(purchases)
-			.where(eq(purchases.id, purchaseId))
-			.for('update')
-		const record = readDisputeRecord(purchase?.fields)
-		if (
-			!purchase?.userId ||
-			record?.stripeDisputeId !== stripeDisputeId ||
-			!record.discordRoleIds.includes(discordRoleId)
-		)
-			return { kind: 'skipped', reason: 'role-not-tracked' }
+	const at = now.toISOString()
+	const plan = await db.transaction((tx) =>
+		discordRolePlan(tx, purchaseId, stripeDisputeId, discordRoleId),
+	)
+	if (!plan) return { kind: 'skipped', reason: 'role-not-tracked' }
 
-		const roleTypes = await discordRoleTypeIds(tx)
-		const [grant] = roleTypes.length
-			? await tx
-					.select({ id: entitlements.id })
-					.from(entitlements)
-					.where(
-						and(
-							eq(entitlements.userId, purchase.userId),
-							inArray(entitlements.entitlementType, roleTypes),
-							isNull(entitlements.deletedAt),
-							sql`JSON_UNQUOTE(JSON_EXTRACT(${entitlements.metadata}, '$.discordRoleId')) = ${discordRoleId}`,
-						),
-					)
-					.limit(1)
-			: []
-		const removedByDispute = ['removed', 'restored'].includes(
-			record.discordSync[discordRoleId]?.result ?? '',
-		)
+	let result: DiscordRoleSyncResult
+	let verified = true
+	if (plan.granted && !plan.removedByDispute) {
+		result = 'kept'
+	} else {
+		const member = await discord.lookupMember(plan.userId)
+		const holds =
+			member.kind === 'member' && member.roles.includes(discordRoleId)
+		const action =
+			member.kind !== 'member'
+				? null
+				: plan.granted
+					? holds
+						? null
+						: 'add'
+					: holds
+						? 'remove'
+						: null
+		result =
+			member.kind !== 'member'
+				? 'no-account'
+				: plan.granted
+					? 'restored'
+					: action === 'remove'
+						? 'removed'
+						: 'absent'
 
-		let result: DiscordRoleSyncResult
-		let verified = true
-		if (grant && !removedByDispute) {
-			result = 'kept'
-		} else {
-			const member = await discord.lookupMember(purchase.userId)
-			if (member.kind !== 'member') {
-				result = 'no-account'
-			} else if (grant) {
-				if (!member.roles.includes(discordRoleId))
-					await discord.addRole(member.discordAccountId, discordRoleId)
-				result = 'restored'
-			} else if (!member.roles.includes(discordRoleId)) {
-				result = 'absent'
-			} else {
-				await discord.removeRole(member.discordAccountId, discordRoleId)
-				result = 'removed'
-			}
-			if (result === 'restored' || result === 'removed') {
-				// Discord acknowledged the change, so record it even if the
-				// readback itself fails: rolling back would make a retry see the
-				// role gone and forget this dispute removed it. A readback that
-				// contradicts the change still throws and retries.
-				const after = await discord
-					.lookupMember(purchase.userId)
-					.catch(() => null)
-				verified = Boolean(after)
-				const holds =
-					after?.kind === 'member' && after.roles.includes(discordRoleId)
-				if (after && holds !== (result === 'restored'))
-					throw new Error(`discord role ${result} not confirmed by readback`)
-			}
-		}
-
-		// `absent` after a removal keeps the record of what the dispute took.
-		const stored =
-			result === 'absent' &&
-			record.discordSync[discordRoleId]?.result === 'removed'
-				? 'removed'
-				: result
-		await tx
-			.update(purchases)
-			.set({
-				fields: setJsonField(purchases.fields, '$.dispute', {
-					...record,
-					discordSync: {
-						...record.discordSync,
-						[discordRoleId]: {
-							result: stored,
-							at: now.toISOString(),
-							...(!verified && { unverified: true }),
-						},
+		if (member.kind === 'member' && action) {
+			await db.transaction(async (tx) => {
+				const current = await discordRolePlan(
+					tx,
+					purchaseId,
+					stripeDisputeId,
+					discordRoleId,
+				)
+				if (!current || current.granted !== plan.granted)
+					throw new Error('dispute changed during discord sync; retrying')
+				await writeDisputeRecord(tx, purchaseId, {
+					...current.record,
+					discordAttempts: {
+						...current.record.discordAttempts,
+						[discordRoleId]: { action, at },
 					},
-				}),
+				})
 			})
-			.where(eq(purchases.id, purchaseId))
-		return { kind: 'synced', roleId: discordRoleId, result, verified }
+			if (action === 'add')
+				await discord.addRole(member.discordAccountId, discordRoleId)
+			else await discord.removeRole(member.discordAccountId, discordRoleId)
+
+			// A failed readback leaves the accepted change unverified. A readback
+			// that contradicts it throws; the committed attempt keeps provenance.
+			const after = await discord.lookupMember(plan.userId).catch(() => null)
+			verified = Boolean(after)
+			const holdsAfter =
+				after?.kind === 'member' && after.roles.includes(discordRoleId)
+			if (after && holdsAfter !== (action === 'add'))
+				throw new Error(`discord role ${result} not confirmed by readback`)
+		}
+	}
+
+	await db.transaction(async (tx) => {
+		const current = await discordRolePlan(
+			tx,
+			purchaseId,
+			stripeDisputeId,
+			discordRoleId,
+		)
+		if (!current) return
+		if (current.granted !== plan.granted)
+			throw new Error('dispute changed during discord sync; retrying')
+		// `absent` after this dispute removed the role keeps the provenance.
+		const stored =
+			result === 'absent' && current.removedByDispute ? 'removed' : result
+		const { [discordRoleId]: _settled, ...attempts } =
+			current.record.discordAttempts ?? {}
+		const { discordAttempts: _previous, ...rest } = current.record
+		await writeDisputeRecord(tx, purchaseId, {
+			...rest,
+			...(Object.keys(attempts).length > 0 && { discordAttempts: attempts }),
+			discordSync: {
+				...current.record.discordSync,
+				[discordRoleId]: {
+					result: stored,
+					at,
+					...(!verified && { unverified: true as const }),
+				},
+			},
+		})
 	})
+	return { kind: 'synced', roleId: discordRoleId, result, verified }
 }
 
 export type DisputeReadback = {
@@ -626,7 +736,7 @@ export type DisputeReadback = {
 	/** Rows the record says were cut that are live again. */
 	liveCutEntitlementIds: string[]
 	buyerBlocked: boolean | null
-	/** Discord roles with no recorded sync result yet. */
+	/** Discord roles with no verified sync result yet. */
 	discordPending: string[]
 }
 
@@ -662,7 +772,10 @@ export async function readDisputeState(
 				? await isUserBlockedFromPurchasing(record.buyer.userId, executor)
 				: null,
 		discordPending: (record?.discordRoleIds ?? []).filter(
-			(roleId) => !record?.discordSync[roleId],
+			(roleId) =>
+				!record?.discordSync[roleId] ||
+				record.discordSync[roleId]!.unverified ||
+				record.discordAttempts?.[roleId],
 		),
 	}
 }

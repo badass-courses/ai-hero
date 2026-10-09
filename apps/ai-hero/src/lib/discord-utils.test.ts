@@ -1,14 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/db', () => ({
-	db: {
-		query: {
-			accounts: {
-				findFirst: async () => ({ providerAccountId: 'discord-fixture' }),
-			},
-		},
-	},
+const accounts = vi.hoisted(() => ({
+	findFirst: vi.fn(async () => ({ providerAccountId: 'discord-fixture' })),
 }))
+vi.mock('@/db', () => ({ db: { query: { accounts } } }))
 vi.mock('@/env.mjs', () => ({
 	env: {
 		DISCORD_GUILD_ID: 'guild-fixture',
@@ -74,6 +69,17 @@ describe('removeDiscordRole reports HTTP failures', () => {
 		await expect(removeDiscordRole('user', 'role-1')).resolves.toMatchObject({
 			status: 'success',
 		})
+	})
+})
+
+describe('removeDiscordRole keeps its contract for existing callers', () => {
+	it('rejects when the account lookup fails, so callers retry', async () => {
+		accounts.findFirst.mockRejectedValueOnce(
+			new Error('account db unavailable'),
+		)
+		await expect(removeDiscordRole('user', 'role-1')).rejects.toThrow(
+			'account db unavailable',
+		)
 	})
 })
 

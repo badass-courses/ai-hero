@@ -10,7 +10,9 @@
  *
  * `won` and `lost` are terminal. A refund overrides every state: once seen it
  * is recorded as `refundedAt` and the purchase stays `Refunded` with no
- * restoration, even if a replayed event overwrites the status later.
+ * restoration, even if a replayed event overwrites the status later. A
+ * `Banned` status set outside the dispute is recorded as `bannedAt` and also
+ * stops restoration; the dispute then leaves the status alone.
  *
  * Every event, including a `reconcile` with no Stripe meaning, also repairs
  * the purchase status to the one the record implies, so a late or duplicate
@@ -67,10 +69,18 @@ export type PurchaseDisputeRecord = {
 	closedAt?: string
 	/** Sticky refund override; see the module comment. */
 	refundedAt?: string
+	/** Sticky: a Banned status seen on this purchase; never restored. */
+	bannedAt?: string
 	/** Entitlement rows this dispute soft-deleted, purchase rows and credits. */
 	revokedEntitlementIds: string[]
 	/** Discord roles granted by the revoked rows. */
 	discordRoleIds: string[]
+	/**
+	 * A Discord change about to be attempted, committed before the remote
+	 * call so a failure after Discord applied it cannot lose the fact that
+	 * this dispute removed the role. Cleared once the result is recorded.
+	 */
+	discordAttempts?: Record<string, { action: 'remove' | 'add'; at: string }>
 	/** What happened to each role in Discord, separate from the rows. */
 	discordSync: Record<
 		string,
@@ -106,8 +116,11 @@ export type DisputeDecision =
 			status: PurchaseStatus | null
 			/** Why a status the record implies was not written. */
 			statusHeld?: 'original-status-unknown'
+			/** Why a win did not restore the rows. */
+			restoreHeld?: 'banned'
 			blockBuyer: boolean
 			markRefunded: boolean
+			markBanned: boolean
 	  }
 
 /** The status a purchase should hold for a dispute state. */
@@ -115,8 +128,11 @@ function impliedStatus(
 	state: DisputeState,
 	originalStatus: AccessStatus | null,
 	refunded: boolean,
+	banned: boolean,
 ): PurchaseStatus | null {
 	if (refunded) return 'Refunded'
+	// Another process denied access; the dispute does not overrule it.
+	if (banned) return null
 	if (state === 'won') return originalStatus
 	return 'Disputed'
 }
@@ -152,6 +168,9 @@ export function decideDisputeTransition({
 		return { kind: 'ignored', reason: 'different-dispute' }
 
 	const refunded = purchaseStatus === 'Refunded' || Boolean(record?.refundedAt)
+	const banned =
+		Boolean(record) &&
+		(purchaseStatus === 'Banned' || Boolean(record?.bannedAt))
 
 	if (!record) {
 		if (event === 'reconcile') return { kind: 'ignored', reason: 'no-record' }
@@ -168,7 +187,7 @@ export function decideDisputeTransition({
 			purchaseStatus,
 			eventPreviousStatus,
 		)
-		const target = impliedStatus(to, originalStatus, refunded)
+		const target = impliedStatus(to, originalStatus, refunded, false)
 		return {
 			kind: 'applied',
 			createRecord: true,
@@ -184,6 +203,7 @@ export function decideDisputeTransition({
 				}),
 			blockBuyer: to === 'lost',
 			markRefunded: false,
+			markBanned: false,
 		}
 	}
 
@@ -195,16 +215,32 @@ export function decideDisputeTransition({
 		else if (from !== event) reason = `closed-${from}`
 	}
 
-	const target = impliedStatus(to, record.originalStatus, refunded)
+	// Commerce sends opened before writing Disputed, but a replay carrying
+	// Disputed can still be handled first. The original payload, arriving
+	// later, fills in what the record could not know.
+	const originalStatus =
+		record.originalStatus ??
+		(event === 'opened' && isAccessStatus(eventPreviousStatus)
+			? eventPreviousStatus
+			: null)
+	const target = impliedStatus(to, originalStatus, refunded, banned)
 	const status = target && target !== purchaseStatus ? target : null
 	const markRefunded = refunded && !record.refundedAt
-	const blockBuyer = to === 'lost' && (from !== 'lost' || !record.buyer)
+	const markBanned = purchaseStatus === 'Banned' && !record.bannedAt
+	// A held block is retried, so a transfer that settles later resolves.
+	const blockBuyer =
+		to === 'lost' &&
+		(from !== 'lost' || !record.buyer || record.buyer.status === 'held')
 	const kind =
 		to !== from || blockBuyer
 			? 'applied'
-			: status || markRefunded
+			: status ||
+				  markRefunded ||
+				  markBanned ||
+				  originalStatus !== record.originalStatus
 				? 'repaired'
 				: 'unchanged'
+	const restoring = from === 'open' && to === 'won'
 
 	return {
 		kind,
@@ -212,17 +248,20 @@ export function decideDisputeTransition({
 		createRecord: false,
 		from,
 		to,
-		originalStatus: record.originalStatus,
+		originalStatus,
 		cut: false,
-		restore: from === 'open' && to === 'won' && !refunded,
+		restore: restoring && !refunded && !banned,
 		status,
 		...(!target &&
 			to === 'won' &&
+			!banned &&
 			purchaseStatus === 'Disputed' && {
 				statusHeld: 'original-status-unknown' as const,
 			}),
+		...(restoring && banned && !refunded && { restoreHeld: 'banned' as const }),
 		blockBuyer,
 		markRefunded,
+		markBanned,
 	}
 }
 

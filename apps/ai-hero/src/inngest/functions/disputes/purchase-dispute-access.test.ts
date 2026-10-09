@@ -74,7 +74,11 @@ const applied = (overrides: Record<string, unknown> = {}) => ({
 describe('purchase dispute functions', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
-		mocks.syncRole.mockResolvedValue({ kind: 'synced', result: 'removed' })
+		mocks.syncRole.mockResolvedValue({
+			kind: 'synced',
+			result: 'removed',
+			verified: true,
+		})
 	})
 
 	it('subscribe to the commerce lifecycle events', () => {
@@ -112,6 +116,44 @@ describe('purchase dispute functions', () => {
 		})
 	})
 
+	it('verifies an unverified Discord change after a pause and fails until confirmed', async () => {
+		mocks.apply.mockResolvedValue(
+			applied({ record: { discordRoleIds: ['role-1'] } }),
+		)
+		mocks.syncRole
+			.mockResolvedValueOnce({
+				kind: 'synced',
+				result: 'removed',
+				verified: false,
+			})
+			.mockResolvedValueOnce({
+				kind: 'synced',
+				result: 'removed',
+				verified: false,
+			})
+		const first = run(purchaseDisputeOpened, base)
+		await expect(first.result).rejects.toThrow('role-1 still unverified')
+		expect(first.steps).toEqual([
+			'apply dispute opened',
+			'sync discord role role-1',
+			'sync discord role role-1 settle',
+			'sync verify discord role role-1',
+		])
+
+		mocks.syncRole
+			.mockResolvedValueOnce({
+				kind: 'synced',
+				result: 'removed',
+				verified: false,
+			})
+			.mockResolvedValueOnce({
+				kind: 'synced',
+				result: 'removed',
+				verified: true,
+			})
+		await expect(run(purchaseDisputeOpened, base).result).resolves.toBeTruthy()
+	})
+
 	it('a failed role sync fails the step so Inngest retries it', async () => {
 		mocks.apply.mockResolvedValue(applied())
 		mocks.syncRole.mockRejectedValue(
@@ -139,6 +181,8 @@ describe('purchase dispute functions', () => {
 				'sync discord role role-2',
 				'let racing status writes land',
 				'reconcile dispute',
+				'reconcile discord role role-1',
+				'reconcile discord role role-2',
 			])
 			expect(mocks.apply).toHaveBeenLastCalledWith({
 				purchaseId: base.purchaseId,
@@ -155,6 +199,7 @@ describe('purchase dispute functions', () => {
 					to: 'lost',
 					isBulk: true,
 					statusHeld: 'original-status-unknown',
+					restoreHeld: 'banned',
 					buyerOutcome: { status: 'held', reason: 'transfer-chain-ambiguous' },
 				}),
 			)
@@ -168,6 +213,7 @@ describe('purchase dispute functions', () => {
 		const warnings = mocks.log.warn.mock.calls.map(([name]) => name)
 		expect(warnings).toEqual([
 			'purchase_dispute.bulk_seats_retained',
+			'purchase_dispute.restore_held',
 			'purchase_dispute.status_held',
 			'purchase_dispute.buyer_block_held',
 		])

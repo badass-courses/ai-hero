@@ -42,6 +42,7 @@ const tables = [
 	schema.entitlements,
 	schema.entitlementTypes,
 	schema.purchaseUserTransfer,
+	schema.merchantCharge,
 ]
 
 // Disposable DDL from the installed schema, never a production clone.
@@ -647,6 +648,247 @@ suite('purchase disputes: real MySQL 8', () => {
 			await expect(syncRole(discord.client)).rejects.toThrow(
 				'not confirmed by readback',
 			)
+		})
+	})
+
+	describe('payer resolution', () => {
+		const transferTo = async (
+			rows: Partial<typeof schema.purchaseUserTransfer.$inferInsert>[],
+			owner = 'bystander',
+		) => {
+			await database
+				.update(schema.purchases)
+				.set({ userId: owner })
+				.where(eq(schema.purchases.id, 'disputed'))
+			await database.insert(schema.purchaseUserTransfer).values(
+				rows.map((row, index) => ({
+					id: `put_${index}`,
+					purchaseId: 'disputed',
+					sourceUserId: 'buyer',
+					targetUserId: 'bystander',
+					...row,
+				})) as (typeof schema.purchaseUserTransfer.$inferInsert)[],
+			)
+		}
+
+		it.each([
+			['VERIFIED', { confirmedAt: NOW }],
+			['CONFIRMED', { completedAt: NOW }],
+			['COMPLETED', { completedAt: NOW }],
+		] as const)(
+			'regression: a %s handoff blocks the paying source, not the recipient',
+			async (transferState, times) => {
+				await transferTo([{ transferState, ...times }])
+				await expect(apply('lost')).resolves.toMatchObject({
+					buyerOutcome: { status: 'blocked', userId: 'buyer' },
+				})
+				expect(await isUserBlockedFromPurchasing('bystander')).toBe(false)
+			},
+		)
+
+		it('an INITIATED transfer has not moved ownership, so the owner paid', async () => {
+			await transferTo([{ transferState: 'INITIATED' }], 'buyer')
+			await expect(apply('lost')).resolves.toMatchObject({
+				buyerOutcome: { status: 'blocked', userId: 'buyer' },
+			})
+		})
+
+		it('holds when the charge names someone else and no transfer explains it', async () => {
+			await database.insert(schema.merchantCharge).values({
+				id: 'charge-1',
+				identifier: 'ch_fixture',
+				merchantAccountId: 'merchant-account',
+				merchantProductId: 'merchant-product',
+				merchantCustomerId: 'merchant-customer',
+				userId: 'bystander',
+				status: 1,
+			})
+			await database
+				.update(schema.purchases)
+				.set({ merchantChargeId: 'charge-1' })
+				.where(eq(schema.purchases.id, 'disputed'))
+			await expect(apply('lost')).resolves.toMatchObject({
+				buyerOutcome: { status: 'held', reason: 'charge-owner-mismatch' },
+			})
+			expect(await isUserBlockedFromPurchasing('buyer')).toBe(false)
+			expect(await isUserBlockedFromPurchasing('bystander')).toBe(false)
+		})
+
+		it('retries a held block once the transfer history settles', async () => {
+			await transferTo([
+				{
+					transferState: 'COMPLETED',
+					targetUserId: 'someone-else',
+					completedAt: NOW,
+				},
+			])
+			await expect(apply('lost')).resolves.toMatchObject({
+				buyerOutcome: { status: 'held' },
+			})
+			await database.insert(schema.purchaseUserTransfer).values({
+				id: 'put_late',
+				purchaseId: 'disputed',
+				sourceUserId: 'someone-else',
+				targetUserId: 'bystander',
+				transferState: 'COMPLETED',
+				completedAt: LATER,
+			})
+			await expect(apply('reconcile')).resolves.toMatchObject({
+				kind: 'applied',
+				buyerOutcome: { status: 'blocked', userId: 'buyer' },
+			})
+			expect((await record())!.buyer).toMatchObject({ status: 'blocked' })
+		})
+	})
+
+	describe('original status and independent denials', () => {
+		it('regression: a delayed original payload upgrades an unknown original status', async () => {
+			await setStatus('Disputed')
+			await apply('opened', { previousStatus: 'Disputed' })
+			await expect(
+				apply('opened', { previousStatus: 'Restricted' }),
+			).resolves.toMatchObject({
+				kind: 'repaired',
+				originalStatus: 'Restricted',
+			})
+			expect((await record())!.originalStatus).toBe('Restricted')
+			await apply('won')
+			expect((await purchase('disputed'))!.status).toBe('Restricted')
+		})
+
+		it('an upgrade after a held win repairs the status', async () => {
+			await setStatus('Disputed')
+			await apply('opened', { previousStatus: 'Disputed' })
+			await apply('won')
+			expect((await purchase('disputed'))!.status).toBe('Disputed')
+			await apply('opened', { previousStatus: 'Restricted' })
+			expect((await purchase('disputed'))!.status).toBe('Restricted')
+		})
+
+		it('never takes an original status from a closed event', async () => {
+			await setStatus('Disputed')
+			await apply('opened', { previousStatus: 'Disputed' })
+			await apply('won', { previousStatus: 'Valid' })
+			expect((await record())!.originalStatus).toBeNull()
+		})
+
+		it('regression: a Banned status set during the dispute blocks restoration for good', async () => {
+			await apply('opened')
+			await setStatus('Banned')
+			await expect(apply('won')).resolves.toMatchObject({
+				to: 'won',
+				restoreHeld: 'banned',
+				restoreEntitlementIds: [],
+				plannedStatus: 'Banned',
+			})
+			expect(await record()).toMatchObject({
+				state: 'won',
+				bannedAt: NOW.toISOString(),
+			})
+			expect(await active()).not.toContain('content')
+			await apply('reconcile')
+			expect((await purchase('disputed'))!.status).toBe('Banned')
+		})
+
+		it('an opened replay does not replace Banned with Disputed', async () => {
+			await apply('opened')
+			await setStatus('Banned')
+			await apply('opened')
+			expect((await purchase('disputed'))!.status).toBe('Banned')
+		})
+	})
+
+	describe('discord provenance', () => {
+		it('regression: a stale readback after an applied removal still restores on a win', async () => {
+			await apply('opened')
+			const discord = fakeDiscord()
+			const lookup = discord.client.lookupMember
+			let lookups = 0
+			discord.client.lookupMember = async (userId) =>
+				++lookups === 2
+					? {
+							kind: 'member',
+							discordAccountId: 'discord-buyer',
+							roles: ['role-1'],
+						}
+					: lookup(userId)
+			await expect(syncRole(discord.client)).rejects.toThrow(
+				'not confirmed by readback',
+			)
+			expect((await record())!.discordAttempts).toEqual({
+				'role-1': { action: 'remove', at: NOW.toISOString() },
+			})
+			await expect(syncRole(discord.client)).resolves.toMatchObject({
+				result: 'absent',
+			})
+			expect(await record()).toMatchObject({
+				discordSync: { 'role-1': { result: 'removed' } },
+			})
+			expect((await record())!.discordAttempts).toBeUndefined()
+			await apply('won')
+			await syncRole(discord.client)
+			expect(discord.roles.has('role-1')).toBe(true)
+		})
+
+		it('regression: a removal whose response was lost still restores on a win', async () => {
+			await apply('opened')
+			const discord = fakeDiscord()
+			const remove = discord.client.removeRole
+			discord.client.removeRole = async (account, role) => {
+				await remove(account, role)
+				throw new Error('response lost')
+			}
+			await expect(syncRole(discord.client)).rejects.toThrow('response lost')
+			discord.client.removeRole = remove
+			await syncRole(discord.client)
+			await apply('won')
+			await expect(syncRole(discord.client)).resolves.toMatchObject({
+				result: 'restored',
+			})
+			expect(discord.roles.has('role-1')).toBe(true)
+		})
+
+		it('a win landing during a removal makes the sync retry and converge', async () => {
+			await apply('opened')
+			const discord = fakeDiscord()
+			const remove = discord.client.removeRole
+			discord.client.removeRole = async (account, role) => {
+				await remove(account, role)
+				await apply('won')
+			}
+			await expect(syncRole(discord.client)).rejects.toThrow(
+				'dispute changed during discord sync',
+			)
+			discord.client.removeRole = remove
+			await expect(syncRole(discord.client)).resolves.toMatchObject({
+				result: 'restored',
+			})
+			expect(discord.roles.has('role-1')).toBe(true)
+		})
+
+		it('regression: an unverified result stays pending until a sync verifies it', async () => {
+			await apply('lost')
+			const discord = fakeDiscord()
+			const lookup = discord.client.lookupMember
+			let lookups = 0
+			discord.client.lookupMember = async (userId) => {
+				if (++lookups === 2) throw new Error('readback 429')
+				return lookup(userId)
+			}
+			await syncRole(discord.client)
+			let readback = await readDisputeState('disputed')
+			expect(readback.discordPending).toEqual(['role-1'])
+			expect(lostDisputeConfirmed(readback, 'du_1')).toBe(false)
+
+			await expect(syncRole(discord.client)).resolves.toMatchObject({
+				verified: true,
+			})
+			readback = await readDisputeState('disputed')
+			expect(readback.record!.discordSync['role-1']).toEqual({
+				result: 'removed',
+				at: NOW.toISOString(),
+			})
+			expect(lostDisputeConfirmed(readback, 'du_1')).toBe(true)
 		})
 	})
 

@@ -7,37 +7,56 @@ import { discordRoleClient } from '@/lib/discord-utils'
 import {
 	applyDisputeEvent,
 	syncDisputeDiscordRole,
+	type DiscordRoleSync,
 	type DisputeResult,
 } from '@/lib/purchase-disputes'
 import { log } from '@/server/logger'
 
 type Step = {
 	run: (id: string, work: () => Promise<unknown>) => Promise<unknown>
+	sleep: (id: string, duration: string) => Promise<unknown>
 }
 
 /**
  * Each role is its own step and reads the database when it runs, so a step
  * retried after a later win or loss acts on the current state, not on the
- * role list this run cached.
+ * role list this run cached. A change Discord accepted but whose readback
+ * failed is verified again after a pause; that step throws, and so retries,
+ * until Discord confirms it.
  */
 async function syncDiscordRoles(
 	step: Step,
 	result: DisputeResult,
 	stripeDisputeId: string,
+	prefix = 'sync',
 ) {
 	if (!('record' in result) || !result.record) return []
+	const sync = (discordRoleId: string) =>
+		syncDisputeDiscordRole({
+			purchaseId: result.purchaseId,
+			stripeDisputeId,
+			discordRoleId,
+			discord: discordRoleClient,
+		})
 	const synced = []
 	for (const discordRoleId of result.record.discordRoleIds) {
-		synced.push(
-			await step.run(`sync discord role ${discordRoleId}`, () =>
-				syncDisputeDiscordRole({
-					purchaseId: result.purchaseId,
-					stripeDisputeId,
-					discordRoleId,
-					discord: discordRoleClient,
-				}),
-			),
-		)
+		const outcome = (await step.run(
+			`${prefix} discord role ${discordRoleId}`,
+			() => sync(discordRoleId),
+		)) as DiscordRoleSync
+		if (outcome.kind === 'synced' && !outcome.verified) {
+			await step.sleep(`${prefix} discord role ${discordRoleId} settle`, '2m')
+			await step.run(
+				`${prefix} verify discord role ${discordRoleId}`,
+				async () => {
+					const verified = await sync(discordRoleId)
+					if (verified.kind === 'synced' && !verified.verified)
+						throw new Error(`discord role ${discordRoleId} still unverified`)
+					return verified
+				},
+			)
+		}
+		synced.push(outcome)
 	}
 	return synced
 }
@@ -51,6 +70,12 @@ async function logResult(event: string, result: DisputeResult) {
 		// Seat holders keep their own seat purchases; an operator decides.
 		await log.warn('purchase_dispute.bulk_seats_retained', {
 			purchaseId: result.purchaseId,
+		})
+	}
+	if (applied && result.restoreHeld) {
+		await log.warn('purchase_dispute.restore_held', {
+			purchaseId: result.purchaseId,
+			reason: result.restoreHeld,
 		})
 	}
 	if (applied && result.statusHeld) {
@@ -132,7 +157,14 @@ export const purchaseDisputeClosed = inngest.createFunction(
 		const reconciled: DisputeResult = await step.run('reconcile dispute', () =>
 			applyDisputeEvent({ purchaseId, stripeDisputeId, event: 'reconcile' }),
 		)
-		if (reconciled.kind === 'repaired') await logResult('repaired', reconciled)
-		return { result, discord, reconciled }
+		if (reconciled.kind !== 'unchanged')
+			await logResult('reconciled', reconciled)
+		const reconciledDiscord = await syncDiscordRoles(
+			step,
+			reconciled,
+			stripeDisputeId,
+			'reconcile',
+		)
+		return { result, discord, reconciled, reconciledDiscord }
 	},
 )
