@@ -40,6 +40,14 @@ jobs:
       - name: Typecheck
         run: pnpm turbo typecheck
 
+      # Facade: RPC round trip, auth, decode failures, and the bundle contract
+      # (no effect import survives in dist). App: hooks and the mounted route.
+      - name: Front-desk support facade and route
+        run: |
+          pnpm --filter @ai-hero/front-desk-support build
+          pnpm --filter @ai-hero/front-desk-support test
+          pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/app/api/front-desk/
+
       - name: Checkout recovery patch contract
         run: pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/lib/checkout-recovery-adopt.test.ts
 
