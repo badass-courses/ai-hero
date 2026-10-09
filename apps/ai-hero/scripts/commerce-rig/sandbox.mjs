@@ -6,10 +6,18 @@ import { assertTestKey, privateWrite, readPrivateKey } from './safety.mjs'
 import { provisioningProxy } from './provision-proxy.mjs'
 const exec = promisify(execFile)
 export const stripeCli = ['-y', '@stripe/cli@1.53.1']
-export async function sandbox(state) {
-  const mode = process.env.RIG_STRIPE ?? 'named'
+export function keySource(env = process.env) {
+  const mode = env.RIG_STRIPE ?? 'named'
   if (!['named', 'ephemeral'].includes(mode)) throw new Error('RIG_STRIPE must be named or ephemeral')
-  const source = process.env.RIG_STRIPE_KEY_SOURCE ?? (mode === 'ephemeral' ? 'anonymous' : 'agent-secrets:ai-hero::stripe_test_secret_key')
+  if (env.RIG_STRIPE_KEY_SOURCE && env.RIG_STRIPE_KEY_FILE) throw new Error('Select only one Stripe key-source override')
+  return env.RIG_STRIPE_KEY_SOURCE ?? (env.RIG_STRIPE_KEY_FILE ? `file:${env.RIG_STRIPE_KEY_FILE}` : mode === 'ephemeral' ? 'anonymous' : 'agent-secrets:ai-hero::stripe_test_secret_key')
+}
+export function keyPrefix(value) {
+  // Return a structural prefix only, never entropy from a credential.
+  return typeof value === 'string' ? value.match(/^[a-z]{1,16}_(?:test|live|sandbox|anon)_/)?.[0] ?? 'unrecognized-format' : 'missing'
+}
+export async function sandbox(state) {
+  const source = keySource()
   if (source.startsWith('file:')) {
     const key = await readPrivateKey(source.slice(5))
     await privateWrite(join(state, 'stripe.env'), `STRIPE_SECRET_TOKEN=${key}\n`)
@@ -54,7 +62,7 @@ export async function sandbox(state) {
   const response = responseText ? JSON.parse(responseText) : null
   if (!response?.account_id || !response?.expires_at || !Number.isFinite(Date.parse(response.expires_at))) throw new Error('Anonymous sandbox did not report its id and expiry')
   const expiresAt = new Date(response.expires_at).toISOString()
-  const result = { source: 'anonymous-cli', status: 'blocked-key-prefix', createdAt: new Date().toISOString(), sandboxId: response.account_id, expiresAt, expiryEvidence: 'CLI response', profile: config }
+  const result = { source: 'anonymous-cli', status: 'blocked-key-prefix', createdAt: new Date().toISOString(), sandboxId: response.account_id, expiresAt, keyPrefix: keyPrefix(response.secret_key), expiryEvidence: 'CLI response', profile: config }
   await privateWrite(config, await readFile(config, 'utf8'))
   await privateWrite(metadataFile, JSON.stringify(result, null, 2) + '\n')
   const key = assertTestKey(response?.secret_key)

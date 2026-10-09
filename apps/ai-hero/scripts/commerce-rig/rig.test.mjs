@@ -11,6 +11,7 @@ import { provesAccess } from './checkout.mjs'
 import { tables } from './seed.mjs'
 import { remember, archiveRun } from './stripe-state.mjs'
 import { startLifecycle } from './lifecycle.mjs'
+import { keySource, keyPrefix } from './sandbox.mjs'
 import { provisioningHosts, provisioningProxy } from './provision-proxy.mjs'
 import https from 'node:https'
 import http from 'node:http'
@@ -24,7 +25,22 @@ const run = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
 
 test('only explicit Stripe test key prefixes are accepted', () => {
   for (const key of ['sk_test_dummy123', 'rk_test_dummy123']) assert.equal(assertTestKey(key), key)
-  for (const key of ['sk_live_dummy', 'rk_live_dummy', 'sk_test_', 'pk_test_dummy', '', undefined, ' sk_test_dummy']) assert.throws(() => assertTestKey(key), /test-mode/)
+  for (const key of ['sk_live_dummy', 'rk_live_dummy', 'rkcs_test_dummy123', 'sk_test_', 'pk_test_dummy', '', undefined, ' sk_test_dummy']) assert.throws(() => assertTestKey(key), /test-mode/)
+})
+test('named, file alias and ephemeral sources are explicit and conflicting overrides fail', () => {
+  assert.equal(keySource({}), 'agent-secrets:ai-hero::stripe_test_secret_key')
+  assert.equal(keySource({ RIG_STRIPE_KEY_FILE: '/private/stripe.env' }), 'file:/private/stripe.env')
+  assert.equal(keySource({ RIG_STRIPE: 'ephemeral' }), 'anonymous')
+  assert.equal(keySource({ RIG_STRIPE_KEY_SOURCE: 'agent-secrets:alternate' }), 'agent-secrets:alternate')
+  assert.throws(() => keySource({ RIG_STRIPE_KEY_SOURCE: 'anonymous', RIG_STRIPE_KEY_FILE: '/private/key' }), /only one/)
+  assert.throws(() => keySource({ RIG_STRIPE: 'live' }), /named or ephemeral/)
+})
+test('prefix diagnostics retain no key material', () => {
+  assert.equal(keyPrefix('sk_test_doNotRecordThis'), 'sk_test_')
+  assert.equal(keyPrefix('rk_test_doNotRecordThis'), 'rk_test_')
+  assert.equal(keyPrefix('newkind_test_doNotRecordThis'), 'newkind_test_')
+  assert.equal(keyPrefix('rkcs_test_doNotRecordThis'), 'rkcs_test_')
+  assert.equal(keyPrefix('opaqueCredentialWithoutSeparators'), 'unrecognized-format')
 })
 test('exact owned loopback database only', () => {
   assert.equal(assertDatabase(databaseUrl), databaseUrl)

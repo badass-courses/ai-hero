@@ -2,7 +2,7 @@
 
 A local MySQL 8 database, synthetic buyers, a Stripe test catalog, the real app checkout route, and a local Inngest server. This is test tooling only. It does not change application code, production configuration, or pricing rules.
 
-**Not yet an E2E-verified rig.** Safety tests pass. The first runtime attempt could not access Docker, so schema push, seed, app startup and paid fulfillment are unverified. Named test-key leasing works. Anonymous provisioning returned a key outside the accepted `sk_test_` / `rk_test_` prefixes and was refused. Do not merge or use the rig as evidence of production prices until the paid receipt passes.
+**Not yet an E2E-verified rig.** Safety tests pass. The first runtime attempt could not access Docker, so schema push, seed, app startup and paid fulfillment are unverified. Named test-key leasing works. A repeat anonymous-provisioning guard probe returned the prefix **`rkcs_test_`**. It is outside the accepted `sk_test_` / `rk_test_` prefixes and was refused. The original probe's credential was deleted during cleanup; no key material is retained in this documentation. Do not merge or use the rig as evidence of production prices until the paid receipt passes.
 
 ## For agents
 
@@ -36,16 +36,19 @@ A crash can leave `command.lock`. Inspect its PID and owner before removing it; 
 # Default: lease the local named sandbox key for one hour at startup.
 RIG_STRIPE=named ./scripts/commerce-rig/rig up
 
-# Alternate source, through the same reader; never source the file in a shell.
+# Permanent-file alias, through the same reader; never source the file in a shell.
+RIG_STRIPE_KEY_FILE="$HOME/.config/ai-hero-commerce-rig/stripe.env" ./scripts/commerce-rig/rig up
+
+# Explicit source selector remains available.
 RIG_STRIPE_KEY_SOURCE=file:/absolute/private/stripe.env ./scripts/commerce-rig/rig up
 
 # Anonymous sandbox path; currently fenced when the CLI returns unsupported keys.
 RIG_SLOT=1 RIG_STRIPE=ephemeral ./scripts/commerce-rig/rig up
 ```
 
-The default source is `agent-secrets:ai-hero::stripe_test_secret_key`. `RIG_STRIPE_KEY_SOURCE` can select another `agent-secrets:<name>`, a `file:<absolute path>`, or `anonymous`. A file must be mode 0600, regular, and contain either a raw test key or `AIH_RIG_STRIPE_SECRET_KEY=<test key>` / `STRIPE_SECRET_TOKEN=<test key>`. Values are never printed. Ambient Stripe keys and CLI profiles are not used.
+The default source is `agent-secrets:ai-hero::stripe_test_secret_key`. `RIG_STRIPE_KEY_SOURCE` can select another `agent-secrets:<name>`, a `file:<absolute path>`, or `anonymous`. `RIG_STRIPE_KEY_FILE` is an alias for the file source; setting both overrides is refused. Leave both overrides unset to exercise the agent-secrets lease route. Both routes passed a checked-key/private-runtime-file probe. A file must be mode 0600, regular, and contain either a raw test key or `AIH_RIG_STRIPE_SECRET_KEY=<test key>` / `STRIPE_SECRET_TOKEN=<test key>`. Values are never printed. Ambient Stripe keys and CLI profiles are not used.
 
-The named sandbox's expiry is operator-owned; `sandbox.json` records the lease times, not an invented sandbox expiration. Ephemeral provisioning records the returned account ID and expiry. It runs in a fresh private CLI home with a synthetic email. A one-shot proxy permits the anonymous provisioning host and package-download hosts, but blocks the CLI's account-login fallback. Unexpected key prefixes fail closed. Do not weaken that guard to make the command green.
+The named sandbox's expiry is operator-owned; `sandbox.json` records the lease times, not an invented sandbox expiration. Ephemeral provisioning records the returned account ID and expiry. It runs in a fresh private CLI home with a synthetic email. A one-shot proxy permits the anonymous provisioning host and package-download hosts, but blocks the CLI's account-login fallback. Unexpected key prefixes fail closed; `sandbox.json` records only the structural prefix alongside the candidate ID/expiry so a later policy decision can use evidence without exposing the key. Do not weaken that guard to make the command green.
 
 The listener receives the checked key explicitly and writes its own `whsec` into the private runtime env. The route is **`/api/coursebuilder/webhook/stripe`**, verified from the installed Course Builder dispatcher. The app does not receive a dashboard webhook secret.
 
