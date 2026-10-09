@@ -11,6 +11,7 @@ import {
 	SourceUnavailable,
 	type PricingPurchaseRow,
 	type PricingSettlement,
+	type PricingTransferRow,
 } from './pricing-facts'
 
 // Synthetic database: plain rows behind the same source port the live layer
@@ -26,6 +27,7 @@ interface SyntheticDb {
 	coupons?: Record<string, string | null>
 	prices?: { id: string; unitAmountCents: number }[]
 	settlements?: Record<string, PricingSettlement>
+	transfers?: PricingTransferRow[]
 	down?: SourceUnavailable['source'][]
 }
 type Session = NonNullable<PricingSettlement['session']>
@@ -120,6 +122,15 @@ function synthetic(data: SyntheticDb) {
 				: Effect.succeed(
 						(data.purchases ?? []).filter((row) =>
 							productIds.includes(row.productId),
+						),
+					),
+		transfers: (userId) =>
+			down('transfers')
+				? fail('transfers')
+				: Effect.succeed(
+						(data.transfers ?? []).filter(
+							(row) =>
+								row.sourceUserId === userId || row.targetUserId === userId,
 						),
 					),
 		couponTypes: (ids) =>
@@ -654,6 +665,7 @@ describe('team seats and credit use', () => {
 			value: 'available',
 			sourceRefs: [
 				'ai-hero:purchases:user:user-test',
+				'ai-hero:purchase-transfers:user:user-test',
 				'ai-hero:credit-redemption-ledger:none-yet',
 			],
 		})
@@ -664,6 +676,137 @@ describe('team seats and credit use', () => {
 			],
 		})
 		expect(seat.facts.facts.creditUse).toMatchObject({ value: 'available' })
+	})
+})
+
+describe('transfer history', () => {
+	const transfer = (
+		over: Partial<PricingTransferRow> & Pick<PricingTransferRow, 'purchaseId'>,
+	): PricingTransferRow => ({
+		id: `transfer-${over.purchaseId}`,
+		sourceUserId: 'user-test',
+		targetUserId: 'user-recipient',
+		purchase: {
+			productId: C5,
+			bulkCouponId: null,
+			redeemedBulkCouponId: null,
+		},
+		...over,
+	})
+	const withCredit = {
+		...buyer,
+		purchases: [purchase({ id: 'cc' })],
+		settlements: Object.fromEntries([charge('cc')]),
+	}
+
+	it('holds credit use after the buyer transferred a target purchase away', async () => {
+		// The purchase now belongs to the recipient, so the buyer's own scan no
+		// longer sees it. The transfer row still proves they owned it.
+		const { facts } = await run({
+			...withCredit,
+			transfers: [transfer({ purchaseId: 'c5-moved' })],
+		})
+		expect(facts.facts.credit).toMatchObject({
+			value: { paid: 25_000, source: 'cc' },
+		})
+		expect(facts.facts.creditUse).toEqual({ gap: 'FactsUnavailable' })
+	})
+
+	it('holds credit use when a transferred purchase cannot be read', async () => {
+		const { facts } = await run({
+			...withCredit,
+			transfers: [transfer({ purchaseId: 'gone', purchase: null })],
+		})
+		expect(facts.facts.creditUse).toEqual({ gap: 'FactsUnavailable' })
+	})
+
+	it.each([
+		[
+			'a transferred team seat',
+			transfer({
+				purchaseId: 'seat',
+				purchase: {
+					productId: C5,
+					bulkCouponId: null,
+					redeemedBulkCouponId: 'bulk',
+				},
+			}),
+		],
+		[
+			'another product transferred away',
+			transfer({
+				purchaseId: 'c4',
+				purchase: {
+					productId: C4,
+					bulkCouponId: null,
+					redeemedBulkCouponId: null,
+				},
+			}),
+		],
+		[
+			"another user's target transfer",
+			transfer({
+				purchaseId: 'theirs',
+				sourceUserId: 'user-other',
+				targetUserId: 'user-recipient',
+			}),
+		],
+	])('leaves credit use available for %s', async (_, row) => {
+		const { facts } = await run({ ...withCredit, transfers: [row] })
+		expect(facts.facts.creditUse).toMatchObject({ value: 'available' })
+	})
+
+	it('holds the credit from a Crash Course purchase that came from another owner, without asking Stripe', async () => {
+		const { facts, stripeReads } = await run({
+			...withCredit,
+			transfers: [
+				transfer({
+					purchaseId: 'cc',
+					sourceUserId: 'user-previous',
+					targetUserId: 'user-test',
+					purchase: {
+						productId: CC,
+						bulkCouponId: null,
+						redeemedBulkCouponId: null,
+					},
+				}),
+			],
+		})
+		expect(facts.facts.credit).toEqual({ gap: 'FactsUnavailable' })
+		expect(stripeReads).toEqual([])
+	})
+
+	it("keeps the credit when the buyer's own Crash Course purchase only has an offer row", async () => {
+		const { facts } = await run({
+			...withCredit,
+			transfers: [
+				transfer({
+					purchaseId: 'cc',
+					targetUserId: null,
+					purchase: {
+						productId: CC,
+						bulkCouponId: null,
+						redeemedBulkCouponId: null,
+					},
+				}),
+			],
+		})
+		expect(facts.facts.credit).toMatchObject({
+			value: { paid: 25_000, source: 'cc' },
+		})
+		expect(facts.facts.creditUse).toMatchObject({ value: 'available' })
+	})
+
+	it('holds both credit facts when transfer history is unavailable', async () => {
+		const { facts, stripeReads } = await run({
+			...withCredit,
+			down: ['transfers'],
+		})
+		expect(facts.facts.credit).toEqual({ gap: 'FactsUnavailable' })
+		expect(facts.facts.creditUse).toEqual({ gap: 'FactsUnavailable' })
+		expect(facts.facts.alumni).toMatchObject({ value: 'none' })
+		expect(facts.facts.existingSeats).toMatchObject({ value: 0 })
+		expect(stripeReads).toEqual([])
 	})
 })
 

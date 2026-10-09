@@ -8,6 +8,7 @@ import {
 	SourceUnavailable,
 	type PricingPurchaseRow,
 	type PricingSettlement,
+	type PricingTransferRow,
 } from './pricing-facts'
 
 /** The read-only Stripe calls the pricing source makes. */
@@ -91,6 +92,33 @@ export const pricingFactsSourceLayer = (deps: {
 					}
 				})
 			}),
+		transfers: (userId) =>
+			attempt('transfers', async () => {
+				const rows = await db.query.purchaseUserTransfer.findMany({
+					where: (transfer, { eq, or }) =>
+						or(
+							eq(transfer.sourceUserId, userId),
+							eq(transfer.targetUserId, userId),
+						),
+					with: { purchase: true },
+				})
+				return rows.map(
+					(transfer): PricingTransferRow => ({
+						id: transfer.id,
+						purchaseId: transfer.purchaseId,
+						sourceUserId: transfer.sourceUserId,
+						targetUserId: transfer.targetUserId ?? null,
+						purchase: transfer.purchase
+							? {
+									productId: transfer.purchase.productId,
+									bulkCouponId: transfer.purchase.bulkCouponId ?? null,
+									redeemedBulkCouponId:
+										transfer.purchase.redeemedBulkCouponId ?? null,
+								}
+							: null,
+					}),
+				)
+			}),
 		couponTypes: (couponIds) =>
 			attempt('coupons', async () => {
 				const rows = await db.query.coupon.findMany({
@@ -114,7 +142,9 @@ export const pricingFactsSourceLayer = (deps: {
 			}),
 		settlement: ({ stripeChargeId, checkoutSessionId }) =>
 			attempt('settlement', async (): Promise<PricingSettlement | null> => {
-				// Refund count and dispute come from the support read's own path.
+				// Two reads of the charge: the support read (with paginated refunds)
+				// and a retrieve for settlement fields. Refund and dispute evidence
+				// from either one counts, so a change between them is never lost.
 				const state = await deps.chargeState(stripeChargeId)
 				if (!state) return null
 				const charge = await deps.stripe.charges.retrieve(stripeChargeId)
@@ -138,9 +168,16 @@ export const pricingFactsSourceLayer = (deps: {
 						paid: charge.paid,
 						captured: charge.captured,
 						status: charge.status,
-						amountRefunded: state.amountRefunded,
-						refundCount: state.refundCount,
-						disputed: state.disputed,
+						amountRefunded: Math.max(
+							state.amountRefunded,
+							charge.amount_refunded,
+							charge.refunded ? charge.amount : 0,
+						),
+						refundCount: Math.max(
+							state.refundCount,
+							charge.amount_refunded > 0 || charge.refunded ? 1 : 0,
+						),
+						disputed: state.disputed || charge.disputed,
 						paymentIntentId: idOf(charge.payment_intent),
 					},
 					session:

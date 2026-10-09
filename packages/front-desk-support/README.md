@@ -28,7 +28,7 @@ The app reports facts only where it has evidence:
 
 - An email with no exact account match is `IdentityUnverified` for ownership facts. It is never treated as an empty history.
 - A Crash Course credit is the matching product line on the purchase's own Checkout Session, less tax, from a paid, captured, succeeded charge. If any link is missing, the credit is `PaymentAmbiguous`.
-- Credit use holds for any individual purchase of the target product until a redemption ledger exists.
+- Credit use holds for any individual purchase of the target product the buyer holds or ever transferred away, until a redemption ledger exists. A Crash Course purchase that arrived by transfer holds the credit, because its previous owner may have spent it. If transfer history cannot be read, both credit facts are `FactsUnavailable`.
 
 Wire format, one request per POST:
 

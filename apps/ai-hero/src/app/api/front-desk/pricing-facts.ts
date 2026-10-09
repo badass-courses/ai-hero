@@ -8,8 +8,8 @@ import type {
 import { Context, Data, Effect, Either } from 'effect'
 
 /**
- * Buyer facts for front-desk's pricing. Read-only: SELECTs and the existing
- * Stripe charge read. The pricing rules live in front-desk; this module only
+ * Buyer facts for front-desk's pricing. Read-only: SELECTs and Stripe
+ * retrieve and list calls. The pricing rules live in front-desk; this module only
  * reports evidence. A source that cannot answer becomes a fact gap, never an
  * empty history, and every known fact carries sourceRefs.
  */
@@ -78,9 +78,28 @@ export interface PricingPriceRow {
 	readonly id: string
 	readonly unitAmountCents: number
 }
+/** A PurchaseUserTransfer row the buyer is the source or target of. The
+ * source user owned the purchase when the row was made, whatever its state. */
+export interface PricingTransferRow {
+	readonly id: string
+	readonly purchaseId: string
+	readonly sourceUserId: string
+	readonly targetUserId: string | null
+	/** The transferred purchase as it is now. Null when it cannot be read. */
+	readonly purchase: Pick<
+		PricingPurchaseRow,
+		'productId' | 'bulkCouponId' | 'redeemedBulkCouponId'
+	> | null
+}
 
 export class SourceUnavailable extends Data.TaggedError('SourceUnavailable')<{
-	readonly source: 'user' | 'purchases' | 'coupons' | 'price' | 'settlement'
+	readonly source:
+		| 'user'
+		| 'purchases'
+		| 'transfers'
+		| 'coupons'
+		| 'price'
+		| 'settlement'
 }> {}
 /** No single active price, so no merchant unit to price against. */
 export class MerchantPriceUnavailable extends Data.TaggedError(
@@ -95,6 +114,10 @@ export interface PricingFactsSourceShape {
 		userId: string,
 		productIds: readonly string[],
 	) => Effect.Effect<readonly PricingPurchaseRow[], SourceUnavailable>
+	/** Every purchase transfer out of or into this user, in any state. */
+	readonly transfers: (
+		userId: string,
+	) => Effect.Effect<readonly PricingTransferRow[], SourceUnavailable>
 	/** MerchantCoupon type per coupon id. A missing coupon has no entry; a
 	 * missing MerchantCoupon or type is null. */
 	readonly couponTypes: (
@@ -177,16 +200,30 @@ export function existingSeatsFact(
 }
 
 /** There is no credit redemption ledger yet. Any individual purchase of this
- * product, in any status, may have spent a credit. A refund does not unspend
- * it, so the fact holds until a ledger can say. */
+ * product the buyer holds or ever transferred away, in any status, may have
+ * spent a credit. Neither a refund nor a transfer unspends it, so the fact
+ * holds until a ledger can say. */
 export function creditUseFact(
 	rows: readonly PricingPurchaseRow[],
+	transfers: readonly PricingTransferRow[],
+	userId: string,
 	productId: string,
-	scanRef: string,
+	refs: readonly string[],
 ): PricingBuyerFacts['creditUse'] {
-	return rows.some((row) => row.productId === productId && individual(row))
+	const held = rows.some(
+		(row) => row.productId === productId && individual(row),
+	)
+	const transferredAway = transfers.some(
+		(transfer) =>
+			transfer.sourceUserId === userId &&
+			(!transfer.purchase ||
+				(transfer.purchase.productId === productId &&
+					!transfer.purchase.bulkCouponId &&
+					!transfer.purchase.redeemedBulkCouponId)),
+	)
+	return held || transferredAway
 		? gap('FactsUnavailable')
-		: known('available', [scanRef, 'ai-hero:credit-redemption-ledger:none-yet'])
+		: known('available', [...refs, 'ai-hero:credit-redemption-ledger:none-yet'])
 }
 
 type CreditCandidate =
@@ -329,6 +366,8 @@ export function creditFact(
 
 const creditFor = (
 	rows: readonly PricingPurchaseRow[],
+	transfers: readonly PricingTransferRow[],
+	userId: string,
 	scanRef: string,
 ): Effect.Effect<PricingBuyerFacts['credit'], never, PricingFactsSource> =>
 	Effect.gen(function* () {
@@ -336,6 +375,14 @@ const creditFor = (
 		const crashCourse = rows.filter(
 			(row) => row.productId === CRASH_COURSE_PRODUCT,
 		)
+		// A purchase that came from another owner may already have spent its
+		// credit there. With no redemption ledger, that is unknowable.
+		const cameFromAnotherOwner = (row: PricingPurchaseRow) =>
+			transfers.some(
+				(transfer) =>
+					transfer.purchaseId === row.id && transfer.sourceUserId !== userId,
+			)
+		if (crashCourse.some(cameFromAnotherOwner)) return gap('FactsUnavailable')
 		const couponIds = [
 			...new Set(crashCourse.flatMap((row) => row.couponId ?? [])),
 		]
@@ -444,11 +491,33 @@ export const buyerPricingFacts = (
 		const rows = yield* Effect.either(source.purchases(userId, productIds))
 		if (Either.isLeft(rows)) return result(buyer, unavailable)
 		const scanRef = `ai-hero:purchases:user:${userId}`
+		const transferRef = `ai-hero:purchase-transfers:user:${userId}`
+		// Transfer history decides both credit facts. Without it, neither is known.
+		const transfers = yield* Effect.either(source.transfers(userId))
+		const ownership = Either.isRight(transfers)
+			? {
+					credit: yield* creditFor(
+						rows.right,
+						transfers.right,
+						userId,
+						scanRef,
+					),
+					creditUse: creditUseFact(
+						rows.right,
+						transfers.right,
+						userId,
+						request.productId,
+						[scanRef, transferRef],
+					),
+				}
+			: {
+					credit: gap<null>('FactsUnavailable'),
+					creditUse: gap<'available'>('FactsUnavailable'),
+				}
 		return result(buyer, {
 			...pending,
 			alumni: alumniFact(rows.right, scanRef),
-			credit: yield* creditFor(rows.right, scanRef),
-			creditUse: creditUseFact(rows.right, request.productId, scanRef),
+			...ownership,
 			existingSeats: existingSeatsFact(rows.right, request.productId, scanRef),
 		})
 	})

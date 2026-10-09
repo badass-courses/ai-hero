@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
 	disputes: vi.fn(),
 	session: vi.fn(),
 	lineItems: vi.fn(),
+	transfers: vi.fn(),
 }))
 vi.mock('../support/integration', () => ({
 	integration: { lookupUser: mocks.lookupUser },
@@ -20,6 +21,7 @@ vi.mock('@/db', () => ({
 			purchases: { findMany: mocks.purchases },
 			coupon: { findMany: mocks.coupons },
 			prices: { findMany: mocks.prices },
+			purchaseUserTransfer: { findMany: mocks.transfers },
 		},
 	},
 }))
@@ -46,6 +48,7 @@ import { hooks } from './hooks'
 
 beforeEach(() => {
 	vi.clearAllMocks()
+	mocks.transfers.mockResolvedValue([])
 })
 describe('front-desk read hooks', () => {
 	it('maps a customer and handles a missing customer', async () => {
@@ -248,6 +251,143 @@ describe('front-desk read hooks', () => {
 		expect(mocks.charge).not.toHaveBeenCalled()
 		expect(mocks.session).not.toHaveBeenCalled()
 	})
+	describe('when the two charge reads disagree', () => {
+		const clean = {
+			id: 'ch_test',
+			amount: 30000,
+			currency: 'usd',
+			amount_refunded: 0,
+			refunded: false,
+			disputed: false,
+			paid: true,
+			captured: true,
+			status: 'succeeded',
+			payment_intent: 'pi_test',
+		}
+		const creditWith = async (
+			first: Record<string, unknown>,
+			second: Record<string, unknown>,
+		) => {
+			mocks.lookupUser.mockResolvedValue({ id: 'test-user' })
+			mocks.prices.mockResolvedValue([
+				{ id: 'price-test', unitAmount: '1000.00' },
+			])
+			mocks.purchases.mockResolvedValue([crashCourse()])
+			settledStripe()
+			mocks.disputes.mockResolvedValue({ data: [{ status: 'needs_response' }] })
+			mocks.charge
+				.mockReset()
+				.mockResolvedValueOnce({ ...clean, ...first })
+				.mockResolvedValueOnce({ ...clean, ...second })
+			const facts = await hooks.pricingFacts(askC5)
+			expect(mocks.charge).toHaveBeenCalledTimes(2)
+			return facts?.facts.credit
+		}
+		it.each([
+			[
+				'a newer full refund excludes the source',
+				{},
+				{ amount_refunded: 30000, refunded: true },
+				{
+					value: null,
+					sourceRefs: ['ai-hero:purchase:cc#excluded:refunded'],
+				},
+			],
+			[
+				'a newer refunded flag alone excludes the source',
+				{},
+				{ refunded: true },
+				{
+					value: null,
+					sourceRefs: ['ai-hero:purchase:cc#excluded:refunded'],
+				},
+			],
+			[
+				'a newer partial refund holds',
+				{},
+				{ amount_refunded: 5000 },
+				{ gap: 'PaymentAmbiguous' },
+			],
+			[
+				'a newer dispute holds',
+				{},
+				{ disputed: true },
+				{ gap: 'PaymentAmbiguous' },
+			],
+			[
+				'an earlier partial refund still holds',
+				{ amount_refunded: 5000 },
+				{},
+				{ gap: 'PaymentAmbiguous' },
+			],
+			[
+				'an earlier dispute still holds',
+				{ disputed: true },
+				{},
+				{ gap: 'PaymentAmbiguous' },
+			],
+		])('%s', async (_, first, second, credit) => {
+			expect(await creditWith(first, second)).toEqual(credit)
+		})
+		it('an earlier refund on the paginated list still holds', async () => {
+			mocks.lookupUser.mockResolvedValue({ id: 'test-user' })
+			mocks.prices.mockResolvedValue([
+				{ id: 'price-test', unitAmount: '1000.00' },
+			])
+			mocks.purchases.mockResolvedValue([crashCourse()])
+			settledStripe()
+			mocks.refunds.mockResolvedValue({
+				data: [{ id: 're_test' }],
+				has_more: false,
+			})
+			expect((await hooks.pricingFacts(askC5))?.facts.credit).toEqual({
+				gap: 'PaymentAmbiguous',
+			})
+		})
+	})
+	it('reads transfer history and holds credit use for a target purchase transferred away', async () => {
+		mocks.lookupUser.mockResolvedValue({ id: 'test-user' })
+		mocks.prices.mockResolvedValue([
+			{ id: 'price-test', unitAmount: '1000.00' },
+		])
+		mocks.purchases.mockResolvedValue([crashCourse()])
+		settledStripe()
+		mocks.transfers.mockResolvedValue([
+			{
+				id: 'transfer-test',
+				purchaseId: 'c5-moved',
+				sourceUserId: 'test-user',
+				targetUserId: 'test-recipient',
+				transferState: 'COMPLETED',
+				purchase: {
+					id: 'c5-moved',
+					userId: 'test-recipient',
+					productId: 'product-s00zs',
+					status: 'Valid',
+					bulkCouponId: null,
+					redeemedBulkCouponId: null,
+				},
+			},
+		])
+		const facts = await hooks.pricingFacts(askC5)
+		expect(facts?.facts.credit).toMatchObject({ value: { paid: 25000 } })
+		expect(facts?.facts.creditUse).toEqual({ gap: 'FactsUnavailable' })
+		const query = mocks.transfers.mock.calls[0]![0]
+		expect(query.with).toEqual({ purchase: true })
+		expect(
+			query.where(
+				{ sourceUserId: 'source', targetUserId: 'target' },
+				{
+					eq: (column: string, value: string) => `${column}=${value}`,
+					or: (...clauses: string[]) => clauses,
+				},
+			),
+		).toEqual(['source=test-user', 'target=test-user'])
+		mocks.transfers.mockRejectedValue(new Error('db down'))
+		const down = await hooks.pricingFacts(askC5)
+		expect(down?.facts.credit).toEqual({ gap: 'FactsUnavailable' })
+		expect(down?.facts.creditUse).toEqual({ gap: 'FactsUnavailable' })
+	})
 	it('holds credit when the purchase session is missing at Stripe', async () => {
 		mocks.lookupUser.mockResolvedValue({ id: 'test-user' })
 		mocks.prices.mockResolvedValue([
@@ -326,6 +466,7 @@ describe('front-desk read hooks', () => {
 					value: 'available',
 					sourceRefs: [
 						'ai-hero:purchases:user:test-user',
+						'ai-hero:purchase-transfers:user:test-user',
 						'ai-hero:credit-redemption-ledger:none-yet',
 					],
 				},
