@@ -6,6 +6,8 @@ import LiveOfficeHoursInvitation, {
 } from '@/emails/live-office-hours-invitation'
 import WelcomeArchiveEmail from '@/emails/welcome-archive-email'
 import WelcomeCohortEmailForTeam from '@/emails/welcome-cohort-email-team'
+import { getCohortWelcomeDetails } from '@/lib/cohort-welcome-details-query'
+import { cohortWelcomeSubject } from '@/lib/cohort-welcome-details'
 import WelcomeWorkshopEmailForTeam from '@/emails/welcome-workshop-email-team'
 import { env } from '@/env.mjs'
 import { inngest } from '@/inngest/inngest.server'
@@ -578,9 +580,14 @@ export const postPurchaseWorkflow = inngest.createFunction(
 						)
 
 						if (context.productType === 'cohort') {
+							const welcomeDetails = await getCohortWelcomeDetails(
+								context.resourceId,
+								user.id,
+							)
 							await sendAnEmail({
 								Component: WelcomeCohortEmailForTeam,
 								componentProps: {
+									welcomeDetails,
 									cohortTitle:
 										parsedResource.fields?.title || parsedResource.fields?.slug,
 									url: contentUrl,
@@ -590,7 +597,13 @@ export const postPurchaseWorkflow = inngest.createFunction(
 									quantity: bulkCoupon?.maxUses || 1,
 									userFirstName: user.name?.split(' ')[0],
 								},
-								Subject: `Welcome to ${parsedResource.fields?.title || config.defaultTitle}!`,
+								Subject: welcomeDetails
+									? cohortWelcomeSubject(
+											welcomeDetails,
+											'team',
+											bulkCoupon?.maxUses || 1,
+										)
+									: `Welcome to ${parsedResource.fields?.title || config.defaultTitle}!`,
 								To: user.email,
 								ReplyTo: env.NEXT_PUBLIC_SUPPORT_EMAIL,
 								From: env.NEXT_PUBLIC_SUPPORT_EMAIL,

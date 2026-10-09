@@ -1,4 +1,6 @@
 import config from '@/config'
+import { getCohortWelcomeDetails } from '@/lib/cohort-welcome-details-query'
+import { cohortWelcomeSubject } from '@/lib/cohort-welcome-details'
 import WelcomeCohortEmail from '@/emails/welcome-cohort-email'
 import WelcomeWorkshopEmail from '@/emails/welcome-workshop-email'
 import { env } from '@/env.mjs'
@@ -61,9 +63,11 @@ export const postPurchaseWelcomeEmail = inngest.createFunction(
 			)
 
 			if (resourceProductType === 'cohort') {
+				const welcomeDetails = await getCohortWelcomeDetails(resourceId, userId)
 				await sendAnEmail({
 					Component: WelcomeCohortEmail,
 					componentProps: {
+						welcomeDetails,
 						cohortTitle:
 							parsedResource.fields?.title || parsedResource.fields?.slug,
 						url: contentUrl,
@@ -71,7 +75,9 @@ export const postPurchaseWelcomeEmail = inngest.createFunction(
 						upcoming: workshopAvailability?.upcoming || [],
 						userFirstName,
 					},
-					Subject: `Welcome to ${parsedResource.fields?.title || config.defaultTitle}!`,
+					Subject: welcomeDetails
+						? cohortWelcomeSubject(welcomeDetails, 'individual')
+						: `Welcome to ${parsedResource.fields?.title || config.defaultTitle}!`,
 					To: userEmail,
 					ReplyTo: env.NEXT_PUBLIC_SUPPORT_EMAIL,
 					From: env.NEXT_PUBLIC_SUPPORT_EMAIL,
