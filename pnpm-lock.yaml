@@ -30,6 +30,9 @@ importers:
       '@ai-hero/course-sync-schema':
         specifier: workspace:*
         version: link:../../packages/course-sync-schema
+      '@ai-hero/front-desk-support':
+        specifier: workspace:*
+        version: link:../../packages/front-desk-support
       '@ai-sdk/gateway':
         specifier: ^3.0.77
         version: 3.0.127(zod@4.4.3)
@@ -821,6 +824,24 @@ importers:
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.1
+      tsx:
+        specifier: ^4.20.6
+        version: 4.22.4
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
+  packages/front-desk-support:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.1
+      effect:
+        specifier: 4.0.2
+        version: 4.0.2
+      esbuild:
+        specifier: 0.28.0
+        version: 0.28.0
       tsx:
         specifier: ^4.20.6
         version: 4.22.4
@@ -8754,6 +8775,9 @@ packages:
 
   effect@4.0.0-beta.84:
     resolution: {integrity: sha512-zWwFI9WZ4TsddBmtcuuAO2IXGR0Dp56xIUt8cX29ZeyOEtErXqP6muDaVpro08lGiMSOGMqSpuH/C1TUxHsRAA==}
+
+  effect@4.0.2:
+    resolution: {integrity: sha512-YeYnLqSFrL4+tCOXRrfNP03w8FILoF/wDl+ukraJAGzXrjcS383W7LAAvGBbLatEyktmLxRq+9xJinx7QzXW5A==}
 
   electron-to-chromium@1.5.371:
     resolution: {integrity: sha512-e9htk9mAYL6AzmkEhSvVVw7IWGSBJ/Bqdn2eRyRLrj1g6sncN4WbFt5qnILYoCktktr45pyjIrOiRvBThQ808w==}
@@ -23026,6 +23050,8 @@ snapshots:
       toml: 4.1.1
       uuid: 14.0.0
       yaml: 2.9.0
+
+  effect@4.0.2: {}
 
   electron-to-chromium@1.5.371: {}
 

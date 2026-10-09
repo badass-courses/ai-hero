@@ -170,6 +170,7 @@ export const env = createEnv({
 		ZOOM_CLIENT_SECRET: z.string().optional(),
 		ZOOM_WEBHOOK_SECRET_TOKEN: z.string().optional(),
 		SUPPORT_WEBHOOK_SECRET: z.string().optional(),
+		FRONT_DESK_API_KEY: z.string().optional(),
 		// Optional at startup; token verification and minting fail closed when absent.
 		INVOICE_LINK_SECRET: z.string().optional(),
 		INVOICE_LINK_TTL_DAYS: z.string().optional(),
@@ -333,6 +334,7 @@ export const env = createEnv({
 		ZOOM_CLIENT_SECRET: process.env.ZOOM_CLIENT_SECRET,
 		ZOOM_WEBHOOK_SECRET_TOKEN: process.env.ZOOM_WEBHOOK_SECRET_TOKEN,
 		SUPPORT_WEBHOOK_SECRET: process.env.SUPPORT_WEBHOOK_SECRET,
+		FRONT_DESK_API_KEY: process.env.FRONT_DESK_API_KEY,
 		INVOICE_LINK_SECRET: process.env.INVOICE_LINK_SECRET,
 		INVOICE_LINK_TTL_DAYS: process.env.INVOICE_LINK_TTL_DAYS,
 	},
