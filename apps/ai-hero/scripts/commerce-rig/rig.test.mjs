@@ -149,6 +149,10 @@ test('proof requires paid, matching webhook, buyer, amount, purchase and C5 acce
   const saved = { checkoutSessionId: 'cs_test_cents', expectedTotalCents: 123456 }
   assert.equal(provesAccess(fixture, cents, decided(saved)), true)
   assert.equal(provesAccess(fixture, cents, decided(null)), true)
+  const authoritative = { ...cents, decisionRef: 'c5d1.0123456789abcdef.-' }
+  assert.equal(provesAccess(fixture, authoritative, decided(null)), false)
+  assert.equal(provesAccess(fixture, authoritative, decided({ ...saved, decisionRef: authoritative.decisionRef })), true)
+  assert.equal(provesAccess(fixture, authoritative, decided({ ...saved, decisionRef: 'different' })), false)
   // A whole-dollar total for a cents charge is the rounding bug, whatever the decision says.
   assert.equal(provesAccess(fixture, cents, decided(saved, '1235.00')), false)
   assert.equal(provesAccess(fixture, cents, decided(saved, '1235')), false)

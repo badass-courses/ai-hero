@@ -71,5 +71,5 @@ export function freshToken() { return randomBytes(32).toString('hex') }
 export function publicSession(session) {
   assertTestObject(session)
   if (session.currency !== 'usd' || !Number.isSafeInteger(session.amount_total)) throw new Error('Unexpected checkout currency/amount')
-  return { id: session.id, currency: session.currency, subtotal: session.amount_subtotal, discount: session.total_details?.amount_discount, tax: session.total_details?.amount_tax, total: session.amount_total, paymentStatus: session.payment_status, status: session.status }
+  return { id: session.id, ...(session.metadata?.decisionRef ? { decisionRef: session.metadata.decisionRef } : {}), currency: session.currency, subtotal: session.amount_subtotal, discount: session.total_details?.amount_discount, tax: session.total_details?.amount_tax, total: session.amount_total, paymentStatus: session.payment_status, status: session.status }
 }

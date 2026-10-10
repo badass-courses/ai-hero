@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import { persistPurchaseGeoWrite } from '@/lib/admin-sales-globe-stripe-geo'
 import { createRequire } from 'node:module'
 import {
 	coupon,
@@ -15,6 +17,7 @@ import {
 	prices,
 	products,
 	purchases,
+	purchaseDecision,
 	purchaseUserTransfer,
 	roles,
 	upgradableProducts,
@@ -25,14 +28,18 @@ import * as schema from '@/db/schema'
 import { mysqlTable } from '@/db/mysql-table'
 import { preserveQueryResultShape } from '@/db/mysql-query-client'
 import type { DbExecutor } from '@/db'
-import { checkC5Duplicate } from '@/lib/c5-pricing/purchase-decision'
+import { checkC5Duplicate, recordC5PurchaseDecision } from '@/lib/c5-pricing/purchase-decision'
+import { C5_PRODUCT_ID } from '@/lib/c5-pricing/decision'
 import { c5DecisionStoreOn } from '@/lib/c5-pricing/purchase-decision-sql'
 import { validateMySqlIntegrationServerUrl } from '@/lib/team-purchase-mysql-test-guard'
 import type { MySqlDatabase } from 'drizzle-orm/mysql-core'
 import { drizzle } from 'drizzle-orm/mysql2'
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise'
 import type Stripe from 'stripe'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+
+let database: MySqlDatabase<any, any, typeof schema>
+vi.mock('@/db', () => ({ get db() { return database } }))
 
 import { DrizzleAdapter } from '@coursebuilder/adapter-drizzle'
 import { courseBuilderCoreFunctions } from '@coursebuilder/server'
@@ -79,6 +86,7 @@ const tables = {
 	merchantPrice,
 	coupon,
 	purchases,
+	purchaseDecision,
 	purchaseUserTransfer,
 	products,
 	prices,
@@ -208,7 +216,6 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 	let server: Pool | undefined
 	let pool: Pool
 	let name: string | undefined
-	let database: MySqlDatabase<any, any, typeof schema>
 	let adapter: CheckoutFulfillDatabase
 	const handler = findCheckoutHandler(courseBuilderCoreFunctions)
 	const sessions = new Map<string, Stripe.Checkout.Session>()
@@ -330,6 +337,11 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 			await generateMySQLDrizzleJson(tables),
 		)
 		for (const statement of statements) await pool.query(statement)
+		// Prove the hand-written deploy migration, including its idempotence.
+		await pool.query('DROP TABLE AI_PurchaseDecision')
+		const ledgerMigration = await readFile(new URL('../../db/migrations/20261010_ai_hero_purchase_decision.sql', import.meta.url), 'utf8')
+		await pool.query(ledgerMigration)
+		await pool.query(ledgerMigration)
 
 		database = drizzle(pool, { schema, mode: 'planetscale' }) as unknown as MySqlDatabase<any, any, typeof schema>
 		adapter = DrizzleAdapter<MySqlDatabase<any, any, typeof schema>>(
@@ -348,6 +360,7 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 
 	beforeEach(async () => {
 		for (const table of [
+			'AI_PurchaseDecision',
 			'AI_PurchaseUserTransfer',
 			'AI_Purchase',
 			'AI_MerchantSession',
@@ -611,6 +624,31 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 		expect(await counts(id)).toEqual({ charges: 0, sessions: 0, purchases: 0 })
 	})
 
+	it('saves a verified ledger row from the reconciler new-purchase event', async () => {
+		await pool.query("INSERT INTO AI_Product (id, name, type, status, fields) VALUES (?, 'Fixture C5', 'cohort', 1, JSON_OBJECT())", [C5_PRODUCT_ID])
+		await pool.query("UPDATE AI_MerchantProduct SET productId = ? WHERE id = 'mp_reconcile'", [C5_PRODUCT_ID])
+		const id = stranded({ metadata: {
+			...checkoutSession('cs_template').metadata!, productId: C5_PRODUCT_ID,
+			cbPricingContract: 'v2-decision', decisionRef: 'c5d1.0123456789abcdef.-',
+			engineVersion: 'engine-fixture', policyVersion: 'policy-fixture',
+			expectedTotalCents: '29900', accessRestriction: 'none',
+		} })
+		const run = inngestLikeStep()
+		const fulfilled = await reconcile(id, run.step, () => false)
+		expect(fulfilled.status).toBe('fulfilled')
+		const announced = run.sent.find(event => event.payload.name === 'commerce/new-purchase-created')!
+		expect(announced.payload.data).toMatchObject({ checkoutSessionId: id })
+		const store = c5DecisionStoreOn(database as unknown as DbExecutor)
+		await expect(recordC5PurchaseDecision({
+			purchaseId: announced.payload.data.purchaseId as string,
+			checkoutSessionId: id, store, now: () => now,
+			getCheckoutSession: paymentProvider.options.paymentsAdapter.getCheckoutSession,
+		})).resolves.toMatchObject({ status: 'saved', verdict: { kind: 'clean' } })
+		await expect(store.purchase(announced.payload.data.purchaseId as string)).resolves.toMatchObject({
+			decision: { checkoutSessionId: id, decisionRef: 'c5d1.0123456789abcdef.-' },
+		})
+	})
+
 	it('still fulfills when the buyer owned the product before this checkout', async () => {
 		const id = stranded()
 		// Bought long before the session opened: not this checkout's business.
@@ -674,7 +712,7 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 			).resolves.toMatchObject({ kind: 'duplicate', duplicateOf: ['purch_racing'] })
 		})
 
-		it('saves a decision in Purchase.fields without touching other keys', async () => {
+		it('keeps the insert-only decision after stale geo writes replace Purchase.fields', async () => {
 			await pool.query(
 				`INSERT INTO AI_Purchase (id, userId, productId, totalAmount, status, fields)
 					VALUES ('purch_fields', ?, 'product_reconcile', 0, 'Valid', JSON_OBJECT('benefit', 'kept'))`,
@@ -688,6 +726,8 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 				v: 1 as const,
 				decisionRef: 'c5d1.0123456789abcdef.purch_cc',
 				creditSource: 'purch_cc',
+				codeRef: null,
+				basis: null,
 				contract: 'v2-decision',
 				engineVersion: 'engine-test',
 				policyVersion: 'policy-test',
@@ -697,6 +737,13 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 				savedAt: now.toISOString(),
 			}
 			await store.saveDecision('purch_fields', decision)
+			// Geo loaded this snapshot before the decision was saved.
+			await persistPurchaseGeoWrite({
+				purchaseId: 'purch_fields', fields: { benefit: 'kept' },
+				plan: { skip: false, reason: null, city: 'Portland', state: 'OR', ipAddress: null,
+					location: { lat: 45.5, lng: -122.6, city: 'Portland', region: 'OR', precision: 'city' },
+					source: 'stripe-billing' },
+			})
 			await store.markDuplicate('purch_fields', ['purch_other'])
 
 			const [rows] = await pool.query<RowDataPacket[]>(
@@ -706,16 +753,29 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 				typeof rows[0]!.fields === 'string'
 					? JSON.parse(rows[0]!.fields)
 					: rows[0]!.fields
-			expect(fields).toEqual({
+			expect(fields).toMatchObject({
 				benefit: 'kept',
-				c5Decision: decision,
 				c5DuplicateOf: ['purch_other'],
 			})
+			expect(fields).not.toHaveProperty('c5Decision')
+			await expect(store.saveDecision('purch_fields', { ...decision, savedAt: '2030-01-01T00:00:00Z' })).resolves.toBe('saved')
+			await expect(store.saveDecision('purch_fields', { ...decision, decisionRef: 'c5d1.ffffffffffffffff.other', creditSource: 'other' })).resolves.toBe('conflict')
 			await expect(store.purchase('purch_fields')).resolves.toMatchObject({
 				decision,
 			})
 			await expect(store.spentBy('purch_cc')).resolves.toEqual(['purch_fields'])
 			await expect(store.spentBy('purch_unspent')).resolves.toEqual([])
+			const [indexes] = await pool.query<RowDataPacket[]>('SHOW INDEX FROM AI_PurchaseDecision')
+			expect(indexes.map(row => row.Key_name)).toContain('PurchaseDecision_creditSource_idx')
+			expect(indexes.map(row => row.Key_name)).toContain('PurchaseDecision_codeRef_idx')
+			await pool.query('DELETE FROM AI_PurchaseDecision')
+			const replays = await Promise.all([
+				store.saveDecision('purch_fields', decision),
+				store.saveDecision('purch_fields', { ...decision, decisionRef: 'c5d1.ffffffffffffffff.other', creditSource: 'other' }),
+			])
+			expect(replays.sort()).toEqual(['conflict', 'saved'])
+			const [count] = await pool.query<RowDataPacket[]>('SELECT COUNT(*) AS n FROM AI_PurchaseDecision')
+			expect(Number(count[0]!.n)).toBe(1)
 		})
 
 		it('counts a sibling bought inside the 48-hour lookback', async () => {
