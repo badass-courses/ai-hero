@@ -11,6 +11,8 @@ import { drizzle, type MySql2PreparedQueryHKT } from 'drizzle-orm/mysql2'
 import mysql from 'mysql2/promise'
 
 import { DrizzleAdapter } from '@coursebuilder/adapter-drizzle'
+import type { RequiredPricingAuthority } from '@coursebuilder/commerce/types'
+import type { AuthoritativePriceRequest } from '@coursebuilder/core/schemas'
 
 import * as schema from './schema'
 
@@ -60,6 +62,24 @@ export const db = drizzle(pool, {
 export type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 export type DbExecutor = typeof db | DbTransaction
 
-export const courseBuilderAdapter = DrizzleAdapter<
-	MySqlDatabase<any, any, any>
->(db, mysqlTable, stripeProvider)
+const drizzleAdapter = DrizzleAdapter<MySqlDatabase<any, any, any>>(
+	db,
+	mysqlTable,
+	stripeProvider,
+)
+
+/**
+ * The app's Course Builder adapter. It carries Course Builder's authoritative-price
+ * hook, typed `RequiredPricingAuthority`, so a commerce path without the hook
+ * does not compile. The hook prices Cohort 005 in-process and returns `null`
+ * for every other product, which keeps Course Builder's legacy pricing. It is
+ * attached to the adapter object itself, so Course Builder's receivers stay
+ * as they were, and loaded on first call to keep `@/db` free of an import
+ * cycle.
+ */
+export const courseBuilderAdapter: RequiredPricingAuthority<
+	typeof drizzleAdapter
+> = Object.assign(drizzleAdapter, {
+	authoritativePrice: async (request: AuthoritativePriceRequest) =>
+		(await import('@/lib/c5-pricing/server')).c5AuthoritativePrice(request),
+})

@@ -171,10 +171,15 @@ export const env = createEnv({
 		ZOOM_WEBHOOK_SECRET_TOKEN: z.string().optional(),
 		SUPPORT_WEBHOOK_SECRET: z.string().optional(),
 		FRONT_DESK_API_KEY: z.string().optional(),
-		// front-desk's team pricing for C5 invoices. Both unset keeps C5
-		// self-serve invoicing off; other products use the app's bulk rules.
+		// front-desk serves the C5 pricing policy (pricing token) and binding
+		// quotes (quotes token); the engine runs in-process. Unset leaves C5
+		// held: no C5 price is charged. Other products are unaffected.
 		FRONT_DESK_URL: z.string().url().optional(),
 		FRONT_DESK_PRICING_TOKEN: z.string().optional(),
+		FRONT_DESK_QUOTES_TOKEN: z.string().optional(),
+		// C5 kill switch: "true" closes C5 checkout and display. It never falls
+		// back to the legacy price.
+		AIH_C5_PRICING_DISABLED: z.enum(['true', 'false']).optional(),
 		// Optional at startup; token verification and minting fail closed when absent.
 		INVOICE_LINK_SECRET: z.string().optional(),
 		INVOICE_LINK_TTL_DAYS: z.string().optional(),
@@ -341,6 +346,8 @@ export const env = createEnv({
 		FRONT_DESK_API_KEY: process.env.FRONT_DESK_API_KEY,
 		FRONT_DESK_URL: process.env.FRONT_DESK_URL,
 		FRONT_DESK_PRICING_TOKEN: process.env.FRONT_DESK_PRICING_TOKEN,
+		FRONT_DESK_QUOTES_TOKEN: process.env.FRONT_DESK_QUOTES_TOKEN,
+		AIH_C5_PRICING_DISABLED: process.env.AIH_C5_PRICING_DISABLED,
 		INVOICE_LINK_SECRET: process.env.INVOICE_LINK_SECRET,
 		INVOICE_LINK_TTL_DAYS: process.env.INVOICE_LINK_TTL_DAYS,
 	},
