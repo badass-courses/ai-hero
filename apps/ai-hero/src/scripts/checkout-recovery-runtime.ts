@@ -11,9 +11,12 @@
  *     imports `server-only`. That specifier only resolves inside Next's
  *     bundler, so the import throws `ERR_MODULE_NOT_FOUND` under `tsx`.
  *
- * This module rebuilds only the three capabilities the recovery command needs,
+ * This module rebuilds only the capabilities the recovery command needs,
  * reading exactly the variables it uses. The Next app keeps its own singletons
- * unchanged.
+ * unchanged. The one exception is direct fulfillment (`--direct`, or a replay
+ * that produced no run): it runs the app's own checkout handler with the app's
+ * own identity, Stripe and Slack providers, so it loads those modules lazily
+ * and needs the full app environment and `--conditions=react-server`.
  *
  * Stripe reads go through the same `StripePaymentAdapter` the app uses, so the
  * session expansion the recovery logic depends on cannot drift.
@@ -27,10 +30,7 @@
  * @module checkout-recovery-runtime
  */
 
-import type {
-	CheckoutRecoveryRuntime,
-	CheckoutRecoveryState,
-} from './checkout-recovery'
+import type { CheckoutRecoveryRuntime } from './checkout-recovery'
 
 export type CheckoutRecoveryEnvSource = Record<string, string | undefined>
 
@@ -44,6 +44,13 @@ export type CheckoutRecoveryEnv = {
 	stripeWebhookSecret: string
 	/** Only present when the command runs in apply mode. */
 	inngestAppId: string | null
+	/**
+	 * `NEXT_PUBLIC_APP_NAME` when set, in any mode. `--direct` needs it to
+	 * check the session's `siteName` before predicting a fulfillment.
+	 */
+	appName: string | null
+	/** Optional. Lets an apply run confirm the replay produced a run. */
+	inngestSigningKey: string | null
 }
 
 /** Variables the command needs in every mode. */
@@ -110,12 +117,55 @@ export function resolveCheckoutRecoveryEnv(
 		inngestAppId: options.apply
 			? (present(source, 'NEXT_PUBLIC_APP_NAME') as string)
 			: null,
+		appName: present(source, 'NEXT_PUBLIC_APP_NAME'),
+		inngestSigningKey: options.apply
+			? present(source, 'INNGEST_SIGNING_KEY')
+			: null,
 	}
 }
 
+const REPLAY_RUN_POLL_INTERVAL_MS = 5_000
+const REPLAY_RUN_POLL_ATTEMPTS = 12
+
 /**
- * Builds the live runtime: Stripe reads, database reads, and — in apply mode
- * only — one Inngest replay send.
+ * Asks the Inngest REST API how many runs each sent event created, for up to
+ * a minute. Returns null when there is no signing key to ask with.
+ */
+export async function countInngestEventRuns(
+	eventIds: string[],
+	signingKey: string | null,
+	options: {
+		fetch?: typeof fetch
+		intervalMs?: number
+		attempts?: number
+	} = {},
+): Promise<number | null> {
+	if (!signingKey) return null
+	const fetcher = options.fetch ?? fetch
+	const intervalMs = options.intervalMs ?? REPLAY_RUN_POLL_INTERVAL_MS
+	const attempts = options.attempts ?? REPLAY_RUN_POLL_ATTEMPTS
+	for (let attempt = 0; attempt < attempts; attempt += 1) {
+		if (attempt > 0) await new Promise((r) => setTimeout(r, intervalMs))
+		let runs = 0
+		for (const eventId of eventIds) {
+			const response = await fetcher(
+				`https://api.inngest.com/v1/events/${encodeURIComponent(eventId)}/runs`,
+				{ headers: { Authorization: `Bearer ${signingKey}` } },
+			)
+			if (!response.ok) {
+				throw new Error(`Inngest runs lookup failed with ${response.status}`)
+			}
+			const body = (await response.json()) as { data?: unknown[] }
+			runs += body.data?.length ?? 0
+		}
+		if (runs > 0) return runs
+	}
+	return 0
+}
+
+/**
+ * Builds the live runtime: Stripe reads, database reads, and, in apply mode
+ * only, one Inngest replay send or one direct handler run.
  */
 export async function createCheckoutRecoveryRuntime(
 	env: CheckoutRecoveryEnv,
@@ -125,7 +175,7 @@ export async function createCheckoutRecoveryRuntime(
 		schema,
 		{ preserveQueryResultShape },
 		{ createDatabasePoolCloser },
-		drizzleOrm,
+		{ inspectCheckoutFulfillment, findBuyerProductPurchaseIds },
 		{ drizzle },
 		mysqlModule,
 	] = await Promise.all([
@@ -133,7 +183,7 @@ export async function createCheckoutRecoveryRuntime(
 		import('@/db/schema'),
 		import('@/db/mysql-query-client'),
 		import('@/db/pool-lifecycle'),
-		import('drizzle-orm'),
+		import('@/lib/checkout-reconcile/inspect'),
 		import('drizzle-orm/mysql2'),
 		import('mysql2/promise'),
 	])
@@ -150,6 +200,8 @@ export async function createCheckoutRecoveryRuntime(
 	)
 	const db = drizzle(pool, { schema, mode: 'planetscale' })
 	const closePool = createDatabasePoolCloser(pool)
+	// Set once direct fulfillment loads the app's own `@/db` pool.
+	let closeAppPool: (() => Promise<void>) | null = null
 
 	const paymentsAdapter = new StripePaymentAdapter({
 		stripeToken: env.stripeToken,
@@ -157,42 +209,10 @@ export async function createCheckoutRecoveryRuntime(
 	})
 
 	return {
+		appName: env.appName,
 		getCheckoutSession: (checkoutSessionId) =>
 			paymentsAdapter.getCheckoutSession(checkoutSessionId),
-		inspect: async ({
-			checkoutSessionId,
-			chargeId,
-		}): Promise<CheckoutRecoveryState> => {
-			const chargeRows = await db
-				.select({ id: schema.merchantCharge.id })
-				.from(schema.merchantCharge)
-				.where(drizzleOrm.eq(schema.merchantCharge.identifier, chargeId))
-			const sessionRows = await db
-				.select({ id: schema.merchantSession.id })
-				.from(schema.merchantSession)
-				.where(
-					drizzleOrm.eq(schema.merchantSession.identifier, checkoutSessionId),
-				)
-			const purchaseConditions = [
-				...chargeRows.map((row) =>
-					drizzleOrm.eq(schema.purchases.merchantChargeId, row.id),
-				),
-				...sessionRows.map((row) =>
-					drizzleOrm.eq(schema.purchases.merchantSessionId, row.id),
-				),
-			]
-			const purchaseRows = purchaseConditions.length
-				? await db
-						.select({ id: schema.purchases.id })
-						.from(schema.purchases)
-						.where(drizzleOrm.or(...purchaseConditions))
-				: []
-			return {
-				chargeIds: chargeRows.map((row) => row.id),
-				merchantSessionIds: sessionRows.map((row) => row.id),
-				purchaseIds: [...new Set(purchaseRows.map((row) => row.id))],
-			}
-		},
+		inspect: (input) => inspectCheckoutFulfillment(db, input),
 		sendReplay: async (event) => {
 			if (!env.inngestAppId) {
 				throw new Error('Replay send requires apply mode environment')
@@ -204,6 +224,65 @@ export async function createCheckoutRecoveryRuntime(
 			const client = new Inngest({ id: env.inngestAppId, isDev: false })
 			return client.send(event)
 		},
-		close: closePool,
+		countReplayRuns: (eventIds) =>
+			countInngestEventRuns(eventIds, env.inngestSigningKey),
+		fulfillDirect: async (checkoutSessionId) => {
+			if (!env.inngestAppId) {
+				throw new Error('Direct fulfillment requires apply mode environment')
+			}
+			// The app's own handler, identity and providers. These modules
+			// validate the full app environment on import.
+			const [
+				{ courseBuilderCoreFunctions },
+				{ magicLinkIdentity },
+				{ stripeProvider },
+				{ slackProvider },
+				{ fulfillCheckoutSessionDirectly, findCheckoutHandler },
+				{ closeDatabasePool },
+				{ Inngest },
+			] = await Promise.all([
+				import('@coursebuilder/server'),
+				import('@/coursebuilder/email-provider'),
+				import('@/coursebuilder/stripe-provider'),
+				import('@/coursebuilder/slack-provider'),
+				import('@/lib/checkout-reconcile/fulfill'),
+				import('@/db'),
+				import('inngest'),
+			])
+			closeAppPool = closeDatabasePool
+			const client = new Inngest({ id: env.inngestAppId, isDev: false })
+			const appPaymentsAdapter = stripeProvider.options
+				.paymentsAdapter as InstanceType<typeof StripePaymentAdapter>
+			return fulfillCheckoutSessionDirectly(checkoutSessionId, {
+				handler: findCheckoutHandler(courseBuilderCoreFunctions),
+				step: {
+					run: async (_name, fn) => {
+						const output = await fn()
+						// Match Inngest, which hands step output back as JSON.
+						return output === undefined
+							? undefined
+							: JSON.parse(JSON.stringify(output))
+					},
+					sendEvent: (_name, payload) => client.send(payload),
+				},
+				db: magicLinkIdentity as never,
+				paymentProvider: stripeProvider,
+				notificationProvider: slackProvider,
+				getCheckoutSession: (id) => appPaymentsAdapter.getCheckoutSession(id),
+				inspect: (input) => inspectCheckoutFulfillment(db, input),
+				findBuyerProductPurchases: (input) =>
+					findBuyerProductPurchaseIds(db, input),
+				appName: env.inngestAppId,
+				now: () => new Date(),
+				txnId: `aih-checkout-recover-direct-${checkoutSessionId}`,
+				// An operator names one exact session; age gates do not apply.
+				minAgeMs: 0,
+				windowMs: Number.POSITIVE_INFINITY,
+			})
+		},
+		close: async () => {
+			await closeAppPool?.()
+			await closePool()
+		},
 	}
 }

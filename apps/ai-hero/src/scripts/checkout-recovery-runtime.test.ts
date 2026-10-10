@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
 	CHECKOUT_RECOVERY_APPLY_ENV,
 	CHECKOUT_RECOVERY_REQUIRED_ENV,
+	countInngestEventRuns,
 	resolveCheckoutRecoveryEnv,
 } from './checkout-recovery-runtime'
 
@@ -28,7 +29,16 @@ describe('checkout recovery environment boundary', () => {
 			stripeToken: 'sk_test_placeholder',
 			stripeWebhookSecret: '',
 			inngestAppId: null,
+			appName: null,
+			inngestSigningKey: null,
 		})
+		// Read when present, so a --direct dry run can check siteName.
+		expect(
+			resolveCheckoutRecoveryEnv(
+				{ ...dryRunSource, NEXT_PUBLIC_APP_NAME: 'ai-hero' },
+				{ apply: false },
+			).appName,
+		).toBe('ai-hero')
 	})
 
 	it('ignores the unrelated Next app variables that blocked the old script', () => {
@@ -101,5 +111,75 @@ describe('checkout recovery environment boundary', () => {
 			'Missing required environment variables: DATABASE_URL',
 		)
 		expect(thrown?.message).not.toContain('sk_test_secret_value')
+	})
+})
+
+describe('checkout recovery replay run check', () => {
+	const respond = (data: unknown[]) =>
+		new Response(JSON.stringify({ data }), { status: 200 })
+
+	it('cannot check without a signing key', async () => {
+		const fetcher = vi.fn()
+		expect(
+			await countInngestEventRuns(['01EVENT'], null, { fetch: fetcher }),
+		).toBeNull()
+		expect(fetcher).not.toHaveBeenCalled()
+	})
+
+	it('reads the signing key from apply mode only', () => {
+		expect(
+			resolveCheckoutRecoveryEnv(
+				{ ...applySource, INNGEST_SIGNING_KEY: 'signkey-prod-placeholder' },
+				{ apply: true },
+			).inngestSigningKey,
+		).toBe('signkey-prod-placeholder')
+		expect(
+			resolveCheckoutRecoveryEnv(
+				{ ...dryRunSource, INNGEST_SIGNING_KEY: 'signkey-prod-placeholder' },
+				{ apply: false },
+			).inngestSigningKey,
+		).toBeNull()
+	})
+
+	it('returns the run count as soon as a run appears', async () => {
+		const fetcher = vi
+			.fn()
+			.mockResolvedValueOnce(respond([]))
+			.mockResolvedValueOnce(respond([{ run_id: '01RUN' }]))
+		expect(
+			await countInngestEventRuns(['01EVENT'], 'signkey-prod-placeholder', {
+				fetch: fetcher,
+				intervalMs: 0,
+				attempts: 3,
+			}),
+		).toBe(1)
+		expect(fetcher).toHaveBeenCalledWith(
+			'https://api.inngest.com/v1/events/01EVENT/runs',
+			{ headers: { Authorization: 'Bearer signkey-prod-placeholder' } },
+		)
+	})
+
+	it('reports zero runs once the wait runs out, the 2026-10-09 case', async () => {
+		const fetcher = vi.fn().mockImplementation(async () => respond([]))
+		expect(
+			await countInngestEventRuns(['01EVENT'], 'signkey-prod-placeholder', {
+				fetch: fetcher,
+				intervalMs: 0,
+				attempts: 3,
+			}),
+		).toBe(0)
+		expect(fetcher).toHaveBeenCalledTimes(3)
+	})
+
+	it('fails loudly when the Inngest API refuses', async () => {
+		const fetcher = vi
+			.fn()
+			.mockResolvedValue(new Response('nope', { status: 401 }))
+		await expect(
+			countInngestEventRuns(['01EVENT'], 'signkey-prod-placeholder', {
+				fetch: fetcher,
+				intervalMs: 0,
+			}),
+		).rejects.toThrow('Inngest runs lookup failed with 401')
 	})
 })

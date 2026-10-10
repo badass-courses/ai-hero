@@ -14,10 +14,13 @@ export const CohortSidebar = ({
 	children,
 
 	cohort,
+	mobileCtaLabel,
 }: {
 	children: React.ReactNode
 	sticky?: boolean
 	cohort: Cohort
+	/** Label for the mobile bar's jump to the rail. Defaults to "Enroll Now". */
+	mobileCtaLabel?: string
 }) => {
 	const [sidebarRef, { height }] = useMeasure<HTMLDivElement>()
 	const [windowHeight, setWindowHeight] = React.useState(0)
@@ -64,6 +67,7 @@ export const CohortSidebar = ({
 					'pointer-events-none opacity-0': isInView,
 				})}
 				cohort={cohort}
+				ctaLabel={mobileCtaLabel}
 			/>
 		</>
 	)
@@ -72,9 +76,11 @@ export const CohortSidebar = ({
 export const CohortSidebarMobile = ({
 	cohort,
 	className,
+	ctaLabel = 'Enroll Now',
 }: {
 	cohort: Cohort
 	className?: string
+	ctaLabel?: string
 }) => {
 	const { fields } = cohort
 	const { startsAt, endsAt, timezone } = fields
@@ -111,7 +117,7 @@ export const CohortSidebarMobile = ({
 				asChild
 			>
 				<Link href="#buy" onClick={handleScrollToBuy}>
-					<span className="relative z-10">Enroll Now</span>
+					<span className="relative z-10">{ctaLabel}</span>
 					<div
 						style={{
 							backgroundSize: '200% 100%',

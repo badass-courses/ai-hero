@@ -53,7 +53,7 @@
 		"team-purchases:repair-memberless": "tsx -r dotenv/config src/scripts/team-purchase-memberless-repair.ts",
 		"kit:fields:check": "tsx -r dotenv/config src/scripts/kit-custom-fields-check.ts",
 		"evergreen:deadline-fields:plan": "tsx -r dotenv/config src/scripts/evergreen-deadline-fields-plan.ts",
-		"checkout:recover": "tsx -r dotenv/config src/scripts/checkout-recovery.ts",
+		"checkout:recover": "tsx --conditions=react-server -r dotenv/config src/scripts/checkout-recovery.ts",
 		"cohort-004:shell-sync": "bun src/scripts/cohort-004-shell-sync.ts",
 		"cohort-004:video-upload-sync": "tsx -r dotenv/config src/scripts/cohort-004-video-upload-sync.ts",
 		"cohort-004:body-content-sync": "tsx -r dotenv/config src/scripts/cohort-004-body-content-sync.ts",

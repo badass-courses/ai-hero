@@ -14,8 +14,9 @@ import { track } from '@/utils/analytics'
 import { cn } from '@coursebuilder/utils/cn'
 
 /**
- * The cohort waitlist capture. One form, one Kit list, two callers: the
- * `/courses` hero and the homepage's cohort block.
+ * The cohort waitlist capture. One form, one Kit list, three callers: the
+ * `/courses` hero, the homepage's cohort block, and the rail of a cohort page
+ * that is still coming soon.
  *
  * It is shared on purpose. Amy's note on the homepage block — *"might as well
  * include the signup form"* — and her note on the `/courses` hero are the same
@@ -46,7 +47,10 @@ export function WaitlistForm({
 }: {
 	actionLabel: string
 	productName: string
-	surface: Extract<ConversionSurface, 'homepage-cohort' | 'courses-cohort'>
+	surface: Extract<
+		ConversionSurface,
+		'homepage-cohort' | 'courses-cohort' | 'cohort-page'
+	>
 	knownIdentity?: boolean
 }) {
 	const router = useRouter()
