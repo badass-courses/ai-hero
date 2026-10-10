@@ -1,4 +1,8 @@
 import { db } from '@/db'
+import {
+	C5_DECISION_FIELD,
+	parseSavedDecision,
+} from '@/lib/c5-pricing/purchase-decision'
 import { drizzleC5DecisionStore } from '@/lib/c5-pricing/purchase-decision-store'
 import type { ChargeState } from '@ai-hero/front-desk-support'
 import { Effect, Layer } from 'effect'
@@ -144,6 +148,12 @@ export const pricingFactsSourceLayer = (deps: {
 						createdAt: purchase.createdAt,
 						bulkCouponId: purchase.bulkCouponId ?? null,
 						redeemedBulkCouponId: purchase.redeemedBulkCouponId ?? null,
+						hasSavedDecision:
+							parseSavedDecision(
+								(purchase.fields as Record<string, unknown> | null)?.[
+									C5_DECISION_FIELD
+								],
+							) !== null,
 					})
 				}
 				for (const purchase of held) add(purchase)

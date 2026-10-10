@@ -184,6 +184,8 @@ export const env = createEnv({
 		// When paid C5 purchases started saving their pricing decisions, as an
 		// ISO-8601 instant. Credit use falls back to purchase history before it.
 		// Unset or unreadable holds any buyer whose credit chain has C5 history.
+		// Never earlier than the deploy that started saving decisions; later is
+		// safe (docs/c5-pricing-runbook.md).
 		AIH_C5_DECISION_CUTOVER_AT: z.string().optional(),
 		// Optional at startup; token verification and minting fail closed when absent.
 		INVOICE_LINK_SECRET: z.string().optional(),

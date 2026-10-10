@@ -39,6 +39,8 @@ interface SyntheticTransfer {
 type SyntheticPurchase = PricingPurchaseRow & {
 	userId?: string
 	createdAt?: Date
+	/** Whether a target purchase carries its saved decision. */
+	hasSavedDecision?: boolean
 }
 interface SyntheticDb {
 	users?: Record<string, string>
@@ -189,6 +191,7 @@ function synthetic(data: SyntheticDb) {
 							createdAt: row!.createdAt ?? after,
 							bulkCouponId: row!.bulkCouponId,
 							redeemedBulkCouponId: row!.redeemedBulkCouponId,
+							hasSavedDecision: row!.hasSavedDecision ?? false,
 						},
 					]),
 			)
@@ -825,7 +828,10 @@ describe('team seats and credit use', () => {
 		(await run({ ...withCredit, ...data })).facts.facts.creditUse
 
 	it('reads credit use from saved decisions after the cutover', async () => {
-		const mine = [...withCredit.purchases, c5('mine', { createdAt: after })]
+		const mine = [
+			...withCredit.purchases,
+			c5('mine', { createdAt: after, hasSavedDecision: true }),
+		]
 		expect(await useOf({ purchases: mine })).toEqual({
 			value: 'available',
 			sourceRefs: [chainRef, 'ai-hero:c5-decision-ledger'],
@@ -861,9 +867,38 @@ describe('team seats and credit use', () => {
 	it('places a purchase at the cutover instant after it', async () => {
 		expect(
 			await useOf({
-				purchases: [...withCredit.purchases, c5('edge', { createdAt: cutover })],
+				purchases: [
+					...withCredit.purchases,
+					c5('edge', { createdAt: cutover, hasSavedDecision: true }),
+				],
 			}),
 		).toMatchObject({ value: 'available' })
+	})
+
+	it('holds credit use while a C5 purchase from after the cutover has no saved decision', async () => {
+		// The decision is saved after payment, and the save can fail.
+		expect(
+			await useOf({
+				purchases: [...withCredit.purchases, c5('pending', { createdAt: after })],
+			}),
+		).toEqual({ gap: 'FactsUnavailable' })
+		// A saved decision that spent the credit still settles it.
+		expect(
+			await useOf({
+				purchases: [...withCredit.purchases, c5('pending', { createdAt: after })],
+				ledger: { cc: ['c5-elsewhere'] },
+			}),
+		).toMatchObject({ value: 'spent' })
+		// So does a purchase from before the cutover.
+		expect(
+			await useOf({
+				purchases: [
+					...withCredit.purchases,
+					c5('pending', { createdAt: after }),
+					c5('old', { createdAt: before }),
+				],
+			}),
+		).toMatchObject({ value: 'spent' })
 	})
 
 	it.each([
@@ -981,19 +1016,24 @@ describe('transfer chain', () => {
 		expect(facts.creditUse).toMatchObject({ value: 'spent' })
 	})
 
-	it('leaves the credit available when a later C5 purchase in the chain saved no decision', async () => {
-		const facts = await factsOf({
-			purchases: [...withCredit.purchases, c5('later', 'user-previous', after)],
-			transfers: [
-				{
-					purchaseId: 'cc',
-					sourceUserId: 'user-previous',
-					targetUserId: 'user-test',
-					completed: true,
-				},
-			],
-		})
-		expect(facts.creditUse).toMatchObject({ value: 'available' })
+	it('holds the credit while a later C5 purchase in the chain has no saved decision, and frees it once saved', async () => {
+		const later = (hasSavedDecision: boolean) =>
+			factsOf({
+				purchases: [
+					...withCredit.purchases,
+					{ ...c5('later', 'user-previous', after), hasSavedDecision },
+				],
+				transfers: [
+					{
+						purchaseId: 'cc',
+						sourceUserId: 'user-previous',
+						targetUserId: 'user-test',
+						completed: true,
+					},
+				],
+			})
+		expect((await later(false)).creditUse).toEqual({ gap: 'FactsUnavailable' })
+		expect((await later(true)).creditUse).toMatchObject({ value: 'available' })
 	})
 
 	it('does not count someone who was only offered the Crash Course purchase', async () => {

@@ -411,6 +411,47 @@ describe('front-desk read hooks', () => {
 		expect(down?.facts.credit).toMatchObject({ value: { paid: 25000 } })
 		expect(down?.facts.creditUse).toEqual({ gap: 'FactsUnavailable' })
 	})
+	it('holds credit use until a C5 purchase from after the cutover has its saved decision', async () => {
+		mocks.lookupUser.mockResolvedValue({ id: 'test-user' })
+		mocks.prices.mockResolvedValue([
+			{ id: 'price-test', unitAmount: '1000.00' },
+		])
+		const c5 = (fields: unknown) => ({
+			id: 'c5-later',
+			userId: 'test-user',
+			productId: 'product-s00zs',
+			status: 'Valid',
+			createdAt: new Date('2030-02-01T00:00:00Z'),
+			bulkCouponId: null,
+			redeemedBulkCouponId: null,
+			fields,
+		})
+		settledStripe()
+		mocks.purchases.mockResolvedValue([crashCourse(), c5({})])
+		expect((await hooks.pricingFacts(askC5))?.facts.creditUse).toEqual({
+			gap: 'FactsUnavailable',
+		})
+		mocks.purchases.mockResolvedValue([
+			crashCourse(),
+			c5({
+				c5Decision: {
+					v: 1,
+					decisionRef: 'c5d1.0000000000000000.-',
+					creditSource: null,
+					contract: 'test',
+					engineVersion: 'engine-test',
+					policyVersion: 'policy-test',
+					accessRestriction: 'none',
+					expectedTotalCents: 80000,
+					checkoutSessionId: 'cs_test_later',
+					savedAt: '2030-02-01T00:00:01Z',
+				},
+			}),
+		])
+		expect((await hooks.pricingFacts(askC5))?.facts.creditUse).toMatchObject({
+			value: 'available',
+		})
+	})
 	it('holds credit when the purchase session is missing at Stripe', async () => {
 		mocks.lookupUser.mockResolvedValue({ id: 'test-user' })
 		mocks.prices.mockResolvedValue([

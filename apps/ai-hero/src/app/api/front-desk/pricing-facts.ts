@@ -93,6 +93,8 @@ export interface CreditChainTarget {
 	readonly createdAt: Date
 	readonly bulkCouponId: string | null
 	readonly redeemedBulkCouponId: string | null
+	/** Whether the purchase carries its saved pricing decision. */
+	readonly hasSavedDecision: boolean
 }
 /**
  * A credit source's transfer chain: everyone who held the source purchase,
@@ -265,8 +267,10 @@ export const creditChainRef = (creditSource: string) =>
  * Target purchases from before the cutover saved no decision. The source is
  * spent when anyone in its transfer chain holds, or ever held, an individual
  * target purchase from before the cutover, in any status. After the cutover
- * only saved decisions count. A chain that cannot be read, or a target
- * purchase with no cutover to place it against, holds the fact.
+ * only saved decisions count, so a target purchase from after it whose
+ * decision is not saved yet (the save runs after payment, and can fail) holds
+ * the fact until it is. A chain that cannot be read, or a target purchase with
+ * no cutover to place it against, holds the fact too.
  */
 export function creditUseFact({
 	creditSource,
@@ -301,6 +305,8 @@ export function creditUseFact({
 			chainRef,
 			...before.map((target) => `${purchaseRef(target.id)}#before-cutover`),
 		])
+	if (targets.some((target) => !target.hasSavedDecision))
+		return gap('FactsUnavailable')
 	return known('available', [chainRef, CREDIT_LEDGER_REF])
 }
 

@@ -30,8 +30,9 @@ export const c5PurchaseDecision = inngest.createFunction(
 		name: 'C5 Purchase Decision and Duplicate Check',
 		idempotency: 'event.data.purchaseId',
 		retries: 5,
-		// A purchase whose decision was never saved keeps its buyer's credit
-		// facts held. That is safe, but someone needs to know.
+		// Until its decision is saved, the purchase holds credit use for every
+		// Crash Course purchase in its holder's transfer chain. Safe, but those
+		// buyers cannot check out, so someone needs to save it.
 		onFailure: async ({ event, error }) => {
 			const purchaseId = event.data.event.data.purchaseId
 			await log.error('c5.purchase.decision_failed', {
@@ -47,7 +48,7 @@ export const c5PurchaseDecision = inngest.createFunction(
 						fallback: `Purchase ${purchaseId}: decision not saved`,
 						color: '#d92d20',
 						title: 'C5 purchase decision was not saved',
-						text: `\`${purchaseId}\` paid, but its pricing decision was not saved after retries. Its buyer's credit stays held until it is. Error: ${error.message}`,
+						text: `\`${purchaseId}\` paid, but its pricing decision was not saved after retries. Until it is saved, any C5 checkout whose Crash Course credit shares this buyer's transfer chain is held. Fix the cause, then rerun this run (see the C5 pricing runbook). Error: ${error.message}`,
 					},
 				],
 			})
