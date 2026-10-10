@@ -585,7 +585,9 @@ export async function CohortPageView(props: CohortPageViewProps) {
 								href={`/cohorts/${fields.slug}/for-teams`}
 								className="hover:bg-foreground/[0.04] flex items-center justify-between border-t px-5 py-4 text-sm font-semibold transition-colors"
 							>
-								Buying for a team? Seats and invoices
+								{isComingSoon
+									? 'Buying for a team?'
+									: 'Buying for a team? Seats and invoices'}
 								<ArrowUpRight className="size-4" aria-hidden="true" />
 							</Link>
 						) : null}
