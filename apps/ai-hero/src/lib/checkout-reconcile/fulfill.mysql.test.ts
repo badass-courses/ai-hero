@@ -436,7 +436,7 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 		await pool.query('UPDATE AI_MerchantProduct SET productId = ?', [C5_PRODUCT_ID])
 		const codeRef = 'synthetic-gift-code'
 		const claimId = 'synthetic-gift-claim'
-		const id = stranded({ metadata: { ...checkoutSession('template').metadata, productId: C5_PRODUCT_ID, codeRef, giftClaimId: claimId, decisionRef: encodeDecisionRef('0000000000000000', undefined, codeRef) } })
+		const id = stranded({ metadata: { ...checkoutSession('template').metadata, productId: C5_PRODUCT_ID, codeRef, giftClaimId: claimId, decisionRef: encodeDecisionRef('0000000000000000', null, codeRef) } })
 		await pool.query('INSERT INTO AI_GiftCodeSlot (codeRef, slot, checkoutSessionId, claimId, state, expiresAt) VALUES (?, 1, ?, ?, ?, ?)', [codeRef, id, claimId, 'reserved', new Date(now.getTime() + 3600000)])
 		expect(await reconcile(id, inngestLikeStep().step)).toMatchObject({ status: 'fulfilled' })
 		const [rows] = await pool.query<RowDataPacket[]>('SELECT state FROM AI_GiftCodeSlot WHERE checkoutSessionId = ?', [id])
@@ -452,7 +452,7 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 		await pool.query('UPDATE AI_Product SET id = ? WHERE id = ?', [C5_PRODUCT_ID, 'product_reconcile'])
 		await pool.query('UPDATE AI_MerchantProduct SET productId = ?', [C5_PRODUCT_ID])
 		const codeRef = 'synthetic-missing-gift'
-		const id = stranded({ metadata: { ...checkoutSession('template').metadata, productId: C5_PRODUCT_ID, codeRef, giftClaimId: 'missing', decisionRef: encodeDecisionRef('0000000000000000', undefined, codeRef) } })
+		const id = stranded({ metadata: { ...checkoutSession('template').metadata, productId: C5_PRODUCT_ID, codeRef, giftClaimId: 'missing', decisionRef: encodeDecisionRef('0000000000000000', null, codeRef) } })
 		expect(await reconcile(id, inngestLikeStep().step)).toMatchObject({ status: 'fulfilled' })
 		expect(await counts(id)).toEqual({ charges: 1, sessions: 1, purchases: 1 })
 	})
