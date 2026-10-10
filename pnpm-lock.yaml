@@ -14,8 +14,6 @@ packageExtensionsChecksum: sha256-ZMmt6GZWoJtnZ5+9BALtlM1MuYOQiex9rnALJE9cJAI=
 
 patchedDependencies:
   '@coursebuilder/analytics@1.1.3': 95e95582b1cc76a0082e0cda9b06a302d864fd74a46023b59f2b7306b48ebfc1
-  '@coursebuilder/commerce-next@0.2.19': 18ba3527048be86a8d5349055bcf75ae4cf0ac21765d088fd5e3e5d5d90e5801
-  '@coursebuilder/commerce@0.2.4': 4f4795913aeb884b5ec926ea7689283fc7a6b677dd56de9b36cbe7fa4f98e44e
 
 importers:
 
@@ -112,23 +110,23 @@ importers:
         specifier: ^6.36.2
         version: 6.43.2
       '@coursebuilder/adapter-drizzle':
-        specifier: 3.1.4
-        version: 3.1.4(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
+        specifier: 3.2.0
+        version: 3.2.0(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
       '@coursebuilder/analytics':
         specifier: ^1.1.3
-        version: 1.1.3(patch_hash=95e95582b1cc76a0082e0cda9b06a302d864fd74a46023b59f2b7306b48ebfc1)(3a5dacb22b721e6f479bdf589cb43c75)
+        version: 1.1.3(patch_hash=95e95582b1cc76a0082e0cda9b06a302d864fd74a46023b59f2b7306b48ebfc1)(3bcb7b3f6c86bb1c5aef8c974f941e9a)
       '@coursebuilder/commerce':
-        specifier: ^0.2.4
-        version: 0.2.4(patch_hash=4f4795913aeb884b5ec926ea7689283fc7a6b677dd56de9b36cbe7fa4f98e44e)(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
+        specifier: ^0.3.0
+        version: 0.3.0(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
       '@coursebuilder/commerce-next':
-        specifier: ^0.2.19
-        version: 0.2.19(patch_hash=18ba3527048be86a8d5349055bcf75ae4cf0ac21765d088fd5e3e5d5d90e5801)(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@sinclair/typebox@0.29.6)(@standard-schema/spec@1.1.0)(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(effect@3.21.3)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(postcss@8.5.15)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
+        specifier: ^0.2.20
+        version: 0.2.20(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@sinclair/typebox@0.29.6)(@standard-schema/spec@1.1.0)(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(effect@3.21.3)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(postcss@8.5.15)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
       '@coursebuilder/core':
-        specifier: 3.1.2
-        version: 3.1.2(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
+        specifier: 3.2.0
+        version: 3.2.0(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
       '@coursebuilder/email':
-        specifier: ^0.1.6
-        version: 0.1.6(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
+        specifier: ^0.1.7
+        version: 0.1.7(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
       '@coursebuilder/email-templates':
         specifier: ^1.0.8
         version: 1.0.8(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(typescript@5.4.5)
@@ -136,29 +134,29 @@ importers:
         specifier: ^0.1.3
         version: 0.1.3(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@coursebuilder/next':
-        specifier: ^0.0.43
-        version: 0.0.43(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next-auth@5.0.0-beta.25(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(react@19.2.3))(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)(zod@4.4.3)
+        specifier: ^0.0.44
+        version: 0.0.44(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next-auth@5.0.0-beta.25(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(react@19.2.3))(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)(zod@4.4.3)
       '@coursebuilder/nodash':
         specifier: ^0.0.3
         version: 0.0.3
       '@coursebuilder/organizations':
-        specifier: ^0.0.6
-        version: 0.0.6(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
+        specifier: ^0.0.7
+        version: 0.0.7(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
       '@coursebuilder/server':
-        specifier: ^0.2.4
-        version: 0.2.4(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
+        specifier: ^0.3.0
+        version: 0.3.0(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
       '@coursebuilder/survey':
-        specifier: ^1.0.21
-        version: 1.0.21(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@sinclair/typebox@0.29.6)(@standard-schema/spec@1.1.0)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(effect@3.21.3)(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)(yup@0.32.11)
+        specifier: ^1.0.22
+        version: 1.0.22(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@sinclair/typebox@0.29.6)(@standard-schema/spec@1.1.0)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(effect@3.21.3)(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)(yup@0.32.11)
       '@coursebuilder/ui':
-        specifier: ^2.5.5
-        version: 2.5.5(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@sinclair/typebox@0.29.6)(@standard-schema/spec@1.1.0)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(effect@3.21.3)(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(typescript@5.4.5)(ws@8.21.0)(yup@0.32.11)
+        specifier: ^2.5.6
+        version: 2.5.6(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@sinclair/typebox@0.29.6)(@standard-schema/spec@1.1.0)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(effect@3.21.3)(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(typescript@5.4.5)(ws@8.21.0)(yup@0.32.11)
       '@coursebuilder/utils':
-        specifier: ^1.1.6
-        version: 1.1.6(@babel/runtime@7.29.7)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
+        specifier: ^1.1.7
+        version: 1.1.7(@babel/runtime@7.29.7)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
       '@coursebuilder/video-processing':
-        specifier: ^0.1.6
-        version: 0.1.6(@babel/runtime@7.29.7)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
+        specifier: ^0.1.7
+        version: 0.1.7(@babel/runtime@7.29.7)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
       '@fal-ai/client':
         specifier: ^1.6.0
         version: 1.10.1
@@ -1644,8 +1642,8 @@ packages:
     peerDependencies:
       react: '>= 16.12.0'
 
-  '@coursebuilder/adapter-drizzle@3.1.4':
-    resolution: {integrity: sha512-fqw0tIote7rkaK7CVIfT/ww3IzNBeEzwIeneqHcHBA6wc5TDl8+SgwTzOrMJDV9e1RCslL5GQYETjYuT/P+qQw==}
+  '@coursebuilder/adapter-drizzle@3.2.0':
+    resolution: {integrity: sha512-noueY0flkDI53+tzsNqBoQ0YsKK08OPQT6wWiNZiGayk79oaDMrZnhw2bA8I50fIlKmdDEUUuUHdhbfVo8Fr9g==}
     peerDependencies:
       drizzle-orm: 0.36.x
 
@@ -1660,23 +1658,23 @@ packages:
       react: '>=18'
       recharts: '*'
 
-  '@coursebuilder/commerce-next@0.2.19':
-    resolution: {integrity: sha512-yYL6e7f8WN3Znkh5Ni4R92oPng76pLEhdhHM9XQPj5CDGhm+febEl2yWJJoEwv+otVAZS8Qy/ulLLPV2U4pQvg==}
+  '@coursebuilder/commerce-next@0.2.20':
+    resolution: {integrity: sha512-UpfDGNQ7jAgKbajHzU5k9kS5xQtkcR3AOiW5NAx36Vj2MpircCbnNWux+oxm3FtTGiKHgVVEN7f+c+qTixy06w==}
     peerDependencies:
       next: 16.2.5
       react: 19.2.3
 
-  '@coursebuilder/commerce@0.2.4':
-    resolution: {integrity: sha512-w5YuEvdKvp1Qb2TQ+Hcjp3v7/tj/TbFn6jp7WTBlAMka8cf5zUhtO26q1SD2ZbAtEuzzkmoyKzTEsngdX5syYw==}
+  '@coursebuilder/commerce@0.3.0':
+    resolution: {integrity: sha512-lM0Smrf6l1uvaYV5Lexin059+BY/DwovgBh1Z7hQSwMyz85vsmAuNgiUln7ssVdkVmVtfrKDEagffDhCZSv9Rw==}
 
-  '@coursebuilder/core@3.1.2':
-    resolution: {integrity: sha512-ccoc0NrwTIbc1VsBuLmrYjC25FZcbPiucMjnMFb3imn0jdu1p74o2NGBdBmsfbF50vhQiFryoQn0b5wbm9LUHg==}
+  '@coursebuilder/core@3.2.0':
+    resolution: {integrity: sha512-fnCRLET4+0N7+0JUcmUOiH8w3S8jSbhefu4PWD81ch6H+igSiUzT7ylEybkI6LKTZVfKgZdNTnTEtj8h1pEX2g==}
 
   '@coursebuilder/email-templates@1.0.8':
     resolution: {integrity: sha512-pVX0qmMkSafN89jQlTc0wo/qX4S1JvtToQGnB2oRThaw2tBeIukWpumQ5w5p4JFEKrrzaOuQuqrVjEiMOQSfJA==}
 
-  '@coursebuilder/email@0.1.6':
-    resolution: {integrity: sha512-P64XIHp3LXnjihZISIQtMlPN+CeEVuM8Mq+lXoHsdYZgrfzPQSCCS0/EYSrbsRUMTDi7sOsHA0j6bp5FCmmQkQ==}
+  '@coursebuilder/email@0.1.7':
+    resolution: {integrity: sha512-jnjj6o9ZNQlXwVTr7zI69C4S6Fu5UtnSbx2GEpWP2gIs45oUIJM2+QRV8QajA4zDIvn2uU8sCIrn8lg7MnRewA==}
 
   '@coursebuilder/eslint-config@0.1.2':
     resolution: {integrity: sha512-i4eO2jFwGkhnKaYsupsK6iPOyl4OjmKuluTMO4ir8JDUr/vlcN/GqUuJVEK5n/L3qE14b0Bt8hKTEWOcA73VLQ==}
@@ -1690,8 +1688,8 @@ packages:
       react: 19.2.3
       react-dom: 19.2.3
 
-  '@coursebuilder/next@0.0.43':
-    resolution: {integrity: sha512-ADmoL7Q8MLr+4Pz+m+Z5QZIBIVBLlM0wF75le7vielK5Fl7EwPZEOxa/Qw25QpXiRm3BnxcVvLp3oyU+s8zNjg==}
+  '@coursebuilder/next@0.0.44':
+    resolution: {integrity: sha512-+Qa5/54LE+PnO9R3I2WvptmvdRu73qOYXb6Hf7ujA+Ui6NhTHa4w2B7bpXudWAc8F59LO67qoK/OqJM6JPQk+A==}
     peerDependencies:
       next: 16.2.5
       next-auth: 5.0.0-beta.25
@@ -1700,28 +1698,28 @@ packages:
   '@coursebuilder/nodash@0.0.3':
     resolution: {integrity: sha512-AYUM2BMZ0C0+RwUTm5FRg/Zvz9R8hIn91Bwc7EjDL2AEm0wYbWoU1otJXQ67BVUDIZVfYgAEj6hupeJhEZ6OMA==}
 
-  '@coursebuilder/organizations@0.0.6':
-    resolution: {integrity: sha512-RPdyylpKJWrzmy197fEnCGpdU+jQCGZcHDTjb4lboJC2Az6tR0FxWtgUXD5yrCSSui/n2EcqI8rFt60gnLZShA==}
+  '@coursebuilder/organizations@0.0.7':
+    resolution: {integrity: sha512-BFOr+hufCGQ7mzKT9btKFDJe1XBRNhMCWdORcpee+FU95/7QqFYOoBASXDLKuPcbzG2iw5peYbt87ezMoLkFuA==}
 
-  '@coursebuilder/server@0.2.4':
-    resolution: {integrity: sha512-GDLdCR929DUov7IeoovwxQan6s6nBQ3Ek6G/9dgthf8mwNuisOaXWcIk2iPXVWitHstZ0jg+6RY2ByhGIn1zhg==}
+  '@coursebuilder/server@0.3.0':
+    resolution: {integrity: sha512-CpxMAVPijO5ELyVpXdQHi/H5SSE2ShQW/vooQQADlV4Typsh+tuQw/JL+lHbwufzYltEOXdfSynjTDhtFBy4qA==}
 
-  '@coursebuilder/survey@1.0.21':
-    resolution: {integrity: sha512-dbYt3ZlztrlNkQfNM3cFqNoSO/+vY2MMoca56mDL6eCECx8vrTZ0VWoOEBIXWHWeB4SlVbhoHeWOqHyzmKgQIg==}
+  '@coursebuilder/survey@1.0.22':
+    resolution: {integrity: sha512-tm8JID0IEst+wSYjGilJSRZn0XzCE8GZeecNv5nIxeV5wef1m3tER+b6lHwV0EbSvLpwi6ryEmpWEc2elnvmnA==}
     peerDependencies:
       react: 19.2.3
       react-dom: 19.2.3
 
-  '@coursebuilder/ui@2.5.5':
-    resolution: {integrity: sha512-fk+ryWLJ8G02eS2lDablEuLPMiwDt6q0NNh8UaPcApfv5aHhqAFu09jc2Z5LxlIW2H9jC1Yl7Ep98pS894W+8Q==}
+  '@coursebuilder/ui@2.5.6':
+    resolution: {integrity: sha512-i448tsbv9nsDkwP/iNrXLiNbecYkkYuLrJZERNSjZfC1YJtt4u7boUQV1mv8sWFsI5jUXeSCojdLN35jRU0pCQ==}
 
-  '@coursebuilder/utils@1.1.6':
-    resolution: {integrity: sha512-G2YHZ0tHgBM4CMUbYgOuZDyxA4HpfcNHxspmxyO61qaQW0A4Hq3EIHbjCR63N2gJI9lT7P2n3PsIeAJFQCqoAg==}
+  '@coursebuilder/utils@1.1.7':
+    resolution: {integrity: sha512-ZhInPdL00fG9U0LDzcBu7x5Ai+Q96STxsQbfPrzizG9Kl8iJJTiZKMPg3FW/Te54WbTS+sDMp3waqQG0gihavQ==}
     peerDependencies:
       react: '>=18.0.0'
 
-  '@coursebuilder/video-processing@0.1.6':
-    resolution: {integrity: sha512-loeSCAAVgULOHiSL9wPtn0wFG3UeRwEcpavVoV3I7oVUP8gHZKZ5fM/bJJSBdeaXHr998f2hxMDyo7d4CxmRyQ==}
+  '@coursebuilder/video-processing@0.1.7':
+    resolution: {integrity: sha512-v+THz69dnIe9rF/AiF5ukZTa05l1z+3zNoPZDJtWB6wfcKMOjI82vOuS6KVh9jA91/g9GbpTOM8qFh6sJy1b7A==}
 
   '@cspotcode/source-map-support@0.8.1':
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
@@ -15053,9 +15051,9 @@ snapshots:
 
   '@codemirror/commands@6.10.3':
     dependencies:
-      '@codemirror/language': 6.12.3
+      '@codemirror/language': 6.12.4
       '@codemirror/state': 6.7.0
-      '@codemirror/view': 6.43.2
+      '@codemirror/view': 6.43.9
       '@lezer/common': 1.5.2
 
   '@codemirror/commands@6.10.4':
@@ -15291,7 +15289,7 @@ snapshots:
   '@codemirror/lint@6.9.7':
     dependencies:
       '@codemirror/state': 6.7.0
-      '@codemirror/view': 6.43.2
+      '@codemirror/view': 6.43.9
       crelt: 1.0.6
 
   '@codemirror/search@6.7.0':
@@ -15335,13 +15333,13 @@ snapshots:
       csstype: 3.2.3
       react: 19.2.3
 
-  '@coursebuilder/adapter-drizzle@3.1.4(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)':
+  '@coursebuilder/adapter-drizzle@3.2.0(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)':
     dependencies:
-      '@coursebuilder/commerce': 0.2.4(patch_hash=4f4795913aeb884b5ec926ea7689283fc7a6b677dd56de9b36cbe7fa4f98e44e)(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
-      '@coursebuilder/core': 3.1.2(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
+      '@coursebuilder/commerce': 0.3.0(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
+      '@coursebuilder/core': 3.2.0(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
       '@coursebuilder/nodash': 0.0.3
-      '@coursebuilder/server': 0.2.4(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
-      '@coursebuilder/utils': 1.1.6(@babel/runtime@7.29.7)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
+      '@coursebuilder/server': 0.3.0(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
+      '@coursebuilder/utils': 1.1.7(@babel/runtime@7.29.7)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
       '@sindresorhus/slugify': 2.2.1
       date-fns: 2.30.0
       drizzle-orm: 0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3)
@@ -15390,9 +15388,9 @@ snapshots:
       - webpack-cli
       - ws
 
-  '@coursebuilder/analytics@1.1.3(patch_hash=95e95582b1cc76a0082e0cda9b06a302d864fd74a46023b59f2b7306b48ebfc1)(3a5dacb22b721e6f479bdf589cb43c75)':
+  '@coursebuilder/analytics@1.1.3(patch_hash=95e95582b1cc76a0082e0cda9b06a302d864fd74a46023b59f2b7306b48ebfc1)(3bcb7b3f6c86bb1c5aef8c974f941e9a)':
     dependencies:
-      '@coursebuilder/ui': 2.5.5(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@sinclair/typebox@0.29.6)(@standard-schema/spec@1.1.0)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(effect@3.21.3)(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(typescript@5.4.5)(ws@8.21.0)(yup@0.32.11)
+      '@coursebuilder/ui': 2.5.6(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@sinclair/typebox@0.29.6)(@standard-schema/spec@1.1.0)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(effect@3.21.3)(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(typescript@5.4.5)(ws@8.21.0)(yup@0.32.11)
       '@google-analytics/data': 4.12.1(encoding@0.1.13)
       drizzle-orm: 0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3)
       lucide-react: 0.288.0(react@19.2.3)
@@ -15405,14 +15403,14 @@ snapshots:
       - encoding
       - supports-color
 
-  '@coursebuilder/commerce-next@0.2.19(patch_hash=18ba3527048be86a8d5349055bcf75ae4cf0ac21765d088fd5e3e5d5d90e5801)(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@sinclair/typebox@0.29.6)(@standard-schema/spec@1.1.0)(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(effect@3.21.3)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(postcss@8.5.15)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)':
+  '@coursebuilder/commerce-next@0.2.20(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@sinclair/typebox@0.29.6)(@standard-schema/spec@1.1.0)(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(effect@3.21.3)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(postcss@8.5.15)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)':
     dependencies:
       '@auth/core': 0.37.2(nodemailer@6.10.1)
-      '@coursebuilder/commerce': 0.2.4(patch_hash=4f4795913aeb884b5ec926ea7689283fc7a6b677dd56de9b36cbe7fa4f98e44e)(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
-      '@coursebuilder/core': 3.1.2(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
+      '@coursebuilder/commerce': 0.3.0(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
+      '@coursebuilder/core': 3.2.0(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
       '@coursebuilder/email-templates': 1.0.8(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(typescript@5.4.5)
       '@coursebuilder/nodash': 0.0.3
-      '@coursebuilder/ui': 2.5.5(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@sinclair/typebox@0.29.6)(@standard-schema/spec@1.1.0)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(effect@3.21.3)(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(typescript@5.4.5)(ws@8.21.0)(yup@0.32.11)
+      '@coursebuilder/ui': 2.5.6(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@sinclair/typebox@0.29.6)(@standard-schema/spec@1.1.0)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(effect@3.21.3)(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(typescript@5.4.5)(ws@8.21.0)(yup@0.32.11)
       '@heroicons/react': 2.2.0(react@19.2.3)
       '@hookform/resolvers': 3.10.0(react-hook-form@7.78.0(react@19.2.3))
       '@mux/mux-player-react': 3.13.0(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -15521,12 +15519,12 @@ snapshots:
       - webpack-cli
       - ws
 
-  '@coursebuilder/commerce@0.2.4(patch_hash=4f4795913aeb884b5ec926ea7689283fc7a6b677dd56de9b36cbe7fa4f98e44e)(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)':
+  '@coursebuilder/commerce@0.3.0(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)':
     dependencies:
-      '@coursebuilder/core': 3.1.2(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
-      '@coursebuilder/email': 0.1.6(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
+      '@coursebuilder/core': 3.2.0(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
+      '@coursebuilder/email': 0.1.7(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
       '@coursebuilder/nodash': 0.0.3
-      '@coursebuilder/utils': 1.1.6(@babel/runtime@7.29.7)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
+      '@coursebuilder/utils': 1.1.7(@babel/runtime@7.29.7)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
       date-fns: 2.30.0
       inngest: 3.54.2(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)(zod@4.4.3)
       pluralize: 8.0.0
@@ -15577,7 +15575,7 @@ snapshots:
       - webpack-cli
       - ws
 
-  '@coursebuilder/core@3.1.2(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)':
+  '@coursebuilder/core@3.2.0(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)':
     dependencies:
       '@ai-sdk/openai': 3.0.69(zod@4.4.3)
       '@coursebuilder/nodash': 0.0.3
@@ -15638,11 +15636,11 @@ snapshots:
       - utf-8-validate
       - webpack-cli
 
-  '@coursebuilder/email@0.1.6(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)':
+  '@coursebuilder/email@0.1.7(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)':
     dependencies:
-      '@coursebuilder/core': 3.1.2(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
+      '@coursebuilder/core': 3.2.0(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
       '@coursebuilder/email-templates': 1.0.8(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(typescript@5.4.5)
-      '@coursebuilder/utils': 1.1.6(@babel/runtime@7.29.7)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
+      '@coursebuilder/utils': 1.1.7(@babel/runtime@7.29.7)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
       '@react-email/components': 0.0.27(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       uuid: 9.0.1
     transitivePeerDependencies:
@@ -15726,10 +15724,10 @@ snapshots:
       unified: 11.0.5
       unist-util-visit: 5.1.0
 
-  '@coursebuilder/next@0.0.43(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next-auth@5.0.0-beta.25(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(react@19.2.3))(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)(zod@4.4.3)':
+  '@coursebuilder/next@0.0.44(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next-auth@5.0.0-beta.25(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(react@19.2.3))(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)(zod@4.4.3)':
     dependencies:
-      '@coursebuilder/core': 3.1.2(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
-      '@coursebuilder/server': 0.2.4(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
+      '@coursebuilder/core': 3.2.0(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
+      '@coursebuilder/server': 0.3.0(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
       inngest: 3.54.2(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)(zod@4.4.3)
       next: 16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       next-auth: 5.0.0-beta.25(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(react@19.2.3)
@@ -15777,9 +15775,9 @@ snapshots:
 
   '@coursebuilder/nodash@0.0.3': {}
 
-  '@coursebuilder/organizations@0.0.6(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)':
+  '@coursebuilder/organizations@0.0.7(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)':
     dependencies:
-      '@coursebuilder/core': 3.1.2(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
+      '@coursebuilder/core': 3.2.0(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
     transitivePeerDependencies:
       - '@opentelemetry/core'
       - '@sveltejs/kit'
@@ -15795,14 +15793,14 @@ snapshots:
       - supports-color
       - typescript
 
-  '@coursebuilder/server@0.2.4(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)':
+  '@coursebuilder/server@0.3.0(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)':
     dependencies:
-      '@coursebuilder/commerce': 0.2.4(patch_hash=4f4795913aeb884b5ec926ea7689283fc7a6b677dd56de9b36cbe7fa4f98e44e)(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
-      '@coursebuilder/core': 3.1.2(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
-      '@coursebuilder/email': 0.1.6(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
+      '@coursebuilder/commerce': 0.3.0(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
+      '@coursebuilder/core': 3.2.0(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
+      '@coursebuilder/email': 0.1.7(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
       '@coursebuilder/nodash': 0.0.3
-      '@coursebuilder/utils': 1.1.6(@babel/runtime@7.29.7)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
-      '@coursebuilder/video-processing': 0.1.6(@babel/runtime@7.29.7)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
+      '@coursebuilder/utils': 1.1.7(@babel/runtime@7.29.7)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
+      '@coursebuilder/video-processing': 0.1.7(@babel/runtime@7.29.7)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
       ai: 5.0.116(zod@4.4.3)
       cookie: 0.7.0
       date-fns: 2.30.0
@@ -15851,9 +15849,9 @@ snapshots:
       - webpack-cli
       - ws
 
-  '@coursebuilder/survey@1.0.21(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@sinclair/typebox@0.29.6)(@standard-schema/spec@1.1.0)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(effect@3.21.3)(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)(yup@0.32.11)':
+  '@coursebuilder/survey@1.0.22(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@sinclair/typebox@0.29.6)(@standard-schema/spec@1.1.0)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(effect@3.21.3)(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)(yup@0.32.11)':
     dependencies:
-      '@coursebuilder/ui': 2.5.5(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@sinclair/typebox@0.29.6)(@standard-schema/spec@1.1.0)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(effect@3.21.3)(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(typescript@5.4.5)(ws@8.21.0)(yup@0.32.11)
+      '@coursebuilder/ui': 2.5.6(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@sinclair/typebox@0.29.6)(@standard-schema/spec@1.1.0)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(effect@3.21.3)(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(typescript@5.4.5)(ws@8.21.0)(yup@0.32.11)
       '@hookform/resolvers': 3.10.0(react-hook-form@7.78.0(react@19.2.3))
       '@radix-ui/react-slot': 1.3.0(@types/react@19.2.7)(react@19.2.3)
       '@xstate/react': 4.1.3(@types/react@19.2.7)(react@19.2.3)(xstate@5.32.0)
@@ -15918,7 +15916,7 @@ snapshots:
       - ws
       - yup
 
-  '@coursebuilder/ui@2.5.5(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@sinclair/typebox@0.29.6)(@standard-schema/spec@1.1.0)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(effect@3.21.3)(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(typescript@5.4.5)(ws@8.21.0)(yup@0.32.11)':
+  '@coursebuilder/ui@2.5.6(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@sinclair/typebox@0.29.6)(@standard-schema/spec@1.1.0)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(effect@3.21.3)(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(typescript@5.4.5)(ws@8.21.0)(yup@0.32.11)':
     dependencies:
       '@atlaskit/pragmatic-drag-and-drop': 1.8.1
       '@atlaskit/pragmatic-drag-and-drop-flourish': 1.2.2(@types/react@19.2.7)(react@19.2.3)
@@ -15933,8 +15931,8 @@ snapshots:
       '@codemirror/search': 6.7.0
       '@codemirror/state': 6.7.0
       '@codemirror/view': 6.43.9
-      '@coursebuilder/core': 3.1.2(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
-      '@coursebuilder/utils': 1.1.6(@babel/runtime@7.29.7)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
+      '@coursebuilder/core': 3.2.0(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
+      '@coursebuilder/utils': 1.1.7(@babel/runtime@7.29.7)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
       '@hookform/resolvers': 5.9.1(@sinclair/typebox@0.29.6)(@standard-schema/spec@1.1.0)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(effect@3.21.3)(react-hook-form@7.78.0(react@19.2.3))(yup@0.32.11)(zod@4.4.3)
       '@internationalized/date': 3.12.2
       '@lezer/highlight': 1.2.3
@@ -16047,12 +16045,12 @@ snapshots:
       - ws
       - yup
 
-  '@coursebuilder/utils@1.1.6(@babel/runtime@7.29.7)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)':
+  '@coursebuilder/utils@1.1.7(@babel/runtime@7.29.7)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)':
     dependencies:
       '@aws-sdk/client-s3': 3.1065.0
       '@aws-sdk/client-textract': 3.1065.0
       '@aws-sdk/credential-providers': 3.1065.0
-      '@coursebuilder/core': 3.1.2(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
+      '@coursebuilder/core': 3.2.0(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
       '@react-email/render': 1.0.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       clsx: 2.1.1
       date-fns: 2.30.0
@@ -16086,10 +16084,10 @@ snapshots:
       - typescript
       - ws
 
-  '@coursebuilder/video-processing@0.1.6(@babel/runtime@7.29.7)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)':
+  '@coursebuilder/video-processing@0.1.7(@babel/runtime@7.29.7)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)':
     dependencies:
-      '@coursebuilder/core': 3.1.2(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
-      '@coursebuilder/utils': 1.1.6(@babel/runtime@7.29.7)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
+      '@coursebuilder/core': 3.2.0(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
+      '@coursebuilder/utils': 1.1.7(@babel/runtime@7.29.7)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
       inngest: 3.54.2(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)(zod@4.4.3)
       srt-parser-2: 1.2.3
       zod: 4.4.3
