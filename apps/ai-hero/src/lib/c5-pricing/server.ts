@@ -5,6 +5,7 @@ import { db } from '@/db'
 import { prices, purchases, users } from '@/db/schema'
 import { env } from '@/env.mjs'
 import { log } from '@/server/logger'
+import { recordCheckoutDecision } from '@/lib/buy-path/checkout-context'
 import { ENGINE_VERSION, price } from '@ai-hero/front-desk-support/pricing'
 import { and, eq } from 'drizzle-orm'
 
@@ -156,6 +157,7 @@ export async function c5AuthoritativePrice(request: AuthoritativePriceRequest) {
 	const decision = await decide(request)
 	if (decision && request.purpose === 'checkout') {
 		await log.info('c5.pricing.checkout_decision', {
+			buyPathId: recordCheckoutDecision(decision.kind),
 			productId: request.productId,
 			quantity: request.quantity,
 			userId: request.userId ?? null,

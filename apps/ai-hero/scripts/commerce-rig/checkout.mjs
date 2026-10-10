@@ -30,11 +30,18 @@ export function provesAccess(fixture, session, result) {
 // Pays a hosted test Checkout Session with the test card. By default it waits for the
 // redirect back to the app; `until` instead polls Stripe, for sessions paid while
 // the app is down (seeding).
-export async function payHostedCheckout(url, state, { until } = {}) {
+export async function payHostedCheckout(url, state, { until, cookies = [], waitForDestination = false } = {}) {
   const { chromium } = await import('@playwright/test')
   const browser = await chromium.launch({ headless: true, env: { PATH: process.env.PATH, HOME: process.env.HOME } })
   try {
-    const page = await browser.newPage()
+    const context = await browser.newContext()
+    if (cookies.length) await context.addCookies(cookies)
+    const page = await context.newPage()
+    // A return URL alone does not prove the destination hydrated or emitted.
+    const destinationResponse = waitForDestination ? page.waitForResponse(response => {
+      if (!response.url().endsWith('/api/telemetry/buy-path') || response.status() !== 204) return false
+      try { return response.request().postDataJSON()?.step === 'destination_rendered' } catch { return false }
+    }, { timeout: 180000 }).catch(() => null) : null
     await page.route('**/*', route => {
       const host = new URL(route.request().url()).hostname
       // Hosted Checkout loads its own assets from stripecdn.com.
@@ -73,7 +80,10 @@ export async function payHostedCheckout(url, state, { until } = {}) {
       if (await saveInfo.count() && await saveInfo.isChecked()) await saveInfo.uncheck({ force: true })
       const submit = page.locator('[data-testid="hosted-payment-submit-button"]').first()
       await (await submit.count() ? submit : page.getByRole('button', { name: /pay|subscribe/i }).last()).click({ timeout: 30000 })
-      if (!until) await page.waitForURL(`${origin}/**`, { timeout: 90000 })
+      if (!until) {
+        await page.waitForURL(`${origin}/**`, { timeout: 90000 })
+        if (destinationResponse && !await destinationResponse) throw new Error('Returned destination telemetry was not accepted')
+      }
       else {
         const deadline = Date.now() + 90000
         while (!await until()) {
@@ -108,6 +118,11 @@ export async function checkout(state, key, fixtureKey, shouldComplete = false) {
   if (fixture.quantity > 1) { url.searchParams.set('bulk', 'true'); url.searchParams.set('organizationId', `rig_org_${fixture.key}`) }
   // The buy form POSTs to this path; Course Builder rejects GET as an unknown action.
   let response = await fetch(url, { method: 'POST', headers: { cookie, origin, 'content-type': 'application/x-www-form-urlencoded' }, body: '', redirect: 'manual', signal: AbortSignal.timeout(90000) })
+  const checkoutCookies = response.headers.getSetCookie().map(value => {
+    const pair = value.split(';')[0]
+    const separator = pair.indexOf('=')
+    return { name: pair.slice(0, separator), value: pair.slice(separator + 1), url: origin }
+  })
   let target = response.headers.get('location')
   const hops = []
   // Cohort checkout goes through the app's /subscribe/verify-login page before Stripe.
@@ -148,7 +163,7 @@ export async function checkout(state, key, fixtureKey, shouldComplete = false) {
     assertTestObject(await stripe.checkout.sessions.expire(id))
     return receipt
   }
-  await payHostedCheckout(target, state)
+  await payHostedCheckout(target, state, { cookies: [{ name: 'authjs.session-token', value: token, url: origin }, ...checkoutCookies], waitForDestination: true })
   const deadline = Date.now() + 180000
   do {
     session = assertTestObject(await stripe.checkout.sessions.retrieve(id))

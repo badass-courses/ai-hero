@@ -17,8 +17,17 @@ import {
 	withTrustedPricingCountry,
 } from '@/lib/c5-pricing/trusted-country'
 import { withSkill } from '@/server/with-skill'
+import { emitBuyPath } from '@/lib/buy-path/server'
+import { signBuyPathToken } from '@/lib/buy-path/token'
+import { buyPathIdSchema } from '@/lib/buy-path/schema'
+import { log } from '@/server/logger'
+import { withCheckoutTelemetry } from '@/lib/buy-path/checkout-context'
+import { installBuyPathLegacyAliases } from '@/lib/buy-path/legacy-logger'
+
 import { StripePaymentAdapter } from '@coursebuilder/commerce/stripe-provider'
 import type { NextRequest } from 'next/server'
+
+installBuyPathLegacyAliases()
 
 type CashBalanceEventType =
 	| 'cash_balance.funds_available'
@@ -41,6 +50,19 @@ async function dispatchCashBalanceReconciliation(request: Request) {
 		signature,
 		env.STRIPE_WEBHOOK_SECRET,
 	)
+	if (stripeEvent.type === 'checkout.session.completed') {
+		const session = stripeEvent.data.object
+		await emitBuyPath(
+			{
+				buyPathId: session.id,
+				purchaseId: null,
+				productId: session.metadata?.productId ?? null,
+				userId: session.metadata?.userId ?? null,
+				paymentAt: stripeEvent.created * 1000,
+			},
+			'webhook_received',
+		)
+	}
 	if (!isCashBalanceEvent(stripeEvent.type)) return
 
 	const object = stripeEvent.data.object as {
@@ -69,7 +91,9 @@ async function dispatchCashBalanceReconciliation(request: Request) {
 const withTrustedCountry = <T>(request: NextRequest, run: () => T) =>
 	withTrustedPricingCountry(trustedCountryFromHeaders(request.headers), run)
 
-const courseBuilderGETWithCouponAuthorization = async (request: NextRequest) => {
+const courseBuilderGETWithCouponAuthorization = async (
+	request: NextRequest,
+) => {
 	const { request: protectedRequest } = await protectCommerceRequest(request)
 	if (protectedRequest instanceof Response) return protectedRequest
 	return withTrustedCountry(request, () => courseBuilderGET(protectedRequest))
@@ -78,20 +102,83 @@ const courseBuilderGETWithCouponAuthorization = async (request: NextRequest) => 
 const courseBuilderPOSTWithCashBalanceReconciliation = async (
 	request: NextRequest,
 ) => {
+	const startedAt = Date.now()
 	const webhookRequest = request.clone()
 	const { request: protectedRequest, userId } =
 		await protectCommerceRequest(request)
 	if (protectedRequest instanceof Response) return protectedRequest
-	const response = await withTrustedCountry(request, () =>
-		coreCourseBuilderPOST(protectedRequest),
+	const rawPre = request.cookies.get('buy_path_pre')?.value
+	const preSessionId =
+		rawPre?.startsWith('pre_') && buyPathIdSchema.safeParse(rawPre).success
+			? rawPre
+			: null
+	const { value: response, decisionKind } = await withCheckoutTelemetry(
+		preSessionId,
+		() =>
+			withTrustedCountry(request, () =>
+				coreCourseBuilderPOST(protectedRequest),
+			),
 	)
 	if (response.ok) await dispatchCashBalanceReconciliation(webhookRequest)
-	const productId = authoritativeCheckoutProduct(protectedRequest)
+	const authoritativeProductId = authoritativeCheckoutProduct(protectedRequest)
+	const productId = protectedRequest.nextUrl.pathname.includes('/checkout/')
+		? protectedRequest.nextUrl.searchParams.get('productId')
+		: null
 	const createdSessionId = productId ? createdCheckoutSessionId(response) : null
-	if (productId && userId && createdSessionId) {
+	if (productId && !createdSessionId && response.ok) {
+		await log.error('buy_path.checkout_created', {
+			buyPathId: null,
+			productId,
+			userId: userId ?? null,
+			outcome: 'failed',
+			field: 'buyPathId',
+		})
+	}
+	if (productId && createdSessionId) {
+		try {
+			const session = await stripe.checkout.sessions.retrieve(createdSessionId)
+			await emitBuyPath(
+				{
+					buyPathId: createdSessionId,
+					preSessionId,
+					productId,
+					userId: userId ?? null,
+					purchaseId: null,
+				},
+				'checkout_created',
+				{
+					durationMs: Date.now() - startedAt,
+					amountCents: session.amount_total ?? 0,
+					decisionKind:
+						decisionKind ?? session.metadata?.pricingCandidate ?? 'legacy',
+				},
+			)
+			await emitBuyPath(
+				{
+					buyPathId: createdSessionId,
+					preSessionId,
+					productId,
+					userId: userId ?? null,
+					purchaseId: null,
+				},
+				'redirect_to_stripe',
+			)
+			if (env.NEXTAUTH_SECRET)
+				response.headers.append(
+					'set-cookie',
+					`buy_path_session=${signBuyPathToken({ buyPathId: createdSessionId, preSessionId, productId, userId: userId ?? null, expiresAt: Date.now() + 3600000 }, env.NEXTAUTH_SECRET)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=3600${request.nextUrl.protocol === 'https:' ? '; Secure' : ''}`,
+				)
+		} catch {
+			await log.error('buy_path.checkout_telemetry_failed', {
+				buyPathId: createdSessionId,
+				productId,
+			})
+		}
+	}
+	if (authoritativeProductId && userId && createdSessionId) {
 		await expireC5SiblingSessions({
 			userId,
-			productId,
+			productId: authoritativeProductId,
 			keepSessionId: createdSessionId,
 		})
 	}

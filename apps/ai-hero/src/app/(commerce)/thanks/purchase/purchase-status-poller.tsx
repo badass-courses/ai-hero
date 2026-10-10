@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import Spinner from '@/components/spinner'
+import { createBuyPathLogger } from '@/lib/buy-path/client'
 
 type CheckoutStatus =
 	| { status: 'ready'; purchaseId: string }
@@ -32,6 +33,8 @@ export function PurchaseStatusPoller({ sessionId }: PurchaseStatusPollerProps) {
 	const [errorMessage, setErrorMessage] = React.useState<string | null>(null)
 
 	React.useEffect(() => {
+		const emit = createBuyPathLogger(sessionId)
+		emit('client_returned')
 		let cancelled = false
 		let timeoutId: ReturnType<typeof setTimeout> | undefined
 
@@ -53,6 +56,10 @@ export function PurchaseStatusPoller({ sessionId }: PurchaseStatusPollerProps) {
 					.catch(() => null)) as CheckoutStatus | null
 
 				if (cancelled) return
+				emit('client_polling', {
+					attempt,
+					outcome: response.ok ? 'ok' : 'failed',
+				})
 
 				if (!response.ok) {
 					setErrorMessage(
@@ -71,6 +78,7 @@ export function PurchaseStatusPoller({ sessionId }: PurchaseStatusPollerProps) {
 				}
 
 				if (result.status === 'ready') {
+					emit('purchase_visible')
 					const nextUrl = new URL(window.location.href)
 					nextUrl.searchParams.set('ready', '1')
 					window.location.replace(nextUrl.toString())
@@ -109,6 +117,7 @@ export function PurchaseStatusPoller({ sessionId }: PurchaseStatusPollerProps) {
 				)
 			} catch (error) {
 				if (cancelled) return
+				emit('client_polling', { attempt, outcome: 'failed' })
 				const nextAttempt = attempt + 1
 				setAttempts(nextAttempt)
 
