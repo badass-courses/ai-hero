@@ -24,6 +24,9 @@ import {
 import * as schema from '@/db/schema'
 import { mysqlTable } from '@/db/mysql-table'
 import { preserveQueryResultShape } from '@/db/mysql-query-client'
+import type { DbExecutor } from '@/db'
+import { checkC5Duplicate } from '@/lib/c5-pricing/purchase-decision'
+import { c5DecisionStoreOn } from '@/lib/c5-pricing/purchase-decision-sql'
 import { validateMySqlIntegrationServerUrl } from '@/lib/team-purchase-mysql-test-guard'
 import type { MySqlDatabase } from 'drizzle-orm/mysql-core'
 import { drizzle } from 'drizzle-orm/mysql2'
@@ -228,8 +231,13 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 	const inspect = (input: { checkoutSessionId: string; chargeId: string | null }) =>
 		inspectCheckoutFulfillment(database, input)
 
-	function reconcile(checkoutSessionId: string, step: CheckoutFulfillStep) {
+	function reconcile(
+		checkoutSessionId: string,
+		step: CheckoutFulfillStep,
+		holdsWhenBuyerHasProduct?: (productId: string) => boolean,
+	) {
 		return fulfillCheckoutSessionDirectly(checkoutSessionId, {
+			holdsWhenBuyerHasProduct,
 			handler,
 			step,
 			db: adapter,
@@ -612,6 +620,127 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 			status: 'fulfilled',
 		})
 		expect(await counts(id)).toEqual({ charges: 1, sessions: 1, purchases: 1 })
+	})
+
+	describe('a product whose duplicates are flagged after payment', () => {
+		// C5's policy: fulfill a paid order, then let the post-payment check
+		// flag the duplicate. The fixture product stands in for C5.
+		const fulfillAndFlag = () => false
+		const duplicateCheck = async (purchaseId: string) => {
+			const store = c5DecisionStoreOn(
+				database as unknown as DbExecutor,
+				'product_reconcile',
+			)
+			const purchase = await store.purchase(purchaseId)
+			return checkC5Duplicate(store, purchase!)
+		}
+
+		it('fulfills instead of holding, and the duplicate check counts the sibling', async () => {
+			const id = stranded()
+			await grantOutOfBand('purch_sibling', '2026-10-09 21:55:00.000')
+			const run = inngestLikeStep()
+
+			const result = await reconcile(id, run.step, fulfillAndFlag)
+
+			expect(result).toMatchObject({ status: 'fulfilled' })
+			expect(await counts(id)).toEqual({ charges: 1, sessions: 1, purchases: 1 })
+			// The decision recorder runs on this event for both fulfillment paths.
+			expect(run.sent.map((event) => event.payload.name)).toEqual([
+				'commerce/new-purchase-created',
+			])
+			await expect(
+				duplicateCheck((result as { purchaseId: string }).purchaseId),
+			).resolves.toEqual({
+				kind: 'duplicate',
+				duplicateOf: ['purch_sibling'],
+				reasons: ['second-individual-c5'],
+			})
+		})
+
+		it('fulfills when a sibling lands between the re-check and the write', async () => {
+			const id = stranded()
+			const run = inngestLikeStep({
+				beforeStep: async (stepId) => {
+					if (stepId === 'create a merchant charge and purchase')
+						await grantOutOfBand('purch_racing', '2026-10-09 21:59:00.000')
+				},
+			})
+
+			const result = await reconcile(id, run.step, fulfillAndFlag)
+
+			expect(result).toMatchObject({ status: 'fulfilled' })
+			await expect(
+				duplicateCheck((result as { purchaseId: string }).purchaseId),
+			).resolves.toMatchObject({ kind: 'duplicate', duplicateOf: ['purch_racing'] })
+		})
+
+		it('saves a decision in Purchase.fields without touching other keys', async () => {
+			await pool.query(
+				`INSERT INTO AI_Purchase (id, userId, productId, totalAmount, status, fields)
+					VALUES ('purch_fields', ?, 'product_reconcile', 0, 'Valid', JSON_OBJECT('benefit', 'kept'))`,
+				[BUYER_ID],
+			)
+			const store = c5DecisionStoreOn(
+				database as unknown as DbExecutor,
+				'product_reconcile',
+			)
+			const decision = {
+				v: 1 as const,
+				decisionRef: 'c5d1.0123456789abcdef.purch_cc',
+				creditSource: 'purch_cc',
+				contract: 'v2-decision',
+				engineVersion: 'engine-test',
+				policyVersion: 'policy-test',
+				accessRestriction: 'none' as const,
+				expectedTotalCents: 1,
+				checkoutSessionId: 'cs_fields',
+				savedAt: now.toISOString(),
+			}
+			await store.saveDecision('purch_fields', decision)
+			await store.markDuplicate('purch_fields', ['purch_other'])
+
+			const [rows] = await pool.query<RowDataPacket[]>(
+				"SELECT fields FROM AI_Purchase WHERE id = 'purch_fields'",
+			)
+			const fields =
+				typeof rows[0]!.fields === 'string'
+					? JSON.parse(rows[0]!.fields)
+					: rows[0]!.fields
+			expect(fields).toEqual({
+				benefit: 'kept',
+				c5Decision: decision,
+				c5DuplicateOf: ['purch_other'],
+			})
+			await expect(store.purchase('purch_fields')).resolves.toMatchObject({
+				decision,
+			})
+			await expect(store.spentBy('purch_cc')).resolves.toEqual(['purch_fields'])
+			await expect(store.spentBy('purch_unspent')).resolves.toEqual([])
+		})
+
+		it('counts a sibling bought inside the 48-hour lookback', async () => {
+			// A session found near the edge of the reconcile window, with a
+			// sibling bought a day after it opened.
+			const id = stranded({
+				created: Math.floor(now.getTime() / 1000) - 47 * 60 * 60,
+			})
+			await grantOutOfBand('purch_day_later', '2026-10-08 23:00:00.000')
+
+			const held = await reconcile(id, inngestLikeStep().step)
+			expect(held).toMatchObject({
+				status: 'held',
+				purchaseIds: ['purch_day_later'],
+			})
+
+			const result = await reconcile(id, inngestLikeStep().step, fulfillAndFlag)
+			expect(result).toMatchObject({ status: 'fulfilled' })
+			await expect(
+				duplicateCheck((result as { purchaseId: string }).purchaseId),
+			).resolves.toMatchObject({
+				kind: 'duplicate',
+				duplicateOf: ['purch_day_later'],
+			})
+		})
 	})
 
 	it('finds a fulfilled session with indexed charge lookups only', async () => {

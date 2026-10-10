@@ -1,4 +1,9 @@
-import { z } from 'zod'
+import type {
+	BindingQuoteData,
+	BuyerFactsData,
+	PriceRequestData,
+	PricingResultData,
+} from '@ai-hero/front-desk-support/pricing'
 
 /**
  * Where a team invoice gets its price. The form never sends one: the server
@@ -9,15 +14,22 @@ import { z } from 'zod'
  * - `appBulkPriceSource`: the app's own rules, the same
  *   `formatPricesForProduct` checkout runs with the same default sale coupon,
  *   so an invoice never costs more than checkout or the team card. One
- *   discount: the better of the sale and the bulk ladder.
- * - `frontDeskPriceSource`: front-desk's private pricing engine, over an
- *   authenticated server-to-server request. Its rules and percentages live in
- *   front-desk, never in this public repo.
+ *   discount: the better of the sale and the bulk ladder. For a product the
+ *   authoritative-price hook prices, that is the hook's own decision.
+ * - `enginePriceSource`: front-desk's pricing engine, run in-process from the
+ *   vendored build, with the policy and binding quotes front-desk serves as
+ *   data. The rules ship with the app; the policy arrives at runtime, so a
+ *   date or percent change needs no deploy.
  *
  * `teamPriceSourceFor` routes a product to one of them. A product routed to
- * front-desk with no configured client is unavailable, which keeps its
- * invoicing off until the token exists. A front-desk price above the app's
- * own price for the same order is unavailable too (`cappedAtCheckout`).
+ * the engine with no configured policy source is unavailable, which keeps its
+ * invoicing off until front-desk is configured.
+ *
+ * An engine-priced product needs no separate cap: checkout prices it with
+ * the same engine, policy and quotes, so the engine's team price is the
+ * price checkout charges. Capping it with the hook's display decision would
+ * be wrong: with no signed-in buyer that decision is only an upper bound, so
+ * a billing email with no account could never be invoiced.
  */
 
 export type TeamPriceRequest = {
@@ -29,6 +41,8 @@ export type TeamPriceRequest = {
 	listUnitAmount: number
 	/** The buyer's app user, when the billing email already has one. */
 	userId?: string
+	/** The billing email, for binding quotes made to it. */
+	email?: string
 }
 
 /** How the invoice reaches the priced total from list price × quantity. */
@@ -42,7 +56,7 @@ export type TeamDiscount =
 export type TeamPrice =
 	| {
 			kind: 'priced'
-			source: 'app-bulk' | 'front-desk'
+			source: 'app-bulk' | 'engine'
 			/** Per-seat price after the team discount, in cents. */
 			unitAmount: number
 			/** The invoice total, in cents. */
@@ -62,8 +76,8 @@ const unavailable = (reason: string): TeamPrice => ({
 	reason,
 })
 
-/** Products whose team prices come from front-desk, not the app's rules. */
-export const FRONT_DESK_PRICED_PRODUCTS: ReadonlySet<string> = new Set([
+/** Products whose team prices come from the engine, not the app's rules. */
+export const ENGINE_PRICED_PRODUCTS: ReadonlySet<string> = new Set([
 	'product-s00zs',
 ])
 
@@ -77,13 +91,11 @@ export function teamPriceSourceFor(
 	sources: {
 		appBulk: TeamPriceSource
 		/** Null until `FRONT_DESK_URL` and `FRONT_DESK_PRICING_TOKEN` are set. */
-		frontDesk: TeamPriceSource | null
+		engine: TeamPriceSource | null
 	},
 ): TeamPriceSource {
-	if (!FRONT_DESK_PRICED_PRODUCTS.has(productId)) return sources.appBulk
-	return sources.frontDesk
-		? cappedAtCheckout(sources.frontDesk, sources.appBulk)
-		: disabledPriceSource('front-desk-not-configured')
+	if (!ENGINE_PRICED_PRODUCTS.has(productId)) return sources.appBulk
+	return sources.engine ?? disabledPriceSource('engine-not-configured')
 }
 
 /**
@@ -115,94 +127,110 @@ export function cappedAtCheckout(
 /** Whether a product can be invoiced at all with this configuration. */
 export function teamInvoicingEnabled(
 	productId: string,
-	frontDeskConfigured: boolean,
+	engineConfigured: boolean,
 ): boolean {
-	return !FRONT_DESK_PRICED_PRODUCTS.has(productId) || frontDeskConfigured
+	return !ENGINE_PRICED_PRODUCTS.has(productId) || engineConfigured
 }
 
-const cents = z.number().int().nonnegative()
-
-/** front-desk's `POST /api/pricing/decision` answer. Cents throughout. */
-export const frontDeskDecisionSchema = z.object({
-	kind: z.string(),
-	unitAmount: cents.optional(),
-	amount: cents.optional(),
-	policy: z.string().optional(),
-	reasons: z.array(z.unknown()).optional(),
-})
-
-export type FrontDeskDecision = z.infer<typeof frontDeskDecisionSchema>
-
-export const FRONT_DESK_TIMEOUT_MS = 5_000
+type Read<A> = { ok: true; value: A } | { ok: false; reason: string }
 
 /**
- * front-desk's pricing engine. Accepts only a 200 with `kind: "priced"`, a
- * per-seat price that multiplies out to the total, and a total the list price
- * can reach by discount; anything else, a malformed body or a timeout is
- * unavailable.
+ * The engine's team price for one order. A team order uses only its seats:
+ * new plus `existingSeats` the billing email already bought, so every
+ * individual fact is a gap the engine ignores. A billing email's binding
+ * quotes are read fresh, because an invoice is a charge; without them the
+ * invoice is unavailable rather than priced at the formula.
+ *
+ * Accepts only `priced`, an amount the list price reaches by discount, and a
+ * per-seat price that multiplies out to the total. The product's kill switch
+ * closes invoices as it closes checkout.
  */
-export function frontDeskPriceSource(options: {
-	url: string
-	token: string
-	fetch?: typeof fetch
-	timeoutMs?: number
+export function enginePriceSource(deps: {
+	policy: (
+		productId: string,
+	) => Promise<
+		Read<{ version: string; policy: PriceRequestData['product']['policy'] }>
+	>
+	quotes: (input: {
+		email: string
+		productId: string
+		quantity: number
+		fresh: boolean
+	}) => Promise<Read<readonly BindingQuoteData[]>>
+	price: (request: PriceRequestData) => {
+		ok: boolean
+		value?: PricingResultData
+	}
+	now: () => Date
+	/** The kill switch checkout obeys. */
+	disabled: () => boolean
 }): TeamPriceSource {
-	const doFetch = options.fetch ?? fetch
-	const endpoint = new URL('/api/pricing/decision', options.url).toString()
 	return {
 		async price(request) {
-			let decision: FrontDeskDecision
-			try {
-				const response = await doFetch(endpoint, {
-					method: 'POST',
-					headers: {
-						authorization: `Bearer ${options.token}`,
-						'content-type': 'application/json',
-					},
-					body: JSON.stringify({
-						productId: request.productId,
-						quantity: request.quantity,
-						orderKind: 'team',
-						existingSeats: request.existingSeats,
-					}),
-					signal: AbortSignal.timeout(
-						options.timeoutMs ?? FRONT_DESK_TIMEOUT_MS,
-					),
-					cache: 'no-store',
+			if (deps.disabled()) return unavailable('engine-disabled')
+			const policy = await deps.policy(request.productId)
+			if (!policy.ok) return unavailable('engine-policy-unavailable')
+			let quotes: readonly BindingQuoteData[] = []
+			if (request.email) {
+				const read = await deps.quotes({
+					email: request.email,
+					productId: request.productId,
+					quantity: request.quantity,
+					fresh: true,
 				})
-				if (response.status !== 200) {
-					return unavailable(`front-desk-http-${response.status}`)
-				}
-				const parsed = frontDeskDecisionSchema.safeParse(await response.json())
-				if (!parsed.success) return unavailable('front-desk-malformed')
-				decision = parsed.data
-			} catch {
-				return unavailable('front-desk-unreachable')
+				if (!read.ok) return unavailable('engine-quotes-unavailable')
+				quotes = read.value
 			}
-
-			if (decision.kind !== 'priced') {
-				return unavailable(`front-desk-${decision.kind}`)
+			const gap = { gap: 'FactsUnavailable' } as const
+			const facts: BuyerFactsData = {
+				order: { value: 'team', sourceRefs: ['team-invoice:order'] },
+				existingSeats: {
+					value: request.existingSeats,
+					sourceRefs: ['team-invoice:existing-seats'],
+				},
+				alumni: gap,
+				credit: gap,
+				creditUse: gap,
+				legend: gap,
+				ppp: { value: null, sourceRefs: ['ppp:team-order'] },
 			}
-			const { unitAmount, amount, policy } = decision
-			if (unitAmount === undefined || amount === undefined || !policy) {
-				return unavailable('front-desk-incomplete')
-			}
+			const result = deps.price({
+				facts,
+				now: deps.now().toISOString(),
+				product: {
+					id: policy.value.policy.product,
+					merchantUnit: request.listUnitAmount,
+					policy: policy.value.policy,
+				},
+				quantity: request.quantity,
+				quotes,
+			})
+			if (!result.ok || !result.value) return unavailable('engine-invalid')
+			const decision = result.value
+			if (decision.kind !== 'priced')
+				return unavailable(`engine-${decision.kind}`)
+			const amount = decision.amount
 			const listTotal = request.listUnitAmount * request.quantity
 			// An invoice can only discount the product's price, never raise it,
 			// and a free team order is not an invoice.
-			if (amount <= 0 || amount > listTotal) {
-				return unavailable('front-desk-out-of-range')
-			}
-			if (unitAmount * request.quantity !== amount) {
-				return unavailable('front-desk-inconsistent')
-			}
+			if (amount <= 0 || amount > listTotal)
+				return unavailable('engine-out-of-range')
+			// A band or Unit-quote price is per seat and must multiply out; a
+			// Total quote prices the order only.
+			if (
+				decision.unitAmount !== null &&
+				decision.unitAmount * request.quantity !== amount
+			)
+				return unavailable('engine-inconsistent')
+			const unitAmount =
+				decision.unitAmount ?? Math.round(amount / request.quantity)
 			const amountOff = listTotal - amount
 			return {
 				kind: 'priced',
-				source: 'front-desk',
+				source: 'engine',
 				unitAmount,
 				amount,
-				policy,
+				policy: `${decision.policyVersion}:${decision.rule}`,
 				discount:
 					amountOff > 0 ? { kind: 'amount-off', amountOff } : { kind: 'none' },
 			}
@@ -223,6 +251,13 @@ export type AppFormattedPrice = {
 		percentageDiscount?: unknown
 		amountDiscount?: unknown
 	} | null
+	/** Present when the authoritative-price hook priced the product. */
+	authoritative?: {
+		kind: string
+		purchasable: boolean
+		amountCents: number
+		policyVersion: string
+	}
 }
 
 /** The site-wide sale coupon checkout applies on its own, when one runs. */
@@ -278,6 +313,27 @@ export function appBulkPriceSource(deps: {
 				return unavailable('app-upgrade-credit')
 			}
 			const listTotal = request.listUnitAmount * request.quantity
+			// The hook priced it: checkout charges its decision, so that is the
+			// price an invoice may not exceed. Only a chargeable one counts.
+			if (formatted.authoritative) {
+				const { authoritative } = formatted
+				if (!authoritative.purchasable)
+					return unavailable(`app-authoritative-${authoritative.kind}`)
+				const amount = authoritative.amountCents
+				if (!(amount > 0 && amount <= listTotal))
+					return unavailable('app-out-of-range')
+				return {
+					kind: 'priced',
+					source: 'app-bulk',
+					unitAmount: Math.round(amount / request.quantity),
+					amount,
+					policy: `app-authoritative:${authoritative.policyVersion}`,
+					discount:
+						amount < listTotal
+							? { kind: 'amount-off', amountOff: listTotal - amount }
+							: { kind: 'none' },
+				}
+			}
 			const inRange = (amount: number) =>
 				Number.isFinite(amount) && amount > 0 && amount <= listTotal
 
@@ -287,7 +343,9 @@ export function appBulkPriceSource(deps: {
 
 			const saleOnly = sale ? saleCandidate(sale, request, listTotal) : null
 			const best =
-				saleOnly && inRange(saleOnly.amount) && saleOnly.amount < checkout.amount
+				saleOnly &&
+				inRange(saleOnly.amount) &&
+				saleOnly.amount < checkout.amount
 					? saleOnly
 					: checkout
 			return {
@@ -332,12 +390,18 @@ async function checkoutCandidate(
 	}
 	// The sale coupon is the only other discount a team invoice carries. PPP
 	// and special coupons are checkout decisions for one buyer, not team rules.
-	if ((type === 'percentage' || type === 'fixed') && coupon.id === sale?.merchantCouponId) {
+	if (
+		(type === 'percentage' || type === 'fixed') &&
+		coupon.id === sale?.merchantCouponId
+	) {
 		return type === 'percentage'
 			? {
 					amount,
 					policy: `app-sale:${percentOf(coupon.percentageDiscount)}`,
-					discount: { kind: 'stripe-coupon', stripeCouponId: sale.stripeCouponId },
+					discount: {
+						kind: 'stripe-coupon',
+						stripeCouponId: sale.stripeCouponId,
+					},
 				}
 			: {
 					amount,

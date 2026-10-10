@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { purchaseGate } from '@/lib/c5-pricing/purchasability'
 import { api } from '@/trpc/react'
 import { useMachine } from '@xstate/react'
 import {
@@ -23,6 +24,7 @@ import {
 	checkoutSurveyMachine,
 	type CheckoutSurveyAnswer,
 } from './checkout-survey-machine'
+import { RegionalUpgradeSupport, UpperBoundNote } from './gated-buy-button'
 
 const CHECKOUT_SURVEY_ID = 'checkout-decision-source'
 const CHECKOUT_SURVEY_QUESTION_ID = 'what-helped-you-decide-to-join'
@@ -102,6 +104,7 @@ export function CheckoutSurveyBuyButton({
 		},
 	)
 	const { formattedPrice, product, status, isSoldOut } = Pricing.usePricing()
+	const gate = purchaseGate(formattedPrice)
 
 	const [snapshot, send] = useMachine(checkoutSurveyMachine, {
 		input: {
@@ -123,13 +126,16 @@ export function CheckoutSurveyBuyButton({
 	)
 	const isMembership = product.type === 'membership'
 	const defaultAction = isMembership ? 'Subscribe' : 'Buy Now'
-	const buttonLabel = children
-		? children
-		: isSoldOut
-			? 'Sold Out'
-			: formattedPrice?.upgradeFromPurchaseId
-				? 'Upgrade Now'
-				: product?.fields.action || defaultAction
+	const buttonLabel =
+		gate.kind !== 'buy'
+			? gate.label
+			: children
+				? children
+				: isSoldOut
+					? 'Sold Out'
+					: formattedPrice?.upgradeFromPurchaseId
+						? 'Upgrade Now'
+						: product?.fields.action || defaultAction
 
 	React.useEffect(() => {
 		const button = buttonRef.current
@@ -198,26 +204,33 @@ export function CheckoutSurveyBuyButton({
 		send({ type: 'BUY_CLICKED' })
 	}
 
+	if (gate.kind === 'support')
+		return <RegionalUpgradeSupport className={className} label={gate.label} />
+
 	if (snapshot.matches('idle')) {
 		return (
-			<Button
-				ref={buttonRef}
-				className={cn(
-					'bg-primary text-primary-foreground flex h-14 w-full items-center justify-center rounded px-4 py-4 text-center text-base font-medium transition ease-in-out disabled:cursor-not-allowed disabled:opacity-50',
-					className,
-				)}
-				type="button"
-				size="lg"
-				disabled={
-					status === 'pending' ||
-					status === 'error' ||
-					isSoldOut ||
-					isSubmittingStoredAnswer
-				}
-				onClick={continueWithoutSurveyIfAlreadyAnswered}
-			>
-				{buttonLabel}
-			</Button>
+			<>
+				<UpperBoundNote className="mb-2" />
+				<Button
+					ref={buttonRef}
+					className={cn(
+						'bg-primary text-primary-foreground flex h-14 w-full items-center justify-center rounded px-4 py-4 text-center text-base font-medium transition ease-in-out disabled:cursor-not-allowed disabled:opacity-50',
+						className,
+					)}
+					type="button"
+					size="lg"
+					disabled={
+						status === 'pending' ||
+						status === 'error' ||
+						isSoldOut ||
+						gate.kind === 'blocked' ||
+						isSubmittingStoredAnswer
+					}
+					onClick={continueWithoutSurveyIfAlreadyAnswered}
+				>
+					{buttonLabel}
+				</Button>
+			</>
 		)
 	}
 
@@ -278,6 +291,7 @@ export function CheckoutSurveyBuyButton({
 					status === 'pending' ||
 					status === 'error' ||
 					isSoldOut ||
+					gate.kind === 'blocked' ||
 					hasSubmittedRef.current
 				}
 				onClick={() => send({ type: 'CONTINUE_CLICKED' })}

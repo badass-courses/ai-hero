@@ -2,16 +2,20 @@ import {
 	GET as courseBuilderGET,
 	POST as coreCourseBuilderPOST,
 } from '@/coursebuilder/course-builder-config'
-import { protectCourseBuilderRequest } from '@/coursebuilder/coursebuilder-request-authorization'
-import { purchaseBlockedCheckoutRefusal } from '@/coursebuilder/purchase-block-checkout'
-import { resolveServerComputedCheckoutCoupon } from '@/coursebuilder/server-computed-checkout-coupon'
+import {
+	authoritativeCheckoutProduct,
+	protectCommerceRequest,
+} from '@/coursebuilder/protect-commerce-request'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
-import { syntheticCheckoutRefusal } from '@/coursebuilder/synthetic-checkout'
-import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
 import { INVOICE_SHORTFALL_RECONCILE_EVENT } from '@/inngest/events/invoice-shortfall'
 import { inngest } from '@/inngest/inngest.server'
-import { getServerAuthSession } from '@/server/auth'
+import { createdCheckoutSessionId } from '@/lib/c5-pricing/checkout-siblings'
+import { expireC5SiblingSessions } from '@/lib/c5-pricing/server-checkout'
+import {
+	trustedCountryFromHeaders,
+	withTrustedPricingCountry,
+} from '@/lib/c5-pricing/trusted-country'
 import { withSkill } from '@/server/with-skill'
 import { StripePaymentAdapter } from '@coursebuilder/commerce/stripe-provider'
 import type { NextRequest } from 'next/server'
@@ -61,52 +65,36 @@ async function dispatchCashBalanceReconciliation(request: Request) {
 	})
 }
 
-const isProtectedCommerceRequest = (request: NextRequest) =>
-	request.nextUrl.pathname.endsWith('/prices-formatted') ||
-	request.nextUrl.pathname.includes('/checkout/')
-
-const protectCommerceRequest = async (
-	request: NextRequest,
-): Promise<NextRequest | Response> => {
-	if (!isProtectedCommerceRequest(request)) return request
-
-	const { session } = await getServerAuthSession()
-	const refusal = syntheticCheckoutRefusal(
-		request.nextUrl.pathname,
-		session?.user?.id,
-	)
-	if (refusal) return refusal
-	const blocked = await purchaseBlockedCheckoutRefusal(
-		request.url,
-		request.nextUrl.pathname,
-		session?.user?.id,
-	)
-	if (blocked) return blocked
-	return protectCourseBuilderRequest(request, {
-		adapter: courseBuilderAdapter,
-		verifiedUserId: session?.user?.id,
-		resolveServerComputedMerchantCoupon: (input) =>
-			resolveServerComputedCheckoutCoupon({
-				...input,
-				adapter: courseBuilderAdapter,
-			}),
-	})
-}
+/** Course Builder runs with the request's trusted country in scope. */
+const withTrustedCountry = <T>(request: NextRequest, run: () => T) =>
+	withTrustedPricingCountry(trustedCountryFromHeaders(request.headers), run)
 
 const courseBuilderGETWithCouponAuthorization = async (request: NextRequest) => {
-	const protectedRequest = await protectCommerceRequest(request)
+	const { request: protectedRequest } = await protectCommerceRequest(request)
 	if (protectedRequest instanceof Response) return protectedRequest
-	return courseBuilderGET(protectedRequest)
+	return withTrustedCountry(request, () => courseBuilderGET(protectedRequest))
 }
 
 const courseBuilderPOSTWithCashBalanceReconciliation = async (
 	request: NextRequest,
 ) => {
 	const webhookRequest = request.clone()
-	const protectedRequest = await protectCommerceRequest(request)
+	const { request: protectedRequest, userId } =
+		await protectCommerceRequest(request)
 	if (protectedRequest instanceof Response) return protectedRequest
-	const response = await coreCourseBuilderPOST(protectedRequest)
+	const response = await withTrustedCountry(request, () =>
+		coreCourseBuilderPOST(protectedRequest),
+	)
 	if (response.ok) await dispatchCashBalanceReconciliation(webhookRequest)
+	const productId = authoritativeCheckoutProduct(protectedRequest)
+	const createdSessionId = productId ? createdCheckoutSessionId(response) : null
+	if (productId && userId && createdSessionId) {
+		await expireC5SiblingSessions({
+			userId,
+			productId,
+			keepSessionId: createdSessionId,
+		})
+	}
 	return response
 }
 

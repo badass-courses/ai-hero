@@ -1,4 +1,5 @@
 import { SYNTHETIC_CHECKOUT_REFUSED } from '@/coursebuilder/synthetic-checkout'
+import { withTrustedPricingCountry } from '@/lib/c5-pricing/trusted-country'
 import {
 	checkoutLoginHandoffProviderIdempotencyKey,
 	type CheckoutLoginHandoffPayload,
@@ -49,6 +50,7 @@ export async function createLoggedInCheckoutSession({
 	claim,
 	handoffPayload,
 	checkoutParams,
+	trustedCountry,
 	isPurchaseBlocked = isUserBlockedFromPurchasing,
 }: {
 	provider: StripePaymentsProviderConfig
@@ -57,6 +59,12 @@ export async function createLoggedInCheckoutSession({
 	claim?: CheckoutLoginHandoffClaim
 	handoffPayload?: CheckoutLoginHandoffPayload
 	checkoutParams: CheckoutParams
+	/**
+	 * The country from AI Hero's trusted geolocation (or the signed handoff that
+	 * carried it). Course Builder's server-only option: the authoritative-price hook
+	 * prices from it, never from `checkoutParams.country`.
+	 */
+	trustedCountry: string
 	isPurchaseBlocked?: (userId: string) => Promise<boolean>
 }): Promise<CheckoutSessionResult> {
 	if (claim && !handoffPayload) {
@@ -104,14 +112,20 @@ export async function createLoggedInCheckoutSession({
 		}
 	}
 
-	const result = claim
-		? await provider.createCheckoutSessionResult(checkoutParams, adapter, {
-				idempotencyKey: checkoutLoginHandoffProviderIdempotencyKey(
-					claim.nonceHash,
-				),
-				operationStartedAt: new Date(handoffPayload!.issuedAt),
-			})
-		: await provider.createCheckoutSessionResult(checkoutParams, adapter)
+	// The block above runs first: a refused buyer never reaches the pricing hook.
+	const result = await withTrustedPricingCountry(trustedCountry, () =>
+		claim
+			? provider.createCheckoutSessionResult(checkoutParams, adapter, {
+					idempotencyKey: checkoutLoginHandoffProviderIdempotencyKey(
+						claim.nonceHash,
+					),
+					operationStartedAt: new Date(handoffPayload!.issuedAt),
+					trustedCountry,
+				})
+			: provider.createCheckoutSessionResult(checkoutParams, adapter, {
+					trustedCountry,
+				}),
+	)
 
 	if (result.kind === 'failure') {
 		if (claim) {

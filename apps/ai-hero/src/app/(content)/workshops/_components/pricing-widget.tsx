@@ -5,6 +5,7 @@ import {
 	ProductPricingFeatures,
 	type ProductPricingFeature,
 } from '@/components/commerce/product-pricing-features'
+import { GatedBuyButton } from '@/components/commerce/gated-buy-button'
 import { TYPE } from '@/components/landing/type'
 import { formatDeadline } from '@/utils/discount-formatter'
 import {
@@ -153,7 +154,7 @@ export const PricingWidget = ({
 					</Pricing.Price>
 					<TeamPurchaseControls teamMode={teamMode} />
 					{buyButton ?? (
-						<Pricing.BuyButton
+						<GatedBuyButton
 							className={cn(
 								WORKSHOP_CTA_BUTTON,
 								'mt-4 h-[46px] w-full',
@@ -161,7 +162,7 @@ export const PricingWidget = ({
 							)}
 						>
 							{buyButtonContent ?? <WorkshopBuyButtonLabel product={product} />}
-						</Pricing.BuyButton>
+						</GatedBuyButton>
 					)}
 					{/* The secondary ask, as the primary's outline twin: same height
 					    and radius, hairline instead of gold, so the pair reads as one

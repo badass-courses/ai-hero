@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import { usePathname } from 'next/navigation'
+import { GatedBuyButton } from '@/components/commerce/gated-buy-button'
 import { env } from '@/env.mjs'
 
 import { useCoupon } from '@coursebuilder/commerce-next/coupons/use-coupon'
@@ -60,9 +61,9 @@ export function VideoOverlayWorkshopPricing({
 							<Pricing.Price className="mb-2 [&_div]:text-white" />
 							<Pricing.TeamToggle className='[&_button>span[data-state="checked"]]:bg-primary mb-2' />
 							<Pricing.TeamQuantityInput />
-							<Pricing.BuyButton className="text-lg font-semibold">
+							<GatedBuyButton className="text-lg font-semibold">
 								Enroll Now
-							</Pricing.BuyButton>
+							</GatedBuyButton>
 							<Pricing.GuaranteeBadge />
 							<Pricing.LiveRefundPolicy className="max-w-none text-center" />
 							<Pricing.SaleCountdown className="py-4" />

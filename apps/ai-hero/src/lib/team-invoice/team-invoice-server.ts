@@ -13,12 +13,19 @@ import { courseBuilderAdapter, db } from '@/db'
 import { purchases } from '@/db/schema'
 import BasicEmail from '@/emails/basic-email'
 import { env } from '@/env.mjs'
+import {
+	c5DecisionCutover,
+	c5PricingDisabled,
+} from '@/lib/c5-pricing/config'
+import { frontDeskData } from '@/lib/c5-pricing/server'
 import { log } from '@/server/logger'
 import { redis } from '@/server/redis-client'
 import { sendAnEmail } from '@coursebuilder/utils/send-an-email'
 import { Ratelimit } from '@upstash/ratelimit'
 import { count, eq } from 'drizzle-orm'
 import { Effect } from 'effect'
+
+import { price as enginePrice } from '@ai-hero/front-desk-support/pricing'
 
 import { formatPricesForProduct } from '@coursebuilder/commerce'
 import type { StripePaymentAdapter } from '@coursebuilder/commerce/stripe-provider'
@@ -35,7 +42,7 @@ import { createAndSendTeamInvoice } from './stripe-team-invoice'
 import type { OpenTeamInvoice } from './team-invoice-expiry'
 import {
 	appBulkPriceSource,
-	frontDeskPriceSource,
+	enginePriceSource,
 	teamInvoicingEnabled,
 	teamPriceSourceFor,
 	type DefaultSaleCoupon,
@@ -45,7 +52,7 @@ import {
 const stripe = () =>
 	(stripeProvider.options.paymentsAdapter as StripePaymentAdapter).stripe
 
-/** front-desk prices C5 only when both its URL and its pricing token are set. */
+/** The engine prices C5 only when front-desk's URL and pricing token are set. */
 export const frontDeskPricingConfigured = () =>
 	Boolean(env.FRONT_DESK_URL && env.FRONT_DESK_PRICING_TOKEN)
 
@@ -93,13 +100,18 @@ const appBulk: TeamPriceSource = appBulkPriceSource({
 	defaultSaleCoupon,
 })
 
-const frontDesk = (): TeamPriceSource | null =>
-	frontDeskPricingConfigured()
-		? frontDeskPriceSource({
-				url: env.FRONT_DESK_URL!,
-				token: env.FRONT_DESK_PRICING_TOKEN!,
+const engine = (): TeamPriceSource | null => {
+	const data = frontDeskData()
+	return data
+		? enginePriceSource({
+				policy: (productId) => data.policy(productId),
+				quotes: (input) => data.bindingQuotes(input),
+				price: enginePrice,
+				now: () => new Date(),
+				disabled: c5PricingDisabled,
 			})
 		: null
+}
 
 const OPEN_SELF_SERVE_QUERY = `status:'open' AND metadata['source']:'${SELF_SERVE_TEAM_INVOICE_SOURCE}' AND metadata['app']:'ai-hero'`
 
@@ -192,6 +204,7 @@ async function buyer(email: string, productId: string) {
 				pricingFactsSourceLayer({
 					chargeState: (id) => frontDeskHooks.chargeState(id),
 					stripe: stripe(),
+					decisionCutover: c5DecisionCutover(),
 				}),
 			),
 			Effect.catchAll(() => Effect.succeed(null)),
@@ -320,7 +333,7 @@ export function teamInvoiceServerDeps(): TeamInvoiceDeps {
 		loadProduct,
 		buyer,
 		priceSource: (productId) =>
-			teamPriceSourceFor(productId, { appBulk, frontDesk: frontDesk() }),
+			teamPriceSourceFor(productId, { appBulk, engine: engine() }),
 		invoicingEnabled: isTeamInvoicingEnabled,
 		createInvoice: (input) => createAndSendTeamInvoice(stripe(), input),
 		forwardRequest: async (request, context) => {

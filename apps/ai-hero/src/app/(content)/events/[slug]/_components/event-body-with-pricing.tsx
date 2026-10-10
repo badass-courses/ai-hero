@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { GatedBuyButton } from '@/components/commerce/gated-buy-button'
 import { DiscountCountdown } from '@/components/mdx/mdx-components'
 import { DiscountDeadline } from '@/components/pricing/discount-deadline'
 import { HasPurchased } from '@/components/pricing/has-purchased'
@@ -139,7 +140,7 @@ export async function EventBodyWithPricing({
 						className="not-prose mt-5 items-start justify-start"
 					>
 						<Pricing.Product>
-							<Pricing.BuyButton className="dark:bg-primary dark:hover:bg-primary/90 relative h-auto w-full cursor-pointer rounded-lg bg-blue-600 px-8 font-semibold hover:bg-blue-700 sm:h-14 sm:w-auto md:px-16">
+							<GatedBuyButton className="dark:bg-primary dark:hover:bg-primary/90 relative h-auto w-full cursor-pointer rounded-lg bg-blue-600 px-8 font-semibold hover:bg-blue-700 sm:h-14 sm:w-auto md:px-16">
 								<span className="relative z-10">{children}</span>
 								<div
 									style={{
@@ -147,7 +148,7 @@ export async function EventBodyWithPricing({
 									}}
 									className="animate-shine pointer-events-none absolute inset-0 rounded-[inherit] bg-[linear-gradient(120deg,rgba(255,255,255,0)40%,rgba(255,255,255,1)50%,rgba(255,255,255,0)60%)] opacity-10 dark:opacity-20"
 								/>
-							</Pricing.BuyButton>
+							</GatedBuyButton>
 						</Pricing.Product>
 					</Pricing.Root>
 				) : null

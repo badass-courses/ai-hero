@@ -9,15 +9,21 @@
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js",
 			"default": "./dist/index.js"
+		},
+		"./pricing": {
+			"types": "./dist/pricing.d.ts",
+			"import": "./dist/pricing.js",
+			"default": "./dist/pricing.js"
 		}
 	},
 	"files": [
-		"dist"
+		"dist",
+		"vendor"
 	],
 	"scripts": {
 		"build": "node build.mjs && tsc -p tsconfig.build.json && node test/bundle.test.mjs",
 		"typecheck": "tsc --noEmit",
-		"test": "tsx --test test/handler.test.ts test/pricing-facts.test.ts"
+		"test": "tsx --test test/handler.test.ts test/pricing-facts.test.ts test/vendored-pricing.test.ts"
 	},
 	"devDependencies": {
 		"effect": "4.0.2",

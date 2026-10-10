@@ -4,6 +4,8 @@ import {
 	type ExclusiveCouponAuthorizationAdapter,
 } from '@/lib/exclusive-coupon-authorization'
 
+import { AUTHORITATIVE_PPP_OFFER_ID } from '@coursebuilder/commerce/authoritative-price'
+
 type ProtectCourseBuilderRequestOptions = {
 	adapter: ExclusiveCouponAuthorizationAdapter & {
 		getPurchase?: (purchaseId: string) => Promise<{
@@ -12,6 +14,12 @@ type ProtectCourseBuilderRequestOptions = {
 		} | null>
 	}
 	verifiedUserId?: string
+	/**
+	 * Products the app's authoritative-price hook prices. Their only client
+	 * input is the PPP consent (`AUTHORITATIVE_PPP_OFFER_ID`); every coupon
+	 * selector is dropped and no server-computed coupon is attached.
+	 */
+	authoritativeProductIds?: ReadonlySet<string>
 	resolveServerComputedMerchantCoupon?: (input: {
 		productId: string
 		quantity: number
@@ -111,7 +119,11 @@ const parsePricesFormattedBody = async (request: NextRequest) => {
 
 const protectPricesFormattedRequest = async (
 	request: NextRequest,
-	{ adapter, verifiedUserId }: ProtectCourseBuilderRequestOptions,
+	{
+		adapter,
+		verifiedUserId,
+		authoritativeProductIds,
+	}: ProtectCourseBuilderRequestOptions,
 ) => {
 	const body = await parsePricesFormattedBody(request)
 	if (!body) return request
@@ -121,6 +133,21 @@ const protectPricesFormattedRequest = async (
 
 	const productId = stringValue(body.productId)
 	if (!productId) return requestWithJsonBody(request, body)
+
+	if (authoritativeProductIds?.has(productId)) {
+		// The hook decides the price. The PPP toggle echoes the offer id as the
+		// buyer's consent; nothing else the client sends selects a discount.
+		const merchantCoupon = isRecord(body.merchantCoupon)
+			? body.merchantCoupon
+			: undefined
+		if (merchantCoupon?.id !== AUTHORITATIVE_PPP_OFFER_ID) delete body.merchantCoupon
+		delete body.couponId
+		delete body.code
+		delete body.country
+		// No upgrade path: a credit replaces the upgrade discount.
+		delete body.upgradeFromPurchaseId
+		return requestWithJsonBody(request, body)
+	}
 
 	const merchantCoupon = isRecord(body.merchantCoupon)
 		? body.merchantCoupon
@@ -153,6 +180,7 @@ const protectCheckoutRequest = async (
 	{
 		adapter,
 		verifiedUserId,
+		authoritativeProductIds,
 		resolveServerComputedMerchantCoupon,
 	}: ProtectCourseBuilderRequestOptions,
 ) => {
@@ -171,6 +199,18 @@ const protectCheckoutRequest = async (
 	const productId = stringValue(url.searchParams.get('productId'))
 	if (!productId) return requestWithUrl(request, url)
 	const quantity = numberValue(url.searchParams.get('quantity') ?? 1)
+
+	if (authoritativeProductIds?.has(productId)) {
+		// The hook re-prices server-side from the trusted country. Only the PPP
+		// consent id passes; no coupon selector or server-computed coupon does.
+		if (url.searchParams.get('couponId') !== AUTHORITATIVE_PPP_OFFER_ID)
+			url.searchParams.delete('couponId')
+		url.searchParams.delete('usedCouponId')
+		// No upgrade path: the credit replaces the upgrade discount, and Course
+		// Builder refuses an authoritative upgrade outright.
+		url.searchParams.delete('upgradeFromPurchaseId')
+		return requestWithUrl(request, url)
+	}
 
 	const decision = await authorizeExclusiveCouponSelection({
 		adapter,

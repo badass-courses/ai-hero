@@ -6,7 +6,7 @@ import { isAbsolute } from 'node:path'
 export const slot = Number(process.env.RIG_SLOT ?? 0)
 if (!Number.isInteger(slot) || slot < 0 || slot > 9) throw new Error('RIG_SLOT must be an integer from 0 to 9')
 // Inngest's default 8288 is often taken by a real Inngest server; the rig never shares it.
-export const ports = { db: 13316 + slot * 10, app: 3310 + slot * 10, jobs: 18288 + slot * 10, worker: 18289 + slot * 10, gatewayGrpc: 18290 + slot * 10, executorGrpc: 18291 + slot * 10 }
+export const ports = { db: 13316 + slot * 10, app: 3310 + slot * 10, frontDesk: 3311 + slot * 10, jobs: 18288 + slot * 10, worker: 18289 + slot * 10, gatewayGrpc: 18290 + slot * 10, executorGrpc: 18291 + slot * 10 }
 export const databaseUrl = `mysql://rig:rig-local-only@127.0.0.1:${ports.db}/commerce_rig`
 export const origin = `http://127.0.0.1:${ports.app}`
 export function assertDatabase(value) {

@@ -6,7 +6,7 @@ const tls = require('node:tls')
 const { syncBuiltinESMExports } = require('node:module')
 const slot = Number(process.env.RIG_SLOT || 0)
 if (!Number.isInteger(slot) || slot < 0 || slot > 9) throw new Error('commerce-rig: invalid slot')
-const localPorts = new Set([9, 3310 + slot * 10, 18288 + slot * 10, 18289 + slot * 10, 13316 + slot * 10])
+const localPorts = new Set([9, 3310 + slot * 10, 3311 + slot * 10, 18288 + slot * 10, 18289 + slot * 10, 13316 + slot * 10])
 // Turbopack runs loaders as `node <.next chunk> <port>` and connects back to its
 // parent on that loopback port. Allow only that port, only for the rig's own build.
 const ipcPort = turbopackIpcPort(process.argv, process.env.COMMERCE_RIG_NEXT_DIR)

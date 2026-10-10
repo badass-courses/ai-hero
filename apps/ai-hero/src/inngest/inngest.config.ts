@@ -1,5 +1,6 @@
 import { aiCodingDictionaryIndex } from '@/inngest/functions/ai-coding-dictionary-index'
 import { archivePurchaseReconciliation } from '@/inngest/functions/archive-purchase-reconciliation'
+import { c5PurchaseDecision } from '@/inngest/functions/c5-purchase-decision'
 import { generateArtwork } from '@/inngest/functions/artwork/generate-artwork'
 import { notifyOnPostCreated } from '@/inngest/functions/artwork/notify-on-post-created'
 import { pickVariant } from '@/inngest/functions/artwork/pick-variant'
@@ -198,6 +199,7 @@ const allFunctions = [
 	invoiceShortfallReconciliation,
 	checkoutReconcilerSweep,
 	checkoutReconcileFulfill,
+	c5PurchaseDecision,
 	teamInvoiceExpiry,
 	syncGithubSourcedPosts,
 	skillChangelogBroadcast,

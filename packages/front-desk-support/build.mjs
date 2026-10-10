@@ -2,8 +2,8 @@ import { build } from 'esbuild'
 import { mkdir, writeFile } from 'node:fs/promises'
 await mkdir('dist', { recursive: true })
 const result = await build({
-	entryPoints: ['src/index.ts'],
-	outfile: 'dist/index.js',
+	entryPoints: ['src/index.ts', 'src/pricing.ts'],
+	outdir: 'dist',
 	bundle: true,
 	platform: 'node',
 	format: 'esm',

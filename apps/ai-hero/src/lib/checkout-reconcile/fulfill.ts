@@ -13,7 +13,10 @@
  *   1. A re-check before the handler runs: any purchase linked to the session
  *      or its charge means there is nothing to do. A purchase of the same
  *      product the buyer got since the session opened, by any other path,
- *      means a human already acted: hold, do not sell it twice.
+ *      means a human already acted: hold, do not sell it twice. A product
+ *      whose duplicates are caught after payment (C5) is
+ *      fulfilled instead: fulfillment never refuses a paid order there, and
+ *      its post-payment check flags the duplicate for a refund.
  *   2. A guarded adapter: inside the handler's own write step, immediately
  *      before `createMerchantChargeAndPurchase`, the guard reads both again,
  *      with the handler's resolved user and product, and throws a
@@ -69,6 +72,12 @@ export type DirectCheckoutFulfillmentDeps = {
 		checkoutSessionId: string
 		chargeId: string | null
 	}) => Promise<CheckoutFulfillmentState>
+	/**
+	 * Whether a buyer who already got this product since the session opened
+	 * holds the session for a human. False for products whose post-payment
+	 * duplicate check flags it instead. Default: hold every product.
+	 */
+	holdsWhenBuyerHasProduct?: (productId: string) => boolean
 	/** Active purchases of the product the buyer got at or after `since`. */
 	findBuyerProductPurchases: (input: {
 		userId: string | null
@@ -211,13 +220,15 @@ export async function fulfillCheckoutSessionDirectly(
 	const since = new Date(session.created * 1000)
 
 	const inspectNow = () => deps.inspect({ checkoutSessionId, chargeId })
+	const holds = (productId: string) =>
+		deps.holdsWhenBuyerHasProduct?.(productId) ?? true
 	const before = (await deps.step.run(
 		'reconcile: re-check fulfillment',
 		async () => {
 			const state = await inspectNow()
 			const productId = session.metadata?.productId
 			const buyerPurchaseIds =
-				state.purchaseIds.length === 0 && productId
+				state.purchaseIds.length === 0 && productId && holds(productId)
 					? await deps.findBuyerProductPurchases({
 							userId: session.metadata?.userId ?? null,
 							email:
@@ -255,7 +266,8 @@ export async function fulfillCheckoutSessionDirectly(
 			}
 			// The handler's own resolved buyer and product, so a buyer the
 			// pre-check could not name by metadata or email is covered too.
-			const buyerPurchaseIds = options?.productId
+			const buyerPurchaseIds =
+				options?.productId && holds(options.productId)
 				? await deps.findBuyerProductPurchases({
 						userId: options.userId ?? null,
 						email: null,

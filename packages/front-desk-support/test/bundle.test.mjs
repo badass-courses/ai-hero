@@ -7,15 +7,24 @@ assert.ok(
 	),
 	'Effect must be bundled',
 )
-assert.deepEqual(Object.keys(meta.outputs), ['dist/index.js'])
+assert.ok(
+	Object.keys(meta.inputs).includes('vendor/front-desk-pricing/pricing.js'),
+	'The vendored pricing engine must be bundled',
+)
+assert.deepEqual(Object.keys(meta.outputs).sort(), [
+	'dist/index.js',
+	'dist/pricing.js',
+])
 for (const output of Object.values(meta.outputs)) {
 	assert.ok(
 		output.imports.every((entry) => entry.path.startsWith('node:')),
 		'Only Node builtins may remain external',
 	)
 }
-const declaration = await readFile('dist/index.d.ts', 'utf8')
-assert.doesNotMatch(declaration, /\b(?:from|import).*['"]effect(?:\/|['"])/)
+for (const file of ['dist/index.d.ts', 'dist/pricing.d.ts']) {
+	const declaration = await readFile(file, 'utf8')
+	assert.doesNotMatch(declaration, /\b(?:from|import).*['"]effect(?:\/|['"])/)
+}
 console.log(
-	'Bundle contract passed: one ESM output, only Node builtins external, native facade declarations',
+	'Bundle contract passed: one ESM output per entry, only Node builtins external, native facade declarations',
 )

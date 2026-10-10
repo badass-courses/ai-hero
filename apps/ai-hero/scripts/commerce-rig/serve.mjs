@@ -3,7 +3,8 @@ import { spawn } from 'node:child_process'
 import { appendFile, mkdir, readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
-import { cleanEnv, origin, ports, privateWrite } from './safety.mjs'
+import { cleanEnv, freshToken, origin, ports, privateWrite } from './safety.mjs'
+import { readFrontDeskData } from './front-desk-stub.mjs'
 import { stripeCli } from './sandbox.mjs'
 import { startLifecycle } from './lifecycle.mjs'
 const state = process.argv[2], mirror = process.argv[3]
@@ -80,6 +81,14 @@ if (!webhook || ending) { if (!ending) await fail('stripe-listener'); } else {
   env.COMMERCE_RIG_RUN = config.run
   env.COMMERCE_RIG_NEXT_DIR = join(mirror, '.next')
   env.NODE_OPTIONS = `--require=${JSON.stringify(resolve(import.meta.dirname, 'network-guard.cjs'))}`
+  // C5 prices only when front-desk is configured; the stub stands in for it on loopback.
+  if (await readFrontDeskData(process.env.RIG_FRONT_DESK_DATA)) {
+    const tokens = { FRONT_DESK_STUB_PRICING_TOKEN: freshToken(), FRONT_DESK_STUB_QUOTES_TOKEN: freshToken() }
+    child('front-desk', process.execPath, [resolve(import.meta.dirname, 'front-desk-stub.mjs'), process.env.RIG_FRONT_DESK_DATA, String(ports.frontDesk)], { PATH: base.PATH, HOME: base.HOME, LANG: base.LANG, RIG_SLOT: base.RIG_SLOT, NODE_OPTIONS: env.NODE_OPTIONS, ...tokens })
+    env.FRONT_DESK_URL = `http://127.0.0.1:${ports.frontDesk}`
+    env.FRONT_DESK_PRICING_TOKEN = tokens.FRONT_DESK_STUB_PRICING_TOKEN
+    env.FRONT_DESK_QUOTES_TOKEN = tokens.FRONT_DESK_STUB_QUOTES_TOKEN
+  }
   await privateWrite(join(state, 'runtime.env'), Object.entries(env).map(([name, value]) => `${name}=${value}`).join('\n') + '\n')
   const inngestEnv = { PATH: base.PATH, HOME: base.HOME, LANG: base.LANG, INNGEST_DEV: '1', COMMERCE_RIG_OWNER: config.owner }
   child('inngest', 'npx', ['-y', 'inngest-cli@1.46.0', 'dev', '--no-discovery', '-u', `${origin}/api/inngest`, '--host', '127.0.0.1', '--port', String(ports.jobs), '--connect-gateway-port', String(ports.worker), '--connect-gateway-grpc-port', String(ports.gatewayGrpc), '--connect-executor-grpc-port', String(ports.executorGrpc)], inngestEnv)

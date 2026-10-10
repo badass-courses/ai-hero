@@ -142,6 +142,13 @@ test('proof requires paid, matching webhook, buyer, amount, purchase and C5 acce
   for (const field of ['webhooks', 'purchases', 'access']) assert.equal(provesAccess(fixture, session, { ...valid, [field]: [] }), false)
   assert.equal(provesAccess(fixture, { ...session, total: 100 }, valid), false)
   assert.equal(provesAccess(fixture, session, { ...valid, access: [{ ...valid.access[0], metadata: { contentIds: ['workshop-2ozd9'] } }] }), false)
+  // A cents price: Course Builder stores whole dollars; the saved decision has the cents.
+  const cents = { id: 'cs_test_cents', paymentStatus: 'paid', total: 90650 }
+  const decided = decision => ({ ...valid, purchases: [{ ...valid.purchases[0], totalAmount: '907.00', decision }] })
+  assert.equal(provesAccess(fixture, cents, decided({ checkoutSessionId: 'cs_test_cents', expectedTotalCents: 90650 })), true)
+  assert.equal(provesAccess(fixture, cents, decided(null)), false)
+  assert.equal(provesAccess(fixture, cents, decided({ checkoutSessionId: 'cs_test_other', expectedTotalCents: 90650 })), false)
+  assert.equal(provesAccess(fixture, cents, decided({ checkoutSessionId: 'cs_test_cents', expectedTotalCents: 90600 })), false)
 })
 test('network preload blocks provider calls before connection and allows only the slot and Stripe', () => {
   const script = `const {allowed,check}=require(${JSON.stringify(join(import.meta.dirname, 'network-guard.cjs'))}); const assert=require('node:assert/strict'); assert(allowed('api.stripe.com',443)); assert(!allowed('api.convertkit.com',443)); assert(!allowed('api.stripe.com.evil.test',443)); assert(!allowed('127.0.0.1',3306)); assert.throws(()=>check([{host:'api.postmarkapp.com',port:443}])); assert.throws(()=>require('node:net').connect({host:'api.frontapp.com',port:443})); fetch('https://api.convertkit.com/v3/forms').then(()=>process.exit(1),()=>console.log('blocked'));`
@@ -231,4 +238,26 @@ test('lifecycle has no implicit retry from a failure', () => {
   actor.send({ type: 'DOWN' }); actor.send({ type: 'UP' }); actor.send({ type: 'READY' }); actor.send({ type: 'READY' })
   assert.equal(actor.getSnapshot().value, 'running')
   actor.stop()
+})
+
+test('front-desk stub serves only its private data, behind each route\'s own token', async () => {
+  const { frontDeskHandler, readFrontDeskData } = await import('./front-desk-stub.mjs')
+  await assert.rejects(readFrontDeskData('relative/front-desk.json'), /absolute/)
+  assert.equal(await readFrontDeskData(undefined), null)
+  const data = { policy: { version: 'synthetic@1', policy: { product: 'synthetic' } }, quotes: { 'q@example.test': [{ quantity: 1, amount: 1 }, { quantity: 2, amount: 2 }] } }
+  const server = http.createServer(frontDeskHandler(data, { pricing: 'p-token', quotes: 'q-token' }))
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const base = `http://127.0.0.1:${server.address().port}`
+  try {
+    const policy = `${base}/api/pricing/policy?productId=product-s00zs`
+    assert.equal((await fetch(policy, { headers: { authorization: 'Bearer q-token' } })).status, 401)
+    const first = await fetch(policy, { headers: { authorization: 'Bearer p-token' } })
+    assert.deepEqual(await first.json(), data.policy)
+    assert.equal(first.headers.get('etag'), '"synthetic@1"')
+    assert.equal((await fetch(policy, { headers: { authorization: 'Bearer p-token', 'if-none-match': '"synthetic@1"' } })).status, 304)
+    const quotes = body => fetch(`${base}/api/binding-quotes`, { method: 'POST', headers: { authorization: 'Bearer q-token' }, body: JSON.stringify(body) })
+    assert.deepEqual(await (await quotes({ email: ' Q@Example.test ', productId: 'product-s00zs', quantity: 2 })).json(), [{ quantity: 2, amount: 2 }])
+    assert.deepEqual(await (await quotes({ email: 'other@example.test', productId: 'product-s00zs', quantity: 1 })).json(), [])
+    assert.equal((await quotes({ email: 'q@example.test', productId: 'product-ma254', quantity: 1 })).status, 400)
+  } finally { server.close() }
 })
