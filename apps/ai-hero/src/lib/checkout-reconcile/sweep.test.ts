@@ -3,42 +3,44 @@ import { describe, expect, it, vi } from 'vitest'
 import type { CheckoutSessionSummary } from './policy'
 import { runCheckoutReconcileSweep, type CheckoutSweepDeps } from './sweep'
 
-const now = new Date('2026-10-09T22:00:00Z')
-const minutesAgo = (minutes: number) =>
-	Math.floor(now.getTime() / 1000) - minutes * 60
+// Not the first tick of an hour, so only a crossing alerts.
+const now = new Date('2026-10-09T22:04:00Z')
+const minutesAgo = (minutes: number, at = now) =>
+	Math.floor(at.getTime() / 1000) - minutes * 60
+
+type ChargeOverrides = {
+	refunded?: boolean
+	amountRefunded?: number
+	disputed?: boolean
+	expanded?: boolean
+}
 
 function summary(
 	id: string,
-	overrides: Partial<CheckoutSessionSummary> = {},
+	overrides: Partial<CheckoutSessionSummary> & { paidMinutesAgo?: number } = {},
+	charge: ChargeOverrides = {},
+	at = now,
 ): CheckoutSessionSummary {
+	const { paidMinutesAgo = 12, ...rest } = overrides
+	const amountRefunded = charge.amountRefunded ?? 0
 	return {
 		id,
-		created: minutesAgo(12),
+		created: minutesAgo(paidMinutesAgo + 1, at),
 		mode: 'payment',
 		status: 'complete',
 		paymentStatus: 'paid',
 		amountTotal: 29_900,
 		siteName: 'ai-hero',
 		chargeId: `ch_${id}`,
-		...overrides,
-	}
-}
-
-function chargeSession(
-	id: string,
-	charge: { refunded?: boolean; amount_refunded?: number; disputed?: boolean },
-) {
-	return {
-		id,
-		payment_intent: {
-			latest_charge: {
-				id: `ch_${id}`,
-				refunded: false,
-				amount_refunded: 0,
-				disputed: false,
-				...charge,
-			},
+		paidAt: minutesAgo(paidMinutesAgo, at),
+		charge: {
+			chargeId: `ch_${id}`,
+			expanded: charge.expanded ?? true,
+			refunded: (charge.refunded ?? false) || amountRefunded > 0,
+			disputed: charge.disputed ?? false,
+			amountRefunded,
 		},
+		...rest,
 	}
 }
 
@@ -46,8 +48,9 @@ function harness(
 	sessions: CheckoutSessionSummary[],
 	options: {
 		fulfilled?: string[]
-		charges?: Record<string, Parameters<typeof chargeSession>[1]>
 		autoFulfill?: boolean
+		truncated?: boolean
+		at?: Date
 	} = {},
 ) {
 	const stepIds: string[] = []
@@ -58,14 +61,14 @@ function harness(
 				return fn()
 			}),
 		},
-		now: () => now,
+		now: () => options.at ?? now,
 		appName: 'ai-hero',
 		autoFulfill: options.autoFulfill ?? true,
-		listSessions: vi.fn(async () => sessions),
+		listSessions: vi.fn(async () => ({
+			sessions,
+			truncated: options.truncated ?? false,
+		})),
 		findFulfilled: vi.fn(async () => options.fulfilled ?? []),
-		getCheckoutSession: vi.fn(async (id: string) =>
-			chargeSession(id, options.charges?.[id] ?? {}),
-		),
 		log: vi.fn(
 			async (_level: string, _event: string, _attrs: Record<string, unknown>) => {},
 		),
@@ -98,12 +101,28 @@ describe('checkout reconciler sweep', () => {
 		expect(deps.requestFulfillment).toHaveBeenCalledWith([
 			{
 				checkoutSessionId: 'cs_stranded',
-				reconcileKey: 'checkout-reconcile:cs_stranded',
+				reconcileKey: 'checkout-reconcile:cs_stranded:2026100922',
 			},
 		])
 	})
 
-	it('leaves fulfilled sessions untouched and never reads their charge', async () => {
+	it('reads charge state from the list call, with no Stripe read per session', async () => {
+		const { deps, stepIds } = harness([
+			summary('cs_a'),
+			summary('cs_b'),
+			summary('cs_c', {}, { disputed: true }),
+		])
+		await runCheckoutReconcileSweep(deps)
+		expect(stepIds).toEqual([
+			'start sweep',
+			'list completed checkout sessions',
+			'find fulfilled checkout sessions',
+			'record stranded checkouts',
+			'record sweep summary',
+		])
+	})
+
+	it('leaves fulfilled sessions untouched', async () => {
 		const { deps } = harness([summary('cs_done')], { fulfilled: ['cs_done'] })
 		const result = await runCheckoutReconcileSweep(deps)
 
@@ -111,7 +130,6 @@ describe('checkout reconciler sweep', () => {
 			{ checkoutSessionId: 'cs_done', chargeId: 'ch_cs_done' },
 		])
 		expect(result).toMatchObject({ fulfilled: 1, stranded: [], requested: [] })
-		expect(deps.getCheckoutSession).not.toHaveBeenCalled()
 		expect(deps.alert).not.toHaveBeenCalled()
 		expect(deps.requestFulfillment).not.toHaveBeenCalled()
 	})
@@ -120,7 +138,7 @@ describe('checkout reconciler sweep', () => {
 		const { deps } = harness([
 			summary('cs_unpaid', { paymentStatus: 'unpaid' }),
 			summary('cs_expired', { status: 'expired', paymentStatus: 'unpaid' }),
-			summary('cs_young', { created: minutesAgo(2) }),
+			summary('cs_young', { paidMinutesAgo: 2 }),
 		])
 		const result = await runCheckoutReconcileSweep(deps)
 
@@ -134,9 +152,9 @@ describe('checkout reconciler sweep', () => {
 	})
 
 	it('ignores and logs a refunded session without alerting or fulfilling', async () => {
-		const { deps } = harness([summary('cs_refunded')], {
-			charges: { cs_refunded: { refunded: true, amount_refunded: 29_900 } },
-		})
+		const { deps } = harness([
+			summary('cs_refunded', {}, { refunded: true, amountRefunded: 29_900 }),
+		])
 		const result = await runCheckoutReconcileSweep(deps)
 
 		expect(result.refunded).toEqual(['cs_refunded'])
@@ -153,9 +171,7 @@ describe('checkout reconciler sweep', () => {
 	})
 
 	it('holds a disputed session for a human', async () => {
-		const { deps } = harness([summary('cs_disputed')], {
-			charges: { cs_disputed: { disputed: true } },
-		})
+		const { deps } = harness([summary('cs_disputed', {}, { disputed: true })])
 		const result = await runCheckoutReconcileSweep(deps)
 
 		expect(result.held).toEqual(['cs_disputed'])
@@ -168,7 +184,7 @@ describe('checkout reconciler sweep', () => {
 		expect(deps.requestFulfillment).not.toHaveBeenCalled()
 	})
 
-	it('alerts without fulfilling when the kill switch is on', async () => {
+	it('alerts without fulfilling in alert-only mode', async () => {
 		const { deps } = harness([summary('cs_stranded')], { autoFulfill: false })
 		const result = await runCheckoutReconcileSweep(deps)
 
@@ -179,8 +195,8 @@ describe('checkout reconciler sweep', () => {
 		expect(deps.requestFulfillment).not.toHaveBeenCalled()
 	})
 
-	it('escalates a session still stranded after 30 minutes', async () => {
-		const { deps } = harness([summary('cs_old', { created: minutesAgo(45) })])
+	it('escalates a session still stranded 30 minutes after payment', async () => {
+		const { deps } = harness([summary('cs_old', { paidMinutesAgo: 35 })])
 		const result = await runCheckoutReconcileSweep(deps)
 
 		expect(result.stranded[0]?.overdue).toBe(true)
@@ -189,9 +205,68 @@ describe('checkout reconciler sweep', () => {
 			'checkout.reconcile.fulfill_overdue',
 			expect.objectContaining({ checkoutSessionId: 'cs_old' }),
 		)
+		expect(deps.alert).toHaveBeenCalledTimes(1)
 		// Requested anyway: a sweep that missed ticks may see it for the first
-		// time now, and a repeat is dropped by the fulfill idempotency key.
+		// time now, and the hourly key drops repeats within the hour.
 		expect(deps.requestFulfillment).toHaveBeenCalledTimes(1)
+	})
+
+	it('does not call a slow checkout overdue the moment it is paid', async () => {
+		// Opened 40 minutes ago, paid 6 minutes ago.
+		const { deps } = harness([
+			summary('cs_slow', { created: minutesAgo(40), paidMinutesAgo: 6 }),
+		])
+		const result = await runCheckoutReconcileSweep(deps)
+		expect(result.stranded[0]).toMatchObject({ ageMinutes: 6, overdue: false })
+	})
+
+	it('alerts on change, then only on the first tick of each hour', async () => {
+		// 25 minutes after payment: no line crossed since the last tick.
+		const at = new Date('2026-10-09T22:24:00Z')
+		const quiet = harness([summary('cs_waiting', { paidMinutesAgo: 25 }, {}, at)], {
+			at,
+		})
+		const quietResult = await runCheckoutReconcileSweep(quiet.deps)
+		expect(quietResult).toMatchObject({ alerted: false })
+		expect(quiet.deps.alert).not.toHaveBeenCalled()
+		// Still logged and still requested every tick.
+		expect(quiet.deps.log).toHaveBeenCalledWith(
+			'error',
+			'checkout.reconcile.stranded',
+			expect.objectContaining({ checkoutSessionId: 'cs_waiting' }),
+		)
+		expect(quiet.deps.requestFulfillment).toHaveBeenCalledTimes(1)
+
+		const hourly = new Date('2026-10-09T23:02:00Z')
+		const reminder = harness(
+			[summary('cs_waiting', { paidMinutesAgo: 63 }, {}, hourly)],
+			{ at: hourly },
+		)
+		expect(await runCheckoutReconcileSweep(reminder.deps)).toMatchObject({
+			alerted: true,
+		})
+		expect(reminder.deps.alert).toHaveBeenCalledTimes(1)
+	})
+
+	it('logs and alerts when the Stripe list hit its cap', async () => {
+		const hourly = new Date('2026-10-09T23:01:00Z')
+		const { deps } = harness([], { truncated: true, at: hourly })
+		const result = await runCheckoutReconcileSweep(deps)
+
+		expect(result.truncated).toBe(true)
+		expect(deps.log).toHaveBeenCalledWith(
+			'error',
+			'checkout.reconcile.list_truncated',
+			{ scanned: 0 },
+		)
+		expect(deps.log).toHaveBeenCalledWith(
+			'info',
+			'checkout.reconcile.sweep',
+			expect.objectContaining({ truncated: true }),
+		)
+		expect(deps.alert).toHaveBeenCalledWith(
+			expect.objectContaining({ truncated: true }),
+		)
 	})
 
 	it('logs and alerts only inside steps, so Inngest replays do not repeat them', async () => {

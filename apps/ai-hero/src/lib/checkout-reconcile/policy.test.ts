@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-	CHECKOUT_RECONCILE_KILL_SWITCH_ENV,
+	CHECKOUT_RECONCILE_AUTO_FULFILL_ENV,
 	checkoutAutoFulfillEnabled,
 	checkoutChargeState,
 	checkoutReconcileKey,
 	classifyCheckoutSession,
+	safeCheckoutErrorLabel,
+	summarizeCheckoutSession,
 	type CheckoutSessionSummary,
 } from './policy'
 
@@ -22,6 +24,14 @@ const paid: CheckoutSessionSummary = {
 	amountTotal: 29_900,
 	siteName: 'ai-hero',
 	chargeId: 'ch_paid',
+	paidAt: minutesAgo(12),
+	charge: {
+		chargeId: 'ch_paid',
+		expanded: true,
+		refunded: false,
+		disputed: false,
+		amountRefunded: 0,
+	},
 }
 
 const classify = (session: Partial<CheckoutSessionSummary>) =>
@@ -61,7 +71,9 @@ describe('checkout reconcile policy', () => {
 	})
 
 	it('leaves young sessions to the normal path and ignores ones past 48 hours', () => {
-		expect(classify({ created: minutesAgo(4) })).toEqual({
+		expect(
+			classify({ created: minutesAgo(4), paidAt: minutesAgo(4) }),
+		).toEqual({
 			kind: 'skip',
 			reason: 'too_young',
 		})
@@ -71,23 +83,99 @@ describe('checkout reconcile policy', () => {
 		})
 	})
 
-	it('keeps auto-fulfill on unless the kill switch is set', () => {
-		expect(checkoutAutoFulfillEnabled({})).toBe(true)
+	it('measures age from payment, not from when checkout opened', () => {
+		// Opened 40 minutes ago, paid 2 minutes ago: still the normal path's.
 		expect(
-			checkoutAutoFulfillEnabled({ [CHECKOUT_RECONCILE_KILL_SWITCH_ENV]: 'false' }),
-		).toBe(true)
+			classify({ created: minutesAgo(40), paidAt: minutesAgo(2) }),
+		).toEqual({ kind: 'skip', reason: 'too_young' })
+		// Paid 6 minutes ago: a candidate, 6 minutes old, not 40.
 		expect(
-			checkoutAutoFulfillEnabled({ [CHECKOUT_RECONCILE_KILL_SWITCH_ENV]: 'true' }),
-		).toBe(false)
-		expect(
-			checkoutAutoFulfillEnabled({ [CHECKOUT_RECONCILE_KILL_SWITCH_ENV]: ' 1 ' }),
-		).toBe(false)
+			classify({ created: minutesAgo(40), paidAt: minutesAgo(6) }),
+		).toEqual({ kind: 'candidate', ageMs: 6 * 60_000 })
+		// No payment time: the session's creation is the only clock.
+		expect(classify({ created: minutesAgo(9), paidAt: null })).toEqual({
+			kind: 'candidate',
+			ageMs: 9 * 60_000,
+		})
 	})
 
-	it('uses a reconcile key distinct from the bare session id', () => {
-		expect(checkoutReconcileKey('cs_test_paid')).toBe(
-			'checkout-reconcile:cs_test_paid',
-		)
+	it('takes payment time from the charge, then the payment intent', () => {
+		const base = {
+			id: 'cs_1',
+			created: 100,
+			mode: 'payment',
+			status: 'complete',
+			payment_status: 'paid',
+			amount_total: 100,
+			metadata: { siteName: 'ai-hero' },
+		}
+		expect(
+			summarizeCheckoutSession({
+				...base,
+				payment_intent: {
+					created: 200,
+					latest_charge: {
+						id: 'ch_1',
+						created: 300,
+						refunded: false,
+						amount_refunded: 0,
+						disputed: false,
+					},
+				},
+			} as never),
+		).toMatchObject({ chargeId: 'ch_1', paidAt: 300, charge: { expanded: true } })
+		expect(
+			summarizeCheckoutSession({
+				...base,
+				payment_intent: { created: 200, latest_charge: 'ch_2' },
+			} as never),
+		).toMatchObject({ chargeId: 'ch_2', paidAt: 200, charge: { expanded: false } })
+		expect(
+			summarizeCheckoutSession({ ...base, payment_intent: 'pi_3' } as never),
+		).toMatchObject({ chargeId: null, paidAt: null })
+	})
+
+	it('keeps auto-fulfill off unless it is opted in', () => {
+		expect(checkoutAutoFulfillEnabled({})).toBe(false)
+		expect(
+			checkoutAutoFulfillEnabled({ [CHECKOUT_RECONCILE_AUTO_FULFILL_ENV]: 'false' }),
+		).toBe(false)
+		expect(
+			checkoutAutoFulfillEnabled({ [CHECKOUT_RECONCILE_AUTO_FULFILL_ENV]: 'yes' }),
+		).toBe(false)
+		expect(
+			checkoutAutoFulfillEnabled({ [CHECKOUT_RECONCILE_AUTO_FULFILL_ENV]: 'true' }),
+		).toBe(true)
+		expect(
+			checkoutAutoFulfillEnabled({ [CHECKOUT_RECONCILE_AUTO_FULFILL_ENV]: ' 1 ' }),
+		).toBe(true)
+	})
+
+	it('uses a reconcile key distinct from the bare session id, bucketed by UTC hour', () => {
+		expect(
+			checkoutReconcileKey('cs_test_paid', new Date('2026-10-09T22:47:31Z')),
+		).toBe('checkout-reconcile:cs_test_paid:2026100922')
+		expect(
+			checkoutReconcileKey('cs_test_paid', new Date('2026-10-09T23:00:00Z')),
+		).toBe('checkout-reconcile:cs_test_paid:2026100923')
+	})
+
+	it('labels errors for Slack and Axiom without the buyer email', () => {
+		expect(
+			safeCheckoutErrorLabel(new Error('no user for buyer@example.com yet')),
+		).toEqual({
+			errorName: 'Error',
+			errorSummary: 'no user for [email] yet',
+		})
+		// The adapter glues the email to its code; the whole token goes.
+		expect(
+			safeCheckoutErrorLabel(
+				new Error('unable-to-create-user-buyer.name+tag@example.co.uk'),
+			).errorSummary,
+		).not.toContain('@')
+		expect(
+			safeCheckoutErrorLabel(new Error('x'.repeat(200))).errorSummary,
+		).toHaveLength(81)
 	})
 
 	it('reads refund and dispute state only from an expanded charge', () => {

@@ -13,40 +13,60 @@
  */
 import type Stripe from 'stripe'
 
-/** A paid session gets this long to be fulfilled by the normal path. */
+/** A session gets this long after payment to be fulfilled by the normal path. */
 export const CHECKOUT_RECONCILE_MIN_AGE_MS = 5 * 60_000
 
 /** The sweep looks this far back in Stripe. */
 export const CHECKOUT_RECONCILE_WINDOW_MS = 48 * 60 * 60_000
 
 /**
- * A session still stranded this long after completion means the reconciler's
- * own fulfillment did not land. The sweep escalates instead of retrying,
- * because the fulfill function's idempotency key is spent for 24 hours.
+ * A session still stranded this long after payment means the reconciler's
+ * own fulfillment did not land. The sweep escalates to a human.
  */
 export const CHECKOUT_RECONCILE_OVERDUE_MS = 30 * 60_000
 
-/** Kill switch. Truthy means alert-only: detect and alert, never fulfill. */
-export const CHECKOUT_RECONCILE_KILL_SWITCH_ENV =
-	'AIH_CHECKOUT_RECONCILER_AUTO_FULFILL_DISABLED'
+/** The sweep's cron interval. Alerts fire when a session crosses a line. */
+export const CHECKOUT_RECONCILE_SWEEP_INTERVAL_MS = 10 * 60_000
+
+/**
+ * Opt-in. Only `true` or `1` lets the reconciler fulfill; anything else,
+ * including unset, is alert-only: detect, log and alert, never write.
+ */
+export const CHECKOUT_RECONCILE_AUTO_FULFILL_ENV =
+	'AIH_CHECKOUT_RECONCILER_AUTO_FULFILL'
 
 /** Marker on the error the guarded adapter throws when a purchase appeared. */
 export const CHECKOUT_RECONCILE_ALREADY_FULFILLED =
 	'CHECKOUT_RECONCILE_ALREADY_FULFILLED'
 
-/** Auto-fulfill is on unless the kill switch is set to `true` or `1`. */
+/**
+ * Marker on the error the guarded adapter throws when the buyer already
+ * holds the product through a purchase this checkout did not create, such
+ * as a gift or a hand fix after the reconciler's alert.
+ */
+export const CHECKOUT_RECONCILE_BUYER_HAS_PRODUCT =
+	'CHECKOUT_RECONCILE_BUYER_HAS_PRODUCT'
+
+/** Auto-fulfill is off unless the opt-in is set to `true` or `1`. */
 export function checkoutAutoFulfillEnabled(
 	source: Record<string, string | undefined> = process.env,
 ): boolean {
-	const value = String(source[CHECKOUT_RECONCILE_KILL_SWITCH_ENV] ?? '')
+	const value = String(source[CHECKOUT_RECONCILE_AUTO_FULFILL_ENV] ?? '')
 		.trim()
 		.toLowerCase()
-	return !['true', '1'].includes(value)
+	return ['true', '1'].includes(value)
 }
 
-/** The fulfill function's idempotency key, distinct from the core function's. */
-export function checkoutReconcileKey(checkoutSessionId: string) {
-	return `checkout-reconcile:${checkoutSessionId}`
+/**
+ * The fulfill function's idempotency key: distinct from the core function's
+ * (the bare session id), and bucketed by UTC hour. Inngest spends a key even
+ * when the run does nothing, so a run that found auto-fulfill off, or
+ * failed, blocks its session only until the next hour's sweep asks again.
+ * Per-session concurrency and the guards keep repeats to one purchase.
+ */
+export function checkoutReconcileKey(checkoutSessionId: string, at: Date) {
+	const hour = at.toISOString().slice(0, 13).replace(/[-T]/g, '')
+	return `checkout-reconcile:${checkoutSessionId}:${hour}`
 }
 
 /** The slice of a Stripe session the sweep keeps in step output. */
@@ -60,6 +80,14 @@ export type CheckoutSessionSummary = {
 	siteName: string | null
 	/** Present when the list call expanded `data.payment_intent`. */
 	chargeId: string | null
+	/**
+	 * When the buyer paid: the charge's `created`, else the payment intent's.
+	 * Null when neither was expanded. Age gates measure from here, because a
+	 * session is created when checkout opens, which can be long before payment.
+	 */
+	paidAt: number | null
+	/** Refund and dispute state, from `data.payment_intent.latest_charge`. */
+	charge: CheckoutChargeState
 }
 
 export function summarizeCheckoutSession(
@@ -76,10 +104,10 @@ export function summarizeCheckoutSession(
 	>,
 ): CheckoutSessionSummary {
 	const paymentIntent = session.payment_intent
-	const latestCharge =
-		paymentIntent && typeof paymentIntent !== 'string'
-			? paymentIntent.latest_charge
-			: null
+	const expandedIntent =
+		paymentIntent && typeof paymentIntent !== 'string' ? paymentIntent : null
+	const latestCharge = expandedIntent?.latest_charge
+	const charge = checkoutChargeState(session)
 	return {
 		id: session.id,
 		created: session.created,
@@ -88,8 +116,14 @@ export function summarizeCheckoutSession(
 		paymentStatus: session.payment_status ?? null,
 		amountTotal: session.amount_total ?? null,
 		siteName: session.metadata?.siteName ?? null,
-		chargeId:
-			typeof latestCharge === 'string' ? latestCharge : (latestCharge?.id ?? null),
+		chargeId: charge.chargeId,
+		paidAt:
+			(latestCharge && typeof latestCharge !== 'string'
+				? latestCharge.created
+				: null) ??
+			expandedIntent?.created ??
+			null,
+		charge,
 	}
 }
 
@@ -103,7 +137,11 @@ export type CheckoutSessionSkipReason =
 	| 'outside_window'
 
 export type CheckoutSessionVerdict =
-	| { kind: 'candidate'; ageMs: number }
+	| {
+			kind: 'candidate'
+			/** Time since payment, the basis for the 5- and 30-minute gates. */
+			ageMs: number
+	  }
 	| { kind: 'skip'; reason: CheckoutSessionSkipReason }
 
 /**
@@ -131,8 +169,11 @@ export function classifyCheckoutSession(
 	if (session.paymentStatus !== 'paid') return skip('not_paid')
 	if (!session.amountTotal) return skip('zero_total')
 	if (session.siteName !== options.appName) return skip('other_site')
-	const ageMs = options.now.getTime() - session.created * 1000
-	if (ageMs > windowMs) return skip('outside_window')
+	const now = options.now.getTime()
+	if (now - session.created * 1000 > windowMs) return skip('outside_window')
+	// Without an expanded charge, the session's creation is the only clock.
+	// It runs early, never late, and the guards still hold.
+	const ageMs = now - (session.paidAt ?? session.created) * 1000
 	if (ageMs < minAgeMs) return skip('too_young')
 	return { kind: 'candidate', ageMs }
 }
@@ -177,5 +218,27 @@ export function checkoutChargeState(
 		refunded: charge.refunded || charge.amount_refunded > 0,
 		disputed: Boolean(charge.disputed),
 		amountRefunded: charge.amount_refunded ?? 0,
+	}
+}
+
+const EMAIL_PATTERN = /[^\s@<>"'`,;:()[\]]+@[^\s@<>"'`,;:()[\]]+\.[^\s@<>"'`,;:()[\]]+/g
+
+/**
+ * An error label safe for Slack and Axiom. Handler errors can carry the
+ * buyer's email (for example the adapter's `unable-to-create-user-<email>`),
+ * so emails are redacted and the message is cut short. The full error stays
+ * in the Inngest run.
+ */
+export function safeCheckoutErrorLabel(error: unknown): {
+	errorName: string
+	errorSummary: string
+} {
+	const name = error instanceof Error ? error.name : typeof error
+	const message = error instanceof Error ? error.message : String(error)
+	const redacted = message.replace(EMAIL_PATTERN, '[email]')
+	return {
+		errorName: name.slice(0, 60),
+		errorSummary:
+			redacted.length > 80 ? `${redacted.slice(0, 80)}…` : redacted,
 	}
 }

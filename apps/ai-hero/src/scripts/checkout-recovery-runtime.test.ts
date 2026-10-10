@@ -29,8 +29,16 @@ describe('checkout recovery environment boundary', () => {
 			stripeToken: 'sk_test_placeholder',
 			stripeWebhookSecret: '',
 			inngestAppId: null,
+			appName: null,
 			inngestSigningKey: null,
 		})
+		// Read when present, so a --direct dry run can check siteName.
+		expect(
+			resolveCheckoutRecoveryEnv(
+				{ ...dryRunSource, NEXT_PUBLIC_APP_NAME: 'ai-hero' },
+				{ apply: false },
+			).appName,
+		).toBe('ai-hero')
 	})
 
 	it('ignores the unrelated Next app variables that blocked the old script', () => {

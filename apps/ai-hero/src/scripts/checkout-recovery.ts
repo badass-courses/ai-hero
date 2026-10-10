@@ -7,7 +7,11 @@ import type Stripe from 'stripe'
 import { buildCheckoutCompletedEventData } from '@/lib/checkout-reconcile/checkout-event'
 import type { DirectCheckoutFulfillmentResult } from '@/lib/checkout-reconcile/fulfill'
 import type { CheckoutFulfillmentState } from '@/lib/checkout-reconcile/inspect'
-import { checkoutChargeState } from '@/lib/checkout-reconcile/policy'
+import {
+	checkoutChargeState,
+	classifyCheckoutSession,
+	summarizeCheckoutSession,
+} from '@/lib/checkout-reconcile/policy'
 
 import {
 	STRIPE_CHECKOUT_SESSION_COMPLETED_EVENT,
@@ -25,6 +29,11 @@ export type CheckoutRecoveryArgs = {
 export type CheckoutRecoveryState = CheckoutFulfillmentState
 
 export type CheckoutRecoveryRuntime = {
+	/**
+	 * `NEXT_PUBLIC_APP_NAME`, which checkout stamps as `metadata.siteName`.
+	 * Null when the environment does not set it.
+	 */
+	appName: string | null
 	getCheckoutSession: (checkoutSessionId: string) => Promise<Stripe.Checkout.Session>
 	inspect: (input: {
 		checkoutSessionId: string
@@ -190,6 +199,16 @@ function directReceipt(
 			reason: `Direct fulfillment skipped: ${result.reason}`,
 		})
 	}
+	if (result.status === 'held') {
+		return receipt(args, {
+			...evidence,
+			status: 'refused',
+			success: false,
+			chargeId: result.chargeId,
+			purchaseId: result.purchaseIds[0] ?? null,
+			reason: `Direct fulfillment held: ${result.reason} (${result.purchaseIds.join(', ')}). The buyer got this product another way; link or refund by hand.`,
+		})
+	}
 	return receipt(args, {
 		...evidence,
 		status: 'already_recovered',
@@ -256,6 +275,31 @@ export async function runCheckoutRecovery(
 		}
 
 		if (args.direct) {
+			if (!runtime.appName) {
+				return refused(
+					args.checkoutSessionId,
+					args.apply,
+					'--direct needs NEXT_PUBLIC_APP_NAME to check the session belongs to this app',
+				)
+			}
+			// The same selection the apply run makes, minus the age gates an
+			// operator lifts by naming one session, so a dry run predicts it.
+			const verdict = classifyCheckoutSession(
+				summarizeCheckoutSession(session),
+				{
+					now: new Date(),
+					appName: runtime.appName,
+					minAgeMs: 0,
+					windowMs: Number.POSITIVE_INFINITY,
+				},
+			)
+			if (verdict.kind === 'skip') {
+				return refused(
+					args.checkoutSessionId,
+					args.apply,
+					`Direct fulfillment skipped: ${verdict.reason}`,
+				)
+			}
 			if (!args.apply) {
 				return receipt(args, {
 					status: 'would_fulfill_direct',

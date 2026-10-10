@@ -44,6 +44,11 @@ export type CheckoutRecoveryEnv = {
 	stripeWebhookSecret: string
 	/** Only present when the command runs in apply mode. */
 	inngestAppId: string | null
+	/**
+	 * `NEXT_PUBLIC_APP_NAME` when set, in any mode. `--direct` needs it to
+	 * check the session's `siteName` before predicting a fulfillment.
+	 */
+	appName: string | null
 	/** Optional. Lets an apply run confirm the replay produced a run. */
 	inngestSigningKey: string | null
 }
@@ -112,6 +117,7 @@ export function resolveCheckoutRecoveryEnv(
 		inngestAppId: options.apply
 			? (present(source, 'NEXT_PUBLIC_APP_NAME') as string)
 			: null,
+		appName: present(source, 'NEXT_PUBLIC_APP_NAME'),
 		inngestSigningKey: options.apply
 			? present(source, 'INNGEST_SIGNING_KEY')
 			: null,
@@ -169,7 +175,7 @@ export async function createCheckoutRecoveryRuntime(
 		schema,
 		{ preserveQueryResultShape },
 		{ createDatabasePoolCloser },
-		{ inspectCheckoutFulfillment },
+		{ inspectCheckoutFulfillment, findBuyerProductPurchaseIds },
 		{ drizzle },
 		mysqlModule,
 	] = await Promise.all([
@@ -203,6 +209,7 @@ export async function createCheckoutRecoveryRuntime(
 	})
 
 	return {
+		appName: env.appName,
 		getCheckoutSession: (checkoutSessionId) =>
 			paymentsAdapter.getCheckoutSession(checkoutSessionId),
 		inspect: (input) => inspectCheckoutFulfillment(db, input),
@@ -263,6 +270,8 @@ export async function createCheckoutRecoveryRuntime(
 				notificationProvider: slackProvider,
 				getCheckoutSession: (id) => appPaymentsAdapter.getCheckoutSession(id),
 				inspect: (input) => inspectCheckoutFulfillment(db, input),
+				findBuyerProductPurchases: (input) =>
+					findBuyerProductPurchaseIds(db, input),
 				appName: env.inngestAppId,
 				now: () => new Date(),
 				txnId: `aih-checkout-recover-direct-${checkoutSessionId}`,

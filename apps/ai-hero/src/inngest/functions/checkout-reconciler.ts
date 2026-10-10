@@ -3,18 +3,19 @@
  * was accepted and produced no run, silently, and the buyer waited two hours.
  *
  * `checkoutReconcilerSweep` runs every 10 minutes. It lists the last 48 hours
- * of completed Stripe Checkout Sessions (read-only), finds paid ones older
- * than 5 minutes with no purchase, logs `checkout.reconcile.stranded` to
- * Axiom, alerts the Slack ops channel, and requests one fulfillment per
- * session.
+ * of completed Stripe Checkout Sessions (read-only), finds paid ones with no
+ * purchase 5 minutes after payment, logs `checkout.reconcile.stranded` to
+ * Axiom, and alerts the Slack ops channel on change, then hourly. With
+ * auto-fulfill opted in, it requests one fulfillment per session.
  *
  * `checkoutReconcileFulfill` runs the registered
  * `stripe-checkout-session-completed` handler directly for one session, under
- * its own idempotency key (`checkout-reconcile:<session id>`), with the
- * guards in `fulfillCheckoutSessionDirectly`.
+ * its own hourly idempotency key (`checkout-reconcile:<session id>:<hour>`),
+ * with the guards in `fulfillCheckoutSessionDirectly`.
  *
- * Kill switch: `AIH_CHECKOUT_RECONCILER_AUTO_FULFILL_DISABLED=true` keeps the
- * sweep and its alerts and stops every fulfillment. Default: auto-fulfill on.
+ * Alert-only by default. `AIH_CHECKOUT_RECONCILER_AUTO_FULFILL=true` opts in
+ * to fulfillment. The instant kill is pausing `checkout-reconcile-fulfill` in
+ * the Inngest dashboard; the env var needs a redeploy.
  */
 import { slackProvider } from '@/coursebuilder/slack-provider'
 import { db } from '@/db'
@@ -27,12 +28,14 @@ import {
 	type CheckoutFulfillDatabase,
 } from '@/lib/checkout-reconcile/fulfill'
 import {
+	findBuyerProductPurchaseIds,
 	findFulfilledCheckoutSessionIds,
 	inspectCheckoutFulfillment,
 } from '@/lib/checkout-reconcile/inspect'
 import {
 	checkoutAutoFulfillEnabled,
-	CHECKOUT_RECONCILE_KILL_SWITCH_ENV,
+	CHECKOUT_RECONCILE_AUTO_FULFILL_ENV,
+	safeCheckoutErrorLabel,
 	summarizeCheckoutSession,
 } from '@/lib/checkout-reconcile/policy'
 import {
@@ -44,6 +47,16 @@ import type { StripePaymentAdapter } from '@coursebuilder/commerce/stripe-provid
 import { courseBuilderCoreFunctions } from '@coursebuilder/server'
 
 const MAX_LISTED_SESSIONS = 10_000
+
+/** Mirrors the core checkout function's limit for the shared write key. */
+function checkoutPurchaseWritesLimit() {
+	const configured = Number(
+		process.env.CB_INNGEST_CHECKOUT_CONCURRENCY_LIMIT ??
+			process.env.CB_INNGEST_CONCURRENCY_LIMIT ??
+			5,
+	)
+	return Number.isFinite(configured) && configured > 0 ? configured : 5
+}
 
 function paymentsAdapter(paymentProvider: unknown): StripePaymentAdapter {
 	const adapter = (
@@ -93,7 +106,7 @@ async function sendOpsAlert(input: {
 	} catch (error) {
 		await log.error('checkout.reconcile.slack_alert_failed', {
 			title: input.title,
-			error: error instanceof Error ? error.message : String(error),
+			...safeCheckoutErrorLabel(error),
 		})
 	}
 }
@@ -131,19 +144,21 @@ export const checkoutReconcilerSweep = inngest.createFunction(
 						created: { gte: sinceUnix },
 						status: 'complete',
 						limit: 100,
-						// Carries `latest_charge` as an id, for the indexed lookup.
-						expand: ['data.payment_intent'],
+						// The charge, for the indexed purchase lookup, payment time,
+						// and refund and dispute state, without a read per session.
+						expand: ['data.payment_intent.latest_charge'],
 					})
 					.autoPagingToArray({ limit: MAX_LISTED_SESSIONS })
-				return sessions.map(summarizeCheckoutSession)
+				return {
+					sessions: sessions.map(summarizeCheckoutSession),
+					truncated: sessions.length >= MAX_LISTED_SESSIONS,
+				}
 			},
 			findFulfilled: async (sessions) => [
 				...(await findFulfilledCheckoutSessionIds(db, sessions)),
 			],
-			getCheckoutSession: (id) =>
-				paymentsAdapter(paymentProvider).getCheckoutSession(id),
 			log: writeLog,
-			alert: async ({ stranded, held, autoFulfill }) => {
+			alert: async ({ stranded, held, autoFulfill, truncated }) => {
 				const lines = [
 					...stranded.map(describeStranded),
 					...held.map(
@@ -153,12 +168,22 @@ export const checkoutReconcilerSweep = inngest.createFunction(
 				const overdue = stranded.some((item) => item.overdue)
 				const action = autoFulfill
 					? overdue
-						? 'Auto-fulfill was requested and has not landed. Run `pnpm checkout:recover --checkout-session-id <id> --direct --apply`.'
+						? 'Auto-fulfill was requested and has not landed; it retries hourly. Run `pnpm checkout:recover --checkout-session-id <id> --direct` (dry run first).'
 						: 'Auto-fulfill requested through the same checkout handler.'
-					: `Auto-fulfill is OFF (${CHECKOUT_RECONCILE_KILL_SWITCH_ENV}). Run \`pnpm checkout:recover --checkout-session-id <id> --direct --apply\`.`
+					: `Alert-only (${CHECKOUT_RECONCILE_AUTO_FULFILL_ENV} is not set). Run \`pnpm checkout:recover --checkout-session-id <id> --direct\` (dry run first).`
 				await sendOpsAlert({
 					title: `Paid checkout with no purchase: ${stranded.length + held.length}`,
-					text: `${lines.join('\n')}\n${action}${held.length ? '\nHeld sessions need a human: disputed, or the charge could not be read.' : ''}`,
+					text: [
+						...lines,
+						action,
+						...(held.length
+							? ['Held sessions need a human: disputed, or the charge could not be read.']
+							: []),
+						...(truncated
+							? [`The Stripe list hit its ${MAX_LISTED_SESSIONS} cap; older sessions were not checked.`]
+							: []),
+						'Repeats hourly while any remain.',
+					].join('\n'),
 					color: '#d92d20',
 				})
 			},
@@ -180,19 +205,33 @@ export const checkoutReconcileFulfill = inngest.createFunction(
 		id: 'checkout-reconcile-fulfill',
 		name: 'Checkout Reconcile Fulfill',
 		// Distinct from the core function's key (the bare session id), so a key
-		// the dropped original event consumed cannot block this run.
+		// the dropped original event consumed cannot block this run. Bucketed
+		// by hour; see `checkoutReconcileKey`.
 		idempotency: 'event.data.reconcileKey',
 		retries: 3,
-		concurrency: { key: 'event.data.checkoutSessionId', limit: 1 },
+		concurrency: [
+			{ key: 'event.data.checkoutSessionId', limit: 1 },
+			// The core checkout function's write throttle. Env-scoped keys are
+			// shared across functions, so a burst of reconciles queues behind the
+			// same limit as the originals.
+			{
+				scope: 'env',
+				key: '"checkout-purchase-writes"',
+				limit: checkoutPurchaseWritesLimit(),
+			},
+		],
 		onFailure: async ({ event, error }) => {
 			const checkoutSessionId = event.data.event.data.checkoutSessionId
+			// No raw message: handler errors can carry the buyer's email. The
+			// full error stays in the Inngest run.
+			const label = safeCheckoutErrorLabel(error)
 			await log.error('checkout.reconcile.fulfill_failed', {
 				checkoutSessionId,
-				error: error.message,
+				...label,
 			})
 			await sendOpsAlert({
 				title: 'Checkout reconciler could not fulfill a paid checkout',
-				text: `\`${checkoutSessionId}\`: ${error.message}\nRun \`pnpm checkout:recover --checkout-session-id ${checkoutSessionId} --direct\` for a dry run first.`,
+				text: `\`${checkoutSessionId}\`: ${label.errorName}: ${label.errorSummary}\nFull error in the Inngest run. Run \`pnpm checkout:recover --checkout-session-id ${checkoutSessionId} --direct\` for a dry run first.`,
 				color: '#d92d20',
 			})
 		},
@@ -216,19 +255,33 @@ export const checkoutReconcileFulfill = inngest.createFunction(
 			getCheckoutSession: (id) =>
 				paymentsAdapter(paymentProvider).getCheckoutSession(id),
 			inspect: (input) => inspectCheckoutFulfillment(db, input),
+			findBuyerProductPurchases: (input) =>
+				findBuyerProductPurchaseIds(db, input),
 			appName: env.NEXT_PUBLIC_APP_NAME,
 			now: () => new Date(),
 			txnId: `aih-checkout-reconcile-${checkoutSessionId}`,
 		})
 
 		await step.run('record reconcile outcome', async () => {
-			const level = result.status === 'skipped' ? 'warn' : 'info'
+			const level =
+				result.status === 'held'
+					? 'error'
+					: result.status === 'skipped'
+						? 'warn'
+						: 'info'
 			await log[level](`checkout.reconcile.${result.status}`, { ...result })
 			if (result.status === 'fulfilled') {
 				await sendOpsAlert({
 					title: 'Checkout reconciler fulfilled a stranded checkout',
 					text: `\`${checkoutSessionId}\` → purchase \`${result.purchaseId}\``,
 					color: '#12b76a',
+				})
+			}
+			if (result.status === 'held') {
+				await sendOpsAlert({
+					title: 'Checkout reconciler held a paid checkout',
+					text: `\`${checkoutSessionId}\`: the buyer already has this product (purchase ${result.purchaseIds.map((id) => `\`${id}\``).join(', ')}), not from this checkout. Nothing was created. Check for a gift or hand fix, then link or refund.`,
+					color: '#f79009',
 				})
 			}
 			return null

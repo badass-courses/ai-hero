@@ -30,7 +30,7 @@ const session = {
 		name: 'Buyer',
 	},
 	livemode: false,
-	metadata: {},
+	metadata: { siteName: 'ai-hero' },
 	mode: 'payment',
 	payment_intent: {
 		id: 'pi_recovery',
@@ -68,13 +68,15 @@ const fulfilledState: CheckoutRecoveryState = {
 
 function runtime(
 	state: CheckoutRecoveryState = intermediateState,
-	options: { replayRuns?: number | null } = {},
+	options: { replayRuns?: number | null; appName?: string | null } = {},
 ): CheckoutRecoveryRuntime & {
+	getCheckoutSession: ReturnType<typeof vi.fn>
 	sendReplay: ReturnType<typeof vi.fn>
 	countReplayRuns: ReturnType<typeof vi.fn>
 	fulfillDirect: ReturnType<typeof vi.fn>
 } {
 	return {
+		appName: options.appName === undefined ? 'ai-hero' : options.appName,
 		getCheckoutSession: vi.fn().mockResolvedValue(session),
 		inspect: vi.fn().mockResolvedValue(state),
 		sendReplay: vi.fn().mockResolvedValue({ ids: ['evt_inngest_recovery'] }),
@@ -326,6 +328,58 @@ describe('checkout recovery command', () => {
 			purchaseId: 'purch_original',
 			reason: 'Another run created the purchase first',
 		})
+	})
+
+	it('refuses a held direct run: the buyer got the product another way', async () => {
+		const testRuntime = runtime()
+		testRuntime.fulfillDirect.mockResolvedValue({
+			status: 'held',
+			checkoutSessionId: session.id,
+			chargeId: 'ch_recovery',
+			reason: 'buyer_already_has_product',
+			purchaseIds: ['purch_gift'],
+		})
+		const receipt = await runCheckoutRecovery(
+			args({ apply: true, direct: true }),
+			testRuntime,
+		)
+
+		expect(receipt).toMatchObject({
+			status: 'refused',
+			success: false,
+			purchaseId: 'purch_gift',
+		})
+		expect(receipt.reason).toContain('buyer_already_has_product')
+	})
+
+	it('predicts in dry-run what a direct apply would refuse', async () => {
+		const otherSite = runtime()
+		otherSite.getCheckoutSession.mockResolvedValue({
+			...session,
+			metadata: { siteName: 'some-other-app' },
+		})
+		expect(
+			await runCheckoutRecovery(args({ direct: true }), otherSite),
+		).toMatchObject({
+			status: 'refused',
+			reason: 'Direct fulfillment skipped: other_site',
+		})
+
+		const zeroTotal = runtime()
+		zeroTotal.getCheckoutSession.mockResolvedValue({ ...session, amount_total: 0 })
+		expect(
+			await runCheckoutRecovery(args({ direct: true }), zeroTotal),
+		).toMatchObject({
+			status: 'refused',
+			reason: 'Direct fulfillment skipped: zero_total',
+		})
+
+		const noAppName = runtime(intermediateState, { appName: null })
+		expect(
+			await runCheckoutRecovery(args({ direct: true }), noAppName),
+		).toMatchObject({ status: 'refused' })
+		for (const testRuntime of [otherSite, zeroTotal, noAppName])
+			expect(testRuntime.fulfillDirect).not.toHaveBeenCalled()
 	})
 
 	it('never runs the handler directly once a purchase exists', async () => {

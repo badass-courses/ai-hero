@@ -11,11 +11,14 @@
  * Exactly-once rests on three layers:
  *
  *   1. A re-check before the handler runs: any purchase linked to the session
- *      or its charge means there is nothing to do.
+ *      or its charge means there is nothing to do. A purchase of the same
+ *      product the buyer got since the session opened, by any other path,
+ *      means a human already acted: hold, do not sell it twice.
  *   2. A guarded adapter: inside the handler's own write step, immediately
- *      before `createMerchantChargeAndPurchase`, the guard reads again and
- *      throws `CHECKOUT_RECONCILE_ALREADY_FULFILLED` if a purchase appeared.
- *      The handler stops before it sends `new-purchase-created`.
+ *      before `createMerchantChargeAndPurchase`, the guard reads both again,
+ *      with the handler's resolved user and product, and throws a
+ *      non-retriable error if either found a purchase. The handler stops
+ *      before it sends `new-purchase-created`.
  *   3. The adapter itself: it writes the charge, merchant session and
  *      purchase in one transaction behind a locking read on the charge, and
  *      `MerchantCharge.identifier` is unique. A late original run that loses
@@ -30,6 +33,7 @@ import { buildCheckoutCompletedEventData } from './checkout-event'
 import type { CheckoutFulfillmentState } from './inspect'
 import {
 	CHECKOUT_RECONCILE_ALREADY_FULFILLED,
+	CHECKOUT_RECONCILE_BUYER_HAS_PRODUCT,
 	checkoutChargeState,
 	classifyCheckoutSession,
 	summarizeCheckoutSession,
@@ -65,6 +69,13 @@ export type DirectCheckoutFulfillmentDeps = {
 		checkoutSessionId: string
 		chargeId: string | null
 	}) => Promise<CheckoutFulfillmentState>
+	/** Active purchases of the product the buyer got at or after `since`. */
+	findBuyerProductPurchases: (input: {
+		userId: string | null
+		email: string | null
+		productId: string
+		since: Date
+	}) => Promise<string[]>
 	appName: string
 	now: () => Date
 	/** Becomes the handler's `txnId`, so logs tie back to this path. */
@@ -91,6 +102,14 @@ export type DirectCheckoutFulfillmentResult =
 			state: CheckoutFulfillmentState
 	  }
 	| {
+			/** A human must decide: the buyer already has the product. */
+			status: 'held'
+			checkoutSessionId: string
+			chargeId: string
+			reason: 'buyer_already_has_product'
+			purchaseIds: string[]
+	  }
+	| {
 			status: 'skipped'
 			checkoutSessionId: string
 			chargeId: string | null
@@ -111,11 +130,32 @@ export class CheckoutAlreadyFulfilledError extends Error {
 	}
 }
 
+export class CheckoutBuyerHasProductError extends Error {
+	constructor(readonly purchaseIds: string[]) {
+		super(
+			`${CHECKOUT_RECONCILE_BUYER_HAS_PRODUCT}: ${purchaseIds.join(',')}`,
+		)
+		this.name = 'CheckoutBuyerHasProductError'
+	}
+}
+
 function isAlreadyFulfilledError(error: unknown) {
 	return (
 		error instanceof Error &&
 		error.message.includes(CHECKOUT_RECONCILE_ALREADY_FULFILLED)
 	)
+}
+
+/** The guard's purchase ids, read back from the error message. */
+function buyerHasProductIds(error: unknown): string[] | null {
+	if (!(error instanceof Error)) return null
+	const marker = `${CHECKOUT_RECONCILE_BUYER_HAS_PRODUCT}: `
+	const index = error.message.indexOf(marker)
+	if (index < 0) return null
+	return error.message
+		.slice(index + marker.length)
+		.split(',')
+		.filter(Boolean)
 }
 
 /** Finds the registered core handler, the one the webhook path runs. */
@@ -168,20 +208,40 @@ export async function fulfillCheckoutSessionDirectly(
 		return skipped(checkoutSessionId, charge.chargeId, 'disputed')
 	}
 	const chargeId = charge.chargeId
+	const since = new Date(session.created * 1000)
 
 	const inspectNow = () => deps.inspect({ checkoutSessionId, chargeId })
 	const before = (await deps.step.run(
 		'reconcile: re-check fulfillment',
-		inspectNow,
-	)) as CheckoutFulfillmentState
-	if (before.purchaseIds.length > 0) {
+		async () => {
+			const state = await inspectNow()
+			const productId = session.metadata?.productId
+			const buyerPurchaseIds =
+				state.purchaseIds.length === 0 && productId
+					? await deps.findBuyerProductPurchases({
+							userId: session.metadata?.userId ?? null,
+							email:
+								session.customer_details?.email ??
+								session.customer_email ??
+								null,
+							productId,
+							since,
+						})
+					: []
+			return { state, buyerPurchaseIds }
+		},
+	)) as { state: CheckoutFulfillmentState; buyerPurchaseIds: string[] }
+	if (before.state.purchaseIds.length > 0) {
 		return {
 			status: 'already_fulfilled',
 			checkoutSessionId,
 			chargeId,
-			purchaseIds: before.purchaseIds,
-			state: before,
+			purchaseIds: before.state.purchaseIds,
+			state: before.state,
 		}
+	}
+	if (before.buyerPurchaseIds.length > 0) {
+		return held(checkoutSessionId, chargeId, before.buyerPurchaseIds)
 	}
 
 	const guardedDb: CheckoutFulfillDatabase = {
@@ -191,6 +251,21 @@ export async function fulfillCheckoutSessionDirectly(
 			if (current.purchaseIds.length > 0) {
 				throw await nonRetriable(
 					new CheckoutAlreadyFulfilledError(current.purchaseIds),
+				)
+			}
+			// The handler's own resolved buyer and product, so a buyer the
+			// pre-check could not name by metadata or email is covered too.
+			const buyerPurchaseIds = options?.productId
+				? await deps.findBuyerProductPurchases({
+						userId: options.userId ?? null,
+						email: null,
+						productId: options.productId,
+						since,
+					})
+				: []
+			if (buyerPurchaseIds.length > 0) {
+				throw await nonRetriable(
+					new CheckoutBuyerHasProductError(buyerPurchaseIds),
 				)
 			}
 			return deps.db.createMerchantChargeAndPurchase(options)
@@ -230,6 +305,10 @@ export async function fulfillCheckoutSessionDirectly(
 				state: after,
 			}
 		}
+		const buyerPurchaseIds = buyerHasProductIds(error)
+		if (buyerPurchaseIds) {
+			return held(checkoutSessionId, chargeId, buyerPurchaseIds)
+		}
 		if (isAlreadyFulfilledError(error)) {
 			throw new Error(
 				'Guard reported a purchase that the re-check cannot find',
@@ -256,6 +335,20 @@ export async function fulfillCheckoutSessionDirectly(
 	}
 }
 
+function held(
+	checkoutSessionId: string,
+	chargeId: string,
+	purchaseIds: string[],
+): DirectCheckoutFulfillmentResult {
+	return {
+		status: 'held',
+		checkoutSessionId,
+		chargeId,
+		reason: 'buyer_already_has_product',
+		purchaseIds,
+	}
+}
+
 function skipped(
 	checkoutSessionId: string,
 	chargeId: string | null,
@@ -271,7 +364,9 @@ function skipped(
  * Wraps the guard error so Inngest fails the step without retrying it. The
  * import is lazy, so the CLI shim and tests do not need the SDK loaded.
  */
-async function nonRetriable(error: CheckoutAlreadyFulfilledError) {
+async function nonRetriable(
+	error: CheckoutAlreadyFulfilledError | CheckoutBuyerHasProductError,
+) {
 	const { NonRetriableError } = await import('inngest')
 	return new NonRetriableError(error.message, { cause: error })
 }

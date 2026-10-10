@@ -40,7 +40,11 @@ import {
 	type CheckoutFulfillDatabase,
 	type CheckoutFulfillStep,
 } from './fulfill'
-import { findFulfilledCheckoutSessionIds, inspectCheckoutFulfillment } from './inspect'
+import {
+	findBuyerProductPurchaseIds,
+	findFulfilledCheckoutSessionIds,
+	inspectCheckoutFulfillment,
+} from './inspect'
 
 // Real Course Builder checkout handler, real Drizzle adapter, disposable
 // MySQL with tables generated from the app schema. Stripe is a fixture: the
@@ -232,6 +236,8 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 			paymentProvider,
 			getCheckoutSession: paymentProvider.options.paymentsAdapter.getCheckoutSession,
 			inspect,
+			findBuyerProductPurchases: (input) =>
+				findBuyerProductPurchaseIds(database, input),
 			appName: APP,
 			now: () => now,
 			txnId: `aih-checkout-reconcile-${checkoutSessionId}`,
@@ -421,6 +427,8 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 
 	it('gives one purchase when the original run races the reconciler', async () => {
 		for (let round = 0; round < 5; round += 1) {
+			// Each round is the buyer's first purchase of the product.
+			await pool.query('DELETE FROM AI_Purchase')
 			const id = stranded()
 			// Both runs pass every read, then hit the purchase write together.
 			const meet = barrier(2)
@@ -476,6 +484,7 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 		// The last layer: the adapter's locking read and the unique
 		// MerchantCharge.identifier, with no reconciler guard in front.
 		for (let round = 0; round < 10; round += 1) {
+			await pool.query('DELETE FROM AI_Purchase')
 			const id = stranded()
 			const options = {
 				userId: BUYER_ID,
@@ -543,5 +552,94 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 		})
 		expect(run.sent).toEqual([])
 		expect(await counts(id)).toEqual({ charges: 0, sessions: 0, purchases: 0 })
+	})
+	/** A purchase this checkout did not create: a gift, coupon or hand fix. */
+	async function grantOutOfBand(id: string, createdAt?: string) {
+		await pool.query(
+			`INSERT INTO AI_Purchase (id, userId, productId, totalAmount, status${createdAt ? ', createdAt' : ''})
+				VALUES (?, ?, 'product_reconcile', 0, 'Valid'${createdAt ? ', ?' : ''})`,
+			createdAt ? [id, BUYER_ID, createdAt] : [id, BUYER_ID],
+		)
+	}
+
+	it('holds when the buyer already got the product another way', async () => {
+		const id = stranded()
+		await grantOutOfBand('purch_manual')
+		const run = inngestLikeStep()
+
+		expect(await reconcile(id, run.step)).toEqual({
+			status: 'held',
+			checkoutSessionId: id,
+			chargeId: `ch_${id.slice(3)}`,
+			reason: 'buyer_already_has_product',
+			purchaseIds: ['purch_manual'],
+		})
+		// Held before the handler ran: no user, customer or charge writes.
+		expect(run.ran).toEqual([
+			'reconcile: load checkout session',
+			'reconcile: re-check fulfillment',
+		])
+		expect(run.sent).toEqual([])
+		expect(await counts(id)).toEqual({ charges: 0, sessions: 0, purchases: 0 })
+	})
+
+	it('holds when a hand fix lands between the re-check and the write', async () => {
+		const id = stranded()
+		const run = inngestLikeStep({
+			beforeStep: async (stepId) => {
+				if (stepId === 'create a merchant charge and purchase')
+					await grantOutOfBand('purch_hand_fix')
+			},
+		})
+
+		expect(await reconcile(id, run.step)).toMatchObject({
+			status: 'held',
+			reason: 'buyer_already_has_product',
+			purchaseIds: ['purch_hand_fix'],
+		})
+		// The guard used the handler's resolved buyer and product, and stopped
+		// the handler before it could announce a purchase.
+		expect(run.sent).toEqual([])
+		expect(await counts(id)).toEqual({ charges: 0, sessions: 0, purchases: 0 })
+	})
+
+	it('still fulfills when the buyer owned the product before this checkout', async () => {
+		const id = stranded()
+		// Bought long before the session opened: not this checkout's business.
+		await grantOutOfBand('purch_old', '2026-01-01 00:00:00.000')
+
+		expect(await reconcile(id, inngestLikeStep().step)).toMatchObject({
+			status: 'fulfilled',
+		})
+		expect(await counts(id)).toEqual({ charges: 1, sessions: 1, purchases: 1 })
+	})
+
+	it('finds a fulfilled session with indexed charge lookups only', async () => {
+		const id = stranded()
+		await reconcile(id, inngestLikeStep().step)
+		const chargeId = `ch_${id.slice(3)}`
+		const queries: string[] = []
+		const tracing = drizzle(pool, {
+			schema,
+			mode: 'planetscale',
+			logger: { logQuery: (query) => queries.push(query) },
+		}) as unknown as MySqlDatabase<any, any, typeof schema>
+
+		const state = await inspectCheckoutFulfillment(tracing, {
+			checkoutSessionId: id,
+			chargeId,
+		})
+		expect(state.purchaseIds).toHaveLength(1)
+		// No MerchantSession scan and no OR across the two purchase columns.
+		expect(queries).toHaveLength(2)
+		expect(queries.join('\n')).not.toContain('AI_MerchantSession')
+		expect(queries.join('\n')).not.toMatch(/\bor\b/i)
+		for (const query of queries) {
+			const [plan] = await pool.query<RowDataPacket[]>(
+				`EXPLAIN ${query}`,
+				query.includes('AI_MerchantCharge') ? [chargeId] : [state.chargeIds[0]],
+			)
+			expect(plan.map((row) => row.type)).not.toContain('ALL')
+		}
 	})
 })
