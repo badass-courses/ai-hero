@@ -5,4 +5,9 @@ export * from './flags'
 export type { Environment } from './flags-env'
 export { getEnvironment } from './flags-env'
 export type { FlagConfig, FlagKey } from './flag-definitions'
-export { FLAGS, COMMERCE_ENABLED, SHOW_TEAM_PRICING } from './flag-definitions'
+export {
+	FLAGS,
+	COMMERCE_ENABLED,
+	SHOW_TEAM_PRICING,
+	C5_PRICING_ENABLED,
+} from './flag-definitions'

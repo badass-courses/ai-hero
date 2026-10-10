@@ -88,6 +88,8 @@ if (!webhook || ending) { if (!ending) await fail('stripe-listener'); } else {
     env.FRONT_DESK_URL = `http://127.0.0.1:${ports.frontDesk}`
     env.FRONT_DESK_PRICING_TOKEN = tokens.FRONT_DESK_STUB_PRICING_TOKEN
     env.FRONT_DESK_QUOTES_TOKEN = tokens.FRONT_DESK_STUB_QUOTES_TOKEN
+    // Read only the local-development C5 flag; no production Redis credentials.
+    env.UPSTASH_REDIS_REST_URL = env.FRONT_DESK_URL
   }
   await privateWrite(join(state, 'runtime.env'), Object.entries(env).map(([name, value]) => `${name}=${value}`).join('\n') + '\n')
   const inngestEnv = { PATH: base.PATH, HOME: base.HOME, LANG: base.LANG, INNGEST_DEV: '1', COMMERCE_RIG_OWNER: config.owner }

@@ -13,11 +13,9 @@ import { courseBuilderAdapter, db } from '@/db'
 import { purchases } from '@/db/schema'
 import BasicEmail from '@/emails/basic-email'
 import { env } from '@/env.mjs'
-import {
-	c5DecisionCutover,
-	c5PricingDisabled,
-} from '@/lib/c5-pricing/config'
+import { c5DecisionCutover } from '@/lib/c5-pricing/config'
 import { frontDeskData } from '@/lib/c5-pricing/server'
+import { c5PricingClosed } from '@/lib/c5-pricing/switch-server'
 import { log } from '@/server/logger'
 import { redis } from '@/server/redis-client'
 import { sendAnEmail } from '@coursebuilder/utils/send-an-email'
@@ -108,7 +106,7 @@ const engine = (): TeamPriceSource | null => {
 				quotes: (input) => data.bindingQuotes(input),
 				price: enginePrice,
 				now: () => new Date(),
-				disabled: c5PricingDisabled,
+				disabled: c5PricingClosed,
 			})
 		: null
 }
