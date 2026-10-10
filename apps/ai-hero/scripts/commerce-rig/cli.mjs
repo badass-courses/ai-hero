@@ -59,7 +59,8 @@ async function prepareMirror() {
     `const base = (await import(${JSON.stringify(original)})).default`,
     'export default async (phase, context) => {',
     '  const config = typeof base === \'function\' ? await base(phase, context) : base',
-    `  return { ...config, turbopack: { ...config.turbopack, root: ${JSON.stringify(root)} } }`,
+    // A persisted dev cache outlived mirror refreshes and served stale route tables.
+    `  return { ...config, experimental: { ...config.experimental, turbopackFileSystemCacheForDev: false }, turbopack: { ...config.turbopack, root: ${JSON.stringify(root)} } }`,
     '}',
   ].join('\n') + '\n')
 }
