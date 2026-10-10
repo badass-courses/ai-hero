@@ -69,7 +69,7 @@ await mkdir(base.HOME, { recursive: true, mode: 0o700 })
 let webhook
 const stripeEnv = { PATH: base.PATH, HOME: base.HOME, LANG: base.LANG, STRIPE_API_KEY: key }
 // Explicit auth and isolated config: never inherit a logged-in Stripe CLI profile.
-child('stripe', 'npx', [...stripeCli, '--config', join(state, 'listener.toml'), '--api-key', key, 'listen', '--events', 'checkout.session.completed,charge.refunded,payment_intent.succeeded', '--forward-to', `${origin}/api/coursebuilder/webhook/stripe`], stripeEnv, line => {
+child('stripe', 'npx', [...stripeCli, '--config', join(state, 'listener.toml'), '--api-key', key, 'listen', '--events', 'checkout.session.completed,checkout.session.expired,checkout.session.async_payment_succeeded,charge.refunded,charge.dispute.created,charge.dispute.closed,payment_intent.succeeded', '--forward-to', `${origin}/api/coursebuilder/webhook/stripe`], stripeEnv, line => {
   const match = line.match(/\bwhsec_[A-Za-z0-9]+\b/)
   if (match) webhook = match[0]
 })
