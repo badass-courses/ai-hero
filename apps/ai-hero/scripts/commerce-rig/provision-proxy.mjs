@@ -1,3 +1,4 @@
+// @ts-nocheck: untyped Node operator tooling, covered by rig.test.mjs; not app code.
 import http from 'node:http'
 import net from 'node:net'
 // The CLI falls back to an account-login flow on provisioning failures.

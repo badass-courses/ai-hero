@@ -1,3 +1,4 @@
+// @ts-nocheck: untyped Node operator tooling, covered by rig.test.mjs; not app code.
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { readFile, readdir, rm } from 'node:fs/promises'

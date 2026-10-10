@@ -1,3 +1,4 @@
+// @ts-nocheck: untyped Node operator tooling, covered by rig.test.mjs; not app code.
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'

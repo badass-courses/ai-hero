@@ -1,3 +1,4 @@
+// @ts-nocheck: untyped Node operator tooling, covered by rig.test.mjs; not app code.
 // Synthetic inputs, not a production catalog or a pricing-policy implementation.
 export const c5WorkshopId = 'rig-workshop-c5'
 export const catalog = [

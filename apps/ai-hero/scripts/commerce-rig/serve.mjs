@@ -1,3 +1,4 @@
+// @ts-nocheck: untyped Node operator tooling, covered by rig.test.mjs; not app code.
 import { spawn } from 'node:child_process'
 import { appendFile, mkdir, readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'

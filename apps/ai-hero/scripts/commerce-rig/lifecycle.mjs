@@ -1,3 +1,4 @@
+// @ts-nocheck: untyped Node operator tooling, covered by rig.test.mjs; not app code.
 import { createMachine, createActor } from 'xstate'
 // Command supervisor: down -> preparing -> starting -> running; failures fence retries.
 export const lifecycle = createMachine({

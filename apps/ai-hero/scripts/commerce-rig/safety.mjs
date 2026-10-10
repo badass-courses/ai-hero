@@ -1,3 +1,4 @@
+// @ts-nocheck: untyped Node operator tooling, covered by rig.test.mjs; not app code.
 import { randomBytes } from 'node:crypto'
 import { chmod, lstat, readFile, rename, writeFile } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'

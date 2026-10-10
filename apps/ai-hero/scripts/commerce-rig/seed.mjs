@@ -1,3 +1,4 @@
+// @ts-nocheck: untyped Node operator tooling, covered by rig.test.mjs; not app code.
 import { join } from 'node:path'
 import mysql from 'mysql2/promise'
 import { drizzle } from 'drizzle-orm/mysql2'

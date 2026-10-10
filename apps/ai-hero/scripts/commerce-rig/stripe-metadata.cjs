@@ -1,3 +1,4 @@
+// @ts-nocheck: untyped Node operator tooling, covered by rig.test.mjs; not app code.
 // Test-only transport overlay, loaded by the private Next process preload.
 // Keep ordinary app attribution fields, and tag objects at CREATE time.
 const https = require('node:https')

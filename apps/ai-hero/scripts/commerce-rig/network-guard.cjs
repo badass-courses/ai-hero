@@ -1,3 +1,4 @@
+// @ts-nocheck: untyped Node operator tooling, covered by rig.test.mjs; not app code.
 // Loaded only by rig-owned Node children. No application source changes.
 // Fail closed: fixtures must not call email/support/media/analytics providers.
 const net = require('node:net')

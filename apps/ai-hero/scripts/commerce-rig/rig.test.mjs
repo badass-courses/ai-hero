@@ -1,3 +1,4 @@
+// @ts-nocheck: untyped Node operator tooling, covered by rig.test.mjs; not app code.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, chmod, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
