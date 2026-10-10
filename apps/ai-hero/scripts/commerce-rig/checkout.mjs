@@ -8,6 +8,21 @@ import { authenticate, evidence } from './seed.mjs'
 import { assertTestKey, assertTestObject, freshToken, origin, privateWrite, publicSession } from './safety.mjs'
 import { remember } from './stripe-state.mjs'
 
+// A provider refusal can be wrapped in verify-login with the app error URL,
+// not a hosted checkout URL. Diagnose it before following the misleading hop.
+export function checkoutHandoffRefusal(target, baseOrigin = origin) {
+  if (!target) return null
+  const handoff = new URL(target, baseOrigin)
+  if (handoff.origin !== new URL(baseOrigin).origin || handoff.pathname !== '/subscribe/verify-login') return null
+  const nested = handoff.searchParams.get('checkoutUrl')
+  if (!nested) return null // Login-first, not a provider checkout response.
+  let checkout
+  try { checkout = new URL(nested) } catch { return { classification: 'checkout-refused-before-login', checkoutHost: null } }
+  if (checkout.protocol === 'https:' && checkout.hostname === 'checkout.stripe.com') return null
+  // Never retain a capability URL or query string in the diagnostic.
+  return { classification: 'checkout-refused-before-login', checkoutHost: checkout.hostname }
+}
+
 // Exact cents from a stored decimal string ("12.5", "12.500000..."), or null when
 // it is not a whole number of cents. No floating point, so 12.505 never rounds.
 export function decimalCents(value) {
@@ -125,6 +140,11 @@ export async function checkout(state, key, fixtureKey, shouldComplete = false) {
   })
   let target = response.headers.get('location')
   const hops = []
+  const refusal = checkoutHandoffRefusal(target)
+  if (refusal) {
+    await privateWrite(join(state, 'checkout-refusal.json'), JSON.stringify({ fixture: fixture.key, at: new Date().toISOString(), status: response.status, ...refusal }) + '\n')
+    throw new Error('Checkout refused before login: non-Stripe checkout URL. Check the pricing-policy fixture and checkout error logs; no Stripe session created.')
+  }
   // Cohort checkout goes through the app's /subscribe/verify-login page before Stripe.
   // Follow same-origin hops as the logged-in buyer, never leaving the rig origin.
   for (let hop = 0; hop < 4 && target && new URL(target, origin).origin === new URL(origin).origin; hop++) {
