@@ -8,8 +8,8 @@ import { authenticate, evidence } from './seed.mjs'
 import { assertTestKey, assertTestObject, freshToken, origin, privateWrite, publicSession } from './safety.mjs'
 import { remember } from './stripe-state.mjs'
 
-// Exact cents from a stored decimal string ("906.5", "906.500000..."), or null when
-// it is not a whole number of cents. No floating point, so 906.505 never rounds.
+// Exact cents from a stored decimal string ("12.5", "12.500000..."), or null when
+// it is not a whole number of cents. No floating point, so 12.505 never rounds.
 export function decimalCents(value) {
   const match = /^(\d+)(?:\.(\d*))?$/.exec(String(value ?? ''))
   if (!match) return null

@@ -144,21 +144,21 @@ test('proof requires paid, matching webhook, buyer, amount, purchase and C5 acce
   assert.equal(provesAccess(fixture, session, { ...valid, access: [{ ...valid.access[0], metadata: { contentIds: ['workshop-2ozd9'] } }] }), false)
   // A cents price: the stored total equals the charge to the cent, and a saved
   // decision must be the one for this session.
-  const cents = { id: 'cs_test_cents', paymentStatus: 'paid', total: 90650 }
-  const decided = (decision, totalAmount = '906.50') => ({ ...valid, purchases: [{ ...valid.purchases[0], totalAmount, decision }] })
-  const saved = { checkoutSessionId: 'cs_test_cents', expectedTotalCents: 90650 }
+  const cents = { id: 'cs_test_cents', paymentStatus: 'paid', total: 123456 }
+  const decided = (decision, totalAmount = '1234.56') => ({ ...valid, purchases: [{ ...valid.purchases[0], totalAmount, decision }] })
+  const saved = { checkoutSessionId: 'cs_test_cents', expectedTotalCents: 123456 }
   assert.equal(provesAccess(fixture, cents, decided(saved)), true)
   assert.equal(provesAccess(fixture, cents, decided(null)), true)
   // A whole-dollar total for a cents charge is the rounding bug, whatever the decision says.
-  assert.equal(provesAccess(fixture, cents, decided(saved, '907.00')), false)
-  assert.equal(provesAccess(fixture, cents, decided(saved, '907')), false)
-  assert.equal(provesAccess(fixture, cents, decided(saved, '906.500000000000000000000000000000')), true)
-  assert.equal(provesAccess(fixture, cents, decided(saved, '906.5')), true)
-  assert.equal(provesAccess(fixture, cents, decided(saved, '906.505')), false)
-  assert.equal(provesAccess(fixture, cents, decided(saved, '906.49')), false)
+  assert.equal(provesAccess(fixture, cents, decided(saved, '1235.00')), false)
+  assert.equal(provesAccess(fixture, cents, decided(saved, '1235')), false)
+  assert.equal(provesAccess(fixture, cents, decided(saved, '1234.560000000000000000000000000000')), true)
+  assert.equal(provesAccess(fixture, cents, decided(saved, '1234.560')), true)
+  assert.equal(provesAccess(fixture, cents, decided(saved, '1234.565')), false)
+  assert.equal(provesAccess(fixture, cents, decided(saved, '1234.55')), false)
   assert.equal(provesAccess(fixture, cents, decided(saved, '')), false)
   assert.equal(provesAccess(fixture, cents, decided({ ...saved, checkoutSessionId: 'cs_test_other' })), false)
-  assert.equal(provesAccess(fixture, cents, decided({ ...saved, expectedTotalCents: 90600 })), false)
+  assert.equal(provesAccess(fixture, cents, decided({ ...saved, expectedTotalCents: 123400 })), false)
 })
 test('network preload blocks provider calls before connection and allows only the slot and Stripe', () => {
   const script = `const {allowed,check}=require(${JSON.stringify(join(import.meta.dirname, 'network-guard.cjs'))}); const assert=require('node:assert/strict'); assert(allowed('api.stripe.com',443)); assert(!allowed('api.convertkit.com',443)); assert(!allowed('api.stripe.com.evil.test',443)); assert(!allowed('127.0.0.1',3306)); assert.throws(()=>check([{host:'api.postmarkapp.com',port:443}])); assert.throws(()=>require('node:net').connect({host:'api.frontapp.com',port:443})); fetch('https://api.convertkit.com/v3/forms').then(()=>process.exit(1),()=>console.log('blocked'));`
