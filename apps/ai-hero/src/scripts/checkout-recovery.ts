@@ -4,23 +4,25 @@ import { dirname, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type Stripe from 'stripe'
 
+import { buildCheckoutCompletedEventData } from '@/lib/checkout-reconcile/checkout-event'
+import type { DirectCheckoutFulfillmentResult } from '@/lib/checkout-reconcile/fulfill'
+import type { CheckoutFulfillmentState } from '@/lib/checkout-reconcile/inspect'
+import { checkoutChargeState } from '@/lib/checkout-reconcile/policy'
+
 import {
 	STRIPE_CHECKOUT_SESSION_COMPLETED_EVENT,
 	type StripeCheckoutSessionCompleted,
 } from '@coursebuilder/core/events/stripe'
-import { checkoutSessionCompletedEvent } from '@coursebuilder/core/schemas/stripe/checkout-session-completed'
 
 export type CheckoutRecoveryArgs = {
 	checkoutSessionId: string
 	apply: boolean
+	/** Skip the replay and run the checkout handler in this process. */
+	direct: boolean
 	receiptPath?: string
 }
 
-export type CheckoutRecoveryState = {
-	chargeIds: string[]
-	merchantSessionIds: string[]
-	purchaseIds: string[]
-}
+export type CheckoutRecoveryState = CheckoutFulfillmentState
 
 export type CheckoutRecoveryRuntime = {
 	getCheckoutSession: (checkoutSessionId: string) => Promise<Stripe.Checkout.Session>
@@ -33,18 +35,38 @@ export type CheckoutRecoveryRuntime = {
 		name: typeof STRIPE_CHECKOUT_SESSION_COMPLETED_EVENT
 		data: StripeCheckoutSessionCompleted['data']
 	}) => Promise<{ ids: string[] }>
+	/**
+	 * Polls Inngest for runs of the sent replay. Resolves to the run count, or
+	 * null when the command cannot read the Inngest API.
+	 */
+	countReplayRuns: (eventIds: string[]) => Promise<number | null>
+	/** Runs the registered checkout handler directly. Apply mode only. */
+	fulfillDirect: (
+		checkoutSessionId: string,
+	) => Promise<DirectCheckoutFulfillmentResult>
 	close: () => Promise<void>
 }
 
 export type CheckoutRecoveryReceipt = {
-	version: 1
+	version: 2
 	checkoutSessionId: string
 	mode: 'dry-run' | 'apply'
-	status: 'would_replay' | 'replay_requested' | 'already_recovered' | 'refused'
+	status:
+		| 'would_replay'
+		| 'replay_requested'
+		| 'would_fulfill_direct'
+		| 'fulfilled_direct'
+		| 'already_recovered'
+		| 'refused'
 	success: boolean
 	chargeId: string | null
 	recoveryEventId: string | null
 	inngestEventIds: string[]
+	/** Runs Inngest created for the replay; null when not checked. */
+	replayRunCount: number | null
+	/** Why the handler ran directly: `--direct`, or a replay with no run. */
+	directReason: 'requested' | 'replay_produced_no_run' | null
+	purchaseId: string | null
 	state: CheckoutRecoveryState | null
 	reason: string | null
 }
@@ -55,11 +77,16 @@ export function parseCheckoutRecoveryArgs(argv: readonly string[]): CheckoutReco
 	let checkoutSessionId: string | undefined
 	let receiptPath: string | undefined
 	let apply = false
+	let direct = false
 
 	for (let index = 0; index < argv.length; index += 1) {
 		const argument = argv[index]
 		if (argument === '--apply') {
 			apply = true
+			continue
+		}
+		if (argument === '--direct') {
+			direct = true
 			continue
 		}
 		if (argument === '--checkout-session-id' || argument === '--receipt') {
@@ -79,7 +106,7 @@ export function parseCheckoutRecoveryArgs(argv: readonly string[]): CheckoutReco
 		throw new Error('--checkout-session-id must be one exact Stripe session id')
 	}
 
-	return { checkoutSessionId, apply, receiptPath }
+	return { checkoutSessionId, apply, direct, receiptPath }
 }
 
 function objectId(value: string | { id: string } | null): string | null {
@@ -94,7 +121,7 @@ function chargeIdFromSession(session: Stripe.Checkout.Session): string | null {
 	return latestCharge ? objectId(latestCharge) : null
 }
 
-function recoveryEventId(checkoutSessionId: string) {
+export function recoveryEventId(checkoutSessionId: string) {
 	const digest = createHash('sha256').update(checkoutSessionId).digest('hex')
 	return `aih-checkout-recovery-${digest.slice(0, 48)}`
 }
@@ -102,44 +129,27 @@ function recoveryEventId(checkoutSessionId: string) {
 function buildReplayData(
 	session: Stripe.Checkout.Session,
 ): StripeCheckoutSessionCompleted['data'] {
-	const customerId = objectId(session.customer)
-	const paymentIntentId = objectId(session.payment_intent)
-	if (!customerId || !paymentIntentId || !session.customer_details) {
-		throw new Error('Checkout session lacks customer or payment intent evidence')
-	}
+	return buildCheckoutCompletedEventData(session, recoveryEventId(session.id))
+}
 
-	const stripeEvent = checkoutSessionCompletedEvent.parse({
-		id: `evt_${recoveryEventId(session.id)}`,
-		created: session.created,
-		type: 'checkout.session.completed',
-		data: {
-			object: {
-				...session,
-				amount_subtotal: session.amount_subtotal ?? session.amount_total ?? 0,
-				amount_total: session.amount_total ?? 0,
-				custom_fields: session.custom_fields ?? [],
-				customer: customerId,
-				customer_details: session.customer_details,
-				metadata: session.metadata ?? {},
-				payment_intent: paymentIntentId,
-				payment_method_collection:
-					session.payment_method_collection ?? 'always',
-				phone_number_collection:
-					session.phone_number_collection ?? { enabled: false },
-				subscription: null,
-				success_url: session.success_url ?? '',
-				total_details: session.total_details ?? {
-					amount_discount: 0,
-					amount_shipping: 0,
-					amount_tax: 0,
-				},
-			},
-		},
-	})
-
+function receipt(
+	args: Pick<CheckoutRecoveryArgs, 'checkoutSessionId' | 'apply'>,
+	fields: Pick<CheckoutRecoveryReceipt, 'status' | 'success'> &
+		Partial<CheckoutRecoveryReceipt>,
+): CheckoutRecoveryReceipt {
 	return {
-		txnId: recoveryEventId(session.id),
-		stripeEvent,
+		version: 2,
+		checkoutSessionId: args.checkoutSessionId,
+		mode: args.apply ? 'apply' : 'dry-run',
+		chargeId: null,
+		recoveryEventId: null,
+		inngestEventIds: [],
+		replayRunCount: null,
+		directReason: null,
+		purchaseId: null,
+		state: null,
+		reason: null,
+		...fields,
 	}
 }
 
@@ -148,18 +158,47 @@ function refused(
 	apply: boolean,
 	reason: string,
 ): CheckoutRecoveryReceipt {
-	return {
-		version: 1,
-		checkoutSessionId,
-		mode: apply ? 'apply' : 'dry-run',
-		status: 'refused',
-		success: false,
-		chargeId: null,
-		recoveryEventId: null,
-		inngestEventIds: [],
-		state: null,
-		reason,
+	return receipt(
+		{ checkoutSessionId, apply },
+		{ status: 'refused', success: false, reason },
+	)
+}
+
+/** Maps a direct fulfillment onto the receipt, keeping replay evidence. */
+function directReceipt(
+	args: CheckoutRecoveryArgs,
+	result: DirectCheckoutFulfillmentResult,
+	evidence: Partial<CheckoutRecoveryReceipt> &
+		Pick<CheckoutRecoveryReceipt, 'directReason'>,
+): CheckoutRecoveryReceipt {
+	if (result.status === 'fulfilled') {
+		return receipt(args, {
+			...evidence,
+			status: 'fulfilled_direct',
+			success: true,
+			chargeId: result.chargeId,
+			purchaseId: result.purchaseId,
+			state: result.state,
+		})
 	}
+	if (result.status === 'skipped') {
+		return receipt(args, {
+			...evidence,
+			status: 'refused',
+			success: false,
+			chargeId: result.chargeId,
+			reason: `Direct fulfillment skipped: ${result.reason}`,
+		})
+	}
+	return receipt(args, {
+		...evidence,
+		status: 'already_recovered',
+		success: true,
+		chargeId: result.chargeId,
+		purchaseId: result.purchaseIds[0] ?? null,
+		state: result.state,
+		reason: result.status === 'raced' ? 'Another run created the purchase first' : null,
+	})
 }
 
 export async function runCheckoutRecovery(
@@ -191,40 +230,57 @@ export async function runCheckoutRecovery(
 				'Checkout session has no expanded Stripe charge',
 			)
 		}
+		const charge = checkoutChargeState(session)
+		if (charge.refunded || charge.disputed) {
+			return refused(
+				args.checkoutSessionId,
+				args.apply,
+				charge.refunded
+					? 'Checkout charge is refunded'
+					: 'Checkout charge is disputed',
+			)
+		}
 
 		const state = await runtime.inspect({
 			checkoutSessionId: args.checkoutSessionId,
 			chargeId,
 		})
 		if (state.purchaseIds.length > 0) {
-			return {
-				version: 1,
-				checkoutSessionId: args.checkoutSessionId,
-				mode: args.apply ? 'apply' : 'dry-run',
+			return receipt(args, {
 				status: 'already_recovered',
 				success: true,
 				chargeId,
-				recoveryEventId: null,
-				inngestEventIds: [],
 				state,
-				reason: null,
+				purchaseId: state.purchaseIds[0] ?? null,
+			})
+		}
+
+		if (args.direct) {
+			if (!args.apply) {
+				return receipt(args, {
+					status: 'would_fulfill_direct',
+					success: true,
+					chargeId,
+					directReason: 'requested',
+					state,
+				})
 			}
+			return directReceipt(
+				args,
+				await runtime.fulfillDirect(args.checkoutSessionId),
+				{ directReason: 'requested' },
+			)
 		}
 
 		const eventId = recoveryEventId(args.checkoutSessionId)
 		if (!args.apply) {
-			return {
-				version: 1,
-				checkoutSessionId: args.checkoutSessionId,
-				mode: 'dry-run',
+			return receipt(args, {
 				status: 'would_replay',
 				success: true,
 				chargeId,
 				recoveryEventId: eventId,
-				inngestEventIds: [],
 				state,
-				reason: null,
-			}
+			})
 		}
 
 		const sent = await runtime.sendReplay({
@@ -232,18 +288,51 @@ export async function runCheckoutRecovery(
 			name: STRIPE_CHECKOUT_SESSION_COMPLETED_EVENT,
 			data: buildReplayData(session),
 		})
-		return {
-			version: 1,
-			checkoutSessionId: args.checkoutSessionId,
-			mode: 'apply',
-			status: 'replay_requested',
-			success: sent.ids.length > 0,
-			chargeId,
+		if (sent.ids.length === 0) {
+			return receipt(args, {
+				status: 'replay_requested',
+				success: false,
+				chargeId,
+				recoveryEventId: eventId,
+				state,
+				reason: 'Inngest returned no event id',
+			})
+		}
+
+		// Within 24 hours of the original event the core function's
+		// idempotency key (the session id) is spent, so Inngest accepts the
+		// replay and runs nothing. That is the 2026-10-09 failure; fall back to
+		// running the handler here.
+		let replayRunCount: number | null = null
+		let replayCheckError: string | null = null
+		try {
+			replayRunCount = await runtime.countReplayRuns(sent.ids)
+		} catch (error) {
+			replayCheckError = error instanceof Error ? error.message : String(error)
+		}
+		const replayEvidence = {
 			recoveryEventId: eventId,
 			inngestEventIds: sent.ids,
-			state,
-			reason: sent.ids.length > 0 ? null : 'Inngest returned no event id',
+			replayRunCount,
 		}
+		if (replayRunCount === 0) {
+			return directReceipt(
+				args,
+				await runtime.fulfillDirect(args.checkoutSessionId),
+				{ ...replayEvidence, directReason: 'replay_produced_no_run' },
+			)
+		}
+		return receipt(args, {
+			...replayEvidence,
+			status: 'replay_requested',
+			success: true,
+			chargeId,
+			state,
+			reason:
+				replayRunCount === null
+					? `Replay run not verified (${replayCheckError ?? 'no INNGEST_SIGNING_KEY'}). If no run appears, rerun with --direct.`
+					: null,
+		})
 	} catch (error) {
 		return refused(
 			args.checkoutSessionId,
@@ -275,7 +364,7 @@ async function main() {
 		const receipt = await runCheckoutRecovery(args, runtime)
 		const receiptPath = resolve(
 			args.receiptPath ??
-				`tmp/checkout-recovery/${args.checkoutSessionId}-${args.apply ? 'apply' : 'dry-run'}.json`,
+				`tmp/checkout-recovery/${args.checkoutSessionId}-${args.direct ? 'direct-' : ''}${args.apply ? 'apply' : 'dry-run'}.json`,
 		)
 		await writeReceiptFile(receiptPath, receipt)
 		console.log(JSON.stringify({ ...receipt, receiptPath }, null, 2))
