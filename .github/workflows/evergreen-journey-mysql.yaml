@@ -128,18 +128,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build course-sync schema
-        run: pnpm --filter @ai-hero/course-sync-schema build
-
-      # Keep the activation regression on real MySQL, not a silently skipped
-      # opt-in suite. Reuse this job's server with a separate disposable database.
-      - name: Run guarded course-sync activation suite
-        env:
-          AIH_COURSE_SYNC_MYSQL_URL: mysql://root:aih_test_password@127.0.0.1:3307/course_sync_verifier_test
-        run: >-
-          pnpm --filter ai-hero exec vitest run -c vitest.config.ts --testTimeout=30000
-          src/course-sync/drizzle-persistence.mysql.test.ts
-
       - name: Run guarded journey and course persistence suite
         env:
           AIH_EVERGREEN_JOURNEY_MYSQL_TEST_SERVER_URL: mysql://root:aih_test_password@127.0.0.1:3307/mysql
@@ -179,3 +167,15 @@ jobs:
           src/lib/purchase-disputes.mysql.test.ts
           src/lib/purchase-fields-write.mysql.test.ts
           src/lib/checkout-reconcile/fulfill.mysql.test.ts
+
+      # Preserve the existing suite's starting filesystem/server state. Build
+      # and run the new opt-in contract only after those unchanged tests pass.
+      - name: Build course-sync schema
+        run: pnpm --filter @ai-hero/course-sync-schema build
+
+      - name: Run guarded course-sync activation suite
+        env:
+          AIH_COURSE_SYNC_MYSQL_URL: mysql://root:aih_test_password@127.0.0.1:3307/course_sync_verifier_test
+        run: >-
+          pnpm --filter ai-hero exec vitest run -c vitest.config.ts --testTimeout=30000
+          src/course-sync/drizzle-persistence.mysql.test.ts
