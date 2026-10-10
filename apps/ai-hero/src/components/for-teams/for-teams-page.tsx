@@ -275,11 +275,12 @@ export function ForTeamsPage({
 								>
 									{invoice.lead ??
 										(invoice.mode === 'invoice'
-											? 'Tell us who to bill and how many seats. Stripe emails the invoice at the team price, ready for your finance team. Once it is paid, you assign the seats from your account.'
+											? 'Tell us who to bill and how many seats. We email the billing address a link to confirm, then Stripe sends the invoice at the team price, ready for your finance team. Once it is paid, you assign the seats from your account.'
 											: 'Tell us who to bill and how many seats, and we will send the invoice at the team price.')}
 								</p>
 								<p className={cn(TYPE.metaSm, 'text-muted-foreground mt-4')}>
-									From 2 to 100 seats. Due on receipt, or Net 30.
+									From 2 to 100 seats. Due on receipt, or Net 30 (by the
+									enrollment close for a cohort).
 								</p>
 							</div>
 							<div

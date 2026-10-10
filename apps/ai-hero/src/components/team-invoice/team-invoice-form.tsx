@@ -40,6 +40,16 @@ export function teamInvoiceResultMessage(result: TeamInvoiceResult): {
 	text: string
 } {
 	switch (result.kind) {
+		case 'confirm-sent':
+			return {
+				tone: 'success',
+				text: `Check ${result.email}. We sent a link to confirm the order, and the invoice goes out once you click it. The link works for 30 minutes.`,
+			}
+		case 'expired':
+			return {
+				tone: 'error',
+				text: 'This link has expired or was already used. Start again from the team page.',
+			}
 		case 'sent':
 			return {
 				tone: 'success',
@@ -84,8 +94,8 @@ const FIELD = 'space-y-2'
 
 /**
  * "Pay by invoice" for a team: billing details and a seat count, nothing about
- * price. The server prices it from the team rules and Stripe sends the
- * invoice. In `request` mode (seats not on sale yet, or invoicing not switched
+ * price. The billing email gets a link to confirm; on confirm the server
+ * prices the order from the team rules and Stripe sends the invoice. In `request` mode (seats not on sale yet, or invoicing not switched
  * on for this product) the same details go to support instead.
  */
 export function TeamInvoiceForm({
@@ -142,7 +152,10 @@ export function TeamInvoiceForm({
 		errors.taxId?.message ??
 		errors.poNumber?.message
 	const message = result ? teamInvoiceResultMessage(result) : null
-	const done = result?.kind === 'sent' || result?.kind === 'requested'
+	const done =
+		result?.kind === 'confirm-sent' ||
+		result?.kind === 'sent' ||
+		result?.kind === 'requested'
 
 	if (done && message) {
 		return (
@@ -308,7 +321,7 @@ export function TeamInvoiceForm({
 							<Spinner className="w-4" aria-hidden="true" /> Sending...
 						</>
 					) : mode === 'invoice' ? (
-						'Send the invoice'
+						'Email me a link to confirm'
 					) : (
 						'Request an invoice'
 					)}

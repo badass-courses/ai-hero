@@ -60,6 +60,7 @@ import { createUserOrganizations } from './functions/create-user-organization'
 import { syncGithubSourcedPosts } from './functions/sync-github-sourced-posts'
 import { googleAdsConversionUpload } from './functions/google-ads-conversion-upload'
 import { invoiceShortfallReconciliation } from './functions/invoice-shortfall-reconciliation'
+import { teamInvoiceExpiry } from './functions/team-invoice-expiry'
 import { addDiscordRoleWorkflow } from './functions/discord/add-discord-role-workflow'
 import { grantLegendDiscordRole } from './functions/discord/grant-legend-discord-role'
 import { eventReminderBroadcast } from './functions/event-reminder-broadcast'
@@ -185,6 +186,7 @@ const allFunctions = [
 	newsletterExitReplay,
 	googleAdsConversionUpload,
 	invoiceShortfallReconciliation,
+	teamInvoiceExpiry,
 	syncGithubSourcedPosts,
 	skillChangelogBroadcast,
 	skillsNewsletterPathEntry,

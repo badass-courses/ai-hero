@@ -13,7 +13,7 @@ import { createAndSendTeamInvoice } from './stripe-team-invoice'
  * `AIH_STRIPE_SANDBOX_KEY` holds a test key (`sk_test_` or `rk_test_`); it
  * refuses anything else. Run it against the `aihero-commerce-tests` sandbox:
  *
- *   AIH_STRIPE_SANDBOX_KEY=$(lease ai-hero::stripe_test_secret_key) \
+ *   AIH_STRIPE_SANDBOX_KEY=sk_test_... \
  *   AIH_SANDBOX_STRIPE_PRODUCT=prod_... \
  *     pnpm vitest run src/lib/team-invoice/team-invoice.sandbox.test.ts
  *
@@ -169,7 +169,7 @@ describe.skipIf(!isTestKey || !PRODUCT)('team invoice in the Stripe sandbox', ()
 				address: { line1: '1 Sandbox Way', city: 'Berlin', country: 'DE' },
 				taxId: 'DE000000000',
 				poNumber: 'PO-SANDBOX-1',
-				daysUntilDue: 30,
+				due: { kind: 'days' as const, days: 30 },
 				stripePriceId: price.id,
 				stripeProductId: PRODUCT,
 				quantity: seats,
@@ -254,7 +254,7 @@ describe.skipIf(!isTestKey || !PRODUCT)('team invoice in the Stripe sandbox', ()
 				orderKey: `${RUN}-amount-off`,
 				billingEmail: `team-${RUN}@example.test`,
 				companyName: 'Sandbox Co',
-				daysUntilDue: 0,
+				due: { kind: 'days', days: 0 },
 				stripePriceId: price.id,
 				stripeProductId: PRODUCT,
 				quantity: seats,
@@ -295,6 +295,68 @@ describe.skipIf(!isTestKey || !PRODUCT)('team invoice in the Stripe sandbox', ()
 	)
 
 	it(
+		'takes a fixed due date and never rewrites an earlier customer',
+		async () => {
+			const price = await listPrice()
+			const email = `team-${RUN}-due@example.test`
+			const dueAt = Math.floor(Date.now() / 1000) + 10 * 24 * 60 * 60
+			const base = {
+				billingEmail: email,
+				stripePriceId: price.id,
+				stripeProductId: PRODUCT,
+				quantity: 2,
+				discount: { kind: 'none' as const },
+				expectedTotal: price.unitAmount * 2,
+				metadata: metadata(2, 'sandbox-due-date'),
+			}
+			const first = await createAndSendTeamInvoice(stripe, {
+				...base,
+				orderKey: `${RUN}-due-1`,
+				companyName: 'First Buyer Co',
+				due: { kind: 'date', at: dueAt },
+			})
+			const invoice = await stripe.invoices.retrieve(first.invoiceId)
+			expect(invoice.due_date).toBe(dueAt)
+
+			const second = await createAndSendTeamInvoice(stripe, {
+				...base,
+				orderKey: `${RUN}-due-2`,
+				companyName: 'Someone Else Ltd',
+				due: { kind: 'days', days: 30 },
+			})
+			expect(second.customerId).not.toBe(first.customerId)
+			const firstCustomer = (await stripe.customers.retrieve(
+				first.customerId,
+			)) as Stripe.Customer
+			expect(firstCustomer.name).toBe('First Buyer Co')
+
+			// Same details again reuse the matching customer.
+			const third = await createAndSendTeamInvoice(stripe, {
+				...base,
+				orderKey: `${RUN}-due-3`,
+				companyName: 'First Buyer Co',
+				due: { kind: 'days', days: 30 },
+			})
+			expect(third.customerId).toBe(first.customerId)
+			for (const id of [first.invoiceId, second.invoiceId, third.invoiceId]) {
+				await stripe.invoices.voidInvoice(id)
+			}
+			console.info(
+				JSON.stringify({
+					proof: 'due-date-and-customer',
+					run: RUN,
+					invoice: first.invoiceId,
+					dueDate: invoice.due_date,
+					firstCustomerNameAfter: firstCustomer.name,
+					secondCustomerIsNew: second.customerId !== first.customerId,
+					thirdReusedFirst: third.customerId === first.customerId,
+				}),
+			)
+		},
+		90_000,
+	)
+
+	it(
 		'voids rather than sends an invoice whose total is not the priced amount',
 		async () => {
 			const price = await listPrice()
@@ -303,7 +365,7 @@ describe.skipIf(!isTestKey || !PRODUCT)('team invoice in the Stripe sandbox', ()
 					orderKey: `${RUN}-mismatch`,
 					billingEmail: `team-${RUN}@example.test`,
 					companyName: 'Sandbox Co',
-					daysUntilDue: 30,
+					due: { kind: 'days' as const, days: 30 },
 					stripePriceId: price.id,
 					stripeProductId: PRODUCT,
 					quantity: 2,

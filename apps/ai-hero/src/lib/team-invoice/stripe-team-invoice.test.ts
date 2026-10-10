@@ -14,7 +14,6 @@ function fakeStripe(options: { total?: number; existing?: any[] } = {}) {
 		customers: {
 			list: vi.fn().mockResolvedValue({ data: options.existing ?? [] }),
 			create: vi.fn().mockResolvedValue({ id: 'cus_new' }),
-			update: vi.fn().mockResolvedValue({}),
 		},
 		coupons: { create: vi.fn().mockResolvedValue({ id: 'coupon_once' }) },
 		invoices: {
@@ -42,7 +41,7 @@ const input: CreateTeamInvoiceInput = {
 	address: { line1: '1 Test St', country: 'DE' },
 	taxId: 'DE123',
 	poNumber: 'PO-1',
-	daysUntilDue: 30,
+	due: { kind: 'days', days: 30 },
 	stripePriceId: 'price_1',
 	stripeProductId: 'prod_1',
 	quantity: 5,
@@ -102,24 +101,66 @@ describe('createAndSendTeamInvoice', () => {
 		})
 	})
 
-	it('reuses the self-serve customer for the email and leaves others alone', async () => {
+	const sameDetails = {
+		name: 'Example Co',
+		address: {
+			line1: '1 Test St',
+			line2: null,
+			city: null,
+			state: null,
+			postal_code: null,
+			country: 'DE',
+		},
+	}
+
+	it('reuses a self-serve customer only when its details already match', async () => {
 		const stripe = fakeStripe({
 			existing: [
-				{ id: 'cus_checkout', metadata: {} },
-				{ id: 'cus_team', metadata: { source: SELF_SERVE_CUSTOMER_SOURCE } },
+				{ id: 'cus_checkout', metadata: {}, ...sameDetails },
+				{
+					id: 'cus_team',
+					metadata: { source: SELF_SERVE_CUSTOMER_SOURCE },
+					...sameDetails,
+				},
 			],
 		})
 		await createAndSendTeamInvoice(stripe, input)
 		expect(stripe.customers.create).not.toHaveBeenCalled()
-		expect(stripe.customers.update).toHaveBeenCalledWith(
-			'cus_team',
-			expect.objectContaining({ name: 'Example Co' }),
-			expect.anything(),
-		)
 		expect(stripe.invoices.create).toHaveBeenCalledWith(
 			expect.objectContaining({ customer: 'cus_team' }),
 			expect.anything(),
 		)
+	})
+
+	it('never rewrites an existing customer: different details get a new one', async () => {
+		const stripe = fakeStripe({
+			existing: [
+				{
+					id: 'cus_team',
+					metadata: { source: SELF_SERVE_CUSTOMER_SOURCE },
+					...sameDetails,
+					name: 'Real Buyer Inc',
+				},
+			],
+		})
+		await createAndSendTeamInvoice(stripe, input)
+		expect(stripe.customers).not.toHaveProperty('update')
+		expect(stripe.customers.create).toHaveBeenCalledTimes(1)
+		expect(stripe.invoices.create).toHaveBeenCalledWith(
+			expect.objectContaining({ customer: 'cus_new' }),
+			expect.anything(),
+		)
+	})
+
+	it('sets a fixed due date when one is given', async () => {
+		const stripe = fakeStripe()
+		await createAndSendTeamInvoice(stripe, {
+			...input,
+			due: { kind: 'date', at: 1_792_000_000 },
+		})
+		const params = stripe.invoices.create.mock.calls[0]![0]
+		expect(params).toMatchObject({ due_date: 1_792_000_000 })
+		expect(params).not.toHaveProperty('days_until_due')
 	})
 
 	it('makes one single-use, product-scoped coupon for an amount off', async () => {

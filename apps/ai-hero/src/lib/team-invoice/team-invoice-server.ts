@@ -1,5 +1,7 @@
 import 'server-only'
 
+import { randomBytes } from 'node:crypto'
+
 import { pricingFactsSourceLayer } from '@/app/api/front-desk/pricing-facts-source'
 import {
 	existingSeatsFact,
@@ -21,14 +23,22 @@ import { Effect } from 'effect'
 import { formatPricesForProduct } from '@coursebuilder/commerce'
 import type { StripePaymentAdapter } from '@coursebuilder/commerce/stripe-provider'
 
-import type { TeamInvoiceDeps, TeamInvoiceProduct } from './create-team-invoice'
+import {
+	CONFIRM_TTL_SECONDS,
+	SELF_SERVE_TEAM_INVOICE_SOURCE,
+	type PendingTeamInvoice,
+	type TeamInvoiceDeps,
+	type TeamInvoiceProduct,
+} from './create-team-invoice'
 import type { TeamInvoiceResult } from './schema'
 import { createAndSendTeamInvoice } from './stripe-team-invoice'
+import type { OpenTeamInvoice } from './team-invoice-expiry'
 import {
 	appBulkPriceSource,
 	frontDeskPriceSource,
 	teamInvoicingEnabled,
 	teamPriceSourceFor,
+	type DefaultSaleCoupon,
 	type TeamPriceSource,
 } from './team-price-source'
 
@@ -43,20 +53,44 @@ export const frontDeskPricingConfigured = () =>
 export const isTeamInvoicingEnabled = (productId: string) =>
 	teamInvoicingEnabled(productId, frontDeskPricingConfigured())
 
+/** The site-wide sale checkout applies on its own, or null. */
+async function defaultSaleCoupon(
+	productId: string,
+): Promise<DefaultSaleCoupon | null> {
+	const result = await courseBuilderAdapter.getDefaultCoupon([productId])
+	const merchantCoupon = result?.defaultMerchantCoupon
+	const stripeCouponId = merchantCoupon?.identifier
+	if (!result || !merchantCoupon || !stripeCouponId) return null
+	return {
+		merchantCouponId: merchantCoupon.id,
+		couponId: result.defaultCoupon.id,
+		stripeCouponId,
+		percentageDiscount: merchantCoupon.percentageDiscount
+			? Number(merchantCoupon.percentageDiscount)
+			: null,
+		amountDiscount: merchantCoupon.amountDiscount ?? null,
+	}
+}
+
 const appBulk: TeamPriceSource = appBulkPriceSource({
-	formatPrice: (request) =>
+	formatPrice: (request, sale) =>
 		formatPricesForProduct({
 			productId: request.productId,
 			quantity: request.quantity,
-			// The buyer's own bulk purchase counts toward the ladder, exactly as
-			// checkout counts it. No site coupon, no PPP: a team rule only.
+			// The buyer's own bulk purchase counts toward the ladder, and the
+			// default sale is in play, exactly as checkout and the team card
+			// count them. No PPP: a team invoice is not a regional price.
 			userId: request.userId,
+			...(sale
+				? { merchantCouponId: sale.merchantCouponId, usedCouponId: sale.couponId }
+				: {}),
 			autoApplyPPP: false,
 			ctx: courseBuilderAdapter,
 		}),
 	stripeCouponIdFor: async (merchantCouponId) =>
 		(await courseBuilderAdapter.getMerchantCoupon(merchantCouponId))
 			?.identifier ?? null,
+	defaultSaleCoupon,
 })
 
 const frontDesk = (): TeamPriceSource | null =>
@@ -67,7 +101,31 @@ const frontDesk = (): TeamPriceSource | null =>
 			})
 		: null
 
-async function loadProduct(
+const OPEN_SELF_SERVE_QUERY = `status:'open' AND metadata['source']:'${SELF_SERVE_TEAM_INVOICE_SOURCE}' AND metadata['app']:'ai-hero'`
+
+/**
+ * Open self-serve team invoices, from Stripe's search. Search lags writes by
+ * about a minute, so a hold can be that late; the expiry job is the backstop.
+ */
+export async function openTeamInvoices(
+	productId?: string,
+): Promise<OpenTeamInvoice[]> {
+	const query = productId
+		? `${OPEN_SELF_SERVE_QUERY} AND metadata['productId']:'${productId.replace(/[^\w-]/g, '')}'`
+		: OPEN_SELF_SERVE_QUERY
+	const invoices = await stripe()
+		.invoices.search({ query, limit: 100 })
+		.autoPagingToArray({ limit: 500 })
+	return invoices.flatMap((invoice) => {
+		const seats = Number(invoice.metadata?.seats)
+		const id = invoice.metadata?.productId
+		return id && Number.isInteger(seats) && seats > 0
+			? [{ id: invoice.id, productId: id, seats }]
+			: []
+	})
+}
+
+export async function loadProduct(
 	productId: string,
 ): Promise<TeamInvoiceProduct | null> {
 	const [product, merchantPrice, merchantProduct, purchaseCount] =
@@ -95,12 +153,21 @@ async function loadProduct(
 	) {
 		return null
 	}
+	// Only a limited product needs its open invoices counted.
+	const limited = (product.quantityAvailable ?? -1) >= 0
+	const heldSeats = limited
+		? (await openTeamInvoices(productId)).reduce(
+				(sum, invoice) => sum + invoice.seats,
+				0,
+			)
+		: 0
 	return {
 		product: {
 			...product,
 			quantityAvailable: product.quantityAvailable,
 		},
 		purchaseCount,
+		heldSeats,
 		stripePriceId: merchantPrice.identifier,
 		stripeProductId: merchantProduct.identifier,
 		listUnitAmount: stripePrice.unit_amount,
@@ -148,9 +215,85 @@ const emailLimit = () =>
 const RESULT_TTL_SECONDS = 2 * 24 * 60 * 60
 const LOCK_TTL_SECONDS = 120
 
+/**
+ * Site-wide ceilings per UTC day. Per-IP and per-email limits cap one sender
+ * and one inbox; these cap everyone, so rotating addresses cannot run up an
+ * unbounded number of confirm emails or invoices.
+ */
+export const TEAM_INVOICE_DAILY_CEILINGS = {
+	confirmation: 60,
+	invoice: 20,
+} as const
+
+async function dailyCeiling(
+	kind: keyof typeof TEAM_INVOICE_DAILY_CEILINGS,
+): Promise<boolean> {
+	const day = new Date().toISOString().slice(0, 10)
+	const key = `team_invoice_ceiling:${kind}:${day}`
+	const used = await redis.incr(key)
+	if (used === 1) await redis.expire(key, 2 * 24 * 60 * 60)
+	if (used <= TEAM_INVOICE_DAILY_CEILINGS[kind]) return true
+	// Tell support once a day, the first time it trips.
+	const alerted = await redis.set(`${key}:alerted`, '1', {
+		nx: true,
+		ex: 2 * 24 * 60 * 60,
+	})
+	if (alerted === 'OK') {
+		await log.warn('team_invoice.ceiling_reached', { kind, day })
+		await sendAnEmail({
+			Component: BasicEmail,
+			componentProps: {
+				body: `The self-serve team invoice ceiling for ${kind === 'invoice' ? 'invoices' : 'confirm emails'} (${TEAM_INVOICE_DAILY_CEILINGS[kind]} a day) was reached on ${day}. New requests get "too many requests" until tomorrow (UTC). Check the logs for team_invoice events.`,
+				messageType: 'transactional',
+			},
+			Subject: `Team invoice ceiling reached: ${kind}`,
+			To: env.NEXT_PUBLIC_SUPPORT_EMAIL,
+			type: 'transactional',
+		}).catch(() => undefined)
+	}
+	return false
+}
+
+const pendingKey = (token: string) => `team_invoice_pending:${token}`
+
+/** The confirm page for a token. A path segment, so it stays out of query logs. */
+export const teamInvoiceConfirmUrl = (token: string) =>
+	new URL(`/team-invoice/confirm/${token}`, env.NEXT_PUBLIC_URL).toString()
+
 export function teamInvoiceServerDeps(): TeamInvoiceDeps {
 	return {
 		now: () => new Date(),
+		dailyCeiling,
+		pending: {
+			put: async (token, order) => {
+				await redis.set(pendingKey(token), order, { ex: CONFIRM_TTL_SECONDS })
+			},
+			get: (token) =>
+				/^[\w-]{32,64}$/.test(token)
+					? redis.get<PendingTeamInvoice>(pendingKey(token))
+					: Promise.resolve(null),
+		},
+		newToken: () => randomBytes(32).toString('base64url'),
+		sendConfirmation: async ({ to, productName, seats, token }) => {
+			// Only our own words, the product's name and a number: nothing the
+			// requester typed reaches their inbox.
+			const body = [
+				`Someone asked us to send an invoice for **${seats} seats** of **${productName}** to this address.`,
+				`[Confirm and send the invoice](${teamInvoiceConfirmUrl(token)})`,
+				`The link works for 30 minutes. If you did not ask for this, ignore this email and nothing is sent.`,
+			].join('\n\n')
+			await sendAnEmail({
+				Component: BasicEmail,
+				componentProps: {
+					body,
+					preview: 'Confirm your team invoice',
+					messageType: 'transactional',
+				},
+				Subject: 'Confirm your AI Hero team invoice',
+				To: to,
+				type: 'transactional',
+			})
+		},
 		rateLimit: async ({ ip, email }) => {
 			const [byIp, byEmail] = await Promise.all([
 				ipLimit().limit(ip),

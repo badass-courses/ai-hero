@@ -16,13 +16,17 @@ import type { TeamInvoiceAddress } from './schema'
  * Two additions for an unattended path. The invoice is finalized without
  * auto-advance and its total read back before anything is sent: a total that
  * is not the priced amount voids the invoice instead of mailing it. And every
- * write carries an idempotency key built from the order key, so a retry
- * returns the same Stripe objects instead of a second invoice.
+ * write carries an idempotency key built from the order key, a hash of the
+ * whole request, so a retry returns the same Stripe objects instead of a
+ * second invoice, and a corrected retry gets fresh ones.
+ *
+ * It never edits an existing Stripe customer. A self-serve customer is reused
+ * only when its billing details already match this order's.
  */
 
 /** The Stripe calls this module makes, narrowed for tests. */
 export type TeamInvoiceStripe = {
-	customers: Pick<Stripe['customers'], 'list' | 'create' | 'update'>
+	customers: Pick<Stripe['customers'], 'list' | 'create'>
 	coupons: Pick<Stripe['coupons'], 'create'>
 	invoices: Pick<
 		Stripe['invoices'],
@@ -32,14 +36,14 @@ export type TeamInvoiceStripe = {
 }
 
 export type CreateTeamInvoiceInput = {
-	/** Stable per (email, product, seats, day). Prefixes every idempotency key. */
+	/** A hash of the whole normalized request. Prefixes every idempotency key. */
 	orderKey: string
 	billingEmail: string
 	companyName: string
 	address?: TeamInvoiceAddress
 	taxId?: string
 	poNumber?: string
-	daysUntilDue: number
+	due: TeamInvoiceDue
 	stripePriceId: string
 	stripeProductId: string
 	quantity: number
@@ -56,6 +60,14 @@ export type CreatedTeamInvoice = {
 	hostedInvoiceUrl: string | null
 	status: Stripe.Invoice.Status | null
 }
+
+/**
+ * When the invoice falls due: a number of days, or a fixed date (unix
+ * seconds) when an enrollment window closes first.
+ */
+export type TeamInvoiceDue =
+	| { kind: 'days'; days: number }
+	| { kind: 'date'; at: number }
 
 export class TeamInvoiceTotalMismatch extends Error {
 	constructor(
@@ -100,6 +112,28 @@ export const invoiceCustomFields = (input: {
 	...(input.taxId ? [{ name: 'Tax ID', value: input.taxId }] : []),
 ]
 
+const addressKey = (address: Partial<Stripe.Address> | null | undefined) =>
+	[
+		address?.line1,
+		address?.line2,
+		address?.city,
+		address?.state,
+		address?.postal_code,
+		address?.country,
+	]
+		.map((part) => part ?? '')
+		.join('|')
+
+function sameBillingDetails(
+	customer: Pick<Stripe.Customer, 'name' | 'address'>,
+	details: { name: string; address?: Stripe.AddressParam },
+): boolean {
+	return (
+		(customer.name ?? '') === details.name &&
+		addressKey(customer.address) === addressKey(details.address)
+	)
+}
+
 export async function findOrCreateTeamCustomer(
 	stripe: TeamInvoiceStripe,
 	input: Pick<
@@ -117,19 +151,16 @@ export async function findOrCreateTeamCustomer(
 		email: input.billingEmail,
 		limit: 100,
 	})
-	const selfServe = existing.data.find(
+	// Reuse a self-serve customer only when it already says what this order
+	// says. Different details get a new customer, so no request ever rewrites
+	// the name or address a past invoice was billed to.
+	const same = existing.data.find(
 		(customer) =>
 			!('deleted' in customer && customer.deleted) &&
-			customer.metadata?.source === SELF_SERVE_CUSTOMER_SOURCE,
+			customer.metadata?.source === SELF_SERVE_CUSTOMER_SOURCE &&
+			sameBillingDetails(customer, details),
 	)
-	if (selfServe) {
-		// The billing details on the newest order win; this customer only ever
-		// carries self-serve team invoices.
-		await stripe.customers.update(selfServe.id, details, {
-			idempotencyKey: `${input.orderKey}:customer-update`,
-		})
-		return selfServe.id
-	}
+	if (same) return same.id
 	const created = await stripe.customers.create(
 		{
 			email: input.billingEmail,
@@ -187,7 +218,9 @@ export async function createAndSendTeamInvoice(
 		{
 			customer: customerId,
 			collection_method: 'send_invoice',
-			days_until_due: input.daysUntilDue,
+			...(input.due.kind === 'date'
+				? { due_date: input.due.at }
+				: { days_until_due: input.due.days }),
 			auto_advance: false,
 			pending_invoice_items_behavior: 'exclude',
 			...(discounts.length ? { discounts } : {}),

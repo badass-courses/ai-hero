@@ -6,16 +6,18 @@ import { z } from 'zod'
  *
  * Two adapters sit behind the port:
  *
- * - `appBulkPriceSource`: the app's own bulk rules, the same
- *   `formatPricesForProduct` checkout runs, so an invoice costs what the
- *   team card says. Its discount is the existing bulk Stripe coupon.
+ * - `appBulkPriceSource`: the app's own rules, the same
+ *   `formatPricesForProduct` checkout runs with the same default sale coupon,
+ *   so an invoice never costs more than checkout or the team card. One
+ *   discount: the better of the sale and the bulk ladder.
  * - `frontDeskPriceSource`: front-desk's private pricing engine, over an
  *   authenticated server-to-server request. Its rules and percentages live in
  *   front-desk, never in this public repo.
  *
  * `teamPriceSourceFor` routes a product to one of them. A product routed to
  * front-desk with no configured client is unavailable, which keeps its
- * invoicing off until the token exists.
+ * invoicing off until the token exists. A front-desk price above the app's
+ * own price for the same order is unavailable too (`cappedAtCheckout`).
  */
 
 export type TeamPriceRequest = {
@@ -79,7 +81,35 @@ export function teamPriceSourceFor(
 	},
 ): TeamPriceSource {
 	if (!FRONT_DESK_PRICED_PRODUCTS.has(productId)) return sources.appBulk
-	return sources.frontDesk ?? disabledPriceSource('front-desk-not-configured')
+	return sources.frontDesk
+		? cappedAtCheckout(sources.frontDesk, sources.appBulk)
+		: disabledPriceSource('front-desk-not-configured')
+}
+
+/**
+ * A price source that never beats checkout upward. The buyer can always pay
+ * by card at checkout's price, so an invoice above it is a mistake, not a
+ * policy. When checkout's price is not knowable, neither is the cap.
+ */
+export function cappedAtCheckout(
+	source: TeamPriceSource,
+	checkout: TeamPriceSource,
+): TeamPriceSource {
+	return {
+		async price(request) {
+			const [price, ceiling] = await Promise.all([
+				source.price(request),
+				checkout.price(request),
+			])
+			if (price.kind !== 'priced') return price
+			if (ceiling.kind !== 'priced') {
+				return unavailable(`checkout-cap-${ceiling.reason}`)
+			}
+			return price.amount > ceiling.amount
+				? unavailable('above-checkout')
+				: price
+		},
+	}
 }
 
 /** Whether a product can be invoiced at all with this configuration. */
@@ -106,9 +136,10 @@ export type FrontDeskDecision = z.infer<typeof frontDeskDecisionSchema>
 export const FRONT_DESK_TIMEOUT_MS = 5_000
 
 /**
- * front-desk's pricing engine. Accepts only `kind: "priced"` with a total the
- * list price can reach by discount; anything else, a non-2xx answer, a
- * malformed body or a timeout is unavailable.
+ * front-desk's pricing engine. Accepts only a 200 with `kind: "priced"`, a
+ * per-seat price that multiplies out to the total, and a total the list price
+ * can reach by discount; anything else, a malformed body or a timeout is
+ * unavailable.
  */
 export function frontDeskPriceSource(options: {
 	url: string
@@ -139,7 +170,9 @@ export function frontDeskPriceSource(options: {
 					),
 					cache: 'no-store',
 				})
-				if (!response.ok) return unavailable(`front-desk-http-${response.status}`)
+				if (response.status !== 200) {
+					return unavailable(`front-desk-http-${response.status}`)
+				}
 				const parsed = frontDeskDecisionSchema.safeParse(await response.json())
 				if (!parsed.success) return unavailable('front-desk-malformed')
 				decision = parsed.data
@@ -159,6 +192,9 @@ export function frontDeskPriceSource(options: {
 			// and a free team order is not an invoice.
 			if (amount <= 0 || amount > listTotal) {
 				return unavailable('front-desk-out-of-range')
+			}
+			if (unitAmount * request.quantity !== amount) {
+				return unavailable('front-desk-inconsistent')
 			}
 			const amountOff = listTotal - amount
 			return {
@@ -182,23 +218,56 @@ export type AppFormattedPrice = {
 	calculatedPrice: number
 	fixedDiscountForUpgrade?: number
 	appliedDiscountType?: string
-	appliedMerchantCoupon?: { id: string; percentageDiscount?: unknown } | null
+	appliedMerchantCoupon?: {
+		id: string
+		percentageDiscount?: unknown
+		amountDiscount?: unknown
+	} | null
+}
+
+/** The site-wide sale coupon checkout applies on its own, when one runs. */
+export type DefaultSaleCoupon = {
+	merchantCouponId: string
+	/** The app coupon, passed to pricing as checkout passes it. */
+	couponId?: string
+	/** The Stripe coupon behind it, used as is for a percentage sale. */
+	stripeCouponId: string
+	/** 0 to 1. */
+	percentageDiscount?: number | null
+	/** Per seat, in cents. */
+	amountDiscount?: number | null
+}
+
+type AppCandidate = {
+	amount: number
+	policy: string
+	discount: TeamDiscount
 }
 
 /**
- * The app's bulk rules: checkout's own pricing for this quantity, with no
- * site coupon, no PPP and no upgrade credit, then the bulk merchant coupon's
- * Stripe id as the discount. Prices are in dollars on the way in.
+ * The app's rules: checkout's own pricing for this quantity and buyer, with
+ * the default sale coupon checkout applies and no PPP or upgrade credit.
+ *
+ * Checkout keeps the bulk ladder whenever it gives any discount, even when a
+ * bigger sale is running. A team invoice takes the better of the two instead,
+ * so it never costs more than checkout or the team card. Exactly one
+ * discount applies; they never stack. Prices are in dollars on the way in.
  */
 export function appBulkPriceSource(deps: {
-	formatPrice: (request: TeamPriceRequest) => Promise<AppFormattedPrice>
+	formatPrice: (
+		request: TeamPriceRequest,
+		saleCoupon: DefaultSaleCoupon | null,
+	) => Promise<AppFormattedPrice>
 	stripeCouponIdFor: (merchantCouponId: string) => Promise<string | null>
+	defaultSaleCoupon: (productId: string) => Promise<DefaultSaleCoupon | null>
 }): TeamPriceSource {
 	return {
 		async price(request) {
 			let formatted: AppFormattedPrice
+			let sale: DefaultSaleCoupon | null
 			try {
-				formatted = await deps.formatPrice(request)
+				sale = await deps.defaultSaleCoupon(request.productId)
+				formatted = await deps.formatPrice(request, sale)
 			} catch {
 				return unavailable('app-price-error')
 			}
@@ -208,44 +277,101 @@ export function appBulkPriceSource(deps: {
 			if (Number(formatted.fixedDiscountForUpgrade ?? 0) > 0) {
 				return unavailable('app-upgrade-credit')
 			}
-			const amount = Math.round(Number(formatted.calculatedPrice) * 100)
 			const listTotal = request.listUnitAmount * request.quantity
-			if (!Number.isFinite(amount) || amount <= 0 || amount > listTotal) {
-				return unavailable('app-out-of-range')
-			}
+			const inRange = (amount: number) =>
+				Number.isFinite(amount) && amount > 0 && amount <= listTotal
 
-			const type = formatted.appliedDiscountType ?? 'none'
-			if (type === 'none' || !formatted.appliedMerchantCoupon) {
-				if (amount !== listTotal) return unavailable('app-unexplained-discount')
-				return {
-					kind: 'priced',
-					source: 'app-bulk',
-					unitAmount: request.listUnitAmount,
-					amount,
-					policy: 'app-bulk:list',
-					discount: { kind: 'none' },
-				}
-			}
-			// Only the bulk ladder belongs on a team invoice. A sale, PPP or
-			// special coupon is a checkout decision, not a team rule.
-			if (type !== 'bulk') return unavailable(`app-discount-${type}`)
+			const checkout = await checkoutCandidate(formatted, sale, listTotal, deps)
+			if ('reason' in checkout) return unavailable(checkout.reason)
+			if (!inRange(checkout.amount)) return unavailable('app-out-of-range')
 
-			const stripeCouponId = await deps
-				.stripeCouponIdFor(formatted.appliedMerchantCoupon.id)
-				.catch(() => null)
-			if (!stripeCouponId) return unavailable('app-bulk-coupon-missing')
-
-			const percent = Math.round(
-				Number(formatted.appliedMerchantCoupon.percentageDiscount ?? 0) * 100,
-			)
+			const saleOnly = sale ? saleCandidate(sale, request, listTotal) : null
+			const best =
+				saleOnly && inRange(saleOnly.amount) && saleOnly.amount < checkout.amount
+					? saleOnly
+					: checkout
 			return {
 				kind: 'priced',
 				source: 'app-bulk',
-				unitAmount: Math.round(amount / request.quantity),
-				amount,
-				policy: `app-bulk:${percent}`,
-				discount: { kind: 'stripe-coupon', stripeCouponId },
+				unitAmount: Math.round(best.amount / request.quantity),
+				amount: best.amount,
+				policy: best.policy,
+				discount: best.discount,
 			}
 		},
 	}
+}
+
+const percentOf = (value: unknown) => Math.round(Number(value ?? 0) * 100)
+
+/** What checkout charges, as an invoice discount. */
+async function checkoutCandidate(
+	formatted: AppFormattedPrice,
+	sale: DefaultSaleCoupon | null,
+	listTotal: number,
+	deps: { stripeCouponIdFor: (id: string) => Promise<string | null> },
+): Promise<AppCandidate | { reason: string }> {
+	const amount = Math.round(Number(formatted.calculatedPrice) * 100)
+	const type = formatted.appliedDiscountType ?? 'none'
+	const coupon = formatted.appliedMerchantCoupon
+
+	if (type === 'none' || !coupon) {
+		if (amount !== listTotal) return { reason: 'app-unexplained-discount' }
+		return { amount, policy: 'app-bulk:list', discount: { kind: 'none' } }
+	}
+	if (type === 'bulk') {
+		const stripeCouponId = await deps
+			.stripeCouponIdFor(coupon.id)
+			.catch(() => null)
+		if (!stripeCouponId) return { reason: 'app-bulk-coupon-missing' }
+		return {
+			amount,
+			policy: `app-bulk:${percentOf(coupon.percentageDiscount)}`,
+			discount: { kind: 'stripe-coupon', stripeCouponId },
+		}
+	}
+	// The sale coupon is the only other discount a team invoice carries. PPP
+	// and special coupons are checkout decisions for one buyer, not team rules.
+	if ((type === 'percentage' || type === 'fixed') && coupon.id === sale?.merchantCouponId) {
+		return type === 'percentage'
+			? {
+					amount,
+					policy: `app-sale:${percentOf(coupon.percentageDiscount)}`,
+					discount: { kind: 'stripe-coupon', stripeCouponId: sale.stripeCouponId },
+				}
+			: {
+					amount,
+					policy: 'app-sale:fixed',
+					discount: { kind: 'amount-off', amountOff: listTotal - amount },
+				}
+	}
+	return { reason: `app-discount-${type}` }
+}
+
+/** The sale alone, priced the way checkout prices a coupon. */
+function saleCandidate(
+	sale: DefaultSaleCoupon,
+	request: TeamPriceRequest,
+	listTotal: number,
+): AppCandidate | null {
+	const perSeatOff = Number(sale.amountDiscount ?? 0)
+	if (perSeatOff > 0) {
+		// A fixed sale is per seat in the app; a Stripe amount-off coupon is per
+		// invoice. So the invoice carries the seat total as a one-off amount.
+		const amountOff = Math.round(perSeatOff) * request.quantity
+		return {
+			amount: listTotal - amountOff,
+			policy: 'app-sale:fixed',
+			discount: { kind: 'amount-off', amountOff },
+		}
+	}
+	const percent = Number(sale.percentageDiscount ?? 0)
+	if (percent > 0 && percent < 1) {
+		return {
+			amount: Math.round(listTotal * (1 - percent)),
+			policy: `app-sale:${percentOf(percent)}`,
+			discount: { kind: 'stripe-coupon', stripeCouponId: sale.stripeCouponId },
+		}
+	}
+	return null
 }

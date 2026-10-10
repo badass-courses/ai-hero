@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('./team-invoice-actions', () => ({ requestTeamInvoice: vi.fn() }))
+vi.mock('./team-invoice-actions', () => ({
+	requestTeamInvoice: vi.fn(),
+	confirmTeamInvoiceAction: vi.fn(),
+}))
 
 import { teamInvoiceResultMessage } from './team-invoice-form'
 
@@ -12,6 +15,17 @@ describe('teamInvoiceResultMessage', () => {
 			tone: 'success',
 			text: 'Invoice sent to billing@example.test. Once it is paid, you assign seats from your account.',
 		})
+	})
+
+	it('says the invoice waits for the emailed link', () => {
+		const message = teamInvoiceResultMessage({
+			kind: 'confirm-sent',
+			email: 'billing@example.test',
+		})
+		expect(message.tone).toBe('success')
+		expect(message.text).toMatch(/Check billing@example\.test/)
+		expect(message.text).toMatch(/once you click it/)
+		expect(teamInvoiceResultMessage({ kind: 'expired' }).tone).toBe('error')
 	})
 
 	it('fails closed on price with the agreed words', () => {
@@ -40,6 +54,8 @@ describe('teamInvoiceResultMessage', () => {
 
 	it('never uses an em dash', () => {
 		const kinds = [
+			{ kind: 'confirm-sent', email: 'a@example.test' },
+			{ kind: 'expired' },
 			{ kind: 'sent', email: 'a@example.test' },
 			{ kind: 'requested', email: 'a@example.test', when: 'seats-open' },
 			{ kind: 'price-unavailable' },
