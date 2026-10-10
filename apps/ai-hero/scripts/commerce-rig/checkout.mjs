@@ -1,6 +1,6 @@
 // @ts-nocheck: untyped Node operator tooling, covered by rig.test.mjs; not app code.
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import Stripe from 'stripe'
 import { catalog, c5WorkshopId, fixtureFor } from './fixtures.mjs'
@@ -149,7 +149,7 @@ export async function checkout(state, key, fixtureKey, shouldComplete = false, {
     if (coupon) { assertTestObject(coupon); await stripe.coupons.update(coupon.id, { metadata }) }
   }
   await privateWrite(join(state, 'checkout-url.txt'), target + '\n')
-  const receipt = { fixture: fixture.key, run: seed.generation, commit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), dirty: execFileSync('git', ['status', '--porcelain', '--', import.meta.dirname], { encoding: 'utf8' }).trim() !== '', catalogBasis: seed.catalogOverlay ? 'synthetic catalog with private list-price overlay; no production discount configuration' : 'synthetic bare catalog; not production configuration', pendingFacts: fixture.pending ?? null, createdAt: new Date().toISOString(), createdSession: publicSession(session), complete: false }
+  const receipt = { fixture: fixture.key, run: seed.generation, commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: resolve(import.meta.dirname, '../..'), encoding: 'utf8' }).trim(), dirty: execFileSync('git', ['status', '--porcelain', '--', import.meta.dirname], { cwd: resolve(import.meta.dirname, '../..'), encoding: 'utf8' }).trim() !== '', catalogBasis: seed.catalogOverlay ? 'synthetic catalog with private list-price overlay; no production discount configuration' : 'synthetic bare catalog; not production configuration', pendingFacts: fixture.pending ?? null, createdAt: new Date().toISOString(), createdSession: publicSession(session), complete: false }
   await privateWrite(join(state, `checkout-${fixture.key}.json`), JSON.stringify(receipt, null, 2) + '\n')
   console.log(`ok checkout ${fixture.key}: USD ${(session.amount_total / 100).toFixed(2)} (${id})`)
   if (!shouldComplete) {
