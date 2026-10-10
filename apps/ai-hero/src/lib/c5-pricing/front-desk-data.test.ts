@@ -154,6 +154,24 @@ describe('front-desk binding quote reads', () => {
 		expect(fetch).toHaveBeenCalledTimes(2)
 	})
 
+	it('starts its own read at checkout, never joining a display revalidation in flight', async () => {
+		const pending: ((response: Response) => void)[] = []
+		const { data, fetch, advance } = setup(
+			() => new Promise<Response>((resolve) => pending.push(resolve)),
+		)
+		const first = data.bindingQuotes({ ...input, fresh: false })
+		pending.shift()!(json([quote]))
+		await first
+		advance(QUOTES_FRESH_MS + 1)
+		// Display serves the cached answer and revalidates in the background.
+		await data.bindingQuotes({ ...input, fresh: false })
+		expect(fetch).toHaveBeenCalledTimes(2)
+		const checkout = data.bindingQuotes({ ...input, fresh: true })
+		expect(fetch).toHaveBeenCalledTimes(3)
+		pending.forEach((resolve) => resolve(json([])))
+		await expect(checkout).resolves.toEqual({ ok: true, value: [] })
+	})
+
 	it('reports a failed fresh read as an error, never an empty list', async () => {
 		let up = true
 		const { data } = setup(async () => {

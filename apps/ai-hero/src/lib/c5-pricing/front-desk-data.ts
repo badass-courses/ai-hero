@@ -88,7 +88,9 @@ class SwrCell<A> {
 			}
 			return { ok: true, value: entry.value }
 		}
-		const loaded = await this.refresh()
+		// A fresh read starts its own load: it never joins a revalidation that
+		// display started earlier.
+		const loaded = await (fresh ? this.loadNow() : this.refresh())
 		if (loaded.ok || fresh) return loaded
 		const kept = this.entry
 		return kept && this.options.now() - kept.fetchedAt < this.options.maxStaleMs
@@ -96,11 +98,17 @@ class SwrCell<A> {
 			: loaded
 	}
 
-	/** Single flight: concurrent readers share one load. */
+	/** Single flight: concurrent non-fresh readers share one load. */
 	private refresh(): Promise<DataRead<A>> {
 		if (this.inflight) return this.inflight
-		const previous = this.entry
-		this.inflight = this.load(previous)
+		this.inflight = this.loadNow().finally(() => {
+			this.inflight = null
+		})
+		return this.inflight
+	}
+
+	private loadNow(): Promise<DataRead<A>> {
+		return this.load(this.entry)
 			.then((result): DataRead<A> => {
 				if (!result.ok) return result
 				this.entry = {
@@ -111,10 +119,6 @@ class SwrCell<A> {
 				return { ok: true, value: result.value.value }
 			})
 			.catch((): DataRead<A> => ({ ok: false, reason: 'load-threw' }))
-			.finally(() => {
-				this.inflight = null
-			})
-		return this.inflight
 	}
 }
 

@@ -30,6 +30,28 @@ export const c5PurchaseDecision = inngest.createFunction(
 		name: 'C5 Purchase Decision and Duplicate Check',
 		idempotency: 'event.data.purchaseId',
 		retries: 5,
+		// A purchase whose decision was never saved keeps its buyer's credit
+		// facts held. That is safe, but someone needs to know.
+		onFailure: async ({ event, error }) => {
+			const purchaseId = event.data.event.data.purchaseId
+			await log.error('c5.purchase.decision_failed', {
+				purchaseId,
+				error: error.message,
+			})
+			if (!slackProvider.defaultChannelId) return
+			await slackProvider.sendNotification({
+				channel: slackProvider.defaultChannelId,
+				text: 'C5 purchase decision was not saved',
+				attachments: [
+					{
+						fallback: `Purchase ${purchaseId}: decision not saved`,
+						color: '#d92d20',
+						title: 'C5 purchase decision was not saved',
+						text: `\`${purchaseId}\` paid, but its pricing decision was not saved after retries. Its buyer's credit stays held until it is. Error: ${error.message}`,
+					},
+				],
+			})
+		},
 	},
 	{
 		event: NEW_PURCHASE_CREATED_EVENT,
