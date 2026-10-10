@@ -14,6 +14,7 @@ import type {
 	PricingOptions,
 } from '@coursebuilder/commerce/types'
 
+import { GatedBuyButton } from './gated-buy-button'
 import { CheckoutSurveyBuyButton } from './checkout-survey-buy-button'
 import { ProductPricingFeatures } from './product-pricing-features'
 
@@ -69,9 +70,9 @@ export const PricingWidget: React.FC<{
 					<Pricing.BuyMoreSeats className="pt-5">
 						<Pricing.TeamQuantityInput className="mb-0" label="Quantity" />
 						<Pricing.Price className="scale-75" />
-						<Pricing.BuyButton className="via-primary bg-linear-to-b mt-3 from-blue-500 to-blue-700 shadow-sm">
+						<GatedBuyButton className="via-primary bg-linear-to-b mt-3 from-blue-500 to-blue-700 shadow-sm">
 							Buy Additional Seats
-						</Pricing.BuyButton>
+						</GatedBuyButton>
 					</Pricing.BuyMoreSeats>
 					<Pricing.BuyMoreSeatsToggle className="text-primary h-12 w-full px-5 py-3 text-base" />
 				</Pricing.Purchased>

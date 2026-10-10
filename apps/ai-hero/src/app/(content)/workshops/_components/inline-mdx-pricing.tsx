@@ -2,6 +2,7 @@
 
 import React from 'react'
 import Link from 'next/link'
+import { GatedBuyButton } from '@/components/commerce/gated-buy-button'
 import { TYPE } from '@/components/landing/type'
 import Spinner from '@/components/spinner'
 import { env } from '@/env.mjs'
@@ -202,7 +203,7 @@ const Buy = ({
 	// how a resting button earns attention (DESIGN rules 7 and 13).
 	return (
 		<>
-			<Pricing.BuyButton className={cn(WORKSHOP_CTA_BUTTON, className)}>
+			<GatedBuyButton className={cn(WORKSHOP_CTA_BUTTON, className)}>
 				<span data-label="">Buy Now</span>
 				<span
 					data-divider=""
@@ -226,7 +227,7 @@ const Buy = ({
 						</>
 					)}
 				</span>
-			</Pricing.BuyButton>
+			</GatedBuyButton>
 			{status === 'error' && (
 				<p role="alert" className="text-muted-foreground mt-2 text-sm">
 					Price unavailable. Reload to try again.
