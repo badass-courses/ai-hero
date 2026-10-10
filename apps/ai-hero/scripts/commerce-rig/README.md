@@ -1,12 +1,12 @@
-# AI Hero commerce rig (draft, runtime proof pending)
+# AI Hero commerce rig
 
 A local MySQL 8 database, synthetic buyers, a Stripe test catalog, the real app checkout route, and a local Inngest server. This is test tooling only. It does not change application code, production configuration, or pricing rules.
 
-**Not yet an E2E-verified rig.** Safety tests pass. The first runtime attempt could not access Docker, so schema push, seed, app startup and paid fulfillment are unverified. Named test-key leasing works. A repeat anonymous-provisioning guard probe returned the prefix **`rkcs_test_`**. It is outside the accepted `sk_test_` / `rk_test_` prefixes and was refused. The original probe's credential was deleted during cleanup; no key material is retained in this documentation. Do not merge or use the rig as evidence of production prices until the paid receipt passes.
+**Status:** `rig checkout new-buyer --complete` passes end to end on macOS (Docker Desktop/OrbStack) with the named Stripe sandbox: a hosted test-card payment, the forwarded `checkout.session.completed` webhook, a matching Valid C5 purchase and a matching C5 entitlement, all read back. Linux hosts keep working through the same code paths. The anonymous-provisioning route is still fenced: the CLI returned the prefix **`rkcs_test_`**, outside the accepted `sk_test_` / `rk_test_` prefixes. Measured totals describe today's checkout code against this synthetic catalog, not production configuration.
 
 ## For agents
 
-Requirements: Node 22+, installed workspace dependencies (`pnpm install --frozen-lockfile` from the repo root), Docker Compose v2 with socket access, the `secrets` CLI and a local agent-secrets daemon. Stripe CLI 1.53.1 and Inngest CLI 1.46.0 are invoked through pinned `npx` packages. No Stripe login is needed or permitted.
+Requirements: Node 24+, installed workspace dependencies (`pnpm install --frozen-lockfile` from the repo root), `rsync`, Docker Compose v2 with socket access, the `secrets` CLI and a local agent-secrets daemon. Stripe CLI 1.53.1 and Inngest CLI 1.46.0 are invoked through pinned `npx` packages. No Stripe login is needed or permitted.
 
 From the development checkout:
 
@@ -26,9 +26,11 @@ pnpm exec playwright install chromium
 
 Run startup, reset and paid checkout in an owned terminal pane or background job when acting as an agent. They can take several minutes. Each step reports `ok` or its failed step. A failed step is not readiness. A running status requires the owned supervisor plus HTTP health responses from the app and jobs server.
 
-`up` preserves an existing seeded run and reuses healthy owned services. `reset` stops owned services, expires owned open sessions, archives owned Stripe prices/products, drops only `commerce_rig`, invokes the app's own `db:push`, seeds a fresh run and starts services. `down` stops owned services and Docker containers but preserves the database volume, Stripe artifacts and receipts. Use `reset` before `down` when provider cleanup is wanted. A failed seed requires `reset`, not hand-edited DB rows.
+`up` preserves an existing seeded run and reuses healthy owned services. `reset` stops owned services, expires owned open sessions, archives owned Stripe prices/products, drops only `commerce_rig`, applies the app schema, seeds a fresh run and starts services.
 
-A crash can leave `command.lock`. Inspect its PID and owner before removing it; the rig refuses concurrent commands rather than guessing a stale lock is safe. The supervisor uses PID, `/proc` environment and exact script ownership checks. It never kills by process name.
+**Schema.** `drizzle-kit push` reported success while MySQL 8 rejected `timestamp(3) ... ON UPDATE CURRENT_TIMESTAMP`. The rig therefore runs `drizzle-kit generate` against the app's own schema into private state, applies a rig-only overlay (`ON UPDATE CURRENT_TIMESTAMP(3)` for fractional timestamps), executes each statement with errors fatal, and then requires every table and column in drizzle's snapshot to exist in `information_schema`. A missing table or column fails `up`. On an already populated database it only verifies; a partial apply needs `reset`. The app's source schema and migrations are unchanged. `down` stops owned services and Docker containers but preserves the database volume, Stripe artifacts and receipts. Use `reset` before `down` when provider cleanup is wanted. A failed seed requires `reset`, not hand-edited DB rows.
+
+A crash can leave `command.lock`. Inspect its PID and owner before removing it; the rig refuses concurrent commands rather than guessing a stale lock is safe. The supervisor uses PID, process environment (`/proc` on Linux, `ps eww` on macOS) and exact script/state-path ownership checks. It never kills by process name.
 
 ## Stripe key source
 
@@ -58,11 +60,11 @@ All intentional seed creates carry `metadata.rig=aihero-commerce` and `metadata.
 
 State lives under **`scripts/commerce-rig/.state/slot-N/`**, ignored by Git. Directories are 0700; credentials, env files, journals and receipts are 0600. Never commit or paste these files into a PR. The named test key remains in the local secret store; scratch-file handoffs are not required.
 
-The app runs from a private mirror that excludes every original `.env*` file and `.next`. The rig copies `tsconfig.json` so Next cannot rewrite the source checkout's config. Child env is constructed from local values, never spread from the operator's environment. Vercel variables cannot redirect the app to production.
+The app runs from a private mirror: an `rsync` copy of the app source that excludes every original `.env*` file, `.next` and the rig's own state, plus a link to `node_modules`. Turbopack does not discover routes through a symlinked `src/app`, so the mirror is a real copy, refreshed on each `up`. A rig-only `next.config.mjs` wraps the original and pins `turbopack.root` to the monorepo, because Turbopack otherwise infers a root from any lockfile above the checkout. The workspace packages the app imports from `dist/` are built before startup, as the app's `prebuild` does. Child env is constructed from local values, never spread from the operator's environment. Vercel variables cannot redirect the app to production.
 
-Only the exact rig TCP database URL is accepted. MySQL binds to loopback. Slot 0 uses app 3310, MySQL 13316, Inngest 8288 and gateway 8289. Set `RIG_SLOT=1` through `9` to reserve separate ports, state and Docker project/volume names; each slot adds 10 to these ports. Use the same slot and Stripe mode for every command in that run. Separate slots support independent named runs; ephemeral runs additionally isolate the Stripe account when provisioning succeeds.
+Only the exact rig TCP database URL is accepted. MySQL binds to loopback. Slot 0 uses app 3310, MySQL 13316, Inngest 18288, gateway 18289 and Inngest gRPC 18290/18291. The rig avoids Inngest's default 8288, which a real Inngest server may own, and `up` refuses to start when any service port already accepts connections. Set `RIG_SLOT=1` through `9` to reserve separate ports, state and Docker project/volume names; each slot adds 10 to these ports. Use the same slot and Stripe mode for every command in that run. Separate slots support independent named runs; ephemeral runs additionally isolate the Stripe account when provisioning succeeds.
 
-The app preload allows outbound sockets only to its selected loopback ports and `api.stripe.com:443`. It also guards global fetch. This is a Node-process test fence, **not an OS security sandbox**. Native executables or an uninstrumented runtime are not covered. Browser checkout automation has its own request allowlist for the local app and Stripe domains.
+The app preload allows outbound sockets only to its selected loopback ports and `api.stripe.com:443`. The one addition is Turbopack's loader IPC: a process whose entry script is inside the rig's own `.next` may connect to the loopback port in its argv. It also guards global fetch. This is a Node-process test fence, **not an OS security sandbox**. Native executables or an uninstrumented runtime are not covered. Browser checkout automation has its own request allowlist for the local app and Stripe domains.
 
 | Integration | Rig behavior |
 | --- | --- |
@@ -82,15 +84,15 @@ Provider-dependent jobs may therefore fail explicitly in the local job UI. That 
 
 ## Fixtures and receipts
 
-There are 18 deterministic `*@example.test` users: new buyer; Crash Course paid 99/199/299; C3 and C4 alumni with no CC or each CC amount; legend; PPP-origin CC; refunded CC; redeemed team seat; team purchaser; binding-quote input. Histories use real settled Stripe **test** payments with linked charges when Stripe is seeded. Refunded history includes a real test refund. Team-seat history has a zero-paid redemption marker, not invented individual payment evidence.
+There are 22 deterministic `*@example.test` users: new buyer; Crash Course paid 99/199/299; C3 and C4 alumni with no CC or each CC amount; legend (owns all six paid courses); PPP-origin CC; refunded CC; redeemed team seat; team purchaser with earlier seats; fresh team orders at the first quantity of each seat band (2, 5, 10, 30); binding-quote input. Seeded commerce rows are active (`status = 1`), and fixture memberships carry an owner role the way personal-org provisioning creates them. Histories use real settled Stripe **test** payments with linked charges when Stripe is seeded. Refunded history includes a real test refund. Team-seat history has a zero-paid redemption marker, not invented individual payment evidence.
 
-The seed catalog is deliberately **synthetic and bare**. No customer dump, production coupon configuration, reviewed legend manifest or Front quote store is imported. Fixture types are not policy implementation. Legend and binding quote are explicit pending fact inputs in `seed.json`; their full eligibility is not represented by ordinary purchase rows. Existing price/credit selectors run unchanged. Add authoritative fact adapters/configuration in their owning projects before calling these two fixtures complete.
+The seed catalog is deliberately **synthetic and bare**. No customer dump, production coupon configuration, reviewed legend manifest or Front quote store is imported. The one discount configuration seeded is Course Builder's generic bulk coupons, at the tiers the installed `@coursebuilder/commerce` reports, because bulk checkout looks them up by type and tier. Fixture types are not policy implementation. Legend and binding quote are explicit pending fact inputs in `seed.json`; their full eligibility is not represented by ordinary purchase rows. Existing price/credit selectors run unchanged. Add authoritative fact adapters/configuration in their owning projects before calling these two fixtures complete.
 
-`checkout <fixture>` inserts a temporary local Auth.js database session and verifies the app resolves that exact buyer. It calls the real authenticated checkout route and retrieves Stripe's session total. Without `--complete`, it records and expires the session. With `--complete`, it submits **4242 4242 4242 4242** through the Stripe-hosted page, then waits for paid status, the matching stored webhook, a matching C5 purchase for the buyer/amount, and C5 access from that purchase. Browser selectors can drift; a failure produces a private screenshot and does not claim proof.
+`checkout <fixture>` inserts a temporary local Auth.js database session and verifies the app resolves that exact buyer. It POSTs to the real authenticated checkout route as the buy form does, follows the app's same-origin `/subscribe/verify-login` hop for cohort products, and retrieves Stripe's session total. Without `--complete`, it records and expires the session. With `--complete`, it selects the card method, opts out of Link and submits **4242 4242 4242 4242** through the Stripe-hosted page, then waits for paid status, the matching stored webhook, a matching C5 purchase for the buyer/amount, and C5 access from that purchase. Browser selectors can drift; a failure produces a private screenshot plus a control-name list (no values) and does not claim proof.
 
 Private artifacts:
 
-- `checkout-<fixture>.json`: source commit, run, session subtotal/discount/tax/total, paid state and fulfillment evidence.
+- `checkout-<fixture>.json`: source commit and whether the rig tree was dirty, run, session subtotal/discount/tax/total, paid state and fulfillment evidence.
 - `price-table.json`: observed amounts against this checkout and **this synthetic catalog**, or explicit blocked rows. Not a production pricing table or the policy's desired numbers.
 - `seed.json`, `artifacts.json`: fixture inputs, provider mappings and reset ownership.
 - `runtime.env`, `stripe.env`: credentials, never include in reports.

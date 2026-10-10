@@ -6,6 +6,7 @@ import { chmod, copyFile, lstat, mkdir, open, readFile, readdir, symlink, unlink
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
+import net from 'node:net'
 import Stripe from 'stripe'
 import { catalog, fixtures } from './fixtures.mjs'
 import { assertDatabase, cleanEnv, databaseUrl, origin, ports, privateWrite, readPrivateKey, slot } from './safety.mjs'
@@ -13,6 +14,7 @@ import { sandbox } from './sandbox.mjs'
 import { archiveRun } from './stripe-state.mjs'
 import { checkout } from './checkout.mjs'
 import { connect, seed } from './seed.mjs'
+import { applySchema } from './schema.mjs'
 const exec = promisify(execFile)
 const require = createRequire(import.meta.url)
 const dir = dirname(fileURLToPath(import.meta.url)), app = resolve(dir, '../..')
@@ -43,23 +45,42 @@ async function compose(args) {
 }
 async function prepareMirror() {
   await privateDirectory(mirror)
-  for (const entry of await readdir(app)) {
-    if (entry.startsWith('.env') || ['.next', 'next-env.d.ts'].includes(entry)) continue
-    const target = join(mirror, entry)
-    if (await lstat(target).catch(() => null)) continue
-    if (entry === 'tsconfig.json') await copyFile(join(app, entry), target)
-    else await symlink(join(app, entry), target)
-  }
+  // A real copy: Turbopack does not discover routes through a symlinked src/app.
+  // Every original .env* file is excluded; the rig writes its own .env.local.
+  await exec('rsync', ['-a', '--delete', '--exclude=/node_modules', '--exclude=/.next', '--exclude=/.env*', '--exclude=/next-env.d.ts', '--exclude=/next.config.mjs', '--exclude=/commerce-rig.drizzle.config.mjs', '--exclude=/scripts/commerce-rig/.state', `${app}/`, `${mirror}/`], { timeout: 240000, maxBuffer: 2 * 1024 * 1024 })
+  const modules = join(mirror, 'node_modules')
+  if (!(await lstat(modules).catch(() => null))) await symlink(join(app, 'node_modules'), modules)
+  // Turbopack otherwise infers its root from any lockfile above the mirror,
+  // including ones outside the repo. Pin it to the monorepo, unchanged otherwise.
+  const original = join(app, 'next.config.mjs'), root = resolve(app, '../..')
+  // Mirrors from earlier rig versions linked the original config here.
+  if ((await lstat(join(mirror, 'next.config.mjs')).catch(() => null))?.isSymbolicLink()) await unlink(join(mirror, 'next.config.mjs'))
+  await privateWrite(join(mirror, 'next.config.mjs'), [
+    `const base = (await import(${JSON.stringify(original)})).default`,
+    'export default async (phase, context) => {',
+    '  const config = typeof base === \'function\' ? await base(phase, context) : base',
+    `  return { ...config, turbopack: { ...config.turbopack, root: ${JSON.stringify(root)} } }`,
+    '}',
+  ].join('\n') + '\n')
 }
 async function ownedSupervisor() {
   const info = await json(join(state, 'supervisor.json'))
   if (!info || info.owner !== owner || !Number.isInteger(info.pid)) return null
   try {
-    const env = await readFile(`/proc/${info.pid}/environ`, 'utf8')
-    const cmd = await readFile(`/proc/${info.pid}/cmdline`, 'utf8')
-    if (!env.split('\0').includes(`COMMERCE_RIG_OWNER=${owner}`) || !cmd.includes(join(dir, 'serve.mjs'))) return null
+    const { env, cmd } = await processIdentity(info.pid)
+    if (!env.includes(`COMMERCE_RIG_OWNER=${owner}`) || !cmd.includes(join(dir, 'serve.mjs')) || !cmd.includes(state)) return null
     return info
   } catch { return null }
+}
+// Linux exposes /proc; macOS shows a same-user process environment through `ps eww`.
+async function processIdentity(pid) {
+  if (process.platform === 'linux') {
+    const env = (await readFile(`/proc/${pid}/environ`, 'utf8')).split('\0')
+    return { env, cmd: (await readFile(`/proc/${pid}/cmdline`, 'utf8')).split('\0').join(' ') }
+  }
+  const { stdout: cmd } = await exec('ps', ['-p', String(pid), '-o', 'command='], { timeout: 5000 })
+  const { stdout: withEnv } = await exec('ps', ['eww', '-p', String(pid), '-o', 'command='], { timeout: 5000 })
+  return { env: withEnv.trim().split(/\s+/), cmd: cmd.trim() }
 }
 async function stop() {
   const info = await ownedSupervisor()
@@ -78,8 +99,23 @@ async function healthy() {
   try {
     const appResponse = await fetch(`${origin}/api/auth/session`, { signal: AbortSignal.timeout(5000) })
     const jobsResponse = await fetch(`http://127.0.0.1:${ports.jobs}/health`, { signal: AbortSignal.timeout(5000) })
-    return appResponse.ok && jobsResponse.ok
+    // A real Inngest server answers /health too; only the local dev server counts.
+    return appResponse.ok && jobsResponse.ok && jobsResponse.headers.get('x-inngest-server-kind') === 'dev'
   } catch { return false }
+}
+// Inngest silently moves to another port on conflict, and the app would then talk
+// to whatever owns the configured one. Refuse to start instead.
+async function assertPortsFree() {
+  for (const port of [ports.app, ports.jobs, ports.worker, ports.gatewayGrpc, ports.executorGrpc]) {
+    const busy = await new Promise(resolve => {
+      const socket = net.connect({ host: '127.0.0.1', port })
+      socket.setTimeout(1000)
+      socket.once('connect', () => { socket.destroy(); resolve(true) })
+      socket.once('timeout', () => { socket.destroy(); resolve(false) })
+      socket.once('error', () => resolve(false))
+    })
+    if (busy) throw new Error(`Port ${port} is already in use on 127.0.0.1; pick another RIG_SLOT or stop its owner`)
+  }
 }
 async function runtimeKey() {
   if ((process.env.RIG_STRIPE ?? 'named') === 'named') return (await sandbox(state)).key
@@ -93,6 +129,7 @@ async function up() {
     return
   }
   await stop()
+  await step('ports-free', assertPortsFree)
   await step('isolated-app-directory', prepareMirror)
   let config = await json(join(state, 'config.json'))
   if (!config) {
@@ -106,12 +143,7 @@ async function up() {
   // db:push and Next never read the original checkout's .env files.
   await privateWrite(join(mirror, '.env.local'), Object.entries(env).map(([name, value]) => `${name}=${value}`).join('\n') + '\n')
   env.NODE_OPTIONS = `--require=${JSON.stringify(join(dir, 'network-guard.cjs'))}`
-  await step('schema-push', async () => {
-    try {
-      const result = await exec('pnpm', ['run', 'db:push', '--force'], { cwd: mirror, env, timeout: 240000, maxBuffer: 2 * 1024 * 1024 })
-      await privateWrite(join(state, 'schema.log'), result.stdout.replace(/(?:sk_test_|rk_test_|whsec_)[A-Za-z0-9_]+/g, '[redacted]'))
-    } catch { throw new Error('App db:push failed in the isolated directory') }
-  })
+  await step('schema-apply-and-verify', () => applySchema({ mirror, state, env, databaseUrl }))
   process.env.DATABASE_URL = assertDatabase(databaseUrl)
   process.env.STRIPE_SECRET_TOKEN = key
   const priorSeed = await json(join(state, 'seed.json'))
@@ -126,7 +158,18 @@ async function up() {
     }
     await seed(state, config.run)
   })
+  // The app's prebuild compiles these workspace packages; their exports point at dist/.
+  await step('workspace-packages', async () => {
+    try {
+      await exec('pnpm', ['--filter', '@ai-hero/course-sync-schema', '--filter', '@ai-hero/front-desk-support', 'build'], { cwd: resolve(app, '../..'), env: { PATH: process.env.PATH, HOME: process.env.HOME, LANG: 'C.UTF-8' }, timeout: 240000, maxBuffer: 4 * 1024 * 1024 })
+    } catch (error) {
+      await privateWrite(join(state, 'workspace-build.log'), `${error.stdout ?? ''}\n${error.stderr ?? ''}`)
+      throw new Error('Workspace package build failed; inspect private workspace-build.log')
+    }
+  })
   await step('listener-inngest-app', async () => {
+    // A previous attempt's failure must not fail this start.
+    await unlink(join(state, 'failure.json')).catch(error => { if (error.code !== 'ENOENT') throw error })
     const daemonEnv = { PATH: process.env.PATH, HOME: env.HOME, LANG: env.LANG, RIG_SLOT: String(slot), COMMERCE_RIG_OWNER: owner }
     const proc = spawn(process.execPath, [join(dir, 'serve.mjs'), state, mirror], { cwd: app, env: daemonEnv, detached: true, stdio: 'ignore' })
     proc.unref()
@@ -179,8 +222,8 @@ async function prices() {
   for (const fixture of fixtures) {
     try {
       const receipt = await checkout(state, key, fixture.key)
-      rows.push({ fixture: fixture.key, quantity: fixture.quantity, totalCents: receipt.createdSession.total, pendingFacts: receipt.pendingFacts, basis: receipt.catalogBasis })
-    } catch { rows.push({ fixture: fixture.key, status: 'blocked', reason: fixture.pending ?? 'checkout failed; inspect private logs' }) }
+      rows.push({ fixture: fixture.key, quantity: fixture.quantity, subtotalCents: receipt.createdSession.subtotal, discountCents: receipt.createdSession.discount, totalCents: receipt.createdSession.total, pendingFacts: receipt.pendingFacts, basis: receipt.catalogBasis, commit: receipt.commit, dirty: receipt.dirty })
+    } catch (error) { rows.push({ fixture: fixture.key, quantity: fixture.quantity, status: 'blocked', reason: String(error.message).replace(/(?:sk_test_|rk_test_|whsec_)[A-Za-z0-9_]+/g, '[redacted]'), pendingFacts: fixture.pending ?? null }) }
   }
   await privateWrite(join(state, 'price-table.json'), JSON.stringify(rows, null, 2) + '\n')
   console.table(rows.map(row => ({ fixture: row.fixture, quantity: row.quantity, total: row.totalCents === undefined ? 'blocked' : (row.totalCents / 100).toFixed(2), pending: row.pendingFacts ?? row.reason ?? '' })))

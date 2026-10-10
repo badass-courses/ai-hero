@@ -1,9 +1,10 @@
 import { randomBytes } from 'node:crypto'
-import { chmod, lstat, readFile, writeFile } from 'node:fs/promises'
+import { chmod, lstat, readFile, rename, writeFile } from 'node:fs/promises'
 
 export const slot = Number(process.env.RIG_SLOT ?? 0)
 if (!Number.isInteger(slot) || slot < 0 || slot > 9) throw new Error('RIG_SLOT must be an integer from 0 to 9')
-export const ports = { db: 13316 + slot * 10, app: 3310 + slot * 10, jobs: 8288 + slot * 10, worker: 8289 + slot * 10 }
+// Inngest's default 8288 is often taken by a real Inngest server; the rig never shares it.
+export const ports = { db: 13316 + slot * 10, app: 3310 + slot * 10, jobs: 18288 + slot * 10, worker: 18289 + slot * 10, gatewayGrpc: 18290 + slot * 10, executorGrpc: 18291 + slot * 10 }
 export const databaseUrl = `mysql://rig:rig-local-only@127.0.0.1:${ports.db}/commerce_rig`
 export const origin = `http://127.0.0.1:${ports.app}`
 export function assertDatabase(value) {
@@ -22,8 +23,11 @@ export async function privateWrite(path, value) {
   // Refuse symlinks rather than chmod or overwrite a foreign file.
   const stat = await lstat(path).catch(error => { if (error.code !== 'ENOENT') throw error })
   if (stat?.isSymbolicLink()) throw new Error('Refusing a symlink in private state')
-  await writeFile(path, value, { mode: 0o600 })
-  await chmod(path, 0o600)
+  // Write then rename, so a concurrent reader never sees a half-written file.
+  const temporary = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`
+  await writeFile(temporary, value, { mode: 0o600, flag: 'wx' })
+  await chmod(temporary, 0o600)
+  await rename(temporary, path)
 }
 export async function readPrivateKey(path) {
   const stat = await lstat(path)

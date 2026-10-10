@@ -77,16 +77,17 @@ if (!webhook || ending) { if (!ending) await fail('stripe-listener'); } else {
   const env = cleanEnv({ key, webhook, state, home: base.HOME })
   env.COMMERCE_RIG_OWNER = config.owner
   env.COMMERCE_RIG_RUN = config.run
+  env.COMMERCE_RIG_NEXT_DIR = join(mirror, '.next')
   env.NODE_OPTIONS = `--require=${JSON.stringify(resolve(import.meta.dirname, 'network-guard.cjs'))}`
   await privateWrite(join(state, 'runtime.env'), Object.entries(env).map(([name, value]) => `${name}=${value}`).join('\n') + '\n')
   const inngestEnv = { PATH: base.PATH, HOME: base.HOME, LANG: base.LANG, INNGEST_DEV: '1', COMMERCE_RIG_OWNER: config.owner }
-  child('inngest', 'npx', ['-y', 'inngest-cli@1.46.0', 'dev', '--no-discovery', '-u', `${origin}/api/inngest`, '--host', '127.0.0.1', '--port', String(ports.jobs), '--connect-gateway-port', String(ports.worker), '--connect-gateway-grpc-port', String(50052 + config.slot * 10), '--connect-executor-grpc-port', String(50053 + config.slot * 10)], inngestEnv)
+  child('inngest', 'npx', ['-y', 'inngest-cli@1.46.0', 'dev', '--no-discovery', '-u', `${origin}/api/inngest`, '--host', '127.0.0.1', '--port', String(ports.jobs), '--connect-gateway-port', String(ports.worker), '--connect-gateway-grpc-port', String(ports.gatewayGrpc), '--connect-executor-grpc-port', String(ports.executorGrpc)], inngestEnv)
   child('app', process.execPath, [require.resolve('next/dist/bin/next'), 'dev', '--hostname', '127.0.0.1', '--port', String(ports.app)], env)
   const readyDeadline = Date.now() + 180000
   while (!ending && Date.now() < readyDeadline) {
     try {
       const [app, jobs] = await Promise.all([fetch(`${origin}/api/auth/session`, { signal: AbortSignal.timeout(3000) }), fetch(`http://127.0.0.1:${ports.jobs}/health`, { signal: AbortSignal.timeout(3000) })])
-      if (app.ok && jobs.ok) {
+      if (app.ok && jobs.ok && jobs.headers.get('x-inngest-server-kind') === 'dev') {
         actor.send({ type: 'READY' })
         await privateWrite(join(state, 'status.json'), JSON.stringify({ status: 'running', run: config.run, webhookRoute: '/api/coursebuilder/webhook/stripe', app: origin, readyAt: new Date().toISOString() }) + '\n')
         break

@@ -5,7 +5,16 @@ const tls = require('node:tls')
 const { syncBuiltinESMExports } = require('node:module')
 const slot = Number(process.env.RIG_SLOT || 0)
 if (!Number.isInteger(slot) || slot < 0 || slot > 9) throw new Error('commerce-rig: invalid slot')
-const localPorts = new Set([9, 3310 + slot * 10, 8288 + slot * 10, 8289 + slot * 10, 13316 + slot * 10])
+const localPorts = new Set([9, 3310 + slot * 10, 18288 + slot * 10, 18289 + slot * 10, 13316 + slot * 10])
+// Turbopack runs loaders as `node <.next chunk> <port>` and connects back to its
+// parent on that loopback port. Allow only that port, only for the rig's own build.
+const ipcPort = turbopackIpcPort(process.argv, process.env.COMMERCE_RIG_NEXT_DIR)
+if (ipcPort) localPorts.add(ipcPort)
+function turbopackIpcPort(argv, nextDir) {
+  if (!nextDir || !require('node:path').isAbsolute(nextDir) || !argv[1] || !/^\d{1,5}$/.test(argv[2] || '')) return null
+  const script = require('node:path').resolve(argv[1])
+  return script.startsWith(nextDir + '/') ? Number(argv[2]) : null
+}
 function allowed(host, port) {
   host = String(host || 'localhost').toLowerCase()
   return ((host === '127.0.0.1' || host === 'localhost' || host === '::1') && localPorts.has(Number(port))) || (host === 'api.stripe.com' && Number(port) === 443)
@@ -30,4 +39,4 @@ if (originalFetch) globalThis.fetch = function (input, options) {
 }
 syncBuiltinESMExports()
 if (process.env.COMMERCE_RIG_RUN) require('./stripe-metadata.cjs').install(process.env.COMMERCE_RIG_RUN)
-module.exports = { allowed, check }
+module.exports = { allowed, check, turbopackIpcPort }

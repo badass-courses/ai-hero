@@ -9,6 +9,7 @@ import { catalog, fixtures, fixtureFor } from './fixtures.mjs'
 import { assertDatabase, assertTestKey, assertTestObject, cleanEnv, databaseUrl, origin, privateWrite, readPrivateKey, publicSession } from './safety.mjs'
 import { provesAccess } from './checkout.mjs'
 import { tables } from './seed.mjs'
+import { missingSchema, overlay, splitStatements } from './schema.mjs'
 import { remember, archiveRun } from './stripe-state.mjs'
 import { startLifecycle } from './lifecycle.mjs'
 import { keySource, keyPrefix } from './sandbox.mjs'
@@ -76,7 +77,7 @@ test('Stripe response guards require explicit livemode=false', () => {
   assert.throws(() => publicSession({ livemode: false, currency: 'eur', amount_total: 100 }), /currency/)
 })
 test('fixture identity and exclusion shapes stay deterministic', () => {
-  assert.equal(fixtures.length, 18)
+  assert.equal(fixtures.length, 22)
   assert.equal(new Set(fixtures.map(f => f.key)).size, fixtures.length)
   assert.ok(fixtures.every(f => f.email.endsWith('@example.test') && f.userId.startsWith('rig_')))
   assert.deepEqual([99, 199, 299].map(n => fixtureFor(`cc-${n}`).purchases[0].cents), [9900, 19900, 29900])
@@ -86,8 +87,24 @@ test('fixture identity and exclusion shapes stay deterministic', () => {
   assert.equal(fixtureFor('team-purchaser').purchases[0].bulk, true)
   assert.ok(fixtureFor('binding-quote').pending)
   assert.ok(fixtureFor('legend').pending)
+  // A legend owns all six paid courses, not just the cohorts and Crash Course.
+  assert.deepEqual(fixtureFor('legend').purchases.map(p => catalog.find(c => c.key === p.product).id).sort(), ['product-3vfob', 'product-7t9ek', 'product-9wdta', 'product-ma254', 'product-pqkk5', 'product-wdhub'])
+  assert.deepEqual([2, 5, 10, 30].map(n => fixtureFor(`team-${n}`)).map(f => [f.quantity, f.purchases.length]), [[2, 0], [5, 0], [10, 0], [30, 0]])
   assert.throws(() => fixtureFor('real-user'), /Unknown/)
   assert.equal(catalog[0].id, 'product-s00zs')
+})
+test('schema overlay pins ON UPDATE precision only where MySQL rejects it', () => {
+  const ddl = 'CREATE TABLE `AI_X` (\n\t`updatedAt` timestamp(3) NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,\n\t`plain` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP\n);'
+  const fixed = overlay(ddl)
+  assert.match(fixed, /`updatedAt` timestamp\(3\)[^\n]*ON UPDATE CURRENT_TIMESTAMP\(3\),/)
+  assert.match(fixed, /`plain` timestamp NOT NULL DEFAULT \(now\(\)\) ON UPDATE CURRENT_TIMESTAMP\n/)
+  assert.equal(overlay(fixed), fixed)
+  assert.deepEqual(splitStatements('A;\n--> statement-breakpoint\nB;\n'), ['A;', 'B;'])
+})
+test('schema check fails closed on any missing table or column', () => {
+  const snapshot = { tables: { AI_A: { columns: { id: {}, name: {} } }, AI_B: { columns: { id: {} } } } }
+  assert.deepEqual(missingSchema(snapshot, [{ table: 'AI_A', column: 'id' }, { table: 'AI_A', column: 'name' }, { table: 'AI_B', column: 'id' }]), [])
+  assert.deepEqual(missingSchema(snapshot, [{ table: 'AI_A', column: 'id' }]), ['AI_A.name', 'AI_B'])
 })
 test('seed writes use installed Course Builder column contracts', () => {
   const purchase = getTableColumns(tables.purchases), entitlement = getTableColumns(tables.entitlements)
@@ -108,6 +125,13 @@ test('network preload blocks provider calls before connection and allows only th
   const result = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', env: { PATH: process.env.PATH, RIG_SLOT: '0' } })
   assert.equal(result.status, 0, result.stderr)
   assert.match(result.stdout, /blocked/)
+})
+test('Turbopack loader IPC is allowed only for the rig build and its argv port', () => {
+  // The guard patches sockets on load, so exercise it in a child process.
+  const script = `const {turbopackIpcPort:p}=require(${JSON.stringify(join(import.meta.dirname, 'network-guard.cjs'))}); const assert=require('node:assert/strict'); const d='/rig/app/.next';
+assert.equal(p(['node','/rig/app/.next/dev/build/chunks/runtime.js','51234'],d),51234); assert.equal(p(['node','/elsewhere/runtime.js','51234'],d),null); assert.equal(p(['node','/rig/app/.next-evil/x.js','51234'],d),null); assert.equal(p(['node','/rig/app/.next/x.js','api.stripe.com'],d),null); assert.equal(p(['node','/rig/app/.next/x.js','51234'],undefined),null); console.log('ok')`
+  const result = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', env: { PATH: process.env.PATH, RIG_SLOT: '0' } })
+  assert.equal(result.stdout.trim(), 'ok', result.stderr)
 })
 test('create-time Stripe metadata preserves attribution and tags nested payment intent', () => {
   const params = new URLSearchParams(metadata.tagBody('/v1/checkout/sessions', 'mode=payment&metadata%5BuserId%5D=rig_buyer', run))
