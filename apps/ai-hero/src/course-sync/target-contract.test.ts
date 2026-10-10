@@ -12,6 +12,7 @@ import {
 import {
 	AI_HERO_COURSE_SYNC_BINDING,
 	AI_HERO_COURSE_SYNC_BINDING_COHORT_005,
+	AI_HERO_COURSE_SYNC_BINDING_COHORT_005_V5,
 	AI_HERO_COURSE_SYNC_BINDING_V1,
 	AI_HERO_COURSE_SYNC_BINDING_V2_OPERATOR,
 	AI_HERO_COURSE_SYNC_BINDING_V3_UNLISTED,
@@ -99,9 +100,9 @@ describe('server-owned binding registry', () => {
 		)
 	})
 
-	it('pins the production Cohort 005 contract to the S0 readback and S5 spec (T21)', () => {
+	it('pins the production Cohort 005 v6 contract to the public cohort shell', () => {
 		expect(AI_HERO_COURSE_SYNC_BINDING_COHORT_005).toEqual({
-			contractVersion: 5,
+			contractVersion: 6,
 			bindingId: 'csb_ai_hero_cohort_005',
 			status: 'active',
 			sourceCourseId: '4cc62b33-db58-455d-83cb-94f680b119e4',
@@ -109,7 +110,7 @@ describe('server-owned binding registry', () => {
 			anchorCohortId: 'cohort-xdy1m',
 			targetContract: {
 				product: { type: 'cohort', state: 'draft', visibility: 'unlisted' },
-				cohort: { type: 'cohort', state: 'draft', visibility: 'unlisted' },
+				cohort: { type: 'cohort', state: 'published', visibility: 'public' },
 				relation: { position: 0, exclusiveProduct: true },
 			},
 			managedChildContract: {
@@ -117,7 +118,7 @@ describe('server-owned binding registry', () => {
 				lesson: { state: 'draft', visibility: 'unlisted' },
 			},
 			applyPolicy: 'bounded-auto',
-			initialApplyPolicyOverride: 'operator',
+			initialApplyPolicyOverride: null,
 			sectionMappingPolicy: 'sections-as-cohort-workshops',
 			sharedLinkSecretRef: 'DROPBOX_SYNC_SHARED_LINK_COHORT_005',
 			assetConnector: 'dropbox-shared-link',
@@ -234,6 +235,45 @@ function validCohortFacts(): CourseSyncTargetFacts {
 		childRelations: [],
 	}
 }
+
+describe('production cohort target contract v6', () => {
+	it('accepts a published public cohort with draft unlisted workshop children', () => {
+		const binding = AI_HERO_COURSE_SYNC_BINDING_COHORT_005
+		const facts = validCohortFacts()
+		facts.workshop!.fields = { state: 'published', visibility: 'public' }
+		facts.childRelations = [{
+			position: 0,
+			resource: {
+				id: 'synthetic-workshop',
+				type: 'workshop',
+				fields: {
+					state: 'draft',
+					visibility: 'unlisted',
+					courseSync: { bindingId: binding.bindingId },
+				},
+			},
+		}]
+		expect(collectCourseSyncTargetViolations(binding, facts)).toEqual([])
+		facts.childRelations[0]!.resource!.fields = {
+			state: 'published', visibility: 'unlisted',
+			courseSync: { bindingId: binding.bindingId },
+		}
+		expect(collectCourseSyncTargetViolations(binding, facts)).toMatchObject([
+			{ code: 'TARGET_CHILD_STATE_MISMATCH', expected: 'draft', actual: 'published' },
+		])
+	})
+
+	it('reproduces exactly the two stale v5 cohort violations', () => {
+		const facts = validCohortFacts()
+		facts.workshop!.fields = { state: 'published', visibility: 'public' }
+		expect(collectCourseSyncTargetViolations(
+			AI_HERO_COURSE_SYNC_BINDING_COHORT_005_V5, facts,
+		)).toMatchObject([
+			{ code: 'TARGET_WORKSHOP_STATE_MISMATCH', expected: 'draft', actual: 'published' },
+			{ code: 'TARGET_WORKSHOP_VISIBILITY_MISMATCH', expected: 'unlisted', actual: 'public' },
+		])
+	})
+})
 
 describe('cohort-anchored target contract v5', () => {
 	it('accepts the synthetic draft/unlisted cohort with zero live children (T5)', () => {
@@ -440,6 +480,26 @@ describe('course sync target contract v4', () => {
 })
 
 describe('stored binding migration', () => {
+	it('migrates only exact production C5 v5 to v6 and remains idempotent', () => {
+		const oldBinding = AI_HERO_COURSE_SYNC_BINDING_COHORT_005_V5
+		const binding = AI_HERO_COURSE_SYNC_BINDING_COHORT_005
+		expect(resolveStoredCourseSyncBinding(structuredClone(oldBinding), binding)).toEqual({
+			binding, migrated: true, fromContractVersion: 5,
+		})
+		expect(resolveStoredCourseSyncBinding(structuredClone(binding), binding)).toEqual({
+			binding, migrated: false, fromContractVersion: null,
+		})
+		for (const stored of [
+			{ ...oldBinding, productId: 'wrong-product' },
+			{ ...oldBinding, status: 'suspended' },
+			{ ...oldBinding, applyPolicy: 'operator' },
+			syntheticCohortBinding,
+		]) {
+			expect(() => resolveStoredCourseSyncBinding(stored, binding)).toThrowError(
+				expect.objectContaining({ code: 'IMMUTABLE_BINDING_CONFLICT' }),
+			)
+		}
+	})
 	it('migrates only the exact v2/v3 literals and is idempotent on v4', () => {
 		expect(() =>
 			resolveStoredCourseSyncBinding(

@@ -76,7 +76,7 @@ export async function deliverCourseSyncEntitlementSync(input: {
 		}
 		bindingId = run.bindingId
 		const binding = getServerCourseSyncBinding(bindingId)
-		if (binding.contractVersion !== 5)
+		if (binding.contractVersion === 4)
 			return { triggered: false, reason: 'not-cohort' }
 		const changes = cohortWorkshopEntitlementChanges(run.plan, input.lifecycle)
 		if (!changes.resourcesAdded.length && !changes.resourcesRemoved.length) {

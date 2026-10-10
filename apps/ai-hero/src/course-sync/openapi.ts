@@ -264,7 +264,7 @@ export function buildCourseSyncOpenApiDocument(baseUrl: string) {
 							],
 							properties: {
 								bindingId: { type: 'string', minLength: 1 },
-								contractVersion: { const: 5 },
+								contractVersion: { enum: [5, 6] },
 								status: { enum: ['active', 'suspended', 'revoked'] },
 								sourceCourseId: { type: 'string', minLength: 1 },
 								applyPolicy: { enum: ['bounded-auto', 'operator'] },
