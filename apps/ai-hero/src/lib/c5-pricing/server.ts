@@ -13,6 +13,7 @@ import type { AuthoritativePriceRequest } from '@coursebuilder/core/schemas'
 
 import { createFrontDeskData, type FrontDeskData } from './front-desk-data'
 import { createC5AuthoritativePrice, type BuyerRead } from './hook'
+import { holdsRestrictedPurchase } from './restricted-holder'
 import { trustedPricingCountry } from './trusted-country'
 
 /** Display reuses a buyer's facts this long; checkout always reads fresh. */
@@ -78,18 +79,25 @@ async function readBuyer(input: {
 		// are someone else's.
 		if (!facts || facts.buyer.userId !== input.userId)
 			return { kind: 'unavailable', reason: 'identity-mismatch' }
-		const [valid] = await db
-			.select({ id: purchases.id })
-			.from(purchases)
-			.where(
-				and(eq(purchases.userId, input.userId), eq(purchases.status, 'Valid')),
-			)
-			.limit(1)
+		const [[valid], restricted] = await Promise.all([
+			db
+				.select({ id: purchases.id })
+				.from(purchases)
+				.where(
+					and(
+						eq(purchases.userId, input.userId),
+						eq(purchases.status, 'Valid'),
+					),
+				)
+				.limit(1),
+			holdsRestrictedPurchase(input.userId, input.productId),
+		])
 		return {
 			kind: 'buyer',
 			email: user.email,
 			facts,
 			hasValidPurchase: Boolean(valid),
+			holdsRestrictedPurchase: restricted,
 		}
 	} catch {
 		return { kind: 'unavailable', reason: 'facts-read-failed' }

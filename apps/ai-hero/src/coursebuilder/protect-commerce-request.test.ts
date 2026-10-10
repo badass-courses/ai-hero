@@ -9,6 +9,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/db', () => ({
 	courseBuilderAdapter: { authoritativePrice: mocks.authoritativePrice },
 }))
+vi.mock('@/lib/c5-pricing/restricted-holder', () => ({
+	holdsRestrictedPurchase: vi.fn(async () => false),
+}))
 vi.mock('@/server/auth', () => ({
 	getServerAuthSession: vi.fn(async () => ({ session: null })),
 }))
@@ -27,6 +30,7 @@ vi.mock('@/coursebuilder/coursebuilder-request-authorization', () => ({
 
 import { protectCourseBuilderRequest } from '@/coursebuilder/coursebuilder-request-authorization'
 import { PURCHASE_BLOCKED_ERROR_PATH } from '@/coursebuilder/purchase-block-checkout'
+import { REGIONAL_UPGRADE_PATH } from '@/lib/c5-pricing/products'
 
 import { protectCommerceRequest } from './protect-commerce-request'
 
@@ -83,6 +87,31 @@ describe('protectCommerceRequest', () => {
 				authoritativeProductIds: expect.any(Set),
 			}),
 		)
+	})
+
+	it('sends a regional ticket holder to support, not to a checkout error', async () => {
+		const holdsRestricted = vi.fn(async () => true)
+		const { request } = await protectCommerceRequest(checkout(C5), {
+			session: async () => ({ userId: 'user-regional' }),
+			isBlocked: async () => false,
+			holdsRestricted,
+		})
+		expect(request).toBeInstanceOf(Response)
+		const location = new URL((request as Response).headers.get('location')!)
+		expect((request as Response).status).toBe(303)
+		expect(location.pathname + location.search).toBe(REGIONAL_UPGRADE_PATH)
+		expect(holdsRestricted).toHaveBeenCalledWith('user-regional', C5)
+		expect(mocks.authoritativePrice).not.toHaveBeenCalled()
+
+		// Any other product keeps its own upgrade path.
+		holdsRestricted.mockClear()
+		const other = await protectCommerceRequest(checkout('product-ma254'), {
+			session: async () => ({ userId: 'user-regional' }),
+			isBlocked: async () => false,
+			holdsRestricted,
+		})
+		expect(other.request).toBeInstanceOf(NextRequest)
+		expect(holdsRestricted).not.toHaveBeenCalled()
 	})
 
 	it('sends an anonymous C5 checkout to sign in without creating a session', async () => {

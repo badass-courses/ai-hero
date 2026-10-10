@@ -33,6 +33,8 @@ export type BuyerRead =
 			readonly facts: PricingFacts
 			/** Whether any purchase blocks PPP, as legacy PPP does; null: unknown. */
 			readonly hasValidPurchase: boolean | null
+			/** Whether the buyer holds a region-restricted purchase of this product. */
+			readonly holdsRestrictedPurchase: boolean
 	  }
 	| {
 			readonly kind: 'anonymous'
@@ -164,6 +166,14 @@ export function createC5AuthoritativePrice(deps: C5PricingDeps) {
 		const withPolicy = { ...base, policyVersion: policy.value.version }
 		if (buyer.kind === 'unavailable')
 			return refusal('held', [APP_REASONS.factsUnavailable], withPolicy)
+		// No upgrade path: a regional holder reaches unrestricted access through
+		// support, and is never sold the product a second time.
+		if (
+			buyer.kind === 'buyer' &&
+			orderKind === 'individual' &&
+			buyer.holdsRestrictedPurchase
+		)
+			return refusal('held', [APP_REASONS.restrictedHolder], withPolicy)
 
 		const product = buyer.kind === 'buyer' ? buyer.facts.product : buyer.product
 		// Course Builder resolved the price it will charge; the facts must be

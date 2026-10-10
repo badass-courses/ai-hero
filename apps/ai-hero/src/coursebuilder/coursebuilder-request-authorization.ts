@@ -144,6 +144,8 @@ const protectPricesFormattedRequest = async (
 		delete body.couponId
 		delete body.code
 		delete body.country
+		// No upgrade path: a credit replaces the upgrade discount.
+		delete body.upgradeFromPurchaseId
 		return requestWithJsonBody(request, body)
 	}
 
@@ -204,6 +206,9 @@ const protectCheckoutRequest = async (
 		if (url.searchParams.get('couponId') !== AUTHORITATIVE_PPP_OFFER_ID)
 			url.searchParams.delete('couponId')
 		url.searchParams.delete('usedCouponId')
+		// No upgrade path: the credit replaces the upgrade discount, and Course
+		// Builder refuses an authoritative upgrade outright.
+		url.searchParams.delete('upgradeFromPurchaseId')
 		return requestWithUrl(request, url)
 	}
 

@@ -11,11 +11,14 @@ import { APP_REASONS } from './reasons'
  * - `sign-in`: nobody is signed in, so the price is an upper bound. The button
  *   stays enabled because checkout sends an anonymous buyer to sign in first
  *   and prices them fresh there; it never charges the bound.
+ * - `support`: the buyer holds a region-restricted purchase. There is no
+ *   upgrade path, so the button becomes a way to reach support.
  * - `blocked`: no purchasable price. The button is disabled.
  */
 export type PurchaseGate =
 	| { kind: 'buy'; upperBound: false }
 	| { kind: 'sign-in'; upperBound: true; label: string }
+	| { kind: 'support'; upperBound: false; label: string }
 	| { kind: 'blocked'; upperBound: boolean; label: string }
 
 const BLOCKED_LABEL: Record<string, string> = {
@@ -36,6 +39,13 @@ export function purchaseGate(
 		decision.reasons.includes(APP_REASONS.identityRequired)
 	) {
 		return { kind: 'sign-in', upperBound: true, label: 'Sign in to buy' }
+	}
+	if (decision.reasons.includes(APP_REASONS.restrictedHolder)) {
+		return {
+			kind: 'support',
+			upperBound: false,
+			label: 'Contact support to upgrade',
+		}
 	}
 	return {
 		kind: 'blocked',

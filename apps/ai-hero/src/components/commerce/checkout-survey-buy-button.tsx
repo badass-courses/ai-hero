@@ -24,7 +24,7 @@ import {
 	checkoutSurveyMachine,
 	type CheckoutSurveyAnswer,
 } from './checkout-survey-machine'
-import { UpperBoundNote } from './gated-buy-button'
+import { RegionalUpgradeSupport, UpperBoundNote } from './gated-buy-button'
 
 const CHECKOUT_SURVEY_ID = 'checkout-decision-source'
 const CHECKOUT_SURVEY_QUESTION_ID = 'what-helped-you-decide-to-join'
@@ -203,6 +203,9 @@ export function CheckoutSurveyBuyButton({
 		}
 		send({ type: 'BUY_CLICKED' })
 	}
+
+	if (gate.kind === 'support')
+		return <RegionalUpgradeSupport className={className} label={gate.label} />
 
 	if (snapshot.matches('idle')) {
 		return (

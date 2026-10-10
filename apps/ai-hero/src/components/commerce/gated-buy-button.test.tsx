@@ -16,6 +16,10 @@ vi.mock('@coursebuilder/commerce-next/pricing/pricing', () => ({
 	),
 }))
 
+vi.mock('@/env.mjs', () => ({
+	env: { NEXT_PUBLIC_SUPPORT_EMAIL: 'support@example.test' },
+}))
+
 vi.mock('@coursebuilder/ui', () => ({
 	Button: ({ children, ...props }: any) => (
 		<button {...props}>{children}</button>
@@ -74,6 +78,21 @@ describe('GatedBuyButton', () => {
 		expect(html).not.toContain('type="submit"')
 		expect(html).toContain('disabled=""')
 		expect(html).toContain(label)
+	})
+
+	it('sends a regional ticket holder to support instead of checkout', () => {
+		mocks.pricing.formattedPrice = {
+			authoritative: authoritative({
+				kind: 'held',
+				purchasable: false,
+				reasons: ['restricted-holder'],
+			}),
+		}
+		const html = render()
+		expect(html).not.toContain('type="submit"')
+		expect(html).toContain('data-purchase-gate="support"')
+		expect(html).toContain('href="mailto:support@example.test?subject=')
+		expect(html).toContain('Contact support to upgrade')
 	})
 
 	it('keeps an anonymous buyer a path to sign in, labelled as an upper bound', () => {

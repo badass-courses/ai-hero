@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import LayoutClient from '@/components/layout-client'
 import { env } from '@/env.mjs'
+import { REGIONAL_UPGRADE_REASON } from '@/lib/c5-pricing/products'
 import { PURCHASE_BLOCKED } from '@/lib/purchase-block'
 import { Mail } from 'lucide-react'
 
@@ -15,6 +16,10 @@ const COPY = {
 		title: "We can't complete this purchase",
 		body: 'Please contact support and we will help you from there.',
 	},
+	[REGIONAL_UPGRADE_REASON]: {
+		title: 'You already have a regional ticket',
+		body: 'Contact support and we will upgrade it to full access.',
+	},
 }
 
 /**
@@ -28,7 +33,9 @@ export default async function SubscribeErrorPage({
 }) {
 	const { reason } = await searchParams
 	const copy =
-		reason === PURCHASE_BLOCKED ? COPY[PURCHASE_BLOCKED] : COPY.default
+		reason === PURCHASE_BLOCKED || reason === REGIONAL_UPGRADE_REASON
+			? COPY[reason]
+			: COPY.default
 
 	return (
 		<LayoutClient withContainer>

@@ -7,6 +7,7 @@ import { revalidateTutorialLesson } from '@/app/(content)/tutorials/actions'
 import { useCohortNavigation } from '@/app/(content)/workshops/_components/cohort-navigation-provider'
 import { useWorkshopNavigation } from '@/app/(content)/workshops/_components/workshop-navigation-provider'
 import { CldImage } from '@/components/cld-image'
+import { RegionalUpgradeSupport } from '@/components/commerce/gated-buy-button'
 import Spinner from '@/components/spinner'
 import { VideoBlockNewsletterCta } from '@/components/video-block-newsletter-cta'
 import {
@@ -17,6 +18,7 @@ import {
 	findParentLessonForSolution,
 	getModuleCompletionState,
 } from '@/lib/content-navigation'
+import { AUTHORITATIVE_PRODUCT_IDS } from '@/lib/c5-pricing/products'
 import { setProgressForResource } from '@/lib/progress'
 import { MinimalWorkshop } from '@/lib/workshops'
 import type { Subscriber } from '@/schemas/subscriber'
@@ -579,6 +581,11 @@ const VideoPlayerOverlay: React.FC<VideoPlayerOverlayProps> = ({
 	const showTeamInvite =
 		canInviteTeam && !canView && purchaseForProduct?.bulkCoupon
 
+	// An authoritative product has no upgrade path; support upgrades it.
+	const upgradeBySupport = AUTHORITATIVE_PRODUCT_IDS.has(
+		pricingProps?.product?.id ?? '',
+	)
+
 	const { data: formattedPrice, status: formattedPriceStatus } =
 		api.pricing.formatted.useQuery(
 			{
@@ -588,9 +595,22 @@ const VideoPlayerOverlay: React.FC<VideoPlayerOverlayProps> = ({
 				autoApplyPPP: false,
 			},
 			{
-				enabled: Boolean(showRegionRestrictedBlock),
+				enabled: Boolean(showRegionRestrictedBlock) && !upgradeBySupport,
 			},
 		)
+
+	if (showRegionRestrictedBlock && upgradeBySupport) {
+		return (
+			<div
+				aria-live="polite"
+				className="relative z-40 flex aspect-video h-full w-full flex-col items-center justify-center gap-5 bg-gray-100 p-5 sm:text-lg"
+			>
+				<div className="w-full max-w-sm">
+					<RegionalUpgradeSupport />
+				</div>
+			</div>
+		)
+	}
 
 	if (showRegionRestrictedBlock) {
 		const regionNames = new Intl.DisplayNames(['en'], { type: 'region' })

@@ -677,6 +677,7 @@ describe('protectCourseBuilderRequest', () => {
 					couponId: protectedCoupon.id,
 					code: 'FORGED',
 					country: 'IN',
+					upgradeFromPurchaseId: 'purchase-crash-course',
 				}),
 			)
 			expect(await consent.json()).toEqual({
@@ -700,7 +701,7 @@ describe('protectCourseBuilderRequest', () => {
 			const checkout = (couponId: string) =>
 				protectC5(
 					new NextRequest(
-						`https://aihero.dev/api/coursebuilder/checkout/stripe?productId=${C5}&quantity=5&couponId=${couponId}&usedCouponId=${protectedCoupon.id}`,
+						`https://aihero.dev/api/coursebuilder/checkout/stripe?productId=${C5}&quantity=5&couponId=${couponId}&usedCouponId=${protectedCoupon.id}&upgradeFromPurchaseId=purchase-crash-course`,
 						{ method: 'POST' },
 					),
 				)
@@ -709,6 +710,9 @@ describe('protectCourseBuilderRequest', () => {
 				AUTHORITATIVE_PPP_OFFER_ID,
 			)
 			expect(consent.nextUrl.searchParams.has('usedCouponId')).toBe(false)
+			expect(consent.nextUrl.searchParams.has('upgradeFromPurchaseId')).toBe(
+				false,
+			)
 
 			const forged = await checkout(protectedMerchantCoupon.id)
 			expect(forged.nextUrl.searchParams.has('couponId')).toBe(false)

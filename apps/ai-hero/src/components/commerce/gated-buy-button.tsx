@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { env } from '@/env.mjs'
 import {
 	purchaseGate,
 	type PurchaseGate,
@@ -35,6 +36,42 @@ export function UpperBoundNote({ className }: { className?: string }) {
 	)
 }
 
+/** Where a regional ticket holder asks for unrestricted access. */
+export const regionalUpgradeHref = () =>
+	`mailto:${env.NEXT_PUBLIC_SUPPORT_EMAIL}?subject=${encodeURIComponent(
+		'Upgrade my regional ticket',
+	)}`
+
+/**
+ * What a buyer who holds a region-restricted ticket sees instead of Buy Now.
+ * There is no self-serve upgrade; support upgrades the ticket.
+ */
+export function RegionalUpgradeSupport({
+	className,
+	label = 'Contact support to upgrade',
+}: {
+	className?: string
+	label?: string
+}) {
+	return (
+		<div className="flex w-full flex-col items-center gap-2">
+			<p className="text-muted-foreground text-center text-sm">
+				You have a regional ticket. Support can upgrade it to full access.
+			</p>
+			<a
+				className={cn(
+					'bg-primary text-primary-foreground flex h-14 w-full items-center justify-center rounded px-4 py-4 text-center text-base font-medium',
+					className,
+				)}
+				href={regionalUpgradeHref()}
+				data-purchase-gate="support"
+			>
+				{label}
+			</a>
+		</div>
+	)
+}
+
 /**
  * `Pricing.BuyButton`, disabled when the authoritative decision has no
  * purchasable price. The stock button only knows pending, error and sold out.
@@ -49,6 +86,8 @@ export function GatedBuyButton({
 	asChild?: boolean
 }) {
 	const gate = usePurchaseGate()
+	if (gate.kind === 'support')
+		return <RegionalUpgradeSupport className={className} label={gate.label} />
 	if (gate.kind === 'blocked') {
 		return (
 			<>

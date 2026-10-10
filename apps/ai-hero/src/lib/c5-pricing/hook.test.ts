@@ -68,6 +68,7 @@ const signedIn = (
 	email: 'buyer@example.test',
 	facts,
 	hasValidPurchase,
+	holdsRestrictedPurchase: false,
 })
 
 let deps: C5PricingDeps
@@ -192,6 +193,23 @@ describe('createC5AuthoritativePrice', () => {
 			kind: 'held',
 			amountCents: 0,
 			reasons: [reason],
+		})
+	})
+
+	it('sends a regional ticket holder to support on display and at checkout', async () => {
+		buyer = { ...signedIn(), holdsRestrictedPurchase: true } as BuyerRead
+		for (const purpose of ['display', 'checkout'] as const)
+			expect(await ask({ purpose })).toMatchObject({
+				kind: 'held',
+				reasons: [APP_REASONS.restrictedHolder],
+			})
+		// Buying seats for a team is not an upgrade.
+		buyer = {
+			...signedIn(buyerFacts({ order: known('team' as const) })),
+			holdsRestrictedPurchase: true,
+		} as BuyerRead
+		expect(await ask({ quantity: 5, purpose: 'checkout' })).toMatchObject({
+			kind: 'priced',
 		})
 	})
 

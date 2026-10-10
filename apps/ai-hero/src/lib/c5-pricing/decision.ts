@@ -6,16 +6,11 @@ import type {
 
 import type { AuthoritativeDecision } from '@coursebuilder/core/schemas'
 
+import { C5_PRODUCT_ID } from './products'
 import { APP_REASONS } from './reasons'
 
-/** The one AI Hero product the in-process engine prices: Cohort 005. */
-export const C5_PRODUCT_ID = 'product-s00zs'
-/** Products the authoritative-price hook prices; everything else is legacy. */
-export const AUTHORITATIVE_PRODUCT_IDS: ReadonlySet<string> = new Set([
-	C5_PRODUCT_ID,
-])
-
 export { APP_REASONS } from './reasons'
+export { AUTHORITATIVE_PRODUCT_IDS, C5_PRODUCT_ID } from './products'
 
 /**
  * `decisionRef` names a decision and carries the one thing fulfillment needs

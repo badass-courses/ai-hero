@@ -4,6 +4,8 @@ import { resolveServerComputedCheckoutCoupon } from '@/coursebuilder/server-comp
 import { syntheticCheckoutRefusal } from '@/coursebuilder/synthetic-checkout'
 import { courseBuilderAdapter } from '@/db'
 import { AUTHORITATIVE_PRODUCT_IDS } from '@/lib/c5-pricing/decision'
+import { REGIONAL_UPGRADE_PATH } from '@/lib/c5-pricing/products'
+import { holdsRestrictedPurchase } from '@/lib/c5-pricing/restricted-holder'
 import { getServerAuthSession } from '@/server/auth'
 import type { NextRequest } from 'next/server'
 
@@ -31,6 +33,7 @@ export const protectCommerceRequest = async (
 	deps: {
 		session?: () => Promise<{ userId?: string }>
 		isBlocked?: (userId: string) => Promise<boolean>
+		holdsRestricted?: (userId: string, productId: string) => Promise<boolean>
 	} = {},
 ): Promise<{ request: NextRequest | Response; userId?: string }> => {
 	if (!isProtectedCommerceRequest(request)) return { request }
@@ -57,10 +60,29 @@ export const protectCommerceRequest = async (
 				adapter: courseBuilderAdapter,
 			}),
 	})
+	const authoritativeProduct = authoritativeCheckoutProduct(guarded)
+	// No upgrade path: a buyer who holds a region-restricted ticket goes to
+	// support, which upgrades it, instead of a checkout error.
+	if (
+		userId &&
+		authoritativeProduct &&
+		(await (deps.holdsRestricted ?? holdsRestrictedPurchase)(
+			userId,
+			authoritativeProduct,
+		))
+	) {
+		return {
+			request: Response.redirect(
+				new URL(REGIONAL_UPGRADE_PATH, request.url),
+				303,
+			),
+			userId,
+		}
+	}
 	// An authoritative product is priced from the signed-in buyer's facts.
 	// Nobody signed in goes to sign-in first; no Stripe session is created
 	// for an anonymous upper-bound price.
-	if (!userId && authoritativeCheckoutProduct(guarded)) {
+	if (!userId && authoritativeProduct) {
 		return {
 			request: Response.redirect(
 				new URL(
