@@ -22,6 +22,7 @@ import {
 import { getAdsCourseFunnelMetrics, getAdsCourseMetrics } from '@/lib/ads-course-metrics'
 import { processGoogleAdsSignupConversionUploads } from '@/lib/google-ads-signup-conversion-upload'
 import { getPurchaseConversionStatus } from '@/lib/purchase-conversion-status'
+import { updatePurchaseFields } from '@/lib/purchase-fields-write'
 import { getLocalSignupConversionStatus } from '@/lib/signup-conversion-status'
 import {
 	backfillOptInAttribution,
@@ -254,13 +255,6 @@ function parseJsonRecord(value: unknown) {
 		}
 	}
 	return isRecord(value) ? value : {}
-}
-
-function affectedRows(result: unknown) {
-	if (!isRecord(result)) return 0
-	return Number(
-		result.rowsAffected ?? result.affectedRows ?? result.rowCount ?? 0,
-	)
 }
 
 function writeReceipt(path: string | undefined, payload: unknown) {
@@ -733,16 +727,12 @@ async function shortlinkBackfill(args: {
 				shortlinkSlug: row.shortlinkSlug ?? null,
 				shortlinkMetadata: row.shortlinkMetadata,
 			})
-			const updateResult = await db
-				.update(purchases)
-				.set({ fields: { ...existingFields, attribution } })
-				.where(
-					and(
-						eq(purchases.id, row.purchaseId),
-						sql`JSON_EXTRACT(${purchases.fields}, '$.attribution') IS NULL`,
-					),
-				)
-			if (affectedRows(updateResult) > 0) {
+			const updateResult = await updatePurchaseFields({
+				purchaseId: row.purchaseId,
+				patch: { attribution },
+				where: sql`JSON_EXTRACT(${purchases.fields}, '$.attribution') IS NULL`,
+			})
+			if (updateResult.rowsAffected > 0) {
 				appliedCount += 1
 				appliedRevenue += Number(row.totalAmount ?? 0)
 			}
@@ -1000,17 +990,12 @@ async function invoiceAttributionAudit(args: {
 			exactEvidencePurchases += 1
 			exactEvidenceRevenue += revenue
 			if (args.allowWrite && !args.dryRun) {
-				const existingFields = parseJsonRecord(row.fields)
-				const updateResult = await db
-					.update(purchases)
-					.set({ fields: { ...existingFields, attribution } })
-					.where(
-						and(
-							eq(purchases.id, row.purchaseId),
-							sql`JSON_EXTRACT(${purchases.fields}, '$.attribution') IS NULL`,
-						),
-					)
-				if (affectedRows(updateResult) > 0) {
+				const updateResult = await updatePurchaseFields({
+					purchaseId: row.purchaseId,
+					patch: { attribution },
+					where: sql`JSON_EXTRACT(${purchases.fields}, '$.attribution') IS NULL`,
+				})
+				if (updateResult.rowsAffected > 0) {
 					appliedPurchases += 1
 					appliedRevenue += revenue
 				}
