@@ -14,6 +14,7 @@ export const ShortlinkMetadataSchema = z
 	.object({
 		schemaVersion: z.literal(1),
 		campaign: shortlinkMetadataSlug,
+		legendId: z.string().uuid().optional(),
 		campaignPhase: z.enum([
 			'prelaunch_research',
 			'warmup',
@@ -73,6 +74,14 @@ export const CreateShortlinkSchema = z.object({
 	url: z.string().url(),
 	description: z.string().max(255).optional(),
 	metadata: ShortlinkMetadataSchema.optional().nullable(),
+	gift: z.object({
+		codeRef: z.string().min(1).max(500),
+		firstName: z.string().min(1).max(100).regex(/^[\p{L}\p{M}'-]+$/u),
+		legendId: z.string().uuid(),
+	}).strict().optional(),
+}).superRefine((value, context) => {
+	if (value.gift && (value.metadata?.campaign !== 'legend-gift' || value.metadata.legendId !== value.gift.legendId || !value.slug))
+		context.addIssue({ code: 'custom', message: 'Gift links require a slug and matching opaque legend metadata' })
 })
 
 export type CreateShortlinkInput = z.infer<typeof CreateShortlinkSchema>

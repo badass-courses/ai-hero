@@ -1,6 +1,6 @@
 import { CB_AUTHORITATIVE_PRICING_CONTRACT_VERSION } from '@coursebuilder/core/schemas'
 
-import { C5_PRODUCT_ID, decodeDecisionRef } from './decision'
+import { C5_PRODUCT_ID, decodeDecisionRef, giftCodeDigest } from './decision'
 
 /**
  * The saved decision is the C5 credit ledger. Each paid C5 purchase keeps
@@ -57,7 +57,9 @@ export function parseSavedDecision(value: unknown): SavedC5Decision | null {
 		!Number.isFinite(Date.parse(row.savedAt))
 	)
 		return null
-	if (decodeDecisionRef(row.decisionRef)?.creditSource !== row.creditSource) return null
+	const ref = decodeDecisionRef(row.decisionRef)
+	if (ref?.creditSource !== row.creditSource) return null
+	if (ref?.codeDigest && (typeof row.codeRef !== 'string' || giftCodeDigest(row.codeRef) !== ref.codeDigest)) return null
 	// SAFETY: all persisted decision fields were validated above.
 	return row as unknown as SavedC5Decision
 }
@@ -84,13 +86,15 @@ export function decisionFromSession(
 	if (!decisionRef || !engineVersion || !policyVersion) return null
 	const ref = decodeDecisionRef(decisionRef)
 	if (!ref) return null
+	const codeRef = ref.codeDigest && metadata.codeRef && giftCodeDigest(metadata.codeRef) === ref.codeDigest ? metadata.codeRef : null
+	if (ref.codeDigest && !codeRef) return null
 	const expected = Number(metadata.expectedTotalCents)
 	return {
 		v: 1,
 		decisionRef,
 		creditSource: ref.creditSource,
-		codeRef: metadata.codeRef || null,
-		basis: metadata.basis || null,
+		codeRef,
+		basis: codeRef ? 'code' : metadata.basis || null,
 		contract: metadata.cbPricingContract,
 		engineVersion,
 		policyVersion,

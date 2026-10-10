@@ -91,14 +91,21 @@ export async function payHostedCheckout(url, state, { until } = {}) {
     }
   } finally { await browser.close() }
 }
-export async function checkout(state, key, fixtureKey, shouldComplete = false) {
+export async function checkout(state, key, fixtureKey, shouldComplete = false, { shortlinkSlug, keepOpen = false } = {}) {
   const fixture = fixtureFor(fixtureKey)
   const seed = JSON.parse(await readFile(join(state, 'seed.json'), 'utf8'))
   if (!seed.stripeSeeded) throw new Error('Stripe catalog is not seeded')
   const stripe = new Stripe(assertTestKey(key))
   const token = freshToken()
   await authenticate(fixture, token)
-  const cookie = `authjs.session-token=${token}`
+  let cookie = `authjs.session-token=${token}`
+  if (shortlinkSlug !== undefined) {
+    if (!/^[a-z0-9-]{1,50}$/.test(shortlinkSlug)) throw new Error('Invalid rig shortlink')
+    const visit = await fetch(`${origin}/s/${encodeURIComponent(shortlinkSlug)}`, { redirect: 'manual', signal: AbortSignal.timeout(60000) })
+    if (visit.status !== 307 || new URL(visit.headers.get('location'), origin).origin !== origin) throw new Error('Rig shortlink did not redirect locally')
+    const cookies = visit.headers.getSetCookie().map(value => value.split(';')[0]).filter(value => /^(?:c5_gift|sl_ref)=/.test(value))
+    cookie += '; ' + cookies.join('; ')
+  }
   const auth = await fetch(`${origin}/api/auth/session`, { headers: { cookie }, signal: AbortSignal.timeout(60000) })
   const sessionUser = await auth.json()
   if (!auth.ok || sessionUser.user?.id !== fixture.userId) throw new Error('Fixture login did not resolve to the expected user')
@@ -146,7 +153,7 @@ export async function checkout(state, key, fixtureKey, shouldComplete = false) {
   await privateWrite(join(state, `checkout-${fixture.key}.json`), JSON.stringify(receipt, null, 2) + '\n')
   console.log(`ok checkout ${fixture.key}: USD ${(session.amount_total / 100).toFixed(2)} (${id})`)
   if (!shouldComplete) {
-    assertTestObject(await stripe.checkout.sessions.expire(id))
+    if (!keepOpen) assertTestObject(await stripe.checkout.sessions.expire(id))
     return receipt
   }
   await payHostedCheckout(target, state)

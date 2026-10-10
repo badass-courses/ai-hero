@@ -1,6 +1,7 @@
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { db } from '@/db'
 import { c5DecisionCutover } from '@/lib/c5-pricing/config'
+import { signedGiftFact } from '@/lib/c5-pricing/gift-server'
 import type { FrontDeskHooks } from '@ai-hero/front-desk-support'
 import type { StripePaymentAdapter } from '@coursebuilder/commerce/stripe-provider'
 import { Effect } from 'effect'
@@ -109,8 +110,8 @@ export const hooks: FrontDeskHooks = {
 		}
 	},
 	// Evidence only. front-desk prices it on its side.
-	pricingFacts(request) {
-		return Effect.runPromise(
+	async pricingFacts(request) {
+		const result = await Effect.runPromise(
 			buyerPricingFacts(request).pipe(
 				Effect.provide(
 					pricingFactsSourceLayer({
@@ -121,5 +122,6 @@ export const hooks: FrontDeskHooks = {
 				),
 			),
 		)
+		return result ? { ...result, facts: { ...result.facts, code: await signedGiftFact(request.productId) } } : null
 	},
 }

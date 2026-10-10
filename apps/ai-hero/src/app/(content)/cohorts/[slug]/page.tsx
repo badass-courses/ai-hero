@@ -8,6 +8,10 @@ import { WaitlistForm } from '@/components/cohort-waitlist-form'
 import { CheckoutSurveyBuyButton } from '@/components/commerce/checkout-survey-buy-button'
 import { Contributor } from '@/components/contributor'
 import LayoutClient from '@/components/layout-client'
+import { TYPE } from '@/components/landing/type'
+import { giftSharePresentation, giftShareTitle } from '@/lib/c5-pricing/gift-share'
+import { signedGiftFact } from '@/lib/c5-pricing/gift-server'
+import { C5_PRODUCT_ID } from '@/lib/c5-pricing/products'
 import { DiscountCountdown } from '@/components/mdx/mdx-components'
 import { PROSE_MEASURE } from '@/components/mdx/prose'
 import { DiscountDeadline } from '@/components/pricing/discount-deadline'
@@ -63,17 +67,21 @@ export async function generateMetadata(
 		return parent as Metadata
 	}
 
+	const via = (await props.searchParams).via
+	const share = await giftSharePresentation(typeof via === 'string' ? via : undefined).catch(() => null)
+	const title = share ? `${giftShareTitle(share.firstName, share.available)}: ${cohort.fields.title}` : cohort.fields.title
 	return {
-		title: cohort.fields.title,
+		title,
 		description: cohort.fields.description,
 		alternates: {
 			canonical: `/cohorts/${cohort.fields.slug}`,
 		},
 		openGraph: {
+			title,
 			images: [
 				{
 					url:
-						cohort?.fields?.image ||
+						(share && typeof via === 'string' ? `${env.NEXT_PUBLIC_URL}/api/og/gift?via=${encodeURIComponent(via)}` : undefined) || cohort?.fields?.image ||
 						`${env.NEXT_PUBLIC_URL}/api/og/default?title=${encodeURIComponent(cohort.fields.title)}`,
 					alt: cohort?.fields?.title,
 				},
@@ -137,6 +145,10 @@ export async function CohortPageView(props: CohortPageViewProps) {
 		workshops,
 		workshopProgressMap,
 	} = pageData
+
+	const share = product?.id === C5_PRODUCT_ID ? await giftSharePresentation(typeof searchParams.via === 'string' ? searchParams.via : undefined).catch(() => null) : null
+	const giftFact = share ? await signedGiftFact() : null
+	const giftBanner = !share || share.closed ? null : !share.available ? 'This gift has been used.' : giftFact && 'value' in giftFact && giftFact.value?.codeRef === share.codeRef ? giftShareTitle(share.firstName, true) : giftShareTitle(share.firstName, false)
 
 	// Already on this cohort's waitlist. Resolved here, on the server, because
 	// the sidebar's closed-enrollment state IS the waitlist form: someone who
@@ -405,6 +417,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	return (
 		<LayoutClient withContainer>
 			<main className="relative">
+				{giftBanner ? <section className="border-border bg-muted text-foreground border-b"><p className={`${TYPE.meta} px-[18px] py-4 sm:px-11`}>{giftBanner}</p></section> : null}
 				<CohortMetadata
 					cohort={displayCohort}
 					product={isComingSoon ? undefined : cohortProps.product}

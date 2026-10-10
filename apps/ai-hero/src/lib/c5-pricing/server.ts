@@ -14,6 +14,7 @@ import type { AuthoritativePriceRequest } from '@coursebuilder/core/schemas'
 import { createFrontDeskData, type FrontDeskData } from './front-desk-data'
 import { createC5AuthoritativePrice, type BuyerRead } from './hook'
 import { holdsRestrictedPurchase } from './restricted-holder'
+import { signedGiftFact } from './gift-server'
 import { c5PricingClosed } from './switch-server'
 import { trustedPricingCountry } from './trusted-country'
 
@@ -132,6 +133,7 @@ function buyerFor(input: {
 }
 
 const decide = createC5AuthoritativePrice({
+	code: signedGiftFact,
 	policy: async (productId) =>
 		frontDeskData()?.policy(productId) ?? {
 			ok: false,

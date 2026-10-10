@@ -72,6 +72,8 @@ export const c5PurchaseDecision = inngest.createFunction(
 				store: drizzleC5DecisionStore(),
 				getCheckoutSession: async (id) => {
 					const session = await stripe().checkout.sessions.retrieve(id)
+					const { settleGiftSession } = await import('@/lib/c5-pricing/gift-settlement')
+					await settleGiftSession(session)
 					return { id: session.id, metadata: session.metadata ?? null }
 				},
 				now: () => new Date(),

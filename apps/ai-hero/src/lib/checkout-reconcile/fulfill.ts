@@ -65,6 +65,8 @@ export type DirectCheckoutFulfillmentDeps = {
 	db: CheckoutFulfillDatabase
 	paymentProvider: unknown
 	notificationProvider?: unknown
+	/** Best-effort bookkeeping only, never a paid-order veto. */
+	onPaidSession?: (session: Stripe.Checkout.Session) => Promise<void>
 	getCheckoutSession: (
 		checkoutSessionId: string,
 	) => Promise<Stripe.Checkout.Session>
@@ -209,6 +211,10 @@ export async function fulfillCheckoutSessionDirectly(
 	}
 	if (!charge.expanded || !charge.chargeId) {
 		return skipped(checkoutSessionId, charge.chargeId, 'charge_not_expanded')
+	}
+	const onPaidSession = deps.onPaidSession
+	if (session.payment_status === 'paid' && onPaidSession) {
+		await deps.step.run('reconcile: record gift use', () => onPaidSession(session))
 	}
 	if (charge.refunded) {
 		return skipped(checkoutSessionId, charge.chargeId, 'refunded')
