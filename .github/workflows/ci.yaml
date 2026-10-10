@@ -51,6 +51,14 @@ jobs:
       - name: Checkout recovery patch contract
         run: pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/lib/checkout-recovery-adopt.test.ts
 
+      # The fulfill.mysql suite skips here without a server URL; the
+      # evergreen-journey-mysql workflow runs it against disposable MySQL.
+      - name: Checkout reconciler and checkout:recover
+        run: >-
+          pnpm --filter ai-hero exec vitest run -c vitest.config.ts
+          src/lib/checkout-reconcile/
+          src/scripts/checkout-recovery
+
       - name: Refund entitlement event boundary and included-product contracts
         run: pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/lib/included-product-entitlements.test.ts
 

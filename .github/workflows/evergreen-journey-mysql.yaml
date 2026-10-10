@@ -40,6 +40,7 @@ on:
       - "apps/ai-hero/src/lib/subscriber-marketing/contact-sync-reconcile*"
       - "apps/ai-hero/src/lib/subscriber-marketing/contact-sync-backfill*"
       - "apps/ai-hero/src/db/contact-sync-schema.ts"
+      - "apps/ai-hero/src/lib/checkout-reconcile/**"
   push:
     branches: [main]
     paths:
@@ -80,6 +81,7 @@ on:
       - "apps/ai-hero/src/lib/subscriber-marketing/contact-sync-reconcile*"
       - "apps/ai-hero/src/lib/subscriber-marketing/contact-sync-backfill*"
       - "apps/ai-hero/src/db/contact-sync-schema.ts"
+      - "apps/ai-hero/src/lib/checkout-reconcile/**"
 
 jobs:
   mysql-contract:
@@ -148,3 +150,4 @@ jobs:
           src/lib/subscriber-marketing/owner-birth-guard.mysql.test.ts
           src/lib/subscriber-marketing/drovr-outbox-drizzle.mysql.test.ts
           src/lib/subscriber-marketing/drovr-outbox-live.mysql.test.ts
+          src/lib/checkout-reconcile/fulfill.mysql.test.ts
