@@ -182,6 +182,7 @@ describe('createTeamInvoice', () => {
 			existingSeats: 7,
 			listUnitAmount: 10_000,
 			userId: 'user-9',
+			email: 'billing@example.test',
 		})
 	})
 

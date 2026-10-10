@@ -378,6 +378,7 @@ export async function confirmTeamInvoice(
 			existingSeats: buyer.existingSeats,
 			listUnitAmount: product.listUnitAmount,
 			userId: buyer.userId,
+			email: request.billingEmail,
 		})
 		if (price.kind !== 'priced') {
 			await deps.log('team_invoice.price_unavailable', {

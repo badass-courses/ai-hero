@@ -1,9 +1,16 @@
+import {
+	SYNTHETIC_LIST,
+	SYNTHETIC_POLICY_PRODUCT,
+	SYNTHETIC_POLICY_VERSION,
+	syntheticPolicy,
+} from '@/lib/c5-pricing/synthetic-policy.test-fixture'
+import { price } from '@ai-hero/front-desk-support/pricing'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
 	appBulkPriceSource,
 	cappedAtCheckout,
-	frontDeskPriceSource,
+	enginePriceSource,
 	teamInvoicingEnabled,
 	teamPriceSourceFor,
 	type DefaultSaleCoupon,
@@ -21,128 +28,118 @@ const request: TeamPriceRequest = {
 	listUnitAmount: LIST,
 }
 
-const jsonResponse = (body: unknown, status = 200) =>
-	new Response(JSON.stringify(body), {
-		status,
-		headers: { 'content-type': 'application/json' },
-	})
-
-/** A recorded front-desk `priced` decision, shaped like the agreed contract. */
-const PRICED_FIXTURE = {
-	kind: 'priced',
-	unitAmount: 9_000,
-	amount: 54_000,
-	policy: 'fixture-team-policy-v1',
-	reasons: ['fixture'],
+const policyRead = async () => ({
+	ok: true as const,
+	value: { version: SYNTHETIC_POLICY_VERSION, policy: syntheticPolicy() },
+})
+const noQuotes = async () => ({ ok: true as const, value: [] })
+const inEarlyWindow = () => new Date('2030-01-05T00:00:00.000Z')
+const engineRequest: TeamPriceRequest = {
+	productId: 'product-s00zs',
+	quantity: 6,
+	existingSeats: 0,
+	listUnitAmount: SYNTHETIC_LIST,
 }
 
-describe('frontDeskPriceSource', () => {
-	it('posts the agreed contract with the bearer token', async () => {
-		const fetch = vi.fn().mockResolvedValue(jsonResponse(PRICED_FIXTURE))
-		const source = frontDeskPriceSource({
-			url: 'https://front-desk.example.test',
-			token: 'fixture-token',
-			fetch,
+describe('enginePriceSource', () => {
+	it('prices a team order from new plus existing seats through the vendored engine', async () => {
+		const source = enginePriceSource({
+			policy: policyRead,
+			quotes: noQuotes,
+			price,
+			now: inEarlyWindow,
 		})
+		// Synthetic early bands: 5+ seats 25%, 10+ seats 30%.
+		await expect(source.price(engineRequest)).resolves.toEqual({
+			kind: 'priced',
+			source: 'engine',
+			unitAmount: 75_000,
+			amount: 450_000,
+			policy: `${SYNTHETIC_POLICY_VERSION}:team`,
+			discount: { kind: 'amount-off', amountOff: 150_000 },
+		})
+		await expect(
+			source.price({ ...engineRequest, existingSeats: 4 }),
+		).resolves.toMatchObject({ unitAmount: 70_000, amount: 420_000 })
+	})
 
-		await source.price({ ...request, existingSeats: 4 })
-
-		expect(fetch).toHaveBeenCalledTimes(1)
-		const [url, init] = fetch.mock.calls[0]!
-		expect(url).toBe('https://front-desk.example.test/api/pricing/decision')
-		expect(init.method).toBe('POST')
-		expect(init.headers.authorization).toBe('Bearer fixture-token')
-		expect(JSON.parse(init.body)).toEqual({
+	it("reads the billing email's binding quotes fresh and fails closed without them", async () => {
+		const quotes = vi.fn(async () => ({ ok: false as const, reason: 'down' }))
+		const source = enginePriceSource({
+			policy: policyRead,
+			quotes,
+			price,
+			now: inEarlyWindow,
+		})
+		await expect(
+			source.price({ ...engineRequest, email: 'team@example.test' }),
+		).resolves.toEqual({
+			kind: 'unavailable',
+			reason: 'engine-quotes-unavailable',
+		})
+		expect(quotes).toHaveBeenCalledWith({
+			email: 'team@example.test',
 			productId: 'product-s00zs',
 			quantity: 6,
-			orderKind: 'team',
-			existingSeats: 4,
+			fresh: true,
 		})
 	})
 
-	it('turns a priced decision into an amount off the list total', async () => {
-		const source = frontDeskPriceSource({
-			url: 'https://front-desk.example.test',
-			token: 't',
-			fetch: vi.fn().mockResolvedValue(jsonResponse(PRICED_FIXTURE)),
+	it('invoices a binding team quote below the band price', async () => {
+		const source = enginePriceSource({
+			policy: policyRead,
+			quotes: async () => ({
+				ok: true as const,
+				value: [
+					{
+						amount: 400_000,
+						basis: 'Total' as const,
+						currency: 'USD',
+						expiresAt: null,
+						product: SYNTHETIC_POLICY_PRODUCT,
+						quantity: 6,
+						ref: 'quote-synthetic@1#line-1',
+					},
+				],
+			}),
+			price,
+			now: inEarlyWindow,
 		})
-
-		await expect(source.price(request)).resolves.toEqual({
-			kind: 'priced',
-			source: 'front-desk',
-			unitAmount: 9_000,
-			amount: 54_000,
-			policy: 'fixture-team-policy-v1',
-			discount: { kind: 'amount-off', amountOff: 6 * LIST - 54_000 },
-		})
-	})
-
-	it('needs no discount when front-desk prices at list', async () => {
-		const source = frontDeskPriceSource({
-			url: 'https://front-desk.example.test',
-			token: 't',
-			fetch: vi.fn().mockResolvedValue(
-				jsonResponse({
-					...PRICED_FIXTURE,
-					unitAmount: LIST,
-					amount: 6 * LIST,
-				}),
-			),
-		})
-		const price = await source.price(request)
-		expect(price.kind === 'priced' && price.discount).toEqual({ kind: 'none' })
+		await expect(
+			source.price({ ...engineRequest, email: 'team@example.test' }),
+		).resolves.toMatchObject({ kind: 'priced', amount: 400_000 })
 	})
 
 	it.each([
-		['a non-priced kind', jsonResponse({ kind: 'needs_review', reasons: [] })],
-		['an http error', jsonResponse({ error: 'nope' }, 401)],
-		['a malformed body', jsonResponse({ kind: 'priced', amount: 'lots' })],
-		['a priced answer with no policy', jsonResponse({ ...PRICED_FIXTURE, policy: undefined })],
-		['a total above list', jsonResponse({ ...PRICED_FIXTURE, amount: 6 * LIST + 1 })],
-		['a zero total', jsonResponse({ ...PRICED_FIXTURE, amount: 0 })],
-		['fractional cents', jsonResponse({ ...PRICED_FIXTURE, amount: 54_000.5 })],
-		['a 2xx that is not 200', jsonResponse(PRICED_FIXTURE, 201)],
-		['a seat price that does not multiply out', jsonResponse({ ...PRICED_FIXTURE, unitAmount: 8_999 })],
-	])('fails closed on %s', async (_label, response) => {
-		const source = frontDeskPriceSource({
-			url: 'https://front-desk.example.test',
-			token: 't',
-			fetch: vi.fn().mockResolvedValue(response),
+		[
+			'no policy',
+			{ policy: async () => ({ ok: false as const, reason: 'x' }) },
+			'engine-policy-unavailable',
+		],
+		[
+			'a closed window',
+			{ now: () => new Date('2031-01-01T00:00:00.000Z') },
+			'engine-closed',
+		],
+		['a list price the policy does not know', { list: 99_999 }, 'engine-held'],
+	])('is unavailable with %s', async (_, over, reason) => {
+		const { list, ...deps } = over as { list?: number } & Record<
+			string,
+			unknown
+		>
+		const source = enginePriceSource({
+			policy: policyRead,
+			quotes: noQuotes,
+			price,
+			now: inEarlyWindow,
+			...(deps as object),
 		})
-		await expect(source.price(request)).resolves.toMatchObject({
-			kind: 'unavailable',
-		})
-	})
-
-	it('fails closed when front-desk is unreachable', async () => {
-		const source = frontDeskPriceSource({
-			url: 'https://front-desk.example.test',
-			token: 't',
-			fetch: vi.fn().mockRejectedValue(new TypeError('fetch failed')),
-		})
-		await expect(source.price(request)).resolves.toEqual({
-			kind: 'unavailable',
-			reason: 'front-desk-unreachable',
-		})
-	})
-
-	it('fails closed on a timeout', async () => {
-		const hang: typeof fetch = (_url, init) =>
-			new Promise((_resolve, reject) => {
-				init?.signal?.addEventListener('abort', () =>
-					reject(new DOMException('timed out', 'TimeoutError')),
-				)
-			})
-		const source = frontDeskPriceSource({
-			url: 'https://front-desk.example.test',
-			token: 't',
-			fetch: hang,
-			timeoutMs: 20,
-		})
-		await expect(source.price(request)).resolves.toEqual({
-			kind: 'unavailable',
-			reason: 'front-desk-unreachable',
-		})
+		await expect(
+			source.price({
+				...engineRequest,
+				listUnitAmount: list ?? SYNTHETIC_LIST,
+			}),
+		).resolves.toEqual({ kind: 'unavailable', reason })
 	})
 })
 
@@ -150,27 +147,27 @@ describe('teamPriceSourceFor', () => {
 	const appBulk: TeamPriceSource = {
 		price: async () => ({ kind: 'unavailable', reason: 'app' }),
 	}
-	const frontDesk: TeamPriceSource = {
-		price: async () => ({ kind: 'unavailable', reason: 'front-desk' }),
+	const engine: TeamPriceSource = {
+		price: async () => ({ kind: 'unavailable', reason: 'engine' }),
 	}
 
-	it('routes C5 to front-desk and everything else to the app rules', async () => {
+	it('routes C5 to the in-process engine and everything else to the app rules', async () => {
 		await expect(
-			teamPriceSourceFor('product-s00zs', { appBulk, frontDesk }).price(request),
-		).resolves.toMatchObject({ reason: 'front-desk' })
+			teamPriceSourceFor('product-s00zs', { appBulk, engine }).price(request),
+		).resolves.toMatchObject({ reason: 'engine' })
 		await expect(
-			teamPriceSourceFor('product-ma254', { appBulk, frontDesk }).price(request),
+			teamPriceSourceFor('product-ma254', { appBulk, engine }).price(request),
 		).resolves.toMatchObject({ reason: 'app' })
 	})
 
 	it('keeps C5 unpriced while front-desk is not configured', async () => {
 		await expect(
-			teamPriceSourceFor('product-s00zs', { appBulk, frontDesk: null }).price(
+			teamPriceSourceFor('product-s00zs', { appBulk, engine: null }).price(
 				request,
 			),
 		).resolves.toEqual({
 			kind: 'unavailable',
-			reason: 'front-desk-not-configured',
+			reason: 'engine-not-configured',
 		})
 		expect(teamInvoicingEnabled('product-s00zs', false)).toBe(false)
 		expect(teamInvoicingEnabled('product-s00zs', true)).toBe(true)
@@ -190,27 +187,27 @@ describe('cappedAtCheckout', () => {
 		policy: 'app-bulk:x',
 		discount: { kind: 'none' },
 	})
-	const frontDesk = at(54_000)
+	const enginePrice = at(54_000)
 
-	it('keeps a front-desk price at or below checkout', async () => {
+	it('keeps an engine price at or below checkout', async () => {
 		await expect(
-			cappedAtCheckout(fixed(frontDesk), fixed(at(60_000))).price(request),
-		).resolves.toBe(frontDesk)
+			cappedAtCheckout(fixed(enginePrice), fixed(at(60_000))).price(request),
+		).resolves.toBe(enginePrice)
 		await expect(
-			cappedAtCheckout(fixed(frontDesk), fixed(at(54_000))).price(request),
-		).resolves.toBe(frontDesk)
+			cappedAtCheckout(fixed(enginePrice), fixed(at(54_000))).price(request),
+		).resolves.toBe(enginePrice)
 	})
 
-	it('refuses a front-desk price above checkout', async () => {
+	it('refuses an engine price above checkout', async () => {
 		await expect(
-			cappedAtCheckout(fixed(frontDesk), fixed(at(50_000))).price(request),
+			cappedAtCheckout(fixed(enginePrice), fixed(at(50_000))).price(request),
 		).resolves.toEqual({ kind: 'unavailable', reason: 'above-checkout' })
 	})
 
 	it('refuses when checkout is not knowable', async () => {
 		await expect(
 			cappedAtCheckout(
-				fixed(frontDesk),
+				fixed(enginePrice),
 				fixed({ kind: 'unavailable', reason: 'app-price-error' }),
 			).price(request),
 		).resolves.toEqual({
@@ -223,13 +220,64 @@ describe('cappedAtCheckout', () => {
 		await expect(
 			teamPriceSourceFor('product-s00zs', {
 				appBulk: fixed(at(50_000)),
-				frontDesk: fixed(frontDesk),
+				engine: fixed(enginePrice),
 			}).price(request),
 		).resolves.toMatchObject({ reason: 'above-checkout' })
 	})
 })
 
 const noSale = vi.fn(async (): Promise<DefaultSaleCoupon | null> => null)
+
+describe('appBulkPriceSource for an authoritative-priced product', () => {
+	const authoritative = (
+		over: Partial<{ kind: string; purchasable: boolean; amountCents: number }>,
+	) => ({
+		quantity: 6,
+		unitPrice: 1000,
+		fullPrice: 6000,
+		calculatedPrice: 4500,
+		appliedDiscountType: 'fixed',
+		appliedMerchantCoupon: { id: 'authoritative-discount' },
+		authoritative: {
+			kind: 'priced',
+			purchasable: true,
+			amountCents: 450_000,
+			policyVersion: 'synthetic',
+			...over,
+		},
+	})
+	const source = (formatted: unknown) =>
+		appBulkPriceSource({
+			defaultSaleCoupon: noSale,
+			formatPrice: vi.fn().mockResolvedValue(formatted),
+			stripeCouponIdFor: vi.fn(),
+		})
+
+	it('caps at the decision checkout would charge', async () => {
+		await expect(
+			source(authoritative({})).price({ ...request, listUnitAmount: 100_000 }),
+		).resolves.toEqual({
+			kind: 'priced',
+			source: 'app-bulk',
+			unitAmount: 75_000,
+			amount: 450_000,
+			policy: 'app-authoritative:synthetic',
+			discount: { kind: 'amount-off', amountOff: 150_000 },
+		})
+	})
+
+	it('is unknowable when checkout would not charge the decision', async () => {
+		await expect(
+			source(authoritative({ kind: 'bounded', purchasable: false })).price({
+				...request,
+				listUnitAmount: 100_000,
+			}),
+		).resolves.toEqual({
+			kind: 'unavailable',
+			reason: 'app-authoritative-bounded',
+		})
+	})
+})
 
 describe('appBulkPriceSource', () => {
 	const appRequest: TeamPriceRequest = {
@@ -288,11 +336,21 @@ describe('appBulkPriceSource', () => {
 	})
 
 	it.each([
-		['a percentage coupon with no sale running', { ...bulk, appliedDiscountType: 'percentage' }],
+		[
+			'a percentage coupon with no sale running',
+			{ ...bulk, appliedDiscountType: 'percentage' },
+		],
 		['PPP', { ...bulk, appliedDiscountType: 'ppp' }],
 		['an upgrade credit', { ...bulk, fixedDiscountForUpgrade: 50 }],
 		['a different quantity', { ...bulk, quantity: 4 }],
-		['a discount with no coupon', { ...bulk, appliedDiscountType: 'none', appliedMerchantCoupon: undefined }],
+		[
+			'a discount with no coupon',
+			{
+				...bulk,
+				appliedDiscountType: 'none',
+				appliedMerchantCoupon: undefined,
+			},
+		],
 		['a price above list', { ...bulk, calculatedPrice: 600 }],
 	])('refuses %s', async (_label, formatted) => {
 		const source = appBulkPriceSource({
@@ -390,9 +448,11 @@ describe('appBulkPriceSource', () => {
 			const source = appBulkPriceSource({
 				formatPrice: vi.fn().mockResolvedValue(bulk),
 				stripeCouponIdFor: vi.fn().mockResolvedValue('stripe_bulk_coupon'),
-				defaultSaleCoupon: vi.fn().mockResolvedValue(
-					sale({ percentageDiscount: null, amountDiscount: 3_000 }),
-				),
+				defaultSaleCoupon: vi
+					.fn()
+					.mockResolvedValue(
+						sale({ percentageDiscount: null, amountDiscount: 3_000 }),
+					),
 			})
 			await expect(source.price(appRequest)).resolves.toMatchObject({
 				amount: 35_000,
