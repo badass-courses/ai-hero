@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS `AI_GiftCodeSlot` (
 CREATE TABLE IF NOT EXISTS `AI_GiftShareLink` (
   `slug` varchar(50) NOT NULL,
   `codeRef` varchar(500) NOT NULL,
-  `firstName` varchar(100) NOT NULL,
+  `firstName` varchar(100) DEFAULT NULL,
   `legendId` varchar(191) NOT NULL,
   PRIMARY KEY (`slug`)
 );

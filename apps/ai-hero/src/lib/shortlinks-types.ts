@@ -76,7 +76,7 @@ export const CreateShortlinkSchema = z.object({
 	metadata: ShortlinkMetadataSchema.optional().nullable(),
 	gift: z.object({
 		codeRef: z.string().min(1).max(500),
-		firstName: z.string().min(1).max(100).regex(/^[\p{L}\p{M}'-]+$/u),
+		firstName: z.string().min(1).max(100).regex(/^[\p{L}\p{M}'-]+$/u).nullable(),
 		legendId: z.string().uuid(),
 	}).strict().optional(),
 }).superRefine((value, context) => {

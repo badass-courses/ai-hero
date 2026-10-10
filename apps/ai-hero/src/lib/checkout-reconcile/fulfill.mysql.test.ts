@@ -29,7 +29,8 @@ import { mysqlTable } from '@/db/mysql-table'
 import { preserveQueryResultShape } from '@/db/mysql-query-client'
 import type { DbExecutor } from '@/db'
 import { checkC5Duplicate, recordC5PurchaseDecision } from '@/lib/c5-pricing/purchase-decision'
-import { C5_PRODUCT_ID } from '@/lib/c5-pricing/decision'
+import { C5_PRODUCT_ID, encodeDecisionRef } from '@/lib/c5-pricing/decision'
+import { settleGiftSession } from '@/lib/c5-pricing/gift-settlement'
 import { c5DecisionStoreOn } from '@/lib/c5-pricing/purchase-decision-sql'
 import { validateMySqlIntegrationServerUrl } from '@/lib/team-purchase-mysql-test-guard'
 import type { MySqlDatabase } from 'drizzle-orm/mysql-core'
@@ -39,7 +40,8 @@ import type Stripe from 'stripe'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 let database: MySqlDatabase<any, any, typeof schema>
-vi.mock('@/db', () => ({ get db() { return database } }))
+let giftSettlementPool: Pool
+vi.mock('@/db', () => ({ get db() { return database }, acquireDatabaseConnection: () => giftSettlementPool.getConnection() }))
 
 import { DrizzleAdapter } from '@coursebuilder/adapter-drizzle'
 import { courseBuilderCoreFunctions } from '@coursebuilder/server'
@@ -74,6 +76,7 @@ const BUYER_ID = 'user_reconcile_buyer'
 const STRIPE_CUSTOMER = 'cus_reconcile'
 
 const tables = {
+	giftCodeSlot: schema.giftCodeSlot,
 	users,
 	roles,
 	userRoles,
@@ -244,6 +247,7 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 		holdsWhenBuyerHasProduct?: (productId: string) => boolean,
 	) {
 		return fulfillCheckoutSessionDirectly(checkoutSessionId, {
+			onPaidSession: sessions.get(checkoutSessionId)?.metadata?.codeRef ? settleGiftSession : undefined,
 			holdsWhenBuyerHasProduct,
 			handler,
 			step,
@@ -326,6 +330,7 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 		pool = preserveQueryResultShape(
 			mysql.createPool({ uri: target.toString(), timezone: 'Z', connectionLimit: 8 }),
 		)
+		giftSettlementPool = pool
 		const acquire = pool.getConnection.bind(pool)
 		pool.getConnection = (async () =>
 			preserveQueryResultShape(await acquire())) as typeof pool.getConnection
@@ -360,6 +365,7 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 
 	beforeEach(async () => {
 		for (const table of [
+			'AI_GiftCodeSlot',
 			'AI_PurchaseDecision',
 			'AI_PurchaseUserTransfer',
 			'AI_Purchase',
@@ -422,6 +428,32 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 		})
 		expect(second.sent).toEqual([])
 		expect(second.ran).not.toContain('load the merchant account')
+		expect(await counts(id)).toEqual({ charges: 1, sessions: 1, purchases: 1 })
+	})
+
+	it('spends a paid gift reservation on direct fulfillment and replay', async () => {
+		await pool.query('UPDATE AI_Product SET id = ? WHERE id = ?', [C5_PRODUCT_ID, 'product_reconcile'])
+		await pool.query('UPDATE AI_MerchantProduct SET productId = ?', [C5_PRODUCT_ID])
+		const codeRef = 'synthetic-gift-code'
+		const claimId = 'synthetic-gift-claim'
+		const id = stranded({ metadata: { ...checkoutSession('template').metadata, productId: C5_PRODUCT_ID, codeRef, giftClaimId: claimId, decisionRef: encodeDecisionRef('0000000000000000', undefined, codeRef) } })
+		await pool.query('INSERT INTO AI_GiftCodeSlot (codeRef, slot, checkoutSessionId, claimId, state, expiresAt) VALUES (?, 1, ?, ?, ?, ?)', [codeRef, id, claimId, 'reserved', new Date(now.getTime() + 3600000)])
+		expect(await reconcile(id, inngestLikeStep().step)).toMatchObject({ status: 'fulfilled' })
+		const [rows] = await pool.query<RowDataPacket[]>('SELECT state FROM AI_GiftCodeSlot WHERE checkoutSessionId = ?', [id])
+		expect(rows[0]?.state).toBe('spent')
+		await pool.query('UPDATE AI_GiftCodeSlot SET state = ? WHERE checkoutSessionId = ?', ['reserved', id])
+		expect(await reconcile(id, inngestLikeStep().step)).toMatchObject({ status: 'already_fulfilled' })
+		const [replay] = await pool.query<RowDataPacket[]>('SELECT state FROM AI_GiftCodeSlot WHERE checkoutSessionId = ?', [id])
+		expect(replay[0]?.state).toBe('spent')
+		expect(await counts(id)).toEqual({ charges: 1, sessions: 1, purchases: 1 })
+	})
+
+	it('fulfills a paid gift even when its reservation is missing', async () => {
+		await pool.query('UPDATE AI_Product SET id = ? WHERE id = ?', [C5_PRODUCT_ID, 'product_reconcile'])
+		await pool.query('UPDATE AI_MerchantProduct SET productId = ?', [C5_PRODUCT_ID])
+		const codeRef = 'synthetic-missing-gift'
+		const id = stranded({ metadata: { ...checkoutSession('template').metadata, productId: C5_PRODUCT_ID, codeRef, giftClaimId: 'missing', decisionRef: encodeDecisionRef('0000000000000000', undefined, codeRef) } })
+		expect(await reconcile(id, inngestLikeStep().step)).toMatchObject({ status: 'fulfilled' })
 		expect(await counts(id)).toEqual({ charges: 1, sessions: 1, purchases: 1 })
 	})
 

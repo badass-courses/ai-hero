@@ -31,7 +31,8 @@ export function provesAccess(fixture, session, result) {
 // Pays a hosted test Checkout Session with the test card. By default it waits for the
 // redirect back to the app; `until` instead polls Stripe, for sessions paid while
 // the app is down (seeding).
-export async function payHostedCheckout(url, state, { until } = {}) {
+export async function payHostedCheckout(url, state, { until, testCard = 'success' } = {}) {
+  if (!['success', 'dispute'].includes(testCard)) throw new Error('Unknown Stripe test-card scenario')
   const { chromium } = await import('@playwright/test')
   const browser = await chromium.launch({ headless: true, env: { PATH: process.env.PATH, HOME: process.env.HOME } })
   try {
@@ -62,7 +63,7 @@ export async function payHostedCheckout(url, state, { until } = {}) {
       await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {})
       const cardChoice = page.locator('[data-testid="card-accordion-item-button"]').first()
       if (await cardChoice.count()) await cardChoice.dispatchEvent('click')
-      await fill('[name="cardNumber"], [name="cardnumber"]', '4242424242424242')
+      await fill('[name="cardNumber"], [name="cardnumber"]', testCard === 'dispute' ? '4000000000000259' : '4242424242424242')
       await fill('[name="cardExpiry"], [name="exp-date"]', '1230')
       await fill('[name="cardCvc"], [name="cvc"]', '123')
       const name = page.locator('[name="billingName"]').first()
@@ -91,7 +92,7 @@ export async function payHostedCheckout(url, state, { until } = {}) {
     }
   } finally { await browser.close() }
 }
-export async function checkout(state, key, fixtureKey, shouldComplete = false, { shortlinkSlug, keepOpen = false } = {}) {
+export async function checkout(state, key, fixtureKey, shouldComplete = false, { shortlinkSlug, keepOpen = false, testCard = 'success' } = {}) {
   const fixture = fixtureFor(fixtureKey)
   const seed = JSON.parse(await readFile(join(state, 'seed.json'), 'utf8'))
   if (!seed.stripeSeeded) throw new Error('Stripe catalog is not seeded')
@@ -156,7 +157,7 @@ export async function checkout(state, key, fixtureKey, shouldComplete = false, {
     if (!keepOpen) assertTestObject(await stripe.checkout.sessions.expire(id))
     return receipt
   }
-  await payHostedCheckout(target, state)
+  await payHostedCheckout(target, state, { testCard })
   const deadline = Date.now() + 180000
   do {
     session = assertTestObject(await stripe.checkout.sessions.retrieve(id))

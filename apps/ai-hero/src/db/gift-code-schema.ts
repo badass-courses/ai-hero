@@ -31,6 +31,6 @@ export const giftCodeSlot = mysqlTable(
 export const giftShareLink = mysqlTable("GiftShareLink", {
   slug: varchar("slug", { length: 50 }).primaryKey(),
   codeRef: varchar("codeRef", { length: 500 }).notNull(),
-  firstName: varchar("firstName", { length: 100 }).notNull(),
+  firstName: varchar("firstName", { length: 100 }),
   legendId: varchar("legendId", { length: 191 }).notNull(),
 });

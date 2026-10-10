@@ -16,8 +16,8 @@ export async function giftSharePresentation(slug: string | undefined) {
     .where(eq(giftShareLink.slug, slug))
     .limit(1);
   if (!share) return null;
-  const firstName = share.firstName.split(/\s+/)[0] ?? "";
-  if (!/^[\p{L}\p{M}'-]{1,100}$/u.test(firstName)) return null;
+  const firstName = share.firstName === null ? null : share.firstName.split(/\s+/)[0] ?? "";
+  if (firstName !== null && !/^[\p{L}\p{M}'-]{1,100}$/u.test(firstName)) return null;
   const connection = await acquireDatabaseConnection();
   try {
     const code = await readGiftCode(
@@ -45,5 +45,5 @@ export async function giftSharePresentation(slug: string | undefined) {
   }
 }
 
-export const giftShareTitle = (firstName: string, available: boolean) =>
-  available ? `Gift from ${firstName}` : `${firstName} recommends`;
+export const giftShareTitle = (firstName: string | null, available: boolean) =>
+  firstName === null ? (available ? "A gift for you" : "An AI Hero legend recommends") : available ? `Gift from ${firstName}` : `${firstName} recommends`;
