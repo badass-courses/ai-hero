@@ -22,9 +22,13 @@ import { eq } from 'drizzle-orm'
 import { Inngest } from 'inngest'
 import Stripe from 'stripe'
 
+import {
+	PURCHASE_DISPUTE_CLOSED_EVENT,
+	PurchaseDisputeClosedEventSchema,
+} from '@coursebuilder/commerce/dispute-events'
+
 import { closeDatabasePool, db } from '../src/db/index'
 import { merchantCharge, purchases } from '../src/db/schema'
-import { PURCHASE_DISPUTE_CLOSED_EVENT } from '../src/inngest/events/purchase-dispute'
 import {
 	lostDisputeConfirmed,
 	previewDisputeEvent,
@@ -149,14 +153,15 @@ async function main() {
 		const sent = await inngest.send({
 			id: `dispute-closed-backfill-${row.stripeDisputeId}`,
 			name: PURCHASE_DISPUTE_CLOSED_EVENT,
-			data: {
+			// Same contract the webhook sends; parse so a bad row fails here.
+			data: PurchaseDisputeClosedEventSchema.parse({
 				stripeChargeId: row.stripeChargeId,
 				stripeDisputeId: row.stripeDisputeId,
 				purchaseId,
 				previousStatus: row.purchase!.status,
 				disputeStatus: 'lost',
-				outcome: 'lost' as const,
-			},
+				outcome: 'lost',
+			}),
 		})
 		readbacks.push({
 			stripeDisputeId: row.stripeDisputeId,

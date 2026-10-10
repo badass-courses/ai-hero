@@ -53,7 +53,7 @@ import {
 	PURCHASE_DISPUTE_OPENED_EVENT,
 	type PurchaseDisputeClosed,
 	type PurchaseDisputeOpened,
-} from '@/inngest/events/purchase-dispute'
+} from '@coursebuilder/commerce/dispute-events'
 import {
 	LESSON_COMPLETED_EVENT,
 	LessonCompleted,

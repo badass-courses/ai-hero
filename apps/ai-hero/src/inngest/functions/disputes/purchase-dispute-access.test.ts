@@ -25,7 +25,7 @@ vi.mock('@/server/logger', () => ({ log: mocks.log }))
 import {
 	PURCHASE_DISPUTE_CLOSED_EVENT,
 	PURCHASE_DISPUTE_OPENED_EVENT,
-} from '@/inngest/events/purchase-dispute'
+} from '@coursebuilder/commerce/dispute-events'
 
 import {
 	purchaseDisputeClosed,

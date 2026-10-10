@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
+import { readPurchaseDisputeLifecycle } from '@coursebuilder/commerce/dispute-lifecycle'
+
 import {
 	decideDisputeTransition,
 	readDisputeRecord,
@@ -237,6 +239,20 @@ describe('decideDisputeTransition', () => {
 		expect(decide({ event: 'reconcile' })).toEqual({
 			kind: 'ignored',
 			reason: 'no-record',
+		})
+	})
+})
+
+describe('commerce lifecycle contract', () => {
+	it('commerce reads the state and refund marker from the app record', () => {
+		const refunded = record({
+			state: 'won',
+			refundedAt: '2026-10-10T00:00:00.000Z',
+		})
+		expect(readPurchaseDisputeLifecycle({ dispute: refunded })).toEqual({
+			stripeDisputeId: 'du_1',
+			state: 'won',
+			refundedAt: '2026-10-10T00:00:00.000Z',
 		})
 	})
 })

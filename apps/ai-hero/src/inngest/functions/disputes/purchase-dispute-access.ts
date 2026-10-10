@@ -1,7 +1,7 @@
 import {
 	PURCHASE_DISPUTE_CLOSED_EVENT,
 	PURCHASE_DISPUTE_OPENED_EVENT,
-} from '@/inngest/events/purchase-dispute'
+} from '@coursebuilder/commerce/dispute-events'
 import { inngest } from '@/inngest/inngest.server'
 import { discordRoleClient } from '@/lib/discord-utils'
 import {

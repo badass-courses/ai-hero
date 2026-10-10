@@ -20,7 +20,7 @@
  *
  * The record's `stripeDisputeId` and `state` (and `refundedAt`) are the
  * contract `@coursebuilder/commerce/dispute-lifecycle` reads to guard its own
- * status writers.
+ * status writers, including the adapter's locked status write.
  */
 
 export const DISPUTE_STATES = ['open', 'won', 'lost'] as const
