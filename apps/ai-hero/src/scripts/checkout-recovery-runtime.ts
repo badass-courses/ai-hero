@@ -240,6 +240,7 @@ export async function createCheckoutRecoveryRuntime(
 				{ fulfillCheckoutSessionDirectly, findCheckoutHandler },
 				{ closeDatabasePool },
 				{ Inngest },
+				{ AUTHORITATIVE_PRODUCT_IDS },
 			] = await Promise.all([
 				import('@coursebuilder/server'),
 				import('@/coursebuilder/email-provider'),
@@ -248,6 +249,7 @@ export async function createCheckoutRecoveryRuntime(
 				import('@/lib/checkout-reconcile/fulfill'),
 				import('@/db'),
 				import('inngest'),
+				import('@/lib/c5-pricing/decision'),
 			])
 			closeAppPool = closeDatabasePool
 			const client = new Inngest({ id: env.inngestAppId, isDev: false })
@@ -270,6 +272,9 @@ export async function createCheckoutRecoveryRuntime(
 				notificationProvider: slackProvider,
 				getCheckoutSession: (id) => appPaymentsAdapter.getCheckoutSession(id),
 				inspect: (input) => inspectCheckoutFulfillment(db, input),
+				// C5 duplicates are fulfilled and flagged after payment, never held.
+				holdsWhenBuyerHasProduct: (productId) =>
+					!AUTHORITATIVE_PRODUCT_IDS.has(productId),
 				findBuyerProductPurchases: (input) =>
 					findBuyerProductPurchaseIds(db, input),
 				appName: env.inngestAppId,

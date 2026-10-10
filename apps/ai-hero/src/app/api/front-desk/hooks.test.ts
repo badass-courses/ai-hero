@@ -11,6 +11,10 @@ const mocks = vi.hoisted(() => ({
 	session: vi.fn(),
 	lineItems: vi.fn(),
 	transfers: vi.fn(),
+	spentBy: vi.fn(async (): Promise<string[]> => []),
+}))
+vi.mock('@/lib/c5-pricing/purchase-decision-store', () => ({
+	drizzleC5DecisionStore: () => ({ spentBy: mocks.spentBy }),
 }))
 vi.mock('../support/integration', () => ({
 	integration: { lookupUser: mocks.lookupUser },
@@ -477,12 +481,13 @@ describe('front-desk read hooks', () => {
 					sourceRefs: [
 						'ai-hero:purchases:user:test-user',
 						'ai-hero:purchase-transfers:user:test-user',
-						'ai-hero:credit-redemption-ledger:none-yet',
+						'ai-hero:c5-decision-ledger',
 					],
 				},
 				existingSeats: { value: 4, sourceRefs: ['ai-hero:purchase:team'] },
 			},
 		})
+		expect(mocks.spentBy).toHaveBeenCalledWith('cc')
 		expect(mocks.charge).toHaveBeenCalledWith('ch_test')
 		expect(mocks.session).toHaveBeenCalledWith('cs_test')
 		expect(mocks.lineItems).toHaveBeenCalledWith('cs_test', { limit: 100 })

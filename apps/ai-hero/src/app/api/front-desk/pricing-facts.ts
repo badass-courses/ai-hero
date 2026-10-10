@@ -51,6 +51,8 @@ export interface PricingPurchaseRow {
 	readonly checkoutSessionId: string | null
 	/** Stripe product of the purchase's MerchantCharge, when it maps to this product. */
 	readonly stripeProductId: string | null
+	/** Whether the purchase carries a saved pricing decision (the credit ledger). */
+	readonly hasSavedDecision: boolean
 }
 /** Settlement evidence for one charge and the Checkout Session that made it. */
 export interface PricingSettlement {
@@ -97,7 +99,7 @@ export interface PricingTransferRow {
 	/** The transferred purchase as it is now. Null when it cannot be read. */
 	readonly purchase: Pick<
 		PricingPurchaseRow,
-		'productId' | 'bulkCouponId' | 'redeemedBulkCouponId'
+		'productId' | 'bulkCouponId' | 'redeemedBulkCouponId' | 'hasSavedDecision'
 	> | null
 }
 
@@ -109,6 +111,7 @@ export class SourceUnavailable extends Data.TaggedError('SourceUnavailable')<{
 		| 'coupons'
 		| 'price'
 		| 'settlement'
+		| 'ledger'
 }> {}
 /** No single active price, so no merchant unit to price against. */
 export class MerchantPriceUnavailable extends Data.TaggedError(
@@ -140,6 +143,13 @@ export interface PricingFactsSourceShape {
 		readonly stripeChargeId: string
 		readonly checkoutSessionId: string
 	}) => Effect.Effect<PricingSettlement | null, SourceUnavailable>
+	/**
+	 * Every target purchase, any owner or status, whose saved pricing decision
+	 * spent this credit. The saved decisions are the credit ledger.
+	 */
+	readonly creditSpentBy: (
+		creditSource: string,
+	) => Effect.Effect<readonly string[], SourceUnavailable>
 }
 export class PricingFactsSource extends Context.Tag(
 	'ai-hero/front-desk/PricingFactsSource',
@@ -227,31 +237,52 @@ export function existingSeatsFact(
 	)
 }
 
-/** There is no credit redemption ledger yet. Any individual purchase of this
- * product the buyer holds or ever transferred away, in any status, may have
- * spent a credit. Neither a refund nor a transfer unspends it, so the fact
- * holds until a ledger can say. */
+export const CREDIT_LEDGER_REF = 'ai-hero:c5-decision-ledger'
+
+/** What the saved decisions say about the buyer's one credit. */
+export type CreditLedger =
+	/** No known credit to look up. */
+	| { readonly kind: 'no-credit' }
+	| { readonly kind: 'read'; readonly spentBy: readonly string[] }
+	| { readonly kind: 'unavailable' }
+
+/**
+ * Each paid target purchase saves the decision its checkout charged, and a
+ * credit is spent exactly when a saved decision names it. Neither a refund
+ * nor a transfer unspends it. A target purchase from before decisions were
+ * saved (held, or transferred away) may have spent a credit nobody recorded,
+ * so it still holds the fact.
+ */
 export function creditUseFact(
 	rows: readonly PricingPurchaseRow[],
 	transfers: readonly PricingTransferRow[],
 	userId: string,
 	productId: string,
 	refs: readonly string[],
+	ledger: CreditLedger,
 ): PricingBuyerFacts['creditUse'] {
-	const held = rows.some(
-		(row) => row.productId === productId && individual(row),
+	if (ledger.kind === 'unavailable') return gap('FactsUnavailable')
+	if (ledger.kind === 'read' && ledger.spentBy.length)
+		return known('spent', [
+			CREDIT_LEDGER_REF,
+			...ledger.spentBy.map((id) => `${purchaseRef(id)}#decision`),
+		])
+	const unrecordedHeld = rows.some(
+		(row) =>
+			row.productId === productId && individual(row) && !row.hasSavedDecision,
 	)
-	const transferredAway = transfers.some(
+	const unrecordedTransferredAway = transfers.some(
 		(transfer) =>
 			transfer.sourceUserId === userId &&
 			(!transfer.purchase ||
 				(transfer.purchase.productId === productId &&
 					!transfer.purchase.bulkCouponId &&
-					!transfer.purchase.redeemedBulkCouponId)),
+					!transfer.purchase.redeemedBulkCouponId &&
+					!transfer.purchase.hasSavedDecision)),
 	)
-	return held || transferredAway
+	return unrecordedHeld || unrecordedTransferredAway
 		? gap('FactsUnavailable')
-		: known('available', [...refs, 'ai-hero:credit-redemption-ledger:none-yet'])
+		: known('available', [...refs, CREDIT_LEDGER_REF])
 }
 
 type CreditCandidate =
@@ -520,21 +551,36 @@ export const buyerPricingFacts = (
 		// Transfer history decides both credit facts. Without it, neither is known.
 		const transfers = yield* Effect.either(source.transfers(userId))
 		const ownership = Either.isRight(transfers)
-			? {
-					credit: yield* creditFor(
+			? yield* Effect.gen(function* () {
+					const credit = yield* creditFor(
 						rows.right,
 						transfers.right,
 						userId,
 						scanRef,
-					),
-					creditUse: creditUseFact(
-						rows.right,
-						transfers.right,
-						userId,
-						request.productId,
-						[scanRef, transferRef],
-					),
-				}
+					)
+					const creditSource =
+						'value' in credit && credit.value ? credit.value.source : null
+					const spent = creditSource
+						? yield* Effect.either(source.creditSpentBy(creditSource))
+						: null
+					const ledger: CreditLedger =
+						spent === null
+							? { kind: 'no-credit' }
+							: Either.isRight(spent)
+								? { kind: 'read', spentBy: spent.right }
+								: { kind: 'unavailable' }
+					return {
+						credit,
+						creditUse: creditUseFact(
+							rows.right,
+							transfers.right,
+							userId,
+							request.productId,
+							[scanRef, transferRef],
+							ledger,
+						),
+					}
+				})
 			: {
 					credit: gap<null>('FactsUnavailable'),
 					creditUse: gap<'available'>('FactsUnavailable'),

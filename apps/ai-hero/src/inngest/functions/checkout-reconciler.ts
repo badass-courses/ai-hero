@@ -42,6 +42,7 @@ import {
 	runCheckoutReconcileSweep,
 	type StrandedCheckout,
 } from '@/lib/checkout-reconcile/sweep'
+import { AUTHORITATIVE_PRODUCT_IDS } from '@/lib/c5-pricing/decision'
 import { log } from '@/server/logger'
 import type { StripePaymentAdapter } from '@coursebuilder/commerce/stripe-provider'
 import { courseBuilderCoreFunctions } from '@coursebuilder/server'
@@ -255,6 +256,9 @@ export const checkoutReconcileFulfill = inngest.createFunction(
 			getCheckoutSession: (id) =>
 				paymentsAdapter(paymentProvider).getCheckoutSession(id),
 			inspect: (input) => inspectCheckoutFulfillment(db, input),
+			// C5 duplicates are fulfilled and flagged after payment, never held.
+			holdsWhenBuyerHasProduct: (productId) =>
+				!AUTHORITATIVE_PRODUCT_IDS.has(productId),
 			findBuyerProductPurchases: (input) =>
 				findBuyerProductPurchaseIds(db, input),
 			appName: env.NEXT_PUBLIC_APP_NAME,

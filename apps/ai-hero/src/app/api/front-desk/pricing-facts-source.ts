@@ -1,4 +1,9 @@
 import { db } from '@/db'
+import {
+	C5_DECISION_FIELD,
+	parseSavedDecision,
+} from '@/lib/c5-pricing/purchase-decision'
+import { drizzleC5DecisionStore } from '@/lib/c5-pricing/purchase-decision-store'
 import type { ChargeState } from '@ai-hero/front-desk-support'
 import { Effect, Layer } from 'effect'
 import type Stripe from 'stripe'
@@ -38,6 +43,10 @@ const missing = (error: unknown) =>
 	error.code === 'resource_missing'
 const idOf = (value: string | { id: string } | null | undefined) =>
 	typeof value === 'string' ? value : (value?.id ?? null)
+const hasSavedDecision = (fields: unknown) =>
+	parseSavedDecision(
+		(fields as Record<string, unknown> | null | undefined)?.[C5_DECISION_FIELD],
+	) !== null
 
 /** SELECT-only reads plus Stripe retrieve and list calls. No writes. */
 export const pricingFactsSourceLayer = (deps: {
@@ -91,6 +100,7 @@ export const pricingFactsSourceLayer = (deps: {
 							merchantProduct.identifier?.startsWith('prod_')
 								? merchantProduct.identifier
 								: null,
+						hasSavedDecision: hasSavedDecision(purchase.fields),
 					}
 				})
 			}),
@@ -116,6 +126,7 @@ export const pricingFactsSourceLayer = (deps: {
 									bulkCouponId: transfer.purchase.bulkCouponId ?? null,
 									redeemedBulkCouponId:
 										transfer.purchase.redeemedBulkCouponId ?? null,
+									hasSavedDecision: hasSavedDecision(transfer.purchase.fields),
 								}
 							: null,
 					}),
@@ -131,6 +142,8 @@ export const pricingFactsSourceLayer = (deps: {
 					rows.map((row) => [row.id, row.merchantCoupon?.type || null]),
 				)
 			}),
+		creditSpentBy: (creditSource) =>
+			attempt('ledger', () => drizzleC5DecisionStore().spentBy(creditSource)),
 		activePrices: (productId) =>
 			attempt('price', async () => {
 				const rows = await db.query.prices.findMany({

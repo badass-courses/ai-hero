@@ -37,6 +37,8 @@ interface SyntheticDb {
 	prices?: { id: string; unitAmountCents: number }[]
 	settlements?: Record<string, PricingSettlement>
 	transfers?: PricingTransferRow[]
+	/** Saved decisions by credit source: the purchases that spent it. */
+	ledger?: Record<string, string[]>
 	down?: SourceUnavailable['source'][]
 }
 type Session = NonNullable<PricingSettlement['session']>
@@ -53,6 +55,7 @@ const purchase = (
 	stripeChargeId: `ch_${over.id}`,
 	checkoutSessionId: `cs_${over.id}`,
 	stripeProductId: 'prod_cc',
+	hasSavedDecision: false,
 	...over,
 })
 /** A settled charge whose own session has one Crash Course line. */
@@ -168,6 +171,10 @@ function synthetic(data: SyntheticDb) {
 				? fail('settlement')
 				: Effect.succeed(data.settlements?.[stripeChargeId] ?? null)
 		},
+		creditSpentBy: (creditSource) =>
+			down('ledger')
+				? fail('ledger')
+				: Effect.succeed(data.ledger?.[creditSource] ?? []),
 	})
 	return { layer, stripeReads }
 }
@@ -762,7 +769,7 @@ describe('team seats and credit use', () => {
 	})
 
 	it.each(['Valid', 'Restricted', 'Refunded', 'Banned', 'Disputed'])(
-		'holds credit use for any individual target purchase, even %s, until a redemption ledger exists',
+		'holds credit use for an individual target purchase with no saved decision, even %s',
 		async (status) => {
 			const { facts } = await run({
 				...buyer,
@@ -772,14 +779,65 @@ describe('team seats and credit use', () => {
 		},
 	)
 
-	it('allows credit use only with no individual target purchase history', async () => {
+	it('reads credit use from saved decisions once every target purchase has one', async () => {
+		const withCredit = {
+			...buyer,
+			purchases: [
+				purchase({ id: 'cc' }),
+				purchase({ id: 'mine', productId: C5, hasSavedDecision: true }),
+			],
+			settlements: Object.fromEntries([charge('cc')]),
+		}
+		const unspent = await run(withCredit)
+		expect(unspent.facts.facts.creditUse).toEqual({
+			value: 'available',
+			sourceRefs: [
+				'ai-hero:purchases:user:user-test',
+				'ai-hero:purchase-transfers:user:user-test',
+				'ai-hero:c5-decision-ledger',
+			],
+		})
+		// Spent by any purchase, whoever owns it now.
+		const spent = await run({ ...withCredit, ledger: { cc: ['c5-elsewhere'] } })
+		expect(spent.facts.facts.creditUse).toEqual({
+			value: 'spent',
+			sourceRefs: [
+				'ai-hero:c5-decision-ledger',
+				'ai-hero:purchase:c5-elsewhere#decision',
+			],
+		})
+		// A saved decision that spent the credit settles it even beside history
+		// from before decisions were saved.
+		const mixed = await run({
+			...withCredit,
+			purchases: [
+				...withCredit.purchases,
+				purchase({ id: 'old', productId: C5 }),
+			],
+			ledger: { cc: ['mine'] },
+		})
+		expect(mixed.facts.facts.creditUse).toMatchObject({ value: 'spent' })
+	})
+
+	it('holds credit use when the decision ledger cannot be read', async () => {
+		const { facts } = await run({
+			...buyer,
+			purchases: [purchase({ id: 'cc' })],
+			settlements: Object.fromEntries([charge('cc')]),
+			down: ['ledger'],
+		})
+		expect(facts.facts.credit).toMatchObject({ value: { source: 'cc' } })
+		expect(facts.facts.creditUse).toEqual({ gap: 'FactsUnavailable' })
+	})
+
+	it('allows credit use only with no unrecorded target purchase history', async () => {
 		const none = await run({ ...buyer, purchases: [purchase({ id: 'cc' })] })
 		expect(none.facts.facts.creditUse).toEqual({
 			value: 'available',
 			sourceRefs: [
 				'ai-hero:purchases:user:user-test',
 				'ai-hero:purchase-transfers:user:user-test',
-				'ai-hero:credit-redemption-ledger:none-yet',
+				'ai-hero:c5-decision-ledger',
 			],
 		})
 		const seat = await run({
@@ -803,6 +861,7 @@ describe('transfer history', () => {
 			productId: C5,
 			bulkCouponId: null,
 			redeemedBulkCouponId: null,
+			hasSavedDecision: false,
 		},
 		...over,
 	})
@@ -825,6 +884,24 @@ describe('transfer history', () => {
 		expect(facts.facts.creditUse).toEqual({ gap: 'FactsUnavailable' })
 	})
 
+	it('leaves credit use available when the transferred target purchase saved its decision', async () => {
+		const { facts } = await run({
+			...withCredit,
+			transfers: [
+				transfer({
+					purchaseId: 'c5-moved',
+					purchase: {
+						productId: C5,
+						bulkCouponId: null,
+						redeemedBulkCouponId: null,
+						hasSavedDecision: true,
+					},
+				}),
+			],
+		})
+		expect(facts.facts.creditUse).toMatchObject({ value: 'available' })
+	})
+
 	it('holds credit use when a transferred purchase cannot be read', async () => {
 		const { facts } = await run({
 			...withCredit,
@@ -842,6 +919,7 @@ describe('transfer history', () => {
 					productId: C5,
 					bulkCouponId: null,
 					redeemedBulkCouponId: 'bulk',
+					hasSavedDecision: false,
 				},
 			}),
 		],
@@ -853,6 +931,7 @@ describe('transfer history', () => {
 					productId: C4,
 					bulkCouponId: null,
 					redeemedBulkCouponId: null,
+					hasSavedDecision: false,
 				},
 			}),
 		],
@@ -881,6 +960,7 @@ describe('transfer history', () => {
 						productId: CC,
 						bulkCouponId: null,
 						redeemedBulkCouponId: null,
+						hasSavedDecision: false,
 					},
 				}),
 			],
@@ -900,6 +980,7 @@ describe('transfer history', () => {
 						productId: CC,
 						bulkCouponId: null,
 						redeemedBulkCouponId: null,
+						hasSavedDecision: false,
 					},
 				}),
 			],
