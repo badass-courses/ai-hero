@@ -100,8 +100,11 @@ suite("course-sync activation: real MySQL 8", () => {
   beforeAll(async () => {
     const parsed = new URL(uri!);
     if (
+      parsed.protocol !== "mysql:" ||
       !["127.0.0.1", "localhost"].includes(parsed.hostname) ||
-      parsed.pathname !== "/course_sync_verifier_test"
+      parsed.pathname !== "/course_sync_verifier_test" ||
+      parsed.search !== "" ||
+      parsed.hash !== ""
     ) {
       throw new Error(
         "Only the disposable loopback course_sync_verifier_test database is allowed",
@@ -113,10 +116,13 @@ suite("course-sync activation: real MySQL 8", () => {
       uri: server.toString(),
       timezone: "Z",
     });
-    await connection.query(
-      "CREATE DATABASE IF NOT EXISTS course_sync_verifier_test",
-    );
-    await connection.end();
+    try {
+      await connection.query(
+        "CREATE DATABASE IF NOT EXISTS course_sync_verifier_test",
+      );
+    } finally {
+      await connection.end();
+    }
     pool = preserveQueryResultShape(
       mysql.createPool({ uri: uri!, connectionLimit: 2, timezone: "Z" }),
     );

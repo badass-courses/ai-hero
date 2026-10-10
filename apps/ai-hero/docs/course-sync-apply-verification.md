@@ -66,6 +66,6 @@ Set `AIH_COURSE_SYNC_MYSQL_URL` to a disposable loopback MySQL 8 database named 
 pnpm exec vitest run src/course-sync/drizzle-persistence.mysql.test.ts
 ```
 
-The suite refuses other hosts/database names and never reads `DATABASE_URL`. It derives fixture DDL, including unique keys and timestamp precision, from the installed schema and uses the production pool result wrapper and Drizzle adapter. Fixtures contain only synthetic content.
+CI runs this suite against a separate disposable database in the existing `MySQL contract` job, before the other MySQL suites. The suite refuses other hosts/database names and never reads `DATABASE_URL`. It derives fixture DDL, including unique keys and timestamp precision, from the installed schema and uses the production pool result wrapper and Drizzle adapter. Fixtures contain only synthetic content.
 
 The main case has 204 resources: 77 creates (6 lessons), 104 updates, 23 retains, 38 media items, 8 workshop/59 lesson detaches, survivor repositioning, and one cross-parent lesson move. It checks apply and compensating rollback. Other cases cover original-key recovery of a failed head, historical tombstones, untouched unmanaged relations, and verifier/telemetry failures rolling back all writes.
