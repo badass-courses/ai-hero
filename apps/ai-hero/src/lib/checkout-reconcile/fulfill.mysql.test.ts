@@ -737,9 +737,10 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 				savedAt: now.toISOString(),
 			}
 			await store.saveDecision('purch_fields', decision)
-			// Geo loaded this snapshot before the decision was saved.
+			// Geo planned this write before the decision was saved. It writes
+			// only its own keys, so it cannot drop keys saved since.
 			await persistPurchaseGeoWrite({
-				purchaseId: 'purch_fields', fields: { benefit: 'kept' },
+				purchaseId: 'purch_fields',
 				plan: { skip: false, reason: null, city: 'Portland', state: 'OR', ipAddress: null,
 					location: { lat: 45.5, lng: -122.6, city: 'Portland', region: 'OR', precision: 'city' },
 					source: 'stripe-billing' },

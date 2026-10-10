@@ -15,8 +15,8 @@ const TEST_FILE = /\.(test|spec)\.(ts|tsx|mts|cts)$/;
 
 const ALLOWED = new Set([
   "src/lib/purchase-fields-write.ts",
-  // Per-key JSON_SET for the C5 decision and duplicate marker. Under review
-  // in a separate change; move it onto the helper once that lands.
+  // Per-key JSON_SET for the C5 duplicate marker. Safe, but a second write
+  // path: move it onto updatePurchaseFields in a follow-up.
   "src/lib/c5-pricing/purchase-decision-sql.ts",
 ]);
 
