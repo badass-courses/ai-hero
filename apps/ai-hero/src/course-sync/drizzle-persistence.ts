@@ -26,7 +26,9 @@ import {
 } from './control-plane'
 import {
 	chunkCourseSyncWrites,
+	courseSyncActivationFailureSummary,
 	courseSyncAnchorTreeParentIds,
+	courseSyncPriorLiveRelation,
 	courseSyncRollbackPointer,
 	isCourseSyncRelationInScope,
 	resolveCourseSyncRollbackFields,
@@ -88,6 +90,27 @@ async function readRun(runId: string): Promise<SyncRunRecord | null> {
 		where: eq(courseSyncRun.runId, runId),
 	})
 	return row ? runFromRow(row) : null
+}
+
+async function logApplyVerificationFailure(input: {
+	runId: string
+	plan: SyncPlan
+	check: string
+	counts: Record<string, number>
+}) {
+	const data = {
+		runId: input.runId,
+		bindingId: input.plan.bindingId,
+		planSha256: input.plan.planSha256,
+		check: input.check,
+		counts: input.counts,
+	}
+	try {
+		await log.error('course_sync.apply_verification_failed', data)
+	} catch {
+		// Logging must not mask the verification error or its transaction rollback.
+		console.error('course_sync.apply_verification_failed', data)
+	}
 }
 
 export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
@@ -1181,7 +1204,8 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					previousPosition: item.previousPosition,
 					action: item.action,
 				})
-				const deletedAt = item.detached ? new Date() : null
+				const previousLive = courseSyncPriorLiveRelation(item)
+				const deletedAt = item.detached || previousLive ? new Date() : null
 				if (deletedAt) {
 					expectedDeletedAtByResource.set(item.targetResourceId, deletedAt)
 				}
@@ -1190,8 +1214,19 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					resourceId: item.targetResourceId,
 					position: item.position,
 					metadata: { bindingId: plan.bindingId, sourceId: item.sourceId },
-					deletedAt,
+					deletedAt: item.detached ? deletedAt : null,
 				})
+				if (previousLive) {
+					// The prior edge was locked and validated above. Retire only that
+					// edge atomically with activation of the new parent and pointer.
+					relationPromotions.push({
+						resourceOfId: previousLive.parentResourceId,
+						resourceId: previousLive.resourceId,
+						position: previousLive.position,
+						metadata: { bindingId: plan.bindingId, sourceId: item.sourceId },
+						deletedAt,
+					})
+				}
 			}
 
 			await trx
@@ -1240,6 +1275,16 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				preparedVersions.length !== versions.length ||
 				preparedReceipts.length !== plan.resources.length
 			) {
+				const check = preparedResources.length !== plan.resources.length
+					? 'resource_preparation_count_mismatch'
+					: preparedVersions.length !== versions.length
+						? 'version_preparation_count_mismatch'
+						: 'receipt_preparation_count_mismatch'
+				await logApplyVerificationFailure({ runId, plan, check, counts: {
+					expectedResources: plan.resources.length, preparedResources: preparedResources.length,
+					expectedVersions: versions.length, preparedVersions: preparedVersions.length,
+					expectedReceipts: plan.resources.length, preparedReceipts: preparedReceipts.length,
+				} })
 				throw new CourseSyncError(
 					'APPLY_PREPARATION_COUNT_MISMATCH',
 					'Prepared apply rows do not match the content-addressed plan.',
@@ -1303,11 +1348,16 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				expectedFieldsByResource,
 			)
 			if (!activation.ok) {
+				const summary = courseSyncActivationFailureSummary({
+					plan, receipts, resources: activatedResources, relations: activatedRelations,
+					expectedDeletedAtByResource, scope: relationScope, failure: activation,
+				})
+				await logApplyVerificationFailure({ runId, plan, ...summary })
 				throw new CourseSyncError(
 					'APPLY_WRITE_VERIFICATION_FAILED',
-					'Applied pointers, fields, relations, or version receipts did not match the content-addressed plan.',
+					`Applied writes did not match the content-addressed plan: ${activation.reason}.`,
 					500,
-					{ category: 'internal', retryable: false },
+					{ category: 'internal', retryable: false, details: summary },
 				)
 			}
 
