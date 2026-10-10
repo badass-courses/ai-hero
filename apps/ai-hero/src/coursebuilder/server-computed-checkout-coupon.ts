@@ -1,3 +1,5 @@
+import { AUTHORITATIVE_PRODUCT_IDS } from '@/lib/c5-pricing/decision'
+
 import { formatPricesForProduct } from '@coursebuilder/commerce'
 import type { CommerceAdapter } from '@coursebuilder/commerce/types'
 
@@ -14,6 +16,8 @@ export async function resolveServerComputedCheckoutCoupon({
 	verifiedUserId?: string
 	country: string
 }) {
+	// The authoritative-price hook prices these; no coupon is chosen for them.
+	if (AUTHORITATIVE_PRODUCT_IDS.has(productId)) return null
 	const defaultCoupons = await adapter.getDefaultCoupon([productId])
 	const pricing = await formatPricesForProduct({
 		productId,

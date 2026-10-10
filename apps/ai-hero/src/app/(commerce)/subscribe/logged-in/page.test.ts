@@ -300,6 +300,9 @@ describe('logged-in checkout coupon authorization', () => {
 				userId: 'user-actual',
 			}),
 			expect.anything(),
+			expect.objectContaining({
+				trustedCountry: expect.stringMatching(/^[A-Z]{2}$/),
+			}),
 		)
 	})
 
@@ -315,6 +318,9 @@ describe('logged-in checkout coupon authorization', () => {
 				userId: 'user-actual',
 			}),
 			expect.anything(),
+			expect.objectContaining({
+				trustedCountry: expect.stringMatching(/^[A-Z]{2}$/),
+			}),
 		)
 	})
 
@@ -334,6 +340,9 @@ describe('logged-in checkout coupon authorization', () => {
 				usedCouponId: mocks.coupon.id,
 			}),
 			expect.anything(),
+			expect.objectContaining({
+				trustedCountry: expect.stringMatching(/^[A-Z]{2}$/),
+			}),
 		)
 	})
 
@@ -355,6 +364,9 @@ describe('logged-in checkout coupon authorization', () => {
 				quantity: 5,
 			}),
 			expect.anything(),
+			expect.objectContaining({
+				trustedCountry: expect.stringMatching(/^[A-Z]{2}$/),
+			}),
 		)
 	})
 
@@ -372,6 +384,9 @@ describe('logged-in checkout coupon authorization', () => {
 				quantity: 0,
 			}),
 			expect.anything(),
+			expect.objectContaining({
+				trustedCountry: expect.stringMatching(/^[A-Z]{2}$/),
+			}),
 		)
 	})
 
@@ -403,6 +418,8 @@ describe('logged-in checkout coupon authorization', () => {
 			expect.anything(),
 			expect.objectContaining({
 				idempotencyKey: expect.stringMatching(/^aih-login-checkout:/),
+				// The signed handoff's country is the trusted one for the hook.
+				trustedCountry: 'TR',
 			}),
 		)
 	})
@@ -556,6 +573,7 @@ describe('logged-in checkout coupon authorization', () => {
 					couponId: undefined,
 				}),
 				expect.anything(),
+				expect.objectContaining({ trustedCountry: 'US' }),
 			)
 		},
 	)
@@ -651,6 +669,7 @@ describe('logged-in checkout coupon authorization', () => {
 				usedCouponId: mocks.coupon.id,
 			}),
 			expect.anything(),
+			expect.objectContaining({ trustedCountry: 'CA' }),
 		)
 	})
 

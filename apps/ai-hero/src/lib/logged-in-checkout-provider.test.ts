@@ -143,6 +143,7 @@ describe('logged-in checkout provider boundary', () => {
 		} satisfies PaymentsAdapter
 
 		const result = await createLoggedInCheckoutSession({
+			trustedCountry: 'US',
 			provider: provider(paymentsAdapter),
 			adapter: courseAdapter(),
 			handoffStore,
@@ -171,6 +172,7 @@ describe('logged-in checkout provider boundary', () => {
 		const createCheckoutSession = vi.fn()
 		await expect(
 			createLoggedInCheckoutSession({
+				trustedCountry: 'US',
 				provider: provider({
 					...mockStripeAdapter,
 					getPrice: vi.fn(async () => ({ recurring: null }) as never),
@@ -195,6 +197,7 @@ describe('logged-in checkout provider boundary', () => {
 		const isPurchaseBlocked = vi.fn(async () => true)
 
 		const result = await createLoggedInCheckoutSession({
+			trustedCountry: 'US',
 			provider: provider({
 				...mockStripeAdapter,
 				getPrice: vi.fn(async () => ({ recurring: null }) as never),
@@ -231,6 +234,7 @@ describe('logged-in checkout provider boundary', () => {
 		} satisfies PaymentsAdapter
 
 		const result = await createLoggedInCheckoutSession({
+			trustedCountry: 'US',
 			provider: provider(paymentsAdapter),
 			adapter: courseAdapter(),
 			handoffStore,
@@ -259,6 +263,7 @@ describe('logged-in checkout provider boundary', () => {
 		}
 
 		const result = await createLoggedInCheckoutSession({
+			trustedCountry: 'US',
 			provider: fakeProvider,
 			adapter: courseAdapter(),
 			handoffStore,
@@ -316,6 +321,7 @@ describe('logged-in checkout provider boundary', () => {
 
 		await expect(
 			createLoggedInCheckoutSession({
+				trustedCountry: 'US',
 				provider: realProvider,
 				adapter: courseAdapter(),
 				handoffStore,
@@ -325,6 +331,7 @@ describe('logged-in checkout provider boundary', () => {
 			}),
 		).rejects.toThrow('checkout-login-handoff-receipt-write-failed')
 		const recovered = await createLoggedInCheckoutSession({
+			trustedCountry: 'US',
 			provider: realProvider,
 			adapter: courseAdapter(),
 			handoffStore,

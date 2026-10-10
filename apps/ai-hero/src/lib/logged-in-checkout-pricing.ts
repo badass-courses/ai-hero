@@ -15,6 +15,7 @@ import {
 } from '@/lib/exclusive-coupon-authorization'
 
 import type { CommerceAdapter } from '@coursebuilder/commerce'
+import { AUTHORITATIVE_PPP_OFFER_ID } from '@coursebuilder/commerce/authoritative-price'
 
 export type LoggedInCheckoutPricingResult =
 	| {
@@ -42,6 +43,7 @@ export async function resolveLoggedInCheckoutPricing({
 	browserSession,
 	trustedCountry,
 	handoffSecret,
+	authoritativeProductIds,
 	now = new Date(),
 }: {
 	adapter: CommerceAdapter
@@ -58,6 +60,8 @@ export async function resolveLoggedInCheckoutPricing({
 	browserSession?: string
 	trustedCountry: string
 	handoffSecret?: string
+	/** Products priced by the app's authoritative-price hook. */
+	authoritativeProductIds?: ReadonlySet<string>
 	now?: Date
 }): Promise<LoggedInCheckoutPricingResult> {
 	const quantity = checkoutParams.quantity ?? 1
@@ -119,6 +123,27 @@ export async function resolveLoggedInCheckoutPricing({
 			}
 		}
 		claim = claimResult.claim
+	}
+
+	// The hook prices these from the trusted country. The PPP offer id is only
+	// the buyer's consent; the hook checks eligibility itself. No coupon
+	// selector or server-computed coupon reaches checkout.
+	if (authoritativeProductIds?.has(checkoutParams.productId)) {
+		return {
+			kind: 'ready',
+			country:
+				checkoutHandoff.valid && claim
+					? checkoutHandoff.payload.country
+					: trustedCountry,
+			couponId:
+				checkoutParams.couponId === AUTHORITATIVE_PPP_OFFER_ID
+					? AUTHORITATIVE_PPP_OFFER_ID
+					: undefined,
+			usedCouponId: undefined,
+			claim,
+			checkoutHandoff,
+			couponAuthorization,
+		}
 	}
 
 	// PPP intent permits recomputation. It does not prove country. The country is

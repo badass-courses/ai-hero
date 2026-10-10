@@ -17,6 +17,7 @@ import {
 } from '@/lib/checkout-login-handoff'
 import { checkoutLoginHandoffStore } from '@/lib/checkout-login-handoff-store'
 import { authorizeExclusiveCouponSelection } from '@/lib/exclusive-coupon-authorization'
+import { AUTHORITATIVE_PRODUCT_IDS } from '@/lib/c5-pricing/decision'
 import { getProduct } from '@/lib/products-query'
 import {
 	hasActiveNonBulkPurchaseForProduct,
@@ -26,6 +27,7 @@ import { getSubscriptionStatus } from '@/lib/subscriptions'
 import { getProviders, getServerAuthSession } from '@/server/auth'
 import { and, eq, inArray, isNull } from 'drizzle-orm'
 
+import { AUTHORITATIVE_PPP_OFFER_ID } from '@coursebuilder/commerce/authoritative-price'
 import { CheckoutParamsSchema } from '@coursebuilder/commerce/stripe-checkout'
 
 export const dynamic = 'force-dynamic'
@@ -151,7 +153,13 @@ export default async function VerifyLoginPage({
 	const checkoutHandoff = createCheckoutLoginHandoffEnvelope({
 		secret: env.NEXTAUTH_SECRET,
 		country: trustedCountry,
-		pppSelected: couponAuthorization.requestedPPP === true,
+		// An authoritative product's PPP selection is the offer id the hook
+		// published; the hook re-checks eligibility from the trusted country.
+		pppSelected: AUTHORITATIVE_PRODUCT_IDS.has(
+			parsedCheckoutParams.data.productId,
+		)
+			? parsedCheckoutParams.data.couponId === AUTHORITATIVE_PPP_OFFER_ID
+			: couponAuthorization.requestedPPP === true,
 		productId: parsedCheckoutParams.data.productId,
 		quantity: parsedCheckoutParams.data.quantity ?? 1,
 		now,
