@@ -177,9 +177,10 @@ export const env = createEnv({
 		FRONT_DESK_URL: z.string().url().optional(),
 		FRONT_DESK_PRICING_TOKEN: z.string().optional(),
 		FRONT_DESK_QUOTES_TOKEN: z.string().optional(),
-		// C5 kill switch: "true" closes C5 checkout and display. It never falls
-		// back to the legacy price.
-		AIH_C5_PRICING_DISABLED: z.enum(['true', 'false']).optional(),
+		// C5 kill switch: "true" closes C5 checkout, display and team invoices.
+		// It never falls back to the legacy price. Any value but "false" closes,
+		// so a typo fails closed rather than failing the build.
+		AIH_C5_PRICING_DISABLED: z.string().optional(),
 		// When paid C5 purchases started saving their pricing decisions, as an
 		// ISO-8601 instant. Credit use falls back to purchase history before it.
 		// Unset or unreadable holds any buyer whose credit chain has C5 history.

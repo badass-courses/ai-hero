@@ -11,6 +11,7 @@ import { and, eq } from 'drizzle-orm'
 import { getPPPDiscountPercent } from '@coursebuilder/commerce/parity-coupon'
 import type { AuthoritativePriceRequest } from '@coursebuilder/core/schemas'
 
+import { c5PricingDisabled } from './config'
 import { createFrontDeskData, type FrontDeskData } from './front-desk-data'
 import { createC5AuthoritativePrice, type BuyerRead } from './hook'
 import { holdsRestrictedPurchase } from './restricted-holder'
@@ -147,7 +148,7 @@ const decide = createC5AuthoritativePrice({
 	price,
 	engineVersion: ENGINE_VERSION,
 	now: () => new Date(),
-	disabled: () => env.AIH_C5_PRICING_DISABLED === 'true',
+	disabled: c5PricingDisabled,
 })
 
 /** AI Hero's authoritative-price hook, as Course Builder calls it. */

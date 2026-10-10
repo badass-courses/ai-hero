@@ -23,8 +23,13 @@ import type {
  *
  * `teamPriceSourceFor` routes a product to one of them. A product routed to
  * the engine with no configured policy source is unavailable, which keeps its
- * invoicing off until front-desk is configured. An engine price above the
- * app's own price for the same order is unavailable too (`cappedAtCheckout`).
+ * invoicing off until front-desk is configured.
+ *
+ * An engine-priced product needs no separate cap: checkout prices it with
+ * the same engine, policy and quotes, so the engine's team price is the
+ * price checkout charges. Capping it with the hook's display decision would
+ * be wrong: with no signed-in buyer that decision is only an upper bound, so
+ * a billing email with no account could never be invoiced.
  */
 
 export type TeamPriceRequest = {
@@ -90,9 +95,7 @@ export function teamPriceSourceFor(
 	},
 ): TeamPriceSource {
 	if (!ENGINE_PRICED_PRODUCTS.has(productId)) return sources.appBulk
-	return sources.engine
-		? cappedAtCheckout(sources.engine, sources.appBulk)
-		: disabledPriceSource('engine-not-configured')
+	return sources.engine ?? disabledPriceSource('engine-not-configured')
 }
 
 /**
@@ -139,7 +142,8 @@ type Read<A> = { ok: true; value: A } | { ok: false; reason: string }
  * invoice is unavailable rather than priced at the formula.
  *
  * Accepts only `priced`, an amount the list price reaches by discount, and a
- * per-seat price that multiplies out to the total.
+ * per-seat price that multiplies out to the total. The product's kill switch
+ * closes invoices as it closes checkout.
  */
 export function enginePriceSource(deps: {
 	policy: (
@@ -158,9 +162,12 @@ export function enginePriceSource(deps: {
 		value?: PricingResultData
 	}
 	now: () => Date
+	/** The kill switch checkout obeys. */
+	disabled: () => boolean
 }): TeamPriceSource {
 	return {
 		async price(request) {
+			if (deps.disabled()) return unavailable('engine-disabled')
 			const policy = await deps.policy(request.productId)
 			if (!policy.ok) return unavailable('engine-policy-unavailable')
 			let quotes: readonly BindingQuoteData[] = []

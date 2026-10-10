@@ -13,3 +13,13 @@ export function c5DecisionCutover(
 	return Number.isNaN(at.getTime()) ? null : at
 }
 
+/**
+ * The C5 kill switch. Any value but unset, empty or "false" closes C5, so a
+ * mistyped value fails closed instead of failing the build.
+ */
+export function c5PricingDisabled(
+	value: string | undefined = env.AIH_C5_PRICING_DISABLED,
+): boolean {
+	const normalized = value?.trim().toLowerCase()
+	return Boolean(normalized) && normalized !== 'false'
+}

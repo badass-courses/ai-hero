@@ -48,6 +48,7 @@ describe('enginePriceSource', () => {
 			quotes: noQuotes,
 			price,
 			now: inEarlyWindow,
+			disabled: () => false,
 		})
 		// Synthetic early bands: 5+ seats 25%, 10+ seats 30%.
 		await expect(source.price(engineRequest)).resolves.toEqual({
@@ -70,6 +71,7 @@ describe('enginePriceSource', () => {
 			quotes,
 			price,
 			now: inEarlyWindow,
+			disabled: () => false,
 		})
 		await expect(
 			source.price({ ...engineRequest, email: 'team@example.test' }),
@@ -104,6 +106,7 @@ describe('enginePriceSource', () => {
 			}),
 			price,
 			now: inEarlyWindow,
+			disabled: () => false,
 		})
 		await expect(
 			source.price({ ...engineRequest, email: 'team@example.test' }),
@@ -122,6 +125,7 @@ describe('enginePriceSource', () => {
 			'engine-closed',
 		],
 		['a list price the policy does not know', { list: 99_999 }, 'engine-held'],
+		['the kill switch on', { disabled: () => true }, 'engine-disabled'],
 	])('is unavailable with %s', async (_, over, reason) => {
 		const { list, ...deps } = over as { list?: number } & Record<
 			string,
@@ -132,6 +136,7 @@ describe('enginePriceSource', () => {
 			quotes: noQuotes,
 			price,
 			now: inEarlyWindow,
+			disabled: () => false,
 			...(deps as object),
 		})
 		await expect(
@@ -216,13 +221,13 @@ describe('cappedAtCheckout', () => {
 		})
 	})
 
-	it('caps C5 through the router', async () => {
+	it('leaves C5 to the engine alone: checkout runs the same engine', async () => {
 		await expect(
 			teamPriceSourceFor('product-s00zs', {
 				appBulk: fixed(at(50_000)),
 				engine: fixed(enginePrice),
 			}).price(request),
-		).resolves.toMatchObject({ reason: 'above-checkout' })
+		).resolves.toBe(enginePrice)
 	})
 })
 
