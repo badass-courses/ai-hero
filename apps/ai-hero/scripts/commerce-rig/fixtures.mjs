@@ -1,7 +1,7 @@
 // Synthetic inputs, not a production catalog or a pricing-policy implementation.
 export const c5WorkshopId = 'rig-workshop-c5'
 export const catalog = [
-  { key: 'c5', id: 'product-s00zs', name: 'Rig C5', type: 'cohort', cents: 129500 },
+  { key: 'c5', id: 'product-s00zs', name: 'Rig C5', type: 'cohort', cents: 100000 },
   { key: 'cc', id: 'product-ma254', name: 'Rig Crash Course', type: 'workshop', cents: 29900 },
   { key: 'c3', id: 'product-7t9ek', name: 'Rig C3', type: 'cohort', cents: 99500 },
   { key: 'c4', id: 'product-pqkk5', name: 'Rig C4', type: 'cohort', cents: 99500 },
@@ -28,6 +28,16 @@ export const fixtures = [
   ...[2, 5, 10, 30].map(seats => ({ key: `team-${seats}`, quantity: seats, purchases: [] })),
   { key: 'binding-quote', purchases: [cc(9900)], pending: 'Confirmed quote store and pricing fact adapter', quoteInput: { currency: 'USD', unitAmountCents: 60000, quantity: 1, basis: 'unit' } },
 ].map(fixture => ({ ...fixture, userId: `rig_${fixture.key}`, email: `${fixture.key}@example.test`, quantity: fixture.quantity ?? 1 }))
+// A measurement run may replace list prices from a private overlay: { "amounts": { "<catalog key>": <cents> } }.
+export function applyCatalogOverlay(base, overlay) {
+  const amounts = overlay?.amounts
+  if (!amounts || typeof amounts !== 'object' || Array.isArray(amounts)) throw new Error('Catalog overlay must have an amounts object')
+  for (const [key, cents] of Object.entries(amounts)) {
+    if (!base.some(product => product.key === key)) throw new Error('Catalog overlay names an unknown catalog key')
+    if (!Number.isSafeInteger(cents) || cents <= 0) throw new Error('Catalog overlay amounts must be positive integer cents')
+  }
+  return base.map(product => product.key in amounts ? { ...product, cents: amounts[product.key] } : product)
+}
 export function fixtureFor(key) {
   const fixture = fixtures.find(item => item.key === key)
   if (!fixture) throw new Error('Unknown fixture. Run rig fixtures.')

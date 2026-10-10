@@ -35,8 +35,8 @@ A crash can leave `command.lock`. Inspect its PID and owner before removing it; 
 ## Stripe key source
 
 ```sh
-# Default: lease the local named sandbox key for one hour at startup.
-RIG_STRIPE=named ./scripts/commerce-rig/rig up
+# Lease a named sandbox key from agent-secrets for one hour at startup.
+RIG_STRIPE_KEY_SOURCE=agent-secrets:<secret name> ./scripts/commerce-rig/rig up
 
 # Permanent-file alias, through the same reader; never source the file in a shell.
 RIG_STRIPE_KEY_FILE="$HOME/.config/ai-hero-commerce-rig/stripe.env" ./scripts/commerce-rig/rig up
@@ -48,7 +48,7 @@ RIG_STRIPE_KEY_SOURCE=file:/absolute/private/stripe.env ./scripts/commerce-rig/r
 RIG_SLOT=1 RIG_STRIPE=ephemeral ./scripts/commerce-rig/rig up
 ```
 
-The default source is `agent-secrets:ai-hero::stripe_test_secret_key`. `RIG_STRIPE_KEY_SOURCE` can select another `agent-secrets:<name>`, a `file:<absolute path>`, or `anonymous`. `RIG_STRIPE_KEY_FILE` is an alias for the file source; setting both overrides is refused. Leave both overrides unset to exercise the agent-secrets lease route. Both routes passed a checked-key/private-runtime-file probe. A file must be mode 0600, regular, and contain either a raw test key or `AIH_RIG_STRIPE_SECRET_KEY=<test key>` / `STRIPE_SECRET_TOKEN=<test key>`. Values are never printed. Ambient Stripe keys and CLI profiles are not used.
+There is no default key source. Named mode requires `RIG_STRIPE_KEY_SOURCE` set to `agent-secrets:<name>`, `file:<absolute path>` or `anonymous`, and refuses to start when it is unset. Keep the secret name in your private operator setup, not in this repo. `RIG_STRIPE_KEY_FILE` is an alias for the file source; setting both is refused. Both routes passed a checked-key/private-runtime-file probe. A file must be mode 0600, regular, and contain either a raw test key or `AIH_RIG_STRIPE_SECRET_KEY=<test key>` / `STRIPE_SECRET_TOKEN=<test key>`. Values are never printed. Ambient Stripe keys and CLI profiles are not used.
 
 The named sandbox's expiry is operator-owned; `sandbox.json` records the lease times, not an invented sandbox expiration. Ephemeral provisioning records the returned account ID and expiry. It runs in a fresh private CLI home with a synthetic email. A one-shot proxy permits the anonymous provisioning host and package-download hosts, but blocks the CLI's account-login fallback. Unexpected key prefixes fail closed; `sandbox.json` records only the structural prefix alongside the candidate ID/expiry so a later policy decision can use evidence without exposing the key. Do not weaken that guard to make the command green.
 
@@ -89,6 +89,15 @@ There are 22 deterministic `*@example.test` users: new buyer; Crash Course paid 
 The seed catalog is deliberately **synthetic and bare**. No customer dump, production coupon configuration, reviewed legend manifest or Front quote store is imported. The one discount configuration seeded is Course Builder's generic bulk coupons, at the tiers the installed `@coursebuilder/commerce` reports, because bulk checkout looks them up by type and tier. Fixture types are not policy implementation. Legend and binding quote are explicit pending fact inputs in `seed.json`; their full eligibility is not represented by ordinary purchase rows. Existing price/credit selectors run unchanged. Add authoritative fact adapters/configuration in their owning projects before calling these two fixtures complete.
 
 `checkout <fixture>` inserts a temporary local Auth.js database session and verifies the app resolves that exact buyer. It POSTs to the real authenticated checkout route as the buy form does, follows the app's same-origin `/subscribe/verify-login` hop for cohort products, and retrieves Stripe's session total. Without `--complete`, it records and expires the session. With `--complete`, it selects the card method, opts out of Link and submits **4242 4242 4242 4242** through the Stripe-hosted page, then waits for paid status, the matching stored webhook, a matching C5 purchase for the buyer/amount, and C5 access from that purchase. Browser selectors can drift; a failure produces a private screenshot plus a control-name list (no values) and does not claim proof.
+
+**List prices.** Public fixtures use synthetic list prices; the C5 fixture is deliberately not the real price. A measurement run can supply real amounts from a private JSON file outside the repo:
+
+```sh
+# { "amounts": { "c5": <cents> } }; keys are catalog keys in fixtures.mjs.
+RIG_CATALOG_OVERLAY=/absolute/private/catalog-overlay.json ./scripts/commerce-rig/rig reset
+```
+
+The overlay must be an absolute path to a regular file. Unknown keys and non-integer or non-positive amounts are refused. `seed.json` and each checkout receipt record whether an overlay was used. Changing the overlay on a seeded run requires `reset`. Keep measured totals in private receipts.
 
 Private artifacts:
 

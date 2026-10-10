@@ -6,9 +6,9 @@ import { eq } from 'drizzle-orm'
 import { getCourseBuilderSchema } from '@coursebuilder/adapter-drizzle/mysql'
 import { getBulkDiscountPercent } from '@coursebuilder/commerce/bulk-coupon'
 import Stripe from 'stripe'
-import { catalog, fixtures } from './fixtures.mjs'
+import { applyCatalogOverlay, catalog as baseCatalog, fixtures } from './fixtures.mjs'
 import { remember } from './stripe-state.mjs'
-import { assertDatabase, assertTestKey, assertTestObject, privateWrite } from './safety.mjs'
+import { assertDatabase, assertTestKey, assertTestObject, privateWrite, readCatalogOverlay } from './safety.mjs'
 
 export const tables = getCourseBuilderSchema(mysqlTableCreator(name => `AI_${name}`))
 export async function connect() {
@@ -18,7 +18,13 @@ export async function connect() {
 const date = new Date('2026-01-01T00:00:00Z')
 // Course Builder treats status 0 as inactive; seeded commerce rows are live, like production.
 const resourceId = key => key === 'cc' ? 'workshop-2ozd9' : `rig-resource-${key}`
+// List prices for this run: the synthetic catalog, or a private overlay when RIG_CATALOG_OVERLAY names one.
+export async function seedCatalog(env = process.env) {
+  const overlay = await readCatalogOverlay(env.RIG_CATALOG_OVERLAY)
+  return { catalog: overlay ? applyCatalogOverlay(baseCatalog, overlay) : baseCatalog, catalogOverlay: Boolean(overlay) }
+}
 export async function seed(state, generation) {
+  const { catalog, catalogOverlay } = await seedCatalog()
   const { db, close } = await connect()
   const key = process.env.STRIPE_SECRET_TOKEN
   const stripe = key === 'sk_test_RigPlaceholder' ? null : new Stripe(assertTestKey(key))
@@ -100,7 +106,7 @@ export async function seed(state, generation) {
         await db.insert(tables.contentResourceResource).values({ resourceOfId: resourceId(product.key), resourceId: child, createdAt: date, updatedAt: date })
       }
     }
-    await privateWrite(join(state, 'seed.json'), JSON.stringify({ generation, catalog, mappings, fixtures, stripeSeeded: Boolean(stripe), bulkTiers: bulkTiers.length, policy: 'Synthetic bare catalog plus Course Builder generic bulk tiers; no production discount configuration imported' }, null, 2) + '\n')
+    await privateWrite(join(state, 'seed.json'), JSON.stringify({ generation, catalog, catalogOverlay, mappings, fixtures, stripeSeeded: Boolean(stripe), bulkTiers: bulkTiers.length, policy: `${catalogOverlay ? 'Synthetic catalog with private list-price overlay' : 'Synthetic bare catalog'} plus Course Builder generic bulk tiers; no production discount configuration imported` }, null, 2) + '\n')
     return { fixtureCount: fixtures.length, stripeSeeded: Boolean(stripe) }
   } finally { await close() }
 }

@@ -1,12 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, chmod, mkdir, readFile, symlink } from 'node:fs/promises'
+import { mkdtemp, chmod, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { spawnSync } from 'node:child_process'
 import { getTableColumns } from 'drizzle-orm'
-import { catalog, fixtures, fixtureFor } from './fixtures.mjs'
-import { assertDatabase, assertTestKey, assertTestObject, cleanEnv, databaseUrl, origin, privateWrite, readPrivateKey, publicSession } from './safety.mjs'
+import { applyCatalogOverlay, catalog, fixtures, fixtureFor } from './fixtures.mjs'
+import { assertDatabase, assertTestKey, assertTestObject, cleanEnv, databaseUrl, origin, privateWrite, readCatalogOverlay, readPrivateKey, publicSession } from './safety.mjs'
 import { provesAccess } from './checkout.mjs'
 import { tables } from './seed.mjs'
 import { missingSchema, overlay, splitStatements } from './schema.mjs'
@@ -29,7 +29,8 @@ test('only explicit Stripe test key prefixes are accepted', () => {
   for (const key of ['sk_live_dummy', 'rk_live_dummy', 'rkcs_test_dummy123', 'sk_test_', 'pk_test_dummy', '', undefined, ' sk_test_dummy']) assert.throws(() => assertTestKey(key), /test-mode/)
 })
 test('named, file alias and ephemeral sources are explicit and conflicting overrides fail', () => {
-  assert.equal(keySource({}), 'agent-secrets:ai-hero::stripe_test_secret_key')
+  assert.throws(() => keySource({}), /not configured; set RIG_STRIPE_KEY_SOURCE/)
+  assert.throws(() => keySource({ RIG_STRIPE: 'named' }), /not configured/)
   assert.equal(keySource({ RIG_STRIPE_KEY_FILE: '/private/stripe.env' }), 'file:/private/stripe.env')
   assert.equal(keySource({ RIG_STRIPE: 'ephemeral' }), 'anonymous')
   assert.equal(keySource({ RIG_STRIPE_KEY_SOURCE: 'agent-secrets:alternate' }), 'agent-secrets:alternate')
@@ -92,6 +93,27 @@ test('fixture identity and exclusion shapes stay deterministic', () => {
   assert.deepEqual([2, 5, 10, 30].map(n => fixtureFor(`team-${n}`)).map(f => [f.quantity, f.purchases.length]), [[2, 0], [5, 0], [10, 0], [30, 0]])
   assert.throws(() => fixtureFor('real-user'), /Unknown/)
   assert.equal(catalog[0].id, 'product-s00zs')
+  // Public fixtures carry a synthetic list price; real amounts come only from a private overlay.
+  assert.equal(catalog[0].cents, 100000)
+})
+test('catalog overlay replaces list prices and rejects bad input', () => {
+  const measured = applyCatalogOverlay(catalog, { amounts: { c5: 123400 } })
+  assert.equal(measured[0].cents, 123400)
+  assert.equal(catalog[0].cents, 100000)
+  assert.deepEqual(measured.slice(1), catalog.slice(1))
+  assert.throws(() => applyCatalogOverlay(catalog, {}), /amounts object/)
+  assert.throws(() => applyCatalogOverlay(catalog, { amounts: { nope: 100 } }), /unknown catalog key/)
+  assert.throws(() => applyCatalogOverlay(catalog, { amounts: { c5: 12.5 } }), /positive integer cents/)
+  assert.throws(() => applyCatalogOverlay(catalog, { amounts: { c5: 0 } }), /positive integer cents/)
+})
+test('catalog overlay path must be absolute and a regular file', async () => {
+  assert.equal(await readCatalogOverlay(undefined), null)
+  await assert.rejects(readCatalogOverlay('relative/overlay.json'), /absolute/)
+  const dir = await mkdtemp(join(temp, 'overlay-'))
+  const file = join(dir, 'overlay.json')
+  await writeFile(file, JSON.stringify({ amounts: { c5: 123400 } }))
+  assert.deepEqual(await readCatalogOverlay(file), { amounts: { c5: 123400 } })
+  await assert.rejects(readCatalogOverlay(dir), /regular file/)
 })
 test('schema overlay pins ON UPDATE precision only where MySQL rejects it', () => {
   const ddl = 'CREATE TABLE `AI_X` (\n\t`updatedAt` timestamp(3) NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,\n\t`plain` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP\n);'
@@ -112,8 +134,8 @@ test('seed writes use installed Course Builder column contracts', () => {
   for (const column of ['userId', 'sourceId', 'sourceType', 'entitlementType', 'metadata', 'organizationMembershipId', 'deletedAt']) assert.ok(entitlement[column], column)
 })
 test('proof requires paid, matching webhook, buyer, amount, purchase and C5 access', () => {
-  const fixture = fixtureFor('new-buyer'), session = { paymentStatus: 'paid', total: 129500 }
-  const valid = { webhooks: [{ id: 'evt_test' }], purchases: [{ id: 'purchase', userId: fixture.userId, productId: catalog[0].id, status: 'Valid', totalAmount: '1295.00' }], access: [{ sourceId: 'purchase', entitlementType: 'cohort_content_access', metadata: { contentIds: ['rig-workshop-c5'] } }] }
+  const fixture = fixtureFor('new-buyer'), session = { paymentStatus: 'paid', total: 100000 }
+  const valid = { webhooks: [{ id: 'evt_test' }], purchases: [{ id: 'purchase', userId: fixture.userId, productId: catalog[0].id, status: 'Valid', totalAmount: '1000.00' }], access: [{ sourceId: 'purchase', entitlementType: 'cohort_content_access', metadata: { contentIds: ['rig-workshop-c5'] } }] }
   assert.equal(provesAccess(fixture, session, valid), true)
   assert.equal(provesAccess(fixture, { ...session, paymentStatus: 'unpaid' }, valid), false)
   for (const field of ['webhooks', 'purchases', 'access']) assert.equal(provesAccess(fixture, session, { ...valid, [field]: [] }), false)

@@ -10,7 +10,10 @@ export function keySource(env = process.env) {
   const mode = env.RIG_STRIPE ?? 'named'
   if (!['named', 'ephemeral'].includes(mode)) throw new Error('RIG_STRIPE must be named or ephemeral')
   if (env.RIG_STRIPE_KEY_SOURCE && env.RIG_STRIPE_KEY_FILE) throw new Error('Select only one Stripe key-source override')
-  return env.RIG_STRIPE_KEY_SOURCE ?? (env.RIG_STRIPE_KEY_FILE ? `file:${env.RIG_STRIPE_KEY_FILE}` : mode === 'ephemeral' ? 'anonymous' : 'agent-secrets:ai-hero::stripe_test_secret_key')
+  const source = env.RIG_STRIPE_KEY_SOURCE ?? (env.RIG_STRIPE_KEY_FILE ? `file:${env.RIG_STRIPE_KEY_FILE}` : mode === 'ephemeral' ? 'anonymous' : null)
+  // No built-in default: the operator's local setup names the key source.
+  if (!source) throw new Error('Stripe key source is not configured; set RIG_STRIPE_KEY_SOURCE')
+  return source
 }
 export function keyPrefix(value) {
   // Return a structural prefix only, never entropy from a credential.

@@ -13,7 +13,7 @@ import { assertDatabase, cleanEnv, databaseUrl, origin, ports, privateWrite, rea
 import { sandbox } from './sandbox.mjs'
 import { archiveRun } from './stripe-state.mjs'
 import { checkout } from './checkout.mjs'
-import { connect, seed } from './seed.mjs'
+import { connect, seed, seedCatalog } from './seed.mjs'
 import { applySchema } from './schema.mjs'
 const exec = promisify(execFile)
 const require = createRequire(import.meta.url)
@@ -153,6 +153,8 @@ async function up() {
   const priorSeed = await json(join(state, 'seed.json'))
   await step('synthetic-fixtures-and-stripe-catalog', async () => {
     if (priorSeed?.generation === config.run && priorSeed.stripeSeeded) {
+      const { catalog: wanted } = await seedCatalog()
+      if (JSON.stringify(wanted.map(p => [p.key, p.cents])) !== JSON.stringify((priorSeed.catalog ?? []).map(p => [p.key, p.cents]))) throw new Error('Catalog amounts changed since the seeded run; reset required')
       const { db, close } = await connect()
       try {
         const buyer = await db.query.users.findFirst()

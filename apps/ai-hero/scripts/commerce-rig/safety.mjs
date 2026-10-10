@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { chmod, lstat, readFile, rename, writeFile } from 'node:fs/promises'
+import { isAbsolute } from 'node:path'
 
 export const slot = Number(process.env.RIG_SLOT ?? 0)
 if (!Number.isInteger(slot) || slot < 0 || slot > 9) throw new Error('RIG_SLOT must be an integer from 0 to 9')
@@ -28,6 +29,13 @@ export async function privateWrite(path, value) {
   await writeFile(temporary, value, { mode: 0o600, flag: 'wx' })
   await chmod(temporary, 0o600)
   await rename(temporary, path)
+}
+export async function readCatalogOverlay(path) {
+  if (!path) return null
+  if (!isAbsolute(path)) throw new Error('RIG_CATALOG_OVERLAY must be an absolute path')
+  const stat = await lstat(path)
+  if (!stat.isFile()) throw new Error('Catalog overlay must be a regular file')
+  try { return JSON.parse(await readFile(path, 'utf8')) } catch { throw new Error('Catalog overlay is not valid JSON') }
 }
 export async function readPrivateKey(path) {
   const stat = await lstat(path)
