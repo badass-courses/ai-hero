@@ -175,6 +175,14 @@ describe('createC5AuthoritativePrice', () => {
 		expect(deps.policy).not.toHaveBeenCalled()
 	})
 
+	it('closes C5 when the async switch resolves closed', async () => {
+		deps = makeDeps({ disabled: async () => true })
+		const decision = await ask()
+		expect(decision).toMatchObject({ kind: 'closed' })
+		expect(decision!.reasons).toEqual([APP_REASONS.killSwitch])
+		expect(deps.policy).not.toHaveBeenCalled()
+	})
+
 	it.each([
 		[
 			'no policy',

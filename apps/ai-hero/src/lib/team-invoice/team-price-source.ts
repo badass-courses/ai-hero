@@ -162,12 +162,12 @@ export function enginePriceSource(deps: {
 		value?: PricingResultData
 	}
 	now: () => Date
-	/** The kill switch checkout obeys. */
-	disabled: () => boolean
+	/** The C5 switch checkout obeys; true when it cannot tell. */
+	disabled: () => boolean | Promise<boolean>
 }): TeamPriceSource {
 	return {
 		async price(request) {
-			if (deps.disabled()) return unavailable('engine-disabled')
+			if (await deps.disabled()) return unavailable('engine-disabled')
 			const policy = await deps.policy(request.productId)
 			if (!policy.ok) return unavailable('engine-policy-unavailable')
 			let quotes: readonly BindingQuoteData[] = []

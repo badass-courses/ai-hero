@@ -4,7 +4,11 @@ Cohort 005 (`product-s00zs`) is priced in-process by front-desk's engine through
 
 ## Settings
 
-- **`AIH_C5_PRICING_DISABLED`** is the kill switch. Any value but unset, empty or `false` closes C5 display, checkout and team invoices with a `closed` decision. C5 never falls back to the legacy price. It takes effect on the next deploy.
+C5 is open only when the admin flag is on **and** the env override is unset. Closed, C5 display, checkout and team invoices get a `closed` decision. C5 never falls back to the legacy price.
+
+- **`c5-pricing-enabled`** ("Cohort 5 pricing enabled") is the normal switch. Toggle it at `/admin/flags` (needs `manage all`). It is read on every pricing decision with no cache, so a toggle takes effect on the next request. It is off by default in production, preview and test, and on by default only in local development.
+  - It fails closed. If Redis errors, is unreachable or does not answer within 500 ms, C5 is closed and the app logs `c5.pricing.flag_read_failed` for errors.
+- **`AIH_C5_PRICING_DISABLED`** is the emergency override. Any value but unset, empty or `false` closes C5 whatever the flag says, without reading Redis. Use it when the admin flag cannot be trusted or reached. It takes effect on the next deploy. Unset it, and redeploy, to hand control back to the flag.
 - **`AIH_C5_DECISION_CUTOVER_AT`** is the instant paid C5 purchases started saving their pricing decision (`Purchase.fields.c5Decision`), as ISO-8601.
   - A Crash Course credit is spent when anyone in its transfer chain holds, or ever held, an individual C5 purchase from before the cutover.
   - After the cutover only saved decisions count. A C5 purchase from after it with no saved decision holds credit use until it has one.
