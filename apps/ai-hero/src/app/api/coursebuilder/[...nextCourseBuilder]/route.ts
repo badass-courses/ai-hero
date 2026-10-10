@@ -3,6 +3,7 @@ import {
 	POST as coreCourseBuilderPOST,
 } from '@/coursebuilder/course-builder-config'
 import { protectCourseBuilderRequest } from '@/coursebuilder/coursebuilder-request-authorization'
+import { purchaseBlockedCheckoutRefusal } from '@/coursebuilder/purchase-block-checkout'
 import { resolveServerComputedCheckoutCoupon } from '@/coursebuilder/server-computed-checkout-coupon'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { syntheticCheckoutRefusal } from '@/coursebuilder/synthetic-checkout'
@@ -75,6 +76,12 @@ const protectCommerceRequest = async (
 		session?.user?.id,
 	)
 	if (refusal) return refusal
+	const blocked = await purchaseBlockedCheckoutRefusal(
+		request.url,
+		request.nextUrl.pathname,
+		session?.user?.id,
+	)
+	if (blocked) return blocked
 	return protectCourseBuilderRequest(request, {
 		adapter: courseBuilderAdapter,
 		verifiedUserId: session?.user?.id,

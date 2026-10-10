@@ -1,16 +1,67 @@
 import { env } from '@/env.mjs'
-import { DiscordError, DiscordMember } from '@/lib/discord'
-import {
-	fetchAsDiscordBot,
-	fetchJsonAsDiscordBot,
-	getDiscordAccount,
-} from '@/lib/discord-query'
+import { DiscordMember } from '@/lib/discord'
+import { fetchAsDiscordBot, getDiscordAccount } from '@/lib/discord-query'
+
+export type DiscordMemberLookup =
+	| { kind: 'no-account' }
+	| { kind: 'not-member'; discordAccountId: string }
+	| { kind: 'member'; discordAccountId: string; roles: string[] }
+
+/**
+ * Reads the user's guild membership. Only a 404 means "not in the guild";
+ * a rate limit, outage or malformed body throws so the caller can retry.
+ */
+async function lookupDiscordMember(
+	userId: string,
+): Promise<DiscordMemberLookup> {
+	const discordAccount = await getDiscordAccount(userId)
+	if (!discordAccount) return { kind: 'no-account' }
+	const discordAccountId = discordAccount.providerAccountId
+	const res = await fetchAsDiscordBot(
+		`guilds/${env.DISCORD_GUILD_ID}/members/${discordAccountId}`,
+	)
+	if (res.status === 404) return { kind: 'not-member', discordAccountId }
+	if (!res.ok) throw new Error(`discord member lookup failed: ${res.status}`)
+	const member = (await res.json()) as Partial<DiscordMember>
+	if (!Array.isArray(member?.roles))
+		throw new Error('discord member lookup returned no roles')
+	return { kind: 'member', discordAccountId, roles: member.roles }
+}
+
+async function setDiscordMemberRole(
+	discordAccountId: string,
+	roleId: string,
+	method: 'PUT' | 'DELETE',
+) {
+	const res = await fetchAsDiscordBot(
+		`guilds/${env.DISCORD_GUILD_ID}/members/${discordAccountId}/roles/${roleId}`,
+		{ method },
+	)
+	// Deleting a role the member no longer has is already done.
+	if (res.ok || (method === 'DELETE' && res.status === 404)) return
+	throw new Error(
+		`discord ${method === 'PUT' ? 'add' : 'remove'} role failed: ${res.status}`,
+	)
+}
+
+/** Discord role calls that throw on any failure that is worth retrying. */
+export const discordRoleClient = {
+	lookupMember: lookupDiscordMember,
+	addRole: (discordAccountId: string, roleId: string) =>
+		setDiscordMemberRole(discordAccountId, roleId, 'PUT'),
+	removeRole: (discordAccountId: string, roleId: string) =>
+		setDiscordMemberRole(discordAccountId, roleId, 'DELETE'),
+}
+export type DiscordRoleClient = typeof discordRoleClient
 
 /**
  * Removes a Discord role from a user
  * @param userId - The user ID to remove the role from
  * @param roleId - The Discord role ID to remove
- * @returns Object with status and details about the operation
+ * @returns Object with status and details about the operation. HTTP failures,
+ *   including rate limits, come back as `error`, never `success` or `skipped`.
+ *   A database failure looking up the account rejects, so callers' steps
+ *   retry. Dispute code uses the stricter `discordRoleClient` instead.
  */
 export async function removeDiscordRole(userId: string, roleId: string) {
 	// Get Discord account for user
@@ -23,47 +74,50 @@ export async function removeDiscordRole(userId: string, roleId: string) {
 			userId,
 		}
 	}
+	const discordAccountId = discordAccount.providerAccountId
 
 	try {
 		// Get current Discord member
-		const discordMember = await fetchJsonAsDiscordBot<DiscordMember>(
-			`guilds/${env.DISCORD_GUILD_ID}/members/${discordAccount.providerAccountId}`,
+		const memberResponse = await fetchAsDiscordBot(
+			`guilds/${env.DISCORD_GUILD_ID}/members/${discordAccountId}`,
 		)
 
-		if (!discordMember) {
+		if (memberResponse.status === 404) {
 			return {
 				status: 'skipped',
 				reason: 'Discord member not found in guild',
-				discordAccountId: discordAccount.providerAccountId,
+				discordAccountId,
 				userId,
 			}
 		}
+		if (!memberResponse.ok)
+			throw new Error(`discord member lookup failed: ${memberResponse.status}`)
+
+		const discordMember = (await memberResponse.json()) as DiscordMember
 
 		// Check if user has the role
-		const hasRole = discordMember.roles?.includes(roleId)
-
-		if (!hasRole) {
+		if (!discordMember.roles?.includes(roleId)) {
 			return {
 				status: 'skipped',
 				reason: 'User does not have role to remove',
 				userId,
-				discordAccountId: discordAccount.providerAccountId,
+				discordAccountId,
 				roleId,
 			}
 		}
 
 		// Remove the role from Discord
-		await fetchAsDiscordBot(
-			`guilds/${env.DISCORD_GUILD_ID}/members/${discordAccount.providerAccountId}/roles/${roleId}`,
-			{
-				method: 'DELETE',
-			},
+		const deleteResponse = await fetchAsDiscordBot(
+			`guilds/${env.DISCORD_GUILD_ID}/members/${discordAccountId}/roles/${roleId}`,
+			{ method: 'DELETE' },
 		)
+		if (!deleteResponse.ok && deleteResponse.status !== 404)
+			throw new Error(`discord remove role failed: ${deleteResponse.status}`)
 
 		return {
 			status: 'success',
 			removedRoleId: roleId,
-			discordAccountId: discordAccount.providerAccountId,
+			discordAccountId,
 			userId,
 		}
 	} catch (error) {
@@ -71,7 +125,7 @@ export async function removeDiscordRole(userId: string, roleId: string) {
 			status: 'error',
 			reason: error instanceof Error ? error.message : String(error),
 			userId,
-			discordAccountId: discordAccount.providerAccountId,
+			discordAccountId,
 			roleId,
 		}
 	}

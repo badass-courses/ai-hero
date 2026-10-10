@@ -32,6 +32,8 @@ on:
       - "apps/ai-hero/src/scripts/contact-integrity-maintenance*"
       - "apps/ai-hero/src/lib/test-principals/**"
       - "apps/ai-hero/src/lib/synthetic-principal*"
+      - "apps/ai-hero/src/lib/purchase-dispute*"
+      - "apps/ai-hero/src/lib/discord-utils.ts"
       - "apps/ai-hero/src/server/magic-link-confirmation*"
       - "apps/ai-hero/src/server/auth-js-adapter*"
       - "apps/ai-hero/src/lib/subscriber-marketing/*value-path-link-anchor*"
@@ -73,6 +75,8 @@ on:
       - "apps/ai-hero/src/scripts/contact-integrity-maintenance*"
       - "apps/ai-hero/src/lib/test-principals/**"
       - "apps/ai-hero/src/lib/synthetic-principal*"
+      - "apps/ai-hero/src/lib/purchase-dispute*"
+      - "apps/ai-hero/src/lib/discord-utils.ts"
       - "apps/ai-hero/src/server/magic-link-confirmation*"
       - "apps/ai-hero/src/server/auth-js-adapter*"
       - "apps/ai-hero/src/lib/subscriber-marketing/*value-path-link-anchor*"
@@ -120,6 +124,7 @@ jobs:
         env:
           AIH_EVERGREEN_JOURNEY_MYSQL_TEST_SERVER_URL: mysql://root:aih_test_password@127.0.0.1:3307/mysql
           AIH_EVERGREEN_COUPON_MYSQL_TEST_SERVER_URL: mysql://root:aih_test_password@127.0.0.1:3307/mysql
+          AIH_PURCHASE_DISPUTES_MYSQL_URL: mysql://root:aih_test_password@127.0.0.1:3307/purchase_disputes_test
         # Twenty-one suites share one MySQL in parallel. The long composition
         # tests (bridge-runtime, evergreen-pilot) run past vitest's 5s default
         # and timed out on main too (runs 35258220266, 35742641569).
@@ -150,4 +155,5 @@ jobs:
           src/lib/subscriber-marketing/owner-birth-guard.mysql.test.ts
           src/lib/subscriber-marketing/drovr-outbox-drizzle.mysql.test.ts
           src/lib/subscriber-marketing/drovr-outbox-live.mysql.test.ts
+          src/lib/purchase-disputes.mysql.test.ts
           src/lib/checkout-reconcile/fulfill.mysql.test.ts

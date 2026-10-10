@@ -159,6 +159,10 @@ const mocks = vi.hoisted(() => {
 	}
 })
 
+const purchaseBlock = vi.hoisted(() => ({
+	isUserBlockedFromPurchasing: vi.fn(async (_userId: string) => false),
+}))
+vi.mock('@/lib/purchase-disputes', () => purchaseBlock)
 vi.mock('@/coursebuilder/server-computed-checkout-coupon', () => ({
 	resolveServerComputedCheckoutCoupon:
 		mocks.resolveServerComputedCheckoutCoupon,
@@ -267,6 +271,21 @@ describe('logged-in checkout coupon authorization', () => {
 		})
 		mocks.headers.mockResolvedValue(new Headers())
 		mocks.resolveServerComputedCheckoutCoupon.mockResolvedValue(null)
+	})
+
+	it('refuses a buyer blocked after a lost chargeback before Stripe', async () => {
+		purchaseBlock.isUserBlockedFromPurchasing.mockResolvedValueOnce(true)
+		mocks.getEntitlementsForUser.mockResolvedValue([])
+
+		await LoginPage({ searchParams: Promise.resolve(searchParams) })
+
+		expect(purchaseBlock.isUserBlockedFromPurchasing).toHaveBeenCalledWith(
+			'user-actual',
+		)
+		expect(mocks.createCheckoutSession).not.toHaveBeenCalled()
+		expect(mocks.redirect).toHaveBeenCalledWith(
+			'/subscribe/error?reason=purchase-blocked',
+		)
 	})
 
 	it('removes an unowned exclusive selector before Stripe checkout', async () => {

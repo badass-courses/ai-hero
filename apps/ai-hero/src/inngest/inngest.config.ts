@@ -16,6 +16,10 @@ import { userSignupAdminEmail } from '@/inngest/functions/notify/creator/user-si
 import { performCodeExtraction } from '@/inngest/functions/ocr/ocr-code-extractor'
 import { postmarkWebhook } from '@/inngest/functions/postmark/postmarks-webhooks-handler'
 import { refundEntitlements } from '@/inngest/functions/refund/refund-entitlements'
+import {
+	purchaseDisputeClosed,
+	purchaseDisputeOpened,
+} from '@/inngest/functions/disputes/purchase-dispute-access'
 import { sendWorkshopAccessEmails } from '@/inngest/functions/send-workshop-access-emails'
 import { syncPurchaseTags } from '@/inngest/functions/sync-purchase-tags'
 import { teamPurchaseFulfillmentWorkflow } from '@/inngest/functions/team-purchase-fulfillment-workflow'
@@ -154,6 +158,8 @@ const allFunctions = [
 	grantLegendDiscordRole,
 	sendWorkshopAccessEmails,
 	refundEntitlements,
+	purchaseDisputeOpened,
+	purchaseDisputeClosed,
 	grantCouponEntitlements,
 	grantCouponEntitlementsForPurchase,
 	createPPPCreditCouponsForPurchasers,
