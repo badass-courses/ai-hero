@@ -142,6 +142,13 @@ test('proof requires paid, matching webhook, buyer, amount, purchase and C5 acce
   for (const field of ['webhooks', 'purchases', 'access']) assert.equal(provesAccess(fixture, session, { ...valid, [field]: [] }), false)
   assert.equal(provesAccess(fixture, { ...session, total: 100 }, valid), false)
   assert.equal(provesAccess(fixture, session, { ...valid, access: [{ ...valid.access[0], metadata: { contentIds: ['workshop-2ozd9'] } }] }), false)
+  // A cents price: Course Builder stores whole dollars; the saved decision has the cents.
+  const cents = { id: 'cs_test_cents', paymentStatus: 'paid', total: 90650 }
+  const decided = decision => ({ ...valid, purchases: [{ ...valid.purchases[0], totalAmount: '907.00', decision }] })
+  assert.equal(provesAccess(fixture, cents, decided({ checkoutSessionId: 'cs_test_cents', expectedTotalCents: 90650 })), true)
+  assert.equal(provesAccess(fixture, cents, decided(null)), false)
+  assert.equal(provesAccess(fixture, cents, decided({ checkoutSessionId: 'cs_test_other', expectedTotalCents: 90650 })), false)
+  assert.equal(provesAccess(fixture, cents, decided({ checkoutSessionId: 'cs_test_cents', expectedTotalCents: 90600 })), false)
 })
 test('network preload blocks provider calls before connection and allows only the slot and Stripe', () => {
   const script = `const {allowed,check}=require(${JSON.stringify(join(import.meta.dirname, 'network-guard.cjs'))}); const assert=require('node:assert/strict'); assert(allowed('api.stripe.com',443)); assert(!allowed('api.convertkit.com',443)); assert(!allowed('api.stripe.com.evil.test',443)); assert(!allowed('127.0.0.1',3306)); assert.throws(()=>check([{host:'api.postmarkapp.com',port:443}])); assert.throws(()=>require('node:net').connect({host:'api.frontapp.com',port:443})); fetch('https://api.convertkit.com/v3/forms').then(()=>process.exit(1),()=>console.log('blocked'));`

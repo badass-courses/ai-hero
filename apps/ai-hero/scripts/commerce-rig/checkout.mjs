@@ -10,10 +10,19 @@ import { remember } from './stripe-state.mjs'
 
 export function provesAccess(fixture, session, result) {
   const c5 = catalog[0].id
-  const purchases = result.purchases.filter(p => p.userId === fixture.userId && p.productId === c5 && p.status === 'Valid' && Math.round(Number(p.totalAmount) * 100) === session.total)
+  // Course Builder stores Purchase.totalAmount in whole dollars, so a cents price
+  // (an authoritative decision) is proven by the decision saved for this session,
+  // which carries the exact cents, and the stored total is its rounding.
+  const amountMatches = p => p.decision
+    ? p.decision.checkoutSessionId === session.id && p.decision.expectedTotalCents === session.total && Number(p.totalAmount) === Number((session.total / 100).toFixed())
+    : Math.round(Number(p.totalAmount) * 100) === session.total
+  const purchases = result.purchases.filter(p => p.userId === fixture.userId && p.productId === c5 && p.status === 'Valid' && amountMatches(p))
   return session.paymentStatus === 'paid' && result.webhooks.length > 0 && purchases.some(p => result.access.some(a => a.sourceId === p.id && a.entitlementType === 'cohort_content_access' && a.metadata?.contentIds?.includes(c5WorkshopId)))
 }
-async function complete(url, state) {
+// Pays a hosted test Checkout Session with the test card. By default it waits for the
+// redirect back to the app; `until` instead polls Stripe, for sessions paid while
+// the app is down (seeding).
+export async function payHostedCheckout(url, state, { until } = {}) {
   const { chromium } = await import('@playwright/test')
   const browser = await chromium.launch({ headless: true, env: { PATH: process.env.PATH, HOME: process.env.HOME } })
   try {
@@ -56,7 +65,14 @@ async function complete(url, state) {
       if (await saveInfo.count() && await saveInfo.isChecked()) await saveInfo.uncheck({ force: true })
       const submit = page.locator('[data-testid="hosted-payment-submit-button"]').first()
       await (await submit.count() ? submit : page.getByRole('button', { name: /pay|subscribe/i }).last()).click({ timeout: 30000 })
-      await page.waitForURL(`${origin}/**`, { timeout: 90000 })
+      if (!until) await page.waitForURL(`${origin}/**`, { timeout: 90000 })
+      else {
+        const deadline = Date.now() + 90000
+        while (!await until()) {
+          if (Date.now() > deadline) throw new Error('Hosted checkout did not complete')
+          await page.waitForTimeout(2000)
+        }
+      }
     } catch {
       await privateWrite(join(state, 'checkout-failure.png'), await page.screenshot({ fullPage: true }))
       // Control names only, never values, so selector drift can be fixed from the receipt.
@@ -124,7 +140,7 @@ export async function checkout(state, key, fixtureKey, shouldComplete = false) {
     assertTestObject(await stripe.checkout.sessions.expire(id))
     return receipt
   }
-  await complete(target, state)
+  await payHostedCheckout(target, state)
   const deadline = Date.now() + 180000
   do {
     session = assertTestObject(await stripe.checkout.sessions.retrieve(id))

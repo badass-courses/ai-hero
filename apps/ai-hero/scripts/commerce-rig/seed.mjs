@@ -9,7 +9,8 @@ import { getBulkDiscountPercent } from '@coursebuilder/commerce/bulk-coupon'
 import Stripe from 'stripe'
 import { applyCatalogOverlay, catalog as baseCatalog, fixtures } from './fixtures.mjs'
 import { remember } from './stripe-state.mjs'
-import { assertDatabase, assertTestKey, assertTestObject, privateWrite, readCatalogOverlay } from './safety.mjs'
+import { assertDatabase, assertTestKey, assertTestObject, origin, privateWrite, readCatalogOverlay } from './safety.mjs'
+import { payHostedCheckout } from './checkout.mjs'
 
 export const tables = getCourseBuilderSchema(mysqlTableCreator(name => `AI_${name}`))
 export async function connect() {
@@ -73,11 +74,29 @@ export async function seed(state, generation) {
       if (customer) await db.insert(tables.merchantCustomer).values({ id: `rig_customer_${fixture.key}`, status: 1, userId: fixture.userId, merchantAccountId: 'rig_stripe', identifier: customer.id, createdAt: date })
       for (const [index, purchase] of fixture.purchases.entries()) {
         const id = `rig_purchase_${fixture.key}_${index}`
-        let chargeId = null
+        let chargeId = null, sessionId = null
         if (stripe && purchase.cents > 0) {
-          const intent = assertTestObject(await stripe.paymentIntents.create({ amount: purchase.cents, currency: 'usd', customer: customer.id, payment_method: 'pm_card_visa', payment_method_types: ['card'], confirm: true, metadata: { ...metadata, fixture: fixture.key } }, { idempotencyKey: `${generation}-${id}` }))
-          if (intent.status !== 'succeeded' || typeof intent.latest_charge !== 'string') throw new Error('Historical test payment did not settle')
-          const charge = assertTestObject(await stripe.charges.retrieve(intent.latest_charge))
+          // A Crash Course purchase that can earn C5 credit is paid the way production
+          // pays it, through its own hosted Checkout Session: the credit fact reads that
+          // session's product line. Every other historical payment is a bare intent.
+          const creditable = purchase.product === 'cc' && (purchase.status ?? 'Valid') === 'Valid' && !purchase.bulk && !purchase.redeemed && !purchase.ppp
+          let latestCharge
+          if (creditable) {
+            const session = assertTestObject(await stripe.checkout.sessions.create({ mode: 'payment', customer: customer.id, payment_method_types: ['card'], line_items: [{ price_data: { currency: 'usd', product: mappings[purchase.product].product, unit_amount: purchase.cents }, quantity: 1 }], success_url: `${origin}/rig-seed-paid`, metadata: { ...metadata, fixture: fixture.key }, payment_intent_data: { metadata: { ...metadata, fixture: fixture.key } } }, { idempotencyKey: `${generation}-${id}-session` }))
+            await remember(state, generation, 'session', session.id)
+            await payHostedCheckout(session.url, state, { until: async () => (await stripe.checkout.sessions.retrieve(session.id)).status === 'complete' })
+            const paid = assertTestObject(await stripe.checkout.sessions.retrieve(session.id, { expand: ['payment_intent'] }))
+            if (paid.payment_status !== 'paid' || paid.amount_total !== purchase.cents) throw new Error('Historical checkout did not settle')
+            latestCharge = paid.payment_intent?.latest_charge
+            sessionId = `rig_session_${fixture.key}_${index}`
+            await db.insert(tables.merchantSession).values({ id: sessionId, identifier: session.id, merchantAccountId: 'rig_stripe', organizationId: org })
+          } else {
+            const intent = assertTestObject(await stripe.paymentIntents.create({ amount: purchase.cents, currency: 'usd', customer: customer.id, payment_method: 'pm_card_visa', payment_method_types: ['card'], confirm: true, metadata: { ...metadata, fixture: fixture.key } }, { idempotencyKey: `${generation}-${id}` }))
+            if (intent.status !== 'succeeded') throw new Error('Historical test payment did not settle')
+            latestCharge = intent.latest_charge
+          }
+          if (typeof latestCharge !== 'string') throw new Error('Historical test payment has no charge')
+          const charge = assertTestObject(await stripe.charges.retrieve(latestCharge))
           if (charge.amount !== purchase.cents || charge.currency !== 'usd') throw new Error('Historical payment evidence mismatch')
           assertTestObject(await stripe.charges.update(charge.id, { metadata }))
           if (purchase.status === 'Refunded') {
@@ -93,7 +112,7 @@ export async function seed(state, generation) {
           couponId = `rig_coupon_${fixture.key}_${index}`
           await db.insert(tables.coupon).values({ id: couponId, status: 1, code: couponId, restrictedToProductId: catalog.find(p => p.key === purchase.product).id, maxUses: purchase.seats ?? 1, fields: { commerceRig: generation, pppOrigin: Boolean(purchase.ppp) }, createdAt: date })
         }
-        await db.insert(tables.purchases).values({ id, userId: fixture.userId, organizationId: org, purchasedByorganizationMembershipId: member, productId: catalog.find(p => p.key === purchase.product).id, totalAmount: (purchase.cents / 100).toFixed(2), status: purchase.status ?? 'Valid', merchantChargeId: chargeId, bulkCouponId: purchase.bulk ? couponId : null, redeemedBulkCouponId: purchase.redeemed ? couponId : null, couponId: purchase.ppp ? couponId : null, fields: { commerceRig: generation, ...(purchase.seats ? { seats: purchase.seats } : {}) }, createdAt: date })
+        await db.insert(tables.purchases).values({ id, userId: fixture.userId, organizationId: org, purchasedByorganizationMembershipId: member, productId: catalog.find(p => p.key === purchase.product).id, totalAmount: (purchase.cents / 100).toFixed(2), status: purchase.status ?? 'Valid', merchantChargeId: chargeId, merchantSessionId: sessionId, bulkCouponId: purchase.bulk ? couponId : null, redeemedBulkCouponId: purchase.redeemed ? couponId : null, couponId: purchase.ppp ? couponId : null, fields: { commerceRig: generation, ...(purchase.seats ? { seats: purchase.seats } : {}) }, createdAt: date })
         const workshop = catalog.find(p => p.key === purchase.product).type === 'workshop'
         if (purchase.status !== 'Refunded') await db.insert(tables.entitlements).values({ id: `rig_access_${fixture.key}_${index}`, userId: fixture.userId, organizationId: org, organizationMembershipId: member, entitlementType: workshop ? 'rig_workshop_type' : 'rig_cohort_type', sourceType: 'PURCHASE', sourceId: id, metadata: { contentIds: [workshop ? resourceId(purchase.product) : `rig-workshop-${purchase.product}`] }, createdAt: date, updatedAt: date })
       }
@@ -135,7 +154,7 @@ export async function evidence(fixture, sessionId) {
     const typeNames = new Map((await db.query.entitlementTypes.findMany()).map(type => [type.id, type.name]))
     return {
       webhooks,
-      purchases: purchases.map(p => ({ id: p.id, userId: p.userId, productId: p.productId, status: p.status, totalAmount: p.totalAmount })),
+      purchases: purchases.map(p => ({ id: p.id, userId: p.userId, productId: p.productId, status: p.status, totalAmount: p.totalAmount, decision: p.fields?.c5Decision ?? null })),
       access: access.filter(a => sourceIds.has(a.sourceId) && !a.deletedAt && (!a.expiresAt || a.expiresAt > new Date())).map(a => ({ id: a.id, sourceId: a.sourceId, entitlementType: typeNames.get(a.entitlementType) ?? 'unknown', metadata: a.metadata })),
     }
   } finally { await close() }
