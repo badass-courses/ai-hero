@@ -79,6 +79,13 @@ const config = {
 					'/cohorts/build-your-own-ai-personal-assistant-in-typescript',
 				permanent: true,
 			},
+			// Cohort 5 renamed to Software Factories for Real Engineers
+			// (2026-10-09). 301 rather than `permanent` (308) by request.
+			{
+				source: '/cohorts/cohort-005-xdy1m',
+				destination: '/cohorts/software-factories-for-real-engineers-xdy1m',
+				statusCode: 301,
+			},
 			{
 				source: '/workshops/ai-sdk-v5-crash-course',
 				destination: '/workshops/ai-sdk-v6-crash-course',

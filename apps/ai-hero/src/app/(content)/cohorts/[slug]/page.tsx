@@ -4,6 +4,7 @@ import type { Metadata, ResolvingMetadata } from 'next'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { CldImage } from '@/components/cld-image'
+import { WaitlistForm } from '@/components/cohort-waitlist-form'
 import { CheckoutSurveyBuyButton } from '@/components/commerce/checkout-survey-buy-button'
 import { Contributor } from '@/components/contributor'
 import LayoutClient from '@/components/layout-client'
@@ -41,6 +42,7 @@ import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
 import { Certificate } from '../../_components/cohort-certificate-container'
 import { EditWorkshopButton } from '../../workshops/_components/edit-workshop-button'
+import { isCohortComingSoon } from './_components/cohort-coming-soon'
 import { CohortContents } from './_components/cohort-contents'
 import { CohortFactStrip } from './_components/cohort-fact-strip'
 import { CohortIncludes } from './_components/cohort-includes'
@@ -185,6 +187,14 @@ export async function CohortPageView(props: CohortPageViewProps) {
 		? openEnrollmentDate < nowInPT &&
 			(closeEnrollment ? new Date(closeEnrollment as string) > nowInPT : true)
 		: true // no dates set = no restriction
+
+	// Draft product, nothing to buy yet: the rail becomes the waitlist, and
+	// nothing on the page (mobile bar, JSON-LD offer) may read as for sale.
+	const isComingSoon = isCohortComingSoon({
+		productState: cohortProps?.product?.fields?.state,
+		allowPurchase,
+		hasCohortAccess,
+	})
 
 	const CAN_ENROLL =
 		allowPurchase === 'true' ||
@@ -397,7 +407,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 			<main className="relative">
 				<CohortMetadata
 					cohort={displayCohort}
-					product={cohortProps.product}
+					product={isComingSoon ? undefined : cohortProps.product}
 					quantityAvailable={cohortProps.quantityAvailable}
 				/>
 				<EditWorkshopButton
@@ -503,15 +513,22 @@ export async function CohortPageView(props: CohortPageViewProps) {
 							</article>
 						</div>
 
-						<CohortContents
-							className="py-8"
-							variant="full"
-							workshops={displayWorkshops as Workshop[]}
-							workshopProgressMap={workshopProgressMap}
-							timezone={PT}
-						/>
+						{/* The curriculum is not announced while the cohort is coming
+						    soon, and its workshop list can still hold drafts. */}
+						{isComingSoon ? null : (
+							<CohortContents
+								className="py-8"
+								variant="full"
+								workshops={displayWorkshops as Workshop[]}
+								workshopProgressMap={workshopProgressMap}
+								timezone={PT}
+							/>
+						)}
 					</div>
-					<CohortSidebar cohort={displayCohort}>
+					<CohortSidebar
+						cohort={displayCohort}
+						mobileCtaLabel={isComingSoon ? 'Join Waitlist' : undefined}
+					>
 						{fields?.image && (
 							<CldImage
 								className="hidden w-full lg:flex"
@@ -543,6 +560,22 @@ export async function CohortPageView(props: CohortPageViewProps) {
 								isOnWaitlist={isOnWaitlist}
 								knownIdentity={hasKnownWaitlistIdentity}
 							/>
+						) : isComingSoon && cohortProps.product ? (
+							<div className="p-5">
+								{isOnWaitlist ? (
+									<p className="inline-flex items-center text-center text-lg font-medium">
+										<CheckCircle className="text-primary mr-2 size-5" />
+										You are on the waitlist
+									</p>
+								) : (
+									<WaitlistForm
+										actionLabel="Join Waitlist"
+										productName={cohortProps.product.name}
+										surface="cohort-page"
+										knownIdentity={hasKnownWaitlistIdentity}
+									/>
+								)}
+							</div>
 						) : null}
 						{/* The team page exists only when its body does (it 404s
 						    otherwise). Offered in every state but purchased: before
@@ -557,8 +590,11 @@ export async function CohortPageView(props: CohortPageViewProps) {
 							</Link>
 						) : null}
 						{/* Last in the rail in every state: waitlist, pricing and
-						    purchased all answer the same "what do I get" question. */}
-						<CohortIncludes workshopCount={displayWorkshops.length} />
+						    purchased all answer the same "what do I get" question.
+						    Coming soon is the exception: nothing is on offer yet. */}
+						{isComingSoon ? null : (
+							<CohortIncludes workshopCount={displayWorkshops.length} />
+						)}
 					</CohortSidebar>
 				</div>
 				{/* <CohortSidebarMobile cohort={displayCohort} /> */}
