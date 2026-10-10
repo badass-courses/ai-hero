@@ -64,7 +64,24 @@ function parseArgs(argv: string[]) {
 		input,
 		apply: argv.includes('--apply'),
 		opened: argv.includes('--opened'),
+		allowTransferred: allowedTransfers(argv),
 	}
+}
+
+/**
+ * `--allow-transferred <purchaseId>` (repeatable) lets one named purchase
+ * through the payer-is-owner gate when an unbroken transfer chain explains the
+ * difference. Only with `--opened`, which blocks nobody. Never a general bypass.
+ */
+function allowedTransfers(argv: string[]) {
+	const ids = argv.flatMap((arg, index) =>
+		arg === '--allow-transferred' ? [argv[index + 1]] : [],
+	)
+	if (ids.some((id) => !id?.startsWith('purch_')))
+		throw new Error('--allow-transferred needs a purchase id')
+	if (ids.length > 0 && !argv.includes('--opened'))
+		throw new Error('--allow-transferred only applies with --opened')
+	return ids as string[]
 }
 
 async function readDisputes(path: string): Promise<LostDispute[]> {
@@ -187,7 +204,9 @@ async function waitForReadback(
 }
 
 async function main() {
-	const { input, apply, opened } = parseArgs(process.argv.slice(2))
+	const { input, apply, opened, allowTransferred } = parseArgs(
+		process.argv.slice(2),
+	)
 	const disputes = await readDisputes(input)
 	const readKey = process.env.STRIPE_DISPUTE_READ_KEY
 	const stripe = readKey ? new Stripe(readKey) : null
@@ -225,9 +244,19 @@ async function main() {
 	const outOfScope = plans.filter((row) => {
 		if (!opened) return false
 		const { scope } = row as {
-			scope?: { payerIsOwner: boolean; isBulk: boolean }
+			scope?: {
+				payerIsOwner: boolean
+				isBulk: boolean
+				payer: Awaited<ReturnType<typeof resolveDisputeBuyer>>
+			}
 		}
-		return !scope?.payerIsOwner || scope.isBulk
+		if (!scope || scope.isBulk) return true
+		if (scope.payerIsOwner) return false
+		const overridden =
+			scope.payer.kind === 'resolved' &&
+			scope.payer.transferred &&
+			allowTransferred.includes(row.purchase!.purchaseId)
+		return !overridden
 	})
 	if (outOfScope.length > 0)
 		throw new Error(
