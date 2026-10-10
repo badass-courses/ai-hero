@@ -2,6 +2,8 @@ import * as React from 'react'
 import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
+import { PostPurchaseShell } from '../_components/post-purchase-shell'
+import { PostPurchaseArrival } from '../_components/post-purchase-arrival'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { courseBuilderAdapter, db } from '@/db'
 import { env } from '@/env.mjs'
@@ -140,6 +142,8 @@ const Welcome = async (props: {
 		provider: string
 		purchaseId?: string
 		subscriptionId?: string
+		buyPathId?: string
+		buyPathWaited?: string
 	}>
 }) => {
 	const searchParams = await props.searchParams
@@ -183,11 +187,14 @@ const Welcome = async (props: {
 		const isDiscordConnected = await discordAccountsForCurrentUser()
 
 		return (
-			<LayoutClient withContainer>
-				<div className="">
-					<PostPurchaseDiscordAccess
-						isDiscordConnected={isDiscordConnected}
-					/>
+			<PostPurchaseShell step="ready" paymentConfirmed landmark="section">
+				<PostPurchaseArrival
+					destination="welcome"
+					checkoutSessionId={searchParams.buyPathId}
+					purchaseWasPolled={searchParams.buyPathWaited === '1'}
+				/>
+				<div className="motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300 [&_main]:py-0 [&_main]:items-stretch [&_main>div]:max-w-none [&_img]:h-28 [&_img]:w-28">
+					<PostPurchaseDiscordAccess isDiscordConnected={isDiscordConnected} />
 					<WelcomePage
 						product={product}
 						productResources={productResources}
@@ -206,7 +213,7 @@ const Welcome = async (props: {
 						initiatePurchaseTransfer={initiatePurchaseTransfer}
 					/>
 				</div>
-			</LayoutClient>
+			</PostPurchaseShell>
 		)
 	}
 
