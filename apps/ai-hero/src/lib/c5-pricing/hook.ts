@@ -71,8 +71,11 @@ export type C5PricingDeps = {
 	}
 	readonly engineVersion: string
 	readonly now: () => Date
-	/** The C5 kill switch: on, C5 is closed, never priced by the legacy path. */
-	readonly disabled: () => boolean
+	/**
+	 * The C5 switch: true, C5 is closed, never priced by the legacy path. Read
+	 * on every decision; it must resolve true when it cannot tell.
+	 */
+	readonly disabled: () => boolean | Promise<boolean>
 }
 
 const known = <A>(value: A, sourceRefs: readonly string[]): FactData<A> => ({
@@ -148,7 +151,7 @@ export function createC5AuthoritativePrice(deps: C5PricingDeps) {
 			userId,
 			engineVersion: deps.engineVersion,
 		}
-		if (deps.disabled())
+		if (await deps.disabled())
 			return refusal('closed', [APP_REASONS.killSwitch], base)
 
 		const policy = await deps.policy(request.productId)

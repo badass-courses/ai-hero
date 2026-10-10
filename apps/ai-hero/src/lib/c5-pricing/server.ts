@@ -11,10 +11,10 @@ import { and, eq } from 'drizzle-orm'
 import { getPPPDiscountPercent } from '@coursebuilder/commerce/parity-coupon'
 import type { AuthoritativePriceRequest } from '@coursebuilder/core/schemas'
 
-import { c5PricingDisabled } from './config'
 import { createFrontDeskData, type FrontDeskData } from './front-desk-data'
 import { createC5AuthoritativePrice, type BuyerRead } from './hook'
 import { holdsRestrictedPurchase } from './restricted-holder'
+import { c5PricingClosed } from './switch-server'
 import { trustedPricingCountry } from './trusted-country'
 
 /** Display reuses a buyer's facts this long; checkout always reads fresh. */
@@ -148,7 +148,7 @@ const decide = createC5AuthoritativePrice({
 	price,
 	engineVersion: ENGINE_VERSION,
 	now: () => new Date(),
-	disabled: c5PricingDisabled,
+	disabled: c5PricingClosed,
 })
 
 /** AI Hero's authoritative-price hook, as Course Builder calls it. */
