@@ -8,14 +8,22 @@ import { authenticate, evidence } from './seed.mjs'
 import { assertTestKey, assertTestObject, freshToken, origin, privateWrite, publicSession } from './safety.mjs'
 import { remember } from './stripe-state.mjs'
 
+// Exact cents from a stored decimal string ("12.5", "12.500000..."), or null when
+// it is not a whole number of cents. No floating point, so 12.505 never rounds.
+export function decimalCents(value) {
+  const match = /^(\d+)(?:\.(\d*))?$/.exec(String(value ?? ''))
+  if (!match) return null
+  const fraction = (match[2] ?? '').padEnd(2, '0')
+  if (/[^0]/.test(fraction.slice(2))) return null
+  return Number(match[1]) * 100 + Number(fraction.slice(0, 2))
+}
+
 export function provesAccess(fixture, session, result) {
   const c5 = catalog[0].id
-  // Course Builder stores Purchase.totalAmount in whole dollars, so a cents price
-  // (an authoritative decision) is proven by the decision saved for this session,
-  // which carries the exact cents, and the stored total is its rounding.
-  const amountMatches = p => p.decision
-    ? p.decision.checkoutSessionId === session.id && p.decision.expectedTotalCents === session.total && Number(p.totalAmount) === Number((session.total / 100).toFixed())
-    : Math.round(Number(p.totalAmount) * 100) === session.total
+  // Purchase.totalAmount must equal the charge to the cent. A purchase priced by an
+  // authoritative decision must also carry the decision saved for this session.
+  const amountMatches = p => decimalCents(p.totalAmount) === session.total &&
+    (!p.decision || (p.decision.checkoutSessionId === session.id && p.decision.expectedTotalCents === session.total))
   const purchases = result.purchases.filter(p => p.userId === fixture.userId && p.productId === c5 && p.status === 'Valid' && amountMatches(p))
   return session.paymentStatus === 'paid' && result.webhooks.length > 0 && purchases.some(p => result.access.some(a => a.sourceId === p.id && a.entitlementType === 'cohort_content_access' && a.metadata?.contentIds?.includes(c5WorkshopId)))
 }
