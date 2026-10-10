@@ -39,6 +39,20 @@ export function frontDeskHandler(data, tokens) {
       response.writeHead(status, body === undefined ? headers : { 'content-type': 'application/json', ...headers })
       response.end(body === undefined ? undefined : JSON.stringify(body))
     }
+    // Local-only Redis REST read for the C5 flag. Null exercises the
+    // development default. Every other command, including writes, is refused.
+    if (request.method === 'POST' && ['/', '/pipeline'].includes(url.pathname)) {
+      let body = ''
+      for await (const chunk of request) body += chunk
+      let input
+      try { input = JSON.parse(body) } catch { return send(400, { error: 'InvalidInput' }) }
+      const commands = url.pathname === '/pipeline' ? input : [input]
+      const allowed = same(bearer, 'rig-disabled') && Array.isArray(commands) && commands.length === 1 &&
+        Array.isArray(commands[0]) && commands[0].length === 2 &&
+        String(commands[0][0]).toLowerCase() === 'get' && commands[0][1] === 'flag:development:c5-pricing-enabled'
+      if (!allowed) return send(403, { error: 'rig-flag-command-refused' })
+      return send(200, url.pathname === '/pipeline' ? [{ result: null }] : { result: null })
+    }
     if (url.pathname === POLICY_PATH && request.method === 'GET') {
       if (!same(bearer, tokens.pricing)) return send(401)
       if (url.searchParams.get('productId') !== C5) return send(400, { error: 'InvalidInput' })

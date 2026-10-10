@@ -15,7 +15,7 @@ import { payHostedCheckout } from './checkout.mjs'
 export const tables = getCourseBuilderSchema(mysqlTableCreator(name => `AI_${name}`))
 export async function connect() {
   const pool = mysql.createPool({ uri: assertDatabase(process.env.DATABASE_URL), timezone: 'Z', connectionLimit: 2 })
-  return { db: drizzle(pool, { schema: tables, mode: 'default' }), close: () => pool.end() }
+  return { db: drizzle(pool, { schema: tables, mode: 'default' }), pool, close: () => pool.end() }
 }
 const date = new Date('2026-01-01T00:00:00Z')
 // Course Builder treats status 0 as inactive; seeded commerce rows are live, like production.
@@ -140,10 +140,11 @@ export async function authenticate(fixture, token) {
   } finally { await close() }
 }
 export async function evidence(fixture, sessionId) {
-  const { db, close } = await connect()
+  const { db, pool, close } = await connect()
   try {
     const session = await db.query.merchantSession.findFirst({ where: eq(tables.merchantSession.identifier, sessionId) })
     const purchases = session ? await db.query.purchases.findMany({ where: eq(tables.purchases.merchantSessionId, session.id) }) : []
+    const [decisions] = await pool.execute('SELECT purchaseId, decisionRef, checkoutSessionId, amountCents, creditSource FROM AI_PurchaseDecision WHERE checkoutSessionId = ?', [sessionId])
     const access = await db.query.entitlements.findMany({ where: eq(tables.entitlements.userId, fixture.userId) })
     const events = await db.query.merchantEvents.findMany()
     const webhooks = events.filter(event => {
@@ -154,7 +155,7 @@ export async function evidence(fixture, sessionId) {
     const typeNames = new Map((await db.query.entitlementTypes.findMany()).map(type => [type.id, type.name]))
     return {
       webhooks,
-      purchases: purchases.map(p => ({ id: p.id, userId: p.userId, productId: p.productId, status: p.status, totalAmount: p.totalAmount, decision: p.fields?.c5Decision ?? null })),
+      purchases: purchases.map(p => ({ id: p.id, userId: p.userId, productId: p.productId, status: p.status, totalAmount: p.totalAmount, decision: decisions.filter(d => d.purchaseId === p.id).map(d => ({ decisionRef: d.decisionRef, checkoutSessionId: d.checkoutSessionId, expectedTotalCents: d.amountCents, creditSource: d.creditSource }))[0] ?? null })),
       access: access.filter(a => sourceIds.has(a.sourceId) && !a.deletedAt && (!a.expiresAt || a.expiresAt > new Date())).map(a => ({ id: a.id, sourceId: a.sourceId, entitlementType: typeNames.get(a.entitlementType) ?? 'unknown', metadata: a.metadata })),
     }
   } finally { await close() }

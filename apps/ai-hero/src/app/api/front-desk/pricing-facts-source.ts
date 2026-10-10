@@ -1,8 +1,5 @@
 import { db } from '@/db'
-import {
-	C5_DECISION_FIELD,
-	parseSavedDecision,
-} from '@/lib/c5-pricing/purchase-decision'
+import { decisionFromRow } from '@/lib/c5-pricing/purchase-decision-sql'
 import { drizzleC5DecisionStore } from '@/lib/c5-pricing/purchase-decision-store'
 import type { ChargeState } from '@ai-hero/front-desk-support'
 import { Effect, Layer } from 'effect'
@@ -138,6 +135,24 @@ export const pricingFactsSourceLayer = (deps: {
 						with: { purchase: true },
 					}),
 				])
+				const targetIds = [
+					...new Set([
+						...held.map((row) => row.id),
+						...movedAway.flatMap((move) =>
+							move.purchase ? [move.purchase.id] : [],
+						),
+					]),
+				]
+				const decisions = targetIds.length
+					? await db.query.purchaseDecision.findMany({
+							where: (row, { inArray }) => inArray(row.purchaseId, targetIds),
+						})
+					: []
+				const savedIds = new Set(
+					decisions
+						.filter((row) => decisionFromRow(row) !== null)
+						.map((row) => row.purchaseId),
+				)
 				const targets = new Map<string, CreditChainTarget>()
 				const add = (purchase: (typeof held)[number]) => {
 					if (purchase.productId !== productId) return
@@ -148,12 +163,7 @@ export const pricingFactsSourceLayer = (deps: {
 						createdAt: purchase.createdAt,
 						bulkCouponId: purchase.bulkCouponId ?? null,
 						redeemedBulkCouponId: purchase.redeemedBulkCouponId ?? null,
-						hasSavedDecision:
-							parseSavedDecision(
-								(purchase.fields as Record<string, unknown> | null)?.[
-									C5_DECISION_FIELD
-								],
-							) !== null,
+						hasSavedDecision: savedIds.has(purchase.id),
 					})
 				}
 				for (const purchase of held) add(purchase)

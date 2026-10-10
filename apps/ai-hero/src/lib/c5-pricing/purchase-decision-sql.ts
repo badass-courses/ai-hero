@@ -1,10 +1,9 @@
 import type { DbExecutor } from '@/db'
-import { purchases } from '@/db/schema'
+import { purchaseDecision, purchases } from '@/db/schema'
 import { and, eq, isNull, sql } from 'drizzle-orm'
 
 import { C5_PRODUCT_ID } from './decision'
 import {
-	C5_DECISION_FIELD,
 	C5_DUPLICATE_FIELD,
 	parseSavedDecision,
 	type C5DecisionStore,
@@ -12,37 +11,51 @@ import {
 } from './purchase-decision'
 
 type PurchaseRecord = typeof purchases.$inferSelect
+type DecisionRecord = typeof purchaseDecision.$inferSelect
 
-const toRow = (purchase: PurchaseRecord): C5PurchaseRow => ({
+export const decisionFromRow = (row: DecisionRecord | null) =>
+	row &&
+	parseSavedDecision({
+		v: 1,
+		decisionRef: row.decisionRef,
+		creditSource: row.creditSource,
+		codeRef: row.codeRef,
+		basis: row.basis,
+		contract: row.contract,
+		engineVersion: row.engineVersion,
+		policyVersion: row.policyVersion,
+		accessRestriction: row.restriction,
+		expectedTotalCents: row.amountCents,
+		checkoutSessionId: row.checkoutSessionId,
+		savedAt: row.createdAt.toISOString(),
+	})
+
+const toRow = (
+	purchase: PurchaseRecord,
+	decision: DecisionRecord | null,
+): C5PurchaseRow => ({
 	id: purchase.id,
 	userId: purchase.userId ?? null,
 	productId: purchase.productId,
 	status: purchase.status,
 	bulkCouponId: purchase.bulkCouponId ?? null,
 	redeemedBulkCouponId: purchase.redeemedBulkCouponId ?? null,
-	decision: parseSavedDecision(
-		(purchase.fields as Record<string, unknown> | null)?.[C5_DECISION_FIELD],
-	),
+	decision: decisionFromRow(decision),
 })
 
-/**
- * The saved decision lives in `Purchase.fields`. Writes are a single
- * `JSON_SET` on one key, so a concurrent writer of another key (purchase
- * benefits, attribution) never loses its value.
- */
+/** Only inserts ledger rows. Replays cannot overwrite the first decision. */
 export function c5DecisionStoreOn(
 	database: DbExecutor,
-	/** Tests point it at a fixture product; production is always C5. */
 	productId: string = C5_PRODUCT_ID,
 ): C5DecisionStore {
-	const setField = (purchaseId: string, path: string, value: unknown) =>
-		database
-			.update(purchases)
-			.set({
-				fields: sql`JSON_SET(COALESCE(${purchases.fields}, JSON_OBJECT()), ${path}, CAST(${JSON.stringify(value)} AS JSON))`,
-			})
-			.where(eq(purchases.id, purchaseId))
-
+	const readDecision = async (purchaseId: string) => {
+		const [row] = await database
+			.select()
+			.from(purchaseDecision)
+			.where(eq(purchaseDecision.purchaseId, purchaseId))
+			.limit(1)
+		return row ?? null
+	}
 	return {
 		async purchase(purchaseId) {
 			const [row] = await database
@@ -50,18 +63,49 @@ export function c5DecisionStoreOn(
 				.from(purchases)
 				.where(eq(purchases.id, purchaseId))
 				.limit(1)
-			return row ? toRow(row) : null
+			return row ? toRow(row, await readDecision(purchaseId)) : null
 		},
 		async saveDecision(purchaseId, decision) {
-			await setField(purchaseId, `$.${C5_DECISION_FIELD}`, decision)
+			await database
+				.insert(purchaseDecision)
+				.values({
+					purchaseId,
+					productId,
+					decisionRef: decision.decisionRef,
+					creditSource: decision.creditSource,
+					codeRef: decision.codeRef,
+					basis: decision.basis,
+					restriction: decision.accessRestriction,
+					amountCents: decision.expectedTotalCents,
+					contract: decision.contract,
+					engineVersion: decision.engineVersion,
+					policyVersion: decision.policyVersion,
+					checkoutSessionId: decision.checkoutSessionId,
+					createdAt: new Date(decision.savedAt),
+				})
+				.onDuplicateKeyUpdate({
+					set: { purchaseId: sql`${purchaseDecision.purchaseId}` },
+				})
+			const stored = await readDecision(purchaseId)
+			if (!stored) throw new Error('purchase-decision-readback-missing')
+			return stored.decisionRef === decision.decisionRef ? 'saved' : 'conflict'
 		},
 		async markDuplicate(purchaseId, duplicateOf) {
-			await setField(purchaseId, `$.${C5_DUPLICATE_FIELD}`, duplicateOf)
+			await database
+				.update(purchases)
+				.set({
+					fields: sql`JSON_SET(COALESCE(${purchases.fields}, JSON_OBJECT()), ${`$.${C5_DUPLICATE_FIELD}`}, CAST(${JSON.stringify(duplicateOf)} AS JSON))`,
+				})
+				.where(eq(purchases.id, purchaseId))
 		},
 		async individualPurchases(userId) {
 			const rows = await database
-				.select()
+				.select({ purchase: purchases, decision: purchaseDecision })
 				.from(purchases)
+				.leftJoin(
+					purchaseDecision,
+					eq(purchaseDecision.purchaseId, purchases.id),
+				)
 				.where(
 					and(
 						eq(purchases.userId, userId),
@@ -70,16 +114,16 @@ export function c5DecisionStoreOn(
 						isNull(purchases.redeemedBulkCouponId),
 					),
 				)
-			return rows.map(toRow)
+			return rows.map((row) => toRow(row.purchase, row.decision))
 		},
 		async spentBy(creditSource) {
 			const rows = await database
-				.select({ id: purchases.id })
-				.from(purchases)
+				.select({ id: purchaseDecision.purchaseId })
+				.from(purchaseDecision)
 				.where(
 					and(
-						eq(purchases.productId, productId),
-						sql`JSON_UNQUOTE(JSON_EXTRACT(${purchases.fields}, ${`$.${C5_DECISION_FIELD}.creditSource`})) = ${creditSource}`,
+						eq(purchaseDecision.productId, productId),
+						eq(purchaseDecision.creditSource, creditSource),
 					),
 				)
 			return rows.map((row) => row.id)
