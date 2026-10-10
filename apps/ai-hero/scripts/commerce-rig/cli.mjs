@@ -124,6 +124,9 @@ async function runtimeKey() {
 }
 async function up() {
   await step('docker-mysql', () => compose(['up', '-d', '--wait']))
+  // Validate the run's Stripe mode before reusing or renewing anything for it.
+  const saved = await json(join(state, 'config.json'))
+  if (saved && saved.stripeMode !== (process.env.RIG_STRIPE ?? 'named')) throw new Error('Stripe mode changed; down and reset before changing modes')
   if (await healthy()) {
     if ((process.env.RIG_STRIPE ?? 'named') === 'named') await step('renew-test-key-lease', () => sandbox(state))
     console.log('ok schema/fixtures/catalog/listener/inngest/app already running')

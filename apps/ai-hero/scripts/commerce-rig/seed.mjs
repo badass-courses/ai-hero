@@ -39,7 +39,8 @@ export async function seed(state, generation) {
       const providerPrice = stripe && assertTestObject(await stripe.prices.create({ product: providerProduct.id, unit_amount: product.cents, currency: 'usd', metadata }, { idempotencyKey: `rig-${generation}-${product.key}-price` }))
       if (providerPrice) await remember(state, generation, 'price', providerPrice.id)
       mappings[product.key] = { product: providerProduct?.id ?? null, price: providerPrice?.id ?? null }
-      await db.insert(tables.products).values({ id: product.id, status: 1, name: product.name, type: product.type, fields: { slug: `rig-${product.key}`, defaultPriceId: `rig_price_${product.key}`, stripeLivemode: false }, createdAt: date })
+      // Self-paced products own workshop resources; post-purchase fulfillment ignores a 'workshop' product type.
+      await db.insert(tables.products).values({ id: product.id, status: 1, name: product.name, type: product.type === 'workshop' ? 'self-paced' : product.type, fields: { slug: `rig-${product.key}`, defaultPriceId: `rig_price_${product.key}`, stripeLivemode: false }, createdAt: date })
       await db.insert(tables.prices).values({ id: `rig_price_${product.key}`, status: 1, productId: product.id, unitAmount: (product.cents / 100).toFixed(2), fields: { offer: { offered: true, position: 0 } }, createdAt: date })
       await db.insert(tables.merchantProduct).values({ id: `rig_mp_${product.key}`, status: 1, merchantAccountId: 'rig_stripe', productId: product.id, identifier: providerProduct?.id ?? null, createdAt: date })
       await db.insert(tables.merchantPrice).values({ id: `rig_mprice_${product.key}`, status: 1, merchantAccountId: 'rig_stripe', merchantProductId: `rig_mp_${product.key}`, priceId: `rig_price_${product.key}`, identifier: providerPrice?.id ?? null, createdAt: date })

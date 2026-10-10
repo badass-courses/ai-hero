@@ -21,6 +21,8 @@ export async function sandbox(state) {
   if (source.startsWith('file:')) {
     const key = await readPrivateKey(source.slice(5))
     await privateWrite(join(state, 'stripe.env'), `STRIPE_SECRET_TOKEN=${key}\n`)
+    // Replace any earlier lease record so the supervisor does not expire a permanent key.
+    await privateWrite(join(state, 'sandbox.json'), JSON.stringify({ source: 'operator-file', expiresAt: null }, null, 2) + '\n')
     return { key, source: 'operator-file', expiresAt: null }
   }
   if (source.startsWith('agent-secrets:')) {
