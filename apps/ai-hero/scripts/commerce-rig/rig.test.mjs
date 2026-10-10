@@ -149,6 +149,10 @@ test('proof requires paid, matching webhook, buyer, amount, purchase and C5 acce
   const saved = { checkoutSessionId: 'cs_test_cents', expectedTotalCents: 123456 }
   assert.equal(provesAccess(fixture, cents, decided(saved)), true)
   assert.equal(provesAccess(fixture, cents, decided(null)), true)
+  const authoritative = { ...cents, decisionRef: 'c5d1.0123456789abcdef.-' }
+  assert.equal(provesAccess(fixture, authoritative, decided(null)), false)
+  assert.equal(provesAccess(fixture, authoritative, decided({ ...saved, decisionRef: authoritative.decisionRef })), true)
+  assert.equal(provesAccess(fixture, authoritative, decided({ ...saved, decisionRef: 'different' })), false)
   // A whole-dollar total for a cents charge is the rounding bug, whatever the decision says.
   assert.equal(provesAccess(fixture, cents, decided(saved, '1235.00')), false)
   assert.equal(provesAccess(fixture, cents, decided(saved, '1235')), false)
@@ -269,5 +273,22 @@ test('front-desk stub serves only its private data, behind each route\'s own tok
     assert.deepEqual(await (await quotes({ email: ' Q@Example.test ', productId: 'product-s00zs', quantity: 2 })).json(), [{ quantity: 2, amount: 2 }])
     assert.deepEqual(await (await quotes({ email: 'other@example.test', productId: 'product-s00zs', quantity: 1 })).json(), [])
     assert.equal((await quotes({ email: 'q@example.test', productId: 'product-ma254', quantity: 1 })).status, 400)
+  } finally { server.close() }
+})
+
+test('rig Redis stand-in allows only the local C5 flag read, never writes or deployed flags', async () => {
+  const { frontDeskHandler } = await import('./front-desk-stub.mjs')
+  const { Redis } = await import('@upstash/redis')
+  const server = http.createServer(frontDeskHandler({ policy: { version: 'synthetic@1' } }, { pricing: 'p', quotes: 'q' }))
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const base = `http://127.0.0.1:${server.address().port}`
+  try {
+    const redis = new Redis({ url: base, token: 'rig-disabled', retry: false })
+    assert.equal(await redis.get('flag:development:c5-pricing-enabled'), null)
+    await assert.rejects(redis.set('flag:development:c5-pricing-enabled', true), /rig-flag-command-refused/)
+    await assert.rejects(redis.get('flag:production:c5-pricing-enabled'), /rig-flag-command-refused/)
+    const response = await fetch(`${base}/pipeline`, { method: 'POST', headers: { authorization: 'Bearer rig-disabled' }, body: JSON.stringify([['get', 'flag:development:c5-pricing-enabled']]) })
+    assert.deepEqual(await response.json(), [{ result: null }])
+    assert.equal((await fetch(base, { method: 'POST', body: JSON.stringify(['get', 'flag:development:c5-pricing-enabled']) })).status, 403)
   } finally { server.close() }
 })

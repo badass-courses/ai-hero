@@ -23,7 +23,8 @@ export function provesAccess(fixture, session, result) {
   // Purchase.totalAmount must equal the charge to the cent. A purchase priced by an
   // authoritative decision must also carry the decision saved for this session.
   const amountMatches = p => decimalCents(p.totalAmount) === session.total &&
-    (!p.decision || (p.decision.checkoutSessionId === session.id && p.decision.expectedTotalCents === session.total))
+    (session.decisionRef ? (p.decision?.decisionRef === session.decisionRef && p.decision.checkoutSessionId === session.id && p.decision.expectedTotalCents === session.total) :
+      (!p.decision || (p.decision.checkoutSessionId === session.id && p.decision.expectedTotalCents === session.total)))
   const purchases = result.purchases.filter(p => p.userId === fixture.userId && p.productId === c5 && p.status === 'Valid' && amountMatches(p))
   return session.paymentStatus === 'paid' && result.webhooks.length > 0 && purchases.some(p => result.access.some(a => a.sourceId === p.id && a.entitlementType === 'cohort_content_access' && a.metadata?.contentIds?.includes(c5WorkshopId)))
 }

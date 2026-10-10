@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
 	lineItems: vi.fn(),
 	transfers: vi.fn(),
 	purchaseFirst: vi.fn(),
+	decisions: vi.fn(),
 	spentBy: vi.fn(async (): Promise<string[]> => []),
 }))
 vi.mock('@/lib/c5-pricing/purchase-decision-store', () => ({
@@ -30,6 +31,7 @@ vi.mock('@/db', () => ({
 				findMany: mocks.purchases,
 				findFirst: mocks.purchaseFirst,
 			},
+			purchaseDecision: { findMany: mocks.decisions },
 			coupon: { findMany: mocks.coupons },
 			prices: { findMany: mocks.prices },
 			purchaseUserTransfer: { findMany: mocks.transfers },
@@ -59,6 +61,7 @@ import { hooks } from './hooks'
 
 beforeEach(() => {
 	vi.clearAllMocks()
+	mocks.decisions.mockResolvedValue([])
 	mocks.transfers.mockResolvedValue([])
 	mocks.purchaseFirst.mockResolvedValue({ userId: 'test-user' })
 })
@@ -286,7 +289,9 @@ describe('front-desk read hooks', () => {
 			])
 			mocks.purchases.mockResolvedValue([crashCourse()])
 			settledStripe()
-			mocks.disputes.mockResolvedValue({ data: [{ status: 'needs_response' }] })
+			mocks.disputes.mockResolvedValue({
+				data: [{ status: 'needs_response' }],
+			})
 			mocks.charge
 				.mockReset()
 				.mockResolvedValueOnce({ ...clean, ...first })
@@ -431,22 +436,22 @@ describe('front-desk read hooks', () => {
 		expect((await hooks.pricingFacts(askC5))?.facts.creditUse).toEqual({
 			gap: 'FactsUnavailable',
 		})
-		mocks.purchases.mockResolvedValue([
-			crashCourse(),
-			c5({
-				c5Decision: {
-					v: 1,
-					decisionRef: 'c5d1.0000000000000000.-',
-					creditSource: null,
-					contract: 'test',
-					engineVersion: 'engine-test',
-					policyVersion: 'policy-test',
-					accessRestriction: 'none',
-					expectedTotalCents: 80000,
-					checkoutSessionId: 'cs_test_later',
-					savedAt: '2030-02-01T00:00:01Z',
-				},
-			}),
+		mocks.decisions.mockResolvedValue([
+			{
+				purchaseId: 'c5-later',
+				productId: 'product-s00zs',
+				decisionRef: 'c5d1.0000000000000000.-',
+				creditSource: null,
+				codeRef: null,
+				basis: null,
+				contract: 'test',
+				engineVersion: 'engine-test',
+				policyVersion: 'policy-test',
+				restriction: 'none',
+				amountCents: 80000,
+				checkoutSessionId: 'cs_test_later',
+				createdAt: new Date('2030-02-01T00:00:01Z'),
+			},
 		])
 		expect((await hooks.pricingFacts(askC5))?.facts.creditUse).toMatchObject({
 			value: 'available',
