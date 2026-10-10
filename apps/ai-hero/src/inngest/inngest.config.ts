@@ -64,6 +64,7 @@ import {
 	checkoutReconcileFulfill,
 	checkoutReconcilerSweep,
 } from './functions/checkout-reconciler'
+import { teamInvoiceExpiry } from './functions/team-invoice-expiry'
 import { addDiscordRoleWorkflow } from './functions/discord/add-discord-role-workflow'
 import { grantLegendDiscordRole } from './functions/discord/grant-legend-discord-role'
 import { eventReminderBroadcast } from './functions/event-reminder-broadcast'
@@ -191,6 +192,7 @@ const allFunctions = [
 	invoiceShortfallReconciliation,
 	checkoutReconcilerSweep,
 	checkoutReconcileFulfill,
+	teamInvoiceExpiry,
 	syncGithubSourcedPosts,
 	skillChangelogBroadcast,
 	skillsNewsletterPathEntry,

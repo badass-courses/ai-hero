@@ -33,6 +33,7 @@ function cohortDefaultValues(resource: unknown) {
 			description: cohort?.fields?.description ?? '',
 			body: cohort?.fields?.body ?? '',
 			postPurchaseBody: cohort?.fields?.postPurchaseBody ?? '',
+			forTeamsBody: cohort?.fields?.forTeamsBody ?? '',
 			image: cohort?.fields?.image ?? '',
 			timezone: cohort?.fields?.timezone || 'America/Los_Angeles',
 			state: cohort?.fields?.state ?? 'draft',
@@ -70,6 +71,18 @@ export function EditCohortClient({
 				media: withVideoChapters(cohortManifest.media),
 				schema: CohortSchema,
 				defaultValues: cohortDefaultValues,
+				// A third body for the team story (`/cohorts/[slug]/for-teams`),
+				// the workshop editor's "For teams" body. Declared here rather than
+				// in the kit because only this app has the route.
+				bodies: [
+					...(cohortManifest.bodies ?? []),
+					{
+						label: 'For teams',
+						field: 'fields.forTeamsBody',
+						description:
+							'The team story on /for-teams. Leave empty to hide the page.',
+					},
+				],
 			},
 			bindings: createCohortBindings({
 				onSlugChange: (slug) => router.push(`/cohorts/${slug}/edit`),

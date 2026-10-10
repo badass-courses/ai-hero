@@ -27,6 +27,12 @@ export const CohortSchema = ContentResourceSchema.merge(
 			slug: z.string(),
 			body: z.string().optional(),
 			postPurchaseBody: z.string().optional(),
+			/**
+			 * MDX for `/cohorts/[slug]/for-teams`: the team story for this cohort,
+			 * a third body next to the sales and post-purchase copy (the same
+			 * field a workshop carries). Empty means the route is a 404.
+			 */
+			forTeamsBody: z.string().optional(),
 			officeHoursSessions: CohortOfficeHoursSessionsSchema,
 			state: ResourceStateSchema.default('draft'),
 			visibility: ResourceVisibilitySchema.default('unlisted'),
