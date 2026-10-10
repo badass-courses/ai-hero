@@ -11,7 +11,6 @@ import {
 	SourceUnavailable,
 	type PricingPurchaseRow,
 	type PricingSettlement,
-	type PricingTransferRow,
 } from './pricing-facts'
 
 // Synthetic database: plain rows behind the same source port the live layer
@@ -30,13 +29,26 @@ const legendProducts = [
 ]
 const legendRefs = legendProducts.map((id) => `product:${id}`)
 
+/** A PurchaseUserTransfer row; `completed` when the target accepted it. */
+interface SyntheticTransfer {
+	purchaseId: string
+	sourceUserId: string
+	targetUserId: string | null
+	completed?: boolean
+}
+type SyntheticPurchase = PricingPurchaseRow & {
+	userId?: string
+	createdAt?: Date
+}
 interface SyntheticDb {
 	users?: Record<string, string>
-	purchases?: (PricingPurchaseRow & { userId?: string })[]
+	purchases?: SyntheticPurchase[]
 	coupons?: Record<string, string | null>
 	prices?: { id: string; unitAmountCents: number }[]
 	settlements?: Record<string, PricingSettlement>
-	transfers?: PricingTransferRow[]
+	transfers?: SyntheticTransfer[]
+	/** Defaults to `cutover`; null leaves it unconfigured. */
+	cutover?: Date | null
 	/** Saved decisions by credit source: the purchases that spent it. */
 	ledger?: Record<string, string[]>
 	down?: SourceUnavailable['source'][]
@@ -55,9 +67,12 @@ const purchase = (
 	stripeChargeId: `ch_${over.id}`,
 	checkoutSessionId: `cs_${over.id}`,
 	stripeProductId: 'prod_cc',
-	hasSavedDecision: false,
 	...over,
 })
+// Target purchases default to after the cutover; `before` places one earlier.
+const cutover = new Date('2030-01-01T00:00:00Z')
+const before = new Date('2029-12-31T23:59:59Z')
+const after = new Date('2030-01-01T00:00:00Z')
 /** A settled charge whose own session has one Crash Course line. */
 const charge = (
 	id: string,
@@ -138,15 +153,48 @@ function synthetic(data: SyntheticDb) {
 								productIds.includes(row.productId),
 						),
 					),
-		transfers: (userId) =>
-			down('transfers')
-				? fail('transfers')
-				: Effect.succeed(
-						(data.transfers ?? []).filter(
-							(row) =>
-								row.sourceUserId === userId || row.targetUserId === userId,
-						),
-					),
+		creditChain: ({ creditSource, productId }) => {
+			if (down('transfers')) return fail('transfers')
+			const all = data.purchases ?? []
+			const ownerOf = (id: string) =>
+				all.find((row) => row.id === id)?.userId ?? 'user-test'
+			const moves = (data.transfers ?? []).filter(
+				(row) => row.purchaseId === creditSource,
+			)
+			const holders = [
+				...new Set([
+					ownerOf(creditSource),
+					...moves.flatMap((row) => [
+						row.sourceUserId,
+						...(row.completed && row.targetUserId ? [row.targetUserId] : []),
+					]),
+				]),
+			]
+			const held = all.filter(
+				(row) =>
+					holders.includes(row.userId ?? 'user-test') &&
+					row.productId === productId,
+			)
+			const movedAway = (data.transfers ?? [])
+				.filter((row) => holders.includes(row.sourceUserId))
+				.map((row) => all.find((purchase) => purchase.id === row.purchaseId))
+			if (movedAway.some((row) => !row)) return fail('transfers')
+			const targets = new Map(
+				[...held, ...movedAway]
+					.filter((row) => row!.productId === productId)
+					.map((row) => [
+						row!.id,
+						{
+							id: row!.id,
+							createdAt: row!.createdAt ?? after,
+							bulkCouponId: row!.bulkCouponId,
+							redeemedBulkCouponId: row!.redeemedBulkCouponId,
+						},
+					]),
+			)
+			return Effect.succeed({ holders, targets: [...targets.values()] })
+		},
+		decisionCutover: data.cutover === undefined ? cutover : data.cutover,
 		couponTypes: (ids) =>
 			down('coupons')
 				? fail('coupons')
@@ -383,11 +431,10 @@ describe('legend', () => {
 				})),
 				transfers: [
 					{
-						id: 'transfer-out',
 						purchaseId: all[0]!.id,
 						sourceUserId: 'user-test',
 						targetUserId: 'user-recipient',
-						purchase: all[0]!,
+						completed: true,
 					},
 				],
 			}),
@@ -400,11 +447,9 @@ describe('legend', () => {
 				purchases: all,
 				transfers: [
 					{
-						id: 'transfer-offer',
 						purchaseId: all[0]!.id,
 						sourceUserId: 'user-test',
 						targetUserId: null,
-						purchase: all[0]!,
 					},
 				],
 			}),
@@ -768,239 +813,219 @@ describe('team seats and credit use', () => {
 		expect(facts.facts.existingSeats).toEqual({ gap: 'PaymentAmbiguous' })
 	})
 
-	it.each(['Valid', 'Restricted', 'Refunded', 'Banned', 'Disputed'])(
-		'holds credit use for an individual target purchase with no saved decision, even %s',
-		async (status) => {
-			const { facts } = await run({
-				...buyer,
-				purchases: [purchase({ id: 'mine', productId: C5, status })],
+	const withCredit = {
+		...buyer,
+		purchases: [purchase({ id: 'cc' })] as SyntheticPurchase[],
+		settlements: Object.fromEntries([charge('cc')]),
+	}
+	const chainRef = 'ai-hero:purchase-transfers:purchase:cc'
+	const c5 = (id: string, over: Partial<SyntheticPurchase> = {}) =>
+		purchase({ id, productId: C5, ...over }) as SyntheticPurchase
+	const useOf = async (data: SyntheticDb) =>
+		(await run({ ...withCredit, ...data })).facts.facts.creditUse
+
+	it('reads credit use from saved decisions after the cutover', async () => {
+		const mine = [...withCredit.purchases, c5('mine', { createdAt: after })]
+		expect(await useOf({ purchases: mine })).toEqual({
+			value: 'available',
+			sourceRefs: [chainRef, 'ai-hero:c5-decision-ledger'],
+		})
+		// Spent by any purchase, whoever owns it now.
+		expect(await useOf({ purchases: mine, ledger: { cc: ['c5-elsewhere'] } }))
+			.toEqual({
+				value: 'spent',
+				sourceRefs: [
+					'ai-hero:c5-decision-ledger',
+					'ai-hero:purchase:c5-elsewhere#decision',
+				],
 			})
-			expect(facts.facts.creditUse).toEqual({ gap: 'FactsUnavailable' })
+	})
+
+	it.each(['Valid', 'Restricted', 'Refunded', 'Banned', 'Disputed'])(
+		'spends the credit beside an individual C5 purchase from before the cutover, even %s',
+		async (status) => {
+			expect(
+				await useOf({
+					purchases: [
+						...withCredit.purchases,
+						c5('old', { status, createdAt: before }),
+					],
+				}),
+			).toEqual({
+				value: 'spent',
+				sourceRefs: [chainRef, 'ai-hero:purchase:old#before-cutover'],
+			})
 		},
 	)
 
-	it('reads credit use from saved decisions once every target purchase has one', async () => {
-		const withCredit = {
-			...buyer,
-			purchases: [
-				purchase({ id: 'cc' }),
-				purchase({ id: 'mine', productId: C5, hasSavedDecision: true }),
-			],
-			settlements: Object.fromEntries([charge('cc')]),
-		}
-		const unspent = await run(withCredit)
-		expect(unspent.facts.facts.creditUse).toEqual({
+	it('places a purchase at the cutover instant after it', async () => {
+		expect(
+			await useOf({
+				purchases: [...withCredit.purchases, c5('edge', { createdAt: cutover })],
+			}),
+		).toMatchObject({ value: 'available' })
+	})
+
+	it.each([
+		['a team purchase', { bulkCouponId: 'bulk', bulkSeats: 5 }],
+		['a redeemed team seat', { redeemedBulkCouponId: 'bulk' }],
+	])('ignores %s from before the cutover', async (_, over) => {
+		expect(
+			await useOf({
+				purchases: [
+					...withCredit.purchases,
+					c5('team', { ...over, createdAt: before }),
+				],
+			}),
+		).toMatchObject({ value: 'available' })
+	})
+
+	it('holds credit use when C5 history exists but no cutover is configured', async () => {
+		expect(
+			await useOf({
+				purchases: [...withCredit.purchases, c5('any')],
+				cutover: null,
+			}),
+		).toEqual({ gap: 'FactsUnavailable' })
+		expect(await useOf({ cutover: null })).toMatchObject({
 			value: 'available',
-			sourceRefs: [
-				'ai-hero:purchases:user:user-test',
-				'ai-hero:purchase-transfers:user:user-test',
-				'ai-hero:c5-decision-ledger',
-			],
 		})
-		// Spent by any purchase, whoever owns it now.
-		const spent = await run({ ...withCredit, ledger: { cc: ['c5-elsewhere'] } })
-		expect(spent.facts.facts.creditUse).toEqual({
-			value: 'spent',
-			sourceRefs: [
-				'ai-hero:c5-decision-ledger',
-				'ai-hero:purchase:c5-elsewhere#decision',
-			],
-		})
-		// A saved decision that spent the credit settles it even beside history
-		// from before decisions were saved.
-		const mixed = await run({
-			...withCredit,
-			purchases: [
-				...withCredit.purchases,
-				purchase({ id: 'old', productId: C5 }),
-			],
-			ledger: { cc: ['mine'] },
-		})
-		expect(mixed.facts.facts.creditUse).toMatchObject({ value: 'spent' })
 	})
 
 	it('holds credit use when the decision ledger cannot be read', async () => {
-		const { facts } = await run({
-			...buyer,
-			purchases: [purchase({ id: 'cc' })],
-			settlements: Object.fromEntries([charge('cc')]),
-			down: ['ledger'],
-		})
+		const { facts } = await run({ ...withCredit, down: ['ledger'] })
 		expect(facts.facts.credit).toMatchObject({ value: { source: 'cc' } })
 		expect(facts.facts.creditUse).toEqual({ gap: 'FactsUnavailable' })
 	})
 
-	it('allows credit use only with no unrecorded target purchase history', async () => {
-		const none = await run({ ...buyer, purchases: [purchase({ id: 'cc' })] })
-		expect(none.facts.facts.creditUse).toEqual({
+	it('reports no credit as available, without reading the chain', async () => {
+		const { facts } = await run({
+			...buyer,
+			purchases: [c5('old', { createdAt: before })],
+			down: ['transfers'],
+		})
+		expect(facts.facts.credit).toMatchObject({ value: null })
+		expect(facts.facts.creditUse).toEqual({
 			value: 'available',
 			sourceRefs: [
 				'ai-hero:purchases:user:user-test',
-				'ai-hero:purchase-transfers:user:user-test',
 				'ai-hero:c5-decision-ledger',
 			],
 		})
-		const seat = await run({
-			...buyer,
-			purchases: [
-				purchase({ id: 'seat', productId: C5, redeemedBulkCouponId: 'bulk' }),
-			],
-		})
-		expect(seat.facts.facts.creditUse).toMatchObject({ value: 'available' })
 	})
 })
 
-describe('transfer history', () => {
-	const transfer = (
-		over: Partial<PricingTransferRow> & Pick<PricingTransferRow, 'purchaseId'>,
-	): PricingTransferRow => ({
-		id: `transfer-${over.purchaseId}`,
-		sourceUserId: 'user-test',
-		targetUserId: 'user-recipient',
-		purchase: {
-			productId: C5,
-			bulkCouponId: null,
-			redeemedBulkCouponId: null,
-			hasSavedDecision: false,
-		},
-		...over,
-	})
+describe('transfer chain', () => {
 	const withCredit = {
 		...buyer,
-		purchases: [purchase({ id: 'cc' })],
+		purchases: [purchase({ id: 'cc' })] as SyntheticPurchase[],
 		settlements: Object.fromEntries([charge('cc')]),
 	}
+	const c5 = (id: string, userId: string, createdAt = before) =>
+		({ ...purchase({ id, productId: C5 }), userId, createdAt }) as SyntheticPurchase
+	const factsOf = async (data: SyntheticDb) =>
+		(await run({ ...withCredit, ...data })).facts.facts
 
-	it('holds credit use after the buyer transferred a target purchase away', async () => {
-		// The purchase now belongs to the recipient, so the buyer's own scan no
-		// longer sees it. The transfer row still proves they owned it.
-		const { facts } = await run({
-			...withCredit,
-			transfers: [transfer({ purchaseId: 'c5-moved' })],
-		})
-		expect(facts.facts.credit).toMatchObject({
-			value: { paid: 25_000, source: 'cc' },
-		})
-		expect(facts.facts.creditUse).toEqual({ gap: 'FactsUnavailable' })
-	})
-
-	it('leaves credit use available when the transferred target purchase saved its decision', async () => {
-		const { facts } = await run({
-			...withCredit,
-			transfers: [
-				transfer({
-					purchaseId: 'c5-moved',
-					purchase: {
-						productId: C5,
-						bulkCouponId: null,
-						redeemedBulkCouponId: null,
-						hasSavedDecision: true,
-					},
-				}),
-			],
-		})
-		expect(facts.facts.creditUse).toMatchObject({ value: 'available' })
-	})
-
-	it('holds credit use when a transferred purchase cannot be read', async () => {
-		const { facts } = await run({
-			...withCredit,
-			transfers: [transfer({ purchaseId: 'gone', purchase: null })],
-		})
-		expect(facts.facts.creditUse).toEqual({ gap: 'FactsUnavailable' })
-	})
-
-	it.each([
-		[
-			'a transferred team seat',
-			transfer({
-				purchaseId: 'seat',
-				purchase: {
-					productId: C5,
-					bulkCouponId: null,
-					redeemedBulkCouponId: 'bulk',
-					hasSavedDecision: false,
-				},
-			}),
-		],
-		[
-			'another product transferred away',
-			transfer({
-				purchaseId: 'c4',
-				purchase: {
-					productId: C4,
-					bulkCouponId: null,
-					redeemedBulkCouponId: null,
-					hasSavedDecision: false,
-				},
-			}),
-		],
-		[
-			"another user's target transfer",
-			transfer({
-				purchaseId: 'theirs',
-				sourceUserId: 'user-other',
-				targetUserId: 'user-recipient',
-			}),
-		],
-	])('leaves credit use available for %s', async (_, row) => {
-		const { facts } = await run({ ...withCredit, transfers: [row] })
-		expect(facts.facts.creditUse).toMatchObject({ value: 'available' })
-	})
-
-	it('holds the credit from a Crash Course purchase that came from another owner, without asking Stripe', async () => {
+	it('credits a Crash Course purchase that came from another owner', async () => {
 		const { facts, stripeReads } = await run({
 			...withCredit,
 			transfers: [
-				transfer({
+				{
 					purchaseId: 'cc',
 					sourceUserId: 'user-previous',
 					targetUserId: 'user-test',
-					purchase: {
-						productId: CC,
-						bulkCouponId: null,
-						redeemedBulkCouponId: null,
-						hasSavedDecision: false,
-					},
-				}),
-			],
-		})
-		expect(facts.facts.credit).toEqual({ gap: 'FactsUnavailable' })
-		expect(stripeReads).toEqual([])
-	})
-
-	it("keeps the credit when the buyer's own Crash Course purchase only has an offer row", async () => {
-		const { facts } = await run({
-			...withCredit,
-			transfers: [
-				transfer({
-					purchaseId: 'cc',
-					targetUserId: null,
-					purchase: {
-						productId: CC,
-						bulkCouponId: null,
-						redeemedBulkCouponId: null,
-						hasSavedDecision: false,
-					},
-				}),
+					completed: true,
+				},
 			],
 		})
 		expect(facts.facts.credit).toMatchObject({
 			value: { paid: 25_000, source: 'cc' },
 		})
 		expect(facts.facts.creditUse).toMatchObject({ value: 'available' })
+		expect(stripeReads).toEqual(['ch_cc'])
 	})
 
-	it('holds both credit facts when transfer history is unavailable', async () => {
-		const { facts, stripeReads } = await run({
-			...withCredit,
-			down: ['transfers'],
+	it('spends the credit when an earlier holder held a C5 purchase from before the cutover', async () => {
+		const facts = await factsOf({
+			purchases: [...withCredit.purchases, c5('theirs', 'user-previous')],
+			transfers: [
+				{
+					purchaseId: 'cc',
+					sourceUserId: 'user-previous',
+					targetUserId: 'user-test',
+					completed: true,
+				},
+			],
 		})
-		expect(facts.facts.credit).toEqual({ gap: 'FactsUnavailable' })
-		expect(facts.facts.creditUse).toEqual({ gap: 'FactsUnavailable' })
-		expect(facts.facts.alumni).toMatchObject({ value: 'none' })
-		expect(facts.facts.existingSeats).toMatchObject({ value: 0 })
-		expect(stripeReads).toEqual([])
+		expect(facts.creditUse).toEqual({
+			value: 'spent',
+			sourceRefs: [
+				'ai-hero:purchase-transfers:purchase:cc',
+				'ai-hero:purchase:theirs#before-cutover',
+			],
+		})
+	})
+
+	it('spends the credit when a holder transferred such a C5 purchase away', async () => {
+		const facts = await factsOf({
+			purchases: [...withCredit.purchases, c5('moved', 'user-recipient')],
+			transfers: [
+				{
+					purchaseId: 'moved',
+					sourceUserId: 'user-test',
+					targetUserId: 'user-recipient',
+					completed: true,
+				},
+			],
+		})
+		expect(facts.creditUse).toMatchObject({ value: 'spent' })
+	})
+
+	it('leaves the credit available when a later C5 purchase in the chain saved no decision', async () => {
+		const facts = await factsOf({
+			purchases: [...withCredit.purchases, c5('later', 'user-previous', after)],
+			transfers: [
+				{
+					purchaseId: 'cc',
+					sourceUserId: 'user-previous',
+					targetUserId: 'user-test',
+					completed: true,
+				},
+			],
+		})
+		expect(facts.creditUse).toMatchObject({ value: 'available' })
+	})
+
+	it('does not count someone who was only offered the Crash Course purchase', async () => {
+		const facts = await factsOf({
+			purchases: [...withCredit.purchases, c5('offered', 'user-offered')],
+			transfers: [
+				{ purchaseId: 'cc', sourceUserId: 'user-test', targetUserId: 'user-offered' },
+			],
+		})
+		expect(facts.creditUse).toMatchObject({ value: 'available' })
+	})
+
+	it('holds credit use when a transferred purchase in the chain cannot be read', async () => {
+		const facts = await factsOf({
+			transfers: [
+				{ purchaseId: 'gone', sourceUserId: 'user-test', targetUserId: 'x' },
+			],
+		})
+		expect(facts.credit).toMatchObject({ value: { source: 'cc' } })
+		expect(facts.creditUse).toEqual({ gap: 'FactsUnavailable' })
+	})
+
+	it('holds only credit use when the chain cannot be read', async () => {
+		const facts = await factsOf({ down: ['transfers'] })
+		expect(facts.credit).toMatchObject({ value: { source: 'cc' } })
+		expect(facts.creditUse).toEqual({ gap: 'FactsUnavailable' })
+		expect(facts.alumni).toMatchObject({ value: 'none' })
+	})
+
+	it('reads the chain only when no saved decision spent the credit', async () => {
+		const facts = await factsOf({ ledger: { cc: ['c5'] }, down: ['transfers'] })
+		expect(facts.creditUse).toMatchObject({ value: 'spent' })
 	})
 })
 

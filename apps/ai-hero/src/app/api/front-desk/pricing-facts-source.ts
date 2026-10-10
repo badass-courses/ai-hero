@@ -1,8 +1,4 @@
 import { db } from '@/db'
-import {
-	C5_DECISION_FIELD,
-	parseSavedDecision,
-} from '@/lib/c5-pricing/purchase-decision'
 import { drizzleC5DecisionStore } from '@/lib/c5-pricing/purchase-decision-store'
 import type { ChargeState } from '@ai-hero/front-desk-support'
 import { Effect, Layer } from 'effect'
@@ -11,9 +7,9 @@ import { integration } from '../support/integration'
 import {
 	PricingFactsSource,
 	SourceUnavailable,
+	type CreditChainTarget,
 	type PricingPurchaseRow,
 	type PricingSettlement,
-	type PricingTransferRow,
 } from './pricing-facts'
 
 /** The read-only Stripe calls the pricing source makes. */
@@ -43,15 +39,13 @@ const missing = (error: unknown) =>
 	error.code === 'resource_missing'
 const idOf = (value: string | { id: string } | null | undefined) =>
 	typeof value === 'string' ? value : (value?.id ?? null)
-const hasSavedDecision = (fields: unknown) =>
-	parseSavedDecision(
-		(fields as Record<string, unknown> | null | undefined)?.[C5_DECISION_FIELD],
-	) !== null
 
 /** SELECT-only reads plus Stripe retrieve and list calls. No writes. */
 export const pricingFactsSourceLayer = (deps: {
 	readonly chargeState: (stripeChargeId: string) => Promise<ChargeState | null>
 	readonly stripe: PricingStripeReads
+	/** When paid target purchases started saving decisions. */
+	readonly decisionCutover: Date | null
 }) =>
 	Layer.succeed(PricingFactsSource, {
 		userByEmail: (email) =>
@@ -100,38 +94,67 @@ export const pricingFactsSourceLayer = (deps: {
 							merchantProduct.identifier?.startsWith('prod_')
 								? merchantProduct.identifier
 								: null,
-						hasSavedDecision: hasSavedDecision(purchase.fields),
 					}
 				})
 			}),
-		transfers: (userId) =>
+		creditChain: ({ creditSource, productId }) =>
 			attempt('transfers', async () => {
-				const rows = await db.query.purchaseUserTransfer.findMany({
-					where: (transfer, { eq, or }) =>
-						or(
-							eq(transfer.sourceUserId, userId),
-							eq(transfer.targetUserId, userId),
-						),
-					with: { purchase: true },
+				const sourcePurchase = await db.query.purchases.findFirst({
+					where: (purchase, { eq }) => eq(purchase.id, creditSource),
+					columns: { userId: true },
 				})
-				return rows.map(
-					(transfer): PricingTransferRow => ({
-						id: transfer.id,
-						purchaseId: transfer.purchaseId,
-						sourceUserId: transfer.sourceUserId,
-						targetUserId: transfer.targetUserId ?? null,
-						purchase: transfer.purchase
-							? {
-									productId: transfer.purchase.productId,
-									bulkCouponId: transfer.purchase.bulkCouponId ?? null,
-									redeemedBulkCouponId:
-										transfer.purchase.redeemedBulkCouponId ?? null,
-									hasSavedDecision: hasSavedDecision(transfer.purchase.fields),
-								}
-							: null,
+				if (!sourcePurchase?.userId) throw new Error('credit source unreadable')
+				// Each transfer's source owned the purchase when the row was made; a
+				// target only held it once the transfer completed.
+				const moves = await db.query.purchaseUserTransfer.findMany({
+					where: (transfer, { eq }) => eq(transfer.purchaseId, creditSource),
+				})
+				const holders = [
+					...new Set([
+						sourcePurchase.userId,
+						...moves.flatMap((move) => [
+							move.sourceUserId,
+							...(move.transferState === 'COMPLETED' && move.targetUserId
+								? [move.targetUserId]
+								: []),
+						]),
+					]),
+				]
+				const [held, movedAway] = await Promise.all([
+					db.query.purchases.findMany({
+						where: (purchase, { and, eq, inArray }) =>
+							and(
+								inArray(purchase.userId, holders),
+								eq(purchase.productId, productId),
+							),
 					}),
-				)
+					db.query.purchaseUserTransfer.findMany({
+						where: (transfer, { inArray }) =>
+							inArray(transfer.sourceUserId, holders),
+						with: { purchase: true },
+					}),
+				])
+				const targets = new Map<string, CreditChainTarget>()
+				const add = (purchase: (typeof held)[number]) => {
+					if (purchase.productId !== productId) return
+					if (!(purchase.createdAt instanceof Date))
+						throw new Error('target purchase unreadable')
+					targets.set(purchase.id, {
+						id: purchase.id,
+						createdAt: purchase.createdAt,
+						bulkCouponId: purchase.bulkCouponId ?? null,
+						redeemedBulkCouponId: purchase.redeemedBulkCouponId ?? null,
+					})
+				}
+				for (const purchase of held) add(purchase)
+				for (const move of movedAway) {
+					// A transferred purchase that cannot be read could be a target one.
+					if (!move.purchase) throw new Error('transferred purchase unreadable')
+					add(move.purchase)
+				}
+				return { holders, targets: [...targets.values()] }
 			}),
+		decisionCutover: deps.decisionCutover,
 		couponTypes: (couponIds) =>
 			attempt('coupons', async () => {
 				const rows = await db.query.coupon.findMany({

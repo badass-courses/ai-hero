@@ -13,6 +13,7 @@ import { courseBuilderAdapter, db } from '@/db'
 import { purchases } from '@/db/schema'
 import BasicEmail from '@/emails/basic-email'
 import { env } from '@/env.mjs'
+import { c5DecisionCutover } from '@/lib/c5-pricing/config'
 import { frontDeskData } from '@/lib/c5-pricing/server'
 import { log } from '@/server/logger'
 import { redis } from '@/server/redis-client'
@@ -199,6 +200,7 @@ async function buyer(email: string, productId: string) {
 				pricingFactsSourceLayer({
 					chargeState: (id) => frontDeskHooks.chargeState(id),
 					stripe: stripe(),
+					decisionCutover: c5DecisionCutover(),
 				}),
 			),
 			Effect.catchAll(() => Effect.succeed(null)),

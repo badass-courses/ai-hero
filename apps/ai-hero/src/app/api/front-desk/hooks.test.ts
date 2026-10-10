@@ -11,10 +11,14 @@ const mocks = vi.hoisted(() => ({
 	session: vi.fn(),
 	lineItems: vi.fn(),
 	transfers: vi.fn(),
+	purchaseFirst: vi.fn(),
 	spentBy: vi.fn(async (): Promise<string[]> => []),
 }))
 vi.mock('@/lib/c5-pricing/purchase-decision-store', () => ({
 	drizzleC5DecisionStore: () => ({ spentBy: mocks.spentBy }),
+}))
+vi.mock('@/lib/c5-pricing/config', () => ({
+	c5DecisionCutover: () => new Date('2030-01-01T00:00:00Z'),
 }))
 vi.mock('../support/integration', () => ({
 	integration: { lookupUser: mocks.lookupUser },
@@ -22,7 +26,10 @@ vi.mock('../support/integration', () => ({
 vi.mock('@/db', () => ({
 	db: {
 		query: {
-			purchases: { findMany: mocks.purchases },
+			purchases: {
+				findMany: mocks.purchases,
+				findFirst: mocks.purchaseFirst,
+			},
 			coupon: { findMany: mocks.coupons },
 			prices: { findMany: mocks.prices },
 			purchaseUserTransfer: { findMany: mocks.transfers },
@@ -53,6 +60,7 @@ import { hooks } from './hooks'
 beforeEach(() => {
 	vi.clearAllMocks()
 	mocks.transfers.mockResolvedValue([])
+	mocks.purchaseFirst.mockResolvedValue({ userId: 'test-user' })
 })
 describe('front-desk read hooks', () => {
 	it('maps a customer and handles a missing customer', async () => {
@@ -349,47 +357,58 @@ describe('front-desk read hooks', () => {
 			})
 		})
 	})
-	it('reads transfer history and holds credit use for a target purchase transferred away', async () => {
+	it("reads the credit source's transfer chain and spends it for a C5 purchase from before the cutover", async () => {
 		mocks.lookupUser.mockResolvedValue({ id: 'test-user' })
 		mocks.prices.mockResolvedValue([
 			{ id: 'price-test', unitAmount: '1000.00' },
 		])
 		mocks.purchases.mockResolvedValue([crashCourse()])
 		settledStripe()
-		mocks.transfers.mockResolvedValue([
-			{
-				id: 'transfer-test',
-				purchaseId: 'c5-moved',
-				sourceUserId: 'test-user',
-				targetUserId: 'test-recipient',
-				transferState: 'COMPLETED',
-				purchase: {
-					id: 'c5-moved',
-					userId: 'test-recipient',
-					productId: 'product-s00zs',
-					status: 'Valid',
-					bulkCouponId: null,
-					redeemedBulkCouponId: null,
-				},
+		const moved = {
+			id: 'transfer-test',
+			purchaseId: 'c5-moved',
+			sourceUserId: 'test-user',
+			targetUserId: 'test-recipient',
+			transferState: 'COMPLETED',
+			purchase: {
+				id: 'c5-moved',
+				userId: 'test-recipient',
+				productId: 'product-s00zs',
+				status: 'Valid',
+				createdAt: new Date('2029-06-01T00:00:00Z'),
+				bulkCouponId: null,
+				redeemedBulkCouponId: null,
 			},
-		])
+		}
+		// The Crash Course purchase never moved; its holder moved a C5 purchase.
+		mocks.transfers.mockResolvedValueOnce([]).mockResolvedValueOnce([moved])
 		const facts = await hooks.pricingFacts(askC5)
 		expect(facts?.facts.credit).toMatchObject({ value: { paid: 25000 } })
-		expect(facts?.facts.creditUse).toEqual({ gap: 'FactsUnavailable' })
-		const query = mocks.transfers.mock.calls[0]![0]
-		expect(query.with).toEqual({ purchase: true })
-		expect(
-			query.where(
-				{ sourceUserId: 'source', targetUserId: 'target' },
-				{
-					eq: (column: string, value: string) => `${column}=${value}`,
-					or: (...clauses: string[]) => clauses,
-				},
-			),
-		).toEqual(['source=test-user', 'target=test-user'])
+		expect(facts?.facts.creditUse).toEqual({
+			value: 'spent',
+			sourceRefs: [
+				'ai-hero:purchase-transfers:purchase:cc',
+				'ai-hero:purchase:c5-moved#before-cutover',
+			],
+		})
+		const ops = {
+			eq: (column: string, value: string) => `${column}=${value}`,
+			inArray: (column: string, values: string[]) =>
+				`${column} in ${values.join(',')}`,
+		}
+		const [chainQuery, movedQuery] = mocks.transfers.mock.calls.map(
+			(call) => call[0],
+		)
+		expect(chainQuery.where({ purchaseId: 'purchase' }, ops)).toBe(
+			'purchase=cc',
+		)
+		expect(movedQuery.with).toEqual({ purchase: true })
+		expect(movedQuery.where({ sourceUserId: 'source' }, ops)).toBe(
+			'source in test-user',
+		)
 		mocks.transfers.mockRejectedValue(new Error('db down'))
 		const down = await hooks.pricingFacts(askC5)
-		expect(down?.facts.credit).toEqual({ gap: 'FactsUnavailable' })
+		expect(down?.facts.credit).toMatchObject({ value: { paid: 25000 } })
 		expect(down?.facts.creditUse).toEqual({ gap: 'FactsUnavailable' })
 	})
 	it('holds credit when the purchase session is missing at Stripe', async () => {
@@ -432,6 +451,7 @@ describe('front-desk read hooks', () => {
 				productId: 'product-s00zs',
 				status: 'Valid',
 				totalAmount: '4000.00',
+				createdAt: new Date('2030-02-01T00:00:00Z'),
 				bulkCouponId: 'bulk-test',
 				bulkCoupon: { maxUses: 4 },
 				merchantCharge: { identifier: 'pi_test' },
@@ -479,8 +499,7 @@ describe('front-desk read hooks', () => {
 				creditUse: {
 					value: 'available',
 					sourceRefs: [
-						'ai-hero:purchases:user:test-user',
-						'ai-hero:purchase-transfers:user:test-user',
+						'ai-hero:purchase-transfers:purchase:cc',
 						'ai-hero:c5-decision-ledger',
 					],
 				},

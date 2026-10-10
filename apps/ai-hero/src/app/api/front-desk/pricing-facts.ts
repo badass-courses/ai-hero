@@ -51,8 +51,6 @@ export interface PricingPurchaseRow {
 	readonly checkoutSessionId: string | null
 	/** Stripe product of the purchase's MerchantCharge, when it maps to this product. */
 	readonly stripeProductId: string | null
-	/** Whether the purchase carries a saved pricing decision (the credit ledger). */
-	readonly hasSavedDecision: boolean
 }
 /** Settlement evidence for one charge and the Checkout Session that made it. */
 export interface PricingSettlement {
@@ -89,18 +87,20 @@ export interface PricingPriceRow {
 	readonly id: string
 	readonly unitAmountCents: number
 }
-/** A PurchaseUserTransfer row the buyer is the source or target of. The
- * source user owned the purchase when the row was made, whatever its state. */
-export interface PricingTransferRow {
+/** A target-product purchase someone in a credit source's chain holds or held. */
+export interface CreditChainTarget {
 	readonly id: string
-	readonly purchaseId: string
-	readonly sourceUserId: string
-	readonly targetUserId: string | null
-	/** The transferred purchase as it is now. Null when it cannot be read. */
-	readonly purchase: Pick<
-		PricingPurchaseRow,
-		'productId' | 'bulkCouponId' | 'redeemedBulkCouponId' | 'hasSavedDecision'
-	> | null
+	readonly createdAt: Date
+	readonly bulkCouponId: string | null
+	readonly redeemedBulkCouponId: string | null
+}
+/**
+ * A credit source's transfer chain: everyone who held the source purchase,
+ * and every target-product purchase any of them holds now or transferred away.
+ */
+export interface CreditChain {
+	readonly holders: readonly string[]
+	readonly targets: readonly CreditChainTarget[]
 }
 
 export class SourceUnavailable extends Data.TaggedError('SourceUnavailable')<{
@@ -126,10 +126,16 @@ export interface PricingFactsSourceShape {
 		userId: string,
 		productIds: readonly string[],
 	) => Effect.Effect<readonly PricingPurchaseRow[], SourceUnavailable>
-	/** Every purchase transfer out of or into this user, in any state. */
-	readonly transfers: (
-		userId: string,
-	) => Effect.Effect<readonly PricingTransferRow[], SourceUnavailable>
+	/** Fails when any purchase in the chain cannot be read. */
+	readonly creditChain: (input: {
+		readonly creditSource: string
+		readonly productId: string
+	}) => Effect.Effect<CreditChain, SourceUnavailable>
+	/**
+	 * When paid target purchases started saving their decisions. Null when it
+	 * is not configured: no target purchase can then be placed before or after.
+	 */
+	readonly decisionCutover: Date | null
 	/** MerchantCoupon type per coupon id. A missing coupon has no entry; a
 	 * missing MerchantCoupon or type is null. */
 	readonly couponTypes: (
@@ -162,7 +168,9 @@ const known = <A>(value: A, sourceRefs: readonly string[]): PricingFact<A> => ({
 })
 const gap = <A>(reason: FactGap): PricingFact<A> => ({ gap: reason })
 const purchaseRef = (id: string) => `ai-hero:purchase:${id}`
-const individual = (row: PricingPurchaseRow) =>
+const individual = (
+	row: Pick<PricingPurchaseRow, 'bulkCouponId' | 'redeemedBulkCouponId'>,
+) =>
 	!row.bulkCouponId && !row.redeemedBulkCouponId
 
 /** Current individual ownership, not payment or historical ownership.
@@ -246,43 +254,54 @@ export type CreditLedger =
 	| { readonly kind: 'read'; readonly spentBy: readonly string[] }
 	| { readonly kind: 'unavailable' }
 
+export const creditChainRef = (creditSource: string) =>
+	`ai-hero:purchase-transfers:purchase:${creditSource}`
+
 /**
  * Each paid target purchase saves the decision its checkout charged, and a
- * credit is spent exactly when a saved decision names it. Neither a refund
- * nor a transfer unspends it. A target purchase from before decisions were
- * saved (held, or transferred away) may have spent a credit nobody recorded,
- * so it still holds the fact.
+ * credit is spent when a saved decision names it. Neither a refund nor a
+ * transfer unspends it.
+ *
+ * Target purchases from before the cutover saved no decision. The source is
+ * spent when anyone in its transfer chain holds, or ever held, an individual
+ * target purchase from before the cutover, in any status. After the cutover
+ * only saved decisions count. A chain that cannot be read, or a target
+ * purchase with no cutover to place it against, holds the fact.
  */
-export function creditUseFact(
-	rows: readonly PricingPurchaseRow[],
-	transfers: readonly PricingTransferRow[],
-	userId: string,
-	productId: string,
-	refs: readonly string[],
-	ledger: CreditLedger,
-): PricingBuyerFacts['creditUse'] {
+export function creditUseFact({
+	creditSource,
+	ledger,
+	chain,
+	cutover,
+	refs,
+}: {
+	readonly creditSource: string | null
+	readonly ledger: CreditLedger
+	readonly chain: Either.Either<CreditChain, SourceUnavailable> | null
+	readonly cutover: Date | null
+	readonly refs: readonly string[]
+}): PricingBuyerFacts['creditUse'] {
 	if (ledger.kind === 'unavailable') return gap('FactsUnavailable')
 	if (ledger.kind === 'read' && ledger.spentBy.length)
 		return known('spent', [
 			CREDIT_LEDGER_REF,
 			...ledger.spentBy.map((id) => `${purchaseRef(id)}#decision`),
 		])
-	const unrecordedHeld = rows.some(
-		(row) =>
-			row.productId === productId && individual(row) && !row.hasSavedDecision,
+	if (!creditSource || ledger.kind === 'no-credit')
+		return known('available', [...refs, CREDIT_LEDGER_REF])
+	if (!chain || Either.isLeft(chain)) return gap('FactsUnavailable')
+	const targets = chain.right.targets.filter(individual)
+	if (targets.length && !cutover) return gap('FactsUnavailable')
+	const before = targets.filter(
+		(target) => cutover && target.createdAt.getTime() < cutover.getTime(),
 	)
-	const unrecordedTransferredAway = transfers.some(
-		(transfer) =>
-			transfer.sourceUserId === userId &&
-			(!transfer.purchase ||
-				(transfer.purchase.productId === productId &&
-					!transfer.purchase.bulkCouponId &&
-					!transfer.purchase.redeemedBulkCouponId &&
-					!transfer.purchase.hasSavedDecision)),
-	)
-	return unrecordedHeld || unrecordedTransferredAway
-		? gap('FactsUnavailable')
-		: known('available', [...refs, CREDIT_LEDGER_REF])
+	const chainRef = creditChainRef(creditSource)
+	if (before.length)
+		return known('spent', [
+			chainRef,
+			...before.map((target) => `${purchaseRef(target.id)}#before-cutover`),
+		])
+	return known('available', [chainRef, CREDIT_LEDGER_REF])
 }
 
 type CreditCandidate =
@@ -425,23 +444,15 @@ export function creditFact(
 
 const creditFor = (
 	rows: readonly PricingPurchaseRow[],
-	transfers: readonly PricingTransferRow[],
-	userId: string,
 	scanRef: string,
 ): Effect.Effect<PricingBuyerFacts['credit'], never, PricingFactsSource> =>
 	Effect.gen(function* () {
 		const source = yield* PricingFactsSource
+		// A Crash Course purchase that came from another owner is creditable too:
+		// whether its credit was spent is read from its whole transfer chain.
 		const crashCourse = rows.filter(
 			(row) => row.productId === CRASH_COURSE_PRODUCT,
 		)
-		// A purchase that came from another owner may already have spent its
-		// credit there. With no redemption ledger, that is unknowable.
-		const cameFromAnotherOwner = (row: PricingPurchaseRow) =>
-			transfers.some(
-				(transfer) =>
-					transfer.purchaseId === row.id && transfer.sourceUserId !== userId,
-			)
-		if (crashCourse.some(cameFromAnotherOwner)) return gap('FactsUnavailable')
 		const couponIds = [
 			...new Set(crashCourse.flatMap((row) => row.couponId ?? [])),
 		]
@@ -547,49 +558,37 @@ export const buyerPricingFacts = (
 		const rows = yield* Effect.either(source.purchases(userId, productIds))
 		if (Either.isLeft(rows)) return result(buyer, unavailable)
 		const scanRef = `ai-hero:purchases:user:${userId}`
-		const transferRef = `ai-hero:purchase-transfers:user:${userId}`
-		// Transfer history decides both credit facts. Without it, neither is known.
-		const transfers = yield* Effect.either(source.transfers(userId))
-		const ownership = Either.isRight(transfers)
-			? yield* Effect.gen(function* () {
-					const credit = yield* creditFor(
-						rows.right,
-						transfers.right,
-						userId,
-						scanRef,
+		const credit = yield* creditFor(rows.right, scanRef)
+		const creditSource =
+			'value' in credit && credit.value ? credit.value.source : null
+		const spent = creditSource
+			? yield* Effect.either(source.creditSpentBy(creditSource))
+			: null
+		const ledger: CreditLedger =
+			spent === null
+				? { kind: 'no-credit' }
+				: Either.isRight(spent)
+					? { kind: 'read', spentBy: spent.right }
+					: { kind: 'unavailable' }
+		// The chain only matters while no saved decision has spent the credit.
+		const chain =
+			creditSource && ledger.kind === 'read' && !ledger.spentBy.length
+				? yield* Effect.either(
+						source.creditChain({ creditSource, productId: request.productId }),
 					)
-					const creditSource =
-						'value' in credit && credit.value ? credit.value.source : null
-					const spent = creditSource
-						? yield* Effect.either(source.creditSpentBy(creditSource))
-						: null
-					const ledger: CreditLedger =
-						spent === null
-							? { kind: 'no-credit' }
-							: Either.isRight(spent)
-								? { kind: 'read', spentBy: spent.right }
-								: { kind: 'unavailable' }
-					return {
-						credit,
-						creditUse: creditUseFact(
-							rows.right,
-							transfers.right,
-							userId,
-							request.productId,
-							[scanRef, transferRef],
-							ledger,
-						),
-					}
-				})
-			: {
-					credit: gap<null>('FactsUnavailable'),
-					creditUse: gap<'available'>('FactsUnavailable'),
-				}
+				: null
 		return result(buyer, {
 			...pending,
 			legend: legendFact(rows.right),
 			alumni: alumniFact(rows.right, scanRef),
-			...ownership,
+			credit,
+			creditUse: creditUseFact({
+				creditSource,
+				ledger,
+				chain,
+				cutover: source.decisionCutover,
+				refs: [scanRef],
+			}),
 			existingSeats: existingSeatsFact(rows.right, request.productId, scanRef),
 		})
 	})

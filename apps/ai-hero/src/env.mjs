@@ -180,6 +180,10 @@ export const env = createEnv({
 		// C5 kill switch: "true" closes C5 checkout and display. It never falls
 		// back to the legacy price.
 		AIH_C5_PRICING_DISABLED: z.enum(['true', 'false']).optional(),
+		// When paid C5 purchases started saving their pricing decisions, as an
+		// ISO-8601 instant. Credit use falls back to purchase history before it.
+		// Unset or unreadable holds any buyer whose credit chain has C5 history.
+		AIH_C5_DECISION_CUTOVER_AT: z.string().optional(),
 		// Optional at startup; token verification and minting fail closed when absent.
 		INVOICE_LINK_SECRET: z.string().optional(),
 		INVOICE_LINK_TTL_DAYS: z.string().optional(),
@@ -348,6 +352,7 @@ export const env = createEnv({
 		FRONT_DESK_PRICING_TOKEN: process.env.FRONT_DESK_PRICING_TOKEN,
 		FRONT_DESK_QUOTES_TOKEN: process.env.FRONT_DESK_QUOTES_TOKEN,
 		AIH_C5_PRICING_DISABLED: process.env.AIH_C5_PRICING_DISABLED,
+		AIH_C5_DECISION_CUTOVER_AT: process.env.AIH_C5_DECISION_CUTOVER_AT,
 		INVOICE_LINK_SECRET: process.env.INVOICE_LINK_SECRET,
 		INVOICE_LINK_TTL_DAYS: process.env.INVOICE_LINK_TTL_DAYS,
 	},

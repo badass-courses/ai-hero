@@ -1,5 +1,6 @@
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { db } from '@/db'
+import { c5DecisionCutover } from '@/lib/c5-pricing/config'
 import type { FrontDeskHooks } from '@ai-hero/front-desk-support'
 import type { StripePaymentAdapter } from '@coursebuilder/commerce/stripe-provider'
 import { Effect } from 'effect'
@@ -115,6 +116,7 @@ export const hooks: FrontDeskHooks = {
 					pricingFactsSourceLayer({
 						chargeState: (id) => hooks.chargeState(id),
 						stripe,
+						decisionCutover: c5DecisionCutover(),
 					}),
 				),
 			),
