@@ -232,3 +232,25 @@ test('lifecycle has no implicit retry from a failure', () => {
   assert.equal(actor.getSnapshot().value, 'running')
   actor.stop()
 })
+
+test('front-desk stub serves only its private data, behind each route\'s own token', async () => {
+  const { frontDeskHandler, readFrontDeskData } = await import('./front-desk-stub.mjs')
+  await assert.rejects(readFrontDeskData('relative/front-desk.json'), /absolute/)
+  assert.equal(await readFrontDeskData(undefined), null)
+  const data = { policy: { version: 'synthetic@1', policy: { product: 'synthetic' } }, quotes: { 'q@example.test': [{ quantity: 1, amount: 1 }, { quantity: 2, amount: 2 }] } }
+  const server = http.createServer(frontDeskHandler(data, { pricing: 'p-token', quotes: 'q-token' }))
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const base = `http://127.0.0.1:${server.address().port}`
+  try {
+    const policy = `${base}/api/pricing/policy?productId=product-s00zs`
+    assert.equal((await fetch(policy, { headers: { authorization: 'Bearer q-token' } })).status, 401)
+    const first = await fetch(policy, { headers: { authorization: 'Bearer p-token' } })
+    assert.deepEqual(await first.json(), data.policy)
+    assert.equal(first.headers.get('etag'), '"synthetic@1"')
+    assert.equal((await fetch(policy, { headers: { authorization: 'Bearer p-token', 'if-none-match': '"synthetic@1"' } })).status, 304)
+    const quotes = body => fetch(`${base}/api/binding-quotes`, { method: 'POST', headers: { authorization: 'Bearer q-token' }, body: JSON.stringify(body) })
+    assert.deepEqual(await (await quotes({ email: ' Q@Example.test ', productId: 'product-s00zs', quantity: 2 })).json(), [{ quantity: 2, amount: 2 }])
+    assert.deepEqual(await (await quotes({ email: 'other@example.test', productId: 'product-s00zs', quantity: 1 })).json(), [])
+    assert.equal((await quotes({ email: 'q@example.test', productId: 'product-ma254', quantity: 1 })).status, 400)
+  } finally { server.close() }
+})

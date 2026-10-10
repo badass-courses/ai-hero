@@ -178,6 +178,8 @@ async function up() {
     // A previous attempt's failure must not fail this start.
     await unlink(join(state, 'failure.json')).catch(error => { if (error.code !== 'ENOENT') throw error })
     const daemonEnv = { PATH: process.env.PATH, HOME: env.HOME, LANG: env.LANG, RIG_SLOT: String(slot), COMMERCE_RIG_OWNER: owner }
+    // Optional: a private policy and quotes file, served by the loopback front-desk stub.
+    if (process.env.RIG_FRONT_DESK_DATA) daemonEnv.RIG_FRONT_DESK_DATA = process.env.RIG_FRONT_DESK_DATA
     const proc = spawn(process.execPath, [join(dir, 'serve.mjs'), state, mirror], { cwd: app, env: daemonEnv, detached: true, stdio: 'ignore' })
     proc.unref()
     await privateWrite(join(state, 'supervisor.json'), JSON.stringify({ pid: proc.pid, owner, run: config.run }) + '\n')
