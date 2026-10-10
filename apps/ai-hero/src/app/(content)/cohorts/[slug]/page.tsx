@@ -34,7 +34,7 @@ import { compileMDX } from '@/utils/compile-mdx'
 import { formatDiscount } from '@/utils/discount-formatter'
 import { formatInTimeZone } from 'date-fns-tz'
 import { eq } from 'drizzle-orm'
-import { CheckCircle } from 'lucide-react'
+import { ArrowUpRight, CheckCircle } from 'lucide-react'
 import { Markdown as ReactMarkdown } from '@/components/markdown'
 
 import * as Pricing from '@coursebuilder/commerce-next/pricing/pricing'
@@ -576,6 +576,20 @@ export async function CohortPageView(props: CohortPageViewProps) {
 									/>
 								)}
 							</div>
+						) : null}
+						{/* The team page exists only when its body does (it 404s
+						    otherwise). Offered in every state but purchased: before
+						    seats open it still takes an invoice request. */}
+						{!hasCohortAccess && fields.forTeamsBody ? (
+							<Link
+								href={`/cohorts/${fields.slug}/for-teams`}
+								className="hover:bg-foreground/[0.04] flex items-center justify-between border-t px-5 py-4 text-sm font-semibold transition-colors"
+							>
+								{isComingSoon
+									? 'Buying for a team?'
+									: 'Buying for a team? Seats and invoices'}
+								<ArrowUpRight className="size-4" aria-hidden="true" />
+							</Link>
 						) : null}
 						{/* Last in the rail in every state: waitlist, pricing and
 						    purchased all answer the same "what do I get" question.
