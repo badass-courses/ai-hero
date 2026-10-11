@@ -21,109 +21,109 @@
  * @module inngest-telemetry-middleware
  */
 
-import { log, serializeError } from "@/server/logger";
-import { emitBuyPath } from "@/lib/buy-path/server";
-import { purchaseBuyPathContext } from "@/lib/buy-path/read-context";
-import type { BuyPathContext } from "@/lib/buy-path/schema";
-import { installBuyPathLegacyAliases } from "@/lib/buy-path/legacy-logger";
+import { log, serializeError } from '@/server/logger'
+import { emitBuyPath } from '@/lib/buy-path/server'
+import { purchaseBuyPathContext } from '@/lib/buy-path/read-context'
+import type { BuyPathContext } from '@/lib/buy-path/schema'
+import { installBuyPathLegacyAliases } from '@/lib/buy-path/legacy-logger'
 
-import { InngestMiddleware } from "inngest";
+import { InngestMiddleware } from 'inngest'
 
-installBuyPathLegacyAliases();
+installBuyPathLegacyAliases()
 
 export const inngestTelemetryMiddleware = new InngestMiddleware({
-  name: "Telemetry Middleware",
-  init() {
-    return {
-      onFunctionRun({ ctx, fn }) {
-        const functionId = fn.id(fn.name);
-        const runId = ctx.runId;
-        const eventName =
-          ctx.event?.name ?? (ctx as Record<string, unknown>).event_name;
-        const txnId = (ctx.event?.data as Record<string, unknown>)?.txnId as
-          | string
-          | undefined;
+	name: 'Telemetry Middleware',
+	init() {
+		return {
+			onFunctionRun({ ctx, fn }) {
+				const functionId = fn.id(fn.name)
+				const runId = ctx.runId
+				const eventName =
+					ctx.event?.name ?? (ctx as Record<string, unknown>).event_name
+				const txnId = (ctx.event?.data as Record<string, unknown>)?.txnId as
+					| string
+					| undefined
 
-        const fnStart = Date.now();
+				const fnStart = Date.now()
 
-        void log.info("inngest.function.started", {
-          functionId,
-          eventName,
-          runId,
-          ...(txnId && { txnId }),
-        });
+				void log.info('inngest.function.started', {
+					functionId,
+					eventName,
+					runId,
+					...(txnId && { txnId }),
+				})
 
-        let context: BuyPathContext | null = null;
-        return {
-          async transformInput({ ctx: hydrated }) {
-            // Observe hydrated input directly; memoized step execution can
-            // bypass beforeExecution, but it cannot bypass input hydration.
-            const purchaseId = hydrated.event?.data?.purchaseId;
-            if (typeof purchaseId !== "string") {
-              if (eventName === "commerce/new-purchase-created")
-                await log.error("buy_path.context_read_failed", {
-                  functionId,
-                  runId,
-                  reason: "missing_purchase_id",
-                });
-              return;
-            }
-            try {
-              context = await purchaseBuyPathContext(purchaseId);
-              if (!context)
-                await log.error("buy_path.context_read_failed", {
-                  purchaseId,
-                  functionId,
-                  runId,
-                });
-              if (context)
-                await emitBuyPath(context, "post_purchase_started", {
-                  functionId,
-                  runId,
-                });
-            } catch {
-              await log.error("buy_path.context_read_failed", {
-                purchaseId,
-                functionId,
-                runId,
-              });
-            }
-          },
-          async finished({ result }) {
-            if (context)
-              await emitBuyPath(context, "post_purchase_finished", {
-                functionId,
-                runId,
-                durationMs: Date.now() - fnStart,
-                outcome: result.error ? "failed" : "ok",
-              });
-          },
-          afterExecution() {
-            const durationMs = Date.now() - fnStart;
+				let context: BuyPathContext | null = null
+				return {
+					async transformInput({ ctx: hydrated }) {
+						// Observe hydrated input directly; memoized step execution can
+						// bypass beforeExecution, but it cannot bypass input hydration.
+						const purchaseId = hydrated.event?.data?.purchaseId
+						if (typeof purchaseId !== 'string') {
+							if (eventName === 'commerce/new-purchase-created')
+								await log.error('buy_path.context_read_failed', {
+									functionId,
+									runId,
+									reason: 'missing_purchase_id',
+								})
+							return
+						}
+						try {
+							context = await purchaseBuyPathContext(purchaseId)
+							if (!context)
+								await log.error('buy_path.context_read_failed', {
+									purchaseId,
+									functionId,
+									runId,
+								})
+							if (context)
+								await emitBuyPath(context, 'post_purchase_started', {
+									functionId,
+									runId,
+								})
+						} catch {
+							await log.error('buy_path.context_read_failed', {
+								purchaseId,
+								functionId,
+								runId,
+							})
+						}
+					},
+					async finished({ result }) {
+						if (context)
+							await emitBuyPath(context, 'post_purchase_finished', {
+								functionId,
+								runId,
+								durationMs: Date.now() - fnStart,
+								outcome: result.error ? 'failed' : 'ok',
+							})
+					},
+					afterExecution() {
+						const durationMs = Date.now() - fnStart
 
-            void log.info("inngest.function.completed", {
-              functionId,
-              eventName,
-              durationMs,
-              runId,
-              ...(txnId && { txnId }),
-            });
-          },
+						void log.info('inngest.function.completed', {
+							functionId,
+							eventName,
+							durationMs,
+							runId,
+							...(txnId && { txnId }),
+						})
+					},
 
-          onFailure({ error }: { error: Error }) {
-            const durationMs = Date.now() - fnStart;
+					onFailure({ error }: { error: Error }) {
+						const durationMs = Date.now() - fnStart
 
-            void log.error("inngest.function.failed", {
-              functionId,
-              eventName,
-              durationMs,
-              runId,
-              ...(txnId && { txnId }),
-              error: serializeError(error),
-            });
-          },
-        };
-      },
-    };
-  },
-});
+						void log.error('inngest.function.failed', {
+							functionId,
+							eventName,
+							durationMs,
+							runId,
+							...(txnId && { txnId }),
+							error: serializeError(error),
+						})
+					},
+				}
+			},
+		}
+	},
+})
