@@ -233,13 +233,54 @@ export function isCourseSyncRelationInScope(
 		scope.anchorTreeParentIds.has(relation.resourceOfId)
 }
 
+export type CourseSyncVerificationCheck =
+	| 'resource_count_mismatch'
+	| 'resource_or_receipt_missing'
+	| 'pointer_mismatch'
+	| 'fields_mismatch'
+	| 'relation_count_mismatch'
+	| 'relation_mismatch'
+	| 'tombstone_mismatch'
+	| 'unexpected_tombstone'
+
+export type CourseSyncVerificationResult =
+	| { ok: true }
+	| { ok: false; resourceId: string; reason: CourseSyncVerificationCheck }
+
+/** A move retires exactly the locked prior live edge, never an unrelated list. */
+export function courseSyncPriorLiveRelation(
+	item: SyncPlan['resources'][number],
+): CourseSyncExpectedRelation | null {
+	if (item.action === 'create' || !item.previousParentResourceId || item.previousDetached ||
+		item.previousParentResourceId === item.parentResourceId) return null
+	return {
+		resourceId: item.targetResourceId,
+		parentResourceId: item.previousParentResourceId,
+		position: item.previousPosition ?? item.position,
+		detached: true,
+	}
+}
+
+export function courseSyncActivationRelations(plan: SyncPlan): CourseSyncExpectedRelation[] {
+	return plan.resources.flatMap((item) => {
+		const current = {
+			resourceId: item.targetResourceId,
+			parentResourceId: item.parentResourceId,
+			position: item.position,
+			detached: item.detached,
+		}
+		const previous = courseSyncPriorLiveRelation(item)
+		return previous ? [current, previous] : [current]
+	})
+}
+
 /** Verify every binding-owned relation, including rows under retired parents. */
 export function verifyCourseSyncRelations(
 	items: ReadonlyArray<CourseSyncExpectedRelation>,
 	relations: ReadonlyArray<CourseSyncRelationReadback>,
 	expectedDeletedAtByResource: ReadonlyMap<string, Date>,
 	scope?: CourseSyncRelationScope,
-): { ok: true } | { ok: false; resourceId: string; reason: string } {
+): CourseSyncVerificationResult {
 	const resourceIds = new Set(items.map((item) => item.resourceId))
 	for (const resourceId of resourceIds) {
 		const expected = items.filter((item) => item.resourceId === resourceId)
@@ -300,7 +341,7 @@ export function verifyCourseSyncActivation(
 	expectedDeletedAtByResource: ReadonlyMap<string, Date>,
 	scope?: CourseSyncRelationScope,
 	expectedFieldsByResource?: ReadonlyMap<string, Record<string, unknown>>,
-): { ok: true } | { ok: false; resourceId: string; reason: string } {
+): CourseSyncVerificationResult {
 	if (resources.length !== plan.resources.length) {
 		return { ok: false, resourceId: '', reason: 'resource_count_mismatch' }
 	}
@@ -322,16 +363,48 @@ export function verifyCourseSyncActivation(
 		}
 	}
 	return verifyCourseSyncRelations(
-		plan.resources.map((item) => ({
-			resourceId: item.targetResourceId,
-			parentResourceId: item.parentResourceId,
-			position: item.position,
-			detached: item.detached,
-		})),
+		courseSyncActivationRelations(plan),
 		relations,
 		expectedDeletedAtByResource,
 		scope,
 	)
+}
+
+/** Bounded diagnostics: check names and numbers only, never fields or titles. */
+export function courseSyncActivationFailureSummary(input: {
+	plan: SyncPlan
+	receipts: Parameters<typeof verifyCourseSyncActivation>[1]
+	resources: Parameters<typeof verifyCourseSyncActivation>[2]
+	relations: ReadonlyArray<CourseSyncRelationReadback>
+	expectedDeletedAtByResource: ReadonlyMap<string, Date>
+	scope?: CourseSyncRelationScope
+	failure: Extract<CourseSyncVerificationResult, { ok: false }>
+}) {
+	const expected = courseSyncActivationRelations(input.plan)
+	const failedExpected = expected.filter(r => r.resourceId === input.failure.resourceId)
+	const scoped = input.relations.filter(r => !input.scope || isCourseSyncRelationInScope(r, input.scope))
+	const failedRows = scoped.filter(r => r.resourceId === input.failure.resourceId)
+	const writtenAt = input.expectedDeletedAtByResource.get(input.failure.resourceId)
+	return {
+		check: input.failure.reason,
+		counts: {
+			plannedResources: input.plan.resources.length,
+			readbackResources: input.resources.length,
+			receipts: input.receipts.length,
+			plannedDetaches: input.plan.resources.filter(r => r.detached).length,
+			plannedMoves: input.plan.resources.filter(r => courseSyncPriorLiveRelation(r)).length,
+			expectedRelations: expected.length,
+			scopedReadbackRelations: scoped.length,
+			readbackLiveRelations: scoped.filter(r => r.deletedAt === null).length,
+			readbackTombstones: scoped.filter(r => r.deletedAt !== null).length,
+			failedExpectedLiveRelations: failedExpected.filter(r => !r.detached).length,
+			failedReadbackLiveRelations: failedRows.filter(r => r.deletedAt === null).length,
+			failedExpectedTombstones: failedExpected.filter(r => r.detached).length,
+			failedMatchingTombstones: failedRows.filter(r => writtenAt !== undefined &&
+				r.deletedAt instanceof Date && r.deletedAt.getTime() === writtenAt.getTime() &&
+				failedExpected.some(e => e.detached && e.parentResourceId === r.resourceOfId && e.position === r.position)).length,
+		},
+	}
 }
 
 export function assertManagedChildRelations(
