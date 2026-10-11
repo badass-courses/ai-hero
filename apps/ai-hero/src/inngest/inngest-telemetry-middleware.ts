@@ -57,16 +57,15 @@ export const inngestTelemetryMiddleware = new InngestMiddleware({
 				let context: BuyPathContext | null = null
 				return {
 					transformInput({ ctx: hydrated }) {
-						// InitialRunInfo is partial. Use the execution's hydrated
-						// event, not identity frozen from initial metadata.
+						// Initial metadata can be partial. Observe input without
+						// returning/replacing the strongly typed execution context.
 						purchaseId = hydrated.event?.data?.purchaseId
-						return { ctx: hydrated }
 					},
 					async beforeExecution() {
 						if (typeof purchaseId !== 'string') return
 						try {
 							context = await purchaseBuyPathContext(purchaseId)
-							if (!context && ctx.event?.data?.checkoutSessionId)
+							if (!context)
 								await log.error('buy_path.context_read_failed', {
 									purchaseId,
 									functionId,

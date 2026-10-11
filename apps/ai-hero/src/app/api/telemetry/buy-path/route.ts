@@ -5,6 +5,7 @@ import { env } from '@/env.mjs'
 import { getServerAuthSession } from '@/server/auth'
 import { courseBuilderAdapter } from '@/db'
 import { ingestBuyPath } from '@/lib/buy-path/ingest'
+import { buyPathOrigin } from '@/lib/buy-path/origin'
 import { readBuyPathToken } from '@/lib/buy-path/token'
 import { purchaseBuyPathContext } from '@/lib/buy-path/read-context'
 import { emitBuyPath } from '@/lib/buy-path/server'
@@ -32,7 +33,11 @@ function developmentLimit(key: string) {
 export async function POST(request: NextRequest) {
 	try {
 		return await ingestBuyPath(request, {
-			origin: new URL(env.COURSEBUILDER_URL).origin,
+			origin: buyPathOrigin({
+				publicUrl: env.NEXT_PUBLIC_URL,
+				vercelEnvironment: process.env.VERCEL_ENV,
+				vercelDeploymentHost: process.env.VERCEL_URL,
+			}),
 			limit: async (key) =>
 				env.NODE_ENV === 'development'
 					? developmentLimit(key)
