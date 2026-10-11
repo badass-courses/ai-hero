@@ -41,8 +41,8 @@ export const buyPathSchema = z
 		functionId: z
 			.string()
 			.min(1)
-			.max(255)
-			.regex(/^[^\x00-\x1F\x7F]+$/)
+			.max(200)
+			.regex(/^[^\p{C}\p{Zl}\p{Zp}]+$/u)
 			.optional(),
 		runId: id.optional(),
 		attempt: z.number().int().min(0).max(45).optional(),
