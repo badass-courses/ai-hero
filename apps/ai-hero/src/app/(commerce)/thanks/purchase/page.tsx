@@ -3,9 +3,9 @@ import { Suspense } from 'react'
 import { revalidatePath } from 'next/cache'
 import { headers } from 'next/headers'
 import { notFound, redirect } from 'next/navigation'
-import LayoutClient from '@/components/layout-client'
-import Spinner from '@/components/spinner'
-import { stripeProvider } from '@/coursebuilder/stripe-provider'
+import { PostPurchaseShell } from '../../_components/post-purchase-shell'
+import { PostPurchaseArrival } from '../../_components/post-purchase-arrival'
+import { getPurchaseThanksDetails } from './purchase-thanks-details'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
 import { isCheckoutSessionOwner } from '@/lib/checkout-owner-resolution'
@@ -20,142 +20,17 @@ import { PurchaseStatusPoller } from './purchase-status-poller'
 
 import * as InvoiceTeaser from '@coursebuilder/commerce-next/invoices/invoice-teaser'
 import * as LoginLink from '@coursebuilder/commerce-next/post-purchase/login-link'
-import { PaymentSuccessButProcessingFailed } from '@coursebuilder/commerce-next/post-purchase/payment-success-but-processing-failed'
 import * as PurchaseSummary from '@coursebuilder/commerce-next/post-purchase/purchase-summary'
 import * as PurchaseTransfer from '@coursebuilder/commerce-next/post-purchase/purchase-transfer'
 import * as InviteTeam from '@coursebuilder/commerce-next/team/invite-team'
-import { convertToSerializeForNextResponse } from '@coursebuilder/commerce-next/utils/serialize-for-next-response'
-import { checkForPaymentSuccessWithoutPurchase } from '@coursebuilder/commerce'
 import {
 	EXISTING_BULK_COUPON,
 	INDIVIDUAL_TO_BULK_UPGRADE,
 	NEW_BULK_COUPON,
 	NEW_INDIVIDUAL_PURCHASE,
 } from '@coursebuilder/core/schemas/purchase-type'
-import { logger } from '@coursebuilder/utils/logger'
 
 export const maxDuration = 100
-
-const getServerSideProps = async (
-	session_id: string,
-	options: { maxRetries?: number } = {},
-) => {
-	const paymentProvider = stripeProvider
-
-	if (!paymentProvider) {
-		throw new Error('No payment provider found')
-	}
-
-	if (!session_id) {
-		throw new Error(`No session_id found: ${session_id}`)
-	}
-
-	logger.info('purchase.thanks-page.loading', {
-		checkoutSessionId: session_id,
-	})
-
-	const maxRetries = options.maxRetries ?? 30
-	const initialDelay = 100
-	const maxDelay = 1000
-
-	let retries = 0
-	let delay = initialDelay
-
-	while (retries < maxRetries) {
-		try {
-			const purchaseInfo = await paymentProvider.getPurchaseInfo(
-				session_id,
-				courseBuilderAdapter,
-			)
-
-			if (
-				'error' in purchaseInfo &&
-				purchaseInfo.error === 'paymentSucceededButProcessingFailed'
-			) {
-				return {
-					paymentSucceededButProcessingFailed: true,
-				}
-			}
-
-			const {
-				email,
-				chargeIdentifier,
-				quantity: seatsPurchased,
-				product: merchantProduct,
-				purchaseType,
-			} = purchaseInfo
-
-			const stripeProductName = merchantProduct.name
-
-			const purchase =
-				await courseBuilderAdapter.getPurchaseForStripeCharge(chargeIdentifier)
-
-			if (!purchase || !email) {
-				throw new Error('Purchase or email not found')
-			}
-
-			const product = await courseBuilderAdapter.getProduct(purchase.productId)
-
-			const redemptionsLeft =
-				purchase.bulkCoupon &&
-				purchase.bulkCoupon.maxUses > purchase.bulkCoupon.usedCount
-
-			logger.info('purchase.thanks-page.loaded', {
-				checkoutSessionId: session_id,
-				purchaseId: purchase.id,
-				productId: purchase.productId,
-				purchaseType,
-				seatsPurchased,
-				retries,
-			})
-
-			return {
-				purchase: convertToSerializeForNextResponse(purchase),
-				email,
-				seatsPurchased,
-				redemptionsLeft,
-				purchaseType,
-				bulkCouponId: purchase.bulkCoupon?.id || null,
-				product: convertToSerializeForNextResponse(product) || null,
-				stripeProductName,
-			}
-		} catch (error) {
-			retries++
-			logger.debug('thanks purchase poll retry', {
-				sessionId: session_id,
-				retries,
-				maxRetries,
-				error: error instanceof Error ? error.message : String(error),
-			})
-			await new Promise((resolve) => setTimeout(resolve, delay))
-			delay = Math.min(delay * 2, maxDelay)
-		}
-	}
-
-	const errorCheck = await checkForPaymentSuccessWithoutPurchase(
-		session_id,
-		courseBuilderAdapter,
-	)
-
-	if (errorCheck.shouldShowError) {
-		logger.debug('thanks purchase poll success-no-purchase fallback', {
-			sessionId: session_id,
-			stripeEventId: errorCheck.stripeEventId,
-		})
-		return {
-			paymentSucceededButProcessingFailed: true,
-		}
-	}
-
-	logger.error(
-		new Error('purchase missing after polling and no Stripe fallback', {
-			cause: {
-				sessionId: session_id,
-			},
-		}),
-	)
-	notFound()
-}
 
 const LoginLinkComp: React.FC<{ email: string }> = ({ email }) => {
 	return (
@@ -218,30 +93,11 @@ export default async function ThanksPurchasePage(props: {
 }
 
 function PurchaseProcessingPage({ session_id }: { session_id: string }) {
-	return (
-		<LayoutClient withContainer>
-			<main className="container min-h-[calc(100vh-var(--nav-height))] border-x px-5 py-8 sm:py-16">
-				<PurchaseStatusPoller sessionId={session_id} />
-			</main>
-		</LayoutClient>
-	)
+	return <PurchaseStatusPoller sessionId={session_id} />
 }
 
 function PageLoading() {
-	return (
-		<LayoutClient withContainer>
-			<main className="container min-h-[calc(100vh-var(--nav-height))] border-x px-5 py-8 sm:py-16">
-				<div className="mx-auto flex w-full max-w-4xl flex-col gap-5">
-					<h1 className="text-center text-lg font-medium sm:text-xl lg:text-2xl">
-						Validating Your Purchase, Hang Tight...
-					</h1>
-					<div className="mx-auto">
-						<Spinner className="text-center" />
-					</div>
-				</div>
-			</main>
-		</LayoutClient>
-	)
+	return <PostPurchaseShell />
 }
 
 async function PurchaseThanksPageLoaded({
@@ -253,19 +109,20 @@ async function PurchaseThanksPageLoaded({
 }) {
 	const token = await getServerAuthSession()
 
-	const result = await getServerSideProps(session_id, {
+	const result = await getPurchaseThanksDetails(session_id, {
 		maxRetries: ready ? 5 : 1,
 	})
 
-	if ('paymentSucceededButProcessingFailed' in result) {
+	if (
+		'paymentSucceededButProcessingFailed' in result ||
+		'processingUnconfirmed' in result
+	) {
 		return (
-			<LayoutClient withContainer>
-				<main className="container min-h-[calc(100vh-var(--nav-height))] border-x px-5 py-8 sm:py-16">
-					<PaymentSuccessButProcessingFailed
-						supportEmail={env.NEXT_PUBLIC_SUPPORT_EMAIL}
-					/>
-				</main>
-			</LayoutClient>
+			<PostPurchaseShell
+				step="failed"
+				paymentConfirmed={'paymentSucceededButProcessingFailed' in result}
+				supportEmail={env.NEXT_PUBLIC_SUPPORT_EMAIL}
+			/>
 		)
 	}
 
@@ -288,7 +145,12 @@ async function PurchaseThanksPageLoaded({
 			sessionUserEmail: token?.session?.user?.email ?? null,
 		})
 	) {
-		return redirect('/welcome?purchaseId=' + purchase.id)
+		const destination = new URLSearchParams({
+			purchaseId: purchase.id,
+			buyPathId: session_id,
+			buyPathWaited: ready ? '1' : '0',
+		})
+		return redirect('/welcome?' + destination)
 	}
 
 	// Session-only authority: an anonymous post-purchase visitor sees no
@@ -358,79 +220,80 @@ async function PurchaseThanksPageLoaded({
 			break
 	}
 	return (
-		<LayoutClient withContainer>
-			<main className="container min-h-[calc(100vh-var(--nav-height))] border-x px-5 py-8 sm:py-16">
-				<div className="mx-auto flex w-full max-w-4xl flex-col gap-5">
-					<PurchaseSummary.Root
-						title={title}
-						description={description}
-						product={product}
-						email={email}
-					>
-						<div className="flex flex-col items-center gap-10 sm:flex-row">
-							<PurchaseSummary.ProductImage />
-							<div className="flex w-full flex-col items-start">
-								<PurchaseSummary.Status />
-								<PurchaseSummary.Title />
-								<PurchaseSummary.Description />
-							</div>
+		<PostPurchaseShell step={loginLink ? 'email' : 'ready'} paymentConfirmed>
+			<PostPurchaseArrival
+				destination="login_link"
+				checkoutSessionId={session_id}
+				purchaseWasPolled={ready}
+			/>
+			<div className="flex w-full flex-col gap-5">
+				<PurchaseSummary.Root
+					title={title}
+					description={description}
+					product={product}
+					email={email}
+				>
+					<div className="flex flex-col items-center gap-10 sm:flex-row">
+						<PurchaseSummary.ProductImage />
+						<div className="flex w-full flex-col items-start">
+							<PurchaseSummary.Status />
+							<PurchaseSummary.Title />
+							<PurchaseSummary.Description />
 						</div>
-					</PurchaseSummary.Root>
-					{inviteTeam && (
-						<div className="border-b pb-5">
-							<h2 className="text-primary pb-4 text-sm uppercase">
-								Invite Team
-							</h2>
-							{inviteTeam}
-						</div>
-					)}
-					{loginLink && loginLink}
+					</div>
+				</PurchaseSummary.Root>
+				{inviteTeam && (
 					<div className="border-b pb-5">
-						<h2 className="text-primary pb-4 text-sm uppercase">Invoice</h2>
-						<InvoiceTeaser.Root
-							className="flex w-full flex-row items-center justify-between sm:gap-10"
-							purchase={{ product: { name: stripeProductName }, ...purchase }}
-						>
-							<InvoiceTeaser.Link className="flex w-full flex-col justify-between sm:flex-row sm:items-center">
-								<InvoiceTeaser.Title className="inline-flex items-center gap-2">
-									<FileText className="h-4 w-4 opacity-75" />
-									<span className="underline">{stripeProductName}</span>
-								</InvoiceTeaser.Title>
-								<InvoiceTeaser.Metadata />
-							</InvoiceTeaser.Link>
-							<InvoiceTeaser.Link className="text-primary flex shrink-0 hover:underline" />
-						</InvoiceTeaser.Root>
+						<h2 className="text-primary pb-4 text-sm uppercase">Invite Team</h2>
+						{inviteTeam}
 					</div>
-					<div>
-						<PurchaseTransfer.Root
-							onTransferInitiated={async () => {
-								'use server'
-								revalidatePath('/thanks/purchase')
-							}}
-							purchaseUserTransfers={purchaseUserTransfers}
-							cancelPurchaseTransfer={cancelPurchaseTransfer}
-							initiatePurchaseTransfer={initiatePurchaseTransfer}
-						>
-							<PurchaseTransfer.Header />
-							<PurchaseTransfer.Available>
-								<PurchaseTransfer.Description />
-								<PurchaseTransfer.Form>
-									<PurchaseTransfer.InputLabel />
-									<PurchaseTransfer.InputEmail />
-									<PurchaseTransfer.SubmitButton />
-								</PurchaseTransfer.Form>
-							</PurchaseTransfer.Available>
-							<PurchaseTransfer.Initiated>
-								<PurchaseTransfer.Description />
-								<PurchaseTransfer.Cancel />
-							</PurchaseTransfer.Initiated>
-							<PurchaseTransfer.Completed>
-								<PurchaseTransfer.Description />
-							</PurchaseTransfer.Completed>
-						</PurchaseTransfer.Root>
-					</div>
+				)}
+				{loginLink && loginLink}
+				<div className="border-b pb-5">
+					<h2 className="text-primary pb-4 text-sm uppercase">Invoice</h2>
+					<InvoiceTeaser.Root
+						className="flex w-full flex-row items-center justify-between sm:gap-10"
+						purchase={{ product: { name: stripeProductName }, ...purchase }}
+					>
+						<InvoiceTeaser.Link className="flex w-full flex-col justify-between sm:flex-row sm:items-center">
+							<InvoiceTeaser.Title className="inline-flex items-center gap-2">
+								<FileText className="h-4 w-4 opacity-75" />
+								<span className="underline">{stripeProductName}</span>
+							</InvoiceTeaser.Title>
+							<InvoiceTeaser.Metadata />
+						</InvoiceTeaser.Link>
+						<InvoiceTeaser.Link className="text-primary flex shrink-0 hover:underline" />
+					</InvoiceTeaser.Root>
 				</div>
-			</main>
-		</LayoutClient>
+				<div>
+					<PurchaseTransfer.Root
+						onTransferInitiated={async () => {
+							'use server'
+							revalidatePath('/thanks/purchase')
+						}}
+						purchaseUserTransfers={purchaseUserTransfers}
+						cancelPurchaseTransfer={cancelPurchaseTransfer}
+						initiatePurchaseTransfer={initiatePurchaseTransfer}
+					>
+						<PurchaseTransfer.Header />
+						<PurchaseTransfer.Available>
+							<PurchaseTransfer.Description />
+							<PurchaseTransfer.Form>
+								<PurchaseTransfer.InputLabel />
+								<PurchaseTransfer.InputEmail />
+								<PurchaseTransfer.SubmitButton />
+							</PurchaseTransfer.Form>
+						</PurchaseTransfer.Available>
+						<PurchaseTransfer.Initiated>
+							<PurchaseTransfer.Description />
+							<PurchaseTransfer.Cancel />
+						</PurchaseTransfer.Initiated>
+						<PurchaseTransfer.Completed>
+							<PurchaseTransfer.Description />
+						</PurchaseTransfer.Completed>
+					</PurchaseTransfer.Root>
+				</div>
+			</div>
+		</PostPurchaseShell>
 	)
 }
