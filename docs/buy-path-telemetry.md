@@ -29,6 +29,12 @@ The post-purchase workflow ends with a ten-second settling delay and a fresh rea
 
 Inngest middleware emits started and finished observations for purchase-related functions. `finished` uses Inngest's final-response hook, not a step checkpoint. Starts can repeat when an execution resumes. Duration is the execution segment, not a fabricated whole-run duration; the ordered timeline supplies elapsed wall time. Missing correlation emits `buy_path.context_read_failed` and is never silently called healthy.
 
+## Browser origin boundary
+
+Ingest requires a non-null Origin exactly equal to the resolved browser origin, including scheme and non-default port. Production and local development use configured `NEXT_PUBLIC_URL`. Production must configure `https://www.aihero.dev`; apex and other hosts are not aliases for ingest. Previews use the exact HTTPS `VERCEL_URL` assigned by Vercel, not the production URL, and fail closed when it is missing or malformed. Preview branch/custom aliases are intentionally not suffix-matched. No Host or Forwarded request header selects an allowed origin.
+
+Do not use `COURSEBUILDER_URL` for this boundary: `src/env.mjs` rewrites it from `VERCEL_PROJECT_PRODUCTION_URL` even in previews. The Origin check also must not use Next's reconstructed internal request URL.
+
 ## Monitor definitions for desk application
 
 **Axiom monitors on Vercel request logs are the first alarm. They must run outside Inngest.** The Inngest invariant is a second line: it verifies persisted state once execution resumes. It cannot detect a scheduler-wide stall while it is itself queued. Neither the invariant nor the reconciler may own the outage clock, monitor evaluation or notification delivery.
