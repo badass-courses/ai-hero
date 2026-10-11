@@ -5,7 +5,7 @@ import { env } from "@/env.mjs";
 import { GIFT_COOKIE, openGiftCookie } from "./gift-cookie";
 import { C5_PRODUCT_ID } from "./products";
 import { noGift, readGiftCode, type GiftFact } from "./gift-slots";
-import { frontDeskData } from "./server";
+import { frontDeskData } from "./front-desk-client";
 import { giftCheckoutOpen } from "./gift-window";
 
 /** Fresh every time, outside the buyer display cache. No query/body input. */

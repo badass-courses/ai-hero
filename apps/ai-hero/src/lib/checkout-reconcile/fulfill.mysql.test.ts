@@ -178,16 +178,35 @@ function checkoutSession(
 	} as unknown as Stripe.Checkout.Session
 }
 
-/** An Inngest-like step: runs each step once and returns JSON, like Inngest. */
-function inngestLikeStep(options: { beforeStep?: (id: string) => Promise<void> } = {}) {
+/** Only retry MySQL's explicit transient transaction failures, including wrapped causes. */
+function transientMysqlFailure(error: unknown) {
+	let current = error
+	for (let depth = 0; depth < 4; depth += 1) {
+		if (typeof current !== 'object' || current === null) return false
+		if ('code' in current && ['ER_LOCK_DEADLOCK', 'ER_LOCK_WAIT_TIMEOUT'].includes(String(current.code))) return true
+		current = 'cause' in current ? current.cause : undefined
+	}
+	return false
+}
+
+/** run -> transient DB failure -> bounded retry -> JSON result/exhaustion, like Inngest. */
+function inngestLikeStep(options: { beforeStep?: (id: string) => Promise<void>; retryTransientDbErrors?: boolean } = {}) {
 	const sent: { id: string; payload: any }[] = []
 	const ran: string[] = []
 	const step: CheckoutFulfillStep = {
 		run: async (id, fn) => {
 			await options.beforeStep?.(id)
 			ran.push(id)
-			const output = await fn()
-			return output === undefined ? undefined : JSON.parse(JSON.stringify(output))
+			let remaining = options.retryTransientDbErrors ? 3 : 0
+			for (;;) {
+				try {
+					const output = await fn()
+					return output === undefined ? undefined : JSON.parse(JSON.stringify(output))
+				} catch (error) {
+					if (!remaining || !transientMysqlFailure(error)) throw error
+					remaining -= 1
+				}
+			}
 		},
 		sendEvent: async (id, payload) => {
 			sent.push({ id, payload })
@@ -478,6 +497,25 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 		expect(before).toEqual({ charges: 1, sessions: 1, purchases: 1 })
 	})
 
+	it('the step shim retries only explicit transient DB failures with a finite budget', async () => {
+		const transient = Object.assign(new Error('wrapped'), { cause: { code: 'ER_LOCK_DEADLOCK' } })
+		const shim = inngestLikeStep({ retryTransientDbErrors: true })
+		let calls = 0
+		await expect(shim.step.run('transient', async () => {
+			calls += 1
+			if (calls === 1) throw transient
+			return { ok: true }
+		})).resolves.toEqual({ ok: true })
+		expect(calls).toBe(2)
+		calls = 0
+		await expect(shim.step.run('exhausted', async () => { calls += 1; throw transient })).rejects.toBe(transient)
+		expect(calls).toBe(4)
+		calls = 0
+		const permanent = new Error('not a transient database failure')
+		await expect(shim.step.run('permanent', async () => { calls += 1; throw permanent })).rejects.toBe(permanent)
+		expect(calls).toBe(1)
+	})
+
 	it('gives one purchase when the original run races the reconciler', async () => {
 		for (let round = 0; round < 5; round += 1) {
 			// Each round is the buyer's first purchase of the product.
@@ -488,8 +526,8 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 			const atWrite = async (stepId: string) => {
 				if (stepId === 'create a merchant charge and purchase') await meet()
 			}
-			const reconciler = inngestLikeStep({ beforeStep: atWrite })
-			const original = inngestLikeStep({ beforeStep: atWrite })
+			const reconciler = inngestLikeStep({ beforeStep: atWrite, retryTransientDbErrors: true })
+			const original = inngestLikeStep({ beforeStep: atWrite, retryTransientDbErrors: true })
 
 			const [reconciled, originalOutcome] = await Promise.allSettled([
 				reconcile(id, reconciler.step),
@@ -497,6 +535,7 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 			])
 
 			expect(await counts(id)).toEqual({ charges: 1, sessions: 1, purchases: 1 })
+			if (reconciled.status === 'rejected') throw reconciled.reason
 			expect(reconciled.status).toBe('fulfilled')
 			const outcome = (reconciled as PromiseFulfilledResult<any>).value
 			expect(['fulfilled', 'raced']).toContain(outcome.status)
