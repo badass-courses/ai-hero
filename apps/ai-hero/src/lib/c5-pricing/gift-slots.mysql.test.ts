@@ -228,7 +228,7 @@ integration("gift slots on real MySQL", () => {
     expect(await withConnection(c => recoverUnboundGiftSlot(c, 'purchase-evidence', reference, now))).toBe('spent');
     await claim('ledger-evidence');
     await pool.query("UPDATE AI_GiftCodeSlot SET expiresAt = ? WHERE claimId = 'ledger-evidence'", [new Date(now.getTime() - 2 * 3600000)]);
-    await pool.query("INSERT INTO AI_PurchaseDecision (purchaseId, productId, decisionRef, codeRef, giftClaimId, giftSlot, restriction, contract, engineVersion, policyVersion, checkoutSessionId, createdAt) VALUES ('synthetic-ledger', ?, 'synthetic', ?, 'ledger-evidence', 2, 'none', 'test', 'test', 'test', 'cs_evidence', ?)", [C5_PRODUCT_ID, reference, now]);
+    await pool.query("INSERT INTO AI_PurchaseDecision (purchaseId, productId, decisionRef, codeRef, giftClaimId, giftSlot, restriction, contract, engineVersion, policyVersion, checkoutSessionId, createdAt) VALUES ('synthetic-ledger', ?, 'synthetic', ?, NULL, 2, 'none', 'test', 'test', 'test', 'cs_evidence', ?)", [C5_PRODUCT_ID, reference, now]);
     expect(await withConnection(c => recoverUnboundGiftSlot(c, 'ledger-evidence', reference, now))).toBe('spent');
     expect(await withConnection(c => usesTaken(c, reference, now))).toBe(2);
   });

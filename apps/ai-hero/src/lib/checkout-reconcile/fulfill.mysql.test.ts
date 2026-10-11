@@ -32,6 +32,7 @@ import { checkC5Duplicate, recordC5PurchaseDecision } from '@/lib/c5-pricing/pur
 import { C5_PRODUCT_ID, encodeDecisionRef } from '@/lib/c5-pricing/decision'
 import { settleGiftSession } from '@/lib/c5-pricing/gift-settlement'
 import { recoverGiftReservations } from '@/lib/c5-pricing/gift-reservation-recovery-server'
+import { claimGiftSlot, readGiftCode } from '@/lib/c5-pricing/gift-slots'
 import { c5DecisionStoreOn } from '@/lib/c5-pricing/purchase-decision-sql'
 import { validateMySqlIntegrationServerUrl } from '@/lib/team-purchase-mysql-test-guard'
 import type { MySqlDatabase } from 'drizzle-orm/mysql-core'
@@ -475,12 +476,21 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 		const expired = checkoutSession('cs_test_missed_expiry', { status: 'expired', payment_status: 'unpaid', metadata: { productId: C5_PRODUCT_ID, codeRef, giftClaimId: claimId, decisionRef: encodeDecisionRef('0000000000000000', null, codeRef) } })
 		const paid = checkoutSession('cs_test_missed_paid', { metadata: { ...expired.metadata, giftClaimId: 'synthetic-paid-claim' } })
 		await pool.query('INSERT INTO AI_GiftCodeSlot (codeRef, slot, checkoutSessionId, claimId, state, expiresAt) VALUES (?, 1, ?, ?, ?, ?), (?, 2, ?, ?, ?, ?)', [codeRef, expired.id, claimId, 'reserved', new Date(now.getTime() - 1), codeRef, paid.id, 'synthetic-paid-claim', 'reserved', new Date(now.getTime() - 1)])
+		await pool.query('INSERT INTO AI_Coupon (id, status, maxUses, expires, restrictedToProductId, fields) VALUES (?, 1, 2, ?, ?, ?)', [codeRef, new Date(now.getTime() + 2 * 3600000), C5_PRODUCT_ID, JSON.stringify({ purpose: 'legend-gift', targetPriceCents: 29900, quantityLimit: 1, stackable: false })])
+		const connection = await pool.getConnection()
+		try { expect((await readGiftCode(connection, codeRef, C5_PRODUCT_ID, now))?.usesTaken).toBe(2) }
+		finally { connection.release() }
 		const retrieve = vi.fn(async (id: string) => id === expired.id ? expired : paid)
 		const stripe = { checkout: { sessions: { retrieve } } } as unknown as Stripe
 		expect(await recoverGiftReservations(stripe, now)).toMatchObject({ checked: 2, expirySettlementAttempts: 1, paidSettlementAttempts: 1, held: 0 })
 		const [rows] = await pool.query<RowDataPacket[]>('SELECT checkoutSessionId, state FROM AI_GiftCodeSlot')
 		expect(rows).toHaveLength(1)
 		expect(rows[0]).toMatchObject({ checkoutSessionId: paid.id, state: 'spent' })
+		const reclaimed = await pool.getConnection()
+		try {
+			expect((await readGiftCode(reclaimed, codeRef, C5_PRODUCT_ID, now))?.usesTaken).toBe(1)
+			expect(await claimGiftSlot({ connection: reclaimed, codeRef, productId: C5_PRODUCT_ID, claimId: 'synthetic-after-missed-webhook', quantity: 1, expiresAt: now.getTime() / 1000 + 3600, unitPrice: 29900, now })).not.toBeNull()
+		} finally { reclaimed.release() }
 		expect(await recoverGiftReservations(stripe, now)).toMatchObject({ checked: 0 })
 	})
 
