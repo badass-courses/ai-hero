@@ -53,9 +53,15 @@ export const inngestTelemetryMiddleware = new InngestMiddleware({
 					...(txnId && { txnId }),
 				})
 
-				const purchaseId = ctx.event?.data?.purchaseId
+				let purchaseId: unknown = ctx.event?.data?.purchaseId
 				let context: BuyPathContext | null = null
 				return {
+					transformInput({ ctx: hydrated }) {
+						// InitialRunInfo is partial. Use the execution's hydrated
+						// event, not identity frozen from initial metadata.
+						purchaseId = hydrated.event?.data?.purchaseId
+						return { ctx: hydrated }
+					},
 					async beforeExecution() {
 						if (typeof purchaseId !== 'string') return
 						try {
