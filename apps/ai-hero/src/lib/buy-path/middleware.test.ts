@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 type Context = { event: { name: string; data: Record<string, unknown> }; runId: string }
 type Hooks = { transformInput(input: { ctx: Context }): { ctx: Context }; beforeExecution(): Promise<void>; finished(input: { result: { error?: Error } }): Promise<void> }
 type Config = { init(): { onFunctionRun(input: { ctx: Context; fn: { name: string; id(name: string): string } }): Promise<Hooks> } }
-const mocks = vi.hoisted(() => ({ register: vi.fn<(config: Config) => void>(), read: vi.fn(), emit: vi.fn(), info: vi.fn(), error: vi.fn() }))
+const mocks = vi.hoisted(() => ({ register: vi.fn<[Config], void>(), read: vi.fn(), emit: vi.fn(), info: vi.fn(), error: vi.fn() }))
 vi.mock('inngest', () => ({ InngestMiddleware: class { constructor(config: Config) { mocks.register(config) } } }))
 vi.mock('@/server/logger', () => ({ log: { info: mocks.info, error: mocks.error }, serializeError: vi.fn() }))
 vi.mock('@/lib/buy-path/read-context', () => ({ purchaseBuyPathContext: mocks.read }))
