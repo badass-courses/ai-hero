@@ -11,6 +11,7 @@ import LayoutClient from '@/components/layout-client'
 import { TYPE } from '@/components/landing/type'
 import { giftSharePresentation, giftShareTitle } from '@/lib/c5-pricing/gift-share'
 import { signedGiftFact } from '@/lib/c5-pricing/gift-server'
+import { GiftShareAttribution } from '@/components/gift-share-attribution'
 import { C5_PRODUCT_ID } from '@/lib/c5-pricing/products'
 import { DiscountCountdown } from '@/components/mdx/mdx-components'
 import { PROSE_MEASURE } from '@/components/mdx/prose'
@@ -417,6 +418,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	return (
 		<LayoutClient withContainer>
 			<main className="relative">
+				{share && typeof searchParams.via === 'string' ? <GiftShareAttribution slug={searchParams.via} /> : null}
 				{giftBanner ? <section className="border-border bg-muted text-foreground border-b"><p className={`${TYPE.meta} px-[18px] py-4 sm:px-11`}>{giftBanner}</p></section> : null}
 				<CohortMetadata
 					cohort={displayCohort}
