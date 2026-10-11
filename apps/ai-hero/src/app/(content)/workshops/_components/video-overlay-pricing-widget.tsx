@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { BuyPathPricingBeacon } from '@/lib/buy-path/beacons'
 import { usePathname } from 'next/navigation'
 import { GatedBuyButton } from '@/components/commerce/gated-buy-button'
 import { env } from '@/env.mjs'
@@ -52,6 +53,7 @@ export function VideoOverlayWorkshopPricing({
 				userId={commerceProps?.userId}
 				pricingDataLoader={pricingDataLoader}
 			>
+				<BuyPathPricingBeacon productId={product.id} />
 				<Pricing.Product className="w-full">
 					<Pricing.ProductImage />
 					<Pricing.Details className="px-0 pt-0">

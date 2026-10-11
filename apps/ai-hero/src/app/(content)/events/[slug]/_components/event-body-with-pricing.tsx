@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { BuyPathPricingBeacon } from '@/lib/buy-path/beacons'
 import { GatedBuyButton } from '@/components/commerce/gated-buy-button'
 import { DiscountCountdown } from '@/components/mdx/mdx-components'
 import { DiscountDeadline } from '@/components/pricing/discount-deadline'
@@ -139,6 +140,7 @@ export async function EventBodyWithPricing({
 						pricingDataLoader={pricingDataLoader}
 						className="not-prose mt-5 items-start justify-start"
 					>
+						<BuyPathPricingBeacon productId={product.id} />
 						<Pricing.Product>
 							<GatedBuyButton className="dark:bg-primary dark:hover:bg-primary/90 relative h-auto w-full cursor-pointer rounded-lg bg-blue-600 px-8 font-semibold hover:bg-blue-700 sm:h-14 sm:w-auto md:px-16">
 								<span className="relative z-10">{children}</span>
