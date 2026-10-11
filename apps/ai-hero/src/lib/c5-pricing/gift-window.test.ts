@@ -18,6 +18,7 @@ describe('creation cutoff and hosted expiry are distinct', () => {
   })
   it('shares the policy cutoff and derives an earlier provider-safe code window', () => {
     expect(giftCheckoutOpen(end, policy, Date.parse('2030-02-28T07:29:00Z'))).toBe(true)
+    expect(giftCheckoutOpen(end, policy, Date.parse('2030-02-28T07:29:01Z'))).toBe(false)
     expect(giftCheckoutOpen(end, policy, Date.parse('2030-02-28T07:31:00Z'))).toBe(false)
     expect(giftCheckoutOpen('2030-02-28T07:30:00Z', policy, Date.parse('2030-02-28T07:01:00Z'))).toBe(false)
   })

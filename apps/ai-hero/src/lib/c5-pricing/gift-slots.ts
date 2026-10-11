@@ -4,8 +4,10 @@ import type {
   ResultSetHeader,
 } from "mysql2/promise";
 import { z } from "zod";
+import { AUTHORITATIVE_CLOSE_BUFFER_MS } from "@coursebuilder/commerce/authoritative-price";
 
-export const MIN_CHECKOUT_TTL_SECONDS = 30 * 60;
+/** Same safety margin as the CL3 provider boundary, not a second business clock. */
+export const MIN_CHECKOUT_TTL_SECONDS = AUTHORITATIVE_CLOSE_BUFFER_MS / 1000;
 
 export const GiftCode = z.object({
   codeRef: z.string().min(1).max(500),

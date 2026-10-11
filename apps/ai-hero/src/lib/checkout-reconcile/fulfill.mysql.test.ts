@@ -31,6 +31,7 @@ import type { DbExecutor } from '@/db'
 import { checkC5Duplicate, recordC5PurchaseDecision } from '@/lib/c5-pricing/purchase-decision'
 import { C5_PRODUCT_ID, encodeDecisionRef } from '@/lib/c5-pricing/decision'
 import { settleGiftSession } from '@/lib/c5-pricing/gift-settlement'
+import { recoverGiftReservations } from '@/lib/c5-pricing/gift-reservation-recovery-server'
 import { c5DecisionStoreOn } from '@/lib/c5-pricing/purchase-decision-sql'
 import { validateMySqlIntegrationServerUrl } from '@/lib/team-purchase-mysql-test-guard'
 import type { MySqlDatabase } from 'drizzle-orm/mysql-core'
@@ -178,35 +179,15 @@ function checkoutSession(
 	} as unknown as Stripe.Checkout.Session
 }
 
-/** Only retry MySQL's explicit transient transaction failures, including wrapped causes. */
-function transientMysqlFailure(error: unknown) {
-	let current = error
-	for (let depth = 0; depth < 4; depth += 1) {
-		if (typeof current !== 'object' || current === null) return false
-		if ('code' in current && ['ER_LOCK_DEADLOCK', 'ER_LOCK_WAIT_TIMEOUT'].includes(String(current.code))) return true
-		current = 'cause' in current ? current.cause : undefined
-	}
-	return false
-}
-
-/** run -> transient DB failure -> bounded retry -> JSON result/exhaustion, like Inngest. */
-function inngestLikeStep(options: { beforeStep?: (id: string) => Promise<void>; retryTransientDbErrors?: boolean } = {}) {
+function inngestLikeStep(options: { beforeStep?: (id: string) => Promise<void> } = {}) {
 	const sent: { id: string; payload: any }[] = []
 	const ran: string[] = []
 	const step: CheckoutFulfillStep = {
 		run: async (id, fn) => {
 			await options.beforeStep?.(id)
 			ran.push(id)
-			let remaining = options.retryTransientDbErrors ? 3 : 0
-			for (;;) {
-				try {
-					const output = await fn()
-					return output === undefined ? undefined : JSON.parse(JSON.stringify(output))
-				} catch (error) {
-					if (!remaining || !transientMysqlFailure(error)) throw error
-					remaining -= 1
-				}
-			}
+			const output = await fn()
+			return output === undefined ? undefined : JSON.parse(JSON.stringify(output))
 		},
 		sendEvent: async (id, payload) => {
 			sent.push({ id, payload })
@@ -467,6 +448,41 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 		expect(await counts(id)).toEqual({ charges: 1, sessions: 1, purchases: 1 })
 	})
 
+	it('fulfills a gift opened at 07:29 and paid at 07:59 after creation closes', async () => {
+		await pool.query('UPDATE AI_Product SET id = ? WHERE id = ?', [C5_PRODUCT_ID, 'product_reconcile'])
+		await pool.query('UPDATE AI_MerchantProduct SET productId = ?', [C5_PRODUCT_ID])
+		const opened = new Date('2026-10-09T07:29:00Z')
+		const paid = new Date('2026-10-09T07:59:00Z')
+		const deadline = new Date('2026-10-09T08:00:00Z')
+		const codeRef = 'synthetic-late-gift', claimId = 'synthetic-late-claim'
+		const template = checkoutSession('late-template')
+		const id = stranded({ created: opened.getTime() / 1000, expires_at: deadline.getTime() / 1000,
+			metadata: { ...template.metadata, productId: C5_PRODUCT_ID, codeRef, giftClaimId: claimId, decisionRef: encodeDecisionRef('0000000000000000', null, codeRef) } })
+		const providerSession = sessions.get(id)!
+		;(providerSession.payment_intent as Stripe.PaymentIntent).created = paid.getTime() / 1000
+		await pool.query('INSERT INTO AI_GiftCodeSlot (codeRef, slot, checkoutSessionId, claimId, state, expiresAt) VALUES (?, 1, ?, ?, ?, ?)', [codeRef, id, claimId, 'reserved', deadline])
+		// The fixture reconciles at 22:00, well after both cutoff and deadline.
+		// Fulfillment only consumes verified paid provider state, not pricing eligibility.
+		expect(await reconcile(id, inngestLikeStep().step)).toMatchObject({ status: 'fulfilled' })
+		expect(await counts(id)).toEqual({ charges: 1, sessions: 1, purchases: 1 })
+		const [rows] = await pool.query<RowDataPacket[]>('SELECT state FROM AI_GiftCodeSlot WHERE checkoutSessionId = ?', [id])
+		expect(rows[0]?.state).toBe('spent')
+	})
+
+	it('recovers a missed expiry webhook on real MySQL and keeps paid reservations spent', async () => {
+		const codeRef = 'synthetic-missed-webhook', claimId = 'synthetic-missed-claim'
+		const expired = checkoutSession('cs_test_missed_expiry', { status: 'expired', payment_status: 'unpaid', metadata: { productId: C5_PRODUCT_ID, codeRef, giftClaimId: claimId, decisionRef: encodeDecisionRef('0000000000000000', null, codeRef) } })
+		const paid = checkoutSession('cs_test_missed_paid', { metadata: { ...expired.metadata, giftClaimId: 'synthetic-paid-claim' } })
+		await pool.query('INSERT INTO AI_GiftCodeSlot (codeRef, slot, checkoutSessionId, claimId, state, expiresAt) VALUES (?, 1, ?, ?, ?, ?), (?, 2, ?, ?, ?, ?)', [codeRef, expired.id, claimId, 'reserved', new Date(now.getTime() - 1), codeRef, paid.id, 'synthetic-paid-claim', 'reserved', new Date(now.getTime() - 1)])
+		const retrieve = vi.fn(async (id: string) => id === expired.id ? expired : paid)
+		const stripe = { checkout: { sessions: { retrieve } } } as unknown as Stripe
+		expect(await recoverGiftReservations(stripe, now)).toMatchObject({ checked: 2, expirySettlementAttempts: 1, paidSettlementAttempts: 1, held: 0 })
+		const [rows] = await pool.query<RowDataPacket[]>('SELECT checkoutSessionId, state FROM AI_GiftCodeSlot')
+		expect(rows).toHaveLength(1)
+		expect(rows[0]).toMatchObject({ checkoutSessionId: paid.id, state: 'spent' })
+		expect(await recoverGiftReservations(stripe, now)).toMatchObject({ checked: 0 })
+	})
+
 	it('fulfills a paid gift even when its reservation is missing', async () => {
 		await pool.query('UPDATE AI_Product SET id = ? WHERE id = ?', [C5_PRODUCT_ID, 'product_reconcile'])
 		await pool.query('UPDATE AI_MerchantProduct SET productId = ?', [C5_PRODUCT_ID])
@@ -497,25 +513,6 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 		expect(before).toEqual({ charges: 1, sessions: 1, purchases: 1 })
 	})
 
-	it('the step shim retries only explicit transient DB failures with a finite budget', async () => {
-		const transient = Object.assign(new Error('wrapped'), { cause: { code: 'ER_LOCK_DEADLOCK' } })
-		const shim = inngestLikeStep({ retryTransientDbErrors: true })
-		let calls = 0
-		await expect(shim.step.run('transient', async () => {
-			calls += 1
-			if (calls === 1) throw transient
-			return { ok: true }
-		})).resolves.toEqual({ ok: true })
-		expect(calls).toBe(2)
-		calls = 0
-		await expect(shim.step.run('exhausted', async () => { calls += 1; throw transient })).rejects.toBe(transient)
-		expect(calls).toBe(4)
-		calls = 0
-		const permanent = new Error('not a transient database failure')
-		await expect(shim.step.run('permanent', async () => { calls += 1; throw permanent })).rejects.toBe(permanent)
-		expect(calls).toBe(1)
-	})
-
 	it('gives one purchase when the original run races the reconciler', async () => {
 		for (let round = 0; round < 5; round += 1) {
 			// Each round is the buyer's first purchase of the product.
@@ -526,8 +523,8 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 			const atWrite = async (stepId: string) => {
 				if (stepId === 'create a merchant charge and purchase') await meet()
 			}
-			const reconciler = inngestLikeStep({ beforeStep: atWrite, retryTransientDbErrors: true })
-			const original = inngestLikeStep({ beforeStep: atWrite, retryTransientDbErrors: true })
+			const reconciler = inngestLikeStep({ beforeStep: atWrite })
+			const original = inngestLikeStep({ beforeStep: atWrite })
 
 			const [reconciled, originalOutcome] = await Promise.allSettled([
 				reconcile(id, reconciler.step),

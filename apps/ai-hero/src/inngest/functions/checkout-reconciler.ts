@@ -133,6 +133,10 @@ export const checkoutReconcilerSweep = inngest.createFunction(
 	async ({ step, paymentProvider }) => {
 		const stripe = paymentsAdapter(paymentProvider).stripe
 		const autoFulfill = checkoutAutoFulfillEnabled()
+		await step.run('reconcile expired gift reservations', async () => {
+			const { recoverGiftReservations } = await import('@/lib/c5-pricing/gift-reservation-recovery-server')
+			return recoverGiftReservations(stripe, new Date())
+		})
 
 		return runCheckoutReconcileSweep({
 			step,
