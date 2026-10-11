@@ -28,12 +28,25 @@ export async function GET(request: NextRequest) {
 		await courseBuilderAdapter.getPurchaseByCheckoutSessionId(sessionId)
 
 	if (purchase?.id) {
-		return NextResponse.json({ status: 'ready', purchaseId: purchase.id })
+		const product = await courseBuilderAdapter.getProduct(purchase.productId)
+		return NextResponse.json(
+			{
+				status: 'ready',
+				purchaseId: purchase.id,
+				product: product
+					? { name: product.name, image: product.fields?.image?.url ?? null }
+					: null,
+			},
+			{ headers: { 'Cache-Control': 'no-store' } },
+		)
 	}
 
 	// Keep this endpoint DB-only and cheap. The page only needs to know when the
 	// webhook-created purchase row exists. If setup takes too long, the client
 	// shows support copy instead of turning a stuck checkout into repeated Stripe
 	// or merchant-event scans.
-	return NextResponse.json({ status: 'processing' })
+	return NextResponse.json(
+		{ status: 'processing' },
+		{ headers: { 'Cache-Control': 'no-store' } },
+	)
 }

@@ -1,9 +1,10 @@
 import * as React from 'react'
 import { headers } from 'next/headers'
-import { BuyPathDestinationBeacon } from '@/lib/buy-path/beacons'
 import { purchaseBuyPathContext } from '@/lib/buy-path/read-context'
 import { redirect } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
+import { PostPurchaseShell } from '../_components/post-purchase-shell'
+import { PostPurchaseArrival } from '../_components/post-purchase-arrival'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { courseBuilderAdapter, db } from '@/db'
 import { env } from '@/env.mjs'
@@ -142,6 +143,8 @@ const Welcome = async (props: {
 		provider: string
 		purchaseId?: string
 		subscriptionId?: string
+		buyPathId?: string
+		buyPathWaited?: string
 	}>
 }) => {
 	const searchParams = await props.searchParams
@@ -160,7 +163,9 @@ const Welcome = async (props: {
 			productResources,
 		} = await getPurchaseDetailsForWelcome(searchParams)
 
-		const buyPath = await purchaseBuyPathContext(purchase.id).catch(() => null)
+		const buyPath = searchParams.buyPathId
+			? null
+			: await purchaseBuyPathContext(purchase.id).catch(() => null)
 		const redemptionsLeft =
 			purchase.bulkCoupon &&
 			purchase.bulkCoupon.maxUses > purchase.bulkCoupon.usedCount
@@ -186,11 +191,13 @@ const Welcome = async (props: {
 		const isDiscordConnected = await discordAccountsForCurrentUser()
 
 		return (
-			<LayoutClient withContainer>
-				<div className="">
-					{buyPath && (
-						<BuyPathDestinationBeacon buyPathId={buyPath.buyPathId} />
-					)}
+			<PostPurchaseShell step="ready" paymentConfirmed landmark="section">
+				<PostPurchaseArrival
+					destination="welcome"
+					checkoutSessionId={searchParams.buyPathId ?? buyPath?.buyPathId}
+					purchaseWasPolled={searchParams.buyPathWaited === '1'}
+				/>
+				<div className="flex flex-col gap-8 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300 [&_main]:py-0 [&_main]:items-stretch [&_main>div]:max-w-none [&_img]:h-28 [&_img]:w-28">
 					<PostPurchaseDiscordAccess isDiscordConnected={isDiscordConnected} />
 					<WelcomePage
 						product={product}
@@ -210,7 +217,7 @@ const Welcome = async (props: {
 						initiatePurchaseTransfer={initiatePurchaseTransfer}
 					/>
 				</div>
-			</LayoutClient>
+			</PostPurchaseShell>
 		)
 	}
 
