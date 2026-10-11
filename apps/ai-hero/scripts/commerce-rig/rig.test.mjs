@@ -8,7 +8,17 @@ import { spawnSync } from 'node:child_process'
 import { getTableColumns } from 'drizzle-orm'
 import { applyCatalogOverlay, catalog, fixtures, fixtureFor } from './fixtures.mjs'
 import { assertDatabase, assertTestKey, assertTestObject, cleanEnv, databaseUrl, origin, privateWrite, readCatalogOverlay, readPrivateKey, publicSession } from './safety.mjs'
-import { provesAccess, payHostedCheckout } from './checkout.mjs'
+import { provesAccess, checkoutHandoffRefusal, payHostedCheckout } from './checkout.mjs'
+
+test('provider refusal is not misdiagnosed as a login failure or persisted as a capability', () => {
+  const base = 'http://127.0.0.1:3350'
+  const handoff = nested => `${base}/subscribe/verify-login?checkoutUrl=${encodeURIComponent(nested)}`
+  assert.equal(checkoutHandoffRefusal('https://checkout.stripe.com/c/pay/cs_test_fixture', base), null)
+  assert.equal(checkoutHandoffRefusal(handoff('https://checkout.stripe.com/c/pay/cs_test_fixture?secret=synthetic'), base), null)
+  assert.equal(checkoutHandoffRefusal(`${base}/subscribe/verify-login?productId=fixture`, base), null)
+  assert.deepEqual(checkoutHandoffRefusal(handoff(`${base}/?secret=synthetic`), base), { classification: 'checkout-refused-before-login', checkoutHost: '127.0.0.1' })
+  assert.deepEqual(checkoutHandoffRefusal(handoff('invalid'), base), { classification: 'checkout-refused-before-login', checkoutHost: null })
+})
 import { tables } from './seed.mjs'
 
 test('the owned listener forwards reservation expiry and dispute lifecycle events', async () => {

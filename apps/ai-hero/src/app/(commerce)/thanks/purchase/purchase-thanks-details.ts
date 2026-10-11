@@ -2,7 +2,7 @@ import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { courseBuilderAdapter } from '@/db'
 import { convertToSerializeForNextResponse } from '@coursebuilder/commerce-next/utils/serialize-for-next-response'
 import { checkForPaymentSuccessWithoutPurchase } from '@coursebuilder/commerce'
-import { logger } from '@coursebuilder/utils/logger'
+import { log as logger } from '@/server/logger'
 
 export const getPurchaseThanksDetails = async (
 	session_id: string,
@@ -18,7 +18,7 @@ export const getPurchaseThanksDetails = async (
 		throw new Error(`No session_id found: ${session_id}`)
 	}
 
-	logger.info('purchase.thanks-page.loading', {
+	await logger.info('purchase.thanks-page.loading', {
 		checkoutSessionId: session_id,
 	})
 
@@ -68,7 +68,7 @@ export const getPurchaseThanksDetails = async (
 				purchase.bulkCoupon &&
 				purchase.bulkCoupon.maxUses > purchase.bulkCoupon.usedCount
 
-			logger.info('purchase.thanks-page.loaded', {
+			await logger.info('purchase.thanks-page.loaded', {
 				checkoutSessionId: session_id,
 				purchaseId: purchase.id,
 				productId: purchase.productId,
@@ -89,7 +89,7 @@ export const getPurchaseThanksDetails = async (
 			}
 		} catch (error) {
 			retries++
-			logger.debug('thanks purchase poll retry', {
+			await logger.debug('thanks purchase poll retry', {
 				sessionId: session_id,
 				retries,
 				maxRetries,
@@ -106,7 +106,7 @@ export const getPurchaseThanksDetails = async (
 	).catch(() => ({ shouldShowError: false, stripeEventId: undefined }))
 
 	if (errorCheck.shouldShowError) {
-		logger.debug('thanks purchase poll success-no-purchase fallback', {
+		await logger.debug('thanks purchase poll success-no-purchase fallback', {
 			sessionId: session_id,
 			stripeEventId: errorCheck.stripeEventId,
 		})
@@ -115,12 +115,8 @@ export const getPurchaseThanksDetails = async (
 		}
 	}
 
-	logger.error(
-		new Error('purchase missing after polling and no Stripe fallback', {
-			cause: {
-				sessionId: session_id,
-			},
-		}),
-	)
+	await logger.error('purchase.thanks-page.purchase_missing', {
+		checkoutSessionId: session_id,
+	})
 	return { processingUnconfirmed: true }
 }

@@ -22,7 +22,14 @@
  */
 
 import { log, serializeError } from '@/server/logger'
+import { emitBuyPath } from '@/lib/buy-path/server'
+import { purchaseBuyPathContext } from '@/lib/buy-path/read-context'
+import type { BuyPathContext } from '@/lib/buy-path/schema'
+import { installBuyPathLegacyAliases } from '@/lib/buy-path/legacy-logger'
+
 import { InngestMiddleware } from 'inngest'
+
+installBuyPathLegacyAliases()
 
 export const inngestTelemetryMiddleware = new InngestMiddleware({
 	name: 'Telemetry Middleware',
@@ -46,7 +53,47 @@ export const inngestTelemetryMiddleware = new InngestMiddleware({
 					...(txnId && { txnId }),
 				})
 
+				let purchaseId: unknown = ctx.event?.data?.purchaseId
+				let context: BuyPathContext | null = null
 				return {
+					transformInput({ ctx: hydrated }) {
+						// InitialRunInfo is partial. Use the execution's hydrated
+						// event, not identity frozen from initial metadata.
+						purchaseId = hydrated.event?.data?.purchaseId
+						return { ctx: hydrated }
+					},
+					async beforeExecution() {
+						if (typeof purchaseId !== 'string') return
+						try {
+							context = await purchaseBuyPathContext(purchaseId)
+							if (!context && ctx.event?.data?.checkoutSessionId)
+								await log.error('buy_path.context_read_failed', {
+									purchaseId,
+									functionId,
+									runId,
+								})
+							if (context)
+								await emitBuyPath(context, 'post_purchase_started', {
+									functionId,
+									runId,
+								})
+						} catch {
+							await log.error('buy_path.context_read_failed', {
+								purchaseId,
+								functionId,
+								runId,
+							})
+						}
+					},
+					async finished({ result }) {
+						if (context)
+							await emitBuyPath(context, 'post_purchase_finished', {
+								functionId,
+								runId,
+								durationMs: Date.now() - fnStart,
+								outcome: result.error ? 'failed' : 'ok',
+							})
+					},
 					afterExecution() {
 						const durationMs = Date.now() - fnStart
 

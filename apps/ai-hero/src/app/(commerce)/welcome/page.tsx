@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { headers } from 'next/headers'
+import { purchaseBuyPathContext } from '@/lib/buy-path/read-context'
 import { redirect } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
 import { PostPurchaseShell } from '../_components/post-purchase-shell'
@@ -162,6 +163,7 @@ const Welcome = async (props: {
 			productResources,
 		} = await getPurchaseDetailsForWelcome(searchParams)
 
+		const buyPath = await purchaseBuyPathContext(purchase.id).catch(() => null)
 		const redemptionsLeft =
 			purchase.bulkCoupon &&
 			purchase.bulkCoupon.maxUses > purchase.bulkCoupon.usedCount
@@ -190,7 +192,7 @@ const Welcome = async (props: {
 			<PostPurchaseShell step="ready" paymentConfirmed landmark="section">
 				<PostPurchaseArrival
 					destination="welcome"
-					checkoutSessionId={searchParams.buyPathId}
+					checkoutSessionId={searchParams.buyPathId ?? buyPath?.buyPathId}
 					purchaseWasPolled={searchParams.buyPathWaited === '1'}
 				/>
 				<div className="motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300 [&_main]:py-0 [&_main]:items-stretch [&_main>div]:max-w-none [&_img]:h-28 [&_img]:w-28">

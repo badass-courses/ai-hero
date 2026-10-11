@@ -1,6 +1,7 @@
 'use client'
 
 import React from 'react'
+import { BuyPathPricingBeacon } from '@/lib/buy-path/beacons'
 import Link from 'next/link'
 import { GatedBuyButton } from '@/components/commerce/gated-buy-button'
 import { TYPE } from '@/components/landing/type'
@@ -91,6 +92,7 @@ export const BuyButtonComponent: React.FC<
 			userId={commerceProps?.userId}
 			pricingDataLoader={pricingDataLoader}
 		>
+			<BuyPathPricingBeacon productId={product.id} />
 			<Pricing.Product>
 				<Buy
 					resourceType={resourceType}
@@ -161,9 +163,7 @@ const RegionalPricingNote = ({ targetId }: { targetId: string }) => {
 			// padding — the two must move together.
 			className="border-border absolute bottom-0 left-0 w-full cursor-pointer border-t px-3 py-1.5 text-left"
 		>
-			<span
-				className={cn(TYPE.metaSm, 'text-muted-foreground text-pretty')}
-			>
+			<span className={cn(TYPE.metaSm, 'text-muted-foreground text-pretty')}>
 				{/* Rhymes with the buy box's "Buying from {country}?" sentence so the
 				    tap lands on familiar words. */}
 				Buying from{' '}

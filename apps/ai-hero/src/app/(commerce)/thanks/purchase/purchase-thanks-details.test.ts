@@ -13,8 +13,8 @@ vi.mock(
 	'@coursebuilder/commerce-next/utils/serialize-for-next-response',
 	() => ({ convertToSerializeForNextResponse: (value: unknown) => value }),
 )
-vi.mock('@coursebuilder/utils/logger', () => ({
-	logger: { info: vi.fn(), debug: vi.fn(), error: vi.fn() },
+vi.mock('@/server/logger', () => ({
+	log: { info: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }))
 
 describe('post-retry purchase recovery, never a paid-buyer 404', () => {
