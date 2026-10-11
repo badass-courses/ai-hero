@@ -60,7 +60,6 @@ export const inngestTelemetryMiddleware = new InngestMiddleware({
 						// InitialRunInfo is partial. Use the execution's hydrated
 						// event, not identity frozen from initial metadata.
 						purchaseId = hydrated.event?.data?.purchaseId
-						return { ctx: hydrated }
 					},
 					async beforeExecution() {
 						if (typeof purchaseId !== 'string') return
