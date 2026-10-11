@@ -13,6 +13,12 @@ import {
 	isEventNotLiveProblem,
 	isStopEvent,
 } from './drovr-stop-verdict'
+import {
+	readPurchaseFacts,
+	PurchaseRefundFactsSchema,
+	type PurchaseFacts,
+	type PurchaseRefundFacts,
+} from './purchase-facts'
 import type { ContactEventRecord, SideEffectIntent } from './types'
 import { valuePathIntentCompletedAt } from './value-path-completion'
 import { SHADOW_NEWSLETTER_JOURNEY_ID } from './drovr-shadow-newsletter'
@@ -96,6 +102,7 @@ export type DrovrShadowEvent = {
 		| 'course.sequence-exhausted'
 		| 'contact.unsubscribed'
 		| 'purchase.recorded'
+		| 'purchase.refunded'
 		| 'contact.profile.updated'
 		| 'contact.links.issued'
 		| 'contact.offer.issued'
@@ -109,8 +116,8 @@ export type DrovrShadowEvent = {
 		| { list: string }
 		| { scope: 'course' | 'all' }
 		| { formId: string; kitFormId: number }
-		| { productId: string }
-		| { productId: string; couponId: string; sameOffer: true }
+		| ({ productId: string; sameOffer?: true } & PurchaseFacts)
+		| PurchaseRefundFacts
 		| DrovrPinnedTimezonePayload
 		| DrovrContactDirectoryBirthPayload
 		| DrovrContactProfilePayload
@@ -496,20 +503,37 @@ function mapContactEvent(event: ContactEventRecord): DrovrShadowEvent[] {
 		case 'contact.bounced':
 		case 'contact.complained':
 			return [directoryStop(base, event.eventType)]
+		case 'purchase.refunded': {
+			const parsed = PurchaseRefundFactsSchema.safeParse(event.domainPayload)
+			if (!parsed.success) return []
+			return [
+				{
+					...base,
+					tenantId: DROVR_AUTHORITY_TENANT_ID,
+					journeyId: DROVR_CONTACT_DIRECTORY_JOURNEY_ID,
+					type: 'purchase.refunded',
+					payload: parsed.data,
+				},
+			]
+		}
 		case 'purchase.recorded': {
 			const productId = purchaseProductId(event.payloadSummary.keywords)
 			if (!productId) return []
 			// Only the evergreen journey hears which offer converted: value-path's
 			// purchaseIsSameOffer guard reads sameOffer as its own offer's.
 			const evergreenOffer = evergreenOfferRedemption(event.domainPayload)
+			const payload = {
+				productId,
+				...readPurchaseFacts(event.domainPayload),
+			}
 			return [
-				...bothJourneys(base, 'purchase.recorded', { productId }).map(
+				...bothJourneys(base, 'purchase.recorded', payload).map(
 					(shadowEvent) =>
 						evergreenOffer &&
 						shadowEvent.journeyId === DROVR_EVERGREEN_OFFER_JOURNEY_ID
 							? {
 									...shadowEvent,
-									payload: { productId, ...evergreenOffer },
+									payload: { ...payload, ...evergreenOffer },
 								}
 							: shadowEvent,
 				),

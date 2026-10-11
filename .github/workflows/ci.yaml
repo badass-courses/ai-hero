@@ -94,6 +94,7 @@ jobs:
           evergreen
           skills-newsletter
           capture-purchase-contact-event
+          capture-purchase-refund-contact-event
           subscribe-to-list
           kit-custom-fields-check
           src/scripts/held-exit-recover.test.ts

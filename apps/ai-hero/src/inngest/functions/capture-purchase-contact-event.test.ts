@@ -15,11 +15,18 @@ const mocks = vi.hoisted(() => ({
 	),
 	findPurchase: vi.fn(),
 	findUser: vi.fn(),
+	findCharge: vi.fn(),
+	retrieveCharge: vi.fn(),
 	selectCoupon: vi.fn(),
 	write: vi.fn(),
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
 
+vi.mock('stripe', () => ({
+	default: class {
+		charges = { retrieve: mocks.retrieveCharge }
+	},
+}))
 vi.mock('@/inngest/inngest.server', () => ({
 	inngest: { createFunction: mocks.createFunction },
 }))
@@ -28,6 +35,7 @@ vi.mock('@/db', () => ({
 		query: {
 			purchases: { findFirst: mocks.findPurchase },
 			users: { findFirst: mocks.findUser },
+			merchantCharge: { findFirst: mocks.findCharge },
 		},
 		select: () => ({
 			from: () => ({ where: () => ({ limit: mocks.selectCoupon }) }),
@@ -62,12 +70,16 @@ function purchaseRow(couponId: string | null) {
 		couponId,
 		redeemedBulkCouponId: null,
 		bulkCouponId: null,
+		merchantChargeId: 'merchant-charge-1',
 	}
 }
 
 async function run() {
 	await registered.handler({
-		event: { name: 'commerce/new-purchase-created', data: { purchaseId: 'purch_1' } },
+		event: {
+			name: 'commerce/new-purchase-created',
+			data: { purchaseId: 'purch_1' },
+		},
 		step,
 	})
 	return mocks.write.mock.calls[0]?.[0].rows[0]
@@ -76,6 +88,14 @@ async function run() {
 beforeEach(() => {
 	vi.clearAllMocks()
 	mocks.findUser.mockResolvedValue({ email: 'buyer@example.com', name: null })
+	mocks.findCharge.mockResolvedValue({ identifier: 'ch_fixture' })
+	mocks.retrieveCharge.mockResolvedValue({
+		paid: true,
+		captured: true,
+		status: 'succeeded',
+		amount_captured: 19900,
+		currency: 'usd',
+	})
 	mocks.write.mockResolvedValue({
 		counts: { written: 1, skippedByReason: {} },
 		decisions: [],
@@ -83,6 +103,51 @@ beforeEach(() => {
 })
 
 describe('capture purchase contact event (row 194)', () => {
+	it('enriches capture with actual captured cents despite rounded DB total', async () => {
+		mocks.findPurchase.mockResolvedValue({
+			...purchaseRow(null),
+			totalAmount: 105,
+			status: 'Restricted',
+		})
+		mocks.retrieveCharge.mockResolvedValue({
+			paid: true,
+			captured: true,
+			status: 'succeeded',
+			amount_captured: 10465,
+			currency: 'usd',
+		})
+		expect(await run()).toMatchObject({
+			purchaseFacts: {
+				purchaseId: 'purch_1',
+				priceClass: 'ppp',
+				amountCents: 10465,
+				currency: 'usd',
+			},
+		})
+		expect(mocks.retrieveCharge).toHaveBeenCalledWith('ch_fixture')
+	})
+
+	it('preserves buyer capture when charge read fails; unknown is not zero/full', async () => {
+		mocks.findPurchase.mockResolvedValue(purchaseRow(null))
+		mocks.retrieveCharge.mockRejectedValue(new Error('provider unavailable'))
+		mocks.log.warn.mockRejectedValueOnce(new Error('telemetry unavailable'))
+		expect(await run()).toMatchObject({
+			purchaseFacts: { purchaseId: 'purch_1' },
+		})
+		expect(mocks.write).toHaveBeenCalledOnce()
+	})
+
+	it('does not look up a parent charge for a nonpaying redeemed team seat', async () => {
+		mocks.findPurchase.mockResolvedValue({
+			...purchaseRow(null),
+			redeemedBulkCouponId: 'seat-1',
+		})
+		expect(await run()).toMatchObject({
+			purchaseFacts: { purchaseId: 'purch_1' },
+		})
+		expect(mocks.retrieveCharge).not.toHaveBeenCalled()
+	})
+
 	it('names the contact the redeemed evergreen coupon was issued to', async () => {
 		const { row, couponId } = await issuedRow(offerPayload())
 		mocks.findPurchase.mockResolvedValue(purchaseRow(couponId))

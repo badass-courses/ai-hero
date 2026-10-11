@@ -77,6 +77,7 @@ type AiHeroWriteDatabase = any
 const AWAITED_DISPATCH_EVENT_TYPES: ReadonlySet<string> = new Set([
 	JOURNEY_OWNER_ASSIGNED_EVENT_TYPE,
 	'purchase.recorded',
+	'purchase.refunded',
 ])
 
 // ~5k rows of intent payload (metadata/gates included) is ~5MB on the wire,

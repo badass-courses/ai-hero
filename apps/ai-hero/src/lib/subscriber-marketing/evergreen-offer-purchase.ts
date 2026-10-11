@@ -65,7 +65,12 @@ export function readEvergreenOfferCoupon(
 			return { status: 'refused', couponId, reason: 'coupon-contact-mismatch' }
 		return {
 			status: 'redeemed',
-			redemption: { couponId: coupon.couponId, contactId: coupon.contactId },
+			redemption: {
+				couponId: coupon.couponId,
+				contactId: coupon.contactId,
+				issuedAt: coupon.issuedAt,
+				expiresAt: coupon.expiresAt,
+			},
 		}
 	} catch (error) {
 		// Any failure falls back to the buyer's contact: recording the purchase
