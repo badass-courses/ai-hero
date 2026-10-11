@@ -40,11 +40,13 @@ export async function createGiftCheckout<
     const {
       codeRef: _code,
       giftClaimId: _claim,
+      giftSlot: _slot,
       ...metadata
     } = params.metadata ?? {};
     const {
       codeRef: _intentCode,
       giftClaimId: _intentClaim,
+      giftSlot: _intentSlot,
       ...intentMetadata
     } = params.payment_intent_data?.metadata ?? {};
     return create(
@@ -97,6 +99,7 @@ export async function createGiftCheckout<
     codeRef: code.codeRef,
     basis: "code",
     giftClaimId: claim.claimId,
+    giftSlot: String(claim.slot),
   };
   // Ambiguous provider failures retain the reservation. Never blindly release.
   const session = await create(

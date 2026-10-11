@@ -39,12 +39,11 @@ const CouponRow = z.object({
   }),
 });
 
-/** All statuses count. A refund or lost dispute cannot recycle a use. */
+/** Reserved and spent count regardless of clock; only verified recovery releases. */
 export async function usesTaken(
   connection: PoolConnection,
   codeRef: string,
-  now: Date,
-  includeExpired = false,
+  _now: Date,
 ) {
   const [rows] = await connection.query<RowDataPacket[]>(
     `
@@ -52,10 +51,10 @@ export async function usesTaken(
 		  SELECT purchaseId AS useId FROM AI_PurchaseDecision WHERE codeRef = ?
 		  UNION ALL
 		  SELECT claimId AS useId FROM AI_GiftCodeSlot s
-		  WHERE s.codeRef = ? AND (s.state = 'spent' OR s.expiresAt > ? OR ?)
+		  WHERE s.codeRef = ? AND s.state IN ('reserved', 'spent')
 		  AND NOT EXISTS (SELECT 1 FROM AI_PurchaseDecision d WHERE d.codeRef = s.codeRef AND d.checkoutSessionId = s.checkoutSessionId)
 		) uses`,
-    [codeRef, codeRef, now, includeExpired],
+    [codeRef, codeRef],
   );
   const taken = Number(rows[0]?.taken);
   if (!Number.isSafeInteger(taken) || taken < 0)
@@ -109,7 +108,7 @@ export type GiftClaim = {
 
 /** Serialize contenders on the existing coupon row, then claim with one INSERT.
  * No provider call occurs in the transaction. Unbound/ambiguous claims are held
- * until reviewed, never reclaimed just because their wall clock ran out.
+ * until provider verification or the reviewed unbound grace/evidence check.
  */
 export async function claimGiftSlot({
   connection,
@@ -170,7 +169,7 @@ export async function claimGiftSlot({
         checkoutSessionId: old.checkoutSessionId,
       };
     }
-    const taken = await usesTaken(connection, codeRef, now, true);
+    const taken = await usesTaken(connection, codeRef, now);
     if (taken >= code.maxUses) {
       await connection.rollback();
       return null;
@@ -210,7 +209,7 @@ export async function bindGiftSlot(
   if (result.affectedRows !== 1) throw new Error("gift-bind-conflict");
 }
 
-/** Only an authoritative expired event releases, and spent is terminal. */
+/** Authoritative expired sessions release; spent is terminal. */
 export async function expireGiftSlot(
   connection: PoolConnection,
   sessionId: string,
@@ -233,4 +232,30 @@ export async function spendGiftSlot(
     [sessionId, codeRef, sessionId, claimId ?? null],
   );
   return result.affectedRows === 1;
+}
+
+export const UNBOUND_GIFT_GRACE_MS = 2 * 60 * 60 * 1000;
+
+/** Coupon/slot locks serialize the reviewed grace cleanup with claims and paid binding. */
+export async function recoverUnboundGiftSlot(connection: PoolConnection, claimId: string, codeRef: string, now: Date): Promise<'held' | 'released' | 'spent'> {
+  await connection.beginTransaction();
+  try {
+    await connection.query('SELECT id FROM AI_Coupon WHERE id = ? FOR UPDATE', [codeRef]);
+    const [rows] = await connection.query<RowDataPacket[]>('SELECT * FROM AI_GiftCodeSlot WHERE claimId = ? AND codeRef = ? FOR UPDATE', [claimId, codeRef]);
+    const row = rows[0];
+    if (!row || row.state !== 'reserved' || row.checkoutSessionId || row.expiresAt.getTime() + UNBOUND_GIFT_GRACE_MS > now.getTime()) {
+      await connection.commit(); return 'held';
+    }
+    const [decisions] = await connection.query<RowDataPacket[]>('SELECT checkoutSessionId FROM AI_PurchaseDecision WHERE giftClaimId = ? OR (codeRef = ? AND giftSlot = ?) LIMIT 1', [claimId, codeRef, row.slot]);
+    const [paid] = await connection.query<RowDataPacket[]>("SELECT id FROM AI_Purchase WHERE JSON_UNQUOTE(JSON_EXTRACT(fields, '$.giftClaimId')) = ? OR (JSON_UNQUOTE(JSON_EXTRACT(fields, '$.codeRef')) = ? AND JSON_UNQUOTE(JSON_EXTRACT(fields, '$.giftSlot')) = ?) LIMIT 1", [claimId, codeRef, String(row.slot)]);
+    if (decisions.length || paid.length) {
+      await connection.query("UPDATE AI_GiftCodeSlot SET state = 'spent', checkoutSessionId = ? WHERE claimId = ? AND codeRef = ? AND state = 'reserved' AND checkoutSessionId IS NULL", [decisions[0]?.checkoutSessionId ?? null, claimId, codeRef]);
+      await connection.commit(); return 'spent';
+    }
+    // Legacy gift ledger rows cannot identify a slot. Do not manufacture absence.
+    const [legacy] = await connection.query<RowDataPacket[]>('SELECT purchaseId FROM AI_PurchaseDecision WHERE codeRef = ? AND giftClaimId IS NULL AND giftSlot IS NULL LIMIT 1', [codeRef]);
+    if (legacy.length) { await connection.commit(); return 'held'; }
+    await connection.query("DELETE FROM AI_GiftCodeSlot WHERE claimId = ? AND codeRef = ? AND state = 'reserved' AND checkoutSessionId IS NULL", [claimId, codeRef]);
+    await connection.commit(); return 'released';
+  } catch (error) { await connection.rollback(); throw error; }
 }

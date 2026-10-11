@@ -22,6 +22,8 @@ export type SavedC5Decision = {
 	readonly decisionRef: string
 	readonly creditSource: string | null
 	readonly codeRef: string | null
+	readonly giftClaimId?: string | null
+	readonly giftSlot?: number | null
 	readonly basis: string | null
 	readonly contract: string
 	readonly engineVersion: string
@@ -94,6 +96,7 @@ export function decisionFromSession(
 		decisionRef,
 		creditSource: ref.creditSource,
 		codeRef,
+		...(codeRef && metadata.giftClaimId ? { giftClaimId: metadata.giftClaimId, giftSlot: Number.isSafeInteger(Number(metadata.giftSlot)) && Number(metadata.giftSlot) > 0 ? Number(metadata.giftSlot) : null } : {}),
 		basis: codeRef ? 'code' : metadata.basis || null,
 		contract: metadata.cbPricingContract,
 		engineVersion,

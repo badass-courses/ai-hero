@@ -4,7 +4,7 @@ import { C5_PRODUCT_ID } from './products'
 import { recoverDueGiftReservations, type DueGiftReservation } from './gift-reservation-recovery'
 const row: DueGiftReservation = { codeRef: 'synthetic-code', claimId: 'synthetic-claim', checkoutSessionId: 'cs_test_fixture' }
 const session = (status: Stripe.Checkout.Session.Status, payment_status: Stripe.Checkout.Session.PaymentStatus) => ({ id: 'cs_test_fixture', status, payment_status, metadata: { productId: C5_PRODUCT_ID, codeRef: row.codeRef, giftClaimId: row.claimId } }) as unknown as Stripe.Checkout.Session
-const deps = () => ({ listDue: vi.fn(async () => [row]), retrieve: vi.fn(async () => session('expired', 'unpaid')), settle: vi.fn(async () => undefined), flag: vi.fn(async () => undefined) })
+const deps = () => ({ listDue: vi.fn(async () => [row]), retrieve: vi.fn(async () => session('expired', 'unpaid')), recoverUnbound: vi.fn(async () => 'held' as const), settle: vi.fn(async () => undefined), flag: vi.fn(async () => undefined) })
 describe('provider-verified recovery of due reservations', () => {
   it('recovers a missed expiry webhook, idempotently delegating terminal state', async () => {
     const d = deps();expect(await recoverDueGiftReservations(d)).toMatchObject({ expirySettlementAttempts: 1, held: 0 });expect(d.settle).toHaveBeenCalledWith(session('expired', 'unpaid'))

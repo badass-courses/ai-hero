@@ -3,6 +3,7 @@ import { mysqlTable } from '@/db/mysql-table'
 import { preserveQueryResultShape } from '@/db/mysql-query-client'
 import { createDatabasePoolCloser } from '@/db/pool-lifecycle'
 import { env } from '@/env.mjs'
+import { guardLegendGiftCouponPaths } from '@/lib/legend-gift-coupon-guard'
 import {
 	type MySqlDatabase,
 	type MySqlQueryResultHKT,
@@ -62,11 +63,11 @@ export const db = drizzle(pool, {
 export type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 export type DbExecutor = typeof db | DbTransaction
 
-const drizzleAdapter = DrizzleAdapter<MySqlDatabase<any, any, any>>(
+const drizzleAdapter = guardLegendGiftCouponPaths(DrizzleAdapter<MySqlDatabase<any, any, any>>(
 	db,
 	mysqlTable,
 	stripeProvider,
-)
+))
 
 /**
  * The app's Course Builder adapter. It carries Course Builder's authoritative-price

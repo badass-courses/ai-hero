@@ -10,6 +10,8 @@ export const purchaseDecision = mysqlTable(
 		decisionRef: varchar('decisionRef', { length: 500 }).notNull(),
 		creditSource: varchar('creditSource', { length: 191 }),
 		codeRef: varchar('codeRef', { length: 500 }),
+		giftClaimId: varchar('giftClaimId', { length: 191 }),
+		giftSlot: int('giftSlot'),
 		// The current checkout contract does not carry basis; never invent it.
 		basis: varchar('basis', { length: 191 }),
 		restriction: varchar('restriction', { length: 16 }).notNull(),

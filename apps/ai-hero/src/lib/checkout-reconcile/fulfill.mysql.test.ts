@@ -347,6 +347,7 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 		const ledgerMigration = await readFile(new URL('../../db/migrations/20261010_ai_hero_purchase_decision.sql', import.meta.url), 'utf8')
 		await pool.query(ledgerMigration)
 		await pool.query(ledgerMigration)
+		await pool.query(await readFile(new URL('../../db/migrations/20261012_ai_hero_gift_claim_evidence.sql', import.meta.url), 'utf8'))
 
 		database = drizzle(pool, { schema, mode: 'planetscale' }) as unknown as MySqlDatabase<any, any, typeof schema>
 		adapter = DrizzleAdapter<MySqlDatabase<any, any, typeof schema>>(
