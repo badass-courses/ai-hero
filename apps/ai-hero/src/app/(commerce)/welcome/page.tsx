@@ -197,7 +197,7 @@ const Welcome = async (props: {
 					checkoutSessionId={searchParams.buyPathId ?? buyPath?.buyPathId}
 					purchaseWasPolled={searchParams.buyPathWaited === '1'}
 				/>
-				<div className="motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300 [&_main]:py-0 [&_main]:items-stretch [&_main>div]:max-w-none [&_img]:h-28 [&_img]:w-28">
+				<div className="flex flex-col gap-8 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300 [&_main]:py-0 [&_main]:items-stretch [&_main>div]:max-w-none [&_img]:h-28 [&_img]:w-28">
 					<PostPurchaseDiscordAccess isDiscordConnected={isDiscordConnected} />
 					<WelcomePage
 						product={product}

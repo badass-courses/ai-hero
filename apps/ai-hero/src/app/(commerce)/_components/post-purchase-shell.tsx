@@ -72,7 +72,7 @@ export function PostPurchaseShell({
 					{step === 'failed' && (
 						<Alert>
 							<AlertTitle>
-								<h1 ref={heading} tabIndex={-1} className={TYPE.panelTitle}>
+								<h1 ref={heading} tabIndex={-1} className={`${TYPE.panelTitle} outline-none`}>
 									Setup needs a hand
 								</h1>
 							</AlertTitle>

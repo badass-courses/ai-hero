@@ -16,6 +16,7 @@ describe('post-purchase shell', () => {
 		expect(html).toContain('Check again')
 		expect(html).toContain('mailto:support@aihero.dev')
 		expect(html).toContain('tabindex="-1"')
+		expect(html).toContain('outline-none')
 	})
 	it('uses the same shell, live region and reduced-motion skeleton while processing', () => {
 		const html = renderToStaticMarkup(<PostPurchaseShell />)

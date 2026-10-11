@@ -25,6 +25,7 @@ export function PostPurchaseArrival({
 		const heading = marker.current?.parentElement?.querySelector('h1')
 		if (heading instanceof HTMLElement) {
 			heading.tabIndex = -1
+			heading.classList.add('outline-none')
 			heading.focus({ preventScroll: true })
 		}
 		// Fast webhook: no poller mounted, so record the two observed steps here.
