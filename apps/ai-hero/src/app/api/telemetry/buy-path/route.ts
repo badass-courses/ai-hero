@@ -32,6 +32,7 @@ function developmentLimit(key: string) {
 export async function POST(request: NextRequest) {
 	try {
 		return await ingestBuyPath(request, {
+			origin: new URL(env.COURSEBUILDER_URL).origin,
 			limit: async (key) =>
 				env.NODE_ENV === 'development'
 					? developmentLimit(key)

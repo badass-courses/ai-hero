@@ -5,6 +5,8 @@ import {
 } from './schema'
 
 type IngestDependencies = {
+	/** Trusted deployment config, not a caller-controlled Host/Forwarded header. */
+	origin?: string
 	limit: (key: string) => Promise<boolean>
 	context: (event: ClientBuyPathEvent) => Promise<BuyPathContext | null>
 	emit: (context: BuyPathContext, event: ClientBuyPathEvent) => Promise<void>
@@ -13,7 +15,7 @@ export async function ingestBuyPath(
 	request: Request,
 	dependencies: IngestDependencies,
 ) {
-	if (request.headers.get('origin') !== new URL(request.url).origin)
+	if (request.headers.get('origin') !== (dependencies.origin ?? new URL(request.url).origin))
 		return new Response(null, { status: 403, headers: { 'x-buy-path-rejection': 'origin' } })
 	if (
 		!(await dependencies.limit(

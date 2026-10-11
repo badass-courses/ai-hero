@@ -137,6 +137,15 @@ describe('readback invariants', () => {
 	})
 })
 describe('ingest route boundary', () => {
+	it('uses trusted deployment origin behind a reconstructed internal URL, not spoofed Host', async () => {
+		const deps = { origin: 'https://app.example', limit: vi.fn(async () => true), context: vi.fn(async () => null), emit: vi.fn() }
+		const internal = (origin: string) => new Request('http://localhost:3000/api/telemetry/buy-path', { method: 'POST', headers: { origin, host: 'app.example' }, body: '{' })
+		expect((await ingestBuyPath(internal('https://app.example'), deps)).status).toBe(400)
+		const foreign = await ingestBuyPath(internal('https://foreign.example'), deps)
+		expect(foreign.status).toBe(403)
+		expect(foreign.headers.get('x-buy-path-rejection')).toBe('origin')
+		expect(deps.limit).toHaveBeenCalledOnce()
+	})
 	const req = (body: unknown, origin = 'https://app.example') =>
 		new Request('https://app.example/api/telemetry/buy-path', {
 			method: 'POST',

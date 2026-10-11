@@ -17,7 +17,7 @@ vi.mock('@upstash/ratelimit', () => ({
 }))
 vi.mock('@/server/redis-client', () => ({ redis: {} }))
 vi.mock('@/env.mjs', () => ({
-	env: { NODE_ENV: 'production', NEXTAUTH_SECRET: 'test-auth-secret' },
+	env: { NODE_ENV: 'production', COURSEBUILDER_URL: 'https://app.example', NEXTAUTH_SECRET: 'test-auth-secret' },
 }))
 vi.mock('@/db', () => ({
 	courseBuilderAdapter: {
