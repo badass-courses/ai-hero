@@ -14,4 +14,3 @@ export type PurchaseWaitLogger = (
 		outcome?: 'ok' | 'failed' | 'skipped'
 	},
 ) => void
-

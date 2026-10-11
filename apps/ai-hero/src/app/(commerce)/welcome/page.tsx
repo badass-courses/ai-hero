@@ -163,7 +163,9 @@ const Welcome = async (props: {
 			productResources,
 		} = await getPurchaseDetailsForWelcome(searchParams)
 
-		const buyPath = await purchaseBuyPathContext(purchase.id).catch(() => null)
+		const buyPath = searchParams.buyPathId
+			? null
+			: await purchaseBuyPathContext(purchase.id).catch(() => null)
 		const redemptionsLeft =
 			purchase.bulkCoupon &&
 			purchase.bulkCoupon.maxUses > purchase.bulkCoupon.usedCount

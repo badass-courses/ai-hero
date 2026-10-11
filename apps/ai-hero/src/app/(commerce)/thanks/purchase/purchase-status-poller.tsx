@@ -47,8 +47,8 @@ export function PurchaseStatusPoller({ sessionId }: { sessionId: string }) {
 		if (!state.matches('ready')) return
 		const nextUrl = new URL(window.location.href)
 		nextUrl.searchParams.set('ready', '1')
-		// Keep the server-owned session/ownership handoff. Client navigation must
-		// not skip the login-link branch for a buyer without a proven session.
+		// Preserve the server-owned ownership/login-link handoff until both buyer
+		// probes clear. A paid signed-in fixture alone is not new-account proof.
 		const navigation = window.setTimeout(
 			() => window.location.replace(nextUrl.toString()),
 			window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 350,
