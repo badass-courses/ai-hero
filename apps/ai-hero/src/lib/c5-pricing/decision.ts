@@ -118,9 +118,17 @@ export function refusal(
 	}
 }
 
-/** Epoch ms at which hosted checkout stops, when the policy has ruled it. */
+/** Epoch ms after which no new checkout may be created. */
 export function checkoutStopsAt(policy: PricingPolicyData | null) {
 	const ruling = policy?.checkoutStopsAt
+	if (!ruling || !('value' in ruling)) return undefined
+	const at = Date.parse(ruling.value)
+	return Number.isFinite(at) && at > 0 ? at : undefined
+}
+
+/** The hosted session's hard deadline, distinct from the creation cutoff. */
+export function enrollmentClosesAt(policy: PricingPolicyData | null) {
+	const ruling = policy?.closesAt
 	if (!ruling || !('value' in ruling)) return undefined
 	const at = Date.parse(ruling.value)
 	return Number.isFinite(at) && at > 0 ? at : undefined
@@ -138,7 +146,7 @@ function fractionOff(amount: number, listTotal: number) {
  * - Money stays in integer cents. The engine's whole-number percents become
  *   Course Builder's 0..1 fractions: a PPP offer carries the buyer's PPP percent / 100.
  * - `priced` and `bounded` keep their kind: only `priced` is ever charged.
- * - `closesAt` is when hosted checkout stops, so no session outlives it.
+ * - `closesAt` is the enrollment deadline; the engine separately stops creation.
  */
 export function toAuthoritativeDecision(
 	result: PricingResultData,
@@ -206,7 +214,7 @@ export function toAuthoritativeDecision(
 }
 
 function withCloses(policy: PricingPolicyData | null, codeExpiresAt?: string) {
-	const policyClose = checkoutStopsAt(policy)
+	const policyClose = enrollmentClosesAt(policy)
 	const codeClose = codeExpiresAt ? Date.parse(codeExpiresAt) : undefined
 	const closesAt = codeClose === undefined ? policyClose : Math.min(codeClose, policyClose ?? Infinity)
 	return closesAt === undefined ? {} : { closesAt }

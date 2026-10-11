@@ -5,6 +5,8 @@ import { env } from "@/env.mjs";
 import { GIFT_COOKIE, openGiftCookie } from "./gift-cookie";
 import { C5_PRODUCT_ID } from "./products";
 import { noGift, readGiftCode, type GiftFact } from "./gift-slots";
+import { frontDeskData } from "./server";
+import { giftCheckoutOpen } from "./gift-window";
 
 /** Fresh every time, outside the buyer display cache. No query/body input. */
 export async function signedGiftFact(
@@ -34,8 +36,10 @@ export async function signedGiftFact(
         productId,
         now,
       );
+      const policy = code ? await frontDeskData()?.policy(productId) : undefined;
+      if (code && !policy?.ok) return { gap: 'FactsUnavailable' };
       return {
-        value: code,
+        value: code && policy?.ok && giftCheckoutOpen(code.expiresAt, policy.value.policy, now.getTime()) ? code : null,
         sourceRefs: ["gift:signed-cookie", "gift:coupon-and-ledger"],
       };
     } finally {

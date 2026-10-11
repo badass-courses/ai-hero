@@ -6,6 +6,7 @@ import { readGiftCode } from "./gift-slots";
 import { C5_PRODUCT_ID } from "./products";
 import { c5PricingClosed } from "./switch-server";
 import { frontDeskData } from "./server";
+import { giftCheckoutOpen } from "./gift-window";
 
 /** via selects public presentation only. No cookie is read or issued here. */
 export async function giftSharePresentation(slug: string | undefined) {
@@ -32,7 +33,7 @@ export async function giftSharePresentation(slug: string | undefined) {
       (await c5PricingClosed()) ||
       !policy?.ok ||
       (close && "value" in close && Date.parse(close.value) <= Date.now());
-    const available = Boolean(!closed && code && code.usesTaken < code.maxUses);
+    const available = Boolean(!closed && code && policy?.ok && code.usesTaken < code.maxUses && giftCheckoutOpen(code.expiresAt, policy.value.policy, Date.now()));
     return {
       firstName,
       available,

@@ -5,6 +5,8 @@ import type {
 } from "mysql2/promise";
 import { z } from "zod";
 
+export const MIN_CHECKOUT_TTL_SECONDS = 30 * 60;
+
 export const GiftCode = z.object({
   codeRef: z.string().min(1).max(500),
   unitPrice: z.number().int().nonnegative(),
@@ -141,7 +143,7 @@ export async function claimGiftSlot({
       expiresAt,
       Math.floor(Date.parse(code.expiresAt) / 1000),
     );
-    if (cap * 1000 - now.getTime() < 30 * 60_000) {
+    if (cap * 1000 - now.getTime() < MIN_CHECKOUT_TTL_SECONDS * 1000) {
       await connection.rollback();
       return null;
     }
