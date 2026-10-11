@@ -5,7 +5,7 @@ import { clientBuyPathSchema, type ClientBuyPathEvent } from './schema'
 /** Fire-and-forget telemetry must never interrupt checkout or navigation. */
 export function createBuyPathLogger(
 	buyPathId: string,
-	transport: (event: ClientBuyPathEvent) => void = send,
+	transport: (event: ClientBuyPathEvent) => void | Promise<unknown> = send,
 	productId?: string,
 ) {
 	const started = Date.now()
@@ -29,7 +29,7 @@ export function createBuyPathLogger(
 		})
 		if (!event.success) return
 		try {
-			transport(event.data)
+			void Promise.resolve(transport(event.data)).catch(() => {})
 		} catch {
 			/* Telemetry is not checkout authority. */
 		}
@@ -37,13 +37,17 @@ export function createBuyPathLogger(
 }
 function send(event: ClientBuyPathEvent) {
 	const body = JSON.stringify(event)
-	if (
-		navigator.sendBeacon?.(
-			'/api/telemetry/buy-path',
-			new Blob([body], { type: 'application/json' }),
+	try {
+		if (
+			navigator.sendBeacon?.(
+				'/api/telemetry/buy-path',
+				new Blob([body], { type: 'application/json' }),
+			)
 		)
-	)
-		return
+			return
+	} catch {
+		// A blocked beacon must not prevent the guarded fetch fallback.
+	}
 	void fetch('/api/telemetry/buy-path', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
