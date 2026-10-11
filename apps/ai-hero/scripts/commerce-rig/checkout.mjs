@@ -124,6 +124,33 @@ export async function payHostedCheckout(url, state, { until, cookies = [], waitF
     }
   } finally { await browser.close() }
 }
+// Observe an actual fixture pricing page, never manufacture the missing step.
+async function observePricingView(cookieHeader) {
+  const { chromium } = await import('@playwright/test')
+  const browser = await chromium.launch({ headless: true, env: { PATH: process.env.PATH, HOME: process.env.HOME } })
+  try {
+    const context = await browser.newContext()
+    await context.addCookies(cookieHeader.split(';').map(pair => {
+      const text = pair.trim(), separator = text.indexOf('=')
+      return { name: text.slice(0, separator), value: text.slice(separator + 1), url: origin }
+    }))
+    const page = await context.newPage()
+    await page.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort())
+    const accepted = page.waitForResponse(response => {
+      if (!response.url().endsWith('/api/telemetry/buy-path') || response.status() !== 204) return false
+      try { return response.request().postDataJSON()?.step === 'pricing_viewed' } catch { return false }
+    }, { timeout: 90000 }).catch(() => null)
+    // Synthetic catalog has no enrollment window. This existing view override
+    // exposes its pricing UI only; the authoritative checkout gate still runs.
+    await page.goto(`${origin}/cohorts/rig-c5?allowPurchase=true`, { waitUntil: 'domcontentloaded', timeout: 90000 })
+    if (!await accepted) throw new Error('Real fixture pricing view did not emit accepted telemetry')
+    const pre = (await context.cookies(origin)).find(cookie => cookie.name === 'buy_path_pre')
+    if (!pre || !/^pre_[a-f0-9-]{36}$/i.test(pre.value)) throw new Error('Pricing view did not establish its pre-session id')
+    console.log('ok real pricing view accepted and linked')
+    return pre.value
+  } finally { await browser.close() }
+}
+
 export async function checkout(state, key, fixtureKey, shouldComplete = false, { shortlinkSlug, keepOpen = false, testCard = 'success' } = {}) {
   const fixture = fixtureFor(fixtureKey)
   const seed = JSON.parse(await readFile(join(state, 'seed.json'), 'utf8'))
@@ -142,6 +169,7 @@ export async function checkout(state, key, fixtureKey, shouldComplete = false, {
   const auth = await fetch(`${origin}/api/auth/session`, { headers: { cookie }, signal: AbortSignal.timeout(60000) })
   const sessionUser = await auth.json()
   if (!auth.ok || sessionUser.user?.id !== fixture.userId) throw new Error('Fixture login did not resolve to the expected user')
+  if (shouldComplete && fixtureKey === 'new-buyer') cookie += `; buy_path_pre=${await observePricingView(cookie)}`
   const url = new URL(`${origin}/api/coursebuilder/checkout/stripe`)
   url.searchParams.set('productId', catalog[0].id)
   url.searchParams.set('quantity', String(fixture.quantity))
