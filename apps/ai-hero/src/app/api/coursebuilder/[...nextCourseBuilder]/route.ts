@@ -52,20 +52,43 @@ async function dispatchCashBalanceReconciliation(request: Request) {
 	)
 	if (stripeEvent.type === 'checkout.session.completed') {
 		const session = stripeEvent.data.object
-		await emitBuyPath(
-			{
-				buyPathId: session.id,
-				purchaseId: null,
-				productId: session.metadata?.productId ?? null,
-				userId: session.metadata?.userId ?? null,
-				paymentAt: stripeEvent.created * 1000,
-			},
-			'webhook_received',
-		)
+		try {
+			await emitBuyPath(
+				{
+					buyPathId: session.id,
+					purchaseId: null,
+					productId: session.metadata?.productId ?? null,
+					userId: session.metadata?.userId ?? null,
+					paymentAt: stripeEvent.created * 1000,
+				},
+				'webhook_received',
+				{
+					...(typeof session.amount_total === 'number'
+						? { amountCents: session.amount_total }
+						: {}),
+				},
+			)
+		} catch {
+			// Neither telemetry nor its error sink may block gift settlement.
+			try {
+				await log.error('buy_path.webhook_telemetry_failed', {
+					buyPathId: session.id,
+				})
+			} catch {
+				/* Best effort only. */
+			}
+		}
 	}
-	if (stripeEvent.type === 'checkout.session.expired' || stripeEvent.type === 'checkout.session.completed' || stripeEvent.type === 'checkout.session.async_payment_succeeded') {
-		const { settleGiftSession } = await import('@/lib/c5-pricing/gift-settlement')
-		await settleGiftSession(await stripe.checkout.sessions.retrieve(stripeEvent.data.object.id))
+	if (
+		stripeEvent.type === 'checkout.session.expired' ||
+		stripeEvent.type === 'checkout.session.completed' ||
+		stripeEvent.type === 'checkout.session.async_payment_succeeded'
+	) {
+		const { settleGiftSession } =
+			await import('@/lib/c5-pricing/gift-settlement')
+		await settleGiftSession(
+			await stripe.checkout.sessions.retrieve(stripeEvent.data.object.id),
+		)
 	}
 	if (!isCashBalanceEvent(stripeEvent.type)) return
 
@@ -128,7 +151,10 @@ const courseBuilderPOSTWithCashBalanceReconciliation = async (
 		try {
 			await dispatchCashBalanceReconciliation(webhookRequest)
 		} catch (error) {
-			if (error instanceof Error && error.constructor.name === 'StripeSignatureVerificationError')
+			if (
+				error instanceof Error &&
+				error.constructor.name === 'StripeSignatureVerificationError'
+			)
 				return new Response(null, { status: 400 })
 			throw error
 		}
@@ -149,7 +175,6 @@ const courseBuilderPOSTWithCashBalanceReconciliation = async (
 	}
 	if (productId && createdSessionId) {
 		try {
-			const session = await stripe.checkout.sessions.retrieve(createdSessionId)
 			await emitBuyPath(
 				{
 					buyPathId: createdSessionId,
@@ -161,9 +186,7 @@ const courseBuilderPOSTWithCashBalanceReconciliation = async (
 				'checkout_created',
 				{
 					durationMs: Date.now() - startedAt,
-					amountCents: session.amount_total ?? 0,
-					decisionKind:
-						decisionKind ?? session.metadata?.pricingCandidate ?? 'legacy',
+					decisionKind: decisionKind ?? 'legacy',
 				},
 			)
 			await emitBuyPath(
