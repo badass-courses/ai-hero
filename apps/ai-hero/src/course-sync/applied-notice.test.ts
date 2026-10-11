@@ -86,7 +86,10 @@ const notification: CourseSyncAppliedNotification = {
 	structureCounts: { sections: 6, lessons: 60, videos: 71 },
 	durationSeconds: 120,
 	mediaCount: 2,
-	workshopEditUrl: 'https://www.aihero.dev/workshops/x/edit',
+	editor: {
+		url: 'https://www.aihero.dev/workshops/x/edit',
+		label: 'Open the workshop editor',
+	},
 }
 
 function deliver() {

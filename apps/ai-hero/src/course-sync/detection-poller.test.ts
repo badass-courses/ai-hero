@@ -1516,8 +1516,10 @@ describe('course sync detection poller', () => {
 			structureCounts: { sections: 4, lessons: 39, videos: 47 },
 			durationSeconds: 31 * 60,
 			mediaCount: 4,
-			workshopEditUrl:
-				'https://www.aihero.dev/workshops/ai-coding-crash-course/edit',
+			editor: {
+				url: 'https://www.aihero.dev/workshops/ai-coding-crash-course/edit',
+				label: 'Open the workshop editor',
+			},
 		})
 		const failure = buildCourseSyncNotificationPayload({
 			kind: 'failure',
