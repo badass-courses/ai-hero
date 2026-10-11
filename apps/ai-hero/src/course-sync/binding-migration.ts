@@ -2,6 +2,7 @@ import { CourseSyncError } from './errors'
 import {
 	AI_HERO_COURSE_SYNC_BINDING_COHORT_005,
 	AI_HERO_COURSE_SYNC_BINDING_COHORT_005_V5,
+	AI_HERO_COURSE_SYNC_BINDING_COHORT_005_V6,
 	AI_HERO_COURSE_SYNC_BINDING_V2_OPERATOR,
 	AI_HERO_COURSE_SYNC_BINDING_V3_UNLISTED,
 	type CourseSyncBinding,
@@ -35,7 +36,7 @@ export function resolveStoredCourseSyncBinding(
 ): {
 	binding: CourseSyncBinding
 	migrated: boolean
-	fromContractVersion: 2 | 3 | 5 | null
+	fromContractVersion: 2 | 3 | 5 | 6 | null
 } {
 	if (sameBinding(stored, expected)) {
 		return { binding: expected, migrated: false, fromContractVersion: null }
@@ -57,6 +58,12 @@ export function resolveStoredCourseSyncBinding(
 		sameBinding(stored, AI_HERO_COURSE_SYNC_BINDING_COHORT_005_V5)
 	) {
 		return { binding: expected, migrated: true, fromContractVersion: 5 }
+	}
+	if (
+		sameBinding(expected, AI_HERO_COURSE_SYNC_BINDING_COHORT_005) &&
+		sameBinding(stored, AI_HERO_COURSE_SYNC_BINDING_COHORT_005_V6)
+	) {
+		return { binding: expected, migrated: true, fromContractVersion: 6 }
 	}
 	throw new CourseSyncError(
 		'IMMUTABLE_BINDING_CONFLICT',

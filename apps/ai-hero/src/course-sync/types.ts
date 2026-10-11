@@ -38,7 +38,7 @@ export type WorkshopCourseSyncBinding = {
 
 /** Cohort-anchored syllabus: each section is a managed workshop. */
 export type CohortCourseSyncBinding = {
-	contractVersion: 5 | 6
+	contractVersion: 5 | 6 | 7
 	bindingId: string
 	status: 'active' | 'suspended' | 'revoked'
 	sourceCourseId: string
@@ -230,8 +230,8 @@ export const AI_HERO_COURSE_SYNC_BINDING_COHORT_005_V5 = deepFreeze({
 	assetConnector: 'dropbox-shared-link',
 } as const satisfies CohortCourseSyncBinding)
 
-/** Public cohort shell; syncing never publishes its managed children. */
-export const AI_HERO_COURSE_SYNC_BINDING_COHORT_005 = deepFreeze({
+/** Exact public-cohort-shell contract, retained only for safe stored-row migration. */
+export const AI_HERO_COURSE_SYNC_BINDING_COHORT_005_V6 = deepFreeze({
 	...AI_HERO_COURSE_SYNC_BINDING_COHORT_005_V5,
 	contractVersion: 6,
 	targetContract: {
@@ -239,6 +239,16 @@ export const AI_HERO_COURSE_SYNC_BINDING_COHORT_005 = deepFreeze({
 		cohort: { type: 'cohort', state: 'published', visibility: 'public' },
 	},
 	initialApplyPolicyOverride: null,
+} as const satisfies CohortCourseSyncBinding)
+
+/** Published, unlisted cohort product; syncing never publishes managed children. */
+export const AI_HERO_COURSE_SYNC_BINDING_COHORT_005 = deepFreeze({
+	...AI_HERO_COURSE_SYNC_BINDING_COHORT_005_V6,
+	contractVersion: 7,
+	targetContract: {
+		...AI_HERO_COURSE_SYNC_BINDING_COHORT_005_V6.targetContract,
+		product: { type: 'cohort', state: 'published', visibility: 'unlisted' },
+	},
 } as const satisfies CohortCourseSyncBinding)
 
 export const COURSE_SYNC_BINDINGS = deepFreeze({
