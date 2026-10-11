@@ -520,6 +520,7 @@ describe('front-desk read hooks', () => {
 			buyer: { userId: 'test-user', sourceRefs: ['ai-hero:user:test-user'] },
 			quantity: 1,
 			facts: {
+				code: { value: null, sourceRefs: ['gift:no-valid-cookie'] },
 				order: { value: 'individual', sourceRefs: ['request:orderKind'] },
 				legend: {
 					value: 'no',

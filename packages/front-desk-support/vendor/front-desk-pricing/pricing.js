@@ -1,4 +1,4 @@
-/*! @front-desk/pricing 0.1.0 public build; front-desk commit 4a5377470ff4a6629459560aee941ced92347674; sha256 of the body below ae07e7cda85ccffba600466c3a59450eb0df6f846639725d93e453024bc47a68 */
+/*! @front-desk/pricing 0.1.0 public build; front-desk commit eb2be7561f6cff76b78dbf0c8e474c5fa999fa9e; sha256 of the body below d7636ab2b7bd3d7ac40350b3a83afa93eda2a31f9f4d8383ce956c8bd953fe09 */
 //#region ../../node_modules/.pnpm/effect@4.0.1/node_modules/effect/dist/Pipeable.js
 var pipeArguments = (self, args) => {
 	switch (args.length) {
@@ -149,6 +149,9 @@ function isBoolean(input) {
 }
 function isFunction(input) {
 	return typeof input === "function";
+}
+function isNotUndefined(input) {
+	return input !== void 0;
 }
 function isNotNullish(input) {
 	return input != null;
@@ -1035,6 +1038,7 @@ var liftThrowable = (f) => (...a) => {
 		return none();
 	}
 };
+var filter = dual(2, (self, predicate) => isNone(self) ? none() : predicate(self.value) ? some(self.value) : none());
 //#endregion
 //#region ../../node_modules/.pnpm/effect@4.0.1/node_modules/effect/dist/Context.js
 var ServiceTypeId = "~effect/Context/Service";
@@ -2789,10 +2793,25 @@ function transformEffect$1(f) {
 		transform: f
 	});
 }
+function transformOptional(f) {
+	return makeGetter({
+		_tag: "TransformOptional",
+		transform: f
+	});
+}
 function transformOptionalEffect(f) {
 	return makeGetter({
 		_tag: "TransformOptionalEffect",
 		transform: f
+	});
+}
+function omit() {
+	return transformOptional(() => none());
+}
+function withDefault$1(defaultValue) {
+	return transformOptionalEffect((o) => {
+		const filtered = filter(o, isNotUndefined);
+		return isSome(filtered) ? succeed$1(filtered) : mapEager(defaultValue, some);
 	});
 }
 function String$3() {
@@ -3188,7 +3207,7 @@ function getIndexSignatureKeys(input, parameter, options = defaultParseOptions) 
 			default: return [];
 		}
 	}
-	return go(parameterFromPropertyKey(toEncoded(parameter)));
+	return go(parameterFromPropertyKey(toEncoded$1(parameter)));
 }
 var PropertySignature = class {
 	name;
@@ -3725,7 +3744,7 @@ var Union$1 = class extends ASTNodeImpl {
 		if (typeof expected === "string") return expected;
 		if (this.types.length === 0) return "never";
 		const types = this.types.map((type) => {
-			const encoded = toEncoded(type);
+			const encoded = toEncoded$1(type);
 			switch (encoded._tag) {
 				case "Arrays": {
 					const literals = encoded.elements.filter(isLiteral);
@@ -3941,6 +3960,9 @@ function updateLastLink(encoding, f) {
 	const out = mapLink(last, f);
 	return out === last ? encoding : append(encoding.slice(0, encoding.length - 1), out);
 }
+function applyToLastLink(f) {
+	return (ast) => ast.encoding ? replaceEncoding(ast, updateLastLink(ast.encoding, f)) : ast;
+}
 function applyToSelfOrLastLinkEncodingIdempotent(f, options) {
 	function out(ast) {
 		if (ast.encoding) {
@@ -3975,6 +3997,10 @@ function annotateKey(ast, annotations) {
 		...annotations
 	}) : new Context(false, false, void 0, annotations));
 }
+var optionalKey$1 = memoizeIdempotent((ast) => {
+	return optionalKeyLastLink(replaceContext(ast, ast.context ? ast.context.isOptional === false ? new Context(true, ast.context.isMutable, ast.context.constructorDefault, ast.context.annotations) : ast.context : new Context(true, false)));
+});
+var optionalKeyLastLink = applyToLastLink(optionalKey$1);
 function decodeTo$1(from, to, transformation) {
 	return appendTransformation(from, transformation, to);
 }
@@ -4018,7 +4044,7 @@ var toType = memoizeIdempotent((ast) => {
 	}
 	return type;
 });
-var toEncoded = memoizeIdempotent((ast) => {
+var toEncoded$1 = memoizeIdempotent((ast) => {
 	return toType(flip$1(ast));
 });
 function flipEncoding(ast, encoding) {
@@ -4522,6 +4548,8 @@ function encodeUnknownSync(schema, options) {
 }
 var encodeSync = encodeUnknownSync;
 var make = make$1;
+var optionalKey = lambda((schema) => make(optionalKey$1(schema.ast), { schema }));
+var toEncoded = lambda((schema) => make(toEncoded$1(schema.ast), { schema }));
 var FlipTypeId = "~effect/Schema/flip";
 function isFlip$(schema) {
 	return hasProperty(schema, FlipTypeId) && schema[FlipTypeId] === FlipTypeId;
@@ -4610,6 +4638,18 @@ function linkDecoding() {
 		decode,
 		encode: forbiddenEncoding
 	});
+}
+function toIssueEffect(self) {
+	return catchCause(self, (cause) => failCauseSync(() => map(cause, (error) => error.issue)));
+}
+function withDecodingDefaultKey(defaultValue, options) {
+	const encode = options?.encodingStrategy === "omit" ? omit() : passthrough$1();
+	return (self) => {
+		return optionalKey(toEncoded(self)).pipe(decodeTo(self, {
+			decode: withDefault$1(toIssueEffect(defaultValue)),
+			encode
+		}));
+	};
 }
 function link() {
 	return (encodeTo, transformation) => {
@@ -4704,6 +4744,24 @@ function makeIsMinLength(minLength, minCodePoints, annotations) {
 }
 function isNonEmpty(annotations) {
 	return makeIsMinLength(1, 1, annotations);
+}
+function isMaxLength(maxLength, annotations) {
+	maxLength = normalizeCardinality(maxLength);
+	return makeFilter((input) => input.length <= maxLength, {
+		expected: `a value with a length of at most ${maxLength}`,
+		representation: {
+			id: "effect/schema/isMaxLength",
+			payload: { maxLength }
+		},
+		toJsonSchema: ({ type }) => type === "string" ? maxLength === 0 ? { maxLength } : [{ maxLength }, true] : type === "array" ? { maxItems: maxLength } : type === void 0 ? [{
+			maxLength,
+			maxItems: maxLength
+		}, true] : [{}, true],
+		toCode: () => ({ runtime: `Schema.isMaxLength(${maxLength})` }),
+		[STRUCTURAL_ANNOTATION_KEY]: true,
+		arbitraryConstraint: { maxLength },
+		...annotations
+	});
 }
 function normalizeCardinality(value) {
 	if (!globalThis.Number.isFinite(value)) throw new globalThis.RangeError(`Expected a finite number, got ${value}`);
@@ -4857,7 +4915,8 @@ var Basis = Literals([
 	"formula",
 	"ppp",
 	"team",
-	"quote"
+	"quote",
+	"code"
 ]);
 var Restriction = Literals(["none", "region"]);
 var Consent = Literal("region");
@@ -4881,6 +4940,7 @@ var pricingResultOf = (unresolved, acceptedFact) => {
 		...Candidate.fields,
 		acceptedFacts: ArraySchema(acceptedFact).annotate({ description: "Every buyer fact the engine accepted, by field name, with only its product refs; gaps are absent" }),
 		candidates: ArraySchema(Candidate).annotate({ description: "Every candidate considered, cheapest first" }),
+		codeRef: optionalKey(NonEmptyString.check(isMaxLength(500))).annotate({ description: "The gift code reference, present only when the code candidate wins" }),
 		engineVersion: String$1.annotate({ description: "The pricing engine version that priced it" }),
 		offers: ArraySchema(Candidate).annotate({ description: "Prices strictly cheaper than this one that need a consent the buyer has not given, cheapest first" }),
 		policyVersion: String$1.annotate({ description: "The policy version that priced it" }),
@@ -4960,6 +5020,19 @@ var PPPChoice = NullOr(Struct({
 	accepted: Boolean.annotate({ description: "Explicit consent to the region restriction" }),
 	percent: Percent
 })).annotate({ description: "Null when the buyer is not PPP eligible" });
+var GiftCode = Struct({
+	codeRef: NonEmptyString.check(isMaxLength(500)),
+	expiresAt: Instant,
+	maxUses: Int.check(isBetween({
+		maximum: Number.MAX_SAFE_INTEGER,
+		minimum: 1
+	})),
+	unitPrice: USDCents,
+	usesTaken: Int.check(isBetween({
+		maximum: Number.MAX_SAFE_INTEGER,
+		minimum: 0
+	}))
+});
 var BuyerFacts = Struct({
 	alumni: fact(Literals([
 		"none",
@@ -4967,6 +5040,10 @@ var BuyerFacts = Struct({
 		"c4",
 		"both"
 	])),
+	code: fact(NullOr(GiftCode)).pipe(withDecodingDefaultKey(succeed$1({
+		sourceRefs: [],
+		value: null
+	}))),
 	credit: fact(Credit),
 	creditUse: fact(Literals([
 		"available",
@@ -4990,7 +5067,7 @@ var Product = Struct({
 //#region src/engine/price.ts
 var QUOTE_RULE = "quote";
 var byText = (left, right) => left < right ? -1 : Number(left > right);
-var compareBy = (rank) => (left, right) => left.amount - right.amount || Number(left.restriction !== "none") - Number(right.restriction !== "none") || Number(left.creditSource !== null) - Number(right.creditSource !== null) || rank.indexOf(left.rule) - rank.indexOf(right.rule) || left.quoteRefs.join(",").localeCompare(right.quoteRefs.join(",")) || byText(left.rule, right.rule) || byText(left.basis, right.basis) || byText(left.creditSource ?? "", right.creditSource ?? "") || (left.unitAmount ?? -1) - (right.unitAmount ?? -1) || byText(left.consent ?? "", right.consent ?? "") || byText(left.quoteRefs.join("\n"), right.quoteRefs.join("\n"));
+var compareBy = (rank) => (left, right) => left.amount - right.amount || Number(left.restriction !== "none") - Number(right.restriction !== "none") || Number(left.creditSource !== null) - Number(right.creditSource !== null) || rank.indexOf(left.rule) - rank.indexOf(right.rule) || left.quoteRefs.join(",").localeCompare(right.quoteRefs.join(",")) || byText(left.rule, right.rule) || byText(left.basis, right.basis) || byText(left.creditSource ?? "", right.creditSource ?? "") || (left.unitAmount ?? -1) - (right.unitAmount ?? -1) || byText(left.consent ?? "", right.consent ?? "") || byText(left.quoteRefs.join("\n"), right.quoteRefs.join("\n")) || byText(left.codeRef ?? "", right.codeRef ?? "");
 var pricer = (rules, rank) => (input, consented, quotes) => {
 	const compare = compareBy(rank);
 	const offered = [...rules.flatMap((rule) => rule.candidates(input)), ...quotes];
@@ -5043,6 +5120,7 @@ var cohort005Rank = [
 	"alumni",
 	"new",
 	"ppp",
+	"giftCode",
 	QUOTE_RULE
 ];
 var formula = (rule, base, credit) => {
@@ -5111,6 +5189,25 @@ var cohort005Rules = [
 		},
 		id: "ppp",
 		order: "individual"
+	},
+	{
+		candidates: ({ buyer, quantity, now }) => {
+			const { code } = buyer;
+			if (buyer.order !== "individual" || quantity !== 1 || code === null || code.usesTaken >= code.maxUses || toEpochMillis(now) >= toEpochMillis(code.expiresAt)) return [];
+			return [{
+				amount: code.unitPrice,
+				basis: "code",
+				codeRef: code.codeRef,
+				consent: null,
+				creditSource: null,
+				quoteRefs: [],
+				restriction: "none",
+				rule: "giftCode",
+				unitAmount: code.unitPrice
+			}];
+		},
+		id: "giftCode",
+		order: "individual"
 	}
 ];
 var resolveTerms = (policy) => {
@@ -5143,6 +5240,7 @@ var resolveTerms = (policy) => {
 var gaps = (facts) => Object.entries(facts).flatMap(([field, fact]) => "gap" in fact ? [reason("fact-unknown", `${field}: ${fact.gap}`)] : []);
 var teamBuyer = (seats) => ({
 	alumni: false,
+	code: null,
 	credit: null,
 	legend: false,
 	order: "team",
@@ -5150,6 +5248,7 @@ var teamBuyer = (seats) => ({
 	seats
 });
 var INDIVIDUAL_FACTS = [
+	"code",
 	"alumni",
 	"credit",
 	"creditUse",
@@ -5158,6 +5257,7 @@ var INDIVIDUAL_FACTS = [
 ];
 var UNLOCKS = {
 	alumni: "alumni",
+	code: "code",
 	credit: "credit",
 	creditUse: "credit",
 	legend: "legend",
@@ -5165,6 +5265,7 @@ var UNLOCKS = {
 };
 var needs = (field, terms) => ({
 	alumni: "C3 or C4 purchase history",
+	code: "gift code eligibility and remaining uses",
 	credit: "the settled Crash Course payment",
 	creditUse: "whether the Crash Course credit is already spent",
 	legend: `ownership checked against legend manifest ${terms.legend.manifest.version}`,
@@ -5178,6 +5279,7 @@ var legendAgainstManifest = (legend, manifest) => {
 };
 var ACCEPTABLE = [
 	"alumni",
+	"code",
 	"credit",
 	"creditUse",
 	"existingSeats",
@@ -5192,7 +5294,7 @@ var acceptedFactsOf = (facts, manifest) => {
 	};
 	return ACCEPTABLE.flatMap((fact) => {
 		const value = checked[fact];
-		return "gap" in value ? [] : [{
+		return "gap" in value || fact === "code" && value.value === null ? [] : [{
 			fact,
 			productRefs: [...new Set(value.sourceRefs.filter((ref) => ref.startsWith(LEGEND_PRODUCT_REF)))].toSorted()
 		}];
@@ -5203,7 +5305,7 @@ var resolveIndividual = (reported, terms, quantity) => {
 		...reported,
 		legend: legendAgainstManifest(reported.legend, terms.legend.manifest)
 	};
-	const { alumni, credit, creditUse, legend, ppp } = facts;
+	const { code, alumni, credit, creditUse, legend, ppp } = facts;
 	if (quantity !== 1) return { held: [reason("individual-quantity", `${quantity} seats need a team order`)] };
 	if (isKnown(credit) && credit.value !== null && !terms.creditAmounts.includes(credit.value.paid)) return { held: [reason("credit-amount-unrecognized", `${credit.value.paid} cents`)] };
 	const creditClosed = isKnown(credit) && credit.value === null || isKnown(creditUse) && creditUse.value === "spent";
@@ -5221,6 +5323,7 @@ var resolveIndividual = (reported, terms, quantity) => {
 		facts,
 		gaps: gaps({
 			alumni,
+			code,
 			credit,
 			creditUse,
 			legend,
@@ -5228,6 +5331,7 @@ var resolveIndividual = (reported, terms, quantity) => {
 		}),
 		resolved: {
 			alumni: isKnown(alumni) && alumni.value !== "none",
+			code: isKnown(facts.code) ? facts.code.value : null,
 			credit: isKnown(credit) && isKnown(creditUse) && creditUse.value !== "spent" ? credit.value : null,
 			legend: isKnown(legend) && legend.value === "verified",
 			order: "individual",
@@ -5260,12 +5364,14 @@ var lowestReachable = (candidate, facts, terms, phase) => {
 	const newBase = percentOff(terms.list, phase === "early" ? terms.newBuyerEarlyPercent : 0);
 	return {
 		alumni: minus(alumniBase, credit),
+		code: 0,
 		credit: minus(alumniPossible ? Math.min(newBase, alumniBase) : newBase, credit),
 		legend: minus(percentOff(terms.list, terms.legend.percent), terms.legend.credit),
 		ppp: 0
 	}[candidate];
 };
 var couldLower = (unresolved, facts, context) => facts === null ? [] : unresolved.filter(({ candidate }) => lowestReachable(candidate, facts, context.terms, context.phase) < context.selected);
+var withoutCodeRef = ({ codeRef: _codeRef, ...candidate }) => candidate;
 var cohort005Pricer = (rules, rank = cohort005Rank) => {
 	const select = {
 		individual: pricer(rules.filter((rule) => rule.order === "individual"), rank),
@@ -5304,6 +5410,7 @@ var cohort005Pricer = (rules, rank = cohort005Rank) => {
 		const { ppp } = buyer.resolved;
 		const { candidates, chosen: selected, offers } = select[buyer.resolved.order]({
 			buyer: buyer.resolved,
+			now,
 			phase,
 			quantity,
 			terms: terms.resolved
@@ -5316,9 +5423,9 @@ var cohort005Pricer = (rules, rank = cohort005Rank) => {
 		const decided = {
 			...selected,
 			acceptedFacts: acceptedFactsOf(buyerFacts, terms.resolved.legend.manifest),
-			candidates,
+			candidates: candidates.map(withoutCodeRef),
 			engineVersion: ENGINE_VERSION$1,
-			offers,
+			offers: offers.map(withoutCodeRef),
 			policyVersion: policy.version,
 			reasons: [
 				reason(phase === "early" ? "early-window" : "standard-window"),
@@ -5350,9 +5457,11 @@ Literals([
 	"alumni",
 	"new",
 	"ppp",
-	"quote"
+	"quote",
+	"giftCode"
 ]);
 var BuyerFactField = Literals([
+	"code",
 	"alumni",
 	"credit",
 	"creditUse",
@@ -5361,6 +5470,7 @@ var BuyerFactField = Literals([
 ]);
 var PricingResult = pricingResultOf(Struct({
 	candidate: Literals([
+		"code",
 		"alumni",
 		"credit",
 		"legend",
@@ -5371,6 +5481,7 @@ var PricingResult = pricingResultOf(Struct({
 	needs: String$1.annotate({ description: "What would resolve the fact, never customer text" })
 }), Struct({
 	fact: Literals([
+		"code",
 		"alumni",
 		"credit",
 		"creditUse",

@@ -3,7 +3,6 @@ import 'server-only'
 import { hooks as frontDeskHooks } from '@/app/api/front-desk/hooks'
 import { db } from '@/db'
 import { prices, purchases, users } from '@/db/schema'
-import { env } from '@/env.mjs'
 import { log } from '@/server/logger'
 import { ENGINE_VERSION, price } from '@ai-hero/front-desk-support/pricing'
 import { and, eq } from 'drizzle-orm'
@@ -11,30 +10,17 @@ import { and, eq } from 'drizzle-orm'
 import { getPPPDiscountPercent } from '@coursebuilder/commerce/parity-coupon'
 import type { AuthoritativePriceRequest } from '@coursebuilder/core/schemas'
 
-import { createFrontDeskData, type FrontDeskData } from './front-desk-data'
+import { frontDeskData } from './front-desk-client'
+export { frontDeskData } from './front-desk-client'
 import { createC5AuthoritativePrice, type BuyerRead } from './hook'
 import { holdsRestrictedPurchase } from './restricted-holder'
+import { signedGiftFact } from './gift-server'
 import { c5PricingClosed } from './switch-server'
 import { trustedPricingCountry } from './trusted-country'
 
 /** Display reuses a buyer's facts this long; checkout always reads fresh. */
 const DISPLAY_FACTS_TTL_MS = 60_000
 const DISPLAY_FACTS_LIMIT = 500
-
-let data: FrontDeskData | null | undefined
-/** front-desk's policy and quote reads, or null until it is configured. */
-export function frontDeskData(): FrontDeskData | null {
-	if (data === undefined)
-		data =
-			env.FRONT_DESK_URL && env.FRONT_DESK_PRICING_TOKEN
-				? createFrontDeskData({
-						url: env.FRONT_DESK_URL,
-						pricingToken: env.FRONT_DESK_PRICING_TOKEN,
-						quotesToken: env.FRONT_DESK_QUOTES_TOKEN,
-					})
-				: null
-	return data
-}
 
 async function singleActivePrice(productId: string) {
 	const rows = await db
@@ -132,6 +118,7 @@ function buyerFor(input: {
 }
 
 const decide = createC5AuthoritativePrice({
+	code: signedGiftFact,
 	policy: async (productId) =>
 		frontDeskData()?.policy(productId) ?? {
 			ok: false,

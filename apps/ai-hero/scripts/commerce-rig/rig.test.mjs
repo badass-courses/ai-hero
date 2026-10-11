@@ -8,8 +8,17 @@ import { spawnSync } from 'node:child_process'
 import { getTableColumns } from 'drizzle-orm'
 import { applyCatalogOverlay, catalog, fixtures, fixtureFor } from './fixtures.mjs'
 import { assertDatabase, assertTestKey, assertTestObject, cleanEnv, databaseUrl, origin, privateWrite, readCatalogOverlay, readPrivateKey, publicSession } from './safety.mjs'
-import { provesAccess } from './checkout.mjs'
+import { provesAccess, payHostedCheckout } from './checkout.mjs'
 import { tables } from './seed.mjs'
+
+test('the owned listener forwards reservation expiry and dispute lifecycle events', async () => {
+  const source = await readFile(new URL('./serve.mjs', import.meta.url), 'utf8')
+  for (const event of ['checkout.session.expired', 'charge.dispute.created', 'charge.dispute.closed']) assert.ok(source.includes(event))
+})
+
+test('unknown payment-card scenarios fail before opening a browser', async () => {
+  await assert.rejects(payHostedCheckout('https://checkout.stripe.com/test', {}, { testCard: 'unknown' }), /Unknown Stripe test-card scenario/)
+})
 import { missingSchema, overlay, splitStatements } from './schema.mjs'
 import { remember, archiveRun } from './stripe-state.mjs'
 import { startLifecycle } from './lifecycle.mjs'

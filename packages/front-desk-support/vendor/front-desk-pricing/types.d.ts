@@ -66,7 +66,15 @@ export type FactData<A> = {
 } | {
     readonly gap: FactGapData;
 };
+export interface CodeData {
+    readonly codeRef: string;
+    readonly unitPrice: number;
+    readonly maxUses: number;
+    readonly usesTaken: number;
+    readonly expiresAt: string;
+}
 export interface BuyerFactsData {
+    readonly code?: FactData<CodeData | null>;
     readonly alumni: FactData<"none" | "c3" | "c4" | "both">;
     readonly credit: FactData<{
         readonly paid: number;
@@ -93,7 +101,7 @@ export interface ReasonData {
 }
 export interface CandidateData {
     readonly amount: number;
-    readonly basis: "formula" | "ppp" | "team" | "quote";
+    readonly basis: "formula" | "ppp" | "team" | "quote" | "code";
     readonly consent: "region" | null;
     readonly creditSource: string | null;
     readonly quoteRefs: readonly string[];
@@ -102,16 +110,17 @@ export interface CandidateData {
     readonly unitAmount: number | null;
 }
 export interface UnresolvedData {
-    readonly candidate: "alumni" | "credit" | "legend" | "ppp";
-    readonly fact: "alumni" | "credit" | "creditUse" | "legend" | "ppp";
+    readonly candidate: "code" | "alumni" | "credit" | "legend" | "ppp";
+    readonly fact: "code" | "alumni" | "credit" | "creditUse" | "legend" | "ppp";
     readonly gap: FactGapData;
     readonly needs: string;
 }
 export interface AcceptedFactData {
-    readonly fact: "alumni" | "credit" | "creditUse" | "existingSeats" | "legend" | "order" | "ppp";
+    readonly fact: "code" | "alumni" | "credit" | "creditUse" | "existingSeats" | "legend" | "order" | "ppp";
     readonly productRefs: readonly string[];
 }
 export interface PricedData extends CandidateData {
+    readonly codeRef?: string;
     readonly acceptedFacts: readonly AcceptedFactData[];
     readonly candidates: readonly CandidateData[];
     readonly engineVersion: string;
