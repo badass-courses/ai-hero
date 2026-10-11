@@ -403,7 +403,7 @@ function mismatch(
 	if (!decision) return 'null decision'
 	if (decision.kind !== expected.kind)
 		return `kind ${decision.kind}, expected ${expected.kind}`
-	if (decision.closesAt !== W.checkoutStops) return `closesAt ${decision.closesAt}`
+	if (decision.closesAt !== W.closes) return `closesAt ${decision.closesAt}`
 	if (decision.policyVersion !== SYNTHETIC_POLICY_VERSION) return 'policyVersion'
 	if (expected.kind !== 'priced') {
 		return decision.amountCents === 0 || expected.kind === 'bounded'

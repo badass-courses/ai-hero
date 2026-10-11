@@ -22,7 +22,9 @@ const REF_PREFIX = 'c5d1'
 export function encodeDecisionRef(
 	hash: string,
 	creditSource: string | null,
+	codeRef?: string,
 ): string {
+	if (codeRef) return ['c5d2', hash, '-', giftCodeDigest(codeRef)].join('.')
 	return [
 		REF_PREFIX,
 		hash,
@@ -32,8 +34,10 @@ export function encodeDecisionRef(
 
 export function decodeDecisionRef(
 	ref: string,
-): { hash: string; creditSource: string | null } | null {
+): { hash: string; creditSource: string | null; codeDigest?: string } | null {
 	const parts = ref.split('.')
+	if (parts.length === 4 && parts[0] === 'c5d2' && /^[0-9a-f]{16}$/.test(parts[1] ?? '') && parts[2] === '-' && /^[0-9a-f]{64}$/.test(parts[3] ?? ''))
+		return { hash: parts[1] ?? '', creditSource: null, codeDigest: parts[3] }
 	if (parts.length !== 3 || parts[0] !== REF_PREFIX) return null
 	const [, hash, credit] = parts
 	if (!hash || !/^[0-9a-f]{16}$/.test(hash) || !credit) return null
@@ -61,6 +65,8 @@ function canonical(value: unknown): string {
 	return JSON.stringify(value) ?? 'null'
 }
 
+export const giftCodeDigest = (codeRef: string) => createHash('sha256').update(codeRef).digest('hex')
+
 const shortHash = (value: unknown) =>
 	createHash('sha256').update(canonical(value)).digest('hex').slice(0, 16)
 
@@ -73,6 +79,7 @@ export type DecisionContext = {
 	readonly engineVersion: string
 	/** Whole-number PPP percent from the buyer's trusted country, if eligible. */
 	readonly pppPercent: number | null
+	readonly codeExpiresAt?: string
 	/** App reasons added to the engine's reasons. */
 	readonly appReasons?: readonly string[]
 }
@@ -111,9 +118,17 @@ export function refusal(
 	}
 }
 
-/** Epoch ms at which hosted checkout stops, when the policy has ruled it. */
+/** Epoch ms after which no new checkout may be created. */
 export function checkoutStopsAt(policy: PricingPolicyData | null) {
 	const ruling = policy?.checkoutStopsAt
+	if (!ruling || !('value' in ruling)) return undefined
+	const at = Date.parse(ruling.value)
+	return Number.isFinite(at) && at > 0 ? at : undefined
+}
+
+/** The hosted session's hard deadline, distinct from the creation cutoff. */
+export function enrollmentClosesAt(policy: PricingPolicyData | null) {
+	const ruling = policy?.closesAt
 	if (!ruling || !('value' in ruling)) return undefined
 	const at = Date.parse(ruling.value)
 	return Number.isFinite(at) && at > 0 ? at : undefined
@@ -131,7 +146,7 @@ function fractionOff(amount: number, listTotal: number) {
  * - Money stays in integer cents. The engine's whole-number percents become
  *   Course Builder's 0..1 fractions: a PPP offer carries the buyer's PPP percent / 100.
  * - `priced` and `bounded` keep their kind: only `priced` is ever charged.
- * - `closesAt` is when hosted checkout stops, so no session outlives it.
+ * - `closesAt` is the enrollment deadline; the engine separately stops creation.
  */
 export function toAuthoritativeDecision(
 	result: PricingResultData,
@@ -155,6 +170,7 @@ export function toAuthoritativeDecision(
 			...withCloses(context.policy),
 		}
 	}
+	const codeRef = 'codeRef' in result && typeof result.codeRef === 'string' ? result.codeRef : undefined
 	const listTotal = (context.policy?.list ?? 0) * context.quantity
 	const unitAmountCents =
 		result.unitAmount ?? Math.round(result.amount / context.quantity)
@@ -174,6 +190,7 @@ export function toAuthoritativeDecision(
 		rule: result.rule,
 		basis: result.basis,
 		creditSource: result.creditSource,
+		codeRef,
 		quoteRefs: result.quoteRefs,
 		offers,
 		productId: context.productId,
@@ -189,15 +206,17 @@ export function toAuthoritativeDecision(
 		restriction: result.restriction,
 		offers,
 		reasons,
-		decisionRef: encodeDecisionRef(shortHash(core), result.creditSource),
+		decisionRef: encodeDecisionRef(shortHash(core), result.creditSource, codeRef),
 		engineVersion: result.engineVersion,
 		policyVersion: result.policyVersion,
-		...withCloses(context.policy),
+		...withCloses(context.policy, codeRef ? context.codeExpiresAt : undefined),
 	}
 }
 
-function withCloses(policy: PricingPolicyData | null) {
-	const closesAt = checkoutStopsAt(policy)
+function withCloses(policy: PricingPolicyData | null, codeExpiresAt?: string) {
+	const policyClose = enrollmentClosesAt(policy)
+	const codeClose = codeExpiresAt ? Date.parse(codeExpiresAt) : undefined
+	const closesAt = codeClose === undefined ? policyClose : Math.min(codeClose, policyClose ?? Infinity)
 	return closesAt === undefined ? {} : { closesAt }
 }
 

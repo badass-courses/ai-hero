@@ -131,7 +131,7 @@ describe('createC5AuthoritativePrice', () => {
 			restriction: 'none',
 			offers: [],
 			policyVersion: SYNTHETIC_POLICY_VERSION,
-			closesAt: Date.parse(SYNTHETIC_WINDOWS.checkoutStopsAt),
+			closesAt: Date.parse(SYNTHETIC_WINDOWS.closesAt),
 		})
 		expect(decodeDecisionRef(decision!.decisionRef)).toMatchObject({
 			creditSource: null,
@@ -169,6 +169,14 @@ describe('createC5AuthoritativePrice', () => {
 
 	it('closes C5 on the kill switch instead of falling back to list pricing', async () => {
 		deps = makeDeps({ disabled: () => true })
+		const decision = await ask()
+		expect(decision).toMatchObject({ kind: 'closed' })
+		expect(decision!.reasons).toEqual([APP_REASONS.killSwitch])
+		expect(deps.policy).not.toHaveBeenCalled()
+	})
+
+	it('closes C5 when the async switch resolves closed', async () => {
+		deps = makeDeps({ disabled: async () => true })
 		const decision = await ask()
 		expect(decision).toMatchObject({ kind: 'closed' })
 		expect(decision!.reasons).toEqual([APP_REASONS.killSwitch])

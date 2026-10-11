@@ -3,6 +3,7 @@ import type { Environment } from './flags-env'
 
 export const COMMERCE_ENABLED = 'commerce-enabled'
 export const SHOW_TEAM_PRICING = 'show-team-pricing'
+export const C5_PRICING_ENABLED = 'c5-pricing-enabled'
 
 export type FlagConfig = {
 	key: string
@@ -13,7 +14,9 @@ export type FlagConfig = {
 }
 
 export const FLAGS: Record<
-	typeof COMMERCE_ENABLED | typeof SHOW_TEAM_PRICING,
+	| typeof COMMERCE_ENABLED
+	| typeof SHOW_TEAM_PRICING
+	| typeof C5_PRICING_ENABLED,
 	FlagConfig
 > = {
 	[COMMERCE_ENABLED]: {
@@ -44,6 +47,22 @@ export const FLAGS: Record<
 		options: [
 			{ value: false, label: 'Hidden' },
 			{ value: true, label: 'Visible' },
+		],
+	},
+	[C5_PRICING_ENABLED]: {
+		key: C5_PRICING_ENABLED,
+		name: 'Cohort 5 pricing enabled',
+		description:
+			'Opens Cohort 5 display, checkout and team invoices. Off, C5 is closed. The AIH_C5_PRICING_DISABLED env override closes C5 whatever this says.',
+		defaultValue: {
+			production: false, // Closed until an admin opens it
+			preview: false, // Closed in preview for safety
+			development: true, // Open in dev for local testing
+			test: false, // Closed in test unless explicitly enabled
+		},
+		options: [
+			{ value: false, label: 'Closed' },
+			{ value: true, label: 'Open' },
 		],
 	},
 } as const

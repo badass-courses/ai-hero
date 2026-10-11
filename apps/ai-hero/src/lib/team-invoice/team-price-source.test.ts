@@ -126,6 +126,11 @@ describe('enginePriceSource', () => {
 		],
 		['a list price the policy does not know', { list: 99_999 }, 'engine-held'],
 		['the kill switch on', { disabled: () => true }, 'engine-disabled'],
+		[
+			'the async switch closed',
+			{ disabled: async () => true },
+			'engine-disabled',
+		],
 	])('is unavailable with %s', async (_, over, reason) => {
 		const { list, ...deps } = over as { list?: number } & Record<
 			string,

@@ -13,6 +13,9 @@ import {
 	summarizeCourseSyncPlanChanges,
 	assertManagedChildRelations,
 	chunkCourseSyncWrites,
+	courseSyncActivationFailureSummary,
+	courseSyncActivationRelations,
+	courseSyncPriorLiveRelation,
 	courseSyncAnchorTreeParentIds,
 	courseSyncRollbackPointer,
 	evaluateCourseSyncBoundedAutoApply,
@@ -127,6 +130,67 @@ function section(position: number) {
 }
 
 describe('course sync persistence invariants', () => {
+	it('requires the former live parent tombstone for a cross-parent move', () => {
+		const fixture = activationFixture()
+		const item = fixture.plan.resources[0]!
+		item.previousParentResourceId = 'previous-parent'
+		item.previousPosition = 9
+		const now = new Date('2026-09-26T00:00:00.123Z')
+		fixture.expectedDeletedAtByResource.set(item.targetResourceId, now)
+		const previous = { ...fixture.relations[0]!, resourceOfId: 'previous-parent', position: 9, deletedAt: now }
+		const verify = (rows: typeof fixture.relations) => verifyCourseSyncActivation(fixture.plan, fixture.receipts,
+			fixture.resources, rows, fixture.expectedDeletedAtByResource)
+		expect(courseSyncActivationRelations(fixture.plan)).toHaveLength(2)
+		expect(verify([...fixture.relations, previous])).toEqual({ ok: true })
+		expect(verify(fixture.relations)).toMatchObject({ reason: 'tombstone_mismatch' })
+		expect(verify([...fixture.relations, { ...previous, deletedAt: null }])).toMatchObject({ reason: 'relation_count_mismatch' })
+		expect(verify([...fixture.relations, { ...previous, deletedAt: new Date('2020-01-01') }])).toMatchObject({ reason: 'tombstone_mismatch' })
+		item.previousDetached = true
+		expect(courseSyncPriorLiveRelation(item)).toBeNull()
+		expect(courseSyncActivationRelations(fixture.plan)).toHaveLength(1)
+		item.previousDetached = false
+		item.previousParentResourceId = null
+		expect(courseSyncPriorLiveRelation(item)).toBeNull()
+		item.previousParentResourceId = 'previous-parent'
+		item.action = 'create'
+		expect(courseSyncPriorLiveRelation(item)).toBeNull()
+	})
+
+	it.each(['resource_count_mismatch', 'resource_or_receipt_missing', 'pointer_mismatch', 'fields_mismatch',
+		'relation_count_mismatch', 'relation_mismatch', 'tombstone_mismatch', 'unexpected_tombstone'] as const)
+		('reports %s using only check names and numeric counts', (check) => {
+			const fixture = activationFixture(check === 'tombstone_mismatch')
+			let resources = fixture.resources
+			let receipts = fixture.receipts
+			let relations = fixture.relations
+			switch (check) {
+				case 'resource_count_mismatch': resources = []; break
+				case 'resource_or_receipt_missing': receipts = []; break
+				case 'pointer_mismatch': resources = [{ ...resources[0]!, currentVersionId: 'wrong' }]; break
+				case 'fields_mismatch': resources = [{ ...resources[0]!, fields: { title: 'never-log-this-content' } }]; break
+				case 'relation_count_mismatch': relations = []; break
+				case 'relation_mismatch': relations = [{ ...relations[0]!, position: 99 }]; break
+				case 'tombstone_mismatch': relations = [{ ...relations[0]!, deletedAt: new Date('2020-01-01') }]; break
+				case 'unexpected_tombstone': {
+					const now = new Date('2026-09-26T00:00:00.123Z')
+					fixture.expectedDeletedAtByResource.set(relations[0]!.resourceId, now)
+					relations = [...relations, { ...relations[0]!, resourceOfId: 'other-parent', deletedAt: now }]
+					break
+				}
+			}
+			const failure = verifyCourseSyncActivation(fixture.plan, receipts, resources, relations, fixture.expectedDeletedAtByResource)
+			expect(failure).toMatchObject({ ok: false, reason: check })
+			if (failure.ok) throw new Error('Expected verification failure')
+			const summary = courseSyncActivationFailureSummary({ plan: fixture.plan, receipts, resources, relations,
+				expectedDeletedAtByResource: fixture.expectedDeletedAtByResource, failure })
+			expect(Object.keys(summary).sort()).toEqual(['check', 'counts'])
+			expect(summary.check).toBe(check)
+			expect(Object.values(summary.counts).every(value => typeof value === 'number')).toBe(true)
+			expect(JSON.stringify(summary)).not.toContain('never-log-this-content')
+			expect(JSON.stringify(summary)).not.toContain('Activation fixture')
+			expect(JSON.stringify(summary)).not.toContain(fixture.plan.resources[0]!.targetResourceId)
+		})
+
 	it('verifies activation with a detached item having one current dead relation and no live one', () => {
 		const fixture = activationFixture(true)
 		expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources, fixture.relations, fixture.expectedDeletedAtByResource)).toEqual({ ok: true })

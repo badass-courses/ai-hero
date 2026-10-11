@@ -92,7 +92,7 @@ export async function POST(
 				try {
 					if (
 						(await getCourseSyncRunBinding(rolledBack.runId))
-							.contractVersion === 5
+							.contractVersion !== 4
 					) {
 						const delivery = await deliverCourseSyncEntitlementSync({
 							controlPlaneRunId: rolledBack.runId,

@@ -72,11 +72,38 @@ export const c5PurchaseDecision = inngest.createFunction(
 				store: drizzleC5DecisionStore(),
 				getCheckoutSession: async (id) => {
 					const session = await stripe().checkout.sessions.retrieve(id)
+					const { settleGiftSession } = await import('@/lib/c5-pricing/gift-settlement')
+					await settleGiftSession(session)
 					return { id: session.id, metadata: session.metadata ?? null }
 				},
 				now: () => new Date(),
 			}),
 		)
+		if (result.status === 'conflict') {
+			await log.error('c5.purchase.decision_conflict', {
+				purchaseId,
+				checkoutSessionId,
+				expectedRef: result.expectedRef,
+				storedRef: result.storedRef,
+			})
+			await step.run('alert ops: C5 decision conflict', async () => {
+				if (!slackProvider.defaultChannelId) return 'no-channel'
+				await slackProvider.sendNotification({
+					channel: slackProvider.defaultChannelId,
+					text: 'C5 purchase decision conflict. Original ledger row preserved.',
+					attachments: [
+						{
+							fallback: `Purchase ${purchaseId}: decision conflict`,
+							color: '#d92d20',
+							title: 'C5 purchase decision conflict',
+							text: `Purchase \`${purchaseId}\` has a different decisionRef. The original ledger row was not overwritten. Review the checkout and ledger; fulfillment was not reversed.`,
+						},
+					],
+				})
+				return 'sent'
+			})
+			return result
+		}
 		if (!('verdict' in result)) return result
 
 		await log.info('c5.purchase.decision', {

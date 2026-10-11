@@ -35,7 +35,7 @@ describe('course sync OpenAPI contract', () => {
 		const [workshopBinding, cohortBinding] =
 			document.components.schemas.SyncBinding.oneOf
 		expect(workshopBinding.properties.contractVersion).toEqual({ const: 4 })
-		expect(cohortBinding.properties.contractVersion).toEqual({ const: 5 })
+		expect(cohortBinding.properties.contractVersion).toEqual({ enum: [5, 6, 7] })
 		expect(
 			cohortBinding.properties.target.properties.sectionMappingPolicy,
 		).toEqual({ const: 'sections-as-cohort-workshops' })

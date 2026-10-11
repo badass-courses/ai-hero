@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process'
 import { getTableColumns } from 'drizzle-orm'
 import { applyCatalogOverlay, catalog, fixtures, fixtureFor } from './fixtures.mjs'
 import { assertDatabase, assertTestKey, assertTestObject, cleanEnv, databaseUrl, origin, privateWrite, readCatalogOverlay, readPrivateKey, publicSession } from './safety.mjs'
-import { provesAccess, checkoutHandoffRefusal } from './checkout.mjs'
+import { provesAccess, checkoutHandoffRefusal, payHostedCheckout } from './checkout.mjs'
 
 test('provider refusal is not misdiagnosed as a login failure or persisted as a capability', () => {
   const base = 'http://127.0.0.1:3350'
@@ -20,6 +20,15 @@ test('provider refusal is not misdiagnosed as a login failure or persisted as a 
   assert.deepEqual(checkoutHandoffRefusal(handoff('invalid'), base), { classification: 'checkout-refused-before-login', checkoutHost: null })
 })
 import { tables } from './seed.mjs'
+
+test('the owned listener forwards reservation expiry and dispute lifecycle events', async () => {
+  const source = await readFile(new URL('./serve.mjs', import.meta.url), 'utf8')
+  for (const event of ['checkout.session.expired', 'charge.dispute.created', 'charge.dispute.closed']) assert.ok(source.includes(event))
+})
+
+test('unknown payment-card scenarios fail before opening a browser', async () => {
+  await assert.rejects(payHostedCheckout('https://checkout.stripe.com/test', {}, { testCard: 'unknown' }), /Unknown Stripe test-card scenario/)
+})
 import { missingSchema, overlay, splitStatements } from './schema.mjs'
 import { remember, archiveRun } from './stripe-state.mjs'
 import { startLifecycle } from './lifecycle.mjs'
@@ -159,6 +168,10 @@ test('proof requires paid, matching webhook, buyer, amount, purchase and C5 acce
   const saved = { checkoutSessionId: 'cs_test_cents', expectedTotalCents: 123456 }
   assert.equal(provesAccess(fixture, cents, decided(saved)), true)
   assert.equal(provesAccess(fixture, cents, decided(null)), true)
+  const authoritative = { ...cents, decisionRef: 'c5d1.0123456789abcdef.-' }
+  assert.equal(provesAccess(fixture, authoritative, decided(null)), false)
+  assert.equal(provesAccess(fixture, authoritative, decided({ ...saved, decisionRef: authoritative.decisionRef })), true)
+  assert.equal(provesAccess(fixture, authoritative, decided({ ...saved, decisionRef: 'different' })), false)
   // A whole-dollar total for a cents charge is the rounding bug, whatever the decision says.
   assert.equal(provesAccess(fixture, cents, decided(saved, '1235.00')), false)
   assert.equal(provesAccess(fixture, cents, decided(saved, '1235')), false)
@@ -279,5 +292,22 @@ test('front-desk stub serves only its private data, behind each route\'s own tok
     assert.deepEqual(await (await quotes({ email: ' Q@Example.test ', productId: 'product-s00zs', quantity: 2 })).json(), [{ quantity: 2, amount: 2 }])
     assert.deepEqual(await (await quotes({ email: 'other@example.test', productId: 'product-s00zs', quantity: 1 })).json(), [])
     assert.equal((await quotes({ email: 'q@example.test', productId: 'product-ma254', quantity: 1 })).status, 400)
+  } finally { server.close() }
+})
+
+test('rig Redis stand-in allows only the local C5 flag read, never writes or deployed flags', async () => {
+  const { frontDeskHandler } = await import('./front-desk-stub.mjs')
+  const { Redis } = await import('@upstash/redis')
+  const server = http.createServer(frontDeskHandler({ policy: { version: 'synthetic@1' } }, { pricing: 'p', quotes: 'q' }))
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const base = `http://127.0.0.1:${server.address().port}`
+  try {
+    const redis = new Redis({ url: base, token: 'rig-disabled', retry: false })
+    assert.equal(await redis.get('flag:development:c5-pricing-enabled'), null)
+    await assert.rejects(redis.set('flag:development:c5-pricing-enabled', true), /rig-flag-command-refused/)
+    await assert.rejects(redis.get('flag:production:c5-pricing-enabled'), /rig-flag-command-refused/)
+    const response = await fetch(`${base}/pipeline`, { method: 'POST', headers: { authorization: 'Bearer rig-disabled' }, body: JSON.stringify([['get', 'flag:development:c5-pricing-enabled']]) })
+    assert.deepEqual(await response.json(), [{ result: null }])
+    assert.equal((await fetch(base, { method: 'POST', body: JSON.stringify(['get', 'flag:development:c5-pricing-enabled']) })).status, 403)
   } finally { server.close() }
 })

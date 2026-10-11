@@ -271,6 +271,7 @@ export async function createCheckoutRecoveryRuntime(
 				paymentProvider: stripeProvider,
 				notificationProvider: slackProvider,
 				getCheckoutSession: (id) => appPaymentsAdapter.getCheckoutSession(id),
+				onPaidSession: async (session) => (await import('@/lib/c5-pricing/gift-settlement')).settleGiftSession(session),
 				inspect: (input) => inspectCheckoutFulfillment(db, input),
 				// C5 duplicates are fulfilled and flagged after payment, never held.
 				holdsWhenBuyerHasProduct: (productId) =>

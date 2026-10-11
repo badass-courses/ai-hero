@@ -63,6 +63,10 @@ async function dispatchCashBalanceReconciliation(request: Request) {
 			'webhook_received',
 		)
 	}
+	if (stripeEvent.type === 'checkout.session.expired' || stripeEvent.type === 'checkout.session.completed' || stripeEvent.type === 'checkout.session.async_payment_succeeded') {
+		const { settleGiftSession } = await import('@/lib/c5-pricing/gift-settlement')
+		await settleGiftSession(await stripe.checkout.sessions.retrieve(stripeEvent.data.object.id))
+	}
 	if (!isCashBalanceEvent(stripeEvent.type)) return
 
 	const object = stripeEvent.data.object as {
@@ -119,7 +123,16 @@ const courseBuilderPOSTWithCashBalanceReconciliation = async (
 				coreCourseBuilderPOST(protectedRequest),
 			),
 	)
-	if (response.ok) await dispatchCashBalanceReconciliation(webhookRequest)
+	// Preserve reservation settlement even when the core handler failed.
+	if (response.ok || webhookRequest.headers.has('stripe-signature')) {
+		try {
+			await dispatchCashBalanceReconciliation(webhookRequest)
+		} catch (error) {
+			if (error instanceof Error && error.constructor.name === 'StripeSignatureVerificationError')
+				return new Response(null, { status: 400 })
+			throw error
+		}
+	}
 	const authoritativeProductId = authoritativeCheckoutProduct(protectedRequest)
 	const productId = protectedRequest.nextUrl.pathname.includes('/checkout/')
 		? protectedRequest.nextUrl.searchParams.get('productId')

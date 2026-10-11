@@ -177,8 +177,10 @@ export const env = createEnv({
 		FRONT_DESK_URL: z.string().url().optional(),
 		FRONT_DESK_PRICING_TOKEN: z.string().optional(),
 		FRONT_DESK_QUOTES_TOKEN: z.string().optional(),
-		// C5 kill switch: "true" closes C5 checkout, display and team invoices.
-		// It never falls back to the legacy price. Any value but "false" closes,
+		// C5 emergency override. The normal switch is the c5-pricing-enabled
+		// admin flag. "true" closes C5 checkout, display and team invoices
+		// whatever the flag says, and never falls back to the legacy price.
+		// Any value but "false" closes,
 		// so a typo fails closed rather than failing the build.
 		AIH_C5_PRICING_DISABLED: z.string().optional(),
 		// When paid C5 purchases started saving their pricing decisions, as an

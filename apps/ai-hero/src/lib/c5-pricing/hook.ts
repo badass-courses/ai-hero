@@ -13,6 +13,7 @@ import type {
 } from '@coursebuilder/core/schemas'
 
 import type { DataRead, PolicyDocument } from './front-desk-data'
+import { noGift, type GiftFact } from './gift-slots'
 import {
 	APP_REASONS,
 	C5_PRODUCT_ID,
@@ -43,6 +44,7 @@ export type BuyerRead =
 	| { readonly kind: 'unavailable'; readonly reason: string }
 
 export type C5PricingDeps = {
+	readonly code?: () => Promise<GiftFact>
 	readonly policy: (productId: string) => Promise<DataRead<PolicyDocument>>
 	readonly quotes: (input: {
 		readonly email: string
@@ -71,8 +73,11 @@ export type C5PricingDeps = {
 	}
 	readonly engineVersion: string
 	readonly now: () => Date
-	/** The C5 kill switch: on, C5 is closed, never priced by the legacy path. */
-	readonly disabled: () => boolean
+	/**
+	 * The C5 switch: true, C5 is closed, never priced by the legacy path. Read
+	 * on every decision; it must resolve true when it cannot tell.
+	 */
+	readonly disabled: () => boolean | Promise<boolean>
 }
 
 const known = <A>(value: A, sourceRefs: readonly string[]): FactData<A> => ({
@@ -148,7 +153,7 @@ export function createC5AuthoritativePrice(deps: C5PricingDeps) {
 			userId,
 			engineVersion: deps.engineVersion,
 		}
-		if (deps.disabled())
+		if (await deps.disabled())
 			return refusal('closed', [APP_REASONS.killSwitch], base)
 
 		const policy = await deps.policy(request.productId)
@@ -190,10 +195,10 @@ export function createC5AuthoritativePrice(deps: C5PricingDeps) {
 			accepted: request.pppAccepted,
 			hasValidPurchase: buyer.kind === 'buyer' ? buyer.hasValidPurchase : false,
 		})
-		const facts: BuyerFactsData =
-			buyer.kind === 'buyer'
-				? { ...buyer.facts.facts, ppp }
-				: { ...anonymousFacts(orderKind), ppp }
+		const code = await (deps.code?.() ?? Promise.resolve(noGift()))
+		const facts = buyer.kind === 'buyer'
+			? { ...buyer.facts.facts, ppp, code }
+			: { ...anonymousFacts(orderKind), ppp, code }
 
 		const appReasons: string[] = []
 		let quotes: readonly BindingQuoteData[] = []
@@ -236,6 +241,7 @@ export function createC5AuthoritativePrice(deps: C5PricingDeps) {
 			policy: policy.value.policy,
 			pppPercent: ppp && 'value' in ppp && ppp.value ? ppp.value.percent : null,
 			appReasons,
+			codeExpiresAt: 'value' in code ? code.value?.expiresAt : undefined,
 		})
 		if (buyer.kind === 'anonymous')
 			decision = provisional(decision, APP_REASONS.identityRequired)

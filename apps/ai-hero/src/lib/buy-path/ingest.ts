@@ -14,7 +14,7 @@ export async function ingestBuyPath(
 	dependencies: IngestDependencies,
 ) {
 	if (request.headers.get('origin') !== new URL(request.url).origin)
-		return new Response(null, { status: 403 })
+		return new Response(null, { status: 403, headers: { 'x-buy-path-rejection': 'origin' } })
 	if (
 		!(await dependencies.limit(
 			request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
@@ -54,7 +54,7 @@ export async function ingestBuyPath(
 	const parsed = clientBuyPathSchema.safeParse(input)
 	if (!parsed.success) return new Response(null, { status: 400 })
 	const context = await dependencies.context(parsed.data)
-	if (!context) return new Response(null, { status: 403 })
+	if (!context) return new Response(null, { status: 403, headers: { 'x-buy-path-rejection': 'context' } })
 	await dependencies.emit(context, parsed.data)
 	return new Response(null, { status: 204 })
 }

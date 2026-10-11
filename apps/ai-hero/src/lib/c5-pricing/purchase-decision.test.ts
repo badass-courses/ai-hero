@@ -47,6 +47,8 @@ describe('decisionFromSession', () => {
 			v: 1,
 			decisionRef: `c5d1.${HASH}.purchase-cc`,
 			creditSource: 'purchase-cc',
+			codeRef: null,
+			basis: null,
 			contract: CB_AUTHORITATIVE_PRICING_CONTRACT_VERSION,
 			engineVersion: 'engine-test',
 			policyVersion: 'policy-test',
@@ -84,7 +86,12 @@ function memoryStore(rows: C5PurchaseRow[]) {
 		purchase: async (id) => byId.get(id) ?? null,
 		saveDecision: vi.fn(async (id: string, decision: SavedC5Decision) => {
 			const row = byId.get(id)
+			if (row?.decision)
+				return row.decision.decisionRef === decision.decisionRef
+					? ('saved' as const)
+					: ('conflict' as const)
 			if (row) byId.set(id, { ...row, decision })
+			return 'saved' as const
 		}),
 		markDuplicate: vi.fn(async (id: string, of: readonly string[]) => {
 			duplicates.set(id, of)
@@ -120,10 +127,7 @@ const savedWith = (creditSource: string | null, id: string) =>
 
 describe('checkC5Duplicate', () => {
 	it('flags a second individual C5 purchase for one buyer', async () => {
-		const { store } = memoryStore([
-			row({ id: 'p-old' }),
-			row({ id: 'p-new' }),
-		])
+		const { store } = memoryStore([row({ id: 'p-old' }), row({ id: 'p-new' })])
 		await expect(
 			checkC5Duplicate(store, row({ id: 'p-new' })),
 		).resolves.toEqual({
@@ -154,7 +158,11 @@ describe('checkC5Duplicate', () => {
 		await expect(
 			checkC5Duplicate(
 				store,
-				row({ id: 'p-b', userId: 'user-b', decision: savedWith('cc-1', 'cs_b') }),
+				row({
+					id: 'p-b',
+					userId: 'user-b',
+					decision: savedWith('cc-1', 'cs_b'),
+				}),
 			),
 		).resolves.toEqual({
 			kind: 'duplicate',
@@ -180,7 +188,10 @@ describe('recordC5PurchaseDecision', () => {
 			checkoutSessionId: 'cs_1',
 			now: () => NOW,
 		})
-		expect(first).toMatchObject({ status: 'saved', verdict: { kind: 'clean' } })
+		expect(first).toMatchObject({
+			status: 'saved',
+			verdict: { kind: 'clean' },
+		})
 		expect(byId.get('p-1')?.decision?.checkoutSessionId).toBe('cs_1')
 		await recordC5PurchaseDecision({
 			purchaseId: 'p-1',
@@ -189,12 +200,47 @@ describe('recordC5PurchaseDecision', () => {
 			checkoutSessionId: 'cs_1',
 			now: () => NOW,
 		})
-		expect(getCheckoutSession).toHaveBeenCalledTimes(1)
-		expect(store.saveDecision).toHaveBeenCalledTimes(1)
+		expect(getCheckoutSession).toHaveBeenCalledTimes(2)
+		expect(store.saveDecision).toHaveBeenCalledTimes(2)
+	})
+
+	it('flags a changed replay without overwriting the original decision', async () => {
+		const original = savedWith('cc-old', 'cs_old')
+		const { store, byId } = memoryStore([
+			row({ id: 'p-1', decision: original }),
+		])
+		const result = await recordC5PurchaseDecision({
+			purchaseId: 'p-1',
+			store,
+			getCheckoutSession: getSession('cc-new'),
+			checkoutSessionId: 'cs_new',
+			now: () => NOW,
+		})
+		expect(result).toMatchObject({
+			status: 'conflict',
+			storedRef: original.decisionRef,
+		})
+		expect(byId.get('p-1')?.decision).toEqual(original)
+	})
+
+	it('does not report saved when readback has no row', async () => {
+		const { store } = memoryStore([row({ id: 'p-1' })])
+		store.saveDecision = async () => 'saved'
+		await expect(
+			recordC5PurchaseDecision({
+				purchaseId: 'p-1',
+				store,
+				getCheckoutSession: getSession(null),
+				checkoutSessionId: 'cs_new',
+				now: () => NOW,
+			}),
+		).rejects.toThrow('purchase-decision-readback-missing')
 	})
 
 	it('skips other products and missing purchases', async () => {
-		const { store } = memoryStore([row({ id: 'p-x', productId: 'product-ma254' })])
+		const { store } = memoryStore([
+			row({ id: 'p-x', productId: 'product-ma254' }),
+		])
 		const args = {
 			store,
 			getCheckoutSession: getSession(null),
