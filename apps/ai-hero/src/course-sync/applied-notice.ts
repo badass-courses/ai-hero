@@ -176,7 +176,7 @@ export async function deliverCourseSyncAppliedNotice(
 
 	// Independent lifecycle receipt: a duplicate applied-notice request can retry
 	// a failed entitlement trigger even after Slack's notice was claimed.
-	if (binding.contractVersion === 5) {
+	if (binding.contractVersion !== 4) {
 		await deliverCourseSyncEntitlementSync({
 			controlPlaneRunId: notification.controlPlaneRunId,
 			lifecycle: 'applied',

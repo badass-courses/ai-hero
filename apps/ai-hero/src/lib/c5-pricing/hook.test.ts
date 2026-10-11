@@ -131,7 +131,7 @@ describe('createC5AuthoritativePrice', () => {
 			restriction: 'none',
 			offers: [],
 			policyVersion: SYNTHETIC_POLICY_VERSION,
-			closesAt: Date.parse(SYNTHETIC_WINDOWS.checkoutStopsAt),
+			closesAt: Date.parse(SYNTHETIC_WINDOWS.closesAt),
 		})
 		expect(decodeDecisionRef(decision!.decisionRef)).toMatchObject({
 			creditSource: null,

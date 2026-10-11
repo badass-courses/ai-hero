@@ -22,6 +22,7 @@ import {
 	type PurchaseDisputeRecord,
 	type PurchaseStatus,
 } from './purchase-dispute-machine'
+import { updatePurchaseFields } from './purchase-fields-write'
 
 /**
  * Chargeback policy (Joel, 2026-10-09): an open dispute cuts the purchase's
@@ -66,8 +67,8 @@ export function readPurchaseBlock(fields: unknown): PurchaseBlock | undefined {
 }
 
 const setJsonField = (
-	column: typeof purchases.fields | typeof users.fields,
-	path: '$.dispute' | '$.purchaseBlock',
+	column: typeof users.fields,
+	path: '$.purchaseBlock',
 	value: unknown,
 ) =>
 	sql`JSON_SET(COALESCE(${column}, JSON_OBJECT()), ${path}, CAST(${JSON.stringify(value)} AS JSON))`
@@ -460,15 +461,15 @@ export async function applyDisputeEvent({
 			next = { ...next, buyer: buyerOutcome }
 		}
 
-		await tx
-			.update(purchases)
-			.set({
-				...(plan.plannedStatus !== purchase.status && {
-					status: plan.plannedStatus,
-				}),
-				fields: setJsonField(purchases.fields, '$.dispute', next),
-			})
-			.where(eq(purchases.id, purchase.id))
+		await updatePurchaseFields({
+			executor: tx,
+			purchaseId: purchase.id,
+			columns:
+				plan.plannedStatus !== purchase.status
+					? { status: plan.plannedStatus }
+					: {},
+			patch: { dispute: next },
+		})
 
 		return { ...plan, record: next, ...(buyerOutcome && { buyerOutcome }) }
 	})
@@ -520,15 +521,11 @@ export async function markPurchaseDisputeRefunded(
 			.for('update')
 		const record = readDisputeRecord(purchase?.fields)
 		if (!record || record.refundedAt) return { marked: false }
-		await tx
-			.update(purchases)
-			.set({
-				fields: setJsonField(purchases.fields, '$.dispute', {
-					...record,
-					refundedAt: now.toISOString(),
-				}),
-			})
-			.where(eq(purchases.id, purchaseId))
+		await updatePurchaseFields({
+			executor: tx,
+			purchaseId,
+			patch: { dispute: { ...record, refundedAt: now.toISOString() } },
+		})
 		return { marked: true }
 	})
 }
@@ -595,10 +592,11 @@ async function writeDisputeRecord(
 	purchaseId: string,
 	record: PurchaseDisputeRecord,
 ) {
-	await tx
-		.update(purchases)
-		.set({ fields: setJsonField(purchases.fields, '$.dispute', record) })
-		.where(eq(purchases.id, purchaseId))
+	await updatePurchaseFields({
+		executor: tx,
+		purchaseId,
+		patch: { dispute: record },
+	})
 }
 
 /**

@@ -41,6 +41,10 @@ async function dispatchCashBalanceReconciliation(request: Request) {
 		signature,
 		env.STRIPE_WEBHOOK_SECRET,
 	)
+	if (stripeEvent.type === 'checkout.session.expired' || stripeEvent.type === 'checkout.session.completed' || stripeEvent.type === 'checkout.session.async_payment_succeeded') {
+		const { settleGiftSession } = await import('@/lib/c5-pricing/gift-settlement')
+		await settleGiftSession(await stripe.checkout.sessions.retrieve(stripeEvent.data.object.id))
+	}
 	if (!isCashBalanceEvent(stripeEvent.type)) return
 
 	const object = stripeEvent.data.object as {
@@ -85,7 +89,10 @@ const courseBuilderPOSTWithCashBalanceReconciliation = async (
 	const response = await withTrustedCountry(request, () =>
 		coreCourseBuilderPOST(protectedRequest),
 	)
-	if (response.ok) await dispatchCashBalanceReconciliation(webhookRequest)
+	// Reservation accounting follows the verified provider state even if the
+	// core handler failed, so retries cannot sell the paid seat again.
+	if (response.ok || webhookRequest.headers.has('stripe-signature'))
+		await dispatchCashBalanceReconciliation(webhookRequest)
 	const productId = authoritativeCheckoutProduct(protectedRequest)
 	const createdSessionId = productId ? createdCheckoutSessionId(response) : null
 	if (productId && userId && createdSessionId) {

@@ -1,11 +1,11 @@
 import { CB_AUTHORITATIVE_PRICING_CONTRACT_VERSION } from '@coursebuilder/core/schemas'
 
-import { C5_PRODUCT_ID, decodeDecisionRef } from './decision'
+import { C5_PRODUCT_ID, decodeDecisionRef, giftCodeDigest } from './decision'
 
 /**
  * The saved decision is the C5 credit ledger. Each paid C5 purchase keeps
- * the decision its checkout charged, under
- * `Purchase.fields.c5Decision`. A credit is spent when some C5 purchase's
+ * the decision its checkout charged, in the insert-only
+ * `PurchaseDecision` table. A credit is spent when some C5 purchase's
  * saved decision names it as its `creditSource`; nothing else records it.
  *
  * It is written after the purchase exists, from the Checkout Session's raw
@@ -14,7 +14,6 @@ import { C5_PRODUCT_ID, decodeDecisionRef } from './decision'
  * run the same core handler, which sends `new-purchase-created`, so a
  * reconciler-fulfilled purchase gets its decision the same way.
  */
-export const C5_DECISION_FIELD = 'c5Decision'
 /** Set by the post-payment duplicate check, beside the decision. */
 export const C5_DUPLICATE_FIELD = 'c5DuplicateOf'
 
@@ -22,6 +21,10 @@ export type SavedC5Decision = {
 	readonly v: 1
 	readonly decisionRef: string
 	readonly creditSource: string | null
+	readonly codeRef: string | null
+	readonly giftClaimId?: string | null
+	readonly giftSlot?: number | null
+	readonly basis: string | null
 	readonly contract: string
 	readonly engineVersion: string
 	readonly policyVersion: string
@@ -31,19 +34,35 @@ export type SavedC5Decision = {
 	readonly savedAt: string
 }
 
-/** A stored field is only trusted when it has the saved shape. */
+/** A ledger row is only trusted when it has the saved shape. */
 export function parseSavedDecision(value: unknown): SavedC5Decision | null {
 	if (!value || typeof value !== 'object') return null
 	const row = value as Record<string, unknown>
 	if (
 		row.v !== 1 ||
 		typeof row.decisionRef !== 'string' ||
+		!decodeDecisionRef(row.decisionRef) ||
 		!(row.creditSource === null || typeof row.creditSource === 'string') ||
+		!(row.codeRef === null || typeof row.codeRef === 'string') ||
+		!(row.basis === null || typeof row.basis === 'string') ||
+		typeof row.contract !== 'string' ||
 		typeof row.engineVersion !== 'string' ||
 		typeof row.policyVersion !== 'string' ||
-		typeof row.checkoutSessionId !== 'string'
+		typeof row.checkoutSessionId !== 'string' ||
+		!(row.accessRestriction === 'none' || row.accessRestriction === 'region') ||
+		!(
+			row.expectedTotalCents === null ||
+			(Number.isSafeInteger(row.expectedTotalCents) &&
+				Number(row.expectedTotalCents) >= 0)
+		) ||
+		typeof row.savedAt !== 'string' ||
+		!Number.isFinite(Date.parse(row.savedAt))
 	)
 		return null
+	const ref = decodeDecisionRef(row.decisionRef)
+	if (ref?.creditSource !== row.creditSource) return null
+	if (ref?.codeDigest && (typeof row.codeRef !== 'string' || giftCodeDigest(row.codeRef) !== ref.codeDigest)) return null
+	// SAFETY: all persisted decision fields were validated above.
 	return row as unknown as SavedC5Decision
 }
 
@@ -69,11 +88,16 @@ export function decisionFromSession(
 	if (!decisionRef || !engineVersion || !policyVersion) return null
 	const ref = decodeDecisionRef(decisionRef)
 	if (!ref) return null
+	const codeRef = ref.codeDigest && metadata.codeRef && giftCodeDigest(metadata.codeRef) === ref.codeDigest ? metadata.codeRef : null
+	if (ref.codeDigest && !codeRef) return null
 	const expected = Number(metadata.expectedTotalCents)
 	return {
 		v: 1,
 		decisionRef,
 		creditSource: ref.creditSource,
+		codeRef,
+		...(codeRef && metadata.giftClaimId ? { giftClaimId: metadata.giftClaimId, giftSlot: Number.isSafeInteger(Number(metadata.giftSlot)) && Number(metadata.giftSlot) > 0 ? Number(metadata.giftSlot) : null } : {}),
+		basis: codeRef ? 'code' : metadata.basis || null,
 		contract: metadata.cbPricingContract,
 		engineVersion,
 		policyVersion,
@@ -97,8 +121,11 @@ export type C5PurchaseRow = {
 
 export interface C5DecisionStore {
 	purchase(purchaseId: string): Promise<C5PurchaseRow | null>
-	/** Idempotent: writes the decision field only, leaving other fields alone. */
-	saveDecision(purchaseId: string, decision: SavedC5Decision): Promise<void>
+	/** Insert once, then read back. Different refs never overwrite the row. */
+	saveDecision(
+		purchaseId: string,
+		decision: SavedC5Decision,
+	): Promise<'saved' | 'conflict'>
 	markDuplicate(
 		purchaseId: string,
 		duplicateOf: readonly string[],
@@ -166,6 +193,12 @@ export async function checkC5Duplicate(
 export type RecordC5DecisionResult =
 	| { readonly status: 'not-c5' | 'missing-purchase' }
 	| {
+			readonly status: 'conflict'
+			readonly purchaseId: string
+			readonly expectedRef: string
+			readonly storedRef: string
+	  }
+	| {
 			readonly status: 'saved' | 'legacy'
 			readonly purchaseId: string
 			readonly verdict: DuplicateVerdict
@@ -193,10 +226,23 @@ export async function recordC5PurchaseDecision({
 	if (!purchase) return { status: 'missing-purchase' }
 	if (purchase.productId !== C5_PRODUCT_ID) return { status: 'not-c5' }
 	let decision = purchase.decision
-	if (!decision && checkoutSessionId) {
+	if (checkoutSessionId) {
 		const session = await getCheckoutSession(checkoutSessionId)
-		decision = decisionFromSession(session, now())
-		if (decision) await store.saveDecision(purchaseId, decision)
+		const expected = decisionFromSession(session, now())
+		if (expected) {
+			await store.saveDecision(purchaseId, expected)
+			// Never log saved based on an attempted write or the input snapshot.
+			const stored = (await store.purchase(purchaseId))?.decision
+			if (!stored) throw new Error('purchase-decision-readback-missing')
+			if (stored.decisionRef !== expected.decisionRef)
+				return {
+					status: 'conflict',
+					purchaseId,
+					expectedRef: expected.decisionRef,
+					storedRef: stored.decisionRef,
+				}
+			decision = stored
+		}
 	}
 	const verdict = await checkC5Duplicate(store, { ...purchase, decision })
 	if (verdict.kind === 'duplicate')

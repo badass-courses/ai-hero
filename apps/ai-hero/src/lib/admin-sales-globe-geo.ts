@@ -241,16 +241,16 @@ export function readCachedGlobeLocation(fields: unknown): GlobeLocation | null {
 	}
 }
 
-export function globeFieldsPatch(
-	fields: unknown,
+/**
+ * The `globe` value for `Purchase.fields`. Write it with
+ * `updatePurchaseFields({ patch: { globe } })`, never as part of a rebuilt
+ * fields object.
+ */
+export function globeFieldValue(
 	location: GlobeLocation,
 	source: GlobeSource = 'stripe-billing'
 ): Record<string, unknown> {
-	const current =
-		fields && typeof fields === 'object' && !Array.isArray(fields)
-			? { ...(fields as Record<string, unknown>) }
-			: {}
-	current.globe = {
+	return {
 		lat: location.lat,
 		lng: location.lng,
 		city: location.city,
@@ -258,7 +258,6 @@ export function globeFieldsPatch(
 		precision: location.precision,
 		source,
 	}
-	return current
 }
 
 export type PurchaseGeoWritePlan = Readonly<{

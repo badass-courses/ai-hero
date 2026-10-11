@@ -1,6 +1,6 @@
 // @ts-nocheck: untyped Node operator tooling, covered by rig.test.mjs; not app code.
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import Stripe from 'stripe'
 import { catalog, c5WorkshopId, fixtureFor } from './fixtures.mjs'
@@ -23,14 +23,16 @@ export function provesAccess(fixture, session, result) {
   // Purchase.totalAmount must equal the charge to the cent. A purchase priced by an
   // authoritative decision must also carry the decision saved for this session.
   const amountMatches = p => decimalCents(p.totalAmount) === session.total &&
-    (!p.decision || (p.decision.checkoutSessionId === session.id && p.decision.expectedTotalCents === session.total))
+    (session.decisionRef ? (p.decision?.decisionRef === session.decisionRef && p.decision.checkoutSessionId === session.id && p.decision.expectedTotalCents === session.total) :
+      (!p.decision || (p.decision.checkoutSessionId === session.id && p.decision.expectedTotalCents === session.total)))
   const purchases = result.purchases.filter(p => p.userId === fixture.userId && p.productId === c5 && p.status === 'Valid' && amountMatches(p))
   return session.paymentStatus === 'paid' && result.webhooks.length > 0 && purchases.some(p => result.access.some(a => a.sourceId === p.id && a.entitlementType === 'cohort_content_access' && a.metadata?.contentIds?.includes(c5WorkshopId)))
 }
 // Pays a hosted test Checkout Session with the test card. By default it waits for the
 // redirect back to the app; `until` instead polls Stripe, for sessions paid while
 // the app is down (seeding).
-export async function payHostedCheckout(url, state, { until } = {}) {
+export async function payHostedCheckout(url, state, { until, testCard = 'success' } = {}) {
+  if (!['success', 'dispute'].includes(testCard)) throw new Error('Unknown Stripe test-card scenario')
   const { chromium } = await import('@playwright/test')
   const browser = await chromium.launch({ headless: true, env: { PATH: process.env.PATH, HOME: process.env.HOME } })
   try {
@@ -61,7 +63,7 @@ export async function payHostedCheckout(url, state, { until } = {}) {
       await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {})
       const cardChoice = page.locator('[data-testid="card-accordion-item-button"]').first()
       if (await cardChoice.count()) await cardChoice.dispatchEvent('click')
-      await fill('[name="cardNumber"], [name="cardnumber"]', '4242424242424242')
+      await fill('[name="cardNumber"], [name="cardnumber"]', testCard === 'dispute' ? '4000000000000259' : '4242424242424242')
       await fill('[name="cardExpiry"], [name="exp-date"]', '1230')
       await fill('[name="cardCvc"], [name="cvc"]', '123')
       const name = page.locator('[name="billingName"]').first()
@@ -90,14 +92,21 @@ export async function payHostedCheckout(url, state, { until } = {}) {
     }
   } finally { await browser.close() }
 }
-export async function checkout(state, key, fixtureKey, shouldComplete = false) {
+export async function checkout(state, key, fixtureKey, shouldComplete = false, { shortlinkSlug, keepOpen = false, testCard = 'success' } = {}) {
   const fixture = fixtureFor(fixtureKey)
   const seed = JSON.parse(await readFile(join(state, 'seed.json'), 'utf8'))
   if (!seed.stripeSeeded) throw new Error('Stripe catalog is not seeded')
   const stripe = new Stripe(assertTestKey(key))
   const token = freshToken()
   await authenticate(fixture, token)
-  const cookie = `authjs.session-token=${token}`
+  let cookie = `authjs.session-token=${token}`
+  if (shortlinkSlug !== undefined) {
+    if (!/^[a-z0-9-]{1,50}$/.test(shortlinkSlug)) throw new Error('Invalid rig shortlink')
+    const visit = await fetch(`${origin}/s/${encodeURIComponent(shortlinkSlug)}`, { redirect: 'manual', signal: AbortSignal.timeout(60000) })
+    if (visit.status !== 307 || new URL(visit.headers.get('location'), origin).origin !== origin) throw new Error('Rig shortlink did not redirect locally')
+    const cookies = visit.headers.getSetCookie().map(value => value.split(';')[0]).filter(value => /^(?:c5_gift|sl_ref)=/.test(value))
+    cookie += '; ' + cookies.join('; ')
+  }
   const auth = await fetch(`${origin}/api/auth/session`, { headers: { cookie }, signal: AbortSignal.timeout(60000) })
   const sessionUser = await auth.json()
   if (!auth.ok || sessionUser.user?.id !== fixture.userId) throw new Error('Fixture login did not resolve to the expected user')
@@ -141,14 +150,14 @@ export async function checkout(state, key, fixtureKey, shouldComplete = false) {
     if (coupon) { assertTestObject(coupon); await stripe.coupons.update(coupon.id, { metadata }) }
   }
   await privateWrite(join(state, 'checkout-url.txt'), target + '\n')
-  const receipt = { fixture: fixture.key, run: seed.generation, commit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), dirty: execFileSync('git', ['status', '--porcelain', '--', import.meta.dirname], { encoding: 'utf8' }).trim() !== '', catalogBasis: seed.catalogOverlay ? 'synthetic catalog with private list-price overlay; no production discount configuration' : 'synthetic bare catalog; not production configuration', pendingFacts: fixture.pending ?? null, createdAt: new Date().toISOString(), createdSession: publicSession(session), complete: false }
+  const receipt = { fixture: fixture.key, run: seed.generation, commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: resolve(import.meta.dirname, '../..'), encoding: 'utf8' }).trim(), dirty: execFileSync('git', ['status', '--porcelain', '--', import.meta.dirname], { cwd: resolve(import.meta.dirname, '../..'), encoding: 'utf8' }).trim() !== '', catalogBasis: seed.catalogOverlay ? 'synthetic catalog with private list-price overlay; no production discount configuration' : 'synthetic bare catalog; not production configuration', pendingFacts: fixture.pending ?? null, createdAt: new Date().toISOString(), createdSession: publicSession(session), complete: false }
   await privateWrite(join(state, `checkout-${fixture.key}.json`), JSON.stringify(receipt, null, 2) + '\n')
   console.log(`ok checkout ${fixture.key}: USD ${(session.amount_total / 100).toFixed(2)} (${id})`)
   if (!shouldComplete) {
-    assertTestObject(await stripe.checkout.sessions.expire(id))
+    if (!keepOpen) assertTestObject(await stripe.checkout.sessions.expire(id))
     return receipt
   }
-  await payHostedCheckout(target, state)
+  await payHostedCheckout(target, state, { testCard })
   const deadline = Date.now() + 180000
   do {
     session = assertTestObject(await stripe.checkout.sessions.retrieve(id))

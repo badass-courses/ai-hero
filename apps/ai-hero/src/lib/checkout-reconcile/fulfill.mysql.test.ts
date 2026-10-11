@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import { persistPurchaseGeoWrite } from '@/lib/admin-sales-globe-stripe-geo'
 import { createRequire } from 'node:module'
 import {
 	coupon,
@@ -15,6 +17,7 @@ import {
 	prices,
 	products,
 	purchases,
+	purchaseDecision,
 	purchaseUserTransfer,
 	roles,
 	upgradableProducts,
@@ -25,14 +28,22 @@ import * as schema from '@/db/schema'
 import { mysqlTable } from '@/db/mysql-table'
 import { preserveQueryResultShape } from '@/db/mysql-query-client'
 import type { DbExecutor } from '@/db'
-import { checkC5Duplicate } from '@/lib/c5-pricing/purchase-decision'
+import { checkC5Duplicate, recordC5PurchaseDecision } from '@/lib/c5-pricing/purchase-decision'
+import { C5_PRODUCT_ID, encodeDecisionRef } from '@/lib/c5-pricing/decision'
+import { settleGiftSession } from '@/lib/c5-pricing/gift-settlement'
+import { recoverGiftReservations } from '@/lib/c5-pricing/gift-reservation-recovery-server'
+import { claimGiftSlot, readGiftCode } from '@/lib/c5-pricing/gift-slots'
 import { c5DecisionStoreOn } from '@/lib/c5-pricing/purchase-decision-sql'
 import { validateMySqlIntegrationServerUrl } from '@/lib/team-purchase-mysql-test-guard'
 import type { MySqlDatabase } from 'drizzle-orm/mysql-core'
 import { drizzle } from 'drizzle-orm/mysql2'
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise'
 import type Stripe from 'stripe'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+
+let database: MySqlDatabase<any, any, typeof schema>
+let giftSettlementPool: Pool
+vi.mock('@/db', () => ({ get db() { return database }, acquireDatabaseConnection: () => giftSettlementPool.getConnection() }))
 
 import { DrizzleAdapter } from '@coursebuilder/adapter-drizzle'
 import { courseBuilderCoreFunctions } from '@coursebuilder/server'
@@ -67,6 +78,7 @@ const BUYER_ID = 'user_reconcile_buyer'
 const STRIPE_CUSTOMER = 'cus_reconcile'
 
 const tables = {
+	giftCodeSlot: schema.giftCodeSlot,
 	users,
 	roles,
 	userRoles,
@@ -79,6 +91,7 @@ const tables = {
 	merchantPrice,
 	coupon,
 	purchases,
+	purchaseDecision,
 	purchaseUserTransfer,
 	products,
 	prices,
@@ -167,7 +180,6 @@ function checkoutSession(
 	} as unknown as Stripe.Checkout.Session
 }
 
-/** An Inngest-like step: runs each step once and returns JSON, like Inngest. */
 function inngestLikeStep(options: { beforeStep?: (id: string) => Promise<void> } = {}) {
 	const sent: { id: string; payload: any }[] = []
 	const ran: string[] = []
@@ -208,7 +220,6 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 	let server: Pool | undefined
 	let pool: Pool
 	let name: string | undefined
-	let database: MySqlDatabase<any, any, typeof schema>
 	let adapter: CheckoutFulfillDatabase
 	const handler = findCheckoutHandler(courseBuilderCoreFunctions)
 	const sessions = new Map<string, Stripe.Checkout.Session>()
@@ -237,6 +248,7 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 		holdsWhenBuyerHasProduct?: (productId: string) => boolean,
 	) {
 		return fulfillCheckoutSessionDirectly(checkoutSessionId, {
+			onPaidSession: sessions.get(checkoutSessionId)?.metadata?.codeRef ? settleGiftSession : undefined,
 			holdsWhenBuyerHasProduct,
 			handler,
 			step,
@@ -319,6 +331,7 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 		pool = preserveQueryResultShape(
 			mysql.createPool({ uri: target.toString(), timezone: 'Z', connectionLimit: 8 }),
 		)
+		giftSettlementPool = pool
 		const acquire = pool.getConnection.bind(pool)
 		pool.getConnection = (async () =>
 			preserveQueryResultShape(await acquire())) as typeof pool.getConnection
@@ -330,6 +343,12 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 			await generateMySQLDrizzleJson(tables),
 		)
 		for (const statement of statements) await pool.query(statement)
+		// Prove the hand-written deploy migration, including its idempotence.
+		await pool.query('DROP TABLE AI_PurchaseDecision')
+		const ledgerMigration = await readFile(new URL('../../db/migrations/20261010_ai_hero_purchase_decision.sql', import.meta.url), 'utf8')
+		await pool.query(ledgerMigration)
+		await pool.query(ledgerMigration)
+		await pool.query(await readFile(new URL('../../db/migrations/20261012_ai_hero_gift_claim_evidence.sql', import.meta.url), 'utf8'))
 
 		database = drizzle(pool, { schema, mode: 'planetscale' }) as unknown as MySqlDatabase<any, any, typeof schema>
 		adapter = DrizzleAdapter<MySqlDatabase<any, any, typeof schema>>(
@@ -348,6 +367,8 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 
 	beforeEach(async () => {
 		for (const table of [
+			'AI_GiftCodeSlot',
+			'AI_PurchaseDecision',
 			'AI_PurchaseUserTransfer',
 			'AI_Purchase',
 			'AI_MerchantSession',
@@ -412,6 +433,76 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 		expect(await counts(id)).toEqual({ charges: 1, sessions: 1, purchases: 1 })
 	})
 
+	it('spends a paid gift reservation on direct fulfillment and replay', async () => {
+		await pool.query('UPDATE AI_Product SET id = ? WHERE id = ?', [C5_PRODUCT_ID, 'product_reconcile'])
+		await pool.query('UPDATE AI_MerchantProduct SET productId = ?', [C5_PRODUCT_ID])
+		const codeRef = 'synthetic-gift-code'
+		const claimId = 'synthetic-gift-claim'
+		const id = stranded({ metadata: { ...checkoutSession('template').metadata, productId: C5_PRODUCT_ID, codeRef, giftClaimId: claimId, decisionRef: encodeDecisionRef('0000000000000000', null, codeRef) } })
+		await pool.query('INSERT INTO AI_GiftCodeSlot (codeRef, slot, checkoutSessionId, claimId, state, expiresAt) VALUES (?, 1, ?, ?, ?, ?)', [codeRef, id, claimId, 'reserved', new Date(now.getTime() + 3600000)])
+		expect(await reconcile(id, inngestLikeStep().step)).toMatchObject({ status: 'fulfilled' })
+		const [rows] = await pool.query<RowDataPacket[]>('SELECT state FROM AI_GiftCodeSlot WHERE checkoutSessionId = ?', [id])
+		expect(rows[0]?.state).toBe('spent')
+		await pool.query('UPDATE AI_GiftCodeSlot SET state = ? WHERE checkoutSessionId = ?', ['reserved', id])
+		expect(await reconcile(id, inngestLikeStep().step)).toMatchObject({ status: 'already_fulfilled' })
+		const [replay] = await pool.query<RowDataPacket[]>('SELECT state FROM AI_GiftCodeSlot WHERE checkoutSessionId = ?', [id])
+		expect(replay[0]?.state).toBe('spent')
+		expect(await counts(id)).toEqual({ charges: 1, sessions: 1, purchases: 1 })
+	})
+
+	it('fulfills a gift opened at 07:29 and paid at 07:59 after creation closes', async () => {
+		await pool.query('UPDATE AI_Product SET id = ? WHERE id = ?', [C5_PRODUCT_ID, 'product_reconcile'])
+		await pool.query('UPDATE AI_MerchantProduct SET productId = ?', [C5_PRODUCT_ID])
+		const opened = new Date('2026-10-09T07:29:00Z')
+		const paid = new Date('2026-10-09T07:59:00Z')
+		const deadline = new Date('2026-10-09T08:00:00Z')
+		const codeRef = 'synthetic-late-gift', claimId = 'synthetic-late-claim'
+		const template = checkoutSession('late-template')
+		const id = stranded({ created: opened.getTime() / 1000, expires_at: deadline.getTime() / 1000,
+			metadata: { ...template.metadata, productId: C5_PRODUCT_ID, codeRef, giftClaimId: claimId, decisionRef: encodeDecisionRef('0000000000000000', null, codeRef) } })
+		const providerSession = sessions.get(id)!
+		;(providerSession.payment_intent as Stripe.PaymentIntent).created = paid.getTime() / 1000
+		await pool.query('INSERT INTO AI_GiftCodeSlot (codeRef, slot, checkoutSessionId, claimId, state, expiresAt) VALUES (?, 1, ?, ?, ?, ?)', [codeRef, id, claimId, 'reserved', deadline])
+		// The fixture reconciles at 22:00, well after both cutoff and deadline.
+		// Fulfillment only consumes verified paid provider state, not pricing eligibility.
+		expect(await reconcile(id, inngestLikeStep().step)).toMatchObject({ status: 'fulfilled' })
+		expect(await counts(id)).toEqual({ charges: 1, sessions: 1, purchases: 1 })
+		const [rows] = await pool.query<RowDataPacket[]>('SELECT state FROM AI_GiftCodeSlot WHERE checkoutSessionId = ?', [id])
+		expect(rows[0]?.state).toBe('spent')
+	})
+
+	it('recovers a missed expiry webhook on real MySQL and keeps paid reservations spent', async () => {
+		const codeRef = 'synthetic-missed-webhook', claimId = 'synthetic-missed-claim'
+		const expired = checkoutSession('cs_test_missed_expiry', { status: 'expired', payment_status: 'unpaid', metadata: { productId: C5_PRODUCT_ID, codeRef, giftClaimId: claimId, decisionRef: encodeDecisionRef('0000000000000000', null, codeRef) } })
+		const paid = checkoutSession('cs_test_missed_paid', { metadata: { ...expired.metadata, giftClaimId: 'synthetic-paid-claim' } })
+		await pool.query('INSERT INTO AI_GiftCodeSlot (codeRef, slot, checkoutSessionId, claimId, state, expiresAt) VALUES (?, 1, ?, ?, ?, ?), (?, 2, ?, ?, ?, ?)', [codeRef, expired.id, claimId, 'reserved', new Date(now.getTime() - 1), codeRef, paid.id, 'synthetic-paid-claim', 'reserved', new Date(now.getTime() - 1)])
+		await pool.query('INSERT INTO AI_Coupon (id, status, maxUses, expires, restrictedToProductId, fields) VALUES (?, 1, 2, ?, ?, ?)', [codeRef, new Date(now.getTime() + 2 * 3600000), C5_PRODUCT_ID, JSON.stringify({ purpose: 'legend-gift', targetPriceCents: 29900, quantityLimit: 1, stackable: false })])
+		const connection = await pool.getConnection()
+		try { expect((await readGiftCode(connection, codeRef, C5_PRODUCT_ID, now))?.usesTaken).toBe(2) }
+		finally { connection.release() }
+		const retrieve = vi.fn(async (id: string) => id === expired.id ? expired : paid)
+		const stripe = { checkout: { sessions: { retrieve } } } as unknown as Stripe
+		expect(await recoverGiftReservations(stripe, now)).toMatchObject({ checked: 2, expirySettlementAttempts: 1, paidSettlementAttempts: 1, held: 0 })
+		const [rows] = await pool.query<RowDataPacket[]>('SELECT checkoutSessionId, state FROM AI_GiftCodeSlot')
+		expect(rows).toHaveLength(1)
+		expect(rows[0]).toMatchObject({ checkoutSessionId: paid.id, state: 'spent' })
+		const reclaimed = await pool.getConnection()
+		try {
+			expect((await readGiftCode(reclaimed, codeRef, C5_PRODUCT_ID, now))?.usesTaken).toBe(1)
+			expect(await claimGiftSlot({ connection: reclaimed, codeRef, productId: C5_PRODUCT_ID, claimId: 'synthetic-after-missed-webhook', quantity: 1, expiresAt: now.getTime() / 1000 + 3600, unitPrice: 29900, now })).not.toBeNull()
+		} finally { reclaimed.release() }
+		expect(await recoverGiftReservations(stripe, now)).toMatchObject({ checked: 0 })
+	})
+
+	it('fulfills a paid gift even when its reservation is missing', async () => {
+		await pool.query('UPDATE AI_Product SET id = ? WHERE id = ?', [C5_PRODUCT_ID, 'product_reconcile'])
+		await pool.query('UPDATE AI_MerchantProduct SET productId = ?', [C5_PRODUCT_ID])
+		const codeRef = 'synthetic-missing-gift'
+		const id = stranded({ metadata: { ...checkoutSession('template').metadata, productId: C5_PRODUCT_ID, codeRef, giftClaimId: 'missing', decisionRef: encodeDecisionRef('0000000000000000', null, codeRef) } })
+		expect(await reconcile(id, inngestLikeStep().step)).toMatchObject({ status: 'fulfilled' })
+		expect(await counts(id)).toEqual({ charges: 1, sessions: 1, purchases: 1 })
+	})
+
 	it('leaves an already-fulfilled session untouched', async () => {
 		const id = stranded()
 		const original = await originalRun(id, inngestLikeStep().step)
@@ -452,6 +543,7 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 			])
 
 			expect(await counts(id)).toEqual({ charges: 1, sessions: 1, purchases: 1 })
+			if (reconciled.status === 'rejected') throw reconciled.reason
 			expect(reconciled.status).toBe('fulfilled')
 			const outcome = (reconciled as PromiseFulfilledResult<any>).value
 			expect(['fulfilled', 'raced']).toContain(outcome.status)
@@ -611,6 +703,31 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 		expect(await counts(id)).toEqual({ charges: 0, sessions: 0, purchases: 0 })
 	})
 
+	it('saves a verified ledger row from the reconciler new-purchase event', async () => {
+		await pool.query("INSERT INTO AI_Product (id, name, type, status, fields) VALUES (?, 'Fixture C5', 'cohort', 1, JSON_OBJECT())", [C5_PRODUCT_ID])
+		await pool.query("UPDATE AI_MerchantProduct SET productId = ? WHERE id = 'mp_reconcile'", [C5_PRODUCT_ID])
+		const id = stranded({ metadata: {
+			...checkoutSession('cs_template').metadata!, productId: C5_PRODUCT_ID,
+			cbPricingContract: 'v2-decision', decisionRef: 'c5d1.0123456789abcdef.-',
+			engineVersion: 'engine-fixture', policyVersion: 'policy-fixture',
+			expectedTotalCents: '29900', accessRestriction: 'none',
+		} })
+		const run = inngestLikeStep()
+		const fulfilled = await reconcile(id, run.step, () => false)
+		expect(fulfilled.status).toBe('fulfilled')
+		const announced = run.sent.find(event => event.payload.name === 'commerce/new-purchase-created')!
+		expect(announced.payload.data).toMatchObject({ checkoutSessionId: id })
+		const store = c5DecisionStoreOn(database as unknown as DbExecutor)
+		await expect(recordC5PurchaseDecision({
+			purchaseId: announced.payload.data.purchaseId as string,
+			checkoutSessionId: id, store, now: () => now,
+			getCheckoutSession: paymentProvider.options.paymentsAdapter.getCheckoutSession,
+		})).resolves.toMatchObject({ status: 'saved', verdict: { kind: 'clean' } })
+		await expect(store.purchase(announced.payload.data.purchaseId as string)).resolves.toMatchObject({
+			decision: { checkoutSessionId: id, decisionRef: 'c5d1.0123456789abcdef.-' },
+		})
+	})
+
 	it('still fulfills when the buyer owned the product before this checkout', async () => {
 		const id = stranded()
 		// Bought long before the session opened: not this checkout's business.
@@ -674,7 +791,7 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 			).resolves.toMatchObject({ kind: 'duplicate', duplicateOf: ['purch_racing'] })
 		})
 
-		it('saves a decision in Purchase.fields without touching other keys', async () => {
+		it('keeps the insert-only decision after stale geo writes replace Purchase.fields', async () => {
 			await pool.query(
 				`INSERT INTO AI_Purchase (id, userId, productId, totalAmount, status, fields)
 					VALUES ('purch_fields', ?, 'product_reconcile', 0, 'Valid', JSON_OBJECT('benefit', 'kept'))`,
@@ -688,6 +805,8 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 				v: 1 as const,
 				decisionRef: 'c5d1.0123456789abcdef.purch_cc',
 				creditSource: 'purch_cc',
+				codeRef: null,
+				basis: null,
 				contract: 'v2-decision',
 				engineVersion: 'engine-test',
 				policyVersion: 'policy-test',
@@ -697,6 +816,14 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 				savedAt: now.toISOString(),
 			}
 			await store.saveDecision('purch_fields', decision)
+			// Geo planned this write before the decision was saved. It writes
+			// only its own keys, so it cannot drop keys saved since.
+			await persistPurchaseGeoWrite({
+				purchaseId: 'purch_fields',
+				plan: { skip: false, reason: null, city: 'Portland', state: 'OR', ipAddress: null,
+					location: { lat: 45.5, lng: -122.6, city: 'Portland', region: 'OR', precision: 'city' },
+					source: 'stripe-billing' },
+			})
 			await store.markDuplicate('purch_fields', ['purch_other'])
 
 			const [rows] = await pool.query<RowDataPacket[]>(
@@ -706,16 +833,29 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 				typeof rows[0]!.fields === 'string'
 					? JSON.parse(rows[0]!.fields)
 					: rows[0]!.fields
-			expect(fields).toEqual({
+			expect(fields).toMatchObject({
 				benefit: 'kept',
-				c5Decision: decision,
 				c5DuplicateOf: ['purch_other'],
 			})
+			expect(fields).not.toHaveProperty('c5Decision')
+			await expect(store.saveDecision('purch_fields', { ...decision, savedAt: '2030-01-01T00:00:00Z' })).resolves.toBe('saved')
+			await expect(store.saveDecision('purch_fields', { ...decision, decisionRef: 'c5d1.ffffffffffffffff.other', creditSource: 'other' })).resolves.toBe('conflict')
 			await expect(store.purchase('purch_fields')).resolves.toMatchObject({
 				decision,
 			})
 			await expect(store.spentBy('purch_cc')).resolves.toEqual(['purch_fields'])
 			await expect(store.spentBy('purch_unspent')).resolves.toEqual([])
+			const [indexes] = await pool.query<RowDataPacket[]>('SHOW INDEX FROM AI_PurchaseDecision')
+			expect(indexes.map(row => row.Key_name)).toContain('PurchaseDecision_creditSource_idx')
+			expect(indexes.map(row => row.Key_name)).toContain('PurchaseDecision_codeRef_idx')
+			await pool.query('DELETE FROM AI_PurchaseDecision')
+			const replays = await Promise.all([
+				store.saveDecision('purch_fields', decision),
+				store.saveDecision('purch_fields', { ...decision, decisionRef: 'c5d1.ffffffffffffffff.other', creditSource: 'other' }),
+			])
+			expect(replays.sort()).toEqual(['conflict', 'saved'])
+			const [count] = await pool.query<RowDataPacket[]>('SELECT COUNT(*) AS n FROM AI_PurchaseDecision')
+			expect(Number(count[0]!.n)).toBe(1)
 		})
 
 		it('counts a sibling bought inside the 48-hour lookback', async () => {

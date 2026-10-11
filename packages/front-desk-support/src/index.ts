@@ -46,6 +46,14 @@ export type PricingFact<A> =
 	| { readonly value: A; readonly sourceRefs: readonly string[] }
 	| { readonly gap: FactGap }
 export interface PricingBuyerFacts {
+	/** Absent on older fact sources. The app reads this from a signed cookie. */
+	readonly code?: PricingFact<{
+		readonly codeRef: string
+		readonly unitPrice: number
+		readonly maxUses: number
+		readonly usesTaken: number
+		readonly expiresAt: string
+	} | null>
 	readonly alumni: PricingFact<'none' | 'c3' | 'c4' | 'both'>
 	/** USD cents actually paid for the one qualifying Crash Course purchase. */
 	readonly credit: PricingFact<{
@@ -161,6 +169,13 @@ const fact = <S extends Schema.Top>(value: S) =>
 		Schema.Struct({ gap: FactGapSchema }),
 	])
 const BuyerFactsSchema = Schema.Struct({
+	code: Schema.optionalKey(fact(Schema.NullOr(Schema.Struct({
+		codeRef: Schema.NonEmptyString.check(Schema.isMaxLength(500)),
+		unitPrice: Cents,
+		maxUses: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+		usesTaken: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+		expiresAt: Schema.String,
+	})))),
 	alumni: fact(Schema.Literals(['none', 'c3', 'c4', 'both'])),
 	credit: fact(
 		Schema.NullOr(

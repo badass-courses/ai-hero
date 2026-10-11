@@ -281,7 +281,7 @@ function effectiveApplyPolicyOverride(
 	binding: CourseSyncBinding,
 ): 'operator' | null {
 	return courseSyncApplyPolicyOverride(state) ??
-		(state === null && binding.contractVersion === 5
+		(state === null && binding.contractVersion !== 4
 			? binding.initialApplyPolicyOverride
 			: null)
 }
