@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { BuyPathPricingBeacon } from '@/lib/buy-path/beacons'
 import Link from 'next/link'
 import { CheckCircle2Icon } from 'lucide-react'
 import pluralize from 'pluralize'
@@ -54,6 +55,7 @@ export const PricingWidget: React.FC<{
 			pricingDataLoader={pricingDataLoader}
 			{...commerceProps}
 		>
+			<BuyPathPricingBeacon productId={product.id} />
 			<Pricing.Product className="w-full">
 				<Pricing.Purchased className="gap-1">
 					<Link

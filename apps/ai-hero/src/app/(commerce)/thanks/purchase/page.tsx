@@ -17,6 +17,7 @@ import {
 import { getServerAuthSession } from '@/server/auth'
 import { FileText, Mail } from 'lucide-react'
 import { PurchaseStatusPoller } from './purchase-status-poller'
+import { BuyPathDestinationBeacon } from '@/lib/buy-path/beacons'
 
 import * as InvoiceTeaser from '@coursebuilder/commerce-next/invoices/invoice-teaser'
 import * as LoginLink from '@coursebuilder/commerce-next/post-purchase/login-link'
@@ -32,7 +33,7 @@ import {
 	NEW_BULK_COUPON,
 	NEW_INDIVIDUAL_PURCHASE,
 } from '@coursebuilder/core/schemas/purchase-type'
-import { logger } from '@coursebuilder/utils/logger'
+import { log as logger } from '@/server/logger'
 
 export const maxDuration = 100
 
@@ -50,7 +51,7 @@ const getServerSideProps = async (
 		throw new Error(`No session_id found: ${session_id}`)
 	}
 
-	logger.info('purchase.thanks-page.loading', {
+	await logger.info('purchase.thanks-page.loading', {
 		checkoutSessionId: session_id,
 	})
 
@@ -100,7 +101,7 @@ const getServerSideProps = async (
 				purchase.bulkCoupon &&
 				purchase.bulkCoupon.maxUses > purchase.bulkCoupon.usedCount
 
-			logger.info('purchase.thanks-page.loaded', {
+			await logger.info('purchase.thanks-page.loaded', {
 				checkoutSessionId: session_id,
 				purchaseId: purchase.id,
 				productId: purchase.productId,
@@ -121,7 +122,7 @@ const getServerSideProps = async (
 			}
 		} catch (error) {
 			retries++
-			logger.debug('thanks purchase poll retry', {
+			await logger.info('purchase.thanks-page.poll_retry', {
 				sessionId: session_id,
 				retries,
 				maxRetries,
@@ -138,7 +139,7 @@ const getServerSideProps = async (
 	)
 
 	if (errorCheck.shouldShowError) {
-		logger.debug('thanks purchase poll success-no-purchase fallback', {
+		await logger.warn('purchase.thanks-page.processing_failed', {
 			sessionId: session_id,
 			stripeEventId: errorCheck.stripeEventId,
 		})
@@ -147,13 +148,9 @@ const getServerSideProps = async (
 		}
 	}
 
-	logger.error(
-		new Error('purchase missing after polling and no Stripe fallback', {
-			cause: {
-				sessionId: session_id,
-			},
-		}),
-	)
+	await logger.error('purchase.thanks-page.purchase_missing', {
+		checkoutSessionId: session_id,
+	})
 	notFound()
 }
 
@@ -361,6 +358,7 @@ async function PurchaseThanksPageLoaded({
 		<LayoutClient withContainer>
 			<main className="container min-h-[calc(100vh-var(--nav-height))] border-x px-5 py-8 sm:py-16">
 				<div className="mx-auto flex w-full max-w-4xl flex-col gap-5">
+					<BuyPathDestinationBeacon buyPathId={session_id} />
 					<PurchaseSummary.Root
 						title={title}
 						description={description}

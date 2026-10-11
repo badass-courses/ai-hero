@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { BuyPathPricingBeacon } from '@/lib/buy-path/beacons'
 import {
 	ProductPricingFeatures,
 	type ProductPricingFeature,
@@ -139,6 +140,7 @@ export const PricingWidget = ({
 			pricingDataLoader={pricingDataLoader}
 			{...commerceProps}
 		>
+			<BuyPathPricingBeacon productId={product.id} />
 			<Pricing.Product className="w-full">
 				<Pricing.Details className="w-full items-stretch px-5 pt-6 text-left sm:px-6">
 					<Pricing.Name className="mt-0 px-0 text-left text-base font-bold tracking-[-0.018em] sm:text-base" />

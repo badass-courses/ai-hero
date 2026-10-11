@@ -1,5 +1,7 @@
 import * as React from 'react'
 import { headers } from 'next/headers'
+import { BuyPathDestinationBeacon } from '@/lib/buy-path/beacons'
+import { purchaseBuyPathContext } from '@/lib/buy-path/read-context'
 import { redirect } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
@@ -158,6 +160,7 @@ const Welcome = async (props: {
 			productResources,
 		} = await getPurchaseDetailsForWelcome(searchParams)
 
+		const buyPath = await purchaseBuyPathContext(purchase.id).catch(() => null)
 		const redemptionsLeft =
 			purchase.bulkCoupon &&
 			purchase.bulkCoupon.maxUses > purchase.bulkCoupon.usedCount
@@ -185,9 +188,10 @@ const Welcome = async (props: {
 		return (
 			<LayoutClient withContainer>
 				<div className="">
-					<PostPurchaseDiscordAccess
-						isDiscordConnected={isDiscordConnected}
-					/>
+					{buyPath && (
+						<BuyPathDestinationBeacon buyPathId={buyPath.buyPathId} />
+					)}
+					<PostPurchaseDiscordAccess isDiscordConnected={isDiscordConnected} />
 					<WelcomePage
 						product={product}
 						productResources={productResources}

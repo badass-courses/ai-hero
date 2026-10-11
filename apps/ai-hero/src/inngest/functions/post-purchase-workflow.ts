@@ -27,6 +27,8 @@ import {
 } from '@/lib/included-product-entitlements'
 import { INCLUDED_PRODUCT_ENTITLEMENTS_RETRY_EVENT } from '@/inngest/events/included-product-entitlements'
 import { log } from '@/server/logger'
+import { verifyPurchase } from '@/lib/buy-path/verify-purchase'
+import type { BuyPathContext } from '@/lib/buy-path/schema'
 import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 
 import { guid } from '@coursebuilder/adapter-drizzle/mysql'
@@ -108,6 +110,7 @@ const tracePostPurchase = async (
 	level: 'info' | 'warn' | 'error' = 'info',
 ) => {
 	await log[level]('post_purchase.trace', {
+		event: 'post_purchase.trace',
 		telemetrySchemaVersion: 1,
 		phase,
 		...data,
@@ -165,6 +168,12 @@ export const postPurchaseWorkflow = inngest.createFunction(
 				'checkoutSessionId' in event.data ? event.data.checkoutSessionId : null,
 		}
 
+		const verifyLast = async (context: BuyPathContext, expected: number) => {
+			await step.sleep('buy path readback settling delay', '10s')
+			return step.run('verify buy path persisted invariants', () =>
+				verifyPurchase(context, expected),
+			)
+		}
 		await tracePostPurchase('workflow.started', traceBase)
 
 		if (
@@ -183,6 +192,15 @@ export const postPurchaseWorkflow = inngest.createFunction(
 			await tracePostPurchase('purchase.missing', traceBase, 'error')
 			throw new Error(`purchase not found`)
 		}
+
+		const buyPath: BuyPathContext | null = traceBase.checkoutSessionId
+			? {
+					buyPathId: traceBase.checkoutSessionId,
+					purchaseId: purchase.id,
+					productId: purchase.productId,
+					userId: purchase.userId ?? null,
+				}
+			: null
 
 		await tracePostPurchase('purchase.loaded', {
 			...traceBase,
@@ -367,6 +385,7 @@ export const postPurchaseWorkflow = inngest.createFunction(
 
 		if (product.type === ARCHIVE_PRODUCT_TYPE) {
 			if (!['Valid', 'Restricted'].includes(purchase.status)) {
+				if (buyPath) await verifyLast(buyPath, 0)
 				return {
 					purchase,
 					product,
@@ -485,6 +504,7 @@ export const postPurchaseWorkflow = inngest.createFunction(
 				})
 			}
 
+			if (buyPath) await verifyLast(buyPath, archiveResult.granted.length)
 			return {
 				purchase,
 				product,
@@ -992,6 +1012,9 @@ export const postPurchaseWorkflow = inngest.createFunction(
 				userId: user.id,
 			})
 		}
+
+		if (buyPath)
+			await verifyLast(buyPath, isTeamPurchase ? 0 : resourceContexts.length)
 
 		await tracePostPurchase('workflow.completed', {
 			...traceBase,

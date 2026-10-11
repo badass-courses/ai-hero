@@ -90,6 +90,10 @@ The seed catalog is deliberately **synthetic and bare**. No customer dump, produ
 
 `checkout <fixture>` inserts a temporary local Auth.js database session and verifies the app resolves that exact buyer. It POSTs to the real authenticated checkout route as the buy form does, follows the app's same-origin `/subscribe/verify-login` hop for cohort products, and retrieves Stripe's session total. Without `--complete`, it records and expires the session. With `--complete`, it selects the card method, opts out of Link and submits **4242 4242 4242 4242** through the Stripe-hosted page, then waits for paid status, the matching stored webhook, a matching C5 purchase for the buyer whose stored `totalAmount` equals Stripe's total to the cent (and whose saved pricing decision, if any, names this session and total), and C5 access from that purchase. Browser selectors can drift; a failure produces a private screenshot plus a control-name list (no values) and does not claim proof.
 
+**C5 pricing policy is required for checkout.** Start or reset with `RIG_FRONT_DESK_DATA=/absolute/private/front-desk-data.json` to enable the existing loopback policy/quote stub. Use `RIG_CATALOG_OVERLAY` too when reproducing a privately recorded price baseline. Neither input is production state; keep both outside the public repo. Restart owned services when changing the policy input, and reset when changing the catalog input.
+
+Without a policy fixture, the authoritative hook correctly holds checkout with `policy-unavailable`. The SDK may wrap its app error URL inside `/subscribe/verify-login?checkoutUrl=...`; following that hop looks like a login error even though the session cookie was valid. The rig now detects this provider refusal before following it. Supply the fixture, do not loosen authentication, the pricing gate, or the Stripe-host redirect check.
+
 **List prices.** Public fixtures use synthetic list prices; the C5 fixture is deliberately not the real price. A measurement run can supply real amounts from a private JSON file outside the repo:
 
 ```sh
