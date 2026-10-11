@@ -37,7 +37,13 @@ export const buyPathSchema = z
 		outcome: z.enum(['ok', 'failed', 'skipped']),
 		durationMs: z.number().finite().nonnegative(),
 		sincePaymentMs: z.number().finite().nonnegative().nullable(),
-		functionId: id.optional(),
+		// Inngest prefixes IDs with human-readable function names (including spaces).
+		functionId: z
+			.string()
+			.min(1)
+			.max(255)
+			.regex(/^[^\x00-\x1F\x7F]+$/)
+			.optional(),
 		runId: id.optional(),
 		attempt: z.number().int().min(0).max(45).optional(),
 		chargeId: id.nullable().optional(),

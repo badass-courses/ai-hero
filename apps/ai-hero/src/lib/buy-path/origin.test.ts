@@ -63,6 +63,23 @@ describe('exact configured browser origin', () => {
 			expect(deps.emit).not.toHaveBeenCalled()
 		},
 	)
+	it('normalizes both configured URL and Origin before comparing scheme, host and port', async () => {
+		const origin = buyPathOrigin({
+			...production,
+			publicUrl: 'https://www.aihero.dev/configured/path/',
+		})
+		expect(
+			(await ingest('https://www.aihero.dev/', origin)).response.status,
+		).toBe(204)
+		expect(
+			(await ingest('https://www.aihero.dev/observed/path', origin)).response
+				.status,
+		).toBe(204)
+		expect(
+			(await ingest('https://www.aihero.dev:8443/path', origin)).response
+				.status,
+		).toBe(403)
+	})
 	it('binds a preview to its platform URL, never the production URL', async () => {
 		const origin = buyPathOrigin({
 			...production,

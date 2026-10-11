@@ -1,3 +1,21 @@
+export function normalizeBuyPathOrigin(
+	value: string | null | undefined,
+): string | null {
+	if (!value) return null
+	try {
+		const url = new URL(value)
+		if (
+			!['http:', 'https:'].includes(url.protocol) ||
+			url.username ||
+			url.password
+		)
+			return null
+		return url.origin
+	} catch {
+		return null
+	}
+}
+
 /** Browser-facing origin. Never trust Host or Forwarded request headers. */
 export function buyPathOrigin(config: {
 	publicUrl?: string

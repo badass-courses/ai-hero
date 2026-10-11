@@ -53,21 +53,16 @@ export const inngestTelemetryMiddleware = new InngestMiddleware({
 					...(txnId && { txnId }),
 				})
 
+				let purchaseId: unknown = ctx.event?.data?.purchaseId
 				let context: BuyPathContext | null = null
 				return {
-					async transformInput({ ctx: hydrated }) {
-						// Observe hydrated input directly; memoized step execution can
-						// bypass beforeExecution, but it cannot bypass input hydration.
-						const purchaseId = hydrated.event?.data?.purchaseId
-						if (typeof purchaseId !== 'string') {
-							if (eventName === 'commerce/new-purchase-created')
-								await log.error('buy_path.context_read_failed', {
-									functionId,
-									runId,
-									reason: 'missing_purchase_id',
-								})
-							return
-						}
+					transformInput({ ctx: hydrated }) {
+						// Initial metadata can be partial. Observe input without
+						// returning/replacing the strongly typed execution context.
+						purchaseId = hydrated.event?.data?.purchaseId
+					},
+					async beforeExecution() {
+						if (typeof purchaseId !== 'string') return
 						try {
 							context = await purchaseBuyPathContext(purchaseId)
 							if (!context)

@@ -4,7 +4,8 @@ type Context = {
 	runId: string
 }
 type Hooks = {
-	transformInput(input: { ctx: Context }): Promise<void>
+	transformInput(input: { ctx: Context }): void
+	beforeExecution(): Promise<void>
 	finished(input: { result: { error?: Error } }): Promise<void>
 }
 type Config = {
@@ -66,6 +67,7 @@ describe('purchase lifecycle telemetry', () => {
 				event: { ...ctx.event, data: { purchaseId: 'purchase_fixture' } },
 			},
 		})
+		await hooks.beforeExecution()
 		await hooks.finished({ result: {} })
 		expect(mocks.read).toHaveBeenCalledWith('purchase_fixture')
 		expect(mocks.emit).toHaveBeenCalledWith(

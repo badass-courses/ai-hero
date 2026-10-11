@@ -1,3 +1,4 @@
+import { normalizeBuyPathOrigin } from './origin'
 import {
 	clientBuyPathSchema,
 	type BuyPathContext,
@@ -15,8 +16,17 @@ export async function ingestBuyPath(
 	request: Request,
 	dependencies: IngestDependencies,
 ) {
-	if (dependencies.origin === null || request.headers.get('origin') !== (dependencies.origin ?? new URL(request.url).origin))
-		return new Response(null, { status: 403, headers: { 'x-buy-path-rejection': 'origin' } })
+	const configuredOrigin = normalizeBuyPathOrigin(
+		dependencies.origin === undefined ? request.url : dependencies.origin,
+	)
+	if (
+		configuredOrigin === null ||
+		normalizeBuyPathOrigin(request.headers.get('origin')) !== configuredOrigin
+	)
+		return new Response(null, {
+			status: 403,
+			headers: { 'x-buy-path-rejection': 'origin' },
+		})
 	if (
 		!(await dependencies.limit(
 			request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
@@ -56,7 +66,11 @@ export async function ingestBuyPath(
 	const parsed = clientBuyPathSchema.safeParse(input)
 	if (!parsed.success) return new Response(null, { status: 400 })
 	const context = await dependencies.context(parsed.data)
-	if (!context) return new Response(null, { status: 403, headers: { 'x-buy-path-rejection': 'context' } })
+	if (!context)
+		return new Response(null, {
+			status: 403,
+			headers: { 'x-buy-path-rejection': 'context' },
+		})
 	await dependencies.emit(context, parsed.data)
 	return new Response(null, { status: 204 })
 }
