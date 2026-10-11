@@ -55,7 +55,7 @@ export const CourseSyncBindingSummary = Schema.Union([Schema.Struct({
 	}),
 }), Schema.Struct({
 	bindingId: NonEmptyString,
-	contractVersion: Schema.Literals([5, 6]),
+	contractVersion: Schema.Literals([5, 6, 7]),
 	status: Schema.Literals(["active", "suspended", "revoked"]),
 	sourceCourseId: NonEmptyString,
 	applyPolicy: Schema.Literals(["bounded-auto", "operator"]),

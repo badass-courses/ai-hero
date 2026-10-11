@@ -46,7 +46,7 @@ describe('production Cohort 005 first scheduled poll (S5)', () => {
 				product: {
 					id: binding.productId,
 					type: 'cohort',
-					fields: { state: 'draft', visibility: 'unlisted' },
+					fields: { state: 'published', visibility: 'unlisted' },
 				},
 				workshop: {
 					id: binding.anchorCohortId,
