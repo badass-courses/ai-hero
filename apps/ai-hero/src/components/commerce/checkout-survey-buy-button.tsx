@@ -86,9 +86,16 @@ function safeSetStoredAnswer(answer: string) {
 export function CheckoutSurveyBuyButton({
 	className,
 	children,
+	trailing,
 }: {
 	className?: string
 	children?: React.ReactNode
+	/**
+	 * Rendered after the label whatever the label is, so it survives a gate
+	 * that swaps the label for its own ("Sign in to buy"). An inline button
+	 * uses it to carry the price the note above the button refers to.
+	 */
+	trailing?: React.ReactNode
 }) {
 	const buttonRef = React.useRef<HTMLButtonElement | null>(null)
 	const surveyRef = React.useRef<HTMLDivElement | null>(null)
@@ -229,6 +236,7 @@ export function CheckoutSurveyBuyButton({
 					onClick={continueWithoutSurveyIfAlreadyAnswered}
 				>
 					{buttonLabel}
+					{trailing}
 				</Button>
 			</>
 		)

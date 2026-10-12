@@ -658,7 +658,10 @@
 		text-decoration: var(--shiki-dark-text-decoration) !important;
 	}
 
-	.prose li {
+	/* Skips `not-prose` regions, as the typography plugin's own rules do: a
+	   component list placed inside an article (the cohort curriculum) is not
+	   prose, and a marker on each of its rows pushed the row's content down. */
+	.prose li:not(:where([class~='not-prose'], [class~='not-prose'] *)) {
 		list-style-type: square;
 	}
 }

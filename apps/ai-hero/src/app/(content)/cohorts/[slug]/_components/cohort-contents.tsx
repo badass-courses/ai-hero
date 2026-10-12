@@ -24,6 +24,10 @@ import WorkshopSidebarItem from './cohort-list/workshop-sidebar-item'
  * for everyone — so there is one component and a variant rather than two
  * lists that drift apart.
  *
+ * `inline` is the full list placed by the copy itself (`<CohortContentList />`
+ * in the body): the same rows, closed, with no heading and no gutter, because
+ * the sentence above it is the heading and the caller draws the box.
+ *
  * Both variants render every lesson title server-side, locked or not: the
  * titles are the thing a buyer is evaluating and search engines should index
  * them. `WorkshopLessonItem` handles the lock affordance (visible row, no
@@ -34,12 +38,13 @@ export const CohortContents: React.FC<{
 	workshopProgressMap: Map<string, Promise<any>>
 	/** Fallback timezone for the "available from" line. */
 	timezone: string
-	variant: 'rail' | 'full'
+	variant: 'rail' | 'full' | 'inline'
 	className?: string
 }> = ({ workshops, workshopProgressMap, timezone, variant, className }) => {
 	if (workshops.length === 0) return null
 
 	const isRail = variant === 'rail'
+	const isFull = variant === 'full'
 
 	return (
 		<section className={className}>
@@ -47,16 +52,16 @@ export const CohortContents: React.FC<{
 				<h2 className="flex h-12 items-center border-b px-4 text-[14px] font-semibold tracking-tight">
 					Workshops
 				</h2>
-			) : (
+			) : isFull ? (
 				<div className="px-5 sm:px-8 lg:px-10">
 					<h2 className={cn(TYPE.heading, 'mb-5')}>Contents</h2>
 				</div>
-			)}
+			) : null}
 			<div className="flex w-full">
 				<ol
 					className={cn(
 						'divide-border flex w-full flex-col divide-y',
-						!isRail && 'border-y',
+						isFull && 'border-y',
 					)}
 				>
 					{workshops.map((workshop, index) => {
@@ -78,8 +83,10 @@ export const CohortContents: React.FC<{
 									<Accordion
 										type="multiple"
 										// The full list is a sales argument, so it opens; the rail
-										// is navigation and stays collapsed to the active branch.
-										defaultValue={isRail ? undefined : [`${workshop.id}-body`]}
+										// is navigation and stays collapsed to the active branch,
+										// and the inline list sits mid-copy, where seven open
+										// workshops would bury the sentence that follows it.
+										defaultValue={isFull ? [`${workshop.id}-body`] : undefined}
 									>
 										<AccordionItem
 											value={`${workshop.id}-body`}
@@ -143,7 +150,7 @@ export const CohortContents: React.FC<{
 						)
 					})}
 				</ol>
-				{!isRail && (
+				{isFull && (
 					<div className="bg-stripes hidden min-h-0 w-4 shrink-0 border-y border-l sm:flex" />
 				)}
 			</div>

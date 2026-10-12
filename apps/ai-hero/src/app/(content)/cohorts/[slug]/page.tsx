@@ -49,6 +49,7 @@ import { Certificate } from '../../_components/cohort-certificate-container'
 import { EditWorkshopButton } from '../../workshops/_components/edit-workshop-button'
 import { isCohortComingSoon } from './_components/cohort-coming-soon'
 import { CohortContents } from './_components/cohort-contents'
+import { CohortEnrollPrice } from './_components/cohort-enroll-price'
 import { CohortFactStrip } from './_components/cohort-fact-strip'
 import { CohortIncludes } from './_components/cohort-includes'
 import { CohortPricingWidgetContainer } from './_components/cohort-pricing-widget-container'
@@ -308,6 +309,13 @@ export async function CohortPageView(props: CohortPageViewProps) {
 				})),
 			}
 
+	// A body that places the curriculum itself replaces the list appended
+	// under it, so the workshops appear once. Code is stripped first so a
+	// body that only shows the tag in an example does not hide the real list.
+	const bodyHasInlineContentList = /<CohortContentList[\s/>]/.test(
+		mdxSource.replace(/```[\s\S]*?```|`[^`\n]*`/g, ''),
+	)
+
 	const { content } = await compileMDX(
 		mdxSource,
 		{
@@ -353,7 +361,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 
 				if (!CAN_ENROLL) {
 					return (
-						<div className="mt-5 flex flex-col items-start gap-2">
+						<div className="my-8 flex flex-col items-start gap-2">
 							<button
 								disabled
 								className="bg-primary/50 text-primary-foreground relative h-auto w-full cursor-not-allowed rounded-lg px-8 py-3 font-semibold opacity-75 sm:h-14 sm:w-auto md:px-16"
@@ -380,10 +388,13 @@ export async function CohortPageView(props: CohortPageViewProps) {
 						}}
 						userId={cohortProps?.userId}
 						pricingDataLoader={cohortProps.pricingDataLoader}
-						className="mt-5 items-start justify-start"
+						className="my-8 items-start justify-start"
 					>
 						<Pricing.Product>
-							<CheckoutSurveyBuyButton className="bg-primary text-primary-foreground hover:bg-primary/90 relative h-auto w-full cursor-pointer rounded-lg px-8 font-semibold sm:h-14 sm:w-auto md:px-16">
+							<CheckoutSurveyBuyButton
+								className="bg-primary text-primary-foreground hover:bg-primary/90 relative h-auto w-full cursor-pointer rounded-lg px-8 font-semibold sm:h-14 sm:w-auto md:px-16"
+								trailing={<CohortEnrollPrice />}
+							>
 								<span className="relative z-10">{children}</span>
 								<div
 									style={{
@@ -396,6 +407,34 @@ export async function CohortPageView(props: CohortPageViewProps) {
 					</Pricing.Root>
 				)
 			},
+			// Copy that only makes sense once seats can be bought: a price
+			// sentence, the curriculum, a deadline. It follows the rail, like
+			// the buttons, so a body can carry its launch section ahead of
+			// time and have it appear the moment enrollment opens.
+			CanEnroll: ({
+				children,
+				fallback,
+			}: {
+				children: React.ReactNode
+				fallback?: React.ReactNode
+			}) =>
+				mobileCta === 'enroll' ? (
+					<>{children}</>
+				) : fallback ? (
+					<>{fallback}</>
+				) : null,
+			// The curriculum, placed where the copy calls for it. Shown to
+			// someone who can buy it or already has, and to no one before that.
+			CohortContentList: () =>
+				mobileCta === 'enroll' || hasCohortAccess ? (
+					<CohortContents
+						className="not-prose border-border my-8 overflow-hidden rounded-md border"
+						variant="inline"
+						workshops={displayWorkshops as Workshop[]}
+						workshopProgressMap={workshopProgressMap}
+						timezone={PT}
+					/>
+				) : null,
 			HasDiscount: ({
 				children,
 				fallback,
@@ -603,7 +642,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 
 						{/* The curriculum is not announced while the cohort is coming
 						    soon, and its workshop list can still hold drafts. */}
-						{isComingSoon ? null : (
+						{isComingSoon || bodyHasInlineContentList ? null : (
 							<CohortContents
 								className="py-8"
 								variant="full"
