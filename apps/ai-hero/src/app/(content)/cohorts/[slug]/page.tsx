@@ -52,6 +52,10 @@ import { CohortContents } from './_components/cohort-contents'
 import { CohortFactStrip } from './_components/cohort-fact-strip'
 import { CohortIncludes } from './_components/cohort-includes'
 import { CohortPricingWidgetContainer } from './_components/cohort-pricing-widget-container'
+import {
+	getCohortEnrollmentWindow,
+	getCohortMobileCta,
+} from './_components/cohort-rail-state'
 import { CohortSidebar } from './_components/cohort-sidebar'
 
 export async function generateMetadata(
@@ -219,6 +223,25 @@ export async function CohortPageView(props: CohortPageViewProps) {
 		(cohortProps?.product?.fields.state === 'published' &&
 			isWithinEnrollmentWindow)
 
+	// The phone's bottom bar follows what the rail actually holds. The rail's
+	// own open/closed answer comes from the same rule, and it is stricter than
+	// `CAN_ENROLL` above: a published product with no opening date is a
+	// waitlist in the rail, so the bar must not offer enrollment over it.
+	const mobileCta = getCohortMobileCta({
+		hasCohortAccess,
+		isComingSoon,
+		isOnWaitlist,
+		railHasOffer: ALLOW_PURCHASE,
+		hasActiveProduct: cohortProps.product?.status === 1,
+		allowPurchase,
+		enrollmentWindow: getCohortEnrollmentWindow({
+			openEnrollment: openEnrollment as string | null | undefined,
+			closeEnrollment: closeEnrollment as string | null | undefined,
+			bypassSoldOut: cohortProps.couponFromCode?.fields?.bypassSoldOut === true,
+			now: nowInPT,
+		}),
+	})
+
 	const enrollmentOpenDateString = openEnrollmentDate
 		? formatInTimeZone(openEnrollmentDate, PT, "MMM d, yyyy 'at' h:mm a zzz")
 		: null
@@ -290,6 +313,38 @@ export async function CohortPageView(props: CohortPageViewProps) {
 			),
 			Enroll: ({ children = 'Enroll Now' }) => {
 				if (!cohortProps.product || hasCohortAccess) return null
+
+				// While the rail holds the waitlist, an inline button makes the
+				// ask the phone's bar makes: a way to that form under the rail's
+				// own label, never a dead control or an offer the rail does not
+				// have. Someone already on the list gets a status and no ask.
+				if (mobileCta === 'waitlist' || mobileCta === 'on-waitlist') {
+					return (
+						<div className="not-prose my-8 flex flex-col items-start gap-2">
+							{mobileCta === 'waitlist' ? (
+								<a
+									href="#buy"
+									className="bg-primary text-primary-foreground hover:bg-primary/90 inline-flex w-full items-center justify-center rounded-lg px-8 py-3 font-semibold sm:h-14 sm:w-auto md:px-16"
+								>
+									Join Waitlist
+								</a>
+							) : (
+								<p className="flex items-center gap-2 text-sm font-medium">
+									<CheckCircle
+										className="text-primary size-4 shrink-0"
+										aria-hidden="true"
+									/>
+									You are on the waitlist
+								</p>
+							)}
+							{enrollmentOpenDateString && (
+								<p className="text-muted-foreground text-sm">
+									Enrollment opens {enrollmentOpenDateString}
+								</p>
+							)}
+						</div>
+					)
+				}
 
 				if (!CAN_ENROLL) {
 					return (
@@ -451,8 +506,12 @@ export async function CohortPageView(props: CohortPageViewProps) {
 				<div className="flex flex-col lg:flex-row">
 					<div className="min-w-0 flex-1">
 						{/* `lg:pt-[52px]` is the spec's `--ah-section`; at `lg:pt-8` the
-						    title sat almost against the nav on desktop. */}
-						<header className="from-card to-background flex w-full flex-col items-center justify-between bg-gradient-to-b pt-6 md:gap-10 lg:flex-row lg:pt-[52px]">
+						    title sat almost against the nav on desktop. Below `lg` the
+						    cover leads the header and sits flush under the nav, so the
+						    top padding is only for a cohort with no cover to lead it. */}
+						<header
+							className={`from-card to-background flex w-full flex-col items-center justify-between bg-gradient-to-b md:gap-10 lg:flex-row lg:pt-[52px] ${fields?.image ? '' : 'pt-6'}`}
+						>
 							{fields?.image && (
 								<CldImage
 									className="flex w-full lg:hidden"
@@ -462,7 +521,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 									alt={fields?.title}
 								/>
 							)}
-							<div className="mt-5 flex w-full flex-col items-center px-5 text-center lg:mt-0 lg:items-start lg:pl-10 lg:text-left">
+							<div className="mt-5 flex w-full flex-col items-center px-5 text-center lg:mt-0 lg:items-start lg:px-10 lg:text-left">
 								<div className="text-foreground/80 mb-2 flex flex-wrap items-center justify-center gap-2 text-base sm:justify-start">
 									<span className="text-xs font-medium uppercase tracking-wider">
 										{campaignVariant?.eyebrow ?? 'Cohort-based Course'}
@@ -476,11 +535,13 @@ export async function CohortPageView(props: CohortPageViewProps) {
 								</>
 							)} */}
 								</div>
-								<h1 className="text-balance text-4xl font-bold sm:text-5xl lg:text-6xl">
+								{/* The headline is the offer, so it takes the single-offer
+								    landing step, tracking included. */}
+								<h1 className={`${TYPE.displayLanding} text-balance`}>
 									{campaignVariant?.headline ?? fields.title}
 								</h1>
 								{(campaignVariant?.subhead || fields.description) && (
-									<h2 className="text-primary mt-5 text-balance text-lg font-normal sm:text-xl lg:text-2xl">
+									<h2 className="text-primary mt-5 text-balance text-lg font-normal tracking-[-0.018em] sm:text-xl lg:text-2xl lg:tracking-[-0.02em]">
 										<ReactMarkdown
 											components={{
 												p: ({ children }) => <>{children}</>,
@@ -549,7 +610,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 					</div>
 					<CohortSidebar
 						cohort={displayCohort}
-						mobileCtaLabel={isComingSoon ? 'Join Waitlist' : undefined}
+						mobileCta={mobileCta}
 					>
 						{fields?.image && (
 							<CldImage

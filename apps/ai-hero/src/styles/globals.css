@@ -1139,6 +1139,56 @@ body {
 	content: none;
 }
 
+/* `Divider` in MDX: the hatched, pointed band from behind the cohort calendar
+   artwork (`cal-dark` and `cal-light` in the AI Hero Figma file), cut down to
+   a 24px rule. Its colours are the artwork's own rather than surface tokens,
+   so the rule and the calendar read as one family when they share a page.
+   Two layers because a clip-path cannot carry a border: `::before` is the 1px
+   outline, `::after` the surface and the hatch. The tips keep the artwork's
+   slope, and the shadow is a filter because a box-shadow would be clipped. */
+.ah-divider {
+	--divider-surface: #ffffff;
+	--divider-edge: #ffffff;
+	--divider-hatch: rgb(0 0 0 / 0.05);
+	position: relative;
+	height: 26px;
+	margin-block: 3rem;
+	filter: drop-shadow(0 1px 3px rgb(0 0 0 / 0.15));
+}
+.dark .ah-divider {
+	--divider-surface: #000000;
+	--divider-edge: #191919;
+	--divider-hatch: rgb(255 255 255 / 0.1);
+}
+.ah-divider::before,
+.ah-divider::after {
+	content: '';
+	position: absolute;
+	clip-path: polygon(
+		var(--divider-tip) 0,
+		calc(100% - var(--divider-tip)) 0,
+		100% 50%,
+		calc(100% - var(--divider-tip)) 100%,
+		var(--divider-tip) 100%,
+		0 50%
+	);
+}
+.ah-divider::before {
+	--divider-tip: 6.5px;
+	inset: 0;
+	background: var(--divider-edge);
+}
+.ah-divider::after {
+	--divider-tip: 6px;
+	inset: 1px 1.12px;
+	background: var(--divider-surface)
+		repeating-linear-gradient(
+			135deg,
+			var(--divider-hatch) 0 2px,
+			transparent 2px 4.2px
+		);
+}
+
 /* `MarkList`: a markdown list whose dot becomes a check or a cross.
    The wrapper only swaps the marker, so the items keep the size, leading and
    ink of every other list in the column and the block still reads as part of

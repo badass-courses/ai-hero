@@ -117,6 +117,9 @@ const SoftwareFactoryMap = dynamic(() =>
 const MarkList = dynamic(() =>
 	import('@/components/mdx/mark-list').then((mod) => mod.MarkList),
 )
+const Divider = dynamic(() =>
+	import('@/components/mdx/divider').then((mod) => mod.Divider),
+)
 const CommandCard = dynamic(() =>
 	import('@/components/mdx/command-card').then((mod) => mod.CommandCard),
 )
@@ -664,6 +667,7 @@ async function compileMDXInternal(
 					Contrast: (props: ContrastProps) => <Contrast {...props} />,
 					SoftwareFactoryMap: () => <SoftwareFactoryMap />,
 					MarkList: (props: MarkListProps) => <MarkList {...props} />,
+					Divider: () => <Divider />,
 					CommandCard: (props: CommandCardProps) => <CommandCard {...props} />,
 					Callout: ({ children, icon, className, intent }) => (
 						<Callout icon={icon} className={className} intent={intent}>
