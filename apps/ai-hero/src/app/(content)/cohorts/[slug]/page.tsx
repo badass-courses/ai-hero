@@ -242,6 +242,11 @@ export async function CohortPageView(props: CohortPageViewProps) {
 		}),
 	})
 
+	// A rail on the waitlist can also be one whose window has closed, and
+	// "opens" must not be said of a date that has passed.
+	const enrollmentOpensLater = openEnrollmentDate
+		? openEnrollmentDate > nowInPT
+		: false
 	const enrollmentOpenDateString = openEnrollmentDate
 		? formatInTimeZone(openEnrollmentDate, PT, "MMM d, yyyy 'at' h:mm a zzz")
 		: null
@@ -314,20 +319,20 @@ export async function CohortPageView(props: CohortPageViewProps) {
 			Enroll: ({ children = 'Enroll Now' }) => {
 				if (!cohortProps.product || hasCohortAccess) return null
 
-				// While the rail holds the waitlist, an inline button makes the
-				// ask the phone's bar makes: a way to that form under the rail's
-				// own label, never a dead control or an offer the rail does not
+				// While the rail holds the waitlist, an inline button is the same
+				// form the rail holds, so the ask can be answered where the reader
+				// is: never a dead control, and never an offer the rail does not
 				// have. Someone already on the list gets a status and no ask.
 				if (mobileCta === 'waitlist' || mobileCta === 'on-waitlist') {
 					return (
-						<div className="not-prose my-8 flex flex-col items-start gap-2">
+						<div className="not-prose my-8 flex max-w-xl flex-col items-start gap-2.5">
 							{mobileCta === 'waitlist' ? (
-								<a
-									href="#buy"
-									className="bg-primary text-primary-foreground hover:bg-primary/90 inline-flex w-full items-center justify-center rounded-lg px-8 py-3 font-semibold sm:h-14 sm:w-auto md:px-16"
-								>
-									Join Waitlist
-								</a>
+								<WaitlistForm
+									actionLabel="Join Waitlist"
+									productName={cohortProps.product.name}
+									surface="cohort-page"
+									knownIdentity={hasKnownWaitlistIdentity}
+								/>
 							) : (
 								<p className="flex items-center gap-2 text-sm font-medium">
 									<CheckCircle
@@ -337,11 +342,11 @@ export async function CohortPageView(props: CohortPageViewProps) {
 									You are on the waitlist
 								</p>
 							)}
-							{enrollmentOpenDateString && (
+							{enrollmentOpensLater && enrollmentOpenDateString ? (
 								<p className="text-muted-foreground text-sm">
 									Enrollment opens {enrollmentOpenDateString}
 								</p>
-							)}
+							) : null}
 						</div>
 					)
 				}
