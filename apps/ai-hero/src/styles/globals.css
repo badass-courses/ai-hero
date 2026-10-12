@@ -255,6 +255,13 @@
 	--ah-line: rgba(20, 22, 26, 0.1);
 	--ah-line-strong: rgba(20, 22, 26, 0.14);
 	--ah-line-soft: rgba(20, 22, 26, 0.07);
+	/* The check and the cross of a `MarkList` / `Contrast marks`. Glyph colours,
+	   not surfaces or text: `--destructive` is tuned as a button fill and in
+	   dark it is too deep to draw a 2px stroke on the page (2.2:1), and the
+	   palette has no green at all. Both measure at least 4.9:1 on
+	   `--background` and `--card`, here and in dark. */
+	--ah-mark-yes: oklch(0.52 0.13 155);
+	--ah-mark-no: oklch(0.55 0.19 27);
 	--ah-hover: rgba(20, 22, 26, 0.06);
 	--ah-accent-wash: rgba(20, 22, 26, 0.04);
 	/* The wash, pre-composited over `--muted` so a panel can be OPAQUE.
@@ -404,6 +411,8 @@
 	--ah-line: rgba(255, 255, 255, 0.08);
 	--ah-line-strong: rgba(255, 255, 255, 0.12);
 	--ah-line-soft: rgba(255, 255, 255, 0.06);
+	--ah-mark-yes: oklch(0.8 0.15 158);
+	--ah-mark-no: oklch(0.72 0.17 25);
 	--ah-hover: rgba(255, 255, 255, 0.07);
 	--ah-accent-wash: rgba(245, 196, 81, 0.07);
 	/* See `:root`. Gold at 7% over `--muted` (#0d0d0c). */
@@ -720,11 +729,16 @@ li.task-list-item {
    carries one — these utilities are layered over whatever surface is already
    there (`bg-muted/40 bg-stripes`, gutters, banners), so an opaque base would
    punch a hole through them. A placeholder that needs the spec's ground pairs
-   this with `bg-muted`. */
+   this with `bg-muted`.
+
+   The ink is `--stripes-ink` when a caller sets it. Grey ink over a coloured
+   wash reads as dirt rather than as hatch, so a tinted surface re-inks the
+   same stripes in its own hue instead of redrawing the pattern
+   (`SoftwareFactoryMap`'s gold band). */
 .bg-stripes {
 	background-image: repeating-linear-gradient(
 		135deg,
-		color-mix(in oklch, var(--foreground) 7%, transparent) 0 6px,
+		var(--stripes-ink, color-mix(in oklch, var(--foreground) 7%, transparent)) 0 6px,
 		transparent 6px 12px
 	);
 }
@@ -1123,6 +1137,38 @@ body {
 
 .ah-bullets.contains-task-list > li::before {
 	content: none;
+}
+
+/* `MarkList`: a markdown list whose dot becomes a check or a cross.
+   The wrapper only swaps the marker, so the items keep the size, leading and
+   ink of every other list in the column and the block still reads as part of
+   the sentence that introduces it. The glyph is a mask over a token colour
+   rather than an inline SVG per item: one rule themes it, and the author
+   wraps a plain markdown list instead of writing icon JSX. */
+.ah-marks {
+	--ah-mark: var(--ah-mark-yes);
+	--ah-mark-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.5 12.75l5 5L19.5 6.75'/%3E%3C/svg%3E");
+	--ah-mark-size: 18px;
+}
+
+.ah-marks[data-tone='negative'] {
+	--ah-mark: var(--ah-mark-no);
+	--ah-mark-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round'%3E%3Cpath d='M6.5 6.5l11 11M17.5 6.5l-11 11'/%3E%3C/svg%3E");
+}
+
+.ah-marks > .ah-bullets > li {
+	padding-left: 30px;
+}
+
+.ah-marks > .ah-bullets > li::before {
+	top: calc((1.68em - var(--ah-mark-size)) / 2);
+	width: var(--ah-mark-size);
+	height: var(--ah-mark-size);
+	border-radius: 0;
+	background: var(--ah-mark);
+	opacity: 1;
+	-webkit-mask: var(--ah-mark-glyph) center / contain no-repeat;
+	mask: var(--ah-mark-glyph) center / contain no-repeat;
 }
 
 /* The ordered numeral lands in the same slot as the dot. A `::marker` rather

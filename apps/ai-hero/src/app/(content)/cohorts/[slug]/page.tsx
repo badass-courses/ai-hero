@@ -95,6 +95,11 @@ type CohortPageViewProps = {
 	params: Promise<{ slug: string }>
 	searchParams: Promise<ParsedUrlQuery>
 	campaignLanding?: CampaignLanding
+	/**
+	 * MDX that replaces the CMS body for this render. Only
+	 * `/preview/cohorts/[slug]/[draft]` passes it, from a file on disk.
+	 */
+	bodySource?: string
 }
 
 /**
@@ -235,11 +240,13 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	// Get product slug to ID map for HasPurchased component
 	const productMap = new Map(allProducts.map((p) => [p.fields?.slug, p.id]))
 	// Use post-purchase body copy for purchasers when available,
-	// otherwise fall back to the standard sales body
+	// otherwise fall back to the standard sales body. A `bodySource` from the
+	// preview route stands in for either.
 	const mdxSource =
-		hasCohortAccess && cohort.fields.postPurchaseBody
+		props.bodySource ??
+		(hasCohortAccess && cohort.fields.postPurchaseBody
 			? cohort.fields.postPurchaseBody
-			: cohort.fields.body || ''
+			: cohort.fields.body || '')
 
 	const displayWorkshops = hasCohortAccess
 		? workshops
