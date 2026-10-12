@@ -47,7 +47,10 @@ import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
 import { Certificate } from '../../_components/cohort-certificate-container'
 import { EditWorkshopButton } from '../../workshops/_components/edit-workshop-button'
-import { isCohortComingSoon } from './_components/cohort-coming-soon'
+import {
+	cohortCallsToAction,
+	cohortEnrollmentPhase,
+} from './_components/cohort-coming-soon'
 import { CohortContents } from './_components/cohort-contents'
 import { CohortFactStrip } from './_components/cohort-fact-strip'
 import { CohortIncludes } from './_components/cohort-includes'
@@ -191,33 +194,29 @@ export async function CohortPageView(props: CohortPageViewProps) {
 		allowPurchase === 'true' ||
 		cohortProps?.product?.fields.state === 'published'
 
-	// Controls whether inline <Enroll> buttons can actually purchase
-	// Enrollment dates must be satisfied even when product is published
+	// One reading of the enrollment window drives every call to action outside
+	// the rail (mobile bar, inline <Enroll>, JSON-LD offer), so none of them can
+	// say "Enroll" while the rail shows the waitlist.
 	const openEnrollment = cohortProps?.product?.fields?.openEnrollment
 	const closeEnrollment = cohortProps?.product?.fields?.closeEnrollment
 	const openEnrollmentDate = openEnrollment
 		? new Date(openEnrollment as string)
 		: null
-	const nowInPT = new Date(
-		formatInTimeZone(new Date(), PT, "yyyy-MM-dd'T'HH:mm:ssXXX"),
-	)
-	const isWithinEnrollmentWindow = openEnrollmentDate
-		? openEnrollmentDate < nowInPT &&
-			(closeEnrollment ? new Date(closeEnrollment as string) > nowInPT : true)
-		: true // no dates set = no restriction
-
-	// Draft product, nothing to buy yet: the rail becomes the waitlist, and
-	// nothing on the page (mobile bar, JSON-LD offer) may read as for sale.
-	const isComingSoon = isCohortComingSoon({
+	const {
+		isComingSoon,
+		canEnroll: CAN_ENROLL,
+		mobileCtaLabel,
+		offerInJsonLd,
+	} = cohortCallsToAction({
+		phase: cohortEnrollmentPhase({
+			now: new Date(),
+			openEnrollment: openEnrollment as string | undefined,
+			closeEnrollment: closeEnrollment as string | undefined,
+		}),
 		productState: cohortProps?.product?.fields?.state,
 		allowPurchase,
 		hasCohortAccess,
 	})
-
-	const CAN_ENROLL =
-		allowPurchase === 'true' ||
-		(cohortProps?.product?.fields.state === 'published' &&
-			isWithinEnrollmentWindow)
 
 	const enrollmentOpenDateString = openEnrollmentDate
 		? formatInTimeZone(openEnrollmentDate, PT, "MMM d, yyyy 'at' h:mm a zzz")
@@ -294,12 +293,12 @@ export async function CohortPageView(props: CohortPageViewProps) {
 				if (!CAN_ENROLL) {
 					return (
 						<div className="mt-5 flex flex-col items-start gap-2">
-							<button
-								disabled
-								className="bg-primary/50 text-primary-foreground relative h-auto w-full cursor-not-allowed rounded-lg px-8 py-3 font-semibold opacity-75 sm:h-14 sm:w-auto md:px-16"
+							<a
+								href="#buy"
+								className="bg-primary text-primary-foreground hover:bg-primary/90 relative inline-flex h-auto w-full items-center justify-center rounded-lg px-8 py-3 font-semibold sm:h-14 sm:w-auto md:px-16"
 							>
-								<span className="relative z-10">{children}</span>
-							</button>
+								<span className="relative z-10">Join Waitlist</span>
+							</a>
 							{enrollmentOpenDateString && (
 								<p className="text-muted-foreground text-sm">
 									Enrollment opens {enrollmentOpenDateString}
@@ -429,7 +428,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 				{giftBanner ? <section className="border-border bg-muted text-foreground border-b"><p className={`${TYPE.meta} px-[18px] py-4 sm:px-11`}>{giftBanner}</p></section> : null}
 				<CohortMetadata
 					cohort={displayCohort}
-					product={isComingSoon ? undefined : cohortProps.product}
+					product={offerInJsonLd ? cohortProps.product : undefined}
 					quantityAvailable={cohortProps.quantityAvailable}
 				/>
 				<EditWorkshopButton
@@ -549,7 +548,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 					</div>
 					<CohortSidebar
 						cohort={displayCohort}
-						mobileCtaLabel={isComingSoon ? 'Join Waitlist' : undefined}
+						mobileCtaLabel={mobileCtaLabel}
 					>
 						{fields?.image && (
 							<CldImage
