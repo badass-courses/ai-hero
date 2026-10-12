@@ -360,7 +360,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 							>
 								<span className="relative z-10">{children}</span>
 							</button>
-							{enrollmentOpenDateString && (
+							{enrollmentOpensLater && enrollmentOpenDateString && (
 								<p className="text-muted-foreground text-sm">
 									Enrollment opens {enrollmentOpenDateString}
 								</p>
