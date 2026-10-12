@@ -28,7 +28,7 @@ export default async function CohortBodyPreviewPage(props: {
 	params: Promise<{ slug: string; draft: string }>
 	searchParams: Promise<ParsedUrlQuery>
 }) {
-	if (process.env.NODE_ENV === 'production') notFound()
+	if (process.env.NODE_ENV !== 'development') notFound()
 
 	const { slug, draft } = await props.params
 	if (!SAFE_SEGMENT.test(slug) || !SAFE_SEGMENT.test(draft)) notFound()
