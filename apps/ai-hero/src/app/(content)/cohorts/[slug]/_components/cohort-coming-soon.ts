@@ -25,3 +25,74 @@ export function isCohortComingSoon({
 	if (allowPurchase === 'true') return false
 	return productState !== undefined && productState !== 'published'
 }
+
+/** Where a published cohort product sits relative to its enrollment window. */
+export type CohortEnrollmentPhase = 'before-open' | 'open' | 'closed'
+
+/**
+ * The one reading of `openEnrollment` and `closeEnrollment` for the page.
+ * Bounds are exclusive, as they always were: at the exact open instant the
+ * window is not open yet, and at the exact close instant it has closed.
+ * No open date means no restriction.
+ *
+ * @param now - The current instant. Time zones do not matter: dates are instants.
+ * @param openEnrollment - `product.fields.openEnrollment`, an ISO string.
+ * @param closeEnrollment - `product.fields.closeEnrollment`, an ISO string.
+ */
+export function cohortEnrollmentPhase({
+	now,
+	openEnrollment,
+	closeEnrollment,
+}: {
+	now: Date
+	openEnrollment: string | null | undefined
+	closeEnrollment: string | null | undefined
+}): CohortEnrollmentPhase {
+	if (!openEnrollment) return 'open'
+	if (now.getTime() <= new Date(openEnrollment).getTime()) return 'before-open'
+	if (closeEnrollment && now.getTime() >= new Date(closeEnrollment).getTime())
+		return 'closed'
+	return 'open'
+}
+
+/**
+ * Everything outside the rail that asks for action, decided together so the
+ * mobile bar, inline `<Enroll>` buttons and the JSON-LD offer cannot disagree.
+ * When there is nothing to buy (coming soon, or published but outside the
+ * enrollment window) the rail is the waitlist, and so is everything else.
+ *
+ * @param phase - From {@link cohortEnrollmentPhase}.
+ * @param productState - `product.fields.state`, undefined when there is no product.
+ * @param allowPurchase - The `allowPurchase` search param.
+ * @param hasCohortAccess - Whether the viewer already has the cohort.
+ * @returns `canEnroll` for inline buy buttons, `mobileCtaLabel` (undefined keeps
+ *   the default "Enroll Now") and whether JSON-LD may describe an offer.
+ */
+export function cohortCallsToAction({
+	phase,
+	productState,
+	allowPurchase,
+	hasCohortAccess,
+}: {
+	phase: CohortEnrollmentPhase
+	productState: string | undefined
+	allowPurchase: unknown
+	hasCohortAccess: boolean
+}) {
+	const isComingSoon = isCohortComingSoon({
+		productState,
+		allowPurchase,
+		hasCohortAccess,
+	})
+	const canEnroll =
+		allowPurchase === 'true' ||
+		(productState === 'published' && phase === 'open')
+	const isWaitlistOnly = !hasCohortAccess && (isComingSoon || !canEnroll)
+	return {
+		isComingSoon,
+		canEnroll,
+		isWaitlistOnly,
+		mobileCtaLabel: isWaitlistOnly ? 'Join Waitlist' : undefined,
+		offerInJsonLd: !isWaitlistOnly,
+	}
+}
