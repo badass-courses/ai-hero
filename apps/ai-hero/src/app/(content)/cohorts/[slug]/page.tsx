@@ -331,9 +331,9 @@ export async function CohortPageView(props: CohortPageViewProps) {
 									knownIdentity={hasKnownWaitlistIdentity}
 								/>
 							) : (
-								<p className="flex items-center gap-2 text-sm font-medium">
+								<p className={`${TYPE.subhead} flex items-center gap-2`}>
 									<CheckCircle
-										className="text-primary size-4 shrink-0"
+										className="text-primary size-5 shrink-0"
 										aria-hidden="true"
 									/>
 									You are on the waitlist
