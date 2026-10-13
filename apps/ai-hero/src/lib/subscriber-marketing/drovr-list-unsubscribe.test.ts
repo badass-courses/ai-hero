@@ -10,11 +10,15 @@ import {
 import {
 	createKitUnsubscriber,
 	KIT_UNSUBSCRIBE_RETRY_MS,
+	listUnsubscribeIdempotencyKey,
 	type KitUnsubscriber,
 } from './drovr-list-unsubscribe'
 import type { ContactRecord, SideEffectIntent } from './types'
 
 const now = '2026-09-24T15:00:00.000Z'
+
+const allKey = (intentKey = 'unsubscribe:org-aihero:contact-1:all') =>
+	listUnsubscribeIdempotencyKey('contact-1', 'all', 'contact-directory', intentKey)
 
 const kitMock = (impl?: KitUnsubscriber) =>
 	impl
@@ -147,7 +151,7 @@ describe('acceptDrovrIntent: list.unsubscribe', () => {
 			payload: { scope: 'all' },
 		})
 		const row = repository.findSideEffectIntentByIdempotencyKey(
-			'contact:contact-1:list-unsubscribe:all',
+			allKey(),
 		)
 		expect(row).toMatchObject({
 			type: 'unsubscribe-kit-list',
@@ -178,7 +182,7 @@ describe('acceptDrovrIntent: list.unsubscribe', () => {
 		expect(repository.intents.size).toBe(1)
 		expect(
 			repository.findSideEffectIntentByIdempotencyKey(
-				'contact:contact-1:list-unsubscribe:all',
+				allKey(),
 			)?.status,
 		).toBe('completed')
 		expect([first.status, second.status]).toContain('completed')
@@ -210,7 +214,7 @@ describe('acceptDrovrIntent: list.unsubscribe', () => {
 		expect(stale.status).toBe('completed')
 		expect(
 			repository.findSideEffectIntentByIdempotencyKey(
-				'contact:contact-1:list-unsubscribe:all',
+				allKey(),
 			)?.status,
 		).toBe('completed')
 	})
@@ -236,6 +240,76 @@ describe('acceptDrovrIntent: list.unsubscribe', () => {
 		expect(repeat.completion.occurredAt).toBe(now)
 	})
 
+	it('re-stops after a lift: a new intent key writes the Kit tag again', async () => {
+		const repository = setup()
+		// Kit's view of the tag: the stop adds it, the subscribe executor's lift removes it.
+		const tagged = new Set<string>()
+		const unsubscribeInKit = kitMock(async ({ email }) => {
+			const already = tagged.has(email)
+			tagged.add(email)
+			return already ? 'already-tagged' : 'tagged'
+		})
+
+		const round1 = intent({ idempotencyKey: 'unsubscribe:org-aihero:contact-1:all:r1' })
+		const round2 = intent({ idempotencyKey: 'unsubscribe:org-aihero:contact-1:all:r2' })
+
+		await acceptDrovrIntent({ repository, intent: round1, now, unsubscribeInKit })
+		expect(tagged.has('learner@example.com')).toBe(true)
+
+		tagged.delete('learner@example.com') // the lift
+
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: round2,
+			now: '2026-09-25T15:00:00.000Z',
+			unsubscribeInKit,
+		})
+
+		expect(result.status).toBe('completed')
+		expect(unsubscribeInKit).toHaveBeenCalledTimes(2)
+		expect(tagged.has('learner@example.com')).toBe(true)
+		expect(repository.intents.size).toBe(2)
+
+		// The same round replayed stays one row and one write.
+		await acceptDrovrIntent({ repository, intent: round2, now, unsubscribeInKit })
+		expect(unsubscribeInKit).toHaveBeenCalledTimes(2)
+		expect(repository.intents.size).toBe(2)
+	})
+
+	it('a replay of an intent already receipted under the old per-contact key does not write Kit again', async () => {
+		const repository = setup()
+		repository.intents.set('legacy-row', {
+			id: 'legacy-row',
+			nextActionId: 'drovr:legacy',
+			contactId: 'contact-1',
+			provider: 'kit',
+			type: 'unsubscribe-kit-list',
+			status: 'completed',
+			idempotencyKey: 'contact:contact-1:list-unsubscribe:all',
+			gates: [],
+			reviewReasons: [],
+			completedAt: now,
+			metadata: {
+				scope: 'all',
+				completedAt: now,
+				drovr: { intentKey: 'unsubscribe:org-aihero:contact-1:all' },
+			},
+			createdAt: now,
+		})
+		const unsubscribeInKit = kitMock(async () => 'tagged')
+
+		const replay = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now: '2026-09-25T15:00:00.000Z',
+			unsubscribeInKit,
+		})
+
+		expect(replay.status).toBe('completed')
+		expect(unsubscribeInKit).not.toHaveBeenCalled()
+		expect(repository.intents.size).toBe(1)
+	})
+
 	it('completes a course scope with a receipt row and no Kit call', async () => {
 		const repository = setup()
 		const unsubscribeInKit = kitMock(async () => 'tagged')
@@ -255,7 +329,7 @@ describe('acceptDrovrIntent: list.unsubscribe', () => {
 		expect(result.status).toBe('completed')
 		expect(
 			repository.findSideEffectIntentByIdempotencyKey(
-				'contact:contact-1:list-unsubscribe:course:value-path-skills-course',
+				listUnsubscribeIdempotencyKey('contact-1', 'course', 'value-path-skills-course', 'unsubscribe:org-aihero:contact-1:course'),
 			)?.metadata.kitCall,
 		).toBe('none')
 	})
@@ -279,7 +353,7 @@ describe('acceptDrovrIntent: list.unsubscribe', () => {
 		})
 		expect(
 			repository.findSideEffectIntentByIdempotencyKey(
-				'contact:contact-1:list-unsubscribe:all',
+				allKey(),
 			)?.status,
 		).toBe('failed')
 
@@ -371,7 +445,7 @@ describe('acceptDrovrIntent: list.unsubscribe', () => {
 			provider: 'kit',
 			type: 'unsubscribe-kit-list',
 			status: 'pending',
-			idempotencyKey: 'contact:contact-1:list-unsubscribe:all',
+			idempotencyKey: allKey(),
 			gates: [],
 			reviewReasons: [],
 			metadata: { scope: 'all' },
