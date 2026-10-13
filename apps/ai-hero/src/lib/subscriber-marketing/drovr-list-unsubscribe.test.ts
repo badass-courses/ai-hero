@@ -10,11 +10,15 @@ import {
 import {
 	createKitUnsubscriber,
 	KIT_UNSUBSCRIBE_RETRY_MS,
+	listUnsubscribeIdempotencyKey,
 	type KitUnsubscriber,
 } from './drovr-list-unsubscribe'
 import type { ContactRecord, SideEffectIntent } from './types'
 
 const now = '2026-09-24T15:00:00.000Z'
+
+const allKey = (intentKey = 'unsubscribe:org-aihero:contact-1:all') =>
+	listUnsubscribeIdempotencyKey('contact-1', 'all', 'contact-directory', intentKey)
 
 const kitMock = (impl?: KitUnsubscriber) =>
 	impl
@@ -147,7 +151,7 @@ describe('acceptDrovrIntent: list.unsubscribe', () => {
 			payload: { scope: 'all' },
 		})
 		const row = repository.findSideEffectIntentByIdempotencyKey(
-			'contact:contact-1:list-unsubscribe:all',
+			allKey(),
 		)
 		expect(row).toMatchObject({
 			type: 'unsubscribe-kit-list',
@@ -178,7 +182,7 @@ describe('acceptDrovrIntent: list.unsubscribe', () => {
 		expect(repository.intents.size).toBe(1)
 		expect(
 			repository.findSideEffectIntentByIdempotencyKey(
-				'contact:contact-1:list-unsubscribe:all',
+				allKey(),
 			)?.status,
 		).toBe('completed')
 		expect([first.status, second.status]).toContain('completed')
@@ -210,7 +214,7 @@ describe('acceptDrovrIntent: list.unsubscribe', () => {
 		expect(stale.status).toBe('completed')
 		expect(
 			repository.findSideEffectIntentByIdempotencyKey(
-				'contact:contact-1:list-unsubscribe:all',
+				allKey(),
 			)?.status,
 		).toBe('completed')
 	})
@@ -325,7 +329,7 @@ describe('acceptDrovrIntent: list.unsubscribe', () => {
 		expect(result.status).toBe('completed')
 		expect(
 			repository.findSideEffectIntentByIdempotencyKey(
-				'contact:contact-1:list-unsubscribe:course:value-path-skills-course',
+				listUnsubscribeIdempotencyKey('contact-1', 'course', 'value-path-skills-course', 'unsubscribe:org-aihero:contact-1:course'),
 			)?.metadata.kitCall,
 		).toBe('none')
 	})
@@ -349,7 +353,7 @@ describe('acceptDrovrIntent: list.unsubscribe', () => {
 		})
 		expect(
 			repository.findSideEffectIntentByIdempotencyKey(
-				'contact:contact-1:list-unsubscribe:all',
+				allKey(),
 			)?.status,
 		).toBe('failed')
 
@@ -441,7 +445,7 @@ describe('acceptDrovrIntent: list.unsubscribe', () => {
 			provider: 'kit',
 			type: 'unsubscribe-kit-list',
 			status: 'pending',
-			idempotencyKey: 'contact:contact-1:list-unsubscribe:all',
+			idempotencyKey: allKey(),
 			gates: [],
 			reviewReasons: [],
 			metadata: { scope: 'all' },
