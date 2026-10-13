@@ -379,17 +379,14 @@ export async function CohortPageView(props: CohortPageViewProps) {
 			// sentence, the curriculum, a deadline. It follows the rail, like
 			// the buttons, so a body can carry its launch section ahead of
 			// time and have it appear the moment enrollment opens.
-			CanEnroll: ({
-				children,
-				fallback,
-			}: {
-				children: React.ReactNode
-				fallback?: React.ReactNode
-			}) =>
-				mobileCta === 'enroll' ? (
+			CanEnroll: ({ children }: { children: React.ReactNode }) =>
+				mobileCta === 'enroll' ? <>{children}</> : null,
+			// The other side of it: copy that belongs to the waitlist ask ("drop
+			// your email in the box below") and would be wrong over a buy button
+			// or for someone who already has the cohort.
+			WaitlistOnly: ({ children }: { children: React.ReactNode }) =>
+				mobileCta === 'waitlist' || mobileCta === 'on-waitlist' ? (
 					<>{children}</>
-				) : fallback ? (
-					<>{fallback}</>
 				) : null,
 			// The curriculum, placed where the copy calls for it, for someone
 			// who can buy it. Everyone else has the list under the body.
@@ -599,10 +596,14 @@ export async function CohortPageView(props: CohortPageViewProps) {
 							</div>
 						</header>
 						{/* Padding sits outside the measure: boxes are border-box, so
-						    70ch on the padded element would be 70ch minus the gutter. */}
-						<div className="px-5 pt-10 sm:px-8 lg:px-10">
+						    70ch on the padded element would be 70ch minus the gutter.
+						    The bottom padding is for a body that ends the column, with
+						    no curriculum under it: the body's last block gives up its
+						    own bottom margin, so the space is the same whether that
+						    block is a paragraph, a form or a buy button. */}
+						<div className="px-5 pt-10 last:pb-10 sm:px-8 lg:px-10">
 							<article
-								className={`prose dark:prose-invert sm:prose-lg lg:prose-lg ${PROSE_MEASURE}`}
+								className={`prose dark:prose-invert sm:prose-lg lg:prose-lg [&>:last-child]:mb-0 ${PROSE_MEASURE}`}
 							>
 								{content}
 							</article>
