@@ -208,15 +208,17 @@ export async function CohortPageView(props: CohortPageViewProps) {
 		openEnrollment: openEnrollment as string | undefined,
 		closeEnrollment: closeEnrollment as string | undefined,
 	})
-	const { isComingSoon, mobileCta, offerInJsonLd } = cohortCallsToAction({
-		phase: enrollmentPhase,
-		productState: cohortProps?.product?.fields?.state,
-		allowPurchase,
-		hasCohortAccess,
-		isOnWaitlist,
-		hasActiveProduct: cohortProps.product?.status === 1,
-		bypassSoldOut: cohortProps.couponFromCode?.fields?.bypassSoldOut === true,
-	})
+	const { isComingSoon, mobileCta, offerInJsonLd, curriculumAnnounced } =
+		cohortCallsToAction({
+			phase: enrollmentPhase,
+			productState: cohortProps?.product?.fields?.state,
+			allowPurchase,
+			hasCohortAccess,
+			isOnWaitlist,
+			hasActiveProduct: cohortProps.product?.status === 1,
+			bypassSoldOut:
+				cohortProps.couponFromCode?.fields?.bypassSoldOut === true,
+		})
 
 	// A rail on the waitlist can also be one whose window has closed, and
 	// "opens" must not be said of a date that has passed.
@@ -295,15 +297,6 @@ export async function CohortPageView(props: CohortPageViewProps) {
 				'',
 			),
 		)
-
-	// The curriculum is not announced before seats go on sale, whether the
-	// product is still a draft or was published ahead of its window: the
-	// workshop list can still hold drafts then. Someone who can buy or already
-	// has the cohort always sees it, and so does a cohort whose window closed.
-	const curriculumAnnounced =
-		mobileCta === 'enroll' ||
-		mobileCta === 'owned' ||
-		(!isComingSoon && !enrollmentOpensLater)
 
 	const { content } = await compileMDX(
 		mdxSource,
@@ -615,6 +608,8 @@ export async function CohortPageView(props: CohortPageViewProps) {
 							</article>
 						</div>
 
+						{/* For sale, the body's own inline list stands in for this one.
+						    On a launch waitlist there is no curriculum at all. */}
 						{!curriculumAnnounced || showsInlineContentList ? null : (
 							<CohortContents
 								className="py-8"

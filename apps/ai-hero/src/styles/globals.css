@@ -261,6 +261,8 @@
 	   palette has no green at all. Both measure at least 4.9:1 on
 	   `--background` and `--card`, here and in dark. */
 	--ah-mark-yes: oklch(0.52 0.13 155);
+	/* Where a check list ends up: the brand gold, darkened to hold on paper. */
+	--ah-mark-gold: oklch(0.6 0.13 82);
 	--ah-mark-no: oklch(0.55 0.19 27);
 	--ah-hover: rgba(20, 22, 26, 0.06);
 	--ah-accent-wash: rgba(20, 22, 26, 0.04);
@@ -412,6 +414,7 @@
 	--ah-line-strong: rgba(255, 255, 255, 0.12);
 	--ah-line-soft: rgba(255, 255, 255, 0.06);
 	--ah-mark-yes: oklch(0.8 0.15 158);
+	--ah-mark-gold: var(--accent-fill);
 	--ah-mark-no: oklch(0.72 0.17 25);
 	--ah-hover: rgba(255, 255, 255, 0.07);
 	--ah-accent-wash: rgba(245, 196, 81, 0.07);
@@ -1222,6 +1225,20 @@ body {
 	opacity: 1;
 	-webkit-mask: var(--ah-mark-glyph) center / contain no-repeat;
 	mask: var(--ah-mark-glyph) center / contain no-repeat;
+}
+
+/* `toGold`: a list of checks that runs from green at its first item to gold
+   at its last, each mark taking the colour of its place in the list. A
+   browser without `sibling-index()` keeps every check green. */
+@supports (width: calc(sibling-index() * 1px)) {
+	.ah-marks[data-to-gold][data-tone='positive'] > .ah-bullets > li::before {
+		background: color-mix(
+			in oklch,
+			var(--ah-mark-yes),
+			var(--ah-mark-gold)
+				calc((sibling-index() - 1) / max(sibling-count() - 1, 1) * 100%)
+		);
+	}
 }
 
 /* The ordered numeral lands in the same slot as the dot. A `::marker` rather

@@ -220,6 +220,40 @@ describe('cohortCallsToAction', () => {
 		}
 	})
 
+	it('keeps the curriculum off a page that is the waitlist for a launch', () => {
+		expect(
+			cohortCallsToAction({ ...base, phase: 'before-open' }).curriculumAnnounced,
+		).toBe(false)
+		expect(
+			cohortCallsToAction({ ...base, productState: 'draft', phase: 'open' })
+				.curriculumAnnounced,
+		).toBe(false)
+		expect(
+			cohortCallsToAction({ ...base, phase: 'before-open', isOnWaitlist: true })
+				.curriculumAnnounced,
+		).toBe(false)
+	})
+
+	it('shows the curriculum to someone who can buy or already has the cohort', () => {
+		for (const state of [
+			{ phase: 'open' as const },
+			{ phase: 'before-open' as const, allowPurchase: 'true' },
+			{ phase: 'before-open' as const, bypassSoldOut: true },
+			{ phase: 'before-open' as const, hasCohortAccess: true },
+			{ phase: 'open' as const, productState: 'draft', hasCohortAccess: true },
+		]) {
+			expect(cohortCallsToAction({ ...base, ...state }).curriculumAnnounced).toBe(
+				true,
+			)
+		}
+	})
+
+	it('keeps the curriculum on a cohort whose window has closed', () => {
+		expect(
+			cohortCallsToAction({ ...base, phase: 'closed' }).curriculumAnnounced,
+		).toBe(true)
+	})
+
 	it('keeps a draft on the waitlist whatever the coupon says', () => {
 		const cta = cohortCallsToAction({
 			...base,

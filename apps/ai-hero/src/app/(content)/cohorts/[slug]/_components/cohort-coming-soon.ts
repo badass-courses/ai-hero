@@ -88,7 +88,10 @@ export type CohortMobileCta =
  * @param bypassSoldOut - The viewer's coupon lets them buy outside the window,
  *   as it does in the rail.
  * @returns `canEnroll` for buying, `mobileCta` for the bar and the inline
- *   buttons, and whether JSON-LD may describe an offer.
+ *   buttons, whether JSON-LD may describe an offer, and `curriculumAnnounced`:
+ *   the workshop list shows to someone who can buy or already has the cohort,
+ *   and on a cohort whose window has closed, but never on a page that is
+ *   still the waitlist for a launch.
  */
 export function cohortCallsToAction({
 	phase,
@@ -131,5 +134,9 @@ export function cohortCallsToAction({
 		isWaitlistOnly,
 		mobileCta,
 		offerInJsonLd: !isWaitlistOnly,
+		curriculumAnnounced:
+			mobileCta === 'enroll' ||
+			mobileCta === 'owned' ||
+			(!isComingSoon && phase !== 'before-open'),
 	}
 }
