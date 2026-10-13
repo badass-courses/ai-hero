@@ -95,7 +95,7 @@ describe('GatedBuyButton', () => {
 		expect(html).toContain('Contact support to upgrade')
 	})
 
-	it('keeps an anonymous buyer a path to sign in, labelled as an upper bound', () => {
+	it('keeps its own label for an anonymous buyer, and tells a returning one their price may differ', () => {
 		mocks.pricing.formattedPrice = {
 			authoritative: authoritative({
 				kind: 'bounded',
@@ -106,8 +106,15 @@ describe('GatedBuyButton', () => {
 		}
 		const html = render()
 		expect(html).toContain('type="submit"')
-		expect(html).toContain('Sign in to buy')
-		expect(html).not.toContain('Enroll')
-		expect(html).toContain('Up to this price. Sign in to see yours.')
+		expect(html).toContain('Enroll')
+		expect(html).not.toContain('Sign in to buy')
+		expect(html).toContain('data-upper-bound=""')
+		expect(html).toContain('Returning student?')
+		expect(html).toContain('href="/login?callbackUrl=%2F"')
+		expect(html).toContain('to see your price.')
+		// A caption: it comes after the button it explains.
+		expect(html.indexOf('data-upper-bound')).toBeGreaterThan(
+			html.indexOf('Enroll'),
+		)
 	})
 })

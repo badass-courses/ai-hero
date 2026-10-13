@@ -9,15 +9,17 @@ import { APP_REASONS } from './reasons'
  *
  * - `buy`: a legacy price or a chargeable decision.
  * - `sign-in`: nobody is signed in, so the price is an upper bound. The button
- *   stays enabled because checkout sends an anonymous buyer to sign in first
- *   and prices them fresh there; it never charges the bound.
+ *   keeps its own label and stays enabled: buying is still what it does, and
+ *   checkout sends an anonymous buyer to sign in first and prices them fresh
+ *   there; it never charges the bound. The caption under the button is where
+ *   a returning buyer is told to sign in for their own price.
  * - `support`: the buyer holds a region-restricted purchase. There is no
  *   upgrade path, so the button becomes a way to reach support.
  * - `blocked`: no purchasable price. The button is disabled.
  */
 export type PurchaseGate =
 	| { kind: 'buy'; upperBound: false }
-	| { kind: 'sign-in'; upperBound: true; label: string }
+	| { kind: 'sign-in'; upperBound: true }
 	| { kind: 'support'; upperBound: false; label: string }
 	| { kind: 'blocked'; upperBound: boolean; label: string }
 
@@ -38,7 +40,7 @@ export function purchaseGate(
 		decision.kind === 'bounded' &&
 		decision.reasons.includes(APP_REASONS.identityRequired)
 	) {
-		return { kind: 'sign-in', upperBound: true, label: 'Sign in to buy' }
+		return { kind: 'sign-in', upperBound: true }
 	}
 	if (decision.reasons.includes(APP_REASONS.restrictedHolder)) {
 		return {
