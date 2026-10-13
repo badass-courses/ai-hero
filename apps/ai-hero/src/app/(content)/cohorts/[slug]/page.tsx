@@ -47,16 +47,15 @@ import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
 import { Certificate } from '../../_components/cohort-certificate-container'
 import { EditWorkshopButton } from '../../workshops/_components/edit-workshop-button'
-import { isCohortComingSoon } from './_components/cohort-coming-soon'
+import {
+	cohortCallsToAction,
+	cohortEnrollmentPhase,
+} from './_components/cohort-coming-soon'
 import { CohortContents } from './_components/cohort-contents'
 import { CohortEnrollPrice } from './_components/cohort-enroll-price'
 import { CohortFactStrip } from './_components/cohort-fact-strip'
 import { CohortIncludes } from './_components/cohort-includes'
 import { CohortPricingWidgetContainer } from './_components/cohort-pricing-widget-container'
-import {
-	getCohortEnrollmentWindow,
-	getCohortMobileCta,
-} from './_components/cohort-rail-state'
 import { CohortSidebar } from './_components/cohort-sidebar'
 
 export async function generateMetadata(
@@ -196,58 +195,32 @@ export async function CohortPageView(props: CohortPageViewProps) {
 		allowPurchase === 'true' ||
 		cohortProps?.product?.fields.state === 'published'
 
-	// Controls whether inline <Enroll> buttons can actually purchase
-	// Enrollment dates must be satisfied even when product is published
+	// One reading of the enrollment window drives every call to action outside
+	// the rail (mobile bar, inline <Enroll>, JSON-LD offer), so none of them can
+	// say "Enroll" while the rail shows the waitlist.
 	const openEnrollment = cohortProps?.product?.fields?.openEnrollment
 	const closeEnrollment = cohortProps?.product?.fields?.closeEnrollment
 	const openEnrollmentDate = openEnrollment
 		? new Date(openEnrollment as string)
 		: null
-	const nowInPT = new Date(
-		formatInTimeZone(new Date(), PT, "yyyy-MM-dd'T'HH:mm:ssXXX"),
-	)
-	const isWithinEnrollmentWindow = openEnrollmentDate
-		? openEnrollmentDate < nowInPT &&
-			(closeEnrollment ? new Date(closeEnrollment as string) > nowInPT : true)
-		: true // no dates set = no restriction
-
-	// Draft product, nothing to buy yet: the rail becomes the waitlist, and
-	// nothing on the page (mobile bar, JSON-LD offer) may read as for sale.
-	const isComingSoon = isCohortComingSoon({
+	const enrollmentPhase = cohortEnrollmentPhase({
+		now: new Date(),
+		openEnrollment: openEnrollment as string | undefined,
+		closeEnrollment: closeEnrollment as string | undefined,
+	})
+	const { isComingSoon, mobileCta, offerInJsonLd } = cohortCallsToAction({
+		phase: enrollmentPhase,
 		productState: cohortProps?.product?.fields?.state,
 		allowPurchase,
 		hasCohortAccess,
-	})
-
-	const CAN_ENROLL =
-		allowPurchase === 'true' ||
-		(cohortProps?.product?.fields.state === 'published' &&
-			isWithinEnrollmentWindow)
-
-	// The phone's bottom bar follows what the rail actually holds. The rail's
-	// own open/closed answer comes from the same rule, and it is stricter than
-	// `CAN_ENROLL` above: a published product with no opening date is a
-	// waitlist in the rail, so the bar must not offer enrollment over it.
-	const mobileCta = getCohortMobileCta({
-		hasCohortAccess,
-		isComingSoon,
 		isOnWaitlist,
-		railHasOffer: ALLOW_PURCHASE,
 		hasActiveProduct: cohortProps.product?.status === 1,
-		allowPurchase,
-		enrollmentWindow: getCohortEnrollmentWindow({
-			openEnrollment: openEnrollment as string | null | undefined,
-			closeEnrollment: closeEnrollment as string | null | undefined,
-			bypassSoldOut: cohortProps.couponFromCode?.fields?.bypassSoldOut === true,
-			now: nowInPT,
-		}),
+		bypassSoldOut: cohortProps.couponFromCode?.fields?.bypassSoldOut === true,
 	})
 
 	// A rail on the waitlist can also be one whose window has closed, and
 	// "opens" must not be said of a date that has passed.
-	const enrollmentOpensLater = openEnrollmentDate
-		? openEnrollmentDate > nowInPT
-		: false
+	const enrollmentOpensLater = enrollmentPhase === 'before-open'
 	const enrollmentOpenDateString = openEnrollmentDate
 		? formatInTimeZone(openEnrollmentDate, PT, "MMM d, yyyy 'at' h:mm a zzz")
 		: null
@@ -310,11 +283,18 @@ export async function CohortPageView(props: CohortPageViewProps) {
 			}
 
 	// A body that places the curriculum itself replaces the list appended
-	// under it, so the workshops appear once. Code is stripped first so a
-	// body that only shows the tag in an example does not hide the real list.
-	const bodyHasInlineContentList = /<CohortContentList[\s/>]/.test(
-		mdxSource.replace(/```[\s\S]*?```|`[^`\n]*`/g, ''),
-	)
+	// under it, so the workshops appear once. The inline list is only for
+	// someone who can buy, so everyone else keeps the appended one. Code and
+	// comments are stripped first so a body that only mentions the tag does
+	// not hide the real list.
+	const showsInlineContentList =
+		mobileCta === 'enroll' &&
+		/<CohortContentList[\s/>]/.test(
+			mdxSource.replace(
+				/```[\s\S]*?```|`[^`\n]*`|\{\/\*[\s\S]*?\*\/\}/g,
+				'',
+			),
+		)
 
 	const { content } = await compileMDX(
 		mdxSource,
@@ -359,23 +339,9 @@ export async function CohortPageView(props: CohortPageViewProps) {
 					)
 				}
 
-				if (!CAN_ENROLL) {
-					return (
-						<div className="my-8 flex flex-col items-start gap-2">
-							<button
-								disabled
-								className="bg-primary/50 text-primary-foreground relative h-auto w-full cursor-not-allowed rounded-lg px-8 py-3 font-semibold opacity-75 sm:h-14 sm:w-auto md:px-16"
-							>
-								<span className="relative z-10">{children}</span>
-							</button>
-							{enrollmentOpensLater && enrollmentOpenDateString && (
-								<p className="text-muted-foreground text-sm">
-									Enrollment opens {enrollmentOpenDateString}
-								</p>
-							)}
-						</div>
-					)
-				}
+				// No product in the rail to act on.
+				if (mobileCta !== 'enroll') return null
+
 
 				return (
 					<Pricing.Root
@@ -423,10 +389,10 @@ export async function CohortPageView(props: CohortPageViewProps) {
 				) : fallback ? (
 					<>{fallback}</>
 				) : null,
-			// The curriculum, placed where the copy calls for it. Shown to
-			// someone who can buy it or already has, and to no one before that.
+			// The curriculum, placed where the copy calls for it, for someone
+			// who can buy it. Everyone else has the list under the body.
 			CohortContentList: () =>
-				mobileCta === 'enroll' || hasCohortAccess ? (
+				mobileCta === 'enroll' ? (
 					<CohortContents
 						className="not-prose border-border my-8 overflow-hidden rounded-md border"
 						variant="inline"
@@ -528,7 +494,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 				{giftBanner ? <section className="border-border bg-muted text-foreground border-b"><p className={`${TYPE.meta} px-[18px] py-4 sm:px-11`}>{giftBanner}</p></section> : null}
 				<CohortMetadata
 					cohort={displayCohort}
-					product={isComingSoon ? undefined : cohortProps.product}
+					product={offerInJsonLd ? cohortProps.product : undefined}
 					quantityAvailable={cohortProps.quantityAvailable}
 				/>
 				<EditWorkshopButton
@@ -642,7 +608,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 
 						{/* The curriculum is not announced while the cohort is coming
 						    soon, and its workshop list can still hold drafts. */}
-						{isComingSoon || bodyHasInlineContentList ? null : (
+						{isComingSoon || showsInlineContentList ? null : (
 							<CohortContents
 								className="py-8"
 								variant="full"

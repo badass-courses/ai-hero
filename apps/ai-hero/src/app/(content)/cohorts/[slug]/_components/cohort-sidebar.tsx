@@ -14,7 +14,7 @@ import { useMeasure } from 'react-use'
 import { Button, ScrollArea } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/utils/cn'
 
-import type { CohortMobileCta } from './cohort-rail-state'
+import type { CohortMobileCta } from './cohort-coming-soon'
 
 export const CohortSidebar = ({
 	children,
