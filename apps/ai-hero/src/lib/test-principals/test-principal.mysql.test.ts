@@ -237,7 +237,7 @@ integration('test principals on disposable MySQL with real Auth.js', () => {
 		const getHandler = createMagicLinkGetHandler(authHandler, { secret: cookieSecret })
 		const parked = await getHandler(new Request(signIn.url))
 		expect(parked.status).toBe(307)
-		expect(new URL(parked.headers.get('location')!).pathname).toBe('/login/verify')
+		expect(parked.headers.get('location')).toBe('/login/verify')
 		const confirmationCookie = parked.headers
 			.get('set-cookie')!
 			.split(';')[0]!

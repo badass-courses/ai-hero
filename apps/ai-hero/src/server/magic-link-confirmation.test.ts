@@ -32,14 +32,15 @@ describe('magic-link confirmation boundary', () => {
 		const handler = createMagicLinkGetHandler(authHandler, { secret, now })
 
 		const response = await handler(magicLinkRequest())
-		const location = new URL(response.headers.get('location')!)
+		const location = response.headers.get('location')
 		const setCookie = response.headers.get('set-cookie')!
 
 		expect(response.status).toBe(307)
 		expect(response.headers.get('referrer-policy')).toBe('no-referrer')
 		expect(response.headers.get('cache-control')).toBe('no-store')
-		expect(location.pathname).toBe('/login/verify')
-		expect(location.search).toBe('')
+		// A path, never an absolute URL: behind a proxy the request's own URL
+		// names the server's host, not the one the browser is on.
+		expect(location).toBe('/login/verify')
 		expect(setCookie).toContain('Max-Age=300')
 		expect(setCookie).toContain('Path=/')
 		expect(setCookie).toContain('HttpOnly')
@@ -168,9 +169,7 @@ describe('magic-link confirmation boundary', () => {
 			)
 
 			expect(response.status).toBe(303)
-			expect(new URL(response.headers.get('location')!).pathname).toBe(
-				'/login/verify',
-			)
+			expect(response.headers.get('location')).toBe('/login/verify')
 			expect(response.headers.get('set-cookie')).toContain('Max-Age=0')
 			expect(authHandler).not.toHaveBeenCalled()
 		},
