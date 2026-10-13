@@ -149,15 +149,21 @@ function withSetCookie(response: Response, setCookie: string) {
 	})
 }
 
-function confirmationRedirect(request: Request) {
-	const response = Response.redirect(
-		new URL(MAGIC_LINK_CONFIRMATION_PATH, request.url),
-		307,
-	)
-	const headers = new Headers(response.headers)
-	headers.set('cache-control', 'no-store')
-	headers.set('referrer-policy', 'no-referrer')
-	return new Response(null, { status: response.status, headers })
+/**
+ * A redirect to the confirmation page as a path, which the browser resolves
+ * against the address it asked for. Behind a proxy or a tunnel `request.url`
+ * carries the server's own host, so an absolute URL built from it sends the
+ * browser to `localhost`, away from the origin the cookie was just set on.
+ */
+function confirmationRedirect(status: 303 | 307) {
+	return new Response(null, {
+		status,
+		headers: {
+			location: MAGIC_LINK_CONFIRMATION_PATH,
+			'cache-control': 'no-store',
+			'referrer-policy': 'no-referrer',
+		},
+	})
 }
 
 function readConfirmationFromCallback(request: Request) {
@@ -195,7 +201,7 @@ export function createMagicLinkGetHandler<RequestType extends Request>(
 		if (request.method !== 'GET') return authHandler(request)
 
 		const confirmation = readConfirmationFromCallback(request)
-		const response = confirmationRedirect(request)
+		const response = confirmationRedirect(307)
 		if (!confirmation || !options.secret) {
 			return withSetCookie(response, clearedMagicLinkCookie())
 		}
@@ -244,10 +250,7 @@ export function createMagicLinkConfirmHandler(
 		)
 		if (!confirmation) {
 			return withSetCookie(
-				Response.redirect(
-					new URL(MAGIC_LINK_CONFIRMATION_PATH, request.url),
-					303,
-				),
+				confirmationRedirect(303),
 				clearedMagicLinkCookie(),
 			)
 		}
