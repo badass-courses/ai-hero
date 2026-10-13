@@ -51,6 +51,7 @@ import {
 	cohortCallsToAction,
 	cohortEnrollmentPhase,
 } from './_components/cohort-coming-soon'
+import { CohortCertificateProgress } from './_components/cohort-certificate-progress'
 import { CohortContents } from './_components/cohort-contents'
 import { CohortEnrollPrice } from './_components/cohort-enroll-price'
 import { CohortFactStrip } from './_components/cohort-fact-strip'
@@ -645,10 +646,24 @@ export async function CohortPageView(props: CohortPageViewProps) {
 									workshopProgressMap={workshopProgressMap}
 									timezone={PT}
 								/>
-								<Certificate
-									isCompleted={hasCompletedCohort}
-									resourceSlugOrId={cohort.fields?.slug}
-								/>
+								{/* The count waits on the same progress reads as the rows
+								    above; until they land the tile shows without it. */}
+								<div className="border-t p-3">
+									<React.Suspense
+										fallback={
+											<Certificate
+												isCompleted={hasCompletedCohort}
+												resourceSlugOrId={cohort.fields?.slug}
+											/>
+										}
+									>
+										<CohortCertificateProgress
+											isCompleted={hasCompletedCohort}
+											resourceSlugOrId={cohort.fields?.slug}
+											workshopProgressMap={workshopProgressMap}
+										/>
+									</React.Suspense>
+								</div>
 							</div>
 						) : ALLOW_PURCHASE ? (
 							<CohortPricingWidgetContainer
