@@ -171,7 +171,10 @@ export const CohortPricingWidgetContainer: React.FC<
 		}
 
 		if (!knownIdentity && sessionStatus === 'loading') {
-			return <div className="bg-muted mt-5 h-12 w-full animate-pulse" />
+			// The height of the form it stands in for (name, email, button,
+			// stacked: 212px). It was one row tall, so when the session resolved
+			// the form arrived 164px taller and pushed the rest of the rail down.
+			return <div className="bg-muted mt-5 h-[212px] w-full animate-pulse" />
 		}
 
 		const intent = {
@@ -274,28 +277,42 @@ export const CohortPricingWidgetContainer: React.FC<
 					<p className="opacit-50 -mb-3 flex w-full items-center justify-center pt-5 text-center text-sm">
 						{eventDateString}
 					</p>
-					{/* The status stays; the ask goes.
+					{/* Someone already on the waitlist gets a confirmation, not the ask.
 
 					    Every subtitle in `getEnrollmentState` ends in "join the
 					    waitlist", and under it sat the form to do exactly that — which
 					    is the right sidebar for a first-time visitor and the wrong one
 					    for the person most likely to be looking at it, someone who
 					    joined weeks ago and came back to see whether the dates are set.
-					    They kept being asked, and the page gave no sign it had heard
-					    them.
 
-					    What is left is the fact they came for — closed, or opening on
-					    a date — with nothing to act on, because there is nothing left
-					    for them to do. */}
+					    Dropping the ask alone left them the date and no sign the page
+					    had heard them. So the rail says what the inline block in the
+					    body says: you are on the waitlist, and under it the fact they
+					    came for — closed, or opening on a date. */}
 					<div className="p-5">
 						<div className="flex flex-col items-center justify-center gap-2 text-center">
-							<p className="text-balance text-lg font-semibold">
-								{enrollmentState.title}
-							</p>
-							{isOnWaitlist ? null : (
-								<p className="text-foreground/80 text-balance text-sm">
-									{enrollmentState.subtitle}
-								</p>
+							{isOnWaitlist ? (
+								<>
+									<p className="flex items-center gap-2 text-lg font-semibold">
+										<CheckCircle
+											className="text-primary size-5 shrink-0"
+											aria-hidden="true"
+										/>
+										You are on the waitlist
+									</p>
+									<p className="text-muted-foreground text-balance text-sm">
+										{enrollmentState.title}
+									</p>
+								</>
+							) : (
+								<>
+									<p className="text-balance text-lg font-semibold">
+										{enrollmentState.title}
+									</p>
+									<p className="text-foreground/80 text-balance text-sm">
+										{enrollmentState.subtitle}
+									</p>
+								</>
 							)}
 						</div>
 						{isOnWaitlist ? null : renderWaitlistForm()}

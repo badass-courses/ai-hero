@@ -9,6 +9,7 @@ import { CheckoutSurveyBuyButton } from '@/components/commerce/checkout-survey-b
 import { Contributor } from '@/components/contributor'
 import LayoutClient from '@/components/layout-client'
 import { TYPE } from '@/components/landing/type'
+import { formatOpensIn } from '@/lib/cohort-opening'
 import { giftSharePresentation, giftShareTitle } from '@/lib/c5-pricing/gift-share'
 import { signedGiftFact } from '@/lib/c5-pricing/gift-server'
 import { GiftShareAttribution } from '@/components/gift-share-attribution'
@@ -37,7 +38,6 @@ import {
 import type { Workshop } from '@/lib/workshops'
 import { compileMDX } from '@/utils/compile-mdx'
 import { formatDiscount } from '@/utils/discount-formatter'
-import { formatInTimeZone } from 'date-fns-tz'
 import { eq } from 'drizzle-orm'
 import { ArrowUpRight, CheckCircle } from 'lucide-react'
 import { Markdown as ReactMarkdown } from '@/components/markdown'
@@ -225,7 +225,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	// "opens" must not be said of a date that has passed.
 	const enrollmentOpensLater = enrollmentPhase === 'before-open'
 	const enrollmentOpenDateString = openEnrollmentDate
-		? formatInTimeZone(openEnrollmentDate, PT, "MMM d, yyyy 'at' h:mm a zzz")
+		? formatOpensIn(openEnrollmentDate, PT, new Date())
 		: null
 
 	// "Trained" in the fact strip: a live count across every cohort to date,
