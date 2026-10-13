@@ -1,9 +1,11 @@
 import type { Metadata } from 'next'
+import { formatStartsAt } from '@/components/landing/format'
 import LayoutClient from '@/components/layout-client'
 import {
 	formatAlumniCount,
 	getCachedCohortAlumniCount,
 } from '@/lib/cohort-stats'
+import { formatOpensIn, upcomingEnrollmentOpening } from '@/lib/cohort-opening'
 import { getCoursesHeroState } from '@/lib/courses-hero-state'
 import { getNextOfferSafe } from '@/lib/next-offer'
 import {
@@ -73,9 +75,24 @@ export default async function CoursesRoute() {
 			? offer
 			: null
 
+	// The flagship's dates that are still ahead, for the row under the hero.
+	// `opens` only while it is announced: once seats are on sale (`upcoming`)
+	// the opening date is history, and the row says "Enrollment open" instead.
+	const now = new Date()
+	const timezone = flagship?.timezone ?? 'America/Los_Angeles'
+	const opens = upcoming ? null : upcomingEnrollmentOpening(flagship, now)
+	const starts = flagship?.startsAt ? new Date(flagship.startsAt) : null
+	const cohortDates = {
+		opens: opens ? formatOpensIn(opens, timezone, now) : null,
+		starts:
+			starts && starts.getTime() > now.getTime()
+				? formatStartsAt(starts, timezone, now)
+				: null,
+	}
+
 	// The flagship never sits on the past shelf: it is either the hero, or —
-	// when the workshop leads — the catalog's cohort card (`CoursesPage`).
-	// Either way the page lists it exactly once.
+	// when the workshop leads — the row under it (`CoursesPage`). Either way
+	// the page lists it exactly once.
 	const pastCohorts = flagship
 		? allPastCohorts.filter((cohort) => cohort.id !== flagship.id)
 		: allPastCohorts
@@ -91,6 +108,7 @@ export default async function CoursesRoute() {
 				running={running}
 				featuredWorkshopOffer={featuredWorkshopOffer}
 				latestWorkshop={latestWorkshop}
+				cohortDates={cohortDates}
 			/>
 		</LayoutClient>
 	)

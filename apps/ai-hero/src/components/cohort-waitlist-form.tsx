@@ -78,7 +78,15 @@ export function WaitlistForm({
 	}
 
 	if (!knownIdentity && sessionStatus === 'loading') {
-		return <div className="bg-muted h-12 w-full animate-pulse rounded-[9px]" />
+		// The height of the form it stands in for, at either layout: one 44px
+		// row from 520px of room, and name, email and button stacked (166px)
+		// below that. It was 48px at every width, so on a phone the form arrived
+		// 118px taller and pushed the page down under the reader.
+		return (
+			<div className="@container w-full min-w-0">
+				<div className="bg-muted @[520px]:h-11 h-[166px] w-full animate-pulse rounded-[9px]" />
+			</div>
+		)
 	}
 
 	return (
