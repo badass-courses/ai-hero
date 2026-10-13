@@ -1197,6 +1197,154 @@ body {
 		);
 }
 
+/* `SoftwareFactoryMap` in MDX: the hatch of its two bands, and everything
+   about the drawing that moves. The geometry and the timetable are in the
+   component; this is the behaviour, kept in CSS so the figure needs no client
+   code.
+
+   The hatch first. The bands wear `.bg-stripes` at the slim divider's pitch
+   (2px of ink on a 4.2px period) instead of the site's 6 on 12: at the size
+   of a band the wide stripe read as a pattern laid over the diagram, where
+   the fine one reads as the band's own surface. Same ink, same angle, and
+   still re-inked through `--stripes-ink`. */
+.ah-factory-map .bg-stripes {
+	background-image: repeating-linear-gradient(
+		135deg,
+		var(--stripes-ink, color-mix(in oklch, var(--foreground) 7%, transparent)) 0
+			2px,
+		transparent 2px 4.2px
+	);
+}
+
+.ah-factory-map {
+	/* A card's border while it is lit, and the ink of the lines that step back.
+	   Both are mixed to opaque colours, like every stroke in the drawing. */
+	--factory-lit: color-mix(in oklab, var(--foreground) 46%, var(--card));
+	--factory-receded: color-mix(in oklab, var(--foreground) 20%, var(--background));
+	--factory-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ah-factory-map [data-accent] {
+	--factory-lit: var(--accent-fill);
+}
+/* The agent and the team are solid ink already, so theirs is a rim. */
+.ah-factory-map [data-node]:not([data-part]) {
+	--factory-lit: color-mix(in oklab, var(--foreground) 32%, var(--background));
+}
+
+/* With reduced motion the moving layer is not drawn at all and nothing below
+   applies, which leaves the still drawing exactly as it was. */
+@media (prefers-reduced-motion: reduce) {
+	.ah-factory-pulse,
+	.ah-factory-flash,
+	.ah-factory-link {
+		display: none;
+	}
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	/* A pulse is one short dash in a pattern whose gap is longer than any line,
+	   slid a fixed distance every loop. That distance, not the line's length,
+	   sets the pace, so every pulse moves at the same speed and a short line
+	   simply finishes sooner; the rest of the loop the dash is off the end of
+	   its line. It starts 2px short of the line so its round cap is not left
+	   showing while it waits. It is the line's own width in full ink, so it
+	   reads as a glint passing along the wire, not as a bead riding on it. */
+	.ah-factory-pulse {
+		stroke-dasharray: 14px var(--flow-travel);
+		stroke-dashoffset: 16px;
+		animation: ah-factory-flow var(--flow-loop) linear infinite;
+	}
+
+	/* The flash where a pulse lands: the arrowhead in full ink (its fill) and
+	   the box's border (a stroke, held a little under full so it stays quieter
+	   than the same border under the pointer). It animates the paint's opacity
+	   rather than the element's, which leaves `opacity` free for the hover
+	   below. The percentages are of the loop: at 12s it swells for 0.3s and
+	   is gone 1.1s later. A slow rise on purpose, since a sudden onset is what
+	   catches an eye that is reading. */
+	.ah-factory-flash {
+		fill-opacity: 0;
+		stroke-opacity: 0;
+		animation: ah-factory-flash var(--flow-loop) linear infinite;
+	}
+
+	.ah-factory-link {
+		opacity: 0;
+	}
+
+	.ah-factory-pulse,
+	.ah-factory-flash,
+	.ah-factory-link,
+	.ah-factory-type {
+		transition: opacity 300ms var(--factory-ease);
+	}
+	.ah-factory-lines {
+		transition: color 300ms var(--factory-ease);
+	}
+	.ah-factory-box {
+		transition:
+			stroke 300ms var(--factory-ease),
+			stroke-width 300ms var(--factory-ease);
+	}
+
+	/* Hovering a box: it lights... */
+	.ah-factory-map [data-part]:hover .ah-factory-box {
+		stroke: var(--factory-lit);
+		stroke-width: 2px;
+	}
+	.ah-factory-map [data-node]:not([data-part]):hover .ah-factory-box {
+		stroke-width: 4px;
+	}
+
+	/* ...the lines that are not its own change to the fainter ink. A part's
+	   connections are stretches of lines it shares, so all of them step back
+	   and its own are redrawn over the top (`Flows`)... */
+	.ah-factory-map:has([data-part]:hover) .ah-factory-lines,
+	.ah-factory-map:has([data-node='agent']:hover) .ah-factory-lines[data-of='team'],
+	.ah-factory-map:has([data-node='team']:hover) .ah-factory-lines[data-of='agent'] {
+		color: var(--factory-receded);
+	}
+	.ah-factory-map:has([data-part]:hover) .ah-factory-link {
+		opacity: 1;
+	}
+
+	/* ...the other parts dim (a player is wired to all four, so hovering one
+	   dims none)... */
+	.ah-factory-map:has([data-part]:hover) [data-part]:not(:hover) .ah-factory-type {
+		opacity: 0.45;
+	}
+
+	/* ...and whatever flows between two other boxes stops showing. One
+	   selector per box: CSS cannot compare one attribute with another. */
+	.ah-factory-map:has([data-node='agent']:hover) [data-flow]:not([data-flow~='agent']),
+	.ah-factory-map:has([data-node='team']:hover) [data-flow]:not([data-flow~='team']),
+	.ah-factory-map:has([data-node='systems']:hover) [data-flow]:not([data-flow~='systems']),
+	.ah-factory-map:has([data-node='environment']:hover) [data-flow]:not([data-flow~='environment']),
+	.ah-factory-map:has([data-node='knowledge']:hover) [data-flow]:not([data-flow~='knowledge']),
+	.ah-factory-map:has([data-node='practices']:hover) [data-flow]:not([data-flow~='practices']) {
+		opacity: 0;
+	}
+}
+
+@keyframes ah-factory-flow {
+	to {
+		stroke-dashoffset: calc(16px - var(--flow-travel));
+	}
+}
+
+@keyframes ah-factory-flash {
+	2.5% {
+		fill-opacity: 1;
+		stroke-opacity: 0.75;
+		animation-timing-function: ease-out;
+	}
+	12%,
+	100% {
+		fill-opacity: 0;
+		stroke-opacity: 0;
+	}
+}
+
 /* `MarkList`: a markdown list whose dot becomes a check or a cross.
    The wrapper only swaps the marker, so the items keep the size, leading and
    ink of every other list in the column and the block still reads as part of

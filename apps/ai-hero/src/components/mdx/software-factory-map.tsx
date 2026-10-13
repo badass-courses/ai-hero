@@ -37,6 +37,195 @@ const LAYERS = [
 	{ label: 'Strategic layer', parts: ['knowledge', 'practices'] },
 ] as const satisfies readonly { label: string; parts: readonly PartKey[] }[]
 
+type NodeKey = PartKey | 'agent' | 'team'
+type Dir = 'up' | 'down' | 'left' | 'right'
+
+/**
+ * What moves. A pulse travels each connection toward its arrowhead, so there
+ * is one row per arrowhead and a two-way line gets two. The number is when the
+ * pulse sets off, in seconds into the loop.
+ *
+ * The loop is two turns with a rest after each. The agent works through its
+ * four things and reaches the team; then the team does the same, and the
+ * systems and the knowledge answer the agent. Within a turn the right-hand
+ * lines trail the left by a beat: a mirrored burst is the one thing here that
+ * would pull the eye off the copy.
+ */
+const DEPARTS = {
+	'agent>systems': 0,
+	'agent>knowledge': 0,
+	'agent>environment': 0.4,
+	'agent>practices': 0.4,
+	'agent>team': 0.8,
+	'team>systems': 6,
+	'team>knowledge': 6,
+	'team>environment': 6.4,
+	'team>practices': 6.4,
+	'team>agent': 6.8,
+	'systems>agent': 7.6,
+	'knowledge>agent': 7.6,
+} as const satisfies Partial<Record<`${NodeKey}>${NodeKey}`, number>>
+
+type FlowKey = keyof typeof DEPARTS
+
+const FLOW_KEYS = Object.keys(DEPARTS) as FlowKey[]
+
+/** The loop in seconds, and a pulse's speed in SVG user units a second. */
+const FLOW_LOOP = 12
+const FLOW_SPEED = 140
+
+/**
+ * The same two numbers as `globals.css` wants them: how long the loop is, and
+ * how far a pulse gets in one. Every pulse moves that far every loop whatever
+ * the length of its line, which is what keeps them all at one speed.
+ */
+const FLOW_VARS = {
+	'--flow-loop': `${FLOW_LOOP}s`,
+	'--flow-travel': `${FLOW_LOOP * FLOW_SPEED}px`,
+} as React.CSSProperties
+
+/** One flow, as one of the two layouts draws it. */
+type FlowLine = {
+	/** Its line, from where it starts to the foot of its arrowhead. It retraces
+	    a line of the drawing, so the two have to move together. */
+	d: string
+	/** That line's length in user units, as `getTotalLength()` reports it. It
+	    times the flash at the far end. */
+	length: number
+	/** The arrowhead it runs into. */
+	head: readonly [x: number, y: number, dir: Dir]
+}
+
+type FlowLines = Record<FlowKey, FlowLine>
+
+const WIDE_FLOWS: FlowLines = {
+	'agent>systems': { d: 'M248 26H220V108', length: 110, head: [220, 115, 'down'] },
+	'agent>knowledge': {
+		d: 'M248 26H26Q16 26 16 36V321Q16 331 26 331H30',
+		length: 543,
+		head: [37, 331, 'right'],
+	},
+	'agent>environment': { d: 'M422 26H460V108', length: 120, head: [460, 115, 'down'] },
+	'agent>practices': {
+		d: 'M422 26H654Q664 26 664 36V321Q664 331 654 331H650',
+		length: 553,
+		head: [643, 331, 'left'],
+	},
+	'agent>team': { d: 'M340 58V420', length: 362, head: [340, 427, 'down'] },
+	'team>systems': {
+		d: 'M318 430V254Q318 244 308 244H260Q250 244 250 234V224',
+		length: 266,
+		head: [250, 217, 'up'],
+	},
+	'team>knowledge': {
+		d: 'M258 452H178Q168 452 168 442V380',
+		length: 158,
+		head: [168, 373, 'up'],
+	},
+	'team>environment': {
+		d: 'M362 430V254Q362 244 372 244H420Q430 244 430 234V224',
+		length: 266,
+		head: [430, 217, 'up'],
+	},
+	'team>practices': {
+		d: 'M422 452H502Q512 452 512 442V380',
+		length: 158,
+		head: [512, 373, 'up'],
+	},
+	'team>agent': { d: 'M340 420V58', length: 362, head: [340, 51, 'up'] },
+	'systems>agent': { d: 'M220 108V26H248', length: 110, head: [255, 26, 'right'] },
+	'knowledge>agent': {
+		d: 'M30 331H26Q16 331 16 321V36Q16 26 26 26H248',
+		length: 543,
+		head: [255, 26, 'right'],
+	},
+}
+
+const NARROW_FLOWS: FlowLines = {
+	'agent>systems': {
+		d: 'M88 26H22Q12 26 12 36V145H22',
+		length: 201,
+		head: [29, 145, 'right'],
+	},
+	'agent>knowledge': {
+		d: 'M88 26H22Q12 26 12 36V375H22',
+		length: 431,
+		head: [29, 375, 'right'],
+	},
+	'agent>environment': {
+		d: 'M88 26H22Q12 26 12 36V233H22',
+		length: 289,
+		head: [29, 233, 'right'],
+	},
+	'agent>practices': {
+		d: 'M88 26H22Q12 26 12 36V453Q12 463 22 463',
+		length: 515,
+		head: [29, 463, 'right'],
+	},
+	'agent>team': {
+		d: 'M272 26H338Q348 26 348 36V554Q348 564 338 564H272',
+		length: 682,
+		head: [265, 564, 'left'],
+	},
+	'team>systems': {
+		d: 'M272 564H338Q348 564 348 554V145H338',
+		length: 501,
+		head: [331, 145, 'left'],
+	},
+	'team>knowledge': {
+		d: 'M272 564H338Q348 564 348 554V375H338',
+		length: 271,
+		head: [331, 375, 'left'],
+	},
+	'team>environment': {
+		d: 'M272 564H338Q348 564 348 554V233H338',
+		length: 413,
+		head: [331, 233, 'left'],
+	},
+	'team>practices': {
+		d: 'M272 564H338Q348 564 348 554V463H338',
+		length: 183,
+		head: [331, 463, 'left'],
+	},
+	'team>agent': {
+		d: 'M272 564H338Q348 564 348 554V36Q348 26 338 26H272',
+		length: 682,
+		head: [265, 26, 'left'],
+	},
+	'systems>agent': {
+		d: 'M22 145H12V36Q12 26 22 26H88',
+		length: 201,
+		head: [95, 26, 'right'],
+	},
+	'knowledge>agent': {
+		d: 'M22 375H12V36Q12 26 22 26H88',
+		length: 431,
+		head: [95, 26, 'right'],
+	},
+}
+
+const flowEnds = (key: FlowKey) => key.split('>') as [from: NodeKey, to: NodeKey]
+
+/** A flow's two ends as one attribute, which is how the stylesheet tells whose
+    it is when a box is hovered. */
+const flowTag = (key: FlowKey) => flowEnds(key).join(' ')
+
+const isPart = (node: NodeKey): node is PartKey => node in PARTS
+
+/** The moment a pulse reaches its arrowhead, as an `animation-delay`. */
+const landsAt = (key: FlowKey, flows: FlowLines) =>
+	`${(DEPARTS[key] + flows[key].length / FLOW_SPEED).toFixed(2)}s`
+
+/** The pulses that end at `node`: what tags each one's flash, and when it
+    goes off. */
+function landings(node: NodeKey, flows: FlowLines) {
+	return FLOW_KEYS.filter((key) => flowEnds(key)[1] === node).map((key) => ({
+		key,
+		'data-flow': flowTag(key),
+		style: { animationDelay: landsAt(key, flows) },
+	}))
+}
+
 /**
  * "What goes into making a Software Factory successful": two players, the
  * agent and the team, each wired to the four things they work through, which
@@ -58,13 +247,25 @@ const LAYERS = [
  * Both drawings are `aria-hidden` and the same content is given once as text
  * for screen readers. Two layouts would otherwise read every label twice.
  *
+ * The drawing moves, quietly: a pulse runs each connection toward its
+ * arrowhead, the box it reaches lights for a moment, and hovering a box keeps
+ * its own connections while the rest step back. All of it is CSS, in the
+ * `SoftwareFactoryMap` block of `globals.css`, so this stays a server
+ * component. What is here is the geometry and the timetable (`DEPARTS`,
+ * `Flows`); the boxes are not focusable, because they do nothing and sit in
+ * an `aria-hidden` drawing. With reduced motion the whole layer is not
+ * rendered and the drawing is the still one.
+ *
  * Sizes are written as SVG user units rather than composed from `TYPE`: they
  * scale with the drawing, so they are positions in it, not steps in the
  * page's type scale. The title and the caption are HTML and do use `TYPE`.
  */
 export function SoftwareFactoryMap({ className }: { className?: string }) {
 	return (
-		<figure className={cn('not-prose @container my-10', className)}>
+		<figure
+			className={cn('ah-factory-map not-prose @container my-10', className)}
+			style={FLOW_VARS}
+		>
 			<p className={cn(TYPE.subhead, 'mb-7 text-balance text-center')}>
 				What goes into making a Software Factory successful
 			</p>
@@ -121,42 +322,58 @@ function Wide() {
 				<BandLabel x={56} y={258} label={LAYERS[1].label} accent />
 
 				<Edges>
+					<Lines of="agent">
+						{/* The agent's left line: back into the agent, down into the
+						    systems, and round the outside into knowledge. */}
+						<path d="M248 26H26Q16 26 16 36V321Q16 331 26 331H30" />
+						<Head x={255} y={26} dir="right" />
+						<Head x={37} y={331} dir="right" />
+						<path d="M220 26V108" />
+						<Head x={220} y={115} dir="down" />
+
+						{/* Its right line: into the environment, and round into practices. */}
+						<path d="M422 26H654Q664 26 664 36V321Q664 331 654 331H650" />
+						<Head x={643} y={331} dir="left" />
+						<path d="M460 26V108" />
+						<Head x={460} y={115} dir="down" />
+					</Lines>
+
+					<Lines of="team">
+						{/* The team: up the middle to the systems and the environment... */}
+						<path d="M318 430V254Q318 244 308 244H260Q250 244 250 234V224" />
+						<Head x={250} y={217} dir="up" />
+						<path d="M362 430V254Q362 244 372 244H420Q430 244 430 234V224" />
+						<Head x={430} y={217} dir="up" />
+
+						{/* ...and out of its sides to knowledge and practices. */}
+						<path d="M258 452H178Q168 452 168 442V380" />
+						<Head x={168} y={373} dir="up" />
+						<path d="M422 452H502Q512 452 512 442V380" />
+						<Head x={512} y={373} dir="up" />
+					</Lines>
+
 					{/* The agent and the team, to each other. */}
-					<path d="M340 58V420" />
-					<Head x={340} y={51} dir="up" />
-					<Head x={340} y={427} dir="down" />
+					<Lines>
+						<path d="M340 58V420" />
+						<Head x={340} y={51} dir="up" />
+						<Head x={340} y={427} dir="down" />
+					</Lines>
 
-					{/* The agent's left line: back into the agent, down into the
-					    systems, and round the outside into knowledge. */}
-					<path d="M248 26H26Q16 26 16 36V321Q16 331 26 331H30" />
-					<Head x={255} y={26} dir="right" />
-					<Head x={37} y={331} dir="right" />
-					<path d="M220 26V108" />
-					<Head x={220} y={115} dir="down" />
-
-					{/* Its right line: into the environment, and round into practices. */}
-					<path d="M422 26H654Q664 26 664 36V321Q664 331 654 331H650" />
-					<Head x={643} y={331} dir="left" />
-					<path d="M460 26V108" />
-					<Head x={460} y={115} dir="down" />
-
-					{/* The team: up the middle to the systems and the environment... */}
-					<path d="M318 430V254Q318 244 308 244H260Q250 244 250 234V224" />
-					<Head x={250} y={217} dir="up" />
-					<path d="M362 430V254Q362 244 372 244H420Q430 244 430 234V224" />
-					<Head x={430} y={217} dir="up" />
-
-					{/* ...and out of its sides to knowledge and practices. */}
-					<path d="M258 452H178Q168 452 168 442V380" />
-					<Head x={168} y={373} dir="up" />
-					<path d="M422 452H502Q512 452 512 442V380" />
-					<Head x={512} y={373} dir="up" />
+					<Flows flows={WIDE_FLOWS} />
 				</Edges>
 
-				<Player x={258} y={4} width={164} player="agent" />
-				<Player x={258} y={430} width={164} player="team" />
+				<Player x={258} y={4} width={164} player="agent" flows={WIDE_FLOWS} />
+				<Player x={258} y={430} width={164} player="team" flows={WIDE_FLOWS} />
 
-				<Part x={40} y={118} width={256} height={96} part="systems" lines="wide" />
+				<Part
+					x={40}
+					y={118}
+					width={256}
+					height={96}
+					part="systems"
+					lines="wide"
+					flows={WIDE_FLOWS}
+				/>
 				<Part
 					x={384}
 					y={118}
@@ -164,6 +381,7 @@ function Wide() {
 					height={96}
 					part="environment"
 					lines="wide"
+					flows={WIDE_FLOWS}
 				/>
 				<Part
 					x={40}
@@ -172,6 +390,7 @@ function Wide() {
 					height={78}
 					part="knowledge"
 					lines="wide"
+					flows={WIDE_FLOWS}
 					accent
 				/>
 				<Part
@@ -181,6 +400,7 @@ function Wide() {
 					height={78}
 					part="practices"
 					lines="wide"
+					flows={WIDE_FLOWS}
 					accent
 				/>
 			</svg>
@@ -213,24 +433,55 @@ function Narrow() {
 				<BandLabel x={48} y={302} label={LAYERS[1].label} accent large />
 
 				<Edges>
-					<path d="M88 26H22Q12 26 12 36V453Q12 463 22 463" />
-					<Head x={95} y={26} dir="right" />
-					<path d="M272 564H338Q348 564 348 554V36Q348 26 338 26H272" />
-					<Head x={265} y={564} dir="left" />
-					<Head x={265} y={26} dir="left" />
-					{rows.map(({ part, y }) => (
-						<React.Fragment key={part}>
-							{/* The last agent branch is the end of its line, drawn above. */}
-							{part === 'practices' ? null : <path d={`M12 ${y + 39}H22`} />}
-							<Head x={29} y={y + 39} dir="right" />
-							<path d={`M348 ${y + 39}H338`} />
-							<Head x={331} y={y + 39} dir="left" />
-						</React.Fragment>
-					))}
+					<Lines of="agent">
+						<path d="M88 26H22Q12 26 12 36V453Q12 463 22 463" />
+						<Head x={95} y={26} dir="right" />
+						{rows.map(({ part, y }) => (
+							<React.Fragment key={part}>
+								{/* The last agent branch is the end of its line, drawn above. */}
+								{part === 'practices' ? null : <path d={`M12 ${y + 39}H22`} />}
+								<Head x={29} y={y + 39} dir="right" />
+							</React.Fragment>
+						))}
+					</Lines>
+
+					<Lines of="team">
+						{rows.map(({ part, y }) => (
+							<React.Fragment key={part}>
+								<path d={`M348 ${y + 39}H338`} />
+								<Head x={331} y={y + 39} dir="left" />
+							</React.Fragment>
+						))}
+					</Lines>
+
+					{/* The team's trunk is also its line to the agent, so it belongs to
+					    both. Drawn after the team's branches: they start on it, and a
+					    branch that has stepped back would otherwise notch it. */}
+					<Lines>
+						<path d="M272 564H338Q348 564 348 554V36Q348 26 338 26H272" />
+						<Head x={265} y={564} dir="left" />
+						<Head x={265} y={26} dir="left" />
+					</Lines>
+
+					<Flows flows={NARROW_FLOWS} />
 				</Edges>
 
-				<Player x={98} y={4} width={164} player="agent" large />
-				<Player x={98} y={542} width={164} player="team" large />
+				<Player
+					x={98}
+					y={4}
+					width={164}
+					player="agent"
+					flows={NARROW_FLOWS}
+					large
+				/>
+				<Player
+					x={98}
+					y={542}
+					width={164}
+					player="team"
+					flows={NARROW_FLOWS}
+					large
+				/>
 
 				{rows.map(({ part, y, accent }) => (
 					<Part
@@ -241,6 +492,7 @@ function Narrow() {
 						height={78}
 						part={part}
 						lines="narrow"
+						flows={NARROW_FLOWS}
 						accent={accent}
 					/>
 				))}
@@ -254,8 +506,10 @@ function Narrow() {
  *
  * It is an HTML box under the drawing rather than a `rect` in it, so that it
  * can wear `.bg-stripes`, the site's one hatch (`globals.css`), instead of a
- * second copy of that pattern redrawn as an SVG `pattern`. It is placed in
- * percentages of the viewBox, so it tracks the drawing at any width.
+ * second copy of that pattern redrawn as an SVG `pattern`. Inside this figure
+ * the hatch is drawn at the slim divider's pitch, which the same stylesheet
+ * sets. It is placed in percentages of the viewBox, so it tracks the drawing
+ * at any width.
  *
  * The gold is a FILL here, which is the one way the accent is allowed to stay
  * gold in light mode (DESIGN rule 7). The border is mixed to an opaque colour
@@ -344,27 +598,50 @@ const PLAYERS = {
 const PLAYER_ICON = 22
 const PLAYER_GAP = 8
 
-/** The agent or the team: a solid ink block, so the two hubs lead. */
+/**
+ * The agent or the team: a solid ink block, so the two hubs lead.
+ *
+ * A block that is already solid ink cannot get brighter, so what lights is a
+ * rim around it. The flashes are drawn under the block and the block's own
+ * rim is painted before its fill, so only the outer half of either shows.
+ */
 function Player({
 	x,
 	y,
 	width,
 	player,
+	flows,
 	large,
 }: {
 	x: number
 	y: number
 	width: number
 	player: keyof typeof PLAYERS
+	flows: FlowLines
 	large?: boolean
 }) {
 	const { label, Icon, advance } = PLAYERS[player]
 	const labelWidth = large ? advance.narrow : advance.wide
 	const pairX = x + (width - (PLAYER_ICON + PLAYER_GAP + labelWidth)) / 2
+	const box = { x, y, width, height: 44, rx: 9 }
 
 	return (
-		<g>
-			<rect x={x} y={y} width={width} height={44} rx={9} className="fill-foreground" />
+		<g data-node={player}>
+			{landings(player, flows).map(({ key, ...flash }) => (
+				<rect
+					key={key}
+					{...box}
+					{...flash}
+					fill="none"
+					strokeWidth={4}
+					className="ah-factory-flash stroke-[color:var(--factory-lit)]"
+				/>
+			))}
+			<rect
+				{...box}
+				strokeWidth={0}
+				className="ah-factory-box fill-foreground stroke-[color:var(--factory-lit)] [paint-order:stroke]"
+			/>
 			<g
 				transform={`translate(${pairX} ${y + 22 - PLAYER_ICON / 2}) scale(${PLAYER_ICON / 24})`}
 				className="text-background"
@@ -424,6 +701,7 @@ function Part({
 	height,
 	part,
 	lines,
+	flows,
 	accent,
 }: {
 	x: number
@@ -432,53 +710,65 @@ function Part({
 	height: number
 	part: PartKey
 	lines: 'wide' | 'narrow'
+	flows: FlowLines
 	accent?: boolean
 }) {
 	// The one-column drawing is shown below its viewBox size on a phone, so its
 	// type is drawn a step larger to land where the wide drawing's does.
 	const large = lines === 'narrow'
+	const box = { x, y, width, height, rx: 11 }
 
 	return (
-		<g>
+		<g data-node={part} data-part="" data-accent={accent ? '' : undefined}>
 			<rect
-				x={x}
-				y={y}
-				width={width}
-				height={height}
-				rx={11}
+				{...box}
 				className={cn(
-					'fill-card',
+					'ah-factory-box fill-card',
 					accent
 						? 'stroke-accent-fill dark:stroke-[color:color-mix(in_oklab,var(--accent-fill)_60%,var(--card))]'
 						: 'stroke-[color:color-mix(in_oklab,var(--foreground)_14%,var(--card))]',
 				)}
 			/>
-			<text
-				x={x + 16}
-				y={y + (large ? 28 : 27)}
-				className={cn(
-					'fill-foreground font-bold tracking-[-0.018em]',
-					large ? 'text-[17px]' : 'text-[16px]',
-				)}
-			>
-				{PARTS[part].title}
-			</text>
-			<text
-				className={cn(
-					'fill-[color:var(--ah-fg-muted)]',
-					large ? 'text-[14px]' : 'text-[13px]',
-				)}
-			>
-				{PARTS[part][lines].map((line, index) => (
-					<tspan
-						key={line}
-						x={x + 16}
-						y={y + (large ? 49 + index * 19 : 47 + index * 18)}
-					>
-						{line}
-					</tspan>
-				))}
-			</text>
+			{landings(part, flows).map(({ key, ...flash }) => (
+				<rect
+					key={key}
+					{...box}
+					{...flash}
+					fill="none"
+					strokeWidth={2}
+					className="ah-factory-flash stroke-[color:var(--factory-lit)]"
+				/>
+			))}
+			{/* The type is its own group so that a card can step back without
+			    turning see-through over the hatch behind it. */}
+			<g className="ah-factory-type">
+				<text
+					x={x + 16}
+					y={y + (large ? 28 : 27)}
+					className={cn(
+						'fill-foreground font-bold tracking-[-0.018em]',
+						large ? 'text-[17px]' : 'text-[16px]',
+					)}
+				>
+					{PARTS[part].title}
+				</text>
+				<text
+					className={cn(
+						'fill-[color:var(--ah-fg-muted)]',
+						large ? 'text-[14px]' : 'text-[13px]',
+					)}
+				>
+					{PARTS[part][lines].map((line, index) => (
+						<tspan
+							key={line}
+							x={x + 16}
+							y={y + (large ? 49 + index * 19 : 47 + index * 18)}
+						>
+							{line}
+						</tspan>
+					))}
+				</text>
+			</g>
 		</g>
 	)
 }
@@ -506,16 +796,90 @@ function Edges({ children }: { children: React.ReactNode }) {
 	)
 }
 
+/**
+ * The lines that belong to one player, or to both when `of` is left out, so
+ * that hovering a player can keep its own lines and let the other's step back.
+ * They step back by changing ink, not by fading, for the reason `Edges` gives.
+ */
+function Lines({
+	of,
+	children,
+}: {
+	of?: 'agent' | 'team'
+	children: React.ReactNode
+}) {
+	return (
+		<g className="ah-factory-lines" data-of={of}>
+			{children}
+		</g>
+	)
+}
+
+/**
+ * Everything that moves along the lines, drawn over them in three passes.
+ *
+ * First a still copy of each part's own connections, hidden until that part is
+ * hovered: the lines under it have all stepped back by then, and a line that
+ * is shared cannot be half one ink and half another. A return flow adds only
+ * its arrowhead, since its line is the outbound one. Two copies of one stroke
+ * would thicken its soft edge.
+ *
+ * Then the pulses, one short dash per flow, and last the arrowheads again in
+ * full ink, each of which flashes as its pulse lands in it.
+ */
+function Flows({ flows }: { flows: FlowLines }) {
+	return (
+		<>
+			{FLOW_KEYS.map((key) => {
+				const [from, to] = flowEnds(key)
+				if (!isPart(from) && !isPart(to)) return null
+				const [x, y, dir] = flows[key].head
+
+				return (
+					<g key={key} className="ah-factory-link" data-flow={flowTag(key)}>
+						{isPart(to) ? <path d={flows[key].d} /> : null}
+						<Head x={x} y={y} dir={dir} />
+					</g>
+				)
+			})}
+			{FLOW_KEYS.map((key) => (
+				<path
+					key={key}
+					d={flows[key].d}
+					className="ah-factory-pulse text-foreground"
+					data-flow={flowTag(key)}
+					style={{ animationDelay: `${DEPARTS[key]}s` }}
+				/>
+			))}
+			{FLOW_KEYS.map((key) => {
+				const [x, y, dir] = flows[key].head
+
+				return (
+					<Head
+						key={key}
+						x={x}
+						y={y}
+						dir={dir}
+						className="ah-factory-flash text-foreground"
+						data-flow={flowTag(key)}
+						style={{ animationDelay: landsAt(key, flows) }}
+					/>
+				)
+			})}
+		</>
+	)
+}
+
 /** An arrowhead whose tip sits at (x, y). */
 function Head({
 	x,
 	y,
 	dir,
-}: {
-	x: number
-	y: number
-	dir: 'up' | 'down' | 'left' | 'right'
-}) {
+	...path
+}: { x: number; y: number; dir: Dir } & Omit<
+	React.ComponentProps<'path'>,
+	'd' | 'x' | 'y'
+>) {
 	const d = {
 		right: `M${x} ${y}l-8 -4.5v9z`,
 		left: `M${x} ${y}l8 -4.5v9z`,
@@ -523,5 +887,5 @@ function Head({
 		up: `M${x} ${y}l-4.5 8h9z`,
 	}[dir]
 
-	return <path d={d} fill="currentColor" stroke="none" />
+	return <path d={d} fill="currentColor" stroke="none" {...path} />
 }
