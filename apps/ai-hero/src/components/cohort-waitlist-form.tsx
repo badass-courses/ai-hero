@@ -55,6 +55,9 @@ export function WaitlistForm({
 }) {
 	const router = useRouter()
 	const { status: sessionStatus } = useSession()
+	// A page can hold this form more than once (a cohort body repeats its
+	// ask), and a fixed id would then be shared by every copy.
+	const instanceId = React.useId()
 	const [completed, setCompleted] = React.useState<
 		'joined' | 'confirmation-required' | null
 	>(null)
@@ -108,7 +111,7 @@ export function WaitlistForm({
 				<ConversionIntentForm
 					intent={intent}
 					surface={surface}
-					id="courses-waitlist"
+					id={`courses-waitlist-${instanceId}`}
 					actionLabel={actionLabel}
 					onSuccess={(subscriber) => {
 						if (!subscriber) return

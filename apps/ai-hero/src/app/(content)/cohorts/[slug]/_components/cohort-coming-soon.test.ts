@@ -128,6 +128,9 @@ describe('cohortCallsToAction', () => {
 		productState: 'published',
 		allowPurchase: undefined,
 		hasCohortAccess: false,
+		isOnWaitlist: false,
+		hasActiveProduct: true,
+		bypassSoldOut: false,
 	}
 
 	it('keeps every surface on the same side for any instant', () => {
@@ -138,7 +141,7 @@ describe('cohortCallsToAction', () => {
 			})
 			const waitlist = expectedPhase(ms) !== 'open'
 			expect(cta.canEnroll).toBe(!waitlist)
-			expect(cta.mobileCtaLabel).toBe(waitlist ? 'Join Waitlist' : undefined)
+			expect(cta.mobileCta).toBe(waitlist ? 'waitlist' : 'enroll')
 			expect(cta.offerInJsonLd).toBe(!waitlist)
 		}
 	})
@@ -147,7 +150,7 @@ describe('cohortCallsToAction', () => {
 		const cta = cohortCallsToAction({ ...base, phase: 'before-open' })
 		expect(cta.isComingSoon).toBe(false)
 		expect(cta.isWaitlistOnly).toBe(true)
-		expect(cta.mobileCtaLabel).toBe('Join Waitlist')
+		expect(cta.mobileCta).toBe('waitlist')
 		expect(cta.offerInJsonLd).toBe(false)
 	})
 
@@ -158,7 +161,7 @@ describe('cohortCallsToAction', () => {
 			phase: 'open',
 		})
 		expect(cta.isWaitlistOnly).toBe(true)
-		expect(cta.mobileCtaLabel).toBe('Join Waitlist')
+		expect(cta.mobileCta).toBe('waitlist')
 	})
 
 	it('lets the allowPurchase override enroll outside the window', () => {
@@ -168,7 +171,7 @@ describe('cohortCallsToAction', () => {
 			phase: 'before-open',
 		})
 		expect(cta.canEnroll).toBe(true)
-		expect(cta.mobileCtaLabel).toBeUndefined()
+		expect(cta.mobileCta).toBe('enroll')
 	})
 
 	it('never points someone who has the cohort at the waitlist', () => {
@@ -178,6 +181,90 @@ describe('cohortCallsToAction', () => {
 			phase: 'before-open',
 		})
 		expect(cta.isWaitlistOnly).toBe(false)
-		expect(cta.mobileCtaLabel).toBeUndefined()
+		expect(cta.mobileCta).toBe('owned')
+	})
+
+	it('stops asking someone who already joined the waitlist', () => {
+		for (const state of [
+			{ phase: 'before-open' as const },
+			{ phase: 'closed' as const },
+			{ phase: 'open' as const, productState: 'draft' },
+		]) {
+			const cta = cohortCallsToAction({ ...base, ...state, isOnWaitlist: true })
+			expect(cta.mobileCta).toBe('on-waitlist')
+			expect(cta.offerInJsonLd).toBe(false)
+		}
+	})
+
+	it('offers nothing when the rail has no product to act on', () => {
+		const retired = cohortCallsToAction({
+			...base,
+			phase: 'open',
+			hasActiveProduct: false,
+		})
+		expect(retired.mobileCta).toBe('none')
+		expect(retired.offerInJsonLd).toBe(false)
+		expect(
+			cohortCallsToAction({
+				...base,
+				phase: 'open',
+				productState: undefined,
+				hasActiveProduct: false,
+			}).mobileCta,
+		).toBe('none')
+	})
+
+	it('lets a coupon that bypasses the window buy, as it does in the rail', () => {
+		for (const phase of ['before-open', 'closed'] as const) {
+			const cta = cohortCallsToAction({ ...base, phase, bypassSoldOut: true })
+			expect(cta.canEnroll).toBe(true)
+			expect(cta.mobileCta).toBe('enroll')
+			expect(cta.offerInJsonLd).toBe(true)
+		}
+	})
+
+	it('keeps the curriculum off a page that is the waitlist for a launch', () => {
+		expect(
+			cohortCallsToAction({ ...base, phase: 'before-open' }).curriculumAnnounced,
+		).toBe(false)
+		expect(
+			cohortCallsToAction({ ...base, productState: 'draft', phase: 'open' })
+				.curriculumAnnounced,
+		).toBe(false)
+		expect(
+			cohortCallsToAction({ ...base, phase: 'before-open', isOnWaitlist: true })
+				.curriculumAnnounced,
+		).toBe(false)
+	})
+
+	it('shows the curriculum to someone who can buy or already has the cohort', () => {
+		for (const state of [
+			{ phase: 'open' as const },
+			{ phase: 'before-open' as const, allowPurchase: 'true' },
+			{ phase: 'before-open' as const, bypassSoldOut: true },
+			{ phase: 'before-open' as const, hasCohortAccess: true },
+			{ phase: 'open' as const, productState: 'draft', hasCohortAccess: true },
+		]) {
+			expect(cohortCallsToAction({ ...base, ...state }).curriculumAnnounced).toBe(
+				true,
+			)
+		}
+	})
+
+	it('keeps the curriculum on a cohort whose window has closed', () => {
+		expect(
+			cohortCallsToAction({ ...base, phase: 'closed' }).curriculumAnnounced,
+		).toBe(true)
+	})
+
+	it('keeps a draft on the waitlist whatever the coupon says', () => {
+		const cta = cohortCallsToAction({
+			...base,
+			productState: 'draft',
+			phase: 'open',
+			bypassSoldOut: true,
+		})
+		expect(cta.canEnroll).toBe(false)
+		expect(cta.mobileCta).toBe('waitlist')
 	})
 })

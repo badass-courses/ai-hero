@@ -52,6 +52,7 @@ import {
 	cohortEnrollmentPhase,
 } from './_components/cohort-coming-soon'
 import { CohortContents } from './_components/cohort-contents'
+import { CohortEnrollPrice } from './_components/cohort-enroll-price'
 import { CohortFactStrip } from './_components/cohort-fact-strip'
 import { CohortIncludes } from './_components/cohort-includes'
 import { CohortPricingWidgetContainer } from './_components/cohort-pricing-widget-container'
@@ -202,22 +203,26 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	const openEnrollmentDate = openEnrollment
 		? new Date(openEnrollment as string)
 		: null
-	const {
-		isComingSoon,
-		canEnroll: CAN_ENROLL,
-		mobileCtaLabel,
-		offerInJsonLd,
-	} = cohortCallsToAction({
-		phase: cohortEnrollmentPhase({
-			now: new Date(),
-			openEnrollment: openEnrollment as string | undefined,
-			closeEnrollment: closeEnrollment as string | undefined,
-		}),
-		productState: cohortProps?.product?.fields?.state,
-		allowPurchase,
-		hasCohortAccess,
+	const enrollmentPhase = cohortEnrollmentPhase({
+		now: new Date(),
+		openEnrollment: openEnrollment as string | undefined,
+		closeEnrollment: closeEnrollment as string | undefined,
 	})
+	const { isComingSoon, mobileCta, offerInJsonLd, curriculumAnnounced } =
+		cohortCallsToAction({
+			phase: enrollmentPhase,
+			productState: cohortProps?.product?.fields?.state,
+			allowPurchase,
+			hasCohortAccess,
+			isOnWaitlist,
+			hasActiveProduct: cohortProps.product?.status === 1,
+			bypassSoldOut:
+				cohortProps.couponFromCode?.fields?.bypassSoldOut === true,
+		})
 
+	// A rail on the waitlist can also be one whose window has closed, and
+	// "opens" must not be said of a date that has passed.
+	const enrollmentOpensLater = enrollmentPhase === 'before-open'
 	const enrollmentOpenDateString = openEnrollmentDate
 		? formatInTimeZone(openEnrollmentDate, PT, "MMM d, yyyy 'at' h:mm a zzz")
 		: null
@@ -279,6 +284,20 @@ export async function CohortPageView(props: CohortPageViewProps) {
 				})),
 			}
 
+	// A body that places the curriculum itself replaces the list appended
+	// under it, so the workshops appear once. The inline list is only for
+	// someone who can buy, so everyone else keeps the appended one. Code and
+	// comments are stripped first so a body that only mentions the tag does
+	// not hide the real list.
+	const showsInlineContentList =
+		mobileCta === 'enroll' &&
+		/<CohortContentList[\s/>]/.test(
+			mdxSource.replace(
+				/```[\s\S]*?```|`[^`\n]*`|\{\/\*[\s\S]*?\*\/\}/g,
+				'',
+			),
+		)
+
 	const { content } = await compileMDX(
 		mdxSource,
 		{
@@ -290,23 +309,41 @@ export async function CohortPageView(props: CohortPageViewProps) {
 			Enroll: ({ children = 'Enroll Now' }) => {
 				if (!cohortProps.product || hasCohortAccess) return null
 
-				if (!CAN_ENROLL) {
+				// While the rail holds the waitlist, an inline button is the same
+				// form the rail holds, so the ask can be answered where the reader
+				// is: never a dead control, and never an offer the rail does not
+				// have. Someone already on the list gets a status and no ask.
+				if (mobileCta === 'waitlist' || mobileCta === 'on-waitlist') {
 					return (
-						<div className="mt-5 flex flex-col items-start gap-2">
-							<a
-								href="#buy"
-								className="bg-primary text-primary-foreground hover:bg-primary/90 relative inline-flex h-auto w-full items-center justify-center rounded-lg px-8 py-3 font-semibold sm:h-14 sm:w-auto md:px-16"
-							>
-								<span className="relative z-10">Join Waitlist</span>
-							</a>
-							{enrollmentOpenDateString && (
+						<div className="not-prose mx-auto my-8 flex max-w-xl flex-col items-center gap-2.5 text-center">
+							{mobileCta === 'waitlist' ? (
+								<WaitlistForm
+									actionLabel="Join Waitlist"
+									productName={cohortProps.product.name}
+									surface="cohort-page"
+									knownIdentity={hasKnownWaitlistIdentity}
+								/>
+							) : (
+								<p className={`${TYPE.subhead} flex items-center gap-2`}>
+									<CheckCircle
+										className="text-primary size-5 shrink-0"
+										aria-hidden="true"
+									/>
+									You are on the waitlist
+								</p>
+							)}
+							{enrollmentOpensLater && enrollmentOpenDateString ? (
 								<p className="text-muted-foreground text-sm">
 									Enrollment opens {enrollmentOpenDateString}
 								</p>
-							)}
+							) : null}
 						</div>
 					)
 				}
+
+				// No product in the rail to act on.
+				if (mobileCta !== 'enroll') return null
+
 
 				return (
 					<Pricing.Root
@@ -319,10 +356,13 @@ export async function CohortPageView(props: CohortPageViewProps) {
 						}}
 						userId={cohortProps?.userId}
 						pricingDataLoader={cohortProps.pricingDataLoader}
-						className="mt-5 items-start justify-start"
+						className="my-8 items-center justify-center"
 					>
 						<Pricing.Product>
-							<CheckoutSurveyBuyButton className="bg-primary text-primary-foreground hover:bg-primary/90 relative h-auto w-full cursor-pointer rounded-lg px-8 font-semibold sm:h-14 sm:w-auto md:px-16">
+							<CheckoutSurveyBuyButton
+								className="bg-primary text-primary-foreground hover:bg-primary/90 relative h-auto w-full cursor-pointer rounded-lg px-8 font-semibold sm:h-14 sm:w-auto md:px-16"
+								trailing={<CohortEnrollPrice />}
+							>
 								<span className="relative z-10">{children}</span>
 								<div
 									style={{
@@ -335,6 +375,31 @@ export async function CohortPageView(props: CohortPageViewProps) {
 					</Pricing.Root>
 				)
 			},
+			// Copy that only makes sense once seats can be bought: a price
+			// sentence, the curriculum, a deadline. It follows the rail, like
+			// the buttons, so a body can carry its launch section ahead of
+			// time and have it appear the moment enrollment opens.
+			CanEnroll: ({ children }: { children: React.ReactNode }) =>
+				mobileCta === 'enroll' ? <>{children}</> : null,
+			// The other side of it: copy that belongs to the waitlist ask ("drop
+			// your email in the box below") and would be wrong over a buy button
+			// or for someone who already has the cohort.
+			WaitlistOnly: ({ children }: { children: React.ReactNode }) =>
+				mobileCta === 'waitlist' || mobileCta === 'on-waitlist' ? (
+					<>{children}</>
+				) : null,
+			// The curriculum, placed where the copy calls for it, for someone
+			// who can buy it. Everyone else has the list under the body.
+			CohortContentList: () =>
+				mobileCta === 'enroll' ? (
+					<CohortContents
+						className="not-prose border-border my-8 overflow-hidden rounded-md border"
+						variant="inline"
+						workshops={displayWorkshops as Workshop[]}
+						workshopProgressMap={workshopProgressMap}
+						timezone={PT}
+					/>
+				) : null,
 			HasDiscount: ({
 				children,
 				fallback,
@@ -450,8 +515,12 @@ export async function CohortPageView(props: CohortPageViewProps) {
 				<div className="flex flex-col lg:flex-row">
 					<div className="min-w-0 flex-1">
 						{/* `lg:pt-[52px]` is the spec's `--ah-section`; at `lg:pt-8` the
-						    title sat almost against the nav on desktop. */}
-						<header className="from-card to-background flex w-full flex-col items-center justify-between bg-gradient-to-b pt-6 md:gap-10 lg:flex-row lg:pt-[52px]">
+						    title sat almost against the nav on desktop. Below `lg` the
+						    cover leads the header and sits flush under the nav, so the
+						    top padding is only for a cohort with no cover to lead it. */}
+						<header
+							className={`from-card to-background flex w-full flex-col items-center justify-between bg-gradient-to-b md:gap-10 lg:flex-row lg:pt-[52px] ${fields?.image ? '' : 'pt-6'}`}
+						>
 							{fields?.image && (
 								<CldImage
 									className="flex w-full lg:hidden"
@@ -461,7 +530,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 									alt={fields?.title}
 								/>
 							)}
-							<div className="mt-5 flex w-full flex-col items-center px-5 text-center lg:mt-0 lg:items-start lg:pl-10 lg:text-left">
+							<div className="mt-5 flex w-full flex-col items-center px-5 text-center lg:mt-0 lg:items-start lg:px-10 lg:text-left">
 								<div className="text-foreground/80 mb-2 flex flex-wrap items-center justify-center gap-2 text-base sm:justify-start">
 									<span className="text-xs font-medium uppercase tracking-wider">
 										{campaignVariant?.eyebrow ?? 'Cohort-based Course'}
@@ -475,11 +544,13 @@ export async function CohortPageView(props: CohortPageViewProps) {
 								</>
 							)} */}
 								</div>
-								<h1 className="text-balance text-4xl font-bold sm:text-5xl lg:text-6xl">
+								{/* The headline is the offer, so it takes the single-offer
+								    landing step, tracking included. */}
+								<h1 className={`${TYPE.displayLanding} text-balance`}>
 									{campaignVariant?.headline ?? fields.title}
 								</h1>
 								{(campaignVariant?.subhead || fields.description) && (
-									<h2 className="text-primary mt-5 text-balance text-lg font-normal sm:text-xl lg:text-2xl">
+									<h2 className="text-primary mt-5 text-balance text-lg font-normal tracking-[-0.018em] sm:text-xl lg:text-2xl lg:tracking-[-0.02em]">
 										<ReactMarkdown
 											components={{
 												p: ({ children }) => <>{children}</>,
@@ -525,18 +596,22 @@ export async function CohortPageView(props: CohortPageViewProps) {
 							</div>
 						</header>
 						{/* Padding sits outside the measure: boxes are border-box, so
-						    70ch on the padded element would be 70ch minus the gutter. */}
-						<div className="px-5 pt-10 sm:px-8 lg:px-10">
+						    70ch on the padded element would be 70ch minus the gutter.
+						    The bottom padding is for a body that ends the column, with
+						    no curriculum under it: the body's last block gives up its
+						    own bottom margin, so the space is the same whether that
+						    block is a paragraph, a form or a buy button. */}
+						<div className="px-5 pt-10 last:pb-10 sm:px-8 lg:px-10">
 							<article
-								className={`prose dark:prose-invert sm:prose-lg lg:prose-lg ${PROSE_MEASURE}`}
+								className={`prose dark:prose-invert sm:prose-lg lg:prose-lg [&>:last-child]:mb-0 ${PROSE_MEASURE}`}
 							>
 								{content}
 							</article>
 						</div>
 
-						{/* The curriculum is not announced while the cohort is coming
-						    soon, and its workshop list can still hold drafts. */}
-						{isComingSoon ? null : (
+						{/* For sale, the body's own inline list stands in for this one.
+						    On a launch waitlist there is no curriculum at all. */}
+						{!curriculumAnnounced || showsInlineContentList ? null : (
 							<CohortContents
 								className="py-8"
 								variant="full"
@@ -548,7 +623,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 					</div>
 					<CohortSidebar
 						cohort={displayCohort}
-						mobileCtaLabel={mobileCtaLabel}
+						mobileCta={mobileCta}
 					>
 						{fields?.image && (
 							<CldImage

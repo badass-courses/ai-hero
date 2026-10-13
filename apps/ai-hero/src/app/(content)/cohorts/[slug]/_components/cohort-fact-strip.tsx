@@ -67,6 +67,11 @@ function formatDuration(
  * we cannot answer is dropped rather than filled in, so the strip renders with
  * however many cells it has (and not at all if it has none).
  *
+ * Below `sm` it is a list of rows, label on the left and value on the right.
+ * Two cells across left about 110px for a value on a phone, which is less
+ * than "November 9, 2026" needs, so one cell wrapped and its row grew taller
+ * than its neighbour. A row has the whole width and never wraps.
+ *
  * @param alumniLabel - Pre-formatted alumni count, or null when there are too
  *   few to quote. Resolved by the page so this stays a pure renderer.
  */
@@ -98,7 +103,7 @@ export const CohortFactStrip: React.FC<{
 	return (
 		<dl
 			className={cn(
-				'border-border bg-border grid w-full grid-cols-[repeat(2,minmax(0,1fr))] gap-px overflow-hidden rounded-lg border',
+				'border-border bg-border grid w-full grid-cols-1 gap-px overflow-hidden rounded-lg border',
 				COLUMNS[facts.length],
 				className,
 			)}
@@ -106,15 +111,19 @@ export const CohortFactStrip: React.FC<{
 			{facts.map((fact) => (
 				<div
 					key={fact.label}
-					// `flex-col-reverse`: a `<dl>` wants `<dt>` before `<dd>` in the DOM,
-					// and `TYPE.statLabel` is a caption that always sits BELOW the value
-					// it names. Reversing the visual order satisfies both.
-					className="bg-background flex flex-col-reverse px-4 py-3.5 text-left"
+					// From `sm`, `flex-col-reverse`: a `<dl>` wants `<dt>` before `<dd>`
+					// in the DOM, and `TYPE.statLabel` is a caption that sits BELOW the
+					// value it names. Reversing the visual order satisfies both. The
+					// phone's row reads in DOM order, so it needs no reversal.
+					className="bg-background flex items-baseline justify-between gap-4 px-4 py-3 text-left sm:flex-col-reverse sm:items-stretch sm:justify-start sm:gap-0 sm:py-3.5"
 				>
-					<dt className={TYPE.statLabel}>{fact.label}</dt>
+					<dt className={cn(TYPE.statLabel, 'mt-0 sm:mt-1.5')}>
+						{fact.label}
+					</dt>
 					<dd
 						className={cn(
 							TYPE.bodyTight,
+							'text-right sm:text-left',
 							fact.mono && 'font-mono tabular-nums',
 						)}
 					>
@@ -122,11 +131,6 @@ export const CohortFactStrip: React.FC<{
 					</dd>
 				</div>
 			))}
-			{/* Odd counts leave a hole in the 2-up mobile grid; the filler keeps the
-			    trailing hairline unbroken. */}
-			{facts.length % 2 === 1 && (
-				<div aria-hidden className="bg-background sm:hidden" />
-			)}
 		</dl>
 	)
 }

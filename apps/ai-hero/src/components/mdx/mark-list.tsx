@@ -6,6 +6,11 @@ export type MarkListProps = {
 	 * `negative` a red cross.
 	 */
 	tone?: 'positive' | 'negative'
+	/**
+	 * Runs the checks from green at the first item to gold at the last, for a
+	 * list that builds to its final point. Checks only: crosses stay one red.
+	 */
+	toGold?: boolean
 	children: React.ReactNode
 }
 
@@ -28,9 +33,17 @@ export type MarkListProps = {
  * the styling is `.ah-marks` in `globals.css`, beside the `.ah-bullets` rules
  * it modifies.
  */
-export function MarkList({ tone = 'positive', children }: MarkListProps) {
+export function MarkList({
+	tone = 'positive',
+	toGold = false,
+	children,
+}: MarkListProps) {
 	return (
-		<div className="ah-marks" data-tone={tone}>
+		<div
+			className="ah-marks"
+			data-tone={tone}
+			data-to-gold={toGold ? '' : undefined}
+		>
 			{children}
 		</div>
 	)
