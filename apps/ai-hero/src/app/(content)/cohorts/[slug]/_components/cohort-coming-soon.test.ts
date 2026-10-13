@@ -197,10 +197,13 @@ describe('cohortCallsToAction', () => {
 	})
 
 	it('offers nothing when the rail has no product to act on', () => {
-		expect(
-			cohortCallsToAction({ ...base, phase: 'open', hasActiveProduct: false })
-				.mobileCta,
-		).toBe('none')
+		const retired = cohortCallsToAction({
+			...base,
+			phase: 'open',
+			hasActiveProduct: false,
+		})
+		expect(retired.mobileCta).toBe('none')
+		expect(retired.offerInJsonLd).toBe(false)
 		expect(
 			cohortCallsToAction({
 				...base,

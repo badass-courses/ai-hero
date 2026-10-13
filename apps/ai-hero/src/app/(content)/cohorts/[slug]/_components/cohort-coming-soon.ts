@@ -133,7 +133,7 @@ export function cohortCallsToAction({
 		canEnroll,
 		isWaitlistOnly,
 		mobileCta,
-		offerInJsonLd: !isWaitlistOnly,
+		offerInJsonLd: hasActiveProduct && !isWaitlistOnly,
 		curriculumAnnounced:
 			mobileCta === 'enroll' ||
 			mobileCta === 'owned' ||
