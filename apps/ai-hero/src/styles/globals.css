@@ -1147,19 +1147,21 @@ body {
 
 /* `Divider` in MDX: the hatched, pointed band from behind the cohort calendar
    artwork (`cal-dark` and `cal-light` in the AI Hero Figma file), cut down to
-   a 24px rule. Its colours are the artwork's own rather than surface tokens,
-   so the rule and the calendar read as one family when they share a page.
+   a 24px rule. Its pattern and its dark colours are the artwork's own rather
+   than surface tokens, so the rule and the calendar read as one family when
+   they share a page. It lies flat in both themes: the artwork's white edge
+   and drop shadow made a raised bar out of what is only a pause in the
+   text, so on paper the outline is a hairline and there is no shadow.
    Two layers because a clip-path cannot carry a border: `::before` is the 1px
    outline, `::after` the surface and the hatch. The tips keep the artwork's
-   slope, and the shadow is a filter because a box-shadow would be clipped. */
+   slope. */
 .ah-divider {
 	--divider-surface: #ffffff;
-	--divider-edge: #ffffff;
-	--divider-hatch: rgb(0 0 0 / 0.05);
+	--divider-edge: rgb(20 22 26 / 0.07);
+	--divider-hatch: rgb(20 22 26 / 0.04);
 	position: relative;
 	height: 26px;
 	margin-block: 3rem;
-	filter: drop-shadow(0 1px 3px rgb(0 0 0 / 0.15));
 }
 .dark .ah-divider {
 	--divider-surface: #000000;
