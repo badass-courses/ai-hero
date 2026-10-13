@@ -322,7 +322,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 				// have. Someone already on the list gets a status and no ask.
 				if (mobileCta === 'waitlist' || mobileCta === 'on-waitlist') {
 					return (
-						<div className="not-prose my-8 flex max-w-xl flex-col items-start gap-2.5">
+						<div className="not-prose mx-auto my-8 flex max-w-xl flex-col items-center gap-2.5 text-center">
 							{mobileCta === 'waitlist' ? (
 								<WaitlistForm
 									actionLabel="Join Waitlist"
@@ -363,7 +363,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 						}}
 						userId={cohortProps?.userId}
 						pricingDataLoader={cohortProps.pricingDataLoader}
-						className="my-8 items-start justify-start"
+						className="my-8 items-center justify-center"
 					>
 						<Pricing.Product>
 							<CheckoutSurveyBuyButton
