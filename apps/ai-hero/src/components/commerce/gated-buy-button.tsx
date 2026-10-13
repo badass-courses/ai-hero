@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useSearchParams } from 'next/navigation'
 import { env } from '@/env.mjs'
 import {
 	purchaseGate,
@@ -31,7 +31,6 @@ export function usePurchaseGate(): PurchaseGate {
  */
 export function UpperBoundNote({ className }: { className?: string }) {
 	const gate = usePurchaseGate()
-	const pathname = usePathname()
 	if (!gate.upperBound) return null
 	return (
 		<p
@@ -41,12 +40,9 @@ export function UpperBoundNote({ className }: { className?: string }) {
 			{gate.kind === 'sign-in' ? (
 				<>
 					Returning student?{' '}
-					<Link
-						href={`/login?callbackUrl=${encodeURIComponent(pathname ?? '/')}`}
-						className="text-foreground font-medium underline underline-offset-4 hover:no-underline"
-					>
-						Sign in
-					</Link>{' '}
+					<React.Suspense fallback={<SignInLink />}>
+						<SignInLinkWithQuery />
+					</React.Suspense>{' '}
 					to see your price.
 				</>
 			) : (
@@ -54,6 +50,29 @@ export function UpperBoundNote({ className }: { className?: string }) {
 			)}
 		</p>
 	)
+}
+
+/** The note's way in: the login page, set to come back to this page. */
+function SignInLink({ search }: { search?: string }) {
+	const pathname = usePathname() ?? '/'
+	const here = search ? `${pathname}?${search}` : pathname
+	return (
+		<Link
+			href={`/login?callbackUrl=${encodeURIComponent(here)}`}
+			className="text-foreground font-medium underline underline-offset-4 hover:no-underline"
+		>
+			Sign in
+		</Link>
+	)
+}
+
+/**
+ * The same link, carrying the query string too, so a coupon or a gift link
+ * is still on the page the buyer comes back to. Reading the query suspends on
+ * a prerendered page, which is why the note falls back to the plain link.
+ */
+function SignInLinkWithQuery() {
+	return <SignInLink search={useSearchParams()?.toString()} />
 }
 
 /** Where a regional ticket holder asks for unrestricted access. */

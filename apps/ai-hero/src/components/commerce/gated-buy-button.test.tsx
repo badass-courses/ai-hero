@@ -4,6 +4,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
 	pricing: {} as Record<string, unknown>,
+	path: '/',
+	search: '',
+}))
+
+vi.mock('next/navigation', () => ({
+	usePathname: () => mocks.path,
+	useSearchParams: () => new URLSearchParams(mocks.search),
 }))
 
 vi.mock('@coursebuilder/commerce-next/pricing/pricing', () => ({
@@ -48,6 +55,8 @@ const render = () =>
 describe('GatedBuyButton', () => {
 	beforeEach(() => {
 		mocks.pricing = { status: 'success', formattedPrice: {} }
+		mocks.path = '/'
+		mocks.search = ''
 	})
 
 	it('is the stock button for a legacy price', () => {
@@ -115,6 +124,22 @@ describe('GatedBuyButton', () => {
 		// A caption: it comes after the button it explains.
 		expect(html.indexOf('data-upper-bound')).toBeGreaterThan(
 			html.indexOf('Enroll'),
+		)
+	})
+
+	it('signs a returning buyer back in to the same address, coupon and gift link included', () => {
+		mocks.pricing.formattedPrice = {
+			authoritative: authoritative({
+				kind: 'bounded',
+				purchasable: false,
+				isUpperBound: true,
+				reasons: ['identity-required'],
+			}),
+		}
+		mocks.path = '/cohorts/c5'
+		mocks.search = 'coupon=abc&via=gift'
+		expect(render()).toContain(
+			'href="/login?callbackUrl=%2Fcohorts%2Fc5%3Fcoupon%3Dabc%26via%3Dgift"',
 		)
 	})
 })
