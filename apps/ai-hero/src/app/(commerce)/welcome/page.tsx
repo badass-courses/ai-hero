@@ -191,7 +191,12 @@ const Welcome = async (props: {
 		const isDiscordConnected = await discordAccountsForCurrentUser()
 
 		return (
-			<PostPurchaseShell step="ready" paymentConfirmed landmark="section">
+			<PostPurchaseShell
+				step="ready"
+				paymentConfirmed
+				readyWasShown={searchParams.buyPathWaited === '1'}
+				landmark="section"
+			>
 				<PostPurchaseArrival
 					destination="welcome"
 					checkoutSessionId={searchParams.buyPathId ?? buyPath?.buyPathId}

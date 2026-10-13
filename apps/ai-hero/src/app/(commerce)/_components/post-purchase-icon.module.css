@@ -1,0 +1,38 @@
+/* Static final frames are the default, including before hydration. */
+.checkmark {
+	stroke-dasharray: 1;
+	stroke-dashoffset: 0;
+}
+
+.mail {
+	transform: translateY(0);
+}
+
+/* One reveal per mount, never on polling and never a navigation gate. */
+@media (prefers-reduced-motion: no-preference) {
+	[data-play='once'] .checkmark {
+		animation: purchase-checkmark 300ms cubic-bezier(0.22, 1, 0.36, 1) 1 both;
+	}
+
+	[data-play='once'] .mail {
+		animation: purchase-mail 400ms cubic-bezier(0.22, 1, 0.36, 1) 1 both;
+	}
+}
+
+@keyframes purchase-checkmark {
+	from {
+		stroke-dashoffset: 1;
+	}
+	to {
+		stroke-dashoffset: 0;
+	}
+}
+
+@keyframes purchase-mail {
+	from {
+		transform: translateY(2px);
+	}
+	to {
+		transform: translateY(0);
+	}
+}

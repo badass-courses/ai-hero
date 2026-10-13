@@ -5,6 +5,7 @@ import { headers } from 'next/headers'
 import { notFound, redirect } from 'next/navigation'
 import { PostPurchaseShell } from '../../_components/post-purchase-shell'
 import { PostPurchaseArrival } from '../../_components/post-purchase-arrival'
+import { PostPurchaseLoginLink } from '../../_components/post-purchase-login-link'
 import { getPurchaseThanksDetails } from './purchase-thanks-details'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
@@ -15,11 +16,10 @@ import {
 	initiatePurchaseTransfer,
 } from '@/purchase-transfer/purchase-transfer-actions'
 import { getServerAuthSession } from '@/server/auth'
-import { FileText, Mail } from 'lucide-react'
+import { FileText } from 'lucide-react'
 import { PurchaseStatusPoller } from './purchase-status-poller'
 
 import * as InvoiceTeaser from '@coursebuilder/commerce-next/invoices/invoice-teaser'
-import * as LoginLink from '@coursebuilder/commerce-next/post-purchase/login-link'
 import * as PurchaseSummary from '@coursebuilder/commerce-next/post-purchase/purchase-summary'
 import * as PurchaseTransfer from '@coursebuilder/commerce-next/post-purchase/purchase-transfer'
 import * as InviteTeam from '@coursebuilder/commerce-next/team/invite-team'
@@ -31,24 +31,6 @@ import {
 } from '@coursebuilder/core/schemas/purchase-type'
 
 export const maxDuration = 100
-
-const LoginLinkComp: React.FC<{ email: string }> = ({ email }) => {
-	return (
-		<LoginLink.Root email={email} className="border-b pb-5">
-			<LoginLink.Status />
-			<LoginLink.Title />
-			<LoginLink.CTA className="mt-4 inline-flex items-center gap-3">
-				<div className="bg-primary/20 text-primary flex h-10 w-10 items-center justify-center rounded-full p-3">
-					<Mail className="h-4 w-4" />
-				</div>
-				<span>
-					Login link sent to: <strong className="font-semibold">{email}</strong>
-				</span>
-			</LoginLink.CTA>
-			<LoginLink.Description className="text-sm opacity-75 sm:text-base" />
-		</LoginLink.Root>
-	)
-}
 
 /**
  * Server component that validates a Stripe checkout session and renders the
@@ -179,7 +161,7 @@ async function PurchaseThanksPageLoaded({
 
 	switch (purchaseType) {
 		case NEW_INDIVIDUAL_PURCHASE:
-			loginLink = <LoginLinkComp email={email} />
+			loginLink = <PostPurchaseLoginLink email={email} />
 			inviteTeam = null
 			break
 		case NEW_BULK_COUPON:
@@ -190,7 +172,7 @@ async function PurchaseThanksPageLoaded({
 					your team grows.
 				</>
 			)
-			loginLink = <LoginLinkComp email={email} />
+			loginLink = <PostPurchaseLoginLink email={email} />
 			break
 		case EXISTING_BULK_COUPON:
 			title = `Thank you for purchasing more seats for ${
@@ -220,7 +202,11 @@ async function PurchaseThanksPageLoaded({
 			break
 	}
 	return (
-		<PostPurchaseShell step={loginLink ? 'email' : 'ready'} paymentConfirmed>
+		<PostPurchaseShell
+			step={loginLink ? 'email' : 'ready'}
+			paymentConfirmed
+			readyWasShown={ready}
+		>
 			<PostPurchaseArrival
 				destination="login_link"
 				checkoutSessionId={session_id}

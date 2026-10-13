@@ -15,10 +15,12 @@ import {
 	PostPurchaseProgress,
 	type PurchaseStep,
 } from './post-purchase-progress'
+import { PostPurchaseIcon } from './post-purchase-icon'
 
 export function PostPurchaseShell({
 	step = 'processing',
 	paymentConfirmed = false,
+	readyWasShown = false,
 	title,
 	image,
 	message,
@@ -29,6 +31,7 @@ export function PostPurchaseShell({
 }: {
 	step?: PurchaseStep
 	paymentConfirmed?: boolean
+	readyWasShown?: boolean
 	title?: string
 	image?: string | null
 	message?: string
@@ -65,9 +68,12 @@ export function PostPurchaseShell({
 						role="status"
 						aria-live="polite"
 						aria-atomic="true"
-						className={`${TYPE.metaProse} min-h-12 text-muted-foreground`}
+						className={`${TYPE.metaProse} flex min-h-12 items-center gap-3 text-muted-foreground`}
 					>
-						{status}
+						{step === 'ready' && (
+							<PostPurchaseIcon kind="ready" play={!readyWasShown} />
+						)}
+						<span>{status}</span>
 					</div>
 					{step === 'failed' && (
 						<Alert>
