@@ -47,6 +47,7 @@ on:
       - "apps/ai-hero/src/lib/subscriber-marketing/contact-sync-backfill*"
       - "apps/ai-hero/src/db/contact-sync-schema.ts"
       - "apps/ai-hero/src/lib/checkout-reconcile/**"
+      - "apps/ai-hero/src/lib/certificates*"
   push:
     branches: [main]
     paths:
@@ -94,6 +95,7 @@ on:
       - "apps/ai-hero/src/lib/subscriber-marketing/contact-sync-backfill*"
       - "apps/ai-hero/src/db/contact-sync-schema.ts"
       - "apps/ai-hero/src/lib/checkout-reconcile/**"
+      - "apps/ai-hero/src/lib/certificates*"
 
 jobs:
   mysql-contract:
@@ -167,6 +169,7 @@ jobs:
           src/lib/purchase-disputes.mysql.test.ts
           src/lib/purchase-fields-write.mysql.test.ts
           src/lib/checkout-reconcile/fulfill.mysql.test.ts
+          src/lib/certificates.mysql.test.ts
 
       # Preserve the existing suite's starting filesystem/server state. Build
       # and run the new opt-in contract only after those unchanged tests pass.
