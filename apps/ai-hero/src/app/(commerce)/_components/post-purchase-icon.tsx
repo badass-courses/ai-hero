@@ -24,11 +24,11 @@ export function PostPurchaseIcon({
 			strokeWidth="2"
 			strokeLinecap="round"
 			strokeLinejoin="round"
-			className={`${className} shrink-0 text-primary`}
+			className={`${className} shrink-0`}
 		>
 			{kind === 'ready' ? (
 				<polyline
-					points="4 12 9 17 20 6"
+					points="4 12 9 20 20 4"
 					pathLength="1"
 					className={styles.checkmark}
 				/>
@@ -39,5 +39,28 @@ export function PostPurchaseIcon({
 				</g>
 			)}
 		</svg>
+	)
+}
+
+/** Shared 40px accent badge; the ready glyph has a larger, evenly padded frame. */
+export function PostPurchaseIconBadge({
+	kind,
+	play = true,
+}: {
+	kind: 'ready' | 'email'
+	play?: boolean
+}) {
+	return (
+		<span
+			aria-hidden="true"
+			data-purchase-badge={kind}
+			className="bg-accent-fill text-accent-fill-foreground inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
+		>
+			<PostPurchaseIcon
+				kind={kind}
+				play={play}
+				className={kind === 'ready' ? 'h-8 w-8' : 'h-4 w-4'}
+			/>
+		</span>
 	)
 }

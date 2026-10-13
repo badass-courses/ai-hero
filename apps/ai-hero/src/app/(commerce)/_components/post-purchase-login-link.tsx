@@ -1,5 +1,5 @@
 import * as LoginLink from '@coursebuilder/commerce-next/post-purchase/login-link'
-import { PostPurchaseIcon } from './post-purchase-icon'
+import { PostPurchaseIconBadge } from './post-purchase-icon'
 
 export function PostPurchaseLoginLink({ email }: { email: string }) {
 	return (
@@ -7,9 +7,7 @@ export function PostPurchaseLoginLink({ email }: { email: string }) {
 			<LoginLink.Status />
 			<LoginLink.Title />
 			<LoginLink.CTA className="mt-4 inline-flex items-center gap-3">
-				<div className="bg-primary/20 text-primary flex h-10 w-10 items-center justify-center rounded-full p-3">
-					<PostPurchaseIcon kind="email" className="h-4 w-4" />
-				</div>
+				<PostPurchaseIconBadge kind="email" />
 				<span>
 					Login link sent to: <strong className="font-semibold">{email}</strong>
 				</span>

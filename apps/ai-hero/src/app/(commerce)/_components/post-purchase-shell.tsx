@@ -15,7 +15,8 @@ import {
 	PostPurchaseProgress,
 	type PurchaseStep,
 } from './post-purchase-progress'
-import { PostPurchaseIcon } from './post-purchase-icon'
+import { PostPurchaseIconBadge } from './post-purchase-icon'
+import iconStyles from './post-purchase-icon.module.css'
 
 export function PostPurchaseShell({
 	step = 'processing',
@@ -68,17 +69,25 @@ export function PostPurchaseShell({
 						role="status"
 						aria-live="polite"
 						aria-atomic="true"
-						className={`${TYPE.metaProse} flex min-h-12 items-center gap-3 text-muted-foreground`}
+						className={`${TYPE.metaProse} min-h-12 text-muted-foreground ${step === 'ready' ? iconStyles.readyRow : 'flex items-center gap-3'}`}
 					>
 						{step === 'ready' && (
-							<PostPurchaseIcon kind="ready" play={!readyWasShown} />
+							<PostPurchaseIconBadge kind="ready" play={!readyWasShown} />
 						)}
-						<span>{status}</span>
+						<span
+							className={step === 'ready' ? iconStyles.readyText : undefined}
+						>
+							{status}
+						</span>
 					</div>
 					{step === 'failed' && (
 						<Alert>
 							<AlertTitle>
-								<h1 ref={heading} tabIndex={-1} className={`${TYPE.panelTitle} outline-none`}>
+								<h1
+									ref={heading}
+									tabIndex={-1}
+									className={`${TYPE.panelTitle} outline-none`}
+								>
 									Setup needs a hand
 								</h1>
 							</AlertTitle>

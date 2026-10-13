@@ -1,0 +1,269 @@
+{
+  "schema": "post-purchase-alignment.v2",
+  "units": "CSS pixels",
+  "method": "DOM Range first rendered text line; SVG getBBox expanded by half of uniform round stroke and mapped to screen. Circle clearance is conservatively bounded by vertex radius plus half stroke.",
+  "light": {
+    "alignmentOffset": 0,
+    "animations": [
+      {
+        "duration": 300,
+        "iterations": 1
+      }
+    ],
+    "badge": {
+      "fill": "rgb(245, 196, 81)",
+      "height": 40,
+      "width": 40,
+      "x": 228.5,
+      "y": 205.546875
+    },
+    "columnOffset": 0,
+    "focus": "H1",
+    "iconFrame": {
+      "height": 32,
+      "width": 32,
+      "x": 232.5,
+      "y": 209.546875
+    },
+    "minCircleClearance": 3.5817220013536533,
+    "overflow": 0,
+    "padding": {
+      "bottom": 8,
+      "left": 8,
+      "right": 8,
+      "top": 8
+    },
+    "reduced": false,
+    "strokeEnvelope": {
+      "height": 24,
+      "width": 24,
+      "x": 236.5,
+      "y": 213.546875
+    },
+    "strokePixels": 2.6666666666666665,
+    "textGap": 12,
+    "textLine": {
+      "height": 18,
+      "width": 184.65625,
+      "x": 280.5,
+      "y": 216.546875
+    },
+    "viewport": {
+      "height": 900,
+      "width": 1280
+    }
+  },
+  "dark": {
+    "alignmentOffset": 0,
+    "animations": [
+      {
+        "duration": 300,
+        "iterations": 1
+      }
+    ],
+    "badge": {
+      "fill": "rgb(245, 196, 81)",
+      "height": 40,
+      "width": 40,
+      "x": 228.5,
+      "y": 205.546875
+    },
+    "columnOffset": 0,
+    "focus": "H1",
+    "iconFrame": {
+      "height": 32,
+      "width": 32,
+      "x": 232.5,
+      "y": 209.546875
+    },
+    "minCircleClearance": 3.5817220013536533,
+    "overflow": 0,
+    "padding": {
+      "bottom": 8,
+      "left": 8,
+      "right": 8,
+      "top": 8
+    },
+    "reduced": false,
+    "strokeEnvelope": {
+      "height": 24,
+      "width": 24,
+      "x": 236.5,
+      "y": 213.546875
+    },
+    "strokePixels": 2.6666666666666665,
+    "textGap": 12,
+    "textLine": {
+      "height": 18,
+      "width": 184.65625,
+      "x": 280.5,
+      "y": 216.546875
+    },
+    "viewport": {
+      "height": 900,
+      "width": 1280
+    }
+  },
+  "mobile": {
+    "alignmentOffset": 0,
+    "animations": [
+      {
+        "duration": 300,
+        "iterations": 1
+      }
+    ],
+    "badge": {
+      "fill": "rgb(245, 196, 81)",
+      "height": 40,
+      "width": 40,
+      "x": 27,
+      "y": 219.09375
+    },
+    "columnOffset": 0,
+    "focus": "H1",
+    "iconFrame": {
+      "height": 32,
+      "width": 32,
+      "x": 31,
+      "y": 223.09375
+    },
+    "minCircleClearance": 3.5817220013536533,
+    "overflow": 0,
+    "padding": {
+      "bottom": 8,
+      "left": 8,
+      "right": 8,
+      "top": 8
+    },
+    "reduced": false,
+    "strokeEnvelope": {
+      "height": 24,
+      "width": 24,
+      "x": 35,
+      "y": 227.09375
+    },
+    "strokePixels": 2.6666666666666665,
+    "textGap": 12,
+    "textLine": {
+      "height": 18,
+      "width": 184.65625,
+      "x": 79,
+      "y": 230.09375
+    },
+    "viewport": {
+      "height": 844,
+      "width": 390
+    }
+  },
+  "narrow": {
+    "alignmentOffset": 0,
+    "animations": [
+      {
+        "duration": 300,
+        "iterations": 1
+      }
+    ],
+    "badge": {
+      "fill": "rgb(245, 196, 81)",
+      "height": 40,
+      "width": 40,
+      "x": 27,
+      "y": 219.09375
+    },
+    "columnOffset": 0,
+    "focus": "H1",
+    "iconFrame": {
+      "height": 32,
+      "width": 32,
+      "x": 31,
+      "y": 223.09375
+    },
+    "minCircleClearance": 3.5817220013536533,
+    "overflow": 0,
+    "padding": {
+      "bottom": 8,
+      "left": 8,
+      "right": 8,
+      "top": 8
+    },
+    "reduced": false,
+    "strokeEnvelope": {
+      "height": 24,
+      "width": 24,
+      "x": 35,
+      "y": 227.09375
+    },
+    "strokePixels": 2.6666666666666665,
+    "textGap": 12,
+    "textLine": {
+      "height": 18,
+      "width": 184.65625,
+      "x": 79,
+      "y": 230.09375
+    },
+    "viewport": {
+      "height": 844,
+      "width": 320
+    }
+  },
+  "reduced": {
+    "alignmentOffset": 0,
+    "animations": [],
+    "badge": {
+      "fill": "rgb(245, 196, 81)",
+      "height": 40,
+      "width": 40,
+      "x": 228.5,
+      "y": 205.546875
+    },
+    "columnOffset": 0,
+    "focus": "H1",
+    "iconFrame": {
+      "height": 32,
+      "width": 32,
+      "x": 232.5,
+      "y": 209.546875
+    },
+    "minCircleClearance": 3.5817220013536533,
+    "overflow": 0,
+    "padding": {
+      "bottom": 8,
+      "left": 8,
+      "right": 8,
+      "top": 8
+    },
+    "reduced": true,
+    "strokeEnvelope": {
+      "height": 24,
+      "width": 24,
+      "x": 236.5,
+      "y": 213.546875
+    },
+    "strokePixels": 2.6666666666666665,
+    "textGap": 12,
+    "textLine": {
+      "height": 18,
+      "width": 184.65625,
+      "x": 280.5,
+      "y": 216.546875
+    },
+    "viewport": {
+      "height": 900,
+      "width": 1280
+    }
+  },
+  "mail": {
+    "animations": [
+      {
+        "duration": 400,
+        "iterations": 1
+      }
+    ],
+    "circleHeight": 40,
+    "circleWidth": 40,
+    "fill": "rgb(245, 196, 81)",
+    "focus": "H1",
+    "gap": 12,
+    "stroke": "rgb(25, 21, 16)"
+  }
+}

@@ -26,5 +26,6 @@ https://useanimations.com/icons/mail.zip (mail.svg)
 https://useanimations.com/licencing-and-terms
 
 Adapted to inline React SVGs with one-shot CSS motion. The checkmark point order
-is reversed to reveal from the short stroke to the long stroke. No player,
-Lottie data, registry wrapper or package code is redistributed.
+is reversed to reveal from the short stroke to the long stroke, and its points
+are normalized to square bounds for even badge padding. Stroke scaling remains
+uniform. No player, Lottie data, registry wrapper or package code is redistributed.
