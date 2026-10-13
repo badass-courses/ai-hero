@@ -1,6 +1,8 @@
 'use client'
 
 import * as React from 'react'
+import Link from 'next/link'
+import { usePathname, useSearchParams } from 'next/navigation'
 import { env } from '@/env.mjs'
 import {
 	purchaseGate,
@@ -20,6 +22,12 @@ export function usePurchaseGate(): PurchaseGate {
 /**
  * Says when the price shown is an upper bound, not the buyer's price. Renders
  * nothing for a chargeable price.
+ *
+ * It is a caption under the button, and it speaks to the one reader the bound
+ * matters to. A signed-out visitor is shown the new-buyer price, which is what
+ * a new buyer pays; only someone who has bought before can come out lower, so
+ * the note asks them and gives them the way to find out. Signing in from here
+ * comes back to this page, where the button then carries their own price.
  */
 export function UpperBoundNote({ className }: { className?: string }) {
 	const gate = usePurchaseGate()
@@ -29,11 +37,42 @@ export function UpperBoundNote({ className }: { className?: string }) {
 			className={cn('text-muted-foreground text-center text-sm', className)}
 			data-upper-bound=""
 		>
-			{gate.kind === 'sign-in'
-				? 'Up to this price. Sign in to see yours.'
-				: 'Up to this price.'}
+			{gate.kind === 'sign-in' ? (
+				<>
+					Returning student?{' '}
+					<React.Suspense fallback={<SignInLink />}>
+						<SignInLinkWithQuery />
+					</React.Suspense>{' '}
+					to see your price.
+				</>
+			) : (
+				'You will pay this price or less.'
+			)}
 		</p>
 	)
+}
+
+/** The note's way in: the login page, set to come back to this page. */
+function SignInLink({ search }: { search?: string }) {
+	const pathname = usePathname() ?? '/'
+	const here = search ? `${pathname}?${search}` : pathname
+	return (
+		<Link
+			href={`/login?callbackUrl=${encodeURIComponent(here)}`}
+			className="text-foreground font-medium underline underline-offset-4 hover:no-underline"
+		>
+			Sign in
+		</Link>
+	)
+}
+
+/**
+ * The same link, carrying the query string too, so a coupon or a gift link
+ * is still on the page the buyer comes back to. Reading the query suspends on
+ * a prerendered page, which is why the note falls back to the plain link.
+ */
+function SignInLinkWithQuery() {
+	return <SignInLink search={useSearchParams()?.toString()} />
 }
 
 /** Where a regional ticket holder asks for unrestricted access. */
@@ -91,7 +130,6 @@ export function GatedBuyButton({
 	if (gate.kind === 'blocked') {
 		return (
 			<>
-				<UpperBoundNote className="mb-2" />
 				<Button
 					className={cn(
 						'bg-primary text-primary-foreground flex h-14 w-full items-center justify-center rounded px-4 py-4 text-center text-base font-medium disabled:cursor-not-allowed disabled:opacity-50',
@@ -104,16 +142,17 @@ export function GatedBuyButton({
 				>
 					{gate.label}
 				</Button>
+				<UpperBoundNote className="mt-2.5" />
 			</>
 		)
 	}
 	if (gate.kind === 'sign-in') {
 		return (
 			<>
-				<UpperBoundNote className="mb-2" />
 				<Pricing.BuyButton className={className} asChild={asChild}>
-					{gate.label}
+					{children}
 				</Pricing.BuyButton>
+				<UpperBoundNote className="mt-2.5" />
 			</>
 		)
 	}

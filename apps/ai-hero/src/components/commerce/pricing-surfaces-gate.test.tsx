@@ -66,7 +66,10 @@ vi.mock('@/trpc/react', () => ({
 		},
 	},
 }))
-vi.mock('next/navigation', () => ({ usePathname: () => '/c5' }))
+vi.mock('next/navigation', () => ({
+	usePathname: () => '/c5',
+	useSearchParams: () => new URLSearchParams(),
+}))
 vi.mock('@/env.mjs', () => ({
 	env: {
 		NEXT_PUBLIC_SUPPORT_EMAIL: 'support@example.test',

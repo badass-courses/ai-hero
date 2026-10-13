@@ -92,8 +92,8 @@ export function CheckoutSurveyBuyButton({
 	children?: React.ReactNode
 	/**
 	 * Rendered after the label whatever the label is, so it survives a gate
-	 * that swaps the label for its own ("Sign in to buy"). An inline button
-	 * uses it to carry the price the note above the button refers to.
+	 * that swaps the label for its own ("Not open yet"). An inline button
+	 * uses it to carry the price the caption under the button refers to.
 	 */
 	trailing?: React.ReactNode
 }) {
@@ -133,8 +133,11 @@ export function CheckoutSurveyBuyButton({
 	)
 	const isMembership = product.type === 'membership'
 	const defaultAction = isMembership ? 'Subscribe' : 'Buy Now'
+	// Only a gate that stops the purchase renames the button. Someone who is
+	// not signed in can still buy (checkout takes them through sign-in), so
+	// their button says what it does.
 	const buttonLabel =
-		gate.kind !== 'buy'
+		gate.kind === 'blocked' || gate.kind === 'support'
 			? gate.label
 			: children
 				? children
@@ -217,7 +220,6 @@ export function CheckoutSurveyBuyButton({
 	if (snapshot.matches('idle')) {
 		return (
 			<>
-				<UpperBoundNote className="mb-2" />
 				<Button
 					ref={buttonRef}
 					className={cn(
@@ -238,6 +240,7 @@ export function CheckoutSurveyBuyButton({
 					{buttonLabel}
 					{trailing}
 				</Button>
+				<UpperBoundNote className="mt-2.5" />
 			</>
 		)
 	}
@@ -304,7 +307,8 @@ export function CheckoutSurveyBuyButton({
 				}
 				onClick={() => send({ type: 'CONTINUE_CLICKED' })}
 			>
-				Continue to Stripe
+				{/* Checkout takes a signed-out buyer through sign-in before Stripe. */}
+				{gate.kind === 'sign-in' ? 'Continue to sign in' : 'Continue to Stripe'}
 			</Button>
 		</div>
 	)

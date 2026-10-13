@@ -356,7 +356,9 @@ export async function CohortPageView(props: CohortPageViewProps) {
 						}}
 						userId={cohortProps?.userId}
 						pricingDataLoader={cohortProps.pricingDataLoader}
-						className="my-8 items-center justify-center"
+						// `not-prose`: the button brings a caption of its own, and the
+						// article's paragraph margins would push it away from the button.
+						className="not-prose my-8 items-center justify-center"
 					>
 						<Pricing.Product>
 							<CheckoutSurveyBuyButton
