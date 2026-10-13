@@ -296,6 +296,15 @@ export async function CohortPageView(props: CohortPageViewProps) {
 			),
 		)
 
+	// The curriculum is not announced before seats go on sale, whether the
+	// product is still a draft or was published ahead of its window: the
+	// workshop list can still hold drafts then. Someone who can buy or already
+	// has the cohort always sees it, and so does a cohort whose window closed.
+	const curriculumAnnounced =
+		mobileCta === 'enroll' ||
+		mobileCta === 'owned' ||
+		(!isComingSoon && !enrollmentOpensLater)
+
 	const { content } = await compileMDX(
 		mdxSource,
 		{
@@ -606,9 +615,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 							</article>
 						</div>
 
-						{/* The curriculum is not announced while the cohort is coming
-						    soon, and its workshop list can still hold drafts. */}
-						{isComingSoon || showsInlineContentList ? null : (
+						{!curriculumAnnounced || showsInlineContentList ? null : (
 							<CohortContents
 								className="py-8"
 								variant="full"
