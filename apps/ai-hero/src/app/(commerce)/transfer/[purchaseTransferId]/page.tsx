@@ -1,117 +1,88 @@
-import { revalidatePath } from 'next/cache'
-import Link from 'next/link'
-import { redirect } from 'next/navigation'
-import LayoutClient from '@/components/layout-client'
+import { revalidatePath, updateTag } from 'next/cache'
+import { notFound, redirect } from 'next/navigation'
 import { courseBuilderAdapter } from '@/db'
+import { INCOMING_TRANSFERS_TAG } from '@/lib/incoming-transfers'
+import { purchaseArtwork } from '@/lib/purchase-artwork'
 import { acceptPurchaseTransfer } from '@/purchase-transfer/purchase-transfer-actions'
+import { isTransferExpired } from '@/purchase-transfer/transfer-lifecycle'
 import { getServerAuthSession } from '@/server/auth'
+
+import { welcomeStart } from '../../welcome/welcome-start'
+import {
+	TransferScreen,
+	type TransferView,
+} from './_components/transfer-screen'
+
+/** States a transfer link can be opened in; AVAILABLE has not been sent yet. */
+const SENT = ['INITIATED', 'VERIFIED', 'COMPLETED', 'CANCELED', 'EXPIRED']
 
 const PurchaseTransferPage = async (props: {
 	params: Promise<{ purchaseTransferId: string }>
 }) => {
-	const params = await props.params
-	const { session } = await getServerAuthSession()
-	const user = session?.user
-	const purchaseTransfer =
-		await courseBuilderAdapter.getPurchaseUserTransferById({
-			id: params.purchaseTransferId,
-		})
+	const { purchaseTransferId: id } = await props.params
+	const [{ session }, transfer] = await Promise.all([
+		getServerAuthSession(),
+		courseBuilderAdapter.getPurchaseUserTransferById({ id }),
+	])
+	if (!transfer?.purchase || !SENT.includes(transfer.transferState)) notFound()
 
-	const signedInAsTargetUser = user?.id === purchaseTransfer?.targetUserId
+	const productId = transfer.purchase.productId
+	const product = await courseBuilderAdapter.getProduct(productId)
+	const viewer = session?.user
+	const viewerIsRecipient = Boolean(
+		viewer?.id && viewer.id === transfer.targetUserId,
+	)
+
+	let view: TransferView
+	if (transfer.transferState === 'COMPLETED') {
+		view = {
+			kind: 'accepted',
+			viewerIsRecipient,
+			start: viewerIsRecipient
+				? welcomeStart({
+						product,
+						productResources:
+							await courseBuilderAdapter.getProductResources(productId),
+						ownsASeat: true,
+					})
+				: null,
+		}
+	} else if (transfer.transferState === 'CANCELED') {
+		view = { kind: 'canceled' }
+	} else if (
+		transfer.transferState === 'EXPIRED' ||
+		isTransferExpired(transfer)
+	) {
+		view = { kind: 'expired' }
+	} else if (viewerIsRecipient) {
+		// VERIFIED is a claim whose completion was interrupted; accepting again
+		// resumes it, so the recipient sees the same button.
+		view = { kind: 'accept' }
+	} else {
+		view = { kind: 'sign-in', viewerEmail: viewer?.email ?? null }
+	}
+
+	async function accept() {
+		'use server'
+		await acceptPurchaseTransfer({ purchaseUserTransferId: id })
+		updateTag(INCOMING_TRANSFERS_TAG)
+		revalidatePath(`/transfer/${id}`)
+		redirect(`/transfer/${id}`)
+	}
 
 	return (
-		<LayoutClient withContainer>
-			<main className="mx-auto flex w-full grow flex-col items-center justify-center px-5 py-24 sm:py-32">
-				{purchaseTransfer?.transferState === 'INITIATED' && (
-					<div className="flex w-full max-w-xl flex-col gap-3">
-						<h1 className="text-center text-3xl font-bold">
-							👋 Welcome to {process.env.NEXT_PUBLIC_SITE_TITLE}
-						</h1>
-						<h2 className="text-center text-xl font-semibold">
-							You've been invited by{' '}
-							{purchaseTransfer?.sourceUser?.name ||
-								purchaseTransfer?.sourceUser?.email ||
-								''}{' '}
-							to join {process.env.NEXT_PUBLIC_SITE_TITLE}
-						</h2>
-						{signedInAsTargetUser ? (
-							<>
-								<form
-									action={async () => {
-										'use server'
-										user &&
-											purchaseTransfer &&
-											(await acceptPurchaseTransfer({
-												purchaseUserTransferId: params.purchaseTransferId,
-											}))
-										revalidatePath(`/transfer/${params.purchaseTransferId}`)
-										redirect(`/transfer/${params.purchaseTransferId}`)
-									}}
-								>
-									<button
-										type="submit"
-										className="w-full rounded bg-blue-600 px-4 py-2 font-bold text-white hover:bg-blue-700"
-										disabled={!purchaseTransfer}
-									>
-										accept this transfer
-									</button>
-								</form>
-								<p className="text-center text-xs">
-									By accepting this transfer you are agreeing to the{' '}
-									<Link
-										className="font-semibold hover:underline"
-										href="/privacy"
-									>
-										terms and conditions of {process.env.NEXT_PUBLIC_SITE_TITLE}
-									</Link>
-									.
-								</p>
-							</>
-						) : (
-							<p className="text-center">
-								In order to accept this invitation, you must be signed in as{' '}
-								<span className="font-semibold underline">
-									{purchaseTransfer?.targetUser?.email}
-								</span>
-								. Please log in to the account tied to that email and revisit
-								this URL to accept the transfer.
-							</p>
-						)}
-					</div>
-				)}
-				{purchaseTransfer?.transferState === 'COMPLETED' && (
-					<div className="flex w-full max-w-xl flex-col gap-3">
-						<h1 className="text-center text-3xl font-bold">
-							Purchase Transfer Completed
-						</h1>
-						<h2 className="text-center text-xl font-semibold">
-							The license transfer from{' '}
-							{purchaseTransfer?.sourceUser?.name ||
-								purchaseTransfer?.sourceUser?.email ||
-								''}{' '}
-							has been completed.
-						</h2>
-					</div>
-				)}
-				{purchaseTransfer?.transferState === 'CANCELED' && (
-					<div className="flex w-full max-w-xl flex-col gap-3">
-						<h1 className="text-center text-3xl font-bold">
-							Purchase Transfer Canceled
-						</h1>
-						<p className="text-center">
-							The license transfer from{' '}
-							<a
-								className="font-semibold hover:underline"
-								href={`mailto:${purchaseTransfer?.sourceUser?.email}`}
-							>
-								{purchaseTransfer?.sourceUser?.email}
-							</a>{' '}
-							has been canceled. Please contact them with any questions.
-						</p>
-					</div>
-				)}
-			</main>
-		</LayoutClient>
+		<TransferScreen
+			view={view}
+			transferId={id}
+			productName={product?.name ?? 'your purchase'}
+			artwork={purchaseArtwork(product)}
+			senderName={
+				transfer.sourceUser?.name || transfer.sourceUser?.email || 'Someone'
+			}
+			senderEmail={transfer.sourceUser?.email}
+			recipientEmail={transfer.targetUser?.email ?? ''}
+			accept={accept}
+		/>
 	)
 }
 
