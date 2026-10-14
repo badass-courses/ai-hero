@@ -16,7 +16,11 @@ type StartResource = {
 export type WelcomeStart = {
 	href: string
 	label: string
-	/** When the cohort begins, for a cohort that has not started yet. */
+	/**
+	 * When the cohort begins and that we will write when it does, for a cohort
+	 * that has not started yet. The email is the workshop access email the daily
+	 * job sends as each workshop opens; the wording follows the welcome email.
+	 */
 	startsLabel: string | null
 }
 
@@ -66,7 +70,7 @@ export function welcomeStart({
 			href: `/${pluralize(product.type)}/${slug}`,
 			label: upcoming ? 'Go to your cohort' : 'Start learning',
 			startsLabel: upcoming
-				? `Class starts ${formatInTimeZone(startsAt, timezone, "MMM d 'at' h:mm a zzz")}.`
+				? `Class starts ${formatInTimeZone(startsAt, timezone, "MMM d 'at' h:mm a zzz")}. We'll email you when the first workshops unlock.`
 				: null,
 		}
 	}

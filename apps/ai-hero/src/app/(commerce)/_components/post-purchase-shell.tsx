@@ -4,10 +4,10 @@ import * as React from 'react'
 import LayoutClient from '@/components/layout-client'
 import { TYPE } from '@/components/landing/type'
 
-import { Skeleton } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
 import { PostPurchaseIconBadge } from './post-purchase-icon'
+import styles from './post-purchase-motion.module.css'
 import {
 	PURCHASE_GHOST_BUTTON,
 	PURCHASE_PRIMARY_BUTTON,
@@ -30,11 +30,17 @@ import {
  * step is announced once. What it says is shown once on screen, in the place
  * that state gives it: a caption while waiting, the failure card, the tick in
  * the card's eyebrow when ready, the login-link step on the email screen.
+ *
+ * Changes of state happen in place: the caption folds away, the placeholder
+ * heading crosses to the real one, and a full-page hand-over to the next
+ * screen cross-fades where the browser supports it. After a hand-over
+ * (`handover`) the card's heading is already on screen, so only what is
+ * new settles in.
  */
 export function PostPurchaseShell({
 	step = 'processing',
 	paymentConfirmed = false,
-	readyWasShown = false,
+	handover = false,
 	title,
 	image,
 	message,
@@ -45,7 +51,7 @@ export function PostPurchaseShell({
 }: {
 	step?: PurchaseStep
 	paymentConfirmed?: boolean
-	readyWasShown?: boolean
+	handover?: boolean
 	title?: string
 	image?: string | null
 	message?: string
@@ -64,43 +70,78 @@ export function PostPurchaseShell({
 		{
 			processing: 'Setting up your access. This usually takes a few seconds.',
 			slow: 'Taking longer than usual. We are still waiting for your purchase to finish processing.',
+			opening: 'Payment confirmed. Opening your purchase.',
 			ready: 'Ready. Your access is set up.',
 			email: 'One last step. Check your email for your login link.',
 			failed:
 				'We could not finish checking your access. Please check your email for a login link or contact support. Do not pay again.',
 		}[step]
 	const moving = step === 'processing' || step === 'slow'
-	const placeholder = moving ? 'motion-reduce:animate-none' : 'animate-none'
-	// The tick plays once, on the screen where access turned ready; a page the
-	// poller handed over to shows it already drawn.
+	const working = moving || step === 'opening'
+	// The caption is only ever built on a screen that waited, and it keeps its
+	// last words while it folds away.
+	const [caption, setCaption] = React.useState(moving ? status : null)
+	if (moving && caption !== status) setCaption(status)
+	// Only what changes in place animates: a caption or title that was already
+	// there on the first paint is simply there.
+	const [first] = React.useState({ caption, title })
+	const placeholder = working ? 'ah-skeleton' : 'bg-foreground/10'
+	// The tick is the welcome page's payoff: the hand-over before it claims
+	// payment and access, never "ready", so the tick is always new when it shows.
 	const readyBadge =
-		step === 'ready' ? (
-			<PostPurchaseIconBadge kind="ready" size="sm" play={!readyWasShown} />
-		) : null
+		step === 'ready' ? <PostPurchaseIconBadge kind="ready" size="sm" /> : null
 	return (
 		<LayoutClient withContainer>
-			<Landmark className="min-h-[calc(100vh-var(--nav-height))]">
+			<Landmark
+				data-handover={handover ? '' : undefined}
+				className={cn(
+					'min-h-[calc(100vh-var(--nav-height))]',
+					children && styles.arrive,
+				)}
+			>
+				<style>{CROSS_DOCUMENT_FADE}</style>
 				<PurchaseColumn>
-					<PostPurchaseProgress step={step} paymentConfirmed={paymentConfirmed} />
-					<p role="status" aria-live="polite" aria-atomic="true" className="sr-only">
-						{status}
-					</p>
-					{moving ? (
-						<div aria-hidden="true" className="flex flex-col gap-4">
-							<p className={cn(TYPE.metaProse, 'text-muted-foreground')}>
-								{status}
-							</p>
-							{step === 'slow' ? (
-								<div className="bg-muted flex flex-col gap-1 rounded-[11px] px-5 py-4">
-									<p className={TYPE.cardTitle}>Still setting up</p>
-									<p className={cn(TYPE.metaProse, 'text-muted-foreground')}>
-										You can leave this tab open while we check. If you already
-										received a login link, you can use it to sign in.
+					<div className="flex flex-col">
+						<PostPurchaseProgress step={step} paymentConfirmed={paymentConfirmed} />
+						<p
+							role="status"
+							aria-live="polite"
+							aria-atomic="true"
+							className="sr-only"
+						>
+							{status}
+						</p>
+						{caption ? (
+							<div aria-hidden="true" data-open={moving} className={styles.collapse}>
+								<div>
+									<p
+										key={caption}
+										className={cn(
+											TYPE.metaProse,
+											'text-muted-foreground pt-8 md:pt-10',
+											caption !== first.caption && styles.swap,
+										)}
+									>
+										{caption}
 									</p>
+									<div data-open={step === 'slow'} className={styles.collapse}>
+										<div>
+											<div className="pt-4">
+												<div className="bg-foreground/[0.04] border-input flex flex-col gap-1 rounded-[11px] border px-5 py-4">
+													<p className={TYPE.cardTitle}>Still setting up</p>
+													<p className={cn(TYPE.metaProse, 'text-muted-foreground')}>
+														You can leave this tab open while we check. If you
+														already received a login link, you can use it to sign
+														in.
+													</p>
+												</div>
+											</div>
+										</div>
+									</div>
 								</div>
-							) : null}
-						</div>
-					) : null}
+							</div>
+						) : null}
+					</div>
 					{step === 'failed' ? (
 						<PurchaseCard>
 							<PurchaseCardSection className="flex flex-col gap-3">
@@ -138,40 +179,57 @@ export function PostPurchaseShell({
 						(children ?? (
 							<PurchaseCard className={title ? undefined : 'pointer-events-none'}>
 								<PurchaseCardSection>
-									<div aria-hidden={!title}>
-										{title ? (
-											<PurchaseHeading
-												artwork={image}
-												badge={readyBadge}
-												eyebrow={step === 'ready' ? 'Ready' : 'Your purchase'}
-												title={title}
+									<div className={styles.stack}>
+										<div
+											aria-hidden="true"
+											className={cn(
+												'flex flex-col items-start gap-4 sm:flex-row sm:gap-6',
+												styles.fade,
+												title && 'opacity-0',
+											)}
+										>
+											<div
+												className={cn(
+													'aspect-video w-32 shrink-0 rounded-[6px] sm:w-40',
+													placeholder,
+												)}
 											/>
-										) : (
-											<div className="flex flex-col items-start gap-4 sm:flex-row sm:gap-6">
-												<div className="bg-stripes-muted border-border aspect-video w-32 shrink-0 rounded-[6px] border sm:w-40" />
-												<div className="flex w-full flex-1 flex-col gap-3 pt-1">
-													{readyBadge ? (
-														<p className={cn(TYPE.eyebrow, 'mb-0 flex items-center gap-2')}>
-															{readyBadge}
-															Ready
-														</p>
-													) : (
-														<Skeleton className={cn('h-3 w-24', placeholder)} />
-													)}
-													<Skeleton className={cn('h-7 w-4/5', placeholder)} />
-												</div>
+											<div className="flex w-full flex-1 flex-col gap-3 pt-1">
+												{readyBadge ? (
+													<p className={cn(TYPE.eyebrow, 'mb-0 flex items-center gap-2')}>
+														{readyBadge}
+														Ready
+													</p>
+												) : (
+													<div className={cn('h-3 w-24 rounded-[4px]', placeholder)} />
+												)}
+												<div className={cn('h-7 w-4/5 rounded-[6px]', placeholder)} />
 											</div>
-										)}
+										</div>
+										{title ? (
+											<div className={cn(title !== first.title && styles.reveal)}>
+												<PurchaseHeading
+													artwork={image}
+													badge={readyBadge}
+													eyebrow={
+														step === 'ready'
+															? 'Ready'
+															: step === 'opening'
+																? 'Thank you for purchasing'
+																: 'Your purchase'
+													}
+													title={title}
+												/>
+											</div>
+										) : null}
 									</div>
 								</PurchaseCardSection>
 								<PurchaseCardSection>
 									<div aria-hidden="true" className="flex items-start gap-4">
-										<Skeleton
-											className={cn('size-10 shrink-0 rounded-full', placeholder)}
-										/>
+										<div className={cn('size-10 shrink-0 rounded-full', placeholder)} />
 										<div className="flex flex-1 flex-col gap-2.5 pt-1">
-											<Skeleton className={cn('h-4 w-1/3', placeholder)} />
-											<Skeleton className={cn('h-4 w-2/3', placeholder)} />
+											<div className={cn('h-4 w-1/3 rounded-[4px]', placeholder)} />
+											<div className={cn('h-4 w-2/3 rounded-[4px]', placeholder)} />
 										</div>
 									</div>
 								</PurchaseCardSection>
@@ -183,3 +241,12 @@ export function PostPurchaseShell({
 		</LayoutClient>
 	)
 }
+
+/**
+ * Opts this screen into the browser's cross-document fade, so the waiting
+ * screen's hand-over (a full reload with `ready=1`) and the redirect to the
+ * welcome page dissolve instead of cutting. Both ends must opt in, and every
+ * post-purchase screen renders this shell, so no other page is affected.
+ */
+const CROSS_DOCUMENT_FADE =
+	'@media (prefers-reduced-motion: no-preference) { @view-transition { navigation: auto; } }'

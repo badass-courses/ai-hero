@@ -30,7 +30,8 @@ describe('welcome start', () => {
 		).toEqual({
 			href: '/cohorts/sf-xdy1m',
 			label: 'Go to your cohort',
-			startsLabel: 'Class starts Nov 9 at 8:00 AM PST.',
+			startsLabel:
+				"Class starts Nov 9 at 8:00 AM PST. We'll email you when the first workshops unlock.",
 		})
 	})
 

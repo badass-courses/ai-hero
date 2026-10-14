@@ -214,7 +214,7 @@ const Welcome = async (props: {
 			<PostPurchaseShell
 				step="ready"
 				paymentConfirmed
-				readyWasShown={searchParams.buyPathWaited === '1'}
+				handover={Boolean(searchParams.buyPathId)}
 				landmark="section"
 			>
 				<PostPurchaseArrival
@@ -227,11 +227,7 @@ const Welcome = async (props: {
 						<PurchaseHeading
 							artwork={purchaseArtwork(product)}
 							badge={
-								<PostPurchaseIconBadge
-									kind="ready"
-									size="sm"
-									play={searchParams.buyPathWaited !== '1'}
-								/>
+								<PostPurchaseIconBadge kind="ready" size="sm" />
 							}
 							eyebrow={eyebrow}
 							title={productName}

@@ -77,8 +77,19 @@ export default async function ThanksPurchasePage(props: {
 		return <PurchaseProcessingPage session_id={session_id} />
 	}
 
+	// While the details load, the card already names what was bought, so a
+	// return from the waiting screen keeps the hand-over card it was showing.
+	const product = await courseBuilderAdapter.getProduct(purchase.productId)
 	return (
-		<Suspense fallback={<PageLoading />}>
+		<Suspense
+			fallback={
+				<PostPurchaseShell
+					step="opening"
+					title={product?.name ?? purchase.product?.name}
+					image={purchaseArtwork(product)}
+				/>
+			}
+		>
 			<PurchaseThanksPageLoaded session_id={session_id} ready={ready === '1'} />
 		</Suspense>
 	)
@@ -86,10 +97,6 @@ export default async function ThanksPurchasePage(props: {
 
 function PurchaseProcessingPage({ session_id }: { session_id: string }) {
 	return <PurchaseStatusPoller sessionId={session_id} />
-}
-
-function PageLoading() {
-	return <PostPurchaseShell />
 }
 
 async function PurchaseThanksPageLoaded({
@@ -184,7 +191,7 @@ async function PurchaseThanksPageLoaded({
 		<PostPurchaseShell
 			step={withLoginLink ? 'email' : 'ready'}
 			paymentConfirmed
-			readyWasShown={ready}
+			handover
 		>
 			<PostPurchaseArrival
 				destination="login_link"
@@ -197,7 +204,7 @@ async function PurchaseThanksPageLoaded({
 						artwork={purchaseArtwork(product)}
 						badge={
 							withLoginLink ? null : (
-								<PostPurchaseIconBadge kind="ready" size="sm" play={!ready} />
+								<PostPurchaseIconBadge kind="ready" size="sm" />
 							)
 						}
 						eyebrow={eyebrow}
