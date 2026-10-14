@@ -5,11 +5,11 @@ import Link from 'next/link'
 import { WORKSHOP_CTA_BUTTON } from '@/app/(content)/workshops/_components/workshop-cta-button'
 import { Contributor } from '@/components/contributor'
 import { TYPE } from '@/components/landing/type'
+import { useHasMoreBelow } from '@/hooks/use-has-more-below'
 import type { Cohort } from '@/lib/cohort'
 import { formatCohortDateRange } from '@/utils/format-cohort-date'
 import { useInView } from 'framer-motion'
 import { CheckCircle } from 'lucide-react'
-import { useMeasure } from 'react-use'
 
 import { Button, ScrollArea } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/utils/cn'
@@ -28,40 +28,26 @@ export const CohortSidebar = ({
 	/** What the phone's bottom bar offers; it follows what this rail holds. */
 	mobileCta: CohortMobileCta
 }) => {
-	const [sidebarRef, { height }] = useMeasure<HTMLDivElement>()
-	const [windowHeight, setWindowHeight] = React.useState(0)
 	const buySectionRef = useRef<HTMLDivElement>(null)
 	const isInView = useInView(buySectionRef, { margin: '0px 0px 0% 0px' })
-
-	React.useEffect(() => {
-		const handleResize = () => {
-			setWindowHeight(window.innerHeight)
-		}
-		handleResize()
-		window.addEventListener('resize', handleResize)
-
-		return () => {
-			window.removeEventListener('resize', handleResize)
-		}
-	}, [])
+	// The bottom fade says "there is more below", so it goes once the reader
+	// has scrolled to the end, or when everything fits, as on a workshop page.
+	const scrollRootRef = useRef<HTMLDivElement>(null)
+	const hasMoreBelow = useHasMoreBelow(scrollRootRef)
 
 	return (
 		<>
 			<div
 				ref={buySectionRef}
 				id="buy"
-				className="dark:bg-muted/50 scroll-mt-15 relative flex w-full min-w-0 flex-col gap-3 border-t bg-white md:max-w-sm md:border-l lg:shrink-0 lg:border-t-0"
+				// A third of the row beside the article, as the workshop page's
+				// rail is (two of its six columns).
+				className="dark:bg-muted/50 scroll-mt-15 relative flex w-full min-w-0 flex-col gap-3 border-t bg-white md:max-w-sm md:border-l lg:w-1/3 lg:max-w-none lg:shrink-0 lg:border-t-0"
 			>
-				<div
-					ref={sidebarRef}
-					className={cn('', {
-						'md:top-(--nav-height) md:sticky': true, // sticky && windowHeight - 63 > height,
-						'': true, // scrollable
-					})}
-				>
+				<div ref={scrollRootRef} className="md:top-(--nav-height) md:sticky">
 					<ScrollArea className="h-full lg:max-h-[calc(100vh-var(--nav-height))] [&>[data-slot=scroll-area-viewport]>div]:block! [&_[data-slot='scroll-area-scrollbar']]:opacity-50">
 						{children}
-						{!Boolean(windowHeight - 63 > height) && (
+						{hasMoreBelow && (
 							<div className="from-card pointer-events-none absolute bottom-0 left-0 hidden h-20 w-full bg-gradient-to-t to-transparent lg:block" />
 						)}
 					</ScrollArea>

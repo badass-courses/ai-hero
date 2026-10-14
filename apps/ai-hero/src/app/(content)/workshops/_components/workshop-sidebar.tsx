@@ -6,6 +6,7 @@ import { useModuleProgress } from '@/app/(content)/_components/module-progress-p
 import { Contributor } from '@/components/contributor'
 import config from '@/config'
 import { env } from '@/env.mjs'
+import { useHasMoreBelow } from '@/hooks/use-has-more-below'
 import { getFirstResourceSlug } from '@/lib/content-navigation'
 import type { MinimalWorkshop } from '@/lib/workshops'
 import { useInView } from 'framer-motion'
@@ -42,41 +43,10 @@ export const WorkshopSidebar = ({
 	const buySectionRef = useRef<HTMLDivElement>(null)
 	const isInView = useInView(buySectionRef, { margin: '0px 0px 0% 0px' })
 
-	// The bottom fade exists to say "there is more below" — so it has to know
-	// whether that is actually true. Driven by the ScrollArea's own scroll
-	// position: at (or near) the end it goes, including the trivial case where
-	// everything fits and there is no scrolling at all. This replaces the old
-	// window-vs-column height comparison, which could only ever say "the column
-	// overflows" and kept fading out the last rows for a reader who had already
-	// scrolled to them.
+	// The bottom fade says "there is more below", so it goes once the reader
+	// has scrolled to the end, or when everything fits.
 	const scrollRootRef = useRef<HTMLDivElement>(null)
-	const [hasMoreBelow, setHasMoreBelow] = React.useState(false)
-
-	React.useEffect(() => {
-		const viewport = scrollRootRef.current?.querySelector<HTMLElement>(
-			'[data-slot="scroll-area-viewport"]',
-		)
-		if (!viewport) return
-
-		const update = () => {
-			setHasMoreBelow(
-				viewport.scrollTop + viewport.clientHeight <
-					viewport.scrollHeight - 8,
-			)
-		}
-		update()
-		viewport.addEventListener('scroll', update, { passive: true })
-		const observer = new ResizeObserver(update)
-		observer.observe(viewport)
-		// Content grows and shrinks in place (accordion sections, resolving
-		// pricing), so watch the content box too, not just the viewport.
-		if (viewport.firstElementChild) observer.observe(viewport.firstElementChild)
-
-		return () => {
-			viewport.removeEventListener('scroll', update)
-			observer.disconnect()
-		}
-	}, [])
+	const hasMoreBelow = useHasMoreBelow(scrollRootRef)
 
 	return (
 		<>
