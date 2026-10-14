@@ -116,10 +116,13 @@ async function PurchaseThanksPageLoaded({
 		'paymentSucceededButProcessingFailed' in result ||
 		'processingUnconfirmed' in result
 	) {
+		// The purchase row was found before this check ran, and the webhook only
+		// writes it once checkout completes, so payment stands even when the
+		// details lookup gives up. The hand-over already said so; keep saying it.
 		return (
 			<PostPurchaseShell
 				step="failed"
-				paymentConfirmed={'paymentSucceededButProcessingFailed' in result}
+				paymentConfirmed
 				supportEmail={env.NEXT_PUBLIC_SUPPORT_EMAIL}
 			/>
 		)
