@@ -629,12 +629,15 @@ const RegionalPricingBox = () => {
 	// applied. So the box keeps the last one it was quoted: applied, it still
 	// names the country and the discount (not "United States, 0%"), and while
 	// the next quote is in flight after unticking, it stays put.
-	const lastQuotedPPPCoupon = React.useRef(quotedPPPCoupon)
-	if (quotedPPPCoupon) lastQuotedPPPCoupon.current = quotedPPPCoupon
+	const [lastQuotedPPPCoupon, setLastQuotedPPPCoupon] =
+		React.useState(quotedPPPCoupon)
+	React.useEffect(() => {
+		if (quotedPPPCoupon) setLastQuotedPPPCoupon(quotedPPPCoupon)
+	}, [quotedPPPCoupon])
 	const pppCoupon: RegionalCoupon | undefined =
 		quotedPPPCoupon ??
 		(appliedPPPCoupon || status === 'pending'
-			? (lastQuotedPPPCoupon.current ?? appliedPPPCoupon ?? undefined)
+			? (lastQuotedPPPCoupon ?? appliedPPPCoupon ?? undefined)
 			: undefined)
 
 	const showPPPBox =

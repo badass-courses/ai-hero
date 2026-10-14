@@ -4,6 +4,7 @@ import React, { useRef } from 'react'
 import Link from 'next/link'
 import { useModuleProgress } from '@/app/(content)/_components/module-progress-provider'
 import { Contributor } from '@/components/contributor'
+import { TYPE } from '@/components/landing/type'
 import config from '@/config'
 import { env } from '@/env.mjs'
 import { useHasMoreBelow } from '@/hooks/use-has-more-below'
@@ -16,6 +17,7 @@ import { Button, ScrollArea } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
 import type { PricingComponentProps } from './inline-mdx-pricing'
+import { RegionalNoteSlot } from './regional-pricing-note'
 import { WorkshopInlineBuyButton } from './workshop-pricing'
 import { useWorkshopNavigation } from './workshop-navigation-provider'
 import { WORKSHOP_CTA_BUTTON } from './workshop-cta-button'
@@ -194,61 +196,63 @@ export const WorkshopSidebarMobile = ({
 	return (
 		<div
 			className={cn(
-				// `has-[[data-regional-note]]:pb-[49px]` reserves the height of the
-				// regional-pricing row (`RegionalPricingNote`, 37px), which is
-				// absolutely anchored to the bar's bottom edge, plus the bar's own
-				// 12px row gap — the two must move together.
-				'bg-background/90 backdrop-blur-xs has-[[data-regional-note]]:pb-[49px] fixed bottom-0 left-0 z-20 flex w-full items-center justify-between gap-3 border-t px-3 py-3 transition-opacity duration-300 md:hidden',
+				'bg-background/90 backdrop-blur-xs fixed bottom-0 left-0 z-20 w-full border-t transition-opacity duration-300 md:hidden',
 				className,
 			)}
 		>
-			<div className="flex min-w-0 flex-col gap-0.5">
-				<h3 className="font-heading truncate text-sm font-semibold">
-					{fields?.title}
-				</h3>
-				{showTeamLink ? (
-					<Link
-						href={teamOptionsHref!}
-						className="text-muted-foreground hover:text-foreground inline-flex min-h-6 w-fit items-center gap-1 text-sm underline underline-offset-4 transition-colors"
-					>
-						For your team
-						<ArrowUpRight className="size-3.5" aria-hidden="true" />
-					</Link>
-				) : (
-					<Contributor className="gap-1 text-sm [&_img]:w-5" />
-				)}
+			<div className="flex items-center justify-between gap-3 px-3 py-3">
+				<div className="flex min-w-0 flex-col gap-0.5">
+					<h3 className="font-heading truncate text-sm font-semibold">
+						{fields?.title}
+					</h3>
+					{showTeamLink ? (
+						<Link
+							href={teamOptionsHref!}
+							className={cn(
+								TYPE.metaSm,
+								'text-muted-foreground hover:text-foreground inline-flex min-h-6 w-fit items-center gap-1 underline underline-offset-4 transition-colors',
+							)}
+						>
+							For your team
+							<ArrowUpRight className="size-3.5" aria-hidden="true" />
+						</Link>
+					) : (
+						<Contributor className="gap-1 text-sm [&_img]:w-5" />
+					)}
+				</div>
+				<div className="ml-auto flex shrink-0 items-center">
+					{interestCapture ? (
+						<Button
+							className={cn(WORKSHOP_CTA_BUTTON, 'h-11 shrink-0 gap-2 text-sm')}
+							onClick={handleScrollToBuy}
+						>
+							Get notified
+						</Button>
+					) : purchased && fields?.slug ? (
+						<ContinueLearningButton moduleSlug={fields.slug} />
+					) : (
+						workshop &&
+						pricingProps && (
+							<React.Suspense fallback={null}>
+								<WorkshopInlineBuyButton
+									className="**:data-divider:mx-1 **:data-label:text-sm h-11 shrink-0 gap-2 px-5"
+									resource={workshop}
+									pricingDataLoader={pricingProps.pricingDataLoader}
+									pricingProps={pricingProps as any}
+									centered={false}
+									resourceType="workshop"
+									pricingOptions={{
+										withTitle: false,
+										withImage: false,
+									}}
+									regionalPricingNoteTargetId="buy"
+								/>
+							</React.Suspense>
+						)
+					)}
+				</div>
 			</div>
-			<div className="ml-auto flex shrink-0 items-center">
-				{interestCapture ? (
-					<Button
-						className={cn(WORKSHOP_CTA_BUTTON, 'h-11 shrink-0 gap-2 text-sm')}
-						onClick={handleScrollToBuy}
-					>
-						Get notified
-					</Button>
-				) : purchased && fields?.slug ? (
-					<ContinueLearningButton moduleSlug={fields.slug} />
-				) : (
-					workshop &&
-					pricingProps && (
-						<React.Suspense fallback={null}>
-							<WorkshopInlineBuyButton
-								className="**:data-divider:mx-1 **:data-label:text-sm h-11 shrink-0 gap-2 px-5"
-								resource={workshop}
-								pricingDataLoader={pricingProps.pricingDataLoader}
-								pricingProps={pricingProps as any}
-								centered={false}
-								resourceType="workshop"
-								pricingOptions={{
-									withTitle: false,
-									withImage: false,
-								}}
-								regionalPricingNoteTargetId="buy"
-							/>
-						</React.Suspense>
-					)
-				)}
-			</div>
+			<RegionalNoteSlot />
 		</div>
 	)
 }

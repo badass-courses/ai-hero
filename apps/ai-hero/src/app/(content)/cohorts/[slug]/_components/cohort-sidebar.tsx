@@ -2,6 +2,7 @@
 
 import React, { useRef } from 'react'
 import Link from 'next/link'
+import { RegionalNoteSlot } from '@/app/(content)/workshops/_components/regional-pricing-note'
 import { WORKSHOP_CTA_BUTTON } from '@/app/(content)/workshops/_components/workshop-cta-button'
 import { Contributor } from '@/components/contributor'
 import { TYPE } from '@/components/landing/type'
@@ -116,53 +117,58 @@ export const CohortSidebarMobile = ({
 	return (
 		<div
 			className={cn(
-				'bg-background/90 backdrop-blur-xs fixed bottom-0 left-0 z-20 flex w-full items-center justify-between gap-3 border-t px-3 py-3 transition-opacity duration-300 lg:hidden',
+				'bg-background/90 backdrop-blur-xs fixed bottom-0 left-0 z-20 w-full border-t transition-opacity duration-300 lg:hidden',
 				className,
 			)}
 		>
-			<div className="flex min-w-0 flex-col gap-0.5">
-				<h3 className="font-heading truncate text-sm font-semibold">
-					{fields.title}
-				</h3>
-				{eventDateString ? (
-					<p className={cn(TYPE.metaMark, 'truncate')}>{eventDateString}</p>
+			<div className="flex items-center justify-between gap-3 px-3 py-3">
+				<div className="flex min-w-0 flex-col gap-0.5">
+					<h3 className="font-heading truncate text-sm font-semibold">
+						{fields.title}
+					</h3>
+					{eventDateString ? (
+						<p className={cn(TYPE.metaMark, 'truncate')}>{eventDateString}</p>
+					) : (
+						<Contributor className="gap-1 text-sm [&_img]:w-5" />
+					)}
+				</div>
+				{cta === 'on-waitlist' ? (
+					<p
+						className={cn(
+							TYPE.meta,
+							'flex h-11 shrink-0 items-center gap-1.5',
+						)}
+					>
+						<CheckCircle
+							className="text-primary size-4 shrink-0"
+							aria-hidden="true"
+						/>
+						On the waitlist
+					</p>
+				) : cta === 'owned' ? (
+					<Button
+						asChild
+						variant="outline"
+						className="border-border h-11 shrink-0 rounded-[9px] border bg-transparent px-4 text-sm font-medium"
+					>
+						<Link href="#buy" onClick={handleScrollToBuy}>
+							Workshops
+						</Link>
+					</Button>
 				) : (
-					<Contributor className="gap-1 text-sm [&_img]:w-5" />
+					<Button
+						asChild
+						className={cn(WORKSHOP_CTA_BUTTON, 'h-11 shrink-0 gap-2 text-sm')}
+					>
+						<Link href="#buy" onClick={handleScrollToBuy}>
+							{cta === 'waitlist' ? 'Join Waitlist' : 'Enroll Now'}
+						</Link>
+					</Button>
 				)}
 			</div>
-			{cta === 'on-waitlist' ? (
-				<p
-					className={cn(
-						TYPE.meta,
-						'flex h-11 shrink-0 items-center gap-1.5',
-					)}
-				>
-					<CheckCircle
-						className="text-primary size-4 shrink-0"
-						aria-hidden="true"
-					/>
-					On the waitlist
-				</p>
-			) : cta === 'owned' ? (
-				<Button
-					asChild
-					variant="outline"
-					className="border-border h-11 shrink-0 rounded-[9px] border bg-transparent px-4 text-sm font-medium"
-				>
-					<Link href="#buy" onClick={handleScrollToBuy}>
-						Workshops
-					</Link>
-				</Button>
-			) : (
-				<Button
-					asChild
-					className={cn(WORKSHOP_CTA_BUTTON, 'h-11 shrink-0 gap-2 text-sm')}
-				>
-					<Link href="#buy" onClick={handleScrollToBuy}>
-						{cta === 'waitlist' ? 'Join Waitlist' : 'Enroll Now'}
-					</Link>
-				</Button>
-			)}
+			{/* Regional pricing rides along only with "Enroll Now": the note
+			    comes from the rail's pricing card, which exists only on sale. */}
+			{cta === 'enroll' ? <RegionalNoteSlot /> : null}
 		</div>
 	)
 }
