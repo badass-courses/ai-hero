@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({
 	deleted: vi.fn(async () => undefined),
 	select: vi.fn(),
 	transaction: vi.fn(),
-	created: vi.fn(async () => undefined),
+	created: vi.fn(async (_tx: unknown, _params: { metadata?: Record<string, unknown> }) => undefined),
 	error: vi.fn(async () => undefined),
 }))
 vi.mock('@/db', () => ({
@@ -35,16 +35,20 @@ import {
 	syncUserCohortEntitlementsWithIds,
 } from './entitlement-sync'
 
-function prepareDiff(currentContentIds: string[]) {
-	const query = {
-		innerJoin: () => query,
-		where: () => ({
-			then: (resolve: (rows: unknown[]) => unknown) =>
-				resolve([{ metadata: { contentIds: currentContentIds } }]),
-			limit: async () => [{ id: 'purchase-1' }],
-		}),
-	}
-	mocks.select.mockImplementation(() => ({ from: () => query }))
+function prepareDiff(
+	currentContentIds: string[],
+	fields: Record<string, unknown> = {},
+	purchaseRows?: Array<{ id: string; fields: Record<string, unknown> }>,
+) {
+	mocks.select.mockImplementation((selection: Record<string, unknown>) => {
+		const query = {
+			innerJoin: () => query,
+			where: async () => selection.fields
+				? purchaseRows ?? [{ id: 'purchase-1', fields }]
+				: [{ metadata: { contentIds: currentContentIds } }],
+		}
+		return { from: () => query }
+	})
 	mocks.transaction.mockImplementation(
 		async (fn: (tx: unknown) => Promise<unknown>) =>
 			fn({ delete: () => ({ where: mocks.deleted }) }),
@@ -58,6 +62,32 @@ beforeEach(() => {
 })
 
 describe('cohort entitlement live-workshop diff', () => {
+	it.each([
+		[{ source: 'comp', earlyAccess: true }, true],
+		[{ source: 'comp', earlyAccess: 'true' }, undefined],
+		[{ source: 'comp', earlyAccess: false }, undefined],
+		[{}, undefined],
+		[{ source: 'other', earlyAccess: true }, undefined],
+	] as const)('preserves strict comp early access for workshops added later (%j)', async (fields, expected) => {
+		prepareDiff(['old-workshop'], fields)
+		await syncUserCohortEntitlementsWithIds('test-user', 'test-cohort', ['old-workshop', 'new-workshop'])
+		expect(mocks.created).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+			resourceId: 'new-workshop', sourceId: 'purchase-1',
+			metadata: expect.objectContaining({ contentIds: ['new-workshop'] }),
+		}))
+		expect(mocks.created.mock.calls[0]?.[1]?.metadata?.earlyAccess).toBe(expected)
+	})
+	it('uses the active comp when another product purchase also links the cohort', async () => {
+		prepareDiff(['old-workshop'], {}, [
+			{ id: 'ordinary-purchase', fields: {} },
+			{ id: 'comp-purchase', fields: { source: 'comp', earlyAccess: true } },
+		])
+		await syncUserCohortEntitlementsWithIds('test-user', 'test-cohort', ['old-workshop', 'new-workshop'])
+		expect(mocks.created).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+			sourceId: 'comp-purchase', metadata: { contentIds: ['new-workshop'], earlyAccess: true },
+		}))
+	})
+
 	it('revokes a detached workshop and restores it when rollback reattaches it', () => {
 		const purchaseEntitlements = [
 			{ metadata: { contentIds: ['kept-workshop'] } },
