@@ -168,7 +168,7 @@ describe('recovery runtime adapters', () => {
 			),
 		)
 		expect(requested.status).toBe('requested')
-		expect(fetcher).toHaveBeenCalledTimes(3)
+		expect(fetcher).toHaveBeenCalledTimes(2)
 		row = { ...row, status: 'completed', completedAt: contact.createdAt }
 		const readback = await Effect.runPromise(
 			runHeldExitRecovery({ ...dryRun, mode: 'readback' }, ports),
@@ -187,7 +187,7 @@ describe('recovery runtime adapters', () => {
 			},
 		})
 		expect(readOutbox).toHaveBeenCalledOnce()
-		expect(fetcher).toHaveBeenCalledTimes(3)
+		expect(fetcher).toHaveBeenCalledTimes(2)
 		for (const value of [
 			contact.id,
 			contact.email!,
@@ -322,6 +322,10 @@ describe('read-only Kit exit proof', () => {
 			if (!signal) throw new Error('Expected request signal')
 			observed.push(signal)
 			return new Promise<Response>((_resolve, reject) => {
+				if (signal.aborted) {
+					reject(signal.reason)
+					return
+				}
 				signal.addEventListener('abort', () => reject(signal.reason), {
 					once: true,
 				})
@@ -336,6 +340,7 @@ describe('read-only Kit exit proof', () => {
 						subscriberId: '123',
 						fetch: fetcher,
 						now: () => contact.createdAt,
+						sleep: async () => {},
 					}),
 				),
 			)
@@ -345,7 +350,8 @@ describe('read-only Kit exit proof', () => {
 			})
 			expect(observed[0]?.aborted).toBe(true)
 			expect(observed[0]?.reason).toBe(timeout.signal.reason)
-			expect(timeoutFactory).toHaveBeenCalledWith(15_000)
+			expect(timeoutFactory).toHaveBeenCalledWith(60_000)
+			expect(fetcher).toHaveBeenCalledTimes(5)
 		} finally {
 			timeoutFactory.mockRestore()
 		}
@@ -409,7 +415,7 @@ describe('read-only Kit exit proof', () => {
 			let clockReads = 0
 			const clock = () =>
 				scenario === 'late' && ++clockReads > 2
-					? '2026-10-06T12:06:00.000Z'
+					? '2026-10-06T12:31:00.000Z'
 					: contact.createdAt
 			const result = await Effect.runPromise(
 				Effect.either(
@@ -418,6 +424,7 @@ describe('read-only Kit exit proof', () => {
 						subscriberId: '123',
 						fetch: fetcher,
 						now: clock,
+						sleep: async () => {},
 						maxPages: scenario === 'cap' ? 1 : 3,
 					}),
 				),
@@ -667,7 +674,7 @@ describe('single-contact held exit recovery', () => {
 		async (scenario) => {
 			const ports = runtime()
 			const original = await ports.inspect(contact.id)
-			if (scenario === 'stale') ports.now = () => '2026-10-06T12:06:00.000Z'
+			if (scenario === 'stale') ports.now = () => '2026-10-06T12:31:00.000Z'
 			if (scenario === 'future')
 				ports.scan = async () => ({
 					...scan,
@@ -690,7 +697,7 @@ describe('single-contact held exit recovery', () => {
 						? 'identity-unproven'
 						: scenario === 'bad-row'
 							? 'invalid-held-row'
-							: 'membership-unknown',
+							: 'provider-unavailable',
 			})
 			expect(ports.persist).not.toHaveBeenCalled()
 			expect(ports.notify).not.toHaveBeenCalled()
@@ -796,8 +803,8 @@ describe('single-contact held exit recovery', () => {
 		['zero', 'held-row-count'],
 		['multiple', 'held-row-count'],
 		['mixed-targets', 'held-row-count'],
-		['unknown', 'membership-unknown'],
-		['partial', 'membership-unknown'],
+		['unknown', 'provider-unavailable'],
+		['partial', 'provider-unavailable'],
 		['member', 'old-sequence-member'],
 		['error', 'provider-unavailable'],
 		['recovered', 'already-recovered'],

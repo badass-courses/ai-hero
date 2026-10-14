@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { and, eq, sql } from 'drizzle-orm'
-import { Effect } from 'effect'
 import { z } from 'zod'
 import type { CaptureMarketingRepository } from '../src/lib/subscriber-marketing/capture-contact-event'
 import type {
@@ -9,8 +10,14 @@ import type {
 	RecoverySnapshot,
 } from './held-exit-recover'
 import { drovrOutboxTarget } from '../src/lib/subscriber-marketing/drovr-outbox'
-import { RecoveryRefused } from './held-exit-recover'
-import { readKitExitMembership } from './held-exit-kit-scan'
+import { MAX_SCAN_AGE_MS, RecoveryRefused } from './held-exit-recover'
+import {
+	membershipFromScan,
+	readKitSequenceScan,
+	type ScanCheckpoint,
+	type ScanStore,
+} from './held-exit-kit-scan'
+import { withScanFile } from './held-exit-scan-store'
 import { NEWSLETTER_EXIT_CONFIRMED_EVENT } from '../src/inngest/events/newsletter-exit'
 import {
 	readOldSequenceMembership,
@@ -69,6 +76,11 @@ export async function createProductionHeldRecoveryRuntime(args: RecoveryArgs) {
 		eventKey,
 		fetch,
 		now: () => new Date().toISOString(),
+		withScanStore: (scope, action) =>
+			withScanFile(
+				join(homedir(), '.cache', 'ai-hero', 'held-exit', `${scope}.json`),
+				action,
+			),
 		deploymentScope: JSON.stringify({
 			database: process.env.DATABASE_URL,
 			target,
@@ -153,6 +165,10 @@ export type RecoveryPortOptions = {
 	deploymentScope: string
 	fetch: typeof fetch
 	now: () => string
+	withScanStore?: (
+		scope: string,
+		action: (store: ScanStore) => Promise<ScanCheckpoint>,
+	) => Promise<ScanCheckpoint>
 }
 const ownerSchema = z.object({
 	tenantId: z.enum([DROVR_AUTHORITY_TENANT_ID, DROVR_SHADOW_TENANT_ID]),
@@ -181,17 +197,20 @@ const historyTypes = [
 export function createHeldRecoveryPorts(
 	options: RecoveryPortOptions,
 ): RecoveryRuntime {
+	const approvalScope = createHash('sha256')
+		.update(
+			JSON.stringify({
+				deployment: options.deploymentScope,
+				kit: options.apiKey,
+				inngest: options.eventKey,
+			}),
+		)
+		.digest('hex')
+	let sharedScan: Promise<ScanCheckpoint> | undefined
+	let startedAt: string | undefined
 	return {
 		// Account/database/deployment changes invalidate approval without exposing their values.
-		approvalScope: createHash('sha256')
-			.update(
-				JSON.stringify({
-					deployment: options.deploymentScope,
-					kit: options.apiKey,
-					inngest: options.eventKey,
-				}),
-			)
-			.digest('hex'),
+		approvalScope,
 		now: options.now,
 		findContactById: async (id) => options.repository.findContactById(id),
 		inspect: async (contactId) => {
@@ -206,15 +225,30 @@ export function createHeldRecoveryPorts(
 			])
 			return { rows, identities, history: histories.flat() }
 		},
-		scan: (subscriberId) =>
-			Effect.runPromise(
-				readKitExitMembership({
-					apiKey: options.apiKey,
-					subscriberId,
-					fetch: options.fetch,
-					now: options.now,
-				}),
-			),
+		scan: async (subscriberId) => {
+			if (
+				startedAt &&
+				Date.parse(options.now()) - Date.parse(startedAt) > MAX_SCAN_AGE_MS
+			)
+				sharedScan = undefined
+			if (!sharedScan) {
+				startedAt = options.now()
+				const read = (store?: ScanStore) =>
+					readKitSequenceScan({
+						apiKey: options.apiKey,
+						fetch: options.fetch,
+						now: options.now,
+						scope: approvalScope,
+						store,
+					})
+				sharedScan = options.withScanStore
+					? options.withScanStore(approvalScope, read)
+					: read()
+			}
+			const scan = await sharedScan
+			startedAt = scan.startedAt
+			return membershipFromScan(scan, subscriberId, options.now())
+		},
 		persist: async (input) => options.repository.createContactEvent(input),
 		currentMembership: async (contactId) =>
 			readOldSequenceMembership(options.repository, contactId),

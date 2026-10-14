@@ -96,7 +96,7 @@ jobs:
           capture-purchase-contact-event
           subscribe-to-list
           kit-custom-fields-check
-          src/scripts/held-exit-recover.test.ts
+          src/scripts/held-exit
           src/lib/test-principals/
 
       - name: Workshop pricing actor contract
