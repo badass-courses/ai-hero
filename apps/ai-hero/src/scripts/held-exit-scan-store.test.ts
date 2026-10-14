@@ -18,7 +18,7 @@ describe('operator-owned private checkpoint', () => {
 				new Response(
 					JSON.stringify({
 						subscribers: [{ id: 1, email_address: 'private@example.test' }],
-						pagination: { has_next_page: false },
+						pagination: { has_next_page: false, total_count: 1 },
 					}),
 				),
 		)
@@ -26,7 +26,7 @@ describe('operator-owned private checkpoint', () => {
 		try {
 			const first = await withScanFile(path, async (store) => {
 				await expect(withScanFile(path, async () => {})).rejects.toMatchObject({
-					code: 'EEXIST',
+					reason: 'scan-locked',
 				})
 				return readKitSequenceScan({ ...options, store })
 			})
@@ -34,9 +34,9 @@ describe('operator-owned private checkpoint', () => {
 				readKitSequenceScan({ ...options, store }),
 			)
 			expect(fetcher).toHaveBeenCalledOnce()
-			expect(membershipFromScan(first, '2', start).fingerprint).toBe(
-				membershipFromScan(second, '2', start).fingerprint,
-			)
+			expect(
+				membershipFromScan(first, '2', start, options.apiKey).fingerprint,
+			).toBe(membershipFromScan(second, '2', start, options.apiKey).fingerprint)
 			expect((await stat(path)).mode & 0o777).toBe(0o600)
 			expect(await readFile(path, 'utf8')).not.toContain('private@example.test')
 			expect(await readFile(path, 'utf8')).not.toContain('fixture-key')

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Effect } from 'effect'
 import { createHeldRecoveryPorts } from '../../scripts/held-exit-recover-runtime'
+import type { ScanCheckpoint } from '../../scripts/held-exit-kit-scan'
 import {
 	MAX_SCAN_AGE_MS,
 	parseHeldRecoveryArgs,
@@ -37,6 +38,10 @@ const row = (id: string): SideEffectIntent => ({
 })
 function ports() {
 	let now = start
+	let checkpoint: ScanCheckpoint | undefined
+	const removeScan = vi.fn(async () => {
+		checkpoint = undefined
+	})
 	const persist = vi.fn(async () => {
 		throw new Error('Unexpected write')
 	})
@@ -45,7 +50,7 @@ function ports() {
 			new Response(
 				JSON.stringify({
 					subscribers: [{ id: 1 }],
-					pagination: { has_next_page: false },
+					pagination: { has_next_page: false, total_count: 1 },
 				}),
 			),
 	)
@@ -68,6 +73,14 @@ function ports() {
 						},
 					],
 		readOutbox: async () => [],
+		withScanStore: async (_scope, action) =>
+			action({
+				load: async () => checkpoint,
+				save: async (value) => {
+					checkpoint = value
+				},
+				remove: removeScan,
+			}),
 		apiKey: 'fixture-key',
 		eventKey: '',
 		deploymentScope: 'fixture-scope',
@@ -78,6 +91,7 @@ function ports() {
 		runtime,
 		fetcher,
 		persist,
+		removeScan,
 		setNow: (value: string) => {
 			now = value
 		},
@@ -102,6 +116,11 @@ describe('shared recovery scan', () => {
 			),
 		)
 		expect(fetcher).toHaveBeenCalledOnce()
+		expect(result.checks).toEqual({
+			contactResolved: true,
+			exactlyOneHeld: true,
+			oldSequenceAbsent: false,
+		})
 		expect(result.results?.map((item) => [item.status, item.reason])).toEqual([
 			['refused', 'old-sequence-member'],
 			['planned', null],
@@ -122,6 +141,33 @@ describe('shared recovery scan', () => {
 			'end_cursor',
 		])
 			expect(JSON.stringify(result)).not.toContain(value)
+	})
+	it('AND-reduces batch checks when the first contact plans but a later identity refuses', async () => {
+		const { runtime } = ports()
+		const result = await Effect.runPromise(
+			runHeldRecoveryCommand(
+				['--contact-id', 'second', '--contact-id', 'third'],
+				async () => ({ runtime, close: async () => {} }),
+			),
+		)
+		expect(result.results?.[0]?.checks.oldSequenceAbsent).toBe(true)
+		expect(result.results?.[1]?.checks.oldSequenceAbsent).toBe(false)
+		expect(result.checks.oldSequenceAbsent).toBe(false)
+	})
+	it('does not memoize rejected scans', async () => {
+		const { runtime, fetcher } = ports()
+		fetcher.mockResolvedValueOnce(new Response('', { status: 404 }))
+		await expect(runtime.scan('2')).rejects.toBeDefined()
+		expect((await runtime.scan('2')).membership).toBe('absent')
+		expect(fetcher).toHaveBeenCalledTimes(2)
+	})
+	it('clears the scope checkpoint and in-memory proof after requested recovery cleanup', async () => {
+		const { runtime, fetcher, removeScan } = ports()
+		await runtime.scan('2')
+		await runtime.clearScan?.()
+		expect(removeScan).toHaveBeenCalledOnce()
+		await runtime.scan('2')
+		expect(fetcher).toHaveBeenCalledTimes(2)
 	})
 	it('distinct absent contacts get distinct hashes bound to the shared scan; a new scan changes the hash', async () => {
 		const { runtime, setNow, fetcher } = ports()

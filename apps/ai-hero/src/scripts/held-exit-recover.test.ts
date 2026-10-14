@@ -87,6 +87,7 @@ function runtime(): RecoveryRuntime & {
 			),
 		}),
 		scan: async () => scan,
+		clearScan: vi.fn(async () => {}),
 		persist: vi.fn(async (input) => repository.createContactEvent(input)),
 		notify: vi.fn(async () => 1),
 	}
@@ -106,7 +107,7 @@ describe('recovery runtime adapters', () => {
 				return new Response(
 					JSON.stringify({
 						subscribers: [],
-						pagination: { has_next_page: false },
+						pagination: { has_next_page: false, total_count: 0 },
 					}),
 				)
 			const payload: unknown = JSON.parse(String(init?.body))
@@ -298,7 +299,7 @@ describe('read-only Kit exit proof', () => {
 							new Response(
 								JSON.stringify({
 									subscribers: [],
-									pagination: { has_next_page: false },
+									pagination: { has_next_page: false, total_count: 0 },
 								}),
 							),
 					),
@@ -404,6 +405,7 @@ describe('read-only Kit exit proof', () => {
 										subscribers: [{ id: 456 }],
 										pagination: {
 											has_next_page: scenario !== 'late',
+											total_count: scenario === 'late' ? 1 : 2,
 											end_cursor:
 												scenario === 'missing-cursor' ? null : 'same-cursor',
 										},
@@ -415,7 +417,7 @@ describe('read-only Kit exit proof', () => {
 			let clockReads = 0
 			const clock = () =>
 				scenario === 'late' && ++clockReads > 2
-					? '2026-10-06T12:31:00.000Z'
+					? '2026-10-06T14:01:00.000Z'
 					: contact.createdAt
 			const result = await Effect.runPromise(
 				Effect.either(
@@ -429,7 +431,7 @@ describe('read-only Kit exit proof', () => {
 					}),
 				),
 			)
-			if (scenario === 'http')
+			if (scenario === 'http' || scenario === 'late')
 				expect(result).toMatchObject({
 					_tag: 'Left',
 					left: { reason: 'provider-unavailable' },
@@ -448,7 +450,7 @@ describe('read-only Kit exit proof', () => {
 				new Response(
 					JSON.stringify({
 						subscribers: [{ id: 123, state: 'cancelled' }],
-						pagination: { has_next_page: false },
+						pagination: { has_next_page: false, total_count: 2 },
 					}),
 				),
 		)
@@ -456,7 +458,11 @@ describe('read-only Kit exit proof', () => {
 			new Response(
 				JSON.stringify({
 					subscribers: [{ id: 456 }],
-					pagination: { has_next_page: true, end_cursor: 'one' },
+					pagination: {
+						has_next_page: true,
+						end_cursor: 'one',
+						total_count: 2,
+					},
 				}),
 			),
 		)
@@ -488,7 +494,11 @@ describe('read-only Kit exit proof', () => {
 								first_name: 'Private',
 							},
 						],
-						pagination: { has_next_page: false, end_cursor: null },
+						pagination: {
+							has_next_page: false,
+							end_cursor: null,
+							total_count: 2,
+						},
 					}),
 				),
 		)
@@ -496,7 +506,11 @@ describe('read-only Kit exit proof', () => {
 			new Response(
 				JSON.stringify({
 					subscribers: [{ id: 789 }],
-					pagination: { has_next_page: true, end_cursor: 'cursor-one' },
+					pagination: {
+						has_next_page: true,
+						end_cursor: 'cursor-one',
+						total_count: 2,
+					},
 				}),
 			),
 		)
@@ -736,6 +750,7 @@ describe('single-contact held exit recovery', () => {
 			counts: { exitReceipts: 1, notifications: 1 },
 		})
 		expect(ports.notify).toHaveBeenCalledOnce()
+		expect(ports.clearScan).toHaveBeenCalledOnce()
 		const original = await ports.inspect(contact.id)
 		ports.inspect = async () => ({
 			...original,

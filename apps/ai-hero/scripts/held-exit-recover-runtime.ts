@@ -10,7 +10,11 @@ import type {
 	RecoverySnapshot,
 } from './held-exit-recover'
 import { drovrOutboxTarget } from '../src/lib/subscriber-marketing/drovr-outbox'
-import { MAX_SCAN_AGE_MS, RecoveryRefused } from './held-exit-recover'
+import {
+	MAX_SCAN_AGE_MS,
+	MAX_PROOF_AGE_AT_WRITE_MS,
+	RecoveryRefused,
+} from './held-exit-recover'
 import {
 	membershipFromScan,
 	readKitSequenceScan,
@@ -165,10 +169,10 @@ export type RecoveryPortOptions = {
 	deploymentScope: string
 	fetch: typeof fetch
 	now: () => string
-	withScanStore?: (
+	withScanStore?: <A>(
 		scope: string,
-		action: (store: ScanStore) => Promise<ScanCheckpoint>,
-	) => Promise<ScanCheckpoint>
+		action: (store: ScanStore) => Promise<A>,
+	) => Promise<A>
 }
 const ownerSchema = z.object({
 	tenantId: z.enum([DROVR_AUTHORITY_TENANT_ID, DROVR_SHADOW_TENANT_ID]),
@@ -208,6 +212,7 @@ export function createHeldRecoveryPorts(
 		.digest('hex')
 	let sharedScan: Promise<ScanCheckpoint> | undefined
 	let startedAt: string | undefined
+	let completedAt: string | undefined
 	return {
 		// Account/database/deployment changes invalidate approval without exposing their values.
 		approvalScope,
@@ -228,11 +233,15 @@ export function createHeldRecoveryPorts(
 		scan: async (subscriberId) => {
 			if (
 				startedAt &&
-				Date.parse(options.now()) - Date.parse(startedAt) > MAX_SCAN_AGE_MS
+				(completedAt
+					? Date.parse(options.now()) - Date.parse(completedAt) >
+						MAX_PROOF_AGE_AT_WRITE_MS
+					: Date.parse(options.now()) - Date.parse(startedAt) > MAX_SCAN_AGE_MS)
 			)
 				sharedScan = undefined
 			if (!sharedScan) {
 				startedAt = options.now()
+				completedAt = undefined
 				const read = (store?: ScanStore) =>
 					readKitSequenceScan({
 						apiKey: options.apiKey,
@@ -245,9 +254,34 @@ export function createHeldRecoveryPorts(
 					? options.withScanStore(approvalScope, read)
 					: read()
 			}
-			const scan = await sharedScan
-			startedAt = scan.startedAt
-			return membershipFromScan(scan, subscriberId, options.now())
+			const pending = sharedScan
+			try {
+				const scan = await pending
+				startedAt = scan.startedAt
+				completedAt = scan.complete ? scan.completedAt : undefined
+				return membershipFromScan(
+					scan,
+					subscriberId,
+					options.now(),
+					options.apiKey,
+				)
+			} catch (error) {
+				if (sharedScan === pending) {
+					sharedScan = undefined
+					startedAt = undefined
+					completedAt = undefined
+				}
+				throw error
+			}
+		},
+		clearScan: async () => {
+			if (options.withScanStore)
+				await options.withScanStore(approvalScope, async (store) => {
+					await store.remove?.()
+				})
+			sharedScan = undefined
+			startedAt = undefined
+			completedAt = undefined
 		},
 		persist: async (input) => options.repository.createContactEvent(input),
 		currentMembership: async (contactId) =>

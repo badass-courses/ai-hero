@@ -42,6 +42,7 @@ export type RecoveryRuntime = {
 	findContactById: (id: string) => Promise<ContactRecord | undefined>
 	inspect: (contactId: string) => Promise<RecoverySnapshot>
 	scan: (subscriberId: string) => Promise<MembershipScan>
+	clearScan?: () => Promise<void>
 	persist: (
 		input: Omit<ContactEventRecord, 'id'>,
 	) => Promise<ContactEventRecord>
@@ -60,8 +61,10 @@ export type RecoveryRuntime = {
 }
 
 export const OLD_SEQUENCE_ID = Number(OLD_NEWSLETTER_REFERENCE.split(':')[2])
-/** Allows deep sequence pagination and bounded retries; proof time is still scan start. */
-export const MAX_SCAN_AGE_MS = 30 * 60_000
+/** Full scan duration / incomplete cursor lifetime; proof instant remains scan start. */
+export const MAX_SCAN_AGE_MS = 120 * 60_000
+/** Completed proof may be reused for at most fifteen minutes, including at write time. */
+export const MAX_PROOF_AGE_AT_WRITE_MS = 15 * 60_000
 const outboxReadbackSchema = z.object({
 	eventDerivable: z.boolean(),
 	outbox: z.array(
@@ -98,7 +101,8 @@ function freshAbsence(scan: MembershipScan, now: string) {
 		Number.isFinite(current) &&
 		start <= end &&
 		end <= current &&
-		current - start <= MAX_SCAN_AGE_MS
+		end - start <= MAX_SCAN_AGE_MS &&
+		current - end <= MAX_PROOF_AGE_AT_WRITE_MS
 	)
 }
 
@@ -139,7 +143,10 @@ export type RecoveryEnvelope = {
 const boundary = <A>(reason: string, action: () => Promise<A>) =>
 	Effect.tryPromise({
 		try: action,
-		catch: () => new RecoveryRefused({ reason }),
+		catch: (error) =>
+			error instanceof RecoveryRefused
+				? error
+				: new RecoveryRefused({ reason }),
 	})
 
 /** Sort object keys as well as event/row arrays: DB order isn't approval evidence. */
@@ -469,6 +476,8 @@ export function runHeldExitRecovery(
 				)
 			envelope.counts.notifications = notifications
 			envelope.status = 'requested'
+			if (runtime.clearScan)
+				yield* boundary('scan-cleanup-failed', runtime.clearScan)
 		} else {
 			envelope.status = 'planned'
 			envelope.counts = { exitReceipts: 1, notifications: 1 }
@@ -645,9 +654,19 @@ export function recoveryPrompt(reason: string) {
 			'the supplied approval hash no longer matches the plan',
 		'runtime-unavailable': 'the deployment runtime could not be loaded',
 		'database-unavailable': 'the database could not be read',
+		'scan-locked': 'another recovery operator holds the scan lease',
+		'scan-cache-unsafe':
+			'the scan cache directory or file is not private and operator-owned',
+		'scan-cleanup-failed': 'the completed proof cache could not be removed',
 	}
 	const why = explanations[reason] ?? 'a recovery precondition was not met'
-	return `RecoveryRefused: you requested held-exit recovery, and it failed because ${why}. Accepted: one proven identity per held contact and a complete fresh GET scan; writes require one contact and the matching plan hash. Fix: verify the deployment and preconditions, then rerun a dry run. Debug: inspect the private operator scan checkpoint and redacted checks.`
+	const fix =
+		reason === 'scan-locked'
+			? 'wait for the lease owner; remove a crash lock only after verifying its named process stopped'
+			: reason === 'scan-cache-unsafe'
+				? 'restore current-user ownership and private permissions without following symlinks'
+				: 'verify the deployment and preconditions, then rerun a dry run'
+	return `RecoveryRefused: you requested held-exit recovery, and it failed because ${why}. Accepted: one proven identity per held contact and an authenticated complete fresh GET scan with exact counts; writes require one contact and the matching plan hash. Fix: ${fix}. Debug: inspect the private operator scan checkpoint and redacted checks.`
 }
 
 /** One runtime owns the shared scan. Output order matches selector order, without identifiers. */
@@ -686,6 +705,15 @@ export function runHeldRecoveryBatch(
 			status: refused ? ('refused' as const) : ('planned' as const),
 			reason: refused?.reason ?? null,
 			prompt: refused?.prompt,
+			checks: {
+				contactResolved: results.every(
+					(result) => result.checks.contactResolved,
+				),
+				exactlyOneHeld: results.every((result) => result.checks.exactlyOneHeld),
+				oldSequenceAbsent: results.every(
+					(result) => result.checks.oldSequenceAbsent,
+				),
+			},
 			counts: results.reduce(
 				(counts, result) => ({
 					exitReceipts: counts.exitReceipts + result.counts.exitReceipts,
