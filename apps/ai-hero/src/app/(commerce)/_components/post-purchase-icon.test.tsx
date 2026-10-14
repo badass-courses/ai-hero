@@ -40,10 +40,16 @@ describe('post-purchase icons', () => {
 		expect(html).toContain('stroke-width="2"')
 		expect(html).toContain('stroke-linecap="round"')
 		expect(html).not.toContain('transform=')
-		expect(css).toContain('grid-template-columns: 40px minmax(0, 1fr)')
-		expect(css).toContain('column-gap: 12px')
-		expect(css).toContain('align-items: start')
-		expect(css).toContain('1lh')
+	})
+
+	it('has a 20px eyebrow tick with a heavier stroke', () => {
+		const html = renderToStaticMarkup(
+			<PostPurchaseIconBadge kind="ready" size="sm" />,
+		)
+		expect(html).toContain('h-5 w-5')
+		expect(html).toContain('h-3 w-3')
+		expect(html).toContain('stroke-width="3.25"')
+		expect(html).toContain('bg-accent-fill text-accent-fill-foreground')
 	})
 
 	it('plays the checkmark once, never loops', () => {

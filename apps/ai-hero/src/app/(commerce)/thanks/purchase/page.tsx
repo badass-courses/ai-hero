@@ -3,9 +3,11 @@ import { Suspense } from 'react'
 import { revalidatePath } from 'next/cache'
 import { headers } from 'next/headers'
 import { notFound, redirect } from 'next/navigation'
+import { purchaseArtwork } from '@/lib/purchase-artwork'
 import { PostPurchaseShell } from '../../_components/post-purchase-shell'
 import { PostPurchaseArrival } from '../../_components/post-purchase-arrival'
 import { PostPurchaseLoginLink } from '../../_components/post-purchase-login-link'
+import { PostPurchaseIconBadge } from '../../_components/post-purchase-icon'
 import { getPurchaseThanksDetails } from './purchase-thanks-details'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
@@ -16,13 +18,21 @@ import {
 	initiatePurchaseTransfer,
 } from '@/purchase-transfer/purchase-transfer-actions'
 import { getServerAuthSession } from '@/server/auth'
-import { FileText } from 'lucide-react'
+import { TYPE } from '@/components/landing/type'
 import { PurchaseStatusPoller } from './purchase-status-poller'
+import {
+	PurchaseCard,
+	PurchaseCardSection,
+	PurchaseHeading,
+	PurchaseRows,
+} from '../../_components/post-purchase-parts'
+import {
+	PurchaseInviteTeam,
+	PurchaseInvoiceRow,
+	PurchaseTransferRow,
+} from '../../_components/post-purchase-receipt'
 
-import * as InvoiceTeaser from '@coursebuilder/commerce-next/invoices/invoice-teaser'
-import * as PurchaseSummary from '@coursebuilder/commerce-next/post-purchase/purchase-summary'
-import * as PurchaseTransfer from '@coursebuilder/commerce-next/post-purchase/purchase-transfer'
-import * as InviteTeam from '@coursebuilder/commerce-next/team/invite-team'
+import { cn } from '@coursebuilder/ui/utils/cn'
 import {
 	EXISTING_BULK_COUPON,
 	INDIVIDUAL_TO_BULK_UPGRADE,
@@ -140,70 +150,39 @@ async function PurchaseThanksPageLoaded({
 	const purchaseUserTransfers = await getPurchaseTransferForPurchaseId({
 		id: purchase.id,
 	})
-	let description: React.ReactElement | null = null
-	let title = `Thank you for purchasing ${stripeProductName}`
-	let loginLink: React.ReactElement | null = null
-	let inviteTeam: React.ReactElement | null = (
-		<InviteTeam.Root
-			disabled={!redemptionsLeft}
-			purchase={purchase}
-			className="flex flex-col gap-y-2"
-		>
-			<InviteTeam.SeatsAvailable className="[&_span]:font-semibold" />
-			<p>Send the following invite link to your colleagues to get started:</p>
-			<div className="flex items-center gap-2">
-				<InviteTeam.InviteLink />
-				<InviteTeam.CopyInviteLinkButton />
-			</div>
-			<p>You'll be able to claim a seat for yourself once you sign in.</p>
-		</InviteTeam.Root>
+	const seats = (count: number, more: boolean) => (
+		<>
+			Your purchase is for <strong className="text-foreground">{count}</strong>
+			{more ? ' additional' : ''} seat{count > 1 && 's'}. You can always add
+			more seats later when your team grows.
+		</>
 	)
+	let eyebrow = 'Thank you for purchasing'
+	let name =
+		stripeProductName || product?.name || process.env.NEXT_PUBLIC_SITE_TITLE
+	let description: React.ReactElement | null = null
+	let withLoginLink = false
+	let withInviteTeam = true
 
 	switch (purchaseType) {
 		case NEW_INDIVIDUAL_PURCHASE:
-			loginLink = <PostPurchaseLoginLink email={email} />
-			inviteTeam = null
+			withLoginLink = true
+			withInviteTeam = false
 			break
 		case NEW_BULK_COUPON:
-			description = (
-				<>
-					Your purchase is for <strong>{seatsPurchased}</strong> seat
-					{seatsPurchased > 1 && 's'}. You can always add more seats later when
-					your team grows.
-				</>
-			)
-			loginLink = <PostPurchaseLoginLink email={email} />
+			description = seats(seatsPurchased, false)
+			withLoginLink = true
 			break
 		case EXISTING_BULK_COUPON:
-			title = `Thank you for purchasing more seats for ${
-				product?.name || process.env.NEXT_PUBLIC_SITE_TITLE
-			}!`
-			description = (
-				<>
-					Your purchase is for <strong>{seatsPurchased}</strong> additional seat
-					{seatsPurchased > 1 && 's'}. You can always add more seats later when
-					your team grows.
-				</>
-			)
-
-			break
 		case INDIVIDUAL_TO_BULK_UPGRADE:
-			title = `Thank you for purchasing more seats for ${
-				product?.name || process.env.NEXT_PUBLIC_SITE_TITLE
-			}!`
-			description = (
-				<>
-					Your purchase is for <strong>{seatsPurchased}</strong> additional seat
-					{seatsPurchased > 1 && 's'}. You can always add more seats later when
-					your team grows.
-				</>
-			)
-
+			eyebrow = 'More seats added to'
+			name = product?.name || process.env.NEXT_PUBLIC_SITE_TITLE || name
+			description = seats(seatsPurchased, true)
 			break
 	}
 	return (
 		<PostPurchaseShell
-			step={loginLink ? 'email' : 'ready'}
+			step={withLoginLink ? 'email' : 'ready'}
 			paymentConfirmed
 			readyWasShown={ready}
 		>
@@ -212,74 +191,54 @@ async function PurchaseThanksPageLoaded({
 				checkoutSessionId={session_id}
 				purchaseWasPolled={ready}
 			/>
-			<div className="flex w-full flex-col gap-5">
-				<PurchaseSummary.Root
-					title={title}
-					description={description}
-					product={product}
-					email={email}
-				>
-					<div className="flex flex-col items-center gap-10 sm:flex-row">
-						<PurchaseSummary.ProductImage />
-						<div className="flex w-full flex-col items-start">
-							<PurchaseSummary.Status />
-							<PurchaseSummary.Title />
-							<PurchaseSummary.Description />
-						</div>
-					</div>
-				</PurchaseSummary.Root>
-				{inviteTeam && (
-					<div className="border-b pb-5">
-						<h2 className="text-primary pb-4 text-sm uppercase">Invite Team</h2>
-						{inviteTeam}
-					</div>
-				)}
-				{loginLink && loginLink}
-				<div className="border-b pb-5">
-					<h2 className="text-primary pb-4 text-sm uppercase">Invoice</h2>
-					<InvoiceTeaser.Root
-						className="flex w-full flex-row items-center justify-between sm:gap-10"
-						purchase={{ product: { name: stripeProductName }, ...purchase }}
+			<PurchaseCard>
+				<PurchaseCardSection>
+					<PurchaseHeading
+						artwork={purchaseArtwork(product)}
+						badge={
+							withLoginLink ? null : (
+								<PostPurchaseIconBadge kind="ready" size="sm" play={!ready} />
+							)
+						}
+						eyebrow={eyebrow}
+						title={name}
 					>
-						<InvoiceTeaser.Link className="flex w-full flex-col justify-between sm:flex-row sm:items-center">
-							<InvoiceTeaser.Title className="inline-flex items-center gap-2">
-								<FileText className="h-4 w-4 opacity-75" />
-								<span className="underline">{stripeProductName}</span>
-							</InvoiceTeaser.Title>
-							<InvoiceTeaser.Metadata />
-						</InvoiceTeaser.Link>
-						<InvoiceTeaser.Link className="text-primary flex shrink-0 hover:underline" />
-					</InvoiceTeaser.Root>
-				</div>
-				<div>
-					<PurchaseTransfer.Root
-						onTransferInitiated={async () => {
-							'use server'
-							revalidatePath('/thanks/purchase')
-						}}
-						purchaseUserTransfers={purchaseUserTransfers}
-						cancelPurchaseTransfer={cancelPurchaseTransfer}
-						initiatePurchaseTransfer={initiatePurchaseTransfer}
-					>
-						<PurchaseTransfer.Header />
-						<PurchaseTransfer.Available>
-							<PurchaseTransfer.Description />
-							<PurchaseTransfer.Form>
-								<PurchaseTransfer.InputLabel />
-								<PurchaseTransfer.InputEmail />
-								<PurchaseTransfer.SubmitButton />
-							</PurchaseTransfer.Form>
-						</PurchaseTransfer.Available>
-						<PurchaseTransfer.Initiated>
-							<PurchaseTransfer.Description />
-							<PurchaseTransfer.Cancel />
-						</PurchaseTransfer.Initiated>
-						<PurchaseTransfer.Completed>
-							<PurchaseTransfer.Description />
-						</PurchaseTransfer.Completed>
-					</PurchaseTransfer.Root>
-				</div>
-			</div>
+						{description ? (
+							<p className={cn(TYPE.metaProse, 'text-muted-foreground')}>
+								{description}
+							</p>
+						) : null}
+					</PurchaseHeading>
+				</PurchaseCardSection>
+				{withInviteTeam ? (
+					<PurchaseCardSection>
+						<PurchaseInviteTeam purchase={purchase} disabled={!redemptionsLeft} />
+					</PurchaseCardSection>
+				) : null}
+				{withLoginLink ? (
+					<PurchaseCardSection>
+						<PostPurchaseLoginLink
+							email={email}
+							supportEmail={env.NEXT_PUBLIC_SUPPORT_EMAIL}
+						/>
+					</PurchaseCardSection>
+				) : null}
+			</PurchaseCard>
+			<PurchaseRows>
+				<PurchaseInvoiceRow
+					purchase={{ product: { name: stripeProductName }, ...purchase }}
+					productName={stripeProductName}
+				/>
+				<PurchaseTransferRow
+					onTransferInitiated={async () => {
+						'use server'
+						revalidatePath('/thanks/purchase')
+					}}
+					purchaseUserTransfers={purchaseUserTransfers}
+					cancelPurchaseTransfer={cancelPurchaseTransfer}
+					initiatePurchaseTransfer={initiatePurchaseTransfer}
+				/>
+			</PurchaseRows>
 		</PostPurchaseShell>
 	)
 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { courseBuilderAdapter } from '@/db'
+import { purchaseArtwork } from '@/lib/purchase-artwork'
 
 export const dynamic = 'force-dynamic'
 
@@ -34,7 +35,7 @@ export async function GET(request: NextRequest) {
 				status: 'ready',
 				purchaseId: purchase.id,
 				product: product
-					? { name: product.name, image: product.fields?.image?.url ?? null }
+					? { name: product.name, image: purchaseArtwork(product) }
 					: null,
 			},
 			{ headers: { 'Cache-Control': 'no-store' } },

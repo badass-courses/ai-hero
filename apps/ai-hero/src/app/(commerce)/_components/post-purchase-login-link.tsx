@@ -1,18 +1,43 @@
-import * as LoginLink from '@coursebuilder/commerce-next/post-purchase/login-link'
 import { PostPurchaseIconBadge } from './post-purchase-icon'
+import { PurchaseNextStep } from './post-purchase-parts'
 
-export function PostPurchaseLoginLink({ email }: { email: string }) {
+/**
+ * The one thing a buyer without a session has left to do. It replaces the
+ * shared kit's login-link block, which said it three times over (a "Final
+ * step" label, a headline, then a paragraph repeating the address).
+ */
+export function PostPurchaseLoginLink({
+	email,
+	supportEmail = process.env.NEXT_PUBLIC_SUPPORT_EMAIL,
+}: {
+	email?: string | null
+	supportEmail?: string
+}) {
 	return (
-		<LoginLink.Root email={email} className="border-b pb-5">
-			<LoginLink.Status />
-			<LoginLink.Title />
-			<LoginLink.CTA className="mt-4 inline-flex items-center gap-3">
-				<PostPurchaseIconBadge kind="email" />
-				<span>
-					Login link sent to: <strong className="font-semibold">{email}</strong>
-				</span>
-			</LoginLink.CTA>
-			<LoginLink.Description className="text-sm opacity-75 sm:text-base" />
-		</LoginLink.Root>
+		<PurchaseNextStep
+			icon={<PostPurchaseIconBadge kind="email" />}
+			title="Open the login link we emailed you"
+		>
+			<p>
+				Sent to{' '}
+				{email ? (
+					<strong className="text-foreground font-semibold break-all">
+						{email}
+					</strong>
+				) : (
+					'your inbox'
+				)}
+				{supportEmail ? (
+					<>
+						{' '}
+						from{' '}
+						<strong className="text-foreground font-semibold">
+							{supportEmail}
+						</strong>
+					</>
+				) : null}
+				. It signs you in so you can start learning.
+			</p>
+		</PurchaseNextStep>
 	)
 }

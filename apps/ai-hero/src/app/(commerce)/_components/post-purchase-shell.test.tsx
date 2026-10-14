@@ -35,16 +35,29 @@ describe('post-purchase shell', () => {
 		)
 		expect(html).toContain('data-purchase-icon="email"')
 		expect(html).not.toContain('data-purchase-icon="ready"')
-		expect(html).toContain('Login link sent to:')
+		expect(html).toContain('Open the login link we emailed you')
 		expect(html).toContain('buyer@example.test')
 		expect(html).toContain('aria-live="polite"')
+	})
+
+	it('says each status once on screen, with the live region for screen readers', () => {
+		const html = renderToStaticMarkup(
+			<PostPurchaseShell step="email">
+				<PostPurchaseLoginLink email="buyer@example.test" />
+			</PostPurchaseShell>,
+		)
+		expect(html.match(/One last step/g)).toHaveLength(1)
+		expect(html).toMatch(/role="status"[^>]*class="sr-only"/)
+		const waiting = renderToStaticMarkup(<PostPurchaseShell step="processing" />)
+		expect(waiting.match(/This usually takes a few seconds/g)).toHaveLength(2)
+		expect(waiting).toMatch(/aria-hidden="true"[^>]*><p[^>]*>Setting up your access/)
 	})
 
 	it('stops all waiting animation on timeout and has an actionable support path', () => {
 		const html = renderToStaticMarkup(<PostPurchaseShell step="failed" />)
 		expect(html).not.toContain('animate-pulse')
 		expect(html).not.toContain('animate-spin')
-		expect(html).toContain('animate-none')
+		expect(html).toContain('Do not pay again')
 		expect(html).toContain('Check again')
 		expect(html).toContain('mailto:support@aihero.dev')
 		expect(html).toContain('tabindex="-1"')

@@ -5,10 +5,12 @@ export function PostPurchaseIcon({
 	kind,
 	className = 'h-6 w-6',
 	play = true,
+	strokeWidth = 2,
 }: {
 	kind: 'ready' | 'email'
 	className?: string
 	play?: boolean
+	strokeWidth?: number
 }) {
 	return (
 		<svg
@@ -21,7 +23,7 @@ export function PostPurchaseIcon({
 			viewBox="0 0 24 24"
 			fill="none"
 			stroke="currentColor"
-			strokeWidth="2"
+			strokeWidth={strokeWidth}
 			strokeLinecap="round"
 			strokeLinejoin="round"
 			className={`${className} shrink-0`}
@@ -42,24 +44,33 @@ export function PostPurchaseIcon({
 	)
 }
 
-/** Shared 40px accent badge; the ready glyph has a larger, evenly padded frame. */
+/**
+ * The accent badge. `md` is the 40px badge a next step leads with; `sm` is the
+ * 20px tick that sits in an eyebrow, where the stroke is heavier so it reads
+ * at that size.
+ */
 export function PostPurchaseIconBadge({
 	kind,
 	play = true,
+	size = 'md',
 }: {
 	kind: 'ready' | 'email'
 	play?: boolean
+	size?: 'sm' | 'md'
 }) {
 	return (
 		<span
 			aria-hidden="true"
 			data-purchase-badge={kind}
-			className="bg-accent-fill text-accent-fill-foreground inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
+			className={`bg-accent-fill text-accent-fill-foreground inline-flex shrink-0 items-center justify-center rounded-full ${size === 'sm' ? 'h-5 w-5' : 'h-10 w-10'}`}
 		>
 			<PostPurchaseIcon
 				kind={kind}
 				play={play}
-				className={kind === 'ready' ? 'h-8 w-8' : 'h-4 w-4'}
+				strokeWidth={size === 'sm' ? 3.25 : 2}
+				className={
+					size === 'sm' ? 'h-3 w-3' : kind === 'ready' ? 'h-8 w-8' : 'h-4 w-4'
+				}
 			/>
 		</span>
 	)
