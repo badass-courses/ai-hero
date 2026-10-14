@@ -61,7 +61,7 @@ export function TransferScreen({
 		expired: 'Transfer expired',
 	}[view.kind]
 	const recipient = (
-		<strong className="text-foreground break-all font-semibold">
+		<strong className="text-foreground break-words font-semibold">
 			{recipientEmail}
 		</strong>
 	)
@@ -158,7 +158,7 @@ export function TransferScreen({
 										{view.viewerEmail ? (
 											<>
 												You&apos;re signed in as{' '}
-												<strong className="text-foreground break-all font-semibold">
+												<strong className="text-foreground break-words font-semibold">
 													{view.viewerEmail}
 												</strong>
 												. We&apos;ll email a login link to {recipient} that
