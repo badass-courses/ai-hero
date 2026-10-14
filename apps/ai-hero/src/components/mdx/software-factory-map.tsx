@@ -4,261 +4,307 @@ import { TYPE } from '@/components/landing/type'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
 /**
- * The four things a Software Factory is made of. Each description is broken
- * by hand, once per layout, because SVG text does not wrap.
+ * The two players. Every description is Matt's, broken by hand once per
+ * layout because SVG text does not wrap. `advance` is the title's width in
+ * the drawing's units: SVG has no layout, so centring an icon and a title as
+ * one pair means knowing how wide the title is. It is also set as the title's
+ * `textLength`, which keeps the number true under a fallback font.
  */
-const PARTS = {
-	systems: {
-		title: 'the systems',
-		wide: ['engineering loop, skills,', 'orchestration, testing,', 'automated reviews'],
-		narrow: ['engineering loop, skills, orchestration,', 'testing, automated reviews'],
+const PLAYERS = {
+	agent: {
+		title: 'The Agent',
+		Icon: AgentIcon,
+		advance: 72,
+		wide: ['The model and harness building', 'the code. The tactician.'],
+		narrow: ['The model and harness building', 'the code. The tactician.'],
 	},
-	environment: {
-		title: 'the environment',
-		wide: ['codebase, data, tests, tools', '"the agent\'s environment"'],
-		narrow: ['codebase, data, tests, tools', '"the agent\'s environment"'],
-	},
-	knowledge: {
-		title: 'knowledge',
-		wide: ['terminology, goals,', 'domain expertise'],
-		narrow: ['terminology, goals,', 'domain expertise'],
-	},
-	practices: {
-		title: 'practices',
-		wide: ['design, planning, reviews,', 'maintenance, engineering discipline'],
-		narrow: ['design, planning, reviews, maintenance,', 'engineering discipline'],
+	team: {
+		title: 'The Team',
+		Icon: TeamIcon,
+		advance: 68,
+		wide: [
+			'The actual humans working on the codebase & factory.',
+			'The strategic thinkers.',
+		],
+		narrow: [
+			'The actual humans working on the',
+			'codebase & factory. The strategic thinkers.',
+		],
 	},
 } as const
 
+/** The four things the team makes, on the arm that makes the agent go faster
+    and on the arm that slows it down. */
+const PARTS = {
+	brakes: {
+		title: 'Brakes',
+		accent: true,
+		wide: [
+			'Automated checks, automated &',
+			'human review. Slows the agent',
+			'down and increases quality.',
+		],
+		narrow: [
+			'Automated checks,',
+			'automated & human',
+			'review. Slows the',
+			'agent down and',
+			'increases quality.',
+		],
+	},
+	knowledge: {
+		title: 'Knowledge',
+		accent: true,
+		wide: [
+			'Codebase design, testing,',
+			'constraining code, good ol’',
+			'software fundamentals.',
+		],
+		narrow: [
+			'Codebase design,',
+			'testing,',
+			'constraining code,',
+			'good ol’ software',
+			'fundamentals.',
+		],
+	},
+	accelerators: {
+		title: 'Accelerators',
+		accent: false,
+		wide: [
+			'Schedules and triggers that',
+			'initiate agents on their own,',
+			'without human intervention.',
+		],
+		narrow: [
+			'Schedules and',
+			'triggers that initiate',
+			'agents on their own,',
+			'without human',
+			'intervention.',
+		],
+	},
+	infrastructure: {
+		title: 'Infrastructure',
+		accent: false,
+		wide: [
+			'Data sources, sandboxes and',
+			'scripts that allow agents to',
+			'work AFK.',
+		],
+		narrow: [
+			'Data sources,',
+			'sandboxes and',
+			'scripts that allow',
+			'agents to work AFK.',
+		],
+	},
+} as const
+
+type PlayerKey = keyof typeof PLAYERS
 type PartKey = keyof typeof PARTS
+type NodeKey = PlayerKey | PartKey
+type Layout = 'wide' | 'narrow'
 
-const LAYERS = [
-	{ label: 'Env + Process layer', parts: ['systems', 'environment'] },
-	{ label: 'Strategic layer', parts: ['knowledge', 'practices'] },
-] as const satisfies readonly { label: string; parts: readonly PartKey[] }[]
-
-type NodeKey = PartKey | 'agent' | 'team'
-type Dir = 'up' | 'down' | 'left' | 'right'
+/** How far along its line a pulse is as its run goes from 0 to 1. */
+type Pace = 'steady' | 'quickening' | 'slowing'
 
 /**
- * What moves. A pulse travels each connection toward its arrowhead, so there
- * is one row per arrowhead and a two-way line gets two. The number is when the
- * pulse sets off, in seconds into the loop.
- *
- * The loop is two turns with a rest after each. The agent works through its
- * four things and reaches the team; then the team does the same, and the
- * systems and the knowledge answer the agent. Within a turn the right-hand
- * lines trail the left by a beat: a mirrored burst is the one thing here that
- * would pull the eye off the copy.
+ * The six connections, each with its label and the pace of the pulse that
+ * runs it. The two into the agent move the way their labels say: the pulse
+ * from the accelerators gathers speed and the one from the brakes loses it.
  */
-const DEPARTS = {
-	'agent>systems': 0,
-	'agent>knowledge': 0,
-	'agent>environment': 0.4,
-	'agent>practices': 0.4,
-	'agent>team': 0.8,
-	'team>systems': 6,
-	'team>knowledge': 6,
-	'team>environment': 6.4,
-	'team>practices': 6.4,
-	'team>agent': 6.8,
-	'systems>agent': 7.6,
-	'knowledge>agent': 7.6,
-} as const satisfies Partial<Record<`${NodeKey}>${NodeKey}`, number>>
+const EDGES = {
+	'team>knowledge': { label: 'Grows', pace: 'steady' },
+	'knowledge>brakes': { label: 'Creates', pace: 'steady' },
+	'brakes>agent': { label: 'Slows Down', pace: 'slowing' },
+	'team>infrastructure': { label: 'Builds', pace: 'steady' },
+	'infrastructure>accelerators': { label: 'Creates', pace: 'steady' },
+	'accelerators>agent': { label: 'Speeds Up', pace: 'quickening' },
+} as const satisfies Partial<
+	Record<`${NodeKey}>${NodeKey}`, { label: string; pace: Pace }>
+>
 
-type FlowKey = keyof typeof DEPARTS
+type EdgeKey = keyof typeof EDGES
 
-const FLOW_KEYS = Object.keys(DEPARTS) as FlowKey[]
+const EDGE_KEYS = Object.keys(EDGES) as EdgeKey[]
 
-/** The loop in seconds, and a pulse's speed in SVG user units a second. */
+/**
+ * The two arms, each in the order a pulse relays along it: it leaves the team,
+ * lands, and the next one sets off a beat later. One arm runs in each half of
+ * the loop, so only one pulse is ever moving.
+ */
+const ARMS = [
+	['team>knowledge', 'knowledge>brakes', 'brakes>agent'],
+	['team>infrastructure', 'infrastructure>accelerators', 'accelerators>agent'],
+] as const satisfies readonly (readonly EdgeKey[])[]
+
+/** The loop in seconds, a pulse's average speed in SVG user units a second,
+    and the beat between one pulse landing and the next leaving. */
 const FLOW_LOOP = 12
 const FLOW_SPEED = 140
+const FLOW_DWELL = 0.35
+
+/** The pulse's length, which `globals.css` repeats in its dash pattern. */
+const PULSE = 14
+
+const FLOW_VARS = { '--flow-loop': `${FLOW_LOOP}s` } as React.CSSProperties
+
+/** Both shaped paces keep the same average speed: one starts at half of it
+    and ends at one and a half times it, the other the reverse. */
+const PACES: Record<Pace, (t: number) => number> = {
+	steady: (t) => t,
+	quickening: (t) => (t + t * t) / 2,
+	slowing: (t) => 1 - PACES.quickening(1 - t),
+}
+
+type Point = readonly [x: number, y: number]
+
+/** Where a connection runs in one layout: the corners it turns, ending at the
+    tip of its arrowhead, and the centre of its label. */
+type Route = { points: readonly Point[]; chip: Point }
+
+/** A connection drawn and timed. */
+type Flow = {
+	d: string
+	length: number
+	/** The arrowhead's tip, and the direction it points in. */
+	head: readonly [x: number, y: number, dx: number, dy: number]
+	chip: Point
+	/** The pulse's whole loop as one `linear()` easing: waiting before its
+	    line, running it at its pace, then gone past the end. */
+	timing: string
+	/** When the pulse reaches the arrowhead, in seconds into the loop. */
+	lands: number
+}
+
+type Flows = Record<EdgeKey, Flow>
+
+/** Corners are quarter turns of this radius, drawn as one quadratic each. */
+const CORNER = 10
+const CORNER_LENGTH = 16.23
+const HEAD = 8
+
+/** A line through `points` with its corners rounded, stopping at the foot of
+    the arrowhead whose tip is the last point. Every run is level or upright,
+    so the length adds up without measuring. */
+function draw(points: readonly Point[]) {
+	const step = (from: Point, to: Point) =>
+		[Math.sign(to[0] - from[0]), Math.sign(to[1] - from[1])] as const
+	let d = `M${points[0]![0]} ${points[0]![1]}`
+	let length = 0
+	let into = step(points[0]!, points[1]!)
+
+	for (let index = 1; index < points.length; index++) {
+		const [x, y] = points[index]!
+		const [px, py] = points[index - 1]!
+		length += Math.abs(x - px) + Math.abs(y - py)
+		into = step(points[index - 1]!, points[index]!)
+
+		if (index === points.length - 1) {
+			d += `L${x - into[0] * HEAD} ${y - into[1] * HEAD}`
+			length -= HEAD
+		} else {
+			const out = step(points[index]!, points[index + 1]!)
+			d += `L${x - into[0] * CORNER} ${y - into[1] * CORNER}Q${x} ${y} ${x + out[0] * CORNER} ${y + out[1] * CORNER}`
+			length += CORNER_LENGTH - 2 * CORNER
+		}
+	}
+
+	const [x, y] = points[points.length - 1]!
+	return { d, length, head: [x, y, into[0], into[1]] as const }
+}
+
+function pacing(depart: number, run: number, pace: Pace) {
+	const steps = pace === 'steady' ? 1 : 8
+	const stops = Array.from({ length: steps + 1 }, (_, step) => {
+		const t = step / steps
+		const at = ((depart + t * run) / FLOW_LOOP) * 100
+		return `${PACES[pace](t).toFixed(3)} ${at.toFixed(2)}%`
+	})
+	return `linear(0, ${stops.join(', ')}, 1)`
+}
 
 /**
- * The same two numbers as `globals.css` wants them: how long the loop is, and
- * how far a pulse gets in one. Every pulse moves that far every loop whatever
- * the length of its line, which is what keeps them all at one speed.
+ * Draws and times every connection of one layout. A pulse starts just short
+ * of its line and ends just past it, so it runs the line plus its own length;
+ * it has landed once its front reaches the arrowhead.
  */
-const FLOW_VARS = {
-	'--flow-loop': `${FLOW_LOOP}s`,
-	'--flow-travel': `${FLOW_LOOP * FLOW_SPEED}px`,
-} as React.CSSProperties
-
-/** One flow, as one of the two layouts draws it. */
-type FlowLine = {
-	/** Its line, from where it starts to the foot of its arrowhead. It retraces
-	    a line of the drawing, so the two have to move together. */
-	d: string
-	/** That line's length in user units, as `getTotalLength()` reports it. It
-	    times the flash at the far end. */
-	length: number
-	/** The arrowhead it runs into. */
-	head: readonly [x: number, y: number, dir: Dir]
+function plan(routes: Record<EdgeKey, Route>): Flows {
+	const flows = {} as Flows
+	ARMS.forEach((arm, index) => {
+		let clock = (index * FLOW_LOOP) / ARMS.length
+		for (const key of arm) {
+			const line = draw(routes[key].points)
+			const run = (line.length + PULSE + 2) / FLOW_SPEED
+			const lands = clock + (line.length + 1) / FLOW_SPEED
+			flows[key] = {
+				...line,
+				chip: routes[key].chip,
+				timing: pacing(clock, run, EDGES[key].pace),
+				lands,
+			}
+			clock = lands + FLOW_DWELL
+		}
+	})
+	return flows
 }
 
-type FlowLines = Record<FlowKey, FlowLine>
+const ends = (key: EdgeKey) => key.split('>') as [from: NodeKey, to: NodeKey]
 
-const WIDE_FLOWS: FlowLines = {
-	'agent>systems': { d: 'M248 26H220V108', length: 110, head: [220, 115, 'down'] },
-	'agent>knowledge': {
-		d: 'M248 26H26Q16 26 16 36V321Q16 331 26 331H30',
-		length: 543,
-		head: [37, 331, 'right'],
-	},
-	'agent>environment': { d: 'M422 26H460V108', length: 120, head: [460, 115, 'down'] },
-	'agent>practices': {
-		d: 'M422 26H654Q664 26 664 36V321Q664 331 654 331H650',
-		length: 553,
-		head: [643, 331, 'left'],
-	},
-	'agent>team': { d: 'M340 58V420', length: 362, head: [340, 427, 'down'] },
-	'team>systems': {
-		d: 'M318 430V254Q318 244 308 244H260Q250 244 250 234V224',
-		length: 266,
-		head: [250, 217, 'up'],
-	},
-	'team>knowledge': {
-		d: 'M258 452H178Q168 452 168 442V380',
-		length: 158,
-		head: [168, 373, 'up'],
-	},
-	'team>environment': {
-		d: 'M362 430V254Q362 244 372 244H420Q430 244 430 234V224',
-		length: 266,
-		head: [430, 217, 'up'],
-	},
-	'team>practices': {
-		d: 'M422 452H502Q512 452 512 442V380',
-		length: 158,
-		head: [512, 373, 'up'],
-	},
-	'team>agent': { d: 'M340 420V58', length: 362, head: [340, 51, 'up'] },
-	'systems>agent': { d: 'M220 108V26H248', length: 110, head: [255, 26, 'right'] },
-	'knowledge>agent': {
-		d: 'M30 331H26Q16 331 16 321V36Q16 26 26 26H248',
-		length: 543,
-		head: [255, 26, 'right'],
-	},
-}
-
-const NARROW_FLOWS: FlowLines = {
-	'agent>systems': {
-		d: 'M88 26H22Q12 26 12 36V145H22',
-		length: 201,
-		head: [29, 145, 'right'],
-	},
-	'agent>knowledge': {
-		d: 'M88 26H22Q12 26 12 36V375H22',
-		length: 431,
-		head: [29, 375, 'right'],
-	},
-	'agent>environment': {
-		d: 'M88 26H22Q12 26 12 36V233H22',
-		length: 289,
-		head: [29, 233, 'right'],
-	},
-	'agent>practices': {
-		d: 'M88 26H22Q12 26 12 36V453Q12 463 22 463',
-		length: 515,
-		head: [29, 463, 'right'],
-	},
-	'agent>team': {
-		d: 'M272 26H338Q348 26 348 36V554Q348 564 338 564H272',
-		length: 682,
-		head: [265, 564, 'left'],
-	},
-	'team>systems': {
-		d: 'M272 564H338Q348 564 348 554V145H338',
-		length: 501,
-		head: [331, 145, 'left'],
-	},
-	'team>knowledge': {
-		d: 'M272 564H338Q348 564 348 554V375H338',
-		length: 271,
-		head: [331, 375, 'left'],
-	},
-	'team>environment': {
-		d: 'M272 564H338Q348 564 348 554V233H338',
-		length: 413,
-		head: [331, 233, 'left'],
-	},
-	'team>practices': {
-		d: 'M272 564H338Q348 564 348 554V463H338',
-		length: 183,
-		head: [331, 463, 'left'],
-	},
-	'team>agent': {
-		d: 'M272 564H338Q348 564 348 554V36Q348 26 338 26H272',
-		length: 682,
-		head: [265, 26, 'left'],
-	},
-	'systems>agent': {
-		d: 'M22 145H12V36Q12 26 22 26H88',
-		length: 201,
-		head: [95, 26, 'right'],
-	},
-	'knowledge>agent': {
-		d: 'M22 375H12V36Q12 26 22 26H88',
-		length: 431,
-		head: [95, 26, 'right'],
-	},
-}
-
-const flowEnds = (key: FlowKey) => key.split('>') as [from: NodeKey, to: NodeKey]
-
-/** A flow's two ends as one attribute, which is how the stylesheet tells whose
-    it is when a box is hovered. */
-const flowTag = (key: FlowKey) => flowEnds(key).join(' ')
-
-const isPart = (node: NodeKey): node is PartKey => node in PARTS
-
-/** The moment a pulse reaches its arrowhead, as an `animation-delay`. */
-const landsAt = (key: FlowKey, flows: FlowLines) =>
-	`${(DEPARTS[key] + flows[key].length / FLOW_SPEED).toFixed(2)}s`
+/**
+ * What stays lit while a box is hovered, as one attribute the stylesheet
+ * matches against: a connection stays for either of its ends, a box for itself
+ * and the boxes it is wired to.
+ */
+const edgeWith = (key: EdgeKey) => ends(key).join(' ')
+const nodeWith = (node: NodeKey) =>
+	[
+		node,
+		...EDGE_KEYS.flatMap((key) => {
+			const [from, to] = ends(key)
+			return from === node ? [to] : to === node ? [from] : []
+		}),
+	].join(' ')
 
 /** The pulses that end at `node`: what tags each one's flash, and when it
     goes off. */
-function landings(node: NodeKey, flows: FlowLines) {
-	return FLOW_KEYS.filter((key) => flowEnds(key)[1] === node).map((key) => ({
+function landings(node: NodeKey, flows: Flows) {
+	return EDGE_KEYS.filter((key) => ends(key)[1] === node).map((key) => ({
 		key,
-		'data-flow': flowTag(key),
-		style: { animationDelay: landsAt(key, flows) },
+		'data-with': edgeWith(key),
+		style: { animationDelay: `${flows[key].lands.toFixed(2)}s` },
 	}))
 }
 
 /**
- * "What goes into making a Software Factory successful": two players, the
- * agent and the team, each wired to the four things they work through, which
- * sit in two layers.
+ * "What makes a Software Factory successful", Matt's alternate pitch: the
+ * team builds infrastructure, which creates accelerators, which speed the
+ * agent up; and it grows knowledge, which creates brakes, which slow the agent
+ * down. Two arms from the team into the agent, every node, label and arrow as
+ * he drew them.
  *
- * It redraws the cohort page's hand-drawn PNG as inline SVG. The PNG had one
- * background, so the dark theme got a white slab, and at phone width its
- * labels came out around 4px. Here every colour is a token, the type is the
- * page's own, and there are two layouts picked by the width of the column
- * (a container query, not a viewport one: the same page gives the body a
- * narrower column once the pricing rail sits beside it).
- *
- * Every connection in the original is kept, arrowheads included: the agent's
- * line carries a head back into the agent on the systems and knowledge side
- * only. What changes is the routing. The original crossed its lines over the
- * middle; here the agent's lines leave from its sides and the team's from its
- * top and sides, so nothing crosses.
+ * He drew it as a ring. The wide layout keeps that: the agent on top, the team
+ * underneath, an arm up either side. Under 600px of column the same two arms
+ * stand side by side as a ladder between the two players (a container query,
+ * not a viewport one: the page gives the body a narrower column once the
+ * pricing rail sits beside it). The brakes arm wears the gold, since it is the
+ * one the pitch says to build first.
  *
  * Both drawings are `aria-hidden` and the same content is given once as text
  * for screen readers. Two layouts would otherwise read every label twice.
  *
- * The drawing moves, quietly: a pulse runs each connection toward its
- * arrowhead, the box it reaches lights for a moment, and hovering a box keeps
- * its own connections while the rest step back. All of it is CSS, in the
+ * The drawing moves, quietly: a pulse relays up one arm and then the other,
+ * each box it reaches lights for a moment, and hovering a box keeps it and its
+ * neighbours while the rest step back. All of it is CSS, in the
  * `SoftwareFactoryMap` block of `globals.css`, so this stays a server
- * component. What is here is the geometry and the timetable (`DEPARTS`,
- * `Flows`); the boxes are not focusable, because they do nothing and sit in
- * an `aria-hidden` drawing. With reduced motion the whole layer is not
- * rendered and the drawing is the still one.
+ * component; what is here is the geometry and the timetable. The boxes are not
+ * focusable, because they do nothing and sit in an `aria-hidden` drawing. With
+ * reduced motion the moving layer is not rendered and the drawing is still.
  *
  * Sizes are written as SVG user units rather than composed from `TYPE`: they
  * scale with the drawing, so they are positions in it, not steps in the
- * page's type scale. The title and the caption are HTML and do use `TYPE`.
+ * page's type scale. The title is HTML and does use `TYPE`.
  */
 export function SoftwareFactoryMap({ className }: { className?: string }) {
 	return (
@@ -266,243 +312,217 @@ export function SoftwareFactoryMap({ className }: { className?: string }) {
 			className={cn('ah-factory-map not-prose @container my-10', className)}
 			style={FLOW_VARS}
 		>
-			<p className={cn(TYPE.subhead, 'mb-7 text-balance text-center')}>
-				What goes into making a Software Factory successful
-			</p>
+			<figcaption className={cn(TYPE.subhead, 'mb-7 text-balance text-center')}>
+				What makes a Software Factory successful
+			</figcaption>
 
 			<Wide />
 			<Narrow />
 
 			<div className="sr-only">
 				<p>
-					Two players, the agent and the team, are each connected to four
-					things, and to each other.
+					Two paths run from the team to the agent. The Team builds
+					Infrastructure, which creates Accelerators, which speed up The
+					Agent. The Team grows Knowledge, which creates Brakes, which slow
+					down The Agent.
 				</p>
 				<dl>
-					{LAYERS.map((layer) => (
-						<React.Fragment key={layer.label}>
-							<dt>{layer.label}</dt>
-							{layer.parts.map((key) => (
-								<dd key={key}>
-									{PARTS[key].title}: {PARTS[key].wide.join(' ')}
-								</dd>
-							))}
+					{(['agent', 'team'] as const).map((key) => (
+						<React.Fragment key={key}>
+							<dt>{PLAYERS[key].title}</dt>
+							<dd>{PLAYERS[key].wide.join(' ')}</dd>
+						</React.Fragment>
+					))}
+					{(Object.keys(PARTS) as PartKey[]).map((key) => (
+						<React.Fragment key={key}>
+							<dt>{PARTS[key].title}</dt>
+							<dd>{PARTS[key].wide.join(' ')}</dd>
 						</React.Fragment>
 					))}
 				</dl>
 			</div>
-
-			<figcaption
-				className={cn(
-					TYPE.metaProse,
-					'mt-5 text-center text-[color:var(--ah-fg-muted)]',
-				)}
-			>
-				<span className="block">humans on the same page as the agent</span>
-				<span className="block">humans on the same page as each other</span>
-				<span className="block text-balance">
-					using the same knowledge &amp; practices &amp; systems
-				</span>
-			</figcaption>
 		</figure>
 	)
 }
 
-/** From 600px of column: the two-column drawing, players top and bottom. */
+const WIDE_SIZE = [680, 522] as const
+
+/** The arms climb through the middle of their cards and turn in to the
+    sides of the two players. */
+const WIDE_FLOWS = plan({
+	'team>knowledge': {
+		points: [
+			[258, 450],
+			[168, 450],
+			[168, 403],
+		],
+		chip: [218, 450],
+	},
+	'knowledge>brakes': {
+		points: [
+			[168, 300],
+			[168, 231],
+		],
+		chip: [168, 266],
+	},
+	'brakes>agent': {
+		points: [
+			[168, 128],
+			[168, 26],
+			[255, 26],
+		],
+		chip: [168, 74],
+	},
+	'team>infrastructure': {
+		points: [
+			[422, 450],
+			[512, 450],
+			[512, 403],
+		],
+		chip: [462, 450],
+	},
+	'infrastructure>accelerators': {
+		points: [
+			[512, 300],
+			[512, 231],
+		],
+		chip: [512, 266],
+	},
+	'accelerators>agent': {
+		points: [
+			[512, 128],
+			[512, 26],
+			[425, 26],
+		],
+		chip: [512, 74],
+	},
+})
+
+/** From 600px of column: the ring. */
 function Wide() {
+	const [width, height] = WIDE_SIZE
+
 	return (
 		<div
 			aria-hidden
 			className="relative mx-auto hidden w-full max-w-[720px] @[600px]:block"
 		>
-			<BandFill y={84} height={146} of={478} />
-			<BandFill y={258} height={128} of={478} accent />
-			<svg viewBox="0 0 680 478" className="relative block h-auto w-full">
-				<BandLabel x={56} y={84} label={LAYERS[0].label} />
-				<BandLabel x={56} y={258} label={LAYERS[1].label} accent />
+			<BandFill x={24} y={112} width={288} height={304} of={WIDE_SIZE} accent />
+			<BandFill x={368} y={112} width={288} height={304} of={WIDE_SIZE} />
+			<svg
+				viewBox={`0 0 ${width} ${height}`}
+				className="relative block h-auto w-full"
+			>
+				<Edges flows={WIDE_FLOWS} />
 
-				<Edges>
-					<Lines of="agent">
-						{/* The agent's left line: back into the agent, down into the
-						    systems, and round the outside into knowledge. */}
-						<path d="M248 26H26Q16 26 16 36V321Q16 331 26 331H30" />
-						<Head x={255} y={26} dir="right" />
-						<Head x={37} y={331} dir="right" />
-						<path d="M220 26V108" />
-						<Head x={220} y={115} dir="down" />
+				<Player player="agent" layout="wide" x={258} y={4} flows={WIDE_FLOWS} />
+				<Player player="team" layout="wide" x={258} y={428} flows={WIDE_FLOWS} />
 
-						{/* Its right line: into the environment, and round into practices. */}
-						<path d="M422 26H654Q664 26 664 36V321Q664 331 654 331H650" />
-						<Head x={643} y={331} dir="left" />
-						<path d="M460 26V108" />
-						<Head x={460} y={115} dir="down" />
-					</Lines>
-
-					<Lines of="team">
-						{/* The team: up the middle to the systems and the environment... */}
-						<path d="M318 430V254Q318 244 308 244H260Q250 244 250 234V224" />
-						<Head x={250} y={217} dir="up" />
-						<path d="M362 430V254Q362 244 372 244H420Q430 244 430 234V224" />
-						<Head x={430} y={217} dir="up" />
-
-						{/* ...and out of its sides to knowledge and practices. */}
-						<path d="M258 452H178Q168 452 168 442V380" />
-						<Head x={168} y={373} dir="up" />
-						<path d="M422 452H502Q512 452 512 442V380" />
-						<Head x={512} y={373} dir="up" />
-					</Lines>
-
-					{/* The agent and the team, to each other. */}
-					<Lines>
-						<path d="M340 58V420" />
-						<Head x={340} y={51} dir="up" />
-						<Head x={340} y={427} dir="down" />
-					</Lines>
-
-					<Flows flows={WIDE_FLOWS} />
-				</Edges>
-
-				<Player x={258} y={4} width={164} player="agent" flows={WIDE_FLOWS} />
-				<Player x={258} y={430} width={164} player="team" flows={WIDE_FLOWS} />
-
-				<Part
-					x={40}
-					y={118}
-					width={256}
-					height={96}
-					part="systems"
-					lines="wide"
-					flows={WIDE_FLOWS}
-				/>
-				<Part
-					x={384}
-					y={118}
-					width={256}
-					height={96}
-					part="environment"
-					lines="wide"
-					flows={WIDE_FLOWS}
-				/>
-				<Part
-					x={40}
-					y={292}
-					width={256}
-					height={78}
-					part="knowledge"
-					lines="wide"
-					flows={WIDE_FLOWS}
-					accent
-				/>
-				<Part
-					x={384}
-					y={292}
-					width={256}
-					height={78}
-					part="practices"
-					lines="wide"
-					flows={WIDE_FLOWS}
-					accent
-				/>
+				<Part part="brakes" layout="wide" x={40} y={128} flows={WIDE_FLOWS} />
+				<Part part="knowledge" layout="wide" x={40} y={300} flows={WIDE_FLOWS} />
+				<Part part="accelerators" layout="wide" x={384} y={128} flows={WIDE_FLOWS} />
+				<Part part="infrastructure" layout="wide" x={384} y={300} flows={WIDE_FLOWS} />
 			</svg>
 		</div>
 	)
 }
 
+const NARROW_SIZE = [336, 675] as const
+
+/** Straight up each column, from the team's card to the agent's. */
+const NARROW_FLOWS = plan({
+	'team>knowledge': {
+		points: [
+			[82, 565],
+			[82, 503],
+		],
+		chip: [82, 533],
+	},
+	'knowledge>brakes': {
+		points: [
+			[82, 373],
+			[82, 304],
+		],
+		chip: [82, 339],
+	},
+	'brakes>agent': {
+		points: [
+			[82, 174],
+			[82, 113],
+		],
+		chip: [82, 143],
+	},
+	'team>infrastructure': {
+		points: [
+			[254, 565],
+			[254, 503],
+		],
+		chip: [254, 533],
+	},
+	'infrastructure>accelerators': {
+		points: [
+			[254, 373],
+			[254, 304],
+		],
+		chip: [254, 339],
+	},
+	'accelerators>agent': {
+		points: [
+			[254, 174],
+			[254, 113],
+		],
+		chip: [254, 143],
+	},
+})
+
 /**
- * Under 600px: one column. Two columns of cards would leave each about
- * twenty characters wide. The agent's connections run down the left edge and
- * the team's up the right, where the team's line carries on to the agent.
+ * Under 600px: the arms side by side between the two players, which become
+ * full-width cards so that both arms can run straight into them. Two columns
+ * leave a card about twenty characters of description a line, which is why
+ * its breaks are set apart from the wide ones.
  */
 function Narrow() {
-	const rows: { part: PartKey; y: number; accent?: boolean }[] = [
-		{ part: 'systems', y: 106 },
-		{ part: 'environment', y: 194 },
-		{ part: 'knowledge', y: 336, accent: true },
-		{ part: 'practices', y: 424, accent: true },
-	]
+	const [width, height] = NARROW_SIZE
 
 	return (
 		<div
 			aria-hidden
-			className="relative mx-auto w-full max-w-[420px] @[600px]:hidden"
+			className="relative mx-auto w-full max-w-[400px] @[600px]:hidden"
 		>
-			<BandFill y={72} height={214} of={590} />
-			<BandFill y={302} height={214} of={590} accent />
-			<svg viewBox="0 0 360 590" className="relative block h-auto w-full">
-				<BandLabel x={48} y={72} label={LAYERS[0].label} large />
-				<BandLabel x={48} y={302} label={LAYERS[1].label} accent large />
-
-				<Edges>
-					<Lines of="agent">
-						<path d="M88 26H22Q12 26 12 36V453Q12 463 22 463" />
-						<Head x={95} y={26} dir="right" />
-						{rows.map(({ part, y }) => (
-							<React.Fragment key={part}>
-								{/* The last agent branch is the end of its line, drawn above. */}
-								{part === 'practices' ? null : <path d={`M12 ${y + 39}H22`} />}
-								<Head x={29} y={y + 39} dir="right" />
-							</React.Fragment>
-						))}
-					</Lines>
-
-					<Lines of="team">
-						{rows.map(({ part, y }) => (
-							<React.Fragment key={part}>
-								<path d={`M348 ${y + 39}H338`} />
-								<Head x={331} y={y + 39} dir="left" />
-							</React.Fragment>
-						))}
-					</Lines>
-
-					{/* The team's trunk is also its line to the agent, so it belongs to
-					    both. Drawn after the team's branches: they start on it, and a
-					    branch that has stepped back would otherwise notch it. */}
-					<Lines>
-						<path d="M272 564H338Q348 564 348 554V36Q348 26 338 26H272" />
-						<Head x={265} y={564} dir="left" />
-						<Head x={265} y={26} dir="left" />
-					</Lines>
-
-					<Flows flows={NARROW_FLOWS} />
-				</Edges>
+			<BandFill x={0} y={166} width={164} height={342} of={NARROW_SIZE} accent />
+			<BandFill x={172} y={166} width={164} height={342} of={NARROW_SIZE} />
+			<svg
+				viewBox={`0 0 ${width} ${height}`}
+				className="relative block h-auto w-full"
+			>
+				<Edges flows={NARROW_FLOWS} />
 
 				<Player
-					x={98}
-					y={4}
-					width={164}
 					player="agent"
+					layout="narrow"
+					x={4}
+					y={4}
 					flows={NARROW_FLOWS}
-					large
 				/>
 				<Player
-					x={98}
-					y={542}
-					width={164}
 					player="team"
+					layout="narrow"
+					x={4}
+					y={565}
 					flows={NARROW_FLOWS}
-					large
 				/>
 
-				{rows.map(({ part, y, accent }) => (
-					<Part
-						key={part}
-						x={32}
-						y={y}
-						width={296}
-						height={78}
-						part={part}
-						lines="narrow"
-						flows={NARROW_FLOWS}
-						accent={accent}
-					/>
-				))}
+				<Part part="brakes" layout="narrow" x={8} y={174} flows={NARROW_FLOWS} />
+				<Part part="knowledge" layout="narrow" x={8} y={373} flows={NARROW_FLOWS} />
+				<Part part="accelerators" layout="narrow" x={180} y={174} flows={NARROW_FLOWS} />
+				<Part part="infrastructure" layout="narrow" x={180} y={373} flows={NARROW_FLOWS} />
 			</svg>
 		</div>
 	)
 }
 
 /**
- * A layer's surface: a tinted, hatched band.
+ * An arm's surface: a tinted, hatched band behind its two cards.
  *
  * It is an HTML box under the drawing rather than a `rect` in it, so that it
  * can wear `.bg-stripes`, the site's one hatch (`globals.css`), instead of a
@@ -518,26 +538,35 @@ function Narrow() {
  * two-toned.
  */
 function BandFill({
+	x,
 	y,
+	width,
 	height,
 	of,
 	accent,
 }: {
+	x: number
 	y: number
+	width: number
 	height: number
-	/** The viewBox height the band is positioned against. */
-	of: number
+	/** The viewBox size the band is positioned against. */
+	of: readonly [width: number, height: number]
 	accent?: boolean
 }) {
 	return (
 		<div
 			className={cn(
-				'absolute inset-x-0 overflow-hidden rounded-lg border',
+				'absolute overflow-hidden rounded-lg border',
 				accent
 					? 'bg-accent-fill/10 dark:bg-accent-fill/[0.05] border-[color:color-mix(in_oklab,var(--accent-fill)_50%,var(--background))] dark:border-[color:color-mix(in_oklab,var(--accent-fill)_25%,var(--background))]'
 					: 'bg-foreground/[0.035] border-[color:color-mix(in_oklab,var(--foreground)_14%,var(--background))]',
 			)}
-			style={{ top: `${(y / of) * 100}%`, height: `${(height / of) * 100}%` }}
+			style={{
+				left: `${(x / of[0]) * 100}%`,
+				width: `${(width / of[0]) * 100}%`,
+				top: `${(y / of[1]) * 100}%`,
+				height: `${(height / of[1]) * 100}%`,
+			}}
 		>
 			{/* The hatch is its own layer: on the same element as the tint,
 			    tailwind-merge reads `bg-stripes` as a second background colour
@@ -554,96 +583,75 @@ function BandFill({
 	)
 }
 
-/** A layer's name, in the top-left corner of its band. */
-function BandLabel({
-	x,
-	y,
-	label,
-	accent,
-	large,
-}: {
-	x: number
-	/** The top of the band the label belongs to. */
-	y: number
-	label: string
-	accent?: boolean
-	large?: boolean
-}) {
-	return (
-		<text
-			x={x}
-			y={y + 22}
-			className={cn(
-				'font-mono font-medium',
-				large ? 'text-[12px]' : 'text-[11px]',
-				accent ? 'fill-primary' : 'fill-muted-foreground',
-			)}
-		>
-			{label}
-		</text>
-	)
-}
+const PILL = { width: 164, height: 44, icon: 22, gap: 8 }
 
 /**
- * The two players. `advance` is the label's width in each drawing's units:
- * SVG has no layout, so centring an icon and a label as one pair means
- * knowing how wide the label is. It is also set as the label's `textLength`,
- * which makes the number true even when a fallback font is in use.
- */
-const PLAYERS = {
-	agent: { label: 'the agent', Icon: AgentIcon, advance: { wide: 68, narrow: 72.5 } },
-	team: { label: 'the team', Icon: TeamIcon, advance: { wide: 64, narrow: 68.5 } },
-} as const
-
-const PLAYER_ICON = 22
-const PLAYER_GAP = 8
-
-/**
- * The agent or the team: a solid ink block, so the two hubs lead.
+ * The agent or the team: a solid ink pill, so the two players lead, with
+ * Matt's line about them underneath.
  *
- * A block that is already solid ink cannot get brighter, so what lights is a
- * rim around it. The flashes are drawn under the block and the block's own
- * rim is painted before its fill, so only the outer half of either shows.
+ * In the ring the pill is the box the lines meet. A pill that is already solid
+ * ink cannot get brighter, so what lights there is a rim around it: the
+ * flashes are drawn under the pill and its own rim is painted before its fill,
+ * so only the outer half of either shows. In the ladder both arms have to
+ * reach the player, so pill and line sit on a full-width card, and that card
+ * is the box.
  */
 function Player({
+	player,
+	layout,
 	x,
 	y,
-	width,
-	player,
 	flows,
-	large,
 }: {
+	player: PlayerKey
+	layout: Layout
 	x: number
 	y: number
-	width: number
-	player: keyof typeof PLAYERS
-	flows: FlowLines
-	large?: boolean
+	flows: Flows
 }) {
-	const { label, Icon, advance } = PLAYERS[player]
-	const labelWidth = large ? advance.narrow : advance.wide
-	const pairX = x + (width - (PLAYER_ICON + PLAYER_GAP + labelWidth)) / 2
-	const box = { x, y, width, height: 44, rx: 9 }
+	const { title, Icon, advance } = PLAYERS[player]
+	const card = layout === 'narrow'
+	const width = card ? NARROW_SIZE[0] - 2 * x : PILL.width
+	const pill = {
+		x: x + (width - PILL.width) / 2,
+		y: card ? y + 10 : y,
+		width: PILL.width,
+		height: PILL.height,
+		rx: 9,
+	}
+	const box = card ? { x, y, width, height: 106, rx: 11 } : pill
+	const pairX = pill.x + (PILL.width - (PILL.icon + PILL.gap + advance)) / 2
+	const middle = pill.y + PILL.height / 2
 
 	return (
-		<g data-node={player}>
+		<g data-node={player} data-with={nodeWith(player)} data-rim={card ? undefined : ''}>
+			{card ? (
+				<rect
+					{...box}
+					className="ah-factory-box fill-card stroke-[color:color-mix(in_oklab,var(--foreground)_14%,var(--card))]"
+				/>
+			) : null}
 			{landings(player, flows).map(({ key, ...flash }) => (
 				<rect
 					key={key}
 					{...box}
 					{...flash}
 					fill="none"
-					strokeWidth={4}
+					strokeWidth={card ? 2 : 4}
 					className="ah-factory-flash stroke-[color:var(--factory-lit)]"
 				/>
 			))}
 			<rect
-				{...box}
+				{...pill}
 				strokeWidth={0}
-				className="ah-factory-box fill-foreground stroke-[color:var(--factory-lit)] [paint-order:stroke]"
+				className={cn(
+					'fill-foreground',
+					!card &&
+						'ah-factory-box stroke-[color:var(--factory-lit)] [paint-order:stroke]',
+				)}
 			/>
 			<g
-				transform={`translate(${pairX} ${y + 22 - PLAYER_ICON / 2}) scale(${PLAYER_ICON / 24})`}
+				transform={`translate(${pairX} ${middle - PILL.icon / 2}) scale(${PILL.icon / 24})`}
 				className="text-background"
 				fill="none"
 				stroke="currentColor"
@@ -654,16 +662,27 @@ function Player({
 				<Icon />
 			</g>
 			<text
-				x={pairX + PLAYER_ICON + PLAYER_GAP}
-				y={y + 22}
-				textLength={labelWidth}
+				x={pairX + PILL.icon + PILL.gap}
+				y={middle}
+				textLength={advance}
 				dominantBaseline="central"
-				className={cn(
-					'fill-background font-semibold tracking-[-0.01em]',
-					large ? 'text-[16px]' : 'text-[15px]',
-				)}
+				className="fill-background text-[15px] font-semibold tracking-[-0.01em]"
 			>
-				{label}
+				{title}
+			</text>
+			<text
+				textAnchor="middle"
+				className="ah-factory-type fill-[color:var(--ah-fg-muted)] text-[13px]"
+			>
+				{PLAYERS[player][layout].map((line, index) => (
+					<tspan
+						key={line}
+						x={x + width / 2}
+						y={pill.y + PILL.height + 22 + index * (card ? 17 : 18)}
+					>
+						{line}
+					</tspan>
+				))}
 			</text>
 		</g>
 	)
@@ -693,33 +712,33 @@ function TeamIcon() {
 	)
 }
 
-/** One of the four things: a card holding its name and what it covers. */
+/** A card's size, and where its type sits, in each layout. The two cards of
+    a row share a height, so it is set by the row's longest description. */
+const CARD = {
+	wide: { width: 256, height: 100, inset: 16, title: 27, first: 47, leading: 18 },
+	narrow: { width: 148, height: 127, inset: 12, title: 26, first: 45, leading: 17 },
+}
+
+/** One of the four things: a card holding its name and what it is. */
 function Part({
+	part,
+	layout,
 	x,
 	y,
-	width,
-	height,
-	part,
-	lines,
 	flows,
-	accent,
 }: {
+	part: PartKey
+	layout: Layout
 	x: number
 	y: number
-	width: number
-	height: number
-	part: PartKey
-	lines: 'wide' | 'narrow'
-	flows: FlowLines
-	accent?: boolean
+	flows: Flows
 }) {
-	// The one-column drawing is shown below its viewBox size on a phone, so its
-	// type is drawn a step larger to land where the wide drawing's does.
-	const large = lines === 'narrow'
-	const box = { x, y, width, height, rx: 11 }
+	const { title, accent } = PARTS[part]
+	const card = CARD[layout]
+	const box = { x, y, width: card.width, height: card.height, rx: 11 }
 
 	return (
-		<g data-node={part} data-part="" data-accent={accent ? '' : undefined}>
+		<g data-node={part} data-with={nodeWith(part)} data-accent={accent ? '' : undefined}>
 			<rect
 				{...box}
 				className={cn(
@@ -743,26 +762,18 @@ function Part({
 			    turning see-through over the hatch behind it. */}
 			<g className="ah-factory-type">
 				<text
-					x={x + 16}
-					y={y + (large ? 28 : 27)}
-					className={cn(
-						'fill-foreground font-bold tracking-[-0.018em]',
-						large ? 'text-[17px]' : 'text-[16px]',
-					)}
+					x={x + card.inset}
+					y={y + card.title}
+					className="fill-foreground text-[16px] font-bold tracking-[-0.018em]"
 				>
-					{PARTS[part].title}
+					{title}
 				</text>
-				<text
-					className={cn(
-						'fill-[color:var(--ah-fg-muted)]',
-						large ? 'text-[14px]' : 'text-[13px]',
-					)}
-				>
-					{PARTS[part][lines].map((line, index) => (
+				<text className="fill-[color:var(--ah-fg-muted)] text-[13px]">
+					{PARTS[part][layout].map((line, index) => (
 						<tspan
 							key={line}
-							x={x + 16}
-							y={y + (large ? 49 + index * 19 : 47 + index * 18)}
+							x={x + card.inset}
+							y={y + card.first + index * card.leading}
 						>
 							{line}
 						</tspan>
@@ -774,118 +785,108 @@ function Part({
 }
 
 /**
- * The connections. One ink for all of them, as in the original.
+ * The connections, each with its label on it and, over it, everything that
+ * moves along it: a pulse, one short dash run toward the arrowhead, and the
+ * arrowhead again in full ink, which flashes as the pulse lands in it. The
+ * label is drawn last, so a pulse passes under it.
  *
- * The ink is OPAQUE: the foreground mixed into the page colour, not the
- * foreground at an alpha. A line runs on under its arrowhead, branches start
- * on top of their trunk, and lines cross the bands' borders, and a
- * translucent ink shows every one of those overlaps as a brighter patch.
+ * One ink for all of them, and it is OPAQUE: the foreground mixed into the
+ * page colour, not the foreground at an alpha. A line runs on under its
+ * arrowhead and crosses a band's border, and a translucent ink shows every
+ * overlap as a brighter patch. The ink is `--factory-ink`, which a hover
+ * swaps for a fainter one (`globals.css`).
  */
-function Edges({ children }: { children: React.ReactNode }) {
+function Edges({ flows }: { flows: Flows }) {
 	return (
 		<g
-			className="text-[color:color-mix(in_oklab,var(--foreground)_58%,var(--background))]"
 			fill="none"
 			stroke="currentColor"
 			strokeWidth={1.5}
 			strokeLinecap="round"
 			strokeLinejoin="round"
 		>
-			{children}
-		</g>
-	)
-}
-
-/**
- * The lines that belong to one player, or to both when `of` is left out, so
- * that hovering a player can keep its own lines and let the other's step back.
- * They step back by changing ink, not by fading, for the reason `Edges` gives.
- */
-function Lines({
-	of,
-	children,
-}: {
-	of?: 'agent' | 'team'
-	children: React.ReactNode
-}) {
-	return (
-		<g className="ah-factory-lines" data-of={of}>
-			{children}
-		</g>
-	)
-}
-
-/**
- * Everything that moves along the lines, drawn over them in three passes.
- *
- * First a still copy of each part's own connections, hidden until that part is
- * hovered: the lines under it have all stepped back by then, and a line that
- * is shared cannot be half one ink and half another. A return flow adds only
- * its arrowhead, since its line is the outbound one. Two copies of one stroke
- * would thicken its soft edge.
- *
- * Then the pulses, one short dash per flow, and last the arrowheads again in
- * full ink, each of which flashes as its pulse lands in it.
- */
-function Flows({ flows }: { flows: FlowLines }) {
-	return (
-		<>
-			{FLOW_KEYS.map((key) => {
-				const [from, to] = flowEnds(key)
-				if (!isPart(from) && !isPart(to)) return null
-				const [x, y, dir] = flows[key].head
+			{EDGE_KEYS.map((key) => {
+				const { d, length, head, chip, timing, lands } = flows[key]
+				const [x, y, dx, dy] = head
 
 				return (
-					<g key={key} className="ah-factory-link" data-flow={flowTag(key)}>
-						{isPart(to) ? <path d={flows[key].d} /> : null}
-						<Head x={x} y={y} dir={dir} />
+					<g key={key} className="ah-factory-edge" data-with={edgeWith(key)}>
+						<path d={d} />
+						<Head x={x} y={y} dx={dx} dy={dy} />
+						<path
+							d={d}
+							className="ah-factory-pulse text-foreground"
+							style={
+								{
+									'--flow-length': `${length.toFixed(1)}px`,
+									animationTimingFunction: timing,
+								} as React.CSSProperties
+							}
+						/>
+						<Head
+							x={x}
+							y={y}
+							dx={dx}
+							dy={dy}
+							className="ah-factory-flash text-foreground"
+							style={{ animationDelay: `${lands.toFixed(2)}s` }}
+						/>
+						<Chip x={chip[0]} y={chip[1]} label={EDGES[key].label} />
 					</g>
 				)
 			})}
-			{FLOW_KEYS.map((key) => (
-				<path
-					key={key}
-					d={flows[key].d}
-					className="ah-factory-pulse text-foreground"
-					data-flow={flowTag(key)}
-					style={{ animationDelay: `${DEPARTS[key]}s` }}
-				/>
-			))}
-			{FLOW_KEYS.map((key) => {
-				const [x, y, dir] = flows[key].head
+		</g>
+	)
+}
 
-				return (
-					<Head
-						key={key}
-						x={x}
-						y={y}
-						dir={dir}
-						className="ah-factory-flash text-foreground"
-						data-flow={flowTag(key)}
-						style={{ animationDelay: landsAt(key, flows) }}
-					/>
-				)
-			})}
+/** JetBrains Mono's advance at 11px: the font is monospaced, so a label's
+    width follows from its length. */
+const CHIP_CHAR = 6.6
+
+/** A connection's label, on a small card of its own set into the line. Its
+    border and type are the line's ink, so they step back with it. */
+function Chip({ x, y, label }: { x: number; y: number; label: string }) {
+	const width = label.length * CHIP_CHAR + 16
+
+	return (
+		<>
+			<rect
+				x={x - width / 2}
+				y={y - 10}
+				width={width}
+				height={20}
+				rx={6}
+				strokeWidth={1}
+				className="fill-card"
+			/>
+			<text
+				x={x}
+				y={y}
+				textAnchor="middle"
+				dominantBaseline="central"
+				stroke="none"
+				className="fill-current font-mono text-[11px] font-medium"
+			>
+				{label}
+			</text>
 		</>
 	)
 }
 
-/** An arrowhead whose tip sits at (x, y). */
+/** An arrowhead whose tip sits at (x, y), pointing along (dx, dy). */
 function Head({
 	x,
 	y,
-	dir,
+	dx,
+	dy,
 	...path
-}: { x: number; y: number; dir: Dir } & Omit<
+}: { x: number; y: number; dx: number; dy: number } & Omit<
 	React.ComponentProps<'path'>,
 	'd' | 'x' | 'y'
 >) {
-	const d = {
-		right: `M${x} ${y}l-8 -4.5v9z`,
-		left: `M${x} ${y}l8 -4.5v9z`,
-		down: `M${x} ${y}l-4.5 -8h9z`,
-		up: `M${x} ${y}l-4.5 8h9z`,
-	}[dir]
+	const bx = x - dx * HEAD
+	const by = y - dy * HEAD
+	const d = `M${x} ${y}L${bx - dy * 4.5} ${by + dx * 4.5}L${bx + dy * 4.5} ${by - dx * 4.5}Z`
 
 	return <path d={d} fill="currentColor" stroke="none" {...path} />
 }
