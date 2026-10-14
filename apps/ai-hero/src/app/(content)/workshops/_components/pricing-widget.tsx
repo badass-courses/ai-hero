@@ -588,6 +588,12 @@ const SaleCountdownBox = ({
 	)
 }
 
+/** What the box reads off a regional coupon, quoted or applied. */
+type RegionalCoupon = {
+	country?: string | null
+	percentageDiscount?: unknown
+}
+
 /**
  * Regional pricing (PPP) as one bordered sentence with a checkbox, replacing
  * the flag-image paragraph block. The from-country viewing restriction stays
@@ -595,11 +601,10 @@ const SaleCountdownBox = ({
  *
  * It shows under the same conditions as `Pricing.PPPToggle` (purchase allowed,
  * PPP enabled, a regional coupon available or applied, not bought before, not
- * a downgrade, not a team purchase), with one difference. Unticking it clears
- * the applied coupon at once, but until the new quote lands the quote on
- * screen is the discounted one, which lists no regional coupon as available.
- * The primitive dropped the box for that second; this keeps the last coupon
- * it saw while a quote is in flight, so the box stays put.
+ * a downgrade, not a team purchase). It reads the coupon from the last quote
+ * that offered it, because a quote with the coupon applied lists none as
+ * available: read from that quote, the box said "United States, 0% off"
+ * while ticked, and dropped out for a second after unticking.
  */
 const RegionalPricingBox = () => {
 	const {
@@ -618,23 +623,29 @@ const RegionalPricingBox = () => {
 	const quotedPPPCoupon = Array.isArray(formattedPrice?.availableCoupons)
 		? formattedPrice.availableCoupons.find((coupon) => coupon?.type === 'ppp')
 		: undefined
-	const lastPPPCoupon = React.useRef(quotedPPPCoupon)
-	if (quotedPPPCoupon) lastPPPCoupon.current = quotedPPPCoupon
-	const availablePPPCoupon =
-		quotedPPPCoupon ??
-		(status === 'pending' ? lastPPPCoupon.current : undefined)
 	const appliedPPPCoupon =
 		activeMerchantCoupon?.type === 'ppp' ? activeMerchantCoupon : null
+	// A quote lists the regional coupon as available only while it is not
+	// applied. So the box keeps the last one it was quoted: applied, it still
+	// names the country and the discount (not "United States, 0%"), and while
+	// the next quote is in flight after unticking, it stays put.
+	const lastQuotedPPPCoupon = React.useRef(quotedPPPCoupon)
+	if (quotedPPPCoupon) lastQuotedPPPCoupon.current = quotedPPPCoupon
+	const pppCoupon: RegionalCoupon | undefined =
+		quotedPPPCoupon ??
+		(appliedPPPCoupon || status === 'pending'
+			? (lastQuotedPPPCoupon.current ?? appliedPPPCoupon ?? undefined)
+			: undefined)
 
 	const showPPPBox =
 		allowPurchase &&
 		isPPPEnabled &&
-		Boolean(availablePPPCoupon || appliedPPPCoupon) &&
+		Boolean(pppCoupon) &&
 		!isPreviouslyPurchased &&
 		!isDowngrade(formattedPrice) &&
 		!isTeamPurchaseActive
 
-	const rawDiscount = availablePPPCoupon?.percentageDiscount as
+	const rawDiscount = pppCoupon?.percentageDiscount as
 		| string
 		| number
 		| { toNumber?: () => number }
@@ -650,7 +661,7 @@ const RegionalPricingBox = () => {
 	// `Intl.DisplayNames.of` THROWS on a structurally invalid region code, and
 	// the code here is stored coupon data — a bad row must not unmount the
 	// whole pricing card.
-	const rawCountryCode = availablePPPCoupon?.country || 'US'
+	const rawCountryCode = pppCoupon?.country || 'US'
 	const countryCode = /^[A-Za-z]{2}$/.test(rawCountryCode)
 		? rawCountryCode.toUpperCase()
 		: 'US'
@@ -678,7 +689,7 @@ const RegionalPricingBox = () => {
 							if (appliedPPPCoupon) {
 								setMerchantCoupon(undefined)
 							} else {
-								setMerchantCoupon(availablePPPCoupon as any)
+								setMerchantCoupon(pppCoupon as any)
 							}
 						}}
 					/>
