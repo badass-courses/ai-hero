@@ -3,7 +3,6 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
-	sharedWelcomePage: vi.fn(),
 	discordAccountsForCurrentUser: vi.fn(),
 	getServerAuthSession: vi.fn(),
 	getPurchaseDetails: vi.fn(),
@@ -51,22 +50,13 @@ vi.mock(
 	'@coursebuilder/commerce-next/post-purchase/subscription-welcome-page',
 	() => ({ SubscriptionWelcomePage: () => null }),
 )
-vi.mock('@coursebuilder/commerce-next/post-purchase/welcome-page', () => ({
-	WelcomePage: (props: unknown) => {
-		mocks.sharedWelcomePage(props)
-		return null
-	},
-}))
 vi.mock(
 	'@coursebuilder/commerce-next/utils/serialize-for-next-response',
 	() => ({ convertToSerializeForNextResponse: (value: unknown) => value }),
 )
 
 import Welcome from './page'
-import {
-	PostPurchaseDiscordAccess,
-	withoutDiscordProvider,
-} from './welcome-discord-entry'
+import { PostPurchaseDiscordAccess } from './welcome-discord-entry'
 
 async function renderPurchaseWelcome(isDiscordConnected: boolean) {
 	mocks.discordAccountsForCurrentUser.mockResolvedValue(isDiscordConnected)
@@ -92,8 +82,11 @@ beforeEach(() => {
 		purchase: {
 			id: 'purchase-1',
 			productId: 'product-1',
+			product: { name: 'Synthetic course', type: 'self-paced' },
 			bulkCoupon: null,
 			merchantChargeId: 'charge-1',
+			totalAmount: 199,
+			createdAt: new Date('2026-10-14T09:00:00Z'),
 		},
 		existingPurchase: null,
 		availableUpgrades: [],
@@ -104,19 +97,6 @@ beforeEach(() => {
 })
 
 describe('post-purchase Discord entry', () => {
-	it('does not expose the direct Discord OAuth action to the shared welcome page', () => {
-		const providers = withoutDiscordProvider([
-			{ id: 'postmark', name: 'Email' },
-			{ id: 'discord', name: 'Discord' },
-			{ id: 'github', name: 'GitHub' },
-		])
-
-		expect(providers).toEqual([
-			{ id: 'postmark', name: 'Email' },
-			{ id: 'github', name: 'GitHub' },
-		])
-	})
-
 	it('routes unlinked purchasers through the managed Discord link flow', () => {
 		const markup = renderToStaticMarkup(
 			<PostPurchaseDiscordAccess isDiscordConnected={false} />,
@@ -138,30 +118,27 @@ describe('post-purchase Discord entry', () => {
 	it('wires unlinked purchasers to managed Discord access on the production page', async () => {
 		const markup = await renderPurchaseWelcome(false)
 
-		expect(mocks.sharedWelcomePage).toHaveBeenCalledWith(
-			expect.objectContaining({
-				providers: [
-					{ id: 'postmark', name: 'Email' },
-					{ id: 'github', name: 'GitHub' },
-				],
-			}),
-		)
 		expect(markup).toContain('href="/discord"')
 		expect(markup).toContain('Join Discord')
+		expect(markup).not.toContain('signin/discord')
+		expect(markup).not.toContain('data-discord-button')
 	})
 
-	it('keeps Discord out of the shared page and hides managed access when linked', async () => {
+	it('hides managed access when linked and never offers the direct OAuth action', async () => {
 		const markup = await renderPurchaseWelcome(true)
 
-		expect(mocks.sharedWelcomePage).toHaveBeenCalledWith(
-			expect.objectContaining({
-				providers: [
-					{ id: 'postmark', name: 'Email' },
-					{ id: 'github', name: 'GitHub' },
-				],
-			}),
-		)
 		expect(markup).not.toContain('href="/discord"')
 		expect(markup).not.toContain('Join Discord')
+		expect(markup).not.toContain('signin/discord')
+	})
+
+	it('leads with the product and keeps the receipt below it', async () => {
+		const markup = await renderPurchaseWelcome(true)
+
+		expect(markup).toContain('Welcome to')
+		expect(markup).toContain('Synthetic course')
+		expect(markup).toContain('href="/invoices/charge-1"')
+		expect(markup).toContain('Share on X')
+		expect(markup.match(/<h1/g)).toHaveLength(1)
 	})
 })
