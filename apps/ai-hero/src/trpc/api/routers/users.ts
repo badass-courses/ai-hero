@@ -1,5 +1,6 @@
 import { db } from '@/db'
 import { accounts, users } from '@/db/schema'
+import { getIncomingTransfer } from '@/lib/incoming-transfers'
 import {
 	getPlaybackPrefsForUser,
 	setPlaybackPrefsForUser,
@@ -70,6 +71,10 @@ export const usersRouter = createTRPCRouter({
 
 			return { name: input.name }
 		}),
+	/** A seat sent to this user that is still waiting, for the site reminder. */
+	incomingTransfer: protectedProcedure.query(async ({ ctx }) => {
+		return getIncomingTransfer(ctx.session.user.id)
+	}),
 	getPlaybackPrefs: protectedProcedure.query(async ({ ctx }) => {
 		return getPlaybackPrefsForUser(ctx.session.user.id)
 	}),
