@@ -3,6 +3,7 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
+import { TYPE } from '@/components/landing/type'
 import { env } from '@/env.mjs'
 import {
 	purchaseGate,
@@ -34,7 +35,9 @@ export function UpperBoundNote({ className }: { className?: string }) {
 	if (!gate.upperBound) return null
 	return (
 		<p
-			className={cn('text-muted-foreground text-center text-sm', className)}
+			// The guarantee line under it is `metaSm` too: one size and one ink
+			// for the two captions under the button.
+			className={cn(TYPE.metaSm, 'text-muted-foreground text-center', className)}
 			data-upper-bound=""
 		>
 			{gate.kind === 'sign-in' ? (

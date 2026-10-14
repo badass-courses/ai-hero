@@ -31,6 +31,7 @@ import { formatUsd } from '@coursebuilder/commerce/format-usd'
 import { cn } from '@coursebuilder/ui/utils/cn'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
+import { RegionalPricingNote } from './regional-pricing-note'
 import { WORKSHOP_CTA_BUTTON } from './workshop-cta-button'
 
 export type PricingData = {
@@ -104,73 +105,6 @@ export const BuyButtonComponent: React.FC<
 				)}
 			</Pricing.Product>
 		</Pricing.Root>
-	)
-}
-
-/**
- * One-line regional-pricing notice for the mobile bottom bar. The desktop buy
- * box explains PPP with a checkbox and the from-country restriction, but a
- * phone visitor only ever meets the bar — so eligible visitors emailed support
- * asking whether regional pricing exists at all. This surfaces the answer
- * without owning the decision: tapping scrolls to the buy box, where the
- * checkbox and the restriction copy (a condition of the discount) live.
- *
- * Renders nothing unless a PPP coupon is actually available for this visitor
- * and not already applied (an applied coupon is visible in the button price).
- */
-const RegionalPricingNote = ({ targetId }: { targetId: string }) => {
-	const { formattedPrice, activeMerchantCoupon } = usePricing()
-
-	const availablePPPCoupon = Array.isArray(formattedPrice?.availableCoupons)
-		? formattedPrice.availableCoupons.find((coupon) => coupon?.type === 'ppp')
-		: undefined
-	if (!availablePPPCoupon || activeMerchantCoupon?.type === 'ppp') return null
-
-	const rawDiscount = availablePPPCoupon.percentageDiscount as
-		| string
-		| number
-		| { toNumber?: () => number }
-		| undefined
-	const percentOff = Math.floor(
-		(typeof rawDiscount === 'string'
-			? Number(rawDiscount)
-			: typeof rawDiscount === 'number'
-				? rawDiscount
-				: (rawDiscount?.toNumber?.() ?? 0)) * 100,
-	)
-
-	// Same guard as the buy box: `Intl.DisplayNames.of` throws on a structurally
-	// invalid region code, and this code is stored coupon data.
-	const rawCountryCode = availablePPPCoupon.country || 'US'
-	const countryCode = /^[A-Za-z]{2}$/.test(rawCountryCode)
-		? rawCountryCode.toUpperCase()
-		: 'US'
-	const country =
-		new Intl.DisplayNames(['en'], { type: 'region' }).of(countryCode) ??
-		countryCode
-
-	return (
-		<button
-			type="button"
-			data-regional-note=""
-			onClick={() => {
-				document
-					.getElementById(targetId)
-					?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-			}}
-			// Anchored to the bar's bottom edge as a second row under title+button;
-			// the bar reserves this row's height via its `has-[[data-regional-note]]`
-			// padding — the two must move together.
-			className="border-border absolute bottom-0 left-0 w-full cursor-pointer border-t px-3 py-1.5 text-left"
-		>
-			<span className={cn(TYPE.metaSm, 'text-muted-foreground text-pretty')}>
-				{/* Rhymes with the buy box's "Buying from {country}?" sentence so the
-				    tap lands on familiar words. */}
-				Buying from{' '}
-				<strong className="text-foreground font-semibold">{country}</strong>?{' '}
-				{percentOff}% off regional pricing is available&nbsp;→
-			</span>
-		</button>
 	)
 }
 

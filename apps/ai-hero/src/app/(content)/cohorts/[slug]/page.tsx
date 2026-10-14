@@ -397,7 +397,11 @@ export async function CohortPageView(props: CohortPageViewProps) {
 								className="bg-primary text-primary-foreground hover:bg-primary/90 relative h-auto w-full cursor-pointer rounded-lg px-8 font-semibold sm:h-14 sm:w-auto md:px-16"
 								trailing={<CohortEnrollPrice />}
 							>
-								<span className="relative z-10">{children}</span>
+								{/* The body's label ("Reserve Your Spot") and the price do not
+								    fit one line on a phone, so the phone says "Enroll" and
+								    keeps the price beside it, divider and all. */}
+								<span className="relative z-10 sm:hidden">Enroll</span>
+								<span className="relative z-10 hidden sm:inline">{children}</span>
 								<div
 									style={{
 										backgroundSize: '200% 100%',

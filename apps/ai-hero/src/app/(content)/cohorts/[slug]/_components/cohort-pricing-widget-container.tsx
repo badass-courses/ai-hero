@@ -4,6 +4,7 @@ import type { ParsedUrlQuery } from 'querystring'
 import * as React from 'react'
 import { useSession } from 'next-auth/react'
 import { PricingWidget } from '@/app/(content)/workshops/_components/pricing-widget'
+import { RegionalPricingNote } from '@/app/(content)/workshops/_components/regional-pricing-note'
 import { WORKSHOP_CTA_BUTTON } from '@/app/(content)/workshops/_components/workshop-cta-button'
 import { CldImage } from '@/components/cld-image'
 import { CheckoutSurveyBuyButton } from '@/components/commerce/checkout-survey-buy-button'
@@ -282,6 +283,9 @@ export const CohortPricingWidgetContainer: React.FC<
 								>
 									Enroll
 								</CheckoutSurveyBuyButton>
+								{/* Renders into the phone's bottom bar, not here: it needs
+								    this card's quote, and the bar has none of its own. */}
+								<RegionalPricingNote targetId="buy" />
 							</div>
 						}
 						pricingWidgetOptions={{

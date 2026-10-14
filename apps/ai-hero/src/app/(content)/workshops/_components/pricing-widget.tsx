@@ -32,6 +32,7 @@ import { formatUsd } from '@coursebuilder/commerce/format-usd'
 import { Checkbox } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+import styles from './pricing-widget.module.css'
 import { WORKSHOP_CTA_BUTTON } from './workshop-cta-button'
 
 export type PricingData = {
@@ -197,9 +198,7 @@ export const PricingWidget = ({
 					<Pricing.SaleCountdown
 						countdownRenderer={(props) => <SaleCountdownBox {...props} />}
 					/>
-					<Pricing.PPPToggle>
-						<RegionalPricingBox />
-					</Pricing.PPPToggle>
+					<RegionalPricingBox />
 				</Pricing.Details>
 			</Pricing.Product>
 			{!hideFeatures && (
@@ -288,11 +287,13 @@ const CardPrice = ({
 	billingInterval?: string | null
 }) => {
 	const { formattedPrice, status } = usePricing()
-	const { isDiscount } = usePriceCheck()
 
 	const fullPrice = formattedPrice?.fullPrice ?? 0
 	const finalPrice = formattedPrice?.calculatedPrice ?? 0
-	const discountActive = Boolean(formattedPrice && isDiscount(formattedPrice))
+	// The quote itself says whether it is a sale. `usePriceCheck().isDiscount`
+	// is the same comparison, but its context answers false wherever no
+	// PriceCheckProvider wraps the card (the cohort rail), hiding a live sale.
+	const discountActive = Boolean(formattedPrice && fullPrice > finalPrice)
 	const percentOff =
 		discountActive && fullPrice > 0
 			? Math.round(((fullPrice - finalPrice) / fullPrice) * 100)
@@ -328,9 +329,10 @@ const CardPrice = ({
 	}
 	if (!formattedPrice) return null
 
-	// Refetch (team toggle, seat count, coupon): the known price stays put,
-	// dimmed and pulsing, instead of collapsing into a skeleton — the reader
-	// keeps their anchor and still sees that the number is in flight.
+	// Refetch (team toggle, seat count, coupon): the known price stays put
+	// instead of collapsing into a skeleton, so the reader keeps their anchor.
+	// A shimmer sweeps its digits, and the discount beside it dims, to say the
+	// number is in flight.
 	const isRefetching = status === 'pending'
 
 	return (
@@ -339,11 +341,17 @@ const CardPrice = ({
 				aria-live="polite"
 				aria-busy={isRefetching}
 				className={cn(
-					'mt-3 flex flex-wrap items-baseline gap-2.5 transition-opacity',
-					isRefetching && 'animate-pulse opacity-40',
+					'mt-3 flex flex-wrap items-baseline gap-2.5',
+					isRefetching &&
+						'[&>[aria-hidden]]:opacity-40 [&>[aria-hidden]]:transition-opacity',
 				)}
 			>
-				<span className="font-mono text-[38px] font-medium leading-none tracking-[-0.03em] sm:text-[42px]">
+				<span
+					className={cn(
+						'font-mono text-[38px] font-medium leading-none tracking-[-0.03em] sm:text-[42px]',
+						isRefetching && styles.shimmer,
+					)}
+				>
 					{dollars}
 					{cents !== '00' && (
 						<span className="text-[0.45em] align-super">.{cents}</span>
@@ -580,28 +588,67 @@ const SaleCountdownBox = ({
 	)
 }
 
+/** What the box reads off a regional coupon, quoted or applied. */
+type RegionalCoupon = {
+	country?: string | null
+	percentageDiscount?: unknown
+}
+
 /**
  * Regional pricing (PPP) as one bordered sentence with a checkbox, replacing
- * the flag-image paragraph block. Visibility gating (coupon available, not a
- * team purchase, not an upgrade…) still lives in `Pricing.PPPToggle`; this is
- * only what shows once it applies. The from-country viewing restriction stays
+ * the flag-image paragraph block. The from-country viewing restriction stays
  * in the copy — it is a condition of the discount, not decoration.
+ *
+ * It shows under the same conditions as `Pricing.PPPToggle` (purchase allowed,
+ * PPP enabled, a regional coupon available or applied, not bought before, not
+ * a downgrade, not a team purchase). It reads the coupon from the last quote
+ * that offered it, because a quote with the coupon applied lists none as
+ * available: read from that quote, the box said "United States, 0% off"
+ * while ticked, and dropped out for a second after unticking.
  */
 const RegionalPricingBox = () => {
 	const {
+		options: { isPPPEnabled },
 		formattedPrice,
+		status,
+		allowPurchase,
+		isTeamPurchaseActive,
+		isPreviouslyPurchased,
 		activeMerchantCoupon,
 		setMerchantCoupon,
 		pricingData: { purchaseToUpgrade },
 	} = usePricing()
+	const { isDowngrade } = usePriceCheck()
 
-	const availablePPPCoupon = Array.isArray(formattedPrice?.availableCoupons)
+	const quotedPPPCoupon = Array.isArray(formattedPrice?.availableCoupons)
 		? formattedPrice.availableCoupons.find((coupon) => coupon?.type === 'ppp')
 		: undefined
 	const appliedPPPCoupon =
 		activeMerchantCoupon?.type === 'ppp' ? activeMerchantCoupon : null
+	// A quote lists the regional coupon as available only while it is not
+	// applied. So the box keeps the last one it was quoted: applied, it still
+	// names the country and the discount (not "United States, 0%"), and while
+	// the next quote is in flight after unticking, it stays put.
+	const [lastQuotedPPPCoupon, setLastQuotedPPPCoupon] =
+		React.useState(quotedPPPCoupon)
+	React.useEffect(() => {
+		if (quotedPPPCoupon) setLastQuotedPPPCoupon(quotedPPPCoupon)
+	}, [quotedPPPCoupon])
+	const pppCoupon: RegionalCoupon | undefined =
+		quotedPPPCoupon ??
+		(appliedPPPCoupon || status === 'pending'
+			? (lastQuotedPPPCoupon ?? appliedPPPCoupon ?? undefined)
+			: undefined)
 
-	const rawDiscount = availablePPPCoupon?.percentageDiscount as
+	const showPPPBox =
+		allowPurchase &&
+		isPPPEnabled &&
+		Boolean(pppCoupon) &&
+		!isPreviouslyPurchased &&
+		!isDowngrade(formattedPrice) &&
+		!isTeamPurchaseActive
+
+	const rawDiscount = pppCoupon?.percentageDiscount as
 		| string
 		| number
 		| { toNumber?: () => number }
@@ -617,7 +664,7 @@ const RegionalPricingBox = () => {
 	// `Intl.DisplayNames.of` THROWS on a structurally invalid region code, and
 	// the code here is stored coupon data — a bad row must not unmount the
 	// whole pricing card.
-	const rawCountryCode = availablePPPCoupon?.country || 'US'
+	const rawCountryCode = pppCoupon?.country || 'US'
 	const countryCode = /^[A-Za-z]{2}$/.test(rawCountryCode)
 		? rawCountryCode.toUpperCase()
 		: 'US'
@@ -628,6 +675,8 @@ const RegionalPricingBox = () => {
 	// Upgrading a PPP purchase auto-applies the coupon; a checkbox would only
 	// invite unchecking it (same rule as the primitive's default UI).
 	const hideCheckbox = Boolean(purchaseToUpgrade)
+
+	if (!showPPPBox) return null
 
 	return (
 		<div className="border-border mt-3 w-full rounded-[9px] border px-4 py-3.5">
@@ -643,7 +692,7 @@ const RegionalPricingBox = () => {
 							if (appliedPPPCoupon) {
 								setMerchantCoupon(undefined)
 							} else {
-								setMerchantCoupon(availablePPPCoupon as any)
+								setMerchantCoupon(pppCoupon as any)
 							}
 						}}
 					/>

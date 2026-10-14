@@ -2,14 +2,15 @@
 
 import React, { useRef } from 'react'
 import Link from 'next/link'
+import { RegionalNoteSlot } from '@/app/(content)/workshops/_components/regional-pricing-note'
 import { WORKSHOP_CTA_BUTTON } from '@/app/(content)/workshops/_components/workshop-cta-button'
 import { Contributor } from '@/components/contributor'
 import { TYPE } from '@/components/landing/type'
+import { useHasMoreBelow } from '@/hooks/use-has-more-below'
 import type { Cohort } from '@/lib/cohort'
 import { formatCohortDateRange } from '@/utils/format-cohort-date'
 import { useInView } from 'framer-motion'
 import { CheckCircle } from 'lucide-react'
-import { useMeasure } from 'react-use'
 
 import { Button, ScrollArea } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/utils/cn'
@@ -28,40 +29,26 @@ export const CohortSidebar = ({
 	/** What the phone's bottom bar offers; it follows what this rail holds. */
 	mobileCta: CohortMobileCta
 }) => {
-	const [sidebarRef, { height }] = useMeasure<HTMLDivElement>()
-	const [windowHeight, setWindowHeight] = React.useState(0)
 	const buySectionRef = useRef<HTMLDivElement>(null)
 	const isInView = useInView(buySectionRef, { margin: '0px 0px 0% 0px' })
-
-	React.useEffect(() => {
-		const handleResize = () => {
-			setWindowHeight(window.innerHeight)
-		}
-		handleResize()
-		window.addEventListener('resize', handleResize)
-
-		return () => {
-			window.removeEventListener('resize', handleResize)
-		}
-	}, [])
+	// The bottom fade says "there is more below", so it goes once the reader
+	// has scrolled to the end, or when everything fits, as on a workshop page.
+	const scrollRootRef = useRef<HTMLDivElement>(null)
+	const hasMoreBelow = useHasMoreBelow(scrollRootRef)
 
 	return (
 		<>
 			<div
 				ref={buySectionRef}
 				id="buy"
-				className="dark:bg-muted/50 scroll-mt-15 relative flex w-full min-w-0 flex-col gap-3 border-t bg-white md:max-w-sm md:border-l lg:shrink-0 lg:border-t-0"
+				// A third of the row beside the article, as the workshop page's
+				// rail is (two of its six columns).
+				className="dark:bg-muted/50 scroll-mt-15 relative flex w-full min-w-0 flex-col gap-3 border-t bg-white md:max-w-sm md:border-l lg:w-1/3 lg:max-w-none lg:shrink-0 lg:border-t-0"
 			>
-				<div
-					ref={sidebarRef}
-					className={cn('', {
-						'md:top-(--nav-height) md:sticky': true, // sticky && windowHeight - 63 > height,
-						'': true, // scrollable
-					})}
-				>
+				<div ref={scrollRootRef} className="md:top-(--nav-height) md:sticky">
 					<ScrollArea className="h-full lg:max-h-[calc(100vh-var(--nav-height))] [&>[data-slot=scroll-area-viewport]>div]:block! [&_[data-slot='scroll-area-scrollbar']]:opacity-50">
 						{children}
-						{!Boolean(windowHeight - 63 > height) && (
+						{hasMoreBelow && (
 							<div className="from-card pointer-events-none absolute bottom-0 left-0 hidden h-20 w-full bg-gradient-to-t to-transparent lg:block" />
 						)}
 					</ScrollArea>
@@ -130,53 +117,58 @@ export const CohortSidebarMobile = ({
 	return (
 		<div
 			className={cn(
-				'bg-background/90 backdrop-blur-xs fixed bottom-0 left-0 z-20 flex w-full items-center justify-between gap-3 border-t px-3 py-3 transition-opacity duration-300 lg:hidden',
+				'bg-background/90 backdrop-blur-xs fixed bottom-0 left-0 z-20 w-full border-t transition-opacity duration-300 lg:hidden',
 				className,
 			)}
 		>
-			<div className="flex min-w-0 flex-col gap-0.5">
-				<h3 className="font-heading truncate text-sm font-semibold">
-					{fields.title}
-				</h3>
-				{eventDateString ? (
-					<p className={cn(TYPE.metaMark, 'truncate')}>{eventDateString}</p>
+			<div className="flex items-center justify-between gap-3 px-3 py-3">
+				<div className="flex min-w-0 flex-col gap-0.5">
+					<h3 className="font-heading truncate text-sm font-semibold">
+						{fields.title}
+					</h3>
+					{eventDateString ? (
+						<p className={cn(TYPE.metaMark, 'truncate')}>{eventDateString}</p>
+					) : (
+						<Contributor className="gap-1 text-sm [&_img]:w-5" />
+					)}
+				</div>
+				{cta === 'on-waitlist' ? (
+					<p
+						className={cn(
+							TYPE.meta,
+							'flex h-11 shrink-0 items-center gap-1.5',
+						)}
+					>
+						<CheckCircle
+							className="text-primary size-4 shrink-0"
+							aria-hidden="true"
+						/>
+						On the waitlist
+					</p>
+				) : cta === 'owned' ? (
+					<Button
+						asChild
+						variant="outline"
+						className="border-border h-11 shrink-0 rounded-[9px] border bg-transparent px-4 text-sm font-medium"
+					>
+						<Link href="#buy" onClick={handleScrollToBuy}>
+							Workshops
+						</Link>
+					</Button>
 				) : (
-					<Contributor className="gap-1 text-sm [&_img]:w-5" />
+					<Button
+						asChild
+						className={cn(WORKSHOP_CTA_BUTTON, 'h-11 shrink-0 gap-2 text-sm')}
+					>
+						<Link href="#buy" onClick={handleScrollToBuy}>
+							{cta === 'waitlist' ? 'Join Waitlist' : 'Enroll Now'}
+						</Link>
+					</Button>
 				)}
 			</div>
-			{cta === 'on-waitlist' ? (
-				<p
-					className={cn(
-						TYPE.meta,
-						'flex h-11 shrink-0 items-center gap-1.5',
-					)}
-				>
-					<CheckCircle
-						className="text-primary size-4 shrink-0"
-						aria-hidden="true"
-					/>
-					On the waitlist
-				</p>
-			) : cta === 'owned' ? (
-				<Button
-					asChild
-					variant="outline"
-					className="border-border h-11 shrink-0 rounded-[9px] border bg-transparent px-4 text-sm font-medium"
-				>
-					<Link href="#buy" onClick={handleScrollToBuy}>
-						Workshops
-					</Link>
-				</Button>
-			) : (
-				<Button
-					asChild
-					className={cn(WORKSHOP_CTA_BUTTON, 'h-11 shrink-0 gap-2 text-sm')}
-				>
-					<Link href="#buy" onClick={handleScrollToBuy}>
-						{cta === 'waitlist' ? 'Join Waitlist' : 'Enroll Now'}
-					</Link>
-				</Button>
-			)}
+			{/* Regional pricing rides along only with "Enroll Now": the note
+			    comes from the rail's pricing card, which exists only on sale. */}
+			{cta === 'enroll' ? <RegionalNoteSlot /> : null}
 		</div>
 	)
 }
