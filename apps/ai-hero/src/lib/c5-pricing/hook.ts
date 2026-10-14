@@ -15,6 +15,11 @@ import type {
 import type { DataRead, PolicyDocument } from './front-desk-data'
 import { noGift, type GiftFact } from './gift-slots'
 import {
+	c5BuyerOpening,
+	policyOpeningWindow,
+	type BuyerOpeningInput,
+} from './buyer-opening'
+import {
 	APP_REASONS,
 	C5_PRODUCT_ID,
 	provisional,
@@ -36,6 +41,8 @@ export type BuyerRead =
 			readonly hasValidPurchase: boolean | null
 			/** Whether the buyer holds a region-restricted purchase of this product. */
 			readonly holdsRestrictedPurchase: boolean
+			/** A Valid purchase of this exact product, not any historical purchase. */
+			readonly holdsValidProductPurchase: boolean
 	  }
 	| {
 			readonly kind: 'anonymous'
@@ -78,6 +85,11 @@ export type C5PricingDeps = {
 	 * on every decision; it must resolve true when it cannot tell.
 	 */
 	readonly disabled: () => boolean | Promise<boolean>
+	/** Emergency override is separate: gifts never bypass it. */
+	readonly overrideDisabled?: () => boolean
+	readonly openingWindow?: (
+		policy: PolicyDocument['policy'],
+	) => Promise<BuyerOpeningInput['window']>
 }
 
 const known = <A>(value: A, sourceRefs: readonly string[]): FactData<A> => ({
@@ -153,12 +165,48 @@ export function createC5AuthoritativePrice(deps: C5PricingDeps) {
 			userId,
 			engineVersion: deps.engineVersion,
 		}
-		if (await deps.disabled())
+		const disabled = await deps.disabled()
+		const overrideDisabled = deps.overrideDisabled?.() ?? disabled
+		if (overrideDisabled)
 			return refusal('closed', [APP_REASONS.killSwitch], base)
 
 		const policy = await deps.policy(request.productId)
 		if (!policy.ok)
 			return refusal('held', [APP_REASONS.policyUnavailable], base)
+
+		const now = deps.now()
+		// Fresh server verification, also on checkout. A cookie alone is not a fact.
+		const code = await (deps.code?.() ?? Promise.resolve(noGift()))
+		const gift = 'value' in code ? code.value : null
+		const openingWindow = deps.openingWindow
+			? await deps.openingWindow(policy.value.policy)
+			: policyOpeningWindow(policy.value.policy)
+		const opening = c5BuyerOpening({
+			switchEnabled: !disabled,
+			overrideDisabled,
+			window: openingWindow,
+			now: now.getTime(),
+			gift: quantity === 1 && gift
+				? { verified: true, productId: request.productId, code: gift }
+				: null,
+		})
+		if (opening === 'closed' && disabled)
+			return refusal('closed', [APP_REASONS.killSwitch], base)
+		if (
+			opening === 'closed' &&
+			openingWindow?.opensAt != null &&
+			now.getTime() < openingWindow.opensAt
+		) {
+			const policyOpens = policyOpeningWindow(policy.value.policy)?.opensAt
+			return {
+				...refusal(
+					policyOpens != null && now.getTime() < policyOpens ? 'not-open' : 'closed',
+					['not-open'],
+					{ ...base, policyVersion: policy.value.version },
+				),
+				closesAt: openingWindow.closesAt,
+			}
+		}
 
 		const orderKind = quantity > 1 ? 'team' : 'individual'
 		const buyer = await deps.buyer({
@@ -180,6 +228,9 @@ export function createC5AuthoritativePrice(deps: C5PricingDeps) {
 		)
 			return refusal('held', [APP_REASONS.restrictedHolder], withPolicy)
 
+		if (opening === 'gift' && buyer.kind === 'buyer' && buyer.holdsValidProductPurchase)
+			return refusal('held', [APP_REASONS.alreadyOwned], withPolicy)
+
 		const product = buyer.kind === 'buyer' ? buyer.facts.product : buyer.product
 		// Course Builder resolved the price it will charge; the facts must be
 		// about that same price row.
@@ -195,7 +246,6 @@ export function createC5AuthoritativePrice(deps: C5PricingDeps) {
 			accepted: request.pppAccepted,
 			hasValidPurchase: buyer.kind === 'buyer' ? buyer.hasValidPurchase : false,
 		})
-		const code = await (deps.code?.() ?? Promise.resolve(noGift()))
 		const facts = buyer.kind === 'buyer'
 			? { ...buyer.facts.facts, ppp, code }
 			: { ...anonymousFacts(orderKind), ppp, code }
@@ -221,9 +271,31 @@ export function createC5AuthoritativePrice(deps: C5PricingDeps) {
 			else appReasons.push(APP_REASONS.quotesUnavailable)
 		}
 
-		const priced = deps.price({
+		// Only the early-access exception uses the exact gift price. Ordinary
+		// switch-on pricing still chooses the engine's cheapest eligible candidate.
+		const priced = opening === 'gift' && gift ? {
+			ok: true,
+			value: {
+				kind: 'priced' as const,
+				amount: gift.unitPrice,
+				unitAmount: gift.unitPrice,
+				basis: 'code' as const,
+				rule: 'legend-gift-early-access',
+				codeRef: gift.codeRef,
+				creditSource: null,
+				quoteRefs: [],
+				restriction: 'none' as const,
+				consent: null,
+				acceptedFacts: [],
+				candidates: [],
+				offers: [],
+				engineVersion: deps.engineVersion,
+				policyVersion: policy.value.version,
+				reasons: [{ code: 'selected' as const, detail: 'Verified gift early access' }],
+			},
+		} : deps.price({
 			facts,
-			now: deps.now().toISOString(),
+			now: now.toISOString(),
 			product: {
 				id: policy.value.policy.product,
 				merchantUnit: product.merchantUnit,
@@ -243,6 +315,11 @@ export function createC5AuthoritativePrice(deps: C5PricingDeps) {
 			appReasons,
 			codeExpiresAt: 'value' in code ? code.value?.expiresAt : undefined,
 		})
+		if (opening === 'gift' && openingWindow)
+			decision = {
+				...decision,
+				closesAt: Math.min(decision.closesAt ?? Infinity, openingWindow.closesAt),
+			}
 		if (buyer.kind === 'anonymous')
 			decision = provisional(decision, APP_REASONS.identityRequired)
 		if (appReasons.includes(APP_REASONS.quotesUnavailable))

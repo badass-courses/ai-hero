@@ -47,6 +47,7 @@ const signedIn = (quantity: number): BuyerRead => ({
 	email: 'team@example.test',
 	hasValidPurchase: false,
 	holdsRestrictedPurchase: false,
+	holdsValidProductPurchase: false,
 	facts: {
 		product,
 		buyer: { userId: 'user-team', sourceRefs: ['test:user'] },

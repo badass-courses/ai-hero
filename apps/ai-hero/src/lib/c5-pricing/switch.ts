@@ -1,7 +1,8 @@
 /**
- * Whether C5 is closed. C5 opens only when the `c5-pricing-enabled` admin flag
- * is on and the `AIH_C5_PRICING_DISABLED` override is not set. The override
- * wins without a flag read. A flag read that fails, throws or outlasts
+ * Whether general C5 enrollment is closed. It opens when the
+ * `c5-pricing-enabled` admin flag is on and the emergency override is not set.
+ * Verified gift early access is decided separately by `c5BuyerOpening`.
+ * The override wins without a flag read. A flag read that fails, throws or outlasts
  * `timeoutMs` closes C5; it never opens it.
  */
 export type C5SwitchDeps = {

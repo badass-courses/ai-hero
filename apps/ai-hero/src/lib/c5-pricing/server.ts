@@ -17,6 +17,8 @@ import { createC5AuthoritativePrice, type BuyerRead } from './hook'
 import { holdsRestrictedPurchase } from './restricted-holder'
 import { signedGiftFact } from './gift-server'
 import { c5PricingClosed } from './switch-server'
+import { c5PricingDisabled } from './config'
+import { c5OpeningWindow } from './buyer-opening-server'
 import { trustedPricingCountry } from './trusted-country'
 
 /** Display reuses a buyer's facts this long; checkout always reads fresh. */
@@ -67,7 +69,7 @@ async function readBuyer(input: {
 		// are someone else's.
 		if (!facts || facts.buyer.userId !== input.userId)
 			return { kind: 'unavailable', reason: 'identity-mismatch' }
-		const [[valid], restricted] = await Promise.all([
+		const [[valid], [validProduct], restricted] = await Promise.all([
 			db
 				.select({ id: purchases.id })
 				.from(purchases)
@@ -78,6 +80,15 @@ async function readBuyer(input: {
 					),
 				)
 				.limit(1),
+			db
+				.select({ id: purchases.id })
+				.from(purchases)
+				.where(and(
+					eq(purchases.userId, input.userId),
+					eq(purchases.productId, input.productId),
+					eq(purchases.status, 'Valid'),
+				))
+				.limit(1),
 			holdsRestrictedPurchase(input.userId, input.productId),
 		])
 		return {
@@ -86,6 +97,7 @@ async function readBuyer(input: {
 			facts,
 			hasValidPurchase: Boolean(valid),
 			holdsRestrictedPurchase: restricted,
+			holdsValidProductPurchase: Boolean(validProduct),
 		}
 	} catch {
 		return { kind: 'unavailable', reason: 'facts-read-failed' }
@@ -137,6 +149,8 @@ const decide = createC5AuthoritativePrice({
 	engineVersion: ENGINE_VERSION,
 	now: () => new Date(),
 	disabled: c5PricingClosed,
+	overrideDisabled: c5PricingDisabled,
+	openingWindow: c5OpeningWindow,
 })
 
 /** AI Hero's authoritative-price hook, as Course Builder calls it. */

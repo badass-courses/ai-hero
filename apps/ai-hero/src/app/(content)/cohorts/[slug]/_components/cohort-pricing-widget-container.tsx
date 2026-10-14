@@ -32,6 +32,8 @@ export const CohortPricingWidgetContainer: React.FC<
 		className?: string
 		searchParams?: ParsedUrlQuery
 		enrollmentOpenDateString?: string | null
+		/** Fresh server-verified gift access; never derived from via or client input. */
+		giftEnrollmentOpen?: boolean
 		/**
 		 * Resolved on the server from the subscriber's `waitlist_<product>` field.
 		 * Passed in rather than read here so the sidebar is correct in the first
@@ -52,6 +54,7 @@ export const CohortPricingWidgetContainer: React.FC<
 	className,
 	searchParams,
 	enrollmentOpenDateString,
+	giftEnrollmentOpen = false,
 	isOnWaitlist,
 	knownIdentity,
 	workshops,
@@ -127,7 +130,7 @@ export const CohortPricingWidgetContainer: React.FC<
 		if (couponFromCode?.fields?.bypassSoldOut === true) {
 			return { type: 'open' as const }
 		}
-		if (isOpenEnrollment) {
+		if (giftEnrollmentOpen || isOpenEnrollment) {
 			return { type: 'open' as const }
 		}
 		if (enrollmentNotOpenYet) {

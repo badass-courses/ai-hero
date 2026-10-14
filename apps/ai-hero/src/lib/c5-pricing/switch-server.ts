@@ -10,7 +10,8 @@ import { c5PricingDisabled } from './config'
 import { c5Closed, C5_FLAG_TIMEOUT_MS } from './switch'
 
 /**
- * The C5 switch every C5 surface obeys: display, checkout and team invoices.
+ * The general C5 switch. Gift display and checkout combine this with a fresh
+ * verified claim in c5BuyerOpening; team invoices have no gift exception.
  * It reads the admin flag fresh on every call, so a toggle at /admin/flags
  * takes effect on the next request.
  */

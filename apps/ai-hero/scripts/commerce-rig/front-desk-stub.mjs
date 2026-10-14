@@ -51,7 +51,9 @@ export function frontDeskHandler(data, tokens) {
         Array.isArray(commands[0]) && commands[0].length === 2 &&
         String(commands[0][0]).toLowerCase() === 'get' && commands[0][1] === 'flag:development:c5-pricing-enabled'
       if (!allowed) return send(403, { error: 'rig-flag-command-refused' })
-      return send(200, url.pathname === '/pipeline' ? [{ result: null }] : { result: null })
+      const raw = typeof data.c5PricingEnabled === 'boolean' ? String(data.c5PricingEnabled) : null
+      const result = raw !== null && request.headers['upstash-encoding'] === 'base64' ? Buffer.from(raw).toString('base64') : raw
+      return send(200, url.pathname === '/pipeline' ? [{ result }] : { result })
     }
     if (url.pathname === POLICY_PATH && request.method === 'GET') {
       if (!same(bearer, tokens.pricing)) return send(401)

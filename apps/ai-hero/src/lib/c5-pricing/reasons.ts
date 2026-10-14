@@ -15,6 +15,8 @@ export const APP_REASONS = {
 	factsUnavailable: 'facts-unavailable',
 	priceMismatch: 'merchant-price-mismatch',
 	killSwitch: 'kill-switch',
+	/** Early gifts must not sell access the buyer already owns. */
+	alreadyOwned: 'already-owned',
 	/**
 	 * The buyer already holds a region-restricted purchase of this product.
 	 * There is no upgrade path; unrestricted access goes through support.
