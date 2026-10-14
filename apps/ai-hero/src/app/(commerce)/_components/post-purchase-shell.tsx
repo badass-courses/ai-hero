@@ -13,6 +13,7 @@ import {
 	PURCHASE_PRIMARY_BUTTON,
 	PurchaseCard,
 	PurchaseCardSection,
+	PurchaseColumn,
 	PurchaseHeading,
 } from './post-purchase-parts'
 import {
@@ -79,7 +80,7 @@ export function PostPurchaseShell({
 	return (
 		<LayoutClient withContainer>
 			<Landmark className="min-h-[calc(100vh-var(--nav-height))]">
-				<div className="mx-auto flex w-full max-w-[728px] flex-col gap-8 px-[18px] py-12 sm:px-11 md:gap-10 md:py-[72px]">
+				<PurchaseColumn>
 					<PostPurchaseProgress step={step} paymentConfirmed={paymentConfirmed} />
 					<p role="status" aria-live="polite" aria-atomic="true" className="sr-only">
 						{status}
@@ -177,7 +178,7 @@ export function PostPurchaseShell({
 							</PurchaseCard>
 						))
 					)}
-				</div>
+				</PurchaseColumn>
 			</Landmark>
 		</LayoutClient>
 	)

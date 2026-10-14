@@ -4,6 +4,15 @@ import { TYPE } from '@/components/landing/type'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+/** The centred column every post-purchase screen is laid out in. */
+export function PurchaseColumn({ children }: { children: React.ReactNode }) {
+	return (
+		<div className="mx-auto flex w-full max-w-[728px] flex-col gap-8 px-[18px] py-12 sm:px-11 md:gap-10 md:py-[72px]">
+			{children}
+		</div>
+	)
+}
+
 /** 16:9 artwork beside the purchase's name; stripes stand in for none. */
 export function PurchaseArtwork({ src }: { src?: string | null }) {
 	return (
