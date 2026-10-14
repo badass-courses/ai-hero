@@ -219,14 +219,21 @@ async function applyEntitlementChanges(
 		)
 	}
 
-	const userMembership = await db.query.organizationMemberships.findFirst({
-		where: and(
-			eq(organizationMemberships.userId, userId),
-			...(purchase.organizationId
-				? [eq(organizationMemberships.organizationId, purchase.organizationId)]
-				: []),
-		),
-	})
+	const purchaseMembership = purchase.organizationId
+		? await db.query.organizationMemberships.findFirst({
+				where: and(
+					eq(organizationMemberships.userId, userId),
+					eq(organizationMemberships.organizationId, purchase.organizationId),
+				),
+			})
+		: undefined
+	// Legacy purchases can name an organization without a matching membership.
+	// Prefer the purchase context, but preserve the old first-membership fallback.
+	const userMembership =
+		purchaseMembership ??
+		(await db.query.organizationMemberships.findFirst({
+			where: eq(organizationMemberships.userId, userId),
+		}))
 	if (!userMembership?.organizationId) {
 		throw new Error(`No organization membership found for user ${userId}`)
 	}

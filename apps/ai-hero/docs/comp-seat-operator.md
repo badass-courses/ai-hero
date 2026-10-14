@@ -76,8 +76,9 @@ The existing CMS and course-sync paths trigger the cohort entitlement sync.
 workflow discovers purchasers and calls `syncUserCohortEntitlementsWithIds`.
 That sync copies strict boolean early access from the valid comp purchase onto
 new workshop entitlements. It prefers an active early-access comp when several
-products grant the same cohort, and uses the purchase's organization membership.
-Refunded and disputed purchases remain excluded by the existing status filter.
+products grant the same cohort, and prefers the purchase's organization membership.
+If that membership is missing, sync falls back to the user's first membership,
+matching the legacy behavior. Refunded and disputed purchases remain excluded by the existing status filter.
 
 ## Rollback
 

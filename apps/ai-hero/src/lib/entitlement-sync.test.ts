@@ -1,3 +1,5 @@
+import type { SQL } from 'drizzle-orm'
+import { MySqlDialect } from 'drizzle-orm/mysql-core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -6,6 +8,11 @@ const mocks = vi.hoisted(() => ({
 	transaction: vi.fn(),
 	created: vi.fn(async (_tx: unknown, _params: { metadata?: Record<string, unknown> }) => undefined),
 	error: vi.fn(async () => undefined),
+	membership: vi.fn(
+		async (_query: { where?: SQL }): Promise<
+			{ id: string; organizationId: string } | undefined
+		> => ({ id: 'membership', organizationId: 'org' }),
+	),
 }))
 vi.mock('@/db', () => ({
 	db: {
@@ -14,7 +21,7 @@ vi.mock('@/db', () => ({
 				findFirst: async () => ({ id: 'cohort-access-type' }),
 			},
 			organizationMemberships: {
-				findFirst: async () => ({ id: 'membership', organizationId: 'org' }),
+				findFirst: mocks.membership,
 			},
 		},
 		select: mocks.select,
@@ -38,7 +45,11 @@ import {
 function prepareDiff(
 	currentContentIds: string[],
 	fields: Record<string, unknown> = {},
-	purchaseRows?: Array<{ id: string; fields: Record<string, unknown> }>,
+	purchaseRows?: Array<{
+		id: string
+		fields: Record<string, unknown>
+		organizationId?: string
+	}>,
 ) {
 	mocks.select.mockImplementation((selection: Record<string, unknown>) => {
 		const query = {
@@ -59,9 +70,64 @@ beforeEach(() => {
 	mocks.deleted.mockClear()
 	mocks.created.mockClear()
 	mocks.error.mockClear()
+	mocks.membership.mockReset()
+	mocks.membership.mockResolvedValue({ id: 'membership', organizationId: 'org' })
 })
 
 describe('cohort entitlement live-workshop diff', () => {
+	it('falls back to the first user membership when the purchase organization has no membership', async () => {
+		prepareDiff(['old-workshop'], {}, [{
+			id: 'purchase-1',
+			fields: { source: 'comp', earlyAccess: true },
+			organizationId: 'purchase-org',
+		}])
+		mocks.membership.mockResolvedValueOnce(undefined)
+		mocks.membership.mockResolvedValueOnce({
+			id: 'fallback-member', organizationId: 'fallback-org',
+		})
+		await expect(
+			syncUserCohortEntitlementsWithIds('test-user', 'test-cohort', [
+				'old-workshop', 'new-workshop',
+			]),
+		).resolves.toMatchObject({ updated: 1 })
+		const dialect = new MySqlDialect()
+		expect(mocks.membership).toHaveBeenCalledTimes(2)
+		expect(
+			dialect.sqlToQuery(mocks.membership.mock.calls[0]![0].where!).params,
+		).toEqual(['test-user', 'purchase-org'])
+		expect(
+			dialect.sqlToQuery(mocks.membership.mock.calls[1]![0].where!).params,
+		).toEqual(['test-user'])
+		expect(mocks.created).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({
+				organizationId: 'fallback-org',
+				organizationMembershipId: 'fallback-member',
+				metadata: { contentIds: ['new-workshop'], earlyAccess: true },
+			}),
+		)
+	})
+
+	it('keeps the purchase organization membership when it exists', async () => {
+		prepareDiff(['old-workshop'], {}, [{
+			id: 'purchase-1', fields: {}, organizationId: 'purchase-org',
+		}])
+		mocks.membership.mockResolvedValueOnce({
+			id: 'scoped-member', organizationId: 'purchase-org',
+		})
+		await syncUserCohortEntitlementsWithIds('test-user', 'test-cohort', [
+			'old-workshop', 'new-workshop',
+		])
+		expect(mocks.membership).toHaveBeenCalledOnce()
+		expect(mocks.created).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({
+				organizationId: 'purchase-org',
+				organizationMembershipId: 'scoped-member',
+			}),
+		)
+	})
+
 	it.each([
 		[{ source: 'comp', earlyAccess: true }, true],
 		[{ source: 'comp', earlyAccess: 'true' }, undefined],
