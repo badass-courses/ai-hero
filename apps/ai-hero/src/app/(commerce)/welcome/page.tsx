@@ -32,7 +32,7 @@ import {
 } from '@coursebuilder/commerce-next/post-purchase/subscription-welcome-page'
 import { convertToSerializeForNextResponse } from '@coursebuilder/commerce-next/utils/serialize-for-next-response'
 import { PostPurchaseDiscordAccess } from './welcome-discord-entry'
-import { welcomeStart } from './welcome-start'
+import { productPagePath, welcomeStart } from './welcome-start'
 import {
 	PURCHASE_PRIMARY_BUTTON,
 	PurchaseCard,
@@ -284,7 +284,10 @@ const Welcome = async (props: {
 							initiatePurchaseTransfer={initiatePurchaseTransfer}
 						/>
 					) : null}
-					<PurchaseShareRow productName={productName} />
+					<PurchaseShareRow
+						productName={productName}
+						productPath={productPagePath(productResources)}
+					/>
 				</PurchaseRows>
 			</PostPurchaseShell>
 		)
