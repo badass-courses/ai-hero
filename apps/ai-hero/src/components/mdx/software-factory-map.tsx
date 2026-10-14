@@ -158,6 +158,16 @@ const PACES: Record<Pace, (t: number) => number> = {
 	slowing: (t) => 1 - PACES.quickening(1 - t),
 }
 
+/** Each pace undone: how far through its run a pulse is once it has covered
+    `share` of the distance. The flash on landing is timed with it: a slowing
+    pulse covers most of its line early and a quickening one late, so a
+    constant-speed guess lights the box after the one and before the other. */
+const ARRIVALS: Record<Pace, (share: number) => number> = {
+	steady: (share) => share,
+	quickening: (share) => (Math.sqrt(1 + 8 * share) - 1) / 2,
+	slowing: (share) => 1 - ARRIVALS.quickening(1 - share),
+}
+
 type Point = readonly [x: number, y: number]
 
 /** Where a connection runs in one layout: the corners it turns, ending at the
@@ -236,12 +246,14 @@ function plan(routes: Record<EdgeKey, Route>): Flows {
 		let clock = (index * FLOW_LOOP) / ARMS.length
 		for (const key of arm) {
 			const line = draw(routes[key].points)
-			const run = (line.length + PULSE + 2) / FLOW_SPEED
-			const lands = clock + (line.length + 1) / FLOW_SPEED
+			const travel = line.length + PULSE + 2
+			const run = travel / FLOW_SPEED
+			const pace = EDGES[key].pace
+			const lands = clock + ARRIVALS[pace]((line.length + 1) / travel) * run
 			flows[key] = {
 				...line,
 				chip: routes[key].chip,
-				timing: pacing(clock, run, EDGES[key].pace),
+				timing: pacing(clock, run, pace),
 				lands,
 			}
 			clock = lands + FLOW_DWELL
