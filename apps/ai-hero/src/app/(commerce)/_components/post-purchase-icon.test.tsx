@@ -29,33 +29,35 @@ describe('post-purchase icons', () => {
 			expect(html).toContain(`data-purchase-badge="${kind}"`)
 			expect(html).toContain('h-10 w-10')
 			expect(html).toContain('bg-accent-fill text-accent-fill-foreground')
-			expect(html).toContain(kind === 'ready' ? 'h-8 w-8' : 'h-4 w-4')
+			expect(html).toContain(kind === 'ready' ? 'h-5 w-5' : 'h-4 w-4')
 			expect(html).not.toContain('text-primary')
 		},
 	)
 
 	it('keeps the tick centred with equal stroke bounds and no scale distortion', () => {
 		const html = renderToStaticMarkup(<PostPurchaseIconBadge kind="ready" />)
-		expect(html).toContain('points="4 12 9 20 20 4"')
+		expect(html).toContain('d="M20 6 9 17l-5-5"')
 		expect(html).toContain('stroke-width="2"')
 		expect(html).toContain('stroke-linecap="round"')
 		expect(html).not.toContain('transform=')
 	})
 
-	it('has a 20px eyebrow tick with a heavier stroke', () => {
+	it('has a 20px eyebrow tick drawn like the stepper\'s', () => {
 		const html = renderToStaticMarkup(
 			<PostPurchaseIconBadge kind="ready" size="sm" />,
 		)
 		expect(html).toContain('h-5 w-5')
-		expect(html).toContain('h-3 w-3')
-		expect(html).toContain('stroke-width="3.25"')
+		expect(html).toContain('h-3.5 w-3.5')
+		expect(html).toContain('stroke-width="2.75"')
+		expect(html).toContain('d="M20 6 9 17l-5-5"')
 		expect(html).toContain('bg-accent-fill text-accent-fill-foreground')
 	})
 
 	it('plays the checkmark once, never loops', () => {
 		const animation = css.match(/animation:\s*purchase-checkmark([^;]+);/)?.[1]
 		expect(animation).toBeDefined()
-		expect(animation).toMatch(/300ms/)
+		expect(animation).toMatch(/450ms/)
+		expect(css).toMatch(/\.checkmark \{[^}]*animation-delay: 150ms;/)
 		expect(animation).toMatch(/\)\s+1\s+both\s*$/)
 		expect(css).not.toMatch(/\binfinite\b/)
 		expect(css).not.toMatch(/animation-iteration-count/)

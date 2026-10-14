@@ -62,7 +62,7 @@ export function PurchaseStatusPoller({ sessionId }: { sessionId: string }) {
 				state.matches('failed')
 					? 'failed'
 					: state.matches('ready')
-						? 'ready'
+						? 'opening'
 						: state.context.slow
 							? 'slow'
 							: 'processing'

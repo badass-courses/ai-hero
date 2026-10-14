@@ -1,0 +1,218 @@
+/*
+ * Post-purchase motion. The rules outside the media query are the final
+ * frames, so reduced motion and the first paint both show the settled state.
+ * Things move only when the state changes in place (the waiting screen), or
+ * once when a screen's real content arrives.
+ */
+
+/* A step's mark: a faint ring while it waits, an arc while it works, a
+   drawn tick once it is done. */
+.stepIcon {
+	width: 14px;
+	height: 14px;
+	flex-shrink: 0;
+	margin-top: 2px;
+	overflow: visible;
+}
+
+.ring {
+	opacity: 0.3;
+}
+
+.arc {
+	opacity: 0;
+	transform-box: fill-box;
+	transform-origin: center;
+}
+
+.check {
+	stroke-dasharray: 1;
+	stroke-dashoffset: 1;
+}
+
+[data-state='active'] .arc {
+	opacity: 1;
+}
+
+[data-state='done'] .ring {
+	opacity: 0;
+}
+
+[data-state='done'] .check {
+	stroke-dashoffset: 0;
+}
+
+/* A sheen that passes along a working step's fill, clipped to the fill. */
+.bar::after {
+	content: '';
+	position: absolute;
+	inset-block: 0;
+	left: 0;
+	width: var(--fill, 0%);
+	opacity: 0;
+	background-image: linear-gradient(
+		90deg,
+		transparent,
+		rgb(255 255 255 / 0.7) 50%,
+		transparent
+	);
+	background-size: 40% 100%;
+	background-repeat: no-repeat;
+	background-position: -67% 0;
+}
+
+/* Fold-away: a grid row that animates between its content's height and 0. */
+.collapse {
+	display: grid;
+	grid-template-rows: 1fr;
+}
+
+.collapse > * {
+	min-height: 0;
+	overflow: hidden;
+}
+
+.collapse[data-open='false'] {
+	grid-template-rows: 0fr;
+	opacity: 0;
+}
+
+/* After a hand-over the artwork was already on screen: no second fade-in. */
+[data-handover] .artwork img {
+	animation: none;
+}
+
+/* Two layers in one cell, so a placeholder and what replaces it cross. */
+.stack {
+	display: grid;
+}
+
+.stack > * {
+	grid-area: 1 / 1;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.bar > [data-indicator] {
+		transition: transform 650ms cubic-bezier(0.22, 1, 0.36, 1) var(--delay, 0ms);
+	}
+
+	.bar::after {
+		transition: opacity 300ms ease-out;
+	}
+
+	[data-state='active'] > .bar::after {
+		opacity: 1;
+		animation: purchase-sheen 2.2s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+	}
+
+	.ring,
+	.arc {
+		transition: opacity 250ms ease-out var(--delay, 0ms);
+	}
+
+	[data-state='active'] .arc {
+		animation: purchase-spin 800ms linear infinite;
+	}
+
+	.check {
+		transition: stroke-dashoffset 450ms cubic-bezier(0.22, 1, 0.36, 1)
+			calc(var(--delay, 0ms) + 200ms);
+	}
+
+	/* A label that changes in place: never on first paint. */
+	.swap {
+		animation: purchase-swap 400ms cubic-bezier(0.22, 1, 0.36, 1) both
+			var(--delay, 0ms);
+	}
+
+	.collapse {
+		transition:
+			grid-template-rows 500ms cubic-bezier(0.22, 1, 0.36, 1),
+			opacity 350ms cubic-bezier(0.22, 1, 0.36, 1);
+	}
+
+	.fade {
+		transition: opacity 250ms ease-out;
+	}
+
+	.reveal {
+		transition:
+			opacity 500ms cubic-bezier(0.22, 1, 0.36, 1),
+			transform 500ms cubic-bezier(0.22, 1, 0.36, 1),
+			filter 500ms cubic-bezier(0.22, 1, 0.36, 1);
+	}
+
+	@starting-style {
+		.reveal {
+			opacity: 0;
+			transform: translateY(6px);
+			filter: blur(6px);
+		}
+	}
+
+	/* A screen's real content settles in, the card's sections first and then
+	   the receipt under it. */
+	.arrive :is(.card, .rows) > * {
+		animation: purchase-rise 450ms cubic-bezier(0.22, 1, 0.36, 1) both;
+	}
+
+	.arrive[data-handover] .card > :first-child {
+		animation: none;
+	}
+
+	/* The heading was there already; what the screen adds under it is new. */
+	.arrive[data-handover] .card > :first-child h1 ~ * {
+		animation: purchase-rise 450ms cubic-bezier(0.22, 1, 0.36, 1) 60ms both;
+	}
+
+	.arrive .card > :nth-child(2) {
+		animation-delay: 60ms;
+	}
+
+	.arrive .card > :nth-child(n + 3) {
+		animation-delay: 120ms;
+	}
+
+	.arrive .rows > :nth-child(1) {
+		animation-delay: 160ms;
+	}
+
+	.arrive .rows > :nth-child(2) {
+		animation-delay: 200ms;
+	}
+
+	.arrive .rows > :nth-child(n + 3) {
+		animation-delay: 240ms;
+	}
+}
+
+/* One pass, then a rest before the next. */
+@keyframes purchase-sheen {
+	0% {
+		background-position: -67% 0;
+	}
+	60%,
+	100% {
+		background-position: 167% 0;
+	}
+}
+
+@keyframes purchase-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+@keyframes purchase-swap {
+	from {
+		opacity: 0;
+		transform: translateY(3px);
+	}
+}
+
+@keyframes purchase-rise {
+	from {
+		opacity: 0;
+		transform: translateY(6px);
+	}
+}

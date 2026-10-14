@@ -4,6 +4,8 @@ import { TYPE } from '@/components/landing/type'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+import styles from './post-purchase-motion.module.css'
+
 /** The centred column every post-purchase screen is laid out in. */
 export function PurchaseColumn({ children }: { children: React.ReactNode }) {
 	return (
@@ -16,7 +18,12 @@ export function PurchaseColumn({ children }: { children: React.ReactNode }) {
 /** 16:9 artwork beside the purchase's name; stripes stand in for none. */
 export function PurchaseArtwork({ src }: { src?: string | null }) {
 	return (
-		<div className="border-border bg-stripes relative aspect-video w-32 shrink-0 overflow-hidden rounded-[6px] border sm:w-40">
+		<div
+			className={cn(
+				'border-border bg-stripes relative aspect-video w-32 shrink-0 overflow-hidden rounded-[6px] border sm:w-40',
+				styles.artwork,
+			)}
+		>
 			{src ? (
 				<Image
 					src={src}
@@ -45,6 +52,7 @@ export function PurchaseCard({
 		<div
 			className={cn(
 				'border-input bg-card text-card-foreground flex flex-col rounded-[12px] border [&>*+*]:border-t [&>*+*]:border-[color:var(--ah-line-soft)]',
+				styles.card,
 				className,
 			)}
 		>
@@ -132,7 +140,12 @@ export function PurchaseNextStep({
  */
 export function PurchaseRows({ children }: { children: React.ReactNode }) {
 	return (
-		<div className="border-border flex flex-col border-t [&>*]:border-b [&>*]:border-border">
+		<div
+			className={cn(
+				'border-border flex flex-col border-t [&>*]:border-b [&>*]:border-border',
+				styles.rows,
+			)}
+		>
 			{children}
 		</div>
 	)
