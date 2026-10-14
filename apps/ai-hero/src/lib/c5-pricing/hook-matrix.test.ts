@@ -352,6 +352,7 @@ function signedIn(
 		email: 'matrix@example.test',
 		hasValidPurchase: validPurchase,
 		holdsRestrictedPurchase: false,
+		holdsValidProductPurchase: false,
 		facts: {
 			product,
 			buyer: { userId: 'user-matrix', sourceRefs: ['matrix:user'] },

@@ -32,6 +32,7 @@ const owner: BuyerRead = {
 	email: 'owner@example.test',
 	hasValidPurchase: true,
 	holdsRestrictedPurchase: false,
+	holdsValidProductPurchase: false,
 	facts: {
 		product: {
 			appProductId: C5_PRODUCT_ID,

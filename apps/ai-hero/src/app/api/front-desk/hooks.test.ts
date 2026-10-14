@@ -18,6 +18,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/c5-pricing/purchase-decision-store', () => ({
 	drizzleC5DecisionStore: () => ({ spentBy: mocks.spentBy }),
 }))
+// This facade consumes verified gift facts; it does not exercise Next request
+// cookies, Redis flags or their application bootstrap/import graph.
+vi.mock('@/lib/c5-pricing/gift-server', () => ({
+	signedGiftFact: vi.fn(async () => ({ value: null, sourceRefs: ['gift:no-valid-cookie'] })),
+}))
 vi.mock('@/lib/c5-pricing/config', () => ({
 	c5DecisionCutover: () => new Date('2030-01-01T00:00:00Z'),
 }))

@@ -159,7 +159,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 
 	const share = product?.id === C5_PRODUCT_ID ? await giftSharePresentation(typeof searchParams.via === 'string' ? searchParams.via : undefined).catch(() => null) : null
 	const giftFact = product?.id === C5_PRODUCT_ID ? await signedGiftFact() : null
-	const giftEnrollmentOpen = await giftEnrollmentAccess(giftFact && 'value' in giftFact ? giftFact.value : null)
+	const giftEnrollmentOpen = await giftEnrollmentAccess(giftFact && 'value' in giftFact ? giftFact.value : null).catch(() => false)
 	const giftBanner = !share || share.closed ? null : !share.available ? 'This gift has been used.' : giftFact && 'value' in giftFact && giftFact.value?.codeRef === share.codeRef ? giftShareTitle(share.firstName, true) : giftShareTitle(share.firstName, false)
 
 	// Already on this cohort's waitlist. Resolved here, on the server, because

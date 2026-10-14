@@ -41,6 +41,8 @@ export type BuyerRead =
 			readonly hasValidPurchase: boolean | null
 			/** Whether the buyer holds a region-restricted purchase of this product. */
 			readonly holdsRestrictedPurchase: boolean
+			/** A Valid purchase of this exact product, not any historical purchase. */
+			readonly holdsValidProductPurchase: boolean
 	  }
 	| {
 			readonly kind: 'anonymous'
@@ -190,6 +192,21 @@ export function createC5AuthoritativePrice(deps: C5PricingDeps) {
 		})
 		if (opening === 'closed' && disabled)
 			return refusal('closed', [APP_REASONS.killSwitch], base)
+		if (
+			opening === 'closed' &&
+			openingWindow?.opensAt != null &&
+			now.getTime() < openingWindow.opensAt
+		) {
+			const policyOpens = policyOpeningWindow(policy.value.policy)?.opensAt
+			return {
+				...refusal(
+					policyOpens != null && now.getTime() < policyOpens ? 'not-open' : 'closed',
+					['not-open'],
+					{ ...base, policyVersion: policy.value.version },
+				),
+				closesAt: openingWindow.closesAt,
+			}
+		}
 
 		const orderKind = quantity > 1 ? 'team' : 'individual'
 		const buyer = await deps.buyer({
@@ -210,6 +227,9 @@ export function createC5AuthoritativePrice(deps: C5PricingDeps) {
 			buyer.holdsRestrictedPurchase
 		)
 			return refusal('held', [APP_REASONS.restrictedHolder], withPolicy)
+
+		if (opening === 'gift' && buyer.kind === 'buyer' && buyer.holdsValidProductPurchase)
+			return refusal('held', [APP_REASONS.alreadyOwned], withPolicy)
 
 		const product = buyer.kind === 'buyer' ? buyer.facts.product : buyer.product
 		// Course Builder resolved the price it will charge; the facts must be

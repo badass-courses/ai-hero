@@ -69,6 +69,7 @@ const signedIn = (
 	facts,
 	hasValidPurchase,
 	holdsRestrictedPurchase: false,
+	holdsValidProductPurchase: false,
 })
 
 let deps: C5PricingDeps
@@ -115,6 +116,30 @@ beforeEach(() => {
 })
 
 describe('createC5AuthoritativePrice', () => {
+	it('closes a non-gift checkout before product opening even with the switch on', async () => {
+		deps = makeDeps({
+			price: vi.fn(price),
+			openingWindow: async () => ({ opensAt: EARLY.getTime() + 86400000, checkoutStopsAt: Date.parse(SYNTHETIC_WINDOWS.checkoutStopsAt), closesAt: Date.parse(SYNTHETIC_WINDOWS.closesAt) }),
+		})
+		await expect(ask({ purpose: 'checkout' })).resolves.toMatchObject({ kind: 'closed' })
+		expect(deps.price).not.toHaveBeenCalled()
+	})
+
+	it('does not block normal switch-on checkout on a missing product window after opening', async () => {
+		deps = makeDeps({ openingWindow: async () => null })
+		await expect(ask({ purpose: 'checkout' })).resolves.toMatchObject({ kind: 'priced', amountCents: 80_000 })
+	})
+
+	it('holds early gifts for current C5 owners and restricted holders, but not other-product owners', async () => {
+		const code = { codeRef: 'fixture-gift', unitPrice: 40_000, expiresAt: '2030-02-15T00:00:00.000Z', maxUses: 5, usesTaken: 0 }
+		deps = makeDeps({ disabled: () => true, overrideDisabled: () => false, code: async () => known(code), now: () => new Date('2029-12-20T00:00:00.000Z') })
+		for (const ownership of [{ holdsValidProductPurchase: true }, { holdsRestrictedPurchase: true }]) {
+			buyer = { ...signedIn(), ...ownership } as BuyerRead
+			await expect(ask({ purpose: 'checkout' })).resolves.toMatchObject({ kind: 'held' })
+		}
+		buyer = signedIn(buyerFacts(), true)
+		await expect(ask({ purpose: 'checkout' })).resolves.toMatchObject({ kind: 'priced', amountCents: 40_000 })
+	})
 	it('prices verified gifts exactly before opening, without consuming credit; ordinary switch-on keeps cheaper pricing', async () => {
 		const code = { codeRef: 'fixture-gift', unitPrice: 60_000, expiresAt: '2030-02-15T00:00:00.000Z', maxUses: 5, usesTaken: 0 }
 		buyer = signedIn(buyerFacts({ alumni: known('c4' as const), credit: known({ paid: 15_000, source: 'fixture-credit' }) }))

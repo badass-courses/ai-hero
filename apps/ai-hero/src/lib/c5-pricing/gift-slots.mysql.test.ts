@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import mysql, { type Connection } from "mysql2/promise";
+import type Stripe from "stripe";
 import { beforeAll, afterAll, beforeEach, describe, it, expect } from "vitest";
 import { validateMySqlIntegrationServerUrl } from "@/lib/team-purchase-mysql-test-guard";
 import {
@@ -125,6 +126,28 @@ integration("gift slots on real MySQL", () => {
         usesTaken(connection, reference, now),
       ),
     ).toBe(5);
+  });
+  it("creates only one provider session for six concurrent gift checkouts at four uses", async () => {
+    for (let i = 0; i < 4; i++) await reserve(`initial-${i}`);
+    // Every contender sees the same still-available fact before reservation.
+    const code = await withConnection(c => readGiftCode(c, reference, C5_PRODUCT_ID, now));
+    expect(code?.usesTaken).toBe(4);
+    let created = 0;
+    const results = await Promise.allSettled(Array.from({ length: 6 }, (_, i) => createGiftCheckout({
+      params: { mode: 'payment', expires_at: expiresAt, line_items: [{ quantity: 1 }], metadata: { productId: C5_PRODUCT_ID, bulk: 'false', expectedTotalCents: '40000', decisionRef: encodeDecisionRef('0000000000000000', null, reference) } },
+      idempotencyKey: `fixture-concurrent-${i}`,
+      create: async () => { created++; return { id: `cs_fixture_${i}` } as Stripe.Checkout.Session; },
+      deps: {
+        fact: async () => ({ value: code, sourceRefs: ['synthetic'] }),
+        claim: input => withConnection(connection => claimGiftSlot({ ...input, connection, productId: C5_PRODUCT_ID, now })),
+        bind: (claim, id) => withConnection(connection => bindGiftSlot(connection, claim, id)),
+        flag: async () => { throw new Error('fixture-unexpected-bind-failure'); },
+      },
+    })));
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter(result => result.status === 'rejected')).toHaveLength(5);
+    expect(created).toBe(1);
+    expect(await withConnection(connection => usesTaken(connection, reference, now))).toBe(5);
   });
   it("releases expired sessions, but spent uses survive late expiry, refunds, and disputes", async () => {
     await reserve("expired");

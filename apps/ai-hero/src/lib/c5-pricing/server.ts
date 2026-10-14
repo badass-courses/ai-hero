@@ -69,7 +69,7 @@ async function readBuyer(input: {
 		// are someone else's.
 		if (!facts || facts.buyer.userId !== input.userId)
 			return { kind: 'unavailable', reason: 'identity-mismatch' }
-		const [[valid], restricted] = await Promise.all([
+		const [[valid], [validProduct], restricted] = await Promise.all([
 			db
 				.select({ id: purchases.id })
 				.from(purchases)
@@ -80,6 +80,15 @@ async function readBuyer(input: {
 					),
 				)
 				.limit(1),
+			db
+				.select({ id: purchases.id })
+				.from(purchases)
+				.where(and(
+					eq(purchases.userId, input.userId),
+					eq(purchases.productId, input.productId),
+					eq(purchases.status, 'Valid'),
+				))
+				.limit(1),
 			holdsRestrictedPurchase(input.userId, input.productId),
 		])
 		return {
@@ -88,6 +97,7 @@ async function readBuyer(input: {
 			facts,
 			hasValidPurchase: Boolean(valid),
 			holdsRestrictedPurchase: restricted,
+			holdsValidProductPurchase: Boolean(validProduct),
 		}
 	} catch {
 		return { kind: 'unavailable', reason: 'facts-read-failed' }
