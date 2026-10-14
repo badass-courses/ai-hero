@@ -1224,6 +1224,10 @@ body {
 	--factory-receded: color-mix(in oklab, var(--foreground) 20%, var(--background));
 	--factory-lit: color-mix(in oklab, var(--foreground) 46%, var(--card));
 	--factory-ease: cubic-bezier(0.22, 1, 0.36, 1);
+	/* A drawing, not text: the arrow over it, no I-beam and no selection over
+	   its labels. Nothing in it can be clicked, so nothing takes the hand. */
+	cursor: default;
+	user-select: none;
 }
 .ah-factory-map [data-accent] {
 	--factory-lit: var(--accent-fill);
