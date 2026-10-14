@@ -207,6 +207,15 @@ export function evaluateAccept(params: {
 	return { ok: true, kind: 'accept' }
 }
 
+/**
+ * Whether a screen may offer this purchase for transfer: the purchase rule
+ * that initiate and accept both enforce, so no screen offers what the server
+ * then refuses.
+ */
+export function isTransferablePurchase(purchase: TransferPurchase): boolean {
+	return evaluatePurchasePolicy(purchase) === null
+}
+
 function evaluatePurchasePolicy(
 	purchase: TransferPurchase | null | undefined,
 ): TransferDenial | null {

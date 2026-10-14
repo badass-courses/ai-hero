@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
 	MAGIC_LINK_COOKIE_NAME,
+	callbackPath,
 	createMagicLinkConfirmHandler,
 	createMagicLinkGetHandler,
 	readMagicLinkCookie,
@@ -174,4 +175,74 @@ describe('magic-link confirmation boundary', () => {
 			expect(authHandler).not.toHaveBeenCalled()
 		},
 	)
+})
+
+describe('a sign-in link for the account already signed in', () => {
+	const siteUrl = 'https://www.aihero.dev'
+	const transferLink = () =>
+		new Request(
+			'https://www.aihero.dev/api/auth/callback/postmark?callbackUrl=https%3A%2F%2Fwww.aihero.dev%2Ftransfer%2Fput_1&token=used-token&email=Learner%40Example.com',
+		)
+
+	it('goes straight to where it points, without spending the token', async () => {
+		const authHandler = vi.fn(async () => new Response(null, { status: 204 }))
+		const handler = createMagicLinkGetHandler(authHandler, {
+			secret,
+			now,
+			siteUrl,
+			signedInEmail: async () => 'learner@example.com',
+		})
+
+		const response = await handler(transferLink())
+
+		expect(response.status).toBe(303)
+		expect(response.headers.get('location')).toBe('/transfer/put_1')
+		expect(response.headers.get('cache-control')).toBe('no-store')
+		expect(response.headers.get('set-cookie')).toContain('Max-Age=0')
+		expect(response.headers.get('set-cookie')).not.toContain('used-token')
+		expect(authHandler).not.toHaveBeenCalled()
+	})
+
+	it.each([['someone@else.example'], [null]])(
+		'asks to confirm as usual when signed in as %s',
+		async (signedIn) => {
+			const handler = createMagicLinkGetHandler(
+				vi.fn(async () => new Response(null, { status: 204 })),
+				{ secret, now, siteUrl, signedInEmail: async () => signedIn },
+			)
+
+			const response = await handler(transferLink())
+
+			expect(response.status).toBe(307)
+			expect(response.headers.get('location')).toBe('/login/verify')
+		},
+	)
+
+	it('reads the session only for a sign-in link', async () => {
+		const signedInEmail = vi.fn(async () => 'learner@example.com')
+		const handler = createMagicLinkGetHandler(
+			vi.fn(async () => new Response(null, { status: 204 })),
+			{ secret, now, siteUrl, signedInEmail },
+		)
+
+		await handler(new Request('https://www.aihero.dev/api/auth/session'))
+
+		expect(signedInEmail).not.toHaveBeenCalled()
+	})
+})
+
+describe('callbackPath', () => {
+	it.each([
+		['/transfer/put_1?from=email#accept', '/transfer/put_1?from=email#accept'],
+		['https://www.aihero.dev/welcome', '/welcome'],
+		['https://www.aihero.dev//evil.example', '/evil.example'],
+		['https://evil.example/welcome', '/'],
+		['//evil.example/welcome', '/'],
+		['/\\evil.example', '/'],
+		['/\t/evil.example', '/'],
+		['javascript:alert(1)', '/'],
+		[null, '/'],
+	])('sends %j to %j', (input, expected) => {
+		expect(callbackPath(input, 'https://www.aihero.dev')).toBe(expected)
+	})
 })

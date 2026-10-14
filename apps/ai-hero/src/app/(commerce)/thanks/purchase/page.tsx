@@ -17,6 +17,7 @@ import {
 	getPurchaseTransferForPurchaseId,
 	initiatePurchaseTransfer,
 } from '@/purchase-transfer/purchase-transfer-actions'
+import { isTransferablePurchase } from '@/purchase-transfer/transfer-lifecycle'
 import { getServerAuthSession } from '@/server/auth'
 import { TYPE } from '@/components/landing/type'
 import { PurchaseStatusPoller } from './purchase-status-poller'
@@ -239,15 +240,17 @@ async function PurchaseThanksPageLoaded({
 					purchase={{ product: { name: stripeProductName }, ...purchase }}
 					productName={stripeProductName}
 				/>
-				<PurchaseTransferRow
-					onTransferInitiated={async () => {
-						'use server'
-						revalidatePath('/thanks/purchase')
-					}}
-					purchaseUserTransfers={purchaseUserTransfers}
-					cancelPurchaseTransfer={cancelPurchaseTransfer}
-					initiatePurchaseTransfer={initiatePurchaseTransfer}
-				/>
+				{isTransferablePurchase(purchase) ? (
+					<PurchaseTransferRow
+						onTransferInitiated={async () => {
+							'use server'
+							revalidatePath('/thanks/purchase')
+						}}
+						purchaseUserTransfers={purchaseUserTransfers}
+						cancelPurchaseTransfer={cancelPurchaseTransfer}
+						initiatePurchaseTransfer={initiatePurchaseTransfer}
+					/>
+				) : null}
 			</PurchaseRows>
 		</PostPurchaseShell>
 	)

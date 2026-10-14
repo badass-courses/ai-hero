@@ -6,6 +6,7 @@ import {
 	evaluateCancel,
 	evaluateInitiate as decideInitiate,
 	isTerminalTransferState,
+	isTransferablePurchase,
 	isTransferExpired,
 	TRANSFER_STATES,
 	type TransferSnapshot,
@@ -83,6 +84,24 @@ describe('included purchase transfer policy', () => {
 				now: NOW,
 			}),
 		).toEqual({ ok: true })
+	})
+	it('tells a screen not to offer what initiate would refuse', () => {
+		expect(isTransferablePurchase(standardPurchase)).toBe(true)
+		expect(
+			isTransferablePurchase({ productId: 'other', bulkCouponId: 'coupon' }),
+		).toBe(true)
+		expect(
+			isTransferablePurchase({
+				productId: 'product-s00zs',
+				redeemedBulkCouponId: 'team-coupon',
+			}),
+		).toBe(false)
+		expect(
+			isTransferablePurchase({
+				productId: 'product-s00zs',
+				bulkCouponId: 'team-coupon',
+			}),
+		).toBe(false)
 	})
 	it('fails closed when the authoritative purchase is missing', () => {
 		expect(
