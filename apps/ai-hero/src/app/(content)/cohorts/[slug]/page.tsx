@@ -10,7 +10,7 @@ import LayoutClient from '@/components/layout-client'
 import { TYPE } from '@/components/landing/type'
 import { formatOpensIn } from '@/lib/cohort-opening'
 import { giftSharePresentation, giftShareTitle } from '@/lib/c5-pricing/gift-share'
-import { signedGiftFact } from '@/lib/c5-pricing/gift-server'
+import { signedGiftFact, giftEnrollmentAccess } from '@/lib/c5-pricing/gift-server'
 import { GiftShareAttribution } from '@/components/gift-share-attribution'
 import { C5_PRODUCT_ID } from '@/lib/c5-pricing/products'
 import { DiscountCountdown } from '@/components/mdx/mdx-components'
@@ -158,7 +158,8 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	} = pageData
 
 	const share = product?.id === C5_PRODUCT_ID ? await giftSharePresentation(typeof searchParams.via === 'string' ? searchParams.via : undefined).catch(() => null) : null
-	const giftFact = share ? await signedGiftFact() : null
+	const giftFact = product?.id === C5_PRODUCT_ID ? await signedGiftFact() : null
+	const giftEnrollmentOpen = await giftEnrollmentAccess(giftFact && 'value' in giftFact ? giftFact.value : null)
 	const giftBanner = !share || share.closed ? null : !share.available ? 'This gift has been used.' : giftFact && 'value' in giftFact && giftFact.value?.codeRef === share.codeRef ? giftShareTitle(share.firstName, true) : giftShareTitle(share.firstName, false)
 
 	// Already on this cohort's waitlist. Resolved here, on the server, because
@@ -193,7 +194,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 
 	// Controls whether sidebar shows pricing container (which handles waitlist internally)
 	const ALLOW_PURCHASE =
-		allowPurchase === 'true' ||
+		giftEnrollmentOpen || allowPurchase === 'true' ||
 		cohortProps?.product?.fields.state === 'published'
 
 	// One reading of the enrollment window drives every call to action outside
@@ -204,7 +205,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	const openEnrollmentDate = openEnrollment
 		? new Date(openEnrollment as string)
 		: null
-	const enrollmentPhase = cohortEnrollmentPhase({
+	const enrollmentPhase = giftEnrollmentOpen ? 'open' : cohortEnrollmentPhase({
 		now: new Date(),
 		openEnrollment: openEnrollment as string | undefined,
 		closeEnrollment: closeEnrollment as string | undefined,
@@ -213,7 +214,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 		cohortCallsToAction({
 			phase: enrollmentPhase,
 			productState: cohortProps?.product?.fields?.state,
-			allowPurchase,
+			allowPurchase: giftEnrollmentOpen ? 'true' : allowPurchase,
 			hasCohortAccess,
 			isOnWaitlist,
 			hasActiveProduct: cohortProps.product?.status === 1,
@@ -703,6 +704,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 						) : ALLOW_PURCHASE ? (
 							<CohortPricingWidgetContainer
 								{...cohortProps}
+								giftEnrollmentOpen={giftEnrollmentOpen}
 								searchParams={searchParams}
 								enrollmentOpenDateString={enrollmentOpenDateString}
 								isOnWaitlist={isOnWaitlist}

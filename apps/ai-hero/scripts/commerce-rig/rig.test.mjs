@@ -298,7 +298,8 @@ test('front-desk stub serves only its private data, behind each route\'s own tok
 test('rig Redis stand-in allows only the local C5 flag read, never writes or deployed flags', async () => {
   const { frontDeskHandler } = await import('./front-desk-stub.mjs')
   const { Redis } = await import('@upstash/redis')
-  const server = http.createServer(frontDeskHandler({ policy: { version: 'synthetic@1' } }, { pricing: 'p', quotes: 'q' }))
+  const data = { policy: { version: 'synthetic@1' } }
+  const server = http.createServer(frontDeskHandler(data, { pricing: 'p', quotes: 'q' }))
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   const base = `http://127.0.0.1:${server.address().port}`
   try {
@@ -308,6 +309,10 @@ test('rig Redis stand-in allows only the local C5 flag read, never writes or dep
     await assert.rejects(redis.get('flag:production:c5-pricing-enabled'), /rig-flag-command-refused/)
     const response = await fetch(`${base}/pipeline`, { method: 'POST', headers: { authorization: 'Bearer rig-disabled' }, body: JSON.stringify([['get', 'flag:development:c5-pricing-enabled']]) })
     assert.deepEqual(await response.json(), [{ result: null }])
+    for (const enabled of [false, true]) {
+      data.c5PricingEnabled = enabled
+      assert.equal(await redis.get('flag:development:c5-pricing-enabled'), enabled)
+    }
     assert.equal((await fetch(base, { method: 'POST', body: JSON.stringify(['get', 'flag:development:c5-pricing-enabled']) })).status, 403)
   } finally { server.close() }
 })

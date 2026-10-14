@@ -17,6 +17,8 @@ import { createC5AuthoritativePrice, type BuyerRead } from './hook'
 import { holdsRestrictedPurchase } from './restricted-holder'
 import { signedGiftFact } from './gift-server'
 import { c5PricingClosed } from './switch-server'
+import { c5PricingDisabled } from './config'
+import { c5OpeningWindow } from './buyer-opening-server'
 import { trustedPricingCountry } from './trusted-country'
 
 /** Display reuses a buyer's facts this long; checkout always reads fresh. */
@@ -137,6 +139,8 @@ const decide = createC5AuthoritativePrice({
 	engineVersion: ENGINE_VERSION,
 	now: () => new Date(),
 	disabled: c5PricingClosed,
+	overrideDisabled: c5PricingDisabled,
+	openingWindow: c5OpeningWindow,
 })
 
 /** AI Hero's authoritative-price hook, as Course Builder calls it. */

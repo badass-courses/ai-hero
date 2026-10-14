@@ -115,6 +115,34 @@ beforeEach(() => {
 })
 
 describe('createC5AuthoritativePrice', () => {
+	it('prices verified gifts exactly before opening, without consuming credit; ordinary switch-on keeps cheaper pricing', async () => {
+		const code = { codeRef: 'fixture-gift', unitPrice: 60_000, expiresAt: '2030-02-15T00:00:00.000Z', maxUses: 5, usesTaken: 0 }
+		buyer = signedIn(buyerFacts({ alumni: known('c4' as const), credit: known({ paid: 15_000, source: 'fixture-credit' }) }))
+		const read = vi.fn(async () => known(code))
+		deps = makeDeps({ disabled: () => true, overrideDisabled: () => false, code: read, now: () => new Date('2029-12-20T00:00:00.000Z') })
+		for (const purpose of ['display', 'checkout'] as const) {
+			const decision = await ask({ purpose })
+			expect(decision).toMatchObject({ kind: 'priced', amountCents: 60_000 })
+			expect(decodeDecisionRef(decision!.decisionRef)).toMatchObject({ creditSource: null, codeDigest: expect.any(String) })
+		}
+		expect(read).toHaveBeenCalledTimes(2)
+		const productClose = Date.parse('2030-01-10T00:00:00.000Z')
+		deps = { ...deps, openingWindow: async () => ({ opensAt: Date.parse(SYNTHETIC_WINDOWS.opensAt), checkoutStopsAt: Date.parse(SYNTHETIC_WINDOWS.checkoutStopsAt), closesAt: productClose }) }
+		await expect(ask({ purpose: 'checkout' })).resolves.toMatchObject({ closesAt: productClose })
+		deps = makeDeps({ code: read })
+		const ordinary = await ask({ purpose: 'checkout' })
+		expect(ordinary).toMatchObject({ kind: 'priced', amountCents: 50_000 })
+		expect(decodeDecisionRef(ordinary!.decisionRef)?.creditSource).toBe('fixture-credit')
+	})
+
+	it('keeps switch-off checkout closed without a usable fresh server fact, including teams', async () => {
+		for (const code of [null, { codeRef: 'fixture-gift', unitPrice: 40_000, expiresAt: '2020-01-01T00:00:00.000Z', maxUses: 5, usesTaken: 0 }, { codeRef: 'fixture-gift', unitPrice: 40_000, expiresAt: '2030-02-15T00:00:00.000Z', maxUses: 5, usesTaken: 5 }]) {
+			deps = makeDeps({ disabled: () => true, overrideDisabled: () => false, code: async () => known(code) })
+			await expect(ask({ purpose: 'checkout' })).resolves.toMatchObject({ kind: 'closed' })
+		}
+		deps = makeDeps({ disabled: () => true, overrideDisabled: () => false, code: async () => known({ codeRef: 'fixture', unitPrice: 40_000, expiresAt: '2030-02-15T00:00:00.000Z', maxUses: 5, usesTaken: 0 }) })
+		await expect(ask({ purpose: 'checkout', quantity: 2 })).resolves.toMatchObject({ kind: 'closed' })
+	})
 	it('returns an explicit null, never undefined, for every other product', async () => {
 		const result = await ask({ productId: 'product-ma254' })
 		expect(result).toBeNull()
