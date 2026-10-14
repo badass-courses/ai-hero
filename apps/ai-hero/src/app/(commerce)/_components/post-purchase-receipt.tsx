@@ -204,8 +204,17 @@ export function PurchaseInviteTeam({
 	)
 }
 
-export function PurchaseShareRow({ productName }: { productName: string }) {
-	const text = `${productName} ${process.env.NEXT_PUBLIC_URL ?? ''}`.trim()
+/** Shares the product's own page; the site's home when there is none. */
+export function PurchaseShareRow({
+	productName,
+	productPath,
+}: {
+	productName: string
+	productPath?: string | null
+}) {
+	const site = process.env.NEXT_PUBLIC_URL
+	const url = site ? new URL(productPath ?? '', site).toString() : ''
+	const text = `${productName} ${url}`.trim()
 	return (
 		<PurchaseRow
 			label="Share"
@@ -216,7 +225,7 @@ export function PurchaseShareRow({ productName }: { productName: string }) {
 					rel="noopener noreferrer"
 					className={PURCHASE_GHOST_BUTTON}
 				>
-					<Icon name="Twitter" size="16" />
+					<Icon name="X" size="16" />
 					Share on X
 					<ArrowUpRight className="size-3.5" aria-hidden="true" />
 				</a>

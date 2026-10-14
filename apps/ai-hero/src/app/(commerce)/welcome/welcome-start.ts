@@ -27,6 +27,18 @@ export type WelcomeStart = {
 const PACIFIC = 'America/Los_Angeles'
 
 /**
+ * The product's own page: its first resource, which is the cohort, workshop
+ * or event the product sells.
+ */
+export function productPagePath(
+	productResources?: StartResource[] | null,
+): string | null {
+	const first = productResources?.[0]
+	const slug = first?.fields?.slug
+	return first && slug ? `/${pluralize(first.type)}/${slug}` : null
+}
+
+/**
  * Where the welcome page sends a buyer who owns a seat: the course's first
  * resource, or the cohort's page. Nothing for a buyer who only bought seats
  * for others, and nothing for a live ticket. The rules are the shared welcome
@@ -44,13 +56,12 @@ export function welcomeStart({
 	now?: Date
 }): WelcomeStart | null {
 	if (!ownsASeat) return null
-	const first = productResources?.[0]
-	const slug = first?.fields?.slug
-	if (!first || !slug) return null
+	const href = productPagePath(productResources)
+	if (!href) return null
 
 	if (product?.type === 'self-paced') {
 		return {
-			href: `/${pluralize(first.type)}/${slug}`,
+			href,
 			label: 'Start learning',
 			startsLabel: null,
 		}
@@ -67,7 +78,7 @@ export function welcomeStart({
 				? fields.timezone
 				: PACIFIC
 		return {
-			href: `/${pluralize(product.type)}/${slug}`,
+			href,
 			label: upcoming ? 'Go to your cohort' : 'Start learning',
 			startsLabel: upcoming
 				? `Class starts ${formatInTimeZone(startsAt, timezone, "MMM d 'at' h:mm a zzz")}. We'll email you when the first workshops unlock.`

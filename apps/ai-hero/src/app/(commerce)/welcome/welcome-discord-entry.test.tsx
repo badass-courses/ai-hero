@@ -141,4 +141,17 @@ describe('post-purchase Discord entry', () => {
 		expect(markup).toContain('Share on X')
 		expect(markup.match(/<h1/g)).toHaveLength(1)
 	})
+
+	it('shares the product page, not the home page', async () => {
+		vi.stubEnv('NEXT_PUBLIC_URL', 'https://site.example')
+		mocks.getProductResources.mockResolvedValue([
+			{ type: 'cohort', fields: { slug: 'sf-xdy1m' } },
+		])
+		const markup = await renderPurchaseWelcome(true)
+		vi.unstubAllEnvs()
+
+		expect(markup).toContain(
+			encodeURIComponent('Synthetic course https://site.example/cohorts/sf-xdy1m'),
+		)
+	})
 })

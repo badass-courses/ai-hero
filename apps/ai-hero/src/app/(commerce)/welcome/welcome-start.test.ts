@@ -1,5 +1,25 @@
 import { describe, expect, it } from 'vitest'
-import { welcomeStart } from './welcome-start'
+import { productPagePath, welcomeStart } from './welcome-start'
+
+describe('product page path', () => {
+	it('is the page of what the product sells', () => {
+		expect(
+			productPagePath([{ type: 'cohort', fields: { slug: 'sf-xdy1m' } }]),
+		).toBe('/cohorts/sf-xdy1m')
+		expect(
+			productPagePath([{ type: 'workshop', fields: { slug: 'crash-course' } }]),
+		).toBe('/workshops/crash-course')
+		expect(
+			productPagePath([{ type: 'event', fields: { slug: 'ralph' } }]),
+		).toBe('/events/ralph')
+	})
+
+	it('is nothing without a resource or a slug', () => {
+		expect(productPagePath([])).toBeNull()
+		expect(productPagePath(null)).toBeNull()
+		expect(productPagePath([{ type: 'cohort', fields: {} }])).toBeNull()
+	})
+})
 
 const now = new Date('2026-10-14T09:00:00Z')
 const cohort = (startsAt: string, timezone?: string) => ({
