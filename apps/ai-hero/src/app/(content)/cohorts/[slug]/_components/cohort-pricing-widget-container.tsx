@@ -4,19 +4,27 @@ import type { ParsedUrlQuery } from 'querystring'
 import * as React from 'react'
 import { useSession } from 'next-auth/react'
 import { PricingWidget } from '@/app/(content)/workshops/_components/pricing-widget'
+import { WORKSHOP_CTA_BUTTON } from '@/app/(content)/workshops/_components/workshop-cta-button'
 import { CldImage } from '@/components/cld-image'
 import { CheckoutSurveyBuyButton } from '@/components/commerce/checkout-survey-buy-button'
-import type { ProductPricingFeature } from '@/components/commerce/product-pricing-features'
 import { ConversionIntentButton } from '@/components/cta/conversion-intent-button'
 import { ConversionIntentForm } from '@/components/cta/conversion-intent-form'
+import { TYPE } from '@/components/landing/type'
 import { env } from '@/env.mjs'
 import type { CohortPageProps } from '@/lib/cohort'
 import { track } from '@/utils/analytics'
 import { formatCohortDateRange } from '@/utils/format-cohort-date'
 import { formatInTimeZone } from 'date-fns-tz'
-import { CheckCircle, Sparkles } from 'lucide-react'
+import { CheckCircle } from 'lucide-react'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
+
+import {
+	CohortIncludes,
+	cohortLessonFeatures,
+	type CohortWorkshopRef,
+} from './cohort-includes'
+import { CohortTeamLink } from './cohort-team-link'
 
 export const CohortPricingWidgetContainer: React.FC<
 	CohortPageProps & {
@@ -32,6 +40,12 @@ export const CohortPricingWidgetContainer: React.FC<
 		isOnWaitlist: boolean
 		/** Cookie- or session-resolved identity; known readers get one button. */
 		knownIdentity: boolean
+		/** The cohort's workshops, for the feature list's count. */
+		workshops: CohortWorkshopRef[]
+		/** Lessons across those workshops; 0 leaves the row out. */
+		lessonCount: number
+		/** The cohort's team page, when it has one. */
+		teamOptionsHref?: string
 	}
 > = ({
 	className,
@@ -39,6 +53,9 @@ export const CohortPricingWidgetContainer: React.FC<
 	enrollmentOpenDateString,
 	isOnWaitlist,
 	knownIdentity,
+	workshops,
+	lessonCount,
+	teamOptionsHref,
 	...props
 }) => {
 	const { status: sessionStatus } = useSession()
@@ -62,7 +79,22 @@ export const CohortPricingWidgetContainer: React.FC<
 	const { fields } = cohort
 	const { startsAt, endsAt, timezone } = fields
 	const product = products && products[0]
-	if (!product || product.status !== 1) return null
+
+	// Everything in the rail below the offer, for the states with no pricing
+	// card. The card carries both itself (its own checklist, its own "Buy for
+	// your team"), so these render only when the card does not.
+	const belowOffer = (
+		<>
+			{teamOptionsHref ? <CohortTeamLink href={teamOptionsHref} /> : null}
+			<CohortIncludes
+				className="border-t px-5 py-6"
+				workshops={workshops}
+				lessonCount={lessonCount}
+			/>
+		</>
+	)
+
+	if (!product || product.status !== 1) return belowOffer
 	const { openEnrollment, closeEnrollment } = product.fields || {}
 	const { allowPurchase } = searchParams || {}
 
@@ -86,27 +118,6 @@ export const CohortPricingWidgetContainer: React.FC<
 	// Check if cohort has actually started (different from enrollment status)
 	const hasStarted = startsAt ? new Date(startsAt) <= nowInPT : false
 
-	const workshops = cohort?.resources?.map(({ resource }) => ({
-		title: resource.fields.title,
-		slug: resource.fields.slug,
-	}))
-	const cohortPrependFeatures = React.useMemo<
-		ProductPricingFeature[] | undefined
-	>(() => {
-		if (product?.type !== 'cohort') return undefined
-		if (
-			product?.fields?.slug !==
-			'autonomous-ai-agents-live-workshop-ticket-qocpc'
-		)
-			return undefined
-
-		return [
-			{
-				icon: <Sparkles className="h-4 w-4" />,
-				label: 'AI SDK v6 Crash Course',
-			},
-		]
-	}, [product?.fields?.slug, product?.type])
 	const { dateString: eventDateString, timeString: eventTimeString } =
 		formatCohortDateRange(startsAt, endsAt, timezone)
 
@@ -237,35 +248,48 @@ export const CohortPricingWidgetContainer: React.FC<
 	return (
 		<>
 			{enrollmentState.type === 'open' || allowPurchase ? (
-				<div className={cn('px-5 pb-5', className)}>
+				// The workshop page's card, as it is there: it fills the column
+				// edge to edge and pads itself, so nothing here insets it.
+				<div className={className}>
 					{renderImage()}
-					<p className="opacit-50 -mb-7 flex w-full items-center justify-center pt-5 text-center text-base">
-						{eventDateString}
-					</p>
 					<PricingWidget
-						className="border-b-0"
 						workshops={workshops}
+						prependFeatures={cohortLessonFeatures(lessonCount)}
 						product={product}
 						quantityAvailable={quantityAvailable}
 						commerceProps={commerceProps}
 						pricingDataLoader={pricingDataLoader}
-						prependFeatures={cohortPrependFeatures}
+						nameMeta={
+							eventDateString ? (
+								<span className={cn(TYPE.metaMark, 'mt-1.5')}>
+									{eventDateString}
+								</span>
+							) : null
+						}
+						// "/boss/<slug>" falls back to the generic letter for a cohort
+						// without one of its own, so the link is always safe to offer.
+						teamLetterHref={`/boss/${cohort.fields.slug}`}
+						teamOptionsHref={teamOptionsHref}
 						buyButton={
-							<CheckoutSurveyBuyButton className="bg-primary dark:bg-primary relative mt-3 h-16 max-w-xs cursor-pointer overflow-hidden rounded-xl text-lg font-semibold shadow-xl hover:brightness-110">
-								<span className="relative z-10">Enroll</span>
-								<div
-									style={{
-										backgroundSize: '200% 100%',
-									}}
-									className="animate-shine absolute inset-0 bg-[linear-gradient(120deg,transparent_40%,var(--primary-foreground)_50%,transparent_60%)] opacity-10 dark:opacity-20"
-								/>
-							</CheckoutSurveyBuyButton>
+							// Still the survey button: it asks what brought the buyer here
+							// before Stripe, and it owns the purchase gate ("Sign in to
+							// buy", the caption for a returning student under it, the
+							// regional-ticket path). Only its dress changes, to the house
+							// CTA.
+							<div className="mt-4 flex w-full flex-col">
+								<CheckoutSurveyBuyButton
+									className={cn(WORKSHOP_CTA_BUTTON, 'w-full')}
+								>
+									Enroll
+								</CheckoutSurveyBuyButton>
+							</div>
 						}
 						pricingWidgetOptions={{
 							cancelUrl: `${env.NEXT_PUBLIC_URL}/cohorts/${cohort.fields.slug}`,
 							isCohort: true,
 							isLiveEvent: true,
 							withImage: false,
+							// The cover above the card already carries the title.
 							withTitle: false,
 							...pricingWidgetOptions,
 						}}
@@ -317,6 +341,7 @@ export const CohortPricingWidgetContainer: React.FC<
 						</div>
 						{isOnWaitlist ? null : renderWaitlistForm()}
 					</div>
+					{belowOffer}
 				</>
 			)}
 		</>

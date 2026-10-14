@@ -1,7 +1,6 @@
 import type { ParsedUrlQuery } from 'querystring'
 import * as React from 'react'
 import type { Metadata, ResolvingMetadata } from 'next'
-import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { CldImage } from '@/components/cld-image'
 import { WaitlistForm } from '@/components/cohort-waitlist-form'
@@ -39,7 +38,7 @@ import type { Workshop } from '@/lib/workshops'
 import { compileMDX } from '@/utils/compile-mdx'
 import { formatDiscount } from '@/utils/discount-formatter'
 import { eq } from 'drizzle-orm'
-import { ArrowUpRight, CheckCircle } from 'lucide-react'
+import { CheckCircle } from 'lucide-react'
 import { Markdown as ReactMarkdown } from '@/components/markdown'
 
 import * as Pricing from '@coursebuilder/commerce-next/pricing/pricing'
@@ -58,6 +57,7 @@ import { CohortFactStrip } from './_components/cohort-fact-strip'
 import { CohortIncludes } from './_components/cohort-includes'
 import { CohortPricingWidgetContainer } from './_components/cohort-pricing-widget-container'
 import { CohortSidebar } from './_components/cohort-sidebar'
+import { CohortTeamLink } from './_components/cohort-team-link'
 
 export async function generateMetadata(
 	props: {
@@ -240,6 +240,27 @@ export async function CohortPageView(props: CohortPageViewProps) {
 			where: eq(products.status, 1),
 		}),
 	])
+	// The lesson total for "Includes" is off for now (Vojta, 2026-10-14): the
+	// list leads with the workshop count alone. To bring it back, restore this
+	// read (and its two imports) in place of the 0. It costs no data of its
+	// own: these are the navigation trees the Contents list reads further down,
+	// and the loader shares one read per workshop across the render. If any
+	// tree fails the total is dropped, never summed from the ones that
+	// answered: an undercount on a sales page is worse than no count.
+	//
+	// const lessonCount = await Promise.all(
+	// 	workshops.map((workshop) =>
+	// 		getCachedWorkshopNavigation(workshop.fields.slug),
+	// 	),
+	// )
+	// 	.then((navigations) =>
+	// 		navigations.reduce(
+	// 			(total, navigation) => total + countTrackedLessons(navigation),
+	// 			0,
+	// 		),
+	// 	)
+	// 	.catch(() => 0)
+	const lessonCount = 0
 	const alumniLabel = formatAlumniCount(alumniCount)
 
 	// Get product slug to ID map for HasPurchased component
@@ -272,6 +293,16 @@ export async function CohortPageView(props: CohortPageViewProps) {
 					},
 				})),
 			}))
+	// The rail's feature list counts workshops by what the reader can see
+	// listed, and the pricing container needs them as plain data.
+	const railWorkshops = displayWorkshops.map((workshop) => ({
+		title: workshop.fields.title,
+		slug: workshop.fields.slug,
+	}))
+	// The team page exists only when its body does (it 404s otherwise).
+	const teamOptionsHref = fields.forTeamsBody
+		? `/cohorts/${fields.slug}/for-teams`
+		: undefined
 	const displayCohort = hasCohortAccess
 		? cohort
 		: {
@@ -672,6 +703,9 @@ export async function CohortPageView(props: CohortPageViewProps) {
 								enrollmentOpenDateString={enrollmentOpenDateString}
 								isOnWaitlist={isOnWaitlist}
 								knownIdentity={hasKnownWaitlistIdentity}
+								workshops={railWorkshops}
+								lessonCount={lessonCount}
+								teamOptionsHref={teamOptionsHref}
 							/>
 						) : isComingSoon && cohortProps.product ? (
 							<div className="p-5">
@@ -690,25 +724,27 @@ export async function CohortPageView(props: CohortPageViewProps) {
 								)}
 							</div>
 						) : null}
-						{/* The team page exists only when its body does (it 404s
-						    otherwise). Offered in every state but purchased: before
-						    seats open it still takes an invoice request. */}
-						{!hasCohortAccess && fields.forTeamsBody ? (
-							<Link
-								href={`/cohorts/${fields.slug}/for-teams`}
-								className="hover:bg-foreground/[0.04] flex items-center justify-between border-t px-5 py-4 text-sm font-semibold transition-colors"
-							>
+						{/* The pricing container owns everything under the offer when
+						    it renders: on sale, its card carries the team button and the
+						    feature list itself, and a second copy here would stack two
+						    "Includes" in one column. These are for the states it does not
+						    cover. The team link is offered in every state but purchased:
+						    before seats open it still takes an invoice request. */}
+						{!hasCohortAccess && !ALLOW_PURCHASE && teamOptionsHref ? (
+							<CohortTeamLink href={teamOptionsHref}>
 								{isComingSoon
 									? 'Buying for a team?'
 									: 'Buying for a team? Seats and invoices'}
-								<ArrowUpRight className="size-4" aria-hidden="true" />
-							</Link>
+							</CohortTeamLink>
 						) : null}
-						{/* Last in the rail in every state: waitlist, pricing and
-						    purchased all answer the same "what do I get" question.
-						    Coming soon is the exception: nothing is on offer yet. */}
-						{isComingSoon ? null : (
-							<CohortIncludes workshopCount={displayWorkshops.length} />
+						{/* Purchased still answers "what do I get". Coming soon is the
+						    exception: nothing is on offer yet. */}
+						{isComingSoon || (!hasCohortAccess && ALLOW_PURCHASE) ? null : (
+							<CohortIncludes
+								className="border-t px-5 py-6"
+								workshops={railWorkshops}
+								lessonCount={lessonCount}
+							/>
 						)}
 					</CohortSidebar>
 				</div>

@@ -61,6 +61,8 @@ export type PricingWidgetProps = {
 	hideFeatures?: boolean
 	/** Custom buy button element. Rendered inside Pricing.Root so it can use pricing context. */
 	buyButton?: React.ReactNode
+	/** One line of context under the product name: a cohort's dates. */
+	nameMeta?: React.ReactNode
 	/** "/boss/<slug>" — a shareable approval letter, offered beside the team checkbox. */
 	teamLetterHref?: string
 	/** "/workshops/<slug>/for-teams" — the team story, offered under the letter. */
@@ -119,6 +121,7 @@ export const PricingWidget = ({
 	buyButtonClassName,
 	hideFeatures,
 	buyButton,
+	nameMeta,
 	teamLetterHref,
 	teamOptionsHref,
 	teamMode = false,
@@ -144,6 +147,7 @@ export const PricingWidget = ({
 			<Pricing.Product className="w-full">
 				<Pricing.Details className="w-full items-stretch px-5 pt-6 text-left sm:px-6">
 					<Pricing.Name className="mt-0 px-0 text-left text-base font-bold tracking-[-0.018em] sm:text-base" />
+					{nameMeta}
 					<Pricing.LiveQuantity className="mt-2 self-start" />
 					{/* The primitive's wrapper centers its children by default; this card
 					    is a left-aligned column, and the price skeleton has no width of
