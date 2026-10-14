@@ -45,7 +45,10 @@ export function TransferLoginButton({
 			disabled={pending}
 			onClick={async () => {
 				setPending(true)
-				await signIn('postmark', { email, callbackUrl })
+				// Success navigates away; a failed request leaves the button usable.
+				await signIn('postmark', { email, callbackUrl }).catch(() =>
+					setPending(false),
+				)
 			}}
 			className={BUTTON}
 		>

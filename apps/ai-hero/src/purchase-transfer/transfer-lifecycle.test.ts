@@ -7,6 +7,7 @@ import {
 	evaluateInitiate as decideInitiate,
 	isTerminalTransferState,
 	isTransferablePurchase,
+	isTransferAccepted,
 	isTransferExpired,
 	TRANSFER_STATES,
 	type TransferSnapshot,
@@ -151,6 +152,48 @@ describe('isTransferExpired', () => {
 	it('is false before expiry and true after', () => {
 		expect(isTransferExpired({ expiresAt: FUTURE }, NOW)).toBe(false)
 		expect(isTransferExpired({ expiresAt: PAST }, NOW)).toBe(true)
+	})
+})
+
+describe('isTransferAccepted', () => {
+	const target = { targetUserId: 'user_target' }
+	it('is true once completed', () => {
+		expect(
+			isTransferAccepted(
+				{ ...target, transferState: 'COMPLETED' },
+				{ userId: 'user_source' },
+			),
+		).toBe(true)
+	})
+	it('is true for a claim whose purchase already moved to the recipient', () => {
+		expect(
+			isTransferAccepted(
+				{ ...target, transferState: 'VERIFIED' },
+				{ userId: 'user_target' },
+			),
+		).toBe(true)
+	})
+	it('is false for an interrupted claim, and before any claim', () => {
+		expect(
+			isTransferAccepted(
+				{ ...target, transferState: 'VERIFIED' },
+				{ userId: 'user_source' },
+			),
+		).toBe(false)
+		expect(
+			isTransferAccepted(
+				{ ...target, transferState: 'INITIATED' },
+				{ userId: 'user_source' },
+			),
+		).toBe(false)
+	})
+	it('is false without a recipient', () => {
+		expect(
+			isTransferAccepted(
+				{ targetUserId: null, transferState: 'VERIFIED' },
+				{ userId: null },
+			),
+		).toBe(false)
 	})
 })
 

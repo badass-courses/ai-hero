@@ -4,7 +4,10 @@ import { courseBuilderAdapter } from '@/db'
 import { INCOMING_TRANSFERS_TAG } from '@/lib/incoming-transfers'
 import { purchaseArtwork } from '@/lib/purchase-artwork'
 import { acceptPurchaseTransfer } from '@/purchase-transfer/purchase-transfer-actions'
-import { isTransferExpired } from '@/purchase-transfer/transfer-lifecycle'
+import {
+	isTransferAccepted,
+	isTransferExpired,
+} from '@/purchase-transfer/transfer-lifecycle'
 import { getServerAuthSession } from '@/server/auth'
 
 import { welcomeStart } from '../../welcome/welcome-start'
@@ -34,7 +37,7 @@ const PurchaseTransferPage = async (props: {
 	)
 
 	let view: TransferView
-	if (transfer.transferState === 'COMPLETED') {
+	if (isTransferAccepted(transfer, transfer.purchase)) {
 		view = {
 			kind: 'accepted',
 			viewerIsRecipient,
@@ -51,12 +54,12 @@ const PurchaseTransferPage = async (props: {
 		view = { kind: 'canceled' }
 	} else if (
 		transfer.transferState === 'EXPIRED' ||
-		isTransferExpired(transfer)
+		(transfer.transferState === 'INITIATED' && isTransferExpired(transfer))
 	) {
 		view = { kind: 'expired' }
 	} else if (viewerIsRecipient) {
-		// VERIFIED is a claim whose completion was interrupted; accepting again
-		// resumes it, so the recipient sees the same button.
+		// A VERIFIED claim that has not moved the purchase was interrupted;
+		// accepting again resumes it at any age, so it gets the same button.
 		view = { kind: 'accept' }
 	} else {
 		view = { kind: 'sign-in', viewerEmail: viewer?.email ?? null }

@@ -36,10 +36,10 @@ import { PromoBarContent } from './promo-bar-content'
 export function PromoBarSlot({ children }: { children: React.ReactNode }) {
 	const pathname = usePathname()
 	const minimal = getNavMode(pathname) === 'minimal'
-	const { status } = useSession()
+	const signedIn = useSession().status === 'authenticated'
 	const utils = api.useUtils()
 	const { data: transfer } = api.users.incomingTransfer.useQuery(undefined, {
-		enabled: status === 'authenticated' && !minimal,
+		enabled: signedIn && !minimal,
 		staleTime: 5 * 60 * 1000,
 	})
 	React.useEffect(() => {
@@ -47,7 +47,8 @@ export function PromoBarSlot({ children }: { children: React.ReactNode }) {
 			void utils.users.incomingTransfer.invalidate()
 	}, [pathname, utils])
 	if (minimal) return null
-	if (transfer)
+	// A disabled query keeps its last answer, so check the session too.
+	if (signedIn && transfer)
 		return (
 			<PromoBarContent
 				promo={{
