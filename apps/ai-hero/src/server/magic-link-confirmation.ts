@@ -35,6 +35,13 @@ type MagicLinkOptions = {
 	now?: Clock
 }
 
+type MagicLinkGetOptions = MagicLinkOptions & {
+	/** The email this browser is already signed in as, if any. */
+	signedInEmail?: () => Promise<string | null | undefined>
+	/** The site's own origin, the only absolute callback it may follow. */
+	siteUrl?: string
+}
+
 function getNow(clock: Clock | undefined) {
 	return typeof clock === 'function' ? clock() : (clock ?? Date.now())
 }
@@ -187,15 +194,59 @@ function readConfirmationFromCallback(request: Request) {
 	return confirmation
 }
 
+/**
+ * Where a link may send the browser: a path on this site, never anywhere else.
+ * An absolute callback on the site's own origin becomes its path, for the same
+ * proxy reason as `confirmationRedirect`.
+ */
+export function callbackPath(callbackUrl: string | null, siteUrl?: string) {
+	if (!callbackUrl) return '/'
+	try {
+		const site = new URL(siteUrl ?? 'https://site.invalid')
+		// Parsed the way a browser would, so a stray tab or backslash cannot
+		// turn a path into another host.
+		const target = new URL(callbackUrl, site)
+		if (target.origin === site.origin)
+			return `${target.pathname.replace(/^\/+/, '/')}${target.search}${target.hash}`
+	} catch {
+		// Not a URL: fall through to the home page.
+	}
+	return '/'
+}
+
+function isSameEmail(a: string | null | undefined, b: string) {
+	return Boolean(a) && a!.trim().toLowerCase() === b.trim().toLowerCase()
+}
+
 function isMagicLinkCallback(request: Request) {
 	return new URL(request.url).pathname === MAGIC_LINK_CALLBACK_PATH
 }
 
+/**
+ * A link for the account this browser is already signed in as needs no token:
+ * it goes straight to where it points. Nothing is consumed or granted, so a
+ * second click on a one-time link (a transfer invite, an old login email) lands
+ * where it meant to instead of on "this login link expired".
+ */
+function alreadySignedInRedirect(callbackUrl: string | null, siteUrl?: string) {
+	return withSetCookie(
+		new Response(null, {
+			status: 303,
+			headers: {
+				location: callbackPath(callbackUrl, siteUrl),
+				'cache-control': 'no-store',
+				'referrer-policy': 'no-referrer',
+			},
+		}),
+		clearedMagicLinkCookie(),
+	)
+}
+
 export function createMagicLinkGetHandler<RequestType extends Request>(
 	authHandler: AuthHandler<RequestType>,
-	options: MagicLinkOptions,
+	options: MagicLinkGetOptions,
 ) {
-	return function handleMagicLinkGet(request: RequestType) {
+	return async function handleMagicLinkGet(request: RequestType) {
 		if (!isMagicLinkCallback(request)) return authHandler(request)
 		if (request.method === 'HEAD') return new Response(null, { status: 204 })
 		if (request.method !== 'GET') return authHandler(request)
@@ -204,6 +255,12 @@ export function createMagicLinkGetHandler<RequestType extends Request>(
 		const response = confirmationRedirect(307)
 		if (!confirmation || !options.secret) {
 			return withSetCookie(response, clearedMagicLinkCookie())
+		}
+		if (
+			options.signedInEmail &&
+			isSameEmail(await options.signedInEmail(), confirmation.email)
+		) {
+			return alreadySignedInRedirect(confirmation.callbackUrl, options.siteUrl)
 		}
 		return withSetCookie(
 			response,

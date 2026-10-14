@@ -22,6 +22,7 @@ import {
 	getPurchaseTransferForPurchaseId,
 	initiatePurchaseTransfer,
 } from '@/purchase-transfer/purchase-transfer-actions'
+import { isTransferablePurchase } from '@/purchase-transfer/transfer-lifecycle'
 import { getServerAuthSession } from '@/server/auth'
 import { subject } from '@casl/ability'
 
@@ -185,6 +186,7 @@ const Welcome = async (props: {
 
 		const isTransferAvailable =
 			!purchase.bulkCoupon &&
+			isTransferablePurchase(purchase) &&
 			Boolean(
 				purchaseUserTransfers?.filter(
 					(purchaseUserTransfer: PurchaseUserTransfer) =>
