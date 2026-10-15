@@ -156,9 +156,6 @@ async function renderOverlay() {
 		root.render(
 			<VideoPlayerOverlay
 				resource={resource}
-				abilityLoader={
-					Promise.resolve({ canViewLesson: true }) as Props['abilityLoader']
-				}
 				moduleType="workshop"
 				moduleSlug="test"
 			/>,

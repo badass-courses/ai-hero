@@ -1,15 +1,12 @@
 import { Suspense } from 'react'
-import Image from 'next/image'
 import { notFound, redirect } from 'next/navigation'
-import { AuthedVideoPlayer } from '@/app/(content)/_components/authed-video-player'
 import { LessonControls } from '@/app/(content)/_components/lesson-controls'
-import VideoPlayerOverlay from '@/app/(content)/_components/video-player-overlay'
+import { LessonVideoSource } from '@/app/(content)/_components/lesson-player-host'
 import { Transcript } from '@/app/(content)/_components/video-transcript-renderer'
 import PostToC from '@/app/(content)/posts/_components/post-toc'
 import UpNext from '@/app/(content)/workshops/_components/up-next'
 import { ContentReadTracker } from '@/components/content-read-tracker'
 import { env } from '@/env.mjs'
-import { PlayerContainerSkeleton } from '@/components/player-skeleton'
 import { ActiveHeadingProvider } from '@/hooks/use-active-heading'
 import { getAiCodingDictionary } from '@/lib/ai-coding-dictionary'
 import type { Lesson } from '@/lib/lessons'
@@ -27,7 +24,6 @@ import {
 } from '@/utils/get-current-ability-rules'
 
 import { Skeleton } from '@coursebuilder/ui'
-import { VideoPlayerOverlayProvider } from '@coursebuilder/ui/hooks/use-video-player-overlay'
 import { cn } from '@coursebuilder/utils/cn'
 
 import { LessonBody } from '../../../_components/lesson-body'
@@ -108,11 +104,10 @@ export async function LessonPage({
 					contentSlug={String(lesson.fields?.slug ?? params.lesson)}
 					parentSlug={params.module}
 				/>
-				<PlayerContainer
+				<LessonVideoRegistration
 					lesson={lesson}
 					params={params}
 					lessonType={lessonType}
-					ability={ability}
 				/>
 				<LessonControls
 					abilityLoader={abilityLoader}
@@ -194,38 +189,29 @@ async function TranscriptContainer({
 	)
 }
 
-async function PlayerContainer({
+/**
+ * Hands this lesson's video (or `null`) to the player in the (learn) layout.
+ * Awaited, never behind Suspense: the host must not keep playing the previous
+ * lesson under this one. Only reached after LessonPage's access check, so the
+ * playback ID travels exactly as far as it did as a player prop.
+ */
+async function LessonVideoRegistration({
 	lesson,
-	lessonType = 'lesson',
+	lessonType,
 	params,
-	ability,
 }: {
-	lesson: Lesson | null
-	lessonType?: 'lesson' | 'exercise' | 'solution'
+	lesson: Lesson
+	lessonType: 'lesson' | 'exercise' | 'solution'
 	params: { module: string; lesson: string }
-	ability: Omit<AbilityForResource, 'canView'> & {
-		canViewWorkshop: boolean
-		canViewLesson: boolean
-		isPendingOpenAccess: boolean
-	}
 }) {
-	if (!lesson) {
-		notFound()
-	}
-
-	const abilityLoader = getAbilityForResource(params.lesson, params.module)
-
-	const videoPlaybackResource = ability.canViewLesson
-		? await getLessonVideoPlaybackResource(lesson.id)
-		: null
+	const [videoPlaybackResource, savedPosition] = await Promise.all([
+		getLessonVideoPlaybackResource(lesson.id),
+		getPlaybackPositionForResource(lesson.id),
+	])
 	const muxPlaybackId = videoPlaybackResource?.muxPlaybackId ?? null
-	const playbackPositionLoader = getPlaybackPositionForResource(lesson.id)
-	const videoResourceReference = lesson?.resources?.find(({ resource }) => {
+	const videoResourceReference = lesson.resources?.find(({ resource }) => {
 		return resource.type === 'videoResource'
 	})
-	const thumbnailUrl =
-		videoResourceReference &&
-		`${env.NEXT_PUBLIC_URL}/api/thumbnails?videoResourceId=${videoResourceReference.resourceId}&time=${lesson.fields?.thumbnailTime || 0}`
 
 	void log.debug('lesson.player.video-resource.loaded', {
 		lessonId: lesson.id,
@@ -238,70 +224,23 @@ async function PlayerContainer({
 		chapterCount: videoPlaybackResource?.chapters?.length ?? 0,
 	})
 
-	if (!muxPlaybackId) {
-		return null
-	}
-
 	return (
-		<VideoPlayerOverlayProvider>
-			<section
-				aria-label="video"
-				className="dark relative flex flex-col items-center justify-center border-b bg-black text-white dark:text-white"
-			>
-				<Suspense
-					fallback={
-						/*
-						 * The blurred thumbnail lives inside the fallback so it exists
-						 * exactly while the player loads: rendered behind the (transparent)
-						 * skeleton, unmounted with it. As a permanent section backdrop it
-						 * leaked around the pillar-boxed player and read as a glitch.
-						 */
-						<>
-							{thumbnailUrl && (
-								<Image
-									src={thumbnailUrl}
-									alt=""
-									fill
-									className="blur-xs absolute inset-0 z-0 h-full w-full object-cover opacity-20"
-									priority
-								/>
-							)}
-							<PlayerContainerSkeleton className="z-10 h-auto w-full bg-transparent md:max-h-[75svh] md:max-w-[calc(75svh*16/9)]" />
-						</>
-					}
-				>
-					<AuthedVideoPlayer
-						key={lesson.id}
-						// The width cap mirrors the height cap: with only max-h, a short
-						// viewport clamps the height while the width stays full, the box
-						// stops being 16:9, and Safari/Chrome each mangle the mismatch
-						// (cropped video, cut-off controls). Height-capped + width-capped
-						// keeps the box a true 16:9 that always fits the viewport.
-						className="aspect-video h-auto w-full max-w-full overflow-hidden md:max-h-[75svh] md:max-w-[calc(75svh*16/9)]"
-						muxPlaybackId={muxPlaybackId}
-						playbackPositionLoader={playbackPositionLoader}
-						// playbackIdLoader={playbackIdLoader}
-						resource={lesson}
-						videoChapters={videoPlaybackResource?.chapters ?? null}
-						abilityLoader={abilityLoader}
-						moduleSlug={params.module}
-						moduleType="workshop"
-						title={lesson.fields?.title}
-						// Inside the player so the end card survives fullscreen.
-						// LessonPage already redirects denied viewers, so the card
-						// only ever shows completion and needs no commerce data.
-						overlay={
-							<VideoPlayerOverlay
-								resource={lesson}
-								abilityLoader={abilityLoader}
-								moduleType="workshop"
-								moduleSlug={params.module}
-							/>
+		<LessonVideoSource
+			video={
+				muxPlaybackId
+					? {
+							resource: lesson,
+							muxPlaybackId,
+							chapters: videoPlaybackResource?.chapters ?? null,
+							savedPosition,
+							moduleSlug: params.module,
+							thumbnailUrl: videoResourceReference
+								? `${env.NEXT_PUBLIC_URL}/api/thumbnails?videoResourceId=${videoResourceReference.resourceId}&time=${lesson.fields?.thumbnailTime || 0}`
+								: null,
 						}
-					/>
-				</Suspense>
-			</section>
-		</VideoPlayerOverlayProvider>
+					: null
+			}
+		/>
 	)
 }
 

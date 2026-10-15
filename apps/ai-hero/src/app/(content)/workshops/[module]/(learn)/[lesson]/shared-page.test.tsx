@@ -13,8 +13,7 @@ const mocks = vi.hoisted(() => ({
 	debug: vi.fn(),
 	getLessonVideoPlaybackResource: vi.fn(),
 	getPlaybackPositionForResource: vi.fn(),
-	player: vi.fn(),
-	overlay: vi.fn(),
+	source: vi.fn(),
 	controls: vi.fn(),
 	commerce: vi.fn(),
 }))
@@ -56,23 +55,15 @@ vi.mock('@/server/auth', () => ({
 	getServerAuthSession: vi.fn(),
 }))
 
-vi.mock('next/image', () => ({ default: () => null }))
 vi.mock('@coursebuilder/ui', () => ({ Skeleton: () => null }))
-vi.mock('@coursebuilder/ui/hooks/use-video-player-overlay', () => ({
-	VideoPlayerOverlayProvider: ({ children }: { children: ReactNode }) =>
-		children,
-}))
 vi.mock('@coursebuilder/utils/cn', () => ({
 	cn: (...values: unknown[]) => values.filter(Boolean).join(' '),
 }))
-vi.mock('@/app/(content)/_components/authed-video-player', () => ({
-	AuthedVideoPlayer: mocks.player,
+vi.mock('@/app/(content)/_components/lesson-player-host', () => ({
+	LessonVideoSource: mocks.source,
 }))
 vi.mock('@/app/(content)/_components/lesson-controls', () => ({
 	LessonControls: mocks.controls,
-}))
-vi.mock('@/app/(content)/_components/video-player-overlay', () => ({
-	default: mocks.overlay,
 }))
 vi.mock('@/app/(content)/_components/video-transcript-renderer', () => ({
 	Transcript: () => null,
@@ -98,9 +89,6 @@ vi.mock(
 )
 vi.mock('@/components/content-read-tracker', () => ({
 	ContentReadTracker: () => null,
-}))
-vi.mock('@/components/player-skeleton', () => ({
-	PlayerContainerSkeleton: () => null,
 }))
 vi.mock('@/hooks/use-active-heading', () => ({
 	ActiveHeadingProvider: ({ children }: { children: ReactNode }) => children,
@@ -141,7 +129,7 @@ const baseAbility = {
 }
 
 // Evaluate this server page's async component tree with its client boundaries
-// mocked above. Unlike calling LessonPage alone, this executes PlayerContainer
+// mocked above. Unlike calling LessonPage alone, this executes the video registration
 // and any pricing wrapper within Suspense (not its fallback).
 async function resolveServerTree(node: ReactNode): Promise<void> {
 	if (Array.isArray(node)) {
@@ -185,8 +173,7 @@ describe('LessonPage office-hours authorization context', () => {
 			chapters: [],
 		})
 		mocks.getPlaybackPositionForResource.mockResolvedValue(42)
-		mocks.player.mockReturnValue(null)
-		mocks.overlay.mockReturnValue(null)
+		mocks.source.mockReturnValue(null)
 		mocks.controls.mockReturnValue(null)
 	})
 
@@ -207,26 +194,16 @@ describe('LessonPage office-hours authorization context', () => {
 			expect(mocks.getLessonVideoPlaybackResource).toHaveBeenCalledWith(
 				lesson.id,
 			)
-			expect(mocks.player).toHaveBeenCalledOnce()
+			expect(mocks.source).toHaveBeenCalledOnce()
 			expect(mocks.controls).toHaveBeenCalledOnce()
-			const playerProps = mocks.player.mock.calls[0]![0]
-			// The end card rides inside the player so it survives fullscreen.
-			expect(playerProps.overlay.type).toBe(mocks.overlay)
-			const overlayProps = playerProps.overlay.props
-			expect(playerProps).toMatchObject({
+			// Plain values only: the host in the layout must never suspend.
+			expect(mocks.source.mock.calls[0]![0].video).toEqual({
+				resource: lesson,
 				muxPlaybackId: 'playback-1',
-				resource: lesson,
+				chapters: [],
+				savedPosition: 42,
 				moduleSlug: 'workshop-1',
-			})
-			expect(await playerProps.playbackPositionLoader).toBe(42)
-			expect(overlayProps).toMatchObject({
-				resource: lesson,
-				moduleType: 'workshop',
-				moduleSlug: 'workshop-1',
-			})
-			expect(overlayProps).not.toHaveProperty('pricingProps')
-			expect(await overlayProps.abilityLoader).toMatchObject({
-				canViewLesson: true,
+				thumbnailUrl: null,
 			})
 		},
 	)
@@ -249,7 +226,7 @@ describe('LessonPage office-hours authorization context', () => {
 		expect(mocks.getLessonVideoPlaybackResource).not.toHaveBeenCalled()
 		expect(mocks.getPlaybackPositionForResource).not.toHaveBeenCalled()
 		expect(mocks.commerce).not.toHaveBeenCalled()
-		expect(mocks.player).not.toHaveBeenCalled()
+		expect(mocks.source).not.toHaveBeenCalled()
 	})
 
 	it.each([
@@ -272,7 +249,7 @@ describe('LessonPage office-hours authorization context', () => {
 		expect(mocks.getAiCodingDictionary).not.toHaveBeenCalled()
 		expect(mocks.compileMDX).not.toHaveBeenCalled()
 		expect(mocks.getLessonVideoPlaybackResource).not.toHaveBeenCalled()
-		expect(mocks.player).not.toHaveBeenCalled()
+		expect(mocks.source).not.toHaveBeenCalled()
 	})
 
 	it('renders a legitimately scoped cohort lesson using actual rules', async () => {
@@ -288,7 +265,7 @@ describe('LessonPage office-hours authorization context', () => {
 		expect(mocks.redirect).not.toHaveBeenCalled()
 		expect(mocks.compileMDX).toHaveBeenCalledOnce()
 		expect(mocks.getLessonVideoPlaybackResource).toHaveBeenCalledWith(fixture.lesson.id)
-		expect(mocks.player).toHaveBeenCalledOnce()
+		expect(mocks.source).toHaveBeenCalledOnce()
 	})
 
 	it('waits for authorization before starting protected work', async () => {
@@ -318,12 +295,13 @@ describe('LessonPage office-hours authorization context', () => {
 		expect(mocks.commerce).not.toHaveBeenCalled()
 	})
 
-	it('does not load commerce or mount a player when an authorized lesson has no playback', async () => {
+	it('registers no video and loads no commerce when an authorized lesson has no playback', async () => {
 		mocks.getAbilityForResource.mockResolvedValue(baseAbility)
 		mocks.getLessonVideoPlaybackResource.mockResolvedValue(null)
 		await resolveServerTree(await renderLessonPage())
 		expect(mocks.commerce).not.toHaveBeenCalled()
-		expect(mocks.player).not.toHaveBeenCalled()
+		expect(mocks.source).toHaveBeenCalledOnce()
+		expect(mocks.source.mock.calls[0]![0].video).toBeNull()
 		expect(mocks.controls).toHaveBeenCalledOnce()
 	})
 

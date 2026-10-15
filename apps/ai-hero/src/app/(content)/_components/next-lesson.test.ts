@@ -102,10 +102,17 @@ describe('getLessonThumbnailUrl', () => {
 })
 
 describe('getArrivalPosterUrl', () => {
-	it('is frame 0 at player width, the URL the previous lesson preloads', () => {
-		expect(getArrivalPosterUrl(lesson2)).toBe(
+	it('is frame 0 at player width under autoplay', () => {
+		expect(getArrivalPosterUrl(lesson2, { fromStart: true })).toBe(
 			'/api/thumbnails?videoResourceId=video-2&time=0&width=720',
 		)
-		expect(getArrivalPosterUrl(lesson1)).toBeNull()
+		expect(getArrivalPosterUrl(lesson1, { fromStart: true })).toBeNull()
+	})
+
+	it("is the lesson's own poster frame otherwise", () => {
+		const posed = { ...lesson2, fields: { ...lesson2.fields, thumbnailTime: 61.2 } }
+		expect(getArrivalPosterUrl(posed, { fromStart: false })).toBe(
+			'/api/thumbnails?videoResourceId=video-2&time=61.2&width=720',
+		)
 	})
 })

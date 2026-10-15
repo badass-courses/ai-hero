@@ -1,6 +1,6 @@
 'use client'
 
-import React, { use } from 'react'
+import React from 'react'
 import { flushSync } from 'react-dom'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
@@ -18,7 +18,6 @@ import {
 } from '@/lib/content-navigation'
 import { api } from '@/trpc/react'
 import { getAdjacentWorkshopResources } from '@/utils/get-adjacent-workshop-resources'
-import type { AbilityForResource } from '@/utils/get-current-ability-rules'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { ArrowRight } from 'lucide-react'
 import { useSession } from 'next-auth/react'
@@ -49,28 +48,10 @@ import { CertificateDialog } from './module-certificate-container'
 import { useModuleProgress } from './module-progress-provider'
 import { getNextLesson, type NextLesson } from './next-lesson'
 
-type AbilityLoader = Promise<
-	Omit<AbilityForResource, 'canView'> & {
-		canViewWorkshop: boolean
-		canViewLesson: boolean
-		isPendingOpenAccess: boolean
-	}
->
-
 const easeOutQuint = [0.22, 1, 0.36, 1] as const
 
 const END_CARD_PRIMARY =
 	'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover h-10 rounded-[9px] px-4 font-bold'
-
-/**
- * Signed out there is nothing to record: the store would flip on and then
- * revert when the write returns null, and the sidebar check would flicker.
- */
-function useCanRecordProgress(abilityLoader: AbilityLoader) {
-	const { data: session } = useSession()
-	const ability = use(abilityLoader)
-	return Boolean(session?.user && ability.canViewLesson)
-}
 
 /** The count rolls over when the lesson's completion lands under the card. */
 function RollingCount({ value }: { value: number }) {
@@ -202,14 +183,7 @@ export const CompletedLessonOverlay: React.FC<{
 	resource: ContentResource | null
 	moduleType?: 'workshop' | 'tutorial'
 	moduleSlug?: string
-	abilityLoader: AbilityLoader
-}> = ({
-	action,
-	resource,
-	moduleType = 'tutorial',
-	moduleSlug,
-	abilityLoader,
-}) => {
+}> = ({ action, resource, moduleType = 'tutorial', moduleSlug }) => {
 	const { playerRef } = action
 	const { dispatch } = useVideoPlayerOverlay()
 	const workshopNavigation = useWorkshopNavigation()
@@ -223,7 +197,10 @@ export const CompletedLessonOverlay: React.FC<{
 
 	const { moduleProgress } = useModuleProgress()
 	const { data: session } = useSession()
-	const canRecordProgress = useCanRecordProgress(abilityLoader)
+	// The card only draws for a viewer the page let in. Signed out there is
+	// nothing to record: the store would flip on and revert when the write
+	// returns null, and the sidebar check would flicker.
+	const canRecordProgress = Boolean(session?.user)
 	const { go, isNavigating } = useContinue({
 		resource,
 		prevResource: prevLesson,
@@ -348,7 +325,6 @@ export const CompletedLessonOverlay: React.FC<{
 						</Button>
 						{resource && resource.type !== 'solution' && (
 							<CopyProblemPromptButton
-								abilityLoader={abilityLoader}
 								className={END_CARD_SECONDARY}
 								lesson={resource}
 								variant="default"
@@ -519,7 +495,6 @@ export const CompletedModuleOverlay: React.FC<{
 
 type VideoPlayerOverlayProps = {
 	resource: ContentResource
-	abilityLoader: AbilityLoader
 	moduleType?: 'workshop' | 'tutorial'
 	moduleSlug?: string
 }
@@ -531,7 +506,6 @@ type VideoPlayerOverlayProps = {
  */
 const VideoPlayerOverlay: React.FC<VideoPlayerOverlayProps> = ({
 	resource,
-	abilityLoader,
 	moduleType = 'tutorial',
 	moduleSlug,
 }) => {
@@ -548,7 +522,6 @@ const VideoPlayerOverlay: React.FC<VideoPlayerOverlayProps> = ({
 					resource={resource}
 					moduleType={moduleType}
 					moduleSlug={moduleSlug}
-					abilityLoader={abilityLoader}
 				/>
 			)}
 		</AnimatePresence>

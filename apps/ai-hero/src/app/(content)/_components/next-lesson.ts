@@ -37,11 +37,17 @@ export function getLessonThumbnailUrl(
 }
 
 /**
- * Frame 0 at full player width, shown while an autoplayed lesson loads. The
- * previous lesson preloads this exact URL, so the poster comes from cache.
+ * The still at full player width, shown while a lesson the player swapped to
+ * loads: frame 0 under autoplay (it starts there), else the lesson's own
+ * poster frame. Under autoplay the previous lesson preloads this exact URL;
+ * the navigation it reads has no poster frame, so only frame 0 can be.
  */
-export function getArrivalPosterUrl(resource: ContentResource | null) {
-	const url = getLessonThumbnailUrl(resource, 0)
+export function getArrivalPosterUrl(
+	resource: ContentResource | null,
+	{ fromStart }: { fromStart: boolean },
+) {
+	const time = fromStart ? 0 : Number(resource?.fields?.thumbnailTime) || 0
+	const url = getLessonThumbnailUrl(resource, time)
 	return url && `${url}&width=720`
 }
 

@@ -77,15 +77,12 @@ export const LessonControls = async ({
 						moduleSlug={moduleSlug}
 					/>
 				</React.Suspense>
-				<React.Suspense fallback={null}>
-					<CopyProblemPromptButton
-						abilityLoader={abilityLoader}
-						lesson={lesson}
-						problem={problem}
-						variant="ghost"
-						className="hover:bg-muted/50 dark:hover:bg-muted/50 border-r-border h-10 rounded-none border-0 border-r px-3 text-sm sm:h-12"
-					/>
-				</React.Suspense>
+				<CopyProblemPromptButton
+					lesson={lesson}
+					problem={problem}
+					variant="ghost"
+					className="hover:bg-muted/50 dark:hover:bg-muted/50 border-r-border h-10 rounded-none border-0 border-r px-3 text-sm sm:h-12"
+				/>
 				{githubUrl && (
 					<Button
 						asChild
