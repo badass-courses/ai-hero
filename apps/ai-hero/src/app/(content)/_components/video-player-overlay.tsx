@@ -144,12 +144,15 @@ function useContinue({
 	prevResource,
 	next,
 	hasSession,
+	held,
 }: {
-	resource: ContentResource | null
+	resource: ContentResource
 	prevResource: ContentResource | null
 	next: NextLesson | null
 	/** Only optimistic with one: a cookie-only email-course subscriber has no session but is recorded. */
 	hasSession: boolean
+	/** The host already plays `next`; moving on again would complete it unwatched. */
+	held: boolean
 }) {
 	const router = useRouter()
 	const pathname = usePathname()
@@ -161,9 +164,10 @@ function useContinue({
 	const [isNavigating, startNavigation] = React.useTransition()
 
 	const go = () => {
+		if (held) return
 		// The card only draws for a viewer the page let in, so the completion
 		// is always recorded. A problem lesson completes on its solution instead.
-		if (resource && !next?.isSolution) {
+		if (!next?.isSolution) {
 			// On a solution, the lesson to complete is the problem before it.
 			const isSolution = pathname.endsWith('/solution')
 			void completeLessonInBackground({
@@ -183,15 +187,16 @@ function useContinue({
 
 export const CompletedLessonOverlay: React.FC<{
 	action: EndCardAction
-	resource: ContentResource | null
+	/** The host swapped to another lesson and only holds this card up over it. */
+	held: boolean
 	moduleType?: 'workshop' | 'tutorial'
 	moduleSlug?: string
-}> = ({ action, resource, moduleType = 'tutorial', moduleSlug }) => {
-	const { playerRef } = action
+}> = ({ action, held, moduleType = 'tutorial', moduleSlug }) => {
+	const { playerRef, resource } = action
 	const { dispatch } = useVideoPlayerOverlay()
 	const workshopNavigation = useWorkshopNavigation()
 	const { nextResource: adjacentNextLesson, prevResource: prevLesson } =
-		getAdjacentWorkshopResources(workshopNavigation, resource?.id as string)
+		getAdjacentWorkshopResources(workshopNavigation, resource.id)
 	const next = getNextLesson({
 		navigation: workshopNavigation,
 		next: action.nextResource || adjacentNextLesson,
@@ -205,6 +210,7 @@ export const CompletedLessonOverlay: React.FC<{
 		prevResource: prevLesson,
 		next,
 		hasSession: Boolean(session?.user),
+		held,
 	})
 
 	// Decide "is the workshop finished" from live progress, not from the
@@ -212,7 +218,7 @@ export const CompletedLessonOverlay: React.FC<{
 	// state and has shown a learner "Up Next: <lesson 1>" beside "6/6
 	// completed" on the last lesson, which also hides the certificate.
 	const resourceToComplete =
-		resource?.type === 'solution'
+		resource.type === 'solution'
 			? prevLesson || findParentLessonForSolution(workshopNavigation, resource.id)
 			: resource
 	// Without navigation there is no lesson list to check against, and an empty
@@ -226,13 +232,16 @@ export const CompletedLessonOverlay: React.FC<{
 				resourceIdToMarkComplete: resourceToComplete?.id,
 			}).isModuleComplete)
 
-	const counting = Boolean(action.autoAdvance && next && !isModuleComplete)
+	const counting = Boolean(
+		action.autoAdvance && next && !isModuleComplete && !held,
+	)
 	const secondsLeft = useCountdown(counting, go)
 
 	if (!next || isModuleComplete)
 		return (
 			<CompletedModuleOverlay
 				action={action}
+				held={held}
 				moduleType={moduleType}
 				moduleSlug={moduleSlug}
 			/>
@@ -257,7 +266,7 @@ export const CompletedLessonOverlay: React.FC<{
 	}
 
 	return (
-		<EndCard>
+		<EndCard inert={held}>
 			<EndCardItem className="flex flex-col items-center gap-3">
 				{next.thumbnailUrl && (
 					// The same immutable URL the player preloads at 80%. Only drawn
@@ -322,7 +331,7 @@ export const CompletedLessonOverlay: React.FC<{
 						>
 							Replay
 						</Button>
-						{resource && resource.type !== 'solution' && (
+						{resource.type !== 'solution' && (
 							<CopyProblemPromptButton
 								className={END_CARD_SECONDARY}
 								lesson={resource}
@@ -357,9 +366,10 @@ export const CompletedLessonOverlay: React.FC<{
  */
 export const CompletedModuleOverlay: React.FC<{
 	action: EndCardAction
+	held?: boolean
 	moduleType?: 'workshop' | 'tutorial'
 	moduleSlug?: string
-}> = ({ action, moduleType = 'tutorial', moduleSlug }) => {
+}> = ({ action, held = false, moduleType = 'tutorial', moduleSlug }) => {
 	const { playerRef } = action
 	const moduleNavigation = useWorkshopNavigation()
 	const reduceMotion = useReducedMotion()
@@ -370,7 +380,8 @@ export const CompletedModuleOverlay: React.FC<{
 	})
 
 	React.useEffect(() => {
-		if (!reduceMotion) reward()
+		// Never for a card held over the next lesson, which is not done.
+		if (!reduceMotion && !held) reward()
 		// Once per card, on arrival.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [])
@@ -468,7 +479,7 @@ export const CompletedModuleOverlay: React.FC<{
 		)
 
 	const card = (
-		<EndCard>
+		<EndCard inert={held}>
 			<EndCardItem>
 				<p className={TYPE.subhead}>Great job!</p>
 				<p className={cn(TYPE.meta, 'pt-1 font-normal text-white/80')}>
@@ -518,7 +529,9 @@ const VideoPlayerOverlay: React.FC<VideoPlayerOverlayProps> = ({
 				<CompletedLessonOverlay
 					key="end-card"
 					action={action}
-					resource={resource}
+					// The card is for the lesson that ended. Once the host has
+					// swapped, it is only held up until the next poster shows.
+					held={action.resource.id !== resource.id}
 					moduleType={moduleType}
 					moduleSlug={moduleSlug}
 				/>

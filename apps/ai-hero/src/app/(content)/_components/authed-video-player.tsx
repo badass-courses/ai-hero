@@ -123,10 +123,11 @@ export function AuthedVideoPlayer({
 		null,
 	)
 	const willAutoplay = bingeMode && settledSourceId !== resource.id
-	// The host swaps sources in place; anything after the first arrived by a
-	// lesson change.
+	// The host swaps sources in place; once it has, every source arrived by a
+	// lesson change, the first one too when the learner comes back to it.
 	const [firstSourceId] = React.useState(resource.id)
-	const swappedIn = resource.id !== firstSourceId
+	const [swappedIn, setSwappedIn] = React.useState(false)
+	if (!swappedIn && resource.id !== firstSourceId) setSwappedIn(true)
 	const minResolution = muxMinResolutionForPrefs(playerPrefs)
 	const router = useRouter()
 	const navigation = useWorkshopNavigation()
@@ -530,6 +531,7 @@ function handleOnVideoEnded({
 	const action: EndCardAction = {
 		...completedAction,
 		autoAdvance: bingeMode && Boolean(nextResource),
+		resource: currentResource,
 	}
 	flushSync(() => dispatchVideoPlayerOverlay(action))
 

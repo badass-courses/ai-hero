@@ -38,6 +38,10 @@ const LessonPlayerHostContext = React.createContext<HostContext | null>(null)
 // from here instead. Module scope, so leaving the lessons for the workshop
 // page and coming back keeps it. Only written from media events, so the
 // server's copy stays empty.
+// It also wins over a server position that is newer: watch further on a phone,
+// come back to this tab, and the lesson resumes where this tab left it. The
+// page payload carries no timestamp to tell a fresh read from a replay, and
+// resuming where this screen stopped is a fair answer, so that is accepted.
 const sessionPositions = new Map<string, number>()
 
 // The box the player and its skeleton share, so neither shifts the page.

@@ -132,6 +132,7 @@ const nextLessonAction = (
 ) => ({
 	type: 'COMPLETED',
 	playerRef,
+	resource,
 	isModuleComplete: false,
 	autoAdvance,
 	nextResource: {
@@ -443,6 +444,7 @@ describe('VideoPlayerOverlay', () => {
 					action: {
 						type: 'COMPLETED',
 						isModuleComplete: true,
+						resource,
 						playerRef: { current: { play } },
 					},
 				},
@@ -461,4 +463,23 @@ describe('VideoPlayerOverlay', () => {
 			expect(dispatch).toHaveBeenCalledWith({ type: 'HIDDEN' })
 		},
 	)
+
+	it('holds a finished-workshop card over the next lesson without confetti', async () => {
+		// Swapped to lesson-2 while the card from lesson-1's end is held.
+		const other = { ...resource, id: 'lesson-2' }
+		mocks.overlay.mockReturnValue({
+			state: {
+				action: {
+					type: 'COMPLETED',
+					isModuleComplete: true,
+					resource: other,
+					playerRef: { current: null },
+				},
+			},
+			dispatch: vi.fn(),
+		})
+		await renderOverlay()
+		expect(container.querySelector<HTMLElement>('[aria-live]')?.inert).toBe(true)
+		expect(mocks.reward).not.toHaveBeenCalled()
+	})
 })
