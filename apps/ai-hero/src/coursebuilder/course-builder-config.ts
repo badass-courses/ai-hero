@@ -6,6 +6,7 @@ import { transcriptProvider } from '@/coursebuilder/transcript-provider'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
 import { inngest } from '@/inngest/inngest.server'
+import { createUserWithPersonalOrg } from '@/lib/find-or-create-user'
 import { authOptions, getServerAuthSession } from '@/server/auth'
 
 import { userSchema } from '@coursebuilder/core/schemas'
@@ -15,7 +16,9 @@ import NextCourseBuilder, {
 
 export const courseBuilderConfig: NextCourseBuilderConfig = {
 	baseUrl: env.COURSEBUILDER_URL,
-	adapter: courseBuilderAdapter,
+	// Course Builder's handlers mint users (newsletter subscribe) through this
+	// adapter, so its createUser provisions the personal organization.
+	adapter: { ...courseBuilderAdapter, createUser: createUserWithPersonalOrg },
 	inngest,
 	providers: [
 		transcriptProvider,
