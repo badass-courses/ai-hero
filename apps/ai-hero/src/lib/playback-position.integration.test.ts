@@ -2,20 +2,11 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
 	createPlaybackPositionSaveQueue,
-	getPlaybackStartTime,
 	mergePlaybackPositionFields,
 	readPlaybackPosition,
 } from './playback-position'
 
 describe('lesson playback position', () => {
-	it('resumes from saved progress when the URL has no explicit time', () => {
-		expect(getPlaybackStartTime({ queryTime: null, savedTime: 91 })).toBe(91)
-	})
-
-	it('uses an explicit URL time instead of saved progress', () => {
-		expect(getPlaybackStartTime({ queryTime: '12', savedTime: 91 })).toBe(12)
-	})
-
 	it('stores playback time without replacing other progress fields', () => {
 		const fields = mergePlaybackPositionFields({ note: 'keep-me' }, 42.8)
 

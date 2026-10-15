@@ -65,10 +65,10 @@ export function useMuxChapters(
 		const player = playerRef.current as PlayerWithAddChapters | null
 		if (!player) return
 
-		const replaceId = replaceIdRef.current + 1
-		replaceIdRef.current = replaceId
-
 		const replaceCurrentChapters = async () => {
+			const replaceId = replaceIdRef.current + 1
+			replaceIdRef.current = replaceId
+
 			if (!chapters?.length) {
 				clearMuxChapters(player, chaptersTrackRef)
 				return
@@ -79,8 +79,8 @@ export function useMuxChapters(
 				chapters,
 				chaptersTrackRef,
 			)
-			if (replaceIdRef.current !== replaceId && addedTrack) {
-				player.removeTextTrack?.(addedTrack)
+			if (replaceIdRef.current !== replaceId) {
+				if (addedTrack) player.removeTextTrack?.(addedTrack)
 				return
 			}
 			chaptersTrackRef.current = addedTrack ?? null
@@ -88,19 +88,20 @@ export function useMuxChapters(
 
 		if (typeof player.readyState === 'number' && player.readyState >= 1) {
 			void replaceCurrentChapters()
-			return () => {
-				replaceIdRef.current = replaceId + 1
-			}
 		}
 
-		if (typeof player.addEventListener !== 'function') return
+		// Mux drops the chapters track whenever the source is emptied: a new
+		// playback ID on this same player, or a reload. So add them again on
+		// every source's metadata, not only the first. When the playback ID and
+		// the chapters change together, the call above may have landed on the
+		// outgoing source; this one puts them on the new one.
 		const onLoadedMetadata = () => {
 			void replaceCurrentChapters()
 		}
-		player.addEventListener('loadedmetadata', onLoadedMetadata, { once: true })
+		player.addEventListener?.('loadedmetadata', onLoadedMetadata)
 		return () => {
 			player.removeEventListener?.('loadedmetadata', onLoadedMetadata)
-			replaceIdRef.current = replaceId + 1
+			replaceIdRef.current += 1
 		}
 	}, [playerRef, chapters])
 }

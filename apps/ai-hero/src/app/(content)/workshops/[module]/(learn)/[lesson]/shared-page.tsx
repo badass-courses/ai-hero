@@ -97,96 +97,71 @@ export async function LessonPage({
 			),
 		)
 
+	// Per page, not in the (learn) layout: the headings belong to this lesson,
+	// and the layout outlives a lesson change.
 	return (
-		<main className="w-full">
-			<ContentReadTracker
-				contentId={lesson.id}
-				contentType={lessonType === 'solution' ? 'solution' : 'lesson'}
-				contentSlug={String(lesson.fields?.slug ?? params.lesson)}
-				parentSlug={params.module}
-			/>
-			<PlayerContainer
-				lesson={lesson}
-				params={params}
-				lessonType={lessonType}
-				workshop={workshop}
-				ability={ability}
-			/>
-			<LessonControls
-				abilityLoader={abilityLoader}
-				lesson={lesson}
-				problem={problem}
-				moduleSlug={params.module}
-			/>
-			<div className="max-w-(--breakpoint-xl) container relative px-5 md:px-10 lg:px-14">
-				<div className="relative z-10">
-					<article className="">
-						<LessonTitle lesson={lesson} />
-						{lesson?.fields?.body && lesson?.fields?.body?.length > 300 && (
-							<PostToC
-								markdown={lesson?.fields?.body}
-								className="top-0 -mx-5 mb-5 md:-mx-10 lg:-mx-14"
-							/>
-						)}
-						<Suspense
-							fallback={
-								<div className="flex flex-col gap-3">
-									<Skeleton className="dark:bg-foreground/10 bg-foreground/5 h-12 w-full rounded" />
-									<Skeleton className="dark:bg-foreground/10 bg-foreground/5 h-5 w-2/3 rounded" />
-									<Skeleton className="dark:bg-foreground/10 bg-foreground/5 h-5 w-1/2 rounded" />
-								</div>
-							}
-						>
-							<LessonBody
-								lesson={lesson}
-								abilityLoader={abilityLoader}
-								mdxContentPromise={mdxContentPromise}
-								workshop={workshop}
-							/>
-						</Suspense>
-						<TranscriptContainer
-							lessonId={lesson?.id}
-							abilityLoader={abilityLoader}
-						/>
-
-						{/* <Accordion type="single" collapsible className="mt-4">
-								<AccordionItem value="contents">
-									<AccordionTrigger className="flex w-full items-center font-medium">
-										Workshop Contents
-									</AccordionTrigger>
-									<AccordionContent>
-										<Suspense
-											fallback={
-												<div className="flex w-full shrink-0 flex-col gap-2 p-5">
-													<Skeleton className="h-24 w-full bg-gray-100" />
-													{new Array(10).fill(null).map((_, i) => (
-														<Skeleton
-															key={i}
-															className="h-8 w-full bg-gray-100"
-														/>
-													))}
-												</div>
-											}
-										>
-											<WorkshopResourceList
-												currentLessonSlug={params.lesson}
-												className="max-w-none"
-											/>
-										</Suspense>
-									</AccordionContent>
-								</AccordionItem>
-							</Accordion> */}
-					</article>
-				</div>
-			</div>
-			<Suspense fallback={null}>
-				<UpNext
-					className="rounded-none border-x-0 border-b-0 border-t"
-					currentResourceId={lesson?.id}
-					abilityLoader={abilityLoader}
+		<ActiveHeadingProvider>
+			<main className="w-full">
+				<ContentReadTracker
+					contentId={lesson.id}
+					contentType={lessonType === 'solution' ? 'solution' : 'lesson'}
+					contentSlug={String(lesson.fields?.slug ?? params.lesson)}
+					parentSlug={params.module}
 				/>
-			</Suspense>
-		</main>
+				<PlayerContainer
+					lesson={lesson}
+					params={params}
+					lessonType={lessonType}
+					ability={ability}
+				/>
+				<LessonControls
+					abilityLoader={abilityLoader}
+					lesson={lesson}
+					problem={problem}
+					moduleSlug={params.module}
+				/>
+				<div className="max-w-(--breakpoint-xl) container relative px-5 md:px-10 lg:px-14">
+					<div className="relative z-10">
+						<article className="">
+							<LessonTitle lesson={lesson} />
+							{lesson?.fields?.body && lesson?.fields?.body?.length > 300 && (
+								<PostToC
+									markdown={lesson?.fields?.body}
+									className="top-0 -mx-5 mb-5 md:-mx-10 lg:-mx-14"
+								/>
+							)}
+							<Suspense
+								fallback={
+									<div className="flex flex-col gap-3">
+										<Skeleton className="dark:bg-foreground/10 bg-foreground/5 h-12 w-full rounded" />
+										<Skeleton className="dark:bg-foreground/10 bg-foreground/5 h-5 w-2/3 rounded" />
+										<Skeleton className="dark:bg-foreground/10 bg-foreground/5 h-5 w-1/2 rounded" />
+									</div>
+								}
+							>
+								<LessonBody
+									lesson={lesson}
+									abilityLoader={abilityLoader}
+									mdxContentPromise={mdxContentPromise}
+									workshop={workshop}
+								/>
+							</Suspense>
+							<TranscriptContainer
+								lessonId={lesson?.id}
+								abilityLoader={abilityLoader}
+							/>
+						</article>
+					</div>
+				</div>
+				<Suspense fallback={null}>
+					<UpNext
+						className="rounded-none border-x-0 border-b-0 border-t"
+						currentResourceId={lesson?.id}
+						abilityLoader={abilityLoader}
+					/>
+				</Suspense>
+			</main>
+		</ActiveHeadingProvider>
 	)
 }
 
@@ -223,13 +198,11 @@ async function PlayerContainer({
 	lesson,
 	lessonType = 'lesson',
 	params,
-	workshop,
 	ability,
 }: {
 	lesson: Lesson | null
 	lessonType?: 'lesson' | 'exercise' | 'solution'
 	params: { module: string; lesson: string }
-	workshop: MinimalWorkshop | null
 	ability: Omit<AbilityForResource, 'canView'> & {
 		canViewWorkshop: boolean
 		canViewLesson: boolean
@@ -297,15 +270,6 @@ async function PlayerContainer({
 						</>
 					}
 				>
-					{/* LessonPage already redirects denied viewers. Authorized overlay
-					    states (including completion) do not need commerce data. */}
-					<VideoPlayerOverlay
-						resource={lesson}
-						abilityLoader={abilityLoader}
-						moduleType="workshop"
-						moduleSlug={params.module}
-						workshop={workshop}
-					/>
 					<AuthedVideoPlayer
 						key={lesson.id}
 						// The width cap mirrors the height cap: with only max-h, a short
@@ -323,6 +287,17 @@ async function PlayerContainer({
 						moduleSlug={params.module}
 						moduleType="workshop"
 						title={lesson.fields?.title}
+						// Inside the player so the end card survives fullscreen.
+						// LessonPage already redirects denied viewers, so the card
+						// only ever shows completion and needs no commerce data.
+						overlay={
+							<VideoPlayerOverlay
+								resource={lesson}
+								abilityLoader={abilityLoader}
+								moduleType="workshop"
+								moduleSlug={params.module}
+							/>
+						}
 					/>
 				</Suspense>
 			</section>

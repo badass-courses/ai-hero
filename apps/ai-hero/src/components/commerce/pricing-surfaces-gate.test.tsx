@@ -89,7 +89,6 @@ vi.mock('@/utils/compile-mdx', () => ({
 import { EventBodyWithPricing } from '@/app/(content)/events/[slug]/_components/event-body-with-pricing'
 import { BuyButtonComponent } from '@/app/(content)/workshops/_components/inline-mdx-pricing'
 import { PricingWidget as WorkshopPricingWidget } from '@/app/(content)/workshops/_components/pricing-widget'
-import { VideoOverlayWorkshopPricing } from '@/app/(content)/workshops/_components/video-overlay-pricing-widget'
 
 import { CheckoutSurveyBuyButton } from './checkout-survey-buy-button'
 import { PricingWidget as HomePricingWidget } from './home-pricing-widget'
@@ -176,20 +175,6 @@ const SURFACES: readonly [string, () => Promise<React.ReactNode> | React.ReactNo
 		),
 	],
 	['the checkout survey button', () => <CheckoutSurveyBuyButton />],
-	[
-		'the video overlay',
-		() => (
-			<VideoOverlayWorkshopPricing
-				{...({
-					product,
-					quantityAvailable: -1,
-					pricingDataLoader: loader,
-					purchasedProductIds: [],
-					country: 'US',
-				} as any)}
-			/>
-		),
-	],
 	[
 		'inline MDX pricing',
 		() => (

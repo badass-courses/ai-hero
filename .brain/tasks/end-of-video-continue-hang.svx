@@ -1,0 +1,60 @@
+---
+title: "Fix the end-of-video Continue hang and drop leftover revalidatePath calls"
+type: "task"
+status: "active"
+created_at: "2026-10-15"
+---
+
+# Fix the end-of-video Continue hang and drop leftover revalidatePath calls
+
+Found in the 2026-10-15 review of the lesson end-of-video states, done ahead of the Cohort 5 class.
+
+## Continue on the end-of-video overlay can hang forever
+
+`ContinueButton` in `apps/ai-hero/src/app/(content)/_components/video-player-overlay.tsx` runs `startTransition(async () => { await setProgressForResource(); await revalidateModuleLesson() })`, dispatches `LOADING`, and calls `router.push` in the same click.
+
+Reproduced 3 of 3 times on the local dev server (Next 16.2.7), signed out, using headless Chrome. The progress action returned in about 70 ms, then the next lesson's RSC payload arrived in about 700 ms. The `revalidateModuleLesson` action was never sent, the URL never changed, and the bare spinner stayed up for the full 25 s watch. In the same setup, a plain `<Link>` to the next lesson committed in about 0.8 s.
+
+When the progress action was held for 1.5 s so the navigation resolved first, the page did arrive, but only after the revalidate action came back carrying a re-rendered page: 5.5 s from click to new URL.
+
+Why, read from Next 16.2.7 `app-router-instance.js` and `server-action-reducer.js`:
+- A navigation that arrives while a server action is pending marks that action discarded. Its router state is dropped, but the caller's promise still resolves.
+- A server action dispatched while a navigation is pending waits in the router's action queue until the navigation finishes.
+- The navigation's transition is entangled with the click's async transition, so it cannot commit until that transition ends.
+
+That transition was awaiting `revalidateModuleLesson`, which was queued behind the navigation. Each waited on the other.
+
+There is a second trap in the same queue. When a discarded action finishes, `runRemainingActions` advances whatever action is pending, which is now the navigation, without checking that it is the action that finished. That starts the next queued server action early. It captured the pre-navigation router state, and because it was dispatched after the push, its result is the last state update and overwrites the navigation.
+
+Autoplay hit this on every run once a position save was dispatched after `router.push` (2026-10-15). The pause-triggered save is always in flight when the video ends.
+
+The rule for this codebase: fire-and-forget writes from the lesson page (completion, playback position) go through tRPC mutations, which use plain fetch, never server actions. Server actions share the router's queue with navigations. The posts-side callers still use server actions and are a follow-up.
+
+Signed-in learners on an uncompleted lesson take the same code path. Not reproduced signed-in, and smer holds no learner report of it, though Front is not in smer.
+
+## Fix direction
+
+Do it the way `ModuleLessonProgressToggle` and the 2026-06-26 completion design already do. Call `addLessonProgress` urgently, write the progress in the background, and never call `revalidatePath`, because it evicts the client prefetch cache. Navigate with `router.push` or a `<Link>`, outside any transition that awaits server actions.
+
+The same leftover `revalidateModuleLesson` calls sit in the binge path of `authed-video-player.tsx`, which awaits three server actions before `router.push`, and in `CompletedModuleOverlay`.
+
+## Who can record progress is not knowable on the client
+
+Learners in the email-course flow have no next-auth session. The server identifies them by the httpOnly `ck_subscriber` cookie (`getUser()` in `src/lib/progress.ts`), which client code cannot read.
+
+So never gate a progress write on `session.user`. Doing so dropped those learners' completions in #424 until review caught it. Gate on `canViewLesson` instead:
+- **With a session:** update the store optimistically.
+- **Without a session:** update the store only after the server returns a record. Anonymous viewers get `null` back, so they see no flicker.
+
+## Parked UX gaps (Vojta, 2026-10-15: note them for later)
+
+These came out of the same review and were left out of the end-of-video PR on purpose.
+
+- Exercise lessons go straight to "Now watch Matt's solution". Proposal: a "Your turn" card first, with Copy prompt, open the repo, and "Watch the solution when you're done". This is Matt's call, since it is pedagogy.
+- At the end of a cohort workshop, when the next workshop is still locked, the card shows only Replay and Certificate. The sidebar already computes `unlocksAt`, so the card could say when the next workshop unlocks.
+- Once the end card is dismissed it is gone for good. A small "Up next" pill could stay behind.
+- The cohort end card could point to live touchpoints (office hours, Discord).
+
+## Related defect: the overlay is invisible in fullscreen
+
+`VideoPlayerOverlay` renders as a sibling of `PlayerGestureShell`, and the shell is the player's `fullscreen-element`. A learner in fullscreen never sees Up Next, Continue, or the workshop-complete card. In binge mode the remount on each navigation (`key={lesson.id}`) also drops fullscreen.

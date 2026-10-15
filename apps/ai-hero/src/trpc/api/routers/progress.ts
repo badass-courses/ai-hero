@@ -6,6 +6,8 @@ import {
 	addProgress,
 	getModuleProgressForUser,
 	sendInngestProgressEvent,
+	setPlaybackPositionForResource,
+	setProgressForResource,
 } from '@/lib/progress'
 import { getNextResource } from '@/lib/resources/get-next-resource'
 import { SubscriberSchema } from '@/schemas/subscriber'
@@ -34,6 +36,23 @@ export const progressRouter = createTRPCRouter({
 		.input(z.object({ moduleIdOrSlug: z.string() }))
 		.query(async ({ input }) => {
 			return getModuleProgressForUser(input.moduleIdOrSlug)
+		}),
+	/**
+	 * The lesson page's fire-and-forget writes (complete on end, the progress
+	 * toggle, the playback position). They go over tRPC, not server actions:
+	 * Next's router queues server actions with navigations, and one settling
+	 * mid-navigation can replay the old page's tree over the new one.
+	 * Both return null on failure or when signed out.
+	 */
+	setCompleted: publicProcedure
+		.input(z.object({ resourceId: z.string(), isCompleted: z.boolean() }))
+		.mutation(async ({ input }) => {
+			return setProgressForResource(input)
+		}),
+	setPlaybackPosition: publicProcedure
+		.input(z.object({ resourceId: z.string(), positionSeconds: z.number() }))
+		.mutation(async ({ input }) => {
+			return setPlaybackPositionForResource(input)
 		}),
 	add: publicProcedure
 		.input(

@@ -29,7 +29,6 @@ import {
 import { useCohortNavigation } from './cohort-navigation-provider'
 
 type Props = {
-	currentLessonSlug?: string
 	currentSectionSlug?: string | null
 	className?: string
 	wrapperClassName?: string
@@ -84,6 +83,10 @@ export function WorkshopResourceList(props: Props) {
 	const cohortNavigation = useCohortNavigation()
 	const { moduleProgress } = useModuleProgress()
 	const params = useParams()
+	// From the URL, not a prop: the lesson layout that renders this list stays
+	// mounted while the lesson changes underneath it.
+	const currentLessonSlug =
+		typeof params.lesson === 'string' ? params.lesson : undefined
 	const pathname = usePathname()
 	const { status: sessionStatus } = useSession()
 	const isAnonymousShell = sessionStatus !== 'authenticated'
@@ -92,7 +95,7 @@ export function WorkshopResourceList(props: Props) {
 		api.ability.getCurrentAbilityRules.useQuery(
 			{
 				moduleId: workshopNavigation?.id,
-				lessonId: props.currentLessonSlug,
+				lessonId: currentLessonSlug,
 			},
 			{
 				enabled: sessionStatus === 'authenticated' && !!workshopNavigation?.id,
@@ -107,7 +110,7 @@ export function WorkshopResourceList(props: Props) {
 
 	const sectionId = findSectionIdForResourceSlug(
 		workshopNavigation,
-		props.currentLessonSlug,
+		currentLessonSlug,
 	)
 
 	if (!workshopNavigation) {
@@ -175,7 +178,7 @@ export function WorkshopResourceList(props: Props) {
 			resources={resources ?? undefined}
 			defaultOpenSectionId={props.defaultAllClosed ? null : sectionId}
 			defaultAllClosed={props.defaultAllClosed}
-			currentSlug={props.currentLessonSlug}
+			currentSlug={currentLessonSlug}
 			isOnSolution={pathname.includes('/solution')}
 			completedLessons={moduleProgress?.completedLessons}
 			buildLessonHref={(slug) => `/workshops/${moduleSlug}/${slug}`}
