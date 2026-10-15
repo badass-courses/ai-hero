@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import { use } from 'react'
+import { flushSync } from 'react-dom'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { PlayerGestureShell } from '@/components/player/player-gesture-shell'
 import { useMuxChapters } from '@/components/video-chapters/use-mux-chapters'
@@ -25,6 +26,7 @@ import {
 	getPlaybackStartTime,
 	normalizePlaybackPosition,
 } from '@/lib/playback-position'
+import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
 import { getAdjacentWorkshopResources } from '@/utils/get-adjacent-workshop-resources'
 import type { AbilityForResource } from '@/utils/get-current-ability-rules'
@@ -32,6 +34,7 @@ import MuxPlayer, {
 	type MuxPlayerProps,
 	type MuxPlayerRefAttributes,
 } from '@mux/mux-player-react'
+import { useSession } from 'next-auth/react'
 
 import type {
 	ContentResource,
@@ -41,6 +44,7 @@ import type {
 } from '@coursebuilder/core/schemas'
 import {
 	useVideoPlayerOverlay,
+	type CompletedAction,
 	type VideoPlayerOverlayAction,
 } from '@coursebuilder/ui/hooks/use-video-player-overlay'
 import { cn } from '@coursebuilder/ui/utils/cn'
@@ -87,6 +91,10 @@ export function AuthedVideoPlayer({
 } & MuxPlayerProps) {
 	const ability = abilityLoader ? use(abilityLoader) : null
 	const canView = ability?.canViewLesson
+	const { data: session } = useSession()
+	// Signed out the write returns null and the store would flip back.
+	const canRecordProgress = Boolean(canView && session?.user)
+	const utils = api.useUtils()
 
 	const muxMetadata = useMuxMetadata({
 		videoId: resource.id,
@@ -229,6 +237,11 @@ export function AuthedVideoPlayer({
 				addLessonProgress,
 				removeLessonProgress,
 				navigation,
+				canRecordProgress,
+				// The cohort eligibility read may have raced the final write;
+				// ask again once it is persisted.
+				onModuleCompleted: () =>
+					void utils.certificate.cohortEligibility.invalidate(),
 			})
 			void persistPlaybackPosition(0, true)
 		},
@@ -307,7 +320,7 @@ function createCompletedOverlayAction({
 	currentResource: ContentResource
 	prevResource?: ContentResource | null
 	nextResource?: ContentResource | null
-}): VideoPlayerOverlayAction {
+}): CompletedAction {
 	const resourceToComplete = getResourceToComplete({
 		currentResource,
 		prevResource,
@@ -342,6 +355,8 @@ function handleOnVideoEnded({
 	currentResource,
 	router,
 	navigation,
+	canRecordProgress,
+	onModuleCompleted,
 }: {
 	resource: ContentResource
 	playerRef: React.RefObject<MuxPlayerRefAttributes | null>
@@ -357,6 +372,8 @@ function handleOnVideoEnded({
 	addLessonProgress: (lessonId: string) => void
 	removeLessonProgress: (lessonId: string) => void
 	navigation: ResourceNavigation | null
+	canRecordProgress: boolean
+	onModuleCompleted: () => void
 }) {
 	void track('video_completed', {
 		resourceSlug: resource?.fields?.slug,
@@ -366,56 +383,42 @@ function handleOnVideoEnded({
 		bingeMode,
 	})
 
-	const resourceToComplete = getResourceToComplete({
-		currentResource,
-		prevResource,
-		navigation,
-	})
-	const completeInBackground = () =>
-		void completeLessonInBackground({
-			resourceId: resourceToComplete.id,
-			moduleProgress,
-			addLessonProgress,
-			removeLessonProgress,
-		})
-
 	if (resource?.type === 'exercise') {
 		router.push(`${resource?.fields?.slug}/exercise`)
 		return
 	}
 
-	if (!bingeMode) {
-		dispatchVideoPlayerOverlay(
-			createCompletedOverlayAction({
-				playerRef,
-				navigation,
-				moduleProgress,
+	const completedAction = createCompletedOverlayAction({
+		playerRef,
+		navigation,
+		moduleProgress,
+		currentResource,
+		prevResource,
+		nextResource,
+	})
+	const showCard = !bingeMode || !nextResource
+	// Commit the card before the completion lands, so the learner sees the
+	// progress bar and count tick over under it.
+	if (showCard) flushSync(() => dispatchVideoPlayerOverlay(completedAction))
+
+	// Every mode completes on end. Dispatched before any push so it never
+	// holds the navigation up. A problem lesson completes on its solution.
+	if (canRecordProgress && nextResource?.type !== 'solution') {
+		void completeLessonInBackground({
+			resourceId: getResourceToComplete({
 				currentResource,
 				prevResource,
-				nextResource,
-			}),
-		)
-		return
-	}
-
-	// Autoplay: complete in the background, then go straight on. The write is
-	// dispatched before the push so it never holds the navigation up. A
-	// problem lesson followed by its solution completes on the solution.
-	if (nextResource?.type !== 'solution') completeInBackground()
-
-	if (!nextResource) {
-		dispatchVideoPlayerOverlay(
-			createCompletedOverlayAction({
-				playerRef,
 				navigation,
-				moduleProgress,
-				currentResource,
-				prevResource,
-				nextResource,
-			}),
-		)
-		return
+			}).id,
+			moduleProgress,
+			addLessonProgress,
+			removeLessonProgress,
+		}).then(() => {
+			if (completedAction.isModuleComplete) onModuleCompleted()
+		})
 	}
+
+	if (showCard || !nextResource) return
 
 	// For solution resources, use the parent lesson's slug instead of the solution's slug
 	const nextResourceSlug =
