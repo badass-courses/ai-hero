@@ -5,7 +5,8 @@ import { runContactSyncBackfill } from '@/lib/subscriber-marketing/contact-sync-
 /**
  * Contact sync, PR 4: the one-time backfill. Nothing schedules it: it runs
  * only when an operator sends `drovr/contact-sync.backfill-requested` (on
- * the hawk's go), then re-queues itself with its cursor until done. Behind
+ * the hawk's go), counts first, then requires a one-contact canary. Every
+ * continuation is another approved command; no run re-queues itself. Behind
  * AIH_DROVR_PROFILE_SYNC like the rest of contact sync.
  */
 export const drovrContactSyncBackfill = inngest.createFunction(

@@ -744,7 +744,7 @@ export function replayOrder(rows: readonly DrovrOutboxRow[]): DrovrOutboxRow[] {
 	const placed = new Map<string, { at: string; rank: number }>()
 	for (const row of rows) {
 		let at = row.occurredAt
-		let rank = isOutboxBirth(row) ? 2 : isOutboxStop(row) ? 1 : 3
+		let rank = isOutboxBirth(row) ? 2 : isOutboxStop(row) ? 1 : row.eventType === 'contact.profile.updated' ? 3 : 4
 		if (isOutboxBirth(row))
 			for (const gated of rows)
 				if (birthGates(row, gated) && gated.occurredAt.localeCompare(at) <= 0) {

@@ -2,6 +2,19 @@
 
 `AI_DrovrOutbox` keeps every drovr send that ran out of retries, and every stop that is owed (rows 204, 204b and 204c). The replay (`drovr-outbox-replay-v1`, cron `2-57/5`) re-posts them under their drovr idempotency keys, so a repeat is deduped by drovr. Every statement below is a **prod write**: the hawk decides, and the row ids go in the receipt.
 
+## Contact deltas and the paced lane
+
+Profile/link deltas persist every immutable event in the outbox **before** publishing one envelope to the bulk lane. An unavailable or unconfigured capture fails closed; it cannot advance the contact-sync watermark. A crash between the write and publish leaves rows for replay. The bulk function settles pending rows after delivery. A version acknowledgement now means delivered **or durably queued**, not necessarily already present in drovr.
+
+- Coupons and offers do not change the profile digest or version. An offer-only update and `coupon.issued` completion stay on the live paths, outside the bulk reservation. An offer-only acknowledgement never postpones the profile's monthly confirmation.
+- A changed profile or link window re-issues the profile first, then links and the current offer at the new version. The bulk lane, straggler retry and bulk/contact-sync replay reserve the same send-time cursor before each single-event POST. A busy slot retries unchanged. The cap is `BULK_EVENTS_PER_MINUTE`, not the number of Inngest envelopes.
+- The existing quarter-hour **delta** reconcile and heartbeat remain registered and independent of monthly confirmation. Unchanged contacts skip payload delivery. A rejected payload holds the watermark; a strict durable queue write may advance it. The heartbeat still carries the bounded scan's actual `syncedThrough`, never just wall time.
+- Monthly confirmations send only an equal-version profile under `profile:<contact>:<version>:restate:<YYYY-MM>`. The timestamp is the memoized issue time. New-format digests are compared before confirming; a genuine difference takes the normal paced bump path. Legacy combined digests are not treated as changes by a confirmation or coupon. drovr ignores equal-version profile values and advances confirmation time. A legacy contact can temporarily retain old values until the delta scan catches a concurrent change.
+- Stored link windows keep the existing lifetime and rotation. drovr checks the send-time expiry margin and uses live personalize if a stored link is too short. AI Hero does not claim to know drovr's latest planned send time.
+- The straggler function remains. The pre-existing generic capture can fail while storage is unavailable, so exactly-once coverage of every legacy event has **not** been proven. Do not remove the straggler on the strength of the new delta path alone.
+- A failed 409 `event-not-live` remains pending on replay. Whole-batch and per-item refusals retain the original event and key. Never re-key a retry or discard it as a permanent refusal.
+- Before deploying or rolling back, follow the read-only inventory and cursor-resume gate in `drovr-bulk-births-runbook.md`. Queued envelopes and row bodies survive a rollback to the previous deploy, but that deploy does **not** preserve the new pacing fence.
+
 ## What to watch
 
 - `drovr.outbox.depth` every 5 minutes: `pending`, `held`, `rejected`, `oldestPendingAgeMin`, `oldestOpenStopAgeMin`, `oldestDeferredStopAgeMin`, `heldStops`, `oldestHeldStopAgeMin`.

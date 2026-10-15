@@ -123,19 +123,15 @@ export async function birthThenRedeliver(args: {
 	)
 	if (cold.length === 0)
 		return { deferred: args.deferred, accepted: 0, rejected: 0 }
-	const contactIds = [...new Set(cold.map((item) => item.event.contactId))]
-	await args.step.run('birth-directory', () => args.birth(contactIds))
-	const outcome = (await args.step.run('redeliver-after-birth', () =>
-		args.deliver(cold.map((item) => item.event)),
-	)) as DrovrBatchOutcome
-	return {
-		deferred: [
-			...args.deferred.filter((item) => item.reason !== 'cold-start-unhandled'),
-			...(outcome.deferred ?? []),
-		],
-		accepted: outcome.accepted,
-		rejected: outcome.rejected,
+	const result = { deferred: args.deferred.filter((item) => item.reason !== 'cold-start-unhandled'), accepted: 0, rejected: 0 }
+	for (const { event } of cold) {
+		await args.step.run(`paced-birth:${event.idempotencyKey}`, () => args.birth([event.contactId]))
+		const answer = (await args.step.run(`paced-redeliver:${event.idempotencyKey}`, () => args.deliver([event]))) as DrovrBatchOutcome
+		result.accepted += answer.accepted
+		result.rejected += answer.rejected
+		result.deferred.push(...(answer.deferred ?? []))
 	}
+	return result
 }
 
 type RetryStep = {
@@ -184,9 +180,15 @@ export async function runContactSyncStragglerRetry(args: {
 			reason: config.reason,
 		}
 	}
-	const outcome = (await args.step.run('deliver', () =>
-		args.deliver(items.map((item) => item.event)),
-	)) as DrovrBatchOutcome
+	const outcome: DrovrBatchOutcome = { accepted: 0, rejected: 0, deferred: [] }
+	// A legacy queued retry may contain many events. Each paced send gets its
+	// own memoized step, so a slot refusal resumes after completed sends.
+	for (const { event } of items) {
+		const answer = (await args.step.run(`paced-deliver:${event.idempotencyKey}`, () => args.deliver([event]))) as DrovrBatchOutcome
+		outcome.accepted += answer.accepted
+		outcome.rejected += answer.rejected
+		outcome.deferred!.push(...(answer.deferred ?? []))
+	}
 	const resolved = await birthThenRedeliver({
 		deferred: outcome.deferred ?? [],
 		step: args.step,

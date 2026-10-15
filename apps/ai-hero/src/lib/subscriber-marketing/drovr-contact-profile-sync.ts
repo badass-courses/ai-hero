@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto'
 import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
 
 import type { ContactProfileVersion } from './contact-profile-version'
+import { linkSendDecision, profileVersionBump } from './contact-sync-deltas'
 import {
 	birthThenRedeliver,
 	contactSyncRetryRequest,
@@ -183,6 +184,8 @@ export function buildContactProfileEvents(args: {
 	profile: ContactProfile
 	links: readonly ContactLinksIssue[]
 	offers: readonly ContactOfferIssue[]
+	/** Acknowledged equal digest proves these link values/windows are equal. */
+	previousProfileVersion?: number
 }): DrovrShadowEvent[] {
 	const base = {
 		tenantId: DROVR_AUTHORITY_TENANT_ID,
@@ -198,11 +201,15 @@ export function buildContactProfileEvents(args: {
 			idempotencyKey: `profile:${args.contactId}:${profileVersion}`,
 			payload: { profileVersion, ...args.profile },
 		},
-		...args.links.map(
+		...args.links.filter((link) => {
+			const next = { value: canonicalJson(link), profileVersion, expiresAt: Date.parse(link.expiresAt) }
+			const prev = args.previousProfileVersion === undefined ? undefined : { ...next, profileVersion: args.previousProfileVersion }
+			return linkSendDecision(prev, next, Date.parse(args.occurredAt)).action === 'send'
+		}).map(
 			(link): DrovrShadowEvent => ({
 				...base,
 				type: 'contact.links.issued',
-				idempotencyKey: `links:${args.contactId}:${link.journeyId}:${link.emailKey}:${link.issuedAt}:v${profileVersion}`,
+				idempotencyKey: `links:${args.contactId}:${link.journeyId}:${link.emailKey}:v${profileVersion}`,
 				payload: { profileVersion, ...link },
 			}),
 		),
@@ -302,17 +309,17 @@ export async function readContactProfileSnapshot(args: {
 }
 
 /**
- * What a sync would push, as one digest: the profile, every link window and
- * its variables, and every offer, in a fixed order. When the snapshot was
- * read and the order things came in do not count, so an unchanged contact
- * hashes the same on every run.
+ * Versioned digest of profile and links only. Offers are independent facts.
+ * The prefix distinguishes legacy combined digests without a schema change;
+ * the remaining 61 hex digits retain 244 bits of the SHA-256 digest. Read
+ * time and input order do not change the digest.
  */
 export function contactProfileContentHash(
 	snapshot: Pick<ContactProfileSnapshot, 'profile' | 'links' | 'offers'>,
 ): string {
 	const byKey = <T>(items: readonly T[], key: (item: T) => string) =>
 		[...items].sort((left, right) => key(left).localeCompare(key(right)))
-	return createHash('sha256')
+	return 'v2:' + createHash('sha256')
 		.update(
 			canonicalJson({
 				profile: snapshot.profile,
@@ -320,10 +327,11 @@ export function contactProfileContentHash(
 					snapshot.links,
 					(link) => `${link.journeyId}\u0000${link.emailKey}`,
 				),
-				offers: byKey(snapshot.offers, (offer) => offer.couponId),
+				// Offers are independent facts at the current version, never inputs
+				// to the version. A new coupon must not invalidate stored links.
 			}),
 		)
-		.digest('hex')
+		.digest('hex').slice(0, 61)
 }
 
 function canonicalJson(value: unknown): string {
@@ -373,10 +381,10 @@ type DeliveryResult =
 
 /**
  * One contact's profile to drovr's contact directory: read it, version it by
- * content, and post the events, answering `sent` only once drovr took them
- * (the contact-sync reconcile's watermark relies on that). A new content
- * moves the version; unchanged content re-sends the last version's exact
- * events, which drovr dedupes. Events addressed to the authority tenant go
+ * content, and deliver or strictly outbox the events before answering
+ * `sent` (the delta reconcile's watermark relies on that). Profile/link
+ * changes move the version; coupons read it without writing it. An unchanged
+ * acknowledged digest skips, except for a monthly profile-only confirmation. Events addressed to the authority tenant go
  * straight to it: no owner fan-out. Read before versioning, so a missing
  * contact spends no version; per-contact concurrency of one keeps a higher
  * version carrying newer content. A 5xx, a network failure or drovr's 409
@@ -389,6 +397,7 @@ export async function runContactProfileSync(args: {
 	readSnapshot: (request: {
 		contactId: string
 		valuePathSlug?: string
+		offerOnly?: boolean
 	}) => Promise<ContactProfileSnapshot | undefined>
 	versionFor: (
 		contactId: string,
@@ -404,6 +413,7 @@ export async function runContactProfileSync(args: {
 	birth: (contactIds: string[]) => Promise<void>
 	/** Records that drovr fully accepted this version (the version store). */
 	acknowledge: (contactId: string, profileVersion: number) => Promise<void>
+	currentVersion?: (contactId: string) => Promise<(ContactProfileVersion & { contentHash?: string }) | undefined>
 }): Promise<ContactProfileSyncReceipt> {
 	const config = parseDrovrProfileSyncConfig(args.env)
 	if (!config.enabled) return { status: 'skipped', reason: config.reason }
@@ -420,7 +430,8 @@ export async function runContactProfileSync(args: {
 	const snapshot = (await args.step.run('read-profile', async () =>
 		args.readSnapshot({
 			contactId,
-			valuePathSlug: valuePathSlug ?? (await args.ownedPath(contactId)),
+			valuePathSlug: args.event.data.reason === 'offer-issued' ? undefined : valuePathSlug ?? (await args.ownedPath(contactId)),
+			...(args.event.data.reason === 'offer-issued' ? { offerOnly: true } : {}),
 		}),
 	)) as ContactProfileSnapshot | undefined
 	if (!snapshot) return { status: 'skipped', reason: 'contact-missing' }
@@ -431,22 +442,46 @@ export async function runContactProfileSync(args: {
 	// Addressed by content: unchanged, this is the last version and when it
 	// was set, so the events below are byte-identical to the last push and
 	// drovr dedupes them for free.
-	const { profileVersion, since, acknowledged } = (await args.step.run(
-		'profile-version',
-		() => args.versionFor(contactId, contactProfileContentHash(snapshot)),
-	)) as ContactProfileVersion
-	// A live writer re-pushing a version drovr already took adds nothing
-	// (drovr dedupes it, but each is an actor call). The reconcile never
-	// skips: its one re-statement per run keeps drovr's confirmedAt moving.
-	if (acknowledged && args.event.data.reason !== 'reconcile')
+	const offerOnly = args.event.data.reason === 'offer-issued'
+	let restate = args.event.data.reason === 'restate'
+	const selected = (await args.step.run('delta-profile-version', async () => {
+		const nextHash = contactProfileContentHash(snapshot)
+		if (restate) {
+			const current = await args.currentVersion?.(contactId)
+			if (!current?.contentHash?.startsWith('v2:') || !profileVersionBump({ kind: 'profile-change', previousHash: current.contentHash, nextHash })) return { version: current, restate: true }
+			return { version: await args.versionFor(contactId, nextHash), restate: false }
+		}
+		return { version: !profileVersionBump({ kind: offerOnly ? 'coupon-issued' : 'profile-change', nextHash }) ? await args.currentVersion?.(contactId) : await args.versionFor(contactId, nextHash), restate: false }
+	})) as { version: (ContactProfileVersion & { contentHash?: string }) | undefined; restate: boolean }
+	const { version } = selected
+	restate = selected.restate
+	// An unseeded directory falls back to live personalize. A coupon cannot
+	// manufacture a profile or spend a version, even for a first issue.
+	if (!version) return { status: 'skipped', reason: 'profile-not-issued' }
+	const { profileVersion, since, acknowledged } = version
+	// Restatements never reinterpret a legacy combined digest as a change.
+	// Delta recovery remains responsible for actual profile/link inputs.
+	// A live writer or delta scan adds nothing for a queued/accepted digest.
+	// Only the independent monthly restater confirms equal versions.
+	if (acknowledged && !offerOnly && !restate)
 		return { status: 'skipped', reason: 'unchanged' }
 	const events = buildContactProfileEvents({
 		contactId,
 		profileVersion,
 		...snapshot,
+		links: offerOnly || restate ? [] : snapshot.links,
+		offers: restate ? [] : snapshot.offers,
 		occurredAt: since,
-	})
-	const delivered = (await args.step.run('deliver-profile', () =>
+	}).filter((event) => !offerOnly || event.type === 'contact.offer.issued')
+	if (restate) {
+		const window = snapshot.occurredAt.slice(0, 7)
+		for (const event of events) {
+			event.idempotencyKey = `profile:${contactId}:${profileVersion}:restate:${window}`
+			event.occurredAt = snapshot.occurredAt
+		}
+	}
+	if (events.length === 0) return { status: 'skipped', reason: 'unchanged' }
+	const delivered = (await args.step.run('delta-deliver-profile', () =>
 		args.deliver(events),
 	)) as DeliveryResult
 	if (delivered === 'not-configured') {
@@ -492,16 +527,16 @@ export async function runContactProfileSync(args: {
 	if (rejected > 0) {
 		return { status: 'skipped', reason: 'drovr-rejected' }
 	}
-	// A full accept: nothing rejected or deferred. Only this vouches for
-	// the version, so a refused or failed push is pushed again.
-	await args.step.run('acknowledge-version', () =>
+	// Delivery answered or the strict bulk handoff durably queued every
+	// event. A coupon cannot postpone the profile's next confirmation.
+	if (!offerOnly) await args.step.run('delta-acknowledge-version', () =>
 		args.acknowledge(contactId, profileVersion),
 	)
 	return {
 		status: 'sent',
 		profileVersion,
-		links: snapshot.links.length,
-		offers: snapshot.offers.length,
+		links: events.filter((event) => event.type === 'contact.links.issued').length,
+		offers: events.filter((event) => event.type === 'contact.offer.issued').length,
 		accepted,
 		rejected,
 	}

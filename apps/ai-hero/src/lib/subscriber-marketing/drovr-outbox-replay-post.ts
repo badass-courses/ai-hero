@@ -144,7 +144,9 @@ export async function postDrovrOutboxRow(
 		if (outcome.status === 'failed')
 			return {
 				kind: 'failed',
-				transient: isTransientStatus(outcome.httpStatus),
+				// The single-event transport reports only event-not-live as a
+				// failed 409. Keep its immutable row pending, never rejected.
+				transient: outcome.httpStatus === 409 || isTransientStatus(outcome.httpStatus),
 				reason: outcome.reason,
 				...(outcome.httpStatus === undefined
 					? {}

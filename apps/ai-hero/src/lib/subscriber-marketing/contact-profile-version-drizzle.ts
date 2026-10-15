@@ -3,6 +3,7 @@ import { isMysqlDuplicateEntryError } from '@/lib/mysql-primary-key-retry'
 import { and, eq, sql } from 'drizzle-orm'
 
 import type { ContactProfileVersionStore } from './contact-profile-version'
+import { profileVersionBump } from './contact-sync-deltas'
 
 /** Enough for the per-contact concurrency of one the sync function runs at. */
 const BUMP_ATTEMPTS = 8
@@ -36,6 +37,11 @@ export function createDrizzleContactProfileVersionStore(
 	const byContact = (contactId: string) =>
 		eq(contactProfileVersion.contactId, contactId)
 	return {
+		async currentFor(contactId) {
+			const rows = (await db.select({ version: contactProfileVersion.profileVersion, hash: contactProfileVersion.profileHash, acknowledgedVersion: contactProfileVersion.acknowledgedVersion, updatedAt: contactProfileVersion.updatedAt }).from(contactProfileVersion).where(byContact(contactId)).limit(1)) as { version: number; hash: string; acknowledgedVersion: number | null; updatedAt: string | Date }[]
+			const row = rows[0]
+			return row ? { profileVersion: Number(row.version), since: isoOf(row.updatedAt), contentHash: row.hash, acknowledged: Number(row.acknowledgedVersion) === Number(row.version) } : undefined
+		},
 		async versionFor(contactId, contentHash) {
 			for (let attempt = 0; attempt < BUMP_ATTEMPTS; attempt += 1) {
 				const rows = (await db
@@ -54,7 +60,7 @@ export function createDrizzleContactProfileVersionStore(
 					updatedAt: string | Date
 				}[]
 				const current = rows[0]
-				if (current?.hash === contentHash) {
+				if (current && !profileVersionBump({ kind: 'profile-change', previousHash: current.hash ?? undefined, nextHash: contentHash })) {
 					return {
 						profileVersion: Number(current.version),
 						since: isoOf(current.updatedAt),

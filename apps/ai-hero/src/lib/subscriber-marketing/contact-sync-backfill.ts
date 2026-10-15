@@ -1,5 +1,4 @@
 import {
-	DROVR_CONTACT_SYNC_BACKFILL_EVENT,
 	DROVR_EVENTS_DELIVER_BULK_EVENT,
 } from '@/inngest/events/drovr'
 import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
@@ -12,6 +11,7 @@ import {
 	type ContactProfileSnapshot,
 } from './drovr-contact-profile-sync'
 import { DOI_REQUESTED_EVENT_TYPE } from './drovr-doi-signup'
+import { requireBackfillCanary } from './contact-sync-deltas'
 import {
 	JOURNEY_OWNER_ASSIGNED_EVENT_TYPE,
 	journeyOwnerAssignmentJourneyId,
@@ -110,7 +110,7 @@ function stopIndexOf(stopBefore: BackfillStopBefore | undefined) {
 	)
 	if (index <= 0)
 		throw new Error(
-			`stopBeforePhase is not a phase after owners: ${stopBefore}`,
+			'BackfillPhase: you requested a phase boundary, and it failed because stopBeforePhase does not follow owners. Accepted: double-opt-in, stops, or a stop event phase. Fix: choose a supported stopBeforePhase. Debug: inspect the saved cursor.',
 		)
 	return index
 }
@@ -224,6 +224,7 @@ type BackfillStep = {
 }
 
 export type BackfillReceipt =
+	| { status: 'dry-run'; rows: number }
 	| { status: 'skipped'; reason: string }
 	| {
 			/** `paused`: a capped run stopped; send its cursor back to resume. */
@@ -237,13 +238,17 @@ export type BackfillReceipt =
 /**
  * One run of the backfill: up to `pagesPerRun` pages, each a memoized step,
  * each page's events handed to the bulk delivery lane (its own queue, so
- * live facts never wait behind it) in batches of at most 100. An unfinished
- * backfill re-queues itself with its cursor, so no single run grows past
- * its step limit.
+ * live facts never wait behind it) in envelopes of at most 100. Every POST
+ * is paced separately by the bulk consumer. An unfinished slice returns a
+ * cursor for an explicit operator command; it never continues itself.
  */
 export async function runContactSyncBackfill(args: {
 	event: {
 		data: {
+			dryRun?: boolean
+			canary?: boolean
+			dryRunCount?: number
+			canaryConfirmed?: boolean
 			cursor?: BackfillCursor
 			maxPages?: number
 			stopBeforePhase?: BackfillStopBefore
@@ -257,12 +262,28 @@ export async function runContactSyncBackfill(args: {
 }): Promise<BackfillReceipt> {
 	const config = parseDrovrProfileSyncConfig(args.env)
 	if (!config.enabled) return { status: 'skipped', reason: config.reason }
+	if (args.event.data.dryRun === true) {
+		let rows = 0
+		for (const phase of PHASES) {
+			let after: BackfillRow | undefined
+			for (let page = 0; ; page++) {
+				const from = after
+				const scanned = (await args.step.run(`count:${phase}:${page}`, () => args.ports.scanEvents({ eventType: phase === 'owners' ? JOURNEY_OWNER_ASSIGNED_EVENT_TYPE : phase === 'double-opt-in' ? DOI_REQUESTED_EVENT_TYPE : phase, afterOccurredAt: from?.occurredAt, afterId: from?.id, limit: 500 }))) as BackfillRow[]
+				rows += scanned.length
+				if (scanned.length < 500) break
+				after = scanned.at(-1)
+			}
+		}
+		return { status: 'dry-run', rows }
+	}
+	requireBackfillCanary(args.event.data)
+	const firstCanary = args.event.data.cursor === undefined
 	// A capped run (the first one is a one-page canary) stops after its
 	// pages and never re-queues: an operator checks drovr, then sends the
 	// receipt's cursor back to go on.
 	const { maxPages, stopBeforePhase } = args.event.data
 	if (maxPages !== undefined && !(Number.isInteger(maxPages) && maxPages > 0))
-		throw new Error(`maxPages must be a positive whole number: ${maxPages}`)
+		throw new Error('BackfillPages: you requested a slice, and it failed because maxPages is not a positive integer. Accepted: a positive whole number. Fix: set a bounded page count. Debug: inspect the request payload.')
 	const stopIndex = stopIndexOf(stopBeforePhase)
 	const atStop = (at: BackfillCursor) =>
 		stopIndex !== undefined &&
@@ -272,7 +293,7 @@ export async function runContactSyncBackfill(args: {
 	let pages = 0
 	let contacts = 0
 	let events = 0
-	const pagesPerRun = Math.min(args.pagesPerRun ?? 10, maxPages ?? Infinity)
+	const pagesPerRun = firstCanary ? 1 : Math.min(args.pagesPerRun ?? 10, maxPages ?? 10)
 	for (
 		let index = 0;
 		index < pagesPerRun && cursor.phase !== 'done' && !atStop(cursor);
@@ -281,7 +302,7 @@ export async function runContactSyncBackfill(args: {
 		const from = cursor
 		const page = (await args.step.run(`page-${index}`, () =>
 			runContactSyncBackfillPage(args.ports, from, {
-				pageSize: args.pageSize,
+				pageSize: firstCanary ? 1 : args.pageSize,
 			}),
 		)) as BackfillPage
 		if (page.events.length > 0) {
@@ -301,23 +322,13 @@ export async function runContactSyncBackfill(args: {
 		events += page.events.length
 		cursor = page.next
 	}
-	const stopped = atStop(cursor)
-	if (cursor.phase !== 'done' && maxPages === undefined && !stopped) {
-		await args.step.sendEvent('continue', {
-			name: DROVR_CONTACT_SYNC_BACKFILL_EVENT,
-			data:
-				stopBeforePhase === undefined
-					? { cursor }
-					: { cursor, stopBeforePhase },
-		})
-	}
+	// Dungeon: every continuation is an explicit operator command. Runs
+	// queued before this deploy drain this bounded slice and stop here.
 	return {
 		status:
 			cursor.phase === 'done'
 				? 'done'
-				: maxPages === undefined && !stopped
-					? 'continued'
-					: 'paused',
+				: 'paused',
 		cursor,
 		pages,
 		contacts,

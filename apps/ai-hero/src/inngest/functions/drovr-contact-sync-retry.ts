@@ -1,6 +1,7 @@
 import { CONTACT_SYNC_RETRY_EVENT } from '@/inngest/events/drovr'
 import { inngest } from '@/inngest/inngest.server'
 import { DROVR_SEND_RETRIES } from '@/lib/subscriber-marketing/drovr-outbox'
+import { reserveDrovrBulkSlot } from '@/lib/subscriber-marketing/drovr-bulk-pace'
 import {
 	createDirectoryBirth,
 	runContactSyncStragglerRetry,
@@ -62,8 +63,9 @@ export const drovrContactSyncRetry = inngest.createFunction(
 			// Row 204c: a stop a backfill outboxed while it waited is settled
 			// when this send lands it, or held if drovr refused it.
 			deliver: (events) =>
-				outboxing(events, async () =>
-					settleOrHoldStragglerStops(
+				outboxing(events, async () => {
+					await reserveDrovrBulkSlot()
+					return settleOrHoldStragglerStops(
 						events,
 						await deliverBatchOrThrow({
 							events,
@@ -73,8 +75,8 @@ export const drovrContactSyncRetry = inngest.createFunction(
 							// 201g), so any instant posts the same bytes.
 							clampAt: Date.now(),
 						}),
-					),
-				),
+					)
+				}),
 			acknowledge: (contactId, profileVersion) =>
 				createDrizzleContactProfileVersionStore(db).acknowledge(
 					contactId,
@@ -85,14 +87,15 @@ export const drovrContactSyncRetry = inngest.createFunction(
 				kitSubscriberIdFor: async (id) =>
 					(await findContactKitIdentity(db, id)).kitSubscriberId,
 				deliver: (births) =>
-					outboxing(births, () =>
-						deliverBatchOrThrow({
+					outboxing(births, async () => {
+						await reserveDrovrBulkSlot()
+						return deliverBatchOrThrow({
 							events: births,
 							config: drovrConfig(),
 							// Directory births are never clamped (row 201g).
 							clampAt: Date.now(),
-						}),
-					),
+						})
+					}),
 			}),
 		})
 	},

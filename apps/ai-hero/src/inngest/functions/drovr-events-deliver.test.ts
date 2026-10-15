@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => ({
 	hold: vi.fn(),
 	valuePathBulkFreeze: vi.fn(),
 	readBirthOptOuts: vi.fn(),
+	pace: vi.fn(),
 }))
 
 // The freeze window's calendar is pinned in drovr-bulk-freeze.test.ts; here
@@ -39,6 +40,8 @@ vi.mock('@/lib/subscriber-marketing/drovr-bulk-freeze', async (original) => ({
 	>()),
 	valuePathBulkFreeze: mocks.valuePathBulkFreeze,
 }))
+
+vi.mock('@/lib/subscriber-marketing/drovr-bulk-pace', () => ({ reserveDrovrBulkSlot: mocks.pace }))
 
 vi.mock('@/env.mjs', () => ({
 	env: { DROVR_SHADOW_INGEST_URL: 'https://drovr.test/events' },
@@ -158,6 +161,7 @@ const createStep = (): Step => ({
 
 beforeEach(() => {
 	vi.clearAllMocks()
+	mocks.pace.mockResolvedValue(undefined)
 	mocks.valuePathBulkFreeze.mockReturnValue({ frozen: false })
 	mocks.openStops.mockResolvedValue([])
 	mocks.readBirthOptOuts.mockResolvedValue([])
@@ -276,13 +280,30 @@ describe('value-path birth admission', () => {
 })
 
 describe('drovr events deliver registration', () => {
-	it('never puts a live single-contact path behind the bulk throttle: only the three bulk sources reach the throttled function (the hawk, 201g)', () => {
+	it('reserves once per actual profile/link/offer event, with the profile first', async () => {
+		mocks.fanOutOwnedEvents.mockImplementation((events) => events)
+		const events = ['contact.profile.updated', 'contact.links.issued', 'contact.offer.issued'].map((type, i) => event('org-aihero', `delta-${i}`, 'contact-directory', type))
+		await registeredBulk.handler({ events: [{ data: { source: 'contact-profile-sync', events } }], step: createStep() })
+		expect(mocks.pace).toHaveBeenCalledTimes(3)
+		expect(mocks.deliverBatchOrThrow.mock.calls.map(([args]) => args.events)).toEqual(events.map(event => [event]))
+	})
+
+	it('coupon completions never acquire a saturated bulk reservation', async () => {
+		mocks.pace.mockRejectedValue(new Error('bulk saturated'))
+		mocks.fanOutOwnedEvents.mockImplementation((events) => events)
+		const receipt = await registered.handler({ event: { data: { source: 'side-effect-intent-completed', events: [event('org-aihero', 'coupon-complete', 'offer', 'coupon.issued')] } }, step: createStep() })
+		expect(receipt).toMatchObject({ status: 'delivered', accepted: 1 })
+		expect(mocks.pace).not.toHaveBeenCalled()
+	})
+
+	it('isolates bulk profiles from live facts and coupon completions', () => {
 		expect(everySourceListed).toBe(true)
 		const bulk = DELIVERY_SOURCES.filter(
 			(source) => deliverEventNameFor(source) === 'drovr/events.deliver.bulk',
 		)
 		expect(bulk).toEqual([
 			'kit-directory-ingest',
+			'contact-profile-sync',
 			'contact-sync-backfill',
 			'evergreen-pitch-backfill',
 		])
@@ -294,13 +315,9 @@ describe('drovr events deliver registration', () => {
 		expect(registered.config.throttle).toBeUndefined()
 	})
 
-	it('paces the bulk lane at 7 runs a minute of up to 100 events, 700 a minute, and never the live lane (row 201g)', () => {
-		expect(registeredBulk.config.throttle).toEqual({ limit: 7, period: '1m' })
-		const perMinute =
-			registeredBulk.config.throttle!.limit *
-			registeredBulk.config.batchEvents!.maxSize
-		expect(perMinute).toBe(700)
-		expect(perMinute).toBeLessThanOrEqual(750)
+	it('spaces envelope starts; the shared send-time gate counts actual events', () => {
+		expect(registeredBulk.config.throttle).toEqual({ limit: 1, period: '1s' })
+		expect(registeredBulk.config.batchEvents!.maxSize).toBe(1)
 		expect(registered.config.throttle).toBeUndefined()
 	})
 
@@ -313,7 +330,7 @@ describe('drovr events deliver registration', () => {
 		expect(registeredBulk.config).toMatchObject({
 			id: 'drovr-events-deliver-bulk-v1',
 			concurrency: [{ limit: 4 }],
-			batchEvents: { maxSize: 100, timeout: '10s' },
+			batchEvents: { maxSize: 1, timeout: '1s' },
 		})
 		expect(registeredBulk.trigger).toEqual({
 			event: 'drovr/events.deliver.bulk',
@@ -476,16 +493,7 @@ describe('retired shadow tenant delivery', () => {
 			rejected: 0,
 			discarded: 2,
 		})
-		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledOnce()
-		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledWith({
-			// One instant: the birth goes first (row 204b's delivery order).
-			events: [authorityEvents[1], authorityEvents[0]],
-			config: {
-				ingestUrl: 'https://drovr.test/events',
-				apiKey: 'authority-key',
-			},
-			clampAt: expect.any(Number),
-		})
+		expect(mocks.deliverBatchOrThrow.mock.calls.map(([args]) => args.events)).toEqual([[authorityEvents[1]], [authorityEvents[0]]])
 		expect(mocks.log.info).toHaveBeenCalledOnce()
 		expect(mocks.log.info).toHaveBeenCalledWith(
 			'drovr.shadow.events_discarded',
@@ -716,14 +724,7 @@ describe('backfill refusals follow the push contract (§4)', () => {
 		vi.setSystemTime(now)
 		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
 		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
-		mocks.deliverBatchOrThrow.mockResolvedValue({
-			accepted: 1,
-			rejected: 0,
-			deferred: [
-				{ event: notLive, reason: 'event-not-live' },
-				{ event: cold, reason: 'cold-start-unhandled' },
-			],
-		})
+		mocks.deliverBatchOrThrow.mockImplementation(async ({ events }) => ({ accepted: events[0] === fine ? 1 : 0, rejected: 0, deferred: events[0] === fine ? [] : [{ event: events[0], reason: events[0] === notLive ? 'event-not-live' : 'cold-start-unhandled' }] }))
 		const sent: unknown[] = []
 		const receipt = await registeredBulk.handler({
 			events: [
@@ -1060,7 +1061,7 @@ describe('row 204: a drovr 5xx never loses a live or bulk event', () => {
 			expect(receipt).toMatchObject({ accepted: 0, outboxed: 2 })
 			expect(
 				(
-					mocks.capture.mock.calls[0]![0] as {
+					mocks.capture.mock.calls.flatMap(([entries]) => entries) as {
 						idempotencyKey: string
 						source: string
 					}[]
@@ -1716,7 +1717,7 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 		// replaying a memoized chunk that now holds other events.
 		expect(
 			(step.run as ReturnType<typeof vi.fn>).mock.calls.map(([id]) => id),
-		).toContain('by-time:batch:org-aihero:0')
+		).toContain('paced-single:batch:org-aihero:0')
 	})
 
 	it("posts a birth ahead of its own contact's earlier stop, as the replay does: [birth 12:20, purchase 12:10] → birth first, nothing refused (Sonnet S6, round 3)", async () => {
@@ -1811,12 +1812,11 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 			step: createStep(),
 			...LAST,
 		})
-		// Chunk 0 (the stop and 99 others) is outboxed whole; chunk 1 held only
-		// the later fact, so it is never posted and goes to the outbox too.
-		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledOnce()
+		// Single-event sends isolate other contacts from an owed stop.
+		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledTimes(100)
 		expect(receipt).toMatchObject({
-			accepted: 0,
-			outboxed: 101,
+			accepted: 99,
+			outboxed: 2,
 			heldBehindStop: 1,
 		})
 		expect(

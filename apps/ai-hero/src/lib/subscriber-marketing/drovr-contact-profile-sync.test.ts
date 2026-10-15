@@ -114,7 +114,7 @@ describe('contact profile sync: the events drovr stores', () => {
 				type: 'contact.links.issued',
 				occurredAt,
 				idempotencyKey:
-					'links:contact-1:value-path-skills-course:ai-hero-skills-workflow.email-2:2026-09-26T16:49:05.594Z:v7',
+					'links:contact-1:value-path-skills-course:ai-hero-skills-workflow.email-2:v7',
 				payload: {
 					profileVersion: 7,
 					journeyId: 'value-path-skills-course',
@@ -592,10 +592,10 @@ describe('contact profile content hash', () => {
 		expect(contactProfileContentHash(laterReversed)).toBe(
 			contactProfileContentHash(snapshot),
 		)
-		expect(contactProfileContentHash(snapshot)).toMatch(/^[0-9a-f]{64}$/)
+		expect(contactProfileContentHash(snapshot)).toMatch(/^v2:[0-9a-f]{61}$/)
 	})
 
-	it('changes with any hold, address, name, link window or offer', () => {
+	it('changes with any hold, address, name or link window, never an offer', () => {
 		const base = contactProfileContentHash(snapshot)
 		for (const changed of [
 			{
@@ -612,16 +612,6 @@ describe('contact profile content hash', () => {
 				links: [
 					{ ...snapshot.links[0]!, issuedAt: '2026-12-25T16:00:00.000Z' },
 					snapshot.links[1]!,
-				],
-			},
-			{
-				...snapshot,
-				offers: [
-					{
-						journeyId: 'crash-course-evergreen-offer',
-						couponId: 'k1',
-						variables: { o: '1' },
-					},
 				],
 			},
 		])

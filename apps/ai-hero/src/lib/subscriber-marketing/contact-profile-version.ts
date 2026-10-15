@@ -1,3 +1,5 @@
+import { profileVersionBump } from './contact-sync-deltas'
+
 /**
  * A per-contact profile version, addressed by content. A sync hashes what
  * it would push; the version moves only when that hash differs from the
@@ -15,6 +17,7 @@ export type ContactProfileVersion = {
 }
 
 export type ContactProfileVersionStore = {
+	currentFor(contactId: string): Promise<(ContactProfileVersion & { contentHash: string }) | undefined>
 	versionFor(
 		contactId: string,
 		contentHash: string,
@@ -40,9 +43,13 @@ export function createMemoryContactProfileVersionStore(
 		}
 	>()
 	return {
+		async currentFor(contactId) {
+			const row = rows.get(contactId)
+			return row ? { profileVersion: row.profileVersion, since: row.since, contentHash: row.contentHash, acknowledged: row.acknowledgedVersion === row.profileVersion } : undefined
+		},
 		async versionFor(contactId, contentHash) {
 			const current = rows.get(contactId)
-			if (current?.contentHash === contentHash) {
+			if (current && !profileVersionBump({ kind: 'profile-change', previousHash: current.contentHash, nextHash: contentHash })) {
 				return {
 					profileVersion: current.profileVersion,
 					since: current.since,

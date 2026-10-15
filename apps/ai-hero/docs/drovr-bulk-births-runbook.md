@@ -5,41 +5,62 @@ A **bulk birth** is any job that births more than 1,000 contacts into a drip or 
 ## The rules
 
 1. **Go through the paced lane.** For ai-hero, that lane is `drovr-events-deliver-bulk-v1`.
-   - It is throttled to 7 runs a minute of up to 100 bulk events each: at most **700 events a minute**. Inngest counts run starts, and it spaces them evenly through the minute.
-   - Its producers are `BULK_DELIVERY_SOURCES` in `src/inngest/events/drovr.ts`: the Kit directory ingest, the contact-sync backfill and the evergreen pitch backfill.
+   - `BULK_EVENTS_PER_MINUTE` is the single cap: **at most 300 events in every sliding minute**. Each POST carries one event. A shared conditional database cursor reserves the next send slot, including bulk retries, contact-sync stragglers and bulk outbox replay. Reservations are spent even if a POST fails. A run-start throttle alone cannot count nested payloads or owner fan-out.
+   - Its producers are `BULK_DELIVERY_SOURCES` in `src/inngest/events/drovr.ts`: the Kit directory ingest, contact profile/link deltas and monthly confirmations, the manual contact-sync backfill, and the evergreen pitch backfill. Coupon completions and offer-only updates stay live and never reserve a bulk slot.
    - Never loop `POST /events` or `POST /events/batch` at full speed. Never push a bulk job through the live lane (`drovr-events-deliver-v1`).
    - Everything on the lane waits its turn, a directory stop from the Kit ingest or the contact-sync backfill included. Live stops (Kit webhooks, ai-hero unsubscribes) are on the live lane and never wait.
-   - **The 700 a minute is not yet measured.** Inngest's batching guide doesn't list throttle as incompatible with `batchEvents`, but nothing proves it counts a batched run as one start. See "Before the first prod backfill" below.
-   - Any other producer paces itself to **≤ 750 births a minute**, and to ≤ 1,000 a minute counting the live signups at the time. At that rate a 130k import takes about 3 hours.
+   - This is a conservative cap, not a measured throughput claim. drovr will supply a measured number. Do not raise the constant before that review. Keep only one bulk producer active when checking timing-sensitive births.
 2. **Pick the start time so the daily repeats miss the calendar waves.** A value-path cohort's drips repeat at the same clock time for 7 days.
    - The import window must not overlap 15:30–16:30Z (the evergreen calendar wave) or 17:45–18:15Z (the shadow-newsletter PT minute).
    - Don't run during a launch send, or inside 11-09 … 11-15.
 3. **Calendar journeys don't spread by pacing.** Evergreen and the shadow newsletter send at local calendar instants, so births paced over hours on one day still fire together.
    - Keep **≤ 60k births per local slot per UTC offset** at a 90-minute spread window, and ≤ 20k while the window is 30 minutes. Split the job across days to stay under.
    - The shadow slot counts every `contact.created`.
-4. **Canary first:** a real one-page run that WRITES: the contact-sync backfill's `maxPages: 1` (it stops and doesn't re-queue), or the evergreen backfill's `--apply --limit 25 --out <report.json>` (a per-run cap; the script refuses to start without `--out`). Without `--apply` the backfill is a dry run that posts nothing, and the checks below would pass without testing anything. Then check drovr, and resume only if all three hold:
+4. **Dungeon: count, one contact, then a manually approved batch.** The contact-sync backfill has no cron and never schedules its own continuation. Send `drovr/contact-sync.backfill-requested` with `{ "dryRun": true }` first. That scans and counts source rows without reading snapshots, creating anchors, changing versions or publishing events. Then omit the cursor and send `{ "canary": true, "dryRunCount": <count from receipt> }`. The code forces one contact and one page, regardless of a requested page size. A command without those approval fields refuses with `BackfillCanary:`. A count is source rows, not distinct contacts.
+   - Save the canary receipt. After checking drovr, explicitly send its cursor with `canary: true`, `dryRunCount`, `canaryConfirmed: true`, and a bounded `maxPages`. No slice continues itself. An approval flag is an operator attestation, not automatic proof of a dashboard check.
+   - The evergreen backfill remains a separate manual birth tool. Count without applying, then use a one-contact apply with a report before approving another bounded slice.
+   - After the real canary, resume only if all three hold:
    - zero `overload` log lines in Axiom since the canary started;
    - `GET /status` with STUCK green;
    - no hold you didn't expect.
 
    `/status` has no overload field (it reports flow, holds, served and stuck), so the overload check is the log line.
-5. **Watch:** drovr's D1 query time per minute (the shed line is about 7.3 s a minute), `overload` log lines, and the queue vital. **At the first overload line, stop the producer:** the import or backfill script, or the Kit bulk action. Its cursor resumes where it stopped. What is already queued drains at ≤ 700 a minute.
+5. **Watch:** drovr's D1 query time per minute (the shed line is about 7.3 s a minute), `overload` log lines, and the queue vital. **At the first overload line, stop the producer:** the import or backfill script, or the Kit bulk action. Its cursor resumes where it stopped. What is already queued drains through the shared cap.
    - A send that fails (a 5xx, 429 or timeout) retries, then outboxes. A stop drovr refuses with a 4xx is held for a human (row 204c; `drovr-outbox-runbook.md`).
    - **Never pause the Inngest function.** Inngest SKIPS events that arrive while a function is paused, and doesn't reprocess them unless someone runs a manual Replay (which ignores event idempotency). The producers' cursors have already moved past them, and the bulk lane carries directory stops.
    - If it was paused anyway, resume it, then Replay its "Skipped" runs for the paused window. Also Replay its "Canceled" runs if the pause cancelled them, or if it lasted more than 7 days.
    - To stop sends on one journey right now, `hold_journey` on drovr parks dispatch; nothing is lost.
 6. **Don't backdate births into drip journeys.** ai-hero enforces this at the send (below). The directory seed backdates only the contact directory, which sends nothing. Check which journeys a job's events name.
 
-## Before the first prod backfill: measure the lane
+## Before deploy: inventory and drain
 
-A gate, not code (Sonnet 2's review of #345). On dev or stage Inngest, send **at least 1,000** bulk events to `drovr-events-deliver-bulk-v1` in one burst, and count the run starts per minute.
-- **Why 1,000:** at up to 100 events a run, that is 10 or more runs. So an unthrottled lane must start 8 or more in the first minute and fail. With 300 (3 runs), the gate could not fail.
-- **Expected for 1,000:** about 10 run starts in all, **at most 7 in any minute**, with the starts falling **in at least 2 separate minutes** (7, then 3). Evenly spaced starts can put all 10 within about 80 seconds, so count minutes, not the span. Each run takes up to 100 events.
-- **It counts only on a fast stage.** The bulk function's own `concurrency: 4` caps starts by itself: four runs at a time, each taking *d* seconds, start at most 4 × 60 / *d* a minute, which is 7 or fewer once runs take about 34 s. On a slow stage, the throttle-shaped result then shows up whether or not the throttle exists. So also read each run's duration: **the result counts only if the median run took ≤ 10 s** (then concurrency alone would allow 24 or more starts a minute). A slower median makes it **inconclusive**, not a pass: re-run it on a faster stage.
-- **Pass:** all three hold: the median run took ≤ 10 s, at most 7 starts in every minute, and starts in at least 2 separate minutes.
-- **Fail:** 8 or more starts in a minute. There's no pacing, and only the clamp is left. Don't run the backfill; tell the owner.
+The operator runs this read-only inventory. Do not infer an empty queue from one page of event history.
 
-Record the result (the environment, the median run duration, the minute counts, the date) on the row before the prod run.
+1. In the Inngest dashboard, open Runs for `drovr-contact-sync-backfill-v1`, `drovr-events-deliver-bulk-v1`, `drovr-outbox-replay-v1`, `drovr-contact-sync-retry-v1` and `drovr-contact-sync-reconcile-v1` and `drovr-contact-profile-sync-v1`. Filter each to Running or Queued. Record the count, oldest start, triggering data and last completed cursor/step.
+2. Read trigger data with REST v1. Use a time before the oldest pending command, and inspect every response page. These are GETs only; substitute the environment's signing key without saving it in a receipt:
+
+   ```sh
+   curl --fail-with-body --silent --show-error --get \
+     'https://api.inngest.com/v1/events' \
+     --data-urlencode 'name=drovr/contact-sync.backfill-requested' \
+     --data-urlencode 'received_after=<ISO>' \
+     --header 'Authorization: Bearer <environment signing key>'
+
+   curl --fail-with-body --silent --show-error \
+     'https://api.inngest.com/v1/events/<eventId>/runs' \
+     --header 'Authorization: Bearer <environment signing key>'
+   ```
+
+   Repeat the event lookup for `drovr/events.deliver.bulk`, `drovr/contact-sync.retry-requested` and `drovr/outbox.replay-requested`. Cron runs are inventoried in the dashboard. Keep raw payloads in the private operator receipt, not this repository.
+3. If any listed run is Running or Queued, **do not deploy yet**. Let it drain on the old code, or explicitly approve cancellation, save its payload/cursor, deploy and re-issue it. Do not pause a function. Changed chunk sizes can exceed an in-flight run's step budget. Changed step ids can repeat a completed chunk under its immutable keys, which drovr dedupes. Profile-sync selection, delivery and acknowledgement steps have a new namespace so an old memoized result cannot acknowledge an unqueued new version.
+
+**Resume a refused old backfill command:** count with `dryRun: true`, apply a cursor-free one-contact canary with `canary: true` and the count, inspect drovr, then re-issue the saved cursor with `canary: true`, `dryRunCount`, `canaryConfirmed: true` and a bounded `maxPages`. Carry `stopBeforePhase` forward explicitly. A missing approval refuses rather than silently authorizing the old command. No slice schedules its successor.
+
+**Named migration notes:** no function id or trigger name is removed. Self-continuation is removed. Link keys no longer include an issue timestamp; each new version has one key per contact/link slot. Old queued events retain their old keys and bytes. A rollback can consume already-materialized compatible bulk envelopes and outbox bodies, but restores the previous bulk/replay pacing. It also removes the new restater from the manifest: drain its runs and any `reason: restate` profile commands first, because the previous handler may skip them without producing a confirmation. Drain before rollback or keep the new delivery fence; do not claim rollback preserves the cap or every new producer command.
+
+## Before the first approved batch: measure actual sends
+
+On an isolated non-production environment with synthetic events, exercise multiple envelopes, nested payloads, owner fan-out, retries and outbox replay together. Measure actual POST starts, not function starts. Every POST must carry one event, starts must be spaced by the shared slot interval, and every sliding minute must stay at or below the named cap. Saturate bulk while issuing a live synthetic coupon completion and verify it never requests a bulk reservation. The code/tests do not constitute a deployed scheduler measurement. Save the environment, event shape, timestamps and result privately before authorizing a real batch.
 
 ## No bulk value-path births in the 201e window
 
@@ -81,8 +102,8 @@ Every event leaves ai-hero through `deliverDrovrShadowEvent` (the single post, t
 ## The evergreen pitch backfill
 
 `src/scripts/evergreen-pitch-backfill.ts` births each contact at its own instant, read as it dispatches, and shares that instant between ai-hero's entry and drovr's birth. Its batches ride the bulk lane (source `evergreen-pitch-backfill`).
-- It waits 100 ms between births, at most 600 a minute against the lane's 700. So a birth never queues behind the throttle long enough to be clamped off the instant ai-hero's entry recorded.
+- Its producer delay is not the delivery cap. The shared paced lane may queue a birth; do not assume the recorded entry instant and drovr's eventual first-send clamp stay aligned.
 - That matters because ai-hero's offer deadline comes from its entry, and drovr's comes from the birth's `occurredAt`. A `drovr.birth.clamped` line with `path: batch` during a backfill means they have drifted apart: stop and look.
-- **Run it alone.** The lane's 7 runs a minute are shared with the Kit directory ingest and the contact-sync backfill. With either running, the backfill's births can wait more than 5 minutes and be clamped off ai-hero's entry instant. Check that neither is running and that the lane's queue is empty first.
+- **Run it alone.** The cap is shared with directory ingest, contact deltas, confirmations, retries and replay. Other producers can delay births until their first-send clamp shifts. Check the queue before the canary and throughout each bounded slice.
 - `--limit` bounds a run. Split a large population across days so that no local slot passes the calendar cap.
 - **A stop on the evergreen journey waits behind its contact's pending or held evergreen start** (the start is a birth). A held start therefore hides its stops from the held-stop monitor until it is released or retired.

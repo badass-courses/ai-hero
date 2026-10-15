@@ -1,5 +1,6 @@
 import { DROVR_OUTBOX_REPLAY_REQUESTED_EVENT } from '@/inngest/events/drovr'
 import { inngest } from '@/inngest/inngest.server'
+import { reserveDrovrBulkSlot } from '@/lib/subscriber-marketing/drovr-bulk-pace'
 import { readUnsubscribedValuePathContactIds } from '@/lib/subscriber-marketing/drovr-value-path-birth-admission-live'
 
 /**
@@ -88,7 +89,10 @@ export const drovrOutboxReplay = inngest.createFunction(
 								drovrApiKeyForTenant(
 									tenantId as Parameters<typeof drovrApiKeyForTenant>[0],
 								),
-							deliver: deliverDrovrShadowEvent,
+							deliver: async (args) => {
+								if (row.source === 'bulk' || row.source === 'contactSync' || row.eventType === 'contact.links.issued' || row.eventType === 'contact.profile.updated') await reserveDrovrBulkSlot()
+								return deliverDrovrShadowEvent(args)
+							},
 							isNeverBornOwnerStop,
 							fanOut: async (events) => {
 								const owned = await resolveOwnedContactIds(events)

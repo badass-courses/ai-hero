@@ -58,9 +58,9 @@ export const contactProfileVersion = mysqlTable('ContactProfileVersion', {
 	profileVersion: bigint('profileVersion', { mode: 'number', unsigned: true })
 		.notNull()
 		.default(1),
-	/** sha256 of the content last pushed at this version (contactProfileContentHash). */
+	/** Versioned profile/link digest; legacy rows may still include offers. */
 	profileHash: varchar('profileHash', { length: 64 }),
-	/** The version drovr last fully accepted; live writers skip an unchanged, acknowledged one. */
+	/** Last delivered or strictly outboxed version; unchanged deltas skip it. */
 	acknowledgedVersion: bigint('acknowledgedVersion', {
 		mode: 'number',
 		unsigned: true,

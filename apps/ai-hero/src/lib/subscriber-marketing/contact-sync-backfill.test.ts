@@ -277,6 +277,11 @@ describe('contact sync backfill', () => {
 	})
 })
 
+// Existing page/batch scenarios model an operator-approved continuation.
+function runApprovedBackfill(args: Parameters<typeof runContactSyncBackfill>[0]) {
+	return runContactSyncBackfill({ ...args, event: { data: { canary: true, dryRunCount: 250, canaryConfirmed: true, cursor: { phase: 'owners' }, ...args.event.data } } })
+}
+
 describe('contact sync backfill run', () => {
 	function harness(env: Record<string, string>, owners = 3) {
 		const { ports } = world({ owners })
@@ -298,7 +303,7 @@ describe('contact sync backfill run', () => {
 	it('does nothing while the flag is off', async () => {
 		const h = harness({})
 		await expect(
-			runContactSyncBackfill({
+			runApprovedBackfill({
 				event: { data: {} },
 				step: h.step,
 				env: {},
@@ -314,7 +319,7 @@ describe('contact sync backfill run', () => {
 
 	it('sends each page to the bulk delivery lane, at most 100 events per batch', async () => {
 		const h = harness({}, 250)
-		const receipt = await runContactSyncBackfill({
+		const receipt = await runApprovedBackfill({
 			event: { data: {} },
 			step: h.step,
 			env: { AIH_DROVR_PROFILE_SYNC: 'true' },
@@ -339,12 +344,12 @@ describe('contact sync backfill run', () => {
 		expect(new Set(batches.map((batch) => batch.data.source))).toEqual(
 			new Set(['contact-sync-backfill']),
 		)
-		expect(receipt).toMatchObject({ status: 'continued', contacts: 250 })
+		expect(receipt).toMatchObject({ status: 'paused', contacts: 250 })
 	})
 
-	it('re-queues itself with its cursor until done, then stops', async () => {
+	it('stops with a cursor for an explicit manual continuation', async () => {
 		const h = harness({}, 3)
-		const first = await runContactSyncBackfill({
+		const first = await runApprovedBackfill({
 			event: { data: {} },
 			step: h.step,
 			env: { AIH_DROVR_PROFILE_SYNC: 'true' },
@@ -352,15 +357,11 @@ describe('contact sync backfill run', () => {
 			pageSize: 2,
 			pagesPerRun: 1,
 		})
-		expect(first.status).toBe('continued')
-		const continuation = h.sent.find((entry) => entry.id === 'continue')
-		expect(continuation?.payload).toEqual({
-			name: DROVR_CONTACT_SYNC_BACKFILL_EVENT,
-			data: { cursor: expect.objectContaining({ phase: 'owners' }) },
-		})
+		expect(first.status).toBe('paused')
+		expect(h.sent.find((entry) => entry.id === 'continue')).toBeUndefined()
 		// Enough pages in one run to reach the end: no continuation.
 		const h2 = harness({}, 3)
-		const done = await runContactSyncBackfill({
+		const done = await runApprovedBackfill({
 			event: { data: {} },
 			step: h2.step,
 			env: { AIH_DROVR_PROFILE_SYNC: 'true' },
@@ -374,7 +375,7 @@ describe('contact sync backfill run', () => {
 
 	it('a canary (maxPages: 1) runs one page, sends it, and stops without re-queueing', async () => {
 		const h = harness({}, 5)
-		const receipt = await runContactSyncBackfill({
+		const receipt = await runApprovedBackfill({
 			event: { data: { maxPages: 1 } },
 			step: h.step,
 			env: { AIH_DROVR_PROFILE_SYNC: 'true' },
@@ -391,7 +392,7 @@ describe('contact sync backfill run', () => {
 		})
 		// The operator resumes by sending the receipt's cursor back.
 		const resumed = harness({}, 5)
-		const next = await runContactSyncBackfill({
+		const next = await runApprovedBackfill({
 			event: {
 				data: { cursor: (receipt as { cursor: BackfillCursor }).cursor },
 			},
@@ -406,7 +407,7 @@ describe('contact sync backfill run', () => {
 
 	it('a canary stops after its one page even while phases remain', async () => {
 		const h = harness({}, 1)
-		const receipt = await runContactSyncBackfill({
+		const receipt = await runApprovedBackfill({
 			event: { data: { maxPages: 1 } },
 			step: h.step,
 			env: { AIH_DROVR_PROFILE_SYNC: 'true' },
@@ -422,7 +423,7 @@ describe('contact sync backfill run', () => {
 		for (const maxPages of [0, -1, 1.5]) {
 			const h = harness({})
 			await expect(
-				runContactSyncBackfill({
+				runApprovedBackfill({
 					event: { data: { maxPages } },
 					step: h.step,
 					env: { AIH_DROVR_PROFILE_SYNC: 'true' },
@@ -470,7 +471,7 @@ describe('contact sync backfill: stopBeforePhase', () => {
 
 	it('with stopBeforePhase "stops", a run never enters the stop phases', async () => {
 		const h = slice(3)
-		const receipt = await runContactSyncBackfill({
+		const receipt = await runApprovedBackfill({
 			event: { data: { stopBeforePhase: 'stops' } },
 			step: h.step,
 			env,
@@ -492,7 +493,7 @@ describe('contact sync backfill: stopBeforePhase', () => {
 
 	it('with stopBeforePhase "double-opt-in", it stops exactly at the end of owners', async () => {
 		const h = slice(3)
-		const receipt = await runContactSyncBackfill({
+		const receipt = await runApprovedBackfill({
 			event: { data: { stopBeforePhase: 'double-opt-in' } },
 			step: h.step,
 			env,
@@ -510,7 +511,7 @@ describe('contact sync backfill: stopBeforePhase', () => {
 
 	it('a slice that ends mid-phase is unchanged: paused on the owners cursor', async () => {
 		const h = slice(5)
-		const receipt = await runContactSyncBackfill({
+		const receipt = await runApprovedBackfill({
 			event: { data: { maxPages: 1, stopBeforePhase: 'double-opt-in' } },
 			step: h.step,
 			env,
@@ -524,9 +525,9 @@ describe('contact sync backfill: stopBeforePhase', () => {
 		})
 	})
 
-	it('a re-queued run carries stopBeforePhase forward', async () => {
+	it('a manual slice never re-queues itself', async () => {
 		const h = slice(5)
-		const receipt = await runContactSyncBackfill({
+		const receipt = await runApprovedBackfill({
 			event: { data: { stopBeforePhase: 'stops' } },
 			step: h.step,
 			env,
@@ -534,19 +535,13 @@ describe('contact sync backfill: stopBeforePhase', () => {
 			pageSize: 2,
 			pagesPerRun: 1,
 		})
-		expect(receipt).toMatchObject({ status: 'continued' })
-		expect(h.sent.find((entry) => entry.id === 'continue')?.payload).toEqual({
-			name: DROVR_CONTACT_SYNC_BACKFILL_EVENT,
-			data: {
-				cursor: expect.objectContaining({ phase: 'owners' }),
-				stopBeforePhase: 'stops',
-			},
-		})
+		expect(receipt).toMatchObject({ status: 'paused' })
+		expect(h.sent.find((entry) => entry.id === 'continue')).toBeUndefined()
 	})
 
 	it('reads nothing when the cursor is already at the stop', async () => {
 		const h = slice(3)
-		const receipt = await runContactSyncBackfill({
+		const receipt = await runApprovedBackfill({
 			event: {
 				data: {
 					cursor: { phase: 'contact.unsubscribed' },
@@ -564,7 +559,7 @@ describe('contact sync backfill: stopBeforePhase', () => {
 	it('refuses an unknown stopBeforePhase', async () => {
 		const h = slice(3)
 		await expect(
-			runContactSyncBackfill({
+			runApprovedBackfill({
 				event: { data: { stopBeforePhase: 'owners' as never } },
 				step: h.step,
 				env,

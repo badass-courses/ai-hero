@@ -506,8 +506,9 @@ describe('what a profile sync receipt means for the watermark', () => {
 			'no-sending-journey',
 			// drovr ignores a profile without an email; nothing to push.
 			'contact-email-missing',
-			// Contract §4: a rejection is final for that event, answered.
-			'drovr-rejected',
+			// Already delivered or durably queued, with no new content.
+			'unchanged',
+			'profile-not-issued',
 		])
 			expect(reconcileSyncOutcome('c1', { status: 'skipped', reason })).toBe(
 				'skipped',
@@ -524,6 +525,7 @@ describe('what a profile sync receipt means for the watermark', () => {
 				}),
 			).toBe('deferred')
 		for (const reason of [
+			'drovr-rejected',
 			'drovr-not-configured',
 			'AIH_DROVR_PROFILE_SYNC is not set',
 		])

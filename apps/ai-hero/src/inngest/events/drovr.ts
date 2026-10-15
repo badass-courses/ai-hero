@@ -50,11 +50,16 @@ export const DROVR_CONTACT_SYNC_BACKFILL_EVENT =
 
 /**
  * Run (or continue) the one-time contact-sync backfill from `cursor`.
- * Only on an explicit request; the backfill re-queues itself until done.
+ * Explicit requests only: count, then one contact, then approved bounded
+ * slices. A saved cursor never grants permission to continue by itself.
  */
 export type DrovrContactSyncBackfillRequested = {
 	name: typeof DROVR_CONTACT_SYNC_BACKFILL_EVENT
 	data: {
+		dryRun?: boolean
+		canary?: boolean
+		dryRunCount?: number
+		canaryConfirmed?: boolean
 		cursor?: import('@/lib/subscriber-marketing/contact-sync-backfill').BackfillCursor
 		/**
 		 * Stop after this many pages and do not re-queue (the first run is a
@@ -110,6 +115,7 @@ export type DrovrContactProfileSyncRequested = {
 			/** An operator created a missing contact state (clears stale-state). */
 			| 'state-initialized'
 			| 'reconcile'
+			| 'restate'
 		valuePathSlug?: string
 	}
 }
@@ -140,6 +146,7 @@ export const BULK_DELIVERY_SOURCES: ReadonlySet<DrovrDeliverySource> =
 	new Set<DrovrDeliverySource>([
 		'kit-directory-ingest',
 		'contact-sync-backfill',
+		'contact-profile-sync',
 		'evergreen-pitch-backfill',
 	])
 

@@ -11,7 +11,6 @@ import {
 	deliverBatchOrThrow,
 	deliverOrThrow,
 	deliveryStepId,
-	DROVR_BATCH_MAX,
 	isNeverBornOwnerStop,
 } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
 import {
@@ -76,6 +75,7 @@ import {
 import { withoutSyntheticContacts } from '@/lib/synthetic-principal'
 import { log } from '@/server/logger'
 import type { GetStepTools } from 'inngest'
+import { reserveDrovrBulkSlot } from '@/lib/subscriber-marketing/drovr-bulk-pace'
 
 export type DrovrEventsDeliverReceipt = {
 	/** Backfill events drovr refused, handed to the straggler retry. */
@@ -133,6 +133,7 @@ export type DeliverContext = {
 	settle: DrovrOutboxSettleFn
 	/** Holds stops drovr refused with a 4xx, for a human (row 204c). */
 	hold: DrovrOutboxHoldFn
+	pace?: () => Promise<void>
 }
 
 type Outboxed = { outboxed: number }
@@ -319,7 +320,7 @@ export function inDeliveryOrder(
 					other.journeyId === event.journeyId
 				)
 					at = Math.min(at, instant(other))
-		const rank = isBirthEvent(event) ? 0 : isStopEvent(event) ? 1 : 2
+		const rank = isBirthEvent(event) ? 0 : isStopEvent(event) ? 1 : event.type === 'contact.profile.updated' ? 2 : 3
 		return { event, index, at, rank }
 	})
 	return placed
@@ -691,13 +692,10 @@ const deliverBulk = async (
 		const config: DrovrDeliveryConfig = { ingestUrl, apiKey }
 		for (
 			let chunkIndex = 0;
-			chunkIndex * DROVR_BATCH_MAX < tenantEvents.length;
+			chunkIndex < tenantEvents.length;
 			chunkIndex += 1
 		) {
-			const sliced = tenantEvents.slice(
-				chunkIndex * DROVR_BATCH_MAX,
-				(chunkIndex + 1) * DROVR_BATCH_MAX,
-			)
+			const sliced = tenantEvents.slice(chunkIndex, chunkIndex + 1)
 			const chunk = sliced.filter((event) => !isBehind(event, outboxedStops))
 			late.push(...sliced.filter((event) => isBehind(event, outboxedStops)))
 			if (chunk.length === 0) continue
@@ -707,11 +705,15 @@ const deliverBulk = async (
 			// in flight across that deploy re-posts its chunks, which drovr
 			// dedupes, instead of replaying a memoized chunk that now holds
 			// other events.
-			const stepId = `by-time:${batchStepId(tenantId, chunkIndex)}`
+			// New ids are deliberate: in-flight old chunks must not be replayed
+			// as if their single-event replacement had already completed.
+			const stepId = `paced-single:${batchStepId(tenantId, chunkIndex)}`
+			await step.sleep?.(`${stepId}:spacing`, '1s')
 			const outcome = (await step.run(stepId, () =>
 				sendOrOutbox<ChunkOutcome & Partial<Outboxed>>({
 					attempt: context.attempt,
 					send: async () => {
+						await context.pace?.()
 						const answer = await deliverBatchOrThrow(
 							options.deferNotLive
 								? { events: chunk, config, clampAt, deferNotLive: true }
@@ -842,18 +844,11 @@ export const drovrEventsDeliver = inngest.createFunction(
 	},
 	{ event: DROVR_EVENTS_DELIVER_EVENT },
 	async ({ event, step, attempt, maxAttempts }) => {
-		// A bulk source can only reach this function as a leftover from
-		// before the bulk function existed (2026-09-21: ~8,000 Kit births
-		// queued ahead of live facts). Answer it in milliseconds instead of
-		// folding it; the directory seed top-up rebirths what it skipped.
+		// Drain pre-deploy events under the same function id, without posting
+		// a bulk payload on the live lane or dropping its queued bytes.
 		if (BULK_DELIVERY_SOURCES.has(event.data.source)) {
-			return {
-				status: 'skipped',
-				accepted: 0,
-				rejected: 0,
-				discarded: 0,
-				reason: 'bulk source on the live function',
-			}
+			await step.sendEvent('drain-to-bulk', { name: DROVR_EVENTS_DELIVER_BULK_EVENT, data: event.data })
+			return { status: 'delivered', accepted: 0, rejected: 0, discarded: 0 }
 		}
 		return deliverBatch(event.data.events, step, {
 			attempt: { attempt, maxAttempts },
@@ -944,19 +939,14 @@ const combineReceipts = (
  * a partial run never re-posts what already landed. Drovr's ingress takes
  * one event per request; a batch ingress there is the next step down.
  */
-export const BULK_DELIVERY_BATCH = { maxSize: 100, timeout: '10s' } as const
+export const BULK_DELIVERY_BATCH = { maxSize: 1, timeout: '1s' } as const
 
-/**
- * Row 201g: the bulk lane is the paced path for births (the hawk,
- * 2026-09-30). Inngest's throttle counts run starts, not events, and a run
- * folds up to BULK_DELIVERY_BATCH.maxSize bulk events, so 7 runs a minute
- * is at most 700 bulk events a minute (under the 750 births/min bulk cap).
- * Run starts are spaced evenly through the minute. A producer that puts one
- * birth in each bulk event (the evergreen pitch backfill) is paced at 700
- * births a minute; the Kit ingest and the contact-sync backfill carry
- * directory events, which cost the birth minute but start no drips.
+/** Envelope scheduling is not the event cap: an envelope may contain many
+ * events and fan-out adds copies. The shared database reservation immediately
+ * before each single-event POST enforces BULK_EVENTS_PER_MINUTE, including
+ * retries/replay. The sleep keeps ordinary operation off the retry ladder.
  */
-export const BULK_DELIVERY_THROTTLE = { limit: 7, period: '1m' } as const
+export const BULK_DELIVERY_THROTTLE = { limit: 1, period: '1s' } as const
 
 export const drovrEventsDeliverBulk = inngest.createFunction(
 	{
@@ -972,6 +962,7 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 		const context: DeliverContext = {
 			attempt: { attempt, maxAttempts },
 			lane: 'bulk',
+			pace: reserveDrovrBulkSlot,
 			capture: captureDrovrOutboxLive,
 			openStops: openDrovrOutboxStopsLive,
 			settle: settleDrovrOutboxLive,
@@ -1074,8 +1065,16 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 				}
 			}
 		}
-		if (others.length > 0 || backfill.length === 0)
-			receipts.push(await deliverBulk(others, step, context, { gate }))
+		if (others.length > 0 || backfill.length === 0) {
+			const profileSync = events.some((event) => event.data.source === 'contact-profile-sync')
+			const profileRefused: DeferredDrovrEvent[] = []
+			receipts.push(await deliverBulk(others, step, context, { gate, ...(profileSync ? { deferNotLive: true, refused: profileRefused } : {}) }))
+			if (profileRefused.length > 0) {
+				const at = (await step.run('profile-sync:defer-at', () => Date.now())) as number
+				await step.sendEvent('profile-sync:defer-refused', contactSyncRetryRequest(profileRefused, 1, at))
+				refused.push(...profileRefused)
+			}
+		}
 		const combined =
 			receipts.length === 1 ? receipts[0]! : combineReceipts(receipts)
 		return {

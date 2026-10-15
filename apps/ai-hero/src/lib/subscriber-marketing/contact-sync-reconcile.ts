@@ -144,7 +144,8 @@ export async function runContactSyncReconcile(
 			`contact sync reconcile cannot advance: over ${limit} late writes behind ${watermark}`,
 		)
 	}
-	const late = [...new Set(overlap.map((row) => row.contactId))]
+	const affectsProfile = (row: ScannedContactEvent) => row.eventType !== 'coupon.issued' && row.eventType !== 'contact.offer.issued'
+	const late = [...new Set(overlap.filter(affectsProfile).map((row) => row.contactId))]
 	if (late.length > maxContacts) {
 		throw new Error(
 			`contact sync reconcile cannot advance: ${late.length} contacts with late writes exceed ${maxContacts}`,
@@ -169,7 +170,7 @@ export async function runContactSyncReconcile(
 
 	// One timeline of fresh events and rotation steps, capped in time order.
 	const timeline = [
-		...fresh.map((row) => ({ contactId: row.contactId, at: row.occurredAt })),
+		...fresh.filter(affectsProfile).map((row) => ({ contactId: row.contactId, at: row.occurredAt })),
 		...rotations.map((row) => ({ contactId: row.contactId, at: row.at })),
 	]
 		.filter((item) => Date.parse(item.at) <= Date.parse(claim))
@@ -298,8 +299,9 @@ const BENIGN_SYNC_SKIPS: ReadonlySet<string> = new Set([
 	'no-sending-journey',
 	// drovr would ignore a profile without an email as malformed.
 	'contact-email-missing',
-	// Contract §4: final for that event, logged; an answer, not a failure.
-	'drovr-rejected',
+	// Nothing changed; the version's payload is already delivered or durably queued.
+	'unchanged',
+	'profile-not-issued',
 ])
 
 /**

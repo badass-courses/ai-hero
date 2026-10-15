@@ -2,6 +2,9 @@ import { DROVR_CONTACT_PROFILE_SYNC_EVENT } from '@/inngest/events/drovr'
 import { inngest } from '@/inngest/inngest.server'
 import { DROVR_SEND_RETRIES } from '@/lib/subscriber-marketing/drovr-outbox'
 import { runContactProfileSync } from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
+import { queueContactSyncBulk } from '@/lib/subscriber-marketing/contact-sync-bulk'
+import { syncDeliveryLane } from '@/lib/subscriber-marketing/contact-sync-deltas'
+import { captureDrovrOutboxLive } from '@/lib/subscriber-marketing/drovr-outbox-live'
 
 export const drovrContactProfileSync = inngest.createFunction(
 	{
@@ -56,12 +59,12 @@ export const drovrContactProfileSync = inngest.createFunction(
 			event,
 			step,
 			env: process.env,
-			readSnapshot: async ({ contactId, valuePathSlug }) =>
+			readSnapshot: async ({ contactId, valuePathSlug, offerOnly }) =>
 				readContactProfileSnapshot({
 					repository,
 					contactId,
 					kitIdentity: await findContactKitIdentity(db, contactId),
-					valuePathSlug,
+					valuePathSlug: offerOnly ? undefined : valuePathSlug,
 					answerPages: valuePathSlug ? await getValuePathAnswerPages() : [],
 					baseUrl:
 						env.NEXT_PUBLIC_URL ??
@@ -72,6 +75,7 @@ export const drovrContactProfileSync = inngest.createFunction(
 					now: new Date().toISOString(),
 					warn: log.warn,
 				}),
+			currentVersion: (contactId) => createDrizzleContactProfileVersionStore(db).currentFor(contactId),
 			versionFor: (contactId, contentHash) =>
 				createDrizzleContactProfileVersionStore(db).versionFor(
 					contactId,
@@ -83,6 +87,10 @@ export const drovrContactProfileSync = inngest.createFunction(
 					profileVersion,
 				),
 			deliver: async (events) => {
+				// Coupons use the existing live completion path. Profile changes,
+				// link rotations and restatements never post on that queue.
+				if (syncDeliveryLane(event.data.reason) === 'bulk')
+					return queueContactSyncBulk(events, { capture: captureDrovrOutboxLive, send: (events) => inngest.send(events) })
 				const ingestUrl = env.DROVR_SHADOW_INGEST_URL
 				const apiKey = drovrApiKeyForTenant(DROVR_AUTHORITY_TENANT_ID)
 				if (!ingestUrl || !apiKey) return 'not-configured'

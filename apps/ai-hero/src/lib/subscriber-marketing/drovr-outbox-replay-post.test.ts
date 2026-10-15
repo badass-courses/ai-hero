@@ -161,7 +161,7 @@ describe('postDrovrOutboxRow', () => {
 		).toEqual({ kind: 'failed', transient: true, reason: 'aborted' })
 	})
 
-	it('answers a 409 event-not-live and a missing key as not transient', async () => {
+	it('retries event-not-live unchanged, but a missing key still needs an operator', async () => {
 		expect(
 			await postDrovrOutboxRow(
 				asRow(outboxEntryForEvent(authorityCopy, 'live')),
@@ -174,7 +174,7 @@ describe('postDrovrOutboxRow', () => {
 					}),
 				}),
 			),
-		).toMatchObject({ kind: 'failed', transient: false, httpStatus: 409 })
+		).toMatchObject({ kind: 'failed', transient: true, httpStatus: 409 })
 		expect(
 			await postDrovrOutboxRow(
 				asRow(outboxEntryForEvent(authorityCopy, 'live')),
