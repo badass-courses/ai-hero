@@ -56,7 +56,7 @@ import { AutoPlayToggle } from './autoplay-toggle'
 import { completeLessonInBackground } from './complete-lesson-in-background'
 import type { EndCardAction } from './end-card'
 import { useModuleProgress } from './module-progress-provider'
-import { getLessonThumbnailUrl, getNextLesson } from './next-lesson'
+import { getArrivalPosterUrl, getNextLesson } from './next-lesson'
 
 export function AuthedVideoPlayer({
 	title,
@@ -161,7 +161,7 @@ export function AuthedVideoPlayer({
 		prefetchedHrefRef.current = next.href
 		router.prefetch(next.href, { kind: PrefetchKind.FULL })
 		if (next.thumbnailUrl) preload(next.thumbnailUrl, { as: 'image' })
-		const arrivalPoster = getLessonThumbnailUrl(next.resource, 0)
+		const arrivalPoster = getArrivalPosterUrl(next.resource)
 		if (bingeMode && arrivalPoster) preload(arrivalPoster, { as: 'image' })
 	}
 
@@ -239,7 +239,7 @@ export function AuthedVideoPlayer({
 		// Arriving by autoplay, the first frame from the still the previous
 		// lesson preloaded: Mux's own poster is a fresh fetch and the player
 		// paints black until it lands.
-		poster: (bingeMode && getLessonThumbnailUrl(resource, 0)) || undefined,
+		poster: (bingeMode && getArrivalPosterUrl(resource)) || undefined,
 		playbackRates: [0.75, 1, 1.25, 1.5, 1.75, 2],
 		maxResolution: '2160p',
 		minResolution,

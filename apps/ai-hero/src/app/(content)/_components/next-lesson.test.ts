@@ -3,7 +3,11 @@ import { describe, expect, it } from 'vitest'
 import type { ResourceNavigation } from '@/lib/content-navigation'
 import type { ContentResource } from '@coursebuilder/core/schemas'
 
-import { getLessonThumbnailUrl, getNextLesson } from './next-lesson'
+import {
+	getArrivalPosterUrl,
+	getLessonThumbnailUrl,
+	getNextLesson,
+} from './next-lesson'
 
 const now = new Date()
 
@@ -94,5 +98,14 @@ describe('getLessonThumbnailUrl', () => {
 			'/api/thumbnails?videoResourceId=video-2&time=0',
 		)
 		expect(getLessonThumbnailUrl(lesson1)).toBeNull()
+	})
+})
+
+describe('getArrivalPosterUrl', () => {
+	it('is frame 0 at player width, the URL the previous lesson preloads', () => {
+		expect(getArrivalPosterUrl(lesson2)).toBe(
+			'/api/thumbnails?videoResourceId=video-2&time=0&width=720',
+		)
+		expect(getArrivalPosterUrl(lesson1)).toBeNull()
 	})
 })
