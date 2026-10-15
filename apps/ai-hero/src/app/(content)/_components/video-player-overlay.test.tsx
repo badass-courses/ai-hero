@@ -236,6 +236,25 @@ describe('VideoPlayerOverlay', () => {
 		},
 	)
 
+	it('draws no "n/0 completed" when the module progress is missing', async () => {
+		mocks.overlay.mockReturnValue({
+			state: { action: nextLessonAction() },
+			dispatch: vi.fn(),
+		})
+		mocks.progress.mockReturnValue({
+			moduleProgress: {
+				...progress,
+				completedLessonsCount: 1,
+				totalLessonsCount: 0,
+			},
+			addLessonProgress: vi.fn(),
+			removeLessonProgress: vi.fn(),
+		})
+		const html = (await renderOverlay()).innerHTML
+		expect(html).toContain('Next lesson')
+		expect(html).not.toContain('completed')
+	})
+
 	it('navigates on Continue without waiting for the progress write', async () => {
 		// A write that never settles must not hold the navigation (the hang).
 		mocks.complete.mockReturnValue(new Promise(() => {}))

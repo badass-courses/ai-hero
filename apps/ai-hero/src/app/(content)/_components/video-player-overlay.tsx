@@ -78,6 +78,9 @@ function RollingCount({ value }: { value: number }) {
 
 function ModuleProgressLine() {
 	const { moduleProgress } = useModuleProgress()
+	// Without the module's progress (it failed to load, or a completion landed
+	// in an empty store) there is no honest "n/N", so draw none.
+	if (!moduleProgress?.totalLessonsCount) return null
 	return (
 		<div className="flex items-center gap-3">
 			<Progress
