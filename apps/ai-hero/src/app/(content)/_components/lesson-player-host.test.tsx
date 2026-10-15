@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
 	chip: vi.fn(),
 	dispatch: vi.fn(),
 	save: vi.fn(() => Promise.resolve(null)),
+	complete: vi.fn(() => Promise.resolve(null)),
 	media: {
 		currentTime: 0,
 		duration: 300,
@@ -42,7 +43,7 @@ vi.mock('@/trpc/react', () => ({
 			client: {
 				progress: {
 					setPlaybackPosition: { mutate: mocks.save },
-					setCompleted: { mutate: vi.fn() },
+					setCompleted: { mutate: mocks.complete },
 				},
 			},
 			certificate: { cohortEligibility: { invalidate: vi.fn() } },
@@ -272,6 +273,11 @@ describe('LessonPlayerHost', () => {
 		await fire('onLoadedMetadata', 0)
 		await fire('onTimeUpdate', 100)
 		await fire('onEnded', 300)
+		// No session here, but a cookie-only email-course subscriber is recorded.
+		expect(mocks.complete).toHaveBeenCalledWith({
+			resourceId: `a-${run}`,
+			isCompleted: true,
+		})
 		await render(video('b'))
 		expect(writes()).toEqual([
 			['a', 100],

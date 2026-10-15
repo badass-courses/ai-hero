@@ -87,9 +87,6 @@ export function AuthedVideoPlayer({
 	overlay?: React.ReactNode
 } & MuxPlayerProps) {
 	const { data: session } = useSession()
-	// Only lesson pages that passed their access check hand over a source.
-	// Signed out the write returns null and the store would flip back.
-	const canRecordProgress = Boolean(session?.user)
 	const utils = api.useUtils()
 	// The lesson page's writes go over tRPC, never server actions: Next's
 	// router queues server actions with navigations, and the position save
@@ -146,8 +143,9 @@ export function AuthedVideoPlayer({
 	})
 	// Past 80%, fetch the whole next lesson (a FULL prefetch; the default one
 	// stops at the layout for this dynamic route) and its card thumbnail, so
-	// Continue and the autoplay countdown land on cached data. Under autoplay
-	// also the still the next lesson's poster will show (see `poster`).
+	// Continue and the autoplay countdown land on cached data, and the still
+	// the next lesson's poster will show (see `poster`), so the card can hand
+	// over to it without waiting.
 	const prefetchedHrefRef = React.useRef<string | null>(null)
 	const prefetchNext = () => {
 		if (!next || prefetchedHrefRef.current === next.href) return
@@ -155,9 +153,9 @@ export function AuthedVideoPlayer({
 		router.prefetch(next.href, { kind: PrefetchKind.FULL })
 		if (next.thumbnailUrl) preload(next.thumbnailUrl, { as: 'image' })
 		const arrivalPoster = getArrivalPosterUrl(next.resource, {
-			fromStart: true,
+			fromStart: bingeMode,
 		})
-		if (bingeMode && arrivalPoster) preload(arrivalPoster, { as: 'image' })
+		if (arrivalPoster) preload(arrivalPoster, { as: 'image' })
 	}
 
 	const searchParams = useSearchParams()
@@ -220,17 +218,17 @@ export function AuthedVideoPlayer({
 	}, [setMuxPlayerRef])
 
 	// Arriving from another lesson (or by autoplay), our own still instead of
-	// Mux's poster, so the swap can wait for it to decode (below). Under
-	// autoplay the previous lesson already preloaded it.
+	// Mux's poster, so the swap can wait for it to decode (below). The
+	// previous lesson already preloaded it.
 	const poster =
 		((bingeMode || swappedIn) &&
 			getArrivalPosterUrl(resource, { fromStart: bingeMode })) ||
 		undefined
 
 	// No card from the last source. Over a swap it stays up, its Continue
-	// spinner still turning, until the new poster is decoded (or 1.5 s pass),
-	// so the emptied player never shows black between the card and the next
-	// lesson's still.
+	// spinner still turning, until the new poster is decoded (or 1.5 s pass,
+	// on a cold network), so the emptied player never shows black between the
+	// card and the next lesson's still. Preloaded, that is the next frame.
 	const hideCardForNewSource = React.useEffectEvent(() => {
 		let pending = true
 		const hide = () => {
@@ -327,7 +325,7 @@ export function AuthedVideoPlayer({
 				addLessonProgress,
 				removeLessonProgress,
 				navigation,
-				canRecordProgress,
+				hasSession: Boolean(session?.user),
 				setCompleted: client.progress.setCompleted.mutate,
 				// The cohort eligibility read may have raced the final write;
 				// ask again once it is persisted.
@@ -479,7 +477,7 @@ function handleOnVideoEnded({
 	currentResource,
 	router,
 	navigation,
-	canRecordProgress,
+	hasSession,
 	setCompleted,
 	onModuleCompleted,
 }: {
@@ -497,7 +495,8 @@ function handleOnVideoEnded({
 	addLessonProgress: (lessonId: string) => void
 	removeLessonProgress: (lessonId: string) => void
 	navigation: ResourceNavigation | null
-	canRecordProgress: boolean
+	/** Only optimistic with one: a cookie-only email-course subscriber has no session but is recorded. */
+	hasSession: boolean
 	setCompleted: (input: {
 		resourceId: string
 		isCompleted: boolean
@@ -535,8 +534,9 @@ function handleOnVideoEnded({
 	flushSync(() => dispatchVideoPlayerOverlay(action))
 
 	// Every mode completes on end, while the card is up and before any push.
-	// A problem lesson completes on its solution.
-	if (canRecordProgress && nextResource?.type !== 'solution') {
+	// A problem lesson completes on its solution. Only pages that passed their
+	// access check register a source, so whoever watches can be recorded.
+	if (nextResource?.type !== 'solution') {
 		void completeLessonInBackground({
 			resourceId: getResourceToComplete({
 				currentResource,
@@ -547,6 +547,7 @@ function handleOnVideoEnded({
 			addLessonProgress,
 			removeLessonProgress,
 			setCompleted,
+			optimistic: hasSession,
 		}).then(() => {
 			if (completedAction.isModuleComplete) onModuleCompleted()
 		})

@@ -95,12 +95,17 @@ export function EndCard({ children }: { children: React.ReactNode }) {
 				target === document.documentElement ||
 				Boolean(shell && path.includes(shell))
 			if (!card || !inScope) return
-			// In fullscreen the certificate dialog portals into the shell.
+			// In fullscreen the certificate dialog portals into the shell. It
+			// also keeps focus on its trigger inside the card, so an open dialog
+			// anywhere owns the keys too.
 			if (
 				path.some((n) =>
 					['dialog', 'alertdialog'].includes(
 						(n as HTMLElement).getAttribute?.('role') ?? '',
 					),
+				) ||
+				document.querySelector(
+					'[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]',
 				)
 			)
 				return

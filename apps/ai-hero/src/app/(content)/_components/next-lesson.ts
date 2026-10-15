@@ -39,8 +39,8 @@ export function getLessonThumbnailUrl(
 /**
  * The still at full player width, shown while a lesson the player swapped to
  * loads: frame 0 under autoplay (it starts there), else the lesson's own
- * poster frame. Under autoplay the previous lesson preloads this exact URL;
- * the navigation it reads has no poster frame, so only frame 0 can be.
+ * poster frame. The previous lesson preloads this exact URL from the
+ * navigation, which carries `thumbnailTime` for that reason.
  */
 export function getArrivalPosterUrl(
 	resource: ContentResource | null,
@@ -51,11 +51,7 @@ export function getArrivalPosterUrl(
 	return url && `${url}&width=720`
 }
 
-/**
- * What the end card and the player need to know about where "next" goes.
- * The navigation keeps a lesson's video child only below a section (the
- * query strips it one level up), so flat workshops have no thumbnail.
- */
+/** What the end card and the player need to know about where "next" goes. */
 export function getNextLesson({
 	navigation,
 	next,

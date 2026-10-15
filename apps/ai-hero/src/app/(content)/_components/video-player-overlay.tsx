@@ -143,12 +143,13 @@ function useContinue({
 	resource,
 	prevResource,
 	next,
-	canRecordProgress,
+	hasSession,
 }: {
 	resource: ContentResource | null
 	prevResource: ContentResource | null
 	next: NextLesson | null
-	canRecordProgress: boolean
+	/** Only optimistic with one: a cookie-only email-course subscriber has no session but is recorded. */
+	hasSession: boolean
 }) {
 	const router = useRouter()
 	const pathname = usePathname()
@@ -160,8 +161,9 @@ function useContinue({
 	const [isNavigating, startNavigation] = React.useTransition()
 
 	const go = () => {
-		// A problem lesson completes on its solution instead.
-		if (resource && canRecordProgress && !next?.isSolution) {
+		// The card only draws for a viewer the page let in, so the completion
+		// is always recorded. A problem lesson completes on its solution instead.
+		if (resource && !next?.isSolution) {
 			// On a solution, the lesson to complete is the problem before it.
 			const isSolution = pathname.endsWith('/solution')
 			void completeLessonInBackground({
@@ -170,6 +172,7 @@ function useContinue({
 				addLessonProgress,
 				removeLessonProgress,
 				setCompleted: client.progress.setCompleted.mutate,
+				optimistic: hasSession,
 			})
 		}
 		if (next) startNavigation(() => router.push(next.href))
@@ -197,15 +200,11 @@ export const CompletedLessonOverlay: React.FC<{
 
 	const { moduleProgress } = useModuleProgress()
 	const { data: session } = useSession()
-	// The card only draws for a viewer the page let in. Signed out there is
-	// nothing to record: the store would flip on and revert when the write
-	// returns null, and the sidebar check would flicker.
-	const canRecordProgress = Boolean(session?.user)
 	const { go, isNavigating } = useContinue({
 		resource,
 		prevResource: prevLesson,
 		next,
-		canRecordProgress,
+		hasSession: Boolean(session?.user),
 	})
 
 	// Decide "is the workshop finished" from live progress, not from the

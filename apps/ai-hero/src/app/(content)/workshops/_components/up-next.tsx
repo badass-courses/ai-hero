@@ -177,9 +177,7 @@ export default function UpNext({
 			isCompleted ||
 			!completionLogic.shouldComplete ||
 			!completionLogic.resourceToComplete ||
-			!canView ||
-			// Signed out the write returns null and the check would flicker.
-			!session?.user
+			!canView
 		) {
 			return
 		}
@@ -190,6 +188,7 @@ export default function UpNext({
 			addLessonProgress,
 			removeLessonProgress,
 			setCompleted: client.progress.setCompleted.mutate,
+			optimistic: Boolean(session?.user),
 		})
 	}
 
