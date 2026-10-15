@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useState } from 'react'
+import { useState } from 'react'
 import type { Lesson } from '@/lib/lessons'
 import { track } from '@/utils/analytics'
 import { getAdjacentWorkshopResources } from '@/utils/get-adjacent-workshop-resources'
@@ -10,17 +10,16 @@ import type { ContentResource } from '@coursebuilder/core/schemas'
 import { Button } from '@coursebuilder/ui'
 import type { ButtonProps } from '@coursebuilder/ui/primitives/button'
 import { cn } from '@coursebuilder/ui/utils/cn'
-import type { AbilityForResource } from '@coursebuilder/utils/current-ability-rules'
 
 import { useWorkshopNavigation } from './workshop-navigation-provider'
 
 /**
  * Renders a button to copy the lesson body (problem prompt) to the clipboard.
  * This button is only shown if the next resource in the workshop navigation is a solution.
+ * Only lesson pages render it, after their access check.
  */
 export function CopyProblemPromptButton({
 	lesson,
-	abilityLoader,
 	className,
 	problem,
 	...rest
@@ -28,22 +27,9 @@ export function CopyProblemPromptButton({
 	lesson: Lesson | ContentResource
 	problem?: Lesson | null
 	className?: string
-	abilityLoader: Promise<
-		Omit<AbilityForResource, 'canView'> & {
-			canViewWorkshop: boolean
-			canViewLesson: boolean
-			isPendingOpenAccess: boolean
-		}
-	>
 } & ButtonProps) {
-	const ability = use(abilityLoader)
-	const canView = ability?.canViewLesson
 	const workshopNavigation = useWorkshopNavigation()
 	const [copied, setCopied] = useState(false)
-
-	if (!canView) {
-		return null
-	}
 
 	if (!workshopNavigation) {
 		return null // Don't render if context is null

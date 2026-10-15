@@ -470,7 +470,9 @@ export function PlayerGestureShell({
 			if (!player.ended && !(isCoarse && chromeUpAtPause))
 				setPlayFlash({ kind: 'pause', key: ++keyCounterRef.current })
 			endHoldSpeed()
-			if (isCoarse) setChrome(true)
+			// The end card owns an ended player; chrome raised under it would
+			// still be fading out when the card lifts for the next source.
+			if (isCoarse && !player.ended) setChrome(true)
 		}
 
 		// A new source (teardown fires `emptied`) has not been played yet.
@@ -478,6 +480,10 @@ export function PlayerGestureShell({
 			pausedRef.current = true
 			setPausedState(true)
 			setHasPlayed(false)
+			// The chrome the last source's end pause left up would show ▶ on
+			// the next poster before autoplay starts it. Without autoplay the
+			// pre-play pin brings ▶ back.
+			if (isCoarse) setChrome(false)
 		}
 
 		player.addEventListener('userinactivechange', onUserInactiveChange)

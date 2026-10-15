@@ -132,6 +132,7 @@ const nextLessonAction = (
 ) => ({
 	type: 'COMPLETED',
 	playerRef,
+	resource,
 	isModuleComplete: false,
 	autoAdvance,
 	nextResource: {
@@ -156,9 +157,6 @@ async function renderOverlay() {
 		root.render(
 			<VideoPlayerOverlay
 				resource={resource}
-				abilityLoader={
-					Promise.resolve({ canViewLesson: true }) as Props['abilityLoader']
-				}
 				moduleType="workshop"
 				moduleSlug="test"
 			/>,
@@ -399,6 +397,24 @@ describe('VideoPlayerOverlay', () => {
 			expect(mocks.push).toHaveBeenCalledWith('/workshops/test/lesson-2')
 		})
 
+		it('keeps the countdown layout but stops its timer while held', async () => {
+			// The host has swapped away; the card from the ended lesson is held.
+			mocks.overlay.mockReturnValue({
+				state: {
+					action: {
+						...nextLessonAction(undefined, true),
+						resource: { ...resource, id: 'lesson-0' },
+					},
+				},
+				dispatch: vi.fn(),
+			})
+			await renderOverlay()
+			expect(container.textContent).toContain('Up next in')
+			expect(container.textContent).not.toContain('Continue')
+			await act(async () => vi.advanceTimersByTime(6_000))
+			expect(mocks.push).not.toHaveBeenCalled()
+		})
+
 		it('becomes the normal card on Cancel', async () => {
 			const dispatch = vi.fn()
 			const action = nextLessonAction(undefined, true)
@@ -465,6 +481,7 @@ describe('VideoPlayerOverlay', () => {
 					action: {
 						type: 'COMPLETED',
 						isModuleComplete: true,
+						resource,
 						playerRef: { current: { play } },
 					},
 				},
@@ -483,4 +500,23 @@ describe('VideoPlayerOverlay', () => {
 			expect(dispatch).toHaveBeenCalledWith({ type: 'HIDDEN' })
 		},
 	)
+
+	it('holds a finished-workshop card over the next lesson without confetti', async () => {
+		// Swapped to lesson-2 while the card from lesson-1's end is held.
+		const other = { ...resource, id: 'lesson-2' }
+		mocks.overlay.mockReturnValue({
+			state: {
+				action: {
+					type: 'COMPLETED',
+					isModuleComplete: true,
+					resource: other,
+					playerRef: { current: null },
+				},
+			},
+			dispatch: vi.fn(),
+		})
+		await renderOverlay()
+		expect(container.querySelector<HTMLElement>('[aria-live]')?.inert).toBe(true)
+		expect(mocks.reward).not.toHaveBeenCalled()
+	})
 })

@@ -37,19 +37,21 @@ export function getLessonThumbnailUrl(
 }
 
 /**
- * Frame 0 at full player width, shown while an autoplayed lesson loads. The
- * previous lesson preloads this exact URL, so the poster comes from cache.
+ * The still at full player width, shown while a lesson the player swapped to
+ * loads: frame 0 under autoplay (it starts there), else the lesson's own
+ * poster frame. The previous lesson preloads this exact URL from the
+ * navigation, which carries `thumbnailTime` for that reason.
  */
-export function getArrivalPosterUrl(resource: ContentResource | null) {
-	const url = getLessonThumbnailUrl(resource, 0)
+export function getArrivalPosterUrl(
+	resource: ContentResource | null,
+	{ fromStart }: { fromStart: boolean },
+) {
+	const time = fromStart ? 0 : Number(resource?.fields?.thumbnailTime) || 0
+	const url = getLessonThumbnailUrl(resource, time)
 	return url && `${url}&width=720`
 }
 
-/**
- * What the end card and the player need to know about where "next" goes.
- * The navigation keeps a lesson's video child only below a section (the
- * query strips it one level up), so flat workshops have no thumbnail.
- */
+/** What the end card and the player need to know about where "next" goes. */
 export function getNextLesson({
 	navigation,
 	next,

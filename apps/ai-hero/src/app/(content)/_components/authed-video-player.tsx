@@ -1,7 +1,6 @@
 'use client'
 
 import * as React from 'react'
-import { use } from 'react'
 import { flushSync, preload } from 'react-dom'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { PrefetchKind } from 'next/dist/client/components/router-reducer/router-reducer-types'
@@ -30,7 +29,6 @@ import {
 import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
 import { getAdjacentWorkshopResources } from '@/utils/get-adjacent-workshop-resources'
-import type { AbilityForResource } from '@/utils/get-current-ability-rules'
 import MuxPlayer, {
 	type MuxPlayerProps,
 	type MuxPlayerRefAttributes,
@@ -62,9 +60,8 @@ export function AuthedVideoPlayer({
 	title,
 	muxPlaybackId,
 	className,
-	playbackIdLoader,
-	playbackPositionLoader,
-	abilityLoader,
+	savedPosition,
+	sessionPositions,
 	resource,
 	videoChapters,
 	moduleSlug,
@@ -72,18 +69,16 @@ export function AuthedVideoPlayer({
 	overlay,
 	...props
 }: {
-	muxPlaybackId?: string
+	muxPlaybackId: string
 	title?: string
-	playbackIdLoader?: Promise<string | null | undefined>
-	playbackPositionLoader?: Promise<number | null>
+	/** The server's saved position for this source, in seconds. */
+	savedPosition: number | null
+	/**
+	 * Positions written this session, by resource id. Newer than
+	 * `savedPosition` when the router cache replays an earlier visit.
+	 */
+	sessionPositions: Map<string, number>
 	className?: string
-	abilityLoader?: Promise<
-		Omit<AbilityForResource, 'canView'> & {
-			canViewWorkshop: boolean
-			canViewLesson: boolean
-			isPendingOpenAccess: boolean
-		}
-	>
 	resource: ContentResource
 	videoChapters?: VideoChapter[] | null
 	moduleSlug?: string
@@ -91,8 +86,6 @@ export function AuthedVideoPlayer({
 	/** Drawn over the video inside the fullscreen element (the end card). */
 	overlay?: React.ReactNode
 } & MuxPlayerProps) {
-	const ability = abilityLoader ? use(abilityLoader) : null
-	const canView = ability?.canViewLesson
 	const { data: session } = useSession()
 	const utils = api.useUtils()
 	// The lesson page's writes go over tRPC, never server actions: Next's
@@ -108,11 +101,6 @@ export function AuthedVideoPlayer({
 		contentType: moduleType || resource.type,
 	})
 
-	const playbackId = canView
-		? playbackIdLoader
-			? use(playbackIdLoader)
-			: muxPlaybackId
-		: muxPlaybackId
 	const playerRef = React.useRef<MuxPlayerRefAttributes>(null)
 
 	const chapters = React.useMemo(() => {
@@ -135,6 +123,11 @@ export function AuthedVideoPlayer({
 		null,
 	)
 	const willAutoplay = bingeMode && settledSourceId !== resource.id
+	// The host swaps sources in place; once it has, every source arrived by a
+	// lesson change, the first one too when the learner comes back to it.
+	const [firstSourceId] = React.useState(resource.id)
+	const [swappedIn, setSwappedIn] = React.useState(false)
+	if (!swappedIn && resource.id !== firstSourceId) setSwappedIn(true)
 	const minResolution = muxMinResolutionForPrefs(playerPrefs)
 	const router = useRouter()
 	const navigation = useWorkshopNavigation()
@@ -151,23 +144,23 @@ export function AuthedVideoPlayer({
 	})
 	// Past 80%, fetch the whole next lesson (a FULL prefetch; the default one
 	// stops at the layout for this dynamic route) and its card thumbnail, so
-	// Continue and the autoplay countdown land on cached data. Under autoplay
-	// also the still the next lesson's poster will show (see `poster`).
+	// Continue and the autoplay countdown land on cached data, and the still
+	// the next lesson's poster will show (see `poster`), so the card can hand
+	// over to it without waiting.
 	const prefetchedHrefRef = React.useRef<string | null>(null)
 	const prefetchNext = () => {
 		if (!next || prefetchedHrefRef.current === next.href) return
 		prefetchedHrefRef.current = next.href
 		router.prefetch(next.href, { kind: PrefetchKind.FULL })
 		if (next.thumbnailUrl) preload(next.thumbnailUrl, { as: 'image' })
-		const arrivalPoster = getArrivalPosterUrl(next.resource)
-		if (bingeMode && arrivalPoster) preload(arrivalPoster, { as: 'image' })
+		const arrivalPoster = getArrivalPosterUrl(next.resource, {
+			fromStart: bingeMode,
+		})
+		if (arrivalPoster) preload(arrivalPoster, { as: 'image' })
 	}
 
 	const searchParams = useSearchParams()
 	const queryTime = normalizePlaybackPosition(searchParams.get('t'))
-	const savedPlaybackPosition = playbackPositionLoader
-		? use(playbackPositionLoader)
-		: null
 	// Where a saved position resumed this source; drives the resume chip.
 	const [resume, setResume] = React.useState<{
 		sourceId: string
@@ -178,24 +171,32 @@ export function AuthedVideoPlayer({
 	// Position events count only once this source's metadata is in: until
 	// then they come from the outgoing source, or report 0 for the new one.
 	const sourceReadyRef = React.useRef(false)
+	// Where this source last was; null once it ended (`onEnded` saved 0).
+	const lastPositionRef = React.useRef<number | null>(null)
 	const lastSavedAtRef = React.useRef(0)
 	const lastSavedPositionRef = React.useRef<number | null>(null)
-	const savePlaybackPosition = React.useMemo(
-		() =>
-			createPlaybackPositionSaveQueue((positionSeconds) =>
-				client.progress.setPlaybackPosition.mutate({
-					resourceId: resource.id,
-					positionSeconds,
-				}),
-			),
-		[client, resource.id],
-	)
+	// One queue per source, so the outgoing source's last write still goes
+	// to its own lesson after a swap.
+	const savePlaybackPosition = React.useMemo(() => {
+		const enqueue = createPlaybackPositionSaveQueue((positionSeconds) =>
+			client.progress.setPlaybackPosition.mutate({
+				resourceId: resource.id,
+				positionSeconds,
+			}),
+		)
+		return (positionSeconds: number) => {
+			lastSavedPositionRef.current = positionSeconds
+			sessionPositions.set(resource.id, positionSeconds)
+			return enqueue(positionSeconds)
+		}
+	}, [client, resource.id, sessionPositions])
 	const persistPlaybackPosition = React.useCallback(
 		(position: unknown, force = false) => {
-			if (!canView || !sourceReadyRef.current) return Promise.resolve(null)
+			if (!sourceReadyRef.current) return Promise.resolve(null)
 
 			const normalizedPosition = normalizePlaybackPosition(position)
 			if (normalizedPosition === null) return Promise.resolve(null)
+			lastPositionRef.current = normalizedPosition
 			if (!force && Date.now() - lastSavedAtRef.current < 15_000) {
 				return Promise.resolve(null)
 			}
@@ -204,10 +205,9 @@ export function AuthedVideoPlayer({
 			}
 
 			lastSavedAtRef.current = Date.now()
-			lastSavedPositionRef.current = normalizedPosition
 			return savePlaybackPosition(normalizedPosition)
 		},
-		[canView, savePlaybackPosition],
+		[savePlaybackPosition],
 	)
 	const { moduleProgress, addLessonProgress, removeLessonProgress } =
 		useModuleProgress()
@@ -218,15 +218,54 @@ export function AuthedVideoPlayer({
 		setMuxPlayerRef(playerRef)
 	}, [setMuxPlayerRef])
 
-	// A new source starts clean: no card from the last one, no save state.
-	// Today the page remounts the player per lesson; this keeps it correct
-	// once the player persists and only its source changes.
+	// Arriving from another lesson (or by autoplay), our own still instead of
+	// Mux's poster, so the swap can wait for it to decode (below). The
+	// previous lesson already preloaded it.
+	const poster =
+		((bingeMode || swappedIn) &&
+			getArrivalPosterUrl(resource, { fromStart: bingeMode })) ||
+		undefined
+
+	// No card from the last source. Over a swap it stays up, its Continue
+	// spinner still turning, until the new poster is decoded (or 1.5 s pass,
+	// on a cold network), so the emptied player never shows black between the
+	// card and the next lesson's still. Preloaded, that is the next frame.
+	const hideCardForNewSource = React.useEffectEvent(() => {
+		let pending = true
+		const hide = () => {
+			if (!pending) return
+			pending = false
+			dispatchVideoPlayerOverlay({ type: 'HIDDEN' })
+		}
+		if (!swappedIn || !poster) return hide()
+		const image = new Image()
+		image.src = poster
+		const timer = setTimeout(hide, 1500)
+		void image.decode().then(hide, hide)
+		return () => {
+			pending = false
+			clearTimeout(timer)
+		}
+	})
+
+	// The host keeps this player across lessons and swaps its source. A new
+	// source starts clean: no card from the last one, no save state.
 	React.useLayoutEffect(() => {
 		sourceReadyRef.current = false
+		lastPositionRef.current = null
 		lastSavedAtRef.current = 0
 		lastSavedPositionRef.current = null
-		dispatchVideoPlayerOverlay({ type: 'HIDDEN' })
-	}, [resource.id, dispatchVideoPlayerOverlay])
+		const cancelHide = hideCardForNewSource()
+		return () => {
+			cancelHide?.()
+			// Leaving this source (a swap, or the host unmounting): save where
+			// it was, through its own queue. Runs before the new source loads.
+			const last = lastPositionRef.current
+			if (last !== null && last !== lastSavedPositionRef.current) {
+				void savePlaybackPosition(last)
+			}
+		}
+	}, [resource.id, savePlaybackPosition])
 
 	const playerProps = {
 		defaultHiddenCaptions: true,
@@ -234,17 +273,11 @@ export function AuthedVideoPlayer({
 		forwardSeekOffset: 5,
 		backwardSeekOffset: 5,
 		thumbnailTime: bingeMode ? 0 : resource.fields?.thumbnailTime || 0,
-		// Arriving by autoplay, the first frame from the still the previous
-		// lesson preloaded: Mux's own poster is a fresh fetch and the player
-		// paints black until it lands.
-		poster: (bingeMode && getArrivalPosterUrl(resource)) || undefined,
+		poster,
 		playbackRates: [0.75, 1, 1.25, 1.5, 1.75, 2],
 		maxResolution: '2160p',
 		minResolution,
 		accentColor: '#DD9637',
-		// Only an explicit ?t=; a saved position needs the duration to judge,
-		// so it is applied in onLoadedMetadata.
-		currentTime: queryTime ?? undefined,
 		playbackRate,
 		onRateChange: (evt: Event) => {
 			const target = evt.target as HTMLVideoElement
@@ -293,7 +326,6 @@ export function AuthedVideoPlayer({
 				addLessonProgress,
 				removeLessonProgress,
 				navigation,
-				canRecordProgress: Boolean(canView),
 				hasSession: Boolean(session?.user),
 				setCompleted: client.progress.setCompleted.mutate,
 				// The cohort eligibility read may have raced the final write;
@@ -302,6 +334,7 @@ export function AuthedVideoPlayer({
 					void utils.certificate.cohortEligibility.invalidate(),
 			})
 			void persistPlaybackPosition(0, true)
+			lastPositionRef.current = null
 		},
 		onPlay: () => {
 			dispatchVideoPlayerOverlay({ type: 'HIDDEN' })
@@ -317,7 +350,7 @@ export function AuthedVideoPlayer({
 		},
 	} as MuxPlayerProps
 
-	return playbackId ? (
+	return (
 		<PlayerGestureShell
 			playerRef={playerRef}
 			className={cn(className)}
@@ -344,16 +377,20 @@ export function AuthedVideoPlayer({
 			<MuxPlayer
 				metadata={muxMetadata}
 				ref={playerRef}
-				playbackId={playbackId}
+				playbackId={muxPlaybackId}
 				className="h-full w-full"
 				{...playerProps}
 				{...props}
 				onLoadedMetadata={(event) => {
 					bindVideoQuality()
+					// Seek here, never through the `currentTime` prop: on a live
+					// player a new prop value would seek the outgoing source.
 					const player = playerRef.current
-					if (player && queryTime === null) {
+					if (player && queryTime !== null) {
+						player.currentTime = queryTime
+					} else if (player) {
 						const start = getResumeStartTime({
-							savedTime: savedPlaybackPosition,
+							savedTime: sessionPositions.get(resource.id) ?? savedPosition,
 							duration: player.duration,
 						})
 						if (start > 0) {
@@ -369,7 +406,7 @@ export function AuthedVideoPlayer({
 				}}
 			/>
 		</PlayerGestureShell>
-	) : null
+	)
 }
 
 function getResourceToComplete({
@@ -441,7 +478,6 @@ function handleOnVideoEnded({
 	currentResource,
 	router,
 	navigation,
-	canRecordProgress,
 	hasSession,
 	setCompleted,
 	onModuleCompleted,
@@ -460,7 +496,7 @@ function handleOnVideoEnded({
 	addLessonProgress: (lessonId: string) => void
 	removeLessonProgress: (lessonId: string) => void
 	navigation: ResourceNavigation | null
-	canRecordProgress: boolean
+	/** Only optimistic with one: a cookie-only email-course subscriber has no session but is recorded. */
 	hasSession: boolean
 	setCompleted: (input: {
 		resourceId: string
@@ -495,12 +531,14 @@ function handleOnVideoEnded({
 	const action: EndCardAction = {
 		...completedAction,
 		autoAdvance: bingeMode && Boolean(nextResource),
+		resource: currentResource,
 	}
 	flushSync(() => dispatchVideoPlayerOverlay(action))
 
 	// Every mode completes on end, while the card is up and before any push.
-	// A problem lesson completes on its solution.
-	if (canRecordProgress && nextResource?.type !== 'solution') {
+	// A problem lesson completes on its solution. Only pages that passed their
+	// access check register a source, so whoever watches can be recorded.
+	if (nextResource?.type !== 'solution') {
 		void completeLessonInBackground({
 			resourceId: getResourceToComplete({
 				currentResource,

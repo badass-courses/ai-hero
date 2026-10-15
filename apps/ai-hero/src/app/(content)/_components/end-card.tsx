@@ -9,6 +9,7 @@ import {
 	type Variants,
 } from 'framer-motion'
 
+import type { ContentResource } from '@coursebuilder/core/schemas'
 import {
 	useVideoPlayerOverlay,
 	type CompletedAction,
@@ -20,8 +21,20 @@ const easeOutQuint = [0.22, 1, 0.36, 1] as const
 /**
  * The overlay's COMPLETED action. The ui package's reducer stores the action
  * as given, so the autoplay countdown rides on it rather than adding a state.
+ * `resource` is the lesson whose end drew the card: the host swaps lessons
+ * under a card it holds up, and the card must keep acting for its own.
  */
-export type EndCardAction = CompletedAction & { autoAdvance?: boolean }
+export type EndCardAction = CompletedAction & {
+	autoAdvance?: boolean
+	resource: ContentResource
+}
+
+/** The reducer types its state as the ui package's action; ours carries more. */
+export function isEndCardAction(
+	action: { type: string } | null | undefined,
+): action is EndCardAction {
+	return action?.type === 'COMPLETED' && 'resource' in action
+}
 
 export const AUTO_ADVANCE_SECONDS = 5
 
@@ -56,8 +69,17 @@ function isControl(node: EventTarget) {
  *
  * Mark the primary action with `data-end-card-primary` (on the control or a
  * wrapper around it) and the one that moves on with `data-end-card-continue`.
+ *
+ * `inert` while the host has already swapped to the next lesson and only
+ * holds the card up over it: no pointer, focus or keys until it hides.
  */
-export function EndCard({ children }: { children: React.ReactNode }) {
+export function EndCard({
+	inert = false,
+	children,
+}: {
+	inert?: boolean
+	children: React.ReactNode
+}) {
 	const ref = React.useRef<HTMLDivElement>(null)
 	const isPresent = useIsPresent()
 	const { dispatch } = useVideoPlayerOverlay()
@@ -82,7 +104,7 @@ export function EndCard({ children }: { children: React.ReactNode }) {
 	}, [])
 
 	React.useEffect(() => {
-		if (!isPresent) return
+		if (!isPresent || inert) return
 		const onKeyDown = (e: KeyboardEvent) => {
 			if (e.defaultPrevented || e.isComposing) return
 			if (e.ctrlKey || e.metaKey || e.altKey) return
@@ -141,7 +163,7 @@ export function EndCard({ children }: { children: React.ReactNode }) {
 		// Capture, so this runs before the shell's document listener.
 		document.addEventListener('keydown', onKeyDown, true)
 		return () => document.removeEventListener('keydown', onKeyDown, true)
-	}, [dispatch, isPresent])
+	}, [dispatch, isPresent, inert])
 
 	const scrim: Variants = {
 		hidden: { opacity: 0 },
@@ -155,6 +177,7 @@ export function EndCard({ children }: { children: React.ReactNode }) {
 	return (
 		<motion.div
 			ref={ref}
+			inert={inert}
 			aria-live="polite"
 			variants={scrim}
 			initial="hidden"

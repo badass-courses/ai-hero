@@ -58,3 +58,9 @@ These came out of the same review and were left out of the end-of-video PR on pu
 ## Related defect: the overlay is invisible in fullscreen
 
 `VideoPlayerOverlay` renders as a sibling of `PlayerGestureShell`, and the shell is the player's `fullscreen-element`. A learner in fullscreen never sees Up Next, Continue, or the workshop-complete card. In binge mode the remount on each navigation (`key={lesson.id}`) also drops fullscreen.
+
+Resolved in two steps:
+- #424 renders the card inside the shell.
+- #425 keeps one player alive in the `(learn)` layout (`LessonPlayerHost`), which swaps `playbackId` in place, so fullscreen survives autoplay and Continue.
+
+The swap leaves one trap: the host changes lessons under a card it is still holding up. Review of #425 caught the card completing the lesson just arrived at. So the card acts for the lesson whose end drew it (`EndCardAction.resource`), never for the host's current lesson, and it stays inert until it hides.

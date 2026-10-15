@@ -16,7 +16,8 @@ import {
 /**
  * The mobile lesson list. The (learn) layout survives lesson changes, so the
  * sheet no longer closes by remounting: it is open only for the path it was
- * opened on, and picking a lesson closes it.
+ * opened on, and picking a lesson closes it, the one already open too (its
+ * path does not change).
  */
 export function LessonsSheet() {
 	const pathname = usePathname()
@@ -30,7 +31,12 @@ export function LessonsSheet() {
 			<SheetTrigger className="bg-card/90 border-foreground/10 fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded border px-3 py-2 shadow-lg backdrop-blur-md lg:hidden dark:bg-gray-800/80">
 				<MenuIcon className="size-4" /> Lessons
 			</SheetTrigger>
-			<SheetContent className="px-0 pt-0">
+			<SheetContent
+				className="px-0 pt-0"
+				onClickCapture={(e) => {
+					if ((e.target as Element).closest('a[href]')) setOpenedOn(null)
+				}}
+			>
 				<SheetHeader>
 					<SheetTitle className="sr-only">Workshop Contents</SheetTitle>
 				</SheetHeader>
