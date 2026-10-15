@@ -1,6 +1,7 @@
 'use client'
 
 import React, { use } from 'react'
+import { flushSync } from 'react-dom'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useCohortNavigation } from '@/app/(content)/workshops/_components/cohort-navigation-provider'
@@ -15,18 +16,17 @@ import {
 	findParentLessonForSolution,
 	getModuleCompletionState,
 } from '@/lib/content-navigation'
+import { api } from '@/trpc/react'
 import { getAdjacentWorkshopResources } from '@/utils/get-adjacent-workshop-resources'
 import type { AbilityForResource } from '@/utils/get-current-ability-rules'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { ArrowRight } from 'lucide-react'
 import { useSession } from 'next-auth/react'
-import pluralize from 'pluralize'
 import { useReward } from 'react-rewards'
 
 import type { ContentResource } from '@coursebuilder/core/schemas'
 import { Button, Progress } from '@coursebuilder/ui'
 import { useVideoPlayerOverlay } from '@coursebuilder/ui/hooks/use-video-player-overlay'
-import type { CompletedAction } from '@coursebuilder/ui/hooks/use-video-player-overlay'
 import { cn } from '@coursebuilder/ui/utils/cn'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
@@ -38,9 +38,16 @@ import {
 	CohortCertificateAction,
 	useCohortCertificateEligibility,
 } from './cohort-certificate-container'
-import { EndCard, END_CARD_SECONDARY, EndCardItem } from './end-card'
+import {
+	AUTO_ADVANCE_SECONDS,
+	EndCard,
+	END_CARD_SECONDARY,
+	EndCardItem,
+	type EndCardAction,
+} from './end-card'
 import { CertificateDialog } from './module-certificate-container'
 import { useModuleProgress } from './module-progress-provider'
+import { getNextLesson, type NextLesson } from './next-lesson'
 
 type AbilityLoader = Promise<
 	Omit<AbilityForResource, 'canView'> & {
@@ -105,8 +112,93 @@ function ModuleProgressLine() {
 	)
 }
 
+/** Ticks down from AUTO_ADVANCE_SECONDS while `active`, then calls `onDone`. */
+function useCountdown(active: boolean, onDone: () => void) {
+	const [secondsLeft, setSecondsLeft] = React.useState(AUTO_ADVANCE_SECONDS)
+	const onDoneRef = React.useRef(onDone)
+	React.useLayoutEffect(() => {
+		onDoneRef.current = onDone
+	})
+
+	React.useEffect(() => {
+		if (!active) return
+		const startedAt = Date.now()
+		const timer = setInterval(() => {
+			const left =
+				AUTO_ADVANCE_SECONDS - (Date.now() - startedAt) / 1000
+			setSecondsLeft(Math.max(0, Math.ceil(left)))
+			if (left > 0) return
+			clearInterval(timer)
+			onDoneRef.current()
+		}, 100)
+		return () => clearInterval(timer)
+	}, [active])
+
+	return secondsLeft
+}
+
+/** Drains linearly over the countdown; reduced motion keeps the number only. */
+function CountdownTrack() {
+	const reduceMotion = useReducedMotion()
+	if (reduceMotion) return null
+	return (
+		<div className="h-1 w-[150px] overflow-hidden rounded-full bg-white/20 sm:w-[200px]">
+			<motion.div
+				className="bg-accent-fill h-full origin-left"
+				initial={{ scaleX: 1 }}
+				animate={{ scaleX: 0 }}
+				transition={{ duration: AUTO_ADVANCE_SECONDS, ease: 'linear' }}
+			/>
+		</div>
+	)
+}
+
+/**
+ * Moves on to the next lesson. The progress write (a retry; the ended handler
+ * already wrote it) starts before the push and stays outside the transition,
+ * which only drives the spinner.
+ */
+function useContinue({
+	resource,
+	prevResource,
+	next,
+	canRecordProgress,
+}: {
+	resource: ContentResource | null
+	prevResource: ContentResource | null
+	next: NextLesson | null
+	canRecordProgress: boolean
+}) {
+	const router = useRouter()
+	const pathname = usePathname()
+	const { moduleProgress, addLessonProgress, removeLessonProgress } =
+		useModuleProgress()
+	// tRPC, not a server action: one settling during the push below would
+	// replay this page over the next one.
+	const { client } = api.useUtils()
+	const [isNavigating, startNavigation] = React.useTransition()
+
+	const go = () => {
+		// A problem lesson completes on its solution instead.
+		if (resource && canRecordProgress && !next?.isSolution) {
+			// On a solution, the lesson to complete is the problem before it.
+			const isSolution = pathname.endsWith('/solution')
+			void completeLessonInBackground({
+				resourceId: isSolution && prevResource ? prevResource.id : resource.id,
+				moduleProgress,
+				addLessonProgress,
+				removeLessonProgress,
+				setCompleted: client.progress.setCompleted.mutate,
+			})
+		}
+		if (next) startNavigation(() => router.push(next.href))
+	}
+
+	return { go, isNavigating }
+}
+
 export const CompletedLessonOverlay: React.FC<{
-	action: CompletedAction
+	action: EndCardAction
 	resource: ContentResource | null
 	moduleType?: 'workshop' | 'tutorial'
 	moduleSlug?: string
@@ -119,15 +211,25 @@ export const CompletedLessonOverlay: React.FC<{
 	abilityLoader,
 }) => {
 	const { playerRef } = action
+	const { dispatch } = useVideoPlayerOverlay()
 	const workshopNavigation = useWorkshopNavigation()
 	const { nextResource: adjacentNextLesson, prevResource: prevLesson } =
 		getAdjacentWorkshopResources(workshopNavigation, resource?.id as string)
-	const nextLesson = action.nextResource || adjacentNextLesson
-	const isSolutionNext = nextLesson?.type === 'solution'
+	const next = getNextLesson({
+		navigation: workshopNavigation,
+		next: action.nextResource || adjacentNextLesson,
+		moduleType,
+	})
 
 	const { moduleProgress } = useModuleProgress()
 	const { data: session } = useSession()
 	const canRecordProgress = useCanRecordProgress(abilityLoader)
+	const { go, isNavigating } = useContinue({
+		resource,
+		prevResource: prevLesson,
+		next,
+		canRecordProgress,
+	})
 
 	// Decide "is the workshop finished" from live progress, not from the
 	// snapshot the ended handler captured. That snapshot can lag the durable
@@ -148,7 +250,10 @@ export const CompletedLessonOverlay: React.FC<{
 				resourceIdToMarkComplete: resourceToComplete?.id,
 			}).isModuleComplete)
 
-	if (!nextLesson || isModuleComplete)
+	const counting = Boolean(action.autoAdvance && next && !isModuleComplete)
+	const secondsLeft = useCountdown(counting, go)
+
+	if (!next || isModuleComplete)
 		return (
 			<CompletedModuleOverlay
 				action={action}
@@ -157,23 +262,57 @@ export const CompletedLessonOverlay: React.FC<{
 			/>
 		)
 
+	const partner = process.env.NEXT_PUBLIC_PARTNER_FIRST_NAME || 'Instructor'
+	const label = next.isSolution
+		? counting
+			? `${partner}'s solution in`
+			: `Now watch ${partner}'s solution`
+		: counting
+			? 'Up next in'
+			: 'Up next'
+
+	const cancel = () => {
+		// Becomes the normal card; keep the keyboard on it.
+		const normalCard: EndCardAction = { ...action, autoAdvance: false }
+		flushSync(() => dispatch(normalCard))
+		document
+			.querySelector<HTMLElement>('[data-end-card-continue]')
+			?.focus({ preventScroll: true })
+	}
+
 	return (
 		<EndCard>
-			<EndCardItem>
-				<p className={cn(TYPE.meta, 'pb-1 text-white/70')}>
-					{isSolutionNext
-						? `Now watch ${process.env.NEXT_PUBLIC_PARTNER_FIRST_NAME || 'Instructor'}'s solution`
-						: 'Up next'}
-				</p>
-				<p className={TYPE.subhead}>
-					{nextLesson?.type === 'solution'
-						? findParentLessonForSolution(workshopNavigation, nextLesson.id)
-								?.fields?.title || 'Next Resource'
-						: nextLesson?.fields?.title || 'Next Resource'}
-				</p>
+			<EndCardItem className="flex flex-col items-center gap-3">
+				{next.thumbnailUrl && (
+					// The same immutable URL the player preloads at 80%. Only drawn
+					// where the card has the height for it.
+					// eslint-disable-next-line @next/next/no-img-element
+					<img
+						src={next.thumbnailUrl}
+						alt=""
+						className="hidden aspect-video w-40 rounded-[9px] object-cover ring-1 ring-white/15 sm:w-48 [@container(min-height:22rem)]:block"
+					/>
+				)}
+				<div>
+					<p className={cn(TYPE.meta, 'pb-1 text-white/70')}>
+						{label}
+						{counting && (
+							<span className="tabular-nums text-white"> {secondsLeft}</span>
+						)}
+						{next.number && (
+							<span className="text-white/50">
+								{' '}
+								· Lesson {next.number} of {next.total}
+							</span>
+						)}
+					</p>
+					<p className={TYPE.subhead}>{next.title}</p>
+				</div>
 			</EndCardItem>
 			<EndCardItem>
-				{session?.user ? (
+				{counting ? (
+					<CountdownTrack />
+				) : session?.user ? (
 					<ModuleProgressLine />
 				) : (
 					<p className={cn(TYPE.meta, 'font-normal text-white/80')}>
@@ -188,31 +327,50 @@ export const CompletedLessonOverlay: React.FC<{
 				)}
 			</EndCardItem>
 			<EndCardItem className="flex w-full flex-wrap items-center justify-center gap-3">
-				<Button
-					variant="ghost"
-					type="button"
-					className={END_CARD_SECONDARY}
-					onClick={() => playerRef.current?.play()}
-				>
-					Replay
-				</Button>
-				{resource && resource.type !== 'solution' && (
-					<CopyProblemPromptButton
-						abilityLoader={abilityLoader}
+				{counting ? (
+					<Button
+						variant="ghost"
+						type="button"
 						className={END_CARD_SECONDARY}
-						lesson={resource}
-						variant="default"
-					/>
+						onClick={cancel}
+					>
+						Cancel
+					</Button>
+				) : (
+					<>
+						<Button
+							variant="ghost"
+							type="button"
+							className={END_CARD_SECONDARY}
+							onClick={() => playerRef.current?.play()}
+						>
+							Replay
+						</Button>
+						{resource && resource.type !== 'solution' && (
+							<CopyProblemPromptButton
+								abilityLoader={abilityLoader}
+								className={END_CARD_SECONDARY}
+								lesson={resource}
+								variant="default"
+							/>
+						)}
+					</>
 				)}
-				{resource && (
-					<ContinueButton
-						moduleType={moduleType}
-						resource={resource}
-						nextResource={nextLesson}
-						prevResource={prevLesson}
-						canRecordProgress={canRecordProgress}
-					/>
-				)}
+				<Button
+					className={cn(END_CARD_PRIMARY, 'cursor-pointer')}
+					data-end-card-primary=""
+					data-end-card-continue=""
+					onClick={go}
+					type="button"
+					disabled={isNavigating}
+				>
+					{counting ? 'Play now' : 'Continue'}
+					{isNavigating ? (
+						<Spinner className="ml-2 size-4" />
+					) : (
+						<ArrowRight className="ml-2 size-4" />
+					)}
+				</Button>
 			</EndCardItem>
 		</EndCard>
 	)
@@ -223,7 +381,7 @@ export const CompletedLessonOverlay: React.FC<{
  * ended (see `AuthedVideoPlayer`), so this card only celebrates and points on.
  */
 export const CompletedModuleOverlay: React.FC<{
-	action: CompletedAction
+	action: EndCardAction
 	moduleType?: 'workshop' | 'tutorial'
 	moduleSlug?: string
 }> = ({ action, moduleType = 'tutorial', moduleSlug }) => {
@@ -356,72 +514,6 @@ export const CompletedModuleOverlay: React.FC<{
 			{card}
 			<CertificateDialog />
 		</ModuleCertificate.Root>
-	)
-}
-
-const ContinueButton: React.FC<{
-	resource: ContentResource
-	moduleType: 'workshop' | 'tutorial'
-	nextResource?: ContentResource
-	prevResource?: ContentResource | null
-	canRecordProgress: boolean
-}> = ({
-	resource,
-	nextResource,
-	prevResource = null,
-	moduleType,
-	canRecordProgress,
-}) => {
-	const router = useRouter()
-	const pathname = usePathname()
-	const { moduleProgress, addLessonProgress, removeLessonProgress } =
-		useModuleProgress()
-	const moduleNavigation = useWorkshopNavigation()
-
-	const isSolution = pathname.endsWith('/solution')
-
-	// Pending covers the navigation only. The progress write stays outside
-	// the transition so the next lesson never waits on it.
-	const [isNavigating, startNavigation] = React.useTransition()
-
-	const href =
-		nextResource && moduleNavigation
-			? nextResource.type === 'solution'
-				? `/${pluralize(moduleType)}/${moduleNavigation.fields?.slug}/${resource?.fields?.slug}/solution`
-				: `/${pluralize(moduleType)}/${moduleNavigation.fields?.slug}/${nextResource?.fields?.slug}`
-			: null
-
-	return (
-		<Button
-			className={cn(END_CARD_PRIMARY, 'cursor-pointer')}
-			data-end-card-primary=""
-			data-end-card-continue=""
-			onClick={() => {
-				// The lesson was completed when the video ended; this only
-				// retries a write that failed and reverted. A problem lesson
-				// completes on its solution instead.
-				if (canRecordProgress && nextResource?.type !== 'solution') {
-					// On a solution, the lesson to complete is the problem before it.
-					void completeLessonInBackground({
-						resourceId:
-							isSolution && prevResource ? prevResource.id : resource.id,
-						moduleProgress,
-						addLessonProgress,
-						removeLessonProgress,
-					})
-				}
-				if (href) startNavigation(() => router.push(href))
-			}}
-			type="button"
-			disabled={isNavigating}
-		>
-			Continue
-			{isNavigating ? (
-				<Spinner className="ml-2 size-4" />
-			) : (
-				<ArrowRight className="ml-2 size-4" />
-			)}
-		</Button>
 	)
 }
 

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
 	navigation: vi.fn(),
 	push: vi.fn(),
 	complete: vi.fn(),
+	setCompleted: vi.fn(),
 	reward: vi.fn(),
 	reduceMotion: vi.fn(() => false),
 }))
@@ -25,6 +26,13 @@ vi.mock('next/navigation', () => ({
 	useRouter: () => ({ push: mocks.push }),
 }))
 vi.mock('next-auth/react', () => ({ useSession: mocks.session }))
+vi.mock('@/trpc/react', () => ({
+	api: {
+		useUtils: () => ({
+			client: { progress: { setCompleted: { mutate: mocks.setCompleted } } },
+		}),
+	},
+}))
 vi.mock('@coursebuilder/ui/hooks/use-video-player-overlay', () => ({
 	useVideoPlayerOverlay: mocks.overlay,
 }))
@@ -63,6 +71,8 @@ vi.mock('@/lib/cohort-navigation', () => ({
 vi.mock('@/lib/content-navigation', () => ({
 	findParentLessonForSolution: () => null,
 	getModuleCompletionState: () => ({ isModuleComplete: false }),
+	flattenNavigationResources: () => [{ id: 'lesson-1' }, { id: 'lesson-2' }],
+	isCompletionTrackedResource: () => true,
 }))
 vi.mock('@/utils/get-adjacent-workshop-resources', () => ({
 	getAdjacentWorkshopResources: () => ({
@@ -116,14 +126,19 @@ const resource: Props['resource'] = {
 	organizationId: null,
 	createdByOrganizationMembershipId: null,
 }
-const nextLessonAction = (playerRef: { current: unknown } = { current: null }) => ({
+const nextLessonAction = (
+	playerRef: { current: unknown } = { current: null },
+	autoAdvance = false,
+) => ({
 	type: 'COMPLETED',
 	playerRef,
 	isModuleComplete: false,
+	autoAdvance,
 	nextResource: {
 		id: 'lesson-2',
 		type: 'lesson',
 		fields: { title: 'Next lesson', slug: 'lesson-2' },
+		resources: [{ resourceId: 'video-2', resource: { type: 'videoResource' } }],
 	},
 })
 const progress = {
@@ -245,6 +260,7 @@ describe('VideoPlayerOverlay', () => {
 			moduleProgress: progress,
 			addLessonProgress,
 			removeLessonProgress,
+			setCompleted: mocks.setCompleted,
 		})
 		expect(mocks.push).toHaveBeenCalledWith('/workshops/test/lesson-2')
 		// The write is dispatched first, so the navigation overtakes it.
@@ -293,6 +309,84 @@ describe('VideoPlayerOverlay', () => {
 		expect(mocks.push).toHaveBeenCalledWith('/workshops/test/lesson-2')
 		press('Escape')
 		expect(dispatch).toHaveBeenCalledWith({ type: 'HIDDEN' })
+	})
+
+	it('previews the next lesson with its thumbnail and place', async () => {
+		mocks.overlay.mockReturnValue({
+			state: { action: nextLessonAction() },
+			dispatch: vi.fn(),
+		})
+		const html = (await renderOverlay()).innerHTML
+		expect(html).toContain('Lesson 2 of 2')
+		expect(container.querySelector('img')?.getAttribute('src')).toBe(
+			'/api/thumbnails?videoResourceId=video-2',
+		)
+	})
+
+	describe('with autoplay', () => {
+		beforeEach(() => {
+			vi.useFakeTimers()
+		})
+		afterEach(() => {
+			vi.useRealTimers()
+		})
+
+		it('counts down and moves on at zero', async () => {
+			mocks.overlay.mockReturnValue({
+				state: { action: nextLessonAction(undefined, true) },
+				dispatch: vi.fn(),
+			})
+			await renderOverlay()
+			expect(container.textContent).toContain('Up next in 5')
+			expect(button(/Play now/)).toBe(document.activeElement)
+			expect(container.querySelector('.origin-left')).not.toBeNull()
+
+			await act(async () => vi.advanceTimersByTime(2_050))
+			expect(container.textContent).toContain('Up next in 3')
+			expect(mocks.push).not.toHaveBeenCalled()
+
+			await act(async () => vi.advanceTimersByTime(3_000))
+			expect(mocks.push).toHaveBeenCalledOnce()
+			expect(mocks.push).toHaveBeenCalledWith('/workshops/test/lesson-2')
+		})
+
+		it('becomes the normal card on Cancel', async () => {
+			const dispatch = vi.fn()
+			const action = nextLessonAction(undefined, true)
+			mocks.overlay.mockReturnValue({ state: { action }, dispatch })
+			await renderOverlay()
+			await act(async () => button('Cancel').click())
+			expect(dispatch).toHaveBeenCalledWith({ ...action, autoAdvance: false })
+		})
+
+		it('shows only the number under reduced motion', async () => {
+			mocks.reduceMotion.mockReturnValue(true)
+			mocks.overlay.mockReturnValue({
+				state: { action: nextLessonAction(undefined, true) },
+				dispatch: vi.fn(),
+			})
+			await renderOverlay()
+			expect(container.textContent).toContain('Up next in 5')
+			expect(container.querySelector('.origin-left')).toBeNull()
+		})
+	})
+
+	it.each([
+		['pointerdown', false],
+		['keydown', true],
+	])('draws the focus ring only after keyboard input (%s)', async (input, ring) => {
+		const focus = vi.spyOn(HTMLElement.prototype, 'focus')
+		window.dispatchEvent(new Event(input))
+		mocks.overlay.mockReturnValue({
+			state: { action: nextLessonAction() },
+			dispatch: vi.fn(),
+		})
+		await renderOverlay()
+		expect(focus).toHaveBeenCalledWith({
+			preventScroll: true,
+			focusVisible: ring,
+		})
+		focus.mockRestore()
 	})
 
 	it('leaves focus where the learner put it outside the player', async () => {

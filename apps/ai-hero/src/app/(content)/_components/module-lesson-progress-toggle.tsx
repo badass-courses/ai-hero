@@ -3,7 +3,7 @@
 import * as React from 'react'
 import { useModuleProgress } from '@/app/(content)/_components/module-progress-provider'
 import type { Lesson } from '@/lib/lessons'
-import { setProgressForResource } from '@/lib/progress'
+import { api } from '@/trpc/react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { CheckIcon } from 'lucide-react'
 
@@ -40,6 +40,9 @@ export function ModuleLessonProgressToggle({
 
 	const { moduleProgress, addLessonProgress, removeLessonProgress } =
 		useModuleProgress()
+	// tRPC, not a server action: the router queues server actions with
+	// navigations, and one settling mid-navigation replays the old page.
+	const { client } = api.useUtils()
 
 	const isCompleted = Boolean(
 		moduleProgress?.completedLessons?.some(
@@ -67,7 +70,7 @@ export function ModuleLessonProgressToggle({
 		// never recorded.
 		startTransition(async () => {
 			try {
-				const result = await setProgressForResource({
+				const result = await client.progress.setCompleted.mutate({
 					resourceId: lesson.id,
 					isCompleted: checked,
 				})

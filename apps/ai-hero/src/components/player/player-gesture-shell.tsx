@@ -138,6 +138,7 @@ export function PlayerGestureShell({
 	children,
 	chromeSlot,
 	overlay,
+	autoplay = false,
 }: {
 	playerRef: React.RefObject<MuxPlayerRefAttributes | null>
 	className?: string
@@ -150,6 +151,11 @@ export function PlayerGestureShell({
 	 * touch surface and chrome (z-20) so taps land on the card, not on them.
 	 */
 	overlay?: React.ReactNode
+	/**
+	 * The player will start itself (the autoplay preference). Until it does,
+	 * the pre-play ▶ is hidden: it would only flash before playback.
+	 */
+	autoplay?: boolean
 }) {
 	const shellId = React.useId()
 	const shellRef = React.useRef<HTMLDivElement>(null)
@@ -179,6 +185,11 @@ export function PlayerGestureShell({
 		chromeVisibleRef.current = chromeVisible
 	}, [chromeVisible])
 	const pausedRef = React.useRef(true)
+	const awaitingAutoplay = autoplay && !hasPlayed
+	const awaitingAutoplayRef = React.useRef(awaitingAutoplay)
+	React.useLayoutEffect(() => {
+		awaitingAutoplayRef.current = awaitingAutoplay
+	}, [awaitingAutoplay])
 	const hideTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
 	const rippleTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
 		null,
@@ -435,7 +446,8 @@ export function PlayerGestureShell({
 			// feedback; the flash is for state changes without a visible button.
 			const mcPlay = getMediaController(playerRef.current)
 			const chromeUp = mcPlay ? !mcPlay.hasAttribute('userinactive') : false
-			if (!(isCoarse && chromeUp))
+			// Nobody pressed play when autoplay starts it.
+			if (!awaitingAutoplayRef.current && !(isCoarse && chromeUp))
 				setPlayFlash({ kind: 'play', key: ++keyCounterRef.current })
 			// Chrome clears out fast once playback starts, YouTube-style.
 			// The userinactive attribute is the truth for visibility — the
@@ -461,13 +473,22 @@ export function PlayerGestureShell({
 			if (isCoarse) setChrome(true)
 		}
 
+		// A new source (teardown fires `emptied`) has not been played yet.
+		const onEmptied = () => {
+			pausedRef.current = true
+			setPausedState(true)
+			setHasPlayed(false)
+		}
+
 		player.addEventListener('userinactivechange', onUserInactiveChange)
 		player.addEventListener('play', onPlay)
 		player.addEventListener('pause', onPause)
+		player.addEventListener('emptied', onEmptied)
 		return () => {
 			player.removeEventListener('userinactivechange', onUserInactiveChange)
 			player.removeEventListener('play', onPlay)
 			player.removeEventListener('pause', onPause)
+			player.removeEventListener('emptied', onEmptied)
 			// Undo the coarse-pointer takeover so a pointer-type flip (e.g.
 			// detaching a touchscreen laptop's mouse) hands auto-hide and the
 			// button layout back to media-chrome's defaults.
@@ -779,10 +800,26 @@ export function PlayerGestureShell({
 		machineRef.current?.cancel()
 	}, [])
 
+	// mux-player's own centre button (desktop) reads this variable.
+	React.useEffect(() => {
+		const player = playerRef.current as unknown as HTMLElement | null
+		if (!player || !awaitingAutoplay) return
+		player.style.setProperty('--center-play-button', 'none')
+		return () => {
+			const restore = () => player.style.removeProperty('--center-play-button')
+			// Once playing, the paused chrome fades out over a second and the
+			// button would show through it; bring it back on the next pause.
+			if (pausedRef.current) restore()
+			else player.addEventListener('pause', restore, { once: true })
+		}
+	}, [playerRef, awaitingAutoplay])
+
 	const surfaceActive = isCoarse
 	// Pre-play the chrome is pinned up (it's the only affordance); once
 	// playback has started, visibility is tap-driven regardless of pause.
-	const chromeShowing = chromeVisible || (paused && !hasPlayed)
+	// Not while autoplay is about to start it.
+	const chromeShowing =
+		chromeVisible || (paused && !hasPlayed && !awaitingAutoplay)
 
 	// Overlay styling note: everything below renders ON the video frame,
 	// not on a page surface, so it uses fixed light-on-dark scrim colors

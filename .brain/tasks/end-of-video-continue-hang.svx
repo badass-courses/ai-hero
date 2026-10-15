@@ -24,7 +24,11 @@ Why, read from Next 16.2.7 `app-router-instance.js` and `server-action-reducer.j
 
 That transition was awaiting `revalidateModuleLesson`, which was queued behind the navigation. Each waited on the other.
 
-The general rule for this codebase: never `await` a server action inside a transition that runs alongside `router.push`. Dispatch writes before the push, and do not await them.
+There is a second trap in the same queue. When a discarded action finishes, `runRemainingActions` advances whatever action is pending, which is now the navigation, without checking that it is the action that finished. That starts the next queued server action early. It captured the pre-navigation router state, and because it was dispatched after the push, its result is the last state update and overwrites the navigation.
+
+Autoplay hit this on every run once a position save was dispatched after `router.push` (2026-10-15). The pause-triggered save is always in flight when the video ends.
+
+The rule for this codebase: fire-and-forget writes from the lesson page (completion, playback position) go through tRPC mutations, which use plain fetch, never server actions. Server actions share the router's queue with navigations. The posts-side callers still use server actions and are a follow-up.
 
 Signed-in learners on an uncompleted lesson take the same code path. Not reproduced signed-in, and smer holds no learner report of it, though Front is not in smer.
 

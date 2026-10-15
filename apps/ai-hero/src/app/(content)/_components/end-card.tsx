@@ -9,10 +9,29 @@ import {
 	type Variants,
 } from 'framer-motion'
 
-import { useVideoPlayerOverlay } from '@coursebuilder/ui/hooks/use-video-player-overlay'
+import {
+	useVideoPlayerOverlay,
+	type CompletedAction,
+} from '@coursebuilder/ui/hooks/use-video-player-overlay'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
 const easeOutQuint = [0.22, 1, 0.36, 1] as const
+
+/**
+ * The overlay's COMPLETED action. The ui package's reducer stores the action
+ * as given, so the autoplay countdown rides on it rather than adding a state.
+ */
+export type EndCardAction = CompletedAction & { autoAdvance?: boolean }
+
+export const AUTO_ADVANCE_SECONDS = 5
+
+// How the learner last interacted. The card focuses its primary button on
+// arrival; after a click or tap that focus should not draw the keyboard ring.
+let lastInputWasPointer = false
+if (typeof window !== 'undefined') {
+	window.addEventListener('pointerdown', () => (lastInputWasPointer = true), true)
+	window.addEventListener('keydown', () => (lastInputWasPointer = false), true)
+}
 
 /** Secondary actions on the card (Replay, certificate beside a next step). */
 export const END_CARD_SECONDARY =
@@ -55,7 +74,11 @@ export function EndCard({ children }: { children: React.ReactNode }) {
 		const target = primary?.matches('a, button')
 			? primary
 			: primary?.querySelector<HTMLElement>('a, button')
-		target?.focus({ preventScroll: true })
+		// `focusVisible` is not in TypeScript's DOM types yet.
+		target?.focus({
+			preventScroll: true,
+			focusVisible: !lastInputWasPointer,
+		} as FocusOptions)
 	}, [])
 
 	React.useEffect(() => {
@@ -134,7 +157,8 @@ export function EndCard({ children }: { children: React.ReactNode }) {
 			exit="exit"
 			// Fixed light-on-dark: the card sits on the video frame, not the page.
 			className={cn(
-				'absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-black/75 p-5 text-center text-white backdrop-blur-md sm:gap-6',
+				// Size container: rows that need height (the thumbnail) query it.
+				'absolute inset-0 z-40 flex flex-col [container-type:size] items-center justify-center gap-3 bg-black/75 p-5 text-center text-white backdrop-blur-md sm:gap-6',
 				!isPresent && 'pointer-events-none',
 			)}
 		>

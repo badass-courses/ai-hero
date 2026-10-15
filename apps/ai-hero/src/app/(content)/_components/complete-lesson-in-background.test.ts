@@ -1,8 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ setProgress: vi.fn() }))
-vi.mock('@/lib/progress', () => ({ setProgressForResource: mocks.setProgress }))
-
 import { completeLessonInBackground } from './complete-lesson-in-background'
 
 const progress = (completed: string[] = []) =>
@@ -13,6 +10,8 @@ const progress = (completed: string[] = []) =>
 		})),
 	}) as never
 
+const mocks = { setProgress: vi.fn() }
+
 describe('completeLessonInBackground', () => {
 	const addLessonProgress = vi.fn()
 	const removeLessonProgress = vi.fn()
@@ -22,6 +21,7 @@ describe('completeLessonInBackground', () => {
 			moduleProgress,
 			addLessonProgress,
 			removeLessonProgress,
+			setCompleted: mocks.setProgress,
 		})
 
 	beforeEach(() => {

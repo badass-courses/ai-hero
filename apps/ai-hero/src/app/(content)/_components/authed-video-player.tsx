@@ -2,9 +2,11 @@
 
 import * as React from 'react'
 import { use } from 'react'
-import { flushSync } from 'react-dom'
+import { flushSync, preload } from 'react-dom'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { PrefetchKind } from 'next/dist/client/components/router-reducer/router-reducer-types'
 import { PlayerGestureShell } from '@/components/player/player-gesture-shell'
+import { ResumeChip } from '@/components/player/resume-chip'
 import { useMuxChapters } from '@/components/video-chapters/use-mux-chapters'
 import { useMuxMetadata } from '@/hooks/use-mux-metadata'
 import { useMuxPlayer } from '@/hooks/use-mux-player'
@@ -20,10 +22,9 @@ import {
 	type ResourceNavigation,
 } from '@/lib/content-navigation'
 import { muxMinResolutionForPrefs } from '@/lib/mux-player-prefs'
-import { setPlaybackPositionForResource } from '@/lib/progress'
 import {
 	createPlaybackPositionSaveQueue,
-	getPlaybackStartTime,
+	getResumeStartTime,
 	normalizePlaybackPosition,
 } from '@/lib/playback-position'
 import { api } from '@/trpc/react'
@@ -48,13 +49,14 @@ import {
 	type VideoPlayerOverlayAction,
 } from '@coursebuilder/ui/hooks/use-video-player-overlay'
 import { cn } from '@coursebuilder/ui/utils/cn'
-import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
 import { useWorkshopNavigation } from '../workshops/_components/workshop-navigation-provider'
 import { playFromLink } from './play-from-link'
 import { AutoPlayToggle } from './autoplay-toggle'
 import { completeLessonInBackground } from './complete-lesson-in-background'
+import type { EndCardAction } from './end-card'
 import { useModuleProgress } from './module-progress-provider'
+import { getLessonThumbnailUrl, getNextLesson } from './next-lesson'
 
 export function AuthedVideoPlayer({
 	title,
@@ -95,6 +97,11 @@ export function AuthedVideoPlayer({
 	// Signed out the write returns null and the store would flip back.
 	const canRecordProgress = Boolean(canView && session?.user)
 	const utils = api.useUtils()
+	// The lesson page's writes go over tRPC, never server actions: Next's
+	// router queues server actions with navigations, and the position save
+	// that a pause starts just before `ended` replayed the old page over the
+	// autoplay push.
+	const { client } = utils
 
 	const muxMetadata = useMuxMetadata({
 		videoId: resource.id,
@@ -123,6 +130,13 @@ export function AuthedVideoPlayer({
 	const { playerPrefs, setPlayerPrefs, setMuxPlayerRef } = useMuxPlayer()
 	const bindVideoQuality = useVideoQualityPref(playerRef)
 	const { playbackRate, volume, autoplay: bingeMode } = playerPrefs
+	// The source whose start no longer depends on autoplay: it loaded with
+	// autoplay off, or the browser refused to play it. Until then autoplay
+	// will start it, and the shell hides the pre-play button.
+	const [settledSourceId, setSettledSourceId] = React.useState<string | null>(
+		null,
+	)
+	const willAutoplay = bingeMode && settledSourceId !== resource.id
 	const minResolution = muxMinResolutionForPrefs(playerPrefs)
 	const router = useRouter()
 	const navigation = useWorkshopNavigation()
@@ -132,30 +146,55 @@ export function AuthedVideoPlayer({
 		resource.id,
 	)
 
+	const next = getNextLesson({
+		navigation,
+		next: nextResource,
+		moduleType: moduleType ?? 'workshop',
+	})
+	// Past 80%, fetch the whole next lesson (a FULL prefetch; the default one
+	// stops at the layout for this dynamic route) and its card thumbnail, so
+	// Continue and the autoplay countdown land on cached data. Under autoplay
+	// also the still the next lesson's poster will show (see `poster`).
+	const prefetchedHrefRef = React.useRef<string | null>(null)
+	const prefetchNext = () => {
+		if (!next || prefetchedHrefRef.current === next.href) return
+		prefetchedHrefRef.current = next.href
+		router.prefetch(next.href, { kind: PrefetchKind.FULL })
+		if (next.thumbnailUrl) preload(next.thumbnailUrl, { as: 'image' })
+		const arrivalPoster = getLessonThumbnailUrl(next.resource, 0)
+		if (bingeMode && arrivalPoster) preload(arrivalPoster, { as: 'image' })
+	}
+
 	const searchParams = useSearchParams()
-	const time = searchParams.get('t')
+	const queryTime = normalizePlaybackPosition(searchParams.get('t'))
 	const savedPlaybackPosition = playbackPositionLoader
 		? use(playbackPositionLoader)
 		: null
-	const playbackStartTime = getPlaybackStartTime({
-		queryTime: time,
-		savedTime: savedPlaybackPosition,
-	})
+	// Where a saved position resumed this source; drives the resume chip.
+	const [resume, setResume] = React.useState<{
+		sourceId: string
+		at: number
+	} | null>(null)
+	const resumedAt = resume?.sourceId === resource.id ? resume.at : null
+
+	// Position events count only once this source's metadata is in: until
+	// then they come from the outgoing source, or report 0 for the new one.
+	const sourceReadyRef = React.useRef(false)
 	const lastSavedAtRef = React.useRef(0)
-	const lastSavedPositionRef = React.useRef(playbackStartTime)
+	const lastSavedPositionRef = React.useRef<number | null>(null)
 	const savePlaybackPosition = React.useMemo(
 		() =>
 			createPlaybackPositionSaveQueue((positionSeconds) =>
-				setPlaybackPositionForResource({
+				client.progress.setPlaybackPosition.mutate({
 					resourceId: resource.id,
 					positionSeconds,
 				}),
 			),
-		[resource.id],
+		[client, resource.id],
 	)
 	const persistPlaybackPosition = React.useCallback(
 		(position: unknown, force = false) => {
-			if (!canView) return Promise.resolve(null)
+			if (!canView || !sourceReadyRef.current) return Promise.resolve(null)
 
 			const normalizedPosition = normalizePlaybackPosition(position)
 			if (normalizedPosition === null) return Promise.resolve(null)
@@ -181,17 +220,33 @@ export function AuthedVideoPlayer({
 		setMuxPlayerRef(playerRef)
 	}, [setMuxPlayerRef])
 
+	// A new source starts clean: no card from the last one, no save state.
+	// Today the page remounts the player per lesson; this keeps it correct
+	// once the player persists and only its source changes.
+	React.useLayoutEffect(() => {
+		sourceReadyRef.current = false
+		lastSavedAtRef.current = 0
+		lastSavedPositionRef.current = null
+		dispatchVideoPlayerOverlay({ type: 'HIDDEN' })
+	}, [resource.id, dispatchVideoPlayerOverlay])
+
 	const playerProps = {
 		defaultHiddenCaptions: true,
 		streamType: 'on-demand',
 		forwardSeekOffset: 5,
 		backwardSeekOffset: 5,
 		thumbnailTime: bingeMode ? 0 : resource.fields?.thumbnailTime || 0,
+		// Arriving by autoplay, the first frame from the still the previous
+		// lesson preloaded: Mux's own poster is a fresh fetch and the player
+		// paints black until it lands.
+		poster: (bingeMode && getLessonThumbnailUrl(resource, 0)) || undefined,
 		playbackRates: [0.75, 1, 1.25, 1.5, 1.75, 2],
 		maxResolution: '2160p',
 		minResolution,
 		accentColor: '#DD9637',
-		currentTime: playbackStartTime,
+		// Only an explicit ?t=; a saved position needs the duration to judge,
+		// so it is applied in onLoadedMetadata.
+		currentTime: queryTime ?? undefined,
 		playbackRate,
 		onRateChange: (evt: Event) => {
 			const target = evt.target as HTMLVideoElement
@@ -205,23 +260,26 @@ export function AuthedVideoPlayer({
 			setPlayerPrefs({ volume: value })
 		},
 		onLoadedData: () => {
-			dispatchVideoPlayerOverlay({ type: 'HIDDEN' })
 			handleTextTrackChange(playerRef, setPlayerPrefs)
 			setPreferredPlaybackRate(playerRef, playbackRate)
 			setPreferredTextTrack(playerRef)
 
 			if (bingeMode) {
-				playerRef?.current?.play().catch(console.warn)
-			} else if (normalizePlaybackPosition(time) !== null) {
-				playFromLink(playerRef.current)
+				playerRef?.current?.play().catch((error) => {
+					console.warn(error)
+					setSettledSourceId(resource.id)
+				})
+				return
 			}
+			setSettledSourceId(resource.id)
+			if (queryTime !== null) playFromLink(playerRef.current)
 		},
 		onSeeked: () => {
 			setPreferredPlaybackRate(playerRef, playbackRate)
 		},
 		onEnded: () => {
-			// The card first: the position reset is a server action queued
-			// behind the save the preceding pause already started.
+			setResume(null)
+			prefetchNext()
 			handleOnVideoEnded({
 				resource,
 				nextResource,
@@ -238,6 +296,7 @@ export function AuthedVideoPlayer({
 				removeLessonProgress,
 				navigation,
 				canRecordProgress,
+				setCompleted: client.progress.setCompleted.mutate,
 				// The cohort eligibility read may have raced the final write;
 				// ask again once it is persisted.
 				onModuleCompleted: () =>
@@ -255,6 +314,7 @@ export function AuthedVideoPlayer({
 		onTimeUpdate: (evt: Event) => {
 			const target = evt.target as HTMLVideoElement
 			void persistPlaybackPosition(target.currentTime)
+			if (target.currentTime >= target.duration * 0.8) prefetchNext()
 		},
 	} as MuxPlayerProps
 
@@ -262,7 +322,19 @@ export function AuthedVideoPlayer({
 		<PlayerGestureShell
 			playerRef={playerRef}
 			className={cn(className)}
-			overlay={overlay}
+			autoplay={willAutoplay}
+			overlay={
+				<>
+					<ResumeChip
+						resumedAt={resumedAt}
+						onStartOver={() => {
+							const player = playerRef.current
+							if (player) player.currentTime = 0
+						}}
+					/>
+					{overlay}
+				</>
+			}
 			chromeSlot={
 				<AutoPlayToggle
 					id="autoplay-player-chrome"
@@ -279,6 +351,21 @@ export function AuthedVideoPlayer({
 				{...props}
 				onLoadedMetadata={(event) => {
 					bindVideoQuality()
+					const player = playerRef.current
+					if (player && queryTime === null) {
+						const start = getResumeStartTime({
+							savedTime: savedPlaybackPosition,
+							duration: player.duration,
+						})
+						if (start > 0) {
+							player.currentTime = start
+							setResume({ sourceId: resource.id, at: start })
+						}
+					}
+					lastSavedPositionRef.current = normalizePlaybackPosition(
+						player?.currentTime,
+					)
+					sourceReadyRef.current = true
 					props.onLoadedMetadata?.(event)
 				}}
 			/>
@@ -356,6 +443,7 @@ function handleOnVideoEnded({
 	router,
 	navigation,
 	canRecordProgress,
+	setCompleted,
 	onModuleCompleted,
 }: {
 	resource: ContentResource
@@ -373,6 +461,10 @@ function handleOnVideoEnded({
 	removeLessonProgress: (lessonId: string) => void
 	navigation: ResourceNavigation | null
 	canRecordProgress: boolean
+	setCompleted: (input: {
+		resourceId: string
+		isCompleted: boolean
+	}) => Promise<unknown>
 	onModuleCompleted: () => void
 }) {
 	void track('video_completed', {
@@ -396,13 +488,17 @@ function handleOnVideoEnded({
 		prevResource,
 		nextResource,
 	})
-	const showCard = !bingeMode || !nextResource
-	// Commit the card before the completion lands, so the learner sees the
+	// With autoplay the card counts down to the next lesson and moves on
+	// itself. Commit it before the completion lands, so the learner sees the
 	// progress bar and count tick over under it.
-	if (showCard) flushSync(() => dispatchVideoPlayerOverlay(completedAction))
+	const action: EndCardAction = {
+		...completedAction,
+		autoAdvance: bingeMode && Boolean(nextResource),
+	}
+	flushSync(() => dispatchVideoPlayerOverlay(action))
 
-	// Every mode completes on end. Dispatched before any push so it never
-	// holds the navigation up. A problem lesson completes on its solution.
+	// Every mode completes on end, while the card is up and before any push.
+	// A problem lesson completes on its solution.
 	if (canRecordProgress && nextResource?.type !== 'solution') {
 		void completeLessonInBackground({
 			resourceId: getResourceToComplete({
@@ -413,28 +509,9 @@ function handleOnVideoEnded({
 			moduleProgress,
 			addLessonProgress,
 			removeLessonProgress,
+			setCompleted,
 		}).then(() => {
 			if (completedAction.isModuleComplete) onModuleCompleted()
 		})
-	}
-
-	if (showCard || !nextResource) return
-
-	// For solution resources, use the parent lesson's slug instead of the solution's slug
-	const nextResourceSlug =
-		nextResource.type === 'solution' && navigation
-			? findParentLessonForSolution(navigation, nextResource.id)?.fields
-					?.slug || nextResource.fields?.slug
-			: nextResource.fields?.slug
-
-	if (nextResource.type && nextResourceSlug && moduleType && moduleSlug) {
-		router.push(
-			getResourcePath(nextResource.type, nextResourceSlug, 'view', {
-				parentType: moduleType,
-				parentSlug: moduleSlug,
-			}),
-		)
-	} else {
-		console.error('Missing required resource or module data for navigation')
 	}
 }

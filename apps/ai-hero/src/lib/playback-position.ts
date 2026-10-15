@@ -30,20 +30,6 @@ export function mergePlaybackPositionFields(
 	}
 }
 
-export function getPlaybackStartTime({
-	queryTime,
-	savedTime,
-}: {
-	queryTime?: string | null
-	savedTime?: number | null
-}): number {
-	return (
-		normalizePlaybackPosition(queryTime) ??
-		normalizePlaybackPosition(savedTime) ??
-		0
-	)
-}
-
 // A save this close to either end is not worth resuming: near the start
 // there is nothing to skip, and near the end the video would finish almost
 // as soon as it starts.
