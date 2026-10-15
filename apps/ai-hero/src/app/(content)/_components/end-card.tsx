@@ -29,6 +29,13 @@ export type EndCardAction = CompletedAction & {
 	resource: ContentResource
 }
 
+/** The reducer types its state as the ui package's action; ours carries more. */
+export function isEndCardAction(
+	action: { type: string } | null | undefined,
+): action is EndCardAction {
+	return action?.type === 'COMPLETED' && 'resource' in action
+}
+
 export const AUTO_ADVANCE_SECONDS = 5
 
 // How the learner last interacted. The card focuses its primary button on

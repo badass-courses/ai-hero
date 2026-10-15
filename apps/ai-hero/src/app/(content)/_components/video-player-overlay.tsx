@@ -42,6 +42,7 @@ import {
 	EndCard,
 	END_CARD_SECONDARY,
 	EndCardItem,
+	isEndCardAction,
 	type EndCardAction,
 } from './end-card'
 import { CertificateDialog } from './module-certificate-container'
@@ -521,7 +522,7 @@ const VideoPlayerOverlay: React.FC<VideoPlayerOverlayProps> = ({
 }) => {
 	const { state: overlayState } = useVideoPlayerOverlay()
 	const action =
-		overlayState.action?.type === 'COMPLETED' ? overlayState.action : null
+		isEndCardAction(overlayState.action) ? overlayState.action : null
 
 	return (
 		<AnimatePresence>
