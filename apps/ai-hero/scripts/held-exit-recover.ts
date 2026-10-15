@@ -17,6 +17,7 @@ import type {
 export type RecoveryArgs = {
 	namespace: 'ai-hero' | 'drovr'
 	contactId: string
+	contacts?: { namespace: 'ai-hero' | 'drovr'; contactId: string }[]
 } & (
 	| { mode: 'dry-run' | 'readback' }
 	| { mode: 'write'; approval: string; planHash: string }
@@ -34,12 +35,14 @@ export type MembershipScan = {
 	subscribers: number
 	startedAt: string
 	completedAt: string
+	fingerprint?: string
 }
 export type RecoveryRuntime = {
 	approvalScope: string
 	findContactById: (id: string) => Promise<ContactRecord | undefined>
 	inspect: (contactId: string) => Promise<RecoverySnapshot>
 	scan: (subscriberId: string) => Promise<MembershipScan>
+	cleanup?: () => Promise<void>
 	persist: (
 		input: Omit<ContactEventRecord, 'id'>,
 	) => Promise<ContactEventRecord>
@@ -58,7 +61,10 @@ export type RecoveryRuntime = {
 }
 
 export const OLD_SEQUENCE_ID = Number(OLD_NEWSLETTER_REFERENCE.split(':')[2])
-export const MAX_SCAN_AGE_MS = 5 * 60_000
+/** Full scan duration / incomplete cursor lifetime; proof instant remains scan start. */
+export const MAX_SCAN_AGE_MS = 120 * 60_000
+/** Completed proof may be reused for at most fifteen minutes, including at write time. */
+export const MAX_PROOF_AGE_AT_WRITE_MS = 15 * 60_000
 const outboxReadbackSchema = z.object({
 	eventDerivable: z.boolean(),
 	outbox: z.array(
@@ -76,6 +82,10 @@ const scanSchema = z.object({
 	subscribers: z.number().int().nonnegative(),
 	startedAt: z.string().datetime({ offset: true }),
 	completedAt: z.string().datetime({ offset: true }),
+	fingerprint: z
+		.string()
+		.regex(/^[a-f0-9]{64}$/)
+		.optional(),
 })
 function freshAbsence(scan: MembershipScan, now: string) {
 	const start = Date.parse(scan.startedAt),
@@ -91,7 +101,20 @@ function freshAbsence(scan: MembershipScan, now: string) {
 		Number.isFinite(current) &&
 		start <= end &&
 		end <= current &&
-		current - start <= MAX_SCAN_AGE_MS
+		end - start <= MAX_SCAN_AGE_MS &&
+		current - end <= MAX_PROOF_AGE_AT_WRITE_MS
+	)
+}
+
+function proofExpired(scan: MembershipScan, now: string) {
+	const end = Date.parse(scan.completedAt),
+		current = Date.parse(now)
+	return (
+		scan.complete &&
+		scan.membership === 'absent' &&
+		Number.isFinite(end) &&
+		Number.isFinite(current) &&
+		current - end > MAX_PROOF_AGE_AT_WRITE_MS
 	)
 }
 
@@ -103,6 +126,7 @@ export type RecoveryEnvelope = {
 	version: 1
 	mode: RecoveryArgs['mode']
 	status: 'refused' | 'planned' | 'requested' | 'readback'
+	cleanup?: 'failed'
 	reason: string | null
 	planHash: string | null
 	notificationEvent: typeof NEWSLETTER_EXIT_CONFIRMED_EVENT
@@ -113,6 +137,8 @@ export type RecoveryEnvelope = {
 		oldSequenceAbsent: boolean
 	}
 	scans: MembershipScan[]
+	prompt?: string
+	results?: RecoveryEnvelope[]
 	readback?: {
 		rowStatus: SideEffectIntent['status']
 		completedAt: string | null
@@ -130,7 +156,10 @@ export type RecoveryEnvelope = {
 const boundary = <A>(reason: string, action: () => Promise<A>) =>
 	Effect.tryPromise({
 		try: action,
-		catch: () => new RecoveryRefused({ reason }),
+		catch: (error) =>
+			error instanceof RecoveryRefused
+				? error
+				: new RecoveryRefused({ reason }),
 	})
 
 /** Sort object keys as well as event/row arrays: DB order isn't approval evidence. */
@@ -148,6 +177,7 @@ function hashSnapshot(
 	contact: ContactRecord,
 	state: RecoverySnapshot,
 	approvalScope: string,
+	scan: MembershipScan,
 ) {
 	return createHash('sha256')
 		.update(
@@ -156,6 +186,9 @@ function hashSnapshot(
 					version: 1,
 					contact,
 					approvalScope,
+					scanFingerprint:
+						scan.fingerprint ??
+						createHash('sha256').update(JSON.stringify(scan)).digest('hex'),
 					state: {
 						...state,
 						rows: [...state.rows].sort((a, b) => a.id.localeCompare(b.id)),
@@ -187,9 +220,18 @@ export function persistRecoveryExitReceipt(
 ) {
 	return Effect.gen(function* () {
 		const decodedScan = scanSchema.safeParse(input.scan)
-		if (!decodedScan.success || !freshAbsence(decodedScan.data, runtime.now()))
+		if (!decodedScan.success)
 			return yield* Effect.fail(
 				new RecoveryRefused({ reason: 'membership-unknown' }),
+			)
+		const proofNow = runtime.now()
+		if (!freshAbsence(decodedScan.data, proofNow))
+			return yield* Effect.fail(
+				new RecoveryRefused({
+					reason: proofExpired(decodedScan.data, proofNow)
+						? 'proof-expired'
+						: 'membership-unknown',
+				}),
 			)
 		const normalized = normalizeContactEvent({
 			provider: 'kit',
@@ -200,8 +242,8 @@ export function persistRecoveryExitReceipt(
 			message: 'Old newsletter absence verified by operator GET scan',
 			privacyLevel: 'internal',
 		})
-		const receipt = yield* boundary('database-unavailable', () =>
-			runtime.persist({
+		const receipt = yield* boundary('database-unavailable', () => {
+			const record: Omit<ContactEventRecord, 'id'> = {
 				...normalized,
 				contactId: input.contact.id,
 				providerIdentityId: input.identity.id,
@@ -216,8 +258,12 @@ export function persistRecoveryExitReceipt(
 						scan: decodedScan.data,
 					}),
 				},
-			}),
-		)
+			}
+			// Last clock read before the actual write, after normalization and record construction.
+			if (!freshAbsence(decodedScan.data, runtime.now()))
+				throw new RecoveryRefused({ reason: 'proof-expired' })
+			return runtime.persist(record)
+		})
 		if (
 			receipt.contactId !== input.contact.id ||
 			receipt.provider !== 'kit' ||
@@ -399,12 +445,22 @@ export function runHeldExitRecovery(
 			return yield* Effect.fail(
 				new RecoveryRefused({ reason: 'old-sequence-member' }),
 			)
-		if (!freshAbsence(scan, runtime.now()))
+		const proofNow = runtime.now()
+		if (!freshAbsence(scan, proofNow))
 			return yield* Effect.fail(
-				new RecoveryRefused({ reason: 'membership-unknown' }),
+				new RecoveryRefused({
+					reason: proofExpired(scan, proofNow)
+						? 'proof-expired'
+						: 'provider-unavailable',
+				}),
 			)
 		envelope.checks.oldSequenceAbsent = true
-		envelope.planHash = hashSnapshot(contact, state, runtime.approvalScope)
+		envelope.planHash = hashSnapshot(
+			contact,
+			state,
+			runtime.approvalScope,
+			scan,
+		)
 		if (args.mode === 'write') {
 			if (args.planHash !== envelope.planHash)
 				return yield* Effect.fail(
@@ -418,7 +474,7 @@ export function runHeldExitRecovery(
 			)
 			if (
 				!currentContact ||
-				hashSnapshot(currentContact, current, runtime.approvalScope) !==
+				hashSnapshot(currentContact, current, runtime.approvalScope, scan) !==
 					envelope.planHash
 			)
 				return yield* Effect.fail(
@@ -451,6 +507,15 @@ export function runHeldExitRecovery(
 				)
 			envelope.counts.notifications = notifications
 			envelope.status = 'requested'
+			// Retain the shared fresh proof; housekeeping cannot undo an acknowledged write.
+			if (runtime.cleanup)
+				yield* boundary('scan-cleanup-failed', runtime.cleanup).pipe(
+					Effect.catchAll(() =>
+						Effect.sync(() => {
+							envelope.cleanup = 'failed'
+						}),
+					),
+				)
 		} else {
 			envelope.status = 'planned'
 			envelope.counts = { exitReceipts: 1, notifications: 1 }
@@ -461,6 +526,7 @@ export function runHeldExitRecovery(
 			Effect.succeed({
 				...envelope,
 				reason: error.reason,
+				prompt: recoveryPrompt(error.reason),
 				status: 'refused' as const,
 			}),
 		),
@@ -471,6 +537,7 @@ export function parseHeldRecoveryArgs(argv: readonly string[]): RecoveryArgs {
 	let selector:
 		| { namespace: 'ai-hero' | 'drovr'; contactId: string }
 		| undefined
+	const contacts: { namespace: 'ai-hero' | 'drovr'; contactId: string }[] = []
 	let mode: RecoveryArgs['mode'] = 'dry-run'
 	let approval: string | undefined, planHash: string | undefined
 	let modeSelected = false
@@ -478,7 +545,13 @@ export function parseHeldRecoveryArgs(argv: readonly string[]): RecoveryArgs {
 	const invalid = () => new RecoveryRefused({ reason: 'arguments-invalid' })
 	for (let index = 0; index < argv.length; index++) {
 		const flag = argv[index]
-		if (!flag || seen.has(flag)) throw invalid()
+		if (
+			!flag ||
+			(seen.has(flag) &&
+				flag !== '--contact-id' &&
+				flag !== '--drovr-contact-id')
+		)
+			throw invalid()
 		seen.add(flag)
 		if (flag === '--write' || flag === '--readback' || flag === '--dry-run') {
 			if (modeSelected) throw invalid()
@@ -503,23 +576,30 @@ export function parseHeldRecoveryArgs(argv: readonly string[]): RecoveryArgs {
 		const value = argv[++index]
 		if (!value || value.startsWith('--')) throw invalid()
 		if (flag === '--contact-id' || flag === '--drovr-contact-id') {
-			if (selector || !/^[A-Za-z0-9][A-Za-z0-9:_-]{0,254}$/.test(value))
+			if (
+				contacts.some((item) => item.contactId === value) ||
+				!/^[A-Za-z0-9][A-Za-z0-9:_-]{0,254}$/.test(value)
+			)
 				throw invalid()
-			selector = {
-				namespace: flag === '--contact-id' ? 'ai-hero' : 'drovr',
+			const selected = {
+				namespace:
+					flag === '--contact-id' ? ('ai-hero' as const) : ('drovr' as const),
 				contactId: value,
 			}
+			selector ??= selected
+			contacts.push(selected)
 		} else if (flag === '--approval') approval = value.trim()
 		else planHash = value
 	}
 	if (!selector) throw invalid()
+	if (mode !== 'dry-run' && contacts.length !== 1) throw invalid()
 	if (mode === 'write') {
 		if (!approval) throw new RecoveryRefused({ reason: 'approval-required' })
 		if (!planHash || !/^[a-f0-9]{64}$/.test(planHash)) throw invalid()
 		return { ...selector, mode, approval, planHash }
 	}
 	if (approval !== undefined || planHash !== undefined) throw invalid()
-	return { ...selector, mode }
+	return { ...selector, mode, ...(contacts.length > 1 ? { contacts } : {}) }
 }
 
 export type RecoveryRuntimeLoader = (
@@ -556,7 +636,7 @@ export function runHeldRecoveryCommand(
 		yield* Effect.acquireUseRelease(
 			boundary('runtime-unavailable', () => load(args)),
 			({ runtime }) =>
-				runHeldExitRecovery(args, runtime).pipe(
+				runHeldRecoveryBatch(args, runtime).pipe(
 					Effect.tap((value) =>
 						Effect.sync(() => {
 							result = value
@@ -567,7 +647,10 @@ export function runHeldRecoveryCommand(
 				boundary('runtime-close-failed', close).pipe(
 					Effect.catchAll((error) =>
 						Effect.sync(() => {
-							result = { ...result, status: 'refused', reason: error.reason }
+							result =
+								result.status === 'requested'
+									? { ...result, cleanup: 'failed' }
+									: { ...result, status: 'refused', reason: error.reason }
 						}),
 					),
 				),
@@ -581,15 +664,112 @@ export function runHeldRecoveryCommand(
 				reason: error.reason,
 			}),
 		),
+		Effect.map((value) =>
+			value.status === 'refused'
+				? { ...value, prompt: recoveryPrompt(value.reason ?? 'internal-error') }
+				: value,
+		),
 		// Final process fence only: never print an unexpected defect, SQL text or provider body.
 		Effect.catchAllCause(() =>
 			Effect.succeed({
 				...result,
 				status: 'refused' as const,
 				reason: 'internal-error',
+				prompt: recoveryPrompt('internal-error'),
 			}),
 		),
 	)
+}
+
+/** Literal operator prompt. Fixed vocabulary only; never interpolate identifiers or causes. */
+export function recoveryPrompt(reason: string) {
+	const explanations: Record<string, string> = {
+		'provider-unavailable':
+			'the provider did not supply a complete fresh membership scan',
+		'membership-unknown': 'the membership evidence is invalid',
+		'identity-unproven':
+			'exactly one bound provider identity could not be proven',
+		'arguments-invalid': 'the selectors or mode are invalid',
+		'old-sequence-member': 'the scan found membership in the old sequence',
+		'plan-hash-mismatch':
+			'the supplied approval hash no longer matches the plan',
+		'runtime-unavailable': 'the deployment runtime could not be loaded',
+		'database-unavailable': 'the database could not be read',
+		'scan-locked': 'another recovery operator holds the scan lease',
+		'scan-cache-unsafe':
+			'the scan cache directory or file is not private and operator-owned',
+		'scan-cleanup-failed': 'post-write housekeeping did not complete',
+		'proof-expired': 'the completed membership proof has expired',
+	}
+	const why = explanations[reason] ?? 'a recovery precondition was not met'
+	const fix =
+		reason === 'proof-expired'
+			? 'rerun the dry run and write within 15 minutes of scan completion'
+			: reason === 'scan-locked'
+				? 'wait for the lease owner; remove a crash lock only after verifying its named process stopped'
+				: reason === 'scan-cache-unsafe'
+					? 'restore current-user ownership and private permissions without following symlinks'
+					: 'verify the deployment and preconditions, then rerun a dry run'
+	return `RecoveryRefused: you requested held-exit recovery, and it failed because ${why}. Accepted: one proven identity per held contact and an authenticated complete fresh GET scan with exact counts; writes require one contact and the matching plan hash. Fix: ${fix}. Debug: inspect the private operator scan checkpoint and redacted checks.`
+}
+
+/** One runtime owns the shared scan. Output order matches selector order, without identifiers. */
+export function runHeldRecoveryBatch(
+	args: RecoveryArgs,
+	runtime: RecoveryRuntime,
+): Effect.Effect<RecoveryEnvelope> {
+	const selectors = args.contacts
+	if (!selectors) return runHeldExitRecovery(args, runtime)
+	if (args.mode !== 'dry-run')
+		return Effect.succeed({
+			version: 1 as const,
+			mode: args.mode,
+			status: 'refused' as const,
+			reason: 'arguments-invalid',
+			planHash: null,
+			notificationEvent: NEWSLETTER_EXIT_CONFIRMED_EVENT,
+			counts: { exitReceipts: 0, notifications: 0 },
+			checks: {
+				contactResolved: false,
+				exactlyOneHeld: false,
+				oldSequenceAbsent: false,
+			},
+			scans: [],
+		})
+	return Effect.gen(function* () {
+		const results: RecoveryEnvelope[] = []
+		for (const selector of selectors)
+			results.push(
+				yield* runHeldExitRecovery({ ...selector, mode: 'dry-run' }, runtime),
+			)
+		const first = results[0]!
+		const refused = results.find((result) => result.status === 'refused')
+		return {
+			...first,
+			status: refused ? ('refused' as const) : ('planned' as const),
+			reason: refused?.reason ?? null,
+			prompt: refused?.prompt,
+			checks: {
+				contactResolved: results.every(
+					(result) => result.checks.contactResolved,
+				),
+				exactlyOneHeld: results.every((result) => result.checks.exactlyOneHeld),
+				oldSequenceAbsent: results.every(
+					(result) => result.checks.oldSequenceAbsent,
+				),
+			},
+			counts: results.reduce(
+				(counts, result) => ({
+					exitReceipts: counts.exitReceipts + result.counts.exitReceipts,
+					notifications: counts.notifications + result.counts.notifications,
+				}),
+				{ exitReceipts: 0, notifications: 0 },
+			),
+			planHash: null,
+			scans: results.find((result) => result.scans.length)?.scans ?? [],
+			results,
+		}
+	})
 }
 
 /** drovr's delivery payload carries the AI Hero contact id unchanged. */

@@ -87,6 +87,7 @@ function runtime(): RecoveryRuntime & {
 			),
 		}),
 		scan: async () => scan,
+		cleanup: vi.fn(async () => {}),
 		persist: vi.fn(async (input) => repository.createContactEvent(input)),
 		notify: vi.fn(async () => 1),
 	}
@@ -106,7 +107,7 @@ describe('recovery runtime adapters', () => {
 				return new Response(
 					JSON.stringify({
 						subscribers: [],
-						pagination: { has_next_page: false },
+						pagination: { has_next_page: false, total_count: 0 },
 					}),
 				)
 			const payload: unknown = JSON.parse(String(init?.body))
@@ -168,7 +169,7 @@ describe('recovery runtime adapters', () => {
 			),
 		)
 		expect(requested.status).toBe('requested')
-		expect(fetcher).toHaveBeenCalledTimes(3)
+		expect(fetcher).toHaveBeenCalledTimes(2)
 		row = { ...row, status: 'completed', completedAt: contact.createdAt }
 		const readback = await Effect.runPromise(
 			runHeldExitRecovery({ ...dryRun, mode: 'readback' }, ports),
@@ -187,7 +188,7 @@ describe('recovery runtime adapters', () => {
 			},
 		})
 		expect(readOutbox).toHaveBeenCalledOnce()
-		expect(fetcher).toHaveBeenCalledTimes(3)
+		expect(fetcher).toHaveBeenCalledTimes(2)
 		for (const value of [
 			contact.id,
 			contact.email!,
@@ -298,7 +299,7 @@ describe('read-only Kit exit proof', () => {
 							new Response(
 								JSON.stringify({
 									subscribers: [],
-									pagination: { has_next_page: false },
+									pagination: { has_next_page: false, total_count: 0 },
 								}),
 							),
 					),
@@ -322,6 +323,10 @@ describe('read-only Kit exit proof', () => {
 			if (!signal) throw new Error('Expected request signal')
 			observed.push(signal)
 			return new Promise<Response>((_resolve, reject) => {
+				if (signal.aborted) {
+					reject(signal.reason)
+					return
+				}
 				signal.addEventListener('abort', () => reject(signal.reason), {
 					once: true,
 				})
@@ -336,6 +341,7 @@ describe('read-only Kit exit proof', () => {
 						subscriberId: '123',
 						fetch: fetcher,
 						now: () => contact.createdAt,
+						sleep: async () => {},
 					}),
 				),
 			)
@@ -345,7 +351,8 @@ describe('read-only Kit exit proof', () => {
 			})
 			expect(observed[0]?.aborted).toBe(true)
 			expect(observed[0]?.reason).toBe(timeout.signal.reason)
-			expect(timeoutFactory).toHaveBeenCalledWith(15_000)
+			expect(timeoutFactory).toHaveBeenCalledWith(60_000)
+			expect(fetcher).toHaveBeenCalledTimes(5)
 		} finally {
 			timeoutFactory.mockRestore()
 		}
@@ -398,6 +405,7 @@ describe('read-only Kit exit proof', () => {
 										subscribers: [{ id: 456 }],
 										pagination: {
 											has_next_page: scenario !== 'late',
+											total_count: scenario === 'late' ? 1 : 2,
 											end_cursor:
 												scenario === 'missing-cursor' ? null : 'same-cursor',
 										},
@@ -409,7 +417,7 @@ describe('read-only Kit exit proof', () => {
 			let clockReads = 0
 			const clock = () =>
 				scenario === 'late' && ++clockReads > 2
-					? '2026-10-06T12:06:00.000Z'
+					? '2026-10-06T14:01:00.000Z'
 					: contact.createdAt
 			const result = await Effect.runPromise(
 				Effect.either(
@@ -418,11 +426,12 @@ describe('read-only Kit exit proof', () => {
 						subscriberId: '123',
 						fetch: fetcher,
 						now: clock,
+						sleep: async () => {},
 						maxPages: scenario === 'cap' ? 1 : 3,
 					}),
 				),
 			)
-			if (scenario === 'http')
+			if (scenario === 'http' || scenario === 'late')
 				expect(result).toMatchObject({
 					_tag: 'Left',
 					left: { reason: 'provider-unavailable' },
@@ -441,7 +450,7 @@ describe('read-only Kit exit proof', () => {
 				new Response(
 					JSON.stringify({
 						subscribers: [{ id: 123, state: 'cancelled' }],
-						pagination: { has_next_page: false },
+						pagination: { has_next_page: false, total_count: 2 },
 					}),
 				),
 		)
@@ -449,7 +458,11 @@ describe('read-only Kit exit proof', () => {
 			new Response(
 				JSON.stringify({
 					subscribers: [{ id: 456 }],
-					pagination: { has_next_page: true, end_cursor: 'one' },
+					pagination: {
+						has_next_page: true,
+						end_cursor: 'one',
+						total_count: 2,
+					},
 				}),
 			),
 		)
@@ -481,7 +494,11 @@ describe('read-only Kit exit proof', () => {
 								first_name: 'Private',
 							},
 						],
-						pagination: { has_next_page: false, end_cursor: null },
+						pagination: {
+							has_next_page: false,
+							end_cursor: null,
+							total_count: 2,
+						},
 					}),
 				),
 		)
@@ -489,7 +506,11 @@ describe('read-only Kit exit proof', () => {
 			new Response(
 				JSON.stringify({
 					subscribers: [{ id: 789 }],
-					pagination: { has_next_page: true, end_cursor: 'cursor-one' },
+					pagination: {
+						has_next_page: true,
+						end_cursor: 'cursor-one',
+						total_count: 2,
+					},
 				}),
 			),
 		)
@@ -667,7 +688,7 @@ describe('single-contact held exit recovery', () => {
 		async (scenario) => {
 			const ports = runtime()
 			const original = await ports.inspect(contact.id)
-			if (scenario === 'stale') ports.now = () => '2026-10-06T12:06:00.000Z'
+			if (scenario === 'stale') ports.now = () => '2026-10-06T12:31:00.000Z'
 			if (scenario === 'future')
 				ports.scan = async () => ({
 					...scan,
@@ -690,12 +711,101 @@ describe('single-contact held exit recovery', () => {
 						? 'identity-unproven'
 						: scenario === 'bad-row'
 							? 'invalid-held-row'
-							: 'membership-unknown',
+							: scenario === 'stale'
+								? 'proof-expired'
+								: 'provider-unavailable',
 			})
 			expect(ports.persist).not.toHaveBeenCalled()
 			expect(ports.notify).not.toHaveBeenCalled()
 		},
 	)
+	it('keeps a completed write requested when post-write housekeeping fails', async () => {
+		const ports = runtime()
+		ports.cleanup = vi.fn(async () => {
+			throw new Error('fixture-housekeeping-failure')
+		})
+		const plan = await Effect.runPromise(runHeldExitRecovery(dryRun, ports))
+		const result = await Effect.runPromise(
+			runHeldExitRecovery(
+				{
+					...dryRun,
+					mode: 'write',
+					approval: 'fixture-approval',
+					planHash: plan.planHash!,
+				},
+				ports,
+			),
+		)
+		expect(result).toMatchObject({
+			status: 'requested',
+			reason: null,
+			cleanup: 'failed',
+			counts: { exitReceipts: 1, notifications: 1 },
+		})
+		expect(ports.persist).toHaveBeenCalledOnce()
+		expect(ports.notify).toHaveBeenCalledOnce()
+	})
+	it('keeps a completed write requested when runtime close fails', async () => {
+		const ports = runtime()
+		const plan = await Effect.runPromise(runHeldExitRecovery(dryRun, ports))
+		const result = await Effect.runPromise(
+			runHeldRecoveryCommand(
+				[
+					'--contact-id',
+					contact.id,
+					'--write',
+					'--approval',
+					'fixture-approval',
+					'--plan-hash',
+					plan.planHash!,
+				],
+				async () => ({
+					runtime: ports,
+					close: async () => {
+						throw new Error('fixture-close-failure')
+					},
+				}),
+			),
+		)
+		expect(result).toMatchObject({
+			status: 'requested',
+			reason: null,
+			cleanup: 'failed',
+			counts: { exitReceipts: 1, notifications: 1 },
+		})
+	})
+	it('refuses proof that expires between validation and the immediate persist boundary', async () => {
+		const ports = runtime()
+		const plan = await Effect.runPromise(runHeldExitRecovery(dryRun, ports))
+		let clockReads = 0
+		ports.now = () =>
+			new Date(
+				Date.parse(scan.completedAt) +
+					15 * 60_000 +
+					(++clockReads < 3 ? -1 : 1),
+			).toISOString()
+		const result = await Effect.runPromise(
+			runHeldExitRecovery(
+				{
+					...dryRun,
+					mode: 'write',
+					approval: 'fixture-approval',
+					planHash: plan.planHash!,
+				},
+				ports,
+			),
+		)
+		expect(result).toMatchObject({
+			status: 'refused',
+			reason: 'proof-expired',
+			counts: { exitReceipts: 0, notifications: 0 },
+		})
+		expect(result.prompt).toContain(
+			'rerun the dry run and write within 15 minutes of scan completion',
+		)
+		expect(ports.persist).not.toHaveBeenCalled()
+		expect(ports.notify).not.toHaveBeenCalled()
+	})
 	it('writes the established current exit proof before its replay notification, then refuses a recovered row', async () => {
 		const ports = runtime()
 		const planned = await Effect.runPromise(runHeldExitRecovery(dryRun, ports))
@@ -729,6 +839,7 @@ describe('single-contact held exit recovery', () => {
 			counts: { exitReceipts: 1, notifications: 1 },
 		})
 		expect(ports.notify).toHaveBeenCalledOnce()
+		expect(ports.cleanup).toHaveBeenCalledOnce()
 		const original = await ports.inspect(contact.id)
 		ports.inspect = async () => ({
 			...original,
@@ -796,8 +907,8 @@ describe('single-contact held exit recovery', () => {
 		['zero', 'held-row-count'],
 		['multiple', 'held-row-count'],
 		['mixed-targets', 'held-row-count'],
-		['unknown', 'membership-unknown'],
-		['partial', 'membership-unknown'],
+		['unknown', 'provider-unavailable'],
+		['partial', 'provider-unavailable'],
 		['member', 'old-sequence-member'],
 		['error', 'provider-unavailable'],
 		['recovered', 'already-recovered'],
