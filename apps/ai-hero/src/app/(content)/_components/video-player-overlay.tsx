@@ -236,10 +236,10 @@ export const CompletedLessonOverlay: React.FC<{
 				resourceIdToMarkComplete: resourceToComplete?.id,
 			}).isModuleComplete)
 
-	const counting = Boolean(
-		action.autoAdvance && next && !isModuleComplete && !held,
-	)
-	const secondsLeft = useCountdown(counting, go)
+	// The layout follows the action; only the timer stops while held, so a
+	// card held over the next lesson fades out as it was drawn.
+	const counting = Boolean(action.autoAdvance && next && !isModuleComplete)
+	const secondsLeft = useCountdown(counting && !held, go)
 
 	if (!next || isModuleComplete)
 		return (

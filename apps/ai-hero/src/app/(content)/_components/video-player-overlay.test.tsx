@@ -397,6 +397,24 @@ describe('VideoPlayerOverlay', () => {
 			expect(mocks.push).toHaveBeenCalledWith('/workshops/test/lesson-2')
 		})
 
+		it('keeps the countdown layout but stops its timer while held', async () => {
+			// The host has swapped away; the card from the ended lesson is held.
+			mocks.overlay.mockReturnValue({
+				state: {
+					action: {
+						...nextLessonAction(undefined, true),
+						resource: { ...resource, id: 'lesson-0' },
+					},
+				},
+				dispatch: vi.fn(),
+			})
+			await renderOverlay()
+			expect(container.textContent).toContain('Up next in')
+			expect(container.textContent).not.toContain('Continue')
+			await act(async () => vi.advanceTimersByTime(6_000))
+			expect(mocks.push).not.toHaveBeenCalled()
+		})
+
 		it('becomes the normal card on Cancel', async () => {
 			const dispatch = vi.fn()
 			const action = nextLessonAction(undefined, true)
