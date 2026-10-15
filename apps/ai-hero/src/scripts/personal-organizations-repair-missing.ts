@@ -12,7 +12,7 @@
  *
  * Usage (from `apps/ai-hero`):
  *   dotenv tsx src/scripts/personal-organizations-repair-missing.ts --dry-run
- *   dotenv tsx src/scripts/personal-organizations-repair-missing.ts --allow-write
+ *   DATABASE_POOL_SIZE=8 dotenv tsx src/scripts/personal-organizations-repair-missing.ts --allow-write
  *   dotenv tsx src/scripts/personal-organizations-repair-missing.ts --allow-write --email someone@example.com
  */
 import { closeDatabasePool, db } from '@/db'
@@ -21,6 +21,10 @@ import { personalOrganizations } from '@/server/personal-organizations'
 import { and, asc, eq, gt, isNull } from 'drizzle-orm'
 
 const PAGE_SIZE = 500
+const WRITE_CONCURRENCY = Math.max(
+	1,
+	Number(process.env.DATABASE_POOL_SIZE) || 1,
+)
 
 const args = process.argv.slice(2)
 const allowWrite = args.includes('--allow-write')
@@ -61,14 +65,18 @@ async function main() {
 		found += page.length
 
 		if (allowWrite) {
-			for (const user of page) {
-				try {
-					await personalOrganizations.ensurePersonalOrganization(user)
-					repaired++
-				} catch (error) {
-					failed++
-					console.error(`failed ${user.id}`, error)
-				}
+			for (let i = 0; i < page.length; i += WRITE_CONCURRENCY) {
+				await Promise.all(
+					page.slice(i, i + WRITE_CONCURRENCY).map(async (user) => {
+						try {
+							await personalOrganizations.ensurePersonalOrganization(user)
+							repaired++
+						} catch (error) {
+							failed++
+							console.error(`failed ${user.id}`, error)
+						}
+					}),
+				)
 			}
 		}
 		console.log(`users without an organization: ${found}, repaired: ${repaired}`)
