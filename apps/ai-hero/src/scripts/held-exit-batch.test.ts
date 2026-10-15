@@ -1,9 +1,18 @@
+import { mkdtemp, stat, unlink, rmdir } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { Effect } from 'effect'
-import { createHeldRecoveryPorts } from '../../scripts/held-exit-recover-runtime'
+import {
+	createHeldRecoveryPorts,
+	type RecoveryPortOptions,
+} from '../../scripts/held-exit-recover-runtime'
+import { withScanFile } from '../../scripts/held-exit-scan-store'
 import type { ScanCheckpoint } from '../../scripts/held-exit-kit-scan'
 import {
 	MAX_SCAN_AGE_MS,
+	MAX_PROOF_AGE_AT_WRITE_MS,
+	type RecoveryRuntime,
 	parseHeldRecoveryArgs,
 	runHeldExitRecovery,
 	runHeldRecoveryCommand,
@@ -36,7 +45,7 @@ const row = (id: string): SideEffectIntent => ({
 	reviewReasons: ['old-newsletter-exit-unconfirmed'],
 	metadata: { list: 'shadow-newsletter' },
 })
-function ports() {
+function ports(withScanStore?: RecoveryPortOptions['withScanStore']) {
 	let now = start
 	let checkpoint: ScanCheckpoint | undefined
 	const removeScan = vi.fn(async () => {
@@ -73,14 +82,16 @@ function ports() {
 						},
 					],
 		readOutbox: async () => [],
-		withScanStore: async (_scope, action) =>
-			action({
-				load: async () => checkpoint,
-				save: async (value) => {
-					checkpoint = value
-				},
-				remove: removeScan,
-			}),
+		withScanStore:
+			withScanStore ??
+			(async (_scope, action) =>
+				action({
+					load: async () => checkpoint,
+					save: async (value) => {
+						checkpoint = value
+					},
+					remove: removeScan,
+				})),
 		apiKey: 'fixture-key',
 		eventKey: '',
 		deploymentScope: 'fixture-scope',
@@ -161,13 +172,150 @@ describe('shared recovery scan', () => {
 		expect((await runtime.scan('2')).membership).toBe('absent')
 		expect(fetcher).toHaveBeenCalledTimes(2)
 	})
-	it('clears the scope checkpoint and in-memory proof after requested recovery cleanup', async () => {
+	it('retains the shared fresh proof through post-write housekeeping', async () => {
 		const { runtime, fetcher, removeScan } = ports()
-		await runtime.scan('2')
-		await runtime.clearScan?.()
-		expect(removeScan).toHaveBeenCalledOnce()
-		await runtime.scan('2')
+		const before = await runtime.scan('2')
+		await runtime.cleanup?.()
+		expect(removeScan).not.toHaveBeenCalled()
+		const after = await runtime.scan('3')
+		expect(after.fingerprint).toBe(before.fingerprint)
+		expect(fetcher).toHaveBeenCalledOnce()
+	})
+	it('does not memoize incomplete scan results', async () => {
+		const { runtime, fetcher } = ports()
+		fetcher.mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					subscribers: [],
+					pagination: { has_next_page: false },
+				}),
+			),
+		)
+		expect((await runtime.scan('2')).membership).toBe('unknown')
+		expect((await runtime.scan('2')).membership).toBe('absent')
 		expect(fetcher).toHaveBeenCalledTimes(2)
+	})
+	it('one batch scan remains valid for successive single-contact writes', async () => {
+		const { runtime, fetcher, removeScan } = ports()
+		const writable: RecoveryRuntime = {
+			...runtime,
+			inspect: async (id) => {
+				const state = await runtime.inspect(id)
+				return id === 'third'
+					? {
+							...state,
+							identities: [
+								{ id: 'identity-third', contactId: id, externalId: '3' },
+							],
+						}
+					: state
+			},
+			persist: vi.fn(async (input) => ({
+				...input,
+				id: `receipt-${input.contactId}`,
+			})),
+			currentMembership: async () => 'exited',
+			notify: vi.fn(async () => 1),
+		}
+		const planned = await Effect.runPromise(
+			runHeldRecoveryCommand(
+				['--contact-id', 'second', '--contact-id', 'third'],
+				async () => ({ runtime: writable, close: async () => {} }),
+			),
+		)
+		expect(planned.results?.map((result) => result.status)).toEqual([
+			'planned',
+			'planned',
+		])
+		for (const [index, contactId] of ['second', 'third'].entries()) {
+			const written = await Effect.runPromise(
+				runHeldExitRecovery(
+					{
+						mode: 'write',
+						namespace: 'ai-hero',
+						contactId,
+						approval: 'fixture-approval',
+						planHash: planned.results![index]!.planHash!,
+					},
+					writable,
+				),
+			)
+			expect(written).toMatchObject({
+				status: 'requested',
+				counts: { exitReceipts: 1, notifications: 1 },
+			})
+		}
+		expect(removeScan).not.toHaveBeenCalled()
+		expect(fetcher).toHaveBeenCalledOnce()
+	})
+	it('removes an aged on-disk checkpoint, rescans, and refuses the old write hash', async () => {
+		const directory = await mkdtemp(join(tmpdir(), 'held-exit-aged-'))
+		const path = join(directory, 'scope.json')
+		const removed = vi.fn()
+		const store: NonNullable<RecoveryPortOptions['withScanStore']> = async (
+			_scope,
+			action,
+		) =>
+			withScanFile(path, (disk) =>
+				action({
+					...disk,
+					remove: async () => {
+						removed()
+						await disk.remove?.()
+					},
+				}),
+			)
+		const args = {
+			mode: 'dry-run' as const,
+			namespace: 'ai-hero' as const,
+			contactId: 'second',
+		}
+		try {
+			const original = ports(store)
+			const plan = await Effect.runPromise(
+				runHeldExitRecovery(args, original.runtime),
+			)
+			expect(plan.status).toBe('planned')
+			const next = ports(store)
+			next.setNow(
+				new Date(
+					Date.parse(start) + MAX_PROOF_AGE_AT_WRITE_MS + 1,
+				).toISOString(),
+			)
+			next.fetcher.mockImplementation(async () => {
+				expect(removed).toHaveBeenCalledOnce()
+				await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' })
+				return new Response(
+					JSON.stringify({
+						subscribers: [{ id: 1 }],
+						pagination: { has_next_page: false, total_count: 1 },
+					}),
+				)
+			})
+			const result = await Effect.runPromise(
+				runHeldExitRecovery(
+					{
+						...args,
+						mode: 'write',
+						approval: 'fixture-approval',
+						planHash: plan.planHash!,
+					},
+					next.runtime,
+				),
+			)
+			expect(result).toMatchObject({
+				status: 'refused',
+				reason: 'plan-hash-mismatch',
+				counts: { exitReceipts: 0, notifications: 0 },
+			})
+			expect(next.fetcher).toHaveBeenCalledOnce()
+			expect(next.persist).not.toHaveBeenCalled()
+		} finally {
+			await unlink(path).catch((error) => {
+				if (error.code !== 'ENOENT') throw error
+			})
+			await rmdir(directory)
+		}
 	})
 	it('distinct absent contacts get distinct hashes bound to the shared scan; a new scan changes the hash', async () => {
 		const { runtime, setNow, fetcher } = ports()

@@ -87,7 +87,7 @@ function runtime(): RecoveryRuntime & {
 			),
 		}),
 		scan: async () => scan,
-		clearScan: vi.fn(async () => {}),
+		cleanup: vi.fn(async () => {}),
 		persist: vi.fn(async (input) => repository.createContactEvent(input)),
 		notify: vi.fn(async () => 1),
 	}
@@ -711,12 +711,101 @@ describe('single-contact held exit recovery', () => {
 						? 'identity-unproven'
 						: scenario === 'bad-row'
 							? 'invalid-held-row'
-							: 'provider-unavailable',
+							: scenario === 'stale'
+								? 'proof-expired'
+								: 'provider-unavailable',
 			})
 			expect(ports.persist).not.toHaveBeenCalled()
 			expect(ports.notify).not.toHaveBeenCalled()
 		},
 	)
+	it('keeps a completed write requested when post-write housekeeping fails', async () => {
+		const ports = runtime()
+		ports.cleanup = vi.fn(async () => {
+			throw new Error('fixture-housekeeping-failure')
+		})
+		const plan = await Effect.runPromise(runHeldExitRecovery(dryRun, ports))
+		const result = await Effect.runPromise(
+			runHeldExitRecovery(
+				{
+					...dryRun,
+					mode: 'write',
+					approval: 'fixture-approval',
+					planHash: plan.planHash!,
+				},
+				ports,
+			),
+		)
+		expect(result).toMatchObject({
+			status: 'requested',
+			reason: null,
+			cleanup: 'failed',
+			counts: { exitReceipts: 1, notifications: 1 },
+		})
+		expect(ports.persist).toHaveBeenCalledOnce()
+		expect(ports.notify).toHaveBeenCalledOnce()
+	})
+	it('keeps a completed write requested when runtime close fails', async () => {
+		const ports = runtime()
+		const plan = await Effect.runPromise(runHeldExitRecovery(dryRun, ports))
+		const result = await Effect.runPromise(
+			runHeldRecoveryCommand(
+				[
+					'--contact-id',
+					contact.id,
+					'--write',
+					'--approval',
+					'fixture-approval',
+					'--plan-hash',
+					plan.planHash!,
+				],
+				async () => ({
+					runtime: ports,
+					close: async () => {
+						throw new Error('fixture-close-failure')
+					},
+				}),
+			),
+		)
+		expect(result).toMatchObject({
+			status: 'requested',
+			reason: null,
+			cleanup: 'failed',
+			counts: { exitReceipts: 1, notifications: 1 },
+		})
+	})
+	it('refuses proof that expires between validation and the immediate persist boundary', async () => {
+		const ports = runtime()
+		const plan = await Effect.runPromise(runHeldExitRecovery(dryRun, ports))
+		let clockReads = 0
+		ports.now = () =>
+			new Date(
+				Date.parse(scan.completedAt) +
+					15 * 60_000 +
+					(++clockReads < 3 ? -1 : 1),
+			).toISOString()
+		const result = await Effect.runPromise(
+			runHeldExitRecovery(
+				{
+					...dryRun,
+					mode: 'write',
+					approval: 'fixture-approval',
+					planHash: plan.planHash!,
+				},
+				ports,
+			),
+		)
+		expect(result).toMatchObject({
+			status: 'refused',
+			reason: 'proof-expired',
+			counts: { exitReceipts: 0, notifications: 0 },
+		})
+		expect(result.prompt).toContain(
+			'rerun the dry run and write within 15 minutes of scan completion',
+		)
+		expect(ports.persist).not.toHaveBeenCalled()
+		expect(ports.notify).not.toHaveBeenCalled()
+	})
 	it('writes the established current exit proof before its replay notification, then refuses a recovered row', async () => {
 		const ports = runtime()
 		const planned = await Effect.runPromise(runHeldExitRecovery(dryRun, ports))
@@ -750,7 +839,7 @@ describe('single-contact held exit recovery', () => {
 			counts: { exitReceipts: 1, notifications: 1 },
 		})
 		expect(ports.notify).toHaveBeenCalledOnce()
-		expect(ports.clearScan).toHaveBeenCalledOnce()
+		expect(ports.cleanup).toHaveBeenCalledOnce()
 		const original = await ports.inspect(contact.id)
 		ports.inspect = async () => ({
 			...original,

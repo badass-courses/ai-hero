@@ -42,7 +42,7 @@ export type RecoveryRuntime = {
 	findContactById: (id: string) => Promise<ContactRecord | undefined>
 	inspect: (contactId: string) => Promise<RecoverySnapshot>
 	scan: (subscriberId: string) => Promise<MembershipScan>
-	clearScan?: () => Promise<void>
+	cleanup?: () => Promise<void>
 	persist: (
 		input: Omit<ContactEventRecord, 'id'>,
 	) => Promise<ContactEventRecord>
@@ -106,6 +106,18 @@ function freshAbsence(scan: MembershipScan, now: string) {
 	)
 }
 
+function proofExpired(scan: MembershipScan, now: string) {
+	const end = Date.parse(scan.completedAt),
+		current = Date.parse(now)
+	return (
+		scan.complete &&
+		scan.membership === 'absent' &&
+		Number.isFinite(end) &&
+		Number.isFinite(current) &&
+		current - end > MAX_PROOF_AGE_AT_WRITE_MS
+	)
+}
+
 export class RecoveryRefused extends Data.TaggedError('RecoveryRefused')<{
 	reason: string
 }> {}
@@ -114,6 +126,7 @@ export type RecoveryEnvelope = {
 	version: 1
 	mode: RecoveryArgs['mode']
 	status: 'refused' | 'planned' | 'requested' | 'readback'
+	cleanup?: 'failed'
 	reason: string | null
 	planHash: string | null
 	notificationEvent: typeof NEWSLETTER_EXIT_CONFIRMED_EVENT
@@ -207,9 +220,18 @@ export function persistRecoveryExitReceipt(
 ) {
 	return Effect.gen(function* () {
 		const decodedScan = scanSchema.safeParse(input.scan)
-		if (!decodedScan.success || !freshAbsence(decodedScan.data, runtime.now()))
+		if (!decodedScan.success)
 			return yield* Effect.fail(
 				new RecoveryRefused({ reason: 'membership-unknown' }),
+			)
+		const proofNow = runtime.now()
+		if (!freshAbsence(decodedScan.data, proofNow))
+			return yield* Effect.fail(
+				new RecoveryRefused({
+					reason: proofExpired(decodedScan.data, proofNow)
+						? 'proof-expired'
+						: 'membership-unknown',
+				}),
 			)
 		const normalized = normalizeContactEvent({
 			provider: 'kit',
@@ -220,8 +242,8 @@ export function persistRecoveryExitReceipt(
 			message: 'Old newsletter absence verified by operator GET scan',
 			privacyLevel: 'internal',
 		})
-		const receipt = yield* boundary('database-unavailable', () =>
-			runtime.persist({
+		const receipt = yield* boundary('database-unavailable', () => {
+			const record: Omit<ContactEventRecord, 'id'> = {
 				...normalized,
 				contactId: input.contact.id,
 				providerIdentityId: input.identity.id,
@@ -236,8 +258,12 @@ export function persistRecoveryExitReceipt(
 						scan: decodedScan.data,
 					}),
 				},
-			}),
-		)
+			}
+			// Last clock read before the actual write, after normalization and record construction.
+			if (!freshAbsence(decodedScan.data, runtime.now()))
+				throw new RecoveryRefused({ reason: 'proof-expired' })
+			return runtime.persist(record)
+		})
 		if (
 			receipt.contactId !== input.contact.id ||
 			receipt.provider !== 'kit' ||
@@ -419,9 +445,14 @@ export function runHeldExitRecovery(
 			return yield* Effect.fail(
 				new RecoveryRefused({ reason: 'old-sequence-member' }),
 			)
-		if (!freshAbsence(scan, runtime.now()))
+		const proofNow = runtime.now()
+		if (!freshAbsence(scan, proofNow))
 			return yield* Effect.fail(
-				new RecoveryRefused({ reason: 'provider-unavailable' }),
+				new RecoveryRefused({
+					reason: proofExpired(scan, proofNow)
+						? 'proof-expired'
+						: 'provider-unavailable',
+				}),
 			)
 		envelope.checks.oldSequenceAbsent = true
 		envelope.planHash = hashSnapshot(
@@ -476,8 +507,15 @@ export function runHeldExitRecovery(
 				)
 			envelope.counts.notifications = notifications
 			envelope.status = 'requested'
-			if (runtime.clearScan)
-				yield* boundary('scan-cleanup-failed', runtime.clearScan)
+			// Retain the shared fresh proof; housekeeping cannot undo an acknowledged write.
+			if (runtime.cleanup)
+				yield* boundary('scan-cleanup-failed', runtime.cleanup).pipe(
+					Effect.catchAll(() =>
+						Effect.sync(() => {
+							envelope.cleanup = 'failed'
+						}),
+					),
+				)
 		} else {
 			envelope.status = 'planned'
 			envelope.counts = { exitReceipts: 1, notifications: 1 }
@@ -609,7 +647,10 @@ export function runHeldRecoveryCommand(
 				boundary('runtime-close-failed', close).pipe(
 					Effect.catchAll((error) =>
 						Effect.sync(() => {
-							result = { ...result, status: 'refused', reason: error.reason }
+							result =
+								result.status === 'requested'
+									? { ...result, cleanup: 'failed' }
+									: { ...result, status: 'refused', reason: error.reason }
 						}),
 					),
 				),
@@ -657,15 +698,18 @@ export function recoveryPrompt(reason: string) {
 		'scan-locked': 'another recovery operator holds the scan lease',
 		'scan-cache-unsafe':
 			'the scan cache directory or file is not private and operator-owned',
-		'scan-cleanup-failed': 'the completed proof cache could not be removed',
+		'scan-cleanup-failed': 'post-write housekeeping did not complete',
+		'proof-expired': 'the completed membership proof has expired',
 	}
 	const why = explanations[reason] ?? 'a recovery precondition was not met'
 	const fix =
-		reason === 'scan-locked'
-			? 'wait for the lease owner; remove a crash lock only after verifying its named process stopped'
-			: reason === 'scan-cache-unsafe'
-				? 'restore current-user ownership and private permissions without following symlinks'
-				: 'verify the deployment and preconditions, then rerun a dry run'
+		reason === 'proof-expired'
+			? 'rerun the dry run and write within 15 minutes of scan completion'
+			: reason === 'scan-locked'
+				? 'wait for the lease owner; remove a crash lock only after verifying its named process stopped'
+				: reason === 'scan-cache-unsafe'
+					? 'restore current-user ownership and private permissions without following symlinks'
+					: 'verify the deployment and preconditions, then rerun a dry run'
 	return `RecoveryRefused: you requested held-exit recovery, and it failed because ${why}. Accepted: one proven identity per held contact and an authenticated complete fresh GET scan with exact counts; writes require one contact and the matching plan hash. Fix: ${fix}. Debug: inspect the private operator scan checkpoint and redacted checks.`
 }
 

@@ -89,13 +89,21 @@ describe('review security and proof contracts', () => {
 		const fetcher = vi
 			.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
 			.mockResolvedValueOnce(page([], 0))
+		let saved: typeof original | undefined
 		const changed = await readKitSequenceScan({
 			...base,
 			scope: 'new-scope',
 			fetch: fetcher,
-			store: { load: async () => original, save: async () => {} },
+			store: {
+				load: async () => original,
+				save: async (value) => {
+					saved = value
+				},
+			},
 		})
 		expect(fetcher).toHaveBeenCalledOnce()
+		expect(saved?.scope).toBe(changed.scope)
+		expect(saved?.scope).not.toBe(original.scope)
 		const tampered = {
 			...changed,
 			memberHashes: original.memberHashes,
@@ -279,7 +287,7 @@ describe('review security and proof contracts', () => {
 		)
 		expect(result).toMatchObject({
 			status: 'refused',
-			reason: 'provider-unavailable',
+			reason: 'proof-expired',
 		})
 		expect(persist).not.toHaveBeenCalled()
 	})

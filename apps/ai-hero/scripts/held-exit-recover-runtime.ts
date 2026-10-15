@@ -257,14 +257,24 @@ export function createHeldRecoveryPorts(
 			const pending = sharedScan
 			try {
 				const scan = await pending
-				startedAt = scan.startedAt
-				completedAt = scan.complete ? scan.completedAt : undefined
-				return membershipFromScan(
-					scan,
-					subscriberId,
-					options.now(),
-					options.apiKey,
+				if (sharedScan === pending) {
+					if (scan.complete) {
+						startedAt = scan.startedAt
+						completedAt = scan.completedAt
+					} else {
+						sharedScan = undefined
+						startedAt = undefined
+						completedAt = undefined
+					}
+				}
+				const proofNow = options.now()
+				if (
+					scan.complete &&
+					Date.parse(proofNow) - Date.parse(scan.completedAt) >
+						MAX_PROOF_AGE_AT_WRITE_MS
 				)
+					throw new RecoveryRefused({ reason: 'proof-expired' })
+				return membershipFromScan(scan, subscriberId, proofNow, options.apiKey)
 			} catch (error) {
 				if (sharedScan === pending) {
 					sharedScan = undefined
@@ -274,14 +284,10 @@ export function createHeldRecoveryPorts(
 				throw error
 			}
 		},
-		clearScan: async () => {
+		cleanup: async () => {
+			// Store acquisition prunes only expired files. Keep the fresh shared proof and memo.
 			if (options.withScanStore)
-				await options.withScanStore(approvalScope, async (store) => {
-					await store.remove?.()
-				})
-			sharedScan = undefined
-			startedAt = undefined
-			completedAt = undefined
+				await options.withScanStore(approvalScope, async () => {})
 		},
 		persist: async (input) => options.repository.createContactEvent(input),
 		currentMembership: async (contactId) =>
