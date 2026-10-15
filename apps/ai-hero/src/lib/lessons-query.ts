@@ -440,6 +440,8 @@ export async function getExerciseSolution(lessonSlugOrId: string) {
 		(resource: ContentResourceResource) =>
 			resource.resource.type === 'solution',
 	)?.resource
+	// Most lessons have no solution; the solution page turns null into a 404.
+	if (!partialSolution) return null
 
 	const solution = await getCachedSolution(partialSolution.id)
 
