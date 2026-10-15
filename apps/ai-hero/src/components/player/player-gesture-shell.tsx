@@ -137,12 +137,19 @@ export function PlayerGestureShell({
 	className,
 	children,
 	chromeSlot,
+	overlay,
 }: {
 	playerRef: React.RefObject<MuxPlayerRefAttributes | null>
 	className?: string
 	children: React.ReactNode
 	/** Extra control rendered in the touch chrome's top-left (e.g. autoplay toggle), fading with the chrome. */
 	chromeSlot?: React.ReactNode
+	/**
+	 * A card drawn over the whole player (the end-of-video card). It lives in
+	 * the shell because the shell is the fullscreen element, and sits above the
+	 * touch surface and chrome (z-20) so taps land on the card, not on them.
+	 */
+	overlay?: React.ReactNode
 }) {
 	const shellId = React.useId()
 	const shellRef = React.useRef<HTMLDivElement>(null)
@@ -446,7 +453,9 @@ export function PlayerGestureShell({
 			const chromeUpAtPause = mcPause
 				? !mcPause.hasAttribute('userinactive')
 				: false
-			if (!(isCoarse && chromeUpAtPause))
+			// `pause` fires just before `ended`; a flash there pops under the
+			// end card.
+			if (!player.ended && !(isCoarse && chromeUpAtPause))
 				setPlayFlash({ kind: 'pause', key: ++keyCounterRef.current })
 			endHoldSpeed()
 			if (isCoarse) setChrome(true)
@@ -918,6 +927,7 @@ export function PlayerGestureShell({
 					</div>
 				)}
 			</AnimatePresence>
+			{overlay}
 		</div>
 	)
 }

@@ -19,10 +19,7 @@ import {
 	type ResourceNavigation,
 } from '@/lib/content-navigation'
 import { muxMinResolutionForPrefs } from '@/lib/mux-player-prefs'
-import {
-	setPlaybackPositionForResource,
-	setProgressForResource,
-} from '@/lib/progress'
+import { setPlaybackPositionForResource } from '@/lib/progress'
 import {
 	createPlaybackPositionSaveQueue,
 	getPlaybackStartTime,
@@ -49,10 +46,10 @@ import {
 import { cn } from '@coursebuilder/ui/utils/cn'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
-import { revalidateModuleLesson } from '../actions'
 import { useWorkshopNavigation } from '../workshops/_components/workshop-navigation-provider'
 import { playFromLink } from './play-from-link'
 import { AutoPlayToggle } from './autoplay-toggle'
+import { completeLessonInBackground } from './complete-lesson-in-background'
 import { useModuleProgress } from './module-progress-provider'
 
 export function AuthedVideoPlayer({
@@ -66,6 +63,7 @@ export function AuthedVideoPlayer({
 	videoChapters,
 	moduleSlug,
 	moduleType,
+	overlay,
 	...props
 }: {
 	muxPlaybackId?: string
@@ -84,6 +82,8 @@ export function AuthedVideoPlayer({
 	videoChapters?: VideoChapter[] | null
 	moduleSlug?: string
 	moduleType?: 'workshop' | 'tutorial'
+	/** Drawn over the video inside the fullscreen element (the end card). */
+	overlay?: React.ReactNode
 } & MuxPlayerProps) {
 	const ability = abilityLoader ? use(abilityLoader) : null
 	const canView = ability?.canViewLesson
@@ -117,18 +117,11 @@ export function AuthedVideoPlayer({
 	const { playbackRate, volume, autoplay: bingeMode } = playerPrefs
 	const minResolution = muxMinResolutionForPrefs(playerPrefs)
 	const router = useRouter()
-	const [currentResource, setCurrentResource] =
-		React.useState<ContentResource>(resource)
-
 	const navigation = useWorkshopNavigation()
 
 	const { nextResource, prevResource } = getAdjacentWorkshopResources(
 		navigation,
-		currentResource.id,
-	)
-
-	const isProblemLesson = Boolean(
-		resource?.resources?.find((r) => r.resource.type === 'solution'),
+		resource.id,
 	)
 
 	const searchParams = useSearchParams()
@@ -171,8 +164,8 @@ export function AuthedVideoPlayer({
 		},
 		[canView, savePlaybackPosition],
 	)
-	const { moduleProgress, addLessonProgress } = useModuleProgress()
-	const [isPending, startTransition] = React.useTransition()
+	const { moduleProgress, addLessonProgress, removeLessonProgress } =
+		useModuleProgress()
 
 	// Publish the ref to the shared context so consumers outside this tree
 	// (transcript timestamp buttons) can drive the player.
@@ -219,27 +212,25 @@ export function AuthedVideoPlayer({
 			setPreferredPlaybackRate(playerRef, playbackRate)
 		},
 		onEnded: () => {
-			startTransition(async () => {
-				await persistPlaybackPosition(0, true)
-				await handleOnVideoEnded({
-					canView,
-					resource,
-					nextResource,
-					prevResource,
-					playerRef,
-					currentResource,
-					dispatchVideoPlayerOverlay,
-					setCurrentResource,
-					handleSetLessonComplete,
-					bingeMode,
-					moduleSlug,
-					moduleType,
-					router,
-					moduleProgress,
-					addLessonProgress,
-					navigation,
-				})
+			// The card first: the position reset is a server action queued
+			// behind the save the preceding pause already started.
+			handleOnVideoEnded({
+				resource,
+				nextResource,
+				prevResource,
+				playerRef,
+				currentResource: resource,
+				dispatchVideoPlayerOverlay,
+				bingeMode,
+				moduleSlug,
+				moduleType,
+				router,
+				moduleProgress,
+				addLessonProgress,
+				removeLessonProgress,
+				navigation,
 			})
+			void persistPlaybackPosition(0, true)
 		},
 		onPlay: () => {
 			dispatchVideoPlayerOverlay({ type: 'HIDDEN' })
@@ -258,6 +249,7 @@ export function AuthedVideoPlayer({
 		<PlayerGestureShell
 			playerRef={playerRef}
 			className={cn(className)}
+			overlay={overlay}
 			chromeSlot={
 				<AutoPlayToggle
 					id="autoplay-player-chrome"
@@ -335,33 +327,26 @@ function createCompletedOverlayAction({
 	}
 }
 
-async function handleOnVideoEnded({
+function handleOnVideoEnded({
 	resource,
 	playerRef,
 	dispatchVideoPlayerOverlay,
-	setCurrentResource,
-	handleSetLessonComplete,
 	moduleProgress,
 	addLessonProgress,
+	removeLessonProgress,
 	bingeMode,
 	moduleSlug,
 	moduleType,
 	nextResource,
 	prevResource,
 	currentResource,
-	canView,
 	router,
 	navigation,
 }: {
-	canView?: boolean
 	resource: ContentResource
 	playerRef: React.RefObject<MuxPlayerRefAttributes | null>
 	dispatchVideoPlayerOverlay: React.Dispatch<VideoPlayerOverlayAction>
-	setCurrentResource: React.Dispatch<any>
 	currentResource: ContentResource
-	handleSetLessonComplete: (
-		props: handleSetLessonCompleteProps,
-	) => Promise<void>
 	bingeMode: boolean
 	moduleSlug?: string
 	moduleType?: 'tutorial' | 'workshop'
@@ -370,9 +355,10 @@ async function handleOnVideoEnded({
 	router: ReturnType<typeof useRouter>
 	moduleProgress: ModuleProgress | null
 	addLessonProgress: (lessonId: string) => void
+	removeLessonProgress: (lessonId: string) => void
 	navigation: ResourceNavigation | null
 }) {
-	await track('video_completed', {
+	void track('video_completed', {
 		resourceSlug: resource?.fields?.slug,
 		resourceType: resource?.type,
 		moduleSlug: moduleSlug,
@@ -385,128 +371,67 @@ async function handleOnVideoEnded({
 		prevResource,
 		navigation,
 	})
+	const completeInBackground = () =>
+		void completeLessonInBackground({
+			resourceId: resourceToComplete.id,
+			moduleProgress,
+			addLessonProgress,
+			removeLessonProgress,
+		})
 
 	if (resource?.type === 'exercise') {
 		router.push(`${resource?.fields?.slug}/exercise`)
-	} else {
-		if (bingeMode && nextResource && playerRef?.current) {
-			dispatchVideoPlayerOverlay({ type: 'LOADING' })
-			// playerRef.current.playbackId = nextLessonPlaybackId
-			if (nextResource.type !== 'solution') {
-				console.log('setting lesson complete', resourceToComplete)
-				await handleSetLessonComplete({
-					currentResource: resourceToComplete,
-					moduleProgress,
-					addLessonProgress,
-				})
-			}
-
-			await revalidateModuleLesson(
-				moduleSlug as string,
-				currentResource.fields?.slug as string,
-				moduleType,
-				currentResource.type as 'lesson' | 'exercise' | 'solution',
-			)
-			const nextResourceType = nextResource.type
-			// For solution resources, use the parent lesson's slug instead of the solution's slug
-			const nextResourceSlug =
-				nextResourceType === 'solution' && navigation
-					? findParentLessonForSolution(navigation, nextResource.id)?.fields
-							?.slug || nextResource.fields?.slug
-					: nextResource.fields?.slug
-
-			if (nextResourceType && nextResourceSlug && moduleType && moduleSlug) {
-				router.push(
-					getResourcePath(nextResourceType, nextResourceSlug, 'view', {
-						parentType: moduleType,
-						parentSlug: moduleSlug,
-					}),
-				)
-			} else {
-				console.error('Missing required resource or module data for navigation')
-			}
-		} else if (bingeMode) {
-			if (nextResource) {
-				dispatchVideoPlayerOverlay({ type: 'LOADING' })
-			}
-
-			await handleSetLessonComplete({
-				currentResource: resourceToComplete,
-				moduleProgress,
-				addLessonProgress,
-			})
-			await revalidateModuleLesson(
-				moduleSlug as string,
-				currentResource.fields?.slug as string,
-				moduleType,
-				currentResource.type as 'lesson' | 'exercise' | 'solution',
-			)
-
-			if (nextResource) {
-				// For solution resources, use the parent lesson's slug instead of the solution's slug
-				const nextResourceSlug =
-					nextResource.type === 'solution' && navigation
-						? findParentLessonForSolution(navigation, nextResource.id)?.fields
-								?.slug ||
-							nextResource.fields?.slug ||
-							''
-						: nextResource.fields?.slug || ''
-				// setTimeout(() => {
-				router.push(
-					getResourcePath(nextResource.type || '', nextResourceSlug, 'view', {
-						parentType: moduleType as string,
-						parentSlug: moduleSlug as string,
-					}),
-				)
-				// }, 250)
-			} else {
-				dispatchVideoPlayerOverlay(
-					createCompletedOverlayAction({
-						playerRef,
-						navigation,
-						moduleProgress,
-						currentResource,
-						prevResource,
-						nextResource,
-					}),
-				)
-			}
-		} else {
-			dispatchVideoPlayerOverlay(
-				createCompletedOverlayAction({
-					playerRef,
-					navigation,
-					moduleProgress,
-					currentResource,
-					prevResource,
-					nextResource,
-				}),
-			)
-		}
+		return
 	}
-}
 
-type handleSetLessonCompleteProps = {
-	currentResource: ContentResource
-	moduleProgress: ModuleProgress | null
-	addLessonProgress: (lessonId: string) => void
-}
+	if (!bingeMode) {
+		dispatchVideoPlayerOverlay(
+			createCompletedOverlayAction({
+				playerRef,
+				navigation,
+				moduleProgress,
+				currentResource,
+				prevResource,
+				nextResource,
+			}),
+		)
+		return
+	}
 
-export async function handleSetLessonComplete({
-	currentResource,
-	moduleProgress,
-	addLessonProgress,
-}: handleSetLessonCompleteProps) {
-	const isCurrentLessonCompleted = Boolean(
-		moduleProgress?.completedLessons?.some(
-			(p) => p.resourceId === currentResource.id && p.completedAt,
-		),
-	)
-	if (!isCurrentLessonCompleted) {
-		addLessonProgress(currentResource.id)
-		await setProgressForResource({
-			resourceId: currentResource.id,
-			isCompleted: true,
-		})
+	// Autoplay: complete in the background, then go straight on. The write is
+	// dispatched before the push so it never holds the navigation up. A
+	// problem lesson followed by its solution completes on the solution.
+	if (nextResource?.type !== 'solution') completeInBackground()
+
+	if (!nextResource) {
+		dispatchVideoPlayerOverlay(
+			createCompletedOverlayAction({
+				playerRef,
+				navigation,
+				moduleProgress,
+				currentResource,
+				prevResource,
+				nextResource,
+			}),
+		)
+		return
+	}
+
+	// For solution resources, use the parent lesson's slug instead of the solution's slug
+	const nextResourceSlug =
+		nextResource.type === 'solution' && navigation
+			? findParentLessonForSolution(navigation, nextResource.id)?.fields
+					?.slug || nextResource.fields?.slug
+			: nextResource.fields?.slug
+
+	if (nextResource.type && nextResourceSlug && moduleType && moduleSlug) {
+		router.push(
+			getResourcePath(nextResource.type, nextResourceSlug, 'view', {
+				parentType: moduleType,
+				parentSlug: moduleSlug,
+			}),
+		)
+	} else {
+		console.error('Missing required resource or module data for navigation')
 	}
 }

@@ -208,10 +208,11 @@ describe('LessonPage office-hours authorization context', () => {
 				lesson.id,
 			)
 			expect(mocks.player).toHaveBeenCalledOnce()
-			expect(mocks.overlay).toHaveBeenCalledOnce()
 			expect(mocks.controls).toHaveBeenCalledOnce()
 			const playerProps = mocks.player.mock.calls[0]![0]
-			const overlayProps = mocks.overlay.mock.calls[0]![0]
+			// The end card rides inside the player so it survives fullscreen.
+			expect(playerProps.overlay.type).toBe(mocks.overlay)
+			const overlayProps = playerProps.overlay.props
 			expect(playerProps).toMatchObject({
 				muxPlaybackId: 'playback-1',
 				resource: lesson,
@@ -220,8 +221,8 @@ describe('LessonPage office-hours authorization context', () => {
 			expect(await playerProps.playbackPositionLoader).toBe(42)
 			expect(overlayProps).toMatchObject({
 				resource: lesson,
-				workshop,
 				moduleType: 'workshop',
+				moduleSlug: 'workshop-1',
 			})
 			expect(overlayProps).not.toHaveProperty('pricingProps')
 			expect(await overlayProps.abilityLoader).toMatchObject({

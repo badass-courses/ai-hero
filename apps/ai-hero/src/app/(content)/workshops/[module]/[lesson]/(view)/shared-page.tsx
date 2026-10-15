@@ -109,7 +109,6 @@ export async function LessonPage({
 				lesson={lesson}
 				params={params}
 				lessonType={lessonType}
-				workshop={workshop}
 				ability={ability}
 			/>
 			<LessonControls
@@ -223,13 +222,11 @@ async function PlayerContainer({
 	lesson,
 	lessonType = 'lesson',
 	params,
-	workshop,
 	ability,
 }: {
 	lesson: Lesson | null
 	lessonType?: 'lesson' | 'exercise' | 'solution'
 	params: { module: string; lesson: string }
-	workshop: MinimalWorkshop | null
 	ability: Omit<AbilityForResource, 'canView'> & {
 		canViewWorkshop: boolean
 		canViewLesson: boolean
@@ -297,15 +294,6 @@ async function PlayerContainer({
 						</>
 					}
 				>
-					{/* LessonPage already redirects denied viewers. Authorized overlay
-					    states (including completion) do not need commerce data. */}
-					<VideoPlayerOverlay
-						resource={lesson}
-						abilityLoader={abilityLoader}
-						moduleType="workshop"
-						moduleSlug={params.module}
-						workshop={workshop}
-					/>
 					<AuthedVideoPlayer
 						key={lesson.id}
 						// The width cap mirrors the height cap: with only max-h, a short
@@ -323,6 +311,17 @@ async function PlayerContainer({
 						moduleSlug={params.module}
 						moduleType="workshop"
 						title={lesson.fields?.title}
+						// Inside the player so the end card survives fullscreen.
+						// LessonPage already redirects denied viewers, so the card
+						// only ever shows completion and needs no commerce data.
+						overlay={
+							<VideoPlayerOverlay
+								resource={lesson}
+								abilityLoader={abilityLoader}
+								moduleType="workshop"
+								moduleSlug={params.module}
+							/>
+						}
 					/>
 				</Suspense>
 			</section>
