@@ -261,6 +261,7 @@ describe('VideoPlayerOverlay', () => {
 			addLessonProgress,
 			removeLessonProgress,
 			setCompleted: mocks.setCompleted,
+			optimistic: true,
 		})
 		expect(mocks.push).toHaveBeenCalledWith('/workshops/test/lesson-2')
 		// The write is dispatched first, so the navigation overtakes it.
@@ -271,7 +272,8 @@ describe('VideoPlayerOverlay', () => {
 		expect(container.innerHTML).toContain('Next lesson')
 	})
 
-	it('records nothing on Continue for a signed-out viewer', async () => {
+	it('writes on Continue without a session, but not optimistically', async () => {
+		// An email-course subscriber is known only by an httpOnly cookie.
 		mocks.session.mockReturnValue({ data: null })
 		mocks.overlay.mockReturnValue({
 			state: { action: nextLessonAction() },
@@ -279,7 +281,9 @@ describe('VideoPlayerOverlay', () => {
 		})
 		await renderOverlay()
 		await act(async () => button(/Continue/).click())
-		expect(mocks.complete).not.toHaveBeenCalled()
+		expect(mocks.complete).toHaveBeenCalledWith(
+			expect.objectContaining({ resourceId: 'lesson-1', optimistic: false }),
+		)
 		expect(mocks.push).toHaveBeenCalledWith('/workshops/test/lesson-2')
 	})
 
@@ -309,6 +313,32 @@ describe('VideoPlayerOverlay', () => {
 		expect(mocks.push).toHaveBeenCalledWith('/workshops/test/lesson-2')
 		press('Escape')
 		expect(dispatch).toHaveBeenCalledWith({ type: 'HIDDEN' })
+	})
+
+	it('leaves the keys to an open dialog that keeps focus on the card', async () => {
+		const dispatch = vi.fn()
+		mocks.overlay.mockReturnValue({
+			state: { action: nextLessonAction() },
+			dispatch,
+		})
+		await renderOverlay()
+		// The certificate dialog leaves focus on its trigger, outside itself.
+		const dialog = document.createElement('div')
+		dialog.setAttribute('role', 'dialog')
+		dialog.setAttribute('data-state', 'open')
+		document.body.append(dialog)
+		try {
+			const press = (key: string, init: KeyboardEventInit = {}) =>
+				document.body.dispatchEvent(
+					new KeyboardEvent('keydown', { key, bubbles: true, ...init }),
+				)
+			await act(async () => void press('N', { shiftKey: true }))
+			press('Escape')
+			expect(mocks.push).not.toHaveBeenCalled()
+			expect(dispatch).not.toHaveBeenCalled()
+		} finally {
+			dialog.remove()
+		}
 	})
 
 	it('previews the next lesson with its thumbnail and place', async () => {

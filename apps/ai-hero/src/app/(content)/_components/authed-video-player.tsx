@@ -94,8 +94,6 @@ export function AuthedVideoPlayer({
 	const ability = abilityLoader ? use(abilityLoader) : null
 	const canView = ability?.canViewLesson
 	const { data: session } = useSession()
-	// Signed out the write returns null and the store would flip back.
-	const canRecordProgress = Boolean(canView && session?.user)
 	const utils = api.useUtils()
 	// The lesson page's writes go over tRPC, never server actions: Next's
 	// router queues server actions with navigations, and the position save
@@ -295,7 +293,8 @@ export function AuthedVideoPlayer({
 				addLessonProgress,
 				removeLessonProgress,
 				navigation,
-				canRecordProgress,
+				canRecordProgress: Boolean(canView),
+				hasSession: Boolean(session?.user),
 				setCompleted: client.progress.setCompleted.mutate,
 				// The cohort eligibility read may have raced the final write;
 				// ask again once it is persisted.
@@ -443,6 +442,7 @@ function handleOnVideoEnded({
 	router,
 	navigation,
 	canRecordProgress,
+	hasSession,
 	setCompleted,
 	onModuleCompleted,
 }: {
@@ -461,6 +461,7 @@ function handleOnVideoEnded({
 	removeLessonProgress: (lessonId: string) => void
 	navigation: ResourceNavigation | null
 	canRecordProgress: boolean
+	hasSession: boolean
 	setCompleted: (input: {
 		resourceId: string
 		isCompleted: boolean
@@ -510,6 +511,7 @@ function handleOnVideoEnded({
 			addLessonProgress,
 			removeLessonProgress,
 			setCompleted,
+			optimistic: hasSession,
 		}).then(() => {
 			if (completedAction.isModuleComplete) onModuleCompleted()
 		})

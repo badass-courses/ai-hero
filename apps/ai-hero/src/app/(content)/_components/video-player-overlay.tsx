@@ -62,16 +62,6 @@ const easeOutQuint = [0.22, 1, 0.36, 1] as const
 const END_CARD_PRIMARY =
 	'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover h-10 rounded-[9px] px-4 font-bold'
 
-/**
- * Signed out there is nothing to record: the store would flip on and then
- * revert when the write returns null, and the sidebar check would flicker.
- */
-function useCanRecordProgress(abilityLoader: AbilityLoader) {
-	const { data: session } = useSession()
-	const ability = use(abilityLoader)
-	return Boolean(session?.user && ability.canViewLesson)
-}
-
 /** The count rolls over when the lesson's completion lands under the card. */
 function RollingCount({ value }: { value: number }) {
 	const reduceMotion = useReducedMotion()
@@ -163,11 +153,13 @@ function useContinue({
 	prevResource,
 	next,
 	canRecordProgress,
+	hasSession,
 }: {
 	resource: ContentResource | null
 	prevResource: ContentResource | null
 	next: NextLesson | null
 	canRecordProgress: boolean
+	hasSession: boolean
 }) {
 	const router = useRouter()
 	const pathname = usePathname()
@@ -189,6 +181,7 @@ function useContinue({
 				addLessonProgress,
 				removeLessonProgress,
 				setCompleted: client.progress.setCompleted.mutate,
+				optimistic: hasSession,
 			})
 		}
 		if (next) startNavigation(() => router.push(next.href))
@@ -223,12 +216,14 @@ export const CompletedLessonOverlay: React.FC<{
 
 	const { moduleProgress } = useModuleProgress()
 	const { data: session } = useSession()
-	const canRecordProgress = useCanRecordProgress(abilityLoader)
+	// A cookie-only email-course subscriber has no session but is recorded.
+	const canRecordProgress = use(abilityLoader).canViewLesson
 	const { go, isNavigating } = useContinue({
 		resource,
 		prevResource: prevLesson,
 		next,
 		canRecordProgress,
+		hasSession: Boolean(session?.user),
 	})
 
 	// Decide "is the workshop finished" from live progress, not from the
