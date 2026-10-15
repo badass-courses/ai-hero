@@ -9,6 +9,8 @@ overrides:
   '@types/react': 19.2.7
   '@types/react-dom': 19.2.3
   '@codemirror/state': 6.7.0
+  '@mux/mux-player-react': ^3.14.0
+  media-chrome: ~4.19.3
 
 packageExtensionsChecksum: sha256-ZMmt6GZWoJtnZ5+9BALtlM1MuYOQiex9rnALJE9cJAI=
 
@@ -194,8 +196,8 @@ importers:
         specifier: 3.0.0-beta2
         version: 3.0.0-beta2
       '@mux/mux-player-react':
-        specifier: ^3.11.7
-        version: 3.13.0(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+        specifier: ^3.14.0
+        version: 3.14.0(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@next/mdx':
         specifier: 16.0.0
         version: 16.0.0(@mdx-js/loader@3.1.1(webpack@5.107.2(@swc/core@1.3.101(@swc/helpers@0.5.23))(esbuild@0.19.12)(lightningcss@1.32.0)(postcss@8.5.15)))(@mdx-js/react@3.1.1(@types/react@19.2.7)(react@19.2.3))
@@ -3225,8 +3227,8 @@ packages:
     resolution: {integrity: sha512-ey2eKn7iwVrjRVJfB/yF9HPDVpEl+fZV00ydx0kc9/BMs+wjBi0KgU0HMqUjTgEoyMUTlHmJ3U3BfDvreyg5iQ==}
     deprecated: '@mux/mux-node was renamed to @mux/ts. 15.5.0 is the final release under this name; install @mux/ts for all future releases. Migration guide: https://github.com/muxinc/mux-ts/blob/main/MIGRATION.md'
 
-  '@mux/mux-player-react@3.13.0':
-    resolution: {integrity: sha512-7IkImo1H3rUYeuWHI/L0L7sGUqBvZCvptx3+4igc+P/V3WgqNFjOyQlcyxzxgXNtNNhGmkn5NaF3TU9DPbOmAQ==}
+  '@mux/mux-player-react@3.14.0':
+    resolution: {integrity: sha512-TmEhiYq30mUzBaMlvl7fX2V3kVW8JqnlmrcOVmxYZynlQMwPprd6Dz1h2frEANa6WO6XiucVZdzT/nqhhOlxnA==}
     peerDependencies:
       '@types/react': 19.2.7
       '@types/react-dom': '*'
@@ -3238,14 +3240,14 @@ packages:
       '@types/react-dom':
         optional: true
 
-  '@mux/mux-player@3.13.0':
-    resolution: {integrity: sha512-vh4CIMahUa29gys+mlfsOFKYKAKXxE07jSWk9WZxkdpGBW1fKfCQXlNxBoAIQlPa9Uk4MZuM3HVgqdW6aTuaZg==}
+  '@mux/mux-player@3.14.0':
+    resolution: {integrity: sha512-vb1czZOL+L1PA4hNbiLBO913CMtJ5LTvJ5hjck+ba93MNNpv/Ie86TxtvspXWK6fufEWiCoCH5GK81A/aEWQhw==}
 
-  '@mux/mux-video@0.31.0':
-    resolution: {integrity: sha512-DvO2GynIJhPDc0LMuWvC144lCF+E07NI+chrg/vcRQlCf2fPdNNqCSMoaRdWu2S2v/Orsc85giT9K6GRbjbzgA==}
+  '@mux/mux-video@0.31.5':
+    resolution: {integrity: sha512-Cs2SUiKhW5puhua071z6CDHFFKu1qtvAot0LtJBFrYIEN3CWTXJ6hrGpPr6JVVCtaTHXQ8nbArOQ70cI1A/gmw==}
 
-  '@mux/playback-core@0.35.0':
-    resolution: {integrity: sha512-7Zi1EJ9sQNIUlQVBjJCXV0CB+rUVEsU3vNRElRV4xnD7dbpoioIAhe1SjZNBifjnK5aBKLDwQHypbnL3Cw3a5A==}
+  '@mux/playback-core@0.36.0':
+    resolution: {integrity: sha512-HCACbUUDQ3j7dA9b7zqa9dsqjQOS6PlETPyiHYS4wfZiY0dciAQhIjymCBtpfXQg+WeSzD1Clsj2Uq0cMev36g==}
 
   '@napi-rs/wasm-runtime@1.1.5':
     resolution: {integrity: sha512-AWPoBRJ9tsnVhor4sjO7rkni+7p+2IAEFj6cx06UgP10jkQHqay/36uRV/bFkgrh18D9vb4cr8Q0Pthskgzy+Q==}
@@ -6779,6 +6781,9 @@ packages:
   '@types/google.maps@3.65.1':
     resolution: {integrity: sha512-O9monmoXfyWsuyR4Wz3TZU26qai9y7jUV7DSRySluae6O5tQt3Obw5ETt0HKfNsjctnlF/yx/Tfn3WQNmKRXZA==}
 
+  '@types/google_interactive_media_ads_types@3.697.1':
+    resolution: {integrity: sha512-gRjJoPKQRjjTuySHqZe8Pnu6a5B0bKbTUD2ioDLPSWlEuBaAc2p1mzUzy42SCeWkyYffo2Mnv+blUGuvVvx3dQ==}
+
   '@types/hast@3.0.4':
     resolution: {integrity: sha512-WPs+bbQw5aCj+x6laNGWLH3wviHtoCv/P3+otBhbOhJgG8qtpdAMlTCxLtsTWA7LH1Oh/bFCHsBn0TPS5m30EQ==}
 
@@ -9718,8 +9723,8 @@ packages:
   hermes-parser@0.25.1:
     resolution: {integrity: sha512-6pEjquH3rqaI6cYAXYPcz9MS4rY6R4ngRgrgfDshRptUZIc3lw0MCIJIGDj9++mfySOuPTHB4nrSW99BCvOPIA==}
 
-  hls.js@1.6.16:
-    resolution: {integrity: sha512-VSIRpLfRwlAAdGL4wiTucx2ScRipo0ed1FBatWkyt832jC4CReKstga6yIhYVwGu9LOBjuX9wzmRMeQdBJtzEA==}
+  hls.js@1.7.3:
+    resolution: {integrity: sha512-MsPlx6yVW4Qv4C7mEVou4/gk/5cN2dVxOTnrNjPSmyH2f0Ln+/UkG10Ax1PE6OvrmTVPKgQYozTtBaPOuCzq7A==}
 
   hogan.js@3.0.2:
     resolution: {integrity: sha512-RqGs4wavGYJWE07t35JQccByczmNUXQT0E12ZYV1VKYu5UiAU9lsos/yBAcf840+zrUQQxgVduCR5/B8nNtibg==}
@@ -10590,8 +10595,8 @@ packages:
   mdn-data@2.0.14:
     resolution: {integrity: sha512-dn6wd0uw5GsdswPFfsgMp5NSB0/aDe6fK94YJV/AJDYXL6HVLWBsxeq7js7Ad+mU2K9LAlwpk6kN2D5mwCPVow==}
 
-  media-chrome@4.19.1:
-    resolution: {integrity: sha512-1+x2l0mNulHKZN0lBxGJwJ+TV2W/KzLjaAd//UCGZz8GE5O5YNafFskWTcv/D6Ty0d9drX9SSfimOzGwob8eVQ==}
+  media-chrome@4.19.3:
+    resolution: {integrity: sha512-B5cPfn5FUTm3ki58QlEk2CB3xFo1i5jM1JavVN3bV81o09cokQC+qWVGVWZWY9Yoo6si9WeaQZUNn472WzbNVQ==}
 
   media-tracks@0.3.5:
     resolution: {integrity: sha512-l54rkKXlLBt3ob3zOLWHcnjvwUmX5bNEZ70igyapOZZC9imzqBmq1oz8p2roiV04KhjblFIi2hetLPF1oYVLRA==}
@@ -15422,7 +15427,7 @@ snapshots:
       '@coursebuilder/ui': 2.5.6(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@sinclair/typebox@0.29.6)(@standard-schema/spec@1.1.0)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(effect@3.21.3)(encoding@0.1.13)(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(typescript@5.4.5)(ws@8.21.0)(yup@0.32.11)
       '@heroicons/react': 2.2.0(react@19.2.3)
       '@hookform/resolvers': 3.10.0(react-hook-form@7.78.0(react@19.2.3))
-      '@mux/mux-player-react': 3.13.0(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@mux/mux-player-react': 3.14.0(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@radix-ui/react-alert-dialog': 1.1.18(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@radix-ui/react-slot': 1.3.0(@types/react@19.2.7)(react@19.2.3)
       '@radix-ui/react-switch': 1.3.2(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -16057,7 +16062,7 @@ snapshots:
       '@hookform/resolvers': 5.9.1(@sinclair/typebox@0.29.6)(@standard-schema/spec@1.1.0)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(effect@3.21.3)(react-hook-form@7.78.0(react@19.2.3))(yup@0.32.11)(zod@4.4.3)
       '@internationalized/date': 3.12.2
       '@lezer/highlight': 1.2.3
-      '@mux/mux-player-react': 3.13.0(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@mux/mux-player-react': 3.14.0(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@radix-ui/react-accordion': 1.2.15(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@radix-ui/react-alert-dialog': 1.1.18(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@radix-ui/react-checkbox': 1.3.6(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -17313,10 +17318,10 @@ snapshots:
     transitivePeerDependencies:
       - encoding
 
-  '@mux/mux-player-react@3.13.0(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@mux/mux-player-react@3.14.0(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
-      '@mux/mux-player': 3.13.0(react@19.2.3)
-      '@mux/playback-core': 0.35.0
+      '@mux/mux-player': 3.14.0(react@19.2.3)
+      '@mux/playback-core': 0.36.0
       prop-types: 15.8.1
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
@@ -17324,26 +17329,27 @@ snapshots:
       '@types/react': 19.2.7
       '@types/react-dom': 19.2.3(@types/react@19.2.7)
 
-  '@mux/mux-player@3.13.0(react@19.2.3)':
+  '@mux/mux-player@3.14.0(react@19.2.3)':
     dependencies:
-      '@mux/mux-video': 0.31.0
-      '@mux/playback-core': 0.35.0
-      media-chrome: 4.19.1(react@19.2.3)
+      '@mux/mux-video': 0.31.5
+      '@mux/playback-core': 0.36.0
+      media-chrome: 4.19.3(react@19.2.3)
       player.style: 0.3.4(react@19.2.3)
     transitivePeerDependencies:
       - react
 
-  '@mux/mux-video@0.31.0':
+  '@mux/mux-video@0.31.5':
     dependencies:
       '@mux/mux-data-google-ima': 0.3.17
-      '@mux/playback-core': 0.35.0
+      '@mux/playback-core': 0.36.0
+      '@types/google_interactive_media_ads_types': 3.697.1
       castable-video: 1.1.16
       custom-media-element: 1.4.6
       media-tracks: 0.3.5
 
-  '@mux/playback-core@0.35.0':
+  '@mux/playback-core@0.36.0':
     dependencies:
-      hls.js: 1.6.16
+      hls.js: 1.7.3
       mux-embed: 5.18.1
 
   '@napi-rs/wasm-runtime@1.1.5(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)':
@@ -21120,6 +21126,8 @@ snapshots:
 
   '@types/google.maps@3.65.1': {}
 
+  '@types/google_interactive_media_ads_types@3.697.1': {}
+
   '@types/hast@3.0.4':
     dependencies:
       '@types/unist': 3.0.3
@@ -24624,7 +24632,7 @@ snapshots:
     dependencies:
       hermes-estree: 0.25.1
 
-  hls.js@1.6.16: {}
+  hls.js@1.7.3: {}
 
   hogan.js@3.0.2:
     dependencies:
@@ -25577,7 +25585,7 @@ snapshots:
 
   mdn-data@2.0.14: {}
 
-  media-chrome@4.19.1(react@19.2.3):
+  media-chrome@4.19.3(react@19.2.3):
     dependencies:
       ce-la-react: 0.3.2(react@19.2.3)
     transitivePeerDependencies:
@@ -26864,7 +26872,7 @@ snapshots:
 
   player.style@0.3.4(react@19.2.3):
     dependencies:
-      media-chrome: 4.19.1(react@19.2.3)
+      media-chrome: 4.19.3(react@19.2.3)
     transitivePeerDependencies:
       - react
 
