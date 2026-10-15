@@ -25,7 +25,9 @@ beforeEach(() => {
 	vi.clearAllMocks()
 	vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
 })
-afterEach(() => vi.unstubAllEnvs())
+afterEach(() => {
+	vi.unstubAllEnvs()
+})
 
 function harness(receipt: unknown = { status: 'sent' }) {
 	const limit = vi.fn(async () => [{ contactId: 'contact-a' }])
@@ -35,7 +37,7 @@ function harness(receipt: unknown = { status: 'sent' }) {
 			from: () => ({ where: () => ({ orderBy: () => ({ limit }) }) }),
 		})
 	const where = vi.fn(async () => undefined)
-	const set = vi.fn(() => ({ where }))
+	const set = vi.fn((_values: Record<string, unknown>) => ({ where }))
 	mocks.update.mockReturnValue({ set })
 	const step = {
 		run: async (_id: string, fn: () => Promise<unknown>) => fn(),
