@@ -5,6 +5,7 @@ import type { ContactProfileSnapshot } from '@/lib/subscriber-marketing/drovr-co
 import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
 import {
 	contactProfileContentHash,
+	legacyContactProfileContentHash,
 	runContactProfileSync,
 } from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
 import { createMemoryContactProfileVersionStore } from '@/lib/subscriber-marketing/contact-profile-version'
@@ -202,7 +203,7 @@ describe('drovr contact profile sync function', () => {
 		expect(h.deliver).toHaveBeenNthCalledWith(2, [profileEvent])
 		expect(h.order.slice(-4)).toEqual([
 			'delta-deliver-profile',
-			'paced-birth:profile:contact-1:4',
+			'paced-birth:contact-1',
 			'paced-redeliver:profile:contact-1:4',
 			'delta-acknowledge-version',
 		])
@@ -342,7 +343,7 @@ describe('drovr contact profile sync function', () => {
 		expect(h.order).toEqual([
 			'sending-journey',
 			'read-profile',
-			'delta-profile-version',
+			'review-profile-version',
 			'delta-deliver-profile',
 			'delta-acknowledge-version',
 		])
@@ -367,6 +368,7 @@ describe('drovr contact profile sync function', () => {
 		expect(h.versionFor).toHaveBeenCalledWith(
 			'contact-1',
 			contactProfileContentHash(snapshot),
+			legacyContactProfileContentHash(snapshot),
 		)
 		expect(h.deliver).toHaveBeenCalledWith([
 			expect.objectContaining({

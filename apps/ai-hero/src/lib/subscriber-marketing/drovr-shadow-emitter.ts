@@ -1192,7 +1192,7 @@ export async function deliverDrovrShadowEvent(args: {
 				return {
 					status: 'failed',
 					httpStatus: 409,
-					reason: 'drovr does not take this event type yet (409 event-not-live)',
+					reason: 'event-not-live: you sent an event, and it failed because this contact is not migrated. Accepted: the same immutable event and key later. Fix: retry after the straggler pass. Debug: inspect the directory migration receipt.',
 				}
 			}
 			// Row 204c: a stop's answer goes through the one stop rule. A stop

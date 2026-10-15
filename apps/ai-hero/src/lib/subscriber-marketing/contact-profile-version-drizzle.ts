@@ -42,7 +42,7 @@ export function createDrizzleContactProfileVersionStore(
 			const row = rows[0]
 			return row ? { profileVersion: Number(row.version), since: isoOf(row.updatedAt), contentHash: row.hash, acknowledged: Number(row.acknowledgedVersion) === Number(row.version) } : undefined
 		},
-		async versionFor(contactId, contentHash) {
+		async versionFor(contactId, contentHash, legacyHash) {
 			for (let attempt = 0; attempt < BUMP_ATTEMPTS; attempt += 1) {
 				const rows = (await db
 					.select({
@@ -60,6 +60,11 @@ export function createDrizzleContactProfileVersionStore(
 					updatedAt: string | Date
 				}[]
 				const current = rows[0]
+				if (current?.hash && !current.hash.startsWith('v2:') && current.hash === legacyHash) {
+					const changed = await db.update(contactProfileVersion).set({ profileHash: contentHash, updatedAt: sql`${contactProfileVersion.updatedAt}` }).where(and(byContact(contactId), eq(contactProfileVersion.profileVersion, Number(current.version)), eq(contactProfileVersion.profileHash, current.hash)))
+					if (affectedRows(changed) !== 1) continue
+					return { profileVersion: Number(current.version), since: isoOf(current.updatedAt), acknowledged: current.acknowledgedVersion !== null && Number(current.acknowledgedVersion) === Number(current.version), migrated: true }
+				}
 				if (current && !profileVersionBump({ kind: 'profile-change', previousHash: current.hash ?? undefined, nextHash: contentHash })) {
 					return {
 						profileVersion: Number(current.version),

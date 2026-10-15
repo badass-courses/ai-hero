@@ -30,6 +30,9 @@ const mocks = vi.hoisted(() => ({
 	valuePathBulkFreeze: vi.fn(),
 	readBirthOptOuts: vi.fn(),
 	pace: vi.fn(),
+	deliveredKeys: vi.fn(),
+	reject: vi.fn(),
+	readOffer: vi.fn(),
 }))
 
 // The freeze window's calendar is pinned in drovr-bulk-freeze.test.ts; here
@@ -41,7 +44,11 @@ vi.mock('@/lib/subscriber-marketing/drovr-bulk-freeze', async (original) => ({
 	valuePathBulkFreeze: mocks.valuePathBulkFreeze,
 }))
 
-vi.mock('@/lib/subscriber-marketing/drovr-bulk-pace', () => ({ reserveDrovrBulkSlot: mocks.pace }))
+vi.mock('@/lib/subscriber-marketing/drovr-bulk-pace', async original => {
+	const actual = await original<typeof import('@/lib/subscriber-marketing/drovr-bulk-pace')>()
+	return { ...actual, waitForBulkSlot: (step: Parameters<typeof actual.waitForBulkSlot>[0], id: string, kind: Parameters<typeof actual.waitForBulkSlot>[2]) => actual.waitForBulkSlot(step, id, kind, mocks.pace) }
+})
+vi.mock('@/lib/subscriber-marketing/contact-sync-offer-refresh', async original => ({ ...await original<typeof import('@/lib/subscriber-marketing/contact-sync-offer-refresh')>(), readCurrentOfferAfterProfile: mocks.readOffer }))
 
 vi.mock('@/env.mjs', () => ({
 	env: { DROVR_SHADOW_INGEST_URL: 'https://drovr.test/events' },
@@ -81,6 +88,8 @@ vi.mock('@/lib/subscriber-marketing/drovr-outbox-live', () => ({
 	holdDrovrStopsLive: mocks.hold,
 	openDrovrOutboxStopsLive: mocks.openStops,
 	settleDrovrOutboxLive: mocks.settle,
+	deliveredDrovrOutboxKeysLive: mocks.deliveredKeys,
+	rejectDrovrOutboxLive: mocks.reject,
 }))
 
 import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
@@ -95,6 +104,9 @@ import {
 	DROVR_CLAMP_INSTANT_STEP,
 	drovrEventsDeliver,
 	drovrEventsDeliverBulk,
+	drovrEventsDeliverDelta,
+	drovrEventsDeliverRestate,
+	drovrEventsDeliverIngest,
 	inDeliveryOrder,
 	outboxFailedRun,
 } from './drovr-events-deliver'
@@ -112,6 +124,7 @@ const DELIVERY_SOURCES = [
 	'drovr-owned-signup',
 	'kit-directory-ingest',
 	'contact-profile-sync',
+	'contact-profile-restate',
 	'contact-sync-backfill',
 	'evergreen-pitch-backfill',
 ] as const satisfies readonly DrovrDeliverySource[]
@@ -123,6 +136,8 @@ const everySourceListed: [
 
 type Step = {
 	run: (id: string, operation: () => unknown) => Promise<unknown>
+	sleepUntil: (id: string, date: Date) => Promise<unknown>
+	sendEvent: (id: string, event: unknown) => Promise<unknown>
 }
 
 type Registered = {
@@ -140,6 +155,9 @@ type Registered = {
 
 const registered = drovrEventsDeliver as unknown as Registered
 const registeredBulk = drovrEventsDeliverBulk as unknown as Registered
+const registeredDelta = drovrEventsDeliverDelta as unknown as Registered
+const registeredRestate = drovrEventsDeliverRestate as unknown as Registered
+const registeredIngest = drovrEventsDeliverIngest as unknown as Registered
 
 const event = (
 	tenantId: 'org-aihero' | 'org-aihero-shadow',
@@ -153,15 +171,22 @@ const event = (
 	type,
 	occurredAt: '2026-09-21T12:00:00.000Z',
 	idempotencyKey,
+	...(['contact.profile.updated', 'contact.links.issued', 'contact.offer.issued'].includes(type) ? { payload: { profileVersion: 1 } } : {}),
 })
 
 const createStep = (): Step => ({
 	run: vi.fn(async (_id, operation) => operation()),
+	sleepUntil: vi.fn(async () => undefined),
+	sendEvent: vi.fn(async () => undefined),
 })
 
 beforeEach(() => {
 	vi.clearAllMocks()
-	mocks.pace.mockResolvedValue(undefined)
+	mocks.pace.mockResolvedValue(0)
+	mocks.deliveredKeys.mockResolvedValue([])
+	mocks.readOffer.mockResolvedValue([])
+	mocks.settle.mockResolvedValue(1)
+	mocks.reject.mockResolvedValue(undefined)
 	mocks.valuePathBulkFreeze.mockReturnValue({ frozen: false })
 	mocks.openStops.mockResolvedValue([])
 	mocks.readBirthOptOuts.mockResolvedValue([])
@@ -280,6 +305,72 @@ describe('value-path birth admission', () => {
 })
 
 describe('drovr events deliver registration', () => {
+	it('isolates capped deltas, confirmations and ingest from the old backfill backlog', () => {
+		expect(registeredDelta.trigger.event).toBe('drovr/events.deliver.delta')
+		expect(registeredRestate.trigger.event).toBe('drovr/events.deliver.restate')
+		expect(registeredIngest.trigger.event).toBe('drovr/events.deliver.ingest')
+		expect(new Set([registered, registeredBulk, registeredDelta, registeredRestate, registeredIngest].map(worker => worker.config.id)).size).toBe(5)
+	})
+	it.each([[registeredDelta, 'contact-profile-sync', 'contact.profile.updated'], [registeredIngest, 'kit-directory-ingest', 'contact.created']])('shards large inputs into five-event children on their own worker before taking any HTTP slots', async (worker, source, type) => {
+		const registeredWorker = worker as Registered
+		const events = Array.from({ length: 21 }, (_, index) => event('org-aihero', `shard-${index}`, 'contact-directory', type as string))
+		const step = createStep()
+		await registeredWorker.handler({ events: [{ data: { source, events } }], step })
+		const shards = (step.sendEvent as ReturnType<typeof vi.fn>).mock.calls[0]![1] as { name: string; data: { events: unknown[] } }[]
+		expect(shards.map(shard => shard.data.events.length)).toEqual([5, 5, 5, 5, 1])
+		expect(shards.flatMap(shard => shard.data.events)).toEqual(events)
+		expect(shards.every(shard => shard.name === registeredWorker.trigger.event)).toBe(true)
+		expect(mocks.pace).not.toHaveBeenCalled()
+		expect(mocks.deliverBatchOrThrow).not.toHaveBeenCalled()
+	})
+	it('settles pre-captured profile and link rows by key on the first attempt, and skips a row already delivered by replay', async () => {
+		mocks.fanOutOwnedEvents.mockImplementation(events => events)
+		const profile = event('org-aihero', 'profile:contact-1:1', 'contact-directory', 'contact.profile.updated')
+		const link = event('org-aihero', 'links:contact-1:journey:email:v1', 'contact-directory', 'contact.links.issued')
+		const run = () => registeredDelta.handler({ events: [{ data: { source: 'contact-profile-sync', events: [profile, link] } }], step: createStep(), attempt: 0, maxAttempts: 9 })
+		await run()
+		for (const item of [profile, link]) expect(mocks.settle).toHaveBeenCalledWith([expect.objectContaining({ idempotencyKey: item.idempotencyKey })], 'delivered by an Inngest retry')
+		mocks.deliverBatchOrThrow.mockClear()
+		mocks.deliveredKeys.mockImplementation(async entries => entries.map((entry: { idempotencyKey: string }) => entry.idempotencyKey))
+		await run()
+		expect(mocks.deliverBatchOrThrow).not.toHaveBeenCalled()
+	})
+	it('rechecks delivery after a durable wait, so a winning replay is not posted again', async () => {
+		mocks.fanOutOwnedEvents.mockImplementation(events => events)
+		const profile = event('org-aihero', 'profile:contact-1:1', 'contact-directory', 'contact.profile.updated')
+		mocks.deliveredKeys.mockResolvedValueOnce([]).mockResolvedValueOnce([profile.idempotencyKey])
+		const tools = createStep()
+		await registeredDelta.handler({ events: [{ data: { source: 'contact-profile-sync', events: [profile] } }], step: tools })
+		expect(mocks.deliverBatchOrThrow).not.toHaveBeenCalled()
+		expect(tools.sendEvent).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ data: expect.objectContaining({ offerRefresh: { contactId: 'contact-1', profileVersion: 1 } }) }))
+	})
+	it('refreshes the newest offer only after the profile POST lands, on the same capped class', async () => {
+		mocks.fanOutOwnedEvents.mockImplementation(events => events)
+		const profile = event('org-aihero', 'profile:contact-1:1', 'contact-directory', 'contact.profile.updated')
+		const tools = createStep()
+		await registeredDelta.handler({ events: [{ data: { source: 'contact-profile-sync', events: [profile] } }], step: tools })
+		const calls = (tools.sendEvent as ReturnType<typeof vi.fn>).mock.calls
+		const refresh = calls[0]![1]
+		expect(refresh).toMatchObject({ name: 'drovr/events.deliver.delta', data: { source: 'contact-profile-sync', events: [], offerRefresh: { contactId: 'contact-1', profileVersion: 1 } } })
+		expect((tools.sendEvent as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]!).toBeGreaterThan(mocks.deliverBatchOrThrow.mock.invocationCallOrder[0]!)
+		const offer = event('org-aihero', 'offer:contact-1:coupon-new:v1', 'offer', 'contact.offer.issued')
+		mocks.readOffer.mockResolvedValue([offer])
+		await registeredDelta.handler({ events: [refresh], step: createStep() })
+		expect(mocks.deliverBatchOrThrow).toHaveBeenLastCalledWith(expect.objectContaining({ events: [offer] }))
+		expect(mocks.pace.mock.calls.map(([kind]) => kind)).toEqual(['delta', 'delta'])
+	})
+	it('does not settle deferred profiles or queue a refresh before they land', async () => {
+		mocks.fanOutOwnedEvents.mockImplementation(events => events)
+		const profile = event('org-aihero', 'profile:contact-1:1', 'contact-directory', 'contact.profile.updated')
+		mocks.deliverBatchOrThrow.mockResolvedValue({ accepted: 0, rejected: 0, deferred: [{ event: profile, reason: 'event-not-live' }] })
+		const tools = createStep()
+		await registeredDelta.handler({ events: [{ data: { source: 'contact-profile-sync', events: [profile] } }], step: tools })
+		expect(mocks.settle).not.toHaveBeenCalled()
+		const sends = (tools.sendEvent as ReturnType<typeof vi.fn>).mock.calls.map(([, value]) => value)
+		expect(sends.some(value => value.data?.offerRefresh)).toBe(false)
+		expect(sends).toContainEqual(expect.objectContaining({ name: 'drovr/contact-sync.retry-requested', data: expect.objectContaining({ paceClass: 'delta' }) }))
+	})
+
 	it('reserves once per actual profile/link/offer event, with the profile first', async () => {
 		mocks.fanOutOwnedEvents.mockImplementation((events) => events)
 		const events = ['contact.profile.updated', 'contact.links.issued', 'contact.offer.issued'].map((type, i) => event('org-aihero', `delta-${i}`, 'contact-directory', type))
@@ -301,12 +392,10 @@ describe('drovr events deliver registration', () => {
 		const bulk = DELIVERY_SOURCES.filter(
 			(source) => deliverEventNameFor(source) === 'drovr/events.deliver.bulk',
 		)
-		expect(bulk).toEqual([
-			'kit-directory-ingest',
-			'contact-profile-sync',
-			'contact-sync-backfill',
-			'evergreen-pitch-backfill',
-		])
+		expect(bulk).toEqual(['contact-sync-backfill', 'evergreen-pitch-backfill'])
+		expect(deliverEventNameFor('contact-profile-sync')).toBe('drovr/events.deliver.delta')
+		expect(deliverEventNameFor('contact-profile-restate')).toBe('drovr/events.deliver.restate')
+		expect(deliverEventNameFor('kit-directory-ingest')).toBe('drovr/events.deliver.ingest')
 		// Signups, Kit webhooks (a DOI confirm, an unsubscribe), captured
 		// purchases and every other live fact go to the live function, which
 		// has its own queue and no throttle, so a running backfill of any
@@ -653,6 +742,7 @@ describe('a rollback between retries of a mixed bulk run', () => {
 		// Inngest replays a completed step.run by id; model that memo.
 		const memo = new Map<string, unknown>()
 		const memoStep = (): Step => ({
+			...createStep(),
 			run: vi.fn(async (id: string, operation: () => unknown) => {
 				if (memo.has(id)) return memo.get(id)
 				const result = await operation()
@@ -661,7 +751,7 @@ describe('a rollback between retries of a mixed bulk run', () => {
 			}),
 		})
 		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
-		const backfill = Array.from({ length: 100 }, (_, index) =>
+		const backfill = Array.from({ length: 2 }, (_, index) =>
 			event(
 				'org-aihero',
 				`profile:contact-${index}:v1`,
@@ -692,15 +782,15 @@ describe('a rollback between retries of a mixed bulk run', () => {
 			},
 		)
 		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
-		await expect(run()).rejects.toThrow('drovr 503')
-		// drovr rolls back: the flag goes off before the retry.
+		expect(await run()).toMatchObject({ accepted: 3 })
+		const beforeRollback = posted.length
+		// Replaying completed steps after a rollback never posts them again.
 		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', '')
-		await run()
+		expect(await run()).toMatchObject({ accepted: 1, backfillDropped: 2 })
 		vi.unstubAllEnvs()
 		expect(posted).toContainEqual(ingest)
 		// And no backfill event reached drovr after the flag went off.
-		const afterOff = posted.slice(1).flat()
-		expect(afterOff.some((e) => backfill.includes(e as never))).toBe(false)
+		expect(posted).toHaveLength(beforeRollback)
 	})
 })
 
@@ -749,12 +839,14 @@ describe('backfill refusals follow the push contract (§4)', () => {
 		)
 		// The straggler retry's own request (its id, and 1 h for a refusal);
 		// a cold start goes at once, since the retry births the actor.
-		expect(sent).toEqual([
+		expect(sent.filter(Array.isArray)).toEqual([
 			[
 				contactSyncRetryRequest(
 					[{ event: notLive, reason: 'event-not-live' }] as DeferredDrovrEvent[],
 					1,
 					now,
+					undefined,
+					'backfill',
 				),
 				{
 					...contactSyncRetryRequest(
@@ -763,12 +855,14 @@ describe('backfill refusals follow the push contract (§4)', () => {
 						] as DeferredDrovrEvent[],
 						1,
 						now,
+						undefined,
+						'backfill',
 					),
 					ts: now,
 				},
 			],
 		])
-		expect((sent[0] as { ts: number }[])[0]?.ts).toBe(now + 60 * 60 * 1000)
+		expect((sent.filter(Array.isArray)[0] as { ts: number }[])[0]?.ts).toBe(now + 60 * 60 * 1000)
 		expect(receipt).toMatchObject({ accepted: 1, deferred: 2 })
 	})
 
@@ -857,6 +951,7 @@ describe('owner-copy stops drovr says never started the journey', () => {
 		// without running the body again.
 		const memo = new Map<string, unknown>()
 		const step: Step = {
+			...createStep(),
 			run: vi.fn(async (id: string, operation: () => unknown) => {
 				if (!memo.has(id)) memo.set(id, await operation())
 				return memo.get(id)
@@ -1067,8 +1162,8 @@ describe('row 204: a drovr 5xx never loses a live or bulk event', () => {
 					}[]
 				).map((entry) => [entry.idempotencyKey, entry.source]),
 			).toEqual([
-				['kit:birth:1', 'bulk'],
-				['kit:birth:2', 'bulk'],
+				['kit:birth:1', 'bulkIngest'],
+				['kit:birth:2', 'bulkIngest'],
 			])
 		},
 	)
@@ -1650,8 +1745,8 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 		expect(receipt).toMatchObject({ rejected: 0, heldStops: 1 })
 	})
 
-	it("captures only a bulk chunk's stops on its first failure", async () => {
-		mocks.deliverBatchOrThrow.mockRejectedValue(drovrFailure(503))
+	it("captures only a bulk chunk's stops on its first failure, then reserves again before its durable HTTP retry", async () => {
+		mocks.deliverBatchOrThrow.mockRejectedValueOnce(drovrFailure(503))
 		await expect(
 			registeredBulk.handler({
 				events: [
@@ -1669,7 +1764,8 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 				attempt: 0,
 				maxAttempts: 9,
 			}),
-		).rejects.toMatchObject({ name: 'RetryAfterError' })
+		).resolves.toMatchObject({ accepted: 2 })
+		expect(mocks.pace).toHaveBeenCalledTimes(3)
 		expect(
 			(mocks.capture.mock.calls[0]![0] as { idempotencyKey: string }[]).map(
 				(e) => e.idempotencyKey,
@@ -1678,7 +1774,7 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 	})
 
 	it('holds a later fact listed in an earlier bulk chunk behind a stop listed last (time order across chunks)', async () => {
-		const fillers = Array.from({ length: 99 }, (_, i) =>
+		const fillers = Array.from({ length: 3 }, (_, i) =>
 			fact(`owner:filler-${i}`, 15, `contact-f${i}`),
 		)
 		mocks.deliverBatchOrThrow.mockImplementation(
@@ -1717,7 +1813,7 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 		// replaying a memoized chunk that now holds other events.
 		expect(
 			(step.run as ReturnType<typeof vi.fn>).mock.calls.map(([id]) => id),
-		).toContain('paced-single:batch:org-aihero:0')
+		).toContain('paced-single:batch:org-aihero:0:attempt:8')
 	})
 
 	it("posts a birth ahead of its own contact's earlier stop, as the replay does: [birth 12:20, purchase 12:10] → birth first, nothing refused (Sonnet S6, round 3)", async () => {
@@ -1786,7 +1882,7 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 	})
 
 	it('holds a later fact in a later chunk behind a stop an earlier chunk outboxed', async () => {
-		const fillers = Array.from({ length: 99 }, (_, i) =>
+		const fillers = Array.from({ length: 3 }, (_, i) =>
 			fact(`owner:filler-${i}`, 15, `contact-f${i}`),
 		)
 		mocks.deliverBatchOrThrow.mockImplementation(
@@ -1813,9 +1909,9 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 			...LAST,
 		})
 		// Single-event sends isolate other contacts from an owed stop.
-		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledTimes(100)
+		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledTimes(4)
 		expect(receipt).toMatchObject({
-			accepted: 99,
+			accepted: 3,
 			outboxed: 2,
 			heldBehindStop: 1,
 		})
@@ -2077,6 +2173,7 @@ const memoStep = () => {
 	const done = new Map<string, unknown>()
 	const ran: string[] = []
 	const step: Step = {
+		...createStep(),
 		run: vi.fn(async (id: string, operation: () => unknown) => {
 			if (done.has(id)) return done.get(id)
 			ran.push(id)
@@ -2173,7 +2270,7 @@ describe('row 201g (#345 S1): a run clamps its births at its first send, on ever
 			mocks.deliverBatchOrThrow.mock.calls.map(
 				([args]) => (args as { clampAt: number }).clampAt,
 			),
-		).toEqual([FIRST, FIRST, FIRST])
+		).toEqual(Array(9).fill(FIRST))
 		expect(ran.filter((id) => id === DROVR_CLAMP_INSTANT_STEP)).toHaveLength(1)
 		expect(mocks.capture).toHaveBeenCalledWith(
 			[
@@ -2210,8 +2307,8 @@ describe('row 201g (#345 S1): a run clamps its births at its first send, on ever
 		const calls = mocks.deliverBatchOrThrow.mock.calls.map(
 			([args]) => args as { clampAt: number; deferNotLive?: boolean },
 		)
-		expect(calls.map(({ deferNotLive }) => deferNotLive)).toEqual([true, true])
-		expect(calls.map(({ clampAt }) => clampAt)).toEqual([FIRST, FIRST])
+		expect(calls.map(({ deferNotLive }) => deferNotLive)).toEqual(Array(9).fill(true))
+		expect(calls.map(({ clampAt }) => clampAt)).toEqual(Array(9).fill(FIRST))
 		expect(
 			ran.filter((id) => id.endsWith(DROVR_CLAMP_INSTANT_STEP)),
 		).toHaveLength(1)

@@ -3,7 +3,6 @@ import { inngest } from '@/inngest/inngest.server'
 import { DROVR_SEND_RETRIES } from '@/lib/subscriber-marketing/drovr-outbox'
 import { runContactProfileSync } from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
 import { queueContactSyncBulk } from '@/lib/subscriber-marketing/contact-sync-bulk'
-import { syncDeliveryLane } from '@/lib/subscriber-marketing/contact-sync-deltas'
 import { captureDrovrOutboxLive } from '@/lib/subscriber-marketing/drovr-outbox-live'
 
 export const drovrContactProfileSync = inngest.createFunction(
@@ -76,10 +75,11 @@ export const drovrContactProfileSync = inngest.createFunction(
 					warn: log.warn,
 				}),
 			currentVersion: (contactId) => createDrizzleContactProfileVersionStore(db).currentFor(contactId),
-			versionFor: (contactId, contentHash) =>
+			versionFor: (contactId, contentHash, legacyHash) =>
 				createDrizzleContactProfileVersionStore(db).versionFor(
 					contactId,
 					contentHash,
+					legacyHash,
 				),
 			acknowledge: (contactId, profileVersion) =>
 				createDrizzleContactProfileVersionStore(db).acknowledge(
@@ -89,8 +89,8 @@ export const drovrContactProfileSync = inngest.createFunction(
 			deliver: async (events) => {
 				// Coupons use the existing live completion path. Profile changes,
 				// link rotations and restatements never post on that queue.
-				if (syncDeliveryLane(event.data.reason) === 'bulk')
-					return queueContactSyncBulk(events, { capture: captureDrovrOutboxLive, send: (events) => inngest.send(events) })
+				if (event.data.reason !== 'offer-issued')
+					return queueContactSyncBulk(events, { capture: captureDrovrOutboxLive, send: (events) => inngest.send(events) }, { restate: events.every(item => item.idempotencyKey.includes(':restate:')) })
 				const ingestUrl = env.DROVR_SHADOW_INGEST_URL
 				const apiKey = drovrApiKeyForTenant(DROVR_AUTHORITY_TENANT_ID)
 				if (!ingestUrl || !apiKey) return 'not-configured'

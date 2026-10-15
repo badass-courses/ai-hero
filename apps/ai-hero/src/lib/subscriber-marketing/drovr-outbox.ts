@@ -144,6 +144,10 @@ export type DrovrOutboxEndpoint = 'events' | 'signups'
 export type DrovrOutboxSource =
 	| 'live'
 	| 'bulk'
+	| 'bulkDelta'
+	| 'bulkRestate'
+	| 'bulkIngest'
+	| 'bulkBackfill'
 	| 'signup'
 	| 'fallback'
 	| 'onFailure'
@@ -609,6 +613,7 @@ export async function settleDrovrOutbox(args: {
 }
 
 export type DrovrOutboxPostOutcome =
+	| { kind: 'queued'; nextAttemptAt: string }
 	| { kind: 'delivered'; httpStatus?: number }
 	/** A 4xx for the row or one of its owner copies: final, alerted. */
 	| {
@@ -966,6 +971,10 @@ export async function runDrovrOutboxReplay(args: {
 		}
 		const attempts = row.attempts + 1
 		const at = args.now().toISOString()
+		if (outcome.kind === 'queued') {
+			await args.store.update(row.id, { nextAttemptAt: outcome.nextAttemptAt, lastAttemptAt: at, lastError: 'queued on isolated capped delivery worker' })
+			continue
+		}
 		if (outcome.kind === 'delivered' || outcome.kind === 'settled') {
 			consecutiveFailures = 0
 			receipt[outcome.kind] += 1

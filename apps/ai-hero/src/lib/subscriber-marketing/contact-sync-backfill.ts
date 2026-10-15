@@ -1,6 +1,8 @@
 import {
 	DROVR_EVENTS_DELIVER_BULK_EVENT,
 } from '@/inngest/events/drovr'
+import { NonRetriableError } from 'inngest'
+import { requireBoundBackfillApproval, type BackfillApprovals } from './contact-sync-backfill-approval'
 import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
 
 import type { ContactProfileVersion } from './contact-profile-version'
@@ -8,6 +10,7 @@ import { parseDrovrProfileSyncConfig } from './drovr-contact-profile-sync-reques
 import {
 	buildContactProfileEvents,
 	contactProfileContentHash,
+	legacyContactProfileContentHash,
 	type ContactProfileSnapshot,
 } from './drovr-contact-profile-sync'
 import { DOI_REQUESTED_EVENT_TYPE } from './drovr-doi-signup'
@@ -61,6 +64,8 @@ export type BackfillRow = {
 
 export type BackfillPorts = {
 	now(): number
+	countEvents?(eventType: string): Promise<number>
+	approvals?: BackfillApprovals
 	/** ContactEvents of one type after (occurredAt, id), in that order. */
 	scanEvents(args: {
 		eventType: string
@@ -75,7 +80,10 @@ export type BackfillPorts = {
 	versionFor(
 		contactId: string,
 		contentHash: string,
+		legacyHash?: string,
 	): Promise<ContactProfileVersion>
+	/** Capture the entire page before publishing or acknowledging a version. */
+	persistEvents(events: DrovrShadowEvent[]): Promise<unknown>
 	/** The live dispatch's facts for these stops (stopFactsFor), directory stop included. */
 	liveStopFacts(rows: BackfillRow[]): Promise<DrovrShadowEvent[]>
 }
@@ -109,7 +117,7 @@ function stopIndexOf(stopBefore: BackfillStopBefore | undefined) {
 		stopBefore === 'stops' ? BACKFILL_STOP_PHASES[0] : stopBefore,
 	)
 	if (index <= 0)
-		throw new Error(
+		throw new NonRetriableError(
 			'BackfillPhase: you requested a phase boundary, and it failed because stopBeforePhase does not follow owners. Accepted: double-opt-in, stops, or a stop event phase. Fix: choose a supported stopBeforePhase. Debug: inspect the saved cursor.',
 		)
 	return index
@@ -169,12 +177,14 @@ export async function runContactSyncBackfillPage(
 			const { profileVersion, since } = await ports.versionFor(
 				contactId,
 				contactProfileContentHash(snapshot),
+				legacyContactProfileContentHash(snapshot),
 			)
 			events.push(
 				...buildContactProfileEvents({
 					contactId,
 					profileVersion,
 					...snapshot,
+					offers: [],
 					occurredAt: since,
 				}),
 			)
@@ -233,6 +243,7 @@ export type BackfillReceipt =
 			pages: number
 			contacts: number
 			events: number
+			approvalToken?: string
 	  }
 
 /**
@@ -249,6 +260,7 @@ export async function runContactSyncBackfill(args: {
 			canary?: boolean
 			dryRunCount?: number
 			canaryConfirmed?: boolean
+			approvalToken?: string
 			cursor?: BackfillCursor
 			maxPages?: number
 			stopBeforePhase?: BackfillStopBefore
@@ -262,28 +274,27 @@ export async function runContactSyncBackfill(args: {
 }): Promise<BackfillReceipt> {
 	const config = parseDrovrProfileSyncConfig(args.env)
 	if (!config.enabled) return { status: 'skipped', reason: config.reason }
-	if (args.event.data.dryRun === true) {
+	const countAll = async () => {
+		if (!args.ports.countEvents) throw new NonRetriableError('BackfillCount: you requested a count, and it failed because the bounded count port is unavailable. Accepted: one COUNT(*) per phase. Fix: restore the count adapter. Debug: inspect the backfill wiring.')
 		let rows = 0
-		for (const phase of PHASES) {
-			let after: BackfillRow | undefined
-			for (let page = 0; ; page++) {
-				const from = after
-				const scanned = (await args.step.run(`count:${phase}:${page}`, () => args.ports.scanEvents({ eventType: phase === 'owners' ? JOURNEY_OWNER_ASSIGNED_EVENT_TYPE : phase === 'double-opt-in' ? DOI_REQUESTED_EVENT_TYPE : phase, afterOccurredAt: from?.occurredAt, afterId: from?.id, limit: 500 }))) as BackfillRow[]
-				rows += scanned.length
-				if (scanned.length < 500) break
-				after = scanned.at(-1)
-			}
-		}
-		return { status: 'dry-run', rows }
+		for (const phase of PHASES) rows += await args.step.run(`count:${phase}`, () => args.ports.countEvents!(phase === 'owners' ? JOURNEY_OWNER_ASSIGNED_EVENT_TYPE : phase === 'double-opt-in' ? DOI_REQUESTED_EVENT_TYPE : phase)) as number
+		return rows
 	}
+	if (args.event.data.dryRun === true) return { status: 'dry-run', rows: await countAll() }
 	requireBackfillCanary(args.event.data)
+	if (!args.ports.approvals) throw new NonRetriableError('BackfillApprovalStore: you requested a canary, and it failed because continuation approvals cannot be recorded. Accepted: a durable single-use approval store. Fix: restore it before applying. Debug: inspect the cursor table adapter.')
 	const firstCanary = args.event.data.cursor === undefined
+	// Recount before the first write: an invented dryRunCount cannot grant a
+	// canary. Later phases require a single-use grant from a real canary/slice.
+	if (firstCanary) {
+		if (await countAll() !== args.event.data.dryRunCount) throw new NonRetriableError('BackfillCountChanged: you requested a canary, and it failed because the count differs from the dry-run receipt. Accepted: a fresh matching count. Fix: rerun dryRun and inspect it. Debug: compare the phase totals.')
+	} else await args.step.run('consume-approval', () => requireBoundBackfillApproval(args.event.data, args.ports.approvals))
 	// A capped run (the first one is a one-page canary) stops after its
 	// pages and never re-queues: an operator checks drovr, then sends the
 	// receipt's cursor back to go on.
 	const { maxPages, stopBeforePhase } = args.event.data
 	if (maxPages !== undefined && !(Number.isInteger(maxPages) && maxPages > 0))
-		throw new Error('BackfillPages: you requested a slice, and it failed because maxPages is not a positive integer. Accepted: a positive whole number. Fix: set a bounded page count. Debug: inspect the request payload.')
+		throw new NonRetriableError('BackfillPages: you requested a slice, and it failed because maxPages is not a positive integer. Accepted: a positive whole number. Fix: set a bounded page count. Debug: inspect the request payload.')
 	const stopIndex = stopIndexOf(stopBeforePhase)
 	const atStop = (at: BackfillCursor) =>
 		stopIndex !== undefined &&
@@ -306,6 +317,7 @@ export async function runContactSyncBackfill(args: {
 			}),
 		)) as BackfillPage
 		if (page.events.length > 0) {
+			await args.step.run(`persist-${index}`, () => args.ports.persistEvents(page.events))
 			const batches = []
 			for (let start = 0; start < page.events.length; start += BULK_BATCH_MAX)
 				batches.push({
@@ -322,6 +334,8 @@ export async function runContactSyncBackfill(args: {
 		events += page.events.length
 		cursor = page.next
 	}
+	if (firstCanary && contacts !== 1) throw new NonRetriableError('BackfillContact: you requested a canary, and it failed because exactly one eligible contact was not queued. Accepted: a verified one-contact canary. Fix: inspect the first candidate and its directory scope before proceeding. Debug: inspect the page receipt; no continuation token was granted.')
+	const approvalToken = cursor.phase !== 'done' && args.ports.approvals ? await args.step.run('issue-next-approval', () => args.ports.approvals!.issue({ kind: 'continue', rows: args.event.data.dryRunCount!, cursor })) as string : undefined
 	// Dungeon: every continuation is an explicit operator command. Runs
 	// queued before this deploy drain this bounded slice and stop here.
 	return {
@@ -333,5 +347,6 @@ export async function runContactSyncBackfill(args: {
 		pages,
 		contacts,
 		events,
+		...(approvalToken ? { approvalToken } : {}),
 	}
 }

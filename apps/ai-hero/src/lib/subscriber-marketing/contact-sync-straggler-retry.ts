@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import type { BulkClass } from './drovr-bulk-pace'
 
 import {
 	CONTACT_SYNC_RETRY_EVENT,
@@ -48,6 +49,7 @@ export function contactSyncRetryRequest(
 	attempt: number,
 	nowMs: number,
 	acknowledge?: RetryAcknowledgement,
+	paceClass?: BulkClass,
 ): DrovrContactSyncRetryRequested & { id: string; ts: number } {
 	const keys = items.map((item) => item.event.idempotencyKey).sort()
 	const digest = createHash('sha256').update(keys.join('\0')).digest('hex')
@@ -55,7 +57,7 @@ export function contactSyncRetryRequest(
 		name: CONTACT_SYNC_RETRY_EVENT,
 		id: `contact-sync-retry:${attempt}:${digest}`,
 		ts: nowMs + stragglerRetryDelayMs(attempt),
-		data: acknowledge ? { items, attempt, acknowledge } : { items, attempt },
+		data: { items, attempt, ...(acknowledge ? { acknowledge } : {}), ...(paceClass ? { paceClass } : {}) },
 	}
 }
 
@@ -110,6 +112,9 @@ export function createDirectoryBirth(args: {
  */
 export async function birthThenRedeliver(args: {
 	deferred: DeferredDrovrEvent[]
+	pacedDeliver?: (id: string, events: DrovrShadowEvent[]) => Promise<DrovrBatchOutcome>
+	pacedBirth?: (id: string, contacts: string[]) => Promise<void>
+	afterProfile?: (event: DrovrShadowEvent) => Promise<void>
 	step: RetryStep
 	birth: (contactIds: string[]) => Promise<void>
 	deliver: (events: DrovrShadowEvent[]) => Promise<DrovrBatchOutcome>
@@ -124,9 +129,16 @@ export async function birthThenRedeliver(args: {
 	if (cold.length === 0)
 		return { deferred: args.deferred, accepted: 0, rejected: 0 }
 	const result = { deferred: args.deferred.filter((item) => item.reason !== 'cold-start-unhandled'), accepted: 0, rejected: 0 }
+	const born = new Set<string>()
 	for (const { event } of cold) {
-		await args.step.run(`paced-birth:${event.idempotencyKey}`, () => args.birth([event.contactId]))
-		const answer = (await args.step.run(`paced-redeliver:${event.idempotencyKey}`, () => args.deliver([event]))) as DrovrBatchOutcome
+		if (!born.has(event.contactId)) {
+			if (args.pacedBirth) await args.pacedBirth(`paced-birth:${event.contactId}`, [event.contactId])
+			else await args.step.run(`paced-birth:${event.contactId}`, () => args.birth([event.contactId]))
+			born.add(event.contactId)
+		}
+		const id = `paced-redeliver:${event.idempotencyKey}`
+		const answer = args.pacedDeliver ? await args.pacedDeliver(id, [event]) : (await args.step.run(id, () => args.deliver([event]))) as DrovrBatchOutcome
+		if (answer.accepted > 0 && event.type === 'contact.profile.updated') await args.afterProfile?.(event)
 		result.accepted += answer.accepted
 		result.rejected += answer.rejected
 		result.deferred.push(...(answer.deferred ?? []))
@@ -153,6 +165,9 @@ export async function runContactSyncStragglerRetry(args: {
 	step: RetryStep
 	env: Readonly<Record<string, string | undefined>>
 	now: () => number
+	pacedDeliver?: (id: string, events: DrovrShadowEvent[]) => Promise<DrovrBatchOutcome>
+	pacedBirth?: (id: string, contacts: string[]) => Promise<void>
+	afterProfile?: (event: DrovrShadowEvent) => Promise<void>
 	/** Delivers in deferNotLive mode; throws on a transient failure. */
 	deliver: (events: DrovrShadowEvent[]) => Promise<DrovrBatchOutcome>
 	warn: (event: string, fields: Record<string, unknown>) => unknown
@@ -161,7 +176,7 @@ export async function runContactSyncStragglerRetry(args: {
 	/** Records that drovr fully accepted a profile version (the version store). */
 	acknowledge: (contactId: string, profileVersion: number) => Promise<void>
 }): Promise<ContactSyncRetryReceipt> {
-	const { items, attempt, acknowledge } = args.event.data
+	const { items, attempt, acknowledge, paceClass } = args.event.data
 	const nowMs = (await args.step.run('now', async () => args.now())) as number
 	const config = parseDrovrProfileSyncConfig(args.env)
 	if (!config.enabled) {
@@ -171,7 +186,7 @@ export async function runContactSyncStragglerRetry(args: {
 		// as a duplicate within 24 h.
 		await args.step.sendEvent(
 			'reschedule',
-			contactSyncRetryRequest(items, attempt + 1, nowMs, acknowledge),
+			contactSyncRetryRequest(items, attempt + 1, nowMs, acknowledge, paceClass),
 		)
 		return {
 			status: 'rescheduled',
@@ -184,7 +199,9 @@ export async function runContactSyncStragglerRetry(args: {
 	// A legacy queued retry may contain many events. Each paced send gets its
 	// own memoized step, so a slot refusal resumes after completed sends.
 	for (const { event } of items) {
-		const answer = (await args.step.run(`paced-deliver:${event.idempotencyKey}`, () => args.deliver([event]))) as DrovrBatchOutcome
+		const id = `paced-deliver:${event.idempotencyKey}`
+		const answer = args.pacedDeliver ? await args.pacedDeliver(id, [event]) : (await args.step.run(id, () => args.deliver([event]))) as DrovrBatchOutcome
+		if (answer.accepted > 0 && event.type === 'contact.profile.updated') await args.afterProfile?.(event)
 		outcome.accepted += answer.accepted
 		outcome.rejected += answer.rejected
 		outcome.deferred!.push(...(answer.deferred ?? []))
@@ -194,6 +211,9 @@ export async function runContactSyncStragglerRetry(args: {
 		step: args.step,
 		birth: args.birth,
 		deliver: args.deliver,
+		pacedDeliver: args.pacedDeliver,
+		pacedBirth: args.pacedBirth,
+		afterProfile: args.afterProfile,
 	})
 	const refused = resolved.deferred
 	const rejected = outcome.rejected + resolved.rejected
@@ -218,7 +238,7 @@ export async function runContactSyncStragglerRetry(args: {
 		})
 	await args.step.sendEvent(
 		'reschedule',
-		contactSyncRetryRequest(refused, attempt + 1, nowMs, acknowledge),
+		contactSyncRetryRequest(refused, attempt + 1, nowMs, acknowledge, paceClass),
 	)
 	return {
 		status: 'rescheduled',

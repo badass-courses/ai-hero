@@ -1,5 +1,5 @@
 import { contactEvent } from '@/db/schema'
-import { and, asc, eq, gt, or } from 'drizzle-orm'
+import { and, asc, count, eq, gt, or } from 'drizzle-orm'
 
 import type { BackfillPorts, BackfillRow } from './contact-sync-backfill'
 
@@ -60,5 +60,14 @@ export function createDrizzleBackfillScan(
 					? row.occurredAt.toISOString()
 					: new Date(`${row.occurredAt.replace(' ', 'T')}Z`).toISOString(),
 		}))
+	}
+}
+
+/** Counts are one aggregate per phase, not one Inngest step per page. */
+export function createDrizzleBackfillCount(database: unknown): NonNullable<BackfillPorts['countEvents']> {
+	const db = database as { select(fields: unknown): { from(table: unknown): { where(clause: unknown): Promise<{ total: number | string }[]> } } }
+	return async eventType => {
+		const [row] = await db.select({ total: count() }).from(contactEvent).where(eq(contactEvent.eventType, eventType))
+		return Number(row?.total ?? 0)
 	}
 }

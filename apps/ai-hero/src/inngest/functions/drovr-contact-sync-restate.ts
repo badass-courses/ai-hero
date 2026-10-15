@@ -2,11 +2,10 @@ import { inngest } from '@/inngest/inngest.server'
 import { drovrContactProfileSync } from './drovr-contact-profile-sync'
 import { parseDrovrProfileSyncConfig } from '@/lib/subscriber-marketing/drovr-contact-profile-sync-requests'
 import type { ContactProfileSyncReceipt } from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
-import { restatementPlan } from '@/lib/subscriber-marketing/contact-sync-deltas'
+import { dueProfileConfirmations } from '@/lib/subscriber-marketing/contact-sync-restatement'
 
-/** This is not a snapshot or a full re-push. Oldest profiles get one
- * equal-version confirmation each month. The independent delta reconcile
- * still sends its heartbeat every quarter hour, even if this lane stalls.
+/** A separate quota, never the heartbeat clock. Capacity produces a structured
+ * alert and terminal run failure; routing that alert to a pager is follow-up.
  */
 export const drovrContactSyncRestate = inngest.createFunction(
 	{
@@ -19,46 +18,26 @@ export const drovrContactSyncRestate = inngest.createFunction(
 	async ({ step }) => {
 		if (!parseDrovrProfileSyncConfig(process.env).enabled)
 			return { status: 'skipped' }
-		const contacts = await step.run('oldest-due-profiles', async () => {
-			const [
-				{ db },
-				{ contactProfileVersion },
-				{ count, or, isNull, lte, asc },
-			] = await Promise.all([
-				import('@/db'),
-				import('@/db/contact-sync-schema'),
-				import('drizzle-orm'),
-			])
-			const [population] = await db
-				.select({ total: count() })
-				.from(contactProfileVersion)
-			const plan = restatementPlan(Number(population?.total ?? 0), Date.now())
-			return db
-				.select({ contactId: contactProfileVersion.contactId })
-				.from(contactProfileVersion)
-				.where(
-					or(
-						isNull(contactProfileVersion.acknowledgedAt),
-						lte(
-							contactProfileVersion.acknowledgedAt,
-							new Date(plan.before)
-								.toISOString()
-								.slice(0, 23)
-								.replace('T', ' '),
-						),
-					),
+		const contacts = await step.run(
+			'acknowledged-oldest-due-profiles',
+			async () => {
+				const [{ db }, { log }] = await Promise.all([
+					import('@/db'),
+					import('@/server/logger'),
+				])
+				return dueProfileConfirmations(db, Date.now(), (fields) =>
+					log.error('drovr.restate.capacity_exceeded', fields),
 				)
-				.orderBy(
-					asc(contactProfileVersion.acknowledgedAt),
-					asc(contactProfileVersion.contactId),
-				)
-				.limit(plan.contacts)
-		})
+			},
+		)
 		for (const { contactId } of contacts) {
 			const receipt = (await step.invoke(`restate:${contactId}`, {
 				function: drovrContactProfileSync,
 				data: { contactId, reason: 'restate' },
 			})) as ContactProfileSyncReceipt
+			// Migration sent nothing. Leave it due, so the next tick can confirm v2.
+			if (receipt.status === 'skipped' && receipt.reason === 'hash-migrated')
+				continue
 			if (receipt.status === 'skipped') {
 				if (
 					![
@@ -70,10 +49,8 @@ export const drovrContactSyncRestate = inngest.createFunction(
 					].includes(receipt.reason)
 				)
 					throw new Error(
-						'RestatementDelivery: you requested a confirmation, and it failed because the profile was not queued. Accepted: a delivered or durably queued confirmation, or a contact outside the directory scope. Fix: restore delivery before advancing this rotation. Debug: inspect the contact sync receipt.',
+						'RestatementDelivery: you requested a confirmation, and it failed because the profile was not queued. Accepted: a delivered or durably queued confirmation, or a contact outside directory scope. Fix: restore delivery before advancing this rotation. Debug: inspect the contact sync receipt.',
 					)
-				// Missing/out-of-scope contacts must not monopolize the oldest-first
-				// quota. This records an attempt only, never acknowledges a version.
 				await step.run(`defer-out-of-scope:${contactId}`, async () => {
 					const [{ db }, { contactProfileVersion }, { eq, sql }] =
 						await Promise.all([

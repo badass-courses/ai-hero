@@ -14,6 +14,9 @@ export type ContactProfileVersion = {
 	since: string
 	/** drovr fully accepted this exact version (acknowledge). */
 	acknowledged: boolean
+	/** A matching legacy digest was rewritten without spending a version. */
+	migrated?: boolean
+	acknowledgedAt?: string
 }
 
 export type ContactProfileVersionStore = {
@@ -21,6 +24,7 @@ export type ContactProfileVersionStore = {
 	versionFor(
 		contactId: string,
 		contentHash: string,
+		legacyHash?: string,
 	): Promise<ContactProfileVersion>
 	/**
 	 * Records that drovr fully accepted `profileVersion`. A no-op when the
@@ -40,15 +44,20 @@ export function createMemoryContactProfileVersionStore(
 			since: string
 			contentHash: string
 			acknowledgedVersion?: number
+			acknowledgedAt?: string
 		}
 	>()
 	return {
 		async currentFor(contactId) {
 			const row = rows.get(contactId)
-			return row ? { profileVersion: row.profileVersion, since: row.since, contentHash: row.contentHash, acknowledged: row.acknowledgedVersion === row.profileVersion } : undefined
+			return row ? { profileVersion: row.profileVersion, since: row.since, contentHash: row.contentHash, acknowledgedAt: row.acknowledgedAt, acknowledged: row.acknowledgedVersion === row.profileVersion } : undefined
 		},
-		async versionFor(contactId, contentHash) {
+		async versionFor(contactId, contentHash, legacyHash) {
 			const current = rows.get(contactId)
+			if (current && !current.contentHash.startsWith('v2:') && current.contentHash === legacyHash) {
+				current.contentHash = contentHash
+				return { profileVersion: current.profileVersion, since: current.since, acknowledged: current.acknowledgedVersion === current.profileVersion, migrated: true }
+			}
 			if (current && !profileVersionBump({ kind: 'profile-change', previousHash: current.contentHash, nextHash: contentHash })) {
 				return {
 					profileVersion: current.profileVersion,
@@ -70,8 +79,10 @@ export function createMemoryContactProfileVersionStore(
 		},
 		async acknowledge(contactId, profileVersion) {
 			const current = rows.get(contactId)
-			if (current?.profileVersion === profileVersion)
+			if (current?.profileVersion === profileVersion) {
 				current.acknowledgedVersion = profileVersion
+				current.acknowledgedAt = now()
+			}
 		},
 	}
 }

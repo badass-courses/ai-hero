@@ -27,6 +27,8 @@ import {
 	type DrovrOutboxRow,
 	type DrovrOutboxStore,
 } from './drovr-outbox'
+import { queueContactSyncBulk, BULK_OUTBOX_QUEUE_WAIT_MS } from './contact-sync-bulk'
+import { queueCappedReplay } from './contact-sync-replay-queue'
 import { postDrovrOutboxRow } from './drovr-outbox-replay-post'
 import {
 	deliverDrovrShadowEvent,
@@ -268,6 +270,34 @@ function replay(
 		}),
 	}
 }
+
+describe('pre-captured capped delivery ownership', () => {
+	it('normal delivery settles profile/link facts before the replay is allowed to take them', async () => {
+		const { store, rows } = memoryStore()
+		const events = (['contact.profile.updated', 'contact.links.issued'] as const).map((type, index) => event(`delta-${index}`, { type }))
+		await queueContactSyncBulk(events, { capture: (entries, reason, options) => captureDrovrOutbox({ store, target: PROD, entries, reason, now: NOW, log: log(), ...options }), send: async () => {} }, { now: () => NOW.getTime() })
+		const post = vi.fn(async (_row: DrovrOutboxRow) => ({ kind: 'delivered' as const }))
+		await replay(store, post).run
+		expect(post).not.toHaveBeenCalled()
+		expect(await settleDrovrOutbox({ store, target: PROD, entries: events.map(item => outboxEntryForEvent(item, 'bulkDelta')), note: 'delivered on bulk', now: NOW, log: log() })).toBe(2)
+		expect([...rows.values()].every(row => row.status === 'delivered')).toBe(true)
+		await replay(store, post, { now: () => new Date(NOW.getTime() + 2 * BULK_OUTBOX_QUEUE_WAIT_MS) }).run
+		expect(post).not.toHaveBeenCalled()
+	})
+	it('after a publish crash, timed-out ownership requeues once without marking an undelivered row delivered', async () => {
+		const { store, rows } = memoryStore()
+		const item = event('profile:contact-1:1', { type: 'contact.profile.updated' })
+		await expect(queueContactSyncBulk([item], { capture: (entries, reason, options) => captureDrovrOutbox({ store, target: PROD, entries, reason, now: NOW, log: log(), ...options }), send: async () => { throw new Error('synthetic crash') } }, { now: () => NOW.getTime() })).rejects.toThrow('synthetic crash')
+		const after = NOW.getTime() + BULK_OUTBOX_QUEUE_WAIT_MS + 1
+		const send = vi.fn(async (_envelope: unknown) => {})
+		const post = async (row: DrovrOutboxRow) => { const result = await queueCappedReplay(row, send, after); if (!result) throw new Error('expected capped row'); return result }
+		await replay(store, post, { now: () => new Date(after) }).run
+		expect(send).toHaveBeenCalledOnce()
+		expect([...rows.values()][0]).toMatchObject({ status: 'pending', attempts: 0 })
+		await replay(store, post, { now: () => new Date(after + 300000) }).run
+		expect(send).toHaveBeenCalledOnce()
+	})
+})
 
 describe('drovr outbox target', () => {
 	it('is the Vercel environment, whatever drovr URL the deployment posts to', () => {

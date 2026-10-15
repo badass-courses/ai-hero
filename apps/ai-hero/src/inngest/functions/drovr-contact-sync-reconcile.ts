@@ -73,6 +73,7 @@ export async function reconcileContactSync(args: {
 					data: { contactId, reason: 'reconcile' },
 				})) as ContactProfileSyncReceipt,
 			),
+		syncOffer: async (contactId) => reconcileSyncOutcome(contactId, (await step.invoke(`offer-repair:${contactId}`, { function: drovrContactProfileSync, data: { contactId, reason: 'offer-issued' } })) as ContactProfileSyncReceipt),
 		resendStops: async (stops) => {
 			const events = (await step.run('load-stops', () =>
 				args.stopFacts(stops),

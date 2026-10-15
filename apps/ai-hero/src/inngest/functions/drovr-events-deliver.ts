@@ -2,6 +2,11 @@ import { env } from '@/env.mjs'
 import {
 	BULK_DELIVERY_SOURCES,
 	DROVR_EVENTS_DELIVER_BULK_EVENT,
+	DROVR_EVENTS_DELIVER_DELTA_EVENT,
+	DROVR_EVENTS_DELIVER_RESTATE_EVENT,
+	DROVR_EVENTS_DELIVER_INGEST_EVENT,
+	deliverEventNameFor,
+	type DrovrDeliverEventName,
 	DROVR_EVENTS_DELIVER_EVENT,
 } from '@/inngest/events/drovr'
 import type { DrovrEventsDeliver } from '@/inngest/events/drovr'
@@ -61,6 +66,8 @@ import {
 	holdDrovrStopsLive,
 	openDrovrOutboxStopsLive,
 	settleDrovrOutboxLive,
+	deliveredDrovrOutboxKeysLive,
+	rejectDrovrOutboxLive,
 	type DrovrOutboxOpenStopsFn,
 } from '@/lib/subscriber-marketing/drovr-outbox-live'
 import {
@@ -75,7 +82,8 @@ import {
 import { withoutSyntheticContacts } from '@/lib/synthetic-principal'
 import { log } from '@/server/logger'
 import type { GetStepTools } from 'inngest'
-import { reserveDrovrBulkSlot } from '@/lib/subscriber-marketing/drovr-bulk-pace'
+import { runPacedSend, waitForBulkSlot, type BulkClass } from '@/lib/subscriber-marketing/drovr-bulk-pace'
+import { profileVersionForRefresh, readCurrentOfferAfterProfile } from '@/lib/subscriber-marketing/contact-sync-offer-refresh'
 
 export type DrovrEventsDeliverReceipt = {
 	/** Backfill events drovr refused, handed to the straggler retry. */
@@ -125,7 +133,7 @@ export type DrovrEventsDeliverReceipt = {
 /** How this run delivers: its attempt, its lane, and where unsent go. */
 export type DeliverContext = {
 	attempt: DrovrSendAttempt
-	lane: Extract<DrovrOutboxSource, 'live' | 'bulk'>
+	lane: Extract<DrovrOutboxSource, 'live' | 'bulk' | 'bulkDelta' | 'bulkRestate' | 'bulkIngest' | 'bulkBackfill'>
 	capture: DrovrOutboxCaptureFn
 	/** The outbox's owed stops for these contacts (row 204b). */
 	openStops: DrovrOutboxOpenStopsFn
@@ -133,7 +141,10 @@ export type DeliverContext = {
 	settle: DrovrOutboxSettleFn
 	/** Holds stops drovr refused with a 4xx, for a human (row 204c). */
 	hold: DrovrOutboxHoldFn
-	pace?: () => Promise<void>
+	pace?: (id: string, step: DeliverStep) => Promise<void>
+	deliveredKeys?: (entries: readonly DrovrOutboxEntry[]) => Promise<string[]>
+	reject?: (entries: readonly DrovrOutboxEntry[], note: string, status: number) => Promise<void>
+	afterProfile?: (id: string, event: DrovrShadowEvent, step: DeliverStep) => Promise<void>
 }
 
 type Outboxed = { outboxed: number }
@@ -616,6 +627,7 @@ const deliverBatch = async (
 type ChunkOutcome = Omit<DrovrBatchOutcome, 'refused'> & {
 	heldStops?: number
 	deferredStopsGated?: number
+	alreadyDelivered?: boolean
 	/** Stops held or deferred and outboxed: they gate the chunks after. */
 	gatedKeys?: string[]
 }
@@ -708,18 +720,25 @@ const deliverBulk = async (
 			// New ids are deliberate: in-flight old chunks must not be replayed
 			// as if their single-event replacement had already completed.
 			const stepId = `paced-single:${batchStepId(tenantId, chunkIndex)}`
-			await step.sleep?.(`${stepId}:spacing`, '1s')
-			const outcome = (await step.run(stepId, () =>
-				sendOrOutbox<ChunkOutcome & Partial<Outboxed>>({
-					attempt: context.attempt,
+			const entries = chunk.map(event => outboxEntryForEvent(event, context.lane))
+			const alreadyDelivered = context.deliveredKeys ? (await step.run(`${stepId}:delivered`, () => context.deliveredKeys!(entries))) as string[] : []
+			if (alreadyDelivered.includes(chunk[0]!.idempotencyKey)) {
+				if (chunk[0]!.type === 'contact.profile.updated') await context.afterProfile?.(stepId, chunk[0]!, step)
+				continue
+			}
+			const post = (sendAttempt: number) => sendOrOutbox<ChunkOutcome & Partial<Outboxed>>({
+					attempt: { ...context.attempt, attempt: sendAttempt },
 					send: async () => {
-						await context.pace?.()
+						// A replay may finish while a reservation sleeps. Re-read at
+						// POST time rather than trusting the memoized fast path.
+						if ((await context.deliveredKeys?.(entries))?.includes(chunk[0]!.idempotencyKey)) return { accepted: 0, rejected: 0, alreadyDelivered: true }
 						const answer = await deliverBatchOrThrow(
 							options.deferNotLive
 								? { events: chunk, config, clampAt, deferNotLive: true }
 								: { events: chunk, config, clampAt },
 						)
 						const { refused = [], ...counts } = answer
+						for (const refusal of refused.filter(item => !isStopEvent(item.event))) await context.reject?.([outboxEntryForEvent(refusal.event, context.lane)], refusalReason(refusal.httpStatus, refusal.problem), refusal.httpStatus)
 						const gatedKeys: string[] = []
 						// Row 204c: a stop drovr refused for good (not "never born")
 						// is held for a human, not counted rejected.
@@ -797,8 +816,14 @@ const deliverBulk = async (
 								: DROVR_SETTLED_BY_RETRY,
 						landedStops,
 					),
-				}),
-			)) as ChunkOutcome & Partial<Outboxed>
+				})
+			const outcome = context.pace ? await runPacedSend(step, stepId, (id) => context.pace!(id, step), post, context.attempt.attempt) : await step.run(stepId, () => post(context.attempt.attempt)) as ChunkOutcome & Partial<Outboxed>
+			// Every pre-captured fact, not just retried stops, is settled by key.
+			// Deferred or outboxed events stay pending for their existing owner.
+			if ((outcome.accepted > 0 || outcome.alreadyDelivered) && !outcome.outboxed && !(outcome.deferred?.length)) {
+				await step.run(`${stepId}:settle`, () => context.settle(entries, outcome.rejected > 0 ? `settled by an Inngest retry: its chunk was answered, and drovr refused ${outcome.rejected} item(s) that are not stops (or never born there), final and counted rejected` : DROVR_SETTLED_BY_RETRY))
+				if (chunk[0]!.type === 'contact.profile.updated') await context.afterProfile?.(stepId, chunk[0]!, step)
+			}
 			accepted += outcome.accepted
 			rejected += outcome.rejected
 			outboxed += outcome.outboxed ?? 0
@@ -847,8 +872,8 @@ export const drovrEventsDeliver = inngest.createFunction(
 		// Drain pre-deploy events under the same function id, without posting
 		// a bulk payload on the live lane or dropping its queued bytes.
 		if (BULK_DELIVERY_SOURCES.has(event.data.source)) {
-			await step.sendEvent('drain-to-bulk', { name: DROVR_EVENTS_DELIVER_BULK_EVENT, data: event.data })
-			return { status: 'delivered', accepted: 0, rejected: 0, discarded: 0 }
+			await step.sendEvent('drain-to-bulk', { name: deliverEventNameFor(event.data.source), data: event.data })
+			return { status: 'skipped', reason: 'forwarded-to-capped-worker', accepted: 0, rejected: 0, discarded: 0 }
 		}
 		return deliverBatch(event.data.events, step, {
 			attempt: { attempt, maxAttempts },
@@ -892,6 +917,7 @@ const withStepPrefix = (step: DeliverStep, prefix: string): DeliverStep =>
 		...step,
 		run: (id: string, operation: () => unknown) =>
 			step.run(`${prefix}${id}`, operation),
+		sleepUntil: (id: string, date: Date) => step.sleepUntil(`${prefix}${id}`, date),
 	}) as DeliverStep
 
 const combineReceipts = (
@@ -948,21 +974,44 @@ export const BULK_DELIVERY_BATCH = { maxSize: 1, timeout: '1s' } as const
  */
 export const BULK_DELIVERY_THROTTLE = { limit: 1, period: '1s' } as const
 
-export const drovrEventsDeliverBulk = inngest.createFunction(
+const cappedWorker = (id: string, eventName: DrovrDeliverEventName, kind: BulkClass) => inngest.createFunction(
 	{
-		id: 'drovr-events-deliver-bulk-v1',
+		id,
 		name: 'drovr: deliver bulk events durably',
 		retries: DROVR_SEND_RETRIES,
 		concurrency: [{ limit: 4 }],
 		batchEvents: BULK_DELIVERY_BATCH,
 		throttle: BULK_DELIVERY_THROTTLE,
 	},
-	{ event: DROVR_EVENTS_DELIVER_BULK_EVENT },
+	{ event: eventName },
 	async ({ events, step, attempt, maxAttempts }) => {
+		// Bound the worst-case durable retry step count, including owner copies.
+		// Five inputs leave room for initial POST retries, one birth per cold
+		// contact and redelivery retries in the downstream straggler run.
+		if (events.reduce((count, envelope) => count + envelope.data.events.length, 0) > 5) {
+			const shards = events.flatMap(envelope => {
+				const width = 5
+				return Array.from({ length: Math.ceil(envelope.data.events.length / width) }, (_, index) => ({ id: `paced-shard:${envelope.data.events[index * width]!.idempotencyKey}`, name: eventName, data: { ...envelope.data, events: envelope.data.events.slice(index * width, (index + 1) * width) } }))
+			})
+			await step.sendEvent('bounded-paced-shards', shards)
+			return { status: 'skipped', reason: 'forwarded-to-bounded-capped-shards', accepted: 0, rejected: 0, discarded: 0 }
+		}
+		// Old bulk envelopes still drain, while new sources have separate queues.
+		const actualKind = events.some(item => item.data.source === 'contact-profile-sync') ? 'delta' : events.some(item => item.data.source === 'contact-profile-restate') ? 'restate' : events.some(item => item.data.source === 'kit-directory-ingest') ? 'ingest' : kind
+		const source = actualKind === 'delta' ? 'contact-profile-sync' : actualKind === 'restate' ? 'contact-profile-restate' : actualKind === 'ingest' ? 'kit-directory-ingest' : 'contact-sync-backfill'
+		for (const [index, envelope] of events.entries()) {
+			if (envelope.data.offerRefresh) envelope.data.events = await step.run(`refresh-current-offer:${index}`, () => readCurrentOfferAfterProfile(envelope.data.offerRefresh!)) as DrovrShadowEvent[]
+		}
 		const context: DeliverContext = {
 			attempt: { attempt, maxAttempts },
-			lane: 'bulk',
-			pace: reserveDrovrBulkSlot,
+			lane: actualKind === 'delta' ? 'bulkDelta' : actualKind === 'restate' ? 'bulkRestate' : actualKind === 'ingest' ? 'bulkIngest' : 'bulkBackfill',
+			pace: (id, tools) => waitForBulkSlot(tools, id, actualKind),
+			deliveredKeys: deliveredDrovrOutboxKeysLive,
+			reject: rejectDrovrOutboxLive,
+			afterProfile: async (id, event, tools) => {
+				if (event.idempotencyKey.includes(':restate:')) return
+				await tools.sendEvent(`${id}:refresh-offer`, { id: `offer-refresh:${event.idempotencyKey}`, name: eventName, data: { source, events: [], offerRefresh: { contactId: event.contactId, profileVersion: profileVersionForRefresh(event) } } })
+			},
 			capture: captureDrovrOutboxLive,
 			openStops: openDrovrOutboxStopsLive,
 			settle: settleDrovrOutboxLive,
@@ -1056,22 +1105,22 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 					)
 					await step.sendEvent('contact-sync-backfill:defer-refused', [
 						...(notLive.length > 0
-							? [contactSyncRetryRequest(notLive, 1, at)]
+							? [contactSyncRetryRequest(notLive, 1, at, undefined, actualKind)]
 							: []),
 						...(coldStart.length > 0
-							? [{ ...contactSyncRetryRequest(coldStart, 1, at), ts: at }]
+							? [{ ...contactSyncRetryRequest(coldStart, 1, at, undefined, actualKind), ts: at }]
 							: []),
 					])
 				}
 			}
 		}
 		if (others.length > 0 || backfill.length === 0) {
-			const profileSync = events.some((event) => event.data.source === 'contact-profile-sync')
+			const profileSync = events.some((event) => event.data.source === 'contact-profile-sync' || event.data.source === 'contact-profile-restate')
 			const profileRefused: DeferredDrovrEvent[] = []
 			receipts.push(await deliverBulk(others, step, context, { gate, ...(profileSync ? { deferNotLive: true, refused: profileRefused } : {}) }))
 			if (profileRefused.length > 0) {
 				const at = (await step.run('profile-sync:defer-at', () => Date.now())) as number
-				await step.sendEvent('profile-sync:defer-refused', contactSyncRetryRequest(profileRefused, 1, at))
+				await step.sendEvent('profile-sync:defer-refused', contactSyncRetryRequest(profileRefused, 1, at, undefined, actualKind))
 				refused.push(...profileRefused)
 			}
 		}
@@ -1085,3 +1134,10 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 		}
 	},
 )
+
+// Preserve the old bulk id/event for queued commands. New priorities cannot
+// sit behind that backlog: each owns its queue, but shares one reservation row.
+export const drovrEventsDeliverBulk = cappedWorker('drovr-events-deliver-bulk-v1', DROVR_EVENTS_DELIVER_BULK_EVENT, 'backfill')
+export const drovrEventsDeliverDelta = cappedWorker('drovr-events-deliver-delta-v1', DROVR_EVENTS_DELIVER_DELTA_EVENT, 'delta')
+export const drovrEventsDeliverRestate = cappedWorker('drovr-events-deliver-restate-v1', DROVR_EVENTS_DELIVER_RESTATE_EVENT, 'restate')
+export const drovrEventsDeliverIngest = cappedWorker('drovr-events-deliver-ingest-v1', DROVR_EVENTS_DELIVER_INGEST_EVENT, 'ingest')

@@ -273,7 +273,7 @@ export async function findEvergreenOffer(args: {
 	contactId: string
 	origin: string
 }): Promise<
-	{ couponId: string; variables: Record<string, string> } | undefined
+	{ couponId: string; issuedAt: string; variables: Record<string, string> } | undefined
 > {
 	const coupon = await args.repository.findSideEffectIntentByIdempotencyKey(
 		`contact:${args.contactId}:evergreen:coupon`,
@@ -289,6 +289,7 @@ export async function findEvergreenOffer(args: {
 		return undefined
 	return {
 		couponId,
+		issuedAt: coupon.completedAt ?? coupon.createdAt,
 		variables: offerFieldsFor({
 			couponId,
 			payload: offer.data,

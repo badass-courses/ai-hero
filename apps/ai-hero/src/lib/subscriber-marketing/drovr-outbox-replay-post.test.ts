@@ -170,7 +170,7 @@ describe('postDrovrOutboxRow', () => {
 						status: 'failed',
 						httpStatus: 409,
 						reason:
-							'drovr does not take this event type yet (409 event-not-live)',
+							'event-not-live: contact is not migrated',
 					}),
 				}),
 			),
@@ -181,6 +181,11 @@ describe('postDrovrOutboxRow', () => {
 				ports({ apiKeyFor: () => undefined }),
 			),
 		).toMatchObject({ kind: 'failed', transient: false })
+	})
+
+	it('does not retry an unrelated 409 whose diagnostic happens to mention event-not-live', async () => {
+		const result = await postDrovrOutboxRow(asRow(outboxEntryForEvent(authorityCopy, 'live')), ports({ deliver: async () => ({ status: 'failed', httpStatus: 409, reason: 'key-reuse: payload differs from event-not-live retry' }) }))
+		expect(result).toMatchObject({ kind: 'failed', httpStatus: 409, transient: false })
 	})
 
 	it('answers rejected on a 4xx for the row itself', async () => {

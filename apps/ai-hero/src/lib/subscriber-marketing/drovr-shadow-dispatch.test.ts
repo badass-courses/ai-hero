@@ -132,7 +132,7 @@ describe('drovr shadow dispatch', () => {
 		// source travels on its own function.
 		expect(send.mock.calls.map(([payload]) => payload.name)).toEqual([
 			'drovr/events.deliver',
-			'drovr/events.deliver.bulk',
+			'drovr/events.deliver.ingest',
 		])
 		expect(send.mock.calls[0]?.[0].data.events).toEqual(
 			send.mock.calls[1]?.[0].data.events,

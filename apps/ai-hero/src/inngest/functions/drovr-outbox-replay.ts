@@ -1,6 +1,6 @@
 import { DROVR_OUTBOX_REPLAY_REQUESTED_EVENT } from '@/inngest/events/drovr'
 import { inngest } from '@/inngest/inngest.server'
-import { reserveDrovrBulkSlot } from '@/lib/subscriber-marketing/drovr-bulk-pace'
+import { queueCappedReplay } from '@/lib/subscriber-marketing/contact-sync-replay-queue'
 import { readUnsubscribedValuePathContactIds } from '@/lib/subscriber-marketing/drovr-value-path-birth-admission-live'
 
 /**
@@ -79,8 +79,10 @@ export const drovrOutboxReplay = inngest.createFunction(
 					target,
 					now: () => new Date(),
 					log,
-					post: (row) =>
-						postDrovrOutboxRow(row, {
+					post: async (row) => {
+						const queued = await queueCappedReplay(row, event => inngest.send(event))
+						if (queued) return queued
+						return postDrovrOutboxRow(row, {
 							ingestUrl,
 							readBirthOptOuts: (ids) =>
 								readUnsubscribedValuePathContactIds(ids, db),
@@ -89,10 +91,7 @@ export const drovrOutboxReplay = inngest.createFunction(
 								drovrApiKeyForTenant(
 									tenantId as Parameters<typeof drovrApiKeyForTenant>[0],
 								),
-							deliver: async (args) => {
-								if (row.source === 'bulk' || row.source === 'contactSync' || row.eventType === 'contact.links.issued' || row.eventType === 'contact.profile.updated') await reserveDrovrBulkSlot()
-								return deliverDrovrShadowEvent(args)
-							},
+							deliver: deliverDrovrShadowEvent,
 							isNeverBornOwnerStop,
 							fanOut: async (events) => {
 								const owned = await resolveOwnedContactIds(events)
@@ -115,7 +114,8 @@ export const drovrOutboxReplay = inngest.createFunction(
 										},
 									}
 								: {}),
-						}),
+						})
+					},
 				})
 			} catch (error) {
 				// Before the deploy request lands there is no table: nothing to

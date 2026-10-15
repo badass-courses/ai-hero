@@ -1,8 +1,7 @@
 import { deliverEventNameFor } from '@/inngest/events/drovr'
 import type {
 	DrovrDeliverySource,
-	DrovrEventsDeliver,
-	DrovrEventsDeliverBulk,
+	DrovrDeliverEnvelope,
 } from '@/inngest/events/drovr'
 import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
 import { log } from '@/server/logger'
@@ -38,7 +37,7 @@ import {
  */
 
 type DrovrShadowSend = (
-	payload: DrovrEventsDeliver | DrovrEventsDeliverBulk,
+	payload: DrovrDeliverEnvelope,
 ) => Promise<unknown>
 
 type InngestEventApiAcknowledgement = {
@@ -47,7 +46,7 @@ type InngestEventApiAcknowledgement = {
 }
 
 export async function sendDrovrEventsDeliverViaInngestHttp(
-	payload: DrovrEventsDeliver | DrovrEventsDeliverBulk,
+	payload: DrovrDeliverEnvelope,
 	options: {
 		eventKey: string
 		fetchImpl?: typeof fetch

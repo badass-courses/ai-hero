@@ -1,5 +1,9 @@
 import { DROVR_CONTACT_SYNC_BACKFILL_EVENT } from '@/inngest/events/drovr'
 import { inngest } from '@/inngest/inngest.server'
+import { createDrizzleBackfillApprovals } from '@/lib/subscriber-marketing/contact-sync-backfill-approval'
+import { persistContactSyncBulk } from '@/lib/subscriber-marketing/contact-sync-bulk'
+import { captureDrovrOutboxLive } from '@/lib/subscriber-marketing/drovr-outbox-live'
+import { profileVersionForRefresh } from '@/lib/subscriber-marketing/contact-sync-offer-refresh'
 import { runContactSyncBackfill } from '@/lib/subscriber-marketing/contact-sync-backfill'
 
 /**
@@ -33,7 +37,7 @@ export const drovrContactSyncBackfill = inngest.createFunction(
 			{ findJourneyOwnerAssignment },
 			{ SKILLS_WORKFLOW_VALUE_PATH },
 			{ stopFactsFor },
-			{ createDrizzleBackfillScan },
+			{ createDrizzleBackfillScan, createDrizzleBackfillCount },
 		] = await Promise.all([
 			import('@/db'),
 			import('@/env.mjs'),
@@ -60,6 +64,8 @@ export const drovrContactSyncBackfill = inngest.createFunction(
 			ports: {
 				now: () => Date.now(),
 				scanEvents: createDrizzleBackfillScan(db),
+				countEvents: createDrizzleBackfillCount(db),
+				approvals: createDrizzleBackfillApprovals(db),
 				snapshot: async (contactId, now) => {
 					const owned = await findJourneyOwnerAssignment(
 						repository,
@@ -83,8 +89,17 @@ export const drovrContactSyncBackfill = inngest.createFunction(
 						warn: log.warn,
 					})
 				},
-				versionFor: (contactId, contentHash) =>
-					versions.versionFor(contactId, contentHash),
+				versionFor: (contactId, contentHash, legacyHash) =>
+					versions.versionFor(contactId, contentHash, legacyHash),
+				persistEvents: async events => {
+					await persistContactSyncBulk(events, captureDrovrOutboxLive, 'bulkBackfill')
+					for (const profile of events.filter(item => item.type === 'contact.profile.updated')) {
+						const version = profileVersionForRefresh(profile)
+						const current = await versions.currentFor(profile.contactId)
+						// Do not postpone the confirmation of an already-queued version.
+						if (current?.profileVersion === version && !current.acknowledged) await versions.acknowledge(profile.contactId, version)
+					}
+				},
 				liveStopFacts: (rows) => stopFactsFor(repository, rows),
 			},
 		})

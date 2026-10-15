@@ -54,6 +54,8 @@ export type ContactSyncReconcilePorts = {
 	}): Promise<{ contactId: string; at: string }[]>
 	/** Resolves only once drovr has the contact's profile; 'skipped' when there is none to push. */
 	syncContact(contactId: string): Promise<'sent' | 'skipped' | 'deferred'>
+	/** Coupon rows remain covered by the watermark through live offer repair. */
+	syncOffer?(contactId: string): Promise<'sent' | 'skipped' | 'deferred'>
 	/** Re-sends the live path's stop facts for these events, under the same keys. */
 	resendStops(events: ScannedContactEvent[]): Promise<void>
 	heartbeat(syncedThrough: string): Promise<void>
@@ -144,8 +146,8 @@ export async function runContactSyncReconcile(
 			`contact sync reconcile cannot advance: over ${limit} late writes behind ${watermark}`,
 		)
 	}
-	const affectsProfile = (row: ScannedContactEvent) => row.eventType !== 'coupon.issued' && row.eventType !== 'contact.offer.issued'
-	const late = [...new Set(overlap.filter(affectsProfile).map((row) => row.contactId))]
+	const isOffer = (row: ScannedContactEvent) => row.eventType === 'coupon.issued' || row.eventType === 'contact.offer.issued'
+	const late = [...new Set(overlap.map((row) => row.contactId))]
 	if (late.length > maxContacts) {
 		throw new Error(
 			`contact sync reconcile cannot advance: ${late.length} contacts with late writes exceed ${maxContacts}`,
@@ -170,7 +172,7 @@ export async function runContactSyncReconcile(
 
 	// One timeline of fresh events and rotation steps, capped in time order.
 	const timeline = [
-		...fresh.filter(affectsProfile).map((row) => ({ contactId: row.contactId, at: row.occurredAt })),
+		...fresh.map((row) => ({ contactId: row.contactId, at: row.occurredAt })),
 		...rotations.map((row) => ({ contactId: row.contactId, at: row.at })),
 	]
 		.filter((item) => Date.parse(item.at) <= Date.parse(claim))
@@ -213,11 +215,21 @@ export async function runContactSyncReconcile(
 	)
 	// Contract §3: a push that failed (anything but an answer) holds the
 	// heartbeat at the last instant before that contact's first change here.
+	const covered = [...freshEvents, ...overlap]
+	const profileContacts = new Set([...covered.filter(row => !isOffer(row)).map(row => row.contactId), ...rotated])
+	const offerContacts = new Set(covered.filter(isOffer).map(row => row.contactId))
+	if (contacts.length + offerContacts.size > 900) throw new Error('ReconcileBudget: you requested a delta scan, and it failed because profile and offer repairs exceed the step budget. Accepted: at most 900 invocations. Fix: use a smaller bounded scan. Debug: inspect the claimed tie group.')
 	const failures: { contactId: string; reason: unknown }[] = []
 	for (let index = 0; index < contacts.length; index += SYNC_CHUNK) {
 		const chunk = contacts.slice(index, index + SYNC_CHUNK)
 		const results = await Promise.allSettled(
-			chunk.map((contactId) => ports.syncContact(contactId)),
+			chunk.map(async (contactId) => {
+				if (profileContacts.has(contactId)) await ports.syncContact(contactId)
+				if (offerContacts.has(contactId)) {
+					if (!ports.syncOffer) throw new Error('OfferRepair: you claimed a coupon row, and it failed because live offer repair is unavailable. Accepted: a live offer-only resync. Fix: restore the repair port. Debug: inspect the reconcile wiring.')
+					await ports.syncOffer(contactId)
+				}
+			}),
 		)
 		results.forEach((result, position) => {
 			if (result.status === 'rejected')
@@ -302,6 +314,7 @@ const BENIGN_SYNC_SKIPS: ReadonlySet<string> = new Set([
 	// Nothing changed; the version's payload is already delivered or durably queued.
 	'unchanged',
 	'profile-not-issued',
+	'hash-migrated',
 ])
 
 /**

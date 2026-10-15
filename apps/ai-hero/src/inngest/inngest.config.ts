@@ -41,6 +41,9 @@ import { courseSyncPollScheduler } from './functions/course-sync-poll-scheduler'
 import {
 	drovrEventsDeliver,
 	drovrEventsDeliverBulk,
+	drovrEventsDeliverDelta,
+	drovrEventsDeliverRestate,
+	drovrEventsDeliverIngest,
 } from './functions/drovr-events-deliver'
 import { drovrContactProfileSync } from './functions/drovr-contact-profile-sync'
 import { drovrContactSyncBackfill } from './functions/drovr-contact-sync-backfill'
@@ -173,6 +176,9 @@ const allFunctions = [
 	learnerFlowReconciler,
 	drovrEventsDeliver,
 	drovrEventsDeliverBulk,
+	drovrEventsDeliverDelta,
+	drovrEventsDeliverRestate,
+	drovrEventsDeliverIngest,
 	drovrEvergreenSender,
 	drovrContactProfileSync,
 	drovrContactSyncReconcile,

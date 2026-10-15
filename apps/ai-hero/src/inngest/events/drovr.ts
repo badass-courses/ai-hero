@@ -14,6 +14,8 @@ export type DrovrEventsDeliver = {
 	name: typeof DROVR_EVENTS_DELIVER_EVENT
 	data: {
 		events: DrovrShadowEvent[]
+		/** Read the current offer only after the named profile has landed. */
+		offerRefresh?: { contactId: string; profileVersion: number }
 		/** Which host fact produced the batch, for the delivery receipt. */
 		source:
 			| 'contact-created'
@@ -35,6 +37,7 @@ export type DrovrEventsDeliver = {
 			| 'kit-directory-ingest'
 			/** A contact's synced profile for drovr (drovr-contact-profile-sync). */
 			| 'contact-profile-sync'
+			| 'contact-profile-restate'
 			/** The one-time contact-sync backfill: the bulk lane. */
 			| 'contact-sync-backfill'
 			/**
@@ -60,6 +63,7 @@ export type DrovrContactSyncBackfillRequested = {
 		canary?: boolean
 		dryRunCount?: number
 		canaryConfirmed?: boolean
+		approvalToken?: string
 		cursor?: import('@/lib/subscriber-marketing/contact-sync-backfill').BackfillCursor
 		/**
 		 * Stop after this many pages and do not re-queue (the first run is a
@@ -86,6 +90,7 @@ export type DrovrContactSyncRetryRequested = {
 	data: {
 		items: import('@/lib/subscriber-marketing/drovr-shadow-delivery').DeferredDrovrEvent[]
 		attempt: number
+		paceClass?: import('@/lib/subscriber-marketing/drovr-bulk-pace').BulkClass
 		/**
 		 * The profile version to acknowledge once drovr takes every item: set
 		 * only when the original push had nothing rejected.
@@ -131,6 +136,9 @@ export type DrovrDeliverySource = DrovrEventsDeliver['data']['source']
  * `deliverEventNameFor` routes them here.
  */
 export const DROVR_EVENTS_DELIVER_BULK_EVENT = 'drovr/events.deliver.bulk'
+export const DROVR_EVENTS_DELIVER_DELTA_EVENT = 'drovr/events.deliver.delta'
+export const DROVR_EVENTS_DELIVER_RESTATE_EVENT = 'drovr/events.deliver.restate'
+export const DROVR_EVENTS_DELIVER_INGEST_EVENT = 'drovr/events.deliver.ingest'
 
 export type DrovrEventsDeliverBulk = {
 	name: typeof DROVR_EVENTS_DELIVER_BULK_EVENT
@@ -140,6 +148,11 @@ export type DrovrEventsDeliverBulk = {
 export type DrovrDeliverEventName =
 	| typeof DROVR_EVENTS_DELIVER_EVENT
 	| typeof DROVR_EVENTS_DELIVER_BULK_EVENT
+	| typeof DROVR_EVENTS_DELIVER_DELTA_EVENT
+	| typeof DROVR_EVENTS_DELIVER_RESTATE_EVENT
+	| typeof DROVR_EVENTS_DELIVER_INGEST_EVENT
+
+export type DrovrDeliverEnvelope = { name: DrovrDeliverEventName; data: DrovrEventsDeliver['data'] }
 
 /** Sources whose batches travel on the bulk function. */
 export const BULK_DELIVERY_SOURCES: ReadonlySet<DrovrDeliverySource> =
@@ -147,12 +160,16 @@ export const BULK_DELIVERY_SOURCES: ReadonlySet<DrovrDeliverySource> =
 		'kit-directory-ingest',
 		'contact-sync-backfill',
 		'contact-profile-sync',
+		'contact-profile-restate',
 		'evergreen-pitch-backfill',
 	])
 
 export function deliverEventNameFor(
 	source: DrovrDeliverySource,
 ): DrovrDeliverEventName {
+	if (source === 'contact-profile-sync') return DROVR_EVENTS_DELIVER_DELTA_EVENT
+	if (source === 'contact-profile-restate') return DROVR_EVENTS_DELIVER_RESTATE_EVENT
+	if (source === 'kit-directory-ingest') return DROVR_EVENTS_DELIVER_INGEST_EVENT
 	return BULK_DELIVERY_SOURCES.has(source)
 		? DROVR_EVENTS_DELIVER_BULK_EVENT
 		: DROVR_EVENTS_DELIVER_EVENT

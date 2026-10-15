@@ -7,6 +7,7 @@ import {
 	contactSyncRetryRequest,
 	createDirectoryBirth,
 	directoryBirthEvents,
+	birthThenRedeliver,
 	runContactSyncStragglerRetry,
 } from './contact-sync-straggler-retry'
 import type { DeferredDrovrEvent } from './drovr-shadow-delivery'
@@ -53,6 +54,18 @@ function harness(delivered: {
 }
 
 describe('contact sync straggler retry', () => {
+	it.each([false, true])('births once per contact, not once per cold link (paced=%s)', async paced => {
+		const events = Array.from({ length: 8 }, (_, index) => ({ ...profile, type: 'contact.links.issued' as const, idempotencyKey: `links:c1:journey:email-${index}:v3` }))
+		const birth = vi.fn(async (_ids: string[]) => {})
+		const deliver = vi.fn(async (items: DrovrShadowEvent[]) => ({ accepted: items.length, rejected: 0 }))
+		const step = { run: async (_id: string, fn: () => Promise<unknown>) => fn(), sendEvent: async () => {} }
+		const answer = await birthThenRedeliver({ deferred: events.map(event => ({ event, reason: 'cold-start-unhandled' })), step, birth, deliver, ...(paced ? { pacedBirth: async (_id: string, ids: string[]) => birth(ids), pacedDeliver: async (_id: string, items: DrovrShadowEvent[]) => deliver(items) } : {}) })
+		expect(birth).toHaveBeenCalledOnce()
+		expect(birth).toHaveBeenCalledWith(['c1'])
+		expect(deliver.mock.calls.map(([items]) => items)).toEqual(events.map(event => [event]))
+		expect(answer).toMatchObject({ accepted: 8, deferred: [] })
+	})
+
 	it('schedules the same events, unchanged: 1 h after the refusal, then every 2 h (contract §4, 2026-09-27)', () => {
 		// drovr's straggler pass runs every 2 h, so the worst case is ~4 h.
 		expect(stragglerRetryDelayMs(1)).toBe(60 * 60_000)

@@ -401,6 +401,7 @@ const replay = async (event: DrovrShadowEvent, answer: Answer) => {
 	})
 	// The replay holds a rejected stop row (drovr-outbox.ts).
 	return {
+		queued: 'retry',
 		delivered: 'landed',
 		settled: 'released',
 		failed: 'pending',

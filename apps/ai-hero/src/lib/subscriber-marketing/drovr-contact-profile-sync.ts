@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
 
 import type { ContactProfileVersion } from './contact-profile-version'
-import { linkSendDecision, profileVersionBump } from './contact-sync-deltas'
+
 import {
 	birthThenRedeliver,
 	contactSyncRetryRequest,
@@ -89,6 +89,8 @@ export type ContactOfferIssue = {
 	journeyId: string
 	emailKey?: string
 	couponId: string
+	/** The coupon's completion time, not the profile version's timestamp. */
+	issuedAt?: string
 	variables: Record<string, string>
 }
 
@@ -184,8 +186,6 @@ export function buildContactProfileEvents(args: {
 	profile: ContactProfile
 	links: readonly ContactLinksIssue[]
 	offers: readonly ContactOfferIssue[]
-	/** Acknowledged equal digest proves these link values/windows are equal. */
-	previousProfileVersion?: number
 }): DrovrShadowEvent[] {
 	const base = {
 		tenantId: DROVR_AUTHORITY_TENANT_ID,
@@ -201,11 +201,7 @@ export function buildContactProfileEvents(args: {
 			idempotencyKey: `profile:${args.contactId}:${profileVersion}`,
 			payload: { profileVersion, ...args.profile },
 		},
-		...args.links.filter((link) => {
-			const next = { value: canonicalJson(link), profileVersion, expiresAt: Date.parse(link.expiresAt) }
-			const prev = args.previousProfileVersion === undefined ? undefined : { ...next, profileVersion: args.previousProfileVersion }
-			return linkSendDecision(prev, next, Date.parse(args.occurredAt)).action === 'send'
-		}).map(
+		...args.links.map(
 			(link): DrovrShadowEvent => ({
 				...base,
 				type: 'contact.links.issued',
@@ -214,8 +210,9 @@ export function buildContactProfileEvents(args: {
 			}),
 		),
 		...args.offers.map(
-			({ couponId, ...offer }): DrovrShadowEvent => ({
+			({ couponId, issuedAt, ...offer }): DrovrShadowEvent => ({
 				...base,
+				occurredAt: issuedAt ?? args.occurredAt,
 				type: 'contact.offer.issued',
 				idempotencyKey: `offer:${args.contactId}:${couponId}:v${profileVersion}`,
 				payload: { profileVersion, ...offer },
@@ -334,6 +331,16 @@ export function contactProfileContentHash(
 		.digest('hex').slice(0, 61)
 }
 
+/** Exact pre-v2 digest, including offers but not their newly added issue time. */
+export function legacyContactProfileContentHash(snapshot: ContactProfileSnapshot): string {
+	const byKey = <T>(items: readonly T[], key: (item: T) => string) => [...items].sort((a, b) => key(a).localeCompare(key(b)))
+	return createHash('sha256').update(canonicalJson({
+		profile: snapshot.profile,
+		links: byKey(snapshot.links, link => `${link.journeyId}\u0000${link.emailKey}`),
+		offers: byKey(snapshot.offers.map(({ issuedAt: _issuedAt, ...offer }) => offer), offer => offer.couponId),
+	})).digest('hex')
+}
+
 function canonicalJson(value: unknown): string {
 	if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
 	if (value && typeof value === 'object') {
@@ -402,6 +409,7 @@ export async function runContactProfileSync(args: {
 	versionFor: (
 		contactId: string,
 		contentHash: string,
+		legacyHash?: string,
 	) => Promise<ContactProfileVersion>
 	deliver: (events: DrovrShadowEvent[]) => Promise<DeliveryResult>
 	/** The value path drovr owns for the contact, when a request names none. */
@@ -443,26 +451,17 @@ export async function runContactProfileSync(args: {
 	// was set, so the events below are byte-identical to the last push and
 	// drovr dedupes them for free.
 	const offerOnly = args.event.data.reason === 'offer-issued'
-	let restate = args.event.data.reason === 'restate'
-	const selected = (await args.step.run('delta-profile-version', async () => {
-		const nextHash = contactProfileContentHash(snapshot)
-		if (restate) {
-			const current = await args.currentVersion?.(contactId)
-			if (!current?.contentHash?.startsWith('v2:') || !profileVersionBump({ kind: 'profile-change', previousHash: current.contentHash, nextHash })) return { version: current, restate: true }
-			return { version: await args.versionFor(contactId, nextHash), restate: false }
-		}
-		return { version: !profileVersionBump({ kind: offerOnly ? 'coupon-issued' : 'profile-change', nextHash }) ? await args.currentVersion?.(contactId) : await args.versionFor(contactId, nextHash), restate: false }
-	})) as { version: (ContactProfileVersion & { contentHash?: string }) | undefined; restate: boolean }
-	const { version } = selected
-	restate = selected.restate
+	const version = (await args.step.run('review-profile-version', () =>
+		offerOnly ? args.currentVersion?.(contactId) ?? Promise.resolve(undefined) : args.versionFor(contactId, contactProfileContentHash(snapshot), legacyContactProfileContentHash(snapshot)),
+	)) as ContactProfileVersion | undefined
+	const restate = args.event.data.reason === 'restate' && version?.acknowledged === true && !version.migrated
 	// An unseeded directory falls back to live personalize. A coupon cannot
 	// manufacture a profile or spend a version, even for a first issue.
 	if (!version) return { status: 'skipped', reason: 'profile-not-issued' }
 	const { profileVersion, since, acknowledged } = version
-	// Restatements never reinterpret a legacy combined digest as a change.
-	// Delta recovery remains responsible for actual profile/link inputs.
-	// A live writer or delta scan adds nothing for a queued/accepted digest.
-	// Only the independent monthly restater confirms equal versions.
+	// A proven legacy match rewrites only the digest, never a version or event.
+	// Unacknowledged versions take full delivery even on a restatement request.
+	if (version.migrated && acknowledged) return { status: 'skipped', reason: 'hash-migrated' }
 	if (acknowledged && !offerOnly && !restate)
 		return { status: 'skipped', reason: 'unchanged' }
 	const events = buildContactProfileEvents({
@@ -470,7 +469,8 @@ export async function runContactProfileSync(args: {
 		profileVersion,
 		...snapshot,
 		links: offerOnly || restate ? [] : snapshot.links,
-		offers: restate ? [] : snapshot.offers,
+		// The capped worker refreshes the current offer only after this profile lands.
+		offers: offerOnly ? snapshot.offers : [],
 		occurredAt: since,
 	}).filter((event) => !offerOnly || event.type === 'contact.offer.issued')
 	if (restate) {
@@ -512,7 +512,7 @@ export async function runContactProfileSync(args: {
 				deferred,
 				1,
 				at,
-				rejected === 0 ? { contactId, profileVersion } : undefined,
+				!offerOnly && rejected === 0 ? { contactId, profileVersion } : undefined,
 			),
 		)
 		return {
