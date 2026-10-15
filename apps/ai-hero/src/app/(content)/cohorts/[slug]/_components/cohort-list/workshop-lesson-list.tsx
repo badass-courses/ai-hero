@@ -118,9 +118,11 @@ export function WorkshopLessonList({
 													aria-label="locked"
 												/>
 											)}
+											{/* The same "99/99"-wide left-aligned slot as the
+											    workshop list, so the lock marks line up. */}
 											{childResources.length > 0 && (
 												<span
-													className="text-muted-foreground/70 shrink-0 font-mono text-[11px] font-medium uppercase tabular-nums tracking-wider"
+													className="text-muted-foreground/70 min-w-[5.5ch] shrink-0 text-left font-mono text-[11px] font-medium uppercase tabular-nums tracking-wider"
 													aria-label={`${sectionDoneCount} of ${childResources.length} lessons completed`}
 												>
 													{sectionDoneCount}/{childResources.length}
