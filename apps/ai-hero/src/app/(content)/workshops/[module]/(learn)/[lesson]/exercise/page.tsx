@@ -1,6 +1,5 @@
 import * as React from 'react'
 import type { Metadata, ResolvingMetadata } from 'next'
-import { LessonProvider } from '@/app/(content)/tutorials/[module]/[lesson]/_components/lesson-context'
 import { LessonPage } from '@/app/(content)/workshops/[module]/(learn)/[lesson]/shared-page'
 import { getLesson } from '@/lib/lessons-query'
 import { getCachedMinimalWorkshop } from '@/lib/workshops-query'
@@ -43,13 +42,11 @@ export default async function LessonExercisePage(props: {
 	const workshop = await getCachedMinimalWorkshop(params.module)
 
 	return (
-		<LessonProvider lesson={lesson}>
-			<LessonPage
-				searchParams={searchParams}
-				lesson={lesson}
-				params={params}
-				workshop={workshop}
-			/>
-		</LessonProvider>
+		<LessonPage
+			searchParams={searchParams}
+			lesson={lesson}
+			params={params}
+			workshop={workshop}
+		/>
 	)
 }

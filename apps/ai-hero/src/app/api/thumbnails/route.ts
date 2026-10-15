@@ -5,6 +5,11 @@ import { getVideoResource } from '@/lib/video-resource-query'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
 
+import {
+	getAuthoredThumbnailTimes,
+	resolveThumbnailTime,
+} from './thumbnail-time'
+
 /**
  * Widths a caller may ask for: the lesson poster's default, and /videos cards.
  * An allowlist, so the proxy cannot be driven to fetch arbitrary variants.
@@ -54,7 +59,16 @@ const getThumbnailHandler = async (request: NextRequest) => {
 				{ status: 404, headers: corsHeaders },
 			)
 		}
-		const thumbnailTime = time || fields.thumbnailTime || 0
+		const defaultTime = Number(fields.thumbnailTime) || 0
+		const authoredTimes =
+			time !== null && Number(time) !== 0
+				? await getAuthoredThumbnailTimes(params.videoResourceId)
+				: []
+		const thumbnailTime = resolveThumbnailTime(
+			time,
+			authoredTimes,
+			defaultTime,
+		)
 		const thumbnailUrl = `https://image.mux.com/${muxPlaybackId}/thumbnail.png?time=${thumbnailTime}&width=${width}`
 
 		const thumbnailResponse = await fetch(thumbnailUrl)
