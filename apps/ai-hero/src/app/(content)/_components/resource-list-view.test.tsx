@@ -198,3 +198,69 @@ describe('isFreshCompletion', () => {
 		expect(isFreshCompletion('not a date', now)).toBe(false)
 	})
 })
+
+describe('ResourceListView open section', () => {
+	;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
+
+	const section = (id: string, lessonSlug: string) => ({
+		resource: {
+			id,
+			type: 'section',
+			fields: { slug: id, title: `Section ${id}` },
+			resources: [
+				{
+					resource: {
+						id: `lesson-${lessonSlug}`,
+						type: 'lesson',
+						fields: { slug: lessonSlug, title: lessonSlug },
+					},
+				},
+			],
+		},
+	})
+	const resources = [section('a', 'first'), section('b', 'second')] as any
+
+	let container: HTMLDivElement
+	let root: ReturnType<typeof createRoot>
+
+	function show(currentSlug: string, defaultOpenSectionId: string) {
+		act(() => {
+			root.render(
+				<ResourceListView
+					title="Getting To Know Claude Code"
+					titleHref="/workshops/claude-code~p9j8f"
+					moduleId="workshop-p9j8f"
+					buildLessonHref={(slug) => `/workshops/claude-code~p9j8f/${slug}`}
+					showAutoplay={false}
+					resources={resources}
+					currentSlug={currentSlug}
+					defaultOpenSectionId={defaultOpenSectionId}
+				/>,
+			)
+		})
+	}
+
+	const openSections = () =>
+		Array.from(container.querySelectorAll('button[data-state="open"]')).map(
+			(button) => button.textContent?.match(/Section \w/)?.[0],
+		)
+
+	afterEach(() => {
+		act(() => root.unmount())
+		container.remove()
+	})
+
+	// The lesson layout keeps the list mounted across lessons, so it has to
+	// open the next lesson's section itself.
+	it('opens the section of a lesson reached without remounting', () => {
+		container = document.createElement('div')
+		document.body.appendChild(container)
+		root = createRoot(container)
+
+		show('first', 'a')
+		expect(openSections()).toEqual(['Section a'])
+
+		show('second', 'b')
+		expect(openSections()).toEqual(['Section b'])
+	})
+})

@@ -122,6 +122,17 @@ export function ResourceListView({
 	stickyTopClassName = 'top-0',
 }: ResourceListViewProps) {
 	const scrollAreaRef = useScrollToActive(currentSlug)
+	const defaultOpenSection = defaultAllClosed
+		? ''
+		: defaultOpenSectionId || resources?.[0]?.resource?.id || ''
+	const [openSection, setOpenSection] = React.useState(defaultOpenSection)
+	const [openedFor, setOpenedFor] = React.useState(currentSlug)
+	// The lesson layout keeps this list mounted across lessons; open the new
+	// lesson's section as a fresh mount would.
+	if (openedFor !== currentSlug) {
+		setOpenedFor(currentSlug)
+		setOpenSection(defaultOpenSection)
+	}
 	// Measured height for the sticky box: the `maxHeight` class alone can't be
 	// right both before and after the non-sticky chrome (promo bar, lesson-page
 	// nav) scrolls away. See the hook's doc comment. `h-auto` callers (list
@@ -236,11 +247,8 @@ export function ResourceListView({
 							type="single"
 							collapsible
 							className={cn('flex flex-col', wrapperClassName)}
-							defaultValue={
-								defaultAllClosed
-									? undefined
-									: defaultOpenSectionId || resources?.[0]?.resource?.id
-							}
+							value={openSection}
+							onValueChange={setOpenSection}
 						>
 							<ol>
 								{resources
