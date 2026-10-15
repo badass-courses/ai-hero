@@ -78,7 +78,8 @@ export const getPlayerPrefs = (): PlayerPrefs => {
 		| Partial<PlayerPrefs>
 		| undefined
 	if (!stored) {
-		return cookies.set(MUX_PLAYER_PREFS_KEY, defaultPlayerPreferences)
+		cookies.set(MUX_PLAYER_PREFS_KEY, defaultPlayerPreferences)
+		return defaultPlayerPreferences
 	}
 	return {
 		...defaultPlayerPreferences,
@@ -93,14 +94,12 @@ export const getPlayerPrefs = (): PlayerPrefs => {
 	}
 }
 
+/**
+ * Returns what it wrote, never a re-read: a write the browser refuses
+ * (cookies blocked) must not turn the prefs into null.
+ */
 export const savePlayerPrefs = (options: Partial<PlayerPrefs>): PlayerPrefs => {
-	return cookies.set(
-		MUX_PLAYER_PREFS_KEY,
-		{
-			...defaultPlayerPreferences,
-			...getPlayerPrefs(),
-			...options,
-		},
-		{ sameSite: 'None', secure: true },
-	)
+	const prefs = { ...getPlayerPrefs(), ...options }
+	cookies.set(MUX_PLAYER_PREFS_KEY, prefs)
+	return prefs
 }
