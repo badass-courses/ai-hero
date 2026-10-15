@@ -1,7 +1,6 @@
 import * as React from 'react'
 import type { Metadata, ResolvingMetadata } from 'next'
 import { notFound } from 'next/navigation'
-import { LessonProvider } from '@/app/(content)/tutorials/[module]/[lesson]/_components/lesson-context'
 import { LessonPage } from '@/app/(content)/workshops/[module]/(learn)/[lesson]/shared-page'
 import {
 	getCachedExerciseSolution,
@@ -54,14 +53,12 @@ export default async function LessonSolutionPage(props: {
 	const { solution, lesson } = data
 
 	return (
-		<LessonProvider lesson={solution}>
-			<LessonPage
-				searchParams={searchParams}
-				lesson={solution}
-				problem={lesson}
-				params={params}
-				workshop={workshop}
-			/>
-		</LessonProvider>
+		<LessonPage
+			searchParams={searchParams}
+			lesson={solution}
+			problem={lesson}
+			params={params}
+			workshop={workshop}
+		/>
 	)
 }
