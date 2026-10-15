@@ -38,6 +38,14 @@ Do it the way `ModuleLessonProgressToggle` and the 2026-06-26 completion design 
 
 The same leftover `revalidateModuleLesson` calls sit in the binge path of `authed-video-player.tsx`, which awaits three server actions before `router.push`, and in `CompletedModuleOverlay`.
 
+## Who can record progress is not knowable on the client
+
+Learners in the email-course flow have no next-auth session. The server identifies them by the httpOnly `ck_subscriber` cookie (`getUser()` in `src/lib/progress.ts`), which client code cannot read.
+
+So never gate a progress write on `session.user`. Doing so dropped those learners' completions in #424 until review caught it. Gate on `canViewLesson` instead:
+- **With a session:** update the store optimistically.
+- **Without a session:** update the store only after the server returns a record. Anonymous viewers get `null` back, so they see no flicker.
+
 ## Parked UX gaps (Vojta, 2026-10-15: note them for later)
 
 These came out of the same review and were left out of the end-of-video PR on purpose.
