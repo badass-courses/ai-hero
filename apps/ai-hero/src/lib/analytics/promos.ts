@@ -11,8 +11,8 @@ export const PROMO_KINDS = [
 export type PromoKind = (typeof PROMO_KINDS)[number]
 
 export type PromoPurchase = {
-	status: string
-	totalAmount: number | string
+	status: string | null
+	totalAmount: number | string | null
 	couponId?: string | null
 	redeemedBulkCouponId?: string | null
 }
@@ -31,12 +31,16 @@ export function promoKindOf(
 ): PromoKind {
 	const amount = Number(purchase.totalAmount)
 	const hasCoupon = purchase.couponId != null
-	if (amount === 0 || purchase.redeemedBulkCouponId != null)
+	if (
+		(purchase.totalAmount !== null && amount === 0) ||
+		purchase.redeemedBulkCouponId != null
+	)
 		return 'seat-or-zero'
 	if (
+		purchase.totalAmount === null ||
 		!Number.isFinite(amount) ||
 		amount < 0 ||
-		!['Valid', 'Restricted', 'Refunded'].includes(purchase.status)
+		!['Valid', 'Restricted', 'Refunded'].includes(purchase.status ?? '')
 	)
 		return 'unclassified'
 	if (
@@ -118,16 +122,18 @@ export function promoWindow(options: PromoOptions, now = new Date()) {
 	const to = options.to === undefined ? now : parse(options.to)
 	const hours = { '24h': 24, '7d': 168, '30d': 720, '90d': 2160 }
 	const range = options.range ?? '30d'
+	if (range === 'all')
+		throw new Error(
+			'range=all is not supported for promo analytics. Use range=24h,7d,30d,90d or paired from/to (maximum 400 days).',
+		)
 	const from =
 		options.from !== undefined
 			? parse(options.from)
-			: range === 'all'
-				? null
-				: new Date(to.getTime() - hours[range] * 3600000)
+			: new Date(to.getTime() - hours[range] * 3600000)
 	if (from && from >= to) throw new Error('from must be before to')
-	// Explicit windows are bounded. range=all retains the existing historical-read contract.
-	if (options.from && from && to.getTime() - from.getTime() > 366 * 86400000)
-		throw new Error('Explicit windows cannot exceed 366 days')
+	// Both rolling and explicit windows are bounded.
+	if (options.from && to.getTime() - from.getTime() > 400 * 86400000)
+		throw new Error('Explicit windows cannot exceed 400 days')
 	return {
 		from: from?.toISOString() ?? null,
 		to: to.toISOString(),
@@ -139,11 +145,48 @@ export function promoWindow(options: PromoOptions, now = new Date()) {
 export type PromoAggregateRow = {
 	date: string
 	kind: PromoKind
-	recordCount: number | string
-	purchaseCount: number | string
+	recordCount: number | string | bigint
+	purchaseCount: number | string | bigint
 	gross: number | string
 	refunds: number | string
 }
+/** mysql2 tuple first, plus the pool's legacy .rows shape. Never fabricate zero on decode failure. */
+export function parsePromoAggregateRows(result: unknown): PromoAggregateRow[] {
+	const rows = Array.isArray(result)
+		? result[0]
+		: (result as { rows?: unknown } | null)?.rows
+	if (!Array.isArray(rows))
+		throw new Error('Promo query returned an unexpected driver shape')
+	for (const row of rows) {
+		if (
+			!row ||
+			typeof row !== 'object' ||
+			!PROMO_KINDS.includes(row.kind) ||
+			typeof row.date !== 'string' ||
+			!/^\d{4}-\d{2}-\d{2}$/.test(row.date)
+		)
+			throw new Error('Promo query returned an invalid aggregate row')
+		for (const key of [
+			'recordCount',
+			'purchaseCount',
+			'gross',
+			'refunds',
+		] as const) {
+			const value = row[key]
+			if (
+				!['number', 'string', 'bigint'].includes(typeof value) ||
+				value === '' ||
+				!Number.isFinite(Number(value)) ||
+				Number(value) < 0 ||
+				((key === 'recordCount' || key === 'purchaseCount') &&
+					!Number.isSafeInteger(Number(value)))
+			)
+				throw new Error('Promo query returned an invalid aggregate value')
+		}
+	}
+	return rows as PromoAggregateRow[]
+}
+
 export function formatPromoRevenue(
 	rows: PromoAggregateRow[],
 	window: PromoRevenue['window'],

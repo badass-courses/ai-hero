@@ -94,10 +94,10 @@ export const REVENUE_SURFACE_SCHEMAS = {
 			'Evergreen means the linked site coupon has fields.evergreenOffer present, including null or false. Coupon status/expiry and arbitrary merchant offer types do not rewrite historical attribution.',
 			'Regional means Restricted, or a linked merchant coupon of type ppp (also preserves regional attribution on Refunded rows when that link exists).',
 			'Classification uses persisted coupon evidence only. A refunded row cannot recover a previous Restricted status without a persisted PPP coupon link. An unrecorded merchant discount cannot be inferred from the paid amount.',
-			'Unknown purchase statuses are unclassified. Unresolved coupon references are unclassified, not full-price. recordCount makes every record visible.',
+			'Unknown purchase statuses (including Disputed and Banned) are unclassified and excluded from paid money, matching the base revenue provider. Status comparisons are byte-exact. Unresolved coupon references are unclassified, not full-price. recordCount makes every record visible.',
 			'purchaseCount counts positive Valid/Restricted/Refunded records except team-seat redemptions. Seat/zero and unknown statuses never contribute paid amounts.',
 			'gross includes original amounts of Refunded purchases; refunds includes their amounts; net = gross - refunds. Refunds are dated by purchase creation, not refund time. Partial Stripe refund events are not represented by this purchase-status report.',
-			'from/to must be supplied together as UTC ISO timestamps (Z, at most millisecond precision), using half-open [from,to) bounds, max 366 days. Explicit windows override range. range=all retains the existing historical-read contract.',
+			'from/to must be supplied together as UTC ISO timestamps (Z, at most millisecond precision), using half-open [from,to) bounds, max 400 days. Explicit windows override the rolling range, and the envelope echoes window instead of range. range=all is rejected with a 400; use 24h/7d/30d/90d or paired from/to. Other surfaces reject from/to.',
 		],
 	},
 	'funnel/evergreen': {
@@ -328,7 +328,7 @@ export function getAnalyticsAgentSchema(surfaceNames: readonly SurfaceName[]) {
 					type: 'string',
 					format: 'date-time',
 					description:
-						'Exclusive UTC ISO instant, supply with from. Max 366-day explicit window.',
+						'Exclusive UTC ISO instant, supply with from. Max 400-day explicit window.',
 				},
 				productId: { type: 'string' },
 				purchaseId: { type: 'string' },
@@ -337,6 +337,17 @@ export function getAnalyticsAgentSchema(surfaceNames: readonly SurfaceName[]) {
 				questionId: { type: 'string' },
 			},
 			allOf: [
+				{
+					if: {
+						properties: {
+							surface: { enum: ['revenue/promos', 'funnel/evergreen'] },
+						},
+						required: ['surface'],
+					},
+					then: {
+						properties: { range: { enum: ['24h', '7d', '30d', '90d'] } },
+					},
+				},
 				{
 					if: {
 						properties: { surface: { const: 'surveys/responses' } },

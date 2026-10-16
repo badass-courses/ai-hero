@@ -14,6 +14,7 @@ import {
 export function EvergreenOfferCard({ range }: { range: AnalyticsRange }) {
 	const revenue = useQuery({
 		queryKey: ['analytics', 'revenue/promos', range],
+		enabled: range !== 'all',
 		queryFn: async ({ signal }) => {
 			const response = await fetch(
 				`/api/analytics?surface=revenue%2Fpromos&range=${encodeURIComponent(range)}`,
@@ -38,7 +39,9 @@ export function EvergreenOfferCard({ range }: { range: AnalyticsRange }) {
 				className={`${TYPE.meta} text-muted-foreground mt-2`}
 				aria-live="polite"
 			>
-				{revenue.isPending ? (
+				{range === 'all' ? (
+					'Choose a bounded range to view evergreen revenue.'
+				) : revenue.isPending ? (
 					'Loading evergreen revenue…'
 				) : revenue.isError ? (
 					'Evergreen revenue is temporarily unavailable.'
@@ -48,7 +51,7 @@ export function EvergreenOfferCard({ range }: { range: AnalyticsRange }) {
 							style: 'currency',
 							currency: revenue.data.currency,
 						}).format(evergreen.net)}{' '}
-						net · {evergreen.purchaseCount} purchases
+						net · {evergreen.purchaseCount} purchases (incl. refunded)
 					</p>
 				) : (
 					'Evergreen revenue is temporarily unavailable.'

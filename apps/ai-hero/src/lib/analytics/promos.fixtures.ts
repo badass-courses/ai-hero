@@ -11,6 +11,30 @@ const coupon = { couponId: 'synthetic-coupon' }
 export const promoCases: PromoCase[] = [
 	{ name: 'no coupon', purchase: paid, facts: {}, kind: 'full-price' },
 	{
+		name: 'null status (defensive schema drift)',
+		purchase: { ...paid, status: null },
+		facts: {},
+		kind: 'unclassified',
+	},
+	{
+		name: 'null amount (defensive schema drift)',
+		purchase: { ...paid, totalAmount: null },
+		facts: {},
+		kind: 'unclassified',
+	},
+	{
+		name: 'lowercase valid is not Valid',
+		purchase: { ...paid, status: 'valid' },
+		facts: {},
+		kind: 'unclassified',
+	},
+	{
+		name: 'disputed is excluded from revenue',
+		purchase: { ...paid, status: 'Disputed' },
+		facts: {},
+		kind: 'unclassified',
+	},
+	{
 		name: 'empty dangling coupon reference',
 		purchase: { ...paid, couponId: '' },
 		facts: {},

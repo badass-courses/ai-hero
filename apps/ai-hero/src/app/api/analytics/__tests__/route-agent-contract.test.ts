@@ -163,6 +163,12 @@ describe('analytics API agent contract', () => {
 			)
 			const body = await response.json()
 			expect(body.data).toEqual(data)
+			expect(body.range).toBeUndefined()
+			expect(body.window).toMatchObject({
+				from: '2026-01-01T18:00:00.001Z',
+				to: '2026-01-02T18:00:00.000Z',
+				bounds: '[from,to)',
+			})
 			expect(body._links.self.href).toContain(
 				'from=2026-01-01T18%3A00%3A00.001Z',
 			)
@@ -171,6 +177,25 @@ describe('analytics API agent contract', () => {
 			)
 		},
 	)
+
+	it('rejects all on promo revenue with an actionable 400 prompt', async () => {
+		const response = await GET(request('?surface=revenue/promos&range=all'))
+		expect(response.status).toBe(400)
+		expect((await response.json()).error.message).toContain(
+			'Use range=24h,7d,30d,90d or paired from/to',
+		)
+		expect(mocks.query).not.toHaveBeenCalled()
+	})
+
+	it('rejects from/to on base surfaces instead of silently ignoring them', async () => {
+		const response = await GET(
+			request(
+				'?surface=summary&from=2026-01-01T00:00:00Z&to=2026-01-02T00:00:00Z',
+			),
+		)
+		expect(response.status).toBe(400)
+		expect(mocks.query).not.toHaveBeenCalled()
+	})
 
 	it('rejects incomplete explicit windows before querying', async () => {
 		const response = await GET(
@@ -244,12 +269,12 @@ describe('analytics API agent contract', () => {
 					properties: {
 						productId: { type: 'string' },
 					},
-					allOf: [
-						{
+					allOf: expect.arrayContaining([
+						expect.objectContaining({
 							then: { properties: { limit: { maximum: 1000 } } },
 							else: { properties: { limit: { maximum: 100 } } },
-						},
-					],
+						}),
+					]),
 				},
 				surfaces: {
 					summary: {

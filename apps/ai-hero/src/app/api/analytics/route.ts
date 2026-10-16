@@ -603,7 +603,16 @@ export const GET = withSkill(async (request: NextRequest) => {
 			ok: true,
 			endpoint: '/api/analytics',
 			surface,
-			range,
+			...(from !== undefined && to !== undefined
+				? {
+						window: {
+							from: new Date(from).toISOString(),
+							to: new Date(to).toISOString(),
+							basis: 'purchase-created',
+							bounds: '[from,to)',
+						},
+					}
+				: { range }),
 			offset,
 			productId,
 			description: catalogByName[surface].description,

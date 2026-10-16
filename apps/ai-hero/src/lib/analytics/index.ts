@@ -1,4 +1,5 @@
 import { createAnalyticsEngine } from '@coursebuilder/analytics/engine'
+import { log } from '@/server/logger'
 
 import * as database from './providers/database'
 import * as derived from './providers/derived'
@@ -21,7 +22,13 @@ import { EVERGREEN_FUNNEL_PENDING, promoWindow } from './promos'
 import type { QueryOptions, QueryResult, SurfaceName } from './types'
 import type { SurfaceName as BaseSurfaceName } from '@coursebuilder/analytics/types'
 
-export const getCatalog = () => Object.values(localCatalog)
+const isPromoSurface = (surface: SurfaceName) =>
+	surface === 'revenue/promos' || surface === 'funnel/evergreen'
+export const getCatalog = () => [
+	...engine.getCatalog(),
+	localCatalog['revenue/promos'],
+	localCatalog['funnel/evergreen'],
+]
 
 export async function query<S extends SurfaceName>(
 	surface: S,
@@ -46,7 +53,8 @@ export async function query<S extends SurfaceName>(
 			data,
 			meta: { queryTimeMs: Date.now() - start, truncated: false },
 		} as QueryResult<S>
-	} catch {
+	} catch (error) {
+		await log.error('analytics.promo.query-failed', { surface, error })
 		return {
 			ok: false,
 			surface,
@@ -63,12 +71,28 @@ export async function queryMany<S extends SurfaceName>(
 	surfaces: S[],
 	options?: QueryOptions,
 ): Promise<{ [K in S]: QueryResult<K> }> {
-	const results = await Promise.all(
-		surfaces.map((surface) => query(surface, options)),
-	)
-	return Object.fromEntries(
-		results.map((result) => [result.surface, result]),
-	) as { [K in S]: QueryResult<K> }
+	if (!surfaces.some(isPromoSurface)) {
+		return engine.queryMany(surfaces as BaseSurfaceName[], options) as Promise<{
+			[K in S]: QueryResult<K>
+		}>
+	}
+	const baseSurfaces = surfaces.filter(
+		(surface) => !isPromoSurface(surface),
+	) as BaseSurfaceName[]
+	const [baseResults, promoResults] = await Promise.all([
+		baseSurfaces.length
+			? engine.queryMany(baseSurfaces, options)
+			: Promise.resolve({}),
+		Promise.all(
+			surfaces.filter(isPromoSurface).map((surface) => query(surface, options)),
+		),
+	])
+	return {
+		...baseResults,
+		...Object.fromEntries(
+			promoResults.map((result) => [result.surface, result]),
+		),
+	} as { [K in S]: QueryResult<K> }
 }
 
 export type {

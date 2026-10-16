@@ -9,6 +9,7 @@ import {
 } from './promos'
 import { promoRevenueSql } from './promos-query'
 import { promoCases } from './promos.fixtures'
+import { promoFixtureDdl } from './promos-fixture-schema'
 
 const url = process.env.AIH_MYSQL_TEST_URL
 const dialect = new MySqlDialect()
@@ -34,15 +35,7 @@ describe.skipIf(!url)('promo SQL parity (synthetic MySQL)', () => {
 		await connection.query(`CREATE DATABASE \`${databaseName}\``)
 		await connection.query(`USE \`${databaseName}\``)
 		await connection.query("SET time_zone = '-08:00'")
-		await connection.query(
-			'CREATE TABLE AI_Purchase (id varchar(191) primary key, productId varchar(191), createdAt timestamp(3), status varchar(191), totalAmount decimal(65,30), couponId varchar(191), redeemedBulkCouponId varchar(191), bulkCouponId varchar(191))',
-		)
-		await connection.query(
-			'CREATE TABLE AI_Coupon (id varchar(191) primary key, fields json, merchantCouponId varchar(191))',
-		)
-		await connection.query(
-			'CREATE TABLE AI_MerchantCoupon (id varchar(191) primary key, type varchar(191))',
-		)
+		for (const ddl of promoFixtureDdl) await connection.query(ddl)
 	})
 	afterAll(async () => {
 		if (connection) {
@@ -97,7 +90,7 @@ describe.skipIf(!url)('promo SQL parity (synthetic MySQL)', () => {
 			const paid =
 				purchase.redeemedBulkCouponId == null &&
 				Number(purchase.totalAmount) > 0 &&
-				['Valid', 'Restricted', 'Refunded'].includes(purchase.status)
+				['Valid', 'Restricted', 'Refunded'].includes(purchase.status ?? '')
 			const gross = paid ? Number(purchase.totalAmount) : 0
 			const refunds = paid && purchase.status === 'Refunded' ? gross : 0
 			expect(result.daily).toEqual([
@@ -169,6 +162,11 @@ describe.skipIf(!url)('promo SQL parity (synthetic MySQL)', () => {
 		for (const [id, instant, product] of [
 			['before', '2026-01-01T18:00:00.000Z', options.productId],
 			['from', options.from, options.productId],
+			[
+				'last-ms-before-midnight',
+				'2026-01-01T23:59:59.999Z',
+				options.productId,
+			],
 			['utc-midnight', '2026-01-02T00:00:00Z', options.productId],
 			['last-ms', '2026-01-02T18:00:00.000Z', options.productId],
 			['to', options.to, options.productId],
@@ -188,11 +186,11 @@ describe.skipIf(!url)('promo SQL parity (synthetic MySQL)', () => {
 				gross,
 			})),
 		).toEqual([
-			{ date: '2026-01-01', purchaseCount: 1, gross: 10.25 },
+			{ date: '2026-01-01', purchaseCount: 2, gross: 20.5 },
 			{ date: '2026-01-02', purchaseCount: 2, gross: 20.5 },
 		])
 		expect(
 			result.byKind.find((row) => row.kind === 'full-price')?.purchaseCount,
-		).toBe(3)
+		).toBe(4)
 	})
 })

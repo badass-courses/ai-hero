@@ -51,12 +51,20 @@ describe('promo window and money', () => {
 	])('rejects invalid explicit windows %j', (input) =>
 		expect(() => promoWindow(input)).toThrow(),
 	)
-	it('uses rolling ranges and historical all with a captured exclusive end', () => {
+	it('uses bounded rolling ranges and rejects all with an actionable prompt', () => {
 		const now = new Date('2026-01-31T18:00:00Z')
 		expect(promoWindow({ range: '30d' }, now).from).toBe(
 			'2026-01-01T18:00:00.000Z',
 		)
-		expect(promoWindow({ range: 'all' }, now).from).toBeNull()
+		expect(() => promoWindow({ range: 'all' }, now)).toThrow(
+			'range=all is not supported',
+		)
+		expect(() =>
+			promoWindow({ from: '2024-01-01T00:00:00Z', to: '2025-02-04T00:00:00Z' }),
+		).not.toThrow()
+		expect(() =>
+			promoWindow({ from: '2024-01-01T00:00:00Z', to: '2025-02-05T00:00:00Z' }),
+		).toThrow('400 days')
 	})
 	it('subtracts refunds and preserves all kinds including empty and unclassified', () => {
 		const result = formatPromoRevenue(
@@ -131,10 +139,14 @@ describe('promo window and money', () => {
 			promoRevenueSql(options, promoWindow(options)),
 		)
 		expect(query.sql).toContain('GROUP BY date, kind')
-		expect(query.sql).toContain('p.createdAt < FROM_UNIXTIME(?)')
-		expect(query.sql).toContain('p.createdAt >= FROM_UNIXTIME(?)')
+		expect(query.sql).toContain('p.createdAt < FROM_UNIXTIME(? / 1000)')
+		expect(query.sql).toContain('p.createdAt >= FROM_UNIXTIME(? / 1000)')
 		expect(query.sql).not.toContain(options.productId)
 		expect(query.params).toContain(options.productId)
+		expect(query.params).toContain(Date.parse(options.from))
+		expect(query.params).toContain(Date.parse(options.to))
+		expect(query.sql).toContain('FLOOR(UNIX_TIMESTAMP(p.createdAt))')
+		expect(query.sql).toContain('BINARY p.status')
 		expect(query.sql).not.toMatch(/email|userId|userName/i)
 	})
 	it('returns typed pending, never fabricated conversion counts', () => {
