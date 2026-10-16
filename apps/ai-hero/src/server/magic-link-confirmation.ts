@@ -313,7 +313,10 @@ function spentTokenTransferPath(
 	} catch {
 		return null
 	}
-	if (error !== 'Verification') return null
+	// Auth.js reports a spent or unknown email token as Verification, and some
+	// adapter failures on it as Configuration; the person holding the link sees
+	// the same thing either way.
+	if (error !== 'Verification' && error !== 'Configuration') return null
 	return transferPathOf(
 		callbackPath(confirmation.callbackUrl, siteUrl).split(/[?#]/, 1)[0]!,
 	)

@@ -45,6 +45,7 @@ export function TransferScreen({
 	recipientEmail,
 	accept,
 	notice,
+	sendLogin,
 }: {
 	view: TransferView
 	transferId: string
@@ -56,6 +57,8 @@ export function TransferScreen({
 	accept?: () => Promise<void>
 	/** Shown above the state when a spent acceptance link brought them here. */
 	notice?: string | null
+	/** Server action that emails the recipient a login link, by transfer id. */
+	sendLogin?: (transferId: string) => Promise<{ sent: boolean }>
 }) {
 	const eyebrow = {
 		accept: `Sent to you by ${senderName}`,
@@ -168,10 +171,12 @@ export function TransferScreen({
 									icon={<PostPurchaseIconBadge kind="email" />}
 									title={<>Sign in as {maskEmail(recipientEmail)} to accept</>}
 									action={
-										<TransferLoginButton
-											email={recipientEmail}
-											callbackUrl={`/transfer/${transferId}`}
-										/>
+										sendLogin ? (
+											<TransferLoginButton
+												transferId={transferId}
+												sendLogin={sendLogin}
+											/>
+										) : null
 									}
 								>
 									<p>

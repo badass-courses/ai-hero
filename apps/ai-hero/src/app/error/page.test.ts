@@ -7,30 +7,19 @@ import {
 	authErrorView,
 } from '@/lib/auth-error-view'
 
-// The page before this change: only these codes had copy; "Configuration" and
-// "AccessDenied" fell to "Something went wrong", with the raw code printed.
-const LEGACY_COVERED = new Set([
-	'Verification',
-	'OAuthAccountNotLinked',
-	'OAuthCallback',
-	'OAuthSignin',
-	'SessionRequired',
-])
-const legacyTitle = (code: string) =>
-	LEGACY_COVERED.has(code) ? 'specific' : 'Something went wrong'
-
 describe('auth error copy', () => {
-	it('legacy: Configuration and AccessDenied got the generic "Something went wrong"', () => {
-		expect(legacyTitle('Configuration')).toBe('Something went wrong')
-		expect(legacyTitle('AccessDenied')).toBe('Something went wrong')
-	})
-
 	it.each(AUTH_ERROR_CODES)('%s has its own plain copy', (code) => {
 		const view = authErrorView(code)
 		expect(view).toBe(AUTH_ERROR_VIEWS[code])
 		expect(view.title).not.toBe('Something went wrong')
 		expect(view.title.toLowerCase()).not.toContain('configuration')
 		expect(view.message.toLowerCase()).not.toContain('configuration')
+	})
+
+	it('AccessDenied says the account is not linked, as the signIn callback means it', () => {
+		const view = authErrorView('AccessDenied')
+		expect(view.title).toContain('not linked')
+		expect(view.emailForm).toBe(true)
 	})
 
 	it('an expired or reused login link says so and offers the email form', () => {

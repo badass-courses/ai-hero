@@ -4,6 +4,17 @@
  * none, gets the generic view, and the raw `error` param is never rendered.
  */
 
+/*
+ * Codes are Auth.js's `AuthError` types (next-auth 5.0.0-beta.25 on
+ * @auth/core 0.37.2) sent to `pages.error`. In this app the ones that actually
+ * arrive are: Verification (spent, expired or unknown email token),
+ * Configuration (some adapter failures while using that token),
+ * AccessDenied (the `signIn` callback returned false: an OAuth sign-in for an
+ * account that is not linked, see server/oauth-link-containment.ts),
+ * OAuthAccountNotLinked, OAuthCallback, OAuthSignin and SessionRequired. The
+ * rest are listed so the record is exhaustive and an unknown code still falls
+ * back to the generic view.
+ */
 export const AUTH_ERROR_CODES = [
 	'Configuration',
 	'AccessDenied',
@@ -70,11 +81,11 @@ export const AUTH_ERROR_VIEWS: Record<AuthErrorCode, AuthErrorView> = {
 			'We could not finish that login. If you used a login link, it may have expired or already been used. Enter your email to get a new one.',
 	},
 	AccessDenied: {
-		title: 'Access denied',
+		title: 'That account is not linked to AI Hero',
 		message:
-			'That account is not allowed to log in. If you think that is a mistake, contact support.',
-		emailForm: false,
-		actions: [{ label: 'Back to login', href: '/login', variant: 'default' }],
+			'GitHub and Discord only sign in to accounts already linked to AI Hero. Enter your email to log in, then connect the provider from your profile.',
+		emailForm: true,
+		actions: [],
 	},
 	EmailSignin: {
 		title: 'We could not send that login link',

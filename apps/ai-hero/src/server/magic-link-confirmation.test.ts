@@ -204,16 +204,44 @@ describe('a spent acceptance link', () => {
 		)
 	}
 
-	it('goes to the transfer page, not an expiry error', async () => {
-		const response = await confirm(`${siteUrl}/transfer/abc123`, 'Verification')
-		expect(response.status).toBe(303)
-		expect(response.headers.get('location')).toBe('/transfer/abc123?link=used')
+	it.each(['Verification', 'Configuration'])(
+		'goes to the transfer page on %s, not an expiry error',
+		async (error) => {
+			const response = await confirm(`${siteUrl}/transfer/abc123`, error)
+			expect(response.status).toBe(303)
+			expect(response.headers.get('location')).toBe('/transfer/abc123?link=used')
+		},
+	)
+
+	it.each([
+		['https://www.aihero.dev/', 'https://www.aihero.dev/transfer/abc123', true],
+		['https://www.aihero.dev', 'https://www.aihero.dev/transfer/abc123', true],
+		// www vs apex is a different origin: never followed.
+		['https://www.aihero.dev', 'https://aihero.dev/transfer/abc123', false],
+		['https://aihero.dev', 'https://www.aihero.dev/transfer/abc123', false],
+	])('siteUrl %s with callback %s -> follows: %s', async (site, cb, follows) => {
+		const value = await spent(cb)()
+		const handler = createMagicLinkConfirmHandler(
+			async () =>
+				Response.redirect('https://www.aihero.dev/error?error=Verification', 302),
+			{ secret, now, siteUrl: site },
+		)
+		const response = await handler(
+			new Request('https://www.aihero.dev/api/auth/magic-link/confirm', {
+				method: 'POST',
+				headers: { cookie: `${MAGIC_LINK_COOKIE_NAME}=${value}` },
+			}),
+		)
+		expect(response.headers.get('location')).toBe(
+			follows ? '/transfer/abc123?link=used' : 'https://www.aihero.dev/error?error=Verification',
+		)
 	})
 
 	it('leaves other callbacks and other errors alone', async () => {
 		for (const [cb, err] of [
 			[`${siteUrl}/welcome`, 'Verification'],
 			[`${siteUrl}/transfer/abc123`, 'AccessDenied'],
+			[`${siteUrl}/transfer/abc123/extra`, 'Verification'],
 			['https://evil.example/transfer/abc123', 'Verification'],
 		] as const) {
 			const response = await confirm(cb, err)

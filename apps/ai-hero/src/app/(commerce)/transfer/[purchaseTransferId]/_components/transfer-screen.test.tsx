@@ -19,6 +19,7 @@ function render(view: TransferView) {
 			senderEmail="pat@work.example"
 			recipientEmail="pat@home.example"
 			accept={async () => {}}
+			sendLogin={async () => ({ sent: true })}
 		/>,
 	)
 }
@@ -81,5 +82,33 @@ describe('transfer screen', () => {
 		expect(html).toContain(copy)
 		expect(html).toContain('href="mailto:pat@work.example"')
 		expect(html).not.toContain('Accept transfer')
+	})
+})
+
+describe('transfer screen privacy', () => {
+	it('never hands the full recipient email to the client login button', async () => {
+		const { TransferLoginButton } = await import('./transfer-actions')
+		const element = TransferScreen({
+			view: { kind: 'sign-in', viewerEmail: null },
+			transferId: 'tr_1',
+			productName: 'Synthetic Course',
+			senderName: 'Pat Buyer',
+			recipientEmail: 'pat@home.example',
+			sendLogin: async () => ({ sent: true }),
+		})
+		const found: Array<Record<string, unknown>> = []
+		const walk = (node: unknown): void => {
+			if (!node || typeof node !== 'object') return
+			const el = node as { type?: unknown; props?: Record<string, unknown> }
+			if (el.type === TransferLoginButton && el.props) found.push(el.props)
+			const kids = el.props?.children
+			if (Array.isArray(kids)) kids.forEach(walk)
+			else walk(kids)
+			for (const v of Object.values(el.props ?? {})) if (v !== kids) walk(v)
+		}
+		walk(element)
+		expect(found.length).toBe(1)
+		expect(JSON.stringify(found[0], (_, v) => (typeof v === 'function' ? 'fn' : v))).not.toContain('pat@home.example')
+		expect(found[0]).toMatchObject({ transferId: 'tr_1' })
 	})
 })

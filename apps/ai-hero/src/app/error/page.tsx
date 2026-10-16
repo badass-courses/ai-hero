@@ -10,6 +10,10 @@ import { Mail } from 'lucide-react'
 
 import { Button } from '@coursebuilder/ui/primitives/button'
 
+function emailOnly(providers: ReturnType<typeof getProviders>) {
+	return providers?.postmark ? { postmark: providers.postmark } : providers
+}
+
 export default async function AuthErrorPage({
 	searchParams,
 }: {
@@ -44,7 +48,9 @@ export default async function AuthErrorPage({
 				{info.emailForm ? (
 					<Login
 						className="!min-h-0 py-8"
-						providers={getProviders()}
+						// Email only: this page is for recovering a login link, not for
+						// offering GitHub or Discord ahead of the form.
+						providers={emailOnly(getProviders())}
 						title="Get a new login link"
 					/>
 				) : null}

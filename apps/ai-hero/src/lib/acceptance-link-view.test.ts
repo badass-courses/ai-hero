@@ -8,21 +8,11 @@ import {
 	acceptanceLinkView,
 	maskEmail,
 	transferPathOf,
-	type AcceptanceTokenState,
 	type AcceptanceTransferState,
 	type AcceptanceViewer,
 } from './acceptance-link-view'
 
-// The behavior before this change: a spent token always meant "login expired",
-// whatever the transfer was doing.
-const legacyMessage = (tokenState: AcceptanceTokenState) =>
-	tokenState === 'spent' ? 'This login link expired.' : null
-
 describe('acceptance email link', () => {
-	it('legacy: a spent link on a pending transfer said expired', () => {
-		expect(legacyMessage('spent')).toBe('This login link expired.')
-	})
-
 	it('a spent link on a pending transfer says it is still waiting, and goes to the transfer', () => {
 		for (const signedIn of ['signed-out', 'recipient'] as const) {
 			expect(
