@@ -31,10 +31,10 @@ describe('/discord containment journey', () => {
 		expect(markup).toContain('Continue to Discord')
 	})
 
-	it('treats an account without an access token as linked, like the welcome page and sync', async () => {
+	it('offers secure renewal when the linked account credentials are stale', async () => {
 		const state = await getDiscordAccessState({
 			getSession: vi.fn(async () => ({
-				session: { user: { id: 'no-token-user' } },
+				session: { user: { id: 'relink-user' } },
 			})),
 			findDiscordAccount: vi.fn(async () => ({
 				provider: 'discord',
@@ -42,12 +42,18 @@ describe('/discord containment journey', () => {
 			})),
 		})
 		const markup = renderToStaticMarkup(
-			<DiscordAccessAction state={state} {...recoveryActions} />,
+			<DiscordAccessAction
+				state={state}
+				requestLink={async () => {}}
+				{...recoveryActions}
+			/>,
 		)
 
-		expect(state).toBe('linked')
-		expect(markup).toContain('href="/discord/redirect"')
-		expect(markup).not.toContain('reconnected')
+		expect(state).toBe('reconnect-required')
+		expect(markup).toContain('Discord needs to be reconnected')
+		expect(markup).toContain('Reconnect Discord')
+		expect(markup).not.toContain('token')
+		expect(markup).not.toContain('relink-user')
 	})
 
 	it('shows the secure link action for an authenticated unlinked session', async () => {

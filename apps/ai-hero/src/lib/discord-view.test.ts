@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
+import { getDiscordAccessState } from '../app/discord/discord-access'
 import {
+	classifyMemberResponse,
 	DISCORD_ERROR_CODES,
 	DISCORD_ERROR_MESSAGES,
 	discordErrorMessage,
 	discordRolesView,
 	GENERIC_DISCORD_ERROR,
+	hasDiscordAccount,
 	isDiscordConnected,
 	sourceLabel,
 	type DiscordRolesView,
@@ -25,10 +28,17 @@ const legacyRolesView = ({
 	if (roles.length === 0) return 'no-roles'
 	return roles.every((r) => r.assigned) ? 'all-assigned' : 'needs-sync'
 }
-const legacyDiscordPageConnected = (
-	a: { access_token?: string | null } | null,
-) => Boolean(a?.access_token)
-const legacyWelcomeConnected = (a: object | null) => a !== null
+// Old getDiscordAccessState tail (/discord) and the welcome page's check.
+type Acct = { provider?: string; access_token?: string | null } | null
+const legacyDiscordState = (account: Acct, linkResult?: string) => {
+	if (account?.access_token) return 'linked'
+	if (linkResult === 'expired') return 'expired'
+	if (linkResult === 'denied') return 'denied'
+	if (linkResult === 'account-conflict') return 'account-conflict'
+	if (account) return 'reconnect-required'
+	return 'ready'
+}
+const legacyWelcomeConnected = (a: Acct) => a !== null
 
 const roleSets = {
 	none: [],
@@ -97,35 +107,127 @@ describe('discordRolesView truth table', () => {
 })
 
 describe('isDiscordConnected', () => {
-	it('treats an account without an access token as connected, like sync does', () => {
-		const account = { provider: 'discord', access_token: null }
-		expect(isDiscordConnected(account)).toBe(true)
-		expect(legacyDiscordPageConnected(account)).toBe(false)
-		expect(legacyWelcomeConnected(account)).toBe(true)
+	const accounts: [string, Acct, boolean][] = [
+		['none', null, false],
+		['token', { provider: 'discord', access_token: 'tok' }, true],
+		['tokenless', { provider: 'discord', access_token: null }, false],
+		['empty token', { provider: 'discord', access_token: '' }, false],
+		['other provider', { provider: 'github', access_token: 'tok' }, false],
+		['no provider', { access_token: 'tok' }, false],
+	]
+	it.each(accounts)('%s -> %s', (_name, account, expected) => {
+		expect(isDiscordConnected(account)).toBe(expected)
 	})
-	it('is false without an account', () => {
-		expect(isDiscordConnected(null)).toBe(false)
-		expect(isDiscordConnected(undefined)).toBe(false)
+	it('closes the old disagreement: /discord and welcome now agree on every account', () => {
+		const tokenless = { provider: 'discord', access_token: null }
+		// legacy: the two pages disagreed on exactly this account
+		expect(legacyDiscordState(tokenless)).toBe('reconnect-required')
+		expect(legacyWelcomeConnected(tokenless)).toBe(true)
+		// shared predicate: not connected, so welcome keeps its CTA and /discord asks to reconnect
+		expect(isDiscordConnected(tokenless)).toBe(false)
+	})
+	it('hasDiscordAccount only needs the row, which is what role sync uses', () => {
+		expect(hasDiscordAccount({ provider: 'discord' })).toBe(true)
+		expect(hasDiscordAccount({ provider: 'github' })).toBe(false)
+		expect(hasDiscordAccount(null)).toBe(false)
+	})
+})
+
+describe('/discord state vs legacy', () => {
+	const accts: [string, Acct][] = [
+		['none', null],
+		['token', { provider: 'discord', access_token: 'tok' }],
+		['tokenless', { provider: 'discord', access_token: null }],
+	]
+	const links = [undefined, 'expired', 'denied', 'account-conflict']
+	const session = async () => ({ session: { user: { id: 'u' } } })
+	for (const [name, account] of accts) {
+		for (const link of links) {
+			it(`${name} link=${link ?? 'none'} matches legacy`, async () => {
+				const state = await getDiscordAccessState({
+					getSession: session,
+					findDiscordAccount: async () => account,
+					linkResult: link,
+				})
+				expect(state).toBe(legacyDiscordState(account, link))
+			})
+		}
+	}
+	it.each(['expired', 'denied', 'account-conflict'])(
+		'a tokenless account with link=%s keeps the link result',
+		async (link) => {
+			const state = await getDiscordAccessState({
+				getSession: session,
+				findDiscordAccount: async () => ({
+					provider: 'discord',
+					access_token: null,
+				}),
+				linkResult: link,
+			})
+			expect(state).toBe(link)
+		},
+	)
+})
+
+describe('classifyMemberResponse', () => {
+	it('classifies a member', () => {
+		expect(
+			classifyMemberResponse({
+				result: { user: { username: 'u' }, roles: ['1', '2'] },
+			}),
+		).toEqual({ kind: 'member', roles: ['1', '2'], username: 'u' })
+	})
+	it('treats Unknown Member (10007) as not in the server, not an error', () => {
+		expect(
+			classifyMemberResponse({
+				result: { code: 10007, message: 'Unknown Member' },
+			}),
+		).toEqual({ kind: 'not-member' })
+	})
+	it('treats a thrown 404 as not in the server', () => {
+		expect(classifyMemberResponse({ thrown: { status: 404 } })).toEqual({
+			kind: 'not-member',
+		})
+	})
+	it.each([
+		[
+			'another error code',
+			{ result: { code: 50001, message: 'Missing Access' } },
+		],
+		[
+			'a 429 body',
+			{ result: { message: 'rate limited', retry_after: 1, global: false } },
+		],
+		['a thrown 429', { thrown: { status: 429 } }],
+		['a thrown network error', { thrown: new Error('boom') }],
+		['null', { result: null }],
+		['a parse error result', { result: new SyntaxError('bad json') }],
+	])('classifies %s as an error', (_n, outcome) => {
+		expect(classifyMemberResponse(outcome)).toEqual({ kind: 'error' })
 	})
 })
 
 describe('sourceLabel', () => {
 	it.each([
-		['purchase', 'Purchase'],
 		['PURCHASE', 'Purchase'],
-		['coupon', 'Coupon'],
-		['bulk_redeem', 'Team seat'],
-		['comp', 'Complimentary access'],
-		['manual', 'Added by support'],
+		['SUBSCRIPTION', 'Subscription'],
+		['COUPON', 'Coupon or team seat'],
+		['MANUAL', 'Added by support'],
+		['purchase', 'Purchase'],
 	])('%s -> %s', (source, label) => {
 		expect(sourceLabel(source)).toBe(label)
 	})
-	it.each(['mystery_source', '', null, undefined, '__proto__', 'toString'])(
-		'unknown source %s gets the generic label, never raw text',
-		(source) => {
-			expect(sourceLabel(source)).toBe('Course access')
-		},
-	)
+	it.each([
+		'bulk_redeem',
+		'mystery_source',
+		'',
+		null,
+		undefined,
+		'__proto__',
+		'toString',
+	])('unknown source %s gets the generic label, never raw text', (source) => {
+		expect(sourceLabel(source)).toBe('Course access')
+	})
 })
 
 describe('discordErrorMessage', () => {
@@ -143,6 +245,8 @@ describe('discordErrorMessage', () => {
 		undefined,
 		'__proto__',
 		'constructor',
+		['a'] as unknown as string,
+		42 as unknown as string,
 	])('unknown code %s gives the generic fallback without throwing', (code) => {
 		expect(() => discordErrorMessage(code)).not.toThrow()
 		expect(discordErrorMessage(code)).toBe(GENERIC_DISCORD_ERROR)

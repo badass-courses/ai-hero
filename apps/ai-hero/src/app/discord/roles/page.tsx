@@ -1,6 +1,5 @@
 import * as React from 'react'
 import type { Metadata } from 'next'
-import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { Icon } from '@/components/brand/icons'
 import LayoutClient from '@/components/layout-client'
@@ -115,7 +114,7 @@ export default async function DiscordRolesPage() {
 					<div className="border-border/60 flex w-full flex-col items-center gap-4 rounded-lg border border-dashed px-6 py-10 text-center">
 						<p className="text-muted-foreground text-sm">{FETCH_ERROR_COPY}</p>
 						<Button asChild variant="outline" size="sm">
-							<Link href="/discord/roles">Try again</Link>
+							<a href="/discord/roles">Try again</a>
 						</Button>
 					</div>
 				) : view === 'no-roles' ? (
@@ -131,7 +130,7 @@ export default async function DiscordRolesPage() {
 				)}
 
 				{/* Sync Button */}
-				{view !== 'fetch-error' && (
+				{(view === 'needs-sync' || view === 'all-assigned') && (
 					<SyncRolesButton needsSync={needsSync} />
 				)}
 

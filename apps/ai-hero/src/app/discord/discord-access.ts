@@ -2,6 +2,7 @@ import { isDiscordConnected } from '@/lib/discord-view'
 
 export type DiscordAccessState =
 	| 'linked'
+	| 'reconnect-required'
 	| 'ready'
 	| 'expired'
 	| 'denied'
@@ -34,10 +35,10 @@ export async function getDiscordAccessState({
 	if (!userId) return 'sign-in'
 
 	const account = await findDiscordAccount(userId)
-	if (account?.access_token) return 'linked'
+	if (isDiscordConnected(account)) return 'linked'
 	if (linkResult === 'expired') return 'expired'
 	if (linkResult === 'denied') return 'denied'
 	if (linkResult === 'account-conflict') return 'account-conflict'
-	if (isDiscordConnected(account)) return 'linked'
+	if (account) return 'reconnect-required'
 	return 'ready'
 }
