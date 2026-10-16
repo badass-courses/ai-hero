@@ -35,6 +35,9 @@ const mocks = vi.hoisted(() => ({
 	stripeRetrieve: vi.fn(),
 	inngestSend: vi.fn(),
 	updates: [] as Array<{ table: unknown; values: unknown }>,
+	evidence: new Map<string, unknown>(),
+	tableExists: vi.fn(),
+	recordSamePerson: vi.fn(),
 }))
 
 vi.mock('@/db/schema', () => tables)
@@ -53,6 +56,22 @@ vi.mock('@/db', () => ({
 		},
 		transaction: mocks.transaction,
 	},
+}))
+vi.mock('@/purchase-transfer/same-person', () => ({
+	loadSamePersonEvidence: async (ids: string[]) =>
+		new Map(ids.flatMap((id) => (mocks.evidence.has(id) ? [[id, mocks.evidence.get(id)]] : []))),
+	toTransferFacts: async (rows: Array<Record<string, unknown>>) =>
+		rows.map((row) => ({
+			id: row.id,
+			state: row.transferState,
+			sourceUserId: row.sourceUserId,
+			targetUserId: row.targetUserId ?? null,
+			completedAt: row.completedAt,
+			createdAt: row.createdAt,
+			samePerson: mocks.evidence.get(row.id as string) ?? null,
+		})),
+	samePersonTableExists: mocks.tableExists,
+	recordSamePersonEvidence: mocks.recordSamePerson,
 }))
 vi.mock('@/env.mjs', () => ({
 	env: { STRIPE_SECRET_TOKEN: 'test-stripe-secret' },
@@ -124,6 +143,9 @@ describe('guarded support purchase completion', () => {
 	beforeEach(() => {
 		vi.resetAllMocks()
 		mocks.updates.length = 0
+		mocks.evidence.clear()
+		mocks.tableExists.mockResolvedValue(true)
+		mocks.recordSamePerson.mockResolvedValue(undefined)
 		process.env.INNGEST_EVENT_KEY = 'test-event-key'
 		mocks.getTransfer.mockResolvedValue(transfer)
 		mocks.getPurchase.mockResolvedValue(purchase)
@@ -307,5 +329,106 @@ describe('guarded support purchase completion', () => {
 			reason: 'refund_present',
 		})
 		expect(mocks.transaction).not.toHaveBeenCalled()
+	})
+
+	describe('same-person move', () => {
+		const samePerson = {
+			verifiedBy: 'owner-mailbox-both' as const,
+			reason: 'Support confirmed both mailboxes',
+			proofRef: 'proof-ref-1',
+		}
+		const withFlag = { ...input, samePerson }
+
+		it('records the evidence in the VERIFIED claim transaction and leaves Stripe and the charge alone', async () => {
+			await expect(completeSupportPurchaseTransfer(withFlag)).resolves.toMatchObject({
+				state: 'completion_requested',
+			})
+			expect(mocks.recordSamePerson).toHaveBeenCalledTimes(1)
+			expect(mocks.recordSamePerson).toHaveBeenCalledWith(
+				expect.anything(),
+				'transfer-1',
+				samePerson,
+			)
+			expect(mocks.transaction).toHaveBeenCalledTimes(1)
+			expect(mocks.updates.some((entry) => entry.table === tables.merchantCharge)).toBe(false)
+		})
+
+		it('a normal move records no evidence', async () => {
+			await completeSupportPurchaseTransfer(input)
+			expect(mocks.recordSamePerson).not.toHaveBeenCalled()
+		})
+
+		it.each([
+			['no verifiedBy', { reason: 'r', proofRef: 'p' }],
+			['unknown verifiedBy', { verifiedBy: 'matching-emails', reason: 'r', proofRef: 'p' }],
+			['blank reason', { verifiedBy: 'owner-mailbox-both', reason: '  ', proofRef: 'p' }],
+			['blank proofRef', { verifiedBy: 'same-stripe-customer', reason: 'r', proofRef: '' }],
+			['null', null],
+		])('refuses evidence with %s before any write', async (_name, bad) => {
+			await expect(
+				completeSupportPurchaseTransfer({ ...input, samePerson: bad as never }),
+			).resolves.toEqual({ state: 'blocked', reason: 'same_person_evidence_invalid' })
+			expect(mocks.transaction).not.toHaveBeenCalled()
+			expect(mocks.recordSamePerson).not.toHaveBeenCalled()
+		})
+
+		it('refuses, and completes nothing, when the same-person table is missing', async () => {
+			mocks.tableExists.mockResolvedValue(false)
+			await expect(completeSupportPurchaseTransfer(withFlag)).resolves.toEqual({
+				state: 'blocked',
+				reason: 'same_person_table_missing',
+			})
+			expect(mocks.transaction).not.toHaveBeenCalled()
+			expect(mocks.updates).toHaveLength(0)
+		})
+
+		it('a normal move still works when the table is missing', async () => {
+			mocks.tableExists.mockResolvedValue(false)
+			await expect(completeSupportPurchaseTransfer(input)).resolves.toMatchObject({
+				state: 'completion_requested',
+			})
+		})
+
+		it('refuses a same-person move by a holder who never paid', async () => {
+			mocks.getTransfer.mockResolvedValue(holderIsB.transfer)
+			mocks.getPurchase.mockResolvedValue(holderIsB.purchase)
+			mocks.findTransfers
+				.mockResolvedValueOnce([])
+				.mockResolvedValueOnce([earlier('buyer-1')])
+			await expect(
+				completeSupportPurchaseTransfer({ ...holderIsB.input, samePerson }),
+			).resolves.toEqual({ state: 'blocked', reason: 'same_person_source_not_payer' })
+			expect(mocks.transaction).not.toHaveBeenCalled()
+		})
+
+		it('lets the new payer move on again: A to A-prime (same person), then A-prime to B, is a normal move', async () => {
+			mocks.evidence.set('transfer-0', samePerson)
+			const aPrime = {
+				input: { ...input, sourceUserId: 'learner-1', targetEmail: 'b@example.com' },
+				purchase: { ...purchase, userId: 'learner-1' },
+				transfer: { ...transfer, sourceUserId: 'learner-1', targetUserId: 'learner-2' },
+			}
+			mocks.getTransfer.mockResolvedValue(aPrime.transfer)
+			mocks.getPurchase.mockResolvedValue(aPrime.purchase)
+			mocks.getUserById.mockImplementation(async (id: string) => ({
+				id,
+				email: id === 'learner-2' ? 'b@example.com' : 'x@example.com',
+			}))
+			mocks.findTransfers
+				.mockResolvedValueOnce([])
+				.mockResolvedValueOnce([{ ...earlier('buyer-1'), targetUserId: 'learner-1' }])
+			await expect(
+				completeSupportPurchaseTransfer(aPrime.input),
+			).resolves.toMatchObject({ state: 'completion_requested' })
+		})
+
+		it('a flag cannot be added to a transfer past its claim unless already recorded', async () => {
+			mocks.getTransfer.mockResolvedValue({ ...transfer, transferState: 'VERIFIED' })
+			mocks.getPurchase.mockResolvedValue({ ...purchase, userId: 'learner-1' })
+			await expect(completeSupportPurchaseTransfer(withFlag)).resolves.toEqual({
+				state: 'blocked',
+				reason: 'same_person_cannot_be_added_after_claim',
+			})
+		})
 	})
 })

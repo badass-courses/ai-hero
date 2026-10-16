@@ -19,7 +19,7 @@ const dataSource: InvoiceLinkDataSource = {
 					merchantChargeId: charge,
 					userId: 'learner',
 					billingUserId: 'payer',
-					originTransfer: null,
+					transfers: [],
 				}
 			: null
 	},
@@ -53,11 +53,13 @@ describe('invoice links after a pre-fix transfer', () => {
 						merchantChargeId: charge,
 						userId: 'learner',
 						billingUserId: 'learner',
-						originTransfer: {
-							state: 'COMPLETED',
-							sourceUserId: 'payer',
-							completedAt: new Date('2026-09-01T00:00:00Z'),
-						},
+						transfers: [
+							{
+								state: 'COMPLETED',
+								sourceUserId: 'payer',
+								completedAt: new Date('2026-09-01T00:00:00Z'),
+							},
+						],
 					}
 				: null
 		},

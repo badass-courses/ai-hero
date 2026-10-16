@@ -147,14 +147,14 @@ export function getManagedOrganizationIds(
 /**
  * The edit gate for an invoice (the name is historical): the payer, or a
  * manager of the team purchase. A holder who did not pay never edits.
- * `originTransfer` is the earliest completed transfer, which names the payer
+ * `transfers` are every completed transfer, which name the payer
  * for purchases transferred before charges stayed with the payer.
  */
 export function canViewPurchaseInvoice(
 	viewerUserId: string | null | undefined,
 	purchase: Pick<Purchase, 'id' | 'userId'> & {
 		billingUserId?: string | null
-		originTransfer: InvoiceTransferFact | null
+		transfers: InvoiceTransferFact[]
 	},
 	managedTeamPurchases: Pick<Purchase, 'id'>[],
 ): boolean {
@@ -164,7 +164,7 @@ export function canViewPurchaseInvoice(
 			viewerId: viewerUserId,
 			payerUserId: purchase.billingUserId ?? purchase.userId,
 			holderUserId: purchase.userId,
-			transfer: purchase.originTransfer,
+			transfers: purchase.transfers,
 		}) ||
 		managedTeamPurchases.some((managedPurchase) => managedPurchase.id === purchase.id)
 	)

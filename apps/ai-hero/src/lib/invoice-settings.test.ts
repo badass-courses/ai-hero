@@ -22,7 +22,7 @@ type StoreOptions = {
 		id: string
 		userId: string | null
 		billingUserId?: string | null
-		originTransfer?: InvoiceTransferFact | null
+		transfers?: InvoiceTransferFact[]
 	}[]
 	managedPurchaseIds?: Record<string, string[]>
 	corruptReadback?: boolean
@@ -50,7 +50,7 @@ function memoryDataSource(options: StoreOptions = {}) {
 						id: purchase.id,
 						userId: purchase.userId,
 						billingUserId: purchase.billingUserId,
-						originTransfer: purchase.originTransfer ?? null,
+						transfers: purchase.transfers ?? [],
 						merchantChargeId: purchase.merchantChargeId,
 					}
 				: null
@@ -219,11 +219,13 @@ describe('saveInvoiceSettingsForViewer', () => {
 					id: PURCHASE_ID,
 					userId: 'transferred_learner',
 					billingUserId: 'transferred_learner',
-					originTransfer: {
-						state: 'COMPLETED',
-						sourceUserId: OWNER,
-						completedAt: new Date('2026-09-01T00:00:00Z'),
-					},
+					transfers: [
+						{
+							state: 'COMPLETED',
+							sourceUserId: OWNER,
+							completedAt: new Date('2026-09-01T00:00:00Z'),
+						},
+					],
 				},
 			],
 		})

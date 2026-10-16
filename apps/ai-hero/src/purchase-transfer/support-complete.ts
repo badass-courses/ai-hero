@@ -11,7 +11,17 @@ import {
 	publishTransferOutboxEvent,
 	recordTransferOutboxEvent,
 } from '@/purchase-transfer/transfer-outbox'
-import { resolveInvoicePayer } from '@/lib/invoice-access-rules'
+import {
+	isValidSamePersonEvidence,
+	resolveInvoicePayer,
+	type SamePersonEvidence,
+} from '@/lib/invoice-access-rules'
+import {
+	loadSamePersonEvidence,
+	recordSamePersonEvidence,
+	samePersonTableExists,
+	toTransferFacts,
+} from '@/purchase-transfer/same-person'
 import { and, eq, inArray, ne } from 'drizzle-orm'
 import { Inngest } from 'inngest'
 import Stripe from 'stripe'
@@ -23,6 +33,9 @@ export type SupportCompleteInput = {
 	purchaseId: string
 	sourceUserId: string
 	targetEmail: string
+	// Support verified both accounts are one person: the target becomes the
+	// invoice payer. Absent means a normal move. Never inferred.
+	samePerson?: SamePersonEvidence
 }
 
 export type SupportCompleteResult =
@@ -228,21 +241,15 @@ async function loadGuardedContext(input: SupportCompleteInput) {
 	// payer is. The payer is the earliest completed transfer's source, else the
 	// charge's user. This move completes a transfer from `sourceUser`; the row
 	// is the same one the workflow marks COMPLETED, so no second row is written.
-	const completedTransfers = (
+	const completedTransfers = await toTransferFacts(
 		await db.query.purchaseUserTransfer.findMany({
 			where: and(
 				eq(purchaseUserTransfer.purchaseId, purchase.id),
 				eq(purchaseUserTransfer.transferState, 'COMPLETED'),
 				ne(purchaseUserTransfer.id, transfer.id),
 			),
-		})
-	).map((row) => ({
-		id: row.id,
-		state: row.transferState,
-		sourceUserId: row.sourceUserId,
-		completedAt: row.completedAt,
-		createdAt: row.createdAt,
-	}))
+		}),
+	)
 	if (!billingCharge) {
 		return { ok: false as const, reason: 'billing_charge_missing' }
 	}
@@ -250,6 +257,31 @@ async function loadGuardedContext(input: SupportCompleteInput) {
 		chargeUserId: billingCharge.userId,
 		transfers: completedTransfers,
 	})
+	// A same-person move is the one move allowed to change the payer, and only
+	// to the target. It needs valid evidence, the table to hold it, and the
+	// mover to be the current payer: a holder who never paid cannot hand the
+	// invoice to their other account.
+	if (input.samePerson !== undefined) {
+		if (!isValidSamePersonEvidence(input.samePerson)) {
+			return { ok: false as const, reason: 'same_person_evidence_invalid' }
+		}
+		if (!(await samePersonTableExists())) {
+			return { ok: false as const, reason: 'same_person_table_missing' }
+		}
+		// Only the INITIATED claim writes the flag. A transfer past it must
+		// already carry the same flag, or the request would record nothing.
+		if (transfer.transferState !== 'INITIATED') {
+			const [recorded] = (
+				await loadSamePersonEvidence([transfer.id])
+			).values()
+			if (!recorded) {
+				return {
+					ok: false as const,
+					reason: 'same_person_cannot_be_added_after_claim',
+				}
+			}
+		}
+	}
 	const payerAfter = resolveInvoicePayer({
 		chargeUserId: billingCharge.userId,
 		transfers: [
@@ -258,7 +290,9 @@ async function loadGuardedContext(input: SupportCompleteInput) {
 				id: transfer.id,
 				state: 'COMPLETED',
 				sourceUserId: sourceUser.id,
+				targetUserId: targetUser.id,
 				completedAt: new Date(),
+				samePerson: input.samePerson ?? null,
 			},
 		],
 	})
@@ -270,7 +304,14 @@ async function loadGuardedContext(input: SupportCompleteInput) {
 			reason: 'move_would_leave_charge_without_payer',
 		}
 	}
-	if (payerBefore !== payerAfter) {
+	if (input.samePerson !== undefined) {
+		if (payerBefore !== sourceUser.id) {
+			return { ok: false as const, reason: 'same_person_source_not_payer' }
+		}
+		if (payerAfter !== targetUser.id) {
+			return { ok: false as const, reason: 'move_would_change_invoice_payer' }
+		}
+	} else if (payerBefore !== payerAfter) {
 		return { ok: false as const, reason: 'move_would_change_invoice_payer' }
 	}
 	const refundState = await inspectStripeRefunds(billingCharge.identifier)
@@ -283,6 +324,7 @@ async function loadGuardedContext(input: SupportCompleteInput) {
 		sourceUser,
 		targetUser,
 		billingCharge,
+		samePerson: input.samePerson,
 	}
 }
 
@@ -336,6 +378,10 @@ export async function completeSupportPurchaseTransfer(
 				)
 			if (getRowsAffected(moved) !== 1) {
 				throw new Error('purchase_owner_race')
+			}
+
+			if (context.samePerson) {
+				await recordSamePersonEvidence(tx, context.transfer.id, context.samePerson)
 			}
 
 			return recordTransferOutboxEvent(tx, {

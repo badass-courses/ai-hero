@@ -5,6 +5,7 @@ import {
 	canEditInvoice,
 	canViewInvoice,
 	invoiceDisplayAmount,
+	isValidSamePersonEvidence,
 	invoiceListView,
 	pickOriginTransfer,
 	resolveInvoicePayer,
@@ -403,12 +404,12 @@ describe('canEditInvoice truth table', () => {
 	}[] = [
 		{
 			name: 'anonymous',
-			input: { viewerId: null, payerUserId: 'a', holderUserId: 'a', transfer: null },
+			input: { viewerId: null, payerUserId: 'a', holderUserId: 'a', transfers: [] },
 			expected: false,
 		},
 		{
 			name: 'payer who still holds',
-			input: { viewerId: 'a', payerUserId: 'a', holderUserId: 'a', transfer: null },
+			input: { viewerId: 'a', payerUserId: 'a', holderUserId: 'a', transfers: [] },
 			expected: true,
 		},
 		{
@@ -417,7 +418,7 @@ describe('canEditInvoice truth table', () => {
 				viewerId: 'a',
 				payerUserId: 'a',
 				holderUserId: 'b',
-				transfer: datedCompleted('a'),
+				transfers: [datedCompleted('a')],
 			},
 			expected: true,
 		},
@@ -427,7 +428,7 @@ describe('canEditInvoice truth table', () => {
 				viewerId: 'b',
 				payerUserId: 'a',
 				holderUserId: 'b',
-				transfer: datedCompleted('a'),
+				transfers: [datedCompleted('a')],
 			},
 			expected: false,
 		},
@@ -437,7 +438,7 @@ describe('canEditInvoice truth table', () => {
 				viewerId: 'b',
 				payerUserId: 'b',
 				holderUserId: 'b',
-				transfer: datedCompleted('a'),
+				transfers: [datedCompleted('a')],
 			},
 			expected: false,
 		},
@@ -447,7 +448,7 @@ describe('canEditInvoice truth table', () => {
 				viewerId: 'a',
 				payerUserId: 'b',
 				holderUserId: 'b',
-				transfer: datedCompleted('a'),
+				transfers: [datedCompleted('a')],
 			},
 			expected: true,
 		},
@@ -457,13 +458,13 @@ describe('canEditInvoice truth table', () => {
 				viewerId: 'x',
 				payerUserId: 'a',
 				holderUserId: 'b',
-				transfer: datedCompleted('a'),
+				transfers: [datedCompleted('a')],
 			},
 			expected: false,
 		},
 		{
 			name: 'no payer known',
-			input: { viewerId: 'x', payerUserId: null, holderUserId: 'x', transfer: null },
+			input: { viewerId: 'x', payerUserId: null, holderUserId: 'x', transfers: [] },
 			expected: false,
 		},
 		{
@@ -472,7 +473,7 @@ describe('canEditInvoice truth table', () => {
 				viewerId: 'p',
 				payerUserId: 'c',
 				holderUserId: 'c',
-				transfer: { state: 'INITIATED', sourceUserId: 'p' },
+				transfers: [{ state: 'INITIATED', sourceUserId: 'p' }],
 			},
 			expected: false,
 		},
@@ -482,7 +483,7 @@ describe('canEditInvoice truth table', () => {
 				viewerId: 'c',
 				payerUserId: 'c',
 				holderUserId: 'c',
-				transfer: { state: 'INITIATED', sourceUserId: 'p' },
+				transfers: [{ state: 'INITIATED', sourceUserId: 'p' }],
 			},
 			expected: true,
 		},
@@ -492,7 +493,7 @@ describe('canEditInvoice truth table', () => {
 				viewerId: 'a',
 				payerUserId: 'b',
 				holderUserId: 'b',
-				transfer: completed('a'),
+				transfers: [completed('a')],
 			},
 			expected: false,
 		},
@@ -527,7 +528,7 @@ describe.each(
 			viewerId: viewer,
 			payerUserId: shape.chargeUserId,
 			holderUserId: shape.purchaseUserId,
-			transfer: origin,
+			transfers: shape.transfers,
 		}
 		expect(canEditInvoice(input)).toBe(expected)
 		// The settings and share-link gate agrees.
@@ -538,7 +539,7 @@ describe.each(
 					id: 'p1',
 					userId: shape.purchaseUserId,
 					billingUserId: shape.chargeUserId,
-					originTransfer: origin,
+					transfers: shape.transfers,
 				},
 				[],
 			),
@@ -566,7 +567,7 @@ describe('team managers still edit', () => {
 		expect(
 			canViewPurchaseInvoice(
 				'mgr',
-				{ id: 'p1', userId: 'owner', billingUserId: 'owner', originTransfer: null },
+				{ id: 'p1', userId: 'owner', billingUserId: 'owner', transfers: [] },
 				[{ id: 'p1' }],
 			),
 		).toBe(true)
@@ -579,5 +580,300 @@ describe('resolveInvoicePayer', () => {
 		expect(
 			resolveInvoicePayer({ chargeUserId: null, transfers: [completed('a')] }),
 		).toBeNull()
+	})
+})
+
+
+describe('resolveInvoicePayer with same-person transfers', () => {
+	const at = (month: number) => new Date(Date.UTC(2026, month, 1))
+	const good = {
+		verifiedBy: 'owner-mailbox-both' as const,
+		reason: 'Support confirmed both mailboxes',
+		proofRef: 'proof-1',
+	}
+	const hop = (
+		id: string,
+		source: string,
+		target: string,
+		month: number,
+		samePerson?: unknown,
+	): InvoiceTransferFact => ({
+		id,
+		state: 'COMPLETED',
+		sourceUserId: source,
+		targetUserId: target,
+		completedAt: at(month),
+		createdAt: at(month),
+		samePerson: samePerson as InvoiceTransferFact['samePerson'],
+	})
+
+	// The #439 rule, restated: no flag anywhere means this.
+	const rule439 = (
+		chargeUserId: string | null,
+		transfers: InvoiceTransferFact[],
+	) => pickOriginTransfer(transfers)?.sourceUserId ?? chargeUserId ?? null
+
+	// What each shape's charge row says. Post-#439 the charge stays with the
+	// payer; pre-#439 it was rewritten to the final holder.
+	const shapes = [
+		{ name: 'post-#439', chargeUser: (payer: string, _holder: string) => payer },
+		{ name: 'pre-#439', chargeUser: (_payer: string, holder: string) => holder },
+	]
+
+	const evidenceCases: [string, unknown, boolean][] = [
+		['absent', undefined, false],
+		['null', null, false],
+		['owner-mailbox-both', good, true],
+		['same-stripe-customer', { ...good, verifiedBy: 'same-stripe-customer' }, true],
+		['missing verifiedBy', { reason: 'r', proofRef: 'p' }, false],
+		['unknown verifiedBy (matching emails)', { ...good, verifiedBy: 'matching-emails' }, false],
+		['blank reason', { ...good, reason: '   ' }, false],
+		['empty proofRef', { ...good, proofRef: '' }, false],
+		['non-string proofRef', { ...good, proofRef: 7 }, false],
+	]
+
+	describe.each(shapes)('$name', (shape) => {
+		it.each(evidenceCases)(
+			'A to A-prime with %s evidence',
+			(_name, evidence, moves) => {
+				const transfers = [hop('t1', 'A', 'A2', 1, evidence)]
+				const charge = shape.chargeUser('A', 'A2')
+				expect(resolveInvoicePayer({ chargeUserId: charge, transfers })).toBe(
+					moves ? 'A2' : 'A',
+				)
+			},
+		)
+
+		it('A to B (normal) leaves the payer at A', () => {
+			expect(
+				resolveInvoicePayer({
+					chargeUserId: shape.chargeUser('A', 'B'),
+					transfers: [hop('t1', 'A', 'B', 1)],
+				}),
+			).toBe('A')
+		})
+
+		it('A to A-prime (same person), then A-prime to B (normal): payer is A-prime', () => {
+			expect(
+				resolveInvoicePayer({
+					chargeUserId: shape.chargeUser('A', 'B'),
+					transfers: [hop('t1', 'A', 'A2', 1, good), hop('t2', 'A2', 'B', 2)],
+				}),
+			).toBe('A2')
+		})
+
+		it('A to B (normal), then B to B-prime (same person): B never paid, payer stays A', () => {
+			expect(
+				resolveInvoicePayer({
+					chargeUserId: shape.chargeUser('A', 'B2'),
+					transfers: [hop('t1', 'A', 'B', 1), hop('t2', 'B', 'B2', 2, good)],
+				}),
+			).toBe('A')
+		})
+
+		it('A to A-prime, then A-prime to A-double-prime, both same person: payer is the latest', () => {
+			expect(
+				resolveInvoicePayer({
+					chargeUserId: shape.chargeUser('A', 'A3'),
+					transfers: [
+						hop('t1', 'A', 'A2', 1, good),
+						hop('t2', 'A2', 'A3', 2, good),
+					],
+				}),
+			).toBe('A3')
+		})
+
+		it('input order does not matter, dates do', () => {
+			const transfers = [hop('t2', 'A2', 'B', 2), hop('t1', 'A', 'A2', 1, good)]
+			expect(
+				resolveInvoicePayer({
+					chargeUserId: shape.chargeUser('A', 'B'),
+					transfers,
+				}),
+			).toBe('A2')
+			expect(
+				resolveInvoicePayer({
+					chargeUserId: shape.chargeUser('A', 'B'),
+					transfers: [...transfers].reverse(),
+				}),
+			).toBe('A2')
+		})
+
+		it('a flagged transfer that is not COMPLETED moves nothing', () => {
+			expect(
+				resolveInvoicePayer({
+					// No completed transfer exists, so the charge was never rewritten.
+					chargeUserId: 'A',
+					transfers: [{ ...hop('t1', 'A', 'A2', 1, good), state: 'VERIFIED' }],
+				}),
+			).toBe('A')
+		})
+
+		it('an undated completed transfer disables same-person moves, like the origin rule', () => {
+			expect(
+				resolveInvoicePayer({
+					chargeUserId: shape.chargeUser('A', 'A2'),
+					transfers: [
+						hop('t1', 'A', 'A2', 1, good),
+						{ id: 't0', state: 'COMPLETED', sourceUserId: 'A', targetUserId: 'A2' },
+					],
+				}),
+			).toBe(rule439(shape.chargeUser('A', 'A2'), [
+				hop('t1', 'A', 'A2', 1, good),
+				{ id: 't0', state: 'COMPLETED', sourceUserId: 'A', targetUserId: 'A2' },
+			]))
+		})
+	})
+
+	it('property: without any flag the result equals the #439 result', () => {
+		let seed = 12345
+		const rand = (n: number) => {
+			seed = (seed * 1103515245 + 12345) & 0x7fffffff
+			return seed % n
+		}
+		const users = ['A', 'B', 'C', 'D']
+		const states = ['COMPLETED', 'COMPLETED', 'VERIFIED', 'CANCELED']
+		for (let i = 0; i < 500; i++) {
+			const transfers: InvoiceTransferFact[] = Array.from(
+				{ length: rand(5) },
+				(_, k) => ({
+					...hop(`t${k}`, users[rand(4)]!, users[rand(4)]!, rand(12)),
+					state: states[rand(4)]!,
+					// Flags that carry no valid evidence must not matter either.
+					samePerson: ([undefined, null, { ...good, reason: '' }] as const)[
+						rand(3)
+					] as InvoiceTransferFact['samePerson'],
+				}),
+			)
+			const charge = [null, ...users][rand(5)] ?? null
+			expect(resolveInvoicePayer({ chargeUserId: charge, transfers })).toBe(
+				rule439(charge, transfers),
+			)
+		}
+	})
+
+	describe('planted mutations are caught by this table', () => {
+		type Input = Parameters<typeof resolveInvoicePayer>[0]
+		const cases: { name: string; input: Input; expected: string }[] = [
+			...evidenceCases.map(([name, evidence, moves]) => ({
+				name: `A to A2, ${name}`,
+				input: {
+					chargeUserId: 'A',
+					transfers: [hop('t1', 'A', 'A2', 1, evidence)],
+				},
+				expected: moves ? 'A2' : 'A',
+			})),
+			{
+				name: 'same-person first, normal second',
+				input: {
+					chargeUserId: 'A',
+					transfers: [hop('t1', 'A', 'A2', 1, good), hop('t2', 'A2', 'B', 2)],
+				},
+				expected: 'A2',
+			},
+			{
+				name: 'normal first, same-person by a non-payer second',
+				input: {
+					chargeUserId: 'A',
+					transfers: [hop('t1', 'A', 'B', 1), hop('t2', 'B', 'B2', 2, good)],
+				},
+				expected: 'A',
+			},
+		]
+		const mutants: Record<string, (input: Input) => string | null> = {
+			// Any flag object moves the payer, evidence or not.
+			'flag without evidence moves the payer': ({ chargeUserId, transfers }) => {
+				let payer = rule439(chargeUserId ?? null, transfers)
+				for (const t of transfers)
+					if (t.samePerson !== undefined && t.samePerson !== null && t.sourceUserId === payer)
+						payer = t.targetUserId ?? payer
+				return payer
+			},
+			// The flag is inferred from the move itself, with nothing recorded.
+			'flag inferred without a recorded flag': ({ chargeUserId, transfers }) =>
+				transfers.filter((t) => t.state === 'COMPLETED').at(-1)?.targetUserId ??
+				chargeUserId ??
+				null,
+			// The payer is whoever the last-listed transfer moved to.
+			'last hop wins regardless of order or flag': ({ chargeUserId, transfers }) =>
+				[...transfers]
+					.sort((a, b) => a.completedAt!.getTime() - b.completedAt!.getTime())
+					.at(-1)?.targetUserId ?? chargeUserId ?? null,
+			// Same-person hops by a non-payer still move the payer.
+			'same-person hop ignores the payer chain': ({ chargeUserId, transfers }) => {
+				let payer = rule439(chargeUserId ?? null, transfers)
+				for (const t of transfers)
+					if (isValidSamePersonEvidence(t.samePerson)) payer = t.targetUserId ?? payer
+				return payer
+			},
+		}
+		it('the real rule satisfies every case', () => {
+			for (const c of cases)
+				expect(resolveInvoicePayer(c.input), c.name).toBe(c.expected)
+		})
+		it.each(Object.entries(mutants))('%s', (_name, mutant) => {
+			expect(cases.some((c) => mutant(c.input) !== c.expected)).toBe(true)
+		})
+	})
+})
+
+describe('every payer reader agrees on a same-person move', () => {
+	const at = (month: number) => new Date(Date.UTC(2026, month, 1))
+	const transfers: InvoiceTransferFact[] = [
+		{
+			id: 't1',
+			state: 'COMPLETED',
+			sourceUserId: 'A',
+			targetUserId: 'A2',
+			completedAt: at(1),
+			createdAt: at(1),
+			samePerson: {
+				verifiedBy: 'owner-mailbox-both',
+				reason: 'Support confirmed both mailboxes',
+				proofRef: 'proof-1',
+			},
+		},
+	]
+	const unflagged = [{ ...transfers[0]!, samePerson: null }]
+	const holder = 'A2'
+
+	const edits = (viewer: string, list: InvoiceTransferFact[]) => ({
+		rule: canEditInvoice({
+			viewerId: viewer,
+			payerUserId: 'A',
+			holderUserId: holder,
+			transfers: list,
+		}),
+		gate: canViewPurchaseInvoice(
+			viewer,
+			{ id: 'p1', userId: holder, billingUserId: 'A', transfers: list },
+			[],
+		),
+	})
+
+	it.each([
+		['A2', true],
+		['A', false],
+		['stranger', false],
+	])('viewer %s: edit rule and the settings/link gate both say %s', (viewer, expected) => {
+		const result = edits(viewer, transfers)
+		expect(result.rule).toBe(expected)
+		expect(result.gate).toBe(expected)
+	})
+
+	it('without evidence the old account stays the payer in both readers', () => {
+		expect(edits('A', unflagged)).toEqual({ rule: true, gate: true })
+		expect(edits('A2', unflagged)).toEqual({ rule: false, gate: false })
+	})
+
+	it('the previous account may still view, since it paid', () => {
+		expect(
+			canViewInvoice({
+				viewerId: 'A',
+				purchaseUserId: holder,
+				payerUserId: resolveInvoicePayer({ chargeUserId: 'A', transfers }),
+				transfer: pickOriginTransfer(transfers),
+			}),
+		).toBe(true)
 	})
 })

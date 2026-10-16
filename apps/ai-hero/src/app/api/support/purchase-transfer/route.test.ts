@@ -116,4 +116,94 @@ describe('support transfer endpoint', () => {
 			purchaseId: 'purchase-1', sourceUserId: 'owner-1', targetEmail: 'learner@example.com',
 		})
 	})
+
+	describe('samePerson evidence', () => {
+		const samePerson = {
+			verifiedBy: 'owner-mailbox-both',
+			reason: 'Support confirmed both mailboxes',
+			proofRef: 'proof-1',
+		}
+		const completeBody = {
+			...payload,
+			mode: 'support_complete',
+			transferId: 'transfer-1',
+		}
+
+		it('passes valid evidence to support completion', async () => {
+			vi.resetAllMocks()
+			mocks.verify.mockReturnValue({ valid: true })
+			mocks.complete.mockResolvedValue({
+				state: 'completion_requested',
+				transferId: 'transfer-1',
+			})
+			const response = await POST(request({ ...completeBody, samePerson }))
+			expect(response.status).toBe(200)
+			expect(mocks.complete).toHaveBeenCalledWith(
+				expect.objectContaining({ transferId: 'transfer-1', samePerson }),
+			)
+		})
+
+		it('a request without samePerson passes none', async () => {
+			vi.resetAllMocks()
+			mocks.verify.mockReturnValue({ valid: true })
+			mocks.complete.mockResolvedValue({
+				state: 'completion_requested',
+				transferId: 'transfer-1',
+			})
+			await POST(request(completeBody))
+			expect(mocks.complete.mock.calls[0]?.[0]).not.toHaveProperty('samePerson')
+		})
+
+		it.each([
+			['empty object', {}],
+			['legacy owner-mailbox shape', { verifiedBy: 'owner-mailbox', proof: 'x' }],
+			['blank reason', { ...samePerson, reason: ' ' }],
+			['empty proofRef', { ...samePerson, proofRef: '' }],
+			['unknown verifiedBy', { ...samePerson, verifiedBy: 'matching-emails' }],
+			['null', null],
+			['true', true],
+		])('refuses %s with a literal prompt and no transfer logic', async (_n, bad) => {
+			vi.resetAllMocks()
+			mocks.verify.mockReturnValue({ valid: true })
+			const response = await POST(request({ ...completeBody, samePerson: bad }))
+			expect(response.status).toBe(400)
+			const body = await response.json()
+			expect(body.reason).toBe('same_person_evidence_invalid')
+			expect(body.error).toContain('verifiedBy')
+			expect(mocks.complete).not.toHaveBeenCalled()
+		})
+
+		it.each(['invite', 'dry_run'])(
+			'%s with samePerson is refused: only support_complete modes carry it',
+			async (mode) => {
+				vi.resetAllMocks()
+				mocks.verify.mockReturnValue({ valid: true })
+				const response = await POST(
+					request({ ...payload, mode, samePerson }),
+				)
+				expect(response.status).toBe(400)
+				expect((await response.json()).reason).toBe(
+					'same_person_only_on_support_complete',
+				)
+				expect(mocks.initiate).not.toHaveBeenCalled()
+				expect(mocks.inspect).not.toHaveBeenCalled()
+			},
+		)
+
+		it('a completion dry run checks the same evidence against the guards', async () => {
+			vi.resetAllMocks()
+			mocks.verify.mockReturnValue({ valid: true })
+			mocks.inspectCompletion.mockResolvedValue({
+				state: 'blocked',
+				reason: 'same_person_table_missing',
+			})
+			const response = await POST(
+				request({ ...completeBody, mode: 'support_complete_dry_run', samePerson }),
+			)
+			expect(response.status).toBe(409)
+			expect(mocks.inspectCompletion).toHaveBeenCalledWith(
+				expect.objectContaining({ samePerson }),
+			)
+		})
+	})
 })

@@ -105,8 +105,8 @@ export type InvoiceSettingsDataSource = {
 		id: string
 		userId: string | null
 		billingUserId?: string | null
-		// Earliest completed transfer: its source paid. See `canEditInvoice`.
-		originTransfer: InvoiceTransferFact | null
+		// Every completed transfer; `resolveInvoicePayer` names the payer.
+		transfers: InvoiceTransferFact[]
 		merchantChargeId: string | null
 	} | null>
 	loadSettings(
@@ -315,7 +315,7 @@ export async function saveInvoiceSettingsForViewer(
 				id: purchase.id,
 				userId: purchase.userId,
 				billingUserId: purchase.billingUserId,
-				originTransfer: purchase.originTransfer,
+				transfers: purchase.transfers,
 			},
 			managedTeamPurchases,
 		)
@@ -663,15 +663,15 @@ export const drizzleInvoiceSettingsDataSource: InvoiceSettingsDataSource = {
 		if (!purchase) return null
 		// Dynamic like the other loads: invoice-access imports '@/db' at the
 		// top level, which this module keeps out of its static graph.
-		const { getOriginTransferForPurchase } = await import(
+		const { getCompletedTransfersForPurchase } = await import(
 			'@/lib/invoice-access'
 		)
-		const originTransfer = await getOriginTransferForPurchase(purchase.id)
+		const transfers = await getCompletedTransfersForPurchase(purchase.id)
 		return {
 			id: purchase.id,
 			userId: purchase.userId,
 			billingUserId: charge?.userId ?? null,
-			originTransfer,
+			transfers,
 			merchantChargeId: purchase.merchantChargeId,
 		}
 	},

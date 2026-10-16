@@ -10,10 +10,12 @@ import LayoutClient from '@/components/layout-client'
 import { courseBuilderAdapter, db } from '@/db'
 import { coupon } from '@/db/schema'
 import { env } from '@/env.mjs'
-import { getOriginTransferForPurchase } from '@/lib/invoice-access'
+import { getCompletedTransfersForPurchase } from '@/lib/invoice-access'
 import {
 	canEditInvoice as canEditInvoiceRule,
 	canViewInvoice,
+	pickOriginTransfer,
+	resolveInvoicePayer,
 	invoiceDisplayAmount,
 } from '@/lib/invoice-access-rules'
 import { drizzleInvoiceSettingsDataSource } from '@/lib/invoice-settings'
@@ -152,9 +154,14 @@ const Invoice = async (props: {
 	const managedTeamPurchases = viewerUserId
 		? await getTeamPurchasesForMember(viewerUserId)
 		: []
-	const originTransfer = await getOriginTransferForPurchase(
+	const transfers = await getCompletedTransfersForPurchase(
 		chargeDetails.result.purchaseId,
 	)
+	const originTransfer = pickOriginTransfer(transfers)
+	const payerUserId = resolveInvoicePayer({
+		chargeUserId: chargeDetails.result.billingUserId,
+		transfers,
+	})
 	// Normal billing authorization is independent of link/cookie availability.
 	const canEditInvoice = canViewPurchaseInvoice(
 		viewerUserId,
@@ -162,7 +169,7 @@ const Invoice = async (props: {
 			id: chargeDetails.result.purchaseId,
 			userId: chargeDetails.result.purchaseUserId,
 			billingUserId: chargeDetails.result.billingUserId,
-			originTransfer,
+			transfers,
 		},
 		managedTeamPurchases,
 	)
@@ -175,7 +182,7 @@ const Invoice = async (props: {
 			? canViewInvoice({
 					viewerId: viewerUserId,
 					purchaseUserId: chargeDetails.result.purchaseUserId,
-					payerUserId: chargeDetails.result.billingUserId,
+					payerUserId,
 					transfer: originTransfer,
 				})
 			: false
@@ -206,7 +213,7 @@ const Invoice = async (props: {
 		viewerId: viewerUserId,
 		payerUserId: chargeDetails.result.billingUserId,
 		holderUserId: chargeDetails.result.purchaseUserId,
-		transfer: originTransfer,
+		transfers,
 	})
 	// Transferring is a right of holding the purchase, not of paying for it:
 	// a holder who is not the payer can pass the purchase on, view only.

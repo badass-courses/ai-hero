@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { env } from '@/env.mjs'
+import { isValidSamePersonEvidence } from '@/lib/invoice-access-rules'
 import { verifySupportSignature } from '@/lib/support-signature'
 import {
 	completeSupportPurchaseTransfer,
@@ -29,6 +30,9 @@ const requestSchema = z.object({
 	purchaseId: z.string().min(1),
 	sourceUserId: z.string().min(1),
 	targetEmail: z.email(),
+	// Validated by hand below so a malformed one gets a literal prompt, not a
+	// generic 400.
+	samePerson: z.unknown().optional(),
 	audit: z.object({
 		runId: z.string().min(1),
 		conversationId: z.string().min(1),
@@ -37,6 +41,9 @@ const requestSchema = z.object({
 		expectedInboundId: z.string().min(1),
 	}).strict(),
 }).strict()
+
+const SAME_PERSON_PROMPT =
+	"samePerson needs verifiedBy ('owner-mailbox-both' or 'same-stripe-customer'), a reason and a proofRef, all non-blank. Add all three or remove samePerson."
 
 export const POST = withSkill(async (request: NextRequest) => {
 	if (!env.SUPPORT_WEBHOOK_SECRET) {
@@ -60,8 +67,38 @@ export const POST = withSkill(async (request: NextRequest) => {
 	if (!parsed.success)
 		return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
 
-	const { mode, transferId, purchaseId, sourceUserId, targetEmail, audit } =
-		parsed.data
+	const {
+		mode,
+		transferId,
+		purchaseId,
+		sourceUserId,
+		targetEmail,
+		audit,
+		samePerson,
+	} = parsed.data
+	if (samePerson !== undefined) {
+		if (!mode.startsWith('support_complete')) {
+			return NextResponse.json(
+				{
+					state: 'invalid',
+					reason: 'same_person_only_on_support_complete',
+					error:
+						'samePerson only applies to a support_complete mode. Remove it from this request.',
+				},
+				{ status: 400 },
+			)
+		}
+		if (!isValidSamePersonEvidence(samePerson)) {
+			return NextResponse.json(
+				{
+					state: 'invalid',
+					reason: 'same_person_evidence_invalid',
+					error: SAME_PERSON_PROMPT,
+				},
+				{ status: 400 },
+			)
+		}
+	}
 	const target = { purchaseId, sourceUserId, targetEmail }
 	let result
 	if (mode.startsWith('support_complete')) {
@@ -71,7 +108,13 @@ export const POST = withSkill(async (request: NextRequest) => {
 				{ status: 400 },
 			)
 		}
-		const completionTarget = { ...target, transferId }
+		const completionTarget = {
+			...target,
+			transferId,
+			...(samePerson !== undefined && isValidSamePersonEvidence(samePerson)
+				? { samePerson }
+				: {}),
+		}
 		result =
 			mode === 'support_complete'
 				? await completeSupportPurchaseTransfer(completionTarget)
