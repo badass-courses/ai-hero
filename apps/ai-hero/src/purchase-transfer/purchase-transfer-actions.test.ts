@@ -514,10 +514,11 @@ describe('acceptPurchaseTransfer', () => {
 		)
 	const expectConverged = () => {
 		expect(updatesFor(purchaseTable)[0]?.values).toEqual({ userId: 'user_b' })
-		expect(updatesFor(merchantCharge)[0]?.values).toEqual({ userId: 'user_b' })
-		expect(updatesFor(merchantCustomer)[0]?.values).toEqual({
-			userId: 'user_b',
-		})
+		// The purchase moves; the payer keeps the charge and the Stripe customer.
+		expect(updatesFor(merchantCharge)).toHaveLength(0)
+		expect(updatesFor(merchantCustomer)).toHaveLength(0)
+		expect(mocks.stripeGetCustomer).not.toHaveBeenCalled()
+		expect(mocks.stripeUpdateCustomer).not.toHaveBeenCalled()
 		const outboxInserts = insertsFor(purchaseTransferOutbox)
 		expect(outboxInserts).toHaveLength(1)
 		expect(outboxInserts[0]?.values).toMatchObject({
@@ -535,21 +536,56 @@ describe('acceptPurchaseTransfer', () => {
 		}
 	}
 
-	it('claims INITIATED -> VERIFIED before touching Stripe, then converges', async () => {
+	it('claims INITIATED -> VERIFIED, moves only the purchase and the transfer row, then converges', async () => {
 		asTarget()
 		mocks.getPurchaseUserTransferById.mockResolvedValue(initiated())
-		let claimsWhenStripeRan = -1
-		mocks.stripeUpdateCustomer.mockImplementation(async () => {
-			claimsWhenStripeRan = claimUpdates().length
-			return {}
-		})
 
 		await acceptPurchaseTransfer({ purchaseUserTransferId: 'put_1' })
 
 		expect(claimUpdates()).toHaveLength(1)
-		expect(claimsWhenStripeRan).toBe(1)
-		expect(mocks.stripeUpdateCustomer).toHaveBeenCalledTimes(1)
+		// Exactly these tables, nothing else: updates are the purchase, the
+		// transfer claim and the outbox publish record; inserts are the outbox.
+		expect(new Set(mocks.dbState.updates.map((u) => u.table))).toEqual(
+			new Set([
+				purchaseTable,
+				purchaseUserTransferTable,
+				purchaseTransferOutbox,
+			]),
+		)
+		expect(new Set(mocks.dbState.inserts.map((u) => u.table))).toEqual(
+			new Set([purchaseTransferOutbox]),
+		)
 		expectConverged()
+	})
+
+	it('readback: after the transfer the payer keeps the charge and the customer, and the holder has none', async () => {
+		asTarget()
+		mocks.getPurchaseUserTransferById.mockResolvedValue(initiated())
+		await acceptPurchaseTransfer({ purchaseUserTransferId: 'put_1' })
+
+		// Apply the recorded writes to an in-memory copy of the rows.
+		const rows = {
+			purchase: { userId: 'user_a' },
+			charge: { userId: 'user_a' },
+			customer: { userId: 'user_a', identifier: 'cus_stripe_1' },
+		}
+		for (const update of mocks.dbState.updates) {
+			const values = update.values as { userId?: string }
+			if (!values.userId) continue
+			if (update.table === purchaseTable) rows.purchase.userId = values.userId
+			if (update.table === merchantCharge) rows.charge.userId = values.userId
+			if (update.table === merchantCustomer)
+				rows.customer.userId = values.userId
+		}
+		const customerFor = (userId: string) =>
+			rows.customer.userId === userId ? rows.customer.identifier : null
+
+		expect(rows.purchase.userId).toBe('user_b')
+		expect(rows.charge.userId).toBe('user_a')
+		expect(customerFor('user_a')).toBe('cus_stripe_1')
+		// The holder's next checkout finds no customer and makes their own.
+		expect(customerFor('user_b')).toBeNull()
+		expect(mocks.stripeUpdateCustomer).not.toHaveBeenCalled()
 	})
 
 	it('denies a wrong user (leaked link holder) with zero writes and no Stripe call', async () => {
@@ -635,32 +671,7 @@ describe('acceptPurchaseTransfer', () => {
 		expect(insertsFor(purchaseUserTransferTable)).toHaveLength(0)
 	})
 
-	it('Stripe failure: claim stays VERIFIED with no local ownership writes, and re-accept resumes cleanly', async () => {
-		asTarget()
-		mocks.getPurchaseUserTransferById.mockResolvedValue(initiated())
-		mocks.stripeUpdateCustomer.mockRejectedValueOnce(new Error('stripe down'))
-
-		await expect(
-			acceptPurchaseTransfer({ purchaseUserTransferId: 'put_1' }),
-		).rejects.toThrow('stripe down')
-
-		expect(claimUpdates()).toHaveLength(1)
-		expect(updatesFor(purchaseTable)).toHaveLength(0)
-		expect(updatesFor(merchantCharge)).toHaveLength(0)
-		expect(insertsFor(purchaseTransferOutbox)).toHaveLength(0)
-		expect(mocks.inngestSend).not.toHaveBeenCalled()
-
-		// Target retries; the row is now VERIFIED for them.
-		mocks.getPurchaseUserTransferById.mockResolvedValue(verified())
-		mocks.stripeUpdateCustomer.mockResolvedValue({})
-		await acceptPurchaseTransfer({ purchaseUserTransferId: 'put_1' })
-
-		// No second claim, one converged completion.
-		expect(claimUpdates()).toHaveLength(1)
-		expectConverged()
-	})
-
-	it('transaction failure after Stripe: re-accept resumes and converges without a second claim', async () => {
+	it('transaction failure: re-accept resumes and converges without a second claim', async () => {
 		asTarget()
 		mocks.getPurchaseUserTransferById.mockResolvedValue(initiated())
 		mocks.dbState.updateHandler = (call) => {
@@ -671,7 +682,6 @@ describe('acceptPurchaseTransfer', () => {
 		await expect(
 			acceptPurchaseTransfer({ purchaseUserTransferId: 'put_1' }),
 		).rejects.toThrow('db blip')
-		expect(mocks.stripeUpdateCustomer).toHaveBeenCalledTimes(1)
 		expect(claimUpdates()).toHaveLength(1)
 		expect(mocks.inngestSend).not.toHaveBeenCalled()
 
@@ -684,7 +694,6 @@ describe('acceptPurchaseTransfer', () => {
 		await acceptPurchaseTransfer({ purchaseUserTransferId: 'put_1' })
 
 		expect(claimUpdates()).toHaveLength(0)
-		expect(mocks.stripeUpdateCustomer).toHaveBeenCalledTimes(2)
 		expectConverged()
 	})
 

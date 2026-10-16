@@ -456,17 +456,17 @@ describe('signed shareable invoice', () => {
 			beforeEach(() => {
 				setShape('holder', [done('middle-holder', 2), done('original-payer', 1)])
 			})
-			it('the original payer sees it, view only', async () => {
+			it('the original payer sees it and edits', async () => {
 				const markup = await canSee('original-payer')
 				expect(markup).toContain('Synthetic Course')
-				expect(markup).not.toContain('Edit invoice details')
+				expect(markup).toContain('Edit invoice details')
 			})
-			// Known gap, enforced outside this change: the charge moved, so the
-			// holder is the billing owner and keeps the editor.
-			it('the holder sees it and, as billing owner, can edit', async () => {
+			// The charge was rewritten to the holder before this fix. The payer
+			// is still the origin transfer's source, so the holder views only.
+			it('the holder sees it, view only', async () => {
 				const markup = await canSee('holder')
 				expect(markup).toContain('Synthetic Course')
-				expect(markup).toContain('Edit invoice details')
+				expect(markup).not.toContain('Edit invoice details')
 			})
 			it('a middle holder who never paid is turned away', async () => {
 				expect(await canSee('middle-holder')).toBeNull()
@@ -564,7 +564,14 @@ describe('signed shareable invoice', () => {
 			userId: 'learner',
 			productId: 'product-synthetic',
 		})
-		expectReadOnly(await renderInvoice())
+		const markup = await renderInvoice()
+		// The editor and share controls stay hidden; the holder may still pass
+		// the purchase on, so transfers are loaded for the holder.
+		expect(markup).not.toContain('Edit invoice details')
+		expect(markup).not.toMatch(/<form|<input|<textarea/)
+		expect(markup).not.toContain('Copy share link')
+		expect(markup).not.toContain('Rotate link')
+		expect(mocks.transfers).toHaveBeenCalledWith({ id: 'purchase-synthetic' })
 	})
 	it('retains the editor and owner-only transfers for the payer', async () => {
 		mocks.auth.mockResolvedValue({ session: { user: { id: 'payer' } } })

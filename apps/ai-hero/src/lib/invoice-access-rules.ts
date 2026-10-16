@@ -3,15 +3,16 @@ import { getInvoicePresentment } from '@/lib/invoice-amounts'
 /**
  * Pure decisions behind the invoice list and invoice page.
  *
- * The self-service transfer in `purchase-transfer-actions.tsx` runs, in one
- * transaction: `update(purchaseTable).set({ userId: user.id })`,
- * `update(merchantCharge).set({ userId: user.id })` and
- * `update(merchantCustomer).set({ userId: user.id })`. So the new holder takes
- * over the charge, and the first completed `PurchaseUserTransfer` row's
- * `sourceUserId` is the only record of who paid. Support-complete moves only
- * `Purchase.userId`; there `MerchantCharge.userId` still names the payer.
- * The payer is either of those two. `MerchantCustomer` is deliberately not
- * used: one customer is shared across a buyer's charges. */
+ * Two transfer shapes coexist. Before the payer fix, a self-service transfer
+ * also rewrote `MerchantCharge.userId` and `MerchantCustomer.userId` to the new
+ * holder, so the first completed `PurchaseUserTransfer` row's `sourceUserId`
+ * was the only record of who paid. Since the fix, a transfer moves
+ * `Purchase.userId` only and `MerchantCharge.userId` keeps naming the payer.
+ * Support-complete always moved only `Purchase.userId`.
+ * The payer is therefore the earliest completed transfer's source when there
+ * is one, otherwise `MerchantCharge.userId`. Both shapes give the same answer.
+ * `MerchantCustomer` is deliberately not used: one customer is shared across a
+ * buyer's charges. */
 
 export type InvoiceTransferFact = {
 	id?: string
@@ -72,6 +73,51 @@ export function canViewInvoice({
 		transfer.state === 'COMPLETED' &&
 		transfer.sourceUserId === viewerId,
 	)
+}
+
+/**
+ * The payer of a charge: the source of the earliest completed transfer, else
+ * `MerchantCharge.userId`. Null when neither names anyone.
+ */
+export function resolveInvoicePayer({
+	chargeUserId,
+	transfers,
+}: {
+	chargeUserId: string | null | undefined
+	transfers: InvoiceTransferFact[]
+}): string | null {
+	return pickOriginTransfer(transfers)?.sourceUserId ?? chargeUserId ?? null
+}
+
+/**
+ * Who may edit an invoice: the payer, and nobody else. The current holder
+ * (when not the payer) views only.
+ *
+ * The payer is the source of the earliest completed transfer, the same rule
+ * `canViewInvoice` uses, else `payerUserId` (`MerchantCharge.userId`). That
+ * keeps purchases transferred before the payer fix correct: their
+ * `MerchantCharge.userId` names the holder.
+ */
+export function canEditInvoice({
+	viewerId,
+	payerUserId,
+	transfer,
+}: {
+	viewerId: string | null | undefined
+	payerUserId: string | null | undefined
+	holderUserId: string | null | undefined
+	transfer: InvoiceTransferFact | null
+}): boolean {
+	if (!viewerId) return false
+	// One rule surface: `resolveInvoicePayer` decides, so an undated COMPLETED
+	// transfer is ignored here exactly as it is there. `holderUserId` is part
+	// of the signature so callers state who holds the purchase, but the rule
+	// does not read it: a holder who is not the payer is not the payer.
+	const payer = resolveInvoicePayer({
+		chargeUserId: payerUserId,
+		transfers: transfer ? [transfer] : [],
+	})
+	return viewerId === payer
 }
 
 export type InvoiceChargeFacts = {

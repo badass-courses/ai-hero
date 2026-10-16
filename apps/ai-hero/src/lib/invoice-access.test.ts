@@ -71,7 +71,9 @@ const transferred = {
 describe('invoice purchase access', () => {
 	beforeEach(() => {
 		vi.resetAllMocks()
-		mocks.findCharges.mockResolvedValue([{ id: 'charge-original-payer' }])
+		mocks.findCharges.mockResolvedValue([
+			{ id: 'charge-original-payer', userId: 'payer-1' },
+		])
 		mocks.findPurchases.mockResolvedValue([transferred])
 		mocks.findTransfers.mockResolvedValue([])
 	})
@@ -115,6 +117,38 @@ describe('invoice purchase access', () => {
 		mocks.findCharges.mockResolvedValue([])
 		const holder = await getInvoicePurchasesForUser('learner-1')
 		expect(holder[0]?.canEdit).toBe(false)
+	})
+
+	it.each([
+		['pre-fix', 'holder-b'],
+		['post-fix', 'payer-a'],
+	])('%s transfer: only the payer edits in the list', async (shape, chargeUserId) => {
+		// Pre-fix the charge was rewritten to the holder; post-fix it stays.
+		const completed = [
+			{
+				id: 't1',
+				purchaseId: 'purchase-transferred',
+				transferState: 'COMPLETED',
+				sourceUserId: 'payer-a',
+				completedAt: new Date('2026-09-25T00:00:00Z'),
+				createdAt: new Date('2026-09-24T00:00:00Z'),
+			},
+		]
+		mocks.findTransfers.mockResolvedValue(completed)
+		mocks.findPurchases.mockResolvedValue([
+			{
+				...transferred,
+				userId: 'holder-b',
+				merchantChargeId: 'charge-x',
+			},
+		])
+		mocks.findCharges.mockResolvedValue([
+			{ id: 'charge-x', userId: chargeUserId },
+		])
+		const payer = await getInvoicePurchasesForUser('payer-a')
+		const holder = await getInvoicePurchasesForUser('holder-b')
+		expect(payer[0]?.canEdit, shape).toBe(true)
+		expect(holder[0]?.canEdit, shape).toBe(false)
 	})
 
 	it('lists a purchase for its current holder', async () => {

@@ -168,6 +168,7 @@ describe('team invoice authorization', () => {
 		const target = {
 			...purchase('purchase-a', 'org-a', { userId: 'learner-a' }),
 			billingUserId: 'payer-a',
+			originTransfer: null,
 		}
 
 		expect(canViewPurchaseInvoice('learner-a', target, [])).toBe(false)
