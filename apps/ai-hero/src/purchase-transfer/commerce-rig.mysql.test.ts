@@ -209,6 +209,14 @@ suite('commerce rig: transfers against real MySQL 8', () => {
 			type: 'self-paced',
 			status: 1,
 		} as never)
+		await db.insert(schema.products).values({
+			id: 'prod-rig-2',
+			name: 'Rig Product Two',
+			key: 'rig-product-two',
+			fields: { slug: 'rig-product-two' },
+			type: 'self-paced',
+			status: 1,
+		} as never)
 		await db.insert(schema.merchantCustomer).values({
 			id: 'mcu-a',
 			identifier: 'cus_rig_a',
@@ -286,7 +294,10 @@ suite('commerce rig: transfers against real MySQL 8', () => {
 				where: eq(schema.merchantCustomer.userId, userId),
 			})
 		)?.identifier ?? null
-	// Refund routing keys on the Stripe charge id, then charge -> purchase.
+	// Refund routing keys on the Stripe charge id, then charge -> purchase,
+	// and entitlements are revoked for the purchase's holder (the adapter's
+	// getPurchaseForStripeCharge, then refund-entitlements on purchase.userId).
+	// Same two queries, no refund issued.
 	const refundTarget = async (stripeChargeId: string) => {
 		const charge = await db.query.merchantCharge.findFirst({
 			where: eq(schema.merchantCharge.identifier, stripeChargeId),
@@ -297,6 +308,17 @@ suite('commerce rig: transfers against real MySQL 8', () => {
 				})
 			: null
 		return purchase?.id ?? null
+	}
+	const refundRevokesUser = async (stripeChargeId: string) => {
+		const charge = await db.query.merchantCharge.findFirst({
+			where: eq(schema.merchantCharge.identifier, stripeChargeId),
+		})
+		const purchase = charge
+			? await db.query.purchases.findFirst({
+					where: eq(schema.purchases.merchantChargeId, charge.id),
+				})
+			: null
+		return purchase?.userId ?? null
 	}
 
 	it('self-service A -> B: purchase moves, payer keeps charge and customer', async () => {
@@ -430,6 +452,99 @@ suite('commerce rig: transfers against real MySQL 8', () => {
 		expect(await customerFor('user-a')).toBe('cus_rig_a')
 	})
 
+	it('self-service A -> B, then support B -> C: payer stays A throughout', async () => {
+		await db.insert(schema.merchantCharge).values({
+			id: 'mch-3',
+			identifier: 'ch_rig_3',
+			merchantAccountId: 'ma-rig',
+			merchantProductId: 'mp-rig',
+			merchantCustomerId: 'mcu-a',
+			userId: 'user-a',
+			status: 1,
+		})
+		await db.insert(schema.purchases).values({
+			id: 'pur-3',
+			userId: 'user-a',
+			productId: 'prod-rig-2',
+			status: 'Valid',
+			totalAmount: '100',
+			merchantChargeId: 'mch-3',
+		})
+		const expiresAt = new Date(Date.now() + 86400000)
+		await db.insert(schema.purchaseUserTransfer).values({
+			id: 'put-3',
+			purchaseId: 'pur-3',
+			sourceUserId: 'user-a',
+			targetUserId: 'user-b',
+			transferState: 'INITIATED',
+			expiresAt,
+		})
+		const complete = (id: string) =>
+			db
+				.update(schema.purchaseUserTransfer)
+				.set({ transferState: 'COMPLETED', completedAt: new Date() })
+				.where(
+					and(
+						eq(schema.purchaseUserTransfer.id, id),
+						eq(schema.purchaseUserTransfer.transferState, 'VERIFIED'),
+					),
+				)
+		state.session = { user: { id: 'user-b', email: 'b@example.test' } }
+		await acceptPurchaseTransfer({ purchaseUserTransferId: 'put-3' })
+		await complete('put-3')
+		await db.insert(schema.purchaseUserTransfer).values({
+			id: 'put-4',
+			purchaseId: 'pur-3',
+			sourceUserId: 'user-b',
+			targetUserId: 'user-c',
+			transferState: 'INITIATED',
+			expiresAt,
+		})
+		const moved = await completeSupportPurchaseTransfer({
+			transferId: 'put-4',
+			purchaseId: 'pur-3',
+			sourceUserId: 'user-b',
+			targetEmail: 'c@example.test',
+		})
+		await complete('put-4')
+		const rows = await db.query.purchaseUserTransfer.findMany({
+			where: eq(schema.purchaseUserTransfer.purchaseId, 'pur-3'),
+		})
+		const edits = async (user: string) =>
+			(await getInvoicePurchasesForUser(user)).find((p) => p.id === 'pur-3')
+				?.canEdit
+		const purchase = (await db.query.purchases.findFirst({
+			where: eq(schema.purchases.id, 'pur-3'),
+		}))!
+		row('A->B->C', 'support move result', moved.state)
+		row(
+			'A->B->C',
+			'transfer rows / states',
+			`${rows.length} / ${rows.map((r) => r.transferState)}`,
+		)
+		row(
+			'A->B->C',
+			'purchase holder / charge user',
+			`${purchase.userId} / ${await chargeUser('mch-3')}`,
+		)
+		row(
+			'A->B->C',
+			'A / B / C edits',
+			`${await edits('user-a')} / ${await edits('user-b')} / ${await edits('user-c')}`,
+		)
+		row('A->B->C', 'refund revokes', await refundRevokesUser('ch_rig_3'))
+		expect(moved.state).toBe('completion_requested')
+		expect(rows.map((r) => r.transferState)).toEqual(['COMPLETED', 'COMPLETED'])
+		expect(purchase.userId).toBe('user-c')
+		expect(await chargeUser('mch-3')).toBe('user-a')
+		expect([
+			await edits('user-a'),
+			await edits('user-b'),
+			await edits('user-c'),
+		]).toEqual([true, undefined, false])
+		expect(await refundRevokesUser('ch_rig_3')).toBe('user-c')
+	})
+
 	// The same user-visible outcome in every shape: pre-fix (charge rewritten
 	// to the holder), post-fix (charge stays) and no transfer.
 	it.each([
@@ -466,6 +581,21 @@ suite('commerce rig: transfers against real MySQL 8', () => {
 					transferState: 'COMPLETED',
 					completedAt: new Date('2026-09-01T00:00:00Z'),
 				})
+			// Pre-fix the holder also owns the payer's Stripe customer row.
+			await db.insert(schema.merchantCustomer).values({
+				id: `mcu-${n}`,
+				identifier: `cus_${n}`,
+				merchantAccountId: 'ma-rig',
+				userId: chargeOwner,
+				status: 1,
+			})
+			const holderReusesPayerCustomer =
+				holder !== 'user-a' &&
+				(
+					await db.query.merchantCustomer.findFirst({
+						where: eq(schema.merchantCustomer.id, `mcu-${n}`),
+					})
+				)?.userId === holder
 			const buyer = await resolveDisputeBuyer(db as never, {
 				id: `pur-${n}`,
 				userId: holder,
@@ -480,6 +610,13 @@ suite('commerce rig: transfers against real MySQL 8', () => {
 				'dispute buyer / A edits / holder edits',
 				`${buyer.kind === 'resolved' ? buyer.userId : buyer.reason} / ${await edits('user-a')} / ${holder === 'user-a' ? 'same as A' : await edits(holder)}`,
 			)
+			row(
+				shape,
+				'refund revokes / holder checkout reuses payer customer',
+				`${await refundRevokesUser(`ch_${n}`)} / ${holderReusesPayerCustomer}${shape === 'pre-fix transfer' ? ' (known legacy, unchanged)' : ''}`,
+			)
+			expect(await refundRevokesUser(`ch_${n}`)).toBe(holder)
+			expect(holderReusesPayerCustomer).toBe(shape === 'pre-fix transfer')
 			expect(buyer).toMatchObject({ kind: 'resolved', userId: 'user-a' })
 			expect(await edits('user-a')).toBe(true)
 			if (holder !== 'user-a') expect(await edits(holder)).toBe(false)

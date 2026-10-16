@@ -195,19 +195,77 @@ describe('guarded support purchase completion', () => {
 		expect(mocks.transaction).toHaveBeenCalledTimes(1)
 	})
 
-	it('refuses a move that would change who the payer is', async () => {
-		// An earlier completed transfer dated in the future: this move would
-		// become the earliest and name a different payer.
-		mocks.findTransfers.mockResolvedValueOnce([]).mockResolvedValueOnce([
-			{
-				id: 'transfer-0',
-				transferState: 'COMPLETED',
-				sourceUserId: 'original-payer',
-				completedAt: new Date('2099-01-01T00:00:00.000Z'),
-				createdAt: new Date('2099-01-01T00:00:00.000Z'),
-			},
+	const earlier = (sourceUserId: string) => ({
+		id: 'transfer-0',
+		transferState: 'COMPLETED',
+		sourceUserId,
+		completedAt: new Date('2026-09-01T00:00:00.000Z'),
+		createdAt: new Date('2026-09-01T00:00:00.000Z'),
+	})
+	const holderIsB = {
+		input: { ...input, sourceUserId: 'holder-b' },
+		purchase: { ...purchase, userId: 'holder-b' },
+		transfer: { ...transfer, sourceUserId: 'holder-b' },
+	}
+
+	it('moves a purchase the payer already transferred away (post-fix A to B, then B to C), payer stays A', async () => {
+		mocks.getTransfer.mockResolvedValue(holderIsB.transfer)
+		mocks.getPurchase.mockResolvedValue(holderIsB.purchase)
+		// The charge stays with the payer, not the holder moving it.
+		mocks.findTransfers
+			.mockResolvedValueOnce([])
+			.mockResolvedValueOnce([earlier('buyer-1')])
+		await expect(
+			completeSupportPurchaseTransfer(holderIsB.input),
+		).resolves.toMatchObject({ state: 'completion_requested' })
+		expect(mocks.updates.map((entry) => entry.table)).toEqual([
+			tables.purchaseUserTransfer,
+			tables.purchases,
 		])
+	})
+
+	it('moves a pre-fix transferred purchase (charge rewritten to the holder), payer resolves to the origin', async () => {
+		mocks.getTransfer.mockResolvedValue(holderIsB.transfer)
+		mocks.getPurchase.mockResolvedValue(holderIsB.purchase)
+		mocks.findCharge.mockResolvedValue({
+			id: 'charge-1',
+			identifier: 'ch_test',
+			userId: 'holder-b',
+		})
+		mocks.findTransfers
+			.mockResolvedValueOnce([])
+			.mockResolvedValueOnce([earlier('buyer-1')])
+		await expect(
+			completeSupportPurchaseTransfer(holderIsB.input),
+		).resolves.toMatchObject({ state: 'completion_requested' })
+	})
+
+	it('refuses a move by someone who does not hold the purchase', async () => {
+		mocks.getPurchase.mockResolvedValue({ ...purchase, userId: 'someone-else' })
 		await expect(completeSupportPurchaseTransfer(input)).resolves.toEqual({
+			state: 'blocked',
+			reason: 'source_no_longer_owns_purchase',
+		})
+		expect(mocks.transaction).not.toHaveBeenCalled()
+	})
+
+	it('refuses a move that would leave the charge with no payer (charge row missing)', async () => {
+		mocks.findCharge.mockResolvedValue(null)
+		await expect(completeSupportPurchaseTransfer(input)).resolves.toEqual({
+			state: 'blocked',
+			reason: 'move_would_leave_charge_without_payer',
+		})
+		expect(mocks.transaction).not.toHaveBeenCalled()
+	})
+
+	it('refuses a move that would change who the payer is (holder changed without a completed row)', async () => {
+		// The charge names the payer, the purchase is held by someone else, and
+		// no completed transfer explains it: moving it would name the holder.
+		mocks.getTransfer.mockResolvedValue(holderIsB.transfer)
+		mocks.getPurchase.mockResolvedValue(holderIsB.purchase)
+		await expect(
+			completeSupportPurchaseTransfer(holderIsB.input),
+		).resolves.toEqual({
 			state: 'blocked',
 			reason: 'move_would_change_invoice_payer',
 		})

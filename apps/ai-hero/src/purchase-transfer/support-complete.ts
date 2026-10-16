@@ -211,8 +211,18 @@ async function loadGuardedContext(input: SupportCompleteInput) {
 	const billingCharge = await db.query.merchantCharge.findFirst({
 		where: eq(merchantCharge.id, purchase.merchantChargeId),
 	})
-	if (!billingCharge || billingCharge.userId !== sourceUser.id) {
-		return { ok: false as const, reason: 'billing_owner_mismatch' }
+	// The mover must hold the purchase. The charge stays with the payer after
+	// a transfer, so its user is not the holder and is not compared to it.
+	// (INITIATED rows are checked above; a resumed VERIFIED/COMPLETED row
+	// already moved the purchase to the target.)
+	if (
+		purchase.userId !== sourceUser.id &&
+		!(
+			['VERIFIED', 'COMPLETED'].includes(transfer.transferState) &&
+			purchase.userId === targetUser.id
+		)
+	) {
+		return { ok: false as const, reason: 'source_no_longer_owns_purchase' }
 	}
 	// A move must never leave the charge with no payer, nor change who the
 	// payer is. The payer is the earliest completed transfer's source, else the
@@ -234,11 +244,11 @@ async function loadGuardedContext(input: SupportCompleteInput) {
 		createdAt: row.createdAt,
 	}))
 	const payerBefore = resolveInvoicePayer({
-		chargeUserId: billingCharge.userId,
+		chargeUserId: billingCharge?.userId ?? null,
 		transfers: completedTransfers,
 	})
 	const payerAfter = resolveInvoicePayer({
-		chargeUserId: billingCharge.userId,
+		chargeUserId: billingCharge?.userId ?? null,
 		transfers: [
 			...completedTransfers,
 			{
@@ -249,13 +259,13 @@ async function loadGuardedContext(input: SupportCompleteInput) {
 			},
 		],
 	})
-	if (!payerAfter) {
+	if (!payerBefore || !billingCharge) {
 		return {
 			ok: false as const,
 			reason: 'move_would_leave_charge_without_payer',
 		}
 	}
-	if (payerBefore && payerBefore !== payerAfter) {
+	if (payerBefore !== payerAfter) {
 		return { ok: false as const, reason: 'move_would_change_invoice_payer' }
 	}
 	const refundState = await inspectStripeRefunds(billingCharge.identifier)
@@ -347,7 +357,7 @@ export async function completeSupportPurchaseTransfer(
 	const billingReadback = await db.query.merchantCharge.findFirst({
 		where: eq(merchantCharge.id, context.billingCharge.id),
 	})
-	if (billingReadback?.userId !== context.sourceUser.id) {
+	if (billingReadback?.userId !== context.billingCharge.userId) {
 		throw new Error('billing_owner_changed')
 	}
 	if (!outboxId) {

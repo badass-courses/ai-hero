@@ -545,11 +545,18 @@ describe('acceptPurchaseTransfer', () => {
 		expect(claimUpdates()).toHaveLength(1)
 		// The write set: purchase and transfer claim, nothing on the payer's
 		// merchant rows, and no Stripe customer write.
-		const touched = new Set(mocks.dbState.updates.map((u) => u.table))
-		expect(touched.has(merchantCharge)).toBe(false)
-		expect(touched.has(merchantCustomer)).toBe(false)
-		expect(touched.has(purchaseTable)).toBe(true)
-		expect(touched.has(purchaseUserTransferTable)).toBe(true)
+		// Exactly these tables, nothing else: updates are the purchase, the
+		// transfer claim and the outbox publish record; inserts are the outbox.
+		expect(new Set(mocks.dbState.updates.map((u) => u.table))).toEqual(
+			new Set([
+				purchaseTable,
+				purchaseUserTransferTable,
+				purchaseTransferOutbox,
+			]),
+		)
+		expect(new Set(mocks.dbState.inserts.map((u) => u.table))).toEqual(
+			new Set([purchaseTransferOutbox]),
+		)
 		expectConverged()
 	})
 
