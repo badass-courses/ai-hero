@@ -543,8 +543,6 @@ describe('acceptPurchaseTransfer', () => {
 		await acceptPurchaseTransfer({ purchaseUserTransferId: 'put_1' })
 
 		expect(claimUpdates()).toHaveLength(1)
-		// The write set: purchase and transfer claim, nothing on the payer's
-		// merchant rows, and no Stripe customer write.
 		// Exactly these tables, nothing else: updates are the purchase, the
 		// transfer claim and the outbox publish record; inserts are the outbox.
 		expect(new Set(mocks.dbState.updates.map((u) => u.table))).toEqual(
