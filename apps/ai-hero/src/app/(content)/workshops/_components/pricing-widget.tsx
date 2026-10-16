@@ -7,6 +7,7 @@ import {
 	type ProductPricingFeature,
 } from '@/components/commerce/product-pricing-features'
 import { GatedBuyButton } from '@/components/commerce/gated-buy-button'
+import { useClearRegionalAtTeamQuantity } from '@/components/commerce/regional-toggle-gate'
 import { TYPE } from '@/components/landing/type'
 import { formatDeadline } from '@/utils/discount-formatter'
 import {
@@ -22,6 +23,7 @@ import { useCoupon } from '@coursebuilder/commerce-next/coupons/use-coupon'
 import * as Pricing from '@coursebuilder/commerce-next/pricing/pricing'
 import {
 	REGIONAL_SINGLE_SEAT_COPY,
+	showRegionalReason,
 	showRegionalOffer,
 	showRegionalToggle,
 } from '@/lib/pricing-decisions'
@@ -662,15 +664,16 @@ const RegionalPricingBox = () => {
 	// Team seats: the offer exists but not at this quantity. Say why.
 	const showSingleSeatReason =
 		!showPPPBox &&
-		seats >= 2 &&
-		showRegionalOffer({ ...offerInput, isTeamPurchaseActive: false })
+		showRegionalReason({
+			quantity: seats,
+			regionalOfferExists: showRegionalOffer({
+				...offerInput,
+				isTeamPurchaseActive: false,
+			}),
+		})
 
 	// A regional coupon must not follow the buyer to a team quantity.
-	const regionalAppliedAtTeamQuantity =
-		seats >= 2 && activeMerchantCoupon?.type === 'ppp'
-	React.useEffect(() => {
-		if (regionalAppliedAtTeamQuantity) setMerchantCoupon(undefined)
-	}, [regionalAppliedAtTeamQuantity, setMerchantCoupon])
+	useClearRegionalAtTeamQuantity()
 
 	const rawDiscount = pppCoupon?.percentageDiscount as
 		| string

@@ -9,6 +9,7 @@ import {
 	FETCH_ERROR_COPY,
 	NO_ROLES_COPY,
 	NOT_IN_SERVER_COPY,
+	showSyncButton,
 } from '@/lib/discord-view'
 import { getServerAuthSession } from '@/server/auth'
 
@@ -148,7 +149,7 @@ export default async function DiscordRolesPage() {
 				)}
 
 				{/* Sync Button */}
-				{view === 'needs-sync' && <SyncRolesButton />}
+				{showSyncButton(view) && <SyncRolesButton />}
 
 				{/* Status Message */}
 				{view === 'in-sync' && (

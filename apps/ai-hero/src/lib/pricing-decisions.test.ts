@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
-import { duplicatePurchaseGuard } from './purchase-guardrails'
+import {
+	duplicatePurchaseGuard,
+	regionalAllowedForQuantity,
+} from './purchase-guardrails'
 import { showEvergreenEndedNotice } from './subscriber-marketing/evergreen-offer-notice'
 import {
+	clearRegionalSelection,
 	inlineBuyLabel,
+	showRegionalReason,
 	seatsTaken,
 	showRegionalOffer,
 	showRegionalToggle,
@@ -109,6 +114,38 @@ describe('showRegionalToggle', () => {
 				showRegionalToggle({ quantity, regionalOfferAvailable: true }),
 			).toBe(!refused)
 		}
+	})
+})
+
+describe('clearRegionalSelection', () => {
+	const types = ['ppp', 'bulk', 'special', undefined, null]
+	it('clears a regional coupon exactly when checkout would refuse it', () => {
+		for (const quantity of [1, 2, 3, 4, 5]) {
+			const refused =
+				duplicatePurchaseGuard({
+					productType: null,
+					quantity,
+					existing: [],
+					regionalCouponApplied: true,
+				}) === 'regional-team-not-allowed'
+			expect(
+				clearRegionalSelection({ quantity, activeCouponType: 'ppp' }),
+			).toBe(refused)
+			expect(regionalAllowedForQuantity(quantity)).toBe(!refused)
+			expect(showRegionalReason({ quantity, regionalOfferExists: true })).toBe(
+				refused,
+			)
+			expect(showRegionalReason({ quantity, regionalOfferExists: false })).toBe(
+				false,
+			)
+		}
+	})
+	it('never clears a non-regional coupon, at any quantity', () => {
+		for (const quantity of [1, 2, 3, 4, 5])
+			for (const activeCouponType of types.filter((t) => t !== 'ppp'))
+				expect(clearRegionalSelection({ quantity, activeCouponType })).toBe(
+					false,
+				)
 	})
 })
 

@@ -32,6 +32,30 @@ export function discordRolesView({
 	return entitlements.every((r) => r.assigned) ? 'in-sync' : 'needs-sync'
 }
 
+/** The page renders the Sync button only for this view. */
+export const showSyncButton = (view: DiscordRolesView): boolean =>
+	view === 'needs-sync'
+
+/**
+ * What a role sync does with the member lookup: proceed with the member's
+ * roles, or stop with copy that says why. A failed lookup is not "not a
+ * member".
+ */
+export type SyncLookup =
+	| { ok: true; roles: string[] }
+	| { ok: false; error: string }
+
+export function syncLookup(classified: MemberClassification): SyncLookup {
+	if (classified.kind === 'member') return { ok: true, roles: classified.roles }
+	return {
+		ok: false,
+		error:
+			classified.kind === 'error'
+				? FETCH_ERROR_COPY
+				: 'Not a member of the Discord server. Join first, then sync.',
+	}
+}
+
 export const NOT_IN_SERVER_COPY =
 	'Join the AI Hero Discord server first. Your roles are added once you are in.'
 

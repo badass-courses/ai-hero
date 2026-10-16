@@ -41,9 +41,32 @@ export function showRegionalToggle(input: {
 }): boolean {
 	return (
 		input.regionalOfferAvailable &&
-		input.quantity >= 1 &&
+		Number.isInteger(input.quantity) &&
+		input.quantity > 0 &&
 		regionalAllowedForQuantity(input.quantity)
 	)
+}
+
+/**
+ * A regional (PPP) coupon must not follow the buyer to a team quantity.
+ * Only a regional coupon is cleared; any other merchant coupon stays.
+ */
+export function clearRegionalSelection(input: {
+	quantity: number
+	activeCouponType: string | null | undefined
+}): boolean {
+	return (
+		!regionalAllowedForQuantity(input.quantity) &&
+		input.activeCouponType === 'ppp'
+	)
+}
+
+/** The offer exists, but not at this quantity: show the reason instead. */
+export function showRegionalReason(input: {
+	quantity: number
+	regionalOfferExists: boolean
+}): boolean {
+	return input.regionalOfferExists && !regionalAllowedForQuantity(input.quantity)
 }
 
 /** The inline buy button's label: a sold-out product never says "Buy Now". */

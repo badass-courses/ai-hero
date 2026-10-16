@@ -7,8 +7,11 @@ import {
 	DISCORD_ERROR_MESSAGES,
 	discordErrorMessage,
 	discordRolesView,
+	FETCH_ERROR_COPY,
 	GENERIC_DISCORD_ERROR,
 	hasDiscordAccount,
+	showSyncButton,
+	syncLookup,
 	isDiscordConnected,
 	sourceLabel,
 	type DiscordRolesView,
@@ -94,6 +97,24 @@ describe('discordRolesView truth table', () => {
 		},
 	)
 
+	// The brief's states as literal rows (linked, fetch, entitlements, view).
+	const some = [{ assigned: false }]
+	const done = [{ assigned: true }]
+	it.each([
+		[false, 'member', some, 'not-linked'],
+		[true, 'not-member', some, 'not-in-server'],
+		[true, 'error', some, 'fetch-error'],
+		[true, 'member', done, 'in-sync'],
+		[true, 'member', some, 'needs-sync'],
+	] as const)(
+		'brief row: linked=%s fetch=%s -> %s',
+		(linked, memberFetch, entitlements, expected) => {
+			expect(discordRolesView({ linked, memberFetch, entitlements })).toBe(
+				expected,
+			)
+		},
+	)
+
 	it('Sync (needs-sync) is reachable only for a linked server member', () => {
 		for (const [key, fetch, linked, expected] of cases) {
 			if (expected === 'needs-sync') {
@@ -104,7 +125,7 @@ describe('discordRolesView truth table', () => {
 		}
 	})
 
-	it('legacy view offered Sync outside the server and read errors apart from not-in-server', () => {
+	it('differs from the legacy view only for a linked user outside the server (legacy offered Sync there)', () => {
 		const diffs = cases.filter(
 			([key, fetch, linked]) =>
 				legacyRolesView({
@@ -124,6 +145,58 @@ describe('discordRolesView truth table', () => {
 			expect(linked).toBe(true)
 			expect(expected).toBe('not-in-server')
 		}
+	})
+})
+
+describe('showSyncButton', () => {
+	const views: DiscordRolesView[] = [
+		'not-linked',
+		'fetch-error',
+		'no-roles',
+		'not-in-server',
+		'needs-sync',
+		'in-sync',
+	]
+	it.each(views)('%s', (view) => {
+		expect(showSyncButton(view)).toBe(view === 'needs-sync')
+	})
+})
+
+describe('syncLookup (role sync member lookup)', () => {
+	// Legacy: `'user' in body` on the raw body; a thrown lookup crashed the
+	// action, and an error body read as "Not a member".
+	const legacy = (body: Record<string, unknown>) =>
+		'user' in body
+			? 'proceed'
+			: 'Not a member of the Discord server. Join first, then sync.'
+
+	it('member proceeds with its roles', () => {
+		expect(
+			syncLookup(
+				classifyMemberResponse({
+					result: { user: { username: 'u' }, roles: ['r1'] },
+				}),
+			),
+		).toEqual({ ok: true, roles: ['r1'] })
+	})
+	it('unknown member (10007) says join first', () => {
+		const r = syncLookup(classifyMemberResponse({ result: { code: 10007 } }))
+		expect(r).toMatchObject({ ok: false })
+		expect((r as { error: string }).error).toContain('Not a member')
+	})
+	it('an error body says Discord could not be reached, not "Not a member"', () => {
+		const body = { code: 50001, message: 'Missing Access' }
+		expect(legacy(body)).toContain('Not a member')
+		const r = syncLookup(classifyMemberResponse({ result: body }))
+		expect(r).toEqual({ ok: false, error: FETCH_ERROR_COPY })
+	})
+	it('a thrown lookup (non-404) says Discord could not be reached', () => {
+		const r = syncLookup(classifyMemberResponse({ thrown: { status: 500 } }))
+		expect(r).toEqual({ ok: false, error: FETCH_ERROR_COPY })
+	})
+	it('a thrown 404 says join first', () => {
+		const r = syncLookup(classifyMemberResponse({ thrown: { status: 404 } }))
+		expect((r as { error: string }).error).toContain('Not a member')
 	})
 })
 

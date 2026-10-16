@@ -7,7 +7,7 @@ import { DiscordError, DiscordMember } from '@/lib/discord'
 import { fetchAsDiscordBot, fetchJsonAsDiscordBot } from '@/lib/discord-query'
 import {
 	classifyMemberResponse,
-	FETCH_ERROR_COPY,
+	syncLookup,
 	sourceLabel,
 	type MemberClassification,
 	type MemberFetch,
@@ -176,28 +176,18 @@ export async function syncDiscordRoles(): Promise<{
 
 	// Get current member roles
 	let classified: MemberClassification
-	let memberBody: DiscordMember | undefined
 	try {
 		const body = await fetchJsonAsDiscordBot<DiscordMember | DiscordError>(
 			`guilds/${env.DISCORD_GUILD_ID}/members/${discordAccount.providerAccountId}`,
 		)
 		classified = classifyMemberResponse({ result: body })
-		if (classified.kind === 'member') memberBody = body as DiscordMember
 	} catch (thrown) {
 		classified = classifyMemberResponse({ thrown })
 	}
 
-	if (classified.kind === 'error' || !memberBody) {
-		return {
-			success: false,
-			synced: 0,
-			error:
-				classified.kind === 'error'
-					? FETCH_ERROR_COPY
-					: 'Not a member of the Discord server. Join first, then sync.',
-		}
-	}
-	const member = memberBody
+	const lookup = syncLookup(classified)
+	if (!lookup.ok) return { success: false, synced: 0, error: lookup.error }
+	const member = { roles: lookup.roles }
 
 	// Get all discord entitlement type IDs
 	const cohortType = await db.query.entitlementTypes.findFirst({
