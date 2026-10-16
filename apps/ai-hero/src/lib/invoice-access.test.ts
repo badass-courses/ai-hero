@@ -5,10 +5,12 @@ const mocks = vi.hoisted(() => ({
 	findPurchases: vi.fn(),
 	findTransfers: vi.fn(),
 	customerQuery: vi.fn(),
+	samePersonRows: vi.fn(),
 }))
 
 vi.mock('@/db', () => ({
 	db: {
+		select: () => ({ from: () => ({ where: mocks.samePersonRows }) }),
 		query: {
 			merchantCharge: { findMany: mocks.findCharges },
 			purchases: { findMany: mocks.findPurchases },
@@ -22,6 +24,12 @@ vi.mock('@/db', () => ({
 	},
 }))
 vi.mock('@/db/schema', () => ({
+	purchaseTransferSamePerson: {
+		transferId: 'samePerson.transferId',
+		verifiedBy: 'samePerson.verifiedBy',
+		reason: 'samePerson.reason',
+		proofRef: 'samePerson.proofRef',
+	},
 	merchantCharge: {
 		id: 'charge.id',
 		userId: 'charge.userId',
@@ -41,6 +49,9 @@ vi.mock('@/db/schema', () => ({
 		transferState: 'transfer.transferState',
 	},
 }))
+vi.mock('@/server/logger', () => ({
+	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}))
 vi.mock('drizzle-orm', () => ({
 	and: (...values: unknown[]) => values,
 	asc: (value: unknown) => value,
@@ -49,6 +60,7 @@ vi.mock('drizzle-orm', () => ({
 	isNotNull: (value: unknown) => ['isNotNull', value],
 	isNull: (value: unknown) => ['isNull', value],
 	or: (...values: unknown[]) => ['or', ...values],
+	sql: (...values: unknown[]) => values,
 }))
 
 import { getInvoicePurchasesForUser } from './invoice-access'
@@ -76,6 +88,7 @@ describe('invoice purchase access', () => {
 		])
 		mocks.findPurchases.mockResolvedValue([transferred])
 		mocks.findTransfers.mockResolvedValue([])
+		mocks.samePersonRows.mockResolvedValue([])
 	})
 
 	it('keeps a transferred purchase with its product in the original payer invoice list', async () => {
@@ -149,6 +162,70 @@ describe('invoice purchase access', () => {
 		const holder = await getInvoicePurchasesForUser('holder-b')
 		expect(payer[0]?.canEdit, shape).toBe(true)
 		expect(holder[0]?.canEdit, shape).toBe(false)
+	})
+
+	describe('same-person move (A to A-prime)', () => {
+		const sameTransfer = [
+			{
+				id: 't1',
+				purchaseId: 'purchase-transferred',
+				transferState: 'COMPLETED',
+				sourceUserId: 'acct-a',
+				targetUserId: 'acct-a2',
+				completedAt: new Date('2026-09-25T00:00:00Z'),
+				createdAt: new Date('2026-09-24T00:00:00Z'),
+			},
+		]
+		// The reader query returns the id, the kind and a SQL verdict.
+		const evidence = {
+			transferId: 't1',
+			verifiedBy: 'owner-mailbox-both',
+			evidenceOk: 1,
+		}
+		const arrange = () => {
+			mocks.findTransfers.mockResolvedValue(sameTransfer)
+			mocks.findPurchases.mockResolvedValue([
+				{
+					...transferred,
+					userId: 'acct-a2',
+					merchantChargeId: 'charge-1',
+				},
+			])
+			mocks.findCharges.mockResolvedValue([{ id: 'charge-1', userId: 'acct-a' }])
+		}
+
+		it('the new account edits and the old account views only', async () => {
+			arrange()
+			mocks.samePersonRows.mockResolvedValue([evidence])
+			expect((await getInvoicePurchasesForUser('acct-a2'))[0]?.canEdit).toBe(true)
+			expect((await getInvoicePurchasesForUser('acct-a'))[0]?.canEdit).toBe(false)
+		})
+
+		it('without recorded evidence the old account stays the payer', async () => {
+			arrange()
+			mocks.samePersonRows.mockResolvedValue([])
+			expect((await getInvoicePurchasesForUser('acct-a2'))[0]?.canEdit).toBe(false)
+			expect((await getInvoicePurchasesForUser('acct-a'))[0]?.canEdit).toBe(true)
+		})
+
+		it('a deploy before the migration gives the #439 answer instead of failing', async () => {
+			arrange()
+			mocks.samePersonRows.mockRejectedValue(
+				Object.assign(new Error('Failed query'), {
+					cause: Object.assign(new Error("Table 'x' doesn't exist"), {
+						code: 'ER_NO_SUCH_TABLE',
+					}),
+				}),
+			)
+			expect((await getInvoicePurchasesForUser('acct-a'))[0]?.canEdit).toBe(true)
+			expect((await getInvoicePurchasesForUser('acct-a2'))[0]?.canEdit).toBe(false)
+		})
+
+		it('a row whose reason or proof fails the SQL check is no flag', async () => {
+			arrange()
+			mocks.samePersonRows.mockResolvedValue([{ ...evidence, evidenceOk: 0 }])
+			expect((await getInvoicePurchasesForUser('acct-a'))[0]?.canEdit).toBe(true)
+		})
 	})
 
 	it('lists a purchase for its current holder', async () => {

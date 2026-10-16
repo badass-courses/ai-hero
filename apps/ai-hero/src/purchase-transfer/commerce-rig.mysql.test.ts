@@ -112,8 +112,12 @@ import { getInvoicePurchasesForUser } from '@/lib/invoice-access'
 import { resolveDisputeBuyer } from '@/lib/purchase-disputes'
 import { drizzleInvoiceSettingsDataSource } from '@/lib/invoice-settings'
 import { canViewPurchaseInvoice } from '@/lib/team-purchases'
-import { canViewInvoice } from '@/lib/invoice-access-rules'
-import { getOriginTransferForPurchase } from '@/lib/invoice-access'
+import {
+	canViewInvoice,
+	pickOriginTransfer,
+	resolveInvoicePayer,
+} from '@/lib/invoice-access-rules'
+import { getCompletedTransfersForPurchase } from '@/lib/invoice-access'
 
 import { acceptPurchaseTransfer } from './purchase-transfer-actions'
 import { completeSupportPurchaseTransfer } from './support-complete'
@@ -126,6 +130,7 @@ const tables = [
 	schema.purchases,
 	schema.purchaseUserTransfer,
 	schema.purchaseTransferOutbox,
+	schema.purchaseTransferSamePerson,
 	schema.merchantCharge,
 	schema.merchantCustomer,
 	schema.products,
@@ -216,6 +221,7 @@ suite('commerce rig: transfers against real MySQL 8', () => {
 			{ id: 'user-a', email: 'a@example.test', name: 'Payer A' },
 			{ id: 'user-b', email: 'b@example.test', name: 'Holder B' },
 			{ id: 'user-c', email: 'c@example.test', name: 'Holder C' },
+			{ id: 'user-a2', email: 'a2@example.test', name: 'Payer A second account' },
 		])
 		await db.insert(schema.products).values({
 			id: 'prod-rig',
@@ -362,7 +368,9 @@ suite('commerce rig: transfers against real MySQL 8', () => {
 		const gate = (viewer: string) => canViewPurchaseInvoice(viewer, loaded, [])
 		row('A->B', 'settings gate A / B', `${gate('user-a')} / ${gate('user-b')}`)
 		expect([gate('user-a'), gate('user-b')]).toEqual([true, false])
-		const origin = await getOriginTransferForPurchase('pur-1')
+		const origin = pickOriginTransfer(
+			await getCompletedTransfersForPurchase('pur-1'),
+		)
 		expect(
 			canViewInvoice({
 				viewerId: 'user-b',
@@ -538,6 +546,214 @@ suite('commerce rig: transfers against real MySQL 8', () => {
 			await edits('user-c'),
 		]).toEqual([true, undefined, false])
 		expect(await refundRevokesUser('ch_rig_3')).toBe('user-c')
+	})
+
+	describe('same-person support move A -> A2', () => {
+		const evidence = {
+			verifiedBy: 'owner-mailbox-both' as const,
+			reason: 'Support confirmed both mailboxes',
+			proofRef: 'rig-proof-1',
+		}
+		const seed = async (n: string) => {
+			// A product of its own: A2 already holds one from the first case.
+			await db.insert(schema.products).values({
+				id: `prod-sp-${n}`,
+				name: `Same Person ${n}`,
+				key: `same-person-${n}`,
+				fields: { slug: `same-person-${n}` },
+				type: 'self-paced',
+				status: 1,
+			} as never)
+			await db.insert(schema.merchantCharge).values({
+				id: `mch-${n}`,
+				identifier: `ch_rig_${n}`,
+				merchantAccountId: 'ma-rig',
+				merchantProductId: 'mp-rig',
+				merchantCustomerId: 'mcu-a',
+				userId: 'user-a',
+				status: 1,
+			})
+			await db.insert(schema.purchases).values({
+				id: `pur-${n}`,
+				userId: 'user-a',
+				productId: `prod-sp-${n}`,
+				status: 'Valid',
+				totalAmount: '100',
+				merchantChargeId: `mch-${n}`,
+			})
+			await db.insert(schema.purchaseUserTransfer).values({
+				id: `put-${n}`,
+				purchaseId: `pur-${n}`,
+				sourceUserId: 'user-a',
+				targetUserId: 'user-a2',
+				transferState: 'INITIATED',
+				expiresAt: new Date(Date.now() + 86400000),
+			})
+		}
+		const finish = (n: string) =>
+			db
+				.update(schema.purchaseUserTransfer)
+				.set({ transferState: 'COMPLETED', completedAt: new Date() })
+				.where(
+					and(
+						eq(schema.purchaseUserTransfer.id, `put-${n}`),
+						eq(schema.purchaseUserTransfer.transferState, 'VERIFIED'),
+					),
+				)
+		const request = (n: string, samePerson?: typeof evidence) => ({
+			transferId: `put-${n}`,
+			purchaseId: `pur-${n}`,
+			sourceUserId: 'user-a',
+			targetEmail: 'a2@example.test',
+			...(samePerson ? { samePerson } : {}),
+		})
+		const edits = async (user: string, n: string) =>
+			(await getInvoicePurchasesForUser(user)).find((p) => p.id === `pur-${n}`)
+				?.canEdit
+		const flagRows = (n: string) =>
+			db.query.purchaseTransferSamePerson.findMany({
+				where: eq(schema.purchaseTransferSamePerson.transferId, `put-${n}`),
+			})
+
+		it('records evidence, moves the payer to A2, and leaves charge, customer and refund routing alone', async () => {
+			await seed('5')
+			const result = await completeSupportPurchaseTransfer(
+				request('5', evidence),
+			)
+			expect(result.state).toBe('completion_requested')
+			await finish('5')
+			expect(await flagRows('5')).toEqual([
+				expect.objectContaining({ ...evidence, transferId: 'put-5' }),
+			])
+			const gate = async (viewer: string) =>
+				canViewPurchaseInvoice(
+					viewer,
+					(await drizzleInvoiceSettingsDataSource.loadPurchaseByMerchantChargeId(
+						'mch-5',
+					))!,
+					[],
+				)
+			const transfers = await getCompletedTransfersForPurchase('pur-5')
+			const payer = resolveInvoicePayer({
+				chargeUserId: await chargeUser('mch-5'),
+				transfers,
+			})
+			row('A->A2 same person', 'resolved payer', payer)
+			row(
+				'A->A2 same person',
+				'A / A2 edits (list)',
+				`${await edits('user-a', '5')} / ${await edits('user-a2', '5')}`,
+			)
+			row(
+				'A->A2 same person',
+				'settings gate A / A2',
+				`${await gate('user-a')} / ${await gate('user-a2')}`,
+			)
+			row('A->A2 same person', 'charge user', await chargeUser('mch-5'))
+			row('A->A2 same person', 'customer for A2', await customerFor('user-a2'))
+			row(
+				'A->A2 same person',
+				'refund routes to / revokes',
+				`${await refundTarget('ch_rig_5')} / ${await refundRevokesUser('ch_rig_5')}`,
+			)
+			expect(payer).toBe('user-a2')
+			expect([await edits('user-a', '5'), await edits('user-a2', '5')]).toEqual([
+				false,
+				true,
+			])
+			expect([await gate('user-a'), await gate('user-a2')]).toEqual([
+				false,
+				true,
+			])
+			// No Stripe-side change: the charge and the customer stay with A.
+			expect(await chargeUser('mch-5')).toBe('user-a')
+			expect(await customerFor('user-a2')).toBeNull()
+			expect(await customerFor('user-a')).toBe('cus_rig_a')
+			expect(await refundTarget('ch_rig_5')).toBe('pur-5')
+			expect(await refundRevokesUser('ch_rig_5')).toBe('user-a2')
+		})
+
+		it('a plain move to a different account of the same person records nothing and the payer stays A', async () => {
+			await seed('6')
+			const result = await completeSupportPurchaseTransfer(request('6'))
+			expect(result.state).toBe('completion_requested')
+			await finish('6')
+			expect(await flagRows('6')).toHaveLength(0)
+			expect([await edits('user-a', '6'), await edits('user-a2', '6')]).toEqual([
+				true,
+				false,
+			])
+		})
+
+		it('a refused move (transfer canceled before the claim) leaves no evidence row', async () => {
+			await seed('7')
+			await db
+				.update(schema.purchaseUserTransfer)
+				.set({ transferState: 'CANCELED' })
+				.where(eq(schema.purchaseUserTransfer.id, 'put-7'))
+			const result = await completeSupportPurchaseTransfer(
+				request('7', evidence),
+			)
+			expect(result.state).toBe('blocked')
+			expect(await flagRows('7')).toHaveLength(0)
+		})
+
+		it('with the table missing, readers give the plain #439 answer and the writer refuses', async () => {
+			await seed('8')
+			await completeSupportPurchaseTransfer(request('8', evidence))
+			await finish('8')
+			expect(await edits('user-a2', '8')).toBe(true)
+			const table = getTableConfig(schema.purchaseTransferSamePerson).name
+			await pool.query(`RENAME TABLE \`${table}\` TO \`${table}_away\``)
+			try {
+				expect([await edits('user-a', '8'), await edits('user-a2', '8')]).toEqual(
+					[true, false],
+				)
+				await seed('9')
+				await expect(
+					completeSupportPurchaseTransfer(request('9', evidence)),
+				).resolves.toEqual({
+					state: 'blocked',
+					reason: 'same_person_table_missing',
+				})
+				const unclaimed = await db.query.purchaseUserTransfer.findFirst({
+					where: eq(schema.purchaseUserTransfer.id, 'put-9'),
+				})
+				expect(unclaimed?.transferState).toBe('INITIATED')
+			} finally {
+				await pool.query(`RENAME TABLE \`${table}_away\` TO \`${table}\``)
+			}
+		})
+
+		it('an email in proofRef written straight to the table is no flag for the readers', async () => {
+			await seed('10')
+			await completeSupportPurchaseTransfer(request('10'))
+			await finish('10')
+			await db.insert(schema.purchaseTransferSamePerson).values({
+				transferId: 'put-10',
+				verifiedBy: 'owner-mailbox-both',
+				reason: 'forged',
+				proofRef: 'someone@example.test',
+			})
+			expect([await edits('user-a', '10'), await edits('user-a2', '10')]).toEqual(
+				[true, false],
+			)
+		})
+
+		it('a blank proofRef written straight to the table is no flag for the readers', async () => {
+			await seed('11')
+			await completeSupportPurchaseTransfer(request('11'))
+			await finish('11')
+			await db.insert(schema.purchaseTransferSamePerson).values({
+				transferId: 'put-11',
+				verifiedBy: 'owner-mailbox-both',
+				reason: 'forged',
+				proofRef: '   ',
+			})
+			expect([await edits('user-a', '11'), await edits('user-a2', '11')]).toEqual(
+				[true, false],
+			)
+		})
 	})
 
 	// Checkout replay as the payer. A's `checkout.session.completed` handler

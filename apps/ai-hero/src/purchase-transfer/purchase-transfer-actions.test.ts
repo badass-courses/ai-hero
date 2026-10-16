@@ -128,6 +128,7 @@ import {
 	merchantCustomer,
 	purchases as purchaseTable,
 	purchaseTransferOutbox,
+	purchaseTransferSamePerson,
 	purchaseUserTransfer as purchaseUserTransferTable,
 } from '@/db/schema'
 
@@ -555,6 +556,25 @@ describe('acceptPurchaseTransfer', () => {
 		expect(new Set(mocks.dbState.inserts.map((u) => u.table))).toEqual(
 			new Set([purchaseTransferOutbox]),
 		)
+		expectConverged()
+	})
+
+	it('self-service never sets same-person: a smuggled samePerson field is ignored and nothing is written to the evidence table', async () => {
+		asTarget()
+		mocks.getPurchaseUserTransferById.mockResolvedValue(initiated())
+
+		await acceptPurchaseTransfer({
+			purchaseUserTransferId: 'put_1',
+			samePerson: {
+				verifiedBy: 'owner-mailbox-both',
+				reason: 'forged',
+				proofRef: 'forged',
+			},
+		} as never)
+
+		expect(updatesFor(purchaseTransferSamePerson)).toHaveLength(0)
+		expect(insertsFor(purchaseTransferSamePerson)).toHaveLength(0)
+		expect(JSON.stringify(mocks.dbState.inserts.map((i) => i.values))).not.toContain('forged')
 		expectConverged()
 	})
 

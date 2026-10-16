@@ -8,80 +8,46 @@ import { and, asc, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm'
 
 import { purchaseSchema, type Purchase } from '@coursebuilder/core/schemas'
 
+import { toTransferFacts } from '@/purchase-transfer/same-person'
+
 import {
 	canEditInvoice,
 	pickOriginTransfer,
+	resolveInvoicePayer,
 	type InvoiceTransferFact,
 } from './invoice-access-rules'
 
 const VISIBLE_PURCHASE_STATES = ['Valid', 'Refunded', 'Restricted']
 
-function toFact(transfer: {
-	id: string
-	transferState: string
-	sourceUserId: string
-	completedAt: Date | null
-	createdAt: Date
-}): InvoiceTransferFact {
-	return {
-		id: transfer.id,
-		state: transfer.transferState,
-		sourceUserId: transfer.sourceUserId,
-		completedAt: transfer.completedAt,
-		createdAt: transfer.createdAt,
-	}
-}
-
-/** The earliest completed transfer for a purchase: its source paid. */
-export async function getOriginTransferForPurchase(purchaseId: string) {
+/** Every completed transfer for a purchase, with same-person evidence. */
+export async function getCompletedTransfersForPurchase(
+	purchaseId: string,
+): Promise<InvoiceTransferFact[]> {
 	const transfers = await db.query.purchaseUserTransfer.findMany({
 		where: and(
 			eq(purchaseUserTransfer.purchaseId, purchaseId),
 			eq(purchaseUserTransfer.transferState, 'COMPLETED'),
 		),
 	})
-	return pickOriginTransfer(transfers.map(toFact))
+	return toTransferFacts(transfers)
 }
 
-async function getOriginTransfersByPurchase(purchaseIds: string[]) {
-	const origins = new Map<string, InvoiceTransferFact>()
-	if (purchaseIds.length === 0) return origins
+async function getCompletedTransfersByPurchase(purchaseIds: string[]) {
+	const byPurchase = new Map<string, InvoiceTransferFact[]>()
+	if (purchaseIds.length === 0) return byPurchase
 	const transfers = await db.query.purchaseUserTransfer.findMany({
 		where: and(
 			inArray(purchaseUserTransfer.purchaseId, purchaseIds),
 			eq(purchaseUserTransfer.transferState, 'COMPLETED'),
 		),
 	})
-	const byPurchase = new Map<string, InvoiceTransferFact[]>()
-	for (const transfer of transfers) {
+	const facts = await toTransferFacts(transfers)
+	transfers.forEach((transfer, index) => {
 		const list = byPurchase.get(transfer.purchaseId) ?? []
-		list.push(toFact(transfer))
+		list.push(facts[index]!)
 		byPurchase.set(transfer.purchaseId, list)
-	}
-	for (const [purchaseId, list] of byPurchase) {
-		const origin = pickOriginTransfer(list)
-		if (origin) origins.set(purchaseId, origin)
-	}
-	return origins
-}
-
-async function getOriginPurchaseIds(userId: string, purchaseIds: string[]) {
-	if (purchaseIds.length === 0) return []
-	const transfers = await db.query.purchaseUserTransfer.findMany({
-		where: and(
-			inArray(purchaseUserTransfer.purchaseId, purchaseIds),
-			eq(purchaseUserTransfer.transferState, 'COMPLETED'),
-		),
 	})
-	const byPurchase = new Map<string, InvoiceTransferFact[]>()
-	for (const transfer of transfers) {
-		const list = byPurchase.get(transfer.purchaseId) ?? []
-		list.push(toFact(transfer))
-		byPurchase.set(transfer.purchaseId, list)
-	}
-	return purchaseIds.filter(
-		(id) => pickOriginTransfer(byPurchase.get(id) ?? [])?.sourceUserId === userId,
-	)
+	return byPurchase
 }
 
 /**
@@ -118,10 +84,22 @@ export async function getInvoicePurchasesForUser(
 		}),
 	])
 
-	// Keep only chains this viewer started: later hops name a holder who
-	// never paid as their source. One query covers every candidate purchase.
+	// Keep only chains this viewer started or pays for: later hops name a
+	// holder who never paid as their source. One query covers every candidate.
 	const candidateIds = [...new Set(sourceTransfers.map((t) => t.purchaseId))]
-	const originPurchaseIds = await getOriginPurchaseIds(userId, candidateIds)
+	const candidateTransfers = await getCompletedTransfersByPurchase(candidateIds)
+	// This is the second transfer query for the same purchases: the one above
+	// only finds candidates by source (cheap, column-limited); this one loads
+	// the full chains so the payer can be resolved with same-person flags.
+	const originPurchaseIds = candidateIds.filter((id) => {
+		const transfers = candidateTransfers.get(id) ?? []
+		return (
+			// The original payer keeps the purchase in their list after a move,
+			// even once a same-person hop made someone else the payer.
+			pickOriginTransfer(transfers)?.sourceUserId === userId ||
+			resolveInvoicePayer({ chargeUserId: null, transfers }) === userId
+		)
+	})
 
 	const chargeIds = chargeRows.map((charge) => charge.id)
 
@@ -156,7 +134,7 @@ export async function getInvoicePurchasesForUser(
 	// Editing follows the payer: the source of the earliest completed transfer,
 	// else the charge's user. Holders who did not pay view only. Covers
 	// purchases transferred before charges stayed with the payer.
-	const [payerCharges, originTransfers] = await Promise.all([
+	const [payerCharges, transfersByPurchase] = await Promise.all([
 		unique.some((purchase) => purchase.merchantChargeId)
 			? db.query.merchantCharge.findMany({
 					where: inArray(
@@ -168,7 +146,7 @@ export async function getInvoicePurchasesForUser(
 					columns: { id: true, userId: true },
 				})
 			: [],
-		getOriginTransfersByPurchase(unique.map((purchase) => purchase.id)),
+		getCompletedTransfersByPurchase(unique.map((purchase) => purchase.id)),
 	])
 	const chargeUserById = new Map(payerCharges.map((c) => [c.id, c.userId]))
 
@@ -180,7 +158,7 @@ export async function getInvoicePurchasesForUser(
 					viewerId: userId,
 					payerUserId: chargeUserById.get(purchase.merchantChargeId),
 					holderUserId: purchase.userId,
-					transfer: originTransfers.get(purchase.id) ?? null,
+					transfers: transfersByPurchase.get(purchase.id) ?? [],
 				}),
 		),
 	}))

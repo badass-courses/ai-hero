@@ -147,6 +147,26 @@ export const checkoutLoginHandoff = mysqlTable(
 )
 
 /**
+ * Same-person evidence for a support-completed purchase transfer. Support
+ * verified both accounts belong to one person, so the new account becomes the
+ * invoice payer. Keyed by the upstream transfer id with no foreign key. A
+ * transfer with no row here moves only the holder, as before. Only
+ * support-complete writes it; self-service transfers never do.
+ */
+export const purchaseTransferSamePerson = mysqlTable(
+	'PurchaseTransferSamePerson',
+	{
+		transferId: varchar('transferId', { length: 191 }).notNull().primaryKey(),
+		verifiedBy: varchar('verifiedBy', { length: 64 }).notNull(),
+		reason: text('reason').notNull(),
+		proofRef: varchar('proofRef', { length: 255 }).notNull(),
+		createdAt: timestamp('createdAt', { mode: 'date', fsp: 3 })
+			.defaultNow()
+			.notNull(),
+	},
+)
+
+/**
  * Durable outbox for purchase-transfer lifecycle events (AIH-223).
  * A committed ownership change always writes a row here in the same
  * transaction; the Inngest publish happens after commit and records its

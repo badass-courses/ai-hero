@@ -33,7 +33,7 @@ beforeEach(() => {
 		id: 'purchase-a',
 		merchantChargeId: id,
 		userId: 'payer',
-		originTransfer: null,
+		transfers: [],
 	}))
 	vi.spyOn(drizzleInvoiceLinkDataSource, 'loadVersion').mockResolvedValue(1)
 })

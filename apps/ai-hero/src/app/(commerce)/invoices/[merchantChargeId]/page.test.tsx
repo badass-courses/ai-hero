@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
 	coupon: vi.fn(),
 	merchantSession: vi.fn(),
 	originTransfers: vi.fn(),
+	samePersonRows: vi.fn(),
 	customerQuery: vi.fn(),
 	transfers: vi.fn(),
 	cookie: vi.fn(),
@@ -20,7 +21,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/server/auth', () => ({ getServerAuthSession: mocks.auth }))
 vi.mock('@/server/logger', () => ({
-	log: { info: vi.fn(), warn: vi.fn() },
+	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 vi.mock('@/db', () => ({
 	courseBuilderAdapter: {
@@ -29,6 +30,7 @@ vi.mock('@/db', () => ({
 		getProduct: mocks.product,
 	},
 	db: {
+		select: () => ({ from: () => ({ where: mocks.samePersonRows }) }),
 		query: {
 			coupon: { findFirst: mocks.coupon },
 			merchantSession: { findFirst: mocks.merchantSession },
@@ -164,6 +166,7 @@ beforeEach(() => {
 	vi.resetAllMocks()
 	vi.stubEnv('INVOICE_LINK_SECRET', SECRET)
 	mocks.originTransfers.mockResolvedValue([])
+	mocks.samePersonRows.mockResolvedValue([])
 	mocks.cookie.mockReturnValue({ value: tokenFor() })
 	vi.spyOn(drizzleInvoiceLinkDataSource, 'loadVersion').mockResolvedValue(1)
 	mocks.auth.mockResolvedValue({ session: null })

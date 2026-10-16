@@ -62,7 +62,7 @@ beforeEach(() => {
 		id: 'purchase-synthetic',
 		userId: 'payer',
 		billingUserId: 'payer',
-		originTransfer: null,
+		transfers: [],
 		merchantChargeId: CHARGE,
 	})
 	vi.spyOn(
@@ -160,7 +160,7 @@ describe('invoice save server action authorization', () => {
 			id: 'purchase-synthetic',
 			userId: 'learner',
 			billingUserId: 'payer',
-			originTransfer: null,
+			transfers: [],
 			merchantChargeId: CHARGE,
 		})
 		expect(
