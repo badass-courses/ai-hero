@@ -13,16 +13,22 @@ const STATUSES = ['Valid', 'Refunded', 'Disputed', 'Banned', 'Restricted']
 const OWNING = ['Valid', 'Restricted']
 const PRODUCT = 'product-a'
 
-// The old inline predicates, kept to show what changed.
+// The old inline predicates, kept to assert exactly how the rule differs.
 const legacy = {
-	someByProduct: (ps: BuyBoxPurchase[], id: string) =>
+	// workshops inline/pricing: purchases.some(productId match)
+	some: (ps: BuyBoxPurchase[], id: string) =>
 		ps.some((p) => p.productId === id),
-	findFirstByProduct: (ps: BuyBoxPurchase[], id: string) => {
+	// cohorts-query: find() the first purchase of the product, check its status
+	findFirst: (ps: BuyBoxPurchase[], id: string) => {
 		const first = ps.find((p) => p.productId === id)
 		return Boolean(
 			first && (first.status === 'Valid' || first.status === 'Restricted'),
 		)
 	},
+	// events/products: Boolean(purchase) from getPurchaseDetails on the first
+	// product purchase (no status filter beyond the adapter's visible states)
+	booleanPurchase: (ps: BuyBoxPurchase[], id: string) =>
+		Boolean(ps.find((p) => p.productId === id)),
 }
 
 const purchase = (
@@ -61,22 +67,52 @@ describe('ownsProductForBuyBox truth table', () => {
 				PRODUCT,
 			),
 		).toBe(false)
+		// a projection without status must not compile
+		// @ts-expect-error status is required
 		expect(ownsProductForBuyBox([{ productId: PRODUCT }], PRODUCT)).toBe(false)
 	})
 })
 
+describe('ownsProductForBuyBox against each legacy predicate', () => {
+	const owned = (status: string) => OWNING.includes(status)
+
+	for (const status of STATUSES) {
+		for (const bulk of [true, false]) {
+			const list = [purchase(status, bulk)]
+			const rule = ownsProductForBuyBox(list, PRODUCT)
+
+			it(`${status} bulk=${bulk}: some() differs only for non-owning or bulk`, () => {
+				expect(legacy.some(list, PRODUCT)).toBe(true)
+				expect(legacy.booleanPurchase(list, PRODUCT)).toBe(true)
+				expect(rule).toBe(owned(status) && !bulk)
+				expect(legacy.some(list, PRODUCT) !== rule).toBe(
+					!(owned(status) && !bulk),
+				)
+			})
+
+			it(`${status} bulk=${bulk}: findFirst differs only for bulk`, () => {
+				expect(legacy.findFirst(list, PRODUCT)).toBe(owned(status))
+				expect(legacy.findFirst(list, PRODUCT) !== rule).toBe(
+					owned(status) && bulk,
+				)
+			})
+		}
+	}
+})
+
 describe('ownsProductForBuyBox mixed lists', () => {
-	it('old Refunded then newer Valid owns', () => {
+	it('old Refunded then newer Valid owns (findFirst said no)', () => {
 		const list = [purchase('Refunded', false), purchase('Valid', false)]
 		expect(ownsProductForBuyBox(list, PRODUCT)).toBe(true)
-		expect(legacy.findFirstByProduct(list, PRODUCT)).toBe(false)
+		expect(legacy.findFirst(list, PRODUCT)).toBe(false)
 	})
 
-	it('bulk-only team manager does not own', () => {
+	it('bulk-only team manager does not own (legacy said yes)', () => {
 		const list = [purchase('Valid', true)]
 		expect(ownsProductForBuyBox(list, PRODUCT)).toBe(false)
-		expect(legacy.findFirstByProduct(list, PRODUCT)).toBe(true)
-		expect(legacy.someByProduct(list, PRODUCT)).toBe(true)
+		expect(legacy.findFirst(list, PRODUCT)).toBe(true)
+		expect(legacy.some(list, PRODUCT)).toBe(true)
+		expect(legacy.booleanPurchase(list, PRODUCT)).toBe(true)
 	})
 
 	it('bulk plus a redeemed seat owns', () => {
@@ -84,24 +120,41 @@ describe('ownsProductForBuyBox mixed lists', () => {
 		expect(ownsProductForBuyBox(list, PRODUCT)).toBe(true)
 	})
 
-	it('refunded-only no longer reads as owned (legacy some() did)', () => {
-		const list = [purchase('Refunded', false)]
+	it('Valid bulk plus a Refunded redeemed seat does not own', () => {
+		const list = [purchase('Valid', true), purchase('Refunded', false)]
 		expect(ownsProductForBuyBox(list, PRODUCT)).toBe(false)
-		expect(legacy.someByProduct(list, PRODUCT)).toBe(true)
+		expect(legacy.some(list, PRODUCT)).toBe(true)
 	})
 
-	it('other-product purchases are ignored', () => {
-		const list = [purchase('Valid', false, 'other')]
+	it('Valid other product plus Refunded this product does not own', () => {
+		const list = [
+			purchase('Valid', false, 'other'),
+			purchase('Refunded', false),
+		]
 		expect(ownsProductForBuyBox(list, PRODUCT)).toBe(false)
+		expect(legacy.some(list, PRODUCT)).toBe(true)
+	})
+
+	it('Valid other product alone does not own', () => {
+		expect(
+			ownsProductForBuyBox([purchase('Valid', false, 'other')], PRODUCT),
+		).toBe(false)
 	})
 })
 
-describe('ownsProductForBuyBox is display-only (import fence)', () => {
+describe('ownsProductForBuyBox is display-only (import allowlist)', () => {
+	// Every file allowed to import the rule. Adding an importer is a decision:
+	// extend this list, and never add ability, entitlement or access code.
+	const ALLOWED_IMPORTERS = [
+		'app/(commerce)/products/[slug]/page.tsx',
+		'app/(content)/events/[slug]/_components/event-pricing-server.tsx',
+		'app/(content)/events/[slug]/page.tsx',
+		'app/(content)/workshops/_components/inline-mdx-pricing.tsx',
+		'app/(content)/workshops/_components/workshop-pricing-server.tsx',
+		'app/(content)/workshops/_components/workshop-pricing.tsx',
+		'lib/cohorts-query.ts',
+	]
 	const srcRoot = join(__dirname, '..')
-	const accessPath = (rel: string) =>
-		/(^|\/)(ability|entitlements?[^/]*|access[^/]*|workshop-access-boundary[^/]*)(\/|\.|$)/i.test(
-			rel,
-		)
 
 	const walk = (dir: string): string[] =>
 		readdirSync(dir).flatMap((name) => {
@@ -110,16 +163,16 @@ describe('ownsProductForBuyBox is display-only (import fence)', () => {
 			return /\.(ts|tsx)$/.test(name) ? [full] : []
 		})
 
-	it('no ability, entitlement or access file imports it', () => {
-		const offenders = walk(srcRoot)
+	it('only the allowlisted buy-box files import it', () => {
+		const importers = walk(srcRoot)
 			.map((f) => relative(srcRoot, f).split(sep).join('/'))
 			.filter((rel) => !rel.startsWith('lib/owns-product-for-buy-box'))
-			.filter(accessPath)
 			.filter((rel) =>
 				readFileSync(join(srcRoot, rel), 'utf8').includes(
 					'owns-product-for-buy-box',
 				),
 			)
-		expect(offenders).toEqual([])
+			.sort()
+		expect(importers).toEqual([...ALLOWED_IMPORTERS].sort())
 	})
 })

@@ -9,6 +9,7 @@ import Spinner from '@/components/spinner'
 import { env } from '@/env.mjs'
 import type { Cohort } from '@/lib/cohort'
 import type { Event } from '@/lib/events'
+import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 import type { MinimalWorkshop, Workshop } from '@/lib/workshops'
 import { api } from '@/trpc/react'
 import { formatInTimeZone } from 'date-fns-tz'
@@ -33,7 +34,6 @@ import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
 import { RegionalPricingNote } from './regional-pricing-note'
 import { WORKSHOP_CTA_BUTTON } from './workshop-cta-button'
-import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 
 export type PricingData = {
 	formattedPrice?: FormattedPrice | null

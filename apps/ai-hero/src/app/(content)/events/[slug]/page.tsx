@@ -12,6 +12,7 @@ import { products, purchases } from '@/db/schema'
 import { env } from '@/env.mjs'
 import type { Event } from '@/lib/events'
 import { getEvent } from '@/lib/events-query'
+import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 import { getPricingData } from '@/lib/pricing-query'
 import { getSaleBannerData } from '@/lib/sale-banner'
 import { getServerAuthSession } from '@/server/auth'
@@ -33,7 +34,6 @@ import { EventDetails } from './_components/event-details'
 import { EventPageProps } from './_components/event-page-props'
 import { EventPricingWidgetContainer } from './_components/event-pricing-widget-container'
 import { EventSidebar } from './_components/event-sidebar'
-import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 
 export async function generateMetadata(
 	props: {
@@ -195,9 +195,10 @@ export default async function EventPage(props: {
 		if (!user) {
 			eventProps = baseProps
 		} else {
+			const productId = productSchema.parse(product).id
 			const purchaseForProduct = commerceProps.purchases?.find(
 				(purchase: Purchase) => {
-					return purchase.productId === productSchema.parse(product).id
+					return purchase.productId === productId
 				},
 			)
 
@@ -213,7 +214,7 @@ export default async function EventPage(props: {
 					...baseProps,
 					hasPurchasedCurrentProduct: ownsProductForBuyBox(
 						commerceProps.purchases,
-						productSchema.parse(product).id,
+						productId,
 					),
 					existingPurchase,
 				}

@@ -3,6 +3,7 @@ import { headers } from 'next/headers'
 import { courseBuilderAdapter, db } from '@/db'
 import { products, purchases } from '@/db/schema'
 import { getEvent } from '@/lib/events-query'
+import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 import { getPricingData } from '@/lib/pricing-query'
 import { getServerAuthSession } from '@/server/auth'
 import { count, eq } from 'drizzle-orm'
@@ -16,7 +17,6 @@ import {
 import { first } from '@coursebuilder/nodash'
 
 import { type EventPageProps } from './event-page-props'
-import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 
 /**
  * Server component that fetches event pricing data and provides it via render props.
@@ -115,9 +115,10 @@ export async function EventPricing({
 		if (!user) {
 			eventProps = baseProps
 		} else {
+			const productId = productSchema.parse(product).id
 			const purchaseForProduct = commerceProps.purchases?.find(
 				(purchase: Purchase) => {
-					return purchase.productId === productSchema.parse(product).id
+					return purchase.productId === productId
 				},
 			)
 
@@ -133,7 +134,7 @@ export async function EventPricing({
 					...baseProps,
 					hasPurchasedCurrentProduct: ownsProductForBuyBox(
 						commerceProps.purchases,
-						productSchema.parse(product).id,
+						productId,
 					),
 					existingPurchase,
 				}

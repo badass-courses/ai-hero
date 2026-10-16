@@ -7,6 +7,7 @@ import Link from 'next/link'
 import { PricingWidget } from '@/app/(content)/workshops/_components/pricing-widget'
 import { courseBuilderAdapter, db } from '@/db'
 import { products, purchases } from '@/db/schema'
+import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 import { getPricingData } from '@/lib/pricing-query'
 import { getProduct } from '@/lib/products-query'
 import { ProductStructuredData } from '@/lib/structured-data'
@@ -18,7 +19,6 @@ import { PriceCheckProvider } from '@coursebuilder/commerce-next/pricing/pricing
 import { propsForCommerce } from '@coursebuilder/commerce/props-for-commerce'
 import { Product, Purchase } from '@coursebuilder/core/schemas'
 import { Button } from '@coursebuilder/ui'
-import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 
 export async function generateMetadata(
 	props: {

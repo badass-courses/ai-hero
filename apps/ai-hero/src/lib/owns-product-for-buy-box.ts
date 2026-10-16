@@ -10,7 +10,7 @@
  */
 export type BuyBoxPurchase = {
 	productId: string
-	status?: string | null
+	status: string
 	bulkCouponId?: string | null
 }
 
@@ -24,7 +24,7 @@ export function ownsProductForBuyBox(
 	return purchases.some(
 		(purchase) =>
 			purchase.productId === productId &&
-			OWNING_STATUSES.has(purchase.status ?? '') &&
+			OWNING_STATUSES.has(purchase.status) &&
 			!purchase.bulkCouponId,
 	)
 }
