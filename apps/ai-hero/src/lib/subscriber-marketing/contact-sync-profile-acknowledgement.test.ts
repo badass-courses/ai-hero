@@ -162,34 +162,19 @@ function producer(status: DrovrOutboxRow['status'], accepted: number) {
 		})
 	return { ...f, acknowledge, deliver, run }
 }
-it('a producer queue return {accepted:0,rejected:0} is awaiting-proof and never an optimistic ACK', async () => {
-	const h = producer('pending', 0)
-	expect(await h.run()).toEqual({
-		status: 'awaiting-proof',
-		profileVersion: 3,
-		reason: 'receiver-acceptance-unproven',
-	})
-	expect(h.deliver).toHaveBeenCalledOnce()
+it.each([0, 2])('a proof-only old producer cannot turn %s sender counters into a registered ACK', async accepted => {
+	const h = producer('pending', accepted)
+	expect(await h.run()).toEqual({ status: 'ack-unavailable', profileVersion: 3, reason: 'registration-adapter-unavailable' })
+	expect(h.deliver).not.toHaveBeenCalled()
 	expect(h.acknowledge).not.toHaveBeenCalled()
 })
-it('even positive sender counters cannot replace a whole-contact terminal proof', async () => {
-	const h = producer('pending', 2)
-	expect(await h.run()).toMatchObject({ status: 'awaiting-proof' })
+it('even complete retained receipts in an old boolean adapter cannot retrofit an unregistered SDK identity', async () => {
+	const h = producer('delivered', 0)
+	expect(await h.prove()).toBe(true)
+	expect(await h.run()).toMatchObject({ status: 'ack-unavailable', reason: 'registration-adapter-unavailable' })
 	expect(h.acknowledge).not.toHaveBeenCalled()
+	expect(h.deliver).not.toHaveBeenCalled()
 })
-it('an SDK ACK retry rechecks fresh receipts rather than reusing a prior memoized proof grant', async () => {
-	const h = producer('delivered', 0)
-	h.acknowledge.mockRejectedValueOnce(new Error('synthetic ACK write failure'))
-	await expect(h.run()).rejects.toThrow('synthetic ACK write failure')
-	h.rows[1]!.status = 'held'
-	expect(await h.run()).toMatchObject({ status: 'awaiting-proof' })
-	expect(h.acknowledge).toHaveBeenCalledTimes(1)
-	expect(h.deliver).toHaveBeenCalledOnce()
-	expect(h.read).toHaveBeenCalledTimes(2)
-})
-it('a producer acknowledges only after all first-owned receiver receipts are delivered', async () => {
-	const h = producer('delivered', 0)
-	expect(await h.run()).toMatchObject({ status: 'sent', accepted: 0 })
-	expect(h.acknowledge).toHaveBeenCalledOnce()
-	expect(h.acknowledge).toHaveBeenCalledWith('synthetic-contact', 3)
-})
+// Actual fresh effect/failed-write/intervening-hold acceptance proofs now live
+// in contact-sync-profile-ack-producer.test.ts and drovr-outbox-live.mysql.test.ts.
+// They call the real frozen completion protocol, not a boolean proof→legacy NOW.

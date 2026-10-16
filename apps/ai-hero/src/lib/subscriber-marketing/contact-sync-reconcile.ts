@@ -178,9 +178,10 @@ export async function stopFactsFor(repository: { findContactEventsByType(contact
 const BENIGN_SYNC_SKIPS: ReadonlySet<string> = new Set(['contact-missing', 'synthetic-principal', 'no-sending-journey', 'contact-email-missing', 'unchanged', 'profile-not-issued', 'hash-migrated'])
 export function reconcileSyncOutcome(contactId: string, receipt: ContactProfileSyncReceipt): 'sent' | 'skipped' | 'deferred' {
  if (receipt.status === 'sent') return 'sent'
- if (receipt.status === 'deferred' || receipt.status === 'awaiting-proof') return 'deferred'
- if (BENIGN_SYNC_SKIPS.has(receipt.reason)) return 'skipped'
- throw new Error(`profile sync for ${contactId} was not pushed: ${receipt.reason}`)
+ if (receipt.status === 'deferred' || receipt.status === 'awaiting-proof' || receipt.status === 'ack-unavailable' || receipt.status === 'ack-evidence-expired') return 'deferred'
+ if (receipt.status === 'skipped' && BENIGN_SYNC_SKIPS.has(receipt.reason)) return 'skipped'
+ const reason = receipt.status === 'receiver-refused' ? 'receiver-refused' : receipt.reason
+ throw new Error(`ContactProfileSync: you synchronized contact ${contactId}, and it failed because ${reason}. Accepted: a whole frozen receiver proof or an explicitly benign scope skip. Fix: inspect the retained native failure without recreating expired evidence. Debug: inspect the scoped contact/version receipt.`)
 }
 export function linkRotationRanges(args: { after: string; through: string }, steps = 5): { after: string; through: string }[] {
  const stepMs = VALUE_PATH_LINK_REISSUE_EVERY_DAYS * DAY_MS

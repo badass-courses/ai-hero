@@ -92,7 +92,7 @@ prose only, never a control-state fallback.
 
 The one whole-subsystem app/admin flag is **`drovr-profile-ack-enabled`**, default **OFF in all four environments**. Fresh bounded Redis reads fail OFF on missing values, errors or timeouts. It gates registration, completion and failed/partial-ACK tombstones together, never genuine signup/purchase/unsubscribe delivery. This PR changes no stored flag value. OFF keeps main's legacy optimistic producer ACK only for never-registered requests to prevent additional sends/re-captures; known frozen identities remain fenced against a legacy age refresh even during OFF/error; it does not write new coordinators/tombstones, pin ACK receipts or reconstruct purged history. The source-pinned main fixture checks every prefix, including a conservative downstream offer-repair allowance; this is a local model, not a deployed POST measurement.
 
-Tombstones have their own `ackTombstone` status/source, `control` endpoint, Schema-decoded fixed `{"control":"ackTombstone","v":1}` NOT NULL body and first-created +400-day/version-change expiry. They are not native events or positive/negative receipts. Native due/retry/held/operator/depth queries and generic writes explicitly exclude them; attempted capture, replay POST or broker publication literally refuses before any port is touched. Ordinary delivered-row purge cannot delete a live tombstone. While ON, purge of incomplete coordinator evidence inserts/fences its tombstone **before DELETE in the same transaction**. Disposable MySQL tests cover rollback after insertion and after deletion, plus committed marker-before-delete ordering. Dedicated 400-day/version-change tombstone deletion and immutable producer capture/registration plumbing remain WIP; this is not permission to enable. Enabling is a **one-way reader-first boundary**, not a flag-off or old-code rollback: prove all active readers compatible and drain/save/cancel deliberately before changing an in-flight rollout.
+Tombstones have their own `ackTombstone` status/source, `control` endpoint, Schema-decoded fixed `{"control":"ackTombstone","v":1}` NOT NULL body and first-created +400-day/version-change expiry. They are not native events or positive/negative receipts. Native due/retry/held/operator/depth queries and generic writes explicitly exclude them; attempted capture, replay POST or broker publication literally refuses before any port is touched. Ordinary delivered-row purge cannot delete a live tombstone. While ON, purge of incomplete coordinator evidence inserts/fences its tombstone **before DELETE in the same transaction**. Disposable MySQL tests cover rollback after insertion and after deletion, plus committed marker-before-delete ordering. Immutable producer capture/registration is now transactionally wired; dedicated 400-day/version-change tombstone deletion and the remaining lifecycle/runtime/operator audits remain WIP; this is not permission to enable. Enabling is a **one-way reader-first boundary**, not a flag-off or old-code rollback: prove all active readers compatible and drain/save/cancel deliberately before changing an in-flight rollout.
 
 ### `PurgeRefused`: known new metadata while the flag is OFF/unknown
 
@@ -106,8 +106,12 @@ Operator recovery:
 3. Do not drop the column, roll old readers back over new state, or repeatedly release work to bypass this refusal. Escalate the count-only >24h signal to the desk.
 
 **WIP boundary:** the fifth-member codec, pure proof/clock policy and atomic native-settlement/first-proof helper are tested
-locally. Consumer-first SDK worker plumbing is implemented; immutable atomic
-capture/registration and producer/memory-store lifecycle integration are not yet complete. This checkpoint is not merge/deploy ready. Profile ACK covers
+locally. Consumer-first SDK workers and immutable atomic first capture/registration
+are wired, including the root producer and frozen-clock memory model. The capture
+transaction installs every original coordinator/member pointer before publication;
+known requests are completion-only, never retrofitted from a current snapshot.
+An old/ambiguous SDK returns a logical unavailable result with no invented reference.
+See `drovr-delta-sync-registration-20261016.md`. This checkpoint is not merge/deploy ready. Profile ACK covers
 only frozen profile/link membership, not the separately durable current-offer
 repair. `confirmationClock` is the delivered profile's frozen `occurredAt` and
 is the only confirmation-age input, forward only. `provedAt` is complete-receipt
@@ -125,8 +129,8 @@ settlement with the atomic proof helper; final/mixed refusal counters and opaque
 notes cannot authorize a known frozen request's delivered receipt. A later held
 row stays held. The legacy Drizzle timestamp writer uses the same contact-first
 transaction order and refuses to refresh a known frozen identity (including OFF),
-or to provide an optimistic ACK while the whole-subsystem flag is ON. This is not
-yet the complete producer/memory-store registration lifecycle.
+or to provide an optimistic ACK while the whole-subsystem flag is ON. This does
+not complete tombstone lifetime, native-family, restatement-fairness or runtime/operator acceptance.
 
 `profileAckRef` and `profileAckNativeDebt` are SDK metadata, never wire-body fields.
 Raw shards, retry renewal, native replay and held release retain the original

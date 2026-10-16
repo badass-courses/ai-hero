@@ -504,7 +504,7 @@ describe('what a profile sync receipt means for the watermark', () => {
 		])
 			expect(() =>
 				reconcileSyncOutcome('c1', { status: 'skipped', reason }),
-			).toThrow(`profile sync for c1 was not pushed: ${reason}`)
+			).toThrow(`ContactProfileSync: you synchronized contact c1, and it failed because ${reason}.`)
 	})
 })
 

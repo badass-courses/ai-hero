@@ -36,7 +36,7 @@ export const drovrContactSyncRestate = inngest.createFunction(
 				data: { contactId, reason: 'restate' },
 			})) as ContactProfileSyncReceipt
 			// Migration sent nothing. Leave it due, so the next tick can confirm v2.
-			if (receipt.status === 'skipped' && receipt.reason === 'hash-migrated')
+			if (receipt.status === 'skipped' && (receipt.reason === 'hash-migrated' || receipt.reason === 'period-already-confirmed'))
 				continue
 			if (receipt.status === 'skipped') {
 				if (
@@ -51,21 +51,10 @@ export const drovrContactSyncRestate = inngest.createFunction(
 					throw new Error(
 						'RestatementDelivery: you requested a confirmation, and it failed because the profile was not queued. Accepted: a delivered or durably queued confirmation, or a contact outside directory scope. Fix: restore delivery before advancing this rotation. Debug: inspect the contact sync receipt.',
 					)
-				await step.run(`defer-out-of-scope:${contactId}`, async () => {
-					const [{ db }, { contactProfileVersion }, { eq, sql }] =
-						await Promise.all([
-							import('@/db'),
-							import('@/db/contact-sync-schema'),
-							import('drizzle-orm'),
-						])
-					await db
-						.update(contactProfileVersion)
-						.set({
-							acknowledgedAt: sql`CURRENT_TIMESTAMP(3)`,
-							updatedAt: sql`${contactProfileVersion.updatedAt}`,
-						})
-						.where(eq(contactProfileVersion.contactId, contactId))
-				})
+				// A scope skip is not receiver proof. Only the child ACK effect
+				// owns this clock. Selection fairness is a separate concern; never
+				// hide it by fabricating confirmation age or a delivered receipt.
+				continue
 			}
 		}
 		return { status: 'queued', contacts: contacts.length }

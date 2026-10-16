@@ -19,7 +19,6 @@ import {
 } from './contact-sync-reconcile'
 import type { DrovrShadowEvent } from './drovr-shadow-emitter'
 import { drovrOutboxDedupeKey, outboxEntryForEvent, type DrovrOutboxEntry, type DrovrOutboxRow } from './drovr-outbox'
-import { proveContactProfileDelivery } from './contact-sync-profile-acknowledgement'
 
 const at = '2032-01-01T00:00:00.000Z'
 const snapshot = (): ContactProfileSnapshot => ({
@@ -67,7 +66,9 @@ function harness() {
 	})
 	const sync = (reason: 'restate' | 'offer-issued' | 'journey-entered') =>
 		runContactProfileSync({
-			profileAckEnabled: async () => true,
+			// Digest/offer legacy regressions exercise reader-first OFF.
+			// Frozen ON completion is covered by producer model + SQL tests.
+			profileAckEnabled: async () => false,
 			event: { data: { contactId: 'contact', reason } },
 			env: { AIH_DROVR_PROFILE_SYNC: 'true' },
 			step: { run: async (_id, fn) => fn(), sendEvent: async () => {} },
@@ -75,7 +76,7 @@ function harness() {
 			currentVersion: versions.currentFor,
 			versionFor: versions.versionFor,
 			acknowledge: versions.acknowledge,
-			proveDelivery: input => proveContactProfileDelivery({ ...input, target, rows: async (_target, keys) => [...receipts.values()].filter(row => keys.includes(row.dedupeKey)) }),
+			acknowledgeLegacy: versions.acknowledgeLegacy,
 			deliver,
 			ownedPath: async () => undefined,
 			onSendingJourney: async () => true,
@@ -200,7 +201,7 @@ describe('review regressions: real contact-sync decisions', () => {
 		)
 		expect((await h.versions.currentFor('contact'))!.acknowledged).toBe(true)
 	})
-	it('equal-version confirmation advances the store acknowledgement clock, preserving version and since', async () => {
+	it('legacy OFF equal-version monthly confirmation advances its legacy clock, preserving version and since', async () => {
 		const h = harness()
 		await h.sync('journey-entered')
 		const before = await h.versions.currentFor('contact')

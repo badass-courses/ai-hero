@@ -11,8 +11,6 @@ import {
 import { createMemoryContactProfileVersionStore } from '@/lib/subscriber-marketing/contact-profile-version'
 import type { DeferredDrovrEvent } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
 import type { DrovrShadowEvent } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
-import { drovrOutboxDedupeKey, outboxEntryForEvent, type DrovrOutboxRow } from '@/lib/subscriber-marketing/drovr-outbox'
-import { proveContactProfileDelivery } from '@/lib/subscriber-marketing/contact-sync-profile-acknowledgement'
 
 const now = Date.parse('2026-09-27T12:00:00.000Z')
 
@@ -67,36 +65,15 @@ function harness(
 			? overrides.delivered!
 			: { accepted: events.length, rejected: 0 },
 	)
-	// Model immutable receiver receipts separately from aggregate outcomes.
-	// A queue's zero counters create no delivered row; cold/retry history
-	// retains the first body and confirms only specifically accepted members.
-	const proveDelivery = vi.fn(async (input: { contactId: string; profileVersion: number; events: DrovrShadowEvent[] }) => {
-		const target = 'synthetic-profile-function'
-		const rows = new Map<string, DrovrOutboxRow>()
-		for (let index = 0; index < deliver.mock.calls.length; index++) {
-			const events = deliver.mock.calls[index]![0]
-			const result = await deliver.mock.results[index]!.value
-			for (const event of events) {
-				const entry = outboxEntryForEvent(event, 'bulkDelta')
-				const key = drovrOutboxDedupeKey(target, entry)
-				if (!rows.has(key)) rows.set(key, { ...entry, id: key, target, dedupeKey: key, status: 'pending', attempts: 0, lastStatus: null, lastError: null, firstFailedAt: event.occurredAt, nextAttemptAt: event.occurredAt, lastAttemptAt: null, deliveredAt: null, releasedAt: null, createdAt: event.occurredAt })
-			}
-			if (result === 'not-configured' || result.rejected) continue
-			const accepted = events.filter(event => !result.deferred?.some((item: DeferredDrovrEvent) => item.event.idempotencyKey === event.idempotencyKey))
-			if (result.accepted !== accepted.length) continue
-			for (const event of accepted) {
-				const row = rows.get(drovrOutboxDedupeKey(target, outboxEntryForEvent(event, 'bulkDelta')))!
-				row.status = 'delivered'; row.lastStatus = 202; row.deliveredAt = new Date(now).toISOString()
-			}
-		}
-		return proveContactProfileDelivery({ ...input, target, rows: async (_target, keys) => [...rows.values()].filter(row => keys.includes(row.dedupeKey)) })
-	})
+	// These are the pinned legacy/OFF roads. ON producer tests use atomic
+	// registration and retained native proof, never synthesize receipts from
+	// these aggregate delivery counters.
 	const ownedPath = vi.fn(async () => 'ai-hero-skills-workflow')
 	const onSendingJourney = vi.fn(async () => overrides.onSendingJourney ?? true)
 	const birth = vi.fn(async () => {})
 	const run = () =>
 		runContactProfileSync({
-			profileAckEnabled: async () => true,
+			profileAckEnabled: async () => false,
 			event: {
 				data: {
 					contactId: overrides.contactId ?? 'contact-1',
@@ -119,7 +96,6 @@ function harness(
 			now: () => now,
 			birth,
 			acknowledge,
-			proveDelivery,
 		})
 	return {
 		sent,
@@ -279,7 +255,7 @@ describe('drovr contact profile sync function', () => {
 		expect(h.deliver).not.toHaveBeenCalled()
 	})
 
-	it('acknowledges only a full accept', async () => {
+	it('legacy OFF acknowledges non-rejected, non-deferred delivery outcomes', async () => {
 		const accepted = harness()
 		await accepted.run()
 		expect(accepted.acknowledge).toHaveBeenCalledWith('contact-1', 4)

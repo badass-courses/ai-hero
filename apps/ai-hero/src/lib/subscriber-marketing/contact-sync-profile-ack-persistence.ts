@@ -85,6 +85,8 @@ export type ProfileAckSettlement =
 			settled: number
 			evaluation: ProfileAckEvaluation
 			disposition?: 'acknowledged' | 'version-superseded'
+			/** Reporting only, derived from the freshly proved original roster. */
+			confirmedLinks?: number
 	  }
 
 /** Internal DB composition boundary, never an HTTP or broker callback.
@@ -226,16 +228,22 @@ export async function settleAndCompleteProfileAck(args: {
 					ref.target,
 					state.members.map((member) => member.key),
 				)
+				for (const row of fresh) {
+					const pointer = readHeldContinuationEnvelope(row.heldContinuation)?.profileAck
+					if (!pointer && state.completion && row.dedupeKey !== ref.coordinatorKey) continue
+					if (!pointer) return { _tag: 'ProfileAckSettled' as const, settled, evaluation: expiredProfileAck(ref) }
+					if (pointer.role === 'tombstone' || referenceIdentity(pointer.ref) !== referenceIdentity(ref)) throw new ProfileAckConflict('the fresh whole-membership proof retained a foreign original member reference')
+				}
 				const { fromStored } = await import('./drovr-outbox-drizzle')
 				const evaluation = evaluateProfileAckCompletion(
 					state,
 					fresh.map(fromStored),
 				)
-				if (
-					evaluation._tag !== 'ProfileAckReady' ||
-					evaluation.alreadyCompleted
-				)
+				if (evaluation._tag !== 'ProfileAckReady')
 					return { _tag: 'ProfileAckSettled' as const, settled, evaluation }
+				const confirmedLinks = state.members.filter(member => member.eventType === 'contact.links.issued').length
+				if (evaluation.alreadyCompleted)
+					return { _tag: 'ProfileAckSettled' as const, settled, evaluation, confirmedLinks, disposition: state.completion!.disposition }
 				let disposition: 'acknowledged' | 'version-superseded' =
 					'version-superseded'
 				if (version && Number(version.profileVersion) === ref.profileVersion) {
@@ -306,6 +314,7 @@ export async function settleAndCompleteProfileAck(args: {
 					settled,
 					evaluation,
 					disposition,
+					confirmedLinks,
 				}
 			})
 		}),

@@ -74,13 +74,13 @@ it('does no scan while disabled', async () => {
 	expect(await registered.handler({ step: {} })).toEqual({ status: 'skipped' })
 	expect(mocks.select).not.toHaveBeenCalled()
 })
-it('does not let an out-of-scope contact monopolize the oldest-first quota', async () => {
+it('never fabricates confirmation age to defer a proofless out-of-scope contact', async () => {
 	const h = harness({ status: 'skipped', reason: 'no-sending-journey' })
 	await registered.handler({ step: h.step })
-	expect(Object.keys(h.set.mock.calls[0]![0])).toEqual([
-		'acknowledgedAt',
-		'updatedAt',
-	])
+	expect(h.set).not.toHaveBeenCalled()
+	expect(mocks.update).not.toHaveBeenCalled()
+	// Separate N13 selection fairness is still required. A CURRENT_TIMESTAMP
+	// write is not a legitimate implementation of that scheduling policy.
 })
 it('matching legacy hash migration remains due for an equal-version confirmation', async () => {
 	const h = harness({ status: 'skipped', reason: 'hash-migrated' })

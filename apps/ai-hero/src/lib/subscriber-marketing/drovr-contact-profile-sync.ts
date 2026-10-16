@@ -4,7 +4,9 @@ import { createHash } from 'node:crypto'
 
 import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
 
-import type { ContactProfileVersion } from './contact-profile-version'
+import type { ContactProfileVersion, LegacyProfileAcknowledgement } from './contact-profile-version'
+import type { AckEvidenceExpired } from './contact-sync-profile-ack-schema'
+import type { ProfileAckPreparation, ProfileAckProducerCompletion, ProfileAckProducerPorts, ProfileAckPublication } from './contact-sync-profile-ack-registration'
 import { profileAckFlagEnabled } from './contact-sync-profile-ack-flag'
 
 import {
@@ -367,6 +369,9 @@ export type ContactProfileSyncReceipt =
 			rejected: number
 	  }
 	| { status: 'awaiting-proof'; profileVersion: number; reason: 'receiver-acceptance-unproven' }
+	| { status: 'ack-unavailable'; profileVersion: number; reason: string }
+	| { status: 'ack-evidence-expired'; profileVersion: number; evidence: AckEvidenceExpired }
+	| { status: 'receiver-refused'; profileVersion: number }
 	/**
 	 * drovr refused the push as event-not-live (or cold-start-unhandled):
 	 * nothing recorded, and the same events are scheduled for after its
@@ -422,11 +427,15 @@ export async function runContactProfileSync(args: {
 	now?: () => number
 	/** Births directory actors drovr answered cold-start-unhandled for (§4). */
 	birth: (contactIds: string[]) => Promise<void>
-	/** OFF preserves main's legacy optimistic ACK; ON requires receiver proof. */
-	acknowledge: (contactId: string, profileVersion: number) => Promise<void>
+	/** Compatibility only, never called for a registered/ON request. */
+	acknowledge: (contactId: string, profileVersion: number, request?: Parameters<LegacyProfileAcknowledgement>[2]) => Promise<void>
+	/** Real OFF writer result, including a concurrent known-request fence. */
+	acknowledgeLegacy?: LegacyProfileAcknowledgement
+	/** Atomic first capture/registration, retained publication and fresh ACK. */
+	profileAck?: ProfileAckProducerPorts
 	/** Fresh, bounded whole-subsystem flag; omitted/failed/hung reads are OFF. */
 	profileAckEnabled?: () => Promise<boolean>
-	/** While ON, missing proof adapters fail closed even with positive counters. */
+	/** Deprecated compatibility shape. A boolean cannot authorize frozen ACK. */
 	proveDelivery?: (input: { contactId: string; profileVersion: number; events: DrovrShadowEvent[] }) => Promise<boolean>
 	currentVersion?: (contactId: string) => Promise<(ContactProfileVersion & { contentHash?: string }) | undefined>
 }): Promise<ContactProfileSyncReceipt> {
@@ -471,6 +480,10 @@ export async function runContactProfileSync(args: {
 	if (version.migrated && acknowledged) return { status: 'skipped', reason: 'hash-migrated' }
 	if (acknowledged && !offerOnly && !restate)
 		return { status: 'skipped', reason: 'unchanged' }
+	// A new logical invocation in a covered period cannot recreate the old
+	// monthly wire key after seven-day receipt purge or refresh its clock.
+	// An original SDK keeps its earlier version-review memo and frozen ref.
+	if (restate && version.acknowledgedAt && version.acknowledgedAt.slice(0, 7) >= snapshot.occurredAt.slice(0, 7)) return { status: 'skipped', reason: 'period-already-confirmed' }
 	const events = buildContactProfileEvents({
 		contactId,
 		profileVersion,
@@ -488,6 +501,40 @@ export async function runContactProfileSync(args: {
 		}
 	}
 	if (events.length === 0) return { status: 'skipped', reason: 'unchanged' }
+	const request = restate ? { kind: 'restate' as const, period: snapshot.occurredAt.slice(0, 7) } : { kind: 'delta' as const }
+	if (!offerOnly) {
+		const enabled = await profileAckFlagEnabled({ readFlag: async () => args.profileAckEnabled?.() ?? false })
+		const ports = args.profileAck
+		if (!ports && enabled) return { status: 'ack-unavailable', profileVersion, reason: 'registration-adapter-unavailable' }
+		if (ports) {
+			const registrationEpoch = version.profileAckProtocol === 1 && (version.newlyIssued || restate)
+				? await args.step.run('delta-registration-epoch', ports.registrationEpoch) as string
+				: undefined
+			const prepared = await args.step.run('delta-prepare-frozen-ack', () => ports.prepare({ contactId, version, contentHash: contactProfileContentHash(snapshot), request, events, registrationEpoch })) as ProfileAckPreparation
+			if (prepared._tag === 'ProfileAckUnavailable') return { status: 'ack-unavailable', profileVersion, reason: prepared.reason }
+			if (prepared._tag === 'ProfileAckCaptured' || prepared._tag === 'ProfileAckKnown') {
+				const ref = prepared.ref
+				// Even a successful cached SDK result cannot revive forgotten
+				// evidence or stand in for fresh admission on a replayed run.
+				const denied = await ports.admit(ref)
+				if (denied) return { status: 'ack-evidence-expired', profileVersion, evidence: denied }
+				if (prepared._tag === 'ProfileAckCaptured') {
+					const published = await args.step.run('delta-deliver-profile', () => ports.publish(ref)) as ProfileAckPublication
+					if (published._tag === 'AckEvidenceExpired') return { status: 'ack-evidence-expired', profileVersion, evidence: published }
+				}
+				// Never a pre-read boolean/counter. The actual effect owns the
+				// fresh full-membership SQL proof and frozen-clock write together.
+				const completed = await args.step.run(`delta-acknowledge-frozen:${ref.requestId}`, () => ports.complete(ref)) as ProfileAckProducerCompletion
+				if (completed._tag === 'AckEvidenceExpired') return { status: 'ack-evidence-expired', profileVersion, evidence: completed }
+				if (completed._tag === 'ProfileAckReceiverRefused') return { status: 'receiver-refused', profileVersion }
+				if (completed._tag !== 'ProfileAckConfirmed') return { status: 'awaiting-proof', profileVersion, reason: 'receiver-acceptance-unproven' }
+				return { status: 'sent', profileVersion: ref.profileVersion, links: completed.links, offers: 0, accepted: 0, rejected: 0 }
+			}
+			// A memoized OFF preparation cannot become an ON registration
+			// after legacy publication, or license a fallback NOW-based ACK.
+			if (await profileAckFlagEnabled({ readFlag: async () => args.profileAckEnabled?.() ?? false })) return { status: 'ack-unavailable', profileVersion, reason: 'registration-disabled-before-publication' }
+		}
+	}
 	const delivered = (await args.step.run('delta-deliver-profile', () =>
 		args.deliver(events),
 	)) as DeliveryResult
@@ -540,15 +587,10 @@ export async function runContactProfileSync(args: {
 	if (!offerOnly) {
 		const confirmed = await args.step.run('delta-acknowledge-version', async () => {
 			const enabled = await profileAckFlagEnabled({ readFlag: async () => args.profileAckEnabled?.() ?? false })
-			if (!enabled) {
-				await args.acknowledge(contactId, profileVersion)
-				return true
-			}
-			// Re-read inside the effect: a previously memoized proof must not
-			// grant an ACK after a failed write and an intervening hold.
-			const proved = await args.proveDelivery?.({ contactId, profileVersion, events }) ?? false
-			if (!proved) return false
-			await args.acknowledge(contactId, profileVersion)
+			if (enabled) return false
+			if (args.acknowledgeLegacy) return args.acknowledgeLegacy(contactId, profileVersion, request)
+			if (restate) await args.acknowledge(contactId, profileVersion, request)
+			else await args.acknowledge(contactId, profileVersion)
 			return true
 		}) as boolean
 		if (!confirmed) return { status: 'awaiting-proof', profileVersion, reason: 'receiver-acceptance-unproven' }

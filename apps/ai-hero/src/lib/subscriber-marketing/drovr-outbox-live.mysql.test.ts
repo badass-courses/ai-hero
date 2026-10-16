@@ -76,7 +76,11 @@ const entry = (
 import { readOutboxQueueState } from './drovr-outbox-queue-state'
 import { encodeHeldContinuationEnvelope, readHeldContinuationEnvelope } from './drovr-outbox-control'
 import { recordOwnerStopRejectionLive } from './drovr-owner-stop-rejection-live'
-import { buildContactProfileEvents } from './drovr-contact-profile-sync'
+import { buildContactProfileEvents, contactProfileContentHash, runContactProfileSync } from './drovr-contact-profile-sync'
+import { createProfileAckProducerPorts } from './contact-sync-profile-ack-producer'
+import { createDrizzleContactProfileVersionStore } from './contact-profile-version-drizzle'
+import { prepareProfileAckRegistration, readProfileAckRegistrationEpoch } from './contact-sync-profile-ack-registration-drizzle'
+import type { ProfileAckRegistrationInput } from './contact-sync-profile-ack-registration'
 import { proveContactProfileDeliveryLive } from './contact-sync-profile-acknowledgement'
 import { ACK_TOMBSTONE_BODY, type ProfileAckReference } from './contact-sync-profile-ack-schema'
 import { ackTombstoneKey, ackTombstoneIdempotencyKey, makeAckTombstone, readAckTombstone, retainAckTombstone } from './contact-sync-ack-tombstone'
@@ -198,6 +202,172 @@ integration('the live outbox wrappers on MySQL (row 204b round 3)', () => {
 			VALUES (?, ?, ?, 'control', ?, ?, ?, 'profile.ack.tombstone', ?, ?, 0, 'ackTombstone', 'ackTombstone', 0, ?, ?, ?, ?, ?)`,
 			['synthetic-atomic-failure', ackTombstoneKey(ref), ref.target, ref.tenantId, ref.contactId, ref.journeyId, ackTombstoneIdempotencyKey(ref), JSON.stringify(ACK_TOMBSTONE_BODY), clock, clock, clock, clock, encodeHeldContinuationEnvelope({ v: 1, profileAck: state })])
 	}
+	async function registrationFixture(linkCount = 1) {
+		const contactId = 'synthetic-first-registration', clock = '2026-01-01T00:00:00.000Z'
+		const snapshot = { occurredAt: clock, profile: { email: 'synthetic-registration@example.test', firstName: null, holds: [] }, links: Array.from({ length: linkCount }, (_, i) => ({ journeyId: 'value-path-skills-course', emailKey: `synthetic-first-${i}`, issuedAt: clock, expiresAt: '2026-05-01T00:00:00.000Z', variables: {}, sendTimeFields: [] })), offers: [] }
+		const contentHash = contactProfileContentHash(snapshot)
+		const store = createDrizzleContactProfileVersionStore(live.db, { now: () => clock, includeRegistrationCapability: true })
+		const version = await store.versionFor(contactId, contentHash)
+		const input: ProfileAckRegistrationInput = { contactId, version, contentHash, request: { kind: 'delta' }, registrationEpoch: await readProfileAckRegistrationEpoch(live.db), events: buildContactProfileEvents({ contactId, profileVersion: version.profileVersion, ...snapshot }) }
+		const prepare = (enabled = true, overrides: Partial<ProfileAckRegistrationInput> = {}, database: unknown = live.db) => prepareProfileAckRegistration({ database, target: 'production', input: { ...input, ...overrides }, enabled: async () => enabled })
+		const stored = async () => (await atomicDb().select().from(drovrOutbox).where(eq(drovrOutbox.contactId, contactId)))
+		return { input, prepare, stored, store, snapshot }
+	}
+	it('fresh ACK-only completion cannot treat an incomplete member pointer as a completed-pointer removal', async () => {
+		const f = await registrationFixture(), first = await f.prepare()
+		if (first._tag !== 'ProfileAckCaptured') throw new Error('synthetic captured reference required')
+		const acceptedAt = (await readProfileAckRegistrationEpoch(live.db)).slice(0, 23).replace('T', ' ')
+		await atomicDb().update(drovrOutbox).set({ status: 'delivered', deliveredAt: acceptedAt, lastAttemptAt: acceptedAt, lastStatus: 202 }).where(eq(drovrOutbox.contactId, f.input.contactId))
+		await atomicDb().update(drovrOutbox).set({ heldContinuation: null }).where(and(eq(drovrOutbox.contactId, f.input.contactId), eq(drovrOutbox.eventType, 'contact.links.issued')))
+		const send = vi.fn(async () => undefined)
+		const ports = createProfileAckProducerPorts({ database: live.db, target: 'production', enabled: async () => true, send })
+		expect(await ports.complete(first.ref)).toMatchObject({ _tag: 'AckEvidenceExpired' })
+		expect(await f.store.currentFor(f.input.contactId)).toMatchObject({ acknowledged: false })
+		expect(send).not.toHaveBeenCalled()
+	})
+	it('first capture installs the whole immutable ACK roster atomically before any publication', async () => {
+		const f = await registrationFixture()
+		const result = await f.prepare()
+		expect(result._tag).toBe('ProfileAckCaptured')
+		if (result._tag !== 'ProfileAckCaptured') throw new Error('synthetic captured reference required')
+		const native = await f.stored()
+		expect(native).toHaveLength(2)
+		for (const row of native) {
+			const state = readHeldContinuationEnvelope(row.heldContinuation)!.profileAck!
+			expect(state.ref).toEqual(result.ref)
+			expect(state.role).toBe(row.dedupeKey === result.ref.coordinatorKey ? 'coordinator' : 'member')
+			expect(row.status).toBe('pending')
+			const owned = fromStored(row)
+			expect(Date.parse(owned.nextAttemptAt) - Date.parse(owned.createdAt)).toBe(BULK_OUTBOX_QUEUE_WAIT_MS)
+			expect(owned.firstFailedAt).toBe(f.input.registrationEpoch)
+		}
+		const coordinator = readHeldContinuationEnvelope(native.find(row => row.dedupeKey === result.ref.coordinatorKey)!.heldContinuation)!.profileAck!
+		expect(coordinator.role === 'coordinator' && coordinator.members.length).toBe(2)
+		expect(await f.store.currentFor(f.input.contactId)).toMatchObject({ acknowledged: false })
+		const before = JSON.stringify(native)
+		expect(await f.prepare(false)).toEqual({ _tag: 'ProfileAckKnown', ref: result.ref })
+		expect(JSON.stringify(await f.stored())).toBe(before)
+	})
+	it('concurrent first captures yield exactly one new frozen request and one unchanged known reference', async () => {
+		const f = await registrationFixture()
+		const results = await Promise.all([f.prepare(), f.prepare()])
+		expect(results.map(result => result._tag).sort()).toEqual(['ProfileAckCaptured', 'ProfileAckKnown'])
+		const refs = results.map(result => result._tag === 'ProfileAckCaptured' || result._tag === 'ProfileAckKnown' ? result.ref : undefined)
+		expect(refs[0]).toEqual(refs[1])
+		expect(await f.stored()).toHaveLength(2)
+	})
+	it('OFF never-registered, old SDK and unchanged unregistered requests do not fabricate references or native rows', async () => {
+		const f = await registrationFixture()
+		expect(await f.prepare(false)).toEqual({ _tag: 'ProfileAckDisabled' })
+		const old = { ...f.input.version }; delete old.profileAckProtocol; delete old.newlyIssued
+		expect(await f.prepare(true, { version: old })).toMatchObject({ _tag: 'ProfileAckUnavailable', reason: 'legacy-sdk-unregistered' })
+		expect(await f.prepare(false, { version: old })).toMatchObject({ _tag: 'ProfileAckUnavailable', reason: 'legacy-sdk-unregistered' })
+		const unchanged = await f.store.versionFor(f.input.contactId, f.input.contentHash)
+		expect(await f.prepare(true, { version: unchanged })).toMatchObject({ _tag: 'ProfileAckUnavailable', reason: 'unchanged-unregistered-version' })
+		expect(await f.prepare(false, { version: unchanged })).toMatchObject({ _tag: 'ProfileAckUnavailable', reason: 'unchanged-unregistered-version' })
+		expect(await f.stored()).toEqual([])
+	})
+	it('an ancient memoized first-capture epoch cannot restart an identity after the metadata lifetime', async () => {
+		const f = await registrationFixture()
+		expect(await f.prepare(true, { registrationEpoch: '2020-01-01T00:00:00.000Z' })).toMatchObject({ _tag: 'ProfileAckUnavailable', reason: 'registration-epoch-expired' })
+		expect(await f.prepare(false, { registrationEpoch: '2020-01-01T00:00:00.000Z' })).toMatchObject({ _tag: 'ProfileAckUnavailable', reason: 'registration-epoch-expired' })
+		expect(await f.stored()).toEqual([])
+	})
+	it('mixed old-SDK native ownership is logical-only unavailable, without filling gaps or overwriting first bytes', async () => {
+		const f = await registrationFixture()
+		await captureDrovrOutbox({ store: createDrizzleDrovrOutboxStore(live.db), target: 'production', entries: [outboxEntryForEvent(f.input.events[0]!, 'bulkDelta')], reason: 'synthetic old SDK first capture', now: new Date(f.input.registrationEpoch!), log: { warn: vi.fn(), info: vi.fn(), error: vi.fn() } })
+		const before = JSON.stringify(await f.stored())
+		expect(await f.prepare()).toMatchObject({ _tag: 'ProfileAckUnavailable', reason: 'ambiguous-legacy-ownership' })
+		expect(JSON.stringify(await f.stored())).toBe(before)
+	})
+	it('a metadata write failure rolls back the native first capture too', async () => {
+		const f = await registrationFixture()
+		const failed = { transaction: (run: (tx: unknown) => Promise<unknown>) => atomicDb().transaction(tx => run(new Proxy(tx, { get(target, key) { if (key === 'update') return () => { throw new Error('synthetic first metadata write failure') }; const value = Reflect.get(target, key); return typeof value === 'function' ? value.bind(target) : value } }))) }
+		await expect(f.prepare(true, {}, failed)).rejects.toThrow('synthetic first metadata write failure')
+		expect(await f.stored()).toEqual([])
+	})
+	it('a later 129th-member required-column failure rolls back all newly installed controls and native rows', async () => {
+		const f = await registrationFixture(128)
+		let reads = 0
+		const failed = { transaction: (run: (tx: unknown) => Promise<unknown>) => atomicDb().transaction(tx => run(new Proxy(tx, { get(target, key) {
+			if (key === 'select') return (...args: unknown[]) => { const builder = (target.select as (...args: unknown[]) => { from: (table: unknown) => unknown })(...args); return { from: (table: unknown) => { const query = builder.from(table) as object; let wrapped: object; wrapped = new Proxy(query, { get(base, property) { const value = Reflect.get(base, property); if (typeof value !== 'function') return value; return (...params: unknown[]) => { if (table === drovrOutbox && property === 'for' && ++reads === 9) throw Object.assign(new Error("Unknown column 'AI_DrovrOutbox.heldContinuation'"), { errno: 1054 }); const result = value.apply(base, params); return result === base ? wrapped : result } } }); return wrapped } } }
+			const value = Reflect.get(target, key); return typeof value === 'function' ? value.bind(target) : value
+		} }))) }
+		await expect(f.prepare(true, {}, failed)).rejects.toThrow('OutboxControl:')
+		expect(reads).toBe(9)
+		expect(await f.stored()).toEqual([])
+	})
+	it('a successful native ACK followed by normal receipt purge cannot authorize a new delta capture from an old SDK memo', async () => {
+		const f = await registrationFixture()
+		const first = await f.prepare()
+		if (first._tag !== 'ProfileAckCaptured') throw new Error('synthetic captured reference required')
+		const native = await f.stored()
+		const acceptedAt = (await readProfileAckRegistrationEpoch(live.db)).slice(0, 23).replace('T', ' ')
+		const completed = await settleAndCompleteProfileAck({ database: live.db, ref: first.ref, settledKeys: native.map(row => row.dedupeKey), enabled: async () => true, settle: async transaction => { const tx = transaction as typeof import('@/db').db; await tx.update(drovrOutbox).set({ status: 'delivered', lastStatus: 202, deliveredAt: acceptedAt, lastAttemptAt: acceptedAt }).where(eq(drovrOutbox.contactId, f.input.contactId)); return native.length } })
+		expect(completed).toMatchObject({ _tag: 'ProfileAckSettled', evaluation: { _tag: 'ProfileAckReady' } })
+		await atomicDb().delete(drovrOutbox).where(eq(drovrOutbox.contactId, f.input.contactId))
+		expect(await f.prepare()).toMatchObject({ _tag: 'ProfileAckUnavailable', reason: 'already-confirmed-without-retained-request' })
+		expect(await f.prepare(false)).toMatchObject({ _tag: 'ProfileAckUnavailable', reason: 'already-confirmed-without-retained-request' })
+		expect(await f.store.acknowledgeLegacy(f.input.contactId, f.input.version.profileVersion)).toBe(false)
+		expect(await f.stored()).toEqual([])
+		expect(await f.store.currentFor(f.input.contactId)).toMatchObject({ acknowledgedAt: f.input.version.since })
+	})
+	it('the actual producer publication reads committed original bodies and keeps SDK references outside every wire body', async () => {
+		const f = await registrationFixture(), first = await f.prepare()
+		if (first._tag !== 'ProfileAckCaptured') throw new Error('synthetic captured reference required')
+		const send = vi.fn(async (publications: unknown) => { expect(await f.stored()).toHaveLength(2); return publications })
+		const ports = createProfileAckProducerPorts({ database: live.db, target: 'production', enabled: async () => true, send })
+		expect(await ports.publish(first.ref)).toEqual({ _tag: 'ProfileAckPublished' })
+		const publications = send.mock.calls[0]![0] as { id: string; data: { profileAckRef: ProfileAckReference; profileAckNativeDebt: boolean; events: DrovrShadowEvent[] } }[]
+		expect(publications[0]!.id).toBe(`sync-frozen:${first.ref.requestId}`)
+		expect(publications[0]!.data.profileAckRef).toEqual(first.ref)
+		expect(publications[0]!.data.profileAckNativeDebt).toBe(true)
+		expect(publications[0]!.data.events).toEqual((await f.stored()).map(fromStored).sort((a, b) => Number(b.eventType === 'contact.profile.updated') - Number(a.eventType === 'contact.profile.updated') || a.dedupeKey.localeCompare(b.dedupeKey)).map(row => row.body))
+		expect(JSON.stringify(publications[0]!.data.events)).not.toContain('profileAck')
+		expect(await ports.complete(first.ref)).toEqual({ _tag: 'ProfileAckAwaitingProof' })
+	})
+	it('forgotten original publication evidence never re-captures or sends a retained subset', async () => {
+		const f = await registrationFixture(), first = await f.prepare()
+		if (first._tag !== 'ProfileAckCaptured') throw new Error('synthetic captured reference required')
+		await atomicDb().delete(drovrOutbox).where(eq(drovrOutbox.dedupeKey, first.ref.coordinatorKey))
+		const before = JSON.stringify(await f.stored()), send = vi.fn(async () => undefined)
+		const ports = createProfileAckProducerPorts({ database: live.db, target: 'production', enabled: async () => true, send })
+		expect(await ports.publish(first.ref)).toMatchObject({ _tag: 'AckEvidenceExpired' })
+		expect(send).not.toHaveBeenCalled()
+		expect(JSON.stringify(await f.stored())).toBe(before)
+	})
+	it('the root actual SQL ACK effect re-proves after a failed write, with no cached-positive escape through a later hold', async () => {
+		const f = await registrationFixture(), cache = new Map<string, unknown>()
+		// Resume the genuine version-review effect that created this row.
+		cache.set('review-profile-version', structuredClone(f.input.version))
+		let fail = true
+		const database = new Proxy(atomicDb(), { get(base, key) {
+			if (key === 'transaction') return (run: (tx: unknown) => Promise<unknown>) => base.transaction(tx => run(new Proxy(tx, { get(target, property) {
+				if (property === 'update') return (table: unknown) => { if (table === contactProfileVersion && fail) { fail = false; throw new Error('synthetic root SQL ACK write failure') }; return (target.update as (table: unknown) => unknown)(table) }
+				const value = Reflect.get(target, property); return typeof value === 'function' ? value.bind(target) : value
+			} })))
+			const value = Reflect.get(base, key); return typeof value === 'function' ? value.bind(base) : value
+		} })
+		const send = vi.fn(async () => { const acceptedAt = (await readProfileAckRegistrationEpoch(live.db)).slice(0, 23).replace('T', ' '); await atomicDb().update(drovrOutbox).set({ status: 'delivered', lastStatus: 202, deliveredAt: acceptedAt, lastAttemptAt: acceptedAt }).where(eq(drovrOutbox.contactId, f.input.contactId)) })
+		const ports = createProfileAckProducerPorts({ database, target: 'production', enabled: async () => true, send })
+		const legacy = vi.fn(async () => undefined), deliver = vi.fn(async () => ({ accepted: 999, rejected: 0 }))
+		const run = () => runContactProfileSync({ event: { data: { contactId: f.input.contactId, reason: 'reconcile' } }, env: { AIH_DROVR_PROFILE_SYNC: 'true' }, step: { run: async (id, callback) => { if (cache.has(id)) return structuredClone(cache.get(id)); const value = await callback(); cache.set(id, structuredClone(value)); return structuredClone(value) }, sendEvent: vi.fn(async () => undefined) }, readSnapshot: async () => f.snapshot, versionFor: (id, hash, legacyHash) => f.store.versionFor(id, hash, legacyHash), deliver, acknowledge: legacy, profileAck: ports, profileAckEnabled: async () => true, ownedPath: async () => undefined, onSendingJourney: async () => true, birth: legacy })
+		await expect(run()).rejects.toThrow('synthetic root SQL ACK write failure')
+		expect(await f.store.currentFor(f.input.contactId)).toMatchObject({ acknowledged: false })
+		const native = await f.stored(), link = native.find(row => row.eventType === 'contact.links.issued')!
+		await atomicDb().update(drovrOutbox).set({ status: 'held' }).where(eq(drovrOutbox.id, link.id))
+		expect(await run()).toMatchObject({ status: 'awaiting-proof' })
+		expect(send).toHaveBeenCalledTimes(1)
+		expect(legacy).not.toHaveBeenCalled(); expect(deliver).not.toHaveBeenCalled()
+		expect(await f.store.currentFor(f.input.contactId)).toMatchObject({ acknowledged: false })
+		await atomicDb().update(drovrOutbox).set({ status: 'delivered' }).where(eq(drovrOutbox.id, link.id))
+		// A later invocation discovers the known request; native replay could
+		// make the same completion without a new producer publication.
+		cache.clear()
+		expect(await run()).toMatchObject({ status: 'sent', links: 1, accepted: 0 })
+		expect(await f.store.currentFor(f.input.contactId)).toMatchObject({ acknowledged: true, acknowledgedAt: f.input.version.since })
+		expect(send).toHaveBeenCalledTimes(1)
+	})
 	it('real native replay carries the frozen SDK reference outside the unchanged body without re-registering it', async () => {
 		const f = await seedAtomicAck()
 		const profile = (await atomicRows()).find(row => row.eventType === 'contact.profile.updated')!

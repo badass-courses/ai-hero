@@ -8,7 +8,6 @@ import {
 } from './drovr-contact-profile-sync'
 import { queueContactSyncBulk } from './contact-sync-bulk'
 import { drovrOutboxDedupeKey, type DrovrOutboxRow } from './drovr-outbox'
-import { proveContactProfileDelivery } from './contact-sync-profile-acknowledgement'
 import {
 	runContactSyncBackfill,
 	type BackfillPorts,
@@ -50,7 +49,7 @@ const snapshot = (): ContactProfileSnapshot => ({
 	],
 })
 
-it('generated contact histories preserve versions, immutable queued links and independent coupon keys across crash/retry', async () => {
+it('generated legacy OFF histories preserve versions, immutable queued links and independent coupon keys across crash/retry', async () => {
 	for (let seed = 1; seed <= 24; seed++) {
 		const random = generator(seed)
 		let clock = start
@@ -72,7 +71,9 @@ it('generated contact histories preserve versions, immutable queued links and in
 			const memo = new Map<string, unknown>()
 			const run = () =>
 				runContactProfileSync({
-					profileAckEnabled: async () => true,
+					// Pinned reader-first OFF model. Atomic frozen ON histories
+					// and SDK failed-write freshness have separate SQL/model tests.
+					profileAckEnabled: async () => false,
 					event: { data: { contactId: 'contact', reason } },
 					env: { AIH_DROVR_PROFILE_SYNC: 'true' },
 					step: {
@@ -86,7 +87,7 @@ it('generated contact histories preserve versions, immutable queued links and in
 					versionFor: store.versionFor,
 					currentVersion: store.currentFor,
 					acknowledge: store.acknowledge,
-					proveDelivery: input => proveContactProfileDelivery({ ...input, target, rows: async (_target, keys) => [...receipts.values()].filter(row => keys.includes(row.dedupeKey)) }),
+					acknowledgeLegacy: store.acknowledgeLegacy,
 					ownedPath: async () => undefined,
 					onSendingJourney: async () => true,
 					birth: async () => {},

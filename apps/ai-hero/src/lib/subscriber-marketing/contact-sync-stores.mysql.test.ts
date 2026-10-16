@@ -201,13 +201,15 @@ integration('contact-sync stores on MySQL', () => {
 		expect(row?.h).toMatch(/^[c-f]$/)
 	})
 
-	it('moves acknowledgedAt on an equal-version confirmation, without changing since', async () => {
+	it('legacy OFF moves acknowledgedAt only for an explicit new monthly confirmation, without changing since', async () => {
 		let clock = '2032-01-01T00:00:00.000Z'
 		const store = createDrizzleContactProfileVersionStore(drizzle(pool, { schema: databaseSchema, mode: 'default' }), { now: () => clock, profileAckEnabled: async () => false })
 		await store.versionFor('confirmation', 'v2:' + 'a'.repeat(61))
 		await store.acknowledge('confirmation', 1)
 		clock = '2032-02-01T00:00:00.000Z'
-		await store.acknowledge('confirmation', 1)
+		expect(await store.acknowledgeLegacy('confirmation', 1)).toBe(false)
+		expect(await store.acknowledgeLegacy('confirmation', 1, { kind: 'restate', period: '2032-02' })).toBe(true)
+		expect(await store.acknowledgeLegacy('confirmation', 1, { kind: 'restate', period: '2032-02' })).toBe(false)
 		const [rows] = await pool.query("SELECT acknowledgedAt AS at, updatedAt AS since, acknowledgedVersion AS version FROM AI_ContactProfileVersion WHERE contactId = 'confirmation'")
 		const [row] = rows as { at: Date; since: Date; version: number }[]
 		expect(row!.at.toISOString()).toBe(clock)
@@ -271,7 +273,7 @@ integration('contact-sync stores on MySQL', () => {
 			const due = await dueProfileConfirmations(db, Date.parse(clock), async () => { throw new Error('unexpected capacity') })
 			expect(due).toHaveLength(1)
 			seen.push(due[0]!.contactId)
-			await versions.acknowledge(due[0]!.contactId, 1)
+			expect(await versions.acknowledgeLegacy(due[0]!.contactId, 1, { kind: 'restate', period: clock.slice(0, 7) })).toBe(true)
 		}
 		expect(new Set(seen).size).toBe(12)
 		expect(seen).not.toContain('pending')
