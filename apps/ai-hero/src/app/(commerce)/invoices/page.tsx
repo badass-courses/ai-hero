@@ -9,10 +9,12 @@ import { InvoiceCard } from '@coursebuilder/commerce-next/invoices/invoice-card'
 import { Purchase } from '@coursebuilder/core/schemas'
 import { Button } from '@coursebuilder/ui'
 
-const Invoices = async (props?: {
+const Invoices = async ({
+	searchParams,
+}: {
 	searchParams?: Promise<{ 'already-own'?: string }>
-}) => {
-	const alreadyOwn = (await props?.searchParams)?.['already-own'] === '1'
+} = {}) => {
+	const alreadyOwn = (await searchParams)?.['already-own'] === '1'
 	const { session } = await getServerAuthSession()
 	if (!session?.user?.id) redirect('/login?callbackUrl=%2Finvoices')
 

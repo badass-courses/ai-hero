@@ -1,5 +1,7 @@
 // @ts-nocheck: untyped Node operator tooling, covered by rig.test.mjs; not app code.
 // Synthetic inputs, not a production catalog or a pricing-policy implementation.
+import { AUTHORITATIVE_PPP_OFFER_ID } from '@coursebuilder/commerce/authoritative-price'
+
 export const c5WorkshopId = 'rig-workshop-c5'
 export const catalog = [
   { key: 'c5', id: 'product-s00zs', name: 'Rig C5', type: 'cohort', cents: 100000 },
@@ -31,7 +33,7 @@ export const fixtures = [
   { key: 'seat-holder', purchases: [{ product: 'c5', cents: 100000 }] },
   { key: 'seat-holder-team', quantity: 2, purchases: [{ product: 'c5', cents: 100000 }] },
   { key: 'restricted-holder-team', quantity: 2, purchases: [{ product: 'c5', cents: 50000, status: 'Restricted', ppp: true }] },
-  { key: 'restricted-holder-team-ppp', quantity: 2, couponId: 'authoritative-ppp-offer', purchases: [{ product: 'c5', cents: 50000, status: 'Restricted', ppp: true }] },
+  { key: 'restricted-holder-team-ppp', quantity: 2, couponId: AUTHORITATIVE_PPP_OFFER_ID, purchases: [{ product: 'c5', cents: 50000, status: 'Restricted', ppp: true }] },
   { key: 'binding-quote', purchases: [cc(9900)], pending: 'Confirmed quote store and pricing fact adapter', quoteInput: { currency: 'USD', unitAmountCents: 60000, quantity: 1, basis: 'unit' } },
 ].map(fixture => ({ ...fixture, userId: `rig_${fixture.key}`, email: `${fixture.key}@example.test`, quantity: fixture.quantity ?? 1 }))
 // A measurement run may replace list prices from a private overlay: { "amounts": { "<catalog key>": <cents> } }.

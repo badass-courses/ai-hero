@@ -207,7 +207,7 @@ export async function checkout(state, key, fixtureKey, shouldComplete = false, {
   const id = target?.match(/\bcs_test_[A-Za-z0-9]+/)?.[0]
   if (![302, 303, 307].includes(response.status) || !id || new URL(target).hostname !== 'checkout.stripe.com') {
     // Record only the shape: a hosted session URL is a payment capability.
-    const shape = target ? { host: new URL(target, origin).hostname, path: new URL(target, origin).pathname.replace(/cs_test_[A-Za-z0-9]+/, 'cs_test_*'), error: new URL(target, origin).searchParams.get('error'), reason: new URL(target, origin).searchParams.get('reason') } : null
+    const shape = target ? { host: new URL(target, origin).hostname, path: new URL(target, origin).pathname.replace(/cs_test_[A-Za-z0-9]+/, 'cs_test_*'), error: new URL(target, origin).searchParams.get('error'), reason: new URL(target, origin).searchParams.get('reason'), alreadyOwn: new URL(target, origin).searchParams.get('already-own') } : null
     await privateWrite(join(state, 'checkout-refusal.json'), JSON.stringify({ fixture: fixture.key, at: new Date().toISOString(), status: response.status, hops, location: shape }) + '\n')
     throw new Error(`App checkout did not return a Stripe test session (HTTP ${response.status}); inspect private checkout-refusal.json`)
   }

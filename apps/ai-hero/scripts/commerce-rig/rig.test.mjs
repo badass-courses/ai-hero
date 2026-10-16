@@ -316,3 +316,19 @@ test('rig Redis stand-in allows only the local C5 flag read, never writes or dep
     assert.equal((await fetch(base, { method: 'POST', body: JSON.stringify(['get', 'flag:development:c5-pricing-enabled']) })).status, 403)
   } finally { server.close() }
 })
+
+test('holder fixtures are seeded with the status and ppp flags the guard reads', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const { AUTHORITATIVE_PPP_OFFER_ID } = await import('@coursebuilder/commerce/authoritative-price')
+  const seeder = await readFile(new URL('./seed.mjs', import.meta.url), 'utf8')
+  // The seeder must write each purchase's status, and mark ppp ones with a coupon.
+  assert.match(seeder, /status: purchase\.status \?\? 'Valid'/)
+  assert.match(seeder, /couponId: purchase\.ppp \? couponId : null/)
+  const seat = fixtureFor('seat-holder-team')
+  assert.equal(seat.quantity, 2)
+  assert.equal(seat.purchases[0].status ?? 'Valid', 'Valid')
+  const restricted = fixtureFor('restricted-holder-team')
+  assert.deepEqual([restricted.purchases[0].status, restricted.purchases[0].ppp, restricted.couponId], ['Restricted', true, undefined])
+  assert.equal(fixtureFor('restricted-holder-team-ppp').couponId, AUTHORITATIVE_PPP_OFFER_ID)
+  assert.equal(fixtureFor('seat-holder').quantity, 1)
+})

@@ -1,3 +1,4 @@
+import { AUTHORITATIVE_PPP_OFFER_ID } from '@coursebuilder/commerce/authoritative-price'
 import type { Purchase } from '@coursebuilder/core/schemas'
 
 export const DUPLICATE_GUARDRAIL_PRODUCT_TYPES = [
@@ -67,3 +68,35 @@ export const duplicatePurchaseGuard = ({
 	)
 	return owns ? 'already-own' : 'allow'
 }
+
+/**
+ * Checkout quantity, strictly: a positive base-10 integer, or absent (one
+ * seat, the same default Course Builder's coupon authorization uses). Anything
+ * else (0, 2.5, 1e1, -1, NaN, " 2") is null and the caller refuses.
+ */
+export const parseCheckoutQuantity = (raw?: string | null): number | null => {
+	if (raw === undefined || raw === null || raw === '') return 1
+	if (!/^[1-9][0-9]*$/.test(raw)) return null
+	const quantity = Number(raw)
+	return Number.isSafeInteger(quantity) ? quantity : null
+}
+
+/**
+ * Whether a checkout carries regional (PPP) pricing: the authoritative PPP
+ * offer, a coupon whose type is `ppp`, or a PPP selection the coupon
+ * authorization saw (`requestedPPP`). Used by verify-login and
+ * protectCommerceRequest so the widget and the route agree.
+ * `usedCouponId` is a site coupon and never regional.
+ */
+export const isRegionalCoupon = ({
+	couponId,
+	couponType,
+	requestedPPP,
+}: {
+	couponId?: string | null
+	couponType?: string | null
+	requestedPPP?: boolean
+}) =>
+	couponId === AUTHORITATIVE_PPP_OFFER_ID ||
+	couponType === 'ppp' ||
+	requestedPPP === true
