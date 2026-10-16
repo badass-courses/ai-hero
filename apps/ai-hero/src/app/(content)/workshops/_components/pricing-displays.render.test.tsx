@@ -234,7 +234,7 @@ describe('ended evergreen offer notice', () => {
 		ended()
 		mocks.session = 'authenticated'
 		mocks.commerce = {
-			data: { purchases: [{ productId: 'p1' }] },
+			data: { purchases: [{ productId: 'p1', status: 'Valid' }] },
 			isError: false,
 		}
 		await render(
@@ -251,6 +251,24 @@ describe('ended evergreen offer notice', () => {
 		await act(async () => {})
 		expect(host.textContent).toContain('This private offer ended Oct 1.')
 	})
+
+	it.each([
+		['refunded', { productId: 'p1', status: 'Refunded' }],
+		['bulk-only', { productId: 'p1', status: 'Valid', bulkCouponId: 'c' }],
+		['another product', { productId: 'p2', status: 'Valid' }],
+	])(
+		'call site: a %s purchase is not ownership, notice shows',
+		async (_n, purchase) => {
+			ended()
+			mocks.session = 'authenticated'
+			mocks.commerce = { data: { purchases: [purchase] }, isError: false }
+			await render(
+				<WorkshopEvergreenOfferEndedNotice endpoint="/s" productId="p1" />,
+			)
+			await act(async () => {})
+			expect(host.textContent).toContain('This private offer ended Oct 1.')
+		},
+	)
 
 	it('call site: hidden while ownership is still loading', async () => {
 		ended()
