@@ -156,17 +156,6 @@ const shapes: Shape[] = [
 		denied: ['middle', 'stranger'],
 	},
 	{
-		// One Stripe customer is shared across a buyer's charges. Transferring
-		// purchase X moves nothing about untransferred purchase Y, which still
-		// belongs to its payer.
-		name: 'shared customer: untransferred sibling purchase Y',
-		purchaseUserId: 'payer',
-		chargeUserId: 'payer',
-		transfers: [],
-		allowed: ['payer'],
-		denied: ['holder-of-sibling-x', 'stranger'],
-	},
-	{
 		name: 'a transfer that never completed grants nothing',
 		purchaseUserId: 'payer',
 		chargeUserId: 'payer',

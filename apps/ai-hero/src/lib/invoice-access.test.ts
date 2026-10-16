@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
 	findCharges: vi.fn(),
 	findPurchases: vi.fn(),
 	findTransfers: vi.fn(),
+	customerQuery: vi.fn(),
 }))
 
 vi.mock('@/db', () => ({
@@ -12,6 +13,11 @@ vi.mock('@/db', () => ({
 			merchantCharge: { findMany: mocks.findCharges },
 			purchases: { findMany: mocks.findPurchases },
 			purchaseUserTransfer: { findMany: mocks.findTransfers },
+			// Never expected: invoices must not follow the shared Stripe customer.
+			merchantCustomer: {
+				findMany: mocks.customerQuery,
+				findFirst: mocks.customerQuery,
+			},
 		},
 	},
 }))
@@ -97,6 +103,7 @@ describe('invoice purchase access', () => {
 		expect(where).toContain('charge-x')
 		expect(where).not.toContain('charge-y')
 		expect(where).toContain('purchase.redeemedBulkCouponId')
+		expect(mocks.customerQuery).not.toHaveBeenCalled()
 	})
 
 	it('lets the billing owner edit and a bare holder only view', async () => {
@@ -118,49 +125,47 @@ describe('invoice purchase access', () => {
 		expect(mocks.findPurchases).toHaveBeenCalledOnce()
 	})
 
-	it('lists a transferred purchase for the person who started the chain', async () => {
-		// The charge moved to the holder, so only the transfer row names the payer.
-		mocks.findCharges.mockResolvedValue([])
+	// Candidate query (with columns) then the batched COMPLETED rows.
+	const chain = (rows: { sourceUserId: string; month: number }[]) =>
 		mocks.findTransfers.mockImplementation(async (args: any) =>
 			args.columns
 				? [{ purchaseId: 'purchase-transferred' }]
-				: [
-						{
-							transferState: 'COMPLETED',
-							sourceUserId: 'payer-1',
-							completedAt: new Date('2026-09-25T00:00:00Z'),
-							createdAt: new Date('2026-09-24T00:00:00Z'),
-						},
-					],
+				: rows.map((row, index) => ({
+						id: `transfer-${index}`,
+						purchaseId: 'purchase-transferred',
+						transferState: 'COMPLETED',
+						sourceUserId: row.sourceUserId,
+						completedAt: new Date(Date.UTC(2026, row.month, 1)),
+						createdAt: new Date(Date.UTC(2026, row.month, 1)),
+					})),
 		)
-		await expect(getInvoicePurchasesForUser('payer-1')).resolves.toHaveLength(
-			1,
-		)
-	})
+	const lastWhere = () =>
+		JSON.stringify(mocks.findPurchases.mock.calls.at(-1)?.[0]?.where)
 
-	it('does not list a transferred purchase for an earlier non-paying holder', async () => {
-		mocks.findCharges.mockResolvedValue([])
-		mocks.findTransfers.mockImplementation(async (args: any) =>
-			args.columns
-				? [{ purchaseId: 'purchase-transferred' }]
-				: [
-						{
-							transferState: 'COMPLETED',
-							sourceUserId: 'payer-1',
-							completedAt: new Date('2026-01-01T00:00:00Z'),
-							createdAt: new Date('2026-01-01T00:00:00Z'),
-						},
-						{
-							transferState: 'COMPLETED',
-							sourceUserId: 'middle-holder',
-							completedAt: new Date('2026-02-01T00:00:00Z'),
-							createdAt: new Date('2026-02-01T00:00:00Z'),
-						},
-					],
-		)
-		const where = () =>
-			JSON.stringify(mocks.findPurchases.mock.calls.at(-1)?.[0]?.where)
-		await getInvoicePurchasesForUser('middle-holder')
-		expect(where()).not.toContain('purchase-transferred')
-	})
+	it.each([
+		['oldest first', [{ sourceUserId: 'payer-1', month: 1 }, { sourceUserId: 'middle-holder', month: 2 }]],
+		['newest first', [{ sourceUserId: 'middle-holder', month: 2 }, { sourceUserId: 'payer-1', month: 1 }]],
+	])(
+		'lists a transferred purchase for the person who started the chain (%s)',
+		async (_name, rows) => {
+			// The charge moved to the holder, so only the transfer row names the payer.
+			mocks.findCharges.mockResolvedValue([])
+			chain(rows)
+			await getInvoicePurchasesForUser('payer-1')
+			expect(lastWhere()).toContain('purchase-transferred')
+		},
+	)
+
+	it.each([
+		['oldest first', [{ sourceUserId: 'payer-1', month: 1 }, { sourceUserId: 'middle-holder', month: 2 }]],
+		['newest first', [{ sourceUserId: 'middle-holder', month: 2 }, { sourceUserId: 'payer-1', month: 1 }]],
+	])(
+		'does not list a transferred purchase for an earlier non-paying holder (%s)',
+		async (_name, rows) => {
+			mocks.findCharges.mockResolvedValue([])
+			chain(rows)
+			await getInvoicePurchasesForUser('middle-holder')
+			expect(lastWhere()).not.toContain('purchase-transferred')
+		},
+	)
 })

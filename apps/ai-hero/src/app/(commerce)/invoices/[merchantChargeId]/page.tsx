@@ -16,10 +16,7 @@ import {
 	invoiceDisplayAmount,
 } from '@/lib/invoice-access-rules'
 import { drizzleInvoiceSettingsDataSource } from '@/lib/invoice-settings'
-import {
-	formatInvoiceAmount,
-	getInvoicePresentment,
-} from '@/lib/invoice-amounts'
+import { formatInvoiceAmount } from '@/lib/invoice-amounts'
 import {
 	drizzleInvoiceLinkDataSource,
 	invoiceLinkConfiguration,
@@ -110,7 +107,14 @@ async function getChargeDetails(merchantChargeId: string) {
 			? await getProduct(purchase?.productId)
 			: null
 
-		if (product && charge.status === 'succeeded' && purchase) {
+		// A redeemed team seat is not the buyer's invoice, even if a charge id
+		// were ever attached to it.
+		if (
+			product &&
+			charge.status === 'succeeded' &&
+			purchase &&
+			!purchase.redeemedBulkCouponId
+		) {
 			return {
 				state: 'SUCCESS' as const,
 				result: {
@@ -253,7 +257,6 @@ const Invoice = async (props: {
 		)
 	const formatChargeAmount = (amount: number) =>
 		formatInvoiceAmount(amount, charge.currency)
-	const presentment = getInvoicePresentment(charge)
 	const display = invoiceDisplayAmount(charge)
 	const created = fromUnixTime(charge.created)
 	const date = format(created, 'MMMM d, y')
@@ -361,7 +364,7 @@ const Invoice = async (props: {
 									</div>
 								</div>
 								<h2 className="sr-only">Purchase details</h2>
-								{presentment && (
+								{display.secondary && (
 									<p>
 										Line items{amountRefunded > 0 ? ' and refunds' : ''} are
 										shown in {charge.currency.toUpperCase()}.

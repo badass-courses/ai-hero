@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
 	coupon: vi.fn(),
 	merchantSession: vi.fn(),
 	originTransfers: vi.fn(),
+	customerQuery: vi.fn(),
 	transfers: vi.fn(),
 	cookie: vi.fn(),
 	readOnlyProps: vi.fn(),
@@ -32,6 +33,11 @@ vi.mock('@/db', () => ({
 			coupon: { findFirst: mocks.coupon },
 			merchantSession: { findFirst: mocks.merchantSession },
 			purchaseUserTransfer: { findMany: mocks.originTransfers },
+			// Never expected: invoices must not follow the shared Stripe customer.
+			merchantCustomer: {
+				findMany: mocks.customerQuery,
+				findFirst: mocks.customerQuery,
+			},
 		},
 	},
 }))
@@ -468,9 +474,28 @@ describe('signed shareable invoice', () => {
 			it('an unrelated user is turned away', async () => {
 				expect(await canSee('unrelated')).toBeNull()
 			})
+			it('a user who only matches the shared Stripe customer is turned away', async () => {
+				mocks.customerQuery.mockResolvedValue({ userId: 'customer-user' })
+				expect(await canSee('customer-user')).toBeNull()
+				expect(mocks.customerQuery).not.toHaveBeenCalled()
+			})
 		})
 
-		describe('support-complete: purchase moved, charge stayed with the payer', () => {
+		describe('redeemed team seat', () => {
+			it('a seat holder on a bulk charge is turned away', async () => {
+				setShape('buyer', [])
+				mocks.purchase.mockResolvedValue({
+					id: 'purchase-seat',
+					userId: 'holder',
+					productId: 'product-synthetic',
+					redeemedBulkCouponId: 'coupon-bulk',
+				})
+				expect(await canSee('holder')).toBeNull()
+				expect(await canSee('buyer')).toBeNull()
+			})
+		})
+
+		describe('support-complete move: purchase moved, charge stayed with the payer', () => {
 			beforeEach(() => {
 				setShape('original-payer', [])
 			})
