@@ -1,4 +1,14 @@
-import { and, eq, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm'
+import {
+	and,
+	eq,
+	gt,
+	inArray,
+	isNull,
+	ne,
+	notExists,
+	or,
+	sql,
+} from 'drizzle-orm'
 import type { MySql2Database } from 'drizzle-orm/mysql2'
 import { access } from 'node:fs/promises'
 
@@ -22,6 +32,18 @@ export const IN_FLIGHT_TRANSFER_STATES = [
 	'VERIFIED',
 	'CONFIRMED',
 ] as const
+
+/** Unexpired transfers in an open state. An expired one can no longer complete; no expiry counts. */
+const openTransferWhere = (now: Date) =>
+	and(
+		inArray(schema.purchaseUserTransfer.transferState, [
+			...IN_FLIGHT_TRANSFER_STATES,
+		]),
+		or(
+			isNull(schema.purchaseUserTransfer.expiresAt),
+			gt(schema.purchaseUserTransfer.expiresAt, now),
+		),
+	)
 
 export function getRowsAffected(result: unknown): number {
 	if (
@@ -196,23 +218,19 @@ export function createDrizzleDbPorts(db: Db) {
 				activeSubscriptionRows: Number(active?.n ?? 0),
 			}
 		},
-		async countInFlightTransfers() {
-			const [row] = await db
-				.select({ n: sql<number>`count(*)` })
+		async inFlightTransferUserIds() {
+			const rows = await db
+				.select({
+					source: schema.purchaseUserTransfer.sourceUserId,
+					target: schema.purchaseUserTransfer.targetUserId,
+				})
 				.from(schema.purchaseUserTransfer)
-				.where(
-					and(
-						inArray(schema.purchaseUserTransfer.transferState, [
-							...IN_FLIGHT_TRANSFER_STATES,
-						]),
-						// An expired transfer can no longer complete. No expiry counts.
-						or(
-							isNull(schema.purchaseUserTransfer.expiresAt),
-							gt(schema.purchaseUserTransfer.expiresAt, new Date()),
-						),
-					),
-				)
-			return Number(row?.n ?? 0)
+				.where(openTransferWhere(new Date()))
+			return new Set(
+				rows
+					.flatMap((r) => [r.source, r.target])
+					.filter((id): id is string => !!id),
+			)
 		},
 		/** One transaction, one guarded update; zero rows affected is a conflict. */
 		async compareAndSet(input: {
@@ -221,6 +239,21 @@ export function createDrizzleDbPorts(db: Db) {
 			payerUserId: string
 		}) {
 			return db.transaction(async (tx) => {
+				// One clock for the NOT EXISTS clause and the lookup after it, so a
+				// transfer expiring in between cannot turn a deferral into a conflict.
+				const now = new Date()
+				// The open-transfer check lives in the same statement as the update,
+				// so no transfer can open between the check and the write.
+				const touchesRow = or(
+					inArray(schema.purchaseUserTransfer.sourceUserId, [
+						input.holderUserId,
+						input.payerUserId,
+					]),
+					inArray(schema.purchaseUserTransfer.targetUserId, [
+						input.holderUserId,
+						input.payerUserId,
+					]),
+				)
 				const result = await tx
 					.update(schema.merchantCustomer)
 					.set({ userId: input.payerUserId })
@@ -228,9 +261,29 @@ export function createDrizzleDbPorts(db: Db) {
 						and(
 							eq(schema.merchantCustomer.id, input.customerId),
 							eq(schema.merchantCustomer.userId, input.holderUserId),
+							notExists(
+								tx
+									.select({ one: sql`1` })
+									.from(schema.purchaseUserTransfer)
+									.where(and(openTransferWhere(now), touchesRow)),
+							),
 						),
 					)
-				return getRowsAffected(result)
+				const affected = getRowsAffected(result)
+				if (affected > 0) return affected
+				// Zero rows: a deferral only if the row is still on the holder and an
+				// open transfer names the holder or payer; otherwise a plain conflict.
+				const [row] = await tx
+					.select({ userId: schema.merchantCustomer.userId })
+					.from(schema.merchantCustomer)
+					.where(eq(schema.merchantCustomer.id, input.customerId))
+				if (row?.userId !== input.holderUserId) return 0
+				const [open] = await tx
+					.select({ one: sql`1` })
+					.from(schema.purchaseUserTransfer)
+					.where(and(openTransferWhere(now), touchesRow))
+					.limit(1)
+				return open ? ('deferred' as const) : 0
 			})
 		},
 		async readCustomerUserId(customerId: string) {
@@ -413,7 +466,7 @@ export function createPorts(options: {
 				),
 			}
 		},
-		countInFlightTransfers: dbPorts.countInFlightTransfers,
+		inFlightTransferUserIds: dbPorts.inFlightTransferUserIds,
 		compareAndSet: dbPorts.compareAndSet,
 		readCustomerUserId: dbPorts.readCustomerUserId,
 		updateStripeCustomer: async ({

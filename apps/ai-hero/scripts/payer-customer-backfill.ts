@@ -339,14 +339,22 @@ export type BackfillPorts = {
 	loadFacts: () => Promise<CustomerFacts[]>
 	/** Fresh database and Stripe facts for one customer, or null if it is gone. */
 	loadCustomerFacts: (customerId: string) => Promise<CustomerFacts | null>
-	/** Unexpired transfers in INITIATED, VERIFIED or CONFIRMED right now. */
-	countInFlightTransfers: () => Promise<number>
-	/** One transaction: `update … set userId=payer where id=? and userId=holder`. */
+	/**
+	 * Every source and target user of an unexpired transfer in INITIATED,
+	 * VERIFIED or CONFIRMED right now.
+	 */
+	inFlightTransferUserIds: () => Promise<ReadonlySet<string>>
+	/**
+	 * One transaction: `update … set userId=payer where id=? and userId=holder`
+	 * and no unexpired INITIATED, VERIFIED or CONFIRMED transfer names the
+	 * holder or the payer. Returns 'deferred' when that transfer check, not a
+	 * changed row, kept the update from running.
+	 */
 	compareAndSet: (input: {
 		customerId: string
 		holderUserId: string
 		payerUserId: string
-	}) => Promise<number>
+	}) => Promise<number | 'deferred'>
 	readCustomerUserId: (customerId: string) => Promise<string | null>
 	updateStripeCustomer: (input: {
 		stripeCustomerId: string
@@ -371,11 +379,15 @@ export const idempotencyKey = (customerId: string, planHash: string) =>
 // ------------------------------------------------------------- write -----
 
 export type WriteResult = {
-	status: 'complete' | 'batch-complete' | 'stopped'
+	status: 'complete' | 'complete-with-deferrals' | 'batch-complete' | 'stopped'
 	moved: number
 	resumed: number
 	conflicts: number
 	drift: number
+	/** Rows skipped because a user on them is in an open transfer; a later run takes them. */
+	deferred: number
+	/** The same rows by where the open transfer was seen. */
+	deferredBy: { beforeRow: number; atWrite: number }
 	remaining: number
 	planHash: string
 }
@@ -409,8 +421,6 @@ export async function runWrite(
 			'copy planHash from the dry run',
 			'rerun the dry run',
 		)
-	await assertNoTransferInFlight(ports)
-
 	// Resume: a journal that already holds this plan carries the approved plan,
 	// because moved rows no longer plan as moves.
 	let journal = await ports.readJournal()
@@ -466,6 +476,8 @@ export async function runWrite(
 		resumed: 0,
 		conflicts: 0,
 		drift: 0,
+		deferred: 0,
+		deferredBy: { beforeRow: 0, atWrite: 0 },
 		remaining: 0,
 		planHash: args.planHash,
 	}
@@ -473,35 +485,38 @@ export async function runWrite(
 	for (const [index, move] of pending.entries()) {
 		if (await ports.stopRequested()) {
 			result.status = 'stopped'
-			result.remaining = pending.length - index
+			// Deferred rows are still pending for a later run.
+			result.remaining = pending.length - index + result.deferred
 			return result
 		}
 		if (worked >= args.batch) {
 			result.status = 'batch-complete'
-			result.remaining = pending.length - index
+			result.remaining = pending.length - index + result.deferred
 			return result
 		}
-		await assertNoTransferInFlight(ports)
+		// Fresh read per row: a transfer can open at any moment mid-run. A row
+		// tied to an open transfer is skipped, not journaled and not counted
+		// toward --batch, so a later run picks it up.
+		const open = await ports.inFlightTransferUserIds()
+		if (open.has(move.holderUserId) || open.has(move.payerUserId!)) {
+			result.deferred += 1
+			result.deferredBy.beforeRow += 1
+			continue
+		}
 		worked += 1
 		const outcome = await writeRow(move, args.planHash, ports)
-		if (outcome === 'conflict') result.conflicts += 1
+		if (outcome === 'deferred') {
+			// Caught inside the compare-and-set transaction: nothing was written.
+			worked -= 1
+			result.deferred += 1
+			result.deferredBy.atWrite += 1
+		} else if (outcome === 'conflict') result.conflicts += 1
 		else if (outcome === 'drift') result.drift += 1
 		else if (outcome === 'resumed') result.resumed += 1
 		else result.moved += 1
 	}
+	if (result.deferred > 0) result.status = 'complete-with-deferrals'
 	return result
-}
-
-async function assertNoTransferInFlight(ports: BackfillPorts) {
-	if ((await ports.countInFlightTransfers()) > 0)
-		throw literal(
-			'TransferInFlight',
-			'asked to write while support transfers are open',
-			'a purchase transfer is INITIATED, VERIFIED or CONFIRMED and has not expired, so it could change a holder mid-run',
-			'a write when no unexpired transfer is in INITIATED, VERIFIED or CONFIRMED.',
-			'wait for the open transfers to finish, be canceled or expire, then rerun the write; the journal resumes',
-			'count PurchaseUserTransfer rows by transferState and expiresAt',
-		)
 }
 
 /** Why a planned move no longer holds, or null when it still does. */
@@ -523,7 +538,7 @@ async function writeRow(
 	move: PlanItem,
 	planHash: string,
 	ports: BackfillPorts,
-): Promise<'moved' | 'resumed' | 'conflict' | 'drift'> {
+): Promise<'moved' | 'resumed' | 'conflict' | 'drift' | 'deferred'> {
 	const payerUserId = move.payerUserId!
 	let outcome: 'moved' | 'resumed' = 'moved'
 	// 0. Re-plan this one customer from fresh facts. The only exception is a
@@ -558,6 +573,10 @@ async function writeRow(
 			holderUserId: move.holderUserId,
 			payerUserId,
 		})
+		// A resumed row can be deferred here too: nothing is journaled, so the
+		// next run resumes it.
+		// A deferral stops here: no Stripe call, no journal entry.
+		if (affected === 'deferred') return 'deferred'
 		if (affected !== 1) {
 			const now = await ports.readCustomerUserId(move.customerId)
 			if (now !== payerUserId) {
@@ -881,6 +900,9 @@ export function parseArgs(argv: readonly string[]): Args {
 
 // ------------------------------------------------------------ main -------
 
+/** A deferral is not a failure: complete-with-deferrals exits 0. */
+export const exitCodeFor = (_output: unknown) => 0
+
 /** Only entrypoint. Importing this module never opens a database or Stripe. */
 async function main() {
 	try {
@@ -897,10 +919,17 @@ async function main() {
 					args.planOut,
 					`${JSON.stringify(plan, null, 2)}\n`,
 				)
+				const open = await ports.inFlightTransferUserIds()
 				output = {
 					mode: 'dry-run',
 					...countPlan(plan),
-					inFlightTransfers: await ports.countInFlightTransfers(),
+					inFlightTransferUsers: open.size,
+					// Moves a write run now would defer, counts only.
+					deferred: plan.filter(
+						(p) =>
+							p.decision === 'move' &&
+							(open.has(p.holderUserId) || open.has(p.payerUserId!)),
+					).length,
 				}
 			} else if (args.mode === 'write') {
 				output = {
@@ -921,6 +950,7 @@ async function main() {
 				}
 			}
 			process.stdout.write(`${JSON.stringify(output)}\n`)
+			process.exitCode = exitCodeFor(output)
 		} finally {
 			await close()
 		}
