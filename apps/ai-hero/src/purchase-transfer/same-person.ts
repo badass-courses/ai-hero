@@ -9,9 +9,11 @@
 import { db } from '@/db'
 import { purchaseTransferSamePerson } from '@/db/schema'
 import {
-	isValidSamePersonEvidence,
+	isSamePersonKind,
+	SAME_PERSON_LIMITS,
 	type InvoiceTransferFact,
 	type SamePersonEvidence,
+	type SamePersonFlag,
 } from '@/lib/invoice-access-rules'
 import { log } from '@/server/logger'
 import { inArray, sql } from 'drizzle-orm'
@@ -26,14 +28,11 @@ export function isMissingTableError(error: unknown): boolean {
 		const candidate = current as {
 			code?: unknown
 			errno?: unknown
-			message?: unknown
 			cause?: unknown
 		}
 		if (
 			candidate.code === 'ER_NO_SUCH_TABLE' ||
-			candidate.errno === 1146 ||
-			(typeof candidate.message === 'string' &&
-				/table .*doesn't exist/i.test(candidate.message))
+			candidate.errno === 1146
 		) {
 			return true
 		}
@@ -43,40 +42,43 @@ export function isMissingTableError(error: unknown): boolean {
 }
 
 /**
- * Evidence by transfer id. Rows that fail validation are dropped, so a
- * malformed row is no flag. A missing table returns an empty map and logs
- * once per process.
+ * Same-person flags by transfer id, for readers. Reads only the transfer id
+ * and `verifiedBy`; `reason` and `proofRef` are checked in the query and never
+ * leave the database. The check mirrors `isValidSamePersonEvidence`: trimmed
+ * reason 1 to 1000 characters, trimmed proofRef 1 to 255 with no `@`. A row
+ * that fails it is no flag. A missing table returns an empty map and logs once
+ * per process.
  */
-export async function loadSamePersonEvidence(
+export async function loadSamePersonFlags(
 	transferIds: string[],
-): Promise<Map<string, SamePersonEvidence>> {
-	const evidence = new Map<string, SamePersonEvidence>()
-	if (transferIds.length === 0) return evidence
+): Promise<Map<string, SamePersonFlag>> {
+	const flags = new Map<string, SamePersonFlag>()
+	if (transferIds.length === 0) return flags
+	const t = purchaseTransferSamePerson
 	let rows
 	try {
 		rows = await db
-			.select()
-			.from(purchaseTransferSamePerson)
-			.where(inArray(purchaseTransferSamePerson.transferId, transferIds))
+			.select({
+				transferId: t.transferId,
+				verifiedBy: t.verifiedBy,
+				evidenceOk: sql<number>`(CHAR_LENGTH(TRIM(${t.reason})) BETWEEN 1 AND ${SAME_PERSON_LIMITS.reason} AND CHAR_LENGTH(TRIM(${t.proofRef})) BETWEEN 1 AND ${SAME_PERSON_LIMITS.proofRef} AND INSTR(${t.proofRef}, '@') = 0)`,
+			})
+			.from(t)
+			.where(inArray(t.transferId, transferIds))
 	} catch (error) {
 		if (!isMissingTableError(error)) throw error
 		if (!missingTableLogged) {
 			missingTableLogged = true
 			await log.error('purchase_transfer.same_person_table_missing', {})
 		}
-		return evidence
+		return flags
 	}
 	for (const row of rows) {
-		const candidate = {
-			verifiedBy: row.verifiedBy,
-			reason: row.reason,
-			proofRef: row.proofRef,
-		}
-		if (isValidSamePersonEvidence(candidate)) {
-			evidence.set(row.transferId, candidate)
+		if (Number(row.evidenceOk) === 1 && isSamePersonKind(row.verifiedBy)) {
+			flags.set(row.transferId, { verifiedBy: row.verifiedBy })
 		}
 	}
-	return evidence
+	return flags
 }
 
 type CompletedTransferRow = {
@@ -92,7 +94,7 @@ type CompletedTransferRow = {
 export async function toTransferFacts(
 	rows: CompletedTransferRow[],
 ): Promise<InvoiceTransferFact[]> {
-	const evidence = await loadSamePersonEvidence(rows.map((row) => row.id))
+	const flags = await loadSamePersonFlags(rows.map((row) => row.id))
 	return rows.map((row) => ({
 		id: row.id,
 		state: row.transferState,
@@ -100,7 +102,7 @@ export async function toTransferFacts(
 		targetUserId: row.targetUserId,
 		completedAt: row.completedAt,
 		createdAt: row.createdAt,
-		samePerson: evidence.get(row.id) ?? null,
+		samePerson: flags.get(row.id) ?? null,
 	}))
 }
 

@@ -13,11 +13,12 @@ import {
 } from '@/purchase-transfer/transfer-outbox'
 import {
 	isValidSamePersonEvidence,
+	orderCompletedTransfers,
 	resolveInvoicePayer,
 	type SamePersonEvidence,
 } from '@/lib/invoice-access-rules'
 import {
-	loadSamePersonEvidence,
+	loadSamePersonFlags,
 	recordSamePersonEvidence,
 	samePersonTableExists,
 	toTransferFacts,
@@ -268,12 +269,18 @@ async function loadGuardedContext(input: SupportCompleteInput) {
 		if (!(await samePersonTableExists())) {
 			return { ok: false as const, reason: 'same_person_table_missing' }
 		}
-		// Only the INITIATED claim writes the flag. A transfer past it must
-		// already carry the same flag, or the request would record nothing.
+		// Same-person moves apply in dated order. One undated completed
+		// transfer makes the order unknowable, so the flag could not move
+		// anything: refuse instead of recording a flag that does nothing.
+		if (orderCompletedTransfers(completedTransfers) === null) {
+			return { ok: false as const, reason: 'same_person_order_unknown' }
+		}
+		// Only the INITIATED claim writes the flag. A transfer past it is
+		// resumed against the row already recorded, which stays authoritative:
+		// evidence in a resumed request is not compared and not rewritten. With
+		// no recorded row, the request would record nothing, so refuse.
 		if (transfer.transferState !== 'INITIATED') {
-			const [recorded] = (
-				await loadSamePersonEvidence([transfer.id])
-			).values()
+			const [recorded] = (await loadSamePersonFlags([transfer.id])).values()
 			if (!recorded) {
 				return {
 					ok: false as const,
@@ -292,7 +299,9 @@ async function loadGuardedContext(input: SupportCompleteInput) {
 				sourceUserId: sourceUser.id,
 				targetUserId: targetUser.id,
 				completedAt: new Date(),
-				samePerson: input.samePerson ?? null,
+				samePerson: input.samePerson
+					? { verifiedBy: input.samePerson.verifiedBy }
+					: null,
 			},
 		],
 	})

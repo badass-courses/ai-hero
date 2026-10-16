@@ -24,7 +24,12 @@ vi.mock('@/db', () => ({
 	},
 }))
 vi.mock('@/db/schema', () => ({
-	purchaseTransferSamePerson: { transferId: 'samePerson.transferId' },
+	purchaseTransferSamePerson: {
+		transferId: 'samePerson.transferId',
+		verifiedBy: 'samePerson.verifiedBy',
+		reason: 'samePerson.reason',
+		proofRef: 'samePerson.proofRef',
+	},
 	merchantCharge: {
 		id: 'charge.id',
 		userId: 'charge.userId',
@@ -55,6 +60,7 @@ vi.mock('drizzle-orm', () => ({
 	isNotNull: (value: unknown) => ['isNotNull', value],
 	isNull: (value: unknown) => ['isNull', value],
 	or: (...values: unknown[]) => ['or', ...values],
+	sql: (...values: unknown[]) => values,
 }))
 
 import { getInvoicePurchasesForUser } from './invoice-access'
@@ -170,11 +176,11 @@ describe('invoice purchase access', () => {
 				createdAt: new Date('2026-09-24T00:00:00Z'),
 			},
 		]
+		// The reader query returns the id, the kind and a SQL verdict.
 		const evidence = {
 			transferId: 't1',
 			verifiedBy: 'owner-mailbox-both',
-			reason: 'Support confirmed both mailboxes',
-			proofRef: 'proof-1',
+			evidenceOk: 1,
 		}
 		const arrange = () => {
 			mocks.findTransfers.mockResolvedValue(sameTransfer)
@@ -215,9 +221,9 @@ describe('invoice purchase access', () => {
 			expect((await getInvoicePurchasesForUser('acct-a2'))[0]?.canEdit).toBe(false)
 		})
 
-		it('evidence with a blank proof is no flag', async () => {
+		it('a row whose reason or proof fails the SQL check is no flag', async () => {
 			arrange()
-			mocks.samePersonRows.mockResolvedValue([{ ...evidence, proofRef: '' }])
+			mocks.samePersonRows.mockResolvedValue([{ ...evidence, evidenceOk: 0 }])
 			expect((await getInvoicePurchasesForUser('acct-a'))[0]?.canEdit).toBe(true)
 		})
 	})

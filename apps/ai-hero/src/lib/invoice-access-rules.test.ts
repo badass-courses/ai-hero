@@ -5,7 +5,9 @@ import {
 	canEditInvoice,
 	canViewInvoice,
 	invoiceDisplayAmount,
+	isSamePersonKind,
 	isValidSamePersonEvidence,
+	orderCompletedTransfers,
 	invoiceListView,
 	pickOriginTransfer,
 	resolveInvoicePayer,
@@ -586,11 +588,8 @@ describe('resolveInvoicePayer', () => {
 
 describe('resolveInvoicePayer with same-person transfers', () => {
 	const at = (month: number) => new Date(Date.UTC(2026, month, 1))
-	const good = {
-		verifiedBy: 'owner-mailbox-both' as const,
-		reason: 'Support confirmed both mailboxes',
-		proofRef: 'proof-1',
-	}
+	// Readers only ever see the flag, never reason or proofRef.
+	const good = { verifiedBy: 'owner-mailbox-both' as const }
 	const hop = (
 		id: string,
 		source: string,
@@ -624,12 +623,10 @@ describe('resolveInvoicePayer with same-person transfers', () => {
 		['absent', undefined, false],
 		['null', null, false],
 		['owner-mailbox-both', good, true],
-		['same-stripe-customer', { ...good, verifiedBy: 'same-stripe-customer' }, true],
-		['missing verifiedBy', { reason: 'r', proofRef: 'p' }, false],
-		['unknown verifiedBy (matching emails)', { ...good, verifiedBy: 'matching-emails' }, false],
-		['blank reason', { ...good, reason: '   ' }, false],
-		['empty proofRef', { ...good, proofRef: '' }, false],
-		['non-string proofRef', { ...good, proofRef: 7 }, false],
+		['same-stripe-customer', { verifiedBy: 'same-stripe-customer' }, true],
+		['missing verifiedBy', {}, false],
+		['unknown verifiedBy (matching emails)', { verifiedBy: 'matching-emails' }, false],
+		['non-string verifiedBy', { verifiedBy: 7 }, false],
 	]
 
 	describe.each(shapes)('$name', (shape) => {
@@ -740,9 +737,11 @@ describe('resolveInvoicePayer with same-person transfers', () => {
 					...hop(`t${k}`, users[rand(4)]!, users[rand(4)]!, rand(12)),
 					state: states[rand(4)]!,
 					// Flags that carry no valid evidence must not matter either.
-					samePerson: ([undefined, null, { ...good, reason: '' }] as const)[
-						rand(3)
-					] as InvoiceTransferFact['samePerson'],
+					// Undated rows and flags of an unknown kind must not matter either.
+					...(rand(4) === 0 ? { completedAt: undefined, createdAt: undefined } : {}),
+					samePerson: (
+						[undefined, null, { verifiedBy: 'matching-emails' }, {}] as const
+					)[rand(4)] as InvoiceTransferFact['samePerson'],
 				}),
 			)
 			const charge = [null, ...users][rand(5)] ?? null
@@ -803,7 +802,7 @@ describe('resolveInvoicePayer with same-person transfers', () => {
 			'same-person hop ignores the payer chain': ({ chargeUserId, transfers }) => {
 				let payer = rule439(chargeUserId ?? null, transfers)
 				for (const t of transfers)
-					if (isValidSamePersonEvidence(t.samePerson)) payer = t.targetUserId ?? payer
+					if (isSamePersonKind(t.samePerson?.verifiedBy)) payer = t.targetUserId ?? payer
 				return payer
 			},
 		}
@@ -827,11 +826,7 @@ describe('every payer reader agrees on a same-person move', () => {
 			targetUserId: 'A2',
 			completedAt: at(1),
 			createdAt: at(1),
-			samePerson: {
-				verifiedBy: 'owner-mailbox-both',
-				reason: 'Support confirmed both mailboxes',
-				proofRef: 'proof-1',
-			},
+			samePerson: { verifiedBy: 'owner-mailbox-both' },
 		},
 	]
 	const unflagged = [{ ...transfers[0]!, samePerson: null }]
@@ -875,5 +870,71 @@ describe('every payer reader agrees on a same-person move', () => {
 				transfer: pickOriginTransfer(transfers),
 			}),
 		).toBe(true)
+	})
+})
+
+
+describe('isValidSamePersonEvidence limits', () => {
+	const ok = {
+		verifiedBy: 'owner-mailbox-both',
+		reason: 'Support confirmed both mailboxes',
+		proofRef: 'proof-1',
+	}
+	it.each([
+		['valid', ok, true],
+		['same-stripe-customer', { ...ok, verifiedBy: 'same-stripe-customer' }, true],
+		['reason at 1000', { ...ok, reason: 'r'.repeat(1000) }, true],
+		['reason at 1001', { ...ok, reason: 'r'.repeat(1001) }, false],
+		['reason 1000 plus padding trims to 1000', { ...ok, reason: ` ${'r'.repeat(1000)} ` }, true],
+		['proofRef at 255', { ...ok, proofRef: 'p'.repeat(255) }, true],
+		['proofRef at 256', { ...ok, proofRef: 'p'.repeat(256) }, false],
+		['proofRef with an email', { ...ok, proofRef: 'ticket for a@example.test' }, false],
+		['proofRef with a bare @', { ...ok, proofRef: 'a@b' }, false],
+		['blank reason', { ...ok, reason: '   ' }, false],
+		['empty proofRef', { ...ok, proofRef: '' }, false],
+		['non-string proofRef', { ...ok, proofRef: 7 }, false],
+		['unknown verifiedBy', { ...ok, verifiedBy: 'matching-emails' }, false],
+		['missing verifiedBy', { reason: 'r', proofRef: 'p' }, false],
+		['null', null, false],
+	])('%s', (_name, evidence, valid) => {
+		expect(isValidSamePersonEvidence(evidence)).toBe(valid)
+	})
+})
+
+describe('one ordering for the origin and the payer walk', () => {
+	const t = (id: string, month: number | null): InvoiceTransferFact => ({
+		id,
+		state: 'COMPLETED',
+		sourceUserId: `s-${id}`,
+		targetUserId: `t-${id}`,
+		...(month === null
+			? {}
+			: { completedAt: new Date(Date.UTC(2026, month, 1)) }),
+	})
+	it('orders by completedAt, then createdAt, then id', () => {
+		const withCreated: InvoiceTransferFact = {
+			...t('c', null),
+			createdAt: new Date(Date.UTC(2026, 3, 1)),
+		}
+		const ordered = orderCompletedTransfers([
+			t('b', 2),
+			withCreated,
+			t('z', 1),
+			t('a', 2),
+		])!
+		expect(ordered.map((x) => x.id)).toEqual(['z', 'a', 'b', 'c'])
+		expect(pickOriginTransfer([t('b', 2), withCreated, t('z', 1)])?.id).toBe('z')
+	})
+	it('any undated completed transfer makes both unknowable', () => {
+		const list = [t('a', 1), t('b', null)]
+		expect(orderCompletedTransfers(list)).toBeNull()
+		expect(pickOriginTransfer(list)).toBeNull()
+	})
+	it('ignores non-COMPLETED transfers, dated or not', () => {
+		expect(
+			orderCompletedTransfers([{ ...t('a', null), state: 'INITIATED' }, t('b', 1)])!.map(
+				(x) => x.id,
+			),
+		).toEqual(['b'])
 	})
 })

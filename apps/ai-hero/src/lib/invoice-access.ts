@@ -32,11 +32,6 @@ export async function getCompletedTransfersForPurchase(
 	return toTransferFacts(transfers)
 }
 
-/** The earliest completed transfer for a purchase: its source paid. */
-export async function getOriginTransferForPurchase(purchaseId: string) {
-	return pickOriginTransfer(await getCompletedTransfersForPurchase(purchaseId))
-}
-
 async function getCompletedTransfersByPurchase(purchaseIds: string[]) {
 	const byPurchase = new Map<string, InvoiceTransferFact[]>()
 	if (purchaseIds.length === 0) return byPurchase
@@ -93,9 +88,14 @@ export async function getInvoicePurchasesForUser(
 	// holder who never paid as their source. One query covers every candidate.
 	const candidateIds = [...new Set(sourceTransfers.map((t) => t.purchaseId))]
 	const candidateTransfers = await getCompletedTransfersByPurchase(candidateIds)
+	// This is the second transfer query for the same purchases: the one above
+	// only finds candidates by source (cheap, column-limited); this one loads
+	// the full chains so the payer can be resolved with same-person flags.
 	const originPurchaseIds = candidateIds.filter((id) => {
 		const transfers = candidateTransfers.get(id) ?? []
 		return (
+			// The original payer keeps the purchase in their list after a move,
+			// even once a same-person hop made someone else the payer.
 			pickOriginTransfer(transfers)?.sourceUserId === userId ||
 			resolveInvoicePayer({ chargeUserId: null, transfers }) === userId
 		)

@@ -24,11 +24,22 @@ export const SAME_PERSON_VERIFIED_BY = [
 	'same-stripe-customer',
 ] as const
 
+export const SAME_PERSON_LIMITS = { reason: 1000, proofRef: 255 } as const
+
+export type SamePersonKind = (typeof SAME_PERSON_VERIFIED_BY)[number]
+
+/** What support sends and the writer stores. Readers never see it. */
 export type SamePersonEvidence = {
-	verifiedBy: (typeof SAME_PERSON_VERIFIED_BY)[number]
+	verifiedBy: SamePersonKind
 	reason: string
 	proofRef: string
 }
+
+/**
+ * What a reader gets: only that evidence exists and which kind. `reason` and
+ * `proofRef` stay with the writer and never travel in a transfer fact.
+ */
+export type SamePersonFlag = { verifiedBy: SamePersonKind }
 
 export type InvoiceTransferFact = {
 	id?: string
@@ -38,53 +49,81 @@ export type InvoiceTransferFact = {
 	targetUserId?: string | null
 	completedAt?: Date | null
 	createdAt?: Date | null
-	// Same-person evidence recorded with this transfer. Only support-complete
-	// writes it. Anything that fails `isValidSamePersonEvidence` is ignored.
-	samePerson?: SamePersonEvidence | null
+	// Set only when valid same-person evidence is recorded for this transfer.
+	// Only support-complete writes it.
+	samePerson?: SamePersonFlag | null
+}
+
+export function isSamePersonKind(value: unknown): value is SamePersonKind {
+	return (
+		typeof value === 'string' &&
+		(SAME_PERSON_VERIFIED_BY as readonly string[]).includes(value)
+	)
+}
+
+function isSamePersonFlag(value: unknown): value is SamePersonFlag {
+	return (
+		!!value &&
+		typeof value === 'object' &&
+		isSamePersonKind((value as { verifiedBy?: unknown }).verifiedBy)
+	)
 }
 
 /**
  * Evidence counts only when it names a known verification kind and carries a
- * non-blank reason and proof reference. A flag without evidence is no flag.
+ * non-blank reason (at most 1000 characters) and proof reference (at most 255,
+ * and no `@`, so no email lands in a durable column). Lengths are of the
+ * trimmed value. A flag without evidence is no flag.
  */
 export function isValidSamePersonEvidence(
 	evidence: unknown,
 ): evidence is SamePersonEvidence {
 	if (!evidence || typeof evidence !== 'object') return false
 	const { verifiedBy, reason, proofRef } = evidence as Record<string, unknown>
+	if (!isSamePersonKind(verifiedBy)) return false
+	if (typeof reason !== 'string' || typeof proofRef !== 'string') return false
+	const trimmedReason = reason.trim()
+	const trimmedProof = proofRef.trim()
 	return (
-		typeof verifiedBy === 'string' &&
-		(SAME_PERSON_VERIFIED_BY as readonly string[]).includes(verifiedBy) &&
-		typeof reason === 'string' &&
-		reason.trim().length > 0 &&
-		typeof proofRef === 'string' &&
-		proofRef.trim().length > 0
+		trimmedReason.length > 0 &&
+		trimmedReason.length <= SAME_PERSON_LIMITS.reason &&
+		trimmedProof.length > 0 &&
+		trimmedProof.length <= SAME_PERSON_LIMITS.proofRef &&
+		!trimmedProof.includes('@')
 	)
+}
+
+/**
+ * The COMPLETED transfers oldest first (`completedAt`, else `createdAt`, then
+ * id), or null when any has no timestamp: the order is then unknowable. The
+ * one ordering `pickOriginTransfer` and `resolveInvoicePayer` both use.
+ */
+export function orderCompletedTransfers(
+	transfers: InvoiceTransferFact[],
+): InvoiceTransferFact[] | null {
+	const completed = transfers.filter(
+		(transfer) => transfer.state === 'COMPLETED',
+	)
+	const stamp = (transfer: InvoiceTransferFact) =>
+		(transfer.completedAt ?? transfer.createdAt)?.getTime()
+	if (completed.some((transfer) => stamp(transfer) === undefined)) return null
+	return completed.sort((a, b) => {
+		const delta = stamp(a)! - stamp(b)!
+		if (delta !== 0) return delta
+		return (a.id ?? '') < (b.id ?? '') ? -1 : (a.id ?? '') > (b.id ?? '') ? 1 : 0
+	})
 }
 
 /**
  * Picks the transfer that started the chain: the earliest COMPLETED one.
  * Its source is the original payer. Later hops (A to B to C) name B as a
- * source, but B only held the purchase and never paid.
+ * source, but B only held the purchase and never paid. Without any
+ * timestamp the order is unknowable, so name no origin rather than guess.
  */
 export function pickOriginTransfer(
 	transfers: InvoiceTransferFact[],
 ): InvoiceTransferFact | null {
-	const completed = transfers.filter(
-		(transfer) => transfer.state === 'COMPLETED',
-	)
-	if (completed.length === 0) return null
-	// completedAt, then createdAt, then id. Without any timestamp the order
-	// is unknowable, so name no origin rather than guess.
-	const stamp = (transfer: InvoiceTransferFact) =>
-		(transfer.completedAt ?? transfer.createdAt)?.getTime()
-	if (completed.some((transfer) => stamp(transfer) === undefined)) return null
-	return completed.reduce((first, next) => {
-		const a = stamp(next)!
-		const b = stamp(first)!
-		if (a !== b) return a < b ? next : first
-		return (next.id ?? '') < (first.id ?? '') ? next : first
-	})
+	return orderCompletedTransfers(transfers)?.[0] ?? null
 }
 
 /**
@@ -119,10 +158,10 @@ export function canViewInvoice({
  *
  * Start from the #439 rule: the source of the earliest completed transfer,
  * else `MerchantCharge.userId`. Then walk the completed transfers oldest
- * first. A transfer with valid same-person evidence whose source is the
- * current payer moves the payer to its target. Every other transfer, flagged
- * or not, leaves the payer alone: a same-person hop by someone who never
- * paid (A to B, then B to B') does not follow the payer chain.
+ * first. A transfer with a same-person flag whose source is the current payer
+ * moves the payer to its target. Every other transfer, flagged or not, leaves
+ * the payer alone: a same-person hop by someone who never paid (A to B, then
+ * B to B') does not follow the payer chain.
  *
  * With any undated completed transfer the order is unknowable, so no
  * same-person move applies, exactly as no origin is named. Null when nothing
@@ -137,19 +176,9 @@ export function resolveInvoicePayer({
 }): string | null {
 	let payer = pickOriginTransfer(transfers)?.sourceUserId ?? chargeUserId ?? null
 	if (!payer) return null
-	const completed = transfers.filter(
-		(transfer) => transfer.state === 'COMPLETED',
-	)
-	const stamp = (transfer: InvoiceTransferFact) =>
-		(transfer.completedAt ?? transfer.createdAt)?.getTime()
-	if (completed.some((transfer) => stamp(transfer) === undefined)) return payer
-	const ordered = [...completed].sort(
-		(a, b) =>
-			stamp(a)! - stamp(b)! || ((a.id ?? '') < (b.id ?? '') ? -1 : (a.id ?? '') > (b.id ?? '') ? 1 : 0),
-	)
-	for (const transfer of ordered) {
+	for (const transfer of orderCompletedTransfers(transfers) ?? []) {
 		if (
-			isValidSamePersonEvidence(transfer.samePerson) &&
+			isSamePersonFlag(transfer.samePerson) &&
 			transfer.targetUserId &&
 			transfer.sourceUserId === payer
 		) {

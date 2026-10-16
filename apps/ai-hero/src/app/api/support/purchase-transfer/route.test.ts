@@ -21,6 +21,8 @@ vi.mock('@/purchase-transfer/support-initiate', () => ({
 vi.mock('@/server/logger', () => ({ log: { info: mocks.info } }))
 vi.mock('@/server/with-skill', () => ({ withSkill: (handler: unknown) => handler }))
 
+import { SUPPORT_TRANSFER_REFUSAL_PROMPTS } from '@/purchase-transfer/refusal-prompts'
+
 import { POST } from './route'
 
 const payload = {
@@ -160,6 +162,9 @@ describe('support transfer endpoint', () => {
 			['blank reason', { ...samePerson, reason: ' ' }],
 			['empty proofRef', { ...samePerson, proofRef: '' }],
 			['unknown verifiedBy', { ...samePerson, verifiedBy: 'matching-emails' }],
+			['reason over 1000', { ...samePerson, reason: 'r'.repeat(1001) }],
+			['proofRef over 255', { ...samePerson, proofRef: 'p'.repeat(256) }],
+			['proofRef with an email', { ...samePerson, proofRef: 'a@example.test' }],
 			['null', null],
 			['true', true],
 		])('refuses %s with a literal prompt and no transfer logic', async (_n, bad) => {
@@ -204,6 +209,79 @@ describe('support transfer endpoint', () => {
 			expect(mocks.inspectCompletion).toHaveBeenCalledWith(
 				expect.objectContaining({ samePerson }),
 			)
+		})
+	})
+
+	describe('refusals carry a literal prompt', () => {
+		const reasons = Object.keys(SUPPORT_TRANSFER_REFUSAL_PROMPTS)
+		it.each(reasons)('409 %s returns reason and its prompt as error', async (reason) => {
+			vi.resetAllMocks()
+			mocks.verify.mockReturnValue({ valid: true })
+			mocks.complete.mockResolvedValue({ state: 'blocked', reason })
+			const response = await POST(
+				request({ ...payload, mode: 'support_complete', transferId: 'transfer-1' }),
+			)
+			const body = await response.json()
+			expect(response.status).toBe(409)
+			expect(body).toEqual({
+				state: 'blocked',
+				reason,
+				error: SUPPORT_TRANSFER_REFUSAL_PROMPTS[reason as keyof typeof SUPPORT_TRANSFER_REFUSAL_PROMPTS],
+			})
+		})
+
+		it.each(['same_person_table_missing', 'same_person_source_not_payer', 'same_person_order_unknown', 'same_person_cannot_be_added_after_claim', 'move_would_change_invoice_payer'])(
+			'%s is a 409 with the exact prompt',
+			async (reason) => {
+				vi.resetAllMocks()
+				mocks.verify.mockReturnValue({ valid: true })
+				mocks.complete.mockResolvedValue({ state: 'blocked', reason })
+				const response = await POST(
+					request({ ...payload, mode: 'support_complete', transferId: 'transfer-1' }),
+				)
+				expect(response.status).toBe(409)
+				const body = await response.json()
+				expect(body.error).toBe(
+					SUPPORT_TRANSFER_REFUSAL_PROMPTS[reason as keyof typeof SUPPORT_TRANSFER_REFUSAL_PROMPTS],
+				)
+				expect(body.error).toMatch(/^Refused: /)
+			},
+		)
+
+		it('a pending 202 also carries its prompt', async () => {
+			vi.resetAllMocks()
+			mocks.verify.mockReturnValue({ valid: true })
+			mocks.complete.mockResolvedValue({
+				state: 'completion_pending',
+				transferId: 'transfer-1',
+				reason: 'event_publish_failed',
+			})
+			const response = await POST(
+				request({ ...payload, mode: 'support_complete', transferId: 'transfer-1' }),
+			)
+			expect(response.status).toBe(202)
+			expect((await response.json()).error).toBe(
+				SUPPORT_TRANSFER_REFUSAL_PROMPTS.event_publish_failed,
+			)
+		})
+
+		it('limits are in the 400 prompt for malformed evidence', async () => {
+			vi.resetAllMocks()
+			mocks.verify.mockReturnValue({ valid: true })
+			const response = await POST(
+				request({
+					...payload,
+					mode: 'support_complete',
+					transferId: 'transfer-1',
+					samePerson: {
+						verifiedBy: 'owner-mailbox-both',
+						reason: 'r',
+						proofRef: 'ticket for a@example.test',
+					},
+				}),
+			)
+			expect(response.status).toBe(400)
+			expect((await response.json()).error).toContain('255')
 		})
 	})
 })

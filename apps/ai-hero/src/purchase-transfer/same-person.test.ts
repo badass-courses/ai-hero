@@ -4,22 +4,31 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
 	rows: vi.fn(),
+	selectedShape: vi.fn(),
 	logError: vi.fn(),
 	inserts: [] as Array<Record<string, unknown>>,
 }))
 
 vi.mock('@/db', () => ({
 	db: {
-		select: () => ({
+		select: (shape?: unknown) => {
+			mocks.selectedShape(shape)
+			return {
 			from: () => ({
 				where: mocks.rows,
 				limit: mocks.rows,
 			}),
-		}),
+			}
+		},
 	},
 }))
 vi.mock('@/db/schema', () => ({
-	purchaseTransferSamePerson: { transferId: 'samePerson.transferId' },
+	purchaseTransferSamePerson: {
+		transferId: 'samePerson.transferId',
+		verifiedBy: 'samePerson.verifiedBy',
+		reason: 'samePerson.reason',
+		proofRef: 'samePerson.proofRef',
+	},
 }))
 vi.mock('@/server/logger', () => ({ log: { error: mocks.logError } }))
 vi.mock('drizzle-orm', () => ({
@@ -29,7 +38,7 @@ vi.mock('drizzle-orm', () => ({
 
 import {
 	isMissingTableError,
-	loadSamePersonEvidence,
+	loadSamePersonFlags,
 	recordSamePersonEvidence,
 	samePersonTableExists,
 	toTransferFacts,
@@ -42,11 +51,12 @@ const missingTable = Object.assign(new Error('Failed query'), {
 	}),
 })
 
+// What the reader query returns: the transfer id, the kind and a verdict on
+// reason and proofRef computed in SQL. The text itself never comes back.
 const row = (over: Record<string, unknown> = {}) => ({
 	transferId: 't1',
 	verifiedBy: 'owner-mailbox-both',
-	reason: 'Support confirmed both mailboxes',
-	proofRef: 'proof-1',
+	evidenceOk: 1,
 	...over,
 })
 
@@ -55,27 +65,36 @@ describe('same-person evidence reader', () => {
 		vi.resetAllMocks()
 	})
 
-	it('returns valid evidence by transfer id', async () => {
+	it('returns the flag by transfer id: only the kind, no reason or proofRef', async () => {
 		mocks.rows.mockResolvedValue([row()])
-		const evidence = await loadSamePersonEvidence(['t1'])
-		expect(evidence.get('t1')).toEqual({
-			verifiedBy: 'owner-mailbox-both',
-			reason: 'Support confirmed both mailboxes',
-			proofRef: 'proof-1',
-		})
+		const flags = await loadSamePersonFlags(['t1'])
+		expect(flags.get('t1')).toEqual({ verifiedBy: 'owner-mailbox-both' })
+		expect(Object.keys(flags.get('t1')!)).toEqual(['verifiedBy'])
 	})
 
-	it('drops rows that fail validation: a malformed row is no flag', async () => {
+	it('selects only the transfer id, the kind and the SQL verdict, never reason or proofRef', async () => {
+		mocks.rows.mockResolvedValue([])
+		await loadSamePersonFlags(['t1'])
+		const shape = mocks.selectedShape.mock.calls[0]?.[0] as Record<string, unknown>
+		expect(Object.keys(shape).sort()).toEqual(['evidenceOk', 'transferId', 'verifiedBy'])
+	})
+
+	it('drops rows that fail the verdict or name an unknown kind: a malformed row is no flag', async () => {
 		mocks.rows.mockResolvedValue([
-			row({ transferId: 't1', reason: ' ' }),
+			row({ transferId: 't1', evidenceOk: 0 }),
 			row({ transferId: 't2', verifiedBy: 'matching-emails' }),
-			row({ transferId: 't3', proofRef: '' }),
+			row({ transferId: 't3', evidenceOk: null }),
 		])
-		expect((await loadSamePersonEvidence(['t1', 't2', 't3'])).size).toBe(0)
+		expect((await loadSamePersonFlags(['t1', 't2', 't3'])).size).toBe(0)
+	})
+
+	it('accepts the verdict as a string from the driver', async () => {
+		mocks.rows.mockResolvedValue([row({ evidenceOk: '1' })])
+		expect((await loadSamePersonFlags(['t1'])).size).toBe(1)
 	})
 
 	it('does not query for no transfers', async () => {
-		await loadSamePersonEvidence([])
+		await loadSamePersonFlags([])
 		expect(mocks.rows).not.toHaveBeenCalled()
 	})
 
@@ -97,18 +116,21 @@ describe('same-person evidence reader', () => {
 
 	it('logs the missing table once per process, not per page view', async () => {
 		mocks.rows.mockRejectedValue(missingTable)
-		await loadSamePersonEvidence(['t1'])
-		await loadSamePersonEvidence(['t2'])
+		await loadSamePersonFlags(['t1'])
+		await loadSamePersonFlags(['t2'])
 		expect(mocks.logError.mock.calls.length).toBeLessThanOrEqual(1)
 	})
 
 	it('rethrows any other database error', async () => {
 		mocks.rows.mockRejectedValue(new Error('connection reset'))
-		await expect(loadSamePersonEvidence(['t1'])).rejects.toThrow('connection reset')
+		await expect(loadSamePersonFlags(['t1'])).rejects.toThrow('connection reset')
 	})
 
-	it('recognizes a missing table through wrapped causes only', () => {
+	it('recognizes a missing table by code or errno through wrapped causes, never by message', () => {
 		expect(isMissingTableError(missingTable)).toBe(true)
+		expect(isMissingTableError({ errno: 1146 })).toBe(true)
+		expect(isMissingTableError({ code: 'ER_NO_SUCH_TABLE' })).toBe(true)
+		expect(isMissingTableError(new Error("Table 'x' doesn't exist"))).toBe(false)
 		expect(isMissingTableError(new Error('connection reset'))).toBe(false)
 		expect(isMissingTableError(null)).toBe(false)
 	})
@@ -169,6 +191,22 @@ describe('only support-complete may write evidence', () => {
 					? [path]
 					: []
 		})
+	it('only the support endpoint imports the support-complete entry points', () => {
+		const offenders = walk(join(__dirname, '..'))
+			.filter(
+				(file) =>
+					!/purchase-transfer\/support-complete\.ts$/.test(file) &&
+					!/api\/support\/purchase-transfer\/route\.ts$/.test(file),
+			)
+			.filter((file) => {
+				const source = readFileSync(file, 'utf8')
+				return /completeSupportPurchaseTransfer|SupportCompleteInput|inspectSupportPurchaseTransferCompletion/.test(
+					source,
+				)
+			})
+		expect(offenders).toEqual([])
+	})
+
 	it('no other source file imports the writer or the table', () => {
 		const offenders = walk(join(__dirname, '..'))
 			.filter((file) => !/purchase-transfer\/(support-complete|same-person)\.ts$/.test(file))

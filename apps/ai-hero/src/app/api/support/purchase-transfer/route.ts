@@ -10,6 +10,7 @@ import {
 	initiateSupportPurchaseTransfer,
 	inspectSupportPurchaseTransfer,
 } from '@/purchase-transfer/support-initiate'
+import { supportTransferRefusalPrompt } from '@/purchase-transfer/refusal-prompts'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
 import { z } from 'zod'
@@ -42,8 +43,9 @@ const requestSchema = z.object({
 	}).strict(),
 }).strict()
 
-const SAME_PERSON_PROMPT =
-	"samePerson needs verifiedBy ('owner-mailbox-both' or 'same-stripe-customer'), a reason and a proofRef, all non-blank. Add all three or remove samePerson."
+const SAME_PERSON_PROMPT = supportTransferRefusalPrompt(
+	'same_person_evidence_invalid',
+)
 
 export const POST = withSkill(async (request: NextRequest) => {
 	if (!env.SUPPORT_WEBHOOK_SECRET) {
@@ -148,13 +150,22 @@ export const POST = withSkill(async (request: NextRequest) => {
 			{
 				state: result.state,
 				transferId: result.transferId,
-				...('reason' in result ? { reason: result.reason } : {}),
+				...('reason' in result
+					? {
+							reason: result.reason,
+							error: supportTransferRefusalPrompt(result.reason),
+						}
+					: {}),
 			},
 			{ status: 202 },
 		)
 	}
 	return NextResponse.json(
-		{ state: result.state, reason: result.reason },
+		{
+			state: result.state,
+			reason: result.reason,
+			error: supportTransferRefusalPrompt(result.reason),
+		},
 		{ status: 409 },
 	)
 })
