@@ -919,6 +919,19 @@ async function deferModel(mod: Backfill): Promise<string[]> {
 	)
 	if (batched.result.moved !== 2)
 		violations.push('deferred row counted toward the batch')
+	const batchedAtWrite = await run(
+		[plain, holderC, plain, plain],
+		(w, ports) => {
+			const load = ports.loadCustomerFacts
+			ports.loadCustomerFacts = async (id) => {
+				if (id === 'mcu-1') w.openUsers.add(userC.id)
+				return load(id)
+			}
+		},
+		2,
+	)
+	if (batchedAtWrite.result.moved !== 2)
+		violations.push('at-write deferral counted toward the batch')
 	return violations
 }
 
@@ -948,6 +961,12 @@ const runtimeSql = (rt: Runtime) => async () => {
 		)
 	)
 		violations.push(`update is not compare-and-set: ${update.sql}`)
+	const scoped = (column: string) =>
+		update.sql.toLowerCase().includes(`\`${column.toLowerCase()}\` in (?, ?)`)
+	if (!scoped('sourceUserId') || !scoped('targetUserId'))
+		violations.push(
+			`update does not scope by both transfer users: ${update.sql}`,
+		)
 	if (!/transferState/i.test(update.sql))
 		violations.push(`update has no open-transfer check: ${update.sql}`)
 	return violations
@@ -1189,7 +1208,45 @@ describe('runWrite', () => {
 		expect(result.status).toBe('batch-complete')
 		expect(result.moved).toBe(2)
 		expect(result.deferred).toBe(1)
+		// The unprocessed row and the deferred row are both still pending.
+		expect(result.remaining).toBe(2)
 		expect(movedIds(world)).toEqual(['mcu-1', 'mcu-2'])
+	})
+
+	it('an at-write deferral inside --batch 2 does not spend the batch', async () => {
+		const shape = rowsWith(plain, holderC, plain, plain)
+		const world = newWorld(4, shape)
+		const planHash = await planHashFor(backfill, 4, userA.name, shape)
+		const ports = portsFor(world, 4)
+		const load = ports.loadCustomerFacts
+		ports.loadCustomerFacts = async (id) => {
+			if (id === 'mcu-1') world.openUsers.add(userC.id)
+			return load(id)
+		}
+		const result = await backfill.runWrite(
+			{ ...approve, planHash, batch: 2 },
+			ports,
+		)
+		expect(result).toMatchObject({
+			status: 'batch-complete',
+			moved: 2,
+			deferred: 1,
+			deferredBy: { beforeRow: 0, atWrite: 1 },
+			remaining: 2,
+		})
+		expect(movedIds(world)).toEqual(['mcu-0', 'mcu-2'])
+	})
+
+	it('a deferral is not a failure: every write status exits 0', () => {
+		for (const status of [
+			'complete',
+			'complete-with-deferrals',
+			'batch-complete',
+			'stopped',
+		])
+			expect(backfill.exitCodeFor({ mode: 'write', status, deferred: 1 })).toBe(
+				0,
+			)
 	})
 
 	it('an unrelated open transfer blocks nothing', async () => {
@@ -1618,9 +1675,23 @@ const mutants: {
 	{
 		name: 'compare-and-set without the open-transfer check',
 		file: 'payer-customer-backfill-runtime',
-		find: 'notExists( tx .select({ one: sql`1` }) .from(schema.purchaseUserTransfer) .where(and(openTransferWhere(), touchesRow)), ),',
+		find: 'notExists( tx .select({ one: sql`1` }) .from(schema.purchaseUserTransfer) .where(and(openTransferWhere(now), touchesRow)), ),',
 		replace: '',
 		caughtBy: /update is not compare-and-set/,
+	},
+	{
+		name: 'open-transfer check ignores the holder and payer',
+		file: 'payer-customer-backfill-runtime',
+		find: 'and(openTransferWhere(now), touchesRow)), ),',
+		replace: 'openTransferWhere(now)), ),',
+		caughtBy: /update does not scope by both transfer users/,
+	},
+	{
+		name: 'an at-write deferral still spends the batch',
+		file: 'payer-customer-backfill',
+		find: 'worked -= 1',
+		replace: '',
+		caughtBy: /at-write deferral counted toward the batch/,
 	},
 	{
 		name: 'a write-time deferral is not honored',

@@ -485,12 +485,13 @@ export async function runWrite(
 	for (const [index, move] of pending.entries()) {
 		if (await ports.stopRequested()) {
 			result.status = 'stopped'
-			result.remaining = pending.length - index
+			// Deferred rows are still pending for a later run.
+			result.remaining = pending.length - index + result.deferred
 			return result
 		}
 		if (worked >= args.batch) {
 			result.status = 'batch-complete'
-			result.remaining = pending.length - index
+			result.remaining = pending.length - index + result.deferred
 			return result
 		}
 		// Fresh read per row: a transfer can open at any moment mid-run. A row
@@ -572,6 +573,8 @@ async function writeRow(
 			holderUserId: move.holderUserId,
 			payerUserId,
 		})
+		// A resumed row can be deferred here too: nothing is journaled, so the
+		// next run resumes it.
 		// A deferral stops here: no Stripe call, no journal entry.
 		if (affected === 'deferred') return 'deferred'
 		if (affected !== 1) {
@@ -897,6 +900,9 @@ export function parseArgs(argv: readonly string[]): Args {
 
 // ------------------------------------------------------------ main -------
 
+/** A deferral is not a failure: complete-with-deferrals exits 0. */
+export const exitCodeFor = (_output: unknown) => 0
+
 /** Only entrypoint. Importing this module never opens a database or Stripe. */
 async function main() {
 	try {
@@ -944,6 +950,7 @@ async function main() {
 				}
 			}
 			process.stdout.write(`${JSON.stringify(output)}\n`)
+			process.exitCode = exitCodeFor(output)
 		} finally {
 			await close()
 		}

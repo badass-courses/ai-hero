@@ -34,14 +34,14 @@ export const IN_FLIGHT_TRANSFER_STATES = [
 ] as const
 
 /** Unexpired transfers in an open state. An expired one can no longer complete; no expiry counts. */
-const openTransferWhere = () =>
+const openTransferWhere = (now: Date) =>
 	and(
 		inArray(schema.purchaseUserTransfer.transferState, [
 			...IN_FLIGHT_TRANSFER_STATES,
 		]),
 		or(
 			isNull(schema.purchaseUserTransfer.expiresAt),
-			gt(schema.purchaseUserTransfer.expiresAt, new Date()),
+			gt(schema.purchaseUserTransfer.expiresAt, now),
 		),
 	)
 
@@ -225,7 +225,7 @@ export function createDrizzleDbPorts(db: Db) {
 					target: schema.purchaseUserTransfer.targetUserId,
 				})
 				.from(schema.purchaseUserTransfer)
-				.where(openTransferWhere())
+				.where(openTransferWhere(new Date()))
 			return new Set(
 				rows
 					.flatMap((r) => [r.source, r.target])
@@ -239,6 +239,9 @@ export function createDrizzleDbPorts(db: Db) {
 			payerUserId: string
 		}) {
 			return db.transaction(async (tx) => {
+				// One clock for the NOT EXISTS clause and the lookup after it, so a
+				// transfer expiring in between cannot turn a deferral into a conflict.
+				const now = new Date()
 				// The open-transfer check lives in the same statement as the update,
 				// so no transfer can open between the check and the write.
 				const touchesRow = or(
@@ -262,7 +265,7 @@ export function createDrizzleDbPorts(db: Db) {
 								tx
 									.select({ one: sql`1` })
 									.from(schema.purchaseUserTransfer)
-									.where(and(openTransferWhere(), touchesRow)),
+									.where(and(openTransferWhere(now), touchesRow)),
 							),
 						),
 					)
@@ -278,7 +281,7 @@ export function createDrizzleDbPorts(db: Db) {
 				const [open] = await tx
 					.select({ one: sql`1` })
 					.from(schema.purchaseUserTransfer)
-					.where(and(openTransferWhere(), touchesRow))
+					.where(and(openTransferWhere(now), touchesRow))
 					.limit(1)
 				return open ? ('deferred' as const) : 0
 			})
