@@ -101,6 +101,7 @@ import { LessonPage } from './shared-page'
 import { createAppAbility, defineRulesForPurchases } from '@/ability'
 import { cohortAbilityFixture } from '@/ability/test-fixtures/cohort-content-scope'
 import { subject } from '@casl/ability'
+import { getServerAuthSession } from '@/server/auth'
 
 const lesson = {
 	id: 'lesson-1',
@@ -209,18 +210,24 @@ describe('LessonPage office-hours authorization context', () => {
 	)
 
 	it.each([
-		['denied', {}],
-		['revoked', { canViewWorkshop: false }],
-		['region restricted', { isRegionRestricted: true }],
-		['unclaimed team seat', { canInviteTeam: true }],
-	])('redirects %s before protected work or commerce', async (_, flags) => {
+		['denied', {}, true, 'no-purchase'],
+		['revoked', { canViewWorkshop: false }, true, 'no-purchase'],
+		['region restricted', { isRegionRestricted: true }, true, 'region-restricted'],
+		['a team pool for another product', { canInviteTeam: true }, true, 'no-purchase'],
+		['signed out', {}, false, 'signed-out'],
+	])('redirects %s before protected work or commerce', async (_, flags, signedIn, reason) => {
+		vi.mocked(getServerAuthSession).mockResolvedValue(
+			(signedIn ? { session: { user: { id: 'viewer-1' } } } : { session: null }) as any,
+		)
 		mocks.getAbilityForResource.mockResolvedValue({
 			...baseAbility,
 			...flags,
 			canViewLesson: false,
 		})
 		await expect(renderLessonPage()).rejects.toThrow('NEXT_REDIRECT')
-		expect(mocks.redirect).toHaveBeenCalledWith('/workshops/workshop-1')
+		expect(mocks.redirect).toHaveBeenCalledWith(
+			`/workshops/workshop-1?denied=${reason}`,
+		)
 		expect(mocks.getAiCodingDictionary).not.toHaveBeenCalled()
 		expect(mocks.compileMDX).not.toHaveBeenCalled()
 		expect(mocks.getLessonVideoPlaybackResource).not.toHaveBeenCalled()
@@ -235,6 +242,9 @@ describe('LessonPage office-hours authorization context', () => {
 		['future direct module', { contentIds: ['unrelated-workshop'], startsAt: '2999-01-01T00:00:00.000Z' }],
 		['section-shaped module', { contentIds: ['unrelated-workshop'], layout: 'section' }],
 	] as const)('redirects an unrelated cohort holder in %s using actual rules', async (_, options) => {
+		vi.mocked(getServerAuthSession).mockResolvedValue({
+			session: { user: { id: 'cohort-holder' } },
+		} as any)
 		const fixture = cohortAbilityFixture({ ...options, contentIds: [...options.contentIds] })
 		const ability = createAppAbility(defineRulesForPurchases(fixture.input))
 		mocks.getAbilityForResource.mockResolvedValue({
@@ -245,7 +255,9 @@ describe('LessonPage office-hours authorization context', () => {
 		})
 		await expect(LessonPage({ lesson: fixture.lesson, workshop: fixture.module,
 			params: { module: fixture.module.id, lesson: fixture.lesson.id }, searchParams: {} })).rejects.toThrow('NEXT_REDIRECT')
-		expect(mocks.redirect).toHaveBeenCalledWith('/workshops/requested-workshop')
+		expect(mocks.redirect).toHaveBeenCalledWith(
+			'/workshops/requested-workshop?denied=no-purchase',
+		)
 		expect(mocks.getAiCodingDictionary).not.toHaveBeenCalled()
 		expect(mocks.compileMDX).not.toHaveBeenCalled()
 		expect(mocks.getLessonVideoPlaybackResource).not.toHaveBeenCalled()

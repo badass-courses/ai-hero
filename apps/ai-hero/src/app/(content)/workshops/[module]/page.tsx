@@ -7,6 +7,7 @@ import {
 	WorkshopAccessBoundary,
 	WorkshopSidebarAccessBoundary,
 } from '@/app/(content)/workshops/_components/workshop-access-boundary'
+import { LessonDeniedNotice } from '@/app/(content)/workshops/_components/lesson-denied-notice'
 import { WorkshopResourceList } from '@/app/(content)/workshops/_components/workshop-resource-list'
 import { TeamWelcomeVideo } from '@/app/(content)/workshops/_components/team-welcome-video'
 import { WorkshopActionsBar } from '@/app/(content)/workshops/_components/workshop-user-actions'
@@ -291,6 +292,7 @@ export default async function ModulePage(props: Props) {
 					</>
 				)}
 			<main className="flex min-h-screen w-full flex-col">
+				<LessonDeniedNotice />
 				{isPreLaunch && (
 					<React.Suspense fallback={null}>
 						<WorkshopDraftBanner

@@ -1,5 +1,9 @@
 import 'server-only'
 
+import { db } from '@/db'
+import { organizationMemberships } from '@/db/schema'
+import { organizationIdsToCheck } from '@/lib/hero-access-organizations'
+import { eq } from 'drizzle-orm'
 import { checkCohortAccess, getCachedCohort } from '@/lib/cohorts-query'
 import { getNextOfferSafe, type NextOffer } from '@/lib/next-offer'
 import type { UpcomingCohortSummary } from '@/lib/upcoming-cohort-query'
@@ -101,11 +105,27 @@ async function resolveRunning(
 	if (ability?.can('update', 'Content')) return window
 	if (!user?.id) return null
 
-	const organizationId = await getCurrentOrganizationId()
-	if (!organizationId) return null
+	const [currentOrganizationId, memberships] = await Promise.all([
+		getCurrentOrganizationId(),
+		db.query.organizationMemberships.findMany({
+			where: eq(organizationMemberships.userId, user.id),
+			columns: { organizationId: true },
+		}),
+	])
+	const organizationIds = organizationIdsToCheck(
+		currentOrganizationId,
+		memberships.map(({ organizationId }) => organizationId),
+	)
 
-	const access = await checkCohortAccess(organizationId, user.id, flagship.slug)
-	return access ? window : null
+	for (const organizationId of organizationIds) {
+		const access = await checkCohortAccess(
+			organizationId,
+			user.id,
+			flagship.slug,
+		)
+		if (access) return window
+	}
+	return null
 }
 
 /**
