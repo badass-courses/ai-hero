@@ -5,7 +5,12 @@ import {
 	getTeamManagerOrganizationsForMember,
 	type TeamManagerOrganization,
 } from '@/lib/team-manager-directory'
-import { getTeamPurchasesForMember } from '@/lib/team-purchases'
+import {
+	getTeamCardState,
+	getTeamPurchasesForMember,
+	getUnlinkedBulkPurchasesForUser,
+	type TeamCardState,
+} from '@/lib/team-purchases'
 import { getServerAuthSession } from '@/server/auth'
 
 import type { Coupon, Purchase } from '@coursebuilder/core/schemas'
@@ -20,6 +25,7 @@ export type TeamPageData = {
 	bulkPurchases: {
 		purchase: Purchase
 		bulkCoupon: Coupon | null
+		state: TeamCardState
 	}[]
 }
 
@@ -39,16 +45,29 @@ async function teamPageDataLoader(): Promise<TeamPageData> {
 		getTeamPurchasesForMember(user.id),
 		getTeamManagerOrganizationsForMember(user.id),
 	])
+	// Read only: a paid pool that no managed organization holds is shown as
+	// "being set up". Repairs run elsewhere, never on a page render.
+	const unlinkedPurchases = await getUnlinkedBulkPurchasesForUser(
+		user.id,
+		teamPurchases,
+	)
+	const managedIds = new Set(teamPurchases.map(({ id }) => id))
 	const bulkPurchases = await Promise.all(
-		teamPurchases.map(async (purchase) => {
+		[...teamPurchases, ...unlinkedPurchases].map(async (purchase) => {
 			const bulkCoupon = purchase.bulkCouponId
 				? await courseBuilderAdapter.getCouponWithBulkPurchases(
 						purchase.bulkCouponId,
 					)
 				: null
+			const activeCoupon = bulkCoupon?.status === 1 ? bulkCoupon : null
 			return {
 				purchase,
-				bulkCoupon: bulkCoupon?.status === 1 ? bulkCoupon : null,
+				bulkCoupon: activeCoupon,
+				state: getTeamCardState({
+					purchaseStatus: purchase.status,
+					managedByViewer: managedIds.has(purchase.id),
+					couponActive: Boolean(activeCoupon),
+				}),
 			}
 		}),
 	)

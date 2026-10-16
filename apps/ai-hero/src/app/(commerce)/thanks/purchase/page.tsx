@@ -13,6 +13,10 @@ import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
 import { isCheckoutSessionOwner } from '@/lib/checkout-owner-resolution'
 import {
+	differentAccountCopy,
+	thanksViewerState,
+} from '@/lib/purchase-viewer'
+import {
 	cancelPurchaseTransfer,
 	getPurchaseTransferForPurchaseId,
 	initiatePurchaseTransfer,
@@ -140,14 +144,32 @@ async function PurchaseThanksPageLoaded({
 		redemptionsLeft,
 	} = result
 
-	if (
-		isCheckoutSessionOwner({
+	const viewer = thanksViewerState({
+		viewerUserId: token?.session?.user?.id,
+		isOwner: isCheckoutSessionOwner({
 			purchaseUserId: purchase.userId ?? null,
 			purchaseEmail: email ?? null,
 			sessionUserId: token?.session?.user?.id ?? null,
 			sessionUserEmail: token?.session?.user?.email ?? null,
-		})
-	) {
+		}),
+	})
+
+	if (viewer === 'different-account') {
+		// A signed-in stranger gets no product, email, invoice or invite link.
+		const copy = differentAccountCopy(token?.session?.user?.email)
+		return (
+			<main className="px-[18px] py-20 sm:px-11 md:py-24">
+				<h1 className="text-3xl font-normal leading-tight tracking-tight sm:text-4xl">
+					{copy.title}
+				</h1>
+				<p className="text-foreground/70 mt-4 max-w-2xl text-lg leading-relaxed">
+					{copy.description}
+				</p>
+			</main>
+		)
+	}
+
+	if (viewer === 'owner') {
 		const destination = new URLSearchParams({
 			purchaseId: purchase.id,
 			buyPathId: session_id,

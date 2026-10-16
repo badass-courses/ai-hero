@@ -16,6 +16,7 @@ import {
 } from '@/lib/lessons-query'
 import { MinimalWorkshop } from '@/lib/workshops'
 import { getPlaybackPositionForResource } from '@/lib/progress'
+import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { compileMDX } from '@/utils/compile-mdx'
 import {
@@ -50,6 +51,7 @@ export async function LessonPage({
 	const abilityLoader = getAbilityForResource(params.lesson, params.module)
 
 	const ability = await abilityLoader
+	const signedIn = Boolean((await getServerAuthSession())?.session?.user?.id)
 
 	if (!ability.canViewLesson) {
 		redirect(`/workshops/${params.module}`)
@@ -139,6 +141,7 @@ export async function LessonPage({
 									abilityLoader={abilityLoader}
 									mdxContentPromise={mdxContentPromise}
 									workshop={workshop}
+									signedIn={signedIn}
 								/>
 							</Suspense>
 							<TranscriptContainer

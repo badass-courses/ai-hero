@@ -10,6 +10,7 @@ import {
 } from '@/app/(user)/team/actions'
 import type { TeamPageData } from '@/app/(user)/team/page'
 import { CldImage } from '@/components/cld-image'
+import type { TeamCardState } from '@/lib/team-purchases'
 
 import { ClaimedTeamSeats } from '@coursebuilder/commerce-next/team/claimed-team-seats'
 import {
@@ -194,6 +195,16 @@ function ManagersSection({ organizations }: Pick<TeamPageData, 'organizations'>)
 	)
 }
 
+const TEAM_CARD_STATE_COPY: Record<Exclude<TeamCardState, 'active'>, string> =
+	{
+		refunded:
+			'Refunded. This purchase was refunded, so its seats are no longer available.',
+		'setting-up':
+			'Your team is being set up. Your payment went through. Contact support and we will finish it.',
+		'coupon-inactive':
+			'Seat invitations are turned off for this purchase. Contact support if that is a surprise.',
+	}
+
 function TeamPurchases({
 	bulkPurchases,
 	organizations,
@@ -217,7 +228,7 @@ function TeamPurchases({
 				</div>
 			) : (
 				<div className="border-border bg-border grid gap-px border-y md:grid-cols-2">
-					{bulkPurchases.map(({ purchase, bulkCoupon }) => {
+					{bulkPurchases.map(({ purchase, bulkCoupon, state }) => {
 						const organizationName = organizations.find(
 							({ id }) => id === purchase.organizationId,
 						)?.name
@@ -248,24 +259,38 @@ function TeamPurchases({
 									</h3>
 								</div>
 
-								<InviteTeamRoot
-									purchase={purchaseWithCoupon}
-									existingPurchase={null}
-									userEmail={viewer?.email}
-									disabled={!redemptionsLeft}
-									className="flex flex-col gap-3"
-								>
-									<SeatsAvailable className="[&_span]:font-semibold" />
-									<p className="text-foreground/70 text-sm">
-										Share this link with learners who should claim a seat.
-									</p>
-									<div className="flex items-center gap-2">
-										<InviteLink className="rounded-none" />
-										<CopyInviteLinkButton className="rounded-none" />
-									</div>
-								</InviteTeamRoot>
+								{state === 'active' ? (
+									<>
+										<InviteTeamRoot
+											purchase={purchaseWithCoupon}
+											existingPurchase={null}
+											userEmail={viewer?.email}
+											disabled={!redemptionsLeft}
+											className="flex flex-col gap-3"
+										>
+											<SeatsAvailable className="[&_span]:font-semibold" />
+											<p className="text-foreground/70 text-sm">
+												Share this link with learners who should claim a seat.
+											</p>
+											<div className="flex items-center gap-2">
+												<InviteLink className="rounded-none" />
+												<CopyInviteLinkButton className="rounded-none" />
+											</div>
+										</InviteTeamRoot>
 
-								<ClaimedTeamSeats purchase={purchase} bulkCoupon={bulkCoupon} />
+										<ClaimedTeamSeats
+											purchase={purchase}
+											bulkCoupon={bulkCoupon}
+										/>
+									</>
+								) : (
+									<p
+										className="text-foreground/70 text-sm"
+										data-team-card-state={state}
+									>
+										{TEAM_CARD_STATE_COPY[state]}
+									</p>
+								)}
 
 								{purchase.merchantChargeId ? (
 									<Link
@@ -320,6 +345,13 @@ export function TeamPageTemplate(data: TeamPageData) {
 						Your account can use seats assigned to it. Team seat management and invoices are available only to owners and team managers.
 					</p>
 				</div>
+				{data.bulkPurchases.length > 0 ? (
+					<TeamPurchases
+						bulkPurchases={data.bulkPurchases}
+						organizations={data.organizations}
+						viewer={data.viewer}
+					/>
+				) : null}
 			</section>
 		)
 	}

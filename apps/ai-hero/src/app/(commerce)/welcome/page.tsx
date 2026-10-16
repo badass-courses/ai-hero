@@ -12,6 +12,7 @@ import { PostPurchaseIconBadge } from '../_components/post-purchase-icon'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { courseBuilderAdapter, db } from '@/db'
 import { env } from '@/env.mjs'
+import { differentAccountCopy, purchaseViewerState } from '@/lib/purchase-viewer'
 import { getSubscription } from '@/lib/subscriptions'
 import {
 	discordAccountsForCurrentUser,
@@ -121,6 +122,16 @@ const getPurchaseDetailsForWelcome = async (query: {
 	}
 
 	if (user && isString(purchaseId) && isString(user?.id)) {
+		const claimed = await courseBuilderAdapter.getPurchase(purchaseId)
+		const viewerState = purchaseViewerState({
+			viewerUserId: user.id,
+			purchaseExists: Boolean(claimed),
+			purchaseOwnerId: claimed?.userId,
+		})
+		if (viewerState === 'different-account') {
+			return { differentAccount: true as const, viewerEmail: user.email }
+		}
+
 		const { purchase, existingPurchase, availableUpgrades } =
 			await courseBuilderAdapter.getPurchaseDetails(purchaseId, user?.id)
 
@@ -163,13 +174,29 @@ const Welcome = async (props: {
 	const { purchaseId, subscriptionId } = searchParams
 
 	if (purchaseId) {
+		const details = await getPurchaseDetailsForWelcome(searchParams)
+		if ('differentAccount' in details) {
+			const copy = differentAccountCopy(details.viewerEmail)
+			return (
+				<LayoutClient withContainer>
+					<section className="px-[18px] py-20 sm:px-11 md:py-24">
+						<h1 className="text-3xl font-normal leading-tight tracking-tight sm:text-4xl">
+							{copy.title}
+						</h1>
+						<p className="text-foreground/70 mt-4 max-w-2xl text-lg leading-relaxed">
+							{copy.description}
+						</p>
+					</section>
+				</LayoutClient>
+			)
+		}
 		const {
 			upgrade,
 			purchase,
 			existingPurchase,
 			product,
 			productResources,
-		} = await getPurchaseDetailsForWelcome(searchParams)
+		} = details
 
 		const buyPath = searchParams.buyPathId
 			? null
