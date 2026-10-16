@@ -10,6 +10,7 @@ import Spinner from '@/components/spinner'
 import { env } from '@/env.mjs'
 import type { Cohort } from '@/lib/cohort'
 import type { Event } from '@/lib/events'
+import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 import type { MinimalWorkshop, Workshop } from '@/lib/workshops'
 import { api } from '@/trpc/react'
 import { formatInTimeZone } from 'date-fns-tz'
@@ -252,8 +253,9 @@ export const withEventPricing = (
 		// Check if cohort has actually started (different from enrollment status)
 		const hasStarted = startsAt ? new Date(startsAt) <= nowInPT : false
 
-		const hasPurchasedCurrentProduct = commerceProps?.purchases?.some(
-			(purchase) => purchase.productId === product.id,
+		const hasPurchasedCurrentProduct = ownsProductForBuyBox(
+			commerceProps?.purchases,
+			product.id,
 		)
 
 		return (

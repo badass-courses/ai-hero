@@ -2,6 +2,10 @@
 
 import { usePathname, useSearchParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
+import {
+	ownsProductForBuyBox,
+	type BuyBoxPurchase,
+} from '@/lib/owns-product-for-buy-box'
 import { api } from '@/trpc/react'
 
 import { EvergreenOfferEndedNotice } from '@/components/evergreen-offer-ended-notice'
@@ -49,20 +53,6 @@ function useWorkshopCommerce(productId?: string) {
 	}
 }
 
-/** The buy box's ownership signal: the one rule the box and the notice share. */
-function buyBoxHasPurchased(
-	hasPurchasedCurrentProduct: boolean | undefined,
-	purchases: ReadonlyArray<{ productId: string }> | null | undefined,
-	productId: string | undefined,
-) {
-	return (
-		Boolean(hasPurchasedCurrentProduct) ||
-		Boolean(
-			productId && purchases?.some((purchase) => purchase.productId === productId),
-		)
-	)
-}
-
 /**
  * The ended-offer notice with the buy box's ownership signal, read from the
  * same uncached commerce query. It stays hidden until that signal is known,
@@ -84,10 +74,8 @@ export function WorkshopEvergreenOfferEndedNotice({
 	return (
 		<EvergreenOfferEndedNotice
 			endpoint={endpoint}
-			viewerOwnsProduct={buyBoxHasPurchased(
-				false,
-				(data as { purchases?: { productId: string }[] } | undefined)
-					?.purchases,
+			viewerOwnsProduct={ownsProductForBuyBox(
+				(data as { purchases?: BuyBoxPurchase[] } | undefined)?.purchases,
 				productId,
 			)}
 		/>
@@ -175,11 +163,11 @@ function WorkshopPricingView({
 	const resolvedPurchasedProductIds =
 		commerceProps.purchases?.map((purchase) => purchase.productId) ??
 		purchasedProductIds
-	const resolvedHasPurchased = buyBoxHasPurchased(
-		hasPurchasedCurrentProduct,
-		commerceProps.purchases,
-		product?.id,
-	)
+	const resolvedHasPurchased =
+		hasPurchasedCurrentProduct ||
+		Boolean(
+			product && ownsProductForBuyBox(commerceProps.purchases, product.id),
+		)
 
 	return product ? (
 		<PriceCheckProvider purchasedProductIds={resolvedPurchasedProductIds}>

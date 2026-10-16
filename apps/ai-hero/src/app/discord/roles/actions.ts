@@ -5,6 +5,12 @@ import { accounts, entitlements, entitlementTypes, users } from '@/db/schema'
 import { env } from '@/env.mjs'
 import { DiscordError, DiscordMember } from '@/lib/discord'
 import { fetchAsDiscordBot, fetchJsonAsDiscordBot } from '@/lib/discord-query'
+import {
+	classifyMemberResponse,
+	sourceLabel,
+	type MemberClassification,
+	type MemberFetch,
+} from '@/lib/discord-view'
 import { getServerAuthSession } from '@/server/auth'
 import { and, eq, inArray, isNull } from 'drizzle-orm'
 
@@ -46,19 +52,26 @@ export async function getDiscordRoleState() {
 
 	if (!discordAccount) return { connected: false as const, userId: user.id }
 
+	// `connected` means an account row exists: roles are read and written via the bot, not the user's token
+
 	// Get the user's discord member data (current roles)
 	let currentRoles: string[] = []
 	let discordUsername: string | null = null
+	let memberFetch: MemberFetch = 'ok'
+	let classified: MemberClassification
 	try {
 		const member = await fetchJsonAsDiscordBot<DiscordMember | DiscordError>(
 			`guilds/${env.DISCORD_GUILD_ID}/members/${discordAccount.providerAccountId}`,
 		)
-		if ('user' in member) {
-			currentRoles = member.roles
-			discordUsername = member.user?.username ?? null
-		}
-	} catch {
-		// Member might not be in the guild
+		classified = classifyMemberResponse({ result: member })
+	} catch (thrown) {
+		classified = classifyMemberResponse({ thrown })
+	}
+	if (classified.kind === 'member') {
+		currentRoles = classified.roles
+		discordUsername = classified.username
+	} else if (classified.kind === 'error') {
+		memberFetch = 'error'
 	}
 
 	// Get all guild roles for name/color lookup
@@ -116,7 +129,7 @@ export async function getDiscordRoleState() {
 				roleColor: guildRole?.color
 					? `#${guildRole.color.toString(16).padStart(6, '0')}`
 					: '#5865F2',
-				source: e.sourceType === 'purchase' ? 'Purchase' : e.sourceType,
+				source: sourceLabel(e.sourceType),
 				sourceType: e.entitlementType,
 				assigned,
 			}
@@ -129,6 +142,7 @@ export async function getDiscordRoleState() {
 		discordUsername,
 		currentRoleCount: currentRoles.length,
 		roles,
+		memberFetch,
 		allAssigned: roles.every((r) => r.assigned),
 		needsSync: roles.some((r) => !r.assigned),
 	}
