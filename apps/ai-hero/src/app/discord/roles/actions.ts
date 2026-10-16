@@ -7,6 +7,7 @@ import { DiscordError, DiscordMember } from '@/lib/discord'
 import { fetchAsDiscordBot, fetchJsonAsDiscordBot } from '@/lib/discord-query'
 import {
 	classifyMemberResponse,
+	memberFetchFrom,
 	syncLookup,
 	sourceLabel,
 	type MemberClassification,
@@ -58,7 +59,6 @@ export async function getDiscordRoleState() {
 	// Get the user's discord member data (current roles)
 	let currentRoles: string[] = []
 	let discordUsername: string | null = null
-	let memberFetch: MemberFetch = 'not-member'
 	let classified: MemberClassification
 	try {
 		const member = await fetchJsonAsDiscordBot<DiscordMember | DiscordError>(
@@ -68,12 +68,10 @@ export async function getDiscordRoleState() {
 	} catch (thrown) {
 		classified = classifyMemberResponse({ thrown })
 	}
+	const memberFetch: MemberFetch = memberFetchFrom(classified)
 	if (classified.kind === 'member') {
-		memberFetch = 'member'
 		currentRoles = classified.roles
 		discordUsername = classified.username
-	} else if (classified.kind === 'error') {
-		memberFetch = 'error'
 	}
 
 	// Get all guild roles for name/color lookup

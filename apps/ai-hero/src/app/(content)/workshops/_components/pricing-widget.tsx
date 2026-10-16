@@ -7,7 +7,7 @@ import {
 	type ProductPricingFeature,
 } from '@/components/commerce/product-pricing-features'
 import { GatedBuyButton } from '@/components/commerce/gated-buy-button'
-import { useClearRegionalAtTeamQuantity } from '@/components/commerce/regional-toggle-gate'
+import { RegionalQuantityClear } from '@/components/commerce/regional-toggle-gate'
 import { TYPE } from '@/components/landing/type'
 import { formatDeadline } from '@/utils/discount-formatter'
 import {
@@ -152,6 +152,8 @@ export const PricingWidget = ({
 			{...commerceProps}
 		>
 			<BuyPathPricingBeacon productId={product.id} />
+			{/* Mounted at the root: no early return or hidden card can skip the clear. */}
+			<RegionalQuantityClear />
 			<Pricing.Product className="w-full">
 				<Pricing.Details className="w-full items-stretch px-5 pt-6 text-left sm:px-6">
 					<Pricing.Name className="mt-0 px-0 text-left text-base font-bold tracking-[-0.018em] sm:text-base" />
@@ -672,8 +674,6 @@ const RegionalPricingBox = () => {
 			}),
 		})
 
-	// A regional coupon must not follow the buyer to a team quantity.
-	useClearRegionalAtTeamQuantity()
 
 	const rawDiscount = pppCoupon?.percentageDiscount as
 		| string

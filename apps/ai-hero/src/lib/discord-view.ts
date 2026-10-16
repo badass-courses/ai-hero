@@ -32,6 +32,18 @@ export function discordRolesView({
 	return entitlements.every((r) => r.assigned) ? 'in-sync' : 'needs-sync'
 }
 
+/** Fail-safe: only a positively classified lookup reads as member or not-member. */
+export function memberFetchFrom(classified: MemberClassification): MemberFetch {
+	switch (classified.kind) {
+		case 'member':
+			return 'member'
+		case 'not-member':
+			return 'not-member'
+		default:
+			return 'error'
+	}
+}
+
 /** The page renders the Sync button only for this view. */
 export const showSyncButton = (view: DiscordRolesView): boolean =>
 	view === 'needs-sync'

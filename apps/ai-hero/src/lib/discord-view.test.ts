@@ -10,6 +10,7 @@ import {
 	FETCH_ERROR_COPY,
 	GENERIC_DISCORD_ERROR,
 	hasDiscordAccount,
+	memberFetchFrom,
 	showSyncButton,
 	syncLookup,
 	isDiscordConnected,
@@ -145,6 +146,22 @@ describe('discordRolesView truth table', () => {
 			expect(linked).toBe(true)
 			expect(expected).toBe('not-in-server')
 		}
+	})
+})
+
+describe('memberFetchFrom (lookup -> memberFetch)', () => {
+	it.each([
+		['thrown 500', { thrown: { status: 500 } }, 'error'],
+		['thrown 404', { thrown: { status: 404 } }, 'not-member'],
+		['thrown, no status', { thrown: new Error('boom') }, 'error'],
+		['error body', { result: { code: 50001 } }, 'error'],
+		['empty body', { result: null }, 'error'],
+		['unknown member 10007', { result: { code: 10007 } }, 'not-member'],
+		['member', { result: { user: { username: 'u' }, roles: [] } }, 'member'],
+	] as const)('%s -> %s', (_name, outcome, expected) => {
+		expect(memberFetchFrom(classifyMemberResponse(outcome as any))).toBe(
+			expected,
+		)
 	})
 })
 

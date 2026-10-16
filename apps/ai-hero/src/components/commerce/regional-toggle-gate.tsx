@@ -23,6 +23,12 @@ export function useClearRegionalAtTeamQuantity() {
 	}, [clear, setMerchantCoupon])
 }
 
+/** Renders nothing; mount it once under `Pricing.Root`. */
+export function RegionalQuantityClear() {
+	useClearRegionalAtTeamQuantity()
+	return null
+}
+
 /** The stock regional toggle, hidden at team quantities. */
 export function GatedPPPToggle(props: { className?: string }) {
 	const { quantity } = usePricing()
