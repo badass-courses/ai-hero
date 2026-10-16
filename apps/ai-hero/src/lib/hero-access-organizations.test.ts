@@ -2,12 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import { organizationIdsToCheck } from './hero-access-organizations'
 
-// Legacy: the cookie org or nothing.
-const legacy = (current: string | null) => (current ? [current] : [])
-
 describe('organizationIdsToCheck', () => {
-	it('legacy sees no organization for an owner without the cookie', () => {
-		expect(legacy(null)).toEqual([])
+	it('falls back to memberships when no organization is named', () => {
 		expect(organizationIdsToCheck(null, ['org-a'])).toEqual(['org-a'])
 	})
 	it('checks the named organization first, then the rest, without repeats', () => {

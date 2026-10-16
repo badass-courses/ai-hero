@@ -13,34 +13,71 @@ import {
 export { BILLING_ADMIN_ROLE } from '@/lib/team-roles'
 const VISIBLE_PURCHASE_STATES = new Set(['Valid', 'Refunded', 'Restricted'])
 
+export type TeamPurchaseStatus =
+	| 'Valid'
+	| 'Refunded'
+	| 'Restricted'
+	| 'Disputed'
+	| 'Banned'
+
+/**
+ * How the viewer's own bulk purchase relates to an organization they manage.
+ *
+ * - `managed`: held by an organization the viewer manages.
+ * - `no-organization`: the purchase has no organization. Its coupon still
+ *   works, so the invite link and seat list render from the purchase alone,
+ *   as `/welcome` already does.
+ * - `not-a-manager`: the purchase is held by an organization the viewer
+ *   belongs to without a manager role (they handed management off).
+ * - `no-membership`: the purchase names an organization the viewer is not a
+ *   member of. Nothing would render, so the page says it is being set up.
+ */
+export type TeamPurchaseLink =
+	| 'managed'
+	| 'no-organization'
+	| 'not-a-manager'
+	| 'no-membership'
+
 /**
  * What a team card on `/team` may offer. Seat and invite actions exist only
  * for `active`; every other state names why they are gone.
- *
- * - `refunded`: the purchase was refunded and its coupon is deactivated.
- * - `setting-up`: the viewer paid for the pool, but no organization they
- *   manage holds it. Shown as a state only; the page never writes.
- * - `coupon-inactive`: a live purchase whose seat coupon is off.
  */
 export type TeamCardState =
 	| 'active'
 	| 'refunded'
 	| 'setting-up'
+	| 'managed-by-admin'
 	| 'coupon-inactive'
+	| 'unavailable'
 
 export function getTeamCardState({
 	purchaseStatus,
-	managedByViewer,
+	link,
 	couponActive,
 }: {
-	purchaseStatus: string
-	managedByViewer: boolean
+	purchaseStatus: TeamPurchaseStatus | (string & {})
+	link: TeamPurchaseLink
 	couponActive: boolean
 }): TeamCardState {
 	if (purchaseStatus === 'Refunded') return 'refunded'
-	if (!managedByViewer) return 'setting-up'
-	if (!couponActive) return 'coupon-inactive'
-	return 'active'
+	if (purchaseStatus !== 'Valid' && purchaseStatus !== 'Restricted')
+		return 'unavailable'
+	if (link === 'not-a-manager') return 'managed-by-admin'
+	if (link === 'no-membership') return 'setting-up'
+	return couponActive ? 'active' : 'coupon-inactive'
+}
+
+/** Classify a bulk purchase the viewer owns but no managed organization holds. */
+export function getTeamPurchaseLink(
+	purchase: Pick<Purchase, 'organizationId'>,
+	memberships: Pick<TeamPurchaseMembership, 'organizationId'>[],
+): Exclude<TeamPurchaseLink, 'managed'> {
+	if (!purchase.organizationId) return 'no-organization'
+	return memberships.some(
+		({ organizationId }) => organizationId === purchase.organizationId,
+	)
+		? 'not-a-manager'
+		: 'no-membership'
 }
 
 /**
@@ -150,13 +187,22 @@ export async function getUnlinkedBulkPurchasesForUser(
 	userId: string | null | undefined,
 	managedPurchases: Pick<Purchase, 'id'>[],
 	dataSource: TeamPurchaseDataSource = drizzleTeamPurchaseDataSource,
-): Promise<Purchase[]> {
+): Promise<
+	{ purchase: Purchase; link: Exclude<TeamPurchaseLink, 'managed'> }[]
+> {
 	if (!userId || !dataSource.loadBulkPurchasesOwnedByUser) return []
-	const owned = await dataSource.loadBulkPurchasesOwnedByUser(userId)
+	const [owned, memberships] = await Promise.all([
+		dataSource.loadBulkPurchasesOwnedByUser(userId),
+		dataSource.loadMembershipsForUser(userId),
+	])
+	// The repository query is scoped too; this keeps another user's row out.
 	return getUnlinkedBulkPurchases(
 		owned.filter((purchase) => purchase.userId === userId),
 		managedPurchases,
-	)
+	).map((purchase) => ({
+		purchase,
+		link: getTeamPurchaseLink(purchase, memberships),
+	}))
 }
 
 export const drizzleTeamPurchaseDataSource: TeamPurchaseDataSource = {

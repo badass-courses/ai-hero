@@ -16,6 +16,7 @@ import {
 } from '@/lib/lessons-query'
 import { MinimalWorkshop } from '@/lib/workshops'
 import { getPlaybackPositionForResource } from '@/lib/progress'
+import { deniedRedirectPath, lessonDenialReason } from '@/lib/lesson-denial'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { compileMDX } from '@/utils/compile-mdx'
@@ -51,10 +52,22 @@ export async function LessonPage({
 	const abilityLoader = getAbilityForResource(params.lesson, params.module)
 
 	const ability = await abilityLoader
+	// `getServerAuthSession` is request-cached, and the ability above already
+	// read it, so this is not a second lookup.
 	const signedIn = Boolean((await getServerAuthSession())?.session?.user?.id)
 
 	if (!ability.canViewLesson) {
-		redirect(`/workshops/${params.module}`)
+		redirect(
+			deniedRedirectPath(
+				params.module,
+				lessonDenialReason({
+					signedIn,
+					isRegionRestricted: ability.isRegionRestricted,
+					isPendingOpenAccess: ability.isPendingOpenAccess,
+					hasTeamPool: ability.canInviteTeam,
+				}),
+			),
+		)
 	}
 
 	// Compile the lesson body only after the viewer is confirmed allowed to open

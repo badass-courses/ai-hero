@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+	DENIED_QUERY_REASONS,
+	deniedRedirectPath,
+	parseDeniedReason,
 	LESSON_DENIAL_COPY,
 	lessonDenialReason,
 	type LessonDenialReason,
 } from './lesson-denial'
-
-const legacyCopy = () => 'You need to be a member to access this lesson.'
 
 describe('lessonDenialReason', () => {
 	const bools = [false, true]
@@ -34,13 +35,35 @@ describe('lessonDenialReason', () => {
 						).toBe(want)
 					})
 
-	it('every reason has distinct copy; legacy used one line for all', () => {
+	it('every reason has distinct copy', () => {
 		const copies = Object.values(LESSON_DENIAL_COPY)
 		expect(new Set(copies).size).toBe(copies.length)
-		expect(
-			Object.entries(LESSON_DENIAL_COPY)
-				.filter(([, copy]) => copy === legacyCopy())
-				.map(([reason]) => reason),
-		).toEqual(['no-purchase'])
+	})
+})
+
+describe('denied redirect', () => {
+	it('only whitelisted reasons survive the query string', () => {
+		expect(parseDeniedReason('region-restricted')).toBe('region-restricted')
+		for (const bad of [
+			'pending-open',
+			'<b>x</b>',
+			'',
+			null,
+			undefined,
+			'constructor',
+		])
+			expect(parseDeniedReason(bad)).toBeNull()
+	})
+	it('builds the module path with the reason, pending-open stays bare', () => {
+		expect(deniedRedirectPath('crash-course', 'signed-out')).toBe(
+			'/workshops/crash-course?denied=signed-out',
+		)
+		expect(deniedRedirectPath('crash-course', 'pending-open')).toBe(
+			'/workshops/crash-course',
+		)
+	})
+	it('every redirect reason round-trips through the whitelist', () => {
+		for (const reason of DENIED_QUERY_REASONS)
+			expect(parseDeniedReason(reason)).toBe(reason)
 	})
 })

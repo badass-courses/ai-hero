@@ -3,7 +3,9 @@ import { Suspense } from 'react'
 import { revalidatePath } from 'next/cache'
 import { headers } from 'next/headers'
 import { notFound, redirect } from 'next/navigation'
+import LayoutClient from '@/components/layout-client'
 import { purchaseArtwork } from '@/lib/purchase-artwork'
+import { DifferentAccountNotice } from '../../_components/different-account-notice'
 import { PostPurchaseShell } from '../../_components/post-purchase-shell'
 import { PostPurchaseArrival } from '../../_components/post-purchase-arrival'
 import { PostPurchaseLoginLink } from '../../_components/post-purchase-login-link'
@@ -12,10 +14,7 @@ import { getPurchaseThanksDetails } from './purchase-thanks-details'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
 import { isCheckoutSessionOwner } from '@/lib/checkout-owner-resolution'
-import {
-	differentAccountCopy,
-	thanksViewerState,
-} from '@/lib/purchase-viewer'
+import { thanksViewerState } from '@/lib/purchase-viewer'
 import {
 	cancelPurchaseTransfer,
 	getPurchaseTransferForPurchaseId,
@@ -156,16 +155,13 @@ async function PurchaseThanksPageLoaded({
 
 	if (viewer === 'different-account') {
 		// A signed-in stranger gets no product, email, invoice or invite link.
-		const copy = differentAccountCopy(token?.session?.user?.email)
 		return (
-			<main className="px-[18px] py-20 sm:px-11 md:py-24">
-				<h1 className="text-3xl font-normal leading-tight tracking-tight sm:text-4xl">
-					{copy.title}
-				</h1>
-				<p className="text-foreground/70 mt-4 max-w-2xl text-lg leading-relaxed">
-					{copy.description}
-				</p>
-			</main>
+			<LayoutClient withContainer>
+				<DifferentAccountNotice
+					viewerEmail={token?.session?.user?.email}
+					signOutCallbackUrl={`/thanks/purchase?session_id=${encodeURIComponent(session_id)}`}
+				/>
+			</LayoutClient>
 		)
 	}
 

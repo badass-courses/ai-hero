@@ -200,9 +200,12 @@ const TEAM_CARD_STATE_COPY: Record<Exclude<TeamCardState, 'active'>, string> =
 		refunded:
 			'Refunded. This purchase was refunded, so its seats are no longer available.',
 		'setting-up':
-			'Your team is being set up. Your payment went through. Contact support and we will finish it.',
+			"Your team is being set up. Contact support if this doesn't change.",
+		'managed-by-admin':
+			"Managed by your organization's team admin. Ask them for seats or invoices.",
 		'coupon-inactive':
 			'Seat invitations are turned off for this purchase. Contact support if that is a surprise.',
+		unavailable: 'This purchase is not available for team seats.',
 	}
 
 function TeamPurchases({

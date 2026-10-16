@@ -6,13 +6,14 @@ import { purchaseBuyPathContext } from '@/lib/buy-path/read-context'
 import { redirect } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
 import { purchaseArtwork } from '@/lib/purchase-artwork'
+import { DifferentAccountNotice } from '../_components/different-account-notice'
 import { PostPurchaseShell } from '../_components/post-purchase-shell'
 import { PostPurchaseArrival } from '../_components/post-purchase-arrival'
 import { PostPurchaseIconBadge } from '../_components/post-purchase-icon'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { courseBuilderAdapter, db } from '@/db'
 import { env } from '@/env.mjs'
-import { differentAccountCopy, purchaseViewerState } from '@/lib/purchase-viewer'
+import { purchaseViewerState } from '@/lib/purchase-viewer'
 import { getSubscription } from '@/lib/subscriptions'
 import {
 	discordAccountsForCurrentUser,
@@ -176,17 +177,12 @@ const Welcome = async (props: {
 	if (purchaseId) {
 		const details = await getPurchaseDetailsForWelcome(searchParams)
 		if ('differentAccount' in details) {
-			const copy = differentAccountCopy(details.viewerEmail)
 			return (
 				<LayoutClient withContainer>
-					<section className="px-[18px] py-20 sm:px-11 md:py-24">
-						<h1 className="text-3xl font-normal leading-tight tracking-tight sm:text-4xl">
-							{copy.title}
-						</h1>
-						<p className="text-foreground/70 mt-4 max-w-2xl text-lg leading-relaxed">
-							{copy.description}
-						</p>
-					</section>
+					<DifferentAccountNotice
+						viewerEmail={details.viewerEmail}
+						signOutCallbackUrl="/login"
+					/>
 				</LayoutClient>
 			)
 		}

@@ -10,6 +10,7 @@ import {
 	getTeamPurchasesForMember,
 	getUnlinkedBulkPurchasesForUser,
 	type TeamCardState,
+	type TeamPurchaseLink,
 } from '@/lib/team-purchases'
 import { getServerAuthSession } from '@/server/auth'
 
@@ -51,9 +52,14 @@ async function teamPageDataLoader(): Promise<TeamPageData> {
 		user.id,
 		teamPurchases,
 	)
-	const managedIds = new Set(teamPurchases.map(({ id }) => id))
 	const bulkPurchases = await Promise.all(
-		[...teamPurchases, ...unlinkedPurchases].map(async (purchase) => {
+		[
+			...teamPurchases.map((purchase) => ({
+				purchase,
+				link: 'managed' as TeamPurchaseLink,
+			})),
+			...unlinkedPurchases,
+		].map(async ({ purchase, link }) => {
 			const bulkCoupon = purchase.bulkCouponId
 				? await courseBuilderAdapter.getCouponWithBulkPurchases(
 						purchase.bulkCouponId,
@@ -65,7 +71,7 @@ async function teamPageDataLoader(): Promise<TeamPageData> {
 				bulkCoupon: activeCoupon,
 				state: getTeamCardState({
 					purchaseStatus: purchase.status,
-					managedByViewer: managedIds.has(purchase.id),
+					link,
 					couponActive: Boolean(activeCoupon),
 				}),
 			}

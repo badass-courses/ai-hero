@@ -44,6 +44,36 @@ export const LESSON_DENIAL_COPY: Record<
 	'region-restricted':
 		'Your purchase has a regional restriction, so this lesson is not available on it. Contact support if you think that is wrong.',
 	'team-seat-unclaimed':
-		'You bought team seats but have not claimed one for yourself. Claim a seat from the team page to open this lesson.',
+		"This account manages a team purchase but doesn't hold a seat of its own. Seats are claimed with the team invite link on the team page. Contact support if you need a hand.",
 	'no-purchase': 'You need to be a member to access this lesson.',
+}
+
+/**
+ * The reasons that travel across the redirect to the module page, as
+ * `?denied=<reason>`. A whitelist: anything else is ignored, so the query
+ * string can never put text on the page. `pending-open` is left out because
+ * the module page already shows the start date.
+ */
+export const DENIED_QUERY_REASONS = [
+	'signed-out',
+	'region-restricted',
+	'team-seat-unclaimed',
+	'no-purchase',
+] as const
+export type DeniedQueryReason = (typeof DENIED_QUERY_REASONS)[number]
+
+export function parseDeniedReason(
+	value: string | null | undefined,
+): DeniedQueryReason | null {
+	return DENIED_QUERY_REASONS.find((reason) => reason === value) ?? null
+}
+
+export function deniedRedirectPath(
+	moduleSlug: string,
+	reason: LessonDenialReason,
+): string {
+	const base = `/workshops/${moduleSlug}`
+	return reason === 'pending-open'
+		? base
+		: `${base}?denied=${encodeURIComponent(reason)}`
 }

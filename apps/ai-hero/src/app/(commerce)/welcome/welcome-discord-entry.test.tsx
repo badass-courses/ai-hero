@@ -19,6 +19,7 @@ vi.mock('@/components/layout-client', () => ({
 vi.mock('@/coursebuilder/stripe-provider', () => ({ stripeProvider: {} }))
 vi.mock('@/db', () => ({
 	courseBuilderAdapter: {
+		getPurchase: vi.fn(async () => ({ id: 'purchase-1', userId: 'user-1' })),
 		getPurchaseDetails: mocks.getPurchaseDetails,
 		getProduct: mocks.getProduct,
 		getProductResources: mocks.getProductResources,
