@@ -3,11 +3,14 @@ import { getInvoicePresentment } from '@/lib/invoice-amounts'
 /**
  * Pure decisions behind the invoice list and invoice page.
  *
- * A completed purchase transfer moves `Purchase.userId` and also reassigns
- * `MerchantCharge.userId` to the new holder, so the charge alone no longer
- * names the person who paid. The first completed `PurchaseUserTransfer` row
- * keeps that person as its `sourceUserId`.
- */
+ * The self-service transfer in `purchase-transfer-actions.tsx` runs, in one
+ * transaction: `update(purchaseTable).set({ userId: user.id })`,
+ * `update(merchantCharge).set({ userId: user.id })` and
+ * `update(merchantCustomer).set({ userId: user.id })`. So the new holder takes
+ * over the charge and the customer, and the first completed
+ * `PurchaseUserTransfer` row's `sourceUserId` is the only record of who paid.
+ * Support-complete moves only `Purchase.userId`; there `MerchantCustomer.userId`
+ * still names the payer. The payer is either of those two. */
 
 export type InvoiceTransferFact = {
 	// PurchaseUserTransfer.transferState; only COMPLETED moved ownership.
@@ -36,17 +39,9 @@ export function pickOriginTransfer(
 	)
 }
 
-/** The paying account: the origin transfer's source, else the charge owner. */
-export function resolveOriginalPayerUserId(
-	chargeUserId: string | null | undefined,
-	transfers: InvoiceTransferFact[],
-): string | null {
-	return pickOriginTransfer(transfers)?.sourceUserId ?? chargeUserId ?? null
-}
-
 /**
  * Who may see an invoice: the person who paid, and whoever holds the
- * purchase now. Previous holders who did not pay, and everyone else, may not.
+ * purchase now. `payerUserId` is `MerchantCustomer.userId` for the charge. Previous holders who did not pay, and everyone else, may not.
  * `transfer` is the origin transfer from `pickOriginTransfer`, if any.
  */
 export function canViewInvoice({
@@ -112,12 +107,15 @@ export function invoiceDisplayAmount(
 export type InvoiceListRow = {
 	merchantChargeId?: string | null
 	status?: string | null
+	// True only for the billing owner. Holders who did not pay view only.
+	canEdit?: boolean
 }
 
 export type InvoiceListEntry<Row extends InvoiceListRow> = {
 	row: Row
 	merchantChargeId: string
 	refunded: boolean
+	canEdit: boolean
 }
 
 export type InvoiceListView<Row extends InvoiceListRow> = {
@@ -142,6 +140,7 @@ export function invoiceListView<Row extends InvoiceListRow>(
 			row,
 			merchantChargeId: row.merchantChargeId,
 			refunded: row.status === 'Refunded',
+			canEdit: row.canEdit === true,
 		})
 	}
 	const withoutInvoiceCount = rows.length - entries.length
@@ -153,7 +152,7 @@ export function invoiceListView<Row extends InvoiceListRow>(
 			entries.length > 0
 				? null
 				: withoutInvoiceCount > 0
-					? 'None of your purchases have an invoice. Complimentary and redeemed purchases are not billed, so there is nothing to invoice.'
+					? "These purchases were free or paid for by someone else, so there's no invoice for you here."
 					: 'You have no invoices yet.',
 	}
 }

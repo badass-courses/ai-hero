@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
 	findCharges: vi.fn(),
 	findPurchases: vi.fn(),
 	findTransfers: vi.fn(),
+	findCustomers: vi.fn(),
 }))
 
 vi.mock('@/server/auth', () => ({
@@ -18,6 +19,7 @@ vi.mock('@/db', () => ({
 			merchantCharge: { findMany: mocks.findCharges },
 			purchases: { findMany: mocks.findPurchases },
 			purchaseUserTransfer: { findMany: mocks.findTransfers },
+			merchantCustomer: { findMany: mocks.findCustomers },
 		},
 	},
 }))
@@ -88,6 +90,7 @@ beforeEach(() => {
 	})
 	mocks.findCharges.mockResolvedValue([{ id: 'mch_123' }])
 	mocks.findTransfers.mockResolvedValue([])
+	mocks.findCustomers.mockResolvedValue([])
 	mocks.findPurchases.mockResolvedValue([
 		{
 			id: 'purchase_1',
@@ -134,20 +137,26 @@ describe('invoices list', () => {
 		expect(editActions).toHaveLength(1)
 		expect(markup).toContain('/invoices/mch_123#invoice-details')
 	})
+	it('lists a holder-only invoice with View but no edit action', async () => {
+		mocks.findCharges.mockResolvedValue([])
+		const markup = renderToStaticMarkup(await Invoices())
+		expect(markup).toContain('/invoices/mch_123')
+		expect(markup).not.toContain('Edit invoice details')
+	})
 	it('shows an honest empty state when no purchase has an invoice', async () => {
 		const rows = await mocks.findPurchases()
 		mocks.findPurchases.mockResolvedValue([rows[1]])
 		const markup = renderToStaticMarkup(await Invoices())
 		expect(markup).toContain('No invoices')
 		expect(markup).not.toContain('Your Invoices')
-		expect(markup).toContain('nothing to invoice')
+		expect(markup).toContain('paid for by someone else')
 		expect(markup).not.toContain('<ul')
 	})
 	it('labels a refunded invoice as refunded', async () => {
-		const rows = await mocks.findPurchases()
+		const [paid] = await mocks.findPurchases()
 		mocks.findPurchases.mockResolvedValue([
-			{ ...rows[0], status: 'Refunded' },
-			rows[0] && { ...rows[0], id: 'purchase_3', merchantChargeId: 'mch_456' },
+			{ ...paid, status: 'Refunded' },
+			{ ...paid, id: 'purchase_3', merchantChargeId: 'mch_456', status: 'Valid' },
 		])
 		const markup = renderToStaticMarkup(await Invoices())
 		expect(markup.match(/Refunded/g) ?? []).toHaveLength(1)

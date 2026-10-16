@@ -5,34 +5,8 @@ import {
 	invoiceDisplayAmount,
 	invoiceListView,
 	pickOriginTransfer,
-	resolveOriginalPayerUserId,
 	type InvoiceTransferFact,
 } from './invoice-access-rules'
-
-// Legacy: the page and list only followed the charge owner (billing user).
-// A completed transfer reassigns MerchantCharge.userId to the new holder, so
-// the original payer fell out of this predicate.
-const legacyCanView = ({
-	viewerId,
-	chargeUserId,
-}: {
-	viewerId: string
-	chargeUserId: string
-}) => viewerId === chargeUserId
-
-// Legacy amount: the charge currency and settlement amount only.
-const legacyDisplay = (facts: {
-	amount: number
-	currency: string
-	amount_refunded: number
-}) => ({
-	currency: facts.currency.toUpperCase(),
-	amount: facts.amount - facts.amount_refunded,
-})
-
-// Legacy list: heading counted every purchase, including those with no charge.
-const legacyHeading = (rows: { merchantChargeId?: string | null }[]) =>
-	rows.length > 0 ? 'Your Invoices' : 'No invoices'
 
 const completed = (sourceUserId: string): InvoiceTransferFact => ({
 	state: 'COMPLETED',
@@ -50,7 +24,7 @@ function scenario(kind: 'untransferred' | 'moved' | 'chain') {
 	if (kind === 'untransferred') {
 		return {
 			purchaseUserId: ids.payer,
-			chargeUserId: ids.payer,
+			customerUserId: ids.payer,
 			transfers: [] as InvoiceTransferFact[],
 			ids,
 			expected: { payer: true, owner: true, previous: false, unrelated: false },
@@ -61,7 +35,7 @@ function scenario(kind: 'untransferred' | 'moved' | 'chain') {
 	if (kind === 'moved') {
 		return {
 			purchaseUserId: ids.owner,
-			chargeUserId: ids.owner,
+			customerUserId: ids.payer,
 			transfers: [completed(ids.payer)],
 			ids,
 			expected: { payer: true, owner: true, previous: false, unrelated: false },
@@ -70,7 +44,7 @@ function scenario(kind: 'untransferred' | 'moved' | 'chain') {
 	}
 	return {
 		purchaseUserId: ids.owner,
-		chargeUserId: ids.owner,
+		customerUserId: ids.payer,
 		transfers: [
 			{ ...completed(ids.payer), completedAt: new Date('2026-01-01') },
 			{ ...completed(ids.previous), completedAt: new Date('2026-02-01') },
@@ -171,19 +145,6 @@ describe('canViewInvoice truth table', () => {
 	it.each(cases)('$name', ({ input, expected }) => {
 		expect(canViewInvoice(input)).toBe(expected)
 	})
-
-	it('legacy predicate loses the original payer after a transfer', () => {
-		// Charge reassigned to the new holder 'a'.
-		expect(legacyCanView({ viewerId: 'p', chargeUserId: 'a' })).toBe(false)
-		expect(
-			canViewInvoice({
-				viewerId: 'p',
-				purchaseUserId: 'a',
-				payerUserId: resolveOriginalPayerUserId('a', [completed('p')]),
-				transfer: pickOriginTransfer([completed('p')]),
-			}),
-		).toBe(true)
-	})
 })
 
 describe('negative control: generated roles', () => {
@@ -197,7 +158,7 @@ describe('negative control: generated roles', () => {
 				const result = canViewInvoice({
 					viewerId,
 					purchaseUserId: s.purchaseUserId,
-					payerUserId: resolveOriginalPayerUserId(s.chargeUserId, s.transfers),
+					payerUserId: s.customerUserId,
 					transfer,
 				})
 				// untransferred: the payer account is also the holder; the owner
@@ -219,7 +180,7 @@ describe('negative control: generated roles', () => {
 				canViewInvoice({
 					viewerId,
 					purchaseUserId: s.purchaseUserId,
-					payerUserId: resolveOriginalPayerUserId(s.chargeUserId, s.transfers),
+					payerUserId: s.customerUserId,
 					transfer: pickOriginTransfer(s.transfers),
 				}),
 			)
@@ -240,10 +201,6 @@ describe('pickOriginTransfer', () => {
 		const first = { ...completed('a'), completedAt: new Date('2026-01-01') }
 		expect(pickOriginTransfer([later, first])).toBe(first)
 		expect(pickOriginTransfer([first, later])).toBe(first)
-	})
-	it('falls back to the charge owner when nothing completed', () => {
-		expect(resolveOriginalPayerUserId('c', [])).toBe('c')
-		expect(resolveOriginalPayerUserId(null, [])).toBeNull()
 	})
 })
 
@@ -356,18 +313,6 @@ describe('invoiceDisplayAmount truth table', () => {
 	it.each(cases)('$name', ({ facts, expected }) => {
 		expect(invoiceDisplayAmount(facts)).toEqual(expected)
 	})
-
-	it('legacy display shows only settlement USD for a local-currency charge', () => {
-		const facts = {
-			...base,
-			presentment_details: {
-				presentment_amount: 30000,
-				presentment_currency: 'cad',
-			},
-		}
-		expect(legacyDisplay(facts)).toEqual({ currency: 'USD', amount: 19900 })
-		expect(invoiceDisplayAmount(facts).primary.currency).toBe('CAD')
-	})
 })
 
 describe('invoiceListView truth table', () => {
@@ -390,8 +335,7 @@ describe('invoiceListView truth table', () => {
 		expect(view.heading).toBe('No invoices')
 		expect(view.entries).toHaveLength(0)
 		expect(view.withoutInvoiceCount).toBe(2)
-		expect(view.emptyMessage).toContain('nothing to invoice')
-		expect(legacyHeading([comp, missing])).toBe('Your Invoices')
+		expect(view.emptyMessage).toContain('paid for by someone else')
 	})
 	it('billed rows list with heading and no empty message', () => {
 		const view = invoiceListView([charged, comp])
@@ -407,6 +351,14 @@ describe('invoiceListView truth table', () => {
 			['mch_2', true],
 			['mch_3', false],
 		])
+	})
+	it('view-only rows never get the edit action', () => {
+		const view = invoiceListView([
+			{ ...charged, canEdit: true },
+			{ merchantChargeId: 'mch_9', status: 'Valid', canEdit: false },
+			{ merchantChargeId: 'mch_8', status: 'Valid' },
+		])
+		expect(view.entries.map((e) => e.canEdit)).toEqual([true, false, false])
 	})
 	it('only refunded rows still list', () => {
 		const view = invoiceListView([refunded])

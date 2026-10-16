@@ -1,5 +1,10 @@
 import { db } from '@/db'
-import { merchantCharge, purchases, purchaseUserTransfer } from '@/db/schema'
+import {
+	merchantCharge,
+	merchantCustomer,
+	purchases,
+	purchaseUserTransfer,
+} from '@/db/schema'
 import { and, asc, eq, inArray, isNotNull, or } from 'drizzle-orm'
 
 import { purchaseSchema, type Purchase } from '@coursebuilder/core/schemas'
@@ -26,6 +31,18 @@ export async function getOriginTransferForPurchase(purchaseId: string) {
 	)
 }
 
+/** The account on the charge's MerchantCustomer, the payer of record. */
+export async function getPayerUserIdForCustomer(
+	merchantCustomerId: string | null | undefined,
+) {
+	if (!merchantCustomerId) return null
+	const customer = await db.query.merchantCustomer.findFirst({
+		where: eq(merchantCustomer.id, merchantCustomerId),
+		columns: { userId: true },
+	})
+	return customer?.userId ?? null
+}
+
 /**
  * Invoice visibility follows the payer and the current holder.
  *
@@ -38,12 +55,16 @@ export async function getOriginTransferForPurchase(purchaseId: string) {
  */
 export async function getInvoicePurchasesForUser(
 	userId: string | null | undefined,
-): Promise<Purchase[]> {
+): Promise<(Purchase & { canEdit: boolean })[]> {
 	if (!userId) return []
 
-	const [chargeRows, sourceTransfers] = await Promise.all([
+	const [chargeRows, customerRows, sourceTransfers] = await Promise.all([
 		db.query.merchantCharge.findMany({
 			where: eq(merchantCharge.userId, userId),
+			columns: { id: true },
+		}),
+		db.query.merchantCustomer.findMany({
+			where: eq(merchantCustomer.userId, userId),
 			columns: { id: true },
 		}),
 		db.query.purchaseUserTransfer.findMany({
@@ -63,14 +84,26 @@ export async function getInvoicePurchasesForUser(
 		if (origin?.sourceUserId === userId) originPurchaseIds.push(purchaseId)
 	}
 
+	// Charges of customers the viewer is the payer of record for.
+	const customerChargeRows = customerRows.length
+		? await db.query.merchantCharge.findMany({
+				where: inArray(
+					merchantCharge.merchantCustomerId,
+					customerRows.map((customer) => customer.id),
+				),
+				columns: { id: true },
+			})
+		: []
+	const chargeIds = [
+		...new Set([...chargeRows, ...customerChargeRows].map((c) => c.id)),
+	]
+	const editableChargeIds = new Set(chargeRows.map((charge) => charge.id))
+
 	const billedRows = await db.query.purchases.findMany({
 		where: and(
 			or(
-				chargeRows.length > 0
-					? inArray(
-							purchases.merchantChargeId,
-							chargeRows.map((charge) => charge.id),
-						)
+				chargeIds.length > 0
+					? inArray(purchases.merchantChargeId, chargeIds)
 					: undefined,
 				and(eq(purchases.userId, userId), isNotNull(purchases.merchantChargeId)),
 				originPurchaseIds.length > 0
@@ -91,5 +124,12 @@ export async function getInvoicePurchasesForUser(
 
 	return Array.from(
 		new Map(billed.map((purchase) => [purchase.id, purchase])).values(),
-	)
+	).map((purchase) => ({
+		...purchase,
+		// Editing stays with the billing owner; holders and earlier payers view.
+		canEdit: Boolean(
+			purchase.merchantChargeId &&
+				editableChargeIds.has(purchase.merchantChargeId),
+		),
+	}))
 }

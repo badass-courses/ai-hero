@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
 	coupon: vi.fn(),
 	merchantSession: vi.fn(),
 	originTransfers: vi.fn(),
+	customer: vi.fn(),
 	transfers: vi.fn(),
 	cookie: vi.fn(),
 	readOnlyProps: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock('@/db', () => ({
 			coupon: { findFirst: mocks.coupon },
 			merchantSession: { findFirst: mocks.merchantSession },
 			purchaseUserTransfer: { findMany: mocks.originTransfers },
+			merchantCustomer: { findFirst: mocks.customer },
 		},
 	},
 }))
@@ -158,6 +160,7 @@ beforeEach(() => {
 	vi.resetAllMocks()
 	vi.stubEnv('INVOICE_LINK_SECRET', SECRET)
 	mocks.originTransfers.mockResolvedValue([])
+	mocks.customer.mockResolvedValue(null)
 	mocks.cookie.mockReturnValue({ value: tokenFor() })
 	vi.spyOn(drizzleInvoiceLinkDataSource, 'loadVersion').mockResolvedValue(1)
 	mocks.auth.mockResolvedValue({ session: null })
@@ -250,6 +253,33 @@ describe('invoice currency presentment', () => {
 			},
 		})
 		expect(await renderInvoice()).toBe(original)
+	})
+
+	it('shows the net total for a partly refunded USD charge, as before', async () => {
+		await chargeWith({ amount_refunded: 5000 })
+		const markup = await renderInvoice()
+		expect(markup).toContain(
+			'<span class="mr-3">Total</span><strong class="text-lg">USD $149.00</strong>',
+		)
+		expect(markup).toContain('Partial Refund')
+		expect(markup).not.toContain('Amount paid')
+	})
+
+	it('renders CAD paid with the USD amount received', async () => {
+		await chargeWith({
+			amount: 14500,
+			presentment_details: {
+				presentment_amount: 19900,
+				presentment_currency: 'cad',
+			},
+		})
+		const markup = await renderInvoice()
+		expect(markup).toContain(
+			'<span class="mr-3">Amount paid</span><strong class="text-lg">CAD CA$199.00</strong>',
+		)
+		expect(markup).toContain(
+			'<span class="mr-3">Amount received</span><span>USD $145.00</span>',
+		)
 	})
 
 	it('renders EUR paid with the USD amount received on a signed public invoice', async () => {
@@ -388,14 +418,16 @@ describe('signed shareable invoice', () => {
 	})
 
 	describe('after the purchase moved to a new holder', () => {
-		// The transfer reassigned the charge to 'holder'; only the transfer row
-		// still names the person who paid.
+		// The charge belongs to a third billing account, so neither the holder
+		// nor the payer of record is the billing owner and both view only.
 		beforeEach(() => {
 			vi.stubEnv('INVOICE_LINK_SECRET', '')
 			mocks.merchantCharge.mockResolvedValue({
 				identifier: 'ch_synthetic',
-				userId: 'holder',
+				userId: 'billing-owner',
+				merchantCustomerId: 'customer-synthetic',
 			})
+			mocks.customer.mockResolvedValue({ userId: 'customer-payer' })
 			mocks.purchase.mockResolvedValue({
 				id: 'purchase-synthetic',
 				userId: 'holder',
@@ -419,15 +451,23 @@ describe('signed shareable invoice', () => {
 		const as = (id: string) =>
 			mocks.auth.mockResolvedValue({ session: { user: { id } } })
 
-		it('lets the original payer read it without a link', async () => {
+		it('lets the payer of record read it without a link, view only', async () => {
+			as('customer-payer')
+			const markup = await renderInvoice(undefined)
+			expect(markup).toContain('Synthetic Course')
+			expect(markup).not.toContain('Edit invoice details')
+		})
+		it('lets the first transfer source read it without a link', async () => {
 			as('original-payer')
 			const markup = await renderInvoice(undefined)
 			expect(markup).toContain('Synthetic Course')
 			expect(markup).not.toContain('Edit invoice details')
 		})
-		it('keeps the invoice with the new holder', async () => {
+		it('lets the new holder read it, but never edit', async () => {
 			as('holder')
-			expect(await renderInvoice(undefined)).toContain('Synthetic Course')
+			const markup = await renderInvoice(undefined)
+			expect(markup).toContain('Synthetic Course')
+			expect(markup).not.toContain('Edit invoice details')
 		})
 		it('turns away a previous holder who never paid', async () => {
 			as('middle-holder')

@@ -28,7 +28,7 @@ const Invoices = async () => {
 						</p>
 					) : (
 						<ul className="divide-border flex w-full flex-col divide-y border-t">
-							{view.entries.map(({ row, merchantChargeId, refunded }) => (
+							{view.entries.map(({ row, merchantChargeId, refunded, canEdit }) => (
 								<li key={merchantChargeId}>
 									<InvoiceCard className="rounded-none border-0" purchase={row}>
 										{refunded && (
@@ -36,11 +36,13 @@ const Invoices = async () => {
 												Refunded
 											</p>
 										)}
-										<Button asChild variant="secondary" size="sm">
-											<Link href={invoiceEditPath(merchantChargeId)}>
-												Edit invoice details
-											</Link>
-										</Button>
+										{canEdit && (
+											<Button asChild variant="secondary" size="sm">
+												<Link href={invoiceEditPath(merchantChargeId)}>
+													Edit invoice details
+												</Link>
+											</Button>
+										)}
 									</InvoiceCard>
 								</li>
 							))}

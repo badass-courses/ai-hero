@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
 	findCharges: vi.fn(),
 	findPurchases: vi.fn(),
 	findTransfers: vi.fn(),
+	findCustomers: vi.fn(),
 }))
 
 vi.mock('@/db', () => ({
@@ -12,11 +13,16 @@ vi.mock('@/db', () => ({
 			merchantCharge: { findMany: mocks.findCharges },
 			purchases: { findMany: mocks.findPurchases },
 			purchaseUserTransfer: { findMany: mocks.findTransfers },
+			merchantCustomer: { findMany: mocks.findCustomers },
 		},
 	},
 }))
 vi.mock('@/db/schema', () => ({
-	merchantCharge: { id: 'charge.id', userId: 'charge.userId' },
+	merchantCharge: {
+		id: 'charge.id',
+		userId: 'charge.userId',
+		merchantCustomerId: 'charge.merchantCustomerId',
+	},
 	purchases: {
 		createdAt: 'purchase.createdAt',
 		merchantChargeId: 'purchase.merchantChargeId',
@@ -24,6 +30,7 @@ vi.mock('@/db/schema', () => ({
 		userId: 'purchase.userId',
 		id: 'purchase.id',
 	},
+	merchantCustomer: { id: 'customer.id', userId: 'customer.userId' },
 	purchaseUserTransfer: {
 		purchaseId: 'transfer.purchaseId',
 		sourceUserId: 'transfer.sourceUserId',
@@ -62,6 +69,7 @@ describe('invoice purchase access', () => {
 		mocks.findCharges.mockResolvedValue([{ id: 'charge-original-payer' }])
 		mocks.findPurchases.mockResolvedValue([transferred])
 		mocks.findTransfers.mockResolvedValue([])
+		mocks.findCustomers.mockResolvedValue([])
 	})
 
 	it('keeps a transferred purchase with its product in the original payer invoice list', async () => {
@@ -80,6 +88,28 @@ describe('invoice purchase access', () => {
 				with: { product: true, user: true, bulkCoupon: true },
 			}),
 		)
+	})
+
+	it('lists a payer-of-record purchase by customer, view only', async () => {
+		// The charge moved to the holder; the payer is still the customer.
+		mocks.findCharges
+			.mockResolvedValueOnce([])
+			.mockResolvedValueOnce([{ id: 'charge-moved' }])
+		mocks.findCustomers.mockResolvedValue([{ id: 'customer-1' }])
+		const result = await getInvoicePurchasesForUser('payer-1')
+		expect(result).toHaveLength(1)
+		expect(result[0]?.canEdit).toBe(false)
+	})
+
+	it('lets the billing owner edit and a bare holder only view', async () => {
+		mocks.findPurchases.mockResolvedValue([
+			{ ...transferred, merchantChargeId: 'charge-original-payer' },
+		])
+		const owner = await getInvoicePurchasesForUser('payer-1')
+		expect(owner[0]?.canEdit).toBe(true)
+		mocks.findCharges.mockResolvedValue([])
+		const holder = await getInvoicePurchasesForUser('learner-1')
+		expect(holder[0]?.canEdit).toBe(false)
 	})
 
 	it('lists a purchase for its current holder', async () => {
