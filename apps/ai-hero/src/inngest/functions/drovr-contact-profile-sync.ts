@@ -93,6 +93,7 @@ export const drovrContactProfileSync = inngest.createFunction(
 						events,
 						config: { ingestUrl, apiKey },
 						deferNotLive: true,
+						caller: 'contact-sync',
 						// Contact-directory events only: nothing is clamped (row
 						// 201g), so any instant posts the same bytes.
 						clampAt: Date.now(),
@@ -114,6 +115,7 @@ export const drovrContactProfileSync = inngest.createFunction(
 							config: { ingestUrl, apiKey },
 							// Directory births are never clamped (row 201g).
 							clampAt: Date.now(),
+							caller: 'birth-redeliver',
 						}),
 					)
 				},
