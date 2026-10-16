@@ -30,14 +30,17 @@ vi.mock('@/coursebuilder/coursebuilder-request-authorization', () => ({
 
 import { protectCourseBuilderRequest } from '@/coursebuilder/coursebuilder-request-authorization'
 import { PURCHASE_BLOCKED_ERROR_PATH } from '@/coursebuilder/purchase-block-checkout'
+import { REGIONAL_TEAM_NOT_ALLOWED_PATH } from '@/lib/purchase-guardrails'
 import { REGIONAL_UPGRADE_PATH } from '@/lib/c5-pricing/products'
+
+import { AUTHORITATIVE_PPP_OFFER_ID } from '@coursebuilder/commerce/authoritative-price'
 
 import { protectCommerceRequest } from './protect-commerce-request'
 
 const C5 = 'product-s00zs'
-const checkout = (productId: string) =>
+const checkout = (productId: string, quantity = 1, couponId = 'forged') =>
 	new NextRequest(
-		`https://app.test/api/coursebuilder/checkout/stripe?productId=${productId}&priceId=price-1&quantity=1&couponId=forged`,
+		`https://app.test/api/coursebuilder/checkout/stripe?productId=${productId}&priceId=price-1&quantity=${quantity}&couponId=${couponId}`,
 		{ method: 'POST' },
 	)
 
@@ -112,6 +115,30 @@ describe('protectCommerceRequest', () => {
 		})
 		expect(other.request).toBeInstanceOf(NextRequest)
 		expect(holdsRestricted).not.toHaveBeenCalled()
+	})
+
+	it('lets a regional ticket holder start a team checkout', async () => {
+		const holdsRestricted = vi.fn(async () => true)
+		const { request } = await protectCommerceRequest(checkout(C5, 5), {
+			session: async () => ({ userId: 'user-regional' }),
+			isBlocked: async () => false,
+			holdsRestricted,
+		})
+		expect(request).toBeInstanceOf(NextRequest)
+	})
+
+	it('refuses a regional coupon on a team order with a clear reason', async () => {
+		const { request } = await protectCommerceRequest(
+			checkout(C5, 5, AUTHORITATIVE_PPP_OFFER_ID),
+			{
+				session: async () => ({ userId: 'user-1' }),
+				isBlocked: async () => false,
+			},
+		)
+		const location = new URL((request as Response).headers.get('location')!)
+		expect(location.pathname + location.search).toBe(
+			REGIONAL_TEAM_NOT_ALLOWED_PATH,
+		)
 	})
 
 	it('sends an anonymous C5 checkout to sign in without creating a session', async () => {

@@ -4,7 +4,12 @@ import { resolveServerComputedCheckoutCoupon } from '@/coursebuilder/server-comp
 import { syntheticCheckoutRefusal } from '@/coursebuilder/synthetic-checkout'
 import { courseBuilderAdapter } from '@/db'
 import { AUTHORITATIVE_PRODUCT_IDS } from '@/lib/c5-pricing/decision'
+import { AUTHORITATIVE_PPP_OFFER_ID } from '@coursebuilder/commerce/authoritative-price'
 import { REGIONAL_UPGRADE_PATH } from '@/lib/c5-pricing/products'
+import {
+	duplicatePurchaseGuard,
+	REGIONAL_TEAM_NOT_ALLOWED_PATH,
+} from '@/lib/purchase-guardrails'
 import { holdsRestrictedPurchase } from '@/lib/c5-pricing/restricted-holder'
 import { getServerAuthSession } from '@/server/auth'
 import type { NextRequest } from 'next/server'
@@ -61,11 +66,40 @@ export const protectCommerceRequest = async (
 			}),
 	})
 	const authoritativeProduct = authoritativeCheckoutProduct(guarded)
-	// No upgrade path: a buyer who holds a region-restricted ticket goes to
-	// support, which upgrades it, instead of a checkout error.
+	const quantity = Number(guarded.nextUrl.searchParams.get('quantity') ?? 1)
+	// Same decision as checkout: a Restricted holder is an existing seat holder.
+	const restrictedHolderDecision = duplicatePurchaseGuard({
+		productType: 'cohort',
+		quantity,
+		existing: [{ status: 'Restricted', bulk: false }],
+		regionalCouponApplied: false,
+	})
+	// Regional pricing is single-seat only: refuse, never silently drop it.
+	if (
+		isCheckoutRequest(request) &&
+		duplicatePurchaseGuard({
+			productType: 'cohort',
+			quantity,
+			existing: [],
+			regionalCouponApplied:
+				request.nextUrl.searchParams.get('couponId') ===
+				AUTHORITATIVE_PPP_OFFER_ID,
+		}) === 'regional-team-not-allowed'
+	) {
+		return {
+			request: Response.redirect(
+				new URL(REGIONAL_TEAM_NOT_ALLOWED_PATH, request.url),
+				303,
+			),
+			userId,
+		}
+	}
+	// No upgrade path: a single-seat buyer who holds a region-restricted ticket
+	// goes to support, which upgrades it. Team orders pass.
 	if (
 		userId &&
 		authoritativeProduct &&
+		restrictedHolderDecision === 'already-own' &&
 		(await (deps.holdsRestricted ?? holdsRestrictedPurchase)(
 			userId,
 			authoritativeProduct,

@@ -9,7 +9,10 @@ import { InvoiceCard } from '@coursebuilder/commerce-next/invoices/invoice-card'
 import { Purchase } from '@coursebuilder/core/schemas'
 import { Button } from '@coursebuilder/ui'
 
-const Invoices = async () => {
+const Invoices = async (props?: {
+	searchParams?: Promise<{ 'already-own'?: string }>
+}) => {
+	const alreadyOwn = (await props?.searchParams)?.['already-own'] === '1'
 	const { session } = await getServerAuthSession()
 	if (!session?.user?.id) redirect('/login?callbackUrl=%2Finvoices')
 
@@ -18,6 +21,11 @@ const Invoices = async () => {
 		<LayoutClient withContainer>
 			<main className="container flex min-h-[calc(100vh-var(--nav-height))] flex-col px-5">
 				<div className="max-w-(--breakpoint-md) mx-auto flex h-full w-full grow flex-col items-center border-x py-16">
+					{alreadyOwn && (
+						<p className="mb-8 text-center">
+							You already own this. Here are your invoices.
+						</p>
+					)}
 					<h1 className="font-heading mb-16 text-3xl font-black">
 						{purchases.length > 0 ? 'Your Invoices' : 'No invoices'}
 					</h1>

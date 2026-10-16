@@ -20,7 +20,8 @@ import { authorizeExclusiveCouponSelection } from '@/lib/exclusive-coupon-author
 import { AUTHORITATIVE_PRODUCT_IDS } from '@/lib/c5-pricing/decision'
 import { getProduct } from '@/lib/products-query'
 import {
-	hasActiveNonBulkPurchaseForProduct,
+	duplicatePurchaseGuard,
+	REGIONAL_TEAM_NOT_ALLOWED_PATH,
 	requiresDuplicateActivePurchaseGuardrail,
 } from '@/lib/purchase-guardrails'
 import { getSubscriptionStatus } from '@/lib/subscriptions'
@@ -60,6 +61,8 @@ export default async function VerifyLoginPage({
 		return redirect('/login')
 	}
 
+	const checkoutQuantity = parsedCheckoutParams.data.quantity ?? 1
+
 	if (requiresDuplicateActivePurchaseGuardrail(product?.type)) {
 		if (user && product) {
 			const guardedProductPurchases = await db.query.purchases.findMany({
@@ -71,10 +74,17 @@ export default async function VerifyLoginPage({
 				),
 			})
 
-			if (
-				hasActiveNonBulkPurchaseForProduct(guardedProductPurchases, product.id)
-			) {
-				return redirect(`/invoices`)
+			const decision = duplicatePurchaseGuard({
+				productType: product.type,
+				quantity: checkoutQuantity,
+				existing: guardedProductPurchases.map((purchase) => ({
+					status: purchase.status,
+					bulk: Boolean(purchase.bulkCouponId),
+				})),
+				regionalCouponApplied: false,
+			})
+			if (decision === 'already-own') {
+				return redirect(`/invoices?already-own=1`)
 			}
 
 			if (typeof checkoutUrl !== 'string' || !checkoutUrl) {
@@ -149,17 +159,30 @@ export default async function VerifyLoginPage({
 		requestedMerchantCouponId: parsedCheckoutParams.data.couponId,
 		requestedSiteCouponId: parsedCheckoutParams.data.usedCouponId,
 	})
+	const regionalCouponApplied = AUTHORITATIVE_PRODUCT_IDS.has(
+		parsedCheckoutParams.data.productId,
+	)
+		? parsedCheckoutParams.data.couponId === AUTHORITATIVE_PPP_OFFER_ID
+		: couponAuthorization.requestedPPP === true
+	// Regional pricing is single-seat only. Refuse, never silently drop the
+	// coupon: that would change the price without the buyer seeing it.
+	if (
+		duplicatePurchaseGuard({
+			productType: product?.type,
+			quantity: checkoutQuantity,
+			existing: [],
+			regionalCouponApplied,
+		}) === 'regional-team-not-allowed'
+	) {
+		return redirect(REGIONAL_TEAM_NOT_ALLOWED_PATH)
+	}
 	const now = new Date()
 	const checkoutHandoff = createCheckoutLoginHandoffEnvelope({
 		secret: env.NEXTAUTH_SECRET,
 		country: trustedCountry,
 		// An authoritative product's PPP selection is the offer id the hook
 		// published; the hook re-checks eligibility from the trusted country.
-		pppSelected: AUTHORITATIVE_PRODUCT_IDS.has(
-			parsedCheckoutParams.data.productId,
-		)
-			? parsedCheckoutParams.data.couponId === AUTHORITATIVE_PPP_OFFER_ID
-			: couponAuthorization.requestedPPP === true,
+		pppSelected: regionalCouponApplied,
 		productId: parsedCheckoutParams.data.productId,
 		quantity: parsedCheckoutParams.data.quantity ?? 1,
 		now,
