@@ -19,6 +19,7 @@ const dataSource: InvoiceLinkDataSource = {
 					merchantChargeId: charge,
 					userId: 'learner',
 					billingUserId: 'payer',
+					transfers: [],
 				}
 			: null
 	},
@@ -40,6 +41,58 @@ const dataSource: InvoiceLinkDataSource = {
 beforeEach(() => {
 	version = 1
 	rotations = 0
+})
+
+describe('invoice links after a pre-fix transfer', () => {
+	const prefix: InvoiceLinkDataSource = {
+		...dataSource,
+		async loadPurchaseByMerchantChargeId(id) {
+			return id === charge
+				? {
+						id: 'purchase-a',
+						merchantChargeId: charge,
+						userId: 'learner',
+						billingUserId: 'learner',
+						transfers: [
+							{
+								state: 'COMPLETED',
+								sourceUserId: 'payer',
+								completedAt: new Date('2026-09-01T00:00:00Z'),
+							},
+						],
+					}
+				: null
+		},
+	}
+	it.each([
+		['payer', 'minted'],
+		['learner', 'denied'],
+	])('%s -> %s', async (viewerUserId, state) => {
+		expect(
+			(
+				await mintInvoiceLinkForViewer(
+					{ merchantChargeId: charge, viewerUserId },
+					prefix,
+					config,
+				)
+			).state,
+		).toBe(state)
+	})
+	it.each([
+		['payer', 'minted', 1],
+		['learner', 'denied', 0],
+	])('rotate: %s -> %s', async (viewerUserId, state, expectedRotations) => {
+		expect(
+			(
+				await rotateInvoiceLinkForViewer(
+					{ merchantChargeId: charge, viewerUserId },
+					prefix,
+					config,
+				)
+			).state,
+		).toBe(state)
+		expect(rotations).toBe(expectedRotations)
+	})
 })
 
 describe('invoice link authorization and revocation', () => {

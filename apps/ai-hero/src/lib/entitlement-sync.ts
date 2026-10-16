@@ -8,7 +8,7 @@ import {
 	users,
 } from '@/db/schema'
 import { log } from '@/server/logger'
-import { and, eq, isNull, ne, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 
 import {
 	createCohortEntitlementInTransaction,
@@ -31,7 +31,7 @@ export async function findUsersWithCohortEntitlements(cohortId: string) {
 
 	// Single JOIN query: entitlements -> purchases -> contentResourceProduct
 	// This replaces the N+1 loop that was causing timeouts
-	// Exclude refunded purchases (Valid and Restricted are both valid for entitlements)
+	// Only Valid and Restricted purchases grant entitlements (not Refunded or Disputed)
 	const results = await db
 		.selectDistinct({
 			userId: users.id,
@@ -51,7 +51,7 @@ export async function findUsersWithCohortEntitlements(cohortId: string) {
 				eq(entitlements.entitlementType, cohortContentAccessEntitlementType.id),
 				isNull(entitlements.deletedAt),
 				eq(contentResourceProduct.resourceId, cohortId),
-				ne(purchases.status, 'Refunded'),
+				inArray(purchases.status, ['Valid', 'Restricted']),
 			),
 		)
 
@@ -181,29 +181,17 @@ async function applyEntitlementChanges(
 		throw new Error('cohort_content_access entitlement type not found')
 	}
 
-	const userMembership = await db.query.organizationMemberships.findFirst({
-		where: eq(organizationMemberships.userId, userId),
-	})
-
-	if (!userMembership) {
-		throw new Error(`No organization membership found for user ${userId}`)
-	}
-
-	if (!userMembership.organizationId) {
-		throw new Error(`No organization ID found for user ${userId}`)
-	}
-
-	const organizationId: string = userMembership.organizationId
-
 	// Get the purchase that grants access to this specific cohort
 	// Must join with contentResourceProduct to ensure the purchase's product is linked to this cohort
-	// Both Valid and Restricted purchases grant access (only Refunded is excluded)
+	// Only Valid and Restricted purchases grant access (Refunded and Disputed do not)
 	const purchaseResult = await db
 		.select({
 			id: purchases.id,
 			userId: purchases.userId,
 			productId: purchases.productId,
 			status: purchases.status,
+			fields: purchases.fields,
+			organizationId: purchases.organizationId,
 		})
 		.from(purchases)
 		.innerJoin(
@@ -213,19 +201,43 @@ async function applyEntitlementChanges(
 		.where(
 			and(
 				eq(purchases.userId, userId),
-				ne(purchases.status, 'Refunded'),
+				inArray(purchases.status, ['Valid', 'Restricted']),
 				eq(contentResourceProduct.resourceId, cohortId),
 			),
 		)
-		.limit(1)
 
-	const purchase = purchaseResult[0]
+	// A valid comp can share a cohort with purchases of other products. Prefer
+	// its explicit early-access grant rather than whichever JOIN row is first.
+	const purchase =
+		purchaseResult.find(
+			(row) => row.fields?.source === 'comp' && row.fields?.earlyAccess === true,
+		) ?? purchaseResult[0]
 
 	if (!purchase) {
 		throw new Error(
 			`No valid purchase found for user ${userId} that grants access to cohort ${cohortId}`,
 		)
 	}
+
+	const purchaseMembership = purchase.organizationId
+		? await db.query.organizationMemberships.findFirst({
+				where: and(
+					eq(organizationMemberships.userId, userId),
+					eq(organizationMemberships.organizationId, purchase.organizationId),
+				),
+			})
+		: undefined
+	// Legacy purchases can name an organization without a matching membership.
+	// Prefer the purchase context, but preserve the old first-membership fallback.
+	const userMembership =
+		purchaseMembership ??
+		(await db.query.organizationMemberships.findFirst({
+			where: eq(organizationMemberships.userId, userId),
+		}))
+	if (!userMembership?.organizationId) {
+		throw new Error(`No organization membership found for user ${userId}`)
+	}
+	const organizationId = userMembership.organizationId
 
 	await db.transaction(async (tx) => {
 		// Remove entitlements for deleted content
@@ -258,6 +270,10 @@ async function applyEntitlementChanges(
 				sourceType: EntitlementSourceType.PURCHASE,
 				metadata: {
 					contentIds: [contentId],
+					...(purchase.fields?.source === 'comp' &&
+					purchase.fields?.earlyAccess === true
+						? { earlyAccess: true }
+						: {}),
 				},
 			})
 		}

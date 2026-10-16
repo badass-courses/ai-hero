@@ -4,6 +4,7 @@ import React from 'react'
 import { useModuleProgress } from '@/app/(content)/_components/module-progress-provider'
 import { env } from '@/env.mjs'
 import { api } from '@/trpc/react'
+import { FullscreenDialogContent } from '@/components/player/fullscreen-dialog-content'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { ClipboardCopyIcon } from 'lucide-react'
 import type { Session } from 'next-auth'
@@ -14,7 +15,6 @@ import { shouldRegenerateCertificateShare } from '@coursebuilder/core/certificat
 
 import {
 	Button,
-	DialogContent,
 	DialogDescription,
 	DialogHeader,
 	Dialog as DialogRoot,
@@ -224,7 +224,7 @@ const Dialog: React.FC<React.PropsWithChildren<{ className?: string }>> = ({
 	const { form } = useModuleCertificate()
 
 	return (
-		<DialogContent>
+		<FullscreenDialogContent>
 			<DialogHeader>
 				<DialogTitle>Certificate</DialogTitle>
 				<DialogDescription>
@@ -238,7 +238,7 @@ const Dialog: React.FC<React.PropsWithChildren<{ className?: string }>> = ({
 					<FormMessage>{form.formState.errors.root?.message}</FormMessage>
 				)}
 			</Form>
-		</DialogContent>
+		</FullscreenDialogContent>
 	)
 }
 

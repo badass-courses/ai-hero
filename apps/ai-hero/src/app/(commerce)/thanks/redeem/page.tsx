@@ -3,10 +3,26 @@ import { headers } from 'next/headers'
 import { notFound } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
 import { courseBuilderAdapter } from '@/db'
-import { Mail } from 'lucide-react'
+import { env } from '@/env.mjs'
+import { purchaseArtwork } from '@/lib/purchase-artwork'
 
-import * as LoginLink from '@coursebuilder/commerce-next/post-purchase/login-link'
+import { PostPurchaseIconBadge } from '../../_components/post-purchase-icon'
+import { PostPurchaseLoginLink } from '../../_components/post-purchase-login-link'
+import {
+	PurchaseCard,
+	PurchaseCardSection,
+	PurchaseColumn,
+	PurchaseHeading,
+} from '../../_components/post-purchase-parts'
 
+/**
+ * Where a teammate lands after claiming a seat while signed out (signed in,
+ * the redeem dialog sends them to `/welcome`). Same card as the purchase
+ * screens: the course, then the login link to open.
+ *
+ * Two reads: the purchase with its user, and the product for its name and
+ * artwork.
+ */
 const ThanksRedeem = async (props: {
 	searchParams: Promise<{ purchaseId: string }>
 }) => {
@@ -17,37 +33,33 @@ const ThanksRedeem = async (props: {
 		searchParams.purchaseId,
 	)
 
-	if (!purchase) {
+	if (!purchase?.user?.email) {
 		return notFound()
 	}
-	const user = await courseBuilderAdapter.getUser?.(purchase.userId as string)
 
-	if (!user) {
-		return notFound()
-	}
+	const product = await courseBuilderAdapter.getProduct(purchase.productId)
 
 	return (
 		<LayoutClient withContainer>
-			<main className="container min-h-[calc(100vh-var(--nav-height))] border-x px-5 py-8 sm:py-16">
-				<div className="mx-auto flex w-full max-w-2xl flex-col justify-center gap-5 text-center">
-					<h1 className="w-full text-balance text-2xl font-semibold sm:text-3xl">
-						Success! Please check your inbox for a login link.
-					</h1>
-					<LoginLink.Root
-						email={user.email}
-						className="flex flex-col items-center text-center"
-					>
-						<LoginLink.CTA className="my-4 flex w-full items-center justify-center gap-3 text-center">
-							<div className="bg-primary/20 text-primary flex h-10 w-10 items-center justify-center rounded-full p-3">
-								<Mail className="h-4 w-4" />
-							</div>
-							<span className="font-semibold">
-								Login link sent to: {user.email}
-							</span>
-						</LoginLink.CTA>
-						<LoginLink.Description className="pt-5 text-sm" />
-					</LoginLink.Root>
-				</div>
+			<main className="min-h-[calc(100vh-var(--nav-height))]">
+				<PurchaseColumn>
+					<PurchaseCard>
+						<PurchaseCardSection>
+							<PurchaseHeading
+								artwork={purchaseArtwork(product)}
+								badge={<PostPurchaseIconBadge kind="ready" size="sm" />}
+								eyebrow="Team seat claimed"
+								title={product?.name || 'Your course'}
+							/>
+						</PurchaseCardSection>
+						<PurchaseCardSection>
+							<PostPurchaseLoginLink
+								email={purchase.user.email}
+								supportEmail={env.NEXT_PUBLIC_SUPPORT_EMAIL}
+							/>
+						</PurchaseCardSection>
+					</PurchaseCard>
+				</PurchaseColumn>
 			</main>
 		</LayoutClient>
 	)

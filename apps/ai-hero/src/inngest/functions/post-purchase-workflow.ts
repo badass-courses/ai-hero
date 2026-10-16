@@ -6,6 +6,8 @@ import LiveOfficeHoursInvitation, {
 } from '@/emails/live-office-hours-invitation'
 import WelcomeArchiveEmail from '@/emails/welcome-archive-email'
 import WelcomeCohortEmailForTeam from '@/emails/welcome-cohort-email-team'
+import { getCohortWelcomeDetails } from '@/lib/cohort-welcome-details-query'
+import { cohortWelcomeSubject } from '@/lib/cohort-welcome-details'
 import WelcomeWorkshopEmailForTeam from '@/emails/welcome-workshop-email-team'
 import { env } from '@/env.mjs'
 import { inngest } from '@/inngest/inngest.server'
@@ -25,6 +27,8 @@ import {
 } from '@/lib/included-product-entitlements'
 import { INCLUDED_PRODUCT_ENTITLEMENTS_RETRY_EVENT } from '@/inngest/events/included-product-entitlements'
 import { log } from '@/server/logger'
+import { verifyPurchase } from '@/lib/buy-path/verify-purchase'
+import type { BuyPathContext } from '@/lib/buy-path/schema'
 import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 
 import { guid } from '@coursebuilder/adapter-drizzle/mysql'
@@ -106,6 +110,7 @@ const tracePostPurchase = async (
 	level: 'info' | 'warn' | 'error' = 'info',
 ) => {
 	await log[level]('post_purchase.trace', {
+		event: 'post_purchase.trace',
 		telemetrySchemaVersion: 1,
 		phase,
 		...data,
@@ -163,6 +168,12 @@ export const postPurchaseWorkflow = inngest.createFunction(
 				'checkoutSessionId' in event.data ? event.data.checkoutSessionId : null,
 		}
 
+		const verifyLast = async (context: BuyPathContext, expected: number) => {
+			await step.sleep('buy path readback settling delay', '10s')
+			return step.run('verify buy path persisted invariants', () =>
+				verifyPurchase(context, expected),
+			)
+		}
 		await tracePostPurchase('workflow.started', traceBase)
 
 		if (
@@ -181,6 +192,15 @@ export const postPurchaseWorkflow = inngest.createFunction(
 			await tracePostPurchase('purchase.missing', traceBase, 'error')
 			throw new Error(`purchase not found`)
 		}
+
+		const buyPath: BuyPathContext | null = traceBase.checkoutSessionId
+			? {
+					buyPathId: traceBase.checkoutSessionId,
+					purchaseId: purchase.id,
+					productId: purchase.productId,
+					userId: purchase.userId ?? null,
+				}
+			: null
 
 		await tracePostPurchase('purchase.loaded', {
 			...traceBase,
@@ -365,6 +385,7 @@ export const postPurchaseWorkflow = inngest.createFunction(
 
 		if (product.type === ARCHIVE_PRODUCT_TYPE) {
 			if (!['Valid', 'Restricted'].includes(purchase.status)) {
+				if (buyPath) await verifyLast(buyPath, 0)
 				return {
 					purchase,
 					product,
@@ -483,6 +504,7 @@ export const postPurchaseWorkflow = inngest.createFunction(
 				})
 			}
 
+			if (buyPath) await verifyLast(buyPath, archiveResult.granted.length)
 			return {
 				purchase,
 				product,
@@ -578,9 +600,14 @@ export const postPurchaseWorkflow = inngest.createFunction(
 						)
 
 						if (context.productType === 'cohort') {
+							const welcomeDetails = await getCohortWelcomeDetails(
+								context.resourceId,
+								user.id,
+							)
 							await sendAnEmail({
 								Component: WelcomeCohortEmailForTeam,
 								componentProps: {
+									welcomeDetails,
 									cohortTitle:
 										parsedResource.fields?.title || parsedResource.fields?.slug,
 									url: contentUrl,
@@ -590,7 +617,13 @@ export const postPurchaseWorkflow = inngest.createFunction(
 									quantity: bulkCoupon?.maxUses || 1,
 									userFirstName: user.name?.split(' ')[0],
 								},
-								Subject: `Welcome to ${parsedResource.fields?.title || config.defaultTitle}!`,
+								Subject: welcomeDetails
+									? cohortWelcomeSubject(
+											welcomeDetails,
+											'team',
+											bulkCoupon?.maxUses || 1,
+										)
+									: `Welcome to ${parsedResource.fields?.title || config.defaultTitle}!`,
 								To: user.email,
 								ReplyTo: env.NEXT_PUBLIC_SUPPORT_EMAIL,
 								From: env.NEXT_PUBLIC_SUPPORT_EMAIL,
@@ -979,6 +1012,9 @@ export const postPurchaseWorkflow = inngest.createFunction(
 				userId: user.id,
 			})
 		}
+
+		if (buyPath)
+			await verifyLast(buyPath, isTeamPurchase ? 0 : resourceContexts.length)
 
 		await tracePostPurchase('workflow.completed', {
 			...traceBase,

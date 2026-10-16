@@ -12,6 +12,8 @@ import {
 } from '@/db/schema'
 import BasicEmail from '@/emails/basic-email'
 import WelcomeCohortEmailForTeamRedeemer from '@/emails/welcome-cohort-email-team-redeemer'
+import { getCohortWelcomeDetails } from './cohort-welcome-details-query'
+import { cohortWelcomeSubject } from './cohort-welcome-details'
 import { env } from '@/env.mjs'
 import { getWorkshopAvailability } from '@/lib/get-workshop-availability'
 import { personalOrganizations } from '@/server/personal-organizations'
@@ -20,6 +22,7 @@ import {
 	alertPurchaseBenefitOperator,
 	logPurchaseBenefitReceipt,
 } from '@/lib/purchase-benefit-telemetry'
+import { updatePurchaseFields } from '@/lib/purchase-fields-write'
 import { log } from '@/server/logger'
 import { sendAnEmail } from '@coursebuilder/utils/send-an-email'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
@@ -298,19 +301,23 @@ function mergePurchaseFields(
 	}
 }
 
+/**
+ * Writes only the patch keys. The merged object it returns is the caller's
+ * in-memory view for later steps, never what is written.
+ */
 async function markPurchaseFields(
 	purchaseId: string,
 	fields: unknown,
 	patch: Record<string, unknown>,
 ) {
-	const nextFields = mergePurchaseFields(fields, patch)
-	await db
-		.update(purchases)
-		.set({ fields: nextFields })
-		.where(eq(purchases.id, purchaseId))
-	return nextFields
+	await updatePurchaseFields({ purchaseId, patch })
+	return mergePurchaseFields(fields, patch)
 }
 
+/**
+ * Claims the send only while neither marker is set at write time, and writes
+ * only the patch keys.
+ */
 async function claimWelcomeEmailSend(input: {
 	purchaseId: string
 	fields: unknown
@@ -318,19 +325,16 @@ async function claimWelcomeEmailSend(input: {
 	sendingField: string
 	patch: Record<string, unknown>
 }) {
-	const nextFields = mergePurchaseFields(input.fields, input.patch)
-	const result = await db
-		.update(purchases)
-		.set({ fields: nextFields })
-		.where(
-			and(
-				eq(purchases.id, input.purchaseId),
-				sql`JSON_EXTRACT(${purchases.fields}, ${`$.${input.sentField}`}) IS NULL`,
-				sql`JSON_EXTRACT(${purchases.fields}, ${`$.${input.sendingField}`}) IS NULL`,
-			),
-		)
+	const { rowsAffected } = await updatePurchaseFields({
+		purchaseId: input.purchaseId,
+		patch: input.patch,
+		where: and(
+			sql`JSON_EXTRACT(${purchases.fields}, ${`$.${input.sentField}`}) IS NULL`,
+			sql`JSON_EXTRACT(${purchases.fields}, ${`$.${input.sendingField}`}) IS NULL`,
+		),
+	})
 
-	return result.rowsAffected && result.rowsAffected > 0 ? nextFields : null
+	return rowsAffected > 0 ? mergePurchaseFields(input.fields, input.patch) : null
 }
 
 async function getBenefitTitles(benefits: ExpandedPurchaseBenefit[]) {
@@ -656,9 +660,14 @@ export async function sendTeamSeatRedemptionWelcomeEmail(input: {
 				type: 'transactional',
 			})
 		} else {
+			const welcomeDetails = await getCohortWelcomeDetails(
+				parsedResource.id,
+				redeemedPurchase.userId,
+			)
 			await sendAnEmail({
 				Component: WelcomeCohortEmailForTeamRedeemer,
 				componentProps: {
+					welcomeDetails,
 					cohortTitle:
 						parsedResource.fields?.title || parsedResource.fields?.slug,
 					url: contentUrl,
@@ -667,7 +676,9 @@ export async function sendTeamSeatRedemptionWelcomeEmail(input: {
 					benefitTitles,
 					userFirstName: user.name?.split(' ')[0],
 				},
-				Subject: `Welcome to ${parsedResource.fields?.title || config.defaultTitle}!`,
+				Subject: welcomeDetails
+					? cohortWelcomeSubject(welcomeDetails, 'seat')
+					: `Welcome to ${parsedResource.fields?.title || config.defaultTitle}!`,
 				To: user.email,
 				ReplyTo: env.NEXT_PUBLIC_SUPPORT_EMAIL,
 				From: env.NEXT_PUBLIC_SUPPORT_EMAIL,

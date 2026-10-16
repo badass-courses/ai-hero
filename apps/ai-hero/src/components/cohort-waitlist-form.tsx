@@ -14,8 +14,9 @@ import { track } from '@/utils/analytics'
 import { cn } from '@coursebuilder/utils/cn'
 
 /**
- * The cohort waitlist capture. One form, one Kit list, two callers: the
- * `/courses` hero and the homepage's cohort block.
+ * The cohort waitlist capture. One form, one Kit list, three callers: the
+ * `/courses` hero, the homepage's cohort block, and the rail of a cohort page
+ * that is still coming soon.
  *
  * It is shared on purpose. Amy's note on the homepage block — *"might as well
  * include the signup form"* — and her note on the `/courses` hero are the same
@@ -46,11 +47,17 @@ export function WaitlistForm({
 }: {
 	actionLabel: string
 	productName: string
-	surface: Extract<ConversionSurface, 'homepage-cohort' | 'courses-cohort'>
+	surface: Extract<
+		ConversionSurface,
+		'homepage-cohort' | 'courses-cohort' | 'cohort-page'
+	>
 	knownIdentity?: boolean
 }) {
 	const router = useRouter()
 	const { status: sessionStatus } = useSession()
+	// A page can hold this form more than once (a cohort body repeats its
+	// ask), and a fixed id would then be shared by every copy.
+	const instanceId = React.useId()
 	const [completed, setCompleted] = React.useState<
 		'joined' | 'confirmation-required' | null
 	>(null)
@@ -71,7 +78,15 @@ export function WaitlistForm({
 	}
 
 	if (!knownIdentity && sessionStatus === 'loading') {
-		return <div className="bg-muted h-12 w-full animate-pulse rounded-[9px]" />
+		// The height of the form it stands in for, at either layout: one 44px
+		// row from 520px of room, and name, email and button stacked (166px)
+		// below that. It was 48px at every width, so on a phone the form arrived
+		// 118px taller and pushed the page down under the reader.
+		return (
+			<div className="@container w-full min-w-0">
+				<div className="bg-muted @[520px]:h-11 h-[166px] w-full animate-pulse rounded-[9px]" />
+			</div>
+		)
 	}
 
 	return (
@@ -104,7 +119,7 @@ export function WaitlistForm({
 				<ConversionIntentForm
 					intent={intent}
 					surface={surface}
-					id="courses-waitlist"
+					id={`courses-waitlist-${instanceId}`}
 					actionLabel={actionLabel}
 					onSuccess={(subscriber) => {
 						if (!subscriber) return

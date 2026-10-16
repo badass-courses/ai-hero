@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { env } from '@/env.mjs'
+import { isValidSamePersonEvidence } from '@/lib/invoice-access-rules'
 import { verifySupportSignature } from '@/lib/support-signature'
 import {
 	completeSupportPurchaseTransfer,
@@ -9,6 +10,7 @@ import {
 	initiateSupportPurchaseTransfer,
 	inspectSupportPurchaseTransfer,
 } from '@/purchase-transfer/support-initiate'
+import { supportTransferRefusalPrompt } from '@/purchase-transfer/refusal-prompts'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
 import { z } from 'zod'
@@ -29,6 +31,9 @@ const requestSchema = z.object({
 	purchaseId: z.string().min(1),
 	sourceUserId: z.string().min(1),
 	targetEmail: z.email(),
+	// Validated by hand below so a malformed one gets a literal prompt, not a
+	// generic 400.
+	samePerson: z.unknown().optional(),
 	audit: z.object({
 		runId: z.string().min(1),
 		conversationId: z.string().min(1),
@@ -37,6 +42,10 @@ const requestSchema = z.object({
 		expectedInboundId: z.string().min(1),
 	}).strict(),
 }).strict()
+
+const SAME_PERSON_PROMPT = supportTransferRefusalPrompt(
+	'same_person_evidence_invalid',
+)
 
 export const POST = withSkill(async (request: NextRequest) => {
 	if (!env.SUPPORT_WEBHOOK_SECRET) {
@@ -60,8 +69,38 @@ export const POST = withSkill(async (request: NextRequest) => {
 	if (!parsed.success)
 		return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
 
-	const { mode, transferId, purchaseId, sourceUserId, targetEmail, audit } =
-		parsed.data
+	const {
+		mode,
+		transferId,
+		purchaseId,
+		sourceUserId,
+		targetEmail,
+		audit,
+		samePerson,
+	} = parsed.data
+	if (samePerson !== undefined) {
+		if (mode !== 'support_complete' && mode !== 'support_complete_dry_run') {
+			return NextResponse.json(
+				{
+					state: 'invalid',
+					reason: 'same_person_only_on_support_complete',
+					error:
+						'samePerson only applies to a support_complete mode. Remove it from this request.',
+				},
+				{ status: 400 },
+			)
+		}
+		if (!isValidSamePersonEvidence(samePerson)) {
+			return NextResponse.json(
+				{
+					state: 'invalid',
+					reason: 'same_person_evidence_invalid',
+					error: SAME_PERSON_PROMPT,
+				},
+				{ status: 400 },
+			)
+		}
+	}
 	const target = { purchaseId, sourceUserId, targetEmail }
 	let result
 	if (mode.startsWith('support_complete')) {
@@ -71,7 +110,13 @@ export const POST = withSkill(async (request: NextRequest) => {
 				{ status: 400 },
 			)
 		}
-		const completionTarget = { ...target, transferId }
+		const completionTarget = {
+			...target,
+			transferId,
+			...(samePerson !== undefined && isValidSamePersonEvidence(samePerson)
+				? { samePerson }
+				: {}),
+		}
 		result =
 			mode === 'support_complete'
 				? await completeSupportPurchaseTransfer(completionTarget)
@@ -105,13 +150,22 @@ export const POST = withSkill(async (request: NextRequest) => {
 			{
 				state: result.state,
 				transferId: result.transferId,
-				...('reason' in result ? { reason: result.reason } : {}),
+				...('reason' in result
+					? {
+							reason: result.reason,
+							error: supportTransferRefusalPrompt(result.reason),
+						}
+					: {}),
 			},
 			{ status: 202 },
 		)
 	}
 	return NextResponse.json(
-		{ state: result.state, reason: result.reason },
+		{
+			state: result.state,
+			reason: result.reason,
+			error: supportTransferRefusalPrompt(result.reason),
+		},
 		{ status: 409 },
 	)
 })

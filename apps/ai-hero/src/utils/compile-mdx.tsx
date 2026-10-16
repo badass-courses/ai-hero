@@ -20,6 +20,7 @@ import type { CalloutIntent } from '@/components/mdx/callout'
 import type { CommandCardProps } from '@/components/mdx/command-card'
 import type { ComparisonProps } from '@/components/mdx/comparison'
 import type { ContrastProps } from '@/components/mdx/contrast'
+import type { MarkListProps } from '@/components/mdx/mark-list'
 import { PromoCard } from '@/components/mdx/promo-card'
 import type { PromoCardProps } from '@/components/mdx/promo-card'
 import type { DictionaryEntry } from '@/lib/ai-coding-dictionary'
@@ -107,6 +108,17 @@ const Comparison = dynamic(() =>
 )
 const Contrast = dynamic(() =>
 	import('@/components/mdx/contrast').then((mod) => mod.Contrast),
+)
+const SoftwareFactoryMap = dynamic(() =>
+	import('@/components/mdx/software-factory-map').then(
+		(mod) => mod.SoftwareFactoryMap,
+	),
+)
+const MarkList = dynamic(() =>
+	import('@/components/mdx/mark-list').then((mod) => mod.MarkList),
+)
+const Divider = dynamic(() =>
+	import('@/components/mdx/divider').then((mod) => mod.Divider),
 )
 const CommandCard = dynamic(() =>
 	import('@/components/mdx/command-card').then((mod) => mod.CommandCard),
@@ -653,6 +665,9 @@ async function compileMDXInternal(
 					),
 					Comparison: (props: ComparisonProps) => <Comparison {...props} />,
 					Contrast: (props: ContrastProps) => <Contrast {...props} />,
+					SoftwareFactoryMap: () => <SoftwareFactoryMap />,
+					MarkList: (props: MarkListProps) => <MarkList {...props} />,
+					Divider: () => <Divider />,
 					CommandCard: (props: CommandCardProps) => <CommandCard {...props} />,
 					Callout: ({ children, icon, className, intent }) => (
 						<Callout icon={icon} className={className} intent={intent}>

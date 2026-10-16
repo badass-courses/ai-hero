@@ -1,6 +1,11 @@
 import { dedupe, flag } from '@vercel/flags/next'
 
-import { COMMERCE_ENABLED, FLAGS, SHOW_TEAM_PRICING } from './flag-definitions'
+import {
+	C5_PRICING_ENABLED,
+	COMMERCE_ENABLED,
+	FLAGS,
+	SHOW_TEAM_PRICING,
+} from './flag-definitions'
 import { redisAdapter } from './flags-adapter'
 import { getEnvironment, getEnvKey } from './flags-env'
 
@@ -38,10 +43,21 @@ export const showTeamPricingFlag = flag<boolean>({
 	options: FLAGS[SHOW_TEAM_PRICING].options,
 })
 
+// Display only, for /admin/flags. C5 surfaces read the switch through
+// c5PricingClosed, which fails closed and bounds the read.
+export const c5PricingEnabledFlag = flag<boolean>({
+	key: getEnvKey(FLAGS[C5_PRICING_ENABLED].key),
+	adapter: redisAdapter(),
+	defaultValue: FLAGS[C5_PRICING_ENABLED].defaultValue[getEnvironment()],
+	identify,
+	options: FLAGS[C5_PRICING_ENABLED].options,
+})
+
 // Map of flag keys to their instances
 export const flagInstances = {
 	[COMMERCE_ENABLED]: commerceEnabled,
 	[SHOW_TEAM_PRICING]: showTeamPricingFlag,
+	[C5_PRICING_ENABLED]: c5PricingEnabledFlag,
 } as const
 
 // Array of flags for precomputation

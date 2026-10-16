@@ -1,6 +1,10 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createActor, waitFor } from "xstate";
-import { evergreenClaimMachine } from "./evergreen-claim-panel";
+import {
+  evergreenClaimMachine,
+  shouldRenderClaimPanel,
+  type ClaimPhase,
+} from "./evergreen-claim-panel";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -35,4 +39,50 @@ it("an authenticated pilot without claim evidence can see the existing sign-in i
   expect(actor.getSnapshot().matches("displaying")).toBe(true);
   expect(fetcher).toHaveBeenCalledTimes(1);
   actor.stop();
+});
+const phases = ["loading", "displaying", "submitting", "error"] as const;
+const statuses = [
+  "unavailable",
+  "verification-needed",
+  "ready",
+  "pending",
+  "bound",
+] as const;
+it("pilot panel renders nothing for unavailable, even after a refresh answers unavailable", async () => {
+  const fetcher = vi.fn(async () => Response.json({ status: "unavailable" }));
+  vi.stubGlobal("fetch", fetcher);
+  const actor = createActor(evergreenClaimMachine, {
+    input: { endpoint: "/api/evergreen/claim" },
+  }).start();
+  const visible = () => {
+    const state = actor.getSnapshot();
+    return shouldRenderClaimPanel({
+      pilotOnly: true,
+      phase: state.value as ClaimPhase,
+      status: state.context.status,
+    });
+  };
+  expect(visible()).toBe(false);
+  await waitFor(actor, (state) => state.matches("displaying"));
+  expect(visible()).toBe(false);
+  actor.send({ type: "REFRESH" });
+  await waitFor(actor, (state) => state.matches("displaying"));
+  expect(visible()).toBe(false);
+  actor.stop();
+});
+describe("shouldRenderClaimPanel truth table", () => {
+  for (const phase of phases)
+    for (const status of statuses) {
+      it(`non-pilot always renders (${phase}, ${status})`, () => {
+        expect(shouldRenderClaimPanel({ pilotOnly: false, phase, status })).toBe(
+          true,
+        );
+      });
+      const hidden = phase === "error" || status === "unavailable";
+      it(`pilot ${hidden ? "hides" : "renders"} (${phase}, ${status})`, () => {
+        expect(shouldRenderClaimPanel({ pilotOnly: true, phase, status })).toBe(
+          !hidden,
+        );
+      });
+    }
 });

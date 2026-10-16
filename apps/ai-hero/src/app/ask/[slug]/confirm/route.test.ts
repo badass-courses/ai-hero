@@ -237,6 +237,25 @@ describe('POST /ask/{slug}/confirm records the answer', () => {
 		)
 	})
 
+	it.each(['value-path-not-complete', 'completion-evidence-unavailable'])(
+		'never creates a certificate share for %s',
+		async (reason) => {
+			mocks.getValuePathAnswerPageBySlug.mockResolvedValue({
+				...answerPage,
+				id: 'email-7-finisher.other',
+				fields: { ...answerPage.fields, emailId: 'email-7', slug: 'cert' },
+			})
+			mocks.checkSkillsWorkflowValuePathCertificateEligibility.mockResolvedValue(
+				{ eligible: false, reason },
+			)
+			await confirm('cert', { pt: 'signed-token', answer: 'other' })
+			expect(
+				mocks.checkSkillsWorkflowValuePathCertificateEligibility,
+			).toHaveBeenCalled()
+			expect(mocks.ensureSkillsWorkflowCertificateShare).not.toHaveBeenCalled()
+		},
+	)
+
 	it('creates the finisher certificate share on confirm, never for a synthetic principal', async () => {
 		const certificate = {
 			...answerPage,

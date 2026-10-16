@@ -57,7 +57,8 @@ vi.mock('@/lib/invoice-settings', async (importOriginal) => {
 		await importOriginal<typeof import('@/lib/invoice-settings')>()
 	const dataSource: InvoiceSettingsDataSource = {
 		async loadPurchaseByMerchantChargeId(merchantChargeId) {
-			return store.purchases.get(merchantChargeId) ?? null
+			const purchase = store.purchases.get(merchantChargeId)
+			return purchase ? { ...purchase, transfers: [] } : null
 		},
 		async loadSettings(purchaseId, merchantChargeId) {
 			const row = store.rows.get(settingsKey(purchaseId, merchantChargeId))

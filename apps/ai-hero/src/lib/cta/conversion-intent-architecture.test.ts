@@ -11,7 +11,6 @@ const migratedSurfaces = [
 	'src/app/(content)/workshops/_components/workshop-pricing-widget-container.tsx',
 	'src/app/(content)/_components/post-newsletter-form.tsx',
 	'src/app/(content)/lists/[slug]/_components/list-newsletter-form.tsx',
-	'src/components/video-block-newsletter-cta.tsx',
 ]
 
 const legacyConvertKitImport =

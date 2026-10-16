@@ -7,6 +7,7 @@ import { PricingInline } from '@/components/pricing/pricing-inline'
 import LayoutClient from '@/components/layout-client'
 import { TeamInquiryForm } from '@/components/team-inquiry/team-inquiry-form'
 import { AI_CODING_COHORT_SLUG } from '@/lib/campaign-landings'
+import { getCachedCohort } from '@/lib/cohorts-query'
 import { AI_CODING_CRASH_COURSE_SLUG } from '@/lib/crash-course-purchaser-tag'
 import { getCachedMinimalWorkshop } from '@/lib/workshops-query'
 import {
@@ -47,6 +48,12 @@ const TEAM_FACTS = [
 	{ icon: CalendarOff, text: 'Self-paced, so nobody waits for a cohort date' },
 ] as const
 
+/**
+ * The next live cohort, by id so its slug and title can change under it.
+ * Its team page is linked once its `forTeamsBody` exists.
+ */
+const NEXT_TEAM_COHORT_ID = 'cohort-xdy1m'
+
 /** The inner pad every band shares (DESIGN rules 1 and 3). */
 const INNER = 'px-[18px] py-12 sm:px-11 md:py-[52px]'
 
@@ -68,6 +75,12 @@ export default async function TeamPage() {
 	const crashCourseHref = crashCourse?.fields.forTeamsBody
 		? `/workshops/${AI_CODING_CRASH_COURSE_SLUG}/for-teams`
 		: `/workshops/${AI_CODING_CRASH_COURSE_SLUG}`
+	const nextCohort = await getCachedCohort(NEXT_TEAM_COHORT_ID).catch(
+		() => null,
+	)
+	const nextCohortTeamHref = nextCohort?.fields.forTeamsBody
+		? `/cohorts/${nextCohort.fields.slug}/for-teams`
+		: null
 
 	return (
 		<LayoutClient withContainer>
@@ -268,6 +281,33 @@ export default async function TeamPage() {
 						</article>
 					</div>
 				</section>
+
+				{nextCohort && nextCohortTeamHref ? (
+					<section aria-labelledby="next-cohort" className="border-b">
+						<Link
+							href={nextCohortTeamHref}
+							className={cn(
+								'hover:bg-foreground/[0.03] group flex flex-wrap items-center justify-between gap-4 transition-colors',
+								INNER,
+								'md:py-8',
+							)}
+						>
+							<span className="flex flex-col gap-1">
+								<span className={cn(TYPE.groupLabel)}>Next live cohort</span>
+								<span id="next-cohort" className={cn(TYPE.subhead)}>
+									{nextCohort.fields.title}
+								</span>
+							</span>
+							<span className={cn(TYPE.meta, 'inline-flex items-center gap-2')}>
+								Team seats and invoices
+								<ArrowUpRight
+									className="size-4 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
+									aria-hidden="true"
+								/>
+							</span>
+						</Link>
+					</section>
+				) : null}
 
 				<section className="border-b">
 					<CompanyLogoGrid className="pt-8" />

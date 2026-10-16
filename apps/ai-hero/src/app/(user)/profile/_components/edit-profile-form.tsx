@@ -1,6 +1,7 @@
 'use client'
 
 import React from 'react'
+import Link from 'next/link'
 import { Icon } from '@/components/brand/icons'
 import { disconnectDiscord } from '@/lib/discord-disconnect-action'
 import { disconnectGithub } from '@/lib/github-query'
@@ -143,14 +144,9 @@ const EditProfileForm: React.FC<{
 													Disconnect
 												</Button>
 											) : (
-												<Button
-													type="button"
-													size="sm"
-													disabled
-													title="Account linking is temporarily unavailable"
-												>
-													Unavailable
-												</Button>
+												<span className="text-muted-foreground text-sm">
+													Not linked
+												</span>
 											)}
 										</div>
 									</li>
@@ -175,13 +171,8 @@ const EditProfileForm: React.FC<{
 													Disconnect
 												</Button>
 											) : (
-												<Button
-													type="button"
-													size="sm"
-													disabled
-													title="Account linking is temporarily unavailable"
-												>
-													Unavailable
+												<Button asChild size="sm">
+													<Link href="/discord">Connect</Link>
 												</Button>
 											)}
 										</div>

@@ -1,14 +1,13 @@
 'use client'
 
-import React, { use } from 'react'
+import React from 'react'
+import { flushSync } from 'react-dom'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { revalidateTutorialLesson } from '@/app/(content)/tutorials/actions'
 import { useCohortNavigation } from '@/app/(content)/workshops/_components/cohort-navigation-provider'
 import { useWorkshopNavigation } from '@/app/(content)/workshops/_components/workshop-navigation-provider'
-import { CldImage } from '@/components/cld-image'
+import { TYPE } from '@/components/landing/type'
 import Spinner from '@/components/spinner'
-import { VideoBlockNewsletterCta } from '@/components/video-block-newsletter-cta'
 import {
 	getNextCohortWorkshop,
 	isWorkshopAvailable,
@@ -17,88 +16,213 @@ import {
 	findParentLessonForSolution,
 	getModuleCompletionState,
 } from '@/lib/content-navigation'
-import { setProgressForResource } from '@/lib/progress'
-import { MinimalWorkshop } from '@/lib/workshops'
-import type { Subscriber } from '@/schemas/subscriber'
 import { api } from '@/trpc/react'
 import { getAdjacentWorkshopResources } from '@/utils/get-adjacent-workshop-resources'
-import type { AbilityForResource } from '@/utils/get-current-ability-rules'
-import { XMarkIcon } from '@heroicons/react/24/outline'
-import type { QueryStatus } from '@tanstack/react-query'
-import { formatInTimeZone } from 'date-fns-tz'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { ArrowRight } from 'lucide-react'
 import { useSession } from 'next-auth/react'
-import pluralize from 'pluralize'
 import { useReward } from 'react-rewards'
 
-import InviteTeam from '@coursebuilder/commerce-next/team/invite-team'
-import { buildStripeCheckoutPath } from '@coursebuilder/commerce/build-stripe-checkout-path'
-import type {
-	ContentResource,
-	ContentResourceResource,
-	Product,
-	Purchase,
-} from '@coursebuilder/core/schemas'
-import type { FormattedPrice } from '@coursebuilder/commerce/types'
-import { formatUsd } from '@coursebuilder/commerce/format-usd'
-import { Button, Progress, useToast } from '@coursebuilder/ui'
+import type { ContentResource } from '@coursebuilder/core/schemas'
+import { Button, Progress } from '@coursebuilder/ui'
 import { useVideoPlayerOverlay } from '@coursebuilder/ui/hooks/use-video-player-overlay'
-import type { CompletedAction } from '@coursebuilder/ui/hooks/use-video-player-overlay'
 import { cn } from '@coursebuilder/ui/utils/cn'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
-import { revalidateModuleLesson } from '../actions'
 import { CopyProblemPromptButton } from '../workshops/_components/copy-problem-prompt-button'
-import { VideoOverlayWorkshopPricing } from '../workshops/_components/video-overlay-pricing-widget'
-import type { WorkshopPageProps } from '../workshops/_components/workshop-page-props'
 import * as ModuleCertificate from '@/components/certificates/module-certificate'
 
-import { handleSetLessonComplete } from './authed-video-player'
+import { completeLessonInBackground } from './complete-lesson-in-background'
 import {
 	CohortCertificateAction,
 	useCohortCertificateEligibility,
 } from './cohort-certificate-container'
+import {
+	AUTO_ADVANCE_SECONDS,
+	EndCard,
+	END_CARD_SECONDARY,
+	EndCardItem,
+	isEndCardAction,
+	type EndCardAction,
+} from './end-card'
 import { CertificateDialog } from './module-certificate-container'
 import { useModuleProgress } from './module-progress-provider'
+import { getNextLesson, type NextLesson } from './next-lesson'
+
+const easeOutQuint = [0.22, 1, 0.36, 1] as const
+
+const END_CARD_PRIMARY =
+	'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover h-10 rounded-[9px] px-4 font-bold'
+
+/** The count rolls over when the lesson's completion lands under the card. */
+function RollingCount({ value }: { value: number }) {
+	const reduceMotion = useReducedMotion()
+	return (
+		<span className="inline-grid overflow-hidden">
+			<AnimatePresence initial={false}>
+				<motion.span
+					key={value}
+					className="[grid-area:1/1]"
+					initial={{ opacity: 0, y: reduceMotion ? 0 : '100%' }}
+					animate={{ opacity: 1, y: 0 }}
+					exit={{ opacity: 0, y: reduceMotion ? 0 : '-100%' }}
+					// Waits for the card's rows to rise first.
+					transition={{ duration: 0.25, ease: easeOutQuint, delay: 0.25 }}
+				>
+					{value}
+				</motion.span>
+			</AnimatePresence>
+		</span>
+	)
+}
+
+function ModuleProgressLine() {
+	const { moduleProgress } = useModuleProgress()
+	// Without the module's progress (it failed to load, or a completion landed
+	// in an empty store) there is no honest "n/N", so draw none.
+	if (!moduleProgress?.totalLessonsCount) return null
+	return (
+		<div className="flex items-center gap-3">
+			<Progress
+				value={moduleProgress?.percentCompleted || 0}
+				// Progress already transitions its indicator; retime it to land
+				// with the rolling count.
+				className="h-1 w-[150px] bg-white/20 sm:w-[200px] [&_[data-indicator]]:delay-250 [&_[data-indicator]]:duration-250 [&_[data-indicator]]:ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:[&_[data-indicator]]:transition-none"
+			/>
+			<span className={cn(TYPE.metaMark, 'tabular-nums text-white/80')}>
+				<RollingCount value={moduleProgress?.completedLessonsCount || 0} />/
+				{moduleProgress?.totalLessonsCount || 0} completed
+			</span>
+		</div>
+	)
+}
+
+/** Ticks down from AUTO_ADVANCE_SECONDS while `active`, then calls `onDone`. */
+function useCountdown(active: boolean, onDone: () => void) {
+	const [secondsLeft, setSecondsLeft] = React.useState(AUTO_ADVANCE_SECONDS)
+	const onDoneRef = React.useRef(onDone)
+	React.useLayoutEffect(() => {
+		onDoneRef.current = onDone
+	})
+
+	React.useEffect(() => {
+		if (!active) return
+		const startedAt = Date.now()
+		const timer = setInterval(() => {
+			const left =
+				AUTO_ADVANCE_SECONDS - (Date.now() - startedAt) / 1000
+			setSecondsLeft(Math.max(0, Math.ceil(left)))
+			if (left > 0) return
+			clearInterval(timer)
+			onDoneRef.current()
+		}, 100)
+		return () => clearInterval(timer)
+	}, [active])
+
+	return secondsLeft
+}
+
+/** Drains linearly over the countdown; reduced motion keeps the number only. */
+function CountdownTrack() {
+	const reduceMotion = useReducedMotion()
+	if (reduceMotion) return null
+	return (
+		<div className="h-1 w-[150px] overflow-hidden rounded-full bg-white/20 sm:w-[200px]">
+			<motion.div
+				className="bg-accent-fill h-full origin-left"
+				initial={{ scaleX: 1 }}
+				animate={{ scaleX: 0 }}
+				transition={{ duration: AUTO_ADVANCE_SECONDS, ease: 'linear' }}
+			/>
+		</div>
+	)
+}
+
+/**
+ * Moves on to the next lesson. The progress write (a retry; the ended handler
+ * already wrote it) starts before the push and stays outside the transition,
+ * which only drives the spinner.
+ */
+function useContinue({
+	resource,
+	prevResource,
+	next,
+	hasSession,
+	held,
+}: {
+	resource: ContentResource
+	prevResource: ContentResource | null
+	next: NextLesson | null
+	/** Only optimistic with one: a cookie-only email-course subscriber has no session but is recorded. */
+	hasSession: boolean
+	/** The host already plays `next`; moving on again would complete it unwatched. */
+	held: boolean
+}) {
+	const router = useRouter()
+	const pathname = usePathname()
+	const { moduleProgress, addLessonProgress, removeLessonProgress } =
+		useModuleProgress()
+	// tRPC, not a server action: one settling during the push below would
+	// replay this page over the next one.
+	const { client } = api.useUtils()
+	const [isNavigating, startNavigation] = React.useTransition()
+
+	const go = () => {
+		if (held) return
+		// The card only draws for a viewer the page let in, so the completion
+		// is always recorded. A problem lesson completes on its solution instead.
+		if (!next?.isSolution) {
+			// On a solution, the lesson to complete is the problem before it.
+			const isSolution = pathname.endsWith('/solution')
+			void completeLessonInBackground({
+				resourceId: isSolution && prevResource ? prevResource.id : resource.id,
+				moduleProgress,
+				addLessonProgress,
+				removeLessonProgress,
+				setCompleted: client.progress.setCompleted.mutate,
+				optimistic: hasSession,
+			})
+		}
+		if (next) startNavigation(() => router.push(next.href))
+	}
+
+	return { go, isNavigating }
+}
 
 export const CompletedLessonOverlay: React.FC<{
-	action: CompletedAction
-	resource: ContentResource | null
+	action: EndCardAction
+	/** The host swapped to another lesson and only holds this card up over it. */
+	held: boolean
 	moduleType?: 'workshop' | 'tutorial'
 	moduleSlug?: string
-	abilityLoader: Promise<
-		Omit<AbilityForResource, 'canView'> & {
-			canViewWorkshop: boolean
-			canViewLesson: boolean
-			isPendingOpenAccess: boolean
-		}
-	>
-}> = ({
-	action,
-	resource,
-	moduleType = 'tutorial',
-	moduleSlug,
-	abilityLoader,
-}) => {
-	const { playerRef } = action
+}> = ({ action, held, moduleType = 'tutorial', moduleSlug }) => {
+	const { playerRef, resource } = action
+	const { dispatch } = useVideoPlayerOverlay()
 	const workshopNavigation = useWorkshopNavigation()
 	const { nextResource: adjacentNextLesson, prevResource: prevLesson } =
-		getAdjacentWorkshopResources(workshopNavigation, resource?.id as string)
-	const nextLesson = action.nextResource || adjacentNextLesson
-	const isSolutionNext = nextLesson?.type === 'solution'
+		getAdjacentWorkshopResources(workshopNavigation, resource.id)
+	const next = getNextLesson({
+		navigation: workshopNavigation,
+		next: action.nextResource || adjacentNextLesson,
+		moduleType,
+	})
 
-	const { dispatch: dispatchVideoPlayerOverlay } = useVideoPlayerOverlay()
 	const { moduleProgress } = useModuleProgress()
 	const { data: session } = useSession()
-
-	const percentCompleted = moduleProgress?.percentCompleted || 0
+	const { go, isNavigating } = useContinue({
+		resource,
+		prevResource: prevLesson,
+		next,
+		hasSession: Boolean(session?.user),
+		held,
+	})
 
 	// Decide "is the workshop finished" from live progress, not from the
 	// snapshot the ended handler captured. That snapshot can lag the durable
 	// state and has shown a learner "Up Next: <lesson 1>" beside "6/6
 	// completed" on the last lesson, which also hides the certificate.
 	const resourceToComplete =
-		resource?.type === 'solution'
+		resource.type === 'solution'
 			? prevLesson || findParentLessonForSolution(workshopNavigation, resource.id)
 			: resource
 	// Without navigation there is no lesson list to check against, and an empty
@@ -112,156 +236,159 @@ export const CompletedLessonOverlay: React.FC<{
 				resourceIdToMarkComplete: resourceToComplete?.id,
 			}).isModuleComplete)
 
-	return nextLesson && !isModuleComplete ? (
-		<div
-			aria-live="polite"
-			className="bg-background/80 absolute left-0 top-0 z-40 flex aspect-video h-full w-full flex-col items-center justify-center gap-3 p-5 text-lg text-white backdrop-blur-md sm:gap-5 lg:gap-10"
-		>
-			<div className="flex flex-col items-center text-center">
-				<p className="pb-2 text-sm opacity-80 sm:text-base">
-					{isSolutionNext
-						? `Now Watch ${process.env.NEXT_PUBLIC_PARTNER_FIRST_NAME || 'Instructor'}'s Solution`
-						: 'Up Next:'}
-				</p>
-				<p className="font-heading text-xl font-bold sm:text-2xl">
-					{nextLesson?.type === 'solution'
-						? findParentLessonForSolution(workshopNavigation, nextLesson.id)
-								?.fields?.title || 'Next Resource'
-						: nextLesson?.fields?.title || 'Next Resource'}
-				</p>
-				{session?.user ? (
-					<div className="mt-3 flex items-center gap-3 text-sm sm:mt-8">
-						<Progress
-							value={percentCompleted}
-							className="bg-foreground/20 h-1 w-[150px] sm:w-[200px]"
-						/>
-						<div className="opacity-85">
-							{moduleProgress?.completedLessonsCount || 0}/
-							{moduleProgress?.totalLessonsCount || 0} completed
-						</div>
-					</div>
+	// The layout follows the action; only the timer stops while held, so a
+	// card held over the next lesson fades out as it was drawn.
+	const counting = Boolean(action.autoAdvance && next && !isModuleComplete)
+	const secondsLeft = useCountdown(counting && !held, go)
+
+	if (!next || isModuleComplete)
+		return (
+			<CompletedModuleOverlay
+				action={action}
+				held={held}
+				moduleType={moduleType}
+				moduleSlug={moduleSlug}
+			/>
+		)
+
+	const partner = process.env.NEXT_PUBLIC_PARTNER_FIRST_NAME || 'Instructor'
+	const label = next.isSolution
+		? counting
+			? `${partner}'s solution in`
+			: `Now watch ${partner}'s solution`
+		: counting
+			? 'Up next in'
+			: 'Up next'
+
+	const cancel = () => {
+		// Becomes the normal card; keep the keyboard on it.
+		const normalCard: EndCardAction = { ...action, autoAdvance: false }
+		flushSync(() => dispatch(normalCard))
+		document
+			.querySelector<HTMLElement>('[data-end-card-continue]')
+			?.focus({ preventScroll: true })
+	}
+
+	return (
+		<EndCard inert={held}>
+			<EndCardItem className="flex flex-col items-center gap-3">
+				{next.thumbnailUrl && (
+					// The same immutable URL the player preloads at 80%. Only drawn
+					// where the card has the height for it.
+					// eslint-disable-next-line @next/next/no-img-element
+					<img
+						src={next.thumbnailUrl}
+						alt=""
+						className="hidden aspect-video w-40 rounded-[9px] object-cover ring-1 ring-white/15 sm:w-48 [@container(min-height:22rem)]:block"
+					/>
+				)}
+				<div>
+					<p className={cn(TYPE.meta, 'pb-1 text-white/70')}>
+						{label}
+						{counting && (
+							<span className="tabular-nums text-white"> {secondsLeft}</span>
+						)}
+						{next.number && (
+							<span className="text-white/50">
+								{' '}
+								· Lesson {next.number} of {next.total}
+							</span>
+						)}
+					</p>
+					<p className={TYPE.subhead}>{next.title}</p>
+				</div>
+			</EndCardItem>
+			<EndCardItem>
+				{counting ? (
+					<CountdownTrack />
+				) : session?.user ? (
+					<ModuleProgressLine />
 				) : (
-					<div className="mt-3 text-sm sm:mt-8">
+					<p className={cn(TYPE.meta, 'font-normal text-white/80')}>
 						<Link
 							href="/login"
-							className="dark:text-primary text-blue-600 hover:underline"
+							className="focus-visible:ring-ring -mx-2 inline-flex min-h-11 items-center rounded-[9px] px-2 font-medium text-white underline underline-offset-4 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2"
 						>
 							Log in
 						</Link>{' '}
 						to track your progress.
-					</div>
+					</p>
 				)}
-			</div>
-			<div className="flex w-full items-center justify-center gap-3">
+			</EndCardItem>
+			<EndCardItem className="flex w-full flex-wrap items-center justify-center gap-3">
+				{counting ? (
+					<Button
+						variant="ghost"
+						type="button"
+						className={END_CARD_SECONDARY}
+						onClick={cancel}
+					>
+						Cancel
+					</Button>
+				) : (
+					<>
+						<Button
+							variant="ghost"
+							type="button"
+							className={END_CARD_SECONDARY}
+							onClick={() => playerRef.current?.play()}
+						>
+							Replay
+						</Button>
+						{resource.type !== 'solution' && (
+							<CopyProblemPromptButton
+								className={END_CARD_SECONDARY}
+								lesson={resource}
+								variant="default"
+							/>
+						)}
+					</>
+				)}
 				<Button
-					variant="ghost"
+					className={cn(END_CARD_PRIMARY, 'cursor-pointer')}
+					data-end-card-primary=""
+					data-end-card-continue=""
+					onClick={go}
 					type="button"
-					onClick={() => {
-						if (playerRef.current) {
-							playerRef.current.play()
-						}
-					}}
+					disabled={isNavigating}
 				>
-					Replay
+					{counting ? 'Play now' : 'Continue'}
+					{isNavigating ? (
+						<Spinner className="ml-2 size-4" />
+					) : (
+						<ArrowRight className="ml-2 size-4" />
+					)}
 				</Button>
-				{resource && resource.type !== 'solution' && (
-					<CopyProblemPromptButton
-						abilityLoader={abilityLoader}
-						className="dark:bg-primary/20 dark:hover:bg-primary/30 dark:text-primary h-10 bg-white/20 px-4 text-sm text-white transition hover:bg-white/30"
-						lesson={resource}
-						variant="default"
-					/>
-				)}
-				{resource && (
-					<ContinueButton
-						className="h-10"
-						moduleType={moduleType}
-						resource={resource}
-						nextResource={nextLesson}
-						prevResource={prevLesson}
-					/>
-				)}
-			</div>
-			<Button
-				type="button"
-				className="absolute right-3 top-3 h-8 w-8 bg-white/10 sm:right-5 sm:top-5 sm:h-10 sm:w-10"
-				variant="ghost"
-				size="icon"
-				onClick={() => {
-					dispatchVideoPlayerOverlay({ type: 'HIDDEN' })
-				}}
-			>
-				<span className="sr-only">Dismiss</span>
-				<XMarkIcon aria-hidden="true" className="h-4 w-4 sm:h-6 sm:w-6" />
-			</Button>
-		</div>
-	) : (
-		<CompletedModuleOverlay
-			action={action}
-			resource={resource}
-			moduleType={moduleType}
-			moduleSlug={moduleSlug}
-			prevResource={prevLesson}
-		/>
+			</EndCardItem>
+		</EndCard>
 	)
 }
 
+/**
+ * The workshop is done. The lesson was already marked complete when the video
+ * ended (see `AuthedVideoPlayer`), so this card only celebrates and points on.
+ */
 export const CompletedModuleOverlay: React.FC<{
-	action: CompletedAction
-	resource: ContentResource | null
+	action: EndCardAction
+	held?: boolean
 	moduleType?: 'workshop' | 'tutorial'
 	moduleSlug?: string
-	prevResource?: any
-}> = ({
-	action,
-	resource,
-	moduleType = 'tutorial',
-	moduleSlug,
-	prevResource,
-}) => {
+}> = ({ action, held = false, moduleType = 'tutorial', moduleSlug }) => {
 	const { playerRef } = action
-	const session = useSession()
-	const { dispatch: dispatchVideoPlayerOverlay } = useVideoPlayerOverlay()
 	const moduleNavigation = useWorkshopNavigation()
-	const { moduleProgress, addLessonProgress } = useModuleProgress()
-	const [isPending, startTransition] = React.useTransition()
-	const utils = api.useUtils()
-	const isCurrentLessonCompleted = Boolean(
-		moduleProgress?.completedLessons?.some(
-			(p) => p.resourceId === resource?.id && p.completedAt,
-		),
-	)
-	const { reward, isAnimating } = useReward('rewardId', 'confetti', {
+	const reduceMotion = useReducedMotion()
+	const { reward } = useReward('rewardId', 'confetti', {
 		angle: 90,
 		decay: 0.9,
 		spread: 100,
 	})
 
 	React.useEffect(() => {
-		if (!resource) return
-		reward()
-		if (isCurrentLessonCompleted) return
-		startTransition(async () => {
-			const resourceToComplete =
-				resource.type === 'solution' && prevResource ? prevResource : resource
-			await handleSetLessonComplete({
-				currentResource: resourceToComplete,
-				moduleProgress: moduleProgress,
-				addLessonProgress: addLessonProgress,
-			})
-			if (moduleSlug && moduleType) {
-				await revalidateModuleLesson(
-					moduleSlug,
-					resourceToComplete.fields?.slug as string,
-					moduleType,
-					resourceToComplete.type as 'lesson' | 'exercise' | 'solution',
-				)
-			}
-			// The cohort eligibility read may have raced this write; ask again
-			// now that the final lesson is persisted.
-			await utils.certificate.cohortEligibility.invalidate()
-		})
-	}, []) // Empty deps array to only run once on mount
+		// Never for a card held over the next lesson, which is not done.
+		if (!reduceMotion && !held) reward()
+		// Once per card, on arrival.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [])
 
 	// Reads the cohort from context rather than its own tRPC round trip. This
 	// used to call `getNextWorkshopInCohort`, which was a second, subtly
@@ -300,14 +427,10 @@ export const CompletedModuleOverlay: React.FC<{
 	// the primary action and the certificate sits beside it.
 	const replayButton = (
 		<Button
-			className="rounded-md border border-white/20 bg-white/10 hover:bg-white/20"
+			className={END_CARD_SECONDARY}
 			variant="outline"
 			type="button"
-			onClick={() => {
-				if (playerRef.current) {
-					playerRef.current.play()
-				}
-			}}
+			onClick={() => playerRef.current?.play()}
 		>
 			Replay
 		</Button>
@@ -317,440 +440,108 @@ export const CompletedModuleOverlay: React.FC<{
 			<>
 				{replayButton}
 				{moduleSlug && (
-					<ModuleCertificate.Trigger className="rounded-md border border-white/20 bg-white/10 text-white hover:bg-white/20">
+					<ModuleCertificate.Trigger className={END_CARD_SECONDARY}>
 						Get your certificate
 					</ModuleCertificate.Trigger>
 				)}
-				<Button asChild variant="default">
-					<Link href={nextWorkshopHref}>Continue to {nextWorkshop.title}</Link>
+				<Button asChild variant="default" className={END_CARD_PRIMARY}>
+					<Link
+						href={nextWorkshopHref}
+						data-end-card-primary=""
+						data-end-card-continue=""
+					>
+						Continue to {nextWorkshop.title}
+					</Link>
 				</Button>
 			</>
 		) : (
 			<>
 				{replayButton}
 				{moduleSlug && (
-					<ModuleCertificate.Trigger
-						className={
-							canClaimCohortCertificate
-								? 'rounded-md border border-white/20 bg-white/10 text-white hover:bg-white/20'
-								: 'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover rounded-md font-bold'
-						}
+					<span
+						className="contents"
+						data-end-card-primary={canClaimCohortCertificate ? undefined : ''}
 					>
-						Get your certificate
-					</ModuleCertificate.Trigger>
+						<ModuleCertificate.Trigger
+							className={
+								canClaimCohortCertificate ? END_CARD_SECONDARY : END_CARD_PRIMARY
+							}
+						>
+							Get your certificate
+						</ModuleCertificate.Trigger>
+					</span>
 				)}
 				{canClaimCohortCertificate && cohortNavigation && (
-					<CohortCertificateAction
-						cohort={cohortNavigation}
-						className="bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover rounded-md font-bold"
-					/>
+					<span className="contents" data-end-card-primary="">
+						<CohortCertificateAction
+							cohort={cohortNavigation}
+							className={END_CARD_PRIMARY}
+						/>
+					</span>
 				)}
 			</>
 		)
 
-	const overlay = (
-		<div
-			aria-live="polite"
-			className="absolute left-0 top-0 z-40 flex aspect-video h-full w-full flex-col items-center justify-center gap-2 bg-gray-900/80 p-5 text-lg text-white backdrop-blur-md sm:gap-5 xl:gap-5"
-		>
-			<p className="font-heading text-center text-xl font-bold">Great job!</p>
-			<p className="text-center text-sm sm:text-base">
-				You&apos;ve completed the "{moduleNavigation?.fields?.title}"{' '}
-				{moduleType}.
-			</p>
-			<span id="rewardId" />
-			<div className="flex w-full flex-wrap items-center justify-center gap-3">
+	const card = (
+		<EndCard inert={held}>
+			<EndCardItem>
+				<p className={TYPE.subhead}>Great job!</p>
+				<p className={cn(TYPE.meta, 'pt-1 font-normal text-white/80')}>
+					You&apos;ve completed the "{moduleNavigation?.fields?.title}"{' '}
+					{moduleType}.
+				</p>
+				<span id="rewardId" />
+			</EndCardItem>
+			<EndCardItem className="flex w-full flex-wrap items-center justify-center gap-3">
 				{actions}
-			</div>
-			<Button
-				type="button"
-				className="text-foreground absolute right-5 top-5"
-				variant="outline"
-				size="icon"
-				onClick={() => {
-					dispatchVideoPlayerOverlay({ type: 'HIDDEN' })
-				}}
-			>
-				<span className="sr-only">Dismiss</span>
-				<XMarkIcon aria-hidden="true" className="h-4 w-4" />
-			</Button>
-		</div>
+			</EndCardItem>
+		</EndCard>
 	)
 
-	if (!moduleSlug) return overlay
+	if (!moduleSlug) return card
 	return (
 		<ModuleCertificate.Root resourceIdOrSlug={moduleSlug}>
-			{overlay}
+			{card}
 			<CertificateDialog />
 		</ModuleCertificate.Root>
 	)
 }
 
-const ContinueButton: React.FC<{
-	resource: ContentResource
-	moduleType: 'workshop' | 'tutorial'
-	nextResource?: ContentResource
-	prevResource?: ContentResource | null
-	className?: string
-}> = ({
-	resource,
-	nextResource,
-	prevResource = null,
-	moduleType,
-	className,
-}) => {
-	const router = useRouter()
-	const { dispatch: dispatchVideoPlayerOverlay } = useVideoPlayerOverlay()
-	const pathname = usePathname()
-	const { moduleProgress, addLessonProgress } = useModuleProgress()
-	const moduleNavigation = useWorkshopNavigation()
-	const isCurrentLessonCompleted = Boolean(
-		moduleProgress?.completedLessons?.some(
-			(p) => p.resourceId === resource.id && p.completedAt,
-		),
-	)
-
-	const isProblemLesson = Boolean(
-		resource?.resources?.find((r) => r.resource.type === 'solution'),
-	)
-
-	const isSolution = pathname.endsWith('/solution')
-
-	const [isPending, startTransition] = React.useTransition()
-	const { data: session } = useSession()
-
-	return (
-		<Button
-			className={cn(
-				'dark:bg-primary dark:hover:bg-primary/90 dark:text-primary-foreground cursor-pointer bg-white text-black hover:bg-white/80',
-				className,
-			)}
-			onClick={async () => {
-				if (!isCurrentLessonCompleted && !isProblemLesson) {
-					startTransition(async () => {
-						// when on solution, we want to add progress to the previous lesson (problem)
-						const resourceIdToComplete =
-							isSolution && prevResource ? prevResource.id : resource.id
-						const resourceToComplete =
-							isSolution && prevResource ? prevResource : resource
-						addLessonProgress(resourceIdToComplete)
-						await setProgressForResource({
-							resourceId: resourceIdToComplete,
-							isCompleted: true,
-						})
-						if (
-							moduleNavigation?.fields?.slug &&
-							resourceToComplete?.fields?.slug
-						) {
-							await revalidateModuleLesson(
-								moduleNavigation.fields.slug,
-								resourceToComplete.fields.slug,
-								moduleType,
-								resourceToComplete.type as 'lesson' | 'exercise' | 'solution',
-							)
-						}
-					})
-					dispatchVideoPlayerOverlay({ type: 'LOADING' })
-				}
-				if (nextResource && moduleNavigation) {
-					if (nextResource.type === 'solution') {
-						return router.push(
-							`/${pluralize(moduleType)}/${moduleNavigation.fields?.slug}/${resource?.fields?.slug}/solution`,
-						)
-					}
-					return router.push(
-						`/${pluralize(moduleType)}/${moduleNavigation.fields?.slug}/${nextResource?.fields?.slug}`,
-					)
-				}
-			}}
-			type="submit"
-			disabled={isPending}
-		>
-			{(isCurrentLessonCompleted && !isPending) || !session?.user
-				? 'Continue'
-				: isProblemLesson
-					? 'Continue'
-					: 'Complete & Continue'}
-			{isPending ? (
-				<Spinner className="ml-2 size-4" />
-			) : (
-				<ArrowRight className="ml-2 size-4" />
-			)}
-		</Button>
-	)
-}
-
-export const SoftBlockOverlay: React.FC<{
-	resource: ContentResource | null
-}> = ({ resource }) => {
-	const { dispatch: dispatchVideoPlayerOverlay } = useVideoPlayerOverlay()
-	const { toast } = useToast()
-
-	const moduleNavigation = useWorkshopNavigation()
-
-	return (
-		<div
-			aria-live="polite"
-			className="z-40 flex h-full w-full flex-col items-center justify-center gap-10 overflow-hidden p-5 py-16 text-lg sm:p-10 sm:py-10 lg:p-16"
-		>
-			<VideoBlockNewsletterCta
-				moduleTitle={moduleNavigation?.fields?.title}
-				onSuccess={async (subscriber?: Subscriber) => {
-					if (subscriber && moduleNavigation && resource) {
-						await revalidateTutorialLesson(
-							moduleNavigation.fields?.slug,
-							resource?.fields?.slug,
-						)
-						dispatchVideoPlayerOverlay({ type: 'LOADING' })
-						toast({
-							title: 'Check your email',
-						})
-					}
-				}}
-				onKnownSuccess={async ({ confirmationRequired }) => {
-					if (moduleNavigation && resource) {
-						await revalidateTutorialLesson(
-							moduleNavigation.fields?.slug,
-							resource?.fields?.slug,
-						)
-						dispatchVideoPlayerOverlay({ type: 'LOADING' })
-						toast({
-							title: confirmationRequired
-								? 'Check your email to confirm'
-								: 'You’re in — enjoy the tutorial',
-						})
-					}
-				}}
-			>
-				{moduleNavigation?.fields?.coverImage && (
-					<CldImage
-						// className="flex sm:hidden"
-						src={moduleNavigation.fields.coverImage}
-						alt={moduleNavigation.fields.title}
-						width={150}
-						height={150}
-					/>
-				)}
-			</VideoBlockNewsletterCta>
-		</div>
-	)
-}
-
 type VideoPlayerOverlayProps = {
 	resource: ContentResource
-	abilityLoader: Promise<
-		Omit<AbilityForResource, 'canView'> & {
-			canViewWorkshop: boolean
-			canViewLesson: boolean
-			isPendingOpenAccess: boolean
-		}
-	>
-	pricingProps?: WorkshopPageProps
 	moduleType?: 'workshop' | 'tutorial'
 	moduleSlug?: string
-	workshop: MinimalWorkshop | null
 }
 
+/**
+ * The end-of-video card. Only the workshop lesson page renders it, inside the
+ * player shell so it survives fullscreen, and that page redirects anyone who
+ * cannot view the lesson. Completion is therefore the only state left to draw.
+ */
 const VideoPlayerOverlay: React.FC<VideoPlayerOverlayProps> = ({
 	resource,
-	abilityLoader,
-	pricingProps,
 	moduleType = 'tutorial',
 	moduleSlug,
-	workshop,
 }) => {
-	// usePrefetchNextResource({ resource, moduleType, moduleSlug })
+	const { state: overlayState } = useVideoPlayerOverlay()
+	const action =
+		isEndCardAction(overlayState.action) ? overlayState.action : null
 
-	const ability = use(abilityLoader)
-	const canView = ability.canViewLesson
-	const canInviteTeam = ability.canInviteTeam
-	const isRegionRestricted = ability.isRegionRestricted
-
-	const { state: overlayState, dispatch } = useVideoPlayerOverlay()
-	const { data: session } = useSession()
-
-	const purchaseForProduct = pricingProps?.purchases?.find(
-		(purchase) => purchase.productId === pricingProps?.product?.id,
-	)
-
-	const showRegionRestrictedBlock =
-		isRegionRestricted && !canView && purchaseForProduct
-
-	const showTeamInvite =
-		canInviteTeam && !canView && purchaseForProduct?.bulkCoupon
-
-	const { data: formattedPrice, status: formattedPriceStatus } =
-		api.pricing.formatted.useQuery(
-			{
-				productId: pricingProps?.product?.id,
-				quantity: 1,
-				upgradeFromPurchaseId: purchaseForProduct?.id,
-				autoApplyPPP: false,
-			},
-			{
-				enabled: Boolean(showRegionRestrictedBlock),
-			},
-		)
-
-	if (showRegionRestrictedBlock) {
-		const regionNames = new Intl.DisplayNames(['en'], { type: 'region' })
-		const countryCode = purchaseForProduct.country
-		const country = countryCode
-			? regionNames.of(countryCode)
-			: 'a specific region'
-
-		return (
-			<div
-				aria-live="polite"
-				className="relative z-40 flex aspect-video h-full w-full flex-col items-center justify-center gap-5 bg-gray-100 p-5 sm:text-lg"
-			>
-				<p className="max-w-md text-balance text-center">
-					Your've purchased a regional license restricted to {country} for lower
-					price. You can upgrade to get full access from anywhere in the world.
-				</p>
-				<Upgrade
-					formattedPrice={formattedPrice}
-					formattedPriceStatus={formattedPriceStatus}
-					product={pricingProps?.product}
-					purchase={purchaseForProduct}
-					purchaseToUpgrade={formattedPrice?.upgradeFromPurchaseId}
-					userId={session?.user?.id}
-				/>
-			</div>
-		)
-	}
-	if (showTeamInvite) {
-		const redemptionsLeft =
-			purchaseForProduct?.bulkCoupon &&
-			purchaseForProduct.bulkCoupon.maxUses >
-				purchaseForProduct.bulkCoupon.usedCount
-
-		return (
-			<div
-				aria-live="polite"
-				className="bg-background relative z-40 flex h-full w-full flex-col items-center justify-center p-5 sm:aspect-video sm:text-lg"
-			>
-				<div className="mx-auto flex w-full max-w-lg flex-col gap-5">
-					<p className="border-border w-full border-b pb-5 font-semibold">
-						You've purchased a team license. Invite your team or claim a seat
-						for yourself.
-					</p>
-					<InviteTeam
-						className="flex flex-col items-start gap-2"
-						purchase={purchaseForProduct}
-						disabled={!redemptionsLeft}
-						userEmail={session?.user.email}
-					/>
-				</div>
-			</div>
-		)
-	}
-	if (!canView && !ability.isPendingOpenAccess && moduleSlug) {
-		if (moduleType === 'tutorial') {
-			return <SoftBlockOverlay resource={resource} />
-		}
-		return (
-			<div
-				aria-live="polite"
-				className={cn(
-					'relative z-40 flex h-full w-full flex-col items-center justify-center p-5 py-8 text-lg xl:aspect-video',
-					{
-						'xl:aspect-auto': pricingProps?.country !== 'US',
-					},
-				)}
-			>
-				{pricingProps && <VideoOverlayWorkshopPricing {...pricingProps} />}
-			</div>
-		)
-	}
-
-	if (!canView && ability.isPendingOpenAccess && moduleSlug) {
-		return (
-			<div
-				aria-live="polite"
-				className={cn(
-					'relative z-40 flex h-full w-full flex-col items-center justify-center p-5 py-8 text-lg xl:aspect-video',
-				)}
-			>
-				<p>
-					This lesson is not available yet. Please check back on{' '}
-					{formatInTimeZone(
-						new Date(workshop?.fields?.startsAt || ''),
-						'America/Los_Angeles',
-						`MMM d, yyyy 'at' h:mm a z`,
-					)}
-				</p>
-			</div>
-		)
-	}
-
-	switch (overlayState.action?.type) {
-		case 'COMPLETED':
-			return (
+	return (
+		<AnimatePresence>
+			{action && (
 				<CompletedLessonOverlay
-					action={overlayState.action}
-					resource={resource}
+					key="end-card"
+					action={action}
+					// The card is for the lesson that ended. Once the host has
+					// swapped, it is only held up until the next poster shows.
+					held={action.resource.id !== resource.id}
 					moduleType={moduleType}
 					moduleSlug={moduleSlug}
-					abilityLoader={abilityLoader}
 				/>
-			)
-		case 'LOADING':
-			return (
-				<div
-					aria-live="polite"
-					className="text-foreground absolute left-0 top-0 z-40 flex aspect-video h-full w-full flex-col items-center justify-center gap-10 p-5 text-lg"
-				>
-					<Spinner className="text-white" />
-				</div>
-			)
-		case 'HIDDEN':
-			return null
-		default:
-			return null
-	}
+			)}
+		</AnimatePresence>
+	)
 }
 
 export default VideoPlayerOverlay
-
-const Upgrade: React.FC<{
-	formattedPrice?: FormattedPrice
-	formattedPriceStatus: QueryStatus
-	purchase: Purchase
-	product?: Product
-	userId: string | undefined
-	purchaseToUpgrade: any
-}> = ({ formattedPrice, formattedPriceStatus, userId }) => {
-	const pathname = usePathname()
-	const formActionPath = buildStripeCheckoutPath({
-		userId,
-		quantity: formattedPrice?.quantity,
-		productId: formattedPrice?.id,
-		bulk: Boolean(formattedPrice?.bulk),
-		upgradeFromPurchaseId: formattedPrice?.upgradeFromPurchaseId,
-		cancelUrl: `${process.env.NEXT_PUBLIC_URL}${pathname}`,
-	})
-
-	return (
-		<form
-			action={formActionPath}
-			method="POST"
-			className="flex flex-col items-center gap-4"
-		>
-			{formattedPriceStatus !== 'success' ? (
-				'Loading price...'
-			) : (
-				<div className="text-xl">
-					<sup>US</sup>
-					<span className="text-3xl font-bold">
-						{formatUsd(formattedPrice?.calculatedPrice).dollars}
-					</span>
-					<sup>{formatUsd(formattedPrice?.calculatedPrice).cents}</sup>
-				</div>
-			)}
-			<Button disabled={formattedPriceStatus !== 'success'} type="submit">
-				Upgrade to full license
-			</Button>
-		</form>
-	)
-}

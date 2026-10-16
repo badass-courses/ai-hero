@@ -72,20 +72,19 @@ export const LessonControls = async ({
 			<div className="flex grow items-center max-sm:[&:has([data-get-access])>*:last-child]:border-r-0">
 				<React.Suspense fallback={null}>
 					<GetAccessButton
-						className="border-r-border bg-primary dark:hover:bg-primary/90 h-10 grow justify-center rounded-none border-0 border-r px-5 text-sm sm:h-12 sm:grow-0"
+						// A CTA fill: gold in both themes (bg-primary is the text accent,
+						// ink in light, which drew a black block here).
+						className="border-r-border bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill/90 h-10 grow justify-center rounded-none border-0 border-r px-5 text-sm font-semibold sm:h-12 sm:grow-0"
 						abilityLoader={abilityLoader}
 						moduleSlug={moduleSlug}
 					/>
 				</React.Suspense>
-				<React.Suspense fallback={null}>
-					<CopyProblemPromptButton
-						abilityLoader={abilityLoader}
-						lesson={lesson}
-						problem={problem}
-						variant="ghost"
-						className="hover:bg-muted/50 dark:hover:bg-muted/50 border-r-border h-10 rounded-none border-0 border-r px-3 text-sm sm:h-12"
-					/>
-				</React.Suspense>
+				<CopyProblemPromptButton
+					lesson={lesson}
+					problem={problem}
+					variant="ghost"
+					className="hover:bg-muted/50 dark:hover:bg-muted/50 border-r-border h-10 rounded-none border-0 border-r px-3 text-sm sm:h-12"
+				/>
 				{githubUrl && (
 					<Button
 						asChild

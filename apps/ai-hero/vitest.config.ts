@@ -10,8 +10,16 @@ export default defineConfig({
 		// mounting its real Pricing.Root in the workshop lifecycle test.
 		// next-auth 5 beta imports `next/server` with no extension, which Node's
 		// ESM resolver refuses; through Vite it resolves (the claim route test).
+		// Course Builder's Next handler calls `headers()` from next/headers.js;
+		// inlined so the Stripe webhook route test can mock it outside a request.
 		server: {
-			deps: { inline: ['@coursebuilder/commerce-next', 'next-auth'] },
+			deps: {
+				inline: [
+					'@coursebuilder/commerce-next',
+					'@coursebuilder/next',
+					'next-auth',
+				],
+			},
 		},
 		include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
 		globals: true,

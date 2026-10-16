@@ -5,6 +5,7 @@ import { ContributorImage } from '@/components/contributor'
 import LayoutClient from '@/components/layout-client'
 import { env } from '@/env.mjs'
 import { getDiscordAccount } from '@/lib/discord-query'
+import { discordErrorMessage } from '@/lib/discord-view'
 import {
 	requestOAuthAccountLink,
 	switchOAuthAccountLogin,
@@ -50,7 +51,7 @@ export default async function Discord({
 
 				{error && (
 					<div className="mx-auto max-w-md rounded-lg bg-red-100 px-4 py-3 text-center text-sm text-red-800">
-						{decodeURIComponent(error)}
+						{discordErrorMessage(error)}
 					</div>
 				)}
 

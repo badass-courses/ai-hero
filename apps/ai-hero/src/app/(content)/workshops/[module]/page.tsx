@@ -7,12 +7,12 @@ import {
 	WorkshopAccessBoundary,
 	WorkshopSidebarAccessBoundary,
 } from '@/app/(content)/workshops/_components/workshop-access-boundary'
+import { LessonDeniedNotice } from '@/app/(content)/workshops/_components/lesson-denied-notice'
 import { WorkshopResourceList } from '@/app/(content)/workshops/_components/workshop-resource-list'
 import { TeamWelcomeVideo } from '@/app/(content)/workshops/_components/team-welcome-video'
 import { WorkshopActionsBar } from '@/app/(content)/workshops/_components/workshop-user-actions'
 import { Contributor } from '@/components/contributor'
 import { EvergreenClaimPanel } from '@/components/evergreen-claim-panel'
-import { EvergreenOfferEndedNotice } from '@/components/evergreen-offer-ended-notice'
 import { DiscountDeadline } from '@/components/pricing/discount-deadline'
 import { PricingInline } from '@/components/pricing/pricing-inline'
 import { TYPE } from '@/components/landing/type'
@@ -37,6 +37,7 @@ import { Skeleton } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
 import WorkshopBreadcrumb from '../_components/workshop-breadcrumb'
+import { WorkshopEvergreenOfferEndedNotice } from '../_components/workshop-evergreen-offer-ended-notice'
 import WorkshopImage from '../_components/workshop-image'
 import {
 	WorkshopInlineBuyButton,
@@ -231,6 +232,7 @@ export default async function ModulePage(props: Props) {
 						return (
 							<WorkshopAccessBoundary
 								member={null}
+								anonymousWithoutCta={null}
 								anonymous={
 									<React.Suspense fallback={null}>
 										<WorkshopInlineBuyButton
@@ -280,7 +282,10 @@ export default async function ModulePage(props: Props) {
 					<>
 						{/* An expired offer link says so instead of a silent full price. */}
 						<React.Suspense fallback={null}>
-							<EvergreenOfferEndedNotice endpoint="/api/evergreen/offer-status" />
+							<WorkshopEvergreenOfferEndedNotice
+								endpoint="/api/evergreen/offer-status"
+								productId={product.id}
+							/>
 						</React.Suspense>
 						<EvergreenClaimPanel
 							pilotOnly
@@ -290,6 +295,7 @@ export default async function ModulePage(props: Props) {
 					</>
 				)}
 			<main className="flex min-h-screen w-full flex-col">
+				<LessonDeniedNotice />
 				{isPreLaunch && (
 					<React.Suspense fallback={null}>
 						<WorkshopDraftBanner
@@ -493,6 +499,9 @@ export default async function ModulePage(props: Props) {
 													wrapperClassName="overflow-hidden pb-0"
 												/>
 											)
+											// The resource list with no buy or notify ask, desktop or
+											// mobile bar: what a viewer sees until we know they don't own it.
+											const sidebarWithoutCta = listSidebar(false)
 											const forcedPurchaseSidebar = pricingProps.product ? (
 												<WorkshopSidebar
 													pricingProps={{
@@ -525,12 +534,15 @@ export default async function ModulePage(props: Props) {
 													fallback={
 														<WorkshopAccessBoundary
 															anonymous={anonymousSidebar}
+															anonymousWithoutCta={sidebarWithoutCta}
 															member={memberSidebar}
+															showErrorNote
 														/>
 													}
 												>
 													<WorkshopSidebarAccessBoundary
 														anonymous={anonymousSidebar}
+														anonymousWithoutCta={sidebarWithoutCta}
 														member={memberSidebar}
 														forcedPurchase={forcedPurchaseSidebar}
 													/>
@@ -542,7 +554,9 @@ export default async function ModulePage(props: Props) {
 							) : (
 								<WorkshopAccessBoundary
 									anonymous={listSidebar(false)}
+									anonymousWithoutCta={listSidebar(false)}
 									member={listSidebar(true)}
+									showErrorNote
 								/>
 							)}
 						</div>

@@ -1,0 +1,254 @@
+// @ts-nocheck: untyped Node operator tooling, covered by rig.test.mjs; not app code.
+import { readFile } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
+import { execFileSync } from 'node:child_process'
+import Stripe from 'stripe'
+import { catalog, c5WorkshopId, fixtureFor } from './fixtures.mjs'
+import { authenticate, evidence } from './seed.mjs'
+import { assertTestKey, assertTestObject, freshToken, origin, privateWrite, publicSession } from './safety.mjs'
+import { remember } from './stripe-state.mjs'
+
+// A provider refusal can be wrapped in verify-login with the app error URL,
+// not a hosted checkout URL. Diagnose it before following the misleading hop.
+export function checkoutHandoffRefusal(target, baseOrigin = origin) {
+  if (!target) return null
+  const handoff = new URL(target, baseOrigin)
+  if (handoff.origin !== new URL(baseOrigin).origin || handoff.pathname !== '/subscribe/verify-login') return null
+  const nested = handoff.searchParams.get('checkoutUrl')
+  if (!nested) return null // Login-first, not a provider checkout response.
+  let checkout
+  try { checkout = new URL(nested) } catch { return { classification: 'checkout-refused-before-login', checkoutHost: null } }
+  if (checkout.protocol === 'https:' && checkout.hostname === 'checkout.stripe.com') return null
+  // Never retain a capability URL or query string in the diagnostic.
+  return { classification: 'checkout-refused-before-login', checkoutHost: checkout.hostname }
+}
+
+// Exact cents from a stored decimal string ("12.5", "12.500000..."), or null when
+// it is not a whole number of cents. No floating point, so 12.505 never rounds.
+export function decimalCents(value) {
+  const match = /^(\d+)(?:\.(\d*))?$/.exec(String(value ?? ''))
+  if (!match) return null
+  const fraction = (match[2] ?? '').padEnd(2, '0')
+  if (/[^0]/.test(fraction.slice(2))) return null
+  return Number(match[1]) * 100 + Number(fraction.slice(0, 2))
+}
+
+export function provesAccess(fixture, session, result) {
+  const c5 = catalog[0].id
+  // Purchase.totalAmount must equal the charge to the cent. A purchase priced by an
+  // authoritative decision must also carry the decision saved for this session.
+  const amountMatches = p => decimalCents(p.totalAmount) === session.total &&
+    (session.decisionRef ? (p.decision?.decisionRef === session.decisionRef && p.decision.checkoutSessionId === session.id && p.decision.expectedTotalCents === session.total) :
+      (!p.decision || (p.decision.checkoutSessionId === session.id && p.decision.expectedTotalCents === session.total)))
+  const purchases = result.purchases.filter(p => p.userId === fixture.userId && p.productId === c5 && p.status === 'Valid' && amountMatches(p))
+  return session.paymentStatus === 'paid' && result.webhooks.length > 0 && purchases.some(p => result.access.some(a => a.sourceId === p.id && a.entitlementType === 'cohort_content_access' && a.metadata?.contentIds?.includes(c5WorkshopId)))
+}
+// Pays a hosted test Checkout Session with the test card. By default it waits for the
+// redirect back to the app; `until` instead polls Stripe, for sessions paid while
+// the app is down (seeding).
+export async function payHostedCheckout(url, state, { until, cookies = [], waitForDestination = false, testCard = 'success' } = {}) {
+  if (!['success', 'dispute'].includes(testCard)) throw new Error('Unknown Stripe test-card scenario')
+  const { chromium } = await import('@playwright/test')
+  const browser = await chromium.launch({ headless: true, env: { PATH: process.env.PATH, HOME: process.env.HOME } })
+  try {
+    const context = await browser.newContext()
+    if (cookies.length) await context.addCookies(cookies)
+    const page = await context.newPage()
+    const telemetry = []
+    page.on('response', response => {
+      if (!response.url().endsWith('/api/telemetry/buy-path')) return
+      const reason = response.headers()['x-buy-path-rejection'] ?? null
+      telemetry.push({ status: response.status(), rejection: ['origin', 'context'].includes(reason) ? reason : null })
+    })
+    // A return URL alone does not prove the destination hydrated or emitted.
+    const destinationResponse = waitForDestination ? page.waitForResponse(response => {
+      if (!response.url().endsWith('/api/telemetry/buy-path') || response.status() !== 204) return false
+      try { return response.request().postDataJSON()?.step === 'destination_rendered' } catch { return false }
+    }, { timeout: 180000 }).catch(() => null) : null
+    await page.route('**/*', route => {
+      const host = new URL(route.request().url()).hostname
+      // Hosted Checkout loads its own assets from stripecdn.com.
+      if (host === '127.0.0.1' || ['stripe.com', 'stripe.network', 'stripecdn.com'].some(domain => host === domain || host.endsWith(`.${domain}`))) return route.continue()
+      return route.abort()
+    })
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 })
+    // Stripe-hosted UI changes independently of this repo. Never submit a live card.
+    const fill = async (selector, value) => {
+      // The hosted page renders after load; poll every frame rather than checking once.
+      const deadline = Date.now() + 60000
+      do {
+        for (const frame of page.frames()) {
+          const input = frame.locator(selector).first()
+          if (await input.count() && await input.isVisible()) { await input.fill(value); return }
+        }
+        await page.waitForTimeout(500)
+      } while (Date.now() < deadline)
+      throw new Error('Stripe test checkout field not found; inspect private screenshot')
+    }
+    try {
+      // Newer hosted pages hide the card form behind a payment-method accordion. Its button
+      // is 0x0 with a CSS click area, so dispatch the click to the React handler directly.
+      await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {})
+      const cardChoice = page.locator('[data-testid="card-accordion-item-button"]').first()
+      if (await cardChoice.count()) await cardChoice.dispatchEvent('click')
+      await fill('[name="cardNumber"], [name="cardnumber"]', testCard === 'dispute' ? '4000000000000259' : '4242424242424242')
+      await fill('[name="cardExpiry"], [name="exp-date"]', '1230')
+      await fill('[name="cardCvc"], [name="cvc"]', '123')
+      const name = page.locator('[name="billingName"]').first()
+      if (await name.count()) await name.fill('Rig Test Buyer')
+      const zip = page.locator('[name="billingPostalCode"], [name="postal"]').first()
+      if (await zip.count()) await zip.fill('94107')
+      // Link's "save my information" asks for a phone number; the test buyer opts out.
+      const saveInfo = page.locator('#enableStripePass').first()
+      if (await saveInfo.count() && await saveInfo.isChecked()) await saveInfo.uncheck({ force: true })
+      const submit = page.locator('[data-testid="hosted-payment-submit-button"]').first()
+      await (await submit.count() ? submit : page.getByRole('button', { name: /pay|subscribe/i }).last()).click({ timeout: 30000 })
+      if (!until) {
+        await page.waitForURL(`${origin}/**`, { timeout: 90000 })
+        if (destinationResponse && !await destinationResponse) throw new Error('Returned destination telemetry was not accepted')
+      }
+      else {
+        const deadline = Date.now() + 90000
+        while (!await until()) {
+          if (Date.now() > deadline) throw new Error('Hosted checkout did not complete')
+          await page.waitForTimeout(2000)
+        }
+      }
+    } catch {
+      await privateWrite(join(state, 'checkout-telemetry.json'), JSON.stringify({ telemetry, cookieNames: (await context.cookies(origin)).map(cookie => cookie.name) }, null, 2) + '\n')
+      await privateWrite(join(state, 'checkout-failure.png'), await page.screenshot({ fullPage: true }))
+      // Control names only, never values, so selector drift can be fixed from the receipt.
+      const controls = await page.locator('input, button, [role=radio]').evaluateAll(nodes => nodes.map(node => ({ tag: node.tagName, type: node.getAttribute('type'), name: node.getAttribute('name'), id: node.id, role: node.getAttribute('role'), label: node.getAttribute('aria-label'), testid: node.getAttribute('data-testid'), checked: node.checked ?? null }))).catch(() => [])
+      await privateWrite(join(state, 'checkout-failure-controls.json'), JSON.stringify(controls, null, 2) + '\n')
+      throw new Error('Test-card automation failed; no payment proof claimed')
+    }
+  } finally { await browser.close() }
+}
+// Observe an actual fixture pricing page, never manufacture the missing step.
+async function observePricingView(cookieHeader) {
+  const { chromium } = await import('@playwright/test')
+  const browser = await chromium.launch({ headless: true, env: { PATH: process.env.PATH, HOME: process.env.HOME } })
+  try {
+    const context = await browser.newContext()
+    await context.addCookies(cookieHeader.split(';').map(pair => {
+      const text = pair.trim(), separator = text.indexOf('=')
+      return { name: text.slice(0, separator), value: text.slice(separator + 1), url: origin }
+    }))
+    const page = await context.newPage()
+    await page.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort())
+    const accepted = page.waitForResponse(response => {
+      if (!response.url().endsWith('/api/telemetry/buy-path') || response.status() !== 204) return false
+      try { return response.request().postDataJSON()?.step === 'pricing_viewed' } catch { return false }
+    }, { timeout: 90000 }).catch(() => null)
+    // Synthetic catalog has no enrollment window. This existing view override
+    // exposes its pricing UI only; the authoritative checkout gate still runs.
+    await page.goto(`${origin}/cohorts/rig-c5?allowPurchase=true`, { waitUntil: 'domcontentloaded', timeout: 90000 })
+    if (!await accepted) throw new Error('Real fixture pricing view did not emit accepted telemetry')
+    const pre = (await context.cookies(origin)).find(cookie => cookie.name === 'buy_path_pre')
+    if (!pre || !/^pre_[a-f0-9-]{36}$/i.test(pre.value)) throw new Error('Pricing view did not establish its pre-session id')
+    console.log('ok real pricing view accepted and linked')
+    return pre.value
+  } finally { await browser.close() }
+}
+
+export async function checkout(state, key, fixtureKey, shouldComplete = false, { shortlinkSlug, keepOpen = false, testCard = 'success' } = {}) {
+  const fixture = fixtureFor(fixtureKey)
+  const seed = JSON.parse(await readFile(join(state, 'seed.json'), 'utf8'))
+  if (!seed.stripeSeeded) throw new Error('Stripe catalog is not seeded')
+  const stripe = new Stripe(assertTestKey(key))
+  const token = freshToken()
+  await authenticate(fixture, token)
+  let cookie = `authjs.session-token=${token}`
+  if (shortlinkSlug !== undefined) {
+    if (!/^[a-z0-9-]{1,50}$/.test(shortlinkSlug)) throw new Error('Invalid rig shortlink')
+    const visit = await fetch(`${origin}/s/${encodeURIComponent(shortlinkSlug)}`, { redirect: 'manual', signal: AbortSignal.timeout(60000) })
+    if (visit.status !== 307 || new URL(visit.headers.get('location'), origin).origin !== origin) throw new Error('Rig shortlink did not redirect locally')
+    const cookies = visit.headers.getSetCookie().map(value => value.split(';')[0]).filter(value => /^(?:c5_gift|sl_ref)=/.test(value))
+    cookie += '; ' + cookies.join('; ')
+  }
+  const auth = await fetch(`${origin}/api/auth/session`, { headers: { cookie }, signal: AbortSignal.timeout(60000) })
+  const sessionUser = await auth.json()
+  if (!auth.ok || sessionUser.user?.id !== fixture.userId) throw new Error('Fixture login did not resolve to the expected user')
+  if (shouldComplete && fixtureKey === 'new-buyer') cookie += `; buy_path_pre=${await observePricingView(cookie)}`
+  const url = new URL(`${origin}/api/coursebuilder/checkout/stripe`)
+  url.searchParams.set('productId', catalog[0].id)
+  url.searchParams.set('quantity', String(fixture.quantity))
+  url.searchParams.set('cancelUrl', origin)
+  // RIG_COUPON_ID and RIG_COUNTRY override the fixture, to exercise PPP paths.
+  const couponId = process.env.RIG_COUPON_ID ?? fixture.couponId
+  if (couponId) url.searchParams.set('couponId', couponId)
+  if (fixture.quantity > 1) { url.searchParams.set('bulk', 'true'); url.searchParams.set('organizationId', `rig_org_${fixture.key}`) }
+  // The buy form POSTs to this path; Course Builder rejects GET as an unknown action.
+  let response = await fetch(url, { method: 'POST', headers: { cookie, origin, 'content-type': 'application/x-www-form-urlencoded', ...(process.env.RIG_COUNTRY ? { 'x-vercel-ip-country': process.env.RIG_COUNTRY } : {}) }, body: '', redirect: 'manual', signal: AbortSignal.timeout(90000) })
+  const checkoutCookies = response.headers.getSetCookie().map(value => {
+    const pair = value.split(';')[0]
+    const separator = pair.indexOf('=')
+    return { name: pair.slice(0, separator), value: pair.slice(separator + 1), url: origin }
+  })
+  let target = response.headers.get('location')
+  const hops = []
+  const refusal = checkoutHandoffRefusal(target)
+  if (refusal) {
+    await privateWrite(join(state, 'checkout-refusal.json'), JSON.stringify({ fixture: fixture.key, at: new Date().toISOString(), status: response.status, ...refusal }) + '\n')
+    throw new Error('Checkout refused before login: non-Stripe checkout URL. Check the pricing-policy fixture and checkout error logs; no Stripe session created.')
+  }
+  // Cohort checkout goes through the app's /subscribe/verify-login page before Stripe.
+  // Follow same-origin hops as the logged-in buyer, never leaving the rig origin.
+  for (let hop = 0; hop < 4 && target && new URL(target, origin).origin === new URL(origin).origin; hop++) {
+    hops.push(new URL(target, origin).pathname)
+    response = await fetch(new URL(target, origin), { headers: { cookie }, redirect: 'manual', signal: AbortSignal.timeout(90000) })
+    target = response.headers.get('location')
+    // A streamed page redirect arrives as 200 with Next's refresh meta tag.
+    if (!target && response.status === 200) {
+      const html = await response.text()
+      const meta = html.match(/id="__next-page-redirect"[^>]*content="\d+;url=([^"]+)"/)?.[1]
+      target = meta ? meta.replaceAll('&amp;', '&') : null
+      if (target) response = { status: 307, headers: response.headers }
+    }
+  }
+  const id = target?.match(/\bcs_test_[A-Za-z0-9]+/)?.[0]
+  if (![302, 303, 307].includes(response.status) || !id || new URL(target).hostname !== 'checkout.stripe.com') {
+    // Record only the shape: a hosted session URL is a payment capability.
+    const shape = target ? { host: new URL(target, origin).hostname, path: new URL(target, origin).pathname.replace(/cs_test_[A-Za-z0-9]+/, 'cs_test_*'), error: new URL(target, origin).searchParams.get('error'), reason: new URL(target, origin).searchParams.get('reason'), alreadyOwn: new URL(target, origin).searchParams.get('already-own') } : null
+    await privateWrite(join(state, 'checkout-refusal.json'), JSON.stringify({ fixture: fixture.key, at: new Date().toISOString(), status: response.status, hops, location: shape }) + '\n')
+    throw new Error(`App checkout did not return a Stripe test session (HTTP ${response.status}); inspect private checkout-refusal.json`)
+  }
+  const metadata = { rig_run: seed.generation, rig: 'aihero-commerce' }
+  let session = assertTestObject(await stripe.checkout.sessions.retrieve(id, { expand: ['discounts.coupon'] }))
+  await stripe.checkout.sessions.update(id, { metadata })
+  await remember(state, seed.generation, 'session', id)
+  if (typeof session.payment_intent === 'string') assertTestObject(await stripe.paymentIntents.update(session.payment_intent, { metadata }))
+  for (const discount of session.discounts ?? []) {
+    const coupon = typeof discount.coupon === 'string' ? await stripe.coupons.retrieve(discount.coupon) : discount.coupon
+    if (coupon) { assertTestObject(coupon); await stripe.coupons.update(coupon.id, { metadata }) }
+  }
+  await privateWrite(join(state, 'checkout-url.txt'), target + '\n')
+  const receipt = { fixture: fixture.key, run: seed.generation, commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: resolve(import.meta.dirname, '../..'), encoding: 'utf8' }).trim(), dirty: execFileSync('git', ['status', '--porcelain', '--', import.meta.dirname], { cwd: resolve(import.meta.dirname, '../..'), encoding: 'utf8' }).trim() !== '', catalogBasis: seed.catalogOverlay ? 'synthetic catalog with private list-price overlay; no production discount configuration' : 'synthetic bare catalog; not production configuration', pendingFacts: fixture.pending ?? null, createdAt: new Date().toISOString(), createdSession: publicSession(session), complete: false }
+  await privateWrite(join(state, `checkout-${fixture.key}.json`), JSON.stringify(receipt, null, 2) + '\n')
+  console.log(`ok checkout ${fixture.key}: USD ${(session.amount_total / 100).toFixed(2)} (${id})`)
+  if (!shouldComplete) {
+    if (!keepOpen) assertTestObject(await stripe.checkout.sessions.expire(id))
+    return receipt
+  }
+  await payHostedCheckout(target, state, { testCard, cookies: [{ name: 'authjs.session-token', value: token, url: origin }, ...checkoutCookies], waitForDestination: true })
+  const deadline = Date.now() + 180000
+  do {
+    session = assertTestObject(await stripe.checkout.sessions.retrieve(id))
+    const result = await evidence(fixture, id)
+    receipt.paidSession = publicSession(session)
+    receipt.evidence = result
+    receipt.complete = provesAccess(fixture, receipt.paidSession, result)
+    await privateWrite(join(state, `checkout-${fixture.key}.json`), JSON.stringify(receipt, null, 2) + '\n')
+    if (receipt.complete) {
+      const intent = typeof session.payment_intent === 'string' ? assertTestObject(await stripe.paymentIntents.retrieve(session.payment_intent)) : null
+      if (intent) {
+        assertTestObject(await stripe.paymentIntents.update(intent.id, { metadata }))
+        if (typeof intent.latest_charge === 'string') assertTestObject(await stripe.charges.update(intent.latest_charge, { metadata }))
+      }
+      console.log('ok paid -> webhook -> matching C5 purchase -> matching C5 entitlement')
+      return receipt
+    }
+    await new Promise(resolve => setTimeout(resolve, 1000))
+  } while (Date.now() < deadline)
+  throw new Error('Paid/webhook/purchase/C5-access proof incomplete; inspect private receipt')
+}

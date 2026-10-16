@@ -8,8 +8,8 @@ import {
 	COURSES_CATALOG,
 	COURSES_DETAILS_EYEBROW,
 	COURSES_FEATURED_WORKSHOP,
-	COURSES_NEXT_COHORT_CARD,
 	COURSES_PAST_COHORTS,
+	COURSES_SECOND_OFFER,
 	COURSES_TESTIMONIALS,
 	COURSES_TESTIMONIALS_EYEBROW,
 	FLAGSHIP_ENROLLING,
@@ -110,6 +110,9 @@ function splitCourseAttribution(author: string): {
  *
  *   1. The flagship, AS the hero — pitch left, the ask right, one hairline
  *      between them. It is not introduced; it is the page.
+ *   1b. The offer that did not take the hero, as one row under it
+ *      (`SecondOffer`): the next cohort while a course leads, the course
+ *      while the cohort leads.
  *   2. What you're signing up for — the practical detail, as a 4-up hairline
  *      grid you scan rather than four paragraphs you read.
  *   3. Team seats — a different buyer, welded to the details because that is
@@ -148,12 +151,13 @@ export function CoursesPage({
 	sale,
 	running,
 	featuredWorkshopOffer,
+	cohortDates,
 }: {
 	flagship: UpcomingCohortSummary | null
 	isPurchasable: boolean
 	/** e.g. "8,500+" — null hides the stat. */
 	alumniLabel: string | null
-	/** The newest buyable self-paced workshop; null drops its card / hero. */
+	/** The newest buyable self-paced workshop; null drops its hero / row. */
 	latestWorkshop: MinimalWorkshop | null
 	/** Closed cohorts, newest first — the shelf alumni navigate back through. */
 	pastCohorts: UpcomingCohortSummary[]
@@ -166,53 +170,57 @@ export function CoursesPage({
 	 * (`page.tsx`): the workshop becomes the hero, the cohort becomes a card.
 	 */
 	featuredWorkshopOffer: NextOffer | null
+	/**
+	 * The flagship's dates that are still ahead, formatted in its own zone:
+	 * `opens` as "in 13 days (Oct 26 at 12:01 AM PDT)", only while it is announced and not yet
+	 * on sale, and `starts` as "Nov 9". Resolved in `page.tsx`, where the clock
+	 * is read once per request.
+	 */
+	cohortDates: { opens: string | null; starts: string | null }
 }) {
 	const workshopLeads = Boolean(featuredWorkshopOffer && latestWorkshop)
 
-	// The latest workshop leads the catalog when it exists AND is not already
-	// the hero — the page never lists one thing twice. The demoted cohort does
-	// NOT join this grid: its note promises "self-paced, start any day", and a
-	// closed cohort is neither. It leads the cohorts shelf below instead.
-	const catalog = [
-		...(!workshopLeads && latestWorkshop
-			? [
-					{
-						title: latestWorkshop.fields.title,
-						href: `/workshops/${latestWorkshop.fields.slug}`,
-						description:
-							latestWorkshop.fields.description ||
-							COURSES_FEATURED_WORKSHOP.description,
-						badge: COURSES_FEATURED_WORKSHOP.badge,
-						badgeTone: 'accent' as const,
-						image: latestWorkshop.fields.coverImage?.url,
-					},
-				]
-			: []),
-		...COURSES_CATALOG.items,
-	]
-
-	// When the workshop takes the hero, the demoted cohort takes the top of
-	// the cohorts shelf: still on the page, one step smaller, honestly badged
-	// with its real state (a sale can outrank even an open enrollment) — and
-	// the shelf's label widens from "Past cohorts" to "Cohorts", because one
-	// row of it now isn't past.
-	const cohortShelfLeader =
-		workshopLeads && flagship
+	// The hero and the row under it are the page's two offers, and they are
+	// never the same thing: whichever of the cohort and the newest self-paced
+	// course does not lead takes the row. So neither appears in the catalog or
+	// on the past-cohorts shelf below; the page lists each thing once.
+	const secondOffer = workshopLeads
+		? flagship
 			? {
+					label: COURSES_SECOND_OFFER.cohort.label,
+					badge: isPurchasable
+						? FLAGSHIP_ENROLLING.badge
+						: COURSES_SECOND_OFFER.cohort.waitlistBadge,
 					title: flagship.title,
 					href: getResourcePath('cohort', flagship.slug, 'view'),
 					description:
-						flagship.description ?? COURSES_NEXT_COHORT_CARD.fallbackBlurb,
-					badge: isPurchasable
-						? FLAGSHIP_ENROLLING.badge
-						: COURSES_NEXT_COHORT_CARD.badge,
-					badgeTone: 'accent' as const,
+						flagship.description ?? COURSES_SECOND_OFFER.cohort.fallbackBlurb,
 					image: flagship.image,
+					facts: [
+						cohortDates.opens
+							? COURSES_SECOND_OFFER.cohort.opens(cohortDates.opens)
+							: null,
+						cohortDates.starts
+							? COURSES_SECOND_OFFER.cohort.starts(cohortDates.starts)
+							: null,
+					].filter((fact): fact is string => fact !== null),
+					ctaLabel: COURSES_SECOND_OFFER.cohort.ctaLabel,
 				}
 			: null
-	const cohortShelfEyebrow = cohortShelfLeader
-		? COURSES_NEXT_COHORT_CARD.shelfEyebrow
-		: COURSES_PAST_COHORTS.eyebrow
+		: latestWorkshop
+			? {
+					label: COURSES_SECOND_OFFER.workshop.label,
+					badge: COURSES_FEATURED_WORKSHOP.badge,
+					title: latestWorkshop.fields.title,
+					href: `/workshops/${latestWorkshop.fields.slug}`,
+					description:
+						latestWorkshop.fields.description ||
+						COURSES_FEATURED_WORKSHOP.description,
+					image: latestWorkshop.fields.coverImage?.url,
+					facts: [],
+					ctaLabel: COURSES_SECOND_OFFER.workshop.ctaLabel,
+				}
+			: null
 
 	return (
 		<main className="bg-background text-foreground">
@@ -225,7 +233,7 @@ export function CoursesPage({
 			    cohort — the same component the homepage's cohort section renders,
 			    so the two surfaces cannot drift. While the self-paced workshop
 			    outranks it (a live sale, or its arrival between cohorts), the
-			    workshop takes the slot and the cohort takes a catalog card. */}
+			    workshop takes the slot and the cohort takes the row under it. */}
 			{workshopLeads && featuredWorkshopOffer && latestWorkshop ? (
 				<WorkshopHero
 					offer={featuredWorkshopOffer}
@@ -242,6 +250,8 @@ export function CoursesPage({
 					headingId="flagship-heading"
 				/>
 			)}
+
+			{secondOffer ? <SecondOffer {...secondOffer} /> : null}
 
 			{/* 2 + 3. The practical detail, then the team ask.
 			    Four short answers in a hairline grid rather than four
@@ -413,7 +423,7 @@ export function CoursesPage({
 					    label and the grid were flush against each other, which read as
 					    the label belonging to the first card rather than to the run. */}
 					<div className={cn(CATALOG_GRID, 'mt-6')}>
-						{catalog.map((item) => (
+						{COURSES_CATALOG.items.map((item) => (
 							<CatalogCard key={item.href} {...item} />
 						))}
 					</div>
@@ -427,13 +437,10 @@ export function CoursesPage({
 					    a closed thing sitting unlabelled among things you can start
 					    today reads as available. The badge and the label are what keep
 					    the row honest for a reader who has not bought. */}
-					{(pastCohorts.length > 0 || cohortShelfLeader) && (
+					{pastCohorts.length > 0 && (
 						<div className="mt-12">
-							<p className={MONO_LABEL}>{cohortShelfEyebrow}</p>
+							<p className={MONO_LABEL}>{COURSES_PAST_COHORTS.eyebrow}</p>
 							<div className={cn(CATALOG_GRID, 'mt-6')}>
-								{cohortShelfLeader ? (
-									<CatalogCard {...cohortShelfLeader} />
-								) : null}
 								{pastCohorts.map((cohort) => (
 									<CatalogCard
 										key={cohort.id}
@@ -453,6 +460,95 @@ export function CoursesPage({
 				</div>
 			</section>
 		</main>
+	)
+}
+
+/**
+ * The offer that did not take the hero, as one row directly under it.
+ *
+ * Shaped like the team-seats row further down: a tinted panel (an ask you can
+ * act on), the product's artwork, what it is, and an outline button, because
+ * the hero above already spent the viewport's one gold fill. The whole row is
+ * the link, as a catalog card is.
+ */
+function SecondOffer({
+	label,
+	badge,
+	title,
+	href,
+	description,
+	image,
+	facts,
+	ctaLabel,
+}: {
+	label: string
+	badge: string
+	title: string
+	href: string
+	description: string
+	image?: string
+	/** Dates still ahead, e.g. "Starts Nov 9". Empty when none. */
+	facts: string[]
+	ctaLabel: string
+}) {
+	return (
+		<section aria-label={label} className="border-b">
+			<div className="flex flex-col gap-5 px-[18px] py-10 sm:px-11 md:py-12">
+				<p className={MONO_LABEL}>{label}</p>
+				<Link
+					href={href}
+					className="border-border bg-muted hover:border-foreground/20 focus-visible:ring-ring group flex flex-col gap-5 rounded-lg border p-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 sm:flex-row sm:items-center sm:gap-7 sm:p-5"
+				>
+					{image ? (
+						<span className="border-border relative block aspect-video w-full shrink-0 overflow-hidden rounded-md border sm:w-[260px]">
+							<Image
+								src={image}
+								alt=""
+								fill
+								sizes="(min-width: 640px) 260px, 100vw"
+								className="object-cover transition-transform duration-500 ease-out group-hover:scale-[1.02] motion-reduce:transform-none motion-reduce:transition-none"
+							/>
+						</span>
+					) : null}
+					<span className="flex min-w-0 flex-1 flex-col items-start gap-2.5">
+						<span
+							className={cn(
+								TYPE.badge,
+								'text-primary inline-flex w-fit items-center rounded-[4px] border border-[color:var(--ah-accent-line)] px-[7px] py-[5px]',
+							)}
+						>
+							{badge}
+						</span>
+						<h2 className={TYPE.subhead}>{title}</h2>
+						<span
+							className={cn(
+								TYPE.metaProse,
+								'max-w-[62ch] text-[color:var(--ah-fg-muted)]',
+							)}
+						>
+							{description}
+						</span>
+						{facts.length > 0 ? (
+							<span className={cn(TYPE.meta, 'text-foreground')}>
+								{facts.join(' · ')}
+							</span>
+						) : null}
+					</span>
+					<span
+						className={cn(
+							TYPE.meta,
+							'border-foreground/20 group-hover:bg-secondary inline-flex h-11 shrink-0 items-center gap-2 self-start rounded-[9px] border px-4 transition-colors sm:self-center',
+						)}
+					>
+						{ctaLabel}
+						<ArrowRight
+							aria-hidden
+							className="ease-out-quart size-4 shrink-0 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
+						/>
+					</span>
+				</Link>
+			</div>
+		</section>
 	)
 }
 

@@ -21,6 +21,7 @@ import {
   processGoogleAdsConversionUploads,
   readGoogleAdsConversionUploadConfig,
 } from "@/lib/google-ads-conversion-upload";
+import { updatePurchaseFields } from "@/lib/purchase-fields-write";
 import { captureNormalizedContactEvent } from "@/lib/subscriber-marketing/capture-contact-event";
 import { DrizzleCaptureMarketingRepository } from "@/lib/subscriber-marketing/drizzle-capture-repository";
 import { normalizeContactEvent } from "@/lib/subscriber-marketing/normalize-contact-event";
@@ -502,19 +503,17 @@ async function run() {
       summarySnapshot(storedSyntheticSummary),
     );
 
-    await db
-      .update(purchases)
-      .set({
-        fields: {
-          syntheticProof: FIXTURE_NAMESPACE,
-          attribution: {
-            synthetic: true,
-            kitSubscriberId: JSON.stringify(KIT_SUBSCRIBER_ID),
-            clickIds: { gclid: TEST_GCLID },
-          },
+    await updatePurchaseFields({
+      purchaseId: PURCHASE_ID,
+      patch: {
+        syntheticProof: FIXTURE_NAMESPACE,
+        attribution: {
+          synthetic: true,
+          kitSubscriberId: JSON.stringify(KIT_SUBSCRIBER_ID),
+          clickIds: { gclid: TEST_GCLID },
         },
-      })
-      .where(eq(purchases.id, PURCHASE_ID));
+      },
+    });
     const checkoutSyntheticSummary = await runCandidateScan();
     recordAssertion(
       "test-prefixed-checkout-click-id-blocks-upload-eligibility",

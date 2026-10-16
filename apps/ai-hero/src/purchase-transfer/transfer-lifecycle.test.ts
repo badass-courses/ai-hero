@@ -6,6 +6,8 @@ import {
 	evaluateCancel,
 	evaluateInitiate as decideInitiate,
 	isTerminalTransferState,
+	isTransferablePurchase,
+	isTransferAccepted,
 	isTransferExpired,
 	TRANSFER_STATES,
 	type TransferSnapshot,
@@ -84,6 +86,24 @@ describe('included purchase transfer policy', () => {
 			}),
 		).toEqual({ ok: true })
 	})
+	it('tells a screen not to offer what initiate would refuse', () => {
+		expect(isTransferablePurchase(standardPurchase)).toBe(true)
+		expect(
+			isTransferablePurchase({ productId: 'other', bulkCouponId: 'coupon' }),
+		).toBe(true)
+		expect(
+			isTransferablePurchase({
+				productId: 'product-s00zs',
+				redeemedBulkCouponId: 'team-coupon',
+			}),
+		).toBe(false)
+		expect(
+			isTransferablePurchase({
+				productId: 'product-s00zs',
+				bulkCouponId: 'team-coupon',
+			}),
+		).toBe(false)
+	})
 	it('fails closed when the authoritative purchase is missing', () => {
 		expect(
 			evaluateAccept({
@@ -132,6 +152,48 @@ describe('isTransferExpired', () => {
 	it('is false before expiry and true after', () => {
 		expect(isTransferExpired({ expiresAt: FUTURE }, NOW)).toBe(false)
 		expect(isTransferExpired({ expiresAt: PAST }, NOW)).toBe(true)
+	})
+})
+
+describe('isTransferAccepted', () => {
+	const target = { targetUserId: 'user_target' }
+	it('is true once completed', () => {
+		expect(
+			isTransferAccepted(
+				{ ...target, transferState: 'COMPLETED' },
+				{ userId: 'user_source' },
+			),
+		).toBe(true)
+	})
+	it('is true for a claim whose purchase already moved to the recipient', () => {
+		expect(
+			isTransferAccepted(
+				{ ...target, transferState: 'VERIFIED' },
+				{ userId: 'user_target' },
+			),
+		).toBe(true)
+	})
+	it('is false for an interrupted claim, and before any claim', () => {
+		expect(
+			isTransferAccepted(
+				{ ...target, transferState: 'VERIFIED' },
+				{ userId: 'user_source' },
+			),
+		).toBe(false)
+		expect(
+			isTransferAccepted(
+				{ ...target, transferState: 'INITIATED' },
+				{ userId: 'user_source' },
+			),
+		).toBe(false)
+	})
+	it('is false without a recipient', () => {
+		expect(
+			isTransferAccepted(
+				{ targetUserId: null, transferState: 'VERIFIED' },
+				{ userId: null },
+			),
+		).toBe(false)
 	})
 })
 

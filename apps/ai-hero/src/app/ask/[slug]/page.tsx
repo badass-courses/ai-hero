@@ -83,6 +83,9 @@ export default async function ValuePathAnswerPage(props: {
 					return undefined
 				})
 			: undefined
+	if (certificateEligibility?.reason === 'completion-evidence-unavailable') {
+		certificateEligibilityUnavailable = true
+	}
 	const certificateShare =
 		certificateEligibility?.eligible && certificateEligibility.contactId
 			? await findSkillsWorkflowCertificateShare(
@@ -334,7 +337,8 @@ function CertificateTrophyPage({
 						</div>
 						<div className="max-w-[70ch] space-y-6">
 							<p className="text-xl font-medium leading-relaxed tracking-tight sm:text-2xl">
-								{answerPage.fields.headline ?? 'Noted. Your certificate is ready.'}
+								{answerPage.fields.headline ??
+									'Noted. Your certificate is ready.'}
 							</p>
 							{answerPage.fields.body ? (
 								<p className="text-base leading-relaxed opacity-80 sm:text-lg">

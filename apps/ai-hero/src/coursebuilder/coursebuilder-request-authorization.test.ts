@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server'
+import { AUTHORITATIVE_PPP_OFFER_ID } from '@coursebuilder/commerce/authoritative-price'
 import { describe, expect, it, vi } from 'vitest'
 
 import { protectCourseBuilderRequest } from './coursebuilder-request-authorization'
@@ -651,4 +652,72 @@ describe('protectCourseBuilderRequest', () => {
 			expect(protectedRequest.nextUrl.searchParams.get('bulk')).toBe('true')
 		},
 	)
+
+	describe('an authoritative-priced product', () => {
+		const C5 = 'product-s00zs'
+		const resolve = vi.fn(async () => bulkMerchantCoupon)
+		const protectC5 = (request: NextRequest) =>
+			protectCourseBuilderRequest(request, {
+				adapter: createAdapter({ entitled: true }) as never,
+				verifiedUserId: 'user-entitled',
+				authoritativeProductIds: new Set([C5]),
+				resolveServerComputedMerchantCoupon: resolve,
+			})
+		const pricesFormatted = (body: Record<string, unknown>) =>
+			new NextRequest('https://aihero.dev/api/coursebuilder/prices-formatted', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ productId: C5, quantity: 1, ...body }),
+			})
+
+		it('keeps only the PPP consent on formatted pricing', async () => {
+			const consent = await protectC5(
+				pricesFormatted({
+					merchantCoupon: { id: AUTHORITATIVE_PPP_OFFER_ID },
+					couponId: protectedCoupon.id,
+					code: 'FORGED',
+					country: 'IN',
+					upgradeFromPurchaseId: 'purchase-crash-course',
+				}),
+			)
+			expect(await consent.json()).toEqual({
+				productId: C5,
+				quantity: 1,
+				userId: 'user-entitled',
+				merchantCoupon: { id: AUTHORITATIVE_PPP_OFFER_ID },
+			})
+
+			const forged = await protectC5(
+				pricesFormatted({ merchantCoupon: protectedMerchantCoupon }),
+			)
+			expect(await forged.json()).toEqual({
+				productId: C5,
+				quantity: 1,
+				userId: 'user-entitled',
+			})
+		})
+
+		it('keeps only the PPP consent at checkout and attaches no server coupon', async () => {
+			const checkout = (couponId: string) =>
+				protectC5(
+					new NextRequest(
+						`https://aihero.dev/api/coursebuilder/checkout/stripe?productId=${C5}&quantity=5&couponId=${couponId}&usedCouponId=${protectedCoupon.id}&upgradeFromPurchaseId=purchase-crash-course`,
+						{ method: 'POST' },
+					),
+				)
+			const consent = await checkout(AUTHORITATIVE_PPP_OFFER_ID)
+			expect(consent.nextUrl.searchParams.get('couponId')).toBe(
+				AUTHORITATIVE_PPP_OFFER_ID,
+			)
+			expect(consent.nextUrl.searchParams.has('usedCouponId')).toBe(false)
+			expect(consent.nextUrl.searchParams.has('upgradeFromPurchaseId')).toBe(
+				false,
+			)
+
+			const forged = await checkout(protectedMerchantCoupon.id)
+			expect(forged.nextUrl.searchParams.has('couponId')).toBe(false)
+			expect(forged.nextUrl.searchParams.get('quantity')).toBe('5')
+			expect(resolve).not.toHaveBeenCalled()
+		})
+	})
 })

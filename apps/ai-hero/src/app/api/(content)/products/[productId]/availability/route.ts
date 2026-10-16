@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { courseBuilderAdapter, db } from '@/db'
-import { purchases } from '@/db/schema'
+import { courseBuilderAdapter } from '@/db'
+import { getSeatsTaken, seatsLeft } from '@/lib/seats-taken-query'
 import { withSkill } from '@/server/with-skill'
-import { eq } from 'drizzle-orm'
 
 const corsHeaders = {
 	'Access-Control-Allow-Origin': '*',
@@ -52,16 +51,14 @@ const getAvailability = async (
 		}
 
 		// Calculate current availability
-		const totalPurchases = await db.query.purchases.findMany({
-			where: eq(purchases.productId, productId),
-		})
-
-		const quantityAvailable =
-			(product.quantityAvailable || 0) - totalPurchases.length
+		const quantityAvailable = seatsLeft(
+			product.quantityAvailable,
+			await getSeatsTaken(productId),
+		)
 
 		return NextResponse.json(
 			{
-				quantityAvailable: Math.max(0, quantityAvailable),
+				quantityAvailable,
 				unlimited: false,
 			},
 			{ headers: corsHeaders },

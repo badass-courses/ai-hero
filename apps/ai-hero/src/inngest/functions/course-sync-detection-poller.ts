@@ -23,6 +23,7 @@ import {
 	unwrapCourseSyncStepResult,
 	type CourseSyncStepResult,
 } from '@/course-sync/errors'
+import { resolveCourseSyncEditorLink } from '@/course-sync/editor-link'
 import { freezeCourseSyncAssetBatch } from '@/course-sync/freeze-batches'
 import { dropboxSyncConfigFor } from '@/course-sync/dropbox-binding-config'
 import { courseSyncControlPlane } from '@/course-sync/runtime'
@@ -208,6 +209,10 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 
 		const poll = createCourseSyncDetectionPoller({
 			binding,
+			resolveEditorLink: (linkBinding, courseVersionId) =>
+				runTypedStep('resolve-course-sync-editor-link', () =>
+					resolveCourseSyncEditorLink(linkBinding, courseVersionId),
+				),
 			readManifest: () =>
 				runTypedStep('detect-course-manifest', async () => {
 					const { config, missingConfig } = dropboxSyncConfigFor(binding)

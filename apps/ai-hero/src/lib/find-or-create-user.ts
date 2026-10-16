@@ -5,6 +5,9 @@ import { log, serializeError } from '@/server/logger'
 import { personalOrganizations } from '@/server/personal-organizations'
 import { handleOutOfBandUserBoundary } from '@/server/user-provisioning'
 
+import type { CourseBuilderUserInput } from '@coursebuilder/core'
+import type { PersonalOrganizationUser } from '@coursebuilder/organizations'
+
 /**
  * App-boundary replacement for `courseBuilderAdapter.findOrCreateUser`.
  *
@@ -33,20 +36,50 @@ export async function findOrCreateUserWithPersonalOrg(
 ) {
 	return handleOutOfBandUserBoundary(
 		() => courseBuilderAdapter.findOrCreateUser(email, name),
-		{
-			provisionPersonalOrganization: (user) =>
-				personalOrganizations.ensurePersonalOrganization(user),
-			enqueueProvisioningRepair: (userId, cause) => {
-				void log.error('user.personal-org-provisioning-failed', {
-					userId,
-					email,
-					error: serializeError(cause),
-				})
-				return inngest.send({
-					name: ENSURE_PERSONAL_ORGANIZATION_EVENT,
-					data: { userId, createIfMissing: true },
-				})
-			},
-		},
+		personalOrgProvisioning(email),
 	)
+}
+
+/**
+ * App-boundary replacement for `courseBuilderAdapter.createUser`.
+ *
+ * Course Builder's own handlers (the newsletter subscribe endpoint) mint
+ * users through the adapter they are configured with, so the Course Builder
+ * config hands them this in place of the bare adapter method. Without it a
+ * subscriber has no personal organization and, once signed in, the
+ * org-aware middleware sends every gated page to an empty `/organization-list`.
+ *
+ * @param data - The user row to persist.
+ * @returns The persisted user.
+ * @throws The repair enqueue error when durable repair cannot be scheduled.
+ */
+export async function createUserWithPersonalOrg(data: CourseBuilderUserInput) {
+	const createUser = courseBuilderAdapter.createUser
+	if (!createUser) throw new Error('The adapter cannot create users')
+	const { user } = await handleOutOfBandUserBoundary(
+		async () => ({
+			user: await createUser(data),
+			isNewUser: true,
+		}),
+		personalOrgProvisioning(data.email),
+	)
+	return user
+}
+
+function personalOrgProvisioning(email: string) {
+	return {
+		provisionPersonalOrganization: (user: PersonalOrganizationUser) =>
+			personalOrganizations.ensurePersonalOrganization(user),
+		enqueueProvisioningRepair: (userId: string, cause: unknown) => {
+			void log.error('user.personal-org-provisioning-failed', {
+				userId,
+				email,
+				error: serializeError(cause),
+			})
+			return inngest.send({
+				name: ENSURE_PERSONAL_ORGANIZATION_EVENT,
+				data: { userId, createIfMissing: true },
+			})
+		},
+	}
 }

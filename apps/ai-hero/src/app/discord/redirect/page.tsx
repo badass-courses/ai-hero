@@ -32,7 +32,7 @@ export default async function DiscordRedirect() {
 			action: 'redirect.error',
 			error: 'Discord account was not linked after OAuth',
 		})
-		redirect('/discord?error=Discord+account+was+not+linked.+Please+try+again.')
+		redirect('/discord?error=not-linked')
 	}
 
 	void log.info('discord.redirect.success', {

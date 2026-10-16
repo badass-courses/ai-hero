@@ -2,11 +2,8 @@
 
 import process from 'process'
 import { emailProvider } from '@/coursebuilder/email-provider'
-import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { courseBuilderAdapter, db } from '@/db'
 import {
-	merchantCharge,
-	merchantCustomer,
 	purchases as purchaseTable,
 	purchaseUserTransfer as purchaseUserTransferTable,
 } from '@/db/schema'
@@ -238,7 +235,7 @@ async function publishTransferOutboxEvents(
 /**
  * Complete a VERIFIED (claimed) transfer. Every step is idempotent, so
  * this converges no matter where a previous attempt stopped: after the
- * claim, after the Stripe write, after the local transaction, or before
+ * claim, after the local transaction, or before
  * the event publish. It also heals pre-outbox VERIFIED rows: the upsert
  * creates the missing outbox row from current state and publishes it.
  */
@@ -248,55 +245,25 @@ async function completeVerifiedTransfer(
 ) {
 	const purchase = await db.query.purchases.findFirst({
 		where: eq(purchaseTable.id, transfer.purchaseId),
-		with: {
-			merchantCharge: {
-				with: {
-					merchantCustomer: true,
-				},
-			},
-		},
 	})
 
 	if (!purchase) {
 		throw new Error('No purchase found')
 	}
 
-	// The claim is already ours (VERIFIED), so a concurrent cancel can no
-	// longer win: this Stripe write only happens for a transfer that will
-	// complete. Same-values idempotent on retry.
-	if (purchase?.merchantCharge?.merchantCustomer) {
-		const { identifier } = purchase.merchantCharge.merchantCustomer
-		const existingCustomer = await stripeProvider.getCustomer(identifier)
-
-		await stripeProvider.updateCustomer(identifier, {
-			email: user.email,
-			name: user.name || existingCustomer.name || user.email,
-		})
-	}
-
-	// One transaction: ownership move, merchant row reassignment, and the
-	// durable outbox event. All writes are idempotent (absolute values plus
-	// an upsert into the per-transfer-event unique key), so a resumed
-	// attempt converges instead of duplicating.
+	// One transaction: the ownership move and the durable outbox event. Only
+	// the purchase moves. The merchant charge and merchant customer stay with
+	// the payer for good (one-way, new transfers only): the payer keeps their
+	// invoice and their Stripe customer, and the new holder's next checkout
+	// gets their own. No Stripe customer write happens here for the same
+	// reason. All writes are idempotent (absolute values plus an upsert into
+	// the per-transfer-event unique key), so a resumed attempt converges
+	// instead of duplicating.
 	await db.transaction(async (tx) => {
 		await tx
 			.update(purchaseTable)
 			.set({ userId: user.id })
 			.where(eq(purchaseTable.id, transfer.purchaseId))
-
-		if (purchase?.merchantCharge?.merchantCustomer) {
-			await tx
-				.update(merchantCharge)
-				.set({ userId: user.id })
-				.where(eq(merchantCharge.id, purchase.merchantCharge.id))
-
-			await tx
-				.update(merchantCustomer)
-				.set({ userId: user.id })
-				.where(
-					eq(merchantCustomer.id, purchase.merchantCharge.merchantCustomerId),
-				)
-		}
 
 		await recordTransferOutboxEvent(tx, {
 			purchaseUserTransferId: transfer.id,

@@ -1,4 +1,5 @@
 import { createHash } from 'crypto'
+import type { InvoiceTransferFact } from '@/lib/invoice-access-rules'
 import { invoicePath } from '@/lib/invoice-paths'
 import {
 	canViewPurchaseInvoice,
@@ -104,6 +105,8 @@ export type InvoiceSettingsDataSource = {
 		id: string
 		userId: string | null
 		billingUserId?: string | null
+		// Every completed transfer; `resolveInvoicePayer` names the payer.
+		transfers: InvoiceTransferFact[]
 		merchantChargeId: string | null
 	} | null>
 	loadSettings(
@@ -312,6 +315,7 @@ export async function saveInvoiceSettingsForViewer(
 				id: purchase.id,
 				userId: purchase.userId,
 				billingUserId: purchase.billingUserId,
+				transfers: purchase.transfers,
 			},
 			managedTeamPurchases,
 		)
@@ -656,14 +660,20 @@ export const drizzleInvoiceSettingsDataSource: InvoiceSettingsDataSource = {
 				columns: { userId: true },
 			}),
 		])
-		return purchase
-			? {
-					id: purchase.id,
-					userId: purchase.userId,
-					billingUserId: charge?.userId ?? null,
-					merchantChargeId: purchase.merchantChargeId,
-				}
-			: null
+		if (!purchase) return null
+		// Dynamic like the other loads: invoice-access imports '@/db' at the
+		// top level, which this module keeps out of its static graph.
+		const { getCompletedTransfersForPurchase } = await import(
+			'@/lib/invoice-access'
+		)
+		const transfers = await getCompletedTransfersForPurchase(purchase.id)
+		return {
+			id: purchase.id,
+			userId: purchase.userId,
+			billingUserId: charge?.userId ?? null,
+			transfers,
+			merchantChargeId: purchase.merchantChargeId,
+		}
 	},
 
 	async loadSettings(purchaseId, merchantChargeId) {

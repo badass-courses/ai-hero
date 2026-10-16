@@ -159,6 +159,10 @@ const mocks = vi.hoisted(() => {
 	}
 })
 
+const purchaseBlock = vi.hoisted(() => ({
+	isUserBlockedFromPurchasing: vi.fn(async (_userId: string) => false),
+}))
+vi.mock('@/lib/purchase-disputes', () => purchaseBlock)
 vi.mock('@/coursebuilder/server-computed-checkout-coupon', () => ({
 	resolveServerComputedCheckoutCoupon:
 		mocks.resolveServerComputedCheckoutCoupon,
@@ -269,6 +273,21 @@ describe('logged-in checkout coupon authorization', () => {
 		mocks.resolveServerComputedCheckoutCoupon.mockResolvedValue(null)
 	})
 
+	it('refuses a buyer blocked after a lost chargeback before Stripe', async () => {
+		purchaseBlock.isUserBlockedFromPurchasing.mockResolvedValueOnce(true)
+		mocks.getEntitlementsForUser.mockResolvedValue([])
+
+		await LoginPage({ searchParams: Promise.resolve(searchParams) })
+
+		expect(purchaseBlock.isUserBlockedFromPurchasing).toHaveBeenCalledWith(
+			'user-actual',
+		)
+		expect(mocks.createCheckoutSession).not.toHaveBeenCalled()
+		expect(mocks.redirect).toHaveBeenCalledWith(
+			'/subscribe/error?reason=purchase-blocked',
+		)
+	})
+
 	it('removes an unowned exclusive selector before Stripe checkout', async () => {
 		mocks.getEntitlementsForUser.mockResolvedValue([])
 
@@ -281,6 +300,9 @@ describe('logged-in checkout coupon authorization', () => {
 				userId: 'user-actual',
 			}),
 			expect.anything(),
+			expect.objectContaining({
+				trustedCountry: expect.stringMatching(/^[A-Z]{2}$/),
+			}),
 		)
 	})
 
@@ -296,6 +318,9 @@ describe('logged-in checkout coupon authorization', () => {
 				userId: 'user-actual',
 			}),
 			expect.anything(),
+			expect.objectContaining({
+				trustedCountry: expect.stringMatching(/^[A-Z]{2}$/),
+			}),
 		)
 	})
 
@@ -315,6 +340,9 @@ describe('logged-in checkout coupon authorization', () => {
 				usedCouponId: mocks.coupon.id,
 			}),
 			expect.anything(),
+			expect.objectContaining({
+				trustedCountry: expect.stringMatching(/^[A-Z]{2}$/),
+			}),
 		)
 	})
 
@@ -336,6 +364,9 @@ describe('logged-in checkout coupon authorization', () => {
 				quantity: 5,
 			}),
 			expect.anything(),
+			expect.objectContaining({
+				trustedCountry: expect.stringMatching(/^[A-Z]{2}$/),
+			}),
 		)
 	})
 
@@ -353,6 +384,9 @@ describe('logged-in checkout coupon authorization', () => {
 				quantity: 0,
 			}),
 			expect.anything(),
+			expect.objectContaining({
+				trustedCountry: expect.stringMatching(/^[A-Z]{2}$/),
+			}),
 		)
 	})
 
@@ -384,6 +418,8 @@ describe('logged-in checkout coupon authorization', () => {
 			expect.anything(),
 			expect.objectContaining({
 				idempotencyKey: expect.stringMatching(/^aih-login-checkout:/),
+				// The signed handoff's country is the trusted one for the hook.
+				trustedCountry: 'TR',
 			}),
 		)
 	})
@@ -537,6 +573,7 @@ describe('logged-in checkout coupon authorization', () => {
 					couponId: undefined,
 				}),
 				expect.anything(),
+				expect.objectContaining({ trustedCountry: 'US' }),
 			)
 		},
 	)
@@ -632,6 +669,7 @@ describe('logged-in checkout coupon authorization', () => {
 				usedCouponId: mocks.coupon.id,
 			}),
 			expect.anything(),
+			expect.objectContaining({ trustedCountry: 'CA' }),
 		)
 	})
 

@@ -8,6 +8,10 @@ import type {
 } from '@/lib/checkout-login-handoff-store'
 import { createLoggedInCheckoutSession } from '@/lib/logged-in-checkout-provider'
 
+vi.mock('@/lib/purchase-disputes', () => ({
+	isUserBlockedFromPurchasing: vi.fn(async () => false),
+}))
+
 import type { CommerceAdapter } from '@coursebuilder/commerce'
 import StripeProvider, {
 	mockStripeAdapter,
@@ -139,6 +143,7 @@ describe('logged-in checkout provider boundary', () => {
 		} satisfies PaymentsAdapter
 
 		const result = await createLoggedInCheckoutSession({
+			trustedCountry: 'US',
 			provider: provider(paymentsAdapter),
 			adapter: courseAdapter(),
 			handoffStore,
@@ -167,6 +172,7 @@ describe('logged-in checkout provider boundary', () => {
 		const createCheckoutSession = vi.fn()
 		await expect(
 			createLoggedInCheckoutSession({
+				trustedCountry: 'US',
 				provider: provider({
 					...mockStripeAdapter,
 					getPrice: vi.fn(async () => ({ recurring: null }) as never),
@@ -185,6 +191,38 @@ describe('logged-in checkout provider boundary', () => {
 		expect(createCheckoutSession).not.toHaveBeenCalled()
 	})
 
+	it('refuses a buyer blocked after a lost chargeback before Stripe', async () => {
+		const handoffStore = store()
+		const createCheckoutSession = vi.fn()
+		const isPurchaseBlocked = vi.fn(async () => true)
+
+		const result = await createLoggedInCheckoutSession({
+			trustedCountry: 'US',
+			provider: provider({
+				...mockStripeAdapter,
+				getPrice: vi.fn(async () => ({ recurring: null }) as never),
+				createCheckoutSession,
+			} satisfies PaymentsAdapter),
+			adapter: courseAdapter(),
+			handoffStore,
+			claim,
+			handoffPayload,
+			checkoutParams,
+			isPurchaseBlocked,
+		})
+
+		expect(isPurchaseBlocked).toHaveBeenCalledWith(claim.userId)
+		expect(result).toEqual({
+			kind: 'failure',
+			failure: { code: 'purchase-blocked', retryable: false },
+		})
+		expect(createCheckoutSession).not.toHaveBeenCalled()
+		expect(handoffStore.failTerminal).toHaveBeenCalledWith({
+			claim,
+			failureCode: 'purchase-blocked',
+		})
+		expect(handoffStore.complete).not.toHaveBeenCalled()
+	})
 	it('does not complete when the real Course Builder provider reports failure', async () => {
 		const handoffStore = store()
 		const paymentsAdapter = {
@@ -196,6 +234,7 @@ describe('logged-in checkout provider boundary', () => {
 		} satisfies PaymentsAdapter
 
 		const result = await createLoggedInCheckoutSession({
+			trustedCountry: 'US',
 			provider: provider(paymentsAdapter),
 			adapter: courseAdapter(),
 			handoffStore,
@@ -224,6 +263,7 @@ describe('logged-in checkout provider boundary', () => {
 		}
 
 		const result = await createLoggedInCheckoutSession({
+			trustedCountry: 'US',
 			provider: fakeProvider,
 			adapter: courseAdapter(),
 			handoffStore,
@@ -281,6 +321,7 @@ describe('logged-in checkout provider boundary', () => {
 
 		await expect(
 			createLoggedInCheckoutSession({
+				trustedCountry: 'US',
 				provider: realProvider,
 				adapter: courseAdapter(),
 				handoffStore,
@@ -290,6 +331,7 @@ describe('logged-in checkout provider boundary', () => {
 			}),
 		).rejects.toThrow('checkout-login-handoff-receipt-write-failed')
 		const recovered = await createLoggedInCheckoutSession({
+			trustedCountry: 'US',
 			provider: realProvider,
 			adapter: courseAdapter(),
 			handoffStore,

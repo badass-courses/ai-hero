@@ -30,11 +30,16 @@ const session = {
 		name: 'Buyer',
 	},
 	livemode: false,
-	metadata: {},
+	metadata: { siteName: 'ai-hero' },
 	mode: 'payment',
 	payment_intent: {
 		id: 'pi_recovery',
-		latest_charge: { id: 'ch_recovery' },
+		latest_charge: {
+			id: 'ch_recovery',
+			refunded: false,
+			amount_refunded: 0,
+			disputed: false,
+		},
 	},
 	payment_method_collection: 'always',
 	payment_status: 'paid',
@@ -55,18 +60,48 @@ const intermediateState: CheckoutRecoveryState = {
 	purchaseIds: [],
 }
 
+const fulfilledState: CheckoutRecoveryState = {
+	chargeIds: ['mc_recovery'],
+	merchantSessionIds: ['ms_recovery'],
+	purchaseIds: ['purch_direct'],
+}
+
 function runtime(
 	state: CheckoutRecoveryState = intermediateState,
+	options: { replayRuns?: number | null; appName?: string | null } = {},
 ): CheckoutRecoveryRuntime & {
+	getCheckoutSession: ReturnType<typeof vi.fn>
 	sendReplay: ReturnType<typeof vi.fn>
+	countReplayRuns: ReturnType<typeof vi.fn>
+	fulfillDirect: ReturnType<typeof vi.fn>
 } {
 	return {
+		appName: options.appName === undefined ? 'ai-hero' : options.appName,
 		getCheckoutSession: vi.fn().mockResolvedValue(session),
 		inspect: vi.fn().mockResolvedValue(state),
 		sendReplay: vi.fn().mockResolvedValue({ ids: ['evt_inngest_recovery'] }),
+		countReplayRuns: vi
+			.fn()
+			.mockResolvedValue(
+				options.replayRuns === undefined ? 1 : options.replayRuns,
+			),
+		fulfillDirect: vi.fn().mockResolvedValue({
+			status: 'fulfilled',
+			checkoutSessionId: session.id,
+			chargeId: 'ch_recovery',
+			purchaseId: 'purch_direct',
+			state: fulfilledState,
+		}),
 		close: vi.fn().mockResolvedValue(undefined),
 	}
 }
+
+const args = (overrides: { apply?: boolean; direct?: boolean } = {}) => ({
+	checkoutSessionId: session.id,
+	apply: false,
+	direct: false,
+	...overrides,
+})
 
 describe('checkout recovery command', () => {
 	it('accepts one exact session id and defaults to dry-run', () => {
@@ -78,6 +113,7 @@ describe('checkout recovery command', () => {
 		).toEqual({
 			checkoutSessionId: 'cs_test_recovery',
 			apply: false,
+			direct: false,
 			receiptPath: undefined,
 		})
 		expect(() =>
@@ -92,7 +128,7 @@ describe('checkout recovery command', () => {
 	it('reports the paid intermediate state without sending in dry-run', async () => {
 		const testRuntime = runtime()
 		const receipt = await runCheckoutRecovery(
-			{ checkoutSessionId: session.id, apply: false },
+			args(),
 			testRuntime,
 		)
 
@@ -109,7 +145,7 @@ describe('checkout recovery command', () => {
 	it('sends one deterministic checkout replay in apply mode', async () => {
 		const testRuntime = runtime()
 		const first = await runCheckoutRecovery(
-			{ checkoutSessionId: session.id, apply: true },
+			args({ apply: true }),
 			testRuntime,
 		)
 
@@ -143,7 +179,7 @@ describe('checkout recovery command', () => {
 			purchaseIds: ['purch_recovered'],
 		})
 		const receipt = await runCheckoutRecovery(
-			{ checkoutSessionId: session.id, apply: true },
+			args({ apply: true }),
 			testRuntime,
 		)
 
@@ -158,12 +194,203 @@ describe('checkout recovery command', () => {
 			payment_status: 'unpaid',
 		})
 		const receipt = await runCheckoutRecovery(
-			{ checkoutSessionId: session.id, apply: true },
+			args({ apply: true }),
 			testRuntime,
 		)
 
 		expect(receipt).toMatchObject({ status: 'refused', success: false })
 		expect(testRuntime.sendReplay).not.toHaveBeenCalled()
+	})
+
+	it('refuses a refunded session in every mode', async () => {
+		for (const mode of [args({ apply: true }), args({ apply: true, direct: true })]) {
+			const testRuntime = runtime()
+			testRuntime.getCheckoutSession = vi.fn().mockResolvedValue({
+				...session,
+				payment_intent: {
+					id: 'pi_recovery',
+					latest_charge: {
+						id: 'ch_recovery',
+						refunded: true,
+						amount_refunded: 19_900,
+						disputed: false,
+					},
+				},
+			})
+			const receipt = await runCheckoutRecovery(mode, testRuntime)
+
+			expect(receipt).toMatchObject({
+				status: 'refused',
+				reason: 'Checkout charge is refunded',
+			})
+			expect(testRuntime.sendReplay).not.toHaveBeenCalled()
+			expect(testRuntime.fulfillDirect).not.toHaveBeenCalled()
+		}
+	})
+
+	it('keeps the replay when Inngest ran it', async () => {
+		const testRuntime = runtime(intermediateState, { replayRuns: 1 })
+		const receipt = await runCheckoutRecovery(args({ apply: true }), testRuntime)
+
+		expect(receipt).toMatchObject({
+			status: 'replay_requested',
+			success: true,
+			replayRunCount: 1,
+			directReason: null,
+		})
+		expect(testRuntime.countReplayRuns).toHaveBeenCalledWith([
+			'evt_inngest_recovery',
+		])
+		expect(testRuntime.fulfillDirect).not.toHaveBeenCalled()
+	})
+
+	it('runs the handler directly when the replay produced no run', async () => {
+		const testRuntime = runtime(intermediateState, { replayRuns: 0 })
+		const receipt = await runCheckoutRecovery(args({ apply: true }), testRuntime)
+
+		expect(receipt).toMatchObject({
+			version: 2,
+			status: 'fulfilled_direct',
+			success: true,
+			directReason: 'replay_produced_no_run',
+			replayRunCount: 0,
+			inngestEventIds: ['evt_inngest_recovery'],
+			purchaseId: 'purch_direct',
+			state: fulfilledState,
+		})
+		expect(testRuntime.fulfillDirect).toHaveBeenCalledTimes(1)
+		expect(testRuntime.fulfillDirect).toHaveBeenCalledWith(session.id)
+	})
+
+	it('says so when it cannot verify the replay run', async () => {
+		const testRuntime = runtime(intermediateState, { replayRuns: null })
+		const receipt = await runCheckoutRecovery(args({ apply: true }), testRuntime)
+
+		expect(receipt).toMatchObject({
+			status: 'replay_requested',
+			success: true,
+			replayRunCount: null,
+		})
+		expect(receipt.reason).toMatch(/--direct/)
+		expect(testRuntime.fulfillDirect).not.toHaveBeenCalled()
+	})
+
+	it('reports a direct run without writing in dry-run', async () => {
+		const testRuntime = runtime()
+		const receipt = await runCheckoutRecovery(args({ direct: true }), testRuntime)
+
+		expect(receipt).toMatchObject({
+			mode: 'dry-run',
+			status: 'would_fulfill_direct',
+			success: true,
+			directReason: 'requested',
+			chargeId: 'ch_recovery',
+		})
+		expect(testRuntime.sendReplay).not.toHaveBeenCalled()
+		expect(testRuntime.fulfillDirect).not.toHaveBeenCalled()
+	})
+
+	it('skips the replay and runs the handler once with --direct --apply', async () => {
+		const testRuntime = runtime()
+		const receipt = await runCheckoutRecovery(
+			args({ apply: true, direct: true }),
+			testRuntime,
+		)
+
+		expect(receipt).toMatchObject({
+			status: 'fulfilled_direct',
+			success: true,
+			directReason: 'requested',
+			purchaseId: 'purch_direct',
+			inngestEventIds: [],
+		})
+		expect(testRuntime.sendReplay).not.toHaveBeenCalled()
+		expect(testRuntime.fulfillDirect).toHaveBeenCalledTimes(1)
+	})
+
+	it('reports a race the direct run lost as already recovered', async () => {
+		const testRuntime = runtime()
+		testRuntime.fulfillDirect.mockResolvedValue({
+			status: 'raced',
+			checkoutSessionId: session.id,
+			chargeId: 'ch_recovery',
+			purchaseIds: ['purch_original'],
+			state: { ...fulfilledState, purchaseIds: ['purch_original'] },
+		})
+		const receipt = await runCheckoutRecovery(
+			args({ apply: true, direct: true }),
+			testRuntime,
+		)
+
+		expect(receipt).toMatchObject({
+			status: 'already_recovered',
+			success: true,
+			purchaseId: 'purch_original',
+			reason: 'Another run created the purchase first',
+		})
+	})
+
+	it('refuses a held direct run: the buyer got the product another way', async () => {
+		const testRuntime = runtime()
+		testRuntime.fulfillDirect.mockResolvedValue({
+			status: 'held',
+			checkoutSessionId: session.id,
+			chargeId: 'ch_recovery',
+			reason: 'buyer_already_has_product',
+			purchaseIds: ['purch_gift'],
+		})
+		const receipt = await runCheckoutRecovery(
+			args({ apply: true, direct: true }),
+			testRuntime,
+		)
+
+		expect(receipt).toMatchObject({
+			status: 'refused',
+			success: false,
+			purchaseId: 'purch_gift',
+		})
+		expect(receipt.reason).toContain('buyer_already_has_product')
+	})
+
+	it('predicts in dry-run what a direct apply would refuse', async () => {
+		const otherSite = runtime()
+		otherSite.getCheckoutSession.mockResolvedValue({
+			...session,
+			metadata: { siteName: 'some-other-app' },
+		})
+		expect(
+			await runCheckoutRecovery(args({ direct: true }), otherSite),
+		).toMatchObject({
+			status: 'refused',
+			reason: 'Direct fulfillment skipped: other_site',
+		})
+
+		const zeroTotal = runtime()
+		zeroTotal.getCheckoutSession.mockResolvedValue({ ...session, amount_total: 0 })
+		expect(
+			await runCheckoutRecovery(args({ direct: true }), zeroTotal),
+		).toMatchObject({
+			status: 'refused',
+			reason: 'Direct fulfillment skipped: zero_total',
+		})
+
+		const noAppName = runtime(intermediateState, { appName: null })
+		expect(
+			await runCheckoutRecovery(args({ direct: true }), noAppName),
+		).toMatchObject({ status: 'refused' })
+		for (const testRuntime of [otherSite, zeroTotal, noAppName])
+			expect(testRuntime.fulfillDirect).not.toHaveBeenCalled()
+	})
+
+	it('never runs the handler directly once a purchase exists', async () => {
+		const testRuntime = runtime(fulfilledState)
+		const receipt = await runCheckoutRecovery(
+			args({ apply: true, direct: true }),
+			testRuntime,
+		)
+
+		expect(receipt.status).toBe('already_recovered')
+		expect(testRuntime.fulfillDirect).not.toHaveBeenCalled()
 	})
 })
 
@@ -180,8 +407,16 @@ describe('checkout recovery argument parsing', () => {
 		).toEqual({
 			checkoutSessionId: 'cs_live_recovery1',
 			apply: true,
+			direct: false,
 			receiptPath: 'tmp/receipt.json',
 		})
+		expect(
+			parseCheckoutRecoveryArgs([
+				'--checkout-session-id',
+				'cs_live_recovery1',
+				'--direct',
+			]),
+		).toMatchObject({ apply: false, direct: true })
 	})
 
 	it('rejects a flag whose value is missing or is another flag', () => {

@@ -1,18 +1,93 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { getErrorInfo } from './page'
+vi.mock('next/headers', () => ({
+	headers: async () => new Headers(),
+}))
+vi.mock('@/components/layout-client', () => ({ default: () => null }))
+vi.mock('@/components/login', () => ({ Login: () => null }))
+vi.mock('@/env.mjs', () => ({
+	env: { NEXT_PUBLIC_SUPPORT_EMAIL: 's@example.com' },
+}))
+vi.mock('@/server/logger', () => ({ log: { error: vi.fn() } }))
+vi.mock('@/server/auth', () => ({
+	getProviders: () => ({
+		postmark: { id: 'postmark' },
+		github: { id: 'github' },
+	}),
+}))
 
-describe('auth error page copy', () => {
-	it('gives magic-link verification failures a recovery action', () => {
-		const info = getErrorInfo('Verification')
+import {
+	AUTH_ERROR_CODES,
+	AUTH_ERROR_VIEWS,
+	GENERIC_AUTH_ERROR,
+	authErrorView,
+} from '@/lib/auth-error-view'
+import { Login } from '@/components/login'
 
-		expect(info.title).toBe('Login link expired')
-		expect(info.message).toContain('Request a fresh login link')
-		expect(info.actions).toContainEqual(
-			expect.objectContaining({
-				label: 'Get a new login link',
-				href: '/login',
-			}),
+import AuthErrorPage from './page'
+
+describe('auth error copy', () => {
+	it.each(AUTH_ERROR_CODES)('%s has its own plain copy', (code) => {
+		const view = authErrorView(code)
+		expect(view).toBe(AUTH_ERROR_VIEWS[code])
+		expect(view.title).not.toBe('Something went wrong')
+		expect(view.title.toLowerCase()).not.toContain('configuration')
+		expect(view.message.toLowerCase()).not.toContain('configuration')
+	})
+
+	it('AccessDenied says the account is not linked, as the signIn callback means it', () => {
+		const view = authErrorView('AccessDenied')
+		expect(view.title).toContain('not linked')
+		expect(view.emailForm).toBe(true)
+	})
+
+	it('an expired or reused login link says so and offers the email form', () => {
+		for (const code of ['Verification', 'Configuration'] as const) {
+			const view = authErrorView(code)
+			expect(view.emailForm).toBe(true)
+			expect(view.message).toContain('Enter your email to get a new one')
+		}
+		expect(authErrorView('Verification').title).toContain(
+			'expired or was already used',
 		)
+	})
+
+	it.each([
+		undefined,
+		null,
+		'',
+		'Nope',
+		'<script>alert(1)</script>',
+		'toString',
+		'__proto__',
+	])('unknown code %s gets the generic view and is never echoed', (code) => {
+		const view = authErrorView(code as string | null | undefined)
+		expect(view).toBe(GENERIC_AUTH_ERROR)
+		expect(JSON.stringify(view)).not.toContain(String(code || 'x-none'))
+	})
+})
+
+describe('auth error page login form', () => {
+	it('never takes its callback from the query, and offers email only', async () => {
+		const element = await AuthErrorPage({
+			searchParams: Promise.resolve({
+				error: 'Verification',
+				callbackUrl: 'https://evil.example/steal',
+			} as { error?: string }),
+		})
+		const found: Array<Record<string, any>> = []
+		const walk = (node: unknown): void => {
+			if (!node || typeof node !== 'object') return
+			const el = node as { type?: unknown; props?: Record<string, any> }
+			if (el.type === Login && el.props) found.push(el.props)
+			for (const v of Object.values(el.props ?? {})) {
+				if (Array.isArray(v)) v.forEach(walk)
+				else walk(v)
+			}
+		}
+		walk(element)
+		expect(found).toHaveLength(1)
+		expect(found[0]!.callbackUrl).toBe('/')
+		expect(Object.keys(found[0]!.providers)).toEqual(['postmark'])
 	})
 })

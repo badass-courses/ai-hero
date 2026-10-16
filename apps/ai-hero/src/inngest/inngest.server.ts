@@ -45,9 +45,19 @@ import {
 	ImageResourceCreated,
 } from '@/inngest/events/image-resource-created'
 import {
+	CHECKOUT_RECONCILE_FULFILL_EVENT,
+	CheckoutReconcileFulfillRequested,
+} from '@/inngest/events/checkout-reconcile'
+import {
 	INVOICE_SHORTFALL_RECONCILE_EVENT,
 	InvoiceShortfallReconcile,
 } from '@/inngest/events/invoice-shortfall'
+import {
+	PURCHASE_DISPUTE_CLOSED_EVENT,
+	PURCHASE_DISPUTE_OPENED_EVENT,
+	type PurchaseDisputeClosed,
+	type PurchaseDisputeOpened,
+} from '@coursebuilder/commerce/dispute-events'
 import {
 	LESSON_COMPLETED_EVENT,
 	LessonCompleted,
@@ -246,6 +256,9 @@ export type Events = {
 	[POSTMARK_WEBHOOK_EVENT]: PostmarkWebhook
 	[IMAGE_RESOURCE_CREATED_EVENT]: ImageResourceCreated
 	[INVOICE_SHORTFALL_RECONCILE_EVENT]: InvoiceShortfallReconcile
+	[PURCHASE_DISPUTE_OPENED_EVENT]: PurchaseDisputeOpened
+	[PURCHASE_DISPUTE_CLOSED_EVENT]: PurchaseDisputeClosed
+	[CHECKOUT_RECONCILE_FULFILL_EVENT]: CheckoutReconcileFulfillRequested
 	[RESOURCE_CHAT_REQUEST_EVENT]: ResourceChat
 	[EMAIL_SEND_BROADCAST]: EmailSendBroadcast
 	[OCR_WEBHOOK_EVENT]: OcrWebhook

@@ -4,7 +4,7 @@ import { revalidateTag } from 'next/cache'
 import { randomUUID } from 'node:crypto'
 import type { AppAbility } from '@/ability'
 import { db } from '@/db'
-import { shortlink, shortlinkAttribution, shortlinkClick } from '@/db/schema'
+import { giftShareLink, shortlink, shortlinkAttribution, shortlinkClick } from '@/db/schema'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import {
@@ -203,14 +203,14 @@ export async function getShortlinkBySlug(
 	// Try Redis cache first. Older cache entries can outlive deleted DB rows or
 	// miss the URL field, so never trust cached data until the redirect target is
 	// known-good.
-	const cachedLink = await redis.get<Shortlink>(cacheKey)
+	const cachedLink = await Promise.resolve(redis.get<Shortlink>(cacheKey)).catch(() => null)
 	if (cachedLink) {
 		if (isCacheableShortlink(cachedLink)) {
 			await log.info('shortlink.cache.hit', { slug })
 			return cachedLink
 		}
 
-		await redis.del(cacheKey)
+		await Promise.resolve(redis.del(cacheKey)).catch(() => null)
 		await log.warn('shortlink.cache.invalid', {
 			slug,
 			hasUrl: typeof cachedLink.url === 'string',
@@ -233,8 +233,8 @@ export async function getShortlinkBySlug(
 		}
 
 		// Cache full object for future lookups
-		await redis.set(cacheKey, link)
-		await log.info('shortlink.cache.miss', { slug, cached: true })
+		const cached = await Promise.resolve(redis.set(cacheKey, link)).then(() => true, () => false)
+		await log.info('shortlink.cache.miss', { slug, cached })
 	}
 
 	return link ?? null
@@ -295,16 +295,16 @@ export async function createShortlink(
 
 	let insertedId: string | undefined
 	try {
-		const results = await db
-			.insert(shortlink)
-			.values({
-				slug,
-				url: parsed.url,
-				description: parsed.description,
-				metadata: parsed.metadata ?? null,
-				createdById: userId,
-			})
-			.$returningId()
+		const values = {
+			slug, url: parsed.url, description: parsed.description,
+			metadata: parsed.metadata ?? null, createdById: userId,
+		}
+		const gift = parsed.gift
+		const results = gift ? await db.transaction(async (tx) => {
+			const inserted = await tx.insert(shortlink).values(values).$returningId()
+			await tx.insert(giftShareLink).values({ slug, ...gift })
+			return inserted
+		}) : await db.insert(shortlink).values(values).$returningId()
 
 		insertedId = results[0]?.id
 	} catch (error) {

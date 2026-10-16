@@ -712,10 +712,10 @@ A gpt-5.4 review of this audit against the current codebase found several correc
 
 ### Post-deployment verification
 
-- [ ] **GA4 DebugView**: Fire a test purchase through staging/preview → verify `purchase` event appears with correct `transaction_id`, `value`, `items`
+- [ ] **GA4 DebugView**: Fire a test purchase in a Stripe sandbox on the commerce rig, never a Vercel preview → verify `purchase` event appears with correct `transaction_id`, `value`, `items`
 - [ ] **GA4 DebugView**: Create a test account → verify `sign_up` event appears with `method` property
 - [ ] **GA4 Realtime**: Verify `user_id` appears in User Explorer for authenticated sessions
-- [ ] **Sandbox purchase**: Complete a real $0 coupon purchase → verify:
+- [ ] **Sandbox purchase**: Complete a $0 coupon purchase in a Stripe sandbox, never a preview or production → verify:
   - `Purchase.fields` has attribution snapshot (UTMs, shortlinkRef, gaClientId, landing page)
   - `User.fields` has first-touch acquisition data
   - `ShortlinkAttribution` row created (if via shortlink)

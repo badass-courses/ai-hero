@@ -1,20 +1,18 @@
 import 'server-only'
 
-import { db } from '@/db'
-import { purchases } from '@/db/schema'
-import { eq } from 'drizzle-orm'
 import type Stripe from 'stripe'
 
 import type { PurchaseTickerHit } from './admin-sales-globe-contract'
 import {
 	billingAddressForPurchase,
-	globeFieldsPatch,
+	globeFieldValue,
 	planPurchaseGeoWrite,
 	resolveGlobeLocation,
 	type CheckoutGeoMetadata,
 	type PurchaseGeoWritePlan,
 	type StripeBillingAddress,
 } from './admin-sales-globe-geo'
+import { updatePurchaseFields } from './purchase-fields-write'
 
 export const STRIPE_GEO_ENRICH_LIMIT = 24
 const STRIPE_GEO_CONCURRENCY = 6
@@ -242,14 +240,14 @@ async function persistGlobeLocation({
 						? ('region' as const)
 						: ('postal' as const),
 	}
-	await db
-		.update(purchases)
-		.set({
+	await updatePurchaseFields({
+		purchaseId: hit.id,
+		columns: {
 			...(hit.city ? { city: hit.city } : {}),
 			...(hit.region ? { state: hit.region } : {}),
-			fields: globeFieldsPatch(row.fields, location),
-		})
-		.where(eq(purchases.id, hit.id))
+		},
+		patch: { globe: globeFieldValue(location) },
+	})
 }
 
 /**
@@ -257,44 +255,32 @@ async function persistGlobeLocation({
  */
 export async function persistPurchaseGeoWrite({
 	purchaseId,
-	fields,
 	plan,
 }: {
 	purchaseId: string
-	fields: unknown
 	plan: PurchaseGeoWritePlan
 }): Promise<void> {
 	if (plan.skip) {
 		if (plan.reason === 'nothing-to-write') {
-			const current =
-				fields && typeof fields === 'object' && !Array.isArray(fields)
-					? { ...(fields as Record<string, unknown>) }
-					: {}
-			current.globeAttempted = true
-			await db
-				.update(purchases)
-				.set({ fields: current })
-				.where(eq(purchases.id, purchaseId))
+			await updatePurchaseFields({
+				purchaseId,
+				patch: { globeAttempted: true },
+			})
 		}
 		return
 	}
-	await db
-		.update(purchases)
-		.set({
+	await updatePurchaseFields({
+		purchaseId,
+		columns: {
 			...(plan.city ? { city: plan.city } : {}),
 			...(plan.state ? { state: plan.state } : {}),
 			...(plan.ipAddress ? { ipAddress: plan.ipAddress } : {}),
-			...(plan.location && plan.source
-				? {
-						fields: globeFieldsPatch(
-							fields,
-							plan.location,
-							plan.source
-						),
-					}
-				: {}),
-		})
-		.where(eq(purchases.id, purchaseId))
+		},
+		patch:
+			plan.location && plan.source
+				? { globe: globeFieldValue(plan.location, plan.source) }
+				: {},
+	})
 }
 
 /**
@@ -312,7 +298,6 @@ export async function persistPurchaseGeoFromStripe({
 	}>
 	persist?: (input: {
 		purchaseId: string
-		fields: unknown
 		plan: PurchaseGeoWritePlan
 	}) => Promise<void>
 }): Promise<PurchaseGeoWritePlan> {
@@ -338,7 +323,7 @@ export async function persistPurchaseGeoFromStripe({
 		billing: geo.address,
 	})
 	if (!plan.skip || plan.reason === 'nothing-to-write') {
-		await persist({ purchaseId: row.id, fields: row.fields, plan })
+		await persist({ purchaseId: row.id, plan })
 	}
 	return plan
 }

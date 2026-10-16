@@ -66,6 +66,13 @@ let host: HTMLDivElement
 beforeEach(() => {
 	;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 	process.env.NEXT_PUBLIC_URL = 'http://localhost:3000'
+	// Happy DOM's beacon starts an unobserved real window.fetch promise.
+	// Browser transport must never leave this isolated mounted test.
+	vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+	vi.stubGlobal(
+		'fetch',
+		vi.fn(() => Promise.reject(new Error('Network disabled in mounted test'))),
+	)
 	host = document.createElement('div')
 	document.body.append(host)
 	root = createRoot(host)
@@ -80,8 +87,10 @@ afterEach(async () => {
 
 describe('workshop coupon actor lifecycle', () => {
 	it.each(['coupon=coupon-valid', 'code=SAVE199'])(
-		'mounts without a coupon, then renders $199 and an authorized checkout after %s resolves',
+		'renders $199 and authorized checkout after %s resolves even when telemetry fetch rejects',
 		async (search) => {
+			vi.mocked(navigator.sendBeacon).mockReturnValue(false)
+			let telemetryRequests = 0
 			testState.search = search
 			let resolveCommerce!: (value: unknown) => void
 			const commerceResult = new Promise<unknown>((resolve) => {
@@ -114,6 +123,10 @@ describe('workshop coupon actor lifecycle', () => {
 			vi.stubGlobal(
 				'fetch',
 				vi.fn(async (url: string, options?: RequestInit) => {
+					if (url === '/api/telemetry/buy-path') {
+						telemetryRequests++
+						throw new Error('Buyer is offline or telemetry is blocked')
+					}
 					if (url !== '/api/coursebuilder/prices-formatted') {
 						throw new Error(`Expected same-origin price request, got ${url}`)
 					}
@@ -160,6 +173,7 @@ describe('workshop coupon actor lifecycle', () => {
 				// observable resolves; keep that notification inside React.act.
 				await new Promise((resolve) => setTimeout(resolve, 20))
 			})
+			expect(telemetryRequests).toBeGreaterThan(0)
 			expect(host.textContent).toContain('$199')
 			expect(priceRequests).toEqual([couponId])
 			const form = host.querySelector('form[action]')

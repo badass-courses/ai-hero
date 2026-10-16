@@ -11,6 +11,18 @@ import {
 	publishTransferOutboxEvent,
 	recordTransferOutboxEvent,
 } from '@/purchase-transfer/transfer-outbox'
+import {
+	isValidSamePersonEvidence,
+	orderCompletedTransfers,
+	resolveInvoicePayer,
+	type SamePersonEvidence,
+} from '@/lib/invoice-access-rules'
+import {
+	loadSamePersonFlags,
+	recordSamePersonEvidence,
+	samePersonTableExists,
+	toTransferFacts,
+} from '@/purchase-transfer/same-person'
 import { and, eq, inArray, ne } from 'drizzle-orm'
 import { Inngest } from 'inngest'
 import Stripe from 'stripe'
@@ -22,6 +34,9 @@ export type SupportCompleteInput = {
 	purchaseId: string
 	sourceUserId: string
 	targetEmail: string
+	// Support verified both accounts are one person: the target becomes the
+	// invoice payer. Absent means a normal move. Never inferred.
+	samePerson?: SamePersonEvidence
 }
 
 export type SupportCompleteResult =
@@ -210,8 +225,103 @@ async function loadGuardedContext(input: SupportCompleteInput) {
 	const billingCharge = await db.query.merchantCharge.findFirst({
 		where: eq(merchantCharge.id, purchase.merchantChargeId),
 	})
-	if (!billingCharge || billingCharge.userId !== sourceUser.id) {
-		return { ok: false as const, reason: 'billing_owner_mismatch' }
+	// The mover must hold the purchase. The charge stays with the payer after
+	// a transfer, so its user is not the holder and is not compared to it.
+	// (INITIATED rows are checked above; a resumed VERIFIED/COMPLETED row
+	// already moved the purchase to the target.)
+	if (
+		purchase.userId !== sourceUser.id &&
+		!(
+			['VERIFIED', 'COMPLETED'].includes(transfer.transferState) &&
+			purchase.userId === targetUser.id
+		)
+	) {
+		return { ok: false as const, reason: 'source_no_longer_owns_purchase' }
+	}
+	// A move must never leave the charge with no payer, nor change who the
+	// payer is. The payer is the earliest completed transfer's source, else the
+	// charge's user. This move completes a transfer from `sourceUser`; the row
+	// is the same one the workflow marks COMPLETED, so no second row is written.
+	const completedTransfers = await toTransferFacts(
+		await db.query.purchaseUserTransfer.findMany({
+			where: and(
+				eq(purchaseUserTransfer.purchaseId, purchase.id),
+				eq(purchaseUserTransfer.transferState, 'COMPLETED'),
+				ne(purchaseUserTransfer.id, transfer.id),
+			),
+		}),
+	)
+	if (!billingCharge) {
+		return { ok: false as const, reason: 'billing_charge_missing' }
+	}
+	const payerBefore = resolveInvoicePayer({
+		chargeUserId: billingCharge.userId,
+		transfers: completedTransfers,
+	})
+	// A same-person move is the one move allowed to change the payer, and only
+	// to the target. It needs valid evidence, the table to hold it, and the
+	// mover to be the current payer: a holder who never paid cannot hand the
+	// invoice to their other account.
+	if (input.samePerson !== undefined) {
+		if (!isValidSamePersonEvidence(input.samePerson)) {
+			return { ok: false as const, reason: 'same_person_evidence_invalid' }
+		}
+		if (!(await samePersonTableExists())) {
+			return { ok: false as const, reason: 'same_person_table_missing' }
+		}
+		// Same-person moves apply in dated order. One undated completed
+		// transfer makes the order unknowable, so the flag could not move
+		// anything: refuse instead of recording a flag that does nothing.
+		if (orderCompletedTransfers(completedTransfers) === null) {
+			return { ok: false as const, reason: 'same_person_order_unknown' }
+		}
+		// Only the INITIATED claim writes the flag. A transfer past it is
+		// resumed against the row already recorded, which stays authoritative:
+		// evidence in a resumed request is not compared and not rewritten. With
+		// no recorded row, the request would record nothing, so refuse.
+		if (transfer.transferState !== 'INITIATED') {
+			const [recorded] = (await loadSamePersonFlags([transfer.id])).values()
+			if (!recorded) {
+				return {
+					ok: false as const,
+					reason: 'same_person_cannot_be_added_after_claim',
+				}
+			}
+		}
+	}
+	const payerAfter = resolveInvoicePayer({
+		chargeUserId: billingCharge.userId,
+		transfers: [
+			...completedTransfers,
+			{
+				id: transfer.id,
+				state: 'COMPLETED',
+				sourceUserId: sourceUser.id,
+				targetUserId: targetUser.id,
+				completedAt: new Date(),
+				samePerson: input.samePerson
+					? { verifiedBy: input.samePerson.verifiedBy }
+					: null,
+			},
+		],
+	})
+	// MerchantCharge.userId is NOT NULL, so this is defense in depth: a move
+	// must never leave a charge with no payer.
+	if (!payerBefore) {
+		return {
+			ok: false as const,
+			reason: 'move_would_leave_charge_without_payer',
+		}
+	}
+	if (input.samePerson !== undefined) {
+		if (payerBefore !== sourceUser.id) {
+			return { ok: false as const, reason: 'same_person_source_not_payer' }
+		}
+		if (payerAfter !== targetUser.id) {
+			return { ok: false as const, reason: 'same_person_move_did_not_apply' }
+		}
+	} else if (payerBefore !== payerAfter) {
+		return { ok: false as const, reason: 'move_would_change_invoice_payer' }
 	}
 	const refundState = await inspectStripeRefunds(billingCharge.identifier)
 	if (!refundState.ok) return refundState
@@ -223,6 +333,7 @@ async function loadGuardedContext(input: SupportCompleteInput) {
 		sourceUser,
 		targetUser,
 		billingCharge,
+		samePerson: input.samePerson,
 	}
 }
 
@@ -278,6 +389,10 @@ export async function completeSupportPurchaseTransfer(
 				throw new Error('purchase_owner_race')
 			}
 
+			if (context.samePerson) {
+				await recordSamePersonEvidence(tx, context.transfer.id, context.samePerson)
+			}
+
 			return recordTransferOutboxEvent(tx, {
 				purchaseUserTransferId: context.transfer.id,
 				purchaseId: context.purchase.id,
@@ -302,7 +417,7 @@ export async function completeSupportPurchaseTransfer(
 	const billingReadback = await db.query.merchantCharge.findFirst({
 		where: eq(merchantCharge.id, context.billingCharge.id),
 	})
-	if (billingReadback?.userId !== context.sourceUser.id) {
+	if (billingReadback?.userId !== context.billingCharge.userId) {
 		throw new Error('billing_owner_changed')
 	}
 	if (!outboxId) {

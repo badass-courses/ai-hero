@@ -9,7 +9,7 @@ import {
 	findParentLessonForSolution,
 	flattenNavigationResources,
 } from '@/lib/content-navigation'
-import { setProgressForResource } from '@/lib/progress'
+import { api } from '@/trpc/react'
 import { getAdjacentWorkshopResources } from '@/utils/get-adjacent-workshop-resources'
 import { ArrowRight } from 'lucide-react'
 import { useSession } from 'next-auth/react'
@@ -18,6 +18,7 @@ import { cn } from '@coursebuilder/ui/utils/cn'
 import type { AbilityForResource } from '@coursebuilder/utils/current-ability-rules'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
+import { completeLessonInBackground } from '../../_components/complete-lesson-in-background'
 import { useModuleProgress } from '../../_components/module-progress-provider'
 import { WorkshopCompleteCard } from './workshop-complete-card'
 import { useWorkshopNavigation } from './workshop-navigation-provider'
@@ -62,11 +63,14 @@ export default function UpNext({
 	>
 }) {
 	const navigation = useWorkshopNavigation()
-	const [isPending, startTransition] = React.useTransition()
 	const { data: session } = useSession()
 	const ability = React.use(abilityLoader)
 	const canView = ability?.canViewLesson
-	const { moduleProgress, addLessonProgress } = useModuleProgress()
+	const { moduleProgress, addLessonProgress, removeLessonProgress } =
+		useModuleProgress()
+	// tRPC, not a server action: this write starts on a Link click, and a
+	// server action settling mid-navigation replays the old page.
+	const { client } = api.useUtils()
 
 	if (!navigation) {
 		return null
@@ -168,7 +172,7 @@ export default function UpNext({
 	 * last lesson of a workshop is exactly where progress used to stop being
 	 * recorded: the component returned null before it could offer a click.
 	 */
-	const completeAndContinue = async () => {
+	const completeAndContinue = () => {
 		if (
 			isCompleted ||
 			!completionLogic.shouldComplete ||
@@ -178,13 +182,13 @@ export default function UpNext({
 			return
 		}
 
-		const resourceToComplete = completionLogic.resourceToComplete
-		startTransition(() => {
-			addLessonProgress(resourceToComplete)
-		})
-		await setProgressForResource({
-			resourceId: resourceToComplete,
-			isCompleted: true,
+		void completeLessonInBackground({
+			resourceId: completionLogic.resourceToComplete,
+			moduleProgress,
+			addLessonProgress,
+			removeLessonProgress,
+			setCompleted: client.progress.setCompleted.mutate,
+			optimistic: Boolean(session?.user),
 		})
 	}
 

@@ -4,176 +4,46 @@ import { revalidatePath } from 'next/cache'
 import { headers } from 'next/headers'
 import { notFound, redirect } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
-import Spinner from '@/components/spinner'
-import { stripeProvider } from '@/coursebuilder/stripe-provider'
+import { purchaseArtwork } from '@/lib/purchase-artwork'
+import { DifferentAccountNotice } from '../../_components/different-account-notice'
+import { PostPurchaseShell } from '../../_components/post-purchase-shell'
+import { PostPurchaseArrival } from '../../_components/post-purchase-arrival'
+import { PostPurchaseLoginLink } from '../../_components/post-purchase-login-link'
+import { PostPurchaseIconBadge } from '../../_components/post-purchase-icon'
+import { getPurchaseThanksDetails } from './purchase-thanks-details'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
-import { isCheckoutSessionOwner } from '@/lib/checkout-owner-resolution'
+import { isPurchaseOwner, thanksViewerState } from '@/lib/purchase-viewer'
 import {
 	cancelPurchaseTransfer,
 	getPurchaseTransferForPurchaseId,
 	initiatePurchaseTransfer,
 } from '@/purchase-transfer/purchase-transfer-actions'
+import { isTransferablePurchase } from '@/purchase-transfer/transfer-lifecycle'
 import { getServerAuthSession } from '@/server/auth'
-import { FileText, Mail } from 'lucide-react'
+import { TYPE } from '@/components/landing/type'
 import { PurchaseStatusPoller } from './purchase-status-poller'
+import {
+	PurchaseCard,
+	PurchaseCardSection,
+	PurchaseHeading,
+	PurchaseRows,
+} from '../../_components/post-purchase-parts'
+import {
+	PurchaseInviteTeam,
+	PurchaseInvoiceRow,
+	PurchaseTransferRow,
+} from '../../_components/post-purchase-receipt'
 
-import * as InvoiceTeaser from '@coursebuilder/commerce-next/invoices/invoice-teaser'
-import * as LoginLink from '@coursebuilder/commerce-next/post-purchase/login-link'
-import { PaymentSuccessButProcessingFailed } from '@coursebuilder/commerce-next/post-purchase/payment-success-but-processing-failed'
-import * as PurchaseSummary from '@coursebuilder/commerce-next/post-purchase/purchase-summary'
-import * as PurchaseTransfer from '@coursebuilder/commerce-next/post-purchase/purchase-transfer'
-import * as InviteTeam from '@coursebuilder/commerce-next/team/invite-team'
-import { convertToSerializeForNextResponse } from '@coursebuilder/commerce-next/utils/serialize-for-next-response'
-import { checkForPaymentSuccessWithoutPurchase } from '@coursebuilder/commerce'
+import { cn } from '@coursebuilder/ui/utils/cn'
 import {
 	EXISTING_BULK_COUPON,
 	INDIVIDUAL_TO_BULK_UPGRADE,
 	NEW_BULK_COUPON,
 	NEW_INDIVIDUAL_PURCHASE,
 } from '@coursebuilder/core/schemas/purchase-type'
-import { logger } from '@coursebuilder/utils/logger'
 
 export const maxDuration = 100
-
-const getServerSideProps = async (
-	session_id: string,
-	options: { maxRetries?: number } = {},
-) => {
-	const paymentProvider = stripeProvider
-
-	if (!paymentProvider) {
-		throw new Error('No payment provider found')
-	}
-
-	if (!session_id) {
-		throw new Error(`No session_id found: ${session_id}`)
-	}
-
-	logger.info('purchase.thanks-page.loading', {
-		checkoutSessionId: session_id,
-	})
-
-	const maxRetries = options.maxRetries ?? 30
-	const initialDelay = 100
-	const maxDelay = 1000
-
-	let retries = 0
-	let delay = initialDelay
-
-	while (retries < maxRetries) {
-		try {
-			const purchaseInfo = await paymentProvider.getPurchaseInfo(
-				session_id,
-				courseBuilderAdapter,
-			)
-
-			if (
-				'error' in purchaseInfo &&
-				purchaseInfo.error === 'paymentSucceededButProcessingFailed'
-			) {
-				return {
-					paymentSucceededButProcessingFailed: true,
-				}
-			}
-
-			const {
-				email,
-				chargeIdentifier,
-				quantity: seatsPurchased,
-				product: merchantProduct,
-				purchaseType,
-			} = purchaseInfo
-
-			const stripeProductName = merchantProduct.name
-
-			const purchase =
-				await courseBuilderAdapter.getPurchaseForStripeCharge(chargeIdentifier)
-
-			if (!purchase || !email) {
-				throw new Error('Purchase or email not found')
-			}
-
-			const product = await courseBuilderAdapter.getProduct(purchase.productId)
-
-			const redemptionsLeft =
-				purchase.bulkCoupon &&
-				purchase.bulkCoupon.maxUses > purchase.bulkCoupon.usedCount
-
-			logger.info('purchase.thanks-page.loaded', {
-				checkoutSessionId: session_id,
-				purchaseId: purchase.id,
-				productId: purchase.productId,
-				purchaseType,
-				seatsPurchased,
-				retries,
-			})
-
-			return {
-				purchase: convertToSerializeForNextResponse(purchase),
-				email,
-				seatsPurchased,
-				redemptionsLeft,
-				purchaseType,
-				bulkCouponId: purchase.bulkCoupon?.id || null,
-				product: convertToSerializeForNextResponse(product) || null,
-				stripeProductName,
-			}
-		} catch (error) {
-			retries++
-			logger.debug('thanks purchase poll retry', {
-				sessionId: session_id,
-				retries,
-				maxRetries,
-				error: error instanceof Error ? error.message : String(error),
-			})
-			await new Promise((resolve) => setTimeout(resolve, delay))
-			delay = Math.min(delay * 2, maxDelay)
-		}
-	}
-
-	const errorCheck = await checkForPaymentSuccessWithoutPurchase(
-		session_id,
-		courseBuilderAdapter,
-	)
-
-	if (errorCheck.shouldShowError) {
-		logger.debug('thanks purchase poll success-no-purchase fallback', {
-			sessionId: session_id,
-			stripeEventId: errorCheck.stripeEventId,
-		})
-		return {
-			paymentSucceededButProcessingFailed: true,
-		}
-	}
-
-	logger.error(
-		new Error('purchase missing after polling and no Stripe fallback', {
-			cause: {
-				sessionId: session_id,
-			},
-		}),
-	)
-	notFound()
-}
-
-const LoginLinkComp: React.FC<{ email: string }> = ({ email }) => {
-	return (
-		<LoginLink.Root email={email} className="border-b pb-5">
-			<LoginLink.Status />
-			<LoginLink.Title />
-			<LoginLink.CTA className="mt-4 inline-flex items-center gap-3">
-				<div className="bg-primary/20 text-primary flex h-10 w-10 items-center justify-center rounded-full p-3">
-					<Mail className="h-4 w-4" />
-				</div>
-				<span>
-					Login link sent to: <strong className="font-semibold">{email}</strong>
-				</span>
-			</LoginLink.CTA>
-			<LoginLink.Description className="text-sm opacity-75 sm:text-base" />
-		</LoginLink.Root>
-	)
-}
 
 /**
  * Server component that validates a Stripe checkout session and renders the
@@ -210,38 +80,26 @@ export default async function ThanksPurchasePage(props: {
 		return <PurchaseProcessingPage session_id={session_id} />
 	}
 
+	// While the details load, the card already names what was bought, so a
+	// return from the waiting screen keeps the hand-over card it was showing.
+	const product = await courseBuilderAdapter.getProduct(purchase.productId)
 	return (
-		<Suspense fallback={<PageLoading />}>
+		<Suspense
+			fallback={
+				<PostPurchaseShell
+					step="opening"
+					title={product?.name ?? purchase.product?.name}
+					image={purchaseArtwork(product)}
+				/>
+			}
+		>
 			<PurchaseThanksPageLoaded session_id={session_id} ready={ready === '1'} />
 		</Suspense>
 	)
 }
 
 function PurchaseProcessingPage({ session_id }: { session_id: string }) {
-	return (
-		<LayoutClient withContainer>
-			<main className="container min-h-[calc(100vh-var(--nav-height))] border-x px-5 py-8 sm:py-16">
-				<PurchaseStatusPoller sessionId={session_id} />
-			</main>
-		</LayoutClient>
-	)
-}
-
-function PageLoading() {
-	return (
-		<LayoutClient withContainer>
-			<main className="container min-h-[calc(100vh-var(--nav-height))] border-x px-5 py-8 sm:py-16">
-				<div className="mx-auto flex w-full max-w-4xl flex-col gap-5">
-					<h1 className="text-center text-lg font-medium sm:text-xl lg:text-2xl">
-						Validating Your Purchase, Hang Tight...
-					</h1>
-					<div className="mx-auto">
-						<Spinner className="text-center" />
-					</div>
-				</div>
-			</main>
-		</LayoutClient>
-	)
+	return <PurchaseStatusPoller sessionId={session_id} />
 }
 
 async function PurchaseThanksPageLoaded({
@@ -253,19 +111,23 @@ async function PurchaseThanksPageLoaded({
 }) {
 	const token = await getServerAuthSession()
 
-	const result = await getServerSideProps(session_id, {
+	const result = await getPurchaseThanksDetails(session_id, {
 		maxRetries: ready ? 5 : 1,
 	})
 
-	if ('paymentSucceededButProcessingFailed' in result) {
+	if (
+		'paymentSucceededButProcessingFailed' in result ||
+		'processingUnconfirmed' in result
+	) {
+		// The purchase row was found before this check ran, and the webhook only
+		// writes it once checkout completes, so payment stands even when the
+		// details lookup gives up. The hand-over already said so; keep saying it.
 		return (
-			<LayoutClient withContainer>
-				<main className="container min-h-[calc(100vh-var(--nav-height))] border-x px-5 py-8 sm:py-16">
-					<PaymentSuccessButProcessingFailed
-						supportEmail={env.NEXT_PUBLIC_SUPPORT_EMAIL}
-					/>
-				</main>
-			</LayoutClient>
+			<PostPurchaseShell
+				step="failed"
+				paymentConfirmed
+				supportEmail={env.NEXT_PUBLIC_SUPPORT_EMAIL}
+			/>
 		)
 	}
 
@@ -280,15 +142,35 @@ async function PurchaseThanksPageLoaded({
 		redemptionsLeft,
 	} = result
 
-	if (
-		isCheckoutSessionOwner({
-			purchaseUserId: purchase.userId ?? null,
-			purchaseEmail: email ?? null,
-			sessionUserId: token?.session?.user?.id ?? null,
-			sessionUserEmail: token?.session?.user?.email ?? null,
+	const viewer = thanksViewerState({
+		viewerUserId: token?.session?.user?.id,
+		isOwner: isPurchaseOwner({
+			viewerUserId: token?.session?.user?.id,
+			viewerEmail: token?.session?.user?.email,
+			purchaseOwnerId: purchase.userId,
+			purchaseEmail: email,
+		}),
+	})
+
+	if (viewer === 'different-account') {
+		// A signed-in stranger gets no product, email, invoice or invite link.
+		return (
+			<LayoutClient withContainer>
+				<DifferentAccountNotice
+					viewerEmail={token?.session?.user?.email}
+					signOutCallbackUrl={`/thanks/purchase?session_id=${encodeURIComponent(session_id)}`}
+				/>
+			</LayoutClient>
+		)
+	}
+
+	if (viewer === 'owner') {
+		const destination = new URLSearchParams({
+			purchaseId: purchase.id,
+			buyPathId: session_id,
+			buyPathWaited: ready ? '1' : '0',
 		})
-	) {
-		return redirect('/welcome?purchaseId=' + purchase.id)
+		return redirect('/welcome?' + destination)
 	}
 
 	// Session-only authority: an anonymous post-purchase visitor sees no
@@ -296,141 +178,97 @@ async function PurchaseThanksPageLoaded({
 	const purchaseUserTransfers = await getPurchaseTransferForPurchaseId({
 		id: purchase.id,
 	})
-	let description: React.ReactElement | null = null
-	let title = `Thank you for purchasing ${stripeProductName}`
-	let loginLink: React.ReactElement | null = null
-	let inviteTeam: React.ReactElement | null = (
-		<InviteTeam.Root
-			disabled={!redemptionsLeft}
-			purchase={purchase}
-			className="flex flex-col gap-y-2"
-		>
-			<InviteTeam.SeatsAvailable className="[&_span]:font-semibold" />
-			<p>Send the following invite link to your colleagues to get started:</p>
-			<div className="flex items-center gap-2">
-				<InviteTeam.InviteLink />
-				<InviteTeam.CopyInviteLinkButton />
-			</div>
-			<p>You'll be able to claim a seat for yourself once you sign in.</p>
-		</InviteTeam.Root>
+	const seats = (count: number, more: boolean) => (
+		<>
+			Your purchase is for <strong className="text-foreground">{count}</strong>
+			{more ? ' additional' : ''} seat{count > 1 && 's'}. You can always add
+			more seats later when your team grows.
+		</>
 	)
+	let eyebrow = 'Thank you for purchasing'
+	let name =
+		stripeProductName || product?.name || process.env.NEXT_PUBLIC_SITE_TITLE
+	let description: React.ReactElement | null = null
+	let withLoginLink = false
+	let withInviteTeam = true
 
 	switch (purchaseType) {
 		case NEW_INDIVIDUAL_PURCHASE:
-			loginLink = <LoginLinkComp email={email} />
-			inviteTeam = null
+			withLoginLink = true
+			withInviteTeam = false
 			break
 		case NEW_BULK_COUPON:
-			description = (
-				<>
-					Your purchase is for <strong>{seatsPurchased}</strong> seat
-					{seatsPurchased > 1 && 's'}. You can always add more seats later when
-					your team grows.
-				</>
-			)
-			loginLink = <LoginLinkComp email={email} />
+			description = seats(seatsPurchased, false)
+			withLoginLink = true
 			break
 		case EXISTING_BULK_COUPON:
-			title = `Thank you for purchasing more seats for ${
-				product?.name || process.env.NEXT_PUBLIC_SITE_TITLE
-			}!`
-			description = (
-				<>
-					Your purchase is for <strong>{seatsPurchased}</strong> additional seat
-					{seatsPurchased > 1 && 's'}. You can always add more seats later when
-					your team grows.
-				</>
-			)
-
-			break
 		case INDIVIDUAL_TO_BULK_UPGRADE:
-			title = `Thank you for purchasing more seats for ${
-				product?.name || process.env.NEXT_PUBLIC_SITE_TITLE
-			}!`
-			description = (
-				<>
-					Your purchase is for <strong>{seatsPurchased}</strong> additional seat
-					{seatsPurchased > 1 && 's'}. You can always add more seats later when
-					your team grows.
-				</>
-			)
-
+			eyebrow = 'More seats added to'
+			name = product?.name || process.env.NEXT_PUBLIC_SITE_TITLE || name
+			description = seats(seatsPurchased, true)
 			break
 	}
 	return (
-		<LayoutClient withContainer>
-			<main className="container min-h-[calc(100vh-var(--nav-height))] border-x px-5 py-8 sm:py-16">
-				<div className="mx-auto flex w-full max-w-4xl flex-col gap-5">
-					<PurchaseSummary.Root
-						title={title}
-						description={description}
-						product={product}
-						email={email}
+		<PostPurchaseShell
+			step={withLoginLink ? 'email' : 'ready'}
+			paymentConfirmed
+			handover
+		>
+			<PostPurchaseArrival
+				destination="login_link"
+				checkoutSessionId={session_id}
+				purchaseWasPolled={ready}
+			/>
+			<PurchaseCard>
+				<PurchaseCardSection>
+					<PurchaseHeading
+						artwork={purchaseArtwork(product)}
+						badge={
+							withLoginLink ? null : (
+								<PostPurchaseIconBadge kind="ready" size="sm" />
+							)
+						}
+						eyebrow={eyebrow}
+						title={name}
 					>
-						<div className="flex flex-col items-center gap-10 sm:flex-row">
-							<PurchaseSummary.ProductImage />
-							<div className="flex w-full flex-col items-start">
-								<PurchaseSummary.Status />
-								<PurchaseSummary.Title />
-								<PurchaseSummary.Description />
-							</div>
-						</div>
-					</PurchaseSummary.Root>
-					{inviteTeam && (
-						<div className="border-b pb-5">
-							<h2 className="text-primary pb-4 text-sm uppercase">
-								Invite Team
-							</h2>
-							{inviteTeam}
-						</div>
-					)}
-					{loginLink && loginLink}
-					<div className="border-b pb-5">
-						<h2 className="text-primary pb-4 text-sm uppercase">Invoice</h2>
-						<InvoiceTeaser.Root
-							className="flex w-full flex-row items-center justify-between sm:gap-10"
-							purchase={{ product: { name: stripeProductName }, ...purchase }}
-						>
-							<InvoiceTeaser.Link className="flex w-full flex-col justify-between sm:flex-row sm:items-center">
-								<InvoiceTeaser.Title className="inline-flex items-center gap-2">
-									<FileText className="h-4 w-4 opacity-75" />
-									<span className="underline">{stripeProductName}</span>
-								</InvoiceTeaser.Title>
-								<InvoiceTeaser.Metadata />
-							</InvoiceTeaser.Link>
-							<InvoiceTeaser.Link className="text-primary flex shrink-0 hover:underline" />
-						</InvoiceTeaser.Root>
-					</div>
-					<div>
-						<PurchaseTransfer.Root
-							onTransferInitiated={async () => {
-								'use server'
-								revalidatePath('/thanks/purchase')
-							}}
-							purchaseUserTransfers={purchaseUserTransfers}
-							cancelPurchaseTransfer={cancelPurchaseTransfer}
-							initiatePurchaseTransfer={initiatePurchaseTransfer}
-						>
-							<PurchaseTransfer.Header />
-							<PurchaseTransfer.Available>
-								<PurchaseTransfer.Description />
-								<PurchaseTransfer.Form>
-									<PurchaseTransfer.InputLabel />
-									<PurchaseTransfer.InputEmail />
-									<PurchaseTransfer.SubmitButton />
-								</PurchaseTransfer.Form>
-							</PurchaseTransfer.Available>
-							<PurchaseTransfer.Initiated>
-								<PurchaseTransfer.Description />
-								<PurchaseTransfer.Cancel />
-							</PurchaseTransfer.Initiated>
-							<PurchaseTransfer.Completed>
-								<PurchaseTransfer.Description />
-							</PurchaseTransfer.Completed>
-						</PurchaseTransfer.Root>
-					</div>
-				</div>
-			</main>
-		</LayoutClient>
+						{description ? (
+							<p className={cn(TYPE.metaProse, 'text-muted-foreground')}>
+								{description}
+							</p>
+						) : null}
+					</PurchaseHeading>
+				</PurchaseCardSection>
+				{withInviteTeam ? (
+					<PurchaseCardSection>
+						<PurchaseInviteTeam purchase={purchase} disabled={!redemptionsLeft} />
+					</PurchaseCardSection>
+				) : null}
+				{withLoginLink ? (
+					<PurchaseCardSection>
+						<PostPurchaseLoginLink
+							email={email}
+							supportEmail={env.NEXT_PUBLIC_SUPPORT_EMAIL}
+						/>
+					</PurchaseCardSection>
+				) : null}
+			</PurchaseCard>
+			<PurchaseRows>
+				<PurchaseInvoiceRow
+					purchase={{ product: { name: stripeProductName }, ...purchase }}
+					productName={stripeProductName}
+				/>
+				{isTransferablePurchase(purchase) ? (
+					<PurchaseTransferRow
+						onTransferInitiated={async () => {
+							'use server'
+							revalidatePath('/thanks/purchase')
+						}}
+						purchaseUserTransfers={purchaseUserTransfers}
+						cancelPurchaseTransfer={cancelPurchaseTransfer}
+						initiatePurchaseTransfer={initiatePurchaseTransfer}
+					/>
+				) : null}
+			</PurchaseRows>
+		</PostPurchaseShell>
 	)
 }

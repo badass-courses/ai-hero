@@ -25,9 +25,9 @@ For those with access to the project in Vercel, here is how to grab those env va
     - "What's the name of your existing project?" **ai-hero** (check in the Vercel dashboard for the exact name of whatever project it is)
 - 4. Pull the environment variables from Vercel
   - `vercel env pull`
-  - At this point, the vercel CLI will have created a `.env.local` file with all of the `development` environment variables.
+  - At this point, the vercel CLI will have created a `.env.local` file with all of the `development` environment variables. These include the live Stripe keys, so don't use this file to test payments.
     - If for some reason you are needing environment variables for a different environment, you can include the `--environment` flag in the above command like so:
-      - `vercel env pull --environment=preview`
+      - Don't pull `--environment=preview` for payment work. Preview shares the live Stripe keys and the production database. See `AGENTS.md`, section "Stripe and commerce testing".
 
 _Note: Because of [Next.js Enviornment Variable Load Order](https://nextjs.org/docs/pages/building-your-application/configuring/environment-variables#environment-variable-load-order), the `.env.local` file generated in this step will override many values that you may want to set in the `.env` or `.env.development` files. Any env vars in development that you want to take precedence over what is in `.env.local` will need to go in `.env.local.development`._
 

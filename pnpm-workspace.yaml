@@ -22,6 +22,11 @@ overrides:
   '@types/react': '19.2.7'
   '@types/react-dom': '19.2.3'
   '@codemirror/state': '6.7.0'
+  # One Mux player and one media-chrome for the app and the @coursebuilder
+  # packages: two copies race to define the same custom elements
+  # (mux-player, media-controller). player.style pins media-chrome exactly.
+  '@mux/mux-player-react': '^3.14.0'
+  'media-chrome': '~4.19.3'
 
 packageExtensions:
   '@coursebuilder/ui@*':
@@ -38,5 +43,3 @@ packageExtensions:
 
 patchedDependencies:
   '@coursebuilder/analytics@1.1.3': patches/@coursebuilder__analytics@1.1.3.patch
-  '@coursebuilder/commerce-next@0.2.16': patches/@coursebuilder__commerce-next@0.2.16.patch
-  '@coursebuilder/commerce@0.2.1': patches/@coursebuilder__commerce@0.2.1.patch

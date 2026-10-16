@@ -11,3 +11,7 @@ An active launch campaign is in flight. Every agent session in this repo (claude
 - Agent-authored commits and pushes go through shitrat tooling as `shitratgit[bot]`.
 
 Remove this block at the August 25 review, see `review-shadow-newsletter-after-campaign.svx` in the same Brain project.
+
+## Stripe and commerce testing
+
+Never test payments on a Vercel preview, and use only `sk_test_` or `rk_test_` keys. The full rules live in `apps/ai-hero/AGENTS.md`.
