@@ -148,6 +148,18 @@ describe('RegionalPricingNote', () => {
 		expect(slot()).toBe('')
 	})
 
+	it.each([2, 3, 5])('renders nothing at quantity %s', async (quantity) => {
+		mocks.pricing = { ...eligible(), quantity }
+		await render(<RegionalPricingNote targetId="buy" />)
+		expect(slot()).toBe('')
+	})
+
+	it('renders at quantity 1', async () => {
+		mocks.pricing = { ...eligible(), quantity: 1 }
+		await render(<RegionalPricingNote targetId="buy" />)
+		expect(slot()).toContain('data-regional-note')
+	})
+
 	it('renders nothing for a downgrade', async () => {
 		mocks.pricing = eligible()
 		mocks.downgrade = true

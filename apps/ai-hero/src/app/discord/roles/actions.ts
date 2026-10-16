@@ -7,6 +7,8 @@ import { DiscordError, DiscordMember } from '@/lib/discord'
 import { fetchAsDiscordBot, fetchJsonAsDiscordBot } from '@/lib/discord-query'
 import {
 	classifyMemberResponse,
+	memberFetchFrom,
+	syncLookup,
 	sourceLabel,
 	type MemberClassification,
 	type MemberFetch,
@@ -57,7 +59,6 @@ export async function getDiscordRoleState() {
 	// Get the user's discord member data (current roles)
 	let currentRoles: string[] = []
 	let discordUsername: string | null = null
-	let memberFetch: MemberFetch = 'ok'
 	let classified: MemberClassification
 	try {
 		const member = await fetchJsonAsDiscordBot<DiscordMember | DiscordError>(
@@ -67,11 +68,10 @@ export async function getDiscordRoleState() {
 	} catch (thrown) {
 		classified = classifyMemberResponse({ thrown })
 	}
+	const memberFetch: MemberFetch = memberFetchFrom(classified)
 	if (classified.kind === 'member') {
 		currentRoles = classified.roles
 		discordUsername = classified.username
-	} else if (classified.kind === 'error') {
-		memberFetch = 'error'
 	}
 
 	// Get all guild roles for name/color lookup
@@ -173,17 +173,19 @@ export async function syncDiscordRoles(): Promise<{
 	}
 
 	// Get current member roles
-	const member = await fetchJsonAsDiscordBot<DiscordMember | DiscordError>(
-		`guilds/${env.DISCORD_GUILD_ID}/members/${discordAccount.providerAccountId}`,
-	)
-
-	if (!('user' in member)) {
-		return {
-			success: false,
-			synced: 0,
-			error: 'Not a member of the Discord server. Join first, then sync.',
-		}
+	let classified: MemberClassification
+	try {
+		const body = await fetchJsonAsDiscordBot<DiscordMember | DiscordError>(
+			`guilds/${env.DISCORD_GUILD_ID}/members/${discordAccount.providerAccountId}`,
+		)
+		classified = classifyMemberResponse({ result: body })
+	} catch (thrown) {
+		classified = classifyMemberResponse({ thrown })
 	}
+
+	const lookup = syncLookup(classified)
+	if (!lookup.ok) return { success: false, synced: 0, error: lookup.error }
+	const member = { roles: lookup.roles }
 
 	// Get all discord entitlement type IDs
 	const cohortType = await db.query.entitlementTypes.findFirst({

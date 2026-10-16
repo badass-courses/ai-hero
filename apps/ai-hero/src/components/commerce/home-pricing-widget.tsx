@@ -15,6 +15,7 @@ import type {
 	PricingOptions,
 } from '@coursebuilder/commerce/types'
 
+import { GatedPPPToggle } from './regional-toggle-gate'
 import { GatedBuyButton } from './gated-buy-button'
 import { CheckoutSurveyBuyButton } from './checkout-survey-buy-button'
 import { ProductPricingFeatures } from './product-pricing-features'
@@ -89,7 +90,7 @@ export const PricingWidget: React.FC<{
 					<Pricing.GuaranteeBadge />
 					<Pricing.LiveRefundPolicy />
 					<Pricing.SaleCountdown className="mt-6 w-full rounded border p-5" />
-					<Pricing.PPPToggle className="mt-5" />
+					<GatedPPPToggle className="mt-5" />
 					<ProductPricingFeatures productType={product.type} workshops={[]} />
 				</Pricing.Details>
 			</Pricing.Product>

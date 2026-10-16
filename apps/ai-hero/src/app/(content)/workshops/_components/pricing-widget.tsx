@@ -7,6 +7,7 @@ import {
 	type ProductPricingFeature,
 } from '@/components/commerce/product-pricing-features'
 import { GatedBuyButton } from '@/components/commerce/gated-buy-button'
+import { RegionalQuantityClear } from '@/components/commerce/regional-toggle-gate'
 import { TYPE } from '@/components/landing/type'
 import { formatDeadline } from '@/utils/discount-formatter'
 import {
@@ -20,7 +21,12 @@ import type { CountdownRenderProps } from 'react-countdown'
 
 import { useCoupon } from '@coursebuilder/commerce-next/coupons/use-coupon'
 import * as Pricing from '@coursebuilder/commerce-next/pricing/pricing'
-import { showRegionalOffer } from '@/lib/pricing-decisions'
+import {
+	REGIONAL_SINGLE_SEAT_COPY,
+	showRegionalReason,
+	showRegionalOffer,
+	showRegionalToggle,
+} from '@/lib/pricing-decisions'
 import { usePriceCheck } from '@coursebuilder/commerce-next/pricing/pricing-check-context'
 import { usePricing } from '@coursebuilder/commerce-next/pricing/pricing-context'
 import type { Product, Purchase } from '@coursebuilder/core/schemas'
@@ -146,6 +152,8 @@ export const PricingWidget = ({
 			{...commerceProps}
 		>
 			<BuyPathPricingBeacon productId={product.id} />
+			{/* Mounted at the root: no early return or hidden card can skip the clear. */}
+			<RegionalQuantityClear />
 			<Pricing.Product className="w-full">
 				<Pricing.Details className="w-full items-stretch px-5 pt-6 text-left sm:px-6">
 					<Pricing.Name className="mt-0 px-0 text-left text-base font-bold tracking-[-0.018em] sm:text-base" />
@@ -617,6 +625,7 @@ const RegionalPricingBox = () => {
 		isPreviouslyPurchased,
 		activeMerchantCoupon,
 		setMerchantCoupon,
+		quantity,
 		pricingData: { purchaseToUpgrade },
 	} = usePricing()
 	const { isDowngrade } = usePriceCheck()
@@ -641,14 +650,30 @@ const RegionalPricingBox = () => {
 			? (lastQuotedPPPCoupon ?? appliedPPPCoupon ?? undefined)
 			: undefined)
 
-	const showPPPBox = showRegionalOffer({
+	const offerInput = {
 		allowPurchase,
 		isPPPEnabled,
 		hasRegionalCoupon: Boolean(pppCoupon),
 		isPreviouslyPurchased,
 		isDowngrade: isDowngrade(formattedPrice),
 		isTeamPurchaseActive,
+	}
+	const seats = quantity ?? 1
+	const showPPPBox = showRegionalToggle({
+		quantity: seats,
+		regionalOfferAvailable: showRegionalOffer(offerInput),
 	})
+	// Team seats: the offer exists but not at this quantity. Say why.
+	const showSingleSeatReason =
+		!showPPPBox &&
+		showRegionalReason({
+			quantity: seats,
+			regionalOfferExists: showRegionalOffer({
+				...offerInput,
+				isTeamPurchaseActive: false,
+			}),
+		})
+
 
 	const rawDiscount = pppCoupon?.percentageDiscount as
 		| string
@@ -677,6 +702,16 @@ const RegionalPricingBox = () => {
 	// Upgrading a PPP purchase auto-applies the coupon; a checkbox would only
 	// invite unchecking it (same rule as the primitive's default UI).
 	const hideCheckbox = Boolean(purchaseToUpgrade)
+
+	if (showSingleSeatReason)
+		return (
+			<p
+				data-regional-single-seat
+				className={cn(TYPE.meta, 'text-muted-foreground mt-3')}
+			>
+				{REGIONAL_SINGLE_SEAT_COPY}
+			</p>
+		)
 
 	if (!showPPPBox) return null
 

@@ -1,5 +1,7 @@
 // Pure pricing-display and seat-count decisions. Client-safe: no server code.
 
+import { regionalAllowedForQuantity } from './purchase-guardrails'
+
 /** Everything the regional-pricing offer is gated on, desktop and mobile alike. */
 export type RegionalOfferInput = {
 	allowPurchase: boolean
@@ -24,6 +26,47 @@ export function showRegionalOffer(input: RegionalOfferInput): boolean {
 		!input.isDowngrade &&
 		!input.isTeamPurchaseActive
 	)
+}
+
+export const REGIONAL_SINGLE_SEAT_COPY =
+	'Regional pricing applies to single-seat purchases.'
+
+/**
+ * Whether the regional toggle is offered at this quantity. Shares its
+ * quantity rule with the checkout guard (`regionalAllowedForQuantity`).
+ */
+export function showRegionalToggle(input: {
+	quantity: number
+	regionalOfferAvailable: boolean
+}): boolean {
+	return (
+		input.regionalOfferAvailable &&
+		Number.isInteger(input.quantity) &&
+		input.quantity > 0 &&
+		regionalAllowedForQuantity(input.quantity)
+	)
+}
+
+/**
+ * A regional (PPP) coupon must not follow the buyer to a team quantity.
+ * Only a regional coupon is cleared; any other merchant coupon stays.
+ */
+export function clearRegionalSelection(input: {
+	quantity: number
+	activeCouponType: string | null | undefined
+}): boolean {
+	return (
+		!regionalAllowedForQuantity(input.quantity) &&
+		input.activeCouponType === 'ppp'
+	)
+}
+
+/** The offer exists, but not at this quantity: show the reason instead. */
+export function showRegionalReason(input: {
+	quantity: number
+	regionalOfferExists: boolean
+}): boolean {
+	return input.regionalOfferExists && !regionalAllowedForQuantity(input.quantity)
 }
 
 /** The inline buy button's label: a sold-out product never says "Buy Now". */
