@@ -33,6 +33,7 @@ import { EventDetails } from './_components/event-details'
 import { EventPageProps } from './_components/event-page-props'
 import { EventPricingWidgetContainer } from './_components/event-pricing-widget-container'
 import { EventSidebar } from './_components/event-sidebar'
+import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 
 export async function generateMetadata(
 	props: {
@@ -203,14 +204,17 @@ export default async function EventPage(props: {
 			if (!purchaseForProduct) {
 				eventProps = baseProps
 			} else {
-				const { purchase, existingPurchase } =
+				const { existingPurchase } =
 					await courseBuilderAdapter.getPurchaseDetails(
 						purchaseForProduct.id,
 						user.id,
 					)
 				eventProps = {
 					...baseProps,
-					hasPurchasedCurrentProduct: Boolean(purchase),
+					hasPurchasedCurrentProduct: ownsProductForBuyBox(
+						commerceProps.purchases,
+						productSchema.parse(product).id,
+					),
 					existingPurchase,
 				}
 			}

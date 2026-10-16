@@ -38,6 +38,7 @@ import { getModuleProgressForUser } from './progress'
 import { getSaleBannerData } from './sale-banner'
 import { WorkshopSchema } from './workshops'
 import type { Workshop } from './workshops'
+import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 
 export async function getCohort(cohortIdOrSlug: string) {
 	const cohortData = await db.query.contentResource.findFirst({
@@ -382,9 +383,14 @@ export async function loadCohortPageData(
 		const currentProductId = product?.id
 
 		if (user && currentProductId) {
-			const purchaseForProduct = commerceProps.purchases?.find(
+			const purchasesForProduct = (commerceProps.purchases ?? []).filter(
 				(purchase: PurchaseSchema) => purchase.productId === currentProductId,
 			)
+			// prefer a purchase that counts as owning for the buy box
+			const purchaseForProduct =
+				purchasesForProduct.find((purchase: PurchaseSchema) =>
+					ownsProductForBuyBox([purchase], currentProductId),
+				) ?? purchasesForProduct[0]
 
 			if (purchaseForProduct) {
 				const purchaseDetails = await courseBuilderAdapter.getPurchaseDetails(
@@ -392,10 +398,9 @@ export async function loadCohortPageData(
 					user.id,
 				)
 
-				hasPurchasedCurrentProduct = Boolean(
-					purchaseDetails.purchase &&
-					(purchaseDetails.purchase.status === 'Valid' ||
-						purchaseDetails.purchase.status === 'Restricted'),
+				hasPurchasedCurrentProduct = ownsProductForBuyBox(
+					commerceProps.purchases,
+					currentProductId,
 				)
 				existingPurchase = purchaseDetails.existingPurchase
 			}

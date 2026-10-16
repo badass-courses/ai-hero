@@ -16,6 +16,7 @@ import {
 import { first } from '@coursebuilder/nodash'
 
 import { type EventPageProps } from './event-page-props'
+import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 
 /**
  * Server component that fetches event pricing data and provides it via render props.
@@ -123,14 +124,17 @@ export async function EventPricing({
 			if (!purchaseForProduct) {
 				eventProps = baseProps
 			} else {
-				const { purchase, existingPurchase } =
+				const { existingPurchase } =
 					await courseBuilderAdapter.getPurchaseDetails(
 						purchaseForProduct.id,
 						user.id,
 					)
 				eventProps = {
 					...baseProps,
-					hasPurchasedCurrentProduct: Boolean(purchase),
+					hasPurchasedCurrentProduct: ownsProductForBuyBox(
+						commerceProps.purchases,
+						productSchema.parse(product).id,
+					),
 					existingPurchase,
 				}
 			}

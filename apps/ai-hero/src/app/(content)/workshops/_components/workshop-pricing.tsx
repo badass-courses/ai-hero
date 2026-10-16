@@ -14,6 +14,7 @@ import { InlineBuyButton } from './inline-mdx-pricing'
 import { useWorkshopNavigation } from './workshop-navigation-provider'
 import type { WorkshopPageProps } from './workshop-page-props'
 import { WorkshopPricingWidgetContainer } from './workshop-pricing-widget-container'
+import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 
 type WorkshopPricingProps = WorkshopPageProps & {
 	className?: string
@@ -132,10 +133,7 @@ function WorkshopPricingView({
 	const resolvedHasPurchased =
 		hasPurchasedCurrentProduct ||
 		Boolean(
-			product &&
-			commerceProps.purchases?.some(
-				(purchase) => purchase.productId === product.id,
-			),
+			product && ownsProductForBuyBox(commerceProps.purchases, product.id),
 		)
 
 	return product ? (

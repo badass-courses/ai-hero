@@ -33,6 +33,7 @@ import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
 import { RegionalPricingNote } from './regional-pricing-note'
 import { WORKSHOP_CTA_BUTTON } from './workshop-cta-button'
+import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 
 export type PricingData = {
 	formattedPrice?: FormattedPrice | null
@@ -252,8 +253,9 @@ export const withEventPricing = (
 		// Check if cohort has actually started (different from enrollment status)
 		const hasStarted = startsAt ? new Date(startsAt) <= nowInPT : false
 
-		const hasPurchasedCurrentProduct = commerceProps?.purchases?.some(
-			(purchase) => purchase.productId === product.id,
+		const hasPurchasedCurrentProduct = ownsProductForBuyBox(
+			commerceProps?.purchases,
+			product.id,
 		)
 
 		return (
