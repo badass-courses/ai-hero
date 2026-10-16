@@ -7,6 +7,7 @@ import Link from 'next/link'
 import { PricingWidget } from '@/app/(content)/workshops/_components/pricing-widget'
 import { courseBuilderAdapter, db } from '@/db'
 import { products, purchases } from '@/db/schema'
+import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 import { getPricingData } from '@/lib/pricing-query'
 import { getProduct } from '@/lib/products-query'
 import { ProductStructuredData } from '@/lib/structured-data'
@@ -183,7 +184,7 @@ async function ProductCommerce({
 	productProps = baseProps
 
 	if (user && purchaseForProduct) {
-		const { purchase, existingPurchase } =
+		const { existingPurchase } =
 			await courseBuilderAdapter.getPurchaseDetails(
 				purchaseForProduct.id,
 				user.id,
@@ -191,7 +192,10 @@ async function ProductCommerce({
 
 		productProps = {
 			...baseProps,
-			hasPurchasedCurrentProduct: Boolean(purchase),
+			hasPurchasedCurrentProduct: ownsProductForBuyBox(
+				commerceProps.purchases,
+				product.id,
+			),
 			...(Boolean(existingPurchase)
 				? {
 						purchasedProductIds: [existingPurchase?.productId, '72', 69],

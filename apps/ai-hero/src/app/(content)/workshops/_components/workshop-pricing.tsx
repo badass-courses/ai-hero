@@ -2,6 +2,7 @@
 
 import { usePathname, useSearchParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
+import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 import { api } from '@/trpc/react'
 
 import { PriceCheckProvider } from '@coursebuilder/commerce-next/pricing/pricing-check-context'
@@ -132,10 +133,7 @@ function WorkshopPricingView({
 	const resolvedHasPurchased =
 		hasPurchasedCurrentProduct ||
 		Boolean(
-			product &&
-			commerceProps.purchases?.some(
-				(purchase) => purchase.productId === product.id,
-			),
+			product && ownsProductForBuyBox(commerceProps.purchases, product.id),
 		)
 
 	return product ? (

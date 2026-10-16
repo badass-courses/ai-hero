@@ -3,6 +3,7 @@ import { headers } from 'next/headers'
 import { courseBuilderAdapter, db } from '@/db'
 import { products, purchases } from '@/db/schema'
 import { getEvent } from '@/lib/events-query'
+import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 import { getPricingData } from '@/lib/pricing-query'
 import { getServerAuthSession } from '@/server/auth'
 import { count, eq } from 'drizzle-orm'
@@ -114,23 +115,30 @@ export async function EventPricing({
 		if (!user) {
 			eventProps = baseProps
 		} else {
+			// parse only when the viewer has purchases, as before
+			const productId = commerceProps.purchases?.length
+				? productSchema.parse(product).id
+				: undefined
 			const purchaseForProduct = commerceProps.purchases?.find(
 				(purchase: Purchase) => {
-					return purchase.productId === productSchema.parse(product).id
+					return purchase.productId === productId
 				},
 			)
 
 			if (!purchaseForProduct) {
 				eventProps = baseProps
 			} else {
-				const { purchase, existingPurchase } =
+				const { existingPurchase } =
 					await courseBuilderAdapter.getPurchaseDetails(
 						purchaseForProduct.id,
 						user.id,
 					)
 				eventProps = {
 					...baseProps,
-					hasPurchasedCurrentProduct: Boolean(purchase),
+					hasPurchasedCurrentProduct: ownsProductForBuyBox(
+						commerceProps.purchases,
+						productId,
+					),
 					existingPurchase,
 				}
 			}
