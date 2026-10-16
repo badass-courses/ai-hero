@@ -174,6 +174,46 @@ describe('guarded support purchase completion', () => {
 		)
 	})
 
+	it('same-person moves are refused before any write', async () => {
+		mocks.getTransfer.mockResolvedValue({ ...transfer, targetUserId: 'buyer-1' })
+		mocks.getUserById.mockImplementation(async (id: string) => ({
+			id,
+			email: 'learner@example.com',
+		}))
+		await expect(completeSupportPurchaseTransfer(input)).resolves.toEqual({
+			state: 'blocked',
+			reason: 'same_user_transfer',
+		})
+		expect(mocks.transaction).not.toHaveBeenCalled()
+		expect(mocks.updates).toHaveLength(0)
+	})
+
+	it('never moves the purchase without claiming its own transfer row in the same transaction', async () => {
+		await completeSupportPurchaseTransfer(input)
+		const tables_ = mocks.updates.map((entry) => entry.table)
+		expect(tables_).toEqual([tables.purchaseUserTransfer, tables.purchases])
+		expect(mocks.transaction).toHaveBeenCalledTimes(1)
+	})
+
+	it('refuses a move that would change who the payer is', async () => {
+		// An earlier completed transfer dated in the future: this move would
+		// become the earliest and name a different payer.
+		mocks.findTransfers.mockResolvedValueOnce([]).mockResolvedValueOnce([
+			{
+				id: 'transfer-0',
+				transferState: 'COMPLETED',
+				sourceUserId: 'original-payer',
+				completedAt: new Date('2099-01-01T00:00:00.000Z'),
+				createdAt: new Date('2099-01-01T00:00:00.000Z'),
+			},
+		])
+		await expect(completeSupportPurchaseTransfer(input)).resolves.toEqual({
+			state: 'blocked',
+			reason: 'move_would_change_invoice_payer',
+		})
+		expect(mocks.transaction).not.toHaveBeenCalled()
+	})
+
 	it('fails closed for team purchases before any mutation', async () => {
 		mocks.getPurchase.mockResolvedValue({ ...purchase, bulkCouponId: 'coupon-team' })
 		await expect(completeSupportPurchaseTransfer(input)).resolves.toEqual({

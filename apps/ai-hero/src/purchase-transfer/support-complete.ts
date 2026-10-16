@@ -11,6 +11,7 @@ import {
 	publishTransferOutboxEvent,
 	recordTransferOutboxEvent,
 } from '@/purchase-transfer/transfer-outbox'
+import { resolveInvoicePayer } from '@/lib/invoice-access-rules'
 import { and, eq, inArray, ne } from 'drizzle-orm'
 import { Inngest } from 'inngest'
 import Stripe from 'stripe'
@@ -212,6 +213,50 @@ async function loadGuardedContext(input: SupportCompleteInput) {
 	})
 	if (!billingCharge || billingCharge.userId !== sourceUser.id) {
 		return { ok: false as const, reason: 'billing_owner_mismatch' }
+	}
+	// A move must never leave the charge with no payer, nor change who the
+	// payer is. The payer is the earliest completed transfer's source, else the
+	// charge's user. This move completes a transfer from `sourceUser`; the row
+	// is the same one the workflow marks COMPLETED, so no second row is written.
+	const completedTransfers = (
+		await db.query.purchaseUserTransfer.findMany({
+			where: and(
+				eq(purchaseUserTransfer.purchaseId, purchase.id),
+				eq(purchaseUserTransfer.transferState, 'COMPLETED'),
+				ne(purchaseUserTransfer.id, transfer.id),
+			),
+		})
+	).map((row) => ({
+		id: row.id,
+		state: row.transferState,
+		sourceUserId: row.sourceUserId,
+		completedAt: row.completedAt,
+		createdAt: row.createdAt,
+	}))
+	const payerBefore = resolveInvoicePayer({
+		chargeUserId: billingCharge.userId,
+		transfers: completedTransfers,
+	})
+	const payerAfter = resolveInvoicePayer({
+		chargeUserId: billingCharge.userId,
+		transfers: [
+			...completedTransfers,
+			{
+				id: transfer.id,
+				state: 'COMPLETED',
+				sourceUserId: sourceUser.id,
+				completedAt: new Date(),
+			},
+		],
+	})
+	if (!payerAfter) {
+		return {
+			ok: false as const,
+			reason: 'move_would_leave_charge_without_payer',
+		}
+	}
+	if (payerBefore && payerBefore !== payerAfter) {
+		return { ok: false as const, reason: 'move_would_change_invoice_payer' }
 	}
 	const refundState = await inspectStripeRefunds(billingCharge.identifier)
 	if (!refundState.ok) return refundState

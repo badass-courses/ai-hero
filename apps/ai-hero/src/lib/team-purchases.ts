@@ -1,5 +1,9 @@
 import { organizationMemberships, purchases } from '@/db/schema'
 import {
+	canEditInvoice,
+	type InvoiceTransferFact,
+} from '@/lib/invoice-access-rules'
+import {
 	BILLING_ADMIN_ROLE,
 	isTeamPurchaseManagerRole,
 } from '@/lib/team-roles'
@@ -140,17 +144,28 @@ export function getManagedOrganizationIds(
 	)
 }
 
+/**
+ * The edit gate for an invoice (the name is historical): the payer, or a
+ * manager of the team purchase. A holder who did not pay never edits.
+ * `originTransfer` is the earliest completed transfer, which names the payer
+ * for purchases transferred before charges stayed with the payer.
+ */
 export function canViewPurchaseInvoice(
 	viewerUserId: string | null | undefined,
 	purchase: Pick<Purchase, 'id' | 'userId'> & {
 		billingUserId?: string | null
+		originTransfer?: Pick<InvoiceTransferFact, 'state' | 'sourceUserId'> | null
 	},
 	managedTeamPurchases: Pick<Purchase, 'id'>[],
 ): boolean {
 	if (!viewerUserId) return false
-	const billingOwnerId = purchase.billingUserId ?? purchase.userId
 	return (
-		billingOwnerId === viewerUserId ||
+		canEditInvoice({
+			viewerId: viewerUserId,
+			payerUserId: purchase.billingUserId ?? purchase.userId,
+			holderUserId: purchase.userId,
+			transfer: purchase.originTransfer ?? null,
+		}) ||
 		managedTeamPurchases.some((managedPurchase) => managedPurchase.id === purchase.id)
 	)
 }

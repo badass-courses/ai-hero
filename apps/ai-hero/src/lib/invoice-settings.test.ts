@@ -21,6 +21,7 @@ type StoreOptions = {
 		id: string
 		userId: string | null
 		billingUserId?: string | null
+		originTransfer?: { state: string; sourceUserId: string } | null
 	}[]
 	managedPurchaseIds?: Record<string, string[]>
 	corruptReadback?: boolean
@@ -48,6 +49,7 @@ function memoryDataSource(options: StoreOptions = {}) {
 						id: purchase.id,
 						userId: purchase.userId,
 						billingUserId: purchase.billingUserId,
+						originTransfer: purchase.originTransfer,
 						merchantChargeId: purchase.merchantChargeId,
 					}
 				: null
@@ -206,6 +208,34 @@ describe('saveInvoiceSettingsForViewer', () => {
 			dataSource,
 		)
 		expect(recipientResult.state).toBe('denied')
+	})
+
+	it('after a pre-fix transfer (charge rewritten to the holder) the payer edits and the holder does not', async () => {
+		const { dataSource } = memoryDataSource({
+			purchases: [
+				{
+					merchantChargeId: CHARGE,
+					id: PURCHASE_ID,
+					userId: 'transferred_learner',
+					billingUserId: 'transferred_learner',
+					originTransfer: { state: 'COMPLETED', sourceUserId: OWNER },
+				},
+			],
+		})
+		const payer = await saveInvoiceSettingsForViewer(
+			{ merchantChargeId: CHARGE, viewerUserId: OWNER, input: INPUT },
+			dataSource,
+		)
+		expect(payer.state).toBe('saved')
+		const holder = await saveInvoiceSettingsForViewer(
+			{
+				merchantChargeId: CHARGE,
+				viewerUserId: 'transferred_learner',
+				input: INPUT,
+			},
+			dataSource,
+		)
+		expect(holder.state).toBe('denied')
 	})
 
 	it('saves trimmed values for the purchase owner and verifies readback', async () => {

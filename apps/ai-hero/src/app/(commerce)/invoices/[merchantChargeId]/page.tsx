@@ -12,6 +12,7 @@ import { coupon } from '@/db/schema'
 import { env } from '@/env.mjs'
 import { getOriginTransferForPurchase } from '@/lib/invoice-access'
 import {
+	canEditInvoice as canEditInvoiceRule,
 	canViewInvoice,
 	invoiceDisplayAmount,
 } from '@/lib/invoice-access-rules'
@@ -151,6 +152,9 @@ const Invoice = async (props: {
 	const managedTeamPurchases = viewerUserId
 		? await getTeamPurchasesForMember(viewerUserId)
 		: []
+	const originTransfer = await getOriginTransferForPurchase(
+		chargeDetails.result.purchaseId,
+	)
 	// Normal billing authorization is independent of link/cookie availability.
 	const canEditInvoice = canViewPurchaseInvoice(
 		viewerUserId,
@@ -158,6 +162,7 @@ const Invoice = async (props: {
 			id: chargeDetails.result.purchaseId,
 			userId: chargeDetails.result.purchaseUserId,
 			billingUserId: chargeDetails.result.billingUserId,
+			originTransfer,
 		},
 		managedTeamPurchases,
 	)
@@ -171,9 +176,7 @@ const Invoice = async (props: {
 					viewerId: viewerUserId,
 					purchaseUserId: chargeDetails.result.purchaseUserId,
 					payerUserId: chargeDetails.result.billingUserId,
-					transfer: await getOriginTransferForPurchase(
-						chargeDetails.result.purchaseId,
-					),
+					transfer: originTransfer,
 				})
 			: false
 
@@ -199,11 +202,16 @@ const Invoice = async (props: {
 	const isPurchaseOwner = Boolean(
 		viewerUserId && viewerUserId === chargeDetails.result.purchaseUserId,
 	)
-	const isBillingOwner = Boolean(
-		viewerUserId && viewerUserId === chargeDetails.result.billingUserId,
-	)
+	const isBillingOwner = canEditInvoiceRule({
+		viewerId: viewerUserId,
+		payerUserId: chargeDetails.result.billingUserId,
+		holderUserId: chargeDetails.result.purchaseUserId,
+		transfer: originTransfer,
+	})
+	// Transferring is a right of holding the purchase, not of paying for it:
+	// a holder who is not the payer can pass the purchase on, view only.
 	const purchaseUserTransfers =
-		canEditInvoice && isPurchaseOwner
+		isPurchaseOwner
 			? await getPurchaseTransferForPurchaseId({
 					id: chargeDetails.result.purchaseId,
 				})
@@ -472,8 +480,7 @@ const Invoice = async (props: {
 							</div>
 						</div>
 					</InvoiceDetails>
-					{canEditInvoice &&
-					isPurchaseOwner &&
+					{isPurchaseOwner &&
 					!bulkCoupon &&
 					purchaseUserTransfers.length > 0 ? (
 						<div className="py-16 print:hidden">

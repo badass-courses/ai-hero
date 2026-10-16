@@ -42,6 +42,37 @@ beforeEach(() => {
 	rotations = 0
 })
 
+describe('invoice links after a pre-fix transfer', () => {
+	const prefix: InvoiceLinkDataSource = {
+		...dataSource,
+		async loadPurchaseByMerchantChargeId(id) {
+			return id === charge
+				? {
+						id: 'purchase-a',
+						merchantChargeId: charge,
+						userId: 'learner',
+						billingUserId: 'learner',
+						originTransfer: { state: 'COMPLETED', sourceUserId: 'payer' },
+					}
+				: null
+		},
+	}
+	it.each([
+		['payer', 'minted'],
+		['learner', 'denied'],
+	])('%s -> %s', async (viewerUserId, state) => {
+		expect(
+			(
+				await mintInvoiceLinkForViewer(
+					{ merchantChargeId: charge, viewerUserId },
+					prefix,
+					config,
+				)
+			).state,
+		).toBe(state)
+	})
+})
+
 describe('invoice link authorization and revocation', () => {
 	it.each([undefined, 'other', 'unrelated-manager', 'learner'])(
 		'refuses mint and rotate from %s',

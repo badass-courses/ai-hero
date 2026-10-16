@@ -8,7 +8,11 @@ import { and, asc, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm'
 
 import { purchaseSchema, type Purchase } from '@coursebuilder/core/schemas'
 
-import { pickOriginTransfer, type InvoiceTransferFact } from './invoice-access-rules'
+import {
+	canEditInvoice,
+	pickOriginTransfer,
+	type InvoiceTransferFact,
+} from './invoice-access-rules'
 
 const VISIBLE_PURCHASE_STATES = ['Valid', 'Refunded', 'Restricted']
 
@@ -39,6 +43,28 @@ export async function getOriginTransferForPurchase(purchaseId: string) {
 	return pickOriginTransfer(transfers.map(toFact))
 }
 
+async function getOriginTransfersByPurchase(purchaseIds: string[]) {
+	const origins = new Map<string, InvoiceTransferFact>()
+	if (purchaseIds.length === 0) return origins
+	const transfers = await db.query.purchaseUserTransfer.findMany({
+		where: and(
+			inArray(purchaseUserTransfer.purchaseId, purchaseIds),
+			eq(purchaseUserTransfer.transferState, 'COMPLETED'),
+		),
+	})
+	const byPurchase = new Map<string, InvoiceTransferFact[]>()
+	for (const transfer of transfers) {
+		const list = byPurchase.get(transfer.purchaseId) ?? []
+		list.push(toFact(transfer))
+		byPurchase.set(transfer.purchaseId, list)
+	}
+	for (const [purchaseId, list] of byPurchase) {
+		const origin = pickOriginTransfer(list)
+		if (origin) origins.set(purchaseId, origin)
+	}
+	return origins
+}
+
 async function getOriginPurchaseIds(userId: string, purchaseIds: string[]) {
 	if (purchaseIds.length === 0) return []
 	const transfers = await db.query.purchaseUserTransfer.findMany({
@@ -61,10 +87,11 @@ async function getOriginPurchaseIds(userId: string, purchaseIds: string[]) {
 /**
  * Invoice visibility follows the payer and the current holder.
  *
- * A self-service transfer moves Purchase.userId and reassigns
+ * A transfer moves Purchase.userId only; MerchantCharge.userId keeps naming
+ * the payer. Transfers made before that fix also reassigned
  * MerchantCharge.userId (and MerchantCustomer.userId) to the new holder, so
- * the original payer is only recorded as the source of the first completed
- * PurchaseUserTransfer. MerchantCustomer is not used: one Stripe customer is
+ * for those the original payer is only recorded as the source of the first
+ * completed PurchaseUserTransfer. MerchantCustomer is not used: one Stripe customer is
  * shared across a buyer's charges, so a transfer of one purchase would hand
  * the buyer's other invoices to the new holder.
  *
@@ -97,7 +124,6 @@ export async function getInvoicePurchasesForUser(
 	const originPurchaseIds = await getOriginPurchaseIds(userId, candidateIds)
 
 	const chargeIds = chargeRows.map((charge) => charge.id)
-	const editableChargeIds = new Set(chargeIds)
 
 	const billedRows = await db.query.purchases.findMany({
 		where: and(
@@ -124,14 +150,38 @@ export async function getInvoicePurchasesForUser(
 
 	const billed = purchaseSchema.array().parse(billedRows)
 
-	return Array.from(
+	const unique = Array.from(
 		new Map(billed.map((purchase) => [purchase.id, purchase])).values(),
-	).map((purchase) => ({
+	)
+	// Editing follows the payer: the source of the earliest completed transfer,
+	// else the charge's user. Holders who did not pay view only. Covers
+	// purchases transferred before charges stayed with the payer.
+	const [payerCharges, originTransfers] = await Promise.all([
+		unique.some((purchase) => purchase.merchantChargeId)
+			? db.query.merchantCharge.findMany({
+					where: inArray(
+						merchantCharge.id,
+						unique.flatMap((purchase) =>
+							purchase.merchantChargeId ? [purchase.merchantChargeId] : [],
+						),
+					),
+					columns: { id: true, userId: true },
+				})
+			: [],
+		getOriginTransfersByPurchase(unique.map((purchase) => purchase.id)),
+	])
+	const chargeUserById = new Map(payerCharges.map((c) => [c.id, c.userId]))
+
+	return unique.map((purchase) => ({
 		...purchase,
-		// Editing stays with the billing owner; holders and earlier payers view.
 		canEdit: Boolean(
 			purchase.merchantChargeId &&
-				editableChargeIds.has(purchase.merchantChargeId),
+				canEditInvoice({
+					viewerId: userId,
+					payerUserId: chargeUserById.get(purchase.merchantChargeId),
+					holderUserId: purchase.userId,
+					transfer: originTransfers.get(purchase.id) ?? null,
+				}),
 		),
 	}))
 }

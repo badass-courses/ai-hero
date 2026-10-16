@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
+import { canViewPurchaseInvoice } from './team-purchases'
 import {
+	canEditInvoice,
 	canViewInvoice,
 	invoiceDisplayAmount,
 	invoiceListView,
 	pickOriginTransfer,
+	resolveInvoicePayer,
 	type InvoiceTransferFact,
 } from './invoice-access-rules'
 
@@ -141,6 +144,15 @@ const shapes: Shape[] = [
 		purchaseUserId: 'holder',
 		chargeUserId: 'payer',
 		transfers: [],
+		allowed: ['payer', 'holder'],
+		denied: ['stranger'],
+	},
+	{
+		// Self-service after the payer fix: only the purchase moves.
+		name: 'self-service transfer, charge stays with the payer',
+		purchaseUserId: 'holder',
+		chargeUserId: 'payer',
+		transfers: [{ ...completed('payer'), completedAt: at(1) }],
 		allowed: ['payer', 'holder'],
 		denied: ['stranger'],
 	},
@@ -370,5 +382,167 @@ describe('invoiceListView truth table', () => {
 		const view = invoiceListView([refunded])
 		expect(view.heading).toBe('Your Invoices')
 		expect(view.entries[0]?.refunded).toBe(true)
+	})
+})
+
+// The legacy edit rule, copied in: the billing owner is whoever
+// MerchantCharge.userId names. It fails once a transfer rewrote that column.
+const legacyCanEdit = (viewerId: string, chargeUserId: string) =>
+	viewerId === chargeUserId
+
+describe('canEditInvoice truth table', () => {
+	const cases: {
+		name: string
+		input: Parameters<typeof canEditInvoice>[0]
+		expected: boolean
+	}[] = [
+		{
+			name: 'anonymous',
+			input: { viewerId: null, payerUserId: 'a', holderUserId: 'a', transfer: null },
+			expected: false,
+		},
+		{
+			name: 'payer who still holds',
+			input: { viewerId: 'a', payerUserId: 'a', holderUserId: 'a', transfer: null },
+			expected: true,
+		},
+		{
+			name: 'payer after a transfer (charge stays)',
+			input: {
+				viewerId: 'a',
+				payerUserId: 'a',
+				holderUserId: 'b',
+				transfer: completed('a'),
+			},
+			expected: true,
+		},
+		{
+			name: 'holder who is not the payer views only',
+			input: {
+				viewerId: 'b',
+				payerUserId: 'a',
+				holderUserId: 'b',
+				transfer: completed('a'),
+			},
+			expected: false,
+		},
+		{
+			name: 'holder after a pre-fix transfer (charge rewritten) views only',
+			input: {
+				viewerId: 'b',
+				payerUserId: 'b',
+				holderUserId: 'b',
+				transfer: completed('a'),
+			},
+			expected: false,
+		},
+		{
+			name: 'payer after a pre-fix transfer edits',
+			input: {
+				viewerId: 'a',
+				payerUserId: 'b',
+				holderUserId: 'b',
+				transfer: completed('a'),
+			},
+			expected: true,
+		},
+		{
+			name: 'stranger',
+			input: {
+				viewerId: 'x',
+				payerUserId: 'a',
+				holderUserId: 'b',
+				transfer: completed('a'),
+			},
+			expected: false,
+		},
+		{
+			name: 'no payer known',
+			input: { viewerId: 'x', payerUserId: null, holderUserId: 'x', transfer: null },
+			expected: false,
+		},
+		{
+			name: 'a transfer that is not COMPLETED names no payer',
+			input: {
+				viewerId: 'p',
+				payerUserId: 'c',
+				holderUserId: 'c',
+				transfer: { state: 'INITIATED', sourceUserId: 'p' },
+			},
+			expected: false,
+		},
+	]
+	it.each(cases)('$name', ({ input, expected }) => {
+		expect(canEditInvoice(input)).toBe(expected)
+	})
+})
+
+// Pre-fix transfers rewrote the charge; post-fix transfers do not; support
+// moves and untransferred purchases never did. Every shape must give the same
+// user-visible outcome: the payer edits, the holder views, nobody else sees.
+describe.each(
+	shapes.filter((shape) => shape.name !== 'a transfer that never completed grants nothing'),
+)('who edits: $name', (shape) => {
+	const origin = pickOriginTransfer(shape.transfers)
+	const viewers = [...shape.allowed, ...shape.denied, 'v1', '']
+	const payer = 'payer'
+	it.each(viewers)('viewer %s', (viewer) => {
+		const expected = viewer === payer
+		const input = {
+			viewerId: viewer,
+			payerUserId: shape.chargeUserId,
+			holderUserId: shape.purchaseUserId,
+			transfer: origin,
+		}
+		expect(canEditInvoice(input)).toBe(expected)
+		// The settings and share-link gate agrees.
+		expect(
+			canViewPurchaseInvoice(
+				viewer,
+				{
+					id: 'p1',
+					userId: shape.purchaseUserId,
+					billingUserId: shape.chargeUserId,
+					originTransfer: origin,
+				},
+				[],
+			),
+		).toBe(expected)
+	})
+	it('resolves the same payer in every shape', () => {
+		expect(
+			resolveInvoicePayer({
+				chargeUserId: shape.chargeUserId,
+				transfers: shape.transfers,
+			}),
+		).toBe(payer)
+	})
+	it('the legacy rule is wrong exactly where the charge was rewritten', () => {
+		const rewritten = shape.chargeUserId !== payer
+		expect(legacyCanEdit(payer, shape.chargeUserId)).toBe(!rewritten)
+		expect(legacyCanEdit(shape.purchaseUserId, shape.chargeUserId)).toBe(
+			shape.purchaseUserId === shape.chargeUserId,
+		)
+	})
+})
+
+describe('team managers still edit', () => {
+	it('a managed team purchase is editable by its manager', () => {
+		expect(
+			canViewPurchaseInvoice(
+				'mgr',
+				{ id: 'p1', userId: 'owner', billingUserId: 'owner', originTransfer: null },
+				[{ id: 'p1' }],
+			),
+		).toBe(true)
+	})
+})
+
+describe('resolveInvoicePayer', () => {
+	it('names nobody without a charge user or an ordered transfer', () => {
+		expect(resolveInvoicePayer({ chargeUserId: null, transfers: [] })).toBeNull()
+		expect(
+			resolveInvoicePayer({ chargeUserId: null, transfers: [completed('a')] }),
+		).toBeNull()
 	})
 })
