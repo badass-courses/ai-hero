@@ -5,7 +5,13 @@ import {
 	getTeamManagerOrganizationsForMember,
 	type TeamManagerOrganization,
 } from '@/lib/team-manager-directory'
-import { getTeamPurchasesForMember } from '@/lib/team-purchases'
+import {
+	getTeamCardState,
+	getTeamPurchasesForMember,
+	getUnlinkedBulkPurchasesForUser,
+	type TeamCardState,
+	type TeamPurchaseLink,
+} from '@/lib/team-purchases'
 import { getServerAuthSession } from '@/server/auth'
 
 import type { Coupon, Purchase } from '@coursebuilder/core/schemas'
@@ -20,6 +26,7 @@ export type TeamPageData = {
 	bulkPurchases: {
 		purchase: Purchase
 		bulkCoupon: Coupon | null
+		state: TeamCardState
 	}[]
 }
 
@@ -39,17 +46,39 @@ async function teamPageDataLoader(): Promise<TeamPageData> {
 		getTeamPurchasesForMember(user.id),
 		getTeamManagerOrganizationsForMember(user.id),
 	])
+	// Read only: a paid pool that no managed organization holds is shown as
+	// "being set up". Repairs run elsewhere, never on a page render.
+	const unlinkedPurchases = await getUnlinkedBulkPurchasesForUser(
+		user.id,
+		teamPurchases,
+	)
 	const bulkPurchases = await Promise.all(
-		teamPurchases.map(async (purchase) => {
+		[
+			...teamPurchases.map((purchase) => ({
+				purchase,
+				link: 'managed' as TeamPurchaseLink,
+			})),
+			...unlinkedPurchases,
+		].map(async ({ purchase, link }) => {
 			const bulkCoupon = purchase.bulkCouponId
 				? await courseBuilderAdapter.getCouponWithBulkPurchases(
 						purchase.bulkCouponId,
 					)
 				: null
-			return {
-				purchase,
-				bulkCoupon: bulkCoupon?.status === 1 ? bulkCoupon : null,
-			}
+			const activeCoupon = bulkCoupon?.status === 1 ? bulkCoupon : null
+			const state = getTeamCardState({
+				purchaseStatus: purchase.status,
+				link,
+				couponActive: Boolean(activeCoupon),
+			})
+			// Coupon data goes to the client only for a card that offers seats.
+			return state === 'active'
+				? { purchase, bulkCoupon: activeCoupon, state }
+				: {
+						purchase: { ...purchase, bulkCoupon: null },
+						bulkCoupon: null,
+						state,
+					}
 		}),
 	)
 

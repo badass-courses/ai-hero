@@ -2,6 +2,7 @@
 
 import React from 'react'
 import { BuyPathPricingBeacon } from '@/lib/buy-path/beacons'
+import { inlineBuyLabel } from '@/lib/pricing-decisions'
 import Link from 'next/link'
 import { GatedBuyButton } from '@/components/commerce/gated-buy-button'
 import { TYPE } from '@/components/landing/type'
@@ -9,6 +10,7 @@ import Spinner from '@/components/spinner'
 import { env } from '@/env.mjs'
 import type { Cohort } from '@/lib/cohort'
 import type { Event } from '@/lib/events'
+import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 import type { MinimalWorkshop, Workshop } from '@/lib/workshops'
 import { api } from '@/trpc/react'
 import { formatInTimeZone } from 'date-fns-tz'
@@ -128,7 +130,6 @@ const Buy = ({
 
 	const finalPrice = formattedPrice?.calculatedPrice || 0
 	const savings = fullPrice - finalPrice
-	const savingsPercentage = Math.round((savings / fullPrice) * 100)
 
 	// The house gold CTA with the price riding along in mono — the button and
 	// the number it commits you to are one object (`Workshop Landing.dc.html`
@@ -138,7 +139,7 @@ const Buy = ({
 	return (
 		<>
 			<GatedBuyButton className={cn(WORKSHOP_CTA_BUTTON, className)}>
-				<span data-label="">Buy Now</span>
+				<span data-label="">{inlineBuyLabel({ isSoldOut })}</span>
 				<span
 					data-divider=""
 					className="bg-accent-fill-foreground/25 mx-2.5 h-4 w-px"
@@ -252,8 +253,9 @@ export const withEventPricing = (
 		// Check if cohort has actually started (different from enrollment status)
 		const hasStarted = startsAt ? new Date(startsAt) <= nowInPT : false
 
-		const hasPurchasedCurrentProduct = commerceProps?.purchases?.some(
-			(purchase) => purchase.productId === product.id,
+		const hasPurchasedCurrentProduct = ownsProductForBuyBox(
+			commerceProps?.purchases,
+			product.id,
 		)
 
 		return (

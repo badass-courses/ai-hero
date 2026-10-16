@@ -6,12 +6,14 @@ import { purchaseBuyPathContext } from '@/lib/buy-path/read-context'
 import { redirect } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
 import { purchaseArtwork } from '@/lib/purchase-artwork'
+import { DifferentAccountNotice } from '../_components/different-account-notice'
 import { PostPurchaseShell } from '../_components/post-purchase-shell'
 import { PostPurchaseArrival } from '../_components/post-purchase-arrival'
 import { PostPurchaseIconBadge } from '../_components/post-purchase-icon'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { courseBuilderAdapter, db } from '@/db'
 import { env } from '@/env.mjs'
+import { purchaseViewerState } from '@/lib/purchase-viewer'
 import { getSubscription } from '@/lib/subscriptions'
 import {
 	discordAccountsForCurrentUser,
@@ -121,8 +123,24 @@ const getPurchaseDetailsForWelcome = async (query: {
 	}
 
 	if (user && isString(purchaseId) && isString(user?.id)) {
+		const claimed = await courseBuilderAdapter.getPurchaseWithUser(purchaseId)
+		const viewerState = purchaseViewerState({
+			viewerUserId: user.id,
+			viewerEmail: user.email,
+			purchaseExists: Boolean(claimed),
+			purchaseOwnerId: claimed?.userId,
+			purchaseEmail: claimed?.user?.email,
+		})
+		if (viewerState === 'different-account') {
+			return { differentAccount: true as const, viewerEmail: user.email }
+		}
+
 		const { purchase, existingPurchase, availableUpgrades } =
-			await courseBuilderAdapter.getPurchaseDetails(purchaseId, user?.id)
+			await courseBuilderAdapter.getPurchaseDetails(
+				purchaseId,
+				// Owned by id, or by purchase email: details are the owner's.
+				claimed?.userId ?? user.id,
+			)
 
 		if (purchase) {
 			const product = await courseBuilderAdapter.getProduct(purchase.productId)
@@ -163,13 +181,24 @@ const Welcome = async (props: {
 	const { purchaseId, subscriptionId } = searchParams
 
 	if (purchaseId) {
+		const details = await getPurchaseDetailsForWelcome(searchParams)
+		if ('differentAccount' in details) {
+			return (
+				<LayoutClient withContainer>
+					<DifferentAccountNotice
+						viewerEmail={details.viewerEmail}
+						signOutCallbackUrl="/login"
+					/>
+				</LayoutClient>
+			)
+		}
 		const {
 			upgrade,
 			purchase,
 			existingPurchase,
 			product,
 			productResources,
-		} = await getPurchaseDetailsForWelcome(searchParams)
+		} = details
 
 		const buyPath = searchParams.buyPathId
 			? null

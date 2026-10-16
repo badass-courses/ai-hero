@@ -1,7 +1,6 @@
 'use client'
 
 import * as React from 'react'
-import { signIn } from 'next-auth/react'
 import { useFormStatus } from 'react-dom'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
@@ -32,27 +31,31 @@ export function TransferAcceptButton() {
  * invitation's own link works once; this is the way back after that.
  */
 export function TransferLoginButton({
-	email,
-	callbackUrl,
+	transferId,
+	sendLogin,
 }: {
-	email: string
-	callbackUrl: string
+	transferId: string
+	sendLogin: (transferId: string) => Promise<{ sent: boolean }>
 }) {
-	const [pending, setPending] = React.useState(false)
+	const [state, setState] = React.useState<'idle' | 'pending' | 'sent'>('idle')
 	return (
 		<button
 			type="button"
-			disabled={pending}
+			disabled={state !== 'idle'}
 			onClick={async () => {
-				setPending(true)
-				// Success navigates away; a failed request leaves the button usable.
-				await signIn('postmark', { email, callbackUrl }).catch(() =>
-					setPending(false),
-				)
+				setState('pending')
+				// A failed request leaves the button usable.
+				await sendLogin(transferId)
+					.then((result) => setState(result.sent ? 'sent' : 'idle'))
+					.catch(() => setState('idle'))
 			}}
 			className={BUTTON}
 		>
-			{pending ? 'Sending…' : 'Email me a login link'}
+			{state === 'pending'
+				? 'Sending…'
+				: state === 'sent'
+					? 'Check your email'
+					: 'Email me a login link'}
 		</button>
 	)
 }

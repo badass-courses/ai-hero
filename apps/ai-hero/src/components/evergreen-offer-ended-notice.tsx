@@ -7,6 +7,7 @@ import { TYPE } from '@/components/landing/type'
 import {
 	evergreenOfferEndedText,
 	isEvergreenCouponId,
+	showEvergreenEndedNotice,
 } from '@/lib/subscriber-marketing/evergreen-offer-notice'
 import { z } from 'zod'
 
@@ -19,9 +20,20 @@ const statusSchema = z.discriminatedUnion('status', [
 /**
  * The static workshop page cannot read `?coupon=` on the server, so this asks
  * the uncached status route. The route formats the deadline; this only shows
- * it. Nothing renders unless the link's evergreen coupon has ended.
+ * it. Nothing renders unless the link's evergreen coupon has ended and the
+ * viewer does not already own the product. Ownership is a prop because this
+ * component sits outside the buy box; `WorkshopEvergreenOfferEndedNotice`
+ * (workshop-pricing.tsx) is the call site and reads the buy box's signal.
  */
-export function EvergreenOfferEndedNotice({ endpoint }: { endpoint: string }) {
+export function EvergreenOfferEndedNotice({
+	endpoint,
+	viewerOwnsProduct,
+}: {
+	endpoint: string
+	/** The buy box's display-only ownership signal, from the call site. */
+	viewerOwnsProduct: boolean
+}) {
+
 	const searchParams = useSearchParams()
 	const couponId = readCommerceUrlParams(searchParams).params.coupon
 	const [deadline, setDeadline] = React.useState<string | null>(null)
@@ -42,7 +54,11 @@ export function EvergreenOfferEndedNotice({ endpoint }: { endpoint: string }) {
 		return () => controller.abort()
 	}, [couponId, endpoint])
 
-	if (!deadline) return null
+	if (
+		!deadline ||
+		!showEvergreenEndedNotice({ status: 'ended', viewerOwnsProduct })
+	)
+		return null
 	return (
 		<section
 			data-testid="evergreen-offer-ended"

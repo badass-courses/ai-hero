@@ -3,7 +3,9 @@ import { Suspense } from 'react'
 import { revalidatePath } from 'next/cache'
 import { headers } from 'next/headers'
 import { notFound, redirect } from 'next/navigation'
+import LayoutClient from '@/components/layout-client'
 import { purchaseArtwork } from '@/lib/purchase-artwork'
+import { DifferentAccountNotice } from '../../_components/different-account-notice'
 import { PostPurchaseShell } from '../../_components/post-purchase-shell'
 import { PostPurchaseArrival } from '../../_components/post-purchase-arrival'
 import { PostPurchaseLoginLink } from '../../_components/post-purchase-login-link'
@@ -11,7 +13,7 @@ import { PostPurchaseIconBadge } from '../../_components/post-purchase-icon'
 import { getPurchaseThanksDetails } from './purchase-thanks-details'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
-import { isCheckoutSessionOwner } from '@/lib/checkout-owner-resolution'
+import { isPurchaseOwner, thanksViewerState } from '@/lib/purchase-viewer'
 import {
 	cancelPurchaseTransfer,
 	getPurchaseTransferForPurchaseId,
@@ -140,14 +142,29 @@ async function PurchaseThanksPageLoaded({
 		redemptionsLeft,
 	} = result
 
-	if (
-		isCheckoutSessionOwner({
-			purchaseUserId: purchase.userId ?? null,
-			purchaseEmail: email ?? null,
-			sessionUserId: token?.session?.user?.id ?? null,
-			sessionUserEmail: token?.session?.user?.email ?? null,
-		})
-	) {
+	const viewer = thanksViewerState({
+		viewerUserId: token?.session?.user?.id,
+		isOwner: isPurchaseOwner({
+			viewerUserId: token?.session?.user?.id,
+			viewerEmail: token?.session?.user?.email,
+			purchaseOwnerId: purchase.userId,
+			purchaseEmail: email,
+		}),
+	})
+
+	if (viewer === 'different-account') {
+		// A signed-in stranger gets no product, email, invoice or invite link.
+		return (
+			<LayoutClient withContainer>
+				<DifferentAccountNotice
+					viewerEmail={token?.session?.user?.email}
+					signOutCallbackUrl={`/thanks/purchase?session_id=${encodeURIComponent(session_id)}`}
+				/>
+			</LayoutClient>
+		)
+	}
+
+	if (viewer === 'owner') {
 		const destination = new URLSearchParams({
 			purchaseId: purchase.id,
 			buyPathId: session_id,
