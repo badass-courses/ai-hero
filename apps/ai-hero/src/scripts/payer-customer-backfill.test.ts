@@ -514,7 +514,10 @@ type World = {
 	unkeyedWrites: number
 	journal: JournalEntry[]
 	calls: string[]
-	transfersInFlight: number
+	/** Users on an unexpired INITIATED, VERIFIED or CONFIRMED transfer. */
+	openUsers: Set<string>
+	/** Per-customer holder and payer, default holder B and payer A. */
+	shape: Shape[]
 	stop: boolean
 	crashed: boolean
 	/** Extra Stripe charge times on a customer: usage that appears later. */
@@ -524,15 +527,28 @@ type World = {
 	payerName: string | null
 }
 
+type Shape = { holder: string; payer: string }
+const defaultShape = (count: number): Shape[] =>
+	Array.from({ length: count }, () => ({ holder: userB.id, payer: userA.id }))
+
 function writeFacts(
 	count: number,
 	payerName: string | null = userA.name,
+	shape: Shape[] = defaultShape(count),
 ): CustomerFacts[] {
 	return Array.from({ length: count }, (_, i) =>
 		facts({
 			customerId: `mcu-${i}`,
 			stripeCustomerId: `cus_${i}`,
-			holderUserId: userB.id,
+			holderUserId: shape[i]!.holder,
+			purchases: [
+				{
+					purchaseId: 'pur-1',
+					chargeUserId: shape[i]!.holder,
+					openDispute: false,
+					transfers: [transfer('put-1', shape[i]!.payer, T0)],
+				},
+			],
 			users: {
 				[userA.id]: { ...userA, name: payerName },
 				[userB.id]: userB,
@@ -542,10 +558,11 @@ function writeFacts(
 	)
 }
 
-function newWorld(count: number): World {
+function newWorld(count: number, shape = defaultShape(count)): World {
 	return {
+		shape,
 		userIds: new Map(
-			Array.from({ length: count }, (_, i) => [`mcu-${i}`, userB.id]),
+			Array.from({ length: count }, (_, i) => [`mcu-${i}`, shape[i]!.holder]),
 		),
 		stripe: new Map(
 			Array.from({ length: count }, (_, i) => [
@@ -557,7 +574,7 @@ function newWorld(count: number): World {
 		unkeyedWrites: 0,
 		journal: [],
 		calls: [],
-		transfersInFlight: 0,
+		openUsers: new Set(),
 		stop: false,
 		crashed: false,
 		usage: new Map(),
@@ -575,11 +592,14 @@ function portsFor(
 		stripeCount = 0,
 		journalCount = 0
 	return {
-		loadFacts: async () => writeFacts(count, world.payerName),
+		loadFacts: async () => writeFacts(count, world.payerName, world.shape),
 		loadCustomerFacts: async (id) => {
-			const holder = world.stale.has(id) ? userB.id : world.userIds.get(id)
+			const idx = Number(id.slice('mcu-'.length))
+			const holder = world.stale.has(id)
+				? world.shape[idx]!.holder
+				: world.userIds.get(id)
 			if (!holder) return null
-			const base = writeFacts(count, world.payerName).find(
+			const base = writeFacts(count, world.payerName, world.shape).find(
 				(f) => f.customerId === id,
 			)!
 			return {
@@ -594,10 +614,16 @@ function portsFor(
 				},
 			}
 		},
-		countInFlightTransfers: async () => world.transfersInFlight,
+		inFlightTransferUserIds: async () => new Set(world.openUsers),
 		compareAndSet: async ({ customerId, holderUserId, payerUserId }) => {
 			world.calls.push(`cas:${customerId}`)
 			let affected = 0
+			// The real port checks open transfers in the same transaction.
+			if (
+				world.userIds.get(customerId) === holderUserId &&
+				(world.openUsers.has(holderUserId) || world.openUsers.has(payerUserId))
+			)
+				return 'deferred' as const
 			if (world.userIds.get(customerId) === holderUserId) {
 				world.userIds.set(customerId, payerUserId)
 				affected = 1
@@ -656,8 +682,9 @@ async function planHashFor(
 	mod: Backfill,
 	count: number,
 	payerName: string | null = userA.name,
+	shape?: Shape[],
 ) {
-	return mod.planHashOf(mod.planAll(writeFacts(count, payerName)))
+	return mod.planHashOf(mod.planAll(writeFacts(count, payerName, shape)))
 }
 const approve = { approval: 'operator approval' }
 
@@ -823,6 +850,78 @@ async function planModel(mod: Backfill): Promise<string[]> {
 	return violations
 }
 
+/** A row tied to an open transfer is skipped; every other row moves. */
+async function deferModel(mod: Backfill): Promise<string[]> {
+	const violations: string[] = []
+	const plain: Shape = { holder: userB.id, payer: userA.id }
+	const holderC: Shape = { holder: userC.id, payer: userA.id }
+	const payerC: Shape = { holder: userB.id, payer: userC.id }
+	const run = async (
+		shape: Shape[],
+		setup: (world: World, ports: BackfillPorts) => void,
+		batch = 25,
+	) => {
+		const world = newWorld(shape.length, shape)
+		const ports = portsFor(world, shape.length)
+		setup(world, ports)
+		const planHash = await planHashFor(mod, shape.length, userA.name, shape)
+		const result = await mod.runWrite({ ...approve, planHash, batch }, ports)
+		const done = world.journal.flatMap((e) => (e.t === 'header' ? [] : [e.t]))
+		return { world, result, journalKinds: done }
+	}
+	const stripeFor = (world: World, i: number) =>
+		world.calls.includes(`stripe:cus_${i}`)
+	const holderCase = await run([plain, holderC, plain], (w) =>
+		w.openUsers.add(userC.id),
+	)
+	if (holderCase.world.userIds.get('mcu-1') !== userC.id)
+		violations.push('holder in an open transfer was written')
+	if (holderCase.journalKinds.length !== 2)
+		violations.push('deferred row journaled as done')
+	if (holderCase.result.deferred !== 1) violations.push('deferral not counted')
+	const payerCase = await run([plain, payerC, plain], (w) =>
+		w.openUsers.add(userC.id),
+	)
+	if (payerCase.world.userIds.get('mcu-1') !== userB.id)
+		violations.push('payer in an open transfer was written')
+	if (payerCase.result.deferredBy.beforeRow !== 1)
+		violations.push('payer in an open transfer not skipped before the row')
+	const reread = await run([plain, plain, holderC, plain], (_w, ports) => {
+		let reads = 0
+		ports.inFlightTransferUserIds = async () =>
+			reads++ >= 2 ? new Set([userC.id]) : new Set()
+	})
+	if (reread.world.userIds.get('mcu-2') !== userC.id)
+		violations.push('open set not re-read per row')
+	const race = await run([plain, holderC, plain], (w, ports) => {
+		const load = ports.loadCustomerFacts
+		ports.loadCustomerFacts = async (id) => {
+			if (id === 'mcu-1') w.openUsers.add(userC.id)
+			return load(id)
+		}
+	})
+	if (race.world.userIds.get('mcu-1') !== userC.id)
+		violations.push('transfer opened before the write was still written')
+	if (stripeFor(race.world, 1)) violations.push('deferral reached stripe')
+	if (race.journalKinds.includes('conflict'))
+		violations.push('deferral journaled as conflict')
+	if (race.result.deferred !== 1)
+		violations.push('deferral at write not counted')
+	const unrelated = await run([plain, plain, plain], (w) =>
+		w.openUsers.add('user-unrelated'),
+	)
+	if (unrelated.result.moved !== 3)
+		violations.push('unrelated open transfer blocked a row')
+	const batched = await run(
+		[holderC, plain, plain, plain],
+		(w) => w.openUsers.add(userC.id),
+		2,
+	)
+	if (batched.result.moved !== 2)
+		violations.push('deferred row counted toward the batch')
+	return violations
+}
+
 const runtimeSql = (rt: Runtime) => async () => {
 	const queries: { sql: string; params: unknown[] }[] = []
 	const db = drizzle(
@@ -843,8 +942,14 @@ const runtimeSql = (rt: Runtime) => async () => {
 	const update = queries.find((q) => q.sql.toLowerCase().startsWith('update'))
 	const violations: string[] = []
 	if (!update) return ['no update issued']
-	if (!/where \(`\w+`\.`id` = \? and `\w+`\.`userId` = \?\)/i.test(update.sql))
+	if (
+		!/where \(`\w+`\.`id` = \? and `\w+`\.`userId` = \? and not exists \(/i.test(
+			update.sql,
+		)
+	)
 		violations.push(`update is not compare-and-set: ${update.sql}`)
+	if (!/transferState/i.test(update.sql))
+		violations.push(`update has no open-transfer check: ${update.sql}`)
 	return violations
 }
 
@@ -855,6 +960,7 @@ async function invariantViolations(mod: Backfill, rt: Runtime) {
 		...(await driftModel(mod)),
 		...(await nullNameModel(mod)),
 		...(await crashModel(mod)),
+		...(await deferModel(mod)),
 		...(await runtimeSql(rt)()),
 	]
 }
@@ -963,36 +1069,138 @@ describe('runWrite', () => {
 		).rejects.toThrow(/^ApprovalRequired:/)
 	})
 
-	it('refuses while a transfer is in flight, saying so', async () => {
-		const world = newWorld(count)
-		world.transfersInFlight = 1
-		const planHash = await planHashFor(backfill, count)
-		await expect(
-			backfill.runWrite(
-				{ ...approve, planHash, batch: 25 },
-				portsFor(world, count),
-			),
-		).rejects.toThrow(/^TransferInFlight: .*INITIATED, VERIFIED or CONFIRMED/)
-		expect(world.calls).toEqual([])
+	const rowsWith = (...pairs: Shape[]) => pairs
+	const plain: Shape = { holder: userB.id, payer: userA.id }
+	const holderC: Shape = { holder: userC.id, payer: userA.id }
+	const payerC: Shape = { holder: userB.id, payer: userC.id }
+	const movedIds = (world: World) =>
+		[...world.userIds.entries()]
+			.filter(([id, user]) => user !== world.shape[Number(id.slice(4))]!.holder)
+			.map(([id]) => id)
+	const journaled = (world: World) =>
+		world.journal.flatMap((e) => (e.t === 'stripe' ? [e.customerId] : []))
+
+	it('skips a row whose holder is in an open transfer and moves the rest', async () => {
+		const shape = rowsWith(plain, holderC, plain)
+		const world = newWorld(3, shape)
+		world.openUsers = new Set([userC.id])
+		const planHash = await planHashFor(backfill, 3, userA.name, shape)
+		const result = await backfill.runWrite(
+			{ ...approve, planHash, batch: 25 },
+			portsFor(world, 3),
+		)
+		expect(result).toMatchObject({
+			status: 'complete-with-deferrals',
+			moved: 2,
+			deferred: 1,
+			deferredBy: { beforeRow: 1, atWrite: 0 },
+		})
+		expect(movedIds(world)).toEqual(['mcu-0', 'mcu-2'])
+		expect(journaled(world)).toEqual(['mcu-0', 'mcu-2'])
+		expect(world.calls).not.toContain('stripe:cus_1')
+		expect(JSON.stringify(result)).not.toContain('mcu-')
 	})
 
-	it('stops between rows when a transfer opens mid-run, then resumes', async () => {
-		const world = newWorld(count)
-		const planHash = await planHashFor(backfill, count)
-		const ports = portsFor(world, count)
-		let rows = 0
-		const inner = ports.countInFlightTransfers
-		ports.countInFlightTransfers = async () => (rows++ >= 3 ? 1 : inner())
-		await expect(
-			backfill.runWrite({ ...approve, planHash, batch: 25 }, ports),
-		).rejects.toThrow(/^TransferInFlight/)
-		world.transfersInFlight = 0
+	it('skips a row whose payer is in an open transfer', async () => {
+		const shape = rowsWith(plain, payerC, plain)
+		const world = newWorld(3, shape)
+		world.openUsers = new Set([userC.id])
+		const planHash = await planHashFor(backfill, 3, userA.name, shape)
+		const result = await backfill.runWrite(
+			{ ...approve, planHash, batch: 25 },
+			portsFor(world, 3),
+		)
+		expect(result).toMatchObject({ moved: 2, deferred: 1 })
+		expect(movedIds(world)).toEqual(['mcu-0', 'mcu-2'])
+		expect(journaled(world)).toEqual(['mcu-0', 'mcu-2'])
+	})
+
+	it('re-reads the open set before every row', async () => {
+		const shape = rowsWith(plain, plain, holderC, plain)
+		const world = newWorld(4, shape)
+		const planHash = await planHashFor(backfill, 4, userA.name, shape)
+		const ports = portsFor(world, 4)
+		let reads = 0
+		ports.inFlightTransferUserIds = async () =>
+			reads++ >= 2 ? new Set([userC.id]) : new Set()
+		const result = await backfill.runWrite(
+			{ ...approve, planHash, batch: 25 },
+			ports,
+		)
+		expect(result).toMatchObject({ moved: 3, deferred: 1 })
+		expect(movedIds(world)).toEqual(['mcu-0', 'mcu-1', 'mcu-3'])
+		expect(journaled(world)).not.toContain('mcu-2')
+	})
+
+	it('a transfer opened after the re-read still stops the write, and nothing reaches Stripe', async () => {
+		const shape = rowsWith(plain, holderC, plain)
+		const world = newWorld(3, shape)
+		const planHash = await planHashFor(backfill, 3, userA.name, shape)
+		const ports = portsFor(world, 3)
+		const load = ports.loadCustomerFacts
+		ports.loadCustomerFacts = async (id) => {
+			if (id === 'mcu-1') world.openUsers.add(userC.id)
+			return load(id)
+		}
+		const result = await backfill.runWrite(
+			{ ...approve, planHash, batch: 25 },
+			ports,
+		)
+		// The open set keeps user C only, so the plain third row still moves.
+		expect(result).toMatchObject({
+			status: 'complete-with-deferrals',
+			moved: 2,
+			deferred: 1,
+			deferredBy: { beforeRow: 0, atWrite: 1 },
+		})
+		expect(world.userIds.get('mcu-1')).toBe(userC.id)
+		expect(world.calls).not.toContain('stripe:cus_1')
+		expect(journaled(world)).toEqual(['mcu-0', 'mcu-2'])
+	})
+
+	it('a later run moves a deferred row once its users are clear', async () => {
+		const shape = rowsWith(plain, holderC, plain)
+		const world = newWorld(3, shape)
+		world.openUsers = new Set([userC.id])
+		const planHash = await planHashFor(backfill, 3, userA.name, shape)
 		await backfill.runWrite(
+			{ ...approve, planHash, batch: 25 },
+			portsFor(world, 3),
+		)
+		world.openUsers = new Set()
+		const second = await backfill.runWrite(
+			{ ...approve, planHash, batch: 25 },
+			portsFor(world, 3),
+		)
+		expect(second).toMatchObject({ status: 'complete', moved: 1, deferred: 0 })
+		expect(movedIds(world)).toEqual(['mcu-0', 'mcu-1', 'mcu-2'])
+		for (const row of world.stripe.values()) expect(row.applied).toBe(1)
+	})
+
+	it('does not count a deferred row toward --batch', async () => {
+		const shape = rowsWith(holderC, plain, plain, plain)
+		const world = newWorld(4, shape)
+		world.openUsers = new Set([userC.id])
+		const planHash = await planHashFor(backfill, 4, userA.name, shape)
+		const result = await backfill.runWrite(
+			{ ...approve, planHash, batch: 2 },
+			portsFor(world, 4),
+		)
+		expect(result.status).toBe('batch-complete')
+		expect(result.moved).toBe(2)
+		expect(result.deferred).toBe(1)
+		expect(movedIds(world)).toEqual(['mcu-1', 'mcu-2'])
+	})
+
+	it('an unrelated open transfer blocks nothing', async () => {
+		const world = newWorld(count)
+		world.openUsers = new Set(['user-unrelated'])
+		const planHash = await planHashFor(backfill, count)
+		const result = await backfill.runWrite(
 			{ ...approve, planHash, batch: 25 },
 			portsFor(world, count),
 		)
-		expect([...world.userIds.values()]).toEqual([userA.id, userA.id, userA.id])
-		for (const row of world.stripe.values()) expect(row.applied).toBe(1)
+		expect(result).toMatchObject({ status: 'complete', moved: 3, deferred: 0 })
 	})
 
 	it('batches, and a rerun finishes the rest', async () => {
@@ -1402,9 +1610,54 @@ const mutants: {
 	{
 		name: 'compare-and-set dropped (where id only)',
 		file: 'payer-customer-backfill-runtime',
-		find: '.where( and( eq(schema.merchantCustomer.id, input.customerId), eq(schema.merchantCustomer.userId, input.holderUserId), ), )',
-		replace: '.where(eq(schema.merchantCustomer.id, input.customerId))',
+		find: '.where( and( eq(schema.merchantCustomer.id, input.customerId), eq(schema.merchantCustomer.userId, input.holderUserId), notExists(',
+		replace:
+			'.where( and( eq(schema.merchantCustomer.id, input.customerId), notExists(',
 		caughtBy: /update is not compare-and-set/,
+	},
+	{
+		name: 'compare-and-set without the open-transfer check',
+		file: 'payer-customer-backfill-runtime',
+		find: 'notExists( tx .select({ one: sql`1` }) .from(schema.purchaseUserTransfer) .where(and(openTransferWhere(), touchesRow)), ),',
+		replace: '',
+		caughtBy: /update is not compare-and-set/,
+	},
+	{
+		name: 'a write-time deferral is not honored',
+		file: 'payer-customer-backfill',
+		find: "if (affected === 'deferred') return 'deferred'",
+		replace: '',
+		caughtBy: /deferral journaled as conflict|deferral at write not counted/,
+	},
+	{
+		name: 'open transfer set read once at the start',
+		file: 'payer-customer-backfill',
+		find: 'const open = await ports.inFlightTransferUserIds() if (open.has(move.holderUserId)',
+		replace:
+			'const open = index === 0 ? ((result as any)._c = await ports.inFlightTransferUserIds()) : (result as any)._c\n if (open.has(move.holderUserId)',
+		caughtBy: /open set not re-read per row/,
+	},
+	{
+		name: 'only the holder is checked against open transfers',
+		file: 'payer-customer-backfill',
+		find: '|| open.has(move.payerUserId!)',
+		replace: '',
+		caughtBy: /payer in an open transfer not skipped before the row/,
+	},
+	{
+		name: 'deferred rows are journaled as done',
+		file: 'payer-customer-backfill',
+		find: 'result.deferredBy.beforeRow += 1 continue',
+		replace:
+			"result.deferredBy.beforeRow += 1\n await ports.appendJournal({ t: 'drift', customerId: move.customerId, reason: 'deferred' })\n continue",
+		caughtBy: /deferred row journaled as done/,
+	},
+	{
+		name: 'an unrelated open transfer blocks the row',
+		file: 'payer-customer-backfill',
+		find: 'open.has(move.holderUserId) || open.has(move.payerUserId!)',
+		replace: 'open.size > 0',
+		caughtBy: /unrelated open transfer blocked a row/,
 	},
 	{
 		name: 'Stripe called on a compare-and-set conflict',

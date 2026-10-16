@@ -429,32 +429,84 @@ suite('payer customer backfill against real MySQL 8', () => {
 		expect(await userOf('5')).toBe('user-e')
 	})
 
-	it('refuses to write while an unexpired transfer is open, not an expired one', async () => {
+	const openTransfer = (id: string, expiresAt: Date) =>
+		db.insert(schema.purchaseUserTransfer).values({
+			id,
+			purchaseId: 'pur-1',
+			sourceUserId: 'user-b',
+			targetUserId: 'user-c',
+			transferState: 'VERIFIED',
+			expiresAt,
+		})
+
+	it('lists the users of an unexpired open transfer, not an expired one', async () => {
+		await openTransfer('put-old', new Date(Date.now() - DAY))
+		expect(await createDrizzleDbPorts(db).inFlightTransferUserIds()).toEqual(
+			new Set(),
+		)
+		await openTransfer('put-open', new Date(Date.now() + DAY))
+		expect(await createDrizzleDbPorts(db).inFlightTransferUserIds()).toEqual(
+			new Set(['user-b', 'user-c']),
+		)
+	})
+
+	it('skips only rows tied to an open transfer, then a later run moves them', async () => {
 		const ports = portsFor()
 		const { planHash } = countPlan(planAll(await ports.loadFacts()))
-		await db.insert(schema.purchaseUserTransfer).values({
-			id: 'put-old',
-			purchaseId: 'pur-1',
-			sourceUserId: 'user-b',
-			targetUserId: 'user-c',
-			transferState: 'VERIFIED',
-			expiresAt: new Date(Date.now() - DAY),
+		await openTransfer('put-open', new Date(Date.now() + DAY))
+		const first = await runWrite(
+			{ approval: 'rig', planHash, batch: 25 },
+			ports,
+		)
+		expect(first).toMatchObject({
+			status: 'complete-with-deferrals',
+			moved: 1,
+			deferred: 2,
+			conflicts: 0,
 		})
-		expect(await createDrizzleDbPorts(db).countInFlightTransfers()).toBe(0)
-		await db.insert(schema.purchaseUserTransfer).values({
-			id: 'put-open',
-			purchaseId: 'pur-1',
-			sourceUserId: 'user-b',
-			targetUserId: 'user-c',
-			transferState: 'VERIFIED',
-			expiresAt: new Date(Date.now() + DAY),
-		})
-		expect(await createDrizzleDbPorts(db).countInFlightTransfers()).toBe(1)
-		await expect(
-			runWrite({ approval: 'rig', planHash, batch: 25 }, ports),
-		).rejects.toThrow(/^TransferInFlight:/)
-		expect(fake.current.writeCalls()).toEqual([])
 		expect(await userOf('1')).toBe('user-b')
+		expect(await userOf('3')).toBe('user-c')
+		expect(await userOf('5')).toBe('user-d')
+		expect(fake.current.writeCalls()).toEqual(['update:cus_5'])
+		await db
+			.update(schema.purchaseUserTransfer)
+			.set({ expiresAt: new Date(Date.now() - DAY) })
+			.where(eq(schema.purchaseUserTransfer.id, 'put-open'))
+		const second = await runWrite(
+			{ approval: 'rig', planHash, batch: 25 },
+			ports,
+		)
+		expect(second).toMatchObject({ status: 'complete', moved: 2, deferred: 0 })
+		expect(await userOf('1')).toBe('user-a')
+		expect(await userOf('3')).toBe('user-a')
+	})
+
+	it('a transfer opened after the re-read defers inside the CAS: nothing written, no Stripe call', async () => {
+		const ports = portsFor()
+		const { planHash } = countPlan(planAll(await ports.loadFacts()))
+		const real = ports.loadCustomerFacts
+		ports.loadCustomerFacts = async (id) => {
+			const facts = await real(id)
+			if (id === 'mcu-1')
+				await openTransfer('put-race', new Date(Date.now() + DAY))
+			return facts
+		}
+		const result = await runWrite(
+			{ approval: 'rig', planHash, batch: 25 },
+			ports,
+		)
+		// Row 1 defers at write; row 3 (holder C) is caught before its row.
+		expect(result).toMatchObject({
+			moved: 1,
+			conflicts: 0,
+			deferred: 2,
+			deferredBy: { beforeRow: 1, atWrite: 1 },
+		})
+		expect(await userOf('1')).toBe('user-b')
+		expect(fake.current.writeCalls()).toEqual(['update:cus_5'])
+		expect((await ports.readJournal()).some((e) => e.t === 'conflict')).toBe(
+			false,
+		)
 	})
 
 	it('the compare-and-set reports one row, then zero on replay', async () => {
