@@ -1,8 +1,8 @@
-import { MetadataRoute } from 'next'
 import { db } from '@/db'
 import { contentResource, contentResourceResource } from '@/db/schema'
 import { getAiCodingDictionary } from '@/lib/ai-coding-dictionary'
 import { getSkillChangelogEntries } from '@/lib/skill-changelog-query'
+import { SKILL_CHANGELOG_RESOURCE_TYPE, SKILL_CHANGELOG_SLUG_PREFIX } from '@/lib/skill-changelog-types'
 import { retryTransientDatabaseRead } from '@/lib/transient-database-read'
 import { sql } from 'drizzle-orm'
 import { unstable_cache } from 'next/cache'
@@ -13,7 +13,7 @@ interface SitemapEntry {
 	url: string
 	title: string
 	description: string
-	lastModified: Date
+	lastModified?: Date
 	changeFrequency:
 		| 'yearly'
 		| 'monthly'
@@ -33,26 +33,27 @@ function toValidDate(value: unknown): Date | null {
 	return Number.isNaN(date.getTime()) ? null : date
 }
 
-function contentTimestamp(...values: unknown[]): Date {
+function contentTimestamp(...values: unknown[]): Date | undefined {
 	for (const value of values) {
 		const date = toValidDate(value)
 		if (date) return date
 	}
 
-	return new Date(0)
+	return undefined
 }
 
-const stableLastModified = contentTimestamp(
-	process.env.DEPLOY_TIMESTAMP,
-	process.env.VERCEL_GIT_COMMIT_SHA,
-	'2026-05-16',
-)
+function latestTimestamp(values: unknown[]): Date | undefined {
+	const dates = values.map(toValidDate).filter((date): date is Date => date !== null)
+	return dates.length ? new Date(Math.max(...dates.map((date) => date.getTime()))) : undefined
+}
 
 async function buildSitemap(): Promise<SitemapEntry[]> {
 	const workshopItems = await db.execute(sql`
     SELECT DISTINCT
       workshop.id AS workshop_id,
       workshop.type AS workshop_type,
+      workshop.fields->>'$.state' AS workshop_state,
+      workshop.fields->>'$.visibility' AS workshop_visibility,
       workshop.fields->>'$.slug' AS workshop_slug,
       workshop.fields->>'$.title' AS workshop_title,
       workshop.fields->>'$.description' AS workshop_description,
@@ -83,20 +84,22 @@ async function buildSitemap(): Promise<SitemapEntry[]> {
     LEFT JOIN ${contentResourceResource} AS section_relations
       ON workshop.id = section_relations.resourceOfId
     LEFT JOIN ${contentResource} AS sections
-      ON sections.id = section_relations.resourceId AND sections.type = 'section'
+      ON sections.id = section_relations.resourceId AND sections.type = 'section' AND sections.deletedAt IS NULL
     LEFT JOIN ${contentResourceResource} AS lesson_relations
       ON sections.id = lesson_relations.resourceOfId
     LEFT JOIN ${contentResource} AS lessons
-      ON lessons.id = lesson_relations.resourceId AND (lessons.type = 'lesson' OR lessons.type = 'exercise')
+      ON lessons.id = lesson_relations.resourceId AND lessons.deletedAt IS NULL AND (lessons.type = 'lesson' OR lessons.type = 'exercise')
     LEFT JOIN ${contentResourceResource} AS top_level_lesson_relations
       ON workshop.id = top_level_lesson_relations.resourceOfId
     LEFT JOIN ${contentResource} AS top_level_lessons
       ON top_level_lessons.id = top_level_lesson_relations.resourceId
+      AND top_level_lessons.deletedAt IS NULL
       AND (top_level_lessons.type = 'lesson' OR top_level_lessons.type = 'exercise')
     WHERE
       (workshop.type = 'workshop' OR workshop.\`type\` = 'tutorial')
       AND workshop.fields->>'$.state' = 'published'
       AND workshop.fields->>'$.visibility' = 'public'
+      AND workshop.deletedAt IS NULL
     ORDER BY
       COALESCE(section_relations.position, top_level_lesson_relations.position),
       lesson_relations.position
@@ -107,6 +110,7 @@ async function buildSitemap(): Promise<SitemapEntry[]> {
 	// Add workshop and tutorial entries
 	const workshopsAndTutorials = new Set<string>()
 	workshopItems.rows.forEach((item: any) => {
+		if (item.workshop_state !== 'published' || item.workshop_visibility !== 'public') return
 		if (!workshopsAndTutorials.has(item.workshop_id)) {
 			workshopsAndTutorials.add(item.workshop_id)
 			sitemapEntries.push({
@@ -114,8 +118,8 @@ async function buildSitemap(): Promise<SitemapEntry[]> {
 				title: item.workshop_title,
 				description: item.workshop_description || '',
 				lastModified: contentTimestamp(
-					item.workshop_publishedAt,
 					item.workshop_updatedAt,
+					item.workshop_publishedAt,
 					item.workshop_createdAt,
 				),
 				changeFrequency: 'monthly',
@@ -126,6 +130,7 @@ async function buildSitemap(): Promise<SitemapEntry[]> {
 
 	// Add lesson and exercise entries
 	workshopItems.rows.forEach((item: any) => {
+		if (item.workshop_state !== 'published' || item.workshop_visibility !== 'public') return
 		if (item.item_type === 'lesson' || item.item_type === 'exercise') {
 			const slug = item.lesson_slug || item.section_or_lesson_slug
 			const isPublicLesson =
@@ -136,8 +141,8 @@ async function buildSitemap(): Promise<SitemapEntry[]> {
 					title: item.lesson_title || item.section_or_lesson_title,
 					description: item.lesson_description || '',
 					lastModified: contentTimestamp(
-						item.lesson_publishedAt,
 						item.lesson_updatedAt,
+						item.lesson_publishedAt,
 						item.lesson_createdAt,
 						item.workshop_publishedAt,
 						item.workshop_updatedAt,
@@ -158,6 +163,8 @@ async function buildSitemap(): Promise<SitemapEntry[]> {
 		cr.fields->>'$.slug' AS slug,
 		cr.fields->>'$.title' AS title,
 		cr.fields->>'$.description' AS description,
+		cr.fields->>'$.state' AS state,
+		cr.fields->>'$.visibility' AS visibility,
 		cr.fields->>'$.publishedAt' AS publishedAt,
 		cr.updatedAt,
 		cr.createdAt
@@ -173,6 +180,7 @@ async function buildSitemap(): Promise<SitemapEntry[]> {
 	`)
 
 	otherContentItems.rows.forEach((item: any) => {
+		if (item.state !== 'published' || item.visibility !== 'public') return
 		let url: string
 		let priority: number
 		let changeFrequency:
@@ -204,8 +212,8 @@ async function buildSitemap(): Promise<SitemapEntry[]> {
 			title: item.title,
 			description: item.description || '',
 			lastModified: contentTimestamp(
-				item.publishedAt,
 				item.updatedAt,
+				item.publishedAt,
 				item.createdAt,
 			),
 			changeFrequency,
@@ -236,13 +244,32 @@ async function buildSitemap(): Promise<SitemapEntry[]> {
 		})
 	})
 
+	// Static route bodies can have CMS backing; never substitute a deployment date.
+	const pageItems = await db.execute(sql`
+		SELECT cr.fields->>'$.slug' AS slug, cr.updatedAt
+		FROM ${contentResource} cr
+		WHERE cr.type = 'page' AND cr.fields->>'$.state' = 'published'
+			AND cr.deletedAt IS NULL
+			AND cr.fields->>'$.slug' IN ('landing-page-v2', 'landing-page', 'newsletter', 'skills', 'skills-subscribe')
+		UNION ALL
+		SELECT 'skills-children' AS slug, MAX(cr.updatedAt) AS updatedAt
+		FROM ${contentResource} cr
+		WHERE cr.fields->>'$.state' = 'published' AND cr.fields->>'$.visibility' = 'public'
+			AND cr.deletedAt IS NULL
+			AND (cr.type = ${SKILL_CHANGELOG_RESOURCE_TYPE} OR
+				(cr.type = 'post' AND (cr.fields->>'$.postType' = ${SKILL_CHANGELOG_RESOURCE_TYPE}
+					OR cr.fields->>'$.slug' LIKE ${`${SKILL_CHANGELOG_SLUG_PREFIX}%`})))
+	`)
+	const pageUpdatedAt = (slug: string) => toValidDate(pageItems.rows.find((item: any) => item.slug === slug)?.updatedAt) ?? undefined
+	const skillChangelogEntries = await getSkillChangelogEntries({ limit: 100 })
+	const skillsUpdatedAt = latestTimestamp([pageUpdatedAt('skills'), pageUpdatedAt('skills-children')])
 	const staticAcquisitionEntries: SitemapEntry[] = [
 		{
 			url: `${process.env.COURSEBUILDER_URL}/newsletter`,
 			title: 'AI Hero Newsletter by Matt Pocock',
 			description:
 				'Subscribe to be the first to learn about AI Hero releases, updates, and special discounts for AI Heroes.',
-			lastModified: stableLastModified,
+			lastModified: pageUpdatedAt('newsletter'),
 			changeFrequency: 'weekly',
 			priority: 0.8,
 		},
@@ -251,7 +278,7 @@ async function buildSitemap(): Promise<SitemapEntry[]> {
 			title: 'AI Skills for Real Engineers',
 			description:
 				'A practical skill system for engineers who want to use AI without giving up their standards.',
-			lastModified: stableLastModified,
+			lastModified: skillsUpdatedAt,
 			changeFrequency: 'weekly',
 			priority: 0.9,
 		},
@@ -260,16 +287,16 @@ async function buildSitemap(): Promise<SitemapEntry[]> {
 			title: 'Skills Newsletter',
 			description:
 				'A practical skill system for engineers who want to use AI without giving up their standards.',
-			lastModified: stableLastModified,
+			lastModified: pageUpdatedAt('skills-subscribe'),
 			changeFrequency: 'weekly',
 			priority: 0.8,
 		},
 	]
 
-	const skillChangelogEntries = await getSkillChangelogEntries({ limit: 100 })
 	const seenSkillSlugs = new Set<string>()
 
 	skillChangelogEntries.forEach((entry) => {
+		if (entry.deletedAt || entry.fields?.state !== 'published' || entry.fields?.visibility !== 'public') return
 		const slug = entry.fields?.slug
 		if (!slug) return
 		if (seenSkillSlugs.has(slug)) return
@@ -293,7 +320,7 @@ async function buildSitemap(): Promise<SitemapEntry[]> {
 			url: `${process.env.COURSEBUILDER_URL}/`,
 			title: 'Homepage',
 			description: '',
-			lastModified: stableLastModified,
+			lastModified: pageUpdatedAt('landing-page-v2') ?? pageUpdatedAt('landing-page') ?? latestTimestamp(sitemapEntries.map((entry) => entry.lastModified)),
 			changeFrequency: 'daily',
 			priority: 1,
 		},
@@ -305,10 +332,10 @@ async function buildSitemap(): Promise<SitemapEntry[]> {
 
 const _getCachedSitemap = unstable_cache(
 	async () => retryTransientDatabaseRead(buildSitemap),
-	['public-sitemap-v1'],
+	['public-sitemap-v2'],
 	{
 		revalidate: 3600,
-		tags: ['posts', 'lists', 'tags', 'skill-changelog', 'ai-coding-dictionary'],
+		tags: ['posts', 'lists', 'tags', 'pages', 'workshop', 'skill-changelog', 'ai-coding-dictionary'],
 	},
 )
 
@@ -316,6 +343,6 @@ export default async function sitemap(): Promise<SitemapEntry[]> {
 	const entries = await _getCachedSitemap()
 	return entries.map((entry) => ({
 		...entry,
-		lastModified: new Date(entry.lastModified),
+		...(entry.lastModified ? { lastModified: new Date(entry.lastModified) } : {}),
 	}))
 }

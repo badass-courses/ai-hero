@@ -1,5 +1,6 @@
 import * as React from 'react'
 import type { Metadata, ResolvingMetadata } from 'next'
+import { metaDescription } from '@/lib/meta-description'
 import { notFound } from 'next/navigation'
 import { CldImage } from '@/components/cld-image'
 import { ForTeamsPage } from '@/components/for-teams/for-teams-page'
@@ -48,9 +49,10 @@ export async function generateMetadata(
 	}
 
 	const title = `${cohort.fields.title} for your team`
-	const description =
+	const description = metaDescription(
 		cohort.fields.description ??
-		'Team seats, invoicing and a shared way to build with AI.'
+		'Team seats, invoicing and a shared way to build with AI.',
+	)
 
 	return {
 		title,

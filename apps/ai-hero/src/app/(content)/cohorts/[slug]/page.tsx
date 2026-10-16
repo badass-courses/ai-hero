@@ -58,6 +58,8 @@ import { CohortIncludes } from './_components/cohort-includes'
 import { CohortPricingWidgetContainer } from './_components/cohort-pricing-widget-container'
 import { CohortSidebar } from './_components/cohort-sidebar'
 import { CohortTeamLink } from './_components/cohort-team-link'
+import { metaDescription } from '@/lib/meta-description'
+import { getCourseSeoCommerce } from '@/lib/course-seo-query'
 
 export async function generateMetadata(
 	props: {
@@ -78,7 +80,7 @@ export async function generateMetadata(
 	const title = share ? `${giftShareTitle(share.firstName, share.available)}: ${cohort.fields.title}` : cohort.fields.title
 	return {
 		title,
-		description: cohort.fields.description,
+		description: metaDescription(cohort.fields.description),
 		alternates: {
 			canonical: `/cohorts/${cohort.fields.slug}`,
 		},
@@ -533,7 +535,6 @@ export async function CohortPageView(props: CohortPageViewProps) {
 				<CohortMetadata
 					cohort={displayCohort}
 					product={offerInJsonLd ? cohortProps.product : undefined}
-					quantityAvailable={cohortProps.quantityAvailable}
 				/>
 				<EditWorkshopButton
 					className=""
@@ -760,22 +761,24 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	)
 }
 
-const CohortMetadata: React.FC<{
+const CohortMetadata = async ({ cohort, product }: {
 	cohort: Cohort
 	product?: CohortPageProps['product']
-	quantityAvailable: number
-}> = ({ cohort, product, quantityAvailable }) => {
+}) => {
+	const commerce = product ? await getCourseSeoCommerce(product.id) : undefined
+	const quantityAvailable = commerce?.quantityAvailable
+	const seoProduct = quantityAvailable === undefined ? undefined : commerce?.product
 	return (
 		<>
 			<CourseStructuredData
 				cohort={cohort}
-				product={product}
-				quantityAvailable={quantityAvailable}
+				product={seoProduct}
+				quantityAvailable={quantityAvailable ?? -1}
 			/>
-			{product ? (
+			{seoProduct ? (
 				<ProductStructuredData
-					product={product}
-					quantityAvailable={quantityAvailable}
+					product={seoProduct}
+					quantityAvailable={quantityAvailable ?? -1}
 					canonicalPath={`/cohorts/${cohort.fields.slug}`}
 				/>
 			) : null}

@@ -15,6 +15,8 @@ export default defineConfig({
 		server: {
 			deps: {
 				inline: [
+					// Exercise the ESM metadata resolver with Vite's server-only stub.
+					/next\/dist\/esm\/lib\/metadata/,
 					'@coursebuilder/commerce-next',
 					'@coursebuilder/next',
 					'next-auth',

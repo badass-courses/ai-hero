@@ -1,4 +1,5 @@
 import { unstable_cache } from 'next/cache'
+import { metaDescription } from '@/lib/meta-description'
 import { fetchGithubMarkdownFile } from '@/lib/github-markdown'
 
 const DICTIONARY_OWNER = 'mattpocock'
@@ -188,10 +189,7 @@ function getDescription(markdown: string) {
 
 	if (!firstParagraph) return ''
 
-	const description = stripMarkdown(firstParagraph)
-	return description.length > 180
-		? `${description.slice(0, 177).trim()}...`
-		: description
+	return metaDescription(firstParagraph)
 }
 
 function getDictionaryEntryPaths(readme: string) {
@@ -328,7 +326,7 @@ function parseDictionaryReadme(
 		currentEntry.rawBody = rawBody
 		currentEntry.body = rewriteDictionaryLinks(rawBody, slugByReadmeAnchor)
 		currentEntry.description =
-			frontmatter.description || getDescription(rawBody)
+			metaDescription(frontmatter.description || getDescription(rawBody))
 		currentEntry.aliases = frontmatter.aliases
 		delete (currentEntry as Partial<typeof currentEntry>).bodyLines
 		entries.push(currentEntry)

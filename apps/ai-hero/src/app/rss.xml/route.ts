@@ -8,7 +8,9 @@ export const revalidate = 3600
 export const dynamic = 'force-static'
 
 async function generateRSS() {
-	const sitemapEntries = await sitemap()
+	const sitemapEntries = (await sitemap()).filter(
+		(entry): entry is typeof entry & { lastModified: Date } => Boolean(entry.lastModified),
+	)
 
 	const feed = new Feed({
 		title: `${env.NEXT_PUBLIC_SITE_TITLE} RSS Feed`,

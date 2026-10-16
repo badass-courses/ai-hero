@@ -1,5 +1,6 @@
 import { Suspense } from 'react'
 import type { Metadata, ResolvingMetadata } from 'next'
+import { metaDescription } from '@/lib/meta-description'
 import { unstable_cache } from 'next/cache'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
@@ -269,10 +270,7 @@ export async function generateMetadata(
 
 	return {
 		title: String(entry.fields?.title ?? 'AI Skills Changelog'),
-		description:
-			typeof entry.fields?.description === 'string'
-				? entry.fields.description
-				: undefined,
+		description: metaDescription(typeof entry.fields?.description === 'string' ? entry.fields.description : undefined),
 		alternates: {
 			canonical: `/skills/${entry.fields?.slug}`,
 		},

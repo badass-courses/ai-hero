@@ -1,5 +1,6 @@
 import type { ParsedUrlQuery } from 'querystring'
 import type { Metadata } from 'next'
+import { metaDescription } from '@/lib/meta-description'
 import { redirect } from 'next/navigation'
 import {
 	AI_CODING_COHORT_SLUG,
@@ -51,7 +52,7 @@ export async function generateMetadata(props: {
 
 	return {
 		title: landing.variant.headline,
-		description: landing.variant.subhead,
+		description: metaDescription(landing.variant.subhead),
 		alternates: {
 			canonical: `/cohorts/${landing.destination.slug}`,
 		},

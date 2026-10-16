@@ -4,6 +4,7 @@ import { unstable_cache } from 'next/cache'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { CourseCta } from '@/app/(content)/_components/course-cta'
+import { metaDescription } from '@/lib/meta-description'
 import { ContentReadTracker } from '@/components/content-read-tracker'
 import { BADGE_OUTLINE, TYPE } from '@/components/landing/type'
 import type { CalloutIntent } from '@/components/mdx/callout'
@@ -897,7 +898,7 @@ export async function generateMetadata(
 
 	return {
 		title: resource.fields.title,
-		description: resource.fields.description,
+		description: metaDescription(resource.fields.description),
 		alternates: {
 			canonical: `/${resource.fields.slug}`,
 		},

@@ -31,7 +31,10 @@ import {
 } from '@/lib/workshops-query'
 import { compileMDX } from '@/utils/compile-mdx'
 import { Markdown as ReactMarkdown } from '@/components/markdown'
-import { Course } from 'schema-dts'
+import { buildCourseSchema } from '@/lib/course-schema'
+import { getCourseSeoCommerce } from '@/lib/course-seo-query'
+import { metaDescription } from '@/lib/meta-description'
+import { StructuredDataScript } from '@/lib/structured-data'
 
 import { Skeleton } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
@@ -79,7 +82,7 @@ export async function generateMetadata(
 
 	return {
 		title: workshop.fields?.title,
-		description: workshop.fields?.description,
+		description: metaDescription(workshop.fields?.description),
 		alternates: {
 			canonical: `/workshops/${params.module}`,
 		},
@@ -309,6 +312,7 @@ export default async function ModulePage(props: Props) {
 					description={workshop.fields?.description || ''}
 					imageUrl={workshop.fields?.coverImage?.url}
 					slug={params.module}
+					productId={!isPreLaunch && hasSelfPacedProduct ? product?.id : undefined}
 				/>
 				{/* The cover bleeds to the container's top, right and bottom edges,
 				    square-cornered, on the same six-column rhythm as the body below —
@@ -579,34 +583,24 @@ export default async function ModulePage(props: Props) {
 	)
 }
 
-const WorkshopMetadata = ({
+const WorkshopMetadata = async ({
 	title,
 	description,
 	imageUrl,
 	slug,
+	productId,
 }: {
 	title: string
 	description: string
 	imageUrl?: string
 	slug: string
+	productId?: string
 }) => {
-	const jsonLd: Course = {
-		'@type': 'Course',
-		name: title,
-		author: config.author,
-		creator: {
-			'@type': 'Person',
-			name: config.author,
-		},
-		description: description,
-		...(imageUrl && { thumbnailUrl: imageUrl }),
-		url: `${env.NEXT_PUBLIC_URL}/workshops/${slug}`,
+	const commerce = productId ? await getCourseSeoCommerce(productId) : undefined
+	const jsonLd = {
+		...buildCourseSchema({ title, description, url: new URL(`/workshops/${slug}`, config.siteUrl).href, ...commerce }),
+		creator: { '@type': 'Person' as const, name: config.author },
+		...(imageUrl ? { thumbnailUrl: imageUrl } : {}),
 	}
-
-	return (
-		<script
-			type="application/ld+json"
-			dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-		/>
-	)
+	return <StructuredDataScript id="course-jsonld" data={jsonLd} />
 }
