@@ -400,3 +400,60 @@ export function readKitExitMembership(
 		catch: () => unavailable(),
 	})
 }
+
+const tagPageSchema = z.object({
+	tags: z
+		.array(
+			z.object({
+				id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+				tagged_at: z.string().datetime({ offset: true }),
+			}),
+		)
+		.max(1000),
+	pagination: z.object({
+		has_next_page: z.boolean(),
+		end_cursor: z.string().nullable().optional(),
+	}),
+})
+export const MAX_TAG_PAGES = 50
+
+/** Authenticated GET of every tag on one subscriber, all pages. Any short read,
+ * bad shape, loop or non-200 throws: a partial tag list is never proof. */
+export async function readKitSubscriberTags(options: {
+	apiKey: string
+	fetch: typeof fetch
+	subscriberId: string
+}): Promise<{ id: number; taggedAt: string }[]> {
+	if (!/^[1-9]\d*$/.test(options.subscriberId) || !options.apiKey.trim())
+		throw new RecoveryRefused({ reason: 'exit-proof-unreadable' })
+	const tags: { id: number; taggedAt: string }[] = []
+	const cursors = new Set<string>()
+	let cursor: string | undefined
+	for (let page = 0; page < MAX_TAG_PAGES; page++) {
+		const url = new URL(
+			`https://api.kit.com/v4/subscribers/${options.subscriberId}/tags`,
+		)
+		url.searchParams.set('per_page', '1000')
+		if (cursor) url.searchParams.set('after', cursor)
+		const response = await options.fetch(url.toString(), {
+			method: 'GET',
+			redirect: 'error',
+			signal: AbortSignal.timeout(KIT_REQUEST_TIMEOUT_MS),
+			headers: { 'X-Kit-Api-Key': options.apiKey.trim() },
+		})
+		if (response.redirected || response.status !== 200)
+			throw new RecoveryRefused({ reason: 'exit-proof-unreadable' })
+		const decoded = tagPageSchema.safeParse(await response.json())
+		if (!decoded.success)
+			throw new RecoveryRefused({ reason: 'exit-proof-unreadable' })
+		for (const tag of decoded.data.tags)
+			tags.push({ id: tag.id, taggedAt: tag.tagged_at })
+		const { has_next_page, end_cursor } = decoded.data.pagination
+		if (!has_next_page) return tags
+		if (!end_cursor || cursors.has(end_cursor))
+			throw new RecoveryRefused({ reason: 'exit-proof-unreadable' })
+		cursors.add(end_cursor)
+		cursor = end_cursor
+	}
+	throw new RecoveryRefused({ reason: 'exit-proof-unreadable' })
+}
