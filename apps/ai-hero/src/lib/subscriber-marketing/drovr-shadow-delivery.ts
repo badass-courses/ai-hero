@@ -106,6 +106,8 @@ export class DrovrBatchDeliveryFailedError extends Error {
 }
 
 export type DrovrBatchOutcome = {
+	/** Terminal SDK coordination result, never a receiver rejection. */
+	ackEvidenceExpired?: import('./contact-sync-profile-ack-schema').AckEvidenceExpired
 	/** Durable owed work, not receiver acceptance or an acknowledgement. */
 	outboxed?: number
 	/** Retained local dispositions, never fresh HTTP rejection counts. */

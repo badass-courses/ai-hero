@@ -119,6 +119,12 @@ function member(
 		firstFailedAt: row.firstFailedAt,
 	}
 }
+/** Read-only first-owned member check, including when unrelated evidence has
+ * expired. This grants neither transport nor ACK authority. */
+export function assertProfileAckRetainedMember(state: ProfileAckCoordinator, row: DrovrOutboxRow): void {
+	const expected = state.members.find(item => item.key === row.dedupeKey)
+	if (!expected || canonical(member(row, state.ref)) !== canonical(expected)) fail('a retained native member changed its original frozen body, scope or clock')
+}
 function requestFor(
 	profile: DrovrOutboxRow,
 	version: number,

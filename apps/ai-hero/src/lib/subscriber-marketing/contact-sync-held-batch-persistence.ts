@@ -40,6 +40,8 @@ export function sameHeldBatchScope(
 		previous.parkedAt === next.parkedAt &&
 		previous.completion.state === 'unfinished' &&
 		next.completion.state === 'unfinished' &&
+		JSON.stringify(previous.profileAckRef ?? null) === JSON.stringify(next.profileAckRef ?? null) &&
+		previous.profileAckNativeDebt === next.profileAckNativeDebt &&
 		JSON.stringify(previous.acknowledge ?? null) ===
 			JSON.stringify(next.acknowledge ?? null) &&
 		previous.members.length === next.members.length &&

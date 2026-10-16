@@ -54,14 +54,16 @@ export function contactSyncRetryRequest(
 	paceClass?: BulkClass,
 	firstFailedAt?: string,
 	deliverySource?: DrovrContactSyncRetryRequested['data']['deliverySource'],
+	profileAckRef?: DrovrContactSyncRetryRequested['data']['profileAckRef'],
+	profileAckNativeDebt?: boolean,
 ): DrovrContactSyncRetryRequested & { id: string; ts: number } {
 	const keys = items.map(({ event }) => JSON.stringify([event.tenantId, event.contactId, event.journeyId, event.idempotencyKey])).sort()
-	const digest = createHash('sha256').update(JSON.stringify([paceClass ?? 'live', deliverySource ?? null, acknowledge ?? null, keys])).digest('hex')
+	const digest = createHash('sha256').update(JSON.stringify([paceClass ?? 'live', deliverySource ?? null, acknowledge ?? null, keys, ...(profileAckRef ? [profileAckRef, profileAckNativeDebt === true] : [])])).digest('hex')
 	return {
 		name: CONTACT_SYNC_RETRY_EVENT,
 		id: `contact-sync-retry:${attempt}:${digest}`,
 		ts: nowMs + stragglerRetryDelayMs(attempt),
-		data: { items, attempt, firstFailedAt: firstFailedAt ?? new Date(nowMs).toISOString(), ...(acknowledge ? { acknowledge } : {}), ...(paceClass ? { paceClass } : {}), ...(deliverySource ? { deliverySource } : {}) },
+		data: { items, attempt, firstFailedAt: firstFailedAt ?? new Date(nowMs).toISOString(), ...(profileAckRef ? { profileAckRef, ...(profileAckNativeDebt ? { profileAckNativeDebt: true } : {}) } : {}), ...(acknowledge ? { acknowledge } : {}), ...(paceClass ? { paceClass } : {}), ...(deliverySource ? { deliverySource } : {}) },
 	}
 }
 
@@ -116,6 +118,7 @@ export function createDirectoryBirth(args: {
  */
 type BirthRedeliveryOutcome = DrovrBatchOutcome & { deferred: DeferredDrovrEvent[] } & (
 	| { kind: 'resolved' }
+	| { kind: 'expired' }
 	| { kind: 'held'; anchor: DrovrShadowEvent; reason: 'outboxed' | 'unproven-delivery' }
 )
 export async function birthThenRedeliver(args: {
@@ -138,11 +141,13 @@ export async function birthThenRedeliver(args: {
 		if (!born.has(event.contactId)) {
 			const birthId = `paced-birth:${createHash('sha256').update(event.contactId).digest('hex')}`
 			const directory = args.pacedBirth ? await args.pacedBirth(birthId, [event.contactId]) : await args.step.run(birthId, () => args.birth([event.contactId])) as void | DrovrBatchOutcome
+			if (directory && directory.ackEvidenceExpired) return { ...result, kind: 'expired', ackEvidenceExpired: directory.ackEvidenceExpired }
 			if (directory && (retryAnswerNeedsHold(directory) || directory.rejected > 0 || (directory.retainedRejected ?? 0) > 0 || directory.deferred?.length)) return { ...result, kind: 'held', anchor: event, reason: directory.outboxed ? 'outboxed' : 'unproven-delivery', deferred: args.deferred }
 			born.add(event.contactId)
 		}
 		const id = `paced-redeliver:${retryStepKey(event)}`
 		const answer = args.pacedDeliver ? await args.pacedDeliver(id, [event]) : (await args.step.run(id, () => args.deliver([event]))) as DrovrBatchOutcome
+		if (answer.ackEvidenceExpired) return { ...result, kind: 'expired', accepted: result.accepted + answer.accepted, rejected: result.rejected + answer.rejected, ackEvidenceExpired: answer.ackEvidenceExpired }
 		if (retryAnswerNeedsHold(answer)) return { ...result, kind: 'held', anchor: event, reason: answer.outboxed ? 'outboxed' : 'unproven-delivery', deferred: args.deferred }
 		if ((answer.accepted > 0 || answer.alreadyDelivered) && event.type === 'contact.profile.updated') await args.afterProfile?.(event)
 		result.accepted += answer.accepted
@@ -165,6 +170,8 @@ type RetryStep = {
 }
 
 export type ContactSyncRetryReceipt =
+	| { status: 'ack-evidence-expired'; accepted: number; rejected: number; evidence: import('./contact-sync-profile-ack-schema').AckEvidenceExpired }
+	| { status: 'awaiting-proof'; remaining: number }
 	| { status: 'held'; remaining: number; reason: 'outboxed' | 'unproven-delivery' }
 	| { status: 'delivered'; accepted: number; rejected: number; priorRejected?: number }
 	| { status: 'continued'; remaining: number; deferred: number; accepted: number; rejected: number; attempt: number }
@@ -190,7 +197,7 @@ export async function runContactSyncStragglerRetry(args: {
 		data: DrovrContactSyncRetryRequested['data']
 		reason: 'outboxed' | 'unproven-delivery'
 	}) => Promise<void>
-	beforeDeliver?: () => Promise<void | 'held'>
+	beforeDeliver?: () => Promise<void | 'held' | import('./contact-sync-profile-ack-schema').AckEvidenceExpired>
 	/** Production supplies fresh full-membership proof, never phase counters. */
 	proveComplete?: () => Promise<import('./contact-sync-retry-acknowledgement').RetryAcknowledgementProof>
 	/** Delivers in deferNotLive mode; throws on a transient failure. */
@@ -199,20 +206,26 @@ export async function runContactSyncStragglerRetry(args: {
 	/** Births these contacts' directory actors (directoryBirthEvents). */
 	birth: (contactIds: string[]) => Promise<void>
 	/** Records that drovr fully accepted a profile version (the version store). */
-	acknowledge: (contactId: string, profileVersion: number) => Promise<void>
+	acknowledge: (contactId: string, profileVersion: number) => Promise<import('./contact-sync-profile-ack-completion-live').ProfileAckWorkerCompletion>
+	acknowledgementStepId?: string
 }): Promise<ContactSyncRetryReceipt> {
-	const { items, attempt, acknowledge, paceClass, firstFailedAt, deliverySource, carry = [], rejectedCarry = 0 } = args.event.data
+	const { items, attempt, acknowledge: requestedAck, paceClass, firstFailedAt, deliverySource, carry = [], rejectedCarry = 0 } = args.event.data
+	const ref = args.event.data.profileAckRef
+	const frozenNative = [...items, ...carry].some(item => item.event.type === 'contact.profile.updated' || item.event.type === 'contact.links.issued')
+	const acknowledge = requestedAck ?? (ref && frozenNative ? { contactId: ref.contactId, profileVersion: ref.profileVersion } : undefined)
 	const nowMs = (await args.step.run('now', async () => args.now())) as number
 	// Hard physical-run quota, including every cold-start and retry booking.
 	const quota = 1
 	if (!Number.isSafeInteger(rejectedCarry) || rejectedCarry < 0) throw new Error('RetryContinuation: you resumed stragglers, and it failed because the rejection proof is invalid. Accepted: a nonnegative whole rejection count. Fix: restore the original continuation metadata. Debug: inspect the retry request.')
 	const continuationId = args.runId ?? createHash('sha256').update(JSON.stringify([args.event.data, nowMs])).digest('hex')
 	const renew = (nextItems: DeferredDrovrEvent[], nextAttempt: number, options: { carry?: DeferredDrovrEvent[]; rejected?: number; id?: string; ts?: number } = {}) => {
-		const request = contactSyncRetryRequest(nextItems, nextAttempt, nowMs, acknowledge, paceClass, firstFailedAt, deliverySource)
+		const request = contactSyncRetryRequest(nextItems, nextAttempt, nowMs, acknowledge, paceClass, firstFailedAt, deliverySource, args.event.data.profileAckRef, args.event.data.profileAckNativeDebt)
 		return routeContactSyncRetry({ ...request, ...(options.id ? { id: options.id } : {}), ...(options.ts === undefined ? {} : { ts: options.ts }), data: { ...request.data, ...(args.event.data.ownedKeys ? { ownedKeys: args.event.data.ownedKeys } : {}), ...(args.event.data.heldBatchRelease ? { heldBatchRelease: args.event.data.heldBatchRelease } : {}), ...(options.carry?.length ? { carry: options.carry } : {}), ...((options.rejected ?? rejectedCarry) ? { rejectedCarry: options.rejected ?? rejectedCarry } : {}) } })
 	}
 	// Even a healthy pause publishes only first-owned immutable work.
-	if (await args.beforeDeliver?.() === 'held') return { status: 'held', remaining: items.length + carry.length, reason: 'unproven-delivery' }
+	const admission = await args.beforeDeliver?.()
+	if (admission && typeof admission === 'object' && admission._tag === 'AckEvidenceExpired') return { status: 'ack-evidence-expired', accepted: 0, rejected: 0, evidence: admission }
+	if (admission === 'held') return { status: 'held', remaining: items.length + carry.length, reason: 'unproven-delivery' }
 	const config = parseDrovrProfileSyncConfig(args.env)
 	if (!config.enabled && !isUncappedOfferRetry(args.event.data) && deliverySource !== 'kit-directory-ingest' && deliverySource !== 'evergreen-pitch-backfill') {
 		// A pause is healthy, not another HTTP refusal. Fresh durable IDs
@@ -235,6 +248,7 @@ export async function runContactSyncStragglerRetry(args: {
 		// answer without retained acceptance or local closure cannot finish
 		// this member either. Park the whole remaining logical batch before
 		// returning; held work must not auto-publish another continuation.
+		if (answer.ackEvidenceExpired) return { status: 'ack-evidence-expired', accepted: outcome.accepted + answer.accepted, rejected: outcome.rejected + answer.rejected, evidence: answer.ackEvidenceExpired }
 		if (retryAnswerNeedsHold(answer)) return hold(event, answer.outboxed ? 'outboxed' : 'unproven-delivery')
 		if ((answer.accepted > 0 || answer.alreadyDelivered) && event.type === 'contact.profile.updated') await args.afterProfile?.(event)
 		outcome.accepted += answer.accepted
@@ -251,6 +265,7 @@ export async function runContactSyncStragglerRetry(args: {
 		pacedBirth: args.pacedBirth,
 		afterProfile: args.afterProfile,
 	})
+	if (resolved.ackEvidenceExpired) return { status: 'ack-evidence-expired', accepted: outcome.accepted + resolved.accepted, rejected: outcome.rejected + resolved.rejected, evidence: resolved.ackEvidenceExpired }
 	if (resolved.kind === 'held') return hold(resolved.anchor, resolved.reason)
 	const refused = [...carry, ...resolved.deferred]
 	const rejected = outcome.rejected + resolved.rejected
@@ -261,8 +276,22 @@ export async function runContactSyncStragglerRetry(args: {
 		return { status: 'continued', remaining: items.length - quota, deferred: refused.length, accepted: outcome.accepted + resolved.accepted, rejected, attempt }
 	}
 	if (refused.length === 0) {
-		if (args.proveComplete) {
-			const proof = await args.proveComplete()
+		type Decision = { proof?: import('./contact-sync-retry-acknowledgement').RetryAcknowledgementProof; completion?: import('./contact-sync-profile-ack-completion-live').ProfileAckWorkerCompletion }
+		let decision: Decision | undefined
+		if (acknowledge && totalRejected === 0) {
+			// The actual SDK effect owns BOTH the fresh proof and the write.
+			// A rolled-back write may not reuse a cached positive proof.
+			decision = await args.step.run(args.acknowledgementStepId ?? 'acknowledge-version', async () => {
+				const proof = await args.proveComplete?.()
+				if (proof && (!proof.proved || proof.rejected !== 0)) return { proof }
+				return { proof, completion: await args.acknowledge(acknowledge.contactId, acknowledge.profileVersion) }
+			}) as Decision | undefined
+		} else decision = { proof: await args.proveComplete?.() }
+		const proof = decision?.proof
+		if (proof && !proof.proved && proof.ackEvidenceExpired) return { status: 'ack-evidence-expired', accepted: outcome.accepted + resolved.accepted, rejected, evidence: proof.ackEvidenceExpired }
+		if (decision?.completion?._tag === 'AckEvidenceExpired') return { status: 'ack-evidence-expired', accepted: outcome.accepted + resolved.accepted, rejected, evidence: decision.completion }
+		if (decision?.completion?._tag === 'ProfileAckAwaitingProof') return { status: 'awaiting-proof', remaining: items.length + carry.length }
+		if (proof) {
 			if (!proof.proved || totalRejected > proof.rejected) {
 				const anchor = items[0]?.event ?? carry[0]?.event
 				if (!anchor) throw new HeldBatchContinuationError({ reason: 'the empty logical request has no complete scoped receiver proof' })
@@ -271,12 +300,6 @@ export async function runContactSyncStragglerRetry(args: {
 			priorRejected += proof.rejected - totalRejected
 			totalRejected = proof.rejected
 		}
-		// drovr now holds every event of the version (Macroscope on #319):
-		// acknowledge it, so live writers stop re-pushing it unchanged.
-		if (acknowledge && totalRejected === 0)
-			await args.step.run('acknowledge-version', () =>
-				args.acknowledge(acknowledge.contactId, acknowledge.profileVersion),
-			)
 		return {
 			status: 'delivered',
 			accepted: outcome.accepted + resolved.accepted,

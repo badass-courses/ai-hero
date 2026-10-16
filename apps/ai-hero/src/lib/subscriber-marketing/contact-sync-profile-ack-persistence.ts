@@ -92,7 +92,8 @@ export type ProfileAckSettlement =
  * Capture/registration and purge must use that SAME contact-first order.
  * A failed ACK write rolls the native settlement and first proof back together.
  * OFF invokes neither the callback nor any SQL; its caller uses legacy settle.
- * This is not yet wired into native workers and is not an enable recommendation.
+ * Native workers compose through this boundary. Producer registration and the
+ * remaining lifecycle proofs are still required; this is not an enable recommendation.
  */
 export async function settleAndCompleteProfileAck(args: {
 	database: unknown

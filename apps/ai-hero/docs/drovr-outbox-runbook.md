@@ -4,7 +4,7 @@
 
 ## Contact deltas and the paced lane
 
-Profile/link deltas and complete backfill pages persist every immutable event **before** publication. An unavailable/unconfigured capture fails closed, so it cannot advance the watermark or acknowledge the new version. Captured rows give the queued worker a **24-hour not-before window**, rather than being immediately due to replay. Accepted nondeferred rows are settled **by key on the first attempt**, not only on an Inngest retry. Deferred, outboxed or held rows are not declared delivered. With `drovr-profile-ack-enabled` **OFF**, the producer intentionally preserves main's legacy optimistic ACK of successful delivery **or durable queue handoff**, avoiding repeated unacknowledged-version sends. This rollout trade-off is **not receiver-proof confirmation**. When **ON**, only fresh complete proof of frozen original profile/link membership may authorize the new atomic ACK; queued/deferred work is not confirmation.
+Profile/link deltas and complete backfill pages persist every immutable event **before** publication. An unavailable/unconfigured capture fails closed, so it cannot advance the watermark or acknowledge the new version. Captured rows give the queued worker a **24-hour not-before window**, rather than being immediately due to replay. Accepted nondeferred rows are settled **by key on the first attempt**, not only on an Inngest retry. Deferred, outboxed or held rows are not declared delivered. With `drovr-profile-ack-enabled` **OFF**, the producer intentionally preserves main's legacy optimistic ACK of successful delivery **or durable queue handoff** only for **never-registered requests**, avoiding repeated unacknowledged-version sends. A known frozen identity must not fall through to a legacy NOW refresh, including during OFF/error. This rollout trade-off is **not receiver-proof confirmation**. When **ON**, only fresh complete proof of frozen original profile/link membership may authorize the new atomic ACK; queued/deferred work is not confirmation.
 
 - Source classes `bulkDelta`, `bulkRestate`, `bulkIngest`, `bulkBackfill` and `bulkEvergreen` preserve ownership without a schema change. Timed-out capped rows return to the same isolated worker. Replay CAS-leases a due pending row **before** publication; a concurrent publisher loses that lease without sending. A successful handoff does not rewrite its lease afterward: a fast consumer's final-failure release remains due, and its original diagnostic is retained. Failed broker publication shortens only the matching lease to a short retry; changed/settled leases are not reopened. Queue outcomes distinguish `published`, healthy `deferred` and `stale`, without charging HTTP attempts or the Drovr outage breaker. Generic bookkeeping cannot rewrite delivered or superseded history. Workers skip delivered rows and recheck after a durable wait. This is not whole-system exactly-once delivery; extreme overlaps still depend on receiver idempotency.
 - Coupons and offers never change the profile digest/version. A genuine offer-only update and `coupon.issued` completion, including an offer-only straggler, stay live and uncapped. They cannot acknowledge a pending profile or postpone its confirmation.
@@ -90,9 +90,9 @@ It stores no event bodies or rebased clocks. Overflow and invalid state refuse
 with a literal-prompt error; nothing is trimmed. `lastError` remains operator
 prose only, never a control-state fallback.
 
-The one whole-subsystem app/admin flag is **`drovr-profile-ack-enabled`**, default **OFF in all four environments**. Fresh bounded Redis reads fail OFF on missing values, errors or timeouts. It gates registration, completion and failed/partial-ACK tombstones together, never genuine signup/purchase/unsubscribe delivery. This PR changes no stored flag value. OFF keeps main's legacy optimistic producer ACK to prevent additional sends/re-captures; it does not write new coordinators/tombstones, pin ACK receipts or reconstruct purged history. The source-pinned main fixture checks every prefix, including a conservative downstream offer-repair allowance; this is a local model, not a deployed POST measurement.
+The one whole-subsystem app/admin flag is **`drovr-profile-ack-enabled`**, default **OFF in all four environments**. Fresh bounded Redis reads fail OFF on missing values, errors or timeouts. It gates registration, completion and failed/partial-ACK tombstones together, never genuine signup/purchase/unsubscribe delivery. This PR changes no stored flag value. OFF keeps main's legacy optimistic producer ACK only for never-registered requests to prevent additional sends/re-captures; known frozen identities remain fenced against a legacy age refresh even during OFF/error; it does not write new coordinators/tombstones, pin ACK receipts or reconstruct purged history. The source-pinned main fixture checks every prefix, including a conservative downstream offer-repair allowance; this is a local model, not a deployed POST measurement.
 
-Tombstones have their own `ackTombstone` status/source, `control` endpoint, Schema-decoded fixed `{"control":"ackTombstone","v":1}` NOT NULL body and first-created +400-day/version-change expiry. They are not native events or positive/negative receipts. Native due/retry/held/operator/depth queries and generic writes explicitly exclude them; attempted capture, replay POST or broker publication literally refuses before any port is touched. Ordinary delivered-row purge cannot delete a live tombstone. While ON, purge of incomplete coordinator evidence inserts/fences its tombstone **before DELETE in the same transaction**. Disposable MySQL tests cover rollback after insertion and after deletion, plus committed marker-before-delete ordering. Dedicated 400-day/version-change tombstone deletion and producer/worker registration plumbing remain WIP; this is not permission to enable. Enabling is a **one-way reader-first boundary**, not a flag-off or old-code rollback: prove all active readers compatible and drain/save/cancel deliberately before changing an in-flight rollout.
+Tombstones have their own `ackTombstone` status/source, `control` endpoint, Schema-decoded fixed `{"control":"ackTombstone","v":1}` NOT NULL body and first-created +400-day/version-change expiry. They are not native events or positive/negative receipts. Native due/retry/held/operator/depth queries and generic writes explicitly exclude them; attempted capture, replay POST or broker publication literally refuses before any port is touched. Ordinary delivered-row purge cannot delete a live tombstone. While ON, purge of incomplete coordinator evidence inserts/fences its tombstone **before DELETE in the same transaction**. Disposable MySQL tests cover rollback after insertion and after deletion, plus committed marker-before-delete ordering. Dedicated 400-day/version-change tombstone deletion and immutable producer capture/registration plumbing remain WIP; this is not permission to enable. Enabling is a **one-way reader-first boundary**, not a flag-off or old-code rollback: prove all active readers compatible and drain/save/cancel deliberately before changing an in-flight rollout.
 
 ### `PurgeRefused`: known new metadata while the flag is OFF/unknown
 
@@ -106,8 +106,8 @@ Operator recovery:
 3. Do not drop the column, roll old readers back over new state, or repeatedly release work to bypass this refusal. Escalate the count-only >24h signal to the desk.
 
 **WIP boundary:** the fifth-member codec, pure proof/clock policy and atomic native-settlement/first-proof helper are tested
-locally; immutable capture/registration and automatic SDK-worker plumbing are
-not yet complete. This checkpoint is not merge/deploy ready. Profile ACK covers
+locally. Consumer-first SDK worker plumbing is implemented; immutable atomic
+capture/registration and producer/memory-store lifecycle integration are not yet complete. This checkpoint is not merge/deploy ready. Profile ACK covers
 only frozen profile/link membership, not the separately durable current-offer
 repair. `confirmationClock` is the delivered profile's frozen `occurredAt` and
 is the only confirmation-age input, forward only. `provedAt` is complete-receipt
@@ -115,7 +115,41 @@ proof time for audit only. Identical same-request proof is a no-op; different
 proof refuses. A different explicit monthly period is a different request.
 Missing purged evidence returns terminal `AckEvidenceExpired` without a new pin,
 recapture, timestamp refresh or ACK retry; this does not abandon retained native
-debt. The worker-level no-retry/log-once execution proof remains outstanding.
+debt. SDK tests now exercise expiry before ownership, during ownership and at
+actual POST time, including empty ACK-only requests and a failed ACK effect followed
+by a fresh completion attempt. These are mocked transport callbacks plus real SQL
+store proofs, not the remaining full actual-fetch/runtime/operator acceptance.
+
+Local worker integration now composes positive native settlement and direct replay
+settlement with the atomic proof helper; final/mixed refusal counters and opaque
+notes cannot authorize a known frozen request's delivered receipt. A later held
+row stays held. The legacy Drizzle timestamp writer uses the same contact-first
+transaction order and refuses to refresh a known frozen identity (including OFF),
+or to provide an optimistic ACK while the whole-subsystem flag is ON. This is not
+yet the complete producer/memory-store registration lifecycle.
+
+`profileAckRef` and `profileAckNativeDebt` are SDK metadata, never wire-body fields.
+Raw shards, retry renewal, native replay and held release retain the original
+reference. Frozen profile/link workers read existing ownership only: they do not
+re-run mutable fan-out, recapture a missing row or recreate it from a late failure
+hook. Read-only admission is repeated inside the actual POST callback; it is not
+ACK proof. The actual SDK ACK effect invokes the atomic stored-request completion
+port, not the legacy NOW writer or a cached subset/counter proof. An awaiting
+receipt is not reconciliation coverage. Native accepted counts remain native
+transport counts, not frozen-request confirmation. Surviving native profile debt
+can still settle without ACK; a surviving link never gains a synthetic missing
+profile authority. Native healthy-gate/parent-child closure audits remain N7 work.
+
+Expiry diagnostics use `logAckEvidenceExpiredOncePerProcess`, signal
+**`drovr.profile_ack.evidence_expired`**. Suppression is a **bounded in-process LRU**
+(4,096 hashed contact/version keys), not distributed exactly-once logging. The
+second call while retained in one process produces no new line; a fresh process
+may log once, and cache eviction can permit a later line. Tests exercise actual
+fresh Node child processes. Missing/failed loggers fail quiet; no Redis key, new
+outbox row, pin, flag mutation or retry is used for logging suppression. The
+result remains terminal `AckEvidenceExpired`; observability does not authorize
+history reconstruction, capture, confirmation-age refresh or wire HTTP. The
+separate `drovr.outbox.purge_refused` alert remains count-based per scheduled tick.
 
 - Ordinary missing-column readers log once and mean no held state. Coordination
   and ACK readers/writers refuse without a diagnostic or legacy fallback, even

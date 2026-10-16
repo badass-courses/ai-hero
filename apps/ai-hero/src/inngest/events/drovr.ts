@@ -13,6 +13,10 @@ export type DrovrEventsDeliver = {
 	name: typeof DROVR_EVENTS_DELIVER_EVENT
 	data: {
 		events: DrovrShadowEvent[]
+		/** Frozen SDK coordination only; never part of a wire event body. */
+		profileAckRef?: import('@/lib/subscriber-marketing/contact-sync-profile-ack-schema').ProfileAckReference
+		/** Hint only: admission still requires matching retained native debt. */
+		profileAckNativeDebt?: boolean
 		/** Original birth clamp instant carried through replay and capacity handoff. */
 		firstFailedAt?: string
 		/** Already-normalized stragglers stay in their protected class queue. */
@@ -98,6 +102,8 @@ export type DrovrContactSyncRetryRequested = {
 		rejectedCarry?: number
 		/** Frozen full scoped membership, including earlier completed slices. */
 		ownedKeys?: string[]
+		profileAckRef?: import('@/lib/subscriber-marketing/contact-sync-profile-ack-schema').ProfileAckReference
+		profileAckNativeDebt?: boolean
 		/** Explicit operator permission; never minted by an automatic retry. */
 		heldBatchRelease?: { anchorKey: string; id: string }
 		firstFailedAt?: string

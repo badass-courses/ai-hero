@@ -192,7 +192,7 @@ export async function prepareHeldBatchReplay(
 					attempt: continuation.attempt,
 					firstFailedAt: continuation.originalClock,
 					ownedKeys: keys,
-					rejectedCarry: continuation.rejectedCarry,
+					...(continuation.profileAckRef ? { profileAckRef: continuation.profileAckRef, ...(continuation.profileAckNativeDebt !== undefined ? { profileAckNativeDebt: continuation.profileAckNativeDebt } : {}) } : {}),					rejectedCarry: continuation.rejectedCarry,
 					heldBatchRelease: {
 						anchorKey: continuation.anchorKey,
 						id: continuation.release.id,

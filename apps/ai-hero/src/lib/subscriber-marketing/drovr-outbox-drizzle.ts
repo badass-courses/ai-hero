@@ -11,6 +11,7 @@ import {
 	notInArray,
 	or,
 	sql,
+	type SQL,
 } from 'drizzle-orm'
 
 import {
@@ -34,6 +35,8 @@ import { collectHeldBatchPins, HELD_BATCH_PIN_SCAN_MAX_COORDINATORS, unpinnedDel
 import { HeldBatchContinuationError } from './contact-sync-held-batch'
 import { retryHeldBatchTransaction } from './contact-sync-held-batch-transaction'
 import { protectProfileAckPurge, type ProfileAckPurgeCandidate } from './contact-sync-profile-ack-purge'
+import { settleProfileAckWorkerRows, type ProfileAckWorkerKey } from './contact-sync-profile-ack-worker'
+import { logAckEvidenceExpiredOncePerProcess } from './contact-sync-profile-ack-expired-log'
 
 // JSON parents are explicit: JSON_SET does not create missing parent objects.
 export const queueEnvelope = sql`JSON_SET(IF(${drovrOutbox.heldContinuation} IS NULL OR JSON_TYPE(${drovrOutbox.heldContinuation}) = 'NULL', JSON_OBJECT('v', 1), ${drovrOutbox.heldContinuation}), '$.replayProof', COALESCE(JSON_EXTRACT(${drovrOutbox.heldContinuation}, '$.replayProof'), JSON_OBJECT('v', 1, 'handoffs', 0)))`
@@ -164,7 +167,7 @@ export function createDrizzleDrovrOutboxStore(
 	// The same shape the capture repository takes; drizzle's MySqlDatabase
 	// generics are unwieldy here.
 	database: unknown,
-	options: { profileAckEnabled?: () => Promise<boolean> } = {},
+	options: { profileAckEnabled?: () => Promise<boolean>; onProfileAckSettlement?: (result: import('./contact-sync-profile-ack-persistence').ProfileAckSettlement) => void } = {},
 ): DrovrOutboxStore {
 	type Operations = {
 		select: (fields?: unknown) => any
@@ -173,6 +176,27 @@ export function createDrizzleDrovrOutboxStore(
 		delete: (table: unknown) => any
 	}
 	const db = database as Operations & { transaction: <A>(run: (tx: Operations) => Promise<A>) => Promise<A> }
+	const profileAckEnabled = options.profileAckEnabled ?? (async () => {
+		const { profileAckEnabled } = await import('./contact-sync-profile-ack-flag-live')
+		return profileAckEnabled()
+	})
+	const scopeKeys = (keys?: readonly ProfileAckWorkerKey[]) => keys
+		? or(...keys.map(row => and(eq(drovrOutbox.target, row.target), eq(drovrOutbox.dedupeKey, row.dedupeKey))))
+		: undefined
+	const settleAccepted = async (where: SQL | undefined, settle: (tx: Operations, keys?: readonly ProfileAckWorkerKey[], coordinated?: boolean) => Promise<number>, receiverAccepted: boolean) => {
+		// No control-column/flag dependency for genuine delivery. This first
+		// projection only identifies eligible native families, never proof.
+		const rows = await db.select({ target: drovrOutbox.target, dedupeKey: drovrOutbox.dedupeKey, endpoint: drovrOutbox.endpoint, tenantId: drovrOutbox.tenantId, contactId: drovrOutbox.contactId, journeyId: drovrOutbox.journeyId, eventType: drovrOutbox.eventType }).from(drovrOutbox).where(where)
+		const result = await settleProfileAckWorkerRows({ database, rows, enabled: profileAckEnabled, receiverAccepted, settle: (tx, keys, coordinated) => settle(tx as Operations, keys, coordinated) })
+		for (const ack of result.acknowledgements) options.onProfileAckSettlement?.(ack)
+		for (const ack of result.acknowledgements) if (ack._tag === 'ProfileAckSettled' && ack.evaluation._tag === 'AckEvidenceExpired') {
+			try {
+				const { log } = await import('@/server/logger')
+				await logAckEvidenceExpiredOncePerProcess(ack.evaluation, log)
+			} catch { /* Logging cannot turn terminal expiry into an SDK retry. */ }
+		}
+		return result.settled
+	}
 	return {
 		insertIgnore: (rows) =>
 			guarded(async () => {
@@ -336,7 +360,8 @@ export function createDrizzleDrovrOutboxStore(
 				const { waitingForStop, ...columns } = patch
 				let control = waitingForStop === undefined ? undefined : waitingForStop ? sql`JSON_SET(${queueEnvelope}, '$.replayProof.waitingForStop', JSON_EXTRACT('true', '$'))` : sql`JSON_REMOVE(${drovrOutbox.heldContinuation}, '$.replayProof.waitingForStop')`
 				if (patch.status === 'rejected') control = sql`JSON_REMOVE(${control ?? drovrOutbox.heldContinuation}, '$.ownerStopRejection')`
-				const write = () => db
+				const where = and(eq(drovrOutbox.id, id), inArray(drovrOutbox.status, ['pending', 'deferred', 'held', 'rejected']))
+				const write = (tx: Operations = db, keys?: readonly ProfileAckWorkerKey[], coordinated = false) => tx
 					.update(drovrOutbox)
 					.set({
 						...columns,
@@ -352,8 +377,10 @@ export function createDrizzleDrovrOutboxStore(
 							? { deliveredAt: sqlTimestampOrNull(patch.deliveredAt) }
 							: {}),
 					})
-					.where(and(eq(drovrOutbox.id, id), inArray(drovrOutbox.status, ['pending', 'deferred', 'held', 'rejected'])))
-				await (control ? writeHeldContinuationGuard(write) : write())
+					.where(and(where, scopeKeys(keys), coordinated ? inArray(drovrOutbox.status, ['pending', 'deferred']) : undefined))
+				const settle = async (tx: Operations, keys?: readonly ProfileAckWorkerKey[], coordinated?: boolean) => affectedRows(await write(tx, keys, coordinated))
+				if (patch.status === 'delivered') await settleAccepted(where, settle, true)
+				else await (control ? writeHeldContinuationGuard(() => write()) : write())
 			}),
 		supersedePending: ({ target, key, contactId, at }) => guarded(async () => {
 			const { persistUnsubscribeSupersession } = await import('./drovr-unsubscribe-supersession-persistence')
@@ -439,10 +466,12 @@ export function createDrizzleDrovrOutboxStore(
 				}
 			}),
 		// Rides DrovrOutbox_dedupe_uq.
-		settlePending: ({ target, dedupeKeys, at, note }) =>
+		settlePending: ({ target, dedupeKeys, at, note, receiverAccepted = false }) =>
 			guarded(async () => {
 				if (dedupeKeys.length === 0) return 0
-				const result = await db
+				const where = and(inArray(drovrOutbox.dedupeKey, [...dedupeKeys]), eq(drovrOutbox.target, target), inArray(drovrOutbox.status, [...DROVR_OUTBOX_WIRE_STATUSES]))
+				return settleAccepted(where, async (tx, keys) => {
+				const result = await tx
 					.update(drovrOutbox)
 					.set({
 						status: 'delivered',
@@ -454,10 +483,12 @@ export function createDrizzleDrovrOutboxStore(
 						and(
 							inArray(drovrOutbox.dedupeKey, [...dedupeKeys]),
 							eq(drovrOutbox.target, target),
+							scopeKeys(keys),
 							inArray(drovrOutbox.status, ['pending', 'deferred']),
 						),
 					)
 				return affectedRows(result)
+				}, receiverAccepted)
 			}),
 		// Rides DrovrOutbox_dedupe_uq.
 		holdPending: ({ target, dedupeKeys, at, note, httpStatus }) =>

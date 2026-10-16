@@ -16,6 +16,9 @@ import type { DrovrBatchOutcome } from '@/lib/subscriber-marketing/drovr-shadow-
 /** All retry items are already normalized/admitted. Never fan them out again,
  * change their source, or retire a delivered receipt on a final real failure. */
 export async function captureFailedContactSyncRetry(data: RetryData, error: unknown) {
+ // Frozen requests already own their native rows. A late failure must not
+ // recreate deleted evidence or rebase its original body/clock.
+ if (data.profileAckRef) return
  const { captureDrovrOutboxLive } = await import('@/lib/subscriber-marketing/drovr-outbox-live')
  const source = retryOutboxSource(data)
  const stamp = data.firstFailedAt ? Date.parse(data.firstFailedAt) : undefined
@@ -57,6 +60,11 @@ export async function runPacedContactSyncRetry({ event, step, runId, attempt = 0
   return proveRetryAcknowledgement({ data: event.data, target, phase, rows: retryProofRowsLive })
  }
  const entriesFor = (events: DrovrShadowEvent[], at = clampAt) => events.map(item => outboxEntryForEvent(item, outboxSource, { sentAt: at }))
+ const guardAck = async (events = [...event.data.items, ...(event.data.carry ?? [])].map(item => item.event)) => {
+  if (!event.data.profileAckRef) return undefined
+  const { guardProfileAckWorkerAdmissionLive } = await import('@/lib/subscriber-marketing/contact-sync-profile-ack-admission')
+  return guardProfileAckWorkerAdmissionLive(event.data.profileAckRef, events, event.data.profileAckNativeDebt === true, !events.length && !!event.data.acknowledge)
+ }
  const config = () => {
   const ingestUrl = env.DROVR_SHADOW_INGEST_URL
   const apiKey = drovrApiKeyForTenant(DROVR_AUTHORITY_TENANT_ID)
@@ -78,27 +86,41 @@ export async function runPacedContactSyncRetry({ event, step, runId, attempt = 0
   }
   return answer
  }
- const deliver = (events: DrovrShadowEvent[], index = attempt) => {
+ const retainedCapture: import('@/lib/subscriber-marketing/drovr-outbox-step').DrovrOutboxCaptureFn | undefined = event.data.profileAckRef ? async entries => {
+  const expired = await guardAck()
+  return expired ? { status: 'unavailable' } : { status: 'outboxed', count: entries.length }
+ } : undefined
+ const deliver = async (events: DrovrShadowEvent[], index = attempt) => {
   const record = recordFor(events)
   const at = record.clampAt
   const entries = entriesFor(events, at)
-  return contactSyncSendOrOutbox({ attempt: index, maxAttempts: uncappedOffer ? maxAttempts : DROVR_SEND_RETRIES + 1 }, undefined, { source: outboxSource, clampAt: at })(events, async () => {
+  try { return await contactSyncSendOrOutbox({ attempt: index, maxAttempts: uncappedOffer ? maxAttempts : DROVR_SEND_RETRIES + 1 }, retainedCapture, { source: outboxSource, clampAt: at })(events, async () => {
+   const expired = await guardAck(events)
+   if (expired) return { accepted: 0, rejected: 0, ackEvidenceExpired: expired }
    const retained = await disposition(record)
    if (retained) return retained
    const answer = await settleOrHoldStragglerStops(events, await recordFinalRefusals(await deliverBatchOrThrow({ events, config: config(), deferNotLive: true, clampAt: at })))
    // Profile settlement waits for its derived refresh command below.
-   if (answer.accepted > 0 && !answer.deferred?.length && !answer.rejected && events[0]!.type !== 'contact.profile.updated') await settleDrovrOutboxLive(entries, 'delivered by straggler')
+   if (answer.accepted > 0 && !answer.deferred?.length && !answer.rejected && events[0]!.type !== 'contact.profile.updated') await settleDrovrOutboxLive(entries, 'delivered by straggler', { receiverAccepted: true, ...(event.data.profileAckRef ? { profileAckRef: event.data.profileAckRef } : {}) })
    return answer
-  })
+  }) } catch (error) {
+   const expired = await guardAck(events)
+   if (expired) return { accepted: 0, rejected: 0, ackEvidenceExpired: expired }
+   throw error
+  }
  }
  const pace = (id: string) => waitForBulkSlot(step, id, kind)
  const pacedDeliver = async (id: string, events: DrovrShadowEvent[]) => {
+  const expired = await guardAck(events)
+  if (expired) return { accepted: 0, rejected: 0, ackEvidenceExpired: expired }
   const retained = await step.run(`${id}:disposition`, () => disposition(recordFor(events)))
   if (retained) return retained
   return uncappedOffer ? await step.run(`${id}:post`, () => deliver(events)) : runPacedSend(step, id, pace, index => deliver(events, index))
  }
  const repository = new DrizzleCaptureMarketingRepository(db)
  const pacedBirth = async (id: string, ids: string[]) => {
+  const expired = await guardAck()
+  if (expired) return { accepted: 0, rejected: 0, ackEvidenceExpired: expired }
   const births = await step.run(`${id}:facts`, async () => {
    const facts: DrovrShadowEvent[] = []
    await createDirectoryBirth({ findContactById: key => repository.findContactById(key), kitSubscriberIdFor: async key => (await findContactKitIdentity(db, key)).kitSubscriberId, deliver: async events => { facts.push(...events) } })(ids)
@@ -112,13 +134,23 @@ export async function runPacedContactSyncRetry({ event, step, runId, attempt = 0
    if (retained) return retained
    const events = [record.event]
    const entries = entriesFor(events, record.clampAt)
-   const post = (index: number) => contactSyncSendOrOutbox({ attempt: index, maxAttempts: uncappedOffer ? maxAttempts : DROVR_SEND_RETRIES + 1 }, undefined, { source: outboxSource, clampAt: record.clampAt })(events, async () => {
+   const postNative = (index: number) => contactSyncSendOrOutbox({ attempt: index, maxAttempts: uncappedOffer ? maxAttempts : DROVR_SEND_RETRIES + 1 }, retainedCapture, { source: outboxSource, clampAt: record.clampAt })(events, async () => {
+    const expired = await guardAck()
+    if (expired) return { accepted: 0, rejected: 0, ackEvidenceExpired: expired }
     const retained = await disposition(record)
     if (retained) return retained
     const answer = await recordFinalRefusals(await deliverBatchOrThrow({ events, config: config(), clampAt: record.clampAt }))
     if (answer.accepted > 0 && !answer.rejected && !answer.deferred?.length) await settleDrovrOutboxLive(entries, 'directory birth delivered by straggler')
     return answer
    })
+   const post = async (index: number) => {
+    try { return await postNative(index) }
+    catch (error) {
+     const expired = await guardAck()
+     if (expired) return { accepted: 0, rejected: 0, ackEvidenceExpired: expired }
+     throw error
+    }
+   }
    const answer = uncappedOffer ? await step.run(`${birthId}:post`, () => post(attempt)) : await runPacedSend(step, birthId, pace, post)
    if (answer.outboxed || answer.retainedHeld || answer.retainedRejected || answer.rejected || answer.deferred?.length || (!answer.accepted && !answer.alreadyDelivered)) return answer
    accepted += answer.accepted
@@ -128,14 +160,30 @@ export async function runPacedContactSyncRetry({ event, step, runId, attempt = 0
  try {
   const receipt = await runContactSyncStragglerRetry({ event, step, env: process.env, now: () => Date.now(), runId, warn: log.warn, deliver, birth: async ids => { await pacedBirth('directory-birth', ids) }, pacedDeliver, pacedBirth,
    holdBatch: park,
-   proveComplete: () => proof('terminal'),
+   // Frozen references complete through their atomic stored-request port;
+   // a legacy subset/counter proof is neither required nor ACK authority.
+   proveComplete: event.data.profileAckRef ? undefined : () => proof('terminal'),
    beforeDeliver: async () => {
+    const expired = await guardAck()
+    if (expired) return expired
     const members = [...event.data.items, ...(event.data.carry ?? [])]
-    const records = await step.run('own-retry-input', () => ownRetryEvents(members.map(item => item.event), outboxSource, clampAt))
+    if (event.data.profileAckRef && !members.length) return
+    const records = await step.run('own-retry-input', async () => {
+     try {
+      return event.data.profileAckRef ? await ownRetryEvents(members.map(item => item.event), outboxSource, clampAt, { retainedOnly: true }) : await ownRetryEvents(members.map(item => item.event), outboxSource, clampAt)
+     } catch (error) {
+      const expired = await guardAck()
+      if (expired) return expired
+      throw error
+     }
+    })
+    if (!Array.isArray(records)) return records
     records.forEach((record, index) => { members[index]!.event = record.event; owned.set(retryEventIdentity(record.event), record) })
     event.data.ownedKeys ??= [...new Set(records.map(record => record.outboxKey))]
     const admitted = await proof('admission')
     if (!admitted.proved) {
+     const expired = await guardAck()
+     if (expired) return expired
      const anchor = members[0]?.event
      if (anchor) await park({ anchor, data: event.data, reason: 'unproven-delivery' })
      if (!anchor) throw new HeldBatchContinuationError({ reason: admitted.reason })
@@ -150,9 +198,16 @@ export async function runPacedContactSyncRetry({ event, step, runId, attempt = 0
    afterProfile: async profile => {
     const key = retryStepKey(profile)
     if (!profile.idempotencyKey.includes(':restate:')) await step.sendEvent(`refresh-offer:${key}`, { id: `offer-refresh:${key}`, name: deliverEventNameFor(source), data: { source, events: [], offerRefresh: { contactId: profile.contactId, profileVersion: profileVersionForRefresh(profile) } } })
-    await step.run(`settle-profile:${key}`, () => settleDrovrOutboxLive(entriesFor([profile]), 'profile and derived refresh command durable'))
+    await step.run(`settle-profile:${key}`, () => settleDrovrOutboxLive(entriesFor([profile]), 'profile and derived refresh command durable', { receiverAccepted: true, ...(event.data.profileAckRef ? { profileAckRef: event.data.profileAckRef } : {}) }))
    },
-   acknowledge: (id, version) => createDrizzleContactProfileVersionStore(db).acknowledge(id, version),
+   acknowledgementStepId: event.data.profileAckRef ? `acknowledge-frozen:${event.data.profileAckRef.requestId}` : undefined,
+   acknowledge: async (id, version) => {
+    if (event.data.profileAckRef) {
+     const { completeProfileAckWorkerReferenceLive } = await import('@/lib/subscriber-marketing/contact-sync-profile-ack-completion-live')
+     return completeProfileAckWorkerReferenceLive(event.data.profileAckRef)
+    }
+    return createDrizzleContactProfileVersionStore(db).acknowledge(id, version)
+   },
   })
   if (receipt.status === 'delivered' && event.data.heldBatchRelease) await step.run('complete-held-batch', async () => (await import('@/lib/subscriber-marketing/contact-sync-held-batch-live')).completeContactSyncHeldBatchLive(event.data))
   return receipt

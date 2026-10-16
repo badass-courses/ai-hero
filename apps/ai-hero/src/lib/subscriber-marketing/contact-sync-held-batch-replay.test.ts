@@ -15,6 +15,7 @@ import {
 import type { DrovrShadowEvent } from './drovr-shadow-emitter'
 
 import { supersededUnsubscribeReason } from './drovr-unsubscribe-supersession'
+import { sameHeldBatchScope } from './contact-sync-held-batch-persistence'
 
 const clock = '2032-01-01T00:00:00.000Z'
 const releaseId = '00000000-0000-4000-8000-000000000001'
@@ -120,6 +121,14 @@ function fixture() {
 }
 
 describe('strict held-batch reconstruction', () => {
+	it('carries the separate frozen ACK SDK pointer through held release without replacing its identity', async () => {
+		const { root: original, anchor, ports } = fixture()
+		const root: HeldBatchContinuation = { ...original, profileAckRef: { target, endpoint: 'events', tenantId: 'org-aihero', contactId: original.acknowledge!.contactId, journeyId: 'contact-directory', profileVersion: 3, coordinatorKey: original.anchorKey, requestId: '1'.repeat(64), request: { kind: 'delta' } }, profileAckNativeDebt: true }
+		anchor.heldBatch = encodeHeldBatchContinuation(root)
+		expect(await prepareHeldBatchReplay(anchor, ports)).toMatchObject({ kind: 'retry', request: { data: { profileAckRef: root.profileAckRef, profileAckNativeDebt: true, firstFailedAt: clock, paceClass: 'delta' } } })
+		expect(sameHeldBatchScope(root, { ...root, attempt: root.attempt + 1 })).toBe(true)
+		expect(sameHeldBatchScope(root, { ...root, profileAckRef: { ...root.profileAckRef!, requestId: '2'.repeat(64) } })).toBe(false)
+	})
 	it('ignores ordinary outbox rows without loading or publishing any continuation', async () => {
 		const { anchor, ports } = fixture()
 		delete anchor.heldBatch

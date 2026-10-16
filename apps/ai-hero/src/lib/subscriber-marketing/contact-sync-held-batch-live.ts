@@ -60,6 +60,8 @@ export async function releasedRetryPermissionLive(
 		root.originalClock === data.firstFailedAt &&
 		root.class === (live ? 'live' : retryPaceClass(data)) &&
 		root.source === (live ? 'live' : retryDeliverySource(data)) &&
+		JSON.stringify(root.profileAckRef ?? null) === JSON.stringify(data.profileAckRef ?? null) &&
+		root.profileAckNativeDebt === data.profileAckNativeDebt &&
 		root.acknowledge?.contactId === data.acknowledge?.contactId &&
 		root.acknowledge?.profileVersion === data.acknowledge?.profileVersion &&
 		keys.length === root.members.length &&
@@ -333,6 +335,7 @@ export async function parkContactSyncRetryLive(args: {
 			completion: { state: 'unfinished' },
 			attempt: args.data.attempt,
 			rejectedCarry: args.data.rejectedCarry ?? 0,
+			...(args.data.profileAckRef ? { profileAckRef: args.data.profileAckRef, ...(args.data.profileAckNativeDebt !== undefined ? { profileAckNativeDebt: args.data.profileAckNativeDebt } : {}) } : {}),
 			...(args.data.acknowledge ? { acknowledge: args.data.acknowledge } : {}),
 			members: (args.data.ownedKeys ?? []).map((key) =>
 				current.has(key)

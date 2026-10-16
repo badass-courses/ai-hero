@@ -408,6 +408,7 @@ export type DrovrOutboxStore = {
 		dedupeKeys: readonly string[]
 		at: string
 		note: string | null
+		receiverAccepted?: boolean
 	}): Promise<number>
 	/**
 	 * Hold these pending rows of this target (row 204c): a stop captured on
@@ -621,6 +622,7 @@ export async function settleDrovrOutbox(args: {
 	target: string | undefined
 	entries: readonly DrovrOutboxEntry[]
 	note: string | null
+	receiverAccepted?: boolean
 	now: Date
 	log: OutboxLog
 }): Promise<number> {
@@ -634,6 +636,7 @@ export async function settleDrovrOutbox(args: {
 			),
 			at: args.now.toISOString(),
 			note: args.note,
+			receiverAccepted: args.receiverAccepted === true,
 		})
 		if (settled === 0) return 0
 		const released = await args.store.pullForward({

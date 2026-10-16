@@ -12,10 +12,12 @@ const mocks = vi.hoisted(() => ({
 	deliver: vi.fn(async (_args: { events: DrovrShadowEvent[] }): Promise<DrovrBatchOutcome> => ({ accepted: 1, rejected: 0 })),
 	reserve: vi.fn(async () => Date.now()),
 	settle: vi.fn(), own: vi.fn(), disposition: vi.fn(), load: vi.fn(), capture: vi.fn(), reject: vi.fn(),
-	acknowledge: vi.fn(async () => {}), warn: vi.fn(), park: vi.fn(),
+	acknowledge: vi.fn(async () => {}), warn: vi.fn(), park: vi.fn(), guardAck: vi.fn(), completeAck: vi.fn(),
 }))
 vi.mock('@/lib/subscriber-marketing/drovr-unsubscribe-supersession', async load => ({ ...await load<typeof import('@/lib/subscriber-marketing/drovr-unsubscribe-supersession')>(), closeSupersededUnsubscribesLive: async () => new Map() }))
 vi.mock('@/inngest/inngest.server', () => ({ inngest: { createFunction: (config: unknown, trigger: unknown, handler: unknown) => ({ config, trigger, handler }) } }))
+vi.mock('@/lib/subscriber-marketing/contact-sync-profile-ack-admission', () => ({ guardProfileAckWorkerAdmissionLive: mocks.guardAck }))
+vi.mock('@/lib/subscriber-marketing/contact-sync-profile-ack-completion-live', () => ({ completeProfileAckWorkerReferenceLive: mocks.completeAck }))
 vi.mock('@/db', () => ({ db: {}, acquireDatabaseConnection: async () => ({ query: async () => [[{ now: Date.now() }]], release: () => {} }) }))
 vi.mock('@/env.mjs', () => ({ env: { DROVR_SHADOW_INGEST_URL: 'https://drovr.example.test/events' } }))
 vi.mock('@/server/logger', () => ({ log: { warn: mocks.warn } }))
@@ -29,7 +31,7 @@ vi.mock('@/lib/subscriber-marketing/drovr-outbox-live', () => ({ captureDrovrOut
 vi.mock('@/lib/subscriber-marketing/contact-sync-retry-owned-events', async load => ({ ...await load<typeof import('@/lib/subscriber-marketing/contact-sync-retry-owned-events')>(), ownRetryEvents: mocks.own, readRetryDispositionLive: mocks.disposition }))
 vi.mock('@/lib/subscriber-marketing/contact-sync-retry-acknowledgement', async load => ({ ...await load<typeof import('@/lib/subscriber-marketing/contact-sync-retry-acknowledgement')>(), retryProofRowsLive: mocks.load }))
 vi.mock('@/lib/subscriber-marketing/contact-sync-held-batch-live', () => ({ parkContactSyncRetryLive: mocks.park }))
-import { drovrContactSyncRetry, runPacedContactSyncRetry } from './drovr-contact-sync-retry'
+import { captureFailedContactSyncRetry, drovrContactSyncRetry, runPacedContactSyncRetry } from './drovr-contact-sync-retry'
 
 function tools() {
 	return { run: async <T>(_id: string, action: () => Promise<T>) => action(), sleep: vi.fn(async () => {}), sleepUntil: vi.fn(async () => {}), sendEvent: vi.fn(async (_id: string, _value: unknown) => {}) }
@@ -70,7 +72,7 @@ async function run(data: DrovrContactSyncRetryRequested['data']) {
 	return { step, result, physical }
 }
 beforeEach(() => {
-	vi.clearAllMocks(); mocks.rows.clear(); vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
+	vi.clearAllMocks(); mocks.guardAck.mockReset().mockResolvedValue(undefined); mocks.completeAck.mockReset().mockResolvedValue(undefined); mocks.rows.clear(); vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
 	mocks.deliver.mockImplementation(async ({ events }) => ({ accepted: events.length, rejected: 0 }))
 	mocks.capture.mockImplementation(async (entries: DrovrOutboxEntry[]) => { for (const entry of entries) retain(entry, entry.firstSentAt ? Date.parse(entry.firstSentAt) : Date.parse(clock)); return { status: 'outboxed', count: entries.length } })
 	mocks.own.mockImplementation(async (events: DrovrShadowEvent[], source: DrovrOutboxSource, at: number): Promise<OwnedRetryEvent[]> => events.map(event => {
@@ -85,6 +87,33 @@ beforeEach(() => {
 })
 afterEach(() => { vi.unstubAllEnvs() })
 describe('real retry routing and physical wrapper', () => {
+	const ref = { target, endpoint: 'events' as const, tenantId: 'org-aihero' as const, contactId: 'synthetic-contact', journeyId: 'contact-directory' as const, profileVersion: 1, coordinatorKey: '1'.repeat(64), requestId: '2'.repeat(64), request: { kind: 'delta' as const } }
+	const expired = { _tag: 'AckEvidenceExpired' as const, v: 1 as const, target, contactId: ref.contactId, profileVersion: 1, requestId: ref.requestId }
+	it.each(['empty', 'purged-during-own'])('a frozen %s request ends as typed expiry, without capture, HTTP, ACK retry or poison', async mode => {
+		if (mode === 'empty') mocks.guardAck.mockResolvedValue(expired)
+		else { mocks.guardAck.mockResolvedValueOnce(undefined).mockResolvedValue(expired); mocks.own.mockRejectedValue(new Error('synthetic retained evidence disappeared')) }
+		const data = request(fact(), { items: mode === 'empty' ? [] : [{ event: fact(), reason: 'event-not-live' }], paceClass: 'delta', profileAckRef: ref, acknowledge: { contactId: ref.contactId, profileVersion: 1 } })
+		const { result, step } = await run(data)
+		expect(result).toEqual({ status: 'ack-evidence-expired', accepted: 0, rejected: 0, evidence: expired })
+		await captureFailedContactSyncRetry(data, new Error('synthetic delayed old SDK failure hook'))
+		for (const port of [mocks.capture, mocks.reserve, mocks.deliver, mocks.completeAck, mocks.acknowledge, mocks.park]) expect(port).not.toHaveBeenCalled()
+		expect(step.sendEvent).not.toHaveBeenCalled()
+		if (mode === 'purged-during-own') expect(mocks.own).toHaveBeenCalledWith(expect.any(Array), 'bulkDelta', Date.parse(clock), { retainedOnly: true })
+	})
+	it('an ACK-only SDK callback re-reads the atomic completion port after a failed write; no cached positive proof or legacy NOW fallback', async () => {
+		const cache = new Map<string, unknown>(), step = tools()
+		step.run = async <T>(id: string, effect: () => Promise<T>) => { if (cache.has(id)) return cache.get(id) as T; const result = await effect(); cache.set(id, result); return result }
+		mocks.completeAck.mockRejectedValueOnce(new Error('synthetic ACK transaction rolled back')).mockResolvedValue({ _tag: 'ProfileAckAwaitingProof' })
+		const data = request(fact(), { items: [], profileAckRef: ref, paceClass: 'delta', acknowledge: { contactId: ref.contactId, profileVersion: 1 } })
+		const input = { event: { data }, step: step as unknown as Parameters<typeof runPacedContactSyncRetry>[0]['step'], runId: 'synthetic-frozen-ack', attempt: 0, maxAttempts: 9 }
+		await expect(runPacedContactSyncRetry(input)).rejects.toThrow('rolled back')
+		expect(cache.has(`acknowledge-frozen:${ref.requestId}`)).toBe(false)
+		expect(await runPacedContactSyncRetry(input)).toEqual({ status: 'awaiting-proof', remaining: 0 })
+		expect(mocks.completeAck).toHaveBeenCalledTimes(2)
+		expect(mocks.completeAck).toHaveBeenNthCalledWith(2, ref)
+		for (const port of [mocks.load, mocks.own, mocks.capture, mocks.reserve, mocks.deliver, mocks.acknowledge, mocks.park]) expect(port).not.toHaveBeenCalled()
+		expect(step.sendEvent).not.toHaveBeenCalled()
+	})
 	it('routing a capped request publishes unchanged work and never claims physical delivery', async () => {
 		const data = request(fact(), { paceClass: 'delta' }); const step = tools()
 		const parent = drovrContactSyncRetry as unknown as { handler: (args: unknown) => Promise<unknown> }

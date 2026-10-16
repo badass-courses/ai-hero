@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { assertOutboxWireRow } from './drovr-outbox-wire-status'
+import { readHeldContinuationEnvelope } from './drovr-outbox-control'
 
 import {
 	deliverEventNameFor,
@@ -59,6 +60,8 @@ export async function queueCappedReplay(
 	if (row.queuePublicationId) return { kind: 'held', detail: 'QueuePublicationUnknown: you resumed capped replay, and it stopped because an earlier durable publication claim has no recorded completion. Accepted: a recorded broker-call outcome. Fix: inspect the prior SDK run before clearing the claim and releasing the original bytes. Debug: inspect the publication ID and retained diagnostic; no new HTTP or publication was sent.' }
 	if (row.queueMetadataInvalid) return { kind: 'held', detail: 'QueueMetadata: you requested replay, and it stopped because the retained handoff proof is malformed. Accepted: valid queue metadata with the original diagnostic. Fix: inspect and repair the retained metadata before releasing. Debug: inspect the row and the prior broker receipts; no HTTP was sent.' }
 	if ((row.queueHandoffs ?? 0) >= DROVR_OUTBOX_MAX_QUEUE_HANDOFFS && !isEventNotLiveDeferred(row)) return { kind: 'held', detail: 'QueueHandoff: you replayed capped work, and it stopped because the successful handoff budget is exhausted without delivery. Accepted: at most eight successful queue handoffs; explicit receiver event-not-live remains deferred. Fix: inspect the failed consumer and release the original bytes deliberately. Debug: inspect attempts, the SDK run and the retained diagnostic.' }
+	const ack = ['contact.profile.updated', 'contact.links.issued'].includes(row.eventType ?? '') ? readHeldContinuationEnvelope(row.heldContinuation)?.profileAck : undefined
+	const ackSdk = ack && (ack.role === 'coordinator' || ack.role === 'member') ? { profileAckRef: ack.ref, profileAckNativeDebt: true } : {}
 	const publicationId = randomUUID()
 	const until = new Date(now + BULK_OUTBOX_QUEUE_WAIT_MS).toISOString()
 	try {
@@ -70,7 +73,7 @@ export async function queueCappedReplay(
 		if (publishContinuation) await publishContinuation()
 		else if (source) await send({
 			name: deliverEventNameFor(source),
-			data: { source, events: [row.body as DrovrShadowEvent], firstFailedAt: row.firstFailedAt },
+			data: { source, events: [row.body as DrovrShadowEvent], firstFailedAt: row.firstFailedAt, ...ackSdk },
 		})
 	} catch {
 		const retryAt = new Date(now + 60_000).toISOString()

@@ -1,4 +1,5 @@
 import { Either, Schema } from 'effect'
+import { ProfileAckReference } from './contact-sync-profile-ack-schema'
 
 /** Logical references, not the HTTP rate limit or SDK operation budget. */
 export const HELD_BATCH_MAX_REFERENCES = 128
@@ -78,6 +79,9 @@ export const HeldBatchContinuation = Schema.Struct({
 	),
 	attempt: PositiveCount,
 	rejectedCarry: WholeCount,
+	/** SDK pointer only; ACK membership/proof lives in its separate member. */
+	profileAckRef: Schema.optional(ProfileAckReference),
+	profileAckNativeDebt: Schema.optional(Schema.Boolean),
 	acknowledge: Schema.optional(
 		Schema.Struct({
 			contactId: Identifier,
@@ -99,6 +103,7 @@ export const HeldBatchContinuation = Schema.Struct({
 		}[value.source]
 		return (
 			value.class === expectedClass &&
+			(!value.profileAckRef || (value.profileAckRef.target === value.target && (!value.acknowledge || (value.profileAckRef.contactId === value.acknowledge.contactId && value.profileAckRef.profileVersion === value.acknowledge.profileVersion)))) &&
 			!(value.class === 'live' && value.acknowledge !== undefined) &&
 			value.members.some((member) => member.key === value.anchorKey) &&
 			value.members.some(

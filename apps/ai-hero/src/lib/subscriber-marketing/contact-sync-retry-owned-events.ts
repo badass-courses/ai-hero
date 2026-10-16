@@ -108,6 +108,7 @@ export async function ownRetryEvents(
 	events: readonly DrovrShadowEvent[],
 	source: DrovrOutboxSource,
 	clampAt: number,
+	options: { retainedOnly?: boolean } = {},
 ): Promise<OwnedRetryEvent[]> {
 	if (!events.length) return []
 	const fail = (why: string) =>
@@ -117,11 +118,12 @@ export async function ownRetryEvents(
 	const entries = events.map((event) =>
 		outboxEntryForEvent(event, source, { sentAt: clampAt }),
 	)
-	const captured = await captureDrovrOutboxLive(entries, undefined, {
-		nextAttemptAt: new Date(Date.now() + BULK_OUTBOX_QUEUE_WAIT_MS),
-	})
-	if (captured.status !== 'outboxed')
-		throw fail('durable capture is unavailable')
+	if (!options.retainedOnly) {
+		const captured = await captureDrovrOutboxLive(entries, undefined, {
+			nextAttemptAt: new Date(Date.now() + BULK_OUTBOX_QUEUE_WAIT_MS),
+		})
+		if (captured.status !== 'outboxed') throw fail('durable capture is unavailable')
+	}
 	const [{ db }, { drovrOutbox }, { and, eq, inArray }] = await Promise.all([
 		import('@/db'),
 		import('@/db/drovr-outbox-schema'),

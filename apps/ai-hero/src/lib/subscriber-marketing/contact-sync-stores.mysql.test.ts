@@ -93,7 +93,7 @@ integration('contact-sync stores on MySQL', () => {
 		await pool.query(acknowledged)
 		const database = drizzle(pool, { schema: databaseSchema, mode: 'default' })
 		store = createDrizzleValuePathLinkAnchorStore(database)
-		versions = createDrizzleContactProfileVersionStore(database)
+		versions = createDrizzleContactProfileVersionStore(database, { profileAckEnabled: async () => false })
 	})
 
 	afterAll(async () => {
@@ -167,7 +167,7 @@ integration('contact-sync stores on MySQL', () => {
 		let clock = '2026-09-26T18:00:00.000Z'
 		const store = createDrizzleContactProfileVersionStore(
 			drizzle(pool, { schema: databaseSchema, mode: 'default' }),
-			{ now: () => clock },
+			{ now: () => clock, profileAckEnabled: async () => false },
 		)
 		await expect(store.versionFor('contact-v', 'hash-a')).resolves.toEqual({
 			profileVersion: 1,
@@ -203,7 +203,7 @@ integration('contact-sync stores on MySQL', () => {
 
 	it('moves acknowledgedAt on an equal-version confirmation, without changing since', async () => {
 		let clock = '2032-01-01T00:00:00.000Z'
-		const store = createDrizzleContactProfileVersionStore(drizzle(pool, { schema: databaseSchema, mode: 'default' }), { now: () => clock })
+		const store = createDrizzleContactProfileVersionStore(drizzle(pool, { schema: databaseSchema, mode: 'default' }), { now: () => clock, profileAckEnabled: async () => false })
 		await store.versionFor('confirmation', 'v2:' + 'a'.repeat(61))
 		await store.acknowledge('confirmation', 1)
 		clock = '2032-02-01T00:00:00.000Z'
@@ -259,7 +259,7 @@ integration('contact-sync stores on MySQL', () => {
 	it('rotates the real oldest-first selector across acknowledged contacts without starving or acknowledging a pending version', async () => {
 		let clock = '2032-01-01T00:00:00.000Z'
 		const db = drizzle(pool, { schema: databaseSchema, mode: 'default' })
-		const versions = createDrizzleContactProfileVersionStore(db, { now: () => clock })
+		const versions = createDrizzleContactProfileVersionStore(db, { now: () => clock, profileAckEnabled: async () => false })
 		for (let index = 0; index < 12; index++) {
 			await versions.versionFor(`due-${index}`, 'v2:' + 'd'.repeat(61))
 			await versions.acknowledge(`due-${index}`, 1)
@@ -296,7 +296,7 @@ integration('contact-sync stores on MySQL', () => {
 		const clock = '2026-09-26T18:00:00.000Z'
 		const store = createDrizzleContactProfileVersionStore(
 			drizzle(pool, { schema: databaseSchema, mode: 'default' }),
-			{ now: () => clock },
+			{ now: () => clock, profileAckEnabled: async () => false },
 		)
 		await store.versionFor('contact-a', 'hash-a')
 		// updatedAt has ON UPDATE CURRENT_TIMESTAMP and is the version's

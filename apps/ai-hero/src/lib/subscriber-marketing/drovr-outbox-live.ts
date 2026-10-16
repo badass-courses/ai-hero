@@ -72,21 +72,36 @@ export const captureDrovrOutboxLive: DrovrOutboxCaptureFn = async (
 export const settleDrovrOutboxLive: DrovrOutboxSettleFn = async (
 	entries,
 	note,
+	proof,
 ) => {
+	if (proof?.profileAckRef) {
+		const ref = proof.profileAckRef, row = entries[0]
+		if (entries.length !== 1 || !row || row.endpoint !== 'events' || row.tenantId !== ref.tenantId || row.contactId !== ref.contactId || row.journeyId !== ref.journeyId || !['contact.profile.updated', 'contact.links.issued'].includes(row.eventType ?? '') || (row.body as { payload?: { profileVersion?: unknown } })?.payload?.profileVersion !== ref.profileVersion) {
+			const { ProfileAckConflict } = await import('./contact-sync-profile-ack')
+			throw new ProfileAckConflict('the SDK native settlement must name one matching frozen profile/link member, not a mixed request or counter')
+		}
+	}
 	const [{ db }, { log }, { createDrizzleDrovrOutboxStore }] =
 		await Promise.all([
 			import('@/db'),
 			import('@/server/logger'),
 			import('./drovr-outbox-drizzle'),
 		])
-	return settleDrovrOutbox({
-		store: createDrizzleDrovrOutboxStore(db),
+	let completion: import('./contact-sync-profile-ack-completion-live').ProfileAckWorkerCompletion = proof?.profileAckRef ? { _tag: 'ProfileAckAwaitingProof' } : undefined
+	const settled = await settleDrovrOutbox({
+		store: createDrizzleDrovrOutboxStore(db, { onProfileAckSettlement: result => {
+			if (!proof?.profileAckRef) return
+			if (result._tag === 'ProfileAckDisabled') { completion = { _tag: 'ProfileAckAwaitingProof' }; return }
+			completion = result.evaluation._tag === 'AckEvidenceExpired' ? result.evaluation : result.evaluation._tag === 'ProfileAckReady' ? undefined : { _tag: 'ProfileAckAwaitingProof' }
+		} }),
 		target: drovrOutboxTargetFromEnv(),
 		entries,
 		note,
+		receiverAccepted: proof?.receiverAccepted === true,
 		now: new Date(),
 		log,
 	})
+	return completion ?? settled
 }
 
 /** holdDrovrStops against this deployment's database and target (row 204c). */

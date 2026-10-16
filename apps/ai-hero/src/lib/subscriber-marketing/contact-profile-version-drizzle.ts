@@ -4,6 +4,8 @@ import { and, eq, sql } from 'drizzle-orm'
 
 import type { ContactProfileVersionStore } from './contact-profile-version'
 import { profileVersionBump } from './contact-sync-deltas'
+import { acknowledgeLegacyProfileVersion } from './contact-sync-profile-ack-legacy'
+import { drovrOutboxTarget } from './drovr-outbox'
 
 /** Enough for the per-contact concurrency of one the sync function runs at. */
 const BUMP_ATTEMPTS = 8
@@ -19,7 +21,7 @@ export function createDrizzleContactProfileVersionStore(
 	// The same shape the capture repository takes; drizzle's MySqlDatabase
 	// generics are unwieldy here and this module only uses select/insert/update.
 	database: unknown,
-	options: { now?: () => string } = {},
+	options: { now?: () => string; profileAckEnabled?: () => Promise<boolean>; target?: string } = {},
 ): ContactProfileVersionStore {
 	const db = database as {
 		select: (fields: unknown) => {
@@ -116,7 +118,14 @@ export function createDrizzleContactProfileVersionStore(
 			// Only the version drovr took, and never a newer one. updatedAt
 			// is the version's since (and has ON UPDATE CURRENT_TIMESTAMP):
 			// assigning it to itself keeps every re-statement byte-identical.
-			await db
+			await acknowledgeLegacyProfileVersion({ database, contactId, profileVersion, target: options.target ?? drovrOutboxTarget({ VERCEL_ENV: process.env.VERCEL_ENV, VERCEL_GIT_COMMIT_REF: process.env.VERCEL_GIT_COMMIT_REF }),
+				enabled: options.profileAckEnabled ?? (async () => {
+					const { profileAckEnabled } = await import('./contact-sync-profile-ack-flag-live')
+					return profileAckEnabled()
+				}),
+				write: async transaction => {
+				const tx = transaction as typeof db
+				await tx
 				.update(contactProfileVersion)
 				.set({
 					acknowledgedVersion: profileVersion,
@@ -129,6 +138,8 @@ export function createDrizzleContactProfileVersionStore(
 						eq(contactProfileVersion.profileVersion, profileVersion),
 					),
 				)
+				},
+			})
 		},
 	}
 }

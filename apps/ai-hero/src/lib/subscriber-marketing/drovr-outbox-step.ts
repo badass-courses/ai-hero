@@ -32,6 +32,7 @@ export type DrovrOutboxHoldFn = (
 export type DrovrOutboxSettleFn = (
 	entries: readonly DrovrOutboxEntry[],
 	note: string | null,
+	proof?: { receiverAccepted: boolean; profileAckRef?: import('./contact-sync-profile-ack-schema').ProfileAckReference },
 ) => Promise<unknown>
 
 /**

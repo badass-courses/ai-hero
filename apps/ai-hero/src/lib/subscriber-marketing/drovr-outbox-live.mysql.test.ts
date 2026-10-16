@@ -32,8 +32,10 @@ import { deliverDrovrShadowEvent, type DrovrShadowEvent } from './drovr-shadow-e
 import { deliverBatchOrThrow, isNeverBornOwnerStop } from './drovr-shadow-delivery'
 
 // The live wrappers against the real store: only the database handle and
-// the logger are stood in, so their option plumbing is what is tested.
-const live = vi.hoisted(() => ({ db: undefined as unknown }))
+// the logger and fail-closed rollout flag are stood in, so option plumbing
+// is tested without any remote flag backend.
+const live = vi.hoisted(() => ({ db: undefined as unknown, ackEnabled: vi.fn(async () => false) }))
+vi.mock('./contact-sync-profile-ack-flag-live', () => ({ profileAckEnabled: live.ackEnabled }))
 vi.mock('@/db', () => ({
 	get db() {
 		return live.db
@@ -143,6 +145,7 @@ integration('the live outbox wrappers on MySQL (row 204b round 3)', () => {
 	})
 
 	beforeEach(async () => {
+		live.ackEnabled.mockReset().mockResolvedValue(false)
 		vi.stubEnv('VERCEL_ENV', 'production')
 		await pool.query('DELETE FROM AI_DrovrOutbox')
 		await pool.query('DELETE FROM AI_ContactEvent')
@@ -195,6 +198,149 @@ integration('the live outbox wrappers on MySQL (row 204b round 3)', () => {
 			VALUES (?, ?, ?, 'control', ?, ?, ?, 'profile.ack.tombstone', ?, ?, 0, 'ackTombstone', 'ackTombstone', 0, ?, ?, ?, ?, ?)`,
 			['synthetic-atomic-failure', ackTombstoneKey(ref), ref.target, ref.tenantId, ref.contactId, ref.journeyId, ackTombstoneIdempotencyKey(ref), JSON.stringify(ACK_TOMBSTONE_BODY), clock, clock, clock, clock, encodeHeldContinuationEnvelope({ v: 1, profileAck: state })])
 	}
+	it('real native replay carries the frozen SDK reference outside the unchanged body without re-registering it', async () => {
+		const f = await seedAtomicAck()
+		const profile = (await atomicRows()).find(row => row.eventType === 'contact.profile.updated')!
+		const store = createDrizzleDrovrOutboxStore(live.db), send = vi.fn(async () => {})
+		const now = Date.parse('2032-03-21T00:00:00.000Z')
+		expect(await queueCappedReplay(profile, send, now, (until, expectedUntil, publicationId) => store.leaseQueue({ target: 'production', id: profile.id, nextAttemptAt: until, publicationId, ...(expectedUntil ? { expectedUntil } : { dueAt: new Date(now).toISOString() }) }), publicationId => store.abortQueueHandoff({ target: 'production', id: profile.id, publicationId }))).toMatchObject({ kind: 'queued', phase: 'published' })
+		expect(send).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ profileAckRef: f.state.ref, profileAckNativeDebt: true, events: [profile.body], firstFailedAt: profile.firstFailedAt }) }))
+		const retained = (await atomicRows()).find(row => row.dedupeKey === profile.dedupeKey)!
+		expect(retained.body).toEqual(profile.body)
+		expect(readHeldContinuationEnvelope(retained.heldContinuation)!.profileAck).toEqual(f.state)
+		expect(live.ackEnabled).not.toHaveBeenCalled()
+	})
+	it('the actual live settlement port distinguishes partial native acceptance from a completed frozen ACK', async () => {
+		const f = await seedAtomicAck()
+		live.ackEnabled.mockResolvedValue(true)
+		const evidence = { receiverAccepted: true, profileAckRef: f.state.ref }
+		const native = await atomicRows(), profile = native.find(row => row.eventType === 'contact.profile.updated')!, link = native.find(row => row.eventType === 'contact.links.issued')!
+		await expect(settleDrovrOutboxLive([profile, link], 'not one physical native request', evidence)).rejects.toThrow('one matching frozen profile/link member')
+		expect(live.ackEnabled).not.toHaveBeenCalled()
+		expect((await atomicRows()).every(row => row.status === 'pending')).toBe(true)
+		expect(await settleDrovrOutboxLive([profile], 'actual SDK profile accepted', evidence)).toEqual({ _tag: 'ProfileAckAwaitingProof' })
+		expect((await atomicVersion()).acknowledgedAt).toBeNull()
+		expect(await settleDrovrOutboxLive([link], 'actual SDK original link accepted', evidence)).toBe(1)
+		expect((await atomicVersion()).acknowledgedAt).toBe('2032-01-01 00:00:00.000')
+	})
+	it('the actual live settlement port returns typed expiry while preserving and settling surviving native debt', async () => {
+		const f = await seedAtomicAck()
+		live.ackEnabled.mockResolvedValue(true)
+		await pool.execute("DELETE FROM AI_DrovrOutbox WHERE eventType = 'contact.links.issued' AND contactId = ?", [f.state.ref.contactId])
+		const profile = (await atomicRows())[0]!
+		expect(await settleDrovrOutboxLive([profile], 'actual surviving native profile accepted', { receiverAccepted: true, profileAckRef: f.state.ref })).toMatchObject({ _tag: 'AckEvidenceExpired' })
+		expect((await atomicRows())[0]!.status).toBe('delivered')
+		expect((await atomicVersion()).acknowledgedAt).toBeNull()
+	})
+	it('real SQL SDK admission returns terminal expiry without recapture; retained native debt is still independently owed', async () => {
+		const f = await seedAtomicAck()
+		const { guardProfileAckWorkerAdmission } = await import('./contact-sync-profile-ack-admission')
+		const profile = (await atomicRows()).find(row => row.eventType === 'contact.profile.updated')!
+		const args = { database: live.db, target: 'production', ref: f.state.ref, events: [profile.body as DrovrShadowEvent] }
+		await expect(guardProfileAckWorkerAdmission(args)).resolves.toBeUndefined()
+		await pool.execute("DELETE FROM AI_DrovrOutbox WHERE eventType = 'contact.links.issued' AND contactId = ?", [f.state.ref.contactId])
+		const before = await atomicDb().select().from(drovrOutbox)
+		expect(await guardProfileAckWorkerAdmission(args)).toMatchObject({ _tag: 'AckEvidenceExpired' })
+		await expect(guardProfileAckWorkerAdmission({ ...args, nativeDebt: true })).resolves.toBeUndefined()
+		expect(await atomicDb().select().from(drovrOutbox)).toEqual(before)
+		expect((await atomicVersion()).acknowledgedAt).toBeNull()
+		await pool.execute('DELETE FROM AI_DrovrOutbox WHERE contactId = ?', [f.state.ref.contactId])
+		expect(await guardProfileAckWorkerAdmission({ ...args, nativeDebt: true })).toMatchObject({ _tag: 'AckEvidenceExpired' })
+	})
+	it('SDK admission refuses the real later 129th-member SQL chunk when its required column disappears', async () => {
+		const f = await seedAtomicAck(undefined, 128)
+		const { guardProfileAckWorkerAdmission } = await import('./contact-sync-profile-ack-admission')
+		const profile = (await atomicRows()).find(row => row.eventType === 'contact.profile.updated')!
+		let selects = 0
+		const faulty = new Proxy(atomicDb(), { get(target, key) {
+			if (key === 'select') return (...args: unknown[]) => {
+				if (++selects === 3) throw { code: 'ER_BAD_FIELD_ERROR', errno: 1054, message: "Unknown column 'heldContinuation'" }
+				return target.select(...args as [])
+			}
+			const value = Reflect.get(target, key); return typeof value === 'function' ? value.bind(target) : value
+		} })
+		await expect(guardProfileAckWorkerAdmission({ database: faulty, target: 'production', ref: f.state.ref, events: [profile.body as DrovrShadowEvent] })).rejects.toThrow('heldContinuation')
+		expect(selects).toBe(3)
+		expect((await atomicRows()).every(row => row.status === 'pending')).toBe(true)
+		expect((await atomicVersion()).acknowledgedAt).toBeNull()
+	})
+	it('ACK-only worker completion uses only fresh stored proof and frozen clocks, never a legacy timestamp', async () => {
+		const f = await seedAtomicAck()
+		const { completeProfileAckWorkerReference } = await import('./contact-sync-profile-ack-completion-live')
+		const args = { database: live.db, ref: f.state.ref, enabled: async () => true }
+		expect(await completeProfileAckWorkerReference(args)).toEqual({ _tag: 'ProfileAckAwaitingProof' })
+		await pool.execute("UPDATE AI_DrovrOutbox SET status = 'delivered', deliveredAt = '2032-03-20 00:00:00.000', lastAttemptAt = '2032-03-20 00:00:00.000', lastStatus = 202 WHERE contactId = ?", [f.state.ref.contactId])
+		await expect(completeProfileAckWorkerReference(args)).resolves.toBeUndefined()
+		expect((await atomicVersion()).acknowledgedAt).toBe('2032-01-01 00:00:00.000')
+		await expect(completeProfileAckWorkerReference(args)).resolves.toBeUndefined()
+		expect((await atomicVersion()).acknowledgedAt).toBe('2032-01-01 00:00:00.000')
+		await pool.execute('DELETE FROM AI_DrovrOutbox WHERE contactId = ?', [f.state.ref.contactId])
+		expect(await completeProfileAckWorkerReference(args)).toMatchObject({ _tag: 'AckEvidenceExpired' })
+		expect((await atomicVersion()).acknowledgedAt).toBe('2032-01-01 00:00:00.000')
+	})
+	it('legacy ACK callbacks cannot refresh known frozen ages or bypass incomplete metadata when OFF', async () => {
+		const f = await seedAtomicAck()
+		const { createDrizzleContactProfileVersionStore } = await import('./contact-profile-version-drizzle')
+		const versions = createDrizzleContactProfileVersionStore(live.db, { profileAckEnabled: async () => false, target: 'production', now: () => '2032-03-21T00:00:00.000Z' })
+		await versions.acknowledge(f.state.ref.contactId, 3)
+		expect((await atomicVersion()).acknowledgedAt).toBeNull()
+		await f.settle(f.keys)
+		await versions.acknowledge(f.state.ref.contactId, 3)
+		expect((await atomicVersion()).acknowledgedAt).toBe('2032-01-01 00:00:00.000')
+		await pool.execute('DELETE FROM AI_DrovrOutbox WHERE contactId = ?', [f.state.ref.contactId])
+		await createDrizzleContactProfileVersionStore(live.db, { profileAckEnabled: async () => true, target: 'production', now: () => '2032-03-22T00:00:00.000Z' }).acknowledge(f.state.ref.contactId, 3)
+		expect((await atomicVersion()).acknowledgedAt).toBe('2032-01-01 00:00:00.000')
+	})
+	it('actual worker settlement and direct replay patch share atomic frozen-clock completion', async () => {
+		const f = await seedAtomicAck()
+		const store = createDrizzleDrovrOutboxStore(live.db, { profileAckEnabled: async () => true })
+		expect(await store.settlePending({ target: 'production', dedupeKeys: [f.state.ref.coordinatorKey], at: '2032-03-20T00:00:00.000Z', note: 'synthetic actual receiver acceptance', receiverAccepted: true })).toBe(1)
+		expect((await atomicVersion()).acknowledgedAt).toBeNull()
+		const link = (await atomicRows()).find(row => row.eventType === 'contact.links.issued')!
+		await store.update(link.id, { status: 'delivered', deliveredAt: '2032-03-20T00:00:00.000Z', lastAttemptAt: '2032-03-20T00:00:00.000Z', lastStatus: 202 })
+		expect((await atomicVersion()).acknowledgedAt).toBe('2032-01-01 00:00:00.000')
+		expect((await atomicRows()).every(row => row.status === 'delivered')).toBe(true)
+		const root = (await atomicRows()).find(row => row.dedupeKey === f.state.ref.coordinatorKey)!
+		expect(readHeldContinuationEnvelope(root.heldContinuation)?.profileAck).toMatchObject({ role: 'coordinator', completion: { confirmationClock: '2032-01-01T00:00:00.000Z' } })
+	})
+	it('worker refusal hints never become native delivered evidence, even across ON/OFF; actual acceptance can settle while OFF', async () => {
+		const f = await seedAtomicAck()
+		let enabled = true
+		const store = createDrizzleDrovrOutboxStore(live.db, { profileAckEnabled: async () => enabled })
+		for (const value of [true, false]) {
+			enabled = value
+			expect(await store.settlePending({ target: 'production', dedupeKeys: f.keys, at: '2032-03-20T00:00:00.000Z', note: 'opaque prose falsely claiming acceptance', receiverAccepted: false })).toBe(0)
+			expect((await atomicRows()).every(row => row.status === 'pending')).toBe(true)
+		}
+		expect(await store.settlePending({ target: 'production', dedupeKeys: f.keys, at: '2032-03-20T00:00:00.000Z', note: 'synthetic actual acceptance OFF', receiverAccepted: true })).toBe(2)
+		expect((await atomicVersion()).acknowledgedAt).toBeNull()
+		enabled = true
+		await store.settlePending({ target: 'production', dedupeKeys: f.keys, at: '2032-03-21T00:00:00.000Z', note: 'synthetic retained positive receipts', receiverAccepted: true })
+		expect((await atomicVersion()).acknowledgedAt).toBe('2032-01-01 00:00:00.000')
+	})
+	it('actual direct replay rolls native settlement back on ACK failure and respects a later held row', async () => {
+		const f = await seedAtomicAck()
+		await f.settle([f.state.ref.coordinatorKey])
+		const link = (await atomicRows()).find(row => row.eventType === 'contact.links.issued')!
+		const faulty = new Proxy(atomicDb(), { get(target, key) {
+			if (key === 'transaction') return (run: (tx: unknown) => Promise<unknown>) => target.transaction(tx => run(new Proxy(tx, { get(t, k) {
+				if (k === 'update') return (table: unknown) => {
+					if (table === contactProfileVersion) throw new Error('synthetic worker ACK failure')
+					return t.update(table as typeof drovrOutbox)
+				}
+				const value = Reflect.get(t, k); return typeof value === 'function' ? value.bind(t) : value
+			} })))
+			const value = Reflect.get(target, key); return typeof value === 'function' ? value.bind(target) : value
+		} })
+		const patch = { status: 'delivered' as const, deliveredAt: '2032-03-20T00:00:00.000Z', lastStatus: 202 }
+		await expect(createDrizzleDrovrOutboxStore(faulty, { profileAckEnabled: async () => true }).update(link.id, patch)).rejects.toThrow('synthetic worker ACK failure')
+		expect((await atomicRows()).find(row => row.id === link.id)?.status).toBe('pending')
+		const store = createDrizzleDrovrOutboxStore(live.db, { profileAckEnabled: async () => true })
+		await store.update(link.id, { status: 'held' })
+		await store.update(link.id, patch)
+		expect((await atomicRows()).find(row => row.id === link.id)?.status).toBe('held')
+		expect((await atomicVersion()).acknowledgedAt).toBeNull()
+	})
 	it('ON then OFF or unknown refuses the WHOLE purge tick; back ON tombstones before deleting evidence', async () => {
 		const f = await seedAtomicAck()
 		await f.settle([f.state.ref.coordinatorKey]) // Registered ON; native link debt still pending.

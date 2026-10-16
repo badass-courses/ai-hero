@@ -40,7 +40,7 @@ export async function retryProofRowsLive(
 
 export type RetryAcknowledgementProof =
 	| { proved: true; rejected: number; additionalAuthority?: string }
-	| { proved: false; reason: string }
+	| { proved: false; reason: string; ackEvidenceExpired?: import('./contact-sync-profile-ack-schema').AckEvidenceExpired }
 const family = new Set([
 	'contact.profile.updated',
 	'contact.links.issued',

@@ -49,6 +49,8 @@ const mocks = vi.hoisted(() => ({
 	releasePermission: vi.fn(),
 	completeBatch: vi.fn(),
 	acknowledge: vi.fn(),
+	guardAck: vi.fn(),
+	completeAck: vi.fn(),
 }))
 
 // The freeze window's calendar is pinned in drovr-bulk-freeze.test.ts; here
@@ -60,6 +62,8 @@ vi.mock('@/lib/subscriber-marketing/drovr-bulk-freeze', async (original) => ({
 	valuePathBulkFreeze: mocks.valuePathBulkFreeze,
 }))
 
+vi.mock('@/lib/subscriber-marketing/contact-sync-profile-ack-completion-live', () => ({ completeProfileAckWorkerReferenceLive: mocks.completeAck }))
+vi.mock('@/lib/subscriber-marketing/contact-sync-profile-ack-admission', () => ({ guardProfileAckWorkerAdmissionLive: mocks.guardAck }))
 vi.mock('@/db', () => ({ db: new Proxy({}, { get: () => { throw new Error('ControllerFixture: you queried the database, and it failed because this controller test has no database port. Accepted: explicit synthetic adapters. Fix: inject the needed fixture. Debug: inspect the unexpected query stack.') } }) }))
 vi.mock('@/lib/subscriber-marketing/drovr-owner-stop-rejection-live', () => ({ recordOwnerStopRejectionLive: mocks.recordOwnerStopRejection }))
 vi.mock('@/lib/subscriber-marketing/contact-sync-retry-owned-events', async original => ({ ...await original<typeof import('@/lib/subscriber-marketing/contact-sync-retry-owned-events')>(), ownRetryEvents: mocks.own, readRetryDispositionLive: mocks.disposition }))
@@ -250,6 +254,8 @@ const createStep = (): Step => ({
 
 beforeEach(() => {
 	vi.clearAllMocks()
+	mocks.guardAck.mockReset().mockResolvedValue(undefined)
+	mocks.completeAck.mockReset().mockResolvedValue(undefined)
 	mocks.pace.mockImplementation(async () => Date.now())
 	mocks.clockSlot = 0
 	mocks.retained.clear()
@@ -262,11 +268,14 @@ beforeEach(() => {
 		}
 		return { status: 'outboxed', count: entries.length }
 	})
-	mocks.own.mockImplementation(async (events: readonly DrovrShadowEvent[], source: DrovrOutboxSource, clampAt: number) => {
+	mocks.own.mockImplementation(async (events: readonly DrovrShadowEvent[], source: DrovrOutboxSource, clampAt: number, options?: { retainedOnly?: boolean }) => {
+		if (!options?.retainedOnly) {
 		const receipt = await mocks.capture(events.map(item => outboxEntryForEvent(item, source, { sentAt: clampAt })), undefined, { nextAttemptAt: new Date(Date.now() + 24 * 60 * 60_000) })
 		if (receipt?.status !== 'outboxed') throw new Error('RetryOwnership: you prepared capped work, and it failed because durable capture is unavailable. Accepted: immutable retained work. Fix: restore the outbox. Debug: inspect the capture receipt.')
+		}
 		return events.map(item => {
 			const key = identity(item)
+			if (options?.retainedOnly && !mocks.retained.has(key)) throw new Error('synthetic retained-only row disappeared')
 			if (!mocks.retained.has(key)) mocks.retained.set(key, { event: structuredClone(item), clampAt, delivered: false, status: 'pending', outboxKey: drovrOutboxDedupeKey('synthetic-controller-target', outboxEntryForEvent(item, source)) })
 			return structuredClone(mocks.retained.get(key)!)
 		})
@@ -523,13 +532,48 @@ describe('drovr events deliver registration', () => {
 		expect(mocks.pace).not.toHaveBeenCalled()
 		expect(mocks.deliverBatchOrThrow).not.toHaveBeenCalled()
 	})
+	it.each(['missing-before-own', 'purged-at-booking', 'purged-during-own'])('returns terminal expired SDK evidence without POST, recapture or retry: %s', async mode => {
+		const profile = event('org-aihero', 'profile:contact-1:1', 'contact-directory', 'contact.profile.updated')
+		const ref = { target: 'synthetic-controller-target', endpoint: 'events' as const, tenantId: 'org-aihero' as const, contactId: 'contact-1', journeyId: 'contact-directory' as const, profileVersion: 1, coordinatorKey: '1'.repeat(64), requestId: '2'.repeat(64), request: { kind: 'delta' as const } }
+		const expired = { _tag: 'AckEvidenceExpired' as const, v: 1 as const, target: ref.target, contactId: ref.contactId, profileVersion: 1, requestId: ref.requestId }
+		if (mode === 'missing-before-own') mocks.guardAck.mockResolvedValue(expired)
+		if (mode === 'purged-during-own') mocks.guardAck.mockResolvedValueOnce(undefined).mockResolvedValue(expired)
+		if (mode === 'purged-at-booking') {
+			await mocks.capture([outboxEntryForEvent(profile as DrovrShadowEvent, 'bulkDelta')])
+			mocks.capture.mockClear()
+			mocks.pace.mockImplementation(async () => { mocks.guardAck.mockResolvedValue(expired); return Date.now() })
+		}
+		const step = createStep()
+		const result = await runCappedTree(registeredDelta, { events: [{ data: { source: 'contact-profile-sync', events: [profile], profileAckRef: ref, firstFailedAt: profile.occurredAt } }], step, attempt: 0, maxAttempts: 9 })
+		expect(result).toMatchObject({ status: 'skipped', reason: 'AckEvidenceExpired', ackEvidenceExpired: expired })
+		await outboxFailedRun({ source: 'contact-profile-sync', events: [profile as DrovrShadowEvent], profileAckRef: ref }, new Error('synthetic delayed failure hook'), mocks.capture)
+		expect(mocks.deliverBatchOrThrow).not.toHaveBeenCalled()
+		expect(mocks.capture).not.toHaveBeenCalled()
+		expect(mocks.fanOutOwnedEvents).not.toHaveBeenCalled()
+		expect(mocks.settle).not.toHaveBeenCalled()
+		expect(mocks.acknowledge).not.toHaveBeenCalled()
+		expect(step.sendEvent).not.toHaveBeenCalled()
+		if (mode === 'missing-before-own') { expect(mocks.own).not.toHaveBeenCalled(); expect(mocks.pace).not.toHaveBeenCalled() }
+		if (mode === 'purged-at-booking') expect([...mocks.retained.values()].every(row => row.status === 'pending')).toBe(true)
+	})
+	it('a pointer-free completed or OFF-then-ON retained member uses fresh SDK completion without a new POST or native rewrite', async () => {
+		const profile = event('org-aihero', 'profile:contact-1:1', 'contact-directory', 'contact.profile.updated') as DrovrShadowEvent
+		const ref = { target: 'synthetic-controller-target', endpoint: 'events' as const, tenantId: 'org-aihero' as const, contactId: 'contact-1', journeyId: 'contact-directory' as const, profileVersion: 1, coordinatorKey: '1'.repeat(64), requestId: '2'.repeat(64), request: { kind: 'delta' as const } }
+		const entry = outboxEntryForEvent(profile, 'bulkDelta')
+		await mocks.capture([entry]); await mocks.settle([entry]); mocks.capture.mockClear(); mocks.settle.mockClear()
+		const result = await runCappedTree(registeredDelta, { events: [{ data: { source: 'contact-profile-sync', events: [profile], profileAckRef: ref, firstFailedAt: profile.occurredAt } }], step: createStep(), attempt: 0, maxAttempts: 9 })
+		expect(result).toMatchObject({ status: 'delivered', accepted: 0, rejected: 0 })
+		expect(mocks.completeAck).toHaveBeenCalledOnce()
+		expect(mocks.completeAck).toHaveBeenCalledWith(ref)
+		for (const port of [mocks.capture, mocks.settle, mocks.deliverBatchOrThrow, mocks.acknowledge, mocks.pace]) expect(port).not.toHaveBeenCalled()
+	})
 	it('settles pre-captured profile and link rows by key on the first attempt, and skips a row already delivered by replay', async () => {
 		mocks.fanOutOwnedEvents.mockImplementation(events => events)
 		const profile = event('org-aihero', 'profile:contact-1:1', 'contact-directory', 'contact.profile.updated')
 		const link = event('org-aihero', 'links:contact-1:journey:email:v1', 'contact-directory', 'contact.links.issued')
 		const run = () => runCappedTree(registeredDelta, { events: [{ data: { source: 'contact-profile-sync', events: [profile, link] } }], step: createStep(), attempt: 0, maxAttempts: 9 })
 		await run()
-		for (const item of [profile, link]) expect(mocks.settle).toHaveBeenCalledWith([expect.objectContaining({ idempotencyKey: item.idempotencyKey })], 'delivered by an Inngest retry')
+		for (const item of [profile, link]) expect(mocks.settle).toHaveBeenCalledWith([expect.objectContaining({ idempotencyKey: item.idempotencyKey })], 'delivered by an Inngest retry', { receiverAccepted: true })
 		mocks.deliverBatchOrThrow.mockClear()
 		mocks.disposition.mockResolvedValue({ accepted: 0, rejected: 0, alreadyDelivered: true })
 		await run()

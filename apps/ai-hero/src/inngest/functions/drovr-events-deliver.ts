@@ -95,6 +95,8 @@ import { runPacedSend, waitForBulkSlot, type BulkClass } from '@/lib/subscriber-
 import { profileVersionForRefresh, readCurrentOfferAfterProfile } from '@/lib/subscriber-marketing/contact-sync-offer-refresh'
 
 export type DrovrEventsDeliverReceipt = {
+	ackEvidenceExpired?: import('@/lib/subscriber-marketing/contact-sync-profile-ack-schema').AckEvidenceExpired
+	profileAckAwaitingProof?: true
 	supersededUnsubscribes?: number
 	/** Backfill events drovr refused, handed to the straggler retry. */
 	deferred?: number
@@ -155,7 +157,10 @@ export type DeliverContext = {
 	/** Holds stops drovr refused with a 4xx, for a human (row 204c). */
 	hold: DrovrOutboxHoldFn
 	pace?: (id: string, step: DeliverStep) => Promise<number>
-	own?: typeof ownRetryEvents
+	own?: (...args: Parameters<typeof ownRetryEvents>) => Promise<OwnedRetryEvent[] | import('@/lib/subscriber-marketing/contact-sync-profile-ack-schema').AckEvidenceExpired>
+	profileAckRef?: import('@/lib/subscriber-marketing/contact-sync-profile-ack-schema').ProfileAckReference
+	completeProfileAck?: () => Promise<import('@/lib/subscriber-marketing/contact-sync-profile-ack-completion-live').ProfileAckWorkerCompletion>
+	guardProfileAck?: (events: readonly DrovrShadowEvent[]) => Promise<import('@/lib/subscriber-marketing/contact-sync-profile-ack-schema').AckEvidenceExpired | undefined>
 	disposition?: (record: OwnedRetryEvent) => Promise<DrovrBatchOutcome | undefined>
 	reject?: (entries: readonly DrovrOutboxEntry[], note: string, status: number) => Promise<void>
 	afterProfile?: (id: string, event: DrovrShadowEvent, step: DeliverStep) => Promise<void>
@@ -683,7 +688,12 @@ const deliverBulk = async (
 ): Promise<DrovrEventsDeliverReceipt> => {
 	const ingestUrl = env.DROVR_SHADOW_INGEST_URL
 	if (!ingestUrl) return NOT_CONFIGURED
-	const fanOutEvents = await fanOut(batch, step, context)
+	// Fresh before fanout/capture, even if an earlier SDK read succeeded.
+	const expired = await context.guardProfileAck?.(batch)
+	if (expired) return { status: 'skipped', accepted: 0, rejected: 0, discarded: 0, reason: 'AckEvidenceExpired', ackEvidenceExpired: expired }
+	const fanOutEvents = context.guardProfileAck && batch.every(event => event.type === 'contact.profile.updated' || event.type === 'contact.links.issued')
+		? batch // Frozen first-owned wire members never re-read mutable ownership.
+		: await fanOut(batch, step, context)
 	if (isOutboxed(fanOutEvents))
 		return {
 			status: 'delivered',
@@ -699,7 +709,9 @@ const deliverBulk = async (
 	let owned: OwnedRetryEvent[] = []
 	if (context.pace && admitted.events.length) {
 		if (!context.own) throw new Error('BulkOwnership: you prepared capped work, and it failed because its immutable ownership port is unavailable. Accepted: every normalized event retained and reread before booking. Fix: restore the ownership adapter. Debug: inspect the capped context.')
-		owned = await step.run(`own-paced-input:${deliveryKeyDigest(admitted.events)}`, () => context.own!(admitted.events, context.lane, clampAt)) as OwnedRetryEvent[]
+		const ownership = await step.run(`own-paced-input:${deliveryKeyDigest(admitted.events)}`, () => context.own!(admitted.events, context.lane, clampAt)) as OwnedRetryEvent[] | import('@/lib/subscriber-marketing/contact-sync-profile-ack-schema').AckEvidenceExpired
+		if (!Array.isArray(ownership)) return { status: 'skipped', accepted: 0, rejected: 0, discarded, reason: 'AckEvidenceExpired', ackEvidenceExpired: ownership }
+		owned = ownership
 	}
 	const retained = context.pace ? owned.map(record => record.event) : admitted.events
 	// Gate FIRST retained planned times, not a newer duplicate's timestamp.
@@ -767,13 +779,26 @@ const deliverBulk = async (
 			const entries = chunk.map(event => outboxEntryForEvent(event, context.lane))
 			const record = ownedByIdentity.get(retryEventIdentity(chunk[0]!))
 			if (context.pace && (!record || !context.disposition)) throw new Error('BulkDisposition: you resumed capped delivery, and it failed because its scoped disposition port is unavailable. Accepted: retained state checked before booking and at POST. Fix: restore the ownership and disposition adapters. Debug: inspect the full scoped key.')
-			const disposition = () => record && context.disposition ? context.disposition(record) : Promise.resolve(undefined)
+			const disposition = async (): Promise<DrovrBatchOutcome | undefined> => {
+				const expired = await context.guardProfileAck?.(chunk)
+				if (expired) return { accepted: 0, rejected: 0, ackEvidenceExpired: expired }
+				return record && context.disposition ? context.disposition(record) : undefined
+			}
 			const retained = await step.run(`${stepId}:disposition`, disposition)
+			if (retained?.ackEvidenceExpired) return { status: 'skipped', accepted, rejected, discarded, reason: 'AckEvidenceExpired', ackEvidenceExpired: retained.ackEvidenceExpired }
 			if (retained?.alreadyDelivered) {
 				if (chunk[0]!.type === 'contact.profile.updated') await context.afterProfile?.(stepId, chunk[0]!, step)
+				if (context.profileAckRef) {
+					const completion = await step.run(`${stepId}:settle-retained-profile-ack`, () => context.completeProfileAck!()) as import('@/lib/subscriber-marketing/contact-sync-profile-ack-completion-live').ProfileAckWorkerCompletion
+					const expired = await context.guardProfileAck?.(chunk) ?? (completion?._tag === 'AckEvidenceExpired' ? completion : undefined)
+					if (expired) return { status: 'skipped', accepted, rejected, discarded, reason: 'AckEvidenceExpired', ackEvidenceExpired: expired }
+					if (completion?._tag === 'ProfileAckAwaitingProof') return { status: 'delivered', accepted, rejected, discarded, profileAckAwaitingProof: true }
+				}
 				continue
 			}
-			const post = (sendAttempt: number) => sendOrOutbox<ChunkOutcome & Partial<Outboxed>>({
+			const expiredBeforeBooking = await context.guardProfileAck?.(chunk)
+			if (expiredBeforeBooking) return { status: 'skipped', accepted, rejected, discarded, reason: 'AckEvidenceExpired', ackEvidenceExpired: expiredBeforeBooking }
+			const postNative = (sendAttempt: number) => sendOrOutbox<ChunkOutcome & Partial<Outboxed>>({
 					attempt: { ...context.attempt, attempt: sendAttempt },
 					send: async () => {
 						// A replay may finish while a reservation sleeps. Re-read at
@@ -874,14 +899,28 @@ const deliverBulk = async (
 						landedStops,
 					),
 				})
+			const post = async (sendAttempt: number) => {
+				try { return await postNative(sendAttempt) }
+				catch (error) {
+					const expired = await context.guardProfileAck?.(chunk)
+					if (expired) return { accepted: 0, rejected: 0, ackEvidenceExpired: expired }
+					throw error
+				}
+			}
 			const outcome = (retained ?? (context.pace ? await runPacedSend(step, stepId, (id) => context.pace!(id, step), post, context.attempt.attempt) : await step.run(stepId, () => post(context.attempt.attempt)))) as ChunkOutcome & Partial<Outboxed>
+			if (outcome.ackEvidenceExpired) return { status: 'skipped', accepted, rejected, discarded, reason: 'AckEvidenceExpired', ackEvidenceExpired: outcome.ackEvidenceExpired }
 			// Every pre-captured fact, not just retried stops, is settled by key.
 			// Deferred or outboxed events stay pending for their existing owner.
 			if ((outcome.accepted > 0 || outcome.alreadyDelivered) && !outcome.outboxed && !(outcome.deferred?.length)) {
 				// Do not retire the profile's durable work before its derived
 				// refresh command is itself durable. A failed publish must replay.
 				if (chunk[0]!.type === 'contact.profile.updated') await context.afterProfile?.(stepId, chunk[0]!, step)
-				await step.run(`${stepId}:settle`, () => context.settle(entries, outcome.rejected > 0 ? `settled by an Inngest retry: its chunk was answered, and drovr refused ${outcome.rejected} item(s) that are not stops (or never born there), final and counted rejected` : DROVR_SETTLED_BY_RETRY))
+				const note = outcome.rejected > 0 ? `settled by an Inngest retry: its chunk was answered, and drovr refused ${outcome.rejected} item(s) that are not stops (or never born there), final and counted rejected` : DROVR_SETTLED_BY_RETRY
+				const proof = chunk.some(event => event.type === 'contact.profile.updated' || event.type === 'contact.links.issued') ? { receiverAccepted: outcome.rejected === 0, ...(context.profileAckRef ? { profileAckRef: context.profileAckRef } : {}) } : undefined
+				const completion = await step.run(`${stepId}:settle`, () => proof ? context.settle(entries, note, proof) : context.settle(entries, note)) as import('@/lib/subscriber-marketing/contact-sync-profile-ack-completion-live').ProfileAckWorkerCompletion
+				const expired = await context.guardProfileAck?.(chunk) ?? (completion?._tag === 'AckEvidenceExpired' ? completion : undefined)
+				if (expired) return { status: 'delivered', accepted: accepted + outcome.accepted, rejected: rejected + outcome.rejected, discarded, reason: 'AckEvidenceExpired', ackEvidenceExpired: expired }
+				if (completion?._tag === 'ProfileAckAwaitingProof') return { status: 'delivered', accepted: accepted + outcome.accepted, rejected: rejected + outcome.rejected, discarded, profileAckAwaitingProof: true }
 			}
 			supersededUnsubscribes += outcome.supersededUnsubscribes ?? 0
 			retainedHeld += outcome.retainedHeld ?? 0
@@ -960,6 +999,9 @@ export async function outboxFailedRun(
 	capture: DrovrOutboxCaptureFn = captureDrovrOutboxLive,
 	forcedLane?: DeliverContext['lane'],
 ): Promise<void> {
+	// A frozen request already owns native debt. Failure never recreates it
+	// from an old SDK body after retention or privacy cleanup.
+	if (data.profileAckRef) return
 	const capped = BULK_DELIVERY_SOURCES.has(data.source)
 	const entries = ownerReadUnsent(data.events, forcedLane ?? (capped ? cappedLaneFor(data.source) : 'live')).map(entry => ({ ...entry, ...(data.firstFailedAt && Number.isFinite(Date.parse(data.firstFailedAt)) ? { firstSentAt: data.firstFailedAt } : {}) }))
 	if (entries.length === 0) return
@@ -1016,6 +1058,8 @@ const combineReceipts = (
 		...sumOf('deferredStopsGated'),
 		...sumOf('supersededUnsubscribes'),
 		...sumOf('valuePathBirthsSkippedUnsubscribed'),
+		...(receipts.some(receipt => receipt.ackEvidenceExpired) ? { reason: 'AckEvidenceExpired', ackEvidenceExpired: receipts.find(receipt => receipt.ackEvidenceExpired)!.ackEvidenceExpired } : {}),
+		...(receipts.some(receipt => receipt.profileAckAwaitingProof) ? { profileAckAwaitingProof: true as const } : {}),
 	}
 }
 
@@ -1082,7 +1126,7 @@ const cappedWorker = (id: string, eventName: DrovrDeliverEventName, kind: BulkCl
 		if (events.length > 1 || events.reduce((count, envelope) => count + envelope.data.events.length, 0) > 1) {
 			const shards = events.flatMap(envelope => {
 				const chunks = envelope.data.stragglerRetry || envelope.data.offerRefresh || !envelope.data.events.length ? [envelope.data.events] : envelope.data.events.map(item => [item])
-				return chunks.map(chunk => { const data = { ...envelope.data, events: chunk }; return { id: `paced-shard:${createHash('sha256').update(JSON.stringify(data)).digest('hex')}`, name: eventName, data } })
+				return chunks.map(chunk => { const data = { ...envelope.data, events: chunk }; if (chunk.length && !chunk.some(item => item.type === 'contact.profile.updated' || item.type === 'contact.links.issued') && !data.stragglerRetry) { delete data.profileAckRef; delete data.profileAckNativeDebt } return { id: `paced-shard:${createHash('sha256').update(JSON.stringify(data)).digest('hex')}`, name: eventName, data } })
 			})
 			for (let offset = 0; offset < shards.length; offset += 100) await step.sendEvent(`bounded-paced-shards:${createHash('sha256').update(JSON.stringify(shards.slice(offset, offset + 100).map(shard => shard.id))).digest('hex')}`, shards.slice(offset, offset + 100))
 			return { status: 'skipped', reason: 'forwarded-to-bounded-capped-shards', accepted: 0, rejected: 0, discarded: 0 }
@@ -1101,6 +1145,7 @@ const cappedWorker = (id: string, eventName: DrovrDeliverEventName, kind: BulkCl
 		const originalClamp = firstFailedAt === undefined ? await drovrClampInstant(events.flatMap(envelope => envelope.data.events), step) : Date.parse(firstFailedAt)
 		if (!Number.isFinite(originalClamp)) throw new Error('BirthClamp: you resumed delivery, and it failed because the original clamp instant is invalid. Accepted: an ISO timestamp. Fix: restore the original replay metadata. Debug: inspect firstFailedAt.')
 		firstFailedAt = new Date(originalClamp).toISOString()
+		const profileAckRef = events[0]?.data.events.some(item => item.type === 'contact.profile.updated' || item.type === 'contact.links.issued') ? events[0]?.data.profileAckRef : undefined
 		const context: DeliverContext = {
 			runId,
 			recordOwnerStopRejection: recordOwnerStopRejectionLive,
@@ -1108,14 +1153,33 @@ const cappedWorker = (id: string, eventName: DrovrDeliverEventName, kind: BulkCl
 			lane: cappedLaneFor(events[0]!.data.source),
 			clampAt: originalClamp,
 			pace: (id, tools) => waitForBulkSlot(tools, id, actualKind),
-			own: ownRetryEvents,
+			profileAckRef,
+			completeProfileAck: profileAckRef ? async () => {
+				const { completeProfileAckWorkerReferenceLive } = await import('@/lib/subscriber-marketing/contact-sync-profile-ack-completion-live')
+				return completeProfileAckWorkerReferenceLive(profileAckRef!)
+			} : undefined,
+			own: profileAckRef ? async (input, lane, at) => {
+				try { return await ownRetryEvents(input, lane, at, { retainedOnly: true }) }
+				catch (error) {
+					const expired = await context.guardProfileAck?.(input)
+					if (expired) return expired
+					throw error
+				}
+			} : ownRetryEvents,
+			guardProfileAck: profileAckRef ? async input => {
+				const { guardProfileAckWorkerAdmissionLive } = await import('@/lib/subscriber-marketing/contact-sync-profile-ack-admission')
+				return guardProfileAckWorkerAdmissionLive(profileAckRef!, input, events[0]!.data.profileAckNativeDebt === true)
+			} : undefined,
 			disposition: record => readRetryDispositionLive(record, { gates: false }),
 			reject: rejectDrovrOutboxLive,
 			afterProfile: async (id, event, tools) => {
 				if (event.idempotencyKey.includes(':restate:')) return
 				await tools.sendEvent(`${id}:refresh-offer`, { id: `offer-refresh:${retryStepKey(event)}`, name: eventName, data: { source, events: [], offerRefresh: { contactId: event.contactId, profileVersion: profileVersionForRefresh(event) } } })
 			},
-			capture: captureDrovrOutboxLive,
+			capture: profileAckRef ? async entries => {
+				const expired = await context.guardProfileAck?.(entries.map(entry => entry.body as DrovrShadowEvent))
+				return expired ? { status: 'unavailable' } : { status: 'outboxed', count: entries.length }
+			} : captureDrovrOutboxLive,
 			openStops: openDrovrOutboxStopsLive,
 			settle: settleDrovrOutboxLive,
 			hold: holdDrovrStopsLive,
@@ -1208,10 +1272,10 @@ const cappedWorker = (id: string, eventName: DrovrDeliverEventName, kind: BulkCl
 					)
 					await step.sendEvent('contact-sync-backfill:defer-refused', [
 						...(notLive.length > 0
-							? [routeContactSyncRetry(contactSyncRetryRequest(notLive, 1, at, undefined, actualKind, firstFailedAt, source))]
+							? [routeContactSyncRetry(contactSyncRetryRequest(notLive, 1, at, undefined, actualKind, firstFailedAt, source, events[0]?.data.profileAckRef, events[0]?.data.profileAckNativeDebt))]
 							: []),
 						...(coldStart.length > 0
-							? [{ ...routeContactSyncRetry(contactSyncRetryRequest(coldStart, 1, at, undefined, actualKind, firstFailedAt, source)), ts: at }]
+							? [{ ...routeContactSyncRetry(contactSyncRetryRequest(coldStart, 1, at, undefined, actualKind, firstFailedAt, source, events[0]?.data.profileAckRef, events[0]?.data.profileAckNativeDebt)), ts: at }]
 							: []),
 					])
 				}
@@ -1223,7 +1287,7 @@ const cappedWorker = (id: string, eventName: DrovrDeliverEventName, kind: BulkCl
 			receipts.push(await deliverBulk(others, step, context, { gate, ...(profileSync ? { deferNotLive: true, refused: profileRefused } : {}) }))
 			if (profileRefused.length > 0) {
 				const at = (await step.run('profile-sync:defer-at', () => Date.now())) as number
-				await step.sendEvent('profile-sync:defer-refused', routeContactSyncRetry(contactSyncRetryRequest(profileRefused, 1, at, undefined, actualKind, firstFailedAt, source)))
+				await step.sendEvent('profile-sync:defer-refused', routeContactSyncRetry(contactSyncRetryRequest(profileRefused, 1, at, undefined, actualKind, firstFailedAt, source, events[0]?.data.profileAckRef, events[0]?.data.profileAckNativeDebt)))
 				refused.push(...profileRefused)
 			}
 		}
