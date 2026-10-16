@@ -112,3 +112,20 @@ describe('transfer screen privacy', () => {
 		expect(found[0]).toMatchObject({ transferId: 'tr_1' })
 	})
 })
+
+describe('recipient email in every view', () => {
+	const kinds: TransferView[] = [
+		{ kind: 'sign-in', viewerEmail: null },
+		{ kind: 'sign-in', viewerEmail: 'pat@work.example' },
+		{ kind: 'accepted', viewerIsRecipient: false, start: null },
+		{ kind: 'canceled' },
+		{ kind: 'expired' },
+	]
+	it.each(kinds)('a viewer who is not the recipient never sees it: %j', (view) => {
+		expect(render(view)).not.toContain('pat@home.example')
+	})
+
+	it('only the accept view, shown to the signed-in recipient, spells it out', () => {
+		expect(render({ kind: 'accept' })).toContain('pat@home.example')
+	})
+})

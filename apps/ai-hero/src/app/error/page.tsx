@@ -52,6 +52,8 @@ export default async function AuthErrorPage({
 						// offering GitHub or Discord ahead of the form.
 						providers={emailOnly(getProviders())}
 						title="Get a new login link"
+						// Fixed: never taken from the query, where it could name any URL.
+						callbackUrl="/"
 					/>
 				) : null}
 				<div className="mt-8 flex flex-wrap justify-center gap-3">

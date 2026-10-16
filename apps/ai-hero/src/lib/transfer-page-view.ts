@@ -43,15 +43,17 @@ export function transferPageView({
 	linkUsed,
 }: {
 	transferState: TransferState
-	/** A VERIFIED claim whose purchase already moved to the recipient. */
+	/** The purchase already moved to the recipient (`isTransferAccepted`). */
 	purchaseMoved: boolean
 	/** An INITIATED transfer past its expiry that has not been marked yet. */
 	clockExpired: boolean
 	viewer: AcceptanceViewer
 	linkUsed: boolean
 }): { kind: TransferPageKind; notice: string | null } {
-	let state = ACCEPTANCE_STATE_OF_TRANSFER[transferState]
-	if (state === 'pending' && purchaseMoved) state = 'accepted'
+	// A purchase that already moved is accepted, whatever the row says now.
+	let state: AcceptanceTransferState = purchaseMoved
+		? 'accepted'
+		: ACCEPTANCE_STATE_OF_TRANSFER[transferState]
 	if (state === 'pending' && transferState === 'INITIATED' && clockExpired)
 		state = 'expired'
 

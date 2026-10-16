@@ -1,4 +1,20 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+vi.mock('next/headers', () => ({
+	headers: async () => new Headers(),
+}))
+vi.mock('@/components/layout-client', () => ({ default: () => null }))
+vi.mock('@/components/login', () => ({ Login: () => null }))
+vi.mock('@/env.mjs', () => ({
+	env: { NEXT_PUBLIC_SUPPORT_EMAIL: 's@example.com' },
+}))
+vi.mock('@/server/logger', () => ({ log: { error: vi.fn() } }))
+vi.mock('@/server/auth', () => ({
+	getProviders: () => ({
+		postmark: { id: 'postmark' },
+		github: { id: 'github' },
+	}),
+}))
 
 import {
 	AUTH_ERROR_CODES,
@@ -6,6 +22,9 @@ import {
 	GENERIC_AUTH_ERROR,
 	authErrorView,
 } from '@/lib/auth-error-view'
+import { Login } from '@/components/login'
+
+import AuthErrorPage from './page'
 
 describe('auth error copy', () => {
 	it.each(AUTH_ERROR_CODES)('%s has its own plain copy', (code) => {
@@ -45,5 +64,30 @@ describe('auth error copy', () => {
 		const view = authErrorView(code as string | null | undefined)
 		expect(view).toBe(GENERIC_AUTH_ERROR)
 		expect(JSON.stringify(view)).not.toContain(String(code || 'x-none'))
+	})
+})
+
+describe('auth error page login form', () => {
+	it('never takes its callback from the query, and offers email only', async () => {
+		const element = await AuthErrorPage({
+			searchParams: Promise.resolve({
+				error: 'Verification',
+				callbackUrl: 'https://evil.example/steal',
+			} as { error?: string }),
+		})
+		const found: Array<Record<string, any>> = []
+		const walk = (node: unknown): void => {
+			if (!node || typeof node !== 'object') return
+			const el = node as { type?: unknown; props?: Record<string, any> }
+			if (el.type === Login && el.props) found.push(el.props)
+			for (const v of Object.values(el.props ?? {})) {
+				if (Array.isArray(v)) v.forEach(walk)
+				else walk(v)
+			}
+		}
+		walk(element)
+		expect(found).toHaveLength(1)
+		expect(found[0]!.callbackUrl).toBe('/')
+		expect(Object.keys(found[0]!.providers)).toEqual(['postmark'])
 	})
 })

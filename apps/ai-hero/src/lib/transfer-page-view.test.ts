@@ -62,6 +62,25 @@ describe('transfer page view', () => {
 		).toEqual({ kind: 'expired', notice: null })
 	})
 
+	it('a moved purchase reads accepted even if the row later says EXPIRED or CANCELED', () => {
+		for (const transferState of ['EXPIRED', 'CANCELED'] as const)
+			expect(
+				transferPageView({ ...base, transferState, purchaseMoved: true }).kind,
+			).toBe('accepted')
+	})
+
+	it('a VERIFIED claim past the clock still lets the recipient accept', () => {
+		expect(
+			transferPageView({
+				...base,
+				transferState: 'VERIFIED',
+				clockExpired: true,
+				viewer: 'recipient',
+				linkUsed: false,
+			}).kind,
+		).toBe('accept')
+	})
+
 	it('a VERIFIED claim whose purchase moved is accepted', () => {
 		expect(
 			transferPageView({
