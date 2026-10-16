@@ -7,6 +7,11 @@ const mocks = vi.hoisted(() => ({
 	canViewWorkshop: false,
 	status: 'pending',
 	search: '',
+	sessionStatus: 'unauthenticated',
+}))
+
+vi.mock('next-auth/react', () => ({
+	useSession: () => ({ status: mocks.sessionStatus }),
 }))
 
 vi.mock('next/navigation', () => ({
@@ -20,6 +25,7 @@ vi.mock('./use-workshop-ability', () => ({
 import {
 	WorkshopAccessBoundary,
 	WorkshopSidebarAccessBoundary,
+	workshopAccessView,
 } from './workshop-access-boundary'
 import { WorkshopDraftBanner } from './workshop-draft-banner'
 
@@ -29,6 +35,7 @@ describe('WorkshopAccessBoundary', () => {
 		mocks.canViewWorkshop = false
 		mocks.status = 'pending'
 		mocks.search = ''
+		mocks.sessionStatus = 'unauthenticated'
 	})
 
 	it('renders only the anonymous-safe branch before ability hydration', () => {
@@ -44,6 +51,7 @@ describe('WorkshopAccessBoundary', () => {
 	})
 
 	it('switches to the member branch after an entitled ability resolves', () => {
+		mocks.sessionStatus = 'authenticated'
 		mocks.status = 'success'
 		mocks.canViewWorkshop = true
 
@@ -56,6 +64,37 @@ describe('WorkshopAccessBoundary', () => {
 
 		expect(markup).toContain('member content')
 		expect(markup).not.toContain('public shell')
+	})
+
+	it('renders neither buy nor member content for a signed-in viewer while loading', () => {
+		mocks.sessionStatus = 'authenticated'
+		mocks.status = 'pending'
+
+		const markup = renderToStaticMarkup(
+			<WorkshopAccessBoundary
+				anonymous={<div>public shell</div>}
+				member={<div>member content</div>}
+			/>,
+		)
+
+		expect(markup).not.toContain('public shell')
+		expect(markup).not.toContain('member content')
+	})
+
+	it('shows a refresh note, not the buy branch, when a signed-in ability check fails', () => {
+		mocks.sessionStatus = 'authenticated'
+		mocks.status = 'error'
+
+		const markup = renderToStaticMarkup(
+			<WorkshopAccessBoundary
+				anonymous={<div>public shell</div>}
+				member={<div>member content</div>}
+			/>,
+		)
+
+		expect(markup).toContain('Refresh to try again')
+		expect(markup).not.toContain('public shell')
+		expect(markup).not.toContain('member content')
 	})
 
 	it('forces the buy branch only for allowPurchase=true', () => {
@@ -72,6 +111,30 @@ describe('WorkshopAccessBoundary', () => {
 		expect(markup).toContain('buy widget')
 		expect(markup).not.toContain('waitlist')
 	})
+})
+
+describe('workshopAccessView', () => {
+	const statuses = ['pending', 'error', 'success'] as const
+	for (const signedIn of [false, true]) {
+		for (const status of statuses) {
+			for (const canViewWorkshop of [false, true]) {
+				const expected = !signedIn
+					? 'anonymous'
+					: status === 'pending'
+						? 'pending'
+						: status === 'error'
+							? 'error'
+							: canViewWorkshop
+								? 'member'
+								: 'anonymous'
+				it(`signedIn=${signedIn} status=${status} canView=${canViewWorkshop} -> ${expected}`, () => {
+					expect(
+						workshopAccessView({ signedIn, status, canViewWorkshop }),
+					).toBe(expected)
+				})
+			}
+		}
+	}
 })
 
 describe('WorkshopDraftBanner', () => {
