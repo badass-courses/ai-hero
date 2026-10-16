@@ -231,6 +231,7 @@ export default async function ModulePage(props: Props) {
 						return (
 							<WorkshopAccessBoundary
 								member={null}
+								anonymousWithoutCta={null}
 								anonymous={
 									<React.Suspense fallback={null}>
 										<WorkshopInlineBuyButton
@@ -493,6 +494,9 @@ export default async function ModulePage(props: Props) {
 													wrapperClassName="overflow-hidden pb-0"
 												/>
 											)
+											// The resource list with no buy or notify ask, desktop or
+											// mobile bar: what a viewer sees until we know they don't own it.
+											const sidebarWithoutCta = listSidebar(false)
 											const forcedPurchaseSidebar = pricingProps.product ? (
 												<WorkshopSidebar
 													pricingProps={{
@@ -525,12 +529,14 @@ export default async function ModulePage(props: Props) {
 													fallback={
 														<WorkshopAccessBoundary
 															anonymous={anonymousSidebar}
+															anonymousWithoutCta={sidebarWithoutCta}
 															member={memberSidebar}
 														/>
 													}
 												>
 													<WorkshopSidebarAccessBoundary
 														anonymous={anonymousSidebar}
+														anonymousWithoutCta={sidebarWithoutCta}
 														member={memberSidebar}
 														forcedPurchase={forcedPurchaseSidebar}
 													/>
@@ -542,6 +548,7 @@ export default async function ModulePage(props: Props) {
 							) : (
 								<WorkshopAccessBoundary
 									anonymous={listSidebar(false)}
+									anonymousWithoutCta={listSidebar(false)}
 									member={listSidebar(true)}
 								/>
 							)}
