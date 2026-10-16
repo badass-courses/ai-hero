@@ -154,7 +154,7 @@ export function canViewPurchaseInvoice(
 	viewerUserId: string | null | undefined,
 	purchase: Pick<Purchase, 'id' | 'userId'> & {
 		billingUserId?: string | null
-		originTransfer?: Pick<InvoiceTransferFact, 'state' | 'sourceUserId'> | null
+		originTransfer?: InvoiceTransferFact | null
 	},
 	managedTeamPurchases: Pick<Purchase, 'id'>[],
 ): boolean {

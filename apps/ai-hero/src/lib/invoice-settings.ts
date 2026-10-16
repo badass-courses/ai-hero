@@ -1,4 +1,5 @@
 import { createHash } from 'crypto'
+import type { InvoiceTransferFact } from '@/lib/invoice-access-rules'
 import { invoicePath } from '@/lib/invoice-paths'
 import {
 	canViewPurchaseInvoice,
@@ -105,7 +106,7 @@ export type InvoiceSettingsDataSource = {
 		userId: string | null
 		billingUserId?: string | null
 		// Earliest completed transfer: its source paid. See `canEditInvoice`.
-		originTransfer?: { state: string; sourceUserId: string } | null
+		originTransfer?: InvoiceTransferFact | null
 		merchantChargeId: string | null
 	} | null>
 	loadSettings(

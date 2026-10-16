@@ -1,3 +1,4 @@
+import type { InvoiceTransferFact } from '@/lib/invoice-access-rules'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -21,7 +22,7 @@ type StoreOptions = {
 		id: string
 		userId: string | null
 		billingUserId?: string | null
-		originTransfer?: { state: string; sourceUserId: string } | null
+		originTransfer?: InvoiceTransferFact | null
 	}[]
 	managedPurchaseIds?: Record<string, string[]>
 	corruptReadback?: boolean
