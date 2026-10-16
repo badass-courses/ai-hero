@@ -52,7 +52,11 @@ describe('invoice links after a pre-fix transfer', () => {
 						merchantChargeId: charge,
 						userId: 'learner',
 						billingUserId: 'learner',
-						originTransfer: { state: 'COMPLETED', sourceUserId: 'payer' },
+						originTransfer: {
+							state: 'COMPLETED',
+							sourceUserId: 'payer',
+							completedAt: new Date('2026-09-01T00:00:00Z'),
+						},
 					}
 				: null
 		},

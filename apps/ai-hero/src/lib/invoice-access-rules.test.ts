@@ -16,6 +16,11 @@ const completed = (sourceUserId: string): InvoiceTransferFact => ({
 	sourceUserId,
 })
 
+const datedCompleted = (sourceUserId: string): InvoiceTransferFact => ({
+	...completed(sourceUserId),
+	completedAt: new Date('2026-09-01T00:00:00Z'),
+})
+
 describe('canViewInvoice truth table', () => {
 	const cases: {
 		name: string
@@ -412,7 +417,7 @@ describe('canEditInvoice truth table', () => {
 				viewerId: 'a',
 				payerUserId: 'a',
 				holderUserId: 'b',
-				transfer: completed('a'),
+				transfer: datedCompleted('a'),
 			},
 			expected: true,
 		},
@@ -422,7 +427,7 @@ describe('canEditInvoice truth table', () => {
 				viewerId: 'b',
 				payerUserId: 'a',
 				holderUserId: 'b',
-				transfer: completed('a'),
+				transfer: datedCompleted('a'),
 			},
 			expected: false,
 		},
@@ -432,7 +437,7 @@ describe('canEditInvoice truth table', () => {
 				viewerId: 'b',
 				payerUserId: 'b',
 				holderUserId: 'b',
-				transfer: completed('a'),
+				transfer: datedCompleted('a'),
 			},
 			expected: false,
 		},
@@ -442,7 +447,7 @@ describe('canEditInvoice truth table', () => {
 				viewerId: 'a',
 				payerUserId: 'b',
 				holderUserId: 'b',
-				transfer: completed('a'),
+				transfer: datedCompleted('a'),
 			},
 			expected: true,
 		},
@@ -452,7 +457,7 @@ describe('canEditInvoice truth table', () => {
 				viewerId: 'x',
 				payerUserId: 'a',
 				holderUserId: 'b',
-				transfer: completed('a'),
+				transfer: datedCompleted('a'),
 			},
 			expected: false,
 		},
@@ -462,7 +467,7 @@ describe('canEditInvoice truth table', () => {
 			expected: false,
 		},
 		{
-			name: 'a transfer that is not COMPLETED names no payer',
+			name: 'not COMPLETED names no payer (the charge user is the payer)',
 			input: {
 				viewerId: 'p',
 				payerUserId: 'c',
@@ -471,7 +476,37 @@ describe('canEditInvoice truth table', () => {
 			},
 			expected: false,
 		},
+		{
+			name: 'not COMPLETED: the charge user still edits',
+			input: {
+				viewerId: 'c',
+				payerUserId: 'c',
+				holderUserId: 'c',
+				transfer: { state: 'INITIATED', sourceUserId: 'p' },
+			},
+			expected: true,
+		},
+		{
+			name: 'an undated COMPLETED transfer is ignored, as resolveInvoicePayer does',
+			input: {
+				viewerId: 'a',
+				payerUserId: 'b',
+				holderUserId: 'b',
+				transfer: completed('a'),
+			},
+			expected: false,
+		},
 	]
+	// The legacy rule disagrees with the table exactly where a transfer
+	// rewrote the charge to the holder.
+	const legacyWrong = new Set([
+		'holder after a pre-fix transfer (charge rewritten) views only',
+		'payer after a pre-fix transfer edits',
+	])
+	it.each(cases)('legacy rule vs $name', ({ name, input, expected }) => {
+		const legacy = legacyCanEdit(input.viewerId ?? '', input.payerUserId ?? '')
+		expect(legacy !== expected).toBe(legacyWrong.has(name))
+	})
 	it.each(cases)('$name', ({ input, expected }) => {
 		expect(canEditInvoice(input)).toBe(expected)
 	})

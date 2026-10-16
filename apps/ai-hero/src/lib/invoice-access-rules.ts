@@ -106,17 +106,17 @@ export function canEditInvoice({
 }: {
 	viewerId: string | null | undefined
 	payerUserId: string | null | undefined
-	holderUserId?: string | null | undefined
-	transfer: Pick<InvoiceTransferFact, 'state' | 'sourceUserId'> | null
+	holderUserId: string | null | undefined
+	transfer: InvoiceTransferFact | null
 }): boolean {
 	if (!viewerId) return false
-	const payer =
-		transfer && transfer.state === 'COMPLETED'
-			? transfer.sourceUserId
-			: payerUserId
-	if (!payer) return false
-	// A holder who is not the payer never edits, even if a row says otherwise.
-	if (viewerId === holderUserId && holderUserId !== payer) return false
+	// One rule surface: `resolveInvoicePayer` decides, so an undated COMPLETED
+	// transfer is ignored here exactly as it is there. The holder needs no
+	// guard of its own: a holder who is not the payer is not the payer.
+	const payer = resolveInvoicePayer({
+		chargeUserId: payerUserId,
+		transfers: transfer ? [transfer] : [],
+	})
 	return viewerId === payer
 }
 

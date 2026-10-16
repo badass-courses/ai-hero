@@ -218,7 +218,11 @@ describe('saveInvoiceSettingsForViewer', () => {
 					id: PURCHASE_ID,
 					userId: 'transferred_learner',
 					billingUserId: 'transferred_learner',
-					originTransfer: { state: 'COMPLETED', sourceUserId: OWNER },
+					originTransfer: {
+						state: 'COMPLETED',
+						sourceUserId: OWNER,
+						completedAt: new Date('2026-09-01T00:00:00Z'),
+					},
 				},
 			],
 		})

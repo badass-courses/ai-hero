@@ -660,19 +660,19 @@ export const drizzleInvoiceSettingsDataSource: InvoiceSettingsDataSource = {
 			}),
 		])
 		if (!purchase) return null
+		// Dynamic like the other loads: invoice-access imports '@/db' at the
+		// top level, which this module keeps out of its static graph.
 		const { getOriginTransferForPurchase } = await import(
 			'@/lib/invoice-access'
 		)
 		const originTransfer = await getOriginTransferForPurchase(purchase.id)
-		return purchase
-			? {
-					id: purchase.id,
-					userId: purchase.userId,
-					billingUserId: charge?.userId ?? null,
-					originTransfer,
-					merchantChargeId: purchase.merchantChargeId,
-				}
-			: null
+		return {
+			id: purchase.id,
+			userId: purchase.userId,
+			billingUserId: charge?.userId ?? null,
+			originTransfer,
+			merchantChargeId: purchase.merchantChargeId,
+		}
 	},
 
 	async loadSettings(purchaseId, merchantChargeId) {
