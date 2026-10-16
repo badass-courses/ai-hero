@@ -15,6 +15,8 @@ export function EvergreenOfferCard({ range }: { range: AnalyticsRange }) {
 	const revenue = useQuery({
 		queryKey: ['analytics', 'revenue/promos', range],
 		enabled: range !== 'all',
+		staleTime: 60_000,
+		refetchOnWindowFocus: false,
 		queryFn: async ({ signal }) => {
 			const response = await fetch(
 				`/api/analytics?surface=revenue%2Fpromos&range=${encodeURIComponent(range)}`,
@@ -39,6 +41,7 @@ export function EvergreenOfferCard({ range }: { range: AnalyticsRange }) {
 				className={`${TYPE.meta} text-muted-foreground mt-2`}
 				aria-live="polite"
 			>
+				<p>All products</p>
 				{range === 'all' ? (
 					'Choose a bounded range to view evergreen revenue.'
 				) : revenue.isPending ? (

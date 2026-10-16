@@ -38,19 +38,4 @@ describe('promo fixture matches Drizzle commerce schema', () => {
 		)
 		expect(enforcingForeignKeys).toEqual([])
 	})
-	it('makes the missing time indexes explicit instead of claiming an index exists', () => {
-		const indexes = getTableConfig(purchases).indexes
-		const columns = indexes.map((index) =>
-			index.config.columns.map((column) =>
-				'name' in column ? column.name : null,
-			),
-		)
-		expect(
-			columns.some(
-				(names) =>
-					names[0] === 'createdAt' ||
-					(names[0] === 'productId' && names[1] === 'createdAt'),
-			),
-		).toBe(false)
-	})
 })

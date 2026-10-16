@@ -11,6 +11,7 @@ describe('evergreen offer admin card', () => {
 		const html = renderToStaticMarkup(<EvergreenOfferCard range="7d" />)
 		expect(html).toContain('Loading evergreen revenue…')
 		expect(html).toContain('Conversion: pending')
+		expect(html).toContain('All products')
 		expect(html).not.toContain('0%')
 	})
 	it('shows USD net and purchase count for the picked range', () => {
@@ -28,6 +29,10 @@ describe('evergreen offer admin card', () => {
 			'90d',
 		])
 		expect(html).toContain('Conversion: pending')
+		expect(mocks.useQuery.mock.calls.at(-1)?.[0]).toMatchObject({
+			staleTime: 60_000,
+			refetchOnWindowFocus: false,
+		})
 	})
 	it('asks for a bounded range without fetching all history', () => {
 		mocks.useQuery.mockReturnValue({ isPending: true })

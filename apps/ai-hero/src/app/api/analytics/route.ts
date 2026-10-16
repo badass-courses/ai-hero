@@ -608,7 +608,9 @@ export const GET = withSkill(async (request: NextRequest) => {
 						window: {
 							from: new Date(from).toISOString(),
 							to: new Date(to).toISOString(),
-							basis: 'purchase-created',
+							...(surface === 'revenue/promos'
+								? { basis: 'purchase-created' }
+								: {}),
 							bounds: '[from,to)',
 						},
 					}

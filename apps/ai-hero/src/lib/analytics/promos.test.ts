@@ -51,6 +51,12 @@ describe('promo window and money', () => {
 	])('rejects invalid explicit windows %j', (input) =>
 		expect(() => promoWindow(input)).toThrow(),
 	)
+	it('lets paired explicit windows override range=all', () => {
+		expect(promoWindow({ ...options, range: 'all' })).toEqual(
+			promoWindow(options),
+		)
+	})
+
 	it('uses bounded rolling ranges and rejects all with an actionable prompt', () => {
 		const now = new Date('2026-01-31T18:00:00Z')
 		expect(promoWindow({ range: '30d' }, now).from).toBe(

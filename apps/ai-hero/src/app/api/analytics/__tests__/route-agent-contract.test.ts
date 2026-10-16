@@ -150,7 +150,7 @@ describe('analytics API agent contract', () => {
 			})
 			const response = await GET(
 				request(
-					`?surface=${surface}&from=2026-01-01T18:00:00.001Z&to=2026-01-02T18:00:00Z`,
+					`?surface=${surface}&range=all&from=2026-01-01T18:00:00.001Z&to=2026-01-02T18:00:00Z`,
 				),
 			)
 			expect(response.status).toBe(200)
@@ -169,6 +169,9 @@ describe('analytics API agent contract', () => {
 				to: '2026-01-02T18:00:00.000Z',
 				bounds: '[from,to)',
 			})
+			expect(body.window.basis).toBe(
+				surface === 'revenue/promos' ? 'purchase-created' : undefined,
+			)
 			expect(body._links.self.href).toContain(
 				'from=2026-01-01T18%3A00%3A00.001Z',
 			)
@@ -233,6 +236,9 @@ describe('analytics API agent contract', () => {
 			body.schema.surfaces['funnel/evergreen'].data.oneOf[0].properties.status
 				.const,
 		).toBe('pending')
+		expect(body.schema.query.allOf[0].if.not).toEqual({
+			required: ['from', 'to'],
+		})
 	})
 
 	it('accepts the limited analytics-read device ability at the analytics route', async () => {

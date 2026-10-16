@@ -122,14 +122,16 @@ export function promoWindow(options: PromoOptions, now = new Date()) {
 	const to = options.to === undefined ? now : parse(options.to)
 	const hours = { '24h': 24, '7d': 168, '30d': 720, '90d': 2160 }
 	const range = options.range ?? '30d'
-	if (range === 'all')
-		throw new Error(
-			'range=all is not supported for promo analytics. Use range=24h,7d,30d,90d or paired from/to (maximum 400 days).',
-		)
-	const from =
-		options.from !== undefined
-			? parse(options.from)
-			: new Date(to.getTime() - hours[range] * 3600000)
+	let from: Date
+	if (options.from !== undefined) {
+		from = parse(options.from)
+	} else {
+		if (range === 'all')
+			throw new Error(
+				'range=all is not supported for promo analytics. Use range=24h,7d,30d,90d or paired from/to (maximum 400 days).',
+			)
+		from = new Date(to.getTime() - hours[range] * 3600000)
+	}
 	if (from && from >= to) throw new Error('from must be before to')
 	// Both rolling and explicit windows are bounded.
 	if (options.from && to.getTime() - from.getTime() > 400 * 86400000)

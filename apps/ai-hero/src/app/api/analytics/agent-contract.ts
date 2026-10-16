@@ -97,7 +97,7 @@ export const REVENUE_SURFACE_SCHEMAS = {
 			'Unknown purchase statuses (including Disputed and Banned) are unclassified and excluded from paid money, matching the base revenue provider. Status comparisons are byte-exact. Unresolved coupon references are unclassified, not full-price. recordCount makes every record visible.',
 			'purchaseCount counts positive Valid/Restricted/Refunded records except team-seat redemptions. Seat/zero and unknown statuses never contribute paid amounts.',
 			'gross includes original amounts of Refunded purchases; refunds includes their amounts; net = gross - refunds. Refunds are dated by purchase creation, not refund time. Partial Stripe refund events are not represented by this purchase-status report.',
-			'from/to must be supplied together as UTC ISO timestamps (Z, at most millisecond precision), using half-open [from,to) bounds, max 400 days. Explicit windows override the rolling range, and the envelope echoes window instead of range. range=all is rejected with a 400; use 24h/7d/30d/90d or paired from/to. Other surfaces reject from/to.',
+			'from/to must be supplied together as UTC ISO timestamps (Z, at most millisecond precision), using half-open [from,to) bounds, max 400 days. Explicit windows override the rolling range, and the envelope echoes window instead of range. range=all without an explicit window is rejected with a 400; paired from/to override range=all. Use 24h/7d/30d/90d or paired from/to. Other surfaces reject from/to.',
 		],
 	},
 	'funnel/evergreen': {
@@ -343,6 +343,7 @@ export function getAnalyticsAgentSchema(surfaceNames: readonly SurfaceName[]) {
 							surface: { enum: ['revenue/promos', 'funnel/evergreen'] },
 						},
 						required: ['surface'],
+						not: { required: ['from', 'to'] },
 					},
 					then: {
 						properties: { range: { enum: ['24h', '7d', '30d', '90d'] } },
