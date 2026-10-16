@@ -12,7 +12,7 @@ import {
 } from '@coursebuilder/commerce/types'
 
 import { getProducts } from './products-query'
-import { getSeatsTaken } from './seats-taken-query'
+import { getSeatsTaken, seatsLeft } from './seats-taken-query'
 
 export async function getPricingData(
 	options: Partial<FormatPricesForProductOptions>,
@@ -45,8 +45,10 @@ export async function getPricingData(
 	} else {
 		// Product has a finite quantity: subtract the seats taken (Valid and
 		// Restricted purchases; a bulk purchase is its seat quantity).
-		resolvedQuantityAvailable =
-			(dbProductQuantityAvailable || 0) - (await getSeatsTaken(options.productId))
+		resolvedQuantityAvailable = seatsLeft(
+			dbProductQuantityAvailable,
+			await getSeatsTaken(options.productId),
+		)
 	}
 
 	return {

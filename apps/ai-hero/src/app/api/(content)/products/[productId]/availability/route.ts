@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { courseBuilderAdapter } from '@/db'
-import { getSeatsTaken } from '@/lib/seats-taken-query'
+import { getSeatsTaken, seatsLeft } from '@/lib/seats-taken-query'
 import { withSkill } from '@/server/with-skill'
 
 const corsHeaders = {
@@ -51,12 +51,14 @@ const getAvailability = async (
 		}
 
 		// Calculate current availability
-		const quantityAvailable =
-			(product.quantityAvailable || 0) - (await getSeatsTaken(productId))
+		const quantityAvailable = seatsLeft(
+			product.quantityAvailable,
+			await getSeatsTaken(productId),
+		)
 
 		return NextResponse.json(
 			{
-				quantityAvailable: Math.max(0, quantityAvailable),
+				quantityAvailable,
 				unlimited: false,
 			},
 			{ headers: corsHeaders },

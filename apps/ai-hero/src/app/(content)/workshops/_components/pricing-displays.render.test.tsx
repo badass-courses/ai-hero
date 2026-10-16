@@ -86,7 +86,7 @@ import { EvergreenOfferEndedNotice } from '@/components/evergreen-offer-ended-no
 
 import { BuyButtonComponent } from './inline-mdx-pricing'
 import { RegionalPricingNote } from './regional-pricing-note'
-import { WorkshopEvergreenOfferEndedNotice } from './workshop-pricing'
+import { WorkshopEvergreenOfferEndedNotice } from './workshop-evergreen-offer-ended-notice'
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
 let root: Root | null = null

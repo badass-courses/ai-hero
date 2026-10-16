@@ -15,7 +15,8 @@ const mocks = vi.hoisted(() => {
 	}
 })
 
-vi.mock('./seats-taken-query', () => ({
+vi.mock('./seats-taken-query', async (importActual) => ({
+	...(await importActual<typeof import('./seats-taken-query')>()),
 	getSeatsTaken: mocks.getSeatsTaken,
 }))
 
@@ -84,5 +85,19 @@ describe('getPricingData quantityAvailable', () => {
 		const result = await getPricingData({ productId: 'product-finite' })
 
 		expect(result.quantityAvailable).toBe(40)
+	})
+
+	it('never goes below zero, so an overshoot is sold out and not the -1 unlimited sentinel', async () => {
+		for (const [cap, taken] of [
+			[40, 40],
+			[40, 41],
+			[1, 2],
+			[1, 50],
+		] as const) {
+			mocks.getProduct.mockResolvedValue({ quantityAvailable: cap })
+			mocks.getSeatsTaken.mockResolvedValue(taken)
+			const result = await getPricingData({ productId: 'product-finite' })
+			expect(result.quantityAvailable, `${cap}/${taken}`).toBe(0)
+		}
 	})
 })

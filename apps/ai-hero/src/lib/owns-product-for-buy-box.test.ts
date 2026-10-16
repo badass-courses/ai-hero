@@ -150,6 +150,7 @@ describe('ownsProductForBuyBox is display-only (import allowlist)', () => {
 		'app/(content)/events/[slug]/_components/event-pricing-server.tsx',
 		'app/(content)/events/[slug]/page.tsx',
 		'app/(content)/workshops/_components/inline-mdx-pricing.tsx',
+		'app/(content)/workshops/_components/workshop-evergreen-offer-ended-notice.tsx',
 		'app/(content)/workshops/_components/workshop-pricing-server.tsx',
 		'app/(content)/workshops/_components/workshop-pricing.tsx',
 		'lib/cohorts-query.ts',

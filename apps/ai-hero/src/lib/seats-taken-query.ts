@@ -46,10 +46,29 @@ export function seatsTakenSql(productId: string) {
 	`
 }
 
+/**
+ * Reads the seat total out of a mysql2 `db.execute` result: the `[rows, fields]`
+ * tuple (the pool also hangs `rows` on it, see `preserveQueryResultShape`).
+ * A missing row or value throws. Defaulting to 0 would read as "no seats
+ * taken" and keep a capped product on sale.
+ */
+export function parseSeatsTaken(result: unknown): number {
+	const rows = Array.isArray(result)
+		? result[0]
+		: (result as { rows?: unknown } | null)?.rows
+	const seats = (Array.isArray(rows) ? rows[0] : undefined)?.seats
+	const total = Number(seats)
+	if (seats === undefined || seats === null || !Number.isFinite(total))
+		throw new Error('seats-taken query returned no usable total')
+	return total
+}
+
 /** Seats taken for a capped product, summed in SQL. */
 export async function getSeatsTaken(productId: string) {
-	const result = (await db.execute(seatsTakenSql(productId))) as unknown as {
-		rows?: { seats?: unknown }[]
-	}
-	return Number(result.rows?.[0]?.seats ?? 0)
+	return parseSeatsTaken(await db.execute(seatsTakenSql(productId)))
+}
+
+/** Seats left on a capped product; never negative, so it cannot read as the -1 unlimited sentinel. */
+export function seatsLeft(cap: number | null | undefined, taken: number) {
+	return Math.max(0, (cap || 0) - taken)
 }

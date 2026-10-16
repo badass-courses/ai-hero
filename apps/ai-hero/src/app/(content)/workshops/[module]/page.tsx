@@ -36,12 +36,12 @@ import { Skeleton } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
 import WorkshopBreadcrumb from '../_components/workshop-breadcrumb'
+import { WorkshopEvergreenOfferEndedNotice } from '../_components/workshop-evergreen-offer-ended-notice'
 import WorkshopImage from '../_components/workshop-image'
 import {
 	WorkshopInlineBuyButton,
 	WorkshopPricingClient,
 	WorkshopPricingFallback,
-	WorkshopEvergreenOfferEndedNotice,
 } from '../_components/workshop-pricing'
 import { PublicWorkshopPricing } from '../_components/workshop-public-pricing-server'
 import { WorkshopDraftBanner } from '../_components/workshop-draft-banner'

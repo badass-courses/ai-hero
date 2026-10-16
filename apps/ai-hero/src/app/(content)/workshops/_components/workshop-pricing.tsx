@@ -2,13 +2,9 @@
 
 import { usePathname, useSearchParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
-import {
-	ownsProductForBuyBox,
-	type BuyBoxPurchase,
-} from '@/lib/owns-product-for-buy-box'
+import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 import { api } from '@/trpc/react'
 
-import { EvergreenOfferEndedNotice } from '@/components/evergreen-offer-ended-notice'
 import { PriceCheckProvider } from '@coursebuilder/commerce-next/pricing/pricing-check-context'
 
 import {
@@ -28,7 +24,7 @@ type WorkshopPricingProps = WorkshopPageProps & {
 	teamMode?: boolean
 }
 
-function useWorkshopCommerce(productId?: string) {
+export function useWorkshopCommerce(productId?: string) {
 	const searchParams = useSearchParams()
 	const { params: commerceUrlParams, hasCommerceParams } =
 		readCommerceUrlParams(searchParams)
@@ -51,35 +47,6 @@ function useWorkshopCommerce(productId?: string) {
 		data,
 		isError,
 	}
-}
-
-/**
- * The ended-offer notice with the buy box's ownership signal, read from the
- * same uncached commerce query. It stays hidden until that signal is known,
- * so an owner never sees the notice flash.
- */
-export function WorkshopEvergreenOfferEndedNotice({
-	endpoint,
-	productId,
-}: {
-	endpoint: string
-	productId?: string
-}) {
-	const { status: sessionStatus } = useSession()
-	const { data, isError } = useWorkshopCommerce(productId)
-	const known =
-		sessionStatus === 'unauthenticated' ||
-		(sessionStatus === 'authenticated' && (Boolean(data) || isError))
-	if (!known) return null
-	return (
-		<EvergreenOfferEndedNotice
-			endpoint={endpoint}
-			viewerOwnsProduct={ownsProductForBuyBox(
-				(data as { purchases?: BuyBoxPurchase[] } | undefined)?.purchases,
-				productId,
-			)}
-		/>
-	)
 }
 
 export function WorkshopPricingClient(props: WorkshopPricingProps) {

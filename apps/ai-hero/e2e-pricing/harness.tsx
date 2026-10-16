@@ -5,9 +5,9 @@
 import * as React from 'react'
 import {
 	WorkshopInlineBuyButton,
-	WorkshopEvergreenOfferEndedNotice,
 	WorkshopPricingClient,
 } from '@/app/(content)/workshops/_components/workshop-pricing'
+import { WorkshopEvergreenOfferEndedNotice } from '@/app/(content)/workshops/_components/workshop-evergreen-offer-ended-notice'
 import { api } from '@/trpc/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { httpLink } from '@trpc/client'
