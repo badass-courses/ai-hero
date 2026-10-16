@@ -1,8 +1,11 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { Effect } from 'effect'
 import { readKitSubscriberTags } from '../../scripts/held-exit-kit-scan'
 import {
 	decideExitTag,
+	DENIED_EXIT_TAG_IDS,
 	EXIT_RULE_ACTION,
 	exitTagReceipt,
 	parseHeldRecoveryArgs,
@@ -13,6 +16,7 @@ import {
 	type ExitTagProofInput,
 	type RecoveryRuntime,
 } from '../../scripts/held-exit-recover'
+import { endOldSequenceMembership } from '../lib/subscriber-marketing/old-newsletter-exit'
 import { InMemorySubscriberMarketingRepository } from '../lib/subscriber-marketing/dry-run'
 import {
 	OLD_NEWSLETTER_EXIT_CONFIRMED,
@@ -32,6 +36,7 @@ const proof: ExitTagProofInput = {
 	ruleActiveSince: SINCE,
 	kitRuleId: 77,
 	ruleAction: EXIT_RULE_ACTION,
+	ruleHistoryEntryCount: 1,
 }
 const decide = (
 	tags: ExitTagFact[],
@@ -98,14 +103,21 @@ describe('decideExitTag (pure)', () => {
 	)
 	it('refuses malformed attested or clock inputs', () => {
 		const tags = [{ id: TAG, taggedAt: '2026-10-16T11:00:00Z' }]
-		expect(decide(tags, { ruleActiveSince: 'soon' })).toMatchObject({
+		expect(decide(tags, { ruleActiveSince: 'soon' })).toEqual({
 			ok: false,
+			reason: 'exit-proof-unreadable',
 		})
-		expect(decide(tags, { now: 'later' })).toMatchObject({ ok: false })
+		expect(decide(tags, { now: 'later' })).toEqual({
+			ok: false,
+			reason: 'exit-proof-unreadable',
+		})
 	})
 	it('refuses a duplicated exit tag entry', () => {
 		const tag = { id: TAG, taggedAt: '2026-10-16T11:00:00Z' }
-		expect(decide([tag, tag])).toMatchObject({ ok: false })
+		expect(decide([tag, tag])).toEqual({
+			ok: false,
+			reason: 'exit-proof-unreadable',
+		})
 	})
 })
 
@@ -145,7 +157,37 @@ describe('readKitSubscriberTags', () => {
 		})
 		expect(decide(tags)).toMatchObject({ ok: true })
 	})
-	it('refuses a cursor loop, a bad shape and a non-200', async () => {
+	it('maps transport failures and non-200 to provider-unavailable', async () => {
+		for (const fetcher of [
+			vi.fn<[RequestInfo | URL, RequestInit?], Promise<Response>>(
+				async () => new Response('{}', { status: 500 }),
+			),
+			vi.fn<[RequestInfo | URL, RequestInit?], Promise<Response>>(
+				async () => new Response('{}', { status: 401 }),
+			),
+			vi.fn<[RequestInfo | URL, RequestInit?], Promise<Response>>(async () => {
+				throw new Error('socket hang up')
+			}),
+		])
+			await expect(
+				readKitSubscriberTags({
+					apiKey: 'k',
+					fetch: fetcher,
+					subscriberId: '1',
+				}),
+			).rejects.toMatchObject({ reason: 'provider-unavailable' })
+	})
+	it('refuses the page cap as exit-proof-unreadable', async () => {
+		let n = 0
+		const fetcher = vi.fn<[RequestInfo | URL, RequestInit?], Promise<Response>>(
+			async () => page([], `c${n++}`),
+		)
+		await expect(
+			readKitSubscriberTags({ apiKey: 'k', fetch: fetcher, subscriberId: '1' }),
+		).rejects.toMatchObject({ reason: 'exit-proof-unreadable' })
+		expect(fetcher).toHaveBeenCalledTimes(50)
+	})
+	it('refuses a cursor loop and a bad shape', async () => {
 		const loop = vi.fn<[RequestInfo | URL, RequestInit?], Promise<Response>>(
 			async () => page([], 'same'),
 		)
@@ -154,7 +196,7 @@ describe('readKitSubscriberTags', () => {
 		).rejects.toMatchObject({ reason: 'exit-proof-unreadable' })
 		for (const response of [
 			() => new Response('{}'),
-			() => new Response('{}', { status: 500 }),
+			() => new Response('not json'),
 			() => page([{ id: 1, tagged_at: 'bad' }]),
 		])
 			await expect(
@@ -233,7 +275,7 @@ describe('exit-tag recovery', () => {
 	it('plans, records the receipt facts, never scans and leaks no email', async () => {
 		const { value, scan } = runtime(good)
 		const planned = await Effect.runPromise(
-			runHeldExitRecovery(dry({ ...proof, ruleHistoryEntryCount: 1 }), value),
+			runHeldExitRecovery(dry(proof), value),
 		)
 		expect(planned).toMatchObject({
 			status: 'planned',
@@ -295,6 +337,7 @@ describe('exit-tag recovery', () => {
 		)
 		expect(written.status).toBe('requested')
 		expect(value.persist).toHaveBeenCalledOnce()
+		expect(value.notify).toHaveBeenCalledOnce()
 		const summary = JSON.parse(
 			String(
 				vi.mocked(value.persist).mock.calls[0]?.[0].payloadSummary?.summary,
@@ -313,7 +356,6 @@ describe('exit-tag recovery', () => {
 		const variants: ExitTagProofInput[] = [
 			{ ...proof, kitRuleId: 78 },
 			{ ...proof, ruleActiveSince: '2026-10-16T10:30:00.000Z' },
-			{ ...proof, ruleHistoryEntryCount: 1 },
 		]
 		for (const variant of variants)
 			expect((await plan(variant)).planHash).not.toBe(base)
@@ -387,6 +429,8 @@ describe('exit-tag argv', () => {
 		SINCE,
 		'--rule-action',
 		EXIT_RULE_ACTION,
+		'--rule-history-entry-count',
+		'1',
 	]
 	it('parses the full input and leaves scan mode untouched', () => {
 		expect(parseHeldRecoveryArgs([...base, ...full])).toMatchObject({
@@ -395,20 +439,13 @@ describe('exit-tag argv', () => {
 		expect(parseHeldRecoveryArgs([...base, '--exit-proof', 'scan'])).toEqual(
 			parseHeldRecoveryArgs(base),
 		)
-		expect(
-			parseHeldRecoveryArgs([
-				...base,
-				...full,
-				'--rule-history-entry-count',
-				'1',
-			]).exitProof?.ruleHistoryEntryCount,
-		).toBe(1)
 	})
 	it.each([
 		['missing tag id', ['--exit-tag-id']],
 		['missing rule id', ['--kit-rule-id']],
 		['missing since', ['--rule-active-since']],
 		['missing action', ['--rule-action']],
+		['missing history count', ['--rule-history-entry-count']],
 	])('refuses %s as ExitProofUnreadable', (_name, drop) => {
 		const argv = [...base, ...full]
 		const at = argv.indexOf(drop[0]!)
@@ -425,6 +462,7 @@ describe('exit-tag argv', () => {
 		['--rule-active-since', '2026-10-16'],
 		['--rule-action', 'unsubscribe-from-sequence:1'],
 		['--rule-history-entry-count', '2'],
+		['--rule-history-entry-count', '0'],
 	])('refuses malformed %s %s', (flag, value) => {
 		const argv = [...base, ...full]
 		const at = argv.indexOf(flag)
@@ -448,5 +486,92 @@ describe('exit-tag argv', () => {
 			[...base, '--readback', ...full],
 		])
 			expect(() => parseHeldRecoveryArgs(argv)).toThrow()
+	})
+})
+
+describe('runtime tag reader errors', () => {
+	it('maps a thrown reader to provider-unavailable and a bad date to unreadable', async () => {
+		const thrown = runtime(good)
+		thrown.value.exitTags = async () => {
+			throw new Error('boom')
+		}
+		expect(
+			(await Effect.runPromise(runHeldExitRecovery(dry(proof), thrown.value)))
+				.reason,
+		).toBe('provider-unavailable')
+		const bad = runtime([{ id: TAG, taggedAt: 'not-a-date' }])
+		expect(
+			(await Effect.runPromise(runHeldExitRecovery(dry(proof), bad.value)))
+				.reason,
+		).toBe('exit-proof-unreadable')
+	})
+})
+
+describe('denied exit tag ids', () => {
+	it('match the lib list, which this script cannot import (inline literal)', async () => {
+		const source = readFileSync(
+			join(__dirname, '../lib/subscriber-marketing/old-newsletter-exit.ts'),
+			'utf8',
+		)
+		const literal = /\[((?:'\d+',?\s*)+)\]\.includes\(tagId\)/.exec(source)
+		const libIds = [...(literal?.[1] ?? '').matchAll(/\d+/g)].map((m) =>
+			Number(m[0]),
+		)
+		expect([...DENIED_EXIT_TAG_IDS].sort()).toEqual(libIds.sort())
+		expect(libIds).toHaveLength(2)
+	})
+	it('the lib itself refuses each of those ids and accepts a control id', async () => {
+		const fetcher = vi.fn(async () => new Response('{}', { status: 201 }))
+		vi.stubGlobal('fetch', fetcher)
+		vi.stubEnv('KIT_V4_API_KEY', 'fixture-key')
+		vi.stubEnv('AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY', 'true')
+		vi.stubEnv('AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY', 'true')
+		try {
+			for (const id of DENIED_EXIT_TAG_IDS) {
+				vi.stubEnv('KIT_SHADOW_NEWSLETTER_EXIT_TAG_ID', String(id))
+				expect(
+					await endOldSequenceMembership({
+						contactId: 'reader',
+						email: 'reader@example.test',
+					}),
+				).toBe('unsupported')
+			}
+			expect(fetcher).not.toHaveBeenCalled()
+			vi.stubEnv('KIT_SHADOW_NEWSLETTER_EXIT_TAG_ID', '999999')
+			expect(
+				await endOldSequenceMembership({
+					contactId: 'reader',
+					email: 'reader@example.test',
+				}),
+			).toBe('requested')
+		} finally {
+			vi.unstubAllEnvs()
+			vi.unstubAllGlobals()
+		}
+	})
+})
+
+describe('scan-mode plan hash is pinned', () => {
+	it('matches the hash computed on main before the exit-tag change', async () => {
+		const { value } = runtime(good)
+		value.scan = async () => ({
+			membership: 'absent',
+			complete: true,
+			sequenceId: 2625552,
+			pages: 2,
+			subscribers: 12,
+			startedAt: contact.createdAt,
+			completedAt: contact.createdAt,
+		})
+		value.now = () => contact.createdAt
+		const planned = await Effect.runPromise(
+			runHeldExitRecovery(
+				{ mode: 'dry-run', namespace: 'ai-hero', contactId: contact.id },
+				value,
+			),
+		)
+		expect(planned.planHash).toBe(
+			'02b281ac9dd68490fb57ab580cfabcdd1bc7d9d3ef12bf35b98255372d054de4',
+		)
 	})
 })

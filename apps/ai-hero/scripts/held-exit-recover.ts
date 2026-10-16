@@ -23,7 +23,7 @@ export type ExitTagProofInput = {
 	kitRuleId: number
 	ruleAction: string
 	/** Operator-attested per-buyer rule-history entries in the Kit UI; must be exactly 1. */
-	ruleHistoryEntryCount?: 1
+	ruleHistoryEntryCount: 1
 }
 export type RecoveryArgs = {
 	namespace: 'ai-hero' | 'drovr'
@@ -57,7 +57,7 @@ export type ExitTagReceipt = {
 	ruleActiveSince: string
 	kitRuleId: number
 	ruleAction: string
-	ruleHistoryEntryCount?: 1
+	ruleHistoryEntryCount: 1
 	timeBound: string
 	attestation: 'operator-attested from Kit UI, not API-read'
 	gap: 'no-api-sequence-send-history'
@@ -124,7 +124,7 @@ export const EXIT_RULE_ACTION = `unsubscribe-from-sequence:${OLD_SEQUENCE_ID}`
 const exitTagFactsSchema = z.array(
 	z.object({
 		id: z.number().int().positive(),
-		taggedAt: z.string(),
+		taggedAt: z.string().datetime({ offset: true }),
 	}),
 )
 export const ONE_WAY_EFFECT =
@@ -179,15 +179,12 @@ export function exitTagReceipt(
 		ruleActiveSince: input.ruleActiveSince,
 		kitRuleId: input.kitRuleId,
 		ruleAction: input.ruleAction,
-		...(input.ruleHistoryEntryCount
-			? { ruleHistoryEntryCount: input.ruleHistoryEntryCount }
-			: {}),
+		ruleHistoryEntryCount: input.ruleHistoryEntryCount,
 	}
 	return {
 		...facts,
-		timeBound: input.ruleHistoryEntryCount
-			? 'proof is the per-buyer Kit rule-history entry (operator-attested from Kit UI); tagged_at >= rule-active-since and now >= tagged_at + 2 minutes is a sanity bound'
-			: 'no rule-history entry attested; only the tagged_at >= rule-active-since and now >= tagged_at + 2 minutes sanity bound applies',
+		timeBound:
+			'proof is the per-buyer Kit rule-history entry (operator-attested from Kit UI); tagged_at >= rule-active-since and now >= tagged_at + 2 minutes is a sanity bound',
 		attestation: 'operator-attested from Kit UI, not API-read',
 		gap: 'no-api-sequence-send-history',
 		oneWayEffect: ONE_WAY_EFFECT,
@@ -612,7 +609,7 @@ export function runHeldExitRecovery(
 					new RecoveryRefused({ reason: 'exit-proof-unreadable' }),
 				)
 			const readTags = runtime.exitTags
-			const rawTags = yield* boundary('exit-proof-unreadable', () =>
+			const rawTags = yield* boundary('provider-unavailable', () =>
 				readTags(identity.externalId),
 			)
 			const decodedTags = exitTagFactsSchema.safeParse(rawTags)
@@ -873,15 +870,14 @@ function parseExitProof(
 	if (ruleAction !== EXIT_RULE_ACTION) throw unreadable()
 	if (DENIED_EXIT_TAG_IDS.includes(tagId))
 		throw new RecoveryRefused({ reason: 'exit-tag-denied' })
-	const count = flags['--rule-history-entry-count']
-	if (count !== undefined && count !== '1') throw unreadable()
+	if (flags['--rule-history-entry-count'] !== '1') throw unreadable()
 	return {
 		exitProof: {
 			kind: 'exit-tag',
 			tagId,
 			kitRuleId,
 			ruleAction,
-			...(count === '1' ? { ruleHistoryEntryCount: 1 as const } : {}),
+			ruleHistoryEntryCount: 1 as const,
 			ruleActiveSince: new Date(since).toISOString(),
 		},
 	}
@@ -981,7 +977,7 @@ export function recoveryPrompt(reason: string) {
 	}
 	const tagWhy = exitTagWhy[reason]
 	if (tagWhy)
-		return `ExitProofUnreadable: you requested held-exit recovery with --exit-proof exit-tag, and it failed because ${tagWhy}. Accepted: --exit-tag-id, --kit-rule-id, --rule-active-since (ISO-8601 with offset) and --rule-action ${EXIT_RULE_ACTION}, all operator-attested from the Kit UI and not API-read, plus a fully paginated tag list showing the tag at least two minutes after both the tag time and the rule start. Fix: confirm the Kit rule is active and has fired for this subscriber, then rerun a dry run. Debug: Kit has no per-subscriber sequence send history in its API, so a send after the tag cannot be checked here.`
+		return `ExitProofUnreadable: you requested held-exit recovery with --exit-proof exit-tag, and it failed because ${tagWhy}. Accepted: --exit-tag-id, --kit-rule-id, --rule-active-since (ISO-8601 with offset) and --rule-action ${EXIT_RULE_ACTION} and --rule-history-entry-count 1, all operator-attested from the Kit UI and not API-read, and the exit tag applied at or after the rule start, and read at least two minutes after it was applied. Fix: confirm the Kit rule is active and has fired for this subscriber, then rerun a dry run. Debug: Kit has no per-subscriber sequence send history in its API, so a send after the tag cannot be checked here.`
 	const explanations: Record<string, string> = {
 		'provider-unavailable':
 			'the provider did not supply a complete fresh membership scan',

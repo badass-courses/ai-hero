@@ -435,15 +435,20 @@ export async function readKitSubscriberTags(options: {
 		)
 		url.searchParams.set('per_page', '1000')
 		if (cursor) url.searchParams.set('after', cursor)
-		const response = await options.fetch(url.toString(), {
-			method: 'GET',
-			redirect: 'error',
-			signal: AbortSignal.timeout(KIT_REQUEST_TIMEOUT_MS),
-			headers: { 'X-Kit-Api-Key': options.apiKey.trim() },
-		})
-		if (response.redirected || response.status !== 200)
-			throw new RecoveryRefused({ reason: 'exit-proof-unreadable' })
-		const decoded = tagPageSchema.safeParse(await response.json())
+		let response: Response
+		try {
+			response = await options.fetch(url.toString(), {
+				method: 'GET',
+				redirect: 'error',
+				signal: AbortSignal.timeout(KIT_REQUEST_TIMEOUT_MS),
+				headers: { 'X-Kit-Api-Key': options.apiKey.trim() },
+			})
+		} catch {
+			throw unavailable()
+		}
+		if (response.redirected || response.status !== 200) throw unavailable()
+		const body: unknown = await response.json().catch(() => undefined)
+		const decoded = tagPageSchema.safeParse(body)
 		if (!decoded.success)
 			throw new RecoveryRefused({ reason: 'exit-proof-unreadable' })
 		for (const tag of decoded.data.tags)
