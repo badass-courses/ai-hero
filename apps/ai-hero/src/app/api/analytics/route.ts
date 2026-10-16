@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import * as analytics from '@/lib/analytics'
+import { promoWindow } from '@/lib/analytics/promos'
 import type { AnalyticsRange, SurfaceEntry, SurfaceName } from '@/lib/analytics'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
@@ -428,6 +429,33 @@ export const GET = withSkill(async (request: NextRequest) => {
 			? Math.floor(requestedOffset)
 			: 0
 
+	const from = searchParams.get('from') ?? undefined
+	const to = searchParams.get('to') ?? undefined
+	if (
+		surface === 'revenue/promos' ||
+		surface === 'funnel/evergreen' ||
+		from !== undefined ||
+		to !== undefined
+	) {
+		try {
+			if (surface !== 'revenue/promos' && surface !== 'funnel/evergreen')
+				throw new Error(
+					'from/to are only supported for revenue/promos and funnel/evergreen',
+				)
+			promoWindow({ from, to, range: range as AnalyticsRange })
+		} catch (error) {
+			return NextResponse.json(
+				{
+					ok: false,
+					error: {
+						code: 'INVALID_WINDOW',
+						message: error instanceof Error ? error.message : 'Invalid window',
+					},
+				},
+				{ status: 400, headers: corsHeaders },
+			)
+		}
+	}
 	const productId = searchParams.get('productId') ?? undefined
 	const purchaseId = searchParams.get('purchaseId') ?? undefined
 	const surveyId = searchParams.get('surveyId') ?? undefined
@@ -440,6 +468,8 @@ export const GET = withSkill(async (request: NextRequest) => {
 		offset: String(offset),
 	})
 	for (const [name, value] of [
+		['from', from],
+		['to', to],
 		['productId', productId],
 		['purchaseId', purchaseId],
 		['surveyId', surveyId],
@@ -465,6 +495,8 @@ export const GET = withSkill(async (request: NextRequest) => {
 	})
 
 	const result = await analytics.query(surface, {
+		...(from !== undefined ? { from } : {}),
+		...(to !== undefined ? { to } : {}),
 		range: range as AnalyticsRange,
 		limit,
 		offset,
@@ -571,7 +603,18 @@ export const GET = withSkill(async (request: NextRequest) => {
 			ok: true,
 			endpoint: '/api/analytics',
 			surface,
-			range,
+			...(from !== undefined && to !== undefined
+				? {
+						window: {
+							from: new Date(from).toISOString(),
+							to: new Date(to).toISOString(),
+							...(surface === 'revenue/promos'
+								? { basis: 'purchase-created' }
+								: {}),
+							bounds: '[from,to)',
+						},
+					}
+				: { range }),
 			offset,
 			productId,
 			description: catalogByName[surface].description,

@@ -22,6 +22,7 @@ import {
 
 import { OmnibusDashboard, type DashboardData } from './omnibus-dashboard'
 import { AnalyticsAgentApiCard } from './analytics-agent-api-card'
+import { EvergreenOfferCard } from './evergreen-offer-card'
 import { AnalyticsDashboardErrorBoundary } from './analytics-dashboard-error-boundary'
 import {
 	TrafficBreakdownPanel,
@@ -291,6 +292,7 @@ export function ProgressiveAnalyticsDashboard({
 					surveyDrilldownHref="/admin/analytics/surveys"
 					agentApiCard={<AnalyticsAgentApiCard />}
 				/>
+				<EvergreenOfferCard range={range} />
 				<TrafficBreakdownPanel traffic={traffic180d} />
 			</AnalyticsDashboardErrorBoundary>
 		</div>
