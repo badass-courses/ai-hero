@@ -5,8 +5,12 @@ import { accounts, entitlements, entitlementTypes, users } from '@/db/schema'
 import { env } from '@/env.mjs'
 import { DiscordError, DiscordMember } from '@/lib/discord'
 import { fetchAsDiscordBot, fetchJsonAsDiscordBot } from '@/lib/discord-query'
+import { sourceLabel, type MemberFetch } from '@/lib/discord-view'
 import { getServerAuthSession } from '@/server/auth'
 import { and, eq, inArray, isNull } from 'drizzle-orm'
+
+// Discord API error code for a user who is not a guild member
+const UNKNOWN_MEMBER_CODE = 10007
 
 export type DiscordRole = {
 	id: string
@@ -49,6 +53,7 @@ export async function getDiscordRoleState() {
 	// Get the user's discord member data (current roles)
 	let currentRoles: string[] = []
 	let discordUsername: string | null = null
+	let memberFetch: MemberFetch = 'ok'
 	try {
 		const member = await fetchJsonAsDiscordBot<DiscordMember | DiscordError>(
 			`guilds/${env.DISCORD_GUILD_ID}/members/${discordAccount.providerAccountId}`,
@@ -56,9 +61,12 @@ export async function getDiscordRoleState() {
 		if ('user' in member) {
 			currentRoles = member.roles
 			discordUsername = member.user?.username ?? null
+		} else if ((member as DiscordError).code !== UNKNOWN_MEMBER_CODE) {
+			// Anything but "not in the server" means we couldn't read the member
+			memberFetch = 'error'
 		}
 	} catch {
-		// Member might not be in the guild
+		memberFetch = 'error'
 	}
 
 	// Get all guild roles for name/color lookup
@@ -116,7 +124,7 @@ export async function getDiscordRoleState() {
 				roleColor: guildRole?.color
 					? `#${guildRole.color.toString(16).padStart(6, '0')}`
 					: '#5865F2',
-				source: e.sourceType === 'purchase' ? 'Purchase' : e.sourceType,
+				source: sourceLabel(e.sourceType),
 				sourceType: e.entitlementType,
 				assigned,
 			}
@@ -129,6 +137,7 @@ export async function getDiscordRoleState() {
 		discordUsername,
 		currentRoleCount: currentRoles.length,
 		roles,
+		memberFetch,
 		allAssigned: roles.every((r) => r.assigned),
 		needsSync: roles.some((r) => !r.assigned),
 	}

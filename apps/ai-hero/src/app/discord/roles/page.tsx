@@ -1,9 +1,17 @@
 import * as React from 'react'
 import type { Metadata } from 'next'
+import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { Icon } from '@/components/brand/icons'
 import LayoutClient from '@/components/layout-client'
+import {
+	discordRolesView,
+	FETCH_ERROR_COPY,
+	NO_ROLES_COPY,
+} from '@/lib/discord-view'
 import { getServerAuthSession } from '@/server/auth'
+
+import { Button } from '@coursebuilder/ui'
 
 import { getDiscordRoleState, type RoleStatus } from './actions'
 import { SyncRolesButton } from './sync-button'
@@ -78,7 +86,8 @@ export default async function DiscordRolesPage() {
 		redirect('/discord?callbackUrl=/discord/roles')
 	}
 
-	const { roles, needsSync, discordUsername, allAssigned } = state
+	const { roles, needsSync, discordUsername, memberFetch } = state
+	const view = discordRolesView({ roles, memberFetch, connected: true })
 
 	return (
 		<LayoutClient withContainer>
@@ -102,29 +111,35 @@ export default async function DiscordRolesPage() {
 				</div>
 
 				{/* Role List */}
-				{roles.length > 0 ? (
+				{view === 'fetch-error' ? (
+					<div className="border-border/60 flex w-full flex-col items-center gap-4 rounded-lg border border-dashed px-6 py-10 text-center">
+						<p className="text-muted-foreground text-sm">{FETCH_ERROR_COPY}</p>
+						<Button asChild variant="outline" size="sm">
+							<Link href="/discord/roles">Try again</Link>
+						</Button>
+					</div>
+				) : view === 'no-roles' ? (
+					<div className="border-border/60 w-full rounded-lg border border-dashed px-6 py-10 text-center">
+						<p className="text-muted-foreground text-sm">{NO_ROLES_COPY}</p>
+					</div>
+				) : (
 					<div className="w-full space-y-2">
 						{roles.map((role) => (
 							<RoleCard key={role.roleId} role={role} />
 						))}
 					</div>
-				) : (
-					<div className="border-border/60 w-full rounded-lg border border-dashed px-6 py-10 text-center">
-						<p className="text-muted-foreground text-sm">
-							No course roles found. Roles are assigned when you purchase a
-							cohort or workshop.
-						</p>
-					</div>
 				)}
 
 				{/* Sync Button */}
-				{roles.length > 0 && <SyncRolesButton needsSync={needsSync} />}
+				{view !== 'fetch-error' && (
+					<SyncRolesButton needsSync={needsSync} />
+				)}
 
 				{/* Status Message */}
-				{allAssigned && roles.length > 0 && (
+				{view === 'all-assigned' && (
 					<p className="text-muted-foreground text-center text-xs">
-						All your course roles are active in Discord. If you purchase a new
-						course, come back here to sync.
+						All your course roles are active in Discord. If you get access to a
+						new course, come back here to sync.
 					</p>
 				)}
 			</main>
