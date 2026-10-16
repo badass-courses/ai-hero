@@ -18,6 +18,7 @@ import {
 import {
 	membershipFromScan,
 	readKitSequenceScan,
+	readKitSubscriberTags,
 	type ScanCheckpoint,
 	type ScanStore,
 } from './held-exit-kit-scan'
@@ -284,6 +285,12 @@ export function createHeldRecoveryPorts(
 				throw error
 			}
 		},
+		exitTags: async (subscriberId) =>
+			readKitSubscriberTags({
+				apiKey: options.apiKey,
+				fetch: options.fetch,
+				subscriberId,
+			}),
 		cleanup: async () => {
 			// Store acquisition prunes only expired files. Keep the fresh shared proof and memo.
 			if (options.withScanStore)

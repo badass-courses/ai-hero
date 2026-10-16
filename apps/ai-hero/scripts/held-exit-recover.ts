@@ -14,10 +14,22 @@ import type {
 	SideEffectIntent,
 } from '../src/lib/subscriber-marketing/types'
 
+/** Operator-attested Kit rule: "tag added -> unsubscribe from sequence 2625552".
+ * Kit v4 has no rules API, so every field here is read from the Kit UI by the operator. */
+export type ExitTagProofInput = {
+	kind: 'exit-tag'
+	tagId: number
+	ruleActiveSince: string
+	kitRuleId: number
+	ruleAction: string
+	/** Operator-attested per-buyer rule-history entries in the Kit UI; must be exactly 1. */
+	ruleHistoryEntryCount: 1
+}
 export type RecoveryArgs = {
 	namespace: 'ai-hero' | 'drovr'
 	contactId: string
 	contacts?: { namespace: 'ai-hero' | 'drovr'; contactId: string }[]
+	exitProof?: ExitTagProofInput
 } & (
 	| { mode: 'dry-run' | 'readback' }
 	| { mode: 'write'; approval: string; planHash: string }
@@ -37,11 +49,28 @@ export type MembershipScan = {
 	completedAt: string
 	fingerprint?: string
 }
+export type ExitTagFact = { id: number; taggedAt: string }
+export type ExitTagReceipt = {
+	proofKind: 'exit-tag'
+	tagId: number
+	taggedAt: string
+	ruleActiveSince: string
+	kitRuleId: number
+	ruleAction: string
+	ruleHistoryEntryCount: 1
+	timeBound: string
+	attestation: 'operator-attested from Kit UI, not API-read'
+	gap: 'no-api-sequence-send-history'
+	oneWayEffect: string
+	digest: string
+}
 export type RecoveryRuntime = {
 	approvalScope: string
 	findContactById: (id: string) => Promise<ContactRecord | undefined>
 	inspect: (contactId: string) => Promise<RecoverySnapshot>
 	scan: (subscriberId: string) => Promise<MembershipScan>
+	/** Every tag on the subscriber, all pages. Only used for the exit-tag proof. */
+	exitTags?: (subscriberId: string) => Promise<ExitTagFact[]>
 	cleanup?: () => Promise<void>
 	persist: (
 		input: Omit<ContactEventRecord, 'id'>,
@@ -87,6 +116,84 @@ const scanSchema = z.object({
 		.regex(/^[a-f0-9]{64}$/)
 		.optional(),
 })
+/** The rule needs time to fire after the tag lands. */
+export const EXIT_TAG_GRACE_MS = 2 * 60_000
+/** Backfill and drovr-newsletter tags never prove an exit. */
+export const DENIED_EXIT_TAG_IDS: readonly number[] = [23763332, 22309615]
+export const EXIT_RULE_ACTION = `unsubscribe-from-sequence:${OLD_SEQUENCE_ID}`
+const exitTagFactsSchema = z.array(
+	z.object({
+		id: z.number().int().positive(),
+		taggedAt: z.string().datetime({ offset: true }),
+	}),
+)
+export const ONE_WAY_EFFECT =
+	'Recovery writes the exit receipt and sends the newsletter-exit-confirmed event; the drovr shadow newsletter then starts sending to this buyer and cannot be recalled'
+
+export type ExitTagDecision =
+	| { ok: true; taggedAt: string }
+	| {
+			ok: false
+			reason:
+				| 'exit-proof-unreadable'
+				| 'exit-tag-denied'
+				| 'exit-tag-missing'
+				| 'exit-tag-before-rule'
+				| 'exit-tag-too-recent'
+	  }
+/** Pure decision. Tag must be present, tagged at/after the rule went live, and
+ * old enough for the rule to have fired. A malformed date never passes. */
+export function decideExitTag(input: {
+	tags: readonly ExitTagFact[]
+	tagId: number
+	ruleActiveSince: string
+	now: string
+}): ExitTagDecision {
+	if (DENIED_EXIT_TAG_IDS.includes(input.tagId))
+		return { ok: false, reason: 'exit-tag-denied' }
+	const since = Date.parse(input.ruleActiveSince),
+		now = Date.parse(input.now)
+	if (!Number.isFinite(since) || !Number.isFinite(now))
+		return { ok: false, reason: 'exit-proof-unreadable' }
+	const matches = input.tags.filter((tag) => tag.id === input.tagId)
+	if (matches.length === 0) return { ok: false, reason: 'exit-tag-missing' }
+	const match = matches[0]
+	if (matches.length > 1 || !match)
+		return { ok: false, reason: 'exit-proof-unreadable' }
+	const taggedAt = Date.parse(match.taggedAt)
+	if (!Number.isFinite(taggedAt))
+		return { ok: false, reason: 'exit-proof-unreadable' }
+	if (taggedAt < since) return { ok: false, reason: 'exit-tag-before-rule' }
+	if (now < taggedAt + EXIT_TAG_GRACE_MS)
+		return { ok: false, reason: 'exit-tag-too-recent' }
+	return { ok: true, taggedAt: new Date(taggedAt).toISOString() }
+}
+export function exitTagReceipt(
+	input: ExitTagProofInput,
+	taggedAt: string,
+): ExitTagReceipt {
+	const facts = {
+		proofKind: 'exit-tag' as const,
+		tagId: input.tagId,
+		taggedAt,
+		ruleActiveSince: input.ruleActiveSince,
+		kitRuleId: input.kitRuleId,
+		ruleAction: input.ruleAction,
+		ruleHistoryEntryCount: input.ruleHistoryEntryCount,
+	}
+	return {
+		...facts,
+		timeBound:
+			'proof is the per-buyer Kit rule-history entry (operator-attested from Kit UI); tagged_at >= rule-active-since and now >= tagged_at + 2 minutes is a sanity bound',
+		attestation: 'operator-attested from Kit UI, not API-read',
+		gap: 'no-api-sequence-send-history',
+		oneWayEffect: ONE_WAY_EFFECT,
+		digest: createHash('sha256')
+			.update(JSON.stringify(canonical(facts)))
+			.digest('hex'),
+	}
+}
+
 function freshAbsence(scan: MembershipScan, now: string) {
 	const start = Date.parse(scan.startedAt),
 		end = Date.parse(scan.completedAt),
@@ -135,8 +242,10 @@ export type RecoveryEnvelope = {
 		contactResolved: boolean
 		exactlyOneHeld: boolean
 		oldSequenceAbsent: boolean
+		exitTagProven?: boolean
 	}
 	scans: MembershipScan[]
+	exitProof?: ExitTagReceipt
 	prompt?: string
 	results?: RecoveryEnvelope[]
 	readback?: {
@@ -177,8 +286,16 @@ function hashSnapshot(
 	contact: ContactRecord,
 	state: RecoverySnapshot,
 	approvalScope: string,
-	scan: MembershipScan,
+	evidence: MembershipScan | ExitTagReceipt,
 ) {
+	const proof =
+		'proofKind' in evidence
+			? { exitTagProof: evidence.digest }
+			: {
+					scanFingerprint:
+						evidence.fingerprint ??
+						createHash('sha256').update(JSON.stringify(evidence)).digest('hex'),
+				}
 	return createHash('sha256')
 		.update(
 			JSON.stringify(
@@ -186,9 +303,7 @@ function hashSnapshot(
 					version: 1,
 					contact,
 					approvalScope,
-					scanFingerprint:
-						scan.fingerprint ??
-						createHash('sha256').update(JSON.stringify(scan)).digest('hex'),
+					...proof,
 					state: {
 						...state,
 						rows: [...state.rows].sort((a, b) => a.id.localeCompare(b.id)),
@@ -264,6 +379,60 @@ export function persistRecoveryExitReceipt(
 				throw new RecoveryRefused({ reason: 'proof-expired' })
 			return runtime.persist(record)
 		})
+		if (
+			receipt.contactId !== input.contact.id ||
+			receipt.provider !== 'kit' ||
+			receipt.providerReference !== OLD_NEWSLETTER_REFERENCE ||
+			receipt.eventType !== OLD_NEWSLETTER_EXIT_CONFIRMED
+		)
+			return yield* Effect.fail(
+				new RecoveryRefused({ reason: 'receipt-not-current' }),
+			)
+		return receipt
+	})
+}
+
+/** Exit-tag variant of the receipt writer: same event type and reference, the
+ * proof summary carries the attested rule inputs instead of a scan. */
+export function persistExitTagRecoveryReceipt(
+	input: {
+		contact: ContactRecord
+		identity: RecoverySnapshot['identities'][number]
+		proof: ExitTagReceipt
+		provedAt: string
+		approval: string
+		planHash: string
+	},
+	runtime: RecoveryRuntime,
+) {
+	return Effect.gen(function* () {
+		const normalized = normalizeContactEvent({
+			provider: 'kit',
+			externalId: input.identity.externalId,
+			providerEventId: `sequence:2625552:operator-exit-tag:${input.planHash}`,
+			eventType: OLD_NEWSLETTER_EXIT_CONFIRMED,
+			occurredAt: input.provedAt,
+			message: 'Old newsletter exit verified by operator exit-tag proof',
+			privacyLevel: 'internal',
+		})
+		const receipt = yield* boundary('database-unavailable', () =>
+			runtime.persist({
+				...normalized,
+				contactId: input.contact.id,
+				providerIdentityId: input.identity.id,
+				providerReference: OLD_NEWSLETTER_REFERENCE,
+				createdAt: runtime.now(),
+				payloadSummary: {
+					...normalized.payloadSummary,
+					summary: JSON.stringify({
+						operation: 'held-exit-recover',
+						approval: input.approval,
+						planHash: input.planHash,
+						exitProof: input.proof,
+					}),
+				},
+			}),
+		)
 		if (
 			receipt.contactId !== input.contact.id ||
 			receipt.provider !== 'kit' ||
@@ -431,35 +600,69 @@ export function runHeldExitRecovery(
 			return yield* Effect.fail(
 				new RecoveryRefused({ reason: 'identity-unproven' }),
 			)
-		const rawScan = yield* boundary('provider-unavailable', () =>
-			runtime.scan(identity.externalId),
-		)
-		const decodedScan = scanSchema.safeParse(rawScan)
-		if (!decodedScan.success)
-			return yield* Effect.fail(
-				new RecoveryRefused({ reason: 'membership-unknown' }),
+		let evidence: MembershipScan | ExitTagReceipt
+		let provedAt = ''
+		if (args.exitProof) {
+			const exitProof = args.exitProof
+			if (!runtime.exitTags)
+				return yield* Effect.fail(
+					new RecoveryRefused({ reason: 'exit-proof-unreadable' }),
+				)
+			const readTags = runtime.exitTags
+			const rawTags = yield* boundary('provider-unavailable', () =>
+				readTags(identity.externalId),
 			)
-		const scan = decodedScan.data
-		envelope.scans = [scan]
-		if (scan.membership === 'present')
-			return yield* Effect.fail(
-				new RecoveryRefused({ reason: 'old-sequence-member' }),
+			const decodedTags = exitTagFactsSchema.safeParse(rawTags)
+			if (!decodedTags.success)
+				return yield* Effect.fail(
+					new RecoveryRefused({ reason: 'exit-proof-unreadable' }),
+				)
+			provedAt = runtime.now()
+			const decision = decideExitTag({
+				tags: decodedTags.data,
+				tagId: exitProof.tagId,
+				ruleActiveSince: exitProof.ruleActiveSince,
+				now: provedAt,
+			})
+			if (!decision.ok)
+				return yield* Effect.fail(
+					new RecoveryRefused({ reason: decision.reason }),
+				)
+			evidence = exitTagReceipt(exitProof, decision.taggedAt)
+			envelope.exitProof = evidence
+			envelope.checks.exitTagProven = true
+		} else {
+			const rawScan = yield* boundary('provider-unavailable', () =>
+				runtime.scan(identity.externalId),
 			)
-		const proofNow = runtime.now()
-		if (!freshAbsence(scan, proofNow))
-			return yield* Effect.fail(
-				new RecoveryRefused({
-					reason: proofExpired(scan, proofNow)
-						? 'proof-expired'
-						: 'provider-unavailable',
-				}),
-			)
-		envelope.checks.oldSequenceAbsent = true
+			const decodedScan = scanSchema.safeParse(rawScan)
+			if (!decodedScan.success)
+				return yield* Effect.fail(
+					new RecoveryRefused({ reason: 'membership-unknown' }),
+				)
+			const scan = decodedScan.data
+			envelope.scans = [scan]
+			if (scan.membership === 'present')
+				return yield* Effect.fail(
+					new RecoveryRefused({ reason: 'old-sequence-member' }),
+				)
+			const proofNow = runtime.now()
+			if (!freshAbsence(scan, proofNow))
+				return yield* Effect.fail(
+					new RecoveryRefused({
+						reason: proofExpired(scan, proofNow)
+							? 'proof-expired'
+							: 'provider-unavailable',
+					}),
+				)
+			envelope.checks.oldSequenceAbsent = true
+			evidence = scan
+		}
 		envelope.planHash = hashSnapshot(
 			contact,
 			state,
 			runtime.approvalScope,
-			scan,
+			evidence,
 		)
 		if (args.mode === 'write') {
 			if (args.planHash !== envelope.planHash)
@@ -474,22 +677,39 @@ export function runHeldExitRecovery(
 			)
 			if (
 				!currentContact ||
-				hashSnapshot(currentContact, current, runtime.approvalScope, scan) !==
-					envelope.planHash
+				hashSnapshot(
+					currentContact,
+					current,
+					runtime.approvalScope,
+					evidence,
+				) !== envelope.planHash
 			)
 				return yield* Effect.fail(
 					new RecoveryRefused({ reason: 'snapshot-changed' }),
 				)
-			const receipt = yield* persistRecoveryExitReceipt(
-				{
-					contact,
-					identity,
-					scan,
-					approval: args.approval,
-					planHash: envelope.planHash,
-				},
-				runtime,
-			)
+			const receipt =
+				'proofKind' in evidence
+					? yield* persistExitTagRecoveryReceipt(
+							{
+								contact,
+								identity,
+								proof: evidence,
+								provedAt,
+								approval: args.approval,
+								planHash: envelope.planHash,
+							},
+							runtime,
+						)
+					: yield* persistRecoveryExitReceipt(
+							{
+								contact,
+								identity,
+								scan: evidence,
+								approval: args.approval,
+								planHash: envelope.planHash,
+							},
+							runtime,
+						)
 			envelope.counts.exitReceipts = 1
 			const membership = yield* boundary('database-unavailable', () =>
 				runtime.currentMembership(contact.id),
@@ -540,6 +760,7 @@ export function parseHeldRecoveryArgs(argv: readonly string[]): RecoveryArgs {
 	const contacts: { namespace: 'ai-hero' | 'drovr'; contactId: string }[] = []
 	let mode: RecoveryArgs['mode'] = 'dry-run'
 	let approval: string | undefined, planHash: string | undefined
+	const exit: Record<string, string> = {}
 	let modeSelected = false
 	const seen = new Set<string>()
 	const invalid = () => new RecoveryRefused({ reason: 'arguments-invalid' })
@@ -570,6 +791,12 @@ export function parseHeldRecoveryArgs(argv: readonly string[]): RecoveryArgs {
 				'--drovr-contact-id',
 				'--approval',
 				'--plan-hash',
+				'--exit-proof',
+				'--exit-tag-id',
+				'--rule-active-since',
+				'--kit-rule-id',
+				'--rule-action',
+				'--rule-history-entry-count',
 			].includes(flag)
 		)
 			throw invalid()
@@ -589,17 +816,71 @@ export function parseHeldRecoveryArgs(argv: readonly string[]): RecoveryArgs {
 			selector ??= selected
 			contacts.push(selected)
 		} else if (flag === '--approval') approval = value.trim()
-		else planHash = value
+		else if (flag === '--plan-hash') planHash = value
+		else exit[flag] = value
 	}
 	if (!selector) throw invalid()
 	if (mode !== 'dry-run' && contacts.length !== 1) throw invalid()
+	const exitProof = parseExitProof(exit, mode)
 	if (mode === 'write') {
 		if (!approval) throw new RecoveryRefused({ reason: 'approval-required' })
 		if (!planHash || !/^[a-f0-9]{64}$/.test(planHash)) throw invalid()
-		return { ...selector, mode, approval, planHash }
+		return { ...selector, mode, approval, planHash, ...exitProof }
 	}
 	if (approval !== undefined || planHash !== undefined) throw invalid()
-	return { ...selector, mode, ...(contacts.length > 1 ? { contacts } : {}) }
+	return {
+		...selector,
+		mode,
+		...(contacts.length > 1 ? { contacts } : {}),
+		...exitProof,
+	}
+}
+
+/** `scan` (default) takes no extra flags. `exit-tag` needs all four, never defaulted. */
+function parseExitProof(
+	flags: Record<string, string>,
+	mode: RecoveryArgs['mode'],
+): { exitProof?: ExitTagProofInput } {
+	const kind = flags['--exit-proof']
+	const extras = Object.keys(flags).filter((flag) => flag !== '--exit-proof')
+	if (kind === undefined && extras.length === 0) return {}
+	if (mode === 'readback')
+		throw new RecoveryRefused({ reason: 'arguments-invalid' })
+	if (kind === 'scan' && extras.length === 0) return {}
+	if (kind !== 'exit-tag')
+		throw new RecoveryRefused({ reason: 'arguments-invalid' })
+	const unreadable = () =>
+		new RecoveryRefused({ reason: 'exit-proof-unreadable' })
+	const positive = (value: string | undefined) => {
+		if (!value || !/^[1-9]\d*$/.test(value)) throw unreadable()
+		const number = Number(value)
+		if (!Number.isSafeInteger(number)) throw unreadable()
+		return number
+	}
+	const tagId = positive(flags['--exit-tag-id'])
+	const kitRuleId = positive(flags['--kit-rule-id'])
+	const since = flags['--rule-active-since']
+	const ruleAction = flags['--rule-action']
+	if (
+		!since ||
+		!z.string().datetime({ offset: true }).safeParse(since).success ||
+		!Number.isFinite(Date.parse(since))
+	)
+		throw unreadable()
+	if (ruleAction !== EXIT_RULE_ACTION) throw unreadable()
+	if (DENIED_EXIT_TAG_IDS.includes(tagId))
+		throw new RecoveryRefused({ reason: 'exit-tag-denied' })
+	if (flags['--rule-history-entry-count'] !== '1') throw unreadable()
+	return {
+		exitProof: {
+			kind: 'exit-tag',
+			tagId,
+			kitRuleId,
+			ruleAction,
+			ruleHistoryEntryCount: 1 as const,
+			ruleActiveSince: new Date(since).toISOString(),
+		},
+	}
 }
 
 export type RecoveryRuntimeLoader = (
@@ -683,6 +964,20 @@ export function runHeldRecoveryCommand(
 
 /** Literal operator prompt. Fixed vocabulary only; never interpolate identifiers or causes. */
 export function recoveryPrompt(reason: string) {
+	const exitTagWhy: Record<string, string> = {
+		'exit-proof-unreadable':
+			'the exit-tag proof inputs or the subscriber tag list were missing or malformed',
+		'exit-tag-denied':
+			'that tag id is a denied backfill or newsletter tag and cannot prove an exit',
+		'exit-tag-missing': 'the subscriber does not carry the exit tag',
+		'exit-tag-before-rule':
+			'the exit tag was applied before the attested rule went live',
+		'exit-tag-too-recent':
+			'the exit tag is less than two minutes old, so the rule may not have fired',
+	}
+	const tagWhy = exitTagWhy[reason]
+	if (tagWhy)
+		return `ExitProofUnreadable: you requested held-exit recovery with --exit-proof exit-tag, and it failed because ${tagWhy}. Accepted: --exit-tag-id, --kit-rule-id, --rule-active-since (ISO-8601 with offset) and --rule-action ${EXIT_RULE_ACTION} and --rule-history-entry-count 1, all operator-attested from the Kit UI and not API-read, and the exit tag applied at or after the rule start, and read at least two minutes after it was applied. Fix: confirm the Kit rule is active and has fired for this subscriber, then rerun a dry run. Debug: Kit has no per-subscriber sequence send history in its API, so a send after the tag cannot be checked here.`
 	const explanations: Record<string, string> = {
 		'provider-unavailable':
 			'the provider did not supply a complete fresh membership scan',
@@ -740,7 +1035,14 @@ export function runHeldRecoveryBatch(
 		const results: RecoveryEnvelope[] = []
 		for (const selector of selectors)
 			results.push(
-				yield* runHeldExitRecovery({ ...selector, mode: 'dry-run' }, runtime),
+				yield* runHeldExitRecovery(
+					{
+						...selector,
+						mode: 'dry-run',
+						...(args.exitProof ? { exitProof: args.exitProof } : {}),
+					},
+					runtime,
+				),
 			)
 		const first = results[0]!
 		const refused = results.find((result) => result.status === 'refused')
