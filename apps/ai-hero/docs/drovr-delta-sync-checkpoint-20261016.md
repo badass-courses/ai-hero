@@ -46,6 +46,12 @@ All evidence below was run on the local post-main source tree before this checkp
 
 The clean-log audit is **not a whole-network-isolation guarantee**. Synthetic fixtures only; the disposable MySQL service remains desk-owned. Remote exact-head CI/build/MySQL/pricing/security readback is still required.
 
+## Exact-head CI follow-up
+
+GitHub readback for `c348e455` found next build, MySQL contract, workshop pricing and both security checks green. CI's native typecheck also passed. Its wider unit selection caught a migration-contract test that incorrectly required the new control column to occur in the immutable original CREATE rather than the approved separate additive migration. This was a test-coverage omission in the narrower local selection, not a request for different DDL.
+
+The follow-up fixes the contract test to inspect cumulative migrations while separately asserting that the original CREATE is unchanged and the additive script executes **only** `ALTER TABLE AI_DrovrOutbox ADD COLUMN heldContinuation JSON NULL`. No migration or runtime code changes. The **exact current CI unit selection** then passed locally: **3,366 tests / 230 files**, 471 guarded skips / 23 files. New exact-head remote checks remain necessary after the follow-up push; worker wiring remains unfinished.
+
 ## Next work, in desk-approved order
 
 1. Worker wiring, including terminal expired evidence with no ACK retry/HTTP/history reconstruction and retained native debt still owed.
