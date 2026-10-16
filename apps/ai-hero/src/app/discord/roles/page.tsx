@@ -1,6 +1,7 @@
 import * as React from 'react'
 import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
+import { env } from '@/env.mjs'
 import { Icon } from '@/components/brand/icons'
 import LayoutClient from '@/components/layout-client'
 import {
@@ -120,6 +121,11 @@ export default async function DiscordRolesPage() {
 				) : view === 'no-roles' ? (
 					<div className="border-border/60 w-full rounded-lg border border-dashed px-6 py-10 text-center">
 						<p className="text-muted-foreground text-sm">{NO_ROLES_COPY}</p>
+						<Button asChild variant="outline" size="sm" className="mt-4">
+							<a href={`mailto:${env.NEXT_PUBLIC_SUPPORT_EMAIL}`}>
+								Contact support
+							</a>
+						</Button>
 					</div>
 				) : (
 					<div className="w-full space-y-2">

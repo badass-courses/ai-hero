@@ -15,7 +15,7 @@ import {
 	type MemberFetch,
 } from './discord-view'
 
-// The behavior before this change, copied verbatim in spirit.
+// The behavior before this change, modeled on the old page logic.
 const legacyRolesView = ({
 	roles,
 	connected,
@@ -28,7 +28,7 @@ const legacyRolesView = ({
 	if (roles.length === 0) return 'no-roles'
 	return roles.every((r) => r.assigned) ? 'all-assigned' : 'needs-sync'
 }
-// Old getDiscordAccessState tail (/discord) and the welcome page's check.
+// Modeled on the old getDiscordAccessState tail (/discord) and the welcome page's check.
 type Acct = { provider?: string; access_token?: string | null } | null
 const legacyDiscordState = (account: Acct, linkResult?: string) => {
 	if (account?.access_token) return 'linked'
@@ -167,6 +167,28 @@ describe('/discord state vs legacy', () => {
 			expect(state).toBe(link)
 		},
 	)
+})
+
+describe('real query row shape', () => {
+	// getDiscordAccount and discordAccountsForCurrentUser select whole account rows
+	// (no narrowed columns), so provider is always present.
+	const row = {
+		userId: 'u',
+		type: 'oauth',
+		provider: 'discord',
+		providerAccountId: 'd1',
+		access_token: 'tok',
+		refresh_token: null,
+		expires_at: null,
+	}
+	it('reads a full linked row as connected on /discord and welcome', async () => {
+		const state = await getDiscordAccessState({
+			getSession: async () => ({ session: { user: { id: 'u' } } }),
+			findDiscordAccount: async () => row,
+		})
+		expect(state).toBe('linked')
+		expect([row].some(isDiscordConnected)).toBe(true)
+	})
 })
 
 describe('classifyMemberResponse', () => {
