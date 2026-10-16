@@ -1,41 +1,47 @@
 # SEO head proof
 
-Base: `77c57d6b`. All content and commerce reads in the proof use synthetic fixtures. No production database, checkout, customer record, or service credential was used.
+Base: `77c57d6b`. Renderer, commerce and feed tests use synthetic fixtures, with no application service credentials. Separate approved read-only Vitess verification is noted below. This document includes the round-two review corrections.
 
 ## Head before and after
 
-The complete fragments are checked into [`seo-head.test.tsx.snap`](../src/lib/__snapshots__/seo-head.test.tsx.snap), for:
+The complete fragments are in [`seo-head.test.tsx.snap`](../src/lib/__snapshots__/seo-head.test.tsx.snap), for `/`, both crash-course workshop pages, and `/ai-coding-dictionary/agent`.
 
-- `/`
-- `/workshops/ai-sdk-v6-crash-course`
-- `/workshops/ai-coding-crash-course`
-- `/ai-coding-dictionary/agent`
+The test executes the actual route metadata declarations and workshop JSON-LD component with fixture read adapters. Next resolves inherited metadata; React renders the fragment. Baseline declarations were extracted verbatim from `77c57d6b` into `src/lib/__fixtures__/seo-head-base.json`, so shallow checkouts do not need Git history. Site and dictionary JSON-LD are included. Scripts are collected alongside head tags for proof, without changing their application-body placement.
 
-The test executes the actual metadata declarations and workshop JSON-LD component with synthetic read adapters. It uses Next's metadata resolver for inherited title, description, canonical and Open Graph values, then React's server renderer for the fragment. The baseline declarations were extracted verbatim from `77c57d6b` into `src/lib/__fixtures__/seo-head-base.json`, so shallow CI checkouts do not need Git history. Existing site and dictionary JSON-LD components are included. Scripts are collected alongside the head tags in the proof fragment; their placement in the application body has not changed.
+This is a metadata test render, not a full-app or production capture. Fixture descriptions and prices are not customer copy or advertised prices. Homepage title, description and H1 remain unchanged; inner-page canonicals are unchanged.
 
-This is a metadata test render, not a full application build or a production capture. Fixture descriptions and the fixture price are not customer copy or advertised prices.
+The UTM test now passes an actual `Request` through Next's loader-tree metadata resolver, with its pathname and search parameters in request context, then renders the resolved canonical. Both `/` and `/?utm_source=x` emit `https://www.aihero.dev/`. It no longer repeats the same assertion against an unused query parameter. Homepage-only `metadataBase: null` preserves the requested trailing slash, which Next otherwise strips from the root canonical.
 
-| Route | Before | After |
-| --- | --- | --- |
-| Homepage | No canonical | `https://www.aihero.dev/`; identical with `?utm_source=x` |
-| AI SDK v6 fixture | Literal `*you*` and link syntax | Plain text in description, OG and Course JSON-LD |
-| AI Coding fixture | Long description | Whole-word prefix, at most 155 characters including the ellipsis |
-| Dictionary fixture | Markdown and encoded entity text | Plain text, decoded before HTML escaping |
-| Workshop Course | No provider or offer | AI Hero provider and the loaded primary price/currency; sold out when no seats remain |
+## Descriptions and dictionary data
 
-Homepage title, description and H1 remain unchanged. Inner-page canonicals remain unchanged. The homepage sets its own `metadataBase` to `null` because its URLs are absolute: Next otherwise normalizes the root canonical to the bare origin and drops the trailing slash. The resolver-backed test checks the emitted value, not just the input metadata object.
+One shared pipeline parses Markdown, flattens HTML, decodes entities and collapses whitespace. Metadata is limited to 155 characters including the ellipsis. It cuts at a word boundary, except that a single overlong word is hard-cut rather than replaced with a lone ellipsis. Trailing punctuation is removed before the ellipsis. Empty metadata is `undefined`; JSON-LD omits the key.
 
-## Description contract
+HTML images, scripts and styles are skipped. HTML headings retain their case. The property generator includes both Markdown and HTML, entities, varied word lengths and limits. It runs 2,000 seeded cases, checking the bound, plain-text prefix, word boundaries or the explicit overlong-word exception, and no dangling HTML entity fragment.
 
-One pure `metaDescription` function parses Markdown, flattens HTML, decodes entities, collapses whitespace and reserves space for an ellipsis only when cutting. It never cuts a word. A word longer than the available space produces only an ellipsis rather than part of the word. A zero limit produces an empty string.
+Dictionary data stores full plain text, not a 155-character teaser. Only metadata and JSON-LD truncate it, using an already-plain input option rather than parsing twice. No dictionary UI component is changed. Tests retain descriptions longer than 155 characters and literal characters obtained from code spans. `stripMarkdown` remains because the Typesense body index still uses it; that search normalization is unchanged.
 
-The property test runs 2,000 seeded cases with variable word lengths, Markdown links/emphasis, entities and limits from 1 to 155. It checks the bound, stripped syntax, a whole-word plain-text prefix and no dangling entity fragment. Table-driven tests cover headings, code, reference links, images, HTML, scripts, empty input, exact fits and long first words.
+## Course and Product JSON-LD
 
-## Course validation
+`buildCourseSchema` returns `WithContext<Course>` without an assertion. Strict serialized JSON-LD tests cover Course, Organization, Offer and online CourseInstance fields. Empty descriptions are omitted. Cohort dates belong on `hasCourseInstance`, not directly on Course.
 
-`buildCourseSchema` returns `WithContext<Course>` from `schema-dts`, without an assertion. Cohort dates are on `hasCourseInstance`, with `courseMode: online`. A strict JSON-LD validation test validates serialized output and the Offer/Organization/CourseInstance fields. The full application typecheck also passes.
+The exact `getProduct`-shaped fixture has `price.fields = {}`. It emits both Product and Course offers from the already-loaded positive single-seat list price. Legacy price fields are not treated as a currency or activation authority.
 
-Validation result: **12 Course tests passed**, including 200 generated list-price values. Example validated output, with synthetic commerce facts:
+No exported app/commerce currency constant exists. `JSON_LD_CURRENCY = 'USD'` is used only by Product and Course JSON-LD and cites the existing USD-only checkout:
+
+- `@coursebuilder/commerce@0.3.1/src/resolve-checkout-price.ts:62` requires `usd`.
+- `@coursebuilder/commerce@0.3.1/src/stripe-checkout.ts:665,1084,1151,1212` uses `currency: 'USD'`.
+
+There is no price constant, visitor discount, regional quote or PPP calculation. Missing, zero or invalid price, or unknown inventory, omits **only the offer**. Product JSON-LD is still rendered whenever the page supplies its sellable product. `config.siteUrl` reads validated `env.NEXT_PUBLIC_URL`; the provider URL derives from it.
+
+Enrollment windows keep `availabilityStarts` and `availabilityEnds`. The policy is omission, not PreOrder: pre-open and closed enrollment omit offers, matching `offerInJsonLd` in `cohort-coming-soon.ts`. A fixture with C5 doors opening October 26 verifies that the October 16 state cannot emit InStock. The open state retains both window dates; exhausted seats emit SoldOut.
+
+### No second commerce fetch
+
+`course-seo-query.ts` and its separate cache were removed. The workshop schema is a slot on the existing public-pricing render, receiving the exact product and quantity object passed to the buy widget. Its test proves one product lookup and one pricing resolution, not a metadata-specific fetch. Cohort metadata consumes the existing product and the already-started pricing promise, whose inventory uses pricing's seat-holding rule. Unknown inventory does not hide the Product script.
+
+### Validated synthetic example
+
+Fourteen Course tests pass, including 200 generated positive list prices and the legacy empty-fields fixture. Example serialized output:
 
 ```json
 {
@@ -44,65 +50,48 @@ Validation result: **12 Course tests passed**, including 200 generated list-pric
   "name": "Synthetic course",
   "description": "Learn engineering.",
   "url": "https://www.aihero.dev/workshops/synthetic-course",
-  "provider": {
-    "@type": "Organization",
-    "name": "AI Hero",
-    "url": "https://www.aihero.dev"
-  },
+  "provider": { "@type": "Organization", "name": "AI Hero", "url": "https://www.aihero.dev" },
   "offers": {
-    "@type": "Offer",
-    "price": 247.5,
-    "priceCurrency": "GBP",
+    "@type": "Offer", "price": 247.5, "priceCurrency": "USD",
     "availability": "https://schema.org/InStock",
     "url": "https://www.aihero.dev/workshops/synthetic-course"
   }
 }
 ```
 
-The price comes from the product adapter's selected primary list price, not a formatted visitor quote, coupon, regional price or PPP calculation. Currency must be present in that price's catalog facts. Missing, zero, invalid, inactive or unsupported price facts omit the offer. Unknown inventory also omits it. Capped inventory uses the same `getSeatsTaken` and `seatsLeft` functions as pricing; `-1` remains the existing unlimited sentinel. A failed SEO read omits the offer rather than failing the page. The anonymous commerce facts are cached for 600 seconds.
+## Sitemap and RSS compatibility
 
-## Sitemap contract
+A shared index keeps the modes separate. Sitemap dates prefer content `updatedAt`. Feed dates retain main's `publishedAt`-first order and existing fallback, including its legacy static-date fallback. The RSS renderer keeps every fixture entry in the same order. A golden test executes main's captured RSS renderer against a fixture index and compares the new route's XML byte-for-byte, including dates, order and fallback. No undated-entry filter remains in RSS.
 
-Content URLs prefer `updatedAt` over publication time. Homepage lastmod uses the active landing-page resource, with its existing fallback. The skills index uses the maximum public, published child `updatedAt`, across the full collection rather than the first 100 entries. CMS-backed static acquisition routes use their resource timestamp. A static route without a known resource timestamp omits lastmod rather than substituting a build date, commit hash, epoch or hard-coded date. The RSS consumer skips those undated entries rather than inventing publication dates.
+The sitemap never uses that legacy feed date. Homepage lastmod follows the `landing-page-v2` resource with the existing `landing-page` fallback. These are the slugs actually loaded by `app/page.tsx:46–47`. The skills index uses the maximum eligible child update across the full collection. Guessed CMS slugs for static newsletter/subscribe pages were removed; those routes omit unknown lastmod rather than inventing one.
 
-Published/public filters remain in SQL and are checked again before emitting content URLs. Deleted workshops, sections and lessons are excluded. Sitemap tests cover draft posts, draft workshops, draft lessons, unlisted posts, updated-versus-published timestamps, index-child timestamps and missing static timestamps.
+Cache tags match existing invalidations: `lib/pages-query.ts:72,109` invalidates `pages`; `lib/workshops-query.ts:510,536` invalidates `workshop`; `lib/posts-query.ts:854–855` invalidates `posts`/`tags`; `lib/lists-query.ts:66` invalidates `lists`; and `lib/skill-changelog-mutations.ts:105` invalidates `skill-changelog`. `inngest/functions/ai-coding-dictionary-index.ts:16` invalidates `ai-coding-dictionary`. Dictionary updates retain their existing cache tag and TTL.
+
+Verified read-only on production Vitess: the query is accepted, and EXPLAIN shows both branches as index range scans (`slug_idx`, `type_idx`), with no full scan. The first-round GitHub MySQL contract also passed. No row counts, timings, table sizes, credentials or private connection details are included here.
 
 ## Checks
 
 ```text
-Focused suites: 11 passed
-Focused tests: 88 passed
+Focused suites: 14 passed
+Focused tests: 118 passed
 Application typecheck: passed
-Mutation checks: 7/7 killed
+Mutation checks: 10/10 killed
 ```
 
-The red-first runs failed 10 description assertions, 8 Course/canonical assertions and 2 sitemap assertions before implementation. The mutation runner plants and restores these defects:
+The mutation runner covers retained Markdown, mid-word cuts, hard-coded price, unknown price emitted as zero, sold-out emitted InStock, missing canonical, loss of legacy-price offers, pre-open InStock, hiding Product schema on unknown inventory, and a draft entering the sitemap. It restores each source plant in `finally`; run it without another writer or checker in the checkout.
 
-```text
-KILLED: markdown not stripped
-KILLED: cut mid-word
-KILLED: hard-coded offer price
-KILLED: unknown price emitted as zero
-KILLED: sold out emitted as InStock
-KILLED: homepage canonical missing
-KILLED: draft enters sitemap
-```
+`unified` is already a direct dependency and `fast-check` is already a direct devDependency. Changed helpers and changed hunks were formatted with the repository's Prettier options.
+
+The first-round GitHub `next build`, CI and MySQL contract checks passed. The clean local checkout still has no application build credentials; no production environment was pulled. Fresh CI must validate the round-two commit before any merge.
 
 Reproduce from `apps/ai-hero`:
 
 ```sh
-pnpm exec vitest run src/lib/meta-description.test.ts src/lib/course-schema.test.ts src/lib/course-seo-query.test.ts src/lib/structured-data.test.tsx src/lib/seo-head.test.tsx src/app/homepage-seo.test.tsx src/app/sitemap.test.ts src/lib/ai-coding-dictionary.test.ts src/lib/pricing-decisions.test.ts src/lib/pricing-query.test.ts src/lib/seats-taken-query.test.ts
+pnpm exec vitest run src/lib/meta-description.test.ts src/lib/course-schema.test.ts src/lib/structured-data.test.tsx src/lib/seo-head.test.tsx src/app/homepage-seo.test.tsx src/app/sitemap.test.ts src/app/rss.xml/route.test.ts 'src/app/(content)/workshops/_components/workshop-pricing-seo.test.tsx' src/lib/ai-coding-dictionary.test.ts src/lib/ai-coding-dictionary-typesense.test.ts src/lib/pricing-decisions.test.ts src/lib/pricing-query.test.ts src/lib/seats-taken-query.test.ts 'src/app/(content)/cohorts/[slug]/_components/cohort-coming-soon.test.ts'
 pnpm run typecheck
 node scripts/seo-mutants.mjs
-pnpm exec next build
 ```
-
-Run mutation checks with no concurrent writer or checker in the checkout. Each planted source change is restored in `finally`.
-
-## Build blocker
-
-`pnpm exec next build` exits 1 while loading `next.config.mjs`: required database and service environment variables are absent in the clean checkout. It does not reach compilation or prerendering. No production environment was pulled to bypass the failure. Keep the PR draft and rerun the build in the authorized application build environment before merge.
 
 ## Release and rollback
 
-No flag, migration, price change, CMS write, merge or deployment is part of this change. Roll back by reverting the PR. After an approved deployment, check the four routes signed out, the homepage with a UTM query, a sold-out course and the generated XML sitemap. Verify that unknown offers/lastmod values remain absent rather than defaulting to invented values.
+Draft PR only. No flag, migration, price change, CMS write, merge or deployment. Roll back by reverting the PR. After an approved deployment, inspect the four routes signed out, the homepage with a UTM query, pre-open/open/sold-out Course states, Product schema with unknown offer facts, sitemap XML and RSS publication dates.

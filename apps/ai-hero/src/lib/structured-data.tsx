@@ -208,7 +208,7 @@ export function buildDictionaryStructuredData(dictionary: DictionaryData) {
 					'@id': `${toPublicUrl(`/ai-coding-dictionary/${entry.slug}`)}#defined-term`,
 					name: entry.title,
 					termCode: entry.slug,
-					description: sanitizeText(entry.description),
+					description: metaDescription(entry.description, 155, { plainText: true }),
 					url: toPublicUrl(`/ai-coding-dictionary/${entry.slug}`),
 					inDefinedTermSet: { '@id': termSetId },
 				})),
@@ -259,7 +259,7 @@ export function buildDictionaryEntryStructuredData({
 	const termSetId = `${dictionaryUrl}#defined-term-set`
 	const termId = `${canonicalUrl}#defined-term`
 	const webpageId = `${canonicalUrl}#webpage`
-	const description = sanitizeText(entry.description)
+	const description = metaDescription(entry.description, 155, { plainText: true })
 	const image = toPublicUrl(
 		getAiCodingDictionaryOgImageUrl(
 			`${entry.title} | ${AI_CODING_DICTIONARY_TITLE}`,
@@ -485,13 +485,18 @@ export function buildProductStructuredData({
 	canonicalPath,
 }: {
 	product: Product
-	quantityAvailable: number
+	quantityAvailable?: number
 	canonicalPath?: string
 }): WithContext<ProductSchema> {
 	const canonicalUrl = toPublicUrl(
 		canonicalPath || `/products/${product.fields?.slug || product.id}`,
 	)
-	const offer = buildCourseOffer({ product, quantityAvailable, url: canonicalUrl })
+	const offer = buildCourseOffer({
+		product,
+		quantityAvailable,
+		url: canonicalUrl,
+	})
+	const description = metaDescription(product.fields?.description)
 
 	return {
 		'@context': SCHEMA_ORG_CONTEXT,
@@ -500,7 +505,7 @@ export function buildProductStructuredData({
 		url: canonicalUrl,
 		sku: product.id,
 		category: product.type || undefined,
-		description: metaDescription(product.fields?.description),
+		...(description ? { description } : {}),
 		image:
 			product.fields?.image?.url ||
 			getOGImageUrlForResource({
@@ -510,7 +515,9 @@ export function buildProductStructuredData({
 					slug: product.fields?.slug || product.id,
 				},
 			}),
-		...(offer ? { offers: { ...offer, seller: buildOrganizationReference() } } : {}),
+		...(offer
+			? { offers: { ...offer, seller: buildOrganizationReference() } }
+			: {}),
 	}
 }
 
@@ -534,7 +541,7 @@ export function buildCourseStructuredData({
 }: {
 	cohort: Cohort
 	product?: Product | null
-	quantityAvailable: number
+	quantityAvailable?: number
 }): WithContext<Course> {
 	const image = cohort.fields.socialImage?.url || cohort.fields.image
 	return {
@@ -763,7 +770,7 @@ export function ProductStructuredData({
 	canonicalPath,
 }: {
 	product: Product
-	quantityAvailable: number
+	quantityAvailable?: number
 	canonicalPath?: string
 }) {
 	return (
@@ -793,7 +800,7 @@ export function CourseStructuredData({
 }: {
 	cohort: Cohort
 	product?: Product | null
-	quantityAvailable: number
+	quantityAvailable?: number
 }) {
 	return (
 		<StructuredDataScript

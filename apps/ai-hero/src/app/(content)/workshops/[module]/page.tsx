@@ -32,7 +32,7 @@ import {
 import { compileMDX } from '@/utils/compile-mdx'
 import { Markdown as ReactMarkdown } from '@/components/markdown'
 import { buildCourseSchema } from '@/lib/course-schema'
-import { getCourseSeoCommerce } from '@/lib/course-seo-query'
+import type { Product } from '@coursebuilder/core/schemas'
 import { metaDescription } from '@/lib/meta-description'
 import { StructuredDataScript } from '@/lib/structured-data'
 
@@ -307,13 +307,14 @@ export default async function ModulePage(props: Props) {
 						/>
 					</React.Suspense>
 				)}
-				<WorkshopMetadata
-					title={workshop.fields?.title || ''}
-					description={workshop.fields?.description || ''}
-					imageUrl={workshop.fields?.coverImage?.url}
-					slug={params.module}
-					productId={!isPreLaunch && hasSelfPacedProduct ? product?.id : undefined}
-				/>
+				{!hasSelfPacedProduct ? (
+					<WorkshopMetadata
+						title={workshop.fields?.title || ''}
+						description={workshop.fields?.description || ''}
+						imageUrl={workshop.fields?.coverImage?.url}
+						slug={params.module}
+					/>
+				) : null}
 				{/* The cover bleeds to the container's top, right and bottom edges,
 				    square-cornered, on the same six-column rhythm as the body below —
 				    its left edge continues the sidebar's hairline. The text column
@@ -419,7 +420,19 @@ export default async function ModulePage(props: Props) {
 										</div>
 									}
 								>
-									<PublicWorkshopPricing moduleSlug={params.module}>
+									<PublicWorkshopPricing
+										moduleSlug={params.module}
+										structuredData={(pricingProps) => (
+											<WorkshopMetadata
+												title={workshop.fields?.title || ''}
+												description={workshop.fields?.description || ''}
+												imageUrl={workshop.fields?.coverImage?.url}
+												slug={params.module}
+												product={isPreLaunch ? undefined : pricingProps.product}
+												quantityAvailable={pricingProps.quantityAvailable}
+											/>
+										)}
+									>
 										{(pricingProps) => {
 											// allowPurchase always forces the buy state; otherwise a
 											// pre-launch workshop shows the interest-capture form.
@@ -583,22 +596,29 @@ export default async function ModulePage(props: Props) {
 	)
 }
 
-const WorkshopMetadata = async ({
+const WorkshopMetadata = ({
 	title,
 	description,
 	imageUrl,
 	slug,
-	productId,
+	product,
+	quantityAvailable,
 }: {
 	title: string
 	description: string
 	imageUrl?: string
 	slug: string
-	productId?: string
+	product?: Product
+	quantityAvailable?: number
 }) => {
-	const commerce = productId ? await getCourseSeoCommerce(productId) : undefined
 	const jsonLd = {
-		...buildCourseSchema({ title, description, url: new URL(`/workshops/${slug}`, config.siteUrl).href, ...commerce }),
+		...buildCourseSchema({
+			title,
+			description,
+			url: new URL(`/workshops/${slug}`, config.siteUrl).href,
+			product,
+			quantityAvailable,
+		}),
 		creator: { '@type': 'Person' as const, name: config.author },
 		...(imageUrl ? { thumbnailUrl: imageUrl } : {}),
 	}

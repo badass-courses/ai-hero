@@ -5,11 +5,7 @@ import { unified } from 'unified'
 
 const parser = unified().use(remarkParse).use(remarkGfm)
 
-type TextNode = {
-	type: string
-	value?: string
-	children?: TextNode[]
-}
+type TextNode = { type: string; value?: string; children?: TextNode[] }
 
 function plainText(node: TextNode): string {
 	if (
@@ -18,12 +14,21 @@ function plainText(node: TextNode): string {
 		)
 	)
 		return ''
-	if (node.type === 'html') {
+	if (node.type === 'html')
 		return convert(node.value ?? '', {
 			wordwrap: false,
-			selectors: [{ selector: 'a', options: { ignoreHref: true } }],
+			selectors: [
+				{ selector: 'a', options: { ignoreHref: true } },
+				...['img', 'script', 'style'].map((selector) => ({
+					selector,
+					format: 'skip',
+				})),
+				...['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].map((selector) => ({
+					selector,
+					options: { uppercase: false },
+				})),
+			],
 		})
-	}
 	if (node.type === 'break') return ' '
 	if (node.value !== undefined) return node.value
 	const separator = [
@@ -39,19 +44,36 @@ function plainText(node: TextNode): string {
 	return (node.children ?? []).map(plainText).join(separator)
 }
 
-/** Decode and flatten Markdown/HTML before taking a whole-word prefix. The ellipsis counts toward the limit. */
-export function metaDescription(source?: string | null, limit = 155): string {
+/** Full plain text for content data. Never truncate the dictionary's on-page description. */
+export function plainDescription(source?: string | null): string {
+	// Inline raw-text elements can span several Markdown nodes. Remove them as a unit.
+	const withoutRawElements = (source ?? '').replace(
+		/<(script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi,
+		'',
+	)
+	return plainText(parser.parse(withoutRawElements)).replace(/\s+/g, ' ').trim()
+}
+
+/** Normalize once, then take a bounded prefix. Already-plain dictionary data must not be parsed again. */
+export function metaDescription(
+	source?: string | null,
+	limit = 155,
+	options: { plainText?: boolean } = {},
+): string | undefined {
 	if (!Number.isInteger(limit) || limit < 0)
 		throw new RangeError('Description limit must be a non-negative integer')
-	if (limit === 0) return ''
-	const text = plainText(parser.parse(source ?? ''))
-		.replace(/\s+/g, ' ')
-		.trim()
+	if (limit === 0) return undefined
+	const text = options.plainText
+		? (source?.trim() ?? '')
+		: plainDescription(source)
+	if (!text) return undefined
 	if (text.length <= limit) return text
-	const candidate = text.slice(0, limit - 1)
-	// Keep the final word only when the next character is whitespace.
+	const candidate = text.slice(0, limit - 1).replace(/[\uD800-\uDBFF]$/, '')
+	const boundary = candidate.lastIndexOf(' ')
 	const prefix = /\s/.test(text[limit - 1] ?? '')
 		? candidate.trimEnd()
-		: candidate.slice(0, Math.max(0, candidate.lastIndexOf(' '))).trimEnd()
-	return `${prefix}…`
+		: boundary > 0
+			? candidate.slice(0, boundary)
+			: candidate
+	return `${prefix.replace(/[\s.,;:!?…\-–—]+$/, '')}…`
 }

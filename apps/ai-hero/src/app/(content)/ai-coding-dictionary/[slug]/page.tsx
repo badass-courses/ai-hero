@@ -234,7 +234,11 @@ export async function generateMetadata(
 	}
 
 	const title = `${entry.title} | ${AI_CODING_DICTIONARY_TITLE}`
-	const description = metaDescription(entry.description || AI_CODING_DICTIONARY_DESCRIPTION)
+	const description = metaDescription(
+		entry.description || AI_CODING_DICTIONARY_DESCRIPTION,
+		155,
+		{ plainText: true },
+	)
 	const canonicalPath = `/ai-coding-dictionary/${entry.slug}`
 	const ogImage = getAiCodingDictionaryOgImageUrl(title)
 

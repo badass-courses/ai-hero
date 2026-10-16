@@ -1,5 +1,5 @@
 import { unstable_cache } from 'next/cache'
-import { metaDescription } from '@/lib/meta-description'
+import { plainDescription } from '@/lib/meta-description'
 import { fetchGithubMarkdownFile } from '@/lib/github-markdown'
 
 const DICTIONARY_OWNER = 'mattpocock'
@@ -169,6 +169,7 @@ function anchorFromTitle(title: string) {
 		.replace(/\s+/g, '-')
 }
 
+// Still used by the Typesense body index; description normalization is separate.
 export function stripMarkdown(markdown: string) {
 	return markdown
 		.replace(/```[\s\S]*?```/g, '')
@@ -189,7 +190,7 @@ function getDescription(markdown: string) {
 
 	if (!firstParagraph) return ''
 
-	return metaDescription(firstParagraph)
+	return plainDescription(firstParagraph)
 }
 
 function getDictionaryEntryPaths(readme: string) {
@@ -325,8 +326,9 @@ function parseDictionaryReadme(
 		}
 		currentEntry.rawBody = rawBody
 		currentEntry.body = rewriteDictionaryLinks(rawBody, slugByReadmeAnchor)
-		currentEntry.description =
-			metaDescription(frontmatter.description || getDescription(rawBody))
+		currentEntry.description = frontmatter.description
+			? plainDescription(frontmatter.description)
+			: getDescription(rawBody)
 		currentEntry.aliases = frontmatter.aliases
 		delete (currentEntry as Partial<typeof currentEntry>).bodyLines
 		entries.push(currentEntry)

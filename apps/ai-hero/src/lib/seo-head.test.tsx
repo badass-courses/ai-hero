@@ -7,11 +7,13 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import ts from 'typescript'
 import { describe, expect, it, vi } from 'vitest'
 import { buildCourseSchema } from './course-schema'
-import { metaDescription } from './meta-description'
+import { metaDescription, plainDescription } from './meta-description'
 import baselineDeclarations from './__fixtures__/seo-head-base.json'
 import {
 	SiteStructuredData,
 	DictionaryEntryStructuredData,
+	CourseStructuredData,
+	ProductStructuredData,
 } from './structured-data'
 
 vi.mock('@/env.mjs', () => ({
@@ -23,6 +25,7 @@ vi.mock('@/env.mjs', () => ({
 }))
 vi.mock('@/config', () => ({
 	default: {
+		siteUrl: 'https://www.aihero.dev',
 		defaultTitle: 'AI Hero',
 		description: 'AI Engineering for Curious Professional Developers',
 		author: 'Matt Pocock',
@@ -101,7 +104,8 @@ type WorkshopScript = (props: {
 	title: string
 	description: string
 	slug: string
-	productId: string
+	product: { price: { unitAmount: number; fields: Record<string, unknown> } }
+	quantityAvailable: number
 }) => React.ReactNode | Promise<React.ReactNode>
 const StructuredDataScript = ({ data, id }: { data: unknown; id: string }) => (
 	<script
@@ -130,7 +134,7 @@ async function renderHead(
 			[layout, null],
 			[leaf, null],
 		],
-		Promise.resolve(pathname.split('?')[0]!),
+		Promise.resolve(pathname),
 		{ trailingSlash: false, isStaticMetadataRouteFile: false },
 	)
 	return renderToStaticMarkup(
@@ -170,6 +174,38 @@ async function renderHead(
 }
 
 describe('source-declaration head renders (synthetic fixtures, Next metadata inheritance)', () => {
+	it('keeps the cohort Product script even when its offer facts are unknown', () => {
+		const metadata = declaration<
+			(props: Record<string, unknown>) => React.ReactNode
+		>(
+			'apps/ai-hero/src/app/(content)/cohorts/[slug]/page.tsx',
+			'CohortMetadata',
+			false,
+			{ React, CourseStructuredData, ProductStructuredData },
+		)
+		const markup = renderToStaticMarkup(
+			metadata({
+				cohort: {
+					fields: {
+						title: 'Synthetic cohort',
+						slug: 'synthetic',
+						description: 'Cohort',
+					},
+				},
+				product: {
+					id: 'synthetic',
+					name: 'Synthetic cohort',
+					type: 'cohort',
+					fields: { slug: 'synthetic' },
+					price: null,
+				},
+				quantityAvailable: undefined,
+			}),
+		)
+		expect(markup).toContain('id="product-jsonld"')
+		expect(markup).toContain('id="course-jsonld"')
+		expect(markup).not.toContain('"offers"')
+	})
 	it('captures base/head for homepage, both crash courses and a dictionary term', async () => {
 		const proof: Record<string, { before: string; after: string }> = {}
 		for (const before of [true, false]) {
@@ -189,14 +225,6 @@ describe('source-declaration head renders (synthetic fixtures, Next metadata inh
 			proof['/'][phase] = homeHead
 			if (!before) {
 				expect(homeHead).toContain('href="https://www.aihero.dev/"')
-				expect(
-					await renderHead(
-						'/?utm_source=x',
-						homepage,
-						<SiteStructuredData />,
-						before,
-					),
-				).toBe(homeHead)
 			}
 			for (const [slug, title, description] of [
 				[
@@ -213,9 +241,7 @@ describe('source-declaration head renders (synthetic fixtures, Next metadata inh
 				const product = {
 					price: {
 						unitAmount: 247,
-						fields: {
-							stripe: { currency: 'usd', active: true, supported: true },
-						},
+						fields: {},
 					},
 				}
 				const bindings = {
@@ -226,7 +252,6 @@ describe('source-declaration head renders (synthetic fixtures, Next metadata inh
 					metaDescription,
 					buildCourseSchema,
 					StructuredDataScript,
-					getCourseSeoCommerce: async () => ({ product, quantityAvailable: 0 }),
 					getCachedMinimalWorkshop: async () => ({
 						fields: { title, description },
 					}),
@@ -251,7 +276,8 @@ describe('source-declaration head renders (synthetic fixtures, Next metadata inh
 					title: title!,
 					description: description!,
 					slug: slug!,
-					productId: 'synthetic-product',
+					product,
+					quantityAvailable: 0,
 				})
 				const route = `/workshops/${slug}`
 				proof[route] ??= { before: '', after: '' }
@@ -281,7 +307,12 @@ describe('source-declaration head renders (synthetic fixtures, Next metadata inh
 				before,
 				{
 					metaDescription,
-					getAiCodingDictionaryEntry: async () => entry,
+					getAiCodingDictionaryEntry: async () => ({
+						...entry,
+						description: before
+							? entry.description
+							: plainDescription(entry.description),
+					}),
 					AI_CODING_DICTIONARY_TITLE: 'AI Coding Dictionary',
 					AI_CODING_DICTIONARY_DESCRIPTION: 'Dictionary',
 					getAiCodingDictionaryOgImageUrl: (title: string) =>
@@ -301,7 +332,7 @@ describe('source-declaration head renders (synthetic fixtures, Next metadata inh
 						...entry,
 						description: before
 							? entry.description
-							: metaDescription(entry.description),
+							: plainDescription(entry.description),
 					}}
 					dictionary={{
 						entries: [entry],

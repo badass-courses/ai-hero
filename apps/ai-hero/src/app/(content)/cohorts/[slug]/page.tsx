@@ -59,7 +59,6 @@ import { CohortPricingWidgetContainer } from './_components/cohort-pricing-widge
 import { CohortSidebar } from './_components/cohort-sidebar'
 import { CohortTeamLink } from './_components/cohort-team-link'
 import { metaDescription } from '@/lib/meta-description'
-import { getCourseSeoCommerce } from '@/lib/course-seo-query'
 
 export async function generateMetadata(
 	props: {
@@ -532,9 +531,10 @@ export async function CohortPageView(props: CohortPageViewProps) {
 			<main className="relative">
 				{share && typeof searchParams.via === 'string' ? <GiftShareAttribution slug={searchParams.via} /> : null}
 				{giftBanner ? <section className="border-border bg-muted text-foreground border-b"><p className={`${TYPE.meta} px-[18px] py-4 sm:px-11`}>{giftBanner}</p></section> : null}
-				<CohortMetadata
+				<ResolvedCohortMetadata
 					cohort={displayCohort}
 					product={offerInJsonLd ? cohortProps.product : undefined}
+					pricingDataLoader={pricingDataLoader}
 				/>
 				<EditWorkshopButton
 					className=""
@@ -761,24 +761,40 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	)
 }
 
-const CohortMetadata = async ({ cohort, product }: {
+const ResolvedCohortMetadata = async ({
+	pricingDataLoader,
+	...props
+}: {
 	cohort: Cohort
 	product?: CohortPageProps['product']
+	pricingDataLoader: CohortPageProps['pricingDataLoader']
 }) => {
-	const commerce = product ? await getCourseSeoCommerce(product.id) : undefined
-	const quantityAvailable = commerce?.quantityAvailable
-	const seoProduct = quantityAvailable === undefined ? undefined : commerce?.product
+	if (!props.product) return <CohortMetadata {...props} />
+	// Share the widget's existing promise without blocking the outer page or fetching again.
+	const { quantityAvailable } = await pricingDataLoader
+	return <CohortMetadata {...props} quantityAvailable={quantityAvailable} />
+}
+
+const CohortMetadata = ({
+	cohort,
+	product,
+	quantityAvailable,
+}: {
+	cohort: Cohort
+	product?: CohortPageProps['product']
+	quantityAvailable?: number
+}) => {
 	return (
 		<>
 			<CourseStructuredData
 				cohort={cohort}
-				product={seoProduct}
-				quantityAvailable={quantityAvailable ?? -1}
+				product={product}
+				quantityAvailable={quantityAvailable}
 			/>
-			{seoProduct ? (
+			{product ? (
 				<ProductStructuredData
-					product={seoProduct}
-					quantityAvailable={quantityAvailable ?? -1}
+					product={product}
+					quantityAvailable={quantityAvailable}
 					canonicalPath={`/cohorts/${cohort.fields.slug}`}
 				/>
 			) : null}

@@ -45,11 +45,6 @@ describe('content-derived sitemap timestamps', () => {
 						updatedAt: '2026-10-14T00:00:00Z',
 						state: 'published',
 					},
-					{
-						slug: 'newsletter',
-						updatedAt: '2026-10-13T00:00:00Z',
-						state: 'published',
-					},
 					{ slug: 'skills-children', updatedAt: '2026-10-16T00:00:00Z' },
 				],
 			})
@@ -70,7 +65,7 @@ describe('content-derived sitemap timestamps', () => {
 			entries
 				.find((entry) => entry.url.endsWith('/newsletter'))
 				?.lastModified?.toISOString(),
-		).toBe('2026-10-13T00:00:00.000Z')
+		).toBeUndefined()
 		expect(
 			entries
 				.find((entry) => entry.url.endsWith('/skills'))

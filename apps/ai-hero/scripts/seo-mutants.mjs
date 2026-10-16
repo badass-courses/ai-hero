@@ -9,18 +9,13 @@ const mutants = [
 		name: 'markdown not stripped',
 		file: 'src/lib/meta-description.ts',
 		test: 'src/lib/meta-description.test.ts',
-		replacements: [["plainText(parser.parse(source ?? ''))", "(source ?? '')"]],
+		replacements: [['plainDescription(source)', "(source ?? '')"]],
 	},
 	{
 		name: 'cut mid-word',
 		file: 'src/lib/meta-description.ts',
 		test: 'src/lib/meta-description.test.ts',
-		replacements: [
-			[
-				"candidate.slice(0, Math.max(0, candidate.lastIndexOf(' '))).trimEnd()",
-				'candidate.trimEnd()',
-			],
-		],
+		replacements: [['candidate.slice(0, boundary)', 'candidate']],
 	},
 	{
 		name: 'hard-coded offer price',
@@ -34,8 +29,8 @@ const mutants = [
 		test: 'src/lib/course-schema.test.ts',
 		replacements: [
 			[
-				'const amount = price?.unitAmount',
-				'const amount = price?.unitAmount ?? 0',
+				'const amount = product?.price?.unitAmount',
+				'const amount = product?.price?.unitAmount ?? 0',
 			],
 			['amount <= 0', 'amount < 0'],
 		],
@@ -58,8 +53,33 @@ const mutants = [
 		],
 	},
 	{
+		name: 'legacy empty price fields lose offers',
+		file: 'src/lib/course-schema.ts',
+		test: 'src/lib/course-schema.test.ts',
+		replacements: [
+			[
+				'const amount = product?.price?.unitAmount',
+				'const amount = product?.price?.unitAmount\n\tif (!product?.price?.fields?.stripe) return undefined',
+			],
+		],
+	},
+	{
+		name: 'pre-open enrollment emitted InStock',
+		file: 'src/lib/course-schema.ts',
+		test: 'src/lib/course-schema.test.ts',
+		replacements: [['new Date(availabilityStarts) > now', 'false']],
+	},
+	{
+		name: 'unknown inventory hides Product JSON-LD',
+		file: 'src/app/(content)/cohorts/[slug]/page.tsx',
+		test: 'src/lib/seo-head.test.tsx',
+		replacements: [
+			['{product ? (', '{product && quantityAvailable !== undefined ? ('],
+		],
+	},
+	{
 		name: 'draft enters sitemap',
-		file: 'src/app/sitemap.ts',
+		file: 'src/lib/public-content-index.ts',
 		test: 'src/app/sitemap.test.ts',
 		replacements: [
 			[
