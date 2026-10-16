@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
 	getServerAuthSession: vi.fn(),
 	findCharges: vi.fn(),
 	findPurchases: vi.fn(),
+	findTransfers: vi.fn(),
 }))
 
 vi.mock('@/server/auth', () => ({
@@ -16,6 +17,7 @@ vi.mock('@/db', () => ({
 		query: {
 			merchantCharge: { findMany: mocks.findCharges },
 			purchases: { findMany: mocks.findPurchases },
+			purchaseUserTransfer: { findMany: mocks.findTransfers },
 		},
 	},
 }))
@@ -85,6 +87,7 @@ beforeEach(() => {
 		session: { user: { id: 'user_1' } },
 	})
 	mocks.findCharges.mockResolvedValue([{ id: 'mch_123' }])
+	mocks.findTransfers.mockResolvedValue([])
 	mocks.findPurchases.mockResolvedValue([
 		{
 			id: 'purchase_1',
@@ -130,5 +133,23 @@ describe('invoices list', () => {
 		const editActions = markup.match(/Edit invoice details/g) ?? []
 		expect(editActions).toHaveLength(1)
 		expect(markup).toContain('/invoices/mch_123#invoice-details')
+	})
+	it('shows an honest empty state when no purchase has an invoice', async () => {
+		const rows = await mocks.findPurchases()
+		mocks.findPurchases.mockResolvedValue([rows[1]])
+		const markup = renderToStaticMarkup(await Invoices())
+		expect(markup).toContain('No invoices')
+		expect(markup).not.toContain('Your Invoices')
+		expect(markup).toContain('nothing to invoice')
+		expect(markup).not.toContain('<ul')
+	})
+	it('labels a refunded invoice as refunded', async () => {
+		const rows = await mocks.findPurchases()
+		mocks.findPurchases.mockResolvedValue([
+			{ ...rows[0], status: 'Refunded' },
+			rows[0] && { ...rows[0], id: 'purchase_3', merchantChargeId: 'mch_456' },
+		])
+		const markup = renderToStaticMarkup(await Invoices())
+		expect(markup.match(/Refunded/g) ?? []).toHaveLength(1)
 	})
 })

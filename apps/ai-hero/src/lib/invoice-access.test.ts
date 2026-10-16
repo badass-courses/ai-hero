@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
 	findCharges: vi.fn(),
 	findPurchases: vi.fn(),
+	findTransfers: vi.fn(),
 }))
 
 vi.mock('@/db', () => ({
@@ -10,6 +11,7 @@ vi.mock('@/db', () => ({
 		query: {
 			merchantCharge: { findMany: mocks.findCharges },
 			purchases: { findMany: mocks.findPurchases },
+			purchaseUserTransfer: { findMany: mocks.findTransfers },
 		},
 	},
 }))
@@ -19,6 +21,13 @@ vi.mock('@/db/schema', () => ({
 		createdAt: 'purchase.createdAt',
 		merchantChargeId: 'purchase.merchantChargeId',
 		status: 'purchase.status',
+		userId: 'purchase.userId',
+		id: 'purchase.id',
+	},
+	purchaseUserTransfer: {
+		purchaseId: 'transfer.purchaseId',
+		sourceUserId: 'transfer.sourceUserId',
+		transferState: 'transfer.transferState',
 	},
 }))
 vi.mock('drizzle-orm', () => ({
@@ -26,6 +35,8 @@ vi.mock('drizzle-orm', () => ({
 	asc: (value: unknown) => value,
 	eq: (...values: unknown[]) => values,
 	inArray: (...values: unknown[]) => values,
+	isNotNull: (value: unknown) => ['isNotNull', value],
+	or: (...values: unknown[]) => ['or', ...values],
 }))
 
 import { getInvoicePurchasesForUser } from './invoice-access'
@@ -50,6 +61,7 @@ describe('invoice purchase access', () => {
 		vi.resetAllMocks()
 		mocks.findCharges.mockResolvedValue([{ id: 'charge-original-payer' }])
 		mocks.findPurchases.mockResolvedValue([transferred])
+		mocks.findTransfers.mockResolvedValue([])
 	})
 
 	it('keeps a transferred purchase with its product in the original payer invoice list', async () => {
@@ -70,9 +82,57 @@ describe('invoice purchase access', () => {
 		)
 	})
 
-	it('does not expose a transferred invoice to the recipient', async () => {
+	it('lists a purchase for its current holder', async () => {
 		mocks.findCharges.mockResolvedValue([])
-		await expect(getInvoicePurchasesForUser('learner-1')).resolves.toEqual([])
-		expect(mocks.findPurchases).not.toHaveBeenCalled()
+		await expect(getInvoicePurchasesForUser('learner-1')).resolves.toHaveLength(
+			1,
+		)
+		expect(mocks.findPurchases).toHaveBeenCalledOnce()
+	})
+
+	it('lists a transferred purchase for the person who started the chain', async () => {
+		// The charge moved to the holder, so only the transfer row names the payer.
+		mocks.findCharges.mockResolvedValue([])
+		mocks.findTransfers.mockImplementation(async (args: any) =>
+			args.columns
+				? [{ purchaseId: 'purchase-transferred' }]
+				: [
+						{
+							transferState: 'COMPLETED',
+							sourceUserId: 'payer-1',
+							completedAt: new Date('2026-09-25T00:00:00Z'),
+							createdAt: new Date('2026-09-24T00:00:00Z'),
+						},
+					],
+		)
+		await expect(getInvoicePurchasesForUser('payer-1')).resolves.toHaveLength(
+			1,
+		)
+	})
+
+	it('does not list a transferred purchase for an earlier non-paying holder', async () => {
+		mocks.findCharges.mockResolvedValue([])
+		mocks.findTransfers.mockImplementation(async (args: any) =>
+			args.columns
+				? [{ purchaseId: 'purchase-transferred' }]
+				: [
+						{
+							transferState: 'COMPLETED',
+							sourceUserId: 'payer-1',
+							completedAt: new Date('2026-01-01T00:00:00Z'),
+							createdAt: new Date('2026-01-01T00:00:00Z'),
+						},
+						{
+							transferState: 'COMPLETED',
+							sourceUserId: 'middle-holder',
+							completedAt: new Date('2026-02-01T00:00:00Z'),
+							createdAt: new Date('2026-02-01T00:00:00Z'),
+						},
+					],
+		)
+		const where = () =>
+			JSON.stringify(mocks.findPurchases.mock.calls.at(-1)?.[0]?.where)
+		await getInvoicePurchasesForUser('middle-holder')
+		expect(where()).not.toContain('purchase-transferred')
 	})
 })

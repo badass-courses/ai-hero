@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
 	checkoutSession: vi.fn(),
 	coupon: vi.fn(),
 	merchantSession: vi.fn(),
+	originTransfers: vi.fn(),
 	transfers: vi.fn(),
 	cookie: vi.fn(),
 	readOnlyProps: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock('@/db', () => ({
 		query: {
 			coupon: { findFirst: mocks.coupon },
 			merchantSession: { findFirst: mocks.merchantSession },
+			purchaseUserTransfer: { findMany: mocks.originTransfers },
 		},
 	},
 }))
@@ -155,6 +157,7 @@ beforeEach(() => {
 	vi.restoreAllMocks()
 	vi.resetAllMocks()
 	vi.stubEnv('INVOICE_LINK_SECRET', SECRET)
+	mocks.originTransfers.mockResolvedValue([])
 	mocks.cookie.mockReturnValue({ value: tokenFor() })
 	vi.spyOn(drizzleInvoiceLinkDataSource, 'loadVersion').mockResolvedValue(1)
 	mocks.auth.mockResolvedValue({ session: null })
@@ -382,6 +385,62 @@ describe('signed shareable invoice', () => {
 		vi.stubEnv('INVOICE_LINK_SECRET', '')
 		mocks.auth.mockResolvedValue({ session: { user: { id: 'payer' } } })
 		expect(await renderInvoice('garbage')).toContain('Edit invoice details')
+	})
+
+	describe('after the purchase moved to a new holder', () => {
+		// The transfer reassigned the charge to 'holder'; only the transfer row
+		// still names the person who paid.
+		beforeEach(() => {
+			vi.stubEnv('INVOICE_LINK_SECRET', '')
+			mocks.merchantCharge.mockResolvedValue({
+				identifier: 'ch_synthetic',
+				userId: 'holder',
+			})
+			mocks.purchase.mockResolvedValue({
+				id: 'purchase-synthetic',
+				userId: 'holder',
+				productId: 'product-synthetic',
+			})
+			mocks.originTransfers.mockResolvedValue([
+				{
+					transferState: 'COMPLETED',
+					sourceUserId: 'original-payer',
+					completedAt: new Date('2026-01-01T00:00:00Z'),
+					createdAt: new Date('2026-01-01T00:00:00Z'),
+				},
+				{
+					transferState: 'COMPLETED',
+					sourceUserId: 'middle-holder',
+					completedAt: new Date('2026-02-01T00:00:00Z'),
+					createdAt: new Date('2026-02-01T00:00:00Z'),
+				},
+			])
+		})
+		const as = (id: string) =>
+			mocks.auth.mockResolvedValue({ session: { user: { id } } })
+
+		it('lets the original payer read it without a link', async () => {
+			as('original-payer')
+			const markup = await renderInvoice(undefined)
+			expect(markup).toContain('Synthetic Course')
+			expect(markup).not.toContain('Edit invoice details')
+		})
+		it('keeps the invoice with the new holder', async () => {
+			as('holder')
+			expect(await renderInvoice(undefined)).toContain('Synthetic Course')
+		})
+		it('turns away a previous holder who never paid', async () => {
+			as('middle-holder')
+			await expect(renderInvoice(undefined)).rejects.toThrow(
+				'redirect:/invoices',
+			)
+		})
+		it('turns away an unrelated signed-in user', async () => {
+			as('unrelated')
+			await expect(renderInvoice(undefined)).rejects.toThrow(
+				'redirect:/invoices',
+			)
+		})
 	})
 
 	it('renders a read-only invoice and print button for an anonymous visitor without transfer data', async () => {
