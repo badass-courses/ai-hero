@@ -298,10 +298,12 @@ it('reports typed purge refusal once per tick as a count-only literal alert with
 	const refusal = ProfileAckPurgeRefused.make({ v: 1, reason: 'profile-ack-protection-flag-off', protectedRows: 2, candidateRows: 5 })
 	const purge = vi.fn(async () => refusal)
 	const post = vi.fn(async () => { throw new Error('purge refusal attempted HTTP') })
-	const h = replay({ ...store, deleteDeliveredBefore: purge }, post)
+	const expire = vi.fn(async () => { throw new Error('whole-tick refusal attempted marker expiry') })
+	const h = replay({ ...store, deleteDeliveredBefore: purge, deleteExpiredAckTombstones: expire }, post)
 	const receipt = await h.run
 	expect(receipt).toMatchObject({ purged: 0, purgeRefusal: refusal })
 	expect(purge).toHaveBeenCalledOnce()
+	expect(expire).not.toHaveBeenCalled()
 	expect(post).not.toHaveBeenCalled()
 	const signal = h.logger.error.mock.calls.filter(([name]) => name === PROFILE_ACK_PURGE_REFUSED_SIGNAL)
 	expect(signal).toHaveLength(1)
@@ -310,6 +312,18 @@ it('reports typed purge refusal once per tick as a count-only literal alert with
 	expect(fields).toMatchObject({ protectedRows: 2, candidateRows: 5 })
 	expect(fields.message).toMatch(/^PurgeRefused: you .+ Accepted: .+ Fix: .+ Debug: /)
 	expect(fields.message).not.toMatch(/\n/)
+})
+
+it('runs dedicated marker expiry only after a successful native purge, reporting its control count separately', async () => {
+	const { store } = memoryStore(), order: string[] = []
+	const purge = vi.fn(async () => { order.push('native'); return 7 })
+	const expire = vi.fn(async () => { order.push('control'); return 2 })
+	const post = vi.fn(async () => { throw new Error('marker expiry attempted HTTP') })
+	const h = replay({ ...store, deleteDeliveredBefore: purge, deleteExpiredAckTombstones: expire }, post)
+	expect(await h.run).toMatchObject({ purged: 7, ackTombstonesPurged: 2 })
+	expect(order).toEqual(['native', 'control'])
+	expect(expire).toHaveBeenCalledWith('production')
+	expect(post).not.toHaveBeenCalled()
 })
 
 describe('pre-captured capped delivery ownership', () => {

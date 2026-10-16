@@ -78,6 +78,7 @@ import { encodeHeldContinuationEnvelope, readHeldContinuationEnvelope } from './
 import { recordOwnerStopRejectionLive } from './drovr-owner-stop-rejection-live'
 import { buildContactProfileEvents, contactProfileContentHash, runContactProfileSync } from './drovr-contact-profile-sync'
 import { createProfileAckProducerPorts } from './contact-sync-profile-ack-producer'
+import { expireAckTombstones } from './contact-sync-ack-tombstone-expiry'
 import { createDrizzleContactProfileVersionStore } from './contact-profile-version-drizzle'
 import { prepareProfileAckRegistration, readProfileAckRegistrationEpoch } from './contact-sync-profile-ack-registration-drizzle'
 import type { ProfileAckRegistrationInput } from './contact-sync-profile-ack-registration'
@@ -194,9 +195,9 @@ integration('the live outbox wrappers on MySQL (row 204b round 3)', () => {
 			} })
 		return { state, settle, keys: [...wanted] }
 	}
-	async function seedAtomicFailureTombstone(ref: ProfileAckReference, expired = false) {
-		let state = makeAckTombstone(ref, { createdAt: '2032-03-01T00:00:00.000Z', reason: 'ack-write-failed' })
-		if (expired) state = retainAckTombstone(state, makeAckTombstone(ref, { createdAt: '2032-03-02T00:00:00.000Z', reason: 'expired-evidence' }))
+	async function seedAtomicFailureTombstone(ref: ProfileAckReference, expired = false, createdAt = '2032-03-01T00:00:00.000Z') {
+		let state = makeAckTombstone(ref, { createdAt, reason: 'ack-write-failed' })
+		if (expired) state = retainAckTombstone(state, makeAckTombstone(ref, { createdAt: new Date(Date.parse(createdAt) + 86400000).toISOString(), reason: 'expired-evidence' }))
 		const clock = state.createdAt.slice(0, 23).replace('T', ' ')
 		await pool.execute(`INSERT INTO AI_DrovrOutbox (id, dedupeKey, target, endpoint, tenantId, contactId, journeyId, eventType, idempotencyKey, body, needsFanOut, source, status, attempts, occurredAt, firstFailedAt, nextAttemptAt, createdAt, heldContinuation)
 			VALUES (?, ?, ?, 'control', ?, ?, ?, 'profile.ack.tombstone', ?, ?, 0, 'ackTombstone', 'ackTombstone', 0, ?, ?, ?, ?, ?)`,
@@ -213,6 +214,132 @@ integration('the live outbox wrappers on MySQL (row 204b round 3)', () => {
 		const stored = async () => (await atomicDb().select().from(drovrOutbox).where(eq(drovrOutbox.contactId, contactId)))
 		return { input, prepare, stored, store, snapshot }
 	}
+	it('a full400-day lifetime ending with no native rows cannot resurrect the original first-capture SDK memo, even OFF', async () => {
+		const f = await registrationFixture(), captured = await f.prepare()
+		if (captured._tag !== 'ProfileAckCaptured') throw new Error('synthetic captured reference required')
+		const createdAt = new Date(Date.parse(f.input.registrationEpoch!) + 8 * 86400000).toISOString()
+		await seedAtomicFailureTombstone(captured.ref, false, createdAt)
+		await atomicDb().delete(drovrOutbox).where(and(eq(drovrOutbox.contactId, f.input.contactId), inArray(drovrOutbox.status, [...DROVR_OUTBOX_WIRE_STATUSES])))
+		const atExpiry = new Date(Date.parse(createdAt) + 400 * 86400000).toISOString()
+		const future = (nowUtc: string) => ({ transaction: (run: (tx: unknown) => Promise<unknown>) => atomicDb().transaction(tx => run(new Proxy(tx, { get(target, key) { if (key === 'execute') return async () => [[{ nowUtc }], []]; const value = Reflect.get(target, key); return typeof value === 'function' ? value.bind(target) : value } }))) })
+		expect(await expireAckTombstones({ database: future(new Date(Date.parse(atExpiry) - 1).toISOString()), target: 'production', enabled: async () => true })).toBe(0)
+		expect(await expireAckTombstones({ database: future(atExpiry), target: 'production', enabled: async () => true })).toBe(1)
+		expect(await f.stored()).toEqual([])
+		for (const enabled of [true, false]) expect(await f.prepare(enabled, {}, future(atExpiry))).toMatchObject({ _tag: 'ProfileAckUnavailable', reason: 'registration-epoch-expired' })
+		const current = await f.store.versionFor(f.input.contactId, f.input.contentHash)
+		expect(await f.prepare(false, { version: current }, future(atExpiry))).toMatchObject({ _tag: 'ProfileAckUnavailable', reason: 'unchanged-unregistered-version' })
+		expect(await f.stored()).toEqual([])
+	})
+	it('dedicated400-day expiry fences surviving original debt before deleting its control, and later receipt purge cannot renew it', async () => {
+		const f = await seedAtomicAck()
+		const now = await readProfileAckRegistrationEpoch(live.db)
+		const createdAt = new Date(Date.parse(now) - 401 * 86400000).toISOString()
+		await seedAtomicFailureTombstone(f.state.ref, false, createdAt)
+		const before = await atomicRows()
+		expect(await expireAckTombstones({ database: live.db, target: 'production', enabled: async () => true })).toBe(1)
+		const [controls] = await pool.query("SELECT id FROM AI_DrovrOutbox WHERE status = 'ackTombstone'")
+		expect(controls).toEqual([])
+		const retained = await atomicRows()
+		for (const row of retained) {
+			const original = before.find(item => item.dedupeKey === row.dedupeKey)!
+			expect({ ...row, heldContinuation: undefined }).toEqual({ ...original, heldContinuation: undefined })
+			const state = readHeldContinuationEnvelope(row.heldContinuation)!.profileAck!
+			expect(state.role !== 'tombstone' && state.retirement).toMatchObject({ createdAt, reason: 'lifetime-expired' })
+			expect(readHeldContinuationEnvelope(row.heldContinuation)!.replayProof).toEqual({ v: 1, handoffs: 2 })
+		}
+		expect(await f.settle(f.keys)).toMatchObject({ _tag: 'ProfileAckSettled', evaluation: { _tag: 'AckEvidenceExpired' } })
+		expect((await atomicVersion()).acknowledgedVersion).toBeNull()
+		const store = createDrizzleDrovrOutboxStore(live.db, { profileAckEnabled: async () => true })
+		expect(await store.deleteDeliveredBefore('2033-01-01T00:00:00.000Z', 500)).toBe(2)
+		expect(await atomicRows()).toEqual([])
+		const [after] = await pool.query('SELECT id FROM AI_DrovrOutbox')
+		expect(after).toEqual([])
+	})
+	it('positive locked version change expires a young marker without pretending missing current-version evidence is a change', async () => {
+		const f = await seedAtomicAck()
+		const now = await readProfileAckRegistrationEpoch(live.db)
+		await seedAtomicFailureTombstone(f.state.ref, false, now)
+		expect(await expireAckTombstones({ database: live.db, target: 'production', enabled: async () => true })).toBe(0)
+		await atomicDb().delete(contactProfileVersion).where(eq(contactProfileVersion.contactId, f.state.ref.contactId))
+		expect(await expireAckTombstones({ database: live.db, target: 'production', enabled: async () => true })).toBe(0)
+		await pool.execute('INSERT INTO AI_ContactProfileVersion (contactId, profileVersion, profileHash, updatedAt) VALUES (?, 4, ?, ?)', [f.state.ref.contactId, 'v2:synthetic-positive-version', now.slice(0, 23).replace('T', ' ')])
+		expect(await expireAckTombstones({ database: live.db, target: 'production', enabled: async () => true })).toBe(1)
+		for (const row of await atomicRows()) {
+			const state = readHeldContinuationEnvelope(row.heldContinuation)!.profileAck!
+			expect(state.role !== 'tombstone' && state.retirement?.reason).toBe('version-changed')
+		}
+	})
+	it('young unchanged markers cannot permanently starve a later positively superseded marker beyond the500 candidate page', async () => {
+		const f = await seedAtomicAck()
+		const now = await readProfileAckRegistrationEpoch(live.db), young = new Date(Date.parse(now) - 86400000).toISOString()
+		await seedAtomicFailureTombstone(f.state.ref, false, now)
+		const clock = young.slice(0, 23).replace('T', ' ')
+		const controls = Array.from({ length: 500 }, (_, index) => {
+			const contactId = `synthetic-young-marker-${index}`, ref = { ...f.state.ref, contactId, coordinatorKey: drovrOutboxDedupeKey('production', { endpoint: 'events', tenantId: 'org-aihero', contactId, journeyId: 'contact-directory', idempotencyKey: `profile:${contactId}:3` }) }
+			const state = makeAckTombstone(ref, { createdAt: young, reason: 'incomplete-proof' })
+			return { id: `synthetic-young-${index}`, dedupeKey: ackTombstoneKey(ref), target: ref.target, endpoint: 'control', tenantId: ref.tenantId, contactId, journeyId: ref.journeyId, eventType: 'profile.ack.tombstone', idempotencyKey: ackTombstoneIdempotencyKey(ref), body: ACK_TOMBSTONE_BODY, needsFanOut: false, source: 'ackTombstone', status: 'ackTombstone', attempts: 0, occurredAt: clock, firstFailedAt: clock, nextAttemptAt: clock, createdAt: clock, heldContinuation: JSON.parse(encodeHeldContinuationEnvelope({ v: 1, profileAck: state })) }
+		})
+		await atomicDb().insert(drovrOutbox).values(controls)
+		await atomicDb().update(contactProfileVersion).set({ profileVersion: 4 }).where(eq(contactProfileVersion.contactId, f.state.ref.contactId))
+		expect(await expireAckTombstones({ database: live.db, target: 'production', enabled: async () => true })).toBe(1)
+		const [remaining] = await pool.query("SELECT COUNT(*) AS n FROM AI_DrovrOutbox WHERE status = 'ackTombstone'")
+		expect((remaining as { n: number }[])[0]!.n).toBe(500)
+		const [original] = await pool.execute('SELECT id FROM AI_DrovrOutbox WHERE dedupeKey = ?', [ackTombstoneKey(f.state.ref)])
+		expect(original).toEqual([])
+	})
+	it('OFF/error dedicated expiry touches no SQL or native metadata, including an actually old marker', async () => {
+		const f = await seedAtomicAck()
+		await seedAtomicFailureTombstone(f.state.ref, false, '2020-01-01T00:00:00.000Z')
+		const [before] = await pool.query('SELECT * FROM AI_DrovrOutbox ORDER BY dedupeKey')
+		const transaction = vi.fn(() => { throw new Error('OFF expiry touched SQL') })
+		await expect(expireAckTombstones({ database: { transaction }, target: 'production', enabled: async () => false })).resolves.toBe(0)
+		await expect(expireAckTombstones({ database: { transaction }, target: 'production', enabled: async () => { throw new Error('synthetic flag failure') } })).resolves.toBe(0)
+		expect(transaction).not.toHaveBeenCalled()
+		const [after] = await pool.query('SELECT * FROM AI_DrovrOutbox ORDER BY dedupeKey')
+		expect(after).toEqual(before)
+	})
+	it('a missing129th-member verification column rolls the complete retirement and marker deletion back', async () => {
+		const f = await seedAtomicAck(undefined, 128)
+		await seedAtomicFailureTombstone(f.state.ref, false, '2020-01-01T00:00:00.000Z')
+		const [before] = await pool.query('SELECT * FROM AI_DrovrOutbox ORDER BY dedupeKey')
+		let reads = 0
+		const failed = { transaction: (run: (tx: unknown) => Promise<unknown>) => atomicDb().transaction(tx => run(new Proxy(tx, { get(target, key) {
+			if (key === 'select') return (...args: unknown[]) => { const builder = (target.select as (...args: unknown[]) => { from: (table: unknown) => unknown })(...args); return { from: (table: unknown) => { const query = builder.from(table) as object; let wrapped: object; wrapped = new Proxy(query, { get(base, property) { const value = Reflect.get(base, property); if (typeof value !== 'function') return value; return (...params: unknown[]) => { if (table === drovrOutbox && property === 'for' && ++reads === 6) throw Object.assign(new Error("Unknown column 'AI_DrovrOutbox.heldContinuation'"), { errno: 1054 }); const result = value.apply(base, params); return result === base ? wrapped : result } } }); return wrapped } } }
+			const value = Reflect.get(target, key); return typeof value === 'function' ? value.bind(target) : value
+		} }))) }
+		await expect(expireAckTombstones({ database: failed, target: 'production', enabled: async () => true })).rejects.toThrow('OutboxControl:')
+		expect(reads).toBe(6)
+		const [after] = await pool.query('SELECT * FROM AI_DrovrOutbox ORDER BY dedupeKey')
+		expect(after).toEqual(before)
+	})
+	it('two concurrent dedicated expiry sweeps delete one original marker without renewing its native negative fence', async () => {
+		const f = await seedAtomicAck()
+		await seedAtomicFailureTombstone(f.state.ref, false, '2020-01-01T00:00:00.000Z')
+		const run = () => expireAckTombstones({ database: live.db, target: 'production', enabled: async () => true })
+		expect((await Promise.all([run(), run()])).sort()).toEqual([0, 1])
+		for (const row of await atomicRows()) {
+			const state = readHeldContinuationEnvelope(row.heldContinuation)!.profileAck!
+			expect(state.role !== 'tombstone' && state.retirement?.createdAt).toBe('2020-01-01T00:00:00.000Z')
+		}
+	})
+	it('a failure after the actual marker DELETE still rolls back the original native retirement fences and marker', async () => {
+		const f = await seedAtomicAck()
+		await seedAtomicFailureTombstone(f.state.ref, false, '2020-01-01T00:00:00.000Z')
+		const [before] = await pool.query('SELECT * FROM AI_DrovrOutbox ORDER BY dedupeKey')
+		const failed = { transaction: (run: (tx: unknown) => Promise<unknown>) => atomicDb().transaction(async tx => { await run(tx); throw new Error('synthetic retirement crash after actual DELETE') }) }
+		await expect(expireAckTombstones({ database: failed, target: 'production', enabled: async () => true })).rejects.toThrow('synthetic retirement crash after actual DELETE')
+		const [after] = await pool.query('SELECT * FROM AI_DrovrOutbox ORDER BY dedupeKey')
+		expect(after).toEqual(before)
+	})
+	it('a crash after retirement-fence installation rolls the native controls and marker deletion back together', async () => {
+		const f = await seedAtomicAck()
+		await seedAtomicFailureTombstone(f.state.ref, false, '2020-01-01T00:00:00.000Z')
+		const [before] = await pool.query('SELECT * FROM AI_DrovrOutbox ORDER BY dedupeKey')
+		const failed = { transaction: (run: (tx: unknown) => Promise<unknown>) => atomicDb().transaction(tx => run(new Proxy(tx, { get(target, key) { if (key === 'delete') return () => { throw new Error('synthetic marker retirement delete failure') }; const value = Reflect.get(target, key); return typeof value === 'function' ? value.bind(target) : value } }))) }
+		await expect(expireAckTombstones({ database: failed, target: 'production', enabled: async () => true })).rejects.toThrow('synthetic marker retirement delete failure')
+		const [after] = await pool.query('SELECT * FROM AI_DrovrOutbox ORDER BY dedupeKey')
+		expect(after).toEqual(before)
+	})
 	it('fresh ACK-only completion cannot treat an incomplete member pointer as a completed-pointer removal', async () => {
 		const f = await registrationFixture(), first = await f.prepare()
 		if (first._tag !== 'ProfileAckCaptured') throw new Error('synthetic captured reference required')

@@ -258,6 +258,10 @@ export function evaluateProfileAckCompletion(
 		return fail(
 			'the completion read returned duplicate, foreign or unscoped evidence',
 		)
+	if (state.retirement || rows.some(row => {
+		const pointer = readHeldContinuationEnvelope(row.heldContinuation)?.profileAck
+		return pointer && pointer.role !== 'tombstone' && pointer.retirement
+	})) return expiredProfileAck(state.ref)
 	if (rows.length !== keys.length) return expiredProfileAck(state.ref)
 	if (
 		rows.some(

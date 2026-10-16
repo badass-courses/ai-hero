@@ -61,6 +61,7 @@ export async function protectProfileAckPurge(args: {
 		)
 	const references = new Map<string, ProfileAckReference>()
 	const candidateRefs = new Map<string, ProfileAckReference>()
+	const retired = new Set<string>()
 	for (const row of args.candidates) {
 		const state = readHeldContinuationEnvelope(row.heldContinuation)?.profileAck
 		if (!state) continue
@@ -72,6 +73,7 @@ export async function protectProfileAckPurge(args: {
 			throw new ProfileAckConflict('purge encountered foreign target metadata')
 		if (state.role === 'coordinator' && state.completion) continue
 		const identity = `${state.ref.target}:${state.ref.coordinatorKey}`
+		if (state.retirement) retired.add(identity)
 		const previous = references.get(identity)
 		if (previous && !sameReference(previous, state.ref))
 			throw new ProfileAckConflict(
@@ -123,6 +125,7 @@ export async function protectProfileAckPurge(args: {
 						throw new ProfileAckConflict(
 							'purge cannot replace the first scoped coordinator identity',
 						)
+					if (state?.role === 'coordinator' && state.retirement) retired.add(`${target}:${ref.coordinatorKey}`)
 					if (!state || !state.completion)
 						incomplete.add(`${target}:${ref.coordinatorKey}`)
 				}
@@ -160,7 +163,7 @@ export async function protectProfileAckPurge(args: {
 			const pending = [...references]
 				.filter(
 					([identity, ref]) =>
-						ref.target === target && incomplete.has(identity),
+						ref.target === target && incomplete.has(identity) && !retired.has(identity),
 				)
 				.map(([, ref]) => ({
 					ref,

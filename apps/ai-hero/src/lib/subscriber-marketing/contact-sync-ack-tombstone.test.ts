@@ -30,7 +30,8 @@ import {
 	fromStored,
 	createDrizzleDrovrOutboxStore,
 } from './drovr-outbox-drizzle'
-import { encodeHeldContinuationEnvelope } from './drovr-outbox-control'
+import { encodeHeldContinuationEnvelope, readHeldContinuationEnvelope } from './drovr-outbox-control'
+import { profileAckRetirementFor, stageProfileAckRetirement } from './contact-sync-profile-ack-retirement'
 import {
 	assertOutboxWireEntry,
 	assertOutboxWireRow,
@@ -99,6 +100,34 @@ function fixture() {
 	}
 	return { state, row }
 }
+it('retirement keeps all four independent operational controls and refuses a duplicate renewing the native negative lifetime', () => {
+	const f = fixture(), ref = f.state.ref
+	const scope = { key: 'b'.repeat(64), target: ref.target, endpoint: 'events', tenantId: 'org-aihero', contactId: ref.contactId, journeyId: 'synthetic-journey', eventType: 'contact.unsubscribed', idempotencyKey: 'owner:synthetic-stop', occurredAt: at }
+	const other = { continuation: { v: 1, blocked: true, reason: 'synthetic hold' }, replayProof: { v: 1, handoffs: 3, waitingForStop: true }, ownerStopRejection: { v: 1, scope, rejectionCode: 'cold-start-never-born', httpStatus: 409, rejectedAttempt: { runId: 'synthetic-run', requestId: '00000000-0000-4000-8000-000000000000', stepKey: scope.key, attempt: 0 }, decidedAt: at }, unsubscribeSupersession: { v: 1, scope, source: { table: 'AI_ContactEvent', eventType: 'contact.resubscribed', contactId: ref.contactId, occurredAt: '2032-01-02T00:00:00.000Z' }, decidedAt: '2032-01-02T00:00:00.000Z' } }
+	const native = { target: ref.target, dedupeKey: 'a'.repeat(64), heldContinuation: encodeHeldContinuationEnvelope({ v: 1, ...other, profileAck: { v: 1, role: 'member', ref } }) }
+	const before = structuredClone(native)
+	const retirement = profileAckRetirementFor(f.state, { now: Date.parse(f.state.expiresAt) })!
+	const staged = stageProfileAckRetirement({ markerRow: f.row, retirement, rows: [native] })
+	expect(native).toEqual(before)
+	const decoded = readHeldContinuationEnvelope(staged[0]!.encoded)!
+	for (const key of Object.keys(other) as (keyof typeof other)[]) expect(decoded[key]).toEqual(other[key])
+	expect(decoded.profileAck).toEqual({ v: 1, role: 'member', ref, retirement })
+	const installed = { ...native, heldContinuation: staged[0]!.encoded }
+	expect(stageProfileAckRetirement({ markerRow: f.row, retirement, rows: [installed] })).toEqual(staged)
+	const duplicate = makeAckTombstone(ref, { createdAt: '2032-01-02T00:00:00.000Z', reason: 'expired-evidence' })
+	const duplicateRow = { ...f.row, createdAt: duplicate.createdAt, heldContinuation: encodeHeldContinuationEnvelope({ v: 1, profileAck: duplicate }) }
+	const later = profileAckRetirementFor(duplicate, { now: Date.parse(duplicate.expiresAt) })!
+	expect(() => stageProfileAckRetirement({ markerRow: duplicateRow, retirement: later, rows: [installed] })).toThrow('renew a retired native lifetime')
+})
+it('generated retention boundaries require positive age or version change, never missing evidence or 399-day rounding', () => {
+	fc.assert(fc.property(fc.integer({ min: 1, max: 100000 }), fc.integer({ min: 0, max: 399 * 86400000 }), (version, elapsed) => {
+		const marker = makeAckTombstone(reference(version), { createdAt: at, reason: 'incomplete-proof' })
+		expect(profileAckRetirementFor(marker, { now: Date.parse(at) + elapsed })).toBeUndefined()
+		expect(profileAckRetirementFor(marker, { now: Date.parse(at) + elapsed, currentVersion: version })).toBeUndefined()
+		expect(profileAckRetirementFor(marker, { now: Date.parse(at) + elapsed, currentVersion: version + 1 })).toMatchObject({ createdAt: at, expiresAt: marker.expiresAt, reason: 'version-changed' })
+		expect(profileAckRetirementFor(marker, { now: Date.parse(marker.expiresAt) })).toMatchObject({ createdAt: at, expiresAt: marker.expiresAt, reason: 'lifetime-expired' })
+	}), { numRuns: 100 })
+})
 it('monotonically fences purged evidence without replacing the first cause, identity or 400-day expiry', () => {
 	const first = makeAckTombstone(reference(), {
 		createdAt: at,

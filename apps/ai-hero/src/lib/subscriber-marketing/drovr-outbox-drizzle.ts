@@ -1,4 +1,5 @@
 import { drovrOutbox } from '@/db/drovr-outbox-schema'
+import { expireAckTombstones } from './contact-sync-ack-tombstone-expiry'
 import {
 	and,
 	asc,
@@ -198,6 +199,7 @@ export function createDrizzleDrovrOutboxStore(
 		return result.settled
 	}
 	return {
+		deleteExpiredAckTombstones: target => expireAckTombstones({ database, target, enabled: profileAckEnabled }),
 		insertIgnore: (rows) =>
 			guarded(async () => {
 				if (rows.length === 0) return

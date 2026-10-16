@@ -77,6 +77,19 @@ const Members = Schema.Array(ProfileAckMember).pipe(
 		),
 	),
 )
+/** Surviving native metadata carries this monotonic negative fence when its
+ * dedicated marker is retired. It is NOT an ACK pin/receipt/new lifetime. */
+export const ProfileAckRetirement = Schema.Struct({
+	v: Schema.Literal(1),
+	createdAt: Instant,
+	expiresAt: Instant,
+	reason: Schema.Literal('lifetime-expired', 'version-changed'),
+}).pipe(
+	Schema.filter(
+		(value) => Date.parse(value.expiresAt) - Date.parse(value.createdAt) === ACK_TOMBSTONE_MAX_AGE_MS,
+	),
+)
+export type ProfileAckRetirement = Schema.Schema.Type<typeof ProfileAckRetirement>
 export const ProfileAck = Schema.Union(
 	Schema.Struct({
 		v: Schema.Literal(1),
@@ -84,6 +97,7 @@ export const ProfileAck = Schema.Union(
 		ref: ProfileAckReference,
 		registeredAt: Instant,
 		members: Members,
+		retirement: Schema.optional(ProfileAckRetirement),
 		completion: Schema.optional(
 			Schema.Struct({
 				proofId: Key,
@@ -97,6 +111,7 @@ export const ProfileAck = Schema.Union(
 	}).pipe(
 		Schema.filter(
 			(value) =>
+				!(value.retirement && value.completion) &&
 				value.members.filter(
 					(member) => member.eventType === 'contact.profile.updated',
 				).length === 1 &&
@@ -111,6 +126,7 @@ export const ProfileAck = Schema.Union(
 		v: Schema.Literal(1),
 		role: Schema.Literal('member'),
 		ref: ProfileAckReference,
+		retirement: Schema.optional(ProfileAckRetirement),
 	}),
 	Schema.Struct({
 		v: Schema.Literal(1),

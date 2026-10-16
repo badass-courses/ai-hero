@@ -399,6 +399,8 @@ export type DrovrOutboxStore = {
 	depth(target: string): Promise<DrovrOutboxDepth>
 	/** Delivered rows only; held and rejected rows stay until resolved. */
 	deleteDeliveredBefore(before: string, limit: number): Promise<number | ProfileAckPurgeRefused>
+	/** Dedicated controls only, after a native purge tick was not refused. */
+	deleteExpiredAckTombstones?: (target: string) => Promise<number>
 	/**
 	 * Mark these rows delivered if they are still pending: a stop captured
 	 * on its first failure whose later Inngest retry landed. Returns how many.
@@ -708,6 +710,7 @@ export type DrovrOutboxReplayReceipt = {
 	budgetSpent: boolean
 	purged: number
 	purgeRefusal?: ProfileAckPurgeRefused
+	ackTombstonesPurged?: number
 	depth: DrovrOutboxDepth
 	alert: string[]
 }
@@ -1188,8 +1191,11 @@ export async function runDrovrOutboxReplay(args: {
 		new Date(now.getTime() - DROVR_OUTBOX_DELIVERED_RETENTION_MS).toISOString(),
 		DROVR_OUTBOX_PURGE_BATCH,
 	)
-	if (typeof purged === 'number') receipt.purged = purged
-	else {
+	if (typeof purged === 'number') {
+		receipt.purged = purged
+		const retired = await args.store.deleteExpiredAckTombstones?.(args.target)
+		if (retired) receipt.ackTombstonesPurged = retired
+	} else {
 		receipt.purgeRefusal = purged
 		await logSafely(args.log.error, PROFILE_ACK_PURGE_REFUSED_SIGNAL, {
 			message: profileAckPurgeRefusalPrompt(purged),
