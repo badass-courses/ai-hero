@@ -88,7 +88,9 @@ beforeEach(() => {
 	mocks.getServerAuthSession.mockResolvedValue({
 		session: { user: { id: 'user_1' } },
 	})
-	mocks.findCharges.mockResolvedValue([{ id: 'mch_123' }])
+	// Serves both charge lookups: the viewer's own charges, then the payer of
+	// each listed purchase.
+	mocks.findCharges.mockResolvedValue([{ id: 'mch_123', userId: 'user_1' }])
 	mocks.findTransfers.mockResolvedValue([])
 	mocks.findPurchases.mockResolvedValue([
 		{
@@ -137,7 +139,10 @@ describe('invoices list', () => {
 		expect(markup).toContain('/invoices/mch_123#invoice-details')
 	})
 	it('lists a holder-only invoice with View but no edit action', async () => {
-		mocks.findCharges.mockResolvedValue([])
+		// The viewer paid for nothing; the listed charge belongs to the payer.
+		mocks.findCharges
+			.mockResolvedValueOnce([])
+			.mockResolvedValue([{ id: 'mch_123', userId: 'payer_1' }])
 		const markup = renderToStaticMarkup(await Invoices(noParams()))
 		expect(markup).toContain('/invoices/mch_123')
 		expect(markup).not.toContain('Edit invoice details')

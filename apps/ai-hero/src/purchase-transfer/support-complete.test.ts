@@ -212,6 +212,8 @@ describe('guarded support purchase completion', () => {
 		mocks.getTransfer.mockResolvedValue(holderIsB.transfer)
 		mocks.getPurchase.mockResolvedValue(holderIsB.purchase)
 		// The charge stays with the payer, not the holder moving it.
+		// findTransfers is called twice, in this order: open conflicts first,
+		// then the other COMPLETED rows for the payer.
 		mocks.findTransfers
 			.mockResolvedValueOnce([])
 			.mockResolvedValueOnce([earlier('buyer-1')])
@@ -249,8 +251,21 @@ describe('guarded support purchase completion', () => {
 		expect(mocks.transaction).not.toHaveBeenCalled()
 	})
 
-	it('refuses a move that would leave the charge with no payer (charge row missing)', async () => {
+	it('refuses a move when the purchase points at a charge row that does not exist', async () => {
 		mocks.findCharge.mockResolvedValue(null)
+		await expect(completeSupportPurchaseTransfer(input)).resolves.toEqual({
+			state: 'blocked',
+			reason: 'billing_charge_missing',
+		})
+		expect(mocks.transaction).not.toHaveBeenCalled()
+	})
+
+	it('refuses a move that would leave the charge with no payer (defense in depth: the column is NOT NULL)', async () => {
+		mocks.findCharge.mockResolvedValue({
+			id: 'charge-1',
+			identifier: 'ch_test',
+			userId: null,
+		})
 		await expect(completeSupportPurchaseTransfer(input)).resolves.toEqual({
 			state: 'blocked',
 			reason: 'move_would_leave_charge_without_payer',

@@ -19,6 +19,7 @@ const dataSource: InvoiceLinkDataSource = {
 					merchantChargeId: charge,
 					userId: 'learner',
 					billingUserId: 'payer',
+					originTransfer: null,
 				}
 			: null
 	},
@@ -74,6 +75,21 @@ describe('invoice links after a pre-fix transfer', () => {
 				)
 			).state,
 		).toBe(state)
+	})
+	it.each([
+		['payer', 'minted', 1],
+		['learner', 'denied', 0],
+	])('rotate: %s -> %s', async (viewerUserId, state, expectedRotations) => {
+		expect(
+			(
+				await rotateInvoiceLinkForViewer(
+					{ merchantChargeId: charge, viewerUserId },
+					prefix,
+					config,
+				)
+			).state,
+		).toBe(state)
+		expect(rotations).toBe(expectedRotations)
 	})
 })
 

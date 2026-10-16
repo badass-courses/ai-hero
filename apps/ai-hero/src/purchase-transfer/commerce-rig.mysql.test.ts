@@ -1,10 +1,17 @@
+import { mysqlTable } from '@/db/mysql-table'
 import { preserveQueryResultShape } from '@/db/mysql-query-client'
 import * as schema from '@/db/schema'
 import { and, eq, is, SQL } from 'drizzle-orm'
-import { getTableConfig, MySqlDialect } from 'drizzle-orm/mysql-core'
+import {
+	getTableConfig,
+	type MySqlDatabase,
+	MySqlDialect,
+} from 'drizzle-orm/mysql-core'
 import { drizzle, type MySql2Database } from 'drizzle-orm/mysql2'
 import mysql, { type Pool } from 'mysql2/promise'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+
+import { DrizzleAdapter } from '@coursebuilder/adapter-drizzle'
 
 /**
  * Commerce rig, database half: the real accept and support-complete code
@@ -167,6 +174,10 @@ async function createFixtureSchema(pool: Pool) {
 suite('commerce rig: transfers against real MySQL 8', () => {
 	let pool: Pool
 	let db: MySql2Database<typeof schema>
+	// The app's real Course Builder adapter, built the way `src/db/index.ts`
+	// builds it, over the rig database. Its own queries answer the checkout
+	// customer lookup, the refund lookup and the checkout replay below.
+	let adapter: ReturnType<typeof DrizzleAdapter>
 	const readback: Record<string, string>[] = []
 	const row = (step: string, check: string, value: unknown) =>
 		readback.push({ step, check, value: String(value) })
@@ -194,6 +205,11 @@ suite('commerce rig: transfers against real MySQL 8', () => {
 		await createFixtureSchema(pool)
 		db = drizzle(pool, { schema, mode: 'planetscale' })
 		state.database = db
+		adapter = DrizzleAdapter<MySqlDatabase<any, any, any>>(
+			db as never,
+			mysqlTable,
+			{} as never,
+		)
 		process.env.INNGEST_EVENT_KEY = 'rig'
 
 		await db.insert(schema.users).values([
@@ -287,39 +303,18 @@ suite('commerce rig: transfers against real MySQL 8', () => {
 		(await db.query.merchantCharge.findFirst({
 			where: eq(schema.merchantCharge.id, id),
 		}))!.userId
-	// Same query as the adapter's getMerchantCustomerForUserId.
+	// The adapter's own checkout customer lookup (`ports/merchant.ts:101`).
 	const customerFor = async (userId: string) =>
-		(
-			await db.query.merchantCustomer.findFirst({
-				where: eq(schema.merchantCustomer.userId, userId),
-			})
-		)?.identifier ?? null
-	// Refund routing keys on the Stripe charge id, then charge -> purchase,
-	// and entitlements are revoked for the purchase's holder (the adapter's
-	// getPurchaseForStripeCharge, then refund-entitlements on purchase.userId).
-	// Same two queries, no refund issued.
-	const refundTarget = async (stripeChargeId: string) => {
-		const charge = await db.query.merchantCharge.findFirst({
-			where: eq(schema.merchantCharge.identifier, stripeChargeId),
-		})
-		const purchase = charge
-			? await db.query.purchases.findFirst({
-					where: eq(schema.purchases.merchantChargeId, charge.id),
-				})
-			: null
-		return purchase?.id ?? null
-	}
-	const refundRevokesUser = async (stripeChargeId: string) => {
-		const charge = await db.query.merchantCharge.findFirst({
-			where: eq(schema.merchantCharge.identifier, stripeChargeId),
-		})
-		const purchase = charge
-			? await db.query.purchases.findFirst({
-					where: eq(schema.purchases.merchantChargeId, charge.id),
-				})
-			: null
-		return purchase?.userId ?? null
-	}
+		(await adapter.getMerchantCustomerForUserId(userId))?.identifier ?? null
+	// Refund routing: the adapter's real `getPurchaseForStripeCharge`
+	// (`ports/purchase.ts:134`) is what the Stripe webhooks and
+	// refund-entitlements call. It reads the purchase for the charge, and
+	// entitlements are revoked for that purchase's holder. A lookup only, no
+	// refund is issued.
+	const refundTarget = async (stripeChargeId: string) =>
+		(await adapter.getPurchaseForStripeCharge(stripeChargeId))?.id ?? null
+	const refundRevokesUser = async (stripeChargeId: string) =>
+		(await adapter.getPurchaseForStripeCharge(stripeChargeId))?.userId ?? null
 
 	it('self-service A -> B: purchase moves, payer keeps charge and customer', async () => {
 		state.session = { user: { id: 'user-b', email: 'b@example.test' } }
@@ -543,6 +538,73 @@ suite('commerce rig: transfers against real MySQL 8', () => {
 			await edits('user-c'),
 		]).toEqual([true, undefined, false])
 		expect(await refundRevokesUser('ch_rig_3')).toBe('user-c')
+	})
+
+	// Checkout replay as the payer. A's `checkout.session.completed` handler
+	// calls the adapter's real `createMerchantChargeAndPurchase` with A's
+	// identity and the same charge. Post-fix the charge still names A, so the
+	// identity guard passes and the existing purchase id comes back; nothing is
+	// created and the purchase stays with B. Pre-fix the charge named B and the
+	// same replay threw.
+	it.each([
+		['post-fix transfer', 'user-a', true],
+		['pre-fix transfer', 'user-b', false],
+	])('replay as A after %s', async (shape, chargeOwner, passesGuard) => {
+		const n = `replay${shape.replace(/\W/g, '')}`
+		await db.insert(schema.merchantCharge).values({
+			id: `mch-${n}`,
+			identifier: `ch_${n}`,
+			merchantAccountId: 'ma-rig',
+			merchantProductId: 'mp-rig',
+			merchantCustomerId: 'mcu-a',
+			userId: chargeOwner,
+			status: 1,
+		})
+		await db.insert(schema.purchases).values({
+			id: `pur-${n}`,
+			userId: 'user-b',
+			productId: 'prod-rig-2',
+			status: 'Valid',
+			totalAmount: '100',
+			merchantChargeId: `mch-${n}`,
+		})
+		const before = (await db.query.purchases.findMany()).length
+		const replay = () =>
+			adapter.createMerchantChargeAndPurchase({
+				userId: 'user-a',
+				organizationId: null,
+				productId: 'prod-rig-2',
+				stripeChargeId: `ch_${n}`,
+				merchantAccountId: 'ma-rig',
+				merchantProductId: 'mp-rig',
+				merchantCustomerId: 'mcu-a',
+				stripeChargeAmount: 100,
+				quantity: 1,
+				checkoutSessionId: `cs_${n}`,
+			} as never)
+		if (passesGuard) {
+			const returned = await replay()
+			const after = await db.query.purchases.findMany()
+			const holder = after.find((p) => p.id === `pur-${n}`)?.userId
+			row(
+				`replay as A, ${shape}`,
+				'returns / purchases added / holder',
+				`${returned.id} / ${after.length - before} / ${holder}`,
+			)
+			expect(returned.id).toBe(`pur-${n}`)
+			expect(after.length).toBe(before)
+			expect(holder).toBe('user-b')
+		} else {
+			await expect(replay()).rejects.toThrow(
+				/CHECKOUT_RECOVERY_CHARGE_IDENTITY_GUARD_V1/,
+			)
+			row(
+				`replay as A, ${shape}`,
+				'result',
+				'throws the identity guard (unchanged legacy)',
+			)
+			expect((await db.query.purchases.findMany()).length).toBe(before)
+		}
 	})
 
 	// The same user-visible outcome in every shape: pre-fix (charge rewritten

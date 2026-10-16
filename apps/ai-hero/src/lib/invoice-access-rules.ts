@@ -101,7 +101,6 @@ export function resolveInvoicePayer({
 export function canEditInvoice({
 	viewerId,
 	payerUserId,
-	holderUserId,
 	transfer,
 }: {
 	viewerId: string | null | undefined
@@ -111,8 +110,9 @@ export function canEditInvoice({
 }): boolean {
 	if (!viewerId) return false
 	// One rule surface: `resolveInvoicePayer` decides, so an undated COMPLETED
-	// transfer is ignored here exactly as it is there. The holder needs no
-	// guard of its own: a holder who is not the payer is not the payer.
+	// transfer is ignored here exactly as it is there. `holderUserId` is part
+	// of the signature so callers state who holds the purchase, but the rule
+	// does not read it: a holder who is not the payer is not the payer.
 	const payer = resolveInvoicePayer({
 		chargeUserId: payerUserId,
 		transfers: transfer ? [transfer] : [],

@@ -50,7 +50,7 @@ function memoryDataSource(options: StoreOptions = {}) {
 						id: purchase.id,
 						userId: purchase.userId,
 						billingUserId: purchase.billingUserId,
-						originTransfer: purchase.originTransfer,
+						originTransfer: purchase.originTransfer ?? null,
 						merchantChargeId: purchase.merchantChargeId,
 					}
 				: null

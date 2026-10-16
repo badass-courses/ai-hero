@@ -243,12 +243,15 @@ async function loadGuardedContext(input: SupportCompleteInput) {
 		completedAt: row.completedAt,
 		createdAt: row.createdAt,
 	}))
+	if (!billingCharge) {
+		return { ok: false as const, reason: 'billing_charge_missing' }
+	}
 	const payerBefore = resolveInvoicePayer({
-		chargeUserId: billingCharge?.userId ?? null,
+		chargeUserId: billingCharge.userId,
 		transfers: completedTransfers,
 	})
 	const payerAfter = resolveInvoicePayer({
-		chargeUserId: billingCharge?.userId ?? null,
+		chargeUserId: billingCharge.userId,
 		transfers: [
 			...completedTransfers,
 			{
@@ -259,7 +262,9 @@ async function loadGuardedContext(input: SupportCompleteInput) {
 			},
 		],
 	})
-	if (!payerBefore || !billingCharge) {
+	// MerchantCharge.userId is NOT NULL, so this is defense in depth: a move
+	// must never leave a charge with no payer.
+	if (!payerBefore) {
 		return {
 			ok: false as const,
 			reason: 'move_would_leave_charge_without_payer',
