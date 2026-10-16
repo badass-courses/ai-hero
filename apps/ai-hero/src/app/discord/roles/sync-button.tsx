@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation'
 
 import { syncDiscordRoles } from './actions'
 
-export function SyncRolesButton({ needsSync }: { needsSync: boolean }) {
+/** Rendered only when a sync is needed and possible (see `discordRolesView`). */
+export function SyncRolesButton() {
 	const [state, setState] = React.useState<
 		'idle' | 'syncing' | 'success' | 'error'
 	>('idle')
@@ -42,12 +43,8 @@ export function SyncRolesButton({ needsSync }: { needsSync: boolean }) {
 			<button
 				type="button"
 				onClick={handleSync}
-				disabled={state === 'syncing' || !needsSync}
-				className={`group relative inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-sm font-semibold tracking-wide transition-all duration-200 disabled:pointer-events-none ${
-					needsSync
-						? 'bg-[#5865F2] text-white shadow-lg shadow-[#5865F2]/25 hover:bg-[#4752C4] hover:shadow-[#5865F2]/40 active:scale-[0.98]'
-						: 'bg-secondary text-muted-foreground hover:bg-secondary/80'
-				} `}
+				disabled={state === 'syncing'}
+				className="group relative inline-flex items-center gap-2.5 rounded-lg bg-[#5865F2] px-6 py-3 text-sm font-semibold tracking-wide text-white shadow-lg shadow-[#5865F2]/25 transition-all duration-200 hover:bg-[#4752C4] hover:shadow-[#5865F2]/40 active:scale-[0.98] disabled:pointer-events-none"
 			>
 				{state === 'syncing' ? (
 					<>
@@ -72,7 +69,7 @@ export function SyncRolesButton({ needsSync }: { needsSync: boolean }) {
 						</svg>
 						Syncing...
 					</>
-				) : needsSync ? (
+				) : (
 					<>
 						<svg className="size-4" viewBox="0 0 20 20" fill="currentColor">
 							<path
@@ -83,17 +80,6 @@ export function SyncRolesButton({ needsSync }: { needsSync: boolean }) {
 							/>
 						</svg>
 						Sync My Roles
-					</>
-				) : (
-					<>
-						<svg className="size-4" viewBox="0 0 20 20" fill="currentColor">
-							<path
-								fillRule="evenodd"
-								d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z"
-								clipRule="evenodd"
-							/>
-						</svg>
-						All Roles Synced
 					</>
 				)}
 			</button>

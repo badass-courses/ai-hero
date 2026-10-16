@@ -8,6 +8,7 @@ import {
 	discordRolesView,
 	FETCH_ERROR_COPY,
 	NO_ROLES_COPY,
+	NOT_IN_SERVER_COPY,
 } from '@/lib/discord-view'
 import { getServerAuthSession } from '@/server/auth'
 
@@ -86,8 +87,12 @@ export default async function DiscordRolesPage() {
 		redirect('/discord?callbackUrl=/discord/roles')
 	}
 
-	const { roles, needsSync, discordUsername, memberFetch } = state
-	const view = discordRolesView({ roles, memberFetch, connected: true })
+	const { roles, discordUsername, memberFetch } = state
+	const view = discordRolesView({
+		linked: true,
+		memberFetch,
+		entitlements: roles,
+	})
 
 	return (
 		<LayoutClient withContainer>
@@ -118,6 +123,13 @@ export default async function DiscordRolesPage() {
 							<a href="/discord/roles">Try again</a>
 						</Button>
 					</div>
+				) : view === 'not-in-server' ? (
+					<div className="border-border/60 flex w-full flex-col items-center gap-4 rounded-lg border border-dashed px-6 py-10 text-center">
+						<p className="text-muted-foreground text-sm">{NOT_IN_SERVER_COPY}</p>
+						<Button asChild variant="outline" size="sm">
+							<a href="/discord">Join the server</a>
+						</Button>
+					</div>
 				) : view === 'no-roles' ? (
 					<div className="border-border/60 w-full rounded-lg border border-dashed px-6 py-10 text-center">
 						<p className="text-muted-foreground text-sm">{NO_ROLES_COPY}</p>
@@ -136,12 +148,10 @@ export default async function DiscordRolesPage() {
 				)}
 
 				{/* Sync Button */}
-				{(view === 'needs-sync' || view === 'all-assigned') && (
-					<SyncRolesButton needsSync={needsSync} />
-				)}
+				{view === 'needs-sync' && <SyncRolesButton />}
 
 				{/* Status Message */}
-				{view === 'all-assigned' && (
+				{view === 'in-sync' && (
 					<p className="text-muted-foreground text-center text-xs">
 						All your course roles are active in Discord. If you get access to a
 						new course, come back here to sync.

@@ -40,6 +40,14 @@ export const ALREADY_OWN_PATH = '/invoices?already-own=1'
 /** One destination for a quantity that is not a positive integer. */
 export const INVALID_QUANTITY_PATH = '/subscribe/error'
 
+/**
+ * Regional (PPP) pricing is a single-seat offer. The one rule behind both the
+ * checkout guard and the pricing widget's regional toggle, so the UI cannot
+ * offer what checkout refuses.
+ */
+export const regionalAllowedForQuantity = (quantity: number): boolean =>
+	quantity < 2
+
 export type DuplicatePurchaseDecision =
 	| 'allow'
 	| 'already-own'
@@ -64,7 +72,7 @@ export const duplicatePurchaseGuard = ({
 	existing: Array<{ status: string; bulk: boolean }>
 	regionalCouponApplied: boolean
 }): DuplicatePurchaseDecision => {
-	if (quantity >= 2) {
+	if (!regionalAllowedForQuantity(quantity)) {
 		return regionalCouponApplied ? 'regional-team-not-allowed' : 'allow'
 	}
 	if (!requiresDuplicateActivePurchaseGuardrail(productType)) return 'allow'

@@ -1,36 +1,45 @@
 export type DiscordRolesView =
-	| 'connect'
+	| 'not-linked'
 	| 'fetch-error'
 	| 'no-roles'
+	| 'not-in-server'
 	| 'needs-sync'
-	| 'all-assigned'
+	| 'in-sync'
 
-export type MemberFetch = 'ok' | 'error'
+/** The guild member lookup: in the server, not in it, or it failed. */
+export type MemberFetch = 'member' | 'not-member' | 'error'
 
 /**
- * What the roles page should show. Order matters: a failed Discord lookup
- * says nothing about assignment, so it never reads as "needs sync".
+ * What the roles page should show. Order matters: a failed lookup says
+ * nothing about membership or assignment, so it never reads as "not in the
+ * server" or "needs sync"; and role sync needs guild membership, so someone
+ * outside the server is told to join instead of being offered a Sync that
+ * cannot succeed. Only `needs-sync` renders the Sync button.
  */
 export function discordRolesView({
-	roles,
+	linked,
 	memberFetch,
-	connected,
+	entitlements,
 }: {
-	roles: ReadonlyArray<{ assigned: boolean }>
+	linked: boolean
 	memberFetch: MemberFetch
-	connected: boolean
+	entitlements: ReadonlyArray<{ assigned: boolean }>
 }): DiscordRolesView {
-	if (!connected) return 'connect'
+	if (!linked) return 'not-linked'
 	if (memberFetch === 'error') return 'fetch-error'
-	if (roles.length === 0) return 'no-roles'
-	return roles.every((r) => r.assigned) ? 'all-assigned' : 'needs-sync'
+	if (entitlements.length === 0) return 'no-roles'
+	if (memberFetch === 'not-member') return 'not-in-server'
+	return entitlements.every((r) => r.assigned) ? 'in-sync' : 'needs-sync'
 }
+
+export const NOT_IN_SERVER_COPY =
+	'Join the AI Hero Discord server first. Your roles are added once you are in.'
 
 export const NO_ROLES_COPY =
 	'No course roles yet. If you have access to a cohort or workshop, contact support.'
 
 export const FETCH_ERROR_COPY =
-	"We couldn't check your Discord roles just now. Try again in a moment."
+	"We couldn't reach Discord right now. Try again in a moment."
 
 // Real stored values: EntitlementSourceType in lib/entitlements.ts
 const SOURCE_LABELS: Record<string, string> = {

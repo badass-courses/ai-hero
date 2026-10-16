@@ -3,7 +3,7 @@
 import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { TYPE } from '@/components/landing/type'
-import { showRegionalOffer } from '@/lib/pricing-decisions'
+import { showRegionalOffer, showRegionalToggle } from '@/lib/pricing-decisions'
 
 import { usePriceCheck } from '@coursebuilder/commerce-next/pricing/pricing-check-context'
 import { usePricing } from '@coursebuilder/commerce-next/pricing/pricing-context'
@@ -40,6 +40,7 @@ export const RegionalPricingNote = ({ targetId }: { targetId: string }) => {
 		allowPurchase,
 		isPreviouslyPurchased,
 		isTeamPurchaseActive,
+		quantity,
 	} = usePricing()
 	const { isDowngrade } = usePriceCheck()
 	const [slot, setSlot] = React.useState<HTMLElement | null>(null)
@@ -56,13 +57,16 @@ export const RegionalPricingNote = ({ targetId }: { targetId: string }) => {
 		!slot ||
 		!availablePPPCoupon ||
 		activeMerchantCoupon?.type === 'ppp' ||
-		!showRegionalOffer({
-			allowPurchase,
-			isPPPEnabled,
-			hasRegionalCoupon: true,
-			isPreviouslyPurchased,
-			isDowngrade: isDowngrade(formattedPrice),
-			isTeamPurchaseActive,
+		!showRegionalToggle({
+			quantity: quantity ?? 1,
+			regionalOfferAvailable: showRegionalOffer({
+				allowPurchase,
+				isPPPEnabled,
+				hasRegionalCoupon: true,
+				isPreviouslyPurchased,
+				isDowngrade: isDowngrade(formattedPrice),
+				isTeamPurchaseActive,
+			}),
 		})
 	)
 		return null

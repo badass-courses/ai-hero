@@ -20,7 +20,11 @@ import type { CountdownRenderProps } from 'react-countdown'
 
 import { useCoupon } from '@coursebuilder/commerce-next/coupons/use-coupon'
 import * as Pricing from '@coursebuilder/commerce-next/pricing/pricing'
-import { showRegionalOffer } from '@/lib/pricing-decisions'
+import {
+	REGIONAL_SINGLE_SEAT_COPY,
+	showRegionalOffer,
+	showRegionalToggle,
+} from '@/lib/pricing-decisions'
 import { usePriceCheck } from '@coursebuilder/commerce-next/pricing/pricing-check-context'
 import { usePricing } from '@coursebuilder/commerce-next/pricing/pricing-context'
 import type { Product, Purchase } from '@coursebuilder/core/schemas'
@@ -617,6 +621,7 @@ const RegionalPricingBox = () => {
 		isPreviouslyPurchased,
 		activeMerchantCoupon,
 		setMerchantCoupon,
+		quantity,
 		pricingData: { purchaseToUpgrade },
 	} = usePricing()
 	const { isDowngrade } = usePriceCheck()
@@ -641,14 +646,31 @@ const RegionalPricingBox = () => {
 			? (lastQuotedPPPCoupon ?? appliedPPPCoupon ?? undefined)
 			: undefined)
 
-	const showPPPBox = showRegionalOffer({
+	const offerInput = {
 		allowPurchase,
 		isPPPEnabled,
 		hasRegionalCoupon: Boolean(pppCoupon),
 		isPreviouslyPurchased,
 		isDowngrade: isDowngrade(formattedPrice),
 		isTeamPurchaseActive,
+	}
+	const seats = quantity ?? 1
+	const showPPPBox = showRegionalToggle({
+		quantity: seats,
+		regionalOfferAvailable: showRegionalOffer(offerInput),
 	})
+	// Team seats: the offer exists but not at this quantity. Say why.
+	const showSingleSeatReason =
+		!showPPPBox &&
+		seats >= 2 &&
+		showRegionalOffer({ ...offerInput, isTeamPurchaseActive: false })
+
+	// A regional coupon must not follow the buyer to a team quantity.
+	const regionalAppliedAtTeamQuantity =
+		seats >= 2 && activeMerchantCoupon?.type === 'ppp'
+	React.useEffect(() => {
+		if (regionalAppliedAtTeamQuantity) setMerchantCoupon(undefined)
+	}, [regionalAppliedAtTeamQuantity, setMerchantCoupon])
 
 	const rawDiscount = pppCoupon?.percentageDiscount as
 		| string
@@ -677,6 +699,16 @@ const RegionalPricingBox = () => {
 	// Upgrading a PPP purchase auto-applies the coupon; a checkbox would only
 	// invite unchecking it (same rule as the primitive's default UI).
 	const hideCheckbox = Boolean(purchaseToUpgrade)
+
+	if (showSingleSeatReason)
+		return (
+			<p
+				data-regional-single-seat
+				className={cn(TYPE.meta, 'text-muted-foreground mt-3')}
+			>
+				{REGIONAL_SINGLE_SEAT_COPY}
+			</p>
+		)
 
 	if (!showPPPBox) return null
 

@@ -1,5 +1,7 @@
 // Pure pricing-display and seat-count decisions. Client-safe: no server code.
 
+import { regionalAllowedForQuantity } from './purchase-guardrails'
+
 /** Everything the regional-pricing offer is gated on, desktop and mobile alike. */
 export type RegionalOfferInput = {
 	allowPurchase: boolean
@@ -23,6 +25,24 @@ export function showRegionalOffer(input: RegionalOfferInput): boolean {
 		!input.isPreviouslyPurchased &&
 		!input.isDowngrade &&
 		!input.isTeamPurchaseActive
+	)
+}
+
+export const REGIONAL_SINGLE_SEAT_COPY =
+	'Regional pricing applies to single-seat purchases.'
+
+/**
+ * Whether the regional toggle is offered at this quantity. Shares its
+ * quantity rule with the checkout guard (`regionalAllowedForQuantity`).
+ */
+export function showRegionalToggle(input: {
+	quantity: number
+	regionalOfferAvailable: boolean
+}): boolean {
+	return (
+		input.regionalOfferAvailable &&
+		input.quantity >= 1 &&
+		regionalAllowedForQuantity(input.quantity)
 	)
 }
 

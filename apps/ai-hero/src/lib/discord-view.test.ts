@@ -15,18 +15,21 @@ import {
 	type MemberFetch,
 } from './discord-view'
 
-// The behavior before this change, modeled on the old page logic.
+// The behavior before this change, modeled on the old page logic: no
+// not-in-server state, and a failed lookup folded into "not a member".
 const legacyRolesView = ({
-	roles,
-	connected,
+	entitlements,
+	linked,
+	memberFetch,
 }: {
-	roles: { assigned: boolean }[]
+	entitlements: { assigned: boolean }[]
 	memberFetch: MemberFetch
-	connected: boolean
+	linked: boolean
 }) => {
-	if (!connected) return 'connect'
-	if (roles.length === 0) return 'no-roles'
-	return roles.every((r) => r.assigned) ? 'all-assigned' : 'needs-sync'
+	if (!linked) return 'not-linked'
+	if (memberFetch === 'error') return 'fetch-error'
+	if (entitlements.length === 0) return 'no-roles'
+	return entitlements.every((r) => r.assigned) ? 'in-sync' : 'needs-sync'
 }
 // Modeled on the old getDiscordAccessState tail (/discord) and the welcome page's check.
 type Acct = { provider?: string; access_token?: string | null } | null
@@ -48,60 +51,78 @@ const roleSets = {
 }
 
 describe('discordRolesView truth table', () => {
+	const fetches: MemberFetch[] = ['member', 'not-member', 'error']
 	const cases: [
 		keyof typeof roleSets,
 		MemberFetch,
 		boolean,
 		DiscordRolesView,
 	][] = []
-	for (const connected of [true, false]) {
-		for (const fetch of ['ok', 'error'] as const) {
+	for (const linked of [true, false]) {
+		for (const fetch of fetches) {
 			for (const key of Object.keys(roleSets) as (keyof typeof roleSets)[]) {
-				const expected: DiscordRolesView = !connected
-					? 'connect'
+				const expected: DiscordRolesView = !linked
+					? 'not-linked'
 					: fetch === 'error'
 						? 'fetch-error'
 						: key === 'none'
 							? 'no-roles'
-							: key === 'allAssigned'
-								? 'all-assigned'
-								: 'needs-sync'
-				cases.push([key, fetch, connected, expected])
+							: fetch === 'not-member'
+								? 'not-in-server'
+								: key === 'allAssigned'
+									? 'in-sync'
+									: 'needs-sync'
+				cases.push([key, fetch, linked, expected])
 			}
 		}
 	}
 
+	it('covers every input combination', () => {
+		expect(cases).toHaveLength(2 * 3 * 4)
+	})
+
 	it.each(cases)(
-		'roles=%s fetch=%s connected=%s -> %s',
-		(key, fetch, connected, expected) => {
+		'entitlements=%s fetch=%s linked=%s -> %s',
+		(key, fetch, linked, expected) => {
 			expect(
 				discordRolesView({
-					roles: roleSets[key],
+					entitlements: roleSets[key],
 					memberFetch: fetch,
-					connected,
+					linked,
 				}),
 			).toBe(expected)
 		},
 	)
 
-	it('differs from the legacy view exactly where a failed fetch was shown as needs sync', () => {
+	it('Sync (needs-sync) is reachable only for a linked server member', () => {
+		for (const [key, fetch, linked, expected] of cases) {
+			if (expected === 'needs-sync') {
+				expect(fetch).toBe('member')
+				expect(linked).toBe(true)
+				expect(key).not.toBe('none')
+			}
+		}
+	})
+
+	it('legacy view offered Sync outside the server and read errors apart from not-in-server', () => {
 		const diffs = cases.filter(
-			([key, fetch, connected]) =>
+			([key, fetch, linked]) =>
 				legacyRolesView({
-					roles: roleSets[key],
+					entitlements: roleSets[key],
 					memberFetch: fetch,
-					connected,
+					linked,
 				}) !==
 				discordRolesView({
-					roles: roleSets[key],
+					entitlements: roleSets[key],
 					memberFetch: fetch,
-					connected,
+					linked,
 				}),
 		)
 		expect(diffs.length).toBeGreaterThan(0)
-		for (const [, fetch, connected] of diffs) {
-			expect(fetch).toBe('error')
-			expect(connected).toBe(true)
+		for (const [, fetch, linked, expected] of diffs) {
+			expect(fetch).toBe('not-member')
+			expect(linked).toBe(true)
+			expect(expected).toBe('not-in-server')
 		}
 	})
 })

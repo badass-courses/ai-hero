@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
+import { duplicatePurchaseGuard } from './purchase-guardrails'
 import { showEvergreenEndedNotice } from './subscriber-marketing/evergreen-offer-notice'
 import {
 	inlineBuyLabel,
 	seatsTaken,
 	showRegionalOffer,
+	showRegionalToggle,
 	type RegionalOfferInput,
 	type SeatRow,
 } from './pricing-decisions'
@@ -68,6 +70,45 @@ describe('showRegionalOffer', () => {
 		expect(wrong.some((i) => i.isDowngrade)).toBe(true)
 		expect(wrong.some((i) => !i.allowPurchase)).toBe(true)
 		for (const i of wrong) expect(showRegionalOffer(i)).toBe(false)
+	})
+})
+
+describe('showRegionalToggle', () => {
+	// The widget's old rule: the offer alone decided, whatever the quantity.
+	const legacy = (i: { quantity: number; regionalOfferAvailable: boolean }) =>
+		i.regionalOfferAvailable
+
+	const cases = [1, 2, 3, 4, 5].flatMap((quantity) =>
+		bools.map((regionalOfferAvailable) => ({
+			quantity,
+			regionalOfferAvailable,
+		})),
+	)
+
+	it.each(cases)('quantity=$quantity offer=$regionalOfferAvailable', (i) => {
+		expect(showRegionalToggle(i)).toBe(
+			i.quantity === 1 && i.regionalOfferAvailable,
+		)
+	})
+
+	it('legacy predicate showed the toggle at team quantities', () => {
+		const wrong = cases.filter((i) => legacy(i) && !showRegionalToggle(i))
+		expect(wrong.map((i) => i.quantity)).toEqual([2, 3, 4, 5])
+	})
+
+	it('agrees with the checkout guard for quantities 1..5', () => {
+		for (const quantity of [1, 2, 3, 4, 5]) {
+			const refused =
+				duplicatePurchaseGuard({
+					productType: null,
+					quantity,
+					existing: [],
+					regionalCouponApplied: true,
+				}) === 'regional-team-not-allowed'
+			expect(
+				showRegionalToggle({ quantity, regionalOfferAvailable: true }),
+			).toBe(!refused)
+		}
 	})
 })
 
