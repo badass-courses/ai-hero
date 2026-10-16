@@ -1,6 +1,7 @@
 import { revalidatePath, updateTag } from 'next/cache'
 import { notFound, redirect } from 'next/navigation'
 import { courseBuilderAdapter } from '@/db'
+import { transferPageView } from '@/lib/transfer-page-view'
 import { INCOMING_TRANSFERS_TAG } from '@/lib/incoming-transfers'
 import { purchaseArtwork } from '@/lib/purchase-artwork'
 import { acceptPurchaseTransfer } from '@/purchase-transfer/purchase-transfer-actions'
@@ -11,6 +12,7 @@ import {
 import { getServerAuthSession } from '@/server/auth'
 
 import { welcomeStart } from '../../welcome/welcome-start'
+import { sendTransferLogin } from './actions'
 import {
 	TransferScreen,
 	type TransferView,
@@ -21,8 +23,10 @@ const SENT = ['INITIATED', 'VERIFIED', 'COMPLETED', 'CANCELED', 'EXPIRED']
 
 const PurchaseTransferPage = async (props: {
 	params: Promise<{ purchaseTransferId: string }>
+	searchParams?: Promise<{ link?: string }>
 }) => {
 	const { purchaseTransferId: id } = await props.params
+	const linkUsed = (await props.searchParams)?.link === 'used'
 	const [{ session }, transfer] = await Promise.all([
 		getServerAuthSession(),
 		courseBuilderAdapter.getPurchaseUserTransferById({ id }),
@@ -36,33 +40,49 @@ const PurchaseTransferPage = async (props: {
 		viewer?.id && viewer.id === transfer.targetUserId,
 	)
 
+	const viewerKind = viewerIsRecipient
+		? 'recipient'
+		: viewer?.id
+			? 'other'
+			: 'signed-out'
+	const { kind, notice } = transferPageView({
+		transferState: transfer.transferState,
+		purchaseMoved: isTransferAccepted(transfer, transfer.purchase),
+		clockExpired: isTransferExpired(transfer),
+		viewer: viewerKind,
+		linkUsed,
+	})
+
 	let view: TransferView
-	if (isTransferAccepted(transfer, transfer.purchase)) {
-		view = {
-			kind: 'accepted',
-			viewerIsRecipient,
-			start: viewerIsRecipient
-				? welcomeStart({
-						product,
-						productResources:
-							await courseBuilderAdapter.getProductResources(productId),
-						ownsASeat: true,
-					})
-				: null,
-		}
-	} else if (transfer.transferState === 'CANCELED') {
-		view = { kind: 'canceled' }
-	} else if (
-		transfer.transferState === 'EXPIRED' ||
-		(transfer.transferState === 'INITIATED' && isTransferExpired(transfer))
-	) {
-		view = { kind: 'expired' }
-	} else if (viewerIsRecipient) {
-		// A VERIFIED claim that has not moved the purchase was interrupted;
-		// accepting again resumes it at any age, so it gets the same button.
-		view = { kind: 'accept' }
-	} else {
-		view = { kind: 'sign-in', viewerEmail: viewer?.email ?? null }
+	switch (kind) {
+		case 'accepted':
+			view = {
+				kind: 'accepted',
+				viewerIsRecipient,
+				start: viewerIsRecipient
+					? welcomeStart({
+							product,
+							productResources:
+								await courseBuilderAdapter.getProductResources(productId),
+							ownsASeat: true,
+						})
+					: null,
+			}
+			break
+		case 'canceled':
+			view = { kind: 'canceled' }
+			break
+		case 'expired':
+			view = { kind: 'expired' }
+			break
+		case 'accept':
+			// A VERIFIED claim that has not moved the purchase was interrupted;
+			// accepting again resumes it at any age, so it gets the same button.
+			view = { kind: 'accept' }
+			break
+		case 'sign-in':
+			view = { kind: 'sign-in', viewerEmail: viewer?.email ?? null }
+			break
 	}
 
 	async function accept() {
@@ -76,6 +96,7 @@ const PurchaseTransferPage = async (props: {
 	return (
 		<TransferScreen
 			view={view}
+			notice={notice}
 			transferId={id}
 			productName={product?.name ?? 'your purchase'}
 			artwork={purchaseArtwork(product)}
@@ -85,6 +106,7 @@ const PurchaseTransferPage = async (props: {
 			senderEmail={transfer.sourceUser?.email}
 			recipientEmail={transfer.targetUser?.email ?? ''}
 			accept={accept}
+			sendLogin={sendTransferLogin}
 		/>
 	)
 }

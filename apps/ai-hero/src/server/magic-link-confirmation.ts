@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { parse, serialize } from 'cookie'
 import { NextRequest } from 'next/server'
+import { transferPathOf } from '@/lib/acceptance-link-view'
 
 const MAGIC_LINK_CALLBACK_PATH = '/api/auth/callback/postmark'
 const MAGIC_LINK_CONFIRMATION_PATH = '/login/verify'
@@ -33,13 +34,13 @@ export type MagicLinkConfirmation = Pick<
 type MagicLinkOptions = {
 	secret: string
 	now?: Clock
+	/** The site's own origin, the only absolute callback it may follow. */
+	siteUrl?: string
 }
 
 type MagicLinkGetOptions = MagicLinkOptions & {
 	/** The email this browser is already signed in as, if any. */
 	signedInEmail?: () => Promise<string | null | undefined>
-	/** The site's own origin, the only absolute callback it may follow. */
-	siteUrl?: string
 }
 
 function getNow(clock: Clock | undefined) {
@@ -294,6 +295,33 @@ function callbackRequest(request: Request, confirmation: MagicLinkConfirmation) 
 	return new NextRequest(url, { method: 'POST', headers })
 }
 
+/**
+ * A spent token on a transfer acceptance link lands on the transfer page, which
+ * says what is true (still waiting, accepted, canceled, expired), instead of on
+ * an expiry error. The token stays spent; only where the browser goes changes.
+ */
+function spentTokenTransferPath(
+	response: Response,
+	confirmation: MagicLinkConfirmation,
+	siteUrl?: string,
+) {
+	const location = response.headers.get('location')
+	if (!location) return null
+	let error: string | null
+	try {
+		error = new URL(location, 'https://site.invalid').searchParams.get('error')
+	} catch {
+		return null
+	}
+	// Auth.js reports a spent or unknown email token as Verification, and some
+	// adapter failures on it as Configuration; the person holding the link sees
+	// the same thing either way.
+	if (error !== 'Verification' && error !== 'Configuration') return null
+	return transferPathOf(
+		callbackPath(confirmation.callbackUrl, siteUrl).split(/[?#]/, 1)[0]!,
+	)
+}
+
 export function createMagicLinkConfirmHandler(
 	authHandler: AuthHandler<NextRequest>,
 	options: MagicLinkOptions,
@@ -313,6 +341,24 @@ export function createMagicLinkConfirmHandler(
 		}
 
 		const response = await authHandler(callbackRequest(request, confirmation))
+		const transferPath = spentTokenTransferPath(
+			response,
+			confirmation,
+			options.siteUrl,
+		)
+		if (transferPath) {
+			return withSetCookie(
+				new Response(null, {
+					status: 303,
+					headers: {
+						location: `${transferPath}?link=used`,
+						'cache-control': 'no-store',
+						'referrer-policy': 'no-referrer',
+					},
+				}),
+				clearedMagicLinkCookie(),
+			)
+		}
 		return withSetCookie(response, clearedMagicLinkCookie())
 	}
 }
