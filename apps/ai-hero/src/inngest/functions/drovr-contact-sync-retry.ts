@@ -1,8 +1,7 @@
 import { CONTACT_SYNC_RETRY_EVENT } from '@/inngest/events/drovr'
 import { inngest } from '@/inngest/inngest.server'
 import { DROVR_SEND_RETRIES } from '@/lib/subscriber-marketing/drovr-outbox'
-import type { DrovrBatchOutcome } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
-import { splitUnsubscribedHolds } from '@/lib/subscriber-marketing/drovr-refusal-outcome'
+import { deliverHoldingUnsubscribed } from '@/lib/subscriber-marketing/drovr-straggler-hold'
 import {
 	createDirectoryBirth,
 	runContactSyncStragglerRetry,
@@ -65,41 +64,28 @@ export const drovrContactSyncRetry = inngest.createFunction(
 			warn: log.warn,
 			// Row 204c: a stop a backfill outboxed while it waited is settled
 			// when this send lands it, or held if drovr refused it.
-			deliver: async (all) => {
-				// An in-flight chain for a contact who has since unsubscribed
-				// ends here: the held profile, link and offer pushes are
-				// counted as rejected, so nothing is rescheduled. Stops flow.
-				const { send: events, held } = await splitUnsubscribedHolds(
-					all,
-					async (contactId) =>
-						(
-							await readContactSendStanding({ repository, contactId })
-						)?.reasons.includes('unsubscribed') ?? false,
-				)
-				if (held.length > 0)
-					await log.warn('drovr.contact_sync.unsubscribed_held', {
-						held: held.length,
-						idempotencyKeys: held.map((event) => event.idempotencyKey),
-					})
-				const outcome: DrovrBatchOutcome =
-					events.length === 0
-						? { accepted: 0, rejected: 0 }
-						: await outboxing(events, async () =>
-								settleOrHoldStragglerStops(
-									events,
-									await deliverBatchOrThrow({
-										events,
-										config: drovrConfig(),
-										deferNotLive: true,
-										caller: 'straggler-retry',
-										// Contact-directory events only: nothing is clamped (row
-										// 201g), so any instant posts the same bytes.
-										clampAt: Date.now(),
-									}),
-								),
-							)
-				return { ...outcome, rejected: outcome.rejected + held.length }
-			},
+			deliver: deliverHoldingUnsubscribed({
+				warn: log.warn,
+				isUnsubscribed: async (contactId) =>
+					(
+						await readContactSendStanding({ repository, contactId })
+					)?.reasons.includes('unsubscribed') ?? false,
+				send: (events) =>
+					outboxing(events, async () =>
+						settleOrHoldStragglerStops(
+							events,
+							await deliverBatchOrThrow({
+								events,
+								config: drovrConfig(),
+								deferNotLive: true,
+								caller: 'straggler-retry',
+								// Contact-directory events only: nothing is clamped (row
+								// 201g), so any instant posts the same bytes.
+								clampAt: Date.now(),
+							}),
+						),
+					),
+			}),
 			acknowledge: (contactId, profileVersion) =>
 				createDrizzleContactProfileVersionStore(db).acknowledge(
 					contactId,
@@ -116,7 +102,7 @@ export const drovrContactSyncRetry = inngest.createFunction(
 							config: drovrConfig(),
 							// Directory births are never clamped (row 201g).
 							clampAt: Date.now(),
-							caller: 'birth-redeliver',
+							caller: 'directory-birth',
 						}),
 					),
 			}),

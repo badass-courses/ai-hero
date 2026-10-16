@@ -4,6 +4,7 @@ import {
 	birthThenRedeliver,
 	createDirectoryBirth,
 	directoryBirthEvents,
+	runContactSyncStragglerRetry,
 } from './contact-sync-straggler-retry'
 import { runContactProfileSync } from './drovr-contact-profile-sync'
 import {
@@ -16,10 +17,23 @@ import {
 	type DrovrRefusalCode,
 	type DrovrRefusalOutcome,
 } from './drovr-refusal-outcome'
-import { deliverBatchOrThrow } from './drovr-shadow-delivery'
-import type { DrovrShadowEvent } from './drovr-shadow-emitter'
+import { readContactSendStanding } from './drovr-personalize'
+import {
+	deliverBatchOrThrow,
+	type DrovrBatchOutcome,
+} from './drovr-shadow-delivery'
+import {
+	deliverHoldingUnsubscribed,
+	HELD_KEYS_LOGGED,
+} from './drovr-straggler-hold'
+import {
+	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+	DROVR_SKILLS_COURSE_JOURNEY_ID,
+	type DrovrShadowEvent,
+} from './drovr-shadow-emitter'
 import { drovrStopVerdict } from './drovr-stop-verdict'
-import type { ContactRecord } from './types'
+import type { ContactLifecycle, ContactRecord } from './types'
 
 const config = { ingestUrl: 'https://drovr.test/events', apiKey: 'test-key' }
 const at = '2026-10-01T10:00:00.000Z'
@@ -42,7 +56,7 @@ const eventOfKind: Record<DrovrEventKind, DrovrShadowEvent> = {
 	links: directoryEvent('contact.links.issued'),
 	offer: directoryEvent('contact.offer.issued'),
 	created: directoryEvent('contact.created'),
-	other: directoryEvent('contact.tag-applied' as never),
+	other: directoryEvent('coupon.issued'),
 }
 
 const neverBornDetail = (c = 'c1') =>
@@ -112,38 +126,6 @@ describe('refusal to outcome: the whole table', () => {
 			'cold-start-unhandled',
 		)
 		expect(drovrRefusalCodeOf('actor busy')).toBeUndefined()
-	})
-
-	describe('an unsubscribed contact', () => {
-		for (const code of codes)
-			for (const kind of ['profile', 'links', 'offer'] as const)
-				it(`${code ?? 'other'} × ${kind} is held when the code is a refusal we know`, () => {
-					expect(drovrRefusalOutcome({ code, kind, unsubscribed: true })).toBe(
-						code ? 'hold' : 'final',
-					)
-				})
-
-		it('unsubscribed × cold-start-never-born: no birth, no retry (held, counted)', () => {
-			const outcome = drovrRefusalOutcome({
-				code: 'cold-start-never-born',
-				kind: 'profile',
-				unsubscribed: true,
-			})
-			expect(outcome).toBe('hold')
-			expect(outcome).not.toBe('birth-then-redeliver')
-			expect(outcome).not.toBe('retry-later')
-		})
-
-		it('does not hold a stop or a birth: they still flow', () => {
-			for (const kind of ['stop', 'created'] as const)
-				expect(
-					drovrRefusalOutcome({
-						code: 'cold-start-unhandled',
-						kind,
-						unsubscribed: true,
-					}),
-				).toBe('birth-then-redeliver')
-		})
 	})
 })
 
@@ -232,7 +214,7 @@ describe('stops never birth', () => {
 	const ownerStop: DrovrShadowEvent = {
 		tenantId: 'org-aihero',
 		contactId: 'c1',
-		journeyId: 'value-path-skills-course',
+		journeyId: DROVR_SKILLS_COURSE_JOURNEY_ID,
 		type: 'contact.unsubscribed',
 		occurredAt: at,
 		idempotencyKey: 'owner:aihero:contact-event:e1',
@@ -358,24 +340,26 @@ describe('births are idempotent and send nothing by themselves', () => {
 			expect(birth.tenantId).toBe('org-aihero')
 		}
 		for (const sending of [
-			'value-path-skills-course',
-			'crash-course-evergreen-offer',
-			'ai-hero-shadow-newsletter',
+			DROVR_SKILLS_COURSE_JOURNEY_ID,
+			DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+			DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
 		])
 			expect(births.map((b) => b.journeyId)).not.toContain(sending)
 	})
 
 	it('births provisional, with no stop lifecycle, whatever the source says', () => {
-		for (const sourceLifecycle of [
-			'nurture-ready',
+		const lifecycles: ContactLifecycle[] = [
 			'new',
-			'stale',
+			'classified',
+			'nurture-ready',
+			'human-review',
 			'suppressed',
-			'unsubscribed',
-			'bounced',
-		]) {
+			'customer',
+			'stale',
+		]
+		for (const sourceLifecycle of lifecycles) {
 			const [birth] = directoryBirthEvents({
-				contact: { ...contact, lifecycle: sourceLifecycle } as never,
+				contact: { ...contact, lifecycle: sourceLifecycle },
 			})
 			expect(birth?.payload).toMatchObject({ lifecycle: 'provisional' })
 			expect(birth?.payload).not.toMatchObject({ lifecycle: 'unsubscribed' })
@@ -464,6 +448,15 @@ describe('unsubscribed contacts: profile, link and offer pushes are held', () =>
 
 // The delivery function a fleet sends from: the profile sync snapshot reads
 // 'unsubscribed' from the same standing live personalize uses.
+// The retry function's predicate, as wired in drovr-contact-sync-retry.ts.
+const isHeldByRetry = async (
+	repository: Parameters<typeof readContactSendStanding>[0]['repository'],
+	contactId: string,
+) =>
+	(await readContactSendStanding({ repository, contactId }))?.reasons.includes(
+		'unsubscribed',
+	) ?? false
+
 describe('the snapshot marks an unsubscribed contact', () => {
 	it('carries unsubscribed only when the standing says so', async () => {
 		const { readContactProfileSnapshot } =
@@ -499,13 +492,24 @@ describe('the snapshot marks an unsubscribed contact', () => {
 			})
 		expect((await read())?.unsubscribed).toBeUndefined()
 		// A stop event on the contact, as drovr's own stop signals read it.
+		const signup = [...repository.contactEvents.values()][0]!
 		repository.createContactEvent({
-			...[...repository.contactEvents.values()][0]!,
+			...signup,
 			eventType: 'contact.unsubscribed',
 			occurredAt: '2026-09-26T17:45:00.000Z',
 			semanticIdempotencyKey: 'test:unsubscribed',
-		} as never)
+		})
 		expect((await read())?.unsubscribed).toBe(true)
+		expect(await isHeldByRetry(repository, captured.contact.id)).toBe(true)
+		// A fresh double opt-in lifts it: not held, in the sync and the retry.
+		repository.createContactEvent({
+			...signup,
+			eventType: 'contact.resubscribed',
+			occurredAt: '2026-09-26T17:50:00.000Z',
+			semanticIdempotencyKey: 'test:resubscribed',
+		})
+		expect((await read())?.unsubscribed).toBeUndefined()
+		expect(await isHeldByRetry(repository, captured.contact.id)).toBe(false)
 	})
 })
 
@@ -517,7 +521,7 @@ describe('the send log names its caller', () => {
 		for (const caller of [
 			'contact-sync',
 			'straggler-retry',
-			'birth-redeliver',
+			'directory-birth',
 			'reconcile',
 			'outbox-replay',
 		] as const) {
@@ -569,6 +573,148 @@ describe('the send log names its caller', () => {
 		expect(info).not.toHaveBeenCalledWith(
 			'drovr.shadow.batch_sent',
 			expect.anything(),
+		)
+	})
+})
+
+describe('the straggler retry closure holds unsubscribed pushes', () => {
+	const profile = eventOfKind.profile
+	const links = directoryEvent('contact.links.issued', 'c2')
+	const stop = directoryEvent('contact.unsubscribed', 'c1')
+	const make = (args: {
+		unsubscribed?: (id: string) => boolean | Error
+		send?: (events: DrovrShadowEvent[]) => Promise<DrovrBatchOutcome>
+	}) => {
+		const warn = vi.fn()
+		const send = vi.fn(
+			args.send ??
+				(async (events) => ({ accepted: events.length, rejected: 0 })),
+		)
+		const deliver = deliverHoldingUnsubscribed({
+			warn,
+			isUnsubscribed: async (id) => {
+				const answer = args.unsubscribed?.(id) ?? false
+				if (answer instanceof Error) throw answer
+				return answer
+			},
+			send,
+		})
+		return { deliver, send, warn }
+	}
+
+	it('sends the subscribed events by reference with their original keys', async () => {
+		const events = [profile, links]
+		const h = make({ unsubscribed: (id) => id === 'c1' })
+		const outcome = await h.deliver(events)
+		expect(h.send).toHaveBeenCalledTimes(1)
+		const sent = h.send.mock.calls[0]![0]
+		expect(sent).toHaveLength(1)
+		expect(sent[0]).toBe(links)
+		expect(sent[0]!.idempotencyKey).toBe(links.idempotencyKey)
+		expect(outcome).toEqual({ accepted: 1, rejected: 1 })
+	})
+
+	it('posts nothing for an all-held chunk, and counts every event rejected', async () => {
+		const h = make({ unsubscribed: () => true })
+		expect(await h.deliver([profile, links])).toEqual({
+			accepted: 0,
+			rejected: 2,
+		})
+		expect(h.send).not.toHaveBeenCalled()
+	})
+
+	it('lets a stop through for an unsubscribed contact', async () => {
+		const h = make({ unsubscribed: () => true })
+		await h.deliver([profile, stop])
+		expect(h.send).toHaveBeenCalledWith([stop])
+	})
+
+	it('adds the held count to what the send rejected', async () => {
+		const h = make({
+			unsubscribed: (id) => id === 'c1',
+			send: async () => ({ accepted: 0, rejected: 1 }),
+		})
+		expect(await h.deliver([profile, links])).toMatchObject({ rejected: 2 })
+	})
+
+	it('fails open: a throwing lookup still sends (and so outboxes) the events', async () => {
+		const h = make({ unsubscribed: () => new Error('db down') })
+		const outcome = await h.deliver([profile, links])
+		expect(h.send).toHaveBeenCalledWith([profile, links])
+		expect(outcome).toEqual({ accepted: 2, rejected: 0 })
+		expect(h.warn).toHaveBeenCalledWith(
+			'drovr.contact_sync.hold_lookup_failed',
+			expect.objectContaining({ error: 'db down' }),
+		)
+	})
+
+	it('caps the held keys it logs and still reports the count', async () => {
+		const many = Array.from({ length: HELD_KEYS_LOGGED + 5 }, (_, i) =>
+			directoryEvent('contact.profile.updated', `h${i}`),
+		)
+		const h = make({ unsubscribed: () => true })
+		await h.deliver(many)
+		const fields = h.warn.mock.calls.find(
+			([name]) => name === 'drovr.contact_sync.unsubscribed_held',
+		)![1] as { held: number; idempotencyKeys: string[] }
+		expect(fields.held).toBe(HELD_KEYS_LOGGED + 5)
+		expect(fields.idempotencyKeys).toHaveLength(HELD_KEYS_LOGGED)
+	})
+
+	it('never acknowledges the unsent version after a hold', async () => {
+		const items = [{ event: profile, reason: 'cold-start-unhandled' as const }]
+		const h = make({ unsubscribed: () => true })
+		const acknowledge = vi.fn(async () => {})
+		const sendEvent = vi.fn(async () => {})
+		const receipt = await runContactSyncStragglerRetry({
+			event: {
+				data: {
+					items,
+					attempt: 1,
+					acknowledge: { contactId: 'c1', profileVersion: 3 },
+				},
+			},
+			step: { run: async (_id, cb) => cb(), sendEvent },
+			env: { AIH_DROVR_PROFILE_SYNC: 'true' },
+			now: () => 0,
+			deliver: h.deliver,
+			warn: vi.fn(),
+			birth: vi.fn(async () => {}),
+			acknowledge,
+		})
+		expect(receipt).toEqual({ status: 'delivered', accepted: 0, rejected: 1 })
+		expect(acknowledge).not.toHaveBeenCalled()
+		expect(sendEvent).not.toHaveBeenCalled()
+	})
+})
+
+describe('a mixed whole-envelope refusal', () => {
+	it('warns every refused event and keeps the non-deferrable ones refused', async () => {
+		const ownerStop: DrovrShadowEvent = {
+			tenantId: 'org-aihero',
+			contactId: 'c1',
+			journeyId: DROVR_SKILLS_COURSE_JOURNEY_ID,
+			type: 'contact.unsubscribed',
+			occurredAt: at,
+			idempotencyKey: 'owner:aihero:contact-event:e2',
+		}
+		const warn = vi.fn()
+		const outcome = await deliverBatchOrThrow({
+			clampAt: Date.now(),
+			events: [eventOfKind.profile, ownerStop],
+			config,
+			fetcher: vi.fn().mockResolvedValue(
+				new Response(JSON.stringify({ code: 'cold-start-never-born' }), {
+					status: 409,
+				}),
+			),
+			warn,
+			deferNotLive: true,
+		})
+		expect(outcome.refused?.map((r) => r.event)).toEqual([ownerStop])
+		expect(warn).toHaveBeenCalledWith(
+			'drovr.shadow.batch_rejected',
+			expect.objectContaining({ count: 1 }),
 		)
 	})
 })

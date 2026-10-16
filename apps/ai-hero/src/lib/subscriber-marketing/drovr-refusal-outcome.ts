@@ -9,14 +9,11 @@ import type { DrovrShadowEvent } from './drovr-shadow-emitter'
  *   unchanged after drovr's straggler pass.
  * - `birth-then-redeliver`: the contact has no directory actor. Birth it
  *   (`directory:seed:<id>`, idempotent on the contact), then re-send.
- * - `hold`: an unsubscribed contact's profile, link or offer push. No
- *   birth, no retry; counted by the caller.
  * - `final`: a real refusal. Warned, never retried, never born.
  */
 export type DrovrRefusalOutcome =
 	| 'retry-later'
 	| 'birth-then-redeliver'
-	| 'hold'
 	| 'final'
 
 export type DrovrRefusalCode =
@@ -66,16 +63,16 @@ export function drovrRefusalCodeOf(
  * The refusal-to-outcome table. A never-born answer births only for the
  * profile-sync pushes: a stop never births (owner stops are released by
  * drovrStopVerdict), and a birth that is itself refused is not retried.
- * An unsubscribed contact's profile-sync pushes are held whatever the code.
+ * An unsubscribed contact never reaches this table: their profile, link and
+ * offer pushes are held before any post (splitUnsubscribedHolds, and the
+ * sync's snapshot), so drovr cannot refuse what is not sent.
  */
 export function drovrRefusalOutcome(args: {
 	code: DrovrRefusalCode | undefined
 	kind: DrovrEventKind
-	unsubscribed?: boolean
 }): DrovrRefusalOutcome {
 	const { code, kind } = args
 	if (!code) return 'final'
-	if (args.unsubscribed && isProfileSyncKind(kind)) return 'hold'
 	if (code === 'event-not-live') return 'retry-later'
 	if (code === 'cold-start-unhandled') return 'birth-then-redeliver'
 	return isProfileSyncKind(kind) ? 'birth-then-redeliver' : 'final'

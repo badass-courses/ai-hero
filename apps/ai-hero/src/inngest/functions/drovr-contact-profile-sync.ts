@@ -115,7 +115,7 @@ export const drovrContactProfileSync = inngest.createFunction(
 							config: { ingestUrl, apiKey },
 							// Directory births are never clamped (row 201g).
 							clampAt: Date.now(),
-							caller: 'birth-redeliver',
+							caller: 'directory-birth',
 						}),
 					)
 				},

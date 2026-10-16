@@ -93,7 +93,7 @@ export function batchIngestUrl(ingestUrl: string): string {
 export type DrovrDeliveryCaller =
 	| 'contact-sync'
 	| 'straggler-retry'
-	| 'birth-redeliver'
+	| 'directory-birth'
 	| 'reconcile'
 	| 'outbox-replay'
 
@@ -310,6 +310,15 @@ export async function deliverBatchOrThrow(args: {
 					(event) => !isHeld(event) && deferralFor(event),
 				)
 				const refusedNow = rest.filter((event) => !later.includes(event))
+				// Every refused event is warned, as on the non-deferral path.
+				if (refusedNow.length > 0)
+					await warnSafely(warn, 'drovr.shadow.batch_rejected', {
+						caller: args.caller,
+						status: response.status,
+						count: refusedNow.length,
+						tenantId: args.events[0]?.tenantId,
+						problem,
+					})
 				for (const event of later)
 					if (deferralFor(event) === 'cold-start-unhandled')
 						await warnColdStart(warn, event)
@@ -478,8 +487,8 @@ async function warnColdStart(
 	warn: typeof log.warn,
 	event: DrovrShadowEvent,
 ): Promise<void> {
-	// The contract expects an actor for every sending-journey contact; until
-	// mig-10 says how to birth one, it is retried daily like event-not-live.
+	// The contract expects an actor for every sending-journey contact. One
+	// missing is born and the push redelivered (birthThenRedeliver).
 	await warnSafely(warn, 'drovr.contact_sync.cold_start_unhandled', {
 		contactId: event.contactId,
 		type: event.type,
