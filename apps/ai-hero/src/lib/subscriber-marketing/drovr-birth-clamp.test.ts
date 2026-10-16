@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
+// These older transport contracts have no resubscribe evidence. N11 has its own actual-policy/SQL tests.
+vi.mock('@/lib/subscriber-marketing/drovr-unsubscribe-supersession', async load => ({ ...await load<typeof import('./drovr-unsubscribe-supersession')>(), closeSupersededUnsubscribesLive: async () => new Map() }))
 
 import {
 	clampBirths,

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { inngest } from '@/inngest/inngest.server'
 import type { GetStepTools } from 'inngest'
 import {
@@ -6,6 +7,7 @@ import {
 	type ContactSyncReconcilePorts,
 	type ContactSyncReconcileReceipt,
 	type ScannedContactEvent,
+	type ReconcileProgress,
 } from '@/lib/subscriber-marketing/contact-sync-reconcile'
 import {
 	parseDrovrProfileSyncConfig,
@@ -34,8 +36,8 @@ export async function reconcileContactSync(args: {
 	error: (event: string, fields: Record<string, unknown>) => unknown
 	store: Pick<
 		ContactSyncReconcilePorts,
-		'readWatermark' | 'scanChanges' | 'rotatedContacts'
-	> & { writeWatermark(watermark: string, heartbeatAt: string): Promise<void> }
+		'readWatermark' | 'readProgress' | 'scanChanges' | 'rotatedContacts'
+	> & { writeWatermark(watermark: string, heartbeatAt: string, progress?: ReconcileProgress): Promise<void> }
 	stopFacts: (stops: ScannedContactEvent[]) => Promise<DrovrShadowEvent[]>
 	heartbeat: (syncedThrough: string) => Promise<unknown>
 	/** From a memoized step, so every replay reads the same start. */
@@ -54,6 +56,7 @@ export async function reconcileContactSync(args: {
 	const { step, store } = args
 	return runContactSyncReconcile({
 		now: () => new Date(args.startedAt),
+		readProgress: async () => await step.run('read-progress', () => store.readProgress()) as ReconcileProgress | undefined,
 		readWatermark: async () =>
 			(await step.run('read-watermark', () => store.readWatermark())) as
 				string | undefined,
@@ -79,29 +82,20 @@ export async function reconcileContactSync(args: {
 				args.stopFacts(stops),
 			)) as DrovrShadowEvent[]
 			if (events.length === 0) return
-			const receipt = (await step.invoke('resend-stops', {
-				function: drovrEventsDeliver,
-				data: { events, source: 'contact-event' },
-			})) as DrovrEventsDeliverReceipt
-			if (receipt.status !== 'delivered') {
-				throw new Error(`stop re-send was not delivered: ${receipt.reason}`)
-			}
-			// An owner copy to a journey the contact never started cannot land;
-			// its directory stop did. Any other rejection holds the watermark.
-			const rejected = receipt.rejected - (receipt.ownerStopsNeverBorn ?? 0)
-			if (rejected > 0) {
-				throw new Error(
-					`stop re-send was not delivered: drovr rejected ${rejected}`,
-				)
+			for (let offset = 0; offset < events.length; offset += 100) {
+				const batch = events.slice(offset, offset + 100)
+				const key = createHash('sha256').update(JSON.stringify(batch.map(event => event.idempotencyKey))).digest('hex')
+				const receipt = await step.invoke(`resend-stops:${key}`, { function: drovrEventsDeliver, data: { events: batch, source: 'contact-event' } }) as DrovrEventsDeliverReceipt
+				if (receipt.status !== 'delivered') throw new Error(`stop re-send was not delivered: ${receipt.reason}`)
+				const rejected = receipt.rejected - (receipt.ownerStopsNeverBorn ?? 0)
+				if (rejected > 0) throw new Error(`stop re-send was not delivered: drovr rejected ${rejected}`)
 			}
 		},
 		heartbeat: async (syncedThrough) => {
 			await step.run('heartbeat', () => args.heartbeat(syncedThrough))
 		},
-		writeWatermark: async (watermark) => {
-			await step.run('write-watermark', () =>
-				store.writeWatermark(watermark, new Date().toISOString()),
-			)
+		writeWatermark: async (watermark, progress) => {
+			await step.run('write-watermark', () => progress ? store.writeWatermark(watermark, new Date().toISOString(), progress) : store.writeWatermark(watermark, new Date().toISOString()))
 		},
 	})
 }

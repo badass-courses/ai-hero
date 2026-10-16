@@ -190,6 +190,16 @@ const LITERAL_ALLOWED: Record<string, string> = {
 		'mapper: which drovr facts are directory stops (row 204c)',
 	'lib/subscriber-marketing/drovr-outbox.ts':
 		'gate: which outbox rows are stops later rows wait behind (row 204b)',
+	'lib/subscriber-marketing/drovr-outbox-control.ts':
+		'typed codec: full stop scope; supersession chronology delegates activeContactStops',
+	'lib/subscriber-marketing/drovr-unsubscribe-supersession-proof.ts':
+		'scope reader: accepts only Schema-validated U0 source proof, not a separate consent-order rule',
+	'lib/subscriber-marketing/drovr-unsubscribe-supersession.ts':
+		'local closure: canonical whole-second rule with retained source-cited evidence',
+	'lib/subscriber-marketing/contact-sync-held-batch-replay.ts':
+		'closure verifier: delegates strictly-newer U0 proof, never lifts B/C',
+	'lib/subscriber-marketing/contact-sync-retry-owned-events.ts':
+		'disposition guard: U0 only after the live work-state adapter validates its retained proof',
 	'lib/subscriber-marketing/contact-sync-reconcile.ts':
 		'mapper: which events carry a stop fact to drovr',
 	'lib/subscriber-marketing/contact-sync-backfill.ts':
@@ -257,6 +267,8 @@ describe('the contact stop rule pin', () => {
 	})
 
 	it.each([
+		'lib/subscriber-marketing/drovr-outbox-control.ts',
+		'lib/subscriber-marketing/drovr-unsubscribe-supersession.ts',
 		'lib/subscriber-marketing/learner-flow-classifier.ts',
 		'lib/subscriber-marketing/drovr-personalize.ts',
 		'lib/subscriber-marketing/drovr-evergreen-sender.ts',

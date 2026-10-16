@@ -1,4 +1,5 @@
 import { RetryAfterError } from 'inngest'
+import { BulkSlotExpiredError } from './drovr-bulk-permit'
 
 import {
 	DROVR_SEND_RETRIES,
@@ -14,7 +15,7 @@ export type DrovrSendAttempt = { attempt: number; maxAttempts?: number }
 export type DrovrOutboxCaptureFn = (
 	entries: readonly DrovrOutboxEntry[],
 	reason: unknown,
-	options?: { nextAttemptAt?: Date },
+	options?: { nextAttemptAt?: Date; status?: 'deferred'; waitingForStop?: true },
 ) => Promise<DrovrOutboxCapture>
 
 /**
@@ -125,7 +126,7 @@ export async function sendOrOutbox<T>(args: {
 	try {
 		result = await args.send()
 	} catch (error) {
-		if (isNonRetriable(error)) throw error
+		if (isNonRetriable(error) || error instanceof BulkSlotExpiredError) throw error
 		if (isFinalDrovrSendAttempt(args.attempt)) {
 			const captured = await args.capture(args.unsent(), error)
 			if (captured.status === 'outboxed') return args.outboxed(captured.count)

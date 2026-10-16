@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+vi.mock("@/lib/subscriber-marketing/drovr-outbox-live", () => ({ captureDrovrOutboxLive: vi.fn(async () => ({ status: "unavailable" })) }));
 
 import {
   enterEvergreenPitch,
@@ -87,6 +88,7 @@ function runArgs(
     enableInstant,
     limit: 25,
     apply: true,
+    dispatchGapMs: EVERGREEN_BACKFILL_DISPATCH_PAUSE_MS,
     birthInstant,
     now: () => birthInstant,
     pause: async () => {},
@@ -265,7 +267,7 @@ describe("evergreen pitch backfill run", () => {
 
     // Paced between births, not before the first: at most 600 a minute.
     expect(pause).toHaveBeenCalledTimes(1);
-    expect(EVERGREEN_BACKFILL_DISPATCH_PAUSE_MS).toBe(100);
+    expect(EVERGREEN_BACKFILL_DISPATCH_PAUSE_MS).toBe(15100);
 
     expect(
       repository.enterEvergreenPitch.mock.calls.map(
@@ -528,12 +530,48 @@ describe("evergreen pitch backfill run", () => {
       data: {
         events: mapDrovrShadowFact(fact),
         source: "evergreen-pitch-backfill",
+        firstFailedAt: birthInstant,
       },
     });
   });
 });
 
 describe("evergreen pitch backfill CLI", () => {
+  it.each([undefined, 100, 12080, 15099, 2147483648, Number.NaN])("refuses unsafe apply pacing (%s) before database reads or entry writes", async (dispatchGapMs) => {
+    const repository = fakeRepository({ population: [candidate("synthetic-paced")] });
+    await expect(runEvergreenPitchBackfill(runArgs(repository, { dispatchGapMs }))).rejects.toThrow("BackfillPace:");
+    expect(repository.loadPopulation).not.toHaveBeenCalled();
+    expect(repository.enterEvergreenPitch).not.toHaveBeenCalled();
+    expect(repository.dispatchFact).not.toHaveBeenCalled();
+    expect(() => parseEvergreenPitchBackfillArgs(["--apply", "--limit=1", "--out=/tmp/synthetic-report.json", ...(dispatchGapMs === undefined ? [] : [`--dispatch-gap-ms=${dispatchGapMs}`])])).toThrow("BackfillPace:");
+  });
+
+  it("uses the real default wait to space HTTP handoffs and retains each entry's own birth clock", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(birthInstant));
+    try {
+      const starts: number[] = [];
+      const fetchImpl = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => { starts.push(Date.now()); return Response.json({ ids: ["synthetic-handoff"], status: 200 }); });
+      const repository = fakeRepository({ population: [candidate("synthetic-one"), candidate("synthetic-two")], dispatch: createBackfillFactDispatcher({ eventKey: "synthetic-key", fetchImpl }) });
+      const pending = runEvergreenPitchBackfill(runArgs(repository, { pause: undefined, now: () => new Date().toISOString() }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(15099);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      const summary = await pending;
+      expect(summary.entered).toBe(2);
+      expect(summary.dispatchGapMs).toBe(15100);
+      expect(starts[1]! - starts[0]!).toBe(15100);
+      expect(repository.enterEvergreenPitch).toHaveBeenCalledTimes(2);
+      for (let index = 0; index < 2; index++) {
+        expect(fetchImpl.mock.calls[index]?.[1]?.body).toEqual(expect.any(String));
+        const body = JSON.parse(String(fetchImpl.mock.calls[index]![1]!.body));
+        expect(body.data.firstFailedAt).toBe(repository.enterEvergreenPitch.mock.calls[index]![0].completedAt);
+        expect(body.data.events[0].occurredAt).toBe(body.data.firstFailedAt);
+      }
+    } finally { vi.useRealTimers(); }
+  });
   it("is dry-run by default and requires an output path", () => {
     expect(
       parseEvergreenPitchBackfillArgs([
@@ -573,8 +611,9 @@ describe("evergreen pitch backfill CLI", () => {
         "--limit=25",
         "--out=/tmp/backfill.json",
         "--apply",
+        "--dispatch-gap-ms=15100",
       ]),
-    ).toMatchObject({ apply: true, limit: 25 });
+    ).toMatchObject({ apply: true, limit: 25, dispatchGapMs: 15100 });
     expect(() =>
       parseEvergreenPitchBackfillArgs([
         "--limit=25",

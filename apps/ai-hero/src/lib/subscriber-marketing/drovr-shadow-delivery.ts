@@ -1,4 +1,5 @@
 import { log } from '@/server/logger'
+import { assertBulkPostPermit, BulkSlotExpiredError } from './drovr-bulk-permit'
 
 import { clampBirths, logClampedBirths } from './drovr-birth-clamp'
 import { parseRetryAfterMs } from './drovr-retry-after'
@@ -105,6 +106,15 @@ export class DrovrBatchDeliveryFailedError extends Error {
 }
 
 export type DrovrBatchOutcome = {
+	/** Durable owed work, not receiver acceptance or an acknowledgement. */
+	outboxed?: number
+	/** Retained local dispositions, never fresh HTTP rejection counts. */
+	retainedHeld?: number
+	retainedRejected?: number
+	/** A retained prior 2xx, not a new HTTP acceptance. */
+	alreadyDelivered?: boolean
+	/** Closed locally with durable reason, not counted as HTTP acceptance. */
+	supersededUnsubscribes?: number
 	accepted: number
 	rejected: number
 	/** deferNotLive only: refusals to re-send unchanged after drovr's straggler pass. */
@@ -248,6 +258,13 @@ export async function deliverBatchOrThrow(args: {
 	clampAt: number
 	info?: typeof log.info
 }): Promise<DrovrBatchOutcome> {
+	const { closeSupersededUnsubscribesLive } = await import('./drovr-unsubscribe-supersession')
+	const closed = await closeSupersededUnsubscribesLive(args.events)
+	if (closed.size) {
+		const remaining = args.events.filter(event => !closed.has(event))
+		const answer: DrovrBatchOutcome = remaining.length ? await deliverBatchOrThrow({ ...args, events: remaining }) : { accepted: 0, rejected: 0 }
+		return { ...answer, supersededUnsubscribes: closed.size + (answer.supersededUnsubscribes ?? 0) }
+	}
 	const fetcher = args.fetcher ?? fetch
 	const warn = args.warn ?? log.warn
 	// Items are read back by index, so the clamped copies stand in only for
@@ -260,16 +277,19 @@ export async function deliverBatchOrThrow(args: {
 	try {
 		let response: Response
 		try {
+			const body = JSON.stringify({ events: clamped.events })
+			assertBulkPostPermit(args.events.length)
 			response = await fetcher(batchIngestUrl(args.config.ingestUrl), {
 				method: 'POST',
 				headers: {
 					authorization: `Bearer ${args.config.apiKey}`,
 					'content-type': 'application/json',
 				},
-				body: JSON.stringify({ events: clamped.events }),
+				body,
 				signal: controller.signal,
 			})
 		} catch (error) {
+			if (error instanceof BulkSlotExpiredError) throw error
 			throw new DrovrBatchDeliveryFailedError(
 				keys,
 				error instanceof Error ? error.message : String(error),

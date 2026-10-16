@@ -54,6 +54,8 @@ export const drovrOutbox = mysqlTable(
 		attempts: int('attempts').notNull().default(0),
 		lastStatus: int('lastStatus'),
 		lastError: varchar('lastError', { length: 1000 }),
+		/** Apply-first nullable control state and typed negative proof; never a wire body or acceptance receipt. */
+		heldContinuation: json('heldContinuation'),
 		occurredAt: timestamp('occurredAt', { mode: 'string', fsp: 3 }).notNull(),
 		firstFailedAt: timestamp('firstFailedAt', {
 			mode: 'string',

@@ -10,6 +10,8 @@ import {
 	birthThenRedeliver,
 	runContactSyncStragglerRetry,
 } from './contact-sync-straggler-retry'
+import { routeContactSyncRetry } from './contact-sync-retry-route'
+import { DROVR_EVENTS_DELIVER_DELTA_EVENT } from '@/inngest/events/drovr'
 import type { DeferredDrovrEvent } from './drovr-shadow-delivery'
 import type { DrovrShadowEvent } from './drovr-shadow-emitter'
 
@@ -75,7 +77,7 @@ describe('contact sync straggler retry', () => {
 			name: CONTACT_SYNC_RETRY_EVENT,
 			id: expect.stringMatching(/^contact-sync-retry:1:[0-9a-f]{64}$/),
 			ts: now + 60 * 60_000,
-			data: { items: deferred, attempt: 1 },
+			data: { items: deferred, attempt: 1, firstFailedAt: new Date(now).toISOString() },
 		})
 		expect(contactSyncRetryRequest(deferred, 3, now).ts).toBe(
 			now + 2 * 60 * 60_000,
@@ -121,7 +123,7 @@ describe('contact sync straggler retry', () => {
 		expect(h.sent).toEqual([])
 	})
 
-	it('refused again: schedules the next day with the next attempt, never drops', async () => {
+	it('refused again: schedules the next two-hour attempt in its protected queue, never drops', async () => {
 		const h = harness({ accepted: 0, rejected: 0, deferred })
 		const receipt = await runContactSyncStragglerRetry({
 			event: { data: { items: deferred, attempt: 2 } },
@@ -135,14 +137,13 @@ describe('contact sync straggler retry', () => {
 		})
 		expect(receipt).toEqual({ status: 'rescheduled', deferred: 1, attempt: 3 })
 		expect(h.sent).toEqual([
-			{ id: 'reschedule', payload: contactSyncRetryRequest(deferred, 3, now) },
+			{ id: 'reschedule', payload: routeContactSyncRetry(contactSyncRetryRequest(deferred, 3, now)) },
 		])
 	})
 
-	it('while the flag is off (a drovr rollback) sends nothing and reschedules as the next attempt', async () => {
-		// The next attempt, never the same one: its id is new, so Inngest's
-		// 24 h same-id dedupe (#318) can't drop the reschedule, which a 2 h
-		// cadence would otherwise hit.
+	it('while paused sends nothing and keeps the refusal attempt with a fresh durable handoff ID', async () => {
+		// A healthy pause spends no HTTP refusal; the run-specific ID avoids
+		// the event API's 24h dedupe without mutating the immutable work.
 		const h = harness({ accepted: 1, rejected: 0 })
 		const receipt = await runContactSyncStragglerRetry({
 			event: { data: { items: deferred, attempt: 2 } },
@@ -158,12 +159,11 @@ describe('contact sync straggler retry', () => {
 		expect(receipt).toEqual({
 			status: 'rescheduled',
 			deferred: 1,
-			attempt: 3,
+			attempt: 2,
 			reason: 'AIH_DROVR_PROFILE_SYNC is not set',
 		})
-		expect(h.sent).toEqual([
-			{ id: 'reschedule', payload: contactSyncRetryRequest(deferred, 3, now) },
-		])
+		expect(h.sent).toHaveLength(1)
+		expect(h.sent[0]!.payload).toMatchObject({ name: DROVR_EVENTS_DELIVER_DELTA_EVENT, id: expect.stringMatching(/^paced-retry:delta:contact-sync-paused:/), ts: now + 2 * 60 * 60_000, data: { events: [], source: 'contact-profile-sync', stragglerRetry: { items: deferred, attempt: 2, firstFailedAt: new Date(now).toISOString() } } })
 	})
 
 	it('warns once a contact has been refused for about a day', () => {
@@ -343,6 +343,7 @@ describe('acknowledging a version the straggler retry lands (Macroscope on #319)
 			items: deferred,
 			attempt: 1,
 			acknowledge: ack,
+			firstFailedAt: new Date(now).toISOString(),
 		})
 		const h = harness({ accepted: 1, rejected: 0 })
 		await run(h, { acknowledge: ack })
@@ -365,16 +366,13 @@ describe('acknowledging a version the straggler retry lands (Macroscope on #319)
 		expect(refused.sent).toEqual([
 			{
 				id: 'reschedule',
-				payload: contactSyncRetryRequest(deferred, 2, now, ack),
+				payload: routeContactSyncRetry(contactSyncRetryRequest(deferred, 2, now, ack)),
 			},
 		])
 		const off = harness({ accepted: 1, rejected: 0 })
 		await run(off, { acknowledge: ack }, {})
-		expect(off.sent).toEqual([
-			{
-				id: 'reschedule',
-				payload: contactSyncRetryRequest(deferred, 2, now, ack),
-			},
-		])
+		expect(off.deliver).not.toHaveBeenCalled()
+		expect(off.sent).toHaveLength(1)
+		expect(off.sent[0]!.payload).toMatchObject({ name: DROVR_EVENTS_DELIVER_DELTA_EVENT, id: expect.stringMatching(/^paced-retry:delta:contact-sync-paused:/), ts: now + 2 * 60 * 60_000, data: { stragglerRetry: { items: deferred, attempt: 1, acknowledge: ack, firstFailedAt: new Date(now).toISOString() } } })
 	})
 })

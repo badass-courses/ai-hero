@@ -1,4 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { retainedRetryOutcome, type OwnedRetryEvent } from '@/lib/subscriber-marketing/contact-sync-retry-owned-events'
+import type { DrovrShadowEvent } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
+import { drovrOutboxDedupeKey, outboxEntryForEvent, isOutboxStop, type DrovrOutboxEntry, type DrovrOutboxSource } from '@/lib/subscriber-marketing/drovr-outbox'
+import { buildOwnerStopRejection, decideOwnerStopRejection, type OwnerStopRejectionInput } from '@/lib/subscriber-marketing/drovr-owner-stop-rejection'
+import type { OwnerStopRejection } from '@/lib/subscriber-marketing/drovr-outbox-control'
+vi.mock('@/lib/subscriber-marketing/drovr-unsubscribe-supersession', async load => ({ ...await load<typeof import('@/lib/subscriber-marketing/drovr-unsubscribe-supersession')>(), closeSupersededUnsubscribesLive: async () => new Map() }))
 
 const mocks = vi.hoisted(() => ({
 	batchStepId: vi.fn(
@@ -9,7 +15,7 @@ const mocks = vi.hoisted(() => ({
 		(config: unknown, trigger: unknown, handler: unknown) => ({
 			config,
 			trigger,
-			handler,
+			handler: (input: any) => (handler as (input: any) => unknown)({ runId: 'synthetic-controller-root', ...input }),
 		}),
 	),
 	deliverBatchOrThrow: vi.fn(),
@@ -30,9 +36,19 @@ const mocks = vi.hoisted(() => ({
 	valuePathBulkFreeze: vi.fn(),
 	readBirthOptOuts: vi.fn(),
 	pace: vi.fn(),
-	deliveredKeys: vi.fn(),
+	clockSlot: 0,
+	own: vi.fn(),
+	retained: new Map<string, OwnedRetryEvent>(),
+	ownerStopReceipts: new Map<string, OwnerStopRejection>(),
+	recordOwnerStopRejection: vi.fn(),
+	disposition: vi.fn(),
+	parkBatch: vi.fn(),
 	reject: vi.fn(),
 	readOffer: vi.fn(),
+	proofRows: vi.fn(),
+	releasePermission: vi.fn(),
+	completeBatch: vi.fn(),
+	acknowledge: vi.fn(),
 }))
 
 // The freeze window's calendar is pinned in drovr-bulk-freeze.test.ts; here
@@ -44,9 +60,18 @@ vi.mock('@/lib/subscriber-marketing/drovr-bulk-freeze', async (original) => ({
 	valuePathBulkFreeze: mocks.valuePathBulkFreeze,
 }))
 
+vi.mock('@/db', () => ({ db: new Proxy({}, { get: () => { throw new Error('ControllerFixture: you queried the database, and it failed because this controller test has no database port. Accepted: explicit synthetic adapters. Fix: inject the needed fixture. Debug: inspect the unexpected query stack.') } }) }))
+vi.mock('@/lib/subscriber-marketing/drovr-owner-stop-rejection-live', () => ({ recordOwnerStopRejectionLive: mocks.recordOwnerStopRejection }))
+vi.mock('@/lib/subscriber-marketing/contact-sync-retry-owned-events', async original => ({ ...await original<typeof import('@/lib/subscriber-marketing/contact-sync-retry-owned-events')>(), ownRetryEvents: mocks.own, readRetryDispositionLive: mocks.disposition }))
+vi.mock('@/lib/subscriber-marketing/contact-sync-held-batch-live', () => ({ parkContactSyncRetryLive: mocks.parkBatch, releasedRetryPermissionLive: mocks.releasePermission, completeContactSyncHeldBatchLive: mocks.completeBatch }))
+vi.mock('@/lib/subscriber-marketing/contact-sync-held-batch-drizzle', () => ({ heldBatchRowsLive: mocks.proofRows }))
+vi.mock('@/lib/subscriber-marketing/contact-profile-version-drizzle', () => ({ createDrizzleContactProfileVersionStore: () => ({ acknowledge: mocks.acknowledge }) }))
+// Controller-only virtual DB clock follows its allocator exactly. Actual
+// fetch containment, RTT, app skew and sliding windows have transport tests.
+vi.mock('@/lib/subscriber-marketing/drovr-bulk-clock', async original => ({ ...await original<typeof import('@/lib/subscriber-marketing/drovr-bulk-clock')>(), probeDrovrBulkClock: async () => ({ utcMs: mocks.clockSlot, rttMs: 0, precisionMs: 0, monotonicAt: 0, monotonicNow: () => 0 }) }))
 vi.mock('@/lib/subscriber-marketing/drovr-bulk-pace', async original => {
 	const actual = await original<typeof import('@/lib/subscriber-marketing/drovr-bulk-pace')>()
-	return { ...actual, waitForBulkSlot: (step: Parameters<typeof actual.waitForBulkSlot>[0], id: string, kind: Parameters<typeof actual.waitForBulkSlot>[2]) => actual.waitForBulkSlot(step, id, kind, mocks.pace) }
+	return { ...actual, waitForBulkSlot: (step: Parameters<typeof actual.waitForBulkSlot>[0], id: string, kind: Parameters<typeof actual.waitForBulkSlot>[2]) => actual.waitForBulkSlot(step, id, kind, async value => { const slot = await mocks.pace(value); mocks.clockSlot = slot; return slot }) }
 })
 vi.mock('@/lib/subscriber-marketing/contact-sync-offer-refresh', async original => ({ ...await original<typeof import('@/lib/subscriber-marketing/contact-sync-offer-refresh')>(), readCurrentOfferAfterProfile: mocks.readOffer }))
 
@@ -64,12 +89,14 @@ vi.mock('@/lib/subscriber-marketing/drovr-shadow-delivery', () => ({
 	DROVR_BATCH_MAX: 100,
 	isNeverBornOwnerStop: mocks.isNeverBornOwnerStop,
 }))
-vi.mock('@/lib/subscriber-marketing/drovr-shadow-emitter', () => ({
+vi.mock('@/lib/subscriber-marketing/drovr-shadow-emitter', async original => ({
+	...await original<typeof import('@/lib/subscriber-marketing/drovr-shadow-emitter')>(),
 	drovrApiKeyForTenant: mocks.drovrApiKeyForTenant,
 	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID: 'shadow-newsletter',
 	DROVR_SHADOW_TENANT_ID: 'org-aihero-shadow',
 }))
-vi.mock('@/lib/subscriber-marketing/drovr-ownership', () => ({
+vi.mock('@/lib/subscriber-marketing/drovr-ownership', async original => ({
+	...await original<typeof import('@/lib/subscriber-marketing/drovr-ownership')>(),
 	fanOutOwnedEvents: mocks.fanOutOwnedEvents,
 	isShadowNewsletterBirth: mocks.isShadowNewsletterBirth,
 }))
@@ -88,11 +115,12 @@ vi.mock('@/lib/subscriber-marketing/drovr-outbox-live', () => ({
 	holdDrovrStopsLive: mocks.hold,
 	openDrovrOutboxStopsLive: mocks.openStops,
 	settleDrovrOutboxLive: mocks.settle,
-	deliveredDrovrOutboxKeysLive: mocks.deliveredKeys,
 	rejectDrovrOutboxLive: mocks.reject,
+	drovrOutboxTargetFromEnv: () => 'synthetic-controller-target',
 }))
 
 import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
+import { routeContactSyncRetry } from '@/lib/subscriber-marketing/contact-sync-retry-route'
 import type { DeferredDrovrEvent } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
 
 import {
@@ -159,6 +187,46 @@ const registeredDelta = drovrEventsDeliverDelta as unknown as Registered
 const registeredRestate = drovrEventsDeliverRestate as unknown as Registered
 const registeredIngest = drovrEventsDeliverIngest as unknown as Registered
 
+/** Execute only immediate structural SDK handoffs, in distinct physical-run
+ * step namespaces. Timed retries and derived refreshes remain queued. Parent
+ * forwarding is not receiver acceptance: assertions see actual leaf outcomes. */
+const runCappedTree = async (worker: Registered, input: Record<string, unknown>) => {
+	const original = input.step as Step
+	const pending: { worker: Registered; input: Record<string, unknown> }[] = [{ worker, input }]
+	const leaves: Record<string, unknown>[] = []
+	const seen = new Set<string>()
+	let runs = 0
+	while (pending.length) {
+		if (++runs > 1024) throw new Error('ControllerFixture: structural handoff tree exceeded its bounded synthetic run budget')
+		const current = pending.shift()!
+		const scope = runs === 1 ? '' : `physical-${runs}:`
+		let forwarded = false
+		const tools: Step = {
+			run: (id, operation) => original.run(`${scope}${id}`, operation),
+			sleepUntil: (id, date) => original.sleepUntil(`${scope}${id}`, date),
+			sendEvent: async (id, value) => {
+				const receipt = await original.sendEvent(`${scope}${id}`, value)
+				if (id.includes('bounded-paced-shards:') || id.endsWith('route-to-class-queue')) {
+					forwarded = true
+					for (const command of (Array.isArray(value) ? value : [value]) as { id?: string; name: string; data: unknown }[]) {
+						const next = [registeredBulk, registeredDelta, registeredRestate, registeredIngest].find(item => item.trigger.event === command.name)
+						if (!next) throw new Error('ControllerFixture: unknown structural class route')
+						const key = command.id ?? JSON.stringify([command.name, command.data])
+						if (!seen.has(key)) { seen.add(key); pending.push({ worker: next, input: { ...current.input, events: [command] } }) }
+					}
+				}
+				return receipt
+			},
+		}
+		const result = await current.worker.handler({ ...current.input, step: tools }) as Record<string, unknown>
+		if (!forwarded) leaves.push(result)
+	}
+	if (leaves.length === 1) return leaves[0]!
+	const total: Record<string, unknown> = { status: leaves.some(item => item.status !== 'skipped') ? 'delivered' : 'skipped' }
+	for (const leaf of leaves) for (const [key, value] of Object.entries(leaf)) if (typeof value === 'number') total[key] = Number(total[key] ?? 0) + value
+	return total
+}
+
 const event = (
 	tenantId: 'org-aihero' | 'org-aihero-shadow',
 	idempotencyKey: string,
@@ -182,13 +250,55 @@ const createStep = (): Step => ({
 
 beforeEach(() => {
 	vi.clearAllMocks()
-	mocks.pace.mockResolvedValue(0)
-	mocks.deliveredKeys.mockResolvedValue([])
+	mocks.pace.mockImplementation(async () => Date.now())
+	mocks.clockSlot = 0
+	mocks.retained.clear()
+	mocks.ownerStopReceipts.clear()
+	const identity = (item: Pick<DrovrOutboxEntry, 'tenantId' | 'contactId' | 'journeyId' | 'idempotencyKey'>) => JSON.stringify([item.tenantId, item.contactId, item.journeyId, item.idempotencyKey])
+	mocks.capture.mockImplementation(async (entries: DrovrOutboxEntry[], _reason?: unknown, options?: { status?: 'deferred' }) => {
+		for (const entry of entries) if (entry.endpoint === 'events') {
+			if (!mocks.retained.has(identity(entry))) mocks.retained.set(identity(entry), { event: structuredClone(entry.body) as DrovrShadowEvent, clampAt: entry.firstSentAt ? Date.parse(entry.firstSentAt) : Date.now(), delivered: false, status: options?.status ?? 'pending', outboxKey: drovrOutboxDedupeKey('synthetic-controller-target', entry) })
+			else if (options?.status === 'deferred' && ['pending', 'deferred'].includes(mocks.retained.get(identity(entry))!.status)) mocks.retained.get(identity(entry))!.status = 'deferred'
+		}
+		return { status: 'outboxed', count: entries.length }
+	})
+	mocks.own.mockImplementation(async (events: readonly DrovrShadowEvent[], source: DrovrOutboxSource, clampAt: number) => {
+		const receipt = await mocks.capture(events.map(item => outboxEntryForEvent(item, source, { sentAt: clampAt })), undefined, { nextAttemptAt: new Date(Date.now() + 24 * 60 * 60_000) })
+		if (receipt?.status !== 'outboxed') throw new Error('RetryOwnership: you prepared capped work, and it failed because durable capture is unavailable. Accepted: immutable retained work. Fix: restore the outbox. Debug: inspect the capture receipt.')
+		return events.map(item => {
+			const key = identity(item)
+			if (!mocks.retained.has(key)) mocks.retained.set(key, { event: structuredClone(item), clampAt, delivered: false, status: 'pending', outboxKey: drovrOutboxDedupeKey('synthetic-controller-target', outboxEntryForEvent(item, source)) })
+			return structuredClone(mocks.retained.get(key)!)
+		})
+	})
+	mocks.disposition.mockImplementation(async (record: OwnedRetryEvent) => {
+		const current = mocks.retained.get(identity(record.event))
+		if (!current) throw new Error('test scoped ownership missing')
+		return retainedRetryOutcome(record, [{ key: current.outboxKey, status: current.status }])
+	})
+	mocks.proofRows.mockImplementation(async (target: string, keys: readonly string[]) => [...mocks.retained.values()].filter(record => keys.includes(record.outboxKey)).map(record => ({ ...outboxEntryForEvent(record.event, 'bulkDelta'), id: record.outboxKey, target, dedupeKey: record.outboxKey, status: record.status, attempts: 0, lastStatus: record.status === 'delivered' ? 202 : null, lastError: null, firstFailedAt: new Date(record.clampAt).toISOString(), nextAttemptAt: new Date(record.clampAt).toISOString(), lastAttemptAt: null, deliveredAt: record.status === 'delivered' ? new Date(record.clampAt).toISOString() : null, releasedAt: null, createdAt: new Date(record.clampAt).toISOString() })))
+	mocks.releasePermission.mockImplementation(async () => { throw new Error('ControllerFixture: explicit released-permission fixture required') })
+	mocks.completeBatch.mockResolvedValue(undefined)
+	mocks.acknowledge.mockResolvedValue(undefined)
 	mocks.readOffer.mockResolvedValue([])
-	mocks.settle.mockResolvedValue(1)
-	mocks.reject.mockResolvedValue(undefined)
+	mocks.settle.mockImplementation(async (entries: { tenantId: string; contactId: string; journeyId: string; idempotencyKey: string }[]) => { for (const entry of entries) { const record = mocks.retained.get(identity(entry)); if (record && ['pending', 'deferred'].includes(record.status)) { record.delivered = true; record.status = 'delivered' } } return 1 })
+	mocks.reject.mockImplementation(async (entries: DrovrOutboxEntry[]) => { for (const entry of entries) { const record = mocks.retained.get(identity(entry)); if (record && ['pending', 'deferred'].includes(record.status)) { record.status = 'rejected'; mocks.ownerStopReceipts.delete(record.outboxKey) } } })
+	mocks.recordOwnerStopRejection.mockImplementation(async (input: OwnerStopRejectionInput) => {
+		const receipt = buildOwnerStopRejection(input)
+		await mocks.capture([input.entry], undefined, { nextAttemptAt: new Date(Date.now() + 24 * 60 * 60_000) })
+		const record = mocks.retained.get(identity(input.entry))!
+		if (record.status === 'delivered') return 'prior-delivered'
+		if (!['pending', 'deferred', 'rejected'].includes(record.status)) throw new Error('synthetic held state forbids replacement')
+		record.status = 'rejected'
+		mocks.ownerStopReceipts.set(record.outboxKey, receipt)
+		return 'rejected'
+	})
 	mocks.valuePathBulkFreeze.mockReturnValue({ frozen: false })
-	mocks.openStops.mockResolvedValue([])
+	mocks.openStops.mockImplementation(async (ids: readonly string[]) => [...mocks.retained.values()].filter(record => {
+		const receipt = mocks.ownerStopReceipts.get(record.outboxKey)
+		const proved = decideOwnerStopRejection({ ...outboxEntryForEvent(record.event, 'bulkIngest'), target: 'synthetic-controller-target', dedupeKey: record.outboxKey, status: record.status, lastStatus: receipt?.httpStatus ?? null, lastAttemptAt: receipt?.decidedAt ?? null, heldContinuation: receipt ? { v: 1, ownerStopRejection: receipt } : undefined }).exclude
+		return ids.includes(record.event.contactId) && ['pending', 'deferred', 'held', 'rejected'].includes(record.status) && isOutboxStop({ eventType: record.event.type }) && !proved
+	}).map(record => ({ id: record.outboxKey, contactId: record.event.contactId, journeyId: record.event.journeyId, endpoint: 'events', eventType: record.event.type, status: record.status, occurredAt: record.event.occurredAt, nextAttemptAt: new Date(record.clampAt).toISOString() })))
 	mocks.readBirthOptOuts.mockResolvedValue([])
 	mocks.resolveOwnedContactIds.mockResolvedValue([])
 	mocks.isShadowNewsletterBirth.mockReturnValue(false)
@@ -233,7 +343,7 @@ describe('value-path birth admission', () => {
 			const receipt =
 				lane === 'live'
 					? await registered.handler({ event: { data }, step: createStep() })
-					: await registeredBulk.handler({
+					: await runCappedTree(registeredBulk, {
 							events: [{ data }],
 							step: createStep(),
 						})
@@ -249,7 +359,7 @@ describe('value-path birth admission', () => {
 				expect(
 					mocks.deliverBatchOrThrow.mock.calls.flatMap(([args]) => args.events),
 				).toEqual([active])
-			expect(mocks.readBirthOptOuts).toHaveBeenCalledWith(['stopped', 'active'])
+			expect(mocks.readBirthOptOuts.mock.calls.flatMap(([ids]) => ids)).toEqual(['stopped', 'active'])
 			expect(JSON.stringify(mocks.log.info.mock.calls)).not.toContain('@')
 		},
 	)
@@ -267,14 +377,18 @@ describe('value-path birth admission', () => {
 			const data = { source: 'contact-event', events: [birth, fact] }
 			const run = () => lane === 'live'
 				? registered.handler({ event: { data }, step })
-				: registeredBulk.handler({ events: [{ data }], step })
+				: runCappedTree(registeredBulk, { events: [{ data }], step })
 			expect(await run()).toMatchObject({ rejected: 1, valuePathBirthsSkippedUnsubscribed: 1 })
 			expect(await run()).toMatchObject({ rejected: 1, valuePathBirthsSkippedUnsubscribed: 1 })
 			const posted = lane === 'live'
 				? mocks.deliverOrThrow.mock.calls.map(([args]) => args.event)
 				: mocks.deliverBatchOrThrow.mock.calls.flatMap(([args]) => args.events)
 			expect(posted).toEqual([fact])
-			expect(mocks.capture).not.toHaveBeenCalled()
+			if (lane === 'live') expect(mocks.capture).not.toHaveBeenCalled()
+			else {
+				expect(mocks.capture).toHaveBeenCalledOnce()
+				expect(mocks.capture).toHaveBeenCalledWith([expect.objectContaining({ body: fact, needsFanOut: false, source: 'bulkEvergreen' })], undefined, expect.objectContaining({ nextAttemptAt: expect.any(Date) }))
+			}
 			expect(mocks.hold).not.toHaveBeenCalled()
 		},
 	)
@@ -305,19 +419,105 @@ describe('value-path birth admission', () => {
 })
 
 describe('drovr events deliver registration', () => {
+	it('durably captures a late-listed raw parent stop before publishing even the first positive child', async () => {
+		const stop = event('org-aihero', 'synthetic-late-stop', 'contact-directory', 'contact.unsubscribed')
+		const positive = { ...event('org-aihero', 'synthetic-earlier-child'), occurredAt: '2026-09-21T12:00:20.000Z' }
+		let persisted = false
+		mocks.capture.mockImplementation(async () => { await Promise.resolve(); persisted = true; return { status: 'outboxed', count: 1 } })
+		const step = createStep()
+		step.sendEvent = vi.fn(async () => { expect(persisted).toBe(true) })
+		await registeredBulk.handler({ events: [{ data: { source: 'evergreen-pitch-backfill', events: [positive, stop] } }], step })
+		expect(mocks.capture).toHaveBeenCalledOnce()
+		expect(mocks.capture.mock.calls[0]![0]).toEqual([expect.objectContaining({ body: stop, needsFanOut: true, source: 'bulkEvergreen' })])
+		expect(step.sendEvent).toHaveBeenCalledOnce(); expect(mocks.pace).not.toHaveBeenCalled(); expect(mocks.deliverBatchOrThrow).not.toHaveBeenCalled()
+	})
+	it('publishes no children and books no HTTP capacity when parent-stop capture is unavailable', async () => {
+		mocks.capture.mockResolvedValue({ status: 'unavailable' })
+		const step = createStep()
+		await expect(runCappedTree(registeredBulk, { events: [{ data: { source: 'evergreen-pitch-backfill', events: [event('org-aihero', 'synthetic-positive'), event('org-aihero', 'synthetic-stop', 'contact-directory', 'contact.unsubscribed')] } }], step })).rejects.toThrow('ParentStops:')
+		expect(step.sendEvent).not.toHaveBeenCalled(); expect(mocks.pace).not.toHaveBeenCalled(); expect(mocks.deliverBatchOrThrow).not.toHaveBeenCalled()
+	})
+	it('memoized owner siblings with the same key on different journeys each execute their single-event transport callback', async () => {
+		const original = event('org-aihero', 'synthetic-unsubscribe', 'contact-directory', 'contact.unsubscribed')
+		const children = [original, { ...original, journeyId: 'value-path-skills-course', idempotencyKey: 'owner:synthetic-unsubscribe' }, { ...original, journeyId: 'crash-course-evergreen-offer', idempotencyKey: 'owner:synthetic-unsubscribe' }]
+		mocks.fanOutOwnedEvents.mockReturnValue(children)
+		const step = createStep(); const memo = new Map<string, Promise<unknown>>()
+		step.run = vi.fn((id, operation) => { if (!memo.has(id)) memo.set(id, Promise.resolve().then(operation)); return memo.get(id)! })
+		await runCappedTree(registeredBulk, { events: [{ data: { source: 'evergreen-pitch-backfill', events: [original] } }], step })
+		expect(mocks.deliverBatchOrThrow.mock.calls.map(([input]) => input.events[0])).toEqual(children)
+		expect(mocks.pace).toHaveBeenCalledTimes(3)
+	})
+
+	it('parks an active straggler on a retained hold with its full owned carry and original clock, without booking, HTTP, refresh or ACK', async () => {
+		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
+		try {
+		mocks.fanOutOwnedEvents.mockImplementation(events => events)
+		const profile = { ...event('org-aihero', 'synthetic-held-retry', 'contact-directory', 'contact.profile.updated'), journeyId: 'contact-directory' as const, type: 'contact.profile.updated' as const, payload: { profileVersion: 1, email: 'learner@example.test', firstName: null, holds: [] } }
+		const link = { ...event('org-aihero', 'synthetic-held-carry', 'contact-directory', 'contact.links.issued'), journeyId: 'contact-directory' as const, type: 'contact.links.issued' as const, payload: { profileVersion: 1, journeyId: 'skills-newsletter', emailKey: 'email', issuedAt: '2032-01-01T00:00:00.000Z', expiresAt: '2032-05-01T00:00:00.000Z', variables: {}, sendTimeFields: [] } }
+		const identity = JSON.stringify([profile.tenantId, profile.contactId, profile.journeyId, profile.idempotencyKey])
+		const firstFailedAt = new Date(Date.now() - 60_000).toISOString()
+		const profileKey = drovrOutboxDedupeKey('synthetic-controller-target', outboxEntryForEvent(profile, 'bulkDelta'))
+		const linkKey = drovrOutboxDedupeKey('synthetic-controller-target', outboxEntryForEvent(link, 'bulkDelta'))
+		mocks.retained.set(identity, { event: profile, clampAt: Date.parse(firstFailedAt), delivered: false, status: 'held', outboxKey: profileKey })
+		const tools = createStep()
+		const result = await runCappedTree(registeredDelta, { events: [{ data: { source: 'contact-profile-sync', events: [], stragglerRetry: { items: [{ event: profile, reason: 'event-not-live' }], carry: [{ event: link, reason: 'event-not-live' }], attempt: 1, firstFailedAt, acknowledge: { contactId: 'contact-1', profileVersion: 1 } } } }], step: tools })
+		expect(result).toMatchObject({ status: 'held' })
+		expect(mocks.parkBatch).toHaveBeenCalledWith(expect.objectContaining({ anchor: profile, data: expect.objectContaining({ firstFailedAt, ownedKeys: [profileKey, linkKey], carry: [{ event: link, reason: 'event-not-live' }] }) }))
+		expect(mocks.pace).not.toHaveBeenCalled(); expect(mocks.deliverBatchOrThrow).not.toHaveBeenCalled(); expect(mocks.settle).not.toHaveBeenCalled(); expect(tools.sendEvent).not.toHaveBeenCalled()
+		} finally { vi.unstubAllEnvs() }
+	})
+	it.each(['held', 'rejected'] as const)('does not book, post, refresh or settle an already %s owned profile', async status => {
+		mocks.fanOutOwnedEvents.mockImplementation(events => events)
+		const profile = { ...event('org-aihero', 'synthetic-retained-status', 'contact-directory', 'contact.profile.updated'), journeyId: 'contact-directory' as const, type: 'contact.profile.updated' as const, payload: { profileVersion: 1, email: 'learner@example.test', firstName: null, holds: [] } }
+		const identity = JSON.stringify([profile.tenantId, profile.contactId, profile.journeyId, profile.idempotencyKey])
+		mocks.retained.set(identity, { event: profile, clampAt: Date.now(), delivered: false, status, outboxKey: drovrOutboxDedupeKey('synthetic-controller-target', outboxEntryForEvent(profile, 'bulkDelta')) })
+		const tools = createStep()
+		const result = await runCappedTree(registeredDelta, { events: [{ data: { source: 'contact-profile-sync', events: [profile] } }], step: tools })
+		expect(result).toMatchObject({ accepted: 0, rejected: 0, [status === 'held' ? 'retainedHeld' : 'retainedRejected']: 1 })
+		expect(mocks.pace).not.toHaveBeenCalled(); expect(mocks.deliverBatchOrThrow).not.toHaveBeenCalled()
+		expect(mocks.settle).not.toHaveBeenCalled(); expect(tools.sendEvent).not.toHaveBeenCalled()
+		expect(mocks.retained.get(identity)?.status).toBe(status)
+	})
+	it.each(['held', 'rejected'] as const)('fresh %s protection wins over the pre-booking pending snapshot', async status => {
+		mocks.fanOutOwnedEvents.mockImplementation(events => events)
+		const profile = event('org-aihero', 'synthetic-wait-status', 'contact-directory', 'contact.profile.updated')
+		const identity = JSON.stringify([profile.tenantId, profile.contactId, profile.journeyId, profile.idempotencyKey])
+		mocks.pace.mockImplementation(async () => {
+			const record = mocks.retained.get(identity)
+			if (!record) throw new Error('test ownership was not captured before booking')
+			record.status = status
+			return Date.now()
+		})
+		const tools = createStep()
+		const result = await runCappedTree(registeredDelta, { events: [{ data: { source: 'contact-profile-sync', events: [profile] } }], step: tools })
+		expect(result).toMatchObject({ accepted: 0, rejected: 0, [status === 'held' ? 'retainedHeld' : 'retainedRejected']: 1 })
+		expect(mocks.pace).toHaveBeenCalledOnce(); expect(mocks.disposition).toHaveBeenCalledTimes(2)
+		expect(mocks.deliverBatchOrThrow).not.toHaveBeenCalled(); expect(mocks.settle).not.toHaveBeenCalled(); expect(tools.sendEvent).not.toHaveBeenCalled()
+	})
+	it('posts the first retained body and clock and gates its original planned time, not a newer duplicate', async () => {
+		const first = { ...event('org-aihero', 'synthetic-retained-profile', 'contact-directory', 'contact.profile.updated'), journeyId: 'contact-directory' as const, type: 'contact.profile.updated' as const, occurredAt: '2032-01-01T00:00:00.000Z', payload: { profileVersion: 1, email: 'first@example.test', firstName: null, holds: [] } }
+		const duplicate = { ...first, occurredAt: '2032-01-01T00:00:20.000Z', payload: { ...first.payload, email: 'changed@example.test' } }
+		const firstClock = Date.parse('2032-01-01T00:00:01.000Z')
+		mocks.retained.set(JSON.stringify([first.tenantId, first.contactId, first.journeyId, first.idempotencyKey]), { event: first, clampAt: firstClock, delivered: false, status: 'pending', outboxKey: drovrOutboxDedupeKey('synthetic-controller-target', outboxEntryForEvent(first, 'bulkDelta')) })
+		mocks.openStops.mockResolvedValue([{ contactId: first.contactId, eventType: 'purchase.recorded', occurredAt: '2032-01-01T00:00:10.000Z', status: 'pending' }])
+		mocks.fanOutOwnedEvents.mockImplementation(events => events)
+		await runCappedTree(registeredDelta, { events: [{ data: { source: 'contact-profile-sync', events: [duplicate] } }], step: createStep() })
+		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledOnce()
+		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledWith(expect.objectContaining({ events: [first], clampAt: firstClock }))
+	})
 	it('isolates capped deltas, confirmations and ingest from the old backfill backlog', () => {
 		expect(registeredDelta.trigger.event).toBe('drovr/events.deliver.delta')
 		expect(registeredRestate.trigger.event).toBe('drovr/events.deliver.restate')
 		expect(registeredIngest.trigger.event).toBe('drovr/events.deliver.ingest')
 		expect(new Set([registered, registeredBulk, registeredDelta, registeredRestate, registeredIngest].map(worker => worker.config.id)).size).toBe(5)
 	})
-	it.each([[registeredDelta, 'contact-profile-sync', 'contact.profile.updated'], [registeredIngest, 'kit-directory-ingest', 'contact.created']])('shards large inputs into five-event children on their own worker before taking any HTTP slots', async (worker, source, type) => {
+	it.each([[registeredDelta, 'contact-profile-sync', 'contact.profile.updated'], [registeredIngest, 'kit-directory-ingest', 'contact.created']])('shards large inputs into one-raw-event children on their own worker before taking any HTTP slots', async (worker, source, type) => {
 		const registeredWorker = worker as Registered
 		const events = Array.from({ length: 21 }, (_, index) => event('org-aihero', `shard-${index}`, 'contact-directory', type as string))
 		const step = createStep()
 		await registeredWorker.handler({ events: [{ data: { source, events } }], step })
 		const shards = (step.sendEvent as ReturnType<typeof vi.fn>).mock.calls[0]![1] as { name: string; data: { events: unknown[] } }[]
-		expect(shards.map(shard => shard.data.events.length)).toEqual([5, 5, 5, 5, 1])
+		expect(shards.map(shard => shard.data.events.length)).toEqual(Array(21).fill(1))
 		expect(shards.flatMap(shard => shard.data.events)).toEqual(events)
 		expect(shards.every(shard => shard.name === registeredWorker.trigger.event)).toBe(true)
 		expect(mocks.pace).not.toHaveBeenCalled()
@@ -327,20 +527,20 @@ describe('drovr events deliver registration', () => {
 		mocks.fanOutOwnedEvents.mockImplementation(events => events)
 		const profile = event('org-aihero', 'profile:contact-1:1', 'contact-directory', 'contact.profile.updated')
 		const link = event('org-aihero', 'links:contact-1:journey:email:v1', 'contact-directory', 'contact.links.issued')
-		const run = () => registeredDelta.handler({ events: [{ data: { source: 'contact-profile-sync', events: [profile, link] } }], step: createStep(), attempt: 0, maxAttempts: 9 })
+		const run = () => runCappedTree(registeredDelta, { events: [{ data: { source: 'contact-profile-sync', events: [profile, link] } }], step: createStep(), attempt: 0, maxAttempts: 9 })
 		await run()
 		for (const item of [profile, link]) expect(mocks.settle).toHaveBeenCalledWith([expect.objectContaining({ idempotencyKey: item.idempotencyKey })], 'delivered by an Inngest retry')
 		mocks.deliverBatchOrThrow.mockClear()
-		mocks.deliveredKeys.mockImplementation(async entries => entries.map((entry: { idempotencyKey: string }) => entry.idempotencyKey))
+		mocks.disposition.mockResolvedValue({ accepted: 0, rejected: 0, alreadyDelivered: true })
 		await run()
 		expect(mocks.deliverBatchOrThrow).not.toHaveBeenCalled()
 	})
 	it('rechecks delivery after a durable wait, so a winning replay is not posted again', async () => {
 		mocks.fanOutOwnedEvents.mockImplementation(events => events)
 		const profile = event('org-aihero', 'profile:contact-1:1', 'contact-directory', 'contact.profile.updated')
-		mocks.deliveredKeys.mockResolvedValueOnce([]).mockResolvedValueOnce([profile.idempotencyKey])
+		mocks.disposition.mockResolvedValueOnce(undefined).mockResolvedValueOnce({ accepted: 0, rejected: 0, alreadyDelivered: true })
 		const tools = createStep()
-		await registeredDelta.handler({ events: [{ data: { source: 'contact-profile-sync', events: [profile] } }], step: tools })
+		await runCappedTree(registeredDelta, { events: [{ data: { source: 'contact-profile-sync', events: [profile] } }], step: tools })
 		expect(mocks.deliverBatchOrThrow).not.toHaveBeenCalled()
 		expect(tools.sendEvent).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ data: expect.objectContaining({ offerRefresh: { contactId: 'contact-1', profileVersion: 1 } }) }))
 	})
@@ -348,14 +548,14 @@ describe('drovr events deliver registration', () => {
 		mocks.fanOutOwnedEvents.mockImplementation(events => events)
 		const profile = event('org-aihero', 'profile:contact-1:1', 'contact-directory', 'contact.profile.updated')
 		const tools = createStep()
-		await registeredDelta.handler({ events: [{ data: { source: 'contact-profile-sync', events: [profile] } }], step: tools })
+		await runCappedTree(registeredDelta, { events: [{ data: { source: 'contact-profile-sync', events: [profile] } }], step: tools })
 		const calls = (tools.sendEvent as ReturnType<typeof vi.fn>).mock.calls
 		const refresh = calls[0]![1]
 		expect(refresh).toMatchObject({ name: 'drovr/events.deliver.delta', data: { source: 'contact-profile-sync', events: [], offerRefresh: { contactId: 'contact-1', profileVersion: 1 } } })
 		expect((tools.sendEvent as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]!).toBeGreaterThan(mocks.deliverBatchOrThrow.mock.invocationCallOrder[0]!)
 		const offer = event('org-aihero', 'offer:contact-1:coupon-new:v1', 'offer', 'contact.offer.issued')
 		mocks.readOffer.mockResolvedValue([offer])
-		await registeredDelta.handler({ events: [refresh], step: createStep() })
+		await runCappedTree(registeredDelta, { events: [refresh], step: createStep() })
 		expect(mocks.deliverBatchOrThrow).toHaveBeenLastCalledWith(expect.objectContaining({ events: [offer] }))
 		expect(mocks.pace.mock.calls.map(([kind]) => kind)).toEqual(['delta', 'delta'])
 	})
@@ -364,17 +564,17 @@ describe('drovr events deliver registration', () => {
 		const profile = event('org-aihero', 'profile:contact-1:1', 'contact-directory', 'contact.profile.updated')
 		mocks.deliverBatchOrThrow.mockResolvedValue({ accepted: 0, rejected: 0, deferred: [{ event: profile, reason: 'event-not-live' }] })
 		const tools = createStep()
-		await registeredDelta.handler({ events: [{ data: { source: 'contact-profile-sync', events: [profile] } }], step: tools })
+		await runCappedTree(registeredDelta, { events: [{ data: { source: 'contact-profile-sync', events: [profile] } }], step: tools })
 		expect(mocks.settle).not.toHaveBeenCalled()
 		const sends = (tools.sendEvent as ReturnType<typeof vi.fn>).mock.calls.map(([, value]) => value)
 		expect(sends.some(value => value.data?.offerRefresh)).toBe(false)
-		expect(sends).toContainEqual(expect.objectContaining({ name: 'drovr/contact-sync.retry-requested', data: expect.objectContaining({ paceClass: 'delta' }) }))
+		expect(sends).toContainEqual(expect.objectContaining({ name: 'drovr/events.deliver.delta', data: expect.objectContaining({ source: 'contact-profile-sync', stragglerRetry: expect.objectContaining({ paceClass: 'delta' }) }) }))
 	})
 
 	it('reserves once per actual profile/link/offer event, with the profile first', async () => {
 		mocks.fanOutOwnedEvents.mockImplementation((events) => events)
 		const events = ['contact.profile.updated', 'contact.links.issued', 'contact.offer.issued'].map((type, i) => event('org-aihero', `delta-${i}`, 'contact-directory', type))
-		await registeredBulk.handler({ events: [{ data: { source: 'contact-profile-sync', events } }], step: createStep() })
+		await runCappedTree(registeredBulk, { events: [{ data: { source: 'contact-profile-sync', events } }], step: createStep() })
 		expect(mocks.pace).toHaveBeenCalledTimes(3)
 		expect(mocks.deliverBatchOrThrow.mock.calls.map(([args]) => args.events)).toEqual(events.map(event => [event]))
 	})
@@ -405,7 +605,7 @@ describe('drovr events deliver registration', () => {
 	})
 
 	it('spaces envelope starts; the shared send-time gate counts actual events', () => {
-		expect(registeredBulk.config.throttle).toEqual({ limit: 1, period: '1s' })
+		expect(registeredBulk.config.throttle).toEqual({ limit: 1, period: '12s' })
 		expect(registeredBulk.config.batchEvents!.maxSize).toBe(1)
 		expect(registered.config.throttle).toBeUndefined()
 	})
@@ -511,7 +711,7 @@ describe('retired shadow tenant delivery', () => {
 	it('never delivers an event about a synthetic principal, on either lane', async () => {
 		const real = event('org-aihero', 'owner:answer')
 		const synthetic = { ...event('org-aihero', 'owner:synthetic'), contactId: 'synthetic_run-1' }
-		mocks.fanOutOwnedEvents.mockReturnValue([synthetic, real])
+		mocks.fanOutOwnedEvents.mockImplementation(events => events)
 
 		const live = await registered.handler({
 			event: { data: { source: 'live-contact', events: [synthetic, real] } },
@@ -524,7 +724,7 @@ describe('retired shadow tenant delivery', () => {
 			deliveryLane: 'live',
 		})
 
-		const bulk = await registeredBulk.handler({
+		const bulk = await runCappedTree(registeredBulk, {
 			events: [{ data: { events: [synthetic, real] } }],
 			step: createStep(),
 		})
@@ -552,7 +752,7 @@ describe('retired shadow tenant delivery', () => {
 		expect(mocks.deliverOrThrow).not.toHaveBeenCalled()
 	})
 
-	it('counts and logs one discarded shadow group in the bulk handler', async () => {
+	it('counts each shadow input once across bounded physical runs', async () => {
 		const shadowEvents = [
 			event('org-aihero-shadow', 'shadow:1'),
 			event('org-aihero-shadow', 'shadow:2'),
@@ -566,12 +766,9 @@ describe('retired shadow tenant delivery', () => {
 				'contact.created',
 			),
 		]
-		mocks.fanOutOwnedEvents.mockReturnValue([
-			...shadowEvents,
-			...authorityEvents,
-		])
+		mocks.fanOutOwnedEvents.mockImplementation((items: DrovrShadowEvent[]) => items.flatMap(item => [item, authorityEvents[shadowEvents.findIndex(shadow => shadow.idempotencyKey === item.idempotencyKey)]!]))
 
-		const receipt = await registeredBulk.handler({
+		const receipt = await runCappedTree(registeredBulk, {
 			events: [{ data: { events: shadowEvents } }],
 			step: createStep(),
 		})
@@ -582,16 +779,11 @@ describe('retired shadow tenant delivery', () => {
 			rejected: 0,
 			discarded: 2,
 		})
-		expect(mocks.deliverBatchOrThrow.mock.calls.map(([args]) => args.events)).toEqual([[authorityEvents[1]], [authorityEvents[0]]])
-		expect(mocks.log.info).toHaveBeenCalledOnce()
-		expect(mocks.log.info).toHaveBeenCalledWith(
-			'drovr.shadow.events_discarded',
-			{
-				tenantId: 'org-aihero-shadow',
-				count: 2,
-				deliveryLane: 'bulk',
-			},
-		)
+		expect(mocks.deliverBatchOrThrow.mock.calls.flatMap(([args]) => args.events)).toEqual(expect.arrayContaining(authorityEvents))
+		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledTimes(2)
+		const drops = mocks.log.info.mock.calls.filter(([tag]) => tag === 'drovr.shadow.events_discarded')
+		expect(drops).toHaveLength(2)
+		for (const [, detail] of drops) expect(detail).toEqual({ tenantId: 'org-aihero-shadow', count: 1, deliveryLane: 'bulk' })
 	})
 })
 
@@ -612,7 +804,7 @@ describe('row 201g: the bulk lane refuses value-path births in the 201e window',
 		contactId: 'contact-2',
 	}
 	const run = () =>
-		registeredBulk.handler({
+		runCappedTree(registeredBulk, {
 			events: [
 				{
 					data: {
@@ -697,7 +889,7 @@ describe('contact-sync backfill batches on the bulk lane', () => {
 		// A drovr rollback turns the flag off; a page already queued must not
 		// reach the old code, which burns keys without an event-not-live guard.
 		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', '')
-		const receipt = await registeredBulk.handler({
+		const receipt = await runCappedTree(registeredBulk, {
 			events: [
 				{ data: { events: backfillEvents, source: 'contact-sync-backfill' } },
 				{ data: { events: ingestEvents, source: 'kit-directory-ingest' } },
@@ -718,7 +910,7 @@ describe('contact-sync backfill batches on the bulk lane', () => {
 
 	it('delivers backfill batches while the flag is on', async () => {
 		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
-		const receipt = await registeredBulk.handler({
+		const receipt = await runCappedTree(registeredBulk, {
 			events: [
 				{ data: { events: backfillEvents, source: 'contact-sync-backfill' } },
 			],
@@ -763,7 +955,7 @@ describe('a rollback between retries of a mixed bulk run', () => {
 			event('org-aihero', 'directory:seed:contact-x', 'contact-directory'),
 		]
 		const run = () =>
-			registeredBulk.handler({
+			runCappedTree(registeredBulk, {
 				events: [
 					{ data: { events: backfill, source: 'contact-sync-backfill' } },
 					{ data: { events: ingest, source: 'kit-directory-ingest' } },
@@ -796,13 +988,12 @@ describe('a rollback between retries of a mixed bulk run', () => {
 
 describe('backfill refusals follow the push contract (§4)', () => {
 	const now = Date.parse('2026-10-01T12:00:00.000Z')
-	const profileEvent = (contactId: string) =>
-		event(
-			'org-aihero',
-			`profile:${contactId}:1`,
-			'contact-directory',
-			'contact.profile.updated',
-		)
+	const profileEvent = (contactId: string): DrovrShadowEvent => ({
+		...event('org-aihero', `profile:${contactId}:1`, 'contact-directory', 'contact.profile.updated'),
+		journeyId: 'contact-directory',
+		type: 'contact.profile.updated',
+		payload: { profileVersion: 1, email: 'synthetic@example.test', firstName: null, holds: [] },
+	})
 	const [notLive, cold, fine] = [
 		{ ...profileEvent('c2'), contactId: 'c2' },
 		{ ...profileEvent('c3'), contactId: 'c3' },
@@ -814,9 +1005,9 @@ describe('backfill refusals follow the push contract (§4)', () => {
 		vi.setSystemTime(now)
 		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
 		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
-		mocks.deliverBatchOrThrow.mockImplementation(async ({ events }) => ({ accepted: events[0] === fine ? 1 : 0, rejected: 0, deferred: events[0] === fine ? [] : [{ event: events[0], reason: events[0] === notLive ? 'event-not-live' : 'cold-start-unhandled' }] }))
+		mocks.deliverBatchOrThrow.mockImplementation(async ({ events }) => ({ accepted: events[0].idempotencyKey === fine.idempotencyKey ? 1 : 0, rejected: 0, deferred: events[0].idempotencyKey === fine.idempotencyKey ? [] : [{ event: events[0], reason: events[0].idempotencyKey === notLive.idempotencyKey ? 'event-not-live' : 'cold-start-unhandled' }] }))
 		const sent: unknown[] = []
-		const receipt = await registeredBulk.handler({
+		const receipt = await runCappedTree(registeredBulk, {
 			events: [
 				{
 					data: {
@@ -837,32 +1028,12 @@ describe('backfill refusals follow the push contract (§4)', () => {
 		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledWith(
 			expect.objectContaining({ deferNotLive: true }),
 		)
-		// The straggler retry's own request (its id, and 1 h for a refusal);
-		// a cold start goes at once, since the retry births the actor.
-		expect(sent.filter(Array.isArray)).toEqual([
-			[
-				contactSyncRetryRequest(
-					[{ event: notLive, reason: 'event-not-live' }] as DeferredDrovrEvent[],
-					1,
-					now,
-					undefined,
-					'backfill',
-				),
-				{
-					...contactSyncRetryRequest(
-						[
-							{ event: cold, reason: 'cold-start-unhandled' },
-						] as DeferredDrovrEvent[],
-						1,
-						now,
-						undefined,
-						'backfill',
-					),
-					ts: now,
-				},
-			],
-		])
-		expect((sent.filter(Array.isArray)[0] as { ts: number }[])[0]?.ts).toBe(now + 60 * 60 * 1000)
+		// Structural shards are not retries. Each physical refusal keeps its
+		// protected class, first clock and the actual first-owned body.
+		const retries = sent.flatMap(value => Array.isArray(value) ? value : [value]).filter((value: any) => value.data?.stragglerRetry)
+		const expected = (item: DeferredDrovrEvent) => routeContactSyncRetry(contactSyncRetryRequest([item], 1, now, undefined, 'backfill', new Date(now).toISOString(), 'contact-sync-backfill'))
+		expect(retries).toEqual([expected({ event: notLive, reason: 'event-not-live' }), { ...expected({ event: cold, reason: 'cold-start-unhandled' }), ts: now }])
+		expect((retries[0] as { ts: number }).ts).toBe(now + 60 * 60 * 1000)
 		expect(receipt).toMatchObject({ accepted: 1, deferred: 2 })
 	})
 
@@ -871,7 +1042,7 @@ describe('backfill refusals follow the push contract (§4)', () => {
 		const ingest = [
 			event('org-aihero', 'directory:seed:contact-z', 'contact-directory'),
 		]
-		await registeredBulk.handler({
+		await runCappedTree(registeredBulk, {
 			events: [{ data: { events: ingest, source: 'kit-directory-ingest' } }],
 			step: createStep(),
 		})
@@ -1022,10 +1193,6 @@ const LAST = { attempt: 8, maxAttempts: 9 }
 describe('row 204: a drovr 5xx never loses a live or bulk event', () => {
 	beforeEach(() => {
 		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
-		mocks.capture.mockImplementation(async (entries: unknown[]) => ({
-			status: 'outboxed',
-			count: entries.length,
-		}))
 	})
 
 	it('gives both drovr-send functions a retry budget of 8', () => {
@@ -1148,23 +1315,21 @@ describe('row 204: a drovr 5xx never loses a live or bulk event', () => {
 				),
 			]
 			mocks.deliverBatchOrThrow.mockRejectedValue(drovrFailure(httpStatus))
-			const receipt = await registeredBulk.handler({
+			const receipt = await runCappedTree(registeredBulk, {
 				events: [{ data: { source: 'kit-directory-ingest', events: chunk } }],
 				step: createStep(),
 				...LAST,
 			})
 			expect(receipt).toMatchObject({ accepted: 0, outboxed: 2 })
-			expect(
-				(
-					mocks.capture.mock.calls.flatMap(([entries]) => entries) as {
-						idempotencyKey: string
-						source: string
-					}[]
-				).map((entry) => [entry.idempotencyKey, entry.source]),
-			).toEqual([
+			const captured = mocks.capture.mock.calls.flatMap(([entries]) => entries) as DrovrOutboxEntry[]
+			// Preownership plus final refusal retention, never four durable rows.
+			expect(captured).toHaveLength(4)
+			expect([...new Set(captured.map(entry => JSON.stringify([entry.idempotencyKey, entry.source])))].map(value => JSON.parse(value))).toEqual([
 				['kit:birth:1', 'bulkIngest'],
 				['kit:birth:2', 'bulkIngest'],
 			])
+			expect(mocks.retained.size).toBe(2)
+			for (const stored of mocks.retained.values()) expect(stored.status).toBe('pending')
 		},
 	)
 
@@ -1221,12 +1386,12 @@ describe('row 204: a drovr 5xx never loses a live or bulk event', () => {
 		expect(mocks.capture.mock.calls[0]![0]).toEqual([
 			expect.objectContaining({
 				idempotencyKey: 'stop:contact-1',
-				source: 'onFailure',
+				source: 'live',
 				needsFanOut: true,
 			}),
 			expect.objectContaining({
 				idempotencyKey: 'owner:answer',
-				source: 'onFailure',
+				source: 'live',
 				needsFanOut: true,
 			}),
 		])
@@ -1247,7 +1412,7 @@ describe('row 204: a drovr 5xx never loses a live or bulk event', () => {
 		expect(captured).toEqual([])
 	})
 
-	it('never outboxes a bulk source from the live onFailure', async () => {
+	it('retains a misrouted capped source with its protected provenance from live onFailure', async () => {
 		await outboxFailedRun(
 			{
 				source: 'kit-directory-ingest',
@@ -1256,7 +1421,8 @@ describe('row 204: a drovr 5xx never loses a live or bulk event', () => {
 			new Error('boom'),
 			mocks.capture,
 		)
-		expect(mocks.capture).not.toHaveBeenCalled()
+		expect(mocks.capture).toHaveBeenCalledWith([expect.objectContaining({ source: 'bulkIngest', needsFanOut: true, body: event('org-aihero', 'kit:birth:1') })], expect.any(Error))
+		expect(mocks.deliverOrThrow).not.toHaveBeenCalled()
 	})
 
 	it('logs, and does not throw, when the onFailure capture fails', async () => {
@@ -1311,10 +1477,6 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 
 	beforeEach(() => {
 		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
-		mocks.capture.mockImplementation(async (entries: unknown[]) => ({
-			status: 'outboxed',
-			count: entries.length,
-		}))
 		mocks.deliverOrThrow.mockResolvedValue({ status: 'accepted' })
 	})
 
@@ -1474,7 +1636,7 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 				rejected: 0,
 			}),
 		)
-		const receipt = await registeredBulk.handler({
+		const receipt = await runCappedTree(registeredBulk, {
 			events: [
 				{
 					data: {
@@ -1588,7 +1750,7 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 		expect(mocks.deliverOrThrow).not.toHaveBeenCalled()
 	})
 
-	it("captures a live stop on its first failure, due when Inngest's retries run out; a fact is not captured early", async () => {
+	it("captures a live stop on its first failure, due when Inngest's retries run out; an unrelated fact is not captured early", async () => {
 		mocks.deliverOrThrow.mockRejectedValue(drovrFailure(503))
 		await expect(
 			run([stopEvent('owner:purchase', 'purchase.recorded', 10)]),
@@ -1605,7 +1767,7 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 		expect(window).toBeLessThanOrEqual(78.75 * 60_000)
 
 		mocks.capture.mockClear()
-		await expect(run([fact('owner:answer', 10)])).rejects.toMatchObject({
+		await expect(run([fact('owner:answer', 10, 'contact-2')])).rejects.toMatchObject({
 			name: 'RetryAfterError',
 		})
 		expect(mocks.capture).not.toHaveBeenCalled()
@@ -1644,21 +1806,18 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 		expect(receipt).toMatchObject({ heldStops: 1, rejected: 0 })
 	})
 
-	it('settles an owner stop drovr says never started the journey: nothing owed (row 204c keeps it)', async () => {
-		mocks.deliverOrThrow.mockResolvedValue({
-			status: 'rejected',
-			httpStatus: 409,
-		})
+	it('retains a coded never-born owner rejection without fake delivery or lifting directory debt', async () => {
+		mocks.deliverOrThrow.mockResolvedValue({ status: 'rejected', httpStatus: 409, problem: { type: 'urn:drovr:problem:contact-never-born' } })
 		mocks.isNeverBornOwnerStop.mockReturnValue(true)
-		await run([stopEvent('owner:unsubscribe', 'contact.unsubscribed', 10)], {
-			attempt: 3,
-			maxAttempts: 9,
-		})
+		const directory = { ...stopEvent('directory:unsubscribe', 'contact.unsubscribed', 5), journeyId: 'contact-directory' as const, type: 'contact.unsubscribed' as const, payload: undefined }
+		await mocks.capture([outboxEntryForEvent(directory, 'live')])
+		const receipt = await run([stopEvent('owner:unsubscribe', 'contact.unsubscribed', 10)], { attempt: 3, maxAttempts: 9 })
+		expect(receipt).toMatchObject({ accepted: 0, rejected: 1, ownerStopsNeverBorn: 1 })
 		expect(mocks.hold).not.toHaveBeenCalled()
-		expect(mocks.settle).toHaveBeenCalledWith(
-			[expect.objectContaining({ idempotencyKey: 'owner:unsubscribe' })],
-			'refused by drovr on an Inngest retry: never born there, nothing owed',
-		)
+		expect(mocks.settle).not.toHaveBeenCalled()
+		expect(mocks.recordOwnerStopRejection).toHaveBeenCalledOnce()
+		expect([...mocks.retained.values()].find(item => item.event.idempotencyKey === 'owner:unsubscribe')?.status).toBe('rejected')
+		expect(await mocks.openStops(['contact-1'])).toEqual([expect.objectContaining({ journeyId: 'contact-directory', status: 'pending' })])
 	})
 
 	it('keeps a stop that 409s event-not-live on a retry owed, then settles it when a later retry folds it (the hawk)', async () => {
@@ -1686,16 +1845,14 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 		)
 	})
 
-	it("records a bulk chunk's stops by what its retry's answer says", async () => {
-		const bulk = (attempt: number) =>
-			registeredBulk.handler({
+	it('isolates stop acceptance from a sibling fact refusal and holds an actual refused stop without rewriting delivered history', async () => {
+		const bulk = (attempt: number, batch = [stopEvent('owner:unsubscribe', 'contact.unsubscribed', 10)]) =>
+			runCappedTree(registeredBulk, {
 				events: [
 					{
 						data: {
 							source: 'kit-directory-ingest',
-							events: [
-								stopEvent('owner:unsubscribe', 'contact.unsubscribed', 10),
-							],
+							events: batch,
 						},
 					},
 				],
@@ -1709,18 +1866,20 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 			[expect.objectContaining({ idempotencyKey: 'owner:unsubscribe' })],
 			'delivered by an Inngest retry',
 		)
-		// A refused fact beside it: the stop still landed, and the note says
-		// what was refused.
-		mocks.deliverBatchOrThrow.mockResolvedValue({ accepted: 1, rejected: 1 })
-		await bulk(2)
+		// Different immutable keys model a genuinely new logical send. A
+		// delivered key must not be reopened to manufacture another answer.
+		const siblingStop = stopEvent('owner:unsubscribe-sibling', 'contact.unsubscribed', 10)
+		const rejectedFact = fact('owner:refused-fact', 20)
+		mocks.deliverBatchOrThrow.mockImplementation(async ({ events }) => events[0].idempotencyKey === siblingStop.idempotencyKey ? { accepted: 1, rejected: 0 } : { accepted: 0, rejected: 1, refused: [{ event: events[0], httpStatus: 400, problem: { type: 'urn:drovr:problem:malformed-event' } }] })
+		await bulk(2, [siblingStop, rejectedFact])
 		expect(mocks.settle).toHaveBeenLastCalledWith(
-			[expect.objectContaining({ idempotencyKey: 'owner:unsubscribe' })],
-			'settled by an Inngest retry: its chunk was answered, and drovr refused 1 item(s) that are not stops (or never born there), final and counted rejected',
+			[expect.objectContaining({ idempotencyKey: siblingStop.idempotencyKey })],
+			'delivered by an Inngest retry',
 		)
 		// A refused stop is held, never settled (row 204c).
 		mocks.settle.mockClear()
 		const unsubscribe = stopEvent(
-			'owner:unsubscribe',
+			'owner:unsubscribe-denied',
 			'contact.unsubscribed',
 			10,
 		)
@@ -1735,9 +1894,9 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 				},
 			],
 		})
-		const receipt = await bulk(2)
+		const receipt = await bulk(2, [unsubscribe])
 		expect(mocks.hold).toHaveBeenCalledWith(
-			[expect.objectContaining({ idempotencyKey: 'owner:unsubscribe' })],
+			[expect.objectContaining({ idempotencyKey: unsubscribe.idempotencyKey })],
 			expect.stringContaining('tenant-mismatch'),
 			403,
 		)
@@ -1745,32 +1904,24 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 		expect(receipt).toMatchObject({ rejected: 0, heldStops: 1 })
 	})
 
-	it("captures only a bulk chunk's stops on its first failure, then reserves again before its durable HTTP retry", async () => {
+	it('owns stops before shards, yields a gated fact without booking, and resumes its unchanged debt after the stop lands', async () => {
 		mocks.deliverBatchOrThrow.mockRejectedValueOnce(drovrFailure(503))
-		await expect(
-			registeredBulk.handler({
-				events: [
-					{
-						data: {
-							source: 'kit-directory-ingest',
-							events: [
-								fact('owner:answer', 20),
-								stopEvent('owner:unsubscribe', 'contact.unsubscribed', 10),
-							],
-						},
-					},
-				],
-				step: createStep(),
-				attempt: 0,
-				maxAttempts: 9,
-			}),
-		).resolves.toMatchObject({ accepted: 2 })
+		const original = fact('owner:answer', 20)
+		const receipt = await runCappedTree(registeredBulk, { events: [{ data: { source: 'kit-directory-ingest', events: [original, stopEvent('owner:unsubscribe', 'contact.unsubscribed', 10)] } }], step: createStep(), attempt: 0, maxAttempts: 9 })
+		expect(receipt).toMatchObject({ accepted: 1, heldBehindStop: 1, outboxed: 1 })
+		expect(mocks.pace).toHaveBeenCalledTimes(2)
+		expect(mocks.deliverBatchOrThrow.mock.calls.flatMap(([args]) => args.events).map(item => item.idempotencyKey)).toEqual(['owner:unsubscribe', 'owner:unsubscribe'])
+		expect(mocks.hold).not.toHaveBeenCalled()
+		expect((mocks.capture.mock.calls[0]![0] as DrovrOutboxEntry[]).map(item => item.idempotencyKey)).toEqual(['owner:unsubscribe'])
+		const owed = [...mocks.retained.values()].find(item => item.event.idempotencyKey === original.idempotencyKey)!
+		expect(owed.status).toBe('pending')
+		expect(owed.event).toEqual(original)
+		const firstClock = owed.clampAt
+		const resumed = await runCappedTree(registeredIngest, { runId: 'synthetic-replay', events: [{ data: { source: 'kit-directory-ingest', events: [owed.event], firstFailedAt: new Date(firstClock).toISOString() } }], step: createStep(), attempt: 0, maxAttempts: 9 })
+		expect(resumed).toMatchObject({ accepted: 1 })
 		expect(mocks.pace).toHaveBeenCalledTimes(3)
-		expect(
-			(mocks.capture.mock.calls[0]![0] as { idempotencyKey: string }[]).map(
-				(e) => e.idempotencyKey,
-			),
-		).toEqual(['owner:unsubscribe'])
+		expect(owed).toMatchObject({ event: original, clampAt: firstClock, status: 'delivered' })
+		expect(mocks.deliverBatchOrThrow.mock.calls.at(-1)![0]).toMatchObject({ events: [original], clampAt: firstClock })
 	})
 
 	it('holds a later fact listed in an earlier bulk chunk behind a stop listed last (time order across chunks)', async () => {
@@ -1785,7 +1936,7 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 			},
 		)
 		const step = createStep()
-		const receipt = await registeredBulk.handler({
+		const receipt = await runCappedTree(registeredBulk, {
 			events: [
 				{
 					data: {
@@ -1813,7 +1964,7 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 		// replaying a memoized chunk that now holds other events.
 		expect(
 			(step.run as ReturnType<typeof vi.fn>).mock.calls.map(([id]) => id),
-		).toContain('paced-single:batch:org-aihero:0:attempt:8')
+		).toEqual(expect.arrayContaining([expect.stringMatching(/physical-\d+:paced-single:org-aihero:[a-f0-9]{64}:attempt:8:booking:0$/)]))
 	})
 
 	it("posts a birth ahead of its own contact's earlier stop, as the replay does: [birth 12:20, purchase 12:10] → birth first, nothing refused (Sonnet S6, round 3)", async () => {
@@ -1892,7 +2043,7 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 				return { accepted: events.length, rejected: 0 }
 			},
 		)
-		const receipt = await registeredBulk.handler({
+		const receipt = await runCappedTree(registeredBulk, {
 			events: [
 				{
 					data: {
@@ -1908,8 +2059,8 @@ describe('row 204b: a fact never reaches drovr ahead of a stop the outbox still 
 			step: createStep(),
 			...LAST,
 		})
-		// Single-event sends isolate other contacts from an owed stop.
-		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledTimes(4)
+		// Nine real failed stop attempts; three independent contacts still land.
+		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledTimes(12)
 		expect(receipt).toMatchObject({
 			accepted: 3,
 			outboxed: 2,
@@ -1940,7 +2091,7 @@ describe('row 204c: a backfill stop that is owed gates the run, whatever the sou
 		occurredAt: at(20),
 	}
 	const bulkRun = (attempt = 0) =>
-		registeredBulk.handler({
+		runCappedTree(registeredBulk, {
 			events: [
 				{ data: { source: 'kit-directory-ingest', events: [laterFact] } },
 				{ data: { source: 'contact-sync-backfill', events: [unsubscribe] } },
@@ -1953,10 +2104,6 @@ describe('row 204c: a backfill stop that is owed gates the run, whatever the sou
 	beforeEach(() => {
 		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
 		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
-		mocks.capture.mockImplementation(async (entries: unknown[]) => ({
-			status: 'outboxed',
-			count: entries.length,
-		}))
 	})
 	afterEach(() => {
 		vi.unstubAllEnvs()
@@ -1976,13 +2123,12 @@ describe('row 204c: a backfill stop that is owed gates the run, whatever the sou
 		const before = Date.now()
 		const receipt = await bulkRun()
 		const gated = mocks.capture.mock.calls.find(
-			([entries]) =>
-				(entries as { source: string }[])[0]?.source === 'contactSync',
+			([, , options]) => (options as { status?: string } | undefined)?.status === 'deferred',
 		)
 		expect(gated?.[0]).toEqual([
 			expect.objectContaining({
 				idempotencyKey: 'backfill:unsubscribe',
-				source: 'contactSync',
+				source: 'bulkBackfill',
 			}),
 		])
 		const wait = (gated?.[2] as { nextAttemptAt: Date }).nextAttemptAt.getTime()
@@ -2012,7 +2158,7 @@ describe('row 204c: a backfill stop that is owed gates the run, whatever the sou
 			}
 			mocks.deliverBatchOrThrow.mockImplementation(
 				async ({ events }: { events: { idempotencyKey: string }[] }) =>
-					events.some((e) => e.idempotencyKey === 'backfill:unsubscribe')
+					events.some((e) => e.idempotencyKey === ownerCopy.idempotencyKey)
 						? {
 								accepted: 0,
 								rejected: 1,
@@ -2026,7 +2172,7 @@ describe('row 204c: a backfill stop that is owed gates the run, whatever the sou
 							}
 						: { accepted: events.length, rejected: 0 },
 			)
-			const receipt = await bulkRun()
+			const receipt = await runCappedTree(registeredBulk, { events: [{ data: { source: 'contact-sync-backfill', events: [ownerCopy] } }, { data: { source: 'kit-directory-ingest', events: [laterFact] } }], step: createStep(), attempt: 0, maxAttempts: 9 })
 			expect(mocks.hold).not.toHaveBeenCalled()
 			expect(receipt).toMatchObject({ rejected: 1, accepted: 1 })
 			expect(receipt).not.toHaveProperty('heldStops')
@@ -2074,7 +2220,7 @@ describe('row 204c: a backfill stop that is owed gates the run, whatever the sou
 						}
 					: { accepted: events.length, rejected: 0 },
 		)
-		const receipt = await registeredBulk.handler({
+		const receipt = await runCappedTree(registeredBulk, {
 			events: [
 				{
 					data: {
@@ -2200,10 +2346,6 @@ describe('row 201g (#345 S1): a run clamps its births at its first send, on ever
 
 	beforeEach(() => {
 		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
-		mocks.capture.mockImplementation(async (entries: unknown[]) => ({
-			status: 'outboxed',
-			count: entries.length,
-		}))
 		vi.useFakeTimers({ toFake: ['Date'] })
 		vi.setSystemTime(FIRST)
 	})
@@ -2250,8 +2392,7 @@ describe('row 201g (#345 S1): a run clamps its births at its first send, on ever
 	it('the bulk lane: a chunk retried 10 minutes on, and its last attempt, send the first instant, and the outbox carries it', async () => {
 		const { step, ran } = memoStep()
 		const bulk = (attempt: number) =>
-			registeredBulk
-				.handler({
+			runCappedTree(registeredBulk, {
 					events: [
 						{ data: { source: 'evergreen-pitch-backfill', events: [birth] } },
 					],
@@ -2289,8 +2430,7 @@ describe('row 201g (#345 S1): a run clamps its births at its first send, on ever
 		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
 		const { step, ran } = memoStep()
 		const backfill = (attempt: number) =>
-			registeredBulk
-				.handler({
+			runCappedTree(registeredBulk, {
 					events: [
 						{ data: { source: 'contact-sync-backfill', events: [birth] } },
 					],
@@ -2353,7 +2493,7 @@ describe('row 201g: the freeze is decided once per run, on every bulk source (So
 	it("keeps a run's first decision on its retry, so the chunks never shift, and logs it once", async () => {
 		const { step } = memoStep()
 		const run = () =>
-			registeredBulk.handler({
+			runCappedTree(registeredBulk, {
 				events: [
 					{
 						data: { events: [valuePathBirth], source: 'kit-directory-ingest' },
@@ -2383,7 +2523,7 @@ describe('row 201g: the freeze is decided once per run, on every bulk source (So
 	it('refuses a value-path birth under the contact-sync-backfill source too', async () => {
 		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
 		mocks.valuePathBulkFreeze.mockReturnValue({ frozen: true, reason: 'x' })
-		const receipt = await registeredBulk.handler({
+		const receipt = await runCappedTree(registeredBulk, {
 			events: [
 				{
 					data: { events: [valuePathBirth], source: 'contact-sync-backfill' },

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+vi.mock('@/lib/subscriber-marketing/drovr-unsubscribe-supersession', async load => ({ ...await load<typeof import('./drovr-unsubscribe-supersession')>(), closeSupersededUnsubscribesLive: async () => new Map() }))
 
 import {
 	drovrOutboxDedupeKey,
@@ -332,7 +333,7 @@ const single = async (event: DrovrShadowEvent, answer: Answer) => {
 		fetcher: fetcherFor(answer),
 	})
 	if (outcome.status === 'accepted') return 'landed'
-	if (outcome.status === 'failed') return 'pending'
+	if (outcome.status === 'failed' || outcome.status === 'deferred') return 'pending' // logical owed debt; durable status is tested separately
 	return isNeverBornOwnerStop(event, outcome) ? 'released' : 'held'
 }
 
@@ -401,10 +402,13 @@ const replay = async (event: DrovrShadowEvent, answer: Answer) => {
 	})
 	// The replay holds a rejected stop row (drovr-outbox.ts).
 	return {
+		held: 'held',
+		superseded: 'superseded',
 		queued: 'retry',
 		delivered: 'landed',
 		settled: 'released',
 		failed: 'pending',
+		deferred: 'pending', // logical owed debt, never accepted or terminally rejected
 		rejected: 'held',
 	}[outcome.kind]
 }
@@ -548,6 +552,7 @@ describe('row 204c: one stop rule on every path', () => {
 			const replayed = await postDrovrOutboxRow(
 				{
 					...outboxEntryForEvent(fact, 'live'),
+					status: 'pending',
 					firstFailedAt: '2026-09-30T05:00:00.000Z',
 				} as DrovrOutboxRow,
 				{

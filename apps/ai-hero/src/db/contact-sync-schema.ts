@@ -60,7 +60,8 @@ export const contactProfileVersion = mysqlTable('ContactProfileVersion', {
 		.default(1),
 	/** Versioned profile/link digest; legacy rows may still include offers. */
 	profileHash: varchar('profileHash', { length: 64 }),
-	/** Last delivered or strictly outboxed version; unchanged deltas skip it. */
+	/** Rollout OFF: legacy optimistic ACK. ON: frozen receiver-proved version;
+	 * a queue/outbox handoff alone never authorizes new profileAck completion. */
 	acknowledgedVersion: bigint('acknowledgedVersion', {
 		mode: 'number',
 		unsigned: true,

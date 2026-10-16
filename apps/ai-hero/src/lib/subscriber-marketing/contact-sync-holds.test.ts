@@ -75,6 +75,7 @@ function world() {
 		runContactSyncReconcile({
 			now: () => clock,
 			readWatermark: async () => watermark,
+			readProgress: async () => undefined,
 			scanChanges: async ({ after, through, limit }) =>
 				[...repository.contactEvents.values()]
 					.filter(

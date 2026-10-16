@@ -4,13 +4,14 @@ import {
 } from '@/db/contact-sync-schema'
 import { contactEvent } from '@/db/schema'
 import { isMysqlDuplicateEntryError } from '@/lib/mysql-primary-key-retry'
-import { and, asc, eq, gt, gte, isNull, lt, lte, min, or } from 'drizzle-orm'
+import { and, asc, eq, gt, gte, isNull, lte, min, or, sql } from 'drizzle-orm'
 
 import { VALUE_PATH_LINK_REISSUE_EVERY_DAYS } from './value-path-link-anchor'
 import {
 	linkRotationRanges,
 	type ContactSyncReconcilePorts,
 	type ScannedContactEvent,
+	type ReconcileProgress,
 } from './contact-sync-reconcile'
 
 const ROTATION_STEP_MS =
@@ -19,6 +20,7 @@ const ROTATION_STEP_MS =
 /** The one stream this reconcile covers: drovr's contact directory. */
 export const CONTACT_SYNC_CURSOR_NAME = 'contact-directory'
 
+type GroupedQuery = { orderBy: (...order: unknown[]) => Promise<unknown[]> & { limit: (n: number) => Promise<unknown[]> }; having: (clause: unknown) => GroupedQuery }
 type Database = {
 	select: (fields: unknown) => {
 		from: (table: unknown) => {
@@ -27,11 +29,7 @@ type Database = {
 				orderBy: (...order: unknown[]) => {
 					limit: (n: number) => Promise<unknown[]>
 				}
-				groupBy: (...columns: unknown[]) => {
-					orderBy: (...order: unknown[]) => Promise<unknown[]> & {
-						limit: (n: number) => Promise<unknown[]>
-					}
-				}
+				groupBy: (...columns: unknown[]) => GroupedQuery
 			}
 		}
 	}
@@ -52,8 +50,8 @@ export function createDrizzleContactSyncStore(
 	database: unknown,
 ): Pick<
 	ContactSyncReconcilePorts,
-	'readWatermark' | 'scanChanges' | 'rotatedContacts'
-> & { writeWatermark(watermark: string, heartbeatAt: string): Promise<void> } {
+	'readWatermark' | 'readProgress' | 'scanChanges' | 'rotatedContacts'
+> & { writeWatermark(watermark: string, heartbeatAt: string, progress?: ReconcileProgress): Promise<void> } {
 	const db = database as Database
 	const byName = eq(contactSyncCursor.name, CONTACT_SYNC_CURSOR_NAME)
 	return {
@@ -66,7 +64,11 @@ export function createDrizzleContactSyncStore(
 			const watermark = rows[0]?.watermark
 			return watermark ? isoOf(watermark) : undefined
 		},
-		async scanChanges({ after, through, limit, writtenAfter }) {
+		async readProgress() {
+			const [row] = await db.select({ cursor: contactSyncCursor.cursor }).from(contactSyncCursor).where(byName).limit(1) as { cursor: string | null }[]
+			return row?.cursor?.startsWith('{') ? JSON.parse(row.cursor) as ReconcileProgress : undefined
+		},
+		async scanChanges({ after, through, limit, writtenAfter, writtenThrough, pageAfter }) {
 			const rows = (await db
 				.select({
 					id: contactEvent.id,
@@ -79,6 +81,8 @@ export function createDrizzleContactSyncStore(
 					and(
 						gt(contactEvent.occurredAt, new Date(after)),
 						lte(contactEvent.occurredAt, new Date(through)),
+						writtenThrough ? lte(contactEvent.createdAt, new Date(writtenThrough)) : undefined,
+						pageAfter ? or(gt(contactEvent.occurredAt, new Date(pageAfter.at)), and(eq(contactEvent.occurredAt, new Date(pageAfter.at)), gt(sql`BINARY ${contactEvent.id}`, pageAfter.id))) : undefined,
 						// Late writes only: the occurredAt range keeps the index;
 						// createdAt narrows it to rows the last run could not see.
 						// createdAt is whole seconds, so the watermark's own second
@@ -91,7 +95,7 @@ export function createDrizzleContactSyncStore(
 							: undefined,
 					),
 				)
-				.orderBy(asc(contactEvent.occurredAt), asc(contactEvent.id))
+				.orderBy(asc(contactEvent.occurredAt), asc(sql`BINARY ${contactEvent.id}`))
 				.limit(limit + 1)) as {
 				id: string
 				contactId: string
@@ -107,7 +111,7 @@ export function createDrizzleContactSyncStore(
 				}),
 			)
 		},
-		async rotatedContacts({ after, through, limit }) {
+		async rotatedContacts({ after, through, limit, pageAfter }) {
 			// As many 90-day steps as the oldest anchor needs: no fixed cap.
 			const [oldest] = (await db
 				.select({ firstIssue: min(valuePathLinkAnchor.issuedAt) })
@@ -127,9 +131,10 @@ export function createDrizzleContactSyncStore(
 			const steps = new Map<string, number>()
 			const firstIssues = (
 				range: { after: string; through: string },
-				cap?: number,
+				cap: number,
+				stepMs: number,
 			) => {
-				const query = db
+				let grouped = db
 					.select({
 						contactId: valuePathLinkAnchor.contactId,
 						firstIssue: min(valuePathLinkAnchor.issuedAt),
@@ -142,8 +147,12 @@ export function createDrizzleContactSyncStore(
 						),
 					)
 					.groupBy(valuePathLinkAnchor.contactId)
-					.orderBy(min(valuePathLinkAnchor.issuedAt))
-				return (cap === undefined ? query : query.limit(cap)) as Promise<
+				if (pageAfter) {
+					const cutoff = sqlTimestamp(new Date(Date.parse(pageAfter.at) - stepMs).toISOString())
+					grouped = grouped.having(or(gt(min(valuePathLinkAnchor.issuedAt), cutoff), and(eq(min(valuePathLinkAnchor.issuedAt), cutoff), gt(sql`BINARY ${valuePathLinkAnchor.contactId}`, pageAfter.id))))
+				}
+				const query = grouped.orderBy(min(valuePathLinkAnchor.issuedAt), asc(sql`BINARY ${valuePathLinkAnchor.contactId}`))
+				return query.limit(cap) as Promise<
 					{ contactId: string; firstIssue: string }[]
 				>
 			}
@@ -152,32 +161,25 @@ export function createDrizzleContactSyncStore(
 				stepCount,
 			).entries()) {
 				const stepMs = (index + 1) * ROTATION_STEP_MS
-				let rows = await firstIssues(range, limit + 1)
-				if (rows.length > limit) {
-					const boundary = isoOf(rows[limit]!.firstIssue)
-					rows = await firstIssues({ after: range.after, through: boundary })
-				}
+				const rows = await firstIssues(range, limit + 1, stepMs)
 				for (const row of rows) {
 					const at = Date.parse(isoOf(row.firstIssue)) + stepMs
 					const known = steps.get(row.contactId)
 					if (known === undefined || at < known) steps.set(row.contactId, at)
 				}
 			}
-			const ordered = [...steps].sort((left, right) => left[1] - right[1])
-			// At most limit + 1, extended to the end of a tie at the boundary.
-			let end = Math.min(ordered.length, limit + 1)
-			while (end < ordered.length && ordered[end]![1] === ordered[end - 1]![1])
-				end += 1
+			const ordered = [...steps].sort((left, right) => left[1] - right[1] || (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0))
+			// Bounded even inside a dense tie; the persisted tuple resumes it.
 			return ordered
-				.slice(0, end)
+				.slice(0, limit + 1)
 				.map(([contactId, at]) => ({
 					contactId,
 					at: new Date(at).toISOString(),
 				}))
 		},
-		async writeWatermark(watermark, heartbeatAt) {
+		async writeWatermark(watermark, heartbeatAt, progress) {
 			const values = {
-				cursor: watermark,
+				cursor: progress ? JSON.stringify(progress) : watermark,
 				watermark: sqlTimestamp(watermark),
 				heartbeatAt: sqlTimestamp(heartbeatAt),
 			}
@@ -198,7 +200,7 @@ export function createDrizzleContactSyncStore(
 						byName,
 						or(
 							isNull(contactSyncCursor.watermark),
-							lt(contactSyncCursor.watermark, values.watermark),
+							lte(contactSyncCursor.watermark, values.watermark),
 						),
 					),
 				)

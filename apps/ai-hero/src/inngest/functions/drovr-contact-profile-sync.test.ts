@@ -10,6 +10,9 @@ import {
 } from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
 import { createMemoryContactProfileVersionStore } from '@/lib/subscriber-marketing/contact-profile-version'
 import type { DeferredDrovrEvent } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
+import type { DrovrShadowEvent } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
+import { drovrOutboxDedupeKey, outboxEntryForEvent, type DrovrOutboxRow } from '@/lib/subscriber-marketing/drovr-outbox'
+import { proveContactProfileDelivery } from '@/lib/subscriber-marketing/contact-sync-profile-acknowledgement'
 
 const now = Date.parse('2026-09-27T12:00:00.000Z')
 
@@ -59,16 +62,41 @@ function harness(
 		acknowledged: overrides.acknowledged ?? false,
 	}))
 	const acknowledge = vi.fn(async () => {})
-	const deliver = vi.fn(async () =>
+	const deliver = vi.fn(async (events: DrovrShadowEvent[]) =>
 		'delivered' in overrides
 			? overrides.delivered!
-			: { accepted: 1, rejected: 0 },
+			: { accepted: events.length, rejected: 0 },
 	)
+	// Model immutable receiver receipts separately from aggregate outcomes.
+	// A queue's zero counters create no delivered row; cold/retry history
+	// retains the first body and confirms only specifically accepted members.
+	const proveDelivery = vi.fn(async (input: { contactId: string; profileVersion: number; events: DrovrShadowEvent[] }) => {
+		const target = 'synthetic-profile-function'
+		const rows = new Map<string, DrovrOutboxRow>()
+		for (let index = 0; index < deliver.mock.calls.length; index++) {
+			const events = deliver.mock.calls[index]![0]
+			const result = await deliver.mock.results[index]!.value
+			for (const event of events) {
+				const entry = outboxEntryForEvent(event, 'bulkDelta')
+				const key = drovrOutboxDedupeKey(target, entry)
+				if (!rows.has(key)) rows.set(key, { ...entry, id: key, target, dedupeKey: key, status: 'pending', attempts: 0, lastStatus: null, lastError: null, firstFailedAt: event.occurredAt, nextAttemptAt: event.occurredAt, lastAttemptAt: null, deliveredAt: null, releasedAt: null, createdAt: event.occurredAt })
+			}
+			if (result === 'not-configured' || result.rejected) continue
+			const accepted = events.filter(event => !result.deferred?.some((item: DeferredDrovrEvent) => item.event.idempotencyKey === event.idempotencyKey))
+			if (result.accepted !== accepted.length) continue
+			for (const event of accepted) {
+				const row = rows.get(drovrOutboxDedupeKey(target, outboxEntryForEvent(event, 'bulkDelta')))!
+				row.status = 'delivered'; row.lastStatus = 202; row.deliveredAt = new Date(now).toISOString()
+			}
+		}
+		return proveContactProfileDelivery({ ...input, target, rows: async (_target, keys) => [...rows.values()].filter(row => keys.includes(row.dedupeKey)) })
+	})
 	const ownedPath = vi.fn(async () => 'ai-hero-skills-workflow')
 	const onSendingJourney = vi.fn(async () => overrides.onSendingJourney ?? true)
 	const birth = vi.fn(async () => {})
 	const run = () =>
 		runContactProfileSync({
+			profileAckEnabled: async () => true,
 			event: {
 				data: {
 					contactId: overrides.contactId ?? 'contact-1',
@@ -91,6 +119,7 @@ function harness(
 			now: () => now,
 			birth,
 			acknowledge,
+			proveDelivery,
 		})
 	return {
 		sent,
@@ -203,8 +232,8 @@ describe('drovr contact profile sync function', () => {
 		expect(h.deliver).toHaveBeenNthCalledWith(2, [profileEvent])
 		expect(h.order.slice(-4)).toEqual([
 			'delta-deliver-profile',
-			'paced-birth:contact-1',
-			'paced-redeliver:profile:contact-1:4',
+			expect.stringMatching(/^paced-birth:[a-f0-9]{64}$/),
+			expect.stringMatching(/^paced-redeliver:[a-f0-9]{64}$/),
 			'delta-acknowledge-version',
 		])
 		expect(h.sent).toEqual([])
@@ -296,6 +325,7 @@ describe('drovr contact profile sync function', () => {
 			.mockResolvedValueOnce({ accepted: 1, rejected: 0 })
 		const run = () =>
 			runContactProfileSync({
+				profileAckEnabled: async () => true,
 				event: { data: { contactId: 'contact-1', reason: 'offer-issued' } },
 				step: {
 					run: async (_id, callback) => callback(),

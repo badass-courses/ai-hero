@@ -1,4 +1,4 @@
-import { deliverEventNameFor } from '@/inngest/events/drovr'
+import { deliverEventNameFor, BULK_DELIVERY_SOURCES } from '@/inngest/events/drovr'
 import type {
 	DrovrDeliverySource,
 	DrovrDeliverEnvelope,
@@ -12,6 +12,7 @@ import {
 	enterEvergreenPitchFromLiveDatabase,
 	resolveOwnedContactIds,
 } from './drovr-ownership-live'
+import { bulkOutboxSource } from './contact-sync-bulk'
 import { outboxEntryForEvent } from './drovr-outbox'
 import { captureDrovrOutboxLive } from './drovr-outbox-live'
 import type { DrovrOutboxCaptureFn } from './drovr-outbox-step'
@@ -31,8 +32,8 @@ import {
  * The host maps a fact into drovr events synchronously (pure), then hands
  * the batch to Inngest, whose delivery function posts each event with
  * retries. Handing off to Inngest is one local API call; if even that
- * fails the legacy direct post runs as a last resort so the fact is never
- * dropped without an attempt. Nothing here can throw into the host flow:
+ * fails, live facts use the legacy direct post as a last resort; bulk facts
+ * must durably return to their protected worker instead of bypassing pacing. Nothing here can throw into the host flow:
  * the authoritative write that produced the fact already committed.
  */
 
@@ -207,7 +208,7 @@ export async function dispatchDrovrShadowFact(
 				: fact.kind
 	const payload = {
 		name: deliverEventNameFor(source),
-		data: { events, source },
+		data: { events, source, ...(fact.kind === 'course-completed' && fact.backfill ? { firstFailedAt: fact.backfill.occurredAt } : {}) },
 	}
 	const logError = options.error ?? log.error
 	const reportError = async (
@@ -259,7 +260,7 @@ export async function dispatchDrovrShadowFact(
 			try {
 				const captured = await outbox(
 					unsent.map((event) =>
-						outboxEntryForEvent(event, 'fallback', { needsFanOut, sentAt }),
+						outboxEntryForEvent(event, BULK_DELIVERY_SOURCES.has(source) ? bulkOutboxSource(source) : 'live', { needsFanOut, sentAt }),
 					),
 					reason,
 				)
@@ -276,6 +277,12 @@ export async function dispatchDrovrShadowFact(
 				})
 				return false
 			}
+		}
+		// A failed bulk broker handoff is not permission to bypass its cap.
+		// Persist raw ownership work for the same protected worker instead.
+		if (BULK_DELIVERY_SOURCES.has(source)) {
+			const at = fact.kind === 'course-completed' && fact.backfill ? Date.parse(fact.backfill.occurredAt) : Date.now()
+			return await toOutbox(events, error, true, at) ? 'outboxed' : 'fallback'
 		}
 		let owned: string[] = []
 		let newsletterOwned: string[] = []

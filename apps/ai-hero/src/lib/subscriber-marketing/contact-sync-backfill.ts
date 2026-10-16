@@ -4,6 +4,7 @@ import {
 import { NonRetriableError } from 'inngest'
 import { requireBoundBackfillApproval, type BackfillApprovals } from './contact-sync-backfill-approval'
 import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
+import { requireBackfillDungeonOverride } from './contact-sync-backfill-dungeon'
 
 import type { ContactProfileVersion } from './contact-profile-version'
 import { parseDrovrProfileSyncConfig } from './drovr-contact-profile-sync-requests'
@@ -272,6 +273,7 @@ export async function runContactSyncBackfill(args: {
 	pageSize?: number
 	pagesPerRun?: number
 }): Promise<BackfillReceipt> {
+	requireBackfillDungeonOverride(args.env)
 	const config = parseDrovrProfileSyncConfig(args.env)
 	if (!config.enabled) return { status: 'skipped', reason: config.reason }
 	const countAll = async () => {

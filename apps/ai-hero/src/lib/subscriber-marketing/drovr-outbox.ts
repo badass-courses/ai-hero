@@ -1,8 +1,20 @@
 import { createHash, randomUUID } from 'node:crypto'
 
-import { CONTACT_STOP_EVENT_TYPES } from './contact-stop-rule'
+import { activeContactStops, CONTACT_STOP_EVENT_TYPES } from './contact-stop-rule'
+import { supersededUnsubscribeReason } from './drovr-unsubscribe-supersession'
 import type { DrovrSignupRequest } from './drovr-doi-signup'
 import type { DrovrShadowEvent } from './drovr-shadow-emitter'
+import {
+	assertOutboxWireEntry,
+	isOutboxWireStatus,
+	type DrovrOutboxWireStatus,
+} from './drovr-outbox-wire-status'
+export { DROVR_OUTBOX_WIRE_STATUSES } from './drovr-outbox-wire-status'
+import {
+	PROFILE_ACK_PURGE_REFUSED_SIGNAL,
+	profileAckPurgeRefusalPrompt,
+	type ProfileAckPurgeRefused,
+} from './contact-sync-profile-ack-purge-schema'
 
 /**
  * Row 204: AI Hero never loses a drovr send.
@@ -33,6 +45,9 @@ export const DROVR_RETRY_AFTER_STEP_CAP_MS = 10 * 60_000
 /** A replay honours Retry-After up to this, never below its own backoff. */
 export const DROVR_RETRY_AFTER_REPLAY_CAP_MS = 15 * 60_000
 export const DROVR_OUTBOX_REPLAY_MAX_BACKOFF_MS = 60 * 60_000
+/** Successful capped broker handoffs consume this replay-effort budget.
+ * Failed publications and healthy pacing rebooks do not. Not a wire-HTTP count. */
+export const DROVR_OUTBOX_MAX_QUEUE_HANDOFFS = 8
 
 /**
  * A birth that has failed to land for longer than this is held for a human
@@ -52,8 +67,9 @@ export const DROVR_OUTBOX_REJECTED_STOP_WAIT_MS = 60 * 60_000
 /** A stop still owed after this long alerts (two replay runs), row 204b. */
 export const DROVR_OUTBOX_STOP_ALERT_MS = 10 * 60_000
 /**
- * A row's lastError while it waits behind an owed stop (live or replay).
- * pullForward moves only these, so a row on its own backoff keeps it.
+ * Operator display note while a row waits behind an owed stop.
+ * Only typed replayProof.waitingForStop controls pullForward; this prose
+ * never selects a row or changes a row's own backoff.
  */
 export const DROVR_OUTBOX_BEHIND_STOP_NOTE =
 	'held behind a stop the outbox still owes'
@@ -148,11 +164,17 @@ export type DrovrOutboxSource =
 	| 'bulkRestate'
 	| 'bulkIngest'
 	| 'bulkBackfill'
+	| 'bulkEvergreen'
 	| 'signup'
 	| 'fallback'
 	| 'onFailure'
 	| 'contactSync'
-export type DrovrOutboxStatus = 'pending' | 'delivered' | 'rejected' | 'held'
+export type DrovrOutboxStatus = DrovrOutboxWireStatus
+
+export type DrovrOutboxWorkState = { key: string; status: DrovrOutboxStatus; heldBatchBlocked?: boolean }
+export function isDrovrOutboxStatus(value: unknown): value is DrovrOutboxStatus {
+	return isOutboxWireStatus(value)
+}
 
 export type DrovrOutboxEntry = {
 	endpoint: DrovrOutboxEndpoint
@@ -182,6 +204,17 @@ export type DrovrOutboxRow = Omit<DrovrOutboxEntry, 'firstSentAt'> & {
 	target: string
 	status: DrovrOutboxStatus
 	attempts: number
+	/** Derived from diagnostic metadata, never a new SQL column. */
+	waitingForStop?: boolean
+	queueHandoffs?: number
+	queueMetadataInvalid?: boolean
+	queuePublicationId?: string
+	/** Dedicated bounded operational envelope; never error prose. */
+	heldContinuation?: unknown
+	/** Durable coordinator state, decoded strictly before replay. */
+	heldBatch?: unknown
+	heldBatchBlocked?: boolean
+	heldBatchReason?: string
 	lastStatus: number | null
 	lastError: string | null
 	firstFailedAt: string
@@ -287,6 +320,7 @@ export class DrovrOutboxUnavailableError extends Error {
 }
 
 export type DrovrOutboxDepth = {
+	deferred?: number
 	pending: number
 	oldestPendingFailedAt: string | null
 	held: number
@@ -317,7 +351,7 @@ export type DrovrOutboxOpenGate = Pick<
 	| 'status'
 	| 'nextAttemptAt'
 	| 'occurredAt'
->
+> & { supersededAt?: string; ownerStopRejectionError?: string; unsubscribeSupersessionError?: string }
 
 export type DrovrOutboxStore = {
 	/** Insert; a row whose dedupeKey is already there is left as it is. */
@@ -332,16 +366,27 @@ export type DrovrOutboxStore = {
 	 * This target's open gates for these contacts: pending or held births,
 	 * and pending, held or rejected stops.
 	 */
+	/** Close a pending unsubscribe by CAS; never rewrite delivered history. */
+	supersedePending(args: { target: string; id: string; key: string; contactId: string; at: string; now: string }): Promise<void>
 	openGates(args: {
 		target: string
 		contactIds: readonly string[]
 	}): Promise<DrovrOutboxOpenGate[]>
+	/** Atomically lease due pending work, or shorten exactly our own lease. */
+	leaseQueue(args: { target: string; id: string; publicationId: string; nextAttemptAt: string } & ({ dueAt: string } | { expectedUntil: string })): Promise<boolean>
+	/** Count a successful broker handoff atomically, without touching lease,
+	 * diagnostic, body or clocks. Closed history remains unchanged. */
+	recordQueueHandoff(args: { target: string; id: string; publicationId: string; count: boolean }): Promise<void>
+	/** Clear only this failed publication's claim, never a newer lease. */
+	abortQueueHandoff(args: { target: string; id: string; publicationId: string }): Promise<void>
+	/** Never rewrite delivered/superseded history, including a stale replay patch. */
 	update(
 		id: string,
 		patch: Partial<
 			Pick<
 				DrovrOutboxRow,
 				| 'status'
+				| 'waitingForStop'
 				| 'attempts'
 				| 'lastStatus'
 				| 'lastError'
@@ -353,7 +398,7 @@ export type DrovrOutboxStore = {
 	): Promise<void>
 	depth(target: string): Promise<DrovrOutboxDepth>
 	/** Delivered rows only; held and rejected rows stay until resolved. */
-	deleteDeliveredBefore(before: string, limit: number): Promise<number>
+	deleteDeliveredBefore(before: string, limit: number): Promise<number | ProfileAckPurgeRefused>
 	/**
 	 * Mark these rows delivered if they are still pending: a stop captured
 	 * on its first failure whose later Inngest retry landed. Returns how many.
@@ -377,7 +422,7 @@ export type DrovrOutboxStore = {
 	}): Promise<number>
 	/**
 	 * Make these contacts' pending rows due now if they wait for later
-	 * behind a stop (lastError DROVR_OUTBOX_BEHIND_STOP_NOTE) that has since
+	 * behind a stop (typed replayProof.waitingForStop) that has since
 	 * landed. Stops keep their time (one may still be inside Inngest's
 	 * retries), and so does a row waiting out its own backoff. Returns how
 	 * many moved.
@@ -442,10 +487,11 @@ export async function captureDrovrOutbox(args: {
 	 */
 	nextAttemptAt?: Date
 	/** `held`: a stop drovr refused, for a human (holdDrovrStops). */
-	status?: 'pending' | 'held'
+	status?: 'pending' | 'held' | 'deferred'
 	log: OutboxLog
 	sleep?: (ms: number) => Promise<void>
 }): Promise<DrovrOutboxCapture> {
+	for (const entry of args.entries) assertOutboxWireEntry(entry)
 	const keys = args.entries.map((entry) => entry.idempotencyKey)
 	const reason = bounded(errorText(args.reason))
 	const summary = {
@@ -612,8 +658,15 @@ export async function settleDrovrOutbox(args: {
 	}
 }
 
+/** Only the explicit durable status exempts a handoff. Operator prose and
+ * HTTP status alone never authorize deferral or change the budget. */
+export const isEventNotLiveDeferred = (row: Pick<DrovrOutboxRow, 'status'>) => row.status === 'deferred'
+
 export type DrovrOutboxPostOutcome =
-	| { kind: 'queued'; nextAttemptAt: string }
+	| { kind: 'deferred'; httpStatus: 409; reason: string }
+	| { kind: 'held'; detail: string }
+	| { kind: 'superseded'; at: string }
+	| { kind: 'queued'; phase: 'published' | 'deferred' | 'stale'; publicationId?: string; nextAttemptAt?: string; detail?: string }
 	| { kind: 'delivered'; httpStatus?: number }
 	/** A 4xx for the row or one of its owner copies: final, alerted. */
 	| {
@@ -634,6 +687,11 @@ export type DrovrOutboxPostOutcome =
 	  }
 
 export type DrovrOutboxReplayReceipt = {
+	deferred?: number
+	queuedHandoffs?: number
+	queueDeferred?: number
+	skippedLease?: number
+	supersededUnsubscribes?: number
 	status: 'replayed'
 	due: number
 	delivered: number
@@ -646,6 +704,7 @@ export type DrovrOutboxReplayReceipt = {
 	circuitOpen: boolean
 	budgetSpent: boolean
 	purged: number
+	purgeRefusal?: ProfileAckPurgeRefused
 	depth: DrovrOutboxDepth
 	alert: string[]
 }
@@ -700,7 +759,7 @@ const instantOf = (occurredAt: string) => {
  * instant that does not parse fails closed: such a row waits behind every
  * owed stop, and such a stop holds every row.
  */
-export function openStopBefore<S extends Pick<DrovrOutboxRow, 'occurredAt'>>(
+export function openStopBefore<S extends Pick<DrovrOutboxRow, 'occurredAt'> & { eventType?: string; supersededAt?: string }>(
 	row: Pick<DrovrOutboxRow, 'eventType' | 'occurredAt'>,
 	stops: readonly S[] | undefined,
 ): S | undefined {
@@ -708,6 +767,7 @@ export function openStopBefore<S extends Pick<DrovrOutboxRow, 'occurredAt'>>(
 	const at = Date.parse(row.occurredAt)
 	return stops
 		.filter((stop) => {
+			if (stop.eventType === 'contact.unsubscribed' && stop.supersededAt && !activeContactStops([{ kind: 'unsubscribed', at: stop.occurredAt }, { kind: 'resubscribed', at: stop.supersededAt }], row.occurredAt).unsubscribed) return false
 			const stopAt = Date.parse(stop.occurredAt)
 			return Number.isNaN(at) || Number.isNaN(stopAt) || stopAt <= at
 		})
@@ -726,7 +786,7 @@ const birthGateKey = (
 		: `${birth.contactId}|${birth.journeyId}`
 
 /** Whether a birth gates a row: its journey's, or any row for a signup. */
-const birthGates = (
+export const birthGates = (
 	birth: Pick<DrovrOutboxRow, 'contactId' | 'journeyId' | 'endpoint'>,
 	row: Pick<
 		DrovrOutboxRow,
@@ -851,6 +911,7 @@ export async function runDrovrOutboxReplay(args: {
 					target: args.target,
 					contactIds: [...new Set(due.map((row) => row.contactId))],
 				})
+	const supersededIds = new Set(gates.filter(gate => gate.eventType === 'contact.unsubscribed' && gate.status === 'superseded' && gate.supersededAt !== undefined).map(gate => gate.id))
 	for (const gate of gates) {
 		if (isOutboxStop(gate)) {
 			const list = openStops.get(gate.contactId) ?? []
@@ -889,6 +950,8 @@ export async function runDrovrOutboxReplay(args: {
 	const blockedContacts = new Set<string>()
 	let consecutiveFailures = 0
 	for (const row of due) {
+		// due() was read before the gate hydration closed historical stops.
+		if (supersededIds.has(row.id)) { receipt.supersededUnsubscribes = (receipt.supersededUnsubscribes ?? 0) + 1; continue }
 		const now = args.now()
 		if (
 			now.getTime() - startedAt.getTime() >=
@@ -907,6 +970,7 @@ export async function runDrovrOutboxReplay(args: {
 		}
 		if (
 			isOutboxBirth(row) &&
+			!isEventNotLiveDeferred(row) &&
 			!row.releasedAt &&
 			now.getTime() - Date.parse(row.firstFailedAt) >
 				DROVR_OUTBOX_AUTO_REPLAY_MAX_AGE_MS
@@ -942,7 +1006,7 @@ export async function runDrovrOutboxReplay(args: {
 		if (stop) {
 			receipt.skippedBehindStop += 1
 			const after =
-				stop.status === 'pending'
+				(stop.status === 'pending' || stop.status === 'deferred')
 					? stop.nextAttemptAt
 					: new Date(
 							now.getTime() + DROVR_OUTBOX_REJECTED_STOP_WAIT_MS,
@@ -951,6 +1015,7 @@ export async function runDrovrOutboxReplay(args: {
 				await args.store.update(row.id, {
 					nextAttemptAt: after,
 					lastError: DROVR_OUTBOX_BEHIND_STOP_NOTE,
+					waitingForStop: true,
 				})
 			await logSafely(args.log.info, 'drovr.outbox.behind_stop', {
 				...fields,
@@ -969,10 +1034,45 @@ export async function runDrovrOutboxReplay(args: {
 		} catch (error) {
 			outcome = { kind: 'failed', transient: true, reason: errorText(error) }
 		}
+		const clearStopWait = row.waitingForStop ? { waitingForStop: false } : {}
 		const attempts = row.attempts + 1
 		const at = args.now().toISOString()
+		if (outcome.kind === 'deferred') {
+			const nextAttemptAt = new Date(args.now().getTime() + DROVR_OUTBOX_DEFERRED_STOP_WAIT_MS).toISOString()
+			await args.store.update(row.id, { status: 'deferred', lastStatus: 409, lastError: bounded(outcome.reason), lastAttemptAt: at, nextAttemptAt, ...(row.waitingForStop ? { waitingForStop: false } : {}) })
+			const gate = stopOf(row)
+			if (gate) { gate.status = 'deferred'; gate.nextAttemptAt = nextAttemptAt }
+			receipt.deferred = (receipt.deferred ?? 0) + 1
+			await logSafely(args.log.info, 'drovr.outbox.event_deferred', { ...fields, nextAttemptAt })
+			continue
+		}
+		if (outcome.kind === 'superseded') {
+			await args.store.supersedePending({ target: args.target, id: row.id, key: row.dedupeKey, contactId: row.contactId, at: outcome.at, now: at })
+			const gate = stopOf(row)
+			if (gate) { gate.status = 'superseded'; gate.supersededAt = outcome.at }
+			receipt.supersededUnsubscribes = (receipt.supersededUnsubscribes ?? 0) + 1
+			await logSafely(args.log.info, 'drovr.outbox.unsubscribe_superseded', { ...fields, reason: supersededUnsubscribeReason(outcome.at) })
+			continue
+		}
+		if (outcome.kind === 'held') {
+			const count = await args.store.holdPending({ target: args.target, dedupeKeys: [row.dedupeKey], at, httpStatus: row.lastStatus, note: bounded([row.lastError, outcome.detail].filter(Boolean).join('\n')) })
+			receipt.held += count
+			if (!count) receipt.skippedLease = (receipt.skippedLease ?? 0) + 1
+			if (count && isOutboxBirth(row)) openBirths.set(birthGateKey(row), { ...row, status: 'held' })
+			if (count) { const gate = stopOf(row); if (gate) gate.status = 'held' }
+			await logSafely(count ? args.log.warn : args.log.info, count ? 'drovr.outbox.queue_handoff_held' : 'drovr.outbox.queue_hold_stale', { ...fields, handoffs: row.queueHandoffs ?? 0, reason: outcome.detail })
+			continue
+		}
 		if (outcome.kind === 'queued') {
-			await args.store.update(row.id, { nextAttemptAt: outcome.nextAttemptAt, lastAttemptAt: at, lastError: 'queued on isolated capped delivery worker' })
+			// The queue lease was persisted BEFORE publication. A fast consumer
+			// can already have released/settled it; never overwrite that result.
+			if (outcome.phase === 'published') {
+				if (!outcome.publicationId) throw new Error('QueueProof: you recorded a handoff, and it failed because its durable publication claim is missing. Accepted: a claimed publication ID. Fix: inspect the broker receipt before releasing the retained row. Debug: inspect this replay run and row.')
+				await args.store.recordQueueHandoff({ target: args.target, id: row.id, publicationId: outcome.publicationId, count: !isEventNotLiveDeferred(row) })
+			}
+			const count = outcome.phase === 'published' ? 'queuedHandoffs' : outcome.phase === 'deferred' ? 'queueDeferred' : 'skippedLease'
+			receipt[count] = (receipt[count] ?? 0) + 1
+			await logSafely(args.log.info, `drovr.outbox.queue_${outcome.phase}`, { ...fields, publicationId: outcome.publicationId, detail: outcome.detail, nextAttemptAt: outcome.nextAttemptAt })
 			continue
 		}
 		if (outcome.kind === 'delivered' || outcome.kind === 'settled') {
@@ -982,6 +1082,7 @@ export async function runDrovrOutboxReplay(args: {
 			if (isOutboxStop(row)) settleStop(row)
 			await args.store.update(row.id, {
 				status: 'delivered',
+				...clearStopWait,
 				attempts,
 				lastStatus: outcome.httpStatus ?? null,
 				lastError: outcome.kind === 'settled' ? outcome.detail : null,
@@ -1005,6 +1106,7 @@ export async function runDrovrOutboxReplay(args: {
 			if (stop) stop.status = 'held'
 			await args.store.update(row.id, {
 				status: 'held',
+				...clearStopWait,
 				attempts,
 				lastStatus: outcome.httpStatus,
 				lastError: bounded(JSON.stringify(outcome.detail ?? null)),
@@ -1027,6 +1129,7 @@ export async function runDrovrOutboxReplay(args: {
 			blockedContacts.add(row.contactId)
 			await args.store.update(row.id, {
 				status: 'rejected',
+				...clearStopWait,
 				attempts,
 				lastStatus: outcome.httpStatus,
 				lastError: bounded(JSON.stringify(outcome.detail ?? null)),
@@ -1056,6 +1159,8 @@ export async function runDrovrOutboxReplay(args: {
 			if (stop) stop.nextAttemptAt = nextAttemptAt
 		}
 		await args.store.update(row.id, {
+			...clearStopWait,
+			status: 'pending',
 			attempts,
 			lastStatus: outcome.httpStatus ?? null,
 			lastError: bounded(outcome.reason),
@@ -1076,10 +1181,19 @@ export async function runDrovrOutboxReplay(args: {
 	}
 
 	const now = args.now()
-	receipt.purged = await args.store.deleteDeliveredBefore(
+	const purged = await args.store.deleteDeliveredBefore(
 		new Date(now.getTime() - DROVR_OUTBOX_DELIVERED_RETENTION_MS).toISOString(),
 		DROVR_OUTBOX_PURGE_BATCH,
 	)
+	if (typeof purged === 'number') receipt.purged = purged
+	else {
+		receipt.purgeRefusal = purged
+		await logSafely(args.log.error, PROFILE_ACK_PURGE_REFUSED_SIGNAL, {
+			message: profileAckPurgeRefusalPrompt(purged),
+			protectedRows: purged.protectedRows,
+			candidateRows: purged.candidateRows,
+		})
+	}
 	receipt.depth = await args.store.depth(args.target)
 	const oldestAgeMs = receipt.depth.oldestPendingFailedAt
 		? now.getTime() - Date.parse(receipt.depth.oldestPendingFailedAt)

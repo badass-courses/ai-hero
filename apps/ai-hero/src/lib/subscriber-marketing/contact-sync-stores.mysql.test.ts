@@ -9,7 +9,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { validateMySqlIntegrationServerUrl } from '../team-purchase-mysql-test-guard'
 import { dueProfileConfirmations } from './contact-sync-restatement'
-import { reserveBulkSlot, type PaceConnection, type BulkClass } from './drovr-bulk-pace'
+import { reserveBulkSlot, BULK_RESERVATION_INTERVAL_MS, type PaceConnection, type BulkClass } from './drovr-bulk-pace'
+import { sampleBulkClock } from './drovr-bulk-clock'
 import { createDrizzleBackfillApprovals } from './contact-sync-backfill-approval'
 import { createDrizzleContactProfileVersionStore } from './contact-profile-version-drizzle'
 import { createDrizzleValuePathLinkAnchorStore } from './drizzle-value-path-link-anchor'
@@ -226,18 +227,32 @@ integration('contact-sync stores on MySQL', () => {
 		await expect(versions.versionFor('migration', 'v2:' + 'c'.repeat(61), legacy)).resolves.toMatchObject({ profileVersion: 2, acknowledged: false })
 	})
 
+	it('samples the real fixture UTC epoch with monotonic RTT and no session mutation', async () => {
+		const before = Date.now()
+		const sample = await sampleBulkClock(async () => pool.getConnection())
+		const after = Date.now()
+		expect(sample.utcMs).toBeGreaterThanOrEqual(before - 5000)
+		expect(sample.utcMs).toBeLessThanOrEqual(after + 5000)
+		expect(sample.rttMs).toBeGreaterThanOrEqual(0)
+		expect(sample.precisionMs).toBe(1)
+	})
+
 	it('reserves disjoint future slots under database contention, with a protected delta budget and UTC connections', async () => {
 		await pool.query("DELETE FROM AI_ContactSyncCursor WHERE name = 'bulk-delivery-pace-v2'")
 		const acquire = async () => await pool.getConnection() as unknown as PaceConnection
 		const classes: BulkClass[] = [...Array<BulkClass>(12).fill('delta'), ...Array<BulkClass>(4).fill('restate'), 'ingest', 'ingest', 'ingest', 'backfill']
-		const slots = await Promise.all(Array.from({ length: 300 }, (_, index) => reserveBulkSlot(acquire, 'AI_ContactSyncCursor', classes[index % classes.length]!)))
+		const slots = await Promise.all(Array.from({ length: 300 }, async (_, index) => {
+			const value = await reserveBulkSlot(acquire, 'AI_ContactSyncCursor', classes[index % classes.length]!)
+			expect(value).toEqual(expect.any(Number))
+			return value as number
+		}))
 		const ordered = slots.sort((a, b) => a - b)
 		expect(new Set(slots).size).toBe(slots.length)
-		for (let i = 1; i < ordered.length; i++) expect(ordered[i]! - ordered[i - 1]!).toBeGreaterThanOrEqual(600)
-		for (const at of slots) expect(slots.filter(other => other >= at && other < at + 60000).length).toBeLessThanOrEqual(100)
+		for (let i = 1; i < ordered.length; i++) expect(ordered[i]! - ordered[i - 1]!).toBeGreaterThanOrEqual(BULK_RESERVATION_INTERVAL_MS)
+		for (const at of slots) expect(slots.filter(other => other >= at && other <= at + 60000).length).toBeLessThanOrEqual(100)
 		// Exhausting background lookahead does not reserve or steal delta slots.
 		await pool.query("UPDATE AI_ContactSyncCursor SET `cursor` = JSON_OBJECT('backfill', UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3)) * 1000 + 900000) WHERE name = 'bulk-delivery-pace-v2'")
-		await expect(reserveBulkSlot(acquire, 'AI_ContactSyncCursor', 'backfill')).rejects.toMatchObject({ name: 'RetryAfterError' })
+		await expect(reserveBulkSlot(acquire, 'AI_ContactSyncCursor', 'backfill')).resolves.toMatchObject({ retryAt: expect.any(Number) })
 		await expect(reserveBulkSlot(acquire, 'AI_ContactSyncCursor', 'delta')).resolves.toBeTypeOf('number')
 	}, 30000)
 

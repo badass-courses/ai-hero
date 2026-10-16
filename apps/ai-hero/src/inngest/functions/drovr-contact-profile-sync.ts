@@ -4,6 +4,7 @@ import { DROVR_SEND_RETRIES } from '@/lib/subscriber-marketing/drovr-outbox'
 import { runContactProfileSync } from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
 import { queueContactSyncBulk } from '@/lib/subscriber-marketing/contact-sync-bulk'
 import { captureDrovrOutboxLive } from '@/lib/subscriber-marketing/drovr-outbox-live'
+import { proveContactProfileDeliveryLive } from '@/lib/subscriber-marketing/contact-sync-profile-acknowledgement'
 
 export const drovrContactProfileSync = inngest.createFunction(
 	{
@@ -81,6 +82,11 @@ export const drovrContactProfileSync = inngest.createFunction(
 					contentHash,
 					legacyHash,
 				),
+			profileAckEnabled: async () => {
+				const { profileAckEnabled } = await import('@/lib/subscriber-marketing/contact-sync-profile-ack-flag-live')
+				return profileAckEnabled()
+			},
+			proveDelivery: proveContactProfileDeliveryLive,
 			acknowledge: (contactId, profileVersion) =>
 				createDrizzleContactProfileVersionStore(db).acknowledge(
 					contactId,

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+vi.mock('@/lib/subscriber-marketing/drovr-unsubscribe-supersession', async load => ({ ...await load<typeof import('@/lib/subscriber-marketing/drovr-unsubscribe-supersession')>(), closeSupersededUnsubscribesLive: async () => new Map() }))
 
 const mocks = vi.hoisted(() => ({
 	createFunction: vi.fn((config, trigger, handler) => ({

@@ -673,7 +673,7 @@ describe('row 204: the fallback never drops what drovr did not take', () => {
 			expect(entries.map((entry) => entry.idempotencyKey)).toEqual(
 				events.map((event) => event.idempotencyKey),
 			)
-			expect(entries.every((entry) => entry.source === 'fallback')).toBe(true)
+			expect(entries.every((entry) => entry.source === 'live')).toBe(true)
 			expect(entries.every((entry) => !entry.needsFanOut)).toBe(true)
 			expect(entries.map((entry) => entry.body)).toEqual(events)
 			// Outboxed is not lost: no fallback_failed.

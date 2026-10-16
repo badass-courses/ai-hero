@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+vi.mock('@/lib/subscriber-marketing/drovr-unsubscribe-supersession', async load => ({ ...await load<typeof import('./drovr-unsubscribe-supersession')>(), closeSupersededUnsubscribesLive: async () => new Map() }))
 
 import {
 	batchIngestUrl,
@@ -425,7 +426,7 @@ describe('drovr event-not-live (409) is a retry, never a drop', () => {
 			},
 		)
 
-	it('throws on one event so the step retries with backoff, and never warns it rejected', async () => {
+	it('returns explicit healthy deferral on one event without throwing or warning rejection', async () => {
 		const warn = vi.fn()
 		await expect(
 			deliverOrThrow({
@@ -435,9 +436,9 @@ describe('drovr event-not-live (409) is a retry, never a drop', () => {
 				fetcher: vi.fn().mockResolvedValue(notLive()),
 				warn,
 			}),
-		).rejects.toMatchObject({
-			name: 'DrovrDeliveryFailedError',
-			idempotencyKey: profileEvent.idempotencyKey,
+		).resolves.toMatchObject({
+			status: 'deferred',
+			httpStatus: 409,
 		})
 		expect(warn).not.toHaveBeenCalledWith(
 			'drovr.shadow.rejected',

@@ -9,6 +9,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { validateMySqlIntegrationServerUrl } from '../team-purchase-mysql-test-guard'
 import { createDrizzleContactSyncStore } from './contact-sync-reconcile-drizzle'
+import { runContactSyncReconcile, type ContactSyncReconcilePorts } from './contact-sync-reconcile'
 
 const serverUrl = process.env.AIH_EVERGREEN_JOURNEY_MYSQL_TEST_SERVER_URL
 const integration = describe.skipIf(!serverUrl)
@@ -82,6 +83,26 @@ integration('contact sync reconcile reads on MySQL', () => {
 			 VALUES (?, ?, 'pi', 'kit', ?, 'ref', ?, ?, 'internal', '{}', '{}', 1, ?, ?)`,
 			[id, contactId, id, eventType, `key:${id}`, occurredAt, createdAt],
 		)
+
+	it('resumes dense binary-id pages at an equal watermark, freezes writes, and later covers a late insert', async () => {
+		const ids = ['case-A', 'case-Z', 'case-b', 'case-c', 'case-d']
+		for (const id of ids) await contactEvent(id, id, '2032-01-01 09:30:00')
+		await store.writeWatermark('2032-01-01T09:00:00.000Z', '2032-01-01T11:00:00.000Z')
+		let now = new Date('2032-01-01T11:00:00.000Z')
+		const seen: string[] = []
+		const ports: ContactSyncReconcilePorts = { now: () => now, readWatermark: store.readWatermark, readProgress: store.readProgress, scanChanges: store.scanChanges, rotatedContacts: store.rotatedContacts, syncContact: async id => { seen.push(id); return 'sent' }, syncOffer: async () => 'sent', resendStops: async () => {}, heartbeat: async () => {}, writeWatermark: (watermark, progress) => store.writeWatermark(watermark, now.toISOString(), progress) }
+		expect((await runContactSyncReconcile(ports, { limit: 2 })).status).toBe('partial')
+		expect((await store.readProgress())?.after?.id).toBe('case-Z')
+		await contactEvent('case-late', 'case-late', '2032-01-01 09:30:00', 'skills-newsletter.subscribed', '2032-01-01 11:30:00')
+		now = new Date('2032-01-01T12:00:00.000Z')
+		expect((await runContactSyncReconcile(ports, { limit: 2 })).status).toBe('partial')
+		expect(await store.readWatermark()).toBe('2032-01-01T09:29:59.999Z')
+		expect((await store.readProgress())?.after?.id).toBe('case-c')
+		expect((await runContactSyncReconcile(ports, { limit: 2 })).status).toBe('synced')
+		expect(seen).toEqual(ids); expect(await store.readProgress()).toBeUndefined()
+		expect((await runContactSyncReconcile(ports, { limit: 2 })).status).toBe('synced')
+		expect(seen).toEqual([...ids, 'case-late'])
+	})
 
 	it('scans every event type after the start and through the end, in (occurredAt, id) order, one past the limit', async () => {
 		await contactEvent('e0', 'c0', '2026-09-26 16:40:00') // == after: excluded
@@ -239,7 +260,7 @@ integration('contact sync reconcile reads on MySQL', () => {
 		])
 	})
 
-	it('returns a rotation tie whole, even past the limit (a batch issued at one instant)', async () => {
+	it('bounds a rotation tie and resumes it by timestamp/contact id', async () => {
 		for (const contactId of ['t1', 't2', 't3'])
 			await pool.query(
 				`INSERT INTO AI_ValuePathLinkAnchor (anchorKey, contactId, valuePathSlug, emailResourceId, fingerprint, issuedAt, expiresAt)
@@ -251,7 +272,9 @@ integration('contact sync reconcile reads on MySQL', () => {
 			through: '2026-09-26T17:58:00.000Z',
 			limit: 1,
 		})
-		expect(rows.map((row) => row.contactId).sort()).toEqual(['t1', 't2', 't3'])
+		expect(rows.map((row) => row.contactId)).toEqual(['t1', 't2'])
+		const rest = await store.rotatedContacts({ after: '2026-09-26T17:40:00.000Z', through: '2026-09-26T17:58:00.000Z', limit: 1, pageAfter: { at: rows[1]!.at, id: rows[1]!.contactId } })
+		expect(rest.map(row => row.contactId)).toEqual(['t3'])
 		expect(new Set(rows.map((row) => row.at))).toEqual(
 			new Set(['2026-09-26T17:50:00.123Z']),
 		)

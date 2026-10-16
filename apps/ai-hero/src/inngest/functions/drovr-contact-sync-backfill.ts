@@ -5,6 +5,7 @@ import { persistContactSyncBulk } from '@/lib/subscriber-marketing/contact-sync-
 import { captureDrovrOutboxLive } from '@/lib/subscriber-marketing/drovr-outbox-live'
 import { profileVersionForRefresh } from '@/lib/subscriber-marketing/contact-sync-offer-refresh'
 import { runContactSyncBackfill } from '@/lib/subscriber-marketing/contact-sync-backfill'
+import { requireBackfillDungeonOverride } from '@/lib/subscriber-marketing/contact-sync-backfill-dungeon'
 
 /**
  * Contact sync, PR 4: the one-time backfill. Nothing schedules it: it runs
@@ -23,6 +24,7 @@ export const drovrContactSyncBackfill = inngest.createFunction(
 	},
 	{ event: DROVR_CONTACT_SYNC_BACKFILL_EVENT },
 	async ({ event, step }) => {
+		requireBackfillDungeonOverride(process.env)
 		const [
 			{ db },
 			{ env },

@@ -18,7 +18,8 @@ import {
 	type ScannedContactEvent,
 } from './contact-sync-reconcile'
 import type { DrovrShadowEvent } from './drovr-shadow-emitter'
-import type { DrovrOutboxEntry } from './drovr-outbox'
+import { drovrOutboxDedupeKey, outboxEntryForEvent, type DrovrOutboxEntry, type DrovrOutboxRow } from './drovr-outbox'
+import { proveContactProfileDelivery } from './contact-sync-profile-acknowledgement'
 
 const at = '2032-01-01T00:00:00.000Z'
 const snapshot = (): ContactProfileSnapshot => ({
@@ -52,12 +53,21 @@ function harness() {
 	let state = snapshot()
 	let clock = at
 	const versions = createMemoryContactProfileVersionStore({ now: () => clock })
-	const deliver = vi.fn(async (events: DrovrShadowEvent[]) => ({
-		accepted: events.length,
-		rejected: 0,
-	}))
+	const target = 'synthetic-review-receiver'
+	const receipts = new Map<string, DrovrOutboxRow>()
+	const deliver = vi.fn(async (events: DrovrShadowEvent[]) => {
+		// This fake receiver persists separate immutable delivered receipts;
+		// producer confirmation reads those, never the aggregate counter.
+		for (const event of events) {
+			const entry = outboxEntryForEvent(event, event.type === 'contact.offer.issued' ? 'live' : event.idempotencyKey.includes(':restate:') ? 'bulkRestate' : 'bulkDelta')
+			const key = drovrOutboxDedupeKey(target, entry)
+			if (!receipts.has(key)) receipts.set(key, { ...entry, target, id: key, dedupeKey: key, status: 'delivered', attempts: 0, lastStatus: 202, lastError: null, firstFailedAt: clock, nextAttemptAt: clock, lastAttemptAt: clock, deliveredAt: clock, releasedAt: null, createdAt: clock })
+		}
+		return { accepted: events.length, rejected: 0 }
+	})
 	const sync = (reason: 'restate' | 'offer-issued' | 'journey-entered') =>
 		runContactProfileSync({
+			profileAckEnabled: async () => true,
 			event: { data: { contactId: 'contact', reason } },
 			env: { AIH_DROVR_PROFILE_SYNC: 'true' },
 			step: { run: async (_id, fn) => fn(), sendEvent: async () => {} },
@@ -65,6 +75,7 @@ function harness() {
 			currentVersion: versions.currentFor,
 			versionFor: versions.versionFor,
 			acknowledge: versions.acknowledge,
+			proveDelivery: input => proveContactProfileDelivery({ ...input, target, rows: async (_target, keys) => [...receipts.values()].filter(row => keys.includes(row.dedupeKey)) }),
 			deliver,
 			ownedPath: async () => undefined,
 			onSendingJourney: async () => true,
@@ -145,6 +156,7 @@ describe('review regressions: real contact-sync decisions', () => {
 		await versions.versionFor('contact', contactProfileContentHash(state))
 		const sends: unknown[] = []
 		await runContactProfileSync({
+			profileAckEnabled: async () => true,
 			event: { data: { contactId: 'contact', reason: 'offer-issued' } },
 			env: { AIH_DROVR_PROFILE_SYNC: 'true' },
 			step: {
@@ -267,6 +279,7 @@ function reconcilePorts(
 	const p = {
 		now: () => new Date('2032-01-01T10:00:00.000Z'),
 		readWatermark: async () => '2032-01-01T09:00:00.000Z',
+		readProgress: async () => undefined,
 		scanChanges: async ({ scope }: { scope: string }) =>
 			scope === 'fresh' ? fresh : overlap,
 		rotatedContacts: async () => [],

@@ -1,4 +1,5 @@
 import { expect, it, vi } from 'vitest'
+import { BACKFILL_DUNGEON_FLAG, BACKFILL_DUNGEON_CONFIRMATION } from './contact-sync-backfill-dungeon'
 import { createMemoryContactProfileVersionStore } from './contact-profile-version'
 import {
 	runContactProfileSync,
@@ -6,6 +7,8 @@ import {
 	type ContactProfileSnapshot,
 } from './drovr-contact-profile-sync'
 import { queueContactSyncBulk } from './contact-sync-bulk'
+import { drovrOutboxDedupeKey, type DrovrOutboxRow } from './drovr-outbox'
+import { proveContactProfileDelivery } from './contact-sync-profile-acknowledgement'
 import {
 	runContactSyncBackfill,
 	type BackfillPorts,
@@ -59,6 +62,8 @@ it('generated contact histories preserve versions, immutable queued links and in
 		await store.acknowledge('contact', 1)
 		let crash = true
 		const durable = new Map<string, string>()
+		const target = 'synthetic-history-receiver'
+		const receipts = new Map<string, DrovrOutboxRow>()
 		const bulk: DrovrShadowEvent[] = []
 		const live: DrovrShadowEvent[] = []
 		const sync = async (
@@ -67,6 +72,7 @@ it('generated contact histories preserve versions, immutable queued links and in
 			const memo = new Map<string, unknown>()
 			const run = () =>
 				runContactProfileSync({
+					profileAckEnabled: async () => true,
 					event: { data: { contactId: 'contact', reason } },
 					env: { AIH_DROVR_PROFILE_SYNC: 'true' },
 					step: {
@@ -80,6 +86,7 @@ it('generated contact histories preserve versions, immutable queued links and in
 					versionFor: store.versionFor,
 					currentVersion: store.currentFor,
 					acknowledge: store.acknowledge,
+					proveDelivery: input => proveContactProfileDelivery({ ...input, target, rows: async (_target, keys) => [...receipts.values()].filter(row => keys.includes(row.dedupeKey)) }),
 					ownedPath: async () => undefined,
 					onSendingJourney: async () => true,
 					birth: async () => {},
@@ -95,6 +102,8 @@ it('generated contact histories preserve versions, immutable queued links and in
 									if (durable.has(entry.idempotencyKey))
 										expect(bytes).toBe(durable.get(entry.idempotencyKey))
 									durable.set(entry.idempotencyKey, bytes)
+									const key = drovrOutboxDedupeKey(target, entry)
+									if (!receipts.has(key)) receipts.set(key, { ...entry, id: key, target, dedupeKey: key, status: 'pending', attempts: 0, lastStatus: null, lastError: null, firstFailedAt: new Date(clock).toISOString(), nextAttemptAt: new Date(clock).toISOString(), lastAttemptAt: null, deliveredAt: null, releasedAt: null, createdAt: new Date(clock).toISOString() })
 								}
 								return { status: 'outboxed', count: entries.length }
 							},
@@ -106,6 +115,13 @@ it('generated contact histories preserve versions, immutable queued links and in
 								bulk.push(
 									...envelopes.flatMap((envelope) => envelope.data.events),
 								)
+								// This model drains the physical receiver after publish,
+								// before the producer's fresh proof. Queue-only no-ACK
+								// behavior is tested independently with pending rows.
+								for (const event of envelopes.flatMap(envelope => envelope.data.events)) {
+									const row = [...receipts.values()].find(row => row.idempotencyKey === event.idempotencyKey)!
+									row.status = 'delivered'; row.lastStatus = 202; row.deliveredAt = new Date(clock).toISOString()
+								}
 							},
 						})
 					},
@@ -251,7 +267,7 @@ it('dry count is five aggregate reads; canary proves the count, then grants only
 			event: { data },
 			step,
 			ports,
-			env: { AIH_DROVR_PROFILE_SYNC: 'true' },
+			env: { AIH_DROVR_PROFILE_SYNC: 'true', [BACKFILL_DUNGEON_FLAG]: BACKFILL_DUNGEON_CONFIRMATION },
 		})
 	expect(await run({ dryRun: true })).toEqual({ status: 'dry-run', rows: 1 })
 	expect(countEvents).toHaveBeenCalledTimes(5)

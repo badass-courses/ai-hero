@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+vi.mock('@/lib/subscriber-marketing/drovr-unsubscribe-supersession', async load => ({ ...await load<typeof import('./drovr-unsubscribe-supersession')>(), closeSupersededUnsubscribesLive: async () => new Map() }))
 
 const mocks = vi.hoisted(() => ({ direct: vi.fn(), capture: vi.fn() }))
 
@@ -49,6 +50,18 @@ describe('the production fallback post (row 204)', () => {
 		vi.clearAllMocks()
 	})
 
+	it.each(['kit', 'evergreen'] as const)('a failed %s bulk handoff retains its protected source and never invokes the direct fallback', async kind => {
+		const fact: DrovrShadowFact = kind === 'kit' ? { kind: 'contact-created', contactId: 'synthetic-bulk', createdAt: '2032-01-01T00:00:00.000Z', sourceLifecycle: 'new', kitSubscriberId: '4242', deliverySource: 'kit-directory-ingest' } : { kind: 'course-completed', contactId: 'synthetic-bulk', valuePathSlug: 'ai-hero-skills-workflow', completedAt: '2032-01-01T00:00:00.000Z', backfill: { occurredAt: '2032-01-01T00:00:00.000Z', idempotencyKey: 'synthetic-bulk-birth' } }
+		mocks.capture.mockResolvedValue({ status: 'outboxed', count: 1 })
+		const resolveOwners = vi.fn(async () => [])
+		expect(await dispatchDrovrShadowFact(fact, { send: vi.fn().mockRejectedValue(new Error('synthetic broker unavailable')), warn: vi.fn(), error: vi.fn(), resolveOwners, evergreenEnabled: false })).toBe('outboxed')
+		expect(mocks.direct).not.toHaveBeenCalled(); expect(resolveOwners).not.toHaveBeenCalled()
+		expect(mocks.capture).toHaveBeenCalledOnce()
+		const expected = mapDrovrShadowFact(fact)
+		expect(mocks.capture.mock.calls[0]![0]).toHaveLength(expected.length)
+		expect(mocks.capture.mock.calls[0]![0]).toEqual(expected.map(event => expect.objectContaining({ body: event, needsFanOut: true, source: kind === 'kit' ? 'bulkIngest' : 'bulkEvergreen', ...(kind === 'evergreen' ? { firstSentAt: '2032-01-01T00:00:00.000Z' } : {}) })))
+	})
+
 	it('posts directly and outboxes what drovr answered 5xx for', async () => {
 		const events = mapDrovrShadowFact(signup)
 		mocks.direct.mockResolvedValue(events)
@@ -72,7 +85,7 @@ describe('the production fallback post (row 204)', () => {
 					endpoint: 'events',
 					idempotencyKey: event.idempotencyKey,
 					body: event,
-					source: 'fallback',
+					source: 'live',
 					needsFanOut: false,
 				}),
 			),

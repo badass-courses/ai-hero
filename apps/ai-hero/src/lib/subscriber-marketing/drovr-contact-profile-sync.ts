@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto'
 import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
 
 import type { ContactProfileVersion } from './contact-profile-version'
+import { profileAckFlagEnabled } from './contact-sync-profile-ack-flag'
 
 import {
 	birthThenRedeliver,
@@ -365,6 +366,7 @@ export type ContactProfileSyncReceipt =
 			accepted: number
 			rejected: number
 	  }
+	| { status: 'awaiting-proof'; profileVersion: number; reason: 'receiver-acceptance-unproven' }
 	/**
 	 * drovr refused the push as event-not-live (or cold-start-unhandled):
 	 * nothing recorded, and the same events are scheduled for after its
@@ -388,14 +390,15 @@ type DeliveryResult =
 
 /**
  * One contact's profile to drovr's contact directory: read it, version it by
- * content, and deliver or strictly outbox the events before answering
- * `sent` (the delta reconcile's watermark relies on that). Profile/link
+ * content, and require whole-contact terminal receiver proof before answering
+ * `sent` or acknowledging a profile version. Queue/capture is awaiting-proof,
+ * not acceptance or reconciliation coverage. Profile/link
  * changes move the version; coupons read it without writing it. An unchanged
  * acknowledged digest skips, except for a monthly profile-only confirmation. Events addressed to the authority tenant go
  * straight to it: no owner fan-out. Read before versioning, so a missing
  * contact spends no version; per-contact concurrency of one keeps a higher
- * version carrying newer content. A 5xx, a network failure or drovr's 409
- * event-not-live throws, and the step retries.
+ * version carrying newer content. Network/5xx failures use SDK retry; healthy
+ * migration deferrals and unproved queue handoffs remain unacknowledged.
  */
 export async function runContactProfileSync(args: {
 	event: Pick<DrovrContactProfileSyncRequested, 'data'>
@@ -419,8 +422,12 @@ export async function runContactProfileSync(args: {
 	now?: () => number
 	/** Births directory actors drovr answered cold-start-unhandled for (§4). */
 	birth: (contactIds: string[]) => Promise<void>
-	/** Records that drovr fully accepted this version (the version store). */
+	/** OFF preserves main's legacy optimistic ACK; ON requires receiver proof. */
 	acknowledge: (contactId: string, profileVersion: number) => Promise<void>
+	/** Fresh, bounded whole-subsystem flag; omitted/failed/hung reads are OFF. */
+	profileAckEnabled?: () => Promise<boolean>
+	/** While ON, missing proof adapters fail closed even with positive counters. */
+	proveDelivery?: (input: { contactId: string; profileVersion: number; events: DrovrShadowEvent[] }) => Promise<boolean>
 	currentVersion?: (contactId: string) => Promise<(ContactProfileVersion & { contentHash?: string }) | undefined>
 }): Promise<ContactProfileSyncReceipt> {
 	const config = parseDrovrProfileSyncConfig(args.env)
@@ -527,11 +534,25 @@ export async function runContactProfileSync(args: {
 	if (rejected > 0) {
 		return { status: 'skipped', reason: 'drovr-rejected' }
 	}
-	// Delivery answered or the strict bulk handoff durably queued every
-	// event. A coupon cannot postpone the profile's next confirmation.
-	if (!offerOnly) await args.step.run('delta-acknowledge-version', () =>
-		args.acknowledge(contactId, profileVersion),
-	)
+	// Reader-first rollout: OFF intentionally retains main's optimistic ACK,
+	// avoiding unacknowledged-version resend/recapture storms. It is NOT the
+	// new confirmation protocol. ON requires complete native receiver proof.
+	if (!offerOnly) {
+		const confirmed = await args.step.run('delta-acknowledge-version', async () => {
+			const enabled = await profileAckFlagEnabled({ readFlag: async () => args.profileAckEnabled?.() ?? false })
+			if (!enabled) {
+				await args.acknowledge(contactId, profileVersion)
+				return true
+			}
+			// Re-read inside the effect: a previously memoized proof must not
+			// grant an ACK after a failed write and an intervening hold.
+			const proved = await args.proveDelivery?.({ contactId, profileVersion, events }) ?? false
+			if (!proved) return false
+			await args.acknowledge(contactId, profileVersion)
+			return true
+		}) as boolean
+		if (!confirmed) return { status: 'awaiting-proof', profileVersion, reason: 'receiver-acceptance-unproven' }
+	}
 	return {
 		status: 'sent',
 		profileVersion,

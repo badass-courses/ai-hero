@@ -6,6 +6,7 @@ import {
 	type DrovrSignupStatus,
 } from './drovr-doi-signup'
 import type { DrovrOutboxPostOutcome, DrovrOutboxRow } from './drovr-outbox'
+import { assertOutboxWireRow } from './drovr-outbox-wire-status'
 import {
 	DROVR_SHADOW_TENANT_ID,
 	type DrovrDeliveryConfig,
@@ -106,6 +107,7 @@ export async function postDrovrOutboxRow(
 	row: DrovrOutboxRow,
 	ports: DrovrOutboxPostPorts,
 ): Promise<DrovrOutboxPostOutcome> {
+	assertOutboxWireRow(row)
 	if (row.endpoint === 'signups') return postSignup(row, ports)
 	const base = row.body as DrovrShadowEvent
 	const fanned = row.needsFanOut ? await ports.fanOut([base]) : [base]
@@ -124,6 +126,7 @@ export async function postDrovrOutboxRow(
 					: 'nothing-deliverable',
 		}
 	let accepted = 0
+	let supersededAt: string | undefined
 	let rejected:
 		| { httpStatus: number; detail: unknown; idempotencyKey: string }
 		| undefined
@@ -141,12 +144,11 @@ export async function postDrovrOutboxRow(
 			timeoutMs: DROVR_OUTBOX_POST_TIMEOUT_MS,
 			clampAt: Date.parse(row.firstFailedAt),
 		})
+		if (outcome.status === 'deferred') return { kind: 'deferred', httpStatus: 409, reason: outcome.reason }
 		if (outcome.status === 'failed')
 			return {
 				kind: 'failed',
-				// The single-event transport reports only event-not-live as a
-				// failed 409. Keep its immutable row pending, never rejected.
-				transient: outcome.reason.startsWith('event-not-live:') || isTransientStatus(outcome.httpStatus),
+				transient: isTransientStatus(outcome.httpStatus),
 				reason: outcome.reason,
 				...(outcome.httpStatus === undefined
 					? {}
@@ -155,6 +157,7 @@ export async function postDrovrOutboxRow(
 					? {}
 					: { retryAfterMs: outcome.retryAfterMs }),
 			}
+		if (outcome.status === 'superseded') { supersededAt = outcome.supersededAt; continue }
 		if (outcome.status === 'accepted') {
 			accepted += 1
 			continue
@@ -167,6 +170,7 @@ export async function postDrovrOutboxRow(
 		}
 	}
 	if (rejected) return { kind: 'rejected', ...rejected }
+	if (supersededAt) return { kind: 'superseded', at: supersededAt }
 	if (accepted > 0) return { kind: 'delivered', httpStatus: 200 }
 	return { kind: 'settled', httpStatus: 409, detail: 'owner-stop-never-born' }
 }

@@ -4,6 +4,7 @@ import type { Environment } from './flags-env'
 export const COMMERCE_ENABLED = 'commerce-enabled'
 export const SHOW_TEAM_PRICING = 'show-team-pricing'
 export const C5_PRICING_ENABLED = 'c5-pricing-enabled'
+export const DROVR_PROFILE_ACK_ENABLED = 'drovr-profile-ack-enabled'
 
 export type FlagConfig = {
 	key: string
@@ -16,7 +17,8 @@ export type FlagConfig = {
 export const FLAGS: Record<
 	| typeof COMMERCE_ENABLED
 	| typeof SHOW_TEAM_PRICING
-	| typeof C5_PRICING_ENABLED,
+	| typeof C5_PRICING_ENABLED
+	| typeof DROVR_PROFILE_ACK_ENABLED,
 	FlagConfig
 > = {
 	[COMMERCE_ENABLED]: {
@@ -63,6 +65,22 @@ export const FLAGS: Record<
 		options: [
 			{ value: false, label: 'Closed' },
 			{ value: true, label: 'Open' },
+		],
+	},
+	[DROVR_PROFILE_ACK_ENABLED]: {
+		key: DROVR_PROFILE_ACK_ENABLED,
+		name: 'Drovr profile ACK subsystem enabled',
+		description:
+			'Enables frozen profileAck registration, atomic completion and failed/partial-ACK tombstones together. OFF preserves legacy optimistic producer ACK to avoid extra sends. One-way boundary: enable only after dispatch, purge, metrics and operator reader compatibility proof.',
+		defaultValue: {
+			production: false,
+			preview: false,
+			development: false,
+			test: false,
+		},
+		options: [
+			{ value: false, label: 'Disabled' },
+			{ value: true, label: 'Enabled after reader deployment proof' },
 		],
 	},
 } as const

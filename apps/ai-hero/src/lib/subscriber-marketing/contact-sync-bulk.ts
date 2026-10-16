@@ -1,9 +1,19 @@
 import {
 	deliverEventNameFor,
 	type DrovrDeliverEventName,
+	type DrovrDeliverySource,
 } from '@/inngest/events/drovr'
 
 export const BULK_OUTBOX_QUEUE_WAIT_MS = 24 * 60 * 60_000
+/** Class metadata must survive every capture road. Unknown capped native
+ * work stays conservative, never under the profile-only backfill guard. */
+export function bulkOutboxSource(source: DrovrDeliverySource): 'bulkDelta' | 'bulkRestate' | 'bulkIngest' | 'bulkBackfill' | 'bulkEvergreen' {
+	if (source === 'contact-profile-sync') return 'bulkDelta'
+	if (source === 'contact-profile-restate') return 'bulkRestate'
+	if (source === 'kit-directory-ingest') return 'bulkIngest'
+	if (source === 'contact-sync-backfill') return 'bulkBackfill'
+	return 'bulkEvergreen'
+}
 import { outboxEntryForEvent } from './drovr-outbox'
 import type { DrovrOutboxCaptureFn } from './drovr-outbox-step'
 import type { DrovrShadowEvent } from './drovr-shadow-emitter'

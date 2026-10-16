@@ -1,3 +1,4 @@
+import { assertBulkPostPermit, BulkSlotExpiredError } from './drovr-bulk-permit'
 import { admitValuePathBirths } from './drovr-value-path-birth-admission'
 import { env } from '@/env.mjs'
 import { withoutSyntheticContacts } from '@/lib/synthetic-principal'
@@ -1130,6 +1131,8 @@ function stringValue(value: unknown) {
  * transient (5xx, network, timeout) and is the only outcome worth a retry.
  */
 export type DrovrDeliveryOutcome =
+	| { status: 'deferred'; httpStatus: 409; reason: string }
+	| { status: 'superseded'; supersededAt: string; reason: string }
 	| { status: 'accepted' }
 	| { status: 'rejected'; httpStatus: number; problem: unknown }
 	| {
@@ -1166,13 +1169,18 @@ export async function deliverDrovrShadowEvent(args: {
 	const controller = new AbortController()
 	const timeout = setTimeout(() => controller.abort(), args.timeoutMs ?? 10_000)
 	try {
+		const { closeSupersededUnsubscribesLive } = await import('./drovr-unsubscribe-supersession')
+		const closed = await closeSupersededUnsubscribesLive([args.event])
+		if (closed.has(args.event)) return { status: 'superseded', supersededAt: closed.get(args.event)!, reason: 'newer-contact-resubscribed; closed locally, never delivered late (3mxwwjnmt7iq6)' }
+		const body = JSON.stringify(clamped.events[0])
+		assertBulkPostPermit()
 		const response = await fetcher(args.config.ingestUrl, {
 			method: 'POST',
 			headers: {
 				authorization: `Bearer ${args.config.apiKey}`,
 				'content-type': 'application/json',
 			},
-			body: JSON.stringify(clamped.events[0]),
+			body,
 			signal: controller.signal,
 		})
 		if (response.status === 200 || response.status === 202) {
@@ -1190,9 +1198,9 @@ export async function deliverDrovrShadowEvent(args: {
 			const problem = await boundedProblemBody(response)
 			if (response.status === 409 && isEventNotLiveProblem(problem)) {
 				return {
-					status: 'failed',
+					status: 'deferred',
 					httpStatus: 409,
-					reason: 'event-not-live: you sent an event, and it failed because this contact is not migrated. Accepted: the same immutable event and key later. Fix: retry after the straggler pass. Debug: inspect the directory migration receipt.',
+					reason: 'EventNotLive: you sent an event, and it failed because this contact is not migrated. Accepted: the same immutable event and key later. Fix: retry after the straggler pass. Debug: inspect the directory migration receipt.',
 				}
 			}
 			// Row 204c: a stop's answer goes through the one stop rule. A stop
@@ -1222,6 +1230,7 @@ export async function deliverDrovrShadowEvent(args: {
 			...retryAfter,
 		}
 	} catch (error) {
+		if (error instanceof BulkSlotExpiredError) throw error
 		return {
 			status: 'failed',
 			reason: error instanceof Error ? error.message : String(error),

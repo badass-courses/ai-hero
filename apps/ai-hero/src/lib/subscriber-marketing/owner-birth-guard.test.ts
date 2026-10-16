@@ -808,6 +808,13 @@ describe('the owner-without-birth guard (row 110)', () => {
 		expect(receipt).toMatchObject({ unreadable: 1, candidates: 0 })
 	})
 
+	it('does not turn healthy event-not-live into acceptance, rejection or a terminal native-debt marker', async () => {
+		const h = harness({ owners: [owner('synthetic-deferred')], post: async () => ({ status: 'deferred', httpStatus: 409, reason: 'synthetic operator prose' }) })
+		expect(await h.run()).toMatchObject({ reposted: 0, rejectedOnPost: 0, suppressedOnPost: 0, deferredOnPost: 1 })
+		expect(h.recorded).toEqual([])
+		expect(h.posted).toHaveLength(1)
+	})
+
 	it('counts a re-post drovr refuses as suppressed, records it, and never retries it', async () => {
 		const h = harness({
 			owners: [owner('sup')],

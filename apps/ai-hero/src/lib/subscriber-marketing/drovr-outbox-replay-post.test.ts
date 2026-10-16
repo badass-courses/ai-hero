@@ -161,20 +161,20 @@ describe('postDrovrOutboxRow', () => {
 		).toEqual({ kind: 'failed', transient: true, reason: 'aborted' })
 	})
 
-	it('retries event-not-live unchanged, but a missing key still needs an operator', async () => {
+	it('defers explicit event-not-live unchanged, but a missing key still needs an operator', async () => {
 		expect(
 			await postDrovrOutboxRow(
 				asRow(outboxEntryForEvent(authorityCopy, 'live')),
 				ports({
 					deliver: async () => ({
-						status: 'failed',
+						status: 'deferred',
 						httpStatus: 409,
 						reason:
-							'event-not-live: contact is not migrated',
+							'EventNotLive: contact is not migrated',
 					}),
 				}),
 			),
-		).toMatchObject({ kind: 'failed', transient: true, httpStatus: 409 })
+		).toMatchObject({ kind: 'deferred', httpStatus: 409 })
 		expect(
 			await postDrovrOutboxRow(
 				asRow(outboxEntryForEvent(authorityCopy, 'live')),
