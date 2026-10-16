@@ -174,10 +174,12 @@ export async function checkout(state, key, fixtureKey, shouldComplete = false, {
   url.searchParams.set('productId', catalog[0].id)
   url.searchParams.set('quantity', String(fixture.quantity))
   url.searchParams.set('cancelUrl', origin)
-  if (fixture.couponId) url.searchParams.set('couponId', fixture.couponId)
+  // RIG_COUPON_ID and RIG_COUNTRY override the fixture, to exercise PPP paths.
+  const couponId = process.env.RIG_COUPON_ID ?? fixture.couponId
+  if (couponId) url.searchParams.set('couponId', couponId)
   if (fixture.quantity > 1) { url.searchParams.set('bulk', 'true'); url.searchParams.set('organizationId', `rig_org_${fixture.key}`) }
   // The buy form POSTs to this path; Course Builder rejects GET as an unknown action.
-  let response = await fetch(url, { method: 'POST', headers: { cookie, origin, 'content-type': 'application/x-www-form-urlencoded' }, body: '', redirect: 'manual', signal: AbortSignal.timeout(90000) })
+  let response = await fetch(url, { method: 'POST', headers: { cookie, origin, 'content-type': 'application/x-www-form-urlencoded', ...(process.env.RIG_COUNTRY ? { 'x-vercel-ip-country': process.env.RIG_COUNTRY } : {}) }, body: '', redirect: 'manual', signal: AbortSignal.timeout(90000) })
   const checkoutCookies = response.headers.getSetCookie().map(value => {
     const pair = value.split(';')[0]
     const separator = pair.indexOf('=')

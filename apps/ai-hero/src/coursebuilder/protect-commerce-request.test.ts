@@ -5,10 +5,14 @@ const mocks = vi.hoisted(() => ({
 	calls: [] as string[],
 	authoritativePrice: vi.fn(),
 	serverComputedCoupon: vi.fn(async (): Promise<unknown> => null),
+	getMerchantCoupon: vi.fn(async (): Promise<unknown> => null),
 }))
 
 vi.mock('@/db', () => ({
-	courseBuilderAdapter: { authoritativePrice: mocks.authoritativePrice },
+	courseBuilderAdapter: {
+		authoritativePrice: mocks.authoritativePrice,
+		getMerchantCoupon: mocks.getMerchantCoupon,
+	},
 	db: { query: { purchases: { findMany: vi.fn(async () => []) } } },
 }))
 vi.mock('@/db/schema', () => ({ purchases: {} }))
@@ -33,15 +37,16 @@ vi.mock('@/coursebuilder/coursebuilder-request-authorization', () => ({
 
 import { protectCourseBuilderRequest } from '@/coursebuilder/coursebuilder-request-authorization'
 import { PURCHASE_BLOCKED_ERROR_PATH } from '@/coursebuilder/purchase-block-checkout'
-import { REGIONAL_TEAM_NOT_ALLOWED_PATH } from '@/lib/purchase-guardrails'
+import {
+	ALREADY_OWN_PATH,
+	INVALID_QUANTITY_PATH,
+	REGIONAL_TEAM_NOT_ALLOWED_PATH,
+} from '@/lib/purchase-guardrails'
 import { REGIONAL_UPGRADE_PATH } from '@/lib/c5-pricing/products'
 
 import { AUTHORITATIVE_PPP_OFFER_ID } from '@coursebuilder/commerce/authoritative-price'
 
-import {
-	ALREADY_OWN_PATH,
-	protectCommerceRequest,
-} from './protect-commerce-request'
+import { protectCommerceRequest } from './protect-commerce-request'
 
 const VALID = [{ status: 'Valid', bulk: false }]
 const RESTRICTED = [{ status: 'Restricted', bulk: false }]
@@ -72,10 +77,10 @@ describe('protectCommerceRequest', () => {
 		expect(request).toBeInstanceOf(Response)
 		const response = request as Response
 		expect(response.status).toBe(303)
-		expect(
-			new URL(response.headers.get('location')!).pathname +
-				new URL(response.headers.get('location')!).search,
-		).toBe(PURCHASE_BLOCKED_ERROR_PATH)
+		expect(new URL(response.headers.get('location')!).pathname +
+			new URL(response.headers.get('location')!).search).toBe(
+			PURCHASE_BLOCKED_ERROR_PATH,
+		)
 		expect(mocks.calls).toEqual(['purchase-block'])
 		expect(protectCourseBuilderRequest).not.toHaveBeenCalled()
 		expect(mocks.authoritativePrice).not.toHaveBeenCalled()
@@ -242,6 +247,64 @@ describe('protectCommerceRequest', () => {
 		expect(request).toBeInstanceOf(NextRequest)
 	})
 
+	it('refuses a client-sent PPP merchant coupon the protector kept, on a team order of a non-authoritative product', async () => {
+		mocks.getMerchantCoupon.mockResolvedValueOnce({ id: 'mc-client', type: 'ppp' })
+		const { request } = await protectCommerceRequest(
+			checkout('product-other', 5, 'mc-client'),
+			{
+				session: async () => ({ userId: 'user-1' }),
+				isBlocked: async () => false,
+				existingPurchases: async () => [],
+			},
+		)
+		expect(mocks.getMerchantCoupon).toHaveBeenCalledWith('mc-client')
+		const location = new URL((request as Response).headers.get('location')!)
+		expect(location.pathname + location.search).toBe(
+			REGIONAL_TEAM_NOT_ALLOWED_PATH,
+		)
+	})
+
+	it('lets a kept client coupon of another type through on a team order', async () => {
+		mocks.getMerchantCoupon.mockResolvedValueOnce({ id: 'mc-special', type: 'special' })
+		const { request } = await protectCommerceRequest(
+			checkout('product-other', 5, 'mc-special'),
+			{
+				session: async () => ({ userId: 'user-1' }),
+				isBlocked: async () => false,
+				existingPurchases: async () => [],
+			},
+		)
+		expect(request).toBeInstanceOf(NextRequest)
+	})
+
+	it('reads the last value of a repeated quantity, as Course Builder does', async () => {
+		const url = new URL(checkout(C5, 2, 'none').url)
+		url.searchParams.append('quantity', '1')
+		const { request } = await protectCommerceRequest(
+			new NextRequest(url, { method: 'POST' }),
+			{
+				session: async () => ({ userId: 'user-owner' }),
+				isBlocked: async () => false,
+				existingPurchases: async () => VALID,
+			},
+		)
+		const location = new URL((request as Response).headers.get('location')!)
+		expect(location.pathname + location.search).toBe(ALREADY_OWN_PATH)
+	})
+
+	it('skips the product and purchase lookups on a team order with no regional coupon', async () => {
+		const existingPurchases = vi.fn(async () => VALID)
+		const productType = vi.fn(async () => 'cohort')
+		await protectCommerceRequest(checkout(C5, 5, 'none'), {
+			session: async () => ({ userId: 'user-1' }),
+			isBlocked: async () => false,
+			existingPurchases,
+			productType,
+		})
+		expect(existingPurchases).not.toHaveBeenCalled()
+		expect(productType).not.toHaveBeenCalled()
+	})
+
 	it('lets a server-computed bulk coupon through on a team order', async () => {
 		mocks.serverComputedCoupon.mockResolvedValueOnce({
 			id: 'mc-bulk',
@@ -282,7 +345,7 @@ describe('protectCommerceRequest', () => {
 				},
 			)
 			const location = new URL((request as Response).headers.get('location')!)
-			expect(location.pathname).toBe('/subscribe/error')
+			expect(location.pathname).toBe(INVALID_QUANTITY_PATH)
 		},
 	)
 

@@ -7,6 +7,7 @@ import { Login } from '@/components/login'
 import { courseBuilderAdapter, db } from '@/db'
 import { purchases } from '@/db/schema'
 import { env } from '@/env.mjs'
+import { AUTHORITATIVE_PRODUCT_IDS } from '@/lib/c5-pricing/decision'
 import {
 	CHECKOUT_LOGIN_BROWSER_COOKIE,
 	hashCheckoutLoginBrowserSession,
@@ -17,10 +18,11 @@ import {
 } from '@/lib/checkout-login-handoff'
 import { checkoutLoginHandoffStore } from '@/lib/checkout-login-handoff-store'
 import { authorizeExclusiveCouponSelection } from '@/lib/exclusive-coupon-authorization'
-import { AUTHORITATIVE_PRODUCT_IDS } from '@/lib/c5-pricing/decision'
 import { getProduct } from '@/lib/products-query'
 import {
+	ALREADY_OWN_PATH,
 	duplicatePurchaseGuard,
+	INVALID_QUANTITY_PATH,
 	isRegionalCoupon,
 	parseCheckoutQuantity,
 	REGIONAL_TEAM_NOT_ALLOWED_PATH,
@@ -57,20 +59,19 @@ export default async function VerifyLoginPage({
 
 	let callbackUrl = `${env.COURSEBUILDER_URL}/subscribe/logged-in`
 
+	// Same strict rule and destination as protectCommerceRequest.
+	const rawQuantity = checkoutParams.quantity
+	const checkoutQuantity = parseCheckoutQuantity(
+		Array.isArray(rawQuantity) ? rawQuantity.join(',') : rawQuantity,
+	)
+	if (checkoutQuantity === null) {
+		return redirect(INVALID_QUANTITY_PATH)
+	}
+
 	const parsedCheckoutParams = CheckoutParamsSchema.safeParse(checkoutParams)
 
 	if (!parsedCheckoutParams.success) {
 		return redirect('/login')
-	}
-
-	// Same strict rule as protectCommerceRequest: a positive integer or refuse.
-	const checkoutQuantity = parseCheckoutQuantity(
-		typeof checkoutParams.quantity === 'string'
-			? checkoutParams.quantity
-			: undefined,
-	)
-	if (checkoutQuantity === null) {
-		return redirect('/subscribe/error')
 	}
 
 	const couponAuthorization = await authorizeExclusiveCouponSelection({
@@ -114,7 +115,7 @@ export default async function VerifyLoginPage({
 		return redirect(REGIONAL_TEAM_NOT_ALLOWED_PATH)
 	}
 	if (duplicateDecision === 'already-own') {
-		return redirect(`/invoices?already-own=1`)
+		return redirect(ALREADY_OWN_PATH)
 	}
 
 	if (requiresDuplicateActivePurchaseGuardrail(product?.type)) {

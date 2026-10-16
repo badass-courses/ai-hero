@@ -12,9 +12,9 @@ import { Button } from '@coursebuilder/ui'
 const Invoices = async ({
 	searchParams,
 }: {
-	searchParams?: Promise<{ 'already-own'?: string }>
-} = {}) => {
-	const alreadyOwn = (await searchParams)?.['already-own'] === '1'
+	searchParams: Promise<{ 'already-own'?: string }>
+}) => {
+	const alreadyOwn = (await searchParams)['already-own'] === '1'
 	const { session } = await getServerAuthSession()
 	if (!session?.user?.id) redirect('/login?callbackUrl=%2Finvoices')
 

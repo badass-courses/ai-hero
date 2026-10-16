@@ -34,6 +34,12 @@ export const REGIONAL_TEAM_NOT_ALLOWED = 'regional-team-not-allowed'
 
 export const REGIONAL_TEAM_NOT_ALLOWED_PATH = `/subscribe/error?reason=${REGIONAL_TEAM_NOT_ALLOWED}`
 
+/** Where a refused single-seat duplicate goes, with the reason shown. */
+export const ALREADY_OWN_PATH = '/invoices?already-own=1'
+
+/** One destination for a quantity that is not a positive integer. */
+export const INVALID_QUANTITY_PATH = '/subscribe/error'
+
 export type DuplicatePurchaseDecision =
 	| 'allow'
 	| 'already-own'

@@ -119,14 +119,14 @@ beforeEach(() => {
 describe('invoices list', () => {
 	it('redirects an anonymous visitor to sign in without querying personal invoices', async () => {
 		mocks.getServerAuthSession.mockResolvedValue({ session: null })
-		await expect(Invoices()).rejects.toThrow(
+		await expect(Invoices({ searchParams: Promise.resolve({}) })).rejects.toThrow(
 			'redirect:/login?callbackUrl=%2Finvoices',
 		)
 		expect(mocks.findCharges).not.toHaveBeenCalled()
 		expect(mocks.findPurchases).not.toHaveBeenCalled()
 	})
 	it('shows an obvious Edit invoice details action for each invoice', async () => {
-		const markup = renderToStaticMarkup(await Invoices())
+		const markup = renderToStaticMarkup(await Invoices({ searchParams: Promise.resolve({}) }))
 		const editActions = markup.match(/Edit invoice details/g) ?? []
 		expect(editActions).toHaveLength(1)
 		expect(markup).toContain('/invoices/mch_123#invoice-details')

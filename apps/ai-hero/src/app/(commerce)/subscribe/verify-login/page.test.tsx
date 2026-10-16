@@ -38,7 +38,8 @@ vi.mock('@/env.mjs', () => ({
 	},
 }))
 vi.mock('@/lib/exclusive-coupon-authorization', () => ({
-	authorizeExclusiveCouponSelection: mocks.authorizeExclusiveCouponSelection,
+	authorizeExclusiveCouponSelection:
+		mocks.authorizeExclusiveCouponSelection,
 }))
 vi.mock('@/lib/checkout-login-handoff-store', () => ({
 	checkoutLoginHandoffStore: { issue: mocks.handoffIssue },
@@ -68,7 +69,11 @@ import {
 	verifyCheckoutLoginHandoff,
 } from '@/lib/checkout-login-handoff'
 
-import { REGIONAL_TEAM_NOT_ALLOWED_PATH } from '@/lib/purchase-guardrails'
+import {
+	ALREADY_OWN_PATH,
+	INVALID_QUANTITY_PATH,
+	REGIONAL_TEAM_NOT_ALLOWED_PATH,
+} from '@/lib/purchase-guardrails'
 
 import VerifyLoginPage from './page'
 
@@ -143,7 +148,9 @@ describe('verify-login checkout handoff', () => {
 			if (!verification.valid) throw new Error('expected valid handoff')
 			expect(mocks.handoffIssue).toHaveBeenCalledWith(
 				expect.objectContaining({
-					nonceHash: hashCheckoutLoginHandoffNonce(verification.payload.nonce),
+					nonceHash: hashCheckoutLoginHandoffNonce(
+						verification.payload.nonce,
+					),
 					browserSessionHash: hashCheckoutLoginBrowserSession(
 						mocks.browserSession,
 					),
@@ -155,7 +162,9 @@ describe('verify-login checkout handoff', () => {
 
 	it('bootstraps an HttpOnly browser session before issuing a handoff', async () => {
 		mocks.cookies.mockResolvedValue({
-			get: vi.fn((_name: string): { value: string } | undefined => undefined),
+			get: vi.fn(
+				(_name: string): { value: string } | undefined => undefined,
+			),
 		})
 		const redirectError = new Error('redirected')
 		mocks.redirect.mockImplementationOnce(() => {
@@ -200,7 +209,7 @@ describe('verify-login checkout handoff', () => {
 				{ status: 'Valid', bulkCouponId: null },
 			])
 			expect(await run({ quantity: '1', couponId: '' })).toBe(
-				'/invoices?already-own=1',
+				ALREADY_OWN_PATH,
 			)
 		})
 
@@ -225,14 +234,10 @@ describe('verify-login checkout handoff', () => {
 			expect(await run({ quantity: '5' })).toBe(REGIONAL_TEAM_NOT_ALLOWED_PATH)
 		})
 
-		it('sends a non-numeric quantity to login, as the checkout schema does', async () => {
-			expect(await run({ quantity: 'abc' })).toBe('/login')
-		})
-
-		it.each(['0', '2.5', '1e1', '-1'])(
+		it.each(['0', '2.5', '1e1', '-1', 'abc'])(
 			'refuses quantity %s',
 			async (quantity) => {
-				expect(await run({ quantity })).toBe('/subscribe/error')
+				expect(await run({ quantity })).toBe(INVALID_QUANTITY_PATH)
 			},
 		)
 	})

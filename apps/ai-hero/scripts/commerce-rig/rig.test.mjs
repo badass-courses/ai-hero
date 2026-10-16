@@ -317,18 +317,28 @@ test('rig Redis stand-in allows only the local C5 flag read, never writes or dep
   } finally { server.close() }
 })
 
-test('holder fixtures are seeded with the status and ppp flags the guard reads', async () => {
-  const { readFile } = await import('node:fs/promises')
+test('holder fixtures seed the status and ppp coupon the guard reads', async () => {
   const { AUTHORITATIVE_PPP_OFFER_ID } = await import('@coursebuilder/commerce/authoritative-price')
-  const seeder = await readFile(new URL('./seed.mjs', import.meta.url), 'utf8')
-  // The seeder must write each purchase's status, and mark ppp ones with a coupon.
-  assert.match(seeder, /status: purchase\.status \?\? 'Valid'/)
-  assert.match(seeder, /couponId: purchase\.ppp \? couponId : null/)
-  const seat = fixtureFor('seat-holder-team')
-  assert.equal(seat.quantity, 2)
-  assert.equal(seat.purchases[0].status ?? 'Valid', 'Valid')
-  const restricted = fixtureFor('restricted-holder-team')
-  assert.deepEqual([restricted.purchases[0].status, restricted.purchases[0].ppp, restricted.couponId], ['Restricted', true, undefined])
-  assert.equal(fixtureFor('restricted-holder-team-ppp').couponId, AUTHORITATIVE_PPP_OFFER_ID)
-  assert.equal(fixtureFor('seat-holder').quantity, 1)
+  const { purchaseCouponId, couponRow, purchaseRow } = await import('./seed.mjs')
+  const rowFor = key => {
+    const fixture = fixtureFor(key)
+    const purchase = fixture.purchases[0]
+    const couponId = purchaseCouponId(fixture, purchase, 0)
+    return { fixture, couponId, purchase: purchaseRow({ id: 'p', fixture, purchase, org: 'o', member: 'm', catalog, chargeId: null, sessionId: null, couponId, generation: 'g' }), coupon: couponId ? couponRow({ couponId, purchase, catalog, generation: 'g' }) : null }
+  }
+  const seat = rowFor('seat-holder-team')
+  assert.equal(seat.purchase.status, 'Valid')
+  assert.equal(seat.purchase.bulkCouponId, null)
+  assert.equal(seat.purchase.couponId, null)
+  assert.equal(seat.coupon, null)
+  assert.equal(seat.fixture.quantity, 2)
+  const restricted = rowFor('restricted-holder-team')
+  assert.equal(restricted.purchase.status, 'Restricted')
+  assert.equal(restricted.purchase.bulkCouponId, null)
+  assert.equal(restricted.purchase.couponId, restricted.couponId)
+  assert.equal(restricted.coupon.fields.pppOrigin, true)
+  assert.equal(restricted.purchase.productId, catalog.find(p => p.key === 'c5').id)
+  assert.equal(restricted.fixture.couponId, undefined)
+  assert.equal(rowFor('restricted-holder-team-ppp').fixture.couponId, AUTHORITATIVE_PPP_OFFER_ID)
+  assert.equal(rowFor('seat-holder').fixture.quantity, 1)
 })

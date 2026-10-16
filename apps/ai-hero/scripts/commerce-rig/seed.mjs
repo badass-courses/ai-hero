@@ -20,6 +20,10 @@ export async function connect() {
 const date = new Date('2026-01-01T00:00:00Z')
 // Course Builder treats status 0 as inactive; seeded commerce rows are live, like production.
 const resourceId = key => key === 'cc' ? 'workshop-2ozd9' : `rig-resource-${key}`
+// Pure row builders, so a test can assert on exactly what the seeder writes.
+export const purchaseCouponId = (fixture, purchase, index) => purchase.bulk || purchase.redeemed || purchase.ppp ? `rig_coupon_${fixture.key}_${index}` : null
+export const couponRow = ({ couponId, purchase, catalog, generation }) => ({ id: couponId, status: 1, code: couponId, restrictedToProductId: catalog.find(p => p.key === purchase.product).id, maxUses: purchase.seats ?? 1, fields: { commerceRig: generation, pppOrigin: Boolean(purchase.ppp) }, createdAt: date })
+export const purchaseRow = ({ id, fixture, purchase, org, member, catalog, chargeId, sessionId, couponId, generation }) => ({ id, userId: fixture.userId, organizationId: org, purchasedByorganizationMembershipId: member, productId: catalog.find(p => p.key === purchase.product).id, totalAmount: (purchase.cents / 100).toFixed(2), status: purchase.status ?? 'Valid', merchantChargeId: chargeId, merchantSessionId: sessionId, bulkCouponId: purchase.bulk ? couponId : null, redeemedBulkCouponId: purchase.redeemed ? couponId : null, couponId: purchase.ppp ? couponId : null, fields: { commerceRig: generation, ...(purchase.seats ? { seats: purchase.seats } : {}) }, createdAt: date })
 // List prices for this run: the synthetic catalog, or a private overlay when RIG_CATALOG_OVERLAY names one.
 export async function seedCatalog(env = process.env) {
   const overlay = await readCatalogOverlay(env.RIG_CATALOG_OVERLAY)
@@ -107,12 +111,9 @@ export async function seed(state, generation) {
           chargeId = `rig_charge_${fixture.key}_${index}`
           await db.insert(tables.merchantCharge).values({ id: chargeId, status: 1, identifier: charge.id, userId: fixture.userId, merchantCustomerId: `rig_customer_${fixture.key}`, merchantProductId: `rig_mp_${purchase.product}`, merchantAccountId: 'rig_stripe', createdAt: date })
         }
-        let couponId = null
-        if (purchase.bulk || purchase.redeemed || purchase.ppp) {
-          couponId = `rig_coupon_${fixture.key}_${index}`
-          await db.insert(tables.coupon).values({ id: couponId, status: 1, code: couponId, restrictedToProductId: catalog.find(p => p.key === purchase.product).id, maxUses: purchase.seats ?? 1, fields: { commerceRig: generation, pppOrigin: Boolean(purchase.ppp) }, createdAt: date })
-        }
-        await db.insert(tables.purchases).values({ id, userId: fixture.userId, organizationId: org, purchasedByorganizationMembershipId: member, productId: catalog.find(p => p.key === purchase.product).id, totalAmount: (purchase.cents / 100).toFixed(2), status: purchase.status ?? 'Valid', merchantChargeId: chargeId, merchantSessionId: sessionId, bulkCouponId: purchase.bulk ? couponId : null, redeemedBulkCouponId: purchase.redeemed ? couponId : null, couponId: purchase.ppp ? couponId : null, fields: { commerceRig: generation, ...(purchase.seats ? { seats: purchase.seats } : {}) }, createdAt: date })
+        const couponId = purchaseCouponId(fixture, purchase, index)
+        if (couponId) await db.insert(tables.coupon).values(couponRow({ couponId, purchase, catalog, generation }))
+        await db.insert(tables.purchases).values(purchaseRow({ id, fixture, purchase, org, member, catalog, chargeId, sessionId, couponId, generation }))
         const workshop = catalog.find(p => p.key === purchase.product).type === 'workshop'
         if (purchase.status !== 'Refunded') await db.insert(tables.entitlements).values({ id: `rig_access_${fixture.key}_${index}`, userId: fixture.userId, organizationId: org, organizationMembershipId: member, entitlementType: workshop ? 'rig_workshop_type' : 'rig_cohort_type', sourceType: 'PURCHASE', sourceId: id, metadata: { contentIds: [workshop ? resourceId(purchase.product) : `rig-workshop-${purchase.product}`] }, createdAt: date, updatedAt: date })
       }
