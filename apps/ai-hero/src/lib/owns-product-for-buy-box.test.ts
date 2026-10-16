@@ -164,7 +164,10 @@ describe('ownsProductForBuyBox is display-only (import allowlist)', () => {
 		})
 
 	it('only the allowlisted buy-box files import it', () => {
-		const importers = walk(srcRoot)
+		const files = walk(srcRoot)
+		// the walk must see the real tree, or an empty match would pass
+		expect(files.length).toBeGreaterThan(500)
+		const importers = files
 			.map((f) => relative(srcRoot, f).split(sep).join('/'))
 			.filter((rel) => !rel.startsWith('lib/owns-product-for-buy-box'))
 			.filter((rel) =>

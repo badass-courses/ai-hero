@@ -195,7 +195,10 @@ export default async function EventPage(props: {
 		if (!user) {
 			eventProps = baseProps
 		} else {
-			const productId = productSchema.parse(product).id
+			// parse only when the viewer has purchases, as before
+			const productId = commerceProps.purchases?.length
+				? productSchema.parse(product).id
+				: undefined
 			const purchaseForProduct = commerceProps.purchases?.find(
 				(purchase: Purchase) => {
 					return purchase.productId === productId
