@@ -178,7 +178,7 @@ describe('support transfer endpoint', () => {
 			expect(mocks.complete).not.toHaveBeenCalled()
 		})
 
-		it.each(['invite', 'dry_run'])(
+		it.each(['invite', 'dry_run', 'support_complete_status'])(
 			'%s with samePerson is refused: only support_complete modes carry it',
 			async (mode) => {
 				vi.resetAllMocks()
@@ -230,7 +230,7 @@ describe('support transfer endpoint', () => {
 			})
 		})
 
-		it.each(['same_person_table_missing', 'same_person_source_not_payer', 'same_person_order_unknown', 'same_person_cannot_be_added_after_claim', 'move_would_change_invoice_payer'])(
+		it.each(['same_person_table_missing', 'same_person_source_not_payer', 'same_person_order_unknown', 'same_person_cannot_be_added_after_claim', 'same_person_move_did_not_apply', 'move_would_change_invoice_payer'])(
 			'%s is a 409 with the exact prompt',
 			async (reason) => {
 				vi.resetAllMocks()

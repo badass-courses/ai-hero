@@ -116,9 +116,12 @@ describe('same-person evidence reader', () => {
 
 	it('logs the missing table once per process, not per page view', async () => {
 		mocks.rows.mockRejectedValue(missingTable)
-		await loadSamePersonFlags(['t1'])
-		await loadSamePersonFlags(['t2'])
-		expect(mocks.logError.mock.calls.length).toBeLessThanOrEqual(1)
+		vi.resetModules()
+		mocks.logError.mockClear()
+		const fresh = await import('./same-person')
+		await fresh.loadSamePersonFlags(['t1'])
+		await fresh.loadSamePersonFlags(['t2'])
+		expect(mocks.logError).toHaveBeenCalledTimes(1)
 	})
 
 	it('rethrows any other database error', async () => {

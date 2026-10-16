@@ -79,7 +79,7 @@ export const POST = withSkill(async (request: NextRequest) => {
 		samePerson,
 	} = parsed.data
 	if (samePerson !== undefined) {
-		if (!mode.startsWith('support_complete')) {
+		if (mode !== 'support_complete' && mode !== 'support_complete_dry_run') {
 			return NextResponse.json(
 				{
 					state: 'invalid',

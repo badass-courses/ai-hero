@@ -725,7 +725,7 @@ suite('commerce rig: transfers against real MySQL 8', () => {
 			}
 		})
 
-		it('a blank proof written straight to the table is no flag for the readers', async () => {
+		it('an email in proofRef written straight to the table is no flag for the readers', async () => {
 			await seed('10')
 			await completeSupportPurchaseTransfer(request('10'))
 			await finish('10')
@@ -736,6 +736,21 @@ suite('commerce rig: transfers against real MySQL 8', () => {
 				proofRef: 'someone@example.test',
 			})
 			expect([await edits('user-a', '10'), await edits('user-a2', '10')]).toEqual(
+				[true, false],
+			)
+		})
+
+		it('a blank proofRef written straight to the table is no flag for the readers', async () => {
+			await seed('11')
+			await completeSupportPurchaseTransfer(request('11'))
+			await finish('11')
+			await db.insert(schema.purchaseTransferSamePerson).values({
+				transferId: 'put-11',
+				verifiedBy: 'owner-mailbox-both',
+				reason: 'forged',
+				proofRef: '   ',
+			})
+			expect([await edits('user-a', '11'), await edits('user-a2', '11')]).toEqual(
 				[true, false],
 			)
 		})

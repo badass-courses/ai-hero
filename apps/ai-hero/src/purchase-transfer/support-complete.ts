@@ -318,7 +318,7 @@ async function loadGuardedContext(input: SupportCompleteInput) {
 			return { ok: false as const, reason: 'same_person_source_not_payer' }
 		}
 		if (payerAfter !== targetUser.id) {
-			return { ok: false as const, reason: 'move_would_change_invoice_payer' }
+			return { ok: false as const, reason: 'same_person_move_did_not_apply' }
 		}
 	} else if (payerBefore !== payerAfter) {
 		return { ok: false as const, reason: 'move_would_change_invoice_payer' }
