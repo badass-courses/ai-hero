@@ -138,4 +138,11 @@ describe('thanks page viewers', () => {
 		})
 		await expect(render()).rejects.toThrow('NEXT_REDIRECT:/welcome?')
 	})
+
+	it('matches the owner by purchase email when the ids differ, as welcome does', async () => {
+		mocks.getServerAuthSession.mockResolvedValue({
+			session: { user: { id: 'other-id', email: BUYER_EMAIL.toUpperCase() } },
+		})
+		await expect(render()).rejects.toThrow('NEXT_REDIRECT:/welcome?')
+	})
 })

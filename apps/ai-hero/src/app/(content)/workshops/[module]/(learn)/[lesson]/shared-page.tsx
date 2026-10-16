@@ -64,7 +64,6 @@ export async function LessonPage({
 					signedIn,
 					isRegionRestricted: ability.isRegionRestricted,
 					isPendingOpenAccess: ability.isPendingOpenAccess,
-					hasTeamPool: ability.canInviteTeam,
 				}),
 			),
 		)

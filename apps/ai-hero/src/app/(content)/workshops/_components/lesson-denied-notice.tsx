@@ -1,12 +1,14 @@
 'use client'
 
 import { Suspense } from 'react'
-import { useSearchParams } from 'next/navigation'
+import Link from 'next/link'
+import { usePathname, useSearchParams } from 'next/navigation'
 import { LESSON_DENIAL_COPY, parseDeniedReason } from '@/lib/lesson-denial'
 import { Lock } from 'lucide-react'
 
 function Notice() {
 	const reason = parseDeniedReason(useSearchParams().get('denied'))
+	const pathname = usePathname()
 	if (!reason) return null
 	return (
 		<p
@@ -15,7 +17,20 @@ function Notice() {
 			className="border-border bg-muted/40 mb-6 flex items-start gap-2 border p-4 text-sm"
 		>
 			<Lock className="mt-0.5 size-4 shrink-0 opacity-75" />
-			<span>{LESSON_DENIAL_COPY[reason]}</span>
+			<span>
+				{LESSON_DENIAL_COPY[reason]}
+				{reason === 'signed-out' ? (
+					<>
+						{' '}
+						<Link
+							href={`/login?callbackUrl=${encodeURIComponent(pathname ?? '/')}`}
+							className="underline underline-offset-4"
+						>
+							Sign in
+						</Link>
+					</>
+				) : null}
+			</span>
 		</p>
 	)
 }

@@ -14,26 +14,28 @@ describe('lessonDenialReason', () => {
 	for (const signedIn of bools)
 		for (const isRegionRestricted of bools)
 			for (const isPendingOpenAccess of bools)
-				for (const hasTeamPool of bools)
-					it(`in=${signedIn} region=${isRegionRestricted} pending=${isPendingOpenAccess} team=${hasTeamPool}`, () => {
-						const want: LessonDenialReason = isPendingOpenAccess
-							? 'pending-open'
-							: !signedIn
-								? 'signed-out'
-								: isRegionRestricted
-									? 'region-restricted'
-									: hasTeamPool
-										? 'team-seat-unclaimed'
-										: 'no-purchase'
-						expect(
-							lessonDenialReason({
-								signedIn,
-								isRegionRestricted,
-								isPendingOpenAccess,
-								hasTeamPool,
-							}),
-						).toBe(want)
-					})
+				it(`in=${signedIn} region=${isRegionRestricted} pending=${isPendingOpenAccess}`, () => {
+					const want: LessonDenialReason = isPendingOpenAccess
+						? 'pending-open'
+						: !signedIn
+							? 'signed-out'
+							: isRegionRestricted
+								? 'region-restricted'
+								: 'no-purchase'
+					expect(
+						lessonDenialReason({
+							signedIn,
+							isRegionRestricted,
+							isPendingOpenAccess,
+						}),
+					).toBe(want)
+				})
+
+	it('copy is viewer-neutral and names no team seat', () => {
+		const text = Object.values(LESSON_DENIAL_COPY).join(' ')
+		expect(text).not.toMatch(/\byour purchase\b/i)
+		expect(text).not.toMatch(/seat/i)
+	})
 
 	it('every reason has distinct copy', () => {
 		const copies = Object.values(LESSON_DENIAL_COPY)

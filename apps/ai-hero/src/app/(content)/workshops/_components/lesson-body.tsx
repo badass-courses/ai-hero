@@ -1,6 +1,7 @@
 'use client'
 
 import { use } from 'react'
+import Link from 'next/link'
 import { PROSE_MEASURE } from '@/components/mdx/prose'
 import type { Lesson } from '@/lib/lessons'
 import { LESSON_DENIAL_COPY, lessonDenialReason } from '@/lib/lesson-denial'
@@ -15,7 +16,7 @@ export function LessonBody({
 	workshop,
 	abilityLoader,
 	mdxContentPromise,
-	signedIn = false,
+	signedIn,
 }: {
 	lesson: Lesson | null
 	workshop: MinimalWorkshop | null
@@ -27,7 +28,7 @@ export function LessonBody({
 		}
 	>
 	mdxContentPromise: Promise<{ content: React.ReactNode }>
-	signedIn?: boolean
+	signedIn: boolean
 }) {
 	const ability = use(abilityLoader)
 	const canView = ability?.canViewLesson
@@ -37,7 +38,6 @@ export function LessonBody({
 			signedIn,
 			isRegionRestricted: ability.isRegionRestricted,
 			isPendingOpenAccess: ability.isPendingOpenAccess,
-			hasTeamPool: ability.canInviteTeam,
 		})
 		const message =
 			reason !== 'pending-open'
@@ -55,6 +55,12 @@ export function LessonBody({
 			>
 				<p>
 					<Lock className="mr-1 inline-block size-5 opacity-75" /> {message}
+					{reason === 'signed-out' ? (
+						<>
+							{' '}
+							<Link href="/login">Sign in</Link>
+						</>
+					) : null}
 				</p>
 			</div>
 		)

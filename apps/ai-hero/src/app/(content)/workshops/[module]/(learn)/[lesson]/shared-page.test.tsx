@@ -213,7 +213,7 @@ describe('LessonPage office-hours authorization context', () => {
 		['denied', {}, true, 'no-purchase'],
 		['revoked', { canViewWorkshop: false }, true, 'no-purchase'],
 		['region restricted', { isRegionRestricted: true }, true, 'region-restricted'],
-		['unclaimed team seat', { canInviteTeam: true }, true, 'team-seat-unclaimed'],
+		['a team pool for another product', { canInviteTeam: true }, true, 'no-purchase'],
 		['signed out', {}, false, 'signed-out'],
 	])('redirects %s before protected work or commerce', async (_, flags, signedIn, reason) => {
 		vi.mocked(getServerAuthSession).mockResolvedValue(

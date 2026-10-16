@@ -13,8 +13,7 @@ import { PostPurchaseIconBadge } from '../../_components/post-purchase-icon'
 import { getPurchaseThanksDetails } from './purchase-thanks-details'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
-import { isCheckoutSessionOwner } from '@/lib/checkout-owner-resolution'
-import { thanksViewerState } from '@/lib/purchase-viewer'
+import { isPurchaseOwner, thanksViewerState } from '@/lib/purchase-viewer'
 import {
 	cancelPurchaseTransfer,
 	getPurchaseTransferForPurchaseId,
@@ -145,11 +144,11 @@ async function PurchaseThanksPageLoaded({
 
 	const viewer = thanksViewerState({
 		viewerUserId: token?.session?.user?.id,
-		isOwner: isCheckoutSessionOwner({
-			purchaseUserId: purchase.userId ?? null,
-			purchaseEmail: email ?? null,
-			sessionUserId: token?.session?.user?.id ?? null,
-			sessionUserEmail: token?.session?.user?.email ?? null,
+		isOwner: isPurchaseOwner({
+			viewerUserId: token?.session?.user?.id,
+			viewerEmail: token?.session?.user?.email,
+			purchaseOwnerId: purchase.userId,
+			purchaseEmail: email,
 		}),
 	})
 

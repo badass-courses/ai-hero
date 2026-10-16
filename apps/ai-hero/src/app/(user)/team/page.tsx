@@ -66,15 +66,19 @@ async function teamPageDataLoader(): Promise<TeamPageData> {
 					)
 				: null
 			const activeCoupon = bulkCoupon?.status === 1 ? bulkCoupon : null
-			return {
-				purchase,
-				bulkCoupon: activeCoupon,
-				state: getTeamCardState({
-					purchaseStatus: purchase.status,
-					link,
-					couponActive: Boolean(activeCoupon),
-				}),
-			}
+			const state = getTeamCardState({
+				purchaseStatus: purchase.status,
+				link,
+				couponActive: Boolean(activeCoupon),
+			})
+			// Coupon data goes to the client only for a card that offers seats.
+			return state === 'active'
+				? { purchase, bulkCoupon: activeCoupon, state }
+				: {
+						purchase: { ...purchase, bulkCoupon: null },
+						bulkCoupon: null,
+						state,
+					}
 		}),
 	)
 

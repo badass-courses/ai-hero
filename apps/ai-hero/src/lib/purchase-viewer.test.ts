@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
 	differentAccountCopy,
+	isPurchaseOwner,
 	maskEmail,
 	purchaseViewerState,
 	thanksViewerState,
@@ -23,5 +24,35 @@ describe('maskEmail', () => {
 		expect(copy.title).toContain('different account')
 		expect(copy.description).toContain('so***@example.com')
 		expect(copy.description).not.toContain('someone@')
+	})
+})
+
+describe('isPurchaseOwner', () => {
+	const base = {
+		viewerUserId: 'u1',
+		viewerEmail: 'Owner@Example.test',
+		purchaseOwnerId: 'u2',
+		purchaseEmail: 'owner@example.test',
+	}
+	it('matches on user id', () => {
+		expect(
+			isPurchaseOwner({
+				...base,
+				purchaseOwnerId: 'u1',
+				purchaseEmail: 'x@y.z',
+			}),
+		).toBe(true)
+	})
+	it('matches on purchase email, case-insensitive, when ids differ', () => {
+		expect(isPurchaseOwner(base)).toBe(true)
+		expect(purchaseViewerState({ ...base, purchaseExists: true })).toBe('owner')
+	})
+	it('matches neither', () => {
+		expect(
+			isPurchaseOwner({ ...base, purchaseEmail: 'else@example.test' }),
+		).toBe(false)
+		expect(
+			isPurchaseOwner({ ...base, viewerUserId: null, viewerEmail: null }),
+		).toBe(false)
 	})
 })

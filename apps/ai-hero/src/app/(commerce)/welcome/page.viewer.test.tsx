@@ -3,7 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
-	getPurchase: vi.fn(),
+	getPurchaseWithUser: vi.fn(),
+	getProduct: vi.fn(),
+	getProductResources: vi.fn(),
 	getPurchaseDetails: vi.fn(),
 	getServerAuthSession: vi.fn(),
 	redirect: vi.fn((to: string) => {
@@ -27,7 +29,9 @@ vi.mock('@/components/layout-client', () => ({
 vi.mock('@/db', () => ({
 	db: {},
 	courseBuilderAdapter: {
-		getPurchase: mocks.getPurchase,
+		getPurchaseWithUser: mocks.getPurchaseWithUser,
+		getProduct: mocks.getProduct,
+		getProductResources: mocks.getProductResources,
 		getPurchaseDetails: mocks.getPurchaseDetails,
 	},
 }))
@@ -119,7 +123,11 @@ describe('welcome page viewers', () => {
 		mocks.getServerAuthSession.mockResolvedValue({
 			session: { user: { id: 'other-1', email: 'stranger@example.test' } },
 		})
-		mocks.getPurchase.mockResolvedValue({ id: 'purchase-1', userId: 'owner-1' })
+		mocks.getPurchaseWithUser.mockResolvedValue({
+			id: 'purchase-1',
+			userId: 'owner-1',
+			user: { email: 'owner@example.test' },
+		})
 		const html = await render()
 		expect(html).toContain('This purchase belongs to a different account')
 		expect(html).toContain('st***@example.test')
@@ -133,8 +141,31 @@ describe('welcome page viewers', () => {
 		mocks.getServerAuthSession.mockResolvedValue({
 			session: { user: { id: 'owner-1', email: 'o@example.test' } },
 		})
-		mocks.getPurchase.mockResolvedValue(null)
+		mocks.getPurchaseWithUser.mockResolvedValue(null)
 		mocks.getPurchaseDetails.mockResolvedValue({ availableUpgrades: [] })
 		await expect(render()).rejects.toThrow('NEXT_REDIRECT:/')
+	})
+
+	it('matches the owner by purchase email when the ids differ, as thanks does', async () => {
+		mocks.getServerAuthSession.mockResolvedValue({
+			session: { user: { id: 'other-id', email: 'Owner@Example.test' } },
+		})
+		mocks.getPurchaseWithUser.mockResolvedValue({
+			id: 'purchase-1',
+			userId: 'owner-1',
+			user: { email: 'owner@example.test' },
+		})
+		mocks.getPurchaseDetails.mockResolvedValue({
+			purchase: { id: 'purchase-1', productId: 'p1', product: { name: 'x' } },
+			availableUpgrades: [],
+		})
+		mocks.getProduct.mockResolvedValue({ id: 'p1', name: 'x', fields: {} })
+		mocks.getProductResources.mockResolvedValue([])
+		const html = await render().catch(() => '')
+		expect(html).not.toContain('different account')
+		expect(mocks.getPurchaseDetails).toHaveBeenCalledWith(
+			'purchase-1',
+			'owner-1',
+		)
 	})
 })

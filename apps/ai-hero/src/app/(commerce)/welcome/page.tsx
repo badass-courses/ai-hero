@@ -123,18 +123,24 @@ const getPurchaseDetailsForWelcome = async (query: {
 	}
 
 	if (user && isString(purchaseId) && isString(user?.id)) {
-		const claimed = await courseBuilderAdapter.getPurchase(purchaseId)
+		const claimed = await courseBuilderAdapter.getPurchaseWithUser(purchaseId)
 		const viewerState = purchaseViewerState({
 			viewerUserId: user.id,
+			viewerEmail: user.email,
 			purchaseExists: Boolean(claimed),
 			purchaseOwnerId: claimed?.userId,
+			purchaseEmail: claimed?.user?.email,
 		})
 		if (viewerState === 'different-account') {
 			return { differentAccount: true as const, viewerEmail: user.email }
 		}
 
 		const { purchase, existingPurchase, availableUpgrades } =
-			await courseBuilderAdapter.getPurchaseDetails(purchaseId, user?.id)
+			await courseBuilderAdapter.getPurchaseDetails(
+				purchaseId,
+				// Owned by id, or by purchase email: details are the owner's.
+				claimed?.userId ?? user.id,
+			)
 
 		if (purchase) {
 			const product = await courseBuilderAdapter.getProduct(purchase.productId)

@@ -7,32 +7,32 @@
  * 2. `signed-out`: nobody is signed in.
  * 3. `region-restricted`: a purchase exists but its country restriction
  *    withholds it.
- * 4. `team-seat-unclaimed`: the viewer bought a team pool (`read Team`) but
- *    holds no seat of their own.
- * 5. `no-purchase`: everything else.
+ * 4. `no-purchase`: everything else.
+ *
+ * There is deliberately no "team seat unclaimed" reason. The ability's
+ * `read Team` is true for a bulk purchase of ANY product, so it cannot tell a
+ * pool for this lesson from a pool for another course, and sending someone to
+ * burn a seat on the wrong product is worse than generic copy. It returns
+ * once the pool is scoped to a product that grants this lesson's resource.
  */
 export type LessonDenialReason =
 	| 'pending-open'
 	| 'signed-out'
 	| 'region-restricted'
-	| 'team-seat-unclaimed'
 	| 'no-purchase'
 
 export function lessonDenialReason({
 	signedIn,
 	isRegionRestricted,
 	isPendingOpenAccess,
-	hasTeamPool,
 }: {
 	signedIn: boolean
 	isRegionRestricted: boolean
 	isPendingOpenAccess: boolean
-	hasTeamPool: boolean
 }): LessonDenialReason {
 	if (isPendingOpenAccess) return 'pending-open'
 	if (!signedIn) return 'signed-out'
 	if (isRegionRestricted) return 'region-restricted'
-	if (hasTeamPool) return 'team-seat-unclaimed'
 	return 'no-purchase'
 }
 
@@ -42,9 +42,7 @@ export const LESSON_DENIAL_COPY: Record<
 > = {
 	'signed-out': 'Sign in to access this lesson.',
 	'region-restricted':
-		'Your purchase has a regional restriction, so this lesson is not available on it. Contact support if you think that is wrong.',
-	'team-seat-unclaimed':
-		"This account manages a team purchase but doesn't hold a seat of its own. Seats are claimed with the team invite link on the team page. Contact support if you need a hand.",
+		"A regional restriction applies to this purchase, so this lesson isn't available. Contact support if you think that is wrong.",
 	'no-purchase': 'You need to be a member to access this lesson.',
 }
 
@@ -57,7 +55,6 @@ export const LESSON_DENIAL_COPY: Record<
 export const DENIED_QUERY_REASONS = [
 	'signed-out',
 	'region-restricted',
-	'team-seat-unclaimed',
 	'no-purchase',
 ] as const
 export type DeniedQueryReason = (typeof DENIED_QUERY_REASONS)[number]

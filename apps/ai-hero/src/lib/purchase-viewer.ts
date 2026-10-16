@@ -1,3 +1,5 @@
+import { isCheckoutSessionOwner } from '@/lib/checkout-owner-resolution'
+
 /**
  * Who is looking at a post-purchase page, relative to the purchase.
  *
@@ -13,18 +15,48 @@ export type PurchaseViewerState =
 	| 'different-account'
 	| 'not-found'
 
+/**
+ * The one owner predicate for `/thanks/purchase` and `/welcome`: the viewer's
+ * user id matches the purchase owner, or their email matches the purchase
+ * email (a buyer who checked out signed out and then signed in with it).
+ */
+export function isPurchaseOwner(input: {
+	viewerUserId: string | null | undefined
+	viewerEmail: string | null | undefined
+	purchaseOwnerId: string | null | undefined
+	purchaseEmail: string | null | undefined
+}): boolean {
+	return isCheckoutSessionOwner({
+		purchaseUserId: input.purchaseOwnerId ?? null,
+		purchaseEmail: input.purchaseEmail ?? null,
+		sessionUserId: input.viewerUserId ?? null,
+		sessionUserEmail: input.viewerEmail ?? null,
+	})
+}
+
 export function purchaseViewerState({
 	viewerUserId,
+	viewerEmail,
 	purchaseExists,
 	purchaseOwnerId,
+	purchaseEmail,
 }: {
 	viewerUserId: string | null | undefined
+	viewerEmail?: string | null
 	purchaseExists: boolean
 	purchaseOwnerId: string | null | undefined
+	purchaseEmail?: string | null
 }): PurchaseViewerState {
 	if (!viewerUserId) return 'anonymous'
 	if (!purchaseExists) return 'not-found'
-	return purchaseOwnerId === viewerUserId ? 'owner' : 'different-account'
+	return isPurchaseOwner({
+		viewerUserId,
+		viewerEmail,
+		purchaseOwnerId,
+		purchaseEmail,
+	})
+		? 'owner'
+		: 'different-account'
 }
 
 /**
