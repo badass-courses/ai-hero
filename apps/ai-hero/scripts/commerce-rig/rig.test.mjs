@@ -98,7 +98,7 @@ test('Stripe response guards require explicit livemode=false', () => {
   assert.throws(() => publicSession({ livemode: false, currency: 'eur', amount_total: 100 }), /currency/)
 })
 test('fixture identity and exclusion shapes stay deterministic', () => {
-  assert.equal(fixtures.length, 22)
+  assert.equal(fixtures.length, 26)
   assert.equal(new Set(fixtures.map(f => f.key)).size, fixtures.length)
   assert.ok(fixtures.every(f => f.email.endsWith('@example.test') && f.userId.startsWith('rig_')))
   assert.deepEqual([99, 199, 299].map(n => fixtureFor(`cc-${n}`).purchases[0].cents), [9900, 19900, 29900])

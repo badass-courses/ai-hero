@@ -27,6 +27,11 @@ export const fixtures = [
   { key: 'team-purchaser', quantity: 5, purchases: [cc(59700, { bulk: true, seats: 3 })] },
   // Fresh team orders at the first quantity of each seat band.
   ...[2, 5, 10, 30].map(seats => ({ key: `team-${seats}`, quantity: seats, purchases: [] })),
+  // Existing C5 seat holders buying team seats (or a duplicate single seat).
+  { key: 'seat-holder', purchases: [{ product: 'c5', cents: 100000 }] },
+  { key: 'seat-holder-team', quantity: 2, purchases: [{ product: 'c5', cents: 100000 }] },
+  { key: 'restricted-holder-team', quantity: 2, purchases: [{ product: 'c5', cents: 50000, status: 'Restricted', ppp: true }] },
+  { key: 'restricted-holder-team-ppp', quantity: 2, couponId: 'authoritative-ppp-offer', purchases: [{ product: 'c5', cents: 50000, status: 'Restricted', ppp: true }] },
   { key: 'binding-quote', purchases: [cc(9900)], pending: 'Confirmed quote store and pricing fact adapter', quoteInput: { currency: 'USD', unitAmountCents: 60000, quantity: 1, basis: 'unit' } },
 ].map(fixture => ({ ...fixture, userId: `rig_${fixture.key}`, email: `${fixture.key}@example.test`, quantity: fixture.quantity ?? 1 }))
 // A measurement run may replace list prices from a private overlay: { "amounts": { "<catalog key>": <cents> } }.
