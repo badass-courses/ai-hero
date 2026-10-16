@@ -24,3 +24,15 @@ export function isEvergreenCouponId(value: string | null | undefined) {
 export function evergreenOfferEndedText(deadline: string) {
 	return `This private offer ended ${deadline}.`
 }
+
+/**
+ * Whether the ended-offer notice shows. Someone who already owns the product
+ * (Valid or Restricted, non-bulk: the buy box's own signal) has no use for a
+ * line about a discount they no longer need.
+ */
+export function showEvergreenEndedNotice(input: {
+	status: EvergreenOfferStatus['status']
+	viewerOwnsProduct: boolean
+}) {
+	return input.status === 'ended' && !input.viewerOwnsProduct
+}

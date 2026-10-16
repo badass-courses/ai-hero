@@ -3,10 +3,12 @@
 import * as React from 'react'
 import { useSearchParams } from 'next/navigation'
 import { readCommerceUrlParams } from '@/app/(content)/workshops/_components/commerce-url-params'
+import { useWorkshopAbility } from '@/app/(content)/workshops/_components/use-workshop-ability'
 import { TYPE } from '@/components/landing/type'
 import {
 	evergreenOfferEndedText,
 	isEvergreenCouponId,
+	showEvergreenEndedNotice,
 } from '@/lib/subscriber-marketing/evergreen-offer-notice'
 import { z } from 'zod'
 
@@ -19,9 +21,14 @@ const statusSchema = z.discriminatedUnion('status', [
 /**
  * The static workshop page cannot read `?coupon=` on the server, so this asks
  * the uncached status route. The route formats the deadline; this only shows
- * it. Nothing renders unless the link's evergreen coupon has ended.
+ * it. Nothing renders unless the link's evergreen coupon has ended and the
+ * viewer does not already own the product.
  */
 export function EvergreenOfferEndedNotice({ endpoint }: { endpoint: string }) {
+	// The buy box's own ownership signal: the viewer can read the workshop.
+	const { canViewWorkshop, status } = useWorkshopAbility()
+	const viewerOwnsProduct = status === 'success' && canViewWorkshop
+
 	const searchParams = useSearchParams()
 	const couponId = readCommerceUrlParams(searchParams).params.coupon
 	const [deadline, setDeadline] = React.useState<string | null>(null)
@@ -42,7 +49,8 @@ export function EvergreenOfferEndedNotice({ endpoint }: { endpoint: string }) {
 		return () => controller.abort()
 	}, [couponId, endpoint])
 
-	if (!deadline) return null
+	if (!deadline || !showEvergreenEndedNotice({ status: 'ended', viewerOwnsProduct }))
+		return null
 	return (
 		<section
 			data-testid="evergreen-offer-ended"

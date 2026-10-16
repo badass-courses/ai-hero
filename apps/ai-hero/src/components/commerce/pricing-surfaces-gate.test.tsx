@@ -47,7 +47,7 @@ vi.mock('@coursebuilder/commerce-next/pricing/pricing-check-context', () => ({
 	PriceCheckProvider: ({ children }: { children?: React.ReactNode }) => (
 		<>{children}</>
 	),
-	usePriceCheck: () => ({ isDiscount: () => false }),
+	usePriceCheck: () => ({ isDiscount: () => false, isDowngrade: () => false }),
 }))
 vi.mock('@coursebuilder/commerce-next/coupons/use-coupon', () => ({
 	useCoupon: () => ({ validCoupon: false }),

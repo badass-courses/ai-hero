@@ -3,7 +3,9 @@
 import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { TYPE } from '@/components/landing/type'
+import { showRegionalOffer } from '@/lib/pricing-decisions'
 
+import { usePriceCheck } from '@coursebuilder/commerce-next/pricing/pricing-check-context'
 import { usePricing } from '@coursebuilder/commerce-next/pricing/pricing-context'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
@@ -31,7 +33,15 @@ export const RegionalNoteSlot = () => <div id={SLOT_ID} />
  * visitor and not already applied (an applied coupon shows in the price).
  */
 export const RegionalPricingNote = ({ targetId }: { targetId: string }) => {
-	const { formattedPrice, activeMerchantCoupon } = usePricing()
+	const {
+		options: { isPPPEnabled },
+		formattedPrice,
+		activeMerchantCoupon,
+		allowPurchase,
+		isPreviouslyPurchased,
+		isTeamPurchaseActive,
+	} = usePricing()
+	const { isDowngrade } = usePriceCheck()
 	const [slot, setSlot] = React.useState<HTMLElement | null>(null)
 	React.useEffect(() => {
 		setSlot(document.getElementById(SLOT_ID))
@@ -40,7 +50,21 @@ export const RegionalPricingNote = ({ targetId }: { targetId: string }) => {
 	const availablePPPCoupon = Array.isArray(formattedPrice?.availableCoupons)
 		? formattedPrice.availableCoupons.find((coupon) => coupon?.type === 'ppp')
 		: undefined
-	if (!slot || !availablePPPCoupon || activeMerchantCoupon?.type === 'ppp')
+	// The same decision as the desktop buy box: no regional offer for someone
+	// who cannot buy, already owns it, is downgrading, or is buying team seats.
+	if (
+		!slot ||
+		!availablePPPCoupon ||
+		activeMerchantCoupon?.type === 'ppp' ||
+		!showRegionalOffer({
+			allowPurchase,
+			isPPPEnabled,
+			hasRegionalCoupon: true,
+			isPreviouslyPurchased,
+			isDowngrade: isDowngrade(formattedPrice),
+			isTeamPurchaseActive,
+		})
+	)
 		return null
 
 	const rawDiscount = availablePPPCoupon.percentageDiscount as
