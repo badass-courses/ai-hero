@@ -83,7 +83,7 @@ export type DrovrActorRead =
 
 export type OwnerCursor = { occurredAt: string; id: string }
 
-export type RepostOutcome = 'accepted' | 'suppressed' | 'rejected'
+export type RepostOutcome = 'accepted' | 'suppressed' | 'rejected' | 'deferred'
 
 /**
  * One birth the guard checks: the owner assignment it belongs to (the
@@ -191,6 +191,7 @@ export type OwnerBirthGuardReceipt = PageCounts & {
 	reposted: number
 	suppressedOnPost: number
 	rejectedOnPost: number
+	deferredOnPost?: number
 	capHit: boolean
 	overCap: number
 	/** Not every owner in the window was read: MAX_PAGES was reached. */
@@ -527,6 +528,7 @@ async function checkSubjects(
  */
 function repostOutcomeOf(outcome: DrovrDeliveryOutcome): RepostOutcome {
 	if (outcome.status === 'accepted') return 'accepted'
+	if (outcome.status === 'deferred') return 'deferred'
 	return outcome.status === 'rejected' &&
 		drovrProblemCodes(outcome.problem).includes(DROVR_CONTACT_SUPPRESSED)
 		? 'suppressed'
@@ -695,7 +697,9 @@ export async function runOwnerBirthGuard(args: {
 		outcomes.push(
 			(await step.run(`repost-${owner.id}`, async () => {
 				const outcome = repostOutcomeOf(await ports.post(birth))
-				await ports.recordRepost(owner, outcome)
+				// A healthy migration wait is not a terminal repost marker: it
+				// must neither count as landed nor exclude this native debt.
+				if (outcome !== 'deferred') await ports.recordRepost(owner, outcome)
 				return outcome
 			})) as RepostOutcome,
 		)
@@ -709,6 +713,7 @@ export async function runOwnerBirthGuard(args: {
 		...counts,
 		candidates: candidates.length,
 		reposted: outcomes.filter((outcome) => outcome === 'accepted').length,
+		...(outcomes.includes('deferred') ? { deferredOnPost: outcomes.filter(outcome => outcome === 'deferred').length } : {}),
 		suppressedOnPost: outcomes.filter((outcome) => outcome === 'suppressed')
 			.length,
 		rejectedOnPost: outcomes.filter((outcome) => outcome === 'rejected').length,

@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
+import { ProfileAckPurgeRefused, PROFILE_ACK_PURGE_REFUSED_SIGNAL } from './contact-sync-profile-ack-purge-schema'
+vi.mock('@/lib/subscriber-marketing/drovr-unsubscribe-supersession', async load => ({ ...await load<typeof import('./drovr-unsubscribe-supersession')>(), closeSupersededUnsubscribesLive: async () => new Map() }))
 
 import {
 	captureDrovrOutbox,
@@ -6,6 +8,7 @@ import {
 	DROVR_OUTBOX_CAPTURE_TRIES,
 	DROVR_OUTBOX_DELIVERED_RETENTION_MS,
 	DROVR_OUTBOX_HELD_BIRTH_WAIT_MS,
+	DROVR_OUTBOX_MAX_QUEUE_HANDOFFS,
 	DROVR_SEND_BACKOFF_MS,
 	DROVR_SEND_RETRIES,
 	drovrOutboxDedupeKey,
@@ -27,6 +30,8 @@ import {
 	type DrovrOutboxRow,
 	type DrovrOutboxStore,
 } from './drovr-outbox'
+import { queueContactSyncBulk, BULK_OUTBOX_QUEUE_WAIT_MS } from './contact-sync-bulk'
+import { queueCappedReplay } from './contact-sync-replay-queue'
 import { postDrovrOutboxRow } from './drovr-outbox-replay-post'
 import {
 	deliverDrovrShadowEvent,
@@ -49,7 +54,7 @@ function memoryStore(initial: DrovrOutboxRow[] = []) {
 			return [...rows.values()]
 				.filter(
 					(row) =>
-						row.status === 'pending' &&
+						['pending', 'deferred'].includes(row.status) &&
 						row.target === target &&
 						row.nextAttemptAt <= now,
 				)
@@ -63,10 +68,10 @@ function memoryStore(initial: DrovrOutboxRow[] = []) {
 					(row) =>
 						row.target === target &&
 						contactIds.includes(row.contactId) &&
-						(((row.status === 'pending' || row.status === 'held') &&
+						(((['pending', 'deferred', 'held'].includes(row.status)) &&
 							(row.eventType === 'contact.created' ||
 								row.endpoint === 'signups')) ||
-							(['pending', 'held', 'rejected'].includes(row.status) &&
+							(['pending', 'deferred', 'held', 'rejected'].includes(row.status) &&
 								isOutboxStop(row))),
 				)
 				.map(
@@ -91,14 +96,35 @@ function memoryStore(initial: DrovrOutboxRow[] = []) {
 					}),
 				)
 		},
+		async supersedePending({ target, id, at, now }) {
+			const row = rows.get(id)
+			if (row?.target === target && row.status === 'pending' && row.eventType === 'contact.unsubscribed') { const { supersededUnsubscribeReason } = await import('./drovr-unsubscribe-supersession'); rows.set(id, { ...row, status: 'superseded', lastError: supersededUnsubscribeReason(at), lastAttemptAt: now }) }
+		},
+		async leaseQueue(args) {
+			const row = rows.get(args.id)
+			if (!row || row.target !== args.target || !['pending', 'deferred'].includes(row.status)) return false
+			if ('dueAt' in args ? row.nextAttemptAt > args.dueAt : row.nextAttemptAt !== args.expectedUntil) return false
+			if ('dueAt' in args ? !!row.queuePublicationId : row.queuePublicationId !== args.publicationId) return false
+			rows.set(row.id, { ...row, nextAttemptAt: args.nextAttemptAt, waitingForStop: false, queuePublicationId: 'dueAt' in args ? args.publicationId : undefined })
+			return true
+		},
+		async recordQueueHandoff({ target, id, publicationId, count }) {
+			const row = rows.get(id)
+			if (row?.target === target && ['pending', 'deferred'].includes(row.status) && row.queuePublicationId === publicationId) rows.set(id, { ...row, queueHandoffs: (row.queueHandoffs ?? 0) + Number(count && row.status === 'pending'), queuePublicationId: undefined })
+		},
+		async abortQueueHandoff({ target, id, publicationId }) {
+			const row = rows.get(id)
+			if (row?.target === target && ['pending', 'deferred'].includes(row.status) && row.queuePublicationId === publicationId) rows.set(id, { ...row, queuePublicationId: undefined })
+		},
 		async update(id, patch) {
-			rows.set(id, { ...rows.get(id)!, ...patch })
+			if (rows.has(id) && !['delivered', 'superseded'].includes(rows.get(id)!.status)) rows.set(id, { ...rows.get(id)!, ...patch })
 		},
 		async depth(target): Promise<DrovrOutboxDepth> {
 			const mine = [...rows.values()].filter((row) => row.target === target)
 			const pending = mine.filter((row) => row.status === 'pending')
 			return {
 				pending: pending.length,
+				deferred: mine.filter(row => row.status === 'deferred').length,
 				oldestPendingFailedAt:
 					pending.map((row) => row.firstFailedAt).sort()[0] ?? null,
 				held: mine.filter((row) => row.status === 'held').length,
@@ -108,7 +134,6 @@ function memoryStore(initial: DrovrOutboxRow[] = []) {
 						.filter(
 							(row) =>
 								(row.status === 'pending' || row.status === 'rejected') &&
-								row.source !== 'contactSync' &&
 								isOutboxStop(row),
 						)
 						.map((row) => row.firstFailedAt)
@@ -117,8 +142,7 @@ function memoryStore(initial: DrovrOutboxRow[] = []) {
 					mine
 						.filter(
 							(row) =>
-								row.status === 'pending' &&
-								row.source === 'contactSync' &&
+								row.status === 'deferred' &&
 								isOutboxStop(row),
 						)
 						.map((row) => row.firstFailedAt)
@@ -138,7 +162,7 @@ function memoryStore(initial: DrovrOutboxRow[] = []) {
 			for (const [id, row] of rows)
 				if (
 					row.target === target &&
-					row.status === 'pending' &&
+					['pending', 'deferred'].includes(row.status) &&
 					dedupeKeys.includes(row.dedupeKey)
 				) {
 					rows.set(id, {
@@ -157,7 +181,7 @@ function memoryStore(initial: DrovrOutboxRow[] = []) {
 			for (const [id, row] of rows)
 				if (
 					row.target === target &&
-					row.status === 'pending' &&
+					['pending', 'deferred'].includes(row.status) &&
 					dedupeKeys.includes(row.dedupeKey)
 				) {
 					rows.set(id, {
@@ -177,12 +201,12 @@ function memoryStore(initial: DrovrOutboxRow[] = []) {
 				if (
 					row.target === target &&
 					contactIds.includes(row.contactId) &&
-					row.status === 'pending' &&
+					['pending', 'deferred'].includes(row.status) &&
 					row.nextAttemptAt > now &&
-					row.lastError === DROVR_OUTBOX_BEHIND_STOP_NOTE &&
+					row.waitingForStop === true &&
 					!isOutboxStop(row)
 				) {
-					rows.set(id, { ...row, nextAttemptAt: now })
+					rows.set(id, { ...row, nextAttemptAt: now, waitingForStop: false })
 					moved += 1
 				}
 			return moved
@@ -268,6 +292,212 @@ function replay(
 		}),
 	}
 }
+
+it('reports typed purge refusal once per tick as a count-only literal alert without retrying or posting', async () => {
+	const { store } = memoryStore()
+	const refusal = ProfileAckPurgeRefused.make({ v: 1, reason: 'profile-ack-protection-flag-off', protectedRows: 2, candidateRows: 5 })
+	const purge = vi.fn(async () => refusal)
+	const post = vi.fn(async () => { throw new Error('purge refusal attempted HTTP') })
+	const expire = vi.fn(async () => { throw new Error('whole-tick refusal attempted marker expiry') })
+	const h = replay({ ...store, deleteDeliveredBefore: purge, deleteExpiredAckTombstones: expire }, post)
+	const receipt = await h.run
+	expect(receipt).toMatchObject({ purged: 0, purgeRefusal: refusal })
+	expect(purge).toHaveBeenCalledOnce()
+	expect(expire).not.toHaveBeenCalled()
+	expect(post).not.toHaveBeenCalled()
+	const signal = h.logger.error.mock.calls.filter(([name]) => name === PROFILE_ACK_PURGE_REFUSED_SIGNAL)
+	expect(signal).toHaveLength(1)
+	const fields = signal[0]![1] as { message: string; protectedRows: number; candidateRows: number }
+	expect(Object.keys(fields).sort()).toEqual(['candidateRows', 'message', 'protectedRows'])
+	expect(fields).toMatchObject({ protectedRows: 2, candidateRows: 5 })
+	expect(fields.message).toMatch(/^PurgeRefused: you .+ Accepted: .+ Fix: .+ Debug: /)
+	expect(fields.message).not.toMatch(/\n/)
+})
+
+it('runs dedicated marker expiry only after a successful native purge, reporting its control count separately', async () => {
+	const { store } = memoryStore(), order: string[] = []
+	const purge = vi.fn(async () => { order.push('native'); return 7 })
+	const expire = vi.fn(async () => { order.push('control'); return 2 })
+	const post = vi.fn(async () => { throw new Error('marker expiry attempted HTTP') })
+	const h = replay({ ...store, deleteDeliveredBefore: purge, deleteExpiredAckTombstones: expire }, post)
+	expect(await h.run).toMatchObject({ purged: 7, ackTombstonesPurged: 2 })
+	expect(order).toEqual(['native', 'control'])
+	expect(expire).toHaveBeenCalledWith('production')
+	expect(post).not.toHaveBeenCalled()
+})
+
+describe('pre-captured capped delivery ownership', () => {
+	it.each([
+		['bulk', 'contact.profile.updated', 'synthetic-profile', 'contact-profile-sync', 'delta'],
+		['contactSync', 'contact.profile.updated', 'synthetic-profile', 'contact-profile-sync', 'delta'],
+		['contactSync', 'contact.unsubscribed', 'synthetic-native-stop', 'evergreen-pitch-backfill', 'bulk'],
+		['fallback', 'contact.profile.updated', 'synthetic-profile', 'contact-profile-sync', 'delta'],
+		['onFailure', 'contact.links.issued', 'synthetic-links', 'contact-profile-sync', 'delta'],
+		['bulk', 'contact.links.issued', 'synthetic:restate:links', 'contact-profile-restate', 'restate'],
+		['fallback', 'contact.profile.updated', 'synthetic:restate:profile', 'contact-profile-restate', 'restate'],
+		['bulk', 'contact.unsubscribed', 'synthetic:restate:not-a-profile', 'evergreen-pitch-backfill', 'bulk'],
+		['onFailure', 'contact.created', 'synthetic-native-birth', 'evergreen-pitch-backfill', 'bulk'],
+		['fallback', 'purchase.recorded', 'synthetic-native-stop', 'evergreen-pitch-backfill', 'bulk'],
+	] as const)('legacy %s %s preserves its protected class without the profile-only guard', async (source, type, key, expectedSource, lane) => {
+		const original = row({ source, body: event(key, { type, journeyId: 'contact-directory', ...(type === 'contact.profile.updated' ? { payload: { profileVersion: 1, email: 'learner@example.test', firstName: null, holds: [] } } : type === 'contact.links.issued' ? { payload: { profileVersion: 1, journeyId: 'value-path-skills-course', emailKey: 'synthetic-email', variables: {} } } : {}) }) })
+		const { store } = memoryStore([original])
+		const send = vi.fn(async (_envelope: unknown) => {})
+		await queueCappedReplay(original, send, NOW.getTime(), (until, expectedUntil, publicationId) => store.leaseQueue({ target: PROD, id: original.id, nextAttemptAt: until, ...(expectedUntil ? { expectedUntil } : { dueAt: NOW.toISOString() }), publicationId }), publicationId => store.abortQueueHandoff({ target: original.target, id: original.id, publicationId }))
+		expect(send).toHaveBeenCalledOnce()
+		expect(send.mock.calls[0]![0]).toMatchObject({ name: `drovr/events.deliver.${lane}`, data: { source: expectedSource, events: [original.body], firstFailedAt: original.firstFailedAt } })
+	})
+	it('keeps legacy genuine offer-only replay unpaced', async () => {
+		const original = row({ source: 'contactSync', body: event('synthetic-genuine-offer', { type: 'contact.offer.issued', journeyId: 'contact-directory', payload: { profileVersion: 1, journeyId: 'crash-course-evergreen-offer', variables: {} } }) })
+		const send = vi.fn(async () => {}); const lease = vi.fn(async () => true)
+		expect(await queueCappedReplay(original, send, NOW.getTime(), lease, vi.fn(async () => {}))).toBeUndefined()
+		expect(send).not.toHaveBeenCalled(); expect(lease).not.toHaveBeenCalled()
+	})
+	it.each([{ attempts: 999, invalid: false, published: 1 }, { attempts: 0, invalid: true, published: 0 }])('keeps HTTP attempts separate and fails malformed queue proof closed: %o', async ({ attempts, invalid, published }) => {
+		const original = row({ source: 'bulkDelta', body: event('synthetic-separated-budget', { type: 'contact.profile.updated', journeyId: 'contact-directory', payload: { profileVersion: 1, email: 'learner@example.test', firstName: null, holds: [] } }), attempts, queueMetadataInvalid: invalid, lastError: 'synthetic retained diagnostic' })
+		const { store, rows } = memoryStore([original]); const send = vi.fn(async () => {})
+		const post = async (item: DrovrOutboxRow) => (await queueCappedReplay(item, send, NOW.getTime(), (until, expectedUntil, publicationId) => store.leaseQueue({ target: PROD, id: item.id, nextAttemptAt: until, ...(expectedUntil ? { expectedUntil } : { dueAt: NOW.toISOString() }), publicationId }), publicationId => store.abortQueueHandoff({ target: item.target, id: item.id, publicationId })))!
+		const result = await replay(store, post).run
+		expect(send).toHaveBeenCalledTimes(published); expect(result).toMatchObject({ failed: 0, held: 1 - published })
+		expect(rows.get(original.id)!.attempts).toBe(attempts)
+		expect(rows.get(original.id)!.lastError).toContain(original.lastError)
+	})
+	it('holds capped work after a bounded number of successful handoffs, retaining its original diagnostic and clock', async () => {
+		const original = row({ source: 'bulkDelta', body: event('synthetic-handoff-budget', { type: 'contact.profile.updated', journeyId: 'contact-directory', payload: { profileVersion: 1, email: 'learner@example.test', firstName: null, holds: [] } }), lastError: 'synthetic original HTTP503' })
+		const { store, rows } = memoryStore([original]); let at = NOW.getTime()
+		const send = vi.fn(async () => {})
+		const post = async (item: DrovrOutboxRow) => (await queueCappedReplay(item, send, at, (until, expectedUntil, publicationId) => store.leaseQueue({ target: PROD, id: item.id, nextAttemptAt: until, ...(expectedUntil ? { expectedUntil } : { dueAt: new Date(at).toISOString() }), publicationId }), publicationId => store.abortQueueHandoff({ target: item.target, id: item.id, publicationId })))!
+		for (let index = 0; index < DROVR_OUTBOX_MAX_QUEUE_HANDOFFS; index++) {
+			expect(await replay(store, post, { now: () => new Date(at) }).run).toMatchObject({ queuedHandoffs: 1, failed: 0, held: 0 })
+			expect(rows.get(original.id)!.queueHandoffs).toBe(index + 1)
+			at += BULK_OUTBOX_QUEUE_WAIT_MS + 1
+		}
+		expect(await replay(store, post, { now: () => new Date(at) }).run).toMatchObject({ held: 1, failed: 0, delivered: 0 })
+		expect(send).toHaveBeenCalledTimes(DROVR_OUTBOX_MAX_QUEUE_HANDOFFS)
+		expect(rows.get(original.id)).toMatchObject({ status: 'held', attempts: 0, queueHandoffs: DROVR_OUTBOX_MAX_QUEUE_HANDOFFS, body: original.body, firstFailedAt: original.firstFailedAt })
+		expect(rows.get(original.id)!.lastError).toContain(original.lastError); expect(rows.get(original.id)!.lastError).toContain('QueueHandoff:')
+	})
+	it.each([true, false])('only explicit durable deferred status exempts the exhausted handoff budget (deferred=%s)', async coded => {
+		const original = row({ source: 'bulkDelta', body: event('synthetic-coded-handoff', { type: 'contact.profile.updated', journeyId: 'contact-directory', payload: { profileVersion: 1, email: 'learner@example.test', firstName: null, holds: [] } }), status: coded ? 'deferred' : 'pending', attempts: 999, queueHandoffs: DROVR_OUTBOX_MAX_QUEUE_HANDOFFS, lastStatus: 409, lastError: 'event-not-live: the same operator prose in both cases' })
+		const { store, rows } = memoryStore([original]); const send = vi.fn(async () => {})
+		const post = async (item: DrovrOutboxRow) => (await queueCappedReplay(item, send, NOW.getTime(), (until, expectedUntil, publicationId) => store.leaseQueue({ target: PROD, id: item.id, nextAttemptAt: until, ...(expectedUntil ? { expectedUntil } : { dueAt: NOW.toISOString() }), publicationId }), publicationId => store.abortQueueHandoff({ target: item.target, id: item.id, publicationId })))!
+		const result = await replay(store, post).run
+		expect(send).toHaveBeenCalledTimes(Number(coded)); expect(result.held).toBe(Number(!coded)); expect(result.failed).toBe(0)
+		expect(rows.get(original.id)).toMatchObject({ attempts: 999, queueHandoffs: DROVR_OUTBOX_MAX_QUEUE_HANDOFFS })
+	})
+	it('a long-deferred birth keeps its body/clock and failure budget until actual acceptance', async () => {
+		const original = row({ status: 'deferred', source: 'bulkIngest', body: event('synthetic-deferred-birth', { type: 'contact.created' }), attempts: 999, firstFailedAt: new Date(NOW.getTime() - 30 * 24 * 60 * 60_000).toISOString(), lastStatus: 409 })
+		const { store, rows } = memoryStore([original])
+		const result = await replay(store, async () => ({ kind: 'deferred', httpStatus: 409, reason: 'synthetic operator note' })).run
+		expect(result).toMatchObject({ deferred: 1, delivered: 0, failed: 0, held: 0, circuitOpen: false, depth: { deferred: 1 } })
+		expect(rows.get(original.id)).toMatchObject({ status: 'deferred', attempts: 999, body: original.body, firstFailedAt: original.firstFailedAt, nextAttemptAt: new Date(NOW.getTime() + 24 * 60 * 60_000).toISOString() })
+		const later = new Date(NOW.getTime() + 24 * 60 * 60_000 + 1)
+		expect(await replay(store, async () => ({ kind: 'delivered', httpStatus: 202 }), { now: () => later }).run).toMatchObject({ delivered: 1, failed: 0, held: 0 })
+		expect(rows.get(original.id)).toMatchObject({ status: 'delivered', attempts: 1000, body: original.body, firstFailedAt: original.firstFailedAt })
+	})
+	it('repeated broker outages do not exhaust the successful handoff budget or open the HTTP breaker', async () => {
+		const original = row({ source: 'bulkDelta', body: event('synthetic-broker-outage', { type: 'contact.profile.updated', journeyId: 'contact-directory', payload: { profileVersion: 1, email: 'learner@example.test', firstName: null, holds: [] } }), lastError: 'synthetic original HTTP503' })
+		const { store, rows } = memoryStore([original]); let at = NOW.getTime()
+		const send = vi.fn(async () => { throw new Error('synthetic unavailable broker') })
+		const post = async (item: DrovrOutboxRow) => (await queueCappedReplay(item, send, at, (until, expectedUntil, publicationId) => store.leaseQueue({ target: PROD, id: item.id, nextAttemptAt: until, ...(expectedUntil ? { expectedUntil } : { dueAt: new Date(at).toISOString() }), publicationId }), publicationId => store.abortQueueHandoff({ target: item.target, id: item.id, publicationId })))!
+		for (let index = 0; index <= DROVR_OUTBOX_MAX_QUEUE_HANDOFFS; index++) {
+			expect(await replay(store, post, { now: () => new Date(at) }).run).toMatchObject({ queueDeferred: 1, failed: 0, held: 0, circuitOpen: false })
+			at += 60_001
+		}
+		expect(rows.get(original.id)).toMatchObject({ attempts: 0, status: 'pending', lastError: original.lastError })
+	})
+	it('holds an abandoned publication claim after expiry instead of republishing unaccounted work', async () => {
+		const original = row({ source: 'bulkDelta', body: event('synthetic-interrupted-publish', { type: 'contact.profile.updated', journeyId: 'contact-directory', payload: { profileVersion: 1, email: 'learner@example.test', firstName: null, holds: [] } }), lastError: 'synthetic original HTTP503' })
+		const { store, rows } = memoryStore([original]); const at = NOW.getTime() + BULK_OUTBOX_QUEUE_WAIT_MS + 1
+		expect(await store.leaseQueue({ target: PROD, id: original.id, publicationId: 'synthetic-interrupted', dueAt: NOW.toISOString(), nextAttemptAt: new Date(at - 1).toISOString() })).toBe(true)
+		// Process stopped after the durable claim, before recording an outcome.
+		const send = vi.fn(async () => {})
+		const post = async (item: DrovrOutboxRow) => (await queueCappedReplay(item, send, at, (until, expectedUntil, publicationId) => store.leaseQueue({ target: PROD, id: item.id, publicationId, nextAttemptAt: until, ...(expectedUntil ? { expectedUntil } : { dueAt: new Date(at).toISOString() }) }), publicationId => store.abortQueueHandoff({ target: PROD, id: item.id, publicationId })))!
+		expect(await replay(store, post, { now: () => new Date(at) }).run).toMatchObject({ held: 1, failed: 0, delivered: 0, circuitOpen: false })
+		expect(send).not.toHaveBeenCalled(); expect(rows.get(original.id)).toMatchObject({ status: 'held', attempts: 0, queuePublicationId: 'synthetic-interrupted', body: original.body, firstFailedAt: original.firstFailedAt })
+		expect(rows.get(original.id)!.lastError).toContain(original.lastError); expect(rows.get(original.id)!.lastError).toContain('QueuePublicationUnknown:')
+	})
+	it('completes each publication claim once and a stale completion/abort cannot clear a newer claim at the same lease instant', async () => {
+		const original = row({ source: 'bulkDelta' }); const { store, rows } = memoryStore([original])
+		const until = new Date(NOW.getTime() + BULK_OUTBOX_QUEUE_WAIT_MS).toISOString()
+		const claim = (publicationId: string) => store.leaseQueue({ target: PROD, id: original.id, publicationId, dueAt: NOW.toISOString(), nextAttemptAt: until })
+		expect(await claim('synthetic-first')).toBe(true)
+		await store.abortQueueHandoff({ target: PROD, id: original.id, publicationId: 'synthetic-first' })
+		await store.update(original.id, { nextAttemptAt: NOW.toISOString(), lastError: 'synthetic current consumer diagnostic' })
+		expect(await claim('synthetic-newer')).toBe(true)
+		await store.abortQueueHandoff({ target: PROD, id: original.id, publicationId: 'synthetic-first' })
+		await store.recordQueueHandoff({ target: PROD, id: original.id, publicationId: 'synthetic-first', count: true })
+		expect(rows.get(original.id)).toMatchObject({ queuePublicationId: 'synthetic-newer', nextAttemptAt: until, lastError: 'synthetic current consumer diagnostic' })
+		await Promise.all(Array.from({ length: 10 }, () => store.recordQueueHandoff({ target: PROD, id: original.id, publicationId: 'synthetic-newer', count: true })))
+		expect(rows.get(original.id)).toMatchObject({ queueHandoffs: 1, attempts: 0, nextAttemptAt: until, lastError: 'synthetic current consumer diagnostic' }); expect(rows.get(original.id)!.queuePublicationId).toBeUndefined()
+	})
+	it('a failed broker call clears its own proof but never overwrites an already released consumer lease', async () => {
+		const original = row({ source: 'bulkDelta' }); const { store, rows } = memoryStore([original])
+		const send = vi.fn(async () => { await store.update(original.id, { nextAttemptAt: NOW.toISOString(), lastError: 'synthetic faster consumer failure' }); throw new Error('synthetic broker error') })
+		const post = async (item: DrovrOutboxRow) => (await queueCappedReplay(item, send, NOW.getTime(), (until, expectedUntil, publicationId) => store.leaseQueue({ target: PROD, id: item.id, publicationId, nextAttemptAt: until, ...(expectedUntil ? { expectedUntil } : { dueAt: NOW.toISOString() }) }), publicationId => store.abortQueueHandoff({ target: PROD, id: item.id, publicationId })))!
+		expect(await replay(store, post).run).toMatchObject({ queueDeferred: 1, failed: 0, held: 0, circuitOpen: false })
+		expect(rows.get(original.id)).toMatchObject({ status: 'pending', nextAttemptAt: NOW.toISOString(), lastError: 'synthetic faster consumer failure', attempts: 0 }); expect(rows.get(original.id)!.queuePublicationId).toBeUndefined(); expect(rows.get(original.id)!.queueHandoffs ?? 0).toBe(0)
+	})
+	it('owns before publication and never overwrites a fast consumer failure release or its diagnostic', async () => {
+		const original = row({ source: 'bulkDelta', body: event('synthetic-fast', { type: 'contact.profile.updated', journeyId: 'contact-directory', payload: { profileVersion: 1, email: 'learner@example.test', firstName: null, holds: [] } }), lastError: 'original synthetic HTTP503' })
+		const { store, rows } = memoryStore([original])
+		const send = vi.fn(async () => {
+			expect(rows.get(original.id)!.nextAttemptAt).toBe(new Date(NOW.getTime() + BULK_OUTBOX_QUEUE_WAIT_MS).toISOString())
+			await store.update(original.id, { nextAttemptAt: NOW.toISOString(), lastError: 'synthetic final consumer failure' })
+		})
+		const post = async (item: DrovrOutboxRow) => { const outcome = await queueCappedReplay(item, send, NOW.getTime(), (until, expectedUntil, publicationId) => store.leaseQueue({ target: PROD, id: item.id, nextAttemptAt: until, ...(expectedUntil ? { expectedUntil } : { dueAt: NOW.toISOString() }), publicationId }), publicationId => store.abortQueueHandoff({ target: item.target, id: item.id, publicationId })); expect(outcome).toBeDefined(); return outcome! }
+		const result = await replay(store, post).run
+		expect(send).toHaveBeenCalledOnce()
+		expect(result).toMatchObject({ queuedHandoffs: 1, failed: 0, circuitOpen: false })
+		expect(rows.get(original.id)).toMatchObject({ status: 'pending', nextAttemptAt: NOW.toISOString(), lastError: 'synthetic final consumer failure', firstFailedAt: original.firstFailedAt, body: original.body })
+	})
+	it('a failed broker handoff shortens only its own lease without a Drovr attempt or outage-breaker charge', async () => {
+		const original = row({ source: 'bulkDelta', body: event('synthetic-broker', { type: 'contact.profile.updated', journeyId: 'contact-directory', payload: { profileVersion: 1, email: 'learner@example.test', firstName: null, holds: [] } }), lastError: 'retain synthetic HTTP503' })
+		const { store, rows } = memoryStore([original])
+		const send = vi.fn(async () => { throw new Error('synthetic broker down') })
+		const post = async (item: DrovrOutboxRow) => { const outcome = await queueCappedReplay(item, send, NOW.getTime(), (until, expectedUntil, publicationId) => store.leaseQueue({ target: PROD, id: item.id, nextAttemptAt: until, ...(expectedUntil ? { expectedUntil } : { dueAt: NOW.toISOString() }), publicationId }), publicationId => store.abortQueueHandoff({ target: item.target, id: item.id, publicationId })); expect(outcome).toBeDefined(); return outcome! }
+		const result = await replay(store, post).run
+		expect(result).toMatchObject({ queueDeferred: 1, failed: 0, circuitOpen: false })
+		expect(rows.get(original.id)).toMatchObject({ status: 'pending', attempts: 0, nextAttemptAt: new Date(NOW.getTime() + 60_000).toISOString(), lastError: original.lastError, firstFailedAt: original.firstFailedAt, body: original.body })
+	})
+	it('atomically chooses one publisher and never revives delivered history from a stale patch', async () => {
+		const original = row({ source: 'bulkDelta', body: event('synthetic-race', { type: 'contact.profile.updated', journeyId: 'contact-directory', payload: { profileVersion: 1, email: 'learner@example.test', firstName: null, holds: [] } }) })
+		const { store, rows } = memoryStore([original])
+		const send = vi.fn(async () => {})
+		const lease = (until: string, expectedUntil: string | undefined, publicationId: string) => store.leaseQueue({ target: PROD, id: original.id, publicationId, nextAttemptAt: until, ...(expectedUntil ? { expectedUntil } : { dueAt: NOW.toISOString() }) })
+		const outcomes = await Promise.all([queueCappedReplay(original, send, NOW.getTime(), lease, publicationId => store.abortQueueHandoff({ target: PROD, id: original.id, publicationId })), queueCappedReplay(original, send, NOW.getTime(), lease, publicationId => store.abortQueueHandoff({ target: PROD, id: original.id, publicationId }))])
+		expect(send).toHaveBeenCalledOnce()
+		expect(outcomes.map(outcome => outcome?.kind === 'queued' ? outcome.phase : 'invalid').sort()).toEqual(['published', 'stale'])
+		await store.update(original.id, { status: 'delivered', lastError: null })
+		await store.update(original.id, { status: 'held', nextAttemptAt: NOW.toISOString() })
+		expect(rows.get(original.id)).toMatchObject({ status: 'delivered', lastError: null })
+		expect(await lease(new Date(NOW.getTime() + 2 * BULK_OUTBOX_QUEUE_WAIT_MS).toISOString(), undefined, 'synthetic-stale-publication')).toBe(false)
+	})
+	it('normal delivery settles profile/link facts before the replay is allowed to take them', async () => {
+		const { store, rows } = memoryStore()
+		const events = (['contact.profile.updated', 'contact.links.issued'] as const).map((type, index) => event(`delta-${index}`, { type }))
+		await queueContactSyncBulk(events, { capture: (entries, reason, options) => captureDrovrOutbox({ store, target: PROD, entries, reason, now: NOW, log: log(), ...options }), send: async () => {} }, { now: () => NOW.getTime() })
+		const post = vi.fn(async (_row: DrovrOutboxRow) => ({ kind: 'delivered' as const }))
+		await replay(store, post).run
+		expect(post).not.toHaveBeenCalled()
+		expect(await settleDrovrOutbox({ store, target: PROD, entries: events.map(item => outboxEntryForEvent(item, 'bulkDelta')), note: 'delivered on bulk', now: NOW, log: log() })).toBe(2)
+		expect([...rows.values()].every(row => row.status === 'delivered')).toBe(true)
+		await replay(store, post, { now: () => new Date(NOW.getTime() + 2 * BULK_OUTBOX_QUEUE_WAIT_MS) }).run
+		expect(post).not.toHaveBeenCalled()
+	})
+	it('after a publish crash, timed-out ownership requeues once without marking an undelivered row delivered', async () => {
+		const { store, rows } = memoryStore()
+		const item = event('profile:contact-1:1', { type: 'contact.profile.updated' })
+		await expect(queueContactSyncBulk([item], { capture: (entries, reason, options) => captureDrovrOutbox({ store, target: PROD, entries, reason, now: NOW, log: log(), ...options }), send: async () => { throw new Error('synthetic crash') } }, { now: () => NOW.getTime() })).rejects.toThrow('synthetic crash')
+		const after = NOW.getTime() + BULK_OUTBOX_QUEUE_WAIT_MS + 1
+		const send = vi.fn(async (_envelope: unknown) => {})
+		const post = async (row: DrovrOutboxRow) => { const result = await queueCappedReplay(row, send, after, (until, expectedUntil, publicationId) => store.leaseQueue({ target: row.target, id: row.id, nextAttemptAt: until, ...(expectedUntil ? { expectedUntil } : { dueAt: new Date(after).toISOString() }), publicationId }), publicationId => store.abortQueueHandoff({ target: row.target, id: row.id, publicationId })); if (!result) throw new Error('expected capped row'); return result }
+		await replay(store, post, { now: () => new Date(after) }).run
+		expect(send).toHaveBeenCalledOnce()
+		expect([...rows.values()][0]).toMatchObject({ status: 'pending', attempts: 0, queueHandoffs: 1 })
+		await replay(store, post, { now: () => new Date(after + 300000) }).run
+		expect(send).toHaveBeenCalledOnce()
+	})
+})
 
 describe('drovr outbox target', () => {
 	it('is the Vercel environment, whatever drovr URL the deployment posts to', () => {
@@ -2048,6 +2278,7 @@ describe('row 204c: a stop drovr refused is held for a human, never rejected', (
 			body: event('behind', { occurredAt: minutesAgo(5) }),
 			nextAttemptAt: minutesAgo(-70),
 			lastError: DROVR_OUTBOX_BEHIND_STOP_NOTE,
+			waitingForStop: true,
 		})
 		const ownBackoff = row({
 			id: 'own',
@@ -2087,6 +2318,7 @@ describe('row 204c: a stop drovr refused is held for a human, never rejected', (
 			'deferred',
 			{
 				source: 'contactSync',
+				status: 'deferred',
 				firstFailedAt: minutesAgo(47 * 60),
 				nextAttemptAt: minutesAgo(-60),
 			},
@@ -2099,6 +2331,7 @@ describe('row 204c: a stop drovr refused is held for a human, never rejected', (
 			'overdue',
 			{
 				source: 'contactSync',
+				status: 'deferred',
 				firstFailedAt: minutesAgo(48 * 60 + 1),
 				nextAttemptAt: minutesAgo(-60),
 			},

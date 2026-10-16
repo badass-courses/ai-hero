@@ -28,7 +28,17 @@ import { drizzle, type MySql2Database } from 'drizzle-orm/mysql2'
 import { eq, sql } from 'drizzle-orm'
 import type { MySqlDatabase } from 'drizzle-orm/mysql-core'
 import mysql, { type Pool } from 'mysql2/promise'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { DROVR_EVENTS_DELIVER_EVENT } from '@/inngest/events/drovr'
+
+// This SQL suite exercises the real contact repository, whose INSERT emits a
+// contact-created handoff. Keep that boundary local, never a dummy-key HTTP
+// request to the real broker; the global test setup deliberately stays intact.
+const broker = vi.hoisted(() => ({
+	send: vi.fn(async (_payload: unknown) => ({ ids: ['synthetic-sql-handoff'] })),
+	unexpectedFetch: vi.fn(async () => { throw new Error('No outbound HTTP is allowed in the disposable SQL suite') }),
+}))
+vi.mock('@/inngest/inngest.server', () => ({ inngest: { send: broker.send } }))
 import { validateMySqlIntegrationServerUrl } from '../../team-purchase-mysql-test-guard'
 import {
 	createEmailTokenLoginObservationWriter,
@@ -85,6 +95,7 @@ integration('email login observation real adapter and disposable MySQL', () => {
 		})
 	}
 	beforeAll(async () => {
+		vi.stubGlobal('fetch', broker.unexpectedFetch)
 		if (!serverUrl || process.env.CI !== 'true')
 			throw new Error('Explicit disposable CI server required')
 		const safe = validateMySqlIntegrationServerUrl(serverUrl, {
@@ -132,12 +143,15 @@ integration('email login observation real adapter and disposable MySQL', () => {
 		readback = makeDatabase(readPool)
 	})
 	afterAll(async () => {
+		vi.unstubAllGlobals()
 		await pool?.end()
 		await readPool?.end()
 		if (server && name) await server.query(`DROP DATABASE \`${name}\``)
 		await server?.end()
 	})
+	afterEach(() => { expect(broker.unexpectedFetch).not.toHaveBeenCalled() })
 	beforeEach(async () => {
+		broker.send.mockClear()
 		await pool.query('DELETE FROM AI_VerificationToken')
 		for (const table of [
 			contactEvent,
@@ -751,6 +765,10 @@ integration('email login observation real adapter and disposable MySQL', () => {
 			createdAt: at,
 			updatedAt: at,
 		})
+		await vi.waitFor(() => expect(broker.send).toHaveBeenCalledWith(expect.objectContaining({
+			name: DROVR_EVENTS_DELIVER_EVENT,
+			data: expect.objectContaining({ source: 'contact-created', events: expect.arrayContaining([expect.objectContaining({ type: 'contact.created', contactId: row.id })]) }),
+		})))
 		const read = async () => {
 			const [value] = await database
 				.select()

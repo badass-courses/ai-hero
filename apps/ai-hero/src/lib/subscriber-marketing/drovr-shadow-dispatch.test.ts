@@ -132,7 +132,7 @@ describe('drovr shadow dispatch', () => {
 		// source travels on its own function.
 		expect(send.mock.calls.map(([payload]) => payload.name)).toEqual([
 			'drovr/events.deliver',
-			'drovr/events.deliver.bulk',
+			'drovr/events.deliver.ingest',
 		])
 		expect(send.mock.calls[0]?.[0].data.events).toEqual(
 			send.mock.calls[1]?.[0].data.events,
@@ -673,7 +673,7 @@ describe('row 204: the fallback never drops what drovr did not take', () => {
 			expect(entries.map((entry) => entry.idempotencyKey)).toEqual(
 				events.map((event) => event.idempotencyKey),
 			)
-			expect(entries.every((entry) => entry.source === 'fallback')).toBe(true)
+			expect(entries.every((entry) => entry.source === 'live')).toBe(true)
 			expect(entries.every((entry) => !entry.needsFanOut)).toBe(true)
 			expect(entries.map((entry) => entry.body)).toEqual(events)
 			// Outboxed is not lost: no fallback_failed.

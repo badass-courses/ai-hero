@@ -58,9 +58,10 @@ export const contactProfileVersion = mysqlTable('ContactProfileVersion', {
 	profileVersion: bigint('profileVersion', { mode: 'number', unsigned: true })
 		.notNull()
 		.default(1),
-	/** sha256 of the content last pushed at this version (contactProfileContentHash). */
+	/** Versioned profile/link digest; legacy rows may still include offers. */
 	profileHash: varchar('profileHash', { length: 64 }),
-	/** The version drovr last fully accepted; live writers skip an unchanged, acknowledged one. */
+	/** Rollout OFF: legacy optimistic ACK. ON: frozen receiver-proved version;
+	 * a queue/outbox handoff alone never authorizes new profileAck completion. */
 	acknowledgedVersion: bigint('acknowledgedVersion', {
 		mode: 'number',
 		unsigned: true,

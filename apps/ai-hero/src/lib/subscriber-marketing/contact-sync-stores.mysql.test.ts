@@ -8,6 +8,10 @@ import mysql, { type Pool } from 'mysql2/promise'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { validateMySqlIntegrationServerUrl } from '../team-purchase-mysql-test-guard'
+import { dueProfileConfirmations } from './contact-sync-restatement'
+import { reserveBulkSlot, BULK_RESERVATION_INTERVAL_MS, type PaceConnection, type BulkClass } from './drovr-bulk-pace'
+import { sampleBulkClock } from './drovr-bulk-clock'
+import { createDrizzleBackfillApprovals } from './contact-sync-backfill-approval'
 import { createDrizzleContactProfileVersionStore } from './contact-profile-version-drizzle'
 import { createDrizzleValuePathLinkAnchorStore } from './drizzle-value-path-link-anchor'
 import {
@@ -89,7 +93,7 @@ integration('contact-sync stores on MySQL', () => {
 		await pool.query(acknowledged)
 		const database = drizzle(pool, { schema: databaseSchema, mode: 'default' })
 		store = createDrizzleValuePathLinkAnchorStore(database)
-		versions = createDrizzleContactProfileVersionStore(database)
+		versions = createDrizzleContactProfileVersionStore(database, { profileAckEnabled: async () => false })
 	})
 
 	afterAll(async () => {
@@ -163,7 +167,7 @@ integration('contact-sync stores on MySQL', () => {
 		let clock = '2026-09-26T18:00:00.000Z'
 		const store = createDrizzleContactProfileVersionStore(
 			drizzle(pool, { schema: databaseSchema, mode: 'default' }),
-			{ now: () => clock },
+			{ now: () => clock, profileAckEnabled: async () => false },
 		)
 		await expect(store.versionFor('contact-v', 'hash-a')).resolves.toEqual({
 			profileVersion: 1,
@@ -197,11 +201,104 @@ integration('contact-sync stores on MySQL', () => {
 		expect(row?.h).toMatch(/^[c-f]$/)
 	})
 
+	it('legacy OFF moves acknowledgedAt only for an explicit new monthly confirmation, without changing since', async () => {
+		let clock = '2032-01-01T00:00:00.000Z'
+		const store = createDrizzleContactProfileVersionStore(drizzle(pool, { schema: databaseSchema, mode: 'default' }), { now: () => clock, profileAckEnabled: async () => false })
+		await store.versionFor('confirmation', 'v2:' + 'a'.repeat(61))
+		await store.acknowledge('confirmation', 1)
+		clock = '2032-02-01T00:00:00.000Z'
+		expect(await store.acknowledgeLegacy('confirmation', 1)).toBe(false)
+		expect(await store.acknowledgeLegacy('confirmation', 1, { kind: 'restate', period: '2032-02' })).toBe(true)
+		expect(await store.acknowledgeLegacy('confirmation', 1, { kind: 'restate', period: '2032-02' })).toBe(false)
+		const [rows] = await pool.query("SELECT acknowledgedAt AS at, updatedAt AS since, acknowledgedVersion AS version FROM AI_ContactProfileVersion WHERE contactId = 'confirmation'")
+		const [row] = rows as { at: Date; since: Date; version: number }[]
+		expect(row!.at.toISOString()).toBe(clock)
+		expect(row!.since.toISOString()).toBe('2032-01-01T00:00:00.000Z')
+		expect(Number(row!.version)).toBe(1)
+	})
+
+	it('migrates a proven matching legacy digest under concurrent writers without spending a version', async () => {
+		const legacy = 'a'.repeat(64)
+		const next = 'v2:' + 'b'.repeat(61)
+		await versions.versionFor('migration', legacy)
+		await versions.acknowledge('migration', 1)
+		const before = await versions.currentFor('migration')
+		const results = await Promise.all([versions.versionFor('migration', next, legacy), versions.versionFor('migration', next, legacy)])
+		expect(results.map(row => row.profileVersion)).toEqual([1, 1])
+		expect(await versions.currentFor('migration')).toMatchObject({ profileVersion: 1, contentHash: next, since: before!.since, acknowledged: true })
+		await expect(versions.versionFor('migration', 'v2:' + 'c'.repeat(61), legacy)).resolves.toMatchObject({ profileVersion: 2, acknowledged: false })
+	})
+
+	it('samples the real fixture UTC epoch with monotonic RTT and no session mutation', async () => {
+		const before = Date.now()
+		const sample = await sampleBulkClock(async () => pool.getConnection())
+		const after = Date.now()
+		expect(sample.utcMs).toBeGreaterThanOrEqual(before - 5000)
+		expect(sample.utcMs).toBeLessThanOrEqual(after + 5000)
+		expect(sample.rttMs).toBeGreaterThanOrEqual(0)
+		expect(sample.precisionMs).toBe(1)
+	})
+
+	it('reserves disjoint future slots under database contention, with a protected delta budget and UTC connections', async () => {
+		await pool.query("DELETE FROM AI_ContactSyncCursor WHERE name = 'bulk-delivery-pace-v2'")
+		const acquire = async () => await pool.getConnection() as unknown as PaceConnection
+		const classes: BulkClass[] = [...Array<BulkClass>(12).fill('delta'), ...Array<BulkClass>(4).fill('restate'), 'ingest', 'ingest', 'ingest', 'backfill']
+		const slots = await Promise.all(Array.from({ length: 300 }, async (_, index) => {
+			const value = await reserveBulkSlot(acquire, 'AI_ContactSyncCursor', classes[index % classes.length]!)
+			expect(value).toEqual(expect.any(Number))
+			return value as number
+		}))
+		const ordered = slots.sort((a, b) => a - b)
+		expect(new Set(slots).size).toBe(slots.length)
+		for (let i = 1; i < ordered.length; i++) expect(ordered[i]! - ordered[i - 1]!).toBeGreaterThanOrEqual(BULK_RESERVATION_INTERVAL_MS)
+		for (const at of slots) expect(slots.filter(other => other >= at && other <= at + 60000).length).toBeLessThanOrEqual(100)
+		// Exhausting background lookahead does not reserve or steal delta slots.
+		await pool.query("UPDATE AI_ContactSyncCursor SET `cursor` = JSON_OBJECT('backfill', UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3)) * 1000 + 900000) WHERE name = 'bulk-delivery-pace-v2'")
+		await expect(reserveBulkSlot(acquire, 'AI_ContactSyncCursor', 'backfill')).resolves.toMatchObject({ retryAt: expect.any(Number) })
+		await expect(reserveBulkSlot(acquire, 'AI_ContactSyncCursor', 'delta')).resolves.toBeTypeOf('number')
+	}, 30000)
+
+	it('rotates the real oldest-first selector across acknowledged contacts without starving or acknowledging a pending version', async () => {
+		let clock = '2032-01-01T00:00:00.000Z'
+		const db = drizzle(pool, { schema: databaseSchema, mode: 'default' })
+		const versions = createDrizzleContactProfileVersionStore(db, { now: () => clock, profileAckEnabled: async () => false })
+		for (let index = 0; index < 12; index++) {
+			await versions.versionFor(`due-${index}`, 'v2:' + 'd'.repeat(61))
+			await versions.acknowledge(`due-${index}`, 1)
+		}
+		await versions.versionFor('pending', 'v2:' + 'e'.repeat(61))
+		clock = '2032-02-05T00:00:00.000Z'
+		const seen: string[] = []
+		for (let tick = 0; tick < 12; tick++) {
+			const due = await dueProfileConfirmations(db, Date.parse(clock), async () => { throw new Error('unexpected capacity') })
+			expect(due).toHaveLength(1)
+			seen.push(due[0]!.contactId)
+			expect(await versions.acknowledgeLegacy(due[0]!.contactId, 1, { kind: 'restate', period: clock.slice(0, 7) })).toBe(true)
+		}
+		expect(new Set(seen).size).toBe(12)
+		expect(seen).not.toContain('pending')
+		expect(await dueProfileConfirmations(db, Date.parse(clock), async () => {})).toEqual([])
+		expect((await versions.currentFor('pending'))!.acknowledged).toBe(false)
+	})
+
+	it('requires a single-use approval bound to the real count and exact cursor', async () => {
+		const approvals = createDrizzleBackfillApprovals(drizzle(pool, { schema: databaseSchema, mode: 'default' }))
+		const binding = { kind: 'continue' as const, rows: 7, cursor: { phase: 'owners' as const, afterId: 'cursor-a' } }
+		const token = await approvals.issue(binding)
+		expect(await approvals.consume(token, { ...binding, rows: 0 })).toBe(false)
+		expect(await approvals.consume(token, { ...binding, cursor: { ...binding.cursor, afterId: 'cursor-b' } })).toBe(false)
+		const claims = await Promise.all(Array.from({ length: 10 }, () => approvals.consume(token, binding)))
+		expect(claims.filter(Boolean)).toHaveLength(1)
+		expect(await approvals.consume(token, binding)).toBe(false)
+		const expired = createDrizzleBackfillApprovals(drizzle(pool, { schema: databaseSchema, mode: 'default' }), () => Date.now() - 2 * 86400000)
+		expect(await approvals.consume(await expired.issue(binding), binding)).toBe(false)
+	})
+
 	it('acknowledges a version without moving when it was set (so re-statements stay byte-identical)', async () => {
 		const clock = '2026-09-26T18:00:00.000Z'
 		const store = createDrizzleContactProfileVersionStore(
 			drizzle(pool, { schema: databaseSchema, mode: 'default' }),
-			{ now: () => clock },
+			{ now: () => clock, profileAckEnabled: async () => false },
 		)
 		await store.versionFor('contact-a', 'hash-a')
 		// updatedAt has ON UPDATE CURRENT_TIMESTAMP and is the version's

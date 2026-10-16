@@ -1,4 +1,5 @@
 import { expect, it, vi } from 'vitest'
+vi.mock('@/lib/subscriber-marketing/drovr-unsubscribe-supersession', async load => ({ ...await load<typeof import('./drovr-unsubscribe-supersession')>(), closeSupersededUnsubscribesLive: async () => new Map() }))
 import {
 	deliverDrovrShadowEventsDirect,
 	emitDrovrShadowEvents,

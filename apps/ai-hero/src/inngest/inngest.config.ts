@@ -46,11 +46,15 @@ import { courseSyncPollScheduler } from './functions/course-sync-poll-scheduler'
 import {
 	drovrEventsDeliver,
 	drovrEventsDeliverBulk,
+	drovrEventsDeliverDelta,
+	drovrEventsDeliverRestate,
+	drovrEventsDeliverIngest,
 } from './functions/drovr-events-deliver'
 import { drovrContactProfileSync } from './functions/drovr-contact-profile-sync'
 import { drovrContactSyncBackfill } from './functions/drovr-contact-sync-backfill'
 import { drovrContactSyncRetry } from './functions/drovr-contact-sync-retry'
 import { drovrContactSyncReconcile } from './functions/drovr-contact-sync-reconcile'
+import { drovrContactSyncRestate } from './functions/drovr-contact-sync-restate'
 import { drovrOwnerBirthGuard } from './functions/drovr-owner-birth-guard'
 import { drovrEvergreenSender } from './functions/drovr-evergreen-sender'
 import { drovrSignupDeliver } from './functions/drovr-signup-deliver'
@@ -184,9 +188,13 @@ const allFunctions = [
 	learnerFlowReconciler,
 	drovrEventsDeliver,
 	drovrEventsDeliverBulk,
+	drovrEventsDeliverDelta,
+	drovrEventsDeliverRestate,
+	drovrEventsDeliverIngest,
 	drovrEvergreenSender,
 	drovrContactProfileSync,
 	drovrContactSyncReconcile,
+	drovrContactSyncRestate,
 	drovrOwnerBirthGuard,
 	drovrContactSyncBackfill,
 	drovrContactSyncRetry,

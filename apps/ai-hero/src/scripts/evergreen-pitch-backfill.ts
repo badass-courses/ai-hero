@@ -70,6 +70,7 @@ export type EvergreenPitchBackfillSummary = {
   selected: number;
   entered: number;
   enteredContactIds: string[];
+  dispatchGapMs?: number;
   refused: Record<BackfillRefusalReason, number>;
   errors: string[];
 };
@@ -97,6 +98,7 @@ export type EvergreenPitchBackfillArgs = {
   enableInstant: string;
   limit: number;
   apply: boolean;
+  dispatchGapMs?: number;
   out: string;
 };
 
@@ -142,6 +144,7 @@ export function parseEvergreenPitchBackfillArgs(
   let out: string | undefined;
   let apply = false;
   let dryRun = false;
+  let dispatchGapMs: number | undefined;
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index]!;
@@ -156,15 +159,20 @@ export function parseEvergreenPitchBackfillArgs(
     if (
       argument === "--floor" ||
       argument === "--limit" ||
-      argument === "--out"
+      argument === "--out" ||
+      argument === "--dispatch-gap-ms"
     ) {
       const value = argv[index + 1];
-      if (!value) throw new Error(`${argument} requires a value`);
+      if (!value) {
+        if (argument === "--dispatch-gap-ms") requireBackfillPace(true, undefined);
+        throw new Error(`${argument} requires a value`);
+      }
       index += 1;
       if (argument === "--floor") floor = value;
       if (argument === "--limit")
         limit = parsePositiveInteger(value, "--limit");
       if (argument === "--out") out = value;
+      if (argument === "--dispatch-gap-ms") dispatchGapMs = parseDispatchGap(value);
       continue;
     }
     if (argument.startsWith("--floor=")) {
@@ -176,6 +184,10 @@ export function parseEvergreenPitchBackfillArgs(
         argument.slice("--limit=".length),
         "--limit",
       );
+      continue;
+    }
+    if (argument.startsWith("--dispatch-gap-ms=")) {
+      dispatchGapMs = parseDispatchGap(argument.slice("--dispatch-gap-ms=".length));
       continue;
     }
     if (argument.startsWith("--out=")) {
@@ -196,11 +208,13 @@ export function parseEvergreenPitchBackfillArgs(
   ) {
     throw new Error("--floor must be before the enable instant");
   }
+  requireBackfillPace(apply, dispatchGapMs);
   return {
     floor: normalizedFloor,
     enableInstant: EVERGREEN_PITCH_ENABLE_INSTANT,
     limit,
     apply,
+    ...(dispatchGapMs !== undefined ? { dispatchGapMs } : {}),
     out,
   };
 }
@@ -260,8 +274,19 @@ export function selectBackfillPopulation(args: {
   return selected;
 }
 
-/** 100 ms between births: at most 600 a minute, under the bulk lane's 700. */
-export const EVERGREEN_BACKFILL_DISPATCH_PAUSE_MS = 100;
+/** Conservative <4 births/min; all actual POSTs still share the protected 5/min lane. */
+export const EVERGREEN_BACKFILL_DISPATCH_PAUSE_MS = 15_100;
+function requireBackfillPace(apply: boolean, gap: number | undefined): void {
+  if ((apply || gap !== undefined) && (typeof gap !== "number" || !Number.isSafeInteger(gap) || gap < EVERGREEN_BACKFILL_DISPATCH_PAUSE_MS || gap > 2_147_483_647)) {
+    throw new Error("BackfillPace: you requested evergreen backfill apply, and it failed because explicit protected-lane pacing is missing or too fast. Accepted: --dispatch-gap-ms from 15100 to 2147483647 (whole milliseconds, fewer than four births/minute and no Node timer overflow). Fix: add that argument and review the dry-run; retries still share the five-POST/minute allocator. Debug: inspect the parsed dispatchGapMs before opening the repository.");
+  }
+}
+
+function parseDispatchGap(value: string): number {
+  const gap = Number(value);
+  requireBackfillPace(true, gap);
+  return gap;
+}
 
 export async function runEvergreenPitchBackfill(args: {
   repository: EvergreenPitchBackfillRepository;
@@ -269,6 +294,8 @@ export async function runEvergreenPitchBackfill(args: {
   enableInstant: string;
   limit: number;
   apply: boolean;
+  /** Required for apply, >=15100. Dry-run does not dispatch or sleep. */
+  dispatchGapMs?: number;
   /** The run's start: its id and date (the idempotency key's day). */
   birthInstant: string;
   /**
@@ -280,8 +307,8 @@ export async function runEvergreenPitchBackfill(args: {
   /**
    * Waits between dispatches, so a birth never queues behind the bulk
    * lane's throttle long enough for drovr's clamp to move it off the
-   * instant ai-hero's entry recorded (row 201g). Default: 100 ms, at most
-   * 600 a minute against the lane's 700.
+   * instant ai-hero's entry recorded (row 201g). Production uses the explicitly
+   * approved dispatchGapMs; this injectable wait exists for offline tests.
    */
   pause?: () => Promise<void>;
   /**
@@ -295,6 +322,7 @@ export async function runEvergreenPitchBackfill(args: {
     reason: BackfillRefusalReason;
   }) => void;
 }): Promise<EvergreenPitchBackfillSummary> {
+  requireBackfillPace(args.apply, args.dispatchGapMs);
   const runDate = args.birthInstant.slice(0, 10);
   const summary: EvergreenPitchBackfillSummary = {
     runId: `evergreen-pitch-backfill-${compactTimestamp(args.birthInstant)}`,
@@ -307,6 +335,7 @@ export async function runEvergreenPitchBackfill(args: {
     selected: 0,
     entered: 0,
     enteredContactIds: [],
+    ...(args.dispatchGapMs !== undefined ? { dispatchGapMs: args.dispatchGapMs } : {}),
     refused: emptyRefusalCounts(),
     errors: [],
   };
@@ -342,7 +371,7 @@ export async function runEvergreenPitchBackfill(args: {
     args.pause ??
     (() =>
       new Promise<void>((resolve) =>
-        setTimeout(resolve, EVERGREEN_BACKFILL_DISPATCH_PAUSE_MS),
+        setTimeout(resolve, args.dispatchGapMs ?? EVERGREEN_BACKFILL_DISPATCH_PAUSE_MS),
       ));
   let dispatched = 0;
   for (const candidate of population) {
@@ -660,6 +689,7 @@ async function main() {
       enableInstant: args.enableInstant,
       limit: args.limit,
       apply: args.apply,
+      dispatchGapMs: args.dispatchGapMs,
       birthInstant,
       carryTimeZone: deadlineTimeZoneCaptureEnabled(process.env),
       logRefusal: (refusal) => {

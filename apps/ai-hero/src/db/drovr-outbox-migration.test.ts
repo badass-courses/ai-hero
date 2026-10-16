@@ -10,6 +10,15 @@ const migration = readFileSync(
 	'utf8',
 )
 
+const heldContinuationMigration = readFileSync(
+	new URL(
+		'./migrations/20261016_ai_hero_drovr_held_continuation.sql',
+		import.meta.url,
+	),
+	'utf8',
+)
+const cumulativeMigrations = `${migration}\n${heldContinuationMigration}`
+
 describe('the drovr outbox migration (row 204)', () => {
 	it('is strictly additive: one guarded CREATE TABLE and nothing else', () => {
 		expect(migration.match(/CREATE TABLE/g)).toHaveLength(1)
@@ -19,12 +28,25 @@ describe('the drovr outbox migration (row 204)', () => {
 		expect(migration).not.toMatch(/\b(UPDATE|DELETE|INSERT)\b/)
 	})
 
-	it('declares every schema column and index the app reads', () => {
+	it('adds only the authorized nullable control column without rewriting the original CREATE', () => {
+		expect(migration).not.toContain('`heldContinuation`')
+		const executable = heldContinuationMigration
+			.split('\n')
+			.filter((line) => !line.trimStart().startsWith('--'))
+			.join('\n')
+			.replace(/\s+/g, ' ')
+			.trim()
+		expect(executable).toBe(
+			'ALTER TABLE `AI_DrovrOutbox` ADD COLUMN `heldContinuation` JSON NULL;',
+		)
+	})
+
+	it('cumulatively declares every schema column and index the app reads', () => {
 		const config = getTableConfig(drovrOutbox)
 		expect(config.name).toBe('AI_DrovrOutbox')
 		for (const column of config.columns) {
 			const nullness = column.notNull ? 'NOT NULL' : 'NULL'
-			expect(migration).toMatch(
+			expect(cumulativeMigrations).toMatch(
 				new RegExp(
 					`\`${column.name}\` ${column.getSQLType().replace(/[()]/g, '\\$&')}(?: ${nullness}| ${nullness} DEFAULT)`,
 					'i',

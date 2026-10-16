@@ -1,21 +1,29 @@
+import { createHash, randomUUID } from 'node:crypto'
+import { BulkPaceYieldError } from '@/lib/subscriber-marketing/drovr-bulk-permit'
+import { BULK_EVENTS_PER_MINUTE, BULK_CLASS_SLOTS } from '@/lib/subscriber-marketing/contact-sync-deltas'
+import { BULK_OUTBOX_QUEUE_WAIT_MS, bulkOutboxSource as cappedLaneFor } from '@/lib/subscriber-marketing/contact-sync-bulk'
 import { env } from '@/env.mjs'
 import {
 	BULK_DELIVERY_SOURCES,
 	DROVR_EVENTS_DELIVER_BULK_EVENT,
+	DROVR_EVENTS_DELIVER_DELTA_EVENT,
+	DROVR_EVENTS_DELIVER_RESTATE_EVENT,
+	DROVR_EVENTS_DELIVER_INGEST_EVENT,
+	deliverEventNameFor,
+	type DrovrDeliverEventName,
 	DROVR_EVENTS_DELIVER_EVENT,
 } from '@/inngest/events/drovr'
 import type { DrovrEventsDeliver } from '@/inngest/events/drovr'
 import { inngest } from '@/inngest/inngest.server'
 import {
-	batchStepId,
 	deliverBatchOrThrow,
 	deliverOrThrow,
 	deliveryStepId,
-	DROVR_BATCH_MAX,
 	isNeverBornOwnerStop,
 } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
 import {
 	isHeldStopRefusal,
+	isNeverBornOwnerStopProblem,
 	refusalsByAnswer,
 } from '@/lib/subscriber-marketing/drovr-stop-verdict'
 import type {
@@ -54,6 +62,7 @@ import {
 	isOutboxStop,
 	openStopBefore,
 	outboxEntryForEvent,
+	drovrOutboxDedupeKey,
 	type DrovrOutboxEntry,
 	type DrovrOutboxSource,
 } from '@/lib/subscriber-marketing/drovr-outbox'
@@ -62,8 +71,11 @@ import {
 	holdDrovrStopsLive,
 	openDrovrOutboxStopsLive,
 	settleDrovrOutboxLive,
+	rejectDrovrOutboxLive,
+	drovrOutboxTargetFromEnv,
 	type DrovrOutboxOpenStopsFn,
 } from '@/lib/subscriber-marketing/drovr-outbox-live'
+import { recordOwnerStopRejectionLive } from '@/lib/subscriber-marketing/drovr-owner-stop-rejection-live'
 import {
 	DROVR_SETTLED_BY_RETRY,
 	sendOrOutbox,
@@ -76,8 +88,16 @@ import {
 import { withoutSyntheticContacts } from '@/lib/synthetic-principal'
 import { log } from '@/server/logger'
 import type { GetStepTools } from 'inngest'
+import { captureFailedContactSyncRetry, runPacedContactSyncRetry } from './drovr-contact-sync-retry'
+import { ownRetryEvents, readRetryDispositionLive, type OwnedRetryEvent } from '@/lib/subscriber-marketing/contact-sync-retry-owned-events'
+import { routeContactSyncRetry, retryEventIdentity, retryStepKey } from '@/lib/subscriber-marketing/contact-sync-retry-route'
+import { runPacedSend, waitForBulkSlot, type BulkClass } from '@/lib/subscriber-marketing/drovr-bulk-pace'
+import { profileVersionForRefresh, readCurrentOfferAfterProfile } from '@/lib/subscriber-marketing/contact-sync-offer-refresh'
 
 export type DrovrEventsDeliverReceipt = {
+	ackEvidenceExpired?: import('@/lib/subscriber-marketing/contact-sync-profile-ack-schema').AckEvidenceExpired
+	profileAckAwaitingProof?: true
+	supersededUnsubscribes?: number
 	/** Backfill events drovr refused, handed to the straggler retry. */
 	deferred?: number
 	/** Backfill events dropped because contact sync was off. */
@@ -124,8 +144,11 @@ export type DrovrEventsDeliverReceipt = {
 
 /** How this run delivers: its attempt, its lane, and where unsent go. */
 export type DeliverContext = {
+	runId: string
+	recordOwnerStopRejection: typeof recordOwnerStopRejectionLive
 	attempt: DrovrSendAttempt
-	lane: Extract<DrovrOutboxSource, 'live' | 'bulk'>
+	lane: Extract<DrovrOutboxSource, 'live' | 'bulk' | 'bulkDelta' | 'bulkRestate' | 'bulkIngest' | 'bulkBackfill' | 'bulkEvergreen'>
+	clampAt?: number
 	capture: DrovrOutboxCaptureFn
 	/** The outbox's owed stops for these contacts (row 204b). */
 	openStops: DrovrOutboxOpenStopsFn
@@ -133,6 +156,20 @@ export type DeliverContext = {
 	settle: DrovrOutboxSettleFn
 	/** Holds stops drovr refused with a 4xx, for a human (row 204c). */
 	hold: DrovrOutboxHoldFn
+	pace?: (id: string, step: DeliverStep) => Promise<number>
+	own?: (...args: Parameters<typeof ownRetryEvents>) => Promise<OwnedRetryEvent[] | import('@/lib/subscriber-marketing/contact-sync-profile-ack-schema').AckEvidenceExpired>
+	profileAckRef?: import('@/lib/subscriber-marketing/contact-sync-profile-ack-schema').ProfileAckReference
+	completeProfileAck?: () => Promise<import('@/lib/subscriber-marketing/contact-sync-profile-ack-completion-live').ProfileAckWorkerCompletion>
+	guardProfileAck?: (events: readonly DrovrShadowEvent[]) => Promise<import('@/lib/subscriber-marketing/contact-sync-profile-ack-schema').AckEvidenceExpired | undefined>
+	disposition?: (record: OwnedRetryEvent) => Promise<DrovrBatchOutcome | undefined>
+	reject?: (entries: readonly DrovrOutboxEntry[], note: string, status: number) => Promise<void>
+	afterProfile?: (id: string, event: DrovrShadowEvent, step: DeliverStep) => Promise<void>
+}
+
+async function saveOwnerStopRejection(event: DrovrShadowEvent, answer: { httpStatus: number; problem?: unknown }, context: DeliverContext, attempt: number, requestId: string, clampAt: number): Promise<void> {
+	const target = drovrOutboxTargetFromEnv()
+	const entry = outboxEntryForEvent(event, context.lane, { sentAt: clampAt })
+	await context.recordOwnerStopRejection({ target, entry, problem: answer.problem, httpStatus: answer.httpStatus, rejectedAttempt: { runId: context.runId, requestId, stepKey: drovrOutboxDedupeKey(target, entry), attempt }, decidedAt: new Date().toISOString() })
 }
 
 type Outboxed = { outboxed: number }
@@ -186,6 +223,7 @@ type DeliverStep = GetStepTools<typeof inngest>
  * it is clamped, so any instant posts the same bytes.
  */
 export const DROVR_CLAMP_INSTANT_STEP = 'drovr-birth-clamp-instant'
+const deliveryKeyDigest = (events: readonly DrovrShadowEvent[]) => createHash('sha256').update(JSON.stringify(events.map(retryEventIdentity).sort())).digest('hex')
 
 const drovrClampInstant = async (
 	events: readonly DrovrShadowEvent[],
@@ -319,7 +357,7 @@ export function inDeliveryOrder(
 					other.journeyId === event.journeyId
 				)
 					at = Math.min(at, instant(other))
-		const rank = isBirthEvent(event) ? 0 : isStopEvent(event) ? 1 : 2
+		const rank = isBirthEvent(event) ? 0 : isStopEvent(event) ? 1 : event.type === 'contact.profile.updated' ? 2 : 3
 		return { event, index, at, rank }
 	})
 	return placed
@@ -345,14 +383,15 @@ const earlyStops = <T>(
 
 /** A chunk's stops less those its answer held or deferred (row 204c). */
 const landedStops = (
-	outcome: { gatedKeys?: string[]; deferred?: DeferredDrovrEvent[] },
+	outcome: { gatedKeys?: string[]; deferred?: DeferredDrovrEvent[]; terminalRejectedIdentities?: string[] },
 	stops: readonly DrovrOutboxEntry[],
 ) => {
 	const owed = new Set([
 		...(outcome.gatedKeys ?? []),
 		...(outcome.deferred ?? []).map(({ event }) => event.idempotencyKey),
 	])
-	return stops.filter((stop) => !owed.has(stop.idempotencyKey))
+	const terminal = new Set(outcome.terminalRejectedIdentities ?? [])
+	return stops.filter((stop) => !owed.has(stop.idempotencyKey) && !terminal.has(retryEventIdentity(stop.body as DrovrShadowEvent)))
 }
 
 const SETTLED_REFUSED =
@@ -425,6 +464,7 @@ const holdInOutbox = async (
 	const captured = await context.capture(
 		behind.map((event) => outboxEntryForEvent(event, context.lane)),
 		new Error(DROVR_OUTBOX_BEHIND_STOP_NOTE),
+		{ waitingForStop: true },
 	)
 	if (captured.status !== 'outboxed')
 		throw new Error(
@@ -495,6 +535,7 @@ const deliverBatch = async (
 	let accepted = 0
 	let rejected = 0
 	let ownerStopsNeverBorn = 0
+	let supersededUnsubscribes = 0
 	let heldStops = 0
 	let outboxed = gate.outboxed
 	let heldBehindStop = gate.held
@@ -526,12 +567,19 @@ const deliverBatch = async (
 			>({
 				attempt: context.attempt,
 				send: async () => {
+					const requestId = randomUUID()
 					const delivered = await deliverOrThrow({
 						event: drovrEvent,
 						config,
 						clampAt,
 					})
-					if (isNeverBornOwnerStop(drovrEvent, delivered)) {
+					if (delivered.status === 'deferred') {
+						const saved = await context.capture([outboxEntryForEvent(drovrEvent, context.lane, { sentAt: clampAt })], new Error(delivered.reason), { status: 'deferred', nextAttemptAt: new Date(Date.now() + DROVR_OUTBOX_DEFERRED_STOP_WAIT_MS) })
+						if (saved.status !== 'outboxed') throw new Error('DeferredStorage: you retained event-not-live work, and it failed because durable storage is unavailable. Accepted: the unchanged scoped body with explicit deferred status. Fix: restore storage before retrying; do not acknowledge or infer state from prose. Debug: inspect the capture receipt and SDK run.')
+						return delivered
+					}
+					if (delivered.status === 'rejected' && isNeverBornOwnerStop(drovrEvent, delivered)) {
+						await saveOwnerStopRejection(drovrEvent, delivered, context, context.attempt.attempt ?? 0, requestId, clampAt)
 						await log.info('drovr.shadow.owner_stop_never_born', {
 							contactId: drovrEvent.contactId,
 							journeyId: drovrEvent.journeyId,
@@ -558,7 +606,7 @@ const deliverBatch = async (
 				capture: context.capture,
 				outboxed: () => ({ status: 'outboxed' }),
 				early: earlyStops([drovrEvent], context, (outcome) =>
-					outcome.status === 'held'
+					outcome.status === 'held' || outcome.status === 'deferred' || (outcome.status === 'rejected' && isNeverBornOwnerStop(drovrEvent, outcome))
 						? null
 						: outcome.status === 'rejected'
 							? SETTLED_REFUSED
@@ -573,7 +621,7 @@ const deliverBatch = async (
 			outboxedStops.set(drovrEvent.contactId, list)
 			continue
 		}
-		if (outcome.status === 'outboxed') {
+		if (outcome.status === 'outboxed' || outcome.status === 'deferred') {
 			outboxed += 1
 			if (isStopEvent(drovrEvent)) {
 				const list = outboxedStops.get(drovrEvent.contactId) ?? []
@@ -582,6 +630,7 @@ const deliverBatch = async (
 			}
 			continue
 		}
+		if (outcome.status === 'superseded') supersededUnsubscribes += 1
 		if (outcome.status === 'accepted') accepted += 1
 		if (outcome.status === 'rejected') rejected += 1
 		if (isNeverBornOwnerStop(drovrEvent, outcome)) ownerStopsNeverBorn += 1
@@ -598,6 +647,7 @@ const deliverBatch = async (
 			? { valuePathBirthsSkippedUnsubscribed: admitted.skipped }
 			: {}),
 		...(ownerStopsNeverBorn > 0 ? { ownerStopsNeverBorn } : {}),
+		...(supersededUnsubscribes > 0 ? { supersededUnsubscribes } : {}),
 		...(outboxed > 0 ? { outboxed } : {}),
 		...(heldBehindStop > 0 ? { heldBehindStop } : {}),
 		...(heldStops > 0 ? { heldStops } : {}),
@@ -615,6 +665,8 @@ const deliverBatch = async (
 type ChunkOutcome = Omit<DrovrBatchOutcome, 'refused'> & {
 	heldStops?: number
 	deferredStopsGated?: number
+	alreadyDelivered?: boolean
+	terminalRejectedIdentities?: string[]
 	/** Stops held or deferred and outboxed: they gate the chunks after. */
 	gatedKeys?: string[]
 }
@@ -636,7 +688,12 @@ const deliverBulk = async (
 ): Promise<DrovrEventsDeliverReceipt> => {
 	const ingestUrl = env.DROVR_SHADOW_INGEST_URL
 	if (!ingestUrl) return NOT_CONFIGURED
-	const fanOutEvents = await fanOut(batch, step, context)
+	// Fresh before fanout/capture, even if an earlier SDK read succeeded.
+	const expired = await context.guardProfileAck?.(batch)
+	if (expired) return { status: 'skipped', accepted: 0, rejected: 0, discarded: 0, reason: 'AckEvidenceExpired', ackEvidenceExpired: expired }
+	const fanOutEvents = context.guardProfileAck && batch.every(event => event.type === 'contact.profile.updated' || event.type === 'contact.links.issued')
+		? batch // Frozen first-owned wire members never re-read mutable ownership.
+		: await fanOut(batch, step, context)
 	if (isOutboxed(fanOutEvents))
 		return {
 			status: 'delivered',
@@ -648,12 +705,20 @@ const deliverBulk = async (
 	const shadowFiltered = await discardShadowTenantEvents(fanOutEvents, 'bulk')
 	const { discarded } = shadowFiltered
 	const admitted = await admitBirths(shadowFiltered.events, step)
-	const gate = await holdBehindOpenStops(admitted.events, step, context)
-	// In time order, so chunks go out oldest first. After the shadow tenant
-	// is discarded only the authority tenant is left, so that order is the
-	// whole batch's.
+	const clampAt = context.clampAt ?? await drovrClampInstant(admitted.events, step)
+	let owned: OwnedRetryEvent[] = []
+	if (context.pace && admitted.events.length) {
+		if (!context.own) throw new Error('BulkOwnership: you prepared capped work, and it failed because its immutable ownership port is unavailable. Accepted: every normalized event retained and reread before booking. Fix: restore the ownership adapter. Debug: inspect the capped context.')
+		const ownership = await step.run(`own-paced-input:${deliveryKeyDigest(admitted.events)}`, () => context.own!(admitted.events, context.lane, clampAt)) as OwnedRetryEvent[] | import('@/lib/subscriber-marketing/contact-sync-profile-ack-schema').AckEvidenceExpired
+		if (!Array.isArray(ownership)) return { status: 'skipped', accepted: 0, rejected: 0, discarded, reason: 'AckEvidenceExpired', ackEvidenceExpired: ownership }
+		owned = ownership
+	}
+	const retained = context.pace ? owned.map(record => record.event) : admitted.events
+	// Gate FIRST retained planned times, not a newer duplicate's timestamp.
+	const gate = await holdBehindOpenStops(retained, step, context)
 	const events = inDeliveryOrder(gate.events)
-	const clampAt = await drovrClampInstant(events, step)
+	const ownedByIdentity = new Map(owned.map(record => [retryEventIdentity(record.event), record]))
+	const ownedClocks = new Map(owned.map(record => [retryEventIdentity(record.event), record.clampAt]))
 
 	// One key per tenant, so one batch stream per tenant.
 	const byTenant = new Map<DrovrShadowEvent['tenantId'], DrovrShadowEvent[]>()
@@ -667,6 +732,9 @@ const deliverBulk = async (
 	let rejected = 0
 	let heldStops = 0
 	let deferredStopsGated = 0
+	let supersededUnsubscribes = 0
+	let retainedHeld = 0
+	let retainedRejected = 0
 	let outboxed = gate.outboxed
 	let heldBehindStop = gate.held
 	// Stops in a chunk this run outboxed, held or deferred hold their
@@ -691,13 +759,10 @@ const deliverBulk = async (
 		const config: DrovrDeliveryConfig = { ingestUrl, apiKey }
 		for (
 			let chunkIndex = 0;
-			chunkIndex * DROVR_BATCH_MAX < tenantEvents.length;
+			chunkIndex < tenantEvents.length;
 			chunkIndex += 1
 		) {
-			const sliced = tenantEvents.slice(
-				chunkIndex * DROVR_BATCH_MAX,
-				(chunkIndex + 1) * DROVR_BATCH_MAX,
-			)
+			const sliced = tenantEvents.slice(chunkIndex, chunkIndex + 1)
 			const chunk = sliced.filter((event) => !isBehind(event, outboxedStops))
 			late.push(...sliced.filter((event) => isBehind(event, outboxedStops)))
 			if (chunk.length === 0) continue
@@ -707,17 +772,54 @@ const deliverBulk = async (
 			// in flight across that deploy re-posts its chunks, which drovr
 			// dedupes, instead of replaying a memoized chunk that now holds
 			// other events.
-			const stepId = `by-time:${batchStepId(tenantId, chunkIndex)}`
-			const outcome = (await step.run(stepId, () =>
-				sendOrOutbox<ChunkOutcome & Partial<Outboxed>>({
-					attempt: context.attempt,
+			// New ids are deliberate: in-flight old chunks must not be replayed
+			// as if their single-event replacement had already completed.
+			const stepId = `paced-single:${tenantId}:${deliveryKeyDigest(chunk)}`
+			const sendClampAt = ownedClocks.get(retryEventIdentity(chunk[0]!)) ?? clampAt
+			const entries = chunk.map(event => outboxEntryForEvent(event, context.lane))
+			const record = ownedByIdentity.get(retryEventIdentity(chunk[0]!))
+			if (context.pace && (!record || !context.disposition)) throw new Error('BulkDisposition: you resumed capped delivery, and it failed because its scoped disposition port is unavailable. Accepted: retained state checked before booking and at POST. Fix: restore the ownership and disposition adapters. Debug: inspect the full scoped key.')
+			const disposition = async (): Promise<DrovrBatchOutcome | undefined> => {
+				const expired = await context.guardProfileAck?.(chunk)
+				if (expired) return { accepted: 0, rejected: 0, ackEvidenceExpired: expired }
+				return record && context.disposition ? context.disposition(record) : undefined
+			}
+			const retained = await step.run(`${stepId}:disposition`, disposition)
+			if (retained?.ackEvidenceExpired) return { status: 'skipped', accepted, rejected, discarded, reason: 'AckEvidenceExpired', ackEvidenceExpired: retained.ackEvidenceExpired }
+			if (retained?.alreadyDelivered) {
+				if (chunk[0]!.type === 'contact.profile.updated') await context.afterProfile?.(stepId, chunk[0]!, step)
+				if (context.profileAckRef) {
+					const completion = await step.run(`${stepId}:settle-retained-profile-ack`, () => context.completeProfileAck!()) as import('@/lib/subscriber-marketing/contact-sync-profile-ack-completion-live').ProfileAckWorkerCompletion
+					const expired = await context.guardProfileAck?.(chunk) ?? (completion?._tag === 'AckEvidenceExpired' ? completion : undefined)
+					if (expired) return { status: 'skipped', accepted, rejected, discarded, reason: 'AckEvidenceExpired', ackEvidenceExpired: expired }
+					if (completion?._tag === 'ProfileAckAwaitingProof') return { status: 'delivered', accepted, rejected, discarded, profileAckAwaitingProof: true }
+				}
+				continue
+			}
+			const expiredBeforeBooking = await context.guardProfileAck?.(chunk)
+			if (expiredBeforeBooking) return { status: 'skipped', accepted, rejected, discarded, reason: 'AckEvidenceExpired', ackEvidenceExpired: expiredBeforeBooking }
+			const postNative = (sendAttempt: number) => sendOrOutbox<ChunkOutcome & Partial<Outboxed>>({
+					attempt: { ...context.attempt, attempt: sendAttempt },
 					send: async () => {
+						// A replay may finish while a reservation sleeps. Re-read at
+						// POST time rather than trusting the memoized fast path.
+						const retained = await disposition()
+						if (retained) return retained
+						const requestId = randomUUID()
 						const answer = await deliverBatchOrThrow(
 							options.deferNotLive
-								? { events: chunk, config, clampAt, deferNotLive: true }
-								: { events: chunk, config, clampAt },
+								? { events: chunk, config, clampAt: sendClampAt, deferNotLive: true }
+								: { events: chunk, config, clampAt: sendClampAt },
 						)
 						const { refused = [], ...counts } = answer
+						const terminalRejectedIdentities: string[] = []
+						for (const refusal of refused.filter(item => isNeverBornOwnerStopProblem(item.event, item.problem))) {
+							const selected = chunk.find(event => retryEventIdentity(event) === retryEventIdentity(refusal.event) && event.type === refusal.event.type && event.occurredAt === refusal.event.occurredAt)
+							if (!selected) throw new Error('OwnerStopRejection: you saved a batch refusal, and it failed because its owner scope was not posted by this attempt. Accepted: an exact first-owned selected member. Fix: retain its gate and inspect the response adapter. Debug: inspect the SDK attempt and full scoped identity.')
+							await saveOwnerStopRejection(selected, refusal, context, sendAttempt, requestId, sendClampAt)
+							terminalRejectedIdentities.push(retryEventIdentity(selected))
+						}
+						for (const refusal of refused.filter(item => !isStopEvent(item.event))) await context.reject?.([outboxEntryForEvent(refusal.event, context.lane)], refusalReason(refusal.httpStatus, refusal.problem), refusal.httpStatus)
 						const gatedKeys: string[] = []
 						// Row 204c: a stop drovr refused for good (not "never born")
 						// is held for a human, not counted rejected.
@@ -742,26 +844,26 @@ const deliverBulk = async (
 						// straggler retry, and to the outbox too, so it gates its
 						// contact until it lands (row 204c). The straggler owns it
 						// for a day; the replay after that.
-						const deferredStops = (counts.deferred ?? []).filter(({ event }) =>
-							isStopEvent(event),
-						)
+						const deferredStops = (counts.deferred ?? []).filter(({ reason }) => reason === 'event-not-live')
 						let deferredGated = 0
 						if (deferredStops.length > 0) {
 							const captured = await context.capture(
 								deferredStops.map(({ event }) =>
-									outboxEntryForEvent(event, 'contactSync'),
+									outboxEntryForEvent(event, context.lane),
 								),
 								new Error(
-									'drovr answered event-not-live: the contact-sync straggler retry owns it',
+									'EventNotLive: you sent an event, and it failed because this contact is not migrated. Accepted: the same immutable event later. Fix: retain deferred status for the straggler retry. Debug: inspect its scoped receipt.',
 								),
 								{
+									status: 'deferred',
 									nextAttemptAt: new Date(
 										Date.now() + DROVR_OUTBOX_DEFERRED_STOP_WAIT_MS,
 									),
 								},
 							)
+							if (captured.status !== 'outboxed') throw new Error('DeferredStorage: you retained event-not-live work, and it failed because durable storage is unavailable. Accepted: the unchanged scoped body with explicit deferred status. Fix: restore storage and retry without acknowledging. Debug: inspect the capture receipt and SDK run.')
 							if (captured.status === 'outboxed') {
-								deferredGated = deferredStops.length
+								deferredGated = deferredStops.filter(({ event }) => isStopEvent(event)).length
 								gatedKeys.push(
 									...deferredStops.map(({ event }) => event.idempotencyKey),
 								)
@@ -769,6 +871,7 @@ const deliverBulk = async (
 						}
 						return {
 							...counts,
+							...(terminalRejectedIdentities.length ? { terminalRejectedIdentities } : {}),
 							rejected: counts.rejected - held,
 							...(held > 0 ? { heldStops: held } : {}),
 							...(deferredGated > 0
@@ -779,7 +882,7 @@ const deliverBulk = async (
 					},
 					unsent: () =>
 						chunk.map((event) =>
-							outboxEntryForEvent(event, context.lane, { sentAt: clampAt }),
+							outboxEntryForEvent(event, context.lane, { sentAt: sendClampAt }),
 						),
 					capture: context.capture,
 					outboxed: (count) => ({ accepted: 0, rejected: 0, outboxed: count }),
@@ -795,8 +898,33 @@ const deliverBulk = async (
 								: DROVR_SETTLED_BY_RETRY,
 						landedStops,
 					),
-				}),
-			)) as ChunkOutcome & Partial<Outboxed>
+				})
+			const post = async (sendAttempt: number) => {
+				try { return await postNative(sendAttempt) }
+				catch (error) {
+					const expired = await context.guardProfileAck?.(chunk)
+					if (expired) return { accepted: 0, rejected: 0, ackEvidenceExpired: expired }
+					throw error
+				}
+			}
+			const outcome = (retained ?? (context.pace ? await runPacedSend(step, stepId, (id) => context.pace!(id, step), post, context.attempt.attempt) : await step.run(stepId, () => post(context.attempt.attempt)))) as ChunkOutcome & Partial<Outboxed>
+			if (outcome.ackEvidenceExpired) return { status: 'skipped', accepted, rejected, discarded, reason: 'AckEvidenceExpired', ackEvidenceExpired: outcome.ackEvidenceExpired }
+			// Every pre-captured fact, not just retried stops, is settled by key.
+			// Deferred or outboxed events stay pending for their existing owner.
+			if ((outcome.accepted > 0 || outcome.alreadyDelivered) && !outcome.outboxed && !(outcome.deferred?.length)) {
+				// Do not retire the profile's durable work before its derived
+				// refresh command is itself durable. A failed publish must replay.
+				if (chunk[0]!.type === 'contact.profile.updated') await context.afterProfile?.(stepId, chunk[0]!, step)
+				const note = outcome.rejected > 0 ? `settled by an Inngest retry: its chunk was answered, and drovr refused ${outcome.rejected} item(s) that are not stops (or never born there), final and counted rejected` : DROVR_SETTLED_BY_RETRY
+				const proof = chunk.some(event => event.type === 'contact.profile.updated' || event.type === 'contact.links.issued') ? { receiverAccepted: outcome.rejected === 0, ...(context.profileAckRef ? { profileAckRef: context.profileAckRef } : {}) } : undefined
+				const completion = await step.run(`${stepId}:settle`, () => proof ? context.settle(entries, note, proof) : context.settle(entries, note)) as import('@/lib/subscriber-marketing/contact-sync-profile-ack-completion-live').ProfileAckWorkerCompletion
+				const expired = await context.guardProfileAck?.(chunk) ?? (completion?._tag === 'AckEvidenceExpired' ? completion : undefined)
+				if (expired) return { status: 'delivered', accepted: accepted + outcome.accepted, rejected: rejected + outcome.rejected, discarded, reason: 'AckEvidenceExpired', ackEvidenceExpired: expired }
+				if (completion?._tag === 'ProfileAckAwaitingProof') return { status: 'delivered', accepted: accepted + outcome.accepted, rejected: rejected + outcome.rejected, discarded, profileAckAwaitingProof: true }
+			}
+			supersededUnsubscribes += outcome.supersededUnsubscribes ?? 0
+			retainedHeld += outcome.retainedHeld ?? 0
+			retainedRejected += outcome.retainedRejected ?? 0
 			accepted += outcome.accepted
 			rejected += outcome.rejected
 			outboxed += outcome.outboxed ?? 0
@@ -822,6 +950,9 @@ const deliverBulk = async (
 		...(heldBehindStop > 0 ? { heldBehindStop } : {}),
 		...(heldStops > 0 ? { heldStops } : {}),
 		...(deferredStopsGated > 0 ? { deferredStopsGated } : {}),
+		...(supersededUnsubscribes > 0 ? { supersededUnsubscribes } : {}),
+		...(retainedHeld > 0 ? { retainedHeld } : {}),
+		...(retainedRejected > 0 ? { retainedRejected } : {}),
 		...(admitted.skipped > 0
 			? { valuePathBirthsSkippedUnsubscribed: admitted.skipped }
 			: {}),
@@ -841,21 +972,16 @@ export const drovrEventsDeliver = inngest.createFunction(
 		},
 	},
 	{ event: DROVR_EVENTS_DELIVER_EVENT },
-	async ({ event, step, attempt, maxAttempts }) => {
-		// A bulk source can only reach this function as a leftover from
-		// before the bulk function existed (2026-09-21: ~8,000 Kit births
-		// queued ahead of live facts). Answer it in milliseconds instead of
-		// folding it; the directory seed top-up rebirths what it skipped.
+	async ({ event, step, attempt, maxAttempts, runId }) => {
+		// Drain pre-deploy events under the same function id, without posting
+		// a bulk payload on the live lane or dropping its queued bytes.
 		if (BULK_DELIVERY_SOURCES.has(event.data.source)) {
-			return {
-				status: 'skipped',
-				accepted: 0,
-				rejected: 0,
-				discarded: 0,
-				reason: 'bulk source on the live function',
-			}
+			await step.sendEvent('drain-to-bulk', { name: deliverEventNameFor(event.data.source), data: event.data })
+			return { status: 'skipped', reason: 'forwarded-to-capped-worker', accepted: 0, rejected: 0, discarded: 0 }
 		}
 		return deliverBatch(event.data.events, step, {
+			runId,
+			recordOwnerStopRejection: recordOwnerStopRejectionLive,
 			attempt: { attempt, maxAttempts },
 			lane: 'live',
 			capture: captureDrovrOutboxLive,
@@ -871,12 +997,13 @@ export async function outboxFailedRun(
 	data: DrovrEventsDeliver['data'],
 	error: unknown,
 	capture: DrovrOutboxCaptureFn = captureDrovrOutboxLive,
+	forcedLane?: DeliverContext['lane'],
 ): Promise<void> {
-	if (BULK_DELIVERY_SOURCES.has(data.source)) return
-	const entries = ownerReadUnsent(data.events, 'live').map((entry) => ({
-		...entry,
-		source: 'onFailure' as const,
-	}))
+	// A frozen request already owns native debt. Failure never recreates it
+	// from an old SDK body after retention or privacy cleanup.
+	if (data.profileAckRef) return
+	const capped = BULK_DELIVERY_SOURCES.has(data.source)
+	const entries = ownerReadUnsent(data.events, forcedLane ?? (capped ? cappedLaneFor(data.source) : 'live')).map(entry => ({ ...entry, ...(data.firstFailedAt && Number.isFinite(Date.parse(data.firstFailedAt)) ? { firstSentAt: data.firstFailedAt } : {}) }))
 	if (entries.length === 0) return
 	try {
 		await capture(entries, error)
@@ -897,6 +1024,7 @@ const withStepPrefix = (step: DeliverStep, prefix: string): DeliverStep =>
 		...step,
 		run: (id: string, operation: () => unknown) =>
 			step.run(`${prefix}${id}`, operation),
+		sleepUntil: (id: string, date: Date) => step.sleepUntil(`${prefix}${id}`, date),
 	}) as DeliverStep
 
 const combineReceipts = (
@@ -910,6 +1038,7 @@ const combineReceipts = (
 			| 'heldBehindStop'
 			| 'heldStops'
 			| 'deferredStopsGated'
+			| 'supersededUnsubscribes'
 			| 'valuePathBirthsSkippedUnsubscribed',
 	) => {
 		const total = delivered.reduce(
@@ -927,7 +1056,10 @@ const combineReceipts = (
 		...sumOf('heldBehindStop'),
 		...sumOf('heldStops'),
 		...sumOf('deferredStopsGated'),
+		...sumOf('supersededUnsubscribes'),
 		...sumOf('valuePathBirthsSkippedUnsubscribed'),
+		...(receipts.some(receipt => receipt.ackEvidenceExpired) ? { reason: 'AckEvidenceExpired', ackEvidenceExpired: receipts.find(receipt => receipt.ackEvidenceExpired)!.ackEvidenceExpired } : {}),
+		...(receipts.some(receipt => receipt.profileAckAwaitingProof) ? { profileAckAwaitingProof: true as const } : {}),
 	}
 }
 
@@ -944,35 +1076,110 @@ const combineReceipts = (
  * a partial run never re-posts what already landed. Drovr's ingress takes
  * one event per request; a batch ingress there is the next step down.
  */
-export const BULK_DELIVERY_BATCH = { maxSize: 100, timeout: '10s' } as const
+export const BULK_DELIVERY_BATCH = { maxSize: 1, timeout: '1s' } as const
 
-/**
- * Row 201g: the bulk lane is the paced path for births (the hawk,
- * 2026-09-30). Inngest's throttle counts run starts, not events, and a run
- * folds up to BULK_DELIVERY_BATCH.maxSize bulk events, so 7 runs a minute
- * is at most 700 bulk events a minute (under the 750 births/min bulk cap).
- * Run starts are spaced evenly through the minute. A producer that puts one
- * birth in each bulk event (the evergreen pitch backfill) is paced at 700
- * births a minute; the Kit ingest and the contact-sync backfill carry
- * directory events, which cost the birth minute but start no drips.
+/** Envelope scheduling is not the event cap: an envelope may contain many
+ * events and fan-out adds copies. The shared database reservation immediately
+ * before each single-event POST enforces BULK_EVENTS_PER_MINUTE, including
+ * retries/replay. The sleep keeps ordinary operation off the retry ladder.
  */
-export const BULK_DELIVERY_THROTTLE = { limit: 7, period: '1m' } as const
+const classThrottle = (kind: BulkClass) => ({ limit: 1, period: `${Math.ceil(60 * Object.values(BULK_CLASS_SLOTS).reduce<number>((sum, value) => sum + value, 0) / (BULK_EVENTS_PER_MINUTE * BULK_CLASS_SLOTS[kind]))}s` as `${number}s` })
+export const BULK_DELIVERY_THROTTLE = classThrottle('backfill')
 
-export const drovrEventsDeliverBulk = inngest.createFunction(
+const cappedWorker = (id: string, eventName: DrovrDeliverEventName, kind: BulkClass) => inngest.createFunction(
 	{
-		id: 'drovr-events-deliver-bulk-v1',
+		id,
 		name: 'drovr: deliver bulk events durably',
 		retries: DROVR_SEND_RETRIES,
 		concurrency: [{ limit: 4 }],
 		batchEvents: BULK_DELIVERY_BATCH,
-		throttle: BULK_DELIVERY_THROTTLE,
+		throttle: classThrottle(kind),
+		onFailure: async ({ event, error }) => { const data = event.data.event.data; if (data.stragglerRetry) await captureFailedContactSyncRetry({ ...data.stragglerRetry, deliverySource: BULK_DELIVERY_SOURCES.has(data.source) ? data.source : 'evergreen-pitch-backfill' }, error); else await outboxFailedRun(data, error, captureDrovrOutboxLive, cappedLaneFor(data.source)) },
 	},
-	{ event: DROVR_EVENTS_DELIVER_BULK_EVENT },
-	async ({ events, step, attempt, maxAttempts }) => {
+	{ event: eventName },
+	async ({ events, step, runId }) => {
+		// A legacy/unknown source on a capped trigger never becomes live on
+		// a class route, a capacity handoff or the next replay.
+		for (const envelope of events) if (!BULK_DELIVERY_SOURCES.has(envelope.data.source)) envelope.data.source = 'evergreen-pitch-backfill'
+		let firstFailedAt = events[0]?.data.firstFailedAt
+		try {
+		// Every raw parent stop is owed BEFORE any child can run. A stop
+		// listed last must gate an earlier-listed positive child as well.
+		// A disabled profile-backfill child is discarded, not made a gate.
+		const rawStops = events.flatMap(envelope => envelope.data.source === 'contact-sync-backfill' && !parseDrovrProfileSyncConfig(process.env).enabled ? [] : withoutSyntheticContacts(envelope.data.events).kept.filter(isStopEvent).map(item => ({ item, source: cappedLaneFor(envelope.data.source), at: envelope.data.firstFailedAt })))
+		if (rawStops.length) {
+			const capturedAt = await step.run('raw-parent-stop-clock', async () => Date.now()) as number
+			await step.run(`capture-raw-parent-stops:${deliveryKeyDigest(rawStops.map(record => record.item))}`, async () => {
+				const entries = rawStops.map(record => {
+					const at = record.at === undefined ? capturedAt : Date.parse(record.at)
+					if (!Number.isFinite(at)) throw new Error('ParentStopClock: you admitted parent stops, and it failed because the original clock is invalid. Accepted: the original finite UTC instant. Fix: restore the parent metadata. Debug: inspect firstFailedAt without moving its clock.')
+					return outboxEntryForEvent(record.item, record.source, { needsFanOut: true, sentAt: at })
+				})
+				const capture = await captureDrovrOutboxLive(entries, undefined, { nextAttemptAt: new Date(Date.now() + BULK_OUTBOX_QUEUE_WAIT_MS) })
+				if (capture.status !== 'outboxed') throw new Error('ParentStops: you split capped work, and it failed because its raw stops are not durably owned. Accepted: every owed parent stop retained before child publication. Fix: restore the outbox and retry the parent unchanged. Debug: inspect the parent capture receipt.')
+				return entries.length
+			})
+		}
+		// Bound the worst-case durable retry step count, including owner copies.
+		// One input leaves room for cold birth, redelivery and every bounded
+		// retry/expiry booking. Legacy SDK batches also retain retry metadata.
+		if (events.length > 1 || events.reduce((count, envelope) => count + envelope.data.events.length, 0) > 1) {
+			const shards = events.flatMap(envelope => {
+				const chunks = envelope.data.stragglerRetry || envelope.data.offerRefresh || !envelope.data.events.length ? [envelope.data.events] : envelope.data.events.map(item => [item])
+				return chunks.map(chunk => { const data = { ...envelope.data, events: chunk }; if (chunk.length && !chunk.some(item => item.type === 'contact.profile.updated' || item.type === 'contact.links.issued') && !data.stragglerRetry) { delete data.profileAckRef; delete data.profileAckNativeDebt } return { id: `paced-shard:${createHash('sha256').update(JSON.stringify(data)).digest('hex')}`, name: eventName, data } })
+			})
+			for (let offset = 0; offset < shards.length; offset += 100) await step.sendEvent(`bounded-paced-shards:${createHash('sha256').update(JSON.stringify(shards.slice(offset, offset + 100).map(shard => shard.id))).digest('hex')}`, shards.slice(offset, offset + 100))
+			return { status: 'skipped', reason: 'forwarded-to-bounded-capped-shards', accepted: 0, rejected: 0, discarded: 0 }
+		}
+		// Old bulk envelopes still drain, while new sources have separate queues.
+		const actualKind = events.some(item => item.data.source === 'contact-profile-sync') ? 'delta' : events.some(item => item.data.source === 'contact-profile-restate') ? 'restate' : events.some(item => item.data.source === 'kit-directory-ingest') ? 'ingest' : 'backfill'
+		const source = BULK_DELIVERY_SOURCES.has(events[0]!.data.source) ? events[0]!.data.source : 'evergreen-pitch-backfill'
+		if (actualKind !== kind) {
+			await step.sendEvent('route-to-class-queue', events.map(envelope => ({ name: deliverEventNameFor(BULK_DELIVERY_SOURCES.has(envelope.data.source) ? envelope.data.source : 'evergreen-pitch-backfill'), data: envelope.data })))
+			return { status: 'skipped', reason: 'forwarded-to-class-queue', accepted: 0, rejected: 0, discarded: 0 }
+		}
+		if (events[0]!.data.stragglerRetry) return await runPacedContactSyncRetry({ event: { data: { ...events[0]!.data.stragglerRetry, paceClass: actualKind, deliverySource: source, firstFailedAt: firstFailedAt ?? events[0]!.data.stragglerRetry.firstFailedAt } }, step, runId })
+		for (const envelope of events) {
+			if (envelope.data.offerRefresh) envelope.data.events = await step.run(`refresh-current-offer:${envelope.data.offerRefresh.contactId}:${envelope.data.offerRefresh.profileVersion}`, () => readCurrentOfferAfterProfile(envelope.data.offerRefresh!)) as DrovrShadowEvent[]
+		}
+		const originalClamp = firstFailedAt === undefined ? await drovrClampInstant(events.flatMap(envelope => envelope.data.events), step) : Date.parse(firstFailedAt)
+		if (!Number.isFinite(originalClamp)) throw new Error('BirthClamp: you resumed delivery, and it failed because the original clamp instant is invalid. Accepted: an ISO timestamp. Fix: restore the original replay metadata. Debug: inspect firstFailedAt.')
+		firstFailedAt = new Date(originalClamp).toISOString()
+		const profileAckRef = events[0]?.data.events.some(item => item.type === 'contact.profile.updated' || item.type === 'contact.links.issued') ? events[0]?.data.profileAckRef : undefined
 		const context: DeliverContext = {
-			attempt: { attempt, maxAttempts },
-			lane: 'bulk',
-			capture: captureDrovrOutboxLive,
+			runId,
+			recordOwnerStopRejection: recordOwnerStopRejectionLive,
+			attempt: { attempt: 0, maxAttempts: DROVR_SEND_RETRIES + 1 },
+			lane: cappedLaneFor(events[0]!.data.source),
+			clampAt: originalClamp,
+			pace: (id, tools) => waitForBulkSlot(tools, id, actualKind),
+			profileAckRef,
+			completeProfileAck: profileAckRef ? async () => {
+				const { completeProfileAckWorkerReferenceLive } = await import('@/lib/subscriber-marketing/contact-sync-profile-ack-completion-live')
+				return completeProfileAckWorkerReferenceLive(profileAckRef!)
+			} : undefined,
+			own: profileAckRef ? async (input, lane, at) => {
+				try { return await ownRetryEvents(input, lane, at, { retainedOnly: true }) }
+				catch (error) {
+					const expired = await context.guardProfileAck?.(input)
+					if (expired) return expired
+					throw error
+				}
+			} : ownRetryEvents,
+			guardProfileAck: profileAckRef ? async input => {
+				const { guardProfileAckWorkerAdmissionLive } = await import('@/lib/subscriber-marketing/contact-sync-profile-ack-admission')
+				return guardProfileAckWorkerAdmissionLive(profileAckRef!, input, events[0]!.data.profileAckNativeDebt === true)
+			} : undefined,
+			disposition: record => readRetryDispositionLive(record, { gates: false }),
+			reject: rejectDrovrOutboxLive,
+			afterProfile: async (id, event, tools) => {
+				if (event.idempotencyKey.includes(':restate:')) return
+				await tools.sendEvent(`${id}:refresh-offer`, { id: `offer-refresh:${retryStepKey(event)}`, name: eventName, data: { source, events: [], offerRefresh: { contactId: event.contactId, profileVersion: profileVersionForRefresh(event) } } })
+			},
+			capture: profileAckRef ? async entries => {
+				const expired = await context.guardProfileAck?.(entries.map(entry => entry.body as DrovrShadowEvent))
+				return expired ? { status: 'unavailable' } : { status: 'outboxed', count: entries.length }
+			} : captureDrovrOutboxLive,
 			openStops: openDrovrOutboxStopsLive,
 			settle: settleDrovrOutboxLive,
 			hold: holdDrovrStopsLive,
@@ -1065,17 +1272,25 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 					)
 					await step.sendEvent('contact-sync-backfill:defer-refused', [
 						...(notLive.length > 0
-							? [contactSyncRetryRequest(notLive, 1, at)]
+							? [routeContactSyncRetry(contactSyncRetryRequest(notLive, 1, at, undefined, actualKind, firstFailedAt, source, events[0]?.data.profileAckRef, events[0]?.data.profileAckNativeDebt))]
 							: []),
 						...(coldStart.length > 0
-							? [{ ...contactSyncRetryRequest(coldStart, 1, at), ts: at }]
+							? [{ ...routeContactSyncRetry(contactSyncRetryRequest(coldStart, 1, at, undefined, actualKind, firstFailedAt, source, events[0]?.data.profileAckRef, events[0]?.data.profileAckNativeDebt)), ts: at }]
 							: []),
 					])
 				}
 			}
 		}
-		if (others.length > 0 || backfill.length === 0)
-			receipts.push(await deliverBulk(others, step, context, { gate }))
+		if (others.length > 0 || backfill.length === 0) {
+			const profileSync = events.some((event) => event.data.source === 'contact-profile-sync' || event.data.source === 'contact-profile-restate')
+			const profileRefused: DeferredDrovrEvent[] = []
+			receipts.push(await deliverBulk(others, step, context, { gate, ...(profileSync ? { deferNotLive: true, refused: profileRefused } : {}) }))
+			if (profileRefused.length > 0) {
+				const at = (await step.run('profile-sync:defer-at', () => Date.now())) as number
+				await step.sendEvent('profile-sync:defer-refused', routeContactSyncRetry(contactSyncRetryRequest(profileRefused, 1, at, undefined, actualKind, firstFailedAt, source, events[0]?.data.profileAckRef, events[0]?.data.profileAckNativeDebt)))
+				refused.push(...profileRefused)
+			}
+		}
 		const combined =
 			receipts.length === 1 ? receipts[0]! : combineReceipts(receipts)
 		return {
@@ -1084,5 +1299,19 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 			...(refused.length > 0 ? { deferred: refused.length } : {}),
 			...(valuePathBirthsRefused > 0 ? { valuePathBirthsRefused } : {}),
 		}
+		} catch (error) {
+			if (!(error instanceof BulkPaceYieldError)) throw error
+			const at = await step.run('capacity-handoff-at', async () => Date.now() + 60_000) as number
+			await step.sleepUntil('capacity-handoff-wait', new Date(at))
+			await step.sendEvent('capacity-handoff', events.map(envelope => ({ id: `paced-handoff:${runId}:${deliveryKeyDigest(envelope.data.events)}`, name: deliverEventNameFor(envelope.data.source), data: { ...envelope.data, ...(firstFailedAt ? { firstFailedAt } : {}) } })))
+			return { status: 'skipped', reason: 'queued-for-paced-capacity', accepted: 0, rejected: 0, discarded: 0 }
+		}
 	},
 )
+
+// Preserve the old bulk id/event for queued commands. New priorities cannot
+// sit behind that backlog: each owns its queue, but shares one reservation row.
+export const drovrEventsDeliverBulk = cappedWorker('drovr-events-deliver-bulk-v1', DROVR_EVENTS_DELIVER_BULK_EVENT, 'backfill')
+export const drovrEventsDeliverDelta = cappedWorker('drovr-events-deliver-delta-v1', DROVR_EVENTS_DELIVER_DELTA_EVENT, 'delta')
+export const drovrEventsDeliverRestate = cappedWorker('drovr-events-deliver-restate-v1', DROVR_EVENTS_DELIVER_RESTATE_EVENT, 'restate')
+export const drovrEventsDeliverIngest = cappedWorker('drovr-events-deliver-ingest-v1', DROVR_EVENTS_DELIVER_INGEST_EVENT, 'ingest')

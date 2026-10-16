@@ -36,6 +36,8 @@ function ports(
 	overrides: Partial<ContactSyncReconcilePorts> = {},
 ): ContactSyncReconcilePorts & { order: string[] } {
 	const order: string[] = []
+	let savedProgress: import('./contact-sync-reconcile').ReconcileProgress | undefined
+	let savedWatermark = 'watermark' in fixture ? fixture.watermark : '2026-09-26T17:40:00.000Z'
 	const events = fixture.events ?? [
 		event('c1', '2026-09-26T17:41:00.000Z'),
 		event('c2', '2026-09-26T17:50:00.000Z'),
@@ -50,42 +52,40 @@ function ports(
 	return {
 		order,
 		now: () => start,
-		readWatermark: vi.fn(async () =>
-			'watermark' in fixture ? fixture.watermark : '2026-09-26T17:40:00.000Z',
-		),
-		scanChanges: vi.fn(async ({ after, through, limit }) =>
+		readWatermark: vi.fn(async () => savedWatermark),
+		readProgress: vi.fn(async () => savedProgress),
+		scanChanges: vi.fn(async ({ after, through, limit, pageAfter }) =>
 			events
-				.filter((row) => within(row.occurredAt, after, through))
+				.filter((row) => within(row.occurredAt, after, through) && (!pageAfter || row.occurredAt > pageAfter.at || row.occurredAt === pageAfter.at && row.id > pageAfter.id))
 				.sort(
 					(l, r) =>
 						Date.parse(l.occurredAt) - Date.parse(r.occurredAt) ||
-						l.id.localeCompare(r.id),
+						(l.id < r.id ? -1 : l.id > r.id ? 1 : 0),
 				)
 				.slice(0, limit + 1),
 		),
-		// The store's contract: at most limit + 1, extended to the end of a
-		// tie at the boundary.
-		rotatedContacts: vi.fn(async ({ after, through, limit }) => {
+		// Bounded rows with deterministic tuple pagination inside ties.
+		rotatedContacts: vi.fn(async ({ after, through, limit, pageAfter }) => {
 			const ordered = rotations
-				.filter((row) => within(row.at, after, through))
-				.sort((l, r) => Date.parse(l.at) - Date.parse(r.at))
-			let end = Math.min(ordered.length, limit + 1)
-			while (end < ordered.length && ordered[end]!.at === ordered[end - 1]!.at)
-				end += 1
-			return ordered.slice(0, end)
+				.filter((row) => within(row.at, after, through) && (!pageAfter || row.at > pageAfter.at || row.at === pageAfter.at && row.contactId > pageAfter.id))
+				.sort((l, r) => Date.parse(l.at) - Date.parse(r.at) || (l.contactId < r.contactId ? -1 : l.contactId > r.contactId ? 1 : 0))
+			return ordered.slice(0, limit + 1)
 		}),
 		syncContact: vi.fn(async (contactId: string) => {
 			order.push(`sync:${contactId}`)
 			return 'sent' as const
 		}),
+		syncOffer: vi.fn(async (contactId: string) => { order.push(`offer:${contactId}`); return 'sent' as const }),
 		resendStops: vi.fn(async () => {
 			order.push('stops')
 		}),
 		heartbeat: vi.fn(async (syncedThrough: string) => {
 			order.push(`heartbeat:${syncedThrough}`)
 		}),
-		writeWatermark: vi.fn(async (watermark: string) => {
+		writeWatermark: vi.fn(async (watermark: string, progress?: import('./contact-sync-reconcile').ReconcileProgress) => {
 			order.push(`watermark:${watermark}`)
+			savedWatermark = watermark
+			savedProgress = progress ? structuredClone(progress) : undefined
 		}),
 		...overrides,
 	}
@@ -95,49 +95,29 @@ describe('contact sync reconcile', () => {
 	it('scans fresh changes and the late writes behind the watermark separately', async () => {
 		const p = ports()
 		await runContactSyncReconcile(p)
+		// Resolve the late-write barrier before rotations/fresh work. Freeze
+		// the write cutoff so later inserts cannot shift a persisted page.
 		expect(p.scanChanges).toHaveBeenNthCalledWith(1, {
-			scope: 'fresh',
-			after: '2026-09-26T17:40:00.000Z',
-			through,
-			limit: 5000,
+			scope: 'overlap', after: '2026-09-24T17:40:00.000Z', through: '2026-09-26T17:40:00.000Z', writtenAfter: '2026-09-26T17:40:00.000Z', writtenThrough: '2026-09-26T17:59:59.999Z', pageAfter: undefined, limit: 5000,
 		})
-		// The overlap looks only for rows written after the watermark: late
-		// writes under an old occurredAt, not rows already claimed. It reaches
-		// 48 h back (prod, 7 days to 2026-09-26: 335 of 2195 signups written
-		// over an hour late, none over a day).
-		expect(p.scanChanges).toHaveBeenNthCalledWith(2, {
-			scope: 'overlap',
-			after: '2026-09-24T17:40:00.000Z',
-			through: '2026-09-26T17:40:00.000Z',
-			writtenAfter: '2026-09-26T17:40:00.000Z',
-			limit: 5000,
-		})
-		expect(p.rotatedContacts).toHaveBeenCalledWith({
-			after: '2026-09-26T17:40:00.000Z',
-			through,
-			limit: 400,
-		})
+		expect(p.scanChanges).toHaveBeenNthCalledWith(2, { scope: 'fresh', after: '2026-09-26T17:40:00.000Z', through, writtenThrough: '2026-09-26T17:59:59.999Z', pageAfter: undefined, limit: 5000 })
+		expect(p.rotatedContacts).toHaveBeenCalledWith({ after: '2026-09-26T17:40:00.000Z', through, pageAfter: undefined, limit: 900 })
 	})
 
 	it('starts an hour back on its first run, with nothing to overlap', async () => {
 		const p = ports({ watermark: undefined })
 		await runContactSyncReconcile(p)
 		expect(p.scanChanges).toHaveBeenCalledTimes(1)
-		expect(p.scanChanges).toHaveBeenCalledWith({
-			scope: 'fresh',
-			after: '2026-09-26T16:58:00.000Z',
-			through,
-			limit: 5000,
-		})
+		expect(p.scanChanges).toHaveBeenCalledWith({ scope: 'fresh', after: '2026-09-26T16:58:00.000Z', through, writtenThrough: '2026-09-26T17:59:59.999Z', pageAfter: undefined, limit: 5000 })
 	})
 
-	it('syncs late writes, then fresh and rotated contacts, then stops, heartbeat, watermark', async () => {
+	it('resolves late writes and rotations before fresh work, then stops, heartbeat and checkpoint', async () => {
 		const p = ports()
 		const receipt = await runContactSyncReconcile(p)
 		expect(p.order).toEqual([
 			'sync:c9',
-			'sync:c1',
 			'sync:c3',
+			'sync:c1',
 			'sync:c2',
 			'stops',
 			`heartbeat:${through}`,
@@ -193,20 +173,13 @@ describe('contact sync reconcile', () => {
 		const held = '2026-09-26T17:49:59.999Z'
 		expect(p.order).toEqual([
 			'sync:c9',
-			'sync:c1',
 			'sync:c3',
+			'sync:c1',
 			'stops',
 			`heartbeat:${held}`,
 			`watermark:${held}`,
 		])
-		expect(receipt).toEqual({
-			status: 'partial',
-			syncedThrough: held,
-			contacts: 4,
-			rotated: 1,
-			events: 4,
-			failed: ['c2'],
-		})
+		expect(receipt).toMatchObject({ status: 'partial', syncedThrough: held, contacts: 3, rotated: 1, events: 2, failed: ['c2'], cursor: { phase: 'fresh', after: { at: '2026-09-26T17:41:00.000Z' } } })
 	})
 
 	it('holds at the earliest first change among several failed contacts', async () => {
@@ -261,7 +234,7 @@ describe('contact sync reconcile', () => {
 			rotations: [],
 		})
 		await runContactSyncReconcile(p)
-		expect(p.resendStops).toHaveBeenCalledWith([fresh, late])
+		expect(p.resendStops).toHaveBeenCalledWith([late, fresh])
 	})
 
 	it("re-sends bounces and complaints too (each writes drovr's suppression row)", async () => {
@@ -379,14 +352,13 @@ describe('contact sync reconcile', () => {
 				),
 			},
 		)
-		await expect(runContactSyncReconcile(p, { limit: 2 })).rejects.toThrow(
-			/late writes/,
-		)
-		expect(p.heartbeat).not.toHaveBeenCalled()
-		expect(p.writeWatermark).not.toHaveBeenCalled()
+		const receipt = await runContactSyncReconcile(p, { limit: 2 })
+		expect(receipt).toMatchObject({ status: 'partial', syncedThrough: '2026-09-26T17:40:00.000Z', contacts: 2, cursor: { phase: 'overlap', after: { at: '2026-09-26T17:11:00.000Z' } } })
+		expect(p.heartbeat).toHaveBeenCalledWith('2026-09-26T17:40:00.000Z')
+		expect(p.writeWatermark).toHaveBeenCalledWith('2026-09-26T17:40:00.000Z', receipt.cursor)
 	})
 
-	it('takes a whole tie of rotations sharing one instant, past the soft cap, and claims that instant', async () => {
+	it('takes a whole affordable rotation tie past the soft cap, then finishes the proven exhausted window', async () => {
 		const at = '2026-09-26T17:41:00.123Z'
 		const p = ports({
 			events: [],
@@ -397,9 +369,9 @@ describe('contact sync reconcile', () => {
 			],
 		})
 		const receipt = await runContactSyncReconcile(p, { maxContacts: 2 })
-		// The store returns ties whole; cutting inside one would stall forever.
+		// All rows fit the hard invocation budget; the bounded scan is exhausted.
 		expect(receipt).toMatchObject({
-			syncedThrough: at,
+			status: 'synced', syncedThrough: through,
 			contacts: 3,
 			rotated: 3,
 		})
@@ -424,7 +396,7 @@ describe('contact sync reconcile', () => {
 		expect(p.syncContact).not.toHaveBeenCalledWith('c3')
 	})
 
-	it('throws, rather than stall silently, when one instant holds more contacts than the hard ceiling', async () => {
+	it('resumes a rotation tie larger than the hard ceiling instead of throwing or stalling', async () => {
 		const at = '2026-09-26T17:41:00.123Z'
 		const p = ports({
 			events: [],
@@ -433,25 +405,25 @@ describe('contact sync reconcile', () => {
 				at,
 			})),
 		})
-		await expect(
-			runContactSyncReconcile(p, { maxContacts: 2, maxContactsHard: 3 }),
-		).rejects.toThrow(/one instant/)
-		expect(p.heartbeat).not.toHaveBeenCalled()
+		const first = await runContactSyncReconcile(p, { maxContacts: 2, maxContactsHard: 3 })
+		expect(first).toMatchObject({ status: 'partial', contacts: 3, cursor: { phase: 'rotations', after: { id: 'r3', at } } })
+		expect(first.syncedThrough).toBe('2026-09-26T17:41:00.122Z')
+		expect((await runContactSyncReconcile(p, { maxContacts: 2, maxContactsHard: 3 })).status).toBe('synced')
+		expect(p.syncContact).toHaveBeenCalledTimes(4)
 	})
 
-	it('fails loudly when fresh changes cannot move past the watermark', async () => {
-		// Over the limit inside the very first second after the watermark:
-		// the claim would not move, so the run must say so, not spin.
+	it('persists tuple progress even when a dense first fresh second cannot advance the timestamp', async () => {
+		// The timestamp alone cannot move; the durable id cursor must.
 		const second = '2026-09-26T17:41:00.000Z'
 		const p = ports({
 			watermark: '2026-09-26T17:40:59.999Z',
 			events: [event('c1', second), event('c2', second), event('c3', second)],
 			rotations: [],
 		})
-		await expect(runContactSyncReconcile(p, { limit: 2 })).rejects.toThrow(
-			/cannot advance/,
-		)
-		expect(p.heartbeat).not.toHaveBeenCalled()
+		const first = await runContactSyncReconcile(p, { limit: 2 })
+		expect(first).toMatchObject({ status: 'partial', syncedThrough: '2026-09-26T17:40:59.999Z', cursor: { phase: 'fresh', after: { at: second, id: `c2:${second}` } } })
+		expect((await runContactSyncReconcile(p, { limit: 2 })).status).toBe('synced')
+		expect(p.syncContact).toHaveBeenCalledTimes(3)
 	})
 
 	it('treats a skipped contact (missing, synthetic) as done', async () => {
@@ -506,14 +478,16 @@ describe('what a profile sync receipt means for the watermark', () => {
 			'no-sending-journey',
 			// drovr ignores a profile without an email; nothing to push.
 			'contact-email-missing',
-			// Contract §4: a rejection is final for that event, answered.
-			'drovr-rejected',
+			// Already receiver-confirmed, with no new content.
+			'unchanged',
+			'profile-not-issued',
 		])
 			expect(reconcileSyncOutcome('c1', { status: 'skipped', reason })).toBe(
 				'skipped',
 			)
-		// Contract §3: a refusal as event-not-live does not hold the watermark;
-		// the same events are already scheduled for after the straggler pass.
+		// Healthy deferrals are not terminal receiver coverage; the parent
+		// retains the unfinished contact rather than advancing through it.
+		expect(reconcileSyncOutcome('c1', { status: 'awaiting-proof', profileVersion: 2, reason: 'receiver-acceptance-unproven' })).toBe('deferred')
 		for (const reason of ['event-not-live', 'cold-start-unhandled'] as const)
 			expect(
 				reconcileSyncOutcome('c1', {
@@ -524,12 +498,13 @@ describe('what a profile sync receipt means for the watermark', () => {
 				}),
 			).toBe('deferred')
 		for (const reason of [
+			'drovr-rejected',
 			'drovr-not-configured',
 			'AIH_DROVR_PROFILE_SYNC is not set',
 		])
 			expect(() =>
 				reconcileSyncOutcome('c1', { status: 'skipped', reason }),
-			).toThrow(`profile sync for c1 was not pushed: ${reason}`)
+			).toThrow(`ContactProfileSync: you synchronized contact c1, and it failed because ${reason}.`)
 	})
 })
 

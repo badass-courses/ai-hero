@@ -5,10 +5,12 @@ import type { ContactProfileSnapshot } from '@/lib/subscriber-marketing/drovr-co
 import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
 import {
 	contactProfileContentHash,
+	legacyContactProfileContentHash,
 	runContactProfileSync,
 } from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
 import { createMemoryContactProfileVersionStore } from '@/lib/subscriber-marketing/contact-profile-version'
 import type { DeferredDrovrEvent } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
+import type { DrovrShadowEvent } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
 
 const now = Date.parse('2026-09-27T12:00:00.000Z')
 
@@ -58,16 +60,20 @@ function harness(
 		acknowledged: overrides.acknowledged ?? false,
 	}))
 	const acknowledge = vi.fn(async () => {})
-	const deliver = vi.fn(async () =>
+	const deliver = vi.fn(async (events: DrovrShadowEvent[]) =>
 		'delivered' in overrides
 			? overrides.delivered!
-			: { accepted: 1, rejected: 0 },
+			: { accepted: events.length, rejected: 0 },
 	)
+	// These are the pinned legacy/OFF roads. ON producer tests use atomic
+	// registration and retained native proof, never synthesize receipts from
+	// these aggregate delivery counters.
 	const ownedPath = vi.fn(async () => 'ai-hero-skills-workflow')
 	const onSendingJourney = vi.fn(async () => overrides.onSendingJourney ?? true)
 	const birth = vi.fn(async () => {})
 	const run = () =>
 		runContactProfileSync({
+			profileAckEnabled: async () => false,
 			event: {
 				data: {
 					contactId: overrides.contactId ?? 'contact-1',
@@ -83,6 +89,7 @@ function harness(
 			env: overrides.env ?? { AIH_DROVR_PROFILE_SYNC: 'true' },
 			readSnapshot,
 			versionFor,
+			currentVersion: versionFor,
 			deliver,
 			ownedPath,
 			onSendingJourney,
@@ -200,10 +207,10 @@ describe('drovr contact profile sync function', () => {
 		expect(h.birth).toHaveBeenCalledWith(['contact-1'])
 		expect(h.deliver).toHaveBeenNthCalledWith(2, [profileEvent])
 		expect(h.order.slice(-4)).toEqual([
-			'deliver-profile',
-			'birth-directory',
-			'redeliver-after-birth',
-			'acknowledge-version',
+			'delta-deliver-profile',
+			expect.stringMatching(/^paced-birth:[a-f0-9]{64}$/),
+			expect.stringMatching(/^paced-redeliver:[a-f0-9]{64}$/),
+			'delta-acknowledge-version',
 		])
 		expect(h.sent).toEqual([])
 	})
@@ -232,7 +239,7 @@ describe('drovr contact profile sync function', () => {
 	it('a live writer skips an unchanged version drovr already acknowledged', async () => {
 		// The hawk (2026-09-27): signup, owner assignment and the like each
 		// re-pushed the same version; drovr deduped them, 2–4× the calls.
-		for (const reason of ['journey-entered', 'offer-issued'] as const) {
+		for (const reason of ['journey-entered', 'reconcile'] as const) {
 			const h = harness({ reason, acknowledged: true })
 			await expect(h.run()).resolves.toEqual({
 				status: 'skipped',
@@ -242,17 +249,17 @@ describe('drovr contact profile sync function', () => {
 		}
 	})
 
-	it('the reconcile always re-states, acknowledged or not (confirmedAt keeps moving)', async () => {
+	it('the delta reconcile skips unchanged profiles; monthly restatement is separate', async () => {
 		const h = harness({ reason: 'reconcile', acknowledged: true })
-		await expect(h.run()).resolves.toMatchObject({ status: 'sent' })
-		expect(h.deliver).toHaveBeenCalledOnce()
+		await expect(h.run()).resolves.toMatchObject({ status: 'skipped', reason: 'unchanged' })
+		expect(h.deliver).not.toHaveBeenCalled()
 	})
 
-	it('acknowledges only a full accept', async () => {
+	it('legacy OFF acknowledges non-rejected, non-deferred delivery outcomes', async () => {
 		const accepted = harness()
 		await accepted.run()
 		expect(accepted.acknowledge).toHaveBeenCalledWith('contact-1', 4)
-		expect(accepted.order.at(-1)).toBe('acknowledge-version')
+		expect(accepted.order.at(-1)).toBe('delta-acknowledge-version')
 
 		const rejected = harness({ delivered: { accepted: 0, rejected: 1 } })
 		await rejected.run()
@@ -285,6 +292,8 @@ describe('drovr contact profile sync function', () => {
 		// With the real store: a failed first push leaves the version
 		// unacknowledged, so the next offer-issued request still delivers.
 		const store = createMemoryContactProfileVersionStore()
+		await store.versionFor('contact-1', contactProfileContentHash(snapshot))
+		const offerSnapshot = { ...snapshot, offers: [{ journeyId: 'journey', couponId: 'coupon', variables: {} }] }
 		const deliver = vi
 			.fn()
 			.mockRejectedValueOnce(new Error('drovr 503'))
@@ -292,13 +301,15 @@ describe('drovr contact profile sync function', () => {
 			.mockResolvedValueOnce({ accepted: 1, rejected: 0 })
 		const run = () =>
 			runContactProfileSync({
+				profileAckEnabled: async () => true,
 				event: { data: { contactId: 'contact-1', reason: 'offer-issued' } },
 				step: {
 					run: async (_id, callback) => callback(),
 					sendEvent: async () => undefined,
 				},
 				env: { AIH_DROVR_PROFILE_SYNC: 'true' },
-				readSnapshot: async () => snapshot,
+				readSnapshot: async () => offerSnapshot,
+				currentVersion: (contactId) => store.currentFor(contactId),
 				versionFor: (contactId, hash) => store.versionFor(contactId, hash),
 				acknowledge: (contactId, version) =>
 					store.acknowledge(contactId, version),
@@ -309,12 +320,10 @@ describe('drovr contact profile sync function', () => {
 			})
 		await expect(run()).rejects.toThrow('drovr 503')
 		await expect(run()).resolves.toMatchObject({ status: 'sent' })
-		// Now acknowledged: an unchanged offer-issued request skips.
-		await expect(run()).resolves.toMatchObject({
-			status: 'skipped',
-			reason: 'unchanged',
-		})
-		expect(deliver).toHaveBeenCalledTimes(2)
+		// Coupon facts retain a stable key; retries never emit a profile or link.
+		await expect(run()).resolves.toMatchObject({ status: 'sent', profileVersion: 1 })
+		expect(deliver).toHaveBeenCalledTimes(3)
+		for (const [events] of deliver.mock.calls) expect(events.every((event: { type: string }) => event.type === 'contact.offer.issued')).toBe(true)
 	})
 
 	it('spends no version on a contact ai-hero does not have', async () => {
@@ -340,9 +349,9 @@ describe('drovr contact profile sync function', () => {
 		expect(h.order).toEqual([
 			'sending-journey',
 			'read-profile',
-			'profile-version',
-			'deliver-profile',
-			'acknowledge-version',
+			'review-profile-version',
+			'delta-deliver-profile',
+			'delta-acknowledge-version',
 		])
 		expect(h.readSnapshot).toHaveBeenCalledWith({
 			contactId: 'contact-1',
@@ -365,6 +374,7 @@ describe('drovr contact profile sync function', () => {
 		expect(h.versionFor).toHaveBeenCalledWith(
 			'contact-1',
 			contactProfileContentHash(snapshot),
+			legacyContactProfileContentHash(snapshot),
 		)
 		expect(h.deliver).toHaveBeenCalledWith([
 			expect.objectContaining({

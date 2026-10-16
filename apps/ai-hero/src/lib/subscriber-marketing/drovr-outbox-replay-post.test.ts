@@ -161,26 +161,31 @@ describe('postDrovrOutboxRow', () => {
 		).toEqual({ kind: 'failed', transient: true, reason: 'aborted' })
 	})
 
-	it('answers a 409 event-not-live and a missing key as not transient', async () => {
+	it('defers explicit event-not-live unchanged, but a missing key still needs an operator', async () => {
 		expect(
 			await postDrovrOutboxRow(
 				asRow(outboxEntryForEvent(authorityCopy, 'live')),
 				ports({
 					deliver: async () => ({
-						status: 'failed',
+						status: 'deferred',
 						httpStatus: 409,
 						reason:
-							'drovr does not take this event type yet (409 event-not-live)',
+							'EventNotLive: contact is not migrated',
 					}),
 				}),
 			),
-		).toMatchObject({ kind: 'failed', transient: false, httpStatus: 409 })
+		).toMatchObject({ kind: 'deferred', httpStatus: 409 })
 		expect(
 			await postDrovrOutboxRow(
 				asRow(outboxEntryForEvent(authorityCopy, 'live')),
 				ports({ apiKeyFor: () => undefined }),
 			),
 		).toMatchObject({ kind: 'failed', transient: false })
+	})
+
+	it('does not retry an unrelated 409 whose diagnostic happens to mention event-not-live', async () => {
+		const result = await postDrovrOutboxRow(asRow(outboxEntryForEvent(authorityCopy, 'live')), ports({ deliver: async () => ({ status: 'failed', httpStatus: 409, reason: 'key-reuse: payload differs from event-not-live retry' }) }))
+		expect(result).toMatchObject({ kind: 'failed', httpStatus: 409, transient: false })
 	})
 
 	it('answers rejected on a 4xx for the row itself', async () => {

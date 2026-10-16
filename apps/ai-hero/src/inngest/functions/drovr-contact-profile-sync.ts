@@ -2,6 +2,10 @@ import { DROVR_CONTACT_PROFILE_SYNC_EVENT } from '@/inngest/events/drovr'
 import { inngest } from '@/inngest/inngest.server'
 import { DROVR_SEND_RETRIES } from '@/lib/subscriber-marketing/drovr-outbox'
 import { runContactProfileSync } from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
+import { queueContactSyncBulk } from '@/lib/subscriber-marketing/contact-sync-bulk'
+import { captureDrovrOutboxLive, drovrOutboxTargetFromEnv } from '@/lib/subscriber-marketing/drovr-outbox-live'
+import { createProfileAckProducerPorts } from '@/lib/subscriber-marketing/contact-sync-profile-ack-producer'
+import { logAckEvidenceExpiredOncePerProcess } from '@/lib/subscriber-marketing/contact-sync-profile-ack-expired-log'
 
 export const drovrContactProfileSync = inngest.createFunction(
 	{
@@ -52,16 +56,18 @@ export const drovrContactProfileSync = inngest.createFunction(
 		// Row 204: the last failed attempt outboxes the events.
 		const outboxing = contactSyncSendOrOutbox({ attempt, maxAttempts })
 		const repository = new DrizzleCaptureMarketingRepository(db)
+		const readProfileAckFlag = async () => (await import('@/lib/subscriber-marketing/contact-sync-profile-ack-flag-live')).profileAckEnabled()
+		const versions = createDrizzleContactProfileVersionStore(db, { includeRegistrationCapability: true, profileAckEnabled: readProfileAckFlag })
 		return runContactProfileSync({
 			event,
 			step,
 			env: process.env,
-			readSnapshot: async ({ contactId, valuePathSlug }) =>
+			readSnapshot: async ({ contactId, valuePathSlug, offerOnly }) =>
 				readContactProfileSnapshot({
 					repository,
 					contactId,
 					kitIdentity: await findContactKitIdentity(db, contactId),
-					valuePathSlug,
+					valuePathSlug: offerOnly ? undefined : valuePathSlug,
 					answerPages: valuePathSlug ? await getValuePathAnswerPages() : [],
 					baseUrl:
 						env.NEXT_PUBLIC_URL ??
@@ -72,17 +78,17 @@ export const drovrContactProfileSync = inngest.createFunction(
 					now: new Date().toISOString(),
 					warn: log.warn,
 				}),
-			versionFor: (contactId, contentHash) =>
-				createDrizzleContactProfileVersionStore(db).versionFor(
-					contactId,
-					contentHash,
-				),
-			acknowledge: (contactId, profileVersion) =>
-				createDrizzleContactProfileVersionStore(db).acknowledge(
-					contactId,
-					profileVersion,
-				),
+			currentVersion: contactId => versions.currentFor(contactId),
+			versionFor: (contactId, contentHash, legacyHash) => versions.versionFor(contactId, contentHash, legacyHash),
+			profileAckEnabled: readProfileAckFlag,
+			profileAck: createProfileAckProducerPorts({ database: db, target: drovrOutboxTargetFromEnv(), enabled: readProfileAckFlag, send: events => inngest.send(events), onExpired: value => logAckEvidenceExpiredOncePerProcess(value, log) }),
+			acknowledge: (contactId, profileVersion) => versions.acknowledge(contactId, profileVersion),
+			acknowledgeLegacy: (contactId, profileVersion, request) => versions.acknowledgeLegacy(contactId, profileVersion, request),
 			deliver: async (events) => {
+				// Coupons use the existing live completion path. Profile changes,
+				// link rotations and restatements never post on that queue.
+				if (event.data.reason !== 'offer-issued')
+					return queueContactSyncBulk(events, { capture: captureDrovrOutboxLive, send: (events) => inngest.send(events) }, { restate: events.every(item => item.idempotencyKey.includes(':restate:')) })
 				const ingestUrl = env.DROVR_SHADOW_INGEST_URL
 				const apiKey = drovrApiKeyForTenant(DROVR_AUTHORITY_TENANT_ID)
 				if (!ingestUrl || !apiKey) return 'not-configured'

@@ -3,6 +3,7 @@ import { dedupe, flag } from '@vercel/flags/next'
 import {
 	C5_PRICING_ENABLED,
 	COMMERCE_ENABLED,
+	DROVR_PROFILE_ACK_ENABLED,
 	FLAGS,
 	SHOW_TEAM_PRICING,
 } from './flag-definitions'
@@ -53,11 +54,22 @@ export const c5PricingEnabledFlag = flag<boolean>({
 	options: FLAGS[C5_PRICING_ENABLED].options,
 })
 
+// Admin display only. The worker uses a fresh bounded, fail-closed Redis read,
+// like C5 pricing, rather than relying on a request-scoped precomputed value.
+export const drovrProfileAckEnabledFlag = flag<boolean>({
+	key: getEnvKey(FLAGS[DROVR_PROFILE_ACK_ENABLED].key),
+	adapter: redisAdapter(),
+	defaultValue: FLAGS[DROVR_PROFILE_ACK_ENABLED].defaultValue[getEnvironment()],
+	identify,
+	options: FLAGS[DROVR_PROFILE_ACK_ENABLED].options,
+})
+
 // Map of flag keys to their instances
 export const flagInstances = {
 	[COMMERCE_ENABLED]: commerceEnabled,
 	[SHOW_TEAM_PRICING]: showTeamPricingFlag,
 	[C5_PRICING_ENABLED]: c5PricingEnabledFlag,
+	[DROVR_PROFILE_ACK_ENABLED]: drovrProfileAckEnabledFlag,
 } as const
 
 // Array of flags for precomputation

@@ -45,6 +45,10 @@ on:
       - "apps/ai-hero/src/lib/subscriber-marketing/contact-sync-stores*"
       - "apps/ai-hero/src/lib/subscriber-marketing/contact-sync-reconcile*"
       - "apps/ai-hero/src/lib/subscriber-marketing/contact-sync-backfill*"
+      - "apps/ai-hero/src/lib/subscriber-marketing/contact-sync-*"
+      - "apps/ai-hero/src/lib/subscriber-marketing/drovr-owner-stop-rejection*"
+      - "apps/ai-hero/src/lib/subscriber-marketing/drovr-unsubscribe-supersession*"
+      - "apps/ai-hero/src/lib/subscriber-marketing/drovr-bulk-*"
       - "apps/ai-hero/src/db/contact-sync-schema.ts"
       - "apps/ai-hero/src/lib/checkout-reconcile/**"
       - "apps/ai-hero/src/lib/certificates*"
@@ -93,6 +97,10 @@ on:
       - "apps/ai-hero/src/lib/subscriber-marketing/contact-sync-stores*"
       - "apps/ai-hero/src/lib/subscriber-marketing/contact-sync-reconcile*"
       - "apps/ai-hero/src/lib/subscriber-marketing/contact-sync-backfill*"
+      - "apps/ai-hero/src/lib/subscriber-marketing/contact-sync-*"
+      - "apps/ai-hero/src/lib/subscriber-marketing/drovr-owner-stop-rejection*"
+      - "apps/ai-hero/src/lib/subscriber-marketing/drovr-unsubscribe-supersession*"
+      - "apps/ai-hero/src/lib/subscriber-marketing/drovr-bulk-*"
       - "apps/ai-hero/src/db/contact-sync-schema.ts"
       - "apps/ai-hero/src/lib/checkout-reconcile/**"
       - "apps/ai-hero/src/lib/certificates*"
@@ -136,7 +144,7 @@ jobs:
           AIH_EVERGREEN_COUPON_MYSQL_TEST_SERVER_URL: mysql://root:aih_test_password@127.0.0.1:3307/mysql
           AIH_PURCHASE_DISPUTES_MYSQL_URL: mysql://root:aih_test_password@127.0.0.1:3307/purchase_disputes_test
           AIH_PURCHASE_FIELDS_MYSQL_URL: mysql://root:aih_test_password@127.0.0.1:3307/purchase_fields_test
-        # Twenty-one suites share one MySQL in parallel. The long composition
+        # These suites share one MySQL in parallel. The long composition
         # tests (bridge-runtime, evergreen-pilot) run past vitest's 5s default
         # and timed out on main too (runs 35258220266, 35742641569).
         run: >-

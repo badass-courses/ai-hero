@@ -1,5 +1,6 @@
 import { DROVR_OUTBOX_REPLAY_REQUESTED_EVENT } from '@/inngest/events/drovr'
 import { inngest } from '@/inngest/inngest.server'
+import { queueCappedReplay } from '@/lib/subscriber-marketing/contact-sync-replay-queue'
 import { readUnsubscribedValuePathContactIds } from '@/lib/subscriber-marketing/drovr-value-path-birth-admission-live'
 
 /**
@@ -73,13 +74,33 @@ export const drovrOutboxReplay = inngest.createFunction(
 		const signupConfig = parseDrovrSignupDeliveryConfig(env)
 		return step.run('replay', async () => {
 			try {
+				const store = createDrizzleDrovrOutboxStore(db)
 				return await runDrovrOutboxReplay({
-					store: createDrizzleDrovrOutboxStore(db),
+					store,
 					target,
 					now: () => new Date(),
 					log,
-					post: (row) =>
-						postDrovrOutboxRow(row, {
+					post: async (row) => {
+						const at = Date.now()
+						let publishContinuation: (() => Promise<unknown>) | undefined
+						if ('heldBatch' in row || row.heldBatchBlocked) {
+							const [{ prepareHeldBatchReplay }, { heldBatchPersistenceLive, heldBatchRowsLive }, { HeldBatchContinuationError }, { routeContactSyncRetry }] = await Promise.all([
+								import('@/lib/subscriber-marketing/contact-sync-held-batch-replay'), import('@/lib/subscriber-marketing/contact-sync-held-batch-drizzle'), import('@/lib/subscriber-marketing/contact-sync-held-batch'), import('@/lib/subscriber-marketing/contact-sync-retry-route'),
+							])
+							try {
+								const persistence = await heldBatchPersistenceLive()
+								const plan = await prepareHeldBatchReplay(row, { block: (anchor, reason, expected) => persistence.block(anchor, reason, expected), rows: heldBatchRowsLive })
+								if (!plan || plan.kind === 'held') return { kind: 'held', detail: new HeldBatchContinuationError({ reason: plan?.reason ?? 'the continuation cannot be reconstructed' }).message }
+								publishContinuation = () => inngest.send(routeContactSyncRetry({ ...plan.request, ts: at }))
+							} catch (error) {
+								const detail = error instanceof HeldBatchContinuationError ? error.message : new HeldBatchContinuationError({ reason: 'strict replay reconstruction is unavailable; retained work was not published' }).message
+								try { await log.warn('drovr.outbox.held_batch_invalid', { id: row.id, detail }) } catch { /* logging failure must not reopen a held anchor */ }
+								return { kind: 'held', detail }
+							}
+						}
+						const queued = await queueCappedReplay(row, event => inngest.send(event), at, (until, expectedUntil, publicationId) => store.leaseQueue({ target, id: row.id, nextAttemptAt: until, ...(expectedUntil ? { expectedUntil } : { dueAt: new Date(at).toISOString() }), publicationId }), publicationId => store.abortQueueHandoff({ target: row.target, id: row.id, publicationId }), publishContinuation)
+						if (queued) return queued
+						return postDrovrOutboxRow(row, {
 							ingestUrl,
 							readBirthOptOuts: (ids) =>
 								readUnsubscribedValuePathContactIds(ids, db),
@@ -111,7 +132,8 @@ export const drovrOutboxReplay = inngest.createFunction(
 										},
 									}
 								: {}),
-						}),
+						})
+					},
 				})
 			} catch (error) {
 				// Before the deploy request lands there is no table: nothing to

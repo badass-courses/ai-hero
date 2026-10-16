@@ -1,4 +1,4 @@
-import { isOutboxStop, outboxEntryForEvent } from './drovr-outbox'
+import { isOutboxStop, outboxEntryForEvent, type DrovrOutboxSource } from './drovr-outbox'
 import {
 	captureDrovrOutboxLive,
 	holdDrovrStopsLive,
@@ -24,6 +24,7 @@ import { isHeldStopRefusal, refusalsByAnswer } from './drovr-stop-verdict'
 export function contactSyncSendOrOutbox(
 	attempt: DrovrSendAttempt,
 	capture: DrovrOutboxCaptureFn = captureDrovrOutboxLive,
+	options: { source?: DrovrOutboxSource; clampAt?: number } = {},
 ) {
 	return (
 		events: readonly DrovrShadowEvent[],
@@ -33,7 +34,7 @@ export function contactSyncSendOrOutbox(
 			attempt,
 			send,
 			unsent: () =>
-				events.map((event) => outboxEntryForEvent(event, 'contactSync')),
+				events.map((event) => outboxEntryForEvent(event, options.source ?? 'contactSync', options.clampAt === undefined ? {} : { sentAt: options.clampAt })),
 			capture,
 			outboxed: () => ({ accepted: 0, rejected: 0 }),
 		})

@@ -10,4 +10,5 @@ export {
 	COMMERCE_ENABLED,
 	SHOW_TEAM_PRICING,
 	C5_PRICING_ENABLED,
+	DROVR_PROFILE_ACK_ENABLED,
 } from './flag-definitions'

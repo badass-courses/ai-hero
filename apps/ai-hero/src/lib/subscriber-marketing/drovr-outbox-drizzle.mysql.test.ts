@@ -17,6 +17,8 @@ import {
 	type DrovrOutboxRow,
 } from './drovr-outbox'
 import { createDrizzleDrovrOutboxStore } from './drovr-outbox-drizzle'
+import { encodeHeldBatchContinuation } from './contact-sync-held-batch'
+import { encodeHeldContinuationEnvelope, readHeldContinuationEnvelope, OutboxControlError } from './drovr-outbox-control'
 
 const serverUrl = process.env.AIH_EVERGREEN_JOURNEY_MYSQL_TEST_SERVER_URL
 const integration = describe.skipIf(!serverUrl)
@@ -49,6 +51,8 @@ integration('drovr outbox store on MySQL (row 204)', () => {
 			timezone: 'Z',
 			multipleStatements: true,
 		})
+		// The existing core stop/lift table, in this guarded disposable DB only.
+		await pool.query(await fs.readFile(new URL('../../db/migrations/20260504_ai_hero_subscriber_marketing_gate_a.sql', import.meta.url), 'utf8'))
 		const acquire = pool.getConnection.bind(pool)
 		pool.getConnection = (async () =>
 			preserveQueryResultShape(await acquire())) as typeof pool.getConnection
@@ -73,6 +77,8 @@ integration('drovr outbox store on MySQL (row 204)', () => {
 				'utf8',
 			),
 		)
+
+	const applyHeldMigration = async () => pool.query(await fs.readFile(new URL('../../db/migrations/20261016_ai_hero_drovr_held_continuation.sql', import.meta.url), 'utf8'))
 
 	let serial = 0
 	const row = (overrides: Partial<DrovrOutboxRow> = {}): DrovrOutboxRow => {
@@ -123,11 +129,14 @@ integration('drovr outbox store on MySQL (row 204)', () => {
 	describe('with the table', () => {
 		beforeAll(async () => {
 			await applyMigration()
-			// Rerunnable: a second apply is a no-op.
+			// The original table migration remains rerunnable.
 			await applyMigration()
+			// The additive column migration is explicitly apply-once.
+			await applyHeldMigration()
 		})
 		beforeEach(async () => {
 			await pool.query('DELETE FROM AI_DrovrOutbox')
+			await pool.query('DELETE FROM AI_ContactEvent')
 		})
 
 		it('has exactly the indexes the Drizzle schema declares (no drift from the deploy request)', async () => {
@@ -165,6 +174,36 @@ integration('drovr outbox store on MySQL (row 204)', () => {
 			})
 		})
 
+		it('round-trips a 128-ref encoded envelope byte-exact in the real JSON column without touching error/body/clock', async () => {
+			const members = Array.from({ length: 128 }, () => row())
+			await store.insertIgnore(members)
+			const first = members[0]!
+			const encoded = encodeHeldBatchContinuation({ v: 1, target: PROD, anchorKey: first.dedupeKey, source: 'contact-profile-sync', class: 'delta', originalClock: first.firstFailedAt, parkedAt: first.firstFailedAt, completion: { state: 'unfinished' }, release: { state: 'held' }, attempt: 1, rejectedCarry: 0, members: members.map(member => ({ key: member.dedupeKey, phase: 'pending', reason: 'event-not-live' })) })
+			const envelope = encodeHeldContinuationEnvelope({ v: 1, continuation: { v: 1, encoded, blocked: true }, replayProof: { v: 1, handoffs: 7, publicationId: randomUUID() } })
+			await pool.query('UPDATE AI_DrovrOutbox SET heldContinuation = ? WHERE id = ?', [envelope, first.id])
+			const [raw] = await pool.query('SELECT heldContinuation, lastError, body, occurredAt, firstFailedAt FROM AI_DrovrOutbox WHERE id = ?', [first.id])
+			const values = (raw as { heldContinuation: unknown; lastError: string; body: unknown; occurredAt: Date; firstFailedAt: Date }[])[0]!
+			expect(Buffer.from(readHeldContinuationEnvelope(values.heldContinuation)!.continuation!.encoded!, 'utf8')).toEqual(Buffer.from(encoded, 'utf8'))
+			expect(values.lastError).toBe(first.lastError)
+			expect(typeof values.body === 'string' ? JSON.parse(values.body) : values.body).toEqual(first.body)
+			expect(values.occurredAt.toISOString()).toBe(first.occurredAt)
+			expect(values.firstFailedAt.toISOString()).toBe(first.firstFailedAt)
+		})
+
+		it('missing additive column keeps due readers working and refuses queue coordination without lastError fallback', async () => {
+			const first = row()
+			await store.insertIgnore([first])
+			await pool.query('ALTER TABLE AI_DrovrOutbox DROP COLUMN heldContinuation')
+			try {
+				const [read] = await store.due({ target: PROD, now: '2026-09-30T12:00:00.000Z', limit: 1 })
+				expect(read).toMatchObject({ id: first.id, lastError: first.lastError, queueHandoffs: 0, queueMetadataInvalid: false })
+				expect(read).not.toHaveProperty('heldBatch')
+				await expect(store.leaseQueue!({ target: PROD, id: first.id, dueAt: first.nextAttemptAt, nextAttemptAt: '2026-10-01T12:00:00.000Z', publicationId: randomUUID() })).rejects.toBeInstanceOf(OutboxControlError)
+				const [raw] = await pool.query('SELECT status, lastError FROM AI_DrovrOutbox WHERE id = ?', [first.id])
+				expect((raw as { status: string; lastError: string }[])[0]).toEqual({ status: 'pending', lastError: first.lastError })
+			} finally { await applyHeldMigration() }
+		})
+
 		it('keeps the exact body and ignores a second capture of the same send', async () => {
 			const first = row()
 			await store.insertIgnore([first])
@@ -175,7 +214,7 @@ integration('drovr outbox store on MySQL (row 204)', () => {
 				limit: 10,
 			})
 			expect(due).toHaveLength(1)
-			expect(due[0]).toEqual(first)
+			expect(due[0]).toEqual({ ...first, queueHandoffs: 0, queueMetadataInvalid: false })
 		})
 
 		it('absorbs only a duplicate: a value that does not fit fails instead of being truncated', async () => {
@@ -343,10 +382,12 @@ integration('drovr outbox store on MySQL (row 204)', () => {
 				}),
 			)
 			await logged.openGates({ target: PROD, contactIds: ['c1', 'c2'] })
-			expect(sent).toHaveLength(1)
+			// Canonical resubscribe evidence is a separate scoped source read.
+			const outboxReads = sent.filter(item => item.query.includes('from `AI_DrovrOutbox`'))
+			expect(outboxReads).toHaveLength(1)
 			const [plan] = (await pool.query(
-				`EXPLAIN ${sent[0]!.query}`,
-				sent[0]!.params,
+				`EXPLAIN ${outboxReads[0]!.query}`,
+				outboxReads[0]!.params,
 			)) as unknown as [{ key: string | null }[]]
 			expect(plan[0]?.key).toBe('DrovrOutbox_contact_idx')
 		})
@@ -355,10 +396,11 @@ integration('drovr outbox store on MySQL (row 204)', () => {
 			const now = '2026-09-30T12:00:00.000Z'
 			const later = '2026-09-30T13:15:00.000Z'
 			const earlier = '2026-09-30T11:55:00.000Z'
-			// Rows the gate moved behind a stop carry its note (row 204c).
+			// Only the typed Boolean marks a fact as waiting behind a stop.
 			const behind = (overrides: Partial<DrovrOutboxRow>) =>
 				row({
-					lastError: 'held behind a stop the outbox still owes',
+					heldContinuation: { v: 1, replayProof: { v: 1, handoffs: 0, waitingForStop: true } },
+					lastError: 'synthetic operator prose unrelated to a stop',
 					...overrides,
 				})
 			const moved = behind({
@@ -395,6 +437,7 @@ integration('drovr outbox store on MySQL (row 204)', () => {
 			})
 			// Waiting out its own backoff (drovr's Retry-After): keeps its time.
 			const ownBackoff = row({
+				lastError: 'held behind a stop the outbox still owes',
 				contactId: 'c1',
 				eventType: 'email.completed',
 				nextAttemptAt: later,
@@ -524,7 +567,8 @@ integration('drovr outbox store on MySQL (row 204)', () => {
 				stop({ firstFailedAt: '2026-09-30T09:00:00.000Z', status: 'held' }),
 				stop({
 					firstFailedAt: '2026-09-30T07:00:00.000Z',
-					source: 'contactSync',
+					source: 'bulkRestate',
+					status: 'deferred',
 				}),
 				stop({ firstFailedAt: '2026-09-30T10:00:00.000Z' }),
 				stop({ firstFailedAt: '2026-09-30T06:00:00.000Z', target: PREVIEW }),
@@ -613,6 +657,7 @@ integration('drovr outbox store on MySQL (row 204)', () => {
 			})
 			expect(await store.depth(PROD)).toEqual({
 				pending: 1,
+				deferred: 0,
 				oldestPendingFailedAt: '2026-09-30T09:00:00.000Z',
 				held: 1,
 				rejected: 1,

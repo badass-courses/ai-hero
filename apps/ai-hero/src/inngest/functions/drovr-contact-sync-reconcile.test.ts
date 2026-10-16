@@ -54,7 +54,8 @@ function harness(
 			error,
 			store: {
 				readWatermark: async () => '2026-09-26T17:40:00.000Z',
-				scanChanges: async () => [
+				readProgress: async () => undefined,
+				scanChanges: async ({ after, through }) => [
 					{
 						id: 'e1',
 						contactId: 'c1',
@@ -67,7 +68,7 @@ function harness(
 						eventType: 'contact.unsubscribed',
 						occurredAt: '2026-09-26T17:51:00.000Z',
 					},
-				],
+				].filter(row => row.occurredAt > after && row.occurredAt <= through),
 				rotatedContacts: async () => [],
 				writeWatermark,
 			},
@@ -120,13 +121,14 @@ describe('drovr contact sync reconcile function', () => {
 		})
 		expect(h.order).toEqual([
 			'read-watermark',
-			'scan-fresh',
+			'read-progress',
 			'scan-overlap',
 			'rotated-contacts',
+			'scan-fresh',
 			'sync:c1',
 			'sync:c2',
 			'load-stops',
-			'resend-stops',
+			expect.stringMatching(/^resend-stops:[a-f0-9]{64}$/),
 			'heartbeat',
 			'write-watermark',
 		])

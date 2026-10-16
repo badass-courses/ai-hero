@@ -4,9 +4,8 @@ import type { DrovrShadowEvent } from '@/lib/subscriber-marketing/drovr-shadow-e
  * One batch of drovr EngineEvents to deliver durably. The host maps its
  * facts into drovr's wire contract synchronously and hands the batch to
  * Inngest; the delivery function posts each event with retries. Before
- * this, delivery was a fire-and-forget fetch with a 3s timeout, and about
- * one in four missing shadow births never reached drovr at all
- * (drovr cutover plan, 2026-09-16).
+ * this, delivery used a fire-and-forget fetch with a 3s timeout. Durable
+ * capture and queue ownership protect work across process exits.
  */
 export const DROVR_EVENTS_DELIVER_EVENT = 'drovr/events.deliver'
 
@@ -14,6 +13,16 @@ export type DrovrEventsDeliver = {
 	name: typeof DROVR_EVENTS_DELIVER_EVENT
 	data: {
 		events: DrovrShadowEvent[]
+		/** Frozen SDK coordination only; never part of a wire event body. */
+		profileAckRef?: import('@/lib/subscriber-marketing/contact-sync-profile-ack-schema').ProfileAckReference
+		/** Hint only: admission still requires matching retained native debt. */
+		profileAckNativeDebt?: boolean
+		/** Original birth clamp instant carried through replay and capacity handoff. */
+		firstFailedAt?: string
+		/** Already-normalized stragglers stay in their protected class queue. */
+		stragglerRetry?: DrovrContactSyncRetryRequested['data']
+		/** Read the current offer only after the named profile has landed. */
+		offerRefresh?: { contactId: string; profileVersion: number }
 		/** Which host fact produced the batch, for the delivery receipt. */
 		source:
 			| 'contact-created'
@@ -35,6 +44,7 @@ export type DrovrEventsDeliver = {
 			| 'kit-directory-ingest'
 			/** A contact's synced profile for drovr (drovr-contact-profile-sync). */
 			| 'contact-profile-sync'
+			| 'contact-profile-restate'
 			/** The one-time contact-sync backfill: the bulk lane. */
 			| 'contact-sync-backfill'
 			/**
@@ -50,11 +60,17 @@ export const DROVR_CONTACT_SYNC_BACKFILL_EVENT =
 
 /**
  * Run (or continue) the one-time contact-sync backfill from `cursor`.
- * Only on an explicit request; the backfill re-queues itself until done.
+ * Explicit requests only: count, then one contact, then approved bounded
+ * slices. A saved cursor never grants permission to continue by itself.
  */
 export type DrovrContactSyncBackfillRequested = {
 	name: typeof DROVR_CONTACT_SYNC_BACKFILL_EVENT
 	data: {
+		dryRun?: boolean
+		canary?: boolean
+		dryRunCount?: number
+		canaryConfirmed?: boolean
+		approvalToken?: string
 		cursor?: import('@/lib/subscriber-marketing/contact-sync-backfill').BackfillCursor
 		/**
 		 * Stop after this many pages and do not re-queue (the first run is a
@@ -81,6 +97,18 @@ export type DrovrContactSyncRetryRequested = {
 	data: {
 		items: import('@/lib/subscriber-marketing/drovr-shadow-delivery').DeferredDrovrEvent[]
 		attempt: number
+		/** Bounded continuations retain prior deferred members and rejection proof. */
+		carry?: import('@/lib/subscriber-marketing/drovr-shadow-delivery').DeferredDrovrEvent[]
+		rejectedCarry?: number
+		/** Frozen full scoped membership, including earlier completed slices. */
+		ownedKeys?: string[]
+		profileAckRef?: import('@/lib/subscriber-marketing/contact-sync-profile-ack-schema').ProfileAckReference
+		profileAckNativeDebt?: boolean
+		/** Explicit operator permission; never minted by an automatic retry. */
+		heldBatchRelease?: { anchorKey: string; id: string }
+		firstFailedAt?: string
+		paceClass?: import('@/lib/subscriber-marketing/drovr-bulk-pace').BulkClass
+		deliverySource?: DrovrEventsDeliver['data']['source']
 		/**
 		 * The profile version to acknowledge once drovr takes every item: set
 		 * only when the original push had nothing rejected.
@@ -110,6 +138,7 @@ export type DrovrContactProfileSyncRequested = {
 			/** An operator created a missing contact state (clears stale-state). */
 			| 'state-initialized'
 			| 'reconcile'
+			| 'restate'
 		valuePathSlug?: string
 	}
 }
@@ -125,6 +154,9 @@ export type DrovrDeliverySource = DrovrEventsDeliver['data']['source']
  * `deliverEventNameFor` routes them here.
  */
 export const DROVR_EVENTS_DELIVER_BULK_EVENT = 'drovr/events.deliver.bulk'
+export const DROVR_EVENTS_DELIVER_DELTA_EVENT = 'drovr/events.deliver.delta'
+export const DROVR_EVENTS_DELIVER_RESTATE_EVENT = 'drovr/events.deliver.restate'
+export const DROVR_EVENTS_DELIVER_INGEST_EVENT = 'drovr/events.deliver.ingest'
 
 export type DrovrEventsDeliverBulk = {
 	name: typeof DROVR_EVENTS_DELIVER_BULK_EVENT
@@ -134,18 +166,28 @@ export type DrovrEventsDeliverBulk = {
 export type DrovrDeliverEventName =
 	| typeof DROVR_EVENTS_DELIVER_EVENT
 	| typeof DROVR_EVENTS_DELIVER_BULK_EVENT
+	| typeof DROVR_EVENTS_DELIVER_DELTA_EVENT
+	| typeof DROVR_EVENTS_DELIVER_RESTATE_EVENT
+	| typeof DROVR_EVENTS_DELIVER_INGEST_EVENT
+
+export type DrovrDeliverEnvelope = { name: DrovrDeliverEventName; data: DrovrEventsDeliver['data'] }
 
 /** Sources whose batches travel on the bulk function. */
 export const BULK_DELIVERY_SOURCES: ReadonlySet<DrovrDeliverySource> =
 	new Set<DrovrDeliverySource>([
 		'kit-directory-ingest',
 		'contact-sync-backfill',
+		'contact-profile-sync',
+		'contact-profile-restate',
 		'evergreen-pitch-backfill',
 	])
 
 export function deliverEventNameFor(
 	source: DrovrDeliverySource,
 ): DrovrDeliverEventName {
+	if (source === 'contact-profile-sync') return DROVR_EVENTS_DELIVER_DELTA_EVENT
+	if (source === 'contact-profile-restate') return DROVR_EVENTS_DELIVER_RESTATE_EVENT
+	if (source === 'kit-directory-ingest') return DROVR_EVENTS_DELIVER_INGEST_EVENT
 	return BULK_DELIVERY_SOURCES.has(source)
 		? DROVR_EVENTS_DELIVER_BULK_EVENT
 		: DROVR_EVENTS_DELIVER_EVENT
