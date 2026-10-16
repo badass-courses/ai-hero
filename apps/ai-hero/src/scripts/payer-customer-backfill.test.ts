@@ -1,4 +1,11 @@
-import { mkdtemp, readFile, stat, unlink, writeFile } from 'node:fs/promises'
+import {
+	mkdir,
+	mkdtemp,
+	readFile,
+	stat,
+	unlink,
+	writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { drizzle } from 'drizzle-orm/mysql-proxy'
@@ -31,6 +38,8 @@ const quiet = {
 	chargeCreated: [sec(-DAY)],
 	paymentIntentCreated: [sec(-DAY)],
 	paymentMethodCreated: [sec(-DAY)],
+	invoiceCreated: [sec(-DAY)],
+	chargeDisputed: false,
 	subscriptions: [],
 }
 const transfer = (
@@ -273,6 +282,61 @@ const scenarios: Scenario[] = [
 		decision: 'carve-out',
 		reason: 'holder-charge-after-transfer',
 	},
+	{
+		name: 'stripe charge disputed',
+		facts: withStripe({ chargeDisputed: true }),
+		decision: 'carve-out',
+		reason: 'stripe-charge-disputed',
+	},
+	{
+		name: 'invoice after the transfer',
+		facts: withStripe({ invoiceCreated: [sec(60)] }),
+		decision: 'carve-out',
+		reason: 'holder-invoice-after-transfer',
+	},
+	{
+		name: 'same-second charge counts as after',
+		facts: withStripe({ chargeCreated: [sec(0)] }),
+		decision: 'carve-out',
+		reason: 'holder-charge-after-transfer',
+	},
+	{
+		name: 'charge one second before the transfer moves',
+		facts: withStripe({ chargeCreated: [sec(-1)] }),
+		decision: 'move',
+		reason: null,
+	},
+	{
+		name: 'transfer dated by createdAt only',
+		facts: facts({
+			purchases: [
+				{
+					purchaseId: 'p',
+					chargeUserId: userB.id,
+					openDispute: false,
+					transfers: [
+						{
+							id: 't',
+							state: 'COMPLETED',
+							sourceUserId: userA.id,
+							completedAt: null,
+							createdAt: T0,
+						},
+					],
+				},
+			],
+		}),
+		decision: 'move',
+		reason: null,
+	},
+	{
+		name: 'payer with no name still moves',
+		facts: facts({
+			users: { [userA.id]: { ...userA, name: null }, [userB.id]: userB },
+		}),
+		decision: 'move',
+		reason: null,
+	},
 	// Precedence: ambiguous and missing before carve-out, carve-out before move.
 	{
 		name: 'ambiguous beats carve-out',
@@ -333,11 +397,13 @@ function oracleUsed(f: CustomerFacts): boolean {
 	const times = f.purchases.flatMap((p) =>
 		p.transfers
 			.filter((t) => t.state === 'COMPLETED')
-			.map((t) => (t.completedAt ?? t.createdAt)!.getTime() / 1000),
+			.map((t) => (t.completedAt ?? t.createdAt)!.getTime()),
 	)
-	const at = Math.min(...times)
+	// Whole seconds, inclusive: same-second objects count as after.
+	const at = Math.floor(Math.min(...times) / 1000)
 	return (
 		f.purchases.some((p) => p.openDispute) ||
+		f.stripe.chargeDisputed ||
 		f.activeSubscriptionRows > 0 ||
 		f.stripe.subscriptions.some(
 			(s) => !['canceled', 'incomplete_expired'].includes(s.status),
@@ -346,8 +412,9 @@ function oracleUsed(f: CustomerFacts): boolean {
 			...f.stripe.chargeCreated,
 			...f.stripe.paymentIntentCreated,
 			...f.stripe.paymentMethodCreated,
+			...f.stripe.invoiceCreated,
 			...f.stripe.subscriptions.map((s) => s.created),
-		].some((created) => created > at)
+		].some((created) => created >= at)
 	)
 }
 
@@ -360,7 +427,9 @@ function rng(seed: number) {
 }
 function randomFacts(next: () => number): CustomerFacts {
 	const pick = <T>(xs: T[]) => xs[Math.floor(next() * xs.length)]!
-	const near = () => sec(Math.floor((next() - 0.5) * 4 * DAY))
+	// 15% land exactly on the first transfer's second, to hit the boundary.
+	const near = () =>
+		next() < 0.15 ? sec(0) : sec(Math.floor((next() - 0.5) * 4 * DAY))
 	const many = (n: number) =>
 		Array.from({ length: Math.floor(next() * n) }, near)
 	const holder = pick([userA.id, userB.id, userC.id])
@@ -403,6 +472,8 @@ function randomFacts(next: () => number): CustomerFacts {
 			chargeCreated: many(3),
 			paymentIntentCreated: many(3),
 			paymentMethodCreated: many(3),
+			invoiceCreated: many(2),
+			chargeDisputed: next() < 0.05,
 			subscriptions: Array.from({ length: Math.floor(next() * 2) }, () => ({
 				created: near(),
 				status: pick(['active', 'canceled', 'past_due']),
@@ -425,15 +496,27 @@ type World = {
 	transfersInFlight: number
 	stop: boolean
 	crashed: boolean
+	/** Extra Stripe charge times on a customer: usage that appears later. */
+	usage: Map<string, number[]>
+	/** Customers whose fresh read returns the old holder (a read/CAS race). */
+	stale: Set<string>
+	payerName: string | null
 }
 
-function writeFacts(count: number): CustomerFacts[] {
+function writeFacts(
+	count: number,
+	payerName: string | null = userA.name,
+): CustomerFacts[] {
 	return Array.from({ length: count }, (_, i) =>
 		facts({
 			customerId: `mcu-${i}`,
 			stripeCustomerId: `cus_${i}`,
-			// Distinct holders and payers per row.
 			holderUserId: userB.id,
+			users: {
+				[userA.id]: { ...userA, name: payerName },
+				[userB.id]: userB,
+				[userC.id]: userC,
+			},
 		}),
 	)
 }
@@ -456,6 +539,9 @@ function newWorld(count: number): World {
 		transfersInFlight: 0,
 		stop: false,
 		crashed: false,
+		usage: new Map(),
+		stale: new Set(),
+		payerName: userA.name,
 	}
 }
 
@@ -468,7 +554,25 @@ function portsFor(
 		stripeCount = 0,
 		journalCount = 0
 	return {
-		loadFacts: async () => writeFacts(count),
+		loadFacts: async () => writeFacts(count, world.payerName),
+		loadCustomerFacts: async (id) => {
+			const holder = world.stale.has(id) ? userB.id : world.userIds.get(id)
+			if (!holder) return null
+			const base = writeFacts(count, world.payerName).find(
+				(f) => f.customerId === id,
+			)!
+			return {
+				...base,
+				holderUserId: holder,
+				stripe: {
+					...quiet,
+					chargeCreated: [
+						...quiet.chargeCreated,
+						...(world.usage.get(id) ?? []),
+					],
+				},
+			}
+		},
 		countInFlightTransfers: async () => world.transfersInFlight,
 		compareAndSet: async ({ customerId, holderUserId, payerUserId }) => {
 			world.calls.push(`cas:${customerId}`)
@@ -499,7 +603,9 @@ function portsFor(
 				if (idempotencyKey) world.keys.set(idempotencyKey, true)
 				else world.unkeyedWrites += 1
 				row.email = email
-				row.name = name
+				// An empty name clears the field, as Stripe does.
+				if (name !== null && name !== undefined)
+					row.name = name === '' ? null : name
 				row.applied += 1
 			}
 			if (crash?.point === 'after-stripe' && stripeCount++ === crash.at) {
@@ -525,8 +631,12 @@ function portsFor(
 	}
 }
 
-async function planHashFor(mod: Backfill, count: number) {
-	return mod.planHashOf(mod.planAll(writeFacts(count)))
+async function planHashFor(
+	mod: Backfill,
+	count: number,
+	payerName: string | null = userA.name,
+) {
+	return mod.planHashOf(mod.planAll(writeFacts(count, payerName)))
 }
 const approve = { approval: 'desk 2026-10-16' }
 
@@ -590,24 +700,86 @@ async function crashModel(mod: Backfill): Promise<string[]> {
 	return violations
 }
 
+/** Fresh facts catch a changed holder; the CAS catches a race after them. */
 async function conflictModel(mod: Backfill): Promise<string[]> {
 	const violations: string[] = []
-	const count = 2
+	const count = 3
 	const planHash = await planHashFor(mod, count)
 	const world = newWorld(count)
-	// A third party moved mcu-0 between plan and write.
+	// mcu-0: a third party moved it before the write (drift).
 	world.userIds.set('mcu-0', userC.id)
+	// mcu-1: it moves after the fresh read, before the CAS (race).
+	world.userIds.set('mcu-1', userC.id)
+	world.stale.add('mcu-1')
 	const result = await mod.runWrite(
 		{ ...approve, planHash, batch: 25 },
 		portsFor(world, count),
 	)
 	if (world.userIds.get('mcu-0') !== userC.id)
+		violations.push('overwrote a drifted row')
+	if (world.userIds.get('mcu-1') !== userC.id)
 		violations.push('CAS overwrote a changed row')
 	if (world.calls.includes('stripe:cus_0'))
+		violations.push('stripe called on drift')
+	if (world.calls.includes('stripe:cus_1'))
 		violations.push('stripe called on a CAS conflict')
+	if (result.drift !== 1) violations.push('drift not counted')
 	if (result.conflicts !== 1) violations.push('conflict not counted')
-	if (world.userIds.get('mcu-1') !== userA.id)
+	if (world.userIds.get('mcu-2') !== userA.id)
 		violations.push('clean row not moved')
+	return violations
+}
+
+/** A payer with no name must not leave the holder's name on their customer. */
+async function nullNameModel(mod: Backfill): Promise<string[]> {
+	const count = 2
+	const world = newWorld(count)
+	world.payerName = null
+	const planHash = await planHashFor(mod, count, null)
+	await mod.runWrite(
+		{ ...approve, planHash, batch: 25 },
+		portsFor(world, count),
+	)
+	return [...world.stripe.values()].some((row) => row.name !== null)
+		? ['holder name left on the payer customer']
+		: []
+}
+
+/** Usage that appears after batch one must stop that row, not the others. */
+async function driftModel(mod: Backfill): Promise<string[]> {
+	const violations: string[] = []
+	const count = 3
+	const planHash = await planHashFor(mod, count)
+	const world = newWorld(count)
+	const first = await mod.runWrite(
+		{ ...approve, planHash, batch: 1 },
+		portsFor(world, count),
+	)
+	if (first.status !== 'batch-complete') violations.push('batch did not stop')
+	world.usage.set('mcu-1', [sec(60)])
+	const rest = await mod.runWrite(
+		{ ...approve, planHash, batch: 25 },
+		portsFor(world, count),
+	)
+	if (world.userIds.get('mcu-1') !== userB.id)
+		violations.push('stale resume wrote a row with new holder usage')
+	if (world.calls.includes('stripe:cus_1'))
+		violations.push('stale resume called stripe for a drifted row')
+	if (rest.drift !== 1) violations.push('stale resume drift not counted')
+	if (world.userIds.get('mcu-2') !== userA.id)
+		violations.push('resume skipped a clean row')
+	const entry = world.journal.find((e) => e.t === 'drift')
+	if (!entry || entry.t !== 'drift' || !entry.reason.startsWith('carve-out'))
+		violations.push('drift not journaled with its reason')
+	const readback = await mod.runReadback({ planHash }, portsFor(world, count))
+	if (readback.drift !== 1) violations.push('readback drift not counted')
+	// A rerun never retries a drifted row.
+	await mod.runWrite(
+		{ ...approve, planHash, batch: 25 },
+		portsFor(world, count),
+	)
+	if (world.userIds.get('mcu-1') !== userB.id)
+		violations.push('rerun retried a drifted row')
 	return violations
 }
 
@@ -659,6 +831,8 @@ async function invariantViolations(mod: Backfill, rt: Runtime) {
 	return [
 		...(await planModel(mod)),
 		...(await conflictModel(mod)),
+		...(await driftModel(mod)),
+		...(await nullNameModel(mod)),
 		...(await crashModel(mod)),
 		...(await runtimeSql(rt)()),
 	]
@@ -675,7 +849,7 @@ describe('planPayerCustomerBackfill', () => {
 			if (s.payer) expect(got.payerUserId).toBe(s.payer)
 			if (s.decision === 'move') {
 				expect(got.payerEmail).toBe(userA.email)
-				expect(got.payerName).toBe(userA.name)
+				expect(got.payerName).toBe(s.facts.users[userA.id]!.name)
 			}
 		})
 
@@ -877,7 +1051,7 @@ describe('runWrite', () => {
 		).rejects.toThrow(/^JournalPlanMismatch:/)
 	})
 
-	it('readback counts rows on the payer, conflicts and Stripe mismatches', async () => {
+	it('readback counts rows on the payer, drift and Stripe mismatches', async () => {
 		const world = newWorld(count)
 		world.userIds.set('mcu-0', userC.id)
 		const planHash = await planHashFor(backfill, count)
@@ -891,7 +1065,8 @@ describe('runWrite', () => {
 		).toEqual({
 			planned: 3,
 			onPayer: 2,
-			conflicts: 1,
+			conflicts: 0,
+			drift: 1,
 			stripeMismatch: 1,
 			notYetWritten: 0,
 		})
@@ -931,6 +1106,7 @@ describe('files and arguments', () => {
 		expect(backfill.parseArgs(['--plan-out', '/p'])).toEqual({
 			mode: 'dry-run',
 			planOut: '/p',
+			rate: 10,
 		})
 		expect(
 			backfill.parseArgs([
@@ -958,10 +1134,95 @@ describe('files and arguments', () => {
 			[],
 			['--write'],
 			['--plan-hash', hash, '--plan-out', '/p'],
+			['--plan-out', '/p', '--bogus', 'x'],
+			['--plan-out', '/p', '--journal', '/j'],
+			['--readback', '--plan-hash', hash, '--journal', '/j', '--batch', '5'],
+			[
+				'--write',
+				'--plan-hash',
+				hash,
+				'--approval',
+				'ok',
+				'--journal',
+				'/j',
+				'--plan-out',
+				'/p',
+			],
 		])
 			expect(() => backfill.parseArgs(argv)).toThrow(
 				/^ArgumentsInvalid: you .* Accepted: .* Fix: .* Debug: /,
 			)
+	})
+
+	it('operator files are create-only and refused inside a git worktree', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'payer-backfill-'))
+		const plan = join(dir, 'plan.json')
+		await backfill.writePrivateFile(plan, '[]')
+		await expect(backfill.writePrivateFile(plan, '[1]')).rejects.toThrow(
+			/^FileExists:/,
+		)
+		expect(await readFile(plan, 'utf8')).toBe('[]')
+		expect(() => backfill.assertOutsideWorktree(plan)).not.toThrow()
+		await mkdir(join(dir, '.git'))
+		expect(() => backfill.assertOutsideWorktree(join(dir, 'sub', 'j'))).toThrow(
+			/^FileInsideWorktree:/,
+		)
+	})
+
+	it('the journal header records the approval, time and plan hash', async () => {
+		const world = newWorld(1)
+		const planHash = await planHashFor(backfill, 1)
+		await backfill.runWrite(
+			{
+				approval: ' approved by operator ',
+				planHash,
+				batch: 5,
+				now: () => '2026-10-16T05:00:00.000Z',
+			},
+			portsFor(world, 1),
+		)
+		expect(world.journal[0]).toMatchObject({
+			t: 'header',
+			planHash,
+			approval: 'approved by operator',
+			approvedAt: '2026-10-16T05:00:00.000Z',
+		})
+	})
+
+	it('the dry run counts payers with other customers and Stripe drift on moved rows', () => {
+		const plan = backfill.planAll([
+			facts({ customerId: 'a', payerOtherCustomers: 1 }),
+			facts({ customerId: 'b' }),
+			facts({
+				customerId: 'c',
+				holderUserId: userA.id,
+				stripe: { ...quiet, email: 'b@example.test' },
+				purchases: [
+					{
+						purchaseId: 'p',
+						chargeUserId: userA.id,
+						openDispute: false,
+						transfers: [transfer('t', userA.id, T0)],
+					},
+				],
+			}),
+			facts({
+				customerId: 'd',
+				holderUserId: userA.id,
+				stripe: { ...quiet, email: 'a@example.test', name: 'Payer A' },
+				purchases: [
+					{
+						purchaseId: 'p',
+						chargeUserId: userA.id,
+						openDispute: false,
+						transfers: [transfer('t', userA.id, T0)],
+					},
+				],
+			}),
+		])
+		const counts = backfill.countPlan(plan)
+		expect(counts.payerHasOtherCustomer).toBe(1)
+		expect(counts.dbOnPayerStripeDiffers).toBe(1)
 	})
 
 	it('rate limiter spaces calls', async () => {
@@ -986,23 +1247,38 @@ describe('files and arguments', () => {
 
 const scriptsDir = join(__dirname, '../../scripts')
 
+let plantCount = 0
+/** Whitespace-insensitive anchor, so formatting never breaks a plant. */
+function anchorPattern(find: string) {
+	const tokens = find
+		.trim()
+		.split(/\s+/)
+		.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+	return new RegExp(tokens.join('\\s*'), 'g')
+}
+
 /**
  * Plant a defect in a copy of the real source, load it, and run the same
- * invariant suite. Each planted defect must produce violations.
+ * invariant suite. Every copy gets its own unique path and module id.
  */
 async function plant(
 	file: 'payer-customer-backfill' | 'payer-customer-backfill-runtime',
 	find: string,
 	replace: string,
 ) {
+	const n = (plantCount += 1)
 	const read = (name: string) =>
 		readFile(join(scriptsDir, `${name}.ts`), 'utf8')
 	const source = await read(file)
-	expect(source.split(find).length - 1, `anchor: ${find.slice(0, 40)}`).toBe(1)
-	const mutated = source.replace(find, () => replace)
+	const pattern = anchorPattern(find)
+	expect(
+		(source.match(pattern) ?? []).length,
+		`anchor: ${find.slice(0, 40)}`,
+	).toBe(1)
+	const mutated = source.replace(pattern, () => replace)
 	const written: string[] = []
 	const write = async (name: string, text: string) => {
-		const path = join(scriptsDir, `${name}.mutant.ts`)
+		const path = join(scriptsDir, `${name}.mutant-${n}.ts`)
 		written.push(path)
 		await writeFile(path, text)
 		return path
@@ -1019,7 +1295,7 @@ async function plant(
 			'payer-customer-backfill-runtime',
 			run.replace(
 				"'./payer-customer-backfill'",
-				"'./payer-customer-backfill.mutant'",
+				`'./payer-customer-backfill.mutant-${n}'`,
 			),
 		)
 		const mod = (await import(/* @vite-ignore */ mainPath)) as Backfill
@@ -1030,53 +1306,83 @@ async function plant(
 	}
 }
 
+/** Each mutant must trip the specific check that guards it. */
+const mutants: {
+	name: string
+	file: 'payer-customer-backfill' | 'payer-customer-backfill-runtime'
+	find: string
+	replace: string
+	caughtBy: RegExp
+}[] = [
+	{
+		name: 'carve-out check dropped',
+		file: 'payer-customer-backfill',
+		find: "if (facts.stripe.chargeCreated.some((at) => at >= completedAt)) return carve('holder-charge-after-transfer')",
+		replace: '',
+		caughtBy: /charge after the transfer|move onto a customer the holder used/,
+	},
+	{
+		name: 'latest transfer instead of earliest',
+		file: 'payer-customer-backfill',
+		find: 'transfers: purchase.transfers, }) if (!payer)',
+		replace:
+			"transfers: purchase.transfers.filter((t) => t.state !== 'COMPLETED').concat(purchase.transfers.filter((t) => t.state === 'COMPLETED').sort((a, b) => b.completedAt!.getTime() - a.completedAt!.getTime()).slice(0, 1)), })\n if (!payer)",
+		caughtBy: /chain A to B to C pays A/,
+	},
+	{
+		name: 'compare-and-set dropped (where id only)',
+		file: 'payer-customer-backfill-runtime',
+		find: '.where( and( eq(schema.merchantCustomer.id, input.customerId), eq(schema.merchantCustomer.userId, input.holderUserId), ), )',
+		replace: '.where(eq(schema.merchantCustomer.id, input.customerId))',
+		caughtBy: /update is not compare-and-set/,
+	},
+	{
+		name: 'Stripe called on a compare-and-set conflict',
+		file: 'payer-customer-backfill',
+		find: "return 'conflict' } outcome = 'resumed'",
+		replace: "} outcome = 'resumed'",
+		caughtBy: /stripe called on a CAS conflict/,
+	},
+	{
+		name: 'a resume repeats the Stripe write without the key',
+		file: 'payer-customer-backfill',
+		find: 'idempotencyKey: idempotencyKey(move.customerId, planHash),',
+		replace:
+			"idempotencyKey: outcome === 'resumed' ? '' : idempotencyKey(move.customerId, planHash),",
+		caughtBy: /unkeyed stripe write|written 2x/,
+	},
+	{
+		name: 'no per-row drift check before the write',
+		file: 'payer-customer-backfill',
+		find: 'const reason = driftReason(move, fresh)',
+		replace: 'const reason = null',
+		caughtBy: /stale resume wrote|overwrote a drifted row/,
+	},
+	{
+		name: 'null payer name left unset on Stripe',
+		file: 'payer-customer-backfill',
+		find: "name: move.payerName ?? '',",
+		replace: 'name: move.payerName as string,',
+		caughtBy: /holder name left on the payer customer/,
+	},
+	{
+		name: 'same-second boundary exclusive',
+		file: 'payer-customer-backfill',
+		find: 'if (facts.stripe.chargeCreated.some((at) => at >= completedAt))',
+		replace: 'if (facts.stripe.chargeCreated.some((at) => at > completedAt))',
+		caughtBy: /same-second charge|move onto a customer the holder used/,
+	},
+]
+
 describe('planted mutations are caught', () => {
 	it('control: the real code has no violations', async () => {
 		expect(await invariantViolations(backfill, runtime)).toEqual([])
 	})
 
-	it('carve-out check dropped', async () => {
-		const found = await plant(
-			'payer-customer-backfill',
-			"\tif (facts.stripe.chargeCreated.some((at) => at > completedAt))\n\t\treturn carve('holder-charge-after-transfer')\n",
-			'',
-		)
-		expect(found.length).toBeGreaterThan(0)
-	})
-
-	it('latest transfer instead of earliest', async () => {
-		const found = await plant(
-			'payer-customer-backfill',
-			'\t\t\ttransfers: purchase.transfers,\n\t\t})\n\t\tif (!payer)',
-			"\t\t\ttransfers: purchase.transfers.filter((t) => t.state !== 'COMPLETED').concat(purchase.transfers.filter((t) => t.state === 'COMPLETED').sort((a, b) => b.completedAt!.getTime() - a.completedAt!.getTime()).slice(0, 1)),\n\t\t})\n\t\tif (!payer)",
-		)
-		expect(found.length).toBeGreaterThan(0)
-	})
-
-	it('compare-and-set dropped (where id only)', async () => {
-		const found = await plant(
-			'payer-customer-backfill-runtime',
-			'\t\t\t\t\t.where(\n\t\t\t\t\t\tand(\n\t\t\t\t\t\t\teq(schema.merchantCustomer.id, input.customerId),\n\t\t\t\t\t\t\teq(schema.merchantCustomer.userId, input.holderUserId),\n\t\t\t\t\t\t),\n\t\t\t\t\t)',
-			'\t\t\t\t\t.where(eq(schema.merchantCustomer.id, input.customerId))',
-		)
-		expect(found.length).toBeGreaterThan(0)
-	})
-
-	it('Stripe called on a compare-and-set conflict', async () => {
-		const found = await plant(
-			'payer-customer-backfill',
-			"\t\t\treturn 'conflict'\n\t\t}\n\t\toutcome = 'resumed'",
-			"\t\t}\n\t\toutcome = 'resumed'",
-		)
-		expect(found.length).toBeGreaterThan(0)
-	})
-
-	it('a resume repeats the Stripe write without the key', async () => {
-		const found = await plant(
-			'payer-customer-backfill',
-			'\t\t\tidempotencyKey: idempotencyKey(move.customerId, planHash),',
-			"\t\t\tidempotencyKey: outcome === 'resumed' ? '' : idempotencyKey(move.customerId, planHash),",
-		)
-		expect(found.length).toBeGreaterThan(0)
-	})
+	for (const mutant of mutants)
+		it(mutant.name, async () => {
+			const found = await plant(mutant.file, mutant.find, mutant.replace)
+			expect(found.length).toBeGreaterThan(0)
+			expect(found.join('\n')).toMatch(mutant.caughtBy)
+		})
 })

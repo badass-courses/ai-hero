@@ -17,15 +17,20 @@
  * undone by hand. Nothing else is written: no charges, refunds, invoices or
  * emails from this script.
  *
- * Per row: re-read and compare-and-set the database row, then update the
- * Stripe customer with an idempotency key, then append a journal line. The
- * journal makes a crashed or stopped run resumable without a double write.
+ * Per row: re-plan the customer from fresh facts (drift is journaled, not
+ * written), compare-and-set the database row, update the Stripe customer with
+ * an idempotency key, then append a journal line. The journal makes a crashed
+ * or stopped run resumable without a double write. Stripe keeps an
+ * idempotency key for 24 hours; a replay after that re-applies the same
+ * values, which is harmless.
  *
  * Stdout carries counts only. The plan and journal files hold ids and emails,
  * so they are 0600.
  */
 import { createHash } from 'node:crypto'
-import { chmod, open, readFile, stat, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { open, readFile, stat } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import {
@@ -54,7 +59,11 @@ export type StripeCustomerFacts = {
 	/** Epoch seconds. */
 	chargeCreated: number[]
 	paymentIntentCreated: number[]
+	/** Legacy sources with no creation time are recorded as +Infinity. */
 	paymentMethodCreated: number[]
+	invoiceCreated: number[]
+	/** Any charge on the customer has `disputed: true`. */
+	chargeDisputed: boolean
 	subscriptions: { created: number; status: string }[]
 }
 
@@ -69,6 +78,8 @@ export type CustomerFacts = {
 	users: Record<string, PayerUser | undefined>
 	/** Active rows in `MerchantSubscription`/`Subscription` on the customer. */
 	activeSubscriptionRows: number
+	/** Other `MerchantCustomer` rows owned by the payer. Informational. */
+	payerOtherCustomers?: number
 	stripe: StripeCustomerFacts
 }
 
@@ -82,10 +93,12 @@ export const SKIP_REASONS = [
 ] as const
 export const CARVE_OUT_REASONS = [
 	'open-dispute',
+	'stripe-charge-disputed',
 	'active-subscription',
 	'holder-charge-after-transfer',
 	'holder-payment-intent-after-transfer',
 	'holder-payment-method-after-transfer',
+	'holder-invoice-after-transfer',
 	'holder-subscription-after-transfer',
 ] as const
 export type SkipReason = (typeof SKIP_REASONS)[number]
@@ -101,6 +114,10 @@ export type PlanItem = {
 	/** Present on moves only: what Stripe will be set to. */
 	payerEmail?: string
 	payerName?: string | null
+	/** Informational counts, not part of the plan hash. */
+	payerHasOtherCustomer?: boolean
+	/** `already-on-payer` rows whose Stripe email or name differ from the payer's. */
+	stripeDiffers?: boolean
 }
 
 const INACTIVE_STRIPE_SUBSCRIPTION = new Set(['canceled', 'incomplete_expired'])
@@ -156,21 +173,29 @@ export function planPayerCustomerBackfill(facts: CustomerFacts): PlanItem {
 	if (facts.stripe.deleted)
 		return item(facts, payerUserId, 'skip', 'stripe-customer-deleted')
 	if (facts.holderUserId === payerUserId)
-		return item(facts, payerUserId, 'skip', 'already-on-payer')
+		return {
+			...item(facts, payerUserId, 'skip', 'already-on-payer'),
+			stripeDiffers: stripeDiffers(facts.stripe, payerUser),
+		}
 
 	// The holder used the customer after the transfer when anything on it was
 	// created after the earliest completed transfer, or it is still live.
-	const completedAt = Math.min(
-		...transferred.flatMap((purchase) =>
-			purchase.transfers
-				.filter((t) => t.state === 'COMPLETED')
-				.map((t) => (t.completedAt ?? t.createdAt)!.getTime() / 1000),
-		),
+	const stamps = transferred.flatMap((purchase) =>
+		purchase.transfers
+			.filter((t) => t.state === 'COMPLETED')
+			.map((t) => (t.completedAt ?? t.createdAt)?.getTime()),
 	)
+	// Guard locally: an undated COMPLETED transfer must never throw.
+	if (stamps.some((at) => at === undefined || !Number.isFinite(at)))
+		return item(facts, payerUserId, 'skip', 'ambiguous-payer')
+	// Whole seconds, inclusive: Stripe timestamps are seconds, so a same-second
+	// object counts as after the transfer.
+	const completedAt = Math.floor(Math.min(...(stamps as number[])) / 1000)
 	const carve = (reason: CarveOutReason) =>
 		item(facts, payerUserId, 'carve-out', reason)
 	if (facts.purchases.some((purchase) => purchase.openDispute))
 		return carve('open-dispute')
+	if (facts.stripe.chargeDisputed) return carve('stripe-charge-disputed')
 	if (
 		facts.activeSubscriptionRows > 0 ||
 		facts.stripe.subscriptions.some(
@@ -178,20 +203,31 @@ export function planPayerCustomerBackfill(facts: CustomerFacts): PlanItem {
 		)
 	)
 		return carve('active-subscription')
-	if (facts.stripe.chargeCreated.some((at) => at > completedAt))
+	if (facts.stripe.chargeCreated.some((at) => at >= completedAt))
 		return carve('holder-charge-after-transfer')
-	if (facts.stripe.paymentIntentCreated.some((at) => at > completedAt))
+	if (facts.stripe.paymentIntentCreated.some((at) => at >= completedAt))
 		return carve('holder-payment-intent-after-transfer')
-	if (facts.stripe.paymentMethodCreated.some((at) => at > completedAt))
+	if (facts.stripe.paymentMethodCreated.some((at) => at >= completedAt))
 		return carve('holder-payment-method-after-transfer')
-	if (facts.stripe.subscriptions.some((sub) => sub.created > completedAt))
+	if (facts.stripe.invoiceCreated.some((at) => at >= completedAt))
+		return carve('holder-invoice-after-transfer')
+	if (facts.stripe.subscriptions.some((sub) => sub.created >= completedAt))
 		return carve('holder-subscription-after-transfer')
 
 	return {
 		...item(facts, payerUserId, 'move', null),
 		payerEmail: payerUser.email,
 		payerName: payerUser.name,
+		payerHasOtherCustomer: (facts.payerOtherCustomers ?? 0) > 0,
 	}
+}
+
+const sameText = (a: string | null, b: string | null) =>
+	(a ?? '').trim().toLowerCase() === (b ?? '').trim().toLowerCase()
+function stripeDiffers(stripe: StripeCustomerFacts, payer: PayerUser) {
+	return (
+		!sameText(stripe.email, payer.email) || !sameText(stripe.name, payer.name)
+	)
 }
 
 export function planAll(customers: CustomerFacts[]): PlanItem[] {
@@ -227,13 +263,21 @@ export type PlanCounts = {
 	move: number
 	carveOut: Record<string, number>
 	skip: Record<string, number>
+	/** Moves whose payer already owns another customer. */
+	payerHasOtherCustomer: number
+	/** `already-on-payer` rows where Stripe still shows someone else. */
+	dbOnPayerStripeDiffers: number
 	planHash: string
 }
 export function countPlan(plan: PlanItem[]): PlanCounts {
 	const carveOut = Object.fromEntries(CARVE_OUT_REASONS.map((r) => [r, 0]))
 	const skip = Object.fromEntries(SKIP_REASONS.map((r) => [r, 0]))
-	let move = 0
+	let move = 0,
+		payerHasOtherCustomer = 0,
+		dbOnPayerStripeDiffers = 0
 	for (const p of plan) {
+		if (p.payerHasOtherCustomer) payerHasOtherCustomer += 1
+		if (p.stripeDiffers) dbOnPayerStripeDiffers += 1
 		if (p.decision === 'move') move += 1
 		else if (p.decision === 'carve-out') carveOut[p.reason!]! += 1
 		else skip[p.reason!]! += 1
@@ -243,6 +287,8 @@ export function countPlan(plan: PlanItem[]): PlanCounts {
 		move,
 		carveOut,
 		skip,
+		payerHasOtherCustomer,
+		dbOnPayerStripeDiffers,
 		planHash: planHashOf(plan),
 	}
 }
@@ -278,13 +324,22 @@ const ACCEPTED =
 // ----------------------------------------------------------- ports -------
 
 export type JournalEntry =
-	| { t: 'header'; planHash: string; plan: PlanItem[] }
+	| {
+			t: 'header'
+			planHash: string
+			plan: PlanItem[]
+			approval: string
+			approvedAt: string
+	  }
 	| { t: 'stripe'; customerId: string }
 	| { t: 'conflict'; customerId: string }
+	| { t: 'drift'; customerId: string; reason: string }
 
 export type BackfillPorts = {
 	loadFacts: () => Promise<CustomerFacts[]>
-	/** Transfers in INITIATED, VERIFIED or CONFIRMED right now. */
+	/** Fresh database and Stripe facts for one customer, or null if it is gone. */
+	loadCustomerFacts: (customerId: string) => Promise<CustomerFacts | null>
+	/** Unexpired transfers in INITIATED, VERIFIED or CONFIRMED right now. */
 	countInFlightTransfers: () => Promise<number>
 	/** One transaction: `update … set userId=payer where id=? and userId=holder`. */
 	compareAndSet: (input: {
@@ -296,7 +351,8 @@ export type BackfillPorts = {
 	updateStripeCustomer: (input: {
 		stripeCustomerId: string
 		email: string
-		name: string | null
+		/** Empty string clears the name, so the holder's never stays behind. */
+		name: string
 		idempotencyKey: string
 	}) => Promise<void>
 	readStripeCustomer: (
@@ -319,6 +375,7 @@ export type WriteResult = {
 	moved: number
 	resumed: number
 	conflicts: number
+	drift: number
 	remaining: number
 	planHash: string
 }
@@ -326,7 +383,12 @@ export type WriteResult = {
 const HEX64 = /^[a-f0-9]{64}$/
 
 export async function runWrite(
-	args: { approval: string; planHash: string; batch: number },
+	args: {
+		approval: string
+		planHash: string
+		batch: number
+		now?: () => string
+	},
 	ports: BackfillPorts,
 ): Promise<WriteResult> {
 	if (!args.approval.trim())
@@ -335,7 +397,7 @@ export async function runWrite(
 			'asked to write without an approval',
 			'--approval was empty',
 			ACCEPTED,
-			'pass the approval text from the desk',
+			'pass the operator approval text',
 			'check the command line',
 		)
 	if (!HEX64.test(args.planHash))
@@ -379,13 +441,21 @@ export async function runWrite(
 				'rerun the dry run and get approval for the new hash',
 				'diff the new plan file against the approved one',
 			)
-		await ports.appendJournal({ t: 'header', planHash: args.planHash, plan })
+		await ports.appendJournal({
+			t: 'header',
+			planHash: args.planHash,
+			plan,
+			approval: args.approval.trim(),
+			approvedAt: (args.now ?? (() => new Date().toISOString()))(),
+		})
 		journal = await ports.readJournal()
 	}
 
 	const done = new Set(
 		journal.flatMap((e) =>
-			e.t === 'stripe' || e.t === 'conflict' ? [e.customerId] : [],
+			e.t === 'stripe' || e.t === 'conflict' || e.t === 'drift'
+				? [e.customerId]
+				: [],
 		),
 	)
 	const moves = plan.filter((p) => p.decision === 'move')
@@ -395,6 +465,7 @@ export async function runWrite(
 		moved: 0,
 		resumed: 0,
 		conflicts: 0,
+		drift: 0,
 		remaining: 0,
 		planHash: args.planHash,
 	}
@@ -414,6 +485,7 @@ export async function runWrite(
 		worked += 1
 		const outcome = await writeRow(move, args.planHash, ports)
 		if (outcome === 'conflict') result.conflicts += 1
+		else if (outcome === 'drift') result.drift += 1
 		else if (outcome === 'resumed') result.resumed += 1
 		else result.moved += 1
 	}
@@ -425,34 +497,69 @@ async function assertNoTransferInFlight(ports: BackfillPorts) {
 		throw literal(
 			'TransferInFlight',
 			'asked to write while support transfers are open',
-			'a purchase transfer is INITIATED, VERIFIED or CONFIRMED and could change a holder mid-run',
-			'a write when no transfer is in INITIATED, VERIFIED or CONFIRMED.',
-			'wait for the open transfers to finish or be canceled, then rerun the write; the journal resumes',
-			'count PurchaseUserTransfer rows by transferState',
+			'a purchase transfer is INITIATED, VERIFIED or CONFIRMED and has not expired, so it could change a holder mid-run',
+			'a write when no unexpired transfer is in INITIATED, VERIFIED or CONFIRMED.',
+			'wait for the open transfers to finish, be canceled or expire, then rerun the write; the journal resumes',
+			'count PurchaseUserTransfer rows by transferState and expiresAt',
 		)
+}
+
+/** Why a planned move no longer holds, or null when it still does. */
+function driftReason(move: PlanItem, fresh: CustomerFacts | null) {
+	if (!fresh) return 'customer-missing'
+	const now = planPayerCustomerBackfill(fresh)
+	if (now.decision !== 'move') return `${now.decision}:${now.reason}`
+	if (
+		now.payerUserId !== move.payerUserId ||
+		now.holderUserId !== move.holderUserId ||
+		now.payerEmail !== move.payerEmail ||
+		(now.payerName ?? null) !== (move.payerName ?? null)
+	)
+		return 'payer-or-holder-changed'
+	return null
 }
 
 async function writeRow(
 	move: PlanItem,
 	planHash: string,
 	ports: BackfillPorts,
-): Promise<'moved' | 'resumed' | 'conflict'> {
+): Promise<'moved' | 'resumed' | 'conflict' | 'drift'> {
 	const payerUserId = move.payerUserId!
 	let outcome: 'moved' | 'resumed' = 'moved'
-	// 1. Compare-and-set. Zero rows: either an earlier run already moved it
-	// (resume), or the row changed under us (conflict, no Stripe call).
-	const affected = await ports.compareAndSet({
-		customerId: move.customerId,
-		holderUserId: move.holderUserId,
-		payerUserId,
-	})
-	if (affected !== 1) {
-		const now = await ports.readCustomerUserId(move.customerId)
-		if (now !== payerUserId) {
-			await ports.appendJournal({ t: 'conflict', customerId: move.customerId })
-			return 'conflict'
-		}
+	// 0. Re-plan this one customer from fresh facts. The only exception is a
+	// resume: the database is already on the planned payer, so only the Stripe
+	// step is left. Anything else that is no longer the approved move is drift.
+	const fresh = await ports.loadCustomerFacts(move.customerId)
+	if (fresh && fresh.holderUserId === payerUserId) {
 		outcome = 'resumed'
+	} else {
+		const reason = driftReason(move, fresh)
+		if (reason) {
+			await ports.appendJournal({
+				t: 'drift',
+				customerId: move.customerId,
+				reason,
+			})
+			return 'drift'
+		}
+		// 1. Compare-and-set. Zero rows: the row changed after the read above
+		// (or an earlier run moved it): conflict unless it is on the payer.
+		const affected = await ports.compareAndSet({
+			customerId: move.customerId,
+			holderUserId: move.holderUserId,
+			payerUserId,
+		})
+		if (affected !== 1) {
+			const now = await ports.readCustomerUserId(move.customerId)
+			if (now !== payerUserId) {
+				await ports.appendJournal({
+					t: 'conflict',
+					customerId: move.customerId,
+				})
+				return 'conflict'
+			}
+			outcome = 'resumed'
+		}
 	}
 	// 2. Stripe, keyed so a replay can never double write.
 	await ports.throttle()
@@ -460,7 +567,7 @@ async function writeRow(
 		await ports.updateStripeCustomer({
 			stripeCustomerId: move.stripeCustomerId,
 			email: move.payerEmail!,
-			name: move.payerName ?? null,
+			name: move.payerName ?? '',
 			idempotencyKey: idempotencyKey(move.customerId, planHash),
 		})
 	} catch {
@@ -484,6 +591,7 @@ export type ReadbackResult = {
 	planned: number
 	onPayer: number
 	conflicts: number
+	drift: number
 	stripeMismatch: number
 	notYetWritten: number
 }
@@ -510,17 +618,25 @@ export async function runReadback(
 	const conflicted = new Set(
 		journal.flatMap((e) => (e.t === 'conflict' ? [e.customerId] : [])),
 	)
+	const drifted = new Set(
+		journal.flatMap((e) => (e.t === 'drift' ? [e.customerId] : [])),
+	)
 	const moves = header.plan.filter((p) => p.decision === 'move')
 	const out: ReadbackResult = {
 		planned: moves.length,
 		onPayer: 0,
 		conflicts: 0,
+		drift: 0,
 		stripeMismatch: 0,
 		notYetWritten: 0,
 	}
 	for (const move of moves) {
 		if (conflicted.has(move.customerId)) {
 			out.conflicts += 1
+			continue
+		}
+		if (drifted.has(move.customerId)) {
+			out.drift += 1
 			continue
 		}
 		const userId = await ports.readCustomerUserId(move.customerId)
@@ -533,8 +649,8 @@ export async function runReadback(
 		const stripe = await ports.readStripeCustomer(move.stripeCustomerId)
 		if (
 			!stripe ||
-			stripe.email?.toLowerCase() !== move.payerEmail!.toLowerCase() ||
-			(stripe.name ?? null) !== (move.payerName ?? null)
+			!sameText(stripe.email, move.payerEmail!) ||
+			!sameText(stripe.name, move.payerName ?? null)
 		)
 			out.stripeMismatch += 1
 	}
@@ -558,9 +674,48 @@ async function assertPrivate(path: string) {
 		)
 }
 
+/** Operator files hold ids and emails: never inside a git worktree. */
+export function assertOutsideWorktree(path: string) {
+	let dir = dirname(resolve(path))
+	for (;;) {
+		if (existsSync(join(dir, '.git')))
+			throw literal(
+				'FileInsideWorktree',
+				'chose an operator file path',
+				'it is inside a git worktree, where customer ids and emails could be committed',
+				'a path outside any git worktree.',
+				'pick a path under a private directory outside the repository',
+				'run git rev-parse --show-toplevel in the directory',
+			)
+		const parent = dirname(dir)
+		if (parent === dir) return
+		dir = parent
+	}
+}
+
+/** Create-only, 0600 from the first byte. Never overwrites. */
 export async function writePrivateFile(path: string, content: string) {
-	await writeFile(path, content, { mode: PRIVATE_MODE })
-	await chmod(path, PRIVATE_MODE)
+	let handle
+	try {
+		handle = await open(path, 'wx', PRIVATE_MODE)
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'EEXIST')
+			throw literal(
+				'FileExists',
+				'wrote an operator file',
+				'the path already exists and is never overwritten',
+				'a path that does not exist yet.',
+				'pick a new path or move the old file aside yourself',
+				'ls -l the path',
+			)
+		throw error
+	}
+	try {
+		await handle.writeFile(content)
+		await handle.sync()
+	} finally {
+		await handle.close()
+	}
 }
 
 export function fileJournal(path: string) {
@@ -593,7 +748,14 @@ export function fileJournal(path: string) {
 			})
 		},
 		async append(entry: JournalEntry) {
-			const handle = await open(path, 'a', PRIVATE_MODE)
+			// wx creates the journal 0600; an existing one is appended to.
+			let handle
+			try {
+				handle = await open(path, 'wx', PRIVATE_MODE)
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+				handle = await open(path, 'a')
+			}
 			try {
 				await handle.writeFile(`${JSON.stringify(entry)}\n`)
 				await handle.sync()
@@ -607,7 +769,7 @@ export function fileJournal(path: string) {
 // ------------------------------------------------------------ args -------
 
 export type Args =
-	| { mode: 'dry-run'; planOut: string }
+	| { mode: 'dry-run'; planOut: string; rate: number }
 	| {
 			mode: 'write'
 			planHash: string
@@ -629,6 +791,19 @@ export function parseArgs(argv: readonly string[]): Args {
 			'fix the flags',
 			'run with --help is not supported; read the file header',
 		)
+	const MODE_FLAGS = {
+		'dry-run': ['--plan-out', '--rate'],
+		write: [
+			'--write',
+			'--plan-hash',
+			'--approval',
+			'--journal',
+			'--batch',
+			'--stop-file',
+			'--rate',
+		],
+		readback: ['--readback', '--plan-hash', '--journal', '--rate'],
+	} as const
 	const flags = new Map<string, string | true>()
 	for (let i = 0; i < argv.length; i += 1) {
 		const flag = argv[i]!
@@ -649,6 +824,13 @@ export function parseArgs(argv: readonly string[]): Args {
 	const write = flags.has('--write'),
 		readback = flags.has('--readback')
 	if (write && readback) throw bad('--write and --readback are exclusive')
+	const allowed: readonly string[] =
+		MODE_FLAGS[write ? 'write' : readback ? 'readback' : 'dry-run']
+	for (const flag of flags.keys())
+		if (!allowed.includes(flag))
+			throw bad(
+				`${flag} is not accepted in ${write ? 'write' : readback ? 'readback' : 'dry-run'} mode (allowed: ${allowed.join(' ')})`,
+			)
 	const rate = Number(str('--rate') ?? 10)
 	if (!(rate > 0) || !Number.isFinite(rate))
 		throw bad('--rate must be positive')
@@ -676,11 +858,7 @@ export function parseArgs(argv: readonly string[]): Args {
 	}
 	const planOut = str('--plan-out')
 	if (!planOut) throw bad('--plan-out is required for a dry run')
-	if (planHash || str('--approval') || str('--journal'))
-		throw bad(
-			'--plan-hash, --approval and --journal need --write or --readback',
-		)
-	return { mode: 'dry-run', planOut }
+	return { mode: 'dry-run', planOut, rate }
 }
 
 // ------------------------------------------------------------ main -------
@@ -689,6 +867,7 @@ export function parseArgs(argv: readonly string[]): Args {
 async function main() {
 	try {
 		const args = parseArgs(process.argv.slice(2))
+		assertOutsideWorktree(args.mode === 'dry-run' ? args.planOut : args.journal)
 		const { createProductionPorts } =
 			await import('./payer-customer-backfill-runtime')
 		const { ports, close } = await createProductionPorts(args)
@@ -700,7 +879,11 @@ async function main() {
 					args.planOut,
 					`${JSON.stringify(plan, null, 2)}\n`,
 				)
-				output = { mode: 'dry-run', ...countPlan(plan) }
+				output = {
+					mode: 'dry-run',
+					...countPlan(plan),
+					inFlightTransfers: await ports.countInFlightTransfers(),
+				}
 			} else if (args.mode === 'write') {
 				output = {
 					mode: 'write',

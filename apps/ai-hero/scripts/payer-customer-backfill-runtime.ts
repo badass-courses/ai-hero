@@ -1,8 +1,9 @@
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm'
 import type { MySql2Database } from 'drizzle-orm/mysql2'
 import { access } from 'node:fs/promises'
 
 import * as schema from '../src/db/schema'
+import { resolveInvoicePayer } from '../src/lib/invoice-access-rules'
 import { readDisputeRecord } from '../src/lib/purchase-dispute-machine'
 import {
 	fileJournal,
@@ -73,11 +74,25 @@ export function createDrizzleDbPorts(db: Db) {
 				.where(eq(schema.purchaseUserTransfer.transferState, 'COMPLETED'))
 			return rows
 		},
+		async loadCustomerRow(customerId: string) {
+			const [row] = await db
+				.select({
+					customerId: schema.merchantCustomer.id,
+					stripeCustomerId: schema.merchantCustomer.identifier,
+					holderUserId: schema.merchantCustomer.userId,
+				})
+				.from(schema.merchantCustomer)
+				.where(eq(schema.merchantCustomer.id, customerId))
+			return row ?? null
+		},
 		async loadDbFacts(customer: {
 			customerId: string
 			holderUserId: string
 		}): Promise<
-			Pick<CustomerFacts, 'purchases' | 'users' | 'activeSubscriptionRows'>
+			Pick<
+				CustomerFacts,
+				'purchases' | 'users' | 'activeSubscriptionRows' | 'payerOtherCustomers'
+			>
 		> {
 			const purchaseRows = await db
 				.select({
@@ -153,7 +168,29 @@ export function createDrizzleDbPorts(db: Db) {
 						eq(schema.subscription.status, 'active'),
 					),
 				)
+			// How many other customers the payer already owns (informational).
+			const payers = new Set(
+				purchases.map((p) =>
+					resolveInvoicePayer({
+						chargeUserId: p.chargeUserId,
+						transfers: p.transfers,
+					}),
+				),
+			)
+			const payer = payers.size === 1 ? [...payers][0] : null
+			const [others] = payer
+				? await db
+						.select({ n: sql<number>`count(*)` })
+						.from(schema.merchantCustomer)
+						.where(
+							and(
+								eq(schema.merchantCustomer.userId, payer),
+								ne(schema.merchantCustomer.id, customer.customerId),
+							),
+						)
+				: [{ n: 0 }]
 			return {
+				payerOtherCustomers: Number(others?.n ?? 0),
 				purchases,
 				users: Object.fromEntries(userRows.map((u) => [u.id, u])),
 				activeSubscriptionRows: Number(active?.n ?? 0),
@@ -164,9 +201,16 @@ export function createDrizzleDbPorts(db: Db) {
 				.select({ n: sql<number>`count(*)` })
 				.from(schema.purchaseUserTransfer)
 				.where(
-					inArray(schema.purchaseUserTransfer.transferState, [
-						...IN_FLIGHT_TRANSFER_STATES,
-					]),
+					and(
+						inArray(schema.purchaseUserTransfer.transferState, [
+							...IN_FLIGHT_TRANSFER_STATES,
+						]),
+						// An expired transfer can no longer complete. No expiry counts.
+						or(
+							isNull(schema.purchaseUserTransfer.expiresAt),
+							gt(schema.purchaseUserTransfer.expiresAt, new Date()),
+						),
+					),
 				)
 			return Number(row?.n ?? 0)
 		},
@@ -209,17 +253,30 @@ export type StripeLike = {
 		}>
 		update(
 			id: string,
-			params: { email: string; name?: string },
+			params: { email: string; name: string },
 			options: { idempotencyKey: string },
 		): Promise<unknown>
+		/** `GET /v1/customers/:id/payment_methods`: `type` is optional there. */
+		listPaymentMethods(
+			id: string,
+			params: { limit: number },
+		): List<{ created: number }>
+		/** Legacy sources and cards; cards carry no `created`. */
+		listSources(
+			id: string,
+			params: { limit: number },
+		): List<{ created?: number }>
 	}
 	charges: {
-		list(p: { customer: string; limit: number }): List<{ created: number }>
+		list(p: {
+			customer: string
+			limit: number
+		}): List<{ created: number; disputed?: boolean }>
 	}
 	paymentIntents: {
 		list(p: { customer: string; limit: number }): List<{ created: number }>
 	}
-	paymentMethods: {
+	invoices: {
 		list(p: { customer: string; limit: number }): List<{ created: number }>
 	}
 	subscriptions: {
@@ -240,38 +297,52 @@ export async function readStripeFacts(
 ): Promise<StripeCustomerFacts> {
 	await throttle()
 	const customer = await stripe.customers.retrieve(stripeCustomerId)
-	const empty = {
-		chargeCreated: [],
-		paymentIntentCreated: [],
-		paymentMethodCreated: [],
-		subscriptions: [],
-	}
 	if (customer.deleted)
-		return { deleted: true, email: null, name: null, ...empty }
+		return {
+			deleted: true,
+			email: null,
+			name: null,
+			chargeCreated: [],
+			paymentIntentCreated: [],
+			paymentMethodCreated: [],
+			invoiceCreated: [],
+			chargeDisputed: false,
+			subscriptions: [],
+		}
 	const base = { customer: stripeCustomerId, limit: 100 }
+	const page = { limit: 100 }
+	const all = { limit: PAGE_CAP }
 	await throttle()
-	const charges = await stripe.charges
-		.list(base)
-		.autoPagingToArray({ limit: PAGE_CAP })
+	const charges = await stripe.charges.list(base).autoPagingToArray(all)
 	await throttle()
-	const intents = await stripe.paymentIntents
-		.list(base)
-		.autoPagingToArray({ limit: PAGE_CAP })
+	const intents = await stripe.paymentIntents.list(base).autoPagingToArray(all)
 	await throttle()
-	const methods = await stripe.paymentMethods
-		.list(base)
-		.autoPagingToArray({ limit: PAGE_CAP })
+	const invoices = await stripe.invoices.list(base).autoPagingToArray(all)
+	await throttle()
+	const methods = await stripe.customers
+		.listPaymentMethods(stripeCustomerId, page)
+		.autoPagingToArray(all)
+	await throttle()
+	const sources = await stripe.customers
+		.listSources(stripeCustomerId, page)
+		.autoPagingToArray(all)
 	await throttle()
 	const subs = await stripe.subscriptions
 		.list({ ...base, status: 'all' })
-		.autoPagingToArray({ limit: PAGE_CAP })
+		.autoPagingToArray(all)
 	return {
 		deleted: false,
 		email: customer.email ?? null,
 		name: customer.name ?? null,
 		chargeCreated: charges.map((c) => c.created),
 		paymentIntentCreated: intents.map((c) => c.created),
-		paymentMethodCreated: methods.map((c) => c.created),
+		// A legacy source with no creation time cannot be proven old: it counts.
+		paymentMethodCreated: [
+			...methods.map((m) => m.created),
+			...sources.map((x) => x.created ?? Number.POSITIVE_INFINITY),
+		],
+		invoiceCreated: invoices.map((c) => c.created),
+		chargeDisputed: charges.some((c) => c.disputed === true),
 		subscriptions: subs.map((s) => ({ created: s.created, status: s.status })),
 	}
 }
@@ -329,6 +400,19 @@ export function createPorts(options: {
 	}
 	return {
 		loadFacts: assembleCustomerFacts(dbPorts, options.stripe, throttle),
+		loadCustomerFacts: async (customerId) => {
+			const row = await dbPorts.loadCustomerRow(customerId)
+			if (!row) return null
+			return {
+				...row,
+				...(await dbPorts.loadDbFacts(row)),
+				stripe: await readStripeFacts(
+					options.stripe,
+					row.stripeCustomerId,
+					throttle,
+				),
+			}
+		},
 		countInFlightTransfers: dbPorts.countInFlightTransfers,
 		compareAndSet: dbPorts.compareAndSet,
 		readCustomerUserId: dbPorts.readCustomerUserId,
@@ -341,7 +425,7 @@ export function createPorts(options: {
 			// Email and name only. Nothing else on the customer is touched.
 			await options.stripe.customers.update(
 				stripeCustomerId,
-				{ email, ...(name ? { name } : {}) },
+				{ email, name },
 				{ idempotencyKey },
 			)
 		},

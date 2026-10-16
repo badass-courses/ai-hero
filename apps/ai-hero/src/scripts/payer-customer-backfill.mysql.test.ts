@@ -92,13 +92,17 @@ function recordingStripe() {
 				const c = customers.get(id)
 				return c ? { email: c.email, name: c.name } : { deleted: true }
 			},
+			listPaymentMethods: () => list([]),
+			listSources: () => list([]),
 			update: async (id, params, options) => {
 				calls.push(`update:${id}`)
 				if (keys.has(options.idempotencyKey)) return {}
 				keys.add(options.idempotencyKey)
 				const c = customers.get(id)!
 				c.email = params.email
-				if (params.name) c.name = params.name
+				// An empty name clears the field, as Stripe does.
+				if (params.name !== undefined)
+					c.name = params.name === '' ? null : params.name
 				applied += 1
 				return {}
 			},
@@ -110,7 +114,7 @@ function recordingStripe() {
 				),
 		},
 		paymentIntents: { list: () => list([]) },
-		paymentMethods: { list: () => list([]) },
+		invoices: { list: () => list([]) },
 		subscriptions: { list: () => list([]) },
 	}
 	return {
@@ -222,6 +226,8 @@ suite('payer customer backfill against real MySQL 8', () => {
 			{ id: 'user-a', email: 'a@example.test', name: 'Payer A' },
 			{ id: 'user-b', email: 'b@example.test', name: 'Holder B' },
 			{ id: 'user-c', email: 'c@example.test', name: 'Holder C' },
+			{ id: 'user-d', email: 'd@example.test', name: null },
+			{ id: 'user-e', email: 'e@example.test', name: 'Holder E' },
 		])
 		// 1. Pre-fix transfer A to B: customer and charge followed B.
 		await seedCustomer({
@@ -268,6 +274,16 @@ suite('payer customer backfill against real MySQL 8', () => {
 			stripeEmail: 'b@example.test',
 		})
 		fake.current.usage.set('cus_4', { charges: [T0.getTime() / 1000 + 60] })
+		// 5. Pre-fix, payer has no name: the holder's name must not stay behind.
+		await seedCustomer({
+			n: '5',
+			holder: 'user-e',
+			chargeUser: 'user-e',
+			purchaseUser: 'user-e',
+			hops: [{ id: 'put-5', from: 'user-d', to: 'user-e', at: T0 }],
+			stripeEmail: 'e@example.test',
+		})
+		fake.current.customers.get('cus_5')!.name = 'Holder E'
 	})
 
 	const portsFor = () =>
@@ -288,7 +304,11 @@ suite('payer customer backfill against real MySQL 8', () => {
 		const ports = portsFor()
 		const plan = planAll(await ports.loadFacts())
 		const counts = countPlan(plan)
-		expect(counts).toMatchObject({ total: 4, move: 2 })
+		expect(counts).toMatchObject({
+			total: 5,
+			move: 3,
+			payerHasOtherCustomer: 2,
+		})
 		expect(counts.skip['already-on-payer']).toBe(1)
 		expect(counts.carveOut['holder-charge-after-transfer']).toBe(1)
 		const byCustomer = Object.fromEntries(plan.map((p) => [p.customerId, p]))
@@ -309,54 +329,118 @@ suite('payer customer backfill against real MySQL 8', () => {
 		)
 		expect(result).toMatchObject({
 			status: 'complete',
-			moved: 2,
+			moved: 3,
 			conflicts: 0,
 		})
 		expect(await userOf('1')).toBe('user-a')
 		expect(await userOf('3')).toBe('user-a')
 		expect(await userOf('2')).toBe('user-a')
 		expect(await userOf('4')).toBe('user-b')
-		// Stripe saw email and name changes for the two moves only.
+		// Stripe saw email and name changes for the three moves only.
 		expect(fake.current.writeCalls().sort()).toEqual([
 			'update:cus_1',
 			'update:cus_3',
+			'update:cus_5',
 		])
+		expect(await userOf('5')).toBe('user-d')
+		// Payer D has no name: the name is cleared, not left as the holder's.
+		expect(fake.current.customers.get('cus_5')).toMatchObject({
+			email: 'd@example.test',
+			name: null,
+		})
 		expect(fake.current.customers.get('cus_1')).toMatchObject({
 			email: 'a@example.test',
 			name: 'Payer A',
 		})
 		expect(fake.current.customers.get('cus_4')!.email).toBe('b@example.test')
 		expect(await runReadback({ planHash: counts.planHash }, ports)).toEqual({
-			planned: 2,
-			onPayer: 2,
+			planned: 3,
+			onPayer: 3,
 			conflicts: 0,
+			drift: 0,
 			stripeMismatch: 0,
 			notYetWritten: 0,
 		})
 	})
 
-	it('a changed row is a conflict: nothing overwritten, no Stripe call', async () => {
+	it('a row that changed before the write is drift: no write, no Stripe call', async () => {
 		const ports = portsFor()
-		const snapshot = await ports.loadFacts()
-		const { planHash } = countPlan(planAll(snapshot))
-		// The row changes after the plan was read: the same race the CAS closes.
-		ports.loadFacts = async () => snapshot
+		const { planHash } = countPlan(planAll(await ports.loadFacts()))
 		await db
 			.update(schema.merchantCustomer)
 			.set({ userId: 'user-c' })
 			.where(eq(schema.merchantCustomer.id, 'mcu-1'))
+		// The plan hash now differs for a fresh run, so approve the old plan the
+		// way a resumed journal does: facts as planned, rows changed since.
+		const stale = await Promise.all(
+			(await ports.loadFacts()).map(async (f) => ({
+				...f,
+				holderUserId: f.customerId === 'mcu-1' ? 'user-b' : f.holderUserId,
+			})),
+		)
+		ports.loadFacts = async () => stale
+		expect(countPlan(planAll(stale)).planHash).toBe(planHash)
 		const result = await runWrite(
 			{ approval: 'rig', planHash, batch: 25 },
 			ports,
 		)
-		expect(result).toMatchObject({ moved: 1, conflicts: 1 })
+		expect(result).toMatchObject({ moved: 2, drift: 1, conflicts: 0 })
 		expect(await userOf('1')).toBe('user-c')
-		expect(fake.current.writeCalls()).toEqual(['update:cus_3'])
+		expect(fake.current.writeCalls().sort()).toEqual([
+			'update:cus_3',
+			'update:cus_5',
+		])
 	})
 
-	it('refuses to write while a transfer is open', async () => {
+	it('a change after the fresh read is a conflict: nothing overwritten', async () => {
 		const ports = portsFor()
 		const { planHash } = countPlan(planAll(await ports.loadFacts()))
+		const real = ports.loadCustomerFacts
+		// The row moves right after the per-row read, before the CAS.
+		ports.loadCustomerFacts = async (id) => {
+			const facts = await real(id)
+			if (id === 'mcu-1')
+				await db
+					.update(schema.merchantCustomer)
+					.set({ userId: 'user-c' })
+					.where(eq(schema.merchantCustomer.id, 'mcu-1'))
+			return facts
+		}
+		const result = await runWrite(
+			{ approval: 'rig', planHash, batch: 25 },
+			ports,
+		)
+		expect(result).toMatchObject({ moved: 2, conflicts: 1 })
+		expect(await userOf('1')).toBe('user-c')
+		expect(fake.current.writeCalls()).not.toContain('update:cus_1')
+	})
+
+	it('holder use that appears after batch one drifts the row', async () => {
+		const ports = portsFor()
+		const { planHash } = countPlan(planAll(await ports.loadFacts()))
+		const first = await runWrite({ approval: 'rig', planHash, batch: 1 }, ports)
+		expect(first.status).toBe('batch-complete')
+		fake.current.usage.set('cus_3', { charges: [T0.getTime() / 1000 + 60] })
+		fake.current.usage.set('cus_5', { charges: [T0.getTime() / 1000 + 60] })
+		const rest = await runWrite({ approval: 'rig', planHash, batch: 25 }, ports)
+		expect(rest.drift).toBe(2)
+		expect(await userOf('1')).toBe('user-a')
+		expect(await userOf('3')).toBe('user-c')
+		expect(await userOf('5')).toBe('user-e')
+	})
+
+	it('refuses to write while an unexpired transfer is open, not an expired one', async () => {
+		const ports = portsFor()
+		const { planHash } = countPlan(planAll(await ports.loadFacts()))
+		await db.insert(schema.purchaseUserTransfer).values({
+			id: 'put-old',
+			purchaseId: 'pur-1',
+			sourceUserId: 'user-b',
+			targetUserId: 'user-c',
+			transferState: 'VERIFIED',
+			expiresAt: new Date(Date.now() - DAY),
+		})
+		expect(await createDrizzleDbPorts(db).countInFlightTransfers()).toBe(0)
 		await db.insert(schema.purchaseUserTransfer).values({
 			id: 'put-open',
 			purchaseId: 'pur-1',
@@ -365,6 +449,7 @@ suite('payer customer backfill against real MySQL 8', () => {
 			transferState: 'VERIFIED',
 			expiresAt: new Date(Date.now() + DAY),
 		})
+		expect(await createDrizzleDbPorts(db).countInFlightTransfers()).toBe(1)
 		await expect(
 			runWrite({ approval: 'rig', planHash, batch: 25 }, ports),
 		).rejects.toThrow(/^TransferInFlight:/)
@@ -390,6 +475,6 @@ suite('payer customer backfill against real MySQL 8', () => {
 			fake.current.stripe,
 			async () => {},
 		)()
-		expect(facts).toHaveLength(4)
+		expect(facts).toHaveLength(5)
 	})
 })
