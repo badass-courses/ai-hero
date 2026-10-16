@@ -531,6 +531,15 @@ async function writeRow(
 	// step is left. Anything else that is no longer the approved move is drift.
 	const fresh = await ports.loadCustomerFacts(move.customerId)
 	if (fresh && fresh.holderUserId === payerUserId) {
+		// Resume: a Stripe customer deleted meanwhile cannot be updated.
+		if (fresh.stripe.deleted) {
+			await ports.appendJournal({
+				t: 'drift',
+				customerId: move.customerId,
+				reason: 'resume:stripe-customer-deleted',
+			})
+			return 'drift'
+		}
 		outcome = 'resumed'
 	} else {
 		const reason = driftReason(move, fresh)
@@ -678,11 +687,11 @@ async function assertPrivate(path: string) {
 export function assertOutsideWorktree(path: string) {
 	let dir = dirname(resolve(path))
 	for (;;) {
-		if (existsSync(join(dir, '.git')))
+		if (existsSync(join(dir, '.git')) || existsSync(join(dir, '.jj')))
 			throw literal(
 				'FileInsideWorktree',
 				'chose an operator file path',
-				'it is inside a git worktree, where customer ids and emails could be committed',
+				'it is inside a git or jj worktree, where customer ids and emails could be committed',
 				'a path outside any git worktree.',
 				'pick a path under a private directory outside the repository',
 				'run git rev-parse --show-toplevel in the directory',
@@ -730,12 +739,14 @@ export function fileJournal(path: string) {
 				throw error
 			}
 			const lines = text.split('\n').filter(Boolean)
-			// A torn final line from a crash is dropped; resume redoes that step.
+			// A torn line from a crash is dropped; resume redoes that step.
 			return lines.flatMap((line, i) => {
 				try {
 					return [JSON.parse(line) as JournalEntry]
 				} catch {
-					if (i === lines.length - 1) return []
+					// A torn line is cut mid-write, so it never ends in a closing
+					// brace. Later appends start on a new line after it.
+					if (i === lines.length - 1 || !line.trimEnd().endsWith('}')) return []
 					throw literal(
 						'JournalCorrupt',
 						'resumed from a journal',
@@ -754,7 +765,14 @@ export function fileJournal(path: string) {
 				handle = await open(path, 'wx', PRIVATE_MODE)
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-				handle = await open(path, 'a')
+				handle = await open(path, 'a+')
+				// A torn last line must not swallow this entry.
+				const { size } = await handle.stat()
+				if (size > 0) {
+					const last = Buffer.alloc(1)
+					await handle.read(last, 0, 1, size - 1)
+					if (last[0] !== 0x0a) await handle.write('\n')
+				}
 			}
 			try {
 				await handle.writeFile(`${JSON.stringify(entry)}\n`)

@@ -467,7 +467,7 @@ export async function createProductionPorts(args: Args) {
 			stripe,
 			journalPath: args.mode === 'dry-run' ? undefined : args.journal,
 			stopFile: args.mode === 'write' ? args.stopFile : undefined,
-			rate: args.mode === 'dry-run' ? 10 : args.rate,
+			rate: args.rate,
 		}),
 		close: closeDatabasePool,
 	}

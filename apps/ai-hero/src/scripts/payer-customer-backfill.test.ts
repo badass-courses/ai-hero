@@ -301,6 +301,22 @@ const scenarios: Scenario[] = [
 		reason: 'holder-charge-after-transfer',
 	},
 	{
+		name: 'charge at the start of the second of a mid-second transfer',
+		facts: facts({
+			stripe: { ...quiet, chargeCreated: [sec(0)] },
+			purchases: [
+				{
+					purchaseId: 'p',
+					chargeUserId: userA.id,
+					openDispute: false,
+					transfers: [transfer('t', userA.id, new Date(T0.getTime() + 500))],
+				},
+			],
+		}),
+		decision: 'carve-out',
+		reason: 'holder-charge-after-transfer',
+	},
+	{
 		name: 'charge one second before the transfer moves',
 		facts: withStripe({ chargeCreated: [sec(-1)] }),
 		decision: 'move',
@@ -399,8 +415,9 @@ function oracleUsed(f: CustomerFacts): boolean {
 			.filter((t) => t.state === 'COMPLETED')
 			.map((t) => (t.completedAt ?? t.createdAt)!.getTime()),
 	)
-	// Whole seconds, inclusive: same-second objects count as after.
-	const at = Math.floor(Math.min(...times) / 1000)
+	// Independent of the code's floor: an object created in the same second
+	// as the transfer (created * 1000 + 999 >= completedMs) counts as after.
+	const completedMs = Math.min(...times)
 	return (
 		f.purchases.some((p) => p.openDispute) ||
 		f.stripe.chargeDisputed ||
@@ -414,7 +431,7 @@ function oracleUsed(f: CustomerFacts): boolean {
 			...f.stripe.paymentMethodCreated,
 			...f.stripe.invoiceCreated,
 			...f.stripe.subscriptions.map((s) => s.created),
-		].some((created) => created >= at)
+		].some((created) => created * 1000 + 999 >= completedMs)
 	)
 }
 
@@ -448,7 +465,11 @@ function randomFacts(next: () => number): CustomerFacts {
 						sources[h]!,
 						next() < 0.05
 							? null
-							: new Date(T0.getTime() + Math.floor(next() * 3) * DAY * 1000),
+							: new Date(
+									T0.getTime() +
+										Math.floor(next() * 3) * DAY * 1000 +
+										Math.floor(next() * 1000),
+								),
 						pick(['COMPLETED', 'COMPLETED', 'INITIATED', 'CANCELED']),
 					),
 				),
@@ -638,7 +659,7 @@ async function planHashFor(
 ) {
 	return mod.planHashOf(mod.planAll(writeFacts(count, payerName)))
 }
-const approve = { approval: 'desk 2026-10-16' }
+const approve = { approval: 'operator approval' }
 
 function snapshot(world: World) {
 	return JSON.stringify({
@@ -1169,6 +1190,55 @@ describe('files and arguments', () => {
 		)
 	})
 
+	it('a jj workspace counts as a worktree too', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'payer-backfill-'))
+		await mkdir(join(dir, '.jj'))
+		expect(() => backfill.assertOutsideWorktree(join(dir, 'j'))).toThrow(
+			/^FileInsideWorktree:/,
+		)
+	})
+
+	it('an append after a torn last line starts on a new line', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'payer-backfill-'))
+		const path = join(dir, 'journal.jsonl')
+		const journal = backfill.fileJournal(path)
+		await journal.append({ t: 'stripe', customerId: 'mcu-1' })
+		await writeFile(path, (await readFile(path, 'utf8')) + '{"t":"stri', {
+			mode: 0o600,
+		})
+		await journal.append({ t: 'stripe', customerId: 'mcu-2' })
+		expect(await journal.read()).toEqual([
+			{ t: 'stripe', customerId: 'mcu-1' },
+			{ t: 'stripe', customerId: 'mcu-2' },
+		])
+	})
+
+	it('a resume onto a Stripe customer deleted meanwhile is drift, not an error', async () => {
+		const world = newWorld(2)
+		world.userIds.set('mcu-0', userA.id)
+		const planHash = await planHashFor(backfill, 2)
+		const ports = portsFor(world, 2)
+		const real = ports.loadCustomerFacts
+		ports.loadCustomerFacts = async (id) => {
+			const f = await real(id)
+			return f && id === 'mcu-0'
+				? { ...f, stripe: { ...f.stripe, deleted: true } }
+				: f
+		}
+		const result = await backfill.runWrite(
+			{ ...approve, planHash, batch: 25 },
+			ports,
+		)
+		expect(result.drift).toBe(1)
+		expect(world.calls).not.toContain('stripe:cus_0')
+		expect(world.journal).toContainEqual({
+			t: 'drift',
+			customerId: 'mcu-0',
+			reason: 'resume:stripe-customer-deleted',
+		})
+		expect(world.userIds.get('mcu-1')).toBe(userA.id)
+	})
+
 	it('the journal header records the approval, time and plan hash', async () => {
 		const world = newWorld(1)
 		const planHash = await planHashFor(backfill, 1)
@@ -1371,6 +1441,13 @@ const mutants: {
 		find: 'if (facts.stripe.chargeCreated.some((at) => at >= completedAt))',
 		replace: 'if (facts.stripe.chargeCreated.some((at) => at > completedAt))',
 		caughtBy: /same-second charge|move onto a customer the holder used/,
+	},
+	{
+		name: 'completedAt not floored to whole seconds',
+		file: 'payer-customer-backfill',
+		find: 'Math.floor(Math.min(...(stamps as number[])) / 1000)',
+		replace: 'Math.min(...(stamps as number[])) / 1000',
+		caughtBy: /move onto a customer the holder used|charge after/,
 	},
 ]
 
