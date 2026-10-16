@@ -39,7 +39,9 @@ export function workshopAccessView({
 	if (sessionStatus === 'loading') return 'pending'
 	// Signed in. A refetch error keeps the rules we already have.
 	if (status === 'error' && !hasData) return 'error'
-	if (status === 'pending') return fetchStatus === 'idle' ? 'anonymous' : 'pending'
+	if (status === 'pending') {
+		return fetchStatus === 'idle' ? 'anonymous' : 'pending'
+	}
 	return canViewWorkshop ? 'member' : 'anonymous'
 }
 
@@ -52,10 +54,13 @@ export function WorkshopAccessBoundary({
 	anonymous,
 	anonymousWithoutCta,
 	member,
+	showErrorNote = false,
 }: {
 	anonymous: ReactNode
 	anonymousWithoutCta: ReactNode
 	member: ReactNode
+	/** Only the sidebar slot says so; inline mounts fail quietly to no ask. */
+	showErrorNote?: boolean
 }) {
 	const { canViewWorkshop, status, fetchStatus, data } = useWorkshopAbility()
 	const { status: sessionStatus } = useSession()
@@ -73,6 +78,7 @@ export function WorkshopAccessBoundary({
 		case 'pending':
 			return anonymousWithoutCta
 		case 'error':
+			if (!showErrorNote) return anonymousWithoutCta
 			return (
 				<>
 					{anonymousWithoutCta}
@@ -106,5 +112,6 @@ export function WorkshopSidebarAccessBoundary({
 			anonymous={anonymous}
 			anonymousWithoutCta={anonymousWithoutCta}
 			member={member}
+			showErrorNote
 		/>
 }

@@ -531,6 +531,7 @@ export default async function ModulePage(props: Props) {
 															anonymous={anonymousSidebar}
 															anonymousWithoutCta={sidebarWithoutCta}
 															member={memberSidebar}
+															showErrorNote
 														/>
 													}
 												>
@@ -550,6 +551,7 @@ export default async function ModulePage(props: Props) {
 									anonymous={listSidebar(false)}
 									anonymousWithoutCta={listSidebar(false)}
 									member={listSidebar(true)}
+									showErrorNote
 								/>
 							)}
 						</div>
