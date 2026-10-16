@@ -13,48 +13,6 @@ const completed = (sourceUserId: string): InvoiceTransferFact => ({
 	sourceUserId,
 })
 
-type Role = 'payer' | 'owner' | 'previous' | 'unrelated'
-
-/**
- * Every account in a purchase's life. After a transfer chain
- * payer -> previous -> owner the charge belongs to the current owner.
- */
-function scenario(kind: 'untransferred' | 'moved' | 'chain') {
-	const ids = { payer: 'u-payer', owner: 'u-owner', previous: 'u-prev' }
-	if (kind === 'untransferred') {
-		return {
-			purchaseUserId: ids.payer,
-			customerUserId: ids.payer,
-			transfers: [] as InvoiceTransferFact[],
-			ids,
-			expected: { payer: true, owner: true, previous: false, unrelated: false },
-			// In this shape the payer and the owner are the same account.
-			sameAccount: true,
-		}
-	}
-	if (kind === 'moved') {
-		return {
-			purchaseUserId: ids.owner,
-			customerUserId: ids.payer,
-			transfers: [completed(ids.payer)],
-			ids,
-			expected: { payer: true, owner: true, previous: false, unrelated: false },
-			sameAccount: false,
-		}
-	}
-	return {
-		purchaseUserId: ids.owner,
-		customerUserId: ids.payer,
-		transfers: [
-			{ ...completed(ids.payer), completedAt: new Date('2026-01-01') },
-			{ ...completed(ids.previous), completedAt: new Date('2026-02-01') },
-		],
-		ids,
-		expected: { payer: true, owner: true, previous: false, unrelated: false },
-		sameAccount: false,
-	}
-}
-
 describe('canViewInvoice truth table', () => {
 	const cases: {
 		name: string
@@ -147,44 +105,94 @@ describe('canViewInvoice truth table', () => {
 	})
 })
 
-describe('negative control: generated roles', () => {
-	for (const kind of ['untransferred', 'moved', 'chain'] as const) {
-		const s = scenario(kind)
-		const roles: Role[] = ['payer', 'owner', 'previous', 'unrelated']
-		for (const role of roles) {
-			const viewerId = role === 'unrelated' ? 'u-unrelated' : s.ids[role]
-			it(`${kind}: ${role} ${s.expected[role] ? 'sees' : 'cannot see'} the invoice`, () => {
-				const transfer = pickOriginTransfer(s.transfers)
-				const result = canViewInvoice({
-					viewerId,
-					purchaseUserId: s.purchaseUserId,
-					payerUserId: s.customerUserId,
-					transfer,
-				})
-				// untransferred: the payer account is also the holder; the owner
-				// role is a distinct account that never touched the purchase.
-				const expected =
-					kind === 'untransferred' && role === 'owner'
-						? false
-						: s.expected[role]
-				expect(result).toBe(expected)
-			})
-		}
-	}
+// Each row states who may view one purchase. The decision inputs mirror what
+// the page and list read: Purchase.userId, MerchantCharge.userId and the
+// COMPLETED PurchaseUserTransfer rows for that purchase.
+type Shape = {
+	name: string
+	purchaseUserId: string
+	chargeUserId: string
+	transfers: InvoiceTransferFact[]
+	allowed: string[]
+	denied: string[]
+}
+const at = (month: number) => new Date(Date.UTC(2026, month, 1))
+const shapes: Shape[] = [
+	{
+		name: 'untransferred',
+		purchaseUserId: 'payer',
+		chargeUserId: 'payer',
+		transfers: [],
+		allowed: ['payer'],
+		denied: ['stranger', 'former-holder'],
+	},
+	{
+		// Self-service: purchase and charge both moved to the holder.
+		name: 'self-service transfer',
+		purchaseUserId: 'holder',
+		chargeUserId: 'holder',
+		transfers: [{ ...completed('payer'), completedAt: at(1) }],
+		allowed: ['payer', 'holder'],
+		denied: ['stranger'],
+	},
+	{
+		// Support-complete: only the purchase moved, the charge stays.
+		name: 'support-complete move',
+		purchaseUserId: 'holder',
+		chargeUserId: 'payer',
+		transfers: [],
+		allowed: ['payer', 'holder'],
+		denied: ['stranger'],
+	},
+	{
+		name: 'self-service chain payer -> middle -> holder',
+		purchaseUserId: 'holder',
+		chargeUserId: 'holder',
+		transfers: [
+			{ ...completed('middle'), completedAt: at(2) },
+			{ ...completed('payer'), completedAt: at(1) },
+		],
+		allowed: ['payer', 'holder'],
+		denied: ['middle', 'stranger'],
+	},
+	{
+		// One Stripe customer is shared across a buyer's charges. Transferring
+		// purchase X moves nothing about untransferred purchase Y, which still
+		// belongs to its payer.
+		name: 'shared customer: untransferred sibling purchase Y',
+		purchaseUserId: 'payer',
+		chargeUserId: 'payer',
+		transfers: [],
+		allowed: ['payer'],
+		denied: ['holder-of-sibling-x', 'stranger'],
+	},
+	{
+		name: 'a transfer that never completed grants nothing',
+		purchaseUserId: 'payer',
+		chargeUserId: 'payer',
+		transfers: [{ state: 'INITIATED', sourceUserId: 'payer' }],
+		allowed: ['payer'],
+		denied: ['stranger', 'target'],
+	},
+]
 
-	it('only payer and current owner ever pass, across generated viewers', () => {
-		for (const kind of ['moved', 'chain'] as const) {
-			const s = scenario(kind)
-			const viewers = ['u-payer', 'u-owner', 'u-prev', 'u-x', 'u-y', '']
-			const allowed = viewers.filter((viewerId) =>
-				canViewInvoice({
-					viewerId,
-					purchaseUserId: s.purchaseUserId,
-					payerUserId: s.customerUserId,
-					transfer: pickOriginTransfer(s.transfers),
-				}),
-			)
-			expect(allowed).toEqual(['u-payer', 'u-owner'])
+describe.each(shapes)('who sees: $name', (shape) => {
+	const decide = (viewerId: string) =>
+		canViewInvoice({
+			viewerId,
+			purchaseUserId: shape.purchaseUserId,
+			payerUserId: shape.chargeUserId,
+			transfer: pickOriginTransfer(shape.transfers),
+		})
+	it.each(shape.allowed)('%s sees it', (viewer) => {
+		expect(decide(viewer)).toBe(true)
+	})
+	it.each(shape.denied)('%s does not', (viewer) => {
+		expect(decide(viewer)).toBe(false)
+	})
+	it('nobody else among generated viewers sees it', () => {
+		for (const viewer of ['v1', 'v2', 'v3', '']) {
+			expect(decide(viewer)).toBe(false)
 		}
 	})
 })
@@ -195,6 +203,15 @@ describe('pickOriginTransfer', () => {
 		expect(
 			pickOriginTransfer([{ state: 'CANCELED', sourceUserId: 'p' }]),
 		).toBeNull()
+	})
+	it('falls back to createdAt, then id, and names nothing without timestamps', () => {
+		const old = { ...completed('a'), createdAt: at(1) }
+		const recent = { ...completed('b'), createdAt: at(2) }
+		expect(pickOriginTransfer([recent, old])).toBe(old)
+		const x = { ...completed('x'), id: 'tr-1', createdAt: at(3) }
+		const y = { ...completed('y'), id: 'tr-2', createdAt: at(3) }
+		expect(pickOriginTransfer([y, x])).toBe(x)
+		expect(pickOriginTransfer([completed('p'), completed('q')])).toBeNull()
 	})
 	it('picks the earliest completed hop regardless of order', () => {
 		const later = { ...completed('b'), completedAt: new Date('2026-03-01') }

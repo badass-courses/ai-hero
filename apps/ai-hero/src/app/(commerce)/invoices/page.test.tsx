@@ -7,7 +7,6 @@ const mocks = vi.hoisted(() => ({
 	findCharges: vi.fn(),
 	findPurchases: vi.fn(),
 	findTransfers: vi.fn(),
-	findCustomers: vi.fn(),
 }))
 
 vi.mock('@/server/auth', () => ({
@@ -19,7 +18,6 @@ vi.mock('@/db', () => ({
 			merchantCharge: { findMany: mocks.findCharges },
 			purchases: { findMany: mocks.findPurchases },
 			purchaseUserTransfer: { findMany: mocks.findTransfers },
-			merchantCustomer: { findMany: mocks.findCustomers },
 		},
 	},
 }))
@@ -90,7 +88,6 @@ beforeEach(() => {
 	})
 	mocks.findCharges.mockResolvedValue([{ id: 'mch_123' }])
 	mocks.findTransfers.mockResolvedValue([])
-	mocks.findCustomers.mockResolvedValue([])
 	mocks.findPurchases.mockResolvedValue([
 		{
 			id: 'purchase_1',

@@ -4,7 +4,6 @@ const mocks = vi.hoisted(() => ({
 	findCharges: vi.fn(),
 	findPurchases: vi.fn(),
 	findTransfers: vi.fn(),
-	findCustomers: vi.fn(),
 }))
 
 vi.mock('@/db', () => ({
@@ -13,7 +12,6 @@ vi.mock('@/db', () => ({
 			merchantCharge: { findMany: mocks.findCharges },
 			purchases: { findMany: mocks.findPurchases },
 			purchaseUserTransfer: { findMany: mocks.findTransfers },
-			merchantCustomer: { findMany: mocks.findCustomers },
 		},
 	},
 }))
@@ -29,8 +27,8 @@ vi.mock('@/db/schema', () => ({
 		status: 'purchase.status',
 		userId: 'purchase.userId',
 		id: 'purchase.id',
+		redeemedBulkCouponId: 'purchase.redeemedBulkCouponId',
 	},
-	merchantCustomer: { id: 'customer.id', userId: 'customer.userId' },
 	purchaseUserTransfer: {
 		purchaseId: 'transfer.purchaseId',
 		sourceUserId: 'transfer.sourceUserId',
@@ -43,6 +41,7 @@ vi.mock('drizzle-orm', () => ({
 	eq: (...values: unknown[]) => values,
 	inArray: (...values: unknown[]) => values,
 	isNotNull: (value: unknown) => ['isNotNull', value],
+	isNull: (value: unknown) => ['isNull', value],
 	or: (...values: unknown[]) => ['or', ...values],
 }))
 
@@ -69,7 +68,6 @@ describe('invoice purchase access', () => {
 		mocks.findCharges.mockResolvedValue([{ id: 'charge-original-payer' }])
 		mocks.findPurchases.mockResolvedValue([transferred])
 		mocks.findTransfers.mockResolvedValue([])
-		mocks.findCustomers.mockResolvedValue([])
 	})
 
 	it('keeps a transferred purchase with its product in the original payer invoice list', async () => {
@@ -90,15 +88,15 @@ describe('invoice purchase access', () => {
 		)
 	})
 
-	it('lists a payer-of-record purchase by customer, view only', async () => {
-		// The charge moved to the holder; the payer is still the customer.
-		mocks.findCharges
-			.mockResolvedValueOnce([])
-			.mockResolvedValueOnce([{ id: 'charge-moved' }])
-		mocks.findCustomers.mockResolvedValue([{ id: 'customer-1' }])
-		const result = await getInvoicePurchasesForUser('payer-1')
-		expect(result).toHaveLength(1)
-		expect(result[0]?.canEdit).toBe(false)
+	it('excludes redeemed seats and does not follow a shared customer', async () => {
+		// Buyer A paid for X and Y on one Stripe customer; X moved to B along
+		// with the customer row. B's list may only reach charges B owns.
+		mocks.findCharges.mockResolvedValue([{ id: 'charge-x' }])
+		await getInvoicePurchasesForUser('holder-b')
+		const where = JSON.stringify(mocks.findPurchases.mock.calls.at(-1)?.[0]?.where)
+		expect(where).toContain('charge-x')
+		expect(where).not.toContain('charge-y')
+		expect(where).toContain('purchase.redeemedBulkCouponId')
 	})
 
 	it('lets the billing owner edit and a bare holder only view', async () => {

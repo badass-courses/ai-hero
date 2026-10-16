@@ -10,10 +10,7 @@ import LayoutClient from '@/components/layout-client'
 import { courseBuilderAdapter, db } from '@/db'
 import { coupon } from '@/db/schema'
 import { env } from '@/env.mjs'
-import {
-	getOriginTransferForPurchase,
-	getPayerUserIdForCustomer,
-} from '@/lib/invoice-access'
+import { getOriginTransferForPurchase } from '@/lib/invoice-access'
 import {
 	canViewInvoice,
 	invoiceDisplayAmount,
@@ -124,7 +121,6 @@ async function getChargeDetails(merchantChargeId: string) {
 					purchaseId: purchase.id,
 					purchaseUserId: purchase.userId,
 					billingUserId: merchantCharge.userId,
-					merchantCustomerId: merchantCharge.merchantCustomerId,
 				},
 			}
 		}
@@ -170,9 +166,7 @@ const Invoice = async (props: {
 			? canViewInvoice({
 					viewerId: viewerUserId,
 					purchaseUserId: chargeDetails.result.purchaseUserId,
-					payerUserId: await getPayerUserIdForCustomer(
-						chargeDetails.result.merchantCustomerId,
-					),
+					payerUserId: chargeDetails.result.billingUserId,
 					transfer: await getOriginTransferForPurchase(
 						chargeDetails.result.purchaseId,
 					),

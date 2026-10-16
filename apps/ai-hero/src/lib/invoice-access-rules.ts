@@ -7,12 +7,14 @@ import { getInvoicePresentment } from '@/lib/invoice-amounts'
  * transaction: `update(purchaseTable).set({ userId: user.id })`,
  * `update(merchantCharge).set({ userId: user.id })` and
  * `update(merchantCustomer).set({ userId: user.id })`. So the new holder takes
- * over the charge and the customer, and the first completed
- * `PurchaseUserTransfer` row's `sourceUserId` is the only record of who paid.
- * Support-complete moves only `Purchase.userId`; there `MerchantCustomer.userId`
- * still names the payer. The payer is either of those two. */
+ * over the charge, and the first completed `PurchaseUserTransfer` row's
+ * `sourceUserId` is the only record of who paid. Support-complete moves only
+ * `Purchase.userId`; there `MerchantCharge.userId` still names the payer.
+ * The payer is either of those two. `MerchantCustomer` is deliberately not
+ * used: one customer is shared across a buyer's charges. */
 
 export type InvoiceTransferFact = {
+	id?: string
 	// PurchaseUserTransfer.transferState; only COMPLETED moved ownership.
 	state: string
 	sourceUserId: string
@@ -32,16 +34,23 @@ export function pickOriginTransfer(
 		(transfer) => transfer.state === 'COMPLETED',
 	)
 	if (completed.length === 0) return null
-	const at = (transfer: InvoiceTransferFact) =>
-		(transfer.completedAt ?? transfer.createdAt)?.getTime() ?? 0
-	return completed.reduce((first, next) =>
-		at(next) < at(first) ? next : first,
-	)
+	// completedAt, then createdAt, then id. Without any timestamp the order
+	// is unknowable, so name no origin rather than guess.
+	const stamp = (transfer: InvoiceTransferFact) =>
+		(transfer.completedAt ?? transfer.createdAt)?.getTime()
+	if (completed.some((transfer) => stamp(transfer) === undefined)) return null
+	return completed.reduce((first, next) => {
+		const a = stamp(next)!
+		const b = stamp(first)!
+		if (a !== b) return a < b ? next : first
+		return (next.id ?? '') < (first.id ?? '') ? next : first
+	})
 }
 
 /**
  * Who may see an invoice: the person who paid, and whoever holds the
- * purchase now. `payerUserId` is `MerchantCustomer.userId` for the charge. Previous holders who did not pay, and everyone else, may not.
+ * purchase now. `payerUserId` is `MerchantCharge.userId`. Previous holders who
+ * did not pay, and everyone else, may not.
  * `transfer` is the origin transfer from `pickOriginTransfer`, if any.
  */
 export function canViewInvoice({
