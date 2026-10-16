@@ -13,7 +13,6 @@ import { TeamWelcomeVideo } from '@/app/(content)/workshops/_components/team-wel
 import { WorkshopActionsBar } from '@/app/(content)/workshops/_components/workshop-user-actions'
 import { Contributor } from '@/components/contributor'
 import { EvergreenClaimPanel } from '@/components/evergreen-claim-panel'
-import { EvergreenOfferEndedNotice } from '@/components/evergreen-offer-ended-notice'
 import { DiscountDeadline } from '@/components/pricing/discount-deadline'
 import { PricingInline } from '@/components/pricing/pricing-inline'
 import { TYPE } from '@/components/landing/type'
@@ -38,6 +37,7 @@ import { Skeleton } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
 import WorkshopBreadcrumb from '../_components/workshop-breadcrumb'
+import { WorkshopEvergreenOfferEndedNotice } from '../_components/workshop-evergreen-offer-ended-notice'
 import WorkshopImage from '../_components/workshop-image'
 import {
 	WorkshopInlineBuyButton,
@@ -282,7 +282,10 @@ export default async function ModulePage(props: Props) {
 					<>
 						{/* An expired offer link says so instead of a silent full price. */}
 						<React.Suspense fallback={null}>
-							<EvergreenOfferEndedNotice endpoint="/api/evergreen/offer-status" />
+							<WorkshopEvergreenOfferEndedNotice
+								endpoint="/api/evergreen/offer-status"
+								productId={product.id}
+							/>
 						</React.Suspense>
 						<EvergreenClaimPanel
 							pilotOnly

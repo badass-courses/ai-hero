@@ -3,24 +3,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { getPricingData } from './pricing-query'
 
 const mocks = vi.hoisted(() => {
-	const selectWhere = vi.fn()
-	const selectFrom = vi.fn(() => ({ where: selectWhere }))
-	const select = vi.fn(() => ({ from: selectFrom }))
+	const getSeatsTaken = vi.fn()
 	const getProduct = vi.fn()
 	const getPurchase = vi.fn()
 	const formatPricesForProduct = vi.fn()
 	return {
-		select,
-		selectFrom,
-		selectWhere,
+		getSeatsTaken,
 		getProduct,
 		getPurchase,
 		formatPricesForProduct,
 	}
 })
 
+vi.mock('./seats-taken-query', async (importActual) => ({
+	...(await importActual<typeof import('./seats-taken-query')>()),
+	getSeatsTaken: mocks.getSeatsTaken,
+}))
+
 vi.mock('@/db', () => ({
-	db: { select: mocks.select },
 	courseBuilderAdapter: {
 		getProduct: mocks.getProduct,
 		getPurchase: mocks.getPurchase,
@@ -65,25 +65,39 @@ describe('getPricingData quantityAvailable', () => {
 		const result = await getPricingData({ productId: 'product-unlimited' })
 
 		expect(result.quantityAvailable).toBe(-1)
-		expect(mocks.select).not.toHaveBeenCalled()
+		expect(mocks.getSeatsTaken).not.toHaveBeenCalled()
 	})
 
-	it('subtracts a SQL count for finite products instead of fetching rows', async () => {
+	it('subtracts the seats taken for finite products', async () => {
 		mocks.getProduct.mockResolvedValue({ quantityAvailable: 40 })
-		mocks.selectWhere.mockResolvedValue([{ count: 3 }])
+		mocks.getSeatsTaken.mockResolvedValue(3)
 
 		const result = await getPricingData({ productId: 'product-finite' })
 
 		expect(result.quantityAvailable).toBe(37)
-		expect(mocks.select).toHaveBeenCalledTimes(1)
+		expect(mocks.getSeatsTaken).toHaveBeenCalledWith('product-finite')
 	})
 
-	it('treats a missing count row as zero purchases', async () => {
+	it('takes nothing off when no seats are taken', async () => {
 		mocks.getProduct.mockResolvedValue({ quantityAvailable: 40 })
-		mocks.selectWhere.mockResolvedValue([])
+		mocks.getSeatsTaken.mockResolvedValue(0)
 
 		const result = await getPricingData({ productId: 'product-finite' })
 
 		expect(result.quantityAvailable).toBe(40)
+	})
+
+	it('never goes below zero, so an overshoot is sold out and not the -1 unlimited sentinel', async () => {
+		for (const [cap, taken] of [
+			[40, 40],
+			[40, 41],
+			[1, 2],
+			[1, 50],
+		] as const) {
+			mocks.getProduct.mockResolvedValue({ quantityAvailable: cap })
+			mocks.getSeatsTaken.mockResolvedValue(taken)
+			const result = await getPricingData({ productId: 'product-finite' })
+			expect(result.quantityAvailable, `${cap}/${taken}`).toBe(0)
+		}
 	})
 })

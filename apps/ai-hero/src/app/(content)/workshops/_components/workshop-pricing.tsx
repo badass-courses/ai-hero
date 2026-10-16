@@ -24,7 +24,7 @@ type WorkshopPricingProps = WorkshopPageProps & {
 	teamMode?: boolean
 }
 
-function useWorkshopCommerce(productId?: string) {
+export function useWorkshopCommerce(productId?: string) {
 	const searchParams = useSearchParams()
 	const { params: commerceUrlParams, hasCommerceParams } =
 		readCommerceUrlParams(searchParams)
