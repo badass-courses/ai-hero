@@ -81,6 +81,8 @@ vi.mock('next/link.js', () => ({
 
 import Invoices from './page'
 
+const noParams = () => ({ searchParams: Promise.resolve({}) })
+
 beforeEach(() => {
 	vi.resetAllMocks()
 	mocks.getServerAuthSession.mockResolvedValue({
@@ -122,28 +124,28 @@ beforeEach(() => {
 describe('invoices list', () => {
 	it('redirects an anonymous visitor to sign in without querying personal invoices', async () => {
 		mocks.getServerAuthSession.mockResolvedValue({ session: null })
-		await expect(Invoices()).rejects.toThrow(
+		await expect(Invoices(noParams())).rejects.toThrow(
 			'redirect:/login?callbackUrl=%2Finvoices',
 		)
 		expect(mocks.findCharges).not.toHaveBeenCalled()
 		expect(mocks.findPurchases).not.toHaveBeenCalled()
 	})
 	it('shows an obvious Edit invoice details action for each invoice', async () => {
-		const markup = renderToStaticMarkup(await Invoices())
+		const markup = renderToStaticMarkup(await Invoices(noParams()))
 		const editActions = markup.match(/Edit invoice details/g) ?? []
 		expect(editActions).toHaveLength(1)
 		expect(markup).toContain('/invoices/mch_123#invoice-details')
 	})
 	it('lists a holder-only invoice with View but no edit action', async () => {
 		mocks.findCharges.mockResolvedValue([])
-		const markup = renderToStaticMarkup(await Invoices())
+		const markup = renderToStaticMarkup(await Invoices(noParams()))
 		expect(markup).toContain('/invoices/mch_123')
 		expect(markup).not.toContain('Edit invoice details')
 	})
 	it('shows an honest empty state when no purchase has an invoice', async () => {
 		const rows = await mocks.findPurchases()
 		mocks.findPurchases.mockResolvedValue([rows[1]])
-		const markup = renderToStaticMarkup(await Invoices())
+		const markup = renderToStaticMarkup(await Invoices(noParams()))
 		expect(markup).toContain('No invoices')
 		expect(markup).not.toContain('Your Invoices')
 		expect(markup).toContain('paid for by someone else')
@@ -155,7 +157,7 @@ describe('invoices list', () => {
 			{ ...paid, status: 'Refunded' },
 			{ ...paid, id: 'purchase_3', merchantChargeId: 'mch_456', status: 'Valid' },
 		])
-		const markup = renderToStaticMarkup(await Invoices())
+		const markup = renderToStaticMarkup(await Invoices(noParams()))
 		expect(markup.match(/Refunded/g) ?? []).toHaveLength(1)
 	})
 })

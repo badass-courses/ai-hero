@@ -3,6 +3,7 @@ import LayoutClient from '@/components/layout-client'
 import { env } from '@/env.mjs'
 import { REGIONAL_UPGRADE_REASON } from '@/lib/c5-pricing/products'
 import { PURCHASE_BLOCKED } from '@/lib/purchase-block'
+import { REGIONAL_TEAM_NOT_ALLOWED } from '@/lib/purchase-guardrails'
 import { Mail } from 'lucide-react'
 
 import { Button } from '@coursebuilder/ui/primitives/button'
@@ -15,6 +16,10 @@ const COPY = {
 	[PURCHASE_BLOCKED]: {
 		title: "We can't complete this purchase",
 		body: 'Please contact support and we will help you from there.',
+	},
+	[REGIONAL_TEAM_NOT_ALLOWED]: {
+		title: 'Regional pricing is for one seat',
+		body: 'Team seats are sold at the normal team price. Remove the regional discount and start your team checkout again.',
 	},
 	[REGIONAL_UPGRADE_REASON]: {
 		title: 'You already have a regional ticket',
@@ -33,7 +38,9 @@ export default async function SubscribeErrorPage({
 }) {
 	const { reason } = await searchParams
 	const copy =
-		reason === PURCHASE_BLOCKED || reason === REGIONAL_UPGRADE_REASON
+		reason === PURCHASE_BLOCKED ||
+		reason === REGIONAL_UPGRADE_REASON ||
+		reason === REGIONAL_TEAM_NOT_ALLOWED
 			? COPY[reason]
 			: COPY.default
 

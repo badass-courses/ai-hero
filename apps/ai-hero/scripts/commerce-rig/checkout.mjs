@@ -174,9 +174,12 @@ export async function checkout(state, key, fixtureKey, shouldComplete = false, {
   url.searchParams.set('productId', catalog[0].id)
   url.searchParams.set('quantity', String(fixture.quantity))
   url.searchParams.set('cancelUrl', origin)
+  // RIG_COUPON_ID and RIG_COUNTRY override the fixture, to exercise PPP paths.
+  const couponId = process.env.RIG_COUPON_ID ?? fixture.couponId
+  if (couponId) url.searchParams.set('couponId', couponId)
   if (fixture.quantity > 1) { url.searchParams.set('bulk', 'true'); url.searchParams.set('organizationId', `rig_org_${fixture.key}`) }
   // The buy form POSTs to this path; Course Builder rejects GET as an unknown action.
-  let response = await fetch(url, { method: 'POST', headers: { cookie, origin, 'content-type': 'application/x-www-form-urlencoded' }, body: '', redirect: 'manual', signal: AbortSignal.timeout(90000) })
+  let response = await fetch(url, { method: 'POST', headers: { cookie, origin, 'content-type': 'application/x-www-form-urlencoded', ...(process.env.RIG_COUNTRY ? { 'x-vercel-ip-country': process.env.RIG_COUNTRY } : {}) }, body: '', redirect: 'manual', signal: AbortSignal.timeout(90000) })
   const checkoutCookies = response.headers.getSetCookie().map(value => {
     const pair = value.split(';')[0]
     const separator = pair.indexOf('=')
@@ -206,7 +209,7 @@ export async function checkout(state, key, fixtureKey, shouldComplete = false, {
   const id = target?.match(/\bcs_test_[A-Za-z0-9]+/)?.[0]
   if (![302, 303, 307].includes(response.status) || !id || new URL(target).hostname !== 'checkout.stripe.com') {
     // Record only the shape: a hosted session URL is a payment capability.
-    const shape = target ? { host: new URL(target, origin).hostname, path: new URL(target, origin).pathname.replace(/cs_test_[A-Za-z0-9]+/, 'cs_test_*'), error: new URL(target, origin).searchParams.get('error') } : null
+    const shape = target ? { host: new URL(target, origin).hostname, path: new URL(target, origin).pathname.replace(/cs_test_[A-Za-z0-9]+/, 'cs_test_*'), error: new URL(target, origin).searchParams.get('error'), reason: new URL(target, origin).searchParams.get('reason'), alreadyOwn: new URL(target, origin).searchParams.get('already-own') } : null
     await privateWrite(join(state, 'checkout-refusal.json'), JSON.stringify({ fixture: fixture.key, at: new Date().toISOString(), status: response.status, hops, location: shape }) + '\n')
     throw new Error(`App checkout did not return a Stripe test session (HTTP ${response.status}); inspect private checkout-refusal.json`)
   }
