@@ -10,11 +10,13 @@ import LayoutClient from '@/components/layout-client'
 import { courseBuilderAdapter, db } from '@/db'
 import { coupon } from '@/db/schema'
 import { env } from '@/env.mjs'
-import { drizzleInvoiceSettingsDataSource } from '@/lib/invoice-settings'
+import { getOriginTransferForPurchase } from '@/lib/invoice-access'
 import {
-	formatInvoiceAmount,
-	getInvoicePresentment,
-} from '@/lib/invoice-amounts'
+	canViewInvoice,
+	invoiceDisplayAmount,
+} from '@/lib/invoice-access-rules'
+import { drizzleInvoiceSettingsDataSource } from '@/lib/invoice-settings'
+import { formatInvoiceAmount } from '@/lib/invoice-amounts'
 import {
 	drizzleInvoiceLinkDataSource,
 	invoiceLinkConfiguration,
@@ -105,7 +107,14 @@ async function getChargeDetails(merchantChargeId: string) {
 			? await getProduct(purchase?.productId)
 			: null
 
-		if (product && charge.status === 'succeeded' && purchase) {
+		// A redeemed team seat is not the buyer's invoice, even if a charge id
+		// were ever attached to it.
+		if (
+			product &&
+			charge.status === 'succeeded' &&
+			purchase &&
+			!purchase.redeemedBulkCouponId
+		) {
 			return {
 				state: 'SUCCESS' as const,
 				result: {
@@ -153,7 +162,22 @@ const Invoice = async (props: {
 		managedTeamPurchases,
 	)
 
-	if (!canEditInvoice) {
+	// Viewing is wider than editing: the original payer and the current holder
+	// may both see the invoice. Editing stays with the billing owner or a team
+	// manager, which settings and share-link actions enforce on their own.
+	const canViewByOwnership =
+		!canEditInvoice && viewerUserId
+			? canViewInvoice({
+					viewerId: viewerUserId,
+					purchaseUserId: chargeDetails.result.purchaseUserId,
+					payerUserId: chargeDetails.result.billingUserId,
+					transfer: await getOriginTransferForPurchase(
+						chargeDetails.result.purchaseId,
+					),
+				})
+			: false
+
+	if (!canEditInvoice && !canViewByOwnership) {
 		const token = (await cookies()).get(INVOICE_LINK_COOKIE)?.value
 		const { secret } = invoiceLinkConfiguration()
 		if (!invoiceLinkSecretUsable(secret) || !token) redirect('/invoices')
@@ -233,7 +257,7 @@ const Invoice = async (props: {
 		)
 	const formatChargeAmount = (amount: number) =>
 		formatInvoiceAmount(amount, charge.currency)
-	const presentment = getInvoicePresentment(charge)
+	const display = invoiceDisplayAmount(charge)
 	const created = fromUnixTime(charge.created)
 	const date = format(created, 'MMMM d, y')
 	const amountRefunded = charge.amount_refunded
@@ -249,13 +273,19 @@ const Invoice = async (props: {
 			<div className="container px-5 print:max-w-none">
 				<main className="max-w-(--breakpoint-md) mx-auto w-full">
 					<div className="flex flex-col justify-between pb-5 pt-10 print:hidden">
-						{canEditInvoice && (
+						{(canEditInvoice || canViewByOwnership) && (
 							<Link
-								href={isPurchaseOwner || isBillingOwner ? '/invoices' : '/team'}
+								href={
+									isPurchaseOwner || isBillingOwner || canViewByOwnership
+										? '/invoices'
+										: '/team'
+								}
 								className="mb-5 inline-flex items-center gap-1 text-sm opacity-75 transition hover:opacity-100"
 							>
 								<ChevronLeft className="h-3 w-3" />{' '}
-								{isPurchaseOwner || isBillingOwner ? 'Invoices' : 'Team'}
+								{isPurchaseOwner || isBillingOwner || canViewByOwnership
+									? 'Invoices'
+									: 'Team'}
 							</Link>
 						)}
 						<h1 className="font-text text-center text-lg font-medium leading-tight sm:text-left sm:text-xl">
@@ -334,7 +364,7 @@ const Invoice = async (props: {
 									</div>
 								</div>
 								<h2 className="sr-only">Purchase details</h2>
-								{presentment && (
+								{display.secondary && (
 									<p>
 										Line items{amountRefunded > 0 ? ' and refunds' : ''} are
 										shown in {charge.currency.toUpperCase()}.
@@ -395,15 +425,15 @@ const Invoice = async (props: {
 									</tbody>
 								</table>
 								<div className="flex flex-col items-end py-16 print:py-6">
-									{presentment ? (
+									{display.secondary ? (
 										<>
 											<div>
 												<span className="mr-3">Amount paid</span>
 												<strong className="text-lg">
-													{presentment.currency}{' '}
+													{display.primary.currency}{' '}
 													{formatInvoiceAmount(
-														presentment.amount,
-														presentment.currency,
+														display.primary.amount,
+														display.primary.currency,
 													)}
 												</strong>
 											</div>
@@ -413,8 +443,11 @@ const Invoice = async (props: {
 													{amountRefunded > 0 ? ' after refunds' : ''}
 												</span>
 												<span>
-													{charge.currency.toUpperCase()}{' '}
-													{formatChargeAmount(amount)}
+													{display.secondary.currency}{' '}
+													{formatInvoiceAmount(
+														display.secondary.amount,
+														display.secondary.currency,
+													)}
 												</span>
 											</div>
 											{amountRefunded > 0 && (
@@ -427,8 +460,11 @@ const Invoice = async (props: {
 										<div>
 											<span className="mr-3">Total</span>
 											<strong className="text-lg">
-												{charge.currency.toUpperCase()}{' '}
-												{formatChargeAmount(amount)}
+												{display.primary.currency}{' '}
+												{formatInvoiceAmount(
+													display.primary.amount,
+													display.primary.currency,
+												)}
 											</strong>
 										</div>
 									)}
