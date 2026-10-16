@@ -20,6 +20,7 @@ import type { CountdownRenderProps } from 'react-countdown'
 
 import { useCoupon } from '@coursebuilder/commerce-next/coupons/use-coupon'
 import * as Pricing from '@coursebuilder/commerce-next/pricing/pricing'
+import { showRegionalOffer } from '@/lib/pricing-decisions'
 import { usePriceCheck } from '@coursebuilder/commerce-next/pricing/pricing-check-context'
 import { usePricing } from '@coursebuilder/commerce-next/pricing/pricing-context'
 import type { Product, Purchase } from '@coursebuilder/core/schemas'
@@ -640,13 +641,14 @@ const RegionalPricingBox = () => {
 			? (lastQuotedPPPCoupon ?? appliedPPPCoupon ?? undefined)
 			: undefined)
 
-	const showPPPBox =
-		allowPurchase &&
-		isPPPEnabled &&
-		Boolean(pppCoupon) &&
-		!isPreviouslyPurchased &&
-		!isDowngrade(formattedPrice) &&
-		!isTeamPurchaseActive
+	const showPPPBox = showRegionalOffer({
+		allowPurchase,
+		isPPPEnabled,
+		hasRegionalCoupon: Boolean(pppCoupon),
+		isPreviouslyPurchased,
+		isDowngrade: isDowngrade(formattedPrice),
+		isTeamPurchaseActive,
+	})
 
 	const rawDiscount = pppCoupon?.percentageDiscount as
 		| string

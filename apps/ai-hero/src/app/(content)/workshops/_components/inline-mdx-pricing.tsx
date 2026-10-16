@@ -2,6 +2,7 @@
 
 import React from 'react'
 import { BuyPathPricingBeacon } from '@/lib/buy-path/beacons'
+import { inlineBuyLabel } from '@/lib/pricing-decisions'
 import Link from 'next/link'
 import { GatedBuyButton } from '@/components/commerce/gated-buy-button'
 import { TYPE } from '@/components/landing/type'
@@ -128,7 +129,6 @@ const Buy = ({
 
 	const finalPrice = formattedPrice?.calculatedPrice || 0
 	const savings = fullPrice - finalPrice
-	const savingsPercentage = Math.round((savings / fullPrice) * 100)
 
 	// The house gold CTA with the price riding along in mono — the button and
 	// the number it commits you to are one object (`Workshop Landing.dc.html`
@@ -138,7 +138,7 @@ const Buy = ({
 	return (
 		<>
 			<GatedBuyButton className={cn(WORKSHOP_CTA_BUTTON, className)}>
-				<span data-label="">Buy Now</span>
+				<span data-label="">{inlineBuyLabel({ isSoldOut })}</span>
 				<span
 					data-divider=""
 					className="bg-accent-fill-foreground/25 mx-2.5 h-4 w-px"
