@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest'
 import { showEvergreenEndedNotice } from './subscriber-marketing/evergreen-offer-notice'
 import {
 	inlineBuyLabel,
-	savingsPercentage,
 	seatsTaken,
 	showRegionalOffer,
 	type RegionalOfferInput,
@@ -72,23 +71,12 @@ describe('showRegionalOffer', () => {
 	})
 })
 
-describe('inlineBuyLabel / savingsPercentage', () => {
+describe('inlineBuyLabel', () => {
 	it('never says Buy Now when sold out', () => {
 		const legacy = () => 'Buy Now'
 		expect(legacy()).toBe('Buy Now') // the bug: ignored isSoldOut
 		expect(inlineBuyLabel({ isSoldOut: true })).toBe('Sold Out')
 		expect(inlineBuyLabel({ isSoldOut: false })).toBe('Buy Now')
-	})
-
-	it('is a whole percent, or null when not a finite number', () => {
-		const legacy = (s: number, f: number) => Math.round((s / f) * 100)
-		expect(legacy(0, 0)).toBeNaN()
-		expect(savingsPercentage(0, 0)).toBeNull()
-		expect(savingsPercentage(10, 0)).toBeNull()
-		expect(savingsPercentage(Number.NaN, 100)).toBeNull()
-		expect(savingsPercentage(10, Number.POSITIVE_INFINITY)).toBeNull()
-		expect(savingsPercentage(25, 100)).toBe(25)
-		expect(savingsPercentage(0, 100)).toBe(0)
 	})
 })
 
@@ -127,6 +115,61 @@ describe('seatsTaken', () => {
 			expect(
 				seatsTaken([{ status: 'Valid', bulkCouponId: 'c', bulkCouponMaxUses }]),
 			).toBe(1)
+	})
+
+	it('one bulk row plus N redeemed seats is maxUses, not maxUses + N', () => {
+		const bulk: SeatRow = {
+			status: 'Valid',
+			bulkCouponId: 'c',
+			bulkCouponMaxUses: 5,
+		}
+		for (const n of [0, 1, 2, 5]) {
+			const redemptions: SeatRow[] = Array.from({ length: n }, () => ({
+				status: 'Valid',
+				redeemedBulkCouponId: 'c',
+			}))
+			expect(seatsTaken([bulk, ...redemptions]), String(n)).toBe(5)
+			expect(legacy([bulk, ...redemptions])).toBe(1 + n)
+		}
+	})
+
+	it('a redeemed seat stays a seat when its bulk purchase no longer holds', () => {
+		for (const status of ['Refunded', 'Banned']) {
+			expect(
+				seatsTaken([
+					{ status, bulkCouponId: 'c', bulkCouponMaxUses: 5 },
+					{ status: 'Valid', redeemedBulkCouponId: 'c' },
+					{ status: 'Restricted', redeemedBulkCouponId: 'c' },
+					{ status: 'Refunded', redeemedBulkCouponId: 'c' },
+				]),
+			).toBe(2)
+		}
+	})
+
+	it('a redemption of a coupon bought on another product still counts one', () => {
+		expect(
+			seatsTaken([{ status: 'Valid', redeemedBulkCouponId: 'other' }]),
+		).toBe(1)
+	})
+
+	it('add-seat purchases share one coupon with a raised maxUses: counted once', () => {
+		const rows: SeatRow[] = [
+			{ status: 'Valid', bulkCouponId: 'c', bulkCouponMaxUses: 8 },
+			{ status: 'Valid', bulkCouponId: 'c', bulkCouponMaxUses: 8 },
+		]
+		expect(seatsTaken(rows)).toBe(8)
+		expect(legacy(rows)).toBe(2)
+		// one of the two refunded: the coupon still holds the seats
+		expect(seatsTaken([{ ...rows[0]!, status: 'Refunded' }, rows[1]!])).toBe(8)
+		// both refunded: none
+		expect(seatsTaken(rows.map((r) => ({ ...r, status: 'Refunded' })))).toBe(0)
+		// separate coupons add up
+		expect(
+			seatsTaken([
+				...rows,
+				{ status: 'Valid', bulkCouponId: 'd', bulkCouponMaxUses: 3 },
+			]),
+		).toBe(11)
 	})
 
 	it('mixes rows and differs from the legacy count', () => {

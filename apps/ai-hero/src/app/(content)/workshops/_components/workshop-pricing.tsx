@@ -4,6 +4,7 @@ import { usePathname, useSearchParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { api } from '@/trpc/react'
 
+import { EvergreenOfferEndedNotice } from '@/components/evergreen-offer-ended-notice'
 import { PriceCheckProvider } from '@coursebuilder/commerce-next/pricing/pricing-check-context'
 
 import {
@@ -46,6 +47,51 @@ function useWorkshopCommerce(productId?: string) {
 		data,
 		isError,
 	}
+}
+
+/** The buy box's ownership signal: the one rule the box and the notice share. */
+function buyBoxHasPurchased(
+	hasPurchasedCurrentProduct: boolean | undefined,
+	purchases: ReadonlyArray<{ productId: string }> | null | undefined,
+	productId: string | undefined,
+) {
+	return (
+		Boolean(hasPurchasedCurrentProduct) ||
+		Boolean(
+			productId && purchases?.some((purchase) => purchase.productId === productId),
+		)
+	)
+}
+
+/**
+ * The ended-offer notice with the buy box's ownership signal, read from the
+ * same uncached commerce query. It stays hidden until that signal is known,
+ * so an owner never sees the notice flash.
+ */
+export function WorkshopEvergreenOfferEndedNotice({
+	endpoint,
+	productId,
+}: {
+	endpoint: string
+	productId?: string
+}) {
+	const { status: sessionStatus } = useSession()
+	const { data, isError } = useWorkshopCommerce(productId)
+	const known =
+		sessionStatus === 'unauthenticated' ||
+		(sessionStatus === 'authenticated' && (Boolean(data) || isError))
+	if (!known) return null
+	return (
+		<EvergreenOfferEndedNotice
+			endpoint={endpoint}
+			viewerOwnsProduct={buyBoxHasPurchased(
+				false,
+				(data as { purchases?: { productId: string }[] } | undefined)
+					?.purchases,
+				productId,
+			)}
+		/>
+	)
 }
 
 export function WorkshopPricingClient(props: WorkshopPricingProps) {
@@ -129,14 +175,11 @@ function WorkshopPricingView({
 	const resolvedPurchasedProductIds =
 		commerceProps.purchases?.map((purchase) => purchase.productId) ??
 		purchasedProductIds
-	const resolvedHasPurchased =
-		hasPurchasedCurrentProduct ||
-		Boolean(
-			product &&
-			commerceProps.purchases?.some(
-				(purchase) => purchase.productId === product.id,
-			),
-		)
+	const resolvedHasPurchased = buyBoxHasPurchased(
+		hasPurchasedCurrentProduct,
+		commerceProps.purchases,
+		product?.id,
+	)
 
 	return product ? (
 		<PriceCheckProvider purchasedProductIds={resolvedPurchasedProductIds}>
