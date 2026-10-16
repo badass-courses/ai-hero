@@ -340,13 +340,6 @@ async function buildIndex(mode: IndexMode): Promise<SitemapEntry[]> {
 	const seenSkillSlugs = new Set<string>()
 
 	skillChangelogEntries.forEach((entry) => {
-		if (
-			mode === 'sitemap' &&
-			(entry.deletedAt ||
-				entry.fields?.state !== 'published' ||
-				entry.fields?.visibility !== 'public')
-		)
-			return
 		const slug = entry.fields?.slug
 		if (!slug) return
 		if (seenSkillSlugs.has(slug)) return

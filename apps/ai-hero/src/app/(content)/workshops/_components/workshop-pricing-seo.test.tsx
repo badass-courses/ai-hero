@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { buildCourseSchema } from '@/lib/course-schema'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { WorkshopPageProps } from './workshop-page-props'
 
@@ -23,6 +24,21 @@ vi.mock('@coursebuilder/commerce/props-for-commerce', () => ({
 }))
 import { PublicWorkshopPricing } from './workshop-public-pricing-server'
 
+function Metadata(props: WorkshopPageProps) {
+	const data = buildCourseSchema({
+		title: 'Synthetic workshop',
+		url: 'https://example.test/workshops/synthetic',
+		product: props.product,
+		quantityAvailable: props.quantityAvailable,
+	})
+	return (
+		<script
+			type="application/ld+json"
+			dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }}
+		/>
+	)
+}
+
 describe('workshop SEO pricing slot', () => {
 	it('passes the exact same resolved product and stock to metadata and the buy widget without a second fetch', async () => {
 		const product = {
@@ -34,13 +50,13 @@ describe('workshop SEO pricing slot', () => {
 		mocks.products.mockResolvedValue([product])
 		mocks.getProduct.mockResolvedValue(product)
 		mocks.getPricingData.mockResolvedValue({
-			formattedPrice: null,
+			formattedPrice: { price: 59, discountedPrice: 59 },
 			quantityAvailable: 0,
 		})
 		mocks.coupon.mockResolvedValue(null)
 		mocks.commerce.mockResolvedValue({})
-		const metadata = vi.fn((_props: WorkshopPageProps) => (
-			<script type="application/ld+json">{'{}'}</script>
+		const metadata = vi.fn((props: WorkshopPageProps) => (
+			<Metadata {...props} />
 		))
 		const widget = vi.fn((_props: WorkshopPageProps) => <div>Pricing</div>)
 		const markup = renderToStaticMarkup(
@@ -51,11 +67,25 @@ describe('workshop SEO pricing slot', () => {
 			}),
 		)
 		expect(markup).toContain('application/ld+json')
+		expect(markup).toContain('"price":247')
+		expect(markup).not.toContain('"price":59')
 		expect(metadata.mock.calls[0]?.[0]).toBe(widget.mock.calls[0]?.[0])
 		expect(metadata).toHaveBeenCalledWith(
 			expect.objectContaining({ product, quantityAvailable: 0 }),
 		)
 		expect(mocks.getProduct).toHaveBeenCalledTimes(1)
 		expect(mocks.getPricingData).toHaveBeenCalledTimes(1)
+	})
+	it('keeps Course without offers when there is no product and the pricing widget renders nothing', async () => {
+		mocks.products.mockResolvedValue([])
+		const markup = renderToStaticMarkup(
+			await PublicWorkshopPricing({
+				moduleSlug: 'missing',
+				children: () => null,
+				structuredData: (props) => <Metadata {...props} />,
+			}),
+		)
+		expect(markup).toContain('"@type":"Course"')
+		expect(markup).not.toContain('"offers"')
 	})
 })

@@ -20,6 +20,8 @@ export type DictionaryEntrySummary = {
 	path: string
 	githubUrl: string
 	description: string
+	/** Full normalized text for metadata and JSON-LD only. */
+	plainDescription?: string
 	aliases: string[]
 	sectionTitle: string
 	position: number
@@ -190,7 +192,10 @@ function getDescription(markdown: string) {
 
 	if (!firstParagraph) return ''
 
-	return plainDescription(firstParagraph)
+	const description = stripMarkdown(firstParagraph)
+	return description.length > 180
+		? `${description.slice(0, 177).trim()}...`
+		: description
 }
 
 function getDictionaryEntryPaths(readme: string) {
@@ -326,9 +331,14 @@ function parseDictionaryReadme(
 		}
 		currentEntry.rawBody = rawBody
 		currentEntry.body = rewriteDictionaryLinks(rawBody, slugByReadmeAnchor)
-		currentEntry.description = frontmatter.description
-			? plainDescription(frontmatter.description)
-			: getDescription(rawBody)
+		// Preserve main's UI/RSS teaser, including untouched frontmatter Markdown.
+		currentEntry.description =
+			frontmatter.description || getDescription(rawBody)
+		currentEntry.plainDescription = plainDescription(
+			frontmatter.description ||
+				rawBody.split(/\n\s*\n/).find((part) => part.trim()) ||
+				'',
+		)
 		currentEntry.aliases = frontmatter.aliases
 		delete (currentEntry as Partial<typeof currentEntry>).bodyLines
 		entries.push(currentEntry)

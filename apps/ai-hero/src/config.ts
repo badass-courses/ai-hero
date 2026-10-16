@@ -1,7 +1,16 @@
-import { env } from '@/env.mjs'
+// Shared with Node-side Inngest/entitlement consumers: do not import Next's full env module.
+const siteUrl = process.env.NEXT_PUBLIC_URL
+if (!siteUrl)
+	throw new Error('NEXT_PUBLIC_URL is required to configure the site URL')
+try {
+	if (!['https:', 'http:'].includes(new URL(siteUrl).protocol))
+		throw new Error('Unsupported protocol')
+} catch {
+	throw new Error('NEXT_PUBLIC_URL must be an absolute HTTP(S) URL')
+}
 
 const config = {
-	siteUrl: env.NEXT_PUBLIC_URL,
+	siteUrl,
 	defaultTitle: `${process.env.NEXT_PUBLIC_SITE_TITLE}`,
 	description: process.env.NEXT_PUBLIC_PRODUCT_DESCRIPTION,
 	author: `${process.env.NEXT_PUBLIC_PARTNER_FIRST_NAME} ${process.env.NEXT_PUBLIC_PARTNER_LAST_NAME}`,

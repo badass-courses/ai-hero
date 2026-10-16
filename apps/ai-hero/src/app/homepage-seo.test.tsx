@@ -11,6 +11,7 @@ vi.mock('./_components/landing-body', () => ({ LandingBody: () => null }))
 vi.mock('@/env.mjs', () => ({
 	env: { NEXT_PUBLIC_URL: 'https://www.aihero.dev' },
 }))
+vi.stubEnv('NEXT_PUBLIC_URL', 'https://www.aihero.dev')
 vi.stubGlobal('AsyncLocalStorage', AsyncLocalStorage)
 const { metadata } = await import('./page')
 const { resolveMetadata } = await vi.importActual<

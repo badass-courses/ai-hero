@@ -208,7 +208,9 @@ export function buildDictionaryStructuredData(dictionary: DictionaryData) {
 					'@id': `${toPublicUrl(`/ai-coding-dictionary/${entry.slug}`)}#defined-term`,
 					name: entry.title,
 					termCode: entry.slug,
-					description: metaDescription(entry.description, 155, { plainText: true }),
+					description: metaDescription(entry.plainDescription ?? entry.description, 155, {
+						plainText: entry.plainDescription !== undefined,
+					}),
 					url: toPublicUrl(`/ai-coding-dictionary/${entry.slug}`),
 					inDefinedTermSet: { '@id': termSetId },
 				})),
@@ -259,7 +261,9 @@ export function buildDictionaryEntryStructuredData({
 	const termSetId = `${dictionaryUrl}#defined-term-set`
 	const termId = `${canonicalUrl}#defined-term`
 	const webpageId = `${canonicalUrl}#webpage`
-	const description = metaDescription(entry.description, 155, { plainText: true })
+	const description = metaDescription(entry.plainDescription ?? entry.description, 155, {
+		plainText: entry.plainDescription !== undefined,
+	})
 	const image = toPublicUrl(
 		getAiCodingDictionaryOgImageUrl(
 			`${entry.title} | ${AI_CODING_DICTIONARY_TITLE}`,

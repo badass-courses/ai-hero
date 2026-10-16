@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { ContentResourceSchema } from '@coursebuilder/core/schemas'
 
-const mocks = vi.hoisted(() => ({ execute: vi.fn() }))
+const mocks = vi.hoisted(() => ({ execute: vi.fn(), skills: vi.fn() }))
 vi.mock('@/db', () => ({ db: { execute: mocks.execute } }))
 vi.mock('@/db/schema', () => ({
 	contentResource: 'ContentResource',
@@ -11,7 +12,7 @@ vi.mock('@/lib/ai-coding-dictionary', () => ({
 	getAiCodingDictionary: async () => ({ updatedAt: '2026-10-01', entries: [] }),
 }))
 vi.mock('@/lib/skill-changelog-query', () => ({
-	getSkillChangelogEntries: async () => [],
+	getSkillChangelogEntries: mocks.skills,
 }))
 import sitemap from './sitemap'
 
@@ -27,6 +28,7 @@ const published = {
 
 describe('content-derived sitemap timestamps', () => {
 	beforeEach(() => {
+		mocks.skills.mockReset().mockResolvedValue([])
 		vi.stubEnv('COURSEBUILDER_URL', 'https://www.aihero.dev')
 		mocks.execute.mockReset()
 		mocks.execute
@@ -128,6 +130,35 @@ describe('content-derived sitemap timestamps', () => {
 				?.lastModified?.toISOString(),
 		).toBe('2026-10-13T00:00:00.000Z')
 		expect(entries.some((entry) => entry.url.includes('draft'))).toBe(false)
+	})
+	it('keeps skill URLs from query-shaped resources without re-filtering their fields', async () => {
+		const skill = ContentResourceSchema.parse({
+			id: 'synthetic-skill',
+			type: 'skill-changelog',
+			createdById: 'synthetic-author',
+			organizationId: null,
+			createdByOrganizationMembershipId: null,
+			createdAt: '2030-01-01',
+			updatedAt: '2030-02-01',
+			deletedAt: null,
+			resources: [],
+			fields: {
+				slug: 'synthetic-skill',
+				title: 'Synthetic skill',
+				description: 'Skill update',
+			},
+		})
+		mocks.skills.mockResolvedValueOnce([
+			skill,
+			{
+				...skill,
+				id: 'second',
+				fields: { slug: 'second-skill', title: 'Second skill' },
+			},
+		])
+		const urls = (await sitemap()).map((entry) => entry.url)
+		expect(urls).toContain('https://www.aihero.dev/skills/synthetic-skill')
+		expect(urls).toContain('https://www.aihero.dev/skills/second-skill')
 	})
 	it('does not emit drafts or unpublished/unlisted content', async () => {
 		const urls = (await sitemap()).map((entry) => entry.url)

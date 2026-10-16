@@ -3,7 +3,10 @@ import { Feed } from 'feed'
 import ts from 'typescript'
 import baseline from '@/lib/__fixtures__/rss-main.json'
 
-const fixture = vi.hoisted(() => ({ execute: vi.fn() }))
+const fixture = vi.hoisted(() => {
+	vi.stubEnv('NEXT_PUBLIC_URL', 'https://www.aihero.dev')
+	return { execute: vi.fn() }
+})
 vi.mock('@/db', () => ({ db: { execute: fixture.execute } }))
 vi.mock('@/db/schema', () => ({
 	contentResource: 'ContentResource',
@@ -18,9 +21,6 @@ vi.mock('@/env.mjs', () => ({
 		NEXT_PUBLIC_SUPPORT_EMAIL: 'support@example.test',
 	},
 }))
-vi.mock('@/lib/ai-coding-dictionary', () => ({
-	getAiCodingDictionary: async () => ({ updatedAt: '2026-01-10', entries: [] }),
-}))
 vi.mock('@/lib/skill-changelog-query', () => ({
 	getSkillChangelogEntries: async () => [],
 }))
@@ -29,6 +29,13 @@ import { env } from '@/env.mjs'
 import { GET } from './route'
 
 const site = 'https://www.aihero.dev'
+const fallbackBody = '**Engineering vocabulary** '.repeat(20).trim()
+const frontmatterDescription =
+	'**Detailed** [guide](https://example.test) ' +
+	'vocabulary '.repeat(20).trim()
+const mainDescription = new Function(
+	`${ts.transpileModule(baseline.dictionaryDescription, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText}; return getDescription`,
+)() as (source: string) => string
 const entry = (
 	path: string,
 	title: string,
@@ -74,10 +81,44 @@ const mainIndexFixture = [
 		'The vocabulary of AI coding, translated into plain English for engineers.',
 		'2026-01-10',
 	),
+	entry(
+		'/ai-coding-dictionary/agent',
+		'Agent | AI Coding Dictionary',
+		mainDescription(fallbackBody),
+		'2026-01-10',
+	),
+	entry(
+		'/ai-coding-dictionary/model',
+		'Model | AI Coding Dictionary',
+		frontmatterDescription,
+		'2026-01-10',
+	),
 ]
 
 describe('RSS compatibility', () => {
 	it('is byte-identical to main: same entries, order, published dates and fallback', async () => {
+		const sha = 'a'.repeat(40)
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (input: unknown) => {
+				const url = String(input)
+				if (url.endsWith('/commits/main.atom'))
+					return new Response(
+						`<feed><entry><id>tag:github.com,2008:Grit::Commit/${sha}</id><updated>2026-01-10T00:00:00Z</updated></entry></feed>`,
+					)
+				if (url.endsWith('/README.md'))
+					return new Response(
+						`## Section 1 — Foundations\n\n### Agent\n\n${fallbackBody}\n\n### Model\n\nModel fallback.`,
+					)
+				if (url.endsWith('/dictionary/Model.md'))
+					return new Response(
+						`---\ndescription: "${frontmatterDescription}"\n---\n\nBody`,
+					)
+				if (url.endsWith('/dictionary/Agent.md'))
+					return new Response('unavailable', { status: 503 })
+				throw new Error(`Unexpected fixture request: ${url}`)
+			}),
+		)
 		vi.stubEnv('COURSEBUILDER_URL', site)
 		vi.stubEnv('DEPLOY_TIMESTAMP', '')
 		vi.stubEnv('VERCEL_GIT_COMMIT_SHA', '')
@@ -131,7 +172,10 @@ describe('RSS compatibility', () => {
 		)(config, env, Feed, async () => mainIndexFixture) as () => Promise<string>
 		const expected = await renderMain()
 		const response = await GET()
-		expect(await response.text()).toBe(expected)
+		const actual = await response.text()
+		expect(actual).toBe(expected)
+		expect(actual).toContain('**Detailed**')
+		expect(mainDescription(fallbackBody)).toHaveLength(180)
 		expect(fixture.execute).toHaveBeenCalledTimes(2)
 	})
 })

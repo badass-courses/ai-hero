@@ -43,6 +43,9 @@ describe('metaDescription', () => {
 		expect(metaDescription('fundamentals', 5)).toBe('fund…')
 		expect(metaDescription('hello, this continues', 8)).toBe('hello…')
 		expect(metaDescription('hello', 0)).toBeUndefined()
+		expect(metaDescription('hello', 1)).toBe('h')
+		expect(metaDescription('…')).toBeUndefined()
+		expect(metaDescription('... continued', 3)).toBeUndefined()
 		expect(() => metaDescription('hello', -1)).toThrow()
 	})
 	it('keeps full dictionary text and does not parse already-plain data twice', () => {
@@ -74,14 +77,14 @@ describe('metaDescription', () => {
 					expect(output.length).toBeLessThanOrEqual(limit)
 					expect(output).not.toMatch(/[*_`<>\[\]]|&(?:a|am|amp)$/)
 					if (plain.length <= limit) expect(output).toBe(plain)
+					else if (limit === 1) expect(output).toBe(plain[0])
 					else {
+						expect(output).not.toBe('…')
 						expect(output.endsWith('…')).toBe(true)
 						const prefix = output.slice(0, -1)
 						expect(plain.startsWith(prefix)).toBe(true)
 						expect(
-							prefix === '' ||
-								plain[prefix.length] === ' ' ||
-								words[0]!.length >= limit,
+							plain[prefix.length] === ' ' || words[0]!.length >= limit,
 						).toBe(true)
 					}
 				},

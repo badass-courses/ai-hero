@@ -206,6 +206,48 @@ describe('source-declaration head renders (synthetic fixtures, Next metadata inh
 		expect(markup).toContain('id="course-jsonld"')
 		expect(markup).not.toContain('"offers"')
 	})
+	it('keeps both cohort schemas without offers when pricing rejects', async () => {
+		const metadata = declaration<
+			(props: Record<string, unknown>) => React.ReactNode
+		>(
+			'apps/ai-hero/src/app/(content)/cohorts/[slug]/page.tsx',
+			'CohortMetadata',
+			false,
+			{ React, CourseStructuredData, ProductStructuredData },
+		)
+		const resolve = declaration<
+			(props: Record<string, unknown>) => Promise<React.ReactNode>
+		>(
+			'apps/ai-hero/src/app/(content)/cohorts/[slug]/page.tsx',
+			'ResolvedCohortMetadata',
+			false,
+			{ React, CohortMetadata: metadata },
+		)
+		const markup = renderToStaticMarkup(
+			await resolve({
+				cohort: {
+					fields: {
+						title: 'Synthetic cohort',
+						slug: 'synthetic',
+						description: 'Cohort',
+					},
+				},
+				product: {
+					id: 'synthetic',
+					name: 'Synthetic cohort',
+					type: 'cohort',
+					fields: {},
+					price: { unitAmount: 247, fields: {} },
+				},
+				pricingDataLoader: Promise.reject(
+					new Error('Synthetic pricing failure'),
+				),
+			}),
+		)
+		expect(markup).toContain('id="product-jsonld"')
+		expect(markup).toContain('id="course-jsonld"')
+		expect(markup).not.toContain('"offers"')
+	})
 	it('captures base/head for homepage, both crash courses and a dictionary term', async () => {
 		const proof: Record<string, { before: string; after: string }> = {}
 		for (const before of [true, false]) {
@@ -277,7 +319,7 @@ describe('source-declaration head renders (synthetic fixtures, Next metadata inh
 					description: description!,
 					slug: slug!,
 					product,
-					quantityAvailable: 0,
+					quantityAvailable: 3,
 				})
 				const route = `/workshops/${slug}`
 				proof[route] ??= { before: '', after: '' }
@@ -285,7 +327,7 @@ describe('source-declaration head renders (synthetic fixtures, Next metadata inh
 				if (!before) {
 					expect(metadata.description).not.toMatch(/\*you\*|\[/)
 					expect(metadata.description!.length).toBeLessThanOrEqual(155)
-					expect(proof[route][phase]).toContain('https://schema.org/SoldOut')
+					expect(proof[route][phase]).toContain('https://schema.org/InStock')
 				}
 			}
 			const entry = {
@@ -309,8 +351,8 @@ describe('source-declaration head renders (synthetic fixtures, Next metadata inh
 					metaDescription,
 					getAiCodingDictionaryEntry: async () => ({
 						...entry,
-						description: before
-							? entry.description
+						plainDescription: before
+							? undefined
 							: plainDescription(entry.description),
 					}),
 					AI_CODING_DICTIONARY_TITLE: 'AI Coding Dictionary',
@@ -330,7 +372,8 @@ describe('source-declaration head renders (synthetic fixtures, Next metadata inh
 				<DictionaryEntryStructuredData
 					entry={{
 						...entry,
-						description: before
+						// Main's JSON-LD writer emitted the raw description; preserve that baseline.
+						plainDescription: before
 							? entry.description
 							: plainDescription(entry.description),
 					}}

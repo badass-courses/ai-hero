@@ -94,13 +94,7 @@ const sampleProduct: Product = {
 		status: 1,
 		unitAmount: 199,
 		createdAt: new Date('2024-05-01T12:00:00.000Z'),
-		fields: {
-			stripe: {
-				identifier: 'price_synthetic', productIdentifier: 'prod_synthetic',
-				active: true, livemode: false, currency: 'usd', unitAmountMinor: 19900,
-				type: 'one_time', recurring: null, supported: true, lookupKey: null,
-			},
-		},
+		fields: {},
 	},
 	resources: [],
 }

@@ -44,7 +44,7 @@ function plainText(node: TextNode): string {
 	return (node.children ?? []).map(plainText).join(separator)
 }
 
-/** Full plain text for content data. Never truncate the dictionary's on-page description. */
+/** Full plain text for SEO data, separate from the dictionary's UI/RSS teaser. */
 export function plainDescription(source?: string | null): string {
 	// Inline raw-text elements can span several Markdown nodes. Remove them as a unit.
 	const withoutRawElements = (source ?? '').replace(
@@ -67,7 +67,8 @@ export function metaDescription(
 		? (source?.trim() ?? '')
 		: plainDescription(source)
 	if (!text) return undefined
-	if (text.length <= limit) return text
+	if (text.length <= limit) return text === '…' ? undefined : text
+	if (limit === 1) return text[0]?.replace(/[\uD800-\uDBFF…]/g, '') || undefined
 	const candidate = text.slice(0, limit - 1).replace(/[\uD800-\uDBFF]$/, '')
 	const boundary = candidate.lastIndexOf(' ')
 	const prefix = /\s/.test(text[limit - 1] ?? '')
@@ -75,5 +76,6 @@ export function metaDescription(
 		: boundary > 0
 			? candidate.slice(0, boundary)
 			: candidate
-	return `${prefix.replace(/[\s.,;:!?…\-–—]+$/, '')}…`
+	const cleanPrefix = prefix.replace(/[\s.,;:!?…\-–—]+$/, '')
+	return cleanPrefix ? `${cleanPrefix}…` : undefined
 }

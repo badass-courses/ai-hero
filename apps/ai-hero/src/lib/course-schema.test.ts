@@ -6,9 +6,7 @@ import type { Product } from '@coursebuilder/core/schemas'
 import { buildCourseSchema } from './course-schema'
 import { buildProductStructuredData } from './structured-data'
 
-vi.mock('@/env.mjs', () => ({
-	env: { NEXT_PUBLIC_URL: 'https://www.aihero.dev' },
-}))
+vi.hoisted(() => vi.stubEnv('NEXT_PUBLIC_URL', 'https://www.aihero.dev'))
 
 // Exact getProduct shape, with legacy AI_Price.fields = {} (no Stripe catalog facts).
 const product: Product = {
@@ -171,33 +169,33 @@ describe('typed Course JSON-LD', () => {
 			).toMatchObject({ availability: `https://schema.org/${availability}` })
 		},
 	)
-	it('keeps the enrollment window and omits pre-open/closed offers (C5 Oct 26)', () => {
+	it('keeps a synthetic enrollment window and omits pre-open/closed offers', () => {
 		const windowed = {
 			...input,
 			product: {
 				...product,
 				fields: {
 					...product.fields,
-					openEnrollment: '2026-10-26T16:00:00Z',
-					closeEnrollment: '2026-11-02T17:00:00Z',
+					openEnrollment: '2030-03-10T16:00:00Z',
+					closeEnrollment: '2030-03-20T17:00:00Z',
 				},
 			},
 		}
 		expect(
-			buildCourseSchema({ ...windowed, now: new Date('2026-10-16T12:00:00Z') })
+			buildCourseSchema({ ...windowed, now: new Date('2030-03-01T12:00:00Z') })
 				.offers,
 		).toBeUndefined()
 		expect(
-			buildCourseSchema({ ...windowed, now: new Date('2026-11-02T17:00:00Z') })
+			buildCourseSchema({ ...windowed, now: new Date('2030-03-20T17:00:00Z') })
 				.offers,
 		).toBeUndefined()
 		const open = buildCourseSchema({
 			...windowed,
-			now: new Date('2026-10-26T16:00:00Z'),
+			now: new Date('2030-03-10T16:00:00Z'),
 		})
 		expect(open.offers).toMatchObject({
-			availabilityStarts: '2026-10-26T16:00:00.000Z',
-			availabilityEnds: '2026-11-02T17:00:00.000Z',
+			availabilityStarts: '2030-03-10T16:00:00.000Z',
+			availabilityEnds: '2030-03-20T17:00:00.000Z',
 			availability: 'https://schema.org/InStock',
 		})
 		expect(courseSchema.safeParse(open).success).toBe(true)

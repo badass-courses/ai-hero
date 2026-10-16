@@ -147,6 +147,14 @@ export default async function ModulePage(props: Props) {
 		? `/workshops/${params.module}/for-teams`
 		: undefined
 	const shouldShowPricingSidebar = hasSelfPacedProduct || isPreLaunch
+	const metadataWithoutOffers = (
+		<WorkshopMetadata
+			title={workshop.fields?.title || ''}
+			description={workshop.fields?.description || ''}
+			imageUrl={workshop.fields?.coverImage?.url}
+			slug={params.module}
+		/>
+	)
 	const bodySource = workshop.fields.body || ''
 	// The body placing the curriculum itself replaces the auto-appended list.
 	// Code fences/inline code are stripped first so a body that merely *shows*
@@ -307,14 +315,7 @@ export default async function ModulePage(props: Props) {
 						/>
 					</React.Suspense>
 				)}
-				{!hasSelfPacedProduct ? (
-					<WorkshopMetadata
-						title={workshop.fields?.title || ''}
-						description={workshop.fields?.description || ''}
-						imageUrl={workshop.fields?.coverImage?.url}
-						slug={params.module}
-					/>
-				) : null}
+				{!shouldShowPricingSidebar ? metadataWithoutOffers : null}
 				{/* The cover bleeds to the container's top, right and bottom edges,
 				    square-cornered, on the same six-column rhythm as the body below —
 				    its left edge continues the sidebar's hairline. The text column
@@ -412,12 +413,15 @@ export default async function ModulePage(props: Props) {
 							{shouldShowPricingSidebar ? (
 								<React.Suspense
 									fallback={
-										<div className="bg-background relative z-10 flex w-full flex-col gap-2 p-5 pb-16">
-											<Skeleton className="bg-accent h-10 w-full" />
-											<Skeleton className="bg-accent h-10 w-full" />
-											<Skeleton className="bg-accent h-10 w-full" />
-											<Skeleton className="bg-accent h-10 w-full" />
-										</div>
+										<>
+											{metadataWithoutOffers}
+											<div className="bg-background relative z-10 flex w-full flex-col gap-2 p-5 pb-16">
+												<Skeleton className="bg-accent h-10 w-full" />
+												<Skeleton className="bg-accent h-10 w-full" />
+												<Skeleton className="bg-accent h-10 w-full" />
+												<Skeleton className="bg-accent h-10 w-full" />
+											</div>
+										</>
 									}
 								>
 									<PublicWorkshopPricing
