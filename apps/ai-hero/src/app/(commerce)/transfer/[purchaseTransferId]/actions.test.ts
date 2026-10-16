@@ -9,7 +9,9 @@ vi.mock('@/server/auth', () => ({ signIn: mocks.signIn }))
 import { sendTransferLogin } from './actions'
 
 describe('sendTransferLogin', () => {
-	beforeEach(() => vi.clearAllMocks())
+	beforeEach(() => {
+		vi.clearAllMocks()
+	})
 
 	it('emails the recipient resolved on the server, back to the transfer', async () => {
 		mocks.get.mockResolvedValue({
