@@ -1,6 +1,7 @@
 import { UserSchema } from '@/ability'
 import { db } from '@/db'
 import { accounts, roles, userRoles, users } from '@/db/schema'
+import { isDiscordConnected } from '@/lib/discord-view'
 import { getServerAuthSession } from '@/server/auth'
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
@@ -48,5 +49,5 @@ export async function discordAccountsForCurrentUser() {
 		),
 	})
 
-	return !isEmpty(userAccounts)
+	return userAccounts.some(isDiscordConnected)
 }
