@@ -37,7 +37,8 @@ describe('transfer screen', () => {
 
 	it('offers anyone else a login link for the recipient, back to this page', () => {
 		const signedOut = render({ kind: 'sign-in', viewerEmail: null })
-		expect(signedOut).toContain('Sign in as pat@home.example to accept')
+		expect(signedOut).toContain('Sign in as p**@home.example to accept')
+		expect(signedOut).not.toContain('pat@home.example')
 		expect(signedOut).toContain('Email me a login link')
 		expect(signedOut).toContain('brings you back here to accept')
 		expect(signedOut).not.toContain('Accept transfer')

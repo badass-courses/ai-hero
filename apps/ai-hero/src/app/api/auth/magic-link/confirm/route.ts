@@ -6,5 +6,6 @@ import { withSkill } from '@/server/with-skill'
 export const POST = withSkill(
 	createMagicLinkConfirmHandler(authPOST, {
 		secret: env.NEXTAUTH_SECRET ?? '',
+		siteUrl: env.NEXT_PUBLIC_URL,
 	}),
 )

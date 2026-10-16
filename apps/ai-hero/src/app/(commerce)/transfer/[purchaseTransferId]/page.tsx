@@ -1,6 +1,7 @@
 import { revalidatePath, updateTag } from 'next/cache'
 import { notFound, redirect } from 'next/navigation'
 import { courseBuilderAdapter } from '@/db'
+import { acceptanceLinkView } from '@/lib/acceptance-link-view'
 import { INCOMING_TRANSFERS_TAG } from '@/lib/incoming-transfers'
 import { purchaseArtwork } from '@/lib/purchase-artwork'
 import { acceptPurchaseTransfer } from '@/purchase-transfer/purchase-transfer-actions'
@@ -21,8 +22,10 @@ const SENT = ['INITIATED', 'VERIFIED', 'COMPLETED', 'CANCELED', 'EXPIRED']
 
 const PurchaseTransferPage = async (props: {
 	params: Promise<{ purchaseTransferId: string }>
+	searchParams?: Promise<{ link?: string }>
 }) => {
 	const { purchaseTransferId: id } = await props.params
+	const linkUsed = (await props.searchParams)?.link === 'used'
 	const [{ session }, transfer] = await Promise.all([
 		getServerAuthSession(),
 		courseBuilderAdapter.getPurchaseUserTransferById({ id }),
@@ -65,6 +68,21 @@ const PurchaseTransferPage = async (props: {
 		view = { kind: 'sign-in', viewerEmail: viewer?.email ?? null }
 	}
 
+	// The acceptance email's one-time link was already spent: say where the
+	// transfer stands instead of "expired". Only a pending transfer is "waiting".
+	const notice =
+		linkUsed && !view.kind.match(/^(accepted|canceled|expired)$/)
+			? acceptanceLinkView({
+					tokenState: 'spent',
+					signedIn: viewerIsRecipient
+						? 'recipient'
+						: viewer?.id
+							? 'other'
+							: 'signed-out',
+					transferState: 'pending',
+				}).notice
+			: null
+
 	async function accept() {
 		'use server'
 		await acceptPurchaseTransfer({ purchaseUserTransferId: id })
@@ -76,6 +94,7 @@ const PurchaseTransferPage = async (props: {
 	return (
 		<TransferScreen
 			view={view}
+			notice={notice}
 			transferId={id}
 			productName={product?.name ?? 'your purchase'}
 			artwork={purchaseArtwork(product)}

@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import LayoutClient from '@/components/layout-client'
+import { maskEmail } from '@/lib/acceptance-link-view'
 import { TYPE } from '@/components/landing/type'
 import { ArrowRight, Gift } from 'lucide-react'
 
@@ -43,6 +44,7 @@ export function TransferScreen({
 	senderEmail,
 	recipientEmail,
 	accept,
+	notice,
 }: {
 	view: TransferView
 	transferId: string
@@ -52,6 +54,8 @@ export function TransferScreen({
 	senderEmail?: string | null
 	recipientEmail: string
 	accept?: () => Promise<void>
+	/** Shown above the state when a spent acceptance link brought them here. */
+	notice?: string | null
 }) {
 	const eyebrow = {
 		accept: `Sent to you by ${senderName}`,
@@ -63,6 +67,11 @@ export function TransferScreen({
 	const recipient = (
 		<strong className="text-foreground break-words font-semibold">
 			{recipientEmail}
+		</strong>
+	)
+	const maskedRecipient = (
+		<strong className="text-foreground break-words font-semibold">
+			{maskEmail(recipientEmail)}
 		</strong>
 	)
 	const askSender = senderEmail ? (
@@ -109,6 +118,17 @@ export function TransferScreen({
 							</PurchaseHeading>
 						</PurchaseCardSection>
 
+						{notice ? (
+							<PurchaseCardSection>
+								<p
+									role="status"
+									className={cn(TYPE.metaProse, 'text-foreground font-medium')}
+								>
+									{notice}
+								</p>
+							</PurchaseCardSection>
+						) : null}
+
 						{view.kind === 'accept' ? (
 							<PurchaseCardSection>
 								<PurchaseNextStep
@@ -146,7 +166,7 @@ export function TransferScreen({
 							<PurchaseCardSection>
 								<PurchaseNextStep
 									icon={<PostPurchaseIconBadge kind="email" />}
-									title={<>Sign in as {recipientEmail} to accept</>}
+									title={<>Sign in as {maskEmail(recipientEmail)} to accept</>}
 									action={
 										<TransferLoginButton
 											email={recipientEmail}
@@ -161,12 +181,12 @@ export function TransferScreen({
 												<strong className="text-foreground break-words font-semibold">
 													{view.viewerEmail}
 												</strong>
-												. We&apos;ll email a login link to {recipient} that
+												. We&apos;ll email a login link to {maskedRecipient} that
 												signs you in there and brings you back here.
 											</>
 										) : (
 											<>
-												We&apos;ll email a login link to {recipient}. It
+												We&apos;ll email a login link to {maskedRecipient}. It
 												brings you back here to accept.
 											</>
 										)}
@@ -178,7 +198,7 @@ export function TransferScreen({
 						{view.kind === 'accepted' && !view.viewerIsRecipient ? (
 							<PurchaseCardSection>
 								<p className={cn(TYPE.metaProse, 'text-muted-foreground')}>
-									This seat now belongs to {recipient}.
+									This seat now belongs to {maskedRecipient}.
 								</p>
 							</PurchaseCardSection>
 						) : null}
