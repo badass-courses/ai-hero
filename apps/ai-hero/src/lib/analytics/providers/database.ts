@@ -5,6 +5,19 @@ import * as schema from '@/db/schema'
 import { createDatabaseProvider } from '@coursebuilder/analytics/providers/database'
 
 import type { AnalyticsRange } from '../types'
+import {
+	formatPromoRevenue,
+	promoWindow,
+	type PromoAggregateRow,
+	type PromoOptions,
+} from '../promos'
+import { promoRevenueSql } from '../promos-query'
+
+export async function getRevenueByPromo(options: PromoOptions = {}) {
+	const window = promoWindow(options)
+	const result = await db.execute(promoRevenueSql(options, window))
+	return formatPromoRevenue(result.rows as PromoAggregateRow[], window)
+}
 
 const provider = createDatabaseProvider(db, schema)
 

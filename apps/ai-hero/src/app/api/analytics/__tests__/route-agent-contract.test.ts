@@ -8,6 +8,31 @@ const mocks = vi.hoisted(() => ({
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 	catalog: [
 		{
+			name: 'revenue/promos',
+			description: 'Promo revenue',
+			category: 'revenue',
+			provider: 'database',
+			fn: 'getRevenueByPromo',
+		},
+		{
+			name: 'funnel/evergreen',
+			description: 'Pending evergreen funnel',
+			category: 'attribution',
+			provider: 'database',
+			fn: 'getEvergreenFunnel',
+		},
+		...[
+			'attribution/funnel',
+			'attribution/coverage',
+			'attribution/commerce-lanes',
+		].map((name) => ({
+			name,
+			description: 'Synthetic attribution surface',
+			category: 'attribution',
+			provider: 'database',
+			fn: 'synthetic',
+		})),
+		{
 			name: 'summary',
 			description: 'Revenue overview: total, purchase count, AOV',
 			category: 'revenue',
@@ -88,6 +113,103 @@ describe('analytics API agent contract', () => {
 		})
 	})
 
+	it.each(['revenue/promos', 'funnel/evergreen'])(
+		'refuses signed-out and ordinary users for %s without querying',
+		async (surface) => {
+			for (const ability of [null, createAppAbility([])]) {
+				mocks.getUserAbilityForRequest.mockResolvedValue({
+					user: null,
+					ability,
+				})
+				mocks.getServerAuthSession.mockResolvedValue({
+					session: ability ? { user: { id: 'synthetic-non-admin' } } : null,
+					ability,
+				})
+				const response = await GET(request(`?surface=${surface}`))
+				expect(response.status).toBe(401)
+				expect(mocks.query).not.toHaveBeenCalled()
+			}
+		},
+	)
+
+	it.each(['revenue/promos', 'funnel/evergreen'])(
+		'accepts analytics-scoped device token for %s and preserves exact window',
+		async (surface) => {
+			mocks.getUserAbilityForRequest.mockResolvedValue({
+				user: null,
+				ability: createAppAbility([{ action: 'view', subject: 'Analytics' }]),
+			})
+			const data =
+				surface === 'funnel/evergreen'
+					? { status: 'pending', reason: 'Aggregate read pending' }
+					: { currency: 'USD', byKind: [], daily: [] }
+			mocks.query.mockResolvedValue({
+				ok: true,
+				data,
+				meta: { queryTimeMs: 1, truncated: false },
+			})
+			const response = await GET(
+				request(
+					`?surface=${surface}&from=2026-01-01T18:00:00.001Z&to=2026-01-02T18:00:00Z`,
+				),
+			)
+			expect(response.status).toBe(200)
+			expect(mocks.query).toHaveBeenCalledWith(
+				surface,
+				expect.objectContaining({
+					from: '2026-01-01T18:00:00.001Z',
+					to: '2026-01-02T18:00:00Z',
+				}),
+			)
+			const body = await response.json()
+			expect(body.data).toEqual(data)
+			expect(body._links.self.href).toContain(
+				'from=2026-01-01T18%3A00%3A00.001Z',
+			)
+			expect(JSON.stringify(body.data)).not.toMatch(
+				/userId|purchaseId|couponId|email|userName/,
+			)
+		},
+	)
+
+	it('rejects incomplete explicit windows before querying', async () => {
+		const response = await GET(
+			request('?surface=revenue/promos&from=2026-01-01T00:00:00Z'),
+		)
+		expect(response.status).toBe(400)
+		expect(mocks.query).not.toHaveBeenCalled()
+	})
+
+	it('publishes both new schemas and their semantics', async () => {
+		const body = await (await GET(request())).json()
+		expect(body.surfaces.map((entry: { name: string }) => entry.name)).toEqual(
+			expect.arrayContaining(['revenue/promos', 'funnel/evergreen']),
+		)
+		expect(body.schema.surfaces['revenue/promos']).toMatchObject({
+			supports: ['range', 'from', 'to', 'productId'],
+			data: {
+				properties: {
+					currency: { const: 'USD' },
+					byKind: {
+						items: {
+							required: expect.arrayContaining([
+								'gross',
+								'refunds',
+								'net',
+								'currency',
+								'recordCount',
+							]),
+						},
+					},
+				},
+			},
+		})
+		expect(
+			body.schema.surfaces['funnel/evergreen'].data.oneOf[0].properties.status
+				.const,
+		).toBe('pending')
+	})
+
 	it('accepts the limited analytics-read device ability at the analytics route', async () => {
 		mocks.getUserAbilityForRequest.mockResolvedValue({
 			user: { id: 'user_1' },
@@ -115,7 +237,7 @@ describe('analytics API agent contract', () => {
 				expect.stringContaining('defaults to range=30d'),
 			]),
 			schema: {
-				version: '2026-08-18.1',
+				version: '2026-10-16.1',
 				query: {
 					type: 'object',
 					required: ['surface'],

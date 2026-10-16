@@ -1,0 +1,45 @@
+name: Promo analytics contract
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/analytics-promos.yaml"
+      - "apps/ai-hero/src/lib/analytics/**"
+      - "apps/ai-hero/src/app/api/analytics/**"
+      - "apps/ai-hero/src/app/admin/analytics/**"
+      - "pnpm-lock.yaml"
+  workflow_dispatch:
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: analytics_test_password
+        ports:
+          - 3307:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -panalytics_test_password --silent"
+          --health-interval=2s
+          --health-timeout=5s
+          --health-retries=30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Pure, API refusal, card and MySQL parity contracts
+        env:
+          AIH_MYSQL_TEST_URL: mysql://root:analytics_test_password@127.0.0.1:3307/mysql
+        run: >-
+          pnpm --filter ai-hero exec vitest run -c vitest.config.ts
+          src/lib/analytics/promos.test.ts
+          src/lib/analytics/promos-engine.test.ts
+          src/lib/analytics/promos.mysql.test.ts
+          src/app/api/analytics/__tests__/route-agent-contract.test.ts
+          src/app/admin/analytics/_components/evergreen-offer-card.test.tsx
