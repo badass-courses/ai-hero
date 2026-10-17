@@ -31,7 +31,12 @@ describe('readEvergreenOfferCoupon', () => {
 		const { row, couponId } = await issuedRow(offerPayload())
 		expect(readEvergreenOfferCoupon(couponId, row)).toEqual({
 			status: 'redeemed',
-			redemption: { couponId, contactId: 'contact-status-fixture' },
+			redemption: {
+				couponId,
+				contactId: 'contact-status-fixture',
+				issuedAt: row.createdAt.toISOString(),
+				expiresAt: row.expires!.toISOString(),
+			},
 		})
 	})
 

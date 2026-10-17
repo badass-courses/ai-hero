@@ -1,3 +1,4 @@
+import { PurchaseFactsSchema, type PurchaseFacts } from './purchase-facts'
 import type {
 	ContactEventPreviewRepository,
 	ContactEventWriteRepository,
@@ -44,12 +45,15 @@ export type PurchaseRecordedSource = {
 	 * from the contact behind the buyer's user (row 194).
 	 */
 	evergreenOffer?: EvergreenOfferRedemption
+	purchaseFacts?: PurchaseFacts
 }
 
 export type EvergreenOfferRedemption = {
 	couponId: string
 	/** AI_Coupon.fields.evergreenOffer.issue.contactId */
 	contactId: string
+	issuedAt?: string
+	expiresAt?: string
 }
 
 /** Carried on the offer contact's purchase.recorded as domainPayload. */
@@ -151,10 +155,15 @@ export function buildPurchaseRecordedEvent(
 ): NormalizedContactEvent {
 	const suffix = options.buyerCopy ? ':buyer' : ''
 	const domainPayload = {
+		...(source.purchaseFacts
+			? { purchaseFacts: PurchaseFactsSchema.parse(source.purchaseFacts) }
+			: {}),
 		...(source.deadlineTimeZone
 			? { deadlineTimeZone: source.deadlineTimeZone }
 			: {}),
-		...(options.evergreenOffer ? { evergreenOffer: options.evergreenOffer } : {}),
+		...(options.evergreenOffer
+			? { evergreenOffer: options.evergreenOffer }
+			: {}),
 	}
 	return {
 		provider: 'ai-hero',
