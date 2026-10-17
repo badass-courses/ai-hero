@@ -5,6 +5,8 @@ import {
 	COMMERCE_ENABLED,
 	FLAGS,
 	SHOW_TEAM_PRICING,
+	SUBSCRIBE_BOT_SHADOW,
+	SUBSCRIBE_BOT_ENFORCE,
 } from './flag-definitions'
 import { redisAdapter } from './flags-adapter'
 import { getEnvironment, getEnvKey } from './flags-env'
@@ -14,7 +16,7 @@ export type FlagOption<T> = {
 	label: string
 }
 
-export const FLAG_PREFIX = 'flag:'
+export { FLAG_PREFIX } from './flag-key'
 
 // Common identify function for all flags
 const identify = dedupe(async () => {
@@ -53,11 +55,29 @@ export const c5PricingEnabledFlag = flag<boolean>({
 	options: FLAGS[C5_PRICING_ENABLED].options,
 })
 
+export const subscribeBotShadowFlag = flag<boolean>({
+	key: getEnvKey(FLAGS[SUBSCRIBE_BOT_SHADOW].key),
+	adapter: redisAdapter(),
+	defaultValue: FLAGS[SUBSCRIBE_BOT_SHADOW].defaultValue[getEnvironment()],
+	identify,
+	options: FLAGS[SUBSCRIBE_BOT_SHADOW].options,
+})
+
+export const subscribeBotEnforceFlag = flag<boolean>({
+	key: getEnvKey(FLAGS[SUBSCRIBE_BOT_ENFORCE].key),
+	adapter: redisAdapter(),
+	defaultValue: FLAGS[SUBSCRIBE_BOT_ENFORCE].defaultValue[getEnvironment()],
+	identify,
+	options: FLAGS[SUBSCRIBE_BOT_ENFORCE].options,
+})
+
 // Map of flag keys to their instances
 export const flagInstances = {
 	[COMMERCE_ENABLED]: commerceEnabled,
 	[SHOW_TEAM_PRICING]: showTeamPricingFlag,
 	[C5_PRICING_ENABLED]: c5PricingEnabledFlag,
+	[SUBSCRIBE_BOT_SHADOW]: subscribeBotShadowFlag,
+	[SUBSCRIBE_BOT_ENFORCE]: subscribeBotEnforceFlag,
 } as const
 
 // Array of flags for precomputation

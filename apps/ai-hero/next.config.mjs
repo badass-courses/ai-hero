@@ -3,6 +3,7 @@
  * for Docker builds.
  */
 import createMDX from '@next/mdx'
+import { withBotId } from 'botid/next/config'
 import { withAxiom } from 'next-axiom'
 
 import {
@@ -151,4 +152,4 @@ const config = {
 	},
 }
 
-export default withAxiom(withMDX(config))
+export default withAxiom(withMDX(withBotId(config)))

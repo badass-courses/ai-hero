@@ -10,6 +10,7 @@ import {
 import { inngest } from '@/inngest/inngest.server'
 import { createShortlinkAttribution } from '@/lib/shortlinks-query'
 import { recordSignupAttribution } from '@/lib/signup-attribution'
+import { guardSubscribe } from '@/lib/subscribe-bot-defense.server'
 import { reconcileAiHeroEmailOptInWithKit } from '@/lib/subscriber-marketing/ai-hero-email-opt-in.server'
 import {
 	AIH_COURSE_ENTRY_EVIDENCE_FIELD,
@@ -42,6 +43,8 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 	// Read the request body before passing to coursebuilder
 	const body = await req.json()
 	const email = body.email
+	const rejection = await guardSubscribe(body)
+	if (rejection) return rejection
 
 	// drovr-owned double opt-in, when DROVR_DOI_FORMS turns it on for this
 	// form (and address, during the canary). Off, this is a no-op and the

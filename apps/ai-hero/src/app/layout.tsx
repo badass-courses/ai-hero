@@ -10,6 +10,7 @@ import { GuardedCouponProvider } from '@/components/guarded-coupon-provider'
 import { Party } from '@/components/party'
 import { Providers } from '@/components/providers'
 import { ThemeProvider } from '@/components/theme-provider'
+import { SubscribeBotProtection } from '@/components/subscribe-bot-protection'
 import config from '@/config'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
@@ -132,6 +133,9 @@ export default async function RootLayout({
 					id="layout"
 					className={`bg-page-background relative overflow-x-hidden ${geist.variable} ${geistMono.variable} ${sourceSerif.variable} antialiased font-sans`}
 				>
+					<React.Suspense fallback={null}>
+						<SubscribeBotProtection />
+					</React.Suspense>
 					<SiteStructuredData />
 					<React.Suspense fallback={null}>
 						<FirstTouchCapture />

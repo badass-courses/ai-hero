@@ -180,6 +180,7 @@
 		"@xstate/react": "^4.1.1",
 		"ai": "^6.0.0",
 		"axios": "1.8.4",
+		"botid": "1.5.11",
 		"class-variance-authority": "^0.7.1",
 		"cloudinary": "^1.41.0",
 		"clsx": "^2.0.0",

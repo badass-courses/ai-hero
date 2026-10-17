@@ -2,13 +2,9 @@ import { redis } from '@/server/redis-client'
 import type { Adapter } from '@vercel/flags'
 
 import { env } from '../env.mjs'
-import { FLAG_PREFIX } from './flags'
-import { getEnvironment } from './flags-env'
+import { getFlagKey } from './flag-key'
 
-export const getFlagKey = (key: string): string => {
-	const env = getEnvironment()
-	return `${FLAG_PREFIX}${env}:${key}`
-}
+export { getFlagKey } from './flag-key'
 
 function createRedisAdapter(): Adapter<boolean, any> {
 	return {

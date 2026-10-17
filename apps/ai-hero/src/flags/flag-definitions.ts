@@ -4,6 +4,8 @@ import type { Environment } from './flags-env'
 export const COMMERCE_ENABLED = 'commerce-enabled'
 export const SHOW_TEAM_PRICING = 'show-team-pricing'
 export const C5_PRICING_ENABLED = 'c5-pricing-enabled'
+export const SUBSCRIBE_BOT_SHADOW = 'subscribe-bot-shadow'
+export const SUBSCRIBE_BOT_ENFORCE = 'subscribe-bot-enforce'
 
 export type FlagConfig = {
 	key: string
@@ -16,9 +18,25 @@ export type FlagConfig = {
 export const FLAGS: Record<
 	| typeof COMMERCE_ENABLED
 	| typeof SHOW_TEAM_PRICING
-	| typeof C5_PRICING_ENABLED,
+	| typeof C5_PRICING_ENABLED
+	| typeof SUBSCRIBE_BOT_SHADOW
+	| typeof SUBSCRIBE_BOT_ENFORCE,
 	FlagConfig
 > = {
+	[SUBSCRIBE_BOT_SHADOW]: {
+		key: SUBSCRIBE_BOT_SHADOW,
+		name: 'Subscribe bot shadow',
+		description: 'Observe signup bot decisions without rejecting signups.',
+		defaultValue: { production: false, preview: false, development: false, test: false },
+		options: [{ value: false, label: 'Off' }, { value: true, label: 'Shadow' }],
+	},
+	[SUBSCRIBE_BOT_ENFORCE]: {
+		key: SUBSCRIBE_BOT_ENFORCE,
+		name: 'Subscribe bot enforce',
+		description: 'Reject suspected signup bots. Takes precedence over shadow.',
+		defaultValue: { production: false, preview: false, development: false, test: false },
+		options: [{ value: false, label: 'Off' }, { value: true, label: 'Enforce' }],
+	},
 	[COMMERCE_ENABLED]: {
 		key: COMMERCE_ENABLED,
 		name: 'Commerce Enabled',
