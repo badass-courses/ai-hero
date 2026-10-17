@@ -11,6 +11,7 @@ import { inngest } from '@/inngest/inngest.server'
 import { createShortlinkAttribution } from '@/lib/shortlinks-query'
 import { recordSignupAttribution } from '@/lib/signup-attribution'
 import { guardSubscribe } from '@/lib/subscribe-bot-defense.server'
+import { pendingSubscribeResponse } from '@/lib/pending-subscribe-response'
 import { reconcileAiHeroEmailOptInWithKit } from '@/lib/subscriber-marketing/ai-hero-email-opt-in.server'
 import {
 	AIH_COURSE_ENTRY_EVIDENCE_FIELD,
@@ -333,9 +334,15 @@ async function doiSignup(
 ) {
 	const drovrFormId = DOI_DROVR_FORM_IDS.get(kitFormId)
 	if (!drovrFormId || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-		return Response.json({ error: 'Subscription was rejected' }, { status: 400 })
+		return Response.json(
+			{ error: 'Subscription was rejected' },
+			{ status: 400 },
+		)
 	}
-	const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : undefined
+	const name =
+		typeof body.name === 'string' && body.name.trim()
+			? body.name.trim()
+			: undefined
 	try {
 		const cookieStore = await cookies()
 		await requestDrovrDoiSignup({
@@ -372,12 +379,7 @@ async function doiSignup(
 		)
 	}
 	// Subscriber-shaped for the form, with no Kit id: nothing is in Kit yet.
-	return Response.json({
-		email_address: email,
-		first_name: name ?? null,
-		state: 'awaiting-confirmation',
-		fields: {},
-	})
+	return pendingSubscribeResponse({ email, name })
 }
 
 export const POST = withSkill(subscribeWithAttribution)

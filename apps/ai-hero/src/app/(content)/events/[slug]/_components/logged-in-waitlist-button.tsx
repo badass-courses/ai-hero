@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import Spinner from '@/components/spinner'
+import { useSubscribeBotProtection } from '@/hooks/use-subscribe-bot-protection'
 import { track } from '@/utils/analytics'
 import axios from 'axios'
 import { CheckCircle } from 'lucide-react'
@@ -58,11 +59,13 @@ export function LoggedInWaitlistButton({
 	productId,
 }: LoggedInWaitlistButtonProps) {
 	const [state, setState] = React.useState<State>('idle')
+	const prepareBotProtection = useSubscribeBotProtection()
 
 	const handleJoinWaitlist = async () => {
 		setState('loading')
 
 		try {
+			await prepareBotProtection()
 			await axios.post('/api/coursebuilder/subscribe-to-list/convertkit', {
 				email,
 				name,

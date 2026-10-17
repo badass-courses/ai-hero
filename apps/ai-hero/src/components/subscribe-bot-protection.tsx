@@ -1,11 +1,9 @@
-import * as React from 'react'
-import { connection } from 'next/server'
-import { readSubscribeBotMode } from '@/lib/subscribe-bot-mode.server'
+'use client'
 
-export async function SubscribeBotProtection() {
-	// Resolve at request time, never bake the switch into a prerendered page.
-	await connection()
-	if ((await readSubscribeBotMode()) === 'off') return null
-	const { SubscribeBotClient } = await import('./subscribe-bot-client')
-	return <SubscribeBotClient />
+import { useSubscribeBotProtection } from '@/hooks/use-subscribe-bot-protection'
+
+// For custom subscribe forms that do not use the shared form hook.
+export function SubscribeBotProtection() {
+	useSubscribeBotProtection()
+	return null
 }

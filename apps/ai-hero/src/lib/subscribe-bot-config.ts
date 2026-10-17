@@ -8,7 +8,4 @@ export const SUBSCRIBE_BOT_CONFIG = {
 	botIdTimeoutMs: 1000,
 	flagTimeoutMs: 250,
 	emailHashLength: 16,
-	protect: [
-		{ path: '/api/coursebuilder/subscribe-to-list/convertkit', method: 'POST' },
-	],
 }

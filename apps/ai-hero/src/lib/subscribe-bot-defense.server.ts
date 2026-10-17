@@ -3,6 +3,7 @@ import 'server-only'
 import { createHmac } from 'node:crypto'
 import { env } from '@/env.mjs'
 import { log } from '@/server/logger'
+import { pendingSubscribeResponse } from './pending-subscribe-response'
 
 import { SUBSCRIBE_BOT_CONFIG } from './subscribe-bot-config'
 import {
@@ -41,14 +42,22 @@ export async function guardSubscribe(body: {
 			: mode === 'shadow'
 				? 'subscribe.bot_would_block'
 				: 'subscribe.bot_rejected'
+	let emailHash: string | undefined
 	try {
-		const emailHash =
+		const scopedKey = createHmac('sha256', env.NEXTAUTH_SECRET)
+			.update('subscribe-bot-v1')
+			.digest()
+		emailHash =
 			typeof body.email === 'string'
-				? createHmac('sha256', env.NEXTAUTH_SECRET)
-						.update(body.email.toLowerCase())
+				? createHmac('sha256', scopedKey)
+						.update(body.email.trim().toLowerCase())
 						.digest('hex')
 						.slice(0, SUBSCRIBE_BOT_CONFIG.emailHashLength)
 				: undefined
+	} catch {
+		// A missing join key must not hide the decision or include raw input.
+	}
+	try {
 		await log.info(event, { mode, reason: decision.reason, emailHash })
 	} catch {
 		// Telemetry must never turn a signup into an outage.
@@ -57,10 +66,5 @@ export async function guardSubscribe(body: {
 	if (mode !== 'enforce' || decision.action !== 'reject') return null
 	// Same check-your-email shape as the existing pending confirmation path.
 	// No invented Kit id, attribution writes or confirmation delivery.
-	return Response.json({
-		email_address: typeof body.email === 'string' ? body.email : undefined,
-		first_name: typeof body.name === 'string' ? body.name : null,
-		state: 'awaiting-confirmation',
-		fields: {},
-	})
+	return pendingSubscribeResponse(body)
 }

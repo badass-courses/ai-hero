@@ -5,6 +5,7 @@ import {
 	SUBSCRIBE_BOT_SHADOW,
 } from '@/flags/flag-definitions'
 import { getFlagKey } from '@/flags/flag-key'
+import { decodeFlagValue } from '@/flags/flags-adapter'
 import { redis } from '@/server/redis-client'
 
 import { SUBSCRIBE_BOT_CONFIG } from './subscribe-bot-config'
@@ -33,9 +34,6 @@ export async function withSubscribeBotTimeout<T>(
 	}
 }
 
-const enabled = (value: unknown) =>
-	value === true || value === 'true' || value === '1'
-
 // Read the admin switches fresh; missing values and flag outages leave this off.
 export async function readSubscribeBotMode(): Promise<SubscribeBotMode> {
 	try {
@@ -45,8 +43,8 @@ export async function readSubscribeBotMode(): Promise<SubscribeBotMode> {
 				redis.get(getFlagKey(SUBSCRIBE_BOT_ENFORCE)),
 			])
 			return subscribeBotMode({
-				shadow: enabled(shadow),
-				enforce: enabled(enforce),
+				shadow: decodeFlagValue(shadow),
+				enforce: decodeFlagValue(enforce),
 			})
 		}, SUBSCRIBE_BOT_CONFIG.flagTimeoutMs)
 	} catch {

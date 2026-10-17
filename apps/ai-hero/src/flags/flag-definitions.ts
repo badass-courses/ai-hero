@@ -27,15 +27,31 @@ export const FLAGS: Record<
 		key: SUBSCRIBE_BOT_SHADOW,
 		name: 'Subscribe bot shadow',
 		description: 'Observe signup bot decisions without rejecting signups.',
-		defaultValue: { production: false, preview: false, development: false, test: false },
-		options: [{ value: false, label: 'Off' }, { value: true, label: 'Shadow' }],
+		defaultValue: {
+			production: false,
+			preview: false,
+			development: false,
+			test: false,
+		},
+		options: [
+			{ value: false, label: 'Off' },
+			{ value: true, label: 'Shadow' },
+		],
 	},
 	[SUBSCRIBE_BOT_ENFORCE]: {
 		key: SUBSCRIBE_BOT_ENFORCE,
 		name: 'Subscribe bot enforce',
 		description: 'Reject suspected signup bots. Takes precedence over shadow.',
-		defaultValue: { production: false, preview: false, development: false, test: false },
-		options: [{ value: false, label: 'Off' }, { value: true, label: 'Enforce' }],
+		defaultValue: {
+			production: false,
+			preview: false,
+			development: false,
+			test: false,
+		},
+		options: [
+			{ value: false, label: 'Off' },
+			{ value: true, label: 'Enforce' },
+		],
 	},
 	[COMMERCE_ENABLED]: {
 		key: COMMERCE_ENABLED,

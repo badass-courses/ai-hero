@@ -81,7 +81,11 @@ export const flagInstances = {
 } as const
 
 // Array of flags for precomputation
-export const precomputeFlags = Object.values(flagInstances)
+export const precomputeFlags = [
+	commerceEnabled,
+	showTeamPricingFlag,
+	c5PricingEnabledFlag,
+]
 
 // Re-export types and constants
 export type { FlagKey } from './flag-definitions'

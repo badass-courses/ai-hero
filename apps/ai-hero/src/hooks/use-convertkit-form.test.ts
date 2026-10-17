@@ -2,12 +2,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
 	post: vi.fn(),
+	prepare: vi.fn().mockResolvedValue(undefined),
 	onSubmit: null as
 		| null
 		| ((
 				values: { email: string; first_name: string },
 				helpers: { setStatus: (status: string) => void },
 		  ) => Promise<void>),
+}))
+
+vi.mock('./use-subscribe-bot-protection', () => ({
+	useSubscribeBotProtection: () => mocks.prepare,
 }))
 
 vi.mock('axios', () => ({
@@ -55,6 +60,18 @@ describe('useConvertkitForm success boundary', () => {
 			{ setStatus },
 		)
 
+		expect(mocks.prepare).toHaveBeenCalledTimes(1)
+		expect(mocks.post).toHaveBeenCalledWith(
+			'/api/coursebuilder/subscribe-to-list/convertkit',
+			{
+				email: 'reader@example.com',
+				name: 'Reader',
+				fields: undefined,
+			},
+		)
+		expect(mocks.prepare.mock.invocationCallOrder[0]).toBeLessThan(
+			mocks.post.mock.invocationCallOrder[0]!,
+		)
 		expect(setStatus).toHaveBeenCalledWith('success')
 		expect(setStatus).not.toHaveBeenCalledWith('error')
 		expect(onError).toHaveBeenCalledWith(callbackError)

@@ -66,12 +66,15 @@ vi.mock('botid/server', () => ({ checkBotId: mocks.checkBotId }))
 
 vi.mock('@/db', () => ({ db: {} }))
 
-vi.mock('@/lib/subscriber-marketing/drovr-doi-signup', async (importOriginal) => ({
-	...(await importOriginal<
-		typeof import('@/lib/subscriber-marketing/drovr-doi-signup')
-	>()),
-	resolveDoiSignupContact: mocks.resolveDoi,
-}))
+vi.mock(
+	'@/lib/subscriber-marketing/drovr-doi-signup',
+	async (importOriginal) => ({
+		...(await importOriginal<
+			typeof import('@/lib/subscriber-marketing/drovr-doi-signup')
+		>()),
+		resolveDoiSignupContact: mocks.resolveDoi,
+	}),
+)
 
 vi.mock('@/inngest/inngest.server', () => ({
 	inngest: {
@@ -301,7 +304,9 @@ describe('subscribe-to-list convertkit route attribution', () => {
 		expect(response.status).toBe(200)
 		expect(mocks.inngestSend).toHaveBeenCalledWith(
 			expect.objectContaining({
-				data: expect.not.objectContaining({ deadlineTimeZone: expect.anything() }),
+				data: expect.not.objectContaining({
+					deadlineTimeZone: expect.anything(),
+				}),
 			}),
 		)
 	})
@@ -682,7 +687,12 @@ describe('drovr double opt-in (DROVR_DOI_FORMS)', () => {
 	})
 
 	it.each([
-		['another address during the canary', '9376133:canary@example.com', 'reader@example.com', 9376133],
+		[
+			'another address during the canary',
+			'9376133:canary@example.com',
+			'reader@example.com',
+			9376133,
+		],
 		['another form', '9376133', 'reader@example.com', 1234],
 	])('flag on for %s: still the Kit path', async (_, forms, email, listId) => {
 		drovrOn(forms)
@@ -757,53 +767,114 @@ describe('drovr double opt-in (DROVR_DOI_FORMS)', () => {
 })
 
 describe('subscribe bot defence', () => {
-	const body = { email: 'Synthetic.Reader@example.test', name: 'aBcDeFgHiJ', listId: 555 }
-	const humanResponse = { id: 123, email_address: body.email, first_name: body.name, state: 'inactive', fields: {} }
-	const botEvents = () => mocks.log.info.mock.calls.filter(([event]) => event.startsWith('subscribe.bot_'))
-	const enable = (mode: 'shadow' | 'enforce') => mocks.redisGet.mockImplementation(async (key: string) => key.endsWith(`subscribe-bot-${mode}`))
+	const body = {
+		email: 'Synthetic.Reader@example.test',
+		name: 'aBcDeFgHiJ',
+		listId: 555,
+	}
+	const humanResponse = {
+		id: 123,
+		email_address: body.email,
+		first_name: body.name,
+		state: 'inactive',
+		fields: {},
+	}
+	const botEvents = () =>
+		mocks.log.info.mock.calls.filter(([event]) =>
+			event.startsWith('subscribe.bot_'),
+		)
+	const enable = (mode: 'shadow' | 'enforce') =>
+		mocks.redisGet.mockImplementation(async (key: string) =>
+			key.endsWith(`subscribe-bot-${mode}`),
+		)
 
 	beforeEach(() => {
-		mocks.courseBuilderPOST.mockImplementation(async () => subscriberResponse(humanResponse))
+		mocks.courseBuilderPOST.mockImplementation(async () =>
+			subscriberResponse(humanResponse),
+		)
 	})
 
 	it('off preserves response bytes, Kit request and writes over generated requests', async () => {
-		await fc.assert(fc.asyncProperty(fc.record({ name: fc.string(), listId: fc.integer({ min: 1, max: 9000 }), extra: fc.string() }), async (generated) => {
-			vi.clearAllMocks()
-			const payload = { ...generated, email: body.email }
-			const upstream = new Response('unchanged upstream bytes', { status: 418, headers: { 'x-synthetic': 'same' } })
-			mocks.courseBuilderPOST.mockResolvedValueOnce(upstream)
+		await fc.assert(
+			fc.asyncProperty(
+				fc.record({
+					name: fc.string(),
+					listId: fc.integer({ min: 1, max: 9000 }),
+					extra: fc.string(),
+				}),
+				async (generated) => {
+					vi.clearAllMocks()
+					const payload = { ...generated, email: body.email }
+					const upstream = new Response('unchanged upstream bytes', {
+						status: 418,
+						headers: { 'x-synthetic': 'same' },
+					})
+					mocks.courseBuilderPOST.mockResolvedValueOnce(upstream)
+					const response = await POST(request(payload))
+					expect(response).toBe(upstream)
+					expect(await response.text()).toBe('unchanged upstream bytes')
+					expect(response.headers.get('x-synthetic')).toBe('same')
+					expect(mocks.courseBuilderPOST).toHaveBeenCalledTimes(1)
+					expect(
+						await mocks.courseBuilderPOST.mock.calls[0]![0].json(),
+					).toEqual(payload)
+					expect(mocks.checkBotId).not.toHaveBeenCalled()
+					expect(botEvents()).toEqual([])
+					expect(mocks.recordSignupAttribution).not.toHaveBeenCalled()
+					expect(mocks.createShortlinkAttribution).not.toHaveBeenCalled()
+					expect(mocks.inngestSend).not.toHaveBeenCalled()
+				},
+			),
+			{ numRuns: 50 },
+		)
+	})
+
+	it.each(['botid', 'random-name'] as const)(
+		'enforce rejects %s before any Kit call or writes',
+		async (reason) => {
+			enable('enforce')
+			mocks.checkBotId.mockResolvedValue({ isBot: true })
+			const payload = {
+				...body,
+				name: reason === 'botid' ? 'Krzysztof' : body.name,
+			}
 			const response = await POST(request(payload))
-			expect(response).toBe(upstream)
-			expect(await response.text()).toBe('unchanged upstream bytes')
-			expect(response.headers.get('x-synthetic')).toBe('same')
-			expect(mocks.courseBuilderPOST).toHaveBeenCalledTimes(1)
-			expect(await mocks.courseBuilderPOST.mock.calls[0]![0].json()).toEqual(payload)
-			expect(mocks.checkBotId).not.toHaveBeenCalled()
-			expect(botEvents()).toEqual([])
+			expect(response.status).toBe(200)
+			expect(await response.json()).toEqual({
+				email_address: body.email,
+				first_name: payload.name,
+				state: 'awaiting-confirmation',
+				fields: {},
+			})
+			expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
 			expect(mocks.recordSignupAttribution).not.toHaveBeenCalled()
 			expect(mocks.createShortlinkAttribution).not.toHaveBeenCalled()
 			expect(mocks.inngestSend).not.toHaveBeenCalled()
-		}), { numRuns: 50 })
-	})
-
-	it.each(['botid', 'random-name'] as const)('enforce rejects %s before any Kit call or writes', async (reason) => {
-		enable('enforce')
-		mocks.checkBotId.mockResolvedValue({ isBot: true })
-		const payload = { ...body, name: reason === 'botid' ? 'Krzysztof' : body.name }
-		const response = await POST(request(payload))
-		expect(response.status).toBe(200)
-		expect(await response.json()).toEqual({ email_address: body.email, first_name: payload.name, state: 'awaiting-confirmation', fields: {} })
-		expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
-		expect(mocks.recordSignupAttribution).not.toHaveBeenCalled()
-		expect(mocks.createShortlinkAttribution).not.toHaveBeenCalled()
-		expect(mocks.inngestSend).not.toHaveBeenCalled()
-		expect(mocks.resolveDoi).not.toHaveBeenCalled()
-		expect(botEvents()).toEqual([['subscribe.bot_rejected', { mode: 'enforce', reason, emailHash: createHmac('sha256', 'synthetic-test-key').update(body.email.toLowerCase()).digest('hex').slice(0, 16) }]])
-		const serialized = JSON.stringify(botEvents())
-		expect(serialized).not.toContain(body.email)
-		expect(serialized).not.toContain(body.email.toLowerCase())
-		expect(serialized).not.toContain(payload.name)
-	})
+			expect(mocks.resolveDoi).not.toHaveBeenCalled()
+			expect(botEvents()).toEqual([
+				[
+					'subscribe.bot_rejected',
+					{
+						mode: 'enforce',
+						reason,
+						emailHash: createHmac(
+							'sha256',
+							createHmac('sha256', 'synthetic-test-key')
+								.update('subscribe-bot-v1')
+								.digest(),
+						)
+							.update(body.email.trim().toLowerCase())
+							.digest('hex')
+							.slice(0, 16),
+					},
+				],
+			])
+			const serialized = JSON.stringify(botEvents())
+			expect(serialized).not.toContain(body.email)
+			expect(serialized).not.toContain(body.email.toLowerCase())
+			expect(serialized).not.toContain(payload.name)
+		},
+	)
 
 	it('shadow records a would-block but preserves the complete normal signup', async () => {
 		enable('shadow')
@@ -812,14 +883,20 @@ describe('subscribe bot defence', () => {
 		expect(await response.json()).toEqual(humanResponse)
 		expect(mocks.courseBuilderPOST).toHaveBeenCalledTimes(1)
 		expect(mocks.recordSignupAttribution).toHaveBeenCalledTimes(1)
-		expect(botEvents()[0]).toEqual(['subscribe.bot_would_block', expect.objectContaining({ reason: 'random-name', mode: 'shadow' })])
+		expect(botEvents()[0]).toEqual([
+			'subscribe.bot_would_block',
+			expect.objectContaining({ reason: 'random-name', mode: 'shadow' }),
+		])
 	})
 
 	it('never rejects a random-looking name without BotID suspicion', async () => {
 		enable('enforce')
 		await POST(request(body))
 		expect(mocks.courseBuilderPOST).toHaveBeenCalledTimes(1)
-		expect(botEvents()[0]).toEqual(['subscribe.bot_allowed', expect.objectContaining({ reason: 'human' })])
+		expect(botEvents()[0]).toEqual([
+			'subscribe.bot_allowed',
+			expect.objectContaining({ reason: 'human' }),
+		])
 	})
 
 	it('fails open on BotID errors, with its own countable reason and no error text', async () => {
@@ -828,7 +905,10 @@ describe('subscribe bot defence', () => {
 		const response = await POST(request(body))
 		expect(await response.json()).toEqual(humanResponse)
 		expect(mocks.courseBuilderPOST).toHaveBeenCalledTimes(1)
-		expect(botEvents()[0]).toEqual(['subscribe.bot_allowed', expect.objectContaining({ reason: 'botid-error' })])
+		expect(botEvents()[0]).toEqual([
+			'subscribe.bot_allowed',
+			expect.objectContaining({ reason: 'botid-error' }),
+		])
 		expect(JSON.stringify(botEvents())).not.toContain(body.email)
 	})
 
@@ -841,8 +921,115 @@ describe('subscribe bot defence', () => {
 			await vi.advanceTimersByTimeAsync(3000)
 			expect((await response).status).toBe(200)
 			expect(mocks.courseBuilderPOST).toHaveBeenCalledTimes(1)
-			expect(botEvents()[0]).toEqual(['subscribe.bot_allowed', expect.objectContaining({ reason: 'botid-error' })])
-		} finally { vi.useRealTimers() }
+			expect(botEvents()[0]).toEqual([
+				'subscribe.bot_allowed',
+				expect.objectContaining({ reason: 'botid-error' }),
+			])
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it('off SUCCESS preserves attribution, shortlink and Inngest writes', async () => {
+		const payload = { ...body, listId: 9376133 }
+		delete mocks.env.DROVR_DOI_FORMS
+		mocks.reconcile.mockResolvedValue({ status: 'active' })
+		mocks.cookieGet.mockImplementation((key: string) =>
+			key === 'sl_ref'
+				? { value: 'synthetic-source' }
+				: key === 'ft_attr'
+					? { value: 'synthetic-attribution' }
+					: undefined,
+		)
+		const response = await POST(request(payload))
+		expect(await response.json()).toEqual(humanResponse)
+		expect(mocks.courseBuilderPOST).toHaveBeenCalledTimes(1)
+		expect(mocks.recordSignupAttribution).toHaveBeenCalledTimes(1)
+		expect(mocks.recordSignupAttribution).toHaveBeenCalledWith({
+			email: body.email,
+			formId: 9376133,
+			kitSubscriberId: 123,
+			rawCookie: 'synthetic-attribution',
+		})
+		expect(mocks.createShortlinkAttribution).toHaveBeenCalledTimes(1)
+		expect(mocks.createShortlinkAttribution).toHaveBeenCalledWith({
+			shortlinkSlug: 'synthetic-source',
+			email: body.email,
+			type: 'signup',
+		})
+		expect(mocks.inngestSend).toHaveBeenCalledTimes(1)
+		expect(mocks.inngestSend).toHaveBeenCalledWith(
+			expect.objectContaining({
+				name: 'skills-newsletter/subscribed',
+				data: expect.objectContaining({
+					email: body.email,
+					formId: 9376133,
+					kitSubscriberId: '123',
+				}),
+			}),
+		)
+		expect(mocks.checkBotId).not.toHaveBeenCalled()
+		expect(botEvents()).toEqual([])
+	})
+
+	it('rejection is byte-shaped like the real pending-confirmation route, including normalization and no id', async () => {
+		mocks.env.DROVR_DOI_FORMS = '9376133'
+		mocks.env.DROVR_API_BASE_URL = 'https://drovr.test'
+		mocks.env.DROVR_API_KEY_ORG_AIHERO = 'synthetic-key'
+		mocks.resolveDoi.mockResolvedValue({ contactId: 'synthetic-contact' })
+		const payload = {
+			email: ` ${body.email} `,
+			name: ' aBcDeFgHiJ ',
+			listId: 9376133,
+		}
+		try {
+			const pending = await POST(request(payload))
+			expect(mocks.resolveDoi).toHaveBeenCalledTimes(1)
+			vi.clearAllMocks()
+			enable('enforce')
+			mocks.checkBotId.mockResolvedValue({ isBot: true })
+			const rejected = await POST(request(payload))
+			expect(rejected.status).toBe(pending.status)
+			expect([...rejected.headers]).toEqual([...pending.headers])
+			expect(await rejected.text()).toBe(await pending.text())
+			expect(mocks.resolveDoi).not.toHaveBeenCalled()
+			expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
+		} finally {
+			delete mocks.env.DROVR_DOI_FORMS
+			delete mocks.env.DROVR_API_BASE_URL
+			delete mocks.env.DROVR_API_KEY_ORG_AIHERO
+		}
+	})
+
+	it('still logs the decision if HMAC fails, without raw input', async () => {
+		enable('enforce')
+		delete mocks.env.NEXTAUTH_SECRET
+		try {
+			await POST(request(body))
+			expect(botEvents()).toEqual([
+				[
+					'subscribe.bot_allowed',
+					{ mode: 'enforce', reason: 'human', emailHash: undefined },
+				],
+			])
+		} finally {
+			mocks.env.NEXTAUTH_SECRET = 'synthetic-test-key'
+		}
+	})
+
+	it('normalizes the email and scopes the HMAC key', async () => {
+		enable('shadow')
+		mocks.checkBotId.mockResolvedValue({ isBot: true })
+		await POST(request({ ...body, email: ` ${body.email} ` }))
+		const scoped = createHmac('sha256', 'synthetic-test-key')
+			.update('subscribe-bot-v1')
+			.digest()
+		expect(botEvents()[0]?.[1].emailHash).toBe(
+			createHmac('sha256', scoped)
+				.update(body.email.toLowerCase())
+				.digest('hex')
+				.slice(0, 16),
+		)
 	})
 
 	it('enforce wins when both switches are on', async () => {

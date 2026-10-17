@@ -3,6 +3,8 @@ import axios from 'axios'
 import { useFormik } from 'formik'
 import * as Yup from 'yup'
 
+import { useSubscribeBotProtection } from './use-subscribe-bot-protection'
+
 export function useConvertkitForm({
 	submitUrl = `/api/coursebuilder/subscribe-to-list/convertkit`,
 	formId = 0,
@@ -27,6 +29,7 @@ export function useConvertkitForm({
 	errors: any
 	touched: any
 } {
+	const prepareBotProtection = useSubscribeBotProtection(submitUrl)
 	const { isSubmitting, status, handleChange, handleSubmit, errors, touched } =
 		useFormik({
 			initialStatus: '',
@@ -46,6 +49,7 @@ export function useConvertkitForm({
 			enableReinitialize: true,
 			onSubmit: async ({ email, first_name }, { setStatus }) => {
 				try {
+					await prepareBotProtection()
 					const response = await axios.post(submitUrl, {
 						email,
 						name: first_name,

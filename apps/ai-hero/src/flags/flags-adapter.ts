@@ -6,6 +6,9 @@ import { getFlagKey } from './flag-key'
 
 export { getFlagKey } from './flag-key'
 
+export const decodeFlagValue = (value: unknown): boolean =>
+	value === true || value === 'true' || value === '1'
+
 function createRedisAdapter(): Adapter<boolean, any> {
 	return {
 		origin(key: string) {
@@ -18,7 +21,7 @@ function createRedisAdapter(): Adapter<boolean, any> {
 			const value = await redis.get(redisKey)
 
 			// Handle both string and boolean values
-			return value === true || value === 'true' || value === '1'
+			return decodeFlagValue(value)
 		},
 	}
 }
