@@ -1,7 +1,10 @@
 import { CONTACT_SYNC_RETRY_EVENT } from '@/inngest/events/drovr'
 import { inngest } from '@/inngest/inngest.server'
 import { DROVR_SEND_RETRIES } from '@/lib/subscriber-marketing/drovr-outbox'
-import { deliverHoldingUnsubscribed } from '@/lib/subscriber-marketing/drovr-straggler-hold'
+import {
+	deliverHoldingUnsubscribed,
+	isUnsubscribedForHold,
+} from '@/lib/subscriber-marketing/drovr-straggler-hold'
 import {
 	createDirectoryBirth,
 	runContactSyncStragglerRetry,
@@ -66,10 +69,8 @@ export const drovrContactSyncRetry = inngest.createFunction(
 			// when this send lands it, or held if drovr refused it.
 			deliver: deliverHoldingUnsubscribed({
 				warn: log.warn,
-				isUnsubscribed: async (contactId) =>
-					(
-						await readContactSendStanding({ repository, contactId })
-					)?.reasons.includes('unsubscribed') ?? false,
+				isUnsubscribed: (contactId) =>
+					isUnsubscribedForHold(readContactSendStanding, repository, contactId),
 				send: (events) =>
 					outboxing(events, async () =>
 						settleOrHoldStragglerStops(

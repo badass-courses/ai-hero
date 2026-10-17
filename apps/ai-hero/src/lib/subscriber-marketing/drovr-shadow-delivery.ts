@@ -271,6 +271,8 @@ export async function deliverBatchOrThrow(args: {
 				error instanceof Error ? error.message : String(error),
 			)
 		}
+		// Logged once per post, before the missing-route retry below, so a
+		// 404 or 405 shows as a send with that status.
 		if (args.caller)
 			await warnSafely(args.info ?? log.info, 'drovr.shadow.batch_sent', {
 				caller: args.caller,

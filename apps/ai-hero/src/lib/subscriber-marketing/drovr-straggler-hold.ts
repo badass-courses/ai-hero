@@ -6,6 +6,26 @@ import { splitUnsubscribedHolds } from './drovr-refusal-outcome'
 export const HELD_KEYS_LOGGED = 20
 
 /**
+ * Whether a contact is unsubscribed for the hold: the one predicate the
+ * straggler retry uses, over the same standing the profile sync reads (a
+ * fresh double opt-in lifts it). Reads the standing once per call.
+ */
+export async function isUnsubscribedForHold<Repository>(
+	readStanding: (args: {
+		repository: Repository
+		contactId: string
+	}) => Promise<{ reasons: readonly string[] } | undefined>,
+	repository: Repository,
+	contactId: string,
+): Promise<boolean> {
+	return (
+		(await readStanding({ repository, contactId }))?.reasons.includes(
+			'unsubscribed',
+		) ?? false
+	)
+}
+
+/**
  * The straggler retry's `deliver`: profile, link and offer pushes for a
  * contact who is unsubscribed by now are dropped and counted as rejected,
  * so the chain ends and the version is never acknowledged (the runner acks

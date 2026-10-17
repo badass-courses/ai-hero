@@ -4,6 +4,7 @@ import {
 	birthThenRedeliver,
 	createDirectoryBirth,
 	directoryBirthEvents,
+	contactSyncRetryRequest,
 	runContactSyncStragglerRetry,
 } from './contact-sync-straggler-retry'
 import { runContactProfileSync } from './drovr-contact-profile-sync'
@@ -25,6 +26,7 @@ import {
 import {
 	deliverHoldingUnsubscribed,
 	HELD_KEYS_LOGGED,
+	isUnsubscribedForHold,
 } from './drovr-straggler-hold'
 import {
 	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
@@ -446,16 +448,10 @@ describe('unsubscribed contacts: profile, link and offer pushes are held', () =>
 	})
 })
 
-// The delivery function a fleet sends from: the profile sync snapshot reads
-// 'unsubscribed' from the same standing live personalize uses.
-// The retry function's predicate, as wired in drovr-contact-sync-retry.ts.
-const isHeldByRetry = async (
+const isHeldByRetry = (
 	repository: Parameters<typeof readContactSendStanding>[0]['repository'],
 	contactId: string,
-) =>
-	(await readContactSendStanding({ repository, contactId }))?.reasons.includes(
-		'unsubscribed',
-	) ?? false
+) => isUnsubscribedForHold(readContactSendStanding, repository, contactId)
 
 describe('the snapshot marks an unsubscribed contact', () => {
 	it('carries unsubscribed only when the standing says so', async () => {
@@ -664,6 +660,7 @@ describe('the straggler retry closure holds unsubscribed pushes', () => {
 	it('never acknowledges the unsent version after a hold', async () => {
 		const items = [{ event: profile, reason: 'cold-start-unhandled' as const }]
 		const h = make({ unsubscribed: () => true })
+		const birth = vi.fn(async () => {})
 		const acknowledge = vi.fn(async () => {})
 		const sendEvent = vi.fn(async () => {})
 		const receipt = await runContactSyncStragglerRetry({
@@ -679,10 +676,11 @@ describe('the straggler retry closure holds unsubscribed pushes', () => {
 			now: () => 0,
 			deliver: h.deliver,
 			warn: vi.fn(),
-			birth: vi.fn(async () => {}),
+			birth,
 			acknowledge,
 		})
 		expect(receipt).toEqual({ status: 'delivered', accepted: 0, rejected: 1 })
+		expect(birth).not.toHaveBeenCalled()
 		expect(acknowledge).not.toHaveBeenCalled()
 		expect(sendEvent).not.toHaveBeenCalled()
 	})
@@ -715,6 +713,62 @@ describe('a mixed whole-envelope refusal', () => {
 		expect(warn).toHaveBeenCalledWith(
 			'drovr.shadow.batch_rejected',
 			expect.objectContaining({ count: 1 }),
+		)
+	})
+})
+
+describe('one held contact does not stop the healer for the others', () => {
+	it('reschedules what the send deferred, on the normal cadence, with its original key', async () => {
+		const held = directoryEvent('contact.profile.updated', 'c1')
+		const links = directoryEvent('contact.links.issued', 'c2')
+		const send = vi.fn(async (events: DrovrShadowEvent[]) => ({
+			accepted: 0,
+			rejected: 0,
+			deferred: events.map((event) => ({
+				event,
+				reason: 'event-not-live' as const,
+			})),
+		}))
+		const deliver = deliverHoldingUnsubscribed({
+			warn: vi.fn(),
+			isUnsubscribed: async (id) => id === 'c1',
+			send,
+		})
+		const sendEvent = vi.fn(async () => {})
+		const now = Date.parse(at)
+		const receipt = await runContactSyncStragglerRetry({
+			event: {
+				data: {
+					items: [
+						{ event: held, reason: 'event-not-live' },
+						{ event: links, reason: 'event-not-live' },
+					],
+					attempt: 1,
+				},
+			},
+			step: { run: async (_id, cb) => cb(), sendEvent },
+			env: { AIH_DROVR_PROFILE_SYNC: 'true' },
+			now: () => now,
+			deliver,
+			warn: vi.fn(),
+			birth: vi.fn(async () => {}),
+			acknowledge: vi.fn(async () => {}),
+		})
+		expect(receipt).toMatchObject({ status: 'rescheduled', deferred: 1 })
+		expect(sendEvent).toHaveBeenCalledTimes(1)
+		const [, payload] = sendEvent.mock.calls[0] as unknown as [
+			string,
+			ReturnType<typeof contactSyncRetryRequest>,
+		]
+		expect(payload).toEqual(
+			contactSyncRetryRequest(
+				[{ event: links, reason: 'event-not-live' }],
+				2,
+				now,
+			),
+		)
+		expect(payload.data.items[0]!.event.idempotencyKey).toBe(
+			links.idempotencyKey,
 		)
 	})
 })
