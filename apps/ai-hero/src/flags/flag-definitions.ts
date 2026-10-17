@@ -6,6 +6,7 @@ export const SHOW_TEAM_PRICING = 'show-team-pricing'
 export const C5_PRICING_ENABLED = 'c5-pricing-enabled'
 export const SUBSCRIBE_BOT_SHADOW = 'subscribe-bot-shadow'
 export const SUBSCRIBE_BOT_ENFORCE = 'subscribe-bot-enforce'
+export const PURCHASE_EXIT_PROOF = 'purchase-exit-proof'
 
 export type FlagConfig = {
 	key: string
@@ -20,7 +21,8 @@ export const FLAGS: Record<
 	| typeof SHOW_TEAM_PRICING
 	| typeof C5_PRICING_ENABLED
 	| typeof SUBSCRIBE_BOT_SHADOW
-	| typeof SUBSCRIBE_BOT_ENFORCE,
+	| typeof SUBSCRIBE_BOT_ENFORCE
+	| typeof PURCHASE_EXIT_PROOF,
 	FlagConfig
 > = {
 	[SUBSCRIBE_BOT_SHADOW]: {
@@ -51,6 +53,22 @@ export const FLAGS: Record<
 		options: [
 			{ value: false, label: 'Off' },
 			{ value: true, label: 'Enforce' },
+		],
+	},
+	[PURCHASE_EXIT_PROOF]: {
+		key: PURCHASE_EXIT_PROOF,
+		name: 'Purchase exit proof',
+		description:
+			'Accept a recorded Crash Course purchase on a held drovr newsletter handoff as proof the contact left the old sequence. Off, held handoffs wait for the operator exit chain.',
+		defaultValue: {
+			production: false,
+			preview: false,
+			development: false,
+			test: false,
+		},
+		options: [
+			{ value: false, label: 'Off' },
+			{ value: true, label: 'On' },
 		],
 	},
 	[COMMERCE_ENABLED]: {

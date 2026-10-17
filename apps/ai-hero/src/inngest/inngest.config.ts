@@ -58,6 +58,7 @@ import { drovrOutboxReplay } from './functions/drovr-outbox-replay'
 import { kitDirectoryIngest } from './functions/kit-directory-ingest'
 import { newsletterVeteransAssign } from './functions/newsletter-veterans'
 import { newsletterExitReplay } from './functions/newsletter-exit-replay'
+import { newsletterPurchaseExitProof } from './functions/newsletter-purchase-exit-proof'
 import { createPPPCreditCouponsForPurchasers } from './functions/coupon/create-ppp-credit-coupons-for-purchasers'
 import { grantCouponEntitlements } from './functions/coupon/grant-coupon-entitlements'
 import { grantCouponEntitlementsForPurchase } from './functions/coupon/grant-coupon-entitlements-for-purchase'
@@ -195,6 +196,7 @@ const allFunctions = [
 	kitDirectoryIngest,
 	newsletterVeteransAssign,
 	newsletterExitReplay,
+	newsletterPurchaseExitProof,
 	googleAdsConversionUpload,
 	invoiceShortfallReconciliation,
 	checkoutReconcilerSweep,

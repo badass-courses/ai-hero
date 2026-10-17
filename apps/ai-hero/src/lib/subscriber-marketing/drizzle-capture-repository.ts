@@ -396,6 +396,48 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		return rows.map(toSideEffectIntentRecord)
 	}
 
+	async findExitHeldSideEffectIntentsByType(args: {
+		type: SideEffectIntent['type']
+		list: string
+		limit: number
+		after?: { createdAt: string; id: string }
+	}) {
+		const limit =
+			Number.isFinite(args.limit) && args.limit >= 1 ? Math.floor(args.limit) : 0
+		if (limit === 0) return []
+		// createdAt is a whole-second timestamp; compare at that precision so a
+		// cursor carrying milliseconds still ties with its own row.
+		const cursorAt = args.after
+			? new Date(Math.floor(Date.parse(args.after.createdAt) / 1000) * 1000)
+			: undefined
+		const after =
+			args.after && cursorAt
+				? or(
+						gt(sideEffectIntent.createdAt, cursorAt),
+						and(
+							eq(sideEffectIntent.createdAt, cursorAt),
+							gt(sideEffectIntent.id, args.after.id),
+						),
+					)
+				: undefined
+		// provider first: the (provider, type, status) index serves this read.
+		const rows = await this.database
+			.select()
+			.from(sideEffectIntent)
+			.where(
+				and(
+					eq(sideEffectIntent.provider, 'kit'),
+					eq(sideEffectIntent.type, args.type),
+					eq(sideEffectIntent.status, 'held-for-exit'),
+					sql`json_unquote(json_extract(${sideEffectIntent.metadata}, '$.list')) = ${args.list}`,
+					after,
+				),
+			)
+			.orderBy(asc(sideEffectIntent.createdAt), asc(sideEffectIntent.id))
+			.limit(limit)
+		return rows.map(toSideEffectIntentRecord)
+	}
+
 	async createContactEvent(
 		input: Omit<ContactEventRecord, 'id' | 'createdAt'> & {
 			createdAt?: string

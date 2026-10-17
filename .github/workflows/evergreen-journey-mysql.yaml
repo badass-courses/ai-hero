@@ -166,6 +166,8 @@ jobs:
           src/lib/subscriber-marketing/owner-birth-guard.mysql.test.ts
           src/lib/subscriber-marketing/drovr-outbox-drizzle.mysql.test.ts
           src/lib/subscriber-marketing/drovr-outbox-live.mysql.test.ts
+          src/lib/subscriber-marketing/exit-held-intents.mysql.test.ts
+          src/lib/subscriber-marketing/purchase-exit-proof.mysql.test.ts
           src/lib/purchase-disputes.mysql.test.ts
           src/lib/purchase-fields-write.mysql.test.ts
           src/lib/checkout-reconcile/fulfill.mysql.test.ts
