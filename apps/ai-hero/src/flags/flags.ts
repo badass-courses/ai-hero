@@ -4,6 +4,7 @@ import {
 	C5_PRICING_ENABLED,
 	COMMERCE_ENABLED,
 	FLAGS,
+	PURCHASE_EXIT_PROOF,
 	SHOW_TEAM_PRICING,
 	SUBSCRIBE_BOT_SHADOW,
 	SUBSCRIBE_BOT_ENFORCE,
@@ -71,6 +72,14 @@ export const subscribeBotEnforceFlag = flag<boolean>({
 	options: FLAGS[SUBSCRIBE_BOT_ENFORCE].options,
 })
 
+export const purchaseExitProofFlag = flag<boolean>({
+	key: getEnvKey(FLAGS[PURCHASE_EXIT_PROOF].key),
+	adapter: redisAdapter(),
+	defaultValue: FLAGS[PURCHASE_EXIT_PROOF].defaultValue[getEnvironment()],
+	identify,
+	options: FLAGS[PURCHASE_EXIT_PROOF].options,
+})
+
 // Map of flag keys to their instances
 export const flagInstances = {
 	[COMMERCE_ENABLED]: commerceEnabled,
@@ -78,12 +87,14 @@ export const flagInstances = {
 	[C5_PRICING_ENABLED]: c5PricingEnabledFlag,
 	[SUBSCRIBE_BOT_SHADOW]: subscribeBotShadowFlag,
 	[SUBSCRIBE_BOT_ENFORCE]: subscribeBotEnforceFlag,
+	[PURCHASE_EXIT_PROOF]: purchaseExitProofFlag,
 } as const
 
 // Array of flags for precomputation
 const NON_PRECOMPUTED = new Set([
 	subscribeBotShadowFlag,
 	subscribeBotEnforceFlag,
+	purchaseExitProofFlag,
 ])
 export const precomputeFlags = Object.values(flagInstances).filter(
 	(instance) => !NON_PRECOMPUTED.has(instance),

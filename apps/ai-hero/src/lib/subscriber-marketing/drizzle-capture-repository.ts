@@ -396,6 +396,26 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		return rows.map(toSideEffectIntentRecord)
 	}
 
+	async findExitHeldSideEffectIntentsByType(
+		type: SideEffectIntent['type'],
+		limit: number,
+	) {
+		const safeLimit = Number.isFinite(limit) && limit >= 1 ? Math.floor(limit) : 0
+		if (safeLimit === 0) return []
+		const rows = await this.database
+			.select()
+			.from(sideEffectIntent)
+			.where(
+				and(
+					eq(sideEffectIntent.type, type),
+					eq(sideEffectIntent.status, 'held-for-exit'),
+				),
+			)
+			.orderBy(asc(sideEffectIntent.createdAt))
+			.limit(safeLimit)
+		return rows.map(toSideEffectIntentRecord)
+	}
+
 	async createContactEvent(
 		input: Omit<ContactEventRecord, 'id' | 'createdAt'> & {
 			createdAt?: string

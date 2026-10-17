@@ -113,3 +113,9 @@ Checks use local event records only. There are zero per-send Kit membership read
 RED-first regressions also cover fresh app-owned signup absence/birth/send, legacy and veteran holds, tag transport retry, membership read retry, lenient env schemas, signup replay provenance, and visible held counts. Earlier regressions cover non-throwing Inngest admission using the real assignment code, queue starvation with more than the batch limit held, existing-reader delivery with no proof, producer/rule flag ordering, unchanged unowned handoffs, and protected-cohort exclusion without an owner row. Receipt tests cover verified replay, re-arming, duplicates and stale/misbound proof.
 
 Ready for review is not deployment approval. Opus review, application gates, producer verification, Kit rule approval/readback, and AI Hero's READY deploy gate remain required.
+
+## Purchase-handoff proof producer
+
+A second proof producer sits beside the operator chain. With the `purchase-exit-proof` admin flag on (default off, a failed read counts as off), a scheduled pass looks at `held-for-exit` drovr `shadow-newsletter` list handoffs. For a contact with an active (`Valid` or `Restricted`) Crash Course purchase in ai-hero, it persists one `newsletter.old-sequence.exit-confirmed` receipt whose summary carries `proofKind: purchase-handoff`, then calls the same replay as every other receipt. Refunded or otherwise inactive purchases leave the hold in place. The receipt id is deterministic per contact, so a second pass writes nothing new and only finishes a lost replay.
+
+This accepts the purchase as proof of exit. It does not read Kit. A buyer still active in sequence `2625552` could receive both newsletters if that sequence is ever un-paused.
