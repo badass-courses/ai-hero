@@ -5,6 +5,21 @@ import { vi } from 'vitest'
 // Expose React for Node-side test collection without changing application runtime.
 ;(globalThis as typeof globalThis & { React?: typeof React }).React = React
 
+// Config reads its public URL directly outside Next. Supply the mocked URL only
+// during config initialization, without changing email/API process-env fixtures.
+vi.mock('@/config', async (importOriginal) => {
+	const previous = process.env.NEXT_PUBLIC_URL
+	const { env } = await import('@/env.mjs')
+	process.env.NEXT_PUBLIC_URL =
+		previous || env.NEXT_PUBLIC_URL || 'http://localhost:3000'
+	try {
+		return await importOriginal<typeof import('@/config')>()
+	} finally {
+		if (previous === undefined) delete process.env.NEXT_PUBLIC_URL
+		else process.env.NEXT_PUBLIC_URL = previous
+	}
+})
+
 // Mock environment variables
 vi.mock('@/env.mjs', () => ({
 	env: {

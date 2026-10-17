@@ -1,4 +1,5 @@
 import type { Metadata, ResolvingMetadata } from 'next'
+import { metaDescription } from '@/lib/meta-description'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { ContentReadTracker } from '@/components/content-read-tracker'
@@ -233,7 +234,11 @@ export async function generateMetadata(
 	}
 
 	const title = `${entry.title} | ${AI_CODING_DICTIONARY_TITLE}`
-	const description = entry.description || AI_CODING_DICTIONARY_DESCRIPTION
+	const description = metaDescription(
+		(entry.plainDescription ?? entry.description) || AI_CODING_DICTIONARY_DESCRIPTION,
+		155,
+		{ plainText: entry.plainDescription !== undefined },
+	)
 	const canonicalPath = `/ai-coding-dictionary/${entry.slug}`
 	const ogImage = getAiCodingDictionaryOgImageUrl(title)
 

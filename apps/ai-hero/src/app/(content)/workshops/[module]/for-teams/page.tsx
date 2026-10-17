@@ -1,5 +1,6 @@
 import * as React from 'react'
 import type { Metadata, ResolvingMetadata } from 'next'
+import { metaDescription } from '@/lib/meta-description'
 import Image from 'next/image'
 import { notFound } from 'next/navigation'
 import {
@@ -48,9 +49,10 @@ export async function generateMetadata(
 	}
 
 	const title = `${workshop.fields.title} for your team`
-	const description =
+	const description = metaDescription(
 		workshop.fields.description ??
-		'Team seats, invoicing and a shared way to build with AI.'
+		'Team seats, invoicing and a shared way to build with AI.',
+	)
 
 	return {
 		title,

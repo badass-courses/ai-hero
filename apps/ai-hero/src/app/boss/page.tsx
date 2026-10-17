@@ -1,4 +1,5 @@
 import type { Metadata, ResolvingMetadata } from 'next'
+import { metaDescription } from '@/lib/meta-description'
 import { notFound } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
 import { env } from '@/env.mjs'
@@ -24,10 +25,10 @@ export async function generateMetadata(
 
 	return {
 		title: page.fields.title,
-		description: page.fields.description,
+		description: metaDescription(page.fields.description),
 		openGraph: {
 			title: page.fields.title,
-			description: page.fields.description,
+			description: metaDescription(page.fields.description),
 			images: [
 				{
 					url: `${env.NEXT_PUBLIC_URL}/api/og/default?title=${encodeURIComponent(page.fields.title || 'Invest in your team')}`,

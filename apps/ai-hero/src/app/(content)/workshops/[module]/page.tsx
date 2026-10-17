@@ -31,7 +31,10 @@ import {
 } from '@/lib/workshops-query'
 import { compileMDX } from '@/utils/compile-mdx'
 import { Markdown as ReactMarkdown } from '@/components/markdown'
-import { Course } from 'schema-dts'
+import { buildCourseSchema } from '@/lib/course-schema'
+import type { Product } from '@coursebuilder/core/schemas'
+import { metaDescription } from '@/lib/meta-description'
+import { StructuredDataScript } from '@/lib/structured-data'
 
 import { Skeleton } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
@@ -79,7 +82,7 @@ export async function generateMetadata(
 
 	return {
 		title: workshop.fields?.title,
-		description: workshop.fields?.description,
+		description: metaDescription(workshop.fields?.description),
 		alternates: {
 			canonical: `/workshops/${params.module}`,
 		},
@@ -144,6 +147,14 @@ export default async function ModulePage(props: Props) {
 		? `/workshops/${params.module}/for-teams`
 		: undefined
 	const shouldShowPricingSidebar = hasSelfPacedProduct || isPreLaunch
+	const metadataWithoutOffers = (
+		<WorkshopMetadata
+			title={workshop.fields?.title || ''}
+			description={workshop.fields?.description || ''}
+			imageUrl={workshop.fields?.coverImage?.url}
+			slug={params.module}
+		/>
+	)
 	const bodySource = workshop.fields.body || ''
 	// The body placing the curriculum itself replaces the auto-appended list.
 	// Code fences/inline code are stripped first so a body that merely *shows*
@@ -304,12 +315,7 @@ export default async function ModulePage(props: Props) {
 						/>
 					</React.Suspense>
 				)}
-				<WorkshopMetadata
-					title={workshop.fields?.title || ''}
-					description={workshop.fields?.description || ''}
-					imageUrl={workshop.fields?.coverImage?.url}
-					slug={params.module}
-				/>
+				{!shouldShowPricingSidebar ? metadataWithoutOffers : null}
 				{/* The cover bleeds to the container's top, right and bottom edges,
 				    square-cornered, on the same six-column rhythm as the body below —
 				    its left edge continues the sidebar's hairline. The text column
@@ -407,15 +413,30 @@ export default async function ModulePage(props: Props) {
 							{shouldShowPricingSidebar ? (
 								<React.Suspense
 									fallback={
-										<div className="bg-background relative z-10 flex w-full flex-col gap-2 p-5 pb-16">
-											<Skeleton className="bg-accent h-10 w-full" />
-											<Skeleton className="bg-accent h-10 w-full" />
-											<Skeleton className="bg-accent h-10 w-full" />
-											<Skeleton className="bg-accent h-10 w-full" />
-										</div>
+										<>
+											{metadataWithoutOffers}
+											<div className="bg-background relative z-10 flex w-full flex-col gap-2 p-5 pb-16">
+												<Skeleton className="bg-accent h-10 w-full" />
+												<Skeleton className="bg-accent h-10 w-full" />
+												<Skeleton className="bg-accent h-10 w-full" />
+												<Skeleton className="bg-accent h-10 w-full" />
+											</div>
+										</>
 									}
 								>
-									<PublicWorkshopPricing moduleSlug={params.module}>
+									<PublicWorkshopPricing
+										moduleSlug={params.module}
+										structuredData={(pricingProps) => (
+											<WorkshopMetadata
+												title={workshop.fields?.title || ''}
+												description={workshop.fields?.description || ''}
+												imageUrl={workshop.fields?.coverImage?.url}
+												slug={params.module}
+												product={isPreLaunch ? undefined : pricingProps.product}
+												quantityAvailable={pricingProps.quantityAvailable}
+											/>
+										)}
+									>
 										{(pricingProps) => {
 											// allowPurchase always forces the buy state; otherwise a
 											// pre-launch workshop shows the interest-capture form.
@@ -584,29 +605,26 @@ const WorkshopMetadata = ({
 	description,
 	imageUrl,
 	slug,
+	product,
+	quantityAvailable,
 }: {
 	title: string
 	description: string
 	imageUrl?: string
 	slug: string
+	product?: Product
+	quantityAvailable?: number
 }) => {
-	const jsonLd: Course = {
-		'@type': 'Course',
-		name: title,
-		author: config.author,
-		creator: {
-			'@type': 'Person',
-			name: config.author,
-		},
-		description: description,
-		...(imageUrl && { thumbnailUrl: imageUrl }),
-		url: `${env.NEXT_PUBLIC_URL}/workshops/${slug}`,
+	const jsonLd = {
+		...buildCourseSchema({
+			title,
+			description,
+			url: new URL(`/workshops/${slug}`, config.siteUrl).href,
+			product,
+			quantityAvailable,
+		}),
+		creator: { '@type': 'Person' as const, name: config.author },
+		...(imageUrl ? { thumbnailUrl: imageUrl } : {}),
 	}
-
-	return (
-		<script
-			type="application/ld+json"
-			dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-		/>
-	)
+	return <StructuredDataScript id="course-jsonld" data={jsonLd} />
 }

@@ -1,4 +1,5 @@
 import type { Metadata, ResolvingMetadata } from 'next'
+import { metaDescription } from '@/lib/meta-description'
 import { LessonPage } from '@/app/(content)/workshops/[module]/(learn)/[lesson]/shared-page'
 import { getCachedLesson } from '@/lib/lessons-query'
 import { getCachedMinimalWorkshop } from '@/lib/workshops-query'
@@ -29,7 +30,7 @@ export async function generateMetadata(
 			lessonTitle && workshopTitle
 				? `${lessonTitle} | ${workshopTitle}`
 				: lessonTitle,
-		description: lesson.fields?.description,
+		description: metaDescription(lesson.fields?.description),
 		alternates: {
 			canonical: `/workshops/${params.module}/${params.lesson}`,
 		},

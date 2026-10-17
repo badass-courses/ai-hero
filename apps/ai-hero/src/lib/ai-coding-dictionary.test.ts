@@ -85,6 +85,45 @@ describe('AI Coding Dictionary GitHub source', () => {
 		vi.restoreAllMocks()
 	})
 
+	it('stores full SEO text separately without changing main UI/RSS descriptions', async () => {
+		const full = 'Engineering vocabulary '.repeat(20).trim()
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (input: unknown) => {
+				const url = urlOf(input)
+				if (url.endsWith('/commits/main.atom')) return new Response(commitFeed)
+				if (url.endsWith('/README.md'))
+					return new Response(
+						readme.replace(
+							'README fallback description for Model.',
+							`${full} \`*literal*\``,
+						),
+					)
+				if (url.endsWith('/dictionary/AI.md'))
+					return new Response(
+						aiFrontmatter.replace(
+							'Frontmatter description for AI',
+							`*${full}*`,
+						),
+					)
+				return new Response('not available', { status: 503 })
+			}),
+		)
+		const dictionary = await getAiCodingDictionary()
+		expect(dictionary.entries[0]?.description).toBe(`*${full}*`)
+		expect(dictionary.entries[0]?.plainDescription).toBe(full)
+		expect(dictionary.entries[1]?.description).toBe(
+			`${full.slice(0, 177).trim()}...`,
+		)
+		expect(dictionary.entries[1]?.plainDescription).toBe(`${full} *literal*`)
+		expect(
+			dictionary.entries.every(
+				(entry) =>
+					entry.plainDescription!.length > 155 &&
+					!entry.plainDescription!.endsWith('…'),
+			),
+		).toBe(true)
+	})
 	it('loads one coherent raw snapshot with frontmatter and a truthful update date', async () => {
 		const fetchMock = vi.fn(async (input: unknown, _init?: unknown) => {
 			const url = urlOf(input)

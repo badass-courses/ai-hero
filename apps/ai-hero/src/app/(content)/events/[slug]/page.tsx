@@ -1,5 +1,6 @@
 import * as React from 'react'
 import type { Metadata, ResolvingMetadata } from 'next'
+import { metaDescription } from '@/lib/meta-description'
 import { headers } from 'next/headers'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
@@ -51,7 +52,7 @@ export async function generateMetadata(
 
 	return {
 		title: event.fields.title,
-		description: event.fields.description,
+		description: metaDescription(event.fields.description),
 		...(event.fields.image
 			? {
 					openGraph: {
@@ -417,7 +418,7 @@ const EventMetadata: React.FC<{ event: Event; quantityAvailable: number }> = ({
 		name: event?.fields.title,
 		startDate: event?.fields.startsAt as string,
 		endDate: event?.fields.endsAt as string,
-		description: event?.fields.description,
+		description: metaDescription(event?.fields.description),
 		inLanguage: 'en-US',
 		remainingAttendeeCapacity: quantityAvailable,
 		organizer: env.NEXT_PUBLIC_SITE_TITLE,

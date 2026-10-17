@@ -3,6 +3,7 @@
 import * as React from 'react'
 import { Suspense } from 'react'
 import { type Metadata, type ResolvingMetadata } from 'next'
+import { metaDescription } from '@/lib/meta-description'
 import Link from 'next/link'
 import { Contributor } from '@/components/contributor'
 import { ResourceRow } from '@/components/landing/resource-row'
@@ -62,7 +63,7 @@ export async function generateMetadata(
 
 	return {
 		title: list.fields.title,
-		description: list.fields.description,
+		description: metaDescription(list.fields.description),
 		openGraph: {
 			images: [
 				getOGImageUrlForResource({

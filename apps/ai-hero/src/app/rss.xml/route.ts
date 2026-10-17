@@ -2,7 +2,7 @@ import config from '@/config'
 import { env } from '@/env.mjs'
 import { Feed } from 'feed'
 
-import sitemap from '../sitemap'
+import { getPublicFeedEntries as sitemap } from '@/lib/public-content-index'
 
 export const revalidate = 3600
 export const dynamic = 'force-static'
@@ -20,9 +20,7 @@ async function generateRSS() {
 			const value = new Date(entry.lastModified)
 			return value > latest ? value : latest
 		}, new Date(0)),
-		feedLinks: {
-			rss: `${env.COURSEBUILDER_URL}/rss.xml`,
-		},
+		feedLinks: { rss: `${env.COURSEBUILDER_URL}/rss.xml` },
 		author: {
 			name: config.author,
 			email: env.NEXT_PUBLIC_SUPPORT_EMAIL,
@@ -42,10 +40,8 @@ async function generateRSS() {
 				date: new Date(entry.lastModified),
 			})
 		})
-
 	return feed.rss2()
 }
-
 export async function GET() {
 	return new Response(await generateRSS(), {
 		headers: {

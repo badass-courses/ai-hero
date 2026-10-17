@@ -11,10 +11,7 @@ import type { Product } from '@coursebuilder/core/schemas'
 
 import type { WorkshopPageProps } from './workshop-page-props'
 
-async function publicPricingProps(
-	product: Product,
-	allProducts: Product[],
-) {
+async function publicPricingProps(product: Product, allProducts: Product[]) {
 	// Active site-wide sale for this product (e.g. the launch intro price):
 	// apply it to the pricing data so PricingInline / the buy widget show the
 	// discounted price, and expose the coupon so HasDiscount / DiscountDeadline
@@ -86,13 +83,20 @@ const getPublicProductPricingProps = unstable_cache(
 export async function PublicWorkshopPricing({
 	moduleSlug,
 	children,
+	structuredData,
 }: {
 	moduleSlug: string
 	children: (props: WorkshopPageProps) => ReactNode
+	structuredData?: (props: WorkshopPageProps) => ReactNode
 }) {
 	return renderPublicPricing(
 		await getPublicWorkshopPricingProps(moduleSlug),
-		children,
+		(props) => (
+			<>
+				{structuredData?.(props)}
+				{children(props)}
+			</>
+		),
 	)
 }
 

@@ -2,6 +2,7 @@ import { ParsedUrlQuery } from 'querystring'
 import * as React from 'react'
 import { Suspense } from 'react'
 import type { Metadata, ResolvingMetadata } from 'next'
+import { metaDescription } from '@/lib/meta-description'
 import { headers } from 'next/headers'
 import Link from 'next/link'
 import { PricingWidget } from '@/app/(content)/workshops/_components/pricing-widget'
@@ -36,6 +37,7 @@ export async function generateMetadata(
 
 	return {
 		title: product.name,
+		description: metaDescription(product.fields?.description),
 		openGraph: {
 			images: [getOGImageUrlForResource(product)],
 		},

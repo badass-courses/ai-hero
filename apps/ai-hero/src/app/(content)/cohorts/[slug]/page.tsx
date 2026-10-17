@@ -58,6 +58,7 @@ import { CohortIncludes } from './_components/cohort-includes'
 import { CohortPricingWidgetContainer } from './_components/cohort-pricing-widget-container'
 import { CohortSidebar } from './_components/cohort-sidebar'
 import { CohortTeamLink } from './_components/cohort-team-link'
+import { metaDescription } from '@/lib/meta-description'
 
 export async function generateMetadata(
 	props: {
@@ -78,7 +79,7 @@ export async function generateMetadata(
 	const title = share ? `${giftShareTitle(share.firstName, share.available)}: ${cohort.fields.title}` : cohort.fields.title
 	return {
 		title,
-		description: cohort.fields.description,
+		description: metaDescription(cohort.fields.description),
 		alternates: {
 			canonical: `/cohorts/${cohort.fields.slug}`,
 		},
@@ -530,11 +531,13 @@ export async function CohortPageView(props: CohortPageViewProps) {
 			<main className="relative">
 				{share && typeof searchParams.via === 'string' ? <GiftShareAttribution slug={searchParams.via} /> : null}
 				{giftBanner ? <section className="border-border bg-muted text-foreground border-b"><p className={`${TYPE.meta} px-[18px] py-4 sm:px-11`}>{giftBanner}</p></section> : null}
-				<CohortMetadata
-					cohort={displayCohort}
-					product={offerInJsonLd ? cohortProps.product : undefined}
-					quantityAvailable={cohortProps.quantityAvailable}
-				/>
+				<React.Suspense fallback={null}>
+					<ResolvedCohortMetadata
+						cohort={displayCohort}
+						product={offerInJsonLd ? cohortProps.product : undefined}
+						pricingDataLoader={pricingDataLoader}
+					/>
+				</React.Suspense>
 				<EditWorkshopButton
 					className=""
 					moduleType="cohort"
@@ -760,11 +763,34 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	)
 }
 
-const CohortMetadata: React.FC<{
+const ResolvedCohortMetadata = async ({
+	pricingDataLoader,
+	...props
+}: {
 	cohort: Cohort
 	product?: CohortPageProps['product']
-	quantityAvailable: number
-}> = ({ cohort, product, quantityAvailable }) => {
+	pricingDataLoader: CohortPageProps['pricingDataLoader']
+}) => {
+	if (!props.product) return <CohortMetadata {...props} />
+	// Share the widget's existing promise without blocking the outer page or fetching again.
+	let quantityAvailable: number | undefined
+	try {
+		quantityAvailable = (await pricingDataLoader).quantityAvailable
+	} catch {
+		// Metadata failure must not fail the page; keep both schemas without an offer.
+	}
+	return <CohortMetadata {...props} quantityAvailable={quantityAvailable} />
+}
+
+const CohortMetadata = ({
+	cohort,
+	product,
+	quantityAvailable,
+}: {
+	cohort: Cohort
+	product?: CohortPageProps['product']
+	quantityAvailable?: number
+}) => {
 	return (
 		<>
 			<CourseStructuredData
