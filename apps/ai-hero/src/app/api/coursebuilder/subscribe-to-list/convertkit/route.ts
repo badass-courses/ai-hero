@@ -44,7 +44,7 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 	// Read the request body before passing to coursebuilder
 	const body = await req.json()
 	const email = body.email
-	const rejection = await guardSubscribe(body)
+	const rejection = await guardSubscribe(body, req.headers)
 	if (rejection) return rejection
 
 	// drovr-owned double opt-in, when DROVR_DOI_FORMS turns it on for this

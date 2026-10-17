@@ -15,24 +15,43 @@ import {
 	withSubscribeBotTimeout,
 } from './subscribe-bot-mode.server'
 
-export async function guardSubscribe(body: {
-	email?: unknown
-	name?: unknown
-}): Promise<Response | null> {
+export async function guardSubscribe(
+	body: { email?: unknown; name?: unknown },
+	headers: Headers,
+): Promise<Response | null> {
 	const mode = await readSubscribeBotMode()
 	if (mode === 'off') return null
 
-	let botid: SubscribeBotSignal
-	try {
-		const verification = await withSubscribeBotTimeout(async () => {
-			const { checkBotId } = await import('botid/server')
-			return checkBotId()
-		}, SUBSCRIBE_BOT_CONFIG.botIdTimeoutMs)
-		if (typeof verification.isBot !== 'boolean')
-			throw new Error('Invalid BotID result')
-		botid = verification.isBot ? 'bot' : 'human'
-	} catch {
-		botid = 'error'
+	const evidence = {
+		headersPresent: ['x-is-human', 'x-path', 'x-method'].every((key) =>
+			Boolean(headers.get(key)?.trim()),
+		),
+		isBot: null as boolean | null,
+		bypassed: null as boolean | null,
+		isVerifiedBot: null as boolean | null,
+	}
+	let botid: SubscribeBotSignal = 'no-attestation'
+	if (evidence.headersPresent) {
+		try {
+			const verification = await withSubscribeBotTimeout(async () => {
+				const { checkBotId } = await import('botid/server')
+				return checkBotId()
+			}, SUBSCRIBE_BOT_CONFIG.botIdTimeoutMs)
+			if (typeof verification.isBot !== 'boolean')
+				throw new Error('Invalid BotID result')
+			evidence.isBot = verification.isBot
+			evidence.bypassed =
+				typeof verification.bypassed === 'boolean'
+					? verification.bypassed
+					: null
+			evidence.isVerifiedBot =
+				typeof verification.isVerifiedBot === 'boolean'
+					? verification.isVerifiedBot
+					: null
+			botid = verification.isBot ? 'bot' : 'human'
+		} catch {
+			botid = 'error'
+		}
 	}
 
 	const decision = decideSubscribe({ botid, firstName: body.name })
@@ -58,7 +77,12 @@ export async function guardSubscribe(body: {
 		// A missing join key must not hide the decision or include raw input.
 	}
 	try {
-		await log.info(event, { mode, reason: decision.reason, emailHash })
+		await log.info(event, {
+			mode,
+			reason: decision.reason,
+			emailHash,
+			...evidence,
+		})
 	} catch {
 		// Telemetry must never turn a signup into an outage.
 	}

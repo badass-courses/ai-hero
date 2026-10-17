@@ -15,8 +15,8 @@ export async function initializeSubscribeBotProtection(): Promise<void> {
 			signal: AbortSignal.timeout(SUBSCRIBE_BOT_ROUTES.modeTimeoutMs),
 		})
 		if (!response.ok) return
-		const { mode } = await response.json()
-		if (mode !== 'shadow' && mode !== 'enforce') return
+		const { enabled } = await response.json()
+		if (enabled !== true) return
 		initializer ??= import('botid/client/core')
 			.then(({ initBotId }) => {
 				initBotId({ protect: SUBSCRIBE_BOT_PROTECT })

@@ -20,7 +20,7 @@ describe('form-local BotID initializer', () => {
 	beforeEach(() => {
 		vi.resetModules()
 		vi.clearAllMocks()
-		mocks.fetch.mockResolvedValue(Response.json({ mode: 'off' }))
+		mocks.fetch.mockResolvedValue(Response.json({ enabled: false }))
 		vi.stubGlobal('fetch', mocks.fetch)
 	})
 	afterEach(() => {
@@ -37,29 +37,35 @@ describe('form-local BotID initializer', () => {
 		expect(mocks.sdkImported).not.toHaveBeenCalled()
 	})
 
-	it.each(['shadow', 'enforce'])(
-		'%s initializes only once across concurrent form mounts',
-		async (mode) => {
-			mocks.fetch.mockImplementation(async () => Response.json({ mode }))
-			await Promise.all([initialize(), initialize()])
-			expect(mocks.initBotId).toHaveBeenCalledTimes(1)
-			expect(mocks.initBotId).toHaveBeenCalledWith({
-				protect: [
-					{
-						path: '/api/coursebuilder/subscribe-to-list/convertkit',
-						method: 'POST',
-					},
-				],
-			})
-		},
-	)
+	it('enabled initializes only once across concurrent form mounts', async () => {
+		mocks.fetch.mockImplementation(async () => Response.json({ enabled: true }))
+		await Promise.all([initialize(), initialize()])
+		expect(mocks.initBotId).toHaveBeenCalledTimes(1)
+		expect(mocks.initBotId).toHaveBeenCalledWith({
+			protect: [
+				{
+					path: '/api/coursebuilder/subscribe-to-list/convertkit',
+					method: 'POST',
+				},
+			],
+		})
+	})
 
 	it('a later form mount can discover on after an off mount', async () => {
 		await initialize()
-		mocks.fetch.mockResolvedValueOnce(Response.json({ mode: 'shadow' }))
+		mocks.fetch.mockResolvedValueOnce(Response.json({ enabled: true }))
 		await initialize()
 		expect(mocks.initBotId).toHaveBeenCalledTimes(1)
 	})
+
+	it.each([{ enabled: false }, { enabled: 'true' }, { mode: 'enforce' }, {}])(
+		'does not initialize for a non-enabled discovery response %j',
+		async (payload) => {
+			mocks.fetch.mockResolvedValueOnce(Response.json(payload))
+			await initialize()
+			expect(mocks.initBotId).not.toHaveBeenCalled()
+		},
+	)
 
 	it('fails open when mode discovery is unavailable or malformed', async () => {
 		mocks.fetch.mockRejectedValueOnce(new Error('unavailable'))

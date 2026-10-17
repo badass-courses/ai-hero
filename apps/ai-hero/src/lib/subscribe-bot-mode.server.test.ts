@@ -9,7 +9,10 @@ import { getFlagKey } from '@/flags/flag-key'
 const mocks = vi.hoisted(() => ({ get: vi.fn() }))
 vi.mock('@/server/redis-client', () => ({ redis: { get: mocks.get } }))
 
-import { readSubscribeBotMode } from './subscribe-bot-mode.server'
+import {
+	readSubscribeBotMode,
+	readSubscribeBotModeStrict,
+} from './subscribe-bot-mode.server'
 
 describe('subscribe admin switches', () => {
 	beforeEach(() => {
@@ -57,12 +60,25 @@ describe('subscribe admin switches', () => {
 		expect(await readSubscribeBotMode()).toBe('off')
 	})
 
+	it('strict reads distinguish an outage from a genuine off value', async () => {
+		mocks.get.mockRejectedValue(new Error('synthetic outage'))
+		await expect(readSubscribeBotModeStrict()).rejects.toThrow(
+			'synthetic outage',
+		)
+		mocks.get.mockResolvedValue(null)
+		expect(await readSubscribeBotModeStrict()).toBe('off')
+	})
+
 	it('bounds a stalled flag store and leaves no deadline timer behind', async () => {
 		vi.useFakeTimers()
 		try {
 			mocks.get.mockImplementation(() => new Promise(() => {}))
 			const result = readSubscribeBotMode()
+			const strict = expect(readSubscribeBotModeStrict()).rejects.toThrow(
+				'timed out',
+			)
 			await vi.advanceTimersByTimeAsync(500)
+			await strict
 			expect(await result).toBe('off')
 			expect(vi.getTimerCount()).toBe(0)
 		} finally {

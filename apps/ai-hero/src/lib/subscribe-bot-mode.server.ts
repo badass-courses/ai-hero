@@ -34,19 +34,24 @@ export async function withSubscribeBotTimeout<T>(
 	}
 }
 
-// Read the admin switches fresh; missing values and flag outages leave this off.
+// Cache callers must see failures, never a cacheable fail-open fallback.
+export async function readSubscribeBotModeStrict(): Promise<SubscribeBotMode> {
+	return withSubscribeBotTimeout(async () => {
+		const [shadow, enforce] = await Promise.all([
+			redis.get(getFlagKey(SUBSCRIBE_BOT_SHADOW)),
+			redis.get(getFlagKey(SUBSCRIBE_BOT_ENFORCE)),
+		])
+		return subscribeBotMode({
+			shadow: decodeFlagValue(shadow),
+			enforce: decodeFlagValue(enforce),
+		})
+	}, SUBSCRIBE_BOT_CONFIG.flagTimeoutMs)
+}
+
+// Subscribe POSTs read fresh and fail open if the flag store is unavailable.
 export async function readSubscribeBotMode(): Promise<SubscribeBotMode> {
 	try {
-		return await withSubscribeBotTimeout(async () => {
-			const [shadow, enforce] = await Promise.all([
-				redis.get(getFlagKey(SUBSCRIBE_BOT_SHADOW)),
-				redis.get(getFlagKey(SUBSCRIBE_BOT_ENFORCE)),
-			])
-			return subscribeBotMode({
-				shadow: decodeFlagValue(shadow),
-				enforce: decodeFlagValue(enforce),
-			})
-		}, SUBSCRIBE_BOT_CONFIG.flagTimeoutMs)
+		return await readSubscribeBotModeStrict()
 	} catch {
 		return 'off'
 	}

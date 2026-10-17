@@ -3,6 +3,7 @@ export const SUBSCRIBE_BOT_ROUTES = {
 	mode: '/api/subscribe-bot-mode',
 	modeCacheSeconds: 5,
 	modeTimeoutMs: 1000,
+	discoveryReuseMs: 30_000,
 }
 
 export const SUBSCRIBE_BOT_PROTECT = [

@@ -81,11 +81,13 @@ export const flagInstances = {
 } as const
 
 // Array of flags for precomputation
-export const precomputeFlags = [
-	commerceEnabled,
-	showTeamPricingFlag,
-	c5PricingEnabledFlag,
-]
+const NON_PRECOMPUTED = new Set([
+	subscribeBotShadowFlag,
+	subscribeBotEnforceFlag,
+])
+export const precomputeFlags = Object.values(flagInstances).filter(
+	(instance) => !NON_PRECOMPUTED.has(instance),
+)
 
 // Re-export types and constants
 export type { FlagKey } from './flag-definitions'

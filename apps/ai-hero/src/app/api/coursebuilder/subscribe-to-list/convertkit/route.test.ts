@@ -134,6 +134,9 @@ function request(
 			method: 'POST',
 			headers: {
 				'content-type': 'application/json',
+				'x-is-human': 'synthetic-attestation',
+				'x-path': '/api/coursebuilder/subscribe-to-list/convertkit',
+				'x-method': 'POST',
 				...(timeZone ? { 'x-vercel-ip-timezone': timeZone } : {}),
 			},
 			body: JSON.stringify(body),
@@ -857,6 +860,10 @@ describe('subscribe bot defence', () => {
 					{
 						mode: 'enforce',
 						reason,
+						headersPresent: true,
+						isBot: true,
+						bypassed: null,
+						isVerifiedBot: null,
 						emailHash: createHmac(
 							'sha256',
 							createHmac('sha256', 'synthetic-test-key')
@@ -1009,7 +1016,15 @@ describe('subscribe bot defence', () => {
 			expect(botEvents()).toEqual([
 				[
 					'subscribe.bot_allowed',
-					{ mode: 'enforce', reason: 'human', emailHash: undefined },
+					{
+						mode: 'enforce',
+						reason: 'human',
+						emailHash: undefined,
+						headersPresent: true,
+						isBot: false,
+						bypassed: null,
+						isVerifiedBot: null,
+					},
 				],
 			])
 		} finally {
@@ -1030,6 +1045,74 @@ describe('subscribe bot defence', () => {
 				.digest('hex')
 				.slice(0, 16),
 		)
+	})
+
+	it.each(['shadow', 'enforce'] as const)(
+		'allows missing attestation in %s with its own cause',
+		async (mode) => {
+			enable(mode)
+			mocks.checkBotId.mockResolvedValue({
+				isBot: true,
+				bypassed: false,
+				isVerifiedBot: false,
+			})
+			const req = request(body)
+			req.headers.delete('x-is-human')
+			const response = await POST(req)
+			expect(await response.json()).toEqual(humanResponse)
+			expect(mocks.courseBuilderPOST).toHaveBeenCalledTimes(1)
+			expect(mocks.checkBotId).not.toHaveBeenCalled()
+			expect(botEvents()).toEqual([
+				[
+					'subscribe.bot_allowed',
+					expect.objectContaining({
+						mode,
+						reason: 'no-attestation',
+						headersPresent: false,
+						isBot: null,
+						bypassed: null,
+						isVerifiedBot: null,
+					}),
+				],
+			])
+		},
+	)
+
+	it.each(['x-is-human', 'x-path', 'x-method'])(
+		'treats a partial attestation missing %s as absent',
+		async (header) => {
+			enable('enforce')
+			const req = request(body)
+			req.headers.delete(header)
+			await POST(req)
+			expect(mocks.courseBuilderPOST).toHaveBeenCalledTimes(1)
+			expect(botEvents()[0]?.[1]).toEqual(
+				expect.objectContaining({
+					reason: 'no-attestation',
+					headersPresent: false,
+				}),
+			)
+		},
+	)
+
+	it.each([
+		{ isBot: false, bypassed: true, isVerifiedBot: false },
+		{ isBot: false, bypassed: false, isVerifiedBot: true },
+		{ isBot: true, bypassed: false, isVerifiedBot: false },
+	])('logs only boolean SDK evidence for %j', async (verification) => {
+		enable('shadow')
+		mocks.checkBotId.mockResolvedValue({
+			...verification,
+			classificationReason: body.email,
+		})
+		await POST(request(body))
+		expect(botEvents()[0]?.[1]).toEqual(
+			expect.objectContaining({ headersPresent: true, ...verification }),
+		)
+		const serialized = JSON.stringify(botEvents())
+		expect(serialized).not.toContain(body.email)
+		expect(serialized).not.toContain('synthetic-attestation')
+		expect(serialized).not.toContain('classificationReason')
 	})
 
 	it('enforce wins when both switches are on', async () => {

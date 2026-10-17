@@ -1,9 +1,9 @@
 import { SUBSCRIBE_BOT_CONFIG } from './subscribe-bot-config'
 
 export type SubscribeBotMode = 'off' | 'shadow' | 'enforce'
-export type SubscribeBotSignal = 'human' | 'bot' | 'error'
+export type SubscribeBotSignal = 'human' | 'bot' | 'error' | 'no-attestation'
 export type SubscribeDecision =
-	| { action: 'allow'; reason: 'human' | 'botid-error' }
+	| { action: 'allow'; reason: 'human' | 'botid-error' | 'no-attestation' }
 	| { action: 'reject'; reason: 'botid' | 'random-name' }
 
 // Two switches, three modes: 00 -> off, 10 -> shadow, 01/11 -> enforce.
@@ -35,6 +35,8 @@ export function decideSubscribe({
 	botid: SubscribeBotSignal
 	firstName: unknown
 }): SubscribeDecision {
+	if (botid === 'no-attestation')
+		return { action: 'allow', reason: 'no-attestation' }
 	if (botid === 'error') return { action: 'allow', reason: 'botid-error' }
 	if (botid !== 'bot') return { action: 'allow', reason: 'human' }
 	return {
