@@ -238,6 +238,11 @@ export function kitIdentityOf(
 }
 
 export type ContactProfileSnapshot = {
+	/**
+	 * Set only for an unsubscribed contact: drovr refuses their profile,
+	 * links and offers forever, so the sync holds them (stops still flow).
+	 */
+	unsubscribed?: true
 	occurredAt: string
 	profile: ContactProfile
 	links: ContactLinksIssue[]
@@ -288,6 +293,9 @@ export async function readContactProfileSnapshot(args: {
 		origin: args.baseUrl,
 	})
 	return {
+		...(standing.reasons.includes('unsubscribed')
+			? { unsubscribed: true as const }
+			: {}),
 		occurredAt: args.now,
 		profile: {
 			email: standing.email,
@@ -424,6 +432,10 @@ export async function runContactProfileSync(args: {
 		}),
 	)) as ContactProfileSnapshot | undefined
 	if (!snapshot) return { status: 'skipped', reason: 'contact-missing' }
+	// Held, not pushed: no send, no birth, no retry chain. The stop and
+	// suppression events travel on their own path.
+	if (snapshot.unsubscribed)
+		return { status: 'skipped', reason: 'unsubscribed-held' }
 	// drovr ignores a profile without an email as malformed (contract §2);
 	// with none, it falls back to live personalize, which holds the contact.
 	if (!snapshot.profile.email.trim())

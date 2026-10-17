@@ -3,6 +3,7 @@ import { log } from '@/server/logger'
 import { clampBirths, logClampedBirths } from './drovr-birth-clamp'
 import { parseRetryAfterMs } from './drovr-retry-after'
 
+import { drovrDeferralReasonOf } from './drovr-refusal-outcome'
 import {
 	boundedProblemBody,
 	deliverDrovrShadowEvent,
@@ -12,7 +13,6 @@ import {
 } from './drovr-shadow-emitter'
 import {
 	drovrStopVerdict,
-	isColdStartUnhandledProblem,
 	isEventNotLiveProblem,
 	isHeldStopRefusal,
 	isNeverBornOwnerStopProblem,
@@ -89,6 +89,14 @@ export function batchIngestUrl(ingestUrl: string): string {
 	return `${ingestUrl.replace(/\/+$/, '')}/batch`
 }
 
+/** The path a batch post came from, stamped on its send log. */
+export type DrovrDeliveryCaller =
+	| 'contact-sync'
+	| 'straggler-retry'
+	| 'directory-birth'
+	| 'reconcile'
+	| 'outbox-replay'
+
 export class DrovrBatchDeliveryFailedError extends Error {
 	constructor(
 		readonly failedKeys: readonly string[],
@@ -144,20 +152,6 @@ export function isNeverBornOwnerStop(
 		isStopEvent(event) &&
 		drovrStopVerdict(event, outcome) === 'released'
 	)
-}
-
-/**
- * The contact-sync push contract (§4): event-not-live means the contact's
- * directory actor is still v1; cold-start-unhandled that it has none. Either
- * way nothing was recorded and the key is not consumed.
- */
-function deferralReasonOf(
-	problem: unknown,
-): DeferredDrovrEventReason | undefined {
-	if (isEventNotLiveProblem(problem)) return 'event-not-live'
-	return isColdStartUnhandledProblem(problem)
-		? 'cold-start-unhandled'
-		: undefined
 }
 
 /** A stop's verdict for a batch answer; undefined for a fact or a birth. */
@@ -247,6 +241,8 @@ export async function deliverBatchOrThrow(args: {
 	 */
 	clampAt: number
 	info?: typeof log.info
+	/** Which path posted this batch; logged once with drovr's answer. */
+	caller?: DrovrDeliveryCaller
 }): Promise<DrovrBatchOutcome> {
 	const fetcher = args.fetcher ?? fetch
 	const warn = args.warn ?? log.warn
@@ -275,6 +271,14 @@ export async function deliverBatchOrThrow(args: {
 				error instanceof Error ? error.message : String(error),
 			)
 		}
+		// Logged once per post, before the missing-route retry below, so a
+		// 404 or 405 shows as a send with that status.
+		if (args.caller)
+			await warnSafely(args.info ?? log.info, 'drovr.shadow.batch_sent', {
+				caller: args.caller,
+				count: args.events.length,
+				status: response.status,
+			})
 		// A missing route is a drovr that has not deployed the batch ingress
 		// yet, not a verdict on the events: retry until it has.
 		if (response.status === 404 || response.status === 405) {
@@ -294,30 +298,46 @@ export async function deliverBatchOrThrow(args: {
 			const stopsLanded = verdicts.filter((v) => v === 'landed').length
 			const rest = args.events.filter((_, i) => verdicts[i] !== 'landed')
 			if (rest.length === 0) return { accepted: stopsLanded, rejected: 0 }
-			const deferral =
+			// The contact-sync push contract (§4), per event: see
+			// drovrRefusalOutcome. A stop the rule holds (a cold-start off the
+			// directory) is refused, never deferred to a retry.
+			const deferralFor = (event: DrovrShadowEvent) =>
 				response.status === 409 && args.deferNotLive
-					? deferralReasonOf(problem)
+					? drovrDeferralReasonOf(event, problem)
 					: undefined
-			if (deferral) {
-				// A stop the rule holds (a cold-start off the directory) is
-				// refused, never deferred to a retry.
-				const isHeld = (event: DrovrShadowEvent) =>
-					verdicts[args.events.indexOf(event)] === 'held'
-				const later = rest.filter((event) => !isHeld(event))
-				const held = rest.filter(isHeld)
-				if (deferral === 'cold-start-unhandled')
-					for (const event of later) await warnColdStart(warn, event)
+			const isHeld = (event: DrovrShadowEvent) =>
+				verdicts[args.events.indexOf(event)] === 'held'
+			if (rest.some((event) => deferralFor(event))) {
+				const later = rest.filter(
+					(event) => !isHeld(event) && deferralFor(event),
+				)
+				const refusedNow = rest.filter((event) => !later.includes(event))
+				// Every refused event is warned, as on the non-deferral path.
+				if (refusedNow.length > 0)
+					await warnSafely(warn, 'drovr.shadow.batch_rejected', {
+						caller: args.caller,
+						status: response.status,
+						count: refusedNow.length,
+						tenantId: args.events[0]?.tenantId,
+						problem,
+					})
+				for (const event of later)
+					if (deferralFor(event) === 'cold-start-unhandled')
+						await warnColdStart(warn, event)
 				return {
 					accepted: stopsLanded,
-					rejected: held.length,
+					rejected: refusedNow.length,
 					...(later.length > 0
 						? {
-								deferred: later.map((event) => ({ event, reason: deferral })),
+								deferred: later.map((event) => ({
+									event,
+									reason: deferralFor(event)!,
+								})),
 							}
 						: {}),
-					...(held.length > 0
+					...(refusedNow.length > 0
 						? {
-								refused: held.map((event) => ({
+								refused: refusedNow.map((event) => ({
 									event,
 									httpStatus: response.status,
 									problem,
@@ -343,6 +363,7 @@ export async function deliverBatchOrThrow(args: {
 				)
 			}
 			await warnSafely(warn, 'drovr.shadow.batch_rejected', {
+				caller: args.caller,
 				status: response.status,
 				count: rest.length,
 				tenantId: args.events[0]?.tenantId,
@@ -405,9 +426,10 @@ export async function deliverBatchOrThrow(args: {
 				if (item.status === 'rejected') stopsLandedRejected += 1
 				continue
 			}
-			const deferral = args.deferNotLive
-				? deferralReasonOf(item.detail)
-				: undefined
+			const deferral =
+				args.deferNotLive && event
+					? drovrDeferralReasonOf(event, item.detail)
+					: undefined
 			if (deferral && event && verdict !== 'held') {
 				deferred.push({ event, reason: deferral })
 				if (item.status === 'rejected') deferredRejected += 1
@@ -429,6 +451,7 @@ export async function deliverBatchOrThrow(args: {
 						problem: item.detail,
 					})
 				await warnSafely(warn, 'drovr.shadow.rejected', {
+					caller: args.caller,
 					journeyId: event?.journeyId,
 					type: event?.type,
 					idempotencyKey: event?.idempotencyKey,
@@ -466,8 +489,8 @@ async function warnColdStart(
 	warn: typeof log.warn,
 	event: DrovrShadowEvent,
 ): Promise<void> {
-	// The contract expects an actor for every sending-journey contact; until
-	// mig-10 says how to birth one, it is retried daily like event-not-live.
+	// The contract expects an actor for every sending-journey contact. One
+	// missing is born and the push redelivered (birthThenRedeliver).
 	await warnSafely(warn, 'drovr.contact_sync.cold_start_unhandled', {
 		contactId: event.contactId,
 		type: event.type,
@@ -476,7 +499,7 @@ async function warnColdStart(
 }
 
 async function warnSafely(
-	warn: typeof log.warn,
+	warn: typeof log.warn | typeof log.info,
 	message: string,
 	fields: Record<string, unknown>,
 ): Promise<void> {

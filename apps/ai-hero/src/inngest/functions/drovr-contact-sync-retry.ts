@@ -2,6 +2,10 @@ import { CONTACT_SYNC_RETRY_EVENT } from '@/inngest/events/drovr'
 import { inngest } from '@/inngest/inngest.server'
 import { DROVR_SEND_RETRIES } from '@/lib/subscriber-marketing/drovr-outbox'
 import {
+	deliverHoldingUnsubscribed,
+	isUnsubscribedForHold,
+} from '@/lib/subscriber-marketing/drovr-straggler-hold'
+import {
 	createDirectoryBirth,
 	runContactSyncStragglerRetry,
 } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
@@ -31,6 +35,7 @@ export const drovrContactSyncRetry = inngest.createFunction(
 			{ findContactKitIdentity },
 			{ createDrizzleContactProfileVersionStore },
 			{ contactSyncSendOrOutbox, settleOrHoldStragglerStops },
+			{ readContactSendStanding },
 		] = await Promise.all([
 			import('@/db'),
 			import('@/env.mjs'),
@@ -41,6 +46,7 @@ export const drovrContactSyncRetry = inngest.createFunction(
 			import('@/lib/subscriber-marketing/contact-kit-identity-drizzle'),
 			import('@/lib/subscriber-marketing/contact-profile-version-drizzle'),
 			import('@/lib/subscriber-marketing/drovr-outbox-contact-sync'),
+			import('@/lib/subscriber-marketing/drovr-personalize'),
 		])
 		// Row 204: the last failed attempt outboxes the events.
 		const outboxing = contactSyncSendOrOutbox({ attempt, maxAttempts })
@@ -61,20 +67,26 @@ export const drovrContactSyncRetry = inngest.createFunction(
 			warn: log.warn,
 			// Row 204c: a stop a backfill outboxed while it waited is settled
 			// when this send lands it, or held if drovr refused it.
-			deliver: (events) =>
-				outboxing(events, async () =>
-					settleOrHoldStragglerStops(
-						events,
-						await deliverBatchOrThrow({
+			deliver: deliverHoldingUnsubscribed({
+				warn: log.warn,
+				isUnsubscribed: (contactId) =>
+					isUnsubscribedForHold(readContactSendStanding, repository, contactId),
+				send: (events) =>
+					outboxing(events, async () =>
+						settleOrHoldStragglerStops(
 							events,
-							config: drovrConfig(),
-							deferNotLive: true,
-							// Contact-directory events only: nothing is clamped (row
-							// 201g), so any instant posts the same bytes.
-							clampAt: Date.now(),
-						}),
+							await deliverBatchOrThrow({
+								events,
+								config: drovrConfig(),
+								deferNotLive: true,
+								caller: 'straggler-retry',
+								// Contact-directory events only: nothing is clamped (row
+								// 201g), so any instant posts the same bytes.
+								clampAt: Date.now(),
+							}),
+						),
 					),
-				),
+			}),
 			acknowledge: (contactId, profileVersion) =>
 				createDrizzleContactProfileVersionStore(db).acknowledge(
 					contactId,
@@ -91,6 +103,7 @@ export const drovrContactSyncRetry = inngest.createFunction(
 							config: drovrConfig(),
 							// Directory births are never clamped (row 201g).
 							clampAt: Date.now(),
+							caller: 'directory-birth',
 						}),
 					),
 			}),
