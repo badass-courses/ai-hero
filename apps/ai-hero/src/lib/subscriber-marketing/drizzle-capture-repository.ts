@@ -396,23 +396,39 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		return rows.map(toSideEffectIntentRecord)
 	}
 
-	async findExitHeldSideEffectIntentsByType(
-		type: SideEffectIntent['type'],
-		limit: number,
-	) {
-		const safeLimit = Number.isFinite(limit) && limit >= 1 ? Math.floor(limit) : 0
-		if (safeLimit === 0) return []
+	async findExitHeldSideEffectIntentsByType(args: {
+		type: SideEffectIntent['type']
+		list: string
+		limit: number
+		after?: { createdAt: string; id: string }
+	}) {
+		const limit =
+			Number.isFinite(args.limit) && args.limit >= 1 ? Math.floor(args.limit) : 0
+		if (limit === 0) return []
+		const after = args.after
+			? or(
+					gt(sideEffectIntent.createdAt, new Date(args.after.createdAt)),
+					and(
+						eq(sideEffectIntent.createdAt, new Date(args.after.createdAt)),
+						gt(sideEffectIntent.id, args.after.id),
+					),
+				)
+			: undefined
+		// provider first: the (provider, type, status) index serves this read.
 		const rows = await this.database
 			.select()
 			.from(sideEffectIntent)
 			.where(
 				and(
-					eq(sideEffectIntent.type, type),
+					eq(sideEffectIntent.provider, 'kit'),
+					eq(sideEffectIntent.type, args.type),
 					eq(sideEffectIntent.status, 'held-for-exit'),
+					sql`json_unquote(json_extract(${sideEffectIntent.metadata}, '$.list')) = ${args.list}`,
+					after,
 				),
 			)
-			.orderBy(asc(sideEffectIntent.createdAt))
-			.limit(safeLimit)
+			.orderBy(asc(sideEffectIntent.createdAt), asc(sideEffectIntent.id))
+			.limit(limit)
 		return rows.map(toSideEffectIntentRecord)
 	}
 

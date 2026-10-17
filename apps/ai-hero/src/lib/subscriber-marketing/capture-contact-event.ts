@@ -95,11 +95,14 @@ export type CaptureMarketingRepository = {
 	): MaybePromise<SideEffectIntent[]>
 	/** Isolated exit holds, re-armed only after independent receipt verification. */
 	findExitHeldSideEffectIntentsByContact?(contactId: string): MaybePromise<SideEffectIntent[]>
-	/** Isolated exit holds of one intent type across contacts, oldest first. */
-	findExitHeldSideEffectIntentsByType?(
-		type: SideEffectIntent['type'],
-		limit: number,
-	): MaybePromise<SideEffectIntent[]>
+	/** One keyset page of isolated exit holds of one intent type and list,
+	 * ordered by (createdAt, id). Pass the last row as `after` for the next page. */
+	findExitHeldSideEffectIntentsByType?(args: {
+		type: SideEffectIntent['type']
+		list: string
+		limit: number
+		after?: { createdAt: string; id: string }
+	}): MaybePromise<SideEffectIntent[]>
 	createContactEvent(
 		input: Omit<ContactEventRecord, 'id' | 'createdAt'> & {
 			createdAt?: string

@@ -2,6 +2,7 @@ import { ACTIVE_PURCHASE_STATUSES } from '@/lib/crash-course-purchaser-tag'
 
 import type { CaptureMarketingRepository } from './capture-contact-event'
 import { SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE } from './drovr-evergreen'
+import { DROVR_EVERGREEN_OFFER_JOURNEY_ID } from './drovr-shadow-emitter'
 import {
 	replayNewsletterExitReceipt,
 	type NewsletterExitReplayRepository,
@@ -16,7 +17,7 @@ import {
 	OLD_NEWSLETTER_SUBSCRIBED,
 	readOldSequenceMembership,
 } from './old-newsletter-exit'
-import type { ContactEventRecord } from './types'
+import type { ContactEventRecord, SideEffectIntent } from './types'
 
 /**
  * Exit proof from a recorded purchase. drovr's evergreen journey stops its
@@ -31,7 +32,6 @@ import type { ContactEventRecord } from './types'
  * Refunded, disputed or otherwise inactive purchases never prove exit.
  */
 export const PURCHASE_HANDOFF_PROOF_KIND = 'purchase-handoff'
-const DEFAULT_LIMIT = 50
 
 export type PurchaseHandoffExitRepository = NewsletterExitReplayRepository &
 	Pick<CaptureMarketingRepository, 'findContactById' | 'findProviderIdentity'> &
@@ -43,7 +43,8 @@ export type PurchaseHandoffExitOutcome =
 	| 'admitted'
 	| 'replayed-existing-receipt'
 	| 'no-active-purchase'
-	| 'already-proven'
+	/** A proof receipt exists from another producer, yet the row is still held. */
+	| 'held-despite-proof'
 	| 'contact-email-missing'
 	| 'identity-unresolved'
 	| 'unproven'
@@ -55,13 +56,34 @@ export type PurchaseHandoffExitResult =
 			results: { contactId: string; outcome: PurchaseHandoffExitOutcome }[]
 	  }
 
+const PAGE_SIZE = 100
+const MAX_PAGES = 100
+
+/** drovr's evergreen journey stamps its handoff rows; the list name alone is
+ * not provenance. */
+export function isDrovrEvergreenHandoff(row: SideEffectIntent): boolean {
+	const drovr = row.metadata.drovr
+	return (
+		row.type === SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE &&
+		row.metadata.list === 'shadow-newsletter' &&
+		row.metadata.source === 'drovr' &&
+		typeof drovr === 'object' &&
+		drovr !== null &&
+		(drovr as { journeyId?: unknown }).journeyId ===
+			DROVR_EVERGREEN_OFFER_JOURNEY_ID
+	)
+}
+
 export async function runPurchaseHandoffExitPass(args: {
 	repository: PurchaseHandoffExitRepository
 	isEnabled: () => Promise<boolean>
-	/** Statuses of the contact's Crash Course purchases, by email. */
-	findCrashCoursePurchaseStatuses: (email: string) => Promise<string[]>
+	/** Statuses of Crash Course purchases per lower-cased account email. */
+	findCrashCoursePurchaseStatuses: (
+		emails: string[],
+	) => Promise<Map<string, string[]>>
 	now: string
-	limit?: number
+	pageSize?: number
+	maxPages?: number
 	send?: NewsletterVeteransSend
 }): Promise<PurchaseHandoffExitResult> {
 	let enabled = false
@@ -71,34 +93,44 @@ export async function runPurchaseHandoffExitPass(args: {
 		enabled = false
 	}
 	if (!enabled) return { status: 'disabled' }
-	const held = await args.repository.findExitHeldSideEffectIntentsByType(
-		SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE,
-		args.limit ?? DEFAULT_LIMIT,
-	)
-	const contactIds = [
-		...new Set(
-			held
-				.filter((row) => row.metadata.list === 'shadow-newsletter')
-				.map((row) => row.contactId),
-		),
-	]
 	const results: { contactId: string; outcome: PurchaseHandoffExitOutcome }[] =
 		[]
-	for (const contactId of contactIds) {
-		results.push({ contactId, outcome: await produceOne(contactId, args) })
+	const seen = new Set<string>()
+	let after: { createdAt: string; id: string } | undefined
+	// Keyset pages over the whole held set: held non-buyers never hide a buyer.
+	for (let page = 0; page < (args.maxPages ?? MAX_PAGES); page++) {
+		const rows = await args.repository.findExitHeldSideEffectIntentsByType({
+			type: SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE,
+			list: 'shadow-newsletter',
+			limit: args.pageSize ?? PAGE_SIZE,
+			after,
+		})
+		if (rows.length === 0) break
+		const last = rows[rows.length - 1]!
+		after = { createdAt: last.createdAt, id: last.id }
+		const contactIds = [
+			...new Set(
+				rows.filter(isDrovrEvergreenHandoff).map((row) => row.contactId),
+			),
+		].filter((contactId) => !seen.has(contactId))
+		for (const contactId of contactIds) seen.add(contactId)
+		results.push(...(await processPage(contactIds, args)))
+		if (rows.length < (args.pageSize ?? PAGE_SIZE)) break
 	}
 	return { status: 'ran', results }
 }
 
 const receiptKey = (contactId: string) =>
-	`sequence:2625552:purchase-handoff:${contactId}`
+	`${OLD_NEWSLETTER_REFERENCE}:purchase-handoff:${contactId}`
 
-async function produceOne(
-	contactId: string,
+async function processPage(
+	contactIds: string[],
 	args: Parameters<typeof runPurchaseHandoffExitPass>[0],
-): Promise<PurchaseHandoffExitOutcome> {
+) {
 	const { repository, now } = args
-	const replay = (receiptId: string) =>
+	const results: { contactId: string; outcome: PurchaseHandoffExitOutcome }[] =
+		[]
+	const replay = (contactId: string, receiptId: string) =>
 		replayNewsletterExitReceipt({
 			repository,
 			contactId,
@@ -106,64 +138,99 @@ async function produceOne(
 			now,
 			send: args.send,
 		})
-	const exits = await repository.findContactEventsByType(
-		contactId,
-		OLD_NEWSLETTER_EXIT_CONFIRMED,
-	)
-	const own = exits.find(
-		(event) =>
-			event.providerEventId === receiptKey(contactId) &&
-			event.provider === 'kit' &&
-			event.providerReference === OLD_NEWSLETTER_REFERENCE,
-	)
-	// Our receipt exists but the rows are still held: the wakeup was lost. Replay
-	// is idempotent, so finish the job without writing a second receipt.
-	if (own) {
-		const replayed = await replay(own.id)
-		return replayed.status === 'resumed'
-			? 'replayed-existing-receipt'
-			: 'unproven'
+	const candidates: { contactId: string; email: string }[] = []
+	for (const contactId of contactIds) {
+		const exits = await repository.findContactEventsByType(
+			contactId,
+			OLD_NEWSLETTER_EXIT_CONFIRMED,
+		)
+		const own = exits.find(
+			(event) =>
+				event.providerEventId === receiptKey(contactId) &&
+				event.provider === 'kit' &&
+				event.providerReference === OLD_NEWSLETTER_REFERENCE,
+		)
+		// Our receipt exists but the rows are still held: the wakeup was lost.
+		// Replay is idempotent, so finish the job without a second receipt.
+		if (own) {
+			const replayed = await replay(contactId, own.id)
+			results.push({
+				contactId,
+				outcome:
+					replayed.status === 'resumed'
+						? 'replayed-existing-receipt'
+						: 'unproven',
+			})
+			continue
+		}
+		const membership = await readOldSequenceMembership(repository, contactId)
+		if (membership === 'exited' || membership === 'absent') {
+			results.push({ contactId, outcome: 'held-despite-proof' })
+			continue
+		}
+		const contact = await repository.findContactById(contactId)
+		if (!contact?.email) {
+			results.push({ contactId, outcome: 'contact-email-missing' })
+			continue
+		}
+		candidates.push({ contactId, email: contact.email })
 	}
-	const membership = await readOldSequenceMembership(repository, contactId)
-	if (membership === 'exited' || membership === 'absent') return 'already-proven'
-	const contact = await repository.findContactById(contactId)
-	if (!contact?.email) return 'contact-email-missing'
-	const statuses = await args.findCrashCoursePurchaseStatuses(contact.email)
-	if (!statuses.some((status) => (ACTIVE_PURCHASE_STATUSES as readonly string[]).includes(status)))
-		return 'no-active-purchase'
-	const identity = await resolveKitIdentity(repository, contactId)
-	if (!identity) return 'identity-unresolved'
-	const normalized = normalizeContactEvent({
-		provider: 'kit',
-		externalId: identity.externalId,
-		email: contact.email,
-		providerEventId: receiptKey(contactId),
-		eventType: OLD_NEWSLETTER_EXIT_CONFIRMED,
-		occurredAt: now,
-		message: 'Old newsletter exit accepted from drovr purchase handoff',
-		privacyLevel: 'internal',
-	})
-	const receipt = await repository.createContactEvent({
-		...normalized,
-		contactId,
-		providerIdentityId: identity.id,
-		providerReference: OLD_NEWSLETTER_REFERENCE,
-		createdAt: now,
-		payloadSummary: {
-			...normalized.payloadSummary,
-			summary: JSON.stringify({
-				operation: 'purchase-handoff-exit',
-				proofKind: PURCHASE_HANDOFF_PROOF_KIND,
-			}),
-		},
-	})
-	if (
-		receipt.contactId !== contactId ||
-		receipt.eventType !== OLD_NEWSLETTER_EXIT_CONFIRMED
-	)
-		return 'unproven'
-	const replayed = await replay(receipt.id)
-	return replayed.status === 'resumed' ? 'admitted' : 'unproven'
+	if (candidates.length === 0) return results
+	const statuses = await args.findCrashCoursePurchaseStatuses([
+		...new Set(candidates.map((candidate) => candidate.email.toLowerCase())),
+	])
+	for (const { contactId, email } of candidates) {
+		const active = (statuses.get(email.toLowerCase()) ?? []).some((status) =>
+			(ACTIVE_PURCHASE_STATUSES as readonly string[]).includes(status),
+		)
+		if (!active) {
+			results.push({ contactId, outcome: 'no-active-purchase' })
+			continue
+		}
+		const identity = await resolveKitIdentity(repository, contactId)
+		if (!identity) {
+			results.push({ contactId, outcome: 'identity-unresolved' })
+			continue
+		}
+		const normalized = normalizeContactEvent({
+			provider: 'kit',
+			externalId: identity.externalId,
+			email,
+			providerEventId: receiptKey(contactId),
+			eventType: OLD_NEWSLETTER_EXIT_CONFIRMED,
+			occurredAt: now,
+			message: 'Old newsletter exit accepted from drovr purchase handoff',
+			privacyLevel: 'internal',
+		})
+		// The semantic key is unique, so a racing writer gets the same row back.
+		const receipt = await repository.createContactEvent({
+			...normalized,
+			contactId,
+			providerIdentityId: identity.id,
+			providerReference: OLD_NEWSLETTER_REFERENCE,
+			createdAt: now,
+			payloadSummary: {
+				...normalized.payloadSummary,
+				summary: JSON.stringify({
+					operation: 'purchase-handoff-exit',
+					proofKind: PURCHASE_HANDOFF_PROOF_KIND,
+				}),
+			},
+		})
+		if (
+			receipt.contactId !== contactId ||
+			receipt.eventType !== OLD_NEWSLETTER_EXIT_CONFIRMED
+		) {
+			results.push({ contactId, outcome: 'unproven' })
+			continue
+		}
+		const replayed = await replay(contactId, receipt.id)
+		results.push({
+			contactId,
+			outcome: replayed.status === 'resumed' ? 'admitted' : 'unproven',
+		})
+	}
+	return results
 }
 
 /** The contact's Kit identity, from the hold or the old-sequence history. */
