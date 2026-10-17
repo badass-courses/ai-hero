@@ -8,7 +8,9 @@ import { getEnvKey } from '@/flags/flags-env'
 const mocks = vi.hoisted(() => ({ get: vi.fn() }))
 vi.mock('server-only', () => ({}))
 vi.mock('@/db', () => ({ db: {} }))
-vi.mock('@/env.mjs', () => ({ env: { COURSEBUILDER_URL: 'https://example.test' } }))
+vi.mock('@/env.mjs', () => ({
+	env: { COURSEBUILDER_URL: 'https://example.test' },
+}))
 vi.mock('@/server/redis-client', () => ({ redis: { get: mocks.get } }))
 
 import { purchaseExitProofEnabled } from './purchase-exit-proof.server'

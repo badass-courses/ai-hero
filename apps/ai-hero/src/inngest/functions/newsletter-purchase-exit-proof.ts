@@ -5,8 +5,14 @@ import {
 	findCrashCoursePurchaseStatuses,
 	purchaseExitProofEnabled,
 } from '@/lib/subscriber-marketing/purchase-exit-proof.server'
-import { runPurchaseHandoffExitPass } from '@/lib/subscriber-marketing/purchase-handoff-exit'
+import {
+	runPurchaseHandoffExitPage,
+	type PurchaseHandoffExitCursor,
+	type PurchaseHandoffExitPageResult,
+} from '@/lib/subscriber-marketing/purchase-handoff-exit'
 import { log } from '@/server/logger'
+
+const MAX_PAGES = 100
 
 /**
  * Scheduled producer of purchase-handoff exit receipts. Off unless the
@@ -20,27 +26,30 @@ export const newsletterPurchaseExitProof = inngest.createFunction(
 		retries: 1,
 		concurrency: 1,
 	},
-	{ cron: '*/5 * * * *' },
+	{ cron: '*/15 * * * *' },
 	async ({ step }) => {
-		const result = await step.run('produce-purchase-handoff-exits', () =>
-			runPurchaseHandoffExitPass({
-				repository: new DrizzleCaptureMarketingRepository(db),
-				isEnabled: purchaseExitProofEnabled,
-				findCrashCoursePurchaseStatuses,
-				now: new Date().toISOString(),
-			}),
-		)
-		if (result.status === 'ran' && result.results.length > 0) {
-			await log.info('newsletter.purchase_exit_proof', {
-				outcomes: result.results.reduce<Record<string, number>>(
-					(acc, row) => {
-						acc[row.outcome] = (acc[row.outcome] ?? 0) + 1
-						return acc
-					},
-					{},
-				),
-			})
+		const deps = () => ({
+			repository: new DrizzleCaptureMarketingRepository(db),
+			isEnabled: purchaseExitProofEnabled,
+			findCrashCoursePurchaseStatuses,
+			now: new Date().toISOString(),
+		})
+		const outcomes: Record<string, number> = {}
+		let after: PurchaseHandoffExitCursor | undefined
+		// One step per page; the flag is re-read at the top of each page.
+		for (let page = 0; page < MAX_PAGES; page++) {
+			const result: PurchaseHandoffExitPageResult = await step.run(
+				`purchase-handoff-exits-page-${page}`,
+				() => runPurchaseHandoffExitPage({ ...deps(), after }),
+			)
+			if (result.status === 'disabled') break
+			for (const row of result.results)
+				outcomes[row.outcome] = (outcomes[row.outcome] ?? 0) + 1
+			if (!result.next) break
+			after = result.next
 		}
-		return result
+		if (Object.keys(outcomes).length > 0)
+			await log.info('newsletter.purchase_exit_proof', { outcomes })
+		return { outcomes }
 	},
 )

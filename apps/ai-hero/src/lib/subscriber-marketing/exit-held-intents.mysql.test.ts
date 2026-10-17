@@ -89,17 +89,19 @@ integration('exit-held intents by type MySQL contract', () => {
 			status?: string
 			type?: string
 			list?: string
+			provider?: string
 			createdAt?: string
 		} = {},
 	) =>
 		pool.query(
 			`INSERT INTO AI_SideEffectIntent
 			(id, nextActionId, contactId, provider, type, status, idempotencyKey, gates, reviewReasons, metadata, createdAt)
-			VALUES (?, ?, ?, 'kit', ?, ?, ?, '[]', '[]', ?, ?)`,
+			VALUES (?, ?, ?, ?, ?, ?, ?, '[]', '[]', ?, ?)`,
 			[
 				id,
 				`action-${id}`,
 				`contact-${id}`,
+				overrides.provider ?? 'kit',
 				overrides.type ?? 'subscribe-evergreen-list',
 				overrides.status ?? 'held-for-exit',
 				`key-${id}`,
@@ -116,6 +118,7 @@ integration('exit-held intents by type MySQL contract', () => {
 		await insert('x-status', { status: 'pending' })
 		await insert('x-type', { type: 'send-shadow-newsletter-email' })
 		await insert('x-list', { list: 'other' })
+		await insert('x-provider', { provider: 'other-provider' })
 		const base = {
 			type: 'subscribe-evergreen-list' as const,
 			list: 'shadow-newsletter',
@@ -136,5 +139,12 @@ integration('exit-held intents by type MySQL contract', () => {
 			after: { createdAt: second[1]!.createdAt, id: second[1]!.id },
 		})
 		expect(third).toEqual([])
+		// createdAt holds whole seconds: a cursor carrying milliseconds must
+		// still tie with its own row and page past it by id.
+		const withMillis = await repository.findExitHeldSideEffectIntentsByType({
+			...base,
+			after: { createdAt: '2026-10-01T00:00:00.789Z', id: 'a' },
+		})
+		expect(withMillis.map((row: { id: string }) => row.id)).toEqual(['b', 'c'])
 	})
 })

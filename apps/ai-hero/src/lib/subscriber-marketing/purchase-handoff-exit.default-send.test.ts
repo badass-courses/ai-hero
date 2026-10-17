@@ -42,7 +42,10 @@ it('admits through the real default sender when the cron passes no send', async 
 		}),
 	})
 	const contactId = capture.contact.id
-	for (const eventType of [OLD_NEWSLETTER_SUBSCRIBED, 'newsletter.exit-required'])
+	for (const eventType of [
+		OLD_NEWSLETTER_SUBSCRIBED,
+		'newsletter.exit-required',
+	])
 		repository.createContactEvent({
 			...normalizeContactEvent({
 				provider: 'kit',

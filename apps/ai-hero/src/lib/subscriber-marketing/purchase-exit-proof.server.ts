@@ -7,7 +7,7 @@ import { getFlagKey } from '@/flags/flag-key'
 import { decodeFlagValue } from '@/flags/flags-adapter'
 import { AI_CODING_CRASH_COURSE_PRODUCT_ID } from '@/lib/crash-course-purchaser-tag'
 import { redis } from '@/server/redis-client'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, isNull } from 'drizzle-orm'
 
 /** Fresh read on every pass. Unset, unreadable or slow counts as off. */
 export async function purchaseExitProofEnabled(
@@ -33,14 +33,17 @@ export async function purchaseExitProofEnabled(
 /**
  * Statuses of Crash Course purchases per lower-cased account email, in one
  * query. The match follows the column collation; a miss only keeps a contact
- * held, never admits one.
+ * held, never admits one. A bulk or team purchaser's own bulk row does not
+ * count (bulkCouponId is set); a buyer counts only through an individual
+ * purchase or a seat they redeemed themselves, both of which have none.
  */
 export async function findCrashCoursePurchaseStatuses(
 	emails: string[],
+	database: typeof db = db,
 ): Promise<Map<string, string[]>> {
 	const byEmail = new Map<string, string[]>()
 	if (emails.length === 0) return byEmail
-	const rows = await db
+	const rows = await database
 		.select({ email: users.email, status: purchases.status })
 		.from(purchases)
 		.innerJoin(users, eq(purchases.userId, users.id))
@@ -48,6 +51,7 @@ export async function findCrashCoursePurchaseStatuses(
 			and(
 				inArray(users.email, emails),
 				eq(purchases.productId, AI_CODING_CRASH_COURSE_PRODUCT_ID),
+				isNull(purchases.bulkCouponId),
 			),
 		)
 	for (const row of rows) {
