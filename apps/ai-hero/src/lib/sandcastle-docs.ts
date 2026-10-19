@@ -9,40 +9,77 @@ import { unified } from 'unified'
 /**
  * Sandcastle's docs are its README: one long file on GitHub, which this module
  * splits into a page per `##` section so /sandcastle reads like a docs site
- * while the repo stays the only place the docs are written.
+ * while the repo stays the only place the docs are written. The landing page's
+ * facts (the lead, the three steps, the provider table, the example) come out
+ * of the same parse, so it cannot drift from the docs either.
  *
- * Fetched from the raw host on ISR, so a README push shows up within the hour
- * (or at once via `/api/revalidate?tag=sandcastle-docs`).
+ * Fetched from the raw host on ISR. A push to the README revalidates at once
+ * through the github-source webhook; the hourly ISR window is the backstop.
  */
-const SANDCASTLE_OWNER = 'mattpocock'
-const SANDCASTLE_REPO = 'sandcastle'
+export const SANDCASTLE_OWNER = 'mattpocock'
+export const SANDCASTLE_REPO = 'sandcastle'
 const SANDCASTLE_REF = 'main'
 const SANDCASTLE_README = 'README.md'
 
 export const SANDCASTLE_DOCS_REVALIDATE_SECONDS = 3600
 export const SANDCASTLE_DOCS_CACHE_TAG = 'sandcastle-docs'
 export const SANDCASTLE_DOCS_PATH = '/sandcastle'
-export const SANDCASTLE_REPO_URL = `https://github.com/${SANDCASTLE_OWNER}/${SANDCASTLE_REPO}`
+/** `owner/repo`, as GitHub names it in a push payload. */
+export const SANDCASTLE_REPOSITORY = `${SANDCASTLE_OWNER}/${SANDCASTLE_REPO}`
+export const SANDCASTLE_REPO_URL = `https://github.com/${SANDCASTLE_REPOSITORY}`
 export const SANDCASTLE_README_URL = `${SANDCASTLE_REPO_URL}/blob/${SANDCASTLE_REF}/${SANDCASTLE_README}`
 export const SANDCASTLE_PACKAGE = '@ai-hero/sandcastle'
 
-export type SandcastleDocsHeading = {
-	title: string
-	/** The heading's id on the rendered page, as `Heading` mints it. */
-	anchor: string
-}
+/**
+ * The sidebar's grouping, by page slug. Editorial, so it lives here rather than
+ * in the README; a section the README gains later lands in "More" until it is
+ * filed, rather than disappearing.
+ */
+const SANDCASTLE_DOCS_GROUPS: { title: string; slugs: string[] }[] = [
+	{
+		title: 'Getting started',
+		slugs: ['what-is-sandcastle', 'prerequisites', 'quick-start'],
+	},
+	{
+		title: 'Guides',
+		slugs: ['how-it-works', 'sandbox-providers', 'prompts', 'configuration'],
+	},
+	{
+		title: 'Reference',
+		slugs: ['api', 'cli-commands', 'custom-sandbox-providers'],
+	},
+	{ title: 'Project', slugs: ['development', 'license'] },
+]
+const UNFILED_GROUP = 'More'
 
 export type SandcastleDocsPage = {
 	title: string
-	/** Empty for the first section, which is the /sandcastle index. */
 	slug: string
 	href: string
-	/** The section's opening paragraph as plain text, for meta and the sitemap. */
+	group: string
+	/** The section's opening paragraph as plain text, for meta and the index. */
 	description: string
 	/** Section body as markdown, headings promoted one level and links rewritten. */
 	body: string
-	/** The page's `##` headings (the README's `###`), for the sidebar. */
-	headings: SandcastleDocsHeading[]
+}
+
+export type SandcastleProvider = {
+	name: string
+	importPath: string
+	type: string
+}
+
+export type SandcastleDocs = {
+	/** Pages in sidebar order: grouped, README order within a group. */
+	pages: SandcastleDocsPage[]
+	groups: { title: string; pages: SandcastleDocsPage[] }[]
+	/** The README's opening sentence. */
+	lead: string
+	/** The intro's numbered list, as inline markdown. */
+	steps: string[]
+	providers: SandcastleProvider[]
+	/** The first TypeScript block in Quick start. */
+	example: string | null
 }
 
 type MdNode = {
@@ -50,6 +87,8 @@ type MdNode = {
 	depth?: number
 	url?: string
 	value?: string
+	lang?: string | null
+	ordered?: boolean | null
 	children?: MdNode[]
 	position?: { start: { offset?: number }; end: { offset?: number } }
 }
@@ -102,11 +141,44 @@ function isRepoRelative(url: string) {
 	return !/^([a-z][a-z0-9+.-]*:|#|\/)/i.test(url)
 }
 
+function introText(node: MdNode | undefined) {
+	// An intro often leads into a list ("…in isolated sandboxes:"), which reads
+	// as cut off once it stands alone.
+	return node ? plainText(node).replace(/:$/, '.') : ''
+}
+
+function findFirst(nodes: MdNode[], match: (node: MdNode) => boolean) {
+	let found: MdNode | undefined
+	for (const node of nodes) {
+		walk(node, (child) => {
+			if (!found && match(child)) found = child
+		})
+	}
+	return found
+}
+
+function providerRows(table: MdNode | undefined): SandcastleProvider[] {
+	const [header, ...rows] = (table?.children ?? []).map((row) =>
+		(row.children ?? []).map((cell) => plainText(cell).trim()),
+	)
+	const column = (name: string) =>
+		header?.findIndex((cell) => cell.toLowerCase() === name) ?? -1
+	const [name, importPath, type] = ['provider', 'import path', 'type'].map(
+		column,
+	)
+	if (name! < 0 || importPath! < 0 || type! < 0) return []
+	return rows.map((cells) => ({
+		name: cells[name!] ?? '',
+		importPath: cells[importPath!] ?? '',
+		type: cells[type!] ?? '',
+	}))
+}
+
 /**
  * Split the README into pages. Anything before the first `##` is the
- * README's logo block, which the page chrome replaces.
+ * README's logo block, which the landing page's wordmark replaces.
  */
-export function parseSandcastleReadme(readme: string): SandcastleDocsPage[] {
+export function parseSandcastleReadme(readme: string): SandcastleDocs {
 	const root = parser.parse(readme) as MdNode
 	const blocks = root.children ?? []
 	const sections = blocks
@@ -115,26 +187,24 @@ export function parseSandcastleReadme(readme: string): SandcastleDocsPage[] {
 
 	// Every heading's GitHub anchor → where it lives on this site.
 	const anchors = new Map<string, string>()
-	const pages = sections.map(({ node, index }, position) => {
+	const sectionBlocks = sections.map(({ node, index }, position) => {
 		const title = plainText(node)
-		const slug = position === 0 ? '' : slugifyHeading(title)
-		const href = slug ? `${SANDCASTLE_DOCS_PATH}/${slug}` : SANDCASTLE_DOCS_PATH
+		const slug = slugifyHeading(title)
+		const href = `${SANDCASTLE_DOCS_PATH}/${slug}`
 		const nextIndex = sections[position + 1]?.index ?? blocks.length
 		const body = blocks.slice(index + 1, nextIndex)
 		anchors.set(githubAnchor(title), href)
-
-		const headings: SandcastleDocsHeading[] = []
 		for (const block of body) {
 			walk(block, (child) => {
 				if (child.type !== 'heading') return
 				const text = plainText(child)
-				const anchor = slugifyHeading(text)
-				anchors.set(githubAnchor(text), `${href}#${anchor}`)
-				if (child.depth === 3) headings.push({ title: text, anchor })
+				anchors.set(githubAnchor(text), `${href}#${slugifyHeading(text)}`)
 			})
 		}
-
-		return { title, slug, href, blocks: body, headings }
+		const group =
+			SANDCASTLE_DOCS_GROUPS.find((candidate) => candidate.slugs.includes(slug))
+				?.title ?? UNFILED_GROUP
+		return { title, slug, href, group, blocks: body }
 	})
 
 	const edits: Edit[] = []
@@ -178,22 +248,53 @@ export function parseSandcastleReadme(readme: string): SandcastleDocsPage[] {
 	})
 	edits.sort((a, b) => a.start - b.start)
 
-	return pages.map(({ blocks, ...page }) => {
-		const first = blocks[0]
-		const last = blocks[blocks.length - 1]
-		const intro = blocks.find((block) => block.type === 'paragraph')
-		return {
-			...page,
-			// An intro often leads into a list ("…in isolated sandboxes:"), which
-			// reads as cut off once it stands alone.
-			description:
-				(intro && metaDescription(plainText(intro).replace(/:$/, '.'))) ?? '',
-			body:
-				first && last
-					? applyEdits(readme, edits, offsets(first).start, offsets(last).end)
-					: '',
-		}
-	})
+	const sourceOf = (nodes: MdNode[]) => {
+		const first = nodes[0]
+		const last = nodes[nodes.length - 1]
+		return first && last
+			? applyEdits(readme, edits, offsets(first).start, offsets(last).end)
+			: ''
+	}
+
+	const pages = sectionBlocks.map(({ blocks, ...page }) => ({
+		...page,
+		description:
+			metaDescription(
+				introText(blocks.find((block) => block.type === 'paragraph')),
+			) ?? '',
+		body: sourceOf(blocks),
+	}))
+	const groups = [
+		...SANDCASTLE_DOCS_GROUPS.map(({ title }) => title),
+		UNFILED_GROUP,
+	]
+		.map((title) => ({
+			title,
+			pages: pages.filter((page) => page.group === title),
+		}))
+		.filter((group) => group.pages.length > 0)
+
+	const intro = sectionBlocks[0]?.blocks ?? []
+	const steps = intro.find((block) => block.type === 'list' && block.ordered)
+	const blocksOf = (slug: string) =>
+		sectionBlocks.find((section) => section.slug === slug)?.blocks ?? []
+
+	return {
+		pages: groups.flatMap((group) => group.pages),
+		groups,
+		lead: introText(intro.find((block) => block.type === 'paragraph')),
+		steps: (steps?.children ?? []).map((item) => sourceOf(item.children ?? [])),
+		providers: providerRows(
+			findFirst(blocksOf('sandbox-providers'), (node) => node.type === 'table'),
+		),
+		example:
+			findFirst(
+				blocksOf('quick-start'),
+				(node) =>
+					node.type === 'code' &&
+					['ts', 'typescript'].includes(node.lang ?? ''),
+			)?.value ?? null,
+	}
 }
 
 export const getSandcastleDocs = cache(async () => {
@@ -210,13 +311,33 @@ export const getSandcastleDocs = cache(async () => {
 })
 
 export async function getSandcastleDocsPage(slug: string) {
-	const pages = await getSandcastleDocs()
+	const docs = await getSandcastleDocs()
+	const { pages } = docs
 	const index = pages.findIndex((page) => page.slug === slug)
 	if (index < 0) return null
 	return {
-		pages,
+		docs,
 		page: pages[index]!,
 		previous: pages[index - 1] ?? null,
 		next: pages[index + 1] ?? null,
+	}
+}
+
+/**
+ * Last week's npm downloads, the number Sandcastle is usually described by.
+ * Null when the registry does not answer, so the stat drops out rather than
+ * printing a zero.
+ */
+export async function getSandcastleWeeklyDownloads(): Promise<number | null> {
+	try {
+		const response = await fetch(
+			`https://api.npmjs.org/downloads/point/last-week/${SANDCASTLE_PACKAGE}`,
+			{ next: { revalidate: SANDCASTLE_DOCS_REVALIDATE_SECONDS } },
+		)
+		if (!response.ok) return null
+		const { downloads } = (await response.json()) as { downloads?: unknown }
+		return typeof downloads === 'number' ? downloads : null
+	} catch {
+		return null
 	}
 }

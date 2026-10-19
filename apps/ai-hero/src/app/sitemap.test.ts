@@ -13,20 +13,18 @@ vi.mock('@/lib/ai-coding-dictionary', () => ({
 }))
 vi.mock('@/lib/sandcastle-docs', () => ({
 	SANDCASTLE_DOCS_CACHE_TAG: 'sandcastle-docs',
-	getSandcastleDocs: async () => [
-		{
-			title: 'What Is Sandcastle?',
-			slug: '',
-			href: '/sandcastle',
-			description: '',
-		},
-		{
-			title: 'Quick start',
-			slug: 'quick-start',
-			href: '/sandcastle/quick-start',
-			description: '',
-		},
-	],
+	SANDCASTLE_DOCS_PATH: '/sandcastle',
+	getSandcastleDocs: async () => ({
+		lead: 'A library.',
+		pages: [
+			{
+				title: 'Quick start',
+				slug: 'quick-start',
+				href: '/sandcastle/quick-start',
+				description: '',
+			},
+		],
+	}),
 }))
 vi.mock('@/lib/skill-changelog-query', () => ({
 	getSkillChangelogEntries: mocks.skills,

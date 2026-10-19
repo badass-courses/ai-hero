@@ -4,6 +4,7 @@ import { getAiCodingDictionary } from '@/lib/ai-coding-dictionary'
 import {
 	getSandcastleDocs,
 	SANDCASTLE_DOCS_CACHE_TAG,
+	SANDCASTLE_DOCS_PATH,
 } from '@/lib/sandcastle-docs'
 import { getSkillChangelogEntries } from '@/lib/skill-changelog-query'
 import {
@@ -289,13 +290,18 @@ async function buildIndex(mode: IndexMode): Promise<SitemapEntry[]> {
 	// Docs pages, not publications: the sitemap lists them, the feed does not.
 	// The README carries no date, so there is no honest lastModified to give.
 	if (mode === 'sitemap') {
-		const sandcastlePages = await getSandcastleDocs()
-		sandcastlePages.forEach((page) => {
+		const sandcastle = await getSandcastleDocs()
+		sitemapEntries.push({
+			url: `${process.env.COURSEBUILDER_URL}${SANDCASTLE_DOCS_PATH}`,
+			title: 'Sandcastle',
+			description: sandcastle.lead,
+			changeFrequency: 'weekly',
+			priority: 0.7,
+		})
+		sandcastle.pages.forEach((page) => {
 			sitemapEntries.push({
 				url: `${process.env.COURSEBUILDER_URL}${page.href}`,
-				title: page.slug
-					? `${page.title} | Sandcastle docs`
-					: 'Sandcastle docs',
+				title: `${page.title} | Sandcastle docs`,
 				description: page.description,
 				changeFrequency: 'weekly',
 				priority: 0.6,
