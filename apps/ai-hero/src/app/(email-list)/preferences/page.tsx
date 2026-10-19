@@ -66,19 +66,18 @@ export default async function PreferencesPage(props: PreferencesPageProps) {
 							Email preferences
 						</h1>
 						<p className="text-muted-foreground">
-							Choose which updates you want. Kit is the source of truth, and we
-							mirror this in AI Hero for app-originated sends.
+							Pick the emails you want from us. You can change this any time.
 						</p>
 					</div>
 
 					{error || !subscriber || !preferences ? (
 						<div className="border-border bg-muted/30 rounded-lg border p-5 text-center">
 							<h2 className="font-heading text-xl font-semibold">
-								This preference link is missing or expired
+								We need the link from your email
 							</h2>
 							<p className="text-muted-foreground mt-2 text-sm">
-								Open the preference link from a recent AI Hero email so we can
-								verify your subscriber record without requiring a login.
+								Click &ldquo;manage preferences&rdquo; at the bottom of any AI
+								Hero email and you&apos;ll land back here, no login needed.
 							</p>
 							<Link
 								href="/"
@@ -91,7 +90,11 @@ export default async function PreferencesPage(props: PreferencesPageProps) {
 						<div className="space-y-4">
 							{updatedPreference && updatedState ? (
 								<div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-700 dark:text-emerald-300">
-									Updated {updatedPreference} to {updatedState}.
+									Saved. Your{' '}
+									{emailPreferenceDefinitions.find(
+										(preference) => preference.key === updatedPreference,
+									)?.name ?? 'email'}{' '}
+									setting is updated.
 								</div>
 							) : null}
 
@@ -114,7 +117,9 @@ export default async function PreferencesPage(props: PreferencesPageProps) {
 													{preference.description}
 												</p>
 												<p className="text-muted-foreground text-xs">
-													Current: {subscribed ? 'subscribed' : 'unsubscribed'}
+													{subscribed
+														? "You're getting these."
+														: "You're not getting these."}
 												</p>
 											</div>
 											<form action={updateEmailPreferenceAction}>
@@ -138,7 +143,7 @@ export default async function PreferencesPage(props: PreferencesPageProps) {
 													type="submit"
 													className="border-border bg-background hover:bg-hover rounded-md border px-4 py-2 text-sm font-medium transition"
 												>
-													{subscribed ? 'Opt out' : 'Opt in'}
+													{subscribed ? 'Stop these' : 'Send me these'}
 												</button>
 											</form>
 										</div>
