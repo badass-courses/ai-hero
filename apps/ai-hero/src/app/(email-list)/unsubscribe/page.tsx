@@ -170,7 +170,7 @@ function ChoiceForm({
 				className={
 					primary
 						? 'bg-primary text-primary-foreground focus-visible:ring-ring w-full rounded-md px-4 py-3 text-base font-semibold transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2'
-						: 'border-border bg-background hover:bg-muted focus-visible:ring-ring w-full rounded-md border px-4 py-3 text-base font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2'
+						: 'border-border bg-background hover:bg-hover focus-visible:ring-ring w-full rounded-md border px-4 py-3 text-base font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2'
 				}
 			>
 				{label}

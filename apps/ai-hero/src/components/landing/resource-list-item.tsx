@@ -27,7 +27,7 @@ export function ResourceListItem({
 	return (
 		<Link
 			href={href}
-			className="group hover:bg-muted focus-visible:ring-ring flex flex-col gap-1 px-6 py-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset sm:px-8"
+			className="group hover:bg-hover focus-visible:ring-ring flex flex-col gap-1 px-6 py-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset sm:px-8"
 		>
 			<span className="flex items-start gap-2">
 				<span className="text-balance text-base font-medium leading-snug tracking-tight">

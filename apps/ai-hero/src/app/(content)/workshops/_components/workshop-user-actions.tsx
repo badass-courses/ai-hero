@@ -260,7 +260,7 @@ export function WorkshopActionsBar({
 					<Button
 						className={cn(
 							TYPE.meta,
-							'text-muted-foreground hover:text-foreground hover:bg-muted h-[46px] rounded-[9px] px-4',
+							'text-muted-foreground hover:text-foreground hover:bg-hover h-[46px] rounded-[9px] px-4',
 						)}
 						variant="ghost"
 						size="lg"
@@ -311,7 +311,7 @@ export function WorkshopGitHubRepoLink({ githubUrl }: { githubUrl?: string }) {
 			asChild
 			size="lg"
 			variant="outline"
-			className={cn(ACTIONS_BAR_OUTLINE, 'text-foreground hover:bg-muted flex')}
+			className={cn(ACTIONS_BAR_OUTLINE, 'text-foreground hover:bg-hover flex')}
 		>
 			<Link href={githubUrl} target="_blank" rel="noopener noreferrer">
 				<Github className="size-4" /> Code

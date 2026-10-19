@@ -154,7 +154,7 @@ export function FeedbackForm({ location }: { location: string }) {
 										'focus-within:ring-ring flex min-h-11 cursor-pointer items-center justify-center rounded-[9px] border text-xl transition-colors focus-within:ring-2 focus-within:ring-offset-2',
 										selected
 											? 'border-primary bg-primary/10'
-											: 'border-input hover:bg-muted',
+											: 'border-input hover:bg-hover',
 									)}
 								>
 									<RadioGroupItem
@@ -192,7 +192,7 @@ export function FeedbackForm({ location }: { location: string }) {
 										'focus-within:ring-ring flex min-h-11 min-w-0 cursor-pointer items-center justify-center rounded-[9px] border px-2 text-sm capitalize transition-colors focus-within:ring-2 focus-within:ring-offset-2',
 										selected
 											? 'border-primary bg-primary/10'
-											: 'border-input hover:bg-muted',
+											: 'border-input hover:bg-hover',
 									)}
 								>
 									<RadioGroupItem

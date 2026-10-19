@@ -186,7 +186,7 @@ function NavTile({
 		<Link
 			href={`/ai-coding-dictionary/${entry.slug}`}
 			prefetch={false}
-			className="bg-background hover:bg-muted/40 group relative flex min-h-32 flex-col justify-between gap-4 p-8 transition-colors sm:p-10"
+			className="bg-background hover:bg-hover group relative flex min-h-32 flex-col justify-between gap-4 p-8 transition-colors sm:p-10"
 		>
 			<span className="text-muted-foreground group-hover:text-foreground inline-flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-wider transition-colors">
 				{isPrev ? (

@@ -83,13 +83,13 @@ export const LessonControls = async ({
 					lesson={lesson}
 					problem={problem}
 					variant="ghost"
-					className="hover:bg-muted/50 dark:hover:bg-muted/50 border-r-border h-10 rounded-none border-0 border-r px-3 text-sm sm:h-12"
+					className="hover:bg-hover border-r-border h-10 rounded-none border-0 border-r px-3 text-sm sm:h-12"
 				/>
 				{githubUrl && (
 					<Button
 						asChild
 						variant="ghost"
-						className="hover:bg-muted/50 dark:hover:bg-muted/50 border-r-border h-10 rounded-none border-0 border-r px-3 sm:h-12 sm:px-4"
+						className="hover:bg-hover border-r-border h-10 rounded-none border-0 border-r px-3 sm:h-12 sm:px-4"
 					>
 						<Link href={githubUrl} target="_blank" aria-label="Source code">
 							<Github className="text-muted-foreground size-4" />
@@ -103,7 +103,7 @@ export const LessonControls = async ({
 						aria-label="Copy page"
 						labelClassName="hidden sm:grid"
 						variant="ghost"
-						className="hover:bg-muted/50 dark:hover:bg-muted/50 border-r-border h-10 rounded-none border-0 border-r px-3 text-sm sm:h-12"
+						className="hover:bg-hover border-r-border h-10 rounded-none border-0 border-r px-3 text-sm sm:h-12"
 					/>
 				)}
 			</div>
@@ -112,7 +112,7 @@ export const LessonControls = async ({
 					<Button
 						asChild
 						variant="ghost"
-						className="hover:bg-muted/50 dark:hover:bg-muted/50 border-l-border h-10 rounded-none border-0 border-l sm:h-12"
+						className="hover:bg-hover border-l-border h-10 rounded-none border-0 border-l sm:h-12"
 					>
 						<Link href={`${lesson.fields.slug}/solution`} prefetch>
 							Solution

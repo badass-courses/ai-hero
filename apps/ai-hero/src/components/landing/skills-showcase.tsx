@@ -192,7 +192,7 @@ export async function SkillsShowcase({
 									index === 0
 										? // The one entry point the section actually recommends.
 											'border-primary/35 bg-primary/[0.07] text-primary hover:bg-primary/15'
-										: 'border-border text-[color:var(--ah-fg-body)] hover:bg-muted hover:text-foreground',
+										: 'border-border text-[color:var(--ah-fg-body)] hover:bg-hover hover:text-foreground',
 								)}
 							>
 								{/* Mono all the way through, label included. The prototype

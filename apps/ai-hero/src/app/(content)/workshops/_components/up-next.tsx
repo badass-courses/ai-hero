@@ -236,9 +236,9 @@ export default function UpNext({
 				    end-of-workshop state read as a different kind of thing. */}
 				<h2 className={cn(TYPE.panelTitle, 'mb-3')}>{upNextText}:</h2>
 				<ul className="w-full">
-					<li className="flex w-full flex-col">
+					<li className="flex w-full flex-col items-center">
 						<Link
-							className="text-primary flex w-full items-center justify-center gap-2 text-center text-lg hover:underline lg:text-xl"
+							className="border-border bg-background hover:bg-hover hover:border-foreground/20 focus-visible:ring-ring group inline-flex max-w-full items-center gap-3 rounded-[9px] border px-5 py-3 text-lg font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 lg:text-xl"
 							href={getResourcePath(
 								nextResource.type || '',
 								nextResourceSlug,
@@ -251,7 +251,7 @@ export default function UpNext({
 							onClick={completeAndContinue}
 						>
 							{nextResource.fields?.title || 'Next Resource'}
-							<ArrowRight className="hidden w-4 sm:block" />
+							<ArrowRight className="text-muted-foreground group-hover:text-foreground size-4 shrink-0 transition-transform duration-150 group-hover:translate-x-0.5 motion-reduce:transition-none" />
 						</Link>
 						{!session?.user && (
 							<span className="text-muted-foreground mt-4">

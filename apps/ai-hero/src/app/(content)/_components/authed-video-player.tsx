@@ -11,6 +11,7 @@ import { useMuxMetadata } from '@/hooks/use-mux-metadata'
 import { useMuxPlayer } from '@/hooks/use-mux-player'
 import { useVideoQualityPref } from '@/hooks/use-video-quality-pref'
 import {
+	clearStaleCaptions,
 	handleTextTrackChange,
 	setPreferredPlaybackRate,
 	setPreferredTextTrack,
@@ -290,6 +291,7 @@ export function AuthedVideoPlayer({
 			const value = target.volume || 1
 			setPlayerPrefs({ volume: value })
 		},
+		onLoadStart: () => clearStaleCaptions(playerRef),
 		onLoadedData: () => {
 			handleTextTrackChange(playerRef, setPlayerPrefs)
 			setPreferredPlaybackRate(playerRef, playbackRate)

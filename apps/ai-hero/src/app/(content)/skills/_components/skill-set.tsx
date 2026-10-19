@@ -205,7 +205,7 @@ function SkillRow({ slug, title, description, iconUrl, kind }: SkillSetItem) {
 			// viewport prefetch was a full dynamic render Next never reuses on
 			// click — see `SidebarNavLink`, same 2026-08-03 measurement.
 			prefetch={false}
-			className="group border-border hover:bg-muted/60 focus-visible:ring-ring flex items-center gap-4 border-b py-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset md:-mx-4 md:px-4"
+			className="group border-border hover:bg-hover focus-visible:ring-ring flex items-center gap-4 border-b py-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset md:-mx-4 md:px-4"
 		>
 			{kind === 'skill' && iconUrl ? (
 				// The skill's mark, top-aligned with the command it belongs to. The

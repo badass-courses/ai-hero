@@ -57,7 +57,7 @@ function PageLink({
 			href={href}
 			className={cn(
 				TYPE.meta,
-				'border-input hover:bg-muted focus-visible:ring-ring inline-flex items-center gap-2 rounded-[9px] border px-4 py-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
+				'border-input hover:bg-hover focus-visible:ring-ring inline-flex items-center gap-2 rounded-[9px] border px-4 py-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
 			)}
 		>
 			{isNewer ? (

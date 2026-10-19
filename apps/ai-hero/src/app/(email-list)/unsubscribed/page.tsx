@@ -37,11 +37,25 @@ const getListName = (
 }
 
 /**
+ * Cohort-update opt-outs are handled by a Kit link rule that tags the
+ * subscriber on click, so this page only confirms and must not touch any
+ * other preference.
+ */
+const COHORT_UPDATES_PREFERENCE = 'cohorts'
+
+/**
  * Confirms the user has been removed from email communication.
  */
 const Unsubscribed = async (props: UnsubscribedProps) => {
 	const searchParams = await props.searchParams
 	await headers()
+	if (
+		getSearchParamValue(searchParams.preference) === COHORT_UPDATES_PREFERENCE
+	) {
+		return (
+			<UnsubscribedMessage message="You've been removed from AI Hero cohort updates. You'll still get other AI Hero emails." />
+		)
+	}
 	const userId = getSearchParamValue(searchParams.userId)
 	const subscriberId = getSearchParamValue(searchParams.ck_subscriber_id)
 	const shKit = getSearchParamValue(searchParams.sh_kit)
@@ -121,23 +135,33 @@ const Unsubscribed = async (props: UnsubscribedProps) => {
 	}
 
 	return (
-		<LayoutClient withContainer>
-			<div className="flex min-h-[calc(100vh-96px)] flex-col p-0">
-				<div className="flex grow flex-col items-center justify-center p-5 pb-16 text-center sm:pb-0">
-					<div className="font-heading max-w-xl pt-4 text-3xl">
-						You&apos;ve been removed from {listName} and won&apos;t receive any
-						more emails.
-					</div>
-					<Link
-						href={managePreferencesHref}
-						className="text-primary mt-6 text-sm font-medium hover:underline"
-					>
-						Manage all email preferences
-					</Link>
-				</div>
-			</div>
-		</LayoutClient>
+		<UnsubscribedMessage
+			message={`You've been removed from ${listName} and won't receive any more emails.`}
+			managePreferencesHref={managePreferencesHref}
+		/>
 	)
 }
+
+const UnsubscribedMessage = ({
+	message,
+	managePreferencesHref = '/preferences',
+}: {
+	message: string
+	managePreferencesHref?: string
+}) => (
+	<LayoutClient withContainer>
+		<div className="flex min-h-[calc(100vh-96px)] flex-col p-0">
+			<div className="flex grow flex-col items-center justify-center p-5 pb-16 text-center sm:pb-0">
+				<div className="font-heading max-w-xl pt-4 text-3xl">{message}</div>
+				<Link
+					href={managePreferencesHref}
+					className="text-primary mt-6 text-sm font-medium hover:underline"
+				>
+					Manage all email preferences
+				</Link>
+			</div>
+		</div>
+	</LayoutClient>
+)
 
 export default Unsubscribed

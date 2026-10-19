@@ -22,6 +22,8 @@ import { useNavLinks } from './use-nav-links'
  * four are live routes rather than aspirational ones.
  */
 const agentLinks = [
+	{ href: '/developers', label: 'developers' },
+	{ href: '/api', label: 'api' },
 	{ href: '/sitemap.md', label: 'sitemap.md' },
 	{ href: '/llms.txt', label: 'llms.txt' },
 	{ href: '/skills.md', label: 'skills.md' },
@@ -41,6 +43,7 @@ type FooterLinkType =
 	| 'newsletter'
 	| 'account'
 	| 'legal'
+	| 'company'
 
 function trackFooterClick(resource: string | undefined, type: FooterLinkType) {
 	track('navigation_menu_item_click', {
@@ -331,6 +334,8 @@ function UtilityRow() {
 		},
 		{ href: '/ai-coding-dictionary', label: 'Dictionary', type: 'dictionary' },
 		{ href: '/faq', label: 'FAQ', type: 'legal' },
+		{ href: '/about', label: 'About', type: 'company' },
+		{ href: '/contact', label: 'Contact', type: 'company' },
 		{ href: '/privacy', label: 'Terms', type: 'legal' },
 	]
 
@@ -372,8 +377,8 @@ function UtilityRow() {
 					TYPE.metaSm,
 					'sm:ml-auto',
 					'h-auto gap-2 rounded-[9px] border-input px-[13px] py-2',
-					'text-[color:var(--ah-fg-subtle)] hover:text-foreground bg-transparent shadow-none dark:bg-transparent',
-					'hover:bg-muted dark:hover:bg-muted sm:aspect-auto',
+					'text-foreground bg-transparent shadow-none dark:bg-transparent',
+					'hover:bg-hover sm:aspect-auto',
 				)}
 			/>
 		</div>

@@ -155,7 +155,7 @@ export function ResourceListView({
 				className,
 				{
 					'border-r': !isCollapsed,
-					'hover:bg-muted/80 w-8 cursor-pointer transition [&_div]:hidden':
+					'hover:bg-hover w-8 cursor-pointer transition [&_div]:hidden':
 						isCollapsed && isCollapsible,
 				},
 			)}
