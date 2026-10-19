@@ -300,6 +300,11 @@ const BENIGN_SYNC_SKIPS: ReadonlySet<string> = new Set([
 	'contact-email-missing',
 	// Contract §4: final for that event, logged; an answer, not a failure.
 	'drovr-rejected',
+	// Held on purpose: an unsubscribed contact is never pushed, and its stop
+	// travels on its own path. Throwing here retried one contact forever.
+	'unsubscribed-held',
+	// Byte-identical to the last push; drovr already has it.
+	'unchanged',
 ])
 
 /**
