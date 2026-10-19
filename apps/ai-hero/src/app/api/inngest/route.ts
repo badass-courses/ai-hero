@@ -1,5 +1,6 @@
 import { inngestConfig } from '@/inngest/inngest.config'
 import { inngestServeHost } from '@/inngest/serve-host'
+import { withInngestFailureLogging } from '@/inngest/serve-failure-logging'
 import { withSkill } from '@/server/with-skill'
 import { serve } from 'inngest/next'
 
@@ -13,5 +14,5 @@ const inngest = serve({
 })
 
 export const GET = withSkill(inngest.GET)
-export const POST = withSkill(inngest.POST)
+export const POST = withSkill(withInngestFailureLogging(inngest.POST))
 export const PUT = withSkill(inngest.PUT)

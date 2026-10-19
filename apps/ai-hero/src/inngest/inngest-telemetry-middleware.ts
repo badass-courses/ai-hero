@@ -99,6 +99,24 @@ export const inngestTelemetryMiddleware = new InngestMiddleware({
 								await log.info('buy_path.context_unavailable', data)
 							}
 						}
+						if (result.error) {
+							await log.error('inngest.function.failed', {
+								functionId,
+								eventName,
+								durationMs: Date.now() - fnStart,
+								runId,
+								...(txnId && { txnId }),
+								errorClass:
+									typeof result.error === 'object' &&
+									'name' in result.error &&
+									typeof result.error.name === 'string' &&
+									result.error.name
+										? result.error.name
+										: 'Error',
+								message: 'Inngest function failed',
+								error: serializeError(result.error),
+							})
+						}
 						if (context)
 							await emitBuyPath(context, 'post_purchase_finished', {
 								functionId,
@@ -116,19 +134,6 @@ export const inngestTelemetryMiddleware = new InngestMiddleware({
 							durationMs,
 							runId,
 							...(txnId && { txnId }),
-						})
-					},
-
-					onFailure({ error }: { error: Error }) {
-						const durationMs = Date.now() - fnStart
-
-						void log.error('inngest.function.failed', {
-							functionId,
-							eventName,
-							durationMs,
-							runId,
-							...(txnId && { txnId }),
-							error: serializeError(error),
 						})
 					},
 				}
