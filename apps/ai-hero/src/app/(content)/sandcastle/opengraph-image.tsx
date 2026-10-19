@@ -22,16 +22,20 @@ export default async function SandcastleOgImage() {
 		getRepoStarCount(SANDCASTLE_OWNER, SANDCASTLE_REPO),
 		getSandcastleWeeklyDownloads(),
 	])
+	// Each stat drops out when its source does not answer.
 	const stats = [
-		stars !== null && {
-			value: stars.toLocaleString('en-US'),
-			label: 'GitHub stars',
-		},
-		downloads !== null && {
-			value: downloads.toLocaleString('en-US'),
-			label: 'npm downloads a week',
-		},
-	].filter((stat) => stat !== false)
+		...(stars !== null
+			? [{ value: stars.toLocaleString('en-US'), label: 'GitHub stars' }]
+			: []),
+		...(downloads !== null
+			? [
+					{
+						value: downloads.toLocaleString('en-US'),
+						label: 'npm downloads a week',
+					},
+				]
+			: []),
+	]
 
 	return renderSandcastleOg({
 		title: docs.lead,
