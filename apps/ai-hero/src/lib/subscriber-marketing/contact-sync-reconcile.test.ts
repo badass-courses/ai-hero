@@ -508,6 +508,10 @@ describe('what a profile sync receipt means for the watermark', () => {
 			'contact-email-missing',
 			// Contract §4: a rejection is final for that event, answered.
 			'drovr-rejected',
+			// Unsubscribed contacts are held, not pushed; no retry chain.
+			'unsubscribed-held',
+			// Nothing new since the last push.
+			'unchanged',
 		])
 			expect(reconcileSyncOutcome('c1', { status: 'skipped', reason })).toBe(
 				'skipped',
