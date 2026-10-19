@@ -20,7 +20,9 @@ export function CopyButton({
 			variant="outline"
 			size="icon"
 			className={cn(
-				'absolute bottom-1 right-1 rounded opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100',
+				// Top right, where a reader looks for it; 28px so it also sits
+				// inside the 33px title bar a terminal block carries.
+				'absolute right-1.5 top-1 z-10 size-7 rounded opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100',
 				className,
 			)}
 			aria-label="Copy to clipboard"
@@ -30,7 +32,7 @@ export function CopyButton({
 				setTimeout(() => setCopied(false), 1200)
 			}}
 		>
-			{copied ? <Check size={16} /> : <Copy size={16} />}
+			{copied ? <Check size={14} /> : <Copy size={14} />}
 		</Button>
 	)
 }

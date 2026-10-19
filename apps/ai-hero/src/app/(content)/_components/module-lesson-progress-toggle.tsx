@@ -11,8 +11,7 @@ import { Label, Switch } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 import type { AbilityForResource } from '@coursebuilder/utils/current-ability-rules'
 
-// Same easing as CopyPageButton, so the two icon buttons in the lesson
-// controls read as one family.
+// The toggle's own ease-out for its icon swap.
 const easeOutQuint = [0.22, 1, 0.36, 1] as const
 
 export function ModuleLessonProgressToggle({

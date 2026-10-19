@@ -8,7 +8,8 @@ import { Button } from '@coursebuilder/ui'
 import type { ButtonProps } from '@coursebuilder/ui/primitives/button'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
-const easeOutQuint = [0.22, 1, 0.36, 1] as const
+// A short, unbouncy spring: the swap should land with the click, not trail it.
+const swap = { type: 'spring', duration: 0.28, bounce: 0 } as const
 
 /**
  * Two ways to get the text, and the choice is a payload decision:
@@ -30,6 +31,7 @@ export function CopyPageButton({
 	sourceUrl,
 	className,
 	labelClassName,
+	label = 'Copy page',
 	variant = 'outline',
 	size = 'default',
 	'aria-label': ariaLabel,
@@ -37,6 +39,8 @@ export function CopyPageButton({
 }: CopySource & {
 	/** Classes for the "Copy page" label span — pass `hidden sm:grid` for an icon-only button on mobile (the icon's flip to a check still signals the copy). */
 	labelClassName?: string
+	/** The idle label, for a button that copies more than the page in view. */
+	label?: string
 } & ButtonProps) {
 	const [copied, setCopied] = useState(false)
 	const prefersReducedMotion = useReducedMotion()
@@ -73,34 +77,26 @@ export function CopyPageButton({
 		}
 	}
 
+	// Both states sit in the same box and cross-fade at once. The icon trades
+	// places with a small scale and blur, the label lifts 4px: enough to read
+	// as a change without anything spinning.
 	const iconMotion = prefersReducedMotion
-		? {
-				initial: { opacity: 0 },
-				animate: { opacity: 1 },
-				exit: { opacity: 0 },
-			}
+		? { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 } }
 		: {
-				initial: { opacity: 0, scale: 0.6, rotate: -45 },
-				animate: { opacity: 1, scale: 1, rotate: 0 },
-				exit: { opacity: 0, scale: 0.6, rotate: 45 },
+				initial: { opacity: 0, scale: 0.7, filter: 'blur(2px)' },
+				animate: { opacity: 1, scale: 1, filter: 'blur(0px)' },
+				exit: { opacity: 0, scale: 0.7, filter: 'blur(2px)' },
 			}
 
 	const labelMotion = prefersReducedMotion
-		? {
-				initial: { opacity: 0 },
-				animate: { opacity: 1 },
-				exit: { opacity: 0 },
-			}
+		? { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 } }
 		: {
-				initial: { opacity: 0, y: 4 },
-				animate: { opacity: 1, y: 0 },
-				exit: { opacity: 0, y: -4 },
+				initial: { opacity: 0, y: 4, filter: 'blur(2px)' },
+				animate: { opacity: 1, y: 0, filter: 'blur(0px)' },
+				exit: { opacity: 0, y: -4, filter: 'blur(2px)' },
 			}
 
-	const transition = {
-		duration: prefersReducedMotion ? 0.01 : 0.18,
-		ease: easeOutQuint,
-	}
+	const transition = prefersReducedMotion ? { duration: 0.12 } : swap
 
 	return (
 		<Button
@@ -112,11 +108,14 @@ export function CopyPageButton({
 			// When the visible label is hidden (icon-only mobile), the copied
 			// confirmation must land in the accessible name instead.
 			aria-label={ariaLabel ? (copied ? 'Copied!' : ariaLabel) : undefined}
-			className={cn('cursor-pointer', className)}
+			className={cn(
+				'cursor-pointer transition-[transform,background-color,color] duration-150 ease-out active:scale-[0.97] motion-reduce:active:scale-100',
+				className,
+			)}
 			{...rest}
 		>
 			<span className="relative inline-flex size-4 shrink-0 items-center justify-center">
-				<AnimatePresence initial={false} mode="wait">
+				<AnimatePresence initial={false}>
 					<motion.span
 						key={copied ? 'check' : 'clipboard'}
 						{...iconMotion}
@@ -136,16 +135,16 @@ export function CopyPageButton({
 					aria-hidden="true"
 					className="invisible col-start-1 row-start-1 whitespace-nowrap"
 				>
-					Copy page
+					{label}
 				</span>
-				<AnimatePresence initial={false} mode="wait">
+				<AnimatePresence initial={false}>
 					<motion.span
 						key={copied ? 'copied' : 'copy'}
 						{...labelMotion}
 						transition={transition}
 						className="col-start-1 row-start-1 whitespace-nowrap"
 					>
-						{copied ? 'Copied!' : 'Copy page'}
+						{copied ? 'Copied!' : label}
 					</motion.span>
 				</AnimatePresence>
 			</span>

@@ -79,11 +79,18 @@ export const OPEN_SOURCE_PROJECTS: OpenSourceProject[] = [
 		repoName: 'sandcastle',
 		name: 'Sandcastle',
 		// PLACEHOLDER: taken from the GitHub description. Matt owns the final
-		// one-liner. Also undecided: if Sandcastle docs land on AI Hero, this row
-		// points at an internal page instead of the repo.
+		// one-liner.
 		description:
 			'Orchestrate sandboxed coding agents in TypeScript with sandcastle.run().',
-		href: 'https://github.com/mattpocock/sandcastle',
+		// The docs live on this site now (/sandcastle renders the README), so
+		// the heading points there and the repo keeps a chip, as Skills does.
+		href: '/sandcastle',
+		links: [
+			{
+				label: 'View the repo',
+				href: 'https://github.com/mattpocock/sandcastle',
+			},
+		],
 		logo: {
 			light: `${CLOUDINARY}/v1775033787/readme-sandcastle-onlight_2x.png`,
 			dark: `${CLOUDINARY}/v1775033787/readme-sandcastle-ondark_2x.png`,

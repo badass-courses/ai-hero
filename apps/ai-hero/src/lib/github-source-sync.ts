@@ -213,22 +213,43 @@ export type SyncAllOptions = {
 	 * empty or omitted list syncs every github-sourced post.
 	 */
 	changedPaths?: string[]
+	/**
+	 * `owner/repo` the push came from. Several repos share the webhook (skills,
+	 * Sandcastle), and a path like `README.md` exists in each, so a push only
+	 * syncs posts sourced from its own repo.
+	 */
+	repositoryFullName?: string
+}
+
+type SyncCandidate = { fields: Record<string, unknown> | null }
+
+/** The posts a sync request should touch. */
+export function selectSyncTargets<T extends SyncCandidate>(
+	resources: T[],
+	{ changedPaths, repositoryFullName }: SyncAllOptions,
+): T[] {
+	const repository = repositoryFullName?.toLowerCase()
+	if (!changedPaths?.length && !repository) return resources
+
+	return resources.filter((resource) => {
+		const source = getStringField(resource.fields ?? {}, 'githubSource')
+		const refInfo = source ? parseGithubSource(source) : null
+		if (!refInfo) return false
+		if (
+			repository &&
+			`${refInfo.owner}/${refInfo.repo}`.toLowerCase() !== repository
+		) {
+			return false
+		}
+		return changedPaths?.length ? changedPaths.includes(refInfo.path) : true
+	})
 }
 
 export async function syncAllGithubSourcedPosts(
 	options: SyncAllOptions = {},
 ): Promise<SyncResult[]> {
 	const resources = await getGithubSourcedResources()
-	const changedPaths = options.changedPaths
-
-	const targets =
-		changedPaths && changedPaths.length
-			? resources.filter((resource) => {
-					const source = getStringField(resource.fields ?? {}, 'githubSource')
-					const refInfo = source ? parseGithubSource(source) : null
-					return refInfo ? changedPaths.includes(refInfo.path) : false
-				})
-			: resources
+	const targets = selectSyncTargets(resources, options)
 
 	const results: SyncResult[] = []
 	for (const resource of targets) {
