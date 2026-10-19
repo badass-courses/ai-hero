@@ -313,27 +313,12 @@ export async function SandcastleLanding({
 	)
 }
 
-function SectionHead({
-	id,
-	title,
-	href,
-	linkLabel,
-}: {
-	id: string
-	title: string
-	href?: string
-	linkLabel?: string
-}) {
+function SectionHead({ id, title }: { id: string; title: string }) {
 	return (
-		<div className="border-border flex flex-col gap-4 border-b px-[18px] pb-8 pt-12 sm:px-11 md:flex-row md:items-end">
+		<div className="border-border border-b px-[18px] pb-8 pt-12 sm:px-11">
 			<h2 id={id} className={cn(TYPE.heading, 'text-balance')}>
 				{title}
 			</h2>
-			{href && linkLabel ? (
-				<MoreLink href={href} className="md:ml-auto">
-					{linkLabel}
-				</MoreLink>
-			) : null}
 		</div>
 	)
 }
