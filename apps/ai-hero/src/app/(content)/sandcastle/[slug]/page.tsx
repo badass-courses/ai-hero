@@ -32,13 +32,6 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 			url: page.href,
 			siteName: 'AI Hero',
 			type: 'article',
-			images: [
-				{
-					url: `/api/og?title=${encodeURIComponent(page.title)}`,
-					width: 1200,
-					height: 630,
-				},
-			],
 		},
 	}
 }

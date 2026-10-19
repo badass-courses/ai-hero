@@ -35,6 +35,10 @@ import {
 	rehypeInternalLinks,
 } from '@/utils/rehype-internal-links'
 import { rehypeNumberCheckboxes } from '@/utils/rehype-number-checkboxes'
+import {
+	remarkSandcastleLinks,
+	SANDCASTLE_PAGE_AUTOLINK,
+} from '@/utils/remark-sandcastle-links'
 import { sanitizeMdxSource } from '@/utils/sanitize-mdx-source'
 import { recmaCodeHike, remarkCodeHike } from 'codehike/mdx'
 import type { MDXComponents } from 'mdx/types'
@@ -345,7 +349,7 @@ async function compilePlainMarkdownFallback(
 		options: {
 			...options,
 			mdxOptions: {
-				remarkPlugins: [remarkGfm],
+				remarkPlugins: [remarkGfm, remarkSandcastleLinks],
 				rehypePlugins: [
 					rehypeInternalLinks,
 					[
@@ -414,7 +418,10 @@ async function compileMDXInternal(
 	context?: CompileMDXContext,
 ) {
 	const dictionaryAutoLinkPlugin = context?.dictionaryAutoLink
-		? createDictionaryAutoLinkRemarkPlugin(context.dictionaryAutoLink)
+		? createDictionaryAutoLinkRemarkPlugin({
+				...context.dictionaryAutoLink,
+				pages: [SANDCASTLE_PAGE_AUTOLINK],
+			})
 		: null
 	const calloutLineAutoInsertPlugin = context?.calloutLineAutoInsert
 		? createCalloutLineAutoInsertRemarkPlugin(context.calloutLineAutoInsert)
@@ -701,6 +708,8 @@ async function compileMDXInternal(
 								},
 							],
 							remarkGfm,
+							// Before the auto-linker, so it counts these as linked.
+							remarkSandcastleLinks,
 							...(dictionaryAutoLinkPlugin ? [dictionaryAutoLinkPlugin] : []),
 							...(calloutLineAutoInsertPlugin
 								? [calloutLineAutoInsertPlugin]

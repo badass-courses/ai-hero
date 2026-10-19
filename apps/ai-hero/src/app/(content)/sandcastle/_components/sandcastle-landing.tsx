@@ -5,6 +5,7 @@ import { BADGE_OUTLINE, TYPE } from '@/components/landing/type'
 import {
 	SANDCASTLE_DOCS_PATH,
 	SANDCASTLE_PACKAGE,
+	SANDCASTLE_README_URL,
 	SANDCASTLE_REPO_URL,
 	type SandcastleDocs,
 } from '@/lib/sandcastle-docs'
@@ -27,16 +28,10 @@ const WORDMARK = {
 
 const INSTALL_COMMAND = `npm install --save-dev ${SANDCASTLE_PACKAGE}`
 
-// PLACEHOLDER: the section heads are ours, not the README's. Matt owns the
-// final wording; the facts under them all come from the README.
-const COPY = {
-	howTitle: 'One call, a sandbox, your branch',
-	providersTitle: 'Run agents wherever you isolate code',
-	customProviderTitle: 'Something else?',
-	customProvider:
-		'Write a bind-mount or isolated provider against the sandbox handle contract.',
-	docsTitle: 'Everything in the docs',
-}
+// The README's own words for a provider of your own, under its "Custom
+// Sandbox Providers" heading.
+const CUSTOM_PROVIDER =
+	'Bind-mount if the sandbox can mount a host directory, isolated if it has its own filesystem.'
 
 /**
  * /sandcastle: the tool's front page. Every fact on it is read out of the
@@ -54,7 +49,12 @@ export async function SandcastleLanding({
 	stars: number | null
 	downloads: number | null
 }) {
-	const firstPage = docs.pages.find((page) => page.slug === 'quick-start')
+	const firstPage = docs.start
+	// The index lists the start page first, as the sidebar does.
+	const index = [
+		...(docs.start ? [{ title: docs.start.group, pages: [docs.start] }] : []),
+		...docs.groups,
+	]
 
 	return (
 		<div className="[&>*+*]:border-border flex flex-col [&>*+*]:-mt-px [&>*+*]:border-t">
@@ -132,10 +132,9 @@ export async function SandcastleLanding({
 				<section aria-labelledby="sandcastle-how">
 					<SectionHead
 						id="sandcastle-how"
-						label="How it works"
-						title={COPY.howTitle}
+						title="How it works"
 						href={`${SANDCASTLE_DOCS_PATH}/how-it-works`}
-						linkLabel="How it works"
+						linkLabel="Branch strategies"
 					/>
 					<ol className="bg-border grid grid-cols-1 gap-px md:grid-cols-3">
 						{docs.steps.map((step, index) => (
@@ -165,8 +164,7 @@ export async function SandcastleLanding({
 				<section aria-labelledby="sandcastle-providers">
 					<SectionHead
 						id="sandcastle-providers"
-						label="Sandbox providers"
-						title={COPY.providersTitle}
+						title="Sandbox providers"
 						href={`${SANDCASTLE_DOCS_PATH}/sandbox-providers`}
 						linkLabel="Compare providers"
 					/>
@@ -205,13 +203,13 @@ export async function SandcastleLanding({
 						<li className="bg-background sm:col-span-2 xl:col-span-4">
 							<Link
 								href={`${SANDCASTLE_DOCS_PATH}/custom-sandbox-providers`}
-								className="hover:bg-muted/40 group flex flex-col gap-1 px-[18px] py-5 transition-colors sm:flex-row sm:items-center sm:gap-4 sm:px-8"
+								className="hover:bg-foreground/[0.04] dark:hover:bg-foreground/[0.06] group flex flex-col gap-1 px-[18px] py-5 transition-colors sm:flex-row sm:items-center sm:gap-4 sm:px-8"
 							>
 								<span className={cn(TYPE.cardTitle, 'shrink-0')}>
-									{COPY.customProviderTitle}
+									Custom providers
 								</span>
 								<span className={cn(TYPE.metaSm, 'text-muted-foreground')}>
-									{COPY.customProvider}
+									{CUSTOM_PROVIDER}
 								</span>
 								<ArrowRight
 									aria-hidden
@@ -224,80 +222,94 @@ export async function SandcastleLanding({
 			) : null}
 
 			<section aria-labelledby="sandcastle-docs-index">
-				<SectionHead
-					id="sandcastle-docs-index"
-					label="Documentation"
-					title={COPY.docsTitle}
-				/>
-				<div className="bg-border grid grid-cols-1 gap-px md:grid-cols-2 xl:grid-cols-4">
-					{docs.groups.map((group) => (
+				<SectionHead id="sandcastle-docs-index" title="Documentation" />
+				{/* One list, read top to bottom: the group on the left, then each
+				    page's title and the sentence it opens on. */}
+				<div className="divide-border flex flex-col divide-y">
+					{index.map((group) => (
 						<div
 							key={group.title}
-							className="bg-background flex flex-col gap-1 px-2 py-6 sm:px-6"
+							className="grid grid-cols-1 md:grid-cols-[13rem_minmax(0,1fr)]"
 						>
-							<h3 className={cn(TYPE.groupLabel, 'px-3 pb-2')}>
+							<h3
+								className={cn(
+									TYPE.groupLabel,
+									'px-[18px] pb-1 pt-6 sm:px-11 md:py-7',
+								)}
+							>
 								{group.title}
 							</h3>
-							{group.pages.map((page) => (
-								<Link
-									key={page.slug}
-									href={page.href}
-									prefetch={false}
-									className="hover:bg-muted group flex flex-col gap-1 rounded-sm px-3 py-2.5 transition-colors"
-								>
-									<span
-										className={cn(
-											TYPE.nav,
-											'text-foreground inline-flex items-center gap-1.5 font-medium',
-										)}
-									>
-										{page.title}
-										<ArrowRight
-											aria-hidden
-											className="size-3 opacity-0 transition group-hover:translate-x-0.5 group-hover:opacity-100 motion-reduce:transition-none"
-										/>
-									</span>
-									{page.description ? (
-										<span
-											className={cn(
-												TYPE.metaSm,
-												'text-muted-foreground line-clamp-2',
-											)}
+							<ul className="divide-border md:border-border flex flex-col divide-y md:border-l">
+								{group.pages.map((page) => (
+									<li key={page.slug}>
+										<Link
+											href={page.href}
+											prefetch={false}
+											className="hover:bg-foreground/[0.04] dark:hover:bg-foreground/[0.06] group flex items-center gap-6 px-[18px] py-5 transition-colors sm:px-11 md:px-8"
 										>
-											{page.description}
-										</span>
-									) : null}
-								</Link>
-							))}
+											<span className="flex min-w-0 flex-col gap-1.5">
+												<span className={TYPE.subhead}>{page.title}</span>
+												{page.description ? (
+													<span
+														className={cn(
+															TYPE.metaProse,
+															'max-w-[68ch] text-[color:var(--ah-fg-muted)]',
+														)}
+													>
+														{page.description}
+													</span>
+												) : null}
+											</span>
+											<ArrowRight
+												aria-hidden
+												className="text-muted-foreground group-hover:text-foreground ml-auto size-4 shrink-0 transition group-hover:translate-x-0.5 motion-reduce:transition-none"
+											/>
+										</Link>
+									</li>
+								))}
+							</ul>
 						</div>
 					))}
 				</div>
 			</section>
+
+			{/* What the README says about the repo itself, which the docs leave
+			    out: its license, and where working on it is described. */}
+			<footer className="px-[18px] py-8 sm:px-11">
+				<p className={cn(TYPE.metaSm, 'text-muted-foreground text-pretty')}>
+					{docs.license ? `Sandcastle is ${docs.license} licensed. ` : null}
+					To work on Sandcastle itself, see{' '}
+					<Link
+						href={`${SANDCASTLE_README_URL}#development`}
+						target="_blank"
+						rel="noopener noreferrer"
+						className="hover:text-foreground underline underline-offset-4 transition-colors"
+					>
+						Development in the README
+					</Link>
+					.
+				</p>
+			</footer>
 		</div>
 	)
 }
 
 function SectionHead({
 	id,
-	label,
 	title,
 	href,
 	linkLabel,
 }: {
 	id: string
-	label: string
 	title: string
 	href?: string
 	linkLabel?: string
 }) {
 	return (
 		<div className="border-border flex flex-col gap-4 border-b px-[18px] pb-8 pt-12 sm:px-11 md:flex-row md:items-end">
-			<div>
-				<p className={TYPE.groupLabel}>{label}</p>
-				<h2 id={id} className={cn(TYPE.heading, 'mt-3.5 text-balance')}>
-					{title}
-				</h2>
-			</div>
+			<h2 id={id} className={cn(TYPE.heading, 'text-balance')}>
+				{title}
+			</h2>
 			{href && linkLabel ? (
 				<Link
 					href={href}

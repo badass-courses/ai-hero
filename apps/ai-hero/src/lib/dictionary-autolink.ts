@@ -1,17 +1,31 @@
+import { toInternalHref } from '@/utils/rehype-internal-links'
+
 import type { DictionaryEntry } from './ai-coding-dictionary'
+
+/**
+ * A site page that prose names by a proper noun, linked like a dictionary
+ * term. Matched case-sensitively: the name is the tool ("Sandcastle"), while
+ * lowercase spellings are paths and channels (`.sandcastle/`, `#sandcastle`).
+ */
+export type PageAutoLink = {
+	phrase: string
+	url: string
+}
 
 type DictionaryAutoLinkOptions = {
 	maxLinks?: number
 	excludedSlugs?: string[]
+	pages?: PageAutoLink[]
 }
 
 type DictionaryLinkCandidate = {
 	phrase: string
-	slug: string
+	url: string
+	matchCase: boolean
 }
 
 type AutoLinkState = {
-	linkedSlugs: Set<string>
+	linkedUrls: Set<string>
 	linkCount: number
 	maxLinks: number
 	candidates: DictionaryLinkCandidate[]
@@ -79,7 +93,7 @@ function normalizeCandidatePhrase(phrase: string) {
 }
 
 function getCandidateKey(candidate: DictionaryLinkCandidate) {
-	return `${candidate.slug}:${candidate.phrase.toLowerCase()}`
+	return `${candidate.url}:${candidate.phrase.toLowerCase()}`
 }
 
 export function buildDictionaryLinkCandidates({
@@ -106,17 +120,22 @@ export function buildDictionaryLinkCandidates({
 
 			const candidate = {
 				phrase: normalizedPhrase,
-				slug: entry.slug,
+				url: `/ai-coding-dictionary/${entry.slug}`,
+				matchCase: false,
 			}
 			candidates.set(getCandidateKey(candidate), candidate)
 		}
 	}
 
-	return [...candidates.values()].sort((a, b) => {
-		const wordDelta =
-			b.phrase.split(/\s+/).length - a.phrase.split(/\s+/).length
-		return wordDelta || b.phrase.length - a.phrase.length
-	})
+	return [...candidates.values()].sort(byLongestPhrase)
+}
+
+function byLongestPhrase(
+	a: DictionaryLinkCandidate,
+	b: DictionaryLinkCandidate,
+) {
+	const wordDelta = b.phrase.split(/\s+/).length - a.phrase.split(/\s+/).length
+	return wordDelta || b.phrase.length - a.phrase.length
 }
 
 function isWordCharacter(character: string | undefined) {
@@ -139,10 +158,13 @@ function findCandidateMatch(value: string, state: AutoLinkState) {
 	} | null = null
 
 	for (const candidate of state.candidates) {
-		if (state.linkedSlugs.has(candidate.slug)) continue
+		if (state.linkedUrls.has(candidate.url)) continue
 
-		const lowerPhrase = candidate.phrase.toLowerCase()
-		let index = lowerValue.indexOf(lowerPhrase)
+		const haystack = candidate.matchCase ? value : lowerValue
+		const needle = candidate.matchCase
+			? candidate.phrase
+			: candidate.phrase.toLowerCase()
+		let index = haystack.indexOf(needle)
 
 		while (index >= 0) {
 			if (hasBoundary(value, index, candidate.phrase.length)) {
@@ -156,7 +178,7 @@ function findCandidateMatch(value: string, state: AutoLinkState) {
 				break
 			}
 
-			index = lowerValue.indexOf(lowerPhrase, index + 1)
+			index = haystack.indexOf(needle, index + 1)
 		}
 	}
 
@@ -180,12 +202,12 @@ function linkTextNode(
 
 		nodes.push({
 			type: 'link',
-			url: `/ai-coding-dictionary/${match.candidate.slug}`,
+			url: match.candidate.url,
 			title: null,
 			children: [{ type: 'text', value: match.text }],
 		})
 
-		state.linkedSlugs.add(match.candidate.slug)
+		state.linkedUrls.add(match.candidate.url)
 		state.linkCount += 1
 		remaining = remaining.slice(match.index + match.text.length)
 	}
@@ -236,17 +258,36 @@ function transformParagraphsOnly(
 	}
 }
 
+/**
+ * Where the author already links, an auto-link would only repeat them: a
+ * lesson that opens on "[Sandcastle](/sandcastle)" needs no second link on the
+ * next mention. Absolute links to this site count as the path they name.
+ */
+function collectLinkedUrls(node: Record<string, any>, urls: Set<string>) {
+	if (node.type === 'link' && typeof node.url === 'string') {
+		urls.add(toInternalHref(node.url) ?? node.url)
+	}
+	if (Array.isArray(node.children)) {
+		for (const child of node.children) collectLinkedUrls(child, urls)
+	}
+	return urls
+}
+
 export function createDictionaryAutoLinkRemarkPlugin({
 	entries,
 	maxLinks = DEFAULT_MAX_LINKS,
 	excludedSlugs = [],
+	pages = [],
 }: DictionaryAutoLinkOptions & { entries: DictionaryEntry[] }) {
-	const candidates = buildDictionaryLinkCandidates({ entries, excludedSlugs })
+	const candidates = [
+		...buildDictionaryLinkCandidates({ entries, excludedSlugs }),
+		...pages.map((page) => ({ ...page, matchCase: true })),
+	].sort(byLongestPhrase)
 
 	return function dictionaryAutoLinkRemarkPlugin() {
 		return function transformDictionaryLinks(tree: Record<string, any>) {
 			const state: AutoLinkState = {
-				linkedSlugs: new Set(),
+				linkedUrls: collectLinkedUrls(tree, new Set()),
 				linkCount: 0,
 				maxLinks,
 				candidates,

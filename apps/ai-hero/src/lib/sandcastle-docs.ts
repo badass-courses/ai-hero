@@ -37,10 +37,6 @@ export const SANDCASTLE_PACKAGE = '@ai-hero/sandcastle'
  */
 const SANDCASTLE_DOCS_GROUPS: { title: string; slugs: string[] }[] = [
 	{
-		title: 'Getting started',
-		slugs: ['what-is-sandcastle', 'prerequisites', 'quick-start'],
-	},
-	{
 		title: 'Guides',
 		slugs: ['how-it-works', 'sandbox-providers', 'prompts', 'configuration'],
 	},
@@ -48,9 +44,26 @@ const SANDCASTLE_DOCS_GROUPS: { title: string; slugs: string[] }[] = [
 		title: 'Reference',
 		slugs: ['api', 'cli-commands', 'custom-sandbox-providers'],
 	},
-	{ title: 'Project', slugs: ['development', 'license'] },
 ]
 const UNFILED_GROUP = 'More'
+/**
+ * Sections about the repo rather than about using Sandcastle: how to work on
+ * it, and its license. They stay README-only, links to them open the README,
+ * and the landing page names both in its closing line.
+ */
+const LICENSE_SECTION = 'license'
+const README_ONLY_SECTIONS = ['development', LICENSE_SECTION]
+
+/**
+ * The README's first sections are each a few lines long, and a newcomer reads
+ * them in one go, so they make one page that keeps them as its sections.
+ */
+const SANDCASTLE_DOCS_START = {
+	title: 'Getting started',
+	slug: 'getting-started',
+	group: 'Start here',
+	sections: ['what-is-sandcastle', 'prerequisites', 'quick-start'],
+}
 
 export type SandcastleDocsPage = {
 	title: string
@@ -70,8 +83,10 @@ export type SandcastleProvider = {
 }
 
 export type SandcastleDocs = {
-	/** Pages in sidebar order: grouped, README order within a group. */
+	/** Pages in sidebar order: the start page, then grouped in README order. */
 	pages: SandcastleDocsPage[]
+	/** The opening sections as one page, which the sidebar puts first. */
+	start: SandcastleDocsPage | null
 	groups: { title: string; pages: SandcastleDocsPage[] }[]
 	/** The README's opening sentence. */
 	lead: string
@@ -80,6 +95,8 @@ export type SandcastleDocs = {
 	providers: SandcastleProvider[]
 	/** The first TypeScript block in Quick start. */
 	example: string | null
+	/** The README's License section, as text. */
+	license: string | null
 }
 
 type MdNode = {
@@ -147,6 +164,11 @@ function introText(node: MdNode | undefined) {
 	return node ? plainText(node).replace(/:$/, '.') : ''
 }
 
+/** A section's opening sentence: what the docs index shows under its title. */
+function firstSentence(text: string) {
+	return text.match(/^.+?[.!?](?=\s|$)/)?.[0] ?? text
+}
+
 function findFirst(nodes: MdNode[], match: (node: MdNode) => boolean) {
 	let found: MdNode | undefined
 	for (const node of nodes) {
@@ -185,27 +207,58 @@ export function parseSandcastleReadme(readme: string): SandcastleDocs {
 		.map((node, index) => ({ node, index }))
 		.filter(({ node }) => node.type === 'heading' && node.depth === 2)
 
+	const startHref = `${SANDCASTLE_DOCS_PATH}/${SANDCASTLE_DOCS_START.slug}`
+
 	// Every heading's GitHub anchor → where it lives on this site.
 	const anchors = new Map<string, string>()
 	const sectionBlocks = sections.map(({ node, index }, position) => {
 		const title = plainText(node)
 		const slug = slugifyHeading(title)
-		const href = `${SANDCASTLE_DOCS_PATH}/${slug}`
+		const isStart = SANDCASTLE_DOCS_START.sections.includes(slug)
+		const isReadmeOnly = README_ONLY_SECTIONS.includes(slug)
+		const href = isReadmeOnly
+			? `${SANDCASTLE_README_URL}#${githubAnchor(title)}`
+			: isStart
+				? startHref
+				: `${SANDCASTLE_DOCS_PATH}/${slug}`
 		const nextIndex = sections[position + 1]?.index ?? blocks.length
 		const body = blocks.slice(index + 1, nextIndex)
-		anchors.set(githubAnchor(title), href)
+		anchors.set(githubAnchor(title), isStart ? `${href}#${slug}` : href)
 		for (const block of body) {
 			walk(block, (child) => {
 				if (child.type !== 'heading') return
 				const text = plainText(child)
-				anchors.set(githubAnchor(text), `${href}#${slugifyHeading(text)}`)
+				anchors.set(
+					githubAnchor(text),
+					isReadmeOnly
+						? `${SANDCASTLE_README_URL}#${githubAnchor(text)}`
+						: `${href}#${slugifyHeading(text)}`,
+				)
 			})
 		}
 		const group =
 			SANDCASTLE_DOCS_GROUPS.find((candidate) => candidate.slugs.includes(slug))
 				?.title ?? UNFILED_GROUP
-		return { title, slug, href, group, blocks: body }
+		return {
+			title,
+			slug,
+			href,
+			group,
+			isStart,
+			isReadmeOnly,
+			heading: node,
+			blocks: body,
+		}
 	})
+	// The start page keeps its sections' own headings, so they stay unpromoted.
+	const startRanges = sectionBlocks
+		.filter((section) => section.isStart)
+		.map(({ heading, blocks: body }) => ({
+			start: offsets(heading).start,
+			end: offsets(body[body.length - 1] ?? heading).end,
+		}))
+	const inStart = (at: number) =>
+		startRanges.some((range) => at >= range.start && at < range.end)
 
 	const edits: Edit[] = []
 	walk(root, (node) => {
@@ -213,7 +266,8 @@ export function parseSandcastleReadme(readme: string): SandcastleDocs {
 		if (
 			node.type === 'heading' &&
 			(node.depth ?? 0) > 2 &&
-			readme[start] === '#'
+			readme[start] === '#' &&
+			!inStart(start)
 		) {
 			// `###` becomes `##`: the README's `##` is the page's `h1`.
 			edits.push({ start, end: start + 1, text: '' })
@@ -256,14 +310,37 @@ export function parseSandcastleReadme(readme: string): SandcastleDocs {
 			: ''
 	}
 
-	const pages = sectionBlocks.map(({ blocks, ...page }) => ({
-		...page,
-		description:
-			metaDescription(
-				introText(blocks.find((block) => block.type === 'paragraph')),
-			) ?? '',
-		body: sourceOf(blocks),
-	}))
+	const describe = (body: MdNode[]) =>
+		metaDescription(
+			firstSentence(
+				introText(body.find((block) => block.type === 'paragraph')),
+			),
+		) ?? ''
+
+	const startSections = sectionBlocks.filter((section) => section.isStart)
+	const start: SandcastleDocsPage | null =
+		startSections.length > 0
+			? {
+					title: SANDCASTLE_DOCS_START.title,
+					slug: SANDCASTLE_DOCS_START.slug,
+					href: startHref,
+					group: SANDCASTLE_DOCS_START.group,
+					description: describe(startSections[0]!.blocks),
+					body: startSections
+						.map(({ heading, blocks: body }) => sourceOf([heading, ...body]))
+						.join('\n\n'),
+				}
+			: null
+	const pages = sectionBlocks
+		.filter((section) => !section.isStart && !section.isReadmeOnly)
+		.map(({ title, slug, href, group, blocks: body }) => ({
+			title,
+			slug,
+			href,
+			group,
+			description: describe(body),
+			body: sourceOf(body),
+		}))
 	const groups = [
 		...SANDCASTLE_DOCS_GROUPS.map(({ title }) => title),
 		UNFILED_GROUP,
@@ -280,7 +357,11 @@ export function parseSandcastleReadme(readme: string): SandcastleDocs {
 		sectionBlocks.find((section) => section.slug === slug)?.blocks ?? []
 
 	return {
-		pages: groups.flatMap((group) => group.pages),
+		pages: [
+			...(start ? [start] : []),
+			...groups.flatMap((group) => group.pages),
+		],
+		start,
 		groups,
 		lead: introText(intro.find((block) => block.type === 'paragraph')),
 		steps: (steps?.children ?? []).map((item) => sourceOf(item.children ?? [])),
@@ -294,6 +375,10 @@ export function parseSandcastleReadme(readme: string): SandcastleDocs {
 					node.type === 'code' &&
 					['ts', 'typescript'].includes(node.lang ?? ''),
 			)?.value ?? null,
+		license:
+			introText(
+				blocksOf(LICENSE_SECTION).find((block) => block.type === 'paragraph'),
+			) || null,
 	}
 }
 

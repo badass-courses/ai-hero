@@ -13,6 +13,8 @@ import { ArrowUpRight, ChevronDown } from 'lucide-react'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+import { SandcastleGlyph, SandcastleMark } from './sandcastle-mark'
+
 /**
  * The frame every Sandcastle page shares: the docs sidebar beside the page.
  * The hub sidebar starts as its icon rail, the call the dictionary makes for
@@ -30,7 +32,7 @@ export function SandcastleShell({
 	children: React.ReactNode
 }) {
 	const currentTitle =
-		docs.pages.find((page) => page.slug === current)?.title ?? 'Overview'
+		docs.pages.find((page) => page.slug === current)?.title ?? 'All pages'
 
 	return (
 		<LayoutClient withContainer withFooter={false}>
@@ -63,7 +65,11 @@ export function SandcastleShell({
 							<DocsNav docs={docs} current={current} />
 						</div>
 					</aside>
-					<div className="border-border min-w-0 lg:border-l">{children}</div>
+					{/* A column, so a short docs page can grow to the screen's
+					    height and keep its pager at the bottom. */}
+					<div className="border-border flex min-w-0 flex-col lg:border-l">
+						{children}
+					</div>
 				</main>
 			</HubLayout>
 		</LayoutClient>
@@ -90,47 +96,76 @@ function DocsNav({
 	current: string | null
 }) {
 	return (
-		<nav aria-label="Sandcastle docs" className="flex flex-col gap-5 px-2 py-5">
-			<Link
-				href={SANDCASTLE_DOCS_PATH}
-				prefetch={false}
-				aria-current={current === null ? 'page' : undefined}
-				className={cn(ROW, current === null && ROW_ACTIVE)}
-			>
-				Overview
-			</Link>
-			{docs.groups.map((group) => (
-				<div key={group.title} className="flex flex-col gap-1">
-					<p className={cn(TYPE.groupLabel, 'px-2.5 pb-1')}>{group.title}</p>
-					<ul className="flex flex-col gap-px">
-						{group.pages.map((page) => {
-							const isCurrent = page.slug === current
-							return (
-								<li key={page.slug}>
-									<Link
-										href={page.href}
-										prefetch={false}
-										aria-current={isCurrent ? 'page' : undefined}
-										className={cn(ROW, isCurrent && ROW_ACTIVE)}
-									>
-										{page.title}
-									</Link>
-								</li>
-							)
-						})}
-					</ul>
-				</div>
-			))}
-			<div className="border-border flex flex-col gap-px border-t pt-4">
-				<ExternalRow href={SANDCASTLE_REPO_URL}>
-					<Icon name="Github" className="size-3.5 shrink-0" />
-					GitHub
-				</ExternalRow>
-				<ExternalRow
-					href={`https://www.npmjs.com/package/${SANDCASTLE_PACKAGE}`}
+		<nav aria-label="Sandcastle docs" className="flex flex-col">
+			{/* The tool's name heads the sidebar and leads back to its front
+			    page, the way a docs site's logo does. */}
+			<div className="border-border border-b px-2 py-3">
+				<Link
+					href={SANDCASTLE_DOCS_PATH}
+					prefetch={false}
+					aria-current={current === null ? 'page' : undefined}
+					className="hover:bg-muted flex items-center gap-3 rounded-[6px] px-2.5 py-2 transition-colors"
 				>
-					npm
-				</ExternalRow>
+					<SandcastleMark className="size-9 rounded-[9px]" />
+					<span className="flex min-w-0 flex-col gap-0.5">
+						<span className={TYPE.cardTitle}>Sandcastle</span>
+						<span
+							className={cn(TYPE.metaMono, 'text-muted-foreground truncate')}
+						>
+							{SANDCASTLE_PACKAGE}
+						</span>
+					</span>
+				</Link>
+			</div>
+			<div className="flex flex-col gap-5 px-2 py-5">
+				{docs.start ? (
+					<Link
+						href={docs.start.href}
+						prefetch={false}
+						aria-current={docs.start.slug === current ? 'page' : undefined}
+						className={cn(
+							ROW,
+							'gap-2.5 font-medium',
+							docs.start.slug === current && ROW_ACTIVE,
+						)}
+					>
+						<SandcastleGlyph className="size-4 shrink-0" />
+						{docs.start.title}
+					</Link>
+				) : null}
+				{docs.groups.map((group) => (
+					<div key={group.title} className="flex flex-col gap-1">
+						<p className={cn(TYPE.groupLabel, 'px-2.5 pb-1')}>{group.title}</p>
+						<ul className="flex flex-col gap-px">
+							{group.pages.map((page) => {
+								const isCurrent = page.slug === current
+								return (
+									<li key={page.slug}>
+										<Link
+											href={page.href}
+											prefetch={false}
+											aria-current={isCurrent ? 'page' : undefined}
+											className={cn(ROW, isCurrent && ROW_ACTIVE)}
+										>
+											{page.title}
+										</Link>
+									</li>
+								)
+							})}
+						</ul>
+					</div>
+				))}
+				<div className="border-border flex flex-col gap-px border-t pt-4">
+					<ExternalRow href={SANDCASTLE_REPO_URL}>
+						<Icon name="Github" className="size-3.5 shrink-0" />
+						GitHub
+					</ExternalRow>
+					<ExternalRow
+						href={`https://www.npmjs.com/package/${SANDCASTLE_PACKAGE}`}
+					>
+						npm
+					</ExternalRow>
+				</div>
 			</div>
 		</nav>
 	)

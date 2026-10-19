@@ -1,7 +1,7 @@
+import * as React from 'react'
 import Link from 'next/link'
 import { Icon } from '@/components/brand/icons'
 import { TYPE } from '@/components/landing/type'
-import { Callout } from '@/components/mdx/callout'
 import { MdxErrorBoundary } from '@/components/mdx/mdx-error-boundary'
 import { PROSE_MEASURE } from '@/components/mdx/prose'
 import { ActiveHeadingProvider } from '@/hooks/use-active-heading'
@@ -38,7 +38,7 @@ export async function DocsArticle({
 
 	return (
 		<ActiveHeadingProvider>
-			<article className="[&>*+*]:border-border flex flex-col [&>*+*]:-mt-px [&>*+*]:border-t">
+			<article className="[&>*+*]:border-border flex flex-1 flex-col [&>*+*]:-mt-px [&>*+*]:border-t">
 				<header className="flex flex-col px-[18px] pb-10 pt-12 sm:px-11">
 					<p className={TYPE.eyebrow}>{page.group}</p>
 					<h1 className={cn(TYPE.article, 'text-balance')}>{page.title}</h1>
@@ -56,7 +56,8 @@ export async function DocsArticle({
 					</Link>
 				</header>
 				<PostToCDisclosure model={tocModel} />
-				<div className="xl:grid xl:grid-cols-[minmax(0,1fr)_232px]">
+				{/* The body takes the slack, so the pager ends the screen. */}
+				<div className="flex-1 xl:grid xl:grid-cols-[minmax(0,1fr)_232px]">
 					<DocsBody body={page.body} />
 					<PostToCRail model={tocModel} title={page.title} />
 				</div>
@@ -67,11 +68,9 @@ export async function DocsArticle({
 }
 
 async function DocsBody({ body }: { body: string }) {
-	// A README blockquote is an aside ("> **Convention**: ..."), not the
-	// testimonial the article pipeline styles blockquotes as.
-	const { content } = await compileMDX(body, {
-		blockquote: ({ children }) => <Callout kind="note">{children}</Callout>,
-	})
+	// A README blockquote is an aside, not the testimonial the article
+	// pipeline styles blockquotes as.
+	const { content } = await compileMDX(body, { blockquote: DocsAside })
 
 	return (
 		<div className="min-w-0 px-[18px] py-10 sm:px-11">
@@ -85,6 +84,67 @@ async function DocsBody({ body }: { body: string }) {
 			</div>
 		</div>
 	)
+}
+
+/**
+ * The README calls a passage out by opening a blockquote on a bold label
+ * ("> **Convention**: …"). That one is highlighted, under its own label. A
+ * blockquote without a label is only set apart, so the page highlights what
+ * its author did and nothing else.
+ */
+function DocsAside({ children }: { children?: React.ReactNode }) {
+	const blocks = React.Children.toArray(children).filter(
+		(child) => typeof child !== 'string' || child.trim() !== '',
+	)
+	const [first, ...rest] = blocks
+	const label = first ? leadingLabel(first) : null
+
+	if (!label) {
+		return (
+			<aside className="border-border my-8 rounded-[9px] border px-6 py-5 [&>:first-child]:mt-0 [&>:last-child]:mb-0">
+				{children}
+			</aside>
+		)
+	}
+
+	return (
+		<aside
+			aria-label={label.text}
+			className="bg-accent-fill/[0.07] border-accent-fill/30 my-8 rounded-[9px] border px-6 py-5 [&>:last-child]:mb-0"
+		>
+			<p className={cn(TYPE.groupLabel, 'text-primary !mb-2 !mt-0')}>
+				{label.text}
+			</p>
+			{label.paragraph}
+			{rest}
+		</aside>
+	)
+}
+
+/**
+ * `<p><strong>Label</strong>: rest…</p>` → the label, and the paragraph
+ * without it. Null when the block does not open that way.
+ */
+function leadingLabel(block: React.ReactNode) {
+	if (!React.isValidElement<{ children?: React.ReactNode }>(block)) return null
+	const [lead, after, ...tail] = React.Children.toArray(block.props.children)
+	if (
+		!React.isValidElement<{ children?: React.ReactNode }>(lead) ||
+		typeof lead.props.children !== 'string' ||
+		typeof after !== 'string' ||
+		!/^\s*:/.test(after)
+	) {
+		return null
+	}
+	return {
+		text: lead.props.children,
+		paragraph: React.cloneElement(
+			block,
+			undefined,
+			after.replace(/^\s*:\s*/, ''),
+			...tail,
+		),
+	}
 }
 
 function DocsPager({
@@ -127,7 +187,7 @@ function PagerTile({
 			href={page.href}
 			prefetch={false}
 			className={cn(
-				'bg-background hover:bg-muted/40 group flex flex-col gap-3 px-[18px] py-8 transition-colors sm:px-11',
+				'bg-background hover:bg-foreground/[0.04] dark:hover:bg-foreground/[0.06] group flex flex-col gap-3 px-[18px] py-8 transition-colors sm:px-11',
 				!isPrevious && 'sm:items-end sm:text-right',
 			)}
 		>

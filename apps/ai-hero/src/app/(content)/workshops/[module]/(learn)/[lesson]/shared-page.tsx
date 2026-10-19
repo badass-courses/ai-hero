@@ -102,7 +102,9 @@ export async function LessonPage({
 					...(workshop && ability.canViewWorkshop
 						? { officeHoursWorkshopId: workshop.id }
 						: {}),
-					...(entries ? { dictionaryAutoLink: { entries, maxLinks: 3 } } : {}),
+					// Without the dictionary the auto-linker still links the pages
+					// it knows (Sandcastle's docs), which need no fetch.
+					dictionaryAutoLink: { entries: entries ?? [], maxLinks: 3 },
 				},
 			),
 		)

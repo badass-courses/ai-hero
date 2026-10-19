@@ -26,7 +26,6 @@ export async function generateMetadata(): Promise<Metadata> {
 			url: SANDCASTLE_DOCS_PATH,
 			siteName: 'AI Hero',
 			type: 'website',
-			images: [{ url: '/api/og?title=Sandcastle', width: 1200, height: 630 }],
 		},
 	}
 }

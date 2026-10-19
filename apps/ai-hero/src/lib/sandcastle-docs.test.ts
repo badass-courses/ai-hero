@@ -47,7 +47,7 @@ await run({ agent })
 
 #### Hanging processes
 
-See [ADR 0019](docs/adr/0019-completion-timeout.md), [Prompts](#prompts) and [the site](https://www.aihero.dev).
+See [ADR 0019](docs/adr/0019-completion-timeout.md), [Prompts](#prompts), [Quick start](#quick-start) and [the site](https://www.aihero.dev). It is [licensed](#license).
 
 ## Custom Sandbox Providers
 
@@ -60,6 +60,10 @@ Back to [dynamic context](#dynamic-context-with-command).
 ## Changelog
 
 Something the groups do not know about yet.
+
+## License
+
+MIT
 `
 
 describe('parseSandcastleReadme', () => {
@@ -70,16 +74,24 @@ describe('parseSandcastleReadme', () => {
 		expect(
 			docs.groups.map((group) => [group.title, group.pages.map((p) => p.href)]),
 		).toEqual([
-			[
-				'Getting started',
-				['/sandcastle/what-is-sandcastle', '/sandcastle/quick-start'],
-			],
 			['Guides', ['/sandcastle/sandbox-providers', '/sandcastle/prompts']],
 			['Reference', ['/sandcastle/custom-sandbox-providers']],
 			['More', ['/sandcastle/changelog']],
 		])
-		expect(docs.pages.map((p) => p.slug)).toEqual(
-			docs.groups.flatMap((group) => group.pages.map((p) => p.slug)),
+		expect(docs.pages.map((p) => p.slug)).toEqual([
+			'getting-started',
+			...docs.groups.flatMap((group) => group.pages.map((p) => p.slug)),
+		])
+	})
+
+	it('joins the opening sections into one start page that keeps their headings', () => {
+		expect(docs.start).toMatchObject({
+			title: 'Getting started',
+			href: '/sandcastle/getting-started',
+			description: 'A library for agents.',
+		})
+		expect(docs.start!.body).toMatch(
+			/^## What Is Sandcastle\?\n[\s\S]*\n## Quick start\n/,
 		)
 	})
 
@@ -97,6 +109,11 @@ describe('parseSandcastleReadme', () => {
 			},
 		])
 		expect(docs.example).toBe('await run({ agent })')
+		expect(docs.license).toBe('MIT')
+		expect(docs.pages.map((p) => p.slug)).not.toContain('license')
+		expect(page('prompts').body).toContain(
+			'[licensed](https://github.com/mattpocock/sandcastle/blob/main/README.md#license)',
+		)
 	})
 
 	it('promotes headings one level and leaves code fences alone', () => {
@@ -107,13 +124,16 @@ describe('parseSandcastleReadme', () => {
 	})
 
 	it('points README anchors at the page that holds the heading', () => {
-		expect(page('what-is-sandcastle').body).toContain(
+		expect(page('getting-started').body).toContain(
 			'[create your own](/sandcastle/custom-sandbox-providers)',
 		)
 		expect(page('custom-sandbox-providers').body).toContain(
 			'[dynamic context](/sandcastle/prompts#dynamic-context-with-command)',
 		)
 		expect(page('prompts').body).toContain('[Prompts](/sandcastle/prompts)')
+		expect(page('prompts').body).toContain(
+			'[Quick start](/sandcastle/getting-started#quick-start)',
+		)
 	})
 
 	it('sends repo-relative links to GitHub and keeps absolute ones', () => {
