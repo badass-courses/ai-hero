@@ -289,8 +289,10 @@ async function buildIndex(mode: IndexMode): Promise<SitemapEntry[]> {
 
 	// Docs pages, not publications: the sitemap lists them, the feed does not.
 	// The README carries no date, so there is no honest lastModified to give.
-	if (mode === 'sitemap') {
-		const sandcastle = await getSandcastleDocs()
+	// The README is a GitHub fetch: when it fails, only these entries drop out.
+	const sandcastle =
+		mode === 'sitemap' ? await getSandcastleDocs().catch(() => null) : null
+	if (sandcastle) {
 		sitemapEntries.push({
 			url: `${process.env.COURSEBUILDER_URL}${SANDCASTLE_DOCS_PATH}`,
 			title: 'Sandcastle',

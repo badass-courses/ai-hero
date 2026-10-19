@@ -59,7 +59,11 @@ Back to [dynamic context](#dynamic-context-with-command).
 
 ## Changelog
 
-Something the groups do not know about yet.
+### Options
+
+### Options
+
+Something the groups do not know about yet. See [the second](#options-1).
 
 ## License
 
@@ -133,6 +137,12 @@ describe('parseSandcastleReadme', () => {
 		expect(page('prompts').body).toContain('[Prompts](/sandcastle/prompts)')
 		expect(page('prompts').body).toContain(
 			'[Quick start](/sandcastle/getting-started#quick-start)',
+		)
+	})
+
+	it('resolves the numbered anchor GitHub gives a repeated heading', () => {
+		expect(page('changelog').body).toContain(
+			'[the second](/sandcastle/changelog#options)',
 		)
 	})
 

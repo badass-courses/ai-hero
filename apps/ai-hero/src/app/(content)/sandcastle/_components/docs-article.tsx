@@ -14,6 +14,7 @@ import { ArrowLeft, ArrowRight } from 'lucide-react'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+import { CopyPageButton } from '../../_components/copy-page-button'
 import { getTocModel } from '../../posts/_components/post-toc-model'
 import {
 	PostToCDisclosure,
@@ -42,18 +43,26 @@ export async function DocsArticle({
 				<header className="flex flex-col px-[18px] pb-10 pt-12 sm:px-11">
 					<p className={TYPE.eyebrow}>{page.group}</p>
 					<h1 className={cn(TYPE.article, 'text-balance')}>{page.title}</h1>
-					<Link
-						href={SANDCASTLE_README_URL}
-						target="_blank"
-						rel="noopener noreferrer"
-						className={cn(
-							TYPE.metaSm,
-							'text-muted-foreground hover:text-foreground mt-5 inline-flex w-fit items-center gap-1.5 transition-colors',
-						)}
-					>
-						<Icon name="Github" className="size-3.5 shrink-0" />
-						Edit this page on GitHub
-					</Link>
+					<div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-3">
+						{/* The page as markdown, for pasting into an agent. */}
+						<CopyPageButton
+							variant="ghost"
+							className="rounded-[9px] border"
+							sourceUrl={`${page.href}.md`}
+						/>
+						<Link
+							href={SANDCASTLE_README_URL}
+							target="_blank"
+							rel="noopener noreferrer"
+							className={cn(
+								TYPE.metaSm,
+								'text-muted-foreground hover:text-foreground inline-flex w-fit items-center gap-1.5 transition-colors',
+							)}
+						>
+							<Icon name="Github" className="size-3.5 shrink-0" />
+							Edit this page on GitHub
+						</Link>
+					</div>
 				</header>
 				<PostToCDisclosure model={tocModel} />
 				{/* The body takes the slack, so the pager ends the screen. */}

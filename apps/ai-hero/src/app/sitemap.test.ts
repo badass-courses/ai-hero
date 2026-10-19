@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ContentResourceSchema } from '@coursebuilder/core/schemas'
 
-const mocks = vi.hoisted(() => ({ execute: vi.fn(), skills: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+	execute: vi.fn(),
+	skills: vi.fn(),
+	sandcastle: vi.fn(),
+}))
 vi.mock('@/db', () => ({ db: { execute: mocks.execute } }))
 vi.mock('@/db/schema', () => ({
 	contentResource: 'ContentResource',
@@ -14,17 +18,7 @@ vi.mock('@/lib/ai-coding-dictionary', () => ({
 vi.mock('@/lib/sandcastle-docs', () => ({
 	SANDCASTLE_DOCS_CACHE_TAG: 'sandcastle-docs',
 	SANDCASTLE_DOCS_PATH: '/sandcastle',
-	getSandcastleDocs: async () => ({
-		lead: 'A library.',
-		pages: [
-			{
-				title: 'Quick start',
-				slug: 'quick-start',
-				href: '/sandcastle/quick-start',
-				description: '',
-			},
-		],
-	}),
+	getSandcastleDocs: mocks.sandcastle,
 }))
 vi.mock('@/lib/skill-changelog-query', () => ({
 	getSkillChangelogEntries: mocks.skills,
@@ -43,6 +37,17 @@ const published = {
 
 describe('content-derived sitemap timestamps', () => {
 	beforeEach(() => {
+		mocks.sandcastle.mockResolvedValue({
+			lead: 'A library.',
+			pages: [
+				{
+					title: 'Quick start',
+					slug: 'quick-start',
+					href: '/sandcastle/quick-start',
+					description: '',
+				},
+			],
+		})
 		mocks.skills.mockReset().mockResolvedValue([])
 		vi.stubEnv('COURSEBUILDER_URL', 'https://www.aihero.dev')
 		mocks.execute.mockReset()
@@ -183,6 +188,14 @@ describe('content-derived sitemap timestamps', () => {
 			'https://www.aihero.dev/sandcastle/quick-start',
 		])
 		expect(docs.every((entry) => entry.lastModified === undefined)).toBe(true)
+	})
+	it('drops only the Sandcastle entries when the README fetch fails', async () => {
+		mocks.sandcastle.mockRejectedValue(
+			new Error('raw.githubusercontent.com 503'),
+		)
+		const urls = (await sitemap()).map((entry) => entry.url)
+		expect(urls.some((url) => url.includes('/sandcastle'))).toBe(false)
+		expect(urls).toContain('https://www.aihero.dev/public-post')
 	})
 	it('does not emit drafts or unpublished/unlisted content', async () => {
 		const urls = (await sitemap()).map((entry) => entry.url)

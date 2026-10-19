@@ -11,9 +11,11 @@ type Props = {
 	params: Promise<{ slug: string }>
 }
 
+// A failed README fetch must not fail the build: with no params the pages
+// render on first request instead.
 export async function generateStaticParams() {
-	const { pages } = await getSandcastleDocs()
-	return pages.map((page) => ({ slug: page.slug }))
+	const docs = await getSandcastleDocs().catch(() => null)
+	return (docs?.pages ?? []).map((page) => ({ slug: page.slug }))
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {

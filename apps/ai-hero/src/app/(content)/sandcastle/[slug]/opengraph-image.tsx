@@ -23,6 +23,5 @@ export default async function SandcastleDocsOgImage({
 		eyebrow: page.group,
 		title: page.title,
 		description: page.description,
-		path: page.href,
 	})
 }

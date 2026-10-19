@@ -1,3 +1,4 @@
+import * as React from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { Icon } from '@/components/brand/icons'
@@ -5,7 +6,6 @@ import { BADGE_OUTLINE, TYPE } from '@/components/landing/type'
 import {
 	SANDCASTLE_DOCS_PATH,
 	SANDCASTLE_PACKAGE,
-	SANDCASTLE_README_URL,
 	SANDCASTLE_REPO_URL,
 	type SandcastleDocs,
 } from '@/lib/sandcastle-docs'
@@ -14,6 +14,7 @@ import { ArrowRight, ArrowUpRight, Download, Star } from 'lucide-react'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+import { CopyPageButton } from '../../_components/copy-page-button'
 import { InstallCommand } from '../../skills/_components/install-command'
 
 /** The README's own wordmark pair, already on the shared Cloudinary. */
@@ -31,7 +32,7 @@ const INSTALL_COMMAND = `npm install --save-dev ${SANDCASTLE_PACKAGE}`
 // The README's own words for a provider of your own, under its "Custom
 // Sandbox Providers" heading.
 const CUSTOM_PROVIDER =
-	'Bind-mount if the sandbox can mount a host directory, isolated if it has its own filesystem.'
+	'Bind-mount when the sandbox can mount a host directory. Isolated when it has its own filesystem.'
 
 /**
  * /sandcastle: the tool's front page. Every fact on it is read out of the
@@ -124,102 +125,129 @@ export async function SandcastleLanding({
 					<div className="flex min-w-0 flex-col gap-3">
 						<InstallCommand command={INSTALL_COMMAND} />
 						{docs.example ? <Example code={docs.example} /> : null}
+						{/* Every docs page as one markdown file, for an agent. */}
+						<CopyPageButton
+							variant="ghost"
+							size="sm"
+							label="Copy all docs"
+							className="text-muted-foreground hover:text-foreground self-end rounded-[6px]"
+							sourceUrl={`${SANDCASTLE_DOCS_PATH}.md`}
+						/>
 					</div>
 				</div>
 			</header>
 
-			{docs.steps.length > 0 ? (
-				<section aria-labelledby="sandcastle-how">
-					<SectionHead
-						id="sandcastle-how"
-						title="How it works"
-						href={`${SANDCASTLE_DOCS_PATH}/how-it-works`}
-						linkLabel="Branch strategies"
-					/>
-					<ol className="bg-border grid grid-cols-1 gap-px md:grid-cols-3">
-						{docs.steps.map((step, index) => (
-							<li
-								key={step}
-								className="bg-background flex flex-col gap-4 px-[18px] py-8 sm:px-11 md:px-8"
-							>
-								<span
-									aria-hidden
-									className={cn(
-										TYPE.navNum,
-										'bg-accent-fill/[0.14] text-primary flex size-7 items-center justify-center rounded-sm',
-									)}
-								>
-									{index + 1}
-								</span>
-								<p className={cn(TYPE.bodyTight, 'text-pretty font-normal')}>
-									<InlineMarkdown source={step} />
-								</p>
-							</li>
-						))}
-					</ol>
-				</section>
-			) : null}
-
-			{docs.providers.length > 0 ? (
-				<section aria-labelledby="sandcastle-providers">
-					<SectionHead
-						id="sandcastle-providers"
-						title="Sandbox providers"
-						href={`${SANDCASTLE_DOCS_PATH}/sandbox-providers`}
-						linkLabel="Compare providers"
-					/>
-					<ul className="bg-border grid grid-cols-1 gap-px sm:grid-cols-2 xl:grid-cols-4">
-						{docs.providers.map((provider) => (
-							<li
-								key={provider.importPath}
-								className="bg-background flex min-w-0 flex-col gap-3 px-[18px] py-7 sm:px-8"
-							>
-								<div className="flex items-center justify-between gap-3">
-									<h3 className={TYPE.cardTitle}>{provider.name}</h3>
-									<span className={cn(TYPE.badge, BADGE_OUTLINE)}>
-										{provider.type}
+			{/* What it does and where it runs, read side by side as one section,
+			    so neither needs a grid of its own. */}
+			<section aria-labelledby="sandcastle-how" className="@container">
+				<div className="grid grid-cols-1 gap-x-16 gap-y-14 px-[18px] py-14 sm:px-11 @[960px]:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+					<div className="flex min-w-0 flex-col">
+						<h2 id="sandcastle-how" className={TYPE.heading}>
+							How it works
+						</h2>
+						<ol className="mt-9 flex flex-col">
+							{docs.steps.map((step, index) => (
+								<li key={step} className="relative flex gap-5 pb-9 last:pb-0">
+									{/* A rule from each number to the next reads the list as
+									    one sequence. */}
+									{index < docs.steps.length - 1 ? (
+										<span
+											aria-hidden
+											className="bg-border absolute bottom-1 left-4 top-11 w-px"
+										/>
+									) : null}
+									<span
+										aria-hidden
+										className={cn(
+											TYPE.navNum,
+											'bg-accent-fill/[0.14] text-primary flex size-8 shrink-0 items-center justify-center rounded-[6px]',
+										)}
+									>
+										{index + 1}
 									</span>
-								</div>
-								<code
-									className={cn(
-										TYPE.metaMark,
-										'break-all text-[color:var(--ah-fg-muted)]',
-									)}
-								>
-									{provider.importPath}
-								</code>
-							</li>
-						))}
-						{/* Fill the last row so the hairline grid keeps its edge. */}
-						{Array.from({ length: (4 - (docs.providers.length % 4)) % 4 }).map(
-							(_, index) => (
-								<li
-									key={index}
-									aria-hidden
-									className="bg-background hidden xl:block"
-								/>
-							),
-						)}
-						<li className="bg-background sm:col-span-2 xl:col-span-4">
-							<Link
-								href={`${SANDCASTLE_DOCS_PATH}/custom-sandbox-providers`}
-								className="hover:bg-foreground/[0.04] dark:hover:bg-foreground/[0.06] group flex flex-col gap-1 px-[18px] py-5 transition-colors sm:flex-row sm:items-center sm:gap-4 sm:px-8"
+									<p className={cn(TYPE.lead, 'text-pretty pt-0.5')}>
+										<InlineMarkdown source={step} />
+									</p>
+								</li>
+							))}
+						</ol>
+						<MoreLink
+							href={`${SANDCASTLE_DOCS_PATH}/how-it-works`}
+							className="mt-auto pt-10"
+						>
+							Branch strategies
+						</MoreLink>
+					</div>
+
+					{docs.providers.length > 0 ? (
+						<div className="flex min-w-0 flex-col">
+							<h2 className={TYPE.heading}>Sandbox providers</h2>
+							<ul className="border-border bg-card divide-border mt-9 flex flex-col divide-y overflow-hidden rounded-[11px] border">
+								{docs.providers.map((provider) => (
+									<li
+										key={provider.importPath}
+										className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 px-5 py-4 sm:grid-cols-[6.5rem_minmax(0,1fr)_6.5rem]"
+									>
+										<span className={TYPE.cardTitle}>{provider.name}</span>
+										<code
+											className={cn(
+												TYPE.metaMark,
+												'col-span-2 row-start-2 text-[color:var(--ah-fg-muted)] sm:col-span-1 sm:row-start-auto',
+											)}
+										>
+											{/* Wrap after a slash, never inside a segment. */}
+											{provider.importPath.split('/').map((segment, index) => (
+												<React.Fragment key={index}>
+													{index > 0 ? (
+														<>
+															/<wbr />
+														</>
+													) : null}
+													{segment}
+												</React.Fragment>
+											))}
+										</code>
+										<span
+											className={cn(
+												TYPE.badge,
+												BADGE_OUTLINE,
+												'col-start-2 row-start-1 justify-self-end sm:col-start-3',
+											)}
+										>
+											{provider.type}
+										</span>
+									</li>
+								))}
+								<li>
+									<Link
+										href={`${SANDCASTLE_DOCS_PATH}/custom-sandbox-providers`}
+										className="hover:bg-foreground/[0.04] dark:hover:bg-foreground/[0.06] group flex items-center gap-4 px-5 py-4 transition-colors"
+									>
+										<span className="flex min-w-0 flex-col gap-1">
+											<span className={TYPE.cardTitle}>Custom providers</span>
+											<span
+												className={cn(TYPE.metaSm, 'text-muted-foreground')}
+											>
+												{CUSTOM_PROVIDER}
+											</span>
+										</span>
+										<ArrowRight
+											aria-hidden
+											className="text-muted-foreground group-hover:text-foreground ml-auto size-4 shrink-0 transition group-hover:translate-x-0.5 motion-reduce:transition-none"
+										/>
+									</Link>
+								</li>
+							</ul>
+							<MoreLink
+								href={`${SANDCASTLE_DOCS_PATH}/sandbox-providers`}
+								className="mt-auto pt-10"
 							>
-								<span className={cn(TYPE.cardTitle, 'shrink-0')}>
-									Custom providers
-								</span>
-								<span className={cn(TYPE.metaSm, 'text-muted-foreground')}>
-									{CUSTOM_PROVIDER}
-								</span>
-								<ArrowRight
-									aria-hidden
-									className="text-muted-foreground group-hover:text-foreground mt-1 size-4 shrink-0 transition group-hover:translate-x-0.5 motion-reduce:transition-none sm:ml-auto sm:mt-0"
-								/>
-							</Link>
-						</li>
-					</ul>
-				</section>
-			) : null}
+								Compare providers
+							</MoreLink>
+						</div>
+					) : null}
+				</div>
+			</section>
 
 			<section aria-labelledby="sandcastle-docs-index">
 				<SectionHead id="sandcastle-docs-index" title="Documentation" />
@@ -273,23 +301,14 @@ export async function SandcastleLanding({
 				</div>
 			</section>
 
-			{/* What the README says about the repo itself, which the docs leave
-			    out: its license, and where working on it is described. */}
-			<footer className="px-[18px] py-8 sm:px-11">
-				<p className={cn(TYPE.metaSm, 'text-muted-foreground text-pretty')}>
-					{docs.license ? `Sandcastle is ${docs.license} licensed. ` : null}
-					To work on Sandcastle itself, see{' '}
-					<Link
-						href={`${SANDCASTLE_README_URL}#development`}
-						target="_blank"
-						rel="noopener noreferrer"
-						className="hover:text-foreground underline underline-offset-4 transition-colors"
-					>
-						Development in the README
-					</Link>
-					.
-				</p>
-			</footer>
+			{/* The README's License section, which is not a page of its own. */}
+			{docs.license ? (
+				<footer className="px-[18px] py-8 sm:px-11">
+					<p className={cn(TYPE.metaSm, 'text-muted-foreground')}>
+						{docs.license}
+					</p>
+				</footer>
+			) : null}
 		</div>
 	)
 }
@@ -311,21 +330,38 @@ function SectionHead({
 				{title}
 			</h2>
 			{href && linkLabel ? (
-				<Link
-					href={href}
-					className={cn(
-						TYPE.meta,
-						'hover:text-foreground group inline-flex shrink-0 items-center gap-1.5 text-[color:var(--ah-fg-subtle)] transition-colors md:ml-auto',
-					)}
-				>
+				<MoreLink href={href} className="md:ml-auto">
 					{linkLabel}
-					<ArrowRight
-						aria-hidden
-						className="size-3.5 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none"
-					/>
-				</Link>
+				</MoreLink>
 			) : null}
 		</div>
+	)
+}
+
+function MoreLink({
+	href,
+	className,
+	children,
+}: {
+	href: string
+	className?: string
+	children: React.ReactNode
+}) {
+	return (
+		<Link
+			href={href}
+			className={cn(
+				TYPE.meta,
+				'hover:text-foreground group inline-flex w-fit shrink-0 items-center gap-1.5 text-[color:var(--ah-fg-subtle)] transition-colors',
+				className,
+			)}
+		>
+			{children}
+			<ArrowRight
+				aria-hidden
+				className="size-3.5 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none"
+			/>
+		</Link>
 	)
 }
 

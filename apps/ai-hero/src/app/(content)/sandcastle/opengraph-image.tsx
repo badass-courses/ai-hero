@@ -2,7 +2,6 @@ import { getRepoStarCount } from '@/lib/github-stars-query'
 import {
 	getSandcastleDocs,
 	getSandcastleWeeklyDownloads,
-	SANDCASTLE_DOCS_PATH,
 	SANDCASTLE_OWNER,
 	SANDCASTLE_REPO,
 } from '@/lib/sandcastle-docs'
@@ -36,7 +35,6 @@ export default async function SandcastleOgImage() {
 
 	return renderSandcastleOg({
 		title: docs.lead,
-		path: SANDCASTLE_DOCS_PATH,
 		stats,
 	})
 }

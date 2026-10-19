@@ -48,8 +48,8 @@ const SANDCASTLE_DOCS_GROUPS: { title: string; slugs: string[] }[] = [
 const UNFILED_GROUP = 'More'
 /**
  * Sections about the repo rather than about using Sandcastle: how to work on
- * it, and its license. They stay README-only, links to them open the README,
- * and the landing page names both in its closing line.
+ * it, and its license. They stay README-only and links to them open the
+ * README; the landing page closes on the license.
  */
 const LICENSE_SECTION = 'license'
 const README_ONLY_SECTIONS = ['development', LICENSE_SECTION]
@@ -72,8 +72,10 @@ export type SandcastleDocsPage = {
 	group: string
 	/** The section's opening paragraph as plain text, for meta and the index. */
 	description: string
-	/** Section body as markdown, headings promoted one level and links rewritten. */
+	/** Section body as MDX source, headings promoted one level and links rewritten. */
 	body: string
+	/** The same body as plain markdown, for the page's `.md` twin. */
+	markdown: string
 }
 
 export type SandcastleProvider = {
@@ -110,7 +112,8 @@ type MdNode = {
 	position?: { start: { offset?: number }; end: { offset?: number } }
 }
 
-type Edit = { start: number; end: number; text: string }
+/** `mdx`: an escape only the MDX compile needs, left out of plain markdown. */
+type Edit = { start: number; end: number; text: string; mdx?: boolean }
 
 const parser = unified().use(remarkParse).use(remarkGfm)
 
@@ -164,6 +167,22 @@ function introText(node: MdNode | undefined) {
 	return node ? plainText(node).replace(/:$/, '.') : ''
 }
 
+/**
+ * The README titles some sections in Title Case ("Sandbox Providers") and
+ * others in sentence case ("How it works"). The sidebar uses sentence case
+ * throughout, keeping acronyms, code-cased words and the tool's own name.
+ */
+function sentenceCase(title: string) {
+	return title
+		.split(' ')
+		.map((word, index) =>
+			index > 0 && /^[A-Z][a-z]+$/.test(word) && word !== 'Sandcastle'
+				? word.toLowerCase()
+				: word,
+		)
+		.join(' ')
+}
+
 /** A section's opening sentence: what the docs index shows under its title. */
 function firstSentence(text: string) {
 	return text.match(/^.+?[.!?](?=\s|$)/)?.[0] ?? text
@@ -209,8 +228,17 @@ export function parseSandcastleReadme(readme: string): SandcastleDocs {
 
 	const startHref = `${SANDCASTLE_DOCS_PATH}/${SANDCASTLE_DOCS_START.slug}`
 
-	// Every heading's GitHub anchor → where it lives on this site.
+	// Every heading's GitHub anchor → where it lives on this site. GitHub
+	// numbers a repeated heading (`options`, `options-1`); the site's ids do
+	// not, so a repeat lands on the page's first heading of that name.
 	const anchors = new Map<string, string>()
+	const anchorCounts = new Map<string, number>()
+	const setAnchor = (text: string, target: string) => {
+		const base = githubAnchor(text)
+		const count = anchorCounts.get(base) ?? 0
+		anchorCounts.set(base, count + 1)
+		anchors.set(count === 0 ? base : `${base}-${count}`, target)
+	}
 	const sectionBlocks = sections.map(({ node, index }, position) => {
 		const title = plainText(node)
 		const slug = slugifyHeading(title)
@@ -223,13 +251,13 @@ export function parseSandcastleReadme(readme: string): SandcastleDocs {
 				: `${SANDCASTLE_DOCS_PATH}/${slug}`
 		const nextIndex = sections[position + 1]?.index ?? blocks.length
 		const body = blocks.slice(index + 1, nextIndex)
-		anchors.set(githubAnchor(title), isStart ? `${href}#${slug}` : href)
+		setAnchor(title, isStart ? `${href}#${slug}` : href)
 		for (const block of body) {
 			walk(block, (child) => {
 				if (child.type !== 'heading') return
 				const text = plainText(child)
-				anchors.set(
-					githubAnchor(text),
+				setAnchor(
+					text,
 					isReadmeOnly
 						? `${SANDCASTLE_README_URL}#${githubAnchor(text)}`
 						: `${href}#${slugifyHeading(text)}`,
@@ -278,7 +306,7 @@ export function parseSandcastleReadme(readme: string): SandcastleDocs {
 			// the whole page to the unhighlighted fallback. Escaped, it is text.
 			for (let at = start; at < end; at++) {
 				if ('<{}'.includes(readme[at]!) && readme[at - 1] !== '\\') {
-					edits.push({ start: at, end: at, text: '\\' })
+					edits.push({ start: at, end: at, text: '\\', mdx: true })
 				}
 			}
 		}
@@ -302,11 +330,17 @@ export function parseSandcastleReadme(readme: string): SandcastleDocs {
 	})
 	edits.sort((a, b) => a.start - b.start)
 
-	const sourceOf = (nodes: MdNode[]) => {
+	const markdownEdits = edits.filter((edit) => !edit.mdx)
+	const sourceOf = (nodes: MdNode[], { mdx = true } = {}) => {
 		const first = nodes[0]
 		const last = nodes[nodes.length - 1]
 		return first && last
-			? applyEdits(readme, edits, offsets(first).start, offsets(last).end)
+			? applyEdits(
+					readme,
+					mdx ? edits : markdownEdits,
+					offsets(first).start,
+					offsets(last).end,
+				)
 			: ''
 	}
 
@@ -329,17 +363,23 @@ export function parseSandcastleReadme(readme: string): SandcastleDocs {
 					body: startSections
 						.map(({ heading, blocks: body }) => sourceOf([heading, ...body]))
 						.join('\n\n'),
+					markdown: startSections
+						.map(({ heading, blocks: body }) =>
+							sourceOf([heading, ...body], { mdx: false }),
+						)
+						.join('\n\n'),
 				}
 			: null
 	const pages = sectionBlocks
 		.filter((section) => !section.isStart && !section.isReadmeOnly)
 		.map(({ title, slug, href, group, blocks: body }) => ({
-			title,
+			title: sentenceCase(title),
 			slug,
 			href,
 			group,
 			description: describe(body),
 			body: sourceOf(body),
+			markdown: sourceOf(body, { mdx: false }),
 		}))
 	const groups = [
 		...SANDCASTLE_DOCS_GROUPS.map(({ title }) => title),
@@ -425,4 +465,33 @@ export async function getSandcastleWeeklyDownloads(): Promise<number | null> {
 	} catch {
 		return null
 	}
+}
+
+/** Site links in the markdown twins become absolute, for a reader off-site. */
+function absoluteLinks(markdown: string, baseUrl: string) {
+	return markdown.replace(/\]\(\//g, `](${baseUrl}/`)
+}
+
+/** One docs page as markdown: what "Copy page" copies and `.md` serves. */
+export function sandcastlePageMarkdown(
+	page: SandcastleDocsPage,
+	baseUrl: string,
+) {
+	return `# ${page.title}
+
+Sandcastle docs: ${baseUrl}${page.href}
+
+${absoluteLinks(page.markdown, baseUrl)}
+`
+}
+
+/** Every docs page in sidebar order, as one markdown file. */
+export function sandcastleDocsMarkdown(docs: SandcastleDocs, baseUrl: string) {
+	return `# Sandcastle
+
+${docs.lead}
+
+Install with \`npm install --save-dev ${SANDCASTLE_PACKAGE}\`. Source: ${SANDCASTLE_README_URL}
+
+${docs.pages.map((page) => sandcastlePageMarkdown(page, baseUrl)).join('\n')}`
 }
