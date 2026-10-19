@@ -77,7 +77,7 @@ export function Heading({ level, children, ...props }: HeadingProps) {
 	return (
 		// 72px is the spec's anchor offset: the 63px nav plus a hairline of air,
 		// so a heading jumped to from the TOC lands just clear of the nav.
-		<Component ref={ref} id={slug} className="scroll-mt-[72px]">
+		<Component ref={ref} id={slug} className="scroll-mt-[72px] tracking-[-0.025em]">
 			<Link
 				href={`#${slug}`}
 				className="text-inherit! w-full font-semibold no-underline"

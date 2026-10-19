@@ -61,7 +61,7 @@ export default async function CourseSyncHistoryPage() {
 								{history.map((item) => (
 									<tr
 										key={item.courseVersionId}
-										className="bg-background hover:bg-muted/50 relative transition-colors"
+										className="bg-background hover:bg-hover relative transition-colors"
 									>
 										<td className="px-6 py-5 align-top">
 											<Link

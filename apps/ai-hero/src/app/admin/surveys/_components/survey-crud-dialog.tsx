@@ -202,7 +202,7 @@ export default function SurveyCrudDialog({
 						<div className="rounded-lg border">
 							<Accordion type="multiple">
 								<AccordionItem value="completion-messages">
-									<AccordionTrigger className="hover:bg-muted flex items-center justify-between rounded-t-lg p-4 hover:no-underline">
+									<AccordionTrigger className="hover:bg-hover flex items-center justify-between rounded-t-lg p-4 hover:no-underline">
 										<div className="flex w-full items-center justify-between">
 											Completion Messages{' '}
 											<span className="text-muted-foreground text-xs">

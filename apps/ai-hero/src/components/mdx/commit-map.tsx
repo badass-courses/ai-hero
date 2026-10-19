@@ -28,9 +28,9 @@ export function CommitMap({
 	return (
 		<PackageManagerContext.Provider value={packageManager}>
 			<div className="my-6">
-				<span className="text-muted-foreground inline-flex items-center gap-1 font-mono text-xs uppercase">
+				<span className="inline-flex items-center gap-1 font-mono text-xs uppercase text-[color:var(--ah-fg-body)]">
 					<svg
-						className="dark:text-primary size-4 text-blue-600"
+						className="size-4"
 						xmlns="http://www.w3.org/2000/svg"
 						width="24"
 						height="24"

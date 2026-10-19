@@ -201,7 +201,7 @@
 	--foreground: #14161a;
 	--card: #ffffff;
 	--card-foreground: #14161a;
-	--popover: #f5f6f8;
+	--popover: #ffffff;
 	--popover-foreground: #14161a;
 	--primary: #14161a;
 	--primary-foreground: #fbfbfc;
@@ -495,6 +495,7 @@
 	--color-secondary: var(--secondary);
 	--color-secondary-foreground: var(--secondary-foreground);
 	--color-muted: var(--muted);
+	--color-hover: var(--ah-hover);
 	--color-muted-foreground: var(--muted-foreground);
 	--color-accent: var(--accent);
 	--color-accent-foreground: var(--accent-foreground);
@@ -1142,6 +1143,26 @@ body {
 
 .ah-bullets.contains-task-list > li::before {
 	content: none;
+}
+
+/* One task-list row, one label (see the `li` entry in compile-mdx). The
+   hanging indent keeps wrapped lines clear of the checkbox, and the negative
+   inline margin lets the hover tint breathe without shifting the text. */
+.ah-task {
+	--ah-task-box: calc(1.125em + 0.4em);
+	display: block;
+	cursor: pointer;
+	margin-inline: -0.5em;
+	padding: 0.2em 0.5em 0.2em calc(0.5em + var(--ah-task-box));
+	text-indent: calc(-1 * var(--ah-task-box));
+	border-radius: 6px;
+	transition: background-color 150ms;
+}
+.ah-task > * {
+	text-indent: 0;
+}
+.ah-task:hover {
+	background: var(--ah-hover);
 }
 
 /* `Divider` in MDX: the hatched, pointed band from behind the cohort calendar

@@ -61,7 +61,7 @@ export function DictionaryShellFallback({
 									<li key={section.title} className="border-border border-b">
 										<a
 											href={`#${id}`}
-											className="text-muted-foreground hover:text-foreground hover:bg-muted/30 group flex items-center justify-between gap-3 px-6 py-3 text-sm transition-colors"
+											className="text-muted-foreground hover:text-foreground hover:bg-hover group flex items-center justify-between gap-3 px-6 py-3 text-sm transition-colors"
 										>
 											<span className="flex min-w-0 items-center gap-2">
 												<span aria-hidden className="text-primary opacity-50">

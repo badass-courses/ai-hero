@@ -106,7 +106,7 @@ export function ModuleLessonProgressToggle({
 					setCompleted(!isCompleted)
 				}}
 				className={cn(
-					'hover:bg-muted/50 flex h-10 items-center justify-center border-l px-3.5 transition sm:hidden',
+					'hover:bg-hover flex h-10 items-center justify-center border-l px-3.5 transition sm:hidden',
 					// Completed: the tint defines the cell, and the alpha hairline
 					// over the tinted bg reads brighter than the other seams — keep
 					// the border box (transparent) so the toggle never shifts 1px.
@@ -140,7 +140,7 @@ export function ModuleLessonProgressToggle({
 			<Label
 				htmlFor="lesson-progress-toggle"
 				className={cn(
-					'hover:bg-muted/50 hidden h-10 items-center gap-0.5 border-l pl-2 transition hover:cursor-pointer sm:flex sm:h-12',
+					'hover:bg-hover hidden h-10 items-center gap-0.5 border-l pl-2 transition hover:cursor-pointer sm:flex sm:h-12',
 				)}
 			>
 				<Switch

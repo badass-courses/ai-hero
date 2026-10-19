@@ -278,7 +278,7 @@ export function CheckoutSurveyBuyButton({
 									<button
 										key={answer.value}
 										type="button"
-										className="border-border bg-background hover:bg-muted flex items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors"
+										className="border-border bg-background hover:bg-hover flex items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors"
 										onClick={() => send({ type: 'ANSWER_SELECTED', answer })}
 									>
 										<Icon className="text-muted-foreground size-4 shrink-0" />

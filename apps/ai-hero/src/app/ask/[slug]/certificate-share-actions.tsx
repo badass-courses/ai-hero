@@ -26,7 +26,7 @@ export function CertificateShareActions({
 	}
 
 	const actionClassName =
-		'focus-visible:ring-ring focus-visible:ring-offset-background inline-flex min-h-11 items-center justify-center gap-2 border border-border bg-background px-4 py-2 font-mono text-xs font-medium uppercase tracking-wider text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2'
+		'focus-visible:ring-ring focus-visible:ring-offset-background inline-flex min-h-11 items-center justify-center gap-2 border border-border bg-background px-4 py-2 font-mono text-xs font-medium uppercase tracking-wider text-foreground transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2'
 
 	return (
 		<div

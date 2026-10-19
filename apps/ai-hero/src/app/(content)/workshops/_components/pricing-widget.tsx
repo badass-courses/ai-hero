@@ -476,7 +476,7 @@ const TeamPurchaseControls = ({ teamMode }: { teamMode: boolean }) => {
 	}
 
 	const stepperButton =
-		'border-border text-muted-foreground hover:bg-muted hover:text-foreground flex h-10 w-9 cursor-pointer items-center justify-center rounded-[9px] border transition-colors'
+		'border-border text-muted-foreground hover:bg-hover hover:text-foreground flex h-10 w-9 cursor-pointer items-center justify-center rounded-[9px] border transition-colors'
 
 	return (
 		<div className="mt-4 flex w-full flex-col items-start gap-3">

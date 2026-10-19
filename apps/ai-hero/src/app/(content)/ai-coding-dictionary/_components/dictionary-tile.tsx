@@ -17,7 +17,7 @@ export function DictionaryTile({
 		<Link
 			href={href}
 			prefetch={false}
-			className="bg-background hover:bg-muted/40 group relative flex h-full flex-col gap-3 p-6 transition-colors sm:p-7"
+			className="bg-background hover:bg-hover group relative flex h-full flex-col gap-3 p-6 transition-colors sm:p-7"
 		>
 			{sectionLabel ? (
 				<span className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">

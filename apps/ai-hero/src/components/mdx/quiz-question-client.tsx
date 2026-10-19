@@ -146,7 +146,7 @@ export function QuizQuestionClient({
 								!isAnswered &&
 									(isSelected
 										? 'border-primary bg-primary/10'
-										: 'border-border hover:border-primary/50 hover:bg-muted/50'),
+										: 'border-border hover:border-primary/50 hover:bg-hover'),
 								showCorrect &&
 									'border-emerald-600 bg-emerald-500/10 text-emerald-950 dark:text-emerald-100',
 								showIncorrect &&

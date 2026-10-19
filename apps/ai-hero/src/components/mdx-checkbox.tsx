@@ -42,18 +42,24 @@ export function MDXCheckbox({
 	}
 
 	return (
-		<label className="group relative mr-1 inline-flex translate-y-2.5 items-center justify-center hover:cursor-pointer">
+		// A span, not a label: the task-list row around it (`ah-task` in
+		// compile-mdx) is the label, so the whole line toggles.
+		<span className="group/checkbox relative mr-[0.4em] inline-flex cursor-pointer items-center justify-center align-[-0.2em]">
 			<input
 				{...props}
 				type="checkbox"
 				className={cn(
-					'border-foreground/20 bg-background hover:border-primary hover:shadow-primary/20 dark:bg-input/30 checked:border-primary checked:bg-primary checked:shadow-primary/30 dark:checked:bg-primary focus-visible:ring-ring peer relative size-8 shrink-0 appearance-none rounded-full border-2 transition-all duration-200 checked:shadow-md hover:scale-110 hover:shadow-lg focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
+					// Sized in `em` so the circle tracks the body copy it sits in.
+					'border-foreground/35 bg-background not-checked:hover:border-foreground/60 not-checked:[.ah-task:hover_&]:border-foreground/60 checked:border-primary checked:bg-primary focus-visible:ring-ring peer relative size-[1.125em] shrink-0 cursor-pointer appearance-none rounded-full border-[1.5px] transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
 				)}
 				checked={checked}
 				onChange={handleChange}
 				disabled={false}
 			/>
-			<Check className="peer-checked:text-primary-foreground text-foreground pointer-events-none absolute size-6 opacity-20 transition-all duration-200 group-hover:opacity-30 peer-checked:opacity-100" />
-		</label>
+			<Check
+				strokeWidth={3}
+				className="peer-checked:text-primary-foreground text-foreground pointer-events-none absolute size-[0.7em] opacity-30 transition-opacity duration-150 group-hover/checkbox:opacity-60 [.ah-task:hover_&]:opacity-60 peer-checked:opacity-100"
+			/>
+		</span>
 	)
 }

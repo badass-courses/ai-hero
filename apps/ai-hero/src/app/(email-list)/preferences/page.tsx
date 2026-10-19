@@ -136,7 +136,7 @@ export default async function PreferencesPage(props: PreferencesPageProps) {
 												/>
 												<button
 													type="submit"
-													className="border-border bg-background hover:bg-muted rounded-md border px-4 py-2 text-sm font-medium transition"
+													className="border-border bg-background hover:bg-hover rounded-md border px-4 py-2 text-sm font-medium transition"
 												>
 													{subscribed ? 'Opt out' : 'Opt in'}
 												</button>

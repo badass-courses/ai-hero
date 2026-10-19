@@ -7,7 +7,7 @@ import { cn } from '@coursebuilder/ui/utils/cn'
 /** The Get Certificate button a tile shows once the certificate is earned. */
 export const CERTIFICATE_TILE_ACTION = cn(
 	TYPE.meta,
-	'border-border text-foreground hover:bg-muted mt-0.5 h-10 w-full cursor-pointer rounded-[9px] border bg-transparent',
+	'border-border text-foreground hover:bg-hover mt-0.5 h-10 w-full cursor-pointer rounded-[9px] border bg-transparent',
 )
 
 /**

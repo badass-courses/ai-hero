@@ -64,7 +64,7 @@ const VARIANTS: Record<PromoCardVariant, VariantConfig> = {
 	},
 	resource: {
 		defaultEyebrow: 'Free Resource',
-		surface: 'border-border bg-muted/40 hover:bg-muted/70',
+		surface: 'border-border bg-muted/40 hover:bg-hover',
 		eyebrowColor: 'text-foreground/60',
 		chip: 'bg-muted text-foreground',
 		button: 'bg-foreground text-background group-hover:bg-foreground/90',

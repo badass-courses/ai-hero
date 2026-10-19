@@ -35,7 +35,7 @@ function GuideCard({ label, title, href }: GuideItem) {
 			initial="initial"
 			whileHover="hover"
 			animate="initial"
-			className="bg-background hover:bg-muted/40 group relative flex min-h-56 flex-col justify-between gap-12 px-8 py-10 transition-colors sm:px-10 sm:py-12"
+			className="bg-background hover:bg-hover group relative flex min-h-56 flex-col justify-between gap-12 px-8 py-10 transition-colors sm:px-10 sm:py-12"
 		>
 			<span className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 				{label}

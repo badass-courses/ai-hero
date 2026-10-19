@@ -113,7 +113,7 @@ async function SurveysList() {
 				<Link
 					key={s.surveyId}
 					href={`/admin/analytics/surveys/${s.surveyId}`}
-					className="hover:bg-muted/30 grid grid-cols-[1fr_80px_80px_80px_80px] gap-3 border-t px-4 py-3 transition-colors"
+					className="hover:bg-hover grid grid-cols-[1fr_80px_80px_80px_80px] gap-3 border-t px-4 py-3 transition-colors"
 				>
 					<div className="min-w-0">
 						<p className="truncate text-sm font-medium">

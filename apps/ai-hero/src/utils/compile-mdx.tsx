@@ -35,6 +35,7 @@ import {
 	rehypeInternalLinks,
 } from '@/utils/rehype-internal-links'
 import { rehypeNumberCheckboxes } from '@/utils/rehype-number-checkboxes'
+import { remarkLiteralPlaceholders } from '@/utils/remark-literal-placeholders'
 import { sanitizeMdxSource } from '@/utils/sanitize-mdx-source'
 import { recmaCodeHike, remarkCodeHike } from 'codehike/mdx'
 import type { MDXComponents } from 'mdx/types'
@@ -574,6 +575,17 @@ async function compileMDXInternal(
 					ul: (props) => (
 						<ul {...props} className={cn('ah-bullets', props.className)} />
 					),
+					// A task-list row is one label, so clicking anywhere on the line
+					// toggles its checkbox; rows sit close together, so the hover
+					// tint marks which one a click will hit.
+					li: ({ children, ...props }) =>
+						props.className?.includes('task-list-item') ? (
+							<li {...props}>
+								<label className="ah-task">{children}</label>
+							</li>
+						) : (
+							<li {...props}>{children}</li>
+						),
 					ol: (props) => (
 						<ol {...props} className={cn('ah-numbers', props.className)} />
 					),
@@ -694,6 +706,8 @@ async function compileMDXInternal(
 					blockJS: false,
 					mdxOptions: {
 						remarkPlugins: [
+							// First: a later plugin must never see an unresolvable `{name}`.
+							remarkLiteralPlaceholders,
 							[
 								remarkMermaid,
 								{

@@ -258,7 +258,7 @@ function ProjectRow({
 										{...(external
 											? { target: '_blank', rel: 'noopener noreferrer' }
 											: null)}
-										className="border-border text-foreground/80 hover:bg-muted hover:text-foreground focus-visible:ring-ring inline-flex items-center gap-1.5 rounded-full border px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+										className="border-border text-foreground/80 hover:bg-hover hover:text-foreground focus-visible:ring-ring inline-flex items-center gap-1.5 rounded-full border px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
 									>
 										{link.label}
 										{external ? (

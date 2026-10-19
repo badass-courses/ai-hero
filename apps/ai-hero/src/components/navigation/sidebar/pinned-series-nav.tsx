@@ -44,7 +44,7 @@ export function PinnedSeriesNav() {
 				    6px radius so it sits on their left edge. */}
 				<Link
 					href={listHomeHref(list.fields.slug)}
-					className="focus-visible:ring-ring text-sidebar-foreground hover:bg-muted block rounded-sm px-2.5 py-1.5 text-sm font-semibold leading-snug tracking-tight text-balance transition-colors focus-visible:outline-none focus-visible:ring-2"
+					className="focus-visible:ring-ring text-sidebar-foreground hover:bg-hover block rounded-sm px-2.5 py-1.5 text-sm font-semibold leading-snug tracking-tight text-balance transition-colors focus-visible:outline-none focus-visible:ring-2"
 				>
 					{list.fields.title}
 				</Link>

@@ -115,7 +115,7 @@ export default async function AdminEmailPreferencesPage(
 				<div className="flex items-end gap-2">
 					<button
 						type="submit"
-						className="border-border bg-background hover:bg-muted rounded-md border px-4 py-2 text-sm font-medium transition"
+						className="border-border bg-background hover:bg-hover rounded-md border px-4 py-2 text-sm font-medium transition"
 					>
 						Inspect
 					</button>
@@ -123,7 +123,7 @@ export default async function AdminEmailPreferencesPage(
 						type="submit"
 						name="sync"
 						value="true"
-						className="border-border bg-background hover:bg-muted rounded-md border px-4 py-2 text-sm font-medium transition"
+						className="border-border bg-background hover:bg-hover rounded-md border px-4 py-2 text-sm font-medium transition"
 					>
 						Sync
 					</button>
