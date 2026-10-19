@@ -23,7 +23,10 @@
 
 import { log, serializeError } from '@/server/logger'
 import { emitBuyPath } from '@/lib/buy-path/server'
-import { purchaseBuyPathContext } from '@/lib/buy-path/read-context'
+import {
+	readPurchaseBuyPathContext,
+	type PurchaseBuyPathRead,
+} from '@/lib/buy-path/read-context'
 import type { BuyPathContext } from '@/lib/buy-path/schema'
 import { installBuyPathLegacyAliases } from '@/lib/buy-path/legacy-logger'
 
@@ -55,6 +58,7 @@ export const inngestTelemetryMiddleware = new InngestMiddleware({
 
 				let purchaseId: unknown = ctx.event?.data?.purchaseId
 				let context: BuyPathContext | null = null
+				let contextRead: PurchaseBuyPathRead | undefined
 				return {
 					transformInput({ ctx: hydrated }) {
 						// Initial metadata can be partial. Observe input without
@@ -64,27 +68,37 @@ export const inngestTelemetryMiddleware = new InngestMiddleware({
 					async beforeExecution() {
 						if (typeof purchaseId !== 'string') return
 						try {
-							context = await purchaseBuyPathContext(purchaseId)
-							if (!context)
-								await log.error('buy_path.context_read_failed', {
-									purchaseId,
-									functionId,
-									runId,
-								})
+							contextRead = await readPurchaseBuyPathContext(purchaseId)
+							context = contextRead.context
 							if (context)
 								await emitBuyPath(context, 'post_purchase_started', {
 									functionId,
 									runId,
 								})
-						} catch {
-							await log.error('buy_path.context_read_failed', {
-								purchaseId,
-								functionId,
-								runId,
-							})
+						} catch (error) {
+							// Telemetry must not fail the business function.
+							contextRead = { reason: 'threw', context: null, error }
 						}
 					},
 					async finished({ result }) {
+						// Final responses only, not every step execution. The SDK can
+						// repeat this hook on retries/parallel final responses.
+						if (contextRead && contextRead.reason !== 'checkout') {
+							const data = {
+								purchaseId,
+								functionId,
+								runId,
+								reason: contextRead.reason,
+							}
+							if (contextRead.reason === 'threw') {
+								await log.error('buy_path.context_read_failed', {
+									...data,
+									error: serializeError(contextRead.error),
+								})
+							} else {
+								await log.info('buy_path.context_unavailable', data)
+							}
+						}
 						if (context)
 							await emitBuyPath(context, 'post_purchase_finished', {
 								functionId,
