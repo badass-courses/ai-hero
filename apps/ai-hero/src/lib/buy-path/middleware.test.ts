@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 type Context = {
 	event: { name: string; data: Record<string, unknown> }
 	runId: string
@@ -43,6 +43,12 @@ vi.mock('@/lib/buy-path/legacy-logger', () => ({
 }))
 import '@/inngest/inngest-telemetry-middleware'
 describe('purchase lifecycle telemetry', () => {
+	beforeEach(() => {
+		mocks.read.mockReset()
+		mocks.emit.mockReset()
+		mocks.info.mockClear()
+		mocks.error.mockClear()
+	})
 	it('resolves purchase identity from hydrated input rather than partial initial metadata', async () => {
 		const config = mocks.register.mock.calls[0]?.[0]
 		if (!config) throw Error('Middleware not registered')
@@ -80,5 +86,37 @@ describe('purchase lifecycle telemetry', () => {
 			'post_purchase_finished',
 			expect.objectContaining({ outcome: 'ok' }),
 		)
+	})
+
+	it('logs failures from the supported finished hook, including empty errors', async () => {
+		const config = mocks.register.mock.calls[0]![0]
+		const hooks = await config.init().onFunctionRun({
+			ctx: { event: { name: 'fixture', data: {} }, runId: 'run_fixture' },
+			fn: { name: 'fixture', id: () => 'function_fixture' },
+		})
+		expect(hooks).not.toHaveProperty('onFailure')
+		await hooks.finished({
+			result: { error: { name: '', message: '' } as Error },
+		})
+		expect(mocks.error).toHaveBeenCalledOnce()
+		expect(mocks.error).toHaveBeenCalledWith(
+			'inngest.function.failed',
+			expect.objectContaining({
+				functionId: 'function_fixture',
+				runId: 'run_fixture',
+				errorClass: 'Error',
+				message: 'Inngest function failed',
+			}),
+		)
+	})
+
+	it('does not log function failures on successful final responses', async () => {
+		const config = mocks.register.mock.calls[0]![0]
+		const hooks = await config.init().onFunctionRun({
+			ctx: { event: { name: 'fixture', data: {} }, runId: 'run_fixture' },
+			fn: { name: 'fixture', id: () => 'function_fixture' },
+		})
+		await hooks.finished({ result: {} })
+		expect(mocks.error).not.toHaveBeenCalled()
 	})
 })
