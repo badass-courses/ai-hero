@@ -176,7 +176,7 @@ export function AnalyticsChat({ className }: { className?: string }) {
 											onClick={() => {
 												setInput(prompt)
 											}}
-											className="bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground rounded-full px-3 py-1.5 text-xs transition-colors"
+											className="bg-muted hover:bg-hover text-muted-foreground hover:text-foreground rounded-full px-3 py-1.5 text-xs transition-colors"
 										>
 											{prompt}
 										</button>

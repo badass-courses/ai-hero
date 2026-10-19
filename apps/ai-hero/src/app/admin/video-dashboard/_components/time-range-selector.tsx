@@ -32,7 +32,7 @@ export function TimeRangeSelector({
 						className={`rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
 							current === value
 								? 'bg-primary text-primary-foreground shadow-sm'
-								: 'text-muted-foreground hover:text-foreground hover:bg-muted'
+								: 'text-muted-foreground hover:text-foreground hover:bg-hover'
 						} ${isPending ? 'cursor-wait opacity-60' : ''}`}
 					>
 						{label}

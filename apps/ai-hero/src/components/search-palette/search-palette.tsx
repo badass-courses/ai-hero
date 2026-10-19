@@ -516,7 +516,7 @@ function PalettePromoRow({
 			// being the one green thing on a monochrome-plus-gold site, it read as a
 			// system notice rather than as the offer it is. `text-emerald-800` on a
 			// 10% tint was also the palette's worst contrast in light mode.
-			className="group focus-visible:ring-ring bg-muted/40 hover:bg-muted/70 flex w-full items-center gap-2.5 border-t px-4 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
+			className="group focus-visible:ring-ring bg-muted/40 hover:bg-hover flex w-full items-center gap-2.5 border-t px-4 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
 		>
 			{promo.label && (
 				<span

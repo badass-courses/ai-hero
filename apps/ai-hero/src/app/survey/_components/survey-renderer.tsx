@@ -99,7 +99,7 @@ export const SurveyRenderer: React.FC<SurveyPageProps> = ({
 						{currentQuestion.type === 'essay' ? (
 							<SurveyQuestionEssay />
 						) : (
-							<SurveyQuestionChoices className="[&_label]:hover:bg-muted divide-border flex flex-col gap-0 divide-y [&_label]:w-full [&_label]:p-3 [&_label]:text-base [&_label]:font-normal" />
+							<SurveyQuestionChoices className="[&_label]:hover:bg-hover divide-border flex flex-col gap-0 divide-y [&_label]:w-full [&_label]:p-3 [&_label]:text-base [&_label]:font-normal" />
 						)}
 						<div className="flex flex-col items-start gap-2">
 							<SurveyQuestionSubmit className="dark:bg-primary dark:text-primary-foreground cursor-pointer bg-blue-600 text-white hover:bg-blue-700">

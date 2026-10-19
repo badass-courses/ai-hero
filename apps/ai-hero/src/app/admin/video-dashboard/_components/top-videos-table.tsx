@@ -174,7 +174,7 @@ function VideoRow({
 	return (
 		<>
 			<tr
-				className="hover:bg-muted/30 group cursor-pointer transition-colors"
+				className="hover:bg-hover group cursor-pointer transition-colors"
 				onClick={handleToggle}
 			>
 				<td className="py-3 pl-3 pr-2">
@@ -332,7 +332,7 @@ export function TopVideosTable({
 							className={`rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
 								activeRange === value
 									? 'bg-primary text-primary-foreground shadow-sm'
-									: 'text-muted-foreground hover:text-foreground hover:bg-muted'
+									: 'text-muted-foreground hover:text-foreground hover:bg-hover'
 							} ${isPending ? 'cursor-wait opacity-60' : ''}`}
 						>
 							{label}
@@ -354,7 +354,7 @@ export function TopVideosTable({
 							className={`rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
 								sortBy === value
 									? 'bg-primary text-primary-foreground shadow-sm'
-									: 'text-muted-foreground hover:text-foreground hover:bg-muted'
+									: 'text-muted-foreground hover:text-foreground hover:bg-hover'
 							} ${isPending ? 'cursor-wait opacity-60' : ''}`}
 						>
 							{label}
