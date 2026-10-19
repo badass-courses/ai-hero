@@ -1,6 +1,10 @@
 import { db } from '@/db'
 import { contentResource, contentResourceResource } from '@/db/schema'
 import { getAiCodingDictionary } from '@/lib/ai-coding-dictionary'
+import {
+	getSandcastleDocs,
+	SANDCASTLE_DOCS_CACHE_TAG,
+} from '@/lib/sandcastle-docs'
 import { getSkillChangelogEntries } from '@/lib/skill-changelog-query'
 import {
 	SKILL_CHANGELOG_RESOURCE_TYPE,
@@ -282,6 +286,23 @@ async function buildIndex(mode: IndexMode): Promise<SitemapEntry[]> {
 		})
 	})
 
+	// Docs pages, not publications: the sitemap lists them, the feed does not.
+	// The README carries no date, so there is no honest lastModified to give.
+	if (mode === 'sitemap') {
+		const sandcastlePages = await getSandcastleDocs()
+		sandcastlePages.forEach((page) => {
+			sitemapEntries.push({
+				url: `${process.env.COURSEBUILDER_URL}${page.href}`,
+				title: page.slug
+					? `${page.title} | Sandcastle docs`
+					: 'Sandcastle docs',
+				description: page.description,
+				changeFrequency: 'weekly',
+				priority: 0.6,
+			})
+		})
+	}
+
 	// Static route bodies can have CMS backing; never substitute a deployment date.
 	const pageItems =
 		mode === 'feed'
@@ -391,6 +412,7 @@ const getCachedIndex = unstable_cache(
 			'workshop',
 			'skill-changelog',
 			'ai-coding-dictionary',
+			SANDCASTLE_DOCS_CACHE_TAG,
 		],
 	},
 )

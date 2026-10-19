@@ -11,6 +11,23 @@ vi.mock('next/cache', () => ({ unstable_cache: (fn: unknown) => fn }))
 vi.mock('@/lib/ai-coding-dictionary', () => ({
 	getAiCodingDictionary: async () => ({ updatedAt: '2026-10-01', entries: [] }),
 }))
+vi.mock('@/lib/sandcastle-docs', () => ({
+	SANDCASTLE_DOCS_CACHE_TAG: 'sandcastle-docs',
+	getSandcastleDocs: async () => [
+		{
+			title: 'What Is Sandcastle?',
+			slug: '',
+			href: '/sandcastle',
+			description: '',
+		},
+		{
+			title: 'Quick start',
+			slug: 'quick-start',
+			href: '/sandcastle/quick-start',
+			description: '',
+		},
+	],
+}))
 vi.mock('@/lib/skill-changelog-query', () => ({
 	getSkillChangelogEntries: mocks.skills,
 }))
@@ -159,6 +176,15 @@ describe('content-derived sitemap timestamps', () => {
 		const urls = (await sitemap()).map((entry) => entry.url)
 		expect(urls).toContain('https://www.aihero.dev/skills/synthetic-skill')
 		expect(urls).toContain('https://www.aihero.dev/skills/second-skill')
+	})
+	it('lists every Sandcastle docs page without inventing a date', async () => {
+		const entries = await sitemap()
+		const docs = entries.filter((entry) => entry.url.includes('/sandcastle'))
+		expect(docs.map((entry) => entry.url)).toEqual([
+			'https://www.aihero.dev/sandcastle',
+			'https://www.aihero.dev/sandcastle/quick-start',
+		])
+		expect(docs.every((entry) => entry.lastModified === undefined)).toBe(true)
 	})
 	it('does not emit drafts or unpublished/unlisted content', async () => {
 		const urls = (await sitemap()).map((entry) => entry.url)
