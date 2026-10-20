@@ -70,6 +70,9 @@ const COOKIE_OPTIONS = {
 // These branches never read the session. Answering them before `auth()` skips
 // the database session lookup, which is a remote round trip for every
 // request that carries a session cookie.
+// Skipping `auth()` here is intentional: these paths also skip Auth.js session
+// refresh (expiry extension) and the session callback's side effects, not only
+// the database read. The access branches are unchanged.
 function respondWithoutSession(req: NextRequest): NextResponse | undefined {
 	const pathname = req.nextUrl.pathname
 
@@ -233,6 +236,8 @@ export function hasSessionCookie(req: NextRequest) {
 // Everything after the admin and invoice branches returns `next()` when there
 // is no user, and a request without a session cookie cannot have one. Skip the
 // session lookup for those requests; admin and invoices still run in full.
+// Like `respondWithoutSession`, this intentionally skips session refresh and
+// callback side effects as well as the database read.
 function isAnonymousPassThrough(req: NextRequest) {
 	const pathname = req.nextUrl.pathname
 	if (pathname === '/admin' || pathname.startsWith('/admin/')) return false
