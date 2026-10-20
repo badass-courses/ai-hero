@@ -214,11 +214,30 @@ const authedProxy = auth(async function middleware(req) {
 	return response
 })
 
-export default function proxy(
-	req: NextRequest,
-	event: NextFetchEvent,
-) {
-	return respondWithoutSession(req) ?? authedProxy(req as never, event as never)
+// Auth.js session cookie, plain or `__Secure-` prefixed, possibly chunked.
+const SESSION_COOKIE = /^(?:__Secure-)?authjs\.session-token(?:\.\d+)?$/
+
+function hasSessionCookie(req: NextRequest) {
+	return req.cookies.getAll().some(({ name }) => SESSION_COOKIE.test(name))
+}
+
+// Everything after the admin and invoice branches returns `next()` when there
+// is no user, and a request without a session cookie cannot have one. Skip the
+// session lookup for those requests; admin and invoices still run in full.
+function isAnonymousPassThrough(req: NextRequest) {
+	const pathname = req.nextUrl.pathname
+	if (pathname === '/admin' || pathname.startsWith('/admin/')) return false
+	if (pathname.startsWith('/invoices/')) return false
+	return !hasSessionCookie(req)
+}
+
+export default function proxy(req: NextRequest, event: NextFetchEvent) {
+	const early = respondWithoutSession(req)
+	if (early) return early
+	if (isAnonymousPassThrough(req)) return NextResponse.next()
+	// `auth()` types its context as a route-handler context; middleware passes a
+	// NextFetchEvent, so the casts are required by Next's types.
+	return authedProxy(req as never, event as never)
 }
 
 export const config = {
