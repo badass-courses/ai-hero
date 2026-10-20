@@ -42,6 +42,7 @@ import {
 } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
 import {
 	fanOutOwnedEvents,
+	isOwnerFanOutCandidate,
 	isShadowNewsletterBirth,
 } from '@/lib/subscriber-marketing/drovr-ownership'
 import { parseDrovrProfileSyncConfig } from '@/lib/subscriber-marketing/drovr-contact-profile-sync-requests'
@@ -232,12 +233,15 @@ const discardShadowTenantEvents = async (
 // Facts about drovr-owned contacts also reach the authority tenant.
 // Ownership is read here, off the host's write path, once per batch.
 // An owner read that runs out of retries sends the batch, unfanned, to the
-// outbox instead of failing the run.
+// outbox instead of failing the run. A batch with no fan-out candidate takes
+// no step: the read answers no owners for it without reading anything.
 const fanOut = async (
 	batch: DrovrEventsDeliver['data']['events'],
 	step: DeliverStep,
 	context: DeliverContext,
 ): Promise<DrovrShadowEvent[] | Outboxed> => {
+	if (!batch.some(isOwnerFanOutCandidate))
+		return fanOutOwnedEvents(batch, new Set(), new Set())
 	const readOwners = (read: () => Promise<string[]>) =>
 		sendOrOutbox<string[] | Outboxed>({
 			attempt: context.attempt,

@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
 	drovrApiKeyForTenant: vi.fn(),
 	fanOutOwnedEvents: vi.fn(),
 	isNeverBornOwnerStop: vi.fn(),
+	isOwnerFanOutCandidate: vi.fn(),
 	isShadowNewsletterBirth: vi.fn(),
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 	resolveOwnedContactIds: vi.fn(),
@@ -61,6 +62,7 @@ vi.mock('@/lib/subscriber-marketing/drovr-shadow-emitter', () => ({
 }))
 vi.mock('@/lib/subscriber-marketing/drovr-ownership', () => ({
 	fanOutOwnedEvents: mocks.fanOutOwnedEvents,
+	isOwnerFanOutCandidate: mocks.isOwnerFanOutCandidate,
 	isShadowNewsletterBirth: mocks.isShadowNewsletterBirth,
 }))
 vi.mock('@/lib/subscriber-marketing/drovr-ownership-live', () => ({
@@ -162,6 +164,8 @@ beforeEach(() => {
 	mocks.openStops.mockResolvedValue([])
 	mocks.readBirthOptOuts.mockResolvedValue([])
 	mocks.resolveOwnedContactIds.mockResolvedValue([])
+	// Every batch reads its owners unless a test says it has no candidate.
+	mocks.isOwnerFanOutCandidate.mockReturnValue(true)
 	mocks.isShadowNewsletterBirth.mockReturnValue(false)
 	mocks.drovrApiKeyForTenant.mockImplementation((tenantId: string) =>
 		tenantId === 'org-aihero' ? 'authority-key' : undefined,
@@ -2347,5 +2351,99 @@ describe('delivery order: the evergreen start is a birth, so it goes before its 
 				(e) => e.idempotencyKey,
 			),
 		).toEqual(['answer', 'exhausted'])
+	})
+})
+
+describe('a batch with no owner fan-out candidate takes no owner step', () => {
+	const shadowStop = event(
+		'org-aihero-shadow',
+		'stop:contact-1',
+		'value-path-skills-course',
+		'contact.unsubscribed',
+	)
+	const authorityFact = event('org-aihero', 'owner:answer')
+	const runLive = (events: unknown[], step: Step) =>
+		registered.handler({
+			event: { data: { source: 'contact-event', events } },
+			step,
+			attempt: 0,
+			maxAttempts: 9,
+		})
+
+	beforeEach(() => {
+		mocks.isOwnerFanOutCandidate.mockImplementation(
+			(drovrEvent: { tenantId: string }) =>
+				drovrEvent.tenantId === 'org-aihero-shadow',
+		)
+		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
+		mocks.capture.mockImplementation(async (entries: unknown[]) => ({
+			status: 'outboxed',
+			count: entries.length,
+		}))
+	})
+
+	it('reads no owners and fans out with none, then gates and delivers as before', async () => {
+		const { step, ran } = memoStep()
+		const receipt = await runLive([authorityFact], step)
+		expect(receipt).toEqual({
+			status: 'delivered',
+			accepted: 1,
+			rejected: 0,
+			discarded: 0,
+		})
+		expect(mocks.resolveOwnedContactIds).not.toHaveBeenCalled()
+		expect(mocks.fanOutOwnedEvents).toHaveBeenCalledWith(
+			[authorityFact],
+			new Set(),
+			new Set(),
+		)
+		// The stop gate still runs, and before the send.
+		expect(ran).toEqual(['drovr-outbox-stop-gate', 'deliver:owner:answer'])
+	})
+
+	it('still holds the fact behind a stop the outbox owes', async () => {
+		mocks.openStops.mockResolvedValue([
+			{
+				contactId: 'contact-1',
+				eventType: 'contact.unsubscribed',
+				occurredAt: '2026-09-21T11:00:00.000Z',
+				status: 'pending',
+			},
+		])
+		const { step, ran } = memoStep()
+		const receipt = await runLive([authorityFact], step)
+		expect(receipt).toMatchObject({ accepted: 0, outboxed: 1, heldBehindStop: 1 })
+		expect(mocks.deliverOrThrow).not.toHaveBeenCalled()
+		expect(ran).toEqual(['drovr-outbox-stop-gate'])
+	})
+
+	it('reads owners as before when one event is a candidate', async () => {
+		const { step, ran } = memoStep()
+		await runLive([authorityFact, shadowStop], step)
+		expect(mocks.resolveOwnedContactIds).toHaveBeenCalledWith([
+			authorityFact,
+			shadowStop,
+		])
+		expect(ran[0]).toBe('resolve-drovr-owners')
+	})
+
+	it('takes no owner step on the bulk lane either', async () => {
+		const { step, ran } = memoStep()
+		const seed = event(
+			'org-aihero',
+			'directory:seed:contact-1',
+			'contact-directory',
+			'contact.created',
+		)
+		const receipt = await registeredBulk.handler({
+			events: [{ data: { events: [seed], source: 'kit-directory-ingest' } }],
+			step,
+			attempt: 0,
+			maxAttempts: 9,
+		})
+		expect(receipt).toMatchObject({ accepted: 1 })
+		expect(mocks.resolveOwnedContactIds).not.toHaveBeenCalled()
+		expect(ran).not.toContain('resolve-drovr-owners')
+		expect(ran).toContain('drovr-outbox-stop-gate')
 	})
 })
