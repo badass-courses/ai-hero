@@ -214,11 +214,20 @@ const authedProxy = auth(async function middleware(req) {
 	return response
 })
 
-// Auth.js session cookie, plain or `__Secure-` prefixed, possibly chunked.
-const SESSION_COOKIE = /^(?:__Secure-)?authjs\.session-token(?:\.\d+)?$/
+// Auth.js `SessionStore` treats every cookie whose name starts with the session
+// cookie name as part of the session (any suffix), so match the same way.
+// Erring toward running `auth()` is the safe direction.
+export const SESSION_COOKIE_PREFIXES = [
+	'authjs.session-token',
+	'__Secure-authjs.session-token',
+]
 
-function hasSessionCookie(req: NextRequest) {
-	return req.cookies.getAll().some(({ name }) => SESSION_COOKIE.test(name))
+export function hasSessionCookie(req: NextRequest) {
+	return req.cookies
+		.getAll()
+		.some(({ name }) =>
+			SESSION_COOKIE_PREFIXES.some((prefix) => name.startsWith(prefix)),
+		)
 }
 
 // Everything after the admin and invoice branches returns `next()` when there

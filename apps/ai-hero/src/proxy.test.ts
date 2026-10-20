@@ -16,7 +16,11 @@ vi.mock('@/server/logger', () => ({
 	log: { warn: vi.fn() },
 }))
 
-import proxy, { config } from './proxy'
+import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
+import path from 'node:path'
+
+import proxy, { config, hasSessionCookie, SESSION_COOKIE_PREFIXES } from './proxy'
 
 const doesProxyMatch = (url: string) =>
 	unstable_doesMiddlewareMatch({ config, url })
@@ -241,4 +245,56 @@ describe('session lookup avoidance', () => {
 			expect(authSpy).toHaveBeenCalledTimes(1)
 		},
 	)
+})
+
+// `@auth/core` does not export its cookie internals, so load the pinned file
+// next to its public entry point.
+const loadSessionStore = async () => {
+	const entry = createRequire(import.meta.url).resolve('@auth/core')
+	const mod = await import(
+		pathToFileURL(path.join(path.dirname(entry), 'lib/utils/cookie.js')).href
+	)
+	return mod.SessionStore as new (
+		option: unknown,
+		cookies: Record<string, string>,
+		logger: unknown,
+	) => { value: string }
+}
+
+describe('hasSessionCookie matches Auth.js SessionStore', () => {
+	const names = SESSION_COOKIE_PREFIXES.flatMap((prefix) => [
+		prefix,
+		`${prefix}.0`,
+		`${prefix}.12`,
+		`${prefix}.extra`,
+		`${prefix}-old`,
+		`${prefix}x`,
+	])
+	const logger = { debug() {}, error() {}, warn() {} } as never
+
+	it.each(SESSION_COOKIE_PREFIXES)(
+		'treats every cookie SessionStore reads for %s as a session',
+		async (prefix) => {
+			const SessionStore = await loadSessionStore()
+			for (const name of names.filter((n) => n.startsWith(prefix))) {
+				const store = new SessionStore(
+					{ name: prefix, options: {} },
+					{ [name]: 'abc' },
+					logger,
+				)
+				expect(store.value).toBe('abc')
+				const req = new NextRequest('https://www.aihero.dev/cohorts/x', {
+					headers: { cookie: `${name}=abc` },
+				})
+				expect(hasSessionCookie(req)).toBe(true)
+			}
+		},
+	)
+
+	it('is false for unrelated cookies', () => {
+		const req = new NextRequest('https://www.aihero.dev/cohorts/x', {
+			headers: { cookie: 'organizationId=1; authjs.csrf-token=x' },
+		})
+		expect(hasSessionCookie(req)).toBe(false)
+	})
 })
