@@ -2397,8 +2397,12 @@ describe('a batch with no owner fan-out candidate takes no owner step', () => {
 			new Set(),
 			new Set(),
 		)
-		// The stop gate still runs, and before the send.
-		expect(ran).toEqual(['drovr-outbox-stop-gate', 'deliver:owner:answer'])
+		// The stop gate still runs, inside the one event's step, before the send.
+		expect(ran).toEqual(['deliver:owner:answer'])
+		expect(mocks.openStops).toHaveBeenCalledWith(['contact-1'])
+		expect(mocks.openStops.mock.invocationCallOrder[0]).toBeLessThan(
+			mocks.deliverOrThrow.mock.invocationCallOrder[0]!,
+		)
 	})
 
 	it('still holds the fact behind a stop the outbox owes', async () => {
@@ -2414,7 +2418,7 @@ describe('a batch with no owner fan-out candidate takes no owner step', () => {
 		const receipt = await runLive([authorityFact], step)
 		expect(receipt).toMatchObject({ accepted: 0, outboxed: 1, heldBehindStop: 1 })
 		expect(mocks.deliverOrThrow).not.toHaveBeenCalled()
-		expect(ran).toEqual(['drovr-outbox-stop-gate'])
+		expect(ran).toEqual(['deliver:owner:answer'])
 	})
 
 	it('reads owners as before when one event is a candidate', async () => {
@@ -2445,5 +2449,172 @@ describe('a batch with no owner fan-out candidate takes no owner step', () => {
 		expect(mocks.resolveOwnedContactIds).not.toHaveBeenCalled()
 		expect(ran).not.toContain('resolve-drovr-owners')
 		expect(ran).toContain('drovr-outbox-stop-gate')
+	})
+})
+
+describe('a one-event live run gates inside its delivery step (row 204b, one step)', () => {
+	const at = (minute: number) =>
+		`2026-09-21T12:${String(minute).padStart(2, '0')}:00.000Z`
+	const fact = { ...event('org-aihero', 'owner:later'), occurredAt: at(20) }
+	const owedStop = {
+		contactId: 'contact-1',
+		eventType: 'contact.unsubscribed',
+		occurredAt: at(10),
+		status: 'pending',
+	}
+	const runLive = (
+		events: unknown[],
+		step: Step,
+		attempt: { attempt: number; maxAttempts: number } = {
+			attempt: 0,
+			maxAttempts: 9,
+		},
+	) =>
+		registered.handler({
+			event: { data: { source: 'contact-event', events } },
+			step,
+			...attempt,
+		})
+	const capturedKeys = () =>
+		mocks.capture.mock.calls.map((call) =>
+			(call[0] as { idempotencyKey: string }[]).map((e) => e.idempotencyKey),
+		)
+
+	beforeEach(() => {
+		mocks.isOwnerFanOutCandidate.mockReturnValue(false)
+		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
+		mocks.capture.mockImplementation(async (entries: unknown[]) => ({
+			status: 'outboxed',
+			count: entries.length,
+		}))
+	})
+
+	it('holds a fact behind an owed stop inside the step, logs it once, and a replay neither re-holds nor posts', async () => {
+		mocks.openStops.mockResolvedValue([owedStop])
+		const { step, ran } = memoStep()
+		const first = await runLive([fact], step)
+		const replay = await runLive([fact], step)
+		for (const receipt of [first, replay])
+			expect(receipt).toEqual({
+				status: 'delivered',
+				accepted: 0,
+				rejected: 0,
+				discarded: 0,
+				outboxed: 1,
+				heldBehindStop: 1,
+			})
+		expect(ran).toEqual(['deliver:owner:later'])
+		expect(mocks.deliverOrThrow).not.toHaveBeenCalled()
+		expect(capturedKeys()).toEqual([['owner:later']])
+		expect(mocks.capture.mock.calls[0]![0]).toEqual([
+			expect.objectContaining({ source: 'live', needsFanOut: false }),
+		])
+		expect(
+			mocks.log.info.mock.calls.filter(
+				([name]) => name === 'drovr.outbox.held_behind_stop',
+			),
+		).toHaveLength(1)
+	})
+
+	it('holds the fact when a stop is owed by the time its retry runs, never posting it after the stop', async () => {
+		const { step } = memoStep()
+		// Attempt 0: nothing owed, and drovr answers 503.
+		mocks.openStops.mockResolvedValueOnce([])
+		mocks.deliverOrThrow.mockRejectedValueOnce(drovrFailure(503))
+		await expect(runLive([fact], step)).rejects.toMatchObject({
+			name: 'RetryAfterError',
+		})
+		// Meanwhile a stop for the contact went to the outbox.
+		mocks.openStops.mockResolvedValueOnce([owedStop])
+		const receipt = await runLive([fact], step, { attempt: 1, maxAttempts: 9 })
+		expect(receipt).toMatchObject({ accepted: 0, outboxed: 1, heldBehindStop: 1 })
+		expect(mocks.openStops).toHaveBeenCalledTimes(2)
+		expect(mocks.deliverOrThrow).toHaveBeenCalledOnce()
+		expect(capturedKeys()).toEqual([['owner:later']])
+	})
+
+	it('retries a failed stop read without posting, and outboxes the event when the read fails on the last attempt', async () => {
+		mocks.openStops.mockRejectedValue(new Error('Vitess: connection reset'))
+		const { step } = memoStep()
+		await expect(runLive([fact], step)).rejects.toMatchObject({
+			name: 'RetryAfterError',
+		})
+		const receipt = await runLive([fact], step, LAST)
+		expect(receipt).toMatchObject({ accepted: 0, outboxed: 1 })
+		expect(mocks.deliverOrThrow).not.toHaveBeenCalled()
+		expect(capturedKeys()).toEqual([['owner:later']])
+		expect(mocks.capture.mock.calls[0]![1]).toMatchObject({
+			message: 'Vitess: connection reset',
+		})
+	})
+
+	it('posts a lone stop without reading the outbox: a stop never waits behind a stop', async () => {
+		mocks.openStops.mockResolvedValue([owedStop])
+		const stop = {
+			...event(
+				'org-aihero',
+				'owner:unsubscribe',
+				'contact-directory',
+				'contact.unsubscribed',
+			),
+			occurredAt: at(20),
+		}
+		const { step, ran } = memoStep()
+		const receipt = await runLive([stop], step)
+		expect(receipt).toMatchObject({ accepted: 1 })
+		expect(mocks.openStops).not.toHaveBeenCalled()
+		expect(ran).toEqual(['deliver:owner:unsubscribe'])
+	})
+
+	it('memoizes the birth clamp in its own step before the folded step, so every attempt posts the same bytes', async () => {
+		const birth = {
+			...event(
+				'org-aihero',
+				'owner:birth:contact-1',
+				'value-path-skills-course',
+				'contact.created',
+			),
+			occurredAt: at(20),
+		}
+		mocks.deliverOrThrow.mockRejectedValue(drovrFailure(503))
+		const { step, ran } = memoStep()
+		await runLive([birth], step).catch(() => undefined)
+		await runLive([birth], step, { attempt: 1, maxAttempts: 9 }).catch(
+			() => undefined,
+		)
+		const receipt = await runLive([birth], step, LAST)
+		expect(receipt).toMatchObject({ outboxed: 1 })
+		expect(ran.filter((id) => id !== 'value-path-birth-admission')).toEqual([
+			DROVR_CLAMP_INSTANT_STEP,
+			'deliver:owner:birth:contact-1',
+			'deliver:owner:birth:contact-1',
+			'deliver:owner:birth:contact-1',
+		])
+		const clamps = mocks.deliverOrThrow.mock.calls.map(
+			([args]) => (args as { clampAt: number }).clampAt,
+		)
+		expect(new Set(clamps).size).toBe(1)
+		expect(mocks.capture).toHaveBeenLastCalledWith(
+			[
+				expect.objectContaining({
+					idempotencyKey: 'owner:birth:contact-1',
+					firstSentAt: new Date(clamps[0]!).toISOString(),
+				}),
+			],
+			expect.anything(),
+		)
+	})
+
+	it('keeps one gate step for a run of two or more events', async () => {
+		const { step, ran } = memoStep()
+		const other = { ...fact, idempotencyKey: 'owner:other', contactId: 'contact-2' }
+		await runLive([fact, other], step)
+		expect(ran).toEqual([
+			'drovr-outbox-stop-gate',
+			'deliver:owner:later',
+			'deliver:owner:other',
+		])
+		expect(mocks.openStops).toHaveBeenCalledOnce()
+		expect(mocks.openStops).toHaveBeenCalledWith(['contact-1', 'contact-2'])
 	})
 })
