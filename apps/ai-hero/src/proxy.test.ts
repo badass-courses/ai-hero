@@ -83,9 +83,14 @@ describe('proxy matcher', () => {
 
 describe('roleless organization routing', () => {
 	const rolelessRequest = (path: string) =>
-		Object.assign(new NextRequest(`https://www.aihero.dev${path}`), {
-			auth: { user: { id: 'buyer', roles: [], organizationRoles: [] } },
-		})
+		Object.assign(
+			new NextRequest(`https://www.aihero.dev${path}`, {
+				headers: { cookie: 'authjs.session-token=abc' },
+			}),
+			{
+				auth: { user: { id: 'buyer', roles: [], organizationRoles: [] } },
+			},
+		)
 
 	it('lets a roleless buyer load the organization list instead of redirecting to itself', async () => {
 		const response = await runProxy(
