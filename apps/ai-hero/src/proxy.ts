@@ -236,8 +236,8 @@ export function hasSessionCookie(req: NextRequest) {
 // Everything after the admin and invoice branches returns `next()` when there
 // is no user, and a request without a session cookie cannot have one. Skip the
 // session lookup for those requests; admin and invoices still run in full.
-// Like `respondWithoutSession`, this intentionally skips session refresh and
-// callback side effects as well as the database read.
+// With no session cookie Auth.js already returns before any database, refresh
+// or callback work, so this only saves the `auth()` wrapper overhead.
 function isAnonymousPassThrough(req: NextRequest) {
 	const pathname = req.nextUrl.pathname
 	if (pathname === '/admin' || pathname.startsWith('/admin/')) return false
