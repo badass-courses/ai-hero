@@ -83,6 +83,7 @@ vi.mock('@/lib/subscriber-marketing/drovr-outbox-live', () => ({
 }))
 
 import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
+import { clampBirths } from '@/lib/subscriber-marketing/drovr-birth-clamp'
 import type { DeferredDrovrEvent } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
 
 import {
@@ -2545,6 +2546,79 @@ describe('a one-event live run gates inside its delivery step (row 204b, one ste
 		expect(capturedKeys()).toEqual([['owner:later']])
 		expect(mocks.capture.mock.calls[0]![1]).toMatchObject({
 			message: 'Vitess: connection reset',
+		})
+	})
+
+	describe('a hold that commits but whose step fails before it is memoized', () => {
+		const birth = {
+			...event(
+				'org-aihero',
+				'owner:birth:contact-1',
+				'value-path-skills-course',
+				'contact.created',
+			),
+			// Older than the clamp skew, so the clamp moves it.
+			occurredAt: at(20),
+		}
+		type Entry = {
+			idempotencyKey: string
+			body: typeof birth
+			firstSentAt?: string
+		}
+		const crashOnce = () => {
+			let crashed = false
+			mocks.log.info.mockImplementation(async (name: string) => {
+				if (name === 'drovr.outbox.held_behind_stop' && !crashed) {
+					crashed = true
+					throw new Error('worker lost after the capture committed')
+				}
+			})
+		}
+		const captured = () =>
+			mocks.capture.mock.calls.map((call) => (call[0] as Entry[])[0]!)
+		afterEach(() => {
+			mocks.log.info.mockReset()
+		})
+
+		it('re-runs the hold as the same outbox entry, which the outbox dedupe key absorbs', async () => {
+			mocks.openStops.mockResolvedValue([owedStop])
+			crashOnce()
+			const { step } = memoStep()
+			await expect(runLive([birth], step)).rejects.toMatchObject({
+				name: 'RetryAfterError',
+			})
+			const receipt = await runLive([birth], step, { attempt: 1, maxAttempts: 9 })
+			expect(receipt).toMatchObject({ outboxed: 1, heldBehindStop: 1 })
+			expect(mocks.deliverOrThrow).not.toHaveBeenCalled()
+			const [first, again] = captured()
+			expect(captured()).toHaveLength(2)
+			// Every input of the dedupe key, the bytes and the clamp are equal.
+			expect(again).toEqual(first)
+		})
+
+		it('if the stop settles before the retry, posts directly with the same key and the captured bytes and clamp', async () => {
+			mocks.openStops.mockResolvedValueOnce([owedStop])
+			mocks.openStops.mockResolvedValueOnce([])
+			crashOnce()
+			const { step } = memoStep()
+			await expect(runLive([birth], step)).rejects.toMatchObject({
+				name: 'RetryAfterError',
+			})
+			const receipt = await runLive([birth], step, { attempt: 1, maxAttempts: 9 })
+			expect(receipt).toMatchObject({ accepted: 1 })
+			const [held] = captured()
+			const [[posted]] = mocks.deliverOrThrow.mock.calls as [
+				[{ event: typeof birth; clampAt: number }],
+			]
+			expect(captured()).toHaveLength(1)
+			expect(held!.idempotencyKey).toBe(posted.event.idempotencyKey)
+			expect(held!.body).toEqual(posted.event)
+			// The replay clamps at the row's firstFailedAt, which takes firstSentAt.
+			expect(Date.parse(held!.firstSentAt!)).toBe(posted.clampAt)
+			const replayed = clampBirths([held!.body], Date.parse(held!.firstSentAt!))
+			const direct = clampBirths([posted.event], posted.clampAt)
+			expect(replayed.events).toEqual(direct.events)
+			expect(direct.events[0]!.occurredAt).not.toBe(birth.occurredAt)
 		})
 	})
 

@@ -429,13 +429,18 @@ const holdBehindOpenStops = async (
 	}
 }
 
-/** Put held events in the outbox; anything short of that fails the step. */
+/**
+ * Put held events in the outbox; anything short of that fails the step.
+ * `sentAt` is the run's clamp instant when it is already fixed, so the
+ * replay posts the bytes a direct post would (row 201g).
+ */
 const holdInOutbox = async (
 	behind: readonly DrovrShadowEvent[],
 	context: DeliverContext,
+	sentAt?: number,
 ) => {
 	const captured = await context.capture(
-		behind.map((event) => outboxEntryForEvent(event, context.lane)),
+		behind.map((event) => outboxEntryForEvent(event, context.lane, { sentAt })),
 		new Error(DROVR_OUTBOX_BEHIND_STOP_NOTE),
 	)
 	if (captured.status !== 'outboxed')
@@ -557,7 +562,7 @@ const deliverBatch = async (
 						!isStopEvent(drovrEvent) &&
 						(await behindOwedStops([drovrEvent], context)).length > 0
 					) {
-						await holdInOutbox([drovrEvent], context)
+						await holdInOutbox([drovrEvent], context, clampAt)
 						return { status: 'heldBehindStop' as const }
 					}
 					const delivered = await deliverOrThrow({
