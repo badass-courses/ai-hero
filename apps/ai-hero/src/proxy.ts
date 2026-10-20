@@ -218,7 +218,7 @@ export default function proxy(
 	req: NextRequest,
 	event: NextFetchEvent,
 ) {
-	return respondWithoutSession(req) ?? authedProxy(req as never, event)
+	return respondWithoutSession(req) ?? authedProxy(req as never, event as never)
 }
 
 export const config = {
