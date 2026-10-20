@@ -106,6 +106,67 @@ describe('withSkill', () => {
 		expect(loggerMocks.error).not.toHaveBeenCalled()
 	})
 
+	it('redacts url and referer in all four request events', async () => {
+		const secrets = /url-secret|url-code|ref-secret|ref-code|userinfo-pass|frag-secret/
+		const headers = {
+			referer:
+				'https://user:userinfo-pass@aihero.dev/login?token=ref-secret&code=ref-code&q=keep#frag-secret',
+		}
+		const target =
+			'https://aihero.dev/api/auth/callback?token=url-secret&code=url-code&q=keep#frag-secret'
+
+		await withSkill(async () => new Response('ok'))(
+			new Request(target, { headers }),
+		)
+		await withSkill(async () => new Response('no', { status: 401 }))(
+			new Request(target, { headers }),
+		)
+		await expect(
+			withSkill(async () => {
+				throw new Error('boom')
+			})(new Request(target, { headers })),
+		).rejects.toThrow('boom')
+
+		const calls = [
+			...loggerMocks.info.mock.calls,
+			...loggerMocks.warn.mock.calls,
+			...loggerMocks.error.mock.calls,
+		]
+		expect(calls.map(([event]) => event).sort()).toEqual([
+			'api.request.completed',
+			'api.request.completed',
+			'api.request.failed',
+			'api.request.failed_response',
+			'api.request.started',
+			'api.request.started',
+			'api.request.started',
+		])
+		for (const [, payload] of calls) {
+			const { url, referer } = payload as { url: string; referer: string }
+			expect(url).toBe(
+				'https://aihero.dev/api/auth/callback?token=%5BREDACTED%5D&code=%5BREDACTED%5D&q=keep',
+			)
+			expect(referer).toBe(
+				'https://aihero.dev/login?token=%5BREDACTED%5D&code=%5BREDACTED%5D&q=keep',
+			)
+			expect(JSON.stringify(payload)).not.toMatch(secrets)
+		}
+	})
+
+	it('emits null for an invalid or relative referer', async () => {
+		const handler = withSkill(async () => new Response('ok'))
+		for (const referer of ['not a url', '/login?token=ref-secret']) {
+			loggerMocks.info.mockClear()
+			await handler(
+				new Request('https://aihero.dev/api/x', { headers: { referer } }),
+			)
+			for (const [, payload] of loggerMocks.info.mock.calls) {
+				expect((payload as { referer: unknown }).referer).toBeNull()
+				expect(JSON.stringify(payload)).not.toContain('ref-secret')
+			}
+		}
+	})
+
 	it('passes through additional handler args and preserves the response', async () => {
 		const handler = withSkill(
 			async (_request: Request, context: { params: { lessonId: string } }) => {
