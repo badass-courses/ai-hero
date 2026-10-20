@@ -1,12 +1,12 @@
-import { courseBuilderAdapter } from "@/db";
-import { env } from "@/env.mjs";
-import { CredentialsSignin } from "next-auth";
-import Postmark from "next-auth/providers/postmark";
+import { courseBuilderAdapter } from '@/db'
+import { env } from '@/env.mjs'
+import { CredentialsSignin } from 'next-auth'
+import Postmark from 'next-auth/providers/postmark'
 
 import {
-  PostmarkSendError,
-  sendVerificationRequest,
-} from "@coursebuilder/email/send-verification-request";
+	PostmarkSendError,
+	sendVerificationRequest,
+} from '@coursebuilder/email/send-verification-request'
 
 /**
  * Identity port handed to the magic-link sender.
@@ -22,13 +22,13 @@ import {
  * cycle before `emailProvider` exists.
  */
 export const magicLinkIdentity = {
-  ...courseBuilderAdapter,
-  findOrCreateUser: async (email: string, name?: string | null) => {
-    const { findOrCreateUserWithPersonalOrg } =
-      await import("@/lib/find-or-create-user");
-    return findOrCreateUserWithPersonalOrg(email, name);
-  },
-};
+	...courseBuilderAdapter,
+	findOrCreateUser: async (email: string, name?: string | null) => {
+		const { findOrCreateUserWithPersonalOrg } =
+			await import('@/lib/find-or-create-user')
+		return findOrCreateUserWithPersonalOrg(email, name)
+	},
+}
 
 /**
  * Postmark answers a send to an inactive address with ErrorCode 406.
@@ -41,34 +41,34 @@ export const magicLinkIdentity = {
  * the pair into `EmailInactive`. Nothing about the recipient is attached.
  */
 export class EmailInactiveError extends CredentialsSignin {
-  static kind = "error";
-  code = "EmailInactive";
+	static kind = 'error'
+	code = 'EmailInactive'
 }
 
-const POSTMARK_INACTIVE_RECIPIENT = 406;
+const POSTMARK_INACTIVE_RECIPIENT = 406
 
 function isInactiveRecipient(error: unknown) {
-  const source =
-    error instanceof PostmarkSendError
-      ? error
-      : error instanceof Error
-        ? error.cause
-        : undefined;
-  return (
-    source instanceof PostmarkSendError &&
-    source.postmarkErrorCode === POSTMARK_INACTIVE_RECIPIENT
-  );
+	const source =
+		error instanceof PostmarkSendError
+			? error
+			: error instanceof Error
+				? error.cause
+				: undefined
+	return (
+		source instanceof PostmarkSendError &&
+		source.postmarkErrorCode === POSTMARK_INACTIVE_RECIPIENT
+	)
 }
 
 export const emailProvider = Postmark({
-  apiKey: env.POSTMARK_API_KEY,
-  from: env.NEXT_PUBLIC_SUPPORT_EMAIL,
-  sendVerificationRequest: async (params) => {
-    try {
-      await sendVerificationRequest(params, magicLinkIdentity);
-    } catch (error) {
-      if (isInactiveRecipient(error)) throw new EmailInactiveError();
-      throw error;
-    }
-  },
-});
+	apiKey: env.POSTMARK_API_KEY,
+	from: env.NEXT_PUBLIC_SUPPORT_EMAIL,
+	sendVerificationRequest: async (params) => {
+		try {
+			await sendVerificationRequest(params, magicLinkIdentity)
+		} catch (error) {
+			if (isInactiveRecipient(error)) throw new EmailInactiveError()
+			throw error
+		}
+	},
+})
