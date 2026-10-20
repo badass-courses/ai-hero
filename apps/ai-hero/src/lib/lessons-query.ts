@@ -364,6 +364,12 @@ export async function getLesson(lessonSlugOrId: string) {
 						},
 					})
 
+			// An unknown slug or id (crawlers, section ids) is a miss, not a schema failure.
+			if (!lesson) {
+				await log.debug('lesson.not_found', { slug: lessonSlugOrId })
+				return null
+			}
+
 			const parsedLesson = LessonSchema.safeParse(lesson)
 			if (!parsedLesson.success) {
 				await log.error('lesson.parse.error', {
@@ -424,6 +430,11 @@ export async function getExerciseSolution(lessonSlugOrId: string) {
 			},
 		},
 	})
+
+	if (!lesson) {
+		await log.debug('lesson.not_found', { slug: lessonSlugOrId })
+		return null
+	}
 
 	const parsedLesson = LessonSchema.safeParse(lesson)
 	if (!parsedLesson.success) {
