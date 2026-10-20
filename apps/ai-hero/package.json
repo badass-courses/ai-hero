@@ -101,7 +101,7 @@
 		"@coursebuilder/commerce": "^0.3.1",
 		"@coursebuilder/commerce-next": "^0.2.20",
 		"@coursebuilder/core": "3.2.0",
-		"@coursebuilder/email": "^0.1.7",
+		"@coursebuilder/email": "^0.1.8",
 		"@coursebuilder/email-templates": "^1.0.8",
 		"@coursebuilder/mdx-mermaid": "^0.1.3",
 		"@coursebuilder/next": "^0.0.44",
