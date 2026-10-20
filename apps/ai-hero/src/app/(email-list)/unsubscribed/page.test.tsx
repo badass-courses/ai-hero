@@ -85,6 +85,16 @@ describe('/unsubscribed', () => {
 		expect(local.props.managePreferencesHref).toBe('/preferences')
 	})
 
+	it('truncates a long unknown preference in the log', async () => {
+		await render({ preference: 'x'.repeat(500), ...identity })
+
+		expectNoWrites()
+		expect(mocks.log.warn).toHaveBeenCalledWith(
+			'email-preferences.unknown_preference',
+			expect.objectContaining({ preference: 'x'.repeat(100) }),
+		)
+	})
+
 	it('a known newsletter key still unsubscribes', async () => {
 		await render({ preference: 'newsletter', ...identity })
 		expect(mocks.updateProviderEmailPreference).toHaveBeenCalledWith(

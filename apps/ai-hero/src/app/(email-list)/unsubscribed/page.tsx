@@ -57,7 +57,7 @@ const Unsubscribed = async (props: UnsubscribedProps) => {
 		// A typo or stale link must never fall back to the newsletter all-stop.
 		await log.warn('email-preferences.unknown_preference', {
 			source: 'unsubscribe-link',
-			preference: resolution.raw,
+			preference: resolution.raw.slice(0, 100),
 			hasKitIdentity: Boolean(subscriberId && shKit),
 		})
 		return (
