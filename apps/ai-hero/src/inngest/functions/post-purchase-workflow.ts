@@ -28,7 +28,10 @@ import {
 import { INCLUDED_PRODUCT_ENTITLEMENTS_RETRY_EVENT } from '@/inngest/events/included-product-entitlements'
 import { log } from '@/server/logger'
 import { verifyPurchase } from '@/lib/buy-path/verify-purchase'
-import type { BuyPathContext } from '@/lib/buy-path/schema'
+import {
+	buyPathContextForCheckout,
+	type BuyPathContext,
+} from '@/lib/buy-path/schema'
 import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 
 import { guid } from '@coursebuilder/adapter-drizzle/mysql'
@@ -193,14 +196,10 @@ export const postPurchaseWorkflow = inngest.createFunction(
 			throw new Error(`purchase not found`)
 		}
 
-		const buyPath: BuyPathContext | null = traceBase.checkoutSessionId
-			? {
-					buyPathId: traceBase.checkoutSessionId,
-					purchaseId: purchase.id,
-					productId: purchase.productId,
-					userId: purchase.userId ?? null,
-				}
-			: null
+		const buyPath = buyPathContextForCheckout(
+			traceBase.checkoutSessionId,
+			purchase,
+		)
 
 		await tracePostPurchase('purchase.loaded', {
 			...traceBase,
