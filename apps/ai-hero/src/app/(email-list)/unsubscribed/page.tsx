@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
-import { parseEmailPreferenceKey } from '@/coursebuilder/email-preferences'
+import { resolveUnsubscribePreference } from '@/coursebuilder/email-preferences'
 import {
 	getEmailPreferenceDefinition,
 	getSearchParamValue,
@@ -37,21 +37,15 @@ const getListName = (
 }
 
 /**
- * Cohort-update opt-outs are handled by a Kit link rule that tags the
- * subscriber on click, so this page only confirms and must not touch any
- * other preference.
- */
-const COHORT_UPDATES_PREFERENCE = 'cohorts'
-
-/**
  * Confirms the user has been removed from email communication.
  */
 const Unsubscribed = async (props: UnsubscribedProps) => {
 	const searchParams = await props.searchParams
 	await headers()
-	if (
-		getSearchParamValue(searchParams.preference) === COHORT_UPDATES_PREFERENCE
-	) {
+	const resolution = resolveUnsubscribePreference(
+		getSearchParamValue(searchParams.preference),
+	)
+	if (resolution.kind === 'cohort-updates') {
 		return (
 			<UnsubscribedMessage message="You've been removed from AI Hero cohort updates. You'll still get other AI Hero emails." />
 		)
@@ -59,9 +53,28 @@ const Unsubscribed = async (props: UnsubscribedProps) => {
 	const userId = getSearchParamValue(searchParams.userId)
 	const subscriberId = getSearchParamValue(searchParams.ck_subscriber_id)
 	const shKit = getSearchParamValue(searchParams.sh_kit)
-	const preferenceKey = parseEmailPreferenceKey(
-		getSearchParamValue(searchParams.preference),
-	)
+	if (resolution.kind === 'unknown') {
+		// A typo or stale link must never fall back to the newsletter all-stop.
+		await log.warn('email-preferences.unknown_preference', {
+			source: 'unsubscribe-link',
+			preference: resolution.raw.slice(0, 100),
+			hasKitIdentity: Boolean(subscriberId && shKit),
+		})
+		return (
+			<UnsubscribedMessage
+				message="Choose which emails you want to stop."
+				managePreferencesHref={
+					subscriberId && shKit
+						? `/preferences?${new URLSearchParams({
+								ck_subscriber_id: subscriberId,
+								sh_kit: shKit,
+							}).toString()}`
+						: '/preferences'
+				}
+			/>
+		)
+	}
+	const preferenceKey = resolution.key
 	const preferenceDefinition = getEmailPreferenceDefinition(preferenceKey)
 	const listName =
 		getListName(searchParams) === 'the email list'
