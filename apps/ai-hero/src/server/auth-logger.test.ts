@@ -86,6 +86,7 @@ describe('safe Auth.js logger', () => {
 		)
 		expect(sink.error).toHaveBeenNthCalledWith(2, 'auth.nextauth.error', {
 			errorType: 'OAuthCallbackError',
+			causeType: 'unknown',
 			reasonCode: 'oauth-callback-failed',
 		})
 	})
