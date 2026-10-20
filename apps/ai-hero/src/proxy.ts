@@ -1,4 +1,8 @@
-import { NextResponse } from 'next/server'
+import {
+	NextResponse,
+	type NextFetchEvent,
+	type NextRequest,
+} from 'next/server'
 import { invoiceLinkResponse } from './lib/invoice-link-http'
 
 import {
@@ -63,8 +67,10 @@ const COOKIE_OPTIONS = {
 	path: '/',
 } as const
 
-export default auth(async function middleware(req) {
-	const user = req.auth?.user as ReqUser | undefined
+// These branches never read the session. Answering them before `auth()` skips
+// the database session lookup, which is a remote round trip for every
+// request that carries a session cookie.
+function respondWithoutSession(req: NextRequest): NextResponse | undefined {
 	const pathname = req.nextUrl.pathname
 
 	if (isStaticRouteHandlerPath(pathname)) {
@@ -134,6 +140,11 @@ export default auth(async function middleware(req) {
 		rewriteUrl.pathname = '/home-coupon'
 		return NextResponse.rewrite(rewriteUrl)
 	}
+}
+
+const authedProxy = auth(async function middleware(req) {
+	const user = req.auth?.user as ReqUser | undefined
+	const pathname = req.nextUrl.pathname
 
 	const isAdmin = user?.roles?.some((role) => role.name === 'admin')
 	const canViewAnalytics = user?.roles?.some(
@@ -202,6 +213,13 @@ export default auth(async function middleware(req) {
 
 	return response
 })
+
+export default function proxy(
+	req: NextRequest,
+	event: NextFetchEvent,
+) {
+	return respondWithoutSession(req) ?? authedProxy(req as never, event)
+}
 
 export const config = {
 	matcher: [
