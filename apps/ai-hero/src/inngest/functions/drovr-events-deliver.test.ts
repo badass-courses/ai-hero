@@ -2559,7 +2559,7 @@ describe('a one-event live run gates inside its delivery step (row 204b, one ste
 			),
 			// Older than the clamp skew, so the clamp moves it.
 			occurredAt: at(20),
-		}
+		} as Parameters<typeof clampBirths>[0][number]
 		type Entry = {
 			idempotencyKey: string
 			body: typeof birth
