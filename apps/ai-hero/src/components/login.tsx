@@ -5,6 +5,10 @@ import { useSearchParams } from 'next/navigation'
 import { Icon } from '@/components/brand/icons'
 import { HeroShader } from '@/components/landing/hero-shader'
 import { env } from '@/env.mjs'
+import {
+	INVALID_LOGIN_EMAIL_MESSAGE,
+	isPlausibleLoginEmail,
+} from '@/lib/login-email'
 import { Provider } from '@/server/auth'
 import { MailIcon } from 'lucide-react'
 import { signIn } from 'next-auth/react'
@@ -34,7 +38,8 @@ export const Login: React.FC<React.PropsWithChildren<LoginTemplateProps>> = ({
 	const {
 		register,
 		handleSubmit,
-		formState: { isSubmitting },
+		formState: { isSubmitting, errors },
+		setError,
 	} = useForm<{ email: string }>()
 
 	const searchParams = useSearchParams()
@@ -83,6 +88,13 @@ export const Login: React.FC<React.PropsWithChildren<LoginTemplateProps>> = ({
 	const emailProvider = providers?.postmark
 	const submitEmailSignIn = handleSubmit(async ({ email }) => {
 		if (!emailProvider) return
+		if (!isPlausibleLoginEmail(email)) {
+			setError('email', {
+				type: 'validate',
+				message: INVALID_LOGIN_EMAIL_MESSAGE,
+			})
+			return
+		}
 
 		await signIn(emailProvider.id, {
 			email: email.trim(),
@@ -223,10 +235,20 @@ export const Login: React.FC<React.PropsWithChildren<LoginTemplateProps>> = ({
 								id="email"
 								type="email"
 								required={true}
+								aria-invalid={errors.email ? true : undefined}
 								placeholder="you@example.com"
 								{...register('email', { required: true })}
 							/>
 						</div>
+						{errors.email ? (
+							<p
+								data-email-error=""
+								role="alert"
+								className="text-destructive text-sm"
+							>
+								{INVALID_LOGIN_EMAIL_MESSAGE}
+							</p>
+						) : null}
 						<Button
 							type="submit"
 							data-button=""
