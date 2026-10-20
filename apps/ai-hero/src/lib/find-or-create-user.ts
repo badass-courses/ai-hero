@@ -1,6 +1,6 @@
 import { courseBuilderAdapter } from '@/db'
 import { ENSURE_PERSONAL_ORGANIZATION_EVENT } from '@/inngest/events/ensure-personal-organization'
-import { inngest } from '@/inngest/inngest.server'
+import { sendWithRetry } from '@/inngest/send-with-retry'
 import { log, serializeError } from '@/server/logger'
 import { personalOrganizations } from '@/server/personal-organizations'
 import { handleOutOfBandUserBoundary } from '@/server/user-provisioning'
@@ -22,8 +22,12 @@ import type { PersonalOrganizationUser } from '@coursebuilder/organizations'
  *
  * @param email - Email that identifies or creates the user.
  * @param name - Optional display name applied when the user is created.
+ * @param options - `tolerateRepairEnqueueFailure` logs a failed repair enqueue
+ * at warn and returns the user, for callers (progress saves) that must not fail
+ * on an Inngest send blip.
  * @returns The resolved user and whether it was newly created.
- * @throws The repair enqueue error when durable repair cannot be scheduled.
+ * @throws The repair enqueue error when durable repair cannot be scheduled,
+ * unless `tolerateRepairEnqueueFailure` is set.
  *
  * @example
  * ```ts
@@ -33,10 +37,11 @@ import type { PersonalOrganizationUser } from '@coursebuilder/organizations'
 export async function findOrCreateUserWithPersonalOrg(
 	email: string,
 	name?: string | null,
+	options: { tolerateRepairEnqueueFailure?: boolean } = {},
 ) {
 	return handleOutOfBandUserBoundary(
 		() => courseBuilderAdapter.findOrCreateUser(email, name),
-		personalOrgProvisioning(email),
+		personalOrgProvisioning(email, options.tolerateRepairEnqueueFailure),
 	)
 }
 
@@ -66,7 +71,10 @@ export async function createUserWithPersonalOrg(data: CourseBuilderUserInput) {
 	return user
 }
 
-function personalOrgProvisioning(email: string) {
+function personalOrgProvisioning(
+	email: string,
+	tolerateRepairEnqueueFailure = false,
+) {
 	return {
 		provisionPersonalOrganization: (user: PersonalOrganizationUser) =>
 			personalOrganizations.ensurePersonalOrganization(user),
@@ -76,9 +84,15 @@ function personalOrgProvisioning(email: string) {
 				email,
 				error: serializeError(cause),
 			})
-			return inngest.send({
+			const send = sendWithRetry({
 				name: ENSURE_PERSONAL_ORGANIZATION_EVENT,
 				data: { userId, createIfMissing: true },
+			})
+			if (!tolerateRepairEnqueueFailure) return send
+			return send.catch((error) => {
+				void log.warn('user.personal-org-repair-enqueue-failed', {
+					error: serializeError(error),
+				})
 			})
 		},
 	}

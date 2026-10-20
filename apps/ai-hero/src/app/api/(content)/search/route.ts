@@ -5,6 +5,7 @@ import {
 	searchContentTypes,
 } from '@/lib/typesense-content-filter'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
+import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
 // App-side wrapper: maps doc type 'skill' (doc type = fields.postType) to the
 // flat post URL — the shared package has no 'skill' entry yet.
@@ -40,6 +41,15 @@ export async function OPTIONS() {
 
 function buildUrl(baseUrl: string, docType: string, slug: string): string {
 	return `${baseUrl}${getResourcePath(docType, slug, 'view')}`
+}
+
+/** Short, query-free class for a failed hybrid search. */
+function classifyHybridFailure(error: unknown): string {
+	const message = error instanceof Error ? error.message : ''
+	if (/no credits|insufficient_quota/i.test(message)) {
+		return 'embedding_provider_quota'
+	}
+	return 'hybrid_failed'
 }
 
 function isDictionaryHit(type: string) {
@@ -139,24 +149,50 @@ const searchHandler = async (request: NextRequest) => {
 
 		const filterBy = buildTypesenseContentFilter({ ability, type })
 
-		const searchParameters: SearchParams = {
+		const keywordParameters: SearchParams = {
 			q,
-			query_by: semantic
-				? 'embedding,title,summary,description'
-				: 'title,summary,description',
+			query_by: 'title,summary,description',
 			exclude_fields: 'embedding,description',
 			...(filterBy && { filter_by: filterBy }),
 			per_page: perPage,
-			...(semantic && {
-				vector_query: 'embedding:([], alpha: 0.5)',
-				prefix: 'false' as unknown as boolean,
-			}),
 		}
 
-		const results = await client
-			.collections(collectionName)
-			.documents()
-			.search(searchParameters)
+		const hybridParameters: SearchParams = {
+			...keywordParameters,
+			query_by: 'embedding,title,summary,description',
+			vector_query: 'embedding:([], alpha: 0.5)',
+			prefix: 'false' as unknown as boolean,
+		}
+
+		const runSearch = (params: SearchParams) =>
+			client.collections(collectionName).documents().search(params)
+
+		let mode: 'hybrid' | 'keyword' = semantic ? 'hybrid' : 'keyword'
+		let fallback: { from: 'hybrid'; reason: string } | undefined
+		let results: Awaited<ReturnType<typeof runSearch>>
+
+		if (semantic) {
+			try {
+				results = await runSearch(hybridParameters)
+			} catch (hybridError) {
+				const reason = classifyHybridFailure(hybridError)
+				const httpStatus =
+					(hybridError as { httpStatus?: number } | null)?.httpStatus ??
+					undefined
+				log.warn('search.semantic_fallback', {
+					reason,
+					errorName:
+						hybridError instanceof Error ? hybridError.name : 'UnknownError',
+					httpStatus,
+				})
+				// If the keyword retry also throws, the outer catch returns the 500.
+				results = await runSearch(keywordParameters)
+				mode = 'keyword'
+				fallback = { from: 'hybrid', reason }
+			}
+		} else {
+			results = await runSearch(keywordParameters)
+		}
 
 		const baseUrl = process.env.NEXT_PUBLIC_URL || 'https://www.aihero.dev'
 
@@ -228,7 +264,8 @@ const searchHandler = async (request: NextRequest) => {
 					query: q,
 					found: results.found,
 					search_time_ms: results.search_time_ms,
-					mode: semantic ? 'hybrid' : 'keyword',
+					mode,
+					...(fallback && { fallback }),
 					hits,
 				},
 				next_actions: nextActions,

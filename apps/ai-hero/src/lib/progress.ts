@@ -1,14 +1,14 @@
 'use server'
 
-import { cookies } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import { courseBuilderAdapter, db } from '@/db'
 import { resourceProgress } from '@/db/schema'
 import { LESSON_COMPLETED_EVENT } from '@/inngest/events/lesson-completed'
-import { inngest } from '@/inngest/inngest.server'
+import { sendWithRetry } from '@/inngest/send-with-retry'
 import { findOrCreateUserWithPersonalOrg } from '@/lib/find-or-create-user'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { getServerAuthSession } from '@/server/auth'
-import { log } from '@/server/logger'
+import { getLogContext, log } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
 import { and, eq } from 'drizzle-orm'
 
@@ -25,6 +25,16 @@ import {
 
 function getErrorMessage(error: unknown) {
 	return error instanceof Error ? error.message : String(error)
+}
+
+async function getRequestId() {
+	const contextId = getLogContext()?.requestId
+	if (contextId) return contextId
+	try {
+		return (await headers()).get('x-vercel-id') ?? undefined
+	} catch {
+		return undefined
+	}
 }
 
 async function setResourceProgressForUser({
@@ -74,10 +84,19 @@ async function setResourceProgressForUser({
 
 	if (!completedAt) return null
 
-	await sendInngestProgressEvent({
-		user,
-		lessonId: resourceId,
-	})
+	// The row is saved. A send failure must not turn it into a failed save.
+	try {
+		await sendInngestProgressEvent({
+			user,
+			lessonId: resourceId,
+		})
+	} catch (error) {
+		void log.warn('progress.inngest_send_failed', {
+			requestId: await getRequestId(),
+			resourceId,
+			error: getErrorMessage(error),
+		})
+	}
 
 	return resourceProgressSchema.parse(progress)
 }
@@ -121,6 +140,7 @@ async function getUser() {
 	const result = await findOrCreateUserWithPersonalOrg(
 		subscriber.email_address,
 		subscriber.first_name,
+		{ tolerateRepairEnqueueFailure: true },
 	)
 	return result.user
 }
@@ -156,6 +176,7 @@ export async function setProgressForResource({
 		let message = 'Unknown Error'
 		if (error instanceof Error) message = error.message
 		void log.error('progress.set.error', {
+			requestId: await getRequestId(),
 			resourceId,
 			isCompleted,
 			error: message,
@@ -247,7 +268,7 @@ export async function sendInngestProgressEvent({
 	lessonSlug?: string
 }) {
 	// TODO: execute a function that will email after a debounce to encourage
-	await inngest.send({
+	await sendWithRetry({
 		name: LESSON_COMPLETED_EVENT,
 		data: {
 			lessonId: lessonId,
