@@ -1,11 +1,11 @@
-import { inngest } from "@/inngest/inngest.server";
+import { inngest } from '@/inngest/inngest.server'
 
-type InngestSendPayload = Parameters<typeof inngest.send>[0];
+type InngestSendPayload = Parameters<typeof inngest.send>[0]
 
 /** Delays before retries 2 and 3, so a full failure waits well under 2 s. */
-const RETRY_DELAYS_MS = [150, 400];
+const RETRY_DELAYS_MS = [150, 400]
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /**
  * Sends an Inngest event, retrying briefly on transport failures such as a
@@ -17,16 +17,16 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  * @throws The last send error once every attempt has failed.
  */
 export async function sendWithRetry(
-  payload: InngestSendPayload,
-  delaysMs: readonly number[] = RETRY_DELAYS_MS,
+	payload: InngestSendPayload,
+	delaysMs: readonly number[] = RETRY_DELAYS_MS,
 ) {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await inngest.send(payload);
-    } catch (error) {
-      const delay = delaysMs[attempt];
-      if (delay === undefined) throw error;
-      await sleep(delay);
-    }
-  }
+	for (let attempt = 0; ; attempt++) {
+		try {
+			return await inngest.send(payload)
+		} catch (error) {
+			const delay = delaysMs[attempt]
+			if (delay === undefined) throw error
+			await sleep(delay)
+		}
+	}
 }

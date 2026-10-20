@@ -1,12 +1,12 @@
-import { courseBuilderAdapter } from "@/db";
-import { ENSURE_PERSONAL_ORGANIZATION_EVENT } from "@/inngest/events/ensure-personal-organization";
-import { sendWithRetry } from "@/inngest/send-with-retry";
-import { log, serializeError } from "@/server/logger";
-import { personalOrganizations } from "@/server/personal-organizations";
-import { handleOutOfBandUserBoundary } from "@/server/user-provisioning";
+import { courseBuilderAdapter } from '@/db'
+import { ENSURE_PERSONAL_ORGANIZATION_EVENT } from '@/inngest/events/ensure-personal-organization'
+import { sendWithRetry } from '@/inngest/send-with-retry'
+import { log, serializeError } from '@/server/logger'
+import { personalOrganizations } from '@/server/personal-organizations'
+import { handleOutOfBandUserBoundary } from '@/server/user-provisioning'
 
-import type { CourseBuilderUserInput } from "@coursebuilder/core";
-import type { PersonalOrganizationUser } from "@coursebuilder/organizations";
+import type { CourseBuilderUserInput } from '@coursebuilder/core'
+import type { PersonalOrganizationUser } from '@coursebuilder/organizations'
 
 /**
  * App-boundary replacement for `courseBuilderAdapter.findOrCreateUser`.
@@ -35,14 +35,14 @@ import type { PersonalOrganizationUser } from "@coursebuilder/organizations";
  * ```
  */
 export async function findOrCreateUserWithPersonalOrg(
-  email: string,
-  name?: string | null,
-  options: { tolerateRepairEnqueueFailure?: boolean } = {},
+	email: string,
+	name?: string | null,
+	options: { tolerateRepairEnqueueFailure?: boolean } = {},
 ) {
-  return handleOutOfBandUserBoundary(
-    () => courseBuilderAdapter.findOrCreateUser(email, name),
-    personalOrgProvisioning(email, options.tolerateRepairEnqueueFailure),
-  );
+	return handleOutOfBandUserBoundary(
+		() => courseBuilderAdapter.findOrCreateUser(email, name),
+		personalOrgProvisioning(email, options.tolerateRepairEnqueueFailure),
+	)
 }
 
 /**
@@ -59,41 +59,41 @@ export async function findOrCreateUserWithPersonalOrg(
  * @throws The repair enqueue error when durable repair cannot be scheduled.
  */
 export async function createUserWithPersonalOrg(data: CourseBuilderUserInput) {
-  const createUser = courseBuilderAdapter.createUser;
-  if (!createUser) throw new Error("The adapter cannot create users");
-  const { user } = await handleOutOfBandUserBoundary(
-    async () => ({
-      user: await createUser(data),
-      isNewUser: true,
-    }),
-    personalOrgProvisioning(data.email),
-  );
-  return user;
+	const createUser = courseBuilderAdapter.createUser
+	if (!createUser) throw new Error('The adapter cannot create users')
+	const { user } = await handleOutOfBandUserBoundary(
+		async () => ({
+			user: await createUser(data),
+			isNewUser: true,
+		}),
+		personalOrgProvisioning(data.email),
+	)
+	return user
 }
 
 function personalOrgProvisioning(
-  email: string,
-  tolerateRepairEnqueueFailure = false,
+	email: string,
+	tolerateRepairEnqueueFailure = false,
 ) {
-  return {
-    provisionPersonalOrganization: (user: PersonalOrganizationUser) =>
-      personalOrganizations.ensurePersonalOrganization(user),
-    enqueueProvisioningRepair: (userId: string, cause: unknown) => {
-      void log.error("user.personal-org-provisioning-failed", {
-        userId,
-        email,
-        error: serializeError(cause),
-      });
-      const send = sendWithRetry({
-        name: ENSURE_PERSONAL_ORGANIZATION_EVENT,
-        data: { userId, createIfMissing: true },
-      });
-      if (!tolerateRepairEnqueueFailure) return send;
-      return send.catch((error) => {
-        void log.warn("user.personal-org-repair-enqueue-failed", {
-          error: serializeError(error),
-        });
-      });
-    },
-  };
+	return {
+		provisionPersonalOrganization: (user: PersonalOrganizationUser) =>
+			personalOrganizations.ensurePersonalOrganization(user),
+		enqueueProvisioningRepair: (userId: string, cause: unknown) => {
+			void log.error('user.personal-org-provisioning-failed', {
+				userId,
+				email,
+				error: serializeError(cause),
+			})
+			const send = sendWithRetry({
+				name: ENSURE_PERSONAL_ORGANIZATION_EVENT,
+				data: { userId, createIfMissing: true },
+			})
+			if (!tolerateRepairEnqueueFailure) return send
+			return send.catch((error) => {
+				void log.warn('user.personal-org-repair-enqueue-failed', {
+					error: serializeError(error),
+				})
+			})
+		},
+	}
 }
