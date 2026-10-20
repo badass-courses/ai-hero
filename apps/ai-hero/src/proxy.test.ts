@@ -247,8 +247,17 @@ describe('session lookup avoidance', () => {
 	)
 })
 
+// Pinned from the lockfile: next 16.2.7, next-auth 5.0.0-beta.25,
+// @auth/core 0.37.2 (cookie 0.7.1 parser). Re-check these on upgrade.
 // `@auth/core` does not export its cookie internals, so load the pinned file
 // next to its public entry point.
+const loadAuthCookieParser = () => {
+	const coreRequire = createRequire(
+		createRequire(import.meta.url).resolve('@auth/core'),
+	)
+	return coreRequire('cookie').parse as (header: string) => Record<string, string>
+}
+
 const loadSessionStore = async () => {
 	const entry = createRequire(import.meta.url).resolve('@auth/core')
 	const mod = await import(
@@ -270,7 +279,7 @@ describe('hasSessionCookie matches Auth.js SessionStore', () => {
 		`${prefix}-old`,
 		`${prefix}x`,
 	])
-	const logger = { debug() {}, error() {}, warn() {} } as never
+	const logger = { debug() {}, error() {}, warn() {} }
 
 	it.each(SESSION_COOKIE_PREFIXES)(
 		'treats every cookie SessionStore reads for %s as a session',
@@ -287,6 +296,34 @@ describe('hasSessionCookie matches Auth.js SessionStore', () => {
 					headers: { cookie: `${name}=abc` },
 				})
 				expect(hasSessionCookie(req)).toBe(true)
+			}
+		},
+	)
+
+	it.each(SESSION_COOKIE_PREFIXES)(
+		'routes duplicate %s headers to auth whenever SessionStore sees a value',
+		async (prefix) => {
+			const SessionStore = await loadSessionStore()
+			const parse = loadAuthCookieParser()
+			const logger = { debug() {}, error() {}, warn() {} }
+			for (const header of [
+				`${prefix}=FAKE; ${prefix}=`,
+				`${prefix}=; ${prefix}=FAKE`,
+				`${prefix}=FAKE; ${prefix}=FAKE2`,
+				`${prefix}=`,
+			]) {
+				const store = new SessionStore(
+					{ name: prefix, options: {} },
+					parse(header),
+					logger,
+				)
+				const req = new NextRequest('https://www.aihero.dev/cohorts/x', {
+					headers: { cookie: header },
+				})
+				// Name match only, whatever the value, so this holds even when
+				// Next's RequestCookies and Auth.js disagree on which value wins.
+				expect(hasSessionCookie(req)).toBe(true)
+				if (store.value) expect(hasSessionCookie(req)).toBe(true)
 			}
 		},
 	)
