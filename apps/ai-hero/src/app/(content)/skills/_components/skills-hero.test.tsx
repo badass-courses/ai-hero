@@ -1,6 +1,6 @@
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/github-stars-query', () => ({
 	getRepoStarCount: vi.fn(),
@@ -39,6 +39,15 @@ vi.mock('next/navigation', () => ({
 import { SkillsHero } from './skills-hero'
 
 describe('SkillsHero', () => {
+	beforeEach(() => {
+		// next-cloudinary resolves its cloud name at render time.
+		vi.stubEnv('NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME', 'test-cloud')
+	})
+
+	afterEach(() => {
+		vi.unstubAllEnvs()
+	})
+
 	it('shows the live Skills.sh badge in the aligned fact row', async () => {
 		const hero = await SkillsHero({ stars: 195_379, skillCount: 49 })
 		const markup = renderToStaticMarkup(hero)
