@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { createPostSignInInvitationHandler } from './auth-post-sign-in'
 import {
+	type SerializedError,
 	redactCredentials,
 	redactedErrorMessage,
 	serializeError,
@@ -70,9 +71,8 @@ describe('serializeError credential redaction', () => {
 		expect(serialized.cause?.stack).not.toContain('xxxxxxxx')
 		expect(serialized.path).toBe('/cb?t=[REDACTED_JWT]')
 		expect(serialized.code).toBe('E_AUTH')
-		expect(serializeError(aggregate).errors?.[0]?.message).toBe(
-			'Bearer [REDACTED]',
-		)
+		const [nested] = serializeError(aggregate).errors as SerializedError[]
+		expect(nested?.message).toBe('Bearer [REDACTED]')
 		expect(json).not.toContain('eyJ')
 		expect(json).not.toContain('aggregate-secret')
 	})
