@@ -46,6 +46,23 @@ export function createStragglerOwnerStore(
 							!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(
 								owner.generation,
 							) ||
+							(owner.claimedBy !== undefined &&
+								(typeof owner.claimedBy !== 'string' ||
+									!/^[A-Za-z0-9_-]{1,64}$/.test(owner.claimedBy))) ||
+							(owner.park !== undefined &&
+								(!owner.park ||
+									typeof owner.park !== 'object' ||
+									!Number.isSafeInteger(owner.park.at) ||
+									owner.park.at < 0 ||
+									typeof owner.park.code !== 'string' ||
+									owner.park.code.length > 64 ||
+									!/^[a-z-]+(?:,[a-z-]+)*$/.test(owner.park.code) ||
+									!Array.isArray(owner.park.types) ||
+									!owner.park.types.every(
+										(type) => typeof type === 'string' && type.length <= 80,
+									) ||
+									(owner.park.alerted !== undefined &&
+										owner.park.alerted !== true))) ||
 							(owner.membershipDigest !== undefined &&
 								(typeof owner.membershipDigest !== 'string' ||
 									!/^[a-f0-9]{64}$/.test(owner.membershipDigest))) ||

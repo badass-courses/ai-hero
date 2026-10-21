@@ -42,9 +42,16 @@ function port() {
 	const store = createStragglerOwnerStore(
 		async () => connection as unknown as PoolConnection,
 	)
-	const claim = () =>
+	let sequence = 0
+	const claim = (runId = `synthetic-run-${++sequence}`) =>
 		store.update(key, (owner, clock) =>
-			claimStragglerOwner(owner, { protocol: 1, startedAt: now }, 1, clock),
+			claimStragglerOwner(
+				owner,
+				{ protocol: 1, startedAt: now },
+				1,
+				clock,
+				runId,
+			),
 		)
 	return {
 		store,
@@ -205,6 +212,36 @@ it('oversized cursor name is rejected before acquiring a connection or issuing S
 		}),
 	).rejects.toThrow('name exceeds 255')
 	expect(acquire).not.toHaveBeenCalled()
+})
+it('same-run SQL claim replay returns claimed without a second cursor update', async () => {
+	const h = port(),
+		first = await h.claim('same-run')
+	h.query.mockClear()
+	const replay = await h.claim('same-run')
+	expect(replay.status).toBe('claimed')
+	expect(replay.owner).toEqual(first.owner)
+	expect(h.query.mock.calls.some(([sql]) => sql.startsWith('UPDATE'))).toBe(
+		false,
+	)
+})
+it.each([
+	{ claimedBy: 'invalid@address' },
+	{ claimedBy: 'x'.repeat(65) },
+	{ park: null },
+	{ park: { at: now, code: 'event-not-live', types: 'not-an-array' } },
+	{ park: { at: now, code: 'event-not-live', types: [42] } },
+	{ park: { at: now, code: 'invalid@address', types: [] } },
+	{ park: { at: now, code: 'event-not-live', types: [], alerted: false } },
+])('rejects malformed retained claimant/park metadata: %j', async (patch) => {
+	const h = port()
+	await h.claim()
+	h.setCursor(JSON.stringify({ ...JSON.parse(h.cursor()), ...patch }))
+	h.query.mockClear()
+	await expect(h.claim()).rejects.toThrow('malformed retained')
+	expect(h.connection.rollback).toHaveBeenCalledOnce()
+	expect(h.query.mock.calls.some(([sql]) => sql.startsWith('UPDATE'))).toBe(
+		false,
+	)
 })
 it('oversized cursor is refused, not trimmed or committed', async () => {
 	const h = port()

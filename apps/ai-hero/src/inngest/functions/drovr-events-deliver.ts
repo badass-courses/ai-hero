@@ -33,6 +33,7 @@ import { admitValuePathBirths } from '@/lib/subscriber-marketing/drovr-value-pat
 import { readUnsubscribedValuePathContactIds } from '@/lib/subscriber-marketing/drovr-value-path-birth-admission-live'
 import { isSendingJourneyBirth } from '@/lib/subscriber-marketing/drovr-birth-clamp'
 import { contactSyncStarterRequests } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
+import { sendContactSyncStarters } from '@/lib/subscriber-marketing/contact-sync-starter-batches'
 import {
 	drovrApiKeyForTenant,
 	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
@@ -1063,13 +1064,17 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 					const coldStart = refused.filter(
 						(item) => item.reason === 'cold-start-unhandled',
 					)
-					await step.sendEvent('contact-sync-backfill:defer-refused', [
-						...contactSyncStarterRequests(notLive, at),
-						...contactSyncStarterRequests(coldStart, at).map((request) => ({
-							...request,
-							ts: at,
-						})),
-					])
+					await sendContactSyncStarters(
+						step,
+						'contact-sync-backfill:defer-refused',
+						[
+							...contactSyncStarterRequests(notLive, at),
+							...contactSyncStarterRequests(coldStart, at).map((request) => ({
+								...request,
+								ts: at,
+							})),
+						],
+					)
 				}
 			}
 		}

@@ -8,6 +8,8 @@ import type { runContactSyncStragglerRetry } from './contact-sync-straggler-retr
 
 export const STRAGGLER_PARK_AFTER_MS = 7 * 24 * 60 * 60 * 1000
 const MAX_BIRTH_CLOCK_SKEW_MS = 5 * 60 * 1000
+export const STRAGGLER_DEADLINE_GRACE_MS = 60_000
+type ParkSource = { code: string; types: string[] }
 export type StragglerOwnerRef = {
 	protocol: 1
 	startedAt: number
@@ -19,6 +21,9 @@ export type StragglerOwner = {
 	startedAt: number
 	deadline: number
 	next: number
+	/** Stable Inngest run identity; retries of one run reclaim, duplicates do not. */
+	claimedBy?: string
+	park?: ParkSource & { at: number; alerted?: true }
 	/** Exact-set fingerprint only; different does not prove any key is new. */
 	membershipDigest?: string
 }
@@ -41,13 +46,38 @@ export type StragglerOwnerStore = {
 export function stragglerOwnerKey(contactId: string) {
 	return `straggler-owner:${createHash('sha256').update(contactId).digest('hex')}`
 }
+function parkOwner(
+	owner: StragglerOwner,
+	now: number,
+	source: ParkSource,
+): StragglerOwner {
+	const parked: StragglerOwner = {
+		...owner,
+		state: 'parked',
+		park: { ...source, at: now },
+	}
+	// Preserve bounded alert provenance, never a body/key roster. If types do
+	// not fit, record ALL types as unknown rather than retaining a partial list.
+	if (
+		JSON.stringify({ ...parked, park: { ...parked.park, alerted: true } })
+			.length > 500 ||
+		source.types.some((type) => type.length > 80)
+	)
+		parked.park!.types = []
+	return parked
+}
 export function claimStragglerOwner(
 	owner: StragglerOwner | undefined,
 	ref: StragglerOwnerRef,
 	attempt: number,
 	now: number,
+	runId: string,
 	membershipDigest?: string,
+	source: ParkSource = { code: 'owner-expired', types: [] },
+	scheduledAt?: number,
 ): { owner: StragglerOwner; value: Decision } {
+	if (typeof runId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(runId))
+		throw new NonRetriableError('StragglerOwner: invalid claimant run ID')
 	if (
 		!Number.isSafeInteger(attempt) ||
 		attempt < 1 ||
@@ -61,6 +91,12 @@ export function claimStragglerOwner(
 		throw new NonRetriableError(
 			'StragglerOwner: a new starter must begin at attempt one',
 		)
+	if (
+		!ref.generation &&
+		owner?.state === 'complete' &&
+		owner.claimedBy === runId
+	)
+		return { owner, value: { status: 'joined', owner, now } }
 	if (!ref.generation && (!owner || owner.state === 'complete')) {
 		// Normalize only at birth. Never refresh an existing owner's clock.
 		const startedAt = Math.min(ref.startedAt, now),
@@ -74,11 +110,16 @@ export function claimStragglerOwner(
 			...(membershipDigest && { membershipDigest }),
 		}
 		// Commit quarantine first; the caller logs outside SQL, then fails.
-		if (clockSkew)
+		if (clockSkew) {
+			owner = parkOwner(owner, now, {
+				code: 'owner-clock-skew',
+				types: source.types,
+			})
 			return {
 				owner,
 				value: { status: 'parked', owner, now, reason: 'owner-clock-skew' },
 			}
+		}
 	}
 	if (!owner)
 		throw new NonRetriableError(
@@ -90,10 +131,20 @@ export function claimStragglerOwner(
 	})
 	if (ref.generation && owner.generation !== ref.generation)
 		return answer('stale')
+	if (owner.state === 'parked') {
+		if (owner.park?.alerted) return answer('joined')
+		if (!owner.park)
+			owner = parkOwner(owner, now, { code: 'owner-expired', types: [] })
+		return answer('parked')
+	}
 	if (owner.state !== 'active') return answer('joined')
 	// A fresh starter must surface an orphan even when no continuation survived.
 	if (now >= owner.deadline) {
-		owner = { ...owner, state: 'parked' }
+		owner = parkOwner(
+			owner,
+			now,
+			ref.generation ? source : { code: 'owner-expired', types: [] },
+		)
 		return {
 			owner,
 			value: {
@@ -104,9 +155,24 @@ export function claimStragglerOwner(
 			},
 		}
 	}
+	// A boundary wake that still precedes DB expiry indicates clock disagreement.
+	// Quarantine instead of POSTing/rescheduling an already-due timestamp in a loop.
+	if (
+		ref.generation &&
+		scheduledAt !== undefined &&
+		scheduledAt >= owner.deadline + STRAGGLER_DEADLINE_GRACE_MS
+	) {
+		owner = parkOwner(owner, now, {
+			code: 'owner-clock-skew',
+			types: source.types,
+		})
+		return answer('parked')
+	}
+	if (owner.next === attempt + 1 && owner.claimedBy === runId)
+		return answer('claimed')
 	if (!ref.generation && owner.next !== 1) return answer('joined')
 	if (attempt !== owner.next) return answer('joined')
-	owner = { ...owner, next: attempt + 1 }
+	owner = { ...owner, next: attempt + 1, claimedBy: runId }
 	return answer('claimed')
 }
 class OwnerStopped extends Error {
@@ -119,6 +185,7 @@ type LegacyArgs = Parameters<typeof runContactSyncStragglerRetry>[0]
 export async function runOwnedStragglerRetry(
 	args: LegacyArgs & {
 		store: StragglerOwnerStore
+		runId: string
 		run: (args: LegacyArgs) => ReturnType<typeof runContactSyncStragglerRetry>
 		parked: (fields: Record<string, unknown>) => Promise<unknown>
 		joined?: (counts: Record<string, number>) => Promise<unknown>
@@ -148,34 +215,66 @@ export async function runOwnedStragglerRetry(
 	const membershipDigest = createHash('sha256')
 		.update(JSON.stringify(keys))
 		.digest('hex')
+	const source: ParkSource = {
+		code: [...new Set(items.map((item) => item.reason))].sort().join(','),
+		types: [...new Set(items.map((item) => item.event.type))].sort(),
+	}
+	const scheduledAt = (args.event as { ts?: number }).ts
 	const claim = (await args.step.run('straggler-owner-claim', () =>
 		args.store.update(key, (owner, now) =>
-			claimStragglerOwner(owner, ref, attempt, now, membershipDigest),
+			claimStragglerOwner(
+				owner,
+				ref,
+				attempt,
+				now,
+				args.runId,
+				membershipDigest,
+				source,
+				scheduledAt,
+			),
 		),
 	)) as Decision
 	const stop = async (decision: Decision) => {
 		if (decision.status !== 'parked') return { status: decision.status }
-		await args.step.run('straggler-owner-alert', () =>
-			args.parked({
+		await args.step.run('straggler-owner-alert', async () => {
+			const current = await args.store.update(key, (owner) => {
+				if (!owner) throw new Error('StragglerOwner: alert lost owner')
+				return { owner, value: owner }
+			})
+			if (
+				current.generation !== decision.owner.generation ||
+				current.state !== 'parked' ||
+				current.park?.alerted
+			)
+				return
+			const park = current.park
+			if (!park) throw new Error('StragglerOwner: alert lost park provenance')
+			await args.parked({
 				alertId: `straggler-parked:${decision.owner.generation}`,
 				contactId,
-				refusalCode:
-					decision.reason ??
-					[...new Set(items.map((item) => item.reason))].sort().join(','),
-				// An orphan's original items are not retained. Do not attribute
-				// a joining starter's unrelated types to that dead chain.
-				eventTypes:
-					decision.reason === 'owner-expired'
-						? []
-						: [...new Set(items.map((item) => item.event.type))].sort(),
+				refusalCode: park.code,
+				eventTypes: park.types,
 				attempts: decision.owner.next - 1,
 				firstAttemptAt: new Date(decision.owner.startedAt).toISOString(),
-				parkedAt: new Date(decision.now).toISOString(),
-			}),
-		)
-		if (decision.reason === 'owner-clock-skew')
+				parkedAt: new Date(park.at).toISOString(),
+			})
+			await args.store.update(key, (owner) => {
+				if (!owner)
+					throw new Error('StragglerOwner: alert acknowledgement lost owner')
+				return {
+					owner:
+						owner.generation === current.generation &&
+						owner.state === 'parked' &&
+						owner.park
+							? { ...owner, park: { ...owner.park, alerted: true } }
+							: owner,
+					value: undefined,
+				}
+			})
+		})
+		if (decision.owner.park?.code === 'owner-clock-skew')
 			throw new NonRetriableError(
-				'StragglerOwner: birth clock exceeds five-minute skew bound',
+				'StragglerOwner: clock skew requires operator review',
 			)
 		return { status: 'parked' as const }
 	}
@@ -203,11 +302,14 @@ export async function runOwnedStragglerRetry(
 			let status: Decision['status'] = 'stale'
 			if (
 				owner.generation === claim.owner.generation &&
-				owner.state === 'active' &&
-				owner.next === attempt + 1
+				owner.next === attempt + 1 &&
+				owner.claimedBy === args.runId
 			) {
-				status = now >= owner.deadline ? 'parked' : 'claimed'
-				if (status === 'parked') owner = { ...owner, state: 'parked' }
+				if (owner.state === 'parked') status = 'parked'
+				if (owner.state === 'active') {
+					status = now >= owner.deadline ? 'parked' : 'claimed'
+					if (status === 'parked') owner = parkOwner(owner, now, source)
+				}
 			}
 			return { owner, value: { status, owner, now } }
 		})
@@ -244,17 +346,18 @@ export async function runOwnedStragglerRetry(
 					return saved.value
 				},
 				sendEvent: (id, payload) => {
-					// Both legacy sends are single reschedule/retry events. Other
-					// step IDs, event names and batches keep their original envelope.
-					if (
-						id !== 'reschedule' ||
-						!payload ||
-						typeof payload !== 'object' ||
-						Array.isArray(payload) ||
-						!('name' in payload) ||
-						payload.name !== CONTACT_SYNC_RETRY_EVENT
-					)
-						return args.step.sendEvent(id, payload)
+					const isRetry = (value: unknown): boolean =>
+						Array.isArray(value)
+							? value.some(isRetry)
+							: !!value &&
+								typeof value === 'object' &&
+								'name' in value &&
+								value.name === CONTACT_SYNC_RETRY_EVENT
+					if (!isRetry(payload)) return args.step.sendEvent(id, payload)
+					if (id !== 'reschedule' || Array.isArray(payload))
+						throw new NonRetriableError(
+							'StragglerOwner: unexpected retry event envelope',
+						)
 					const next = payload as DrovrContactSyncRetryRequested & {
 						id: string
 						ts: number
@@ -271,7 +374,10 @@ export async function runOwnedStragglerRetry(
 					return args.step.sendEvent(id, {
 						...next,
 						id: `contact-sync-owned:${claim.owner.generation}:${next.data.attempt}`,
-						ts: Math.min(next.ts, claim.owner.deadline),
+						ts:
+							next.ts >= claim.owner.deadline
+								? claim.owner.deadline + STRAGGLER_DEADLINE_GRACE_MS
+								: next.ts,
 						data: {
 							...next.data,
 							stragglerOwner: {
@@ -298,7 +404,9 @@ export async function runOwnedStragglerRetry(
 				return {
 					owner:
 						owner.generation === claim.owner.generation &&
-						owner.state === 'active'
+						owner.state === 'active' &&
+						owner.next === attempt + 1 &&
+						owner.claimedBy === args.runId
 							? { ...owner, state: 'complete' }
 							: owner,
 					value: now,

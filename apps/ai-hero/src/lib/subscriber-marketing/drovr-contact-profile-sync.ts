@@ -10,6 +10,7 @@ import {
 	contactSyncStarterRequests,
 } from './contact-sync-straggler-retry'
 import { parseDrovrProfileSyncConfig } from './drovr-contact-profile-sync-requests'
+import { sendContactSyncStarters } from './contact-sync-starter-batches'
 
 import {
 	findEvergreenOffer,
@@ -483,7 +484,8 @@ export async function runContactProfileSync(args: {
 			(args.now ?? Date.now)(),
 		)) as number
 		// The retry may vouch for this version only if nothing was rejected.
-		await args.step.sendEvent(
+		await sendContactSyncStarters(
+			args.step,
 			'defer-refused',
 			contactSyncStarterRequests(
 				deferred,

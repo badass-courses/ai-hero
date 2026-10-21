@@ -26,7 +26,7 @@ export const drovrContactSyncRetry = inngest.createFunction(
 		concurrency: [{ limit: 4 }],
 	},
 	{ event: CONTACT_SYNC_RETRY_EVENT },
-	async ({ event, step, attempt, maxAttempts }) => {
+	async ({ event, step, attempt, maxAttempts, runId }) => {
 		const [
 			{ db, acquireDatabaseConnection },
 			{ env },
@@ -113,6 +113,7 @@ export const drovrContactSyncRetry = inngest.createFunction(
 		return Object.hasOwn(event.data, 'stragglerOwner')
 			? runOwnedStragglerRetry({
 					...retryArgs,
+					runId,
 					run: runContactSyncStragglerRetry,
 					store: createStragglerOwnerStore(acquireDatabaseConnection),
 					parked: (fields) =>

@@ -25,6 +25,7 @@ vi.mock('@/server/logger', () => ({
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 const start = Date.parse('2032-01-01T00:00:00Z')
+const STRAGGLER_DEADLINE_GRACE_MS = 60_000
 function item(contactId = 'synthetic-owner'): DeferredDrovrEvent {
 	return {
 		reason: 'event-not-live',
@@ -47,6 +48,7 @@ function item(contactId = 'synthetic-owner'): DeferredDrovrEvent {
 /** Atomic in-memory PORT only, not a MySQL lock/concurrency proof. */
 function fixture() {
 	let now = start
+	let sequence = 0
 	const owners = new Map<string, StragglerOwner>()
 	const store: StragglerOwnerStore = {
 		async update(key, change) {
@@ -76,6 +78,7 @@ function fixture() {
 		event: DrovrContactSyncRetryRequested,
 		run: typeof runContactSyncStragglerRetry = runContactSyncStragglerRetry,
 	) {
+		const runId = `synthetic-run-${++sequence}`
 		const cache = new Map<string, unknown>(),
 			sent: DrovrContactSyncRetryRequested[] = []
 		const step = {
@@ -91,6 +94,7 @@ function fixture() {
 		const execute = () =>
 			runOwnedStragglerRetry({
 				event,
+				runId,
 				step,
 				store,
 				run,
@@ -107,7 +111,7 @@ function fixture() {
 				parked,
 				joined,
 			})
-		return { execute, sent, cache }
+		return { execute, sent, cache, runId }
 	}
 	return {
 		owners,
@@ -329,7 +333,7 @@ describe('new straggler starter ownership (no-SQL ports)', () => {
 		await b.execute()
 		expect(
 			(b.sent[0] as DrovrContactSyncRetryRequested & { ts: number }).ts,
-		).toBe(start + STRAGGLER_PARK_AFTER_MS)
+		).toBe(start + STRAGGLER_PARK_AFTER_MS + STRAGGLER_DEADLINE_GRACE_MS)
 	})
 	it('park logging retry has a stable alert id and never starts transport again', async () => {
 		const h = fixture(),
@@ -360,6 +364,7 @@ describe('new straggler starter ownership (no-SQL ports)', () => {
 			sent: unknown[] = []
 		const result = await runOwnedStragglerRetry({
 			event: original,
+			runId: 'synthetic-source-off',
 			store: h.store,
 			run: runContactSyncStragglerRetry,
 			step: {
@@ -511,7 +516,10 @@ describe('new straggler starter ownership (no-SQL ports)', () => {
 		joining.data.items[0]!.event.idempotencyKey += ':unrelated'
 		const b = h.invocation(joining)
 		expect(await b.execute()).toEqual({ status: 'parked' })
-		expect([...h.owners.values()][0]).toEqual({ ...original, state: 'parked' })
+		expect([...h.owners.values()][0]).toMatchObject({
+			...original,
+			state: 'parked',
+		})
 		expect(h.deliver).toHaveBeenCalledOnce()
 		expect(b.sent).toHaveLength(0)
 		expect(h.acknowledge).not.toHaveBeenCalled()
@@ -618,12 +626,11 @@ describe('new straggler starter ownership (no-SQL ports)', () => {
 		expect(h.deliver).not.toHaveBeenCalled()
 	})
 	it.each([
-		['different-step', contactSyncRetryRequest([item()], 2, start)],
 		[
 			'reschedule',
 			{ name: 'unrelated/event', id: 'untouched', data: { value: 1 } },
 		],
-		['reschedule', [contactSyncRetryRequest([item()], 2, start)]],
+		['reschedule', [{ name: 'unrelated/event', data: {} }]],
 		['different-step', null],
 	])('passes unrelated sends through unchanged: %s', async (id, payload) => {
 		const h = fixture()
@@ -676,6 +683,176 @@ describe('new straggler starter ownership (no-SQL ports)', () => {
 			expect(key).toHaveLength(80)
 		}
 	})
+	it.each(['starter', 'continuation'])(
+		'committed %s claim re-executes after lost step state with the same run and one deliver',
+		async (kind) => {
+			const h = fixture()
+			let event = starter()
+			if (kind === 'continuation') {
+				const seed = h.invocation(event)
+				await seed.execute()
+				event = seed.sent[0]! as ReturnType<typeof starter>
+				h.deliver.mockClear()
+			}
+			let executions = 0
+			const a = h.invocation(event, async (args) => {
+				if (executions++ === 0)
+					throw new Error('synthetic committed claim result lost')
+				return runContactSyncStragglerRetry(args)
+			})
+			await expect(a.execute()).rejects.toThrow('claim result lost')
+			const owner = structuredClone([...h.owners.values()][0]!)
+			expect(h.deliver).not.toHaveBeenCalled()
+			a.cache.clear()
+			expect((await a.execute()).status).toBe('rescheduled')
+			expect(owner.claimedBy).toBe(a.runId)
+			expect(a.cache.get('straggler-owner-claim')).toMatchObject({
+				status: 'claimed',
+			})
+			expect([...h.owners.values()][0]).toEqual(owner)
+			expect(h.deliver).toHaveBeenCalledOnce()
+			expect(a.sent).toHaveLength(1)
+		},
+	)
+	it.each([
+		['different-step', contactSyncRetryRequest([item()], 2, start)],
+		['reschedule', [contactSyncRetryRequest([item()], 2, start)]],
+		[
+			'different-step',
+			[
+				{ name: 'unrelated/event' },
+				contactSyncRetryRequest([item()], 2, start),
+			],
+		],
+	])(
+		'fails closed when a retry escapes the single owned envelope: %s',
+		async (id, payload) => {
+			const h = fixture(),
+				a = h.invocation(starter(), async (args) => {
+					await args.step.sendEvent(id as string, payload)
+					return { status: 'delivered', accepted: 0, rejected: 0 }
+				})
+			await expect(a.execute()).rejects.toThrow(
+				'unexpected retry event envelope',
+			)
+			expect(a.sent).toHaveLength(0)
+		},
+	)
+	it('a committed park with lost step result is recovered and alerted, not swallowed as stale', async () => {
+		const h = fixture(),
+			a = h.invocation(starter())
+		h.deliver.mockRejectedValueOnce(new Error('synthetic first delivery fault'))
+		await expect(a.execute()).rejects.toThrow('delivery fault')
+		h.at(start + STRAGGLER_PARK_AFTER_MS)
+		h.parked.mockRejectedValueOnce(new Error('synthetic alert failed'))
+		await expect(a.execute()).rejects.toThrow('alert failed')
+		const park = structuredClone([...h.owners.values()][0]!.park)
+		a.cache.delete('deliver')
+		h.at(start + STRAGGLER_PARK_AFTER_MS + 1000)
+		expect(await a.execute()).toEqual({ status: 'parked' })
+		expect(h.parked.mock.calls[0]![0]).toEqual(h.parked.mock.calls[1]![0])
+		expect([...h.owners.values()][0]!.park).toEqual({ ...park, alerted: true })
+		expect(h.deliver).toHaveBeenCalledOnce()
+	})
+	it('a later continuation recovers an unaccepted park alert from persisted provenance', async () => {
+		const h = fixture(),
+			a = h.invocation(starter())
+		await a.execute()
+		h.at(start + STRAGGLER_PARK_AFTER_MS)
+		h.parked.mockRejectedValueOnce(new Error('synthetic exhausted alert'))
+		await expect(h.invocation(a.sent[0]!).execute()).rejects.toThrow(
+			'exhausted alert',
+		)
+		const later = a.sent[0]!
+		later.data.items[0]!.event.idempotencyKey += ':unrelated-retry'
+		h.at(start + STRAGGLER_PARK_AFTER_MS + 10_000)
+		expect(await h.invocation(later).execute()).toEqual({ status: 'parked' })
+		expect(h.parked.mock.calls[0]![0]).toEqual(h.parked.mock.calls[1]![0])
+		expect([...h.owners.values()][0]!.park?.alerted).toBe(true)
+		await h.invocation(later).execute()
+		expect(h.parked).toHaveBeenCalledTimes(2)
+	})
+	it('boundary wake with DB still behind the deadline quarantines once without a POST hot loop', async () => {
+		const h = fixture(),
+			a = h.invocation(starter())
+		await a.execute()
+		h.at(start + STRAGGLER_PARK_AFTER_MS - 1)
+		const b = h.invocation(a.sent[0]!)
+		await b.execute()
+		const before = h.deliver.mock.calls.length,
+			c = h.invocation(b.sent[0]!)
+		await expect(c.execute()).rejects.toBeInstanceOf(NonRetriableError)
+		expect(h.deliver).toHaveBeenCalledTimes(before)
+		expect(c.sent).toHaveLength(0)
+		expect(h.parked).toHaveBeenLastCalledWith(
+			expect.objectContaining({ refusalCode: 'owner-clock-skew' }),
+		)
+		expect([...h.owners.values()][0]!.deadline).toBe(
+			start + STRAGGLER_PARK_AFTER_MS,
+		)
+	})
+	it('bounded park provenance and accepted-alert flag fit the existing cursor even with a maximum claimant', () => {
+		const source = {
+			code: 'event-not-live',
+			types: Array.from(
+				{ length: 40 },
+				(_, i) => `synthetic.${'x'.repeat(60)}.${i}`,
+			),
+		}
+		const first = claimStragglerOwner(
+			undefined,
+			{ protocol: 1, startedAt: start },
+			1,
+			start,
+			'r'.repeat(64),
+			'f'.repeat(64),
+			source,
+		)
+		const parked = claimStragglerOwner(
+			first.owner,
+			{ protocol: 1, startedAt: start, generation: first.owner.generation },
+			2,
+			start + STRAGGLER_PARK_AFTER_MS,
+			's'.repeat(64),
+			undefined,
+			source,
+		).owner
+		expect(parked.park!.types).toEqual([])
+		expect(
+			JSON.stringify({ ...parked, park: { ...parked.park, alerted: true } })
+				.length,
+		).toBeLessThanOrEqual(500)
+	})
+	it('terminal completion cannot close a later claim in the same generation', async () => {
+		const h = fixture(),
+			key = stragglerOwnerKey('synthetic-owner')
+		const a = h.invocation(starter(), async () => {
+			const owner = h.owners.get(key)!
+			h.owners.set(key, {
+				...owner,
+				next: owner.next + 1,
+				claimedBy: 'later-run',
+			})
+			return { status: 'delivered', accepted: 0, rejected: 1 }
+		})
+		await a.execute()
+		expect(h.owners.get(key)).toMatchObject({
+			state: 'active',
+			next: 3,
+			claimedBy: 'later-run',
+		})
+	})
+	it('a completed same-run claim replay cannot birth a replacement generation', async () => {
+		const h = fixture(),
+			a = h.invocation(starter())
+		h.deliver.mockResolvedValueOnce({ accepted: 1, rejected: 0 })
+		await a.execute()
+		const original = structuredClone([...h.owners.values()][0])
+		a.cache.clear()
+		expect(await a.execute()).toEqual({ status: 'joined' })
+		expect([...h.owners.values()][0]).toEqual(original)
+		expect(h.deliver).toHaveBeenCalledOnce()
+	})
 	it('rejects malformed owner inputs before sending or claiming', () => {
 		expect(() =>
 			claimStragglerOwner(
@@ -683,6 +860,7 @@ describe('new straggler starter ownership (no-SQL ports)', () => {
 				{ protocol: 1, startedAt: Number.NaN },
 				1,
 				start,
+				'synthetic-claim',
 			),
 		).toThrow('clock')
 		expect(() =>
@@ -691,6 +869,7 @@ describe('new straggler starter ownership (no-SQL ports)', () => {
 				{ protocol: 1, startedAt: start, generation: 'lost' },
 				2,
 				start,
+				'synthetic-claim',
 			),
 		).toThrow('original owner')
 	})
