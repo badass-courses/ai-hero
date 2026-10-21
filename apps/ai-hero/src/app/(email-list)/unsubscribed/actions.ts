@@ -1,22 +1,22 @@
-'use server'
+"use server";
 
-import { redirect } from 'next/navigation'
-import { parseEmailPreferenceKey } from '@/coursebuilder/email-preferences'
+import { redirect } from "next/navigation";
+import { resolveUnsubscribePreference } from "@/coursebuilder/email-preferences";
 import {
-	getEmailPreferenceDefinition,
-	syncLocalEmailPreference,
-	unsubscribeLocalEmailPreferenceByUserId,
-	updateProviderEmailPreference,
-	validateKitPreferenceIdentity,
-} from '@/lib/email-preferences'
-import { log } from '@/server/logger'
+  getEmailPreferenceDefinition,
+  syncLocalEmailPreference,
+  unsubscribeLocalEmailPreferenceByUserId,
+  updateProviderEmailPreference,
+  validateKitPreferenceIdentity,
+} from "@/lib/email-preferences";
+import { log } from "@/server/logger";
 
-export type UnsubscribeActionState = { status: 'idle' | 'done' }
+export type UnsubscribeActionState = { status: "idle" | "done" };
 
 const readField = (formData: FormData, name: string) => {
-	const value = formData.get(name)
-	return typeof value === 'string' && value ? value : undefined
-}
+  const value = formData.get(name);
+  return typeof value === "string" && value ? value : undefined;
+};
 
 /**
  * The only place /unsubscribed writes. Opening the page changes nothing;
@@ -24,73 +24,83 @@ const readField = (formData: FormData, name: string) => {
  * fields, so nothing is trusted beyond what the server checks itself.
  */
 export async function unsubscribeAction(
-	_previous: UnsubscribeActionState,
-	formData: FormData,
+  _previous: UnsubscribeActionState,
+  formData: FormData,
 ): Promise<UnsubscribeActionState> {
-	const subscriberId = readField(formData, 'ck_subscriber_id')
-	const shKit = readField(formData, 'sh_kit')
-	const userId = readField(formData, 'userId')
-	const preferenceKey = parseEmailPreferenceKey(readField(formData, 'preference'))
-	const preferenceDefinition = getEmailPreferenceDefinition(preferenceKey)
+  const subscriberId = readField(formData, "ck_subscriber_id");
+  const shKit = readField(formData, "sh_kit");
+  const userId = readField(formData, "userId");
+  const resolution = resolveUnsubscribePreference(
+    readField(formData, "preference"),
+  );
 
-	if (subscriberId && shKit) {
-		const subscriber = await validateKitPreferenceIdentity({
-			subscriberId,
-			shKit,
-			source: 'unsubscribe-link',
-			route: '/unsubscribed',
-		})
+  // Only a known preference may write. Unknown or cohort values never fall
+  // back to the newsletter all-stop.
+  if (resolution.kind !== "known") {
+    redirect("/");
+  }
 
-		if (!subscriber) {
-			redirect('/')
-		}
+  const preferenceKey = resolution.key;
+  const preferenceDefinition = getEmailPreferenceDefinition(preferenceKey);
 
-		const state = await updateProviderEmailPreference({
-			subscriberId,
-			subscriberEmail: subscriber.email_address ?? undefined,
-			preference: preferenceDefinition,
-			subscribed: false,
-			source: 'unsubscribe-link',
-		})
+  if (subscriberId && shKit) {
+    const subscriber = await validateKitPreferenceIdentity({
+      subscriberId,
+      shKit,
+      source: "unsubscribe-link",
+      route: "/unsubscribed",
+    });
 
-		await syncLocalEmailPreference({
-			email: subscriber.email_address,
-			preference: preferenceDefinition,
-			subscribed: state.subscribed,
-			source: 'unsubscribe-link',
-		})
+    if (!subscriber) {
+      redirect("/");
+    }
 
-		await log.info('email-preferences.unsubscribe', {
-			source: 'unsubscribe-link',
-			provider: 'convertkit',
-			kitSubscriberId: subscriberId,
-			shKit,
-			preferenceKey,
-			result: state.status,
-		})
-	} else {
-		if (!userId) {
-			redirect('/')
-		}
+    const state = await updateProviderEmailPreference({
+      subscriberId,
+      subscriberEmail: subscriber.email_address ?? undefined,
+      preference: preferenceDefinition,
+      subscribed: false,
+      source: "unsubscribe-link",
+    });
 
-		const result = await unsubscribeLocalEmailPreferenceByUserId({
-			userId,
-			preference: preferenceDefinition,
-			source: 'unsubscribe-link',
-		})
+    await syncLocalEmailPreference({
+      email: subscriber.email_address,
+      preference: preferenceDefinition,
+      subscribed: state.subscribed,
+      source: "unsubscribe-link",
+    });
 
-		if (!result) {
-			redirect('/')
-		}
+    await log.info("email-preferences.unsubscribe", {
+      source: "unsubscribe-link",
+      provider: "convertkit",
+      kitSubscriberId: subscriberId,
+      shKit,
+      preferenceKey,
+      result: state.status,
+    });
+  } else {
+    if (!userId) {
+      redirect("/");
+    }
 
-		await log.info('email-preferences.unsubscribe', {
-			source: 'unsubscribe-link',
-			provider: 'local-db',
-			userId: result.userId,
-			preferenceKey,
-			result: 'unsubscribed',
-		})
-	}
+    const result = await unsubscribeLocalEmailPreferenceByUserId({
+      userId,
+      preference: preferenceDefinition,
+      source: "unsubscribe-link",
+    });
 
-	return { status: 'done' }
+    if (!result) {
+      redirect("/");
+    }
+
+    await log.info("email-preferences.unsubscribe", {
+      source: "unsubscribe-link",
+      provider: "local-db",
+      userId: result.userId,
+      preferenceKey,
+      result: "unsubscribed",
+    });
+  }
+
+  return { status: "done" };
 }
