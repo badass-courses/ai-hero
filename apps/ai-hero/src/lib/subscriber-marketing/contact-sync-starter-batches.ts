@@ -3,6 +3,12 @@ import { NonRetriableError } from 'inngest'
 import type { contactSyncStarterRequests } from './contact-sync-straggler-retry'
 
 type Starter = ReturnType<typeof contactSyncStarterRequests>[number]
+/** Producer-only kill switch. Marked histories always retain their reader. */
+export function stragglerOwnershipEnabled(
+	env: Readonly<Record<string, string | undefined>>,
+) {
+	return env.AIH_DROVR_STRAGGLER_OWNER === 'true'
+}
 export const STARTER_SEND_MAX_EVENTS = 100
 // Conservative application budget, below the smallest published 256-KiB
 // per-event plan limit; includes UTF-8 JSON brackets/commas, with headroom.
@@ -42,7 +48,8 @@ export async function sendContactSyncStarters(
 ) {
 	const batches = contactSyncStarterBatches(requests)
 	for (const [index, batch] of batches.entries())
-		// Keep the old first-step ID for already queued histories. Later IDs
-		// and layouts depend only on the retained input, never on wall time.
+		// Only chunk 0 reuses the legacy step. Later chunks can duplicate a
+		// legacy aggregate chain if enabled mid-run: enable with no bulk
+		// backfill in flight. Layout/IDs depend on input, never wall time.
 		await step.sendEvent(index === 0 ? id : `${id}:chunk:${index}`, batch)
 }

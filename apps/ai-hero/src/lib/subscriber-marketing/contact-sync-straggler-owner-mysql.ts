@@ -3,9 +3,10 @@ import type {
 	RowDataPacket,
 	ResultSetHeader,
 } from 'mysql2/promise'
-import type {
-	StragglerOwner,
-	StragglerOwnerStore,
+import {
+	isStragglerParkCode,
+	type StragglerOwner,
+	type StragglerOwnerStore,
 } from './contact-sync-straggler-owner'
 
 /** Only the reserved cursor namespace is used. No new schema or outbox writes.
@@ -54,9 +55,7 @@ export function createStragglerOwnerStore(
 									typeof owner.park !== 'object' ||
 									!Number.isSafeInteger(owner.park.at) ||
 									owner.park.at < 0 ||
-									typeof owner.park.code !== 'string' ||
-									owner.park.code.length > 64 ||
-									!/^[a-z-]+(?:,[a-z-]+)*$/.test(owner.park.code) ||
+									!isStragglerParkCode(owner.park.code) ||
 									!Array.isArray(owner.park.types) ||
 									!owner.park.types.every(
 										(type) => typeof type === 'string' && type.length <= 80,

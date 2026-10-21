@@ -9,6 +9,7 @@ import {
 } from './contact-sync-straggler-retry'
 import {
 	claimStragglerOwner,
+	isStragglerParkCode,
 	runOwnedStragglerRetry,
 	stragglerOwnerKey,
 	STRAGGLER_PARK_AFTER_MS,
@@ -852,6 +853,39 @@ describe('new straggler starter ownership (no-SQL ports)', () => {
 		expect(await a.execute()).toEqual({ status: 'joined' })
 		expect([...h.owners.values()][0]).toEqual(original)
 		expect(h.deliver).toHaveBeenCalledOnce()
+	})
+	it('queued marked histories retain the owner reader when the producer switch is unset', async () => {
+		const h = fixture(),
+			a = h.invocation(starter())
+		expect((await a.execute()).status).toBe('rescheduled')
+		expect(a.sent[0]!.data.stragglerOwner?.generation).toBe(
+			[...h.owners.values()][0]!.generation,
+		)
+	})
+	it.each([
+		'event2',
+		'x'.repeat(65),
+		'',
+		'event-not-live,,cold-start-unhandled',
+	])('normalizes an unreadable park code before persisting: %s', (code) => {
+		const first = claimStragglerOwner(
+			undefined,
+			{ protocol: 1, startedAt: start },
+			1,
+			start,
+			'synthetic-run',
+		)
+		const parked = claimStragglerOwner(
+			first.owner,
+			{ protocol: 1, startedAt: start, generation: first.owner.generation },
+			2,
+			start + STRAGGLER_PARK_AFTER_MS,
+			'next-run',
+			undefined,
+			{ code, types: [] },
+		).owner
+		expect(parked.park!.code).toBe('unknown')
+		expect(isStragglerParkCode(parked.park!.code)).toBe(true)
 	})
 	it('rejects malformed owner inputs before sending or claiming', () => {
 		expect(() =>

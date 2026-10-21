@@ -7,6 +7,7 @@ import {
 	sendContactSyncStarters,
 	STARTER_SEND_MAX_BYTES,
 	STARTER_SEND_MAX_EVENTS,
+	stragglerOwnershipEnabled,
 } from './contact-sync-starter-batches'
 
 function request(index = 0, firstName = '') {
@@ -81,6 +82,14 @@ it('an oversized individual event fails before ANY partial send and is never mem
 	).rejects.toBeInstanceOf(NonRetriableError)
 	expect(sendEvent).not.toHaveBeenCalled()
 })
+it.each([undefined, '', 'false', '1', 'TRUE', ' true ', 'true'])(
+	'producer switch opts in only for exact true: %s',
+	(value) => {
+		expect(
+			stragglerOwnershipEnabled({ AIH_DROVR_STRAGGLER_OWNER: value }),
+		).toBe(value === 'true')
+	},
+)
 it('empty input emits no send step', async () => {
 	const sendEvent = vi.fn()
 	await sendContactSyncStarters({ sendEvent }, 'defer', [])

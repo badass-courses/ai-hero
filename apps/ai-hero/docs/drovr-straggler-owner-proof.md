@@ -29,6 +29,20 @@ A final boundary wake is scheduled at the original deadline plus 60 seconds. The
 
 Dedupe namespaces are disjoint: legacy IDs start with `contact-sync-retry:`, starters with `contact-sync-starter:`, and owned continuations with `contact-sync-owned:`. Full-string equality cannot collide across these prefixes. Owned IDs contain the immutable generation and next attempt rather than relying on a digest repeated inside the provider's dedupe window.
 
+## Default-OFF deployment and explicit enablement
+
+`AIH_DROVR_STRAGGLER_OWNER` enables starter production only when its value is exactly `true`. Unset, `false`, misspelled and other values are OFF. OFF producers emit the exact legacy `contactSyncRetryRequest` envelopes, IDs, clocks and ACK scope: a single object for profile sync and the original aggregate array for bulk deferrals. The dual reader is unconditional, so turning production OFF does not abandon already marked histories. Merging into auto-deploying `main` is therefore not enablement.
+
+Enable in this order, with separate operational authorization:
+
+1. Deploy with this switch OFF. Retain the dual reader and existing owner rows.
+2. Complete and record an operator-approved write smoke through the actual PlanetScale/vtgate path. Historical local MySQL evidence is not this smoke.
+3. Obtain **Joel's explicit yes** to enable.
+4. Verify **no bulk backfill is mid-run** and keep that window quiescent through configuration rollout. Only then set `AIH_DROVR_STRAGGLER_OWNER=true` in the approved environment/deployment. Do not infer quiescence from an empty sample or toggle during active bulk work.
+5. Verify a genuine seven-field dataset receipt before claiming alert pickup is live.
+
+**In-flight duplicate hazard:** the first marked chunk reuses the old aggregate send-step ID. If a bulk run already memoized that legacy aggregate send and resumes with the switch ON, chunk 0 is skipped, but newly introduced `:chunk:1` and later steps can send owned starters for contacts already covered by the uncapped legacy chain. Retaining the first ID only protects chunk 0; it does not prevent this cross-protocol duplicate. Deploying OFF avoids introducing marked chunks at deploy, but the hazard still applies at enable time. Use the no-mid-bulk enable gate above; no migration/cancellation is implied. Use a quiescent window for planned flag-OFF rollback too: if an enabled bulk plan has sent its first chunk, the memoized first step can suppress the legacy aggregate while turning OFF skips remaining marked chunks. An emergency toggle therefore requires explicit in-flight inventory and separately approved recovery, not an assumption of gap-free rollback.
+
 ## Fan-out tradeoff
 
 This is a source bound, **not an observed batch-size distribution or savings forecast**. The standard backfill producer defaults to 50 source rows per page and emits messages of at most 100 events. The bulk consumer combines at most 100 messages. That path can therefore carry up to 5,000 distinct source contacts and 10,000 events in one bulk run. These are bounds derived from current producers, not a new receiver-enforced validation limit for manual or future payloads.
@@ -47,7 +61,7 @@ Use the existing structured logger/Axiom pipeline with ambient log context clear
 |---|---|
 | `alertId` | Stable `straggler-parked:<generation>` identifier. |
 | `contactId` | Opaque contact ID, never an address. |
-| `refusalCode` | Sorted comma-joined receiver refusal codes, or local `owner-expired` / `owner-clock-skew`. Local codes are not receiver wire verdicts. |
+| `refusalCode` | Sorted comma-joined receiver refusal codes, or local `owner-expired` / `owner-clock-skew`. A future unreadable code normalizes to `unknown` before writing, using the same predicate as the reader. Local/fallback codes are not receiver wire verdicts. |
 | `eventTypes` | Sorted distinct types available to this decision. Empty means unknown original types or a complete type list that cannot fit the cursor; a joining starter is not original provenance. |
 | `attempts` | Logical claims in this generation, not HTTP calls or elapsed age. Birth clock-skew quarantine has zero claims; boundary quarantine retains earlier claims. |
 | `firstAttemptAt` | Immutable validated/normalized original start, ISO UTC. |
@@ -77,4 +91,4 @@ An operator-provided read-only production DDL readback confirms `name varchar(25
 
 The unchanged bootstrap/locked-read/CAS SQL has an isolated real-MySQL concurrency proof, including one-claim contention and the old shared-lock-upgrade negative control. See the [documented InnoDB duplicate-lock behavior](https://docs.oracle.com/cd/E17952_01/mysql-8.0-en/innodb-locks-set.html). That is not a production performance or scheduler-causality proof. Unit tests cover orphan detection, terminal holds, skew boundaries, continuation envelope validation, serializable replay denials and adapter failures. Required exact-head CI and operator approval remain separate deployment gates.
 
-A safe rollback stops new marked starter production but retains the dual-reader handler for already queued marked histories. Do not delete owner rows, auto-unpark, cancel runs or revert to a marker-ignorant handler as rollback shortcuts.
+A safe rollback unsets `AIH_DROVR_STRAGGLER_OWNER` (or sets it to `false`) to stop new marked starter production, but retains the dual-reader handler for already queued marked histories. Do not delete owner rows, auto-unpark, cancel runs or revert to a marker-ignorant handler as rollback shortcuts.

@@ -46,6 +46,13 @@ export type StragglerOwnerStore = {
 export function stragglerOwnerKey(contactId: string) {
 	return `straggler-owner:${createHash('sha256').update(contactId).digest('hex')}`
 }
+export function isStragglerParkCode(value: unknown): value is string {
+	return (
+		typeof value === 'string' &&
+		value.length <= 64 &&
+		/^[a-z-]+(?:,[a-z-]+)*$/.test(value)
+	)
+}
 function parkOwner(
 	owner: StragglerOwner,
 	now: number,
@@ -54,7 +61,11 @@ function parkOwner(
 	const parked: StragglerOwner = {
 		...owner,
 		state: 'parked',
-		park: { ...source, at: now },
+		park: {
+			...source,
+			code: isStragglerParkCode(source.code) ? source.code : 'unknown',
+			at: now,
+		},
 	}
 	// Preserve bounded alert provenance, never a body/key roster. If types do
 	// not fit, record ALL types as unknown rather than retaining a partial list.
