@@ -1,6 +1,8 @@
 import { CONTACT_SYNC_RETRY_EVENT } from '@/inngest/events/drovr'
 import { inngest } from '@/inngest/inngest.server'
 import { DROVR_SEND_RETRIES } from '@/lib/subscriber-marketing/drovr-outbox'
+import { runOwnedStragglerRetry } from '@/lib/subscriber-marketing/contact-sync-straggler-owner'
+import { createStragglerOwnerStore } from '@/lib/subscriber-marketing/contact-sync-straggler-owner-mysql'
 import {
 	deliverHoldingUnsubscribed,
 	isUnsubscribedForHold,
@@ -26,9 +28,9 @@ export const drovrContactSyncRetry = inngest.createFunction(
 	{ event: CONTACT_SYNC_RETRY_EVENT },
 	async ({ event, step, attempt, maxAttempts }) => {
 		const [
-			{ db },
+			{ db, acquireDatabaseConnection },
 			{ env },
-			{ log },
+			{ log, withLogContext },
 			{ deliverBatchOrThrow },
 			{ drovrApiKeyForTenant, DROVR_AUTHORITY_TENANT_ID },
 			{ DrizzleCaptureMarketingRepository },
@@ -59,7 +61,7 @@ export const drovrContactSyncRetry = inngest.createFunction(
 			return { ingestUrl, apiKey }
 		}
 		const repository = new DrizzleCaptureMarketingRepository(db)
-		return runContactSyncStragglerRetry({
+		const retryArgs: Parameters<typeof runContactSyncStragglerRetry>[0] = {
 			event,
 			step,
 			env: process.env,
@@ -107,6 +109,20 @@ export const drovrContactSyncRetry = inngest.createFunction(
 						}),
 					),
 			}),
-		})
+		}
+		return Object.hasOwn(event.data, 'stragglerOwner')
+			? runOwnedStragglerRetry({
+					...retryArgs,
+					run: runContactSyncStragglerRetry,
+					store: createStragglerOwnerStore(acquireDatabaseConnection),
+					parked: (fields) =>
+						withLogContext({}, () => log.warn('aih.drovr_sync.parked', fields)),
+					// Different sets are gap-CANDIDATE upper bounds, never exact new-key counts.
+					joined: (counts) =>
+						withLogContext({}, () =>
+							log.info('aih.drovr_sync.joined_membership_candidate', counts),
+						),
+				})
+			: runContactSyncStragglerRetry(retryArgs)
 	},
 )

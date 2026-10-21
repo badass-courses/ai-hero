@@ -80,7 +80,7 @@ vi.mock('@/lib/subscriber-marketing/drovr-outbox-live', () => ({
 	settleDrovrOutboxLive: mocks.settle,
 }))
 
-import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
+import { contactSyncStarterRequests } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
 import type { DeferredDrovrEvent } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
 
 import {
@@ -750,21 +750,14 @@ describe('backfill refusals follow the push contract (§4)', () => {
 		// a cold start goes at once, since the retry births the actor.
 		expect(sent).toEqual([
 			[
-				contactSyncRetryRequest(
+				...contactSyncStarterRequests(
 					[{ event: notLive, reason: 'event-not-live' }] as DeferredDrovrEvent[],
-					1,
 					now,
 				),
-				{
-					...contactSyncRetryRequest(
-						[
-							{ event: cold, reason: 'cold-start-unhandled' },
-						] as DeferredDrovrEvent[],
-						1,
-						now,
-					),
-					ts: now,
-				},
+				...contactSyncStarterRequests(
+					[{ event: cold, reason: 'cold-start-unhandled' }] as DeferredDrovrEvent[],
+					now,
+				).map((request) => ({ ...request, ts: now })),
 			],
 		])
 		expect((sent[0] as { ts: number }[])[0]?.ts).toBe(now + 60 * 60 * 1000)

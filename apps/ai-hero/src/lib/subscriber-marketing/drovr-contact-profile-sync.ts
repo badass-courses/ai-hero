@@ -7,7 +7,7 @@ import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
 import type { ContactProfileVersion } from './contact-profile-version'
 import {
 	birthThenRedeliver,
-	contactSyncRetryRequest,
+	contactSyncStarterRequests,
 } from './contact-sync-straggler-retry'
 import { parseDrovrProfileSyncConfig } from './drovr-contact-profile-sync-requests'
 
@@ -485,9 +485,8 @@ export async function runContactProfileSync(args: {
 		// The retry may vouch for this version only if nothing was rejected.
 		await args.step.sendEvent(
 			'defer-refused',
-			contactSyncRetryRequest(
+			contactSyncStarterRequests(
 				deferred,
-				1,
 				at,
 				rejected === 0 ? { contactId, profileVersion } : undefined,
 			),
