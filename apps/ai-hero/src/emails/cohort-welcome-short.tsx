@@ -13,6 +13,7 @@ import {
 	cohortWelcomeSubject,
 	type CohortWelcomeDetails,
 } from '@/lib/cohort-welcome-details'
+import TeamInviteSection from './team-invite-section'
 
 export default function CohortWelcomeShort({
 	details,
@@ -20,12 +21,15 @@ export default function CohortWelcomeShort({
 	quantity = 1,
 	userFirstName,
 	url,
+	inviteUrl,
 }: {
 	details: CohortWelcomeDetails
 	variant: 'individual' | 'team' | 'seat'
 	quantity?: number
 	userFirstName?: string
 	url: string
+	/** Team buyer only. */
+	inviteUrl?: string
 }) {
 	const baseUrl = process.env.NEXT_PUBLIC_URL
 	return (
@@ -44,12 +48,12 @@ export default function CohortWelcomeShort({
 						<>
 							<Text>
 								You bought {quantity} {quantity === 1 ? 'seat' : 'seats'} for{' '}
-								{details.title}. Invite your team from your{' '}
-								<Link href={`${baseUrl}/team`}>team dashboard</Link>.
+								{details.title}.
 							</Text>
-							<Text>
-								If you're joining too, claim a seat for yourself there.
-							</Text>
+							<TeamInviteSection
+								inviteUrl={inviteUrl}
+								teamUrl={`${baseUrl}/team`}
+							/>
 						</>
 					) : (
 						<Text>

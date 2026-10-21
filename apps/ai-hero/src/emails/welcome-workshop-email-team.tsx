@@ -12,9 +12,13 @@ import {
 	Text,
 } from '@react-email/components'
 
+import TeamInviteSection from './team-invite-section'
+
 export interface WelcomeWorkshopEmailTeamProps {
 	workshopTitle: string
 	url: string
+	/** Team invite link built from the purchase's bulk coupon. */
+	inviteUrl?: string
 	quantity: number
 	userFirstName?: string
 	supportEmail?: string
@@ -23,6 +27,7 @@ export interface WelcomeWorkshopEmailTeamProps {
 export default function WelcomeWorkshopEmailForTeam({
 	workshopTitle,
 	url,
+	inviteUrl,
 	quantity,
 	userFirstName,
 	supportEmail = env.NEXT_PUBLIC_SUPPORT_EMAIL,
@@ -55,24 +60,15 @@ export default function WelcomeWorkshopEmailForTeam({
 								{quantity === 1 ? 'seat' : 'seats'} to{' '}
 								<strong>{workshopTitle}</strong>.
 							</Text>
-
-							<Text style={text}>
-								(You will need to redeem a seat on your team.)
-							</Text>
+							<TeamInviteSection
+								inviteUrl={inviteUrl}
+								teamUrl={teamDashboardUrl}
+								textStyle={text}
+								linkStyle={link}
+							/>
 							<Section style={{ textAlign: 'center', marginTop: '20px' }}>
 								<Link href={url} style={buttonStyle}>
 									Get Started with {workshopTitle}
-								</Link>
-							</Section>
-						</Section>
-
-						<Section style={contentSection}>
-							<Text style={text}>
-								Manage your team seats anytime from your dashboard:
-							</Text>
-							<Section style={{ textAlign: 'center', marginTop: '20px' }}>
-								<Link href={teamDashboardUrl} style={buttonStyle}>
-									Manage Seats
 								</Link>
 							</Section>
 						</Section>
