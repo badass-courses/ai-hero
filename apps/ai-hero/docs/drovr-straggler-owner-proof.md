@@ -32,6 +32,14 @@ Park is permanent. Joined starters cannot unpark or silently replace that genera
 
 The no-SQL run used synthetic fixtures, stubbed ports and a network guard. The native project typecheck also passed after building the two required local workspace packages. No production/payment test or source flag change occurred. These are targeted unit/model checks, not an all-repository suite or native/N7 lifecycle proof.
 
+## Full CI-filter follow-up
+
+CI exposed a missed handler-level expectation in `src/inngest/functions/drovr-contact-profile-sync.test.ts`: new starter fan-out is intentionally an event **array**, even for one contact, while the test still expected the old starter object. The test now checks the one-element array, protocol marker, unchanged items and original ACK scope. A separate explicit assertion confirms an **unmarked legacy continuation remains exactly one old event object**, with its original ID/body/clock and no marker. No production behavior changed in this follow-up.
+
+The **entire** CI `drovr, subscriber-marketing and evergreen unit suites` command was then run locally through `muster-heavy`, using all nine CI path filters and `--maxWorkers=4` (`--minWorkers=1`). Result: **3,013 passed, 435 guarded MySQL cases skipped, zero failed**, across 197 passed / 25 skipped files in 28.58s. No SQL URL or fixture load was supplied. Counts are verified from individual assertion statuses and the console summary: this Vitest version's top-level JSON counters misleadingly count skipped cases as passed. This replaces the earlier targeted-only coverage as the current unit-suite evidence. Hosted exact-head CI still must be checked separately.
+
+The closed PR2 proposal has been removed from the PR and retained only in lane evidence; no PR2 implementation is planned.
+
 ## Approved isolated MySQL proof
 
 One freshly authorized process on the retained local fixture, maximum2 connections, **55ms** measured harness duration, peak2 observed sockets, zero non-fixture network. Three new synthetic keys only, explicit approved schema, no DDL/import/HTTP/service/container/config changes. The older retained synthetic leftover was not read/matched/deleted.

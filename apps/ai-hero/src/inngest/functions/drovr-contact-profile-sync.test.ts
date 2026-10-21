@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { ContactProfileSnapshot } from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
 
-import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
+import { contactSyncStarterRequests } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
 import {
 	contactProfileContentHash,
 	runContactProfileSync,
@@ -165,13 +165,23 @@ describe('drovr contact profile sync function', () => {
 		expect(h.sent).toEqual([
 			{
 				id: 'defer-refused',
-				// Nothing was rejected, so the retry may vouch for version 4.
-				payload: contactSyncRetryRequest(deferred, 1, now, {
+				// New starters are a per-contact event array, even for one contact.
+				// Nothing was rejected, so this retry may vouch for version 4.
+				payload: contactSyncStarterRequests(deferred, now, {
 					contactId: 'contact-1',
 					profileVersion: 4,
 				}),
 			},
 		])
+		const payload = h.sent[0]!.payload as ReturnType<typeof contactSyncStarterRequests>
+		expect(Array.isArray(payload)).toBe(true)
+		expect(payload).toHaveLength(1)
+		expect(payload[0]!.data).toEqual({
+			items: deferred,
+			attempt: 1,
+			acknowledge: { contactId: 'contact-1', profileVersion: 4 },
+			stragglerOwner: { protocol: 1, startedAt: now },
+		})
 		// That actor exists, it is on v1: never a birth.
 		expect(h.birth).not.toHaveBeenCalled()
 	})

@@ -267,6 +267,10 @@ describe('new straggler starter ownership (no-SQL ports)', () => {
 		await a.execute()
 		expect(h.owners.size).toBe(0)
 		expect([...a.cache.keys()]).toEqual(['now', 'deliver'])
+		// Unlike a new starter batch, the unmarked continuation stays one
+		// event object with the exact legacy ID, body, clock and no marker.
+		expect(Array.isArray(a.sent[0])).toBe(false)
+		expect(a.sent).toEqual([contactSyncRetryRequest([item()], 54, start)])
 		expect(a.sent[0]!.data.attempt).toBe(54)
 		expect(a.sent[0]!.data.stragglerOwner).toBeUndefined()
 		expect(h.warn).toHaveBeenCalledOnce()
