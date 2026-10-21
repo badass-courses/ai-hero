@@ -13,7 +13,7 @@ const deadlock = () =>
 describe('runWithDeadlockRetry', () => {
 	it('retries after a deadlock and returns the next result', async () => {
 		const fn = vi
-			.fn<() => Promise<string>>()
+			.fn<[], Promise<string>>()
 			.mockRejectedValueOnce(deadlock())
 			.mockResolvedValueOnce('ok')
 		await expect(runWithDeadlockRetry(fn)).resolves.toBe('ok')
@@ -22,7 +22,7 @@ describe('runWithDeadlockRetry', () => {
 
 	it('rethrows the deadlock after all attempts', async () => {
 		const error = deadlock()
-		const fn = vi.fn<() => Promise<string>>().mockRejectedValue(error)
+		const fn = vi.fn<[], Promise<string>>().mockRejectedValue(error)
 		await expect(runWithDeadlockRetry(fn)).rejects.toBe(error)
 		expect(MAX_STEP_ATTEMPTS).toBe(3)
 		expect(fn).toHaveBeenCalledTimes(3)
@@ -30,7 +30,7 @@ describe('runWithDeadlockRetry', () => {
 
 	it('does not retry a non-deadlock error', async () => {
 		const error = new Error('boom')
-		const fn = vi.fn<() => Promise<string>>().mockRejectedValue(error)
+		const fn = vi.fn<[], Promise<string>>().mockRejectedValue(error)
 		await expect(runWithDeadlockRetry(fn)).rejects.toBe(error)
 		expect(fn).toHaveBeenCalledTimes(1)
 	})
