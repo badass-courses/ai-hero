@@ -180,6 +180,27 @@ function checkoutSession(
 	} as unknown as Stripe.Checkout.Session
 }
 
+const MAX_STEP_ATTEMPTS = 3
+
+function isDeadlock(error: unknown): boolean {
+	// Walk the cause chain: drivers/ORMs wrap the mysql error.
+	for (let e: any = error, i = 0; e && i < 5; e = e.cause, i++) {
+		if (e.errno === 1213 || e.code === 'ER_LOCK_DEADLOCK') return true
+	}
+	return false
+}
+
+/** Mirrors Inngest step retries, limited to InnoDB deadlock victims. */
+async function runWithDeadlockRetry<T>(fn: () => Promise<T>): Promise<T> {
+	for (let attempt = 1; ; attempt++) {
+		try {
+			return await fn()
+		} catch (error) {
+			if (attempt >= MAX_STEP_ATTEMPTS || !isDeadlock(error)) throw error
+		}
+	}
+}
+
 function inngestLikeStep(options: { beforeStep?: (id: string) => Promise<void> } = {}) {
 	const sent: { id: string; payload: any }[] = []
 	const ran: string[] = []
@@ -187,7 +208,7 @@ function inngestLikeStep(options: { beforeStep?: (id: string) => Promise<void> }
 		run: async (id, fn) => {
 			await options.beforeStep?.(id)
 			ran.push(id)
-			const output = await fn()
+			const output = await runWithDeadlockRetry(fn)
 			return output === undefined ? undefined : JSON.parse(JSON.stringify(output))
 		},
 		sendEvent: async (id, payload) => {
