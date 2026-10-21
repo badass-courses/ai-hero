@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { persistPurchaseGeoWrite } from '@/lib/admin-sales-globe-stripe-geo'
 import { createRequire } from 'node:module'
+import { runWithDeadlockRetry } from './deadlock-retry.test-support'
 import {
 	coupon,
 	contentResource,
@@ -178,27 +179,6 @@ function checkoutSession(
 		total_details: { amount_discount: 0, amount_shipping: 0, amount_tax: 0 },
 		...overrides,
 	} as unknown as Stripe.Checkout.Session
-}
-
-const MAX_STEP_ATTEMPTS = 3
-
-function isDeadlock(error: unknown): boolean {
-	// Walk the cause chain: drivers/ORMs wrap the mysql error.
-	for (let e: any = error, i = 0; e && i < 5; e = e.cause, i++) {
-		if (e.errno === 1213 || e.code === 'ER_LOCK_DEADLOCK') return true
-	}
-	return false
-}
-
-/** Mirrors Inngest step retries, limited to InnoDB deadlock victims. */
-async function runWithDeadlockRetry<T>(fn: () => Promise<T>): Promise<T> {
-	for (let attempt = 1; ; attempt++) {
-		try {
-			return await fn()
-		} catch (error) {
-			if (attempt >= MAX_STEP_ATTEMPTS || !isDeadlock(error)) throw error
-		}
-	}
 }
 
 function inngestLikeStep(options: { beforeStep?: (id: string) => Promise<void> } = {}) {
