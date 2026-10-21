@@ -1,3 +1,4 @@
+import { posix } from 'node:path'
 import { cache } from 'react'
 import { fetchGithubMarkdownFile } from '@/lib/github-markdown'
 import { metaDescription } from '@/lib/meta-description'
@@ -7,19 +8,24 @@ import remarkParse from 'remark-parse'
 import { unified } from 'unified'
 
 /**
- * Sandcastle's docs are its README: one long file on GitHub, which this module
- * splits into a page per `##` section so /sandcastle reads like a docs site
- * while the repo stays the only place the docs are written. The landing page's
- * facts (the lead, the three steps, the provider table, the example) come out
- * of the same parse, so it cannot drift from the docs either.
+ * Sandcastle's docs live in its repo, and /sandcastle renders them, so the
+ * repo stays the only place they are written. `docs/guide/toc.json` lists the
+ * pages (`docs/guide/<slug>.md`) and groups them for the sidebar. The landing
+ * page's facts (the lead, the three steps, the provider table, the example)
+ * come out of the same pages, so it cannot drift from the docs either.
  *
- * Fetched from the raw host on ISR. A push to the README revalidates at once
+ * Until the repo has `toc.json`, the docs are still one README, split here
+ * into a page per `##` section. That path goes once the split lands upstream.
+ *
+ * Fetched from the raw host on ISR. A push to the docs revalidates at once
  * through the github-source webhook; the hourly ISR window is the backstop.
  */
 export const SANDCASTLE_OWNER = 'mattpocock'
 export const SANDCASTLE_REPO = 'sandcastle'
 const SANDCASTLE_REF = 'main'
 const SANDCASTLE_README = 'README.md'
+export const SANDCASTLE_GUIDE_DIR = 'docs/guide'
+const SANDCASTLE_TOC = `${SANDCASTLE_GUIDE_DIR}/toc.json`
 
 export const SANDCASTLE_DOCS_REVALIDATE_SECONDS = 3600
 export const SANDCASTLE_DOCS_CACHE_TAG = 'sandcastle-docs'
@@ -76,6 +82,17 @@ export type SandcastleDocsPage = {
 	body: string
 	/** The same body as plain markdown, for the page's `.md` twin. */
 	markdown: string
+	/** The file on GitHub the page is written in, for "Edit this page". */
+	sourceUrl: string
+}
+
+/**
+ * `docs/guide/toc.json`: the page a new reader opens first, then the sidebar's
+ * groups, each a title and its pages by slug (`docs/guide/<slug>.md`).
+ */
+export type SandcastleToc = {
+	start: string
+	groups: { title: string; pages: string[] }[]
 }
 
 export type SandcastleProvider = {
@@ -159,6 +176,87 @@ function applyEdits(source: string, edits: Edit[], from: number, to: number) {
 
 function isRepoRelative(url: string) {
 	return !/^([a-z][a-z0-9+.-]*:|#|\/)/i.test(url)
+}
+
+/**
+ * The docs are markdown, the page compiles them as MDX: a bare
+ * `Record<string, string>` in a table cell would parse as JSX and drop the
+ * whole page to the unhighlighted fallback. Escaped, it is text.
+ */
+function mdxEscapes(source: string, node: MdNode): Edit[] {
+	if (node.type !== 'text' && node.type !== 'html') return []
+	const { start, end } = offsets(node)
+	const edits: Edit[] = []
+	for (let at = start; at < end; at++) {
+		if ('<{}'.includes(source[at]!) && source[at - 1] !== '\\') {
+			edits.push({ start: at, end: at, text: '\\', mdx: true })
+		}
+	}
+	return edits
+}
+
+/** Point a link node at `target`, editing only its URL. */
+function linkEdit(source: string, node: MdNode, target: string): Edit | null {
+	const { start, end } = offsets(node)
+	const urlAt = source.slice(start, end).lastIndexOf(`(${node.url}`)
+	if (urlAt < 0) return null
+	const urlStart = start + urlAt + 1
+	return {
+		start: urlStart,
+		end: urlStart + (node.url?.length ?? 0),
+		text: target,
+	}
+}
+
+/** Slices of `source` with `edits` applied, plain or MDX-escaped. */
+function sourceSlicer(source: string, edits: Edit[]) {
+	edits.sort((a, b) => a.start - b.start)
+	const markdownEdits = edits.filter((edit) => !edit.mdx)
+	return (nodes: MdNode[], { mdx = true } = {}) => {
+		const first = nodes[0]
+		const last = nodes[nodes.length - 1]
+		return first && last
+			? applyEdits(
+					source,
+					mdx ? edits : markdownEdits,
+					offsets(first).start,
+					offsets(last).end,
+				)
+			: ''
+	}
+}
+
+function describe(body: MdNode[]) {
+	return (
+		metaDescription(
+			firstSentence(
+				introText(body.find((block) => block.type === 'paragraph')),
+			),
+		) ?? ''
+	)
+}
+
+/** The provider table: the first one with these columns, wherever it sits. */
+function findProviders(blocks: MdNode[]) {
+	let providers: SandcastleProvider[] = []
+	for (const block of blocks) {
+		walk(block, (node) => {
+			if (providers.length === 0 && node.type === 'table') {
+				providers = providerRows(node)
+			}
+		})
+	}
+	return providers
+}
+
+function firstTypeScript(blocks: MdNode[]) {
+	return (
+		findFirst(
+			blocks,
+			(node) =>
+				node.type === 'code' && ['ts', 'typescript'].includes(node.lang ?? ''),
+		)?.value ?? null
+	)
 }
 
 function introText(node: MdNode | undefined) {
@@ -290,7 +388,7 @@ export function parseSandcastleReadme(readme: string): SandcastleDocs {
 
 	const edits: Edit[] = []
 	walk(root, (node) => {
-		const { start, end } = offsets(node)
+		const { start } = offsets(node)
 		if (
 			node.type === 'heading' &&
 			(node.depth ?? 0) > 2 &&
@@ -300,56 +398,18 @@ export function parseSandcastleReadme(readme: string): SandcastleDocs {
 			// `###` becomes `##`: the README's `##` is the page's `h1`.
 			edits.push({ start, end: start + 1, text: '' })
 		}
-		if (node.type === 'text' || node.type === 'html') {
-			// The README is markdown, the page compiles it as MDX: a bare
-			// `Record<string, string>` in a table cell would parse as JSX and drop
-			// the whole page to the unhighlighted fallback. Escaped, it is text.
-			for (let at = start; at < end; at++) {
-				if ('<{}'.includes(readme[at]!) && readme[at - 1] !== '\\') {
-					edits.push({ start: at, end: at, text: '\\', mdx: true })
-				}
-			}
-		}
+		edits.push(...mdxEscapes(readme, node))
 		if (node.type === 'link' && node.url) {
 			const target = node.url.startsWith('#')
 				? anchors.get(node.url.slice(1))
 				: isRepoRelative(node.url)
 					? `${SANDCASTLE_REPO_URL}/blob/${SANDCASTLE_REF}/${node.url.replace(/^\.\//, '')}`
 					: null
-			const source = readme.slice(start, end)
-			const urlAt = source.lastIndexOf(`(${node.url}`)
-			if (target && urlAt >= 0) {
-				const urlStart = start + urlAt + 1
-				edits.push({
-					start: urlStart,
-					end: urlStart + node.url.length,
-					text: target,
-				})
-			}
+			const edit = target ? linkEdit(readme, node, target) : null
+			if (edit) edits.push(edit)
 		}
 	})
-	edits.sort((a, b) => a.start - b.start)
-
-	const markdownEdits = edits.filter((edit) => !edit.mdx)
-	const sourceOf = (nodes: MdNode[], { mdx = true } = {}) => {
-		const first = nodes[0]
-		const last = nodes[nodes.length - 1]
-		return first && last
-			? applyEdits(
-					readme,
-					mdx ? edits : markdownEdits,
-					offsets(first).start,
-					offsets(last).end,
-				)
-			: ''
-	}
-
-	const describe = (body: MdNode[]) =>
-		metaDescription(
-			firstSentence(
-				introText(body.find((block) => block.type === 'paragraph')),
-			),
-		) ?? ''
+	const sourceOf = sourceSlicer(readme, edits)
 
 	const startSections = sectionBlocks.filter((section) => section.isStart)
 	const start: SandcastleDocsPage | null =
@@ -368,6 +428,7 @@ export function parseSandcastleReadme(readme: string): SandcastleDocs {
 							sourceOf([heading, ...body], { mdx: false }),
 						)
 						.join('\n\n'),
+					sourceUrl: SANDCASTLE_README_URL,
 				}
 			: null
 	const pages = sectionBlocks
@@ -380,6 +441,7 @@ export function parseSandcastleReadme(readme: string): SandcastleDocs {
 			description: describe(body),
 			body: sourceOf(body),
 			markdown: sourceOf(body, { mdx: false }),
+			sourceUrl: SANDCASTLE_README_URL,
 		}))
 	const groups = [
 		...SANDCASTLE_DOCS_GROUPS.map(({ title }) => title),
@@ -405,16 +467,8 @@ export function parseSandcastleReadme(readme: string): SandcastleDocs {
 		groups,
 		lead: introText(intro.find((block) => block.type === 'paragraph')),
 		steps: (steps?.children ?? []).map((item) => sourceOf(item.children ?? [])),
-		providers: providerRows(
-			findFirst(blocksOf('sandbox-providers'), (node) => node.type === 'table'),
-		),
-		example:
-			findFirst(
-				blocksOf('quick-start'),
-				(node) =>
-					node.type === 'code' &&
-					['ts', 'typescript'].includes(node.lang ?? ''),
-			)?.value ?? null,
+		providers: findProviders(blocksOf('sandbox-providers')),
+		example: firstTypeScript(blocksOf('quick-start')),
 		license:
 			introText(
 				blocksOf(LICENSE_SECTION).find((block) => block.type === 'paragraph'),
@@ -422,17 +476,184 @@ export function parseSandcastleReadme(readme: string): SandcastleDocs {
 	}
 }
 
-export const getSandcastleDocs = cache(async () => {
-	const readme = await fetchGithubMarkdownFile({
+/** The README's License section, which the landing page closes on. */
+function readmeLicense(readme: string) {
+	const blocks = (parser.parse(readme) as MdNode).children ?? []
+	const heading = blocks.findIndex(
+		(node) =>
+			node.type === 'heading' &&
+			node.depth === 2 &&
+			slugifyHeading(plainText(node)) === LICENSE_SECTION,
+	)
+	const paragraph = heading < 0 ? undefined : blocks[heading + 1]
+	return paragraph?.type === 'paragraph' ? introText(paragraph) || null : null
+}
+
+/**
+ * Build the docs from `docs/guide`: one page per `toc.json` slug, in its
+ * order. A page's `# Title` is its title; the rest is its body. Links between
+ * pages become site links, other repo-relative links open on GitHub.
+ */
+export function parseSandcastleGuide({
+	toc,
+	files,
+	readme,
+}: {
+	toc: SandcastleToc
+	/** Each listed page's markdown, by slug. */
+	files: Record<string, string>
+	readme: string
+}): SandcastleDocs {
+	const groupOf = new Map(
+		toc.groups.flatMap((group) =>
+			group.pages.map((slug) => [slug, group.title] as const),
+		),
+	)
+	const parsed = [toc.start, ...groupOf.keys()].map((slug) => {
+		const source = files[slug] ?? ''
+		const root = parser.parse(source) as MdNode
+		const [first, ...rest] = root.children ?? []
+		const hasTitle = first?.type === 'heading' && first.depth === 1
+		return {
+			slug,
+			source,
+			root,
+			file: `${SANDCASTLE_GUIDE_DIR}/${slug}.md`,
+			href: `${SANDCASTLE_DOCS_PATH}/${slug}`,
+			title: hasTitle ? plainText(first) : slug,
+			blocks: hasTitle ? rest : (root.children ?? []),
+		}
+	})
+
+	// `<repo path>#<GitHub anchor>` → where it lives on this site. GitHub
+	// numbers a repeated heading (`options`, `options-1`); the site's ids do
+	// not, so a repeat lands on the page's first heading of that name.
+	const anchors = new Map<string, string>()
+	for (const page of parsed) {
+		anchors.set(page.file, page.href)
+		const counts = new Map<string, number>()
+		for (const block of page.blocks) {
+			walk(block, (node) => {
+				if (node.type !== 'heading') return
+				const text = plainText(node)
+				const base = githubAnchor(text)
+				const count = counts.get(base) ?? 0
+				counts.set(base, count + 1)
+				anchors.set(
+					`${page.file}#${count === 0 ? base : `${base}-${count}`}`,
+					`${page.href}#${slugifyHeading(text)}`,
+				)
+			})
+		}
+	}
+	const resolveLink = (url: string, fromFile: string) => {
+		if (!url.startsWith('#') && !isRepoRelative(url)) return null
+		const [path = '', hash] = url.split('#')
+		const file = path
+			? posix.normalize(posix.join(posix.dirname(fromFile), path))
+			: fromFile
+		return (
+			anchors.get(hash ? `${file}#${hash}` : file) ??
+			anchors.get(file) ??
+			`${SANDCASTLE_REPO_URL}/blob/${SANDCASTLE_REF}/${file}${hash ? `#${hash}` : ''}`
+		)
+	}
+
+	const pages = parsed.map((page) => {
+		const edits: Edit[] = []
+		walk(page.root, (node) => {
+			edits.push(...mdxEscapes(page.source, node))
+			if (node.type === 'link' && node.url) {
+				const target = resolveLink(node.url, page.file)
+				const edit = target ? linkEdit(page.source, node, target) : null
+				if (edit) edits.push(edit)
+			}
+		})
+		const sourceOf = sourceSlicer(page.source, edits)
+		return {
+			...page,
+			sourceOf,
+			page: {
+				title: page.title,
+				slug: page.slug,
+				href: page.href,
+				group:
+					page.slug === toc.start
+						? SANDCASTLE_DOCS_START.group
+						: (groupOf.get(page.slug) ?? UNFILED_GROUP),
+				description: describe(page.blocks),
+				body: sourceOf(page.blocks),
+				markdown: sourceOf(page.blocks, { mdx: false }),
+				sourceUrl: `${SANDCASTLE_REPO_URL}/blob/${SANDCASTLE_REF}/${page.file}`,
+			} satisfies SandcastleDocsPage,
+		}
+	})
+
+	const [start] = pages
+	const steps = start?.blocks.find(
+		(block) => block.type === 'list' && block.ordered,
+	)
+	return {
+		pages: pages.map(({ page }) => page),
+		start: start?.page ?? null,
+		groups: toc.groups
+			.map((group) => ({
+				title: group.title,
+				pages: pages
+					.filter(({ slug }) => group.pages.includes(slug))
+					.map(({ page }) => page),
+			}))
+			.filter((group) => group.pages.length > 0),
+		lead: introText(start?.blocks.find((block) => block.type === 'paragraph')),
+		steps: (steps?.children ?? []).map(
+			(item) => start?.sourceOf(item.children ?? []) ?? '',
+		),
+		providers: findProviders(pages.flatMap(({ blocks }) => blocks)),
+		example: firstTypeScript(start?.blocks ?? []),
+		license: readmeLicense(readme),
+	}
+}
+
+function fetchRepoFile(path: string) {
+	return fetchGithubMarkdownFile({
 		owner: SANDCASTLE_OWNER,
 		repo: SANDCASTLE_REPO,
-		path: SANDCASTLE_README,
+		path,
 		ref: SANDCASTLE_REF,
 		revalidate: SANDCASTLE_DOCS_REVALIDATE_SECONDS,
 		tags: [SANDCASTLE_DOCS_CACHE_TAG],
 		transport: 'raw-only',
 	})
-	return parseSandcastleReadme(readme)
+}
+
+/** `toc.json`, or null while the repo has none. Any other failure throws. */
+async function fetchToc(): Promise<SandcastleToc | null> {
+	try {
+		return JSON.parse(await fetchRepoFile(SANDCASTLE_TOC)) as SandcastleToc
+	} catch (error) {
+		if ((error as { status?: number }).status === 404) return null
+		throw error
+	}
+}
+
+export const getSandcastleDocs = cache(async () => {
+	const [readme, toc] = await Promise.all([
+		fetchRepoFile(SANDCASTLE_README),
+		fetchToc(),
+	])
+	if (!toc) return parseSandcastleReadme(readme)
+
+	const slugs = [toc.start, ...toc.groups.flatMap((group) => group.pages)]
+	const pages = await Promise.all(
+		slugs.map((slug) => fetchRepoFile(`${SANDCASTLE_GUIDE_DIR}/${slug}.md`)),
+	)
+	return parseSandcastleGuide({
+		toc,
+		files: Object.fromEntries(
+			slugs.map((slug, index) => [slug, pages[index]!]),
+		),
+		readme,
+	})
 })
 
 export async function getSandcastleDocsPage(slug: string) {
