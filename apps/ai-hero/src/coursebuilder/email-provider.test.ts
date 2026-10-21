@@ -25,6 +25,8 @@ vi.mock('next-auth/providers/postmark', () => ({
 	default: (options: unknown) => ({ id: 'postmark', options }),
 }))
 
+import { readMagicLinkFragment } from '@/server/magic-link-fragment'
+
 import { emailProvider, magicLinkIdentity } from './email-provider'
 
 describe('magic-link identity port', () => {
@@ -46,13 +48,38 @@ describe('magic-link identity port', () => {
 
 	it('hands that port to sendVerificationRequest', async () => {
 		const options = (emailProvider as unknown as { options: { sendVerificationRequest: (p: unknown) => Promise<void> } }).options
-		const params = { identifier: 'new@example.test' }
+		const params = {
+			identifier: 'new@example.test',
+			url: 'https://www.aihero.dev/api/auth/callback/postmark?callbackUrl=https%3A%2F%2Fwww.aihero.dev%2Fwelcome&token=one-time-token&email=new%40example.test',
+		}
 
 		await options.sendVerificationRequest(params)
 
 		expect(mocks.sendVerificationRequest).toHaveBeenCalledWith(
-			params,
+			expect.objectContaining({ identifier: 'new@example.test' }),
 			magicLinkIdentity,
 		)
+	})
+
+	it('emails a fragment link with no secrets in the query string', async () => {
+		mocks.sendVerificationRequest.mockClear()
+		const options = (emailProvider as unknown as { options: { sendVerificationRequest: (p: unknown) => Promise<void> } }).options
+
+		await options.sendVerificationRequest({
+			identifier: 'new@example.test',
+			url: 'https://www.aihero.dev/api/auth/callback/postmark?callbackUrl=https%3A%2F%2Fwww.aihero.dev%2Fwelcome&token=one-time-token&email=new%40example.test',
+		})
+
+		const sent = new URL(
+			mocks.sendVerificationRequest.mock.calls[0]![0].url as string,
+		)
+		expect(sent.pathname).toBe('/login/verify')
+		expect(sent.search).toBe('')
+		expect(sent.toString()).not.toMatch(/\?[^#]*(token|email|callbackUrl)=/)
+		expect(readMagicLinkFragment(sent.hash)).toEqual({
+			token: 'one-time-token',
+			email: 'new@example.test',
+			callbackUrl: 'https://www.aihero.dev/welcome',
+		})
 	})
 })
