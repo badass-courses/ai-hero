@@ -102,6 +102,18 @@ jobs:
       - name: Workshop pricing actor contract
         run: pnpm --filter ai-hero exec vitest run -c vitest.config.ts "src/app/(content)/workshops/_components/workshop-pricing.mounted.test.tsx"
 
+      # The named steps above run subsets, so tests outside them merged red
+      # (four were found on 2026-10-21). This runs the whole app unit suite.
+      # *.mysql.test.ts suites skip without a server URL. Thread flags, not
+      # --maxWorkers: on vitest 1.6 --maxWorkers throws, runs 0 tests and
+      # exits 0, so the step also fails when no test ran.
+      - name: Full app unit suite
+        run: |
+          pnpm --filter ai-hero exec vitest run -c vitest.config.ts \
+            --poolOptions.threads.maxThreads=4 --poolOptions.threads.minThreads=1 \
+            --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/vitest-full.json"
+          node -e 'const r=require(process.argv[1]); if (!(r.numTotalTests > 0)) { console.error("Full app unit suite ran 0 tests"); process.exit(1) } console.log("numTotalTests", r.numTotalTests, "failed", r.numFailedTests)' "$RUNNER_TEMP/vitest-full.json"
+
   pricing-e2e:
     # Real browser, real workshop CTAs and pricing actor; every API response is
     # an in-memory Playwright route fixture (no DB, coupon, session or Stripe).
