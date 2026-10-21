@@ -7,12 +7,11 @@ import { resolveUnsubscribePreference } from '@/coursebuilder/email-preferences'
 import {
 	getEmailPreferenceDefinition,
 	getSearchParamValue,
-	syncLocalEmailPreference,
-	unsubscribeLocalEmailPreferenceByUserId,
-	updateProviderEmailPreference,
 	validateKitPreferenceIdentity,
 } from '@/lib/email-preferences'
 import { log } from '@/server/logger'
+
+import { UnsubscribeForm } from './unsubscribe-form'
 
 export const metadata: Metadata = {
 	title: 'Unsubscribed',
@@ -37,7 +36,7 @@ const getListName = (
 }
 
 /**
- * Confirms the user has been removed from email communication.
+ * Asks the user to confirm leaving a list. Writes nothing on GET.
  */
 const Unsubscribed = async (props: UnsubscribedProps) => {
 	const searchParams = await props.searchParams
@@ -88,6 +87,8 @@ const Unsubscribed = async (props: UnsubscribedProps) => {
 				}).toString()}`
 			: '/preferences'
 
+	// GET only validates. The writes happen in unsubscribeAction on POST, so a
+	// link scanner or bot that opens this URL unsubscribes nobody.
 	if (subscriberId && shKit) {
 		const subscriber = await validateKitPreferenceIdentity({
 			subscriberId,
@@ -99,59 +100,30 @@ const Unsubscribed = async (props: UnsubscribedProps) => {
 		if (!subscriber) {
 			redirect('/')
 		}
+	} else if (!userId) {
+		redirect('/')
+	}
 
-		const state = await updateProviderEmailPreference({
-			subscriberId,
-			subscriberEmail: subscriber.email_address ?? undefined,
-			preference: preferenceDefinition,
-			subscribed: false,
-			source: 'unsubscribe-link',
-		})
-
-		await syncLocalEmailPreference({
-			email: subscriber.email_address,
-			preference: preferenceDefinition,
-			subscribed: state.subscribed,
-			source: 'unsubscribe-link',
-		})
-
-		await log.info('email-preferences.unsubscribe', {
-			source: 'unsubscribe-link',
-			provider: 'convertkit',
-			kitSubscriberId: subscriberId,
-			shKit,
-			preferenceKey,
-			result: state.status,
-		})
-	} else {
-		if (!userId) {
-			redirect('/')
-		}
-
-		const result = await unsubscribeLocalEmailPreferenceByUserId({
-			userId,
-			preference: preferenceDefinition,
-			source: 'unsubscribe-link',
-		})
-
-		if (!result) {
-			redirect('/')
-		}
-
-		await log.info('email-preferences.unsubscribe', {
-			source: 'unsubscribe-link',
-			provider: 'local-db',
-			userId: result.userId,
-			preferenceKey,
-			result: 'unsubscribed',
-		})
+	const hiddenFields: Record<string, string> = { preference: preferenceKey }
+	if (subscriberId && shKit) {
+		hiddenFields.ck_subscriber_id = subscriberId
+		hiddenFields.sh_kit = shKit
+	} else if (userId) {
+		hiddenFields.userId = userId
 	}
 
 	return (
-		<UnsubscribedMessage
-			message={`You've been removed from ${listName} and won't receive any more emails.`}
-			managePreferencesHref={managePreferencesHref}
-		/>
+		<LayoutClient withContainer>
+			<div className="flex min-h-[calc(100vh-96px)] flex-col p-0">
+				<div className="flex grow flex-col items-center justify-center p-5 pb-16 text-center sm:pb-0">
+					<UnsubscribeForm
+						listName={listName}
+						hiddenFields={hiddenFields}
+						managePreferencesHref={managePreferencesHref}
+					/>
+				</div>
+			</div>
+		</LayoutClient>
 	)
 }
 

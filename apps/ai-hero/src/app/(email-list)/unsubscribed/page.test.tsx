@@ -31,12 +31,25 @@ vi.mock('@/lib/email-preferences', async () => {
 	}
 })
 
+import { unsubscribeAction } from './actions'
 import Unsubscribed from './page'
+import { UnsubscribeForm } from './unsubscribe-form'
 
 const identity = { ck_subscriber_id: '123', sh_kit: 'abc' }
 
 const render = (params: Record<string, string>) =>
 	Unsubscribed({ searchParams: Promise.resolve(params) })
+
+const findForm = (node: any): any => {
+	if (!node || typeof node !== 'object') return undefined
+	if (node.type === UnsubscribeForm) return node
+	const children = node.props?.children
+	for (const child of Array.isArray(children) ? children : [children]) {
+		const found = findForm(child)
+		if (found) return found
+	}
+	return undefined
+}
 
 function expectNoWrites() {
 	expect(mocks.updateProviderEmailPreference).not.toHaveBeenCalled()
@@ -95,17 +108,109 @@ describe('/unsubscribed', () => {
 		)
 	})
 
-	it('a known newsletter key still unsubscribes', async () => {
-		await render({ preference: 'newsletter', ...identity })
+	it('GET with a valid Kit identity writes nothing and renders the confirm form', async () => {
+		const result = await render({ preference: 'newsletter', ...identity })
+
+		expectNoWrites()
+		expect(mocks.validateKitPreferenceIdentity).toHaveBeenCalledTimes(1)
+		const form = findForm(result)
+		expect(form?.props.hiddenFields).toEqual({
+			preference: 'newsletter',
+			ck_subscriber_id: '123',
+			sh_kit: 'abc',
+		})
+		expect(form?.props.managePreferencesHref).toBe(
+			'/preferences?ck_subscriber_id=123&sh_kit=abc',
+		)
+	})
+
+	it('GET with a userId writes nothing and renders the confirm form', async () => {
+		const result = await render({ preference: 'newsletter', userId: 'u1' })
+
+		expectNoWrites()
+		expect(findForm(result)?.props.hiddenFields).toEqual({
+			preference: 'newsletter',
+			userId: 'u1',
+		})
+	})
+
+	it('GET redirects home on a bad Kit signature, with no writes', async () => {
+		mocks.validateKitPreferenceIdentity.mockResolvedValue(null)
+		await expect(
+			render({ preference: 'newsletter', ...identity }),
+		).rejects.toThrow('redirect:/')
+		expectNoWrites()
+	})
+
+	it('GET redirects home with no identity at all', async () => {
+		await expect(render({ preference: 'newsletter' })).rejects.toThrow(
+			'redirect:/',
+		)
+		expectNoWrites()
+	})
+})
+
+describe('unsubscribeAction (POST)', () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+		mocks.validateKitPreferenceIdentity.mockResolvedValue({
+			email_address: 'a@example.com',
+		})
+		mocks.updateProviderEmailPreference.mockResolvedValue({
+			subscribed: false,
+			status: 'updated',
+		})
+		mocks.unsubscribeLocalEmailPreferenceByUserId.mockResolvedValue({
+			userId: 'u1',
+		})
+	})
+
+	const post = (fields: Record<string, string>) => {
+		const formData = new FormData()
+		for (const [k, v] of Object.entries(fields)) formData.set(k, v)
+		return unsubscribeAction({ status: 'idle' }, formData)
+	}
+
+	it('unsubscribes a valid Kit identity at the provider and locally', async () => {
+		const state = await post({ preference: 'newsletter', ...identity })
+
+		expect(state).toEqual({ status: 'done' })
+		expect(mocks.validateKitPreferenceIdentity).toHaveBeenCalledTimes(1)
 		expect(mocks.updateProviderEmailPreference).toHaveBeenCalledWith(
-			expect.objectContaining({ subscribed: false }),
+			expect.objectContaining({ subscriberId: '123', subscribed: false }),
 		)
 		expect(mocks.syncLocalEmailPreference).toHaveBeenCalledTimes(1)
+		expect(mocks.log.info).toHaveBeenCalledWith(
+			'email-preferences.unsubscribe',
+			expect.objectContaining({ provider: 'convertkit' }),
+		)
+	})
 
-		await render({ preference: 'newsletter', userId: 'u1' })
+	it('unsubscribes a userId locally', async () => {
+		const state = await post({ preference: 'newsletter', userId: 'u1' })
+
+		expect(state).toEqual({ status: 'done' })
 		expect(mocks.unsubscribeLocalEmailPreferenceByUserId).toHaveBeenCalledTimes(
 			1,
 		)
-		expect(mocks.log.warn).not.toHaveBeenCalled()
+		expect(mocks.updateProviderEmailPreference).not.toHaveBeenCalled()
+	})
+
+	it('redirects home on a bad Kit signature, with no writes', async () => {
+		mocks.validateKitPreferenceIdentity.mockResolvedValue(null)
+		await expect(
+			post({ preference: 'newsletter', ...identity }),
+		).rejects.toThrow('redirect:/')
+		expectNoWrites()
+	})
+
+	it('redirects home with no identity, and when the userId is unknown', async () => {
+		await expect(post({ preference: 'newsletter' })).rejects.toThrow(
+			'redirect:/',
+		)
+		mocks.unsubscribeLocalEmailPreferenceByUserId.mockResolvedValue(null)
+		await expect(
+			post({ preference: 'newsletter', userId: 'nope' }),
+		).rejects.toThrow('redirect:/')
 	})
 })
