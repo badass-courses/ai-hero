@@ -13,6 +13,7 @@ import { getNextResource } from '@/lib/resources/get-next-resource'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
+import { redactedErrorMessage } from '@/server/logger-utils'
 import { createTRPCRouter, publicProcedure } from '@/trpc/api/trpc'
 import { z } from 'zod'
 
@@ -213,7 +214,7 @@ export const progressRouter = createTRPCRouter({
 				await log.error('progress.update.error', {
 					operation: 'get-progress',
 					userId: user?.id,
-					error: error instanceof Error ? error.message : String(error),
+					error: redactedErrorMessage(error),
 				})
 				let message = 'Unknown Error'
 				if (error instanceof Error) message = error.message
