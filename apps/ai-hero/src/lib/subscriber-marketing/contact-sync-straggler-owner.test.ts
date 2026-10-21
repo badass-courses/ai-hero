@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
+import { NonRetriableError } from 'inngest'
+import { deliverHoldingUnsubscribed } from './drovr-straggler-hold'
+import type { ContactSyncRetryReceipt } from './contact-sync-straggler-retry'
 import {
 	contactSyncRetryRequest,
 	contactSyncStarterRequests,
@@ -53,7 +56,9 @@ function fixture() {
 		},
 	}
 	const deliver = vi.fn(
-		async (events: unknown[]): Promise<DrovrBatchOutcome> => ({
+		async (
+			events: DeferredDrovrEvent['event'][],
+		): Promise<DrovrBatchOutcome> => ({
 			accepted: 0,
 			rejected: 0,
 			deferred: events.map((event) => ({
@@ -67,7 +72,10 @@ function fixture() {
 		warn = vi.fn(),
 		parked = vi.fn(async (_fields: Record<string, unknown>) => {}),
 		joined = vi.fn(async (_counts: Record<string, number>) => {})
-	function invocation(event: DrovrContactSyncRetryRequested) {
+	function invocation(
+		event: DrovrContactSyncRetryRequested,
+		run: typeof runContactSyncStragglerRetry = runContactSyncStragglerRetry,
+	) {
 		const cache = new Map<string, unknown>(),
 			sent: DrovrContactSyncRetryRequested[] = []
 		const step = {
@@ -85,7 +93,7 @@ function fixture() {
 				event,
 				step,
 				store,
-				run: runContactSyncStragglerRetry,
+				run,
 				env: {
 					AIH_DROVR_PROFILE_SYNC: 'true',
 					DROVR_SHADOW_INGEST_URL: 'https://synthetic.example.test/events',
@@ -489,11 +497,190 @@ describe('new straggler starter ownership (no-SQL ports)', () => {
 			expect(h.owners.size).toBe(0)
 		},
 	)
+	it('dead chain with no continuation is parked and alerted by a starter at the original deadline', async () => {
+		const h = fixture(),
+			a = h.invocation(starter())
+		h.deliver.mockRejectedValueOnce(
+			new NonRetriableError('synthetic dead chain'),
+		)
+		await expect(a.execute()).rejects.toThrow('synthetic dead chain')
+		expect(a.sent).toHaveLength(0)
+		const original = structuredClone([...h.owners.values()][0]!)
+		h.at(start + STRAGGLER_PARK_AFTER_MS)
+		const joining = starter('synthetic-owner', start + STRAGGLER_PARK_AFTER_MS)
+		joining.data.items[0]!.event.idempotencyKey += ':unrelated'
+		const b = h.invocation(joining)
+		expect(await b.execute()).toEqual({ status: 'parked' })
+		expect([...h.owners.values()][0]).toEqual({ ...original, state: 'parked' })
+		expect(h.deliver).toHaveBeenCalledOnce()
+		expect(b.sent).toHaveLength(0)
+		expect(h.acknowledge).not.toHaveBeenCalled()
+		expect(h.parked.mock.calls[0]![0]).toEqual({
+			alertId: `straggler-parked:${original.generation}`,
+			contactId: 'synthetic-owner',
+			refusalCode: 'owner-expired',
+			eventTypes: [],
+			attempts: 1,
+			firstAttemptAt: new Date(start).toISOString(),
+			parkedAt: new Date(start + STRAGGLER_PARK_AFTER_MS).toISOString(),
+		})
+		await h.invocation(joining).execute()
+		expect(h.parked).toHaveBeenCalledOnce()
+		expect(h.joined).toHaveBeenLastCalledWith(
+			expect.objectContaining({ parkedOwners: 1 }),
+		)
+	})
+	it('a future non-delivered terminal receipt completes the owner without an ACK', async () => {
+		const h = fixture(),
+			terminal = { status: 'held-unsubscribed' }
+		// Deliberately injected FUTURE status, not a current legacy wire/status.
+		const a = h.invocation(
+			starter(),
+			async () => terminal as unknown as ContactSyncRetryReceipt,
+		)
+		expect(await a.execute()).toEqual(terminal)
+		expect([...h.owners.values()][0]!.state).toBe('complete')
+		expect(h.acknowledge).not.toHaveBeenCalled()
+		expect(a.sent).toHaveLength(0)
+	})
+	it('actual unsubscribed-hold terminal completes with rejected items and no send or ACK', async () => {
+		const h = fixture(),
+			send = vi.fn()
+		h.deliver.mockImplementation(
+			deliverHoldingUnsubscribed({
+				isUnsubscribed: async () => true,
+				warn: h.warn,
+				send,
+			}),
+		)
+		expect(await h.invocation(starter()).execute()).toEqual({
+			status: 'delivered',
+			accepted: 0,
+			rejected: 1,
+		})
+		expect(send).not.toHaveBeenCalled()
+		expect(h.acknowledge).not.toHaveBeenCalled()
+		const first = [...h.owners.values()][0]!
+		expect(first.state).toBe('complete')
+		await h.invocation(starter()).execute()
+		expect([...h.owners.values()][0]!.generation).not.toBe(first.generation)
+	})
+	it.each([1, 5 * 60_000])(
+		'normalizes app birth clock ahead by %i ms only once without changing event bytes',
+		async (ahead) => {
+			const h = fixture(),
+				event = starter('synthetic-owner', start + ahead)
+			const bytes = JSON.stringify(event)
+			const a = h.invocation(event)
+			await a.execute()
+			const owner = [...h.owners.values()][0]!
+			expect(owner.startedAt).toBe(start)
+			expect(owner.deadline).toBe(start + STRAGGLER_PARK_AFTER_MS)
+			expect(a.sent[0]!.data.stragglerOwner!.startedAt).toBe(start)
+			expect(JSON.stringify(event)).toBe(bytes)
+			expect(h.parked).not.toHaveBeenCalled()
+			const before = structuredClone(owner)
+			await h
+				.invocation(starter('synthetic-owner', start + 24 * 3600_000))
+				.execute()
+			expect([...h.owners.values()][0]).toEqual(before)
+		},
+	)
+	it('excess birth clock skew commits quarantine and alerts before failing non-retriably', async () => {
+		const h = fixture(),
+			a = h.invocation(starter('synthetic-owner', start + 5 * 60_000 + 1))
+		await expect(a.execute()).rejects.toBeInstanceOf(NonRetriableError)
+		const owner = [...h.owners.values()][0]!
+		expect(owner).toMatchObject({ state: 'parked', startedAt: start, next: 1 })
+		expect(h.deliver).not.toHaveBeenCalled()
+		expect(h.acknowledge).not.toHaveBeenCalled()
+		expect(a.sent).toHaveLength(0)
+		expect(h.parked.mock.calls[0]![0]).toEqual({
+			alertId: `straggler-parked:${owner.generation}`,
+			contactId: 'synthetic-owner',
+			refusalCode: 'owner-clock-skew',
+			eventTypes: ['contact.profile.updated'],
+			attempts: 0,
+			firstAttemptAt: new Date(start).toISOString(),
+			parkedAt: new Date(start).toISOString(),
+		})
+		await expect(a.execute()).rejects.toBeInstanceOf(NonRetriableError)
+		expect(h.parked).toHaveBeenCalledOnce()
+	})
+	it('excess-skew alert retry retains its committed quarantine and stable seven fields', async () => {
+		const h = fixture(),
+			a = h.invocation(starter('synthetic-owner', start + 6 * 60_000))
+		h.parked.mockRejectedValueOnce(new Error('synthetic alert failure'))
+		await expect(a.execute()).rejects.toThrow('synthetic alert failure')
+		expect([...h.owners.values()][0]!.state).toBe('parked')
+		await expect(a.execute()).rejects.toBeInstanceOf(NonRetriableError)
+		expect(h.parked.mock.calls[0]![0]).toEqual(h.parked.mock.calls[1]![0])
+		expect(h.deliver).not.toHaveBeenCalled()
+	})
+	it.each([
+		['different-step', contactSyncRetryRequest([item()], 2, start)],
+		[
+			'reschedule',
+			{ name: 'unrelated/event', id: 'untouched', data: { value: 1 } },
+		],
+		['reschedule', [contactSyncRetryRequest([item()], 2, start)]],
+		['different-step', null],
+	])('passes unrelated sends through unchanged: %s', async (id, payload) => {
+		const h = fixture()
+		const a = h.invocation(starter(), async (args) => {
+			await args.step.sendEvent(id as string, payload)
+			return { status: 'delivered', accepted: 0, rejected: 0 }
+		})
+		await a.execute()
+		expect(a.sent[0]).toBe(payload)
+	})
+	it.each([
+		undefined,
+		null,
+		Number.NaN,
+		Number.POSITIVE_INFINITY,
+		-1,
+		0.5,
+		'not-a-clock',
+	])(
+		'rejects a missing or invalid continuation timestamp %s before sending',
+		async (ts) => {
+			const h = fixture()
+			const a = h.invocation(starter(), async (args) => {
+				await args.step.sendEvent('reschedule', {
+					...contactSyncRetryRequest([item()], 2, start),
+					ts,
+				})
+				return { status: 'rescheduled', deferred: 1, attempt: 2 }
+			})
+			await expect(a.execute()).rejects.toThrow(
+				'invalid continuation clock or attempt',
+			)
+			expect(a.sent).toHaveLength(0)
+		},
+	)
+	it('new starter IDs cannot collide with any legacy attempt/digest prefix', () => {
+		const items = [item()],
+			legacy = contactSyncRetryRequest(items, 1, start),
+			next = starter()
+		expect(legacy.id).toMatch(/^contact-sync-retry:1:[a-f0-9]{64}$/)
+		expect(next.id).toBe(`contact-sync-starter:${legacy.id}`)
+		expect(next.id.startsWith('contact-sync-retry:')).toBe(false)
+		expect(next.id.startsWith('contact-sync-owned:')).toBe(false)
+		expect(next.id).not.toBe(contactSyncRetryRequest(items, 2, start).id)
+	})
+	it('opaque contact IDs of any practical length always hash to an 80-character ASCII name', () => {
+		for (const contactId of ['x', 'x'.repeat(255), 'x'.repeat(100_000)]) {
+			const key = stragglerOwnerKey(contactId)
+			expect(key).toMatch(/^straggler-owner:[a-f0-9]{64}$/)
+			expect(key).toHaveLength(80)
+		}
+	})
 	it('rejects malformed owner inputs before sending or claiming', () => {
 		expect(() =>
 			claimStragglerOwner(
 				undefined,
-				{ protocol: 1, startedAt: start + 1 },
+				{ protocol: 1, startedAt: Number.NaN },
 				1,
 				start,
 			),

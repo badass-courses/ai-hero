@@ -1,9 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { NonRetriableError } from 'inngest'
-import type { DrovrContactSyncRetryRequested } from '@/inngest/events/drovr'
+import {
+	CONTACT_SYNC_RETRY_EVENT,
+	type DrovrContactSyncRetryRequested,
+} from '@/inngest/events/drovr'
 import type { runContactSyncStragglerRetry } from './contact-sync-straggler-retry'
 
 export const STRAGGLER_PARK_AFTER_MS = 7 * 24 * 60 * 60 * 1000
+const MAX_BIRTH_CLOCK_SKEW_MS = 5 * 60 * 1000
 export type StragglerOwnerRef = {
 	protocol: 1
 	startedAt: number
@@ -22,6 +26,8 @@ type Decision = {
 	status: 'claimed' | 'joined' | 'stale' | 'parked'
 	owner: StragglerOwner
 	now: number
+	/** Local failures, not a receiver refusal or joined-item provenance. */
+	reason?: 'owner-expired' | 'owner-clock-skew'
 }
 export type StragglerOwnerStore = {
 	update<T>(
@@ -46,21 +52,34 @@ export function claimStragglerOwner(
 		!Number.isSafeInteger(attempt) ||
 		attempt < 1 ||
 		!Number.isSafeInteger(ref.startedAt) ||
-		ref.startedAt < 0 ||
-		ref.startedAt > now
+		ref.startedAt < 0
 	)
 		throw new NonRetriableError(
 			'StragglerOwner: invalid original chain clock or attempt',
 		)
-	if (!ref.generation && (!owner || owner.state === 'complete'))
+	if (!ref.generation && attempt !== 1)
+		throw new NonRetriableError(
+			'StragglerOwner: a new starter must begin at attempt one',
+		)
+	if (!ref.generation && (!owner || owner.state === 'complete')) {
+		// Normalize only at birth. Never refresh an existing owner's clock.
+		const startedAt = Math.min(ref.startedAt, now),
+			clockSkew = ref.startedAt - now > MAX_BIRTH_CLOCK_SKEW_MS
 		owner = {
 			generation: randomUUID(),
-			state: 'active',
-			startedAt: ref.startedAt,
-			deadline: ref.startedAt + STRAGGLER_PARK_AFTER_MS,
+			state: clockSkew ? 'parked' : 'active',
+			startedAt,
+			deadline: startedAt + STRAGGLER_PARK_AFTER_MS,
 			next: 1,
 			...(membershipDigest && { membershipDigest }),
 		}
+		// Commit quarantine first; the caller logs outside SQL, then fails.
+		if (clockSkew)
+			return {
+				owner,
+				value: { status: 'parked', owner, now, reason: 'owner-clock-skew' },
+			}
+	}
 	if (!owner)
 		throw new NonRetriableError(
 			'StragglerOwner: continuation has no original owner',
@@ -72,16 +91,20 @@ export function claimStragglerOwner(
 	if (ref.generation && owner.generation !== ref.generation)
 		return answer('stale')
 	if (owner.state !== 'active') return answer('joined')
-	// Joined membership is not the original chain's alert provenance (PR2).
-	if (!ref.generation && owner.next !== 1) return answer('joined')
+	// A fresh starter must surface an orphan even when no continuation survived.
 	if (now >= owner.deadline) {
 		owner = { ...owner, state: 'parked' }
-		return answer('parked')
+		return {
+			owner,
+			value: {
+				status: 'parked',
+				owner,
+				now,
+				...(!ref.generation && { reason: 'owner-expired' as const }),
+			},
+		}
 	}
-	if (!ref.generation && attempt !== 1)
-		throw new NonRetriableError(
-			'StragglerOwner: a new starter must begin at attempt one',
-		)
+	if (!ref.generation && owner.next !== 1) return answer('joined')
 	if (attempt !== owner.next) return answer('joined')
 	owner = { ...owner, next: attempt + 1 }
 	return answer('claimed')
@@ -136,15 +159,24 @@ export async function runOwnedStragglerRetry(
 			args.parked({
 				alertId: `straggler-parked:${decision.owner.generation}`,
 				contactId,
-				refusalCode: [...new Set(items.map((item) => item.reason))]
-					.sort()
-					.join(','),
-				eventTypes: [...new Set(items.map((item) => item.event.type))].sort(),
+				refusalCode:
+					decision.reason ??
+					[...new Set(items.map((item) => item.reason))].sort().join(','),
+				// An orphan's original items are not retained. Do not attribute
+				// a joining starter's unrelated types to that dead chain.
+				eventTypes:
+					decision.reason === 'owner-expired'
+						? []
+						: [...new Set(items.map((item) => item.event.type))].sort(),
 				attempts: decision.owner.next - 1,
 				firstAttemptAt: new Date(decision.owner.startedAt).toISOString(),
 				parkedAt: new Date(decision.now).toISOString(),
 			}),
 		)
+		if (decision.reason === 'owner-clock-skew')
+			throw new NonRetriableError(
+				'StragglerOwner: birth clock exceeds five-minute skew bound',
+			)
 		return { status: 'parked' as const }
 	}
 	if (claim.status === 'joined' && !ref.generation && args.joined)
@@ -212,10 +244,30 @@ export async function runOwnedStragglerRetry(
 					return saved.value
 				},
 				sendEvent: (id, payload) => {
+					// Both legacy sends are single reschedule/retry events. Other
+					// step IDs, event names and batches keep their original envelope.
+					if (
+						id !== 'reschedule' ||
+						!payload ||
+						typeof payload !== 'object' ||
+						Array.isArray(payload) ||
+						!('name' in payload) ||
+						payload.name !== CONTACT_SYNC_RETRY_EVENT
+					)
+						return args.step.sendEvent(id, payload)
 					const next = payload as DrovrContactSyncRetryRequested & {
 						id: string
 						ts: number
 					}
+					if (
+						!Number.isSafeInteger(next.ts) ||
+						next.ts < 0 ||
+						!next.data ||
+						next.data.attempt !== attempt + 1
+					)
+						throw new NonRetriableError(
+							'StragglerOwner: invalid continuation clock or attempt',
+						)
 					return args.step.sendEvent(id, {
 						...next,
 						id: `contact-sync-owned:${claim.owner.generation}:${next.data.attempt}`,
@@ -236,7 +288,10 @@ export async function runOwnedStragglerRetry(
 		if (error instanceof OwnerStopped) return stop(error.decision)
 		throw error
 	}
-	if (result.status === 'delivered')
+	// Today the union is delivered | rescheduled; unsubscribe holds are
+	// delivered with rejections, not ACKs. Future terminal statuses must also
+	// release ownership: only a rescheduled receipt promises a continuation.
+	if (result.status !== 'rescheduled')
 		await args.step.run('straggler-owner-complete', () =>
 			args.store.update(key, (owner, now) => {
 				if (!owner) throw new Error('StragglerOwner: completion lost owner')

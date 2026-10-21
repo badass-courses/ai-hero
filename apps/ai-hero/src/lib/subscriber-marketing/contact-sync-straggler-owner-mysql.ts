@@ -16,9 +16,12 @@ export function createStragglerOwnerStore(
 ): StragglerOwnerStore {
 	return {
 		async update(key, change) {
+			if (key.length > 255)
+				throw new Error('StragglerOwner: cursor name exceeds 255 characters')
 			if (!/^straggler-owner:[a-f0-9]{64}$/.test(key))
 				throw new Error('StragglerOwner: invalid cursor namespace')
 			const connection = await acquire()
+			let destroyed = false
 			try {
 				await connection.beginTransaction()
 				// Acquire the duplicate row's X lock directly; INSERT IGNORE can
@@ -61,6 +64,8 @@ export function createStragglerOwnerStore(
 				if (cursor.length > 500)
 					throw new Error('StragglerOwner: cursor exceeds existing column')
 				if (cursor !== prior) {
+					// Deliberately leave shared cursor bookkeeping timestamps alone.
+					// Owner age/liveness is JSON startedAt/deadline/next, never updatedAt.
 					const [written] = await connection.query<ResultSetHeader>(
 						'UPDATE `AI_ContactSyncCursor` SET `cursor` = ?, `updatedAt` = `updatedAt` WHERE `name` = ? AND `cursor` = ?',
 						[cursor, key, prior],
@@ -71,10 +76,19 @@ export function createStragglerOwnerStore(
 				await connection.commit()
 				return next.value
 			} catch (error) {
-				await connection.rollback().catch(() => connection.destroy())
+				try {
+					await connection.rollback()
+				} catch {
+					destroyed = true
+					try {
+						connection.destroy()
+					} catch {
+						// Destruction must not mask the original transaction failure.
+					}
+				}
 				throw error
 			} finally {
-				connection.release()
+				if (!destroyed) connection.release()
 			}
 		},
 	}

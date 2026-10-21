@@ -1,8 +1,8 @@
 # Read-only legacy straggler inventory
 
-**Operator procedure, not an executed production inventory.** No cancel, replay, re-issue, deploy, POST, fixture query, or automatic operation is included. The AIH desk runs this after PR1 deploys and drovr confirms the email #3 migration. It takes an evidenced final-stop count to Switchboard for any separately approved targeted cancellation.
+**Read-only operator procedure, not an executed production inventory.** No cancellation, replay, re-issue, deployment, POST or automatic operation is included. Run only with explicit production read authority and verified upstream migration/refusal status. An evidenced final-stop cohort still needs separate approval for any targeted cancellation.
 
-PR1 does not rewrite old queued histories. Existing legacy chains can keep running; neither a zero parked-alert count nor fewer warnings proves they stopped. Whistler's 184 warnings / 92 contact-attempt pairs / 59 contacts are a sample, not an active-run or chain inventory.
+New ownership does not rewrite old queued histories. Existing legacy chains can keep running; neither a zero parked-alert count nor fewer warnings proves they stopped. Warning samples are not active-run or chain inventories.
 
 ## Read source and coverage contract
 
@@ -26,7 +26,7 @@ These are query shapes, **not a claim that the provider currently supports an al
 
 ## Documented aggregate query
 
-The following is an analytical query over a **validated in-memory/export-normalized view**, not SQL to run against AIH or the3307 fixture. `rootChainHash` is non-null only for verified lineage; `firstRetryClock` is non-null only when reconstructed. The collector supplies the single UTC `inventoryAt` and validated production/coverage booleans. Raw payload/IDs are not output.
+The following is an analytical query over a **validated in-memory/export-normalized view**, not a production database query. `rootChainHash` is non-null only for verified lineage; `firstRetryClock` is non-null only when reconstructed. The collector supplies the single UTC `inventoryAt` and validated production/coverage booleans. Raw payload/IDs are not output.
 
 ```sql
 -- DuckDB-style SQL over the normalized read-only stream.
@@ -61,7 +61,13 @@ ORDER BY refusalCode, chainAge;
 
 Publish alongside it: snapshot UTC, verified app/function/environment, page/history counts, declared time coverage, active marked/legacy/unknown-protocol run counts, unclassified active runs, unknown-status count, unknown-chain-clock count, and current-run age buckets. Do not output provider IDs or emails. The query's `coverageVerified` predicate is not a substitute for refusing an incomplete collection.
 
-**Final stop is not inferred:** today's `event-not-live` does not identify the ~37 unsubscribed final-stop actors. Drovr will supply the terminal refusal wire shape and any separately authorized private contact list. Only then can the desk cross-check that cohort. No re-drive for those final stops. Any one-off re-issue for the migrating ~58 contacts is a separate operator decision, not a side effect of this inventory.
+**Final stop is not inferred:** `event-not-live` alone does not identify an unsubscribed final-stop cohort. Require a validated upstream terminal refusal shape and separately authorized cohort evidence before classifying it. Do not re-drive final stops. Any one-off re-issue for migrated contacts is a separate operator decision, not a side effect of this inventory.
+
+## New owner liveness and recovery
+
+Keep marked owner population counts separate from the legacy run inventory. Under separately approved read-only owner access, flag `active` rows already past their JSON deadline, including rows with no known active continuation; absence of warnings is not a liveness proof. A subsequent starter or continuation parks an expired active owner with `owner-expired`. Use the original JSON clock/deadline and attempt, never the shared cursor `updatedAt`, for age. Malformed/unknown rows remain unresolved.
+
+Include `parkedOwners > 0` joins in the operational digest: unrelated future keys can be blocked by a permanent park. Recovery is not automatic. Follow the [exact-generation, operator-gated recovery procedure](./drovr-straggler-owner-proof.md#operator-gated-recovery-from-a-park); that CAS completes the parked owner without an ACK or send, and does not authorize replay or cancellation.
 
 ## New-protocol gap-candidate telemetry (not this inventory)
 
@@ -71,4 +77,4 @@ Publish alongside it: snapshot UTC, verified app/function/environment, page/hist
 - Different: **upper-bound gap candidate**, not a measured new-key count; a subset also differs.
 - Unknown: no retained fingerprint; not evidence of no gap.
 
-Aggregate sums, with explicit collection interval and log-coverage caveats. Zero candidates is useful only with adequate coverage and zero unknowns; nonzero requires a separate exact-classification review, not an automatic PR2 build. Drovr/AIH have closed PR2 for now.
+Aggregate sums, with explicit collection interval and log-coverage caveats. Zero candidates is useful only with adequate coverage and zero unknowns; nonzero requires a separate exact-classification review, not an automatic PR2 build. No held-debt/roster implementation is planned; reopening requires separate evidence and review.

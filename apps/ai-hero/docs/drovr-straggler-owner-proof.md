@@ -1,93 +1,70 @@
-# New straggler owner: proof and rollout boundaries
+# Straggler ownership protocol and recovery
 
-## Limits first
+## Scope and limitations
 
-- **Unmarked legacy histories stay legacy, untouched and uncancelled.** This prevents new-protocol multiplication; it does not promise an immediate reduction in existing retry traffic. Initial producer/bulk POSTs are not deduped by this owner.
-- PR1 can skip genuinely new keys in a joined/parked starter without durably retaining that new membership. It does not falsely ACK them. Exact frequency and complete reconcile recovery are unknown.
-- `joined_membership_candidate` is an **upper-bound candidate**: an unequal key-set fingerprint can be a subset, not new keys. No roster or outbox changes are included.
-- **PR2 is not planned**, following drovr's review. Reopening requires separate evidence/review/authority; no auto-unpark or release implementation is included.
-- No migration, cancellation, one-off re-issue, merge, deploy or live enable occurs from this PR.
+- Only newly marked starters use ownership. Unmarked queued histories retain the legacy steps, event shapes and uncapped behavior. Nothing automatically migrates or cancels them, and an immediate traffic reduction is not promised.
+- Initial producer/bulk sends are not deduplicated by the retry owner. Joined or parked starters may contain new keys that are not durably retained. They are not falsely acknowledged, but complete recovery of those keys is not guaranteed.
+- The membership fingerprint is an upper-bound gap signal, not a roster or an exact new-key count. No held-debt implementation, schema change or outbox change is included.
+- A park is permanent unless an operator explicitly approves the recovery procedure below. Completion or recovery never implies that the receiver accepted the original profile version.
 
-## Protocol
+## Owner protocol
 
-Only new starter call sites add protocol1 and split retries per contact. `straggler-owner:` plus SHA256(contactId) reserves an existing `AI_ContactSyncCursor` row; bounded JSON carries generation, state, original startedAt, seven-day deadline, next attempt and an optional original-key-set fingerprint. No DDL.
+`straggler-owner:` plus SHA256(contactId) is an **80-character ASCII key**, independent of contact ID length, in the existing `AI_ContactSyncCursor` table. The adapter rejects names longer than 255 characters and names outside that exact namespace before acquiring a connection. The JSON cursor is bounded by the existing 500-character column and holds generation, state, original clock, seven-day deadline, next attempt and an optional original-membership fingerprint.
 
-One transaction acquires the owner row's X lock via no-op duplicate update, locks/validates it, uses DBUTC, and CAS-writes the next claim. Daily starters join without refreshing the original clock. Continuations use generation+attempt event IDs in a namespace separate from old digest/attempt IDs; the final wake is no later than the original deadline. This is not digest-only dedupe over a24h window and not a short singleton claiming the2h gaps.
+A transaction obtains the primary-key X lock through `INSERT ... ON DUPLICATE KEY UPDATE name = name`, reads the cursor and DB UTC under `FOR UPDATE`, validates it, then compare-and-swaps the cursor. Transactions end before any delivery, birth, logging or broker call. `updatedAt` deliberately remains unchanged: owner liveness is defined by the JSON clock/deadline/attempt, not the shared cursor bookkeeping timestamp. A joined starter does not issue a cursor update.
 
-Actual deliver/birth/redeliver SDK callbacks re-read active generation/attempt/deadline before delegating, because the outer claim can be memoized. A denial is retained as serializable data, not an Error identity lost across SDK replay. Cached success is an already retained result, never fresh POST permission. The transaction ends before delegation: no continuous-lock, exactly-once or native/N7 ACK-authority claim.
+A new generation normalizes an app clock ahead of DB UTC by **at most five minutes** back to DB UTC. The normalized start and `start + seven calendar days` deadline are then immutable. Larger future skew creates a parked quarantine, emits `owner-clock-skew`, and only then fails non-retriably. It never sends or acknowledges events. Quarantine uses the first DB UTC observation because the supplied future clock is untrusted. Joining an existing owner never changes its original clock.
 
-Park is permanent. Joined starters cannot unpark or silently replace that generation. Completion changes only the matching active owner. Original wire keys, body/payload, occurredAt and ACK/version scope are passed through unchanged. Marked malformed protocol/address-as-contact inputs fail closed; genuinely absent markers take the unchanged legacy path and steps.
+Both starters and continuations check an active owner's deadline before joining or claiming. A starter that encounters an expired active owner parks it even if the previous chain died without leaving a continuation. It emits `owner-expired`, using the persisted original clock and attempt count, not the new starter's clock or membership. There is no background reaper: an otherwise orphaned row surfaces when a fresh starter or continuation encounters it; read-only inventory should also flag overdue active rows.
 
-## Local no-SQL checks
+Only a `rescheduled` receipt leaves ownership active. Every terminal receipt completes the matching active generation. In the current legacy union, the only other status is `delivered`; an unsubscribed hold is represented by zero accepts and rejected items, so it terminates without an ACK. Unhandled exceptions leave the owner active for expiry detection rather than pretending the delivery succeeded.
 
-149 tests passed, zero failures/skips:
+Actual delivery, birth and redelivery callbacks re-read the active generation, attempt and deadline. A memoized outer claim is not fresh POST permission. Denials are saved as serializable data so SDK replay cannot erase their park/alert meaning. This is not continuous-lock or exactly-once delivery.
 
-| File | Cases |
-|---|---:|
-| `contact-sync-straggler-owner.test.ts` |25|
-| `contact-sync-straggler-owner-mysql.test.ts` (ports/model only) |10|
-| `contact-sync-straggler-retry.test.ts` |16|
-| `drovr-contact-profile-sync.test.ts` |19|
-| `drovr-events-deliver.test.ts` |79|
+The wrapper rewrites only the two existing `reschedule` sends whose event name is `drovr/contact-sync.retry-requested`. It validates an integer timestamp and the next attempt, preserves body/keys/occurrence clocks/ACK scope, adds generation ownership, and clamps the wake to the deadline. Other step IDs, event names and arrays pass through unchanged; a missing/invalid continuation timestamp fails closed, never becoming `NaN`.
 
-The no-SQL run used synthetic fixtures, stubbed ports and a network guard. The native project typecheck also passed after building the two required local workspace packages. No production/payment test or source flag change occurred. These are targeted unit/model checks, not an all-repository suite or native/N7 lifecycle proof.
+Dedupe namespaces are disjoint: legacy IDs start with `contact-sync-retry:`, starters with `contact-sync-starter:`, and owned continuations with `contact-sync-owned:`. Full-string equality cannot collide across these prefixes. Owned IDs contain the immutable generation and next attempt rather than relying on a digest repeated inside the provider's dedupe window.
 
-## Full CI-filter follow-up
+## Fan-out tradeoff
 
-CI exposed a missed handler-level expectation in `src/inngest/functions/drovr-contact-profile-sync.test.ts`: new starter fan-out is intentionally an event **array**, even for one contact, while the test still expected the old starter object. The test now checks the one-element array, protocol marker, unchanged items and original ACK scope. A separate explicit assertion confirms an **unmarked legacy continuation remains exactly one old event object**, with its original ID/body/clock and no marker. No production behavior changed in this follow-up.
+This is a source bound, **not an observed batch-size distribution or savings forecast**. The standard backfill producer defaults to 50 source rows per page and emits messages of at most 100 events. The bulk consumer combines at most 100 messages. That path can therefore carry up to 5,000 distinct source contacts and 10,000 events in one bulk run. These are bounds derived from current producers, not a new receiver-enforced validation limit for manual or future payloads.
 
-The **entire** CI `drovr, subscriber-marketing and evergreen unit suites` command was then run locally through `muster-heavy`, using all nine CI path filters and `--maxWorkers=4` (`--minWorkers=1`). Result: **3,013 passed, 435 guarded MySQL cases skipped, zero failed**, across 197 passed / 25 skipped files in 28.58s. No SQL URL or fixture load was supplied. Counts are verified from individual assertion statuses and the console summary: this Vitest version's top-level JSON counters misleadingly count skipped cases as passed. This replaces the earlier targeted-only coverage as the current unit-suite evidence. Hosted exact-head CI still must be checked separately.
+For N deferred contacts and S deferred events, starters number at most `min(2N, S)`: the bulk handler separately groups event-not-live and cold-start refusals, so a contact present in both groups can have two starters. With one refusal category per contact, it is N starters, compared with up to two aggregate legacy retry runs for the whole bulk deferral. Only one generation claims ownership; other starters join. Successful retry delivery is per contact rather than batched across contacts, so large new backfills can increase Inngest runs and POSTs. Birth/redelivery and transport retries can add more calls. Profile-sync deferrals involve one contact. No production distribution or immediate net reduction has been measured.
 
-The closed PR2 proposal has been removed from the PR and retained only in lane evidence; no PR2 implementation is planned.
+## Telemetry
 
-## Approved isolated MySQL proof
+Use the existing structured logger/Axiom pipeline with ambient log context cleared. The infrastructure envelope is separate; `aih.drovr_sync.parked` has exactly seven business fields:
 
-One freshly authorized process on the retained local fixture, maximum2 connections, **55ms** measured harness duration, peak2 observed sockets, zero non-fixture network. Three new synthetic keys only, explicit approved schema, no DDL/import/HTTP/service/container/config changes. The older retained synthetic leftover was not read/matched/deleted.
-
-| Phase | Result |
+| Field | Meaning |
 |---|---|
-| A: original bootstrap, controlled duplicate-lock rendezvous <=250ms | Two duplicate starters; exactly one real `ER_LOCK_DEADLOCK`, errno1213, SQLState40001: `Deadlock found when trying to get lock; try restarting transaction`. |
-| B: proposed bootstrap,20 simultaneous starters | Exactly1 claim,19 joins. |
-| B:20 simultaneous same-generation continuations | Exactly1 claim,19 joins; generation/original clock/deadline unchanged. |
-| C: callback failure and >500-character cursor | Both bootstrap writes rolled back; no retained row before seeding the clock case. |
-| C: synthetic original clock already seven days old | Parked on the original deadline; later starter did not auto-unpark. |
-| Cleanup | All3 new keys removed only against recorded exact cursor+generation; verified zero remain. Primary SQL error and cleanup errors retained separately; no cleanup errors. |
+| `alertId` | Stable `straggler-parked:<generation>` identifier. |
+| `contactId` | Opaque contact ID, never an address. |
+| `refusalCode` | Sorted comma-joined receiver refusal codes, or local `owner-expired` / `owner-clock-skew`. Local codes are not receiver wire verdicts. |
+| `eventTypes` | Sorted distinct types available to this decision. Empty means unknown original types for an orphan: a joining starter is not original provenance. |
+| `attempts` | Logical claims in this generation, not HTTP calls or elapsed age. Clock-skew quarantine has zero claims. |
+| `firstAttemptAt` | Immutable validated/normalized original start, ISO UTC. |
+| `parkedAt` | Original park decision DB UTC, ISO UTC. |
 
-The original `INSERT IGNORE` duplicate-record shared locks can mutually block their `FOR UPDATE` upgrades. The no-op `ON DUPLICATE KEY UPDATE name=name` obtains a duplicate-primary-key X lock directly. See Oracle's [documented InnoDB duplicate-record lock behavior](https://docs.oracle.com/cd/E17952_01/mysql-8.0-en/innodb-locks-set.html). Unit tests retain the old lock-cycle negative control.
+No email, payload, body or key roster is logged. Alert IDs remain stable across alert retries; downstream deduplication must use `alertId`. Ambiguous logging can duplicate entries, so this is not an exactly-once alert guarantee.
 
-**Historical failure is not hidden:** the earlier attempt's partial-batch cleanup assertion masked its original SQL error and left one synthetic key. The desk ordered it left in the throwaway fixture until separately owned container/volume removal by2026-10-26 12:00Z. Its exact key/schema and the failed raw evidence remain in the private handoff. The successful A counterexample captures a real old-adapter hazard; it does not retroactively recover that earlier lost error or classify unrelated original N7 findings. There was no unapproved SQL retry or force-delete.
+The operational policy is an hourly digest, with escalation for a non-`event-not-live` refusal or more than ten distinct parks per day. Both local failure codes qualify for the former. Include parked-owner join counts in review so later unrelated deferrals do not disappear behind an old park. Deployment and genuine dataset verification must precede any claim that alert pickup is live.
 
-The approved SQL harness/scope/source hashes/raw code/message/snapshots and results are retained privately under the isolated clone's `.git/straggler-*` evidence. It is a real SQL concurrency check for this adapter, not production performance, actual SDK scheduler causality, full native authority or a live receipt.
+`aih.drovr_sync.joined_membership_candidate` contains counts only: `starters`, `incomingKeys`, `unchangedMembership`, `changedMembershipCandidate`, `unknownMembership`, `parkedOwners`. Unequal fingerprints can represent a subset, so they are only gap-candidate upper bounds. See the [read-only inventory runbook](./drovr-straggler-owner-inventory.md).
 
-## Telemetry contract
+## Operator-gated recovery from a park
 
-Use AIH's existing structured logger/Vercel-to-Axiom pipeline and dataset, with cleared ambient context. No application credentials or new transport is added. The normal logger envelope (`event`, `_time`, `level`, empty context) is infrastructure; the parked event has **exactly these seven business fields**:
+No automatic unpark, deletion, replay or recovery API is provided. A permanent park also blocks unrelated future starters for that contact, so recovery must be an explicit operational decision:
 
-```text
-event: aih.drovr_sync.parked
-alertId: straggler-parked:<immutable generation UUID>
-contactId: original opaque contact ID, never an address
-refusalCode: sorted distinct refusal codes, comma-joined when mixed
-eventTypes: sorted distinct event types
-attempts: logical claims made in this chain, not HTTP calls or elapsed age
-firstAttemptAt: original starter clock, ISO UTC
-parkedAt: original park decision DBUTC, ISO UTC
-```
+1. Obtain recorded operator approval for one exact contact/owner generation. Confirm the receiver's migration/refusal issue or app clock fault is resolved. Inspect the original run, park alert and count-only gap evidence; unresolved debt is not proof of acceptance.
+2. Using an approved database client on one connection, lock the exact owner row in a transaction and read its complete cursor. Verify the expected key, generation and `state = parked`. Abort if missing, changed, malformed, active or already complete. Do not use `updatedAt` as the owner's clock.
+3. Serialize the same owner with **only `state` changed to `complete`**. Preserve generation, original clock/deadline, attempt and fingerprint; validate the resulting JSON is at most 500 characters. Execute a parameterized cursor update requiring the exact key **and exact previously read cursor**, preserving shared cursor bookkeeping. Require exactly one affected row; otherwise roll back. Commit before any external action.
+4. Record the approval and exact CAS outcome in the private operational audit. This changes no ACK/version state and sends nothing. It merely allows a subsequently authorized fresh deferral to establish a new UUID generation; old queued continuations cannot act for that new generation.
+5. Decide separately whether any missing original/joined keys need recovery. Any cancellation or re-issue needs its own reviewed source, scope and approval. Never synthesize an accepted ACK, reuse a parked generation or replay a broad cohort as part of unpark.
 
-No email, body, payload, key roster or extra business fields. Alert ID stays stable across retries. The SDK alert step suppresses repeated successful calls; a transport/handler ambiguity can still duplicate logs, so downstream deduplication uses `alertId`, not an exactly-once claim.
+## Schema and validation scope
 
-`drovr/alert-boss` owns the pickup rule: hourly digest, page only for a non-`event-not-live` refusal or >10 distinct parks/day. **The event is not live merely because this PR exists.** After separate operator deployment, confirm a genuine park in the existing dataset and notify drovr that the event is live before claiming pickup is configured.
+An operator-provided read-only production DDL readback confirms `name varchar(255) NOT NULL` primary key, `cursor varchar(500) NOT NULL`, nullable `watermark` and `heartbeatAt` timestamps with millisecond precision, and `updatedAt timestamp(3) NOT NULL` with a default and `ON UPDATE`. The table uses InnoDB and `utf8mb4_unicode_ci`. Bootstrap supplies all required non-default values. Local fixture column/collation parity is **unverified**; no PlanetScale/vtgate write smoke is claimed.
 
-The separate `aih.drovr_sync.joined_membership_candidate` log has numeric counts only: starters, incomingKeys, unchangedMembership, changedMembershipCandidate, unknownMembership, parkedOwners. It contains no IDs or payload. See the [read-only inventory/aggregation runbook](./drovr-straggler-owner-inventory.md).
+The unchanged bootstrap/locked-read/CAS SQL has an isolated real-MySQL concurrency proof, including one-claim contention and the old shared-lock-upgrade negative control. See the [documented InnoDB duplicate-lock behavior](https://docs.oracle.com/cd/E17952_01/mysql-8.0-en/innodb-locks-set.html). That is not a production performance or scheduler-causality proof. Unit tests cover orphan detection, terminal holds, skew boundaries, continuation envelope validation, serializable replay denials and adapter failures. Required exact-head CI and operator approval remain separate deployment gates.
 
-## Expected cohorts and conditional arithmetic
-
-Drovr reports ~58 email #3 v1 contacts migrating after its send ends (~16:30–16:45PDT), with events comfortably within7days. They should fold after migration rather than park. ~37 unsubscribed v1 actors are final stops and need no re-drive: if still deferred in the new protocol they correctly park; drovr separately plans an explicit terminal refusal so they can terminate earlier. That future wire shape is not guessed or implemented here. These are drovr's expectations, not a measured outcome; old unmarked chains remain outside this cap.
-
-Whistler reported92 distinct contact-attempt pairs across59 contacts in a2h warning sample. If all that sampled stuck-chain component were under one-owner semantics, the simple illustration is92−59=33 fewer chain-equivalent attempts,33/92≈35.9%. This is not a measured drop, endpoint-call count, whole-function forecast or independent proof of scheduler cause. Preserved legacy chains and other traffic make the immediate actual reduction **unknown**.
-
-## Deployment and rollback handoff
-
-No new flag, migration or deployment is performed. Existing source-off behavior retains its no-HTTP continuation; owned wakes still preserve age and park at the original deadline. Native/N7 writer/ACK and all unrelated holds remain unchanged.
-
-Deploy only with operator approval after review/CI. A safe protocol rollback must retain the dual-reader handler for already queued protocol1 histories while reverting new starter production; a wholesale revert to a handler that ignores the marker would lose the ownership/cap semantics for those histories. Keep cursor rows; do not auto-unpark/delete them or cancel runs as a rollback shortcut. Inventory first; any targeted cancellation/re-issue is a separate bulk-operation approval.
+A safe rollback stops new marked starter production but retains the dual-reader handler for already queued marked histories. Do not delete owner rows, auto-unpark, cancel runs or revert to a marker-ignorant handler as rollback shortcuts.

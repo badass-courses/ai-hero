@@ -174,20 +174,37 @@ it('failed claim CAS rolls back and never reports ownership', async () => {
 	expect(h.connection.commit).not.toHaveBeenCalled()
 	expect(h.connection.rollback).toHaveBeenCalledOnce()
 })
-it('SQL-shaped port failure keeps original identity even if rollback fails', async () => {
-	const h = port(),
-		original = Object.assign(new Error('synthetic SQL fault'), {
-			code: 'ER_LOCK_DEADLOCK',
-			errno: 1213,
-			sqlState: '40001',
-		})
-	h.query.mockRejectedValueOnce(original)
-	h.connection.rollback.mockRejectedValueOnce(
-		new Error('synthetic rollback failure'),
-	)
-	await expect(h.claim()).rejects.toBe(original)
-	expect(h.connection.destroy).toHaveBeenCalledOnce()
-	expect(h.connection.release).toHaveBeenCalledOnce()
+it.each([false, true])(
+	'SQL-shaped failure preserves identity and never releases after destroy (destroy throws: %s)',
+	async (destroyThrows) => {
+		const h = port(),
+			original = Object.assign(new Error('synthetic SQL fault'), {
+				code: 'ER_LOCK_DEADLOCK',
+				errno: 1213,
+				sqlState: '40001',
+			})
+		h.query.mockRejectedValueOnce(original)
+		h.connection.rollback.mockRejectedValueOnce(
+			new Error('synthetic rollback failure'),
+		)
+		if (destroyThrows)
+			h.connection.destroy.mockImplementationOnce(() => {
+				throw new Error('synthetic destroy failure')
+			})
+		await expect(h.claim()).rejects.toBe(original)
+		expect(h.connection.destroy).toHaveBeenCalledOnce()
+		expect(h.connection.release).not.toHaveBeenCalled()
+	},
+)
+it('oversized cursor name is rejected before acquiring a connection or issuing SQL', async () => {
+	const acquire = vi.fn(),
+		store = createStragglerOwnerStore(acquire)
+	await expect(
+		store.update(`straggler-owner:${'f'.repeat(240)}`, () => {
+			throw new Error('must not run')
+		}),
+	).rejects.toThrow('name exceeds 255')
+	expect(acquire).not.toHaveBeenCalled()
 })
 it('oversized cursor is refused, not trimmed or committed', async () => {
 	const h = port()
