@@ -32,7 +32,14 @@ import {
 import { admitValuePathBirths } from '@/lib/subscriber-marketing/drovr-value-path-birth-admission'
 import { readUnsubscribedValuePathContactIds } from '@/lib/subscriber-marketing/drovr-value-path-birth-admission-live'
 import { isSendingJourneyBirth } from '@/lib/subscriber-marketing/drovr-birth-clamp'
-import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
+import {
+	contactSyncStarterRequests,
+	contactSyncRetryRequest,
+} from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
+import {
+	sendContactSyncStarters,
+	stragglerOwnershipEnabled,
+} from '@/lib/subscriber-marketing/contact-sync-starter-batches'
 import {
 	drovrApiKeyForTenant,
 	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
@@ -1107,14 +1114,28 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 					const coldStart = refused.filter(
 						(item) => item.reason === 'cold-start-unhandled',
 					)
-					await step.sendEvent('contact-sync-backfill:defer-refused', [
-						...(notLive.length > 0
-							? [contactSyncRetryRequest(notLive, 1, at)]
-							: []),
-						...(coldStart.length > 0
-							? [{ ...contactSyncRetryRequest(coldStart, 1, at), ts: at }]
-							: []),
-					])
+					if (stragglerOwnershipEnabled(process.env)) {
+						await sendContactSyncStarters(
+							step,
+							'contact-sync-backfill:defer-refused',
+							[
+								...contactSyncStarterRequests(notLive, at),
+								...contactSyncStarterRequests(coldStart, at).map((request) => ({
+									...request,
+									ts: at,
+								})),
+							],
+						)
+					} else {
+						await step.sendEvent('contact-sync-backfill:defer-refused', [
+							...(notLive.length > 0
+								? [contactSyncRetryRequest(notLive, 1, at)]
+								: []),
+							...(coldStart.length > 0
+								? [{ ...contactSyncRetryRequest(coldStart, 1, at), ts: at }]
+								: []),
+						])
+					}
 				}
 			}
 		}

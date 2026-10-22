@@ -82,7 +82,10 @@ vi.mock('@/lib/subscriber-marketing/drovr-outbox-live', () => ({
 	settleDrovrOutboxLive: mocks.settle,
 }))
 
-import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
+import {
+	contactSyncStarterRequests,
+	contactSyncRetryRequest,
+} from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
 import { clampBirths } from '@/lib/subscriber-marketing/drovr-birth-clamp'
 import type { DeferredDrovrEvent } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
 
@@ -716,65 +719,87 @@ describe('backfill refusals follow the push contract (§4)', () => {
 		{ ...profileEvent('c1'), contactId: 'c1' },
 	]
 
-	it('hands refused backfill events to the straggler retry instead of throwing: event-not-live after 1 h, cold-start at once', async () => {
-		vi.useFakeTimers()
-		vi.setSystemTime(now)
-		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
-		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
-		mocks.deliverBatchOrThrow.mockResolvedValue({
-			accepted: 1,
-			rejected: 0,
-			deferred: [
-				{ event: notLive, reason: 'event-not-live' },
-				{ event: cold, reason: 'cold-start-unhandled' },
-			],
-		})
-		const sent: unknown[] = []
-		const receipt = await registeredBulk.handler({
-			events: [
-				{
-					data: {
-						events: [fine, notLive, cold],
-						source: 'contact-sync-backfill',
+	it.each([undefined, 'false', 'true'])(
+		'hands refusals to the exact selected retry protocol (ownership env: %s)',
+		async (ownership) => {
+			vi.useFakeTimers()
+			vi.setSystemTime(now)
+			vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
+			vi.stubEnv('AIH_DROVR_STRAGGLER_OWNER', ownership ?? '')
+			if (ownership === undefined) delete process.env.AIH_DROVR_STRAGGLER_OWNER
+			mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
+			mocks.deliverBatchOrThrow.mockResolvedValue({
+				accepted: 1,
+				rejected: 0,
+				deferred: [
+					{ event: notLive, reason: 'event-not-live' },
+					{ event: cold, reason: 'cold-start-unhandled' },
+				],
+			})
+			const sent: unknown[] = []
+			const receipt = await registeredBulk.handler({
+				events: [
+					{
+						data: {
+							events: [fine, notLive, cold],
+							source: 'contact-sync-backfill',
+						},
 					},
+				],
+				step: {
+					...createStep(),
+					sendEvent: vi.fn(async (_id: string, payload: unknown) => {
+						sent.push(payload)
+					}),
 				},
-			],
-			step: {
-				...createStep(),
-				sendEvent: vi.fn(async (_id: string, payload: unknown) => {
-					sent.push(payload)
-				}),
-			},
-		})
-		vi.useRealTimers()
-		vi.unstubAllEnvs()
-		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledWith(
-			expect.objectContaining({ deferNotLive: true }),
-		)
-		// The straggler retry's own request (its id, and 1 h for a refusal);
-		// a cold start goes at once, since the retry births the actor.
-		expect(sent).toEqual([
-			[
-				contactSyncRetryRequest(
-					[{ event: notLive, reason: 'event-not-live' }] as DeferredDrovrEvent[],
-					1,
-					now,
-				),
-				{
-					...contactSyncRetryRequest(
-						[
-							{ event: cold, reason: 'cold-start-unhandled' },
-						] as DeferredDrovrEvent[],
-						1,
-						now,
-					),
-					ts: now,
-				},
-			],
-		])
-		expect((sent[0] as { ts: number }[])[0]?.ts).toBe(now + 60 * 60 * 1000)
-		expect(receipt).toMatchObject({ accepted: 1, deferred: 2 })
-	})
+			})
+			vi.useRealTimers()
+			vi.unstubAllEnvs()
+			expect(mocks.deliverBatchOrThrow).toHaveBeenCalledWith(
+				expect.objectContaining({ deferNotLive: true }),
+			)
+			// The straggler retry's own request (its id, and 1 h for a refusal);
+			// a cold start goes at once, since the retry births the actor.
+			expect(sent).toEqual([
+				ownership === 'true'
+					? [
+							...contactSyncStarterRequests(
+								[
+									{ event: notLive, reason: 'event-not-live' },
+								] as DeferredDrovrEvent[],
+								now,
+							),
+							...contactSyncStarterRequests(
+								[
+									{ event: cold, reason: 'cold-start-unhandled' },
+								] as DeferredDrovrEvent[],
+								now,
+							).map((request) => ({ ...request, ts: now })),
+						]
+					: [
+							contactSyncRetryRequest(
+								[
+									{ event: notLive, reason: 'event-not-live' },
+								] as DeferredDrovrEvent[],
+								1,
+								now,
+							),
+							{
+								...contactSyncRetryRequest(
+									[
+										{ event: cold, reason: 'cold-start-unhandled' },
+									] as DeferredDrovrEvent[],
+									1,
+									now,
+								),
+								ts: now,
+							},
+						],
+			])
+			expect((sent[0] as { ts: number }[])[0]?.ts).toBe(now + 60 * 60 * 1000)
+			expect(receipt).toMatchObject({ accepted: 1, deferred: 2 })
+		},
+	)
 
 	it('keeps other bulk sources on the default delivery (no deferral)', async () => {
 		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
