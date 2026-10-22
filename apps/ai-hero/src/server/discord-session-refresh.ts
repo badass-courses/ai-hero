@@ -192,12 +192,26 @@ type DiscordRefreshDependencies = {
 
 export type DiscordRefreshStage = 'refresh' | 'bust'
 
-const SAFE_ERROR_NAME = /^[A-Za-z][A-Za-z0-9]{0,63}$/
+// Only these error names reach the logs; anything else, including a custom
+// name that could carry provider text, logs as 'Other'.
+const LOGGED_ERROR_NAMES = new Set([
+	'Error',
+	'TypeError',
+	'RangeError',
+	'SyntaxError',
+	'AbortError',
+	'TimeoutError',
+	'FetchError',
+	'DrizzleError',
+	'AuthError',
+	'OAuthCallbackError',
+	'CallbackRouteError',
+])
 
 function safeErrorName(error: unknown) {
-	return error instanceof Error && SAFE_ERROR_NAME.test(error.name)
+	return error instanceof Error && LOGGED_ERROR_NAMES.has(error.name)
 		? error.name
-		: 'unknown'
+		: 'Other'
 }
 
 /** Fixed log fields for a proxy refresh skipped because `after()` threw. */

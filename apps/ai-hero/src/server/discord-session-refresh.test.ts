@@ -165,7 +165,7 @@ describe('discord refresh failure logging', () => {
 		})
 		const named = new Error('x')
 		named.name = `Bad ${SENTINEL}`
-		expect(discordRefreshFailureFields(named, 'bust').errorName).toBe('unknown')
+		expect(discordRefreshFailureFields(named, 'bust').errorName).toBe('Other')
 		expect(discordRefreshSkippedFields(new Error(SENTINEL))).toEqual({
 			provider: 'discord',
 			action: 'skipped',
@@ -178,8 +178,26 @@ describe('discord refresh failure logging', () => {
 			action: 'failed',
 			stage: 'bust',
 			reasonCode: 'unexpected-error',
-			errorName: 'unknown',
+			errorName: 'Other',
 		})
+	})
+
+	it('logs only allowlisted error names', () => {
+		const named = (name: string) => Object.assign(new Error('x'), { name })
+		for (const name of ['TypeError', 'AbortError', 'TimeoutError', 'Error'])
+			expect(discordRefreshFailureFields(named(name), 'refresh').errorName).toBe(
+				name,
+			)
+		for (const name of ['DiscordApiError', 'Sentinel', SENTINEL, ''])
+			expect(discordRefreshFailureFields(named(name), 'refresh').errorName).toBe(
+				'Other',
+			)
+		expect(discordRefreshSkippedFields(named('MysteryError')).errorName).toBe(
+			'Other',
+		)
+		expect(discordRefreshFailureFields({ name: 'TypeError' }, 'bust').errorName).toBe(
+			'Other',
+		)
 	})
 
 	it('emits no token text from the app handler', async () => {
