@@ -145,7 +145,7 @@ export function createSessionCallback({
 		if (cached.status === 'hit') return cached.access
 		const access = await loadAccess(userId)
 		if (cached.status === 'miss' && isSessionAccessCacheable(access)) {
-			await cache.write(sessionToken, userId, cached.generation, access)
+			await cache.write(sessionToken, userId, cached, access)
 		}
 		return access
 	}

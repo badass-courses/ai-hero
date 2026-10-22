@@ -10,7 +10,7 @@ import {
 	type DiscordAccountCredentials,
 	type DiscordCredentialUpdate,
 } from '@/server/discord-token-refresh-persistence'
-import { log, serializeError } from '@/server/logger'
+import { log } from '@/server/logger'
 import { isInProxyAuthContext } from '@/server/proxy-auth-context'
 import { bustSessionAccessForUser } from '@/server/session-access-runtime'
 import { and, eq, isNull } from 'drizzle-orm'
@@ -186,7 +186,56 @@ type DiscordRefreshDependencies = {
 	bustUser: (userId: string) => Promise<void>
 	isDeferred: () => boolean
 	schedule: (task: () => Promise<void>) => void
-	onError: (error: unknown) => void
+	onError: (error: unknown, stage: DiscordRefreshStage) => void
+	onSkipped: (error: unknown) => void
+}
+
+export type DiscordRefreshStage = 'refresh' | 'bust'
+
+const SAFE_ERROR_NAME = /^[A-Za-z][A-Za-z0-9]{0,63}$/
+
+function safeErrorName(error: unknown) {
+	return error instanceof Error && SAFE_ERROR_NAME.test(error.name)
+		? error.name
+		: 'unknown'
+}
+
+/** Fixed log fields for a proxy refresh skipped because `after()` threw. */
+export function discordRefreshSkippedFields(error: unknown) {
+	return {
+		provider: 'discord',
+		action: 'skipped',
+		stage: 'schedule',
+		reasonCode: 'after-unavailable',
+		errorName: safeErrorName(error),
+	}
+}
+
+/**
+ * Fixed, token-free log fields for an unexpected refresh failure. Error
+ * messages, stacks and causes can carry provider responses, so none are kept.
+ */
+export function discordRefreshFailureFields(
+	error: unknown,
+	stage: DiscordRefreshStage,
+) {
+	const name = safeErrorName(error)
+	const status =
+		typeof error === 'object' && error !== null && 'status' in error
+			? error.status
+			: undefined
+	return {
+		provider: 'discord',
+		action: 'failed',
+		stage,
+		reasonCode: 'unexpected-error',
+		errorName: name,
+		...(Number.isInteger(status) &&
+		(status as number) >= 100 &&
+		(status as number) <= 599
+			? { httpStatus: status as number }
+			: {}),
+	}
 }
 
 /**
@@ -200,6 +249,7 @@ export function createExpiredDiscordTokenHandler({
 	isDeferred,
 	schedule,
 	onError,
+	onSkipped,
 }: DiscordRefreshDependencies) {
 	const inFlight = new Map<string, Promise<void>>()
 
@@ -207,9 +257,9 @@ export function createExpiredDiscordTokenHandler({
 		const current = inFlight.get(userId)
 		if (current) return current
 		const task = refresh(userId)
-			.catch(onError)
+			.catch((error) => onError(error, 'refresh'))
 			.then(() => bustUser(userId))
-			.catch(onError)
+			.catch((error) => onError(error, 'bust'))
 			.finally(() => inFlight.delete(userId))
 		inFlight.set(userId, task)
 		return task
@@ -219,9 +269,11 @@ export function createExpiredDiscordTokenHandler({
 		if (!isDeferred()) return start(userId)
 		try {
 			schedule(() => start(userId))
-		} catch {
-			// Outside a request scope `after()` throws. Still never block.
-			void start(userId)
+		} catch (error) {
+			onSkipped(error)
+			// `after()` is unavailable, so a detached refresh could be cut off
+			// mid-write. Skip it: the cached expiry stays expired and the next
+			// page render's awaited path refreshes.
 		}
 	}
 }
@@ -231,12 +283,13 @@ export const handleExpiredDiscordToken = createExpiredDiscordTokenHandler({
 	bustUser: bustSessionAccessForUser,
 	isDeferred: isInProxyAuthContext,
 	schedule: (task) => after(task),
-	onError: (error) => {
-		void log.error('auth.discord.token-refresh', {
-			provider: 'discord',
-			action: 'failed',
-			reasonCode: 'unexpected-error',
-			error: serializeError(error),
-		})
+	onError: (error, stage) => {
+		void log.error(
+			'auth.discord.token-refresh',
+			discordRefreshFailureFields(error, stage),
+		)
+	},
+	onSkipped: (error) => {
+		void log.warn('auth.discord.token-refresh', discordRefreshSkippedFields(error))
 	},
 })

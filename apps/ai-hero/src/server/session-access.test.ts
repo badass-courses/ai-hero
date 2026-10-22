@@ -375,6 +375,37 @@ describe('session callback cache', () => {
 		expect(after).toEqual(await legacySession(fixture, null))
 	})
 
+	it('anchors the cache deadline before the database load', async () => {
+		let clock = 1_800_000_000_000
+		const store = createFakeStore(() => clock)
+		const cache = createSessionAccessCache({
+			getStore: async () => store,
+			ttlSeconds: 60,
+			now: () => clock,
+		})
+		const { run, loadAccess } = harness({ cache })
+		const load = loadAccess.getMockImplementation()!
+		// The first load stalls past the TTL, the second takes 20 seconds.
+		loadAccess.mockImplementationOnce(async (userId) => {
+			clock += 61_000
+			return load(userId)
+		})
+		loadAccess.mockImplementationOnce(async (userId) => {
+			clock += 20_000
+			return load(userId)
+		})
+
+		await run()
+		expect(store.set).not.toHaveBeenCalled()
+		await run()
+		expect(vi.mocked(store.set).mock.calls[0]?.[2]).toEqual({ px: 40_000 })
+		await run()
+		expect(loadAccess).toHaveBeenCalledTimes(2)
+		clock += 40_000
+		await run()
+		expect(loadAccess).toHaveBeenCalledTimes(3)
+	})
+
 	it('does not cache users still being provisioned', async () => {
 		const fixture = fixtureDatabase()
 		fixture.userRoles.length = 0

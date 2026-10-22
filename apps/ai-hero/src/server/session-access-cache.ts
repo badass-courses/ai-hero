@@ -6,13 +6,17 @@ import { z } from 'zod'
  * token itself, and are stamped with a per-user generation. Any role or
  * membership write bumps the generation, so stale entries miss immediately.
  *
+ * Each entry also carries the time its database load started. It is never
+ * served more than one TTL after that moment, whatever Redis still holds, so
+ * a slow load that races a failed bust cannot outlive the TTL.
+ *
  * Every Redis failure or timeout falls through to the database read. The
  * cache can only skip a read; it never decides whether a session is valid.
  */
 
 export const SESSION_ACCESS_CACHE_TTL_ENV = 'AUTH_SESSION_ACCESS_CACHE_TTL_SECONDS'
 export const DEFAULT_SESSION_ACCESS_CACHE_TTL_SECONDS = 60
-export const MAX_SESSION_ACCESS_CACHE_TTL_SECONDS = 3600
+export const MAX_SESSION_ACCESS_CACHE_TTL_SECONDS = 300
 // Must stay well above the max entry TTL: an expired generation key reads as
 // 0, and an entry written before the last bust must be gone by then.
 const GENERATION_TTL_SECONDS = 7 * 24 * 60 * 60
@@ -48,7 +52,7 @@ export type SessionAccess = {
 /** The subset of `@upstash/redis` this cache uses. */
 export type SessionAccessCacheStore = {
 	mget(...keys: string[]): Promise<unknown[]>
-	set(key: string, value: unknown, options: { ex: number }): Promise<unknown>
+	set(key: string, value: unknown, options: { px: number }): Promise<unknown>
 	del(...keys: string[]): Promise<unknown>
 	incr(key: string): Promise<number>
 	expire(key: string, seconds: number): Promise<unknown>
@@ -56,8 +60,11 @@ export type SessionAccessCacheStore = {
 
 export type SessionAccessCacheRead =
 	| { status: 'hit'; access: SessionAccess }
-	| { status: 'miss'; generation: number }
+	| { status: 'miss'; generation: number; loadStartedAt: number }
 	| { status: 'bypass' }
+
+/** What a miss hands to `write`: the generation and the load start, read first. */
+export type SessionAccessCacheFill = { generation: number; loadStartedAt: number }
 
 export type SessionAccessCacheEvent =
 	| 'read-failed'
@@ -70,7 +77,7 @@ export type SessionAccessCache = {
 	write(
 		sessionToken: string,
 		userId: string,
-		generation: number,
+		fill: SessionAccessCacheFill,
 		access: SessionAccess,
 	): Promise<void>
 	bustUser(userId: string): Promise<void>
@@ -131,6 +138,7 @@ const entrySchema = z.object({
 	v: z.literal(ENTRY_VERSION),
 	userId: z.string(),
 	generation: z.number().int(),
+	loadStartedAt: z.number().int(),
 	access: z.object({
 		roles: z.array(roleSchema),
 		organizationRoles: z.array(roleSchema),
@@ -175,12 +183,21 @@ export function createSessionAccessCache({
 	ttlSeconds,
 	timeoutMs = DEFAULT_TIMEOUT_MS,
 	onEvent = () => {},
+	now = Date.now,
 }: {
 	getStore: () => Promise<SessionAccessCacheStore | null>
 	ttlSeconds: number
 	timeoutMs?: number
 	onEvent?: (event: SessionAccessCacheEvent, error?: unknown) => void
+	now?: () => number
 }): SessionAccessCache {
+	const ttlMs = ttlSeconds * 1000
+	// A load start in the future means clock skew; treat it as expired.
+	const remainingMs = (loadStartedAt: number) => {
+		const age = now() - loadStartedAt
+		return age < 0 ? 0 : ttlMs - age
+	}
+
 	const run = async <T>(
 		operation: (store: SessionAccessCacheStore) => Promise<T>,
 	) => {
@@ -196,6 +213,8 @@ export function createSessionAccessCache({
 		async read(sessionToken, userId) {
 			if (ttlSeconds <= 0) return { status: 'bypass' }
 			try {
+				// Stamped before the database load the caller runs on a miss.
+				const loadStartedAt = now()
 				const entryKey = await sessionAccessEntryKey(sessionToken)
 				const result = await run((store) =>
 					store.mget(entryKey, sessionAccessGenerationKey(userId)),
@@ -204,17 +223,18 @@ export function createSessionAccessCache({
 				const [rawEntry, rawGeneration] = result.value
 				const generation = toGeneration(rawGeneration)
 				if (rawEntry === null || rawEntry === undefined)
-					return { status: 'miss', generation }
+					return { status: 'miss', generation, loadStartedAt }
 				const entry = entrySchema.safeParse(decode(rawEntry))
 				if (!entry.success) {
 					onEvent('entry-invalid')
-					return { status: 'miss', generation }
+					return { status: 'miss', generation, loadStartedAt }
 				}
 				if (
 					entry.data.userId !== userId ||
-					entry.data.generation !== generation
+					entry.data.generation !== generation ||
+					remainingMs(entry.data.loadStartedAt) <= 0
 				)
-					return { status: 'miss', generation }
+					return { status: 'miss', generation, loadStartedAt }
 				return { status: 'hit', access: entry.data.access }
 			} catch (error) {
 				onEvent('read-failed', error)
@@ -222,15 +242,19 @@ export function createSessionAccessCache({
 			}
 		},
 
-		async write(sessionToken, userId, generation, access) {
+		async write(sessionToken, userId, { generation, loadStartedAt }, access) {
 			if (ttlSeconds <= 0) return
 			try {
 				const entryKey = await sessionAccessEntryKey(sessionToken)
+				// The entry expires one TTL after the load started, not after the
+				// write. A load that overran the TTL is not cached at all.
+				const px = remainingMs(loadStartedAt)
+				if (px <= 0) return
 				await run((store) =>
 					store.set(
 						entryKey,
-						{ v: ENTRY_VERSION, userId, generation, access },
-						{ ex: ttlSeconds },
+						{ v: ENTRY_VERSION, userId, generation, loadStartedAt, access },
+						{ px },
 					),
 				)
 			} catch (error) {

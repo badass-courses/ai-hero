@@ -61,10 +61,10 @@ export function createFakeStore(now: () => number = Date.now) {
 				return entry ? JSON.parse(entry.value) : null
 			}),
 		),
-		set: vi.fn(async (key: string, value: unknown, { ex }: { ex: number }) => {
+		set: vi.fn(async (key: string, value: unknown, { px }: { px: number }) => {
 			data.set(key, {
 				value: JSON.stringify(value),
-				expiresAt: now() + ex * 1000,
+				expiresAt: now() + px,
 			})
 			return 'OK'
 		}),
