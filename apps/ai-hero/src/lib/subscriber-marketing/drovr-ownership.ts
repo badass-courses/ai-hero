@@ -327,6 +327,18 @@ export function isOwnerFanOutCandidate(event: DrovrShadowEvent): boolean {
 }
 
 /**
+ * A shadow-addressed event delivery can only discard: the shadow tenant is
+ * never posted to, and no owner copy is made from it, whoever owns the
+ * contact. Producers drop these before the hand-off to Inngest, so a batch
+ * of nothing else never starts a delivery run.
+ */
+export function isDiscardOnlyShadowEvent(event: DrovrShadowEvent): boolean {
+	return (
+		event.tenantId === DROVR_SHADOW_TENANT_ID && !isOwnerFanOutCandidate(event)
+	)
+}
+
+/**
  * Shadow-addressed facts about a drovr-owned contact also go to the
  * authority tenant, where the owning actor folds them. Copies get their
  * own idempotency key so drovr's per-tenant dedupe cannot confuse them

@@ -16,7 +16,7 @@ import {
 	type DrovrShadowFact,
 } from './drovr-shadow-emitter'
 
-const signup: DrovrShadowFact = {
+const unsubscribe: DrovrShadowFact = {
 	kind: 'contact-event',
 	event: {
 		id: 'contact-event-1',
@@ -25,9 +25,9 @@ const signup: DrovrShadowFact = {
 		provider: 'ai-hero',
 		providerEventId: 'provider-event-1',
 		providerReference: 'provider-reference-1',
-		eventType: 'skills-newsletter.subscribed',
+		eventType: 'contact.unsubscribed',
 		occurredAt: '2026-09-26T05:00:00.000Z',
-		semanticIdempotencyKey: 'semantic:skills-newsletter.subscribed:1',
+		semanticIdempotencyKey: 'semantic:contact.unsubscribed:1',
 		privacyLevel: 'internal',
 		identityEvidence: {
 			source: 'ai-hero',
@@ -50,12 +50,12 @@ describe('the production fallback post (row 204)', () => {
 	})
 
 	it('posts directly and outboxes what drovr answered 5xx for', async () => {
-		const events = mapDrovrShadowFact(signup)
+		const events = mapDrovrShadowFact(unsubscribe)
 		mocks.direct.mockResolvedValue(events)
 		mocks.capture.mockResolvedValue({ status: 'outboxed', count: 1 })
 		const error = vi.fn()
 
-		const result = await dispatchDrovrShadowFact(signup, {
+		const result = await dispatchDrovrShadowFact(unsubscribe, {
 			send: vi.fn().mockRejectedValue(new Error('inngest unreachable')),
 			warn: vi.fn(),
 			error,
@@ -85,10 +85,10 @@ describe('the production fallback post (row 204)', () => {
 	})
 
 	it('outboxes the unsent with the instant the direct post clamped at, so the replay posts the same bytes (row 201g)', async () => {
-		const events = mapDrovrShadowFact(signup)
+		const events = mapDrovrShadowFact(unsubscribe)
 		mocks.direct.mockResolvedValue(events)
 		mocks.capture.mockResolvedValue({ status: 'outboxed', count: 1 })
-		await dispatchDrovrShadowFact(signup, {
+		await dispatchDrovrShadowFact(unsubscribe, {
 			send: vi.fn().mockRejectedValue(new Error('inngest unreachable')),
 			warn: vi.fn(),
 			error: vi.fn(),
@@ -111,7 +111,7 @@ describe('the production fallback post (row 204)', () => {
 		mocks.capture.mockResolvedValue({ status: 'unavailable' })
 		const error = vi.fn()
 
-		const result = await dispatchDrovrShadowFact(signup, {
+		const result = await dispatchDrovrShadowFact(unsubscribe, {
 			send: vi.fn().mockRejectedValue(new Error('inngest unreachable')),
 			warn: vi.fn(),
 			error,
@@ -123,7 +123,7 @@ describe('the production fallback post (row 204)', () => {
 			'drovr.shadow.fallback_failed',
 			expect.objectContaining({
 				error: 'drovr 503',
-				idempotencyKeys: mapDrovrShadowFact(signup).map(
+				idempotencyKeys: mapDrovrShadowFact(unsubscribe).map(
 					(event) => event.idempotencyKey,
 				),
 			}),
