@@ -140,7 +140,10 @@ const getNextOfferCached = unstable_cache(
 		return null
 	},
 	['next-offer-v2'],
-	{ revalidate: 600, tags: ['products', 'cohorts', 'workshops'] },
+	// The root layout reads this, and Next caps a static page's ISR window at the
+	// smallest revalidate it reads. Tag edits still invalidate at once; only
+	// clock-driven changes (a sale expiry, a cohort start) wait up to an hour.
+	{ revalidate: 3600, tags: ['products', 'cohorts', 'workshops'] },
 )
 
 /**
@@ -286,7 +289,7 @@ async function resolveWorkshopOffer(): Promise<NextOffer | null> {
  *
  * The catch is deliberately OUT here rather than inside the cached function:
  * `unstable_cache` does not store a thrown result, so a transient blip stays
- * transient. Catching inside would cache `null` for the full 600s and keep the
+ * transient. Catching inside would cache `null` for the full revalidate window and keep the
  * CTA missing long after the database came back.
  */
 export async function getNextOfferSafe(): Promise<NextOffer | null> {
