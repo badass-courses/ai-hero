@@ -22,7 +22,6 @@ import { PromoBarSlot } from '@/components/navigation/promo-bar-slot'
 import { PlaybackPrefHydrator } from '@/hooks/playback-pref-hydrator'
 import { TRPCReactProvider } from '@/trpc/react'
 import { ourFileRouter } from '@/uploadthing/core'
-import { GoogleAnalytics } from '@next/third-parties/google'
 import { NextSSRPlugin } from '@uploadthing/react/next-ssr-plugin'
 import HolyLoader from 'holy-loader'
 import { AxiomWebVitals } from 'next-axiom'
@@ -64,6 +63,9 @@ const sourceSerif = Source_Serif_4({
 	variable: '--font-source-serif',
 	weight: ['400', '600'],
 	style: ['normal', 'italic'],
+	// Testimonials only, and they sit below the fold where they appear at all.
+	// Preloading put two serif files (~100KB) at highest priority on every page.
+	preload: false,
 })
 
 export const metadata: Metadata = {
@@ -86,11 +88,13 @@ export const metadata: Metadata = {
 	},
 }
 
-const isGoogleAnalyticsAvailable =
-	env.NODE_ENV !== 'development' && env.NEXT_PUBLIC_GOOGLE_ANALYTICS
-
-const isGoogleAdsAvailable =
-	env.NODE_ENV !== 'development' && env.NEXT_PUBLIC_GOOGLE_ADS_ID
+/** GA4 measurement id first, then the Ads id, minus whatever is unset. */
+const gtagIds =
+	env.NODE_ENV === 'development'
+		? []
+		: [env.NEXT_PUBLIC_GOOGLE_ANALYTICS, env.NEXT_PUBLIC_GOOGLE_ADS_ID].filter(
+				(id): id is string => Boolean(id),
+			)
 
 export default async function RootLayout({
 	children,
@@ -189,21 +193,25 @@ export default async function RootLayout({
 							</ThemeProvider>
 						</NuqsAdapter>
 					</TRPCReactProvider>
-					{isGoogleAnalyticsAvailable && (
-						<GoogleAnalytics gaId={env.NEXT_PUBLIC_GOOGLE_ANALYTICS!} />
-					)}
-					{isGoogleAdsAvailable && (
+					{/* ONE gtag.js for both Google products. The GA and Ads tags used
+					    to be two separate gtag.js downloads (~330KB, 400–600ms of main
+					    thread on a mid-range phone); one script configured for both
+					    IDs sends exactly the same hits. `lazyOnload` rather than
+					    `afterInteractive`: the App Router preloads `afterInteractive`
+					    scripts from the document head, so the tag was fetched at
+					    high priority before any of the app's own JS. */}
+					{gtagIds.length > 0 && (
 						<>
 							<Script
-								src={`https://www.googletagmanager.com/gtag/js?id=${env.NEXT_PUBLIC_GOOGLE_ADS_ID}`}
-								strategy="afterInteractive"
+								src={`https://www.googletagmanager.com/gtag/js?id=${gtagIds[0]}`}
+								strategy="lazyOnload"
 							/>
-							<Script id="google-ads-remarketing" strategy="afterInteractive">
+							<Script id="gtag-init" strategy="lazyOnload">
 								{`
 									window.dataLayer = window.dataLayer || [];
 									function gtag(){window.dataLayer.push(arguments);}
 									gtag('js', new Date());
-									gtag('config', '${env.NEXT_PUBLIC_GOOGLE_ADS_ID}');
+									${gtagIds.map((id) => `gtag('config', '${id}');`).join('\n')}
 								`}
 							</Script>
 						</>
