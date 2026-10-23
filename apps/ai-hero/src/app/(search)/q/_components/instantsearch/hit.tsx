@@ -31,7 +31,9 @@ export default function Hit({ hit }: { hit: TypesenseResource }) {
 		<li>
 			<Link
 				href={href}
-				prefetch
+				// Default prefetching (visible links only), not `prefetch`: this
+				// forced a full RSC prefetch of all 40 results, and those payloads
+				// in turn preloaded their client chunks — the Mux player among them.
 				className="border-border group relative block border-t"
 			>
 				{/* Same hover wash as `landing/resource-row.tsx`, as CSS on
