@@ -6,6 +6,9 @@ import { BADGE_NEUTRAL, TYPE } from '@/components/landing/type'
 import { PricingInline } from '@/components/pricing/pricing-inline'
 import LayoutClient from '@/components/layout-client'
 import { TeamInquiryForm } from '@/components/team-inquiry/team-inquiry-form'
+import { TeamInvoiceForm } from '@/components/team-invoice/team-invoice-form'
+import { C5TeamCheckout } from '@/components/for-teams/c5-team-checkout'
+import { env } from '@/env.mjs'
 import { AI_CODING_COHORT_SLUG } from '@/lib/campaign-landings'
 import { getCachedCohort } from '@/lib/cohorts-query'
 import { AI_CODING_CRASH_COURSE_SLUG } from '@/lib/crash-course-purchaser-tag'
@@ -31,7 +34,7 @@ export const dynamic = 'force-static'
 
 const TITLE = 'AI Hero for your team'
 const DESCRIPTION =
-	'Team seats, bulk discounts, invoicing and procurement: all handled. Two ways to bring Matt Pocock’s AI coding training to your engineers.'
+	'Team seats, bulk discounts, invoicing and procurement: all handled. Bring Matt Pocock’s AI coding training to your engineers.'
 
 export const metadata: Metadata = {
 	title: TITLE,
@@ -64,11 +67,8 @@ const OFFER_LINK =
  * The generic teams hub. Linked from the `/courses` "Bringing your team?"
  * banner and the nav, and the address most inquiries already arrive from.
  *
- * It carries the two things we actually sell to a team today, in the order
- * they are sold: the self-paced crash course, which a champion can buy seats
- * for without talking to anyone, and recorded access to the completed cohort,
- * which is quoted per team. Both end at the same inquiry form, because that
- * is where every question we cannot answer on a page goes.
+ * Keeps the self-paced and completed-cohort offers, with C5 self-serve seats
+ * and invoices alongside them. The shared inquiry form handles team quotes.
  */
 export default async function TeamPage() {
 	const crashCourse = await getCachedMinimalWorkshop(AI_CODING_CRASH_COURSE_SLUG)
@@ -173,7 +173,7 @@ export default async function TeamPage() {
 					</div>
 				</header>
 
-				{/* The two offers, in a hairline grid (DESIGN rule 2). Each cell is
+				{/* The offers, in a hairline grid (DESIGN rule 2). Each cell is
 				    the same shape: what kind of thing, its name, what a team gets,
 				    and the one way in. */}
 				<section aria-label="Ways to bring AI Hero to your team" className="border-b">
@@ -279,6 +279,112 @@ export default async function TeamPage() {
 								/>
 							</a>
 						</article>
+						<article
+							className={cn('bg-background flex flex-col md:col-span-2', INNER)}
+							aria-labelledby="offer-c5"
+						>
+							<div className="mb-4 flex flex-wrap items-center gap-3">
+								<p className={cn(TYPE.groupLabel)}>03 / Cohort 005</p>
+							</div>
+							<h2 id="offer-c5" className={cn(TYPE.heading, 'text-balance')}>
+								Software Factories for Real Engineers
+							</h2>
+							<p className={cn(TYPE.meta, 'text-muted-foreground mt-3')}>
+								$1,295 list price. Team pricing through November 2, 2026.
+							</p>
+							<table
+								className={cn(TYPE.meta, 'mt-6 w-full max-w-2xl text-left')}
+							>
+								<caption className="sr-only">
+									Cohort 005 team pricing through November 2, 2026
+								</caption>
+								<thead>
+									<tr className="border-b border-[color:var(--ah-line-soft)]">
+										<th scope="col" className="pb-3 pr-3">
+											Seats
+										</th>
+										<th scope="col" className="pb-3 pr-3">
+											Discount
+										</th>
+										<th scope="col" className="pb-3">
+											Per seat
+										</th>
+									</tr>
+								</thead>
+								<tbody>
+									{[
+										['1 to 4', '30%', '$906.50'],
+										['5 to 9', '35%', '$841.75'],
+										['10 to 29', '40%', '$777.00'],
+										['30+', '45%', '$712.25'],
+									].map(([seats, discount, price]) => (
+										<tr
+											key={seats}
+											className="border-b border-[color:var(--ah-line-soft)]"
+										>
+											<th scope="row" className="py-3 pr-3 font-normal">
+												{seats}
+											</th>
+											<td className="py-3 pr-3">{discount}</td>
+											<td className="py-3 font-mono">{price}</td>
+										</tr>
+									))}
+								</tbody>
+							</table>
+							<C5TeamCheckout
+								cancelUrl={`${env.NEXT_PUBLIC_URL}/for-your-team`}
+							/>
+							<div
+								className={cn(TYPE.meta, 'mt-5 flex flex-wrap gap-x-6 gap-y-3')}
+							>
+								<a
+									href="#c5-team-invoice"
+									className="underline underline-offset-4"
+								>
+									Need an invoice?
+								</a>
+								<a
+									href="mailto:team@aihero.dev"
+									className="underline underline-offset-4"
+								>
+									team@aihero.dev
+								</a>
+								<a href="#contact" className="underline underline-offset-4">
+									Get a quote for your team
+								</a>
+							</div>
+							<p
+								className={cn(
+									TYPE.meta,
+									'text-muted-foreground mt-5 max-w-[65ch]',
+								)}
+							>
+								Already bought Crash Course team seats for your organization?{' '}
+								<a
+									href="mailto:team@aihero.dev"
+									className="text-foreground underline underline-offset-4"
+								>
+									Email us for a quote
+								</a>
+								. That credit is handled manually.
+							</p>
+						</article>
+					</div>
+				</section>
+
+				<section
+					id="c5-team-invoice"
+					aria-labelledby="c5-invoice-title"
+					className="scroll-mt-(--nav-height) border-b"
+				>
+					<div className={INNER}>
+						<h2 id="c5-invoice-title" className={cn(TYPE.heading, 'mb-6')}>
+							Cohort 005 team invoice
+						</h2>
+						<TeamInvoiceForm
+							productId="product-s00zs"
+							location="/for-your-team#c5-team-invoice"
+						/>
 					</div>
 				</section>
 
