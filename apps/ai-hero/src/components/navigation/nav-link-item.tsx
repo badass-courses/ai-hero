@@ -3,24 +3,24 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { track } from '@/utils/analytics'
 import { ChevronRight } from 'lucide-react'
-import { z } from 'zod'
 
 import { Button } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/utils/cn'
 
 import { NavPill } from './nav-pill'
 
-const NavLinkItemSchema = z.object({
-	href: z.string().optional(),
-	label: z.union([z.string(), z.any()]),
-	onClick: z.function().optional(),
-	className: z.string().optional(),
-	icon: z.any().optional(),
-	variant: z.enum(['nav', 'menu']).default('nav').optional(),
-	textLabel: z.string().optional(),
-})
-
-export type NavLinkItem = z.infer<typeof NavLinkItemSchema>
+// A plain type, not a zod schema: nothing validated these props at runtime,
+// and the `import { z }` was the nav's share of putting zod (65KB gz) into
+// every page's client bundle.
+export type NavLinkItem = {
+	href?: string
+	label: React.ReactNode
+	onClick?: () => void
+	className?: string
+	icon?: React.ReactNode
+	variant?: 'nav' | 'menu'
+	textLabel?: string
+}
 
 /**
  * NavLinkItem component that can be used in both navigation and menu contexts
