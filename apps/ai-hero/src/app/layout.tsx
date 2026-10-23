@@ -21,12 +21,9 @@ import { PromoBar } from '@/components/navigation/promo-bar'
 import { PromoBarSlot } from '@/components/navigation/promo-bar-slot'
 import { PlaybackPrefHydrator } from '@/hooks/playback-pref-hydrator'
 import { TRPCReactProvider } from '@/trpc/react'
-import { ourFileRouter } from '@/uploadthing/core'
-import { NextSSRPlugin } from '@uploadthing/react/next-ssr-plugin'
 import HolyLoader from 'holy-loader'
 import { AxiomWebVitals } from 'next-axiom'
 import { NuqsAdapter } from 'nuqs/adapters/next/app'
-import { extractRouterConfig } from 'uploadthing/server'
 
 import { getCouponForCode } from '@coursebuilder/commerce/props-for-commerce'
 import { Toaster } from '@coursebuilder/ui/primitives/toaster'
@@ -162,15 +159,12 @@ export default async function RootLayout({
 								disableTransitionOnChange
 							>
 								<HolyLoader height="0.15rem" speed={250} />
-								<NextSSRPlugin
-									/**
-									 * The `extractRouterConfig` will extract **only** the route configs from the
-									 * router to prevent additional information from being leaked to the client. The
-									 * data passed to the client is the same as if you were to fetch
-									 * `/api/uploadthing` directly.
-									 */
-									routerConfig={extractRouterConfig(ourFileRouter)}
-								/>
+								{/* No uploadthing `NextSSRPlugin` here any more. It hydrated the
+								    upload router config into every page so an uploader would
+								    not need one fetch of `/api/uploadthing` — but the only
+								    uploaders are editors (post and admin UIs), and every reader
+								    was paying for the plugin's chunk and the serialized config.
+								    Uploaders fetch the config on first use instead. */}
 								<GuardedCouponProvider
 									getCouponForCode={async (couponCodeOrId: string | null) => {
 										'use server'
