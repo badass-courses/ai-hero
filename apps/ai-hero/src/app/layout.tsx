@@ -193,28 +193,41 @@ export default async function RootLayout({
 							</ThemeProvider>
 						</NuqsAdapter>
 					</TRPCReactProvider>
-					{/* ONE gtag.js for both Google products. The GA and Ads tags used
-					    to be two separate gtag.js downloads (~330KB, 400–600ms of main
-					    thread on a mid-range phone); one script configured for both
-					    IDs sends exactly the same hits. `lazyOnload` rather than
-					    `afterInteractive`: the App Router preloads `afterInteractive`
-					    scripts from the document head, so the tag was fetched at
-					    high priority before any of the app's own JS. */}
+					{/* One gtag.js for both Google products, loaded after `load`.
+
+					    The GA and Ads tags used to be two `afterInteractive`
+					    `<Script src>`s. The App Router preloads those from the
+					    document head, so ~330KB of tag JS was fetched at high
+					    priority at ~0.5s, ahead of every one of the app's own
+					    chunks. (gtag fetches the Ads container itself once it sees
+					    the second `config`, so the byte count is the same; what
+					    changes is when it competes.)
+
+					    NOT `strategy="lazyOnload"`: that waits on
+					    `requestIdleCallback`, and the hero shader's rAF loop can
+					    starve idle callbacks indefinitely — on `/` and `/newsletter`
+					    the tag never loaded at all in testing. This inline script
+					    is never preloaded, runs after hydration, and appends the
+					    tag on `load` (or at once if the page is already loaded). */}
 					{gtagIds.length > 0 && (
-						<>
-							<Script
-								src={`https://www.googletagmanager.com/gtag/js?id=${gtagIds[0]}`}
-								strategy="lazyOnload"
-							/>
-							<Script id="gtag-init" strategy="lazyOnload">
-								{`
-									window.dataLayer = window.dataLayer || [];
-									function gtag(){window.dataLayer.push(arguments);}
-									gtag('js', new Date());
-									${gtagIds.map((id) => `gtag('config', '${id}');`).join('\n')}
-								`}
-							</Script>
-						</>
+						<Script id="gtag-init" strategy="afterInteractive">
+							{`
+								window.dataLayer = window.dataLayer || [];
+								function gtag(){window.dataLayer.push(arguments);}
+								gtag('js', new Date());
+								${gtagIds.map((id) => `gtag('config', '${id}');`).join('\n')}
+								(function () {
+									var load = function () {
+										var s = document.createElement('script');
+										s.async = true;
+										s.src = 'https://www.googletagmanager.com/gtag/js?id=${gtagIds[0]}';
+										document.head.appendChild(s);
+									};
+									if (document.readyState === 'complete') load();
+									else window.addEventListener('load', load, { once: true });
+								})();
+							`}
+						</Script>
 					)}
 				</body>
 			</html>
