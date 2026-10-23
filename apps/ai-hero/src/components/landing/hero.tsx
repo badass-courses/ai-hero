@@ -314,6 +314,9 @@ export async function Hero({
 						/>
 						<Image
 							priority
+							// `priority` only preloads; the request itself still went out at
+							// Low priority. This portrait is the desktop LCP element.
+							fetchPriority="high"
 							src="/landing/matt-pocock-left@2x.png"
 							alt="Matt Pocock"
 							width={349}
