@@ -1,20 +1,9 @@
 'use client'
 
 import * as React from 'react'
-import dynamic from 'next/dynamic'
+import MuxPlayer from '@mux/mux-player-react'
 
-import {
-	Dialog,
-	DialogContent,
-	DialogTitle,
-	DialogTrigger,
-} from '@coursebuilder/ui'
-
-// Keep the player (and hls.js) out of the homepage's initial client bundle.
-// Declaring this boundary is not enough: mount it only after opening the video.
-const MuxPlayer = dynamic(() => import('@mux/mux-player-react'), {
-	ssr: false,
-})
+import { Dialog, DialogContent, DialogTrigger } from '@coursebuilder/ui'
 
 export function HeroVideo({
 	playbackId,
@@ -24,8 +13,7 @@ export function HeroVideo({
 	title?: string
 }) {
 	const [open, setOpen] = React.useState(false)
-	const poster = `https://image.mux.com/${playbackId}/thumbnail.webp`
-	const preview = `https://image.mux.com/${playbackId}/animated.webp?width=640&fps=15&start=0&end=6`
+	const previewRef = React.useRef<React.ComponentRef<typeof MuxPlayer>>(null)
 
 	return (
 		<Dialog open={open} onOpenChange={setOpen} modal={false}>
@@ -35,16 +23,19 @@ export function HeroVideo({
 					aria-label={title ? `Play ${title}` : 'Play welcome video'}
 					className="group relative block h-full min-h-80 w-full cursor-pointer overflow-hidden"
 				>
-					<picture>
-						<source media="(prefers-reduced-motion: reduce)" srcSet={poster} />
-						<img
-							src={preview}
-							alt=""
-							loading="eager"
-							fetchPriority="high"
-							className="pointer-events-none absolute inset-0 h-full w-full object-cover object-center"
-						/>
-					</picture>
+					<MuxPlayer
+						ref={previewRef}
+						playbackId={playbackId}
+						streamType="on-demand"
+						autoPlay="muted"
+						muted
+						loop
+						playsInline
+						preload="auto"
+						nohotkeys
+						defaultHiddenCaptions
+						className="pointer-events-none absolute inset-0 h-full w-full [--controls:none] [--media-object-fit:cover] [--media-object-position:center]"
+					/>
 					<div
 						aria-hidden
 						className="from-background via-background/0 to-background pointer-events-none absolute inset-0 bg-gradient-to-r"
@@ -68,21 +59,15 @@ export function HeroVideo({
 					</span>
 				</button>
 			</DialogTrigger>
-			<DialogContent
-				aria-describedby={undefined}
-				className="bg-background h-[min(75vh,calc(85vw*9/16))] w-[min(85vw,calc(75vh*16/9))] max-w-none border-0 p-0 sm:max-w-none"
-			>
-				<DialogTitle className="sr-only">{title ?? 'Welcome video'}</DialogTitle>
-				{open && (
-					<MuxPlayer
-						playbackId={playbackId}
-						streamType="on-demand"
-						title={title}
-						autoPlay
-						accentColor="#ffcf77"
-						className="h-full w-full"
-					/>
-				)}
+			<DialogContent className="bg-background h-[min(75vh,calc(85vw*9/16))] w-[min(85vw,calc(75vh*16/9))] max-w-none border-0 p-0 sm:max-w-none">
+				<MuxPlayer
+					playbackId={playbackId}
+					streamType="on-demand"
+					title={title}
+					autoPlay
+					accentColor="#ffcf77"
+					className="h-full w-full"
+				/>
 			</DialogContent>
 		</Dialog>
 	)
