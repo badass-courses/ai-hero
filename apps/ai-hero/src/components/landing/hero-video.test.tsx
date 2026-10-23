@@ -33,12 +33,26 @@ describe('HeroVideo', () => {
 		vi.unstubAllGlobals()
 	})
 
-	it('server-renders a thumbnail and accessible play button, not a player', () => {
+	it('renders an animated preview with a reduced-motion still, not a player', () => {
 		const html = renderToStaticMarkup(<HeroVideo playbackId="welcome" />)
 
 		expect(html).toContain('Play welcome video')
-		expect(html).toContain('image.mux.com')
-		expect(html).toContain('thumbnail.webp')
+		const markup = document.createElement('div')
+		markup.innerHTML = html
+		const image = markup.querySelector('picture img')!
+		expect(image.getAttribute('src')).toBe(
+			'https://image.mux.com/welcome/animated.webp?width=640&fps=15&start=0&end=6',
+		)
+		expect(image.getAttribute('loading')).toBe('eager')
+		expect(image.getAttribute('fetchpriority')).toBe('high')
+		const reducedMotion = markup.querySelector('picture source')!
+		expect(reducedMotion.getAttribute('media')).toBe(
+			'(prefers-reduced-motion: reduce)',
+		)
+		expect(reducedMotion.getAttribute('srcset')).toBe(
+			'https://image.mux.com/welcome/thumbnail.webp',
+		)
+		expect(markup.querySelector('mux-player')).toBeNull()
 		expect(html).not.toContain('mux-player')
 		expect(playerImported).not.toHaveBeenCalled()
 	})

@@ -36,9 +36,13 @@ import { cn } from '@coursebuilder/ui/utils/cn'
 
 // compileMDX also imports non-video components from this client module on the
 // homepage. Don't pull the player into those pages just to register MDX embeds.
-const MDXVideo = dynamic(() => import('@/components/content/mdx-video'), {
+const DynamicMDXVideo = dynamic(() => import('@/components/content/mdx-video'), {
 	ssr: false,
 })
+// The page-builder registry accepts function components, not ComponentClass.
+type MDXVideoProps = React.ComponentProps<typeof DynamicMDXVideo>
+const MDXVideo: React.FC<MDXVideoProps> = (props) => <DynamicMDXVideo {...props} />
+
 const TrackedMuxPlayer = dynamic(
 	() =>
 		import('@/components/content/tracked-mux-player').then(

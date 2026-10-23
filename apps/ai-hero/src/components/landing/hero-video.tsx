@@ -2,7 +2,6 @@
 
 import * as React from 'react'
 import dynamic from 'next/dynamic'
-import Image from 'next/image'
 
 import {
 	Dialog,
@@ -26,6 +25,7 @@ export function HeroVideo({
 }) {
 	const [open, setOpen] = React.useState(false)
 	const poster = `https://image.mux.com/${playbackId}/thumbnail.webp`
+	const preview = `https://image.mux.com/${playbackId}/animated.webp?width=640&fps=15&start=0&end=6`
 
 	return (
 		<Dialog open={open} onOpenChange={setOpen} modal={false}>
@@ -35,13 +35,16 @@ export function HeroVideo({
 					aria-label={title ? `Play ${title}` : 'Play welcome video'}
 					className="group relative block h-full min-h-80 w-full cursor-pointer overflow-hidden"
 				>
-					<Image
-						src={poster}
-						alt=""
-						fill
-						sizes="(min-width: 768px) 50vw, 100vw"
-						className="pointer-events-none object-cover object-center"
-					/>
+					<picture>
+						<source media="(prefers-reduced-motion: reduce)" srcSet={poster} />
+						<img
+							src={preview}
+							alt=""
+							loading="eager"
+							fetchPriority="high"
+							className="pointer-events-none absolute inset-0 h-full w-full object-cover object-center"
+						/>
+					</picture>
 					<div
 						aria-hidden
 						className="from-background via-background/0 to-background pointer-events-none absolute inset-0 bg-gradient-to-r"
