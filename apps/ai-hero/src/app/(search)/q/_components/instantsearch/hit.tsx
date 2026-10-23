@@ -20,6 +20,8 @@ const MotionLink = motion.create(Link)
 
 export default function Hit({ hit }: { hit: TypesenseResource }) {
 	const href = getResourceHref(hit)
+	// InstantSearch stamps every hit with its 1-based position in the results.
+	const position = (hit as { __position?: number }).__position ?? Infinity
 	const dateLabel = hit.created_at_timestamp
 		? format(new Date(hit.created_at_timestamp), 'MMM d, y')
 		: ''
@@ -74,6 +76,11 @@ export default function Hit({ hit }: { hit: TypesenseResource }) {
 									src={hit.image}
 									alt={hit.title}
 									fill
+									// The first rows are above the fold on a phone and the top
+									// one is the page's LCP element; lazy-loading them cost /posts
+									// ~2s of load delay on its LCP.
+									priority={position <= 2}
+									fetchPriority={position === 1 ? 'high' : undefined}
 									deliveryType={isRemoteUrl(hit.image) ? 'fetch' : undefined}
 									sizes="(min-width: 640px) 240px, 100vw"
 									className="object-cover"
