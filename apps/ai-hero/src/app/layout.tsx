@@ -88,6 +88,12 @@ export const metadata: Metadata = {
 	},
 }
 
+/**
+ * How long after `load` the Google tag loads when the reader has not touched
+ * the page. See the comment on the init script below.
+ */
+const GTAG_DELAY_MS = 5000
+
 /** GA4 measurement id first, then the Ads id, minus whatever is unset. */
 const gtagIds =
 	env.NODE_ENV === 'development'
@@ -207,8 +213,18 @@ export default async function RootLayout({
 					    `requestIdleCallback`, and the hero shader's rAF loop can
 					    starve idle callbacks indefinitely — on `/` and `/newsletter`
 					    the tag never loaded at all in testing. This inline script
-					    is never preloaded, runs after hydration, and appends the
-					    tag on `load` (or at once if the page is already loaded). */}
+					    is never preloaded and runs after hydration.
+
+					    It appends the tag on the reader's first interaction
+					    (scroll, touch, pointer, key) or ${GTAG_DELAY_MS / 1000}s
+					    after `load`, whichever comes first. The tag's own
+					    evaluation is ~500ms of main thread on a mid-range phone,
+					    and running it inside the page's loading window was most
+					    of what was left of the homepage's blocking time. Someone
+					    who leaves within ${GTAG_DELAY_MS / 1000}s without touching
+					    the page is the only visit this does not record; every
+					    event on a later page still fires, since the tag is loaded
+					    by then. The hits themselves are unchanged. */}
 					{gtagIds.length > 0 && (
 						<Script id="gtag-init" strategy="afterInteractive">
 							{`
@@ -217,14 +233,21 @@ export default async function RootLayout({
 								gtag('js', new Date());
 								${gtagIds.map((id) => `gtag('config', '${id}');`).join('\n')}
 								(function () {
+									var done = false;
+									var events = ['scroll', 'touchstart', 'pointerdown', 'pointermove', 'keydown'];
 									var load = function () {
+										if (done) return;
+										done = true;
+										events.forEach(function (e) { window.removeEventListener(e, load); });
 										var s = document.createElement('script');
 										s.async = true;
 										s.src = 'https://www.googletagmanager.com/gtag/js?id=${gtagIds[0]}';
 										document.head.appendChild(s);
 									};
-									if (document.readyState === 'complete') load();
-									else window.addEventListener('load', load, { once: true });
+									events.forEach(function (e) { window.addEventListener(e, load, { passive: true }); });
+									var arm = function () { setTimeout(load, ${GTAG_DELAY_MS}); };
+									if (document.readyState === 'complete') arm();
+									else window.addEventListener('load', arm, { once: true });
 								})();
 							`}
 						</Script>
