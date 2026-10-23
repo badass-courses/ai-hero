@@ -22,7 +22,20 @@ const config = createDefaultConfig({
 })
 
 // Never ship the embedding vectors to the client.
-config.additionalSearchParameters.exclude_fields = 'embedding'
+//
+// Nor `description`: it is the full post body, and the hit UI renders only
+// `title` and `summary`. Returning it put each body in the response FOUR times
+// (the document, `_highlightResult`, `_snippetResult`, `_rawTypesenseHit`) —
+// 1.6MB of the 2MB `/posts` HTML was the 40 server-rendered hits. It stays in
+// `query_by`, so search still matches on it.
+config.additionalSearchParameters.exclude_fields = 'embedding,description'
+// Highlight only what is rendered. The adapter's default is every `query_by`
+// field, which asked Typesense for a full-text highlight of each body too.
+// `summary` stays in `highlight_full_fields` on purpose: `<Highlight>` reads
+// the full highlighted value, and without it a matched summary would render
+// as a 30-word snippet.
+config.additionalSearchParameters.highlight_fields = 'title,summary'
+config.additionalSearchParameters.highlight_full_fields = 'title,summary'
 
 // Create adapter directly instead of using the createTypesenseAdapter function
 export const typesenseInstantsearchAdapter = new TypesenseInstantSearchAdapter(
