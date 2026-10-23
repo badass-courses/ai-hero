@@ -10,6 +10,14 @@ describe('getNavMode', () => {
 		expect(getNavMode(undefined)).toBe('full')
 	})
 
+	it('treats /index, the pathname Next prerenders / under, as the homepage', () => {
+		// Server and client must agree here or the nav hydration-mismatches on
+		// every homepage load. See the note on `normalize` in nav-mode.ts.
+		expect(getNavMode('/index')).toBe('full')
+		expect(getNavMode('/index/')).toBe('full')
+		expect(getNavMode('/INDEX')).toBe('full')
+	})
+
 	it('returns full for course/sales and commerce sections', () => {
 		expect(getNavMode('/workshops')).toBe('full')
 		expect(getNavMode('/workshops/ai-sdk-v6-crash-course')).toBe('full')
