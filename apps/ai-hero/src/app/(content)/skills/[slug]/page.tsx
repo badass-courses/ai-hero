@@ -32,7 +32,7 @@ import { cn } from '@coursebuilder/utils/cn'
 
 import { CopyPageButton } from '../../_components/copy-page-button'
 import { PostShareDialogButton } from '../../[post]/_components/post-header-dialog-buttons'
-import { PostPlayer } from '../../posts/_components/post-player'
+import { PostPlayer } from '../../posts/_components/lazy-post-player'
 import { SkillsCourseCta } from '../_components/skills-course-cta'
 import { SkillChangelogActionBar } from './_components/skill-changelog-action-bar'
 
