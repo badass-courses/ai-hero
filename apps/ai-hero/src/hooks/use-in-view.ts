@@ -27,7 +27,13 @@ export function useInView(
 		const threshold = amount === 'some' ? 0 : amount === 'all' ? 1 : amount
 		const observer = new IntersectionObserver(
 			([entry]) => {
-				const next = entry?.isIntersecting ?? false
+				// `isIntersecting` is true for ANY overlap whatever the threshold, and
+				// the callback fires once on observe with the current state, so a
+				// 30%-visible element read as in view under `amount: 0.5`. Fractional
+				// amounts also need the ratio.
+				const next =
+					(entry?.isIntersecting ?? false) &&
+					(threshold === 0 || (entry?.intersectionRatio ?? 0) >= threshold)
 				setInView(next)
 				if (next && once) observer.disconnect()
 			},

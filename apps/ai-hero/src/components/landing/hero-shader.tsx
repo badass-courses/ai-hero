@@ -404,7 +404,10 @@ export function HeroShader({
 		// the single largest thing on the homepage's main thread.
 		const small = canvas.clientWidth < 768
 		const maxDpr = small ? 1.5 : 2
-		const minFrameMs = small ? 1000 / 30 : 0
+		// A few ms under the frame budget: rAF timestamps jitter, and an exact
+		// 33.3ms gate drops every other pair of 60Hz frames (two are 33.33ms),
+		// which is 20fps, not 30.
+		const minFrameMs = small ? 1000 / 30 - 4 : 0
 
 		const vs = compileShader(gl, gl.VERTEX_SHADER, VERT)
 		const fs = compileShader(gl, gl.FRAGMENT_SHADER, FRAG)
@@ -544,7 +547,10 @@ export function HeroShader({
 				gl.drawArrays(gl.TRIANGLES, 0, 3)
 				if (!drawn) {
 					drawn = true
-					canvas.style.opacity = '1'
+					// Clear the inline 0 rather than set 1: callers tint the canvas with
+					// an opacity class (`opacity-50` on /newsletter, `opacity-25` on
+					// /for-your-team) and an inline value would win over it.
+					canvas.style.opacity = ''
 				}
 			}
 			if (reduce) return
