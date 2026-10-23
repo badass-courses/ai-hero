@@ -1,9 +1,21 @@
 'use client'
 
 import * as React from 'react'
-import MuxPlayer from '@mux/mux-player-react'
+import dynamic from 'next/dynamic'
+import Image from 'next/image'
 
-import { Dialog, DialogContent, DialogTrigger } from '@coursebuilder/ui'
+import {
+	Dialog,
+	DialogContent,
+	DialogTitle,
+	DialogTrigger,
+} from '@coursebuilder/ui'
+
+// Keep the player (and hls.js) out of the homepage's initial client bundle.
+// Declaring this boundary is not enough: mount it only after opening the video.
+const MuxPlayer = dynamic(() => import('@mux/mux-player-react'), {
+	ssr: false,
+})
 
 export function HeroVideo({
 	playbackId,
@@ -13,7 +25,7 @@ export function HeroVideo({
 	title?: string
 }) {
 	const [open, setOpen] = React.useState(false)
-	const previewRef = React.useRef<React.ComponentRef<typeof MuxPlayer>>(null)
+	const poster = `https://image.mux.com/${playbackId}/thumbnail.webp`
 
 	return (
 		<Dialog open={open} onOpenChange={setOpen} modal={false}>
@@ -23,18 +35,12 @@ export function HeroVideo({
 					aria-label={title ? `Play ${title}` : 'Play welcome video'}
 					className="group relative block h-full min-h-80 w-full cursor-pointer overflow-hidden"
 				>
-					<MuxPlayer
-						ref={previewRef}
-						playbackId={playbackId}
-						streamType="on-demand"
-						autoPlay="muted"
-						muted
-						loop
-						playsInline
-						preload="auto"
-						nohotkeys
-						defaultHiddenCaptions
-						className="pointer-events-none absolute inset-0 h-full w-full [--controls:none] [--media-object-fit:cover] [--media-object-position:center]"
+					<Image
+						src={poster}
+						alt=""
+						fill
+						sizes="(min-width: 768px) 50vw, 100vw"
+						className="pointer-events-none object-cover object-center"
 					/>
 					<div
 						aria-hidden
@@ -59,15 +65,21 @@ export function HeroVideo({
 					</span>
 				</button>
 			</DialogTrigger>
-			<DialogContent className="bg-background h-[min(75vh,calc(85vw*9/16))] w-[min(85vw,calc(75vh*16/9))] max-w-none border-0 p-0 sm:max-w-none">
-				<MuxPlayer
-					playbackId={playbackId}
-					streamType="on-demand"
-					title={title}
-					autoPlay
-					accentColor="#ffcf77"
-					className="h-full w-full"
-				/>
+			<DialogContent
+				aria-describedby={undefined}
+				className="bg-background h-[min(75vh,calc(85vw*9/16))] w-[min(85vw,calc(75vh*16/9))] max-w-none border-0 p-0 sm:max-w-none"
+			>
+				<DialogTitle className="sr-only">{title ?? 'Welcome video'}</DialogTitle>
+				{open && (
+					<MuxPlayer
+						playbackId={playbackId}
+						streamType="on-demand"
+						title={title}
+						autoPlay
+						accentColor="#ffcf77"
+						className="h-full w-full"
+					/>
+				)}
 			</DialogContent>
 		</Dialog>
 	)
