@@ -12,6 +12,17 @@ import {
 import { CldImage, ThemeImage } from '@/components/cld-image'
 import { DictionaryHoverLink } from '@/components/dictionary/dictionary-hover-link'
 import { Heading } from '@/components/mdx/heading'
+import {
+	Commit,
+	CommitMap,
+	MDXCheckbox as DynamicMDXCheckbox,
+	Mermaid,
+	OfficeHoursSchedule as DynamicOfficeHoursSchedule,
+	ProjectVideo as DynamicProjectVideo,
+	Spoiler,
+	TableWrapper,
+	Testimonial,
+} from '@/components/mdx/lazy-client-components'
 import { AISummary, TrackLink } from '@/components/mdx/mdx-components'
 import { SubscriberCount } from '@/components/subscriber-count'
 import { courseBuilderAdapter } from '@/db'
@@ -60,45 +71,18 @@ import { cn } from '@coursebuilder/ui/utils/cn'
 
 import config from '@/config'
 
+// The async server components stay behind server-side `dynamic()`. The
+// client components in the map are imported from a client lazy module
+// instead: a `dynamic()` here does not split a client component's
+// dependencies, so every MDX page shipped all of them. See
+// `components/mdx/lazy-client-components.tsx`.
 const Scrollycoding = dynamic(
 	() => import('@/components/codehike/scrollycoding'),
-)
-const Mermaid = dynamic(() =>
-	import('@coursebuilder/mdx-mermaid/client').then((mod) => mod.Mermaid),
-)
-const Testimonial = dynamic(() =>
-	import('@/app/admin/pages/_components/page-builder-mdx-components').then(
-		(mod) => mod.Testimonial,
-	),
-)
-const TableWrapper = dynamic(() =>
-	import('@/app/admin/pages/_components/page-builder-mdx-components').then(
-		(mod) => mod.TableWrapper,
-	),
-)
-const Spoiler = dynamic(() =>
-	import('@/app/admin/pages/_components/page-builder-mdx-components').then(
-		(mod) => mod.Spoiler,
-	),
 )
 const DynamicCode = dynamic(() =>
 	import('@/components/codehike/code').then((mod) => mod.Code),
 )
 const DynamicMDXVideo = dynamic(() => import('@/components/content/lazy-mdx-video'))
-const DynamicProjectVideo = dynamic(() =>
-	import('@/app/admin/pages/_components/page-builder-mdx-components').then(
-		(mod) => mod.ProjectVideo,
-	),
-)
-const DynamicMDXCheckbox = dynamic(() =>
-	import('@/components/mdx-checkbox').then((mod) => mod.MDXCheckbox),
-)
-const CommitMap = dynamic(() =>
-	import('@/components/mdx/commit-map').then((mod) => mod.CommitMap),
-)
-const Commit = dynamic(() =>
-	import('@/components/mdx/commit-map').then((mod) => mod.Commit),
-)
 const CompareTable = dynamic(() =>
 	import('@/components/mdx/compare-table').then((mod) => mod.CompareTable),
 )
@@ -137,12 +121,6 @@ const Timeline = dynamic(() =>
 const TimelineItem = dynamic(() =>
 	import('@/components/mdx/timeline').then((mod) => mod.TimelineItem),
 )
-const DynamicOfficeHoursSchedule = dynamic(() =>
-	import('@/components/office-hours-schedule').then(
-		(mod) => mod.OfficeHoursSchedule,
-	),
-)
-
 type OfficeHoursScheduleMdxProps = React.ComponentProps<
 	typeof DynamicOfficeHoursSchedule
 > & {
