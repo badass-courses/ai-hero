@@ -18,6 +18,12 @@ export function PromoBarContent({ promo }: { promo: Promo }) {
 				)}
 				<Link
 					href={promo.href}
+					// The bar is on every page and this href is a `/s/` shortlink that
+					// 307s to the product page. Prefetching it fetched the product page's
+					// RSC payload on every pageview, and that payload's client references
+					// then preloaded the Mux player (300KB+ gz) and the workshop UI —
+					// on pages with no video at all.
+					prefetch={false}
 					className="group focus-visible:ring-ring inline-flex min-w-0 items-center gap-1.5 font-medium tracking-tight underline-offset-4 transition hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
 				>
 					<span className="truncate leading-[1.4]">{promo.message}</span>
