@@ -358,9 +358,38 @@ export function HeroShader({
 		colors,
 	])
 
+	// The shader does not start until the page has loaded and the main thread
+	// has a gap. It used to start at hydration, and its rAF loop then competed
+	// with everything else the page was still doing: on a throttled phone the
+	// main thread never went idle, and `requestIdleCallback` never fired for
+	// anyone else (the Google tag, for one). Before the loop runs, idle
+	// callbacks fire normally, so one with a short timeout is the gate; the
+	// canvas fades in on its first frame instead of popping.
+	const [ready, setReady] = React.useState(false)
+	React.useEffect(() => {
+		let idle = 0
+		let timer = 0
+		const go = () => {
+			if (typeof window.requestIdleCallback === 'function') {
+				idle = window.requestIdleCallback(() => setReady(true), {
+					timeout: 1500,
+				})
+			} else {
+				timer = window.setTimeout(() => setReady(true), 300)
+			}
+		}
+		if (document.readyState === 'complete') go()
+		else window.addEventListener('load', go, { once: true })
+		return () => {
+			window.removeEventListener('load', go)
+			if (idle) window.cancelIdleCallback?.(idle)
+			if (timer) window.clearTimeout(timer)
+		}
+	}, [])
+
 	React.useEffect(() => {
 		const canvas = canvasRef.current
-		if (!canvas) return
+		if (!canvas || !ready) return
 
 		const gl = canvas.getContext('webgl2', {
 			antialias: false,
@@ -368,6 +397,14 @@ export function HeroShader({
 			powerPreference: 'low-power',
 		})
 		if (!gl) return
+
+		// Phone-sized viewports render fewer pixels and fewer frames. The
+		// field is slow-moving noise with grain on top; at 30fps and 1.5× it
+		// reads the same, and a full-viewport fragment shader at DPR 3 was
+		// the single largest thing on the homepage's main thread.
+		const small = canvas.clientWidth < 768
+		const maxDpr = small ? 1.5 : 2
+		const minFrameMs = small ? 1000 / 30 : 0
 
 		const vs = compileShader(gl, gl.VERTEX_SHADER, VERT)
 		const fs = compileShader(gl, gl.FRAGMENT_SHADER, FRAG)
@@ -426,7 +463,7 @@ export function HeroShader({
 			window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 
 		const resize = () => {
-			const dpr = Math.min(window.devicePixelRatio || 1, 2)
+			const dpr = Math.min(window.devicePixelRatio || 1, maxDpr)
 			const w = Math.max(1, Math.floor(canvas.clientWidth * dpr))
 			const h = Math.max(1, Math.floor(canvas.clientHeight * dpr))
 			if (canvas.width !== w || canvas.height !== h) {
@@ -460,8 +497,15 @@ export function HeroShader({
 
 		let raf = 0
 		const start = performance.now()
+		let last = -Infinity
+		let drawn = false
 
 		const tick = (now: number) => {
+			if (now - last < minFrameMs) {
+				raf = requestAnimationFrame(tick)
+				return
+			}
+			last = now
 			if (visible) {
 				const u = uniformsRef.current
 				const t = reduce ? 1.7 : (now - start) / 1000
@@ -498,6 +542,10 @@ export function HeroShader({
 					gl.uniform3f(loc, c[0], c[1], c[2])
 				}
 				gl.drawArrays(gl.TRIANGLES, 0, 3)
+				if (!drawn) {
+					drawn = true
+					canvas.style.opacity = '1'
+				}
 			}
 			if (reduce) return
 			raf = requestAnimationFrame(tick)
@@ -515,13 +563,15 @@ export function HeroShader({
 			gl.deleteShader(vs)
 			gl.deleteShader(fs)
 		}
-	}, [])
+	}, [ready])
 
 	return (
 		<canvas
 			ref={canvasRef}
 			aria-hidden
 			className={cn('block h-full w-full', className)}
+			// Invisible until the first frame is drawn; see the `ready` gate above.
+			style={{ opacity: 0, transition: 'opacity 600ms ease-out' }}
 		/>
 	)
 }
