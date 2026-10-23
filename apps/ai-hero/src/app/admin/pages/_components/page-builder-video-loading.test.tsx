@@ -3,16 +3,23 @@ import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
+import LazyMDXVideo from '@/components/content/lazy-mdx-video'
 
-const { mdxImported, trackedImported, trackedRendered } = vi.hoisted(() => ({
+const { mdxImported, mdxRendered, trackedImported, trackedRendered } = vi.hoisted(() => ({
 	mdxImported: vi.fn(),
+	mdxRendered: vi.fn(),
 	trackedImported: vi.fn(),
 	trackedRendered: vi.fn(),
 }))
 
 vi.mock('@/components/content/mdx-video', () => {
 	mdxImported()
-	return { default: () => null }
+	return {
+		default: (props: Record<string, unknown>) => {
+			mdxRendered(props)
+			return <div data-testid="mdx-player" />
+		},
+	}
 })
 vi.mock('@/components/content/tracked-mux-player', () => {
 	trackedImported()
@@ -35,6 +42,7 @@ describe('page builder video loading', () => {
 			<CheckList><li>Ready</li></CheckList>,
 		)
 		expect(html).toContain('Ready')
+		expect(LazyMDXVideo).toBeDefined()
 		expect(mdxImported).not.toHaveBeenCalled()
 		expect(trackedImported).not.toHaveBeenCalled()
 	})
@@ -62,6 +70,28 @@ describe('page builder video loading', () => {
 				}),
 			)
 			expect(mdxImported).not.toHaveBeenCalled()
+		} finally {
+			await act(async () => root.unmount())
+			container.remove()
+			vi.unstubAllGlobals()
+		}
+	})
+
+	it('loads the MDX player through its client boundary only when mounted', async () => {
+		vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+		const container = document.createElement('div')
+		document.body.append(container)
+		const root = createRoot(container)
+		try {
+			await act(async () => {
+				root.render(<LazyMDXVideo resourceId="video-1" muxPlaybackId="welcome" />)
+			})
+			await vi.waitFor(() => expect(mdxImported).toHaveBeenCalledTimes(1))
+			await act(async () => {})
+			expect(container.querySelector('[data-testid="mdx-player"]')).not.toBeNull()
+			expect(mdxRendered).toHaveBeenLastCalledWith(
+				expect.objectContaining({ resourceId: 'video-1', muxPlaybackId: 'welcome' }),
+			)
 		} finally {
 			await act(async () => root.unmount())
 			container.remove()
