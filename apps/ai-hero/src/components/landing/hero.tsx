@@ -17,7 +17,7 @@ import rehypeRaw from 'rehype-raw'
 
 import { SubscriberCount } from '../subscriber-count'
 import { HeroShader } from './hero-shader'
-import { HeroVideo } from './hero-video'
+import { HeroVideo } from './lazy-hero-video'
 
 import { TYPE } from './type'
 
