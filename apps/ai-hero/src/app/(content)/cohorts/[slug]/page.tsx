@@ -23,6 +23,7 @@ import { products } from '@/db/schema'
 import { env } from '@/env.mjs'
 import type { CampaignLanding } from '@/lib/campaign-landings'
 import { CohortPageProps, type Cohort } from '@/lib/cohort'
+import { toClientCohort } from '@/lib/cohort-client-shape'
 import {
 	formatAlumniCount,
 	getCachedCohortAlumniCount,
@@ -317,6 +318,10 @@ export async function CohortPageView(props: CohortPageViewProps) {
 					},
 				})),
 			}
+
+	// Client components get this, never `cohort`: whatever they receive is
+	// serialized into the RSC payload, lesson bodies included.
+	const clientCohort = toClientCohort(cohort)
 
 	// A body that places the curriculum itself replaces the list appended
 	// under it, so the workshops appear once. The inline list is only for
@@ -664,7 +669,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 						)}
 					</div>
 					<CohortSidebar
-						cohort={displayCohort}
+						cohort={clientCohort}
 						mobileCta={mobileCta}
 					>
 						{fields?.image && (
@@ -707,6 +712,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 						) : ALLOW_PURCHASE ? (
 							<CohortPricingWidgetContainer
 								{...cohortProps}
+								cohort={clientCohort}
 								giftEnrollmentOpen={giftEnrollmentOpen}
 								searchParams={searchParams}
 								enrollmentOpenDateString={enrollmentOpenDateString}
