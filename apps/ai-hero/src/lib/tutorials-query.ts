@@ -74,6 +74,8 @@ export async function getTutorial(moduleSlugOrId: string) {
 		},
 	})
 
+	if (!tutorial) return null
+
 	const parsedTutorial = ModuleSchema.safeParse(tutorial)
 	if (!parsedTutorial.success) {
 		await log.error('tutorial.parse.error', {
