@@ -69,6 +69,11 @@ const config = {
 	async redirects() {
 		return [
 			{
+				source: '/for-teams',
+				destination: '/for-your-team',
+				permanent: true,
+			},
+			{
 				source: '/ai-coding-for-real-engineers-with-claude-code-2026-04',
 				destination: '/claude-code-for-real-engineers-2026-04',
 				permanent: true,
