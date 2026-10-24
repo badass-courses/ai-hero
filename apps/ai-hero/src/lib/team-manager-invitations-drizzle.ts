@@ -17,6 +17,7 @@ import {
 	type TeamManagerMembership,
 } from '@/lib/team-manager-invitations'
 import { BILLING_ADMIN_ROLE } from '@/lib/team-roles'
+import { bustSessionAccessForUser } from '@/server/session-access-runtime'
 import { and, eq, gt, sql } from 'drizzle-orm'
 
 import { sendAnEmail } from '@coursebuilder/utils/send-an-email'
@@ -246,6 +247,8 @@ export const drizzleTeamManagerInvitationDataSource: TeamManagerInvitationDataSo
 						eq(organizationMembershipRoles.roleId, role.id),
 					),
 				)
+			// Reactivation happens after the adapter write already busted.
+			await bustSessionAccessForUser(membership.userId)
 		},
 
 		async markInvitationAccepted(invitationId) {
@@ -293,6 +296,11 @@ export const drizzleTeamManagerInvitationDataSource: TeamManagerInvitationDataSo
 						eq(organizationMembershipRoles.roleId, role.id),
 					),
 				)
+			const member = await db.query.organizationMemberships.findFirst({
+				where: eq(organizationMemberships.id, membershipId),
+				columns: { userId: true },
+			})
+			if (member) await bustSessionAccessForUser(member.userId)
 			return (result.rowsAffected ?? 0) === 1
 		},
 	}
