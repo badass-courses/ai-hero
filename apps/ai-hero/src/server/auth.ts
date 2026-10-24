@@ -29,6 +29,7 @@ import {
 	type DiscordCredentialUpdate,
 } from '@/server/discord-token-refresh-persistence'
 import { log, serializeError } from '@/server/logger'
+import { redactedErrorMessage } from '@/server/logger-utils'
 import {
 	createOAuthContainmentAdapter,
 	createOAuthContainmentSignInCallback,
@@ -181,7 +182,7 @@ async function triggerVerifiedOAuthRoleSync({
 			provider: account.provider,
 			targetUserRef: common.targetUserRef,
 			accountRef: common.accountRef,
-			error: error instanceof Error ? error.message : String(error),
+			error: redactedErrorMessage(error),
 		})
 		await observeOAuthLinkCanary({
 			...common,

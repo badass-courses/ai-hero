@@ -16,6 +16,27 @@ export interface SerializedError {
 	[key: string]: unknown
 }
 
+const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi
+const JWT_PATTERN = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g
+
+/**
+ * Replaces credential-shaped text with a placeholder, leaving the rest intact:
+ * `Bearer <token>` becomes `Bearer [REDACTED]` and a JWT (three base64url
+ * segments, the first starting `eyJ`) becomes `[REDACTED_JWT]`. Error text from
+ * upstream libraries and HTTP clients can echo an Authorization header or a
+ * token verbatim, so anything logged from an error passes through here.
+ */
+export function redactCredentials(text: string): string {
+	return text
+		.replace(BEARER_PATTERN, 'Bearer [REDACTED]')
+		.replace(JWT_PATTERN, '[REDACTED_JWT]')
+}
+
+/** The message of a caught value with credential text redacted. */
+export function redactedErrorMessage(error: unknown): string {
+	return redactCredentials(error instanceof Error ? error.message : String(error))
+}
+
 /**
  * Serializes an error object into a structured format suitable for logging
  *
@@ -81,9 +102,9 @@ export function serializeError(
 		seen.add(error)
 
 		const serialized: SerializedError = {
-			message: error.message,
+			message: redactCredentials(error.message),
 			name: error.name,
-			stack: error.stack,
+			stack: error.stack === undefined ? undefined : redactCredentials(error.stack),
 		}
 
 		// Handle cause chain recursively
@@ -125,7 +146,8 @@ export function serializeError(
 					typeof value === 'number' ||
 					typeof value === 'boolean'
 				) {
-					serialized[prop] = value
+					serialized[prop] =
+						typeof value === 'string' ? redactCredentials(value) : value
 				}
 			}
 		}
@@ -139,7 +161,9 @@ export function serializeError(
 
 		const obj = error as Record<string, unknown>
 		const serialized: SerializedError = {
-			message: obj.message ? String(obj.message) : JSON.stringify(error),
+			message: redactCredentials(
+				obj.message ? String(obj.message) : JSON.stringify(error),
+			),
 		}
 
 		// Try to extract useful properties from plain objects
@@ -147,7 +171,7 @@ export function serializeError(
 			serialized.name = obj.name
 		}
 		if ('stack' in obj && typeof obj.stack === 'string') {
-			serialized.stack = obj.stack
+			serialized.stack = redactCredentials(obj.stack)
 		}
 		if ('code' in obj) {
 			serialized.code = obj.code as string | number
@@ -158,6 +182,6 @@ export function serializeError(
 
 	// Handle primitive throws (strings, numbers, etc.)
 	return {
-		message: String(error),
+		message: redactCredentials(String(error)),
 	}
 }

@@ -15,6 +15,7 @@ import {
 	verifyPersonalAccessToken,
 } from '@/lib/personal-access-tokens'
 import { log } from '@/server/logger'
+import { redactedErrorMessage } from '@/server/logger-utils'
 import {
 	buildPersonalAccessTokenAbility,
 	isPersonalAccessTokenScope,
@@ -262,7 +263,7 @@ async function stampPersonalAccessTokenLastUsed(id: string) {
 	} catch (error) {
 		await log.error('auth.personal-access-token.last-used.failed', {
 			tokenKind: 'personal-access-token',
-			error: error instanceof Error ? error.message : 'Unknown error',
+			error: redactedErrorMessage(error),
 		})
 	}
 }
