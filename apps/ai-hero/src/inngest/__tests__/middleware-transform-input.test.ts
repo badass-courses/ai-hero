@@ -5,8 +5,9 @@ import { inngestTelemetryMiddleware } from '../inngest-telemetry-middleware'
 
 type TestRunHooks = {
 	transformInput?: (args: any) => unknown
+	beforeExecution?: () => Promise<void>
 	afterExecution?: () => void
-	onFailure?: (args: { error: Error }) => void
+	finished?: (args: { result: { error?: unknown } }) => Promise<void>
 }
 
 const loggerMocks = vi.hoisted(() => {
@@ -122,7 +123,8 @@ describe('inngest-telemetry-middleware', () => {
 			}),
 		).toBeUndefined()
 		expect(runHooks.afterExecution).toEqual(expect.any(Function))
-		expect(runHooks.onFailure).toEqual(expect.any(Function))
+		expect(runHooks.beforeExecution).toEqual(expect.any(Function))
+		expect(runHooks.finished).toEqual(expect.any(Function))
 
 		expect(loggerMocks.info).toHaveBeenCalledWith(
 			'inngest.function.started',
@@ -145,7 +147,7 @@ describe('inngest-telemetry-middleware', () => {
 			}),
 		)
 
-		runHooks.onFailure?.({ error: new Error('boom') })
+		await runHooks.finished?.({ result: { error: new Error('boom') } })
 		expect(loggerMocks.serializeError).toHaveBeenCalledWith(expect.any(Error))
 		expect(loggerMocks.error).toHaveBeenCalledWith(
 			'inngest.function.failed',
