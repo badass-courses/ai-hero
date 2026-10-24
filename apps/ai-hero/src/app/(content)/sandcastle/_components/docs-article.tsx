@@ -5,10 +5,7 @@ import { TYPE } from '@/components/landing/type'
 import { MdxErrorBoundary } from '@/components/mdx/mdx-error-boundary'
 import { PROSE_MEASURE } from '@/components/mdx/prose'
 import { ActiveHeadingProvider } from '@/hooks/use-active-heading'
-import {
-	SANDCASTLE_README_URL,
-	type SandcastleDocsPage,
-} from '@/lib/sandcastle-docs'
+import { type SandcastleDocsPage } from '@/lib/sandcastle-docs'
 import { compileMDX } from '@/utils/compile-mdx'
 import { ArrowLeft, ArrowRight } from 'lucide-react'
 
@@ -51,7 +48,7 @@ export async function DocsArticle({
 							sourceUrl={`${page.href}.md`}
 						/>
 						<Link
-							href={SANDCASTLE_README_URL}
+							href={page.sourceUrl}
 							target="_blank"
 							rel="noopener noreferrer"
 							className={cn(
