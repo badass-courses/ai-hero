@@ -14,7 +14,7 @@ import {
 	type HeadingInfo,
 } from '@/hooks/use-active-heading'
 import { slugifyHeading } from '@/utils/extract-markdown-headings'
-import { motion, useInView } from 'framer-motion'
+import { useInView } from '@/hooks/use-in-view'
 
 import { AISummaryContext } from './mdx-components'
 
@@ -72,7 +72,9 @@ export function Heading({ level, children, ...props }: HeadingProps) {
 		}
 	}, [isInView, headingInfo, registerVisibility, isWithinAISummary])
 
-	const Component = motion[`h${level}`]
+	// A plain heading element. This was `motion[...]` with no motion props,
+	// which still pulled framer-motion into every MDX page's bundle.
+	const Component = `h${level}` as const
 
 	return (
 		// 72px is the spec's anchor offset: the 63px nav plus a hairline of air,

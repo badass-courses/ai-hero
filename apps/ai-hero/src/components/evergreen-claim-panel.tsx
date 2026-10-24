@@ -1,6 +1,7 @@
 'use client'
 
 import { useMachine } from '@xstate/react'
+import { useSession } from 'next-auth/react'
 import { setup, fromPromise, assign } from 'xstate'
 import { TYPE } from '@/components/landing/type'
 import { z } from 'zod'
@@ -119,7 +120,21 @@ export function shouldRenderClaimPanel({
 
 /** Dormant until explicitly rendered and a real protected endpoint is composed.
  * Fixed local product return path; no email/coupon/account selector props. */
-export function EvergreenClaimPanel({
+export function EvergreenClaimPanel(props: {
+	endpoint: string
+	productPath: string
+	pilotOnly?: boolean
+}) {
+	// In pilot mode the deciding GET is authenticated, so for an anonymous
+	// reader it could only 401: a wasted request and a console error on the
+	// product page. The machine below starts on mount, so the gate has to
+	// sit above it.
+	const { status } = useSession()
+	if (props.pilotOnly && status !== 'authenticated') return null
+	return <ClaimPanel {...props} />
+}
+
+function ClaimPanel({
 	endpoint,
 	productPath,
 	pilotOnly = false,

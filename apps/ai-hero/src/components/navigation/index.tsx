@@ -349,7 +349,8 @@ const FreeCourseCta = ({
 const Navigation = () => {
 	const pathname = usePathname()
 	const mode = getNavMode(pathname)
-	const isRoot = pathname === '/'
+	// `/index` is what the server sees while prerendering `/`; see `nav-mode.ts`.
+	const isRoot = pathname === '/' || pathname === '/index'
 	const params = useParams()
 	const router = useRouter()
 	const { setIsFeedbackDialogOpen } = useFeedback()

@@ -8,7 +8,7 @@ import {
 } from '@/hooks/use-active-heading'
 import { track } from '@/utils/analytics'
 import { slugifyHeading } from '@/utils/extract-markdown-headings'
-import { useInView } from 'framer-motion'
+import { useInView } from '@/hooks/use-in-view'
 import { ExternalLink } from 'lucide-react'
 import type { MDXComponents } from 'mdx/types'
 

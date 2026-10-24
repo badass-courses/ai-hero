@@ -94,11 +94,21 @@ const HUB_PREFIXES = [
 	'/videos',
 ] as const
 
-/** Strip query/hash and trailing slash, lowercase. Always returns a leading slash. */
+/**
+ * Strip query/hash and trailing slash, lowercase. Always returns a leading
+ * slash.
+ *
+ * `/index` is the homepage. When Next prerenders `/` (build and ISR), the
+ * pathname it renders with is `/index`; the browser's is `/`. Without this
+ * the server classified the homepage as a one-segment article (`hub`) while
+ * the client said `full`, the first nav item differed, and React threw
+ * hydration error #418 and re-rendered the whole page client-side on every
+ * homepage load.
+ */
 function normalize(pathname: string): string {
 	const path = (pathname.split(/[?#]/)[0] || '').toLowerCase()
 	const trimmed = path.replace(/\/+$/, '')
-	if (trimmed === '') return '/'
+	if (trimmed === '' || trimmed === '/index') return '/'
 	return trimmed.startsWith('/') ? trimmed : `/${trimmed}`
 }
 

@@ -9,17 +9,16 @@ import type { TypesenseResource } from '@/lib/typesense'
 // flat post URL — the shared package has no 'skill' entry yet.
 import { getResourcePath } from '@/utils/resource-paths'
 import { format } from 'date-fns'
-import { motion } from 'framer-motion'
 import { Sparkles } from 'lucide-react'
 import { Highlight } from 'react-instantsearch'
 
 import { Badge } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
-const MotionLink = motion.create(Link)
-
 export default function Hit({ hit }: { hit: TypesenseResource }) {
 	const href = getResourceHref(hit)
+	// InstantSearch stamps every hit with its 1-based position in the results.
+	const position = (hit as { __position?: number }).__position ?? Infinity
 	const dateLabel = hit.created_at_timestamp
 		? format(new Date(hit.created_at_timestamp), 'MMM d, y')
 		: ''
@@ -30,36 +29,28 @@ export default function Hit({ hit }: { hit: TypesenseResource }) {
 
 	return (
 		<li>
-			<MotionLink
+			<Link
 				href={href}
-				prefetch
-				initial="initial"
-				whileHover="hover"
-				animate="initial"
+				// Default prefetching (visible links only), not `prefetch`: this
+				// forced a full RSC prefetch of all 40 results, and those payloads
+				// in turn preloaded their client chunks — the Mux player among them.
 				className="border-border group relative block border-t"
 			>
-				<motion.div
+				{/* Same hover wash as `landing/resource-row.tsx`, as CSS on
+				    `group-hover`: 40 of these hydrate on /posts, and the motion
+				    variants were the page's only use of framer-motion. */}
+				<div
 					aria-hidden
-					className="animate-resource-gradient pointer-events-none absolute -inset-y-px inset-x-0"
+					className="animate-resource-gradient pointer-events-none absolute -inset-y-px inset-x-0 opacity-0 transition-opacity duration-[400ms] ease-[cubic-bezier(0.65,0,0.35,1)] group-hover:opacity-100 motion-reduce:transition-none"
 					style={{
 						backgroundImage:
 							'linear-gradient(90deg, oklch(0.92 0.05 30), oklch(0.74 0.18 50), oklch(0.82 0.12 350), oklch(0.50 0.20 260), oklch(0.85 0.10 5), oklch(0.92 0.07 145), oklch(0.74 0.18 50), oklch(0.88 0.18 95), oklch(0.62 0.22 25), oklch(0.74 0.18 45), oklch(0.82 0.12 350), oklch(0.92 0.05 30))',
 						backgroundSize: '200% 200%',
 					}}
-					variants={{
-						initial: { opacity: 0 },
-						hover: { opacity: 1 },
-					}}
-					transition={{ duration: 0.4, ease: [0.65, 0, 0.35, 1] }}
 				/>
-				<motion.div
+				<div
 					aria-hidden
-					className="bg-background pointer-events-none absolute"
-					variants={{
-						initial: { top: 0, right: 0, bottom: 0, left: 0 },
-						hover: { top: 5, right: 5, bottom: 5, left: 5 },
-					}}
-					transition={{ duration: 0.4, ease: [0.65, 0, 0.35, 1] }}
+					className="bg-background pointer-events-none absolute inset-0 transition-[inset] duration-[400ms] ease-[cubic-bezier(0.65,0,0.35,1)] group-hover:inset-[5px] motion-reduce:transition-none"
 				/>
 				<div className="relative flex flex-col gap-5 p-5 sm:flex-row sm:items-center sm:gap-8 sm:px-14 sm:py-10">
 					<div
@@ -74,6 +65,11 @@ export default function Hit({ hit }: { hit: TypesenseResource }) {
 									src={hit.image}
 									alt={hit.title}
 									fill
+									// The first rows are above the fold on a phone and the top
+									// one is the page's LCP element; lazy-loading them cost /posts
+									// ~2s of load delay on its LCP.
+									priority={position <= 2}
+									fetchPriority={position === 1 ? 'high' : undefined}
 									deliveryType={isRemoteUrl(hit.image) ? 'fetch' : undefined}
 									sizes="(min-width: 640px) 240px, 100vw"
 									className="object-cover"
@@ -139,7 +135,7 @@ export default function Hit({ hit }: { hit: TypesenseResource }) {
 						<AnimatedArrowCircle />
 					</div>
 				</div>
-			</MotionLink>
+			</Link>
 		</li>
 	)
 }
