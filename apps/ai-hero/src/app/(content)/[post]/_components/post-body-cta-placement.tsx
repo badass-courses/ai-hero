@@ -4,6 +4,8 @@ import {
 } from '@/app/(content)/_components/organic-opportunity-cta'
 import { SkillsCourseCta } from '@/app/(content)/skills/_components/skills-newsletter-cta'
 import type { ResolvedPostCta } from '@/lib/post-cta'
+import { C5SaleCta } from '@/components/c5-sale-cta'
+import { C5SaleSwitch } from '@/components/c5-sale-switch'
 
 /**
  * Everything that may appear directly under an article body, and the order of
@@ -15,6 +17,10 @@ import type { ResolvedPostCta } from '@/lib/post-cta'
  * written as if it were the only one, so the precedence has to be stated
  * somewhere; it is stated here, and nowhere else, because a page that asks for
  * two things at once converts on neither.
+ *
+ * During C5 enrollment, its paid CTA replaces the organic/cohort slot. The
+ * free course remains available and explicit editorial `none` stays suppressed.
+ * Outside that window the original order below is unchanged.
  *
  * The order:
  *
@@ -46,6 +52,12 @@ export function PostBodyCtaPlacement({
 }) {
 	const organicCtaKind = organicOpportunityCtaBySlug[slug]
 	const hasCourseCta = resolvedCta.kind === 'course'
+	const fallback = (
+		<>
+			{organicCtaKind ? <OrganicOpportunityCta kind={organicCtaKind} /> : null}
+			{!hasCourseCta && !organicCtaKind ? cohortCta : null}
+		</>
+	)
 
 	return (
 		<>
@@ -57,10 +69,13 @@ export function PostBodyCtaPlacement({
 					source={`skill_page_course:${slug}`}
 				/>
 			) : null}
-			{organicCtaKind ? (
-				<OrganicOpportunityCta kind={organicCtaKind} />
-			) : null}
-			{!hasCourseCta && !organicCtaKind ? cohortCta : null}
+			{resolvedCta.kind === null && resolvedCta.source === 'field' ? (
+				fallback
+			) : (
+				<C5SaleSwitch fallback={fallback}>
+					<C5SaleCta />
+				</C5SaleSwitch>
+			)}
 		</>
 	)
 }

@@ -1,7 +1,21 @@
 import * as React from 'react'
 import { readFile } from 'node:fs/promises'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const sale = vi.hoisted(() => ({ active: false }))
+vi.mock('@/components/c5-sale-switch', () => ({
+	C5SaleSwitch: ({
+		children,
+		fallback,
+	}: {
+		children: React.ReactNode
+		fallback: React.ReactNode
+	}) => (sale.active ? children : fallback),
+}))
+beforeEach(() => {
+	sale.active = false
+})
 
 vi.mock('@/components/layout-client', () => ({
 	default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -36,6 +50,14 @@ import TeamPage from './page'
 const render = async () => renderToStaticMarkup(await TeamPage())
 
 describe('team hub C5 card', () => {
+	it('puts the live cohort team destination ahead of the catalog during enrollment', async () => {
+		sale.active = true
+		const html = await render()
+		expect(html).toContain(
+			'href="/cohorts/software-factories-for-real-engineers-xdy1m/for-teams"',
+		)
+		expect(html).toContain('Join with your team')
+	})
 	it('shows the approved ladder and its validity, without replacing the older offers', async () => {
 		const html = await render()
 		expect(html).toContain('AI Coding Crash Course')

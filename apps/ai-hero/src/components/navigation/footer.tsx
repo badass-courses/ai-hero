@@ -13,6 +13,8 @@ import { useSession } from 'next-auth/react'
 import { useFeedback } from '@coursebuilder/ui/feedback-widget/feedback-context'
 import { cn } from '@coursebuilder/utils/cn'
 
+import { C5_TITLE, FEATURED_PROMO } from './promo-config'
+import { useFeaturedPromo } from './timed-promo-bar-switch'
 import { ThemeToggle } from './theme-toggle'
 import { useNavLinks } from './use-nav-links'
 
@@ -91,14 +93,12 @@ const dimSiblingsOnHover =
 	'[&:has(a:hover,button:hover)_a:not(:hover)]:opacity-60 [&:has(a:hover,button:hover)_button:not(:hover)]:opacity-60'
 
 function Eyebrow({ children }: { children: React.ReactNode }) {
-	return (
-		<h3 className={cn(TYPE.groupLabel, 'mb-4')}>
-			{children}
-		</h3>
-	)
+	return <h3 className={cn(TYPE.groupLabel, 'mb-4')}>{children}</h3>
 }
 
 function LearnColumn() {
+	const featuredPromo = useFeaturedPromo()
+	const c5Active = featuredPromo === FEATURED_PROMO
 	const navData = useNavLinks()
 	const courses = navData.learn.courses
 	const tutorials = [
@@ -112,13 +112,18 @@ function LearnColumn() {
 			<ul className={cn(linkListClass, dimSiblingsOnHover)}>
 				<li>
 					<Link
-						href="/workshops/ai-coding-crash-course"
+						href={
+							c5Active ? '/s/c5-site-cta' : '/workshops/ai-coding-crash-course'
+						}
 						className={linkClass}
 						onClick={() =>
-							trackFooterClick('AI Coding Crash Course', 'course')
+							trackFooterClick(
+								c5Active ? C5_TITLE : 'AI Coding Crash Course',
+								'course',
+							)
 						}
 					>
-						AI Coding Crash Course
+						{c5Active ? C5_TITLE : 'AI Coding Crash Course'}
 					</Link>
 				</li>
 				{courses.map((course) => (

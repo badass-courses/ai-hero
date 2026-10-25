@@ -11,6 +11,8 @@ import { C5TeamCheckout } from '@/components/for-teams/c5-team-checkout'
 import { env } from '@/env.mjs'
 import { AI_CODING_COHORT_SLUG } from '@/lib/campaign-landings'
 import { getCachedCohort } from '@/lib/cohorts-query'
+import { C5SaleCta } from '@/components/c5-sale-cta'
+import { C5SaleSwitch } from '@/components/c5-sale-switch'
 import { AI_CODING_CRASH_COURSE_SLUG } from '@/lib/crash-course-purchaser-tag'
 import { getCachedMinimalWorkshop } from '@/lib/workshops-query'
 import {
@@ -71,7 +73,9 @@ const OFFER_LINK =
  * and invoices alongside them. The shared inquiry form handles team quotes.
  */
 export default async function TeamPage() {
-	const crashCourse = await getCachedMinimalWorkshop(AI_CODING_CRASH_COURSE_SLUG)
+	const crashCourse = await getCachedMinimalWorkshop(
+		AI_CODING_CRASH_COURSE_SLUG,
+	)
 	const crashCourseHref = crashCourse?.fields.forTeamsBody
 		? `/workshops/${AI_CODING_CRASH_COURSE_SLUG}/for-teams`
 		: `/workshops/${AI_CODING_CRASH_COURSE_SLUG}`
@@ -85,6 +89,9 @@ export default async function TeamPage() {
 	return (
 		<LayoutClient withContainer>
 			<main className="flex min-h-screen w-full flex-col">
+				<C5SaleSwitch>
+					<C5SaleCta forTeams />
+				</C5SaleSwitch>
 				{/* Hero: the claim on the left, and on the right the four facts a
 				    champion forwards to whoever signs off, as a panel on the band
 				    ground so it reads as an object the page hands you. Same stripes

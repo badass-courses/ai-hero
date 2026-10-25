@@ -27,7 +27,7 @@ import {
 	PRIMARY_LEARNING_ENTRY,
 	PRIMARY_NAV_ITEMS,
 } from './primary-nav'
-import { useTimedActivation } from './timed-promo-bar-switch'
+import { useFeaturedPromo } from './timed-promo-bar-switch'
 import { UserMenu } from './user-menu'
 
 /**
@@ -192,16 +192,14 @@ const FreeCourseCta = ({
 	subscriberResolved: boolean
 }) => {
 	const cohortOffer = useCohortOffer()
-	const featuredPromoActive = useTimedActivation(FEATURED_PROMO, false)
+	const featuredPromo = useFeaturedPromo()
+	const c5Active = featuredPromo === FEATURED_PROMO
 	const activeOffer =
-		featuredPromoActive &&
-		FEATURED_PROMO.resourceId &&
-		FEATURED_PROMO.navLabel &&
-		FEATURED_PROMO.navHref
+		featuredPromo?.resourceId && featuredPromo.navLabel && featuredPromo.navHref
 			? {
-					id: FEATURED_PROMO.resourceId,
-					label: FEATURED_PROMO.navLabel,
-					href: FEATURED_PROMO.navHref,
+					id: featuredPromo.resourceId,
+					label: featuredPromo.navLabel,
+					href: c5Active ? '/s/c5-site-nav' : featuredPromo.navHref,
 				}
 			: cohortOffer
 
@@ -263,22 +261,24 @@ const FreeCourseCta = ({
 	// costs nothing extra.
 	const activeOfferWaitlist =
 		activeOffer && 'waitlist' in activeOffer ? activeOffer.waitlist : undefined
-	const alreadyWaiting = hasJoinedOfferWaitlist(
-		subscriber,
-		activeOfferWaitlist,
-	)
+	const alreadyWaiting = hasJoinedOfferWaitlist(subscriber, activeOfferWaitlist)
 
-	// The free course is the front door and outranks everything: someone who has
+	// C5 enrollment temporarily outranks the free course, but never ownership.
+	// Outside that window the original ladder is unchanged: someone who has
 	// not taken it is asked for that, cohort or no cohort. Only once they are on
 	// the list does the bar move them up the ladder to the cohort — enroll when
 	// one is purchasable, waitlist between cohorts — and past that too, once
 	// they own the cohort or are already waiting for it.
 	const cohortSettled = ownership?.owned === true || alreadyWaiting
-	const offer = !isSubscribed
-		? { label: 'Get the free course', href: '/skills/subscribe' }
-		: activeOffer && !cohortSettled
+	const offer = c5Active
+		? activeOffer && !cohortSettled
 			? { label: activeOffer.label, href: activeOffer.href }
 			: null
+		: !isSubscribed
+			? { label: 'Get the free course', href: '/skills/subscribe' }
+			: activeOffer && !cohortSettled
+				? { label: activeOffer.label, href: activeOffer.href }
+				: null
 
 	// Hold the slot rather than guess at it.
 	//
@@ -323,6 +323,12 @@ const FreeCourseCta = ({
 	if (!offer) return null
 	// Never sell the page you are standing on.
 	if (pathname.startsWith(offer.href)) return null
+	if (
+		c5Active &&
+		FEATURED_PROMO.navHref &&
+		pathname.startsWith(FEATURED_PROMO.navHref)
+	)
+		return null
 
 	return (
 		<li className="hidden items-center lg:flex">
