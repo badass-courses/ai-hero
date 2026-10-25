@@ -92,6 +92,21 @@ const config = {
 				destination: '/cohorts/software-factories-for-real-engineers-xdy1m',
 				statusCode: 301,
 			},
+			// Bare C5 slugs without the resource id suffix. Temporary so a
+			// future cohort can reuse the slug.
+			{
+				source:
+					'/(cohorts/)?software-factories-for-real-engineers',
+				destination: '/cohorts/software-factories-for-real-engineers-xdy1m',
+				permanent: false,
+			},
+			{
+				source:
+					'/(cohorts/)?software-factories-for-real-engineers/for-teams',
+				destination:
+					'/cohorts/software-factories-for-real-engineers-xdy1m',
+				permanent: false,
+			},
 			{
 				source: '/workshops/ai-sdk-v5-crash-course',
 				destination: '/workshops/ai-sdk-v6-crash-course',
