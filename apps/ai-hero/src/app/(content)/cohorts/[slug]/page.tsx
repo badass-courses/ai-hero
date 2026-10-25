@@ -23,7 +23,7 @@ import { products } from '@/db/schema'
 import { env } from '@/env.mjs'
 import type { CampaignLanding } from '@/lib/campaign-landings'
 import { CohortPageProps, type Cohort } from '@/lib/cohort'
-import { toClientCohort } from '@/lib/cohort-client-shape'
+import { toClientCohortPageProps } from '@/lib/cohort-client-shape'
 import {
 	formatAlumniCount,
 	getCachedCohortAlumniCount,
@@ -321,7 +321,8 @@ export async function CohortPageView(props: CohortPageViewProps) {
 
 	// Client components get this, never `cohort`: whatever they receive is
 	// serialized into the RSC payload, lesson bodies included.
-	const clientCohort = toClientCohort(cohort)
+	const clientCohortProps = toClientCohortPageProps(cohortProps)
+	const clientCohort = clientCohortProps.cohort
 
 	// A body that places the curriculum itself replaces the list appended
 	// under it, so the workshops appear once. The inline list is only for
@@ -346,7 +347,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 				</h2>
 			),
 			Enroll: ({ children = 'Enroll Now' }) => {
-				if (!cohortProps.product || hasCohortAccess) return null
+				if (!clientCohortProps.product || hasCohortAccess) return null
 
 				// While the rail holds the waitlist, an inline button is the same
 				// form the rail holds, so the ask can be answered where the reader
@@ -358,7 +359,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 							{mobileCta === 'waitlist' ? (
 								<WaitlistForm
 									actionLabel="Join Waitlist"
-									productName={cohortProps.product.name}
+									productName={clientCohortProps.product.name}
 									surface="cohort-page"
 									knownIdentity={hasKnownWaitlistIdentity}
 								/>
@@ -386,15 +387,15 @@ export async function CohortPageView(props: CohortPageViewProps) {
 
 				return (
 					<Pricing.Root
-						{...cohortProps}
-						product={cohortProps.product}
+						{...clientCohortProps}
+						product={clientCohortProps.product}
 						country={cohortProps.country}
 						options={{
 							withTitle: false,
 							withImage: false,
 						}}
-						userId={cohortProps?.userId}
-						pricingDataLoader={cohortProps.pricingDataLoader}
+						userId={clientCohortProps.userId}
+						pricingDataLoader={clientCohortProps.pricingDataLoader}
 						// `not-prose`: the button brings a caption of its own, and the
 						// article's paragraph margins would push it away from the button.
 						className="not-prose my-8 items-center justify-center"
@@ -468,7 +469,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 			PricingInline: ({ type }: { type: 'original' | 'discounted' }) => (
 				<PricingInline
 					type={type}
-					pricingDataLoader={cohortProps.pricingDataLoader}
+					pricingDataLoader={clientCohortProps.pricingDataLoader}
 				/>
 			),
 			DiscountDeadline: ({ format }: { format?: 'short' | 'long' }) => (
@@ -489,7 +490,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 				<HasPurchased
 					productSlug={productSlug}
 					productId={productId}
-					purchases={cohortProps.purchases || []}
+					purchases={clientCohortProps.purchases || []}
 					productMap={productMap}
 				>
 					{children}
@@ -547,7 +548,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 					className=""
 					moduleType="cohort"
 					moduleSlug={cohort.fields?.slug || cohort.id}
-					product={product}
+					product={clientCohortProps.product}
 				/>
 
 				{hasCohortAccess ? (
@@ -711,7 +712,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 							</div>
 						) : ALLOW_PURCHASE ? (
 							<CohortPricingWidgetContainer
-								{...cohortProps}
+								{...clientCohortProps}
 								cohort={clientCohort}
 								giftEnrollmentOpen={giftEnrollmentOpen}
 								searchParams={searchParams}
