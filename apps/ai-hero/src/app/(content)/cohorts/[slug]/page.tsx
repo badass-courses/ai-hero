@@ -3,6 +3,7 @@ import * as React from 'react'
 import type { Metadata, ResolvingMetadata } from 'next'
 import { notFound } from 'next/navigation'
 import { CldImage } from '@/components/cld-image'
+import { C5PastCohortCallout } from '@/components/c5-past-cohort-callout'
 import { WaitlistForm } from '@/components/cohort-waitlist-form'
 import { CheckoutSurveyBuyButton } from '@/components/commerce/checkout-survey-buy-button'
 import { Contributor } from '@/components/contributor'
@@ -535,6 +536,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	return (
 		<LayoutClient withContainer>
 			<main className="relative">
+				<C5PastCohortCallout slug={fields.slug ?? cohort.id} />
 				{share && typeof searchParams.via === 'string' ? <GiftShareAttribution slug={searchParams.via} /> : null}
 				{giftBanner ? <section className="border-border bg-muted text-foreground border-b"><p className={`${TYPE.meta} px-[18px] py-4 sm:px-11`}>{giftBanner}</p></section> : null}
 				<React.Suspense fallback={null}>
@@ -682,6 +684,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 								alt={fields?.title}
 							/>
 						)}
+						<C5PastCohortCallout slug={fields.slug ?? cohort.id} />
 						{/* <CohortDetails cohort={displayCohort} /> */}
 						{hasCohortAccess ? (
 							<div>

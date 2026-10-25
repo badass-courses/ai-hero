@@ -16,6 +16,8 @@ export type Promo = {
 	label?: string
 	/** The promo headline. Keep it short for one line on mobile. */
 	message: string
+	/** Optional single-line copy shown below sm instead of the full headline. */
+	shortMessage?: string
 	href: string
 	/** Resource id used to suppress owned offers in the global nav. */
 	resourceId?: string
@@ -101,11 +103,12 @@ export const CRASH_COURSE_PROMO: Promo = {
 
 /** C5 enrollment, with no price claims. Checkout remains the price authority. */
 export const C5_TITLE = 'Software Factories for Real Engineers'
-export const C5_TEAM_HREF =
-	'/cohorts/software-factories-for-real-engineers-xdy1m/for-teams'
+// C5 sells team seats on the cohort page; its separate /for-teams page has no body.
+export const C5_TEAM_HREF = '/s/c5-site-cta'
 export const FEATURED_PROMO: Promo = {
 	label: 'Cohort',
 	message: `${C5_TITLE}: enrollment is open.`,
+	shortMessage: 'Software Factories cohort: enrollment open',
 	href: '/s/c5-site-banner',
 	resourceId: 'cohort-xdy1m',
 	navLabel: 'Join the cohort',

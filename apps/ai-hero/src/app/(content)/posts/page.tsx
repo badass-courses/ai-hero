@@ -1,4 +1,6 @@
 import * as React from 'react'
+import { C5SaleCta } from '@/components/c5-sale-cta'
+import { C5SaleSwitch } from '@/components/c5-sale-switch'
 import type { Metadata } from 'next'
 import Search from '@/app/(search)/q/_components/search'
 import LayoutClient from '@/components/layout-client'
@@ -33,6 +35,9 @@ export default async function PostsIndexPage() {
 				<main className="flex min-h-[calc(100vh-var(--nav-height))] flex-col lg:flex-row">
 					<div className="mx-auto flex w-full flex-col">
 						<Search graph={graph} />
+						<C5SaleSwitch>
+							<C5SaleCta />
+						</C5SaleSwitch>
 					</div>
 					<React.Suspense fallback={null}>
 						<PostListActions />

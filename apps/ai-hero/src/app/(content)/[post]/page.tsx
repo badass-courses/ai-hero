@@ -9,7 +9,6 @@ import { ContentReadTracker } from '@/components/content-read-tracker'
 import { BADGE_OUTLINE, TYPE } from '@/components/landing/type'
 import { Callout, type CalloutIntent } from '@/components/mdx/callout'
 import { C5SaleSwitch } from '@/components/c5-sale-switch'
-import { C5_TITLE } from '@/components/navigation/promo-config'
 import { Contributor } from '@/components/contributor'
 import { MdxErrorBoundary } from '@/components/mdx/mdx-error-boundary'
 import { PROSE_MEASURE } from '@/components/mdx/prose'
@@ -538,14 +537,9 @@ async function PostBody({
 		{
 			Callout: (props: React.ComponentProps<typeof Callout>) =>
 				props.intent === 'course' ? (
-					<C5SaleSwitch fallback={<Callout {...props} />}>
-						<Callout {...props}>
-							<p>
-								Enrollment is open:{' '}
-								<Link href="/s/c5-site-cta">{C5_TITLE}</Link>.
-							</p>
-						</Callout>
-					</C5SaleSwitch>
+					// The end card owns the C5 ask. Keep the original inline
+					// course callout only outside the campaign, never stack two.
+					<C5SaleSwitch fallback={<Callout {...props} />}>{null}</C5SaleSwitch>
 				) : (
 					<Callout {...props} />
 				),
