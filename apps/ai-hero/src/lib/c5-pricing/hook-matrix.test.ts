@@ -62,10 +62,10 @@ type Alumni = 'none' | 'c3' | 'c4' | 'both' | Gap
 type Credit = null | number | Gap
 type CreditUse = 'available' | 'spent' | Gap
 type Legend = 'no' | 'verified' | Gap
-/** The PPP inputs the hook reads: trusted country, its percent, consent, history. */
+/** C5 PPP inputs: trusted country, its percent, and consent, never history. */
 type Ppp =
 	| { kind: 'no-country' }
-	| { kind: 'country'; percent: number; accepted: boolean; validPurchase: boolean }
+	| { kind: 'country'; percent: number; accepted: boolean }
 type QuoteVariant =
 	| 'none'
 	| 'below'
@@ -76,11 +76,11 @@ type QuoteVariant =
 
 const PPP_VARIANTS: readonly Ppp[] = [
 	{ kind: 'no-country' },
-	{ kind: 'country', percent: 0, accepted: true, validPurchase: false },
-	{ kind: 'country', percent: 60, accepted: false, validPurchase: false },
-	{ kind: 'country', percent: 60, accepted: true, validPurchase: false },
-	{ kind: 'country', percent: 60, accepted: true, validPurchase: true },
-	{ kind: 'country', percent: 10, accepted: true, validPurchase: false },
+	{ kind: 'country', percent: 0, accepted: true },
+	{ kind: 'country', percent: 60, accepted: false },
+	{ kind: 'country', percent: 60, accepted: true },
+	{ kind: 'country', percent: 10, accepted: false },
+	{ kind: 'country', percent: 10, accepted: true },
 ]
 const QUOTES: readonly QuoteVariant[] = [
 	'none',
@@ -232,10 +232,7 @@ function expectIndividual(cell: {
 	if (quoted !== null)
 		candidates.push({ amount: quoted, certain: true, creditSource: null })
 
-	const pppPercent =
-		cell.ppp.kind === 'country' && !cell.ppp.validPurchase
-			? cell.ppp.percent
-			: 0
+	const pppPercent = cell.ppp.percent
 	const regional =
 		pppPercent > 0 ? Math.round(LIST * (1 - pppPercent / 100)) : null
 	const accepted = cell.ppp.accepted
@@ -345,12 +342,10 @@ const product = {
 function signedIn(
 	facts: Omit<BuyerFactsData, 'ppp'>,
 	quantity: number,
-	validPurchase: boolean,
 ): BuyerRead {
 	return {
 		kind: 'buyer',
 		email: 'matrix@example.test',
-		hasValidPurchase: validPurchase,
 		holdsRestrictedPurchase: false,
 		holdsValidProductPurchase: false,
 		facts: {
@@ -464,11 +459,7 @@ describe('generated hook matrix: individual orders', () => {
 										legend: fact(legend, LEGEND_REFS),
 									} as Omit<BuyerFactsData, 'ppp'>
 									const decision = await decide({
-										buyer: signedIn(
-											facts,
-											1,
-											ppp.kind === 'country' && ppp.validPurchase,
-										),
+										buyer: signedIn(facts, 1),
 										ppp,
 										quotes: quoteFor(quote, 1, now),
 										now,
@@ -502,7 +493,7 @@ describe('generated hook matrix: individual orders', () => {
 		async (_, now) => {
 			const decision = await decide({
 				buyer: { kind: 'anonymous', product },
-				ppp: { kind: 'country', percent: 0, accepted: false, validPurchase: false },
+				ppp: { kind: 'country', percent: 0, accepted: false },
 				quotes: [],
 				now,
 				quantity: 1,
@@ -541,9 +532,9 @@ describe('generated hook matrix: team orders', () => {
 								legend: fact<'no'>(GAP),
 							} as Omit<BuyerFactsData, 'ppp'>
 							const decision = await decide({
-								buyer: signedIn(facts, quantity, false),
+								buyer: signedIn(facts, quantity),
 								// A team order is never regional, whatever the country.
-								ppp: { kind: 'country', percent: 60, accepted: true, validPurchase: false },
+								ppp: { kind: 'country', percent: 60, accepted: true },
 								quotes: quoteFor(quote, quantity, now),
 								now,
 								quantity,
