@@ -41,6 +41,10 @@ The global banner is excluded from this table. “Already covered” means an in
 
 The four root list routes and ten named skill posts were checked with anonymous public GETs during the audit: all returned 200. Each skill page had one tracked C5 in-page link; each list landing had none and rendered the shared “Start lesson 1” control. The remaining rows were traced through their route/component source. No production mutations or preview payment tests were run.
 
+## Team-link follow-up
+
+The shared `C5_TEAM_HREF` now uses `/s/c5-site-cta`, which leads to the cohort page where team checkout is available. The separate C5 `/for-teams` route returns 404 because the cohort has no `forTeamsBody`. This fixes the campaign cards on `/for-your-team` and `/skills/for-your-team` without changing “Join with your team” or the sale gate. The team-hub test and shared card tests assert the tracked destination and reject the broken route.
+
 ## Responsive banner
 
 `Promo.shortMessage` is optional. Both messages are server-rendered and CSS selects the short message below `sm`, full message from `sm` up. The optional badge is hidden below `sm` only when short copy exists, leaving room for the complete message and arrow. The Crash Course keeps its existing message, badge and markup path.

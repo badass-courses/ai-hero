@@ -53,7 +53,8 @@ describe('team hub C5 card', () => {
 	it('puts the live cohort team destination ahead of the catalog during enrollment', async () => {
 		sale.active = true
 		const html = await render()
-		expect(html).toContain(
+		expect(html).toContain('href="/s/c5-site-cta"')
+		expect(html).not.toContain(
 			'href="/cohorts/software-factories-for-real-engineers-xdy1m/for-teams"',
 		)
 		expect(html).toContain('Join with your team')
