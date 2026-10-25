@@ -548,6 +548,7 @@ const Navigation = () => {
 					setIsMobileMenuOpen={setIsMobileMenuOpen}
 					onSearchOpen={() => setIsSearchOpen(true)}
 					subscriber={subscriber}
+					subscriberResolved={subscriberResolved}
 					// The same flag that gates the palette below and the desktop
 					// Search link above — otherwise the mobile glyph renders on
 					// `minimal` routes and toggles state nothing is listening to.
