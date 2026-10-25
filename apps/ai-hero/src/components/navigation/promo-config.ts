@@ -16,6 +16,8 @@ export type Promo = {
 	label?: string
 	/** The promo headline. Keep it short for one line on mobile. */
 	message: string
+	/** Optional single-line copy shown below sm instead of the full headline. */
+	shortMessage?: string
 	href: string
 	/** Resource id used to suppress owned offers in the global nav. */
 	resourceId?: string
@@ -106,6 +108,7 @@ export const C5_TEAM_HREF =
 export const FEATURED_PROMO: Promo = {
 	label: 'Cohort',
 	message: `${C5_TITLE}: enrollment is open.`,
+	shortMessage: 'Software Factories cohort: enrollment open',
 	href: '/s/c5-site-banner',
 	resourceId: 'cohort-xdy1m',
 	navLabel: 'Join the cohort',
