@@ -9,6 +9,7 @@ import { db } from '@/db'
 import { purchases } from '@/db/schema'
 import { env } from '@/env.mjs'
 import { getCachedCohort } from '@/lib/cohorts-query'
+import { toClientPricingProps } from '@/lib/cohort-client-shape'
 import { teamSaleState } from '@/lib/team-invoice/sale-state'
 import { compileMDX } from '@/utils/compile-mdx'
 import { formatInTimeZone } from 'date-fns-tz'
@@ -51,7 +52,7 @@ export async function generateMetadata(
 	const title = `${cohort.fields.title} for your team`
 	const description = metaDescription(
 		cohort.fields.description ??
-		'Team seats, invoicing and a shared way to build with AI.',
+			'Team seats, invoicing and a shared way to build with AI.',
 	)
 
 	return {
@@ -149,23 +150,26 @@ export default async function CohortForTeamsPage(props: Props) {
 						}
 					>
 						<PublicProductPricing productId={product.id}>
-							{(pricingProps) => (
-								<React.Suspense
-									fallback={
-										<WorkshopPricingFallback
+							{(pricingProps) => {
+								const clientPricingProps = toClientPricingProps(pricingProps)
+								return (
+									<React.Suspense
+										fallback={
+											<WorkshopPricingFallback
+												className="bg-card pb-8"
+												teamMode
+												{...clientPricingProps}
+											/>
+										}
+									>
+										<WorkshopPricingClient
 											className="bg-card pb-8"
 											teamMode
-											{...pricingProps}
+											{...clientPricingProps}
 										/>
-									}
-								>
-									<WorkshopPricingClient
-										className="bg-card pb-8"
-										teamMode
-										{...pricingProps}
-									/>
-								</React.Suspense>
-							)}
+									</React.Suspense>
+								)
+							}}
 						</PublicProductPricing>
 					</React.Suspense>
 				) : null
