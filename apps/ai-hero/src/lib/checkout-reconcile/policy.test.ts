@@ -178,6 +178,34 @@ describe('checkout reconcile policy', () => {
 		).toHaveLength(81)
 	})
 
+	it.each(['ch_test', 'py_test'])(
+		'reads expanded and unexpanded %s charge state without prefix-dependent behavior',
+		(chargeId) => {
+			for (const state of [
+				{ refunded: false, amount_refunded: 0, disputed: false },
+				{ refunded: true, amount_refunded: 19900, disputed: false },
+				{ refunded: false, amount_refunded: 500, disputed: false },
+				{ refunded: false, amount_refunded: 0, disputed: true },
+			]) {
+				expect(checkoutChargeState({
+					payment_intent: { latest_charge: { id: chargeId, ...state } },
+				} as never)).toEqual({
+					chargeId,
+					expanded: true,
+					refunded: state.refunded || state.amount_refunded > 0,
+					disputed: state.disputed,
+					amountRefunded: state.amount_refunded,
+				})
+			}
+			expect(checkoutChargeState({
+				payment_intent: { latest_charge: chargeId },
+			} as never)).toEqual({
+				chargeId, expanded: false, refunded: false, disputed: false,
+				amountRefunded: 0,
+			})
+		},
+	)
+
 	it('reads refund and dispute state only from an expanded charge', () => {
 		expect(
 			checkoutChargeState({
