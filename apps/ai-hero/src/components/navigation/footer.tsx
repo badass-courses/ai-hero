@@ -335,7 +335,7 @@ function UtilityRow() {
 		{ href: '/ai-coding-dictionary', label: 'Dictionary', type: 'dictionary' },
 		{ href: '/faq', label: 'FAQ', type: 'legal' },
 		{ href: '/about', label: 'About', type: 'company' },
-		{ href: '/contact', label: 'Contact', type: 'company' },
+		{ href: 'mailto:support@aihero.dev', label: 'Contact', type: 'company' },
 		{ href: '/privacy', label: 'Terms', type: 'legal' },
 	]
 
