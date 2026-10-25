@@ -119,22 +119,45 @@ describe('front-desk read hooks', () => {
 			seats: 1,
 		})
 	})
-	it('never treats a non-charge merchant identifier as a Stripe charge id', async () => {
-		mocks.purchases.mockResolvedValue([
-			{
-				id: 'test-purchase',
-				productId: 'test-product',
-				totalAmount: 0,
-				createdAt: new Date('2026-01-01'),
-				status: 'Valid',
+	it.each(['ch_test', 'py_test'])(
+		'preserves the Stripe charge identifier %s',
+		async (id) => {
+			mocks.purchases.mockResolvedValue([
+				{
+					id: 'test-purchase',
+					productId: 'test-product',
+					totalAmount: '199.00',
+					createdAt: new Date('2026-01-01'),
+					status: 'Valid',
+					merchantChargeId: 'merchant-test',
+					merchantCharge: { identifier: id },
+				},
+			])
+			expect((await hooks.purchasesForUser('test-user'))[0]).toMatchObject({
 				merchantChargeId: 'merchant-test',
-				merchantCharge: { identifier: 'pi_test' },
-			},
-		])
-		expect(
-			(await hooks.purchasesForUser('test-user'))[0]?.stripeChargeId,
-		).toBeNull()
-	})
+				stripeChargeId: id,
+			})
+		},
+	)
+	it.each(['pi_test', 'cs_test', 'merchant-test', 'other_test'])(
+		'never treats %s as a Stripe charge id',
+		async (id) => {
+			mocks.purchases.mockResolvedValue([
+				{
+					id: 'test-purchase',
+					productId: 'test-product',
+					totalAmount: 0,
+					createdAt: new Date('2026-01-01'),
+					status: 'Valid',
+					merchantChargeId: 'merchant-test',
+					merchantCharge: { identifier: id },
+				},
+			])
+			expect(
+				(await hooks.purchasesForUser('test-user'))[0]?.stripeChargeId,
+			).toBeNull()
+		},
+	)
 	it('reads all refund pages and dispute state with presentment details', async () => {
 		mocks.charge.mockResolvedValue({
 			id: 'ch_test',
@@ -185,9 +208,9 @@ describe('front-desk read hooks', () => {
 		})
 		expect(mocks.disputes).not.toHaveBeenCalled()
 	})
-	const settledStripe = () => {
+	const settledStripe = (chargeId = 'ch_test') => {
 		mocks.charge.mockResolvedValue({
-			id: 'ch_test',
+			id: chargeId,
 			amount: 30000,
 			currency: 'usd',
 			amount_refunded: 0,
@@ -248,6 +271,62 @@ describe('front-desk read hooks', () => {
 		quantity: 1,
 		orderKind: 'individual',
 	} as const
+	it.each(['ch_test', 'py_test'])(
+		'credits settled %s using the matching Checkout Payment Intent and product amount less tax',
+		async (id) => {
+			mocks.lookupUser.mockResolvedValue({ id: 'test-user' })
+			mocks.prices.mockResolvedValue([
+				{ id: 'price-test', unitAmount: '1000.00' },
+			])
+			const row = crashCourse()
+			mocks.purchases.mockResolvedValue([
+				{ ...row, merchantCharge: { ...row.merchantCharge, identifier: id } },
+			])
+			settledStripe(id)
+			const facts = await hooks.pricingFacts(askC5)
+			expect(facts?.facts.credit).toMatchObject({
+				value: { paid: 25000, source: 'cc' },
+				sourceRefs: [
+					'ai-hero:purchase:cc',
+					`stripe:charge:${id}`,
+					'stripe:checkout-session:cs_test#product:prod_test_cc',
+				],
+			})
+			expect(mocks.charge).toHaveBeenNthCalledWith(1, id)
+			expect(mocks.charge).toHaveBeenNthCalledWith(2, id)
+			expect(mocks.session).toHaveBeenCalledWith('cs_test')
+			expect(mocks.refunds).toHaveBeenCalledWith({ charge: id, limit: 100 })
+
+			// A valid prefix cannot bypass the charge-to-session ownership check.
+			mocks.session.mockResolvedValue({
+				id: 'cs_test',
+				status: 'complete',
+				payment_status: 'paid',
+				payment_intent: 'pi_other',
+			})
+			expect((await hooks.pricingFacts(askC5))?.facts.credit).toEqual({
+				gap: 'PaymentAmbiguous',
+			})
+		},
+	)
+	it.each(['pi_test', 'cs_test', 'merchant-test', 'other_test'])(
+		'rejects %s in the pricing source before reading Stripe',
+		async (id) => {
+			mocks.lookupUser.mockResolvedValue({ id: 'test-user' })
+			mocks.prices.mockResolvedValue([
+				{ id: 'price-test', unitAmount: '1000.00' },
+			])
+			const row = crashCourse()
+			mocks.purchases.mockResolvedValue([
+				{ ...row, merchantCharge: { ...row.merchantCharge, identifier: id } },
+			])
+			expect((await hooks.pricingFacts(askC5))?.facts.credit).toEqual({
+				gap: 'PaymentAmbiguous',
+			})
+			expect(mocks.charge).not.toHaveBeenCalled()
+			expect(mocks.session).not.toHaveBeenCalled()
+		},
+	)
 	it('treats a coupon with no MerchantCoupon relation as ambiguous, without asking Stripe', async () => {
 		mocks.lookupUser.mockResolvedValue({ id: 'test-user' })
 		mocks.prices.mockResolvedValue([

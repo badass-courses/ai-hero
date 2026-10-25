@@ -3,10 +3,11 @@ import {
 	type PricingFacts,
 	type PricingRequest,
 } from '@ai-hero/front-desk-support'
-import { Effect, Exit, Layer } from 'effect'
+import { Effect, Either, Exit, Layer } from 'effect'
 import { describe, expect, it } from 'vitest'
 import {
 	buyerPricingFacts,
+	chargeCandidate,
 	PricingFactsSource,
 	SourceUnavailable,
 	type PricingPurchaseRow,
@@ -238,6 +239,38 @@ const run = (data: SyntheticDb, request: PricingRequest = ask) => {
 const buyer = { users: { [email]: 'user-test' } }
 const creditOf = async (data: SyntheticDb) =>
 	(await run({ ...buyer, ...data })).facts.facts.credit
+
+describe('chargeCandidate with non-card charges', () => {
+	it('resolves a settled py_ charge to eligible at the product amount less tax', () => {
+		const row = purchase({ id: 'noncard', stripeChargeId: 'py_test' })
+		const [, settlement] = charge('noncard', {
+			id: 'py_test',
+			amount: 30000,
+			line: { amountTotal: 27000, amountTax: 2000 },
+		})
+		expect(chargeCandidate(row, Either.right(settlement))).toEqual({
+			kind: 'eligible',
+			paid: 25000,
+			purchaseId: 'noncard',
+			refs: [
+				'ai-hero:purchase:noncard',
+				'stripe:charge:py_test',
+				'stripe:checkout-session:cs_noncard#product:prod_cc',
+			],
+		})
+	})
+	it('holds a py_ charge whose Payment Intent does not match its Checkout Session', () => {
+		const row = purchase({ id: 'noncard', stripeChargeId: 'py_test' })
+		const [, settlement] = charge('noncard', {
+			id: 'py_test',
+			session: { paymentIntentId: 'pi_other' },
+		})
+		expect(chargeCandidate(row, Either.right(settlement))).toEqual({
+			kind: 'unknown',
+			gap: 'PaymentAmbiguous',
+		})
+	})
+})
 
 describe('buyerPricingFacts', () => {
 	it('reports facts only for products it supports', async () => {
