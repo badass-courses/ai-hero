@@ -62,12 +62,10 @@ function buyerFacts(
 
 const signedIn = (
 	facts = buyerFacts(),
-	hasValidPurchase: boolean | null = false,
 ): BuyerRead => ({
 	kind: 'buyer',
 	email: 'buyer@example.test',
 	facts,
-	hasValidPurchase,
 	holdsRestrictedPurchase: false,
 	holdsValidProductPurchase: false,
 })
@@ -137,7 +135,7 @@ describe('createC5AuthoritativePrice', () => {
 			buyer = { ...signedIn(), ...ownership } as BuyerRead
 			await expect(ask({ purpose: 'checkout' })).resolves.toMatchObject({ kind: 'held' })
 		}
-		buyer = signedIn(buyerFacts(), true)
+		buyer = signedIn(buyerFacts({ credit: known({ paid: 10_000, source: 'valid-cc-purchase' }) }))
 		await expect(ask({ purpose: 'checkout' })).resolves.toMatchObject({ kind: 'priced', amountCents: 40_000 })
 	})
 	it('prices verified gifts exactly before opening, without consuming credit; ordinary switch-on keeps cheaper pricing', async () => {
@@ -361,14 +359,26 @@ describe('createC5AuthoritativePrice', () => {
 			})
 		})
 
-		it('keeps the legacy rule: a Valid purchase blocks PPP', async () => {
-			country = 'IN'
-			buyer = signedIn(buyerFacts(), true)
-			await expect(ask({ pppAccepted: true })).resolves.toMatchObject({
-				amountCents: 80_000,
-				restriction: 'none',
-				offers: [],
-			})
+		it.each([
+			['IN', 40_000, 'region', null],
+			['BR', 55_000, 'none', 'valid-cc-purchase'],
+		] as const)('offers alumni regional pricing in %s without stacking credit', async (region, amount, restriction, creditSource) => {
+			country = region
+			buyer = signedIn(buyerFacts({
+				alumni: known('c4' as const),
+				credit: known({ paid: 10_000, source: 'valid-cc-purchase' }),
+			}))
+			for (const purpose of ['display', 'checkout'] as const) {
+				const offered = await ask({ purpose })
+				expect(offered).toMatchObject({ amountCents: 55_000, restriction: 'none' })
+				expect(offered!.offers).toEqual(region === 'IN'
+					? [expect.objectContaining({ amountCents: 40_000, restriction: 'region' })]
+					: [])
+				const accepted = await ask({ purpose, pppAccepted: true })
+				expect(accepted).toMatchObject({ kind: 'priced', amountCents: amount, restriction })
+				expect(accepted!.offers).toEqual([])
+				expect(decodeDecisionRef(accepted!.decisionRef)?.creditSource).toBe(creditSource)
+			}
 		})
 
 		it('never prices PPP for a team order', async () => {
