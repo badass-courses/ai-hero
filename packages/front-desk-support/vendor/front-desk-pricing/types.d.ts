@@ -32,6 +32,8 @@ export interface PricingPolicyData {
     readonly checkoutStopsAt: Ruling<string>;
     readonly closesAt: Ruling<string>;
     readonly creditAmounts: Ruling<readonly number[]>;
+    readonly creditOffPpp?: Ruling<boolean>;
+    readonly creditPaidMaximum?: Ruling<number>;
     readonly earlyEndsAt: Ruling<string>;
     readonly enabled: boolean;
     readonly legend: Ruling<{
@@ -48,6 +50,13 @@ export interface PricingPolicyData {
         readonly early: readonly TeamBandData[];
         readonly standard: readonly TeamBandData[];
     }>;
+    readonly teamCrashCourseCredit: {
+        readonly minimumSeatNetCents: number;
+        readonly minimumSeatNetSource: string;
+        readonly seatOrder: "highestPaidFirst";
+        readonly seatOrderSource: string;
+        readonly windowEnd: string;
+    };
     readonly version: string;
 }
 export interface BindingQuoteData {

@@ -893,6 +893,7 @@ export {
 } from './contact-sync-schema'
 
 export { drovrOutbox } from './drovr-outbox-schema'
+export { integrationToken } from './integration-token-schema'
 
 export {
 	evergreenOfferJourneyAttempt,

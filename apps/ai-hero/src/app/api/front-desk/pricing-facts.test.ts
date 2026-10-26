@@ -872,7 +872,7 @@ describe('Crash Course credit', () => {
 		['missing percentage', null, 0, null, false, null, null],
 		['untyped MerchantCoupon', 1, 0, null, true, null, null],
 		['unknown type', 1, 0, null, true, 'mystery', null],
-		['PPP', 1, 0, null, true, 'ppp', 'ppp-coupon'],
+		['free PPP', 1, 0, null, true, 'ppp', 'zero-paid'],
 		['bulk', 1, 0, null, true, 'bulk', 'bulk-coupon'],
 	] as const)(
 		'checks free-coupon evidence: %s',
@@ -996,6 +996,116 @@ describe('Crash Course credit', () => {
 		},
 	)
 
+	describe('regional (PPP) purchases', () => {
+		const regional = {
+			Restricted: { status: 'Restricted' },
+			'a PPP coupon': { couponId: 'coupon-ppp' },
+			'Restricted with a PPP coupon': {
+				status: 'Restricted',
+				couponId: 'coupon-ppp',
+			},
+		} as const
+		const cases = Object.entries(regional)
+		const coupons = { 'coupon-ppp': 'ppp' }
+
+		it.each(cases)('credits %s at the amount paid', async (_, over) => {
+			expect(
+				await creditOf({
+					purchases: [
+						purchase({ id: 'cc', totalAmountCents: 11_900, ...over }),
+					],
+					coupons,
+					settlements: Object.fromEntries([
+						charge('cc', { amount: 12_495, line: { amountTax: 595 } }),
+					]),
+				}),
+			).toEqual({
+				value: { paid: 11_900, source: 'cc' },
+				sourceRefs: [
+					'ai-hero:purchase:cc',
+					'stripe:charge:ch_cc',
+					'stripe:checkout-session:cs_cc#product:prod_cc',
+				],
+			})
+		})
+
+		it.each(cases)('subtracts a partial refund from %s', async (_, over) => {
+			expect(
+				await creditOf({
+					purchases: [purchase({ id: 'cc', ...over })],
+					coupons,
+					settlements: Object.fromEntries([
+						charge('cc', {
+							amount: 11_900,
+							amountRefunded: 4_000,
+							refundCount: 1,
+						}),
+					]),
+				}),
+			).toMatchObject({ value: { paid: 7_900, source: 'cc' } })
+		})
+
+		it.each(cases)('excludes %s refunded in full', async (_, over) => {
+			expect(
+				await creditOf({
+					purchases: [purchase({ id: 'cc', ...over })],
+					coupons,
+					settlements: Object.fromEntries([
+						charge('cc', {
+							amount: 11_900,
+							amountRefunded: 11_900,
+							refundCount: 1,
+						}),
+					]),
+				}),
+			).toEqual({
+				value: null,
+				sourceRefs: ['ai-hero:purchase:cc#excluded:refunded'],
+			})
+		})
+
+		it.each(
+			cases.flatMap(([label, over]) =>
+				(
+					[
+						{ disputed: true },
+						{ refundCount: 1 },
+						{ paid: false },
+						{ session: { id: 'cs_other' } },
+						{ line: { stripeProductId: 'prod_other' } },
+					] as const
+				).map((guard) => [label, guard, over] as const),
+			),
+		)('still holds %s on an ambiguous charge: %j', async (_, guard, over) => {
+			expect(
+				await creditOf({
+					purchases: [purchase({ id: 'cc', ...over })],
+					coupons,
+					settlements: Object.fromEntries([charge('cc', guard as any)]),
+				}),
+			).toEqual({ gap: 'PaymentAmbiguous' })
+		})
+
+		it('still excludes a Restricted bulk purchase without asking Stripe', async () => {
+			const { facts, stripeReads } = await run({
+				...buyer,
+				purchases: [
+					purchase({
+						id: 'cc',
+						status: 'Restricted',
+						bulkCouponId: 'bulk',
+						bulkSeats: 3,
+					}),
+				],
+			})
+			expect(facts.facts.credit).toEqual({
+				value: null,
+				sourceRefs: ['ai-hero:purchase:cc#excluded:bulk'],
+			})
+			expect(stripeReads).toEqual([])
+		})
+	})
+
 	it('takes one highest credit, never a sum', async () => {
 		expect(
 			await creditOf({
@@ -1009,7 +1119,6 @@ describe('Crash Course credit', () => {
 	})
 
 	it.each([
-		['Restricted (PPP)', { status: 'Restricted' }, 'restricted-ppp'],
 		['refunded', { status: 'Refunded' }, 'refunded'],
 		['a bulk purchase', { bulkCouponId: 'bulk', bulkSeats: 3 }, 'bulk'],
 		[
@@ -1017,7 +1126,6 @@ describe('Crash Course credit', () => {
 			{ redeemedBulkCouponId: 'bulk' },
 			'redeemed-bulk-seat',
 		],
-		['a PPP coupon', { couponId: 'coupon-ppp' }, 'ppp-coupon'],
 		['a bulk coupon', { couponId: 'coupon-bulk' }, 'bulk-coupon'],
 		['zero-paid', { totalAmountCents: 0, stripeChargeId: null }, 'zero-paid'],
 	] as const)('excludes %s without asking Stripe', async (_, over, why) => {

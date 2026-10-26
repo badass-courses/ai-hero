@@ -41,8 +41,7 @@ afterEach(async () => {
 	root = null
 })
 
-const note =
-	"Regional pricing doesn't combine with your Crash Course credit. You'll get whichever price is lower."
+const note = 'Your Crash Course credit comes off the regional price too.'
 const coupon = { type: 'ppp', country: 'IN', percentageDiscount: 0.6 }
 
 async function renderBox(overrides: Record<string, any> = {}) {
@@ -74,6 +73,11 @@ describe('C5 regional credit note', () => {
 		const host = await renderBox()
 		expect(host.querySelector('[role="checkbox"]')).not.toBeNull()
 		expect(host.textContent).toContain(note)
+	})
+
+	it('no longer says regional pricing drops the credit', async () => {
+		const host = await renderBox({ activeMerchantCoupon: coupon })
+		expect(host.textContent).not.toMatch(/doesn.t combine|whichever price/)
 	})
 
 	it('keeps the note when regional is selected and the formula still uses credit', async () => {

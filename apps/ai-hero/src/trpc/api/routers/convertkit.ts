@@ -6,6 +6,7 @@ import {
 	contentResourceResource,
 	questionResponse,
 } from '@/db/schema'
+import { normalizeKitSubscriberId } from '@/lib/content-progress'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
 import { persistSurveyAnswers } from '@/lib/survey-answer-persistence'
 import { answerSurvey } from '@/lib/surveys-query'
@@ -296,15 +297,20 @@ export const convertkitRouter = createTRPCRouter({
 		const convertkitId = cookieStore.get('ck_subscriber_id')?.value
 		const subscriberCookie = cookieStore.get('ck_subscriber')?.value
 
-		let subscriber: z.infer<typeof SubscriberSchema> | null = null
+		// Only the Kit id is read below, and the id cookie already holds it.
+		// Fetching the subscriber from Kit to read the same id back cost two
+		// Kit calls per buyer-page view. A non-numeric id resolves to nothing,
+		// as the Kit 404 did.
+		let emailListSubscriberId: string | null = null
 
 		try {
 			if (convertkitId) {
-				subscriber = SubscriberSchema.parse(
-					await emailListProvider.getSubscriber(convertkitId),
-				)
+				const cookieKitId = normalizeKitSubscriberId(convertkitId)
+				emailListSubscriberId =
+					cookieKitId && /^\d+$/.test(cookieKitId) ? cookieKitId : null
 			} else if (subscriberCookie) {
-				subscriber = SubscriberSchema.parse(JSON.parse(subscriberCookie))
+				const subscriber = SubscriberSchema.parse(JSON.parse(subscriberCookie))
+				emailListSubscriberId = subscriber.id.toString()
 			}
 		} catch (error) {
 			await log.warn('checkout.survey.answer.lookup.subscriber.failed', {
@@ -313,7 +319,6 @@ export const convertkitRouter = createTRPCRouter({
 		}
 
 		let userId = session?.user?.id || null
-		const emailListSubscriberId = subscriber?.id?.toString() || null
 		const sessionEmail = session?.user?.email || null
 
 		if (!userId && sessionEmail) {

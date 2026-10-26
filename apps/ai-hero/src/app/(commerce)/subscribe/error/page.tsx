@@ -25,6 +25,22 @@ const COPY = {
 		title: 'You already have a regional ticket',
 		body: 'Contact support and we will upgrade it to full access.',
 	},
+	// The emailed sign-in link opened in a different browser (often a mail
+	// app's built-in browser) from the one that started checkout.
+	'browser-mismatch': {
+		title: "You're signed in. One more step",
+		body: "The sign-in link opened in a different browser from the one you started in. You're signed in here now, so go back to the course page in this browser and click Enroll again.",
+	},
+	'invalid-expired': {
+		title: 'This checkout link has expired',
+		body: 'Go back to the course page and click Enroll again to start a fresh checkout.',
+	},
+} as const
+
+type CopyReason = keyof typeof COPY
+
+function isCopyReason(reason: unknown): reason is CopyReason {
+	return typeof reason === 'string' && Object.hasOwn(COPY, reason)
 }
 
 /**
@@ -37,12 +53,7 @@ export default async function SubscribeErrorPage({
 	searchParams: Promise<{ [key: string]: string | string[] | undefined }>
 }) {
 	const { reason } = await searchParams
-	const copy =
-		reason === PURCHASE_BLOCKED ||
-		reason === REGIONAL_UPGRADE_REASON ||
-		reason === REGIONAL_TEAM_NOT_ALLOWED
-			? COPY[reason]
-			: COPY.default
+	const copy = isCopyReason(reason) ? COPY[reason] : COPY.default
 
 	return (
 		<LayoutClient withContainer>

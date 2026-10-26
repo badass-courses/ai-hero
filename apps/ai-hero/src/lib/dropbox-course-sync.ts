@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { putIntegrationRefreshToken } from '@/lib/integration-token-store'
 import {
 	COURSE_JSON_SCHEMA_VERSIONS,
 	courseJsonVideos,
@@ -596,6 +597,8 @@ export async function storeDropboxRefreshToken({
 	environment?: Environment
 	fetchImpl?: Fetch
 }): Promise<DropboxTokenStoreResult> {
+	// The optional DB store is best effort; legacy Vercel storage remains authoritative here.
+	await putIntegrationRefreshToken('dropbox', refreshToken)
 	const vercelToken = environment.VERCEL_API_TOKEN
 	const projectId = environment.VERCEL_AI_HERO_PROJECT_ID
 	const teamId = environment.VERCEL_TEAM_ID
