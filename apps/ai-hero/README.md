@@ -33,8 +33,7 @@ _Note: Because of [Next.js Enviornment Variable Load Order](https://nextjs.org/d
 
 ### Ops scripts with 1Password
 
-Run `pnpm cta-report` (including `cta-report:scheduled` and
-`cta-report:top-organic`) or `pnpm kit:fields:check` from this directory with
+Run `pnpm cta-report:ops` or `pnpm kit:fields:check` from this directory with
 `OP_TOKEN` and `OP_VAULT` injected into the caller's environment. Use the
 Varlock 1Password plugin and a service account with access to the selected vault. Each item
 is titled with its environment variable name and stores its value in `password`.
@@ -50,8 +49,10 @@ access is for authorized agents and CI only. Do not run reports against
 production merely to check secret resolution.
 
 `env:check` and Vercel's `prebuild` still use the existing ambient environment
-and `.env.schema`, without 1Password. `cta-report:build` keeps its existing
-dotenv path and build arguments, independently of the ops entry point.
+and `.env.schema`, without 1Password. `cta-report`, `cta-report:build`,
+`cta-report:scheduled`, `cta-report:top-organic` and the scheduled GitHub Actions
+workflow keep their existing dotenv path and arguments. Moving that workflow to
+1Password needs separate CI credentials and is not part of this change.
 The PPP alumni, lost-dispute, purchaser-tag, geo-backfill and evergreen deadline
 scripts remain on their existing paths: their database imports validate the
 whole app environment, including credentials not available through this ops
