@@ -3,6 +3,10 @@ import {
 	type PricingFacts,
 	type PricingRequest,
 } from '@ai-hero/front-desk-support'
+import { price } from '@ai-hero/front-desk-support/pricing'
+import { createC5AuthoritativePrice } from '@/lib/c5-pricing/hook'
+import { purchaseGate } from '@/lib/c5-pricing/purchasability'
+import { syntheticPolicy } from '@/lib/c5-pricing/synthetic-policy.test-fixture'
 import { Effect, Either, Exit, Layer } from 'effect'
 import { describe, expect, it } from 'vitest'
 import {
@@ -537,6 +541,247 @@ describe('alumni', () => {
 })
 
 describe('Crash Course credit', () => {
+	it.each([
+		[29_900, 20_000, 9_900],
+		[19_900, 10_000, 9_900],
+		[19_900, 9_435, 10_465],
+	])(
+		'credits %i cents less %i refunded as %i cents',
+		async (amount, amountRefunded, paid) => {
+			expect(
+				await creditOf({
+					purchases: [purchase({ id: 'partial' })],
+					settlements: Object.fromEntries([
+						charge('partial', { amount, amountRefunded, refundCount: 1 }),
+					]),
+				}),
+			).toEqual({
+				value: { paid, source: 'partial' },
+				sourceRefs: [
+					'ai-hero:purchase:partial',
+					'stripe:charge:ch_partial#partial-refund',
+					'stripe:checkout-session:cs_partial#product:prod_cc',
+				],
+			})
+		},
+	)
+
+	it.each([
+		{ disputed: true },
+		{ currency: 'eur' },
+		{ paid: false },
+		{ captured: false },
+		{ status: 'pending' },
+		{ session: { id: 'cs_other' } },
+		{ session: { paymentIntentId: 'pi_other' } },
+		{ session: { linesComplete: false } },
+		{ line: { stripeProductId: 'prod_other' } },
+		{ line: { quantity: 2 } },
+		{ line: { currency: 'eur' } },
+		{ line: { amountTotal: 19_900.5 } },
+		{ line: { amountTotal: Number.MAX_SAFE_INTEGER + 1 } },
+		{ amountRefunded: 9_435.5 },
+		{ amountRefunded: -1 },
+		{ amountRefunded: Number.NaN },
+		{ amount: Number.MAX_SAFE_INTEGER + 1 },
+	])('keeps settlement guards for partial refunds: %j', async (over) => {
+		expect(
+			await creditOf({
+				purchases: [purchase({ id: 'guarded' })],
+				settlements: Object.fromEntries([
+					charge('guarded', {
+						amount: 19_900,
+						amountRefunded: 9_435,
+						refundCount: 1,
+						...over,
+					}),
+				]),
+			}),
+		).toEqual({ gap: 'PaymentAmbiguous' })
+	})
+
+	it('subtracts a partial refund from product money after removing tax', async () => {
+		expect(
+			await creditOf({
+				purchases: [purchase({ id: 'taxed' })],
+				settlements: Object.fromEntries([
+					charge('taxed', {
+						amount: 19_900,
+						amountRefunded: 9_435,
+						refundCount: 1,
+						line: { amountTax: 1_000 },
+					}),
+				]),
+			}),
+		).toMatchObject({ value: { paid: 9_465, source: 'taxed' } })
+	})
+
+	it('excludes a fully refunded $99 charge even while the purchase is Valid', async () => {
+		expect(
+			await creditOf({
+				purchases: [purchase({ id: 'full' })],
+				settlements: Object.fromEntries([
+					charge('full', {
+						amount: 9_900,
+						amountRefunded: 9_900,
+						refundCount: 1,
+					}),
+				]),
+			}),
+		).toEqual({
+			value: null,
+			sourceRefs: ['ai-hero:purchase:full#excluded:refunded'],
+		})
+	})
+
+	it('holds a partly refunded multi-line session even with only one Crash Course line', async () => {
+		const [id, settled] = charge('multi', {
+			amount: 29_900,
+			amountRefunded: 20_000,
+			refundCount: 1,
+		})
+		const session = settled.session!
+		expect(
+			await creditOf({
+				purchases: [purchase({ id: 'multi' })],
+				settlements: {
+					[id]: {
+						...settled,
+						session: {
+							...session,
+							lines: [
+								{ ...session.lines[0]!, amountTotal: 24_900 },
+								{
+									...session.lines[0]!,
+									stripeProductId: 'prod_other',
+									amountTotal: 5_000,
+								},
+							],
+						},
+					},
+				},
+			}),
+		).toEqual({ gap: 'PaymentAmbiguous' })
+	})
+
+	it.each([0, 100])(
+		'excludes a partial refund exceeding net product money by %i cents',
+		async (extraRefund) => {
+			expect(
+				await creditOf({
+					purchases: [purchase({ id: 'taxed' })],
+					settlements: Object.fromEntries([
+						charge('taxed', {
+							amount: 19_900,
+							amountRefunded: 18_000 + extraRefund,
+							refundCount: 1,
+							line: { amountTax: 1_900 },
+						}),
+					]),
+				}),
+			).toEqual({
+				value: null,
+				sourceRefs: ['ai-hero:purchase:taxed#excluded:zero-paid'],
+			})
+		},
+	)
+
+	it.each([
+		['display', 29_900, 20_000, 9_900],
+		['checkout', 29_900, 20_000, 9_900],
+		['display', 19_900, 9_435, 10_465],
+		['checkout', 19_900, 9_435, 10_465],
+	] as const)(
+		'%s with %i charged and %i refunded resolves %i kept cents against policy',
+		async (purpose, amount, amountRefunded, paid) => {
+			const { facts } = await run({
+				...buyer,
+				prices: [{ id: 'price-test', unitAmountCents: 129_500 }],
+				purchases: [
+					purchase({ id: 'partial' }),
+					purchase({ id: 'alumnus', productId: C4 }),
+				],
+				settlements: Object.fromEntries([
+					charge('partial', { amount, amountRefunded, refundCount: 1 }),
+				]),
+			})
+			expect(facts.facts.credit).toMatchObject({
+				value: { paid, source: 'partial' },
+			})
+			// Test-only policy: credit stacks on the alumni discount, but an
+			// unlisted kept amount must still hold until policy recognizes it.
+			const policy = syntheticPolicy()
+			const decide = createC5AuthoritativePrice({
+				policy: async () => ({
+					ok: true,
+					value: {
+						version: policy.version,
+						policy: {
+							...policy,
+							list: 129_500,
+							creditAmounts: {
+								...policy.creditAmounts,
+								value: [9_900, 19_900, 29_900],
+							},
+							newBuyerEarlyPercent: {
+								...policy.newBuyerEarlyPercent,
+								value: 30,
+							},
+							alumniPercent: { ...policy.alumniPercent, value: 40 },
+						},
+					},
+				}),
+				quotes: async () => ({ ok: true, value: [] }),
+				buyer: async () => ({
+					kind: 'buyer',
+					email,
+					facts,
+					holdsRestrictedPurchase: false,
+					holdsValidProductPurchase: false,
+				}),
+				trustedCountry: async () => 'US',
+				pppPercent: () => 0,
+				price,
+				engineVersion: 'engine-test',
+				now: () => new Date('2030-01-05T00:00:00Z'),
+				disabled: () => false,
+			})
+			const decision = await decide({
+				purpose,
+				productId: C5,
+				priceId: 'price-test',
+				quantity: 1,
+				userId: 'user-test',
+				country: 'US',
+				pppAccepted: false,
+			})
+			expect(decision).not.toBeNull()
+			// Course Builder's formatted-price contract derives these flags from kind.
+			const gate = purchaseGate({
+				authoritative: {
+					...decision!,
+					purchasable: decision!.kind === 'priced',
+					isUpperBound: decision!.kind === 'bounded',
+				},
+			})
+			if (paid === 9_900) {
+				expect(decision).toMatchObject({ kind: 'priced', amountCents: 67_800 })
+				expect(decision!.amountCents).toBeLessThan(90_650 - paid)
+				expect(gate).toEqual({ kind: 'buy', upperBound: false })
+			} else {
+				expect(decision).toMatchObject({
+					kind: 'held',
+					reasons: ['credit-amount-unrecognized'],
+				})
+				expect(gate).toEqual({
+					kind: 'blocked',
+					upperBound: false,
+					label: 'Price unavailable',
+				})
+			}
+		},
+	)
+
 	it('is the product line on the purchase session less tax, never the gross charge or Purchase total', async () => {
 		const [id, settled] = charge('cc', { amount: 30_000 })
 		const session = settled.session!
@@ -637,11 +882,9 @@ describe('Crash Course credit', () => {
 
 	it.each([
 		[
-			'partly refunded',
+			'a refund record without a refunded amount',
 			{
-				settlements: Object.fromEntries([
-					charge('cc', { amountRefunded: 5_000, refundCount: 1 }),
-				]),
+				settlements: Object.fromEntries([charge('cc', { refundCount: 1 })]),
 			},
 			'PaymentAmbiguous',
 		],

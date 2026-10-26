@@ -366,6 +366,7 @@ export function purchaseCandidate(
  * The product money a purchase that passed the DB checks actually settled.
  * The charge must be paid, captured and succeeded, and the amount is the one
  * Crash Course line on the purchase's own Checkout Session, less its tax.
+ * A partial refund reduces that amount only on a single-line session.
  * Never the gross charge, and never the rounded Purchase total.
  */
 export function chargeCandidate(
@@ -382,10 +383,18 @@ export function chargeCandidate(
 		charge.disputed
 	)
 		return ambiguous
+	if (
+		!Number.isSafeInteger(charge.amount) ||
+		charge.amount < 0 ||
+		!Number.isSafeInteger(charge.amountRefunded) ||
+		charge.amountRefunded < 0
+	)
+		return ambiguous
 	if (charge.amount === 0) return excluded(row, 'zero-paid')
 	if (charge.amountRefunded >= charge.amount) return excluded(row, 'refunded')
-	// A partial refund leaves no clean paid amount to credit.
-	if (charge.amountRefunded > 0 || charge.refundCount > 0) return ambiguous
+	const partialRefund = charge.amountRefunded > 0
+	// A refund record without a settled refund amount proves no kept amount.
+	if (!partialRefund && charge.refundCount > 0) return ambiguous
 	if (!charge.paid || !charge.captured || charge.status !== 'succeeded')
 		return ambiguous
 	if (
@@ -403,22 +412,26 @@ export function chargeCandidate(
 	)
 	const [line] = lines
 	if (lines.length !== 1 || !line || line.quantity !== 1) return ambiguous
-	const paid = line.amountTotal - line.amountTax
+	// A charge-level refund cannot be attributed across multiple lines.
+	if (partialRefund && session.lines.length !== 1) return ambiguous
+	const productPaid = line.amountTotal - line.amountTax
 	if (
 		line.currency !== 'usd' ||
-		!Number.isSafeInteger(paid) ||
-		paid < 0 ||
-		paid > charge.amount
+		!Number.isSafeInteger(productPaid) ||
+		productPaid < 0 ||
+		productPaid > charge.amount
 	)
 		return ambiguous
-	if (paid === 0) return excluded(row, 'zero-paid')
+	const paid = productPaid - charge.amountRefunded
+	if (!Number.isSafeInteger(paid)) return ambiguous
+	if (paid <= 0) return excluded(row, 'zero-paid')
 	return {
 		kind: 'eligible',
 		paid,
 		purchaseId: row.id,
 		refs: [
 			purchaseRef(row.id),
-			`stripe:charge:${charge.id}`,
+			`stripe:charge:${charge.id}${partialRefund ? '#partial-refund' : ''}`,
 			`stripe:checkout-session:${session.id}#product:${row.stripeProductId}`,
 		],
 	}
