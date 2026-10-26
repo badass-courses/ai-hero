@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => {
 	const inngestSend = vi.fn().mockResolvedValue(undefined)
 	const issueRecoveryToken = vi.fn().mockResolvedValue(undefined)
 	const reconcile = vi.fn()
+	const routeReturning = vi.fn()
 	const cookieGet = vi.fn()
 	const resolveDoi = vi.fn()
 	const setFields = vi.fn().mockResolvedValue(undefined)
@@ -35,6 +36,7 @@ const mocks = vi.hoisted(() => {
 		inngestSend,
 		issueRecoveryToken,
 		reconcile,
+		routeReturning,
 		cookieGet,
 		resolveDoi,
 		setFields,
@@ -92,6 +94,7 @@ vi.mock('@/lib/signup-attribution', () => ({
 
 vi.mock('@/lib/subscriber-marketing/ai-hero-email-opt-in.server', () => ({
 	reconcileAiHeroEmailOptInWithKit: mocks.reconcile,
+	routeReturningUnsubscriberWithKit: mocks.routeReturning,
 }))
 
 vi.mock(
@@ -184,6 +187,9 @@ function useRealCourseBuilderFailureBoundary(error: Error) {
 beforeEach(() => {
 	vi.clearAllMocks()
 	mocks.redisGet.mockReset().mockResolvedValue(false)
+	mocks.routeReturning.mockReset().mockResolvedValue({
+		status: 'not-unsubscribed',
+	})
 	mocks.checkBotId.mockReset().mockResolvedValue({ isBot: false })
 	process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED = 'true'
 	process.env.AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED = 'true'
@@ -766,6 +772,89 @@ describe('drovr double opt-in (DROVR_DOI_FORMS)', () => {
 		expect(JSON.stringify(mocks.log.error.mock.calls)).not.toContain(
 			'reader@example.com',
 		)
+	})
+})
+
+describe('returning unsubscriber (Kit tag 8244351)', () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+		for (const key of [
+			'DROVR_DOI_FORMS',
+			'DROVR_API_BASE_URL',
+			'DROVR_API_KEY_ORG_AIHERO',
+		])
+			delete mocks.env[key]
+		mocks.cookieGet.mockReturnValue(undefined)
+		mocks.routeReturning.mockReset().mockResolvedValue({
+			status: 'not-unsubscribed',
+		})
+	})
+
+	const post = () =>
+		POST(
+			request({
+				email: 'person@example.com',
+				name: 'Pat',
+				listId: 9376133,
+			}),
+		)
+
+	it('tagged and drovr reachable: answers the DOI shape, no Kit subscribe, no untag', async () => {
+		mocks.routeReturning.mockResolvedValue({ status: 'doi-requested' })
+
+		const response = await post()
+
+		expect(response.status).toBe(200)
+		expect(await response.json()).toMatchObject({
+			email_address: 'person@example.com',
+			state: 'awaiting-confirmation',
+		})
+		expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
+		expect(mocks.reconcile).not.toHaveBeenCalled()
+		expect(mocks.routeReturning).toHaveBeenCalledWith(
+			expect.objectContaining({ kitFormId: 9376133, entry: 'form' }),
+		)
+	})
+
+	it('tagged but blocked (drovr not configured): fails closed, no Kit subscribe, no untag', async () => {
+		mocks.routeReturning.mockResolvedValue({
+			status: 'blocked',
+			reason: 'drovr-unconfigured',
+		})
+
+		const response = await post()
+
+		expect(response.status).toBe(502)
+		expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
+		expect(mocks.reconcile).not.toHaveBeenCalled()
+	})
+
+	it('tagged and the DOI request throws: 502, no Kit subscribe, no untag', async () => {
+		mocks.routeReturning.mockRejectedValue(new Error('boom'))
+
+		const response = await post()
+
+		expect(response.status).toBe(502)
+		expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
+		expect(mocks.reconcile).not.toHaveBeenCalled()
+	})
+
+	it('not tagged: continues to the Kit path', async () => {
+		mocks.courseBuilderPOST.mockResolvedValue(
+			subscriberResponse({
+				id: 1,
+				email_address: 'person@example.com',
+				state: 'active',
+				fields: {},
+			}),
+		)
+		mocks.reconcile.mockResolvedValue({ status: 'active' })
+
+		const response = await post()
+
+		expect(response.status).toBe(200)
+		expect(mocks.courseBuilderPOST).toHaveBeenCalledTimes(1)
+		expect(mocks.reconcile).toHaveBeenCalledTimes(1)
 	})
 })
 
