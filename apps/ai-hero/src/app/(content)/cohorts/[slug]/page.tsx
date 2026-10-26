@@ -30,6 +30,7 @@ import {
 import { getCachedCohort, loadCohortPageData } from '@/lib/cohorts-query'
 import { isOnCohortWaitlist } from '@/lib/cta-gating'
 import { getActiveProductSlugMap } from '@/lib/product-slug-map'
+import { startEarly } from '@/lib/start-early'
 import { getSubscriberForGating } from '@/lib/subscriber-gate'
 import {
 	CourseStructuredData,
@@ -135,6 +136,18 @@ export async function CohortPageView(props: CohortPageViewProps) {
 		notFound()
 	}
 
+	// Three reads that need nothing from the loader or from each other: start
+	// them now so they run under the loader instead of after it. Each is
+	// awaited where it is used, so a failure still fails (or, for the alumni
+	// count, still falls back to 0) exactly where it did before.
+	const gatingSubscriberRead = startEarly(() => getSubscriberForGating())
+	const productMapRead = startEarly(() => getActiveProductSlugMap())
+	// "Trained" in the fact strip: a live count across every cohort to date,
+	// dropped rather than guessed when it is too small to quote — including
+	// when the count itself fails, which must never take the sales page down
+	// with it (`.catch(() => 0)`, as on the landing page and /courses).
+	const alumniCountRead = getCachedCohortAlumniCount().catch(() => 0)
+
 	const pageData = await loadCohortPageData(params.slug, searchParams)
 
 	const {
@@ -167,7 +180,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	// the sidebar's closed-enrollment state IS the waitlist form: someone who
 	// joined last month and came back to check on the dates was being asked to
 	// join again, with no sign the site had heard them the first time.
-	const gatingSubscriber = await getSubscriberForGating()
+	const gatingSubscriber = await gatingSubscriberRead
 	const isOnWaitlist = isOnCohortWaitlist(gatingSubscriber, product?.name)
 	const hasKnownWaitlistIdentity = Boolean(
 		gatingSubscriber?.email_address || session?.user?.email,
@@ -230,15 +243,9 @@ export async function CohortPageView(props: CohortPageViewProps) {
 		? formatOpensIn(openEnrollmentDate, PT, new Date())
 		: null
 
-	// "Trained" in the fact strip: a live count across every cohort to date,
-	// dropped rather than guessed when it is too small to quote — including
-	// when the count itself fails, which must never take the sales page down
-	// with it (`.catch(() => 0)`, as on the landing page and /courses).
-	// Fetched alongside the product map because neither depends on the other,
-	// and serialising them only adds latency to the server render.
 	const [alumniCount, productMap] = await Promise.all([
-		getCachedCohortAlumniCount().catch(() => 0),
-		getActiveProductSlugMap(),
+		alumniCountRead,
+		productMapRead,
 	])
 	// The lesson total for "Includes" is off for now (Vojta, 2026-10-14): the
 	// list leads with the workshop count alone. To bring it back, restore this
