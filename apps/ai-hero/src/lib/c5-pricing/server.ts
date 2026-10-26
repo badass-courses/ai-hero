@@ -14,6 +14,10 @@ import type { AuthoritativePriceRequest } from '@coursebuilder/core/schemas'
 import { frontDeskData } from './front-desk-client'
 export { frontDeskData } from './front-desk-client'
 import { createC5AuthoritativePrice, type BuyerRead } from './hook'
+import {
+	PPP_CREDIT_BOUND_EVENT,
+	pppCreditBoundCharge,
+} from './ppp-credit-bound'
 import { holdsRestrictedPurchase } from './restricted-holder'
 import { signedGiftFact } from './gift-server'
 import { c5PricingClosed } from './switch-server'
@@ -160,5 +164,7 @@ export async function c5AuthoritativePrice(request: AuthoritativePriceRequest) {
 			engineVersion: decision.engineVersion,
 		})
 	}
+	const boundCharge = pppCreditBoundCharge(request, decision)
+	if (boundCharge) await log.warn(PPP_CREDIT_BOUND_EVENT, boundCharge)
 	return decision
 }
