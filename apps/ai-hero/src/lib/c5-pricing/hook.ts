@@ -26,6 +26,7 @@ import {
 	refusal,
 	toAuthoritativeDecision,
 } from './decision'
+import { isPppCreditBound } from './ppp-credit-bound'
 
 /**
  * What the hook knows about the buyer. A signed-in buyer's facts come from
@@ -298,7 +299,22 @@ export function createC5AuthoritativePrice(deps: C5PricingDeps) {
 		if (!priced.ok || !priced.value)
 			return refusal('held', [APP_REASONS.factsUnavailable], withPolicy)
 
-		let decision = toAuthoritativeDecision(priced.value, {
+		// Checkout re-runs the engine, so this reads checkout's own result: a
+		// credit resolved since display prices normally and never matches.
+		let result = priced.value
+		if (
+			buyer.kind === 'buyer' &&
+			orderKind === 'individual' &&
+			!appReasons.length &&
+			isPppCreditBound(result, policy.value.policy)
+		) {
+			appReasons.push(APP_REASONS.pppCreditBound)
+			// Charge the bound with no credit source: it spends no credit.
+			if (request.purpose === 'checkout')
+				result = { ...result, kind: 'priced', creditSource: null }
+		}
+
+		let decision = toAuthoritativeDecision(result, {
 			...base,
 			purpose: request.purpose,
 			policy: policy.value.policy,

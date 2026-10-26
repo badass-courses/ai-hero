@@ -29,6 +29,11 @@ import {
  * alumni 35%; credits 50/100/150; legend 50% plus 50.00, never with a
  * credit; team bands early 20/25/30/40 and standard 0/10/20/30 at 1/5/10/30
  * seats; PPP the better of the formula and the regional price.
+ *
+ * Individual orders run under two sets of credit terms. Formula only: the
+ * credit is one of the fixed amounts and comes off the formula prices. Credit
+ * off regional (the live terms): any paid amount up to the maximum counts,
+ * and it also comes off the regional price, once.
  */
 
 const LIST = SYNTHETIC_LIST
@@ -162,6 +167,27 @@ type Expected =
 			creditSource: string | null
 	  }
 
+type Terms = {
+	readonly creditOffPpp: boolean
+	readonly creditPaidMaximum: number | null
+}
+const TERMS: readonly [string, Terms][] = [
+	['formula only', { creditOffPpp: false, creditPaidMaximum: null }],
+	['credit off regional', { creditOffPpp: true, creditPaidMaximum: 15_000 }],
+]
+const policyFor = (terms: Terms) =>
+	syntheticPolicy(
+		terms.creditOffPpp
+			? {
+					creditOffPpp: { source: 'matrix#creditOffPpp', value: true },
+					creditPaidMaximum: {
+						source: 'matrix#creditPaidMaximum',
+						value: terms.creditPaidMaximum!,
+					},
+				}
+			: {},
+	)
+
 const windowKind = (now: Date): Expected | null =>
 	now.getTime() < W.opens
 		? { kind: 'not-open' }
@@ -184,10 +210,17 @@ function expectIndividual(cell: {
 	ppp: Ppp
 	quote: QuoteVariant
 	now: Date
+	terms: Terms
 }): Expected {
 	const closed = windowKind(cell.now)
 	if (closed) return closed
-	if (typeof cell.credit === 'number' && !CREDITS.includes(cell.credit))
+	const maximum = cell.terms.creditPaidMaximum
+	if (
+		typeof cell.credit === 'number' &&
+		!(maximum === null
+			? CREDITS.includes(cell.credit)
+			: cell.credit >= 1 && cell.credit <= maximum)
+	)
 		return { kind: 'held' }
 	if (cell.ppp.kind === 'no-country') return { kind: 'bounded' }
 
@@ -203,7 +236,7 @@ function expectIndividual(cell: {
 		(cell.credit !== GAP && (cell.credit === null || cell.creditUse !== GAP))
 	const credit = !creditKnown
 		? cell.credit === GAP
-			? Math.max(...CREDITS)
+			? (maximum ?? Math.max(...CREDITS))
 			: (cell.credit as number)
 		: typeof cell.credit === 'number' && cell.creditUse === 'available'
 			? cell.credit
@@ -236,13 +269,22 @@ function expectIndividual(cell: {
 	const regional =
 		pppPercent > 0 ? Math.round(LIST * (1 - pppPercent / 100)) : null
 	const accepted = cell.ppp.accepted
+	// The regional price the buyer is offered, with the credit off it too.
+	const offer =
+		regional !== null && cell.terms.creditOffPpp && creditKnown
+			? regional - credit
+			: regional
 	if (accepted && regional !== null)
-		candidates.push({
-			amount: regional,
-			certain: true,
-			creditSource: null,
-			region: true,
-		})
+		candidates.push(
+			cell.terms.creditOffPpp
+				? {
+						amount: regional - credit,
+						certain: creditKnown,
+						creditSource,
+						region: true,
+					}
+				: { amount: regional, certain: true, creditSource: null, region: true },
+		)
 
 	// On a tie an unrestricted price beats a regional one, and the buyer
 	// keeps their credit.
@@ -258,7 +300,40 @@ function expectIndividual(cell: {
 	const best = lowest(candidates.filter((c) => c.certain))
 	const bound = lowest(candidates.filter((c) => !c.certain))
 	// An unknown fact that could at best tie the certain price cannot change it.
-	if (!best || (bound && bound.amount < best.amount)) return { kind: 'bounded' }
+	if (!best || (bound && bound.amount < best.amount)) {
+		// Checkout charges the regional bound when the credit is the only
+		// unknown and, with no credit anywhere, the regional price is lowest.
+		const uncredited = (amount: number, region = false): Candidate => ({
+			amount,
+			certain: true,
+			creditSource: null,
+			region,
+		})
+		const selected = lowest([
+			uncredited(early(cell.now) ? LIST * 0.8 : LIST),
+			...(cell.alumni !== 'none' ? [uncredited(LIST * 0.65)] : []),
+			...(cell.legend === 'verified' ? [uncredited(LIST * 0.5 - 5_000)] : []),
+			...(quoted !== null ? [uncredited(quoted)] : []),
+			...(accepted && regional !== null ? [uncredited(regional, true)] : []),
+		])
+		if (
+			cell.terms.creditOffPpp &&
+			cell.credit === GAP &&
+			cell.creditUse === 'available' &&
+			cell.alumni !== GAP &&
+			cell.legend !== GAP &&
+			selected?.region
+		)
+			return {
+				kind: 'priced',
+				amount: selected.amount,
+				unit: selected.amount,
+				restriction: 'region',
+				pppOffer: null,
+				creditSource: null,
+			}
+		return { kind: 'bounded' }
+	}
 	if (best.region)
 		return {
 			kind: 'priced',
@@ -266,15 +341,14 @@ function expectIndividual(cell: {
 			unit: best.amount,
 			restriction: 'region',
 			pppOffer: null,
-			creditSource: null,
+			creditSource: best.creditSource,
 		}
 	return {
 		kind: 'priced',
 		amount: best.amount,
 		unit: best.amount,
 		restriction: 'none',
-		pppOffer:
-			!accepted && regional !== null && regional < best.amount ? regional : null,
+		pppOffer: !accepted && offer !== null && offer < best.amount ? offer : null,
 		creditSource: best.creditSource,
 	}
 }
@@ -364,11 +438,15 @@ async function decide(input: {
 	now: Date
 	quantity: number
 	purpose: 'display' | 'checkout'
+	terms?: Terms
 }): Promise<AuthoritativeDecision | null> {
 	const hook = createC5AuthoritativePrice({
 		policy: async () => ({
 			ok: true,
-			value: { version: SYNTHETIC_POLICY_VERSION, policy: syntheticPolicy() },
+			value: {
+				version: SYNTHETIC_POLICY_VERSION,
+				policy: policyFor(input.terms ?? TERMS[0]![1]),
+			},
 		}),
 		quotes: async () => ({ ok: true, value: input.quotes }),
 		buyer: async () => input.buyer,
@@ -435,9 +513,13 @@ const CREDIT_USE: readonly CreditUse[] = ['available', 'spent', GAP]
 const LEGEND: readonly Legend[] = ['no', 'verified', GAP]
 
 describe('generated hook matrix: individual orders', () => {
-	it.each(WINDOW_EDGES)(
-		'prices every fact, PPP and quote combination %s',
-		async (_, now) => {
+	it.each(
+		TERMS.flatMap(([name, terms]) =>
+			WINDOW_EDGES.map(([edge, now]) => [name, edge, now, terms] as const),
+		),
+	)(
+		'prices every fact, PPP and quote combination, %s, %s',
+		async (_, __, now, terms) => {
 			const failures: string[] = []
 			let cells = 0
 			for (const alumni of ALUMNI)
@@ -465,10 +547,11 @@ describe('generated hook matrix: individual orders', () => {
 										now,
 										quantity: 1,
 										purpose: 'checkout',
+										terms,
 									})
 									const cell = { alumni, credit, creditUse, legend, ppp, quote }
 									const wrong = mismatch(
-										expectIndividual({ ...cell, now }),
+										expectIndividual({ ...cell, now, terms }),
 										decision,
 										1,
 									)
