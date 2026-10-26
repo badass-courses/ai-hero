@@ -75,6 +75,8 @@ export const env = createEnv({
 		DROPBOX_APP_SECRET: z.string().optional(),
 		DROPBOX_OAUTH_REDIRECT_URI: z.string().url().optional(),
 		DROPBOX_REFRESH_TOKEN: z.string().optional(),
+		// Production only: previews share the database. Validated by the dormant store.
+		INTEGRATION_TOKEN_KEY: z.string().optional(),
 		DROPBOX_SYNC_SHARED_FOLDER_ID: z.string().optional(),
 		DROPBOX_SYNC_ALLOWED_ROOT: z.string().optional(),
 		// URL shape is checked when the individual binding polls, not at app import.
@@ -257,6 +259,7 @@ export const env = createEnv({
 		DROPBOX_APP_SECRET: process.env.DROPBOX_APP_SECRET,
 		DROPBOX_OAUTH_REDIRECT_URI: process.env.DROPBOX_OAUTH_REDIRECT_URI,
 		DROPBOX_REFRESH_TOKEN: process.env.DROPBOX_REFRESH_TOKEN,
+		INTEGRATION_TOKEN_KEY: process.env.INTEGRATION_TOKEN_KEY,
 		DROPBOX_SYNC_SHARED_FOLDER_ID: process.env.DROPBOX_SYNC_SHARED_FOLDER_ID,
 		DROPBOX_SYNC_ALLOWED_ROOT: process.env.DROPBOX_SYNC_ALLOWED_ROOT,
 		DROPBOX_SYNC_SHARED_LINK: process.env.DROPBOX_SYNC_SHARED_LINK,
