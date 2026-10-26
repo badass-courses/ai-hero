@@ -31,7 +31,10 @@ export const ALUMNI_PRODUCTS = {
 	'product-pqkk5': 'c4',
 } as const
 /** MerchantCoupon types that prove a coupon was neither PPP nor bulk. */
-export const VERIFIED_COUPON_TYPES: ReadonlySet<string> = new Set(['special'])
+export const VERIFIED_COUPON_TYPES: ReadonlySet<string> = new Set([
+	'special',
+	'special credit',
+])
 /** front-desk's upper bound for the existingSeats fact. */
 export const MAX_EXISTING_SEATS = 100_000
 
@@ -82,6 +85,11 @@ export interface PricingSettlement {
 			readonly amountTax: number
 		}[]
 	} | null
+}
+export interface PricingCouponEvidence {
+	readonly type: string | null
+	readonly hasMerchantCoupon: boolean
+	readonly percentageDiscount: number | null
 }
 export interface PricingPriceRow {
 	readonly id: string
@@ -138,11 +146,13 @@ export interface PricingFactsSourceShape {
 	 * is not configured: no target purchase can then be placed before or after.
 	 */
 	readonly decisionCutover: Date | null
-	/** MerchantCoupon type per coupon id. A missing coupon has no entry; a
-	 * missing MerchantCoupon or type is null. */
+	/** Coupon evidence from one batched read. A missing coupon has no entry. */
 	readonly couponTypes: (
 		couponIds: readonly string[],
-	) => Effect.Effect<ReadonlyMap<string, string | null>, SourceUnavailable>
+	) => Effect.Effect<
+		ReadonlyMap<string, PricingCouponEvidence>,
+		SourceUnavailable
+	>
 	readonly activePrices: (
 		productId: string,
 	) => Effect.Effect<readonly PricingPriceRow[], SourceUnavailable>
@@ -330,7 +340,7 @@ const ambiguous: CreditCandidate = { kind: 'unknown', gap: 'PaymentAmbiguous' }
 /** DB checks for one Crash Course purchase. Only a survivor needs Stripe. */
 export function purchaseCandidate(
 	row: PricingPurchaseRow,
-	couponType: string | null | undefined,
+	coupon: PricingCouponEvidence | null | undefined,
 ):
 	| CreditCandidate
 	| {
@@ -346,10 +356,19 @@ export function purchaseCandidate(
 	if (row.bulkCouponId) return excluded(row, 'bulk')
 	if (row.redeemedBulkCouponId) return excluded(row, 'redeemed-bulk-seat')
 	if (row.couponId) {
+		const couponType = coupon?.type
 		// Never infer PPP from the amount. Only the coupon's own type counts.
 		if (couponType === 'ppp') return excluded(row, 'ppp-coupon')
 		if (couponType === 'bulk') return excluded(row, 'bulk-coupon')
-		// A missing coupon, MerchantCoupon or type proves nothing about origin.
+		// Only a proven free coupon without a MerchantCoupon can bypass type checks.
+		if (
+			coupon?.hasMerchantCoupon === false &&
+			coupon.percentageDiscount === 1 &&
+			row.totalAmountCents === 0 &&
+			!row.stripeChargeId
+		)
+			return excluded(row, 'zero-paid')
+		// Any other missing coupon, MerchantCoupon or type proves nothing.
 		if (!couponType || !VERIFIED_COUPON_TYPES.has(couponType)) return ambiguous
 	}
 	if (!row.stripeChargeId)
@@ -477,7 +496,7 @@ const creditFor = (
 		]
 		const types = couponIds.length
 			? yield* Effect.either(source.couponTypes(couponIds))
-			: Either.right(new Map<string, string | null>())
+			: Either.right(new Map<string, PricingCouponEvidence>())
 		if (Either.isLeft(types)) return gap('FactsUnavailable')
 		const candidates = yield* Effect.forEach(crashCourse, (row) => {
 			const checked = purchaseCandidate(

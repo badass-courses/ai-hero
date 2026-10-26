@@ -183,7 +183,17 @@ export const pricingFactsSourceLayer = (deps: {
 					with: { merchantCoupon: true },
 				})
 				return new Map(
-					rows.map((row) => [row.id, row.merchantCoupon?.type || null]),
+					rows.map((row) => [
+						row.id,
+						{
+							type: row.merchantCoupon?.type || null,
+							hasMerchantCoupon: row.merchantCoupon != null,
+							percentageDiscount:
+								row.percentageDiscount === null
+									? null
+									: Number(row.percentageDiscount),
+						},
+					]),
 				)
 			}),
 		creditSpentBy: (creditSource) =>
