@@ -51,6 +51,10 @@ import { ChevronLeft, MailIcon } from 'lucide-react'
 import Stripe from 'stripe'
 
 import { InvoicePrintButton } from '@coursebuilder/commerce-next/invoices/invoice-print-button'
+import {
+	TransferDenialMessage,
+	TransferDenialRoot,
+} from '@/purchase-transfer/transfer-denial-form'
 import * as PurchaseTransfer from '@coursebuilder/commerce-next/post-purchase/purchase-transfer'
 import { Button } from '@coursebuilder/ui'
 
@@ -495,7 +499,7 @@ const Invoice = async (props: {
 								<h2 className="text-primary pb-4 text-sm uppercase">
 									Transfer this purchase to another email address
 								</h2>
-								<PurchaseTransfer.Root
+								<TransferDenialRoot
 									onTransferInitiated={async () => {
 										'use server'
 										revalidatePath(`/invoices/${params.merchantChargeId}`)
@@ -511,6 +515,7 @@ const Invoice = async (props: {
 											<PurchaseTransfer.InputEmail />
 											<PurchaseTransfer.SubmitButton />
 										</PurchaseTransfer.Form>
+										<TransferDenialMessage />
 									</PurchaseTransfer.Available>
 									<PurchaseTransfer.Initiated>
 										<PurchaseTransfer.Description />
@@ -519,7 +524,7 @@ const Invoice = async (props: {
 									<PurchaseTransfer.Completed>
 										<PurchaseTransfer.Description />
 									</PurchaseTransfer.Completed>
-								</PurchaseTransfer.Root>
+								</TransferDenialRoot>
 							</div>
 						</div>
 					) : null}

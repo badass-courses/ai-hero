@@ -17,7 +17,12 @@ import {
 	OPEN_TRANSFER_STATES,
 	TRANSFER_DENIAL_MESSAGES,
 	transferDenialError,
+	type TransferDenial,
 } from '@/purchase-transfer/transfer-lifecycle'
+import type {
+	InitiateTransferResult,
+	TransferDenialResult,
+} from '@/purchase-transfer/transfer-result'
 import {
 	getUnpublishedTransferOutboxEvents,
 	publishTransferOutboxEvent,
@@ -404,10 +409,34 @@ export async function getPurchaseTransferForPurchaseId(input: { id: string }) {
 	return z.array(purchaseUserTransferSchema).parse(transfers)
 }
 
+/**
+ * An expected refusal: log it below `error` (it is the user's request being
+ * declined, not a fault) and hand it back as data.
+ */
+function denyInitiate(
+	denial: TransferDenial,
+	context: { purchaseUserTransferId: string; actorUserId: string | null },
+): TransferDenialResult {
+	log.info('purchase_transfer.initiate_denied', {
+		code: denial.code,
+		purchaseUserTransferId: context.purchaseUserTransferId,
+		actorUserId: context.actorUserId,
+	})
+	return {
+		ok: false,
+		code: denial.code,
+		message: TRANSFER_DENIAL_MESSAGES[denial.code],
+	}
+}
+
+/**
+ * Expected denials resolve to `{ ok: false, code, message }`; only
+ * unexpected failures throw.
+ */
 export async function initiatePurchaseTransfer(input: {
 	purchaseUserTransferId: string
 	email: string
-}) {
+}): Promise<InitiateTransferResult<unknown>> {
 	const { session } = await getServerAuthSession()
 	const actorUserId = session?.user?.id ?? null
 	const actorEmail = session?.user?.email ?? null
@@ -419,7 +448,10 @@ export async function initiatePurchaseTransfer(input: {
 
 	const parsedEmailResult = z.string().email().safeParse(input.email.trim())
 	if (!parsedEmailResult.success) {
-		throw new Error(TRANSFER_DENIAL_MESSAGES.invalid_email)
+		return denyInitiate(
+			{ ok: false, code: 'invalid_email' },
+			{ purchaseUserTransferId: input.purchaseUserTransferId, actorUserId },
+		)
 	}
 	const parsedEmail = parsedEmailResult.data.toLowerCase()
 
@@ -456,7 +488,10 @@ export async function initiatePurchaseTransfer(input: {
 		if (preDecision.markExpired && purchaseUserTransfer) {
 			await markTransferExpired(purchaseUserTransfer.id)
 		}
-		throw transferDenialError(preDecision)
+		return denyInitiate(preDecision, {
+			purchaseUserTransferId: input.purchaseUserTransferId,
+			actorUserId,
+		})
 	}
 
 	const transfer = purchaseUserTransfer!
@@ -470,7 +505,12 @@ export async function initiatePurchaseTransfer(input: {
 		targetUserId: toUser.id,
 		inFlightCountForPurchase: inFlight.length,
 	})
-	if (!decision.ok) throw transferDenialError(decision)
+	if (!decision.ok) {
+		return denyInitiate(decision, {
+			purchaseUserTransferId: input.purchaseUserTransferId,
+			actorUserId,
+		})
+	}
 
 	// Compare-and-swap AVAILABLE -> INITIATED; a concurrent initiate on the
 	// same slot loses with zero affected rows.
@@ -488,7 +528,10 @@ export async function initiatePurchaseTransfer(input: {
 		)
 
 	if (getRowsAffected(initiateResult) !== 1) {
-		throw new Error(TRANSFER_DENIAL_MESSAGES.invalid_state)
+		return denyInitiate(
+			{ ok: false, code: 'invalid_state' },
+			{ purchaseUserTransferId: input.purchaseUserTransferId, actorUserId },
+		)
 	}
 
 	const initiatedTransfer = await db.query.purchaseUserTransfer.findFirst({
@@ -512,5 +555,5 @@ export async function initiatePurchaseTransfer(input: {
 		emailProvider: emailProvider,
 	})
 
-	return initiatedTransfer
+	return { ok: true, transfer: initiatedTransfer }
 }
