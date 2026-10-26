@@ -752,6 +752,10 @@ export const contactEvent = mysqlTable(
 		eventTypeProviderReferenceIdx: index(
 			'ContactEvent_eventType_providerReference_idx',
 		).on(table.eventType, table.providerReference),
+		// Lookups by providerEventId alone cannot use the (provider, providerEventId) index.
+		providerEventIdIdx: index('idx_ContactEvent_on_providerEventId').on(
+			table.providerEventId,
+		),
 	}),
 )
 

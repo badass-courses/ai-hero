@@ -37,8 +37,6 @@ export type BuyerRead =
 			readonly kind: 'buyer'
 			readonly email: string
 			readonly facts: PricingFacts
-			/** Whether any purchase blocks PPP, as legacy PPP does; null: unknown. */
-			readonly hasValidPurchase: boolean | null
 			/** Whether the buyer holds a region-restricted purchase of this product. */
 			readonly holdsRestrictedPurchase: boolean
 			/** A Valid purchase of this exact product, not any historical purchase. */
@@ -100,28 +98,22 @@ const gap = <A>(
 	reason: 'FactsUnavailable' | 'IdentityUnverified',
 ): FactData<A> => ({ gap: reason })
 
-/** The PPP fact: trusted country, the buyer's consent, and legacy eligibility. */
+/** C5 regional pricing depends on country and consent, not purchase history. */
 export function pppFact({
 	orderKind,
 	country,
 	percent,
 	accepted,
-	hasValidPurchase,
 }: {
 	orderKind: 'individual' | 'team'
 	country: string | null
 	percent: number
 	accepted: boolean
-	/** Null: unknown. Anonymous display passes false (provisional). */
-	hasValidPurchase: boolean | null
 }): BuyerFactsData['ppp'] {
 	// A team order is never regional; the engine ignores PPP for it anyway.
 	if (orderKind === 'team') return known(null, ['ppp:team-order'])
 	if (country === null) return gap('FactsUnavailable')
 	if (percent <= 0) return known(null, [`geo:country:${country}`])
-	if (hasValidPurchase === null) return gap('FactsUnavailable')
-	// Legacy PPP: any Valid purchase means the buyer already paid full price.
-	if (hasValidPurchase) return known(null, ['ai-hero:ppp:valid-purchase'])
 	return known({ accepted, percent }, [`geo:country:${country}`])
 }
 
@@ -244,7 +236,6 @@ export function createC5AuthoritativePrice(deps: C5PricingDeps) {
 			country,
 			percent,
 			accepted: request.pppAccepted,
-			hasValidPurchase: buyer.kind === 'buyer' ? buyer.hasValidPurchase : false,
 		})
 		const facts = buyer.kind === 'buyer'
 			? { ...buyer.facts.facts, ppp, code }

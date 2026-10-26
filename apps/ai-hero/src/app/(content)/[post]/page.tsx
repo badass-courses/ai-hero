@@ -7,7 +7,8 @@ import { CourseCta } from '@/app/(content)/_components/course-cta'
 import { metaDescription } from '@/lib/meta-description'
 import { ContentReadTracker } from '@/components/content-read-tracker'
 import { BADGE_OUTLINE, TYPE } from '@/components/landing/type'
-import type { CalloutIntent } from '@/components/mdx/callout'
+import { Callout, type CalloutIntent } from '@/components/mdx/callout'
+import { C5SaleSwitch } from '@/components/c5-sale-switch'
 import { Contributor } from '@/components/contributor'
 import { MdxErrorBoundary } from '@/components/mdx/mdx-error-boundary'
 import { PROSE_MEASURE } from '@/components/mdx/prose'
@@ -533,7 +534,16 @@ async function PostBody({
 
 	const { content } = await compileMDX(
 		post.fields.body,
-		{},
+		{
+			Callout: (props: React.ComponentProps<typeof Callout>) =>
+				props.intent === 'course' ? (
+					// The end card owns the C5 ask. Keep the original inline
+					// course callout only outside the campaign, never stack two.
+					<C5SaleSwitch fallback={<Callout {...props} />}>{null}</C5SaleSwitch>
+				) : (
+					<Callout {...props} />
+				),
+		},
 		{},
 		{
 			lessonId: post.id,

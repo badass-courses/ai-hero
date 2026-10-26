@@ -45,7 +45,6 @@ const noQuotes = async () => ({ ok: true as const, value: [] })
 const signedIn = (quantity: number): BuyerRead => ({
 	kind: 'buyer',
 	email: 'team@example.test',
-	hasValidPurchase: false,
 	holdsRestrictedPurchase: false,
 	holdsValidProductPurchase: false,
 	facts: {

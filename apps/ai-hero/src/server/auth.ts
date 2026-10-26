@@ -4,6 +4,7 @@ import { getAbility, UserSchema } from '@/ability'
 import { emailProvider } from '@/coursebuilder/email-provider'
 import { courseBuilderAdapter, db } from '@/db'
 import { env } from '@/env.mjs'
+import { withLoginEmailGuard } from '@/lib/login-email'
 import { clearLegacyOAuthLinkCookies } from '@/lib/oauth-link-cookie'
 import {
 	OAUTH_PROVIDER_ACCOUNT_LINKED_EVENT,
@@ -128,14 +129,16 @@ const getAuthenticatedOAuthLinkSession =
 		getSessionAndUser,
 	})
 
-const oauthContainmentSignInCallback = createOAuthContainmentSignInCallback({
-	getCookieStore: cookies,
-	findAccountOwner: async (account) =>
-		(await courseBuilderAdapter.getUserByAccount?.(account)) ?? null,
-	getAuthenticatedSession: getAuthenticatedOAuthLinkSession,
-	consumeLinkIntent: (input) => oauthLinkIntentService.consume(input),
-	observe: observeOAuthLinkCanary,
-})
+const oauthContainmentSignInCallback = withLoginEmailGuard(
+	createOAuthContainmentSignInCallback({
+		getCookieStore: cookies,
+		findAccountOwner: async (account) =>
+			(await courseBuilderAdapter.getUserByAccount?.(account)) ?? null,
+		getAuthenticatedSession: getAuthenticatedOAuthLinkSession,
+		consumeLinkIntent: (input) => oauthLinkIntentService.consume(input),
+		observe: observeOAuthLinkCanary,
+	}),
+)
 
 async function triggerVerifiedOAuthRoleSync({
 	account,

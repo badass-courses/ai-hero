@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { C5SaleSecondaryLink } from '@/components/c5-sale-secondary-link'
 import LayoutClient from '@/components/layout-client'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
@@ -79,6 +80,7 @@ export default async function SkillsSubscribePage({
 				status={status}
 				location="skills_course_front_door"
 			/>
+			<C5SaleSecondaryLink />
 		</LayoutClient>
 	)
 }

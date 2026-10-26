@@ -69,17 +69,7 @@ async function readBuyer(input: {
 		// are someone else's.
 		if (!facts || facts.buyer.userId !== input.userId)
 			return { kind: 'unavailable', reason: 'identity-mismatch' }
-		const [[valid], [validProduct], restricted] = await Promise.all([
-			db
-				.select({ id: purchases.id })
-				.from(purchases)
-				.where(
-					and(
-						eq(purchases.userId, input.userId),
-						eq(purchases.status, 'Valid'),
-					),
-				)
-				.limit(1),
+		const [[validProduct], restricted] = await Promise.all([
 			db
 				.select({ id: purchases.id })
 				.from(purchases)
@@ -95,7 +85,6 @@ async function readBuyer(input: {
 			kind: 'buyer',
 			email: user.email,
 			facts,
-			hasValidPurchase: Boolean(valid),
 			holdsRestrictedPurchase: restricted,
 			holdsValidProductPurchase: Boolean(validProduct),
 		}

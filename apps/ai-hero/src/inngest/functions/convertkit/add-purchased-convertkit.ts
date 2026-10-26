@@ -15,7 +15,10 @@ import {
 import { log } from '@/server/logger'
 import { eq } from 'drizzle-orm'
 
-import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/events/commerce'
+import {
+	FULL_PRICE_COUPON_REDEEMED_EVENT,
+	NEW_PURCHASE_CREATED_EVENT,
+} from '@coursebuilder/core/events/commerce'
 
 export const addPurchasesConvertkit = inngest.createFunction(
 	{
@@ -23,7 +26,13 @@ export const addPurchasesConvertkit = inngest.createFunction(
 		name: 'Add Purchase Convertkit',
 		idempotency: 'event.data.purchaseId',
 	},
-	{ event: NEW_PURCHASE_CREATED_EVENT },
+	// Team-seat redemptions emit FULL_PRICE_COUPON_REDEEMED_EVENT, never
+	// NEW_PURCHASE_CREATED_EVENT, so they need their own trigger or the redeemer
+	// never gets the purchased_<product>_on field the buyer exclusion keys on.
+	[
+		{ event: NEW_PURCHASE_CREATED_EVENT },
+		{ event: FULL_PRICE_COUPON_REDEEMED_EVENT },
+	],
 	async ({ event, step }) => {
 		const user = await step.run('get user', async () => {
 			return db.query.users.findFirst({

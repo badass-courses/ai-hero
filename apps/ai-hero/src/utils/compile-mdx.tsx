@@ -84,7 +84,7 @@ const Spoiler = dynamic(() =>
 const DynamicCode = dynamic(() =>
 	import('@/components/codehike/code').then((mod) => mod.Code),
 )
-const DynamicMDXVideo = dynamic(() => import('@/components/content/mdx-video'))
+const DynamicMDXVideo = dynamic(() => import('@/components/content/lazy-mdx-video'))
 const DynamicProjectVideo = dynamic(() =>
 	import('@/app/admin/pages/_components/page-builder-mdx-components').then(
 		(mod) => mod.ProjectVideo,

@@ -48,8 +48,9 @@ vi.mock('@/db', () => ({
 vi.mock('@/inngest/inngest.server', () => ({
 	inngest: {
 		createFunction: mocks.createFunction.mockImplementation(
-			(config: unknown, _trigger: unknown, handler: unknown) => ({
+			(config: unknown, trigger: unknown, handler: unknown) => ({
 				config,
+				trigger,
 				handler,
 			}),
 		),
@@ -58,6 +59,8 @@ vi.mock('@/inngest/inngest.server', () => ({
 
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
 vi.mock('date-fns', () => ({ format: vi.fn(() => 'purchase-date') }))
+
+import { FULL_PRICE_COUPON_REDEEMED_EVENT } from '@coursebuilder/core/events/commerce'
 
 import { addPurchasesConvertkit } from './add-purchased-convertkit'
 
@@ -73,6 +76,7 @@ type TestHandler = (args: {
 
 const fn = addPurchasesConvertkit as unknown as {
 	config: { idempotency: string }
+	trigger: Array<{ event: string }>
 	handler: TestHandler
 }
 const handler = fn.handler
@@ -122,6 +126,27 @@ describe('addPurchasesConvertkit', () => {
 
 	it('uses the purchase id as its idempotency key', () => {
 		expect(fn.config.idempotency).toBe('event.data.purchaseId')
+	})
+
+	it('also runs for team-seat redemptions, which never emit a new-purchase event', () => {
+		const events = fn.trigger.map((t) => t.event)
+		expect(events).toContain('commerce/new-purchase-created')
+		expect(events).toContain(FULL_PRICE_COUPON_REDEEMED_EVENT)
+	})
+
+	it('writes the product purchased-on field for a $0 bulk-redeemed seat', async () => {
+		mocks.findPurchase.mockResolvedValue({
+			...purchase('product-s00zs', 'cohort-005'),
+			totalAmount: 0,
+			redeemedBulkCouponId: 'coupon-1',
+		})
+
+		await handler({ event, step: createStep() })
+
+		expect(mocks.updatePrimarySubscriber).toHaveBeenCalledWith({
+			subscriberId: 'primary-41',
+			fields: { purchased_cohort_005_on: 'purchase-date' },
+		})
 	})
 
 	it('keeps the canonical property and v4-tags a Crash Course purchaser', async () => {
