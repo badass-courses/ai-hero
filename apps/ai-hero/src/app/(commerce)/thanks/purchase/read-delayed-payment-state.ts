@@ -7,6 +7,9 @@ import type { StripePaymentAdapter } from '@coursebuilder/commerce/stripe-provid
 
 import { delayedPaymentState, type DelayedPaymentState } from './delayed-payment-state'
 
+/** The thanks page is public: junk ids must not spend the Stripe rate limit. */
+const CHECKOUT_SESSION_ID = /^cs_(live|test)_[A-Za-z0-9]{20,}$/
+
 /**
  * One bounded Stripe read for a checkout that has no purchase yet. Any
  * failure falls back to the normal wait screen, which is what the buyer saw
@@ -15,6 +18,9 @@ import { delayedPaymentState, type DelayedPaymentState } from './delayed-payment
 export async function readDelayedPaymentState(
 	checkoutSessionId: string,
 ): Promise<DelayedPaymentState> {
+	if (!CHECKOUT_SESSION_ID.test(checkoutSessionId)) {
+		return { kind: 'not_delayed' }
+	}
 	try {
 		const stripe = (
 			stripeProvider.options.paymentsAdapter as StripePaymentAdapter
