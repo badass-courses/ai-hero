@@ -49,6 +49,10 @@ import {
 	CheckoutReconcileFulfillRequested,
 } from '@/inngest/events/checkout-reconcile'
 import {
+	CHECKOUT_ASYNC_PAYMENT_SUCCEEDED_EVENT,
+	CheckoutAsyncPaymentSucceeded,
+} from '@/inngest/events/checkout-async-payment'
+import {
 	INVOICE_SHORTFALL_RECONCILE_EVENT,
 	InvoiceShortfallReconcile,
 } from '@/inngest/events/invoice-shortfall'
@@ -256,6 +260,7 @@ export type Events = {
 	[PURCHASE_DISPUTE_OPENED_EVENT]: PurchaseDisputeOpened
 	[PURCHASE_DISPUTE_CLOSED_EVENT]: PurchaseDisputeClosed
 	[CHECKOUT_RECONCILE_FULFILL_EVENT]: CheckoutReconcileFulfillRequested
+	[CHECKOUT_ASYNC_PAYMENT_SUCCEEDED_EVENT]: CheckoutAsyncPaymentSucceeded
 	[RESOURCE_CHAT_REQUEST_EVENT]: ResourceChat
 	[EMAIL_SEND_BROADCAST]: EmailSendBroadcast
 	[OCR_WEBHOOK_EVENT]: OcrWebhook
