@@ -4,6 +4,19 @@ import { parseNewsletterExitFlag } from './lib/subscriber-marketing/newsletter-e
 
 const newsletterExitFlag = z.string().optional().transform(value => parseNewsletterExitFlag(value) ? 'true' : 'false')
 
+const integrationTokenKeySchema = z.string().refine((value) => {
+	try {
+		const decoded = atob(value)
+		return decoded.length === 32 && btoa(decoded) === value
+	} catch {
+		return false
+	}
+}, 'INTEGRATION_TOKEN_KEY must be 32 bytes encoded as base64').optional()
+
+// Validate this secret when present even if general env validation is skipped
+// for a build. Also reject a present empty key before emptyStringAsUndefined.
+integrationTokenKeySchema.parse(process.env.INTEGRATION_TOKEN_KEY)
+
 export const env = createEnv({
 	/**
 	 * Specify your server-side environment variables schema here. This way you can ensure the app
@@ -75,8 +88,8 @@ export const env = createEnv({
 		DROPBOX_APP_SECRET: z.string().optional(),
 		DROPBOX_OAUTH_REDIRECT_URI: z.string().url().optional(),
 		DROPBOX_REFRESH_TOKEN: z.string().optional(),
-		// Production only: previews share the database. Validated by the dormant store.
-		INTEGRATION_TOKEN_KEY: z.string().optional(),
+		// Production only: previews share the database. Reject invalid keys at build/start.
+		INTEGRATION_TOKEN_KEY: integrationTokenKeySchema,
 		DROPBOX_SYNC_SHARED_FOLDER_ID: z.string().optional(),
 		DROPBOX_SYNC_ALLOWED_ROOT: z.string().optional(),
 		// URL shape is checked when the individual binding polls, not at app import.

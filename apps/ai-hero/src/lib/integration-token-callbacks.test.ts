@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
 	setCredentials: vi.fn(),
 	generateAuthUrl: vi.fn(),
 	insert: vi.fn(),
+	delete: vi.fn(),
+	deleteWhere: vi.fn(),
+	debug: vi.fn(),
 	limit: vi.fn(),
 	fetch: vi.fn(),
 	info: vi.fn(),
@@ -25,6 +28,7 @@ vi.mock('@/server/with-skill', () => ({
 vi.mock('@/server/logger', async () => ({
 	log: {
 		info: mocks.info,
+		debug: mocks.debug,
 		warn: mocks.warn,
 		error: mocks.error,
 		flush: mocks.flush,
@@ -34,6 +38,7 @@ vi.mock('@/server/logger', async () => ({
 vi.mock('@/db', () => ({
 	db: {
 		insert: mocks.insert,
+		delete: mocks.delete,
 		select: () => ({ from: () => ({ where: () => ({ limit: mocks.limit }) }) }),
 	},
 }))
@@ -59,6 +64,8 @@ vi.mock('googleapis', () => ({
 	},
 }))
 import { GET } from '@/app/api/analytics/youtube-auth/route'
+import { getIntegrationRefreshToken } from './integration-token-store'
+import { storeDropboxRefreshToken } from './dropbox-course-sync'
 
 const key = Buffer.alloc(32, 7)
 const scopes =
@@ -97,6 +104,8 @@ describe('YouTube callback dual-write dormancy', () => {
 		mocks.insert.mockImplementation(() => {
 			throw new Error('synthetic database failure')
 		})
+		mocks.delete.mockReturnValue({ where: mocks.deleteWhere })
+		mocks.deleteWhere.mockResolvedValue(undefined)
 		mocks.generateAuthUrl.mockReturnValue('https://example.test/consent')
 		vi.spyOn(console, 'info').mockImplementation(() => {})
 		vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -114,8 +123,10 @@ describe('YouTube callback dual-write dormancy', () => {
 			mocks.env.INTEGRATION_TOKEN_KEY = value
 			const response = await GET(callback())
 			expect(response.status).toBe(200)
-			expect(await response.text()).toContain(
-				'Refresh token stored automatically',
+			const html = await response.text()
+			expect(html).toContain('Refresh token stored automatically')
+			expect(html.includes('DB token store failed; using env.')).toBe(
+				Boolean(value),
 			)
 			expect(mocks.fetch).toHaveBeenCalledTimes(4)
 			for (const [index, [url, options]] of mocks.fetch.mock.calls
@@ -146,6 +157,7 @@ describe('YouTube callback dual-write dormancy', () => {
 				},
 			})
 			expect(mocks.insert).toHaveBeenCalledTimes(value ? 1 : 0)
+			expect(mocks.delete).toHaveBeenCalledTimes(value ? 1 : 0)
 			expect(
 				JSON.stringify([
 					mocks.info.mock.calls,
@@ -155,6 +167,72 @@ describe('YouTube callback dual-write dormancy', () => {
 			).not.toContain('fresh-youtube')
 		},
 	)
+	it.each(['dropbox', 'youtube_analytics'] as const)(
+		'failed %s put removes the old row and successful Vercel writes supply the fresh env fallback',
+		async (provider) => {
+			mocks.env.INTEGRATION_TOKEN_KEY = key.toString('base64')
+			let rows = [encryptIntegrationToken(provider, 'old-db-token', key)]
+			mocks.limit.mockImplementation(async () => rows)
+			mocks.deleteWhere.mockImplementation(async () => {
+				rows = []
+			})
+			const envName =
+				provider === 'dropbox'
+					? 'DROPBOX_REFRESH_TOKEN'
+					: 'YOUTUBE_ANALYTICS_REFRESH_TOKEN'
+			vi.stubEnv(envName, 'old-env-token')
+			expect(
+				await getIntegrationRefreshToken(provider, process.env[envName]),
+			).toBe('old-db-token')
+			mocks.fetch.mockImplementation(
+				async (url: string, options: { body: string }) => {
+					if (url.includes('/env?'))
+						process.env[envName] = JSON.parse(options.body).value
+					return new Response('{}', { status: 200 })
+				},
+			)
+			if (provider === 'dropbox') {
+				const result = await storeDropboxRefreshToken({
+					refreshToken: 'fresh-dropbox',
+					environment: {
+						VERCEL_API_TOKEN: 'synthetic-vercel',
+						VERCEL_AI_HERO_PROJECT_ID: 'prj_test',
+					},
+					fetchImpl: mocks.fetch,
+				})
+				expect(result.ok).toBe(true)
+				expect(mocks.warn).toHaveBeenCalledWith(
+					'integration-token.fallback',
+					expect.objectContaining({
+						message: 'DB token store failed; using env',
+					}),
+				)
+			} else {
+				const response = await GET(callback())
+				expect(response.status).toBe(200)
+				expect(await response.text()).toContain(
+					'DB token store failed; using env.',
+				)
+			}
+			expect(
+				await getIntegrationRefreshToken(provider, process.env[envName]),
+			).toBe(provider === 'dropbox' ? 'fresh-dropbox' : 'fresh-youtube')
+		},
+	)
+
+	it('keeps YouTube callback success and redeploy when row cleanup also throws', async () => {
+		mocks.env.INTEGRATION_TOKEN_KEY = key.toString('base64')
+		mocks.deleteWhere.mockRejectedValue(new Error('synthetic cleanup failure'))
+		const response = await GET(callback())
+		expect(response.status).toBe(200)
+		expect(await response.text()).toContain('DB token store failed; using env.')
+		expect(mocks.fetch).toHaveBeenCalledTimes(4)
+		expect(mocks.warn).toHaveBeenCalledWith(
+			'integration-token.fallback',
+			expect.objectContaining({ reason: 'cleanup-failed' }),
+		)
+	})
+
 	it('escapes the token exchange error in HTML', async () => {
 		mocks.getToken.mockRejectedValue(
 			new Error('<script>"bad" & \'worse\'</script>'),

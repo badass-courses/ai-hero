@@ -15,14 +15,25 @@ async function reason(
 	code: string,
 ) {
 	try {
-		await log.warn('integration-token.fallback', {
-			provider,
-			operation,
-			reason: code,
-			error: serializeError(
-				new Error(`Integration token ${operation}: ${code}`),
-			),
-		})
+		await log[code === 'no-key' ? 'debug' : 'warn'](
+			'integration-token.fallback',
+			{
+				provider,
+				operation,
+				reason: code,
+				...(operation === 'write' && code !== 'no-key'
+					? {
+							message:
+								code === 'cleanup-failed'
+									? 'DB token cleanup failed; stale row may remain'
+									: 'DB token store failed; using env',
+						}
+					: {}),
+				error: serializeError(
+					new Error(`Integration token ${operation}: ${code}`),
+				),
+			},
+		)
 	} catch {
 		/* Logging must not change OAuth outcomes. */
 	}
@@ -88,10 +99,11 @@ export async function getIntegrationRefreshToken(
 export async function putIntegrationRefreshToken(
 	provider: IntegrationTokenProvider,
 	token: string,
-): Promise<void> {
+): Promise<{ ok: boolean }> {
 	if (!env.INTEGRATION_TOKEN_KEY) {
 		await reason(provider, 'write', 'no-key')
-		return
+		// Dormancy is a successful no-op, not a callback storage failure.
+		return { ok: true }
 	}
 	try {
 		const encrypted = encryptIntegrationToken(
@@ -108,11 +120,29 @@ export async function putIntegrationRefreshToken(
 			.insert(integrationToken)
 			.values({ provider, ...values })
 			.onDuplicateKeyUpdate({ set: values })
+		return { ok: true }
 	} catch (error) {
 		await reason(
 			provider,
 			'write',
 			missingTable(error) ? 'no-table' : 'write-failed',
 		)
+		// A stale DB row would beat the newly written Vercel env token. Remove
+		// only this provider's row so the next deployment can use env instead.
+		try {
+			const [{ db }, { integrationToken }, { eq }] = await Promise.all([
+				import('@/db'),
+				import('@/db/integration-token-schema'),
+				import('drizzle-orm'),
+			])
+			await db
+				.delete(integrationToken)
+				.where(eq(integrationToken.provider, provider))
+		} catch (cleanupError) {
+			// An absent table has no stale row to clean up.
+			if (!missingTable(cleanupError))
+				await reason(provider, 'write', 'cleanup-failed')
+		}
+		return { ok: false }
 	}
 }

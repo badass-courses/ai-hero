@@ -24,6 +24,7 @@ describe('integration token migration', () => {
 	it('matches every schema column and primary key', () => {
 		const config = getTableConfig(integrationToken)
 		expect(config.name).toBe('AI_IntegrationToken')
+		expect(migration).toContain(`CREATE TABLE IF NOT EXISTS \`${config.name}\``)
 		for (const column of config.columns) {
 			expect(migration).toMatch(
 				new RegExp(

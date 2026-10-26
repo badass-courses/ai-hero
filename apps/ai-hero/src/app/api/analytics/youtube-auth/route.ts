@@ -373,7 +373,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 				)
 			}
 
-			await putIntegrationRefreshToken('youtube_analytics', tokens.refresh_token)
+			const dbStorage = await putIntegrationRefreshToken('youtube_analytics', tokens.refresh_token)
 
 			const vercelToken = process.env.VERCEL_API_TOKEN
 			const projectId = process.env.VERCEL_CB_PROJECT_ID
@@ -528,7 +528,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 					stored
 						? '<p style="color:#16a34a;font-weight:600">Refresh token stored automatically. No further action needed.</p>'
 						: '<p>Authorization succeeded, but token storage did not fully complete. Check the youtube-auth logs or /api/analytics/youtube-auth?verify=1 before asking Matt to retry.</p>'
-				}<p style="color:#666;font-size:13px;margin-top:16px">Analytics plus YouTube channel management access granted. This refresh token stays valid until revoked. You can close this tab.</p>`,
+				}${dbStorage.ok ? '' : '<p>DB token store failed; using env.</p>'}<p style="color:#666;font-size:13px;margin-top:16px">Analytics plus YouTube channel management access granted. This refresh token stays valid until revoked. You can close this tab.</p>`,
 				true,
 			)
 		} catch (err) {

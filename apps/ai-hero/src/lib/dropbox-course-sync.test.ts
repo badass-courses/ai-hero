@@ -3,9 +3,10 @@ import { describe, expect, it, vi } from 'vitest'
 const tokenStoreMocks = vi.hoisted(() => ({
 	env: { INTEGRATION_TOKEN_KEY: undefined as string | undefined },
 	insert: vi.fn(() => { throw new Error('synthetic DB failure') }),
+	delete: vi.fn(() => { throw new Error('synthetic cleanup failure') }),
 }))
 vi.mock('@/env.mjs', () => ({ env: tokenStoreMocks.env }))
-vi.mock('@/db', () => ({ db: { insert: tokenStoreMocks.insert } }))
+vi.mock('@/db', () => ({ db: { insert: tokenStoreMocks.insert, delete: tokenStoreMocks.delete } }))
 vi.mock('@/server/logger', async () => ({
 	log: { warn: vi.fn() },
 	serializeError: (await import('@/server/logger-utils')).serializeError,
@@ -468,6 +469,7 @@ describe('Dropbox course sync OAuth', () => {
 	it.each([undefined, Buffer.alloc(32, 7).toString('base64')])('keeps Vercel write-back identical with no key or a failing DB (%s)', async (key) => {
 		tokenStoreMocks.env.INTEGRATION_TOKEN_KEY = key
 		tokenStoreMocks.insert.mockClear()
+		tokenStoreMocks.delete.mockClear()
 		const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ id: 'env_1' }))
 		const result = await storeDropboxRefreshToken({
 			refreshToken: 'callback-refresh-token',
@@ -491,6 +493,7 @@ describe('Dropbox course sync OAuth', () => {
 			})
 		}
 		expect(tokenStoreMocks.insert).toHaveBeenCalledTimes(key ? 1 : 0)
+		expect(tokenStoreMocks.delete).toHaveBeenCalledTimes(key ? 1 : 0)
 		tokenStoreMocks.env.INTEGRATION_TOKEN_KEY = undefined
 	})
 
