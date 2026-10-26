@@ -5,6 +5,7 @@ import {
 	dispatchDrovrShadowFactAwaited,
 	sendDrovrEventsDeliverViaInngestHttp,
 } from './drovr-shadow-dispatch'
+import { isDiscardOnlyShadowEvent } from './drovr-ownership'
 import {
 	mapDrovrShadowFact,
 	type DrovrShadowFact,
@@ -51,6 +52,16 @@ const signup: DrovrShadowFact = {
 	event: contactEvent('skills-newsletter.subscribed'),
 }
 
+/** Two shadow stops (owner fan-out candidates) and the directory stop. */
+const unsubscribe: DrovrShadowFact = {
+	kind: 'contact-event',
+	event: contactEvent('contact.unsubscribed'),
+}
+
+/** What a fact hands to Inngest: its events less the discard-only ones. */
+const queued = (fact: DrovrShadowFact) =>
+	mapDrovrShadowFact(fact).filter((event) => !isDiscardOnlyShadowEvent(event))
+
 const courseCompleted: DrovrShadowFact = {
 	kind: 'course-completed',
 	contactId: 'contact-1',
@@ -75,15 +86,89 @@ describe('drovr shadow dispatch', () => {
 		const send = vi.fn().mockResolvedValue({ ids: ['evt-1'] })
 		const fallback = vi.fn()
 
-		const result = await dispatchDrovrShadowFact(signup, { send, fallback })
+		const result = await dispatchDrovrShadowFact(unsubscribe, {
+			send,
+			fallback,
+		})
 
 		expect(result).toBe('queued')
 		expect(send).toHaveBeenCalledTimes(1)
 		expect(send).toHaveBeenCalledWith({
 			name: 'drovr/events.deliver',
-			data: { events: mapDrovrShadowFact(signup), source: 'contact-event' },
+			data: { events: mapDrovrShadowFact(unsubscribe), source: 'contact-event' },
 		})
 		expect(fallback).not.toHaveBeenCalled()
+	})
+
+	it('never queues a legacy signup: its shadow birth is discarded at delivery and copied to no owner', async () => {
+		const send = vi.fn()
+		const fallback = vi.fn()
+
+		const result = await dispatchDrovrShadowFact(signup, { send, fallback })
+
+		expect(mapDrovrShadowFact(signup)).toEqual([
+			expect.objectContaining({
+				tenantId: 'org-aihero-shadow',
+				journeyId: 'value-path-skills-course',
+				type: 'contact.created',
+			}),
+		])
+		expect(result).toBe('nothing')
+		expect(send).not.toHaveBeenCalled()
+		expect(fallback).not.toHaveBeenCalled()
+	})
+
+	it('drops only the discard-only events from a batch, and queues the rest unchanged', async () => {
+		const send = vi.fn().mockResolvedValue({ ids: ['evt-1'] })
+
+		await dispatchDrovrShadowFact(courseCompleted, {
+			send,
+			evergreenEnabled: false,
+		})
+
+		const [skillsExhausted, ...rest] = mapDrovrShadowFact(courseCompleted)
+		expect(skillsExhausted).toMatchObject({
+			tenantId: 'org-aihero-shadow',
+			journeyId: 'value-path-skills-course',
+			type: 'course.sequence-exhausted',
+		})
+		// The evergreen exhaustion and the newsletter birth are fan-out
+		// candidates: an owned contact's copies come from them.
+		expect(send.mock.calls[0]?.[0].data.events).toEqual(rest)
+	})
+
+	it('queues only the owner completion of a drovr-planned value-path send', async () => {
+		const send = vi.fn().mockResolvedValue({ ids: ['evt-1'] })
+		const completed: DrovrShadowFact = {
+			kind: 'side-effect-intent-completed',
+			intent: {
+				id: 'intent-1',
+				contactId: 'contact-1',
+				provider: 'kit',
+				type: 'send-value-path-email',
+				status: 'completed',
+				completedAt: occurredAt,
+				metadata: {
+					emailResourceId: 'email-0',
+					completedAt: occurredAt,
+					drovr: {
+						tenantId: 'org-aihero',
+						journeyId: 'value-path-skills-course',
+						intentKey: 'intent-key-1',
+					},
+				},
+			} as never,
+		}
+		const mapped = mapDrovrShadowFact(completed)
+
+		const result = await dispatchDrovrShadowFact(completed, { send })
+
+		expect(mapped.map((event) => `${event.tenantId}/${event.type}`)).toEqual([
+			'org-aihero/email.completed',
+			'org-aihero-shadow/email.completed',
+		])
+		expect(result).toBe('queued')
+		expect(send.mock.calls[0]?.[0].data.events).toEqual([mapped[0]])
 	})
 
 	it.each([
@@ -216,7 +301,7 @@ describe('drovr shadow dispatch', () => {
 		const fallback = vi.fn().mockResolvedValue(undefined)
 		const warn = vi.fn()
 
-		const result = await dispatchDrovrShadowFact(signup, {
+		const result = await dispatchDrovrShadowFact(unsubscribe, {
 			send,
 			fallback,
 			warn,
@@ -226,10 +311,10 @@ describe('drovr shadow dispatch', () => {
 		expect(result).toBe('fallback')
 		expect(warn).toHaveBeenCalledWith('drovr.shadow.queue_failed', {
 			source: 'contact-event',
-			eventCount: 1,
+			eventCount: 3,
 			error: 'inngest unreachable',
 		})
-		expect(fallback).toHaveBeenCalledWith(mapDrovrShadowFact(signup), {
+		expect(fallback).toHaveBeenCalledWith(mapDrovrShadowFact(unsubscribe), {
 			clampAt: expect.any(Number),
 		})
 	})
@@ -310,7 +395,7 @@ describe('drovr shadow dispatch', () => {
 		const fallback = vi.fn().mockRejectedValue(new Error('drovr 503'))
 		const error = vi.fn()
 
-		await dispatchDrovrShadowFact(signup, {
+		await dispatchDrovrShadowFact(unsubscribe, {
 			send,
 			fallback,
 			warn: vi.fn(),
@@ -323,7 +408,7 @@ describe('drovr shadow dispatch', () => {
 			expect.objectContaining({
 				source: 'contact-event',
 				error: 'drovr 503',
-				idempotencyKeys: mapDrovrShadowFact(signup).map(
+				idempotencyKeys: mapDrovrShadowFact(unsubscribe).map(
 					(e) => e.idempotencyKey,
 				),
 			}),
@@ -404,7 +489,7 @@ describe('drovr shadow dispatch', () => {
 
 		expect(enterPitch).not.toHaveBeenCalled()
 		expect(send.mock.calls[0]?.[0].data.events).toEqual(
-			mapDrovrShadowFact(courseCompleted),
+			queued(courseCompleted),
 		)
 	})
 
@@ -426,7 +511,7 @@ describe('drovr shadow dispatch', () => {
 			completedAt: occurredAt,
 		})
 		const events = send.mock.calls[0]?.[0].data.events
-		expect(events).toHaveLength(3)
+		expect(events).toHaveLength(2)
 		expect(
 			events.find(
 				(event: { journeyId: string }) =>
@@ -450,7 +535,7 @@ describe('drovr shadow dispatch', () => {
 			}),
 		})
 		expect(send.mock.calls[0]?.[0].data.events).toEqual(
-			mapDrovrShadowFact(courseCompleted),
+			queued(courseCompleted),
 		)
 	})
 
@@ -467,10 +552,10 @@ describe('drovr shadow dispatch', () => {
 			}),
 		})
 		const events = send.mock.calls[0]?.[0].data.events
-		expect(events).toHaveLength(2)
+		expect(events).toHaveLength(1)
 		expect(events[0]).toMatchObject({
-			journeyId: 'value-path-skills-course',
-			type: 'course.sequence-exhausted',
+			journeyId: 'shadow-newsletter',
+			type: 'contact.created',
 		})
 		expect(
 			events.some(
@@ -488,7 +573,7 @@ describe('drovr shadow dispatch', () => {
 		const send = vi.fn().mockResolvedValue({ ids: ['evt-1'] })
 		const warn = vi.fn()
 
-		await dispatchDrovrShadowFact(courseExhausted, {
+		const result = await dispatchDrovrShadowFact(courseExhausted, {
 			send,
 			warn,
 			evergreenEnabled: true,
@@ -498,24 +583,10 @@ describe('drovr shadow dispatch', () => {
 			}),
 		})
 
-		const events = send.mock.calls[0]?.[0].data.events
-		expect(events).toHaveLength(1)
-		expect(events[0]).toMatchObject({
-			journeyId: 'value-path-skills-course',
-			type: 'course.sequence-exhausted',
-		})
-		expect(
-			events.some(
-				(event: { journeyId: string }) =>
-					event.journeyId === 'crash-course-evergreen-offer',
-			),
-		).toBe(false)
-		expect(
-			events.some(
-				(event: { journeyId: string }) =>
-					event.journeyId === 'shadow-newsletter',
-			),
-		).toBe(false)
+		// Only the skills-course exhaustion was left, a shadow event delivery
+		// discards and no owner copy comes from: nothing is queued.
+		expect(result).toBe('nothing')
+		expect(send).not.toHaveBeenCalled()
 		expect(warn).toHaveBeenCalledWith('drovr.evergreen.entry_refused', {
 			contactId: 'contact-1',
 			reason: 'unsubscribed',
@@ -647,10 +718,10 @@ describe('row 204: the fallback never drops what drovr did not take', () => {
 	it.each([500, 503])(
 		'outboxes the events a direct post got %i for, and not the ones it delivered',
 		async (httpStatus) => {
-			const events = mapDrovrShadowFact(signup)
+			const events = mapDrovrShadowFact(unsubscribe)
 			const outbox = outboxed()
 			const error = vi.fn()
-			const result = await dispatchDrovrShadowFact(signup, {
+			const result = await dispatchDrovrShadowFact(unsubscribe, {
 				send: vi.fn().mockRejectedValue(new Error('inngest unreachable')),
 				// drovr answered this status for every event of the batch.
 				fallback: vi.fn(async (batch) => {
@@ -703,7 +774,7 @@ describe('row 204: the fallback never drops what drovr did not take', () => {
 
 	it('outboxes nothing when the direct post delivered everything', async () => {
 		const outbox = outboxed()
-		await dispatchDrovrShadowFact(signup, {
+		await dispatchDrovrShadowFact(unsubscribe, {
 			send: vi.fn().mockRejectedValue(new Error('inngest unreachable')),
 			fallback: vi.fn(async () => []),
 			outbox,
@@ -736,7 +807,7 @@ describe('row 204: the fallback never drops what drovr did not take', () => {
 
 	it('keeps the error log as the last word when the outbox is unavailable', async () => {
 		const error = vi.fn()
-		await dispatchDrovrShadowFact(signup, {
+		await dispatchDrovrShadowFact(unsubscribe, {
 			send: vi.fn().mockRejectedValue(new Error('inngest unreachable')),
 			fallback: vi.fn(async (batch) => batch),
 			outbox: vi.fn(async () => ({ status: 'unavailable' as const })),
@@ -747,7 +818,7 @@ describe('row 204: the fallback never drops what drovr did not take', () => {
 		expect(error).toHaveBeenCalledWith(
 			'drovr.shadow.fallback_failed',
 			expect.objectContaining({
-				idempotencyKeys: mapDrovrShadowFact(signup).map(
+				idempotencyKeys: mapDrovrShadowFact(unsubscribe).map(
 					(event) => event.idempotencyKey,
 				),
 			}),
@@ -756,7 +827,7 @@ describe('row 204: the fallback never drops what drovr did not take', () => {
 
 	it('reports a throwing outbox at error and keeps the batch keys', async () => {
 		const error = vi.fn()
-		await dispatchDrovrShadowFact(signup, {
+		await dispatchDrovrShadowFact(unsubscribe, {
 			send: vi.fn().mockRejectedValue(new Error('inngest unreachable')),
 			fallback: vi.fn(async (batch) => batch),
 			outbox: vi.fn(async () => {

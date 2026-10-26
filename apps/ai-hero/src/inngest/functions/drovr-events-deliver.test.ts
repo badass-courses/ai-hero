@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
 	drovrApiKeyForTenant: vi.fn(),
 	fanOutOwnedEvents: vi.fn(),
 	isNeverBornOwnerStop: vi.fn(),
+	isOwnerFanOutCandidate: vi.fn(),
 	isShadowNewsletterBirth: vi.fn(),
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 	resolveOwnedContactIds: vi.fn(),
@@ -61,6 +62,7 @@ vi.mock('@/lib/subscriber-marketing/drovr-shadow-emitter', () => ({
 }))
 vi.mock('@/lib/subscriber-marketing/drovr-ownership', () => ({
 	fanOutOwnedEvents: mocks.fanOutOwnedEvents,
+	isOwnerFanOutCandidate: mocks.isOwnerFanOutCandidate,
 	isShadowNewsletterBirth: mocks.isShadowNewsletterBirth,
 }))
 vi.mock('@/lib/subscriber-marketing/drovr-ownership-live', () => ({
@@ -80,7 +82,11 @@ vi.mock('@/lib/subscriber-marketing/drovr-outbox-live', () => ({
 	settleDrovrOutboxLive: mocks.settle,
 }))
 
-import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
+import {
+	contactSyncStarterRequests,
+	contactSyncRetryRequest,
+} from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
+import { clampBirths } from '@/lib/subscriber-marketing/drovr-birth-clamp'
 import type { DeferredDrovrEvent } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
 
 import {
@@ -162,6 +168,8 @@ beforeEach(() => {
 	mocks.openStops.mockResolvedValue([])
 	mocks.readBirthOptOuts.mockResolvedValue([])
 	mocks.resolveOwnedContactIds.mockResolvedValue([])
+	// Every batch reads its owners unless a test says it has no candidate.
+	mocks.isOwnerFanOutCandidate.mockReturnValue(true)
 	mocks.isShadowNewsletterBirth.mockReturnValue(false)
 	mocks.drovrApiKeyForTenant.mockImplementation((tenantId: string) =>
 		tenantId === 'org-aihero' ? 'authority-key' : undefined,
@@ -711,65 +719,87 @@ describe('backfill refusals follow the push contract (§4)', () => {
 		{ ...profileEvent('c1'), contactId: 'c1' },
 	]
 
-	it('hands refused backfill events to the straggler retry instead of throwing: event-not-live after 1 h, cold-start at once', async () => {
-		vi.useFakeTimers()
-		vi.setSystemTime(now)
-		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
-		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
-		mocks.deliverBatchOrThrow.mockResolvedValue({
-			accepted: 1,
-			rejected: 0,
-			deferred: [
-				{ event: notLive, reason: 'event-not-live' },
-				{ event: cold, reason: 'cold-start-unhandled' },
-			],
-		})
-		const sent: unknown[] = []
-		const receipt = await registeredBulk.handler({
-			events: [
-				{
-					data: {
-						events: [fine, notLive, cold],
-						source: 'contact-sync-backfill',
+	it.each([undefined, 'false', 'true'])(
+		'hands refusals to the exact selected retry protocol (ownership env: %s)',
+		async (ownership) => {
+			vi.useFakeTimers()
+			vi.setSystemTime(now)
+			vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
+			vi.stubEnv('AIH_DROVR_STRAGGLER_OWNER', ownership ?? '')
+			if (ownership === undefined) delete process.env.AIH_DROVR_STRAGGLER_OWNER
+			mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
+			mocks.deliverBatchOrThrow.mockResolvedValue({
+				accepted: 1,
+				rejected: 0,
+				deferred: [
+					{ event: notLive, reason: 'event-not-live' },
+					{ event: cold, reason: 'cold-start-unhandled' },
+				],
+			})
+			const sent: unknown[] = []
+			const receipt = await registeredBulk.handler({
+				events: [
+					{
+						data: {
+							events: [fine, notLive, cold],
+							source: 'contact-sync-backfill',
+						},
 					},
+				],
+				step: {
+					...createStep(),
+					sendEvent: vi.fn(async (_id: string, payload: unknown) => {
+						sent.push(payload)
+					}),
 				},
-			],
-			step: {
-				...createStep(),
-				sendEvent: vi.fn(async (_id: string, payload: unknown) => {
-					sent.push(payload)
-				}),
-			},
-		})
-		vi.useRealTimers()
-		vi.unstubAllEnvs()
-		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledWith(
-			expect.objectContaining({ deferNotLive: true }),
-		)
-		// The straggler retry's own request (its id, and 1 h for a refusal);
-		// a cold start goes at once, since the retry births the actor.
-		expect(sent).toEqual([
-			[
-				contactSyncRetryRequest(
-					[{ event: notLive, reason: 'event-not-live' }] as DeferredDrovrEvent[],
-					1,
-					now,
-				),
-				{
-					...contactSyncRetryRequest(
-						[
-							{ event: cold, reason: 'cold-start-unhandled' },
-						] as DeferredDrovrEvent[],
-						1,
-						now,
-					),
-					ts: now,
-				},
-			],
-		])
-		expect((sent[0] as { ts: number }[])[0]?.ts).toBe(now + 60 * 60 * 1000)
-		expect(receipt).toMatchObject({ accepted: 1, deferred: 2 })
-	})
+			})
+			vi.useRealTimers()
+			vi.unstubAllEnvs()
+			expect(mocks.deliverBatchOrThrow).toHaveBeenCalledWith(
+				expect.objectContaining({ deferNotLive: true }),
+			)
+			// The straggler retry's own request (its id, and 1 h for a refusal);
+			// a cold start goes at once, since the retry births the actor.
+			expect(sent).toEqual([
+				ownership === 'true'
+					? [
+							...contactSyncStarterRequests(
+								[
+									{ event: notLive, reason: 'event-not-live' },
+								] as DeferredDrovrEvent[],
+								now,
+							),
+							...contactSyncStarterRequests(
+								[
+									{ event: cold, reason: 'cold-start-unhandled' },
+								] as DeferredDrovrEvent[],
+								now,
+							).map((request) => ({ ...request, ts: now })),
+						]
+					: [
+							contactSyncRetryRequest(
+								[
+									{ event: notLive, reason: 'event-not-live' },
+								] as DeferredDrovrEvent[],
+								1,
+								now,
+							),
+							{
+								...contactSyncRetryRequest(
+									[
+										{ event: cold, reason: 'cold-start-unhandled' },
+									] as DeferredDrovrEvent[],
+									1,
+									now,
+								),
+								ts: now,
+							},
+						],
+			])
+			expect((sent[0] as { ts: number }[])[0]?.ts).toBe(now + 60 * 60 * 1000)
+			expect(receipt).toMatchObject({ accepted: 1, deferred: 2 })
+		},
+	)
 
 	it('keeps other bulk sources on the default delivery (no deferral)', async () => {
 		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
@@ -2347,5 +2377,343 @@ describe('delivery order: the evergreen start is a birth, so it goes before its 
 				(e) => e.idempotencyKey,
 			),
 		).toEqual(['answer', 'exhausted'])
+	})
+})
+
+describe('a batch with no owner fan-out candidate takes no owner step', () => {
+	const shadowStop = event(
+		'org-aihero-shadow',
+		'stop:contact-1',
+		'value-path-skills-course',
+		'contact.unsubscribed',
+	)
+	const authorityFact = event('org-aihero', 'owner:answer')
+	const runLive = (events: unknown[], step: Step) =>
+		registered.handler({
+			event: { data: { source: 'contact-event', events } },
+			step,
+			attempt: 0,
+			maxAttempts: 9,
+		})
+
+	beforeEach(() => {
+		mocks.isOwnerFanOutCandidate.mockImplementation(
+			(drovrEvent: { tenantId: string }) =>
+				drovrEvent.tenantId === 'org-aihero-shadow',
+		)
+		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
+		mocks.capture.mockImplementation(async (entries: unknown[]) => ({
+			status: 'outboxed',
+			count: entries.length,
+		}))
+	})
+
+	it('reads no owners and fans out with none, then gates and delivers as before', async () => {
+		const { step, ran } = memoStep()
+		const receipt = await runLive([authorityFact], step)
+		expect(receipt).toEqual({
+			status: 'delivered',
+			accepted: 1,
+			rejected: 0,
+			discarded: 0,
+		})
+		expect(mocks.resolveOwnedContactIds).not.toHaveBeenCalled()
+		expect(mocks.fanOutOwnedEvents).toHaveBeenCalledWith(
+			[authorityFact],
+			new Set(),
+			new Set(),
+		)
+		// The stop gate still runs, inside the one event's step, before the send.
+		expect(ran).toEqual(['deliver:owner:answer'])
+		expect(mocks.openStops).toHaveBeenCalledWith(['contact-1'])
+		expect(mocks.openStops.mock.invocationCallOrder[0]).toBeLessThan(
+			mocks.deliverOrThrow.mock.invocationCallOrder[0]!,
+		)
+	})
+
+	it('still holds the fact behind a stop the outbox owes', async () => {
+		mocks.openStops.mockResolvedValue([
+			{
+				contactId: 'contact-1',
+				eventType: 'contact.unsubscribed',
+				occurredAt: '2026-09-21T11:00:00.000Z',
+				status: 'pending',
+			},
+		])
+		const { step, ran } = memoStep()
+		const receipt = await runLive([authorityFact], step)
+		expect(receipt).toMatchObject({ accepted: 0, outboxed: 1, heldBehindStop: 1 })
+		expect(mocks.deliverOrThrow).not.toHaveBeenCalled()
+		expect(ran).toEqual(['deliver:owner:answer'])
+	})
+
+	it('reads owners as before when one event is a candidate', async () => {
+		const { step, ran } = memoStep()
+		await runLive([authorityFact, shadowStop], step)
+		expect(mocks.resolveOwnedContactIds).toHaveBeenCalledWith([
+			authorityFact,
+			shadowStop,
+		])
+		expect(ran[0]).toBe('resolve-drovr-owners')
+	})
+
+	it('takes no owner step on the bulk lane either', async () => {
+		const { step, ran } = memoStep()
+		const seed = event(
+			'org-aihero',
+			'directory:seed:contact-1',
+			'contact-directory',
+			'contact.created',
+		)
+		const receipt = await registeredBulk.handler({
+			events: [{ data: { events: [seed], source: 'kit-directory-ingest' } }],
+			step,
+			attempt: 0,
+			maxAttempts: 9,
+		})
+		expect(receipt).toMatchObject({ accepted: 1 })
+		expect(mocks.resolveOwnedContactIds).not.toHaveBeenCalled()
+		expect(ran).not.toContain('resolve-drovr-owners')
+		expect(ran).toContain('drovr-outbox-stop-gate')
+	})
+})
+
+describe('a one-event live run gates inside its delivery step (row 204b, one step)', () => {
+	const at = (minute: number) =>
+		`2026-09-21T12:${String(minute).padStart(2, '0')}:00.000Z`
+	const fact = { ...event('org-aihero', 'owner:later'), occurredAt: at(20) }
+	const owedStop = {
+		contactId: 'contact-1',
+		eventType: 'contact.unsubscribed',
+		occurredAt: at(10),
+		status: 'pending',
+	}
+	const runLive = (
+		events: unknown[],
+		step: Step,
+		attempt: { attempt: number; maxAttempts: number } = {
+			attempt: 0,
+			maxAttempts: 9,
+		},
+	) =>
+		registered.handler({
+			event: { data: { source: 'contact-event', events } },
+			step,
+			...attempt,
+		})
+	const capturedKeys = () =>
+		mocks.capture.mock.calls.map((call) =>
+			(call[0] as { idempotencyKey: string }[]).map((e) => e.idempotencyKey),
+		)
+
+	beforeEach(() => {
+		mocks.isOwnerFanOutCandidate.mockReturnValue(false)
+		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
+		mocks.capture.mockImplementation(async (entries: unknown[]) => ({
+			status: 'outboxed',
+			count: entries.length,
+		}))
+	})
+
+	it('holds a fact behind an owed stop inside the step, logs it once, and a replay neither re-holds nor posts', async () => {
+		mocks.openStops.mockResolvedValue([owedStop])
+		const { step, ran } = memoStep()
+		const first = await runLive([fact], step)
+		const replay = await runLive([fact], step)
+		for (const receipt of [first, replay])
+			expect(receipt).toEqual({
+				status: 'delivered',
+				accepted: 0,
+				rejected: 0,
+				discarded: 0,
+				outboxed: 1,
+				heldBehindStop: 1,
+			})
+		expect(ran).toEqual(['deliver:owner:later'])
+		expect(mocks.deliverOrThrow).not.toHaveBeenCalled()
+		expect(capturedKeys()).toEqual([['owner:later']])
+		expect(mocks.capture.mock.calls[0]![0]).toEqual([
+			expect.objectContaining({ source: 'live', needsFanOut: false }),
+		])
+		expect(
+			mocks.log.info.mock.calls.filter(
+				([name]) => name === 'drovr.outbox.held_behind_stop',
+			),
+		).toHaveLength(1)
+	})
+
+	it('holds the fact when a stop is owed by the time its retry runs, never posting it after the stop', async () => {
+		const { step } = memoStep()
+		// Attempt 0: nothing owed, and drovr answers 503.
+		mocks.openStops.mockResolvedValueOnce([])
+		mocks.deliverOrThrow.mockRejectedValueOnce(drovrFailure(503))
+		await expect(runLive([fact], step)).rejects.toMatchObject({
+			name: 'RetryAfterError',
+		})
+		// Meanwhile a stop for the contact went to the outbox.
+		mocks.openStops.mockResolvedValueOnce([owedStop])
+		const receipt = await runLive([fact], step, { attempt: 1, maxAttempts: 9 })
+		expect(receipt).toMatchObject({ accepted: 0, outboxed: 1, heldBehindStop: 1 })
+		expect(mocks.openStops).toHaveBeenCalledTimes(2)
+		expect(mocks.deliverOrThrow).toHaveBeenCalledOnce()
+		expect(capturedKeys()).toEqual([['owner:later']])
+	})
+
+	it('retries a failed stop read without posting, and outboxes the event when the read fails on the last attempt', async () => {
+		mocks.openStops.mockRejectedValue(new Error('Vitess: connection reset'))
+		const { step } = memoStep()
+		await expect(runLive([fact], step)).rejects.toMatchObject({
+			name: 'RetryAfterError',
+		})
+		const receipt = await runLive([fact], step, LAST)
+		expect(receipt).toMatchObject({ accepted: 0, outboxed: 1 })
+		expect(mocks.deliverOrThrow).not.toHaveBeenCalled()
+		expect(capturedKeys()).toEqual([['owner:later']])
+		expect(mocks.capture.mock.calls[0]![1]).toMatchObject({
+			message: 'Vitess: connection reset',
+		})
+	})
+
+	describe('a hold that commits but whose step fails before it is memoized', () => {
+		const birth = {
+			...event(
+				'org-aihero',
+				'owner:birth:contact-1',
+				'value-path-skills-course',
+				'contact.created',
+			),
+			// Older than the clamp skew, so the clamp moves it.
+			occurredAt: at(20),
+		} as Parameters<typeof clampBirths>[0][number]
+		type Entry = {
+			idempotencyKey: string
+			body: typeof birth
+			firstSentAt?: string
+		}
+		const crashOnce = () => {
+			let crashed = false
+			mocks.log.info.mockImplementation(async (name: string) => {
+				if (name === 'drovr.outbox.held_behind_stop' && !crashed) {
+					crashed = true
+					throw new Error('worker lost after the capture committed')
+				}
+			})
+		}
+		const captured = () =>
+			mocks.capture.mock.calls.map((call) => (call[0] as Entry[])[0]!)
+		afterEach(() => {
+			mocks.log.info.mockReset()
+		})
+
+		it('re-runs the hold as the same outbox entry, which the outbox dedupe key absorbs', async () => {
+			mocks.openStops.mockResolvedValue([owedStop])
+			crashOnce()
+			const { step } = memoStep()
+			await expect(runLive([birth], step)).rejects.toMatchObject({
+				name: 'RetryAfterError',
+			})
+			const receipt = await runLive([birth], step, { attempt: 1, maxAttempts: 9 })
+			expect(receipt).toMatchObject({ outboxed: 1, heldBehindStop: 1 })
+			expect(mocks.deliverOrThrow).not.toHaveBeenCalled()
+			const [first, again] = captured()
+			expect(captured()).toHaveLength(2)
+			// Every input of the dedupe key, the bytes and the clamp are equal.
+			expect(again).toEqual(first)
+		})
+
+		it('if the stop settles before the retry, posts directly with the same key and the captured bytes and clamp', async () => {
+			mocks.openStops.mockResolvedValueOnce([owedStop])
+			mocks.openStops.mockResolvedValueOnce([])
+			crashOnce()
+			const { step } = memoStep()
+			await expect(runLive([birth], step)).rejects.toMatchObject({
+				name: 'RetryAfterError',
+			})
+			const receipt = await runLive([birth], step, { attempt: 1, maxAttempts: 9 })
+			expect(receipt).toMatchObject({ accepted: 1 })
+			const [held] = captured()
+			const [[posted]] = mocks.deliverOrThrow.mock.calls as [
+				[{ event: typeof birth; clampAt: number }],
+			]
+			expect(captured()).toHaveLength(1)
+			expect(held!.idempotencyKey).toBe(posted.event.idempotencyKey)
+			expect(held!.body).toEqual(posted.event)
+			// The replay clamps at the row's firstFailedAt, which takes firstSentAt.
+			expect(Date.parse(held!.firstSentAt!)).toBe(posted.clampAt)
+			const replayed = clampBirths([held!.body], Date.parse(held!.firstSentAt!))
+			const direct = clampBirths([posted.event], posted.clampAt)
+			expect(replayed.events).toEqual(direct.events)
+			expect(direct.events[0]!.occurredAt).not.toBe(birth.occurredAt)
+		})
+	})
+
+	it('posts a lone stop without reading the outbox: a stop never waits behind a stop', async () => {
+		mocks.openStops.mockResolvedValue([owedStop])
+		const stop = {
+			...event(
+				'org-aihero',
+				'owner:unsubscribe',
+				'contact-directory',
+				'contact.unsubscribed',
+			),
+			occurredAt: at(20),
+		}
+		const { step, ran } = memoStep()
+		const receipt = await runLive([stop], step)
+		expect(receipt).toMatchObject({ accepted: 1 })
+		expect(mocks.openStops).not.toHaveBeenCalled()
+		expect(ran).toEqual(['deliver:owner:unsubscribe'])
+	})
+
+	it('memoizes the birth clamp in its own step before the folded step, so every attempt posts the same bytes', async () => {
+		const birth = {
+			...event(
+				'org-aihero',
+				'owner:birth:contact-1',
+				'value-path-skills-course',
+				'contact.created',
+			),
+			occurredAt: at(20),
+		}
+		mocks.deliverOrThrow.mockRejectedValue(drovrFailure(503))
+		const { step, ran } = memoStep()
+		await runLive([birth], step).catch(() => undefined)
+		await runLive([birth], step, { attempt: 1, maxAttempts: 9 }).catch(
+			() => undefined,
+		)
+		const receipt = await runLive([birth], step, LAST)
+		expect(receipt).toMatchObject({ outboxed: 1 })
+		expect(ran.filter((id) => id !== 'value-path-birth-admission')).toEqual([
+			DROVR_CLAMP_INSTANT_STEP,
+			'deliver:owner:birth:contact-1',
+			'deliver:owner:birth:contact-1',
+			'deliver:owner:birth:contact-1',
+		])
+		const clamps = mocks.deliverOrThrow.mock.calls.map(
+			([args]) => (args as { clampAt: number }).clampAt,
+		)
+		expect(new Set(clamps).size).toBe(1)
+		expect(mocks.capture).toHaveBeenLastCalledWith(
+			[
+				expect.objectContaining({
+					idempotencyKey: 'owner:birth:contact-1',
+					firstSentAt: new Date(clamps[0]!).toISOString(),
+				}),
+			],
+			expect.anything(),
+		)
+	})
+
+	it('keeps one gate step for a run of two or more events', async () => {
+		const { step, ran } = memoStep()
+		const other = { ...fact, idempotencyKey: 'owner:other', contactId: 'contact-2' }
+		await runLive([fact, other], step)
+		expect(ran).toEqual([
+			'drovr-outbox-stop-gate',
+			'deliver:owner:later',
+			'deliver:owner:other',
+		])
+		expect(mocks.openStops).toHaveBeenCalledOnce()
+		expect(mocks.openStops).toHaveBeenCalledWith(['contact-1', 'contact-2'])
 	})
 })

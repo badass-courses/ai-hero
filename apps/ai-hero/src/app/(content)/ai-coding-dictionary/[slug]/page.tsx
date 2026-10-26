@@ -1,4 +1,6 @@
 import type { Metadata, ResolvingMetadata } from 'next'
+import { C5SaleCta } from '@/components/c5-sale-cta'
+import { C5SaleSwitch } from '@/components/c5-sale-switch'
 import { metaDescription } from '@/lib/meta-description'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
@@ -99,6 +101,10 @@ export default async function DictionaryEntryPage({ params }: Props) {
 					</header>
 
 					<DictionaryEntryBody body={entry.body} />
+
+					<C5SaleSwitch>
+						<C5SaleCta />
+					</C5SaleSwitch>
 
 					<DictionaryEntryNav previous={previousEntry} next={nextEntry} />
 

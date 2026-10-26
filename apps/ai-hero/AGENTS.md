@@ -22,6 +22,22 @@ Key rules (full detail in `DESIGN.md`):
 
 Non-blocking means: post the note and ship — never wait for a reply. One or two sentences: what changed, where, why, and how it's monitored. Agents without a Slack posting lane put the drafted note in front of Joel instead of skipping it.
 
+## Test database
+
+The guarded `*.mysql.test.ts` suites skip unless their URL env is set. To run one, start a disposable MySQL 8.4 (CI's image and root password) from `apps/ai-hero`:
+
+```sh
+scripts/test-mysql.sh up                 # prints AIH_TEST_MYSQL_SERVER_URL=mysql://root:...@127.0.0.1:<port>/mysql
+scripts/test-mysql.sh schema my_test_db  # creates the database, applies the app schema, prints AIH_TEST_MYSQL_URL=...
+AIH_TEAM_SEATS_MYSQL_URL=<that URL> pnpm exec vitest run -c vitest.config.ts src/lib/team-seat-redemption.mysql.test.ts
+scripts/test-mysql.sh down               # removes this worktree's container
+```
+
+- One container per worktree, `aih-test-mysql-<worktree basename>`, labelled `aih-test-mysql=1`, `--rm`, no volume, on a free loopback port. `down` removes only that container. Never prune or touch other containers; `127.0.0.1:3307` on pennywise belongs to another project.
+- `schema` reuses the commerce rig's generate-overlay-verify path (`scripts/commerce-rig/schema.mjs`), because `drizzle-kit push` fails silently on MySQL 8. It refuses non-loopback hosts and system schemas.
+- Suites that build their own tables, such as `team-purchase-fulfillment-mysql.integration.test.ts`, take the server URL instead.
+- If Docker says permission denied while you are in the `docker` group, the script re-runs itself under `sg docker`.
+
 ## Stripe and commerce testing
 
 Read this before any checkout, coupon, credit, invoice, webhook or fulfilment test.

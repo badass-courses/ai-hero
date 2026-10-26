@@ -3,7 +3,9 @@
 import { useActionState } from 'react'
 import Link from 'next/link'
 import {
+	addTeamSeatsByEmailAction,
 	inviteBillingAdminAction,
+	type AddTeamSeatsActionState,
 	removeBillingAdminAction,
 	revokeBillingAdminInvitationAction,
 	type TeamManagerActionState,
@@ -19,7 +21,7 @@ import {
 	Root as InviteTeamRoot,
 	SeatsAvailable,
 } from '@coursebuilder/commerce-next/team/invite-team'
-import { Button, Input, Label } from '@coursebuilder/ui'
+import { Button, Input, Label, Textarea } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
 const initialTeamManagerActionState: TeamManagerActionState = {
@@ -73,6 +75,76 @@ function InviteManagerForm({ organizationId }: { organizationId: string }) {
 				</Button>
 			</div>
 			<ActionMessage state={state} />
+		</form>
+	)
+}
+
+const initialAddTeamSeatsActionState: AddTeamSeatsActionState = {
+	...initialTeamManagerActionState,
+	results: [],
+}
+
+const SEAT_RESULT_COPY: Record<
+	AddTeamSeatsActionState['results'][number]['status'],
+	string
+> = {
+	added: 'Added',
+	'added-email-failed': "Added, but the welcome email didn't send. Contact support.",
+	'already-had-access': 'Already had access',
+	'no-seats-left': 'No seats left',
+	invalid: 'Not a valid email address',
+	failed: "Couldn't add. Try again or contact support.",
+}
+
+function AddSeatsByEmailForm({ purchaseId }: { purchaseId: string }) {
+	const [state, action, pending] = useActionState(
+		addTeamSeatsByEmailAction,
+		initialAddTeamSeatsActionState,
+	)
+	const fieldId = `seat-emails-${purchaseId}`
+	return (
+		<form action={action} className="flex flex-col gap-3">
+			<input type="hidden" name="purchaseId" value={purchaseId} />
+			<Label htmlFor={fieldId}>Add learners by email</Label>
+			<p id={`${fieldId}-help`} className="text-foreground/70 text-sm">
+				Each seat is for one person and can't be moved to someone else later,
+				so check the addresses before adding. Up to 50 at a time.
+			</p>
+			<Textarea
+				id={fieldId}
+				name="emails"
+				required
+				rows={4}
+				aria-describedby={`${fieldId}-help`}
+				placeholder={'learner@company.com\nanother@company.com'}
+				className="rounded-none"
+			/>
+			<Button type="submit" disabled={pending} className="w-fit rounded-none">
+				{pending ? 'Adding…' : 'Add learners'}
+			</Button>
+			<ActionMessage state={state} />
+			{state.results.length > 0 ? (
+				<ul className="border-border divide-border divide-y border-y text-sm">
+					{state.results.map((result) => (
+						<li
+							key={result.email}
+							className="flex flex-col justify-between gap-1 py-2 sm:flex-row"
+						>
+							<span className="break-all">{result.email}</span>
+							<span
+								className={cn(
+									'text-muted-foreground',
+									(result.status === 'failed' ||
+										result.status === 'added-email-failed') &&
+										'text-destructive',
+								)}
+							>
+								{SEAT_RESULT_COPY[result.status]}
+							</span>
+						</li>
+					))}
+				</ul>
+			) : null}
 		</form>
 	)
 }
@@ -280,6 +352,10 @@ function TeamPurchases({
 												<CopyInviteLinkButton className="rounded-none" />
 											</div>
 										</InviteTeamRoot>
+
+										{organizationName && redemptionsLeft ? (
+											<AddSeatsByEmailForm purchaseId={purchase.id} />
+										) : null}
 
 										<ClaimedTeamSeats
 											purchase={purchase}

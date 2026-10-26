@@ -1,6 +1,8 @@
 // Used for root route /[post]
 
 import * as React from 'react'
+import { C5SaleCta } from '@/components/c5-sale-cta'
+import { C5SaleSwitch } from '@/components/c5-sale-switch'
 import { Suspense } from 'react'
 import { type Metadata, type ResolvingMetadata } from 'next'
 import { metaDescription } from '@/lib/meta-description'
@@ -477,6 +479,9 @@ export default async function ListPage(props: {
 					<ListClosingNewsletter />
 				</Suspense>
 			</section>
+			<C5SaleSwitch>
+				<C5SaleCta />
+			</C5SaleSwitch>
 		</main>
 	)
 }

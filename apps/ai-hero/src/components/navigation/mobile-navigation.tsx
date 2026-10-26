@@ -2,7 +2,6 @@
 
 import * as React from 'react'
 import Link from 'next/link'
-import { Subscriber } from '@/schemas/subscriber'
 import type { CtaGatingSubscriber } from '@/lib/cta-gating'
 import { track } from '@/utils/analytics'
 import { Menu, Search, X } from 'lucide-react'
@@ -12,6 +11,7 @@ type MobileNavigationProps = {
 	setIsMobileMenuOpen: React.Dispatch<React.SetStateAction<boolean>>
 	onSearchOpen: () => void
 	subscriber?: CtaGatingSubscriber | null
+	subscriberResolved: boolean
 	/**
 	 * Whether this route mounts the search palette at all. The desktop bar
 	 * already hides its Search link on `minimal` routes; without this the mobile
@@ -33,6 +33,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
 	setIsMobileMenuOpen,
 	onSearchOpen,
 	subscriber,
+	subscriberResolved,
 	showSearch = true,
 }) => {
 	// Glyphs, not words, below `lg`: the bar is 18px-gutter wide on a phone and
@@ -45,7 +46,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
 	// shape once keeps it even. Values match `--ah-fg-muted` in both schemes.
 	// (Same fix as the related-reading arrow.)
 	const control =
-		'text-foreground opacity-70 hover:bg-foreground/[0.06] hover:opacity-100 focus-visible:ring-ring flex size-9 items-center justify-center rounded-[7px] transition focus-visible:outline-none focus-visible:ring-2 dark:opacity-60 dark:hover:opacity-100'
+		'text-foreground opacity-70 hover:bg-foreground/[0.06] hover:opacity-100 focus-visible:ring-ring flex size-9 shrink-0 items-center justify-center rounded-[7px] transition focus-visible:outline-none focus-visible:ring-2 dark:opacity-60 dark:hover:opacity-100'
 
 	return (
 		<div className="ml-auto flex items-center gap-0.5 lg:hidden">
@@ -62,7 +63,9 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
 					<Search aria-hidden className="size-5" />
 				</button>
 			)}
-			{!subscriber && (
+			{/* Keep the slot even for subscribers so resolving the gate never
+			    moves the search or menu controls. */}
+			{subscriberResolved && !subscriber ? (
 				<Link
 					href="/newsletter"
 					aria-label="Subscribe to the newsletter"
@@ -96,6 +99,8 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
 						/>
 					</svg>
 				</Link>
+			) : (
+				<span aria-hidden="true" className="invisible size-9 shrink-0" />
 			)}
 			<button
 				className={control}

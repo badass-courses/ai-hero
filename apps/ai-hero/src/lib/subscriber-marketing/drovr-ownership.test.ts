@@ -5,6 +5,7 @@ import {
 	decideJourneyOwner,
 	fanOutOwnedEvents,
 	findJourneyOwnerAssignment,
+	isDiscardOnlyShadowEvent,
 	isOnDrovrSendingJourney,
 	journeyOwnerAssignmentJourneyId,
 	journeyOwnerProviderEventId,
@@ -321,6 +322,55 @@ describe('fan-out of owned facts to the authority tenant', () => {
 				new Set(),
 			),
 		).toEqual([])
+	})
+
+	describe('discard-only shadow events, which producers drop before Inngest', () => {
+		const on = (
+			event: DrovrShadowEvent,
+			journeyId: DrovrShadowEvent['journeyId'],
+		): DrovrShadowEvent => ({ ...event, journeyId })
+		const dropped = [
+			// A legacy signup's shadow birth (skills-newsletter.subscribed).
+			shadow('contact.created', 'owned'),
+			// Shadow completions: value path, shadow newsletter, evergreen.
+			shadow('email.completed', 'owned'),
+			on(shadow('email.completed', 'owned'), 'shadow-newsletter'),
+			on(shadow('email.completed', 'owned'), 'crash-course-evergreen-offer'),
+			// The skills-course exhaustion of a course completion or exhaustion.
+			shadow('course.sequence-exhausted', 'owned'),
+		]
+		const kept: DrovrShadowEvent[] = [
+			on(shadow('contact.created', 'owned'), 'shadow-newsletter'),
+			on(
+				shadow('course.sequence-exhausted', 'owned'),
+				'crash-course-evergreen-offer',
+			),
+			shadow('contact.unsubscribed', 'owned'),
+			shadow('purchase.recorded', 'owned'),
+			shadow('value-path.answer-selected', 'owned'),
+			{ ...shadow('email.completed', 'owned'), tenantId: 'org-aihero' },
+			{ ...shadow('contact.created', 'owned'), tenantId: 'org-aihero' },
+		]
+
+		it.each(dropped.map((event) => [`${event.journeyId} ${event.type}`, event]))(
+			'drops a shadow %s: delivery discards it and copies it to no owner',
+			(_name, event) => {
+				expect(isDiscardOnlyShadowEvent(event)).toBe(true)
+				// Owned on every journey, it still yields no authority copy.
+				expect(
+					fanOutOwnedEvents([event], new Set(['owned']), new Set(['owned'])),
+				).toEqual([event])
+			},
+		)
+
+		it.each(
+			kept.map((event) => [
+				`${event.tenantId} ${event.journeyId} ${event.type}`,
+				event,
+			]),
+		)('keeps %s', (_name, event) => {
+			expect(isDiscardOnlyShadowEvent(event)).toBe(false)
+		})
 	})
 
 	it('leaves authority-addressed events alone', () => {

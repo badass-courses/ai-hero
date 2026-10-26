@@ -49,6 +49,9 @@ import {
 } from '../_components/workshop-pricing'
 import { PublicWorkshopPricing } from '../_components/workshop-public-pricing-server'
 import { WorkshopDraftBanner } from '../_components/workshop-draft-banner'
+import { C5SaleCta } from '@/components/c5-sale-cta'
+import { C5SaleSwitch } from '@/components/c5-sale-switch'
+
 import { WorkshopInterestCta } from '../_components/workshop-interest-cta'
 import { WorkshopNotifyButton } from '../_components/workshop-notify-button'
 import { WorkshopSidebar } from '../_components/workshop-sidebar'
@@ -307,6 +310,9 @@ export default async function ModulePage(props: Props) {
 				)}
 			<main className="flex min-h-screen w-full flex-col">
 				<LessonDeniedNotice />
+				<C5SaleSwitch>
+					<C5SaleCta />
+				</C5SaleSwitch>
 				{isPreLaunch && (
 					<React.Suspense fallback={null}>
 						<WorkshopDraftBanner

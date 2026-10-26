@@ -2,6 +2,12 @@
 
 import * as React from 'react'
 
+import {
+	CRASH_COURSE_PROMO,
+	FEATURED_PROMO,
+	getFeaturedPromo,
+} from './promo-config'
+
 /** The half-open window `[startsAt, endsAt)` a promo is live for. */
 export type PromoWindow = { startsAt?: string; endsAt?: string }
 
@@ -90,6 +96,13 @@ export function useTimedActivation(
 	}, [startsAt, endsAt])
 
 	return active
+}
+
+/** Client-only chrome follows the same promo priority and both timed boundaries. */
+export function useFeaturedPromo() {
+	const c5Active = useTimedActivation(FEATURED_PROMO, false)
+	const crashActive = useTimedActivation(CRASH_COURSE_PROMO, false)
+	return c5Active || crashActive ? getFeaturedPromo() : null
 }
 
 /**

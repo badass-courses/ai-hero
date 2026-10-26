@@ -40,7 +40,11 @@ export async function emitBuyPath(
 		...extra,
 	})
 	if (!parsed.success) {
-		await log.error('buy_path.invalid_event', { step, field: 'schema' })
+		await log.error('buy_path.invalid_event', {
+			step,
+			field: 'schema',
+			issuePaths: parsed.error.issues.map((issue) => issue.path.join('.')),
+		})
 		return
 	}
 	await log[extra.outcome === 'failed' ? 'error' : 'info'](
