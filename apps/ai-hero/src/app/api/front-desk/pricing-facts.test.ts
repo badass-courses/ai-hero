@@ -14,6 +14,7 @@ import {
 	chargeCandidate,
 	PricingFactsSource,
 	SourceUnavailable,
+	type PricingCouponEvidence,
 	type PricingPurchaseRow,
 	type PricingSettlement,
 } from './pricing-facts'
@@ -50,7 +51,7 @@ type SyntheticPurchase = PricingPurchaseRow & {
 interface SyntheticDb {
 	users?: Record<string, string>
 	purchases?: SyntheticPurchase[]
-	coupons?: Record<string, string | null>
+	coupons?: Record<string, string | null | PricingCouponEvidence>
 	prices?: { id: string; unitAmountCents: number }[]
 	settlements?: Record<string, PricingSettlement>
 	transfers?: SyntheticTransfer[]
@@ -137,6 +138,17 @@ const ask: PricingRequest = {
 	orderKind: 'individual',
 }
 
+const couponEvidence = (
+	coupon: string | null | PricingCouponEvidence,
+): PricingCouponEvidence =>
+	typeof coupon === 'object' && coupon !== null
+		? coupon
+		: {
+				type: coupon,
+				hasMerchantCoupon: coupon !== null,
+				percentageDiscount: null,
+			}
+
 function synthetic(data: SyntheticDb) {
 	const stripeReads: string[] = []
 	const down = (source: SourceUnavailable['source']) =>
@@ -210,7 +222,7 @@ function synthetic(data: SyntheticDb) {
 						new Map(
 							ids.flatMap((id) =>
 								data.coupons && id in data.coupons
-									? [[id, data.coupons[id]!] as const]
+									? [[id, couponEvidence(data.coupons[id]!)] as const]
 									: [],
 							),
 						),
@@ -823,6 +835,166 @@ describe('Crash Course credit', () => {
 			}),
 		).toMatchObject({ value: { paid: 20_000, source: 'cc' } })
 	})
+
+	it.each([
+		[0, 9_900],
+		[930, 8_970],
+	])(
+		'credits special credit money kept after a %i-cent refund',
+		async (amountRefunded, paid) => {
+			expect(
+				await creditOf({
+					purchases: [
+						purchase({
+							id: 'cc',
+							couponId: 'coupon-credit',
+							totalAmountCents: 9_900,
+						}),
+					],
+					coupons: { 'coupon-credit': 'special credit' },
+					settlements: Object.fromEntries([
+						charge('cc', {
+							amount: 9_900,
+							amountRefunded,
+							refundCount: amountRefunded > 0 ? 1 : 0,
+						}),
+					]),
+				}),
+			).toMatchObject({ value: { paid, source: 'cc' } })
+		},
+	)
+
+	it.each([
+		['free', 1, 0, null, false, null, 'zero-paid'],
+		['nonzero total', 1, 100, null, false, null, null],
+		['half off', 0.5, 0, null, false, null, null],
+		['charge present', 1, 0, 'ch_cc', false, null, null],
+		['missing percentage', null, 0, null, false, null, null],
+		['untyped MerchantCoupon', 1, 0, null, true, null, null],
+		['unknown type', 1, 0, null, true, 'mystery', null],
+		['PPP', 1, 0, null, true, 'ppp', 'ppp-coupon'],
+		['bulk', 1, 0, null, true, 'bulk', 'bulk-coupon'],
+	] as const)(
+		'checks free-coupon evidence: %s',
+		async (
+			_,
+			percentageDiscount,
+			totalAmountCents,
+			stripeChargeId,
+			hasMerchantCoupon,
+			type,
+			exclusion,
+		) => {
+			const { facts, stripeReads } = await run({
+				...buyer,
+				purchases: [
+					purchase({
+						id: 'cc',
+						couponId: 'coupon-free',
+						totalAmountCents,
+						stripeChargeId,
+					}),
+				],
+				coupons: {
+					'coupon-free': { type, hasMerchantCoupon, percentageDiscount },
+				},
+			})
+			expect(facts.facts.credit).toEqual(
+				exclusion
+					? {
+							value: null,
+							sourceRefs: [`ai-hero:purchase:cc#excluded:${exclusion}`],
+						}
+					: { gap: 'PaymentAmbiguous' },
+			)
+			expect(stripeReads).toEqual([])
+		},
+	)
+
+	it.each(['display', 'checkout'] as const)(
+		'%s prices special credit alumni and free-only buyers without a bound',
+		async (purpose) => {
+			for (const free of [false, true]) {
+				const { facts } = await run({
+					...buyer,
+					prices: [{ id: 'price-test', unitAmountCents: 129_500 }],
+					purchases: [
+						purchase({
+							id: 'cc',
+							couponId: 'coupon-cc',
+							totalAmountCents: free ? 0 : 9_900,
+							stripeChargeId: free ? null : 'ch_cc',
+						}),
+						...(free ? [] : [purchase({ id: 'alumnus', productId: C4 })]),
+					],
+					coupons: {
+						'coupon-cc': free
+							? { type: null, hasMerchantCoupon: false, percentageDiscount: 1 }
+							: 'special credit',
+					},
+					settlements: Object.fromEntries([charge('cc', { amount: 9_900 })]),
+				})
+				const policy = syntheticPolicy()
+				const decide = createC5AuthoritativePrice({
+					policy: async () => ({
+						ok: true,
+						value: {
+							version: policy.version,
+							policy: {
+								...policy,
+								list: 129_500,
+								creditAmounts: {
+									...policy.creditAmounts,
+									value: [9_900, 19_900, 29_900],
+								},
+								newBuyerEarlyPercent: {
+									...policy.newBuyerEarlyPercent,
+									value: 30,
+								},
+								alumniPercent: { ...policy.alumniPercent, value: 40 },
+							},
+						},
+					}),
+					quotes: async () => ({ ok: true, value: [] }),
+					buyer: async () => ({
+						kind: 'buyer',
+						email,
+						facts,
+						holdsRestrictedPurchase: false,
+						holdsValidProductPurchase: false,
+					}),
+					trustedCountry: async () => 'US',
+					pppPercent: () => 0,
+					price,
+					engineVersion: 'engine-test',
+					now: () => new Date('2030-01-05T00:00:00Z'),
+					disabled: () => false,
+				})
+				const decision = await decide({
+					purpose,
+					productId: C5,
+					priceId: 'price-test',
+					quantity: 1,
+					userId: 'user-test',
+					country: 'US',
+					pppAccepted: false,
+				})
+				expect(decision).toMatchObject({
+					kind: 'priced',
+					amountCents: free ? 90_650 : 67_800,
+				})
+				expect(
+					purchaseGate({
+						authoritative: {
+							...decision!,
+							purchasable: decision!.kind === 'priced',
+							isUpperBound: decision!.kind === 'bounded',
+						},
+					}),
+				).toEqual({ kind: 'buy', upperBound: false })
+			}
+		},
+	)
 
 	it('takes one highest credit, never a sum', async () => {
 		expect(
