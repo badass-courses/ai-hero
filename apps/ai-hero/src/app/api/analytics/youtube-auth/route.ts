@@ -5,6 +5,7 @@ import { OAuth2Client } from 'google-auth-library'
 import { getServerAuthSession } from '@/server/auth'
 import { log, serializeError } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
+import { storeSensitiveVercelRefreshToken } from '@/lib/dropbox-course-sync'
 
 const SCOPES = [
 	'https://www.googleapis.com/auth/yt-analytics.readonly',
@@ -363,20 +364,15 @@ export const GET = withSkill(async (request: NextRequest) => {
 				target: string
 				ok: boolean
 				status: number
-				bodyPreview: string
+				reason: string
 			}> = []
 
 			if (vercelToken && projectId) {
 				try {
-					const envParams = new URLSearchParams({ upsert: 'true' })
-					if (teamId) {
-						envParams.set('teamId', teamId)
-					}
 					const redeployParams = new URLSearchParams()
 					if (teamId) {
 						redeployParams.set('teamId', teamId)
 					}
-					const envQuery = `?${envParams.toString()}`
 					const redeployQuery = redeployParams.toString()
 						? `?${redeployParams.toString()}`
 						: ''
@@ -387,30 +383,15 @@ export const GET = withSkill(async (request: NextRequest) => {
 							refreshTokenFingerprint,
 						})
 
-						const resp = await fetch(
-							`https://api.vercel.com/v10/projects/${projectId}/env${envQuery}`,
-							{
-								method: 'POST',
-								headers: {
-									Authorization: `Bearer ${vercelToken}`,
-									'Content-Type': 'application/json',
-								},
-								body: JSON.stringify({
-									key: 'YOUTUBE_ANALYTICS_REFRESH_TOKEN',
-									value: tokens.refresh_token,
-									target: [target],
-									type: 'encrypted',
-								}),
-							},
-						)
-						const body = await resp.text()
-						const bodyPreview = body.slice(0, 200)
-						storeResults.push({
+						const resp = await storeSensitiveVercelRefreshToken({
+							key: 'YOUTUBE_ANALYTICS_REFRESH_TOKEN',
+							refreshToken: tokens.refresh_token,
 							target,
-							ok: resp.ok,
-							status: resp.status,
-							bodyPreview,
+							projectId,
+							vercelToken,
+							teamId,
 						})
+						storeResults.push({ target, ...resp })
 
 						if (resp.ok) {
 							await emitAuthLog(
@@ -431,7 +412,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 									requestId,
 									target,
 									status: resp.status,
-									bodyPreview,
+									reason: resp.reason,
 									refreshTokenFingerprint,
 								},
 							)
@@ -467,10 +448,6 @@ export const GET = withSkill(async (request: NextRequest) => {
 								}),
 							},
 						)
-						const redeployBodyPreview = (await redeployResp.text()).slice(
-							0,
-							200,
-						)
 						if (redeployResp.ok) {
 							await emitAuthLog('info', 'youtube-auth.redeploy-triggered', {
 								requestId,
@@ -481,7 +458,6 @@ export const GET = withSkill(async (request: NextRequest) => {
 							await emitAuthLog('warn', 'youtube-auth.redeploy-failed', {
 								requestId,
 								status: redeployResp.status,
-								bodyPreview: redeployBodyPreview,
 								refreshTokenFingerprint,
 							})
 						}
@@ -490,7 +466,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 					await emitAuthLog('error', 'youtube-auth.vercel-store.failed', {
 						requestId,
 						refreshTokenFingerprint,
-						error: serializeError(storeErr),
+						reason: 'storage-or-redeploy-failed',
 					})
 				}
 			} else {

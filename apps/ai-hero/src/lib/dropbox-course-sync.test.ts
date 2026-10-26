@@ -9,6 +9,7 @@ import {
 	readDropboxCourseManifestSummary,
 	redeployAfterDropboxAuthorization,
 	storeDropboxRefreshToken,
+	storeSensitiveVercelRefreshToken,
 	verifyDropboxConnection,
 } from './dropbox-course-sync'
 
@@ -454,8 +455,12 @@ describe('Dropbox course sync OAuth', () => {
 		).rejects.toThrow('exceeds the maximum allowed size')
 	})
 
-	it('stores the callback-issued refresh token as encrypted Vercel configuration', async () => {
-		const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ id: 'env_1' }))
+	it('stores the callback-issued refresh token as sensitive Vercel configuration', async () => {
+		const fetchImpl = vi
+			.fn()
+			.mockImplementation(async (_url, options) =>
+				jsonResponse({ created: JSON.parse(options.body), failed: [] }),
+			)
 		const result = await storeDropboxRefreshToken({
 			refreshToken: 'callback-refresh-token',
 			environment: {
@@ -466,14 +471,128 @@ describe('Dropbox course sync OAuth', () => {
 			fetchImpl,
 		})
 
-		expect(result).toEqual({ ok: true, missingConfig: [], statuses: [200, 200, 200] })
+		expect(result).toEqual({
+			ok: true,
+			missingConfig: [],
+			statuses: [200, 200, 200],
+		})
 		expect(fetchImpl).toHaveBeenCalledTimes(3)
 		for (const [, options] of fetchImpl.mock.calls) {
 			expect(JSON.parse(options.body)).toMatchObject({
 				key: 'DROPBOX_REFRESH_TOKEN',
-				type: 'encrypted',
+				type: 'sensitive',
+				visibility: 'secret',
 			})
 		}
+	})
+
+	it.each(['production', 'preview', 'development'])(
+		'writes %s as a write-only Secret',
+		async (target) => {
+			const fetchImpl = vi
+				.fn()
+				.mockImplementation(async (_url, options) =>
+					jsonResponse({ created: JSON.parse(options.body), failed: [] }),
+				)
+			const result = await storeSensitiveVercelRefreshToken({
+				key: 'DROPBOX_REFRESH_TOKEN',
+				refreshToken: 'new-token',
+				target,
+				projectId: 'test-project',
+				vercelToken: 'test-token',
+				teamId: 'test-team',
+				fetchImpl,
+			})
+			expect(result.ok).toBe(true)
+			const [url, options] = fetchImpl.mock.calls[0]
+			expect(url).toContain('upsert=true&teamId=test-team')
+			expect(JSON.parse(options.body)).toMatchObject({
+				target: [target],
+				type: 'sensitive',
+				visibility: 'secret',
+			})
+		},
+	)
+
+	it.each([
+		[
+			'type conflict',
+			409,
+			{ error: { code: 'conflict', message: 'new-token' } },
+		],
+		[
+			'unchanged encrypted type',
+			200,
+			{
+				created: {
+					key: 'DROPBOX_REFRESH_TOKEN',
+					target: ['production'],
+					type: 'encrypted',
+				},
+				failed: [],
+			},
+		],
+		[
+			'partial failure',
+			201,
+			{
+				created: {
+					key: 'DROPBOX_REFRESH_TOKEN',
+					target: ['production'],
+					type: 'sensitive',
+				},
+				failed: [{ error: { message: 'new-token' } }],
+			},
+		],
+		['unconfirmed response', 200, {}],
+		[
+			'readable visibility',
+			200,
+			{
+				created: {
+					key: 'DROPBOX_REFRESH_TOKEN',
+					target: ['production'],
+					type: 'sensitive',
+					visibility: 'config',
+				},
+				failed: [],
+			},
+		],
+	] as const)(
+		'fails closed on %s without deleting credentials or exposing the token',
+		async (_name, status, body) => {
+			const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(body, status))
+			const result = await storeSensitiveVercelRefreshToken({
+				key: 'DROPBOX_REFRESH_TOKEN',
+				refreshToken: 'new-token',
+				target: 'production',
+				projectId: 'test-project',
+				vercelToken: 'test-token',
+				fetchImpl,
+			})
+			expect(result.ok).toBe(false)
+			expect(JSON.stringify(result)).not.toContain('new-token')
+			expect(fetchImpl).toHaveBeenCalledTimes(1)
+			expect(fetchImpl.mock.calls[0][1].method).toBe('POST')
+		},
+	)
+
+	it('surfaces network failures and still attempts the other targets', async () => {
+		const fetchImpl = vi.fn().mockRejectedValue(new Error('new-token'))
+		const result = await storeDropboxRefreshToken({
+			refreshToken: 'new-token',
+			environment: {
+				VERCEL_API_TOKEN: 'test-token',
+				VERCEL_AI_HERO_PROJECT_ID: 'test-project',
+			},
+			fetchImpl,
+		})
+		expect(result).toEqual({
+			ok: false,
+			missingConfig: [],
+			statuses: [0, 0, 0],
+		})
+		expect(fetchImpl).toHaveBeenCalledTimes(3)
 	})
 
 	it('triggers a production deployment after storing a refresh token', async () => {

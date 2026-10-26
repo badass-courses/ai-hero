@@ -587,6 +587,69 @@ export async function verifyDropboxConnection({
 	}
 }
 
+// Upsert only documents value replacement, not type conversion. Verify the
+// classification; an existing Config needs an operator-approved migration first.
+// Never delete a working credential or expose Vercel response bodies on failure.
+export async function storeSensitiveVercelRefreshToken({
+	key,
+	refreshToken,
+	target,
+	projectId,
+	vercelToken,
+	teamId,
+	fetchImpl = fetch,
+}: {
+	key: 'DROPBOX_REFRESH_TOKEN' | 'YOUTUBE_ANALYTICS_REFRESH_TOKEN'
+	refreshToken: string
+	target: string
+	projectId: string
+	vercelToken: string
+	teamId?: string
+	fetchImpl?: Fetch
+}): Promise<{ ok: boolean; status: number; reason: string }> {
+	const query = new URLSearchParams({ upsert: 'true' })
+	if (teamId) query.set('teamId', teamId)
+	const headers = {
+		Authorization: `Bearer ${vercelToken}`,
+		'Content-Type': 'application/json',
+	}
+	// Current Vercel Secrets support Development as well as Production/Preview.
+	const body = JSON.stringify({
+		key,
+		value: refreshToken,
+		target: [target],
+		type: 'sensitive',
+		visibility: 'secret',
+	})
+	let status = 0
+	try {
+		const response = await fetchImpl(
+			`https://api.vercel.com/v10/projects/${projectId}/env?${query}`,
+			{ method: 'POST', headers, body },
+		)
+		status = response.status
+		if (!response.ok) return { ok: false, status, reason: 'write-rejected' }
+		const result = await response.json()
+		if (!Array.isArray(result.failed) || result.failed.length > 0) {
+			return { ok: false, status, reason: 'write-unconfirmed' }
+		}
+		const created = Array.isArray(result.created)
+			? result.created[0]
+			: result.created
+		if (created?.key !== key || !created.target?.includes(target)) {
+			return { ok: false, status, reason: 'write-unconfirmed' }
+		}
+		const ok = created.type === 'sensitive' && created.visibility !== 'config'
+		return {
+			ok: Boolean(ok),
+			status,
+			reason: ok ? 'stored' : 'type-unconfirmed',
+		}
+	} catch {
+		return { ok: false, status, reason: 'write-unconfirmed' }
+	}
+}
+
 export async function storeDropboxRefreshToken({
 	refreshToken,
 	environment = process.env,
@@ -608,29 +671,26 @@ export async function storeDropboxRefreshToken({
 		return { ok: false, missingConfig, statuses: [] }
 	}
 
-	const query = new URLSearchParams({ upsert: 'true' })
-	if (teamId) query.set('teamId', teamId)
-	const url = `https://api.vercel.com/v10/projects/${projectId}/env?${query.toString()}`
-	const statuses: number[] = []
-
+	const results = []
 	for (const target of ['production', 'preview', 'development']) {
-		const response = await fetchImpl(url, {
-			method: 'POST',
-			headers: {
-				Authorization: `Bearer ${vercelToken}`,
-				'Content-Type': 'application/json',
-			},
-			body: JSON.stringify({
+		results.push(
+			await storeSensitiveVercelRefreshToken({
 				key: 'DROPBOX_REFRESH_TOKEN',
-				value: refreshToken,
-				target: [target],
-				type: 'encrypted',
+				refreshToken,
+				target,
+				projectId,
+				vercelToken,
+				teamId,
+				fetchImpl,
 			}),
-		})
-		statuses.push(response.status)
+		)
 	}
 
-	return { ok: statuses.every((status) => status >= 200 && status < 300), missingConfig: [], statuses }
+	return {
+		ok: results.every((result) => result.ok),
+		missingConfig: [],
+		statuses: results.map((result) => result.status),
+	}
 }
 
 export async function redeployAfterDropboxAuthorization(
