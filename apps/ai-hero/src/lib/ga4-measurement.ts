@@ -30,11 +30,11 @@ export interface GA4SendReceipt {
 const GA4_COLLECT_URL = 'https://www.google-analytics.com/mp/collect'
 
 function getMeasurementId(): string | undefined {
-	return process.env.NEXT_PUBLIC_GOOGLE_ANALYTICS
+	return process.env.NEXT_PUBLIC_GOOGLE_ANALYTICS?.trim()
 }
 
 function getApiSecret(): string | undefined {
-	return process.env.GA4_MEASUREMENT_API_SECRET
+	return process.env.GA4_MEASUREMENT_API_SECRET?.trim()
 }
 
 // ─── Core ────────────────────────────────────────────────────────────────────

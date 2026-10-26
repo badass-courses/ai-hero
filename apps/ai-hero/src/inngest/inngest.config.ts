@@ -70,6 +70,10 @@ import {
 	checkoutReconcileFulfill,
 	checkoutReconcilerSweep,
 } from './functions/checkout-reconciler'
+import { checkoutAsyncPaymentFulfill } from './functions/checkout-async-payment'
+import { guardUnpaidCheckoutCompletion } from '@/lib/checkout-reconcile/delayed-payment'
+import { STRIPE_CHECKOUT_HANDLER_ID } from '@/lib/checkout-reconcile/fulfill'
+import { log } from '@/server/logger'
 import { teamInvoiceExpiry } from './functions/team-invoice-expiry'
 import { addDiscordRoleWorkflow } from './functions/discord/add-discord-role-workflow'
 import { grantLegendDiscordRole } from './functions/discord/grant-legend-discord-role'
@@ -122,7 +126,18 @@ const isVercelNonProduction =
 
 const allFunctions = [
 	...courseBuilderCoreFunctions.map(({ config, trigger, handler }) =>
-		inngest.createFunction(config, trigger, handler),
+		inngest.createFunction(
+			config,
+			trigger,
+			// A bank-transfer checkout completes unpaid; record it instead of
+			// failing on the missing charge. `checkoutAsyncPaymentFulfill` runs
+			// when the money lands.
+			config.id === STRIPE_CHECKOUT_HANDLER_ID
+				? guardUnpaidCheckoutCompletion(handler, (attrs) =>
+						log.info('checkout.awaiting_payment', attrs),
+					)
+				: handler,
+		),
 	),
 	userCreated,
 	userSignupAdminEmail,
@@ -201,6 +216,7 @@ const allFunctions = [
 	invoiceShortfallReconciliation,
 	checkoutReconcilerSweep,
 	checkoutReconcileFulfill,
+	checkoutAsyncPaymentFulfill,
 	c5PurchaseDecision,
 	teamInvoiceExpiry,
 	syncGithubSourcedPosts,

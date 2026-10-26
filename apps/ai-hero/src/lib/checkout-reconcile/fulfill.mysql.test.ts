@@ -49,6 +49,10 @@ import { DrizzleAdapter } from '@coursebuilder/adapter-drizzle'
 import { courseBuilderCoreFunctions } from '@coursebuilder/server'
 
 import {
+	fulfillAsyncPaidCheckout,
+	guardUnpaidCheckoutCompletion,
+} from './delayed-payment'
+import {
 	findCheckoutHandler,
 	fulfillCheckoutSessionDirectly,
 	type CheckoutFulfillDatabase,
@@ -910,5 +914,102 @@ integration('checkout reconciler direct fulfillment on disposable MySQL', () => 
 			)
 			expect(plan.map((row) => row.type)).not.toContain('ALL')
 		}
+	})
+
+	describe('delayed payment (bank transfer)', () => {
+		function asyncPaid(checkoutSessionId: string, step: CheckoutFulfillStep) {
+			return fulfillAsyncPaidCheckout(checkoutSessionId, {
+				handler,
+				step,
+				db: adapter,
+				paymentProvider,
+				getCheckoutSession: paymentProvider.options.paymentsAdapter.getCheckoutSession,
+				inspect,
+				findBuyerProductPurchases: (input) =>
+					findBuyerProductPurchaseIds(database, input),
+				appName: APP,
+				now: () => now,
+				txnId: `aih-checkout-async-paid-${checkoutSessionId}`,
+			})
+		}
+
+		it('records an unpaid completion as awaiting payment and creates nothing', async () => {
+			const id = stranded({
+				payment_status: 'unpaid',
+				payment_intent: { id: 'pi_unpaid_transfer', latest_charge: null } as any,
+			})
+			const record = vi.fn(async () => undefined)
+			const session = sessions.get(id)!
+
+			const result = await guardUnpaidCheckoutCompletion(handler, record)({
+				event: {
+					name: 'stripe/checkout-session-completed',
+					data: {
+						txnId: `original-${id}`,
+						stripeEvent: {
+							id: `evt_original_${id}`,
+							created: session.created,
+							type: 'checkout.session.completed',
+							data: {
+								object: {
+									...session,
+									customer: STRIPE_CUSTOMER,
+									payment_intent: 'pi_unpaid_transfer',
+								},
+							},
+						},
+					},
+				},
+				step: inngestLikeStep().step,
+				db: adapter,
+				paymentProvider,
+			})
+
+			expect(result).toMatchObject({ status: 'awaiting_payment', checkoutSessionId: id })
+			expect(record).toHaveBeenCalledTimes(1)
+			expect(await counts(id)).toEqual({ charges: 0, sessions: 0, purchases: 0 })
+		})
+
+		it('fulfills once when the transfer lands; redelivery and the reconciler are no-ops', async () => {
+			// Checkout opened 30 hours ago; Stripe now reports the money arrived.
+			const id = stranded({
+				created: Math.floor(now.getTime() / 1000) - 30 * 3600,
+			})
+			const first = inngestLikeStep()
+			const result = await asyncPaid(id, first.step)
+
+			expect(result).toMatchObject({ status: 'fulfilled', checkoutSessionId: id })
+			const purchaseId = (result as { purchaseId: string }).purchaseId
+			expect(await counts(id)).toEqual({ charges: 1, sessions: 1, purchases: 1 })
+			expect(first.sent.map((event) => event.payload.name)).toEqual([
+				'commerce/new-purchase-created',
+			])
+			// At the price the session was created with.
+			const [[purchase]] = await pool.query<RowDataPacket[]>(
+				'SELECT totalAmount FROM AI_Purchase WHERE id = ?',
+				[purchaseId],
+			)
+			expect(Number(purchase!.totalAmount)).toBe(299)
+
+			const redelivery = inngestLikeStep()
+			expect(await asyncPaid(id, redelivery.step)).toMatchObject({
+				status: 'already_fulfilled',
+				purchaseIds: [purchaseId],
+			})
+			expect(redelivery.sent).toEqual([])
+
+			expect(
+				await findFulfilledCheckoutSessionIds(database, [
+					{ checkoutSessionId: id, chargeId: `ch_${id.slice(3)}` },
+				]),
+			).toEqual(new Set([id]))
+			const sweep = inngestLikeStep()
+			expect(await reconcile(id, sweep.step)).toMatchObject({
+				status: 'already_fulfilled',
+				purchaseIds: [purchaseId],
+			})
+			expect(sweep.sent).toEqual([])
+			expect(await counts(id)).toEqual({ charges: 1, sessions: 1, purchases: 1 })
+		})
 	})
 })

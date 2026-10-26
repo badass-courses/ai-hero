@@ -4,6 +4,9 @@ import { preserveQueryResultShape } from '@/db/mysql-query-client'
 import { createDatabasePoolCloser } from '@/db/pool-lifecycle'
 import { env } from '@/env.mjs'
 import { guardLegendGiftCouponPaths } from '@/lib/legend-gift-coupon-guard'
+import { withSessionAccessBusts } from '@/server/session-access-busts'
+import { bustSessionAccessForUser } from '@/server/session-access-runtime'
+import { eq } from 'drizzle-orm'
 import {
 	type MySqlDatabase,
 	type MySqlQueryResultHKT,
@@ -63,11 +66,23 @@ export const db = drizzle(pool, {
 export type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 export type DbExecutor = typeof db | DbTransaction
 
-const drizzleAdapter = guardLegendGiftCouponPaths(DrizzleAdapter<MySqlDatabase<any, any, any>>(
-	db,
-	mysqlTable,
-	stripeProvider,
-))
+const drizzleAdapter = withSessionAccessBusts(
+	guardLegendGiftCouponPaths(DrizzleAdapter<MySqlDatabase<any, any, any>>(
+		db,
+		mysqlTable,
+		stripeProvider,
+	)),
+	{
+		bustUser: bustSessionAccessForUser,
+		findMembershipUserId: async (membershipId) =>
+			(
+				await db.query.organizationMemberships.findFirst({
+					where: eq(schema.organizationMemberships.id, membershipId),
+					columns: { userId: true },
+				})
+			)?.userId ?? null,
+	},
+)
 
 /**
  * The app's Course Builder adapter. It carries Course Builder's authoritative-price

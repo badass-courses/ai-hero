@@ -13,8 +13,9 @@ import { pathToFileURL } from 'node:url'
  * `GET /v3/subscribers?email_address=`, printing the evidence field and
  * whether the attribution stash is set. Still no writes.
  *
- * Needs CONVERTKIT_API_KEY (and CONVERTKIT_API_SECRET for --email) in the
- * environment, e.g. DOTENV_CONFIG_PATH=<checkout>/apps/ai-hero/.env.vercel.
+ * pnpm kit:fields:check resolves CONVERTKIT_API_KEY and CONVERTKIT_API_SECRET
+ * through the ops-only Varlock schema. Supply OP_TOKEN and OP_VAULT in the
+ * caller's environment; see the app README. No .env.vercel pull is needed.
  */
 
 export const ROW_183_KIT_FIELDS = [

@@ -31,6 +31,37 @@ For those with access to the project in Vercel, here is how to grab those env va
 
 _Note: Because of [Next.js Enviornment Variable Load Order](https://nextjs.org/docs/pages/building-your-application/configuring/environment-variables#environment-variable-load-order), the `.env.local` file generated in this step will override many values that you may want to set in the `.env` or `.env.development` files. Any env vars in development that you want to take precedence over what is in `.env.local` will need to go in `.env.local.development`._
 
+### Ops scripts with 1Password
+
+Run `pnpm cta-report:ops` or `pnpm kit:fields:check` from this directory with
+`OP_TOKEN` and `OP_VAULT` injected into the caller's environment. Use the
+Varlock 1Password plugin and a service account with access to the selected vault. Each item
+is titled with its environment variable name and stores its value in `password`.
+Never put the token or vault name in source control or command-line arguments.
+The token stays internal to Varlock, not in the script's child environment;
+desktop app authentication is disabled. Missing credentials or vault selection
+fail before the script starts.
+The ops entry points disable telemetry with `DO_NOT_TRACK=1`; never set
+`DEBUG=varlock*` in CI because it logs resolved `op://` references.
+
+These entry points use separate, least-privilege `.env.ops-*.schema` files, not
+`.env.vercel`. They do not supply missing application-wide configuration or
+bypass `src/env.mjs` validation. People must use test credentials; production
+access is for authorized agents and CI only. Do not run reports against
+production merely to check secret resolution.
+
+`env:check` and Vercel's `prebuild` still use the existing ambient environment
+and `.env.schema`, without 1Password. `cta-report`, `cta-report:build`,
+`cta-report:scheduled`, `cta-report:top-organic` and the scheduled GitHub Actions
+workflow keep their existing dotenv path and arguments. Moving that workflow to
+1Password needs separate CI credentials and is not part of this change.
+The PPP alumni, lost-dispute, purchaser-tag, geo-backfill and evergreen deadline
+scripts remain on their existing paths: their database imports validate the
+whole app environment, including credentials not available through this ops
+contract. The Discord legend backfill also remains unchanged because it reads
+an env file directly rather than the process environment. This change does not
+remove `.env.vercel` or change runtime environment loading.
+
 ### Install dependences
 
 Make sure you have [`pnpm`](https://pnpm.io/) installed.
