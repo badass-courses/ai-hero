@@ -173,31 +173,21 @@ of the purchaser.
 
 ## Refund Policy
 
-Our refund policy lasts 30 days. If 30 days have gone by since your purchase, unfortunately we can’t offer you a refund or exchange.
+Our refund policy lasts 30 days. If 30 days have gone by since your purchase, unfortunately we can’t offer you a refund.
 
-There are certain situations where only partial refunds are granted: (if applicable)
-
-Any item not in its original condition, is damaged or missing parts for reasons not due to our error.
-
-Any item that is returned more than 30 days after delivery
-
-### Refunds (if applicable)
+### Refunds
 
 We will notify you of the approval or rejection of your refund.
 
 If you are approved, then your refund will be processed, and a credit will automatically be applied to your credit card or original method of payment, within a certain amount of days.
 
-### Late or missing refunds (if applicable)
+### Late or missing refunds
 
 If you haven’t received a refund yet, first check your bank account again. Then contact your credit card company, it may take some time before your refund is officially posted. Next contact your bank. There is often some processing time before a refund is posted. If you’ve done all of this and you still have not received your refund yet, please contact us at [${process.env.NEXT_PUBLIC_SUPPORT_EMAIL}](mailto:${process.env.NEXT_PUBLIC_SUPPORT_EMAIL}).
 
-### Sale items (if applicable)
-
-Only regular priced items may be refunded, unfortunately sale items cannot be refunded.
-
 ## Privacy Policy
 
-This Privacy Policy describes how your personal information is collected, used, and shared when you visit or make a purchase from ${process.env.NEXT_PUBLIC_HOST} (the “Site”).
+This Privacy Policy describes how your personal information is collected, used, and shared when you visit or make a purchase from aihero.dev (the “Site”).
 
 ### Personal Information We Collect
 
