@@ -9,6 +9,8 @@ import {
 import { GatedBuyButton } from '@/components/commerce/gated-buy-button'
 import { RegionalQuantityClear } from '@/components/commerce/regional-toggle-gate'
 import { TYPE } from '@/components/landing/type'
+import { C5_PRODUCT_ID } from '@/lib/c5-pricing/products'
+import { APP_REASONS } from '@/lib/c5-pricing/reasons'
 import { formatDeadline } from '@/utils/discount-formatter'
 import {
 	ArrowUpRight,
@@ -615,7 +617,7 @@ type RegionalCoupon = {
  * available: read from that quote, the box said "United States, 0% off"
  * while ticked, and dropped out for a second after unticking.
  */
-const RegionalPricingBox = () => {
+export const RegionalPricingBox = () => {
 	const {
 		options: { isPPPEnabled },
 		formattedPrice,
@@ -627,6 +629,7 @@ const RegionalPricingBox = () => {
 		setMerchantCoupon,
 		quantity,
 		pricingData: { purchaseToUpgrade },
+		product,
 	} = usePricing()
 	const { isDowngrade } = usePriceCheck()
 
@@ -775,6 +778,16 @@ const RegionalPricingBox = () => {
 					and no bonuses are included.
 				</label>
 			</div>
+			{!hideCheckbox &&
+				product.id === C5_PRODUCT_ID &&
+				formattedPrice?.authoritative?.reasons.includes(
+					APP_REASONS.formulaUsesCredit,
+				) && (
+					<p className={cn(TYPE.metaSm, 'text-muted-foreground mt-2')}>
+						Regional pricing doesn&apos;t combine with your Crash Course credit.
+						You&apos;ll get whichever price is lower.
+					</p>
+				)}
 		</div>
 	)
 }

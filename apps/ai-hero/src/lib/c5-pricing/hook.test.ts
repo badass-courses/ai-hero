@@ -215,6 +215,7 @@ describe('createC5AuthoritativePrice', () => {
 		const decision = await ask({ userId: undefined })
 		expect(decision).toMatchObject({ kind: 'bounded', amountCents: 80_000 })
 		expect(decision!.reasons).toContain(APP_REASONS.identityRequired)
+		expect(decision!.reasons).not.toContain(APP_REASONS.formulaUsesCredit)
 		expect(deps.quotes).not.toHaveBeenCalled()
 	})
 
@@ -331,6 +332,28 @@ describe('createC5AuthoritativePrice', () => {
 	})
 
 	describe('PPP from the trusted country only', () => {
+		it.each([
+			['available', true],
+			['spent', false],
+		] as const)(
+			'reports formula credit only when it is %s',
+			async (creditUse, expected) => {
+				country = 'IN'
+				buyer = signedIn(
+					buyerFacts({
+						credit: known({ paid: 10_000, source: 'valid-cc-purchase' }),
+						creditUse: known(creditUse),
+					}),
+				)
+				for (const pppAccepted of [false, true]) {
+					const decision = await ask({ pppAccepted })
+					expect(
+						decision!.reasons.includes(APP_REASONS.formulaUsesCredit),
+					).toBe(expected)
+				}
+			},
+		)
+
 		it('ignores a spoofed request country', async () => {
 			country = 'US'
 			const decision = await ask({ country: 'IN', pppAccepted: true })
@@ -351,6 +374,7 @@ describe('createC5AuthoritativePrice', () => {
 				restriction: 'none',
 				offers: [{ amountCents: 40_000, percent: 0.6, restriction: 'region' }],
 			})
+			expect(offered!.reasons).not.toContain(APP_REASONS.formulaUsesCredit)
 			const accepted = await ask({ country: 'US', pppAccepted: true })
 			expect(accepted).toMatchObject({
 				kind: 'priced',
@@ -374,7 +398,9 @@ describe('createC5AuthoritativePrice', () => {
 				expect(offered!.offers).toEqual(region === 'IN'
 					? [expect.objectContaining({ amountCents: 40_000, restriction: 'region' })]
 					: [])
+				expect(offered!.reasons).toContain(APP_REASONS.formulaUsesCredit)
 				const accepted = await ask({ purpose, pppAccepted: true })
+				expect(accepted!.reasons).toContain(APP_REASONS.formulaUsesCredit)
 				expect(accepted).toMatchObject({ kind: 'priced', amountCents: amount, restriction })
 				expect(accepted!.offers).toEqual([])
 				expect(decodeDecisionRef(accepted!.decisionRef)?.creditSource).toBe(creditSource)
@@ -393,6 +419,7 @@ describe('createC5AuthoritativePrice', () => {
 			const decision = await ask({ quantity: 5, pppAccepted: true })
 			expect(decision).toMatchObject({ kind: 'priced', restriction: 'none' })
 			expect(decision!.offers).toEqual([])
+			expect(decision!.reasons).not.toContain(APP_REASONS.formulaUsesCredit)
 		})
 	})
 })

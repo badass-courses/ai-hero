@@ -5,6 +5,8 @@
  * surfaces why a price is not a charge.
  */
 export const APP_REASONS = {
+	/** The engine's formula candidate uses an available Crash Course credit. */
+	formulaUsesCredit: 'formula-uses-crash-course-credit',
 	/** Nobody is signed in: the price is the new-buyer upper bound. */
 	identityRequired: 'identity-required',
 	/** Display could not read the buyer's binding quotes. */
