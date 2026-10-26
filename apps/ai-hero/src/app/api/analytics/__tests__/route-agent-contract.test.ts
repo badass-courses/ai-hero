@@ -306,6 +306,27 @@ describe('analytics API agent contract', () => {
 							totalMatchingCount: 'meta.pagination.totalMatchingRows',
 							nextPage: '_links.next.href',
 						},
+						data: {
+							items: {
+								properties: {
+									isTeam: {
+										type: 'boolean',
+										description: expect.stringContaining('bulk coupon'),
+									},
+									seats: {
+										type: ['integer', 'null'],
+										description: expect.stringContaining('add-seat teams'),
+									},
+									teamSeats: {
+										type: ['integer', 'null'],
+										description: expect.stringContaining('current total'),
+									},
+								},
+							},
+						},
+						semantics: expect.arrayContaining([
+							expect.stringContaining('teamSeats is the team total now'),
+						]),
 					},
 				},
 			},
@@ -348,8 +369,20 @@ describe('analytics API agent contract', () => {
 			.mockResolvedValueOnce({
 				ok: true,
 				data: [
-					{ id: 'purchase_2', createdAt: '2026-08-18T12:00:00.000Z' },
-					{ id: 'purchase_1', createdAt: '2026-08-18T11:00:00.000Z' },
+					{
+						id: 'purchase_2',
+						createdAt: '2026-08-18T12:00:00.000Z',
+						isTeam: true,
+						seats: null,
+						teamSeats: 6,
+					},
+					{
+						id: 'purchase_1',
+						createdAt: '2026-08-18T11:00:00.000Z',
+						isTeam: false,
+						seats: null,
+						teamSeats: null,
+					},
 				],
 				meta: { queryTimeMs: 5, truncated: false },
 			})
@@ -370,6 +403,18 @@ describe('analytics API agent contract', () => {
 			range: '7d',
 			productId: 'product_crash',
 		})
+		expect(
+			body.data.map(
+				({ isTeam, seats, teamSeats }: Record<string, unknown>) => ({
+					isTeam,
+					seats,
+					teamSeats,
+				}),
+			),
+		).toEqual([
+			{ isTeam: true, seats: null, teamSeats: 6 },
+			{ isTeam: false, seats: null, teamSeats: null },
+		])
 		expect(body.meta.pagination).toEqual({
 			limit: 2,
 			offset: 0,
