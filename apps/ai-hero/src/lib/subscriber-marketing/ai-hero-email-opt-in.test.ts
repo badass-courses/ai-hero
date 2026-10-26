@@ -147,6 +147,31 @@ describe('reconcileAiHeroEmailOptIn', () => {
 	})
 })
 
+describe('reconcileAiHeroEmailOptIn with the untag disabled', () => {
+	it('leaves a present tag in place and never calls Kit to remove it', async () => {
+		const getSubscriberByEmail = vi.fn().mockResolvedValue({
+			state: 'active',
+			tags: [{ id: Number(AI_HERO_UNSUBSCRIBED_TAG_ID) }],
+		})
+		const removeUnsubscribeTag = vi.fn()
+
+		await expect(
+			reconcileAiHeroEmailOptIn({
+				email: 'person@example.com',
+				subscriberState: 'active',
+				mayRemoveUnsubscribeTag: false,
+				getSubscriberByEmail,
+				removeUnsubscribeTag,
+			}),
+		).resolves.toEqual({
+			status: 'active',
+			removedUnsubscribeTag: false,
+			untagSkipped: true,
+		})
+		expect(removeUnsubscribeTag).not.toHaveBeenCalled()
+	})
+})
+
 describe('routeReturningUnsubscriber', () => {
 	const tagged = {
 		state: 'active',
@@ -201,14 +226,13 @@ describe('routeReturningUnsubscriber', () => {
 		expect(args.requestDoi).not.toHaveBeenCalled()
 	})
 
-	it('Kit lookup fails: blocked, fails closed', async () => {
+	it('Kit lookup fails: reports lookup-failed so the sign-up can continue', async () => {
 		const args = {
 			...base(),
 			getSubscriberByEmail: vi.fn().mockRejectedValue(new Error('down')),
 		}
 		await expect(routeReturningUnsubscriber(args)).resolves.toEqual({
-			status: 'blocked',
-			reason: 'lookup-failed',
+			status: 'lookup-failed',
 		})
 		expect(args.requestDoi).not.toHaveBeenCalled()
 	})

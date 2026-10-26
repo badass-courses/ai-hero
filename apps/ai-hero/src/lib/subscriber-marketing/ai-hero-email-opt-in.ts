@@ -2,7 +2,12 @@ export const AI_HERO_UNSUBSCRIBED_TAG_ID = '8244351' as const
 
 export type AiHeroEmailOptInResult =
 	| { status: 'confirmation-required' }
-	| { status: 'active'; removedUnsubscribeTag: boolean }
+	| {
+			status: 'active'
+			removedUnsubscribeTag: boolean
+			/** The tag is present but this request was not allowed to remove it. */
+			untagSkipped?: boolean
+	  }
 
 type KitTag = {
 	id: string | number
@@ -28,6 +33,8 @@ function getKitTags(subscriber: KitSubscriber | null | undefined): KitTag[] {
 export async function reconcileAiHeroEmailOptIn(args: {
 	email: string
 	subscriberState?: string
+	/** False when the pre-check could not read Kit: consent fails closed. */
+	mayRemoveUnsubscribeTag?: boolean
 	getSubscriberByEmail: (email: string) => Promise<KitSubscriber | null | undefined>
 	removeUnsubscribeTag: (email: string) => Promise<void>
 }): Promise<AiHeroEmailOptInResult> {
@@ -41,6 +48,10 @@ export async function reconcileAiHeroEmailOptIn(args: {
 	)
 	if (!hasUnsubscribeTag) {
 		return { status: 'active', removedUnsubscribeTag: false }
+	}
+
+	if (args.mayRemoveUnsubscribeTag === false) {
+		return { status: 'active', removedUnsubscribeTag: false, untagSkipped: true }
 	}
 
 	await args.removeUnsubscribeTag(args.email)
@@ -59,16 +70,16 @@ export async function reconcileAiHeroEmailOptIn(args: {
 export type ReturningUnsubscriberResult =
 	| { status: 'not-unsubscribed' }
 	| { status: 'doi-requested' }
-	| {
-			status: 'blocked'
-			reason: 'drovr-unconfigured' | 'unmapped-form' | 'lookup-failed'
-	  }
+	/** Kit could not be read: sign-up continues, the tag must stay. */
+	| { status: 'lookup-failed' }
+	| { status: 'blocked'; reason: 'drovr-unconfigured' | 'unmapped-form' }
 
 /**
  * A contact Kit shows tagged as an earlier AI Hero unsubscribe may come back
  * only through a fresh drovr double opt-in. Runs before any Kit subscribe or
- * untag. Anything but a clean "not tagged" answer that we cannot turn into a
- * confirmation request is blocked, so consent fails closed: the tag stays.
+ * untag. A tagged contact we cannot turn into a confirmation request is blocked,
+ * so consent fails closed: the tag stays. A failed Kit read fails open for
+ * the sign-up (liveness); the caller must then not remove the tag.
  */
 export async function routeReturningUnsubscriber(args: {
 	email: string
@@ -87,7 +98,7 @@ export async function routeReturningUnsubscriber(args: {
 			(tag) => String(tag.id) === AI_HERO_UNSUBSCRIBED_TAG_ID,
 		)
 	} catch {
-		return { status: 'blocked', reason: 'lookup-failed' }
+		return { status: 'lookup-failed' }
 	}
 	if (!tagged) return { status: 'not-unsubscribed' }
 	if (!args.formMapped) return { status: 'blocked', reason: 'unmapped-form' }

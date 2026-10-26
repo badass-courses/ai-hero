@@ -107,6 +107,7 @@ export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 	}
 
 	// A returning unsubscriber confirms through drovr, never straight to Kit.
+	let mayRemoveUnsubscribeTag = true
 	try {
 		const [cookieStore, headerStore] = await Promise.all([cookies(), headers()])
 		const returning = await routeReturningUnsubscriberWithKit({
@@ -129,6 +130,8 @@ export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 		if (returning.status === 'blocked') {
 			return { success: false, reason: 'request-failed' as const }
 		}
+		// Kit unreadable: carry on with the sign-up, but never untag.
+		mayRemoveUnsubscribeTag = returning.status !== 'lookup-failed'
 	} catch (error) {
 		await log.error('skills.tagme.doi.failed', {
 			formId: SKILLS_FORM_ID,
@@ -173,6 +176,7 @@ export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 		const optIn = await reconcileAiHeroEmailOptInWithKit({
 			email: subscribed.email_address!,
 			subscriberState: subscribed.state,
+			mayRemoveUnsubscribeTag,
 		})
 		if (optIn.status === 'confirmation-required') {
 			await reportVerifiedUnconfirmed({

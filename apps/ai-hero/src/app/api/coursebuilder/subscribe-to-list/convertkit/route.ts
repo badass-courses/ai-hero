@@ -61,6 +61,7 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 		return await doiSignup(req, body, email.trim(), kitFormId)
 	}
 
+	let mayRemoveUnsubscribeTag = true
 	// A returning unsubscriber re-signs up only through a fresh drovr double
 	// opt-in: no Kit subscribe, no untag. Everyone else falls through.
 	if (typeof email === 'string' && DOI_DROVR_FORM_IDS.has(kitFormId)) {
@@ -70,7 +71,8 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 			email.trim(),
 			kitFormId,
 		)
-		if (returning) return returning
+		if (returning.response) return returning.response
+		mayRemoveUnsubscribeTag = !returning.lookupFailed
 	}
 
 	// Clone the request with the body since it can only be read once
@@ -171,6 +173,7 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 				const optIn = await reconcileAiHeroEmailOptInWithKit({
 					email: subscriberEmail,
 					subscriberState: subscriber.state,
+					mayRemoveUnsubscribeTag,
 				})
 				const cookieStore = await cookies()
 				const optInAttribution = parseOptInAttributionCookie(
@@ -334,8 +337,9 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 }
 
 /**
- * Answers a sign-up from a contact Kit shows as an earlier unsubscribe, or
- * undefined when the contact is not one and the Kit path should run.
+ * Answers a sign-up from a contact Kit shows as an earlier unsubscribe with
+ * a `response`; otherwise the Kit path runs, with `lookupFailed` when Kit
+ * could not be read (so the tag must not be removed).
  */
 async function returningUnsubscriberSignup(
 	req: NextRequest,
@@ -359,9 +363,11 @@ async function returningUnsubscriberSignup(
 			),
 			entry: 'form',
 		})
-		if (result.status === 'not-unsubscribed') return undefined
+		if (result.status === 'not-unsubscribed') return {}
+		// Kit unreadable: carry on with the sign-up, but never untag.
+		if (result.status === 'lookup-failed') return { lookupFailed: true }
 		if (result.status === 'doi-requested') {
-			return pendingSubscribeResponse({ email, name })
+			return { response: pendingSubscribeResponse({ email, name }) }
 		}
 	} catch (error) {
 		await log.error('skills.newsletter.doi.failed', {
@@ -369,10 +375,12 @@ async function returningUnsubscriberSignup(
 			error: error instanceof Error ? error.name : 'unknown',
 		})
 	}
-	return Response.json(
-		{ error: 'Subscription could not be confirmed' },
-		{ status: 502 },
-	)
+	return {
+		response: Response.json(
+			{ error: 'Subscription could not be confirmed' },
+			{ status: 502 },
+		),
+	}
 }
 
 /**

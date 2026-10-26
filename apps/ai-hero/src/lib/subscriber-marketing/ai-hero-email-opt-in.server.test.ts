@@ -74,6 +74,17 @@ describe("routeReturningUnsubscriberWithKit", () => {
     );
   });
 
+  it("Kit lookup fails: continues, logs lookup_failed without the email", async () => {
+    mocks.getSubscriberByEmail.mockRejectedValue(new Error("429"));
+
+    await expect(call()).resolves.toEqual({ status: "lookup-failed" });
+    expect(mocks.requestDoi).not.toHaveBeenCalled();
+    expect(mocks.log.warn).toHaveBeenCalledWith(
+      "optin.resubscribe.lookup_failed",
+      { formId: 9376133, entry: "form" },
+    );
+  });
+
   it("untagged: nothing requested, nothing logged", async () => {
     mocks.getSubscriberByEmail.mockResolvedValue({ state: "active", tags: [] });
     await expect(call()).resolves.toEqual({ status: "not-unsubscribed" });

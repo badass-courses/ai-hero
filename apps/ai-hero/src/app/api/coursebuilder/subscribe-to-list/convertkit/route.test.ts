@@ -839,6 +839,27 @@ describe('returning unsubscriber (Kit tag 8244351)', () => {
 		expect(mocks.reconcile).not.toHaveBeenCalled()
 	})
 
+	it('Kit lookup failed: signs up through Kit, with the untag disabled', async () => {
+		mocks.routeReturning.mockResolvedValue({ status: 'lookup-failed' })
+		mocks.courseBuilderPOST.mockResolvedValue(
+			subscriberResponse({
+				id: 1,
+				email_address: 'person@example.com',
+				state: 'active',
+				fields: {},
+			}),
+		)
+		mocks.reconcile.mockResolvedValue({ status: 'active' })
+
+		const response = await post()
+
+		expect(response.status).toBe(200)
+		expect(mocks.courseBuilderPOST).toHaveBeenCalledTimes(1)
+		expect(mocks.reconcile).toHaveBeenCalledWith(
+			expect.objectContaining({ mayRemoveUnsubscribeTag: false }),
+		)
+	})
+
 	it('not tagged: continues to the Kit path', async () => {
 		mocks.courseBuilderPOST.mockResolvedValue(
 			subscriberResponse({
@@ -855,6 +876,9 @@ describe('returning unsubscriber (Kit tag 8244351)', () => {
 		expect(response.status).toBe(200)
 		expect(mocks.courseBuilderPOST).toHaveBeenCalledTimes(1)
 		expect(mocks.reconcile).toHaveBeenCalledTimes(1)
+		expect(mocks.reconcile).toHaveBeenCalledWith(
+			expect.objectContaining({ mayRemoveUnsubscribeTag: true }),
+		)
 	})
 })
 

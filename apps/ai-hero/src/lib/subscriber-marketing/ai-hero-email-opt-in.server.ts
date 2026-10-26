@@ -17,13 +17,18 @@ import type { OptInAttribution } from './opt-in-attribution'
 export async function reconcileAiHeroEmailOptInWithKit(args: {
 	email: string
 	subscriberState?: string
+	mayRemoveUnsubscribeTag?: boolean
 }) {
-	return reconcileAiHeroEmailOptIn({
+	const result = await reconcileAiHeroEmailOptIn({
 		...args,
 		getSubscriberByEmail: (email) =>
 			emailListProvider.getSubscriberByEmail(email),
 		removeUnsubscribeTag: removeAiHeroUnsubscribeTag,
 	})
+	if (result.status === 'active' && result.untagSkipped) {
+		await log.warn('optin.resubscribe.untag_skipped', {})
+	}
+	return result
 }
 
 /**
@@ -52,7 +57,12 @@ export async function routeReturningUnsubscriberWithKit(args: {
 			await requestDrovrDoiSignup(args)
 		},
 	})
-	if (result.status === 'blocked') {
+	if (result.status === 'lookup-failed') {
+		await log.warn('optin.resubscribe.lookup_failed', {
+			formId: args.kitFormId,
+			entry: args.entry,
+		})
+	} else if (result.status === 'blocked') {
 		await log.warn(
 			result.reason === 'unmapped-form'
 				? 'optin.resubscribe.unmapped_form'

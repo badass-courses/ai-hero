@@ -497,6 +497,18 @@ describe('tagSubscriberAsSkills for a returning unsubscriber (Kit tag 8244351)',
 		expect(mocks.reconcile).not.toHaveBeenCalled()
 	})
 
+	it('Kit lookup failed: enrols through Kit, with the untag disabled', async () => {
+		mocks.routeReturning.mockResolvedValue({ status: 'lookup-failed' })
+
+		const result = await tagSubscriberAsSkills('skills-post')
+
+		expect(result).toEqual({ success: true })
+		expect(mocks.subscribeToList).toHaveBeenCalledTimes(1)
+		expect(mocks.reconcile).toHaveBeenCalledWith(
+			expect.objectContaining({ mayRemoveUnsubscribeTag: false }),
+		)
+	})
+
 	it('not tagged: the Kit path runs unchanged', async () => {
 		mocks.routeReturning.mockResolvedValue({ status: 'not-unsubscribed' })
 
