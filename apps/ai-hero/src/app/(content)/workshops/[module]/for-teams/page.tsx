@@ -7,6 +7,8 @@ import {
 	FOR_TEAMS_INNER,
 	ForTeamsPage,
 } from '@/components/for-teams/for-teams-page'
+import { C5SaleSwitch } from '@/components/c5-sale-switch'
+import { CohortTeamCta } from '@/components/for-teams/cohort-team-cta'
 import { teamInvoiceBand } from '@/components/for-teams/team-invoice-band'
 import { TYPE } from '@/components/landing/type'
 import { env } from '@/env.mjs'
@@ -29,9 +31,10 @@ type Props = {
 	params: Promise<{ module: string }>
 }
 
-export const revalidate = 3600
+// Evaluate the C5 sale gate per request; cached HTML must not outlive enrollment.
+export const revalidate = 0
 export const dynamicParams = true
-export const dynamic = 'force-static'
+export const dynamic = 'force-dynamic'
 
 export async function generateStaticParams() {
 	return []
@@ -113,6 +116,11 @@ export default async function WorkshopForTeamsPage(props: Props) {
 				) : null
 			}
 			story={story}
+			promotion={
+				params.module === 'ai-coding-crash-course'
+					? await C5SaleSwitch({ children: <CohortTeamCta /> })
+					: null
+			}
 			seats={
 				sellsSeats ? (
 					<React.Suspense
