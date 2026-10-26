@@ -253,4 +253,72 @@ describe('withSkill', () => {
 			}),
 		)
 	})
+	describe('route-scoped started', () => {
+		const events = () => loggerMocks.info.mock.calls.map(([event]) => event)
+
+		it.each([
+			'/api/auth/session',
+			'/api/auth/session/',
+			'/api/trpc',
+			'/api/trpc/',
+			'/api/trpc/x.y',
+			'/api/trpc/a.b,c.d',
+		])('skips started but emits completed for %s', async (path) => {
+			await withSkill(async () => new Response('ok'))(
+				new Request(`https://aihero.dev${path}?token=s3cret&batch=1`),
+			)
+			expect(events()).toEqual(['api.request.completed'])
+			const payload = loggerMocks.info.mock.calls[0]?.[1]
+			expect(JSON.stringify(payload)).not.toContain('s3cret')
+		})
+
+		it.each([
+			'/api/auth/sessionfoo',
+			'/api/auth/session-x',
+			'/api/auth/session/x',
+			'/api/trpcx',
+			'/api/trpc-other',
+			'/api/auth/callback/github',
+			'/api/auth/confirm',
+			'/api/inngest',
+			'/api/checkout',
+			'/api/stripe/webhook',
+		])('keeps started for %s', async (path) => {
+			await withSkill(async () => new Response('ok'))(
+				new Request(`https://aihero.dev${path}`),
+			)
+			expect(events()).toEqual(['api.request.started', 'api.request.completed'])
+		})
+
+		it('does not match on the query string', async () => {
+			await withSkill(async () => new Response('ok'))(
+				new Request('https://aihero.dev/api/other?next=/api/trpc/x'),
+			)
+			expect(events()).toEqual(['api.request.started', 'api.request.completed'])
+		})
+
+		it('still emits completed and failed_response for a 500', async () => {
+			await withSkill(async () => new Response('no', { status: 500 }))(
+				new Request('https://aihero.dev/api/trpc/x.y'),
+			)
+			expect(events()).toEqual(['api.request.completed'])
+			expect(loggerMocks.error).toHaveBeenCalledWith(
+				'api.request.failed_response',
+				expect.objectContaining({ statusCode: 500, path: '/api/trpc/x.y' }),
+			)
+		})
+
+		it('still emits failed for a throw', async () => {
+			await expect(
+				withSkill(async () => {
+					throw new Error('boom')
+				})(new Request('https://aihero.dev/api/auth/session')),
+			).rejects.toThrow('boom')
+			expect(events()).toEqual([])
+			expect(loggerMocks.error).toHaveBeenCalledWith(
+				'api.request.failed',
+				expect.objectContaining({ path: '/api/auth/session' }),
+			)
+		})
+	})
 })
