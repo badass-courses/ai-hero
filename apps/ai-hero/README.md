@@ -41,6 +41,8 @@ Never put the token or vault name in source control or command-line arguments.
 The token stays internal to Varlock, not in the script's child environment;
 desktop app authentication is disabled. Missing credentials or vault selection
 fail before the script starts.
+The ops entry points disable telemetry with `DO_NOT_TRACK=1`; never set
+`DEBUG=varlock*` in CI because it logs resolved `op://` references.
 
 These entry points use separate, least-privilege `.env.ops-*.schema` files, not
 `.env.vercel`. They do not supply missing application-wide configuration or
