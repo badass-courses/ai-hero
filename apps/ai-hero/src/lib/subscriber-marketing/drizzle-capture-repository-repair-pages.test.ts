@@ -79,7 +79,7 @@ it('bounds repair hydration and retains full entry evidence across row pages', a
 								if (table === sideEffectIntent) return []
 								const contactId = params.find(
 									(value) =>
-										typeof value === 'string' && value.startsWith('c'),
+										typeof value === 'string' && /^c[0-9]{5}$/.test(value),
 								)
 								const continued = params.some(
 									(value) =>
@@ -126,7 +126,7 @@ it('bounds repair hydration and retains full entry evidence across row pages', a
 		) {
 			expect(
 				call.params.filter(
-					(value) => typeof value === 'string' && value.startsWith('c'),
+					(value) => typeof value === 'string' && /^c[0-9]{5}$/.test(value),
 				).length,
 			).toBeLessThanOrEqual(LEARNER_FLOW_RECORD_PAGE_SIZE)
 			expect(call.selection).toBeUndefined()
@@ -139,7 +139,7 @@ it('bounds repair hydration and retains full entry evidence across row pages', a
 		expect(call.limit).toBe(5000)
 		expect(
 			call.params.filter(
-				(value) => typeof value === 'string' && value.startsWith('c'),
+				(value) => typeof value === 'string' && /^c[0-9]{5}$/.test(value),
 			).length,
 		).toBeLessThanOrEqual(LEARNER_FLOW_RECORD_PAGE_SIZE)
 	}
