@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
 	getPurchaseThanksDetails: vi.fn(),
 	getServerAuthSession: vi.fn(),
 	getPurchaseTransferForPurchaseId: vi.fn(),
+	readDelayedPaymentState: vi.fn(),
 	redirect: vi.fn((to: string) => {
 		throw new Error(`NEXT_REDIRECT:${to}`)
 	}),
@@ -46,7 +47,10 @@ vi.mock('@/purchase-transfer/transfer-lifecycle', () => ({
 	isTransferablePurchase: () => true,
 }))
 vi.mock('./purchase-status-poller', () => ({
-	PurchaseStatusPoller: () => null,
+	PurchaseStatusPoller: () => <p data-poller="1">polling</p>,
+}))
+vi.mock('./read-delayed-payment-state', () => ({
+	readDelayedPaymentState: mocks.readDelayedPaymentState,
 }))
 vi.mock('next-auth/react', () => ({ signOut: vi.fn() }))
 vi.mock('@coursebuilder/ui', async (importOriginal) => ({
@@ -100,6 +104,45 @@ beforeEach(() => {
 		redemptionsLeft: true,
 	})
 	mocks.getPurchaseTransferForPurchaseId.mockResolvedValue([])
+})
+
+describe('thanks page before the purchase exists', () => {
+	async function renderWithoutPurchase() {
+		mocks.getPurchaseByCheckoutSessionId.mockResolvedValue(null)
+		const page = (await ThanksPurchasePage({
+			searchParams: Promise.resolve({ session_id: 'cs_test_1', provider: 'x' }),
+		})) as ReactElement
+		return renderToStaticMarkup(page)
+	}
+
+	it('a paid checkout waits for its purchase as before', async () => {
+		mocks.readDelayedPaymentState.mockResolvedValue({ kind: 'not_delayed' })
+		const html = await renderWithoutPurchase()
+		expect(html).toContain('data-poller')
+		expect(mocks.readDelayedPaymentState).toHaveBeenCalledWith('cs_test_1')
+	})
+
+	it('an unpaid bank transfer says access waits on the transfer', async () => {
+		mocks.readDelayedPaymentState.mockResolvedValue({
+			kind: 'awaiting_payment',
+			method: 'bank_transfer',
+			instructionsUrl: 'https://payments.stripe.test/instructions',
+		})
+		const html = await renderWithoutPurchase()
+		expect(html).not.toContain('data-poller')
+		expect(html).toContain('data-delayed-payment="awaiting_payment"')
+		expect(html).toContain('waiting for your bank transfer')
+		expect(html).toContain('href="https://payments.stripe.test/instructions"')
+		expect(html).toContain('mailto:support@example.test')
+	})
+
+	it('a failed delayed payment says so and offers support', async () => {
+		mocks.readDelayedPaymentState.mockResolvedValue({ kind: 'payment_failed' })
+		const html = await renderWithoutPurchase()
+		expect(html).not.toContain('data-poller')
+		expect(html).toContain('data-delayed-payment="payment_failed"')
+		expect(html).toContain('mailto:support@example.test')
+	})
 })
 
 describe('thanks page viewers', () => {

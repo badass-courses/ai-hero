@@ -21,7 +21,8 @@ import { getCachedAllLists, getCachedListForPost } from '@/lib/lists-query'
 import { CldImage } from '@/components/cld-image'
 import { type Post } from '@/lib/posts'
 import { skillIconUrl } from '@/lib/skill-icon'
-import { getAllPosts, getCachedPostOrList } from '@/lib/posts-query'
+import { getAllPosts } from '@/lib/posts-query'
+import { getRoutePost } from './get-route-post'
 import { resolvePostCta } from '@/lib/post-cta'
 import { PostStructuredData } from '@/lib/structured-data'
 import { getLatestCohort, getUpcomingCohort } from '@/lib/upcoming-cohort-query'
@@ -92,7 +93,7 @@ export default async function PostPage(props: {
 }) {
 	const params = await props.params
 
-	const post = await getCachedPostOrList(params.post)
+	const post = await getRoutePost(params.post)
 
 	if (!post) {
 		notFound()
@@ -900,7 +901,7 @@ export async function generateMetadata(
 ): Promise<Metadata> {
 	const params = await props.params
 
-	const resource = await getCachedPostOrList(params.post)
+	const resource = await getRoutePost(params.post)
 
 	if (!resource) {
 		return parent as Metadata

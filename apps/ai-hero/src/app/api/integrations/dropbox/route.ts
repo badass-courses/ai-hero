@@ -14,6 +14,8 @@ import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
 
+import { getIntegrationRefreshToken } from '@/lib/integration-token-store'
+
 const STATE_COOKIE_NAME = 'dropbox_course_sync_state'
 const STATE_COOKIE_MAX_AGE_SECONDS = 60 * 10
 const STATE_COOKIE_PATH = '/api/integrations/dropbox'
@@ -83,7 +85,8 @@ export const GET = withSkill(async (request: NextRequest) => {
 				{ status: 401, headers: { 'Cache-Control': 'no-store' } },
 			)
 		}
-		if (!config || config.source.kind !== 'shared-link' || !process.env.DROPBOX_REFRESH_TOKEN) {
+		const refreshToken = await getIntegrationRefreshToken('dropbox', process.env.DROPBOX_REFRESH_TOKEN)
+		if (!config || config.source.kind !== 'shared-link' || !refreshToken) {
 			return NextResponse.json(
 				{
 					ok: false,
@@ -93,7 +96,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 						...(config?.source.kind === 'shared-link'
 							? []
 							: ['DROPBOX_SYNC_SHARED_LINK']),
-						...(process.env.DROPBOX_REFRESH_TOKEN ? [] : ['DROPBOX_REFRESH_TOKEN']),
+						...(refreshToken ? [] : ['DROPBOX_REFRESH_TOKEN']),
 					],
 				},
 				{ status: 503, headers: { 'Cache-Control': 'no-store' } },
@@ -103,7 +106,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 		try {
 			const summary = await readDropboxCourseManifestSummary({
 				config,
-				refreshToken: process.env.DROPBOX_REFRESH_TOKEN,
+				refreshToken,
 			})
 			await log.info('dropbox-course-sync.manifest-summary.completed', {
 				requestId,
@@ -141,7 +144,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 
 		const verification = await verifyDropboxConnection({
 			config,
-			refreshToken: process.env.DROPBOX_REFRESH_TOKEN,
+			refreshToken: await getIntegrationRefreshToken('dropbox', process.env.DROPBOX_REFRESH_TOKEN),
 		})
 		await log.info('dropbox-course-sync.verify.completed', {
 			requestId,

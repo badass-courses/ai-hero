@@ -1,4 +1,5 @@
 import { env } from '@/env.mjs'
+import { getIntegrationRefreshToken } from '@/lib/integration-token-store'
 import { createYouTubeWatchUrl } from '@/lib/cohort-office-hours'
 import { google, type youtube_v3 } from 'googleapis'
 import { OAuth2Client } from 'google-auth-library'
@@ -66,10 +67,10 @@ export type YouTubeLiveThumbnailUpload = {
 	bytes: number
 }
 
-function getOAuth2Client() {
+async function getOAuth2Client() {
 	const clientId = env.YOUTUBE_OAUTH_CLIENT_ID
 	const clientSecret = env.YOUTUBE_OAUTH_CLIENT_SECRET
-	const refreshToken = env.YOUTUBE_ANALYTICS_REFRESH_TOKEN
+	const refreshToken = await getIntegrationRefreshToken('youtube_analytics')
 
 	if (!clientId || !clientSecret || !refreshToken) {
 		throw new Error(
@@ -83,8 +84,8 @@ function getOAuth2Client() {
 	return auth
 }
 
-function getYouTubeClient() {
-	return google.youtube({ version: 'v3', auth: getOAuth2Client() })
+async function getYouTubeClient() {
+	return google.youtube({ version: 'v3', auth: await getOAuth2Client() })
 }
 
 async function getThumbnailUpload(imageUrl: string) {
@@ -154,7 +155,7 @@ function mapBroadcast(
 }
 
 export async function verifyYouTubeForceSslScope() {
-	const refreshToken = env.YOUTUBE_ANALYTICS_REFRESH_TOKEN
+	const refreshToken = await getIntegrationRefreshToken('youtube_analytics')
 	const clientId = env.YOUTUBE_OAUTH_CLIENT_ID
 	const clientSecret = env.YOUTUBE_OAUTH_CLIENT_SECRET
 
@@ -199,7 +200,7 @@ export async function listYouTubeLiveBroadcasts(
 	maxResults = 50,
 	broadcastStatus?: YouTubeLiveBroadcastStatus,
 ) {
-	const youtube = getYouTubeClient()
+	const youtube = await getYouTubeClient()
 	const broadcasts = await youtube.liveBroadcasts.list({
 		maxResults,
 		part: ['id', 'snippet', 'status', 'contentDetails'],
@@ -214,7 +215,7 @@ export async function listYouTubeLiveBroadcasts(
 }
 
 export async function getYouTubeLiveBroadcast(id: string) {
-	const youtube = getYouTubeClient()
+	const youtube = await getYouTubeClient()
 	const response = await youtube.liveBroadcasts.list({
 		id: [id],
 		part: ['id', 'snippet', 'status', 'contentDetails'],
@@ -225,7 +226,7 @@ export async function getYouTubeLiveBroadcast(id: string) {
 }
 
 export async function listYouTubeLiveStreams(maxResults = 25) {
-	const youtube = getYouTubeClient()
+	const youtube = await getYouTubeClient()
 	const response = await youtube.liveStreams.list({
 		mine: true,
 		maxResults,
@@ -262,7 +263,7 @@ export async function getDefaultYouTubeLiveStreamId() {
 export async function createYouTubeLiveBroadcast(
 	input: CreateYouTubeLiveBroadcastInput,
 ) {
-	const youtube = getYouTubeClient()
+	const youtube = await getYouTubeClient()
 	const created = await youtube.liveBroadcasts.insert({
 		part: ['snippet', 'status', 'contentDetails'],
 		requestBody: {
@@ -321,7 +322,7 @@ export async function createYouTubeLiveBroadcast(
 export async function updateYouTubeLiveBroadcast(
 	input: UpdateYouTubeLiveBroadcastInput,
 ) {
-	const youtube = getYouTubeClient()
+	const youtube = await getYouTubeClient()
 	const existing = await youtube.liveBroadcasts.list({
 		id: [input.id],
 		part: ['id', 'snippet', 'status', 'contentDetails'],
@@ -370,7 +371,7 @@ export async function setYouTubeLiveBroadcastThumbnail({
 	videoId: string
 	imageUrl: string
 }): Promise<YouTubeLiveThumbnailUpload> {
-	const youtube = getYouTubeClient()
+	const youtube = await getYouTubeClient()
 	const upload = await getThumbnailUpload(imageUrl)
 
 	await youtube.thumbnails.set({

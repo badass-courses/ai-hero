@@ -264,8 +264,23 @@ export const REVENUE_SURFACE_SCHEMAS = {
 					couponId: { type: ['string', 'null'] },
 					userName: { type: ['string', 'null'] },
 					userEmail: { type: ['string', 'null'], format: 'email' },
-					isTeam: { type: 'boolean' },
-					seats: { type: ['integer', 'null'], minimum: 1 },
+					isTeam: {
+						type: 'boolean',
+						description:
+							'True only when the purchase has a bulk coupon with more than one seat. An organization alone does not make a purchase a team purchase.',
+					},
+					seats: {
+						type: ['integer', 'null'],
+						minimum: 2,
+						description:
+							'Seats bought by this purchase. Set only for a team purchase that is the only purchase on its bulk coupon. Null for individual purchases and for add-seat teams, where the per-purchase count is not stored.',
+					},
+					teamSeats: {
+						type: ['integer', 'null'],
+						minimum: 2,
+						description:
+							"The team's current total seats, its bulk coupon's maxUses today, for any team purchase. Null for individual purchases.",
+					},
 				},
 			},
 		},
@@ -273,6 +288,7 @@ export const REVENUE_SURFACE_SCHEMAS = {
 			'Rows are newest first. Large historical purchases do not outrank newer purchases.',
 			'The 100-row limit is per page. Follow _links.next.href until absent, or meta.pagination.nextOffset until null.',
 			'Read meta.pagination.totalMatchingRows for the full matching purchase count. meta.totalRows and meta.pagination.returnedRows describe only the current page.',
+			'A team purchase is one with a bulk coupon of more than one seat. Add-seat purchases reuse the team coupon and raise its total, so seats is null when a coupon has more than one purchase, and teamSeats is the team total now, not at purchase time.',
 		],
 	},
 } as const
