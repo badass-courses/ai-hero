@@ -306,7 +306,7 @@ export function createC5AuthoritativePrice(deps: C5PricingDeps) {
 			buyer.kind === 'buyer' &&
 			orderKind === 'individual' &&
 			!appReasons.length &&
-			isPppCreditBound(result)
+			isPppCreditBound(result, policy.value.policy)
 		) {
 			appReasons.push(APP_REASONS.pppCreditBound)
 			// Charge the bound with no credit source: it spends no credit.

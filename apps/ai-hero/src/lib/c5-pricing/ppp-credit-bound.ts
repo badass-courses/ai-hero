@@ -1,4 +1,7 @@
-import type { PricingResultData } from '@ai-hero/front-desk-support/pricing'
+import type {
+	PricingPolicyData,
+	PricingResultData,
+} from '@ai-hero/front-desk-support/pricing'
 
 import type {
 	AuthoritativeDecision,
@@ -15,26 +18,37 @@ import { APP_REASONS } from './reasons'
  * bound, and the backfill refunds the difference once the credit resolves.
  *
  * Front-desk's exact signature, matched in full and nothing broader:
- * - engine 0.2 or later (`creditOffRegional`)
+ * - engine 0.2 or later, under a policy that rules `creditOffPpp` true
+ *   (`creditOffRegional`)
  * - kind `bounded`; rule, basis and restriction `ppp`, `ppp`, `region`
  * - no credit source, and a whole positive amount
  * - exactly one unresolved entry: candidate `credit`, fact `credit`, any gap
- * - one `fact-unknown` reason, for `credit:`, and otherwise only window and
- *   selection reasons
+ * - one `fact-unknown` reason, for `credit:`, and otherwise only window,
+ *   selection and set-aside quote reasons
  */
-const WINDOW_AND_SELECTION: ReadonlySet<string> = new Set([
+const ALLOWED_REASONS: ReadonlySet<string> = new Set([
 	'early-window',
 	'standard-window',
 	'selected',
+	// A quote the engine set aside cannot lower the price. An unreadable quote
+	// basis could, so `quote-basis-unknown` stays blocked.
+	'quote-expired',
+	'quote-out-of-scope',
 ])
 
 /**
- * Engine 0.1 never takes the credit off the regional price, so the same
- * signature there can resolve to a cheaper unrestricted price, and a refund
- * cannot undo a region restriction. From 0.2 the credit comes off both
- * prices, so the regional price stays the winner and only the amount moves.
+ * Whether the credit comes off the regional price. Engine 0.1 never takes it
+ * off, and 0.2 only when the policy rules `creditOffPpp` true. Otherwise the
+ * same signature can resolve to a cheaper unrestricted price, and a refund
+ * cannot undo a region restriction. With the credit off both prices, the
+ * regional price stays the winner and only the amount moves.
  */
-function creditOffRegional(engineVersion: string) {
+function creditOffRegional(
+	engineVersion: string,
+	policy: Pick<PricingPolicyData, 'creditOffPpp'>,
+) {
+	const ruling = policy.creditOffPpp
+	if (!ruling || !('value' in ruling) || ruling.value !== true) return false
 	const [major, minor] = engineVersion.split('.').map(Number)
 	if (!Number.isInteger(major) || !Number.isInteger(minor)) return false
 	return major! > 0 || minor! >= 2
@@ -42,10 +56,11 @@ function creditOffRegional(engineVersion: string) {
 
 export function isPppCreditBound(
 	result: PricingResultData,
+	policy: Pick<PricingPolicyData, 'creditOffPpp'>,
 ): result is Extract<PricingResultData, { kind: 'bounded' }> {
 	if (result.kind !== 'bounded') return false
 	if (
-		!creditOffRegional(result.engineVersion) ||
+		!creditOffRegional(result.engineVersion, policy) ||
 		result.rule !== 'ppp' ||
 		result.basis !== 'ppp' ||
 		result.restriction !== 'region' ||
@@ -69,7 +84,7 @@ export function isPppCreditBound(
 		return false
 	return result.reasons.every(
 		(reason) =>
-			reason.code === 'fact-unknown' || WINDOW_AND_SELECTION.has(reason.code),
+			reason.code === 'fact-unknown' || ALLOWED_REASONS.has(reason.code),
 	)
 }
 

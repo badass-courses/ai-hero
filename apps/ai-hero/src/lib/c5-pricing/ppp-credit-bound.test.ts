@@ -1,5 +1,8 @@
 import type { PricingFacts } from '@ai-hero/front-desk-support'
-import type { PricingResultData } from '@ai-hero/front-desk-support/pricing'
+import type {
+	PricingPolicyData,
+	PricingResultData,
+} from '@ai-hero/front-desk-support/pricing'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { AuthoritativePriceRequest } from '@coursebuilder/core/schemas'
@@ -127,6 +130,13 @@ const mutations: [string, PricingResultData][] = [
 		},
 	],
 	[
+		'a quote whose basis it could not read',
+		{
+			...vector,
+			reasons: [...vector.reasons, { code: 'quote-basis-unknown', detail: '' }],
+		},
+	],
+	[
 		'a credit-spent reason',
 		{
 			...vector,
@@ -142,6 +152,27 @@ const mutations: [string, PricingResultData][] = [
 	],
 ]
 
+/** The live policy's regional-credit rulings, with invented sources. */
+const creditOffPpp = {
+	creditOffPpp: { source: 'test#creditOffPpp', value: true },
+	creditPaidMaximum: { source: 'test#creditPaidMaximum', value: 29_900 },
+}
+const policy = syntheticPolicy(creditOffPpp)
+/** Policies that keep the credit off the regional price. */
+const creditOnFormulaOnly: [string, PricingPolicyData][] = [
+	['an absent creditOffPpp', syntheticPolicy()],
+	[
+		'creditOffPpp ruled false',
+		syntheticPolicy({
+			creditOffPpp: { source: 'test#creditOffPpp', value: false },
+		}),
+	],
+	[
+		'creditOffPpp still a question',
+		syntheticPolicy({ creditOffPpp: { question: 'open' } }),
+	],
+]
+
 let buyer: BuyerRead
 /** The engine's result for each purpose: checkout runs the engine again. */
 let results: Record<'display' | 'checkout', PricingResultData>
@@ -149,11 +180,12 @@ const ask = async (
 	at: 'display' | 'checkout',
 	over: Partial<AuthoritativePriceRequest> = {},
 	deps: Partial<C5PricingDeps> = {},
+	policyData: PricingPolicyData = policy,
 ) => {
 	const decide = createC5AuthoritativePrice({
 		policy: async () => ({
 			ok: true,
-			value: { version: SYNTHETIC_POLICY_VERSION, policy: syntheticPolicy() },
+			value: { version: SYNTHETIC_POLICY_VERSION, policy: policyData },
 		}),
 		quotes: async () => ({ ok: true, value: [] }),
 		buyer: async () => buyer,
@@ -194,15 +226,30 @@ beforeEach(() => {
 
 describe('isPppCreditBound', () => {
 	it("matches front-desk's engine 0.2.0 vector", () => {
-		expect(isPppCreditBound(vector)).toBe(true)
+		expect(isPppCreditBound(vector, policy)).toBe(true)
 	})
 
 	it.each(mutations)('does not match %s', (_, result) => {
-		expect(isPppCreditBound(result)).toBe(false)
+		expect(isPppCreditBound(result, policy)).toBe(false)
 	})
 
+	it.each(['quote-expired', 'quote-out-of-scope'] as const)(
+		'still matches beside a set-aside quote: %s',
+		(code) => {
+			const setAside: PricingResultData = {
+				...vector,
+				reasons: [...vector.reasons, { code, detail: 'quote' }],
+			}
+			expect(isPppCreditBound(setAside, policy)).toBe(true)
+		},
+	)
+
 	it('does not match a priced result', () => {
-		expect(isPppCreditBound(credited)).toBe(false)
+		expect(isPppCreditBound(credited, policy)).toBe(false)
+	})
+
+	it.each(creditOnFormulaOnly)('does not match under %s', (_, formulaOnly) => {
+		expect(isPppCreditBound(vector, formulaOnly)).toBe(false)
 	})
 })
 
@@ -264,6 +311,18 @@ describe('a regional price bounded only by the credit', () => {
 			expect(pppCreditBoundCharge(request, decision)).toBeNull()
 		}
 	})
+
+	it.each(creditOnFormulaOnly)(
+		'stays blocked under %s',
+		async (_, formulaOnly) => {
+			for (const at of ['display', 'checkout'] as const) {
+				const { request, decision } = await ask(at, {}, {}, formulaOnly)
+				expect(decision).toMatchObject({ kind: 'bounded' })
+				expect(gateOf(decision).kind).toBe('blocked')
+				expect(pppCreditBoundCharge(request, decision)).toBeNull()
+			}
+		},
+	)
 
 	it('keeps an anonymous buyer on sign-in and never charges the bound', async () => {
 		buyer = { kind: 'anonymous', product }
