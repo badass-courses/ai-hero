@@ -57,7 +57,8 @@ export function getSearchParamValue(
 }
 
 /**
- * Fetches a ConvertKit subscriber with slow-call tracing.
+ * Fetches current consent state without the cross-request subscriber cache.
+ * React cache only deduplicates reads within this server render/request.
  */
 export const getEmailPreferenceSubscriber = cache(
 	async ({
@@ -81,7 +82,7 @@ export const getEmailPreferenceSubscriber = cache(
 			},
 			operation: async () =>
 				subscriberId
-					? (emailListProvider.getSubscriber(
+					? (emailListProvider.getSubscriberFresh(
 							subscriberId,
 						) as Promise<Subscriber | null>)
 					: (emailListProvider.getSubscriberByEmail(

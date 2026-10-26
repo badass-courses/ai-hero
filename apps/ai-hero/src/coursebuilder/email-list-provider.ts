@@ -44,6 +44,13 @@ const subscriberCache = createKitSubscriberCache((id) =>
 	}),
 )
 
+/** Consent and unsubscribe decisions must bypass the short-lived display cache. */
+export async function getSubscriberFresh(
+	id: Parameters<typeof convertkitProvider.getSubscriber>[0],
+) {
+	return convertkitProvider.getSubscriber(id)
+}
+
 /** Direct attribution/custom-field writes share the same 429 policy. */
 export async function setKitSubscriberFields(
 	input: Parameters<typeof coreSetSubscriberFields>[0],
@@ -239,6 +246,7 @@ export async function subscribeToKitListWithoutFields(
 
 export const emailListProvider = {
 	...convertkitProvider,
+	getSubscriberFresh,
 	getSubscriber: async (
 		id: Parameters<typeof convertkitProvider.getSubscriber>[0],
 	) => (id ? ((await subscriberCache.get(String(id))) ?? null) : null),

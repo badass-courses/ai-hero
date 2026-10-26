@@ -6,7 +6,14 @@
 
 Only a successful subscriber read, including its tags, or a 404 from the subscriber endpoint enters the cache. A failed tags read, 429, other error, or ambiguous empty response does not. A cached 404 returns `null` at the provider boundary. Successful subscription and field writes invalidate the affected ID when known. In-flight reads cannot refill an invalidated entry.
 
-The cache returns the complete subscriber state and fields without changing opt-out values. Consent reconciliation still reads by email through the uncached provider method. This is not a consent cache.
+The cache returns the complete subscriber state and fields without changing opt-out values. Consent and unsubscribe decisions must use `getSubscriberFresh` (also exposed on `emailListProvider`) or the uncached email/preference readers, never `getSubscriber`. The preferences identity reader uses `getSubscriberFresh`, so Kit-side changes to unsubscribe tags and subscriber state bypass the three-minute cache. React request memoization remains local to a render/request.
+
+Audited consent and sending paths:
+
+- `lib/email-preferences.ts`: preferences, unsubscribe identity checks, API reads, admin reads, and local preference synchronization share the fresh subscriber reader. `getProviderEmailPreferences` uses Course Builder's uncached `getSubscriberPreferences`.
+- `lib/subscriber-marketing/ai-hero-email-opt-in.server.ts`: opt-in reconciliation checks unsubscribe tags using uncached `getSubscriberByEmail`.
+- `lib/subscriber-marketing/evergreen-offer-journey/current-authority.ts`: the send-authority check reads current state and paginated exclusion tags through the direct Kit v4 transport wired by `server/evergreen-pilot-live.ts`, not this cache.
+- The remaining cached ID readers in `lib/convertkit.ts`, `lib/video-viewer-status-query.ts`, the survey router, the skills subscribe page, and the marketing operator's identity-link preview resolve display, survey, or identity data, not send consent. CTA gating uses cookie/display snapshots; final opt-in reconciliation stays uncached.
 
 ## Write retries
 
