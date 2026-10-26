@@ -30,10 +30,14 @@ export const ALUMNI_PRODUCTS = {
 	'product-7t9ek': 'c3',
 	'product-pqkk5': 'c4',
 } as const
-/** MerchantCoupon types that prove a coupon was neither PPP nor bulk. */
-export const VERIFIED_COUPON_TYPES: ReadonlySet<string> = new Set([
+/**
+ * MerchantCoupon types whose purchases earn credit for what was actually
+ * paid. A regional (PPP) purchase counts; a bulk one never does.
+ */
+export const CREDITABLE_COUPON_TYPES: ReadonlySet<string> = new Set([
 	'special',
 	'special credit',
+	'ppp',
 ])
 /** front-desk's upper bound for the existingSeats fact. */
 export const MAX_EXISTING_SEATS = 100_000
@@ -348,17 +352,15 @@ export function purchaseCandidate(
 			readonly stripeChargeId: string
 			readonly checkoutSessionId: string
 	  } {
-	if (row.status === 'Restricted') return excluded(row, 'restricted-ppp')
 	if (row.status === 'Refunded') return excluded(row, 'refunded')
 	if (row.status === 'Banned') return excluded(row, 'banned')
-	if (row.status !== 'Valid')
+	// A Restricted (regional) purchase earns credit for what it actually paid.
+	if (!CURRENT.has(row.status))
 		return { kind: 'unknown', gap: 'PaymentAmbiguous' }
 	if (row.bulkCouponId) return excluded(row, 'bulk')
 	if (row.redeemedBulkCouponId) return excluded(row, 'redeemed-bulk-seat')
 	if (row.couponId) {
 		const couponType = coupon?.type
-		// Never infer PPP from the amount. Only the coupon's own type counts.
-		if (couponType === 'ppp') return excluded(row, 'ppp-coupon')
 		if (couponType === 'bulk') return excluded(row, 'bulk-coupon')
 		// Only a proven free coupon without a MerchantCoupon can bypass type checks.
 		if (
@@ -369,7 +371,8 @@ export function purchaseCandidate(
 		)
 			return excluded(row, 'zero-paid')
 		// Any other missing coupon, MerchantCoupon or type proves nothing.
-		if (!couponType || !VERIFIED_COUPON_TYPES.has(couponType)) return ambiguous
+		if (!couponType || !CREDITABLE_COUPON_TYPES.has(couponType))
+			return ambiguous
 	}
 	if (!row.stripeChargeId)
 		return row.totalAmountCents === 0 ? excluded(row, 'zero-paid') : ambiguous
