@@ -4,7 +4,6 @@ import { unstable_cache } from 'next/cache'
 import { headers } from 'next/headers'
 import { createAppAbility, defineRulesForPurchases } from '@/ability'
 import { courseBuilderAdapter, db } from '@/db'
-import { getSubscriberFromCookie } from '@/lib/convertkit'
 import { getAllUserEntitlements } from '@/lib/entitlements-query'
 import { getCachedLesson, getLesson } from '@/lib/lessons-query'
 import { getCachedMinimalWorkshop, getWorkshop } from '@/lib/workshops-query'
@@ -58,19 +57,17 @@ const getCurrentAbilityRulesCached = cache(
 				// lookups that depend only on the arguments; wave two is what needs
 				// the session or the wave-one rows. Critical path: the workshop
 				// load, not the sum.
-				const [
-					convertkitSubscriber,
-					{ session },
-					lessonResource,
-					moduleResource,
-					entitlementTypes,
-				] = await Promise.all([
-					getSubscriberFromCookie(),
-					getServerAuthSession(),
-					lessonId ? getCachedLesson(lessonId) : null,
-					moduleId ? getWorkshop(moduleId) : null,
-					getCachedEntitlementTypes(),
-				])
+				//
+				// No Kit subscriber lookup here: `defineRulesForPurchases` grants
+				// nothing from a subscriber, and the cookie re-fetch made this the
+				// busiest Kit reader on the site for a value nothing read.
+				const [{ session }, lessonResource, moduleResource, entitlementTypes] =
+					await Promise.all([
+						getServerAuthSession(),
+						lessonId ? getCachedLesson(lessonId) : null,
+						moduleId ? getWorkshop(moduleId) : null,
+						getCachedEntitlementTypes(),
+					])
 
 				const [sectionResource, purchases, activeEntitlements] =
 					await Promise.all([
@@ -100,9 +97,6 @@ const getCurrentAbilityRulesCached = cache(
 					country,
 					entitlementTypes,
 					isSolution: false,
-					...(convertkitSubscriber && {
-						subscriber: convertkitSubscriber,
-					}),
 					...(lessonResource && { lesson: lessonResource }),
 					...(moduleResource && { module: moduleResource }),
 					...(sectionResource ? { section: sectionResource } : {}),
