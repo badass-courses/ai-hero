@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
 	),
 	where: vi.fn(),
 	logError: vi.fn(),
+	logDebug: vi.fn(),
 }))
 vi.mock('@/db', () => ({
 	courseBuilderAdapter: {},
@@ -35,7 +36,9 @@ vi.mock('./entitlements-query', () => ({ getAllUserEntitlements: vi.fn() }))
 vi.mock('./certificates', () => ({
 	checkCohortCertificateEligibilityFromWorkshops: vi.fn(),
 }))
-vi.mock('@/server/logger', () => ({ log: { error: mocks.logError } }))
+vi.mock('@/server/logger', () => ({
+	log: { error: mocks.logError, debug: mocks.logDebug },
+}))
 vi.mock('next/cache', () => ({ unstable_cache: (fn: unknown) => fn }))
 vi.mock('next/headers', () => ({ headers: vi.fn() }))
 
@@ -73,5 +76,30 @@ describe('cohort live relation readers', () => {
 		expect(
 			sqlText(options.with.resources.with.resource.with.resources.where),
 		).toContain('deletedat` is null')
+	})
+})
+
+describe('getCohort not-found handling', () => {
+	it('is null with a debug log and no error log when no row matches', async () => {
+		mocks.logError.mockClear()
+		mocks.logDebug.mockClear()
+		mocks.findFirst.mockResolvedValueOnce(null)
+
+		await expect(getCohort('missing-cohort')).resolves.toBeNull()
+		expect(mocks.logDebug).toHaveBeenCalledWith('cohort.not_found', {
+			slugOrId: 'missing-cohort',
+		})
+		expect(mocks.logError).not.toHaveBeenCalled()
+	})
+
+	it('still logs cohort.parse.error for a malformed row', async () => {
+		mocks.logError.mockClear()
+		mocks.findFirst.mockResolvedValueOnce({ id: 'cohort-1' } as never)
+
+		await expect(getCohort('cohort-1')).resolves.toBeNull()
+		expect(mocks.logError).toHaveBeenCalledWith(
+			'cohort.parse.error',
+			expect.objectContaining({ cohortId: 'cohort-1' }),
+		)
 	})
 })

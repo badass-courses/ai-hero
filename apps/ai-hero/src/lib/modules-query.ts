@@ -62,6 +62,8 @@ export async function getModule(moduleSlugOrId: string) {
 		},
 	})
 
+	if (!moduleData) return null
+
 	const parsedModule = ModuleSchema.safeParse(moduleData)
 	if (!parsedModule.success) {
 		void log.error('module.parse.error', {
