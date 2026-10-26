@@ -784,8 +784,7 @@ export const RegionalPricingBox = () => {
 					APP_REASONS.formulaUsesCredit,
 				) && (
 					<p className={cn(TYPE.metaSm, 'text-muted-foreground mt-2')}>
-						Regional pricing doesn&apos;t combine with your Crash Course credit.
-						You&apos;ll get whichever price is lower.
+						Your Crash Course credit comes off the regional price too.
 					</p>
 				)}
 		</div>
