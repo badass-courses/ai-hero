@@ -5,6 +5,7 @@ import {
 	createFrontDeskData,
 	POLICY_FRESH_MS,
 	POLICY_MAX_STALE_MS,
+	QUOTES_ATTEMPTS,
 	QUOTES_FRESH_MS,
 } from './front-desk-data'
 import {
@@ -184,6 +185,35 @@ describe('front-desk binding quote reads', () => {
 			ok: false,
 			reason: 'quotes-http-503',
 		})
+	})
+
+	it('retries a dropped read once within the same total budget', async () => {
+		let calls = 0
+		const { data, fetch } = setup(async () => {
+			if (++calls === 1) throw new DOMException('timed out', 'TimeoutError')
+			return json([quote])
+		})
+		await expect(data.bindingQuotes({ ...input, fresh: true })).resolves.toEqual({
+			ok: true,
+			value: [quote],
+		})
+		expect(fetch).toHaveBeenCalledTimes(QUOTES_ATTEMPTS)
+		for (const [, init] of fetch.mock.calls) expect(init.signal).toBeInstanceOf(AbortSignal)
+	})
+
+	it('reports unreachable after every attempt drops, and never retries an answer', async () => {
+		const down = setup(async () => {
+			throw new Error('down')
+		})
+		await expect(down.data.bindingQuotes({ ...input, fresh: true })).resolves.toEqual({
+			ok: false,
+			reason: 'quotes-unreachable',
+		})
+		expect(down.fetch).toHaveBeenCalledTimes(QUOTES_ATTEMPTS)
+
+		const busy = setup(async () => new Response('busy', { status: 503 }))
+		await busy.data.bindingQuotes({ ...input, fresh: true })
+		expect(busy.fetch).toHaveBeenCalledTimes(1)
 	})
 
 	it('fails without a quotes token rather than answering no quotes', async () => {
