@@ -72,10 +72,16 @@ describe("learner-flow summary pagination", () => {
     let idPage = 0;
     let hydrationPage = 0;
     const database = {
-      selectDistinct: (selection: unknown) => ({
-        from: () => ({
-          where: () => ({
-            union: () => ({ as: () => ({ contactId: selection && {} }) }),
+      selectDistinct: () => ({
+        from: (table: unknown) => ({
+          where: (condition: unknown) => ({
+            orderBy: () => ({
+              limit: (limit: number) => {
+                if (table === contactEvent) return [];
+                idQueries.push({ condition, limit });
+                return idPages[idPage++] ?? [];
+              },
+            }),
           }),
         }),
       }),
@@ -298,13 +304,7 @@ describe("learner-flow summary pagination", () => {
     }> = [];
     let idPage = 0;
     const database = {
-      selectDistinct: (selection: unknown) => ({
-        from: () => ({
-          where: () => ({
-            union: () => ({ as: () => ({ contactId: selection && {} }) }),
-          }),
-        }),
-      }),
+      selectDistinct: () => ({ from: (table: unknown) => ({ where: () => ({ orderBy: () => ({ limit: () => table === sideEffectIntent ? [{ contactId }] : [] }) }) }) }),
       select: (selection?: Record<string, unknown>) => ({
         from: (table: unknown) => ({
           where: (condition: unknown) => {
@@ -379,13 +379,7 @@ describe("learner-flow summary pagination", () => {
     };
     let idPage = 0;
     const database = {
-      selectDistinct: (selection: unknown) => ({
-        from: () => ({
-          where: () => ({
-            union: () => ({ as: () => ({ contactId: selection && {} }) }),
-          }),
-        }),
-      }),
+      selectDistinct: () => ({ from: (table: unknown) => ({ where: () => ({ orderBy: () => ({ limit: () => table === sideEffectIntent ? [{ contactId }] : [] }) }) }) }),
       select: () => ({
         from: (table: unknown) => ({
           where: () => {
@@ -464,13 +458,7 @@ describe("learner-flow summary pagination", () => {
     };
     let idPage = 0;
     const database = {
-      selectDistinct: (selection: unknown) => ({
-        from: () => ({
-          where: () => ({
-            union: () => ({ as: () => ({ contactId: selection && {} }) }),
-          }),
-        }),
-      }),
+      selectDistinct: () => ({ from: (table: unknown) => ({ where: () => ({ orderBy: () => ({ limit: () => table === sideEffectIntent ? [{ contactId }] : [] }) }) }) }),
       select: () => ({
         from: (table: unknown) => ({
           where: () => {
@@ -540,13 +528,7 @@ describe("learner-flow summary pagination", () => {
     }> = [];
     let idPage = 0;
     const database = {
-      selectDistinct: (selection: unknown) => ({
-        from: () => ({
-          where: () => ({
-            union: () => ({ as: () => ({ contactId: selection && {} }) }),
-          }),
-        }),
-      }),
+      selectDistinct: () => ({ from: (table: unknown) => ({ where: () => ({ orderBy: () => ({ limit: () => table === sideEffectIntent ? [{ contactId }] : [] }) }) }) }),
       select: (selection?: Record<string, unknown>) => ({
         from: (table: unknown) => ({
           where: (condition: unknown) => {
@@ -616,10 +598,12 @@ describe("learner-flow summary pagination", () => {
   it("does not classify a learner deleted after the frozen ID scan", async () => {
     let idRead = false;
     const database = {
-      selectDistinct: (selection: unknown) => ({
-        from: () => ({
+      selectDistinct: () => ({
+        from: (table: unknown) => ({
           where: () => ({
-            union: () => ({ as: () => ({ contactId: selection && {} }) }),
+            orderBy: () => ({
+              limit: () => table === sideEffectIntent ? [{ contactId: 'deleted-after-id-scan' }] : [],
+            }),
           }),
         }),
       }),

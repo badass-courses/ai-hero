@@ -28,10 +28,15 @@ it('bounds repair hydration and retains full entry evidence across row pages', a
 	const stopCalls: Array<{ params: unknown[]; limit: number }> = []
 	const database = {
 		selectDistinct: () => ({
-			from: () => ({
+			from: (table: unknown) => ({
 				where: () => ({
-					union: () => ({
-						as: () => ({ contactId: sideEffectIntent.contactId }),
+					orderBy: () => ({
+						limit: (limit: number) => {
+							if (table === contactEvent) return []
+							const page = ids.slice(idOffset, idOffset + limit)
+							idOffset += page.length
+							return page.map((contactId) => ({ contactId }))
+						},
 					}),
 				}),
 			}),
