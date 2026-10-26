@@ -53,16 +53,16 @@ describe("learner-flow summary pagination", () => {
     const firstIds = Array.from(
       { length: LEARNER_FLOW_RECORD_PAGE_SIZE },
       (_, index) => ({
-        contactId: `contact-${String(index).padStart(4, "0")}`,
+        contactId: `contact${String(index).padStart(4, "0")}`,
       }),
     );
     const secondIds = Array.from(
       { length: LEARNER_FLOW_RECORD_PAGE_SIZE },
       (_, index) => ({
-        contactId: `contact-${String(index + LEARNER_FLOW_RECORD_PAGE_SIZE).padStart(4, "0")}`,
+        contactId: `contact${String(index + LEARNER_FLOW_RECORD_PAGE_SIZE).padStart(4, "0")}`,
       }),
     );
-    const lastIds = [{ contactId: "contact-z" }];
+    const lastIds = [{ contactId: "contactz" }];
     const idPages = [firstIds, secondIds, lastIds];
     const idQueries: Array<{ condition: unknown; limit: number }> = [];
     const relatedQueries: Array<{
@@ -312,7 +312,7 @@ describe("learner-flow summary pagination", () => {
   });
 
   it("keyset-pages projected intents inside one learner page", async () => {
-    const contactId = "intent-heavy";
+    const contactId = "intentheavy";
     const fullPage = Array.from({ length: 5000 }, (_, index) => ({
       ...intentRow(contactId),
       id: `intent-${String(index).padStart(6, "0")}`,
@@ -386,7 +386,7 @@ describe("learner-flow summary pagination", () => {
   });
 
   it("reconstructs only bounded classifier metadata facts", async () => {
-    const contactId = "metadata-facts";
+    const contactId = "metadatafacts";
     const projected = {
       ...intentRow(contactId),
       completedAt: null,
@@ -478,7 +478,7 @@ describe("learner-flow summary pagination", () => {
   });
 
   it("does not coerce wrong JSON scalar types into classifier facts", async () => {
-    const contactId = "wrong-json-types";
+    const contactId = "wrongjsontypes";
     const projected = {
       ...intentRow(contactId),
       valuePathSlug: "null",
@@ -542,7 +542,7 @@ describe("learner-flow summary pagination", () => {
   });
 
   it("keyset-pages projected entry events inside one learner page", async () => {
-    const contactId = "entry-heavy";
+    const contactId = "entryheavy";
     const fullPage = Array.from(
       { length: LEARNER_FLOW_ENTRY_EVENT_PAGE_SIZE },
       (_, index) => ({
@@ -661,7 +661,7 @@ describe("learner-flow summary pagination", () => {
             orderBy: () => ({
               limit: () =>
                 table === sideEffectIntent
-                  ? [{ contactId: "deleted-after-id-scan" }]
+                  ? [{ contactId: "deletedafteridscan" }]
                   : [],
             }),
           }),
@@ -682,7 +682,7 @@ describe("learner-flow summary pagination", () => {
                 limit: () => {
                   if (idRead) return [];
                   idRead = true;
-                  return [{ contactId: "deleted-after-id-scan" }];
+                  return [{ contactId: "deletedafteridscan" }];
                 },
               }),
             };

@@ -74,6 +74,15 @@ import {
 
 type AiHeroWriteDatabase = any
 
+class LearnerFlowContactIdOrderingError extends Error {
+	constructor() {
+		super(
+			'Learner-flow contact IDs must contain only lowercase ASCII letters and digits',
+		)
+		this.name = 'LearnerFlowContactIdOrderingError'
+	}
+}
+
 const AWAITED_DISPATCH_EVENT_TYPES: ReadonlySet<string> = new Set([
 	JOURNEY_OWNER_ASSIGNED_EVENT_TYPE,
 	'purchase.recorded',
@@ -908,6 +917,19 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 				intentContactIds,
 				entryContactIds,
 			])
+			// JS code-unit sort must match MySQL utf8mb4_0900_ai_ci (NO PAD),
+			// or the shared cursor could skip IDs. They agree on lowercase ASCII
+			// letters/digits, including mixed-length IDs and shared prefixes.
+			// Compare the entire match because JS `$` also accepts a final newline.
+			if (
+				rows.some((source) =>
+					source.some(
+						(row) => /^[a-z0-9]+$/.exec(row.contactId)?.[0] !== row.contactId,
+					),
+				)
+			) {
+				throw new LearnerFlowContactIdOrderingError()
+			}
 			// Each source contributes at most pageSize distinct IDs. Any ID beyond
 			// either source's page cannot precede the merged page's last ID.
 			const page = [...new Set(rows.flat().map((row) => row.contactId))]

@@ -63,11 +63,15 @@ async function scan(
   return { ids, queries };
 }
 
-// Contact IDs are generated from lowercase ASCII letters/digits in this repository.
-const idSet = fc.array(
-  fc.integer({ min: 0, max: 80 }).map((n) => `c${String(n).padStart(3, "0")}`),
-  { maxLength: 100 },
-);
+// Production IDs are 5–8 lowercase alphanumeric characters. Broaden to 1–10
+// to exercise mixed lengths: JS and MySQL ordering must agree at shared prefixes.
+const contactId = fc
+  .array(fc.constantFrom(..."0123456789abcdefghijklmnopqrstuvwxyz"), {
+    minLength: 1,
+    maxLength: 10,
+  })
+  .map((characters) => characters.join(""));
+const idSet = fc.array(contactId, { maxLength: 100 });
 
 describe("learner-flow membership keyset merge", () => {
   it("walks any two overlapping ID sets exactly once in ascending order", async () => {
@@ -86,6 +90,7 @@ describe("learner-flow membership keyset merge", () => {
   });
 
   it.each([
+    { intents: ["abc12", "abc12z"], entries: ["abc12", "abc123"], size: 2 },
     { intents: ["a", "b", "c", "d"], entries: ["b", "c", "e"], size: 2 },
     { intents: ["a", "z"], entries: ["b", "c", "d"], size: 2 },
     { intents: ["a"], entries: ["a"], size: 1 },
@@ -97,6 +102,40 @@ describe("learner-flow membership keyset merge", () => {
     async ({ intents, entries, size }) => {
       const { ids } = await scan(intents, entries, size);
       expect(ids).toEqual([...new Set([...intents, ...entries])].sort());
+    },
+  );
+
+  it("rejects IDs outside the ordering alphabet from either source", async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        contactId,
+        fc.constantFrom("A", "-", "é", " ", "\n"),
+        fc.boolean(),
+        async (prefix, invalidCharacter, fromIntent) => {
+          const invalidId = prefix + invalidCharacter;
+          await expect(
+            scan(
+              fromIntent ? [invalidId] : [],
+              fromIntent ? [] : [invalidId],
+              1,
+            ),
+          ).rejects.toMatchObject({
+            name: "LearnerFlowContactIdOrderingError",
+          });
+        },
+      ),
+      { numRuns: 100, seed: 20261026 },
+    );
+  });
+
+  it.each(["", "ABC12", "abc-12", "abc12 ", "abc12\n", "ábc12"])(
+    "throws a named ordering error for invalid ID %j",
+    async (invalidId) => {
+      for (const fromIntent of [true, false]) {
+        await expect(
+          scan(fromIntent ? [invalidId] : [], fromIntent ? [] : [invalidId], 1),
+        ).rejects.toMatchObject({ name: "LearnerFlowContactIdOrderingError" });
+      }
     },
   );
 
