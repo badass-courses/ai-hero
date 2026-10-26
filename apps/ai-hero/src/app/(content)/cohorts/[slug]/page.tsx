@@ -19,8 +19,6 @@ import { PROSE_MEASURE } from '@/components/mdx/prose'
 import { DiscountDeadline } from '@/components/pricing/discount-deadline'
 import { HasPurchased } from '@/components/pricing/has-purchased'
 import { PricingInline } from '@/components/pricing/pricing-inline'
-import { db } from '@/db'
-import { products } from '@/db/schema'
 import { env } from '@/env.mjs'
 import type { CampaignLanding } from '@/lib/campaign-landings'
 import { CohortPageProps, type Cohort } from '@/lib/cohort'
@@ -31,6 +29,7 @@ import {
 } from '@/lib/cohort-stats'
 import { getCachedCohort, loadCohortPageData } from '@/lib/cohorts-query'
 import { isOnCohortWaitlist } from '@/lib/cta-gating'
+import { getActiveProductSlugMap } from '@/lib/product-slug-map'
 import { getSubscriberForGating } from '@/lib/subscriber-gate'
 import {
 	CourseStructuredData,
@@ -39,7 +38,6 @@ import {
 import type { Workshop } from '@/lib/workshops'
 import { compileMDX } from '@/utils/compile-mdx'
 import { formatDiscount } from '@/utils/discount-formatter'
-import { eq } from 'drizzle-orm'
 import { CheckCircle } from 'lucide-react'
 import { Markdown as ReactMarkdown } from '@/components/markdown'
 
@@ -238,11 +236,9 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	// with it (`.catch(() => 0)`, as on the landing page and /courses).
 	// Fetched alongside the product map because neither depends on the other,
 	// and serialising them only adds latency to the server render.
-	const [alumniCount, allProducts] = await Promise.all([
+	const [alumniCount, productMap] = await Promise.all([
 		getCachedCohortAlumniCount().catch(() => 0),
-		db.query.products.findMany({
-			where: eq(products.status, 1),
-		}),
+		getActiveProductSlugMap(),
 	])
 	// The lesson total for "Includes" is off for now (Vojta, 2026-10-14): the
 	// list leads with the workshop count alone. To bring it back, restore this
@@ -267,8 +263,6 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	const lessonCount = 0
 	const alumniLabel = formatAlumniCount(alumniCount)
 
-	// Get product slug to ID map for HasPurchased component
-	const productMap = new Map(allProducts.map((p) => [p.fields?.slug, p.id]))
 	// Use post-purchase body copy for purchasers when available,
 	// otherwise fall back to the standard sales body. A `bodySource` from the
 	// preview route stands in for either.
