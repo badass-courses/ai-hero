@@ -239,19 +239,96 @@ describe('purchase.recorded lifecycle contact events', () => {
 		}
 	})
 
-	it('skips purchasers with no existing contact instead of creating one', async () => {
+	it('creates a provisional contact for a buyer with none and records the purchase', async () => {
 		const repository = new InMemorySubscriberMarketingRepository()
 
 		const summary = await writePurchaseRecordedContactEvents({
 			repository,
-			rows: [purchaseSource({ email: 'stranger@example.com' })],
+			rows: [purchaseSource({ email: 'Stranger@Example.com' })],
+			now: NOW,
+		})
+
+		expect(summary.counts.written).toBe(1)
+		expect(
+			summary.counts.skippedByReason['no-existing-contact'],
+		).toBeUndefined()
+		expect(repository.contacts.size).toBe(1)
+		const contact = [...repository.contacts.values()][0]!
+		expect(contact.email).toBe('stranger@example.com')
+		expect(contact.userId).toBe('user-1')
+		expect(contact.isProvisional).toBe(true)
+		expect(summary.written[0]!.contactId).toBe(contact.id)
+		expect(summary.written[0]!.eventType).toBe('purchase.recorded')
+	})
+
+	it('records a seat redemption by a buyer with no contact', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+
+		const summary = await writePurchaseRecordedContactEvents({
+			repository,
+			rows: [
+				purchaseSource({
+					purchaseId: 'purchase-seat',
+					userId: 'seat-user',
+					email: 'seat@example.com',
+					totalAmount: '0',
+				}),
+			],
+			now: NOW,
+		})
+
+		expect(summary.counts.written).toBe(1)
+		expect(repository.contacts.size).toBe(1)
+		expect(summary.written[0]!.semanticIdempotencyKey).toBe(
+			'ai-hero:purchase.recorded:purchase:purchase-seat',
+		)
+	})
+
+	it('writes one event and one contact when the same purchase is redelivered', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const row = purchaseSource({ email: 'stranger@example.com' })
+
+		await writePurchaseRecordedContactEvents({
+			repository,
+			rows: [row],
+			now: NOW,
+		})
+		const second = await writePurchaseRecordedContactEvents({
+			repository,
+			rows: [row],
+			now: NOW,
+		})
+
+		expect(second.counts.written).toBe(0)
+		expect(second.counts.skippedByReason['duplicate-semantic-key']).toBe(1)
+		expect(repository.contacts.size).toBe(1)
+		expect(repository.contactEvents.size).toBe(1)
+	})
+
+	it('still skips a row with no identity evidence and creates nothing', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+
+		const summary = await writePurchaseRecordedContactEvents({
+			repository,
+			rows: [purchaseSource({ userId: null, email: null })],
 			now: NOW,
 		})
 
 		expect(summary.counts.written).toBe(0)
+		expect(summary.counts.skippedByReason['no-identity-evidence']).toBe(1)
+		expect(repository.contacts.size).toBe(0)
+	})
+
+	it('does not create contacts when only previewing', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+
+		const summary = await previewPurchaseRecordedContactEvents({
+			repository,
+			rows: [purchaseSource({ email: 'stranger@example.com' })],
+		})
+
 		expect(summary.counts.skippedByReason['no-existing-contact']).toBe(1)
 		expect(repository.contacts.size).toBe(0)
-		expect(repository.contactEvents.size).toBe(0)
 	})
 
 	it('produces the same semantic key from forward capture and backfill shapes', () => {
@@ -265,9 +342,7 @@ describe('purchase.recorded lifecycle contact events', () => {
 			purchaseSource({ email: null, name: null }),
 			evidence,
 		)
-		expect(forward.semanticIdempotencyKey).toBe(
-			backfill.semanticIdempotencyKey,
-		)
+		expect(forward.semanticIdempotencyKey).toBe(backfill.semanticIdempotencyKey)
 		expect(forward.semanticIdempotencyKey).toBe(
 			purchaseRecordedSemanticKey('purchase-1'),
 		)
@@ -381,8 +456,14 @@ describe('evergreen coupon purchases (row 194)', () => {
 	}
 
 	it.each([
-		['a user with no contact', { userId: 'user-new', email: 'new@example.com' }],
-		['an unknown email and no user', { userId: null, email: 'new@example.com' }],
+		[
+			'a user with no contact',
+			{ userId: 'user-new', email: 'new@example.com' },
+		],
+		[
+			'an unknown email and no user',
+			{ userId: null, email: 'new@example.com' },
+		],
 	])(
 		'records the purchase on the coupon contact when the buyer is %s (was skipped)',
 		async (_label, buyer) => {
@@ -600,7 +681,9 @@ describe('evergreen coupon purchases (row 194)', () => {
 			contactId: buyerContact.id,
 			identityResolutionPath: 'user-id-existing-ai-hero-provider-identity',
 		})
-		expect(eventsFor(repository, buyerContact.id)[0]?.domainPayload).toBeUndefined()
+		expect(
+			eventsFor(repository, buyerContact.id)[0]?.domainPayload,
+		).toBeUndefined()
 	})
 
 	describe('a purchase.recorded whose drovr dispatch died (row 194b)', () => {
@@ -643,64 +726,64 @@ describe('evergreen coupon purchases (row 194)', () => {
 		})
 
 		it('re-sends the evergreen coupon evidence and the same drovr keys as the first attempt, though the row read back from MySQL has no domainPayload', async () => {
-		const repository = new DyingDispatchRepository()
-		const offerContact = seedOfferContact(repository)
-		seedUserContact(repository, {
-			email: 'buyer@example.com',
-			userId: 'user-1',
-		})
-		const row = purchaseSource({
-			productId: 'product-ma254',
-			evergreenOffer: { couponId: COUPON_ID, contactId: offerContact.id },
-		})
-		await expect(
-			writePurchaseRecordedContactEvents({
+			const repository = new DyingDispatchRepository()
+			const offerContact = seedOfferContact(repository)
+			seedUserContact(repository, {
+				email: 'buyer@example.com',
+				userId: 'user-1',
+			})
+			const row = purchaseSource({
+				productId: 'product-ma254',
+				evergreenOffer: { couponId: COUPON_ID, contactId: offerContact.id },
+			})
+			await expect(
+				writePurchaseRecordedContactEvents({
+					repository,
+					rows: [row],
+					now: NOW,
+					redispatchDuplicates: true,
+				}),
+			).rejects.toThrow('lambda died before the dispatch')
+			const [inserted] = [...repository.contactEvents.values()]
+			if (!inserted) throw new Error('the insert left no record')
+			expect(inserted.domainPayload).toMatchObject({
+				evergreenOffer: { couponId: COUPON_ID, sameOffer: true },
+			})
+			repository.dieAfterInsert = false
+
+			await writePurchaseRecordedContactEvents({
 				repository,
 				rows: [row],
 				now: NOW,
 				redispatchDuplicates: true,
-			}),
-		).rejects.toThrow('lambda died before the dispatch')
-		const [inserted] = [...repository.contactEvents.values()]
-		if (!inserted) throw new Error('the insert left no record')
-		expect(inserted.domainPayload).toMatchObject({
-			evergreenOffer: { couponId: COUPON_ID, sameOffer: true },
-		})
-		repository.dieAfterInsert = false
+			})
 
-		await writePurchaseRecordedContactEvents({
-			repository,
-			rows: [row],
-			now: NOW,
-			redispatchDuplicates: true,
+			const [resent] = repository.redispatched
+			if (!resent) throw new Error('nothing was re-dispatched')
+			const firstAttempt = mapDrovrShadowFact({
+				kind: 'contact-event',
+				event: inserted,
+			})
+			const secondAttempt = mapDrovrShadowFact({
+				kind: 'contact-event',
+				event: resent,
+			})
+			expect(
+				secondAttempt.find(
+					(event) => event.journeyId === DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+				)?.payload,
+			).toEqual({
+				productId: 'product-ma254',
+				couponId: COUPON_ID,
+				sameOffer: true,
+			})
+			expect(secondAttempt).toEqual(firstAttempt)
+			expect(secondAttempt.map((event) => event.idempotencyKey)).toEqual(
+				firstAttempt.map((event) => event.idempotencyKey),
+			)
 		})
 
-		const [resent] = repository.redispatched
-		if (!resent) throw new Error('nothing was re-dispatched')
-		const firstAttempt = mapDrovrShadowFact({
-			kind: 'contact-event',
-			event: inserted,
-		})
-		const secondAttempt = mapDrovrShadowFact({
-			kind: 'contact-event',
-			event: resent,
-		})
-		expect(
-			secondAttempt.find(
-				(event) => event.journeyId === DROVR_EVERGREEN_OFFER_JOURNEY_ID,
-			)?.payload,
-		).toEqual({
-			productId: 'product-ma254',
-			couponId: COUPON_ID,
-			sameOffer: true,
-		})
-		expect(secondAttempt).toEqual(firstAttempt)
-		expect(secondAttempt.map((event) => event.idempotencyKey)).toEqual(
-			firstAttempt.map((event) => event.idempotencyKey),
-		)
-	})
-
-	it('re-dispatches nothing when the flag is off, as a backfill runs', async () => {
+		it('re-dispatches nothing when the flag is off, as a backfill runs', async () => {
 			const repository = dyingRepository()
 			repository.dieAfterInsert = false
 			await writePurchaseRecordedContactEvents({
@@ -745,8 +828,8 @@ describe('evergreen coupon purchases (row 194)', () => {
 
 			expect(
 				repository.redispatched
-				.map((event) => event.semanticIdempotencyKey)
-				.sort(),
+					.map((event) => event.semanticIdempotencyKey)
+					.sort(),
 			).toEqual([
 				purchaseRecordedSemanticKey('purchase-1'),
 				purchaseRecordedBuyerSemanticKey('purchase-1'),
