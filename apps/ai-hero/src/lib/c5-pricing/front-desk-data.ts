@@ -40,6 +40,8 @@ export const QUOTES_FRESH_MS = 60_000
 /** Display never uses a buyer's quotes older than this. */
 export const QUOTES_MAX_STALE_MS = 10 * 60_000
 export const FRONT_DESK_DATA_TIMEOUT_MS = 4_000
+/** Binding-quote reads split the timeout above across this many attempts. */
+export const QUOTES_ATTEMPTS = 2
 const QUOTES_CACHE_LIMIT = 1_000
 
 type Clock = () => number
@@ -209,21 +211,28 @@ export function createFrontDeskData(
 		async (): Promise<DataRead<{ value: readonly BindingQuoteData[] }>> => {
 			if (!options.quotesToken)
 				return { ok: false, reason: 'quotes-not-configured' }
-			let response: Response
-			try {
-				response = await doFetch(new URL(BINDING_QUOTES_PATH, options.url), {
-					method: 'POST',
-					headers: {
-						authorization: `Bearer ${options.quotesToken}`,
-						'content-type': 'application/json',
-					},
-					body: JSON.stringify(input),
-					cache: 'no-store',
-					signal: AbortSignal.timeout(timeout),
-				})
-			} catch {
-				return { ok: false, reason: 'quotes-unreachable' }
+			// The read is idempotent. A slow or dropped attempt often lands on a
+			// different front-desk edge site when retried, so split the same total
+			// budget across attempts instead of raising it.
+			const attemptTimeout = Math.floor(timeout / QUOTES_ATTEMPTS)
+			let response: Response | undefined
+			for (let attempt = 0; attempt < QUOTES_ATTEMPTS && !response; attempt++) {
+				try {
+					response = await doFetch(new URL(BINDING_QUOTES_PATH, options.url), {
+						method: 'POST',
+						headers: {
+							authorization: `Bearer ${options.quotesToken}`,
+							'content-type': 'application/json',
+						},
+						body: JSON.stringify(input),
+						cache: 'no-store',
+						signal: AbortSignal.timeout(attemptTimeout),
+					})
+				} catch {
+					// Try again within the budget; the last failure is reported below.
+				}
 			}
+			if (!response) return { ok: false, reason: 'quotes-unreachable' }
 			if (response.status !== 200)
 				return { ok: false, reason: `quotes-http-${response.status}` }
 			let body: unknown
