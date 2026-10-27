@@ -21,6 +21,7 @@ import {
 	AUTH_ERROR_VIEWS,
 	GENERIC_AUTH_ERROR,
 	authErrorView,
+	resolveAuthErrorCode,
 } from '@/lib/auth-error-view'
 import { Login } from '@/components/login'
 
@@ -64,6 +65,51 @@ describe('auth error copy', () => {
 		const view = authErrorView(code as string | null | undefined)
 		expect(view).toBe(GENERIC_AUTH_ERROR)
 		expect(JSON.stringify(view)).not.toContain(String(code || 'x-none'))
+	})
+})
+
+describe('inactive recipient', () => {
+	it('tells the person to contact support, with no address or email form', () => {
+		const view = authErrorView('EmailInactive')
+		expect(view.message).toBe(
+			"We couldn't email you a login link. Please contact team@aihero.dev and we'll get you in.",
+		)
+		expect(view.emailForm).toBe(false)
+		expect(JSON.stringify(view)).not.toMatch(/[\w.+-]+@(?!aihero\.dev)[\w.-]+/)
+	})
+
+	it('is reached only by the CredentialsSignin + EmailInactive pair', () => {
+		expect(resolveAuthErrorCode('CredentialsSignin', 'EmailInactive')).toBe(
+			'EmailInactive',
+		)
+		expect(resolveAuthErrorCode('CredentialsSignin', 'credentials')).toBe(
+			'CredentialsSignin',
+		)
+		expect(resolveAuthErrorCode('EmailInactive', undefined)).toBe(
+			'EmailInactive',
+		)
+		expect(resolveAuthErrorCode('Verification', 'EmailInactive')).toBe(
+			'Verification',
+		)
+	})
+
+	it('renders from the error page query', async () => {
+		const element = await AuthErrorPage({
+			searchParams: Promise.resolve({
+				error: 'CredentialsSignin',
+				code: 'EmailInactive',
+			}),
+		})
+		const texts: string[] = []
+		const walk = (node: unknown): void => {
+			if (typeof node === 'string') texts.push(node)
+			if (!node || typeof node !== 'object') return
+			const props = (node as { props?: Record<string, unknown> }).props
+			if (props) for (const v of Object.values(props)) walk(v)
+			if (Array.isArray(node)) node.forEach(walk)
+		}
+		walk(element)
+		expect(texts.join(' ')).toContain('contact team@aihero.dev')
 	})
 })
 

@@ -29,6 +29,7 @@ export const AUTH_ERROR_CODES = [
 	'EmailSignin',
 	'CredentialsSignin',
 	'SessionRequired',
+	'EmailInactive',
 	'Default',
 ] as const
 
@@ -87,6 +88,15 @@ export const AUTH_ERROR_VIEWS: Record<AuthErrorCode, AuthErrorView> = {
 		emailForm: true,
 		actions: [],
 	},
+	// The login-link send was refused because the recipient address is marked
+	// inactive. Resending cannot help, so no email form: send them to support.
+	EmailInactive: {
+		title: 'We could not email you a login link',
+		message:
+			"We couldn't email you a login link. Please contact team@aihero.dev and we'll get you in.",
+		emailForm: false,
+		actions: [],
+	},
 	EmailSignin: {
 		title: 'We could not send that login link',
 		message:
@@ -129,6 +139,20 @@ export const AUTH_ERROR_VIEWS: Record<AuthErrorCode, AuthErrorView> = {
 
 function isAuthErrorCode(code: string): code is AuthErrorCode {
 	return Object.hasOwn(AUTH_ERROR_VIEWS, code)
+}
+
+/**
+ * Auth.js only forwards a fixed set of error types to `pages.error`; the
+ * inactive-recipient failure rides on `CredentialsSignin` with a `code`
+ * (see coursebuilder/email-provider.ts). Fold the pair back into one code.
+ */
+export function resolveAuthErrorCode(
+	error: string | null | undefined,
+	code: string | null | undefined,
+): string | null | undefined {
+	return error === 'CredentialsSignin' && code === 'EmailInactive'
+		? 'EmailInactive'
+		: error
 }
 
 /** The code is kept for logs only when it is one we know; never echoed. */

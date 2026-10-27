@@ -13,17 +13,35 @@ vi.mock('@/db', () => ({
 	},
 }))
 vi.mock('@/env.mjs', () => ({
-	env: { POSTMARK_API_KEY: 'pm', NEXT_PUBLIC_SUPPORT_EMAIL: 'team@example.test' },
+	env: {
+		POSTMARK_API_KEY: 'pm',
+		NEXT_PUBLIC_SUPPORT_EMAIL: 'team@example.test',
+	},
 }))
 vi.mock('@/lib/find-or-create-user', () => ({
 	findOrCreateUserWithPersonalOrg: mocks.findOrCreateUserWithPersonalOrg,
 }))
-vi.mock('@coursebuilder/email/send-verification-request', () => ({
-	sendVerificationRequest: mocks.sendVerificationRequest,
-}))
+vi.mock('@coursebuilder/email/send-verification-request', () => {
+	class PostmarkSendError extends Error {
+		readonly status?: number
+		readonly postmarkErrorCode?: number
+		constructor(options: { status?: number; postmarkErrorCode?: number }) {
+			super(`Postmark request failed with status ${options.status}`)
+			this.status = options.status
+			this.postmarkErrorCode = options.postmarkErrorCode
+			this.name = 'PostmarkSendError'
+		}
+	}
+	return {
+		PostmarkSendError,
+		sendVerificationRequest: mocks.sendVerificationRequest,
+	}
+})
 vi.mock('next-auth/providers/postmark', () => ({
 	default: (options: unknown) => ({ id: 'postmark', options }),
 }))
+
+import { PostmarkSendError } from '@coursebuilder/email/send-verification-request'
 
 import { emailProvider, magicLinkIdentity } from './email-provider'
 
@@ -45,7 +63,11 @@ describe('magic-link identity port', () => {
 	})
 
 	it('hands that port to sendVerificationRequest', async () => {
-		const options = (emailProvider as unknown as { options: { sendVerificationRequest: (p: unknown) => Promise<void> } }).options
+		const options = (
+			emailProvider as unknown as {
+				options: { sendVerificationRequest: (p: unknown) => Promise<void> }
+			}
+		).options
 		const params = { identifier: 'new@example.test' }
 
 		await options.sendVerificationRequest(params)
@@ -54,5 +76,57 @@ describe('magic-link identity port', () => {
 			params,
 			magicLinkIdentity,
 		)
+	})
+})
+
+describe('inactive recipient', () => {
+	type Provider = {
+		options: { sendVerificationRequest: (p: unknown) => Promise<void> }
+	}
+	const send = () =>
+		(emailProvider as unknown as Provider).options.sendVerificationRequest({
+			identifier: 'person@example.test',
+		})
+
+	it('turns Postmark ErrorCode 406 into a client-safe CredentialsSignin on the error page', async () => {
+		mocks.sendVerificationRequest.mockRejectedValueOnce(
+			new PostmarkSendError({ status: 422, postmarkErrorCode: 406 }),
+		)
+
+		const error: any = await send().catch((e) => e)
+
+		expect(error.type).toBe('CredentialsSignin')
+		expect(error.code).toBe('EmailInactive')
+		expect(error.kind).toBe('error')
+		expect(JSON.stringify([error.message, error.code])).not.toContain('person@')
+	})
+
+	it('leaves other Postmark failures as they were', async () => {
+		mocks.sendVerificationRequest.mockRejectedValueOnce(
+			new PostmarkSendError({ status: 422, postmarkErrorCode: 300 }),
+		)
+
+		const error: any = await send().catch((e) => e)
+
+		expect(error.message).toBe('Postmark request failed with status 422')
+		expect(error.code).toBeUndefined()
+	})
+
+	it('finds a 406 PostmarkSendError wrapped as a cause', async () => {
+		mocks.sendVerificationRequest.mockRejectedValueOnce(
+			new Error('wrapped', {
+				cause: new PostmarkSendError({ status: 422, postmarkErrorCode: 406 }),
+			}),
+		)
+
+		const error: any = await send().catch((e) => e)
+
+		expect(error.code).toBe('EmailInactive')
+	})
+
+	it('leaves non-Postmark failures as they were', async () => {
+		mocks.sendVerificationRequest.mockRejectedValueOnce(new Error('boom'))
+
+		await expect(send()).rejects.toThrow('boom')
 	})
 })
