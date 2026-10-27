@@ -35,6 +35,7 @@ describe("routeReturningUnsubscriberWithKit", () => {
       tags: [{ id: 8244351 }],
     });
     mocks.requestDoi.mockResolvedValue({ contactId: "contact-1" });
+    mocks.env.AIH_RESUBSCRIBE_DOI_ENABLED = "true";
   });
 
   it("requests DOI with DROVR_DOI_FORMS unset, given drovr base URL and key", async () => {
@@ -45,6 +46,23 @@ describe("routeReturningUnsubscriberWithKit", () => {
     expect(mocks.requestDoi).toHaveBeenCalledWith(
       expect.objectContaining({ kitFormId: 9376133, entry: "form" }),
     );
+  });
+
+  it("blocks and logs doi-disabled when the flag is off, even with drovr configured", async () => {
+    mocks.env.DROVR_API_BASE_URL = "https://drovr.test";
+    mocks.env.DROVR_API_KEY_ORG_AIHERO = "drovr_key";
+    mocks.env.AIH_RESUBSCRIBE_DOI_ENABLED = undefined;
+
+    await expect(call()).resolves.toEqual({
+      status: "blocked",
+      reason: "doi-disabled",
+    });
+    expect(mocks.requestDoi).not.toHaveBeenCalled();
+    expect(mocks.log.warn).toHaveBeenCalledWith("optin.resubscribe.blocked", {
+      formId: 9376133,
+      reason: "doi-disabled",
+      entry: "form",
+    });
   });
 
   it("blocks and logs when drovr is not configured", async () => {

@@ -49,6 +49,7 @@ export async function routeReturningUnsubscriberWithKit(args: {
 }) {
 	const result = await routeReturningUnsubscriber({
 		email: args.email,
+		doiEnabled: env.AIH_RESUBSCRIBE_DOI_ENABLED === 'true',
 		drovrConfigured: Boolean(parseDrovrSignupDeliveryConfig(env)),
 		formMapped: DOI_DROVR_FORM_IDS.has(args.kitFormId),
 		getSubscriberByEmail: (email) =>
