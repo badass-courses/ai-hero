@@ -6,14 +6,26 @@ import { log } from '@/server/logger'
 import ConvertkitProvider, {
 	ConvertKitApiError,
 	subscribeToEndpoint,
+	setConvertkitSubscriberFields as coreSetSubscriberFields,
 } from '@coursebuilder/core/providers/convertkit'
 
 import { withKitCallTiming } from './kit-call-timing'
 import {
 	createKitCustomFieldCache,
 	KitFieldsUnconfirmedError,
+	readKitSubscriberById,
 	subscribeWithKitFields,
 } from './kit-field-contract'
+
+import { withKitRateLimitRetry } from './kit-rate-limit-retry'
+import { createKitSubscriberCache } from './kit-subscriber-cache'
+
+const kitRetry = {
+	onRetry: (event: Record<string, unknown>) =>
+		log.warn('kit.rate_limit.retry', event),
+	onExhausted: (event: Record<string, unknown>) =>
+		log.warn('kit.rate_limit.exhausted', event),
+}
 
 const convertkitProvider = ConvertkitProvider({
 	apiKey: env.CONVERTKIT_API_KEY,
@@ -24,6 +36,35 @@ const convertkitProvider = ConvertkitProvider({
 
 /** Custom field keys Kit has, shared by every send on this instance. */
 const kitCustomFieldCache = createKitCustomFieldCache()
+const subscriberCache = createKitSubscriberCache((id) =>
+	readKitSubscriberById(id, {
+		apiKey: env.CONVERTKIT_API_KEY,
+		apiSecret: env.CONVERTKIT_API_SECRET,
+		cache: kitCustomFieldCache,
+	}),
+)
+
+/** Consent and unsubscribe decisions must bypass the short-lived display cache. */
+export async function getSubscriberFresh(
+	id: Parameters<typeof convertkitProvider.getSubscriber>[0],
+) {
+	return convertkitProvider.getSubscriber(id)
+}
+
+/** Direct attribution/custom-field writes share the same 429 policy. */
+export async function setKitSubscriberFields(
+	input: Parameters<typeof coreSetSubscriberFields>[0],
+) {
+	try {
+		return await withKitRateLimitRetry(
+			'set-subscriber-fields',
+			() => coreSetSubscriberFields(input),
+			kitRetry,
+		)
+	} finally {
+		subscriberCache.invalidate(String(input.subscriber.id))
+	}
+}
 
 type SubscribeToListOptions = Parameters<
 	typeof convertkitProvider.subscribeToList
@@ -93,7 +134,10 @@ async function refuseSyntheticKitWrite(
 async function subscribeWithFieldContract(
 	options: SubscribeToListOptions,
 ): Promise<Subscriber> {
-	await refuseSyntheticKitWrite('subscribe-to-list-with-fields', options.user.email)
+	await refuseSyntheticKitWrite(
+		'subscribe-to-list-with-fields',
+		options.user.email,
+	)
 	const listType = options.listType ?? convertkitProvider.defaultListType
 
 	await log.info('kit.write.logical_operation', {
@@ -113,6 +157,7 @@ async function subscribeWithFieldContract(
 			apiKey: env.CONVERTKIT_API_KEY,
 			apiSecret: env.CONVERTKIT_API_SECRET,
 			cache: kitCustomFieldCache,
+			retry: kitRetry,
 		}),
 	)
 	const timing = { durationMs: timed.durationMs, calls: timed.calls }
@@ -123,6 +168,7 @@ async function subscribeWithFieldContract(
 			requestedEmail: options.user.email,
 			allowMissingEmail: false,
 		})
+		subscriberCache.invalidate(String(subscriber.id))
 		await log.info('kit.write.outcome', {
 			operation: 'subscribe-to-list-with-fields',
 			outcome: 'succeeded',
@@ -179,11 +225,13 @@ export async function subscribeToKitListWithoutFields(
 			},
 			convertkitApiKey: env.CONVERTKIT_API_KEY,
 		})
-		return parseKitSubscriber({
+		const subscriber = parseKitSubscriber({
 			result,
 			requestedEmail: options.user.email,
 			allowMissingEmail: true,
 		})
+		subscriberCache.invalidate(String(subscriber.id))
+		return subscriber
 	} catch (error) {
 		if (error instanceof KitSubscribeError) throw error
 		if (
@@ -198,6 +246,10 @@ export async function subscribeToKitListWithoutFields(
 
 export const emailListProvider = {
 	...convertkitProvider,
+	getSubscriberFresh,
+	getSubscriber: async (
+		id: Parameters<typeof convertkitProvider.getSubscriber>[0],
+	) => (id ? ((await subscriberCache.get(String(id))) ?? null) : null),
 	subscribeToList: subscribeWithFieldContract,
 	tagSubscriber: async (
 		input: Parameters<NonNullable<typeof convertkitProvider.tagSubscriber>>[0],
@@ -210,8 +262,21 @@ export const emailListProvider = {
 			NonNullable<typeof convertkitProvider.updateSubscriberFields>
 		>[0],
 	) => {
-		await refuseSyntheticKitWrite('update-subscriber-fields', input.subscriberEmail)
-		return convertkitProvider.updateSubscriberFields!(input)
+		await refuseSyntheticKitWrite(
+			'update-subscriber-fields',
+			input.subscriberEmail,
+		)
+		try {
+			const subscriber = await withKitRateLimitRetry(
+				'update-subscriber-fields',
+				() => convertkitProvider.updateSubscriberFields!(input),
+				kitRetry,
+			)
+			if (subscriber?.id) subscriberCache.invalidate(String(subscriber.id))
+			return subscriber
+		} finally {
+			if (input.subscriberId) subscriberCache.invalidate(input.subscriberId)
+		}
 	},
 }
 

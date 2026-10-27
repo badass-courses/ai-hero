@@ -191,9 +191,9 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 						? serializeDeadlineTimeZoneEvidenceForKit(deadlineTimeZone)
 						: undefined
 					const stashFields = async (fields: Record<string, string>) => {
-						const { setConvertkitSubscriberFields } =
-							await import('@coursebuilder/core/providers/convertkit')
-						await setConvertkitSubscriberFields({
+						const { setKitSubscriberFields } =
+							await import('@/coursebuilder/email-list-provider')
+						await setKitSubscriberFields({
 							subscriber: { id: subscriber.id, fields: subscriber.fields },
 							fields,
 							convertkitApiSecret: env.CONVERTKIT_API_SECRET,

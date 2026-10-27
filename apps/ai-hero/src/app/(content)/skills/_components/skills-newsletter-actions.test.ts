@@ -49,6 +49,7 @@ vi.mock('@coursebuilder/core/providers/convertkit', () => ({
 }))
 
 vi.mock('@/coursebuilder/email-list-provider', () => ({
+	setKitSubscriberFields: mocks.setSubscriberFields,
 	emailListProvider: {
 		subscribeToList: mocks.subscribeToList,
 	},

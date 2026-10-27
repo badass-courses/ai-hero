@@ -1,4 +1,11 @@
-import { ConvertKitApiError } from '@coursebuilder/core/providers/convertkit'
+import ConvertkitProvider, {
+	ConvertKitApiError,
+} from '@coursebuilder/core/providers/convertkit'
+
+import {
+	withKitRateLimitRetry,
+	type KitRateLimitRetryDeps,
+} from './kit-rate-limit-retry'
 
 /**
  * Course Builder's Kit field contract (create missing custom fields, write
@@ -85,6 +92,7 @@ export type KitFieldContractDeps = {
 	apiSecret: string | undefined
 	cache: KitCustomFieldCache
 	fetch?: typeof globalThis.fetch
+	retry?: KitRateLimitRetryDeps
 }
 
 /** Subscribe, write fields, read back. Kit refusals throw ConvertKitApiError. */
@@ -176,6 +184,36 @@ async function ensureCustomFields(
 	}
 }
 
+type KitSubscriber = NonNullable<
+	Awaited<ReturnType<ReturnType<typeof ConvertkitProvider>['getSubscriber']>>
+> & { tags?: unknown }
+
+/** Only a 404 on the subscriber itself is a cacheable absence, never a tags error. */
+export async function readKitSubscriberById(
+	id: string,
+	deps: KitFieldContractDeps,
+): Promise<KitSubscriber | null | undefined> {
+	const kit = kitClient(deps)
+	let read: { subscriber?: KitSubscriber }
+	try {
+		read = await kit.get(`/subscribers/${encodeURIComponent(id)}`, 'secret')
+	} catch (error) {
+		if (error instanceof ConvertKitApiError && error.status === 404) return null
+		throw error
+	}
+	if (
+		!read?.subscriber ||
+		typeof read.subscriber !== 'object' ||
+		Array.isArray(read.subscriber) ||
+		!read.subscriber.id
+	) return undefined
+	const tags = await kit.get(
+		`/subscribers/${encodeURIComponent(id)}/tags`,
+		'key',
+	)
+	return { ...read.subscriber, tags }
+}
+
 async function readSubscriber(
 	kit: KitClient,
 	subscriberId: number | string,
@@ -237,7 +275,14 @@ type KitClient = ReturnType<typeof kitClient>
 
 function kitClient(deps: KitFieldContractDeps) {
 	const fetchImpl = deps.fetch ?? globalThis.fetch
-	const send = async <T>(path: string, init: RequestInit): Promise<T> => {
+	const retry = deps.retry && {
+		...deps.retry,
+		budget: deps.retry.budget ?? {
+			startedAt: (deps.retry.now ?? Date.now)(),
+			waitedMs: 0,
+		},
+	}
+	const sendOnce = async <T>(path: string, init: RequestInit): Promise<T> => {
 		const response = await fetchImpl(`${KIT_V3}${path}`, init)
 		const text = await response.text()
 		let data: unknown
@@ -258,6 +303,14 @@ function kitClient(deps: KitFieldContractDeps) {
 		}
 		return data as T
 	}
+	const send = <T>(path: string, init: RequestInit): Promise<T> =>
+		retry
+			? withKitRateLimitRetry(
+					`field-contract:${init.method}`,
+					() => sendOnce<T>(path, init),
+					retry,
+				)
+			: sendOnce<T>(path, init)
 	const json = (method: string, body: unknown): RequestInit => ({
 		method,
 		headers: { 'Content-Type': 'application/json; charset=utf-8' },
