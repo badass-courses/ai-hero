@@ -75,6 +75,12 @@ export async function reconcileAiHeroEmailOptIn(args: {
 export type ReturningUnsubscriberResult =
 	| { status: 'not-unsubscribed' }
 	| { status: 'doi-requested' }
+	/**
+	 * drovr's opt-out state could not be read (timeout or 5xx) and the caller
+	 * asked to defer. Nothing was subscribed; the caller must queue the
+	 * sign-up for a later re-read and never subscribe it inline.
+	 */
+	| { status: 'deferred' }
 	/** Kit could not be read: sign-up continues, the tag must stay. */
 	| { status: 'lookup-failed' }
 	| {
@@ -107,6 +113,12 @@ export async function routeReturningUnsubscriber(args: {
 		email: string,
 	) => Promise<KitSubscriber | null | undefined>
 	getDrovrStops: (kitSubscriberId: string) => Promise<{ reason: string }[]>
+	/**
+	 * Unknown drovr state defers instead of blocking, when drovr is configured
+	 * and DOI is not taking the sign-up. Never a fail-open: the deferred
+	 * subscribe happens only after drovr answers "no all stop".
+	 */
+	deferUnknown?: boolean
 	requestDoi: () => Promise<void>
 }): Promise<ReturningUnsubscriberResult> {
 	let tagged: boolean
@@ -126,6 +138,9 @@ export async function routeReturningUnsubscriber(args: {
 			stops = await args.getDrovrStops(String(subscriber.id))
 		} catch {
 			if (!args.doiEnabled || !args.formMapped || !args.drovrConfigured) {
+				if (args.deferUnknown && args.drovrConfigured) {
+					return { status: 'deferred' }
+				}
 				return { status: 'blocked', reason: 'drovr-unknown' }
 			}
 			await args.requestDoi()

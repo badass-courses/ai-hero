@@ -87,6 +87,10 @@ import {
 	type ContactUnsubscribed,
 } from '@/inngest/events/contact-unsubscribed'
 import {
+	OPTIN_DEFERRED_EVENT,
+	type OptInDeferred,
+} from '@/inngest/events/optin-deferred'
+import {
 	SKILLS_COURSE_LESSON_ONE_RECOVERY_REQUESTED_EVENT,
 	SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
 	type SkillsCourseLessonOneRecoveryRequested,
@@ -296,6 +300,7 @@ export type Events = {
 	[RESOURCE_UPDATED_EVENT]: ResourceUpdated
 	[SKILL_CHANGELOG_PUBLISHED_EVENT]: SkillChangelogPublished
 	[SKILLS_NEWSLETTER_SUBSCRIBED_EVENT]: SkillsNewsletterSubscribed
+	[OPTIN_DEFERRED_EVENT]: OptInDeferred
 	[SKILLS_COURSE_LESSON_ONE_RECOVERY_REQUESTED_EVENT]: SkillsCourseLessonOneRecoveryRequested
 	[CONTACT_UNSUBSCRIBED_EVENT]: ContactUnsubscribed
 	[WORKSHOP_INTEREST_REQUESTED_EVENT]: WorkshopInterestRequested

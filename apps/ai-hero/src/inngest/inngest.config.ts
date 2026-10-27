@@ -96,6 +96,7 @@ import { shortlinkAttribution } from './functions/shortlink-attribution'
 import { signupAttribution } from './functions/signup-attribution'
 import { skillChangelogBroadcast } from './functions/skill-changelog-broadcast'
 import { skillsCourseLessonOneRecovery } from './functions/skills-course-lesson-one-recovery'
+import { optinDeferredSubscribe } from './functions/optin-deferred-subscribe'
 import { skillsNewsletterConfirmationReconciler } from './functions/skills-newsletter-confirmation-reconciler'
 import { skillsNewsletterPathEntry } from './functions/skills-newsletter-path-entry'
 import { emailCourseShadowAnswer } from './functions/email-course-shadow-answer'
@@ -228,6 +229,7 @@ const allFunctions = [
 	captureContactUnsubscribed,
 	workshopInterestSync,
 	skillsNewsletterConfirmationReconciler,
+	optinDeferredSubscribe,
 	notifyOnPostCreated,
 	generateArtwork,
 	pickVariant,

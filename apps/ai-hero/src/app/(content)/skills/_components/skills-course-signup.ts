@@ -6,6 +6,9 @@ import { SKILLS_HOSTED_RESUBSCRIBE_URL } from './skills-newsletter-config'
 /** The form route's answer for a drovr double opt-in signup. */
 export const DOI_AWAITING_CONFIRMATION = 'awaiting-confirmation'
 
+/** The form route's answer for a sign-up queued behind an unreadable drovr state. */
+export const DEFERRED_SUBSCRIBE = 'deferred'
+
 /**
  * Where a successful course-form submission sends the reader. Every CTA that
  * enrols in the free course must go through here, because both branches are
@@ -32,6 +35,12 @@ export function completeSkillsCourseSignup(
 	// plain /confirm page is the one that says "check your email to confirm".
 	if (subscriber.state === DOI_AWAITING_CONFIRMATION) {
 		router.push(redirectUrlBuilder(subscriber, '/confirm'))
+		return
+	}
+	// Queued, not yet in Kit: same page as a normal enrolment (lesson one
+	// follows). Not `onEnrolled`: nobody is enrolled until the job lands.
+	if (subscriber.state === DEFERRED_SUBSCRIBE) {
+		router.push(redirectUrlBuilder(subscriber, '/confirm', { flow: 'course' }))
 		return
 	}
 	if (subscriber.state !== 'active') {

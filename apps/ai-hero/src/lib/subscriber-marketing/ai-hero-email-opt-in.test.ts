@@ -345,6 +345,46 @@ describe('routeReturningUnsubscriber', () => {
 		},
 	)
 
+	it.each([
+		[{ doiEnabled: false }, { status: 'deferred' }],
+		[{ formMapped: false }, { status: 'deferred' }],
+		// DOI takes the sign-up first; deferral never preempts it.
+		[{}, { status: 'doi-requested' }],
+		// Unconfigured drovr is a config fault, not an outage: no queue.
+		[
+			{ drovrConfigured: false },
+			{ status: 'blocked', reason: 'drovr-unknown' },
+		],
+	] as const)(
+		'deferUnknown: unknown drovr state %s',
+		async (gate, expected) => {
+			const args = {
+				...base(),
+				...gate,
+				deferUnknown: true,
+				getSubscriberByEmail: vi.fn().mockResolvedValue({ id: 123, tags: [] }),
+				getDrovrStops: vi.fn().mockRejectedValue(new Error('offline')),
+			}
+			await expect(routeReturningUnsubscriber(args)).resolves.toEqual(expected)
+		},
+	)
+
+	it('deferUnknown never defers a tagged contact: still blocked', async () => {
+		const args = {
+			...base(),
+			doiEnabled: false,
+			deferUnknown: true,
+			getSubscriberByEmail: vi
+				.fn()
+				.mockResolvedValue({ id: 123, tags: [{ id: 8244351 }] }),
+			getDrovrStops: vi.fn().mockRejectedValue(new Error('offline')),
+		}
+		await expect(routeReturningUnsubscriber(args)).resolves.toEqual({
+			status: 'blocked',
+			reason: 'doi-disabled',
+		})
+	})
+
 	it('unknown drovr consent never masks a failed DOI request', async () => {
 		const args = {
 			...base(),
