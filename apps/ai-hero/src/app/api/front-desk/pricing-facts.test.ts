@@ -533,7 +533,17 @@ describe('alumni', () => {
 		],
 		['a Restricted (PPP) C4 purchase', [{ ...c4, status: 'Restricted' }], 'c4'],
 		['a refunded C4 purchase', [{ ...c4, status: 'Refunded' }], 'none'],
-		['a redeemed team seat', [{ ...c4, redeemedBulkCouponId: 'bulk' }], 'none'],
+		['a redeemed C4 team seat', [{ ...c4, redeemedBulkCouponId: 'bulk' }], 'c4'],
+		[
+			'a redeemed C3 team seat plus an own C4 purchase',
+			[{ ...c3, redeemedBulkCouponId: 'bulk' }, c4],
+			'both',
+		],
+		[
+			'a refunded redeemed team seat',
+			[{ ...c4, status: 'Refunded', redeemedBulkCouponId: 'bulk' }],
+			'none',
+		],
 		[
 			'a team purchase',
 			[{ ...c4, bulkCouponId: 'bulk', bulkSeats: 5 }],
