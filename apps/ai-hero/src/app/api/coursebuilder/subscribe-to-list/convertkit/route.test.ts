@@ -816,15 +816,16 @@ describe('returning unsubscriber (Kit tag 8244351)', () => {
 		)
 	})
 
-	it('tagged but blocked (drovr not configured): fails closed, no Kit subscribe, no untag', async () => {
+	it.each(['drovr-unconfigured', 'doi-disabled', 'unmapped-form', 'suppressed'])('blocked (%s): 409, no Kit subscribe, no untag', async (reason) => {
 		mocks.routeReturning.mockResolvedValue({
 			status: 'blocked',
-			reason: 'drovr-unconfigured',
+			reason,
 		})
 
 		const response = await post()
 
-		expect(response.status).toBe(502)
+		expect(response.status).toBe(409)
+		await expect(response.json()).resolves.toEqual({ error: 'Subscription could not be confirmed' })
 		expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
 		expect(mocks.reconcile).not.toHaveBeenCalled()
 	})
@@ -839,8 +840,8 @@ describe('returning unsubscriber (Kit tag 8244351)', () => {
 		expect(mocks.reconcile).not.toHaveBeenCalled()
 	})
 
-	it('Kit lookup failed: signs up through Kit, with the untag disabled', async () => {
-		mocks.routeReturning.mockResolvedValue({ status: 'lookup-failed' })
+	it.each([undefined, 'drovr'])('%s lookup failed: signs up through Kit, with the untag disabled', async (source) => {
+		mocks.routeReturning.mockResolvedValue({ status: 'lookup-failed', ...(source ? { source } : {}) })
 		mocks.courseBuilderPOST.mockResolvedValue(
 			subscriberResponse({
 				id: 1,

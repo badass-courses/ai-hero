@@ -12,6 +12,7 @@ import {
 	parseDrovrSignupDeliveryConfig,
 } from './drovr-doi-signup'
 import { requestDrovrDoiSignup } from './drovr-doi-signup.server'
+import { readDrovrOptOuts } from './drovr-opt-out-reader'
 import type { OptInAttribution } from './opt-in-attribution'
 
 export async function reconcileAiHeroEmailOptInWithKit(args: {
@@ -32,12 +33,13 @@ export async function reconcileAiHeroEmailOptInWithKit(args: {
 }
 
 /**
- * Call before any Kit subscribe on a Kit sign-up path. A contact Kit shows
- * tagged as an earlier unsubscribe is sent drovr's confirmation email
+ * Call before any Kit subscribe on a Kit sign-up path. An earlier unsubscribe
+ * tagged in Kit or stopped only in drovr is sent drovr's confirmation email
  * instead (works without DROVR_DOI_FORMS; needs only drovr's base URL and
- * tenant key). Callers stop on anything but `not-unsubscribed`: they must not
- * subscribe to Kit or untag, and answer "check your email" for
- * `doi-requested` or their usual failure for `blocked`.
+ * tenant key). Callers continue on `not-unsubscribed` or `lookup-failed`
+ * (without untagging on a failed lookup). Otherwise they must not subscribe
+ * to Kit or untag, and answer "check your email" for `doi-requested` or their
+ * usual failure for `blocked`.
  */
 export async function routeReturningUnsubscriberWithKit(args: {
 	email: string
@@ -47,18 +49,29 @@ export async function routeReturningUnsubscriberWithKit(args: {
 	optInAttribution?: OptInAttribution
 	entry: 'form' | 'tag-me'
 }) {
+	const drovrConfig = parseDrovrSignupDeliveryConfig(env)
 	const result = await routeReturningUnsubscriber({
 		email: args.email,
 		doiEnabled: env.AIH_RESUBSCRIBE_DOI_ENABLED === 'true',
-		drovrConfigured: Boolean(parseDrovrSignupDeliveryConfig(env)),
+		drovrConfigured: Boolean(drovrConfig),
 		formMapped: DOI_DROVR_FORM_IDS.has(args.kitFormId),
 		getSubscriberByEmail: (email) =>
 			emailListProvider.getSubscriberByEmail(email),
+		getDrovrStops: async (kitSubscriberId) => {
+			try {
+				return await readDrovrOptOuts(kitSubscriberId, drovrConfig)
+			} catch (error) {
+				await log.warn('optin.resubscribe.drovr_lookup_failed', {
+					error: error instanceof Error ? error.name : 'unknown',
+				})
+				throw error
+			}
+		},
 		requestDoi: async () => {
 			await requestDrovrDoiSignup(args)
 		},
 	})
-	if (result.status === 'lookup-failed') {
+	if (result.status === 'lookup-failed' && result.source !== 'drovr') {
 		await log.warn('optin.resubscribe.lookup_failed', {
 			formId: args.kitFormId,
 			entry: args.entry,

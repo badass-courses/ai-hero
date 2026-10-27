@@ -364,10 +364,18 @@ async function returningUnsubscriberSignup(
 			entry: 'form',
 		})
 		if (result.status === 'not-unsubscribed') return {}
-		// Kit unreadable: carry on with the sign-up, but never untag.
+		// Consent lookup unreadable: carry on with the sign-up, but never untag.
 		if (result.status === 'lookup-failed') return { lookupFailed: true }
 		if (result.status === 'doi-requested') {
 			return { response: pendingSubscribeResponse({ email, name }) }
+		}
+		if (result.status === 'blocked') {
+			return {
+				response: Response.json(
+					{ error: 'Subscription could not be confirmed' },
+					{ status: 409 },
+				),
+			}
 		}
 	} catch (error) {
 		await log.error('skills.newsletter.doi.failed', {
