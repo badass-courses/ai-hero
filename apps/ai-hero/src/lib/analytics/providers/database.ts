@@ -126,7 +126,9 @@ export async function getShortlinkPerformance(
 	const clickCounts = database
 		.select({
 			shortlinkId: schema.shortlinkClick.shortlinkId,
-			clicks: count().as('clicks'),
+			// Drizzle emits aggregate aliases unqualified in the outer query.
+			// Avoid colliding with Shortlink.clicks (the cached lifetime count).
+			clicks: count().as('shortlink_event_count'),
 		})
 		.from(schema.shortlinkClick)
 		.where(clickConditions.length > 0 ? and(...clickConditions) : undefined)
