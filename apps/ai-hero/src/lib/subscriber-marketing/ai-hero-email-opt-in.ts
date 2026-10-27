@@ -72,7 +72,7 @@ export type ReturningUnsubscriberResult =
 	| { status: 'doi-requested' }
 	/** Kit could not be read: sign-up continues, the tag must stay. */
 	| { status: 'lookup-failed' }
-	| { status: 'blocked'; reason: 'drovr-unconfigured' | 'unmapped-form' }
+	| { status: 'blocked'; reason: 'drovr-unconfigured' | 'unmapped-form' | 'doi-disabled' }
 
 /**
  * A contact Kit shows tagged as an earlier AI Hero unsubscribe may come back
@@ -83,6 +83,8 @@ export type ReturningUnsubscriberResult =
  */
 export async function routeReturningUnsubscriber(args: {
 	email: string
+	/** Whether returning-unsubscriber DOI is switched on (drovr signup enabled). */
+	doiEnabled: boolean
 	/** Whether drovr has a base URL and tenant key. */
 	drovrConfigured: boolean
 	/** Whether the Kit form has a registered drovr double opt-in form. */
@@ -101,6 +103,7 @@ export async function routeReturningUnsubscriber(args: {
 		return { status: 'lookup-failed' }
 	}
 	if (!tagged) return { status: 'not-unsubscribed' }
+	if (!args.doiEnabled) return { status: 'blocked', reason: 'doi-disabled' }
 	if (!args.formMapped) return { status: 'blocked', reason: 'unmapped-form' }
 	if (!args.drovrConfigured) {
 		return { status: 'blocked', reason: 'drovr-unconfigured' }

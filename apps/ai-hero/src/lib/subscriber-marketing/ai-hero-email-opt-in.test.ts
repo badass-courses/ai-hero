@@ -179,6 +179,7 @@ describe('routeReturningUnsubscriber', () => {
 	}
 	const base = () => ({
 		email: 'person@example.com',
+		doiEnabled: true,
 		drovrConfigured: true,
 		formMapped: true,
 		getSubscriberByEmail: vi.fn().mockResolvedValue(tagged),
@@ -191,6 +192,26 @@ describe('routeReturningUnsubscriber', () => {
 			status: 'doi-requested',
 		})
 		expect(args.requestDoi).toHaveBeenCalledTimes(1)
+	})
+
+	it('tagged with DOI disabled: blocked, no DOI request', async () => {
+		const args = { ...base(), doiEnabled: false }
+		await expect(routeReturningUnsubscriber(args)).resolves.toEqual({
+			status: 'blocked',
+			reason: 'doi-disabled',
+		})
+		expect(args.requestDoi).not.toHaveBeenCalled()
+	})
+
+	it('not tagged with DOI disabled: still not unsubscribed', async () => {
+		const args = {
+			...base(),
+			doiEnabled: false,
+			getSubscriberByEmail: vi.fn().mockResolvedValue({ state: 'active', tags: [] }),
+		}
+		await expect(routeReturningUnsubscriber(args)).resolves.toEqual({
+			status: 'not-unsubscribed',
+		})
 	})
 
 	it('tagged and drovr not configured: blocked, no DOI request', async () => {
