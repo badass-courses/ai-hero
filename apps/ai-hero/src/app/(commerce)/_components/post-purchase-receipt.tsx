@@ -1,4 +1,8 @@
 import * as React from 'react'
+import {
+	TransferDenialMessage,
+	TransferDenialRoot,
+} from '@/purchase-transfer/transfer-denial-form'
 import { Icon } from '@/components/brand/icons'
 import { TYPE } from '@/components/landing/type'
 import { ArrowUpRight, ChevronDown, Copy, Users } from 'lucide-react'
@@ -67,7 +71,7 @@ export function PurchaseTransferRow({
 }) {
 	if (!purchaseUserTransfers?.length) return null
 	return (
-		<PurchaseTransfer.Root
+		<TransferDenialRoot
 			onTransferInitiated={onTransferInitiated}
 			purchaseUserTransfers={purchaseUserTransfers}
 			cancelPurchaseTransfer={cancelPurchaseTransfer}
@@ -104,6 +108,7 @@ export function PurchaseTransferRow({
 								className={cn(PURCHASE_GHOST_BUTTON, 'shadow-none')}
 							/>
 						</PurchaseTransfer.Form>
+						<TransferDenialMessage />
 					</div>
 				</details>
 			</PurchaseTransfer.Available>
@@ -134,7 +139,7 @@ export function PurchaseTransferRow({
 					</p>
 				</PurchaseRow>
 			</PurchaseTransfer.Completed>
-		</PurchaseTransfer.Root>
+		</TransferDenialRoot>
 	)
 }
 
