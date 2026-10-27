@@ -41,6 +41,33 @@ index c2e5156258d646f41a589c95b2946292b8f8123b..ff29e49904189ed50e2053ba41fbeb8c
      appName
    }), /* @__PURE__ */ React3.createElement("div", {
      className: "grid grid-cols-2 gap-2.5 lg:grid-cols-3 xl:grid-cols-5"
+diff --git a/dist/providers/database.js b/dist/providers/database.js
+index 73d22c3cd61a13cc527089153f997dd9d3f8cbe8..54f97b71363791f460ae55713ba878f76d5de173 100644
+--- a/dist/providers/database.js
++++ b/dist/providers/database.js
+@@ -46,12 +46,16 @@ function createDatabaseProvider(db, schema) {
+ 		OR JSON_UNQUOTE(JSON_EXTRACT(${purchases.fields}, '$.utmSource')) IS NOT NULL
+ 		OR JSON_UNQUOTE(JSON_EXTRACT(${purchases.fields}, '$.gaClientId')) IS NOT NULL
+ 	)`;
+-  const exactShortlinkPurchaseAttributionSignalSql = sql`EXISTS (
+-		SELECT 1
+-		FROM ${shortlinkAttribution}
+-		WHERE ${shortlinkAttribution.type} = 'purchase'
+-			AND JSON_VALID(${shortlinkAttribution.metadata})
+-			AND JSON_UNQUOTE(JSON_EXTRACT(${shortlinkAttribution.metadata}, '$.purchaseId')) = ${purchases.id}
++  // DISTINCT prevents derived-table merging; materialize the purchase ids once.
++  // Exclude SQL NULL so the same signal remains safe inside NOT (...).
++  const exactShortlinkPurchaseAttributionSignalSql = sql`${purchases.id} IN (
++		SELECT pid FROM (
++			SELECT DISTINCT JSON_UNQUOTE(JSON_EXTRACT(${shortlinkAttribution.metadata}, '$.purchaseId')) AS pid
++			FROM ${shortlinkAttribution}
++			WHERE ${shortlinkAttribution.type} = 'purchase'
++				AND JSON_VALID(${shortlinkAttribution.metadata})
++		) AS attributed_purchase_ids
++		WHERE pid IS NOT NULL
+ 	)`;
+   const shortlinkRecoveredAttributionSignalSql = sql`(
+ 		NOT ${purchaseFieldAttributionSignalSql}
 diff --git a/src/components/omnibus-dashboard.tsx b/src/components/omnibus-dashboard.tsx
 index ac25178b8088cd45e804c5e6dea3ff5a7f06b0c4..59b04bb589eab0a1d6857f5a3c8e1d9078bd1f00 100644
 --- a/src/components/omnibus-dashboard.tsx
