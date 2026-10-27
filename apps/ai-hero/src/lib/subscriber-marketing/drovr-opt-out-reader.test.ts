@@ -116,7 +116,7 @@ describe('readDrovrOptOuts', () => {
 	})
 
 	it.each(['fetch', 'body'])(
-		'one 1.5s deadline bounds a stalled %s',
+		'one 3s deadline bounds a stalled %s',
 		async (stage) => {
 			vi.useFakeTimers()
 			const { fetcher, config } = setup()
@@ -132,7 +132,7 @@ describe('readDrovrOptOuts', () => {
 			const assertion = expect(result).rejects.toMatchObject({
 				name: 'TimeoutError',
 			})
-			await vi.advanceTimersByTimeAsync(1500)
+			await vi.advanceTimersByTimeAsync(3000)
 			await assertion
 			expect((fetcher.mock.calls[0]![1]!.signal as AbortSignal).aborted).toBe(
 				true,
@@ -155,7 +155,7 @@ describe('readDrovrOptOuts', () => {
 		const assertion = expect(
 			readDrovrOptOuts('123', config),
 		).rejects.toMatchObject({ name: 'TimeoutError' })
-		await vi.advanceTimersByTimeAsync(1499)
+		await vi.advanceTimersByTimeAsync(2999)
 		expect((fetcher.mock.calls[1]![1]!.signal as AbortSignal).aborted).toBe(
 			false,
 		)
