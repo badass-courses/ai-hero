@@ -24,7 +24,7 @@ function ports(overrides: Partial<BackfillPorts> = {}): BackfillPorts {
 				['u3@example.com', { status: 'conflict' }],
 				['u4@example.com', { status: 'resolved', contactId: 'drv-4' }],
 			]),
-		deliver: vi.fn(async () => ({ accepted: 1, rejected: 0 })),
+		deliver: vi.fn(async () => ({ accepted: 1, rejected: 0, rejections: {} })),
 		sleep: vi.fn(async () => undefined),
 		...overrides,
 	}
@@ -34,6 +34,29 @@ const all = [1, 2, 3, 4].map(purchase)
 const ingestConfig = { ingestUrl: 'https://drovr.test/events', apiKey: 'key' }
 
 describe('runPurchaseBackfill', () => {
+	it('tallies rejections by status and problem type', async () => {
+		const p = ports({
+			deliver: vi.fn(async () => ({
+				accepted: 1,
+				rejected: 2,
+				rejections: { '422 journey-not-joined': 1, '409 other': 1 },
+			})),
+		})
+
+		const counts = await runPurchaseBackfill({
+			purchases: all,
+			allowWrite: true,
+			ingestConfig,
+			ports: p,
+		})
+
+		expect(counts.rejected).toBe(4)
+		expect(counts.rejectedBy).toEqual({
+			'422 journey-not-joined': 2,
+			'409 other': 2,
+		})
+	})
+
 	it('counts resolved, missing and conflict and posts nothing by default', async () => {
 		const p = ports()
 
@@ -51,6 +74,7 @@ describe('runPurchaseBackfill', () => {
 			posted: 0,
 			accepted: 0,
 			rejected: 0,
+			rejectedBy: {},
 		})
 		expect(p.deliver).not.toHaveBeenCalled()
 	})
@@ -63,7 +87,7 @@ describe('runPurchaseBackfill', () => {
 			},
 			deliver: vi.fn(async (args) => {
 				order.push(`post:${args.events[0]!.contactId}`)
-				return { accepted: 1, rejected: 0 }
+				return { accepted: 1, rejected: 0, rejections: {} }
 			}),
 		})
 
@@ -103,10 +127,11 @@ describe('runPurchaseBackfill', () => {
 			deliver: vi.fn(async () => {
 				calls += 1
 				if (calls === 2) throw new Error('drovr purchase delivery failed')
-				return { accepted: 1, rejected: 0 }
+				return { accepted: 1, rejected: 0, rejections: {} }
 			}),
 		})
 		const counts = {
+			rejectedBy: {},
 			purchases: 0,
 			resolved: 0,
 			missing: 0,

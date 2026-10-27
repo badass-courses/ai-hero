@@ -106,6 +106,7 @@ async function main() {
 		posted: 0,
 		accepted: 0,
 		rejected: 0,
+		rejectedBy: {},
 	}
 	try {
 		await runPurchaseBackfill({

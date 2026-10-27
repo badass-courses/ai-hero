@@ -24,6 +24,8 @@ export type BackfillCounts = {
 	posted: number
 	accepted: number
 	rejected: number
+	/** Rejections by `<HTTP status> <problem type>`; no ids. */
+	rejectedBy: Record<string, number>
 }
 
 export type SnapshotRow = {
@@ -60,6 +62,7 @@ export async function runPurchaseBackfill(args: {
 		posted: 0,
 		accepted: 0,
 		rejected: 0,
+		rejectedBy: {},
 	}
 	counts.purchases = args.purchases.length
 	const answers = await args.ports.resolve(
@@ -94,6 +97,9 @@ export async function runPurchaseBackfill(args: {
 		counts.posted += 1
 		counts.accepted += result.accepted
 		counts.rejected += result.rejected
+		for (const [key, n] of Object.entries(result.rejections ?? {})) {
+			counts.rejectedBy[key] = (counts.rejectedBy[key] ?? 0) + n
+		}
 	}
 	return counts
 }

@@ -166,6 +166,26 @@ describe('back-dated purchases', () => {
 	})
 })
 
+describe('rejection tally', () => {
+	it('counts rejections by status and problem type, never the detail', async () => {
+		const fetcher = async () =>
+			new Response(
+				JSON.stringify({ type: 'journey-not-joined', detail: 'contact drv-1' }),
+				{ status: 422 },
+			)
+
+		const result = await deliverResolvedPurchaseEvents({
+			events: drovrPurchaseRecordedEventsFor(source, 'drv-1'),
+			config: { ingestUrl: 'https://drovr.test/events', apiKey: 'key' },
+			fetcher: fetcher as unknown as typeof fetch,
+		})
+
+		expect(result.rejected).toBeGreaterThan(0)
+		expect(Object.keys(result.rejections)).toEqual(['422 journey-not-joined'])
+		expect(JSON.stringify(result.rejections)).not.toContain('drv-1')
+	})
+})
+
 describe('deliverResolvedPurchaseEvents', () => {
 	const events = () => drovrPurchaseRecordedEventsFor(source, 'drv-1')
 
