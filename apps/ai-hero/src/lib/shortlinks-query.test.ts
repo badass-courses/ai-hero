@@ -405,6 +405,57 @@ describe('recordClick', () => {
 		vi.clearAllMocks()
 	})
 
+	it('uses the resolved link id and metadata without looking up the slug', async () => {
+		await recordClick('cc004-warmup-01', {}, {
+			id: 'shortlink_resolved',
+			slug: 'cc004-warmup-01',
+			metadata: valuePathMetadata,
+		})
+
+		expect(mocks.findFirst).not.toHaveBeenCalled()
+		expect(mocks.updateWhere).toHaveBeenCalledOnce()
+		expect(mocks.insertValues).toHaveBeenCalledWith(expect.objectContaining({
+			shortlinkId: 'shortlink_resolved',
+			metadata: valuePathMetadata,
+		}))
+	})
+
+	it('preserves legacy metadata fallback for a resolved link', async () => {
+		await recordClick('hUsWyq', {}, {
+			id: 'shortlink_resolved',
+			slug: 'hUsWyq',
+			metadata: null,
+		})
+
+		expect(mocks.findFirst).not.toHaveBeenCalled()
+		expect(mocks.insertValues).toHaveBeenCalledWith(expect.objectContaining({
+			shortlinkId: 'shortlink_resolved',
+			metadata: expect.objectContaining({ sourceId: 'x_launch_post' }),
+		}))
+	})
+
+	it.each(['lookup', 'update', 'insert'] as const)('logs %s errors without throwing', async (operation) => {
+		const error = new Error('synthetic database error')
+		const link = { id: 'shortlink_resolved', slug: 'test-link', metadata: null }
+		if (operation === 'lookup') mocks.findFirst.mockRejectedValueOnce(error)
+		if (operation === 'update') mocks.updateWhere.mockRejectedValueOnce(error)
+		if (operation === 'insert') mocks.insertValues.mockRejectedValueOnce(error)
+
+		await expect(recordClick('test-link', {}, operation === 'lookup' ? undefined : link)).resolves.toBeUndefined()
+		expect(mocks.log.error).toHaveBeenCalledWith('shortlink.click.error', {
+			slug: 'test-link',
+			error: String(error),
+		})
+	})
+
+	it('warns without writing when the slug lookup finds no link', async () => {
+		mocks.findFirst.mockResolvedValueOnce(undefined)
+		await expect(recordClick('missing-link', {})).resolves.toBeUndefined()
+		expect(mocks.log.warn).toHaveBeenCalledWith('shortlink.click.notfound', { slug: 'missing-link' })
+		expect(mocks.update).not.toHaveBeenCalled()
+		expect(mocks.insert).not.toHaveBeenCalled()
+	})
+
 	it('snapshots current shortlink metadata onto the click event', async () => {
 		mocks.findFirst.mockResolvedValueOnce({
 			id: 'shortlink_123',
@@ -419,6 +470,8 @@ describe('recordClick', () => {
 			device: 'desktop',
 		})
 
+		expect(mocks.findFirst).toHaveBeenCalledOnce()
+		expect(mocks.findFirst).toHaveBeenCalledWith({ where: expect.anything() })
 		expect(mocks.insertValues).toHaveBeenCalledWith(
 			expect.objectContaining({
 				shortlinkId: 'shortlink_123',
