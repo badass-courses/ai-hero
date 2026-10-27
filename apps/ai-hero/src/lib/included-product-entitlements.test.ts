@@ -21,6 +21,8 @@ const fake = vi.hoisted(() => ({
 	})),
 	duplicateRow: undefined as Record<string, unknown> | undefined,
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+	send: vi.fn(async () => ({ ids: [] })),
+	removeDiscordRole: vi.fn(async () => ({ success: true })),
 }))
 const dialect = new MySqlDialect()
 function matches(row: Record<string, unknown>, predicate?: SQL) {
@@ -169,7 +171,10 @@ vi.mock('@/db', () => ({
 }))
 vi.mock('@/server/logger', () => ({ log: fake.log }))
 vi.mock('@/inngest/inngest.server', () => ({
-	inngest: { createFunction: fake.createFunction },
+	inngest: { createFunction: fake.createFunction, send: fake.send },
+}))
+vi.mock('@/lib/discord-utils', () => ({
+	removeDiscordRole: fake.removeDiscordRole,
 }))
 
 import {
@@ -586,6 +591,115 @@ describe('included product fulfillment policy', () => {
 		await expect(grantIncludedProductEntitlements(context)).rejects.toThrow(
 			'seat origin',
 		)
+	})
+})
+
+describe('included product discord role', () => {
+	const roleId = '1535229555642601502'
+	const discordId = (userId = context.userId) =>
+		'c5_cc_dr_' +
+		createHash('sha256')
+			.update(
+				JSON.stringify([
+					context.purchaseId,
+					userId,
+					'discord:' + roleId,
+				]),
+			)
+			.digest('hex')
+	const discordRows = () =>
+		rows(entitlements).filter((row) => row.entitlementType === 'discord-type')
+	beforeEach(() => {
+		seed(entitlementTypes, {
+			id: 'discord-type',
+			name: 'workshop_discord_role',
+		})
+		rows(products).find((row) => row.id === 'product-ma254')!.fields = {
+			discordRoleId: roleId,
+		}
+	})
+	it('creates the role entitlement once and requests the add-role event', async () => {
+		await grantIncludedProductEntitlements(context)
+		expect(discordRows()).toEqual([
+			expect.objectContaining({
+				id: discordId(),
+				userId: context.userId,
+				sourceType: 'PURCHASE',
+				sourceId: context.purchaseId,
+				metadata: expect.objectContaining({ discordRoleId: roleId }),
+			}),
+		])
+		expect(fake.send).toHaveBeenCalledWith({
+			name: 'workshop/user-added',
+			data: {
+				workshopId: 'workshop-2ozd9',
+				userId: context.userId,
+				discordRoleId: roleId,
+			},
+		})
+	})
+	it('does not duplicate the role entitlement on retry or concurrent delivery', async () => {
+		await Promise.all([
+			grantIncludedProductEntitlements(context),
+			grantIncludedProductEntitlements(context),
+		])
+		await grantIncludedProductEntitlements(context)
+		expect(discordRows()).toHaveLength(1)
+	})
+	it('skips the role when the included product has no discordRoleId', async () => {
+		rows(products).find((row) => row.id === 'product-ma254')!.fields = {}
+		await grantIncludedProductEntitlements(context)
+		expect(discordRows()).toEqual([])
+		expect(fake.send).not.toHaveBeenCalled()
+	})
+	it('a refund removes the role entitlement with the content access', async () => {
+		await grantIncludedProductEntitlements(context)
+		await softDeleteEntitlementsForPurchase(context.purchaseId)
+		expect(active()).toEqual([])
+		expect(discordRows()[0]!.deletedAt).toBeInstanceOf(Date)
+	})
+	it('does not revive a revoked role entitlement on a late fulfillment event', async () => {
+		await grantIncludedProductEntitlements(context)
+		await softDeleteEntitlementsForPurchase(context.purchaseId)
+		fake.send.mockClear()
+		await expect(grantIncludedProductEntitlements(context)).rejects.toThrow(
+			'revoked',
+		)
+		expect(fake.send).not.toHaveBeenCalled()
+	})
+	it('a transfer retires the source role, grants the target and removes the source role', async () => {
+		await grantIncludedProductEntitlements(context)
+		fake.send.mockClear()
+		await transferIncludedProductEntitlements(target())
+		expect(
+			discordRows().find((row) => row.id === discordId())!.deletedAt,
+		).toBeInstanceOf(Date)
+		expect(
+			discordRows().find((row) => row.id === discordId('target'))!.deletedAt,
+		).toBeNull()
+		expect(fake.removeDiscordRole).toHaveBeenCalledWith(context.userId, roleId)
+		expect(fake.send).toHaveBeenCalledWith({
+			name: 'workshop/user-added',
+			data: {
+				workshopId: 'workshop-2ozd9',
+				userId: 'target',
+				discordRoleId: roleId,
+			},
+		})
+	})
+	it('keeps the source role when another live grant covers it', async () => {
+		seed(entitlements, {
+			id: 'direct-crash-role',
+			userId: context.userId,
+			sourceType: 'PURCHASE',
+			sourceId: 'direct',
+			entitlementType: 'discord-type',
+			deletedAt: null,
+			metadata: { discordRoleId: roleId },
+		})
+		await grantIncludedProductEntitlements(context)
+		await transferIncludedProductEntitlements(target())
+		expect(fake.removeDiscordRole).not.toHaveBeenCalled()
 	})
 })
 

@@ -9,6 +9,7 @@ import {
 	type WorkshopAvailability,
 } from '@/lib/get-workshop-availability'
 import { getWorkshop } from '@/lib/workshops-query'
+import { log } from '@/server/logger'
 import { formatInTimeZone } from 'date-fns-tz'
 
 import type { ContentResource, Product } from '@coursebuilder/core/schemas'
@@ -31,8 +32,12 @@ export const PRODUCT_TYPE_CONFIG = {
 		createEntitlement: createCohortEntitlement,
 		discordEvent: USER_ADDED_TO_COHORT_EVENT,
 		logPrefix: 'cohort',
-		getDiscordRoleId: (product: any) =>
-			product?.fields?.discordRoleId || env.DISCORD_COHORT_001_ROLE_ID,
+		getDiscordRoleId: (product: any) => {
+			const roleId = product?.fields?.discordRoleId
+			if (roleId) return roleId
+			log.warn('discord.role_fallback_used', { productId: product?.id })
+			return env.DISCORD_COHORT_001_ROLE_ID
+		},
 	},
 	'self-paced': {
 		resourceType: 'workshop',
@@ -42,8 +47,12 @@ export const PRODUCT_TYPE_CONFIG = {
 		createEntitlement: createWorkshopEntitlement,
 		discordEvent: USER_ADDED_TO_WORKSHOP_EVENT,
 		logPrefix: 'workshop',
-		getDiscordRoleId: (product: any) =>
-			product?.fields?.discordRoleId || env.DISCORD_PURCHASER_ROLE_ID,
+		getDiscordRoleId: (product: any) => {
+			const roleId = product?.fields?.discordRoleId
+			if (roleId) return roleId
+			log.warn('discord.role_fallback_used', { productId: product?.id })
+			return env.DISCORD_PURCHASER_ROLE_ID
+		},
 	},
 	// Future product types can be added here
 	// live: { ... },

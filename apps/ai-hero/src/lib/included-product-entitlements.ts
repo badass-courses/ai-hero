@@ -17,6 +17,9 @@ import {
 	createWorkshopEntitlement,
 	EntitlementSourceType,
 } from '@/lib/entitlements'
+import { USER_ADDED_TO_WORKSHOP_EVENT } from '@/inngest/functions/discord/add-discord-role-workflow'
+import { inngest } from '@/inngest/inngest.server'
+import { removeDiscordRole } from '@/lib/discord-utils'
 import { log } from '@/server/logger'
 import { and, eq, isNull } from 'drizzle-orm'
 
@@ -38,7 +41,15 @@ type Grant = {
 	entitlementTypeId: string
 	resourceId: string
 }
+type DiscordGrant = {
+	entitlementId: string
+	workshopId: string
+	discordRoleId: string
+	retireSourceRole: boolean
+}
 type Entitlement = typeof entitlements.$inferSelect
+
+const DISCORD_ID_PREFIX = 'c5_cc_dr_'
 
 function entitlementId(
 	prefix: string,
@@ -92,6 +103,34 @@ function verifyRow(
 					expected.context.organizationMembershipId))
 	)
 		throw new Error('Included-product entitlement contract mismatch')
+}
+
+function verifyDiscordRow(
+	row: Entitlement,
+	expected: {
+		userId: string
+		purchaseId: string
+		entitlementTypeId: string
+		bundlePolicy: string
+		productId: string
+		context?: LearnerContext
+	},
+) {
+	if (
+		row.userId !== expected.userId ||
+		row.sourceType !== EntitlementSourceType.PURCHASE ||
+		row.sourceId !== expected.purchaseId ||
+		row.entitlementType !== expected.entitlementTypeId ||
+		row.expiresAt !== null ||
+		row.metadata?.bundlePolicy !== expected.bundlePolicy ||
+		row.metadata?.includedByProductId !== expected.productId ||
+		typeof row.metadata?.discordRoleId !== 'string' ||
+		(expected.context &&
+			(row.organizationId !== expected.context.organizationId ||
+				row.organizationMembershipId !==
+					expected.context.organizationMembershipId))
+	)
+		throw new Error('Included-product discord entitlement contract mismatch')
 }
 
 /**
@@ -234,7 +273,15 @@ async function reconcileIncludedProducts(
 		if (!type)
 			throw new Error('Missing workshop_content_access entitlement type')
 
+		// Optional: a missing type skips the role and never blocks content access.
+		const [discordType] = await tx
+			.select()
+			.from(entitlementTypes)
+			.where(eq(entitlementTypes.name, 'workshop_discord_role'))
+			.for('share')
+
 		const result: Grant[] = []
+		const discordGrants: DiscordGrant[] = []
 		for (const policy of included) {
 			const [includedProduct] = await tx
 				.select()
@@ -388,11 +435,151 @@ async function reconcileIncludedProducts(
 				entitlementTypeId: type.id,
 				resourceId: policy.workshopId,
 			})
-		}
-		return result
-	})
 
-	for (const grant of grants) {
+			const discordRoleId = includedProduct.fields?.discordRoleId
+			if (typeof discordRoleId === 'string' && discordRoleId) {
+				if (!discordType) {
+					await log.warn('included_product.discord_type_missing', {
+						purchaseId: purchase.id,
+						productId: policy.productId,
+					})
+					continue
+				}
+				const discordContract = {
+					purchaseId: purchase.id,
+					productId: purchase.productId,
+					entitlementTypeId: discordType.id,
+					bundlePolicy: policy.bundlePolicy,
+				}
+				const discordIdFor = (userId: string) =>
+					entitlementId(
+						DISCORD_ID_PREFIX,
+						purchase.id,
+						userId,
+						'discord:' + discordRoleId,
+					)
+				let retireSourceRole = false
+				if (operation.kind === 'transfer') {
+					const sourceDiscordId = discordIdFor(operation.sourceUserId)
+					const [source] = await tx
+						.select()
+						.from(entitlements)
+						.where(eq(entitlements.id, sourceDiscordId))
+						.for('update')
+					if (source) {
+						verifyDiscordRow(source, {
+							...discordContract,
+							userId: operation.sourceUserId,
+						})
+						if (!source.deletedAt) {
+							retireSourceRole = true
+							await tx
+								.update(entitlements)
+								.set({
+									deletedAt: new Date(),
+									metadata: {
+										...source.metadata,
+										retiredByTransferId: operation.transferId,
+									},
+								})
+								.where(
+									and(
+										eq(entitlements.id, sourceDiscordId),
+										isNull(entitlements.deletedAt),
+									),
+								)
+						}
+					}
+				}
+
+				const discordId = discordIdFor(context.userId)
+				const readDiscordRow = async () =>
+					(
+						await tx
+							.select()
+							.from(entitlements)
+							.where(eq(entitlements.id, discordId))
+							.for('update')
+					)[0]
+				let discordRow = await readDiscordRow()
+				if (!discordRow) {
+					try {
+						await createWorkshopEntitlement(
+							{
+								id: discordId,
+								userId: context.userId,
+								organizationId: context.organizationId,
+								organizationMembershipId: context.organizationMembershipId,
+								entitlementType: discordType.id,
+								sourceType: EntitlementSourceType.PURCHASE,
+								sourceId: purchase.id,
+								metadata: {
+									discordRoleId,
+									bundlePolicy: policy.bundlePolicy,
+									includedByProductId: purchase.productId,
+								},
+							},
+							tx,
+						)
+					} catch (error) {
+						if (!isDuplicateEntry(error)) throw error
+					}
+					discordRow = await readDiscordRow()
+				}
+				if (!discordRow)
+					throw new Error('Included-product discord grant readback missing')
+				verifyDiscordRow(discordRow, {
+					...discordContract,
+					userId: context.userId,
+					context,
+				})
+				if (discordRow.deletedAt) {
+					// Same tombstone rule as content access: only a completed
+					// transfer retirement from this same owner may be undone.
+					const retiredBy =
+						operation.kind === 'transfer'
+							? discordRow.metadata?.retiredByTransferId
+							: undefined
+					if (typeof retiredBy !== 'string') {
+						await log.warn('included_product.discord_grant_revoked', {
+							purchaseId: purchase.id,
+							entitlementId: discordId,
+						})
+						continue
+					}
+					const [retirement] = await tx
+						.select()
+						.from(purchaseUserTransfer)
+						.where(eq(purchaseUserTransfer.id, retiredBy))
+						.for('share')
+					if (
+						!retirement ||
+						retirement.transferState !== 'COMPLETED' ||
+						retirement.purchaseId !== purchase.id ||
+						retirement.sourceUserId !== context.userId
+					)
+						continue
+					await tx
+						.update(entitlements)
+						.set({
+							deletedAt: null,
+							metadata: { ...discordRow.metadata, retiredByTransferId: null },
+						})
+						.where(eq(entitlements.id, discordId))
+				}
+				discordGrants.push({
+					entitlementId: discordId,
+					workshopId: policy.workshopId,
+					discordRoleId,
+					retireSourceRole,
+				})
+			}
+		}
+		return { result, discordGrants }
+	})
+	const { result: contentGrants, discordGrants } = grants
+
+	for (const grant of contentGrants) {
 		await log.info('included_product.entitlement_reconciled', {
 			purchaseId: context.purchaseId,
 			entitlementId: grant.entitlementId,
@@ -402,7 +589,40 @@ async function reconcileIncludedProducts(
 			status: operation.kind,
 		})
 	}
-	return grants
+
+	for (const grant of discordGrants) {
+		if (operation.kind === 'transfer' && grant.retireSourceRole) {
+			// Another live grant of the same role (e.g. a direct Crash Course
+			// purchase) keeps the source user's role.
+			const sourceLive = await db.query.entitlements.findMany({
+				where: and(
+					eq(entitlements.userId, operation.sourceUserId),
+					isNull(entitlements.deletedAt),
+				),
+			})
+			const stillEntitled = sourceLive.some(
+				(row) => row.metadata?.discordRoleId === grant.discordRoleId,
+			)
+			if (!stillEntitled)
+				await removeDiscordRole(operation.sourceUserId, grant.discordRoleId)
+		}
+		// Idempotent add-role path shared with direct purchases. A send failure
+		// throws so the retry event re-runs the (already-created) grant.
+		await inngest.send({
+			name: USER_ADDED_TO_WORKSHOP_EVENT,
+			data: {
+				workshopId: grant.workshopId,
+				userId: context.userId,
+				discordRoleId: grant.discordRoleId,
+			},
+		})
+		await log.info('included_product.discord_role_requested', {
+			purchaseId: context.purchaseId,
+			entitlementId: grant.entitlementId,
+			status: operation.kind,
+		})
+	}
+	return contentGrants
 }
 
 export function grantIncludedProductEntitlements(context: LearnerContext) {
