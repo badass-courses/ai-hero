@@ -22,8 +22,8 @@ import {
  * These land in the ContactEvent log so history replays (drovr shadow parity)
  * can see that a contact bought or opted out instead of over-planning emails
  * for them. They follow the content-read/shortlink preview-write pattern:
- * direct ContactEvent writes against existing contacts (a purchase also
- * creates a provisional one for a buyer with none), with no classifier, no ContactState mutation, and no side-effect intents.
+ * direct ContactEvent writes against existing contacts only, with no
+ * classifier, no ContactState mutation, and no side-effect intents.
  */
 
 export type PurchaseRecordedSource = {
@@ -154,9 +154,7 @@ export function buildPurchaseRecordedEvent(
 		...(source.deadlineTimeZone
 			? { deadlineTimeZone: source.deadlineTimeZone }
 			: {}),
-		...(options.evergreenOffer
-			? { evergreenOffer: options.evergreenOffer }
-			: {}),
+		...(options.evergreenOffer ? { evergreenOffer: options.evergreenOffer } : {}),
 	}
 	return {
 		provider: 'ai-hero',
@@ -313,8 +311,7 @@ async function resolveLifecycleIdentity(
 	const contact =
 		(input.userId
 			? await repository.findContactByUserId(input.userId)
-			: undefined) ??
-		(email ? await repository.findContactByEmail(email) : undefined)
+			: undefined) ?? (email ? await repository.findContactByEmail(email) : undefined)
 	if (!contact) {
 		return {
 			status: 'skipped',
@@ -491,9 +488,7 @@ async function findContactDeadlineTimeZone(
 				: undefined
 		})
 		.filter(
-			(
-				value,
-			): value is {
+			(value): value is {
 				occurredAt: string
 				deadlineTimeZone: DeadlineTimeZoneEvidence
 			} => value !== undefined,
@@ -694,49 +689,6 @@ async function redispatchDuplicatePurchases(
 	}
 }
 
-/**
- * A buyer with no marketing Contact still bought, and drovr learns of a
- * purchase only through the purchase.recorded mirror. Without a Contact the
- * mirror skipped, and a buyer who owns the course kept getting its sales
- * email. Create a provisional Contact keyed by the buyer's user id and email
- * so the normal resolution path finds it. This only adds a buyer fact, which
- * narrows sends. Write path only: previews never create contacts.
- */
-async function ensurePurchaseBuyerContact(
-	repository: ContactEventWriteRepository,
-	row: PurchaseRecordedSource,
-	now: string,
-) {
-	const email = normalizeEmail(row.email)
-	if (!row.userId && !email) return
-	// A purchase recorded on the coupon's own contact already reaches drovr.
-	if (
-		row.evergreenOffer &&
-		(await repository.findContactById(row.evergreenOffer.contactId))
-	) {
-		return
-	}
-	if (row.userId) {
-		const identity = await repository.findProviderIdentity(
-			'ai-hero',
-			row.userId,
-		)
-		if (identity && (await repository.findContactById(identity.contactId)))
-			return
-		if (await repository.findContactByUserId(row.userId)) return
-	}
-	if (email && (await repository.findContactByEmail(email))) return
-	await repository.createContact({
-		userId: row.userId ?? null,
-		email: email ?? null,
-		name: row.name ?? null,
-		lifecycle: 'new',
-		isProvisional: true,
-		createdAt: now,
-		updatedAt: now,
-	})
-}
-
 export async function previewPurchaseRecordedContactEvents(args: {
 	repository: ContactEventPreviewRepository
 	rows: PurchaseRecordedSource[]
@@ -759,7 +711,6 @@ export async function writePurchaseRecordedContactEvents(args: {
 	const now = args.now ?? new Date().toISOString()
 	const decisions: LifecycleContactEventDecision[] = []
 	for (const row of args.rows) {
-		await ensurePurchaseBuyerContact(args.repository, row, now)
 		decisions.push(
 			...(await previewPurchaseRecordedDecisions(args.repository, row)),
 		)

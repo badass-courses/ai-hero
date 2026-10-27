@@ -5,7 +5,19 @@ import {
 	users as usersTable,
 } from '@/db/schema'
 import { inngest } from '@/inngest/inngest.server'
+import { env } from '@/env.mjs'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
+import {
+	deliverResolvedPurchaseEvents,
+	drovrPurchaseRecordedEventsFor,
+	emailLogHash,
+	resolveDrovrContacts,
+} from '@/lib/subscriber-marketing/drovr-purchase-resolve'
+import { resolveDrovrApiBaseUrl } from '@/lib/subscriber-marketing/drovr-unsubscribe-page'
+import {
+	DROVR_AUTHORITY_TENANT_ID,
+	drovrApiKeyForTenant,
+} from '@/lib/subscriber-marketing/drovr-shadow-emitter'
 import {
 	evergreenCouponIdOf,
 	evergreenCouponLogId,
@@ -97,11 +109,14 @@ export const capturePurchaseContactEvent = inngest.createFunction(
 			: null
 		if (evergreenOffer?.status === 'refused') {
 			// Falls back to the buyer's contact, which is what ran before row 194.
-			await log.warn('contact_event.purchase_recorded.evergreen_coupon_refused', {
-				purchaseId: purchase.id,
-				couponId: evergreenCouponLogId(evergreenOffer.couponId),
-				reason: evergreenOffer.reason,
-			})
+			await log.warn(
+				'contact_event.purchase_recorded.evergreen_coupon_refused',
+				{
+					purchaseId: purchase.id,
+					couponId: evergreenCouponLogId(evergreenOffer.couponId),
+					reason: evergreenOffer.reason,
+				},
+			)
 		}
 
 		const source: PurchaseRecordedSource = {
@@ -153,6 +168,57 @@ export const capturePurchaseContactEvent = inngest.createFunction(
 				? evergreenCouponLogId(evergreenCouponId)
 				: null,
 		})
+
+		// A buyer with no ai-hero Contact can still be a drovr contact (matched
+		// there by Kit email). Ask drovr who they are and send the purchase to
+		// that contact. Never create a Contact, never send a birth.
+		const buyerEmail = source.email?.trim()
+		if (
+			summary.counts.written === 0 &&
+			summary.counts.skippedByReason['no-existing-contact'] &&
+			buyerEmail
+		) {
+			const drovr = await step.run('resolve buyer in drovr', async () => {
+				const ingestUrl = env.DROVR_SHADOW_INGEST_URL
+				const apiKey = drovrApiKeyForTenant(DROVR_AUTHORITY_TENANT_ID)
+				const baseUrl = resolveDrovrApiBaseUrl({
+					DROVR_API_BASE_URL: env.DROVR_API_BASE_URL,
+					DROVR_SHADOW_INGEST_URL: ingestUrl,
+				})
+				if (!ingestUrl || !apiKey || !baseUrl) {
+					return { status: 'not-configured' as const }
+				}
+				const answers = await resolveDrovrContacts({
+					emails: [buyerEmail],
+					config: { baseUrl, apiKey },
+				})
+				const answer = answers.get(buyerEmail.toLowerCase())
+				if (answer?.status !== 'resolved') {
+					return { status: answer?.status ?? ('missing' as const) }
+				}
+				const result = await deliverResolvedPurchaseEvents({
+					events: drovrPurchaseRecordedEventsFor(source, answer.contactId),
+					config: { ingestUrl, apiKey },
+				})
+				return { status: 'resolved' as const, ...result }
+			})
+			const logName =
+				drovr.status === 'resolved'
+					? 'contact_event.purchase_recorded.drovr_resolved'
+					: drovr.status === 'conflict'
+						? 'contact_event.purchase_recorded.drovr_conflict'
+						: drovr.status === 'missing'
+							? 'contact_event.purchase_recorded.drovr_missing'
+							: 'contact_event.purchase_recorded.drovr_not_configured'
+			await (drovr.status === 'conflict' ? log.warn : log.info)(logName, {
+				purchaseId: purchase.id,
+				emailHash: emailLogHash(buyerEmail),
+				...(drovr.status === 'resolved'
+					? { accepted: drovr.accepted, rejected: drovr.rejected }
+					: {}),
+			})
+			return { status: `drovr-${drovr.status}`, counts: summary.counts }
+		}
 
 		return {
 			status: summary.counts.written > 0 ? 'written' : 'skipped',

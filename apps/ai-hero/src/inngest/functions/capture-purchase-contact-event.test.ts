@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
 	findUser: vi.fn(),
 	selectCoupon: vi.fn(),
 	write: vi.fn(),
+	resolve: vi.fn(),
+	deliver: vi.fn(),
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
 
@@ -39,6 +41,22 @@ vi.mock('@/lib/subscriber-marketing/drizzle-capture-repository', () => ({
 }))
 vi.mock('@/lib/subscriber-marketing/lifecycle-contact-events', () => ({
 	writePurchaseRecordedContactEvents: mocks.write,
+}))
+vi.mock('@/env.mjs', () => ({
+	env: {
+		DROVR_SHADOW_INGEST_URL: 'https://drovr.test/events',
+		DROVR_API_KEY_ORG_AIHERO: 'key',
+	},
+}))
+vi.mock('@/lib/subscriber-marketing/drovr-purchase-resolve', () => ({
+	resolveDrovrContacts: mocks.resolve,
+	deliverResolvedPurchaseEvents: mocks.deliver,
+	drovrPurchaseRecordedEventsFor: () => [],
+	emailLogHash: () => 'hash',
+}))
+vi.mock('@/lib/subscriber-marketing/drovr-shadow-emitter', () => ({
+	DROVR_AUTHORITY_TENANT_ID: 'org-aihero',
+	drovrApiKeyForTenant: () => 'key',
 }))
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
 
@@ -67,7 +85,10 @@ function purchaseRow(couponId: string | null) {
 
 async function run() {
 	await registered.handler({
-		event: { name: 'commerce/new-purchase-created', data: { purchaseId: 'purch_1' } },
+		event: {
+			name: 'commerce/new-purchase-created',
+			data: { purchaseId: 'purch_1' },
+		},
 		step,
 	})
 	return mocks.write.mock.calls[0]?.[0].rows[0]
@@ -131,5 +152,84 @@ describe('capture purchase contact event (row 194)', () => {
 
 		expect(await run()).not.toHaveProperty('evergreenOffer')
 		expect(mocks.selectCoupon).not.toHaveBeenCalled()
+	})
+
+	describe('buyer with no ai-hero contact', () => {
+		const noContact = {
+			counts: { written: 0, skippedByReason: { 'no-existing-contact': 1 } },
+			decisions: [],
+		}
+		const runResult = async () =>
+			registered.handler({
+				event: {
+					name: 'commerce/new-purchase-created',
+					data: { purchaseId: 'purch_1' },
+				},
+				step,
+			})
+
+		beforeEach(() => {
+			mocks.findPurchase.mockResolvedValue(purchaseRow('ppp-coupon'))
+			mocks.write.mockResolvedValue(noContact)
+			mocks.deliver.mockResolvedValue({ accepted: 1, rejected: 0 })
+		})
+
+		it('sends the purchase to the contact drovr resolves', async () => {
+			mocks.resolve.mockResolvedValue(
+				new Map([
+					['buyer@example.com', { status: 'resolved', contactId: 'drv-1' }],
+				]),
+			)
+
+			expect(await runResult()).toMatchObject({ status: 'drovr-resolved' })
+			expect(mocks.deliver).toHaveBeenCalledTimes(1)
+			expect(mocks.log.info).toHaveBeenCalledWith(
+				'contact_event.purchase_recorded.drovr_resolved',
+				expect.objectContaining({ emailHash: 'hash' }),
+			)
+		})
+
+		it('logs a hash and stops when drovr has no such contact', async () => {
+			mocks.resolve.mockResolvedValue(
+				new Map([['buyer@example.com', { status: 'missing' }]]),
+			)
+
+			expect(await runResult()).toMatchObject({ status: 'drovr-missing' })
+			expect(mocks.deliver).not.toHaveBeenCalled()
+			expect(mocks.log.info).toHaveBeenCalledWith(
+				'contact_event.purchase_recorded.drovr_missing',
+				{ purchaseId: 'purch_1', emailHash: 'hash' },
+			)
+		})
+
+		it('logs a conflict with a hash and emits nothing', async () => {
+			mocks.resolve.mockResolvedValue(
+				new Map([['buyer@example.com', { status: 'conflict' }]]),
+			)
+
+			expect(await runResult()).toMatchObject({ status: 'drovr-conflict' })
+			expect(mocks.deliver).not.toHaveBeenCalled()
+			expect(mocks.log.warn).toHaveBeenCalledWith(
+				'contact_event.purchase_recorded.drovr_conflict',
+				{ purchaseId: 'purch_1', emailHash: 'hash' },
+			)
+		})
+
+		it('throws when drovr is unavailable so the step retries', async () => {
+			mocks.resolve.mockRejectedValue(new Error('unavailable'))
+
+			await expect(runResult()).rejects.toThrow('unavailable')
+			expect(mocks.deliver).not.toHaveBeenCalled()
+		})
+
+		it('does not ask drovr when the purchase was written to a contact', async () => {
+			mocks.write.mockResolvedValue({
+				counts: { written: 1, skippedByReason: {} },
+				decisions: [],
+			})
+
+			expect(await runResult()).toMatchObject({ status: 'written' })
+			expect(mocks.resolve).not.toHaveBeenCalled()
+		})
 	})
 })
