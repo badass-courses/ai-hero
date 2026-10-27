@@ -20,12 +20,17 @@ vi.mock('@/config', async (importOriginal) => {
 	}
 })
 
+// The shared DB client reads ambient env, not the app env module mocked below.
+// Always use an inert loopback fixture, never a developer's real database URL.
+// This assignment runs before test-module imports and survives unstubAllEnvs.
+process.env.DATABASE_URL = 'mysql://test:test@127.0.0.1:1/mock_only'
+
 // Mock environment variables
 vi.mock('@/env.mjs', () => ({
 	env: {
 		STRIPE_SECRET_TOKEN: 'test_stripe_token',
 		STRIPE_WEBHOOK_SECRET: 'test_webhook_secret',
-		DATABASE_URL: 'sqlite://test.db',
+		DATABASE_URL: 'mysql://test:test@127.0.0.1:1/mock_only',
 		NEXTAUTH_SECRET: 'test_nextauth_secret',
 		OPENAI_API_KEY: 'test_openai_key',
 		INNGEST_EVENT_KEY: 'test_inngest_key',

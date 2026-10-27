@@ -17,12 +17,8 @@ export type EntitlementType =
 	| 'subscription_tier'
 	| 'apply_special_credit'
 
-export enum EntitlementSourceType {
-	PURCHASE = 'PURCHASE',
-	SUBSCRIPTION = 'SUBSCRIPTION',
-	MANUAL = 'MANUAL',
-	COUPON = 'COUPON',
-}
+export { EntitlementSourceType } from './entitlement-source-type'
+import { EntitlementSourceType } from './entitlement-source-type'
 
 export type EntitlementSource =
 	| { type: EntitlementSourceType.PURCHASE; id: string }
