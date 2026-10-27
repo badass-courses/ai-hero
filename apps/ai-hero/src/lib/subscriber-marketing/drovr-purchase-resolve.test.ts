@@ -142,6 +142,50 @@ describe('drovrPurchaseRecordedEventsFor', () => {
 	})
 })
 
+describe('back-dated purchases', () => {
+	it('post with their own purchase time, never the send time', async () => {
+		const bodies: Array<{ occurredAt: string; type: string }> = []
+		const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
+			bodies.push(JSON.parse(init.body as string))
+			return new Response(null, { status: 202 })
+		})
+		const old = { ...source, purchasedAt: '2026-10-02T08:15:00.000Z' }
+
+		await deliverResolvedPurchaseEvents({
+			events: drovrPurchaseRecordedEventsFor(old, 'drv-1'),
+			config: { ingestUrl: 'https://drovr.test/events', apiKey: 'key' },
+			fetcher: fetcher as unknown as typeof fetch,
+			now: Date.parse('2026-10-28T00:00:00.000Z'),
+		})
+
+		expect(bodies.length).toBeGreaterThan(0)
+		for (const body of bodies) {
+			expect(body.type).toBe('purchase.recorded')
+			expect(body.occurredAt).toBe('2026-10-02T08:15:00.000Z')
+		}
+	})
+})
+
+describe('rejection tally', () => {
+	it('counts rejections by status and problem type, never the detail', async () => {
+		const fetcher = async () =>
+			new Response(
+				JSON.stringify({ type: 'journey-not-joined', detail: 'contact drv-1' }),
+				{ status: 422 },
+			)
+
+		const result = await deliverResolvedPurchaseEvents({
+			events: drovrPurchaseRecordedEventsFor(source, 'drv-1'),
+			config: { ingestUrl: 'https://drovr.test/events', apiKey: 'key' },
+			fetcher: fetcher as unknown as typeof fetch,
+		})
+
+		expect(result.rejected).toBeGreaterThan(0)
+		expect(Object.keys(result.rejections)).toEqual(['422 journey-not-joined'])
+		expect(JSON.stringify(result.rejections)).not.toContain('drv-1')
+	})
+})
+
 describe('deliverResolvedPurchaseEvents', () => {
 	const events = () => drovrPurchaseRecordedEventsFor(source, 'drv-1')
 

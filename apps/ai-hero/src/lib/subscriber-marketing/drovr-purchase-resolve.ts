@@ -163,9 +163,15 @@ export async function deliverResolvedPurchaseEvents(args: {
 	fetcher?: typeof fetch
 	timeoutMs?: number
 	now?: number
-}): Promise<{ accepted: number; rejected: number }> {
+}): Promise<{
+	accepted: number
+	rejected: number
+	/** Rejections by `<HTTP status> <problem type>`; no ids. */
+	rejections: Record<string, number>
+}> {
 	let accepted = 0
 	let rejected = 0
+	const rejections: Record<string, number> = {}
 	const outcomes: DrovrDeliveryOutcome[] = []
 	for (const event of args.events.filter(
 		(candidate) => candidate.tenantId === DROVR_AUTHORITY_TENANT_ID,
@@ -182,8 +188,20 @@ export async function deliverResolvedPurchaseEvents(args: {
 	}
 	for (const outcome of outcomes) {
 		if (outcome.status === 'accepted') accepted += 1
-		else if (outcome.status === 'rejected') rejected += 1
-		else throw new Error(`drovr purchase delivery failed: ${outcome.reason}`)
+		else if (outcome.status === 'rejected') {
+			rejected += 1
+			const key = `${outcome.httpStatus} ${problemTypeOf(outcome.problem)}`
+			rejections[key] = (rejections[key] ?? 0) + 1
+		} else throw new Error(`drovr purchase delivery failed: ${outcome.reason}`)
 	}
-	return { accepted, rejected }
+	return { accepted, rejected, rejections }
+}
+
+/** The problem's `type` only, bounded; never the detail, which may name ids. */
+function problemTypeOf(problem: unknown): string {
+	const type =
+		problem && typeof problem === 'object'
+			? (problem as Record<string, unknown>).type
+			: undefined
+	return typeof type === 'string' && type ? type.slice(0, 120) : 'unknown'
 }
