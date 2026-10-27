@@ -30,12 +30,12 @@ export async function readDrovrOptOuts(
 	if (!config) throw new Error('Drovr opt-out reader is not configured')
 	const controller = new AbortController()
 	let timer: ReturnType<typeof setTimeout> | undefined
-	// One 1.5s budget covers both reads, all pages and their bodies. No retries.
+	// One 3s budget covers both reads, all pages and their bodies. No retries.
 	const deadline = new Promise<never>((_, reject) => {
 		timer = setTimeout(() => {
 			controller.abort()
 			reject(new DOMException('Drovr opt-out read timed out', 'TimeoutError'))
-		}, 1500)
+		}, 3000)
 	})
 	const fetcher = config.fetch ?? fetch
 	const baseUrl = config.baseUrl.replace(/\/$/, '')
