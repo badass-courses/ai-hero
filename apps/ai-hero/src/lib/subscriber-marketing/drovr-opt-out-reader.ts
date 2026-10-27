@@ -1,39 +1,46 @@
 import { z } from 'zod'
 
-const IdentitiesReply = z.object({
-	identities: z.array(
+const StopsReply = z.object({
+	kitSubscriberId: z.string(),
+	tenantId: z.string().optional(),
+	contactId: z.string().nullable().optional(),
+	stops: z.array(
 		z.object({
-			kitSubscriberId: z.string(),
-			contactId: z.string().min(1),
-		}),
-	),
-})
-const SuppressionsReply = z.object({
-	suppressions: z.array(
-		z.object({
-			contactId: z.string(),
 			scope: z.literal('all'),
-			lifted: z.literal(false),
 			// Unknown future stop reasons must never become DOI consent.
 			reason: z.string().min(1),
+			createdAt: z.string().optional(),
 		}),
 	),
-	nextCursor: z.string().nullable(),
 })
 
 /** Server p95 is ~0.7s; the old 3s budget was overrun client-side (cold connection/TLS per request). */
 export const DROVR_READ_BUDGET_MS = 6000
 
-/** Read-only org-aihero REST contracts: directory identities, then active all stops. */
+export type DrovrReadObservation = { ms: number; status: number | 'error' }
+
+/**
+ * Read-only org-aihero contract: one `GET /kit-subscriber-stops` returns the
+ * subscriber's active all-scope stops. An empty list means clear. Anything
+ * else (503, 403, timeout, malformed body, mismatched id) throws, which the
+ * caller treats as unknown and defers; it is never read as "no stop".
+ */
 export async function readDrovrOptOuts(
 	kitSubscriberId: string,
-	config: { baseUrl: string; apiKey: string; fetch?: typeof fetch } | undefined,
-	onUnexpectedPage?: () => void | Promise<void>,
+	config:
+		| {
+				baseUrl: string
+				apiKey: string
+				fetch?: typeof fetch
+				/** Called once per request with latency and HTTP status. */
+				onRead?: (observation: DrovrReadObservation) => void | Promise<void>
+		  }
+		| undefined,
 ): Promise<{ reason: string }[]> {
 	if (!config) throw new Error('Drovr opt-out reader is not configured')
 	const controller = new AbortController()
 	let timer: ReturnType<typeof setTimeout> | undefined
-	// One 6s budget covers both reads, all pages and their bodies. No retries.
+	// One 6s budget covers the request and its body. No retries.
 	const deadline = new Promise<never>((_, reject) => {
 		timer = setTimeout(() => {
 			controller.abort()
@@ -42,65 +49,32 @@ export async function readDrovrOptOuts(
 	})
 	const fetcher = config.fetch ?? fetch
 	const baseUrl = config.baseUrl.replace(/\/$/, '')
-	const read = async (path: string, body?: unknown): Promise<unknown> => {
-		controller.signal.throwIfAborted()
-		const response = await fetcher(`${baseUrl}${path}`, {
-			method: body === undefined ? 'GET' : 'POST',
+	const started = Date.now()
+	let status: number | 'error' = 'error'
+	const lookup = async () => {
+		const query = new URLSearchParams({ kitSubscriberId })
+		const response = await fetcher(`${baseUrl}/kit-subscriber-stops?${query}`, {
+			method: 'GET',
 			headers: {
 				authorization: `Bearer ${config.apiKey}`,
-				'content-type': 'application/json',
 				accept: 'application/json',
 			},
-			...(body === undefined ? {} : { body: JSON.stringify(body) }),
 			signal: controller.signal,
 		})
+		status = response.status
 		if (!response.ok) throw new Error('Drovr opt-out read failed')
-		return response.json()
-	}
-	const lookup = async () => {
-		const { identities } = IdentitiesReply.parse(
-			await read('/journeys/contact-directory/identities', {
-				kitSubscriberIds: [kitSubscriberId],
-			}),
-		)
-		if (identities.length === 0) return []
-		if (
-			identities.length !== 1 ||
-			identities[0]!.kitSubscriberId !== kitSubscriberId
-		) {
-			throw new TypeError('Unexpected drovr directory identity')
+		const reply = StopsReply.parse(await response.json())
+		if (reply.kitSubscriberId !== kitSubscriberId) {
+			throw new TypeError('Unexpected drovr subscriber id')
 		}
-		const contactId = identities[0]!.contactId
-		const stops: { reason: string }[] = []
-		const cursors = new Set<string>()
-		let cursor: string | null = null
-		let pageCount = 0
-		do {
-			const query = new URLSearchParams({
-				contactId,
-				scope: 'all',
-				activeOnly: 'true',
-			})
-			if (cursor !== null) query.set('cursor', cursor)
-			controller.signal.throwIfAborted()
-			if (++pageCount === 2) await onUnexpectedPage?.()
-			const page = SuppressionsReply.parse(await read(`/suppressions?${query}`))
-			if (page.suppressions.some((stop) => stop.contactId !== contactId)) {
-				throw new TypeError('Unexpected drovr suppression contact')
-			}
-			stops.push(...page.suppressions.map(({ reason }) => ({ reason })))
-			cursor = page.nextCursor
-			if (cursor !== null) {
-				if (cursors.has(cursor))
-					throw new TypeError('Repeated drovr suppression cursor')
-				cursors.add(cursor)
-			}
-		} while (cursor !== null)
-		return stops
+		return reply.stops.map(({ reason }) => ({ reason }))
 	}
 	try {
 		return await Promise.race([lookup(), deadline])
 	} finally {
 		clearTimeout(timer)
+		try {
+			await config.onRead?.({ ms: Date.now() - started, status })
+		} catch {}
 	}
 }
