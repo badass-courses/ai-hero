@@ -26,11 +26,11 @@ async function main() {
 			CASE WHEN p.redeemedBulkCouponId IS NOT NULL OR p.totalAmount = 0
 				THEN 'coupon-redeemed' ELSE 'new-purchase' END AS kind,
 			COUNT(*) AS missed
-		FROM Purchase p
+		FROM AI_Purchase p
 		WHERE p.status IN ('Valid', 'Restricted')
 			AND p.createdAt >= ${since}
 			AND NOT EXISTS (
-				SELECT 1 FROM ContactEvent ce
+				SELECT 1 FROM AI_ContactEvent ce
 				WHERE ce.eventType = 'purchase.recorded'
 					AND ce.semanticIdempotencyKey = LOWER(CONCAT('ai-hero:purchase.recorded:purchase:', p.id))
 			)
