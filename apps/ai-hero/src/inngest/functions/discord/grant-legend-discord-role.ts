@@ -1,41 +1,22 @@
 import { db } from '@/db'
-import {
-	entitlements,
-	entitlementTypes,
-	products,
-	purchases,
-} from '@/db/schema'
+import { entitlements, entitlementTypes } from '@/db/schema'
 import { inngest } from '@/inngest/inngest.server'
 import {
 	DISCORD_LEGEND_ROLE_ID,
 	LEGEND_ENTITLEMENT_SOURCE_ID,
 } from '@/lib/discord-legend'
 import { EntitlementSourceType } from '@/lib/entitlements'
+import {
+	countActiveDistinctCohortPurchasesForUser,
+	LEGEND_COHORT_THRESHOLD,
+} from '@/lib/legend-cohort-count'
 import { log } from '@/server/logger'
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, eq, isNull, sql } from 'drizzle-orm'
 
 import { guid } from '@coursebuilder/adapter-drizzle/mysql'
 
 import { GRANT_LEGEND_DISCORD_ROLE_EVENT } from '../../events/grant-legend-discord-role'
 import { USER_ADDED_TO_COHORT_EVENT } from './add-discord-role-workflow'
-
-const countActiveDistinctCohortPurchasesForUser = async (userId: string) => {
-	const [result] = await db
-		.select({
-			count: sql<number>`count(distinct ${purchases.productId})`,
-		})
-		.from(purchases)
-		.innerJoin(products, eq(products.id, purchases.productId))
-		.where(
-			and(
-				eq(purchases.userId, userId),
-				inArray(purchases.status, ['Valid', 'Restricted']),
-				eq(products.type, 'cohort'),
-			),
-		)
-
-	return Number(result?.count ?? 0)
-}
 
 const findLegendEntitlementForUser = async (
 	userId: string,
@@ -98,7 +79,7 @@ export const grantLegendDiscordRole = inngest.createFunction(
 				const activeCohortCount =
 					await countActiveDistinctCohortPurchasesForUser(userId)
 
-				if (activeCohortCount < 3) {
+				if (activeCohortCount < LEGEND_COHORT_THRESHOLD) {
 					return {
 						granted: false,
 						activeCohortCount,
