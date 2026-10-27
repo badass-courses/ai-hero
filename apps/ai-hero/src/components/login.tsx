@@ -157,6 +157,7 @@ export const Login: React.FC<React.PropsWithChildren<LoginTemplateProps>> = ({
 						<Button
 							data-button=""
 							variant="outline"
+							className="h-auto min-h-10 w-full whitespace-normal py-2 text-balance"
 							onClick={() =>
 								signIn(discordProvider.id, {
 									callbackUrl,
@@ -164,7 +165,7 @@ export const Login: React.FC<React.PropsWithChildren<LoginTemplateProps>> = ({
 							}
 						>
 							<Icon
-								className="mr-2 flex items-center justify-center"
+								className="mr-2 flex shrink-0 items-center justify-center"
 								name="Discord"
 								size="20"
 							/>
@@ -175,6 +176,7 @@ export const Login: React.FC<React.PropsWithChildren<LoginTemplateProps>> = ({
 						<Button
 							data-button=""
 							variant="outline"
+							className="h-auto min-h-10 w-full whitespace-normal py-2 text-balance"
 							onClick={() =>
 								signIn(githubProvider.id, {
 									callbackUrl,
@@ -186,7 +188,7 @@ export const Login: React.FC<React.PropsWithChildren<LoginTemplateProps>> = ({
 								height={20}
 								viewBox={'0 0 16 16'}
 								role={'img'}
-								className="mr-2 flex items-center justify-center"
+								className="mr-2 flex shrink-0 items-center justify-center"
 								xmlns="http://www.w3.org/2000/svg"
 							>
 								<title>{'Github'}</title>

@@ -775,7 +775,7 @@ describe('drovr double opt-in (DROVR_DOI_FORMS)', () => {
 	})
 })
 
-describe('returning unsubscriber (Kit tag 8244351)', () => {
+describe('returning unsubscriber (Kit or drovr)', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		for (const key of [
@@ -799,7 +799,7 @@ describe('returning unsubscriber (Kit tag 8244351)', () => {
 			}),
 		)
 
-	it('tagged and drovr reachable: answers the DOI shape, no Kit subscribe, no untag', async () => {
+	it.each(['tagged', 'drovr consent unknown with DOI enabled'])('%s: answers the DOI shape, no Kit subscribe, no untag', async () => {
 		mocks.routeReturning.mockResolvedValue({ status: 'doi-requested' })
 
 		const response = await post()
@@ -816,15 +816,16 @@ describe('returning unsubscriber (Kit tag 8244351)', () => {
 		)
 	})
 
-	it('tagged but blocked (drovr not configured): fails closed, no Kit subscribe, no untag', async () => {
+	it.each(['drovr-unconfigured', 'doi-disabled', 'unmapped-form', 'suppressed', 'drovr-unknown'])('blocked (%s): 409, no Kit subscribe, no untag', async (reason) => {
 		mocks.routeReturning.mockResolvedValue({
 			status: 'blocked',
-			reason: 'drovr-unconfigured',
+			reason,
 		})
 
 		const response = await post()
 
-		expect(response.status).toBe(502)
+		expect(response.status).toBe(409)
+		await expect(response.json()).resolves.toEqual({ error: 'Subscription could not be confirmed' })
 		expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
 		expect(mocks.reconcile).not.toHaveBeenCalled()
 	})

@@ -322,12 +322,12 @@ describe('source-declaration head renders (synthetic fixtures, Next metadata inh
 					quantityAvailable: 3,
 				})
 				const route = `/workshops/${slug}`
-				proof[route] ??= { before: '', after: '' }
-				proof[route][phase] = await renderHead(route, metadata, jsonLd, before)
+				const routeProof = (proof[route] ??= { before: '', after: '' })
+				routeProof[phase] = await renderHead(route, metadata, jsonLd, before)
 				if (!before) {
 					expect(metadata.description).not.toMatch(/\*you\*|\[/)
 					expect(metadata.description!.length).toBeLessThanOrEqual(155)
-					expect(proof[route][phase]).toContain('https://schema.org/InStock')
+					expect(routeProof[phase]).toContain('https://schema.org/InStock')
 				}
 			}
 			const entry = {

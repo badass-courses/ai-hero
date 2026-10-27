@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getSubscriberByEmail: vi.fn(),
   requestDoi: vi.fn(),
+  readDrovrOptOuts: vi.fn(),
   log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   env: {} as Record<string, string | undefined>,
 }));
@@ -14,6 +15,10 @@ vi.mock("@/coursebuilder/email-list-provider", () => ({
 }));
 vi.mock("./drovr-doi-signup.server", () => ({
   requestDrovrDoiSignup: mocks.requestDoi,
+}));
+
+vi.mock("./drovr-opt-out-reader", () => ({
+  readDrovrOptOuts: mocks.readDrovrOptOuts,
 }));
 
 import { routeReturningUnsubscriberWithKit } from "./ai-hero-email-opt-in.server";
@@ -35,6 +40,7 @@ describe("routeReturningUnsubscriberWithKit", () => {
       tags: [{ id: 8244351 }],
     });
     mocks.requestDoi.mockResolvedValue({ contactId: "contact-1" });
+    mocks.readDrovrOptOuts.mockResolvedValue([]);
     mocks.env.AIH_RESUBSCRIBE_DOI_ENABLED = "true";
   });
 
@@ -101,6 +107,43 @@ describe("routeReturningUnsubscriberWithKit", () => {
       "optin.resubscribe.lookup_failed",
       { formId: 9376133, entry: "form" },
     );
+  });
+
+  it("drovr-only unsubscribe requests DOI using the existing Kit subscriber id", async () => {
+    mocks.env.DROVR_API_BASE_URL = "https://drovr.test";
+    mocks.env.DROVR_API_KEY_ORG_AIHERO = "drovr_key";
+    mocks.getSubscriberByEmail.mockResolvedValue({ id: 123, tags: [] });
+    mocks.readDrovrOptOuts.mockResolvedValue([{ reason: "unsubscribed" }]);
+    await expect(call()).resolves.toEqual({ status: "doi-requested" });
+    expect(mocks.readDrovrOptOuts).toHaveBeenCalledWith("123", {
+      baseUrl: "https://drovr.test", apiKey: "drovr_key",
+    }, expect.any(Function));
+  });
+
+  it.each([true, false])("unknown drovr consent with DOI enabled=%s logs the error name and gate", async (doiEnabled) => {
+    mocks.env.DROVR_API_BASE_URL = "https://drovr.test";
+    mocks.env.DROVR_API_KEY_ORG_AIHERO = "drovr_key";
+    mocks.env.AIH_RESUBSCRIBE_DOI_ENABLED = String(doiEnabled);
+    mocks.getSubscriberByEmail.mockResolvedValue({ id: 123, tags: [] });
+    mocks.readDrovrOptOuts.mockRejectedValue(new TypeError("private@example.test secret"));
+    await expect(call()).resolves.toEqual(doiEnabled
+      ? { status: "doi-requested" }
+      : { status: "blocked", reason: "drovr-unknown" });
+    expect(mocks.log.warn).toHaveBeenCalledWith(
+      "optin.resubscribe.drovr_unknown", { error: "TypeError", doiEnabled },
+    );
+    expect(JSON.stringify(mocks.log.warn.mock.calls)).not.toContain("private@example.test");
+    expect(mocks.requestDoi).toHaveBeenCalledTimes(doiEnabled ? 1 : 0);
+  });
+
+  it("wires the unexpected-page warning without ids", async () => {
+    mocks.getSubscriberByEmail.mockResolvedValue({ id: 123, tags: [] });
+    mocks.readDrovrOptOuts.mockImplementationOnce(async (_id, _config, onUnexpectedPage) => {
+      await onUnexpectedPage();
+      return [];
+    });
+    await expect(call()).resolves.toEqual({ status: "not-unsubscribed" });
+    expect(mocks.log.warn).toHaveBeenCalledWith("optin.resubscribe.drovr_unexpected_page", {});
   });
 
   it("untagged: nothing requested, nothing logged", async () => {
