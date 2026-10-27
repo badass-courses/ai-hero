@@ -96,10 +96,26 @@ export async function getIntegrationRefreshToken(
 	}
 }
 
+// staleRow: the write failed and the provider's old row could not be removed,
+// so it may still beat the fresh env token on the next deploy.
+export type IntegrationTokenPutResult =
+	| { ok: true }
+	| { ok: false; staleRow: boolean }
+
+// Static, value-free operator copy for OAuth callback result pages.
+export function integrationTokenStorageNotice(
+	result: IntegrationTokenPutResult,
+): string | null {
+	if (result.ok) return null
+	return result.staleRow
+		? 'DB token store failed and a stale DB row may remain; delete it before the next deploy.'
+		: 'DB token store failed; using env.'
+}
+
 export async function putIntegrationRefreshToken(
 	provider: IntegrationTokenProvider,
 	token: string,
-): Promise<{ ok: boolean }> {
+): Promise<IntegrationTokenPutResult> {
 	if (!env.INTEGRATION_TOKEN_KEY) {
 		await reason(provider, 'write', 'no-key')
 		// Dormancy is a successful no-op, not a callback storage failure.
@@ -140,9 +156,11 @@ export async function putIntegrationRefreshToken(
 				.where(eq(integrationToken.provider, provider))
 		} catch (cleanupError) {
 			// An absent table has no stale row to clean up.
-			if (!missingTable(cleanupError))
+			if (!missingTable(cleanupError)) {
 				await reason(provider, 'write', 'cleanup-failed')
+				return { ok: false, staleRow: true }
+			}
 		}
-		return { ok: false }
+		return { ok: false, staleRow: false }
 	}
 }

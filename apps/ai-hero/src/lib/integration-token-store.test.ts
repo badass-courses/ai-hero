@@ -35,6 +35,7 @@ vi.mock('@/db', () => {
 })
 import {
 	getIntegrationRefreshToken,
+	integrationTokenStorageNotice,
 	putIntegrationRefreshToken,
 } from './integration-token-store'
 
@@ -66,8 +67,12 @@ describe('dormant dual-read integration token store', () => {
 			'raw-process-env',
 		)
 		expect(await getIntegrationRefreshToken('dropbox', '')).toBe('')
-		await putIntegrationRefreshToken('dropbox', 'fresh-token')
-		await putIntegrationRefreshToken('youtube_analytics', 'fresh-token')
+		expect(await putIntegrationRefreshToken('dropbox', 'fresh-token')).toEqual(
+			{ ok: true },
+		)
+		expect(
+			await putIntegrationRefreshToken('youtube_analytics', 'fresh-token'),
+		).toEqual({ ok: true })
 		expect(mocks.dbLoaded).not.toHaveBeenCalled()
 		expect(mocks.select).not.toHaveBeenCalled()
 		expect(mocks.insert).not.toHaveBeenCalled()
@@ -113,14 +118,16 @@ describe('dormant dual-read integration token store', () => {
 			expect(await getIntegrationRefreshToken('dropbox')).toBe('env-dropbox')
 			await expect(
 				putIntegrationRefreshToken('dropbox', 'fresh-token'),
-			).resolves.toEqual({ ok: false })
+			).resolves.toEqual({ ok: false, staleRow: false })
 			expect(mocks.warn).toHaveBeenCalledTimes(2)
 			for (const [, data] of mocks.warn.mock.calls)
 				expect(data.reason).toBe('no-table')
 		},
 	)
 	it('writes only an authenticated envelope and upserts atomically', async () => {
-		await putIntegrationRefreshToken('dropbox', 'fresh-token')
+		expect(await putIntegrationRefreshToken('dropbox', 'fresh-token')).toEqual(
+			{ ok: true },
+		)
 		const row = mocks.values.mock.calls[0]![0]
 		expect(row.provider).toBe('dropbox')
 		expect(row.updatedAt).toBeInstanceOf(Date)
@@ -135,7 +142,7 @@ describe('dormant dual-read integration token store', () => {
 		expect(await getIntegrationRefreshToken('dropbox')).toBe('env-dropbox')
 		await expect(
 			putIntegrationRefreshToken('dropbox', 'fresh-token'),
-		).resolves.toEqual({ ok: false })
+		).resolves.toEqual({ ok: false, staleRow: false })
 		expect(mocks.select).not.toHaveBeenCalled()
 		expect(mocks.insert).not.toHaveBeenCalled()
 	})
@@ -182,6 +189,7 @@ describe('dormant dual-read integration token store', () => {
 			mocks.upsert.mockRejectedValue(new Error('synthetic write failure'))
 			expect(await putIntegrationRefreshToken(provider, 'new-token')).toEqual({
 				ok: false,
+				staleRow: false,
 			})
 			expect(mocks.delete).toHaveBeenCalledTimes(1)
 			expect(await getIntegrationRefreshToken(provider, 'new-env-token')).toBe(
@@ -201,13 +209,35 @@ describe('dormant dual-read integration token store', () => {
 		mocks.deleteWhere.mockRejectedValue(new Error('synthetic delete failure'))
 		await expect(
 			putIntegrationRefreshToken('dropbox', 'token'),
-		).resolves.toEqual({ ok: false })
+		).resolves.toEqual({ ok: false, staleRow: true })
 		expect(mocks.warn).toHaveBeenCalledWith(
 			'integration-token.fallback',
 			expect.objectContaining({
 				reason: 'cleanup-failed',
 				message: 'DB token cleanup failed; stale row may remain',
 			}),
+		)
+	})
+
+	it('a missing table during cleanup leaves no stale row', async () => {
+		mocks.upsert.mockRejectedValue(new Error('synthetic write failure'))
+		mocks.deleteWhere.mockRejectedValue({ code: 'ER_NO_SUCH_TABLE' })
+		await expect(
+			putIntegrationRefreshToken('dropbox', 'token'),
+		).resolves.toEqual({ ok: false, staleRow: false })
+		expect(mocks.warn).not.toHaveBeenCalledWith(
+			'integration-token.fallback',
+			expect.objectContaining({ reason: 'cleanup-failed' }),
+		)
+	})
+
+	it('maps each put outcome to static operator copy', () => {
+		expect(integrationTokenStorageNotice({ ok: true })).toBeNull()
+		expect(integrationTokenStorageNotice({ ok: false, staleRow: false })).toBe(
+			'DB token store failed; using env.',
+		)
+		expect(integrationTokenStorageNotice({ ok: false, staleRow: true })).toBe(
+			'DB token store failed and a stale DB row may remain; delete it before the next deploy.',
 		)
 	})
 })
