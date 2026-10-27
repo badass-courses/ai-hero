@@ -35,26 +35,28 @@ export const shortlinkAttribution = inngest.createFunction(
 			}
 		}
 
-		const purchase = await step.run('get purchase', async () => {
-			return adapter.getPurchase(event.data.purchaseId)
+		const context = await step.run('get attribution context', async () => {
+			const purchase = await adapter.getPurchase(event.data.purchaseId)
+
+			if (!purchase) {
+				return { skipped: true, reason: 'Purchase not found' }
+			}
+
+			const product = await adapter.getProduct(purchase.productId as string)
+			const user = await adapter.getUserById(purchase.userId as string)
+
+			if (!user) {
+				return { skipped: true, reason: 'User not found' }
+			}
+
+			return { purchase, product, user }
 		})
 
-		if (!purchase) {
-			return { skipped: true, reason: 'Purchase not found' }
-		}
+		if ('skipped' in context) return context
+		const { purchase, product, user } = context
 
-		const product = await step.run('get product', async () => {
-			return adapter.getProduct(purchase.productId as string)
-		})
-
-		const user = await step.run('get user', async () => {
-			return adapter.getUserById(purchase.userId as string)
-		})
-
-		if (!user) {
-			return { skipped: true, reason: 'User not found' }
-		}
-
+		// Purchase attribution inserts a new row on every call. Keep its checkpoint
+		// separate from reads and GA4 so retries do not introduce extra inserts.
 		const result = await step.run('record attribution', async () => {
 			try {
 				const checkoutSession =
@@ -72,7 +74,10 @@ export const shortlinkAttribution = inngest.createFunction(
 						productType: event.data.productType,
 						metadata: checkoutSession.metadata,
 					})
-					return { skipped: true, reason: 'No shortlink reference in metadata' }
+					return {
+						skipped: true,
+						reason: 'No shortlink reference in metadata',
+					}
 				}
 
 				await log.info('shortlink.attribution.found_ref', {
