@@ -26,31 +26,18 @@ type BackfillRow = {
 	assignmentStatus: string
 }
 
-const ENV_CANDIDATES = ['.env.local', '.env.vercel', '.env.development']
 const DUPLICATE_ACCOUNT_OVERRIDES: Record<string, string[]> = {
 	'john.harnett@gmail.com': ['1073260223319527595', '1188860677809504307'],
 	'rajatkumartx@gmail.com': ['854397973202468864'],
 	'scrajusam@gmail.com': ['1247451712726241461', '268796964215193601'],
 }
 
-const loadEnvFile = () => {
-	for (const candidate of ENV_CANDIDATES) {
-		const filePath = path.join(process.cwd(), candidate)
-		if (fs.existsSync(filePath)) {
-			return fs.readFileSync(filePath, 'utf8')
-		}
-	}
-
-	throw new Error(`No env file found. Checked: ${ENV_CANDIDATES.join(', ')}`)
-}
-
-const envText = loadEnvFile()
 const readEnv = (name: string) => {
-	const match = envText.match(new RegExp(`^${name}=(.*)$`, 'm'))
-	if (!match?.[1]) {
-		throw new Error(`${name} not found in env file`)
+	const value = process.env[name]
+	if (!value?.trim()) {
+		throw new Error(`Missing required environment variable: ${name}`)
 	}
-	return match[1].trim().replace(/^"|"$/g, '')
+	return value
 }
 
 const databaseUrl = readEnv('DATABASE_URL')

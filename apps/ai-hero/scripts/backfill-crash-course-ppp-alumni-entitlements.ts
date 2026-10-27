@@ -1,7 +1,7 @@
 import { Effect } from 'effect'
 import { and, eq, gt, inArray, isNull, lte, sql } from 'drizzle-orm'
 
-import { db } from '../src/db/index'
+import { db } from '../src/db/client'
 import {
 	coupon,
 	entitlements,
@@ -29,7 +29,7 @@ import {
 	type PppAlumniPlan,
 	type PppAlumniPlanEntry,
 } from '../src/lib/crash-course-ppp-alumni-backfill'
-import { EntitlementSourceType } from '../src/lib/entitlements'
+import { EntitlementSourceType } from '../src/lib/entitlement-source-type'
 
 const migration = CRASH_COURSE_PPP_ALUMNI_MIGRATION
 const sourceProductIds = Object.keys(migration.sourceProductCoupons)
