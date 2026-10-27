@@ -1,9 +1,19 @@
 'use client'
 
 import * as React from 'react'
+import { useSession } from 'next-auth/react'
 import { useMuxMetadata } from '@/hooks/use-mux-metadata'
 import type { RestrictedVideoPayload } from '@/lib/restricted-video-access'
-import MuxPlayer from '@mux/mux-player-react'
+import dynamic from 'next/dynamic'
+
+// Lazy, client-only: this component sits in the workshop MDX map, so a static
+// import put the whole Mux player (300KB+ gz) on the product page for every
+// visitor, while the video itself renders only for one organization's
+// members after an authenticated fetch. Nothing shows until that fetch
+// resolves, so there is no SSR to lose.
+const MuxPlayer = dynamic(() => import('@mux/mux-player-react'), {
+	ssr: false,
+})
 
 import { cn } from '@coursebuilder/utils/cn'
 
@@ -38,9 +48,13 @@ export function TeamWelcomeVideo({
 	className?: string
 }) {
 	const [video, setVideo] = React.useState<RestrictedVideoPayload | null>(null)
+	// The endpoint reads the viewer's session and 403s everyone else, so an
+	// anonymous reader was making a request that could only fail (and logging
+	// a console error on a product page). Ask only once there is a session.
+	const { status } = useSession()
 
 	React.useEffect(() => {
-		if (!resourceId) {
+		if (!resourceId || status !== 'authenticated') {
 			return
 		}
 
@@ -78,7 +92,7 @@ export function TeamWelcomeVideo({
 		void load()
 
 		return () => controller.abort()
-	}, [resourceId])
+	}, [resourceId, status])
 
 	const resolvedTitle = title ?? video?.title ?? 'Welcome'
 	const metadata = useMuxMetadata({

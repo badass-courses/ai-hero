@@ -273,9 +273,6 @@ importers:
       '@sindresorhus/slugify':
         specifier: ^2.2.1
         version: 2.2.1
-      '@skillrecordings/analytics':
-        specifier: ^1.0.1
-        version: 1.0.1(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react@19.2.3)
       '@skillrecordings/config':
         specifier: ^0.0.3
         version: 0.0.3
@@ -1184,21 +1181,25 @@ packages:
 
   '@atlaskit/theme@12.12.0':
     resolution: {integrity: sha512-HHJ60r+74BInccPoeOEXTNl6eAvASKLCDi+e6ScZ4WG/9KQwgv4OgXzgubY83DOu1cS2FidHSPsX6lOcIJ8fgw==}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       react: ^16.8.0 || ^17.0.0 || ^18.0.0
 
   '@atlaskit/theme@13.1.0':
     resolution: {integrity: sha512-9HWU2Wf5DX1+OQKmqAeZqUPAe2BgNhyYhIlkQm2Vo8RxzvI0BDWyjafEro4MdUK8ZYqSfegd9wgk7qzIUF9ZaQ==}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       react: ^16.8.0 || ^17.0.0 || ^18.0.0
 
   '@atlaskit/theme@14.1.0':
     resolution: {integrity: sha512-jXZ5nLUOKgf3UJialhpbg0+WQV2qrWdRZ5afnYq/tW1pqmZshw129Ty1i2xcpFbPVE/KndXpkZws0DdXAfhB0A==}
+    deprecated: This package is deprecated and is no longer maintained or supported.
     peerDependencies:
       react: ^16.8.0 || ^17.0.0 || ^18.0.0
 
   '@atlaskit/theme@16.0.0':
     resolution: {integrity: sha512-GIxzHsdGQWlfv1XfhqpdPe911rq5IZ7a/RJDjHcdRSzm40N+0gYOk1Mg3F/QFVeK6ZeQOutrNJ/sD8CerHn3SA==}
+    deprecated: This package is deprecated and is no longer maintained or supported.
     peerDependencies:
       react: ^16.8.0 || ^17.0.0 || ^18.0.0
 
@@ -6219,12 +6220,6 @@ packages:
   '@sindresorhus/transliterate@1.6.0':
     resolution: {integrity: sha512-doH1gimEu3A46VX6aVxpHTeHrytJAG6HgdxntYnCFiIFHEM/ZGpG8KiZGBChchjQmG0XFIBL552kBTjVcMZXwQ==}
     engines: {node: '>=12'}
-
-  '@skillrecordings/analytics@1.0.1':
-    resolution: {integrity: sha512-gqJa4mC+3GVpNQD2EHuYi6TOW6kMBONfdrMVx/7jHozJ6jLq2hsadWjk/zXYup+vdLONysAi5aUUpLpizzXitg==}
-    peerDependencies:
-      next: '>= 11.1.2 < 13'
-      react: ^17.0.2 < 18.0.0
 
   '@skillrecordings/config@0.0.3':
     resolution: {integrity: sha512-0a89yYp0xWDsSJr7SCo0qXc8OoY3SitR5+ePBrJuUReogv771yzsiiZEKK4oIORNwF7RWE+4IdJ2KYahYz31Qw==}
@@ -20542,12 +20537,6 @@ snapshots:
   '@sindresorhus/transliterate@1.6.0':
     dependencies:
       escape-string-regexp: 5.0.0
-
-  '@skillrecordings/analytics@1.0.1(next@16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react@19.2.3)':
-    dependencies:
-      lodash: 4.18.1
-      next: 16.2.7(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      react: 19.2.3
 
   '@skillrecordings/config@0.0.3': {}
 

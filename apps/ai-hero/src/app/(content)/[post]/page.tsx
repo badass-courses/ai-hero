@@ -61,7 +61,7 @@ import {
 } from '@/components/skills'
 import { getSkillSectionMap, type SkillSectionMap } from '@/lib/skills-query'
 import ListPage from '../lists/[slug]/_page'
-import { PostPlayer } from '../posts/_components/post-player'
+import { PostPlayer } from '../posts/_components/lazy-post-player'
 import { getTocModel } from '../posts/_components/post-toc-model'
 import {
 	PostToCDisclosure,

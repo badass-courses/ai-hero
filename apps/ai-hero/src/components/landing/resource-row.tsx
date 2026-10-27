@@ -1,9 +1,9 @@
-'use client'
-
+// Not a client component any more: the hover animation is CSS now, and the
+// description's markdown renders on the server, which keeps react-markdown
+// (and, before it, framer-motion) out of the homepage's client bundle.
 import * as React from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
-import { motion } from 'framer-motion'
 import { Markdown as ReactMarkdown } from '@/components/markdown'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
@@ -11,8 +11,6 @@ import { cn } from '@coursebuilder/ui/utils/cn'
 import { AnimatedArrowCircle } from './animated-arrow-circle'
 
 import { BADGE_OUTLINE, TYPE } from './type'
-
-const MotionLink = motion.create(Link)
 
 type ResourceRowProps = {
 	title: string
@@ -73,38 +71,29 @@ export function ResourceRow({
 		typeof badge === 'string' ? <DefaultBadge>{badge}</DefaultBadge> : badge
 
 	return (
-		<MotionLink
+		<Link
 			href={href}
 			prefetch={!isExternal}
 			target={isExternal ? '_blank' : undefined}
 			rel={isExternal ? 'noopener noreferrer' : undefined}
-			initial="initial"
-			whileHover="hover"
-			animate="initial"
 			className="border-border group relative -mt-px block border-y"
 		>
-			<motion.div
+			{/* The hover wash: a gradient that fades in under a page-coloured
+			    inset that shrinks by 5px, so a hairline of colour appears around
+			    the row. CSS transitions on `group-hover`, with the 400ms and the
+			    easing the motion variants had. */}
+			<div
 				aria-hidden
-				className="animate-resource-gradient pointer-events-none absolute -inset-y-px inset-x-0"
+				className="animate-resource-gradient pointer-events-none absolute -inset-y-px inset-x-0 opacity-0 transition-opacity duration-[400ms] ease-[cubic-bezier(0.65,0,0.35,1)] group-hover:opacity-100 motion-reduce:transition-none"
 				style={{
 					backgroundImage:
 						'linear-gradient(90deg, oklch(0.92 0.05 30), oklch(0.74 0.18 50), oklch(0.82 0.12 350), oklch(0.50 0.20 260), oklch(0.85 0.10 5), oklch(0.92 0.07 145), oklch(0.74 0.18 50), oklch(0.88 0.18 95), oklch(0.62 0.22 25), oklch(0.74 0.18 45), oklch(0.82 0.12 350), oklch(0.92 0.05 30))',
 					backgroundSize: '200% 200%',
 				}}
-				variants={{
-					initial: { opacity: 0 },
-					hover: { opacity: 1 },
-				}}
-				transition={{ duration: 0.4, ease: [0.65, 0, 0.35, 1] }}
 			/>
-			<motion.div
+			<div
 				aria-hidden
-				className="bg-background pointer-events-none absolute"
-				variants={{
-					initial: { top: 0, right: 0, bottom: 0, left: 0 },
-					hover: { top: 5, right: 5, bottom: 5, left: 5 },
-				}}
-				transition={{ duration: 0.4, ease: [0.65, 0, 0.35, 1] }}
+				className="bg-background pointer-events-none absolute inset-0 transition-[inset] duration-[400ms] ease-[cubic-bezier(0.65,0,0.35,1)] group-hover:inset-[5px] motion-reduce:transition-none"
 			/>
 			<div className="relative flex flex-col gap-5 p-5 sm:flex-row sm:items-center sm:gap-8 sm:px-14 sm:py-10">
 				<div
@@ -167,7 +156,7 @@ export function ResourceRow({
 				</div>
 				<AnimatedArrowCircle />
 			</div>
-		</MotionLink>
+		</Link>
 	)
 }
 

@@ -59,7 +59,8 @@ export function AboutMatt({
 				<Image
 					src="/landing/matt-pocock@2x.png"
 					alt="Matt Pocock"
-					priority
+					// Not `priority`: this section is well below the fold, and the flag
+					// preloaded it at the top of every homepage load, ahead of the hero.
 					sizes="(min-width: 768px) 400px, 70vw"
 					width={473}
 					height={520}

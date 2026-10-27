@@ -46,7 +46,9 @@ export function PostUpNextCard({
 				animate="initial"
 				aria-label={ariaLabel}
 				className={cn(
-					'border-border relative flex w-full flex-col items-center overflow-hidden border-y py-16 text-center transition',
+					// `group`: the arrow ring draws on `group-hover` now, not on this
+					// nav's framer `hover` variant.
+					'border-border group relative flex w-full flex-col items-center overflow-hidden border-y py-16 text-center transition',
 					surfaceClassName,
 					className,
 				)}
