@@ -8,6 +8,7 @@ on:
       - "apps/ai-hero/src/app/api/analytics/**"
       - "apps/ai-hero/src/app/admin/analytics/**"
       - "pnpm-lock.yaml"
+      - "patches/@coursebuilder__analytics@*.patch"
   workflow_dispatch:
 
 permissions:
@@ -46,5 +47,6 @@ jobs:
           src/lib/analytics/promos-provider.test.ts
           src/lib/analytics/promos-fixture-schema.test.ts
           src/lib/analytics/promos.mysql.test.ts
+          src/lib/analytics/attribution-semijoin.mysql.test.ts
           src/app/api/analytics/__tests__/route-agent-contract.test.ts
           src/app/admin/analytics/_components/evergreen-offer-card.test.tsx
