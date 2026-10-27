@@ -73,6 +73,7 @@ export async function runDeferredOptIn(
 	const base = {
 		formId: data.formId,
 		entry: data.entry,
+		action: data.action,
 		emailHash: optInEmailHash(data.email),
 		submissionKey: data.submissionKey,
 	}
@@ -126,7 +127,7 @@ export const optinDeferredDeps: DeferredOptInDeps = {
 				page: data.page,
 				optInAttribution: data.optInAttribution,
 				entry: data.entry,
-				deferral: { queue: false },
+				deferral: { queue: false, action: data.action },
 			})
 			if (result.status === 'not-unsubscribed') return 'clear'
 			if (result.status === 'deferred' || result.status === 'lookup-failed') {

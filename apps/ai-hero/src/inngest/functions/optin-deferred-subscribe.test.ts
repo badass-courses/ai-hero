@@ -30,6 +30,7 @@ const data = {
 	email: 'person@example.com',
 	formId: 9376133,
 	entry: 'form' as const,
+	action: 'form-subscribe' as const,
 	tenantId: 'org-aihero' as const,
 	page: 'https://www.aihero.dev/',
 	queuedAt: '2026-10-27T00:00:00.000Z',

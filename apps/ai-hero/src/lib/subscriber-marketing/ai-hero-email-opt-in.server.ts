@@ -59,6 +59,7 @@ export function optInDeferralKey(email: string, formId: number, now: number) {
 export type OptInDeferralInput = {
 	/** False for the deferred function itself: report `deferred`, never re-queue. */
 	queue?: boolean
+	action?: 'form-subscribe' | 'tag-me'
 	fields?: Record<string, unknown>
 	deadlineTimeZone?: DeadlineTimeZoneEvidence
 }
@@ -165,6 +166,9 @@ async function queueDeferral<
 				name: args.name,
 				formId: args.kitFormId,
 				entry: args.entry,
+				action:
+					args.deferral?.action ??
+					(args.entry === 'tag-me' ? 'tag-me' : 'form-subscribe'),
 				tenantId: DROVR_AUTHORITY_TENANT_ID,
 				fields: args.deferral?.fields,
 				page: args.page,

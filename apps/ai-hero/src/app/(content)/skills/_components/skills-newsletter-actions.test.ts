@@ -485,6 +485,26 @@ describe('tagSubscriberAsSkills for a returning unsubscriber (Kit tag 8244351)',
 		expect(mocks.inngestSend).not.toHaveBeenCalled()
 	})
 
+	it('drovr state unknown (deferred): success, no Kit subscribe, replays tag-me later', async () => {
+		mocks.routeReturning.mockResolvedValue({ status: 'deferred' })
+
+		const result = await tagSubscriberAsSkills('skills-post')
+
+		expect(result).toEqual({ success: true })
+		expect(mocks.subscribeToList).not.toHaveBeenCalled()
+		expect(mocks.reconcile).not.toHaveBeenCalled()
+		expect(mocks.inngestSend).not.toHaveBeenCalled()
+		expect(mocks.routeReturning).toHaveBeenCalledWith(
+			expect.objectContaining({
+				entry: 'tag-me',
+				deferral: expect.objectContaining({
+					action: 'tag-me',
+					fields: expect.objectContaining({ source: expect.any(String) }),
+				}),
+			}),
+		)
+	})
+
 	it('blocked (drovr not configured): request-failed, no Kit subscribe, no untag', async () => {
 		mocks.routeReturning.mockResolvedValue({
 			status: 'blocked',

@@ -19,6 +19,13 @@ export type OptInDeferred = {
 		name?: string
 		formId: number
 		entry: 'form' | 'tag-me'
+		/**
+		 * Which action to replay. `form-subscribe` is the form route's Kit form
+		 * subscribe; `tag-me` is the signed-in or cookie reader's "Start the
+		 * free course" action (same Kit subscribe with the conversion-intent
+		 * fields, then its recovery token).
+		 */
+		action: 'form-subscribe' | 'tag-me'
 		tenantId: 'org-aihero'
 		fields?: Record<string, unknown>
 		page: string

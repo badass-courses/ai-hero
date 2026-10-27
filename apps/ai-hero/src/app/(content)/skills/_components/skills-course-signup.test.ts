@@ -51,6 +51,21 @@ describe('completeSkillsCourseSignup', () => {
 		expect(url).not.toContain('ck_subscriber_id')
 	})
 
+	it('sends a deferred signup to the course /confirm without counting an enrolment', () => {
+		const onEnrolled = vi.fn()
+		completeSkillsCourseSignup(
+			{ state: 'deferred', email_address: 'reader@example.com' } as any,
+			{ push },
+			onEnrolled,
+		)
+
+		expect(assign).not.toHaveBeenCalled()
+		expect(onEnrolled).not.toHaveBeenCalled()
+		const url = push.mock.calls[0]?.[0] as string
+		expect(url).toContain('/confirm?')
+		expect(url).toContain('flow=course')
+	})
+
 	it('sends an inactive subscriber to the hosted resubscribe flow', () => {
 		const onEnrolled = vi.fn()
 		completeSkillsCourseSignup(subscriber('inactive'), { push }, onEnrolled)

@@ -11,7 +11,10 @@ import { inngest } from '@/inngest/inngest.server'
 import { createShortlinkAttribution } from '@/lib/shortlinks-query'
 import { recordSignupAttribution } from '@/lib/signup-attribution'
 import { guardSubscribe } from '@/lib/subscribe-bot-defense.server'
-import { pendingSubscribeResponse } from '@/lib/pending-subscribe-response'
+import {
+	deferredSubscribeResponse,
+	pendingSubscribeResponse,
+} from '@/lib/pending-subscribe-response'
 import {
 	reconcileAiHeroEmailOptInWithKit,
 	routeReturningUnsubscriberWithKit,
@@ -374,6 +377,7 @@ async function returningUnsubscriberSignup(
 			entry: 'form',
 			// An unreadable drovr state queues the sign-up instead of failing it.
 			deferral: {
+				action: 'form-subscribe',
 				fields:
 					body.fields && typeof body.fields === 'object'
 						? (body.fields as Record<string, unknown>)
@@ -384,8 +388,10 @@ async function returningUnsubscriberSignup(
 		if (result.status === 'not-unsubscribed') return {}
 		// Consent lookup unreadable: carry on with the sign-up, but never untag.
 		if (result.status === 'lookup-failed') return { lookupFailed: true }
-		// Queued for a later drovr re-read; the person sees a normal sign-up.
-		if (result.status === 'doi-requested' || result.status === 'deferred') {
+		if (result.status === 'deferred') {
+			return { response: deferredSubscribeResponse({ email, name }) }
+		}
+		if (result.status === 'doi-requested') {
 			return { response: pendingSubscribeResponse({ email, name }) }
 		}
 		if (result.status === 'blocked') {

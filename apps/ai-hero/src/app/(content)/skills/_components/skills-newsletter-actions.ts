@@ -119,7 +119,21 @@ export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 				cookieStore.get('ft_attr')?.value,
 			),
 			entry: 'tag-me',
+			// An unreadable drovr state queues the same action for a later re-read.
+			deferral: {
+				action: 'tag-me',
+				fields: conversionIntentContract({
+					intent: { kind: 'skills-course' },
+					surface,
+				}).fields,
+				deadlineTimeZone: deferredDeadlineTimeZone(headerStore),
+			},
 		})
+		if (returning.status === 'deferred') {
+			// Success as the client already handles it; the queued job subscribes
+			// only once drovr says there is no "all" stop.
+			return { success: true as const }
+		}
 		if (returning.status === 'doi-requested') {
 			return {
 				success: false as const,
@@ -228,6 +242,16 @@ export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 		})
 		return { success: false, reason: 'request-failed' as const }
 	}
+}
+
+function deferredDeadlineTimeZone(headerStore: Headers) {
+	const result = deadlineTimeZoneEvidenceFromHeader({
+		headerValue: headerStore.get('x-vercel-ip-timezone'),
+		capturedAt: new Date().toISOString(),
+	})
+	return deadlineTimeZoneCaptureEnabled(process.env) && result.ok
+		? result.value
+		: undefined
 }
 
 async function captureAndStashCourseEntryEvidence(input: unknown) {

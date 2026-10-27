@@ -845,7 +845,9 @@ describe('returning unsubscriber (Kit or drovr)', () => {
 		expect(response.status).toBe(200)
 		expect(await response.json()).toMatchObject({
 			email_address: 'person@example.com',
-			state: 'awaiting-confirmation',
+			// Not 'awaiting-confirmation': no email is coming, so the client
+			// must render the subscribed page.
+			state: 'deferred',
 		})
 		expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
 		expect(mocks.reconcile).not.toHaveBeenCalled()
@@ -853,6 +855,7 @@ describe('returning unsubscriber (Kit or drovr)', () => {
 		expect(mocks.routeReturning).toHaveBeenCalledWith(
 			expect.objectContaining({
 				deferral: expect.objectContaining({
+					action: 'form-subscribe',
 					fields: { source: 'aihero_skills_page' },
 				}),
 			}),

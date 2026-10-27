@@ -178,6 +178,7 @@ describe("routeReturningUnsubscriberWithKit", () => {
           fields: { source: "aihero_skills_page" },
         },
       });
+      expect(sent.data.action).toBe("form-subscribe");
       expect(sent.id).toBe(`optin-deferred:${sent.data.submissionKey}`);
       expect(mocks.log.info).toHaveBeenCalledWith(
         "optin.deferred.queued",
@@ -189,6 +190,21 @@ describe("routeReturningUnsubscriberWithKit", () => {
       expect(JSON.stringify(mocks.log.warn.mock.calls)).not.toContain(
         "person@example.com",
       );
+    });
+
+    it("carries the tag-me action for the tag-me entry", async () => {
+      await routeReturningUnsubscriberWithKit({
+        email: "person@example.com",
+        kitFormId: 9376133,
+        page: "https://www.aihero.dev/skills",
+        entry: "tag-me",
+        deferral: { action: "tag-me", fields: { source: "skills" } },
+      });
+      expect(mocks.inngestSend.mock.calls[0]![0].data).toMatchObject({
+        entry: "tag-me",
+        action: "tag-me",
+        fields: { source: "skills" },
+      });
     });
 
     it("keys a double submit in the same window to one event id", async () => {
