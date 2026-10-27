@@ -11,7 +11,7 @@ const row = {
 	date: '2026-01-01',
 	kind: 'evergreen',
 	recordCount: '3',
-	purchaseCount: 3n,
+	purchaseCount: BigInt(3),
 	gross: '75.50',
 	refunds: '25.50',
 }
