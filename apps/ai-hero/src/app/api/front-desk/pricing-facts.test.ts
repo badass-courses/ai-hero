@@ -3,12 +3,18 @@ import {
 	type PricingFacts,
 	type PricingRequest,
 } from '@ai-hero/front-desk-support'
-import { Effect, Exit, Layer } from 'effect'
+import { price } from '@ai-hero/front-desk-support/pricing'
+import { createC5AuthoritativePrice } from '@/lib/c5-pricing/hook'
+import { purchaseGate } from '@/lib/c5-pricing/purchasability'
+import { syntheticPolicy } from '@/lib/c5-pricing/synthetic-policy.test-fixture'
+import { Effect, Either, Exit, Layer } from 'effect'
 import { describe, expect, it } from 'vitest'
 import {
 	buyerPricingFacts,
+	chargeCandidate,
 	PricingFactsSource,
 	SourceUnavailable,
+	type PricingCouponEvidence,
 	type PricingPurchaseRow,
 	type PricingSettlement,
 } from './pricing-facts'
@@ -45,7 +51,7 @@ type SyntheticPurchase = PricingPurchaseRow & {
 interface SyntheticDb {
 	users?: Record<string, string>
 	purchases?: SyntheticPurchase[]
-	coupons?: Record<string, string | null>
+	coupons?: Record<string, string | null | PricingCouponEvidence>
 	prices?: { id: string; unitAmountCents: number }[]
 	settlements?: Record<string, PricingSettlement>
 	transfers?: SyntheticTransfer[]
@@ -132,6 +138,17 @@ const ask: PricingRequest = {
 	orderKind: 'individual',
 }
 
+const couponEvidence = (
+	coupon: string | null | PricingCouponEvidence,
+): PricingCouponEvidence =>
+	typeof coupon === 'object' && coupon !== null
+		? coupon
+		: {
+				type: coupon,
+				hasMerchantCoupon: coupon !== null,
+				percentageDiscount: null,
+			}
+
 function synthetic(data: SyntheticDb) {
 	const stripeReads: string[] = []
 	const down = (source: SourceUnavailable['source']) =>
@@ -205,7 +222,7 @@ function synthetic(data: SyntheticDb) {
 						new Map(
 							ids.flatMap((id) =>
 								data.coupons && id in data.coupons
-									? [[id, data.coupons[id]!] as const]
+									? [[id, couponEvidence(data.coupons[id]!)] as const]
 									: [],
 							),
 						),
@@ -238,6 +255,38 @@ const run = (data: SyntheticDb, request: PricingRequest = ask) => {
 const buyer = { users: { [email]: 'user-test' } }
 const creditOf = async (data: SyntheticDb) =>
 	(await run({ ...buyer, ...data })).facts.facts.credit
+
+describe('chargeCandidate with non-card charges', () => {
+	it('resolves a settled py_ charge to eligible at the product amount less tax', () => {
+		const row = purchase({ id: 'noncard', stripeChargeId: 'py_test' })
+		const [, settlement] = charge('noncard', {
+			id: 'py_test',
+			amount: 30000,
+			line: { amountTotal: 27000, amountTax: 2000 },
+		})
+		expect(chargeCandidate(row, Either.right(settlement))).toEqual({
+			kind: 'eligible',
+			paid: 25000,
+			purchaseId: 'noncard',
+			refs: [
+				'ai-hero:purchase:noncard',
+				'stripe:charge:py_test',
+				'stripe:checkout-session:cs_noncard#product:prod_cc',
+			],
+		})
+	})
+	it('holds a py_ charge whose Payment Intent does not match its Checkout Session', () => {
+		const row = purchase({ id: 'noncard', stripeChargeId: 'py_test' })
+		const [, settlement] = charge('noncard', {
+			id: 'py_test',
+			session: { paymentIntentId: 'pi_other' },
+		})
+		expect(chargeCandidate(row, Either.right(settlement))).toEqual({
+			kind: 'unknown',
+			gap: 'PaymentAmbiguous',
+		})
+	})
+})
 
 describe('buyerPricingFacts', () => {
 	it('reports facts only for products it supports', async () => {
@@ -484,7 +533,17 @@ describe('alumni', () => {
 		],
 		['a Restricted (PPP) C4 purchase', [{ ...c4, status: 'Restricted' }], 'c4'],
 		['a refunded C4 purchase', [{ ...c4, status: 'Refunded' }], 'none'],
-		['a redeemed team seat', [{ ...c4, redeemedBulkCouponId: 'bulk' }], 'none'],
+		['a redeemed C4 team seat', [{ ...c4, redeemedBulkCouponId: 'bulk' }], 'c4'],
+		[
+			'a redeemed C3 team seat plus an own C4 purchase',
+			[{ ...c3, redeemedBulkCouponId: 'bulk' }, c4],
+			'both',
+		],
+		[
+			'a refunded redeemed team seat',
+			[{ ...c4, status: 'Refunded', redeemedBulkCouponId: 'bulk' }],
+			'none',
+		],
 		[
 			'a team purchase',
 			[{ ...c4, bulkCouponId: 'bulk', bulkSeats: 5 }],
@@ -504,6 +563,247 @@ describe('alumni', () => {
 })
 
 describe('Crash Course credit', () => {
+	it.each([
+		[29_900, 20_000, 9_900],
+		[19_900, 10_000, 9_900],
+		[19_900, 9_435, 10_465],
+	])(
+		'credits %i cents less %i refunded as %i cents',
+		async (amount, amountRefunded, paid) => {
+			expect(
+				await creditOf({
+					purchases: [purchase({ id: 'partial' })],
+					settlements: Object.fromEntries([
+						charge('partial', { amount, amountRefunded, refundCount: 1 }),
+					]),
+				}),
+			).toEqual({
+				value: { paid, source: 'partial' },
+				sourceRefs: [
+					'ai-hero:purchase:partial',
+					'stripe:charge:ch_partial#partial-refund',
+					'stripe:checkout-session:cs_partial#product:prod_cc',
+				],
+			})
+		},
+	)
+
+	it.each([
+		{ disputed: true },
+		{ currency: 'eur' },
+		{ paid: false },
+		{ captured: false },
+		{ status: 'pending' },
+		{ session: { id: 'cs_other' } },
+		{ session: { paymentIntentId: 'pi_other' } },
+		{ session: { linesComplete: false } },
+		{ line: { stripeProductId: 'prod_other' } },
+		{ line: { quantity: 2 } },
+		{ line: { currency: 'eur' } },
+		{ line: { amountTotal: 19_900.5 } },
+		{ line: { amountTotal: Number.MAX_SAFE_INTEGER + 1 } },
+		{ amountRefunded: 9_435.5 },
+		{ amountRefunded: -1 },
+		{ amountRefunded: Number.NaN },
+		{ amount: Number.MAX_SAFE_INTEGER + 1 },
+	])('keeps settlement guards for partial refunds: %j', async (over) => {
+		expect(
+			await creditOf({
+				purchases: [purchase({ id: 'guarded' })],
+				settlements: Object.fromEntries([
+					charge('guarded', {
+						amount: 19_900,
+						amountRefunded: 9_435,
+						refundCount: 1,
+						...over,
+					}),
+				]),
+			}),
+		).toEqual({ gap: 'PaymentAmbiguous' })
+	})
+
+	it('subtracts a partial refund from product money after removing tax', async () => {
+		expect(
+			await creditOf({
+				purchases: [purchase({ id: 'taxed' })],
+				settlements: Object.fromEntries([
+					charge('taxed', {
+						amount: 19_900,
+						amountRefunded: 9_435,
+						refundCount: 1,
+						line: { amountTax: 1_000 },
+					}),
+				]),
+			}),
+		).toMatchObject({ value: { paid: 9_465, source: 'taxed' } })
+	})
+
+	it('excludes a fully refunded $99 charge even while the purchase is Valid', async () => {
+		expect(
+			await creditOf({
+				purchases: [purchase({ id: 'full' })],
+				settlements: Object.fromEntries([
+					charge('full', {
+						amount: 9_900,
+						amountRefunded: 9_900,
+						refundCount: 1,
+					}),
+				]),
+			}),
+		).toEqual({
+			value: null,
+			sourceRefs: ['ai-hero:purchase:full#excluded:refunded'],
+		})
+	})
+
+	it('holds a partly refunded multi-line session even with only one Crash Course line', async () => {
+		const [id, settled] = charge('multi', {
+			amount: 29_900,
+			amountRefunded: 20_000,
+			refundCount: 1,
+		})
+		const session = settled.session!
+		expect(
+			await creditOf({
+				purchases: [purchase({ id: 'multi' })],
+				settlements: {
+					[id]: {
+						...settled,
+						session: {
+							...session,
+							lines: [
+								{ ...session.lines[0]!, amountTotal: 24_900 },
+								{
+									...session.lines[0]!,
+									stripeProductId: 'prod_other',
+									amountTotal: 5_000,
+								},
+							],
+						},
+					},
+				},
+			}),
+		).toEqual({ gap: 'PaymentAmbiguous' })
+	})
+
+	it.each([0, 100])(
+		'excludes a partial refund exceeding net product money by %i cents',
+		async (extraRefund) => {
+			expect(
+				await creditOf({
+					purchases: [purchase({ id: 'taxed' })],
+					settlements: Object.fromEntries([
+						charge('taxed', {
+							amount: 19_900,
+							amountRefunded: 18_000 + extraRefund,
+							refundCount: 1,
+							line: { amountTax: 1_900 },
+						}),
+					]),
+				}),
+			).toEqual({
+				value: null,
+				sourceRefs: ['ai-hero:purchase:taxed#excluded:zero-paid'],
+			})
+		},
+	)
+
+	it.each([
+		['display', 29_900, 20_000, 9_900],
+		['checkout', 29_900, 20_000, 9_900],
+		['display', 19_900, 9_435, 10_465],
+		['checkout', 19_900, 9_435, 10_465],
+	] as const)(
+		'%s with %i charged and %i refunded resolves %i kept cents against policy',
+		async (purpose, amount, amountRefunded, paid) => {
+			const { facts } = await run({
+				...buyer,
+				prices: [{ id: 'price-test', unitAmountCents: 129_500 }],
+				purchases: [
+					purchase({ id: 'partial' }),
+					purchase({ id: 'alumnus', productId: C4 }),
+				],
+				settlements: Object.fromEntries([
+					charge('partial', { amount, amountRefunded, refundCount: 1 }),
+				]),
+			})
+			expect(facts.facts.credit).toMatchObject({
+				value: { paid, source: 'partial' },
+			})
+			// Test-only policy: credit stacks on the alumni discount, but an
+			// unlisted kept amount must still hold until policy recognizes it.
+			const policy = syntheticPolicy()
+			const decide = createC5AuthoritativePrice({
+				policy: async () => ({
+					ok: true,
+					value: {
+						version: policy.version,
+						policy: {
+							...policy,
+							list: 129_500,
+							creditAmounts: {
+								...policy.creditAmounts,
+								value: [9_900, 19_900, 29_900],
+							},
+							newBuyerEarlyPercent: {
+								...policy.newBuyerEarlyPercent,
+								value: 30,
+							},
+							alumniPercent: { ...policy.alumniPercent, value: 40 },
+						},
+					},
+				}),
+				quotes: async () => ({ ok: true, value: [] }),
+				buyer: async () => ({
+					kind: 'buyer',
+					email,
+					facts,
+					holdsRestrictedPurchase: false,
+					holdsValidProductPurchase: false,
+				}),
+				trustedCountry: async () => 'US',
+				pppPercent: () => 0,
+				price,
+				engineVersion: 'engine-test',
+				now: () => new Date('2030-01-05T00:00:00Z'),
+				disabled: () => false,
+			})
+			const decision = await decide({
+				purpose,
+				productId: C5,
+				priceId: 'price-test',
+				quantity: 1,
+				userId: 'user-test',
+				country: 'US',
+				pppAccepted: false,
+			})
+			expect(decision).not.toBeNull()
+			// Course Builder's formatted-price contract derives these flags from kind.
+			const gate = purchaseGate({
+				authoritative: {
+					...decision!,
+					purchasable: decision!.kind === 'priced',
+					isUpperBound: decision!.kind === 'bounded',
+				},
+			})
+			if (paid === 9_900) {
+				expect(decision).toMatchObject({ kind: 'priced', amountCents: 67_800 })
+				expect(decision!.amountCents).toBeLessThan(90_650 - paid)
+				expect(gate).toEqual({ kind: 'buy', upperBound: false })
+			} else {
+				expect(decision).toMatchObject({
+					kind: 'held',
+					reasons: ['credit-amount-unrecognized'],
+				})
+				expect(gate).toEqual({
+					kind: 'blocked',
+					upperBound: false,
+					label: 'Price unavailable',
+				})
+			}
+		},
+	)
+
 	it('is the product line on the purchase session less tax, never the gross charge or Purchase total', async () => {
 		const [id, settled] = charge('cc', { amount: 30_000 })
 		const session = settled.session!
@@ -546,6 +846,276 @@ describe('Crash Course credit', () => {
 		).toMatchObject({ value: { paid: 20_000, source: 'cc' } })
 	})
 
+	it.each([
+		[0, 9_900],
+		[930, 8_970],
+	])(
+		'credits special credit money kept after a %i-cent refund',
+		async (amountRefunded, paid) => {
+			expect(
+				await creditOf({
+					purchases: [
+						purchase({
+							id: 'cc',
+							couponId: 'coupon-credit',
+							totalAmountCents: 9_900,
+						}),
+					],
+					coupons: { 'coupon-credit': 'special credit' },
+					settlements: Object.fromEntries([
+						charge('cc', {
+							amount: 9_900,
+							amountRefunded,
+							refundCount: amountRefunded > 0 ? 1 : 0,
+						}),
+					]),
+				}),
+			).toMatchObject({ value: { paid, source: 'cc' } })
+		},
+	)
+
+	it.each([
+		['free', 1, 0, null, false, null, 'zero-paid'],
+		['nonzero total', 1, 100, null, false, null, null],
+		['half off', 0.5, 0, null, false, null, null],
+		['charge present', 1, 0, 'ch_cc', false, null, null],
+		['missing percentage', null, 0, null, false, null, null],
+		['untyped MerchantCoupon', 1, 0, null, true, null, null],
+		['unknown type', 1, 0, null, true, 'mystery', null],
+		['free PPP', 1, 0, null, true, 'ppp', 'zero-paid'],
+		['bulk', 1, 0, null, true, 'bulk', 'bulk-coupon'],
+	] as const)(
+		'checks free-coupon evidence: %s',
+		async (
+			_,
+			percentageDiscount,
+			totalAmountCents,
+			stripeChargeId,
+			hasMerchantCoupon,
+			type,
+			exclusion,
+		) => {
+			const { facts, stripeReads } = await run({
+				...buyer,
+				purchases: [
+					purchase({
+						id: 'cc',
+						couponId: 'coupon-free',
+						totalAmountCents,
+						stripeChargeId,
+					}),
+				],
+				coupons: {
+					'coupon-free': { type, hasMerchantCoupon, percentageDiscount },
+				},
+			})
+			expect(facts.facts.credit).toEqual(
+				exclusion
+					? {
+							value: null,
+							sourceRefs: [`ai-hero:purchase:cc#excluded:${exclusion}`],
+						}
+					: { gap: 'PaymentAmbiguous' },
+			)
+			expect(stripeReads).toEqual([])
+		},
+	)
+
+	it.each(['display', 'checkout'] as const)(
+		'%s prices special credit alumni and free-only buyers without a bound',
+		async (purpose) => {
+			for (const free of [false, true]) {
+				const { facts } = await run({
+					...buyer,
+					prices: [{ id: 'price-test', unitAmountCents: 129_500 }],
+					purchases: [
+						purchase({
+							id: 'cc',
+							couponId: 'coupon-cc',
+							totalAmountCents: free ? 0 : 9_900,
+							stripeChargeId: free ? null : 'ch_cc',
+						}),
+						...(free ? [] : [purchase({ id: 'alumnus', productId: C4 })]),
+					],
+					coupons: {
+						'coupon-cc': free
+							? { type: null, hasMerchantCoupon: false, percentageDiscount: 1 }
+							: 'special credit',
+					},
+					settlements: Object.fromEntries([charge('cc', { amount: 9_900 })]),
+				})
+				const policy = syntheticPolicy()
+				const decide = createC5AuthoritativePrice({
+					policy: async () => ({
+						ok: true,
+						value: {
+							version: policy.version,
+							policy: {
+								...policy,
+								list: 129_500,
+								creditAmounts: {
+									...policy.creditAmounts,
+									value: [9_900, 19_900, 29_900],
+								},
+								newBuyerEarlyPercent: {
+									...policy.newBuyerEarlyPercent,
+									value: 30,
+								},
+								alumniPercent: { ...policy.alumniPercent, value: 40 },
+							},
+						},
+					}),
+					quotes: async () => ({ ok: true, value: [] }),
+					buyer: async () => ({
+						kind: 'buyer',
+						email,
+						facts,
+						holdsRestrictedPurchase: false,
+						holdsValidProductPurchase: false,
+					}),
+					trustedCountry: async () => 'US',
+					pppPercent: () => 0,
+					price,
+					engineVersion: 'engine-test',
+					now: () => new Date('2030-01-05T00:00:00Z'),
+					disabled: () => false,
+				})
+				const decision = await decide({
+					purpose,
+					productId: C5,
+					priceId: 'price-test',
+					quantity: 1,
+					userId: 'user-test',
+					country: 'US',
+					pppAccepted: false,
+				})
+				expect(decision).toMatchObject({
+					kind: 'priced',
+					amountCents: free ? 90_650 : 67_800,
+				})
+				expect(
+					purchaseGate({
+						authoritative: {
+							...decision!,
+							purchasable: decision!.kind === 'priced',
+							isUpperBound: decision!.kind === 'bounded',
+						},
+					}),
+				).toEqual({ kind: 'buy', upperBound: false })
+			}
+		},
+	)
+
+	describe('regional (PPP) purchases', () => {
+		const regional = {
+			Restricted: { status: 'Restricted' },
+			'a PPP coupon': { couponId: 'coupon-ppp' },
+			'Restricted with a PPP coupon': {
+				status: 'Restricted',
+				couponId: 'coupon-ppp',
+			},
+		} as const
+		const cases = Object.entries(regional)
+		const coupons = { 'coupon-ppp': 'ppp' }
+
+		it.each(cases)('credits %s at the amount paid', async (_, over) => {
+			expect(
+				await creditOf({
+					purchases: [
+						purchase({ id: 'cc', totalAmountCents: 11_900, ...over }),
+					],
+					coupons,
+					settlements: Object.fromEntries([
+						charge('cc', { amount: 12_495, line: { amountTax: 595 } }),
+					]),
+				}),
+			).toEqual({
+				value: { paid: 11_900, source: 'cc' },
+				sourceRefs: [
+					'ai-hero:purchase:cc',
+					'stripe:charge:ch_cc',
+					'stripe:checkout-session:cs_cc#product:prod_cc',
+				],
+			})
+		})
+
+		it.each(cases)('subtracts a partial refund from %s', async (_, over) => {
+			expect(
+				await creditOf({
+					purchases: [purchase({ id: 'cc', ...over })],
+					coupons,
+					settlements: Object.fromEntries([
+						charge('cc', {
+							amount: 11_900,
+							amountRefunded: 4_000,
+							refundCount: 1,
+						}),
+					]),
+				}),
+			).toMatchObject({ value: { paid: 7_900, source: 'cc' } })
+		})
+
+		it.each(cases)('excludes %s refunded in full', async (_, over) => {
+			expect(
+				await creditOf({
+					purchases: [purchase({ id: 'cc', ...over })],
+					coupons,
+					settlements: Object.fromEntries([
+						charge('cc', {
+							amount: 11_900,
+							amountRefunded: 11_900,
+							refundCount: 1,
+						}),
+					]),
+				}),
+			).toEqual({
+				value: null,
+				sourceRefs: ['ai-hero:purchase:cc#excluded:refunded'],
+			})
+		})
+
+		it.each(
+			cases.flatMap(([label, over]) =>
+				(
+					[
+						{ disputed: true },
+						{ refundCount: 1 },
+						{ paid: false },
+						{ session: { id: 'cs_other' } },
+						{ line: { stripeProductId: 'prod_other' } },
+					] as const
+				).map((guard) => [label, guard, over] as const),
+			),
+		)('still holds %s on an ambiguous charge: %j', async (_, guard, over) => {
+			expect(
+				await creditOf({
+					purchases: [purchase({ id: 'cc', ...over })],
+					coupons,
+					settlements: Object.fromEntries([charge('cc', guard as any)]),
+				}),
+			).toEqual({ gap: 'PaymentAmbiguous' })
+		})
+
+		it('still excludes a Restricted bulk purchase without asking Stripe', async () => {
+			const { facts, stripeReads } = await run({
+				...buyer,
+				purchases: [
+					purchase({
+						id: 'cc',
+						status: 'Restricted',
+						bulkCouponId: 'bulk',
+						bulkSeats: 3,
+					}),
+				],
+			})
+			expect(facts.facts.credit).toEqual({
+				value: null,
+				sourceRefs: ['ai-hero:purchase:cc#excluded:bulk'],
+			})
+			expect(stripeReads).toEqual([])
+		})
+	})
+
 	it('takes one highest credit, never a sum', async () => {
 		expect(
 			await creditOf({
@@ -559,7 +1129,6 @@ describe('Crash Course credit', () => {
 	})
 
 	it.each([
-		['Restricted (PPP)', { status: 'Restricted' }, 'restricted-ppp'],
 		['refunded', { status: 'Refunded' }, 'refunded'],
 		['a bulk purchase', { bulkCouponId: 'bulk', bulkSeats: 3 }, 'bulk'],
 		[
@@ -567,7 +1136,6 @@ describe('Crash Course credit', () => {
 			{ redeemedBulkCouponId: 'bulk' },
 			'redeemed-bulk-seat',
 		],
-		['a PPP coupon', { couponId: 'coupon-ppp' }, 'ppp-coupon'],
 		['a bulk coupon', { couponId: 'coupon-bulk' }, 'bulk-coupon'],
 		['zero-paid', { totalAmountCents: 0, stripeChargeId: null }, 'zero-paid'],
 	] as const)('excludes %s without asking Stripe', async (_, over, why) => {
@@ -604,11 +1172,9 @@ describe('Crash Course credit', () => {
 
 	it.each([
 		[
-			'partly refunded',
+			'a refund record without a refunded amount',
 			{
-				settlements: Object.fromEntries([
-					charge('cc', { amountRefunded: 5_000, refundCount: 1 }),
-				]),
+				settlements: Object.fromEntries([charge('cc', { refundCount: 1 })]),
 			},
 			'PaymentAmbiguous',
 		],

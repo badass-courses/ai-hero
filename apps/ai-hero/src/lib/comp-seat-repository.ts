@@ -13,6 +13,7 @@ import {
 	users,
 } from '@/db/schema'
 import { and, eq, isNull } from 'drizzle-orm'
+import { bustSessionAccessForUser } from '@/server/session-access-runtime'
 import { createCohortEntitlementInTransaction } from './entitlements'
 import {
 	compSeatError,
@@ -212,7 +213,7 @@ export function createCompSeatRepository(): CompSeatRepository {
 	return {
 		...compSeatReader(db),
 		async transaction(userId, operation) {
-			return db.transaction(async (tx) => {
+			const result = await db.transaction(async (tx) => {
 				// Serialize concurrent grants for this user. The purchase check and
 				// all org, membership, purchase and entitlement writes share this tx.
 				await tx
@@ -257,6 +258,9 @@ export function createCompSeatRepository(): CompSeatRepository {
 					},
 				})
 			})
+			// A grant can add a membership and roles; drop cached session access.
+			await bustSessionAccessForUser(userId)
+			return result
 		},
 		async send(event) {
 			// Import only after a committed grant. No commerce event is emitted.

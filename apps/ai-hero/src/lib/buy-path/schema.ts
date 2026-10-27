@@ -71,6 +71,23 @@ export type BuyPathContext = Pick<
 	preSessionId?: string | null
 	chargeId?: string | null
 }
+/**
+ * Only a real Stripe Checkout Session can anchor a buy path. Coupon
+ * redemptions carry a synthetic `coupon-<purchaseId>` and get no buy path.
+ */
+export function buyPathContextForCheckout(
+	checkoutSessionId: string | null | undefined,
+	purchase: { id: string; productId?: string | null; userId?: string | null },
+): BuyPathContext | null {
+	if (!checkoutSessionId?.startsWith('cs_')) return null
+	if (!buyPathIdSchema.safeParse(checkoutSessionId).success) return null
+	return {
+		buyPathId: checkoutSessionId,
+		purchaseId: purchase.id,
+		productId: purchase.productId ?? null,
+		userId: purchase.userId ?? null,
+	}
+}
 export const clientBuyPathSchema = z
 	.object({
 		buyPathId: buyPathIdSchema,

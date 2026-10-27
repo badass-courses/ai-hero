@@ -128,7 +128,44 @@ describe('/cohorts/[slug]/for-teams', () => {
 		expect(props.location).toBe('/cohorts/test-cohort-abc12/for-teams')
 		expect(props.title).toBe('Test Cohort')
 		expect(props.seats).not.toBeNull()
-		expect(props.invoice).toEqual({ productId: 'product-test', mode: 'invoice' })
+		expect(props.invoice).toEqual({
+			productId: 'product-test',
+			mode: 'invoice',
+		})
+	})
+
+	it('strips content from both client pricing and its Suspense fallback', async () => {
+		mocks.cohort = cohort({ state: 'published', openEnrollment: iso(-DAY) })
+		const props = await render()
+		const rawProduct = mocks.cohort.resourceProducts[0].product
+		rawProduct.resources = [
+			{
+				resource: {
+					id: 'sync_lesson_private',
+					type: 'lesson',
+					fields: { body: 'PRIVATE_LESSON', solution: 'PRIVATE_SOLUTION' },
+				},
+			},
+		]
+		const pricing = {
+			product: rawProduct,
+			products: [rawProduct],
+			pricingDataLoader: Promise.resolve({
+				quantityAvailable: 10,
+				formattedPrice: { upgradedProduct: rawProduct },
+			}),
+		}
+		const boundary = props.seats.props.children.props.children(pricing)
+		for (const element of [boundary.props.children, boundary.props.fallback]) {
+			const json = JSON.stringify({
+				...element.props,
+				pricingDataLoader: await element.props.pricingDataLoader,
+			})
+			expect(json).not.toContain('PRIVATE_LESSON')
+			expect(json).not.toContain('PRIVATE_SOLUTION')
+			expect(json).not.toContain('sync_lesson_private')
+			expect(element.props.product.resources).toEqual([])
+		}
 	})
 
 	it('has no checkout before enrollment opens, only the request and inquiry', async () => {
@@ -172,7 +209,10 @@ describe('/cohorts/[slug]/for-teams', () => {
 		})
 		const props = await render()
 		expect(props.seats).not.toBeNull()
-		expect(props.invoice).toEqual({ productId: 'product-test', mode: 'request' })
+		expect(props.invoice).toEqual({
+			productId: 'product-test',
+			mode: 'request',
+		})
 	})
 
 	it('treats a sold-out cohort as closed', async () => {

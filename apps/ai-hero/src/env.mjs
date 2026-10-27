@@ -4,6 +4,19 @@ import { parseNewsletterExitFlag } from './lib/subscriber-marketing/newsletter-e
 
 const newsletterExitFlag = z.string().optional().transform(value => parseNewsletterExitFlag(value) ? 'true' : 'false')
 
+const integrationTokenKeySchema = z.string().refine((value) => {
+	try {
+		const decoded = atob(value)
+		return decoded.length === 32 && btoa(decoded) === value
+	} catch {
+		return false
+	}
+}, 'INTEGRATION_TOKEN_KEY must be 32 bytes encoded as base64').optional()
+
+// Validate this secret when present even if general env validation is skipped
+// for a build. Also reject a present empty key before emptyStringAsUndefined.
+integrationTokenKeySchema.parse(process.env.INTEGRATION_TOKEN_KEY)
+
 export const env = createEnv({
 	/**
 	 * Specify your server-side environment variables schema here. This way you can ensure the app
@@ -75,6 +88,8 @@ export const env = createEnv({
 		DROPBOX_APP_SECRET: z.string().optional(),
 		DROPBOX_OAUTH_REDIRECT_URI: z.string().url().optional(),
 		DROPBOX_REFRESH_TOKEN: z.string().optional(),
+		// Production only: previews share the database. Reject invalid keys at build/start.
+		INTEGRATION_TOKEN_KEY: integrationTokenKeySchema,
 		DROPBOX_SYNC_SHARED_FOLDER_ID: z.string().optional(),
 		DROPBOX_SYNC_ALLOWED_ROOT: z.string().optional(),
 		// URL shape is checked when the individual binding polls, not at app import.
@@ -143,6 +158,9 @@ export const env = createEnv({
 		// for everyone (`9376133`) or for an address allowlist
 		// (`9376133:a@example.com|b@example.com`). Unset: Kit's path, unchanged.
 		DROVR_DOI_FORMS: z.string().optional(),
+		// Returning unsubscribers get drovr's confirmation email only when this is
+		// "true". Turn on together with drovr's org-aihero `confirm-doi` flag.
+		AIH_RESUBSCRIBE_DOI_ENABLED: z.string().optional(),
 		DROVR_EXECUTOR_TOKEN: z.string().min(16).optional(),
 		AI_HERO_VALUE_PATH_TOKEN_SECRET: z.string().min(16).optional(),
 		// drovr #36T link tests mint throwaway principals with this; never the
@@ -257,6 +275,7 @@ export const env = createEnv({
 		DROPBOX_APP_SECRET: process.env.DROPBOX_APP_SECRET,
 		DROPBOX_OAUTH_REDIRECT_URI: process.env.DROPBOX_OAUTH_REDIRECT_URI,
 		DROPBOX_REFRESH_TOKEN: process.env.DROPBOX_REFRESH_TOKEN,
+		INTEGRATION_TOKEN_KEY: process.env.INTEGRATION_TOKEN_KEY,
 		DROPBOX_SYNC_SHARED_FOLDER_ID: process.env.DROPBOX_SYNC_SHARED_FOLDER_ID,
 		DROPBOX_SYNC_ALLOWED_ROOT: process.env.DROPBOX_SYNC_ALLOWED_ROOT,
 		DROPBOX_SYNC_SHARED_LINK: process.env.DROPBOX_SYNC_SHARED_LINK,
@@ -328,6 +347,7 @@ export const env = createEnv({
 		DROVR_API_BASE_URL: process.env.DROVR_API_BASE_URL,
 		DROVR_API_KEY_ORG_AIHERO: process.env.DROVR_API_KEY_ORG_AIHERO,
 		DROVR_DOI_FORMS: process.env.DROVR_DOI_FORMS,
+		AIH_RESUBSCRIBE_DOI_ENABLED: process.env.AIH_RESUBSCRIBE_DOI_ENABLED,
 		DROVR_EXECUTOR_TOKEN: process.env.DROVR_EXECUTOR_TOKEN,
 		AI_HERO_VALUE_PATH_TOKEN_SECRET:
 			process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET,

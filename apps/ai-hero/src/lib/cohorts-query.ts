@@ -82,6 +82,11 @@ export async function getCohort(cohortIdOrSlug: string) {
 		},
 	})
 
+	if (!cohortData) {
+		void log.debug('cohort.not_found', { slugOrId: cohortIdOrSlug })
+		return null
+	}
+
 	const parsedCohort = CohortSchema.safeParse(cohortData)
 	if (!parsedCohort.success) {
 		void log.error('cohort.parse.error', {

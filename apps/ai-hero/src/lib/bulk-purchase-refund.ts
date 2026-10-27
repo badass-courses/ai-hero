@@ -10,6 +10,7 @@ import {
 	softDeleteEntitlementsForPurchase,
 } from '@/lib/entitlements'
 import { log } from '@/server/logger'
+import { bustSessionAccessForUser } from '@/server/session-access-runtime'
 import { and, eq, inArray, isNull } from 'drizzle-orm'
 
 /**
@@ -129,6 +130,7 @@ export async function removeOrganizationMembership(
 		await db
 			.delete(organizationMemberships)
 			.where(eq(organizationMemberships.id, membership.id))
+		await bustSessionAccessForUser(userId)
 
 		await log.info('bulk_refund.membership_removed', {
 			userId,

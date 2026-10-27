@@ -90,6 +90,17 @@ function extractRequestTelemetry(req: Request): RequestTelemetry {
 	}
 }
 
+// Route families that skip `api.request.started`. Matched on the pathname
+// with segment boundaries; see docs/observability/api-request-telemetry.md.
+export function skipsStartedEvent(pathname: string): boolean {
+	return (
+		pathname === '/api/auth/session' ||
+		pathname === '/api/auth/session/' ||
+		pathname === '/api/trpc' ||
+		pathname.startsWith('/api/trpc/')
+	)
+}
+
 export function withSkill<Args extends [SkillRequest, ...unknown[]]>(
 	params: NextHandler<Args>,
 ): NextHandler<Args> {
@@ -100,10 +111,12 @@ export function withSkill<Args extends [SkillRequest, ...unknown[]]>(
 		const request = extractRequestTelemetry(req)
 
 		return withLogContext(context, async () => {
-			await log.info('api.request.started', {
-				requestId: context.requestId,
-				...request,
-			})
+			if (!skipsStartedEvent(request.path)) {
+				await log.info('api.request.started', {
+					requestId: context.requestId,
+					...request,
+				})
+			}
 
 			try {
 				const response = await params(...args)

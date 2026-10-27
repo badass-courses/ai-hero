@@ -1,6 +1,6 @@
 import { db } from '@/db'
 import { contentRead } from '@/db/schema'
-import { and, count, isNull, lt } from 'drizzle-orm'
+import { and, asc, count, gte, inArray, isNull, lt } from 'drizzle-orm'
 
 export const ANONYMOUS_CONTENT_READ_RETENTION_DAYS = 14
 
@@ -30,20 +30,98 @@ export async function previewExpiredAnonymousContentReads(args?: {
 	}
 }
 
+export const CONTENT_READ_RETENTION_BATCH_SIZE = 1000
+export const CONTENT_READ_RETENTION_MAX_BATCHES = 200
+
+export type ContentReadRetentionBatchResult = {
+	selectedCount: number
+	deletedCount: number
+	/** Max `occurredAt` among the selected rows (ISO), null on an empty batch. */
+	lastOccurredAt: string | null
+}
+
+/**
+ * Deletes at most one bounded batch of expired anonymous rows. The range key is
+ * the indexed `occurredAt` column; `createdAt < cutoff` stays on the delete so
+ * the removed rows are a subset of the full-table predicate.
+ */
+export async function deleteExpiredAnonymousContentReadBatch(args: {
+	cutoff: Date
+	batchSize?: number
+	/** Cursor: only consider rows with `occurredAt >= after`. */
+	after?: Date
+}): Promise<ContentReadRetentionBatchResult> {
+	const batchSize = args.batchSize ?? CONTENT_READ_RETENTION_BATCH_SIZE
+	const rows = await db
+		.select({ id: contentRead.id, occurredAt: contentRead.occurredAt })
+		.from(contentRead)
+		.where(
+			and(
+				expiredAnonymousContentReadWhere(args.cutoff),
+				lt(contentRead.occurredAt, args.cutoff),
+				args.after ? gte(contentRead.occurredAt, args.after) : undefined,
+			),
+		)
+		.orderBy(asc(contentRead.occurredAt))
+		.limit(batchSize)
+	if (rows.length === 0) {
+		return { selectedCount: 0, deletedCount: 0, lastOccurredAt: null }
+	}
+	const lastOccurredAt = new Date(
+		Math.max(...rows.map((row) => new Date(row.occurredAt).getTime())),
+	).toISOString()
+
+	const result = await db.delete(contentRead).where(
+		and(
+			inArray(
+				contentRead.id,
+				rows.map((row) => row.id),
+			),
+			expiredAnonymousContentReadWhere(args.cutoff),
+		),
+	)
+	return {
+		selectedCount: rows.length,
+		deletedCount: Number(result.rowsAffected ?? 0),
+		lastOccurredAt,
+	}
+}
+
+export function getContentReadRetentionCutoff(args?: {
+	retentionDays?: number
+	now?: Date
+}) {
+	return getRetentionCutoff(args)
+}
+
 export async function deleteExpiredAnonymousContentReads(args?: {
 	retentionDays?: number
 	now?: Date
+	batchSize?: number
+	maxBatches?: number
 }): Promise<AnonymousContentReadRetentionResult> {
-	const preview = await previewExpiredAnonymousContentReads(args)
-	const { cutoff } = getRetentionCutoff(args)
-	const result = await db
-		.delete(contentRead)
-		.where(expiredAnonymousContentReadWhere(cutoff))
+	const { retentionDays, cutoff } = getRetentionCutoff(args)
+	const batchSize = args?.batchSize ?? CONTENT_READ_RETENTION_BATCH_SIZE
+	const maxBatches = args?.maxBatches ?? CONTENT_READ_RETENTION_MAX_BATCHES
+	let deletedCount = 0
+	let after: Date | undefined
+	for (let batch = 0; batch < maxBatches; batch++) {
+		const result = await deleteExpiredAnonymousContentReadBatch({
+			cutoff,
+			batchSize,
+			after,
+		})
+		deletedCount += result.deletedCount
+		if (result.lastOccurredAt) after = new Date(result.lastOccurredAt)
+		if (result.selectedCount < batchSize) break
+	}
 
 	return {
-		...preview,
 		mode: 'write',
-		deletedCount: Number(result.rowsAffected ?? 0),
+		retentionDays,
+		cutoff: cutoff.toISOString(),
+		candidateCount: deletedCount,
+		deletedCount,
 	}
 }
 

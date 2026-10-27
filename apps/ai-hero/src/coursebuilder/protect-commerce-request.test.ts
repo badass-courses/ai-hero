@@ -345,7 +345,7 @@ describe('protectCommerceRequest', () => {
 				},
 			)
 			const location = new URL((request as Response).headers.get('location')!)
-			expect(location.pathname).toBe(INVALID_QUANTITY_PATH)
+			expect(location.pathname + location.search).toBe(INVALID_QUANTITY_PATH)
 		},
 	)
 

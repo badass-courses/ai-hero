@@ -12,7 +12,10 @@ import { createShortlinkAttribution } from '@/lib/shortlinks-query'
 import { recordSignupAttribution } from '@/lib/signup-attribution'
 import { guardSubscribe } from '@/lib/subscribe-bot-defense.server'
 import { pendingSubscribeResponse } from '@/lib/pending-subscribe-response'
-import { reconcileAiHeroEmailOptInWithKit } from '@/lib/subscriber-marketing/ai-hero-email-opt-in.server'
+import {
+	reconcileAiHeroEmailOptInWithKit,
+	routeReturningUnsubscriberWithKit,
+} from '@/lib/subscriber-marketing/ai-hero-email-opt-in.server'
 import {
 	AIH_COURSE_ENTRY_EVIDENCE_FIELD,
 	deadlineTimeZoneEvidenceFromHeader,
@@ -56,6 +59,20 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 		doiAppliesTo(parseDrovrDoiConfig(env), kitFormId, email)
 	) {
 		return await doiSignup(req, body, email.trim(), kitFormId)
+	}
+
+	let mayRemoveUnsubscribeTag = true
+	// A returning unsubscriber re-signs up only through a fresh drovr double
+	// opt-in: no Kit subscribe, no untag. Everyone else falls through.
+	if (typeof email === 'string' && DOI_DROVR_FORM_IDS.has(kitFormId)) {
+		const returning = await returningUnsubscriberSignup(
+			req,
+			body,
+			email.trim(),
+			kitFormId,
+		)
+		if (returning.response) return returning.response
+		mayRemoveUnsubscribeTag = !returning.lookupFailed
 	}
 
 	// Clone the request with the body since it can only be read once
@@ -156,6 +173,7 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 				const optIn = await reconcileAiHeroEmailOptInWithKit({
 					email: subscriberEmail,
 					subscriberState: subscriber.state,
+					mayRemoveUnsubscribeTag,
 				})
 				const cookieStore = await cookies()
 				const optInAttribution = parseOptInAttributionCookie(
@@ -173,9 +191,9 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 						? serializeDeadlineTimeZoneEvidenceForKit(deadlineTimeZone)
 						: undefined
 					const stashFields = async (fields: Record<string, string>) => {
-						const { setConvertkitSubscriberFields } =
-							await import('@coursebuilder/core/providers/convertkit')
-						await setConvertkitSubscriberFields({
+						const { setKitSubscriberFields } =
+							await import('@/coursebuilder/email-list-provider')
+						await setKitSubscriberFields({
 							subscriber: { id: subscriber.id, fields: subscriber.fields },
 							fields,
 							convertkitApiSecret: env.CONVERTKIT_API_SECRET,
@@ -316,6 +334,61 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 	}
 
 	return response
+}
+
+/**
+ * Answers a sign-up from a contact Kit shows as an earlier unsubscribe with
+ * a `response`; otherwise the Kit path runs, with `lookupFailed` when Kit
+ * could not be read (so the tag must not be removed).
+ */
+async function returningUnsubscriberSignup(
+	req: NextRequest,
+	body: { name?: unknown },
+	email: string,
+	kitFormId: number,
+) {
+	const name =
+		typeof body.name === 'string' && body.name.trim()
+			? body.name.trim()
+			: undefined
+	try {
+		const cookieStore = await cookies()
+		const result = await routeReturningUnsubscriberWithKit({
+			email,
+			name,
+			kitFormId,
+			page: req.headers.get('referer') ?? 'https://www.aihero.dev/',
+			optInAttribution: parseOptInAttributionCookie(
+				cookieStore.get('ft_attr')?.value,
+			),
+			entry: 'form',
+		})
+		if (result.status === 'not-unsubscribed') return {}
+		// Consent lookup unreadable: carry on with the sign-up, but never untag.
+		if (result.status === 'lookup-failed') return { lookupFailed: true }
+		if (result.status === 'doi-requested') {
+			return { response: pendingSubscribeResponse({ email, name }) }
+		}
+		if (result.status === 'blocked') {
+			return {
+				response: Response.json(
+					{ error: 'Subscription could not be confirmed' },
+					{ status: 409 },
+				),
+			}
+		}
+	} catch (error) {
+		await log.error('skills.newsletter.doi.failed', {
+			formId: kitFormId,
+			error: error instanceof Error ? error.name : 'unknown',
+		})
+	}
+	return {
+		response: Response.json(
+			{ error: 'Subscription could not be confirmed' },
+			{ status: 502 },
+		),
+	}
 }
 
 /**

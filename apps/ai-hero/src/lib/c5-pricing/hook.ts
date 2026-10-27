@@ -26,6 +26,7 @@ import {
 	refusal,
 	toAuthoritativeDecision,
 } from './decision'
+import { isPppCreditBound } from './ppp-credit-bound'
 
 /**
  * What the hook knows about the buyer. A signed-in buyer's facts come from
@@ -37,8 +38,6 @@ export type BuyerRead =
 			readonly kind: 'buyer'
 			readonly email: string
 			readonly facts: PricingFacts
-			/** Whether any purchase blocks PPP, as legacy PPP does; null: unknown. */
-			readonly hasValidPurchase: boolean | null
 			/** Whether the buyer holds a region-restricted purchase of this product. */
 			readonly holdsRestrictedPurchase: boolean
 			/** A Valid purchase of this exact product, not any historical purchase. */
@@ -100,28 +99,22 @@ const gap = <A>(
 	reason: 'FactsUnavailable' | 'IdentityUnverified',
 ): FactData<A> => ({ gap: reason })
 
-/** The PPP fact: trusted country, the buyer's consent, and legacy eligibility. */
+/** C5 regional pricing depends on country and consent, not purchase history. */
 export function pppFact({
 	orderKind,
 	country,
 	percent,
 	accepted,
-	hasValidPurchase,
 }: {
 	orderKind: 'individual' | 'team'
 	country: string | null
 	percent: number
 	accepted: boolean
-	/** Null: unknown. Anonymous display passes false (provisional). */
-	hasValidPurchase: boolean | null
 }): BuyerFactsData['ppp'] {
 	// A team order is never regional; the engine ignores PPP for it anyway.
 	if (orderKind === 'team') return known(null, ['ppp:team-order'])
 	if (country === null) return gap('FactsUnavailable')
 	if (percent <= 0) return known(null, [`geo:country:${country}`])
-	if (hasValidPurchase === null) return gap('FactsUnavailable')
-	// Legacy PPP: any Valid purchase means the buyer already paid full price.
-	if (hasValidPurchase) return known(null, ['ai-hero:ppp:valid-purchase'])
 	return known({ accepted, percent }, [`geo:country:${country}`])
 }
 
@@ -244,7 +237,6 @@ export function createC5AuthoritativePrice(deps: C5PricingDeps) {
 			country,
 			percent,
 			accepted: request.pppAccepted,
-			hasValidPurchase: buyer.kind === 'buyer' ? buyer.hasValidPurchase : false,
 		})
 		const facts = buyer.kind === 'buyer'
 			? { ...buyer.facts.facts, ppp, code }
@@ -307,7 +299,22 @@ export function createC5AuthoritativePrice(deps: C5PricingDeps) {
 		if (!priced.ok || !priced.value)
 			return refusal('held', [APP_REASONS.factsUnavailable], withPolicy)
 
-		let decision = toAuthoritativeDecision(priced.value, {
+		// Checkout re-runs the engine, so this reads checkout's own result: a
+		// credit resolved since display prices normally and never matches.
+		let result = priced.value
+		if (
+			buyer.kind === 'buyer' &&
+			orderKind === 'individual' &&
+			!appReasons.length &&
+			isPppCreditBound(result, policy.value.policy)
+		) {
+			appReasons.push(APP_REASONS.pppCreditBound)
+			// Charge the bound with no credit source: it spends no credit.
+			if (request.purpose === 'checkout')
+				result = { ...result, kind: 'priced', creditSource: null }
+		}
+
+		let decision = toAuthoritativeDecision(result, {
 			...base,
 			purpose: request.purpose,
 			policy: policy.value.policy,

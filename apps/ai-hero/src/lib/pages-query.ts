@@ -138,6 +138,8 @@ export async function getPage(slugOrId: string) {
     },
   });
 
+  if (!page) return null;
+
   const pageParsed = PageSchema.safeParse(page);
   if (!pageParsed.success) {
     void log.error("page.parse.error", {

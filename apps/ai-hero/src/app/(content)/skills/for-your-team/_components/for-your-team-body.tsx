@@ -1,5 +1,7 @@
 import * as React from 'react'
 import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
+import { C5SaleCta } from '@/components/c5-sale-cta'
+import { C5SaleSwitch } from '@/components/c5-sale-switch'
 import { Prose } from '@/components/landing/prose'
 import { courseBuilderAdapter } from '@/db'
 import { compileMDX } from '@/utils/compile-mdx'
@@ -104,7 +106,11 @@ export async function ForYourTeamBody({
 		// The cover art goes above the heading, so it is injected here rather
 		// than authored in the body: the page knows which product it promotes.
 		TeamClose: (props: React.ComponentProps<typeof TeamClose>) => (
-			<TeamClose {...props} media={<CrashCourseArt />} />
+			<C5SaleSwitch
+				fallback={<TeamClose {...props} media={<CrashCourseArt />} />}
+			>
+				<C5SaleCta forTeams />
+			</C5SaleSwitch>
 		),
 		TeamCloseBody,
 		CompanyLogoGrid,

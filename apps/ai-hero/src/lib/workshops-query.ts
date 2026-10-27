@@ -356,6 +356,8 @@ export async function getWorkshop(moduleSlugOrId: string) {
 				},
 			})
 
+			if (!workshop) return null
+
 			const parsedWorkshop = WorkshopSchema.safeParse(workshop)
 			if (!parsedWorkshop.success) {
 				void log.error('workshop.parse.error', {

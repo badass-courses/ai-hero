@@ -3,10 +3,14 @@ import { captureContentProgress } from '@/lib/content-progress'
 import { log } from '@/server/logger'
 import { z } from 'zod'
 
+import { retryOnceOnLockTimeout } from './retry-lock-timeout'
+
 export async function POST(request: NextRequest) {
 	try {
 		const body = await request.json()
-		const result = await captureContentProgress(body)
+		const result = await retryOnceOnLockTimeout(() =>
+			captureContentProgress(body),
+		)
 
 		if (result.status === 'captured') {
 			return NextResponse.json({ ok: true }, { status: 201 })

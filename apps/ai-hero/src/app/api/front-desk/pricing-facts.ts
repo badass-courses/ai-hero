@@ -30,8 +30,15 @@ export const ALUMNI_PRODUCTS = {
 	'product-7t9ek': 'c3',
 	'product-pqkk5': 'c4',
 } as const
-/** MerchantCoupon types that prove a coupon was neither PPP nor bulk. */
-export const VERIFIED_COUPON_TYPES: ReadonlySet<string> = new Set(['special'])
+/**
+ * MerchantCoupon types whose purchases earn credit for what was actually
+ * paid. A regional (PPP) purchase counts; a bulk one never does.
+ */
+export const CREDITABLE_COUPON_TYPES: ReadonlySet<string> = new Set([
+	'special',
+	'special credit',
+	'ppp',
+])
 /** front-desk's upper bound for the existingSeats fact. */
 export const MAX_EXISTING_SEATS = 100_000
 
@@ -82,6 +89,11 @@ export interface PricingSettlement {
 			readonly amountTax: number
 		}[]
 	} | null
+}
+export interface PricingCouponEvidence {
+	readonly type: string | null
+	readonly hasMerchantCoupon: boolean
+	readonly percentageDiscount: number | null
 }
 export interface PricingPriceRow {
 	readonly id: string
@@ -138,11 +150,13 @@ export interface PricingFactsSourceShape {
 	 * is not configured: no target purchase can then be placed before or after.
 	 */
 	readonly decisionCutover: Date | null
-	/** MerchantCoupon type per coupon id. A missing coupon has no entry; a
-	 * missing MerchantCoupon or type is null. */
+	/** Coupon evidence from one batched read. A missing coupon has no entry. */
 	readonly couponTypes: (
 		couponIds: readonly string[],
-	) => Effect.Effect<ReadonlyMap<string, string | null>, SourceUnavailable>
+	) => Effect.Effect<
+		ReadonlyMap<string, PricingCouponEvidence>,
+		SourceUnavailable
+	>
 	readonly activePrices: (
 		productId: string,
 	) => Effect.Effect<readonly PricingPriceRow[], SourceUnavailable>
@@ -175,6 +189,12 @@ const individual = (
 ) =>
 	!row.bulkCouponId && !row.redeemedBulkCouponId
 
+/** A redeemed team seat counts toward alumni (Joel, 2026-10-27), unlike legend.
+ * A team buyer's own bulk row does not, unless it is also a redeemed seat. */
+const alumniOwnership = (
+	row: Pick<PricingPurchaseRow, 'bulkCouponId' | 'redeemedBulkCouponId'>,
+) => !!row.redeemedBulkCouponId || individual(row)
+
 /** Current individual ownership, not payment or historical ownership.
  * The source scans only purchases currently held by this exact-email account.
  * Cite exactly the checked manifest, even for a negative result. */
@@ -194,7 +214,7 @@ export function legendFact(
 	)
 }
 
-/** C3/C4 purchases that are current and the buyer's own, not a team seat. */
+/** Current C3/C4 purchases that are the buyer's own or a redeemed team seat. */
 export function alumniFact(
 	rows: readonly PricingPurchaseRow[],
 	scanRef: string,
@@ -203,7 +223,7 @@ export function alumniFact(
 		(row) =>
 			row.productId in ALUMNI_PRODUCTS &&
 			CURRENT.has(row.status) &&
-			individual(row),
+			alumniOwnership(row),
 	)
 	const cohorts = new Set(
 		qualifying.map(
@@ -330,7 +350,7 @@ const ambiguous: CreditCandidate = { kind: 'unknown', gap: 'PaymentAmbiguous' }
 /** DB checks for one Crash Course purchase. Only a survivor needs Stripe. */
 export function purchaseCandidate(
 	row: PricingPurchaseRow,
-	couponType: string | null | undefined,
+	coupon: PricingCouponEvidence | null | undefined,
 ):
 	| CreditCandidate
 	| {
@@ -338,19 +358,27 @@ export function purchaseCandidate(
 			readonly stripeChargeId: string
 			readonly checkoutSessionId: string
 	  } {
-	if (row.status === 'Restricted') return excluded(row, 'restricted-ppp')
 	if (row.status === 'Refunded') return excluded(row, 'refunded')
 	if (row.status === 'Banned') return excluded(row, 'banned')
-	if (row.status !== 'Valid')
+	// A Restricted (regional) purchase earns credit for what it actually paid.
+	if (!CURRENT.has(row.status))
 		return { kind: 'unknown', gap: 'PaymentAmbiguous' }
 	if (row.bulkCouponId) return excluded(row, 'bulk')
 	if (row.redeemedBulkCouponId) return excluded(row, 'redeemed-bulk-seat')
 	if (row.couponId) {
-		// Never infer PPP from the amount. Only the coupon's own type counts.
-		if (couponType === 'ppp') return excluded(row, 'ppp-coupon')
+		const couponType = coupon?.type
 		if (couponType === 'bulk') return excluded(row, 'bulk-coupon')
-		// A missing coupon, MerchantCoupon or type proves nothing about origin.
-		if (!couponType || !VERIFIED_COUPON_TYPES.has(couponType)) return ambiguous
+		// Only a proven free coupon without a MerchantCoupon can bypass type checks.
+		if (
+			coupon?.hasMerchantCoupon === false &&
+			coupon.percentageDiscount === 1 &&
+			row.totalAmountCents === 0 &&
+			!row.stripeChargeId
+		)
+			return excluded(row, 'zero-paid')
+		// Any other missing coupon, MerchantCoupon or type proves nothing.
+		if (!couponType || !CREDITABLE_COUPON_TYPES.has(couponType))
+			return ambiguous
 	}
 	if (!row.stripeChargeId)
 		return row.totalAmountCents === 0 ? excluded(row, 'zero-paid') : ambiguous
@@ -366,6 +394,7 @@ export function purchaseCandidate(
  * The product money a purchase that passed the DB checks actually settled.
  * The charge must be paid, captured and succeeded, and the amount is the one
  * Crash Course line on the purchase's own Checkout Session, less its tax.
+ * A partial refund reduces that amount only on a single-line session.
  * Never the gross charge, and never the rounded Purchase total.
  */
 export function chargeCandidate(
@@ -382,10 +411,18 @@ export function chargeCandidate(
 		charge.disputed
 	)
 		return ambiguous
+	if (
+		!Number.isSafeInteger(charge.amount) ||
+		charge.amount < 0 ||
+		!Number.isSafeInteger(charge.amountRefunded) ||
+		charge.amountRefunded < 0
+	)
+		return ambiguous
 	if (charge.amount === 0) return excluded(row, 'zero-paid')
 	if (charge.amountRefunded >= charge.amount) return excluded(row, 'refunded')
-	// A partial refund leaves no clean paid amount to credit.
-	if (charge.amountRefunded > 0 || charge.refundCount > 0) return ambiguous
+	const partialRefund = charge.amountRefunded > 0
+	// A refund record without a settled refund amount proves no kept amount.
+	if (!partialRefund && charge.refundCount > 0) return ambiguous
 	if (!charge.paid || !charge.captured || charge.status !== 'succeeded')
 		return ambiguous
 	if (
@@ -403,22 +440,26 @@ export function chargeCandidate(
 	)
 	const [line] = lines
 	if (lines.length !== 1 || !line || line.quantity !== 1) return ambiguous
-	const paid = line.amountTotal - line.amountTax
+	// A charge-level refund cannot be attributed across multiple lines.
+	if (partialRefund && session.lines.length !== 1) return ambiguous
+	const productPaid = line.amountTotal - line.amountTax
 	if (
 		line.currency !== 'usd' ||
-		!Number.isSafeInteger(paid) ||
-		paid < 0 ||
-		paid > charge.amount
+		!Number.isSafeInteger(productPaid) ||
+		productPaid < 0 ||
+		productPaid > charge.amount
 	)
 		return ambiguous
-	if (paid === 0) return excluded(row, 'zero-paid')
+	const paid = productPaid - charge.amountRefunded
+	if (!Number.isSafeInteger(paid)) return ambiguous
+	if (paid <= 0) return excluded(row, 'zero-paid')
 	return {
 		kind: 'eligible',
 		paid,
 		purchaseId: row.id,
 		refs: [
 			purchaseRef(row.id),
-			`stripe:charge:${charge.id}`,
+			`stripe:charge:${charge.id}${partialRefund ? '#partial-refund' : ''}`,
 			`stripe:checkout-session:${session.id}#product:${row.stripeProductId}`,
 		],
 	}
@@ -464,7 +505,7 @@ const creditFor = (
 		]
 		const types = couponIds.length
 			? yield* Effect.either(source.couponTypes(couponIds))
-			: Either.right(new Map<string, string | null>())
+			: Either.right(new Map<string, PricingCouponEvidence>())
 		if (Either.isLeft(types)) return gap('FactsUnavailable')
 		const candidates = yield* Effect.forEach(crashCourse, (row) => {
 			const checked = purchaseCandidate(

@@ -14,6 +14,10 @@ import type { AuthoritativePriceRequest } from '@coursebuilder/core/schemas'
 import { frontDeskData } from './front-desk-client'
 export { frontDeskData } from './front-desk-client'
 import { createC5AuthoritativePrice, type BuyerRead } from './hook'
+import {
+	PPP_CREDIT_BOUND_EVENT,
+	pppCreditBoundCharge,
+} from './ppp-credit-bound'
 import { holdsRestrictedPurchase } from './restricted-holder'
 import { signedGiftFact } from './gift-server'
 import { c5PricingClosed } from './switch-server'
@@ -69,17 +73,7 @@ async function readBuyer(input: {
 		// are someone else's.
 		if (!facts || facts.buyer.userId !== input.userId)
 			return { kind: 'unavailable', reason: 'identity-mismatch' }
-		const [[valid], [validProduct], restricted] = await Promise.all([
-			db
-				.select({ id: purchases.id })
-				.from(purchases)
-				.where(
-					and(
-						eq(purchases.userId, input.userId),
-						eq(purchases.status, 'Valid'),
-					),
-				)
-				.limit(1),
+		const [[validProduct], restricted] = await Promise.all([
 			db
 				.select({ id: purchases.id })
 				.from(purchases)
@@ -95,7 +89,6 @@ async function readBuyer(input: {
 			kind: 'buyer',
 			email: user.email,
 			facts,
-			hasValidPurchase: Boolean(valid),
 			holdsRestrictedPurchase: restricted,
 			holdsValidProductPurchase: Boolean(validProduct),
 		}
@@ -171,5 +164,7 @@ export async function c5AuthoritativePrice(request: AuthoritativePriceRequest) {
 			engineVersion: decision.engineVersion,
 		})
 	}
+	const boundCharge = pppCreditBoundCharge(request, decision)
+	if (boundCharge) await log.warn(PPP_CREDIT_BOUND_EVENT, boundCharge)
 	return decision
 }

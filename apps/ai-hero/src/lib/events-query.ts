@@ -43,6 +43,11 @@ export async function getEvent(eventIdOrSlug: string) {
 		},
 	})
 
+	if (!eventData) {
+		void log.debug('event.not_found', { slugOrId: eventIdOrSlug })
+		return null
+	}
+
 	const parsedEvent = EventSchema.safeParse(eventData)
 	if (!parsedEvent.success) {
 		void log.error('event.parse.error', {
