@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   getSubscriberByEmail: vi.fn(),
   requestDoi: vi.fn(),
   readDrovrOptOuts: vi.fn(),
+  inngestSend: vi.fn(),
   log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   env: {} as Record<string, string | undefined>,
 }));
@@ -15,6 +16,10 @@ vi.mock("@/coursebuilder/email-list-provider", () => ({
 }));
 vi.mock("./drovr-doi-signup.server", () => ({
   requestDrovrDoiSignup: mocks.requestDoi,
+}));
+
+vi.mock("@/inngest/inngest.server", () => ({
+  inngest: { send: mocks.inngestSend },
 }));
 
 vi.mock("./drovr-opt-out-reader", () => ({
@@ -41,6 +46,7 @@ describe("routeReturningUnsubscriberWithKit", () => {
     });
     mocks.requestDoi.mockResolvedValue({ contactId: "contact-1" });
     mocks.readDrovrOptOuts.mockResolvedValue([]);
+    mocks.inngestSend.mockResolvedValue(undefined);
     mocks.env.AIH_RESUBSCRIBE_DOI_ENABLED = "true";
   });
 
@@ -134,6 +140,105 @@ describe("routeReturningUnsubscriberWithKit", () => {
     );
     expect(JSON.stringify(mocks.log.warn.mock.calls)).not.toContain("private@example.test");
     expect(mocks.requestDoi).toHaveBeenCalledTimes(doiEnabled ? 1 : 0);
+  });
+
+  describe("unknown drovr state with a deferral", () => {
+    const deferred = () =>
+      routeReturningUnsubscriberWithKit({
+        email: "person@example.com",
+        name: "Pat",
+        kitFormId: 9376133,
+        page: "https://www.aihero.dev/",
+        entry: "form",
+        deferral: { fields: { source: "aihero_skills_page" } },
+      });
+
+    beforeEach(() => {
+      mocks.env.DROVR_API_BASE_URL = "https://drovr.test";
+      mocks.env.DROVR_API_KEY_ORG_AIHERO = "drovr_key";
+      mocks.env.AIH_RESUBSCRIBE_DOI_ENABLED = undefined;
+      mocks.getSubscriberByEmail.mockResolvedValue({ id: 123, tags: [] });
+      mocks.readDrovrOptOuts.mockRejectedValue(
+        new DOMException("timed out", "TimeoutError"),
+      );
+    });
+
+    it("queues aihero/optin.deferred and logs without the address", async () => {
+      await expect(deferred()).resolves.toEqual({ status: "deferred" });
+      expect(mocks.inngestSend).toHaveBeenCalledTimes(1);
+      const sent = mocks.inngestSend.mock.calls[0]![0];
+      expect(sent).toMatchObject({
+        name: "aihero/optin.deferred",
+        data: {
+          email: "person@example.com",
+          name: "Pat",
+          formId: 9376133,
+          entry: "form",
+          tenantId: "org-aihero",
+          fields: { source: "aihero_skills_page" },
+        },
+      });
+      expect(sent.id).toBe(`optin-deferred:${sent.data.submissionKey}`);
+      expect(mocks.log.info).toHaveBeenCalledWith(
+        "optin.deferred.queued",
+        expect.objectContaining({ formId: 9376133, entry: "form" }),
+      );
+      expect(JSON.stringify(mocks.log.info.mock.calls)).not.toContain(
+        "person@example.com",
+      );
+      expect(JSON.stringify(mocks.log.warn.mock.calls)).not.toContain(
+        "person@example.com",
+      );
+    });
+
+    it("keys a double submit in the same window to one event id", async () => {
+      await deferred();
+      await deferred();
+      const [a, b] = mocks.inngestSend.mock.calls.map(([e]) => e.id);
+      expect(a).toBe(b);
+    });
+
+    it("blocks, as before, when the event cannot be queued", async () => {
+      mocks.inngestSend.mockRejectedValue(new Error("inngest down"));
+      await expect(deferred()).resolves.toEqual({
+        status: "blocked",
+        reason: "drovr-unknown",
+      });
+      expect(mocks.log.error).toHaveBeenCalledWith(
+        "optin.deferred.queue_failed",
+        expect.objectContaining({ formId: 9376133 }),
+      );
+    });
+
+    it("callers without a deferral still block", async () => {
+      await expect(call()).resolves.toEqual({
+        status: "blocked",
+        reason: "drovr-unknown",
+      });
+      expect(mocks.inngestSend).not.toHaveBeenCalled();
+    });
+
+    it("a drovr-confirmed stop is never deferred", async () => {
+      mocks.readDrovrOptOuts.mockResolvedValue([{ reason: "bounced" }]);
+      await expect(deferred()).resolves.toEqual({
+        status: "blocked",
+        reason: "suppressed",
+      });
+      expect(mocks.inngestSend).not.toHaveBeenCalled();
+    });
+
+    it("the deferred function's own probe reports deferred without re-queueing", async () => {
+      await expect(
+        routeReturningUnsubscriberWithKit({
+          email: "person@example.com",
+          kitFormId: 9376133,
+          page: "https://www.aihero.dev/",
+          entry: "form",
+          deferral: { queue: false },
+        }),
+      ).resolves.toEqual({ status: "deferred" });
+      expect(mocks.inngestSend).not.toHaveBeenCalled();
+    });
   });
 
   it("wires the unexpected-page warning without ids", async () => {

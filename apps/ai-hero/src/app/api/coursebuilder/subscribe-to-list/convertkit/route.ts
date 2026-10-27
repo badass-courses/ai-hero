@@ -336,6 +336,16 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 	return response
 }
 
+function deferredDeadlineTimeZone(req: NextRequest) {
+	const result = deadlineTimeZoneEvidenceFromHeader({
+		headerValue: req.headers.get('x-vercel-ip-timezone'),
+		capturedAt: new Date().toISOString(),
+	})
+	return deadlineTimeZoneCaptureEnabled(process.env) && result.ok
+		? result.value
+		: undefined
+}
+
 /**
  * Answers a sign-up from a contact Kit shows as an earlier unsubscribe with
  * a `response`; otherwise the Kit path runs, with `lookupFailed` when Kit
@@ -343,7 +353,7 @@ const subscribeWithAttribution = async (req: NextRequest) => {
  */
 async function returningUnsubscriberSignup(
 	req: NextRequest,
-	body: { name?: unknown },
+	body: { name?: unknown; fields?: unknown },
 	email: string,
 	kitFormId: number,
 ) {
@@ -362,11 +372,20 @@ async function returningUnsubscriberSignup(
 				cookieStore.get('ft_attr')?.value,
 			),
 			entry: 'form',
+			// An unreadable drovr state queues the sign-up instead of failing it.
+			deferral: {
+				fields:
+					body.fields && typeof body.fields === 'object'
+						? (body.fields as Record<string, unknown>)
+						: undefined,
+				deadlineTimeZone: deferredDeadlineTimeZone(req),
+			},
 		})
 		if (result.status === 'not-unsubscribed') return {}
 		// Consent lookup unreadable: carry on with the sign-up, but never untag.
 		if (result.status === 'lookup-failed') return { lookupFailed: true }
-		if (result.status === 'doi-requested') {
+		// Queued for a later drovr re-read; the person sees a normal sign-up.
+		if (result.status === 'doi-requested' || result.status === 'deferred') {
 			return { response: pendingSubscribeResponse({ email, name }) }
 		}
 		if (result.status === 'blocked') {

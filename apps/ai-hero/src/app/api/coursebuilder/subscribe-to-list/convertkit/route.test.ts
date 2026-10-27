@@ -830,6 +830,35 @@ describe('returning unsubscriber (Kit or drovr)', () => {
 		expect(mocks.reconcile).not.toHaveBeenCalled()
 	})
 
+	it('drovr state unknown (deferred): success shape, no Kit subscribe, no untag', async () => {
+		mocks.routeReturning.mockResolvedValue({ status: 'deferred' })
+
+		const response = await POST(
+			request({
+				email: 'person@example.com',
+				name: 'Pat',
+				listId: 9376133,
+				fields: { source: 'aihero_skills_page' },
+			}),
+		)
+
+		expect(response.status).toBe(200)
+		expect(await response.json()).toMatchObject({
+			email_address: 'person@example.com',
+			state: 'awaiting-confirmation',
+		})
+		expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
+		expect(mocks.reconcile).not.toHaveBeenCalled()
+		// The route opts in to deferral, carrying the submitted fields.
+		expect(mocks.routeReturning).toHaveBeenCalledWith(
+			expect.objectContaining({
+				deferral: expect.objectContaining({
+					fields: { source: 'aihero_skills_page' },
+				}),
+			}),
+		)
+	})
+
 	it('tagged and the DOI request throws: 502, no Kit subscribe, no untag', async () => {
 		mocks.routeReturning.mockRejectedValue(new Error('boom'))
 
