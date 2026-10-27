@@ -45,8 +45,9 @@ export const emailLogHash = (email: string) =>
 		.slice(0, 12)
 
 /**
- * Resolve emails against drovr, read-only. Answers are keyed by the
- * normalized (trimmed, lowercased) email. Any transport fault, non-200,
+ * Resolve emails against drovr, read-only. Emails are normalized
+ * (trimmed, lowercased) and de-duplicated in first-seen order; answers map by
+ * each result's index within its batch's items and are keyed by that email. Any transport fault, non-200,
  * malformed body or missing answer throws DrovrResolveUnavailableError so the
  * caller's step retries; a conflict is an answer, never a throw.
  */
@@ -77,7 +78,7 @@ export async function resolveDrovrContacts(args: {
 						authorization: `Bearer ${args.config.apiKey}`,
 						'content-type': 'application/json',
 					},
-					body: JSON.stringify({ emails: batch }),
+					body: JSON.stringify({ items: batch.map((email) => ({ email })) }),
 					signal: controller.signal,
 				},
 			)
@@ -93,33 +94,27 @@ export async function resolveDrovrContacts(args: {
 		} finally {
 			clearTimeout(timer)
 		}
-		const items = readItems(body)
-		for (const item of items) {
-			const email =
-				typeof item.email === 'string' ? normalizeResolveEmail(item.email) : ''
-			if (!email) continue
-			if (item.status === 'resolved' && typeof item.contactId === 'string') {
+		const results = readResults(body)
+		// One entry per item, by index within this batch's items.
+		batch.forEach((email, position) => {
+			const item = results.find((candidate) => candidate.index === position)
+			if (item?.status === 'resolved' && typeof item.contactId === 'string') {
 				answers.set(email, { status: 'resolved', contactId: item.contactId })
-			} else if (item.status === 'missing') {
-				answers.set(email, { status: 'missing' })
-			} else if (item.status === 'conflict') {
-				answers.set(email, { status: 'conflict' })
+			} else if (item?.status === 'missing' || item?.status === 'conflict') {
+				answers.set(email, { status: item.status })
+			} else {
+				// No entry for an index is unknown, not missing: retry.
+				throw new DrovrResolveUnavailableError('incomplete answer')
 			}
-		}
-		// An email drovr did not answer is unknown, not missing: retry.
-		if (batch.some((email) => !answers.has(email))) {
-			throw new DrovrResolveUnavailableError('incomplete answer')
-		}
+		})
 	}
 	return answers
 }
 
-function readItems(body: unknown): Array<Record<string, unknown>> {
-	const list = Array.isArray(body)
-		? body
-		: body && typeof body === 'object'
-			? ((body as Record<string, unknown>).results ??
-				(body as Record<string, unknown>).items)
+function readResults(body: unknown): Array<Record<string, unknown>> {
+	const list =
+		body && typeof body === 'object'
+			? (body as Record<string, unknown>).results
 			: undefined
 	if (!Array.isArray(list)) {
 		throw new DrovrResolveUnavailableError('malformed answer')

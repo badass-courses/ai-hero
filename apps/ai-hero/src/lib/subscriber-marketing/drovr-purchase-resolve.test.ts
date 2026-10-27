@@ -22,19 +22,24 @@ const source = {
 }
 
 describe('resolveDrovrContacts', () => {
-	it('returns resolved, missing and conflict answers keyed by normalized email', async () => {
+	it('maps resolved, missing and conflict answers by index, with duplicates sent once', async () => {
 		const fetcher = vi.fn(async () =>
 			json({
 				results: [
-					{ email: 'a@example.com', status: 'resolved', contactId: 'drv-1' },
-					{ email: 'b@example.com', status: 'missing' },
-					{ email: 'c@example.com', status: 'conflict' },
+					{ index: 0, status: 'resolved', contactId: 'drv-1' },
+					{ index: 1, status: 'missing' },
+					{ index: 2, status: 'conflict' },
 				],
 			}),
 		)
 
 		const answers = await resolveDrovrContacts({
-			emails: [' A@Example.com ', 'b@example.com', 'c@example.com'],
+			emails: [
+				' A@Example.com ',
+				'b@example.com',
+				'a@example.com',
+				'c@example.com',
+			],
 			config,
 			fetcher: fetcher as unknown as typeof fetch,
 		})
@@ -52,16 +57,40 @@ describe('resolveDrovrContacts', () => {
 		expect(url).toBe('https://drovr.test/resolve_contacts')
 		expect(init.method).toBe('POST')
 		expect(JSON.parse(init.body as string)).toEqual({
-			emails: ['a@example.com', 'b@example.com', 'c@example.com'],
+			items: [
+				{ email: 'a@example.com' },
+				{ email: 'b@example.com' },
+				{ email: 'c@example.com' },
+			],
 		})
 	})
 
-	it('batches at 1000 emails per call', async () => {
+	it('maps by index even when results arrive out of order', async () => {
+		const answers = await resolveDrovrContacts({
+			emails: ['a@example.com', 'b@example.com'],
+			config,
+			fetcher: (async () =>
+				json({
+					results: [
+						{ index: 1, status: 'resolved', contactId: 'drv-b' },
+						{ index: 0, status: 'missing' },
+					],
+				})) as unknown as typeof fetch,
+		})
+
+		expect(answers.get('a@example.com')).toEqual({ status: 'missing' })
+		expect(answers.get('b@example.com')).toEqual({
+			status: 'resolved',
+			contactId: 'drv-b',
+		})
+	})
+
+	it('batches at 1000 items per call and restarts index in each batch', async () => {
 		const emails = Array.from({ length: 1001 }, (_, i) => `u${i}@example.com`)
 		const fetcher = vi.fn(async (_url: string, init: RequestInit) =>
 			json({
-				results: (JSON.parse(init.body as string).emails as string[]).map(
-					(email) => ({ email, status: 'missing' }),
+				results: (JSON.parse(init.body as string).items as unknown[]).map(
+					(_item, index) => ({ index, status: 'missing' }),
 				),
 			}),
 		)
@@ -80,7 +109,11 @@ describe('resolveDrovrContacts', () => {
 		['a 503', async () => json({}, 503)],
 		['a network fault', async () => Promise.reject(new Error('boom'))],
 		['a malformed body', async () => json({ nope: true })],
-		['an unanswered email', async () => json({ results: [] })],
+		['a missing index', async () => json({ results: [] })],
+		[
+			'a resolved answer with no contactId',
+			async () => json({ results: [{ index: 0, status: 'resolved' }] }),
+		],
 	])('throws unavailable on %s', async (_label, impl) => {
 		await expect(
 			resolveDrovrContacts({

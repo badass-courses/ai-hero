@@ -6,6 +6,7 @@ import {
 } from '@/db/schema'
 import { inngest } from '@/inngest/inngest.server'
 import { env } from '@/env.mjs'
+import { resolveDrovrApiBaseUrl } from '@/lib/subscriber-marketing/drovr-unsubscribe-page'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import {
 	deliverResolvedPurchaseEvents,
@@ -13,7 +14,6 @@ import {
 	emailLogHash,
 	resolveDrovrContacts,
 } from '@/lib/subscriber-marketing/drovr-purchase-resolve'
-import { resolveDrovrApiBaseUrl } from '@/lib/subscriber-marketing/drovr-unsubscribe-page'
 import {
 	DROVR_AUTHORITY_TENANT_ID,
 	drovrApiKeyForTenant,

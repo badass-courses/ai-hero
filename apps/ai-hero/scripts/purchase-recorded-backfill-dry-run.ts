@@ -20,8 +20,8 @@ import {
 	DROVR_AUTHORITY_TENANT_ID,
 	drovrApiKeyForTenant,
 } from '../src/lib/subscriber-marketing/drovr-shadow-emitter'
-import { resolveDrovrContacts } from '../src/lib/subscriber-marketing/drovr-purchase-resolve'
 import { resolveDrovrApiBaseUrl } from '../src/lib/subscriber-marketing/drovr-unsubscribe-page'
+import { resolveDrovrContacts } from '../src/lib/subscriber-marketing/drovr-purchase-resolve'
 
 const sinceArg = process.argv.indexOf('--since')
 const since = sinceArg > -1 ? process.argv[sinceArg + 1] : '2026-10-01'
