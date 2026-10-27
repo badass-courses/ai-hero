@@ -21,6 +21,9 @@ const SuppressionsReply = z.object({
 	nextCursor: z.string().nullable(),
 })
 
+/** Server p95 is ~0.7s; the old 3s budget was overrun client-side (cold connection/TLS per request). */
+export const DROVR_READ_BUDGET_MS = 6000
+
 /** Read-only org-aihero REST contracts: directory identities, then active all stops. */
 export async function readDrovrOptOuts(
 	kitSubscriberId: string,
@@ -30,12 +33,12 @@ export async function readDrovrOptOuts(
 	if (!config) throw new Error('Drovr opt-out reader is not configured')
 	const controller = new AbortController()
 	let timer: ReturnType<typeof setTimeout> | undefined
-	// One 3s budget covers both reads, all pages and their bodies. No retries.
+	// One 6s budget covers both reads, all pages and their bodies. No retries.
 	const deadline = new Promise<never>((_, reject) => {
 		timer = setTimeout(() => {
 			controller.abort()
 			reject(new DOMException('Drovr opt-out read timed out', 'TimeoutError'))
-		}, 3000)
+		}, DROVR_READ_BUDGET_MS)
 	})
 	const fetcher = config.fetch ?? fetch
 	const baseUrl = config.baseUrl.replace(/\/$/, '')
