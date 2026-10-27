@@ -100,7 +100,19 @@ export async function runDeferredOptIn(
 		return { status: 'suppressed' as const }
 	}
 
-	await step.run('subscribe-kit', () => deps.subscribe(data))
+	// Re-read inside the step: if the Kit call fails and the step retries, the
+	// memoized "clear" above may be stale and the person may have opted out.
+	const outcome = await step.run('subscribe-kit', async () => {
+		const latest = await deps.readVerdict(data)
+		if (latest === 'unknown') throw new Error('drovr state unknown, retrying')
+		if (latest === 'stopped') return 'suppressed' as const
+		await deps.subscribe(data)
+		return 'subscribed' as const
+	})
+	if (outcome === 'suppressed') {
+		await log.info('optin.deferred.suppressed', base)
+		return { status: 'suppressed' as const }
+	}
 	await log.info('optin.deferred.subscribed', base)
 	await step.run('after-subscribe', async () => {
 		try {

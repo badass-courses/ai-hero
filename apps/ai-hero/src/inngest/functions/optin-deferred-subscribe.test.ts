@@ -76,11 +76,12 @@ describe('runDeferredOptIn', () => {
 
 	it('drovr answers "no stop" on a later read: subscribes exactly once', async () => {
 		const { step, sleeps } = memoStep()
-		const d = deps(['unknown', 'unknown', 'clear'])
+		const d = deps(['unknown', 'unknown', 'clear', 'clear'])
 		await expect(runDeferredOptIn({ event: { data }, step }, d)).resolves.toEqual(
 			{ status: 'subscribed' },
 		)
-		expect(d.readVerdict).toHaveBeenCalledTimes(3)
+		// Three backoff reads, plus one fresh read inside the subscribe step.
+		expect(d.readVerdict).toHaveBeenCalledTimes(4)
 		expect(sleeps).toEqual(['backoff-0', 'backoff-1'])
 		expect(d.subscribe).toHaveBeenCalledTimes(1)
 		expect(d.afterSubscribe).toHaveBeenCalledTimes(1)
@@ -89,11 +90,46 @@ describe('runDeferredOptIn', () => {
 
 	it('a replayed run does not subscribe twice', async () => {
 		const { step } = memoStep()
-		const d = deps(['clear'])
+		const d = deps(['clear', 'clear'])
 		await runDeferredOptIn({ event: { data }, step }, d)
 		await runDeferredOptIn({ event: { data }, step }, d)
 		expect(d.subscribe).toHaveBeenCalledTimes(1)
-		expect(d.readVerdict).toHaveBeenCalledTimes(1)
+		expect(d.readVerdict).toHaveBeenCalledTimes(2)
+	})
+
+	it('Kit subscribe fails, person opts out before the retry: the retry does not subscribe', async () => {
+		const memo = new Map<string, unknown>()
+		const step = {
+			sleep: async () => {},
+			// Inngest retries a throwing step by re-running its body.
+			run: async <T>(id: string, fn: () => Promise<T>): Promise<T> => {
+				if (memo.has(id)) return memo.get(id) as T
+				let value: T
+				try {
+					value = await fn()
+				} catch {
+					value = await fn()
+				}
+				memo.set(id, value)
+				return value
+			},
+		}
+		const d = deps(['clear', 'clear', 'stopped'])
+		d.subscribe.mockRejectedValueOnce(new Error('kit 500'))
+		await expect(runDeferredOptIn({ event: { data }, step }, d)).resolves.toEqual(
+			{ status: 'suppressed' },
+		)
+		expect(d.subscribe).toHaveBeenCalledTimes(1)
+		expect(d.afterSubscribe).not.toHaveBeenCalled()
+		expect(loggedEvents()).toContain('optin.deferred.suppressed')
+		expect(loggedEvents()).not.toContain('optin.deferred.subscribed')
+	})
+
+	it('unknown at subscribe time throws so the step retries', async () => {
+		const { step } = memoStep()
+		const d = deps(['clear', 'unknown'])
+		await expect(runDeferredOptIn({ event: { data }, step }, d)).rejects.toThrow()
+		expect(d.subscribe).not.toHaveBeenCalled()
 	})
 
 	it('drovr says opted out: never subscribes', async () => {
@@ -133,7 +169,7 @@ describe('runDeferredOptIn', () => {
 
 	it('post-subscribe failure is logged, not retried into a second subscribe', async () => {
 		const { step } = memoStep()
-		const d = deps(['clear'])
+		const d = deps(['clear', 'clear'])
 		d.afterSubscribe.mockRejectedValue(new TypeError('boom'))
 		await expect(runDeferredOptIn({ event: { data }, step }, d)).resolves.toEqual(
 			{ status: 'subscribed' },
@@ -148,7 +184,7 @@ describe('runDeferredOptIn', () => {
 	it('never logs the address', async () => {
 		const { step } = memoStep()
 		await runDeferredOptIn({ event: { data }, step }, deps([]))
-		await runDeferredOptIn({ event: { data }, step: memoStep().step }, deps(['clear']))
+		await runDeferredOptIn({ event: { data }, step: memoStep().step }, deps(['clear', 'clear']))
 		const all = JSON.stringify([
 			mocks.log.info.mock.calls,
 			mocks.log.warn.mock.calls,
