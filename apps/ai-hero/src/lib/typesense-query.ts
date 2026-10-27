@@ -148,6 +148,17 @@ export async function upsertPostToTypeSense(
 			})
 			return { ok: false, reason: 'config-missing' }
 		}
+		// Generic resource saves can include structural/non-searchable resources
+		// with no publication state. Never invent a state to make them indexable.
+		if (post.fields?.state === undefined) {
+			void log.info('typesense.upsert.skip-missing-state', {
+				postId: post.id,
+				resourceType: post.type,
+				action,
+			})
+			return { ok: false, reason: 'invalid-resource' }
+		}
+
 		const typesenseWriteClient = new Typesense.Client({
 			nodes: [
 				{
