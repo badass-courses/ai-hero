@@ -1,0 +1,147 @@
+{
+	"description": "BuyerFacts boundary cases. Each `facts` decodes with front-desk's BuyerFacts exactly when `valid` is true.",
+	"cases": [
+		{
+			"name": "max existing seats",
+			"valid": true,
+			"facts": {
+				"alumni": { "value": "none", "sourceRefs": ["test:scan"] },
+				"credit": { "value": null, "sourceRefs": ["test:scan"] },
+				"creditUse": { "value": "available", "sourceRefs": ["test:scan"] },
+				"existingSeats": { "value": 100000, "sourceRefs": ["test:seats"] },
+				"legend": { "gap": "FactsUnavailable" },
+				"order": { "value": "team", "sourceRefs": ["request:orderKind"] },
+				"ppp": { "gap": "FactsUnavailable" }
+			}
+		},
+		{
+			"name": "existing seats over the max",
+			"valid": false,
+			"facts": {
+				"alumni": { "value": "none", "sourceRefs": ["test:scan"] },
+				"credit": { "value": null, "sourceRefs": ["test:scan"] },
+				"creditUse": { "value": "available", "sourceRefs": ["test:scan"] },
+				"existingSeats": { "value": 100001, "sourceRefs": ["test:seats"] },
+				"legend": { "gap": "FactsUnavailable" },
+				"order": { "value": "team", "sourceRefs": ["request:orderKind"] },
+				"ppp": { "gap": "FactsUnavailable" }
+			}
+		},
+		{
+			"name": "negative existing seats",
+			"valid": false,
+			"facts": {
+				"alumni": { "value": "none", "sourceRefs": ["test:scan"] },
+				"credit": { "value": null, "sourceRefs": ["test:scan"] },
+				"creditUse": { "value": "available", "sourceRefs": ["test:scan"] },
+				"existingSeats": { "value": -1, "sourceRefs": ["test:seats"] },
+				"legend": { "gap": "FactsUnavailable" },
+				"order": { "value": "team", "sourceRefs": ["request:orderKind"] },
+				"ppp": { "gap": "FactsUnavailable" }
+			}
+		},
+		{
+			"name": "email with no account: ownership facts are IdentityUnverified",
+			"valid": true,
+			"facts": {
+				"alumni": { "gap": "IdentityUnverified" },
+				"credit": { "gap": "IdentityUnverified" },
+				"creditUse": { "gap": "IdentityUnverified" },
+				"existingSeats": { "gap": "IdentityUnverified" },
+				"legend": { "gap": "FactsUnavailable" },
+				"order": { "value": "individual", "sourceRefs": ["request:orderKind"] },
+				"ppp": { "gap": "FactsUnavailable" }
+			}
+		},
+		{
+			"name": "purchase source unavailable: ownership facts are FactsUnavailable",
+			"valid": true,
+			"facts": {
+				"alumni": { "gap": "FactsUnavailable" },
+				"credit": { "gap": "FactsUnavailable" },
+				"creditUse": { "gap": "FactsUnavailable" },
+				"existingSeats": { "gap": "FactsUnavailable" },
+				"legend": { "gap": "FactsUnavailable" },
+				"order": { "value": "individual", "sourceRefs": ["request:orderKind"] },
+				"ppp": { "gap": "FactsUnavailable" }
+			}
+		},
+		{
+			"name": "ambiguous credit and held credit use",
+			"valid": true,
+			"facts": {
+				"alumni": { "value": "both", "sourceRefs": ["test:c3", "test:c4"] },
+				"credit": { "gap": "PaymentAmbiguous" },
+				"creditUse": { "gap": "FactsUnavailable" },
+				"existingSeats": { "value": 0, "sourceRefs": ["test:scan"] },
+				"legend": { "value": "no", "sourceRefs": ["test:legend"] },
+				"order": { "value": "individual", "sourceRefs": ["request:orderKind"] },
+				"ppp": { "value": null, "sourceRefs": ["test:ppp"] }
+			}
+		},
+		{
+			"name": "max safe-integer credit and full PPP range",
+			"valid": true,
+			"facts": {
+				"alumni": { "value": "none", "sourceRefs": ["test:scan"] },
+				"credit": {
+					"value": { "paid": 9007199254740991, "source": "purchase-test" },
+					"sourceRefs": ["test:credit"]
+				},
+				"creditUse": { "value": "spent", "sourceRefs": ["test:ledger"] },
+				"existingSeats": { "value": 0, "sourceRefs": ["test:scan"] },
+				"legend": { "value": "verified", "sourceRefs": ["test:legend"] },
+				"order": { "value": "individual", "sourceRefs": ["request:orderKind"] },
+				"ppp": {
+					"value": { "accepted": true, "percent": 100 },
+					"sourceRefs": ["test:ppp"]
+				}
+			}
+		},
+		{
+			"name": "credit past the safe-integer range",
+			"valid": false,
+			"facts": {
+				"alumni": { "value": "none", "sourceRefs": ["test:scan"] },
+				"credit": {
+					"value": { "paid": 9007199254740992, "source": "purchase-test" },
+					"sourceRefs": ["test:credit"]
+				},
+				"creditUse": { "value": "available", "sourceRefs": ["test:scan"] },
+				"existingSeats": { "value": 0, "sourceRefs": ["test:scan"] },
+				"legend": { "gap": "FactsUnavailable" },
+				"order": { "value": "individual", "sourceRefs": ["request:orderKind"] },
+				"ppp": { "gap": "FactsUnavailable" }
+			}
+		},
+		{
+			"name": "PPP percent over 100",
+			"valid": false,
+			"facts": {
+				"alumni": { "value": "none", "sourceRefs": ["test:scan"] },
+				"credit": { "value": null, "sourceRefs": ["test:scan"] },
+				"creditUse": { "value": "available", "sourceRefs": ["test:scan"] },
+				"existingSeats": { "value": 0, "sourceRefs": ["test:scan"] },
+				"legend": { "gap": "FactsUnavailable" },
+				"order": { "value": "individual", "sourceRefs": ["request:orderKind"] },
+				"ppp": {
+					"value": { "accepted": true, "percent": 101 },
+					"sourceRefs": ["test:ppp"]
+				}
+			}
+		},
+		{
+			"name": "known fact with an empty source ref",
+			"valid": false,
+			"facts": {
+				"alumni": { "value": "none", "sourceRefs": [""] },
+				"credit": { "value": null, "sourceRefs": ["test:scan"] },
+				"creditUse": { "value": "available", "sourceRefs": ["test:scan"] },
+				"existingSeats": { "value": 0, "sourceRefs": ["test:scan"] },
+				"legend": { "gap": "FactsUnavailable" },
+				"order": { "value": "individual", "sourceRefs": ["request:orderKind"] },
+				"ppp": { "gap": "FactsUnavailable" }
+			}
+		}
+	]
+}

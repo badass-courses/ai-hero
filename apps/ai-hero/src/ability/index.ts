@@ -74,6 +74,20 @@ function cohortContentIds(entitlement: UserEntitlement): string[] {
 		: []
 }
 
+/** Early access removes only the date gate for this entitlement's modules. */
+export function cohortModuleOpenFor(
+	entitlement: UserEntitlement,
+	module: { id: string; fields?: { startsAt?: string | null } },
+	now: Date,
+): boolean {
+	return (
+		cohortContentIds(entitlement).includes(module.id) &&
+		(entitlement.metadata?.earlyAccess === true ||
+			!module.fields?.startsAt ||
+			new Date(module.fields.startsAt) < now)
+	)
+}
+
 interface OrganizationBilling {
 	organizationId: string
 }
@@ -388,14 +402,9 @@ export function defineRulesForPurchases(
 					can('read', 'Content', { id: { $in: contentIds } })
 				}
 
-				// Check module start date
-				const moduleStartsAt = module?.fields?.startsAt
-				const moduleStarted =
-					!moduleStartsAt || new Date(moduleStartsAt) < new Date()
-
-				// If user has access to this specific workshop, grant access to lessons only if started
+				// Early access bypasses only the date, never the module scope.
 				if (contentIds.includes(module.id)) {
-					if (moduleStarted) {
+					if (cohortModuleOpenFor(entitlement, module, new Date())) {
 						can('read', 'Content', {
 							id: { $in: allModuleResourceIds },
 						})
@@ -483,10 +492,6 @@ export function defineRulesForPurchases(
 		(resource) => resource.resourceId === lesson?.id,
 	)
 	if (user?.entitlements && lessonModule && module?.id) {
-		const moduleStartsAt = module?.fields?.startsAt
-		const moduleStarted =
-			!moduleStartsAt || new Date(moduleStartsAt) < new Date()
-
 		user.entitlements.forEach((entitlement: UserEntitlement) => {
 			if (
 				!cohortEntitlementType ||
@@ -494,7 +499,7 @@ export function defineRulesForPurchases(
 				!cohortContentIds(entitlement).includes(module.id)
 			)
 				return
-			if (moduleStarted) {
+			if (cohortModuleOpenFor(entitlement, module, new Date())) {
 				can('read', 'Content', {
 					id: { $in: allModuleResourceIds },
 				})

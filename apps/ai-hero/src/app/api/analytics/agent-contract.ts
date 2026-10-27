@@ -1,6 +1,7 @@
 import type { SurfaceName } from '@/lib/analytics'
+import { PROMO_KINDS } from '@/lib/analytics/promos'
 
-export const ANALYTICS_SCHEMA_VERSION = '2026-08-18.1'
+export const ANALYTICS_SCHEMA_VERSION = '2026-10-16.1'
 
 export const ANALYTICS_AGENT_INSTRUCTIONS = [
 	'Revenue amounts are USD major units. Treat database revenue surfaces as the revenue source of truth, not GA4.',
@@ -24,7 +25,133 @@ const count = (description: string) => ({
 	description,
 })
 
+const promoMetrics = {
+	type: 'object',
+	additionalProperties: false,
+	required: [
+		'kind',
+		'currency',
+		'recordCount',
+		'purchaseCount',
+		'gross',
+		'refunds',
+		'net',
+	],
+	properties: {
+		kind: { type: 'string', enum: PROMO_KINDS },
+		currency: { const: 'USD' },
+		recordCount: count('All records, including seat/zero and unclassified'),
+		purchaseCount: count(
+			'Positive Valid, Restricted and Refunded purchases, excluding team-seat redemptions',
+		),
+		gross: usd(
+			'Original paid amounts, including subsequently refunded purchases',
+		),
+		refunds: usd(
+			'Refunded purchase amounts, dated by purchase creation, not refund time',
+		),
+		net: usd('gross minus refunds'),
+	},
+} as const
+
 export const REVENUE_SURFACE_SCHEMAS = {
+	'revenue/promos': {
+		supports: ['range', 'from', 'to', 'productId'],
+		data: {
+			type: 'object',
+			additionalProperties: false,
+			required: ['currency', 'window', 'byKind', 'daily'],
+			properties: {
+				currency: { const: 'USD' },
+				window: {
+					type: 'object',
+					additionalProperties: false,
+					required: ['from', 'to', 'basis', 'bounds'],
+					properties: {
+						from: { type: ['string', 'null'], format: 'date-time' },
+						to: { type: 'string', format: 'date-time' },
+						basis: { const: 'purchase-created' },
+						bounds: { const: '[from,to)' },
+					},
+				},
+				byKind: { type: 'array', items: promoMetrics },
+				daily: {
+					type: 'array',
+					items: {
+						...promoMetrics,
+						required: [...promoMetrics.required, 'date'],
+						properties: {
+							...promoMetrics.properties,
+							date: { type: 'string', format: 'date' },
+						},
+					},
+				},
+			},
+		},
+		semantics: [
+			'USD major units. No customer identifiers. SQL groups by UTC purchase-created day and promo kind.',
+			'Precedence: seat-or-zero; invalid amount or unknown status -> unclassified; evergreen; regional; unresolved coupon -> unclassified; other-coupon; full-price.',
+			'Evergreen means the linked site coupon has fields.evergreenOffer present, including null or false. Coupon status/expiry and arbitrary merchant offer types do not rewrite historical attribution.',
+			'Regional means Restricted, or a linked merchant coupon of type ppp (also preserves regional attribution on Refunded rows when that link exists).',
+			'Classification uses persisted coupon evidence only. A refunded row cannot recover a previous Restricted status without a persisted PPP coupon link. An unrecorded merchant discount cannot be inferred from the paid amount.',
+			'Unknown purchase statuses (including Disputed and Banned) are unclassified and excluded from paid money, matching the base revenue provider. Status comparisons are byte-exact. Unresolved coupon references are unclassified, not full-price. recordCount makes every record visible.',
+			'purchaseCount counts positive Valid/Restricted/Refunded records except team-seat redemptions. Seat/zero and unknown statuses never contribute paid amounts.',
+			'gross includes original amounts of Refunded purchases; refunds includes their amounts; net = gross - refunds. Refunds are dated by purchase creation, not refund time. Partial Stripe refund events are not represented by this purchase-status report.',
+			'from/to must be supplied together as UTC ISO timestamps (Z, at most millisecond precision), using half-open [from,to) bounds, max 400 days. Explicit windows override the rolling range, and the envelope echoes window instead of range. range=all without an explicit window is rejected with a 400; paired from/to override range=all. Use 24h/7d/30d/90d or paired from/to. Other surfaces reject from/to.',
+		],
+	},
+	'funnel/evergreen': {
+		supports: ['range', 'from', 'to', 'productId'],
+		data: {
+			oneOf: [
+				{
+					type: 'object',
+					additionalProperties: false,
+					required: ['status', 'reason'],
+					properties: {
+						status: { const: 'pending' },
+						reason: { type: 'string' },
+					},
+				},
+				{
+					type: 'object',
+					additionalProperties: false,
+					required: ['status', 'daily'],
+					properties: {
+						status: { const: 'ready' },
+						daily: {
+							type: 'array',
+							items: {
+								type: 'object',
+								additionalProperties: false,
+								required: [
+									'date',
+									'entered',
+									'clicked',
+									'boughtWithCoupon',
+									'boughtWithout',
+									'productMatched',
+								],
+								properties: {
+									date: { type: 'string', format: 'date' },
+									entered: count('Entered journey'),
+									clicked: count('Clicked offer'),
+									boughtWithCoupon: count('Bought with offer coupon'),
+									boughtWithout: count('Bought without offer coupon'),
+									productMatched: count(
+										'Purchases matched to the offered product',
+									),
+								},
+							},
+						},
+					},
+				},
+			],
+		},
+		semantics: [
+			'Currently returns only { status: pending, reason }. No journey provider calls. Conversion remains typed pending, never zero, until an aggregate read lands.',
+		],
+	},
 	summary: {
 		supports: ['range', 'productId'],
 		data: {
@@ -137,8 +264,23 @@ export const REVENUE_SURFACE_SCHEMAS = {
 					couponId: { type: ['string', 'null'] },
 					userName: { type: ['string', 'null'] },
 					userEmail: { type: ['string', 'null'], format: 'email' },
-					isTeam: { type: 'boolean' },
-					seats: { type: ['integer', 'null'], minimum: 1 },
+					isTeam: {
+						type: 'boolean',
+						description:
+							'True only when the purchase has a bulk coupon with more than one seat. An organization alone does not make a purchase a team purchase.',
+					},
+					seats: {
+						type: ['integer', 'null'],
+						minimum: 2,
+						description:
+							'Seats bought by this purchase. Set only for a team purchase that is the only purchase on its bulk coupon. Null for individual purchases and for add-seat teams, where the per-purchase count is not stored.',
+					},
+					teamSeats: {
+						type: ['integer', 'null'],
+						minimum: 2,
+						description:
+							"The team's current total seats, its bulk coupon's maxUses today, for any team purchase. Null for individual purchases.",
+					},
 				},
 			},
 		},
@@ -146,6 +288,7 @@ export const REVENUE_SURFACE_SCHEMAS = {
 			'Rows are newest first. Large historical purchases do not outrank newer purchases.',
 			'The 100-row limit is per page. Follow _links.next.href until absent, or meta.pagination.nextOffset until null.',
 			'Read meta.pagination.totalMatchingRows for the full matching purchase count. meta.totalRows and meta.pagination.returnedRows describe only the current page.',
+			'A team purchase is one with a bulk coupon of more than one seat. Add-seat purchases reuse the team coupon and raise its total, so seats is null when a coupon has more than one purchase, and teamSeats is the team total now, not at purchase time.',
 		],
 	},
 } as const
@@ -191,6 +334,18 @@ export function getAnalyticsAgentSchema(surfaceNames: readonly SurfaceName[]) {
 					minimum: 0,
 					default: 0,
 				},
+				from: {
+					type: 'string',
+					format: 'date-time',
+					description:
+						'revenue/promos and funnel/evergreen only. Inclusive UTC ISO instant, supply with to.',
+				},
+				to: {
+					type: 'string',
+					format: 'date-time',
+					description:
+						'Exclusive UTC ISO instant, supply with from. Max 400-day explicit window.',
+				},
 				productId: { type: 'string' },
 				purchaseId: { type: 'string' },
 				surveyId: { type: 'string' },
@@ -198,6 +353,18 @@ export function getAnalyticsAgentSchema(surfaceNames: readonly SurfaceName[]) {
 				questionId: { type: 'string' },
 			},
 			allOf: [
+				{
+					if: {
+						properties: {
+							surface: { enum: ['revenue/promos', 'funnel/evergreen'] },
+						},
+						required: ['surface'],
+						not: { required: ['from', 'to'] },
+					},
+					then: {
+						properties: { range: { enum: ['24h', '7d', '30d', '90d'] } },
+					},
+				},
 				{
 					if: {
 						properties: { surface: { const: 'surveys/responses' } },

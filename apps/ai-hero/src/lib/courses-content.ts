@@ -98,6 +98,41 @@ export const FLAGSHIP_WAITLIST = {
 	note: 'No spam. Unsubscribe anytime.',
 } as const
 
+/**
+ * The same cell once the next cohort is announced: it has an opening date,
+ * and seats are not on sale yet. Still a waitlist, but no longer "dates to
+ * follow", so the heading is the date.
+ *
+ * The wording is the cohort page's own for this state (`getEnrollmentState`
+ * in `cohort-pricing-widget-container.tsx`). A reader who follows the block to
+ * that page is told the same thing twice, not two things.
+ */
+export const FLAGSHIP_ANNOUNCED = {
+	/** Interpolated with `formatOpensIn`, e.g. "in 13 days (Oct 26 at 12:01 AM PDT)". */
+	heading: (opens: string) => `Enrollment opens ${opens}`,
+	description: 'Join the waitlist to be notified when enrollment opens.',
+} as const
+
+/**
+ * The same cell for a reader who is already on this cohort's waitlist. The
+ * ask is answered, so it becomes a status, and the button becomes the way to
+ * the cohort's page.
+ *
+ * The cell used to vanish for these readers. That left the block with
+ * nothing to click but its artwork, for the people most likely to come back
+ * and check on it.
+ */
+export const FLAGSHIP_WAITING = {
+	badge: 'On the waitlist',
+	/** The heading when there is no opening date to lead with. */
+	heading: 'You are on the waitlist',
+	description: 'You get the dates by email the moment they are set.',
+	/** Under the opening date, when the cohort is announced. */
+	announcedDescription:
+		'You are on the waitlist. The email arrives the moment enrollment opens.',
+	ctaLabel: 'See the cohort',
+} as const
+
 /** The same cell while a cohort is actually purchasable. */
 /**
  * A live discount, surfaced without a price.
@@ -218,8 +253,8 @@ export const COURSES_TESTIMONIALS = [
  * ladder ranks it above the cohort (`next-offer.ts`: a live sale on it, or
  * simply that it is buyable while no cohort is). Which workshop that is comes
  * from the data (`getCachedLatestSelfPacedWorkshop`), not from here. The
- * cohort does not leave the page — it takes a card in the shelf below
- * (`COURSES_NEXT_COHORT_CARD`).
+ * cohort does not leave the page — it takes the row under the hero
+ * (`COURSES_SECOND_OFFER`).
  */
 export const COURSES_FEATURED_WORKSHOP = {
 	/** Same slot and same reasoning as `FLAGSHIP_HERO.eyebrow`: the headline is
@@ -244,17 +279,31 @@ export const COURSES_FEATURED_WORKSHOP = {
 } as const
 
 /**
- * The cohort's card for when the hero features the workshop instead. "Waitlist
- * open" is the honest status: the last run ended, the next has no date, and
- * the cohort page is where the waitlist lives.
+ * The row under the hero: the offer that did not take it.
+ *
+ * The hero goes to what a reader can buy today, so a cohort that is only a
+ * waitlist does not lead while a course is on sale. It used to drop to a card
+ * on the shelf of past cohorts, at the foot of the page, which filed the next
+ * cohort with the finished ones. It now keeps a place of its own directly
+ * under the hero, and when enrollment opens the two swap: the cohort takes
+ * the hero and the self-paced course takes this row.
  */
-export const COURSES_NEXT_COHORT_CARD = {
-	badge: 'Waitlist open',
-	/** The cohorts shelf's label while this card leads it — "Past cohorts"
-	 *  would be a lie about the first row. */
-	shelfEyebrow: 'Cohorts',
-	fallbackBlurb:
-		'The flagship cohort. Join the waitlist on its page and you hear the moment the next dates land.',
+export const COURSES_SECOND_OFFER = {
+	cohort: {
+		label: 'Next cohort',
+		waitlistBadge: 'Waitlist open',
+		/** For a cohort authored without a description. */
+		fallbackBlurb:
+			'The flagship cohort. Join the waitlist on its page and you hear the moment the next dates land.',
+		ctaLabel: 'See the cohort',
+		/** `formatOpensIn`'s "in 13 days (Oct 26 at 12:01 AM PDT)", and a date, "Nov 9". */
+		opens: (opens: string) => `Enrollment opens ${opens}`,
+		starts: (date: string) => `Starts ${date}`,
+	},
+	workshop: {
+		label: 'Self-paced course',
+		ctaLabel: 'See the course',
+	},
 } as const
 
 /**

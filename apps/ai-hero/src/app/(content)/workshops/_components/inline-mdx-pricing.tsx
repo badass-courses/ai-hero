@@ -1,12 +1,16 @@
 'use client'
 
 import React from 'react'
+import { BuyPathPricingBeacon } from '@/lib/buy-path/beacons'
+import { inlineBuyLabel } from '@/lib/pricing-decisions'
 import Link from 'next/link'
+import { GatedBuyButton } from '@/components/commerce/gated-buy-button'
 import { TYPE } from '@/components/landing/type'
 import Spinner from '@/components/spinner'
 import { env } from '@/env.mjs'
 import type { Cohort } from '@/lib/cohort'
 import type { Event } from '@/lib/events'
+import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 import type { MinimalWorkshop, Workshop } from '@/lib/workshops'
 import { api } from '@/trpc/react'
 import { formatInTimeZone } from 'date-fns-tz'
@@ -29,6 +33,7 @@ import { formatUsd } from '@coursebuilder/commerce/format-usd'
 import { cn } from '@coursebuilder/ui/utils/cn'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
+import { RegionalPricingNote } from './regional-pricing-note'
 import { WORKSHOP_CTA_BUTTON } from './workshop-cta-button'
 
 export type PricingData = {
@@ -90,6 +95,7 @@ export const BuyButtonComponent: React.FC<
 			userId={commerceProps?.userId}
 			pricingDataLoader={pricingDataLoader}
 		>
+			<BuyPathPricingBeacon productId={product.id} />
 			<Pricing.Product>
 				<Buy
 					resourceType={resourceType}
@@ -101,75 +107,6 @@ export const BuyButtonComponent: React.FC<
 				)}
 			</Pricing.Product>
 		</Pricing.Root>
-	)
-}
-
-/**
- * One-line regional-pricing notice for the mobile bottom bar. The desktop buy
- * box explains PPP with a checkbox and the from-country restriction, but a
- * phone visitor only ever meets the bar — so eligible visitors emailed support
- * asking whether regional pricing exists at all. This surfaces the answer
- * without owning the decision: tapping scrolls to the buy box, where the
- * checkbox and the restriction copy (a condition of the discount) live.
- *
- * Renders nothing unless a PPP coupon is actually available for this visitor
- * and not already applied (an applied coupon is visible in the button price).
- */
-const RegionalPricingNote = ({ targetId }: { targetId: string }) => {
-	const { formattedPrice, activeMerchantCoupon } = usePricing()
-
-	const availablePPPCoupon = Array.isArray(formattedPrice?.availableCoupons)
-		? formattedPrice.availableCoupons.find((coupon) => coupon?.type === 'ppp')
-		: undefined
-	if (!availablePPPCoupon || activeMerchantCoupon?.type === 'ppp') return null
-
-	const rawDiscount = availablePPPCoupon.percentageDiscount as
-		| string
-		| number
-		| { toNumber?: () => number }
-		| undefined
-	const percentOff = Math.floor(
-		(typeof rawDiscount === 'string'
-			? Number(rawDiscount)
-			: typeof rawDiscount === 'number'
-				? rawDiscount
-				: (rawDiscount?.toNumber?.() ?? 0)) * 100,
-	)
-
-	// Same guard as the buy box: `Intl.DisplayNames.of` throws on a structurally
-	// invalid region code, and this code is stored coupon data.
-	const rawCountryCode = availablePPPCoupon.country || 'US'
-	const countryCode = /^[A-Za-z]{2}$/.test(rawCountryCode)
-		? rawCountryCode.toUpperCase()
-		: 'US'
-	const country =
-		new Intl.DisplayNames(['en'], { type: 'region' }).of(countryCode) ??
-		countryCode
-
-	return (
-		<button
-			type="button"
-			data-regional-note=""
-			onClick={() => {
-				document
-					.getElementById(targetId)
-					?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-			}}
-			// Anchored to the bar's bottom edge as a second row under title+button;
-			// the bar reserves this row's height via its `has-[[data-regional-note]]`
-			// padding — the two must move together.
-			className="border-border absolute bottom-0 left-0 w-full cursor-pointer border-t px-3 py-1.5 text-left"
-		>
-			<span
-				className={cn(TYPE.metaSm, 'text-muted-foreground text-pretty')}
-			>
-				{/* Rhymes with the buy box's "Buying from {country}?" sentence so the
-				    tap lands on familiar words. */}
-				Buying from{' '}
-				<strong className="text-foreground font-semibold">{country}</strong>?{' '}
-				{percentOff}% off regional pricing is available&nbsp;→
-			</span>
-		</button>
 	)
 }
 
@@ -193,7 +130,6 @@ const Buy = ({
 
 	const finalPrice = formattedPrice?.calculatedPrice || 0
 	const savings = fullPrice - finalPrice
-	const savingsPercentage = Math.round((savings / fullPrice) * 100)
 
 	// The house gold CTA with the price riding along in mono — the button and
 	// the number it commits you to are one object (`Workshop Landing.dc.html`
@@ -202,8 +138,8 @@ const Buy = ({
 	// how a resting button earns attention (DESIGN rules 7 and 13).
 	return (
 		<>
-			<Pricing.BuyButton className={cn(WORKSHOP_CTA_BUTTON, className)}>
-				<span data-label="">Buy Now</span>
+			<GatedBuyButton className={cn(WORKSHOP_CTA_BUTTON, className)}>
+				<span data-label="">{inlineBuyLabel({ isSoldOut })}</span>
 				<span
 					data-divider=""
 					className="bg-accent-fill-foreground/25 mx-2.5 h-4 w-px"
@@ -226,7 +162,7 @@ const Buy = ({
 						</>
 					)}
 				</span>
-			</Pricing.BuyButton>
+			</GatedBuyButton>
 			{status === 'error' && (
 				<p role="alert" className="text-muted-foreground mt-2 text-sm">
 					Price unavailable. Reload to try again.
@@ -317,8 +253,9 @@ export const withEventPricing = (
 		// Check if cohort has actually started (different from enrollment status)
 		const hasStarted = startsAt ? new Date(startsAt) <= nowInPT : false
 
-		const hasPurchasedCurrentProduct = commerceProps?.purchases?.some(
-			(purchase) => purchase.productId === product.id,
+		const hasPurchasedCurrentProduct = ownsProductForBuyBox(
+			commerceProps?.purchases,
+			product.id,
 		)
 
 		return (

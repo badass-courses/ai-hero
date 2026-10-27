@@ -1,9 +1,7 @@
 import { headers } from 'next/headers'
 import { unstable_cache } from 'next/cache'
-import { courseBuilderAdapter, db } from '@/db'
-import { purchases } from '@/db/schema'
+import { courseBuilderAdapter } from '@/db'
 import { getServerAuthSession } from '@/server/auth'
-import { count, eq } from 'drizzle-orm'
 
 import { formatPricesForProduct } from '@coursebuilder/commerce'
 import { propsForCommerce } from '@coursebuilder/commerce/props-for-commerce'
@@ -14,6 +12,7 @@ import {
 } from '@coursebuilder/commerce/types'
 
 import { getProducts } from './products-query'
+import { getSeatsTaken, seatsLeft } from './seats-taken-query'
 
 export async function getPricingData(
 	options: Partial<FormatPricesForProductOptions>,
@@ -44,13 +43,12 @@ export async function getPricingData(
 	if (dbProductQuantityAvailable === -1) {
 		resolvedQuantityAvailable = -1 // Product is unlimited
 	} else {
-		// Product has a finite quantity, subtract purchases
-		const [purchaseCountRow] = await db
-			.select({ count: count() })
-			.from(purchases)
-			.where(eq(purchases.productId, options.productId))
-		resolvedQuantityAvailable =
-			(dbProductQuantityAvailable || 0) - (purchaseCountRow?.count ?? 0)
+		// Product has a finite quantity: subtract the seats taken (Valid and
+		// Restricted purchases; a bulk purchase is its seat quantity).
+		resolvedQuantityAvailable = seatsLeft(
+			dbProductQuantityAvailable,
+			await getSeatsTaken(options.productId),
+		)
 	}
 
 	return {

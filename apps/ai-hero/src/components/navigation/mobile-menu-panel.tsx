@@ -106,7 +106,7 @@ function NavSkeleton() {
  * has exactly one definition and a non-link row can use it directly.
  */
 const ACCOUNT_ROW =
-	'focus-visible:ring-ring flex min-h-10 items-center px-5 py-[9px] text-[14px] transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset'
+	'focus-visible:ring-ring flex min-h-10 items-center px-5 py-[9px] text-[14px] transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset'
 
 /** What the drawer's focus trap counts as a stop. */
 const FOCUSABLE_SELECTOR = [

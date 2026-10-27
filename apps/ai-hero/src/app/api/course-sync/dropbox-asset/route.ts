@@ -3,6 +3,7 @@ import { verifyDropboxMuxProxyToken } from '@/course-sync/dropbox-mux-source'
 import { CourseSyncError } from '@/course-sync/errors'
 import { getServerCourseSyncBinding } from '@/course-sync/types'
 import { env } from '@/env.mjs'
+import { getIntegrationRefreshToken } from '@/lib/integration-token-store'
 import { createDropboxSharedLinkAssetReader } from '@/lib/dropbox-course-sync'
 
 export const maxDuration = 800
@@ -45,7 +46,8 @@ export async function GET(request: Request) {
 	}
 
 	const { config } = dropboxSyncConfigFor(binding)
-	if (!config || !env.DROPBOX_REFRESH_TOKEN) {
+	const refreshToken = await getIntegrationRefreshToken('dropbox')
+	if (!config || !refreshToken) {
 		return new Response('Dropbox course sync is not configured.', { status: 503 })
 	}
 	if (config.source.kind !== 'shared-link') {
@@ -56,7 +58,7 @@ export async function GET(request: Request) {
 
 	const reader = await createDropboxSharedLinkAssetReader({
 		config,
-		refreshToken: env.DROPBOX_REFRESH_TOKEN,
+		refreshToken,
 	})
 	const asset = await reader.read(relativePath)
 	return new Response(asset.stream, {

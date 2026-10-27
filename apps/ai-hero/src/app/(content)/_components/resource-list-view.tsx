@@ -7,6 +7,7 @@ import { TYPE } from '@/components/landing/type'
 import { useFillViewportHeight } from '@/hooks/use-fill-viewport-height'
 import { useScrollToActive } from '@/hooks/use-scroll-to-active'
 import { subject } from '@casl/ability'
+import { motion, useReducedMotion } from 'framer-motion'
 import {
 	Check,
 	ChevronRight,
@@ -121,6 +122,17 @@ export function ResourceListView({
 	stickyTopClassName = 'top-0',
 }: ResourceListViewProps) {
 	const scrollAreaRef = useScrollToActive(currentSlug)
+	const defaultOpenSection = defaultAllClosed
+		? ''
+		: defaultOpenSectionId || resources?.[0]?.resource?.id || ''
+	const [openSection, setOpenSection] = React.useState(defaultOpenSection)
+	const [openedFor, setOpenedFor] = React.useState(currentSlug)
+	// The lesson layout keeps this list mounted across lessons; open the new
+	// lesson's section as a fresh mount would.
+	if (openedFor !== currentSlug) {
+		setOpenedFor(currentSlug)
+		setOpenSection(defaultOpenSection)
+	}
 	// Measured height for the sticky box: the `maxHeight` class alone can't be
 	// right both before and after the non-sticky chrome (promo bar, lesson-page
 	// nav) scrolls away. See the hook's doc comment. `h-auto` callers (list
@@ -143,7 +155,7 @@ export function ResourceListView({
 				className,
 				{
 					'border-r': !isCollapsed,
-					'hover:bg-muted/80 w-8 cursor-pointer transition [&_div]:hidden':
+					'hover:bg-hover w-8 cursor-pointer transition [&_div]:hidden':
 						isCollapsed && isCollapsible,
 				},
 			)}
@@ -235,11 +247,8 @@ export function ResourceListView({
 							type="single"
 							collapsible
 							className={cn('flex flex-col', wrapperClassName)}
-							defaultValue={
-								defaultAllClosed
-									? undefined
-									: defaultOpenSectionId || resources?.[0]?.resource?.id
-							}
+							value={openSection}
+							onValueChange={setOpenSection}
 						>
 							<ol>
 								{resources
@@ -312,9 +321,12 @@ export function ResourceListView({
 																	) : null}
 																</>
 															)}
+															{/* A left-aligned slot as wide as "99/99" (tracking
+															    included): counts of different widths would
+															    otherwise push the lock/Free marks out of line. */}
 															{childResources.length > 0 && (
 																<span
-																	className="text-muted-foreground/70 shrink-0 font-mono text-[11px] font-medium uppercase tabular-nums tracking-wider"
+																	className="text-muted-foreground/70 min-w-[5.5ch] shrink-0 text-left font-mono text-[11px] font-medium uppercase tabular-nums tracking-wider"
 																	aria-label={`${sectionDoneCount} of ${childResources.length} lessons completed`}
 																>
 																	{sectionDoneCount}/{childResources.length}
@@ -419,6 +431,92 @@ function NextModuleRow({ nextModule }: { nextModule: NextModuleLink }) {
 	)
 }
 
+const easeOutQuint = [0.22, 1, 0.36, 1] as const
+
+// Progress hydrates after mount (the provider starts at null), so "became
+// complete while mounted" alone would draw every finished lesson on load. A
+// completion this fresh can only have happened in this session.
+const JUST_COMPLETED_MS = 10_000
+
+export function isFreshCompletion(
+	completedAt: Date | string | null | undefined,
+	now = Date.now(),
+) {
+	if (!completedAt) return false
+	const time = new Date(completedAt).getTime()
+	return Number.isFinite(time) && now - time < JUST_COMPLETED_MS
+}
+
+/**
+ * Play arrow, or a check once the lesson is complete. The check draws in only
+ * on an incomplete-to-complete change seen while mounted: lessons that load
+ * complete stay calm, un-completing just swaps back, and reduced motion gets
+ * the end state.
+ */
+function LessonGlyph({
+	completedAt,
+}: {
+	completedAt: Date | string | null | undefined
+}) {
+	const isCompleted = Boolean(completedAt)
+	const prefersReducedMotion = useReducedMotion()
+	const [wasCompleted, setWasCompleted] = React.useState(isCompleted)
+	const [shouldDraw, setShouldDraw] = React.useState(false)
+
+	// Adjust during render, not in an effect: an effect would paint one frame
+	// of the finished check before the draw starts.
+	if (wasCompleted !== isCompleted) {
+		setWasCompleted(isCompleted)
+		setShouldDraw(
+			isCompleted && !prefersReducedMotion && isFreshCompletion(completedAt),
+		)
+	}
+
+	if (!isCompleted) {
+		return (
+			<Play
+				className="size-3"
+				aria-hidden="true"
+				strokeWidth={1.8}
+				data-glyph="play"
+			/>
+		)
+	}
+
+	if (!shouldDraw) {
+		return (
+			<Check
+				className="text-foreground dark:text-primary size-3.5"
+				aria-hidden="true"
+				strokeWidth={2.4}
+				data-glyph="check"
+			/>
+		)
+	}
+
+	// Lucide's Check path, so the drawn glyph ends identical to the static one.
+	return (
+		<svg
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth={2.4}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			className="text-foreground dark:text-primary size-3.5"
+			aria-hidden="true"
+			data-glyph="check-drawing"
+		>
+			<motion.path
+				d="M20 6 9 17l-5-5"
+				initial={{ pathLength: 0 }}
+				animate={{ pathLength: 1 }}
+				transition={{ duration: 0.25, ease: easeOutQuint }}
+			/>
+		</svg>
+	)
+}
+
 type LessonResourceProps = {
 	lesson: ContentResource
 	className?: string
@@ -454,9 +552,10 @@ function LessonResource({
 	const isActiveInGroup = isActiveLesson || isActiveSolution
 	const showActiveCard = isActiveInGroup && Boolean(solution)
 
-	const isCompleted = completedLessons?.some(
+	const completedAt = completedLessons?.find(
 		(p) => p.resourceId === lesson.id && p.completedAt,
-	)
+	)?.completedAt
+	const isCompleted = Boolean(completedAt)
 	const canViewLesson = ability
 		? ability.can('read', subject('Content', { id: lesson.id }))
 		: true
@@ -464,15 +563,7 @@ function LessonResource({
 	const lessonHref = buildLessonHref(lessonSlug)
 	const editHref = buildEditHref?.(lessonSlug)
 
-	const lessonGlyph = isCompleted ? (
-		<Check
-			className="text-foreground dark:text-primary size-3.5"
-			aria-hidden="true"
-			strokeWidth={2.4}
-		/>
-	) : (
-		<Play className="size-3" aria-hidden="true" strokeWidth={1.8} />
-	)
+	const lessonGlyph = <LessonGlyph completedAt={completedAt} />
 
 	if (!showActiveCard) {
 		const rowClasses = cn(
@@ -486,7 +577,7 @@ function LessonResource({
 		)
 
 		const titleClasses = cn(
-			'ml-2.5 min-w-0 flex-1 truncate text-[14px] leading-[1.3] tracking-[-0.005em] transition-colors',
+			'ml-2.5 min-w-0 flex-1 truncate text-[14px] leading-[1.3] tracking-[-0.005em] transition-colors duration-[250ms] ease-out',
 			isActiveLesson
 				? 'text-foreground font-semibold dark:text-primary'
 				: isCompleted
@@ -495,7 +586,7 @@ function LessonResource({
 		)
 
 		const glyphClasses = cn(
-			'flex w-3.5 shrink-0 items-center justify-center transition-colors',
+			'flex w-3.5 shrink-0 items-center justify-center transition-colors duration-[250ms] ease-out',
 			isActiveLesson
 				? 'text-foreground dark:text-primary'
 				: isCompleted

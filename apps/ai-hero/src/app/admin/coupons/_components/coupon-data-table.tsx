@@ -14,6 +14,7 @@ import {
 	VisibilityState,
 } from '@tanstack/react-table'
 import { ArrowUpDown, ChevronDown, MoreHorizontal } from 'lucide-react'
+import { getCouponInviteUrl } from '@/lib/team-invite-url'
 import toast from 'react-hot-toast'
 
 import { Coupon } from '@coursebuilder/core/schemas'
@@ -172,7 +173,7 @@ export const columns = () => {
 			enableHiding: false,
 			cell: ({ row }) => {
 				const coupon = row.original
-				const couponUrl = `${process.env.NEXT_PUBLIC_URL}?code=${coupon.id}`
+				const couponUrl = getCouponInviteUrl(coupon.id)
 				return (
 					<DropdownMenu>
 						<DropdownMenuTrigger asChild>
@@ -327,7 +328,7 @@ const CouponDataTable: React.FC<{ coupons: Coupon[] }> = ({ coupons }) => {
 										.getFilteredSelectedRowModel()
 										.rows.map(
 											(row) =>
-												`${process.env.NEXT_PUBLIC_URL}?code=${row.original.id}`,
+												getCouponInviteUrl(row.original.id),
 										)
 										.join('\n')}`
 									toast.success('Copied to clipboard')

@@ -1,10 +1,19 @@
 import * as React from 'react'
+import { revalidatePath } from 'next/cache'
 import { headers } from 'next/headers'
+import Link from 'next/link'
+import { purchaseBuyPathContext } from '@/lib/buy-path/read-context'
 import { redirect } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
+import { purchaseArtwork } from '@/lib/purchase-artwork'
+import { DifferentAccountNotice } from '../_components/different-account-notice'
+import { PostPurchaseShell } from '../_components/post-purchase-shell'
+import { PostPurchaseArrival } from '../_components/post-purchase-arrival'
+import { PostPurchaseIconBadge } from '../_components/post-purchase-icon'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { courseBuilderAdapter, db } from '@/db'
 import { env } from '@/env.mjs'
+import { purchaseViewerState } from '@/lib/purchase-viewer'
 import { getSubscription } from '@/lib/subscriptions'
 import {
 	discordAccountsForCurrentUser,
@@ -15,19 +24,33 @@ import {
 	getPurchaseTransferForPurchaseId,
 	initiatePurchaseTransfer,
 } from '@/purchase-transfer/purchase-transfer-actions'
-import { authOptions, getServerAuthSession } from '@/server/auth'
+import { isTransferablePurchase } from '@/purchase-transfer/transfer-lifecycle'
+import { getServerAuthSession } from '@/server/auth'
 import { subject } from '@casl/ability'
 
 import {
 	SubscriptionWelcomePage,
 	type StripeSubscriptionData,
 } from '@coursebuilder/commerce-next/post-purchase/subscription-welcome-page'
-import { WelcomePage } from '@coursebuilder/commerce-next/post-purchase/welcome-page'
 import { convertToSerializeForNextResponse } from '@coursebuilder/commerce-next/utils/serialize-for-next-response'
+import { PostPurchaseDiscordAccess } from './welcome-discord-entry'
+import { productPagePath, welcomeStart } from './welcome-start'
 import {
-	PostPurchaseDiscordAccess,
-	withoutDiscordProvider,
-} from './welcome-discord-entry'
+	PURCHASE_PRIMARY_BUTTON,
+	PurchaseCard,
+	PurchaseCardSection,
+	PurchaseHeading,
+	PurchaseRows,
+} from '../_components/post-purchase-parts'
+import {
+	PurchaseInviteTeam,
+	PurchaseInvoiceRow,
+	PurchaseShareRow,
+	PurchaseTransferRow,
+} from '../_components/post-purchase-receipt'
+import { TYPE } from '@/components/landing/type'
+import { ArrowRight } from 'lucide-react'
+import { cn } from '@coursebuilder/ui/utils/cn'
 import { PurchaseUserTransfer } from '@coursebuilder/core/schemas'
 import { PurchaseInfoSchema } from '@coursebuilder/core/schemas/purchase-info'
 import { isString } from '@coursebuilder/nodash'
@@ -68,14 +91,6 @@ const getPurchaseDetailsForWelcome = async (query: {
 	const token = await getServerAuthSession()
 	const user = token.session?.user
 
-	const providers = authOptions.providers.map((p) => {
-		return {
-			// @ts-ignore
-			id: p.id,
-			name: p.name,
-		}
-	})
-
 	let purchaseId = query.purchaseId
 
 	const session_id = query.session_id
@@ -108,8 +123,24 @@ const getPurchaseDetailsForWelcome = async (query: {
 	}
 
 	if (user && isString(purchaseId) && isString(user?.id)) {
+		const claimed = await courseBuilderAdapter.getPurchaseWithUser(purchaseId)
+		const viewerState = purchaseViewerState({
+			viewerUserId: user.id,
+			viewerEmail: user.email,
+			purchaseExists: Boolean(claimed),
+			purchaseOwnerId: claimed?.userId,
+			purchaseEmail: claimed?.user?.email,
+		})
+		if (viewerState === 'different-account') {
+			return { differentAccount: true as const, viewerEmail: user.email }
+		}
+
 		const { purchase, existingPurchase, availableUpgrades } =
-			await courseBuilderAdapter.getPurchaseDetails(purchaseId, user?.id)
+			await courseBuilderAdapter.getPurchaseDetails(
+				purchaseId,
+				// Owned by id, or by purchase email: details are the owner's.
+				claimed?.userId ?? user.id,
+			)
 
 		if (purchase) {
 			const product = await courseBuilderAdapter.getProduct(purchase.productId)
@@ -124,7 +155,6 @@ const getPurchaseDetailsForWelcome = async (query: {
 				existingPurchase,
 				availableUpgrades,
 				upgrade: query.upgrade === 'true',
-				providers,
 			}
 		} else {
 			redirect(`/`)
@@ -140,6 +170,8 @@ const Welcome = async (props: {
 		provider: string
 		purchaseId?: string
 		subscriptionId?: string
+		buyPathId?: string
+		buyPathWaited?: string
 	}>
 }) => {
 	const searchParams = await props.searchParams
@@ -149,15 +181,28 @@ const Welcome = async (props: {
 	const { purchaseId, subscriptionId } = searchParams
 
 	if (purchaseId) {
+		const details = await getPurchaseDetailsForWelcome(searchParams)
+		if ('differentAccount' in details) {
+			return (
+				<LayoutClient withContainer>
+					<DifferentAccountNotice
+						viewerEmail={details.viewerEmail}
+						signOutCallbackUrl="/login"
+					/>
+				</LayoutClient>
+			)
+		}
 		const {
 			upgrade,
 			purchase,
 			existingPurchase,
 			product,
-			providers = [],
 			productResources,
-		} = await getPurchaseDetailsForWelcome(searchParams)
+		} = details
 
+		const buyPath = searchParams.buyPathId
+			? null
+			: await purchaseBuyPathContext(purchase.id).catch(() => null)
 		const redemptionsLeft =
 			purchase.bulkCoupon &&
 			purchase.bulkCoupon.maxUses > purchase.bulkCoupon.usedCount
@@ -170,6 +215,7 @@ const Welcome = async (props: {
 
 		const isTransferAvailable =
 			!purchase.bulkCoupon &&
+			isTransferablePurchase(purchase) &&
 			Boolean(
 				purchaseUserTransfers?.filter(
 					(purchaseUserTransfer: PurchaseUserTransfer) =>
@@ -179,34 +225,100 @@ const Welcome = async (props: {
 				).length,
 			)
 
-		const isGithubConnected = await githubAccountsForCurrentUser()
 		const isDiscordConnected = await discordAccountsForCurrentUser()
+		const owned = purchase.bulkCoupon ? existingPurchase : purchase
+		const start = welcomeStart({
+			product,
+			productResources,
+			ownsASeat: Boolean(owned),
+		})
+		const productName =
+			purchase.product?.name || product?.name || 'your purchase'
+		const eyebrow =
+			purchase.product?.type === 'live'
+				? 'Thank you for purchasing'
+				: upgrade
+					? "You've upgraded"
+					: 'Welcome to'
 
 		return (
-			<LayoutClient withContainer>
-				<div className="">
-					<PostPurchaseDiscordAccess
-						isDiscordConnected={isDiscordConnected}
+			<PostPurchaseShell
+				step="ready"
+				paymentConfirmed
+				handover={Boolean(searchParams.buyPathId)}
+				landmark="section"
+			>
+				<PostPurchaseArrival
+					destination="welcome"
+					checkoutSessionId={searchParams.buyPathId ?? buyPath?.buyPathId}
+					purchaseWasPolled={searchParams.buyPathWaited === '1'}
+				/>
+				<PurchaseCard>
+					<PurchaseCardSection>
+						<PurchaseHeading
+							artwork={purchaseArtwork(product)}
+							badge={
+								<PostPurchaseIconBadge kind="ready" size="sm" />
+							}
+							eyebrow={eyebrow}
+							title={productName}
+						>
+							{start ? (
+								<div className="flex flex-col items-start gap-2 pt-3">
+									<Link href={start.href} className={PURCHASE_PRIMARY_BUTTON}>
+										{start.label}
+										<ArrowRight
+											aria-hidden="true"
+											className="ease-out-quart size-4 shrink-0 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
+										/>
+									</Link>
+									{start.startsLabel ? (
+										<p className={cn(TYPE.metaSm, 'text-muted-foreground')}>
+											{start.startsLabel}
+										</p>
+									) : null}
+								</div>
+							) : null}
+						</PurchaseHeading>
+					</PurchaseCardSection>
+					{isDiscordConnected ? null : (
+						<PurchaseCardSection>
+							<PostPurchaseDiscordAccess isDiscordConnected={false} />
+						</PurchaseCardSection>
+					)}
+					{redemptionsLeft ? (
+						<PurchaseCardSection>
+							<PurchaseInviteTeam
+								purchase={purchase}
+								existingPurchase={existingPurchase}
+								userEmail={session?.user?.email}
+								disabled={!redemptionsLeft}
+								canClaim
+							/>
+						</PurchaseCardSection>
+					) : null}
+				</PurchaseCard>
+				<PurchaseRows>
+					{hasCharge ? (
+						<PurchaseInvoiceRow purchase={purchase} productName={productName} />
+					) : null}
+					{isTransferAvailable ? (
+						<PurchaseTransferRow
+							onTransferInitiated={async () => {
+								'use server'
+								revalidatePath('/welcome')
+							}}
+							purchaseUserTransfers={purchaseUserTransfers}
+							cancelPurchaseTransfer={cancelPurchaseTransfer}
+							initiatePurchaseTransfer={initiatePurchaseTransfer}
+						/>
+					) : null}
+					<PurchaseShareRow
+						productName={productName}
+						productPath={productPagePath(productResources)}
 					/>
-					<WelcomePage
-						product={product}
-						productResources={productResources}
-						purchase={purchase}
-						existingPurchase={existingPurchase}
-						upgrade={upgrade}
-						providers={withoutDiscordProvider(providers)}
-						isGithubConnected={isGithubConnected}
-						isDiscordConnected={isDiscordConnected}
-						redemptionsLeft={redemptionsLeft}
-						isTransferAvailable={isTransferAvailable}
-						purchaseUserTransfers={purchaseUserTransfers}
-						hasCharge={hasCharge}
-						userEmail={session?.user?.email}
-						cancelPurchaseTransfer={cancelPurchaseTransfer}
-						initiatePurchaseTransfer={initiatePurchaseTransfer}
-					/>
-				</div>
-			</LayoutClient>
+				</PurchaseRows>
+			</PostPurchaseShell>
 		)
 	}
 

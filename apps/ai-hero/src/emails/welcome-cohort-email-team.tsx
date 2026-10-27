@@ -1,4 +1,7 @@
 import * as React from 'react'
+import CohortWelcomeShort from './cohort-welcome-short'
+import TeamInviteSection from './team-invite-section'
+import type { CohortWelcomeDetails } from '@/lib/cohort-welcome-details'
 import type {
 	UpcomingGroup,
 	WorkshopSummary,
@@ -16,8 +19,11 @@ import {
 } from '@react-email/components'
 
 export interface WelcomeCohortEmailTeamProps {
+	welcomeDetails?: CohortWelcomeDetails
 	cohortTitle: string
 	url: string
+	/** Team invite link built from the purchase's bulk coupon. */
+	inviteUrl?: string
 	quantity: number
 	userFirstName?: string
 	supportEmail?: string
@@ -28,14 +34,27 @@ export interface WelcomeCohortEmailTeamProps {
 }
 
 export default function WelcomeCohortEmailForTeam({
+	welcomeDetails,
 	cohortTitle,
 	url,
+	inviteUrl,
 	quantity,
 	userFirstName,
 	supportEmail = process.env.NEXT_PUBLIC_SUPPORT_EMAIL,
 	availableNow = [],
 	upcoming = [],
 }: WelcomeCohortEmailTeamProps) {
+	if (welcomeDetails)
+		return (
+			<CohortWelcomeShort
+				details={welcomeDetails}
+				variant="team"
+				quantity={quantity}
+				url={url}
+				inviteUrl={inviteUrl}
+				userFirstName={userFirstName}
+			/>
+		)
 	if (process.env.LOG_LEVEL === 'debug') {
 		console.debug('Rendering WelcomeCohortEmailForTeam', {
 			cohortTitle,
@@ -64,9 +83,12 @@ export default function WelcomeCohortEmailForTeam({
 								{quantity === 1 ? 'seat' : 'seats'} to{' '}
 								<strong>{cohortTitle}</strong>.
 							</Text>
-							<Text style={text}>
-								(You will need to redeem a seat on your team.)
-							</Text>
+							<TeamInviteSection
+								inviteUrl={inviteUrl}
+								teamUrl={teamDashboardUrl}
+								textStyle={text}
+								linkStyle={link}
+							/>
 							<Section style={{ textAlign: 'center', marginTop: '20px' }}>
 								<Link href={url} style={buttonStyle}>
 									Get Started with {cohortTitle}
@@ -108,17 +130,6 @@ export default function WelcomeCohortEmailForTeam({
 								</Text>
 							</Section>
 						)}
-
-						<Section style={contentSection}>
-							<Text style={text}>
-								Manage your team seats anytime from your dashboard:
-							</Text>
-							<Section style={{ textAlign: 'center', marginTop: '20px' }}>
-								<Link href={teamDashboardUrl} style={buttonStyle}>
-									Manage Seats
-								</Link>
-							</Section>
-						</Section>
 
 						<Section style={contentSection}>
 							<Text style={textSmall}>

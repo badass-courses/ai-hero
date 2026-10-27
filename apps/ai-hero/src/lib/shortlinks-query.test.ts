@@ -306,6 +306,13 @@ describe('shortlink metadata persistence', () => {
 })
 
 describe('getShortlinkBySlug', () => {
+	it('redirects from the database when the cache is unavailable', async () => {
+		const link = { id: 'test-link', slug: 'test-link', url: 'https://www.aihero.dev/cohorts/test', metadata: metadataV1 }
+		mocks.redisGet.mockRejectedValueOnce(new Error('cache-unavailable'))
+		mocks.redisSet.mockRejectedValueOnce(new Error('cache-unavailable'))
+		mocks.findFirst.mockResolvedValueOnce(link)
+		expect(await getShortlinkBySlug('test-link')).toEqual(link)
+	})
 	it('returns a valid cached shortlink without hitting the database', async () => {
 		const cached = {
 			id: 'shortlink_123',

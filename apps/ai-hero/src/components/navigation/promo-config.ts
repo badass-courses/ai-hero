@@ -2,8 +2,9 @@
  * Site-wide promo bar content (Phase 7). One active message at a time.
  *
  * Resolution order (see `promo-bar.tsx`):
- * 1. `FEATURED_PROMO` manual override, when set.
- * 2. Fallback to the latest published, public post.
+ * 1. `FEATURED_PROMO` during C5 enrollment.
+ * 2. The unchanged Crash Course promo when its launch window is active.
+ * 3. Fallback to the latest published, public post.
  *
  * Client-safe (no server imports): just the manual-override config + types.
  * The bar is server-rendered and NOT dismissible, so there is no cookie/state
@@ -15,6 +16,8 @@ export type Promo = {
 	label?: string
 	/** The promo headline. Keep it short for one line on mobile. */
 	message: string
+	/** Optional single-line copy shown below sm instead of the full headline. */
+	shortMessage?: string
 	href: string
 	/** Resource id used to suppress owned offers in the global nav. */
 	resourceId?: string
@@ -77,7 +80,7 @@ export function isProductPromoActive(
 }
 
 /**
- * Manual override. It becomes visible at midnight Pacific on launch day.
+ * Evergreen fallback. It became visible at midnight Pacific on launch day.
  * Before then the site keeps the latest-post fallback.
  *
  * Deliberately says nothing about price or dates. It used to carry the intro
@@ -88,7 +91,7 @@ export function isProductPromoActive(
  * and always current. Re-adding a priced claim here means adding an `endsAt`
  * with it.
  */
-export const FEATURED_PROMO: Promo = {
+export const CRASH_COURSE_PROMO: Promo = {
 	label: 'New',
 	message: 'AI Coding Crash Course is out now.',
 	href: '/s/crash-course',
@@ -96,4 +99,36 @@ export const FEATURED_PROMO: Promo = {
 	navLabel: 'Get the course',
 	navHref: '/workshops/ai-coding-crash-course',
 	startsAt: CRASH_COURSE_PROMO_STARTS_AT,
+}
+
+/** C5 enrollment, with no price claims. Checkout remains the price authority. */
+export const C5_TITLE = 'Software Factories for Real Engineers'
+// C5 sells team seats on the cohort page; its separate /for-teams page has no body.
+export const C5_TEAM_HREF = '/s/c5-site-cta'
+export const FEATURED_PROMO: Promo = {
+	label: 'Cohort',
+	message: `${C5_TITLE}: enrollment is open.`,
+	shortMessage: 'Software Factories cohort: enrollment open',
+	href: '/s/c5-site-banner',
+	resourceId: 'cohort-xdy1m',
+	navLabel: 'Join the cohort',
+	navHref: '/cohorts/software-factories-for-real-engineers-xdy1m',
+	startsAt: '2026-10-25T18:59:00.000Z',
+	endsAt: '2026-11-10T07:30:00.000Z',
+}
+
+/** Server callers supply c5PricingClosed(); client-only surfaces use the window. */
+export function isC5OnSale(
+	now: Date = new Date(),
+	pricingClosed = false,
+): boolean {
+	return !pricingClosed && isPromoActive(FEATURED_PROMO, now)
+}
+
+export function getFeaturedPromo(
+	now: Date = new Date(),
+	pricingClosed = false,
+): Promo | null {
+	if (isC5OnSale(now, pricingClosed)) return FEATURED_PROMO
+	return isPromoActive(CRASH_COURSE_PROMO, now) ? CRASH_COURSE_PROMO : null
 }

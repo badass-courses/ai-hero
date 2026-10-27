@@ -1,61 +1,58 @@
-import React, { type ComponentProps, type ReactNode } from 'react'
-import { PassThrough } from 'node:stream'
-import { renderToPipeableStream } from 'react-dom/server'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+// @vitest-environment happy-dom
+import React, { act, type ComponentProps, type ReactNode } from 'react'
+import { createRoot } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
 	overlay: vi.fn(),
-	formattedPrice: vi.fn(),
 	session: vi.fn(),
 	progress: vi.fn(),
 	navigation: vi.fn(),
-	button: vi.fn(),
+	push: vi.fn(),
+	complete: vi.fn(),
+	setCompleted: vi.fn(),
+	reward: vi.fn(),
+	reduceMotion: vi.fn(() => false),
+}))
+vi.mock('framer-motion', async (importOriginal) => ({
+	...(await importOriginal<typeof import('framer-motion')>()),
+	useReducedMotion: mocks.reduceMotion,
 }))
 vi.mock('next/link', () => ({
 	default: ({ children }: { children: ReactNode }) => children,
 }))
 vi.mock('next/navigation', () => ({
-	usePathname: () => '/workshops/test/lesson',
-	useRouter: () => ({ push: vi.fn() }),
+	usePathname: () => '/workshops/test/lesson-1',
+	useRouter: () => ({ push: mocks.push }),
 }))
 vi.mock('next-auth/react', () => ({ useSession: mocks.session }))
 vi.mock('@/trpc/react', () => ({
 	api: {
-		pricing: { formatted: { useQuery: mocks.formattedPrice } },
-		useUtils: () => ({}),
+		useUtils: () => ({
+			client: { progress: { setCompleted: { mutate: mocks.setCompleted } } },
+		}),
 	},
 }))
 vi.mock('@coursebuilder/ui/hooks/use-video-player-overlay', () => ({
 	useVideoPlayerOverlay: mocks.overlay,
 }))
 vi.mock('@coursebuilder/ui', () => ({
-	Button: (props: React.ComponentProps<'button'>) => {
-		mocks.button(props)
-		return <button>{props.children}</button>
-	},
+	Button: ({
+		children,
+		asChild: _asChild,
+		...props
+	}: React.ComponentProps<'button'> & { asChild?: boolean }) => (
+		<button {...props}>{children}</button>
+	),
 	Progress: () => null,
-	useToast: () => ({ toast: vi.fn() }),
 }))
 vi.mock('@coursebuilder/ui/utils/cn', () => ({
 	cn: (...values: unknown[]) =>
 		values.filter((v) => typeof v === 'string').join(' '),
 }))
-vi.mock('@coursebuilder/commerce-next/team/invite-team', () => ({
-	default: () => <div>Team invitations</div>,
-}))
-vi.mock('@coursebuilder/commerce/build-stripe-checkout-path', () => ({
-	buildStripeCheckoutPath: () => '/checkout',
-}))
-vi.mock('@coursebuilder/commerce/format-usd', () => ({
-	formatUsd: () => ({ dollars: '10', cents: '00' }),
-}))
 vi.mock('@coursebuilder/utils/resource-paths', () => ({
 	getResourcePath: () => '/next',
 }))
-vi.mock('@/app/(content)/tutorials/actions', () => ({
-	revalidateTutorialLesson: vi.fn(),
-}))
-vi.mock('../actions', () => ({ revalidateModuleLesson: vi.fn() }))
 vi.mock(
 	'@/app/(content)/workshops/_components/cohort-navigation-provider',
 	() => ({ useCohortNavigation: () => null }),
@@ -64,12 +61,8 @@ vi.mock(
 	'@/app/(content)/workshops/_components/workshop-navigation-provider',
 	() => ({ useWorkshopNavigation: mocks.navigation }),
 )
-vi.mock('@/components/cld-image', () => ({ CldImage: () => null }))
 vi.mock('@/components/spinner', () => ({
-	default: () => <span>Loading player</span>,
-}))
-vi.mock('@/components/video-block-newsletter-cta', () => ({
-	VideoBlockNewsletterCta: () => null,
+	default: () => <span>Navigating</span>,
 }))
 vi.mock('@/lib/cohort-navigation', () => ({
 	getNextCohortWorkshop: () => null,
@@ -78,8 +71,9 @@ vi.mock('@/lib/cohort-navigation', () => ({
 vi.mock('@/lib/content-navigation', () => ({
 	findParentLessonForSolution: () => null,
 	getModuleCompletionState: () => ({ isModuleComplete: false }),
+	flattenNavigationResources: () => [{ id: 'lesson-1' }, { id: 'lesson-2' }],
+	isCompletionTrackedResource: () => true,
 }))
-vi.mock('@/lib/progress', () => ({ setProgressForResource: vi.fn() }))
 vi.mock('@/utils/get-adjacent-workshop-resources', () => ({
 	getAdjacentWorkshopResources: () => ({
 		nextResource: null,
@@ -87,22 +81,20 @@ vi.mock('@/utils/get-adjacent-workshop-resources', () => ({
 	}),
 }))
 vi.mock('react-rewards', () => ({
-	useReward: () => ({ reward: vi.fn(), isAnimating: false }),
+	useReward: () => ({ reward: mocks.reward, isAnimating: false }),
 }))
 vi.mock('../workshops/_components/copy-problem-prompt-button', () => ({
 	CopyProblemPromptButton: () => null,
-}))
-vi.mock('../workshops/_components/video-overlay-pricing-widget', () => ({
-	VideoOverlayWorkshopPricing: () => <div>Workshop purchase</div>,
 }))
 vi.mock('@/components/certificates/module-certificate', () => ({
 	Root: ({ children }: { children: ReactNode }) => children,
 	Trigger: ({ children }: { children: ReactNode }) => (
 		<button>{children}</button>
 	),
-	Content: () => null,
 }))
-vi.mock('./authed-video-player', () => ({ handleSetLessonComplete: vi.fn() }))
+vi.mock('./complete-lesson-in-background', () => ({
+	completeLessonInBackground: mocks.complete,
+}))
 vi.mock('./cohort-certificate-container', () => ({
 	CohortCertificateAction: () => null,
 	useCohortCertificateEligibility: () => false,
@@ -114,7 +106,12 @@ vi.mock('./module-progress-provider', () => ({
 	useModuleProgress: mocks.progress,
 }))
 
+import { MotionGlobalConfig } from 'framer-motion'
+
 import VideoPlayerOverlay from './video-player-overlay'
+
+// happy-dom cancels native animations with an unhandled AbortError.
+MotionGlobalConfig.skipAnimations = true
 
 type Props = ComponentProps<typeof VideoPlayerOverlay>
 const resource: Props['resource'] = {
@@ -129,177 +126,397 @@ const resource: Props['resource'] = {
 	organizationId: null,
 	createdByOrganizationMembershipId: null,
 }
-const allowed = {
-	canViewLesson: true,
-	canViewWorkshop: true,
-	canInviteTeam: false,
-	isRegionRestricted: false,
-	isPendingOpenAccess: false,
-	canCreate: false,
+const nextLessonAction = (
+	playerRef: { current: unknown } = { current: null },
+	autoAdvance = false,
+) => ({
+	type: 'COMPLETED',
+	playerRef,
+	resource,
+	isModuleComplete: false,
+	autoAdvance,
+	nextResource: {
+		id: 'lesson-2',
+		type: 'lesson',
+		fields: { title: 'Next lesson', slug: 'lesson-2' },
+		resources: [{ resourceId: 'video-2', resource: { type: 'videoResource' } }],
+	},
+})
+const progress = {
+	completedLessons: [],
+	percentCompleted: 50,
+	completedLessonsCount: 1,
+	totalLessonsCount: 2,
 }
-const pricing = {
-	product: { id: 'product-1' },
-	purchases: [
-		{
-			id: 'purchase-1',
-			productId: 'product-1',
-			country: 'US',
-			bulkCoupon: { maxUses: 5, usedCount: 0 },
-		},
-	],
-} as Props['pricingProps']
 
-// Real React streaming SSR resolves use(abilityLoader) and renders the actual
-// overlay and completion components. Provider/UI adapters stay synthetic.
-function renderOverlay(
-	ability = allowed,
-	pricingProps?: Props['pricingProps'],
-) {
-	return new Promise<string>((resolve, reject) => {
-		const output = new PassThrough()
-		let html = ''
-		output.on('data', (chunk) => {
-			html += chunk.toString()
-		})
-		output.on('end', () => resolve(html))
-		const stream = renderToPipeableStream(
+let container: HTMLDivElement
+let root: ReturnType<typeof createRoot>
+
+async function renderOverlay() {
+	await act(async () => {
+		root.render(
 			<VideoPlayerOverlay
 				resource={resource}
-				abilityLoader={Promise.resolve(ability) as Props['abilityLoader']}
 				moduleType="workshop"
 				moduleSlug="test"
-				workshop={null}
-				pricingProps={pricingProps}
 			/>,
-			{
-				onAllReady() {
-					stream.pipe(output)
-				},
-				onError: reject,
-			},
 		)
 	})
+	return container
 }
 
-describe('VideoPlayerOverlay without authorized commerce data', () => {
+function button(name: string | RegExp) {
+	const match = [...container.querySelectorAll('button')].find((b) =>
+		typeof name === 'string'
+			? b.textContent?.trim() === name
+			: name.test(b.textContent ?? ''),
+	)
+	if (!match) throw new Error(`no button ${name}`)
+	return match
+}
+
+describe('VideoPlayerOverlay', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+		container = document.createElement('div')
+		document.body.append(container)
+		root = createRoot(container)
 		mocks.overlay.mockReturnValue({
 			state: { action: { type: 'HIDDEN' } },
 			dispatch: vi.fn(),
 		})
-		mocks.formattedPrice.mockReturnValue({ status: 'pending' })
 		mocks.session.mockReturnValue({ data: { user: { id: 'user-1' } } })
-		mocks.navigation.mockReturnValue(null)
-		mocks.progress.mockReturnValue({
-			moduleProgress: {
-				completedLessons: [],
-				percentCompleted: 50,
-				completedLessonsCount: 1,
-				totalLessonsCount: 2,
-			},
-			addLessonProgress: vi.fn(),
+		mocks.navigation.mockReturnValue({
+			id: 'workshop-1',
+			fields: { slug: 'test', title: 'Workshop' },
 		})
+		mocks.progress.mockReturnValue({
+			moduleProgress: progress,
+			addLessonProgress: vi.fn(),
+			removeLessonProgress: vi.fn(),
+		})
+		mocks.complete.mockReturnValue(Promise.resolve())
+		mocks.reduceMotion.mockReturnValue(false)
 	})
 
-	it('keeps authorized hidden and loading states without enabling pricing', async () => {
-		expect(await renderOverlay()).toBe('')
+	afterEach(async () => {
+		await act(async () => root.unmount())
+		container.remove()
+		vi.unstubAllGlobals()
+	})
+
+	it.each(['HIDDEN', 'LOADING', undefined])(
+		'draws nothing outside completion (%s)',
+		async (type) => {
+			mocks.overlay.mockReturnValue({
+				state: { action: type ? { type } : undefined },
+				dispatch: vi.fn(),
+			})
+			expect((await renderOverlay()).innerHTML).toBe('')
+		},
+	)
+
+	it.each(['member', 'signed out'])(
+		'shows the next lesson card to a %s viewer',
+		async (kind) => {
+			mocks.overlay.mockReturnValue({
+				state: { action: nextLessonAction() },
+				dispatch: vi.fn(),
+			})
+			if (kind === 'signed out') mocks.session.mockReturnValue({ data: null })
+			const html = (await renderOverlay()).innerHTML
+			expect(html).toContain('Next lesson')
+			expect(html).toContain('Replay')
+			expect(html).toContain('Dismiss')
+			// The lesson completed when the video ended.
+			expect(html).toContain('Continue')
+			expect(html).not.toContain('Complete')
+			expect(html).toContain(kind === 'signed out' ? 'Log in' : 'completed')
+		},
+	)
+
+	it('draws no "n/0 completed" when the module progress is missing', async () => {
 		mocks.overlay.mockReturnValue({
-			state: { action: { type: 'LOADING' } },
+			state: { action: nextLessonAction() },
 			dispatch: vi.fn(),
 		})
-		expect(await renderOverlay()).toContain('Loading player')
-		for (const [, options] of mocks.formattedPrice.mock.calls)
-			expect(options.enabled).toBe(false)
+		mocks.progress.mockReturnValue({
+			moduleProgress: {
+				...progress,
+				completedLessonsCount: 1,
+				totalLessonsCount: 0,
+			},
+			addLessonProgress: vi.fn(),
+			removeLessonProgress: vi.fn(),
+		})
+		const html = (await renderOverlay()).innerHTML
+		expect(html).toContain('Next lesson')
+		expect(html).not.toContain('completed')
 	})
 
-	it.each(['paid', 'free', 'team'])(
-		'retains %s completion controls without pricing',
-		async (kind) => {
+	it('navigates on Continue without waiting for the progress write', async () => {
+		// A write that never settles must not hold the navigation (the hang).
+		mocks.complete.mockReturnValue(new Promise(() => {}))
+		const removeLessonProgress = vi.fn()
+		const addLessonProgress = vi.fn()
+		mocks.progress.mockReturnValue({
+			moduleProgress: progress,
+			addLessonProgress,
+			removeLessonProgress,
+		})
+		mocks.overlay.mockReturnValue({
+			state: { action: nextLessonAction() },
+			dispatch: vi.fn(),
+		})
+		await renderOverlay()
+		await act(async () => button(/Continue/).click())
+
+		expect(mocks.complete).toHaveBeenCalledWith({
+			resourceId: 'lesson-1',
+			moduleProgress: progress,
+			addLessonProgress,
+			removeLessonProgress,
+			setCompleted: mocks.setCompleted,
+			optimistic: true,
+		})
+		expect(mocks.push).toHaveBeenCalledWith('/workshops/test/lesson-2')
+		// The write is dispatched first, so the navigation overtakes it.
+		expect(mocks.complete.mock.invocationCallOrder[0]).toBeLessThan(
+			mocks.push.mock.invocationCallOrder[0]!,
+		)
+		// The card stays up through the navigation.
+		expect(container.innerHTML).toContain('Next lesson')
+	})
+
+	it('writes on Continue without a session, but not optimistically', async () => {
+		// An email-course subscriber is known only by an httpOnly cookie.
+		mocks.session.mockReturnValue({ data: null })
+		mocks.overlay.mockReturnValue({
+			state: { action: nextLessonAction() },
+			dispatch: vi.fn(),
+		})
+		await renderOverlay()
+		await act(async () => button(/Continue/).click())
+		expect(mocks.complete).toHaveBeenCalledWith(
+			expect.objectContaining({ resourceId: 'lesson-1', optimistic: false }),
+		)
+		expect(mocks.push).toHaveBeenCalledWith('/workshops/test/lesson-2')
+	})
+
+	it('focuses Continue and answers Shift+N, Escape and Space', async () => {
+		const dispatch = vi.fn()
+		mocks.overlay.mockReturnValue({
+			state: { action: nextLessonAction() },
+			dispatch,
+		})
+		await renderOverlay()
+		expect(document.activeElement).toBe(button(/Continue/))
+
+		const press = (key: string, init: KeyboardEventInit = {}) => {
+			const event = new KeyboardEvent('keydown', {
+				key,
+				bubbles: true,
+				cancelable: true,
+				...init,
+			})
+			document.body.dispatchEvent(event)
+			return event
+		}
+		// Space on the page must not reach the shell's play/pause.
+		expect(press(' ').defaultPrevented).toBe(true)
+		expect(press('k').defaultPrevented).toBe(true)
+		await act(async () => void press('N', { shiftKey: true }))
+		expect(mocks.push).toHaveBeenCalledWith('/workshops/test/lesson-2')
+		press('Escape')
+		expect(dispatch).toHaveBeenCalledWith({ type: 'HIDDEN' })
+	})
+
+	it('leaves the keys to an open dialog that keeps focus on the card', async () => {
+		const dispatch = vi.fn()
+		mocks.overlay.mockReturnValue({
+			state: { action: nextLessonAction() },
+			dispatch,
+		})
+		await renderOverlay()
+		// The certificate dialog leaves focus on its trigger, outside itself.
+		const dialog = document.createElement('div')
+		dialog.setAttribute('role', 'dialog')
+		dialog.setAttribute('data-state', 'open')
+		document.body.append(dialog)
+		try {
+			const press = (key: string, init: KeyboardEventInit = {}) =>
+				document.body.dispatchEvent(
+					new KeyboardEvent('keydown', { key, bubbles: true, ...init }),
+				)
+			await act(async () => void press('N', { shiftKey: true }))
+			press('Escape')
+			expect(mocks.push).not.toHaveBeenCalled()
+			expect(dispatch).not.toHaveBeenCalled()
+		} finally {
+			dialog.remove()
+		}
+	})
+
+	it('previews the next lesson with its thumbnail and place', async () => {
+		mocks.overlay.mockReturnValue({
+			state: { action: nextLessonAction() },
+			dispatch: vi.fn(),
+		})
+		const html = (await renderOverlay()).innerHTML
+		expect(html).toContain('Lesson 2 of 2')
+		expect(container.querySelector('img')?.getAttribute('src')).toBe(
+			'/api/thumbnails?videoResourceId=video-2',
+		)
+	})
+
+	describe('with autoplay', () => {
+		beforeEach(() => {
+			vi.useFakeTimers()
+		})
+		afterEach(() => {
+			vi.useRealTimers()
+		})
+
+		it('counts down and moves on at zero', async () => {
+			mocks.overlay.mockReturnValue({
+				state: { action: nextLessonAction(undefined, true) },
+				dispatch: vi.fn(),
+			})
+			await renderOverlay()
+			expect(container.textContent).toContain('Up next in 5')
+			expect(button(/Play now/)).toBe(document.activeElement)
+			expect(container.querySelector('.origin-left')).not.toBeNull()
+
+			await act(async () => vi.advanceTimersByTime(2_050))
+			expect(container.textContent).toContain('Up next in 3')
+			expect(mocks.push).not.toHaveBeenCalled()
+
+			await act(async () => vi.advanceTimersByTime(3_000))
+			expect(mocks.push).toHaveBeenCalledOnce()
+			expect(mocks.push).toHaveBeenCalledWith('/workshops/test/lesson-2')
+		})
+
+		it('keeps the countdown layout but stops its timer while held', async () => {
+			// The host has swapped away; the card from the ended lesson is held.
 			mocks.overlay.mockReturnValue({
 				state: {
 					action: {
-						type: 'COMPLETED',
-						playerRef: { current: null },
-						isModuleComplete: false,
-						nextResource: {
-							id: 'lesson-2',
-							type: 'lesson',
-							fields: { title: 'Next lesson', slug: 'lesson-2' },
-						},
+						...nextLessonAction(undefined, true),
+						resource: { ...resource, id: 'lesson-0' },
 					},
 				},
 				dispatch: vi.fn(),
 			})
-			if (kind === 'free') mocks.session.mockReturnValue({ data: null })
-			const html = await renderOverlay({
-				...allowed,
-				canViewWorkshop: kind !== 'free',
-				canInviteTeam: kind === 'team',
+			await renderOverlay()
+			expect(container.textContent).toContain('Up next in')
+			expect(container.textContent).not.toContain('Continue')
+			await act(async () => vi.advanceTimersByTime(6_000))
+			expect(mocks.push).not.toHaveBeenCalled()
+		})
+
+		it('becomes the normal card on Cancel', async () => {
+			const dispatch = vi.fn()
+			const action = nextLessonAction(undefined, true)
+			mocks.overlay.mockReturnValue({ state: { action }, dispatch })
+			await renderOverlay()
+			await act(async () => button('Cancel').click())
+			expect(dispatch).toHaveBeenCalledWith({ ...action, autoAdvance: false })
+		})
+
+		it('shows only the number under reduced motion', async () => {
+			mocks.reduceMotion.mockReturnValue(true)
+			mocks.overlay.mockReturnValue({
+				state: { action: nextLessonAction(undefined, true) },
+				dispatch: vi.fn(),
 			})
-			expect(html).toContain('Next lesson')
-			expect(html).toContain('Replay')
-			expect(html).toContain('Dismiss')
-			expect(html).toContain(
-				kind === 'free' ? 'Continue' : 'Complete &amp; Continue',
-			)
-			expect(html).not.toContain('Workshop purchase')
-			for (const [, options] of mocks.formattedPrice.mock.calls)
-				expect(options.enabled).toBe(false)
+			await renderOverlay()
+			expect(container.textContent).toContain('Up next in 5')
+			expect(container.querySelector('.origin-left')).toBeNull()
+		})
+	})
+
+	it.each([
+		['pointerdown', false],
+		['keydown', true],
+	])('draws the focus ring only after keyboard input (%s)', async (input, ring) => {
+		const focus = vi.spyOn(HTMLElement.prototype, 'focus')
+		window.dispatchEvent(new Event(input))
+		mocks.overlay.mockReturnValue({
+			state: { action: nextLessonAction() },
+			dispatch: vi.fn(),
+		})
+		await renderOverlay()
+		expect(focus).toHaveBeenCalledWith({
+			preventScroll: true,
+			focusVisible: ring,
+		})
+		focus.mockRestore()
+	})
+
+	it('leaves focus where the learner put it outside the player', async () => {
+		const input = document.createElement('input')
+		document.body.append(input)
+		input.focus()
+		mocks.overlay.mockReturnValue({
+			state: { action: nextLessonAction() },
+			dispatch: vi.fn(),
+		})
+		await renderOverlay()
+		expect(document.activeElement).toBe(input)
+		input.remove()
+	})
+
+	it.each([
+		[false, 1],
+		[true, 0],
+	])(
+		'celebrates the finished workshop (reduced motion %s) and dismisses',
+		async (reduced, confetti) => {
+			mocks.reduceMotion.mockReturnValue(reduced)
+			const play = vi.fn()
+			const dispatch = vi.fn()
+			mocks.overlay.mockReturnValue({
+				state: {
+					action: {
+						type: 'COMPLETED',
+						isModuleComplete: true,
+						resource,
+						playerRef: { current: { play } },
+					},
+				},
+				dispatch,
+			})
+			const html = (await renderOverlay()).innerHTML
+			expect(html).toContain('Great job!')
+			expect(html).toContain('Get your certificate')
+			// The ended handler wrote the completion; the card does not.
+			expect(mocks.complete).not.toHaveBeenCalled()
+			expect(mocks.reward).toHaveBeenCalledTimes(confetti)
+
+			await act(async () => button('Replay').click())
+			expect(play).toHaveBeenCalledOnce()
+			await act(async () => button('Dismiss').click())
+			expect(dispatch).toHaveBeenCalledWith({ type: 'HIDDEN' })
 		},
 	)
 
-	it('retains final completion, certificate, replay and dismiss without pricing', async () => {
-		const play = vi.fn()
-		const dispatch = vi.fn()
+	it('holds a finished-workshop card over the next lesson without confetti', async () => {
+		// Swapped to lesson-2 while the card from lesson-1's end is held.
+		const other = { ...resource, id: 'lesson-2' }
 		mocks.overlay.mockReturnValue({
 			state: {
 				action: {
 					type: 'COMPLETED',
 					isModuleComplete: true,
-					playerRef: { current: { play } },
+					resource: other,
+					playerRef: { current: null },
 				},
 			},
-			dispatch,
+			dispatch: vi.fn(),
 		})
-		const html = await renderOverlay()
-		expect(html).toContain('Great job!')
-		expect(html).toContain('Get your certificate')
-		const buttons = mocks.button.mock.calls.map(([props]) => props)
-		buttons.find((props) => props.children === 'Replay').onClick()
-		expect(play).toHaveBeenCalledOnce()
-		// Dismiss has an sr-only span and icon, unlike the replay text button.
-		buttons.find((props) => Array.isArray(props.children)).onClick()
-		expect(dispatch).toHaveBeenCalledWith({ type: 'HIDDEN' })
-		for (const [, options] of mocks.formattedPrice.mock.calls)
-			expect(options.enabled).toBe(false)
-	})
-
-	it('retains denied purchase UI for other callers that supply pricing', async () => {
-		expect(
-			await renderOverlay({ ...allowed, canViewLesson: false }, pricing),
-		).toContain('Workshop purchase')
-	})
-
-	it('retains region upgrade and its enabled pricing query for other callers', async () => {
-		const html = await renderOverlay(
-			{ ...allowed, canViewLesson: false, isRegionRestricted: true },
-			pricing,
-		)
-		expect(html).toContain('Upgrade to full license')
-		expect(mocks.formattedPrice).toHaveBeenCalledWith(
-			expect.objectContaining({ productId: 'product-1' }),
-			{ enabled: true },
-		)
-	})
-
-	it('retains the team invitation branch for unclaimed seats on other callers', async () => {
-		expect(
-			await renderOverlay(
-				{ ...allowed, canViewLesson: false, canInviteTeam: true },
-				pricing,
-			),
-		).toContain('Team invitations')
-		expect(mocks.formattedPrice.mock.calls[0]?.[1].enabled).toBe(false)
+		await renderOverlay()
+		expect(container.querySelector<HTMLElement>('[aria-live]')?.inert).toBe(true)
+		expect(mocks.reward).not.toHaveBeenCalled()
 	})
 })

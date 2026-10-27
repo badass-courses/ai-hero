@@ -25,7 +25,7 @@ export function sharedLinkFor(binding: CourseSyncBinding): string | undefined {
 	}
 	// v5 has no shared-folder fallback: a missing cohort link must not read
 	// Crash Course's folder. v4 retains its original optional link fallback.
-	if (binding.contractVersion === 5 && !link) {
+	if (binding.contractVersion !== 4 && !link) {
 		throw new CourseSyncError(
 			'SOURCE_CONFIG_INVALID',
 			`Missing Dropbox shared link for ${binding.sharedLinkSecretRef}.`,

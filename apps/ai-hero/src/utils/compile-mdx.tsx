@@ -20,6 +20,7 @@ import type { CalloutIntent } from '@/components/mdx/callout'
 import type { CommandCardProps } from '@/components/mdx/command-card'
 import type { ComparisonProps } from '@/components/mdx/comparison'
 import type { ContrastProps } from '@/components/mdx/contrast'
+import type { MarkListProps } from '@/components/mdx/mark-list'
 import { PromoCard } from '@/components/mdx/promo-card'
 import type { PromoCardProps } from '@/components/mdx/promo-card'
 import type { DictionaryEntry } from '@/lib/ai-coding-dictionary'
@@ -34,6 +35,11 @@ import {
 	rehypeInternalLinks,
 } from '@/utils/rehype-internal-links'
 import { rehypeNumberCheckboxes } from '@/utils/rehype-number-checkboxes'
+import { remarkLiteralPlaceholders } from '@/utils/remark-literal-placeholders'
+import {
+	remarkSandcastleLinks,
+	SANDCASTLE_PAGE_AUTOLINK,
+} from '@/utils/remark-sandcastle-links'
 import { sanitizeMdxSource } from '@/utils/sanitize-mdx-source'
 import { recmaCodeHike, remarkCodeHike } from 'codehike/mdx'
 import type { MDXComponents } from 'mdx/types'
@@ -78,7 +84,7 @@ const Spoiler = dynamic(() =>
 const DynamicCode = dynamic(() =>
 	import('@/components/codehike/code').then((mod) => mod.Code),
 )
-const DynamicMDXVideo = dynamic(() => import('@/components/content/mdx-video'))
+const DynamicMDXVideo = dynamic(() => import('@/components/content/lazy-mdx-video'))
 const DynamicProjectVideo = dynamic(() =>
 	import('@/app/admin/pages/_components/page-builder-mdx-components').then(
 		(mod) => mod.ProjectVideo,
@@ -107,6 +113,17 @@ const Comparison = dynamic(() =>
 )
 const Contrast = dynamic(() =>
 	import('@/components/mdx/contrast').then((mod) => mod.Contrast),
+)
+const SoftwareFactoryMap = dynamic(() =>
+	import('@/components/mdx/software-factory-map').then(
+		(mod) => mod.SoftwareFactoryMap,
+	),
+)
+const MarkList = dynamic(() =>
+	import('@/components/mdx/mark-list').then((mod) => mod.MarkList),
+)
+const Divider = dynamic(() =>
+	import('@/components/mdx/divider').then((mod) => mod.Divider),
 )
 const CommandCard = dynamic(() =>
 	import('@/components/mdx/command-card').then((mod) => mod.CommandCard),
@@ -333,7 +350,7 @@ async function compilePlainMarkdownFallback(
 		options: {
 			...options,
 			mdxOptions: {
-				remarkPlugins: [remarkGfm],
+				remarkPlugins: [remarkGfm, remarkSandcastleLinks],
 				rehypePlugins: [
 					rehypeInternalLinks,
 					[
@@ -402,7 +419,10 @@ async function compileMDXInternal(
 	context?: CompileMDXContext,
 ) {
 	const dictionaryAutoLinkPlugin = context?.dictionaryAutoLink
-		? createDictionaryAutoLinkRemarkPlugin(context.dictionaryAutoLink)
+		? createDictionaryAutoLinkRemarkPlugin({
+				...context.dictionaryAutoLink,
+				pages: [SANDCASTLE_PAGE_AUTOLINK],
+			})
 		: null
 	const calloutLineAutoInsertPlugin = context?.calloutLineAutoInsert
 		? createCalloutLineAutoInsertRemarkPlugin(context.calloutLineAutoInsert)
@@ -562,6 +582,17 @@ async function compileMDXInternal(
 					ul: (props) => (
 						<ul {...props} className={cn('ah-bullets', props.className)} />
 					),
+					// A task-list row is one label, so clicking anywhere on the line
+					// toggles its checkbox; rows sit close together, so the hover
+					// tint marks which one a click will hit.
+					li: ({ children, ...props }) =>
+						props.className?.includes('task-list-item') ? (
+							<li {...props}>
+								<label className="ah-task">{children}</label>
+							</li>
+						) : (
+							<li {...props}>{children}</li>
+						),
 					ol: (props) => (
 						<ol {...props} className={cn('ah-numbers', props.className)} />
 					),
@@ -653,6 +684,9 @@ async function compileMDXInternal(
 					),
 					Comparison: (props: ComparisonProps) => <Comparison {...props} />,
 					Contrast: (props: ContrastProps) => <Contrast {...props} />,
+					SoftwareFactoryMap: () => <SoftwareFactoryMap />,
+					MarkList: (props: MarkListProps) => <MarkList {...props} />,
+					Divider: () => <Divider />,
 					CommandCard: (props: CommandCardProps) => <CommandCard {...props} />,
 					Callout: ({ children, icon, className, intent }) => (
 						<Callout icon={icon} className={className} intent={intent}>
@@ -679,6 +713,8 @@ async function compileMDXInternal(
 					blockJS: false,
 					mdxOptions: {
 						remarkPlugins: [
+							// First: a later plugin must never see an unresolvable `{name}`.
+							remarkLiteralPlaceholders,
 							[
 								remarkMermaid,
 								{
@@ -686,6 +722,8 @@ async function compileMDXInternal(
 								},
 							],
 							remarkGfm,
+							// Before the auto-linker, so it counts these as linked.
+							remarkSandcastleLinks,
 							...(dictionaryAutoLinkPlugin ? [dictionaryAutoLinkPlugin] : []),
 							...(calloutLineAutoInsertPlugin
 								? [calloutLineAutoInsertPlugin]

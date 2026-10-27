@@ -95,7 +95,7 @@ describe('inngest-telemetry-middleware', () => {
 		}).toThrow('Cannot read properties of undefined')
 	})
 
-	it('actual middleware does not define transformInput and emits safe function-level logs', async () => {
+	it('actual middleware observes input without returning context and emits safe function-level logs', async () => {
 		const initHooks = (await inngestTelemetryMiddleware.init()) as any
 		const runHooks = initHooks.onFunctionRun({
 			ctx: {
@@ -113,7 +113,14 @@ describe('inngest-telemetry-middleware', () => {
 			reqArgs: [],
 		}) as TestRunHooks
 
-		expect(runHooks.transformInput).toBeUndefined()
+		expect(
+			await runHooks.transformInput?.({
+				ctx: { event: { data: {} } },
+				steps: [],
+				fn: {},
+				reqArgs: [],
+			}),
+		).toBeUndefined()
 		expect(runHooks.afterExecution).toEqual(expect.any(Function))
 		expect(runHooks.onFailure).toEqual(expect.any(Function))
 

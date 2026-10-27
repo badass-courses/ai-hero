@@ -2,11 +2,13 @@ import { ParsedUrlQuery } from 'querystring'
 import * as React from 'react'
 import { Suspense } from 'react'
 import type { Metadata, ResolvingMetadata } from 'next'
+import { metaDescription } from '@/lib/meta-description'
 import { headers } from 'next/headers'
 import Link from 'next/link'
 import { PricingWidget } from '@/app/(content)/workshops/_components/pricing-widget'
 import { courseBuilderAdapter, db } from '@/db'
 import { products, purchases } from '@/db/schema'
+import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 import { getPricingData } from '@/lib/pricing-query'
 import { getProduct } from '@/lib/products-query'
 import { ProductStructuredData } from '@/lib/structured-data'
@@ -35,6 +37,7 @@ export async function generateMetadata(
 
 	return {
 		title: product.name,
+		description: metaDescription(product.fields?.description),
 		openGraph: {
 			images: [getOGImageUrlForResource(product)],
 		},
@@ -183,7 +186,7 @@ async function ProductCommerce({
 	productProps = baseProps
 
 	if (user && purchaseForProduct) {
-		const { purchase, existingPurchase } =
+		const { existingPurchase } =
 			await courseBuilderAdapter.getPurchaseDetails(
 				purchaseForProduct.id,
 				user.id,
@@ -191,7 +194,10 @@ async function ProductCommerce({
 
 		productProps = {
 			...baseProps,
-			hasPurchasedCurrentProduct: Boolean(purchase),
+			hasPurchasedCurrentProduct: ownsProductForBuyBox(
+				commerceProps.purchases,
+				product.id,
+			),
 			...(Boolean(existingPurchase)
 				? {
 						purchasedProductIds: [existingPurchase?.productId, '72', 69],

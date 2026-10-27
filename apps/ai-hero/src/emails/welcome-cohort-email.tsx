@@ -1,4 +1,6 @@
 import * as React from 'react'
+import CohortWelcomeShort from './cohort-welcome-short'
+import type { CohortWelcomeDetails } from '@/lib/cohort-welcome-details'
 import type {
 	UpcomingGroup,
 	WorkshopSummary,
@@ -17,6 +19,7 @@ import {
 } from '@react-email/components'
 
 export interface WelcomeCohortEmailProps {
+	welcomeDetails?: CohortWelcomeDetails
 	cohortTitle: string
 	url: string
 	userFirstName?: string
@@ -28,6 +31,7 @@ export interface WelcomeCohortEmailProps {
 }
 
 export default function WelcomeCohortEmail({
+	welcomeDetails,
 	cohortTitle,
 	url,
 	userFirstName,
@@ -35,6 +39,15 @@ export default function WelcomeCohortEmail({
 	availableNow = [],
 	upcoming = [],
 }: WelcomeCohortEmailProps) {
+	if (welcomeDetails)
+		return (
+			<CohortWelcomeShort
+				details={welcomeDetails}
+				variant="individual"
+				url={url}
+				userFirstName={userFirstName}
+			/>
+		)
 	if (process.env.LOG_LEVEL === 'debug') {
 		console.debug('Rendering WelcomeCohortEmail', { cohortTitle })
 	}

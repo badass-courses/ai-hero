@@ -1,5 +1,6 @@
 import { aiCodingDictionaryIndex } from '@/inngest/functions/ai-coding-dictionary-index'
 import { archivePurchaseReconciliation } from '@/inngest/functions/archive-purchase-reconciliation'
+import { c5PurchaseDecision } from '@/inngest/functions/c5-purchase-decision'
 import { generateArtwork } from '@/inngest/functions/artwork/generate-artwork'
 import { notifyOnPostCreated } from '@/inngest/functions/artwork/notify-on-post-created'
 import { pickVariant } from '@/inngest/functions/artwork/pick-variant'
@@ -16,6 +17,10 @@ import { userSignupAdminEmail } from '@/inngest/functions/notify/creator/user-si
 import { performCodeExtraction } from '@/inngest/functions/ocr/ocr-code-extractor'
 import { postmarkWebhook } from '@/inngest/functions/postmark/postmarks-webhooks-handler'
 import { refundEntitlements } from '@/inngest/functions/refund/refund-entitlements'
+import {
+	purchaseDisputeClosed,
+	purchaseDisputeOpened,
+} from '@/inngest/functions/disputes/purchase-dispute-access'
 import { sendWorkshopAccessEmails } from '@/inngest/functions/send-workshop-access-emails'
 import { syncPurchaseTags } from '@/inngest/functions/sync-purchase-tags'
 import { teamPurchaseFulfillmentWorkflow } from '@/inngest/functions/team-purchase-fulfillment-workflow'
@@ -53,6 +58,7 @@ import { drovrOutboxReplay } from './functions/drovr-outbox-replay'
 import { kitDirectoryIngest } from './functions/kit-directory-ingest'
 import { newsletterVeteransAssign } from './functions/newsletter-veterans'
 import { newsletterExitReplay } from './functions/newsletter-exit-replay'
+import { newsletterPurchaseExitProof } from './functions/newsletter-purchase-exit-proof'
 import { createPPPCreditCouponsForPurchasers } from './functions/coupon/create-ppp-credit-coupons-for-purchasers'
 import { grantCouponEntitlements } from './functions/coupon/grant-coupon-entitlements'
 import { grantCouponEntitlementsForPurchase } from './functions/coupon/grant-coupon-entitlements-for-purchase'
@@ -60,6 +66,15 @@ import { createUserOrganizations } from './functions/create-user-organization'
 import { syncGithubSourcedPosts } from './functions/sync-github-sourced-posts'
 import { googleAdsConversionUpload } from './functions/google-ads-conversion-upload'
 import { invoiceShortfallReconciliation } from './functions/invoice-shortfall-reconciliation'
+import {
+	checkoutReconcileFulfill,
+	checkoutReconcilerSweep,
+} from './functions/checkout-reconciler'
+import { checkoutAsyncPaymentFulfill } from './functions/checkout-async-payment'
+import { guardUnpaidCheckoutCompletion } from '@/lib/checkout-reconcile/delayed-payment'
+import { STRIPE_CHECKOUT_HANDLER_ID } from '@/lib/checkout-reconcile/fulfill'
+import { log } from '@/server/logger'
+import { teamInvoiceExpiry } from './functions/team-invoice-expiry'
 import { addDiscordRoleWorkflow } from './functions/discord/add-discord-role-workflow'
 import { grantLegendDiscordRole } from './functions/discord/grant-legend-discord-role'
 import { eventReminderBroadcast } from './functions/event-reminder-broadcast'
@@ -111,7 +126,18 @@ const isVercelNonProduction =
 
 const allFunctions = [
 	...courseBuilderCoreFunctions.map(({ config, trigger, handler }) =>
-		inngest.createFunction(config, trigger, handler),
+		inngest.createFunction(
+			config,
+			trigger,
+			// A bank-transfer checkout completes unpaid; record it instead of
+			// failing on the missing charge. `checkoutAsyncPaymentFulfill` runs
+			// when the money lands.
+			config.id === STRIPE_CHECKOUT_HANDLER_ID
+				? guardUnpaidCheckoutCompletion(handler, (attrs) =>
+						log.info('checkout.awaiting_payment', attrs),
+					)
+				: handler,
+		),
 	),
 	userCreated,
 	userSignupAdminEmail,
@@ -149,6 +175,8 @@ const allFunctions = [
 	grantLegendDiscordRole,
 	sendWorkshopAccessEmails,
 	refundEntitlements,
+	purchaseDisputeOpened,
+	purchaseDisputeClosed,
 	grantCouponEntitlements,
 	grantCouponEntitlementsForPurchase,
 	createPPPCreditCouponsForPurchasers,
@@ -183,8 +211,14 @@ const allFunctions = [
 	kitDirectoryIngest,
 	newsletterVeteransAssign,
 	newsletterExitReplay,
+	newsletterPurchaseExitProof,
 	googleAdsConversionUpload,
 	invoiceShortfallReconciliation,
+	checkoutReconcilerSweep,
+	checkoutReconcileFulfill,
+	checkoutAsyncPaymentFulfill,
+	c5PurchaseDecision,
+	teamInvoiceExpiry,
 	syncGithubSourcedPosts,
 	skillChangelogBroadcast,
 	skillsNewsletterPathEntry,

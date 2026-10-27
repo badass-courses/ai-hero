@@ -37,7 +37,7 @@ export function ResourceLadderItem({
 	return (
 		<Link
 			href={href}
-			className="group border-border hover:bg-muted/60 focus-visible:ring-ring flex items-center gap-4 border-b py-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset md:-mx-4 md:px-4"
+			className="group border-border hover:bg-hover focus-visible:ring-ring flex items-center gap-4 border-b py-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset md:-mx-4 md:px-4"
 		>
 			{/* The label sits in its own fixed column to the LEFT of the title,
 			    not stacked above it. Stacked, three rows of two lines each read

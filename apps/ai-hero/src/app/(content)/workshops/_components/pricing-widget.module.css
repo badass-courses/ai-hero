@@ -1,0 +1,34 @@
+/* A price being re-quoted (team toggle, seat count, coupon): the known number
+   stays, muted, and a light band sweeps across its digits until the new one
+   lands. The band is the text's own gradient, clipped to the glyphs. */
+.shimmer {
+	color: transparent;
+	background-image: linear-gradient(
+		100deg,
+		var(--muted-foreground) 35%,
+		var(--foreground) 50%,
+		var(--muted-foreground) 65%
+	);
+	background-size: 250% 100%;
+	-webkit-background-clip: text;
+	background-clip: text;
+	animation: price-shimmer 1.2s linear infinite;
+}
+
+@keyframes price-shimmer {
+	from {
+		background-position: 100% 0;
+	}
+	to {
+		background-position: 0% 0;
+	}
+}
+
+/* Without motion, the same muted number, holding still. */
+@media (prefers-reduced-motion: reduce) {
+	.shimmer {
+		animation: none;
+		background: none;
+		color: var(--muted-foreground);
+	}
+}

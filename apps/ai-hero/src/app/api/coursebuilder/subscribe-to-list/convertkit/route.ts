@@ -10,7 +10,12 @@ import {
 import { inngest } from '@/inngest/inngest.server'
 import { createShortlinkAttribution } from '@/lib/shortlinks-query'
 import { recordSignupAttribution } from '@/lib/signup-attribution'
-import { reconcileAiHeroEmailOptInWithKit } from '@/lib/subscriber-marketing/ai-hero-email-opt-in.server'
+import { guardSubscribe } from '@/lib/subscribe-bot-defense.server'
+import { pendingSubscribeResponse } from '@/lib/pending-subscribe-response'
+import {
+	reconcileAiHeroEmailOptInWithKit,
+	routeReturningUnsubscriberWithKit,
+} from '@/lib/subscriber-marketing/ai-hero-email-opt-in.server'
 import {
 	AIH_COURSE_ENTRY_EVIDENCE_FIELD,
 	deadlineTimeZoneEvidenceFromHeader,
@@ -42,6 +47,8 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 	// Read the request body before passing to coursebuilder
 	const body = await req.json()
 	const email = body.email
+	const rejection = await guardSubscribe(body, req.headers)
+	if (rejection) return rejection
 
 	// drovr-owned double opt-in, when DROVR_DOI_FORMS turns it on for this
 	// form (and address, during the canary). Off, this is a no-op and the
@@ -52,6 +59,20 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 		doiAppliesTo(parseDrovrDoiConfig(env), kitFormId, email)
 	) {
 		return await doiSignup(req, body, email.trim(), kitFormId)
+	}
+
+	let mayRemoveUnsubscribeTag = true
+	// A returning unsubscriber re-signs up only through a fresh drovr double
+	// opt-in: no Kit subscribe, no untag. Everyone else falls through.
+	if (typeof email === 'string' && DOI_DROVR_FORM_IDS.has(kitFormId)) {
+		const returning = await returningUnsubscriberSignup(
+			req,
+			body,
+			email.trim(),
+			kitFormId,
+		)
+		if (returning.response) return returning.response
+		mayRemoveUnsubscribeTag = !returning.lookupFailed
 	}
 
 	// Clone the request with the body since it can only be read once
@@ -152,6 +173,7 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 				const optIn = await reconcileAiHeroEmailOptInWithKit({
 					email: subscriberEmail,
 					subscriberState: subscriber.state,
+					mayRemoveUnsubscribeTag,
 				})
 				const cookieStore = await cookies()
 				const optInAttribution = parseOptInAttributionCookie(
@@ -315,6 +337,53 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 }
 
 /**
+ * Answers a sign-up from a contact Kit shows as an earlier unsubscribe with
+ * a `response`; otherwise the Kit path runs, with `lookupFailed` when Kit
+ * could not be read (so the tag must not be removed).
+ */
+async function returningUnsubscriberSignup(
+	req: NextRequest,
+	body: { name?: unknown },
+	email: string,
+	kitFormId: number,
+) {
+	const name =
+		typeof body.name === 'string' && body.name.trim()
+			? body.name.trim()
+			: undefined
+	try {
+		const cookieStore = await cookies()
+		const result = await routeReturningUnsubscriberWithKit({
+			email,
+			name,
+			kitFormId,
+			page: req.headers.get('referer') ?? 'https://www.aihero.dev/',
+			optInAttribution: parseOptInAttributionCookie(
+				cookieStore.get('ft_attr')?.value,
+			),
+			entry: 'form',
+		})
+		if (result.status === 'not-unsubscribed') return {}
+		// Kit unreadable: carry on with the sign-up, but never untag.
+		if (result.status === 'lookup-failed') return { lookupFailed: true }
+		if (result.status === 'doi-requested') {
+			return { response: pendingSubscribeResponse({ email, name }) }
+		}
+	} catch (error) {
+		await log.error('skills.newsletter.doi.failed', {
+			formId: kitFormId,
+			error: error instanceof Error ? error.name : 'unknown',
+		})
+	}
+	return {
+		response: Response.json(
+			{ error: 'Subscription could not be confirmed' },
+			{ status: 502 },
+		),
+	}
+}
+
+/**
  * A double opt-in signup: no Kit subscribe and no value-path entry. Find or
  * create the contact, hand drovr the signup durably (it sends the
  * confirmation email and births the course on confirmation), and tell the
@@ -330,9 +399,15 @@ async function doiSignup(
 ) {
 	const drovrFormId = DOI_DROVR_FORM_IDS.get(kitFormId)
 	if (!drovrFormId || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-		return Response.json({ error: 'Subscription was rejected' }, { status: 400 })
+		return Response.json(
+			{ error: 'Subscription was rejected' },
+			{ status: 400 },
+		)
 	}
-	const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : undefined
+	const name =
+		typeof body.name === 'string' && body.name.trim()
+			? body.name.trim()
+			: undefined
 	try {
 		const cookieStore = await cookies()
 		await requestDrovrDoiSignup({
@@ -369,12 +444,7 @@ async function doiSignup(
 		)
 	}
 	// Subscriber-shaped for the form, with no Kit id: nothing is in Kit yet.
-	return Response.json({
-		email_address: email,
-		first_name: name ?? null,
-		state: 'awaiting-confirmation',
-		fields: {},
-	})
+	return pendingSubscribeResponse({ email, name })
 }
 
 export const POST = withSkill(subscribeWithAttribution)

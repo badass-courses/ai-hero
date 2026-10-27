@@ -12,6 +12,7 @@ import {
 	createCohortEntitlement,
 	EntitlementSourceType,
 } from '@/lib/entitlements'
+import { updatePurchaseFields } from '@/lib/purchase-fields-write'
 import { personalOrganizations } from '@/server/personal-organizations'
 import { and, asc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
@@ -233,19 +234,15 @@ export async function persistArchivePolicySnapshot(params: {
 		throw new Error(`Purchase not found: ${params.purchaseId}`)
 	}
 
-	const nextFields = {
+	await updatePurchaseFields({
+		purchaseId: params.purchaseId,
+		patch: { archivePolicy: params.policy },
+	})
+
+	return {
 		...(purchase.fields ?? {}),
 		archivePolicy: params.policy,
 	}
-
-	await db
-		.update(purchases)
-		.set({
-			fields: nextFields,
-		})
-		.where(eq(purchases.id, params.purchaseId))
-
-	return nextFields
 }
 
 export async function ensureArchiveEntitlementContext(params: {

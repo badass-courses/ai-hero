@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getShortlinkBySlug, recordClick } from '@/lib/shortlinks-query'
 import { log } from '@/server/logger'
+import { env } from '@/env.mjs'
+import { giftSharePresentation } from '@/lib/c5-pricing/gift-share'
+import { GIFT_COOKIE, sealGiftCookie } from '@/lib/c5-pricing/gift-cookie'
+import { C5_PRODUCT_ID } from '@/lib/c5-pricing/products'
 
 const UTM_PARAMS = [
 	'utm_source',
@@ -115,9 +119,19 @@ export async function GET(
 		})
 
 		// Set attribution cookie and redirect
-		const response = NextResponse.redirect(
-			buildShortlinkRedirectUrl(link.url, request.url),
-		)
+		const redirectUrl = buildShortlinkRedirectUrl(link.url, request.url)
+		const isGift = link.metadata?.campaign === 'legend-gift'
+		if (isGift) redirectUrl.searchParams.set('via', slug)
+		const response = NextResponse.redirect(redirectUrl)
+		if (isGift) {
+			const share = await giftSharePresentation(slug).catch(() => null)
+			if (share?.available && share.expiresAt) {
+				const expires = new Date(share.expiresAt)
+				response.cookies.set(GIFT_COOKIE, sealGiftCookie({ v: 1, productId: C5_PRODUCT_ID, codeRef: share.codeRef, expiresAt: expires.getTime() }, env.NEXTAUTH_SECRET), {
+					expires, path: '/', httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production',
+				})
+			} else response.cookies.set(GIFT_COOKIE, '', { maxAge: 0, path: '/', httpOnly: true, sameSite: 'lax' })
+		}
 		response.cookies.set('sl_ref', slug, {
 			maxAge: 60 * 60 * 24 * 30, // 30 days
 			path: '/',

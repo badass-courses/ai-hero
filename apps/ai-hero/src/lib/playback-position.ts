@@ -30,18 +30,31 @@ export function mergePlaybackPositionFields(
 	}
 }
 
-export function getPlaybackStartTime({
-	queryTime,
+// A save this close to either end is not worth resuming: near the start
+// there is nothing to skip, and near the end the video would finish almost
+// as soon as it starts.
+const RESUME_MIN_SECONDS = 5
+const RESUME_TAIL_SECONDS = 10
+const RESUME_TAIL_FRACTION = 0.05
+
+/**
+ * Where a lesson should start from its saved position, once the duration is
+ * known. Returns 0 to restart: no usable save, a save in the first 5 s, or a
+ * save inside the tail (the last 5% or the last 10 s, whichever is larger).
+ */
+export function getResumeStartTime({
 	savedTime,
+	duration,
 }: {
-	queryTime?: string | null
 	savedTime?: number | null
+	duration: number
 }): number {
-	return (
-		normalizePlaybackPosition(queryTime) ??
-		normalizePlaybackPosition(savedTime) ??
-		0
-	)
+	const saved = normalizePlaybackPosition(savedTime)
+	if (saved === null || saved < RESUME_MIN_SECONDS) return 0
+	if (!Number.isFinite(duration) || duration <= 0) return saved
+
+	const tail = Math.max(duration * RESUME_TAIL_FRACTION, RESUME_TAIL_SECONDS)
+	return saved >= duration - tail ? 0 : saved
 }
 
 export function createPlaybackPositionSaveQueue(

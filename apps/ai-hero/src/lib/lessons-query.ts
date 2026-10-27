@@ -364,6 +364,12 @@ export async function getLesson(lessonSlugOrId: string) {
 						},
 					})
 
+			// An unknown slug or id (crawlers, section ids) is a miss, not a schema failure.
+			if (!lesson) {
+				await log.debug('lesson.not_found', { slug: lessonSlugOrId })
+				return null
+			}
+
 			const parsedLesson = LessonSchema.safeParse(lesson)
 			if (!parsedLesson.success) {
 				await log.error('lesson.parse.error', {
@@ -425,6 +431,11 @@ export async function getExerciseSolution(lessonSlugOrId: string) {
 		},
 	})
 
+	if (!lesson) {
+		await log.debug('lesson.not_found', { slug: lessonSlugOrId })
+		return null
+	}
+
 	const parsedLesson = LessonSchema.safeParse(lesson)
 	if (!parsedLesson.success) {
 		await log.error('lesson.parse.error', {
@@ -440,6 +451,8 @@ export async function getExerciseSolution(lessonSlugOrId: string) {
 		(resource: ContentResourceResource) =>
 			resource.resource.type === 'solution',
 	)?.resource
+	// Most lessons have no solution; the solution page turns null into a 404.
+	if (!partialSolution) return null
 
 	const solution = await getCachedSolution(partialSolution.id)
 

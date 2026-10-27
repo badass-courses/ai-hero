@@ -8,6 +8,31 @@ const mocks = vi.hoisted(() => ({
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 	catalog: [
 		{
+			name: 'revenue/promos',
+			description: 'Promo revenue',
+			category: 'revenue',
+			provider: 'database',
+			fn: 'getRevenueByPromo',
+		},
+		{
+			name: 'funnel/evergreen',
+			description: 'Pending evergreen funnel',
+			category: 'attribution',
+			provider: 'database',
+			fn: 'getEvergreenFunnel',
+		},
+		...[
+			'attribution/funnel',
+			'attribution/coverage',
+			'attribution/commerce-lanes',
+		].map((name) => ({
+			name,
+			description: 'Synthetic attribution surface',
+			category: 'attribution',
+			provider: 'database',
+			fn: 'synthetic',
+		})),
+		{
 			name: 'summary',
 			description: 'Revenue overview: total, purchase count, AOV',
 			category: 'revenue',
@@ -88,6 +113,134 @@ describe('analytics API agent contract', () => {
 		})
 	})
 
+	it.each(['revenue/promos', 'funnel/evergreen'])(
+		'refuses signed-out and ordinary users for %s without querying',
+		async (surface) => {
+			for (const ability of [null, createAppAbility([])]) {
+				mocks.getUserAbilityForRequest.mockResolvedValue({
+					user: null,
+					ability,
+				})
+				mocks.getServerAuthSession.mockResolvedValue({
+					session: ability ? { user: { id: 'synthetic-non-admin' } } : null,
+					ability,
+				})
+				const response = await GET(request(`?surface=${surface}`))
+				expect(response.status).toBe(401)
+				expect(mocks.query).not.toHaveBeenCalled()
+			}
+		},
+	)
+
+	it.each(['revenue/promos', 'funnel/evergreen'])(
+		'accepts analytics-scoped device token for %s and preserves exact window',
+		async (surface) => {
+			mocks.getUserAbilityForRequest.mockResolvedValue({
+				user: null,
+				ability: createAppAbility([{ action: 'view', subject: 'Analytics' }]),
+			})
+			const data =
+				surface === 'funnel/evergreen'
+					? { status: 'pending', reason: 'Aggregate read pending' }
+					: { currency: 'USD', byKind: [], daily: [] }
+			mocks.query.mockResolvedValue({
+				ok: true,
+				data,
+				meta: { queryTimeMs: 1, truncated: false },
+			})
+			const response = await GET(
+				request(
+					`?surface=${surface}&range=all&from=2026-01-01T18:00:00.001Z&to=2026-01-02T18:00:00Z`,
+				),
+			)
+			expect(response.status).toBe(200)
+			expect(mocks.query).toHaveBeenCalledWith(
+				surface,
+				expect.objectContaining({
+					from: '2026-01-01T18:00:00.001Z',
+					to: '2026-01-02T18:00:00Z',
+				}),
+			)
+			const body = await response.json()
+			expect(body.data).toEqual(data)
+			expect(body.range).toBeUndefined()
+			expect(body.window).toMatchObject({
+				from: '2026-01-01T18:00:00.001Z',
+				to: '2026-01-02T18:00:00.000Z',
+				bounds: '[from,to)',
+			})
+			expect(body.window.basis).toBe(
+				surface === 'revenue/promos' ? 'purchase-created' : undefined,
+			)
+			expect(body._links.self.href).toContain(
+				'from=2026-01-01T18%3A00%3A00.001Z',
+			)
+			expect(JSON.stringify(body.data)).not.toMatch(
+				/userId|purchaseId|couponId|email|userName/,
+			)
+		},
+	)
+
+	it('rejects all on promo revenue with an actionable 400 prompt', async () => {
+		const response = await GET(request('?surface=revenue/promos&range=all'))
+		expect(response.status).toBe(400)
+		expect((await response.json()).error.message).toContain(
+			'Use range=24h,7d,30d,90d or paired from/to',
+		)
+		expect(mocks.query).not.toHaveBeenCalled()
+	})
+
+	it('rejects from/to on base surfaces instead of silently ignoring them', async () => {
+		const response = await GET(
+			request(
+				'?surface=summary&from=2026-01-01T00:00:00Z&to=2026-01-02T00:00:00Z',
+			),
+		)
+		expect(response.status).toBe(400)
+		expect(mocks.query).not.toHaveBeenCalled()
+	})
+
+	it('rejects incomplete explicit windows before querying', async () => {
+		const response = await GET(
+			request('?surface=revenue/promos&from=2026-01-01T00:00:00Z'),
+		)
+		expect(response.status).toBe(400)
+		expect(mocks.query).not.toHaveBeenCalled()
+	})
+
+	it('publishes both new schemas and their semantics', async () => {
+		const body = await (await GET(request())).json()
+		expect(body.surfaces.map((entry: { name: string }) => entry.name)).toEqual(
+			expect.arrayContaining(['revenue/promos', 'funnel/evergreen']),
+		)
+		expect(body.schema.surfaces['revenue/promos']).toMatchObject({
+			supports: ['range', 'from', 'to', 'productId'],
+			data: {
+				properties: {
+					currency: { const: 'USD' },
+					byKind: {
+						items: {
+							required: expect.arrayContaining([
+								'gross',
+								'refunds',
+								'net',
+								'currency',
+								'recordCount',
+							]),
+						},
+					},
+				},
+			},
+		})
+		expect(
+			body.schema.surfaces['funnel/evergreen'].data.oneOf[0].properties.status
+				.const,
+		).toBe('pending')
+		expect(body.schema.query.allOf[0].if.not).toEqual({
+			required: ['from', 'to'],
+		})
+	})
+
 	it('accepts the limited analytics-read device ability at the analytics route', async () => {
 		mocks.getUserAbilityForRequest.mockResolvedValue({
 			user: { id: 'user_1' },
@@ -115,19 +268,19 @@ describe('analytics API agent contract', () => {
 				expect.stringContaining('defaults to range=30d'),
 			]),
 			schema: {
-				version: '2026-08-18.1',
+				version: '2026-10-16.1',
 				query: {
 					type: 'object',
 					required: ['surface'],
 					properties: {
 						productId: { type: 'string' },
 					},
-					allOf: [
-						{
+					allOf: expect.arrayContaining([
+						expect.objectContaining({
 							then: { properties: { limit: { maximum: 1000 } } },
 							else: { properties: { limit: { maximum: 100 } } },
-						},
-					],
+						}),
+					]),
 				},
 				surfaces: {
 					summary: {
@@ -153,6 +306,27 @@ describe('analytics API agent contract', () => {
 							totalMatchingCount: 'meta.pagination.totalMatchingRows',
 							nextPage: '_links.next.href',
 						},
+						data: {
+							items: {
+								properties: {
+									isTeam: {
+										type: 'boolean',
+										description: expect.stringContaining('bulk coupon'),
+									},
+									seats: {
+										type: ['integer', 'null'],
+										description: expect.stringContaining('add-seat teams'),
+									},
+									teamSeats: {
+										type: ['integer', 'null'],
+										description: expect.stringContaining('current total'),
+									},
+								},
+							},
+						},
+						semantics: expect.arrayContaining([
+							expect.stringContaining('teamSeats is the team total now'),
+						]),
 					},
 				},
 			},
@@ -195,8 +369,20 @@ describe('analytics API agent contract', () => {
 			.mockResolvedValueOnce({
 				ok: true,
 				data: [
-					{ id: 'purchase_2', createdAt: '2026-08-18T12:00:00.000Z' },
-					{ id: 'purchase_1', createdAt: '2026-08-18T11:00:00.000Z' },
+					{
+						id: 'purchase_2',
+						createdAt: '2026-08-18T12:00:00.000Z',
+						isTeam: true,
+						seats: null,
+						teamSeats: 6,
+					},
+					{
+						id: 'purchase_1',
+						createdAt: '2026-08-18T11:00:00.000Z',
+						isTeam: false,
+						seats: null,
+						teamSeats: null,
+					},
 				],
 				meta: { queryTimeMs: 5, truncated: false },
 			})
@@ -217,6 +403,18 @@ describe('analytics API agent contract', () => {
 			range: '7d',
 			productId: 'product_crash',
 		})
+		expect(
+			body.data.map(
+				({ isTeam, seats, teamSeats }: Record<string, unknown>) => ({
+					isTeam,
+					seats,
+					teamSeats,
+				}),
+			),
+		).toEqual([
+			{ isTeam: true, seats: null, teamSeats: 6 },
+			{ isTeam: false, seats: null, teamSeats: null },
+		])
 		expect(body.meta.pagination).toEqual({
 			limit: 2,
 			offset: 0,

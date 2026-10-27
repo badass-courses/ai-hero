@@ -1,19 +1,15 @@
 import Link from 'next/link'
 import { Icon } from '@/components/brand/icons'
 
-import { Button } from '@coursebuilder/ui'
+import {
+	PURCHASE_GHOST_BUTTON,
+	PurchaseNextStep,
+} from '../_components/post-purchase-parts'
 
-type OAuthProvider = {
-	id: string
-	name: string
-}
-
-export function withoutDiscordProvider<T extends OAuthProvider>(
-	providers: readonly T[],
-): T[] {
-	return providers.filter((provider) => provider.id !== 'discord')
-}
-
+/**
+ * Discord goes through the managed `/discord` link flow, never a direct
+ * OAuth sign-in, so the server role is granted with the account link.
+ */
 export function PostPurchaseDiscordAccess({
 	isDiscordConnected,
 }: {
@@ -22,19 +18,23 @@ export function PostPurchaseDiscordAccess({
 	if (isDiscordConnected) return null
 
 	return (
-		<aside className="mt-10 flex flex-col items-start gap-4 rounded-[11px] border border-border bg-card p-6 sm:flex-row sm:items-center sm:justify-between">
-			<div className="flex flex-col gap-1">
-				<h2 className="font-heading text-lg font-bold">Join the Discord</h2>
-				<p className="text-muted-foreground text-sm">
-					Link your Discord account to get into the AI Hero server.
-				</p>
-			</div>
-			<Button asChild className="rounded-[9px]">
-				<Link href="/discord" className="flex items-center gap-2">
+		<PurchaseNextStep
+			icon={
+				<span
+					aria-hidden="true"
+					className="bg-muted text-foreground inline-flex size-10 shrink-0 items-center justify-center rounded-full"
+				>
 					<Icon name="Discord" size="20" />
+				</span>
+			}
+			title="Join the Discord"
+			action={
+				<Link href="/discord" className={PURCHASE_GHOST_BUTTON}>
 					Join Discord
 				</Link>
-			</Button>
-		</aside>
+			}
+		>
+			<p>Link your Discord account to get into the AI Hero server.</p>
+		</PurchaseNextStep>
 	)
 }

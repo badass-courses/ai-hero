@@ -1,3 +1,4 @@
+import { AUTHORITATIVE_PPP_OFFER_ID } from '@coursebuilder/commerce/authoritative-price'
 import type { Purchase } from '@coursebuilder/core/schemas'
 
 export const DUPLICATE_GUARDRAIL_PRODUCT_TYPES = [
@@ -27,3 +28,101 @@ export const hasActiveNonBulkPurchaseForProduct = (
 		)
 	})
 }
+
+/** `reason` on /subscribe/error for a regional coupon on a team order. */
+export const REGIONAL_TEAM_NOT_ALLOWED = 'regional-team-not-allowed'
+
+export const REGIONAL_TEAM_NOT_ALLOWED_PATH = `/subscribe/error?reason=${REGIONAL_TEAM_NOT_ALLOWED}`
+
+/** Where a refused single-seat duplicate goes, with the reason shown. */
+export const ALREADY_OWN_PATH = '/invoices?already-own=1'
+
+/** One destination for a quantity that is not a positive integer. */
+export const INVALID_QUANTITY = 'invalid-quantity'
+
+export const INVALID_QUANTITY_PATH = `/subscribe/error?reason=${INVALID_QUANTITY}`
+
+/** `reason` on /subscribe/error for a checkout link that is missing or unusable. */
+export const CHECKOUT_LINK_EXPIRED = 'invalid-expired'
+
+export const CHECKOUT_LINK_EXPIRED_PATH = `/subscribe/error?reason=${CHECKOUT_LINK_EXPIRED}`
+
+/** `reason` on /subscribe/error when checkout cannot start because of our setup. */
+export const CHECKOUT_UNAVAILABLE = 'checkout-unavailable'
+
+export const CHECKOUT_UNAVAILABLE_PATH = `/subscribe/error?reason=${CHECKOUT_UNAVAILABLE}`
+
+/**
+ * Regional (PPP) pricing is a single-seat offer. The one rule behind both the
+ * checkout guard and the pricing widget's regional toggle, so the UI cannot
+ * offer what checkout refuses.
+ */
+export const regionalAllowedForQuantity = (quantity: number): boolean =>
+	quantity < 2
+
+export type DuplicatePurchaseDecision =
+	| 'allow'
+	| 'already-own'
+	| 'regional-team-not-allowed'
+
+/**
+ * The one decision for "may this buyer start this checkout?".
+ * - Team orders (quantity >= 2) always pass the duplicate guard, so a seat
+ *   holder, regional holders included, can buy team seats. A team order must
+ *   never carry a regional (PPP) coupon.
+ * - A single seat is blocked when the buyer already holds an active non-bulk
+ *   purchase of a guarded product type.
+ */
+export const duplicatePurchaseGuard = ({
+	productType,
+	quantity,
+	existing,
+	regionalCouponApplied,
+}: {
+	productType?: string | null
+	quantity: number
+	existing: Array<{ status: string; bulk: boolean }>
+	regionalCouponApplied: boolean
+}): DuplicatePurchaseDecision => {
+	if (!regionalAllowedForQuantity(quantity)) {
+		return regionalCouponApplied ? 'regional-team-not-allowed' : 'allow'
+	}
+	if (!requiresDuplicateActivePurchaseGuardrail(productType)) return 'allow'
+	const owns = existing.some(
+		(purchase) =>
+			['Valid', 'Restricted'].includes(purchase.status) && !purchase.bulk,
+	)
+	return owns ? 'already-own' : 'allow'
+}
+
+/**
+ * Checkout quantity, strictly: a positive base-10 integer, or absent (one
+ * seat, the same default Course Builder's coupon authorization uses). Anything
+ * else (0, 2.5, 1e1, -1, NaN, " 2") is null and the caller refuses.
+ */
+export const parseCheckoutQuantity = (raw?: string | null): number | null => {
+	if (raw === undefined || raw === null || raw === '') return 1
+	if (!/^[1-9][0-9]*$/.test(raw)) return null
+	const quantity = Number(raw)
+	return Number.isSafeInteger(quantity) ? quantity : null
+}
+
+/**
+ * Whether a checkout carries regional (PPP) pricing: the authoritative PPP
+ * offer, a coupon whose type is `ppp`, or a PPP selection the coupon
+ * authorization saw (`requestedPPP`). Used by verify-login and
+ * protectCommerceRequest so the widget and the route agree.
+ * `usedCouponId` is a site coupon and never regional.
+ */
+export const isRegionalCoupon = ({
+	couponId,
+	couponType,
+	requestedPPP,
+}: {
+	couponId?: string | null
+	couponType?: string | null
+	requestedPPP?: boolean
+}) =>
+	couponId === AUTHORITATIVE_PPP_OFFER_ID ||
+	couponType === 'ppp' ||
+	requestedPPP === true

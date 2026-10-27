@@ -4,6 +4,8 @@ import { redirect } from 'next/navigation'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
+import { AUTHORITATIVE_PRODUCT_IDS } from '@/lib/c5-pricing/decision'
+import { expireC5SiblingSessions } from '@/lib/c5-pricing/server-checkout'
 import { CHECKOUT_LOGIN_BROWSER_COOKIE } from '@/lib/checkout-login-browser-session'
 import { checkoutLoginHandoffStore } from '@/lib/checkout-login-handoff-store'
 import { addKitSubscriberToCheckoutAttribution } from '@/lib/checkout-subscriber-attribution'
@@ -91,6 +93,7 @@ export default async function LoginPage({
 		browserSession: cookieStore.get(CHECKOUT_LOGIN_BROWSER_COOKIE)?.value,
 		trustedCountry,
 		handoffSecret: env.NEXTAUTH_SECRET,
+		authoritativeProductIds: AUTHORITATIVE_PRODUCT_IDS,
 	})
 	if (pricing.kind === 'completed') {
 		return redirect(pricing.redirect)
@@ -120,11 +123,19 @@ export default async function LoginPage({
 			? pricing.checkoutHandoff.payload
 			: undefined,
 		checkoutParams: authorizedCheckoutParams,
+		trustedCountry: pricing.country,
 	})
 	if (providerResult.kind === 'failure') {
 		return redirect(
 			`/subscribe/error?reason=${encodeURIComponent(providerResult.failure.code)}`,
 		)
+	}
+	if (AUTHORITATIVE_PRODUCT_IDS.has(checkoutParams.productId)) {
+		await expireC5SiblingSessions({
+			userId: user.id,
+			productId: checkoutParams.productId,
+			keepSessionId: providerResult.providerSessionId,
+		})
 	}
 	return redirect(providerResult.redirect)
 }

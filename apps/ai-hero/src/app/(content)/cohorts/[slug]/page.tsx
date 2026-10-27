@@ -1,28 +1,36 @@
 import type { ParsedUrlQuery } from 'querystring'
 import * as React from 'react'
 import type { Metadata, ResolvingMetadata } from 'next'
-import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { CldImage } from '@/components/cld-image'
+import { C5PastCohortCallout } from '@/components/c5-past-cohort-callout'
+import { WaitlistForm } from '@/components/cohort-waitlist-form'
 import { CheckoutSurveyBuyButton } from '@/components/commerce/checkout-survey-buy-button'
 import { Contributor } from '@/components/contributor'
 import LayoutClient from '@/components/layout-client'
+import { TYPE } from '@/components/landing/type'
+import { formatOpensIn } from '@/lib/cohort-opening'
+import { giftSharePresentation, giftShareTitle } from '@/lib/c5-pricing/gift-share'
+import { signedGiftFact, giftEnrollmentAccess } from '@/lib/c5-pricing/gift-server'
+import { GiftShareAttribution } from '@/components/gift-share-attribution'
+import { C5_PRODUCT_ID } from '@/lib/c5-pricing/products'
 import { DiscountCountdown } from '@/components/mdx/mdx-components'
 import { PROSE_MEASURE } from '@/components/mdx/prose'
 import { DiscountDeadline } from '@/components/pricing/discount-deadline'
 import { HasPurchased } from '@/components/pricing/has-purchased'
 import { PricingInline } from '@/components/pricing/pricing-inline'
-import { db } from '@/db'
-import { products } from '@/db/schema'
 import { env } from '@/env.mjs'
 import type { CampaignLanding } from '@/lib/campaign-landings'
 import { CohortPageProps, type Cohort } from '@/lib/cohort'
+import { toClientCohortPageProps } from '@/lib/cohort-client-shape'
 import {
 	formatAlumniCount,
 	getCachedCohortAlumniCount,
 } from '@/lib/cohort-stats'
 import { getCachedCohort, loadCohortPageData } from '@/lib/cohorts-query'
 import { isOnCohortWaitlist } from '@/lib/cta-gating'
+import { getActiveProductSlugMap } from '@/lib/product-slug-map'
+import { startEarly } from '@/lib/start-early'
 import { getSubscriberForGating } from '@/lib/subscriber-gate'
 import {
 	CourseStructuredData,
@@ -31,8 +39,6 @@ import {
 import type { Workshop } from '@/lib/workshops'
 import { compileMDX } from '@/utils/compile-mdx'
 import { formatDiscount } from '@/utils/discount-formatter'
-import { formatInTimeZone } from 'date-fns-tz'
-import { eq } from 'drizzle-orm'
 import { CheckCircle } from 'lucide-react'
 import { Markdown as ReactMarkdown } from '@/components/markdown'
 
@@ -41,11 +47,19 @@ import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
 import { Certificate } from '../../_components/cohort-certificate-container'
 import { EditWorkshopButton } from '../../workshops/_components/edit-workshop-button'
+import {
+	cohortCallsToAction,
+	cohortEnrollmentPhase,
+} from './_components/cohort-coming-soon'
+import { CohortCertificateProgress } from './_components/cohort-certificate-progress'
 import { CohortContents } from './_components/cohort-contents'
+import { CohortEnrollPrice } from './_components/cohort-enroll-price'
 import { CohortFactStrip } from './_components/cohort-fact-strip'
 import { CohortIncludes } from './_components/cohort-includes'
 import { CohortPricingWidgetContainer } from './_components/cohort-pricing-widget-container'
 import { CohortSidebar } from './_components/cohort-sidebar'
+import { CohortTeamLink } from './_components/cohort-team-link'
+import { metaDescription } from '@/lib/meta-description'
 
 export async function generateMetadata(
 	props: {
@@ -61,17 +75,21 @@ export async function generateMetadata(
 		return parent as Metadata
 	}
 
+	const via = (await props.searchParams).via
+	const share = await giftSharePresentation(typeof via === 'string' ? via : undefined).catch(() => null)
+	const title = share ? `${giftShareTitle(share.firstName, share.available)}: ${cohort.fields.title}` : cohort.fields.title
 	return {
-		title: cohort.fields.title,
-		description: cohort.fields.description,
+		title,
+		description: metaDescription(cohort.fields.description),
 		alternates: {
 			canonical: `/cohorts/${cohort.fields.slug}`,
 		},
 		openGraph: {
+			title,
 			images: [
 				{
 					url:
-						cohort?.fields?.image ||
+						(share && typeof via === 'string' ? `${env.NEXT_PUBLIC_URL}/api/og/gift?via=${encodeURIComponent(via)}` : undefined) || cohort?.fields?.image ||
 						`${env.NEXT_PUBLIC_URL}/api/og/default?title=${encodeURIComponent(cohort.fields.title)}`,
 					alt: cohort?.fields?.title,
 				},
@@ -84,6 +102,11 @@ type CohortPageViewProps = {
 	params: Promise<{ slug: string }>
 	searchParams: Promise<ParsedUrlQuery>
 	campaignLanding?: CampaignLanding
+	/**
+	 * MDX that replaces the CMS body for this render. Only
+	 * `/preview/cohorts/[slug]/[draft]` passes it, from a file on disk.
+	 */
+	bodySource?: string
 }
 
 /**
@@ -113,6 +136,18 @@ export async function CohortPageView(props: CohortPageViewProps) {
 		notFound()
 	}
 
+	// Three reads that need nothing from the loader or from each other: start
+	// them now so they run under the loader instead of after it. Each is
+	// awaited where it is used, so a failure still fails (or, for the alumni
+	// count, still falls back to 0) exactly where it did before.
+	const gatingSubscriberRead = startEarly(() => getSubscriberForGating())
+	const productMapRead = startEarly(() => getActiveProductSlugMap())
+	// "Trained" in the fact strip: a live count across every cohort to date,
+	// dropped rather than guessed when it is too small to quote — including
+	// when the count itself fails, which must never take the sales page down
+	// with it (`.catch(() => 0)`, as on the landing page and /courses).
+	const alumniCountRead = getCachedCohortAlumniCount().catch(() => 0)
+
 	const pageData = await loadCohortPageData(params.slug, searchParams)
 
 	const {
@@ -136,11 +171,16 @@ export async function CohortPageView(props: CohortPageViewProps) {
 		workshopProgressMap,
 	} = pageData
 
+	const share = product?.id === C5_PRODUCT_ID ? await giftSharePresentation(typeof searchParams.via === 'string' ? searchParams.via : undefined).catch(() => null) : null
+	const giftFact = product?.id === C5_PRODUCT_ID ? await signedGiftFact() : null
+	const giftEnrollmentOpen = await giftEnrollmentAccess(giftFact && 'value' in giftFact ? giftFact.value : null).catch(() => false)
+	const giftBanner = !share || share.closed ? null : !share.available ? 'This gift has been used.' : giftFact && 'value' in giftFact && giftFact.value?.codeRef === share.codeRef ? giftShareTitle(share.firstName, true) : giftShareTitle(share.firstName, false)
+
 	// Already on this cohort's waitlist. Resolved here, on the server, because
 	// the sidebar's closed-enrollment state IS the waitlist form: someone who
 	// joined last month and came back to check on the dates was being asked to
 	// join again, with no sign the site had heard them the first time.
-	const gatingSubscriber = await getSubscriberForGating()
+	const gatingSubscriber = await gatingSubscriberRead
 	const isOnWaitlist = isOnCohortWaitlist(gatingSubscriber, product?.name)
 	const hasKnownWaitlistIdentity = Boolean(
 		gatingSubscriber?.email_address || session?.user?.email,
@@ -168,55 +208,76 @@ export async function CohortPageView(props: CohortPageViewProps) {
 
 	// Controls whether sidebar shows pricing container (which handles waitlist internally)
 	const ALLOW_PURCHASE =
-		allowPurchase === 'true' ||
+		giftEnrollmentOpen || allowPurchase === 'true' ||
 		cohortProps?.product?.fields.state === 'published'
 
-	// Controls whether inline <Enroll> buttons can actually purchase
-	// Enrollment dates must be satisfied even when product is published
+	// One reading of the enrollment window drives every call to action outside
+	// the rail (mobile bar, inline <Enroll>, JSON-LD offer), so none of them can
+	// say "Enroll" while the rail shows the waitlist.
 	const openEnrollment = cohortProps?.product?.fields?.openEnrollment
 	const closeEnrollment = cohortProps?.product?.fields?.closeEnrollment
 	const openEnrollmentDate = openEnrollment
 		? new Date(openEnrollment as string)
 		: null
-	const nowInPT = new Date(
-		formatInTimeZone(new Date(), PT, "yyyy-MM-dd'T'HH:mm:ssXXX"),
-	)
-	const isWithinEnrollmentWindow = openEnrollmentDate
-		? openEnrollmentDate < nowInPT &&
-			(closeEnrollment ? new Date(closeEnrollment as string) > nowInPT : true)
-		: true // no dates set = no restriction
+	const enrollmentPhase = giftEnrollmentOpen ? 'open' : cohortEnrollmentPhase({
+		now: new Date(),
+		openEnrollment: openEnrollment as string | undefined,
+		closeEnrollment: closeEnrollment as string | undefined,
+	})
+	const { isComingSoon, mobileCta, offerInJsonLd, curriculumAnnounced } =
+		cohortCallsToAction({
+			phase: enrollmentPhase,
+			productState: cohortProps?.product?.fields?.state,
+			allowPurchase: giftEnrollmentOpen ? 'true' : allowPurchase,
+			hasCohortAccess,
+			isOnWaitlist,
+			hasActiveProduct: cohortProps.product?.status === 1,
+			bypassSoldOut:
+				cohortProps.couponFromCode?.fields?.bypassSoldOut === true,
+		})
 
-	const CAN_ENROLL =
-		allowPurchase === 'true' ||
-		(cohortProps?.product?.fields.state === 'published' &&
-			isWithinEnrollmentWindow)
-
+	// A rail on the waitlist can also be one whose window has closed, and
+	// "opens" must not be said of a date that has passed.
+	const enrollmentOpensLater = enrollmentPhase === 'before-open'
 	const enrollmentOpenDateString = openEnrollmentDate
-		? formatInTimeZone(openEnrollmentDate, PT, "MMM d, yyyy 'at' h:mm a zzz")
+		? formatOpensIn(openEnrollmentDate, PT, new Date())
 		: null
 
-	// "Trained" in the fact strip: a live count across every cohort to date,
-	// dropped rather than guessed when it is too small to quote — including
-	// when the count itself fails, which must never take the sales page down
-	// with it (`.catch(() => 0)`, as on the landing page and /courses).
-	// Fetched alongside the product map because neither depends on the other,
-	// and serialising them only adds latency to the server render.
-	const [alumniCount, allProducts] = await Promise.all([
-		getCachedCohortAlumniCount().catch(() => 0),
-		db.query.products.findMany({
-			where: eq(products.status, 1),
-		}),
+	const [alumniCount, productMap] = await Promise.all([
+		alumniCountRead,
+		productMapRead,
 	])
+	// The lesson total for "Includes" is off for now (Vojta, 2026-10-14): the
+	// list leads with the workshop count alone. To bring it back, restore this
+	// read (and its two imports) in place of the 0. It costs no data of its
+	// own: these are the navigation trees the Contents list reads further down,
+	// and the loader shares one read per workshop across the render. If any
+	// tree fails the total is dropped, never summed from the ones that
+	// answered: an undercount on a sales page is worse than no count.
+	//
+	// const lessonCount = await Promise.all(
+	// 	workshops.map((workshop) =>
+	// 		getCachedWorkshopNavigation(workshop.fields.slug),
+	// 	),
+	// )
+	// 	.then((navigations) =>
+	// 		navigations.reduce(
+	// 			(total, navigation) => total + countTrackedLessons(navigation),
+	// 			0,
+	// 		),
+	// 	)
+	// 	.catch(() => 0)
+	const lessonCount = 0
 	const alumniLabel = formatAlumniCount(alumniCount)
 
-	// Get product slug to ID map for HasPurchased component
-	const productMap = new Map(allProducts.map((p) => [p.fields?.slug, p.id]))
 	// Use post-purchase body copy for purchasers when available,
-	// otherwise fall back to the standard sales body
+	// otherwise fall back to the standard sales body. A `bodySource` from the
+	// preview route stands in for either.
 	const mdxSource =
-		hasCohortAccess && cohort.fields.postPurchaseBody
+		props.bodySource ??
+		(hasCohortAccess && cohort.fields.postPurchaseBody
 			? cohort.fields.postPurchaseBody
-			: cohort.fields.body || ''
+			: cohort.fields.body || '')
 
 	const displayWorkshops = hasCohortAccess
 		? workshops
@@ -237,6 +298,16 @@ export async function CohortPageView(props: CohortPageViewProps) {
 					},
 				})),
 			}))
+	// The rail's feature list counts workshops by what the reader can see
+	// listed, and the pricing container needs them as plain data.
+	const railWorkshops = displayWorkshops.map((workshop) => ({
+		title: workshop.fields.title,
+		slug: workshop.fields.slug,
+	}))
+	// The team page exists only when its body does (it 404s otherwise).
+	const teamOptionsHref = fields.forTeamsBody
+		? `/cohorts/${fields.slug}/for-teams`
+		: undefined
 	const displayCohort = hasCohortAccess
 		? cohort
 		: {
@@ -250,6 +321,25 @@ export async function CohortPageView(props: CohortPageViewProps) {
 				})),
 			}
 
+	// Client components get this, never `cohort`: whatever they receive is
+	// serialized into the RSC payload, lesson bodies included.
+	const clientCohortProps = toClientCohortPageProps(cohortProps)
+	const clientCohort = clientCohortProps.cohort
+
+	// A body that places the curriculum itself replaces the list appended
+	// under it, so the workshops appear once. The inline list is only for
+	// someone who can buy, so everyone else keeps the appended one. Code and
+	// comments are stripped first so a body that only mentions the tag does
+	// not hide the real list.
+	const showsInlineContentList =
+		mobileCta === 'enroll' &&
+		/<CohortContentList[\s/>]/.test(
+			mdxSource.replace(
+				/```[\s\S]*?```|`[^`\n]*`|\{\/\*[\s\S]*?\*\/\}/g,
+				'',
+			),
+		)
+
 	const { content } = await compileMDX(
 		mdxSource,
 		{
@@ -259,42 +349,69 @@ export async function CohortPageView(props: CohortPageViewProps) {
 				</h2>
 			),
 			Enroll: ({ children = 'Enroll Now' }) => {
-				if (!cohortProps.product || hasCohortAccess) return null
+				if (!clientCohortProps.product || hasCohortAccess) return null
 
-				if (!CAN_ENROLL) {
+				// While the rail holds the waitlist, an inline button is the same
+				// form the rail holds, so the ask can be answered where the reader
+				// is: never a dead control, and never an offer the rail does not
+				// have. Someone already on the list gets a status and no ask.
+				if (mobileCta === 'waitlist' || mobileCta === 'on-waitlist') {
 					return (
-						<div className="mt-5 flex flex-col items-start gap-2">
-							<button
-								disabled
-								className="bg-primary/50 text-primary-foreground relative h-auto w-full cursor-not-allowed rounded-lg px-8 py-3 font-semibold opacity-75 sm:h-14 sm:w-auto md:px-16"
-							>
-								<span className="relative z-10">{children}</span>
-							</button>
-							{enrollmentOpenDateString && (
+						<div className="not-prose mx-auto my-8 flex max-w-xl flex-col items-center gap-2.5 text-center">
+							{mobileCta === 'waitlist' ? (
+								<WaitlistForm
+									actionLabel="Join Waitlist"
+									productName={clientCohortProps.product.name}
+									surface="cohort-page"
+									knownIdentity={hasKnownWaitlistIdentity}
+								/>
+							) : (
+								<p className={`${TYPE.subhead} flex items-center gap-2`}>
+									<CheckCircle
+										className="text-primary size-5 shrink-0"
+										aria-hidden="true"
+									/>
+									You are on the waitlist
+								</p>
+							)}
+							{enrollmentOpensLater && enrollmentOpenDateString ? (
 								<p className="text-muted-foreground text-sm">
 									Enrollment opens {enrollmentOpenDateString}
 								</p>
-							)}
+							) : null}
 						</div>
 					)
 				}
 
+				// No product in the rail to act on.
+				if (mobileCta !== 'enroll') return null
+
+
 				return (
 					<Pricing.Root
-						{...cohortProps}
-						product={cohortProps.product}
+						{...clientCohortProps}
+						product={clientCohortProps.product}
 						country={cohortProps.country}
 						options={{
 							withTitle: false,
 							withImage: false,
 						}}
-						userId={cohortProps?.userId}
-						pricingDataLoader={cohortProps.pricingDataLoader}
-						className="mt-5 items-start justify-start"
+						userId={clientCohortProps.userId}
+						pricingDataLoader={clientCohortProps.pricingDataLoader}
+						// `not-prose`: the button brings a caption of its own, and the
+						// article's paragraph margins would push it away from the button.
+						className="not-prose my-8 items-center justify-center"
 					>
 						<Pricing.Product>
-							<CheckoutSurveyBuyButton className="bg-primary text-primary-foreground hover:bg-primary/90 relative h-auto w-full cursor-pointer rounded-lg px-8 font-semibold sm:h-14 sm:w-auto md:px-16">
-								<span className="relative z-10">{children}</span>
+							<CheckoutSurveyBuyButton
+								className="bg-primary text-primary-foreground hover:bg-primary/90 relative h-auto w-full cursor-pointer rounded-lg px-8 font-semibold sm:h-14 sm:w-auto md:px-16"
+								trailing={<CohortEnrollPrice />}
+							>
+								{/* The body's label ("Reserve Your Spot") and the price do not
+								    fit one line on a phone, so the phone says "Enroll" and
+								    keeps the price beside it, divider and all. */}
+								<span className="relative z-10 sm:hidden">Enroll</span>
+								<span className="relative z-10 hidden sm:inline">{children}</span>
 								<div
 									style={{
 										backgroundSize: '200% 100%',
@@ -306,6 +423,31 @@ export async function CohortPageView(props: CohortPageViewProps) {
 					</Pricing.Root>
 				)
 			},
+			// Copy that only makes sense once seats can be bought: a price
+			// sentence, the curriculum, a deadline. It follows the rail, like
+			// the buttons, so a body can carry its launch section ahead of
+			// time and have it appear the moment enrollment opens.
+			CanEnroll: ({ children }: { children: React.ReactNode }) =>
+				mobileCta === 'enroll' ? <>{children}</> : null,
+			// The other side of it: copy that belongs to the waitlist ask ("drop
+			// your email in the box below") and would be wrong over a buy button
+			// or for someone who already has the cohort.
+			WaitlistOnly: ({ children }: { children: React.ReactNode }) =>
+				mobileCta === 'waitlist' || mobileCta === 'on-waitlist' ? (
+					<>{children}</>
+				) : null,
+			// The curriculum, placed where the copy calls for it, for someone
+			// who can buy it. Everyone else has the list under the body.
+			CohortContentList: () =>
+				mobileCta === 'enroll' ? (
+					<CohortContents
+						className="not-prose border-border my-8 overflow-hidden rounded-md border"
+						variant="inline"
+						workshops={displayWorkshops as Workshop[]}
+						workshopProgressMap={workshopProgressMap}
+						timezone={PT}
+					/>
+				) : null,
 			HasDiscount: ({
 				children,
 				fallback,
@@ -329,7 +471,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 			PricingInline: ({ type }: { type: 'original' | 'discounted' }) => (
 				<PricingInline
 					type={type}
-					pricingDataLoader={cohortProps.pricingDataLoader}
+					pricingDataLoader={clientCohortProps.pricingDataLoader}
 				/>
 			),
 			DiscountDeadline: ({ format }: { format?: 'short' | 'long' }) => (
@@ -350,7 +492,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 				<HasPurchased
 					productSlug={productSlug}
 					productId={productId}
-					purchases={cohortProps.purchases || []}
+					purchases={clientCohortProps.purchases || []}
 					productMap={productMap}
 				>
 					{children}
@@ -395,16 +537,21 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	return (
 		<LayoutClient withContainer>
 			<main className="relative">
-				<CohortMetadata
-					cohort={displayCohort}
-					product={cohortProps.product}
-					quantityAvailable={cohortProps.quantityAvailable}
-				/>
+				<C5PastCohortCallout slug={fields.slug ?? cohort.id} />
+				{share && typeof searchParams.via === 'string' ? <GiftShareAttribution slug={searchParams.via} /> : null}
+				{giftBanner ? <section className="border-border bg-muted text-foreground border-b"><p className={`${TYPE.meta} px-[18px] py-4 sm:px-11`}>{giftBanner}</p></section> : null}
+				<React.Suspense fallback={null}>
+					<ResolvedCohortMetadata
+						cohort={displayCohort}
+						product={offerInJsonLd ? cohortProps.product : undefined}
+						pricingDataLoader={pricingDataLoader}
+					/>
+				</React.Suspense>
 				<EditWorkshopButton
 					className=""
 					moduleType="cohort"
 					moduleSlug={cohort.fields?.slug || cohort.id}
-					product={product}
+					product={clientCohortProps.product}
 				/>
 
 				{hasCohortAccess ? (
@@ -419,8 +566,12 @@ export async function CohortPageView(props: CohortPageViewProps) {
 				<div className="flex flex-col lg:flex-row">
 					<div className="min-w-0 flex-1">
 						{/* `lg:pt-[52px]` is the spec's `--ah-section`; at `lg:pt-8` the
-						    title sat almost against the nav on desktop. */}
-						<header className="from-card to-background flex w-full flex-col items-center justify-between bg-gradient-to-b pt-6 md:gap-10 lg:flex-row lg:pt-[52px]">
+						    title sat almost against the nav on desktop. Below `lg` the
+						    cover leads the header and sits flush under the nav, so the
+						    top padding is only for a cohort with no cover to lead it. */}
+						<header
+							className={`from-card to-background flex w-full flex-col items-center justify-between bg-gradient-to-b md:gap-10 lg:flex-row lg:pt-[52px] ${fields?.image ? '' : 'pt-6'}`}
+						>
 							{fields?.image && (
 								<CldImage
 									className="flex w-full lg:hidden"
@@ -430,7 +581,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 									alt={fields?.title}
 								/>
 							)}
-							<div className="mt-5 flex w-full flex-col items-center px-5 text-center lg:mt-0 lg:items-start lg:pl-10 lg:text-left">
+							<div className="mt-5 flex w-full flex-col items-center px-5 text-center lg:mt-0 lg:items-start lg:px-10 lg:text-left">
 								<div className="text-foreground/80 mb-2 flex flex-wrap items-center justify-center gap-2 text-base sm:justify-start">
 									<span className="text-xs font-medium uppercase tracking-wider">
 										{campaignVariant?.eyebrow ?? 'Cohort-based Course'}
@@ -444,11 +595,13 @@ export async function CohortPageView(props: CohortPageViewProps) {
 								</>
 							)} */}
 								</div>
-								<h1 className="text-balance text-4xl font-bold sm:text-5xl lg:text-6xl">
+								{/* The headline is the offer, so it takes the single-offer
+								    landing step, tracking included. */}
+								<h1 className={`${TYPE.displayLanding} text-balance`}>
 									{campaignVariant?.headline ?? fields.title}
 								</h1>
 								{(campaignVariant?.subhead || fields.description) && (
-									<h2 className="text-primary mt-5 text-balance text-lg font-normal sm:text-xl lg:text-2xl">
+									<h2 className="text-primary mt-5 text-balance text-lg font-normal tracking-[-0.018em] sm:text-xl lg:text-2xl lg:tracking-[-0.02em]">
 										<ReactMarkdown
 											components={{
 												p: ({ children }) => <>{children}</>,
@@ -494,24 +647,35 @@ export async function CohortPageView(props: CohortPageViewProps) {
 							</div>
 						</header>
 						{/* Padding sits outside the measure: boxes are border-box, so
-						    70ch on the padded element would be 70ch minus the gutter. */}
-						<div className="px-5 pt-10 sm:px-8 lg:px-10">
+						    70ch on the padded element would be 70ch minus the gutter.
+						    The bottom padding is for a body that ends the column, with
+						    no curriculum under it: the body's last block gives up its
+						    own bottom margin, so the space is the same whether that
+						    block is a paragraph, a form or a buy button. */}
+						<div className="px-5 pt-10 last:pb-10 sm:px-8 lg:px-10">
 							<article
-								className={`prose dark:prose-invert sm:prose-lg lg:prose-lg ${PROSE_MEASURE}`}
+								className={`prose dark:prose-invert sm:prose-lg lg:prose-lg [&>:last-child]:mb-0 ${PROSE_MEASURE}`}
 							>
 								{content}
 							</article>
 						</div>
 
-						<CohortContents
-							className="py-8"
-							variant="full"
-							workshops={displayWorkshops as Workshop[]}
-							workshopProgressMap={workshopProgressMap}
-							timezone={PT}
-						/>
+						{/* For sale, the body's own inline list stands in for this one.
+						    On a launch waitlist there is no curriculum at all. */}
+						{!curriculumAnnounced || showsInlineContentList ? null : (
+							<CohortContents
+								className="py-8"
+								variant="full"
+								workshops={displayWorkshops as Workshop[]}
+								workshopProgressMap={workshopProgressMap}
+								timezone={PT}
+							/>
+						)}
 					</div>
-					<CohortSidebar cohort={displayCohort}>
+					<CohortSidebar
+						cohort={clientCohort}
+						mobileCta={mobileCta}
+					>
 						{fields?.image && (
 							<CldImage
 								className="hidden w-full lg:flex"
@@ -521,6 +685,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 								alt={fields?.title}
 							/>
 						)}
+						<C5PastCohortCallout slug={fields.slug ?? cohort.id} />
 						{/* <CohortDetails cohort={displayCohort} /> */}
 						{hasCohortAccess ? (
 							<div>
@@ -530,23 +695,77 @@ export async function CohortPageView(props: CohortPageViewProps) {
 									workshopProgressMap={workshopProgressMap}
 									timezone={PT}
 								/>
-								<Certificate
-									isCompleted={hasCompletedCohort}
-									resourceSlugOrId={cohort.fields?.slug}
-								/>
+								{/* The count waits on the same progress reads as the rows
+								    above; until they land the tile shows without it. */}
+								<div className="border-t p-3">
+									<React.Suspense
+										fallback={
+											<Certificate
+												isCompleted={hasCompletedCohort}
+												resourceSlugOrId={cohort.fields?.slug}
+											/>
+										}
+									>
+										<CohortCertificateProgress
+											isCompleted={hasCompletedCohort}
+											resourceSlugOrId={cohort.fields?.slug}
+											workshopProgressMap={workshopProgressMap}
+										/>
+									</React.Suspense>
+								</div>
 							</div>
 						) : ALLOW_PURCHASE ? (
 							<CohortPricingWidgetContainer
-								{...cohortProps}
+								{...clientCohortProps}
+								cohort={clientCohort}
+								giftEnrollmentOpen={giftEnrollmentOpen}
 								searchParams={searchParams}
 								enrollmentOpenDateString={enrollmentOpenDateString}
 								isOnWaitlist={isOnWaitlist}
 								knownIdentity={hasKnownWaitlistIdentity}
+								workshops={railWorkshops}
+								lessonCount={lessonCount}
+								teamOptionsHref={teamOptionsHref}
 							/>
+						) : isComingSoon && cohortProps.product ? (
+							<div className="p-5">
+								{isOnWaitlist ? (
+									<p className="inline-flex items-center text-center text-lg font-medium">
+										<CheckCircle className="text-primary mr-2 size-5" />
+										You are on the waitlist
+									</p>
+								) : (
+									<WaitlistForm
+										actionLabel="Join Waitlist"
+										productName={cohortProps.product.name}
+										surface="cohort-page"
+										knownIdentity={hasKnownWaitlistIdentity}
+									/>
+								)}
+							</div>
 						) : null}
-						{/* Last in the rail in every state: waitlist, pricing and
-						    purchased all answer the same "what do I get" question. */}
-						<CohortIncludes workshopCount={displayWorkshops.length} />
+						{/* The pricing container owns everything under the offer when
+						    it renders: on sale, its card carries the team button and the
+						    feature list itself, and a second copy here would stack two
+						    "Includes" in one column. These are for the states it does not
+						    cover. The team link is offered in every state but purchased:
+						    before seats open it still takes an invoice request. */}
+						{!hasCohortAccess && !ALLOW_PURCHASE && teamOptionsHref ? (
+							<CohortTeamLink href={teamOptionsHref}>
+								{isComingSoon
+									? 'Buying for a team?'
+									: 'Buying for a team? Seats and invoices'}
+							</CohortTeamLink>
+						) : null}
+						{/* Purchased still answers "what do I get". Coming soon is the
+						    exception: nothing is on offer yet. */}
+						{isComingSoon || (!hasCohortAccess && ALLOW_PURCHASE) ? null : (
+							<CohortIncludes
+								className="border-t px-5 py-6"
+								workshops={railWorkshops}
+								lessonCount={lessonCount}
+							/>
+						)}
 					</CohortSidebar>
 				</div>
 				{/* <CohortSidebarMobile cohort={displayCohort} /> */}
@@ -555,11 +774,34 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	)
 }
 
-const CohortMetadata: React.FC<{
+const ResolvedCohortMetadata = async ({
+	pricingDataLoader,
+	...props
+}: {
 	cohort: Cohort
 	product?: CohortPageProps['product']
-	quantityAvailable: number
-}> = ({ cohort, product, quantityAvailable }) => {
+	pricingDataLoader: CohortPageProps['pricingDataLoader']
+}) => {
+	if (!props.product) return <CohortMetadata {...props} />
+	// Share the widget's existing promise without blocking the outer page or fetching again.
+	let quantityAvailable: number | undefined
+	try {
+		quantityAvailable = (await pricingDataLoader).quantityAvailable
+	} catch {
+		// Metadata failure must not fail the page; keep both schemas without an offer.
+	}
+	return <CohortMetadata {...props} quantityAvailable={quantityAvailable} />
+}
+
+const CohortMetadata = ({
+	cohort,
+	product,
+	quantityAvailable,
+}: {
+	cohort: Cohort
+	product?: CohortPageProps['product']
+	quantityAvailable?: number
+}) => {
 	return (
 		<>
 			<CourseStructuredData

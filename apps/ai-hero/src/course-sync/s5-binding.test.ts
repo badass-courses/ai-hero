@@ -34,7 +34,8 @@ function syntheticCopyOfSyllabusShape(): CourseJsonDocumentV3 {
 }
 
 describe('production Cohort 005 first scheduled poll (S5)', () => {
-	it('stages and previews 15 workshops and 112 lessons, then waits for the operator without media or strikes', async () => {
+	it('stages draft children without an initial operator override but retains the new-workshop review bound', async () => {
+		expect(binding.initialApplyPolicyOverride).toBeNull()
 		const manifest = syntheticCopyOfSyllabusShape()
 		const persistence = new InMemoryCourseSyncPersistence()
 		const unexpected = vi.fn(async (): Promise<never> => {
@@ -45,12 +46,12 @@ describe('production Cohort 005 first scheduled poll (S5)', () => {
 				product: {
 					id: binding.productId,
 					type: 'cohort',
-					fields: { state: 'draft', visibility: 'unlisted' },
+					fields: { state: 'published', visibility: 'unlisted' },
 				},
 				workshop: {
 					id: binding.anchorCohortId,
 					type: 'cohort',
-					fields: { state: 'draft', visibility: 'unlisted' },
+					fields: { state: 'published', visibility: 'public' },
 					deletedAt: null,
 				},
 				relation: { position: 0 },
@@ -120,6 +121,7 @@ describe('production Cohort 005 first scheduled poll (S5)', () => {
 		expect(state).toMatchObject({
 			bindingId: binding.bindingId,
 			status: 'awaiting-apply',
+			// The new-workshop bound creates this hold, not the binding's initial policy.
 			applyPolicyOverride: 'operator',
 			consecutiveFailures: 0,
 			failureClass: null,
@@ -138,6 +140,13 @@ describe('production Cohort 005 first scheduled poll (S5)', () => {
 		).toHaveLength(112)
 		expect(plan?.resources).toHaveLength(127)
 		expect(plan?.media).toEqual([])
+		for (const item of plan!.resources) {
+			expect(item.fields).toMatchObject({ state: 'draft', visibility: 'unlisted' })
+		}
+		await expect(plane.evaluateBoundedAutoApply(result.controlPlaneRunId!)).resolves.toMatchObject({
+			eligible: false,
+			failureCode: 'WORKSHOP_CREATE_REVIEW_REQUIRED',
+		})
 		expect(notices).toEqual([
 			expect.objectContaining({
 				kind: 'review',

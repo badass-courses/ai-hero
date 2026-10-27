@@ -98,6 +98,25 @@ export const evergreenClaimMachine = setup({
 	},
 })
 
+export type ClaimPhase = 'loading' | 'displaying' | 'submitting' | 'error'
+
+/** In pilot mode 'unavailable' (and any failed load) means there is no pilot
+ * offer for this visitor, so the panel must not exist. The initial load also
+ * starts as 'unavailable', so this covers the loading state too. Non-pilot
+ * mode always renders. */
+export function shouldRenderClaimPanel({
+	pilotOnly,
+	phase,
+	status,
+}: {
+	pilotOnly: boolean
+	phase: ClaimPhase
+	status: z.infer<typeof responseSchema>['status']
+}) {
+	if (!pilotOnly) return true
+	return phase !== 'error' && status !== 'unavailable'
+}
+
 /** Dormant until explicitly rendered and a real protected endpoint is composed.
  * Fixed local product return path; no email/coupon/account selector props. */
 export function EvergreenClaimPanel({
@@ -120,9 +139,11 @@ export function EvergreenClaimPanel({
 	// Static workshop HTML contains no private configuration. The uncached,
 	// authenticated GET decides whether this pilot affordance exists at all.
 	if (
-		pilotOnly &&
-		(state.matches('error') ||
-			(state.matches('loading') && state.context.status === 'unavailable'))
+		!shouldRenderClaimPanel({
+			pilotOnly,
+			phase: state.value as ClaimPhase,
+			status: state.context.status,
+		})
 	)
 		return null
 	const busy = state.matches('loading') || state.matches('submitting')

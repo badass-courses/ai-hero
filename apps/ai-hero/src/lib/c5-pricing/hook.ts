@@ -1,0 +1,336 @@
+import type {
+	BindingQuoteData,
+	BuyerFactsData,
+	FactData,
+	PricingResultData,
+	PriceRequestData,
+} from '@ai-hero/front-desk-support/pricing'
+import type { PricingFacts } from '@ai-hero/front-desk-support'
+
+import type {
+	AuthoritativeDecision,
+	AuthoritativePriceRequest,
+} from '@coursebuilder/core/schemas'
+
+import type { DataRead, PolicyDocument } from './front-desk-data'
+import { noGift, type GiftFact } from './gift-slots'
+import {
+	c5BuyerOpening,
+	policyOpeningWindow,
+	type BuyerOpeningInput,
+} from './buyer-opening'
+import {
+	APP_REASONS,
+	C5_PRODUCT_ID,
+	provisional,
+	refusal,
+	toAuthoritativeDecision,
+} from './decision'
+import { isPppCreditBound } from './ppp-credit-bound'
+
+/**
+ * What the hook knows about the buyer. A signed-in buyer's facts come from
+ * this app's own sources (`buyerPricingFacts`). Nobody signed in is
+ * anonymous; facts that cannot be read are unavailable, never empty.
+ */
+export type BuyerRead =
+	| {
+			readonly kind: 'buyer'
+			readonly email: string
+			readonly facts: PricingFacts
+			/** Whether the buyer holds a region-restricted purchase of this product. */
+			readonly holdsRestrictedPurchase: boolean
+			/** A Valid purchase of this exact product, not any historical purchase. */
+			readonly holdsValidProductPurchase: boolean
+	  }
+	| {
+			readonly kind: 'anonymous'
+			readonly product: PricingFacts['product']
+	  }
+	| { readonly kind: 'unavailable'; readonly reason: string }
+
+export type C5PricingDeps = {
+	readonly code?: () => Promise<GiftFact>
+	readonly policy: (productId: string) => Promise<DataRead<PolicyDocument>>
+	readonly quotes: (input: {
+		readonly email: string
+		readonly productId: string
+		readonly quantity: number
+		readonly fresh: boolean
+	}) => Promise<DataRead<readonly BindingQuoteData[]>>
+	readonly buyer: (input: {
+		readonly userId: string | null
+		readonly productId: string
+		readonly quantity: number
+		readonly orderKind: 'individual' | 'team'
+		readonly purpose: 'display' | 'checkout'
+	}) => Promise<BuyerRead>
+	/**
+	 * The buyer's country from AI Hero's trusted request geolocation, the source
+	 * the coupon guard uses. Null outside a request. Never the `country` Course
+	 * Builder passes in, which the display path still takes from the body.
+	 */
+	readonly trustedCountry: () => Promise<string | null>
+	/** Whole-number PPP percent for a country; 0 when it has none. */
+	readonly pppPercent: (country: string) => number
+	readonly price: (request: PriceRequestData) => {
+		ok: boolean
+		value?: PricingResultData
+	}
+	readonly engineVersion: string
+	readonly now: () => Date
+	/**
+	 * The C5 switch: true, C5 is closed, never priced by the legacy path. Read
+	 * on every decision; it must resolve true when it cannot tell.
+	 */
+	readonly disabled: () => boolean | Promise<boolean>
+	/** Emergency override is separate: gifts never bypass it. */
+	readonly overrideDisabled?: () => boolean
+	readonly openingWindow?: (
+		policy: PolicyDocument['policy'],
+	) => Promise<BuyerOpeningInput['window']>
+}
+
+const known = <A>(value: A, sourceRefs: readonly string[]): FactData<A> => ({
+	value,
+	sourceRefs,
+})
+const gap = <A>(
+	reason: 'FactsUnavailable' | 'IdentityUnverified',
+): FactData<A> => ({ gap: reason })
+
+/** C5 regional pricing depends on country and consent, not purchase history. */
+export function pppFact({
+	orderKind,
+	country,
+	percent,
+	accepted,
+}: {
+	orderKind: 'individual' | 'team'
+	country: string | null
+	percent: number
+	accepted: boolean
+}): BuyerFactsData['ppp'] {
+	// A team order is never regional; the engine ignores PPP for it anyway.
+	if (orderKind === 'team') return known(null, ['ppp:team-order'])
+	if (country === null) return gap('FactsUnavailable')
+	if (percent <= 0) return known(null, [`geo:country:${country}`])
+	return known({ accepted, percent }, [`geo:country:${country}`])
+}
+
+function anonymousFacts(
+	orderKind: 'individual' | 'team',
+): Omit<BuyerFactsData, 'ppp'> {
+	return {
+		order: known(orderKind, ['request:orderKind']),
+		alumni: gap('IdentityUnverified'),
+		credit: gap('IdentityUnverified'),
+		creditUse: gap('IdentityUnverified'),
+		legend: gap('IdentityUnverified'),
+		// A team's existing seats can only lower its band, so zero is the upper
+		// bound an anonymous display can show.
+		existingSeats:
+			orderKind === 'team'
+				? known(0, ['display:anonymous-provisional'])
+				: gap('IdentityUnverified'),
+	}
+}
+
+/**
+ * Course Builder's authoritative-price hook for AI Hero: Cohort 005 is priced in-process
+ * by front-desk's engine; every other product returns an explicit `null` and
+ * keeps Course Builder's legacy path.
+ *
+ * The hook prices; it never authorizes. AI Hero's route refuses blocked
+ * buyers and synthetic principals before any pricing runs.
+ */
+export function createC5AuthoritativePrice(deps: C5PricingDeps) {
+	return async function authoritativePrice(
+		request: AuthoritativePriceRequest,
+	): Promise<AuthoritativeDecision | null> {
+		if (request.productId !== C5_PRODUCT_ID) return null
+
+		const quantity = request.quantity
+		const userId = request.userId ?? null
+		const base = {
+			productId: request.productId,
+			quantity,
+			userId,
+			engineVersion: deps.engineVersion,
+		}
+		const disabled = await deps.disabled()
+		const overrideDisabled = deps.overrideDisabled?.() ?? disabled
+		if (overrideDisabled)
+			return refusal('closed', [APP_REASONS.killSwitch], base)
+
+		const policy = await deps.policy(request.productId)
+		if (!policy.ok)
+			return refusal('held', [APP_REASONS.policyUnavailable], base)
+
+		const now = deps.now()
+		// Fresh server verification, also on checkout. A cookie alone is not a fact.
+		const code = await (deps.code?.() ?? Promise.resolve(noGift()))
+		const gift = 'value' in code ? code.value : null
+		const openingWindow = deps.openingWindow
+			? await deps.openingWindow(policy.value.policy)
+			: policyOpeningWindow(policy.value.policy)
+		const opening = c5BuyerOpening({
+			switchEnabled: !disabled,
+			overrideDisabled,
+			window: openingWindow,
+			now: now.getTime(),
+			gift: quantity === 1 && gift
+				? { verified: true, productId: request.productId, code: gift }
+				: null,
+		})
+		if (opening === 'closed' && disabled)
+			return refusal('closed', [APP_REASONS.killSwitch], base)
+		if (
+			opening === 'closed' &&
+			openingWindow?.opensAt != null &&
+			now.getTime() < openingWindow.opensAt
+		) {
+			const policyOpens = policyOpeningWindow(policy.value.policy)?.opensAt
+			return {
+				...refusal(
+					policyOpens != null && now.getTime() < policyOpens ? 'not-open' : 'closed',
+					['not-open'],
+					{ ...base, policyVersion: policy.value.version },
+				),
+				closesAt: openingWindow.closesAt,
+			}
+		}
+
+		const orderKind = quantity > 1 ? 'team' : 'individual'
+		const buyer = await deps.buyer({
+			userId,
+			productId: request.productId,
+			quantity,
+			orderKind,
+			purpose: request.purpose,
+		})
+		const withPolicy = { ...base, policyVersion: policy.value.version }
+		if (buyer.kind === 'unavailable')
+			return refusal('held', [APP_REASONS.factsUnavailable], withPolicy)
+		// No upgrade path: a regional holder reaches unrestricted access through
+		// support, and is never sold the product a second time.
+		if (
+			buyer.kind === 'buyer' &&
+			orderKind === 'individual' &&
+			buyer.holdsRestrictedPurchase
+		)
+			return refusal('held', [APP_REASONS.restrictedHolder], withPolicy)
+
+		if (opening === 'gift' && buyer.kind === 'buyer' && buyer.holdsValidProductPurchase)
+			return refusal('held', [APP_REASONS.alreadyOwned], withPolicy)
+
+		const product = buyer.kind === 'buyer' ? buyer.facts.product : buyer.product
+		// Course Builder resolved the price it will charge; the facts must be
+		// about that same price row.
+		if (request.priceId && product.merchantPriceId !== request.priceId)
+			return refusal('held', [APP_REASONS.priceMismatch], withPolicy)
+
+		const country = await deps.trustedCountry()
+		const percent = country ? deps.pppPercent(country) : 0
+		const ppp = pppFact({
+			orderKind,
+			country,
+			percent,
+			accepted: request.pppAccepted,
+		})
+		const facts = buyer.kind === 'buyer'
+			? { ...buyer.facts.facts, ppp, code }
+			: { ...anonymousFacts(orderKind), ppp, code }
+
+		const appReasons: string[] = []
+		let quotes: readonly BindingQuoteData[] = []
+		if (buyer.kind === 'buyer') {
+			const read = await deps.quotes({
+				email: buyer.email,
+				productId: request.productId,
+				quantity,
+				fresh: request.purpose === 'checkout',
+			})
+			if (read.ok) quotes = read.value
+			// A quote only lowers a price. Without a fresh answer, checkout holds
+			// the personalized price instead of charging the formula.
+			else if (request.purpose === 'checkout')
+				return refusal(
+					'held',
+					[APP_REASONS.quotesUnavailableAtCheckout],
+					withPolicy,
+				)
+			else appReasons.push(APP_REASONS.quotesUnavailable)
+		}
+
+		// Only the early-access exception uses the exact gift price. Ordinary
+		// switch-on pricing still chooses the engine's cheapest eligible candidate.
+		const priced = opening === 'gift' && gift ? {
+			ok: true,
+			value: {
+				kind: 'priced' as const,
+				amount: gift.unitPrice,
+				unitAmount: gift.unitPrice,
+				basis: 'code' as const,
+				rule: 'legend-gift-early-access',
+				codeRef: gift.codeRef,
+				creditSource: null,
+				quoteRefs: [],
+				restriction: 'none' as const,
+				consent: null,
+				acceptedFacts: [],
+				candidates: [],
+				offers: [],
+				engineVersion: deps.engineVersion,
+				policyVersion: policy.value.version,
+				reasons: [{ code: 'selected' as const, detail: 'Verified gift early access' }],
+			},
+		} : deps.price({
+			facts,
+			now: now.toISOString(),
+			product: {
+				id: policy.value.policy.product,
+				merchantUnit: product.merchantUnit,
+				policy: policy.value.policy,
+			},
+			quantity,
+			quotes,
+		})
+		if (!priced.ok || !priced.value)
+			return refusal('held', [APP_REASONS.factsUnavailable], withPolicy)
+
+		// Checkout re-runs the engine, so this reads checkout's own result: a
+		// credit resolved since display prices normally and never matches.
+		let result = priced.value
+		if (
+			buyer.kind === 'buyer' &&
+			orderKind === 'individual' &&
+			!appReasons.length &&
+			isPppCreditBound(result, policy.value.policy)
+		) {
+			appReasons.push(APP_REASONS.pppCreditBound)
+			// Charge the bound with no credit source: it spends no credit.
+			if (request.purpose === 'checkout')
+				result = { ...result, kind: 'priced', creditSource: null }
+		}
+
+		let decision = toAuthoritativeDecision(result, {
+			...base,
+			purpose: request.purpose,
+			policy: policy.value.policy,
+			pppPercent: ppp && 'value' in ppp && ppp.value ? ppp.value.percent : null,
+			appReasons,
+			codeExpiresAt: 'value' in code ? code.value?.expiresAt : undefined,
+		})
+		if (opening === 'gift' && openingWindow)
+			decision = {
+				...decision,
+				closesAt: Math.min(decision.closesAt ?? Infinity, openingWindow.closesAt),
+			}
+		if (buyer.kind === 'anonymous')
+			decision = provisional(decision, APP_REASONS.identityRequired)
+		if (appReasons.includes(APP_REASONS.quotesUnavailable))
+			decision = provisional(decision, APP_REASONS.quotesUnavailable)
+		return decision
+	}
+}

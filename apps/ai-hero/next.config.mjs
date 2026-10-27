@@ -3,6 +3,7 @@
  * for Docker builds.
  */
 import createMDX from '@next/mdx'
+import { withBotId } from 'botid/next/config'
 import { withAxiom } from 'next-axiom'
 
 import {
@@ -68,6 +69,11 @@ const config = {
 	async redirects() {
 		return [
 			{
+				source: '/for-teams',
+				destination: '/for-your-team',
+				permanent: true,
+			},
+			{
 				source: '/ai-coding-for-real-engineers-with-claude-code-2026-04',
 				destination: '/claude-code-for-real-engineers-2026-04',
 				permanent: true,
@@ -78,6 +84,36 @@ const config = {
 				destination:
 					'/cohorts/build-your-own-ai-personal-assistant-in-typescript',
 				permanent: true,
+			},
+			// Cohort 5 renamed to Software Factories for Real Engineers
+			// (2026-10-09). 301 rather than `permanent` (308) by request.
+			{
+				source: '/cohorts/cohort-005-xdy1m',
+				destination: '/cohorts/software-factories-for-real-engineers-xdy1m',
+				statusCode: 301,
+			},
+			// Bare C5 slugs without the resource id suffix. Temporary so a
+			// future cohort can reuse the slug. Listed one by one: an optional
+			// `(cohorts/)?` group does not match the root form.
+			{
+				source: '/software-factories-for-real-engineers',
+				destination: '/cohorts/software-factories-for-real-engineers-xdy1m',
+				permanent: false,
+			},
+			{
+				source: '/cohorts/software-factories-for-real-engineers',
+				destination: '/cohorts/software-factories-for-real-engineers-xdy1m',
+				permanent: false,
+			},
+			{
+				source: '/software-factories-for-real-engineers/for-teams',
+				destination: '/cohorts/software-factories-for-real-engineers-xdy1m',
+				permanent: false,
+			},
+			{
+				source: '/cohorts/software-factories-for-real-engineers/for-teams',
+				destination: '/cohorts/software-factories-for-real-engineers-xdy1m',
+				permanent: false,
 			},
 			{
 				source: '/workshops/ai-sdk-v5-crash-course',
@@ -144,4 +180,4 @@ const config = {
 	},
 }
 
-export default withAxiom(withMDX(config))
+export default withAxiom(withMDX(withBotId(config)))

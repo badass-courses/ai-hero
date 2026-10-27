@@ -104,21 +104,24 @@ export async function LandingBody({
 			    `border-y`s) or none at all (two `border-b`-less neighbours), and
 			    both kept happening.
 
-			    Here every child after the first draws its own top rule and pulls up
-			    1px. Two consequences make this reorder-proof: a child that already
-			    declares `border-t` sets the same property, so it cannot double; and
-			    a previous child's `border-b` ends up underneath the next child's
-			    `border-t` rather than stacking with it. Sections can be moved,
-			    added or removed in the CMS body without anyone touching a border.
+			    Here every child after the first draws the rule above itself, and
+			    every child but the last gives up its own `border-b`. So each
+			    boundary has exactly one rule, whatever the two sections declare:
+			    a child that already has `border-t` sets the same property, and a
+			    `border-b` above it is gone. Sections can be moved, added or
+			    removed in the CMS body without anyone touching a border.
 
-			    This is the `-mt-px` idiom `ResourceRow` already used to stack
-			    consecutive rows, generalised to the whole page. */}
+			    The `border-b` used to stay, pulled under the next child's rule
+			    with `-mt-px`. That only hides it when the lower section paints a
+			    background. The rule colour is translucent, so between two plain
+			    sections the pair showed through as one rule at twice the
+			    strength: the hero's and the manifesto's, for one. */}
 			{/* The company band used to be hardcoded here, after the MDX, which
 			    put it after the newsletter at the very tail of the page. The
 			    prototype has it inside PROOF (`Home Page.dc.html` § PROOF), so
 			    `ProofGrid` renders it now and the page ends on MATT +
 			    NEWSLETTER. */}
-			<article className="[&>*+*]:border-border [&>*+*]:-mt-px [&>*+*]:border-t">
+			<article className="[&>*+*]:border-border [&>*+*]:border-t [&>*:not(:last-child)]:border-b-0">
 				{compiled.content}
 			</article>
 		</main>

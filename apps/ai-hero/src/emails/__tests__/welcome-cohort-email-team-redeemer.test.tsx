@@ -38,4 +38,29 @@ describe('WelcomeCohortEmailForTeamRedeemer', () => {
 		expect(html).toContain('Redeemer Cohort')
 		expect(html).toContain('claimed your seat via your team')
 	})
+
+	it('never carries the team invite link', async () => {
+		const html = await render(
+			<WelcomeCohortEmailForTeamRedeemer
+				cohortTitle="Redeemer Cohort"
+				url="#start"
+			/>,
+		)
+		const short = await render(
+			<WelcomeCohortEmailForTeamRedeemer
+				cohortTitle="Redeemer Cohort"
+				url="#start"
+				welcomeDetails={{
+					title: 'AI Coding for Real Engineers',
+					schedule: "We'll email you when each part opens.",
+					workshops: [],
+				}}
+			/>,
+		)
+
+		for (const output of [html, short]) {
+			expect(output).not.toContain('?code=')
+			expect(output).not.toContain('Share this link with your team')
+		}
+	})
 })

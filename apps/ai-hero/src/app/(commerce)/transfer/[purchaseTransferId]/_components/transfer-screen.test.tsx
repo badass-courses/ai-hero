@@ -1,0 +1,131 @@
+import * as React from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, expect, it, vi } from 'vitest'
+
+import { TransferScreen, type TransferView } from './transfer-screen'
+
+vi.mock('@/components/layout-client', () => ({
+	default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}))
+vi.mock('next-auth/react', () => ({ signIn: vi.fn() }))
+
+function render(view: TransferView) {
+	return renderToStaticMarkup(
+		<TransferScreen
+			view={view}
+			transferId="put_1"
+			productName="Synthetic Course"
+			senderName="Pat Buyer"
+			senderEmail="pat@work.example"
+			recipientEmail="pat@home.example"
+			accept={async () => {}}
+			sendLogin={async () => ({ sent: true })}
+		/>,
+	)
+}
+
+describe('transfer screen', () => {
+	it('lets the signed-in recipient accept, and says what accepting does', () => {
+		const html = render({ kind: 'accept' })
+		expect(html).toContain('Sent to you by Pat Buyer')
+		expect(html).toContain('Synthetic Course')
+		expect(html).toContain('Accept your seat')
+		expect(html).toContain('Accept transfer')
+		expect(html).toContain('pat@home.example')
+		expect(html).toContain('href="/privacy"')
+		expect(html).not.toContain('Email me a login link')
+	})
+
+	it('offers anyone else a login link for the recipient, back to this page', () => {
+		const signedOut = render({ kind: 'sign-in', viewerEmail: null })
+		expect(signedOut).toContain('Sign in as p**@home.example to accept')
+		expect(signedOut).not.toContain('pat@home.example')
+		expect(signedOut).toContain('Email me a login link')
+		expect(signedOut).toContain('brings you back here to accept')
+		expect(signedOut).not.toContain('Accept transfer')
+
+		const otherAccount = render({
+			kind: 'sign-in',
+			viewerEmail: 'pat@work.example',
+		})
+		expect(otherAccount).toContain('signed in as')
+		expect(otherAccount).toContain('pat@work.example')
+	})
+
+	it('sends the recipient on to the course once it is theirs', () => {
+		const html = render({
+			kind: 'accepted',
+			viewerIsRecipient: true,
+			start: {
+				href: '/workshops/synthetic-course',
+				label: 'Start learning',
+				startsLabel: null,
+			},
+		})
+		expect(html).toContain('Transfer complete')
+		expect(html).toContain('data-purchase-badge="ready"')
+		expect(html).toContain('href="/workshops/synthetic-course"')
+		expect(html).not.toContain('now belongs to')
+	})
+
+	it('tells anyone else who the seat belongs to now', () => {
+		const html = render({ kind: 'accepted', viewerIsRecipient: false, start: null })
+		expect(html).toContain('This seat now belongs to')
+		expect(html).not.toContain('Start learning')
+	})
+
+	it.each([
+		['canceled', 'Pat Buyer canceled this transfer'],
+		['expired', 'This invitation expired before it was accepted'],
+	] as const)('explains a %s transfer and points at the sender', (kind, copy) => {
+		const html = render({ kind })
+		expect(html).toContain(copy)
+		expect(html).toContain('href="mailto:pat@work.example"')
+		expect(html).not.toContain('Accept transfer')
+	})
+})
+
+describe('transfer screen privacy', () => {
+	it('never hands the full recipient email to the client login button', async () => {
+		const { TransferLoginButton } = await import('./transfer-actions')
+		const element = TransferScreen({
+			view: { kind: 'sign-in', viewerEmail: null },
+			transferId: 'tr_1',
+			productName: 'Synthetic Course',
+			senderName: 'Pat Buyer',
+			recipientEmail: 'pat@home.example',
+			sendLogin: async () => ({ sent: true }),
+		})
+		const found: Array<Record<string, unknown>> = []
+		const walk = (node: unknown): void => {
+			if (!node || typeof node !== 'object') return
+			const el = node as { type?: unknown; props?: Record<string, unknown> }
+			if (el.type === TransferLoginButton && el.props) found.push(el.props)
+			const kids = el.props?.children
+			if (Array.isArray(kids)) kids.forEach(walk)
+			else walk(kids)
+			for (const v of Object.values(el.props ?? {})) if (v !== kids) walk(v)
+		}
+		walk(element)
+		expect(found.length).toBe(1)
+		expect(JSON.stringify(found[0], (_, v) => (typeof v === 'function' ? 'fn' : v))).not.toContain('pat@home.example')
+		expect(found[0]).toMatchObject({ transferId: 'tr_1' })
+	})
+})
+
+describe('recipient email in every view', () => {
+	const kinds: TransferView[] = [
+		{ kind: 'sign-in', viewerEmail: null },
+		{ kind: 'sign-in', viewerEmail: 'pat@work.example' },
+		{ kind: 'accepted', viewerIsRecipient: false, start: null },
+		{ kind: 'canceled' },
+		{ kind: 'expired' },
+	]
+	it.each(kinds)('a viewer who is not the recipient never sees it: %j', (view) => {
+		expect(render(view)).not.toContain('pat@home.example')
+	})
+
+	it('only the accept view, shown to the signed-in recipient, spells it out', () => {
+		expect(render({ kind: 'accept' })).toContain('pat@home.example')
+	})
+})

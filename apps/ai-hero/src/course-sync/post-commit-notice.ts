@@ -37,7 +37,7 @@ export async function recordPostCommitNoticeFailure(input: {
 			phase === 'apply' ? 'applied' : 'entitlement-rolled-back'
 		const shouldRecord =
 			phase === 'apply' ||
-			getServerCourseSyncBinding(run.bindingId).contractVersion === 5
+			getServerCourseSyncBinding(run.bindingId).contractVersion !== 4
 		if (shouldRecord) {
 			if (!run.planSha256)
 				throw new Error('Committed run has no plan hash for notice receipt')

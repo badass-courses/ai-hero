@@ -51,8 +51,11 @@ export async function softDeleteEntitlementsForUser(userId: string) {
  * @param purchaseId - The ID of the purchase whose entitlements should be soft deleted
  * @returns The number of entitlements that were soft deleted
  */
-export async function softDeleteEntitlementsForPurchase(purchaseId: string) {
-	const result = await db
+export async function softDeleteEntitlementsForPurchase(
+	purchaseId: string,
+	executor: DbExecutor = db,
+) {
+	const result = await executor
 		.update(entitlements)
 		.set({
 			deletedAt: new Date(),
@@ -333,6 +336,7 @@ export async function createWorkshopEntitlement(
 export async function createCohortEntitlementInTransaction(
 	tx: any,
 	{
+		id,
 		userId,
 		resourceId,
 		sourceId,
@@ -343,6 +347,8 @@ export async function createCohortEntitlementInTransaction(
 		expiresAt,
 		metadata = {},
 	}: {
+		/** Optional stable ID for reviewed operator plans. */
+		id?: string
 		userId: string
 		resourceId?: string
 		organizationId: string
@@ -354,9 +360,9 @@ export async function createCohortEntitlementInTransaction(
 		metadata?: Record<string, any>
 	},
 ): Promise<string> {
-	const entitlementId = resourceId
-		? `${resourceId}-${guid()}`
-		: `entitlement-${guid()}`
+	const entitlementId =
+		id ??
+		(resourceId ? `${resourceId}-${guid()}` : `entitlement-${guid()}`)
 
 	// Only add contentIds if resourceId is provided and not null
 	const finalMetadata = {

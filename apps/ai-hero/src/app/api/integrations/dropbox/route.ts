@@ -14,6 +14,11 @@ import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
 
+import {
+	getIntegrationRefreshToken,
+	integrationTokenStorageNotice,
+} from '@/lib/integration-token-store'
+
 const STATE_COOKIE_NAME = 'dropbox_course_sync_state'
 const STATE_COOKIE_MAX_AGE_SECONDS = 60 * 10
 const STATE_COOKIE_PATH = '/api/integrations/dropbox'
@@ -83,7 +88,8 @@ export const GET = withSkill(async (request: NextRequest) => {
 				{ status: 401, headers: { 'Cache-Control': 'no-store' } },
 			)
 		}
-		if (!config || config.source.kind !== 'shared-link' || !process.env.DROPBOX_REFRESH_TOKEN) {
+		const refreshToken = await getIntegrationRefreshToken('dropbox', process.env.DROPBOX_REFRESH_TOKEN)
+		if (!config || config.source.kind !== 'shared-link' || !refreshToken) {
 			return NextResponse.json(
 				{
 					ok: false,
@@ -93,7 +99,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 						...(config?.source.kind === 'shared-link'
 							? []
 							: ['DROPBOX_SYNC_SHARED_LINK']),
-						...(process.env.DROPBOX_REFRESH_TOKEN ? [] : ['DROPBOX_REFRESH_TOKEN']),
+						...(refreshToken ? [] : ['DROPBOX_REFRESH_TOKEN']),
 					],
 				},
 				{ status: 503, headers: { 'Cache-Control': 'no-store' } },
@@ -103,7 +109,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 		try {
 			const summary = await readDropboxCourseManifestSummary({
 				config,
-				refreshToken: process.env.DROPBOX_REFRESH_TOKEN,
+				refreshToken,
 			})
 			await log.info('dropbox-course-sync.manifest-summary.completed', {
 				requestId,
@@ -141,7 +147,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 
 		const verification = await verifyDropboxConnection({
 			config,
-			refreshToken: process.env.DROPBOX_REFRESH_TOKEN,
+			refreshToken: await getIntegrationRefreshToken('dropbox', process.env.DROPBOX_REFRESH_TOKEN),
 		})
 		await log.info('dropbox-course-sync.verify.completed', {
 			requestId,
@@ -194,13 +200,16 @@ export const GET = withSkill(async (request: NextRequest) => {
 			}
 
 			const storage = await storeDropboxRefreshToken({ refreshToken })
+			const dbNotice = storage.dbStorage
+				? `<p>${integrationTokenStorageNotice(storage.dbStorage)}</p>`
+				: ''
 			if (!storage.ok) {
 				await log.error('dropbox-course-sync.callback.secret-store-failed', {
 					requestId,
 					missingConfig: storage.missingConfig,
 					statuses: storage.statuses,
 				})
-				return page('Dropbox authorization was not stored', '<p>AI Hero could not save the credential to its encrypted runtime configuration. No credential was displayed. Fix the server configuration and start again.</p>', true)
+				return page('Dropbox authorization was not stored', '<p>AI Hero could not save the credential to its encrypted runtime configuration. No credential was displayed. Fix the server configuration and start again.</p>' + dbNotice, true)
 			}
 
 			const redeploy = await redeployAfterDropboxAuthorization()
@@ -210,7 +219,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 					missingConfig: redeploy.missingConfig,
 					status: redeploy.status,
 				})
-				return page('Dropbox credential was stored, but AI Hero was not redeployed', '<p>The credential is safely stored, but the running app cannot use it until a new production deployment succeeds. Trigger a production deployment, then run the verification endpoint.</p>', true)
+				return page('Dropbox credential was stored, but AI Hero was not redeployed', '<p>The credential is safely stored, but the running app cannot use it until a new production deployment succeeds. Trigger a production deployment, then run the verification endpoint.</p>' + dbNotice, true)
 			}
 
 			await log.info('dropbox-course-sync.callback.succeeded', {
@@ -220,7 +229,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 				sharedFolderVerified: verification.sharedFolderBoundary.verified,
 				redeployStatus: redeploy.status,
 			})
-			return page('Dropbox authorized', '<p>AI Hero verified the approved shared folder, stored the refresh credential in encrypted runtime configuration, and triggered a production deployment. You can close this tab.</p>', true)
+			return page('Dropbox authorized', '<p>AI Hero verified the approved shared folder, stored the refresh credential in encrypted runtime configuration, and triggered a production deployment. You can close this tab.</p>' + dbNotice, true)
 		} catch (error) {
 			await log.error('dropbox-course-sync.callback.failed', {
 				requestId,

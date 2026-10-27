@@ -110,13 +110,36 @@ export function createKitUnsubscriber(options: {
 const boundedNextActionId = (intentKey: string): string =>
 	`drovr:${createHash('sha256').update(intentKey).digest('hex').slice(0, 40)}`
 
-/** One receipt row per contact and scope: `all`, or `course:<journeyId>`. */
-export function listUnsubscribeIdempotencyKey(
+const listUnsubscribeScopeKey = (
+	scope: ListUnsubscribeScope,
+	journeyId: string,
+): string => (scope === 'all' ? 'all' : `course:${journeyId}`)
+
+/**
+ * The receipt before it was keyed per intent: one row per contact and scope.
+ * Kept only to recognise a replay of an intent that row already answered.
+ */
+export function legacyListUnsubscribeIdempotencyKey(
 	contactId: string,
 	scope: ListUnsubscribeScope,
 	journeyId: string,
 ): string {
-	return `contact:${contactId}:list-unsubscribe:${scope === 'all' ? 'all' : `course:${journeyId}`}`
+	return `contact:${contactId}:list-unsubscribe:${listUnsubscribeScopeKey(scope, journeyId)}`
+}
+
+/**
+ * One receipt row per contact, scope and drovr intent. drovr re-stops after a
+ * suppression lift with a new intent key, and the lift removes the Kit tag, so
+ * a receipt shared across intents would swallow the second stop. The same
+ * intent replayed lands on the same row.
+ */
+export function listUnsubscribeIdempotencyKey(
+	contactId: string,
+	scope: ListUnsubscribeScope,
+	journeyId: string,
+	intentKey: string,
+): string {
+	return `${legacyListUnsubscribeIdempotencyKey(contactId, scope, journeyId)}:${boundedNextActionId(intentKey)}`
 }
 
 export async function acceptListUnsubscribe(args: {
@@ -144,6 +167,7 @@ export async function acceptListUnsubscribe(args: {
 		contact.id,
 		scope,
 		intent.journeyId,
+		intent.idempotencyKey,
 	)
 	// The completion is addressed to the actor that asked: drovr refuses a
 	// completion for another journey, and several actors may ask for `all`.
@@ -166,6 +190,17 @@ export async function acceptListUnsubscribe(args: {
 
 	let row =
 		await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
+	if (!row) {
+		// A row from the per-contact days answers only the intent it recorded.
+		const legacy = await args.repository.findSideEffectIntentByIdempotencyKey(
+			legacyListUnsubscribeIdempotencyKey(contact.id, scope, intent.journeyId),
+		)
+		const legacyIntentKey = (legacy?.metadata.drovr as { intentKey?: unknown } | undefined)
+			?.intentKey
+		if (legacy?.status === 'completed' && legacyIntentKey === intent.idempotencyKey) {
+			return completionFor(legacy)
+		}
+	}
 	if (row?.status === 'completed') return completionFor(row)
 	if (!row) {
 		try {

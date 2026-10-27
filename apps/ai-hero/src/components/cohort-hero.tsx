@@ -2,14 +2,18 @@ import * as React from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { WaitlistForm } from '@/components/cohort-waitlist-form'
+import { C5SaleSwitch } from '@/components/c5-sale-switch'
 import { formatStartsAt } from '@/components/landing/format'
 import { BADGE_NEUTRAL, BADGE_OUTLINE, TYPE } from '@/components/landing/type'
 import { DiscountCountdown } from '@/components/pricing/discount-countdown'
 import { getCachedCohort } from '@/lib/cohorts-query'
+import { formatOpensIn, upcomingEnrollmentOpening } from '@/lib/cohort-opening'
 import {
+	FLAGSHIP_ANNOUNCED,
 	FLAGSHIP_ENROLLING,
 	FLAGSHIP_HERO,
 	FLAGSHIP_SALE,
+	FLAGSHIP_WAITING,
 	FLAGSHIP_WAITLIST,
 } from '@/lib/courses-content'
 import type { CoursesHeroState } from '@/lib/courses-hero-state'
@@ -67,12 +71,17 @@ import { cn } from '@coursebuilder/utils/cn'
  *    as the newsletter CTA in the nav, which de-emphasized both. The gold now
  *    belongs to the one action.
  *
- * ## The four states
+ * ## The five states
  *
  * All resolved on the server, never a client toggle. Rendering "join the
  * waitlist" while seats are on sale is the failure mode worth the branches.
  *
  * - **Waitlist** (between cohorts) — the Kit form, inline.
+ * - **Announced** — the next cohort has an opening date and seats are not on
+ *   sale yet. The same form, under the date instead of "dates to follow", and
+ *   the start date joins the facts.
+ * - **On the waitlist** — the reader already joined (either of the two states
+ *   above). A status in place of the form, and a button to the cohort page.
  * - **Purchasable** — a button to the cohort page, which is where buying
  *   happens. The only state where a link beats a form.
  * - **On sale** — the discount and its deadline, and no price: PPP makes a
@@ -132,9 +141,15 @@ export async function CohortHero({
 	// else on this page reads off this one boolean.
 	const isOpen = isPurchasable && Boolean(flagship)
 
-	// Already on this cohort's waitlist. The ask would otherwise be a request to
-	// do something they did, on the page they land on when they come back to
-	// check. The hero keeps its shape and drops the ask.
+	// Announced: dated, not yet on sale. `isOpen` wins, so a cached summary
+	// that still carries a date which has since passed cannot print it.
+	const now = new Date()
+	const opens = isOpen ? null : upcomingEnrollmentOpening(flagship, now)
+	const opensLabel = opens ? formatOpensIn(opens, timezone, now) : null
+
+	// Already on this cohort's waitlist. The form would be a request to do
+	// something they did, on the page they land on when they come back to
+	// check, so the ask turns into a status with a button to the cohort page.
 	const subscriber = !isOpen ? await getSubscriberForGating() : null
 	const alreadyWaiting = isOnCohortWaitlist(subscriber, flagship?.productName)
 
@@ -198,28 +213,56 @@ export async function CohortHero({
 					    — and now that the name is the `h1` and the cohort's own
 					    description sits under it, this was a third block of prose making
 					    the argument a second time before the reader reached the ask. */}
-					{alreadyWaiting ? null : (
-						<Ask
-							isOpen={isOpen}
-							href={href}
-							sale={sale}
-							productName={flagship?.productName ?? title}
-							knownIdentity={Boolean(subscriber?.email_address)}
-							surface={
-								headingLevel === 'h1' ? 'courses-cohort' : 'homepage-cohort'
-							}
-						/>
-					)}
+					<C5SaleSwitch
+						fallback={
+							<Ask
+								isOpen={isOpen}
+								isWaiting={alreadyWaiting}
+								href={href}
+								sale={sale}
+								opensLabel={opensLabel}
+								productName={flagship?.productName ?? title}
+								knownIdentity={Boolean(subscriber?.email_address)}
+								surface={
+									headingLevel === 'h1' ? 'courses-cohort' : 'homepage-cohort'
+								}
+							/>
+						}
+					>
+						<Link
+							href="/s/c5-site-cta"
+							className={cn(
+								TYPE.meta,
+								'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover mt-6 inline-flex min-h-11 items-center rounded-[9px] px-5 py-3 font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2',
+							)}
+						>
+							Join the cohort
+						</Link>
+					</C5SaleSwitch>
 				</div>
 
 				{/* The rail. Not a second ask — the product's face, the route to the
 				    page that sells it, and the facts a buyer checks.
 
+				    Stacked (a phone, or any width without room for two columns) it
+				    leads when the block is one section of a longer page: the
+				    artwork and the facts first, then the name and the ask. Under the
+				    text it arrived a full screen down, after the reader had already
+				    been asked to act on something they had not seen. Where the
+				    cohort is the page's `h1` the name still leads, as it does on the
+				    workshop hero that shares that slot. The source order stays text
+				    first either way, which is the order a screen reader should get.
+
 				    The facts moved here from under the pitch. In the left column they
 				    sat between the description and the signup, which made them a toll
 				    gate on the way to the one thing this page wants; in the rail they
 				    are visible immediately, beside the pitch rather than after it. */}
-				<div className="flex flex-col gap-8">
+				<div
+					className={cn(
+						'flex flex-col gap-8',
+						headingLevel === 'h2' && '@[1000px]:order-none order-first',
+					)}
+				>
 					{image ? (
 						<Link
 							href={href}
@@ -275,19 +318,51 @@ export async function CohortHero({
  */
 function Ask({
 	isOpen,
+	isWaiting,
 	href,
 	sale,
+	opensLabel,
 	productName,
 	surface,
 	knownIdentity,
 }: {
 	isOpen: boolean
+	/** The reader is already on this cohort's waitlist. Never true when open. */
+	isWaiting: boolean
 	href: string
 	sale: CoursesHeroState['sale']
+	/** When an announced cohort opens, e.g. "in 13 days (Oct 26 at 12:01 AM PDT)". Else null. */
+	opensLabel: string | null
 	productName: string
 	surface: 'homepage-cohort' | 'courses-cohort'
 	knownIdentity: boolean
 }) {
+	// One state, one set of words. Open and waiting end in a button to the
+	// cohort page; the other two end in the form.
+	const copy = isOpen
+		? FLAGSHIP_ENROLLING
+		: isWaiting
+			? {
+					badge: FLAGSHIP_WAITING.badge,
+					heading: opensLabel
+						? FLAGSHIP_ANNOUNCED.heading(opensLabel)
+						: FLAGSHIP_WAITING.heading,
+					description: opensLabel
+						? FLAGSHIP_WAITING.announcedDescription
+						: FLAGSHIP_WAITING.description,
+					ctaLabel: FLAGSHIP_WAITING.ctaLabel,
+				}
+			: {
+					badge: FLAGSHIP_WAITLIST.badge,
+					heading: opensLabel
+						? FLAGSHIP_ANNOUNCED.heading(opensLabel)
+						: FLAGSHIP_WAITLIST.heading,
+					description: opensLabel
+						? FLAGSHIP_ANNOUNCED.description
+						: FLAGSHIP_WAITLIST.description,
+					ctaLabel: null,
+				}
+
 	return (
 		// No rule above it. A hairline is this design's section divider, so one
 		// between the pitch and the ask read as the hero ending and something else
@@ -299,7 +374,7 @@ function Ask({
 				    the newsletter CTA in the nav, "so de-emphasizes it". The gold in
 				    this viewport belongs to the one thing you click. */}
 				<span className={cn(TYPE.badge, BADGE_NEUTRAL, 'inline-flex w-fit')}>
-					{isOpen ? FLAGSHIP_ENROLLING.badge : FLAGSHIP_WAITLIST.badge}
+					{copy.badge}
 				</span>
 				{sale ? (
 					<span
@@ -313,13 +388,9 @@ function Ask({
 					</span>
 				) : null}
 			</div>
-			<h2 className={cn(TYPE.subhead, 'mb-2')}>
-				{isOpen ? FLAGSHIP_ENROLLING.heading : FLAGSHIP_WAITLIST.heading}
-			</h2>
+			<h2 className={cn(TYPE.subhead, 'mb-2')}>{copy.heading}</h2>
 			<p className={cn(TYPE.metaProse, 'text-[color:var(--ah-fg-muted)]')}>
-				{isOpen
-					? FLAGSHIP_ENROLLING.description
-					: FLAGSHIP_WAITLIST.description}
+				{copy.description}
 			</p>
 
 			{sale ? (
@@ -335,9 +406,10 @@ function Ask({
 			) : null}
 
 			<div className="mt-4">
-				{isOpen ? (
-					// The one state where a link beats a form: there is a page to buy
-					// on, and a waitlist form would be a detour around the sale.
+				{copy.ctaLabel ? (
+					// Where a link beats a form: seats are on sale and there is a page
+					// to buy on, or the reader already joined and the form has nothing
+					// left to ask.
 					<Link
 						href={href}
 						className={cn(
@@ -345,7 +417,7 @@ function Ask({
 							'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring group inline-flex h-[46px] items-center justify-center gap-2 rounded-[9px] px-6 font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
 						)}
 					>
-						{FLAGSHIP_ENROLLING.ctaLabel}
+						{copy.ctaLabel}
 						<ArrowRight
 							aria-hidden
 							className="ease-out-quart size-4 shrink-0 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
@@ -386,7 +458,8 @@ function Ask({
  *
  * "Next dates" drops out entirely between cohorts. It used to read "Announced
  * to the list first", which — with the form standing right above it — is the
- * form's own promise said twice.
+ * form's own promise said twice. An announced cohort has a real date, so the
+ * fact is back for it.
  */
 function Facts({
 	alumniLabel,
@@ -409,7 +482,10 @@ function Facts({
 		// Same reasoning as the ask: no rule. In the rail the facts already sit
 		// under the image with a gap between them, and a hairline there fenced
 		// them off from the block they describe.
-		<dl className="flex flex-wrap gap-x-10 gap-y-5">
+		// Two columns at phone width only: left to wrap on their own there, three
+		// facts became three rows, a screen of captions between the artwork and
+		// the name. Two columns hold one to three facts without a hole.
+		<dl className="@[520px]:flex @[520px]:flex-wrap @[520px]:gap-x-10 grid grid-cols-2 gap-x-8 gap-y-5">
 			{alumniLabel ? (
 				<Fact label={FLAGSHIP_HERO.trainedLabel}>
 					<span className={TYPE.stat}>{alumniLabel}</span>
@@ -418,7 +494,7 @@ function Facts({
 			<Fact label={FLAGSHIP_HERO.formatLabel}>
 				<span className={TYPE.bodyTight}>{FLAGSHIP_HERO.formatValue}</span>
 			</Fact>
-			{isOpen ? (
+			{isOpen || (startsInFuture && startsAt) ? (
 				<Fact label={FLAGSHIP_HERO.datesLabel}>
 					<span className={TYPE.bodyTight}>
 						{startsInFuture && startsAt

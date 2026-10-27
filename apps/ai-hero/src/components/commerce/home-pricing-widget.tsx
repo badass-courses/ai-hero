@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { BuyPathPricingBeacon } from '@/lib/buy-path/beacons'
 import Link from 'next/link'
 import { CheckCircle2Icon } from 'lucide-react'
 import pluralize from 'pluralize'
@@ -14,6 +15,8 @@ import type {
 	PricingOptions,
 } from '@coursebuilder/commerce/types'
 
+import { GatedPPPToggle } from './regional-toggle-gate'
+import { GatedBuyButton } from './gated-buy-button'
 import { CheckoutSurveyBuyButton } from './checkout-survey-buy-button'
 import { ProductPricingFeatures } from './product-pricing-features'
 
@@ -53,6 +56,7 @@ export const PricingWidget: React.FC<{
 			pricingDataLoader={pricingDataLoader}
 			{...commerceProps}
 		>
+			<BuyPathPricingBeacon productId={product.id} />
 			<Pricing.Product className="w-full">
 				<Pricing.Purchased className="gap-1">
 					<Link
@@ -69,9 +73,9 @@ export const PricingWidget: React.FC<{
 					<Pricing.BuyMoreSeats className="pt-5">
 						<Pricing.TeamQuantityInput className="mb-0" label="Quantity" />
 						<Pricing.Price className="scale-75" />
-						<Pricing.BuyButton className="via-primary bg-linear-to-b mt-3 from-blue-500 to-blue-700 shadow-sm">
+						<GatedBuyButton className="via-primary bg-linear-to-b mt-3 from-blue-500 to-blue-700 shadow-sm">
 							Buy Additional Seats
-						</Pricing.BuyButton>
+						</GatedBuyButton>
 					</Pricing.BuyMoreSeats>
 					<Pricing.BuyMoreSeatsToggle className="text-primary h-12 w-full px-5 py-3 text-base" />
 				</Pricing.Purchased>
@@ -86,7 +90,7 @@ export const PricingWidget: React.FC<{
 					<Pricing.GuaranteeBadge />
 					<Pricing.LiveRefundPolicy />
 					<Pricing.SaleCountdown className="mt-6 w-full rounded border p-5" />
-					<Pricing.PPPToggle className="mt-5" />
+					<GatedPPPToggle className="mt-5" />
 					<ProductPricingFeatures productType={product.type} workshops={[]} />
 				</Pricing.Details>
 			</Pricing.Product>

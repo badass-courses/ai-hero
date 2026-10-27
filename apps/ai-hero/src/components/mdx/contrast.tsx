@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { TYPE } from '@/components/landing/type'
+import { Check, X } from 'lucide-react'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 
@@ -10,6 +11,12 @@ export type ContrastProps = {
 	right: string
 	leftItems: string[]
 	rightItems: string[]
+	/**
+	 * Draws a red cross on the left items and a green check on the right ones
+	 * instead of the dots. For a before/after pair, where the left column is a
+	 * state the reader wants out of rather than a thing they can skip.
+	 */
+	marks?: boolean
 	className?: string
 }
 
@@ -36,6 +43,7 @@ export function Contrast({
 	right,
 	leftItems,
 	rightItems,
+	marks = false,
 	className,
 }: ContrastProps) {
 	return (
@@ -52,6 +60,7 @@ export function Contrast({
 				headingClassName="text-[color:var(--ah-fg-label)]"
 				itemClassName="text-[color:var(--ah-fg-muted)]"
 				dotClassName="bg-foreground/25"
+				mark={marks ? 'no' : undefined}
 			/>
 			<Column
 				heading={right}
@@ -62,6 +71,7 @@ export function Contrast({
 				// The gold fill, not `text-primary` — a dot is a fill, and in light
 				// mode `--primary` is ink (DESIGN rule 7).
 				dotClassName="bg-accent-fill/70"
+				mark={marks ? 'yes' : undefined}
 			/>
 		</div>
 	)
@@ -74,6 +84,7 @@ function Column({
 	headingClassName,
 	itemClassName,
 	dotClassName,
+	mark,
 }: {
 	heading: string
 	items: string[]
@@ -81,7 +92,9 @@ function Column({
 	headingClassName?: string
 	itemClassName?: string
 	dotClassName?: string
+	mark?: 'yes' | 'no'
 }) {
+	const Glyph = mark === 'yes' ? Check : X
 	return (
 		<div className={cn('px-5 pb-6 pt-5 sm:px-[22px]', className)}>
 			<div className={cn(TYPE.groupLabel, 'mb-4', headingClassName)}>{heading}</div>
@@ -89,17 +102,36 @@ function Column({
 				{items.map((item) => (
 					<li
 						key={item}
-						className={cn(TYPE.metaProse, 'flex gap-3', itemClassName)}
+						className={cn(
+							TYPE.metaProse,
+							'flex',
+							mark ? 'gap-2.5' : 'gap-3',
+							itemClassName,
+						)}
 					>
-						<span
-							aria-hidden
-							// `mt-2` puts the dot on the first line's optical centre; it
-							// is a marker, not a bullet the flexbox should baseline.
-							className={cn(
-								'mt-2 size-[5px] flex-none rounded-full',
-								dotClassName,
-							)}
-						/>
+						{mark ? (
+							<Glyph
+								aria-hidden
+								// `mt-[3px]` centres a 16px glyph on the 22.75px line.
+								className={cn(
+									'mt-[3px] size-4 flex-none',
+									mark === 'yes'
+										? 'text-[color:var(--ah-mark-yes)]'
+										: 'text-[color:var(--ah-mark-no)]',
+								)}
+								strokeWidth={2.4}
+							/>
+						) : (
+							<span
+								aria-hidden
+								// `mt-2` puts the dot on the first line's optical centre; it
+								// is a marker, not a bullet the flexbox should baseline.
+								className={cn(
+									'mt-2 size-[5px] flex-none rounded-full',
+									dotClassName,
+								)}
+							/>
+						)}
 						{item}
 					</li>
 				))}

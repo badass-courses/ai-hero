@@ -3,7 +3,7 @@
 import * as React from 'react'
 import { useModuleProgress } from '@/app/(content)/_components/module-progress-provider'
 import type { Lesson } from '@/lib/lessons'
-import { setProgressForResource } from '@/lib/progress'
+import { api } from '@/trpc/react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { CheckIcon } from 'lucide-react'
 
@@ -11,8 +11,7 @@ import { Label, Switch } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 import type { AbilityForResource } from '@coursebuilder/utils/current-ability-rules'
 
-// Same easing as CopyPageButton, so the two icon buttons in the lesson
-// controls read as one family.
+// The toggle's own ease-out for its icon swap.
 const easeOutQuint = [0.22, 1, 0.36, 1] as const
 
 export function ModuleLessonProgressToggle({
@@ -40,6 +39,9 @@ export function ModuleLessonProgressToggle({
 
 	const { moduleProgress, addLessonProgress, removeLessonProgress } =
 		useModuleProgress()
+	// tRPC, not a server action: the router queues server actions with
+	// navigations, and one settling mid-navigation replays the old page.
+	const { client } = api.useUtils()
 
 	const isCompleted = Boolean(
 		moduleProgress?.completedLessons?.some(
@@ -67,7 +69,7 @@ export function ModuleLessonProgressToggle({
 		// never recorded.
 		startTransition(async () => {
 			try {
-				const result = await setProgressForResource({
+				const result = await client.progress.setCompleted.mutate({
 					resourceId: lesson.id,
 					isCompleted: checked,
 				})
@@ -103,7 +105,7 @@ export function ModuleLessonProgressToggle({
 					setCompleted(!isCompleted)
 				}}
 				className={cn(
-					'hover:bg-muted/50 flex h-10 items-center justify-center border-l px-3.5 transition sm:hidden',
+					'hover:bg-hover flex h-10 items-center justify-center border-l px-3.5 transition sm:hidden',
 					// Completed: the tint defines the cell, and the alpha hairline
 					// over the tinted bg reads brighter than the other seams — keep
 					// the border box (transparent) so the toggle never shifts 1px.
@@ -137,7 +139,7 @@ export function ModuleLessonProgressToggle({
 			<Label
 				htmlFor="lesson-progress-toggle"
 				className={cn(
-					'hover:bg-muted/50 hidden h-10 items-center gap-0.5 border-l pl-2 transition hover:cursor-pointer sm:flex sm:h-12',
+					'hover:bg-hover hidden h-10 items-center gap-0.5 border-l pl-2 transition hover:cursor-pointer sm:flex sm:h-12',
 				)}
 			>
 				<Switch

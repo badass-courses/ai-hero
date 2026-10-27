@@ -83,6 +83,9 @@ export default async function ValuePathAnswerPage(props: {
 					return undefined
 				})
 			: undefined
+	if (certificateEligibility?.reason === 'completion-evidence-unavailable') {
+		certificateEligibilityUnavailable = true
+	}
 	const certificateShare =
 		certificateEligibility?.eligible && certificateEligibility.contactId
 			? await findSkillsWorkflowCertificateShare(
@@ -314,7 +317,7 @@ function CertificateTrophyPage({
 						</div>
 						<div className="mt-4 flex justify-end">
 							<a
-								className="focus-visible:ring-ring focus-visible:ring-offset-background inline-flex min-h-11 items-center justify-center gap-2 border border-border bg-background px-4 py-2 font-mono text-xs font-medium uppercase tracking-wider transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+								className="focus-visible:ring-ring focus-visible:ring-offset-background inline-flex min-h-11 items-center justify-center gap-2 border border-border bg-background px-4 py-2 font-mono text-xs font-medium uppercase tracking-wider transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
 								download
 								href={downloadUrl}
 							>
@@ -334,7 +337,8 @@ function CertificateTrophyPage({
 						</div>
 						<div className="max-w-[70ch] space-y-6">
 							<p className="text-xl font-medium leading-relaxed tracking-tight sm:text-2xl">
-								{answerPage.fields.headline ?? 'Noted. Your certificate is ready.'}
+								{answerPage.fields.headline ??
+									'Noted. Your certificate is ready.'}
 							</p>
 							{answerPage.fields.body ? (
 								<p className="text-base leading-relaxed opacity-80 sm:text-lg">

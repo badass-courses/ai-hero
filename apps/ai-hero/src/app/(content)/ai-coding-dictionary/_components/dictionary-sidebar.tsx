@@ -53,7 +53,7 @@ function DictionarySectionNav({ sections }: { sections: DictionarySection[] }) {
 									'group flex items-center justify-between gap-3 px-6 py-3 text-sm transition-colors',
 									isSearching
 										? 'text-muted-foreground/50 pointer-events-none'
-										: 'text-muted-foreground hover:text-foreground hover:bg-muted/30',
+										: 'text-muted-foreground hover:text-foreground hover:bg-hover',
 									isActive && 'text-foreground bg-muted/40',
 								)}
 							>

@@ -1,4 +1,7 @@
 import type { Metadata, ResolvingMetadata } from 'next'
+import { C5SaleCta } from '@/components/c5-sale-cta'
+import { C5SaleSwitch } from '@/components/c5-sale-switch'
+import { metaDescription } from '@/lib/meta-description'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { ContentReadTracker } from '@/components/content-read-tracker'
@@ -99,6 +102,10 @@ export default async function DictionaryEntryPage({ params }: Props) {
 
 					<DictionaryEntryBody body={entry.body} />
 
+					<C5SaleSwitch>
+						<C5SaleCta />
+					</C5SaleSwitch>
+
 					<DictionaryEntryNav previous={previousEntry} next={nextEntry} />
 
 					<PrimaryNewsletterCta
@@ -185,7 +192,7 @@ function NavTile({
 		<Link
 			href={`/ai-coding-dictionary/${entry.slug}`}
 			prefetch={false}
-			className="bg-background hover:bg-muted/40 group relative flex min-h-32 flex-col justify-between gap-4 p-8 transition-colors sm:p-10"
+			className="bg-background hover:bg-hover group relative flex min-h-32 flex-col justify-between gap-4 p-8 transition-colors sm:p-10"
 		>
 			<span className="text-muted-foreground group-hover:text-foreground inline-flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-wider transition-colors">
 				{isPrev ? (
@@ -233,7 +240,11 @@ export async function generateMetadata(
 	}
 
 	const title = `${entry.title} | ${AI_CODING_DICTIONARY_TITLE}`
-	const description = entry.description || AI_CODING_DICTIONARY_DESCRIPTION
+	const description = metaDescription(
+		(entry.plainDescription ?? entry.description) || AI_CODING_DICTIONARY_DESCRIPTION,
+		155,
+		{ plainText: entry.plainDescription !== undefined },
+	)
 	const canonicalPath = `/ai-coding-dictionary/${entry.slug}`
 	const ogImage = getAiCodingDictionaryOgImageUrl(title)
 

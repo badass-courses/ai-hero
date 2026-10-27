@@ -4,6 +4,11 @@ import { google } from 'googleapis'
 import { OAuth2Client } from 'google-auth-library'
 import { getServerAuthSession } from '@/server/auth'
 import { log, serializeError } from '@/server/logger'
+import {
+	getIntegrationRefreshToken,
+	integrationTokenStorageNotice,
+	putIntegrationRefreshToken,
+} from '@/lib/integration-token-store'
 import { withSkill } from '@/server/with-skill'
 
 const SCOPES = [
@@ -12,6 +17,17 @@ const SCOPES = [
 ]
 
 const REDIRECT_URI = 'https://www.aihero.dev/api/analytics/youtube-auth'
+function escapeHtml(value: string) {
+	const entities: Record<string, string> = {
+		'&': '&amp;',
+		'<': '&lt;',
+		'>': '&gt;',
+		'"': '&quot;',
+		"'": '&#39;',
+	}
+	return value.replace(/[&<>"']/g, (character) => entities[character]!)
+}
+
 const STATE_COOKIE_NAME = 'youtube_auth_state'
 const STATE_COOKIE_MAX_AGE_SECONDS = 60 * 10
 const STATE_COOKIE_PATH = '/api/analytics/youtube-auth'
@@ -112,7 +128,10 @@ async function createHtmlResponse(
 async function verifyStoredYouTubeAuth(): Promise<StoredAuthVerification> {
 	const clientId = process.env.YOUTUBE_OAUTH_CLIENT_ID || null
 	const clientSecret = process.env.YOUTUBE_OAUTH_CLIENT_SECRET || null
-	const refreshToken = process.env.YOUTUBE_ANALYTICS_REFRESH_TOKEN || null
+	const refreshToken = (await getIntegrationRefreshToken(
+		'youtube_analytics',
+		process.env.YOUTUBE_ANALYTICS_REFRESH_TOKEN,
+	)) || null
 	const missingEnvKeys = [
 		!clientId ? 'YOUTUBE_OAUTH_CLIENT_ID' : null,
 		!clientSecret ? 'YOUTUBE_OAUTH_CLIENT_SECRET' : null,
@@ -245,7 +264,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 	const verify = url.searchParams.get('verify') === '1'
 	const stateFromQuery = url.searchParams.get('state')
 	const stateFromCookie = request.cookies.get(STATE_COOKIE_NAME)?.value || null
-	const requestId = stateFromQuery || stateFromCookie || randomUUID()
+	const requestId = randomUUID()
 	const requestedScopes = SCOPES
 	const callbackScopes = parseScopes(url.searchParams.get('scope'))
 
@@ -354,6 +373,13 @@ export const GET = withSkill(async (request: NextRequest) => {
 					true,
 				)
 			}
+
+			const dbStorageNotice = integrationTokenStorageNotice(
+				await putIntegrationRefreshToken(
+					'youtube_analytics',
+					tokens.refresh_token,
+				),
+			)
 
 			const vercelToken = process.env.VERCEL_API_TOKEN
 			const projectId = process.env.VERCEL_CB_PROJECT_ID
@@ -508,7 +534,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 					stored
 						? '<p style="color:#16a34a;font-weight:600">Refresh token stored automatically. No further action needed.</p>'
 						: '<p>Authorization succeeded, but token storage did not fully complete. Check the youtube-auth logs or /api/analytics/youtube-auth?verify=1 before asking Matt to retry.</p>'
-				}<p style="color:#666;font-size:13px;margin-top:16px">Analytics plus YouTube channel management access granted. This refresh token stays valid until revoked. You can close this tab.</p>`,
+				}${dbStorageNotice ? `<p>${dbStorageNotice}</p>` : ''}<p style="color:#666;font-size:13px;margin-top:16px">Analytics plus YouTube channel management access granted. This refresh token stays valid until revoked. You can close this tab.</p>`,
 				true,
 			)
 		} catch (err) {
@@ -519,7 +545,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 			})
 			return createHtmlResponse(
 				'<h1>❌ Token exchange failed</h1>',
-				`<p>${err instanceof Error ? err.message : 'Unknown error'}</p>`,
+				`<p>${escapeHtml(err instanceof Error ? err.message : 'Unknown error')}</p>`,
 				true,
 			)
 		}
@@ -547,7 +573,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 	})
 
 	await emitAuthLog('info', 'youtube-auth.start.redirecting', {
-		requestId: state,
+		requestId,
 		requestedScopes,
 		redirectUri: REDIRECT_URI,
 	})

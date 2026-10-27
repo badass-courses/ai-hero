@@ -7,9 +7,14 @@ import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
 import type { ContactProfileVersion } from './contact-profile-version'
 import {
 	birthThenRedeliver,
+	contactSyncStarterRequests,
 	contactSyncRetryRequest,
 } from './contact-sync-straggler-retry'
 import { parseDrovrProfileSyncConfig } from './drovr-contact-profile-sync-requests'
+import {
+	sendContactSyncStarters,
+	stragglerOwnershipEnabled,
+} from './contact-sync-starter-batches'
 
 import {
 	findEvergreenOffer,
@@ -238,6 +243,11 @@ export function kitIdentityOf(
 }
 
 export type ContactProfileSnapshot = {
+	/**
+	 * Set only for an unsubscribed contact: drovr refuses their profile,
+	 * links and offers forever, so the sync holds them (stops still flow).
+	 */
+	unsubscribed?: true
 	occurredAt: string
 	profile: ContactProfile
 	links: ContactLinksIssue[]
@@ -288,6 +298,9 @@ export async function readContactProfileSnapshot(args: {
 		origin: args.baseUrl,
 	})
 	return {
+		...(standing.reasons.includes('unsubscribed')
+			? { unsubscribed: true as const }
+			: {}),
 		occurredAt: args.now,
 		profile: {
 			email: standing.email,
@@ -424,6 +437,10 @@ export async function runContactProfileSync(args: {
 		}),
 	)) as ContactProfileSnapshot | undefined
 	if (!snapshot) return { status: 'skipped', reason: 'contact-missing' }
+	// Held, not pushed: no send, no birth, no retry chain. The stop and
+	// suppression events travel on their own path.
+	if (snapshot.unsubscribed)
+		return { status: 'skipped', reason: 'unsubscribed-held' }
 	// drovr ignores a profile without an email as malformed (contract §2);
 	// with none, it falls back to live personalize, which holds the contact.
 	if (!snapshot.profile.email.trim())
@@ -471,15 +488,27 @@ export async function runContactProfileSync(args: {
 			(args.now ?? Date.now)(),
 		)) as number
 		// The retry may vouch for this version only if nothing was rejected.
-		await args.step.sendEvent(
-			'defer-refused',
-			contactSyncRetryRequest(
-				deferred,
-				1,
-				at,
-				rejected === 0 ? { contactId, profileVersion } : undefined,
-			),
-		)
+		if (stragglerOwnershipEnabled(args.env)) {
+			await sendContactSyncStarters(
+				args.step,
+				'defer-refused',
+				contactSyncStarterRequests(
+					deferred,
+					at,
+					rejected === 0 ? { contactId, profileVersion } : undefined,
+				),
+			)
+		} else {
+			await args.step.sendEvent(
+				'defer-refused',
+				contactSyncRetryRequest(
+					deferred,
+					1,
+					at,
+					rejected === 0 ? { contactId, profileVersion } : undefined,
+				),
+			)
+		}
 		return {
 			status: 'deferred',
 			reason: deferred[0]!.reason,

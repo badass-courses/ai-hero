@@ -1,0 +1,19 @@
+services:
+  db:
+    image: mysql:8.0.43
+    environment:
+      MYSQL_ROOT_PASSWORD: root-local-only
+      MYSQL_DATABASE: commerce_rig
+      MYSQL_USER: rig
+      MYSQL_PASSWORD: rig-local-only
+    ports:
+      - "127.0.0.1:${RIG_DB_PORT:?rig sets this port}:3306"
+    volumes:
+      - db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_ROOT_PASSWORD mysqladmin ping -h localhost --silent"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+volumes:
+  db:

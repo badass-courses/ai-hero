@@ -428,6 +428,21 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 			row.contactId === contactId && row.status === 'held-for-exit' &&
 			(row.type === 'send-shadow-newsletter-email' || row.type === 'subscribe-evergreen-list'))
 	}
+	findExitHeldSideEffectIntentsByType(args: {
+		type: SideEffectIntent['type']
+		list: string
+		limit: number
+		after?: { createdAt: string; id: string }
+	}) {
+		const limit = Number.isFinite(args.limit) && args.limit >= 1 ? Math.floor(args.limit) : 0
+		const key = (row: { createdAt: string; id: string }) => `${row.createdAt}\u0000${row.id}`
+		return Array.from(this.sideEffectIntents.values())
+			.filter((row) => row.provider === 'kit' && row.type === args.type &&
+				row.status === 'held-for-exit' && row.metadata.list === args.list &&
+				(!args.after || key(row) > key(args.after)))
+			.sort((left, right) => key(left).localeCompare(key(right)))
+			.slice(0, limit)
+	}
 	createSideEffectIntent(input: SideEffectIntent) {
 		const record = {
 			...input,

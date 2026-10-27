@@ -1,6 +1,7 @@
 import { headers } from 'next/headers'
 import { courseBuilderAdapter, db } from '@/db'
 import { entitlementTypes } from '@/db/schema'
+import { AUTHORITATIVE_PRODUCT_IDS } from '@/lib/c5-pricing/decision'
 import { authorizeExclusiveCouponSelection } from '@/lib/exclusive-coupon-authorization'
 import { getServerAuthSession } from '@/server/auth'
 import { createTRPCRouter, publicProcedure } from '@/trpc/api/trpc'
@@ -333,12 +334,17 @@ export const pricingRouter = createTRPCRouter({
 				process.env.DEFAULT_COUNTRY ||
 				'US'
 
-			let upgradeFromPurchaseId = await checkForAnyAvailableUpgrades({
-				upgradeFromPurchaseId: _upgradeFromPurchaseId,
-				productId,
-				purchases,
-				country,
-			})
+			// An authoritative product has no upgrade path: its credit replaces
+			// the upgrade discount, and Course Builder refuses the upgrade.
+			const upgradable = !AUTHORITATIVE_PRODUCT_IDS.has(productId)
+			let upgradeFromPurchaseId = upgradable
+				? await checkForAnyAvailableUpgrades({
+						upgradeFromPurchaseId: _upgradeFromPurchaseId,
+						productId,
+						purchases,
+						country,
+					})
+				: undefined
 
 			const restrictedPurchase = purchases.find((purchase) => {
 				return (
@@ -346,7 +352,7 @@ export const pricingRouter = createTRPCRouter({
 				)
 			})
 
-			if (restrictedPurchase) {
+			if (restrictedPurchase && upgradable) {
 				const validPurchase = purchases.find((purchase) => {
 					return purchase.productId === productId && purchase.status === 'Valid'
 				})

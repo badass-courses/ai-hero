@@ -1,4 +1,6 @@
 import { mysqlTable } from '@/db/mysql-table'
+export { purchaseDecision } from './purchase-decision-schema'
+export { giftCodeSlot, giftShareLink } from './gift-code-schema'
 import { relations, sql } from 'drizzle-orm'
 import { CONTACT_EMAIL_STALE_SQL } from '@/lib/subscriber-marketing/contact-email-key-contract'
 import {
@@ -142,6 +144,26 @@ export const checkoutLoginHandoff = mysqlTable(
 		),
 		stateIdx: index('CheckoutLoginHandoff_state_idx').on(table.state),
 	}),
+)
+
+/**
+ * Same-person evidence for a support-completed purchase transfer. Support
+ * verified both accounts belong to one person, so the new account becomes the
+ * invoice payer. Keyed by the upstream transfer id with no foreign key. A
+ * transfer with no row here moves only the holder, as before. Only
+ * support-complete writes it; self-service transfers never do.
+ */
+export const purchaseTransferSamePerson = mysqlTable(
+	'PurchaseTransferSamePerson',
+	{
+		transferId: varchar('transferId', { length: 191 }).notNull().primaryKey(),
+		verifiedBy: varchar('verifiedBy', { length: 64 }).notNull(),
+		reason: text('reason').notNull(),
+		proofRef: varchar('proofRef', { length: 255 }).notNull(),
+		createdAt: timestamp('createdAt', { mode: 'date', fsp: 3 })
+			.defaultNow()
+			.notNull(),
+	},
 )
 
 /**
@@ -730,6 +752,10 @@ export const contactEvent = mysqlTable(
 		eventTypeProviderReferenceIdx: index(
 			'ContactEvent_eventType_providerReference_idx',
 		).on(table.eventType, table.providerReference),
+		// Lookups by providerEventId alone cannot use the (provider, providerEventId) index.
+		providerEventIdIdx: index('idx_ContactEvent_on_providerEventId').on(
+			table.providerEventId,
+		),
 	}),
 )
 
@@ -867,6 +893,7 @@ export {
 } from './contact-sync-schema'
 
 export { drovrOutbox } from './drovr-outbox-schema'
+export { integrationToken } from './integration-token-schema'
 
 export {
 	evergreenOfferJourneyAttempt,

@@ -20,13 +20,9 @@ import {
 import { cn } from '@coursebuilder/utils/cn'
 
 import { useCohortOffer } from '../navigation/nav-cta-context'
-import {
-	FEATURED_PROMO,
-	isPromoActive,
-	type Promo,
-} from '../navigation/promo-config'
+import { type Promo } from '../navigation/promo-config'
 import { NAV_ICONS, SkillsIcon } from '../navigation/sidebar/nav-icons'
-import { useTimedActivation } from '../navigation/timed-promo-bar-switch'
+import { useFeaturedPromo } from '../navigation/timed-promo-bar-switch'
 import {
 	Command,
 	CommandEmpty,
@@ -461,11 +457,9 @@ function PalettePromoRow({
 	) => void
 }) {
 	const cohortOffer = useCohortOffer()
-	const featuredPromoActive = useTimedActivation(FEATURED_PROMO, false)
+	const featuredPromo = useFeaturedPromo()
 	const promo = React.useMemo<Promo | null>(() => {
-		if (featuredPromoActive && isPromoActive(FEATURED_PROMO)) {
-			return FEATURED_PROMO
-		}
+		if (featuredPromo) return featuredPromo
 		// A live sale earns the row outright: it is the most time-bounded thing
 		// on the site and the palette is where someone goes when they already
 		// know what they want.
@@ -497,7 +491,7 @@ function PalettePromoRow({
 			}
 		}
 		return PALETTE_PROMO
-	}, [cohortOffer, featuredPromoActive])
+	}, [cohortOffer, featuredPromo])
 
 	if (!promo) return null
 
@@ -516,7 +510,7 @@ function PalettePromoRow({
 			// being the one green thing on a monochrome-plus-gold site, it read as a
 			// system notice rather than as the offer it is. `text-emerald-800` on a
 			// 10% tint was also the palette's worst contrast in light mode.
-			className="group focus-visible:ring-ring bg-muted/40 hover:bg-muted/70 flex w-full items-center gap-2.5 border-t px-4 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
+			className="group focus-visible:ring-ring bg-muted/40 hover:bg-hover flex w-full items-center gap-2.5 border-t px-4 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
 		>
 			{promo.label && (
 				<span

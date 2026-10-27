@@ -1,6 +1,6 @@
 import { contentResource } from '@/db/schema'
 import { and, eq, inArray, sql } from 'drizzle-orm'
-import type { Client as TypesenseClient } from 'typesense'
+import { Errors, type Client as TypesenseClient } from 'typesense'
 
 import type { ContentResource } from '@coursebuilder/core/schemas'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
@@ -156,31 +156,50 @@ export async function writePopularityScores(
 	client: TypesenseClient,
 	collection: string,
 	scores: ReadonlyArray<PopularityScore>,
-): Promise<{ written: number; failed: number }> {
+): Promise<{ written: number; failed: number; skipped: number }> {
 	if (scores.length === 0) {
-		return { written: 0, failed: 0 }
+		return { written: 0, failed: 0, skipped: 0 }
 	}
 
-	const results = (await client
-		.collections(collection)
-		.documents()
-		.import(scores as PopularityScore[], { action: 'emplace' })) as
-		| Array<{ success: boolean }>
-		| string
+	type ImportResult = { success: boolean; code?: number }
+	let results: ImportResult[] | string
+	try {
+		results = (await client
+			.collections(collection)
+			.documents()
+			.import(scores as PopularityScore[], { action: 'update' })) as
+			| ImportResult[]
+			| string
+	} catch (error) {
+		// The SDK throws on any failed row for array input, including a missing
+		// document. Only unwrap per-document results; transport errors must retry.
+		if (!(error instanceof Errors.ImportError)) throw error
+		// The SDK declares importResults as a single failure, but supplies the
+		// full array at runtime (including successes).
+		if (!Array.isArray(error.importResults)) throw error
+		results = error.importResults as ImportResult[]
+	}
 
-	if (typeof results === 'string') {
-		// JSONL string response — count newlines containing "success":true
-		const lines = results.split('\n').filter((l) => l.length > 0)
-		let written = 0
-		for (const line of lines) {
-			if (line.includes('"success":true')) written += 1
-		}
-		return { written, failed: lines.length - written }
+	const rows: ImportResult[] =
+		typeof results === 'string'
+			? results
+					.split('\n')
+					.filter((line) => line.trim())
+					.map((line) => JSON.parse(line))
+			: results
+	if (rows.length !== scores.length) {
+		throw new Error(
+			'Typesense popularity import returned an unexpected result count',
+		)
 	}
 
 	let written = 0
-	for (const r of results) {
-		if (r.success) written += 1
+	let skipped = 0
+	let failed = 0
+	for (const row of rows) {
+		if (row.success === true) written += 1
+		else if (row.success === false && row.code === 404) skipped += 1
+		else failed += 1
 	}
-	return { written, failed: results.length - written }
+	return { written, failed, skipped }
 }

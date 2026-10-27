@@ -74,6 +74,15 @@ import {
 
 type AiHeroWriteDatabase = any
 
+class LearnerFlowContactIdOrderingError extends Error {
+	constructor() {
+		super(
+			'Learner-flow contact IDs must contain only lowercase ASCII letters and digits',
+		)
+		this.name = 'LearnerFlowContactIdOrderingError'
+	}
+}
+
 const AWAITED_DISPATCH_EVENT_TYPES: ReadonlySet<string> = new Set([
 	JOURNEY_OWNER_ASSIGNED_EVENT_TYPE,
 	'purchase.recorded',
@@ -393,6 +402,48 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 			eq(sideEffectIntent.status, 'held-for-exit'),
 			inArray(sideEffectIntent.type, ['send-shadow-newsletter-email', 'subscribe-evergreen-list']),
 		))
+		return rows.map(toSideEffectIntentRecord)
+	}
+
+	async findExitHeldSideEffectIntentsByType(args: {
+		type: SideEffectIntent['type']
+		list: string
+		limit: number
+		after?: { createdAt: string; id: string }
+	}) {
+		const limit =
+			Number.isFinite(args.limit) && args.limit >= 1 ? Math.floor(args.limit) : 0
+		if (limit === 0) return []
+		// createdAt is a whole-second timestamp; compare at that precision so a
+		// cursor carrying milliseconds still ties with its own row.
+		const cursorAt = args.after
+			? new Date(Math.floor(Date.parse(args.after.createdAt) / 1000) * 1000)
+			: undefined
+		const after =
+			args.after && cursorAt
+				? or(
+						gt(sideEffectIntent.createdAt, cursorAt),
+						and(
+							eq(sideEffectIntent.createdAt, cursorAt),
+							gt(sideEffectIntent.id, args.after.id),
+						),
+					)
+				: undefined
+		// provider first: the (provider, type, status) index serves this read.
+		const rows = await this.database
+			.select()
+			.from(sideEffectIntent)
+			.where(
+				and(
+					eq(sideEffectIntent.provider, 'kit'),
+					eq(sideEffectIntent.type, args.type),
+					eq(sideEffectIntent.status, 'held-for-exit'),
+					sql`json_unquote(json_extract(${sideEffectIntent.metadata}, '$.list')) = ${args.list}`,
+					after,
+				),
+			)
+			.orderBy(asc(sideEffectIntent.createdAt), asc(sideEffectIntent.id))
+			.limit(limit)
 		return rows.map(toSideEffectIntentRecord)
 	}
 
@@ -818,9 +869,10 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		}
 	}
 
-	private async findSkillsWorkflowLearnerFlowContactIds(options?: {
-		includeCanary?: boolean
-	}) {
+	private async findSkillsWorkflowLearnerFlowContactIds(
+		options?: { includeCanary?: boolean },
+		pageSize = LEARNER_FLOW_RECORD_PAGE_SIZE,
+	) {
 		const contactIds: string[] = []
 		let cursor: string | undefined
 		for (;;) {
@@ -831,6 +883,9 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 					and(
 						eq(sideEffectIntent.provider, 'kit'),
 						eq(sideEffectIntent.type, 'send-value-path-email'),
+						cursor === undefined
+							? undefined
+							: gt(sideEffectIntent.contactId, cursor),
 						options?.includeCanary
 							? undefined
 							: excludeLearnerFlowCanary({
@@ -838,12 +893,15 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 								}),
 					),
 				)
+				.orderBy(asc(sideEffectIntent.contactId))
+				.limit(pageSize)
 			const entryContactIds = this.database
 				.selectDistinct({ contactId: contactEvent.contactId })
 				.from(contactEvent)
 				.where(
 					and(
 						eq(contactEvent.eventType, 'value-path.entered'),
+						cursor === undefined ? undefined : gt(contactEvent.contactId, cursor),
 						inArray(
 							contactEvent.providerReference,
 							COURSE_VALUE_PATH_SLUGS.map((path) => `value-path:${path}`),
@@ -853,20 +911,32 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 							: excludeLearnerFlowCanary({ contactId: contactEvent.contactId }),
 					),
 				)
-			const learnerIds = intentContactIds
-				.union(entryContactIds)
-				.as('learner_ids')
-			const idRows = await this.database
-				.select({ contactId: learnerIds.contactId })
-				.from(learnerIds)
-				.where(
-					cursor === undefined ? undefined : gt(learnerIds.contactId, cursor),
+				.orderBy(asc(contactEvent.contactId))
+				.limit(pageSize)
+			const rows: Array<Array<{ contactId: string }>> = await Promise.all([
+				intentContactIds,
+				entryContactIds,
+			])
+			// JS code-unit sort must match MySQL utf8mb4_0900_ai_ci (NO PAD),
+			// or the shared cursor could skip IDs. They agree on lowercase ASCII
+			// letters/digits, including mixed-length IDs and shared prefixes.
+			// Compare the entire match because JS `$` also accepts a final newline.
+			if (
+				rows.some((source) =>
+					source.some(
+						(row) => /^[a-z0-9]+$/.exec(row.contactId)?.[0] !== row.contactId,
+					),
 				)
-				.orderBy(asc(learnerIds.contactId))
-				.limit(LEARNER_FLOW_RECORD_PAGE_SIZE)
-			const page = idRows.map((row: { contactId: string }) => row.contactId)
+			) {
+				throw new LearnerFlowContactIdOrderingError()
+			}
+			// Each source contributes at most pageSize distinct IDs. Any ID beyond
+			// either source's page cannot precede the merged page's last ID.
+			const page = [...new Set(rows.flat().map((row) => row.contactId))]
+				.sort()
+				.slice(0, pageSize)
 			contactIds.push(...page)
-			if (page.length < LEARNER_FLOW_RECORD_PAGE_SIZE) return contactIds
+			if (page.length < pageSize) return contactIds
 			cursor = page[page.length - 1]
 		}
 	}

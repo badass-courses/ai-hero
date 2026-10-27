@@ -13,6 +13,8 @@ import { useSession } from 'next-auth/react'
 import { useFeedback } from '@coursebuilder/ui/feedback-widget/feedback-context'
 import { cn } from '@coursebuilder/utils/cn'
 
+import { C5_TITLE, FEATURED_PROMO } from './promo-config'
+import { useFeaturedPromo } from './timed-promo-bar-switch'
 import { ThemeToggle } from './theme-toggle'
 import { useNavLinks } from './use-nav-links'
 
@@ -22,6 +24,8 @@ import { useNavLinks } from './use-nav-links'
  * four are live routes rather than aspirational ones.
  */
 const agentLinks = [
+	{ href: '/developers', label: 'developers' },
+	{ href: '/api', label: 'api' },
 	{ href: '/sitemap.md', label: 'sitemap.md' },
 	{ href: '/llms.txt', label: 'llms.txt' },
 	{ href: '/skills.md', label: 'skills.md' },
@@ -41,6 +45,7 @@ type FooterLinkType =
 	| 'newsletter'
 	| 'account'
 	| 'legal'
+	| 'company'
 
 function trackFooterClick(resource: string | undefined, type: FooterLinkType) {
 	track('navigation_menu_item_click', {
@@ -88,14 +93,12 @@ const dimSiblingsOnHover =
 	'[&:has(a:hover,button:hover)_a:not(:hover)]:opacity-60 [&:has(a:hover,button:hover)_button:not(:hover)]:opacity-60'
 
 function Eyebrow({ children }: { children: React.ReactNode }) {
-	return (
-		<h3 className={cn(TYPE.groupLabel, 'mb-4')}>
-			{children}
-		</h3>
-	)
+	return <h3 className={cn(TYPE.groupLabel, 'mb-4')}>{children}</h3>
 }
 
 function LearnColumn() {
+	const featuredPromo = useFeaturedPromo()
+	const c5Active = featuredPromo === FEATURED_PROMO
 	const navData = useNavLinks()
 	const courses = navData.learn.courses
 	const tutorials = [
@@ -109,13 +112,18 @@ function LearnColumn() {
 			<ul className={cn(linkListClass, dimSiblingsOnHover)}>
 				<li>
 					<Link
-						href="/workshops/ai-coding-crash-course"
+						href={
+							c5Active ? '/s/c5-site-cta' : '/workshops/ai-coding-crash-course'
+						}
 						className={linkClass}
 						onClick={() =>
-							trackFooterClick('AI Coding Crash Course', 'course')
+							trackFooterClick(
+								c5Active ? C5_TITLE : 'AI Coding Crash Course',
+								'course',
+							)
 						}
 					>
-						AI Coding Crash Course
+						{c5Active ? C5_TITLE : 'AI Coding Crash Course'}
 					</Link>
 				</li>
 				{courses.map((course) => (
@@ -331,6 +339,8 @@ function UtilityRow() {
 		},
 		{ href: '/ai-coding-dictionary', label: 'Dictionary', type: 'dictionary' },
 		{ href: '/faq', label: 'FAQ', type: 'legal' },
+		{ href: '/about', label: 'About', type: 'company' },
+		{ href: 'mailto:support@aihero.dev', label: 'Contact', type: 'company' },
 		{ href: '/privacy', label: 'Terms', type: 'legal' },
 	]
 
@@ -372,8 +382,8 @@ function UtilityRow() {
 					TYPE.metaSm,
 					'sm:ml-auto',
 					'h-auto gap-2 rounded-[9px] border-input px-[13px] py-2',
-					'text-[color:var(--ah-fg-subtle)] hover:text-foreground bg-transparent shadow-none dark:bg-transparent',
-					'hover:bg-muted dark:hover:bg-muted sm:aspect-auto',
+					'text-foreground bg-transparent shadow-none dark:bg-transparent',
+					'hover:bg-hover sm:aspect-auto',
 				)}
 			/>
 		</div>

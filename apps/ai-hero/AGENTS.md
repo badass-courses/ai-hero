@@ -21,3 +21,33 @@ Key rules (full detail in `DESIGN.md`):
 **Standing rule (Matt + Joel, 2026-07-16.)** Any change to a customer-facing surface — CTAs, landing pages, signup flows, email copy, pricing pages — ships with a **non-blocking heads-up to Matt in Slack `#cc-matt-p`** (eggheadio, channel `C0211NSK3TP`), before or at ship. Matt: "feel free to experiment, just need a non-blocking heads up when things change." His socials point at these surfaces; silent changes make his callouts wrong.
 
 Non-blocking means: post the note and ship — never wait for a reply. One or two sentences: what changed, where, why, and how it's monitored. Agents without a Slack posting lane put the drafted note in front of Joel instead of skipping it.
+
+## Test database
+
+The guarded `*.mysql.test.ts` suites skip unless their URL env is set. To run one, start a disposable MySQL 8.4 (CI's image and root password) from `apps/ai-hero`:
+
+```sh
+scripts/test-mysql.sh up                 # prints AIH_TEST_MYSQL_SERVER_URL=mysql://root:...@127.0.0.1:<port>/mysql
+scripts/test-mysql.sh schema my_test_db  # creates the database, applies the app schema, prints AIH_TEST_MYSQL_URL=...
+AIH_TEAM_SEATS_MYSQL_URL=<that URL> pnpm exec vitest run -c vitest.config.ts src/lib/team-seat-redemption.mysql.test.ts
+scripts/test-mysql.sh down               # removes this worktree's container
+```
+
+- One container per worktree, `aih-test-mysql-<worktree basename>`, labelled `aih-test-mysql=1`, `--rm`, no volume, on a free loopback port. `down` removes only that container. Never prune or touch other containers; `127.0.0.1:3307` on pennywise belongs to another project.
+- `schema` reuses the commerce rig's generate-overlay-verify path (`scripts/commerce-rig/schema.mjs`), because `drizzle-kit push` fails silently on MySQL 8. It refuses non-loopback hosts and system schemas.
+- Suites that build their own tables, such as `team-purchase-fulfillment-mysql.integration.test.ts`, take the server URL instead.
+- If Docker says permission denied while you are in the `docker` group, the script re-runs itself under `sg docker`.
+
+## Stripe and commerce testing
+
+Read this before any checkout, coupon, credit, invoice, webhook or fulfilment test.
+
+- **Never test payments on a Vercel preview.** Production, Preview and Development share one database and the same live Stripe keys. A preview checkout charges real money and writes to the production database.
+- **Never test with env pulled from Vercel.** `vercel env pull` brings the live keys into `.env.local`. Use that file to boot the app, not to test payments.
+- **Test keys only.** Use a key that starts with `sk_test_` or `rk_test_`, and refuse anything else. Prefer a restricted `rk_test_` key. Get one from the team's named sandbox (the operator holds the key in the secret store), or make a throwaway one with `npx -y @stripe/cli sandbox create --non-interactive`.
+- **Never run `stripe login` on an agent machine.** Pass `--api-key` on every Stripe CLI call.
+- **Forward webhooks with the CLI.** Run `stripe listen --api-key <test key> --forward-to localhost:3000/<Course Builder webhook route>` and use the signing secret it prints. The route sits under `src/app/api/coursebuilder/`. Don't create dashboard webhook endpoints for local tests.
+- **Use synthetic fixtures.** Test users are `*@example.test` only. Never use real customer accounts, production data dumps or the production database.
+- **Label test objects.** Put `metadata.rig=aihero-commerce` and `metadata.rig_run=<run id>` on every object a test creates, so a reset can archive them.
+- **Know what a test proves.** A sandbox checkout at the expected total, paid with a test card, with the webhook, purchase and access rows read back, proves the price and the fulfilment. A $1 live charge proves only transport and webhook delivery. It never proves a price.
+- **The commerce rig is in progress.** It lands under `apps/ai-hero/scripts/commerce-rig/`. Until it merges, follow these rules by hand.

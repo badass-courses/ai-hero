@@ -14,6 +14,7 @@ import {
 	purchases,
 } from '@/db/schema'
 import { env } from '@/env.mjs'
+import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { and, asc, count, eq, gt, isNull, or, sql } from 'drizzle-orm'
@@ -80,6 +81,11 @@ export async function getCohort(cohortIdOrSlug: string) {
 			},
 		},
 	})
+
+	if (!cohortData) {
+		void log.debug('cohort.not_found', { slugOrId: cohortIdOrSlug })
+		return null
+	}
 
 	const parsedCohort = CohortSchema.safeParse(cohortData)
 	if (!parsedCohort.success) {
@@ -392,10 +398,9 @@ export async function loadCohortPageData(
 					user.id,
 				)
 
-				hasPurchasedCurrentProduct = Boolean(
-					purchaseDetails.purchase &&
-					(purchaseDetails.purchase.status === 'Valid' ||
-						purchaseDetails.purchase.status === 'Restricted'),
+				hasPurchasedCurrentProduct = ownsProductForBuyBox(
+					commerceProps.purchases,
+					currentProductId,
 				)
 				existingPurchase = purchaseDetails.existingPurchase
 			}

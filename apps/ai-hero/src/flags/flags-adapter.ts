@@ -2,13 +2,12 @@ import { redis } from '@/server/redis-client'
 import type { Adapter } from '@vercel/flags'
 
 import { env } from '../env.mjs'
-import { FLAG_PREFIX } from './flags'
-import { getEnvironment } from './flags-env'
+import { getFlagKey } from './flag-key'
 
-export const getFlagKey = (key: string): string => {
-	const env = getEnvironment()
-	return `${FLAG_PREFIX}${env}:${key}`
-}
+export { getFlagKey } from './flag-key'
+
+export const decodeFlagValue = (value: unknown): boolean =>
+	value === true || value === 'true' || value === '1'
 
 function createRedisAdapter(): Adapter<boolean, any> {
 	return {
@@ -22,7 +21,7 @@ function createRedisAdapter(): Adapter<boolean, any> {
 			const value = await redis.get(redisKey)
 
 			// Handle both string and boolean values
-			return value === true || value === 'true' || value === '1'
+			return decodeFlagValue(value)
 		},
 	}
 }

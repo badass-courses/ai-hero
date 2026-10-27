@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import LayoutClient from '@/components/layout-client'
+import config from '@/config'
 import { getCachedPage } from '@/lib/pages-query'
 
 import { LandingBody } from './_components/landing-body'
@@ -8,6 +9,10 @@ export const revalidate = 3600
 export const dynamic = 'force-static'
 
 export const metadata: Metadata = {
+	// This page uses absolute URLs. Without this, Next normalizes the root
+	// canonical to the bare origin and drops its requested trailing slash.
+	metadataBase: null,
+	alternates: { canonical: new URL('/', config.siteUrl).href },
 	title: {
 		template: '%s | AI Hero',
 		default: 'Become a Real AI Hero',

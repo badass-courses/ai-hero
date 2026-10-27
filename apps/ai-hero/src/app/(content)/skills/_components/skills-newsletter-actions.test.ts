@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 		error: vi.fn(),
 	},
 	reconcile: vi.fn(),
+	routeReturning: vi.fn(),
 	revalidatePath: vi.fn(),
 	setSubscriberCookie: vi.fn(),
 	setSubscriberFields: vi.fn(),
@@ -87,6 +88,7 @@ vi.mock('@/server/logger', () => ({
 
 vi.mock('@/lib/subscriber-marketing/ai-hero-email-opt-in.server', () => ({
 	reconcileAiHeroEmailOptInWithKit: mocks.reconcile,
+	routeReturningUnsubscriberWithKit: mocks.routeReturning,
 }))
 
 vi.mock('@/lib/subscriber-marketing/opt-in-attribution', () => ({
@@ -113,6 +115,9 @@ describe('tagSubscriberAsSkills', () => {
 		mocks.getSubscriberFromCookie.mockResolvedValue(subscriber)
 		mocks.subscribeToList.mockResolvedValue(subscriber)
 		mocks.reconcile.mockResolvedValue({ status: 'active' })
+		mocks.routeReturning
+			.mockReset()
+			.mockResolvedValue({ status: 'not-unsubscribed' })
 		mocks.inngestSend.mockResolvedValue(undefined)
 		mocks.issueRecoveryToken.mockResolvedValue(undefined)
 		mocks.setSubscriberFields.mockResolvedValue(undefined)
@@ -343,6 +348,9 @@ describe('tagSubscriberAsSkills with drovr double opt-in (DROVR_DOI_FORMS)', () 
 		mocks.getSubscriberFromCookie.mockResolvedValue(cookieReader)
 		mocks.subscribeToList.mockResolvedValue(cookieReader)
 		mocks.reconcile.mockResolvedValue({ status: 'active' })
+		mocks.routeReturning
+			.mockReset()
+			.mockResolvedValue({ status: 'not-unsubscribed' })
 		mocks.inngestSend.mockResolvedValue(undefined)
 		mocks.issueRecoveryToken.mockResolvedValue(undefined)
 		mocks.cookieGet.mockReturnValue(undefined)
@@ -430,5 +438,84 @@ describe('tagSubscriberAsSkills with drovr double opt-in (DROVR_DOI_FORMS)', () 
 		expect(result).toEqual({ success: false, reason: 'request-failed' })
 		expect(mocks.subscribeToList).not.toHaveBeenCalled()
 		expect(JSON.stringify(mocks.log.error.mock.calls)).not.toContain('Reader@')
+	})
+})
+
+describe('tagSubscriberAsSkills for a returning unsubscriber (Kit tag 8244351)', () => {
+	const reader = {
+		id: 9,
+		email_address: 'person@example.com',
+		first_name: 'Pat',
+		state: 'active',
+		fields: {},
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+		for (const key of [
+			'DROVR_DOI_FORMS',
+			'DROVR_API_BASE_URL',
+			'DROVR_API_KEY_ORG_AIHERO',
+		])
+			delete mocks.env[key]
+		mocks.getSubscriberFromCookie.mockResolvedValue(reader)
+		mocks.subscribeToList.mockResolvedValue(reader)
+		mocks.reconcile.mockResolvedValue({ status: 'active' })
+		mocks.inngestSend.mockResolvedValue(undefined)
+		mocks.issueRecoveryToken.mockResolvedValue(undefined)
+		mocks.cookieGet.mockReturnValue(undefined)
+		mocks.headerGet.mockReturnValue(null)
+		mocks.getServerAuthSession.mockResolvedValue(null)
+		mocks.routeReturning.mockReset()
+	})
+
+	it('DOI requested: confirm-by-email answer, no Kit subscribe, no untag', async () => {
+		mocks.routeReturning.mockResolvedValue({ status: 'doi-requested' })
+
+		const result = await tagSubscriberAsSkills('skills-post')
+
+		expect(result).toMatchObject({
+			success: false,
+			reason: 'confirmation-required',
+			confirmationUrl: '/confirm?email=person%40example.com',
+		})
+		expect(mocks.subscribeToList).not.toHaveBeenCalled()
+		expect(mocks.reconcile).not.toHaveBeenCalled()
+		expect(mocks.inngestSend).not.toHaveBeenCalled()
+	})
+
+	it('blocked (drovr not configured): request-failed, no Kit subscribe, no untag', async () => {
+		mocks.routeReturning.mockResolvedValue({
+			status: 'blocked',
+			reason: 'drovr-unconfigured',
+		})
+
+		const result = await tagSubscriberAsSkills('skills-post')
+
+		expect(result).toEqual({ success: false, reason: 'request-failed' })
+		expect(mocks.subscribeToList).not.toHaveBeenCalled()
+		expect(mocks.reconcile).not.toHaveBeenCalled()
+	})
+
+	it('Kit lookup failed: enrols through Kit, with the untag disabled', async () => {
+		mocks.routeReturning.mockResolvedValue({ status: 'lookup-failed' })
+
+		const result = await tagSubscriberAsSkills('skills-post')
+
+		expect(result).toEqual({ success: true })
+		expect(mocks.subscribeToList).toHaveBeenCalledTimes(1)
+		expect(mocks.reconcile).toHaveBeenCalledWith(
+			expect.objectContaining({ mayRemoveUnsubscribeTag: false }),
+		)
+	})
+
+	it('not tagged: the Kit path runs unchanged', async () => {
+		mocks.routeReturning.mockResolvedValue({ status: 'not-unsubscribed' })
+
+		const result = await tagSubscriberAsSkills('skills-post')
+
+		expect(result).toEqual({ success: true })
+		expect(mocks.subscribeToList).toHaveBeenCalledTimes(1)
+		expect(mocks.reconcile).toHaveBeenCalledTimes(1)
 	})
 })

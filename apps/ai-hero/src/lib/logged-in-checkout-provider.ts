@@ -1,4 +1,5 @@
 import { SYNTHETIC_CHECKOUT_REFUSED } from '@/coursebuilder/synthetic-checkout'
+import { withTrustedPricingCountry } from '@/lib/c5-pricing/trusted-country'
 import {
 	checkoutLoginHandoffProviderIdempotencyKey,
 	type CheckoutLoginHandoffPayload,
@@ -7,6 +8,8 @@ import type {
 	CheckoutLoginHandoffClaim,
 	CheckoutLoginHandoffStore,
 } from '@/lib/checkout-login-handoff-store'
+import { PURCHASE_BLOCKED } from '@/lib/purchase-block'
+import { isUserBlockedFromPurchasing } from '@/lib/purchase-disputes'
 import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
 
 import type { CommerceAdapter } from '@coursebuilder/commerce'
@@ -47,6 +50,8 @@ export async function createLoggedInCheckoutSession({
 	claim,
 	handoffPayload,
 	checkoutParams,
+	trustedCountry,
+	isPurchaseBlocked = isUserBlockedFromPurchasing,
 }: {
 	provider: StripePaymentsProviderConfig
 	adapter: CommerceAdapter
@@ -54,6 +59,13 @@ export async function createLoggedInCheckoutSession({
 	claim?: CheckoutLoginHandoffClaim
 	handoffPayload?: CheckoutLoginHandoffPayload
 	checkoutParams: CheckoutParams
+	/**
+	 * The country from AI Hero's trusted geolocation (or the signed handoff that
+	 * carried it). Course Builder's server-only option: the authoritative-price hook
+	 * prices from it, never from `checkoutParams.country`.
+	 */
+	trustedCountry: string
+	isPurchaseBlocked?: (userId: string) => Promise<boolean>
 }): Promise<CheckoutSessionResult> {
 	if (claim && !handoffPayload) {
 		throw new Error('missing-checkout-login-handoff-payload')
@@ -80,14 +92,40 @@ export async function createLoggedInCheckoutSession({
 		}
 	}
 
-	const result = claim
-		? await provider.createCheckoutSessionResult(checkoutParams, adapter, {
-				idempotencyKey: checkoutLoginHandoffProviderIdempotencyKey(
-					claim.nonceHash,
-				),
-				operationStartedAt: new Date(handoffPayload!.issuedAt),
-			})
-		: await provider.createCheckoutSessionResult(checkoutParams, adapter)
+	// A buyer who lost a chargeback never gets a new Stripe session.
+	if (
+		checkoutParams.userId &&
+		(await isPurchaseBlocked(checkoutParams.userId))
+	) {
+		if (
+			claim &&
+			!(await handoffStore.failTerminal({
+				claim,
+				failureCode: PURCHASE_BLOCKED,
+			}))
+		) {
+			throw new Error('checkout-login-handoff-failure-write-failed')
+		}
+		return {
+			kind: 'failure',
+			failure: { code: PURCHASE_BLOCKED, retryable: false },
+		}
+	}
+
+	// The block above runs first: a refused buyer never reaches the pricing hook.
+	const result = await withTrustedPricingCountry(trustedCountry, () =>
+		claim
+			? provider.createCheckoutSessionResult(checkoutParams, adapter, {
+					idempotencyKey: checkoutLoginHandoffProviderIdempotencyKey(
+						claim.nonceHash,
+					),
+					operationStartedAt: new Date(handoffPayload!.issuedAt),
+					trustedCountry,
+				})
+			: provider.createCheckoutSessionResult(checkoutParams, adapter, {
+					trustedCountry,
+				}),
+	)
 
 	if (result.kind === 'failure') {
 		if (claim) {

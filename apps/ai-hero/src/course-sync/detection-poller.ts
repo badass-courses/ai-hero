@@ -22,9 +22,6 @@ import {
 import { courseSyncApplyPolicyOverride } from './poll-policy'
 import type { CourseSyncBinding } from './types'
 
-export const COURSE_SYNC_WORKSHOP_EDIT_URL =
-	'https://www.aihero.dev/workshops/ai-coding-crash-course/edit'
-
 export type CourseSyncPollStage =
 	| 'detect'
 	| 'compare'
@@ -118,7 +115,7 @@ export type CourseSyncNotification =
 			structureCounts: { sections: number; lessons: number; videos: number }
 			durationSeconds: number
 			mediaCount: number
-			workshopEditUrl: string
+			editor: { url: string; label: string }
 	  }
 	| {
 			kind: 'review'
@@ -168,6 +165,11 @@ export type CourseSyncSlackNotificationPayload = {
 
 export type CourseSyncDetectionPollerDependencies = {
 	binding: CourseSyncBinding
+	/** Defaults to the run page; production wires `resolveCourseSyncEditorLink`. */
+	resolveEditorLink?: (
+		binding: CourseSyncBinding,
+		courseVersionId: string,
+	) => Promise<{ url: string; label: string }>
 	readManifest(): Promise<CourseSyncManifestRead>
 	getRevisionHead(bindingId: string): Promise<CourseSyncRevisionHead | null>
 	getRun(runId: string): Promise<CourseSyncRunSummary>
@@ -281,7 +283,7 @@ function effectiveApplyPolicyOverride(
 	binding: CourseSyncBinding,
 ): 'operator' | null {
 	return courseSyncApplyPolicyOverride(state) ??
-		(state === null && binding.contractVersion === 5
+		(state === null && binding.contractVersion !== 4
 			? binding.initialApplyPolicyOverride
 			: null)
 }
@@ -415,6 +417,16 @@ export function courseSyncVersionLabel(
 	return courseName ? `${courseName} (${shortId})` : shortId
 }
 
+async function defaultEditorLink(
+	_binding: CourseSyncBinding,
+	courseVersionId: string,
+) {
+	return {
+		url: courseSyncHistoryPermalink(courseVersionId),
+		label: 'Open the sync run',
+	}
+}
+
 export function courseSyncHistoryPermalink(courseVersionId: string) {
 	return new URL(
 		`/admin/course-sync/${encodeURIComponent(courseVersionId)}`,
@@ -458,7 +470,7 @@ export function buildCourseSyncNotificationPayload(
 					fallback: text,
 					color: '#2eb67d',
 					title: 'AI Hero course sync applied',
-					text: `<${notification.workshopEditUrl}|Open the workshop editor>`,
+					text: `<${notification.editor.url}|${notification.editor.label}>`,
 					fields: [
 						{
 							title: 'Course version',
@@ -1544,7 +1556,9 @@ export function createCourseSyncDetectionPoller(
 					(clock().getTime() - pollStartedAt.getTime()) / 1000,
 				),
 				mediaCount: mediaCount(syncRun),
-				workshopEditUrl: COURSE_SYNC_WORKSHOP_EDIT_URL,
+				editor: await (
+					dependencies.resolveEditorLink ?? defaultEditorLink
+				)(dependencies.binding, courseVersionId),
 			})
 			await log({
 				bindingId,

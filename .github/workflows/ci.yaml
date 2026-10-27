@@ -20,7 +20,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: '24.22.1'
 
       - name: Get pnpm store directory
         id: pnpm-cache
@@ -40,8 +40,27 @@ jobs:
       - name: Typecheck
         run: pnpm turbo typecheck
 
+      # Facade: RPC round trip, auth, decode failures, and the bundle contract
+      # (no effect import survives in dist). App: hooks and the mounted route.
+      - name: Front-desk support facade and route
+        run: |
+          pnpm --filter @ai-hero/front-desk-support build
+          pnpm --filter @ai-hero/front-desk-support test
+          pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/app/api/front-desk/
+
       - name: Checkout recovery patch contract
         run: pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/lib/checkout-recovery-adopt.test.ts
+
+      # The fulfill.mysql suite skips here without a server URL; the
+      # evergreen-journey-mysql workflow runs it against disposable MySQL.
+      - name: Checkout reconciler and checkout:recover
+        run: >-
+          pnpm --filter ai-hero exec vitest run -c vitest.config.ts
+          src/lib/checkout-reconcile/
+          src/scripts/checkout-recovery
+
+      - name: Refund entitlement event boundary and included-product contracts
+        run: pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/lib/included-product-entitlements.test.ts
 
       # Every PR, no path filter: a coupon or checkout policy change must meet
       # these unit contracts (the MySQL workflow runs only *.mysql.test.ts, so
@@ -77,7 +96,7 @@ jobs:
           capture-purchase-contact-event
           subscribe-to-list
           kit-custom-fields-check
-          src/scripts/held-exit-recover.test.ts
+          src/scripts/held-exit
           src/lib/test-principals/
 
       - name: Workshop pricing actor contract
@@ -99,7 +118,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: '24.22.1'
 
       - name: Get pnpm store directory
         id: pnpm-cache

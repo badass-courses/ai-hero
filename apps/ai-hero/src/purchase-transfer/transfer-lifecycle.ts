@@ -80,6 +80,24 @@ export function isTransferExpired(
 	return Boolean(transfer.expiresAt && transfer.expiresAt < now)
 }
 
+/**
+ * Whether the seat is already the recipient's. Accepting moves the purchase
+ * at once, and the transfer reads VERIFIED until the transfer workflow marks
+ * it COMPLETED. A VERIFIED claim whose purchase has not moved was
+ * interrupted, and accepting again resumes it.
+ */
+export function isTransferAccepted(
+	transfer: Pick<TransferSnapshot, 'transferState' | 'targetUserId'>,
+	purchase: { userId?: string | null },
+): boolean {
+	if (transfer.transferState === 'COMPLETED') return true
+	return (
+		transfer.transferState === 'VERIFIED' &&
+		Boolean(transfer.targetUserId) &&
+		purchase.userId === transfer.targetUserId
+	)
+}
+
 export type TransferDenialCode =
 	| 'not_found'
 	| 'not_authenticated'
@@ -205,6 +223,15 @@ export function evaluateAccept(params: {
 	if (isTransferExpired(transfer, now))
 		return { ok: false, code: 'expired', markExpired: true }
 	return { ok: true, kind: 'accept' }
+}
+
+/**
+ * Whether a screen may offer this purchase for transfer: the purchase rule
+ * that initiate and accept both enforce, so no screen offers what the server
+ * then refuses.
+ */
+export function isTransferablePurchase(purchase: TransferPurchase): boolean {
+	return evaluatePurchasePolicy(purchase) === null
 }
 
 function evaluatePurchasePolicy(

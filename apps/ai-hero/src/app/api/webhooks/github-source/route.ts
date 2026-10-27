@@ -1,8 +1,13 @@
+import { revalidateTag } from 'next/cache'
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'node:crypto'
 import { env } from '@/env.mjs'
 import { GITHUB_SOURCE_SYNC_REQUESTED_EVENT } from '@/inngest/events/github-source'
 import { inngest } from '@/inngest/inngest.server'
+import {
+	SANDCASTLE_DOCS_CACHE_TAG,
+	SANDCASTLE_REPOSITORY,
+} from '@/lib/sandcastle-docs'
 
 /**
  * GitHub push webhook for github-sourced posts. On a push to the default branch
@@ -11,6 +16,10 @@ import { inngest } from '@/inngest/inngest.server'
  * hourly cron in `sync-github-sourced-posts` is the backstop if a delivery is
  * missed. The shared webhook secret is the gate — only a correctly-signed push
  * to the default branch is processed.
+ *
+ * The Sandcastle docs ride the same hook. They are read from the repo's README
+ * at render time rather than synced into a post, so a push that touches it
+ * only has to drop the cached copy.
  */
 
 const SOURCE_REF = 'refs/heads/main'
@@ -100,6 +109,13 @@ export async function POST(request: NextRequest) {
 			]),
 		),
 	)
+
+	if (
+		payload.repository?.full_name === SANDCASTLE_REPOSITORY &&
+		changedPaths.includes('README.md')
+	) {
+		revalidateTag(SANDCASTLE_DOCS_CACHE_TAG, 'max')
+	}
 
 	await inngest.send({
 		name: GITHUB_SOURCE_SYNC_REQUESTED_EVENT,

@@ -1,0 +1,57 @@
+/* Static final frames are the default, including before hydration. */
+.checkmark {
+	stroke-dasharray: 1;
+	stroke-dashoffset: 0;
+}
+
+.mail {
+	transform: translateY(0);
+}
+
+/* One reveal per mount, never on polling and never a navigation gate. */
+@media (prefers-reduced-motion: no-preference) {
+	.badge[data-play='once'] {
+		animation: purchase-badge 400ms cubic-bezier(0.22, 1, 0.36, 1) 1 both;
+	}
+
+	/* The glyph waits for the disc to grow in. */
+	[data-play='once'] .checkmark {
+		animation: purchase-checkmark 450ms cubic-bezier(0.22, 1, 0.36, 1) 1 both;
+		animation-delay: 150ms;
+	}
+
+	[data-play='once'] .mail {
+		animation: purchase-mail 400ms cubic-bezier(0.22, 1, 0.36, 1) 1 both;
+		animation-delay: 150ms;
+	}
+}
+
+@keyframes purchase-badge {
+	from {
+		opacity: 0;
+		transform: scale(0.5);
+	}
+	to {
+		opacity: 1;
+		transform: scale(1);
+	}
+}
+
+@keyframes purchase-checkmark {
+	from {
+		stroke-dashoffset: 1;
+	}
+	to {
+		stroke-dashoffset: 0;
+	}
+}
+
+@keyframes purchase-mail {
+	from {
+		opacity: 0;
+		transform: translateY(3px);
+	}
+	to {
+		transform: translateY(0);
+	}
+}

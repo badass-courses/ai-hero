@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { parse, serialize } from 'cookie'
 import { NextRequest } from 'next/server'
+import { transferPathOf } from '@/lib/acceptance-link-view'
 
 const MAGIC_LINK_CALLBACK_PATH = '/api/auth/callback/postmark'
 const MAGIC_LINK_CONFIRMATION_PATH = '/login/verify'
@@ -33,6 +34,13 @@ export type MagicLinkConfirmation = Pick<
 type MagicLinkOptions = {
 	secret: string
 	now?: Clock
+	/** The site's own origin, the only absolute callback it may follow. */
+	siteUrl?: string
+}
+
+type MagicLinkGetOptions = MagicLinkOptions & {
+	/** The email this browser is already signed in as, if any. */
+	signedInEmail?: () => Promise<string | null | undefined>
 }
 
 function getNow(clock: Clock | undefined) {
@@ -149,15 +157,21 @@ function withSetCookie(response: Response, setCookie: string) {
 	})
 }
 
-function confirmationRedirect(request: Request) {
-	const response = Response.redirect(
-		new URL(MAGIC_LINK_CONFIRMATION_PATH, request.url),
-		307,
-	)
-	const headers = new Headers(response.headers)
-	headers.set('cache-control', 'no-store')
-	headers.set('referrer-policy', 'no-referrer')
-	return new Response(null, { status: response.status, headers })
+/**
+ * A redirect to the confirmation page as a path, which the browser resolves
+ * against the address it asked for. Behind a proxy or a tunnel `request.url`
+ * carries the server's own host, so an absolute URL built from it sends the
+ * browser to `localhost`, away from the origin the cookie was just set on.
+ */
+function confirmationRedirect(status: 303 | 307) {
+	return new Response(null, {
+		status,
+		headers: {
+			location: MAGIC_LINK_CONFIRMATION_PATH,
+			'cache-control': 'no-store',
+			'referrer-policy': 'no-referrer',
+		},
+	})
 }
 
 function readConfirmationFromCallback(request: Request) {
@@ -181,23 +195,73 @@ function readConfirmationFromCallback(request: Request) {
 	return confirmation
 }
 
+/**
+ * Where a link may send the browser: a path on this site, never anywhere else.
+ * An absolute callback on the site's own origin becomes its path, for the same
+ * proxy reason as `confirmationRedirect`.
+ */
+export function callbackPath(callbackUrl: string | null, siteUrl?: string) {
+	if (!callbackUrl) return '/'
+	try {
+		const site = new URL(siteUrl ?? 'https://site.invalid')
+		// Parsed the way a browser would, so a stray tab or backslash cannot
+		// turn a path into another host.
+		const target = new URL(callbackUrl, site)
+		if (target.origin === site.origin)
+			return `${target.pathname.replace(/^\/+/, '/')}${target.search}${target.hash}`
+	} catch {
+		// Not a URL: fall through to the home page.
+	}
+	return '/'
+}
+
+function isSameEmail(a: string | null | undefined, b: string) {
+	return Boolean(a) && a!.trim().toLowerCase() === b.trim().toLowerCase()
+}
+
 function isMagicLinkCallback(request: Request) {
 	return new URL(request.url).pathname === MAGIC_LINK_CALLBACK_PATH
 }
 
+/**
+ * A link for the account this browser is already signed in as needs no token:
+ * it goes straight to where it points. Nothing is consumed or granted, so a
+ * second click on a one-time link (a transfer invite, an old login email) lands
+ * where it meant to instead of on "this login link expired".
+ */
+function alreadySignedInRedirect(callbackUrl: string | null, siteUrl?: string) {
+	return withSetCookie(
+		new Response(null, {
+			status: 303,
+			headers: {
+				location: callbackPath(callbackUrl, siteUrl),
+				'cache-control': 'no-store',
+				'referrer-policy': 'no-referrer',
+			},
+		}),
+		clearedMagicLinkCookie(),
+	)
+}
+
 export function createMagicLinkGetHandler<RequestType extends Request>(
 	authHandler: AuthHandler<RequestType>,
-	options: MagicLinkOptions,
+	options: MagicLinkGetOptions,
 ) {
-	return function handleMagicLinkGet(request: RequestType) {
+	return async function handleMagicLinkGet(request: RequestType) {
 		if (!isMagicLinkCallback(request)) return authHandler(request)
 		if (request.method === 'HEAD') return new Response(null, { status: 204 })
 		if (request.method !== 'GET') return authHandler(request)
 
 		const confirmation = readConfirmationFromCallback(request)
-		const response = confirmationRedirect(request)
+		const response = confirmationRedirect(307)
 		if (!confirmation || !options.secret) {
 			return withSetCookie(response, clearedMagicLinkCookie())
+		}
+		if (
+			options.signedInEmail &&
+			isSameEmail(await options.signedInEmail(), confirmation.email)
+		) {
+			return alreadySignedInRedirect(confirmation.callbackUrl, options.siteUrl)
 		}
 		return withSetCookie(
 			response,
@@ -231,6 +295,33 @@ function callbackRequest(request: Request, confirmation: MagicLinkConfirmation) 
 	return new NextRequest(url, { method: 'POST', headers })
 }
 
+/**
+ * A spent token on a transfer acceptance link lands on the transfer page, which
+ * says what is true (still waiting, accepted, canceled, expired), instead of on
+ * an expiry error. The token stays spent; only where the browser goes changes.
+ */
+function spentTokenTransferPath(
+	response: Response,
+	confirmation: MagicLinkConfirmation,
+	siteUrl?: string,
+) {
+	const location = response.headers.get('location')
+	if (!location) return null
+	let error: string | null
+	try {
+		error = new URL(location, 'https://site.invalid').searchParams.get('error')
+	} catch {
+		return null
+	}
+	// Auth.js reports a spent or unknown email token as Verification, and some
+	// adapter failures on it as Configuration; the person holding the link sees
+	// the same thing either way.
+	if (error !== 'Verification' && error !== 'Configuration') return null
+	return transferPathOf(
+		callbackPath(confirmation.callbackUrl, siteUrl).split(/[?#]/, 1)[0]!,
+	)
+}
+
 export function createMagicLinkConfirmHandler(
 	authHandler: AuthHandler<NextRequest>,
 	options: MagicLinkOptions,
@@ -244,15 +335,30 @@ export function createMagicLinkConfirmHandler(
 		)
 		if (!confirmation) {
 			return withSetCookie(
-				Response.redirect(
-					new URL(MAGIC_LINK_CONFIRMATION_PATH, request.url),
-					303,
-				),
+				confirmationRedirect(303),
 				clearedMagicLinkCookie(),
 			)
 		}
 
 		const response = await authHandler(callbackRequest(request, confirmation))
+		const transferPath = spentTokenTransferPath(
+			response,
+			confirmation,
+			options.siteUrl,
+		)
+		if (transferPath) {
+			return withSetCookie(
+				new Response(null, {
+					status: 303,
+					headers: {
+						location: `${transferPath}?link=used`,
+						'cache-control': 'no-store',
+						'referrer-policy': 'no-referrer',
+					},
+				}),
+				clearedMagicLinkCookie(),
+			)
+		}
 		return withSetCookie(response, clearedMagicLinkCookie())
 	}
 }

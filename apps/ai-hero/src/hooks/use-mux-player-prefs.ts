@@ -91,3 +91,18 @@ export const handleTextTrackChange = (
 		})
 	}
 }
+
+/**
+ * Empties the caption tracks when the live lesson player starts a new source.
+ * The one `<mux-player>` swaps `playbackId` across lessons, and its text
+ * tracks outlive the swap: cues the outgoing video left behind keep showing
+ * under the new video's, as two overlapping subtitle lines.
+ */
+export const clearStaleCaptions = (
+	muxPlayerRef: React.RefObject<MuxPlayerRefAttributes | null>,
+) => {
+	for (const track of Array.from(muxPlayerRef.current?.textTracks ?? [])) {
+		if (track.kind !== 'subtitles' && track.kind !== 'captions') continue
+		for (const cue of Array.from(track.cues ?? [])) track.removeCue(cue)
+	}
+}

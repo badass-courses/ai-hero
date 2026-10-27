@@ -12,10 +12,11 @@ import type { ResourceListViewProps } from '../../_components/resource-list-view
 const mocks = vi.hoisted(() => ({
 	cohortNavigation: null as CohortNavigation | null,
 	captured: null as ResourceListViewProps | null,
+	params: {} as Record<string, string>,
 }))
 
 vi.mock('next/navigation', () => ({
-	useParams: () => ({ module: 'claude-code~p9j8f' }),
+	useParams: () => ({ module: 'claude-code~p9j8f', ...mocks.params }),
 	usePathname: () => '/workshops/claude-code~p9j8f/permissions~pwt8r',
 }))
 
@@ -173,6 +174,25 @@ describe('WorkshopResourceList cohort context', () => {
 
 		expect(renderList()?.nextModule).toBeUndefined()
 		expect(renderList()?.positionLabel).toBe('Workshop 1 of 1')
+	})
+})
+
+describe('WorkshopResourceList current lesson', () => {
+	beforeEach(() => {
+		mocks.cohortNavigation = null
+		mocks.params = {}
+	})
+
+	// The lesson layout stays mounted while the lesson changes, so the slug
+	// has to come from the URL rather than from the layout.
+	it('marks the lesson in the URL as current', () => {
+		mocks.params = { lesson: 'permissions~pwt8r' }
+
+		expect(renderList()?.currentSlug).toBe('permissions~pwt8r')
+	})
+
+	it('marks nothing current on the workshop page', () => {
+		expect(renderList()?.currentSlug).toBeUndefined()
 	})
 })
 

@@ -16,11 +16,11 @@ import {
 } from './detection-persistence'
 import {
 	buildCourseSyncNotificationPayload,
-	COURSE_SYNC_WORKSHOP_EDIT_URL,
 	type CourseSyncNotification,
 	type CourseSyncSlackNotificationPayload,
 } from './detection-poller'
 import { deliverCourseSyncEntitlementSync } from './cohort-entitlements'
+import { resolveCourseSyncEditorLink } from './editor-link'
 import { CourseSyncError } from './errors'
 import { COURSE_SYNC_AUTHOR_NAME, narrateCourseSyncApply } from './narrate'
 import { getCourseSyncRunBinding } from './run-binding'
@@ -121,7 +121,10 @@ export async function buildCourseSyncAppliedNotification(
 			(run.updatedAt.getTime() - run.createdAt.getTime()) / 1000,
 		),
 		mediaCount: plan.media.filter((item) => item.action === 'update').length,
-		workshopEditUrl: COURSE_SYNC_WORKSHOP_EDIT_URL,
+		editor: await resolveCourseSyncEditorLink(
+			await getCourseSyncRunBinding(run.runId),
+			run.courseVersionId,
+		),
 	}
 }
 
@@ -176,7 +179,7 @@ export async function deliverCourseSyncAppliedNotice(
 
 	// Independent lifecycle receipt: a duplicate applied-notice request can retry
 	// a failed entitlement trigger even after Slack's notice was claimed.
-	if (binding.contractVersion === 5) {
+	if (binding.contractVersion !== 4) {
 		await deliverCourseSyncEntitlementSync({
 			controlPlaneRunId: notification.controlPlaneRunId,
 			lifecycle: 'applied',

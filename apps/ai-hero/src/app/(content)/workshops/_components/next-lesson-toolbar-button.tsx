@@ -80,7 +80,7 @@ export function NextLessonToolbarButton({
 		<Button
 			asChild
 			variant="ghost"
-			className="hover:bg-muted/50 dark:hover:bg-muted/50 border-l-border h-10 rounded-none border-0 border-l sm:h-12"
+			className="hover:bg-hover border-l-border h-10 rounded-none border-0 border-l sm:h-12"
 		>
 			<Link href={target.href} prefetch>
 				{target.label}

@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { purchaseGate } from '@/lib/c5-pricing/purchasability'
 import { api } from '@/trpc/react'
 import { useMachine } from '@xstate/react'
 import {
@@ -23,6 +24,7 @@ import {
 	checkoutSurveyMachine,
 	type CheckoutSurveyAnswer,
 } from './checkout-survey-machine'
+import { RegionalUpgradeSupport, UpperBoundNote } from './gated-buy-button'
 
 const CHECKOUT_SURVEY_ID = 'checkout-decision-source'
 const CHECKOUT_SURVEY_QUESTION_ID = 'what-helped-you-decide-to-join'
@@ -84,9 +86,16 @@ function safeSetStoredAnswer(answer: string) {
 export function CheckoutSurveyBuyButton({
 	className,
 	children,
+	trailing,
 }: {
 	className?: string
 	children?: React.ReactNode
+	/**
+	 * Rendered after the label whatever the label is, so it survives a gate
+	 * that swaps the label for its own ("Not open yet"). An inline button
+	 * uses it to carry the price the caption under the button refers to.
+	 */
+	trailing?: React.ReactNode
 }) {
 	const buttonRef = React.useRef<HTMLButtonElement | null>(null)
 	const surveyRef = React.useRef<HTMLDivElement | null>(null)
@@ -102,6 +111,7 @@ export function CheckoutSurveyBuyButton({
 		},
 	)
 	const { formattedPrice, product, status, isSoldOut } = Pricing.usePricing()
+	const gate = purchaseGate(formattedPrice)
 
 	const [snapshot, send] = useMachine(checkoutSurveyMachine, {
 		input: {
@@ -123,13 +133,19 @@ export function CheckoutSurveyBuyButton({
 	)
 	const isMembership = product.type === 'membership'
 	const defaultAction = isMembership ? 'Subscribe' : 'Buy Now'
-	const buttonLabel = children
-		? children
-		: isSoldOut
-			? 'Sold Out'
-			: formattedPrice?.upgradeFromPurchaseId
-				? 'Upgrade Now'
-				: product?.fields.action || defaultAction
+	// Only a gate that stops the purchase renames the button. Someone who is
+	// not signed in can still buy (checkout takes them through sign-in), so
+	// their button says what it does.
+	const buttonLabel =
+		gate.kind === 'blocked' || gate.kind === 'support'
+			? gate.label
+			: children
+				? children
+				: isSoldOut
+					? 'Sold Out'
+					: formattedPrice?.upgradeFromPurchaseId
+						? 'Upgrade Now'
+						: product?.fields.action || defaultAction
 
 	React.useEffect(() => {
 		const button = buttonRef.current
@@ -198,26 +214,34 @@ export function CheckoutSurveyBuyButton({
 		send({ type: 'BUY_CLICKED' })
 	}
 
+	if (gate.kind === 'support')
+		return <RegionalUpgradeSupport className={className} label={gate.label} />
+
 	if (snapshot.matches('idle')) {
 		return (
-			<Button
-				ref={buttonRef}
-				className={cn(
-					'bg-primary text-primary-foreground flex h-14 w-full items-center justify-center rounded px-4 py-4 text-center text-base font-medium transition ease-in-out disabled:cursor-not-allowed disabled:opacity-50',
-					className,
-				)}
-				type="button"
-				size="lg"
-				disabled={
-					status === 'pending' ||
-					status === 'error' ||
-					isSoldOut ||
-					isSubmittingStoredAnswer
-				}
-				onClick={continueWithoutSurveyIfAlreadyAnswered}
-			>
-				{buttonLabel}
-			</Button>
+			<>
+				<Button
+					ref={buttonRef}
+					className={cn(
+						'bg-primary text-primary-foreground flex h-14 w-full items-center justify-center rounded px-4 py-4 text-center text-base font-medium transition ease-in-out disabled:cursor-not-allowed disabled:opacity-50',
+						className,
+					)}
+					type="button"
+					size="lg"
+					disabled={
+						status === 'pending' ||
+						status === 'error' ||
+						isSoldOut ||
+						gate.kind === 'blocked' ||
+						isSubmittingStoredAnswer
+					}
+					onClick={continueWithoutSurveyIfAlreadyAnswered}
+				>
+					{buttonLabel}
+					{trailing}
+				</Button>
+				<UpperBoundNote className="mt-2.5" />
+			</>
 		)
 	}
 
@@ -254,7 +278,7 @@ export function CheckoutSurveyBuyButton({
 									<button
 										key={answer.value}
 										type="button"
-										className="border-border bg-background hover:bg-muted flex items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors"
+										className="border-border bg-background hover:bg-hover flex items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors"
 										onClick={() => send({ type: 'ANSWER_SELECTED', answer })}
 									>
 										<Icon className="text-muted-foreground size-4 shrink-0" />
@@ -278,11 +302,13 @@ export function CheckoutSurveyBuyButton({
 					status === 'pending' ||
 					status === 'error' ||
 					isSoldOut ||
+					gate.kind === 'blocked' ||
 					hasSubmittedRef.current
 				}
 				onClick={() => send({ type: 'CONTINUE_CLICKED' })}
 			>
-				Continue to Stripe
+				{/* Checkout takes a signed-out buyer through sign-in before Stripe. */}
+				{gate.kind === 'sign-in' ? 'Continue to sign in' : 'Continue to Stripe'}
 			</Button>
 		</div>
 	)

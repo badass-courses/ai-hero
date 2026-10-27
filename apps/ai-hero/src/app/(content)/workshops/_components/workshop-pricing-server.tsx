@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { headers } from 'next/headers'
 import { courseBuilderAdapter } from '@/db'
+import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 import { getPricingData } from '@/lib/pricing-query'
 import { getProduct } from '@/lib/products-query'
 import { getCachedAllWorkshopProducts } from '@/lib/workshops-query'
@@ -99,10 +100,8 @@ export async function WorkshopPricing({
 			// 2. User has entitlements that grant access to the workshop
 			const hasPurchasedCurrentProduct =
 				hasPurchasedViaEntitlements ||
-				Boolean(
-					purchaseForProduct &&
-					(purchaseForProduct.status === 'Valid' ||
-						purchaseForProduct.status === 'Restricted'),
+				allProducts.some((p) =>
+					ownsProductForBuyBox(commerceProps.purchases, p.id),
 				)
 
 			if (!purchaseForProduct && !hasPurchasedViaEntitlements) {

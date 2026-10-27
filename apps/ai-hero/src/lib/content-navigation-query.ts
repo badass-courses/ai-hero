@@ -12,12 +12,7 @@ import { and, asc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 
 import { productSchema } from '@coursebuilder/core/schemas'
 
-import {
-	ResourceNavigationSchema,
-	type Level1ResourceWrapper,
-	type Level2ResourceWrapper,
-	type ResourceNavigation,
-} from './content-navigation'
+import { ResourceNavigationSchema } from './content-navigation'
 import {
 	buildNavigationTree,
 	cleanNavigationFields,
@@ -83,7 +78,8 @@ const navigationFieldsProjection = sql<
 	'slug', JSON_EXTRACT(${contentResource.fields}, '$.slug'),
 	'title', JSON_EXTRACT(${contentResource.fields}, '$.title'),
 	'visibility', JSON_EXTRACT(${contentResource.fields}, '$.visibility'),
-	'state', JSON_EXTRACT(${contentResource.fields}, '$.state')
+	'state', JSON_EXTRACT(${contentResource.fields}, '$.state'),
+	'thumbnailTime', JSON_EXTRACT(${contentResource.fields}, '$.thumbnailTime')
 )`
 
 /**
@@ -282,7 +278,6 @@ export async function getContentNavigation(slugOrId: string) {
 				return null
 			}
 
-			const filteredResource = filterVideoResources(validatedResource.data)
 			const products = strippedProductRelations
 				.map((rel) => rel.product)
 				.filter(
@@ -291,48 +286,11 @@ export async function getContentNavigation(slugOrId: string) {
 				.map((product) => productSchema.parse(product))
 
 			return {
-				...filteredResource,
+				// A lesson's videoResource child stays: Up Next reads its thumbnail.
+				// Everything that walks the tree skips it as non-navigable.
+				...validatedResource.data,
 				parents: products.length > 0 ? products : undefined,
 			}
 		},
 	})
-}
-
-/**
- * Filters out videoResource types from level 2 (deepest nested resources)
- */
-function filterLevel2Resources(
-	wrappers: Level2ResourceWrapper[] | null | undefined,
-): Level2ResourceWrapper[] | null | undefined {
-	if (!wrappers) return wrappers
-	return wrappers.filter((wrapper) => wrapper.resource.type !== 'videoResource')
-}
-
-/**
- * Filters out videoResource types from level 1 resources and their nested resources
- */
-function filterLevel1Resources(
-	wrappers: Level1ResourceWrapper[] | null | undefined,
-): Level1ResourceWrapper[] | null | undefined {
-	if (!wrappers) return wrappers
-
-	return wrappers
-		.filter((wrapper) => wrapper.resource.type !== 'videoResource')
-		.map((wrapper) => ({
-			...wrapper,
-			resource: {
-				...wrapper.resource,
-				resources: filterLevel2Resources(wrapper.resource.resources),
-			},
-		}))
-}
-
-/**
- * Filters out videoResource types from the entire navigation tree
- */
-function filterVideoResources(data: ResourceNavigation): ResourceNavigation {
-	return {
-		...data,
-		resources: filterLevel1Resources(data.resources),
-	}
 }

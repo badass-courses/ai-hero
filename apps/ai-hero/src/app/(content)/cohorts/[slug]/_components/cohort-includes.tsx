@@ -1,69 +1,52 @@
 import * as React from 'react'
-import { TYPE } from '@/components/landing/type'
 import {
-	Clock,
-	Infinity as InfinityIcon,
-	Layers,
-	LineChart,
-	MessagesSquare,
-	Receipt,
-	Subtitles,
-} from 'lucide-react'
+	ProductPricingFeatures,
+	type ProductPricingFeature,
+} from '@/components/commerce/product-pricing-features'
+import { PlayCircle } from 'lucide-react'
 
-import { cn } from '@coursebuilder/utils/cn'
+export type CohortWorkshopRef = { title: string; slug: string }
 
 /**
- * What every seat comes with. These are product facts, not per-cohort data,
- * so they live here as a list a human can edit. The workshop count is the one
- * live value and is prepended by the component.
+ * The cohort's lesson total as a row of the feature list, placed by the list
+ * directly under its workshop count. Empty when there is nothing to count, so
+ * a cohort whose trees are empty (or could not be read) shows no "0 Lessons".
  */
-const COHORT_INCLUDES = [
-	{ icon: Clock, label: 'Live office hours' },
-	{ icon: InfinityIcon, label: 'Lifetime access to lessons' },
-	{ icon: Receipt, label: 'Customizable invoice' },
-	{ icon: Subtitles, label: 'English transcripts & subtitles' },
-	{ icon: LineChart, label: 'Progress tracking' },
-	{ icon: MessagesSquare, label: 'Access to the Discord community' },
-] as const
-
-/**
- * Closes out the sticky rail in all three of its states (waitlist, pricing,
- * purchased). Someone weighing the cohort and someone already enrolled both
- * want the same answer to "what do I actually get", so it never branches.
- */
-export const CohortIncludes: React.FC<{
-	workshopCount: number
-	className?: string
-}> = ({ workshopCount, className }) => {
-	return (
-		<section className={cn('border-t px-5 py-6', className)}>
-			<h2 className={cn(TYPE.subhead, 'mb-4')}>Includes</h2>
-			<ul className="flex flex-col gap-3">
-				{workshopCount > 0 && (
-					<Item icon={Layers}>
-						{workshopCount} {workshopCount === 1 ? 'workshop' : 'workshops'}
-					</Item>
-				)}
-				{COHORT_INCLUDES.map(({ icon, label }) => (
-					<Item key={label} icon={icon}>
-						{label}
-					</Item>
-				))}
-			</ul>
-		</section>
-	)
+export function cohortLessonFeatures(
+	lessonCount: number,
+): ProductPricingFeature[] {
+	if (lessonCount <= 0) return []
+	return [
+		{
+			icon: <PlayCircle className="h-4 w-4" />,
+			label: `${lessonCount} ${lessonCount === 1 ? 'Lesson' : 'Lessons'}`,
+		},
+	]
 }
 
-const Item: React.FC<{
-	icon: React.ElementType
-	children: React.ReactNode
-}> = ({ icon: Icon, children }) => (
-	<li className={cn(TYPE.metaProse, 'flex items-center gap-3')}>
-		<Icon
-			className="size-4 shrink-0 text-[color:var(--ah-fg-subtle)]"
-			aria-hidden="true"
-			strokeWidth={1.75}
-		/>
-		<span className="text-[color:var(--ah-fg-body)]">{children}</span>
-	</li>
+/**
+ * What every seat comes with, for the rail states that have no pricing card:
+ * the waitlist and the purchased rail. Someone weighing the cohort and someone
+ * already enrolled both want the same answer to "what do I actually get".
+ *
+ * It is the pricing card's own checklist, not a second design. When seats are
+ * on sale the card renders that checklist itself (between the guarantee and
+ * the boss letter, as on a workshop page), so the rail must show one or the
+ * other and never both: two "Includes" stacked in one column read as a
+ * mistake.
+ *
+ * @param lessonCount - Lessons across every workshop; 0 drops the row.
+ */
+export const CohortIncludes: React.FC<{
+	workshops: CohortWorkshopRef[]
+	lessonCount: number
+	className?: string
+}> = ({ workshops, lessonCount, className }) => (
+	<ProductPricingFeatures
+		variant="checklist"
+		productType="cohort"
+		workshops={workshops}
+		prependFeatures={cohortLessonFeatures(lessonCount)}
+		className={className}
+	/>
 )

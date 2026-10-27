@@ -15,3 +15,7 @@ See `./AGENTS.md` for the full agent guide (kept in sync, harness-agnostic).
 - Sizes come from `TYPE` in `src/components/landing/type.ts`. Do not write size classes inline. Headings are 700.
 - Radii: 4 / 6 / 9 / 11 / 12. Page structure stays sharp; `rounded-full` only on circles.
 - Light + dark mode both required.
+
+## Stripe and commerce testing
+
+Never test payments on a Vercel preview, and use only `sk_test_` or `rk_test_` keys. The full rules live in `./AGENTS.md`, section "Stripe and commerce testing".

@@ -30,12 +30,34 @@ export type UpcomingCohortSummary = {
 	 * condition under which there is no waitlist to be on.
 	 */
 	productName?: string
+	/**
+	 * ISO datetime the product's enrollment opens (`openEnrollment`), carried
+	 * only for a live product: a draft product's date is a plan, and printing
+	 * it would announce something nobody has committed to. With `startsAt` it
+	 * is what lets a block say "enrollment opens Oct 26" instead of treating
+	 * an announced cohort like the gap between cohorts.
+	 */
+	opensAt?: string
 }
 
 function readString(obj: unknown, key: string): string | undefined {
 	if (!obj || typeof obj !== 'object') return undefined
 	const v = (obj as Record<string, unknown>)[key]
 	return typeof v === 'string' && v.length > 0 ? v : undefined
+}
+
+/**
+ * `openEnrollment`, for a product a reader could actually buy from once the
+ * date arrives: active and published, the same test `getUpcomingCohort` puts
+ * on a product before calling its cohort purchasable.
+ */
+function readOpensAt(
+	product: { status: number; fields: unknown } | null | undefined,
+): string | undefined {
+	if (!product || product.status !== 1) return undefined
+	const state = readString(product.fields, 'state')
+	if (state && state !== 'published') return undefined
+	return readString(product.fields, 'openEnrollment')
 }
 
 /**
@@ -101,6 +123,7 @@ async function getUpcomingCohortUncached(): Promise<UpcomingCohortSummary | null
 		image: readString(winner.fields, 'image'),
 		description: readString(winner.fields, 'description'),
 		productName: winner.resourceProducts?.[0]?.product?.name ?? undefined,
+		opensAt: readOpensAt(winner.resourceProducts?.[0]?.product),
 	}
 }
 
@@ -225,6 +248,7 @@ async function getLatestCohortUncached(): Promise<UpcomingCohortSummary | null> 
 		image: readString(winner.fields, 'image'),
 		description: readString(winner.fields, 'description'),
 		productName: winner.resourceProducts?.[0]?.product?.name ?? undefined,
+		opensAt: readOpensAt(winner.resourceProducts?.[0]?.product),
 	}
 }
 
@@ -248,15 +272,18 @@ async function getLatestCohortUncached(): Promise<UpcomingCohortSummary | null> 
  * 600s against windows measured in days, that is not a real edge; the tags mean
  * a cohort or product edit invalidates it immediately anyway.
  */
+// `v2`: the summary gained `opensAt`. A `v1` entry would serve the old shape
+// for its remaining lifetime, and an announced cohort would read as a plain
+// waitlist until it expired.
 const _getUpcomingCohort = unstable_cache(
 	getUpcomingCohortUncached,
-	['upcoming-cohort-v1'],
+	['upcoming-cohort-v2'],
 	{ revalidate: 600, tags: ['products', 'cohorts'] },
 )
 
 const _getLatestCohort = unstable_cache(
 	getLatestCohortUncached,
-	['latest-cohort-v1'],
+	['latest-cohort-v2'],
 	{ revalidate: 600, tags: ['products', 'cohorts'] },
 )
 

@@ -23,6 +23,7 @@ import {
 	unwrapCourseSyncStepResult,
 	type CourseSyncStepResult,
 } from '@/course-sync/errors'
+import { resolveCourseSyncEditorLink } from '@/course-sync/editor-link'
 import { freezeCourseSyncAssetBatch } from '@/course-sync/freeze-batches'
 import { dropboxSyncConfigFor } from '@/course-sync/dropbox-binding-config'
 import { courseSyncControlPlane } from '@/course-sync/runtime'
@@ -30,7 +31,7 @@ import {
 	AI_HERO_COURSE_SYNC_BINDING,
 	getServerCourseSyncBinding,
 } from '@/course-sync/types'
-import { env } from '@/env.mjs'
+import { getIntegrationRefreshToken } from '@/lib/integration-token-store'
 import { log } from '@/server/logger'
 import { readDropboxCourseManifest } from '@/lib/dropbox-course-sync'
 
@@ -208,15 +209,20 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 
 		const poll = createCourseSyncDetectionPoller({
 			binding,
+			resolveEditorLink: (linkBinding, courseVersionId) =>
+				runTypedStep('resolve-course-sync-editor-link', () =>
+					resolveCourseSyncEditorLink(linkBinding, courseVersionId),
+				),
 			readManifest: () =>
 				runTypedStep('detect-course-manifest', async () => {
 					const { config, missingConfig } = dropboxSyncConfigFor(binding)
-					if (!config || !env.DROPBOX_REFRESH_TOKEN) {
+					const refreshToken = await getIntegrationRefreshToken('dropbox')
+					if (!config || !refreshToken) {
 						throw new CourseSyncError(
 							'DROPBOX_SYNC_NOT_CONFIGURED',
 							`Dropbox sync is not configured: ${[
 								...missingConfig,
-								...(!env.DROPBOX_REFRESH_TOKEN
+								...(!refreshToken
 									? ['DROPBOX_REFRESH_TOKEN']
 									: []),
 							].join(', ')}`,
@@ -225,7 +231,7 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 					}
 					return readDropboxCourseManifest({
 						config,
-						refreshToken: env.DROPBOX_REFRESH_TOKEN,
+						refreshToken,
 					})
 				}),
 			getRevisionHead: (bindingId) =>

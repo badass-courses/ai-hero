@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
 	CRASH_COURSE_PRODUCT_ID,
 	CRASH_COURSE_PROMO_STARTS_AT,
-	FEATURED_PROMO,
+	CRASH_COURSE_PROMO,
+	getFeaturedPromo,
 	isProductPromoActive,
 	isPromoActive,
 } from './promo-config'
@@ -13,18 +14,15 @@ const MIDNIGHT_PACIFIC = new Date('2026-08-17T07:00:00.000Z')
 
 describe('Crash Course promotion timing', () => {
 	it('keeps the featured promo hidden until midnight Pacific', () => {
-		expect(isPromoActive(FEATURED_PROMO, ONE_MILLISECOND_BEFORE)).toBe(
+		expect(isPromoActive(CRASH_COURSE_PROMO, ONE_MILLISECOND_BEFORE)).toBe(
 			false,
 		)
-		expect(isPromoActive(FEATURED_PROMO, MIDNIGHT_PACIFIC)).toBe(true)
+		expect(isPromoActive(CRASH_COURSE_PROMO, MIDNIGHT_PACIFIC)).toBe(true)
 	})
 
 	it('keeps only the Crash Course sale out of global offer surfaces', () => {
 		expect(
-			isProductPromoActive(
-				CRASH_COURSE_PRODUCT_ID,
-				ONE_MILLISECOND_BEFORE,
-			),
+			isProductPromoActive(CRASH_COURSE_PRODUCT_ID, ONE_MILLISECOND_BEFORE),
 		).toBe(false)
 		expect(
 			isProductPromoActive(CRASH_COURSE_PRODUCT_ID, MIDNIGHT_PACIFIC),
@@ -35,14 +33,14 @@ describe('Crash Course promotion timing', () => {
 	})
 
 	it('uses the tracked launch link and exact launch instant', () => {
-		expect(FEATURED_PROMO.href).toBe('/s/crash-course')
-		expect(FEATURED_PROMO.resourceId).toBe('workshop-2ozd9')
-		expect(FEATURED_PROMO.navLabel).toBe('Get the course')
-		expect(FEATURED_PROMO.navHref).toBe(
-			'/workshops/ai-coding-crash-course',
-		)
-		expect(FEATURED_PROMO.startsAt).toBe(CRASH_COURSE_PROMO_STARTS_AT)
-		expect(FEATURED_PROMO.message).toBe('AI Coding Crash Course is out now.')
+		const promo = getFeaturedPromo(new Date('2026-11-10T07:30:00.000Z'))
+		expect(promo).toBe(CRASH_COURSE_PROMO)
+		expect(promo?.href).toBe('/s/crash-course')
+		expect(promo?.resourceId).toBe('workshop-2ozd9')
+		expect(promo?.navLabel).toBe('Get the course')
+		expect(promo?.navHref).toBe('/workshops/ai-coding-crash-course')
+		expect(promo?.startsAt).toBe(CRASH_COURSE_PROMO_STARTS_AT)
+		expect(promo?.message).toBe('AI Coding Crash Course is out now.')
 	})
 
 	/**
@@ -53,16 +51,17 @@ describe('Crash Course promotion timing', () => {
 	 * same assertion in four words ("Save $100").
 	 */
 	it('never makes a priced or dated claim without an expiry', () => {
-		const claims = [FEATURED_PROMO.message, FEATURED_PROMO.navLabel]
+		const claims = [CRASH_COURSE_PROMO.message, CRASH_COURSE_PROMO.navLabel]
 			.filter(Boolean)
 			.join(' ')
-		const isTimeBound = /\$\d|\d+%|\bJanuary\b|\bFebruary\b|\bMarch\b|\bApril\b|\bMay\b|\bJune\b|\bJuly\b|\bAugust\b|\bSeptember\b|\bOctober\b|\bNovember\b|\bDecember\b/i.test(
-			claims,
-		)
+		const isTimeBound =
+			/\$\d|\d+%|\bJanuary\b|\bFebruary\b|\bMarch\b|\bApril\b|\bMay\b|\bJune\b|\bJuly\b|\bAugust\b|\bSeptember\b|\bOctober\b|\bNovember\b|\bDecember\b/i.test(
+				claims,
+			)
 
 		if (isTimeBound) {
 			expect(
-				FEATURED_PROMO.endsAt,
+				CRASH_COURSE_PROMO.endsAt,
 				`"${claims}" names a price or date, so it needs an endsAt`,
 			).toBeDefined()
 		}

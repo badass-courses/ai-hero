@@ -22,10 +22,12 @@ export const syncGithubSourcedPosts = inngest.createFunction(
 		const data = event?.data
 		const changedPaths =
 			data && 'changedPaths' in data ? data.changedPaths : undefined
+		const repositoryFullName =
+			data && 'repositoryFullName' in data ? data.repositoryFullName : undefined
 		const source = data && 'source' in data ? data.source : 'cron'
 
 		const results = await step.run('sync github-sourced posts', async () => {
-			return syncAllGithubSourcedPosts({ changedPaths })
+			return syncAllGithubSourcedPosts({ changedPaths, repositoryFullName })
 		})
 
 		return {

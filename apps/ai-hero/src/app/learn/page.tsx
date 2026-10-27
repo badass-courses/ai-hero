@@ -1,4 +1,6 @@
 import type { Metadata } from 'next'
+import { C5SaleCta } from '@/components/c5-sale-cta'
+import { C5SaleSwitch } from '@/components/c5-sale-switch'
 import LayoutClient from '@/components/layout-client'
 import { AskAIHeroBotCard } from '@/components/navigation/ask-ai-hero-bot-card'
 import {
@@ -65,6 +67,9 @@ export default async function LearnPage() {
 					whatsNew={whatsNew}
 					tocItems={TOC_ITEMS}
 				/>
+				<C5SaleSwitch>
+					<C5SaleCta />
+				</C5SaleSwitch>
 			</HubLayout>
 		</LayoutClient>
 	)

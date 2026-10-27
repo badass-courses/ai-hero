@@ -7,12 +7,12 @@ import {
 	WorkshopAccessBoundary,
 	WorkshopSidebarAccessBoundary,
 } from '@/app/(content)/workshops/_components/workshop-access-boundary'
+import { LessonDeniedNotice } from '@/app/(content)/workshops/_components/lesson-denied-notice'
 import { WorkshopResourceList } from '@/app/(content)/workshops/_components/workshop-resource-list'
 import { TeamWelcomeVideo } from '@/app/(content)/workshops/_components/team-welcome-video'
 import { WorkshopActionsBar } from '@/app/(content)/workshops/_components/workshop-user-actions'
 import { Contributor } from '@/components/contributor'
 import { EvergreenClaimPanel } from '@/components/evergreen-claim-panel'
-import { EvergreenOfferEndedNotice } from '@/components/evergreen-offer-ended-notice'
 import { DiscountDeadline } from '@/components/pricing/discount-deadline'
 import { PricingInline } from '@/components/pricing/pricing-inline'
 import { TYPE } from '@/components/landing/type'
@@ -31,12 +31,16 @@ import {
 } from '@/lib/workshops-query'
 import { compileMDX } from '@/utils/compile-mdx'
 import { Markdown as ReactMarkdown } from '@/components/markdown'
-import { Course } from 'schema-dts'
+import { buildCourseSchema } from '@/lib/course-schema'
+import type { Product } from '@coursebuilder/core/schemas'
+import { metaDescription } from '@/lib/meta-description'
+import { StructuredDataScript } from '@/lib/structured-data'
 
 import { Skeleton } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
 import WorkshopBreadcrumb from '../_components/workshop-breadcrumb'
+import { WorkshopEvergreenOfferEndedNotice } from '../_components/workshop-evergreen-offer-ended-notice'
 import WorkshopImage from '../_components/workshop-image'
 import {
 	WorkshopInlineBuyButton,
@@ -45,6 +49,9 @@ import {
 } from '../_components/workshop-pricing'
 import { PublicWorkshopPricing } from '../_components/workshop-public-pricing-server'
 import { WorkshopDraftBanner } from '../_components/workshop-draft-banner'
+import { C5SaleCta } from '@/components/c5-sale-cta'
+import { C5SaleSwitch } from '@/components/c5-sale-switch'
+
 import { WorkshopInterestCta } from '../_components/workshop-interest-cta'
 import { WorkshopNotifyButton } from '../_components/workshop-notify-button'
 import { WorkshopSidebar } from '../_components/workshop-sidebar'
@@ -78,7 +85,7 @@ export async function generateMetadata(
 
 	return {
 		title: workshop.fields?.title,
-		description: workshop.fields?.description,
+		description: metaDescription(workshop.fields?.description),
 		alternates: {
 			canonical: `/workshops/${params.module}`,
 		},
@@ -143,6 +150,14 @@ export default async function ModulePage(props: Props) {
 		? `/workshops/${params.module}/for-teams`
 		: undefined
 	const shouldShowPricingSidebar = hasSelfPacedProduct || isPreLaunch
+	const metadataWithoutOffers = (
+		<WorkshopMetadata
+			title={workshop.fields?.title || ''}
+			description={workshop.fields?.description || ''}
+			imageUrl={workshop.fields?.coverImage?.url}
+			slug={params.module}
+		/>
+	)
 	const bodySource = workshop.fields.body || ''
 	// The body placing the curriculum itself replaces the auto-appended list.
 	// Code fences/inline code are stripped first so a body that merely *shows*
@@ -231,6 +246,7 @@ export default async function ModulePage(props: Props) {
 						return (
 							<WorkshopAccessBoundary
 								member={null}
+								anonymousWithoutCta={null}
 								anonymous={
 									<React.Suspense fallback={null}>
 										<WorkshopInlineBuyButton
@@ -280,7 +296,10 @@ export default async function ModulePage(props: Props) {
 					<>
 						{/* An expired offer link says so instead of a silent full price. */}
 						<React.Suspense fallback={null}>
-							<EvergreenOfferEndedNotice endpoint="/api/evergreen/offer-status" />
+							<WorkshopEvergreenOfferEndedNotice
+								endpoint="/api/evergreen/offer-status"
+								productId={product.id}
+							/>
 						</React.Suspense>
 						<EvergreenClaimPanel
 							pilotOnly
@@ -290,6 +309,10 @@ export default async function ModulePage(props: Props) {
 					</>
 				)}
 			<main className="flex min-h-screen w-full flex-col">
+				<LessonDeniedNotice />
+				<C5SaleSwitch>
+					<C5SaleCta />
+				</C5SaleSwitch>
 				{isPreLaunch && (
 					<React.Suspense fallback={null}>
 						<WorkshopDraftBanner
@@ -298,12 +321,7 @@ export default async function ModulePage(props: Props) {
 						/>
 					</React.Suspense>
 				)}
-				<WorkshopMetadata
-					title={workshop.fields?.title || ''}
-					description={workshop.fields?.description || ''}
-					imageUrl={workshop.fields?.coverImage?.url}
-					slug={params.module}
-				/>
+				{!shouldShowPricingSidebar ? metadataWithoutOffers : null}
 				{/* The cover bleeds to the container's top, right and bottom edges,
 				    square-cornered, on the same six-column rhythm as the body below —
 				    its left edge continues the sidebar's hairline. The text column
@@ -401,15 +419,30 @@ export default async function ModulePage(props: Props) {
 							{shouldShowPricingSidebar ? (
 								<React.Suspense
 									fallback={
-										<div className="bg-background relative z-10 flex w-full flex-col gap-2 p-5 pb-16">
-											<Skeleton className="bg-accent h-10 w-full" />
-											<Skeleton className="bg-accent h-10 w-full" />
-											<Skeleton className="bg-accent h-10 w-full" />
-											<Skeleton className="bg-accent h-10 w-full" />
-										</div>
+										<>
+											{metadataWithoutOffers}
+											<div className="bg-background relative z-10 flex w-full flex-col gap-2 p-5 pb-16">
+												<Skeleton className="bg-accent h-10 w-full" />
+												<Skeleton className="bg-accent h-10 w-full" />
+												<Skeleton className="bg-accent h-10 w-full" />
+												<Skeleton className="bg-accent h-10 w-full" />
+											</div>
+										</>
 									}
 								>
-									<PublicWorkshopPricing moduleSlug={params.module}>
+									<PublicWorkshopPricing
+										moduleSlug={params.module}
+										structuredData={(pricingProps) => (
+											<WorkshopMetadata
+												title={workshop.fields?.title || ''}
+												description={workshop.fields?.description || ''}
+												imageUrl={workshop.fields?.coverImage?.url}
+												slug={params.module}
+												product={isPreLaunch ? undefined : pricingProps.product}
+												quantityAvailable={pricingProps.quantityAvailable}
+											/>
+										)}
+									>
 										{(pricingProps) => {
 											// allowPurchase always forces the buy state; otherwise a
 											// pre-launch workshop shows the interest-capture form.
@@ -493,6 +526,9 @@ export default async function ModulePage(props: Props) {
 													wrapperClassName="overflow-hidden pb-0"
 												/>
 											)
+											// The resource list with no buy or notify ask, desktop or
+											// mobile bar: what a viewer sees until we know they don't own it.
+											const sidebarWithoutCta = listSidebar(false)
 											const forcedPurchaseSidebar = pricingProps.product ? (
 												<WorkshopSidebar
 													pricingProps={{
@@ -525,12 +561,15 @@ export default async function ModulePage(props: Props) {
 													fallback={
 														<WorkshopAccessBoundary
 															anonymous={anonymousSidebar}
+															anonymousWithoutCta={sidebarWithoutCta}
 															member={memberSidebar}
+															showErrorNote
 														/>
 													}
 												>
 													<WorkshopSidebarAccessBoundary
 														anonymous={anonymousSidebar}
+														anonymousWithoutCta={sidebarWithoutCta}
 														member={memberSidebar}
 														forcedPurchase={forcedPurchaseSidebar}
 													/>
@@ -542,7 +581,9 @@ export default async function ModulePage(props: Props) {
 							) : (
 								<WorkshopAccessBoundary
 									anonymous={listSidebar(false)}
+									anonymousWithoutCta={listSidebar(false)}
 									member={listSidebar(true)}
+									showErrorNote
 								/>
 							)}
 						</div>
@@ -570,29 +611,26 @@ const WorkshopMetadata = ({
 	description,
 	imageUrl,
 	slug,
+	product,
+	quantityAvailable,
 }: {
 	title: string
 	description: string
 	imageUrl?: string
 	slug: string
+	product?: Product
+	quantityAvailable?: number
 }) => {
-	const jsonLd: Course = {
-		'@type': 'Course',
-		name: title,
-		author: config.author,
-		creator: {
-			'@type': 'Person',
-			name: config.author,
-		},
-		description: description,
-		...(imageUrl && { thumbnailUrl: imageUrl }),
-		url: `${env.NEXT_PUBLIC_URL}/workshops/${slug}`,
+	const jsonLd = {
+		...buildCourseSchema({
+			title,
+			description,
+			url: new URL(`/workshops/${slug}`, config.siteUrl).href,
+			product,
+			quantityAvailable,
+		}),
+		creator: { '@type': 'Person' as const, name: config.author },
+		...(imageUrl ? { thumbnailUrl: imageUrl } : {}),
 	}
-
-	return (
-		<script
-			type="application/ld+json"
-			dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-		/>
-	)
+	return <StructuredDataScript id="course-jsonld" data={jsonLd} />
 }

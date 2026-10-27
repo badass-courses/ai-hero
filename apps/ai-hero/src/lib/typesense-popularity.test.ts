@@ -1,3 +1,4 @@
+import { Errors } from 'typesense'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -274,11 +275,11 @@ describe('writePopularityScores', () => {
 	it('no-ops when scores is empty (does not call Typesense)', async () => {
 		const { client, importMock } = makeMockClient([])
 		const result = await writePopularityScores(client, 'col', [])
-		expect(result).toEqual({ written: 0, failed: 0 })
+		expect(result).toEqual({ written: 0, failed: 0, skipped: 0 })
 		expect(importMock).not.toHaveBeenCalled()
 	})
 
-	it('passes scores verbatim to import with action: emplace', async () => {
+	it('passes scores verbatim to import with action: update', async () => {
 		const { client, importMock, collections } = makeMockClient([
 			{ success: true },
 			{ success: true },
@@ -292,7 +293,7 @@ describe('writePopularityScores', () => {
 		expect(importMock).toHaveBeenCalledTimes(1)
 		const [payload, opts] = importMock.mock.calls[0] ?? []
 		expect(payload).toBe(scores) // identical reference — no transformation
-		expect(opts).toEqual({ action: 'emplace' })
+		expect(opts).toEqual({ action: 'update' })
 	})
 
 	it('counts successes and failures from array response', async () => {
@@ -306,7 +307,7 @@ describe('writePopularityScores', () => {
 			{ id: 'b', popularity_30d: 2 },
 			{ id: 'c', popularity_30d: 3 },
 		])
-		expect(result).toEqual({ written: 2, failed: 1 })
+		expect(result).toEqual({ written: 2, failed: 1, skipped: 0 })
 	})
 
 	it('counts successes and failures from JSONL string response', async () => {
@@ -318,6 +319,73 @@ describe('writePopularityScores', () => {
 			{ id: 'b', popularity_30d: 2 },
 			{ id: 'c', popularity_30d: 3 },
 		])
-		expect(result).toEqual({ written: 2, failed: 1 })
+		expect(result).toEqual({ written: 2, failed: 1, skipped: 0 })
 	})
+
+	it.each(['array', 'jsonl', 'sdk-error'])(
+		'skips only document 404s in %s results',
+		async (format) => {
+			const rows = [
+				{ success: true },
+				{
+					success: false,
+					code: 404,
+					error: 'Could not find a document with id: b',
+				},
+				{ success: false, code: 400, error: 'Invalid field' },
+			]
+			const { client, importMock } = makeMockClient(
+				format === 'jsonl'
+					? rows.map((row) => JSON.stringify(row)).join('\n')
+					: rows,
+			)
+			if (format === 'sdk-error') {
+				importMock.mockRejectedValue(
+					new Errors.ImportError('partial import', rows),
+				)
+			}
+			await expect(
+				writePopularityScores(client, 'col', [
+					{ id: 'a', popularity_30d: 0 },
+					{ id: 'b', popularity_30d: 2 },
+					{ id: 'c', popularity_30d: 3 },
+				]),
+			).resolves.toEqual({ written: 1, skipped: 1, failed: 1 })
+		},
+	)
+
+	it('unwraps the SDK error when every missing document is skipped', async () => {
+		const { client, importMock } = makeMockClient([])
+		importMock.mockRejectedValue(
+			new Errors.ImportError('missing document', [
+				{
+					success: false,
+					code: 404,
+					error: 'Could not find a document with id: a',
+				},
+			]),
+		)
+		await expect(
+			writePopularityScores(client, 'col', [{ id: 'a', popularity_30d: 5 }]),
+		).resolves.toEqual({ written: 0, skipped: 1, failed: 0 })
+	})
+
+	it('propagates transport failures, including collection-level 404s', async () => {
+		const { client, importMock } = makeMockClient([])
+		const error = new Errors.ObjectNotFound('Collection not found')
+		importMock.mockRejectedValue(error)
+		await expect(
+			writePopularityScores(client, 'col', [{ id: 'a', popularity_30d: 1 }]),
+		).rejects.toBe(error)
+	})
+
+	it.each(['{"success":true', '', 'no JSON'])(
+		'rejects malformed or incomplete responses: %s',
+		async (response) => {
+			const { client } = makeMockClient(response)
+			await expect(
+				writePopularityScores(client, 'col', [{ id: 'a', popularity_30d: 1 }]),
+			).rejects.toThrow()
+		},
+	)
 })
