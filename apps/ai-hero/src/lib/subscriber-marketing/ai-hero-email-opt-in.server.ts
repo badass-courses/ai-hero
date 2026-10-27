@@ -94,8 +94,14 @@ export async function routeReturningUnsubscriberWithKit(args: {
 		deferUnknown: Boolean(args.deferral),
 		getDrovrStops: async (kitSubscriberId) => {
 			try {
-				return await readDrovrOptOuts(kitSubscriberId, drovrConfig, () =>
-					log.warn('optin.resubscribe.drovr_unexpected_page', {}),
+				return await readDrovrOptOuts(
+					kitSubscriberId,
+					drovrConfig && {
+						...drovrConfig,
+						// Latency per call, for p50/p95 in Axiom. No ids or addresses.
+						onRead: ({ ms, status }) =>
+							log.info('optin.drovr_stops.read', { ms, status, entry: args.entry }),
+					},
 				)
 			} catch (error) {
 				await log.warn('optin.resubscribe.drovr_unknown', {
