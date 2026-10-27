@@ -128,6 +128,7 @@ describe('YouTube callback dual-write dormancy', () => {
 			expect(html.includes('DB token store failed; using env.')).toBe(
 				Boolean(value),
 			)
+			expect(html).not.toContain('stale DB row')
 			expect(mocks.fetch).toHaveBeenCalledTimes(4)
 			for (const [index, [url, options]] of mocks.fetch.mock.calls
 				.slice(0, 3)
@@ -201,6 +202,7 @@ describe('YouTube callback dual-write dormancy', () => {
 					fetchImpl: mocks.fetch,
 				})
 				expect(result.ok).toBe(true)
+				expect(result.dbStorage).toEqual({ ok: false, staleRow: false })
 				expect(mocks.warn).toHaveBeenCalledWith(
 					'integration-token.fallback',
 					expect.objectContaining({
@@ -225,12 +227,37 @@ describe('YouTube callback dual-write dormancy', () => {
 		mocks.deleteWhere.mockRejectedValue(new Error('synthetic cleanup failure'))
 		const response = await GET(callback())
 		expect(response.status).toBe(200)
-		expect(await response.text()).toContain('DB token store failed; using env.')
+		const html = await response.text()
+		expect(html).toContain('Refresh token stored automatically')
+		expect(html).toContain(
+			'<p>DB token store failed and a stale DB row may remain; delete it before the next deploy.</p>',
+		)
+		expect(html).not.toContain('DB token store failed; using env.')
 		expect(mocks.fetch).toHaveBeenCalledTimes(4)
 		expect(mocks.warn).toHaveBeenCalledWith(
 			'integration-token.fallback',
 			expect.objectContaining({ reason: 'cleanup-failed' }),
 		)
+	})
+
+	it('reports a possible stale Dropbox row in the store result when cleanup also throws', async () => {
+		mocks.env.INTEGRATION_TOKEN_KEY = key.toString('base64')
+		mocks.deleteWhere.mockRejectedValue(new Error('synthetic cleanup failure'))
+		mocks.fetch.mockResolvedValue(new Response('{}', { status: 200 }))
+		const result = await storeDropboxRefreshToken({
+			refreshToken: 'fresh-dropbox',
+			environment: {
+				VERCEL_API_TOKEN: 'synthetic-vercel',
+				VERCEL_AI_HERO_PROJECT_ID: 'prj_test',
+			},
+			fetchImpl: mocks.fetch,
+		})
+		expect(result).toEqual({
+			ok: true,
+			missingConfig: [],
+			statuses: [200, 200, 200],
+			dbStorage: { ok: false, staleRow: true },
+		})
 	})
 
 	it('escapes the token exchange error in HTML', async () => {

@@ -481,7 +481,13 @@ describe('Dropbox course sync OAuth', () => {
 			fetchImpl,
 		})
 
-		expect(result).toEqual({ ok: true, missingConfig: [], statuses: [200, 200, 200] })
+		// No key keeps the exact old result; a failed DB adds only the stale-row signal.
+		expect(result).toStrictEqual({
+			ok: true,
+			missingConfig: [],
+			statuses: [200, 200, 200],
+			...(key ? { dbStorage: { ok: false, staleRow: true } } : {}),
+		})
 		expect(fetchImpl).toHaveBeenCalledTimes(3)
 		for (const [index, [url, options]] of fetchImpl.mock.calls.entries()) {
 			expect(url).toBe('https://api.vercel.com/v10/projects/prj_aihero/env?upsert=true&teamId=team_aihero')

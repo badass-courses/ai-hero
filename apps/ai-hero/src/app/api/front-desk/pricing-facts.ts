@@ -189,6 +189,12 @@ const individual = (
 ) =>
 	!row.bulkCouponId && !row.redeemedBulkCouponId
 
+/** A redeemed team seat counts toward alumni (Joel, 2026-10-27), unlike legend.
+ * A team buyer's own bulk row does not, unless it is also a redeemed seat. */
+const alumniOwnership = (
+	row: Pick<PricingPurchaseRow, 'bulkCouponId' | 'redeemedBulkCouponId'>,
+) => !!row.redeemedBulkCouponId || individual(row)
+
 /** Current individual ownership, not payment or historical ownership.
  * The source scans only purchases currently held by this exact-email account.
  * Cite exactly the checked manifest, even for a negative result. */
@@ -208,7 +214,7 @@ export function legendFact(
 	)
 }
 
-/** C3/C4 purchases that are current and the buyer's own, not a team seat. */
+/** Current C3/C4 purchases that are the buyer's own or a redeemed team seat. */
 export function alumniFact(
 	rows: readonly PricingPurchaseRow[],
 	scanRef: string,
@@ -217,7 +223,7 @@ export function alumniFact(
 		(row) =>
 			row.productId in ALUMNI_PRODUCTS &&
 			CURRENT.has(row.status) &&
-			individual(row),
+			alumniOwnership(row),
 	)
 	const cohorts = new Set(
 		qualifying.map(
