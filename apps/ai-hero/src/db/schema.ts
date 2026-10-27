@@ -752,6 +752,12 @@ export const contactEvent = mysqlTable(
 		eventTypeProviderReferenceIdx: index(
 			'ContactEvent_eventType_providerReference_idx',
 		).on(table.eventType, table.providerReference),
+		// Serves the learner-flow keyset read: eventType equality, then contactId
+		// in order for ORDER BY contactId / contactId > ? paging (DR 51).
+		eventTypeContactIdIdx: index('ContactEvent_eventType_contactId_idx').on(
+			table.eventType,
+			table.contactId,
+		),
 		// Lookups by providerEventId alone cannot use the (provider, providerEventId) index.
 		providerEventIdIdx: index('idx_ContactEvent_on_providerEventId').on(
 			table.providerEventId,
@@ -870,6 +876,11 @@ export const sideEffectIntent = mysqlTable(
 		),
 		contactIdIdx: index('SideEffectIntent_contactId_idx').on(table.contactId),
 		statusIdx: index('SideEffectIntent_status_idx').on(table.status),
+		// Serves the learner-flow keyset read: provider + type equality, then
+		// contactId in order for DISTINCT / ORDER BY / contactId > ? paging (DR 51).
+		providerTypeContactIdIdx: index(
+			'SideEffectIntent_provider_type_contactId_idx',
+		).on(table.provider, table.type, table.contactId),
 		// Every value-path reader filters provider + type together; the executor
 		// poll additionally filters status IN ('pending','failed') so the status
 		// column rides the same index and completed rows are never examined.
