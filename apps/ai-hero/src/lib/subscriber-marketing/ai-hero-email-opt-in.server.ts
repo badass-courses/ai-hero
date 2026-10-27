@@ -50,19 +50,23 @@ export async function routeReturningUnsubscriberWithKit(args: {
 	entry: 'form' | 'tag-me'
 }) {
 	const drovrConfig = parseDrovrSignupDeliveryConfig(env)
+	const doiEnabled = env.AIH_RESUBSCRIBE_DOI_ENABLED === 'true'
 	const result = await routeReturningUnsubscriber({
 		email: args.email,
-		doiEnabled: env.AIH_RESUBSCRIBE_DOI_ENABLED === 'true',
+		doiEnabled,
 		drovrConfigured: Boolean(drovrConfig),
 		formMapped: DOI_DROVR_FORM_IDS.has(args.kitFormId),
 		getSubscriberByEmail: (email) =>
 			emailListProvider.getSubscriberByEmail(email),
 		getDrovrStops: async (kitSubscriberId) => {
 			try {
-				return await readDrovrOptOuts(kitSubscriberId, drovrConfig)
+				return await readDrovrOptOuts(kitSubscriberId, drovrConfig, () =>
+					log.warn('optin.resubscribe.drovr_unexpected_page', {}),
+				)
 			} catch (error) {
-				await log.warn('optin.resubscribe.drovr_lookup_failed', {
+				await log.warn('optin.resubscribe.drovr_unknown', {
 					error: error instanceof Error ? error.name : 'unknown',
+					doiEnabled,
 				})
 				throw error
 			}
@@ -71,7 +75,7 @@ export async function routeReturningUnsubscriberWithKit(args: {
 			await requestDrovrDoiSignup(args)
 		},
 	})
-	if (result.status === 'lookup-failed' && result.source !== 'drovr') {
+	if (result.status === 'lookup-failed') {
 		await log.warn('optin.resubscribe.lookup_failed', {
 			formId: args.kitFormId,
 			entry: args.entry,

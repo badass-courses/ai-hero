@@ -25,6 +25,7 @@ const SuppressionsReply = z.object({
 export async function readDrovrOptOuts(
 	kitSubscriberId: string,
 	config: { baseUrl: string; apiKey: string; fetch?: typeof fetch } | undefined,
+	onUnexpectedPage?: () => void | Promise<void>,
 ): Promise<{ reason: string }[]> {
 	if (!config) throw new Error('Drovr opt-out reader is not configured')
 	const controller = new AbortController()
@@ -70,6 +71,7 @@ export async function readDrovrOptOuts(
 		const stops: { reason: string }[] = []
 		const cursors = new Set<string>()
 		let cursor: string | null = null
+		let pageCount = 0
 		do {
 			const query = new URLSearchParams({
 				contactId,
@@ -77,6 +79,8 @@ export async function readDrovrOptOuts(
 				activeOnly: 'true',
 			})
 			if (cursor !== null) query.set('cursor', cursor)
+			controller.signal.throwIfAborted()
+			if (++pageCount === 2) await onUnexpectedPage?.()
 			const page = SuppressionsReply.parse(await read(`/suppressions?${query}`))
 			if (page.suppressions.some((stop) => stop.contactId !== contactId)) {
 				throw new TypeError('Unexpected drovr suppression contact')

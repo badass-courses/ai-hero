@@ -775,7 +775,7 @@ describe('drovr double opt-in (DROVR_DOI_FORMS)', () => {
 	})
 })
 
-describe('returning unsubscriber (Kit tag 8244351)', () => {
+describe('returning unsubscriber (Kit or drovr)', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		for (const key of [
@@ -799,7 +799,7 @@ describe('returning unsubscriber (Kit tag 8244351)', () => {
 			}),
 		)
 
-	it('tagged and drovr reachable: answers the DOI shape, no Kit subscribe, no untag', async () => {
+	it.each(['tagged', 'drovr consent unknown with DOI enabled'])('%s: answers the DOI shape, no Kit subscribe, no untag', async () => {
 		mocks.routeReturning.mockResolvedValue({ status: 'doi-requested' })
 
 		const response = await post()
@@ -816,7 +816,7 @@ describe('returning unsubscriber (Kit tag 8244351)', () => {
 		)
 	})
 
-	it.each(['drovr-unconfigured', 'doi-disabled', 'unmapped-form', 'suppressed'])('blocked (%s): 409, no Kit subscribe, no untag', async (reason) => {
+	it.each(['drovr-unconfigured', 'doi-disabled', 'unmapped-form', 'suppressed', 'drovr-unknown'])('blocked (%s): 409, no Kit subscribe, no untag', async (reason) => {
 		mocks.routeReturning.mockResolvedValue({
 			status: 'blocked',
 			reason,
@@ -840,8 +840,8 @@ describe('returning unsubscriber (Kit tag 8244351)', () => {
 		expect(mocks.reconcile).not.toHaveBeenCalled()
 	})
 
-	it.each([undefined, 'drovr'])('%s lookup failed: signs up through Kit, with the untag disabled', async (source) => {
-		mocks.routeReturning.mockResolvedValue({ status: 'lookup-failed', ...(source ? { source } : {}) })
+	it('Kit lookup failed: signs up through Kit, with the untag disabled', async () => {
+		mocks.routeReturning.mockResolvedValue({ status: 'lookup-failed' })
 		mocks.courseBuilderPOST.mockResolvedValue(
 			subscriberResponse({
 				id: 1,

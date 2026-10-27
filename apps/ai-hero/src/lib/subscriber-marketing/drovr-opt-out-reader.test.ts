@@ -37,9 +37,11 @@ describe('readDrovrOptOuts', () => {
 			.mockResolvedValueOnce(
 				reply({ suppressions: [stop()], nextCursor: null }),
 			)
-		await expect(readDrovrOptOuts('123', config)).resolves.toEqual([
-			{ reason: 'unsubscribed' },
-		])
+		const onUnexpectedPage = vi.fn()
+		await expect(
+			readDrovrOptOuts('123', config, onUnexpectedPage),
+		).resolves.toEqual([{ reason: 'unsubscribed' }])
+		expect(onUnexpectedPage).not.toHaveBeenCalled()
 		expect(fetcher).toHaveBeenCalledTimes(2)
 		expect(fetcher).toHaveBeenNthCalledWith(
 			1,
@@ -67,18 +69,23 @@ describe('readDrovrOptOuts', () => {
 		expect(fetcher).toHaveBeenCalledTimes(1)
 	})
 
-	it('reads through empty pages and preserves bounced stops on later pages', async () => {
+	it('warns once when requesting a second page and still reads every page', async () => {
 		const { fetcher, config } = setup()
+		const onUnexpectedPage = vi.fn()
 		fetcher
 			.mockResolvedValueOnce(reply(identity))
 			.mockResolvedValueOnce(reply({ suppressions: [], nextCursor: 'next/1' }))
+			.mockResolvedValueOnce(reply({ suppressions: [], nextCursor: 'next/2' }))
 			.mockResolvedValueOnce(
 				reply({ suppressions: [stop('bounced')], nextCursor: null }),
 			)
-		await expect(readDrovrOptOuts('123', config)).resolves.toEqual([
-			{ reason: 'bounced' },
-		])
+		await expect(
+			readDrovrOptOuts('123', config, onUnexpectedPage),
+		).resolves.toEqual([{ reason: 'bounced' }])
 		expect(fetcher.mock.calls[2]![0]).toContain('cursor=next%2F1')
+		expect(fetcher.mock.calls[3]![0]).toContain('cursor=next%2F2')
+		expect(onUnexpectedPage).toHaveBeenCalledTimes(1)
+		expect(onUnexpectedPage).toHaveBeenCalledWith()
 	})
 
 	it('no active stops returns an empty result', async () => {

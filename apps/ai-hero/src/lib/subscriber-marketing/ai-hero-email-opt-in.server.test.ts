@@ -117,18 +117,33 @@ describe("routeReturningUnsubscriberWithKit", () => {
     await expect(call()).resolves.toEqual({ status: "doi-requested" });
     expect(mocks.readDrovrOptOuts).toHaveBeenCalledWith("123", {
       baseUrl: "https://drovr.test", apiKey: "drovr_key",
-    });
+    }, expect.any(Function));
   });
 
-  it("drovr read failure logs only the error name and keeps the untag disabled", async () => {
+  it.each([true, false])("unknown drovr consent with DOI enabled=%s logs the error name and gate", async (doiEnabled) => {
+    mocks.env.DROVR_API_BASE_URL = "https://drovr.test";
+    mocks.env.DROVR_API_KEY_ORG_AIHERO = "drovr_key";
+    mocks.env.AIH_RESUBSCRIBE_DOI_ENABLED = String(doiEnabled);
     mocks.getSubscriberByEmail.mockResolvedValue({ id: 123, tags: [] });
     mocks.readDrovrOptOuts.mockRejectedValue(new TypeError("private@example.test secret"));
-    await expect(call()).resolves.toEqual({ status: "lookup-failed", source: "drovr" });
-    expect(mocks.log.warn).toHaveBeenCalledTimes(1);
+    await expect(call()).resolves.toEqual(doiEnabled
+      ? { status: "doi-requested" }
+      : { status: "blocked", reason: "drovr-unknown" });
     expect(mocks.log.warn).toHaveBeenCalledWith(
-      "optin.resubscribe.drovr_lookup_failed", { error: "TypeError" },
+      "optin.resubscribe.drovr_unknown", { error: "TypeError", doiEnabled },
     );
-    expect(mocks.requestDoi).not.toHaveBeenCalled();
+    expect(JSON.stringify(mocks.log.warn.mock.calls)).not.toContain("private@example.test");
+    expect(mocks.requestDoi).toHaveBeenCalledTimes(doiEnabled ? 1 : 0);
+  });
+
+  it("wires the unexpected-page warning without ids", async () => {
+    mocks.getSubscriberByEmail.mockResolvedValue({ id: 123, tags: [] });
+    mocks.readDrovrOptOuts.mockImplementationOnce(async (_id, _config, onUnexpectedPage) => {
+      await onUnexpectedPage();
+      return [];
+    });
+    await expect(call()).resolves.toEqual({ status: "not-unsubscribed" });
+    expect(mocks.log.warn).toHaveBeenCalledWith("optin.resubscribe.drovr_unexpected_page", {});
   });
 
   it("untagged: nothing requested, nothing logged", async () => {

@@ -32,7 +32,7 @@ function getKitTags(subscriber: KitSubscriber | null | undefined): KitTag[] {
 export async function reconcileAiHeroEmailOptIn(args: {
 	email: string
 	subscriberState?: string
-	/** False when the pre-check could not read Kit or drovr: keep the tag. */
+	/** False when the pre-check could not read Kit: keep the tag. */
 	mayRemoveUnsubscribeTag?: boolean
 	getSubscriberByEmail: (
 		email: string,
@@ -75,8 +75,8 @@ export async function reconcileAiHeroEmailOptIn(args: {
 export type ReturningUnsubscriberResult =
 	| { status: 'not-unsubscribed' }
 	| { status: 'doi-requested' }
-	/** A consent read failed: sign-up continues, the tag must stay. */
-	| { status: 'lookup-failed'; source?: 'drovr' }
+	/** Kit could not be read: sign-up continues, the tag must stay. */
+	| { status: 'lookup-failed' }
 	| {
 			status: 'blocked'
 			reason:
@@ -84,14 +84,16 @@ export type ReturningUnsubscriberResult =
 				| 'unmapped-form'
 				| 'doi-disabled'
 				| 'suppressed'
+				| 'drovr-unknown'
 	  }
 
 /**
  * An earlier AI Hero unsubscribe in Kit or drovr may come back only through
  * a fresh drovr double opt-in. Runs before any Kit subscribe or
  * untag. A tagged contact we cannot turn into a confirmation request is blocked,
- * so consent fails closed: the tag stays. A failed Kit or drovr read fails
- * open for sign-up (liveness); the caller must then not remove the tag.
+ * so consent fails closed: the tag stays. Unknown drovr consent also requires
+ * DOI or a block. A failed Kit read keeps its existing fail-open behavior;
+ * the caller must then not remove the tag.
  */
 export async function routeReturningUnsubscriber(args: {
 	email: string
@@ -123,8 +125,11 @@ export async function routeReturningUnsubscriber(args: {
 		try {
 			stops = await args.getDrovrStops(String(subscriber.id))
 		} catch {
-			// Reuse the existing caller contract: continue signup, never untag.
-			return { status: 'lookup-failed', source: 'drovr' }
+			if (!args.doiEnabled || !args.formMapped || !args.drovrConfigured) {
+				return { status: 'blocked', reason: 'drovr-unknown' }
+			}
+			await args.requestDoi()
+			return { status: 'doi-requested' }
 		}
 		if (stops.length === 0) return { status: 'not-unsubscribed' }
 		if (stops.some((stop) => stop.reason !== 'unsubscribed')) {

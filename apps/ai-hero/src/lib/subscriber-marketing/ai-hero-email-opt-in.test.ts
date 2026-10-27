@@ -322,16 +322,39 @@ describe('routeReturningUnsubscriber', () => {
 		expect(args.requestDoi).not.toHaveBeenCalled()
 	})
 
-	it('drovr read fails: continues via the existing untag-disabled caller contract', async () => {
+	it.each([
+		[{}, { status: 'doi-requested' }, 1],
+		[{ doiEnabled: false }, { status: 'blocked', reason: 'drovr-unknown' }, 0],
+		[{ formMapped: false }, { status: 'blocked', reason: 'drovr-unknown' }, 0],
+		[
+			{ drovrConfigured: false },
+			{ status: 'blocked', reason: 'drovr-unknown' },
+			0,
+		],
+	] as const)(
+		'unknown drovr consent respects DOI gates %s',
+		async (gate, expected, doiCalls) => {
+			const args = {
+				...base(),
+				...gate,
+				getSubscriberByEmail: vi.fn().mockResolvedValue({ id: 123, tags: [] }),
+				getDrovrStops: vi.fn().mockRejectedValue(new Error('offline')),
+			}
+			await expect(routeReturningUnsubscriber(args)).resolves.toEqual(expected)
+			expect(args.requestDoi).toHaveBeenCalledTimes(doiCalls)
+		},
+	)
+
+	it('unknown drovr consent never masks a failed DOI request', async () => {
 		const args = {
 			...base(),
 			getSubscriberByEmail: vi.fn().mockResolvedValue({ id: 123, tags: [] }),
 			getDrovrStops: vi.fn().mockRejectedValue(new Error('offline')),
+			requestDoi: vi.fn().mockRejectedValue(new Error('queue failed')),
 		}
-		const result = await routeReturningUnsubscriber(args)
-		expect(result).toEqual({ status: 'lookup-failed', source: 'drovr' })
-		expect(result.status !== 'lookup-failed').toBe(false)
-		expect(args.requestDoi).not.toHaveBeenCalled()
+		await expect(routeReturningUnsubscriber(args)).rejects.toThrow(
+			'queue failed',
+		)
 	})
 
 	it('Kit lookup fails: reports lookup-failed so the sign-up can continue', async () => {
