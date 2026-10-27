@@ -141,9 +141,9 @@ import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/events/commerce'
 import { postPurchaseWorkflow } from './post-purchase-workflow'
 
 type Step = {
-	run: ReturnType<typeof vi.fn>
-	sendEvent: ReturnType<typeof vi.fn>
-	sleep: ReturnType<typeof vi.fn>
+	run: ReturnType<typeof vi.fn<any[], any>>
+	sendEvent: ReturnType<typeof vi.fn<any[], any>>
+	sleep: ReturnType<typeof vi.fn<any[], any>>
 }
 type Handler = (args: Record<string, unknown>) => Promise<unknown>
 
