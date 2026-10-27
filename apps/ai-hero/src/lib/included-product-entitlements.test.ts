@@ -687,6 +687,41 @@ describe('included product discord role', () => {
 			},
 		})
 	})
+	it('throws when the source role removal fails and removes it on retry', async () => {
+		await grantIncludedProductEntitlements(context)
+		fake.removeDiscordRole.mockResolvedValueOnce({ status: 'error' } as any)
+		const transfer = target()
+		await expect(transferIncludedProductEntitlements(transfer)).rejects.toThrow(
+			'removal failed',
+		)
+		fake.removeDiscordRole.mockClear()
+		await transferIncludedProductEntitlements(transfer)
+		expect(fake.removeDiscordRole).toHaveBeenCalledWith(context.userId, roleId)
+	})
+	it('still removes the source role when the target row is revoked', async () => {
+		await grantIncludedProductEntitlements(context)
+		const transfer = target()
+		seed(entitlements, {
+			id: discordId('target'),
+			userId: 'target',
+			organizationId: 'target-org',
+			organizationMembershipId: 'target-member',
+			sourceType: 'PURCHASE',
+			sourceId: context.purchaseId,
+			entitlementType: 'discord-type',
+			expiresAt: null,
+			deletedAt: new Date(),
+			metadata: {
+				discordRoleId: roleId,
+				bundlePolicy: 'c5-includes-crash-course-v1',
+				includedByProductId: context.productId,
+			},
+		})
+		fake.send.mockClear()
+		await transferIncludedProductEntitlements(transfer)
+		expect(fake.removeDiscordRole).toHaveBeenCalledWith(context.userId, roleId)
+		expect(fake.send).not.toHaveBeenCalled()
+	})
 	it('keeps the source role when another live grant covers it', async () => {
 		seed(entitlements, {
 			id: 'direct-crash-role',

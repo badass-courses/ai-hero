@@ -46,6 +46,7 @@ type DiscordGrant = {
 	workshopId: string
 	discordRoleId: string
 	retireSourceRole: boolean
+	grantTarget: boolean
 }
 type Entitlement = typeof entitlements.$inferSelect
 
@@ -471,6 +472,13 @@ async function reconcileIncludedProducts(
 							...discordContract,
 							userId: operation.sourceUserId,
 						})
+						// A retry after the retiring commit but before the Discord
+						// removal succeeded must still remove the source role.
+						if (
+							source.deletedAt &&
+							source.metadata?.retiredByTransferId === operation.transferId
+						)
+							retireSourceRole = true
 						if (!source.deletedAt) {
 							retireSourceRole = true
 							await tx
@@ -533,6 +541,8 @@ async function reconcileIncludedProducts(
 					userId: context.userId,
 					context,
 				})
+				// A revoked target row never blocks the source-role cleanup below.
+				let grantTarget = true
 				if (discordRow.deletedAt) {
 					// Same tombstone rule as content access: only a completed
 					// transfer retirement from this same owner may be undone.
@@ -540,38 +550,44 @@ async function reconcileIncludedProducts(
 						operation.kind === 'transfer'
 							? discordRow.metadata?.retiredByTransferId
 							: undefined
-					if (typeof retiredBy !== 'string') {
-						await log.warn('included_product.discord_grant_revoked', {
-							purchaseId: purchase.id,
-							entitlementId: discordId,
-						})
-						continue
-					}
-					const [retirement] = await tx
-						.select()
-						.from(purchaseUserTransfer)
-						.where(eq(purchaseUserTransfer.id, retiredBy))
-						.for('share')
+					const [retirement] =
+						typeof retiredBy === 'string'
+							? await tx
+									.select()
+									.from(purchaseUserTransfer)
+									.where(eq(purchaseUserTransfer.id, retiredBy))
+									.for('share')
+							: []
 					if (
 						!retirement ||
 						retirement.transferState !== 'COMPLETED' ||
 						retirement.purchaseId !== purchase.id ||
 						retirement.sourceUserId !== context.userId
-					)
-						continue
-					await tx
-						.update(entitlements)
-						.set({
-							deletedAt: null,
-							metadata: { ...discordRow.metadata, retiredByTransferId: null },
+					) {
+						grantTarget = false
+						await log.warn('included_product.discord_grant_revoked', {
+							purchaseId: purchase.id,
+							entitlementId: discordId,
 						})
-						.where(eq(entitlements.id, discordId))
+					} else {
+						await tx
+							.update(entitlements)
+							.set({
+								deletedAt: null,
+								metadata: {
+									...discordRow.metadata,
+									retiredByTransferId: null,
+								},
+							})
+							.where(eq(entitlements.id, discordId))
+					}
 				}
 				discordGrants.push({
 					entitlementId: discordId,
 					workshopId: policy.workshopId,
 					discordRoleId,
 					retireSourceRole,
+					grantTarget,
 				})
 			}
 		}
@@ -603,9 +619,17 @@ async function reconcileIncludedProducts(
 			const stillEntitled = sourceLive.some(
 				(row) => row.metadata?.discordRoleId === grant.discordRoleId,
 			)
-			if (!stillEntitled)
-				await removeDiscordRole(operation.sourceUserId, grant.discordRoleId)
+			if (!stillEntitled) {
+				const removal = await removeDiscordRole(
+					operation.sourceUserId,
+					grant.discordRoleId,
+				)
+				// Throw so the caller's retry re-runs the removal.
+				if (removal.status === 'error')
+					throw new Error('Included-product source discord role removal failed')
+			}
 		}
+		if (!grant.grantTarget) continue
 		// Idempotent add-role path shared with direct purchases. A send failure
 		// throws so the retry event re-runs the (already-created) grant.
 		await inngest.send({
