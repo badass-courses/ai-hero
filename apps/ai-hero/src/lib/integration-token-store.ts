@@ -66,7 +66,7 @@ export async function getIntegrationRefreshToken(
 	}
 	try {
 		const key = integrationTokenKey(env.INTEGRATION_TOKEN_KEY)
-		const [{ db }, { integrationToken }, { eq }] = await Promise.all([
+		const [{ db }, { integrationToken }, { eq, sql }] = await Promise.all([
 			import('@/db'),
 			import('@/db/integration-token-schema'),
 			import('drizzle-orm'),
@@ -78,6 +78,26 @@ export async function getIntegrationRefreshToken(
 			.limit(1)
 		if (!row) {
 			await reason(provider, 'read', 'no-row')
+			if (typeof fallback === 'string' && fallback.length > 0) {
+				try {
+					await db
+						.insert(integrationToken)
+						.values({
+							provider,
+							...encryptIntegrationToken(provider, fallback, key),
+							updatedAt: new Date(),
+						})
+						.onDuplicateKeyUpdate({ set: { provider: sql`provider` } })
+				} catch {
+					await reason(provider, 'read', 'seed-failed')
+					return fallback
+				}
+				try {
+					await log.info('integration-token.seeded', { provider })
+				} catch {
+					/* Logging must not change read outcomes. */
+				}
+			}
 			return fallback
 		}
 		try {
