@@ -26,7 +26,18 @@ export const LEGEND_PRODUCTS = [
 	'product-pqkk5',
 	'product-ma254',
 ] as const
+/**
+ * All four earlier AI Hero cohorts earn the returning-student price (Joel,
+ * 2026-10-28). The vendored front-desk bundle only accepts
+ * 'none' | 'c3' | 'c4' | 'both' and the engine checks only `!== 'none'`.
+ * It is built upstream (see its SOURCE.json), so it is not edited here.
+ * INTERIM MAPPING until front-desk widens the literal: C1 and C2 report
+ * 'both', meaning "more than a single named C3/C4 cohort". They are never
+ * reported as 'c3' or 'c4'.
+ */
 export const ALUMNI_PRODUCTS = {
+	'product-3vfob': 'both', // C1 Build DeepSearch in TypeScript
+	'product-wdhub': 'both', // C2 Build Your Own AI Personal Assistant
 	'product-7t9ek': 'c3',
 	'product-pqkk5': 'c4',
 } as const
@@ -214,7 +225,7 @@ export function legendFact(
 	)
 }
 
-/** Current C3/C4 purchases that are the buyer's own or a redeemed team seat. */
+/** Current C1-C4 purchases that are the buyer's own or a redeemed team seat. */
 export function alumniFact(
 	rows: readonly PricingPurchaseRow[],
 	scanRef: string,
@@ -231,7 +242,9 @@ export function alumniFact(
 		),
 	)
 	const value =
-		cohorts.size === 2 ? 'both' : ([...cohorts][0] ?? ('none' as const))
+		cohorts.size >= 2 || cohorts.has('both')
+			? ('both' as const)
+			: ([...cohorts][0] ?? ('none' as const))
 	return known(
 		value,
 		qualifying.length
