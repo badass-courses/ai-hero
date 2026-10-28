@@ -1,4 +1,4 @@
-/*! @front-desk/pricing 0.2.1 public build; front-desk commit 3c6341344c0b1a8b34ac879508a48f698cb46b2c; sha256 of the body below 0cd7127ba28c912f2cf30a2032616a95131b80fc4210792c614b51fc2f65cd71 */
+/*! @front-desk/pricing 0.2.2 public build; front-desk commit 06c7c50362404de2ac2b31e14f7f92bb6f3c5cf5; sha256 of the body below 59a8abe6decc6a04bef492bfcec8d21b7f6d93a23e035510988caf1c7aaf041f */
 //#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Pipeable.js
 var pipeArguments = (self, args) => {
 	switch (args.length) {
@@ -4984,7 +4984,7 @@ var plainDecoderOf = (schema) => {
 decoderOf(ArraySchema(BindingQuote));
 //#endregion
 //#region src/engine/result.ts
-var ENGINE_VERSION$1 = "0.2.1";
+var ENGINE_VERSION$1 = "0.2.2";
 var Reason = Struct({
 	code: Literals([
 		"policy-disabled",
@@ -5148,7 +5148,6 @@ var BuyerFacts = Struct({
 		"c2",
 		"c3",
 		"c4",
-		"both",
 		"multiple"
 	])),
 	code: fact(NullOr(GiftCode)).pipe(withDecodingDefaultKey(succeed$1({
