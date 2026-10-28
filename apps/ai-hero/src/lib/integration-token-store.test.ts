@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { serializeError } from '@/server/logger-utils'
 import {
@@ -16,6 +17,7 @@ const mocks = vi.hoisted(() => ({
 	insert: vi.fn(),
 	values: vi.fn(),
 	upsert: vi.fn(),
+	info: vi.fn(),
 	warn: vi.fn(),
 	debug: vi.fn(),
 	delete: vi.fn(),
@@ -24,7 +26,7 @@ const mocks = vi.hoisted(() => ({
 }))
 vi.mock('@/env.mjs', () => ({ env: mocks.env }))
 vi.mock('@/server/logger', async () => ({
-	log: { warn: mocks.warn, debug: mocks.debug },
+	log: { info: mocks.info, warn: mocks.warn, debug: mocks.debug },
 	serializeError: (await import('@/server/logger-utils')).serializeError,
 }))
 vi.mock('@/db', () => {
@@ -52,6 +54,7 @@ describe('dormant dual-read integration token store', () => {
 		mocks.values.mockReturnValue({ onDuplicateKeyUpdate: mocks.upsert })
 		mocks.limit.mockResolvedValue([])
 		mocks.upsert.mockResolvedValue(undefined)
+		mocks.info.mockResolvedValue(undefined)
 		mocks.warn.mockResolvedValue(undefined)
 		mocks.debug.mockResolvedValue(undefined)
 		mocks.delete.mockReturnValue({ where: mocks.deleteWhere })
@@ -67,9 +70,9 @@ describe('dormant dual-read integration token store', () => {
 			'raw-process-env',
 		)
 		expect(await getIntegrationRefreshToken('dropbox', '')).toBe('')
-		expect(await putIntegrationRefreshToken('dropbox', 'fresh-token')).toEqual(
-			{ ok: true },
-		)
+		expect(await putIntegrationRefreshToken('dropbox', 'fresh-token')).toEqual({
+			ok: true,
+		})
 		expect(
 			await putIntegrationRefreshToken('youtube_analytics', 'fresh-token'),
 		).toEqual({ ok: true })
@@ -90,14 +93,77 @@ describe('dormant dual-read integration token store', () => {
 				encryptIntegrationToken(provider, 'db-token', key),
 			])
 			expect(await getIntegrationRefreshToken(provider)).toBe('db-token')
+			expect(mocks.insert).not.toHaveBeenCalled()
 			expect(mocks.warn).not.toHaveBeenCalled()
 		},
 	)
-	it('falls back for a missing row', async () => {
+	it.each(['dropbox', 'youtube_analytics'] as const)(
+		'seeds an encrypted env token without overwriting concurrent rows for %s',
+		async (provider) => {
+			const fallback = provider === 'dropbox' ? 'env-dropbox' : 'env-youtube'
+			expect(await getIntegrationRefreshToken(provider)).toBe(fallback)
+			expect(mocks.insert).toHaveBeenCalledTimes(1)
+			const row = mocks.values.mock.calls[0]![0]
+			expect(row.provider).toBe(provider)
+			expect(row.updatedAt).toBeInstanceOf(Date)
+			expect(decryptIntegrationToken(provider, row, key)).toBe(fallback)
+			expect(JSON.stringify(row)).not.toContain(fallback)
+			expect(mocks.upsert).toHaveBeenCalledTimes(1)
+			expect(mocks.upsert).toHaveBeenCalledWith({
+				set: { provider: sql`provider` },
+			})
+			expect(mocks.info).toHaveBeenCalledTimes(1)
+			expect(mocks.info).toHaveBeenCalledWith(
+				'integration-token.seeded',
+				{ provider },
+			)
+			expect(mocks.warn).toHaveBeenCalledWith(
+				'integration-token.fallback',
+				expect.objectContaining({ reason: 'no-row' }),
+			)
+		},
+	)
+	it.each(['', undefined])(
+		'does not seed an empty fallback (%s)',
+		async (fallback) => {
+			expect(await getIntegrationRefreshToken('dropbox', fallback)).toBe(
+				fallback,
+			)
+			expect(mocks.insert).not.toHaveBeenCalled()
+			expect(mocks.info).not.toHaveBeenCalled()
+		},
+	)
+	it('seeds the raw override instead of the env token', async () => {
+		expect(await getIntegrationRefreshToken('dropbox', 'raw-override')).toBe(
+			'raw-override',
+		)
+		expect(mocks.insert).toHaveBeenCalledTimes(1)
+		expect(
+			decryptIntegrationToken('dropbox', mocks.values.mock.calls[0]![0], key),
+		).toBe('raw-override')
+	})
+	it('preserves fallback on seed failure without cleanup or sensitive logs', async () => {
+		mocks.upsert.mockRejectedValue(new Error('synthetic-secret-driver-error'))
 		expect(await getIntegrationRefreshToken('dropbox')).toBe('env-dropbox')
+		expect(mocks.insert).toHaveBeenCalledTimes(1)
+		expect(mocks.delete).not.toHaveBeenCalled()
+		expect(mocks.info).not.toHaveBeenCalled()
 		expect(mocks.warn).toHaveBeenCalledWith(
 			'integration-token.fallback',
-			expect.objectContaining({ reason: 'no-row' }),
+			expect.objectContaining({ operation: 'read', reason: 'seed-failed' }),
+		)
+		const logs = JSON.stringify(mocks.warn.mock.calls)
+		expect(logs).not.toContain('synthetic-secret-driver-error')
+		expect(logs).not.toContain('env-dropbox')
+		expect(logs).not.toContain(mocks.values.mock.calls[0]![0].ciphertext)
+	})
+	it('preserves fallback when seeded logging fails', async () => {
+		mocks.info.mockRejectedValue(new Error('log transport down'))
+		expect(await getIntegrationRefreshToken('dropbox')).toBe('env-dropbox')
+		expect(mocks.delete).not.toHaveBeenCalled()
+		expect(mocks.warn).not.toHaveBeenCalledWith(
+			'integration-token.fallback',
+			expect.objectContaining({ reason: 'seed-failed' }),
 		)
 	})
 	it('falls back for a bad decrypt or swapped provider', async () => {
@@ -116,6 +182,7 @@ describe('dormant dual-read integration token store', () => {
 			mocks.limit.mockRejectedValue(error)
 			mocks.upsert.mockRejectedValue(error)
 			expect(await getIntegrationRefreshToken('dropbox')).toBe('env-dropbox')
+			expect(mocks.insert).not.toHaveBeenCalled()
 			await expect(
 				putIntegrationRefreshToken('dropbox', 'fresh-token'),
 			).resolves.toEqual({ ok: false, staleRow: false })
@@ -125,9 +192,9 @@ describe('dormant dual-read integration token store', () => {
 		},
 	)
 	it('writes only an authenticated envelope and upserts atomically', async () => {
-		expect(await putIntegrationRefreshToken('dropbox', 'fresh-token')).toEqual(
-			{ ok: true },
-		)
+		expect(await putIntegrationRefreshToken('dropbox', 'fresh-token')).toEqual({
+			ok: true,
+		})
 		const row = mocks.values.mock.calls[0]![0]
 		expect(row.provider).toBe('dropbox')
 		expect(row.updatedAt).toBeInstanceOf(Date)
