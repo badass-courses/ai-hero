@@ -159,6 +159,7 @@ export const getVideoResourceForLesson = async (lessonIdOrSlug: string) => {
 const LessonVideoPlaybackResourceSchema = z.object({
 	id: z.string(),
 	muxPlaybackId: z.string().nullable().optional(),
+	muxSignedPlaybackId: z.string().nullable().optional(),
 	chapters: z.preprocess((value) => {
 		if (typeof value !== 'string') return value
 		try {
@@ -181,6 +182,7 @@ export const getLessonVideoPlaybackResource = async (
 			const query = sql`SELECT
 					cr_video.id AS id,
 					cr_video.fields->>'$.muxPlaybackId' AS muxPlaybackId,
+					cr_video.fields->>'$.muxSignedPlaybackId' AS muxSignedPlaybackId,
 					JSON_EXTRACT(cr_video.fields, '$.chapters') AS chapters
 				FROM ${contentResource} AS cr_lesson
 				JOIN ${contentResourceResource} AS crr ON cr_lesson.id = crr.resourceOfId

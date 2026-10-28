@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 	debug: vi.fn(),
 	getLessonVideoPlaybackResource: vi.fn(),
 	getPlaybackPositionForResource: vi.fn(),
+	getSignedLessonPlayback: vi.fn(),
 	source: vi.fn(),
 	controls: vi.fn(),
 	commerce: vi.fn(),
@@ -38,6 +39,10 @@ vi.mock('@/lib/ai-coding-dictionary', () => ({
 vi.mock('@/lib/lessons-query', () => ({
 	getLessonVideoPlaybackResource: mocks.getLessonVideoPlaybackResource,
 	getLessonVideoTranscript: vi.fn(),
+}))
+
+vi.mock('@/lib/signed-lesson-playback', () => ({
+	getSignedLessonPlayback: mocks.getSignedLessonPlayback,
 }))
 
 vi.mock('@/lib/progress', () => ({
@@ -174,6 +179,7 @@ describe('LessonPage office-hours authorization context', () => {
 			chapters: [],
 		})
 		mocks.getPlaybackPositionForResource.mockResolvedValue(42)
+		mocks.getSignedLessonPlayback.mockResolvedValue({ muxPlaybackId: 'playback-1' })
 		mocks.source.mockReturnValue(null)
 		mocks.controls.mockReturnValue(null)
 	})
@@ -232,6 +238,7 @@ describe('LessonPage office-hours authorization context', () => {
 		expect(mocks.compileMDX).not.toHaveBeenCalled()
 		expect(mocks.getLessonVideoPlaybackResource).not.toHaveBeenCalled()
 		expect(mocks.getPlaybackPositionForResource).not.toHaveBeenCalled()
+		expect(mocks.getSignedLessonPlayback).not.toHaveBeenCalled()
 		expect(mocks.commerce).not.toHaveBeenCalled()
 		expect(mocks.source).not.toHaveBeenCalled()
 	})
@@ -305,6 +312,15 @@ describe('LessonPage office-hours authorization context', () => {
 		expect(mocks.getAiCodingDictionary).not.toHaveBeenCalled()
 		expect(mocks.getLessonVideoPlaybackResource).not.toHaveBeenCalled()
 		expect(mocks.commerce).not.toHaveBeenCalled()
+	})
+
+	it('passes signed playback and tokens to the persistent player host', async () => {
+		mocks.getAbilityForResource.mockResolvedValue(baseAbility)
+		const tokens = { playback: 'v-token', thumbnail: 't-token', storyboard: 's-token' }
+		mocks.getSignedLessonPlayback.mockResolvedValue({ muxPlaybackId: 'signed-fixture', tokens })
+		await resolveServerTree(await renderLessonPage())
+		expect(mocks.source.mock.calls[0]![0].video).toMatchObject({ muxPlaybackId: 'signed-fixture', tokens })
+		expect(mocks.getSignedLessonPlayback).toHaveBeenCalledWith(expect.objectContaining({ lessonId: lesson.id, workshopId: workshop.id }))
 	})
 
 	it('registers no video and loads no commerce when an authorized lesson has no playback', async () => {

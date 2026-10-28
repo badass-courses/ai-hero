@@ -205,6 +205,15 @@ describe('LessonPlayerHost', () => {
 		expect(player().playbackId).toBe('playback-c')
 	})
 
+	it('passes signed tokens to Mux and clears them on a public source swap', async () => {
+		const tokens = { playback: 'v-token', thumbnail: 't-token', storyboard: 's-token' }
+		await render({ ...video('signed'), tokens })
+		expect(player().tokens).toEqual(tokens)
+		await render(video('public'))
+		expect(player().tokens).toBeUndefined()
+		expect(player().playbackId).toBe('playback-public')
+	})
+
 	it('keeps one player across a swap', async () => {
 		await render(video('a'))
 		const shell = container.querySelector('[data-shell]')
