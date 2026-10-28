@@ -6,7 +6,6 @@ import { notifyOnPostCreated } from '@/inngest/functions/artwork/notify-on-post-
 import { pickVariant } from '@/inngest/functions/artwork/pick-variant'
 import { retryHandler } from '@/inngest/functions/artwork/retry-handler'
 import { skipNotification } from '@/inngest/functions/artwork/skip-notification'
-import { imageResourceCreated } from '@/inngest/functions/cloudinary/image-resource-created'
 import { addPurchasesConvertkit } from '@/inngest/functions/convertkit/add-purchased-convertkit'
 import { addSubscriptionRoleDiscord } from '@/inngest/functions/discord/add-subscription-discord-role'
 import { discordAccountLinked } from '@/inngest/functions/discord/discord-account-linked'
@@ -14,7 +13,6 @@ import { removePurchaseRoleDiscord } from '@/inngest/functions/discord/remove-pu
 import { emailSendBroadcast } from '@/inngest/functions/email-send-broadcast'
 import { ensurePersonalOrganizationWorkflow } from '@/inngest/functions/ensure-personal-organization'
 import { userSignupAdminEmail } from '@/inngest/functions/notify/creator/user-signup'
-import { performCodeExtraction } from '@/inngest/functions/ocr/ocr-code-extractor'
 import { postmarkWebhook } from '@/inngest/functions/postmark/postmarks-webhooks-handler'
 import { refundEntitlements } from '@/inngest/functions/refund/refund-entitlements'
 import {
@@ -110,10 +108,6 @@ import { typesensePopularitySync } from './functions/typesense-popularity-sync'
 import { typesenseVideoFactsReconcile } from './functions/typesense-video-facts-reconcile'
 import { learnerFlowReconciler } from './functions/learner-flow-reconciler'
 import { valuePathEmailExecutor } from './functions/value-path-email-executor'
-import {
-	videoResourceAttached,
-	videoResourceDetached,
-} from './functions/video-resource-attached'
 
 // Vercel Preview/Development deployments auto-register into Inngest's shared
 // branch environment, which runs every cron in this list against the
@@ -145,9 +139,7 @@ const allFunctions = [
 	aiCodingDictionaryIndex,
 	postmarkWebhook,
 	archivePurchaseReconciliation,
-	imageResourceCreated,
 	emailSendBroadcast,
-	performCodeExtraction,
 	getOrCreateConcept,
 	computeVideoSplitPoints,
 	discordAccountLinked,
@@ -170,8 +162,6 @@ const allFunctions = [
 	persistPurchaseGeo,
 	createUserOrganizations,
 	ensurePersonalOrganizationWorkflow,
-	videoResourceAttached,
-	videoResourceDetached,
 	addDiscordRoleWorkflow,
 	grantLegendDiscordRole,
 	sendWorkshopAccessEmails,

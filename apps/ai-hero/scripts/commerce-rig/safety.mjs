@@ -60,7 +60,6 @@ export function cleanEnv({ key = 'sk_test_RigPlaceholder', webhook = 'whsec_rig_
     UPLOADTHING_URL: 'http://127.0.0.1:9', CONVERTKIT_SIGNUP_FORM: '0',
     NEXT_PUBLIC_APP_NAME: 'Commerce Rig', NEXT_PUBLIC_SITE_TITLE: 'Commerce Rig',
     NEXT_PUBLIC_SUPPORT_EMAIL: 'support@example.test',
-    NEXT_PUBLIC_PARTYKIT_ROOM_NAME: 'disabled', NEXT_PUBLIC_PARTY_KIT_URL: 'http://127.0.0.1:9',
     NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME: 'disabled', NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET: 'disabled',
     COMMERCE_RIG_STATE: state, NEXT_TELEMETRY_DISABLED: '1',
   }
