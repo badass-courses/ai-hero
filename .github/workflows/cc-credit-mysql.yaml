@@ -1,0 +1,100 @@
+name: CC Credit MySQL
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/cc-credit-mysql.yaml"
+      - "pnpm-lock.yaml"
+      - "apps/ai-hero/package.json"
+      - "apps/ai-hero/src/lib/cc-credit/**"
+      - "apps/ai-hero/src/app/api/support/cc-credit/**"
+      - "apps/ai-hero/src/app/api/cc-credit/**"
+      - "apps/ai-hero/src/components/for-teams/cc-credit-notice*"
+      - "apps/ai-hero/src/app/(commerce)/for-your-team/page*"
+      - "apps/ai-hero/src/db/cc-credit*"
+      - "apps/ai-hero/src/db/migrations/20261028_ai_hero_cc_credit.sql"
+      - "apps/ai-hero/src/db/schema.ts"
+      - "apps/ai-hero/src/db/mysql-table.ts"
+      - "apps/ai-hero/scripts/cc-credit*"
+      - "apps/ai-hero/scripts/test-mysql*"
+      - "apps/ai-hero/scripts/commerce-rig/schema*"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/cc-credit-mysql.yaml"
+      - "pnpm-lock.yaml"
+      - "apps/ai-hero/package.json"
+      - "apps/ai-hero/src/lib/cc-credit/**"
+      - "apps/ai-hero/src/app/api/support/cc-credit/**"
+      - "apps/ai-hero/src/app/api/cc-credit/**"
+      - "apps/ai-hero/src/components/for-teams/cc-credit-notice*"
+      - "apps/ai-hero/src/app/(commerce)/for-your-team/page*"
+      - "apps/ai-hero/src/db/cc-credit*"
+      - "apps/ai-hero/src/db/migrations/20261028_ai_hero_cc_credit.sql"
+      - "apps/ai-hero/src/db/schema.ts"
+      - "apps/ai-hero/src/db/mysql-table.ts"
+      - "apps/ai-hero/scripts/cc-credit*"
+      - "apps/ai-hero/scripts/test-mysql*"
+      - "apps/ai-hero/scripts/commerce-rig/schema*"
+
+permissions:
+  contents: read
+
+jobs:
+  cc-credit-mysql:
+    name: CC credit capacity proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/ai-hero
+    env:
+      NO_COLOR: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Use PNPM
+        uses: pnpm/action-setup@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.1'
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build workspace contracts
+        run: pnpm run pretypecheck
+      - name: Start this checkout's disposable MySQL on a dynamic loopback port
+        run: |
+          scripts/test-mysql.sh up
+          scripts/test-mysql.sh schema aih_cc_credit_runtime_ci
+          server="$(scripts/test-mysql.sh url)"
+          server="${server#AIH_TEST_MYSQL_SERVER_URL=}"
+          echo "AIH_CC_CREDIT_MYSQL_SERVER_URL=$server" >> "$GITHUB_ENV"
+          echo "AIH_CC_CREDIT_MYSQL_URL=${server%/mysql}/aih_cc_credit_runtime_ci" >> "$GITHUB_ENV"
+      - name: Prove migration, reserve interleavings, lifecycle, auth, dry runs and display
+        run: >-
+          pnpm exec vitest run -c vitest.config.ts --testTimeout=30000
+          src/db/cc-credit-migration.test.ts
+          src/db/cc-credit-migration.mysql.test.ts
+          src/lib/cc-credit
+          src/app/api/support/cc-credit/route.test.ts
+          src/app/api/cc-credit/balance/route.test.ts
+          src/components/for-teams/cc-credit-notice.test.tsx
+          'src/app/(commerce)/for-your-team/page.test.tsx'
+      - name: Require the planted unlocked writer to FAIL the same property
+        run: |
+          set +e
+          output="$(AIH_CC_CREDIT_PLANT_UNLOCKED=1 pnpm exec vitest run -c vitest.config.ts src/lib/cc-credit/credit.mysql.test.ts -t 'locking concurrency property' 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          # A setup error, timeout, skipped suite or missing dependency is NOT
+          # evidence that the negative control caught overspending.
+          test "$status" -eq 1
+          printf '%s\n' "$output" | grep -q 'Property failed after 1 tests'
+          printf '%s\n' "$output" | grep -q 'seed: 20261028'
+          printf '%s\n' "$output" | grep -Eq 'expected [0-9]+ to be less than or equal to [0-9]+'
+      - name: Remove only this checkout's disposable MySQL
+        if: always()
+        run: scripts/test-mysql.sh down
