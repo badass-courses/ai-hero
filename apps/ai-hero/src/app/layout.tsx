@@ -2,7 +2,7 @@ import '@/styles/globals.css'
 
 import * as React from 'react'
 import { Metadata } from 'next'
-import { DM_Sans, JetBrains_Mono, Source_Serif_4 } from 'next/font/google'
+import localFont from 'next/font/local'
 import Script from 'next/script'
 import { FeedbackInsert } from '@/components/feedback-widget/feedback-insert'
 import { FirstTouchCapture } from '@/components/first-touch-capture'
@@ -37,18 +37,40 @@ import { Toaster } from '@coursebuilder/ui/primitives/toaster'
  * The CSS variables keep their `--font-geist*` names so the hundreds of
  * existing `font-sans` / `font-mono` call sites and the `@theme` mapping keep
  * working — the families behind them are what changed, not the plumbing.
+ * Self-hosted (latin subset woff2 under ./fonts, OFL) so builds never fetch
+ * from Google. Files are the variable fonts Google serves, covering all weights.
  */
-const geist = DM_Sans({
-	subsets: ['latin'],
+const geist = localFont({
+	src: [
+		{
+			path: './fonts/dm-sans-latin-normal.woff2',
+			weight: '100 1000',
+			style: 'normal',
+		},
+		{
+			path: './fonts/dm-sans-latin-italic.woff2',
+			weight: '100 1000',
+			style: 'italic',
+		},
+	],
 	variable: '--font-geist',
-	weight: ['400', '500', '600', '700'],
-	style: ['normal', 'italic'],
+	display: 'swap',
+	adjustFontFallback: 'Arial',
+	fallback: ['system-ui', 'arial'],
 })
 
-const geistMono = JetBrains_Mono({
-	subsets: ['latin'],
+const geistMono = localFont({
+	src: [
+		{
+			path: './fonts/jetbrains-mono-latin-normal.woff2',
+			weight: '100 800',
+			style: 'normal',
+		},
+	],
 	variable: '--font-geist-mono',
-	weight: ['400', '500'],
+	display: 'swap',
+	adjustFontFallback: 'Arial',
+	fallback: ['ui-monospace', 'monospace'],
 })
 
 /**
@@ -59,11 +81,23 @@ const geistMono = JetBrains_Mono({
  * cells, and its stems survive the dark background better than a display
  * serif would.
  */
-const sourceSerif = Source_Serif_4({
-	subsets: ['latin'],
+const sourceSerif = localFont({
+	src: [
+		{
+			path: './fonts/source-serif-4-latin-normal.woff2',
+			weight: '200 900',
+			style: 'normal',
+		},
+		{
+			path: './fonts/source-serif-4-latin-italic.woff2',
+			weight: '200 900',
+			style: 'italic',
+		},
+	],
 	variable: '--font-source-serif',
-	weight: ['400', '600'],
-	style: ['normal', 'italic'],
+	display: 'swap',
+	adjustFontFallback: 'Times New Roman',
+	fallback: ['Georgia', 'serif'],
 })
 
 export const metadata: Metadata = {
