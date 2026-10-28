@@ -15,6 +15,7 @@ import {
 	products,
 } from '@/db/schema'
 import { log } from '@/server/logger'
+import { getRunIdentity } from '@/server/run-identity'
 import { and, asc, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm'
 
 import { resolveStoredCourseSyncBinding } from './binding-migration'
@@ -173,6 +174,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 							stage: 'migration',
 							outcome: 'succeeded',
 							metadata: {
+								runIdentity: getRunIdentity(),
 								fromContractVersion,
 								toContractVersion: binding.contractVersion,
 							},
