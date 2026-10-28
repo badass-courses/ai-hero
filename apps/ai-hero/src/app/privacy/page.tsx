@@ -200,6 +200,10 @@ We collect Device Information using the following technologies:
 
 “Web beacons,” “tags,” and “pixels” are electronic files used to record information about how you browse the Site.
 
+“Email tracking.” Emails we send you may include a small image (a pixel) and tracked links. These let us record when an email is opened and which links in it are clicked. We use this to measure which emails are useful, to stop sending to addresses that bounce or never engage, and to choose what we send and show you next.
+
+“Activity on the Site.” When you are signed in, or arrive on the Site from a link in one of our emails, we connect what you do on the Site to your account. This includes the pages and articles you read, the videos you watch and how much of each, how far down a page you scroll, and the steps you take toward a purchase. We combine this with how you interact with our emails to recommend the lessons, courses and offers most relevant to you. We do not sell this information.
+
 “Convertkit” to allow customers to subscribe for mailing list. Required information collected includes an email address. Optional information collected includes first name, last name, email address, phone number, birthday, and referral type.
 
 Additionally when you make a purchase or attempt to make a purchase through the Site, we collect certain information from you, including your name, billing address, shipping address, payment information (including credit card information), email address, and phone number. We refer to this information as “Order Information.”
@@ -219,6 +223,8 @@ Screen our orders for potential risk or fraud; and
 When in line with the preferences you have shared with us, provide you with information or advertising relating to our products or services.
 
 We use the Device Information that we collect to help us screen for potential risk and fraud (in particular, your IP address), and more generally to improve and optimize our Site (for example, by generating analytics about how our customers browse and interact with the Site, and to assess the success of our marketing and advertising campaigns).
+
+We use email tracking and Site activity connected to your account to personalize the emails, recommendations and offers we show you. To stop email tracking, unsubscribe using the link in any email or contact us at [${process.env.NEXT_PUBLIC_SUPPORT_EMAIL}](mailto:${process.env.NEXT_PUBLIC_SUPPORT_EMAIL}).
 
 ### Sharing Your Personal Information
 
