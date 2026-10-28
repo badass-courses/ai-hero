@@ -38,39 +38,37 @@ import { Toaster } from '@coursebuilder/ui/primitives/toaster'
  * existing `font-sans` / `font-mono` call sites and the `@theme` mapping keep
  * working — the families behind them are what changed, not the plumbing.
  * Self-hosted (latin subset woff2 under ./fonts, OFL) so builds never fetch
- * from Google. Files are the variable fonts Google serves, covering all weights.
+ * from Google. Files are the exact latin woff2 files Google serves, trimmed to the weights used.
  */
 const geist = localFont({
 	src: [
 		{
 			path: './fonts/dm-sans-latin-normal.woff2',
-			weight: '100 1000',
+			weight: '400 700',
 			style: 'normal',
 		},
 		{
 			path: './fonts/dm-sans-latin-italic.woff2',
-			weight: '100 1000',
+			weight: '400 700',
 			style: 'italic',
 		},
 	],
 	variable: '--font-geist',
 	display: 'swap',
 	adjustFontFallback: 'Arial',
-	fallback: ['system-ui', 'arial'],
 })
 
 const geistMono = localFont({
 	src: [
 		{
 			path: './fonts/jetbrains-mono-latin-normal.woff2',
-			weight: '100 800',
+			weight: '400 500',
 			style: 'normal',
 		},
 	],
 	variable: '--font-geist-mono',
 	display: 'swap',
 	adjustFontFallback: 'Arial',
-	fallback: ['ui-monospace', 'monospace'],
 })
 
 /**
@@ -85,19 +83,18 @@ const sourceSerif = localFont({
 	src: [
 		{
 			path: './fonts/source-serif-4-latin-normal.woff2',
-			weight: '200 900',
+			weight: '400 600',
 			style: 'normal',
 		},
 		{
 			path: './fonts/source-serif-4-latin-italic.woff2',
-			weight: '200 900',
+			weight: '400 600',
 			style: 'italic',
 		},
 	],
 	variable: '--font-source-serif',
 	display: 'swap',
 	adjustFontFallback: 'Times New Roman',
-	fallback: ['Georgia', 'serif'],
 })
 
 export const metadata: Metadata = {
