@@ -3,6 +3,7 @@
 import * as React from 'react'
 import Image from 'next/image'
 import { PlayerContainerSkeleton } from '@/components/player-skeleton'
+import type { PlaybackTokens } from '@/lib/signed-playback'
 
 import type {
 	ContentResource,
@@ -17,6 +18,7 @@ import VideoPlayerOverlay from './video-player-overlay'
 export type LessonVideo = {
 	resource: ContentResource
 	muxPlaybackId: string
+	tokens?: PlaybackTokens
 	chapters: VideoChapter[] | null
 	/** The server's saved position on this request, in seconds. */
 	savedPosition: number | null
@@ -90,6 +92,7 @@ export function LessonPlayerHost({ children }: { children: React.ReactNode }) {
 						<AuthedVideoPlayer
 							className={PLAYER_BOX}
 							muxPlaybackId={video.muxPlaybackId}
+							tokens={video.tokens}
 							resource={video.resource}
 							videoChapters={video.chapters}
 							savedPosition={video.savedPosition}

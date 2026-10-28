@@ -15,6 +15,7 @@ import {
 	getLessonVideoTranscript,
 } from '@/lib/lessons-query'
 import { MinimalWorkshop } from '@/lib/workshops'
+import { getSignedLessonPlayback } from '@/lib/signed-lesson-playback'
 import { getPlaybackPositionForResource } from '@/lib/progress'
 import { deniedRedirectPath, lessonDenialReason } from '@/lib/lesson-denial'
 import { getServerAuthSession } from '@/server/auth'
@@ -121,6 +122,7 @@ export async function LessonPage({
 					parentSlug={params.module}
 				/>
 				<LessonVideoRegistration
+					workshopId={workshop?.id}
 					lesson={lesson}
 					params={params}
 					lessonType={lessonType}
@@ -216,7 +218,9 @@ async function LessonVideoRegistration({
 	lesson,
 	lessonType,
 	params,
+	workshopId,
 }: {
+	workshopId?: string
 	lesson: Lesson
 	lessonType: 'lesson' | 'exercise' | 'solution'
 	params: { module: string; lesson: string }
@@ -225,7 +229,16 @@ async function LessonVideoRegistration({
 		getLessonVideoPlaybackResource(lesson.id),
 		getPlaybackPositionForResource(lesson.id),
 	])
-	const muxPlaybackId = videoPlaybackResource?.muxPlaybackId ?? null
+	const playback = videoPlaybackResource
+		? await getSignedLessonPlayback({
+				lessonId: lesson.id,
+				workshopId,
+				moduleSlug: params.module,
+				lessonSlug: params.lesson,
+				video: videoPlaybackResource,
+			})
+		: null
+	const muxPlaybackId = playback?.muxPlaybackId ?? null
 	const videoResourceReference = lesson.resources?.find(({ resource }) => {
 		return resource.type === 'videoResource'
 	})
@@ -248,6 +261,7 @@ async function LessonVideoRegistration({
 					? {
 							resource: lesson,
 							muxPlaybackId,
+							tokens: playback?.tokens,
 							chapters: videoPlaybackResource?.chapters ?? null,
 							savedPosition,
 							moduleSlug: params.module,
