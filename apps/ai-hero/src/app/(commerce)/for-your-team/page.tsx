@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { ProductPageView } from '@/components/product-page-view'
 import Link from 'next/link'
 import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
 import { HeroShader } from '@/components/landing/hero-shader'
@@ -89,6 +90,7 @@ export default async function TeamPage() {
 
 	return (
 		<LayoutClient withContainer>
+			<ProductPageView />
 			<main className="flex min-h-screen w-full flex-col">
 				<CcCreditNotice />
 				<C5SaleSwitch>

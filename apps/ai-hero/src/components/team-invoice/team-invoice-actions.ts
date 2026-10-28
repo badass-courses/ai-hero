@@ -1,6 +1,7 @@
 'use server'
 
 import { headers } from 'next/headers'
+import { scheduleProductEvents } from '@/lib/subscriber-marketing/product-events-live'
 import {
 	confirmTeamInvoice,
 	startTeamInvoice,
@@ -41,7 +42,13 @@ export async function confirmTeamInvoiceAction(
 	token: string,
 ): Promise<TeamInvoiceResult> {
 	try {
-		return await confirmTeamInvoice(String(token ?? ''), teamInvoiceServerDeps())
+		const result = await confirmTeamInvoice(String(token ?? ''), teamInvoiceServerDeps())
+		if (result.kind === 'sent') {
+			scheduleProductEvents(async () => result.email, [{
+				_tag: 'TeamIntent', intent: 'invoice', sourceId: 'team-invoice', at: Date.now(),
+			}])
+		}
+		return result
 	} catch (error) {
 		await log.error('team_invoice.confirm_error', {
 			message: error instanceof Error ? error.message : String(error),

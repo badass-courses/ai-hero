@@ -1,4 +1,5 @@
 import { env } from '@/env.mjs'
+import { scheduleCheckoutProductEvents } from '@/lib/subscriber-marketing/product-events-live'
 
 import StripeProvider, {
 	StripePaymentAdapter,
@@ -7,7 +8,7 @@ import StripeProvider, {
 class GiftPaymentAdapter extends StripePaymentAdapter {
 	async createCheckoutSession(...[params, options]: Parameters<StripePaymentAdapter['createCheckoutSession']>) {
 		const { createGiftCheckout } = await import('@/lib/c5-pricing/gift-checkout')
-		return createGiftCheckout({
+		const session = await createGiftCheckout({
 			params,
 			idempotencyKey: options?.idempotencyKey,
 			create: (input, key) => super.createCheckoutSession(input, { ...options, idempotencyKey: key }),
@@ -33,6 +34,9 @@ class GiftPaymentAdapter extends StripePaymentAdapter {
 				},
 			},
 		})
+		// Observe the successful receipt only; Stripe inputs and gift behavior stay unchanged.
+		scheduleCheckoutProductEvents(session, Math.max(0, ...(params.line_items ?? []).map((item) => item.quantity ?? 0)))
+		return session
 	}
 }
 

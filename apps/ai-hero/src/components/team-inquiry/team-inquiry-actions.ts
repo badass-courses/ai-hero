@@ -1,6 +1,7 @@
 'use server'
 
 import { headers } from 'next/headers'
+import { scheduleProductEvents } from '@/lib/subscriber-marketing/product-events-live'
 import BasicEmail from '@/emails/basic-email'
 import { env } from '@/env.mjs'
 import { log } from '@/server/logger'
@@ -111,6 +112,10 @@ export async function sendTeamInquiry({
 			ReplyTo: email,
 			type: 'transactional',
 		})
+
+		scheduleProductEvents(async () => email, [{
+			_tag: 'TeamIntent', intent: 'seats', sourceId: 'team-inquiry', at: Date.now(),
+		}])
 
 		// Log successful submission
 		await log.info('team_inquiry.submitted', {
