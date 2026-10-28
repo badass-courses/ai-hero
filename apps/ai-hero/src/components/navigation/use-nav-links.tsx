@@ -124,6 +124,20 @@ export function useNavLinks(): NavigationMenuData {
 
 	const cohorts: CohortItem[] = [
 		{
+			href: '/cohorts/software-factories-for-real-engineers-xdy1m',
+			image: {
+				src: 'https://res.cloudinary.com/total-typescript/image/upload/v1791799196/cohorts/pbqmeemewqbfeqxomwj6.jpg',
+				alt: 'Software Factories for Real Engineers',
+				width: 960 / 6,
+				height: 540 / 6,
+			},
+			title: 'Software Factories for Real Engineers',
+			subtitle: 'November 9 – November 20, 2026',
+		},
+	]
+
+	const pastCohorts: CohortItem[] = [
+		{
 			href: '/cohorts/ai-coding-for-real-engineers-m0k0w',
 			image: {
 				src: 'https://res.cloudinary.com/total-typescript/image/upload/v1778482299/cohorts/cohort-m0k0w/fh5sosv36pw0ogibmc0p.jpg',
@@ -132,11 +146,8 @@ export function useNavLinks(): NavigationMenuData {
 				height: 540 / 6,
 			},
 			title: 'AI Coding for Real Engineers',
-			subtitle: 'June 1 – June 12, 2026',
+			subtitle: 'June, 2026',
 		},
-	]
-
-	const pastCohorts: CohortItem[] = [
 		{
 			href: '/cohorts/claude-code-for-real-engineers-2026-04',
 			image: {
