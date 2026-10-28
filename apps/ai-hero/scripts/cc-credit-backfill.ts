@@ -7,6 +7,9 @@
  * or SUPPORT_WEBHOOK_SECRET for --url. Never commit output.
  * --local-db uses SELECTs under the same purchase-lock transaction protocol;
  * it never calls insert/settle. Use read-only DB credentials.
+ * Preview still takes FOR UPDATE locks on production AI_Purchase rows,
+ * briefly, in one transaction per matched invoice. Run once off peak, not
+ * in a polling loop: it can delay other work touching those purchases.
  * Run with reservations disabled. Review ALL holds before enabling. A separately
  * approved import uses scripts/cc-credit.ts mode backfill and the normally-off
  * AIH_CC_CREDIT_IMPORT_ENABLED flag. This inventory never enables it or imports.
