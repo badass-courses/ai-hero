@@ -8,6 +8,7 @@ import LayoutClient from '@/components/layout-client'
 import { TeamInquiryForm } from '@/components/team-inquiry/team-inquiry-form'
 import { TeamInvoiceForm } from '@/components/team-invoice/team-invoice-form'
 import { C5TeamCheckout } from '@/components/for-teams/c5-team-checkout'
+import { CcCreditNotice } from '@/components/for-teams/cc-credit-notice'
 import { env } from '@/env.mjs'
 import { AI_CODING_COHORT_SLUG } from '@/lib/campaign-landings'
 import { getCachedCohort } from '@/lib/cohorts-query'
@@ -89,6 +90,7 @@ export default async function TeamPage() {
 	return (
 		<LayoutClient withContainer>
 			<main className="flex min-h-screen w-full flex-col">
+				<CcCreditNotice />
 				<C5SaleSwitch>
 					<C5SaleCta forTeams />
 				</C5SaleSwitch>

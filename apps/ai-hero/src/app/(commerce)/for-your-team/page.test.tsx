@@ -3,6 +3,10 @@ import { readFile } from 'node:fs/promises'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('next-auth/react', () => ({
+	useSession: () => ({ status: 'unauthenticated', data: null }),
+}))
+
 const sale = vi.hoisted(() => ({ active: false }))
 vi.mock('@/components/c5-sale-switch', () => ({
 	C5SaleSwitch: ({
