@@ -2,6 +2,7 @@ import {
 	emailProvider,
 	magicLinkIdentity as provisionedIdentity,
 } from '@/coursebuilder/email-provider'
+import { partyProvider } from '@/coursebuilder/party-provider'
 import { slackProvider } from '@/coursebuilder/slack-provider'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { courseBuilderAdapter } from '@/db'
@@ -184,7 +185,6 @@ import {
 } from '@coursebuilder/core/events/stripe'
 import DeepgramProvider from '@coursebuilder/core/providers/deepgram'
 import OpenAIProvider from '@coursebuilder/core/providers/openai'
-import PartykitProvider from '@coursebuilder/core/providers/partykit'
 
 import {
 	ARTWORK_FAL_COMPLETED_EVENT,
@@ -345,9 +345,7 @@ const middleware = createInngestMiddleware({
 		apiKey: env.OPENAI_API_KEY,
 		partyUrlBase: env.NEXT_PUBLIC_PARTY_KIT_URL,
 	}),
-	partyProvider: PartykitProvider({
-		partyUrlBase: env.NEXT_PUBLIC_PARTY_KIT_URL,
-	}),
+	partyProvider,
 	transcriptProvider: DeepgramProvider({
 		apiKey: env.DEEPGRAM_API_KEY,
 		callbackUrl: `${callbackBase}/api/coursebuilder/webhook/deepgram`,
