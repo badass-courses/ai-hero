@@ -134,6 +134,7 @@ import {
 
 import {
 	TRANSFER_DENIAL_MESSAGES,
+	TransferDenialError,
 	type TransferDenialCode,
 } from './transfer-lifecycle'
 import {
@@ -656,6 +657,36 @@ describe('acceptPurchaseTransfer', () => {
 			expect(update.values.transferState).not.toBe('COMPLETED')
 		}
 	}
+
+	it.each([
+		['no session', sessionFor(null), undefined],
+		[
+			'a session whose user row is missing',
+			sessionFor({ id: 'user_b', email: 'b@example.com' }),
+			null,
+		],
+	])('refuses %s as a typed not_authenticated denial with no writes, and logs it', async (_name, session, userRow) => {
+		mocks.getServerAuthSession.mockResolvedValue(session)
+		mocks.getUserById.mockResolvedValue(userRow)
+		mocks.getPurchaseUserTransferById.mockResolvedValue(initiated())
+
+		const error = await acceptPurchaseTransfer({
+			purchaseUserTransferId: 'put_1',
+		}).catch((e: unknown) => e)
+
+		expect(error).toBeInstanceOf(TransferDenialError)
+		expect((error as TransferDenialError).code).toBe('not_authenticated')
+		expect(mocks.dbState.updates).toEqual([])
+		expect(mocks.dbState.inserts).toEqual([])
+		expect(mocks.inngestSend).not.toHaveBeenCalled()
+		expect(mocks.log.warn).toHaveBeenCalledWith(
+			'purchase_transfer.accept_without_user',
+			expect.objectContaining({
+				purchaseUserTransferId: 'put_1',
+				hasSession: session.session !== null,
+			}),
+		)
+	})
 
 	it('claims INITIATED -> VERIFIED, moves only the purchase and the transfer row, then converges', async () => {
 		asTarget()

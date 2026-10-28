@@ -246,6 +246,14 @@ function evaluatePurchasePolicy(
 	return null
 }
 
+/** A refusal thrown as an Error; `code` lets a caller turn it into a page. */
+export class TransferDenialError extends Error {
+	constructor(readonly code: TransferDenialCode) {
+		super(TRANSFER_DENIAL_MESSAGES[code])
+		this.name = 'TransferDenialError'
+	}
+}
+
 export function transferDenialError(denial: TransferDenial): Error {
-	return new Error(TRANSFER_DENIAL_MESSAGES[denial.code])
+	return new TransferDenialError(denial.code)
 }
