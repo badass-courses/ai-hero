@@ -514,8 +514,16 @@ describe('alumni', () => {
 		(await run({ ...buyer, purchases })).facts.facts.alumni
 	const c3 = purchase({ id: 'c3', productId: C3 })
 	const c4 = purchase({ id: 'c4', productId: C4 })
+	const c1 = purchase({ id: 'c1', productId: 'product-3vfob' })
+	const c2 = purchase({ id: 'c2', productId: 'product-wdhub' })
 
 	it.each([
+		// C1 and C2 use the interim 'both' value, never 'c3' or 'c4'.
+		['C1 only', [c1], 'both'],
+		['C2 only', [c2], 'both'],
+		['a redeemed C2 team seat', [{ ...c2, redeemedBulkCouponId: 'bulk' }], 'both'],
+		['a refunded C1 purchase', [{ ...c1, status: 'Refunded' }], 'none'],
+		['a Crash Course only', [purchase({ id: 'cc', productId: CC })], 'none'],
 		['C3', [c3], 'c3'],
 		['C4', [c4], 'c4'],
 		['both', [c3, c4], 'both'],
