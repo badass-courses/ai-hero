@@ -72,9 +72,10 @@ export async function deliverProductEvents(args: {
 	const fetcher: typeof fetch = (input, init) =>
 		(args.fetcher ?? fetch)(input, {
 			...init,
-			signal: init?.signal
-				? AbortSignal.any([init.signal, controller.signal])
-				: controller.signal,
+			// This whole-operation deadline always precedes the resolver's
+			// per-request 2.8s timer. Use it for both requests, without relying
+			// on AbortSignal.any (absent from the deployment's TS DOM library).
+			signal: controller.signal,
 		})
 	const deliver = async (): Promise<Outcome> => {
 		try {

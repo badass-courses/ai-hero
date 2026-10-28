@@ -153,6 +153,29 @@ describe('product event contract and delivery', () => {
 		expect(await pending).toBe('timeout')
 		expect(fetcher.mock.calls).toHaveLength(1)
 	})
+	it('uses one abort signal for resolve and POST, including time already spent resolving', async () => {
+		vi.useFakeTimers()
+		const fetcher = vi
+			.fn()
+			.mockResolvedValueOnce(resolved())
+			.mockImplementationOnce(() => new Promise<Response>(() => {}))
+		const pending = deliverProductEvents({
+			email,
+			facts: [checkout],
+			config,
+			fetcher,
+			timeoutMs: 100,
+		})
+		await vi.advanceTimersByTimeAsync(50)
+		expect(fetcher).toHaveBeenCalledTimes(2)
+		const resolveSignal = fetcher.mock.calls[0]![1].signal as AbortSignal
+		const postSignal = fetcher.mock.calls[1]![1].signal as AbortSignal
+		expect(resolveSignal).toBe(postSignal)
+		expect(postSignal.aborted).toBe(false)
+		await vi.advanceTimersByTimeAsync(51)
+		expect(await pending).toBe('timeout')
+		expect(postSignal.aborted).toBe(true)
+	})
 	it('contains identity and receipt-body hangs in the same budget', async () => {
 		vi.useFakeTimers()
 		const pending = deliverProductEvents({
