@@ -1,5 +1,7 @@
 import 'server-only'
 
+import { unstable_rethrow } from 'next/navigation'
+
 import {
 	pageViewFact,
 	productEventsEnabled,
@@ -16,8 +18,11 @@ export async function ProductPageView({ pageId }: { pageId: string }) {
 		const { session } = await getServerAuthSession()
 		const email = session?.user?.email
 		if (email) scheduleProductEvents(async () => email, [fact])
-	} catch {
-		/* Tracking cannot fail the page. */
+	} catch (error) {
+		// Preserve Next's dynamic-rendering control flow; do not bake an
+		// anonymous tracking result into a prerendered page.
+		unstable_rethrow(error)
+		/* Ordinary tracking failures cannot fail the page. */
 	}
 	return null
 }

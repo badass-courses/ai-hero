@@ -34,7 +34,9 @@ import { WORKSHOP_CTA_BUTTON } from '../../(content)/workshops/_components/works
 import { PublicWorkshopPricing } from '../../(content)/workshops/_components/workshop-public-pricing-server'
 
 export const revalidate = 3600
-export const dynamic = 'force-static'
+// Signed-in tracking must see request cookies; force-static strips them.
+// The null-fallback tracking boundary leaves the page content independent.
+export const dynamic = 'auto'
 
 const TITLE = 'AI Hero for your team'
 const DESCRIPTION =
