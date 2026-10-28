@@ -7,7 +7,6 @@ import Script from 'next/script'
 import { FeedbackInsert } from '@/components/feedback-widget/feedback-insert'
 import { FirstTouchCapture } from '@/components/first-touch-capture'
 import { GuardedCouponProvider } from '@/components/guarded-coupon-provider'
-import { Party } from '@/components/party'
 import { Providers } from '@/components/providers'
 import { ThemeProvider } from '@/components/theme-provider'
 import config from '@/config'
@@ -175,7 +174,6 @@ export default async function RootLayout({
 					<TRPCReactProvider>
 						<PlaybackPrefHydrator />
 						<NuqsAdapter>
-							<Party />
 							<ThemeProvider
 								attribute="class"
 								defaultTheme="system"

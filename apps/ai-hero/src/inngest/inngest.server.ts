@@ -343,7 +343,8 @@ const middleware = createInngestMiddleware({
 	mediaUploadProvider: new UTApi(),
 	openaiProvider: OpenAIProvider({
 		apiKey: env.OPENAI_API_KEY,
-		partyUrlBase: env.NEXT_PUBLIC_PARTY_KIT_URL,
+		// PartyKit is gone; the OpenAI provider still requires a base URL.
+		partyUrlBase: 'https://partykit.invalid',
 	}),
 	partyProvider,
 	transcriptProvider: DeepgramProvider({
