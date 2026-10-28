@@ -216,6 +216,102 @@ describe('front-desk binding quote reads', () => {
 		expect(busy.fetch).toHaveBeenCalledTimes(1)
 	})
 
+	describe('attempt timeouts', () => {
+		// A fetch that settles after `ms` unless its signal aborts first.
+		const slowFetch =
+			(delays: number[]) => (_url: URL, init: RequestInit) =>
+				new Promise<Response>((resolve, reject) => {
+					const delay = delays.shift() ?? 0
+					const timer = setTimeout(() => resolve(json([quote])), delay)
+					init.signal!.addEventListener('abort', () => {
+						clearTimeout(timer)
+						reject(init.signal!.reason)
+					})
+				})
+
+		it('lets a fresh read survive a 3 s first attempt', async () => {
+			vi.useFakeTimers()
+			// Native AbortSignal.timeout ignores fake timers; route it through them.
+			vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+				const controller = new AbortController()
+				setTimeout(
+					() => controller.abort(new DOMException('timed out', 'TimeoutError')),
+					ms,
+				)
+				return controller.signal
+			})
+			try {
+				const { data, fetch } = setup(slowFetch([3_000]))
+				const read = data.bindingQuotes({ ...input, fresh: true })
+				await vi.advanceTimersByTimeAsync(3_000)
+				await expect(read).resolves.toEqual({ ok: true, value: [quote] })
+				expect(fetch).toHaveBeenCalledTimes(1)
+			} finally {
+				vi.restoreAllMocks()
+				vi.useRealTimers()
+			}
+		})
+
+		it('still aborts a display read at 2 s and retries', async () => {
+			vi.useFakeTimers()
+			// Native AbortSignal.timeout ignores fake timers; route it through them.
+			vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+				const controller = new AbortController()
+				setTimeout(
+					() => controller.abort(new DOMException('timed out', 'TimeoutError')),
+					ms,
+				)
+				return controller.signal
+			})
+			try {
+				const { data, fetch } = setup(slowFetch([3_000, 0]))
+				const read = data.bindingQuotes({ ...input, fresh: false })
+				// The first attempt aborts at 2 s; the retry then answers at once.
+				await vi.advanceTimersByTimeAsync(2_000)
+				expect(fetch).toHaveBeenCalledTimes(2)
+				await vi.advanceTimersByTimeAsync(1)
+				await expect(read).resolves.toEqual({ ok: true, value: [quote] })
+				expect(fetch).toHaveBeenCalledTimes(2)
+			} finally {
+				vi.restoreAllMocks()
+				vi.useRealTimers()
+			}
+		})
+
+		it('gives up a fresh read after 2 x 4 s', async () => {
+			vi.useFakeTimers()
+			// Native AbortSignal.timeout ignores fake timers; route it through them.
+			vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+				const controller = new AbortController()
+				setTimeout(
+					() => controller.abort(new DOMException('timed out', 'TimeoutError')),
+					ms,
+				)
+				return controller.signal
+			})
+			try {
+				const { data, fetch } = setup(slowFetch([60_000, 60_000]))
+				const read = data.bindingQuotes({ ...input, fresh: true })
+				await vi.advanceTimersByTimeAsync(7_999)
+				expect(fetch).toHaveBeenCalledTimes(2)
+				let settled = false
+				void read.then(() => {
+					settled = true
+				})
+				await vi.advanceTimersByTimeAsync(0)
+				expect(settled).toBe(false)
+				await vi.advanceTimersByTimeAsync(1)
+				await expect(read).resolves.toEqual({
+					ok: false,
+					reason: 'quotes-unreachable',
+				})
+			} finally {
+				vi.restoreAllMocks()
+				vi.useRealTimers()
+			}
+		})
+	})
+
 	it('fails without a quotes token rather than answering no quotes', async () => {
 		const data = createFrontDeskData({
 			url: 'https://desk.test',
