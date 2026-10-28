@@ -63,7 +63,7 @@ const WINDOW_EDGES: readonly [string, Date][] = [
 
 type Gap = 'gap'
 const GAP: Gap = 'gap'
-type Alumni = 'none' | 'c3' | 'c4' | 'both' | Gap
+type Alumni = 'none' | 'c3' | 'c4' | 'multiple' | Gap
 type Credit = null | number | Gap
 type CreditUse = 'available' | 'spent' | Gap
 type Legend = 'no' | 'verified' | Gap
@@ -507,7 +507,7 @@ function mismatch(
 	return null
 }
 
-const ALUMNI: readonly Alumni[] = ['none', 'c3', 'c4', 'both', GAP]
+const ALUMNI: readonly Alumni[] = ['none', 'c3', 'c4', 'multiple', GAP]
 const CREDIT: readonly Credit[] = [null, 5_000, 10_000, 15_000, 7_000, GAP]
 const CREDIT_USE: readonly CreditUse[] = ['available', 'spent', GAP]
 const LEGEND: readonly Legend[] = ['no', 'verified', GAP]

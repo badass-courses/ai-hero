@@ -49,7 +49,7 @@ const creditUse = fc.constantFrom(
 	'reserved-by-this-attempt',
 	'spent',
 )
-const alumni = fc.constantFrom('none', 'c3', 'c4', 'both')
+const alumni = fc.constantFrom('none', 'c3', 'c4', 'multiple')
 const off = (amount: number, discount: number) =>
 	Math.floor((amount * (100 - discount)) / 100)
 const sample = fc.record({
@@ -221,9 +221,9 @@ function checkReasons(reasons: readonly string[]) {
 		expect(allowedReasons.has(reason), reason).toBe(true)
 }
 
-describe('C5 credit-off-regional pricing properties (vendored engine 0.2.1)', () => {
+describe('C5 credit-off-regional pricing properties (vendored engine 0.2.2)', () => {
 	it('exercises the pinned engine, not a mocked pricing implementation', () => {
-		expect(ENGINE_VERSION).toBe('0.2.1')
+		expect(ENGINE_VERSION).toBe('0.2.2')
 	})
 
 	it('subtracts one settled credit from the winning standard or regional price, with only a zero floor', () => {
