@@ -252,6 +252,60 @@ describe('product event contract and delivery', () => {
 			),
 		).toHaveLength(1)
 	})
+	it('releases a failed page POST so a later view retries within the hour', async () => {
+		const fact = pageViewFact('/for-your-team', Date.now() + 2 * 3_600_000)!
+		let posts = 0
+		const fetcher = vi.fn(async (url) => {
+			if (String(url).endsWith('/resolve_contacts')) return resolved()
+			return ++posts === 1 ? Response.json({}, { status: 503 }) : receipt()
+		})
+		expect(
+			await deliverProductEvents({ email, facts: [fact], config, fetcher }),
+		).toBe('failed')
+		expect(
+			await deliverProductEvents({ email, facts: [fact], config, fetcher }),
+		).toBe('sent')
+		expect(
+			await deliverProductEvents({ email, facts: [fact], config, fetcher }),
+		).toBe('skipped')
+		expect(posts).toBe(2)
+	})
+	it('releases a timed-out pending page and a late response cannot replace the retry reservation', async () => {
+		vi.useFakeTimers()
+		const fact = pageViewFact('/for-your-team', Date.now() + 3 * 3_600_000)!
+		let posts = 0
+		let release!: (response: Response) => void
+		const fetcher = vi.fn(async (url) => {
+			if (String(url).endsWith('/resolve_contacts')) return resolved()
+			return ++posts === 1
+				? new Promise<Response>((resolve) => {
+						release = resolve
+					})
+				: receipt()
+		})
+		const pending = deliverProductEvents({
+			email,
+			facts: [fact],
+			config,
+			fetcher,
+		})
+		await vi.advanceTimersByTimeAsync(1)
+		// Another view while the first POST is pending must not flood drovr.
+		expect(
+			await deliverProductEvents({ email, facts: [fact], config, fetcher }),
+		).toBe('skipped')
+		await vi.advanceTimersByTimeAsync(2801)
+		expect(await pending).toBe('timeout')
+		expect(
+			await deliverProductEvents({ email, facts: [fact], config, fetcher }),
+		).toBe('sent')
+		release(receipt())
+		await vi.advanceTimersByTimeAsync(1)
+		expect(
+			await deliverProductEvents({ email, facts: [fact], config, fetcher }),
+		).toBe('skipped')
+		expect(posts).toBe(2)
+	})
 	it('does not track unrelated routes or include query strings', () => {
 		expect(pageViewFact('/articles/hello')).toBeNull()
 		expect(pageViewFact('/for-your-team?email=private')).toBeNull()

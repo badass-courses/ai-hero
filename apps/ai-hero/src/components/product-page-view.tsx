@@ -1,28 +1,19 @@
-import 'server-only'
+'use client'
 
-import { unstable_rethrow } from 'next/navigation'
+import { useEffect } from 'react'
 
-import {
-	pageViewFact,
-	productEventsEnabled,
-} from '@/lib/subscriber-marketing/product-events'
-import { scheduleProductEvents } from '@/lib/subscriber-marketing/product-events-live'
-
-/** Render under Suspense: the teams page never waits for tracking identity. */
-export async function ProductPageView({ pageId }: { pageId: string }) {
-	if (!productEventsEnabled(process.env)) return null
-	try {
-		const fact = pageViewFact(pageId)
-		if (!fact) return null
-		const { getServerAuthSession } = await import('@/server/auth')
-		const { session } = await getServerAuthSession()
-		const email = session?.user?.email
-		if (email) scheduleProductEvents(async () => email, [fact])
-	} catch (error) {
-		// Preserve Next's dynamic-rendering control flow; do not bake an
-		// anonymous tracking result into a prerendered page.
-		unstable_rethrow(error)
-		/* Ordinary tracking failures cannot fail the page. */
-	}
+/** One fixed-page notification, not a client event stream. The server owns
+ * sign-in, the flag, contact resolution and all drovr credentials/payloads.
+ */
+export function ProductPageView() {
+	useEffect(() => {
+		void fetch('/api/product-events/team-page-view', {
+			method: 'POST',
+			credentials: 'same-origin',
+			keepalive: true,
+		}).catch(() => {
+			/* Tracking never affects navigation. */
+		})
+	}, [])
 	return null
 }

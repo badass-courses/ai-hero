@@ -29,12 +29,20 @@ export function productEventsEnabled(env: Record<string, string | undefined>) {
 }
 
 // Per-process, bounded refresh protection. drovr also deduplicates durably.
-const pageViews = new Map<string, number>()
+// Reservation lifecycle: absent -> pending -> sent (acknowledged receipt),
+// or pending -> absent (failure/off/timeout). Pending also suppresses races.
+type PageReservation = { state: 'pending' | 'sent'; expires: number }
+const pageViews = new Map<string, PageReservation>()
 const HOUR = 3_600_000
-function reservePage(contactId: string, fact: ProductFact, now: number) {
+function reservePage(
+	contactId: string,
+	fact: ProductFact,
+	now: number,
+	owned: Map<string, PageReservation>,
+) {
 	if (fact._tag !== 'PageViewed') return true
-	for (const [key, expires] of pageViews)
-		if (expires <= now) pageViews.delete(key)
+	for (const [key, entry] of pageViews)
+		if (entry.expires <= now) pageViews.delete(key)
 	const key = JSON.stringify([
 		contactId,
 		fact.pageId,
@@ -42,7 +50,9 @@ function reservePage(contactId: string, fact: ProductFact, now: number) {
 	])
 	if (pageViews.has(key)) return false
 	if (pageViews.size >= 10_000) pageViews.delete(pageViews.keys().next().value!)
-	pageViews.set(key, now + HOUR)
+	const entry: PageReservation = { state: 'pending', expires: now + HOUR }
+	pageViews.set(key, entry)
+	owned.set(key, entry)
 	return true
 }
 
@@ -59,6 +69,7 @@ export async function deliverProductEvents(args: {
 	timeoutMs?: number
 }): Promise<Outcome> {
 	const controller = new AbortController()
+	const reservations = new Map<string, PageReservation>()
 	let timer: ReturnType<typeof setTimeout> | undefined
 	const timeout = new Promise<Outcome>((resolve) => {
 		timer = setTimeout(
@@ -92,7 +103,9 @@ export async function deliverProductEvents(args: {
 			if (contact?.status !== 'resolved' || controller.signal.aborted)
 				return 'skipped'
 			const events = args.facts
-				.filter((fact) => reservePage(contact.contactId, fact, Date.now()))
+				.filter((fact) =>
+					reservePage(contact.contactId, fact, Date.now(), reservations),
+				)
 				.map((fact) => ({ contactId: contact.contactId, fact }))
 			if (!events.length) return 'skipped'
 			const response = await fetcher(
@@ -124,10 +137,18 @@ export async function deliverProductEvents(args: {
 			return controller.signal.aborted ? 'timeout' : 'failed'
 		}
 	}
+	let outcome: Outcome = 'failed'
 	try {
-		return await Promise.race([deliver(), timeout])
+		outcome = await Promise.race([deliver(), timeout])
+		return outcome
 	} finally {
 		clearTimeout(timer)
+		for (const [key, entry] of reservations) {
+			// Never release a newer owner's reservation after eviction/retry.
+			if (pageViews.get(key) !== entry) continue
+			if (outcome === 'sent') entry.state = 'sent'
+			else pageViews.delete(key)
+		}
 	}
 }
 

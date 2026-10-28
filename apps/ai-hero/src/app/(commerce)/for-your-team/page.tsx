@@ -1,5 +1,4 @@
 import type { Metadata } from 'next'
-import { Suspense } from 'react'
 import { ProductPageView } from '@/components/product-page-view'
 import Link from 'next/link'
 import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
@@ -34,9 +33,7 @@ import { WORKSHOP_CTA_BUTTON } from '../../(content)/workshops/_components/works
 import { PublicWorkshopPricing } from '../../(content)/workshops/_components/workshop-public-pricing-server'
 
 export const revalidate = 3600
-// Signed-in tracking must see request cookies; force-static strips them.
-// The null-fallback tracking boundary leaves the page content independent.
-export const dynamic = 'auto'
+export const dynamic = 'force-static'
 
 const TITLE = 'AI Hero for your team'
 const DESCRIPTION =
@@ -92,7 +89,7 @@ export default async function TeamPage() {
 
 	return (
 		<LayoutClient withContainer>
-			<Suspense fallback={null}><ProductPageView pageId="/for-your-team" /></Suspense>
+			<ProductPageView />
 			<main className="flex min-h-screen w-full flex-col">
 				<C5SaleSwitch>
 					<C5SaleCta forTeams />

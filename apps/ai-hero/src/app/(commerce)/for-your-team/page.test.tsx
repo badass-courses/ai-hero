@@ -45,11 +45,15 @@ vi.mock(
 	() => ({ PublicWorkshopPricing: () => null }),
 )
 
-import TeamPage from './page'
+import TeamPage, { dynamic, revalidate } from './page'
 
 const render = async () => renderToStaticMarkup(await TeamPage())
 
 describe('team hub C5 card', () => {
+	it('keeps the launch page static with its existing ISR window', () => {
+		expect(dynamic).toBe('force-static')
+		expect(revalidate).toBe(3600)
+	})
 	it('puts the live cohort team destination ahead of the catalog during enrollment', async () => {
 		sale.active = true
 		const html = await render()

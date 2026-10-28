@@ -1,62 +1,35 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-const mocks = vi.hoisted(() => ({
-	auth: vi.fn(),
-	schedule: vi.fn(),
-	rethrow: vi.fn(),
-}))
-vi.mock('@/server/auth', () => ({ getServerAuthSession: mocks.auth }))
-vi.mock('next/navigation', () => ({ unstable_rethrow: mocks.rethrow }))
-vi.mock('@/lib/subscriber-marketing/product-events-live', () => ({
-	scheduleProductEvents: mocks.schedule,
-}))
+const mocks = vi.hoisted(() => ({ effect: vi.fn() }))
+vi.mock('react', () => ({ useEffect: mocks.effect }))
 import { ProductPageView } from './product-page-view'
 
 beforeEach(() => {
-	vi.resetAllMocks()
-	vi.stubEnv('AIH_DROVR_PRODUCT_EVENTS_ENABLED', 'true')
+	vi.clearAllMocks()
 })
 afterEach(() => {
-	vi.unstubAllEnvs()
+	vi.unstubAllGlobals()
 })
-it('does not read identity or schedule in preview or with the gate off', async () => {
-	vi.stubEnv('VERCEL_ENV', 'preview')
-	await ProductPageView({ pageId: '/for-your-team' })
-	vi.stubEnv('VERCEL_ENV', 'production')
-	vi.stubEnv('AIH_DROVR_PRODUCT_EVENTS_ENABLED', 'false')
-	await ProductPageView({ pageId: '/for-your-team' })
-	expect(mocks.auth).not.toHaveBeenCalled()
-	expect(mocks.schedule).not.toHaveBeenCalled()
-})
-it('only schedules a signed-in teams page view, never anonymous', async () => {
-	mocks.auth.mockResolvedValueOnce({ session: null })
-	await ProductPageView({ pageId: '/for-your-team' })
-	expect(mocks.schedule).not.toHaveBeenCalled()
-	mocks.auth.mockResolvedValueOnce({
-		session: { user: { email: 'person@example.test' } },
+it('renders nothing and schedules one fixed-page notification after mount', async () => {
+	const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+	vi.stubGlobal('fetch', fetcher)
+	expect(ProductPageView()).toBeNull()
+	expect(fetcher).not.toHaveBeenCalled()
+	expect(mocks.effect).toHaveBeenCalledWith(expect.any(Function), [])
+	mocks.effect.mock.calls[0]![0]()
+	await Promise.resolve()
+	expect(fetcher).toHaveBeenCalledOnce()
+	expect(fetcher).toHaveBeenCalledWith('/api/product-events/team-page-view', {
+		method: 'POST',
+		credentials: 'same-origin',
+		keepalive: true,
 	})
-	await ProductPageView({ pageId: '/for-your-team' })
-	const [email, facts] = mocks.schedule.mock.calls[0]!
-	expect(await email()).toBe('person@example.test')
-	expect(facts).toEqual([
-		{
-			_tag: 'PageViewed',
-			page: 'team-pricing',
-			pageId: '/for-your-team',
-			at: expect.any(Number),
-		},
-	])
 })
-it('contains ordinary auth failures but preserves Next dynamic-rendering signals', async () => {
-	mocks.auth.mockRejectedValueOnce(new Error('identity unavailable'))
-	await expect(
-		ProductPageView({ pageId: '/for-your-team' }),
-	).resolves.toBeNull()
-	const signal = new Error('Next dynamic render')
-	mocks.auth.mockRejectedValueOnce(signal)
-	mocks.rethrow.mockImplementationOnce((error) => {
-		throw error
-	})
-	await expect(ProductPageView({ pageId: '/for-your-team' })).rejects.toBe(
-		signal,
+it('contains notification failures without changing navigation', async () => {
+	vi.stubGlobal(
+		'fetch',
+		vi.fn().mockRejectedValue(new Error('network unavailable')),
 	)
+	ProductPageView()
+	expect(() => mocks.effect.mock.calls[0]![0]()).not.toThrow()
+	await Promise.resolve()
 })
