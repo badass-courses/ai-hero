@@ -15,7 +15,9 @@ beforeEach(() => {
 	vi.resetAllMocks()
 	vi.stubEnv('AIH_DROVR_PRODUCT_EVENTS_ENABLED', 'true')
 })
-afterEach(() => vi.unstubAllEnvs())
+afterEach(() => {
+	vi.unstubAllEnvs()
+})
 it('does not read identity or schedule in preview or with the gate off', async () => {
 	vi.stubEnv('VERCEL_ENV', 'preview')
 	await ProductPageView({ pageId: '/for-your-team' })
