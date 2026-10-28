@@ -1,4 +1,6 @@
 import type { ParsedUrlQuery } from 'querystring'
+import { pageViewFact } from '@/lib/subscriber-marketing/product-events'
+import { scheduleProductEvents } from '@/lib/subscriber-marketing/product-events-live'
 import * as React from 'react'
 import type { Metadata, ResolvingMetadata } from 'next'
 import { notFound } from 'next/navigation'
@@ -170,6 +172,12 @@ export async function CohortPageView(props: CohortPageViewProps) {
 		workshops,
 		workshopProgressMap,
 	} = pageData
+
+	const viewedPage = pageViewFact(`/cohorts/${params.slug}`)
+	if (viewedPage && session?.user?.email) {
+		const email = session.user.email
+		scheduleProductEvents(async () => email, [viewedPage])
+	}
 
 	const share = product?.id === C5_PRODUCT_ID ? await giftSharePresentation(typeof searchParams.via === 'string' ? searchParams.via : undefined).catch(() => null) : null
 	const giftFact = product?.id === C5_PRODUCT_ID ? await signedGiftFact() : null

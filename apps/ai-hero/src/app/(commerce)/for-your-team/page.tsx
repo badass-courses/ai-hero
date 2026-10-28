@@ -1,4 +1,6 @@
 import type { Metadata } from 'next'
+import { Suspense } from 'react'
+import { ProductPageView } from '@/components/product-page-view'
 import Link from 'next/link'
 import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
 import { HeroShader } from '@/components/landing/hero-shader'
@@ -88,6 +90,7 @@ export default async function TeamPage() {
 
 	return (
 		<LayoutClient withContainer>
+			<Suspense fallback={null}><ProductPageView pageId="/for-your-team" /></Suspense>
 			<main className="flex min-h-screen w-full flex-col">
 				<C5SaleSwitch>
 					<C5SaleCta forTeams />
