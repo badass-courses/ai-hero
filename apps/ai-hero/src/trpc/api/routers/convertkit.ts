@@ -234,6 +234,7 @@ export const convertkitRouter = createTRPCRouter({
 						logger: log,
 						surveySlug: input.surveyId,
 						answers: input.answers,
+						identityEmail,
 						userId,
 						emailListSubscriberId,
 					})
@@ -444,6 +445,7 @@ export const convertkitRouter = createTRPCRouter({
 						logger: log,
 						surveySlug: input.surveyId,
 						answers: { [input.question]: input.answer },
+						identityEmail,
 						eventPrefix: 'survey.answer',
 						userId,
 						emailListSubscriberId,
