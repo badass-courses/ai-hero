@@ -48,7 +48,7 @@ describe('C5 timed client chrome', () => {
 	})
 
 	it('restores the existing promo at the exclusive close without a reload', async () => {
-		await mount('2026-11-10T07:29:59.999Z')
+		await mount('2026-11-10T07:59:58.999Z')
 		expect(container?.textContent).toContain(
 			'Software Factories for Real Engineers',
 		)

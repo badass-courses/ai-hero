@@ -221,9 +221,9 @@ function checkReasons(reasons: readonly string[]) {
 		expect(allowedReasons.has(reason), reason).toBe(true)
 }
 
-describe('C5 credit-off-regional pricing properties (vendored engine 0.2.2)', () => {
+describe('C5 credit-off-regional pricing properties (vendored engine 0.2.3)', () => {
 	it('exercises the pinned engine, not a mocked pricing implementation', () => {
-		expect(ENGINE_VERSION).toBe('0.2.2')
+		expect(ENGINE_VERSION).toBe('0.2.3')
 	})
 
 	it('subtracts one settled credit from the winning standard or regional price, with only a zero floor', () => {

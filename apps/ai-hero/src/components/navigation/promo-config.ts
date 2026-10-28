@@ -114,7 +114,7 @@ export const FEATURED_PROMO: Promo = {
 	navLabel: 'Join the cohort',
 	navHref: '/cohorts/software-factories-for-real-engineers-xdy1m',
 	startsAt: '2026-10-25T18:59:00.000Z',
-	endsAt: '2026-11-10T07:30:00.000Z',
+	endsAt: '2026-11-10T07:59:59.000Z',
 }
 
 /** Server callers supply c5PricingClosed(); client-only surfaces use the window. */

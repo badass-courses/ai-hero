@@ -12,8 +12,8 @@ describe('C5 sitewide sale', () => {
 		['2026-10-25T18:58:59.999Z', false],
 		['2026-10-25T18:59:00.000Z', true],
 		['2026-11-01T12:00:00.000Z', true],
-		['2026-11-10T07:29:59.999Z', true],
-		['2026-11-10T07:30:00.000Z', false],
+		['2026-11-10T07:59:58.999Z', true],
+		['2026-11-10T07:59:59.000Z', false],
 		['2026-11-11T12:00:00.000Z', false],
 	])('uses the half-open sale window at %s', (instant, expected) => {
 		const now = new Date(instant)

@@ -33,7 +33,7 @@ describe('Crash Course promotion timing', () => {
 	})
 
 	it('uses the tracked launch link and exact launch instant', () => {
-		const promo = getFeaturedPromo(new Date('2026-11-10T07:30:00.000Z'))
+		const promo = getFeaturedPromo(new Date('2026-11-10T07:59:59.000Z'))
 		expect(promo).toBe(CRASH_COURSE_PROMO)
 		expect(promo?.href).toBe('/s/crash-course')
 		expect(promo?.resourceId).toBe('workshop-2ozd9')

@@ -1,12 +1,12 @@
 {
 	"package": "@front-desk/pricing",
-	"version": "0.2.2",
+	"version": "0.2.3",
 	"build": "public default entry (pnpm --filter @front-desk/pricing build, dist/bundle)",
-	"frontDeskCommit": "06c7c50362404de2ac2b31e14f7f92bb6f3c5cf5",
+	"frontDeskCommit": "0c9759ac1236279dc9b1d7a93cffe56cec4bdb02",
 	"files": {
 		"pricing.js": {
-			"sha256": "400646d02d31e5cc67cf0ad03704809cb08b72349c324d2661a049c75f143dfc",
-			"bodySha256": "59a8abe6decc6a04bef492bfcec8d21b7f6d93a23e035510988caf1c7aaf041f"
+			"sha256": "1b028c1a74e9305e2c9fbc4ba9dcc6d3132837c7c5aab1e027748adafa56b939",
+			"bodySha256": "645aa01dd690ec3924666b03e1f910a25025edd28acb410baacaeb3f1ff05928"
 		},
 		"pricing.d.ts": {
 			"sha256": "158ccb528bb2a297a772377a89514da8e2b227ae665297d77e1f85adac94b1c9"

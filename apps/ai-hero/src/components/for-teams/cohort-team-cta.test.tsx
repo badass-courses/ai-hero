@@ -42,7 +42,7 @@ async function render(instant: string, backHref = '/workshops/ai-coding-crash-co
 }
 
 const open = '2026-11-01T12:00:00Z'
-const closed = '2026-11-10T07:30:00Z'
+const closed = '2026-11-10T07:59:59Z'
 
 describe('local team page HTML with the shared C5 sale switch', () => {
 	it('renders the open offer, tracked cohort link, credit and quote anchor', async () => {
