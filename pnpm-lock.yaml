@@ -516,9 +516,6 @@ importers:
       openai-edge:
         specifier: ^1.2.2
         version: 1.2.3
-      partysocket:
-        specifier: 1.0.1
-        version: 1.0.1
       pluralize:
         specifier: ^8.0.0
         version: 8.0.0
