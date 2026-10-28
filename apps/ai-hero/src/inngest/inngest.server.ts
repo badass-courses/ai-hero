@@ -184,7 +184,7 @@ import {
 	StripeCheckoutSessionCompleted,
 } from '@coursebuilder/core/events/stripe'
 import DeepgramProvider from '@coursebuilder/core/providers/deepgram'
-import OpenAIProvider from '@coursebuilder/core/providers/openai'
+import { MockOpenAIProvider } from '@coursebuilder/core/providers/openai'
 
 import {
 	ARTWORK_FAL_COMPLETED_EVENT,
@@ -341,10 +341,8 @@ const middleware = createInngestMiddleware({
 	db: commerceIdentity,
 	siteRootUrl: env.NEXT_PUBLIC_URL,
 	mediaUploadProvider: new UTApi(),
-	openaiProvider: OpenAIProvider({
-		apiKey: env.OPENAI_API_KEY,
-		partyUrlBase: env.NEXT_PUBLIC_PARTY_KIT_URL,
-	}),
+	// Only the resource-chat workflow calls this, and nothing sends its event.
+	openaiProvider: MockOpenAIProvider,
 	partyProvider,
 	transcriptProvider: DeepgramProvider({
 		apiKey: env.DEEPGRAM_API_KEY,

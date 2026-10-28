@@ -49,8 +49,6 @@ jobs:
       NEXT_PUBLIC_DISCORD_INVITE_URL: https://discord.test
       NEXT_PUBLIC_GOOGLE_ADS_ID: ci
       NEXT_PUBLIC_GOOGLE_ANALYTICS: ci
-      NEXT_PUBLIC_PARTY_KIT_URL: https://partykit.test
-      NEXT_PUBLIC_PARTYKIT_ROOM_NAME: ci
       NEXT_PUBLIC_SUPPORT_EMAIL: support@example.test
       # SDK clients built at import throw on an empty key; nothing calls them
       # during a build, so obviously fake values are enough.

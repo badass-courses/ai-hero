@@ -50,8 +50,6 @@ vi.mock('@/env.mjs', () => ({
 		CLOUDINARY_API_KEY: 'test_cloudinary_key',
 		CLOUDINARY_API_SECRET: 'test_cloudinary_secret',
 		NEXT_PUBLIC_APP_NAME: 'Test App',
-		NEXT_PUBLIC_PARTYKIT_ROOM_NAME: 'test_room',
-		NEXT_PUBLIC_PARTY_KIT_URL: 'test_partykit_url',
 		NEXT_PUBLIC_URL: 'http://localhost:3000',
 		NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME: 'test_cloud',
 		NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET: 'test_preset',

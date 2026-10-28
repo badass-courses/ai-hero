@@ -1,8 +1,5 @@
-import { env } from '@/env.mjs'
+import { MockOpenAIProvider } from '@coursebuilder/core/providers/openai'
 
-import OpenAIProvider from '@coursebuilder/core/providers/openai'
-
-export const openaiProvider = OpenAIProvider({
-	apiKey: env.OPENAI_API_KEY,
-	partyUrlBase: env.NEXT_PUBLIC_PARTY_KIT_URL,
-})
+// The only consumer of a live OpenAI provider was the resource-chat workflow
+// that streamed to PartyKit; nothing sends its event.
+export const openaiProvider = MockOpenAIProvider
