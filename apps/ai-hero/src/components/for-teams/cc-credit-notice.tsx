@@ -11,6 +11,11 @@ type Balance = { seats: number; amountCents: number; currency: 'usd' }
 export function CcCreditNotice() {
 	const { data: session, status } = useSession()
 	const userId = status === 'authenticated' ? session?.user?.id : undefined
+	return userId ? <UserCreditNotice key={userId} userId={userId} /> : null
+}
+
+/** A new identity gets a fresh component, including after sign-out/sign-in. */
+function UserCreditNotice({ userId }: { userId: string }) {
 	const [loaded, setLoaded] = useState<{
 		userId: string
 		balance: Balance

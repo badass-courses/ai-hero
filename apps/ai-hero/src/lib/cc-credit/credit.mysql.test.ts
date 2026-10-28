@@ -3,7 +3,18 @@ import mysql, {
 	type PoolConnection,
 	type RowDataPacket,
 } from 'mysql2/promise'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import {
+	afterAll,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	vi,
+} from 'vitest'
+vi.mock('@/db/client', () => ({ acquireDatabaseConnection: vi.fn() }))
+import { acquireDatabaseConnection } from '@/db/client'
+import { signedInOrganizationScopes } from './runtime'
 import fc from 'fast-check'
 import { mysqlCreditStore } from './store'
 import {
@@ -61,6 +72,9 @@ suite('CC credit production locking protocol against real MySQL', () => {
 			connectionLimit: 12,
 			timezone: 'Z',
 		})
+		vi.mocked(acquireDatabaseConnection).mockImplementation(() =>
+			pool.getConnection(),
+		)
 	})
 	afterAll(async () => {
 		await pool?.end()
@@ -139,6 +153,74 @@ suite('CC credit production locking protocol against real MySQL', () => {
 			remaining: { seats: 1, amountCents: 10000 },
 		})
 	})
+	it('allows only a current owner with a current eligible purchase to see organization balances', async () => {
+		await pool.query('DELETE FROM AI_OrganizationMembership')
+		await pool.query(
+			"INSERT INTO AI_OrganizationMembership (id,organizationId,userId,role,invitedById) VALUES ('membership_synthetic','org_synthetic','user_synthetic','owner','user_synthetic')",
+		)
+		expect(await signedInOrganizationScopes('user_synthetic')).toHaveLength(1)
+		await pool.query("UPDATE AI_Purchase SET status='Restricted'")
+		expect(await signedInOrganizationScopes('user_synthetic')).toHaveLength(1)
+		await pool.query("UPDATE AI_Purchase SET status='Refunded'")
+		expect(await signedInOrganizationScopes('user_synthetic')).toEqual([])
+		await pool.query(
+			"UPDATE AI_Purchase SET status='Valid', userId='user_new_owner'",
+		)
+		expect(await signedInOrganizationScopes('user_synthetic')).toEqual([]) // Transferred purchase.
+		await pool.query("UPDATE AI_Purchase SET userId='user_synthetic'")
+		await pool.query("UPDATE AI_OrganizationMembership SET role='user'")
+		expect(await signedInOrganizationScopes('user_synthetic')).toEqual([]) // No billing authority.
+		await pool.query('DELETE FROM AI_OrganizationMembership')
+		expect(await signedInOrganizationScopes('user_synthetic')).toEqual([]) // Former member, still has purchase.
+	})
+	it.each([
+		['missing', []],
+		[
+			'wrong amount',
+			[
+				{
+					description: 'Crash Course team seat credit x 2 (purch_syntheticA)',
+					amountCents: -19999,
+				},
+			],
+		],
+		[
+			'wrong seats',
+			[
+				{
+					description: 'Crash Course team seat credit x 1 (purch_syntheticA)',
+					amountCents: -20000,
+				},
+			],
+		],
+	] as const)(
+		'holds existing reservation inspect with %s invoice lines',
+		async (_, lines) => {
+			const input = command('in_syntheticInspectHold', 2)
+			await runCreditCommand(store(), input)
+			await expect(
+				runCreditCommand(store(), {
+					...input,
+					mode: 'inspect',
+					invoice: { ...input.invoice, creditLines: [...lines] },
+				}),
+			).rejects.toBeInstanceOf(CreditRefusal)
+			expect(await spent()).toBe(2)
+			const correct = [
+				{
+					description: 'Crash Course team seat credit x 2 (purch_syntheticA)',
+					amountCents: -20000,
+				},
+			]
+			expect(
+				await runCreditCommand(store(), {
+					...input,
+					mode: 'inspect',
+					invoice: { ...input.invoice, creditLines: correct },
+				}),
+			).toMatchObject({ idempotent: true })
+		},
+	)
 	it('replays invoices without allocating again and refuses changed seats', async () => {
 		const input = command('in_syntheticIdempotent', 2)
 		await runCreditCommand(store(), input)

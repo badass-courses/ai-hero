@@ -127,11 +127,34 @@ export async function runCreditCommand(
 			validateCredit(
 				invoice,
 				tx.receipt.amountCents,
-				(mode === 'reconcile' ||
+				(mode === 'inspect' ||
+					mode === 'reconcile' ||
 					mode === 'reconcile_preview' ||
 					mode === 'backfill') &&
 					invoice.status !== 'void',
 			)
+			if (mode === 'inspect') {
+				const actual = historicalAllocations(invoice, tx.receipt.allocations)
+				const declaredSeats = invoice.creditLines.map((line) =>
+					Number(/credit x (\d+)\b/i.exec(line.description)?.[1] ?? 0),
+				)
+				if (
+					declaredSeats.some(
+						(count, index) => count !== actual[index]?.seats,
+					) ||
+					actual.length !== tx.receipt.allocations.length ||
+					new Set(actual.map((row) => row.purchaseId)).size !== actual.length ||
+					actual.some(
+						(row) =>
+							!tx.receipt!.allocations.some(
+								(expected) =>
+									expected.purchaseId === row.purchaseId &&
+									expected.seats === row.seats,
+							),
+					)
+				)
+					throw new CreditRefusal('invoice_credit_seat_count_mismatch')
+			}
 			if (
 				mode === 'reconcile' ||
 				mode === 'reconcile_preview' ||

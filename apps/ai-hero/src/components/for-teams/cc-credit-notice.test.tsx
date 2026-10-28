@@ -68,6 +68,46 @@ describe('private team credit island', () => {
 		await render()
 		expect(element.textContent).toBe('')
 	})
+	it('discards balances across user switches and sign-out, even when returning to the same user', async () => {
+		const pending: ((response: Response) => void)[] = []
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(() => new Promise<Response>((resolve) => pending.push(resolve))),
+		)
+		const answer = async (index: number, seats: number) =>
+			act(async () =>
+				pending[index]!(
+					new Response(
+						JSON.stringify({
+							seats,
+							amountCents: seats * 10000,
+							currency: 'usd',
+						}),
+					),
+				),
+			)
+		auth.userId = 'user_A'
+		await render()
+		await answer(0, 2)
+		expect(element.textContent).toContain('2 unused')
+		auth.userId = 'user_B'
+		await render()
+		expect(element.textContent).toBe('')
+		auth.userId = 'user_A'
+		await render()
+		expect(element.textContent).toBe('')
+		await answer(1, 9) // Late response for B cannot populate A.
+		expect(element.textContent).toBe('')
+		await answer(2, 1)
+		expect(element.textContent).toContain('1 unused')
+		auth.userId = null
+		await render()
+		auth.userId = 'user_A'
+		await render()
+		expect(element.textContent).toBe('')
+		await answer(3, 3)
+		expect(element.textContent).toContain('3 unused')
+	})
 	it.each([
 		{ seats: 0, amountCents: 0, currency: 'usd' },
 		{ seats: 1, amountCents: 100, currency: 'eur' },

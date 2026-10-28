@@ -54,9 +54,12 @@ export async function signedInOrganizationScopes(userId: string) {
 	const connection = await acquireDatabaseConnection()
 	try {
 		const [rows] = await connection.execute<RowDataPacket[]>(
-			`SELECT organizationId FROM AI_OrganizationMembership WHERE BINARY userId = ? AND organizationId IS NOT NULL
-			 UNION SELECT organizationId FROM AI_Purchase WHERE BINARY userId = ? AND organizationId IS NOT NULL AND productId = ?`,
-			[userId, userId, 'product-ma254'],
+			`SELECT DISTINCT m.organizationId
+			 FROM AI_OrganizationMembership m
+			 JOIN AI_Purchase p ON BINARY p.organizationId = BINARY m.organizationId AND BINARY p.userId = BINARY m.userId
+			 WHERE BINARY m.userId = ? AND m.organizationId IS NOT NULL
+			 AND m.role = 'owner' AND p.status IN ('Valid', 'Restricted') AND p.productId = ?`,
+			[userId, 'product-ma254'],
 		)
 		return rows.map((row) => ({
 			organizationId: String(row.organizationId),
