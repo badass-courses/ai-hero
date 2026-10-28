@@ -40,7 +40,7 @@ export function purchaseCents(value: string): number {
 		throw new CreditRefusal('unrepresentable_purchase_amount')
 	return positiveInteger(
 		Number(
-			BigInt(match[1]!) * 100n +
+			BigInt(match[1]!) * BigInt(100) +
 				BigInt((match[2] ?? '').padEnd(2, '0').slice(0, 2)),
 		),
 		'purchase_cents',
