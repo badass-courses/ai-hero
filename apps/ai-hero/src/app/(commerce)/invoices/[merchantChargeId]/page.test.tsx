@@ -271,6 +271,84 @@ describe('invoice currency presentment', () => {
 		expect(markup).not.toContain('Amount paid')
 	})
 
+	const currencyCases = [
+		['pkr', 3592761, '35,927.61'],
+		['idr', 3592761, '35,927.61'],
+		['cop', 3592761, '35,927.61'],
+		['inr', 3592761, '35,927.61'],
+		['eur', 27806, '278.06'],
+		['jpy', 42000, '42,000'],
+		['kwd', 12340, '12.340'],
+		['huf', 1045, '10.45'],
+		['isk', 50000, '500.00'],
+		['ugx', 50000, '500.00'],
+	] as const
+
+	it.each(currencyCases)(
+		'renders %s presentment with one code and Stripe decimals',
+		async (currency, amount, formatted) => {
+			await chargeWith({
+				presentment_details: {
+					presentment_amount: amount,
+					presentment_currency: currency,
+				},
+			})
+			const markup = await renderInvoice()
+			const code = currency.toUpperCase()
+			expect(markup).toContain(
+				`Amount paid</span><strong class="text-lg">${code} ${formatted}</strong>`,
+			)
+			expect(markup.match(new RegExp(code, 'g'))).toHaveLength(1)
+			expect(markup).not.toMatch(/\b([A-Z]{3})\s+\1\b/)
+		},
+	)
+
+	it.each(currencyCases)(
+		'renders %s charge line items, total and refund with one code per amount',
+		async (currency, amount, formatted) => {
+			await chargeWith({ currency, amount })
+			const code = currency.toUpperCase()
+			const markup = await renderInvoice()
+			expect(markup).toContain(
+				`Total</span><strong class="text-lg">${code} ${formatted}</strong>`,
+			)
+			expect(markup.split(`${code} ${formatted}`)).toHaveLength(4)
+			expect(markup.match(new RegExp(code, 'g'))).toHaveLength(3)
+			expect(markup).not.toMatch(/\b([A-Z]{3})\s+\1\b/)
+
+			await chargeWith({ amount_refunded: amount, refunded: true })
+			const refunded = await renderInvoice()
+			expect(refunded).toContain(`${code} -${formatted}</td>`)
+			expect(refunded.match(new RegExp(code, 'g'))).toHaveLength(4)
+			expect(refunded).not.toMatch(/\b([A-Z]{3})\s+\1\b/)
+		},
+	)
+
+	it('formats PKR bulk unit price, line amount, partial refund and net total', async () => {
+		await chargeWith({
+			currency: 'pkr',
+			amount: 3592761,
+			amount_refunded: 10000,
+		})
+		mocks.purchase.mockResolvedValue({
+			id: 'purchase-synthetic',
+			userId: 'payer',
+			productId: 'product-synthetic',
+			merchantSessionId: 'session-synthetic',
+		})
+		mocks.merchantSession.mockResolvedValue({ identifier: 'cs_synthetic' })
+		mocks.checkoutSession.mockResolvedValue({
+			line_items: { data: [{ quantity: 3 }] },
+		})
+		const markup = await renderInvoice()
+		expect(markup).toContain('PKR 11,975.87</td><td class="pr-5">3</td>')
+		expect(markup).toContain('PKR 35,927.61</td>')
+		expect(markup).toContain('PKR -100.00</td>')
+		expect(markup).toContain('PKR 35,827.61</strong>')
+		expect(markup.match(/PKR/g)).toHaveLength(4)
+		expect(markup).not.toMatch(/\b([A-Z]{3})\s+\1\b/)
+	})
+
 	it('renders CAD paid with the USD amount received', async () => {
 		await chargeWith({
 			amount: 14500,
@@ -281,7 +359,7 @@ describe('invoice currency presentment', () => {
 		})
 		const markup = await renderInvoice()
 		expect(markup).toContain(
-			'<span class="mr-3">Amount paid</span><strong class="text-lg">CAD CA$199.00</strong>',
+			'<span class="mr-3">Amount paid</span><strong class="text-lg">CAD 199.00</strong>',
 		)
 		expect(markup).toContain(
 			'<span class="mr-3">Amount received</span><span>USD $145.00</span>',
@@ -299,7 +377,7 @@ describe('invoice currency presentment', () => {
 		const markup = await renderInvoice()
 		expectReadOnly(markup)
 		expect(markup).toContain(
-			'<span class="mr-3">Amount paid</span><strong class="text-lg">EUR €278.06</strong>',
+			'<span class="mr-3">Amount paid</span><strong class="text-lg">EUR 278.06</strong>',
 		)
 		expect(markup).toContain(
 			'<span class="mr-3">Amount received</span><span>USD $299.00</span>',
@@ -319,8 +397,8 @@ describe('invoice currency presentment', () => {
 			},
 		})
 		const markup = await renderInvoice()
-		expect(markup).toContain('JPY ¥42,000</strong>')
-		expect(markup).not.toContain('¥420.00')
+		expect(markup).toContain('JPY 42,000</strong>')
+		expect(markup).not.toContain('JPY 420.00')
 		expect(markup).toContain('Amount received</span><span>USD $199.00')
 	})
 
@@ -345,7 +423,7 @@ describe('invoice currency presentment', () => {
 		const markup = await renderInvoice()
 		expect(markup).toContain('Line items are shown in USD.')
 		expect(markup).toContain('USD $149.50</td><td class="pr-5">2</td>')
-		expect(markup).toContain('EUR €278.06</strong>')
+		expect(markup).toContain('EUR 278.06</strong>')
 		expect(markup.match(/EUR/g)).toHaveLength(1)
 	})
 
@@ -363,7 +441,7 @@ describe('invoice currency presentment', () => {
 			})
 			const markup = await renderInvoice()
 			expect(markup).toContain('Line items and refunds are shown in USD.')
-			expect(markup).toContain('EUR €278.06</strong>')
+			expect(markup).toContain('EUR 278.06</strong>')
 			expect(markup).toContain(
 				`Amount received after refunds</span><span>USD $${refunded === 29900 ? '0.00' : '249.00'}`,
 			)

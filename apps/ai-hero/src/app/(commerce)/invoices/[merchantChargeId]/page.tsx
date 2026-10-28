@@ -274,8 +274,11 @@ const Invoice = async (props: {
 				{children}
 			</InvoiceDetailsReadOnly>
 		)
+	// Keep USD's existing symbol; every currency code is rendered by the markup.
+	const formatAmount = (amount: number, currency: string) =>
+		`${currency.toUpperCase() === 'USD' ? '$' : ''}${formatInvoiceAmount(amount, currency)}`
 	const formatChargeAmount = (amount: number) =>
-		formatInvoiceAmount(amount, charge.currency)
+		formatAmount(amount, charge.currency)
 	const display = invoiceDisplayAmount(charge)
 	const created = fromUnixTime(charge.created)
 	const date = format(created, 'MMMM d, y')
@@ -450,7 +453,7 @@ const Invoice = async (props: {
 												<span className="mr-3">Amount paid</span>
 												<strong className="text-lg">
 													{display.primary.currency}{' '}
-													{formatInvoiceAmount(
+													{formatAmount(
 														display.primary.amount,
 														display.primary.currency,
 													)}
@@ -463,7 +466,7 @@ const Invoice = async (props: {
 												</span>
 												<span>
 													{display.secondary.currency}{' '}
-													{formatInvoiceAmount(
+													{formatAmount(
 														display.secondary.amount,
 														display.secondary.currency,
 													)}
@@ -480,7 +483,7 @@ const Invoice = async (props: {
 											<span className="mr-3">Total</span>
 											<strong className="text-lg">
 												{display.primary.currency}{' '}
-												{formatInvoiceAmount(
+												{formatAmount(
 													display.primary.amount,
 													display.primary.currency,
 												)}
