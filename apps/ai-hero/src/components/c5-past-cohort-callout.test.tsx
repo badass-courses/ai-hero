@@ -43,7 +43,7 @@ describe('past-cohort callout', () => {
 		},
 	)
 
-	it.each(['2026-10-25T18:58:59Z', '2026-11-10T07:30:00Z'])(
+	it.each(['2026-10-25T18:58:59Z', '2026-11-10T07:59:59Z'])(
 		'disappears outside enrollment at %s',
 		async (instant) => {
 			vi.useFakeTimers()

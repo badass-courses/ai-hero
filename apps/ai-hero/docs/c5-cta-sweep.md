@@ -1,6 +1,6 @@
 # C5 CTA coverage, sweep 2
 
-Baseline: `cc3aa382` (PR #490). All additions use `C5SaleSwitch`, which preserves the old surface when C5 pricing is closed or the enrollment window ends at `2026-11-10T07:30:00Z`. No flag, CMS, database, Redis or commerce configuration changes are required.
+Baseline: `cc3aa382` (PR #490). All additions use `C5SaleSwitch`, which preserves the old surface when C5 pricing is closed or the enrollment window ends at `2026-11-10T07:59:59Z`. No flag, CMS, database, Redis or commerce configuration changes are required.
 
 ## Route audit
 

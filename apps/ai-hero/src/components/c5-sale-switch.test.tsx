@@ -30,7 +30,7 @@ describe('server C5 sale switch', () => {
 	it.each([
 		['2026-10-25T18:58:59.999Z', false],
 		['2026-10-25T18:59:00.000Z', true],
-		['2026-11-10T07:30:00.000Z', false],
+		['2026-11-10T07:59:59.000Z', false],
 	])('renders the right first paint at %s', async (instant, active) => {
 		vi.useFakeTimers()
 		vi.setSystemTime(new Date(instant))

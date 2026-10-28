@@ -120,7 +120,7 @@ describe('/workshops/[module]/for-teams', () => {
 		['2026-10-25T18:59:00.000Z', false, true],
 		['2026-11-01T12:00:00.000Z', false, true],
 		['2026-11-01T12:00:00.000Z', true, false],
-		['2026-11-10T07:30:00.000Z', false, false],
+		['2026-11-10T07:59:59.000Z', false, false],
 		['2026-11-11T12:00:00.000Z', false, false],
 	])('renders the promotion at %s with pricing closed=%s: %s', async (instant, closed, active) => {
 		vi.useFakeTimers()
