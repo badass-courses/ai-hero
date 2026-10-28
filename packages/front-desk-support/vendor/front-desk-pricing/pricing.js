@@ -1,4 +1,4 @@
-/*! @front-desk/pricing 0.2.2 public build; front-desk commit 06c7c50362404de2ac2b31e14f7f92bb6f3c5cf5; sha256 of the body below 59a8abe6decc6a04bef492bfcec8d21b7f6d93a23e035510988caf1c7aaf041f */
+/*! @front-desk/pricing 0.2.3 public build; front-desk commit 0c9759ac1236279dc9b1d7a93cffe56cec4bdb02; sha256 of the body below 645aa01dd690ec3924666b03e1f910a25025edd28acb410baacaeb3f1ff05928 */
 //#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Pipeable.js
 var pipeArguments = (self, args) => {
 	switch (args.length) {
@@ -4984,7 +4984,7 @@ var plainDecoderOf = (schema) => {
 decoderOf(ArraySchema(BindingQuote));
 //#endregion
 //#region src/engine/result.ts
-var ENGINE_VERSION$1 = "0.2.2";
+var ENGINE_VERSION$1 = "0.2.3";
 var Reason = Struct({
 	code: Literals([
 		"policy-disabled",
