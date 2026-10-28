@@ -84,7 +84,7 @@ export interface CodeData {
 }
 export interface BuyerFactsData {
     readonly code?: FactData<CodeData | null>;
-    readonly alumni: FactData<"none" | "c3" | "c4" | "both">;
+    readonly alumni: FactData<"none" | "c1" | "c2" | "c3" | "c4" | "both" | "multiple">;
     readonly credit: FactData<{
         readonly paid: number;
         readonly source: string;

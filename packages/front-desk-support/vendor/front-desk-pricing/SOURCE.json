@@ -1,18 +1,18 @@
 {
 	"package": "@front-desk/pricing",
-	"version": "0.2.0",
+	"version": "0.2.1",
 	"build": "public default entry (pnpm --filter @front-desk/pricing build, dist/bundle)",
-	"frontDeskCommit": "28f2f88626ecdd7a054ec7008a835637fe849146",
+	"frontDeskCommit": "3c6341344c0b1a8b34ac879508a48f698cb46b2c",
 	"files": {
 		"pricing.js": {
-			"sha256": "ee51f5f704b71ed8804f45e3cd5fd03df877612fff6d5d93bf31547dee34f26b",
-			"bodySha256": "dee3f4f9c5d8f3968e7c9ef15a6978c242f9ee06d01aafd908413132c3f15dbc"
+			"sha256": "3f1bd91104fc1735e61fb65254a990289d95e9b0a52c4388f2f80051e15ed8e5",
+			"bodySha256": "0cd7127ba28c912f2cf30a2032616a95131b80fc4210792c614b51fc2f65cd71"
 		},
 		"pricing.d.ts": {
 			"sha256": "158ccb528bb2a297a772377a89514da8e2b227ae665297d77e1f85adac94b1c9"
 		},
 		"types.d.ts": {
-			"sha256": "b7a5da22d3149de1fbed316cd2d48ff2a3507aea11a5e7acbfea1648f74c9553"
+			"sha256": "61ecc8a6192f97249ecf0e679557cbe1d2e868a6bb02579aeb7cda07c1540436"
 		}
 	}
 }

@@ -518,15 +518,15 @@ describe('alumni', () => {
 	const c2 = purchase({ id: 'c2', productId: 'product-wdhub' })
 
 	it.each([
-		// C1 and C2 use the interim 'both' value, never 'c3' or 'c4'.
-		['C1 only', [c1], 'both'],
-		['C2 only', [c2], 'both'],
-		['a redeemed C2 team seat', [{ ...c2, redeemedBulkCouponId: 'bulk' }], 'both'],
+		['C1 only', [c1], 'c1'],
+		['C2 only', [c2], 'c2'],
+		['a redeemed C2 team seat', [{ ...c2, redeemedBulkCouponId: 'bulk' }], 'c2'],
+		['C1 plus C3', [c1, c3], 'multiple'],
 		['a refunded C1 purchase', [{ ...c1, status: 'Refunded' }], 'none'],
 		['a Crash Course only', [purchase({ id: 'cc', productId: CC })], 'none'],
 		['C3', [c3], 'c3'],
 		['C4', [c4], 'c4'],
-		['both', [c3, c4], 'both'],
+		['C3 plus C4', [c3, c4], 'multiple'],
 		[
 			'a $0 C3-to-C4 update',
 			[
@@ -545,7 +545,7 @@ describe('alumni', () => {
 		[
 			'a redeemed C3 team seat plus an own C4 purchase',
 			[{ ...c3, redeemedBulkCouponId: 'bulk' }, c4],
-			'both',
+			'multiple',
 		],
 		[
 			'a refunded redeemed team seat',
@@ -564,7 +564,7 @@ describe('alumni', () => {
 
 	it('cites the qualifying purchases', async () => {
 		expect(await alumniOf([c3, c4])).toEqual({
-			value: 'both',
+			value: 'multiple',
 			sourceRefs: ['ai-hero:purchase:c3', 'ai-hero:purchase:c4'],
 		})
 	})
