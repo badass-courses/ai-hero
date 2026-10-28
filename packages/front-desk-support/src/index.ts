@@ -54,7 +54,9 @@ export interface PricingBuyerFacts {
 		readonly usesTaken: number
 		readonly expiresAt: string
 	} | null>
-	readonly alumni: PricingFact<'none' | 'c3' | 'c4' | 'both'>
+	readonly alumni: PricingFact<
+		'none' | 'c1' | 'c2' | 'c3' | 'c4' | 'both' | 'multiple'
+	>
 	/** USD cents actually paid for the one qualifying Crash Course purchase. */
 	readonly credit: PricingFact<{
 		readonly paid: number
@@ -176,7 +178,7 @@ const BuyerFactsSchema = Schema.Struct({
 		usesTaken: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 		expiresAt: Schema.String,
 	})))),
-	alumni: fact(Schema.Literals(['none', 'c3', 'c4', 'both'])),
+	alumni: fact(Schema.Literals(['none', 'c1', 'c2', 'c3', 'c4', 'both', 'multiple'])),
 	credit: fact(
 		Schema.NullOr(
 			Schema.Struct({ paid: Cents, source: Schema.NonEmptyString }),
