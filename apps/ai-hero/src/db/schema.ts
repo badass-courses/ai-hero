@@ -1,6 +1,7 @@
 import { mysqlTable } from '@/db/mysql-table'
 export { purchaseDecision } from './purchase-decision-schema'
 export { giftCodeSlot, giftShareLink } from './gift-code-schema'
+export { ccCreditReservation, ccCreditAllocation } from './cc-credit-schema'
 import { relations, sql } from 'drizzle-orm'
 import { CONTACT_EMAIL_STALE_SQL } from '@/lib/subscriber-marketing/contact-email-key-contract'
 import {
