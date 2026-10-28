@@ -8,6 +8,7 @@ import { acceptPurchaseTransfer } from '@/purchase-transfer/purchase-transfer-ac
 import {
 	isTransferAccepted,
 	isTransferExpired,
+	TransferDenialError,
 } from '@/purchase-transfer/transfer-lifecycle'
 import { getServerAuthSession } from '@/server/auth'
 
@@ -87,7 +88,19 @@ const PurchaseTransferPage = async (props: {
 
 	async function accept() {
 		'use server'
-		await acceptPurchaseTransfer({ purchaseUserTransferId: id })
+		try {
+			await acceptPurchaseTransfer({ purchaseUserTransferId: id })
+		} catch (error) {
+			// No signed-in user at Accept: show the page's sign-in view (with the
+			// "still waiting" notice) rather than a 500.
+			if (
+				error instanceof TransferDenialError &&
+				error.code === 'not_authenticated'
+			) {
+				redirect(`/transfer/${id}?link=used`)
+			}
+			throw error
+		}
 		updateTag(INCOMING_TRANSFERS_TAG)
 		revalidatePath(`/transfer/${id}`)
 		redirect(`/transfer/${id}`)

@@ -1,6 +1,7 @@
 'use server'
 
 import process from 'process'
+import { cookies } from 'next/headers'
 import { emailProvider } from '@/coursebuilder/email-provider'
 import { courseBuilderAdapter, db } from '@/db'
 import {
@@ -293,6 +294,29 @@ async function completeVerifiedTransfer(
 	return readAcceptResult(transfer.id, transfer.purchaseId)
 }
 
+async function logAcceptWithoutUser(context: {
+	purchaseUserTransferId: string
+	hasSession: boolean
+	hasSessionUserId: boolean
+}) {
+	let sessionCookiePresent: boolean | null = null
+	let region: string | null = null
+	try {
+		const jar = await cookies()
+		sessionCookiePresent = jar
+			.getAll()
+			.some((c) => /session-token/.test(c.name))
+		region = process.env.VERCEL_REGION ?? null
+	} catch {
+		// Outside a request (tests): leave the diagnostics null.
+	}
+	await log.warn('purchase_transfer.accept_without_user', {
+		...context,
+		sessionCookiePresent,
+		region,
+	})
+}
+
 export async function acceptPurchaseTransfer(input: {
 	purchaseUserTransferId: string
 }) {
@@ -306,7 +330,16 @@ export async function acceptPurchaseTransfer(input: {
 		: null
 
 	if (!user) {
-		throw new Error('No user found')
+		// The recipient reached Accept without a session we can resolve (seen
+		// right after a fresh login link). Record what we can see so the cause
+		// can be proven, and refuse as a typed denial the page turns into the
+		// sign-in view instead of a 500.
+		await logAcceptWithoutUser({
+			purchaseUserTransferId: input.purchaseUserTransferId,
+			hasSession: Boolean(token.session),
+			hasSessionUserId: Boolean(token.session?.user?.id),
+		})
+		throw transferDenialError({ ok: false, code: 'not_authenticated' })
 	}
 
 	const purchase = purchaseUserTransfer
