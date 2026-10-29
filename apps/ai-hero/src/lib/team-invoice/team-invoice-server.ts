@@ -21,7 +21,7 @@ import { redis } from '@/server/redis-client'
 import { sendAnEmail } from '@coursebuilder/utils/send-an-email'
 import { Ratelimit } from '@upstash/ratelimit'
 import { count, eq } from 'drizzle-orm'
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 
 import { price as enginePrice } from '@ai-hero/front-desk-support/pricing'
 
@@ -173,7 +173,7 @@ async function buyer(email: string, productId: string) {
 					decisionCutover: c5DecisionCutover(),
 				}),
 			),
-			Effect.catchAll(() => Effect.succeed(null)),
+			Effect.catch(() => Effect.succeed(null)),
 		),
 	)
 }
