@@ -85,6 +85,16 @@ describe('course-sync field ownership', () => {
 		).toEqual({ ...schedule, ...fields })
 	})
 
+	it('removes a session extract the source no longer sends', () => {
+		const fields = { title: 'Solution', chapters: [] }
+		expect(
+			mergeCourseSyncResourceFields(
+				{ sourceKind: 'video', fields },
+				{ ...fields, sessionExtract: { sessions: [] }, operatorNote: 'Keep' },
+			),
+		).toEqual({ ...fields, operatorNote: 'Keep' })
+	})
+
 	it('takes operator edits and deletions from the row, never from the source plan', () => {
 		expect(
 			mergeCourseSyncResourceFields(

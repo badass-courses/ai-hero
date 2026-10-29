@@ -41,6 +41,10 @@ vi.mock('@/lib/lessons-query', () => ({
 	getLessonVideoTranscript: vi.fn(),
 }))
 
+vi.mock('@/lib/session-extract-query', () => ({
+	getLessonSessionExtract: vi.fn().mockResolvedValue(null),
+}))
+
 vi.mock('@/lib/signed-lesson-playback', () => ({
 	getSignedLessonPlayback: mocks.getSignedLessonPlayback,
 }))
@@ -210,6 +214,7 @@ describe('LessonPage office-hours authorization context', () => {
 				chapters: [],
 				savedPosition: 42,
 				moduleSlug: 'workshop-1',
+				sessionExtract: null,
 				thumbnailUrl: null,
 			})
 		},

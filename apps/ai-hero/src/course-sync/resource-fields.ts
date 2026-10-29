@@ -29,6 +29,7 @@ export const sourceFieldsByKind: Readonly<
 		'muxAssetId',
 		'muxPlaybackId',
 		'chapters',
+		'sessionExtract',
 	],
 	question: [...commonFields, ...Object.keys(QuestionResourceSchema.shape)],
 }
