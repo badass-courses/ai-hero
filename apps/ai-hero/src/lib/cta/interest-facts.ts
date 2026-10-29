@@ -84,7 +84,8 @@ export function interestFieldsFromFacts(
 		const at = new Date(row.occurredAt)
 		if (!isInterestFieldKey(key) || !Number.isFinite(at.getTime())) continue
 		const date = at.toISOString().slice(0, 10)
-		if (!fields[key] || date < fields[key]) fields[key] = date
+		const earliest = fields[key]
+		if (!earliest || date < earliest) fields[key] = date
 	}
 	return fields
 }
