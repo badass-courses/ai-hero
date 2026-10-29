@@ -6,12 +6,30 @@ import { getDiscordAccount } from '@/lib/discord-query'
 import { removeDiscordRole } from '@/lib/discord-utils'
 import { EntitlementSourceType } from '@/lib/entitlements'
 import { log } from '@/server/logger'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm'
 
 import { PURCHASE_STATUS_UPDATED_EVENT } from '@coursebuilder/core/events/commerce'
 
+import { partitionDiscordRoleRemovals } from './discord-role-retention'
+
+/**
+ * Runs one at a time. Two concurrent refunds that grant the same role would
+ * each see the other's entitlement as live and both skip the removal. The
+ * status event carries only the charge id, not the user, so this can't be
+ * keyed per user; refunds are rare enough that a single lane is fine.
+ */
+export const removePurchaseRoleDiscordConfig = {
+	id: `remove-purchase-role-discord`,
+	name: 'Remove Purchase Role Discord',
+	concurrency: {
+		scope: 'env',
+		key: '"remove-purchase-role-discord"',
+		limit: 1,
+	},
+} as const
+
 export const removePurchaseRoleDiscord = inngest.createFunction(
-	{ id: `remove-purchase-role-discord`, name: 'Remove Purchase Role Discord' },
+	removePurchaseRoleDiscordConfig,
 	{
 		event: PURCHASE_STATUS_UPDATED_EVENT,
 		// Disputes remove their own Discord roles (purchase-dispute-access) so a
@@ -110,6 +128,70 @@ export const removePurchaseRoleDiscord = inngest.createFunction(
 			}
 		}
 
+		// Another live entitlement (a different purchase or source) may still
+		// grant the same role, e.g. a bundle that includes the refunded product.
+		// The refunded purchase's own rows are excluded by the helper, so this
+		// doesn't depend on refund-entitlements having already soft-deleted them.
+		const liveEntitlements = await step.run(
+			'get live discord role entitlements for user',
+			async () => {
+				// Every Discord role type, not just the refunded entitlement's own:
+				// the same role can be granted under either type. The role id
+				// decides, and any source type counts.
+				const roleTypes = await db.query.entitlementTypes.findMany({
+					where: inArray(entitlementTypes.name, [
+						'cohort_discord_role',
+						'workshop_discord_role',
+					]),
+				})
+				const roleTypeIds = roleTypes.map((t) => t.id)
+				if (roleTypeIds.length === 0) return []
+				const rows = await db.query.entitlements.findMany({
+					where: and(
+						eq(entitlements.userId, user.id),
+						inArray(entitlements.entitlementType, roleTypeIds),
+						isNull(entitlements.deletedAt),
+						or(
+							isNull(entitlements.expiresAt),
+							gt(entitlements.expiresAt, sql`CURRENT_TIMESTAMP`),
+						),
+					),
+				})
+				return rows.map((row) => ({
+					id: row.id,
+					sourceType: row.sourceType,
+					sourceId: row.sourceId,
+					metadata: row.metadata as { discordRoleId?: unknown } | null,
+				}))
+			},
+		)
+
+		const { remove, keep } = partitionDiscordRoleRemovals({
+			refundedPurchaseId: purchase.id,
+			refundedEntitlements: discordRoleEntitlements.map((e) => ({
+				id: e.id,
+				sourceType: e.sourceType,
+				sourceId: e.sourceId,
+				metadata: e.metadata as { discordRoleId?: unknown } | null,
+			})),
+			liveEntitlements,
+		})
+
+		for (const kept of keep) {
+			log.info(
+				'Skipped Discord role removal: still granted by another entitlement',
+				{
+					purchaseId: purchase.id,
+					discordRoleId: kept.discordRoleId,
+					reason: 'role_granted_by_other_live_entitlement',
+				},
+			)
+		}
+
+		const removeByEntitlement = new Map(
+			remove.map((r) => [r.entitlementId, r.discordRoleId]),
+		)
+
 		// Remove each Discord role that was granted by this purchase
 		const removalResults = []
 
@@ -122,6 +204,20 @@ export const removePurchaseRoleDiscord = inngest.createFunction(
 					purchaseId: purchase.id,
 					userId: user.id,
 				})
+				continue
+			}
+
+			if (!removeByEntitlement.has(entitlement.id)) {
+				// Role kept; still retire the refunded purchase's own row.
+				await step.run(
+					`soft delete discord role entitlement ${entitlement.id}`,
+					async () => {
+						await db
+							.update(entitlements)
+							.set({ deletedAt: new Date() })
+							.where(eq(entitlements.id, entitlement.id))
+					},
+				)
 				continue
 			}
 
