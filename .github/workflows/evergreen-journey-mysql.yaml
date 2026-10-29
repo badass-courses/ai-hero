@@ -38,6 +38,8 @@ on:
       - "apps/ai-hero/src/lib/archive-products.ts"
       - "apps/ai-hero/src/lib/purchase-benefit-entitlements.ts"
       - "apps/ai-hero/src/lib/discord-utils.ts"
+      - "apps/ai-hero/src/lib/coupon-mint*"
+      - "apps/ai-hero/src/app/api/support/coupons/**"
       - "apps/ai-hero/src/server/magic-link-confirmation*"
       - "apps/ai-hero/src/server/auth-js-adapter*"
       - "apps/ai-hero/src/lib/subscriber-marketing/*value-path-link-anchor*"
@@ -86,6 +88,8 @@ on:
       - "apps/ai-hero/src/lib/archive-products.ts"
       - "apps/ai-hero/src/lib/purchase-benefit-entitlements.ts"
       - "apps/ai-hero/src/lib/discord-utils.ts"
+      - "apps/ai-hero/src/lib/coupon-mint*"
+      - "apps/ai-hero/src/app/api/support/coupons/**"
       - "apps/ai-hero/src/server/magic-link-confirmation*"
       - "apps/ai-hero/src/server/auth-js-adapter*"
       - "apps/ai-hero/src/lib/subscriber-marketing/*value-path-link-anchor*"
@@ -184,3 +188,11 @@ jobs:
         run: >-
           pnpm --filter ai-hero exec vitest run -c vitest.config.ts --testTimeout=30000
           src/course-sync/drizzle-persistence.mysql.test.ts
+
+      - name: Run guarded coupon mint suite
+        env:
+          AIH_COUPON_MINT_MYSQL_URL: mysql://root:aih_test_password@127.0.0.1:3307/coupon_mint_test
+        run: |
+          mysql -h 127.0.0.1 -P 3307 -uroot -paih_test_password -e 'CREATE DATABASE IF NOT EXISTS coupon_mint_test'
+          pnpm --filter ai-hero exec node scripts/test-mysql-schema.mjs "$AIH_COUPON_MINT_MYSQL_URL"
+          pnpm --filter ai-hero exec vitest run -c vitest.config.ts --testTimeout=30000 src/lib/coupon-mint.mysql.test.ts

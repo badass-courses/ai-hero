@@ -295,7 +295,7 @@ export default async function TeamPage() {
 							aria-labelledby="offer-c5"
 						>
 							<div className="mb-4 flex flex-wrap items-center gap-3">
-								<p className={cn(TYPE.groupLabel)}>03 / Cohort 005</p>
+								<p className={cn(TYPE.groupLabel)}>03 / Live cohort</p>
 							</div>
 							<h2 id="offer-c5" className={cn(TYPE.heading, 'text-balance')}>
 								Software Factories for Real Engineers
@@ -307,7 +307,7 @@ export default async function TeamPage() {
 								className={cn(TYPE.meta, 'mt-6 w-full max-w-2xl text-left')}
 							>
 								<caption className="sr-only">
-									Cohort 005 team pricing through November 2, 2026
+									Software Factories team pricing through November 2, 2026
 								</caption>
 								<thead>
 									<tr className="border-b border-[color:var(--ah-line-soft)]">
@@ -390,7 +390,7 @@ export default async function TeamPage() {
 				>
 					<div className={INNER}>
 						<h2 id="c5-invoice-title" className={cn(TYPE.heading, 'mb-6')}>
-							Cohort 005 team invoice
+							Software Factories team invoice
 						</h2>
 						<TeamInvoiceForm
 							productId="product-s00zs"

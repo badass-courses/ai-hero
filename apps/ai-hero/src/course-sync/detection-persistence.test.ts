@@ -1,13 +1,26 @@
 import { MySqlDialect } from 'drizzle-orm/mysql-core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const dbMock = vi.hoisted(() => ({ transaction: vi.fn() }))
+const dbMock = vi.hoisted(() => ({ transaction: vi.fn(), insert: vi.fn() }))
 
 vi.mock('@/db', () => ({ db: dbMock }))
-vi.mock('@/server/logger', () => ({ log: { info: vi.fn() } }))
+vi.mock('@/server/logger', () => ({ log: { info: vi.fn(), error: vi.fn() } }))
+vi.mock('@/server/run-identity', () => ({
+	getRunIdentity: () => ({
+		vercelEnv: null,
+		nodeEnv: 'test',
+		onVercel: false,
+		inngest: 'dev',
+		hostname: 'poller.example.test',
+		gitSha: null,
+		dbHost: 'db.example.test',
+		dbUsername: 'observer',
+	}),
+}))
 
 import { sha256, stableJson } from './control-plane'
 import {
+	appendCourseSyncPollLog,
 	claimCourseSyncReviewNotification,
 	completeCourseSyncReviewNotification,
 	failCourseSyncReviewNotification,
@@ -37,6 +50,41 @@ describe('course-sync revision head persistence', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 	})
+
+	it.each(['started', 'failed', 'held'] as const)(
+		'persists runIdentity on %s poll rows without replacing metadata',
+		async (outcome) => {
+			const values = vi.fn(async () => undefined)
+			dbMock.insert.mockReturnValue({ values })
+			await appendCourseSyncPollLog({
+				bindingId: 'test-binding',
+				courseVersionId: 'test-version',
+				providerRevision: 'test-revision',
+				runId: 'test-run',
+				stage: 'detect',
+				outcome,
+				occurredAt: new Date(),
+				metadata: { consecutiveFailures: 2, runIdentity: { stale: true } },
+			})
+			expect(values).toHaveBeenCalledWith(
+				expect.objectContaining({
+					metadata: {
+						consecutiveFailures: 2,
+						runIdentity: {
+							vercelEnv: null,
+							nodeEnv: 'test',
+							onVercel: false,
+							inngest: 'dev',
+							hostname: 'poller.example.test',
+							gitSha: null,
+							dbHost: 'db.example.test',
+							dbUsername: 'observer',
+						},
+					},
+				}),
+			)
+		},
+	)
 
 	it('excludes compensating rollback runs from successful head selection', () => {
 		const dialect = new MySqlDialect()
@@ -118,6 +166,9 @@ describe('course-sync revision head persistence', () => {
 			stage: 'notify',
 			outcome: 'started',
 			metadata: {
+				runIdentity: expect.objectContaining({
+					hostname: 'poller.example.test',
+				}),
 				kind: 'review',
 				planSha256: 'a'.repeat(64),
 			},

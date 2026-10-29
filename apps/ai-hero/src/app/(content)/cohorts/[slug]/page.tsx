@@ -62,6 +62,9 @@ import { CohortPricingWidgetContainer } from './_components/cohort-pricing-widge
 import { CohortSidebar } from './_components/cohort-sidebar'
 import { CohortTeamLink } from './_components/cohort-team-link'
 import { metaDescription } from '@/lib/meta-description'
+import { discordAccountsForCurrentUser } from '@/lib/users'
+import { OfficeHoursSchedule } from '@/components/office-hours-schedule'
+import { CohortPostPurchase } from './_components/cohort-post-purchase'
 
 export async function generateMetadata(
 	props: {
@@ -278,14 +281,12 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	const lessonCount = 0
 	const alumniLabel = formatAlumniCount(alumniCount)
 
-	// Use post-purchase body copy for purchasers when available,
-	// otherwise fall back to the standard sales body. A `bodySource` from the
-	// preview route stands in for either.
-	const mdxSource =
-		props.bodySource ??
-		(hasCohortAccess && cohort.fields.postPurchaseBody
-			? cohort.fields.postPurchaseBody
-			: cohort.fields.body || '')
+	// Authored post-purchase MDX remains a full override. Buyers without one
+	// get the generated view, never the sales pitch. Preview copy still wins.
+	const buyerBody = props.bodySource ?? cohort.fields.postPurchaseBody
+	const mdxSource = hasCohortAccess
+		? buyerBody || ''
+		: (props.bodySource ?? cohort.fields.body ?? '')
 
 	const displayWorkshops = hasCohortAccess
 		? workshops
@@ -351,6 +352,20 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	const { content } = await compileMDX(
 		mdxSource,
 		{
+			// The general MDX widget requires workshop access context. Here the
+			// cohort access check authorizes the sessions explicitly, including
+			// old C3/C4 overrides. Never pass unlisted links to a sales viewer.
+			...(hasCohortAccess
+				? {
+						OfficeHoursSchedule: () => (
+							<OfficeHoursSchedule
+								sessions={fields.officeHoursSessions}
+								variant="lesson"
+								timeZone={PT}
+							/>
+						),
+					}
+				: {}),
 			h1: ({ children }: { children: React.ReactNode }) => (
 				<h2 className="mb-5 text-3xl font-semibold tracking-tight">
 					{children}
@@ -541,6 +556,41 @@ export async function CohortPageView(props: CohortPageViewProps) {
 			},
 		},
 	)
+
+	if (hasCohortAccess) {
+		const isDiscordConnected = Boolean(await discordAccountsForCurrentUser())
+		return (
+			<LayoutClient withContainer>
+				<main>
+					<EditWorkshopButton
+						className=""
+						moduleType="cohort"
+						moduleSlug={fields.slug || cohort.id}
+						product={clientCohortProps.product}
+					/>
+					<CohortPostPurchase
+						cohort={cohort}
+						workshops={workshops as Workshop[]}
+						isDiscordConnected={isDiscordConnected}
+						override={buyerBody ? content : undefined}
+					/>
+					<CohortContents
+						variant="full"
+						workshops={displayWorkshops as Workshop[]}
+						workshopProgressMap={workshopProgressMap}
+						timezone={PT}
+					/>
+					<React.Suspense fallback={<Certificate isCompleted={hasCompletedCohort} resourceSlugOrId={fields.slug} />}>
+						<CohortCertificateProgress
+							isCompleted={hasCompletedCohort}
+							resourceSlugOrId={fields.slug}
+							workshopProgressMap={workshopProgressMap}
+						/>
+					</React.Suspense>
+				</main>
+			</LayoutClient>
+		)
+	}
 
 	return (
 		<LayoutClient withContainer>

@@ -6,6 +6,18 @@ import {
 	AI_HERO_COURSE_SYNC_BINDING_COHORT_005_V7 as v7,
 } from './types'
 
+const runIdentity = vi.hoisted(() => ({
+	vercelEnv: null,
+	nodeEnv: 'test',
+	onVercel: false,
+	inngest: 'cloud' as const,
+	hostname: 'migration.example.test',
+	gitSha: null,
+	dbHost: 'db.example.test',
+	dbUsername: 'observer',
+}))
+vi.mock('@/server/run-identity', () => ({ getRunIdentity: () => runIdentity }))
+
 const transaction = vi.hoisted(() => vi.fn())
 const findBinding = vi.hoisted(() => vi.fn())
 vi.mock('@/db', () => ({
@@ -62,6 +74,7 @@ describe('drizzle stored binding migration to v8', () => {
 					outcome: 'succeeded',
 					runId: `binding-migration:${v8.bindingId}:v${old.contractVersion}-v8`,
 					metadata: {
+						runIdentity,
 						fromContractVersion: old.contractVersion,
 						toContractVersion: 8,
 					},

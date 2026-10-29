@@ -22,6 +22,11 @@
  */
 
 import { log, serializeError } from '@/server/logger'
+import {
+	getRunIdentity,
+	registerInngestRunIdentity,
+} from '@/server/run-identity'
+import { logCourseSyncRunStart } from '@/course-sync/run-identity-observability'
 import { emitBuyPath } from '@/lib/buy-path/server'
 import {
 	readPurchaseBuyPathContext,
@@ -36,7 +41,8 @@ installBuyPathLegacyAliases()
 
 export const inngestTelemetryMiddleware = new InngestMiddleware({
 	name: 'Telemetry Middleware',
-	init() {
+	init(args) {
+		if (args?.client) registerInngestRunIdentity(args.client)
 		return {
 			onFunctionRun({ ctx, fn }) {
 				const functionId = fn.id(fn.name)
@@ -48,8 +54,41 @@ export const inngestTelemetryMiddleware = new InngestMiddleware({
 					| undefined
 
 				const fnStart = Date.now()
+				const runIdentity = getRunIdentity()
+				const executor = functionId.endsWith(
+					'ai-hero-course-sync-poll-scheduler',
+				)
+					? 'scheduler'
+					: functionId.endsWith('ai-hero-course-sync-detection-poller')
+						? 'detection-poller'
+						: null
+				const courseSyncStart = executor
+					? logCourseSyncRunStart(
+							{ runId, executor },
+							{
+								identity: runIdentity,
+								notify: async (identity) => {
+									const { sendCourseSyncSlackPayload } =
+										await import('@/course-sync/applied-notice')
+									const {
+										COURSE_SYNC_SLACK_USERNAME,
+										COURSE_SYNC_SLACK_ICON_EMOJI,
+									} = await import('@/course-sync/detection-poller')
+									await sendCourseSyncSlackPayload({
+										username: COURSE_SYNC_SLACK_USERNAME,
+										icon_emoji: COURSE_SYNC_SLACK_ICON_EMOJI,
+										text: `course_sync.nonprod_executor_on_prod_db\n${JSON.stringify(identity)}\nSR 🐀`,
+										attachments: [],
+									})
+								},
+							},
+						).catch(() => {
+							/* Never fail the business function. */
+						})
+					: Promise.resolve()
 
 				void log.info('inngest.function.started', {
+					runIdentity,
 					functionId,
 					eventName,
 					runId,
@@ -66,6 +105,7 @@ export const inngestTelemetryMiddleware = new InngestMiddleware({
 						purchaseId = hydrated.event?.data?.purchaseId
 					},
 					async beforeExecution() {
+						await courseSyncStart
 						if (typeof purchaseId !== 'string') return
 						try {
 							contextRead = await readPurchaseBuyPathContext(purchaseId)
