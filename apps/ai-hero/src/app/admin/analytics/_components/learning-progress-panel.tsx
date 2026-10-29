@@ -190,6 +190,8 @@ export function LearningProgressPanel({
 		queryKey: ['analytics', 'learning/progress', productId],
 		enabled: productId !== '',
 		staleTime: 60_000,
+		// Matches the server cache, so the 'refreshes every 5 minutes' copy holds.
+		refetchInterval: 5 * 60_000,
 		refetchOnWindowFocus: false,
 		retry: false,
 		queryFn: async ({ signal }) => {
