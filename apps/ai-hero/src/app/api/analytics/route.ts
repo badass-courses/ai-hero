@@ -83,6 +83,7 @@ const CATEGORY_SUGGESTIONS: Record<SurfaceEntry['category'], SurfaceName[]> = {
 		'attribution/email-campaigns/strict',
 		'attribution/shortlinks',
 	],
+	learning: ['summary', 'revenue/products', 'purchases/recent'],
 }
 
 const corsHeaders = {
@@ -457,6 +458,27 @@ export const GET = withSkill(async (request: NextRequest) => {
 		}
 	}
 	const productId = searchParams.get('productId') ?? undefined
+	if (surface === 'learning/progress' && !productId) {
+		return NextResponse.json(
+			{
+				ok: false,
+				endpoint: '/api/analytics',
+				surface,
+				error: {
+					message: 'learning/progress requires productId',
+					code: 'PRODUCT_REQUIRED',
+				},
+				fix: 'Pass productId, for example a cohort or self-paced course product id.',
+				next_actions: [
+					{
+						command: 'GET /api/analytics?surface=revenue/products&range=all',
+						description: 'List product ids with revenue',
+					},
+				],
+			},
+			{ status: 400, headers: corsHeaders },
+		)
+	}
 	const purchaseId = searchParams.get('purchaseId') ?? undefined
 	const surveyId = searchParams.get('surveyId') ?? undefined
 	const surveySlug = searchParams.get('surveySlug') ?? undefined
@@ -530,7 +552,11 @@ export const GET = withSkill(async (request: NextRequest) => {
 				}),
 			},
 			{
-				status: result.error.code.endsWith('_UNAVAILABLE') ? 503 : 500,
+				status: result.error.code.endsWith('_UNAVAILABLE')
+					? 503
+					: result.error.code.endsWith('_NOT_FOUND')
+						? 404
+						: 500,
 				headers: corsHeaders,
 			},
 		)

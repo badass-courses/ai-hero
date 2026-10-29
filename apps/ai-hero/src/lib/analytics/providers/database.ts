@@ -12,6 +12,7 @@ import {
 	or,
 	type SQL,
 } from 'drizzle-orm'
+import { unstable_cache } from 'next/cache'
 import { db } from '@/db'
 import * as schema from '@/db/schema'
 
@@ -25,6 +26,35 @@ import {
 	type PromoOptions,
 } from '../promos'
 import { promoRevenueSql } from '../promos-query'
+import { rowsOf, type LearningProgress } from '../learning-progress'
+import {
+	learningProductsSql,
+	readLearningProgress,
+} from '../learning-progress-query'
+
+export const LEARNING_PROGRESS_CACHE_TAG = 'analytics:learning-progress'
+
+/**
+ * Cached per product for five minutes, so admin page loads and agent polling
+ * share one progress scan. asOf records when the scan ran.
+ */
+export const getLearningProgress = unstable_cache(
+	(productId: string) =>
+		readLearningProgress((query) => db.execute(query), productId, new Date()),
+	['analytics-learning-progress-v1'],
+	{ revalidate: 300, tags: [LEARNING_PROGRESS_CACHE_TAG] },
+)
+
+/** The admin product picker. Products change rarely; cached for an hour. */
+export const listLearningProducts = unstable_cache(
+	async (): Promise<LearningProgress['product'][]> =>
+		rowsOf<LearningProgress['product']>(
+			await db.execute(learningProductsSql()),
+			'Learning products',
+		).map((row) => ({ id: row.id, name: row.name, type: row.type ?? null })),
+	['analytics-learning-products-v1'],
+	{ revalidate: 3600, tags: [LEARNING_PROGRESS_CACHE_TAG] },
+)
 
 export async function getRevenueByPromo(options: PromoOptions = {}) {
 	const window = promoWindow(options)
