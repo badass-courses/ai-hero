@@ -129,6 +129,18 @@ function canonicalIntent(args: {
 	}
 }
 
+type StoredEvent = [eventType: string, occurredAt: string]
+
+/** ContactEvents by type, read live so a test can record one between runs. */
+function serveContactEvents(events: StoredEvent[]) {
+	mocks.findContactEventsByType.mockImplementation(
+		async (_contactId: string, eventType: string) =>
+			events
+				.filter(([type]) => type === eventType)
+				.map(([type, occurredAt]) => ({ eventType: type, occurredAt })),
+	)
+}
+
 function createDurableStep() {
 	const results = new Map<string, unknown>()
 	return {
@@ -265,6 +277,111 @@ describe('skills course lesson-one recovery', () => {
 			postmarkToken: 'postmark-test-token',
 		})
 		expect(mocks.sendDelivery).toHaveBeenCalledTimes(1)
+	})
+
+	it('never sends to a contact stopped after the request was queued', async () => {
+		mocks.findContactEventsByType.mockImplementation(
+			async (_contactId: string, eventType: string) =>
+				eventType === 'contact.unsubscribed'
+					? [{ eventType, occurredAt: '2026-08-20T12:30:00.000Z' }]
+					: [],
+		)
+		const { step } = createDurableStep()
+
+		await expect(fn.handler({ event, step })).resolves.toMatchObject({
+			success: true,
+			outcome: 'contact-stopped',
+		})
+		expect(mocks.readDelivery).not.toHaveBeenCalled()
+		expect(mocks.sendDelivery).not.toHaveBeenCalled()
+	})
+
+	it('re-reads stops before a retried send: an unsubscribe between attempts means no send', async () => {
+		const events: StoredEvent[] = []
+		serveContactEvents(events)
+		mocks.sendDelivery.mockRejectedValueOnce(new Error('timeout'))
+		const { step, results } = createDurableStep()
+
+		const firstAttempt = await fn
+			.handler({ event, step })
+			.catch((error) => error)
+		expect(firstAttempt).toBeInstanceOf(RetryAfterError)
+		expect(
+			results.get('wait-for-trusted-recovery-identity-and-canonical-send'),
+		).toMatchObject({ sendRequired: true })
+
+		events.push(['contact.unsubscribed', '2026-08-20T12:05:00.000Z'])
+		await expect(fn.handler({ event, step })).resolves.toMatchObject({
+			success: true,
+			outcome: 'contact-stopped',
+		})
+		expect(mocks.sendDelivery).toHaveBeenCalledTimes(1)
+		expect(results.get('send-lesson-one-recovery')).toEqual({
+			delivered: false,
+			outcome: 'contact-stopped',
+		})
+		expect(mocks.log.info).not.toHaveBeenCalledWith(
+			'skills.course.lesson_one_resent',
+			expect.anything(),
+		)
+	})
+
+	it('sends after a double opt-in resubscribe recorded before the request', async () => {
+		serveContactEvents([
+			['contact.unsubscribed', '2026-08-19T09:00:00.000Z'],
+			['contact.resubscribed', '2026-08-19T10:00:00.000Z'],
+		])
+		const { step } = createDurableStep()
+
+		await expect(fn.handler({ event, step })).resolves.toEqual({
+			success: true,
+			requestId: 'request-safe-1',
+		})
+		expect(mocks.sendDelivery).toHaveBeenCalledTimes(1)
+	})
+
+	it.each([
+		[
+			'unsubscribed before the request, double opt-in resubscribe after it',
+			'2026-08-19T09:00:00.000Z',
+			'2026-08-20T12:20:00.000Z',
+		],
+		[
+			'unsubscribed and resubscribed after the request, before its first run',
+			'2026-08-20T12:10:00.000Z',
+			'2026-08-20T12:20:00.000Z',
+		],
+	])(
+		'never lets a lift after the request revive it: %s',
+		async (_case, unsubscribedAt, resubscribedAt) => {
+			serveContactEvents([
+				['contact.unsubscribed', unsubscribedAt],
+				['contact.resubscribed', resubscribedAt],
+			])
+			const { step } = createDurableStep()
+
+			await expect(fn.handler({ event, step })).resolves.toMatchObject({
+				success: true,
+				outcome: 'contact-stopped',
+			})
+			expect(mocks.sendDelivery).not.toHaveBeenCalled()
+		},
+	)
+
+	it('keeps the stop when the resubscribe did not come through double opt-in', async () => {
+		// Kit's subscriber.activated is recorded as contact.confirmed: a Kit-side
+		// reactivation, not a fresh double opt-in, so it lifts nothing.
+		serveContactEvents([
+			['contact.unsubscribed', '2026-08-19T09:00:00.000Z'],
+			['contact.confirmed', '2026-08-19T10:00:00.000Z'],
+		])
+		const { step } = createDurableStep()
+
+		await expect(fn.handler({ event, step })).resolves.toMatchObject({
+			success: true,
+			outcome: 'contact-stopped',
+		})
+		expect(mocks.sendDelivery).not.toHaveBeenCalled()
 	})
 
 	it('reads provider correlation before replaying ambiguous acceptance', async () => {

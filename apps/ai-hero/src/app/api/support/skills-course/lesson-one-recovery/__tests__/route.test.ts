@@ -4,7 +4,19 @@ import { NextRequest } from 'next/server'
 import { describe, expect, it, vi } from 'vitest'
 
 import { buildSkillsCourseLessonOneEmail } from '@/lib/skills-course/lesson-one-email'
+import type { RecoveryStandingReader } from '@/lib/skills-course/recovery-standing'
 import type { SkillsLessonOneRecoveryDependencies } from '@/lib/skills-course/support-lesson-one-recovery'
+import type { ContactEventRecord } from '@/lib/subscriber-marketing/types'
+
+// Kit is unreachable: the off-Kit standing must never ask it.
+const kit = vi.hoisted(() => ({
+	getSubscriberByEmail: vi.fn(async () => {
+		throw new Error('Kit is unreachable')
+	}),
+}))
+vi.mock('@/coursebuilder/email-list-provider', () => ({
+	emailListProvider: { getSubscriberByEmail: kit.getSubscriberByEmail },
+}))
 
 vi.mock('@/env.mjs', () => ({
 	env: {
@@ -28,7 +40,10 @@ vi.mock('@/server/logger', () => ({
 	serializeError: (error: unknown) => ({ message: String(error) }),
 }))
 
-import { createSkillsLessonOneRecoveryPostHandler } from '../route'
+import {
+	createLocalRecoverySubscribers,
+	createSkillsLessonOneRecoveryPostHandler,
+} from '../route'
 
 const SECRET = 'test-support-secret'
 const BODY = {
@@ -173,5 +188,119 @@ describe('POST /api/support/skills-course/lesson-one-recovery', () => {
 
 		expect(response.status).toBe(400)
 		expect(deps.store.createIntent).not.toHaveBeenCalled()
+	})
+
+	describe('off-Kit standing, Kit unreachable', () => {
+		function standingReader(
+			options: {
+				stopped?: boolean
+				drovrStops?: { reason: string }[]
+				drovrDown?: boolean
+				contact?: boolean
+			} = {},
+		): RecoveryStandingReader {
+			const events = [
+				{
+					eventType: 'value-path.entered',
+					occurredAt: '2026-09-01T10:00:00.000Z',
+					providerReference: 'value-path:ai-hero-skills-workflow',
+				},
+				...(options.stopped
+					? [
+							{
+								eventType: 'contact.unsubscribed',
+								occurredAt: '2026-09-02T10:00:00.000Z',
+							},
+						]
+					: []),
+			] as ContactEventRecord[]
+			return {
+				findContactByEmail: async () =>
+					options.contact === false
+						? undefined
+						: { id: 'contact_41', email: 'learner@example.com' },
+				findKitSubscriberIds: async () => ['kit_41'],
+				findContactEventsByType: async (_id, type) =>
+					events.filter((entry) => entry.eventType === type),
+				readDrovrStops: async () => {
+					if (options.drovrDown) throw new Error('drovr 503')
+					return options.drovrStops ?? []
+				},
+			}
+		}
+
+		function handlerWith(reader: RecoveryStandingReader) {
+			const deps = {
+				...dependencies(),
+				subscribers: createLocalRecoverySubscribers(reader),
+			}
+			return {
+				deps,
+				handler: createSkillsLessonOneRecoveryPostHandler({
+					webhookSecret: SECRET,
+					dependencies: deps,
+				}),
+			}
+		}
+
+		it('subscribed: previews without asking Kit', async () => {
+			const { handler } = handlerWith(standingReader())
+			const response = await handler(request(BODY))
+			expect(response.status).toBe(200)
+			expect(await response.json()).toMatchObject({ state: 'ready' })
+			expect(kit.getSubscriberByEmail).not.toHaveBeenCalled()
+		})
+
+		it('stopped: apply blocks before any intent or send', async () => {
+			const { deps, handler } = handlerWith(standingReader({ stopped: true }))
+			const response = await handler(
+				request({
+					...BODY,
+					operation: 'apply',
+					allowWrite: true,
+					previewToken: `${Date.now() + 60_000}.sig`,
+				}),
+			)
+			expect(response.status).toBe(409)
+			expect(await response.json()).toEqual({
+				state: 'blocked',
+				reason: 'contact-stopped',
+			})
+			expect(deps.store.createIntent).not.toHaveBeenCalled()
+			expect(deps.provider.send).not.toHaveBeenCalled()
+			expect(kit.getSubscriberByEmail).not.toHaveBeenCalled()
+		})
+
+		it('stopped: a drovr stop blocks too', async () => {
+			const { handler } = handlerWith(
+				standingReader({ drovrStops: [{ reason: 'complained' }] }),
+			)
+			const response = await handler(request(BODY))
+			expect(await response.json()).toEqual({
+				state: 'blocked',
+				reason: 'contact-stopped',
+			})
+		})
+
+		it('unknown: drovr unreadable fails closed and says why', async () => {
+			const { deps, handler } = handlerWith(standingReader({ drovrDown: true }))
+			const response = await handler(request(BODY))
+			expect(response.status).toBe(409)
+			expect(await response.json()).toEqual({
+				state: 'blocked',
+				reason: 'stop-state-unknown',
+			})
+			expect(deps.store.findContext).not.toHaveBeenCalled()
+		})
+
+		it('not found: no directory contact', async () => {
+			const { handler } = handlerWith(standingReader({ contact: false }))
+			const response = await handler(request(BODY))
+			expect(await response.json()).toEqual({
+				state: 'blocked',
+				reason: 'kit-subscriber-not-found',
+			})
+			expect(kit.getSubscriberByEmail).not.toHaveBeenCalled()
+		})
 	})
 })
