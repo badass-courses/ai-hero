@@ -335,6 +335,8 @@ export const convertkitRouter = createTRPCRouter({
 				hasSubscriber: !!subscriber,
 			})
 
+			let saveFailed = false
+
 			if (input.surveyId) {
 				try {
 					await persistSurveyAnswers({
@@ -347,12 +349,18 @@ export const convertkitRouter = createTRPCRouter({
 						emailListSubscriberId,
 					})
 				} catch (error) {
+					saveFailed = true
 					await log.error('survey.answers.save.failed', {
 						error: error instanceof Error ? error.message : String(error),
 						surveySlug: input.surveyId,
 						userId,
 					})
 				}
+			}
+
+			// Off Kit, the local row is the only copy of the answer.
+			if (offKit && saveFailed) {
+				return { success: false, storedInDb: false, subscriberSyncError }
 			}
 
 			if (!subscriber) {
@@ -595,6 +603,8 @@ export const convertkitRouter = createTRPCRouter({
 				await ensureCheckoutSurveyResources(userId || 'system')
 			}
 
+			let saveFailed = false
+
 			if (input.surveyId && input.question && input.answer?.trim()) {
 				try {
 					await persistSurveyAnswers({
@@ -608,6 +618,7 @@ export const convertkitRouter = createTRPCRouter({
 						emailListSubscriberId,
 					})
 				} catch (error) {
+					saveFailed = true
 					await log.error('survey.answer.save.failed', {
 						error: error instanceof Error ? error.message : String(error),
 						surveySlug: input.surveyId,
@@ -615,6 +626,11 @@ export const convertkitRouter = createTRPCRouter({
 						userId,
 					})
 				}
+			}
+
+			// Off Kit, the local row is the only copy of the answer.
+			if (offKit && saveFailed) {
+				return { success: false, storedInDb: false, subscriberLookupError }
 			}
 
 			if (!subscriber) {

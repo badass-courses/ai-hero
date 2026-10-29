@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
 	kitUp: false,
 	kitFetches: [] as string[],
 	inserted: [] as Array<Record<string, unknown>>,
+	insertFails: false,
 	scheduled: [] as Array<{ questionId: string; email: string | null }>,
 }))
 
@@ -53,6 +54,7 @@ vi.mock('@/db', () => ({
 		},
 		insert: () => ({
 			values: async (rows: Array<Record<string, unknown>>) => {
+				if (mocks.insertFails) throw new Error('database unavailable')
 				mocks.inserted.push(...rows)
 			},
 		}),
@@ -125,6 +127,7 @@ describe('surveys off Kit, with Kit unreachable', () => {
 		mocks.kitUp = false
 		mocks.kitFetches.length = 0
 		mocks.inserted.length = 0
+		mocks.insertFails = false
 		mocks.scheduled.length = 0
 		mocks.identities.set(KIT_ID, 'contact-1')
 		mocks.contacts.set('contact-1', {
@@ -240,6 +243,77 @@ describe('surveys off Kit, with Kit unreachable', () => {
 			{ questionId: 'question-goal', email: null },
 		])
 		expect(mocks.kitCalls).toEqual([])
+	})
+
+	it('reports a failed save of an answer set instead of success', async () => {
+		mocks.insertFails = true
+		mocks.cookies.set('ck_subscriber_id', KIT_ID)
+
+		const result = await caller().answerSurveyMultiple({
+			surveyId: 'ai-coding-readiness',
+			email: 'reader@example.test',
+			answers: { goal: 'ship-faster' },
+		})
+
+		expect(result).toEqual({
+			success: false,
+			storedInDb: false,
+			subscriberSyncError: null,
+		})
+		expect(mocks.inserted).toEqual([])
+		expect(mocks.scheduled).toEqual([])
+		expect(mocks.kitCalls).toEqual([])
+		expect(mocks.kitFetches).toEqual([])
+	})
+
+	it('reports a failed save of a single answer instead of success', async () => {
+		mocks.insertFails = true
+		mocks.cookies.set('ck_subscriber_id', KIT_ID)
+
+		const result = await caller().answerSurvey({
+			surveyId: 'ai-coding-readiness',
+			question: 'goal',
+			answer: 'ship-faster',
+		})
+
+		expect(result).toEqual({
+			success: false,
+			storedInDb: false,
+			subscriberLookupError: null,
+		})
+		expect(mocks.inserted).toEqual([])
+		expect(mocks.scheduled).toEqual([])
+		expect(mocks.kitCalls).toEqual([])
+		expect(mocks.kitFetches).toEqual([])
+	})
+
+	it('off, a failed save still falls through to the Kit write, as before', async () => {
+		vi.stubEnv('AIH_SURVEY_OFF_KIT_ENABLED', '')
+		mocks.kitUp = true
+		mocks.insertFails = true
+		mocks.cookies.set('ck_subscriber_id', KIT_ID)
+
+		const single = await caller().answerSurvey({
+			surveyId: 'ai-coding-readiness',
+			question: 'goal',
+			answer: 'ship-faster',
+		})
+		const multiple = await caller().answerSurveyMultiple({
+			surveyId: 'ai-coding-readiness',
+			email: 'reader@example.test',
+			answers: { goal: 'ship-faster' },
+		})
+
+		expect(single).toMatchObject({ id: 1234567, state: 'active' })
+		expect(multiple).toMatchObject({ id: 1234567, state: 'active' })
+		expect(mocks.kitCalls).toEqual([
+			'getSubscriber',
+			'updateSubscriberFields',
+			'getSubscriber',
+			'getSubscriber',
+			'updateSubscriberFields',
+		])
+		expect(mocks.inserted).toEqual([])
 	})
 
 	it('off, keeps every Kit read and write (the flag is the switch)', async () => {
