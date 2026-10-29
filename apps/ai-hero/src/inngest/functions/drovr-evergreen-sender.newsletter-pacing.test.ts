@@ -20,7 +20,7 @@ const control = vi.hoisted(() => {
 	const events: { id: string; value: unknown }[] = []
 	const failures: { storage?: 'read' | 'write'; unexpected?: boolean } = {}
 	return { sends, posts, fields, couponLimits, reads, steps, events, failures,
-		storageCalls: 0, profileSync: false, stopped: false,
+		storageCalls: 0, profileSync: false, stopped: false, evergreenUnready: false,
 		setHandler: (next: Handler) => { handler = next }, handler: () => handler }
 })
 vi.mock('@/inngest/inngest.server', () => ({ inngest: { createFunction: (_options: unknown, _trigger: unknown, handler: Handler) => { control.setHandler(handler); return handler } } }))
@@ -35,7 +35,7 @@ vi.mock('@/lib/subscriber-marketing/drovr-evergreen', () => ({
 	EVERGREEN_LIST_SEQUENCES: { 'shadow-newsletter': { backfillTagId: 'synthetic-tag' } },
 	parseDrovrEvergreenConfig: () => ({ enabled: true }),
 	readbackEvergreenListSequences: async () => { control.reads.push('lists'); return { ready: true } },
-	readbackEvergreenSequences: async () => { control.reads.push('evergreen'); return { ready: true } },
+	readbackEvergreenSequences: async () => { control.reads.push('evergreen'); return control.evergreenUnready ? { ready: false, problems: ['P1: fetch failed'] } : { ready: true } },
 	subscribeToEvergreenList: async () => 'added',
 	addSubscriberToKitSequence: async (args: Parameters<typeof addSubscriberToKitSequence>[0]) => { control.posts.push(args); return 'added' },
 	updateKitSubscriberFields: async (args: Parameters<typeof updateKitSubscriberFields>[0]) => { control.fields.push(args) },
@@ -91,6 +91,7 @@ beforeEach(() => {
 	control.sends.length = 0; control.posts.length = 0; control.fields.length = 0
 	control.couponLimits.length = 0; control.reads.length = 0; control.stopped = false
 	control.steps.length = 0; control.events.length = 0; control.storageCalls = 0; control.profileSync = false
+	control.evergreenUnready = false
 	delete control.failures.storage; delete control.failures.unexpected
 	vi.stubEnv('AIH_DROVR_EVERGREEN_SENDER_LIMIT', '25')
 	vi.stubEnv('AIH_DROVR_EVERGREEN_SENDER_PACING_MS', '3000')
@@ -173,6 +174,14 @@ describe('combined cron, fake import closure: newsletter-only config/result inje
 		expect(control.sends).toHaveLength(3); expect(control.couponLimits).toEqual([25])
 		expect(control.reads).toEqual(['lists', 'shadow', 'evergreen']); expect(control.fields).toHaveLength(1)
 		expect(control.posts).toHaveLength(1); expect(control.posts[0]).not.toHaveProperty('newsletter429')
+	})
+	it('an unready Kit pitch readback holds pitch sends but still issues coupons and asks for their profile sync', async () => {
+		control.evergreenUnready = true; control.profileSync = true
+		expect(await invoke()).toMatchObject({ status: 'not-ready', coupons: [], counts: { coupons: {} } })
+		expect(control.couponLimits).toEqual([25])
+		expect(control.steps.indexOf('issue-pending-evergreen-coupons')).toBeLessThan(control.steps.indexOf('readback-kit-sequences'))
+		expect(control.steps).not.toContain('send-pending-evergreen-emails')
+		expect(control.events.map(event => event.id)).toEqual(['request-offer-profile-syncs'])
 	})
 	it('a fake durable-step checkpoint preserves stopped result on replay, without reexecuting sends', async () => {
 		vi.stubEnv('AIH_DROVR_NEWSLETTER_LIMIT', '120'); control.stopped = true

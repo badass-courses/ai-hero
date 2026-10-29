@@ -249,15 +249,16 @@ const stringField = (value: unknown): string | undefined =>
  * Drain pending coupon rows: issue through the authority (idempotent on the
  * semantic key, so a retry reads the same coupon back), publish the offer
  * fields to Kit when the contact has a Kit identity, complete the row, and
- * dispatch `coupon.issued` to drovr. Without Kit, the completed row supplies
- * the offer to live personalization; no Kit field write is needed.
+ * dispatch `coupon.issued` to drovr. The completed row supplies the offer to
+ * live personalization; the Kit field write only feeds the legacy Kit pitch
+ * sequences' Liquid, so it is best-effort and never holds the coupon.
  *
  * Authority verdicts map straight onto the row: a permanent refusal is
  * terminal; transient unavailability retries; an ambiguous outcome is
  * terminal for a human because the transaction may or may not have
  * committed and only a readback can say. A Kit failure after a successful
- * issue retries: the next run reads the same coupon back and rewrites the
- * same field values.
+ * issue still completes the row, once, with no field proof: the Kit pitch
+ * gate then refuses that contact instead of sending blank offer fields.
  */
 export async function executePendingEvergreenCoupons(args: {
 	repository: CouponIssuerRepository
@@ -346,8 +347,10 @@ async function issueOne(input: {
 		)
 	}
 	const { coupon } = outcome.right
-	try {
-		if (subscriberId) {
+	let kitFieldsWritten = false
+	let kitFieldsError: string | null = null
+	if (subscriberId) {
+		try {
 			await args.writeFields({
 				subscriberId,
 				email: contact.email,
@@ -357,25 +360,12 @@ async function issueOne(input: {
 					origin: args.origin,
 				}),
 			})
+			kitFieldsWritten = true
+		} catch (error) {
+			kitFieldsError = (
+				error instanceof Error ? error.message : String(error)
+			).slice(0, 200)
 		}
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error)
-		if (attempts >= EVERGREEN_COUPON_MAX_ATTEMPTS) {
-			return await fail('evergreen-coupon-fields-exhausted', message)
-		}
-		await args.repository.updateSideEffectIntent(row.id, {
-			status: 'pending',
-			completedAt: null,
-			gates: row.gates,
-			reviewReasons: row.reviewReasons,
-			metadata: {
-				...row.metadata,
-				attempts,
-				couponId: coupon.couponId,
-				lastError: message,
-			},
-		})
-		return { status: 'retry', intentId: row.id, attempts, error: message }
 	}
 	const completed = await args.repository.updateSideEffectIntent(row.id, {
 		status: 'completed',
@@ -390,8 +380,9 @@ async function issueOne(input: {
 			expiresAt: coupon.expiresAt,
 			issuedAt: coupon.issuedAt,
 			// Only a successful Kit field write can authorize a Kit pitch.
-			kitOfferFieldsWrittenAt: subscriberId ? now : null,
-			kitOfferFieldsEmail: subscriberId ? contact.email.trim().toLowerCase() : null,
+			kitOfferFieldsWrittenAt: kitFieldsWritten ? now : null,
+			kitOfferFieldsEmail: kitFieldsWritten ? contact.email.trim().toLowerCase() : null,
+			kitOfferFieldsError: kitFieldsError,
 		},
 	})
 	dispatch(completed)

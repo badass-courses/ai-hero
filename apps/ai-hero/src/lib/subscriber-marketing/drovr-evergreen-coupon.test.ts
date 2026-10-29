@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from 'vitest'
 import { findEvergreenOffer } from './drovr-personalize'
 import { acceptDrovrIntent, type DrovrIntent } from './drovr-executor'
 import { executePendingEvergreenSends } from './drovr-evergreen-sender'
-import { EVERGREEN_KIT_SEQUENCES } from './drovr-evergreen'
+import {
+	EVERGREEN_KIT_SEQUENCES,
+	updateKitSubscriberFields,
+} from './drovr-evergreen'
 
 import {
 	deadlineDisplay,
@@ -720,7 +723,7 @@ describe('executePendingEvergreenCoupons', () => {
 		}
 	})
 
-	it('retries a transient authority failure and a Kit field write failure', async () => {
+	it('retries a transient authority failure but completes through a Kit field write failure', async () => {
 		const transient = await run({
 			issue: () =>
 				Effect.fail({
@@ -738,16 +741,95 @@ describe('executePendingEvergreenCoupons', () => {
 				throw new Error('kit v4 answered 503')
 			},
 		})
-		expect(kitDown.results[0]).toMatchObject({ status: 'retry', attempts: 1 })
+		expect(kitDown.results[0]).toMatchObject({ status: 'completed', couponId: 'eoj-coupon:abc' })
 		expect(kitDown.row).toMatchObject({
-			status: 'pending',
+			status: 'completed',
 			metadata: {
 				couponId: 'eoj-coupon:abc',
-				lastError: 'kit v4 answered 503',
+				kitOfferFieldsWrittenAt: null,
+				kitOfferFieldsEmail: null,
+				kitOfferFieldsError: 'kit v4 answered 503',
 			},
 		})
-		expect(kitDown.dispatched).toEqual([])
-		expect(kitDown.row.metadata.kitOfferFieldsWrittenAt).toBeUndefined()
+		expect(kitDown.dispatched).toEqual([kitDown.row])
+	})
+
+	it('issues and completes exactly once with Kit unreachable, and the Kit pitch fails closed', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		repository.intents.set('row-1', row())
+		const issue = vi.fn(() => Effect.succeed(issued))
+		const unreachable = vi.fn(async () => {
+			throw new TypeError('fetch failed')
+		})
+		const dispatch = vi.fn()
+		const args = {
+			repository,
+			authority: { issue },
+			// The production writer, against a network that never reaches Kit.
+			writeFields: (input: { subscriberId: string; email: string; fields: Record<string, string> }) =>
+				updateKitSubscriberFields({
+					apiKey: 'synthetic-key',
+					fetch: unreachable as unknown as typeof fetch,
+					...input,
+				}),
+			dispatch,
+			origin: 'https://www.aihero.dev',
+			limit: 10,
+			now: () => now,
+		}
+		expect(await executePendingEvergreenCoupons(args)).toEqual([
+			{
+				status: 'completed',
+				intentId: 'row-1',
+				contactId: 'contact-1',
+				couponId: 'eoj-coupon:abc',
+			},
+		])
+		expect(await executePendingEvergreenCoupons(args)).toEqual([])
+		expect(unreachable).toHaveBeenCalledOnce()
+		expect(issue).toHaveBeenCalledOnce()
+		expect(dispatch).toHaveBeenCalledOnce()
+		const settled = repository.intents.get('row-1')!
+		expect(settled).toMatchObject({
+			status: 'completed',
+			completedAt: now,
+			metadata: {
+				attempts: 1,
+				couponId: 'eoj-coupon:abc',
+				expiresAt: payload.expiresAt,
+				kitOfferFieldsWrittenAt: null,
+				kitOfferFieldsError: 'fetch failed',
+			},
+		})
+		expect(dispatch).toHaveBeenCalledWith(settled)
+		// The coupon row, not Kit, serves the offer to live personalization.
+		expect(
+			await findEvergreenOffer({
+				repository: {
+					findSideEffectIntentByIdempotencyKey: (key) =>
+						key === settled.idempotencyKey ? settled : undefined,
+				},
+				contactId: 'contact-1',
+				origin: 'https://www.aihero.dev',
+			}),
+		).toMatchObject({
+			couponId: 'eoj-coupon:abc',
+			variables: { aih_evergreen_offer_price: '$199' },
+		})
+		// Without field proof, a Kit pitch would render blank Liquid: refuse it.
+		expect(
+			await acceptDrovrIntent({
+				repository,
+				intent: pitchIntent('pitch_open_product_origin_v1'),
+				now,
+				evergreen: { enabled: true },
+				findKitSubscriberId: async () => '4298556847',
+			}),
+		).toEqual({
+			status: 'blocked',
+			reviewReasons: ['evergreen-offer-fields-not-in-kit'],
+		})
 	})
 
 	it('fails a row without a contact email or with an unreadable offer', async () => {
