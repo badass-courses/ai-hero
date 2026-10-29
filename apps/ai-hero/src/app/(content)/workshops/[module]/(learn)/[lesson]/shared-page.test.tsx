@@ -38,8 +38,11 @@ vi.mock('@/lib/ai-coding-dictionary', () => ({
 
 vi.mock('@/lib/lessons-query', () => ({
 	getLessonVideoPlaybackResource: mocks.getLessonVideoPlaybackResource,
-	getLessonSessionExtract: vi.fn().mockResolvedValue(null),
 	getLessonVideoTranscript: vi.fn(),
+}))
+
+vi.mock('@/lib/session-extract-query', () => ({
+	getLessonSessionExtract: vi.fn().mockResolvedValue(null),
 }))
 
 vi.mock('@/lib/signed-lesson-playback', () => ({

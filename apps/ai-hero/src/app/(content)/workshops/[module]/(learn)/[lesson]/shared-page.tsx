@@ -11,10 +11,10 @@ import { ActiveHeadingProvider } from '@/hooks/use-active-heading'
 import { getAiCodingDictionary } from '@/lib/ai-coding-dictionary'
 import type { Lesson } from '@/lib/lessons'
 import {
-	getLessonSessionExtract,
 	getLessonVideoPlaybackResource,
 	getLessonVideoTranscript,
 } from '@/lib/lessons-query'
+import { getLessonSessionExtract } from '@/lib/session-extract-query'
 import { MinimalWorkshop } from '@/lib/workshops'
 import { getSignedLessonPlayback } from '@/lib/signed-lesson-playback'
 import { getPlaybackPositionForResource } from '@/lib/progress'
