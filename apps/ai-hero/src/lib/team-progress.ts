@@ -72,7 +72,7 @@ export async function loadTeamProgressForViewer({
 	if (requests.length === 0) return []
 
 	// A failed team leaves the rest of the page; it never blocks seat actions.
-	const blocks = await Promise.all(
+	const blocks: (TeamProgressBlock | null)[] = await Promise.all(
 		requests.map(async ({ teamId, scope }) => {
 			try {
 				const data = await source.readMembers(
@@ -112,7 +112,9 @@ export async function loadTeamProgressForViewer({
 			}
 		}),
 	)
-	const loaded = blocks.filter((block) => block !== null)
+	const loaded = blocks.filter(
+		(block): block is TeamProgressBlock => block !== null,
+	)
 	await log.info('team.progress.read', {
 		viewerId,
 		teams: loaded.map(({ teamId, scope, data }) => ({
