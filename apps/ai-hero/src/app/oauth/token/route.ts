@@ -2,11 +2,36 @@ import { NextResponse } from 'next/server'
 import { getUser } from '@/app/oauth/userinfo/get-user'
 import { db } from '@/db'
 import { deviceAccessToken, deviceVerifications } from '@/db/schema'
+import {
+	LEARNER_READ_SCOPE,
+	LEARNER_TOKEN_TTL_MS,
+} from '@/lib/learner-agent/identity'
 import { eq } from 'drizzle-orm'
+
+/**
+ * Scopes a client may narrow a device token to at exchange. Narrowing only:
+ * without `scope` the token keeps today's full owner ability.
+ */
+const NARROWING_SCOPES = new Set([LEARNER_READ_SCOPE])
 
 export async function POST(request: Request) {
 	const formData = await request.formData()
 	const device_code = formData.get('device_code')
+	const requestedScope = formData.get('scope')
+	const scope =
+		typeof requestedScope === 'string' && requestedScope.trim()
+			? requestedScope.trim().split(/\s+/)
+			: null
+
+	if (scope && !scope.every((entry) => NARROWING_SCOPES.has(entry))) {
+		return NextResponse.json(
+			{
+				error: 'invalid_scope',
+				error_description: `Supported scopes: ${[...NARROWING_SCOPES].join(' ')}`,
+			},
+			{ status: 400 },
+		)
+	}
 
 	const deviceVerification = await db.query.deviceVerifications.findFirst({
 		where: eq(deviceVerifications.deviceCode, device_code as string),
@@ -43,6 +68,12 @@ export async function POST(request: Request) {
 			await db.insert(deviceAccessToken).values({
 				userId: user.id,
 				token: newToken,
+				...(scope
+					? {
+							scope: scope.join(' '),
+							expiresAt: new Date(Date.now() + LEARNER_TOKEN_TTL_MS),
+						}
+					: {}),
 			})
 
 			const deviceToken = await db.query.deviceAccessToken.findFirst({
@@ -68,7 +99,7 @@ export async function POST(request: Request) {
 			return NextResponse.json({
 				access_token: deviceToken.token,
 				token_type: 'bearer',
-				scope: 'content:read progress',
+				scope: scope ? scope.join(' ') : 'content:read progress',
 			})
 		} else {
 			return NextResponse.json(

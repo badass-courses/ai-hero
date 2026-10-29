@@ -7,6 +7,8 @@ import { retryTransientDatabaseRead } from '@/lib/transient-database-read'
 import { sql } from 'drizzle-orm'
 import { unstable_cache } from 'next/cache'
 
+import { learnerTools } from '@ai-hero/learner-agent'
+
 export const DISCOVERY_CACHE_CONTROL =
 	'public, s-maxage=3600, stale-while-revalidate=86400'
 const DEFAULT_DISCOVERY_BASE_URL = 'https://www.aihero.dev'
@@ -26,6 +28,8 @@ const DISCOVERY_SURFACES = {
 	sitemap: '/sitemap.xml',
 	sitemapMarkdown: '/sitemap.md',
 	llms: '/llms.txt',
+	mcp: '/mcp',
+	learnerGuide: '/api/learner',
 } as const
 
 interface DiscoverySurfaceHint {
@@ -49,6 +53,15 @@ interface ApiDiscoveryResourceFamily {
 }
 
 const DISCOVERY_SURFACE_HINTS = [
+	{
+		path: DISCOVERY_SURFACES.mcp,
+		description:
+			'learner MCP server: an enrolled learner connects their agent to work their courses',
+	},
+	{
+		path: DISCOVERY_SURFACES.learnerGuide,
+		description: 'learner agent guide: sign in, tools, study companion rules',
+	},
 	{
 		path: DISCOVERY_SURFACES.apiCatalog,
 		description: 'standard API catalog linkset',
@@ -565,6 +578,13 @@ export function buildApiCatalogDocument(baseUrl = getDiscoveryBaseUrl()) {
 						),
 						type: 'text/plain',
 					},
+					{
+						href: toAbsoluteDiscoveryPath(
+							normalizedBaseUrl,
+							DISCOVERY_SURFACES.learnerGuide,
+						),
+						type: 'text/markdown',
+					},
 				],
 			},
 		],
@@ -591,6 +611,16 @@ export function buildApiDiscoveryDocument(baseUrl = getDiscoveryBaseUrl()) {
 			})),
 		},
 		agentTokens: buildAgentTokenDiscovery(normalizedBaseUrl),
+		learnerAgent: {
+			note: 'For an enrolled learner’s own agent. Sign in as the learner (device flow with scope=learner:read, or a learner token from /api/learner/token); reads only what that learner can read in the browser.',
+			mcp: toAbsoluteDiscoveryPath(normalizedBaseUrl, DISCOVERY_SURFACES.mcp),
+			guide: toAbsoluteDiscoveryPath(
+				normalizedBaseUrl,
+				DISCOVERY_SURFACES.learnerGuide,
+			),
+			http: `${normalizedBaseUrl}/api/learner/<tool>`,
+			tools: learnerTools().map((tool) => tool.name),
+		},
 		nextActions: [...DISCOVERY_NEXT_ACTIONS],
 	}
 }
@@ -609,6 +639,7 @@ AI Hero teaches engineers to build with AI through courses, cohorts, events, and
 
 ## Agent discovery
 
+- [Learner MCP server](${normalizedBaseUrl}${DISCOVERY_SURFACES.mcp}): enrolled learners connect their agent here; [guide](${normalizedBaseUrl}${DISCOVERY_SURFACES.learnerGuide})
 - [API catalog](${normalizedBaseUrl}${DISCOVERY_SURFACES.apiCatalog})
 - [Public API discovery](${normalizedBaseUrl}${DISCOVERY_SURFACES.api})
 - [Agent and content OpenAPI](${normalizedBaseUrl}${DISCOVERY_SURFACES.openapi})
@@ -648,6 +679,13 @@ ${markdownRoutes}
 
 Public JSON APIs:
 ${formatSurfaceHints(normalizedBaseUrl, PUBLIC_JSON_API_HINTS, '->')}
+
+Learners with an agent:
+- MCP server: ${normalizedBaseUrl}${DISCOVERY_SURFACES.mcp} (streamable HTTP). Tools: ${learnerTools()
+		.map((tool) => tool.name)
+		.join(', ')}; prompt: start_lesson.
+- Guide, sign-in and study companion rules: ${normalizedBaseUrl}${DISCOVERY_SURFACES.learnerGuide}
+- Sign in as the learner: device flow (POST ${normalizedBaseUrl}/oauth/device/code, then POST ${normalizedBaseUrl}/oauth/token with scope=learner:read). Reads only what the learner can read in the browser.
 
 Agent tokens:
 - Full guide: ${normalizedBaseUrl}/api
