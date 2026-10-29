@@ -87,6 +87,22 @@ Readback performs no Kit read or writes. It reports row status, `completedAt`, a
 
 This command does not replace the automatic producer, inventory provider-side re-enrollment paths, configure Kit rules, or authorize a production run. Those rollout gates remain below.
 
+## Batch absence proof for blocked PostShiba readers
+
+On the PostShiba route, personalize applies the exit gate to every shadow-newsletter reader, existing or new (Ruling A). On 2026-10-29, most existing readers had no local proof and were blocked as `old-newsletter-exit-unconfirmed`. `scripts/newsletter-absence-proof.ts` writes proof only for readers who were never in `2625552`.
+
+```sh
+pnpm exec tsx -r dotenv/config scripts/newsletter-absence-proof.ts --file <private ids.json>
+pnpm exec tsx -r dotenv/config scripts/newsletter-absence-proof.ts --file <private ids.json> --write --approval <ref> --plan-hash <dry-run hash>
+```
+
+- The input is a private `{ "contactIds": [...] }` file, with at most 10,000 unique AI Hero contact ids. Stdout carries counts, a plan hash and scan metadata, never an id.
+- Database reads come first. Then one shared, authenticated `status=all` scan of `2625552` runs, the same scan as held-exit recovery, with the same 120-minute duration and 15-minute proof-age bounds. Removed and cancelled subscribers still appear in that list, so absence from it means the reader was never enrolled.
+- Classes: `contact-missing`, `already-proven` (local exit or absence proof already accepted), `protected-cohort`, `identity-unproven` (not exactly one numeric Kit identity), `old-sequence-member` (any listing, so the reader stays blocked), and `absent`. A failed, partial or stale scan refuses the whole run and writes nothing.
+- The write recomputes the plan and requires the dry run's exact hash. Before each receipt it re-reads the reader, skipping `already-proven` or `snapshot-changed` readers, and checks proof freshness. Each `absent` reader gets one `newsletter.old-sequence.exit-confirmed` receipt, dated at scan start and bound to `kit:sequence:2625552`. Its provider event id is keyed by the scan fingerprint, so a re-run writes no second receipt. `partial` means some readers were skipped or the proof expired. Re-run the dry run and write for the rest, splitting the file if 15 minutes is not enough.
+- No notification is sent. drovr's completion re-ask or its operator redrive re-runs personalize, which then accepts the receipt. Readers already stuck after their re-asks need that redrive.
+- Veterans tagged `drovr-newsletter` on 2026-09-20 appear in the list as removed, so this script counts them as `old-sequence-member`. Treating that tag-and-rule history as exit proof is a separate ruling. `DENIED_EXIT_TAG_IDS` still refuses the tag.
+
 ## Producer before rule flag: hard rollout gate
 
 The new exit adapter requires **both**:
