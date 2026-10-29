@@ -35,7 +35,7 @@ import {
 	type TeamInvoiceDeps,
 	type TeamInvoiceProduct,
 } from './create-team-invoice'
-import { resolveMerchantIds } from './merchant-ids'
+import { loadTeamInvoiceProduct } from './load-product'
 import type { TeamInvoiceResult } from './schema'
 import { createAndSendTeamInvoice } from './stripe-team-invoice'
 import type { OpenTeamInvoice } from './team-invoice-expiry'
@@ -136,51 +136,21 @@ export async function openTeamInvoices(
 	})
 }
 
-export async function loadProduct(
-	productId: string,
-): Promise<TeamInvoiceProduct | null> {
-	const [product, merchantIds, purchaseCount] = await Promise.all([
-		courseBuilderAdapter.getProduct(productId),
-		resolveMerchantIds(courseBuilderAdapter, productId),
-		db
-			.select({ count: count() })
-			.from(purchases)
-			.where(eq(purchases.productId, productId))
-			.then((rows) => rows[0]?.count ?? 0),
-	])
-	if (!product || !merchantIds) return null
-	const { stripePriceId, stripeProductId } = merchantIds
-	// The invoice line is the Stripe price, so its amount is the list price
-	// the discount works from, not the app's copy of it.
-	const stripePrice = await stripe().prices.retrieve(stripePriceId)
-	if (
-		!stripePrice.active ||
-		stripePrice.currency !== 'usd' ||
-		stripePrice.type !== 'one_time' ||
-		typeof stripePrice.unit_amount !== 'number'
-	) {
-		return null
-	}
-	// Only a limited product needs its open invoices counted.
-	const limited = (product.quantityAvailable ?? -1) >= 0
-	const heldSeats = limited
-		? (await openTeamInvoices(productId)).reduce(
-				(sum, invoice) => sum + invoice.seats,
-				0,
-			)
-		: 0
-	return {
-		product: {
-			...product,
-			quantityAvailable: product.quantityAvailable,
+export const loadProduct = (productId: string) =>
+	loadTeamInvoiceProduct(
+		{
+			adapter: courseBuilderAdapter,
+			stripe: stripe(),
+			purchaseCount: (id) =>
+				db
+					.select({ count: count() })
+					.from(purchases)
+					.where(eq(purchases.productId, id))
+					.then((rows) => rows[0]?.count ?? 0),
+			openInvoices: openTeamInvoices,
 		},
-		purchaseCount,
-		heldSeats,
-		stripePriceId,
-		stripeProductId,
-		listUnitAmount: stripePrice.unit_amount,
-	}
-}
+		productId,
+	)
 
 /** The same existing-seats count front-desk's pricing facts report. */
 async function buyer(email: string, productId: string) {
