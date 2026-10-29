@@ -53,10 +53,14 @@ export function useDocumentPictureInPicture() {
 		[],
 	)
 
-	const close = React.useCallback(() => {
-		pipWindow?.close()
-		setPipWindow(null)
+	// The window only holds a portal from this page, so it closes when it is
+	// dropped and when the page that owns it unmounts.
+	React.useEffect(() => {
+		if (!pipWindow) return
+		return () => pipWindow.close()
 	}, [pipWindow])
+
+	const close = React.useCallback(() => setPipWindow(null), [])
 
 	return { supported, pipWindow, open, close }
 }

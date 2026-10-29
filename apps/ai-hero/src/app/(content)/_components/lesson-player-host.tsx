@@ -138,6 +138,12 @@ export function LessonPlayerHost({ children }: { children: React.ReactNode }) {
 			}
 		/>
 	) : null
+	// A lesson without a session would leave the floating window empty.
+	const hasSession = Boolean(video?.sessionExtract)
+	const closeSessionWindow = sessionWindow.close
+	React.useEffect(() => {
+		if (!hasSession) closeSessionWindow()
+	}, [hasSession, closeSessionWindow])
 
 	return (
 		<LessonPlayerHostContext value={context}>
