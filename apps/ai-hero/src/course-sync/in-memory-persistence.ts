@@ -378,7 +378,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 		let writes = 0
 		for (const item of input.plan.resources) {
 			let resource = resources.get(item.targetResourceId)
-			const appliedFields = mergeCourseSyncResourceFields(item, resource?.fields)
+			const appliedFields = mergeCourseSyncResourceFields(item, resource?.fields, binding)
 			expectedFieldsByResource.set(item.targetResourceId, appliedFields)
 			if (item.action === 'create') {
 				if (resource)
@@ -483,7 +483,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 						409,
 					)
 				}
-				if (sha256(stableJson(courseSyncSourceFields(item.sourceKind, resource.fields))) !== item.previousFieldsSha256) {
+				if (sha256(stableJson(courseSyncSourceFields(item.sourceKind, resource.fields, binding))) !== item.previousFieldsSha256) {
 					throw new CourseSyncError(
 						'APPLY_TARGET_CHANGED',
 						'Resource fields changed after preview.',
@@ -777,6 +777,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 					? nextVersions.get(receipt.parentVersionId)
 					: null
 				const fields = resolveCourseSyncRollbackFields({
+					binding: this.bindings.get(input.bindingId),
 					action: planItem.action,
 					sourceKind: planItem.sourceKind,
 					currentFields: resource.fields,

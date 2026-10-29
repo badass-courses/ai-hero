@@ -175,6 +175,30 @@ assert.doesNotThrow(() =>
 		},
 	}),
 )
+const releaseBindingSummary = {
+	bindingId: "csb_test_release_cohort",
+	contractVersion: 8,
+	status: "active",
+	sourceCourseId: "test-course",
+	applyPolicy: "bounded-auto",
+	target: {
+		product: { type: "cohort", state: "published", visibility: "unlisted" },
+		cohort: { type: "cohort", state: "published", visibility: "public" },
+		managedChildren: {
+			workshop: { state: ["draft", "published"], visibility: "unlisted" },
+			lesson: { state: "draft", visibility: "unlisted" },
+		},
+		sectionMappingPolicy: "sections-as-cohort-workshops",
+	},
+}
+assert.doesNotThrow(() => decodeCourseSyncBindingSummary(releaseBindingSummary))
+assert.throws(() => decodeCourseSyncBindingSummary({
+	...releaseBindingSummary,
+	target: { ...releaseBindingSummary.target, managedChildren: {
+		...releaseBindingSummary.target.managedChildren,
+		lesson: { state: "published", visibility: "unlisted" },
+	} },
+}))
 assert.throws(() =>
 	decodeCourseSyncBindingSummary({
 		bindingId: "csb_ai_coding_crash_course",

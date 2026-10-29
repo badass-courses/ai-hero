@@ -41,7 +41,7 @@ import {
 	mergeCourseSyncResourceFields,
 } from './resource-fields'
 import { assertCourseSyncTargetContract } from './target-contract'
-import { anchorResourceId, getServerCourseSyncBinding } from './types'
+import { anchorResourceId, getServerCourseSyncBinding, managedResourceStateAllowed } from './types'
 import type {
 	CourseSyncBinding,
 	CourseSyncPersistence,
@@ -122,7 +122,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			const resolved = resolveStoredCourseSyncBinding(existing.binding, binding)
 			if (!resolved.migrated) return resolved.binding
 
-			let migratedFromContractVersion: 2 | 3 | 5 | 6 | null = null
+			let migratedFromContractVersion: ReturnType<typeof resolveStoredCourseSyncBinding>['fromContractVersion'] = null
 			const locked = await db.transaction(async (trx) => {
 				const [current] = await trx
 					.select()
@@ -991,6 +991,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				const appliedFields = mergeCourseSyncResourceFields(
 					item,
 					existing?.fields ?? {},
+					binding,
 				)
 				expectedFieldsByResource.set(item.targetResourceId, appliedFields)
 				if (item.action === 'create') {
@@ -1077,14 +1078,13 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 						}
 					} else if (
 						existing.type !== resourceType(item.sourceKind) ||
-						fields.state !==
-							(item.sourceKind === 'video' ? 'ready' : 'draft') ||
+						!managedResourceStateAllowed(binding, item.sourceKind, fields.state) ||
 						fields.visibility !== 'unlisted' ||
 						sync?.bindingId !== plan.bindingId
 					) {
 						throw new CourseSyncError(
 							'MANAGED_RESOURCE_SCOPE_MISMATCH',
-							'A managed resource left draft sync scope.',
+							'A managed resource left its contracted sync scope.',
 							409,
 						)
 					}
@@ -1094,7 +1094,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 							: item.previousVersionId
 					if (
 						existing.currentVersionId !== expectedCurrentVersionId ||
-						sha256(stableJson(courseSyncSourceFields(item.sourceKind, existing.fields ?? {}))) !==
+						sha256(stableJson(courseSyncSourceFields(item.sourceKind, existing.fields ?? {}, binding))) !==
 							item.previousFieldsSha256
 					) {
 						throw new CourseSyncError(
@@ -1543,10 +1543,12 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					!planItem ||
 					!current ||
 					!appliedVersion ||
+					(planItem.sourceKind === 'workshop' &&
+						!managedResourceStateAllowed(lockedBinding.binding, 'workshop', current.fields?.state)) ||
 					current.currentVersionId !== receipt.contentResourceVersionId ||
 					(receipt.action !== 'retain' &&
-						stableJson(courseSyncSourceFields(planItem.sourceKind, current.fields ?? {})) !==
-							stableJson(courseSyncSourceFields(planItem.sourceKind, appliedVersion.fields ?? {}))) ||
+						stableJson(courseSyncSourceFields(planItem.sourceKind, current.fields ?? {}, lockedBinding.binding)) !==
+							stableJson(courseSyncSourceFields(planItem.sourceKind, appliedVersion.fields ?? {}, lockedBinding.binding))) ||
 					!relationMatches
 				) {
 					throw new CourseSyncError(
@@ -1608,6 +1610,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					? versionsById.get(receipt.parentVersionId)
 					: null
 				const fields = resolveCourseSyncRollbackFields({
+					binding: lockedBinding.binding,
 					action: planItem.action,
 					sourceKind: planItem.sourceKind,
 					currentFields: (current.fields ?? {}) as Record<string, unknown>,
