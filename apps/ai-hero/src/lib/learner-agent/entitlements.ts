@@ -21,7 +21,7 @@ import type {
 	WorkshopSummary,
 } from '@ai-hero/learner-agent'
 
-import { getCourseResource } from './course-resources'
+import { getCourseResource, type CourseResource } from './course-resources'
 
 /** Same catalog the lesson page reads; cached apart so neither evicts the other. */
 const getEntitlementTypes = unstable_cache(
@@ -192,13 +192,13 @@ export function makeEntitlementsPort({
 			]
 			const found = (
 				await Promise.all(candidateIds.map((id) => getCourseResource(id)))
-			).filter((course) => course !== null)
+			).filter((course): course is CourseResource => course !== null)
 			const unique = [
 				...new Map(found.map((course) => [course.id, course])).values(),
 			]
 
 			const courses = await Promise.all(
-				unique.map(async (course) => {
+				unique.map(async (course): Promise<OwnedCourse | null> => {
 					const listed =
 						course.type === 'cohort'
 							? ((await getCachedCohortNavigation(course.id))?.workshops ?? [])
@@ -245,7 +245,9 @@ export function makeEntitlementsPort({
 				}),
 			)
 
-			const owned = courses.filter((course) => course !== null)
+			const owned = courses.filter(
+				(course): course is OwnedCourse => course !== null,
+			)
 			const inCohorts = new Set(
 				owned
 					.filter((course) => course.type === 'cohort')
