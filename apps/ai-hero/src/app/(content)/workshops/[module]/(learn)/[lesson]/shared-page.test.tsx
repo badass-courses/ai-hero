@@ -38,6 +38,7 @@ vi.mock('@/lib/ai-coding-dictionary', () => ({
 
 vi.mock('@/lib/lessons-query', () => ({
 	getLessonVideoPlaybackResource: mocks.getLessonVideoPlaybackResource,
+	getLessonSessionExtract: vi.fn().mockResolvedValue(null),
 	getLessonVideoTranscript: vi.fn(),
 }))
 
@@ -210,6 +211,7 @@ describe('LessonPage office-hours authorization context', () => {
 				chapters: [],
 				savedPosition: 42,
 				moduleSlug: 'workshop-1',
+				sessionExtract: null,
 				thumbnailUrl: null,
 			})
 		},

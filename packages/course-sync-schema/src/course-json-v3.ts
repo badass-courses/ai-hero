@@ -25,6 +25,70 @@ export const CourseJsonChapterV3 = Schema.Struct({
 	startTime: Schema.Number.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
 })
 
+const VisibleFrom = Schema.Number.pipe(
+	Schema.check(Schema.isGreaterThanOrEqualTo(0)),
+)
+const ResultIsError = Schema.NullOr(Schema.Boolean)
+
+/**
+ * A coding-agent session shown on screen in the video, as entries stamped
+ * with the video time they first appear (`visibleFrom`, seconds). AI Hero
+ * shows it beside the player and follows playback through it.
+ */
+export const CourseJsonSessionExtract = Schema.Struct({
+	sessions: Schema.Array(
+		Schema.Struct({
+			sessionId: NonEmptyString,
+			entries: Schema.Array(
+				Schema.Union([
+					Schema.Struct({
+						kind: Schema.Literal("userPrompt"),
+						visibleFrom: VisibleFrom,
+						text: NonEmptyString,
+					}),
+					Schema.Struct({
+						kind: Schema.Literal("assistantText"),
+						visibleFrom: VisibleFrom,
+						text: NonEmptyString,
+					}),
+					Schema.Struct({
+						kind: Schema.Literal("skillCall"),
+						via: Schema.Literal("toolCall"),
+						visibleFrom: VisibleFrom,
+						skill: NonEmptyString,
+						args: Schema.NullOr(Schema.String),
+						result: Schema.NullOr(Schema.String),
+						resultIsError: ResultIsError,
+						skillBody: Schema.NullOr(NonEmptyString),
+					}),
+					Schema.Struct({
+						kind: Schema.Literal("skillCall"),
+						via: Schema.Literal("slashCommand"),
+						visibleFrom: VisibleFrom,
+						skill: NonEmptyString,
+						args: Schema.NullOr(NonEmptyString),
+						skillBody: NonEmptyString,
+					}),
+					Schema.Struct({
+						kind: Schema.Literal("toolCall"),
+						visibleFrom: VisibleFrom,
+						tool: NonEmptyString,
+						summary: Schema.NullOr(
+							Schema.String.pipe(Schema.check(Schema.isMaxLength(160))),
+						),
+						resultIsError: ResultIsError,
+					}),
+					Schema.Struct({
+						kind: Schema.Literal("interrupt"),
+						visibleFrom: VisibleFrom,
+						text: Schema.String,
+					}),
+				]),
+			).pipe(Schema.check(Schema.isMinLength(1))),
+		}),
+	).pipe(Schema.check(Schema.isMinLength(1))),
+})
+
 export const CourseJsonVideoV3 = Schema.Struct({
 	id: NonEmptyString,
 	relativePath: CourseJsonRelativeMp4Path,
@@ -34,6 +98,7 @@ export const CourseJsonVideoV3 = Schema.Struct({
 	sha256: CourseJsonSha256,
 	bytes: NonNegativeInt,
 	chapters: Schema.Array(CourseJsonChapterV3),
+	sessionExtract: Schema.optionalKey(CourseJsonSessionExtract),
 })
 
 export const CourseJsonExplainerLessonV3 = Schema.Struct({
@@ -85,6 +150,7 @@ export const CourseJsonDocument = Schema.Struct({
 })
 
 export type CourseJsonChapterV3 = typeof CourseJsonChapterV3.Type
+export type CourseJsonSessionExtract = typeof CourseJsonSessionExtract.Type
 export type CourseJsonVideoV3 = typeof CourseJsonVideoV3.Type
 export type CourseJsonLessonV3 = typeof CourseJsonLessonV3.Type
 export type CourseJsonSectionV3 = typeof CourseJsonSectionV3.Type

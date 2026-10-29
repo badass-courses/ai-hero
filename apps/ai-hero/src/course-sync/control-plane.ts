@@ -346,6 +346,9 @@ export function sourceResourceFields(
 						muxAssetId: asset.muxAssetId,
 						muxPlaybackId: asset.muxPlaybackId,
 						chapters: video.chapters,
+						...(video.sessionExtract && {
+							sessionExtract: video.sessionExtract,
+						}),
 						courseSync: {
 							bindingId: binding.bindingId,
 							sourceCourseId: manifest.courseId,

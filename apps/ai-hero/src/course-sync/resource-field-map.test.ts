@@ -68,7 +68,19 @@ const manifest: CourseJsonDocumentV3 = {
 					id: 'problem-solution',
 					title: 'Problem and solution',
 					problem: video('problem-video'),
-					solution: video('solution-video'),
+					solution: {
+						...video('solution-video'),
+						sessionExtract: {
+							sessions: [
+								{
+									sessionId: 'session-1',
+									entries: [
+										{ kind: 'userPrompt', visibleFrom: 3, text: 'Grill me' },
+									],
+								},
+							],
+						},
+					},
 				},
 			],
 		},

@@ -131,6 +131,45 @@ assert.throws(() =>
 		],
 	}),
 )
+function withSessionExtract(sessionExtract: unknown) {
+	const fixture = makeCourseJsonV3Fixture()
+	const [section] = fixture.sections
+	const [lesson] = section!.lessons
+	return {
+		...fixture,
+		sections: [
+			{
+				...section,
+				lessons: [
+					{ ...lesson, explainer: { ...lesson!.explainer, sessionExtract } },
+				],
+			},
+		],
+	}
+}
+const sessionExtract = {
+	sessions: [
+		{
+			sessionId: "session-1",
+			entries: [
+				{ kind: "userPrompt", visibleFrom: 3, text: "Grill me" },
+				{ kind: "toolCall", visibleFrom: 5, tool: "Read", summary: "README.md", resultIsError: null },
+				{ kind: "assistantText", visibleFrom: 9, text: "Q1 - Where does it live?" },
+			],
+		},
+	],
+}
+const withExtract = decodeCourseJsonDocumentV3(withSessionExtract(sessionExtract))
+assert.deepEqual(courseJsonVideos(withExtract)[0]?.sessionExtract, sessionExtract)
+assert.throws(() => decodeCourseJsonDocumentV3(withSessionExtract({ sessions: [] })))
+assert.throws(() =>
+	decodeCourseJsonDocumentV3(
+		withSessionExtract({
+			sessions: [{ sessionId: "s", entries: [{ kind: "userPrompt", visibleFrom: -1, text: "x" }] }],
+		}),
+	),
+)
+
 assert.doesNotThrow(() =>
 	decodeStageSourceRevisionRequest({ manifest: makeCourseJsonV3Fixture() }),
 )

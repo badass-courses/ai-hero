@@ -1,17 +1,28 @@
 'use client'
 
 import * as React from 'react'
+import { createPortal } from 'react-dom'
 import Image from 'next/image'
 import { PlayerContainerSkeleton } from '@/components/player-skeleton'
+import { useDocumentPictureInPicture } from '@/hooks/use-document-picture-in-picture'
+import type { SessionExtract } from '@/lib/session-extract'
 import type { PlaybackTokens } from '@/lib/signed-playback'
 
-import type {
-	ContentResource,
-	VideoChapter,
-} from '@coursebuilder/core/schemas'
+import type { ContentResource, VideoChapter } from '@coursebuilder/core/schemas'
 import { VideoPlayerOverlayProvider } from '@coursebuilder/ui/hooks/use-video-player-overlay'
+import {
+	Sheet,
+	SheetContent,
+	SheetHeader,
+	SheetTitle,
+} from '@coursebuilder/ui'
+import { cn } from '@coursebuilder/ui/utils/cn'
 
 import { AuthedVideoPlayer } from './authed-video-player'
+import {
+	SessionExtractPanel,
+	SessionExtractStrip,
+} from './session-extract-panel'
 import VideoPlayerOverlay from './video-player-overlay'
 
 /** What a lesson page hands the player, after its own access check. */
@@ -25,6 +36,8 @@ export type LessonVideo = {
 	moduleSlug: string
 	/** Blurred behind the skeleton before the player hydrates. */
 	thumbnailUrl: string | null
+	/** The agent session the video drives, drawn beside the player. */
+	sessionExtract?: SessionExtract | null
 }
 
 type HostContext = {
@@ -54,13 +67,39 @@ const sessionPositions = new Map<string, number>()
 const PLAYER_BOX =
 	'aspect-video h-auto w-full max-w-full overflow-hidden md:max-h-[75svh] md:max-w-[calc(75svh*16/9)]'
 
-function VideoSection({ children }: { children: React.ReactNode }) {
+function VideoSection({
+	children,
+	aside,
+	below,
+}: {
+	children: React.ReactNode
+	/**
+	 * Beside the player from `lg`. The section keeps the height a lesson
+	 * without one has (the player's own 16:9-capped-at-75svh box at full
+	 * width), and the player shrinks into the remaining width, letterboxed,
+	 * so lessons never change height.
+	 */
+	aside?: React.ReactNode
+	/** Under the player below `lg`, where the aside is hidden. */
+	below?: React.ReactNode
+}) {
 	return (
 		<section
 			aria-label="video"
-			className="dark relative flex flex-col items-center justify-center border-b bg-black text-white dark:text-white"
+			className={cn(
+				'dark relative flex flex-col border-b bg-black text-white dark:text-white',
+				aside && 'lg:aspect-video lg:max-h-[75svh] lg:flex-row',
+			)}
 		>
-			{children}
+			<div className="relative flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center">
+				{children}
+			</div>
+			{aside && (
+				<div className="relative hidden lg:block lg:w-[22rem] lg:shrink-0 lg:border-l 2xl:w-[26rem]">
+					<div className="absolute inset-0">{aside}</div>
+				</div>
+			)}
+			{below && <div className="border-t lg:hidden">{below}</div>}
 		</section>
 	)
 }
@@ -83,12 +122,38 @@ export function LessonPlayerHost({ children }: { children: React.ReactNode }) {
 		() => ({ register: setVideo, registered: video !== undefined }),
 		[video],
 	)
+	// The session panel can float in its own window; the player then takes
+	// the section's full width again.
+	const sessionWindow = useDocumentPictureInPicture()
+	// Below `lg` the panel opens in a bottom sheet from a strip under the
+	// player; a scroller of its own in the page would trap scrolling.
+	const [sessionSheetOpen, setSessionSheetOpen] = React.useState(false)
+	const sessionPanel = video?.sessionExtract ? (
+		<SessionExtractPanel
+			extract={video.sessionExtract}
+			onPopOut={
+				sessionWindow.supported && !sessionWindow.pipWindow
+					? () => void sessionWindow.open({ width: 420, height: 720 })
+					: undefined
+			}
+		/>
+	) : null
 
 	return (
 		<LessonPlayerHostContext value={context}>
 			{video && (
 				<VideoPlayerOverlayProvider>
-					<VideoSection>
+					<VideoSection
+						aside={sessionWindow.pipWindow ? undefined : sessionPanel}
+						below={
+							video.sessionExtract && (
+								<SessionExtractStrip
+									extract={video.sessionExtract}
+									onOpen={() => setSessionSheetOpen(true)}
+								/>
+							)
+						}
+					>
 						<AuthedVideoPlayer
 							className={PLAYER_BOX}
 							muxPlaybackId={video.muxPlaybackId}
@@ -114,6 +179,19 @@ export function LessonPlayerHost({ children }: { children: React.ReactNode }) {
 					</VideoSection>
 				</VideoPlayerOverlayProvider>
 			)}
+			{video?.sessionExtract && (
+				<Sheet open={sessionSheetOpen} onOpenChange={setSessionSheetOpen}>
+					<SheetContent side="bottom" className="h-[70svh] p-0 lg:hidden">
+						<SheetHeader className="sr-only">
+							<SheetTitle>Session on screen</SheetTitle>
+						</SheetHeader>
+						<SessionExtractPanel extract={video.sessionExtract} />
+					</SheetContent>
+				</Sheet>
+			)}
+			{sessionWindow.pipWindow &&
+				sessionPanel &&
+				createPortal(sessionPanel, sessionWindow.pipWindow.document.body)}
 			{children}
 		</LessonPlayerHostContext>
 	)
@@ -130,7 +208,8 @@ export function LessonPlayerHost({ children }: { children: React.ReactNode }) {
  */
 export function LessonVideoSource({ video }: { video: LessonVideo | null }) {
 	const host = React.use(LessonPlayerHostContext)
-	if (!host) throw new Error('LessonVideoSource must be inside LessonPlayerHost')
+	if (!host)
+		throw new Error('LessonVideoSource must be inside LessonPlayerHost')
 	const { register, registered } = host
 
 	React.useLayoutEffect(() => {
@@ -142,7 +221,13 @@ export function LessonVideoSource({ video }: { video: LessonVideo | null }) {
 	// the box and nothing shifts. Gone in the commit that registers.
 	if (registered || !video) return null
 	return (
-		<VideoSection>
+		<VideoSection
+			below={
+				video.sessionExtract && (
+					<SessionExtractStrip extract={video.sessionExtract} onOpen={() => {}} />
+				)
+			}
+		>
 			{video.thumbnailUrl && (
 				<Image
 					src={video.thumbnailUrl}
