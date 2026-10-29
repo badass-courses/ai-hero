@@ -109,6 +109,8 @@ export const clearStaleCaptions = (
 	}
 }
 
+/** `HTMLMediaElement.HAVE_METADATA`. */
+const HAVE_METADATA = 1
 const primingCaptionTracks = new WeakSet<TextTrack>()
 const primedCaptionSources = new WeakMap<TextTrack, string>()
 
@@ -158,10 +160,17 @@ export const keepCaptionCuesLoading = (
 	// has selected the playlist by the time this hides the track again. The
 	// flag clears on the `change` that hiding fires, after the saved
 	// preference's listener has skipped it.
-	// A new lesson that loaded meanwhile was skipped while this ran.
+	// A new lesson that loaded meanwhile was skipped while this ran. Before
+	// its metadata (and so its subtitle playlists) has loaded, playback-core
+	// cannot select one; its own `loadedmetadata` primes it then.
 	const done = () => {
 		primingCaptionTracks.delete(track)
-		if ((player?.playbackId ?? '') !== source) keepCaptionCuesLoading(player)
+		const media = player?.media?.nativeEl ?? player
+		if (
+			(player?.playbackId ?? '') !== source &&
+			(media?.readyState ?? 0) >= HAVE_METADATA
+		)
+			keepCaptionCuesLoading(player)
 	}
 	tracks.addEventListener(
 		'change',

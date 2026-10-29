@@ -59,6 +59,7 @@ function fakePlayer(playbackId: string) {
 	tracks.length = 1
 	const player = {
 		playbackId,
+		readyState: 1,
 		textTracks: tracks,
 	} as unknown as MuxPlayerRefAttributes
 	return { player, track, modes }
@@ -105,6 +106,21 @@ describe('keepCaptionCuesLoading', () => {
 
 		keepCaptionCuesLoading(player)
 		Object.assign(player, { playbackId: 'b' })
+		keepCaptionCuesLoading(player)
+		await settle()
+		expect(modes).toEqual(['showing', 'hidden', 'showing', 'hidden'])
+	})
+
+	it('leaves a source without metadata to its own loadedmetadata', async () => {
+		prefs.subtitleMode = 'hidden'
+		const { player, modes } = fakePlayer('a')
+
+		keepCaptionCuesLoading(player)
+		Object.assign(player, { playbackId: 'b', readyState: 0 })
+		await settle()
+		expect(modes).toEqual(['showing', 'hidden'])
+
+		Object.assign(player, { readyState: 1 })
 		keepCaptionCuesLoading(player)
 		await settle()
 		expect(modes).toEqual(['showing', 'hidden', 'showing', 'hidden'])
