@@ -5,8 +5,10 @@ import { InMemorySubscriberMarketingRepository } from './dry-run'
 import {
 	buildDrovrSignupRequest,
 	DoiSignupContactAmbiguousError,
+	DOI_DROVR_FORM_IDS,
 	DOI_REQUESTED_EVENT_TYPE,
 	doiAppliesTo,
+	drovrSignupKitFormId,
 	DrovrSignupRefusedError,
 	DrovrSignupRetryableError,
 	parseDrovrDoiConfig,
@@ -62,6 +64,52 @@ describe('DROVR_DOI_FORMS (the kill switch)', () => {
 		})
 		expect(config?.baseUrl).toBe('https://api.drovr.test')
 		expect(doiAppliesTo(config, 9376133, 'anyone@example.com')).toBe(true)
+	})
+})
+
+describe('Kit form 8447166 (the default form)', () => {
+	it('maps to the skills-newsletter drovr form and turns on by its own id', () => {
+		expect(DOI_DROVR_FORM_IDS.get(8447166)).toBe('skills-newsletter')
+		const config = parseDrovrDoiConfig({
+			...reachable,
+			DROVR_DOI_FORMS: '8447166',
+		})
+		expect(doiAppliesTo(config, 8447166, 'anyone@example.com')).toBe(true)
+		expect(doiAppliesTo(config, 9376133, 'anyone@example.com')).toBe(false)
+	})
+
+	it('takes a post with no listId as the default form, plain newsletter asks only', () => {
+		const plain = { fields: { source: 'primary-newsletter-cta' } }
+		expect(drovrSignupKitFormId({}, '8447166')).toBe(8447166)
+		expect(drovrSignupKitFormId(plain, '8447166')).toBe(8447166)
+		expect(drovrSignupKitFormId({ ...plain, listId: '' }, 8447166)).toBe(
+			8447166,
+		)
+		expect(drovrSignupKitFormId({ listId: 8447166 }, 'other')).toBe(8447166)
+		// Waitlist and interest posts carry fields drovr's signup drops.
+		const waitlist = { fields: { waitlist_cohort_x: '2026-10-29' } }
+		expect(drovrSignupKitFormId(waitlist, '8447166')).toBeUndefined()
+		expect(
+			drovrSignupKitFormId({ ...waitlist, listId: 8447166 }, '1'),
+		).toBeUndefined()
+		expect(drovrSignupKitFormId({ fields: 'junk' }, '8447166')).toBeUndefined()
+	})
+
+	it('leaves unmapped forms and an unset default on Kit, and 9376133 as it was', () => {
+		expect(drovrSignupKitFormId({}, undefined)).toBeUndefined()
+		expect(drovrSignupKitFormId({}, '1234')).toBeUndefined()
+		expect(drovrSignupKitFormId({ listId: 1234 }, '8447166')).toBeUndefined()
+		// The skills form named explicitly keeps its fields, as before.
+		expect(
+			drovrSignupKitFormId(
+				{ listId: 9376133, fields: { skills_course: 'yes' } },
+				'8447166',
+			),
+		).toBe(9376133)
+		// A listId-less waitlist never takes DOI, whatever the default is.
+		expect(
+			drovrSignupKitFormId({ fields: { waitlist_x: 'y' } }, '9376133'),
+		).toBeUndefined()
 	})
 })
 
