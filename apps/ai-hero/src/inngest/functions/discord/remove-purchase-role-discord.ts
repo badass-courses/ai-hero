@@ -12,8 +12,24 @@ import { PURCHASE_STATUS_UPDATED_EVENT } from '@coursebuilder/core/events/commer
 
 import { partitionDiscordRoleRemovals } from './discord-role-retention'
 
+/**
+ * Runs one at a time. Two concurrent refunds that grant the same role would
+ * each see the other's entitlement as live and both skip the removal. The
+ * status event carries only the charge id, not the user, so this can't be
+ * keyed per user; refunds are rare enough that a single lane is fine.
+ */
+export const removePurchaseRoleDiscordConfig = {
+	id: `remove-purchase-role-discord`,
+	name: 'Remove Purchase Role Discord',
+	concurrency: {
+		scope: 'env',
+		key: '"remove-purchase-role-discord"',
+		limit: 1,
+	},
+} as const
+
 export const removePurchaseRoleDiscord = inngest.createFunction(
-	{ id: `remove-purchase-role-discord`, name: 'Remove Purchase Role Discord' },
+	removePurchaseRoleDiscordConfig,
 	{
 		event: PURCHASE_STATUS_UPDATED_EVENT,
 		// Disputes remove their own Discord roles (purchase-dispute-access) so a
