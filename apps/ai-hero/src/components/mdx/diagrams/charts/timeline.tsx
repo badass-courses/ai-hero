@@ -74,7 +74,7 @@ export function Timeline({
 							<Tick first={i === 0} last={i === last} />
 							{markers?.[i] || agents ? (
 								<span className="flex items-center gap-3 @2xl:mt-3 @2xl:flex-col @2xl:gap-4">
-									{markers?.[i] ? <Marker marker={markers[i]} /> : null}
+									{markers?.[i] ? <Marker marker={markers[i]!} /> : null}
 									{agents ? <SandboxAgent /> : null}
 								</span>
 							) : null}
