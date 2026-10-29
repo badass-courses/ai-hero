@@ -1,4 +1,4 @@
-import { Effect, Result } from 'effect4'
+import { Effect, Result } from 'effect'
 
 import { decideEvergreenOfferJourney } from './decision'
 import type { EvergreenOfferJourneyDefinition } from './domain'

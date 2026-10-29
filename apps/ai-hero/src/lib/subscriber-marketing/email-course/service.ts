@@ -1,4 +1,4 @@
-import { Effect } from "effect4";
+import { Effect } from "effect";
 
 import { decideEmailCourse } from "./decision";
 import type {

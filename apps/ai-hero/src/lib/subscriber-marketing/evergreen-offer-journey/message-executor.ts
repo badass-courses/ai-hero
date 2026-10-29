@@ -1,4 +1,4 @@
-import { Effect, Result } from 'effect4'
+import { Effect, Result } from 'effect'
 import { isDeepStrictEqual } from 'node:util'
 import type { MessagePreparationGate } from './message-preparation-gate'
 import {

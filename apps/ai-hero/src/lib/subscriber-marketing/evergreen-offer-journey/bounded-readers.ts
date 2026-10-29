@@ -5,7 +5,7 @@ import {
 } from '@/db/evergreen-offer-journey-schema'
 import { and, asc, eq, gt, lte, or } from 'drizzle-orm'
 import type { MySql2Database } from 'drizzle-orm/mysql2'
-import { Effect, Result } from 'effect4'
+import { Effect, Result } from 'effect'
 import { z } from 'zod'
 import {
 	COURSE_SEQUENCE_EXHAUSTED_EVENT_TYPE,

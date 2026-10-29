@@ -1,4 +1,4 @@
-import { Data, Effect } from 'effect4'
+import { Data, Effect } from 'effect'
 import { NonRetriableError } from 'inngest'
 
 import type { NewsletterSendPause } from '@/lib/subscriber-marketing/drovr-evergreen-sender'

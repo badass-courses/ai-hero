@@ -1,4 +1,4 @@
-import { Effect } from 'effect4'
+import { Effect } from 'effect'
 import { createCouponReceiptReader } from './coupon-receipt-reader'
 import {
 	validatePersistedCommitEvidenceEnvelope,

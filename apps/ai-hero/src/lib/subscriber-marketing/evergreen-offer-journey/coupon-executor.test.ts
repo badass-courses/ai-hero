@@ -1,4 +1,4 @@
-import { Effect } from 'effect4'
+import { Effect } from 'effect'
 import { expect, it } from 'vitest'
 import { couponExecutorFixture, instant } from './coupon-executor.fixtures'
 import { createCouponIntentExecutor } from './coupon-executor'

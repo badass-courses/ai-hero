@@ -4,7 +4,7 @@ import {
 	EVERGREEN_OFFER_JOURNEY_V2,
 	EVERGREEN_OFFER_JOURNEY_V3,
 } from './definition'
-import { Effect } from 'effect4'
+import { Effect } from 'effect'
 import { z } from 'zod'
 import { createKitDeliveryPort, type KitDeliveryOptions } from './kit-delivery'
 import {

@@ -7,7 +7,7 @@ import {
 } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
-import { Effect } from 'effect4'
+import { Effect } from 'effect'
 import { z } from 'zod'
 import { assertEmailKeyRuntime } from '../lib/subscriber-marketing/contact-email-equivalence'
 import {

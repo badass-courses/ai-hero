@@ -1,4 +1,4 @@
-import { Effect, Result } from "effect4";
+import { Effect, Result } from "effect";
 import { encodeEvergreenOfferJourneySnapshot } from "./restoration";
 import { AI_HERO_UNSUBSCRIBED_TAG_ID } from "../ai-hero-email-opt-in";
 import {

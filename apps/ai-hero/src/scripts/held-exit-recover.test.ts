@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
-import { Effect } from 'effect4'
+import { Effect } from 'effect'
 import { readKitExitMembership } from '../../scripts/held-exit-kit-scan'
 import { createHeldRecoveryPorts } from '../../scripts/held-exit-recover-runtime'
 import { NEWSLETTER_EXIT_CONFIRMED_EVENT } from '../inngest/events/newsletter-exit'

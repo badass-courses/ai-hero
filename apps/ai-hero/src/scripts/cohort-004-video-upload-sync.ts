@@ -7,7 +7,7 @@ import { contentResource } from '@/db/schema'
 import { inngest } from '@/inngest/inngest.server'
 import { VIDEO_UPLOADED_EVENT } from '@coursebuilder/core/events/video'
 import { eq } from 'drizzle-orm'
-import { Console, Effect } from 'effect4'
+import { Console, Effect } from 'effect'
 
 type Action =
 	| {

@@ -7,7 +7,7 @@ import { price } from '@ai-hero/front-desk-support/pricing'
 import { createC5AuthoritativePrice } from '@/lib/c5-pricing/hook'
 import { purchaseGate } from '@/lib/c5-pricing/purchasability'
 import { syntheticPolicy } from '@/lib/c5-pricing/synthetic-policy.test-fixture'
-import { Effect, Exit, Layer, Result } from 'effect4'
+import { Effect, Exit, Layer, Result } from 'effect'
 import { describe, expect, it } from 'vitest'
 import {
 	buyerPricingFacts,

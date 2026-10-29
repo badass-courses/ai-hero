@@ -28,7 +28,7 @@ import {
 import mysql, { type Pool } from "mysql2/promise";
 import { drizzle } from "drizzle-orm/mysql2";
 import { eq } from "drizzle-orm";
-import { Effect } from "effect4";
+import { Effect } from "effect";
 import * as schema from "@/db/schema";
 import * as journeySchema from "@/db/evergreen-offer-journey-schema";
 import { preserveQueryResultShape } from "@/db/mysql-query-client";

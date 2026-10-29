@@ -16,7 +16,7 @@ import { drizzle } from "drizzle-orm/mysql2";
 import type { MySqlDatabase } from "drizzle-orm/mysql-core";
 import { automationControl } from "@/db/email-course-schema";
 import { and, eq, asc } from "drizzle-orm";
-import { Effect } from "effect4";
+import { Effect } from "effect";
 import { compileMessageTemplate } from "@/lib/subscriber-marketing/evergreen-offer-journey/message-preparation";
 import * as revisionDelivery from "@/lib/subscriber-marketing/evergreen-offer-journey/revision-delivery";
 import { Auth } from "@auth/core";

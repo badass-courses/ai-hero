@@ -1,5 +1,5 @@
 import { formatInTimeZone, zonedTimeToUtc } from "date-fns-tz";
-import { Effect } from "effect4";
+import { Effect } from "effect";
 
 import type { ScheduleEvidence } from "./domain";
 import { parseIsoInstant, type IsoInstant } from "./primitives";

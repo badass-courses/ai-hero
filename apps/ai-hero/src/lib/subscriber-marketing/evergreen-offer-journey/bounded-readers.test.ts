@@ -1,4 +1,4 @@
-import { Effect, Result } from 'effect4'
+import { Effect, Result } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
 import {
 	createBoundedJourneyReaders,

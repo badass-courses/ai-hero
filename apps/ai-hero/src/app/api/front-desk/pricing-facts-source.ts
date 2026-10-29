@@ -3,7 +3,7 @@ import { decisionFromRow } from '@/lib/c5-pricing/purchase-decision-sql'
 import { drizzleC5DecisionStore } from '@/lib/c5-pricing/purchase-decision-store'
 import { isStripeChargeId } from '@/lib/stripe-charge-id'
 import type { ChargeState } from '@ai-hero/front-desk-support'
-import { Effect, Layer } from 'effect4'
+import { Effect, Layer } from 'effect'
 import type Stripe from 'stripe'
 import { integration } from '../support/integration'
 import {

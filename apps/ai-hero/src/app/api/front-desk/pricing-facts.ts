@@ -5,7 +5,7 @@ import type {
 	PricingFacts,
 	PricingRequest,
 } from '@ai-hero/front-desk-support'
-import { Context, Data, Effect, Result } from 'effect4'
+import { Context, Data, Effect, Result } from 'effect'
 
 /**
  * Buyer facts for front-desk's pricing. Read-only: SELECTs and Stripe

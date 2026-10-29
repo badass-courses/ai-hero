@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
-import { Effect } from 'effect4'
+import { Effect } from 'effect'
 import { z } from 'zod'
 import {
 	decodeAttempt,

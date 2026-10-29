@@ -1,4 +1,4 @@
-import { Effect } from 'effect4'
+import { Effect } from 'effect'
 import { z } from 'zod'
 
 import { EVERGREEN_OFFER_JOURNEY_V1 } from './definition'

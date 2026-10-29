@@ -1,4 +1,4 @@
-import { Effect, Result } from "effect4";
+import { Effect, Result } from "effect";
 import { z } from "zod";
 import type {
   CurrentSubscriberTagsPageEvidence,

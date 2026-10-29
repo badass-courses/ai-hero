@@ -1,4 +1,4 @@
-import { Effect } from 'effect4'
+import { Effect } from 'effect'
 import { z } from 'zod'
 
 import type { CaptureMarketingRepository } from './capture-contact-event'

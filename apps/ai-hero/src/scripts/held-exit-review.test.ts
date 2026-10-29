@@ -13,7 +13,7 @@ import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { Effect } from 'effect4'
+import { Effect } from 'effect'
 import {
 	readKitSequenceScan,
 	membershipFromScan,

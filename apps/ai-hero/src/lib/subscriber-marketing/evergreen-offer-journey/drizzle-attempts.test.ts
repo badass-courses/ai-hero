@@ -1,4 +1,4 @@
-import { Effect, Result } from 'effect4'
+import { Effect, Result } from 'effect'
 import type { SQL } from 'drizzle-orm'
 import { MySqlDialect } from 'drizzle-orm/mysql-core'
 import { expect, it, vi } from 'vitest'

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import fc from 'fast-check'
-import { Effect } from 'effect4'
+import { Effect } from 'effect'
 import {
 	readKitExitMembership,
 	readKitSequenceScan,

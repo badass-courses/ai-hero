@@ -1,4 +1,4 @@
-import { Effect } from 'effect4'
+import { Effect } from 'effect'
 import { drizzle } from 'drizzle-orm/mysql2'
 import type { Pool } from 'mysql2/promise'
 import { eq } from 'drizzle-orm'

@@ -1,4 +1,4 @@
-import type { Effect } from 'effect4'
+import type { Effect } from 'effect'
 
 import type {
 	DecideEvergreenOfferJourneyInput,

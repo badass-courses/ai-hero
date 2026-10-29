@@ -5,7 +5,7 @@ import * as databaseSchema from '@/db/schema'
 import { contactEvent, emailCourseCommit, sideEffectIntent } from '@/db/schema'
 import { and, desc, eq, sql } from 'drizzle-orm'
 import type { MySqlDatabase } from 'drizzle-orm/mysql-core'
-import { Effect } from 'effect4'
+import { Effect } from 'effect'
 import type { FieldPacket, ResultSetHeader } from 'mysql2/promise'
 import { z } from 'zod'
 

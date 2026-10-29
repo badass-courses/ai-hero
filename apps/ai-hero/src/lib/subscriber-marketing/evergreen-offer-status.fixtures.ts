@@ -1,4 +1,4 @@
-import { Effect } from 'effect4'
+import { Effect } from 'effect'
 
 import { issueIntentFor, type CouponIssuePayload } from './drovr-evergreen-coupon'
 import {
