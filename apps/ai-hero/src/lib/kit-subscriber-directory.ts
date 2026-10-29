@@ -63,6 +63,29 @@ export async function readKitSubscriberIdentity(
 	kitSubscriberId: unknown,
 	reader: DirectoryReader = db as unknown as DirectoryReader,
 ): Promise<KitSubscriberIdentity | null> {
+	const found = await readKitSubscriberContact(kitSubscriberId, reader)
+	if (!found) return null
+	return {
+		id: found.id,
+		email_address: found.email,
+		...(found.firstName ? { first_name: found.firstName } : {}),
+	}
+}
+
+/**
+ * The directory contact behind one Kit subscriber id: the same lookup as
+ * `readKitSubscriberIdentity`, plus the contact id for callers that read the
+ * contact's own evidence. Never spread into a cookie.
+ */
+export async function readKitSubscriberContact(
+	kitSubscriberId: unknown,
+	reader: DirectoryReader = db as unknown as DirectoryReader,
+): Promise<{
+	id: number
+	contactId: string
+	email: string
+	firstName?: string
+} | null> {
 	const id = parseKitSubscriberId(kitSubscriberId)
 	if (!id) return null
 
@@ -85,7 +108,8 @@ export async function readKitSubscriberIdentity(
 	const firstName = row?.name?.trim()
 	return {
 		id: Number(id),
-		email_address: email,
-		...(firstName ? { first_name: firstName } : {}),
+		contactId: identity.contactId,
+		email,
+		...(firstName ? { firstName } : {}),
 	}
 }

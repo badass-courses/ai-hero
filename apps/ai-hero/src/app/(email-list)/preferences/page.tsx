@@ -1,12 +1,22 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import LayoutClient from '@/components/layout-client'
-import { emailPreferenceDefinitions } from '@/coursebuilder/email-preferences'
 import {
+	emailPreferenceDefinitions,
+	type EmailPreferenceKey,
+} from '@/coursebuilder/email-preferences'
+import { env } from '@/env.mjs'
+import {
+	getLocalEmailPreferences,
 	getProviderEmailPreferences,
 	getSearchParamValue,
 	validateKitPreferenceIdentity,
+	verifyKitPreferenceLinkLocally,
 } from '@/lib/email-preferences'
+import {
+	emailPreferencesLocalEnabled,
+	type LocalEmailPreferences,
+} from '@/lib/email-preferences-local'
 import { log } from '@/server/logger'
 
 import { updateEmailPreferenceAction } from './actions'
@@ -32,27 +42,9 @@ export default async function PreferencesPage(props: PreferencesPageProps) {
 	const updatedPreference = getSearchParamValue(searchParams.updated)
 	const updatedState = getSearchParamValue(searchParams.state)
 
-	const subscriber = await validateKitPreferenceIdentity({
-		subscriberId,
-		shKit,
-		source: 'preferences-page',
-		route: '/preferences',
-	})
-
-	const preferences = subscriber
-		? await getProviderEmailPreferences({
-				subscriberId,
-				source: 'preferences-page',
-			})
-		: null
-
-	await log.info('email-preferences.view', {
-		source: 'preferences-page',
-		provider: 'convertkit',
-		kitSubscriberId: subscriberId,
-		shKit,
-		result: subscriber && preferences ? 'success' : 'failed',
-	})
+	const { subscriber, preferences } = emailPreferencesLocalEnabled(env)
+		? await readLocalView(subscriberId, shKit)
+		: await readKitView(subscriberId, shKit)
 
 	return (
 		<LayoutClient withContainer>
@@ -101,8 +93,8 @@ export default async function PreferencesPage(props: PreferencesPageProps) {
 							<div className="divide-border overflow-hidden rounded-lg border">
 								{emailPreferenceDefinitions.map((preference) => {
 									const state = preferences[preference.key]
-									const subscribed =
-										state?.subscribed ?? preference.defaultSubscribed
+									// Unknown is never shown as subscribed, and only offers a stop.
+									const subscribed = state.known ? state.subscribed : false
 
 									return (
 										<div
@@ -117,35 +109,45 @@ export default async function PreferencesPage(props: PreferencesPageProps) {
 													{preference.description}
 												</p>
 												<p className="text-muted-foreground text-xs">
-													{subscribed
-														? "You're getting these."
-														: "You're not getting these."}
+													{!state.known
+														? "We couldn't load this setting right now."
+														: state.stoppedEverything
+															? "You've unsubscribed from all AI Hero email."
+															: subscribed
+																? "You're getting these."
+																: "You're not getting these."}
 												</p>
 											</div>
-											<form action={updateEmailPreferenceAction}>
-												<input
-													type="hidden"
-													name="ck_subscriber_id"
-													value={subscriberId}
-												/>
-												<input type="hidden" name="sh_kit" value={shKit} />
-												<input
-													type="hidden"
-													name="preference"
-													value={preference.key}
-												/>
-												<input
-													type="hidden"
-													name="subscribed"
-													value={subscribed ? 'false' : 'true'}
-												/>
-												<button
-													type="submit"
-													className="border-border bg-background hover:bg-hover rounded-md border px-4 py-2 text-sm font-medium transition"
-												>
-													{subscribed ? 'Stop these' : 'Send me these'}
-												</button>
-											</form>
+											{state.known && state.stoppedEverything ? null : (
+												<form action={updateEmailPreferenceAction}>
+													<input
+														type="hidden"
+														name="ck_subscriber_id"
+														value={subscriberId}
+													/>
+													<input type="hidden" name="sh_kit" value={shKit} />
+													<input
+														type="hidden"
+														name="preference"
+														value={preference.key}
+													/>
+													<input
+														type="hidden"
+														name="subscribed"
+														value={
+															subscribed || !state.known ? 'false' : 'true'
+														}
+													/>
+													<button
+														type="submit"
+														className="border-border bg-background hover:bg-hover rounded-md border px-4 py-2 text-sm font-medium transition"
+													>
+														{subscribed || !state.known
+															? 'Stop these'
+															: 'Send me these'}
+													</button>
+												</form>
+											)}
 										</div>
 									)
 								})}
@@ -156,4 +158,85 @@ export default async function PreferencesPage(props: PreferencesPageProps) {
 			</main>
 		</LayoutClient>
 	)
+}
+
+type PreferenceView = {
+	subscriber: unknown
+	preferences: LocalEmailPreferences | null
+}
+
+/** Kit-backed view: the link checked against Kit's email, Kit's preferences. */
+async function readKitView(
+	subscriberId: string | undefined,
+	shKit: string | undefined,
+): Promise<PreferenceView> {
+	const subscriber = await validateKitPreferenceIdentity({
+		subscriberId,
+		shKit,
+		source: 'preferences-page',
+		route: '/preferences',
+	})
+
+	const kitPreferences = subscriber
+		? await getProviderEmailPreferences({
+				subscriberId,
+				source: 'preferences-page',
+			})
+		: null
+
+	await log.info('email-preferences.view', {
+		source: 'preferences-page',
+		provider: 'convertkit',
+		kitSubscriberId: subscriberId,
+		shKit,
+		result: subscriber && kitPreferences ? 'success' : 'failed',
+	})
+
+	return {
+		subscriber,
+		preferences: kitPreferences
+			? (Object.fromEntries(
+					emailPreferenceDefinitions.map((preference) => [
+						preference.key,
+						{
+							known: true,
+							subscribed:
+								kitPreferences[preference.key as EmailPreferenceKey]
+									?.subscribed ?? preference.defaultSubscribed,
+							stoppedEverything: false,
+						},
+					]),
+				) as LocalEmailPreferences)
+			: null,
+	}
+}
+
+/**
+ * Local view, Kit out of the request: the link checked against the
+ * directory, state from local evidence and drovr stops. A link that cannot
+ * be checked right now still lists every preference as unknown, with a stop.
+ */
+async function readLocalView(
+	subscriberId: string | undefined,
+	shKit: string | undefined,
+): Promise<PreferenceView> {
+	const verification = await verifyKitPreferenceLinkLocally({
+		subscriberId,
+		shKit,
+		source: 'preferences-page',
+		route: '/preferences',
+	})
+	const preferences =
+		verification.status === 'invalid'
+			? null
+			: await getLocalEmailPreferences(verification)
+
+	await log.info('email-preferences.view', {
+		source: 'preferences-page',
+		provider: 'local-directory',
+		kitSubscriberId: subscriberId,
+		result: verification.status,
+	})
+
+	return { subscriber: preferences ? verification : null, preferences }
 }
