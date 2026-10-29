@@ -124,6 +124,8 @@ export type DrovrCreateShardedBroadcastInput = DrovrCreateBroadcastInput & {
 export type DrovrBroadcastAddress = { broadcastId: string; tenantId: string }
 
 export type DrovrBroadcastReport = {
+	/** Only sharded answers name the broadcast; a single one is addressed. */
+	broadcastId: string | null
 	phase: string | null
 	captured: number | null
 	sent: number | null
@@ -186,12 +188,42 @@ const strings = (value: unknown): string[] =>
 		? value.filter((item): item is string => typeof item === 'string')
 		: []
 
-/** Reads `broadcast_status` and `sharded_broadcast_status` answers alike. */
-export function readBroadcastReport(body: unknown): DrovrBroadcastReport {
+const BROADCAST_PHASES = new Set([
+	'capturing',
+	'capture-paused',
+	'captured',
+	'freezing',
+	'scheduled',
+	'sending',
+	'paused',
+	'done',
+	'cancelled',
+])
+
+/**
+ * Reads `broadcast_status` and `sharded_broadcast_status` answers alike.
+ * Null unless the answer proves a broadcast: drovr's required capture
+ * fields, a known phase if any, and a broadcast id on a sharded answer.
+ */
+export function readBroadcastReport(
+	body: unknown,
+): DrovrBroadcastReport | null {
 	const output = record(body)
-	const status = record(output.broadcast ?? output.sharded)
+	const sharded = output.sharded !== undefined
+	const status = record(sharded ? output.sharded : output.broadcast)
+	const broadcastId = stringOrNull(status.broadcastId)
+	const phase = stringOrNull(status.phase)
+	if (
+		typeof status.captureComplete !== 'boolean' ||
+		numberOrNull(status.captured) === null ||
+		(status.phase !== undefined && !BROADCAST_PHASES.has(phase ?? '')) ||
+		(sharded && !broadcastId)
+	) {
+		return null
+	}
 	return {
-		phase: stringOrNull(status.phase),
+		broadcastId,
+		phase,
 		captured: numberOrNull(status.captured),
 		sent: numberOrNull(record(status.stats).sent),
 		nextMoves: strings(output.nextMoves),
@@ -562,7 +594,22 @@ export async function approveDrovrBroadcast(args: {
 			: await args.client.createBroadcast(input)
 
 	if (created.ok) {
+		const answered = created.value.broadcastId
+		if (answered !== null && answered !== broadcastId) {
+			return {
+				status: 'refused',
+				reason: `drovr answered for ${answered}, not ${broadcastId}; the send is unconfirmed`,
+			}
+		}
 		return { status: 'created', broadcastId, report: created.value }
+	}
+	if (created.status === 200) {
+		// drovr accepted the call but its answer proves nothing: say so, never
+		// announce a send.
+		return {
+			status: 'refused',
+			reason: `drovr gave an unreadable answer; the send is unconfirmed, check broadcast_status for ${broadcastId}`,
+		}
 	}
 	if (isAlreadyInitialized(created)) {
 		const address = { broadcastId, tenantId: AI_HERO_DROVR_TENANT_ID }

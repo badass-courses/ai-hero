@@ -93,7 +93,13 @@ function fakeClient() {
 		validateMessageFile: vi.fn(),
 		createBroadcast: vi.fn(async () => ({
 			ok: true,
-			value: { phase: 'capturing', captured: 0, sent: 0, nextMoves: [] },
+			value: {
+				broadcastId: null,
+				phase: 'capturing',
+				captured: 0,
+				sent: 0,
+				nextMoves: [],
+			},
 		})),
 		createShardedBroadcast: vi.fn(),
 		broadcastStatus: vi.fn(),
@@ -150,6 +156,34 @@ describe('drovr broadcast approval', () => {
 		expect(update.text).toContain('Approved; drovr is sending')
 		expect(update.text).toContain('aihero.broadcast.x-1@v-abc')
 		expect(JSON.stringify(update.blocks)).not.toContain('Open in Kit')
+		expect(kitCalls()).toEqual([])
+	})
+
+	it('never announces a send when drovr answers create_broadcast with junk', async () => {
+		const actual = await vi.importActual<
+			typeof import('@/lib/drovr-broadcasts')
+		>('@/lib/drovr-broadcasts')
+		mocks.client = actual.createDrovrBroadcastClient({
+			config: { baseUrl: 'https://drovr.test', apiKey: 'tenant-key' },
+			fetcher: vi.fn(
+				async () => new Response('{"ok":true}', { status: 200 }),
+			) as unknown as typeof fetch,
+		})
+		const response = await POST(
+			signedRequest(
+				'ai_hero_skills_approve_drovr_send',
+				drovrValue,
+				'U_APPROVER',
+			),
+		)
+		const { text } = await response.json()
+		expect(text).toContain('the send is unconfirmed')
+		expect(text).not.toContain('drovr is sending')
+		expect(
+			outbound.mock.calls.some(([input]) =>
+				String(input).startsWith('https://hooks.slack.test/'),
+			),
+		).toBe(false)
 		expect(kitCalls()).toEqual([])
 	})
 

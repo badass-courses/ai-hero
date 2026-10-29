@@ -27,7 +27,13 @@ const drovrEnv = {
 	AI_HERO_BROADCAST_APPROVER_SLACK_IDS: 'U_APPROVER, U_OTHER',
 }
 
-const report = { phase: 'capturing', captured: 0, sent: 0, nextMoves: [] }
+const report = {
+	broadcastId: null,
+	phase: 'capturing',
+	captured: 0,
+	sent: 0,
+	nextMoves: [],
+}
 
 function fakeClient(
 	overrides: Partial<DrovrBroadcastClient> = {},
@@ -387,13 +393,87 @@ describe('drovr approval blocks', () => {
 	})
 })
 
+describe('a malformed 200 from create_broadcast', () => {
+	const value = {
+		messageId: 'aihero.broadcast.x-1',
+		version: 'v-abc',
+		subject: 'Skills changelog',
+		shortlink: 'https://aihero.dev/s/x',
+	}
+
+	it.each([
+		['an empty body', ''],
+		['not JSON', 'ok'],
+		['no broadcast', '{"nextMoves":[]}'],
+		['a broadcast without capture fields', '{"broadcast":{"phase":"sending"}}'],
+		[
+			'an unknown phase',
+			'{"broadcast":{"captureComplete":true,"captured":3,"phase":"maybe"}}',
+		],
+		[
+			'a sharded answer without a broadcast id',
+			'{"sharded":{"captureComplete":true,"captured":3}}',
+		],
+	])('with %s is an unconfirmed send, never "sending"', async (_case, text) => {
+		const client = createDrovrBroadcastClient({
+			config: { baseUrl: 'https://drovr.test', apiKey: 'k' },
+			fetcher: vi.fn(
+				async () => new Response(text, { status: 200 }),
+			) as unknown as typeof fetch,
+		})
+		const outcome = await approveDrovrBroadcast({
+			value,
+			approverSlackId: 'U_APPROVER',
+			env: {
+				...drovrEnv,
+				AI_HERO_SKILLS_DROVR_SEND_PLAN: JSON.stringify(
+					text.includes('sharded') ? { ...plan, shards: 2 } : plan,
+				),
+			},
+			client,
+		})
+		expect(outcome).toEqual({
+			status: 'refused',
+			reason:
+				'drovr gave an unreadable answer; the send is unconfirmed, check broadcast_status for aihero.broadcast.x-1@v-abc',
+		})
+	})
+
+	it('naming another broadcast is an unconfirmed send', async () => {
+		const client = fakeClient({
+			createShardedBroadcast: vi.fn(async () => ({
+				ok: true as const,
+				value: { ...report, broadcastId: 'someone-else' },
+			})),
+		})
+		const outcome = await approveDrovrBroadcast({
+			value,
+			approverSlackId: 'U_APPROVER',
+			env: {
+				...drovrEnv,
+				AI_HERO_SKILLS_DROVR_SEND_PLAN: JSON.stringify({ ...plan, shards: 2 }),
+			},
+			client,
+		})
+		expect(outcome).toMatchObject({
+			status: 'refused',
+			reason: expect.stringContaining('the send is unconfirmed'),
+		})
+	})
+})
+
 describe('createDrovrBroadcastClient', () => {
 	it('POSTs create_broadcast with the tenant key and reads the status', async () => {
 		const fetcher = vi.fn(
 			async () =>
 				new Response(
 					JSON.stringify({
-						broadcast: { phase: 'capturing', captured: 0, stats: { sent: 0 } },
+						broadcast: {
+							captureComplete: false,
+							phase: 'capturing',
+							captured: 0,
+							stats: { sent: 0 },
+						},
 						nextMoves: ['broadcast_status'],
 					}),
 					{ status: 200 },
@@ -421,6 +501,7 @@ describe('createDrovrBroadcastClient', () => {
 		await expect(client.createBroadcast(input)).resolves.toEqual({
 			ok: true,
 			value: {
+				broadcastId: null,
 				phase: 'capturing',
 				captured: 0,
 				sent: 0,
