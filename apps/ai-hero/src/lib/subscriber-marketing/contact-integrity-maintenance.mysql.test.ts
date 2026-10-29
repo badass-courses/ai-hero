@@ -6,7 +6,7 @@ import {
 } from '../../scripts/contact-maintenance-provider-receipt'
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise'
 import { beforeAll, beforeEach, afterAll, describe, it, expect } from 'vitest'
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 import { validateMySqlIntegrationServerUrl } from '../team-purchase-mysql-test-guard'
 import { contactEmailWriteValues } from './contact-email-equivalence'
 import { CONTACT_EMAIL_STALE_SQL } from './contact-email-key-contract'

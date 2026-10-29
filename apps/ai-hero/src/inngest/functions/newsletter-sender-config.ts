@@ -1,4 +1,4 @@
-import { Data, Effect } from 'effect'
+import { Data, Effect } from 'effect4'
 
 export const NEWSLETTER_LIMIT_CAP = 120
 export const MIN_NEWSLETTER_PACING_MS = 2_000
@@ -41,7 +41,7 @@ export function parseNewsletterSenderConfig(input: {
 		try: read,
 		catch: () => new NewsletterSenderConfigError({ message: `${control}: inherited configuration is invalid` }),
 	})
-	const result = Effect.runSync(Effect.either(Effect.gen(function* () {
+	const result = Effect.runSync(Effect.result(Effect.gen(function* () {
 		// Validate ALL explicit inputs before evaluating inheritance or any HTTP.
 		const explicitPacing = input.pacingMs === undefined ? undefined : yield* integer(
 			input.pacingMs, 'AIH_DROVR_NEWSLETTER_PACING_MS', MIN_NEWSLETTER_PACING_MS, MAX_NEWSLETTER_PACING_MS,
@@ -66,6 +66,6 @@ export function parseNewsletterSenderConfig(input: {
 		}
 		return { mode: 'opt-in', limit, pacingMs } as const
 	})))
-	if (result._tag === 'Left') throw result.left
-	return result.right
+	if (result._tag === 'Failure') throw result.failure
+	return result.success
 }
