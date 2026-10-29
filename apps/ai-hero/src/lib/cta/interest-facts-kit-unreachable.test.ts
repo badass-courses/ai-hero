@@ -64,7 +64,10 @@ import {
 	getSubscriberForGating,
 } from '@/lib/subscriber-gate'
 
-import { completeKnownConversionIntent } from './conversion-intent-actions'
+import {
+	completeKnownConversionIntent,
+	finalizeAnonymousConversionIntent,
+} from './conversion-intent-actions'
 
 const factEvents = () =>
 	mocks.inngestSend.mock.calls
@@ -181,6 +184,58 @@ describe('join, Kit unreachable', () => {
 		})
 		expect(mocks.kit.subscribeToList).toHaveBeenCalledTimes(1)
 		expect(factEvents()).toEqual([])
+	})
+})
+
+describe('a failed fact queue after the cut keeps the Kit write', () => {
+	const intent = {
+		kind: 'cohort-waitlist',
+		productName: 'AI Coding Crash Course',
+	} as const
+
+	beforeEach(() => {
+		vi.stubEnv('AIH_INTEREST_KIT_WRITES', 'off')
+		mocks.kit.subscribeToList.mockResolvedValue({
+			id: 42,
+			state: 'active',
+			fields: {},
+		})
+		mocks.kit.tagSubscriber.mockResolvedValue(undefined)
+	})
+
+	it('one-click: the join lands in Kit, field and tag, when Inngest refuses', async () => {
+		mocks.inngestSend.mockRejectedValue(new Error('inngest down'))
+		const result = await completeKnownConversionIntent({
+			intent,
+			surface: 'cohort-page',
+		})
+
+		expect(result).toEqual({ success: true, confirmationRequired: false })
+		expect(mocks.kit.subscribeToList).toHaveBeenCalledTimes(1)
+		expect(mocks.kit.tagSubscriber).toHaveBeenCalledWith({
+			tag: 'waitlist_ai_coding_crash_course',
+			email: 'reader@example.test',
+		})
+	})
+
+	it('form finalize: a failed queue still tags in Kit', async () => {
+		mocks.inngestSend.mockRejectedValue(new Error('inngest down'))
+		await finalizeAnonymousConversionIntent({
+			intent,
+			surface: 'cohort-page',
+			email: 'reader@example.test',
+		})
+		expect(mocks.kit.tagSubscriber).toHaveBeenCalledTimes(1)
+	})
+
+	it('form finalize: a queued fact holds the join, so no Kit tag', async () => {
+		await finalizeAnonymousConversionIntent({
+			intent,
+			surface: 'cohort-page',
+			email: 'reader@example.test',
+		})
+		expect(mocks.kit.tagSubscriber).not.toHaveBeenCalled()
+		expect(factEvents()).toHaveLength(1)
 	})
 })
 

@@ -49,13 +49,13 @@ export async function requestInterestFacts(args: {
 		)
 		return { queued: keys.length }
 	} catch (error) {
-		await log
-			.error('interest.fact.enqueue.failed', {
+		try {
+			await log.error('interest.fact.enqueue.failed', {
 				fieldKeys: keys,
 				via: args.via,
 				error: error instanceof Error ? error.name : 'unknown',
 			})
-			.catch(() => undefined)
+		} catch {}
 		return { queued: 0 }
 	}
 }

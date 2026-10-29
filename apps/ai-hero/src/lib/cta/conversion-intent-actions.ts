@@ -149,9 +149,17 @@ export async function finalizeAnonymousConversionIntent({
 }) {
 	const contract = conversionIntentContract({ intent, surface })
 	if (!contract.tagName) return { success: true as const }
-	// After the cut the tag is a Kit projection nobody reads.
-	if (interestFactsEnabled() && !interestKitWritesEnabled())
-		return { success: true as const }
+	// After the cut the tag is a Kit projection nobody reads, but only once the
+	// fact holds the join. Re-requesting is idempotent (the event id is the
+	// list and the address hash), and a failed queue keeps the Kit tag.
+	if (interestFactsEnabled() && !interestKitWritesEnabled()) {
+		const { queued } = await requestInterestFacts({
+			email,
+			fields: contract.fields,
+			via: 'form',
+		})
+		if (queued > 0) return { success: true as const }
+	}
 
 	try {
 		await emailListProvider.tagSubscriber?.({
