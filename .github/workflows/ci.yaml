@@ -40,6 +40,19 @@ jobs:
       - name: Typecheck
         run: pnpm turbo typecheck
 
+      - name: Course-sync executor identity and warning contracts
+        run: >-
+          pnpm --filter ai-hero exec vitest run -c vitest.config.ts
+          src/server/run-identity.test.ts
+          src/course-sync/run-identity-observability.test.ts
+          src/course-sync/detection-persistence.test.ts
+          src/course-sync/detection-poller.test.ts
+          src/course-sync/drizzle-binding-migration.test.ts
+          src/course-sync/poll-state-guard.test.ts
+          src/inngest/functions/course-sync-poll-scheduler.test.ts
+          src/inngest/functions/course-sync-detection-poller.config.test.ts
+          src/inngest/__tests__/middleware-transform-input.test.ts
+
       # Facade: RPC round trip, auth, decode failures, and the bundle contract
       # (no effect import survives in dist). App: hooks and the mounted route.
       - name: Front-desk support facade and route

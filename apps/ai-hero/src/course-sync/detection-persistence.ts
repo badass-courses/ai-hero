@@ -12,6 +12,7 @@ import {
 	products,
 } from '@/db/schema'
 import { log } from '@/server/logger'
+import { getRunIdentity } from '@/server/run-identity'
 import { and, desc, eq, isNull, ne } from 'drizzle-orm'
 
 import { resolveStoredCourseSyncBinding } from './binding-migration'
@@ -252,6 +253,7 @@ export async function claimCourseSyncReviewNotification(
 					failureClass: null,
 					metadata: {
 						...existing.metadata,
+						runIdentity: getRunIdentity(),
 						deliveryAttempts: deliveryAttempts + 1,
 					},
 					occurredAt: input.occurredAt,
@@ -270,6 +272,7 @@ export async function claimCourseSyncReviewNotification(
 			outcome: 'started',
 			failureClass: null,
 			metadata: {
+				runIdentity: getRunIdentity(),
 				kind,
 				notificationKey,
 				planSha256: input.planSha256,
@@ -315,6 +318,7 @@ export async function completeCourseSyncReviewNotification(
 				outcome: 'succeeded',
 				metadata: {
 					...existing.metadata,
+					runIdentity: getRunIdentity(),
 					deliveredAt: input.occurredAt.toISOString(),
 				},
 				occurredAt: input.occurredAt,
@@ -350,6 +354,7 @@ export async function failCourseSyncReviewNotification(
 				failureClass: input.failureClass,
 				metadata: {
 					...existing.metadata,
+					runIdentity: getRunIdentity(),
 					failedAt: input.occurredAt.toISOString(),
 				},
 				occurredAt: input.occurredAt,
@@ -539,6 +544,7 @@ export async function releaseCourseSyncPollHoldAtomically(
 			outcome: 'succeeded',
 			failureClass: null,
 			metadata: {
+				runIdentity: getRunIdentity(),
 				requestHash,
 				actor: input.actor,
 				reason: input.reason,
@@ -573,10 +579,11 @@ export async function releaseCourseSyncPollHoldAtomically(
 }
 
 export async function appendCourseSyncPollLog(input: CourseSyncPollLogInput) {
+	const metadata = { ...input.metadata, runIdentity: getRunIdentity() }
 	await db.insert(courseSyncPollLog).values({
 		id: `cspl_${randomUUID()}`,
 		...input,
-		metadata: input.metadata ?? null,
+		metadata,
 		failureClass: input.failureClass ?? null,
 		controlPlaneRunId: input.controlPlaneRunId ?? null,
 	})
@@ -588,7 +595,7 @@ export async function appendCourseSyncPollLog(input: CourseSyncPollLogInput) {
 		runId: input.runId,
 		controlPlaneRunId: input.controlPlaneRunId ?? null,
 		failureClass: input.failureClass ?? null,
-		...input.metadata,
+		...metadata,
 	}
 	if (input.outcome === 'failed' || input.outcome === 'held') {
 		await log.error(event, attributes)
