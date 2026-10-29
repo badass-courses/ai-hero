@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { Effect } from "effect";
+import { Effect } from "effect4";
 import { z } from "zod";
 
 import type { AppEmailPreferenceDefinition } from "@/coursebuilder/email-preferences";
@@ -135,7 +135,7 @@ export function createCurrentOfferAuthority(args: {
   return {
     currentFacts: (query) =>
       Effect.tryPromise({
-        try: async () => {
+        try: async (): Promise<EligibilityFacts> => {
           const startedAt = instant(args.now());
           if (
             !args.automationId ||

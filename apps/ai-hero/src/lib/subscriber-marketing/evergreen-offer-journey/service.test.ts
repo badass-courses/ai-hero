@@ -1,4 +1,4 @@
-import { Effect, Either } from 'effect'
+import { Effect, Result } from 'effect4'
 import { describe, expect, it } from 'vitest'
 
 import { EVERGREEN_OFFER_JOURNEY_V1 } from './definition'
@@ -119,9 +119,9 @@ describe('Evergreen application service', () => {
 			},
 		]) {
 			const result = await Effect.runPromise(
-				Effect.either(service.advance(altered)),
+				Effect.result(service.advance(altered)),
 			)
-			expect(Either.isLeft(result)).toBe(true)
+			expect(Result.isFailure(result)).toBe(true)
 		}
 		expect(ledger.records().stimuli).toHaveLength(1)
 	})
@@ -140,9 +140,9 @@ describe('Evergreen application service', () => {
 			definition: EVERGREEN_OFFER_JOURNEY_V1,
 		})
 		const missingControl = await Effect.runPromise(
-			Effect.either(service.advance(stimulus)),
+			Effect.result(service.advance(stimulus)),
 		)
-		expect(Either.isLeft(missingControl) && missingControl.left.type).toBe(
+		expect(Result.isFailure(missingControl) && missingControl.failure.type).toBe(
 			'AuthorityInconsistent',
 		)
 		const validAuthorityService = createEvergreenOfferJourneyService({
@@ -164,11 +164,11 @@ describe('Evergreen application service', () => {
 			{ ...stimulus, stimulusId: 'different-fact' },
 		]) {
 			const result = await Effect.runPromise(
-				Effect.either(
+				Effect.result(
 					validAuthorityService.advance(input as EvergreenOfferStimulus),
 				),
 			)
-			expect(Either.isLeft(result) && result.left.type).toBe(
+			expect(Result.isFailure(result) && result.failure.type).toBe(
 				'JourneyDecodeFailure',
 			)
 		}
@@ -226,9 +226,9 @@ describe('Evergreen application service', () => {
 			definition: EVERGREEN_OFFER_JOURNEY_V1,
 		})
 		const result = await Effect.runPromise(
-			Effect.either(alwaysConflicts.advance(stimulus)),
+			Effect.result(alwaysConflicts.advance(stimulus)),
 		)
-		expect(Either.isLeft(result) && result.left.type).toBe(
+		expect(Result.isFailure(result) && result.failure.type).toBe(
 			'JourneyVersionConflict',
 		)
 		expect(attempts).toBe(3)
@@ -343,8 +343,8 @@ describe('Evergreen application service', () => {
 			definition: EVERGREEN_OFFER_JOURNEY_V1,
 		})
 		expect(
-			Either.isLeft(
-				await Effect.runPromise(Effect.either(service.advance(stimulus))),
+			Result.isFailure(
+				await Effect.runPromise(Effect.result(service.advance(stimulus))),
 			),
 		).toBe(true)
 		expect(reads).toBe(1)
@@ -360,9 +360,9 @@ describe('Evergreen application service', () => {
 			definition: EVERGREEN_OFFER_JOURNEY_V1,
 		})
 		const result = await Effect.runPromise(
-			Effect.either(wrongIdentity.advance(stimulus)),
+			Effect.result(wrongIdentity.advance(stimulus)),
 		)
-		expect(Either.isLeft(result) && result.left.type).toBe(
+		expect(Result.isFailure(result) && result.failure.type).toBe(
 			'AuthorityInconsistent',
 		)
 		expect(ledger.records().stimuli).toHaveLength(0)
@@ -432,9 +432,9 @@ describe('Evergreen application service', () => {
 				definition: EVERGREEN_OFFER_JOURNEY_V1,
 			})
 			const result = await Effect.runPromise(
-				Effect.either(service.inspect(deriveJourneyId(stimulus.entryFactId))),
+				Effect.result(service.inspect(deriveJourneyId(stimulus.entryFactId))),
 			)
-			expect(Either.isLeft(result) && result.left).toEqual(
+			expect(Result.isFailure(result) && result.failure).toEqual(
 				error.type === 'JourneyDecodeFailure'
 					? error
 					: {
@@ -462,9 +462,9 @@ describe('Evergreen application service', () => {
 		await Effect.runPromise(service.advance(stimulus))
 		const before = ledger.records()
 		const result = await Effect.runPromise(
-			Effect.either(service.inspect(deriveJourneyId(stimulus.entryFactId))),
+			Effect.result(service.inspect(deriveJourneyId(stimulus.entryFactId))),
 		)
-		expect(Either.isLeft(result) && result.left).toEqual(error)
+		expect(Result.isFailure(result) && result.failure).toEqual(error)
 		expect(ledger.records()).toEqual(before)
 	})
 
@@ -479,9 +479,9 @@ describe('Evergreen application service', () => {
 			definition: EVERGREEN_OFFER_JOURNEY_V1,
 		})
 		const result = await Effect.runPromise(
-			Effect.either(service.inspect(journeyId)),
+			Effect.result(service.inspect(journeyId)),
 		)
-		expect(Either.isLeft(result) && result.left).toEqual({
+		expect(Result.isFailure(result) && result.failure).toEqual({
 			type: 'JourneyNotFound',
 			journeyId,
 		})
@@ -518,9 +518,9 @@ describe('Evergreen application service', () => {
 			await Effect.runPromise(service.advance(stimulus))
 			inspecting = true
 			const result = await Effect.runPromise(
-				Effect.either(service.inspect(deriveJourneyId(stimulus.entryFactId))),
+				Effect.result(service.inspect(deriveJourneyId(stimulus.entryFactId))),
 			)
-			expect(Either.isLeft(result) && result.left).toEqual({
+			expect(Result.isFailure(result) && result.failure).toEqual({
 				type: 'JourneyQueryUnavailable',
 				reason:
 					stage === 'authority'
@@ -563,7 +563,7 @@ describe('Evergreen application service', () => {
 								} as unknown as Partial<EligibilityFacts>)
 			const before = ledger.records()
 			const result = await Effect.runPromise(
-				Effect.either(
+				Effect.result(
 					service.advance({
 						type: 'WakeDue',
 						stimulusId: value(parseStimulusId('mismatched-wake')),
@@ -574,7 +574,7 @@ describe('Evergreen application service', () => {
 					}),
 				),
 			)
-			expect(Either.isLeft(result) && result.left.type).toBe(
+			expect(Result.isFailure(result) && result.failure.type).toBe(
 				'AuthorityInconsistent',
 			)
 			expect(ledger.records()).toEqual(before)
@@ -619,9 +619,9 @@ describe('Evergreen application service', () => {
 			{ ...due, purpose: start.decision.wakeIntents[1]!.purpose },
 		]) {
 			const result = await Effect.runPromise(
-				Effect.either(service.advance(altered)),
+				Effect.result(service.advance(altered)),
 			)
-			expect(Either.isLeft(result) && result.left.type).toBe(
+			expect(Result.isFailure(result) && result.failure.type).toBe(
 				'JourneyDecodeFailure',
 			)
 		}

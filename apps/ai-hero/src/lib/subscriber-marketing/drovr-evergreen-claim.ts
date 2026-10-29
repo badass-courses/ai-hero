@@ -1,4 +1,4 @@
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 
 import type {
 	ClaimApplication,
@@ -159,7 +159,7 @@ export function createDrovrEvergreenClaimApplication(options: {
 			}
 			const authority = await options.resolveAuthority()
 			const outcome = await Effect.runPromise(
-				Effect.either(
+				Effect.result(
 					authority.bind({
 						type: 'BindCoupon',
 						idempotencyKey: couponBindingIntentKey({
@@ -173,9 +173,9 @@ export function createDrovrEvergreenClaimApplication(options: {
 					}),
 				),
 			)
-			if (outcome._tag === 'Left') {
-				options.onBindFailure?.(`${outcome.left.type}:${outcome.left.reason}`)
-				return outcome.left.type === 'EffectTransientUnavailable'
+			if (outcome._tag === 'Failure') {
+				options.onBindFailure?.(`${outcome.failure.type}:${outcome.failure.reason}`)
+				return outcome.failure.type === 'EffectTransientUnavailable'
 					? 'pending'
 					: 'unavailable'
 			}

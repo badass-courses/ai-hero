@@ -1,4 +1,4 @@
-import { Effect, Either } from 'effect'
+import { Effect, Result } from 'effect4'
 import { isDeepStrictEqual } from 'node:util'
 import type { MessagePreparationGate } from './message-preparation-gate'
 import {
@@ -503,29 +503,29 @@ export function createMessageIntentExecutor(
 		live = false,
 	): Effect.Effect<RevisionHoldReason | null> =>
 		Effect.gen(function* () {
-			const read = yield* Effect.either(
+			const read = yield* Effect.result(
 				ledger.inspect({
 					journeyId: intent.journeyId,
 					now,
 					automationControl: 'Stopped',
 				}),
 			)
-			if (Either.isLeft(read)) return 'RevisionUnavailable' as const
-			const row = read.right.intents.find(
+			if (Result.isFailure(read)) return 'RevisionUnavailable' as const
+			const row = read.success.intents.find(
 				(row) => row.intent.idempotencyKey === intent.idempotencyKey,
 			)
 			if (!row || !isDeepStrictEqual(row.intent, intent))
 				return 'RevisionMismatch' as const
 			if (
 				live &&
-				(!read.right.aggregate ||
-					isFinal(read.right.aggregate) ||
+				(!read.success.aggregate ||
+					isFinal(read.success.aggregate) ||
 					row.status !== 'pending' ||
-					slotBinding(read.right.aggregate, intent)?.status !==
+					slotBinding(read.success.aggregate, intent)?.status !==
 						'IntentCommitted')
 			)
 				return 'RevisionMismatch' as const
-			return revisionScope.check(read.right.aggregate, intent)
+			return revisionScope.check(read.success.aggregate, intent)
 		})
 
 	const activeSlots = (aggregate: EvergreenOfferJourneyAggregate) => [
@@ -614,16 +614,16 @@ export function createMessageIntentExecutor(
 			)
 			if (scoped) return { type: 'RevisionHeld', reason: scoped } as const
 			const stimulusId = settlementStimulusId(intent, claimToken)
-			const existing = yield* Effect.either(
+			const existing = yield* Effect.result(
 				ledger.findCommittedStimulus(stimulusId),
 			)
-			if (Either.isLeft(existing))
+			if (Result.isFailure(existing))
 				return {
 					type: 'Failed',
 					stimulusId,
-					error: existing.left.type,
+					error: existing.failure.type,
 				} as const
-			if (existing.right)
+			if (existing.success)
 				return { type: 'AlreadyCommitted', stimulusId } as const
 			const observation =
 				outcome.type === 'Accepted'
@@ -645,14 +645,14 @@ export function createMessageIntentExecutor(
 				settledAt,
 				outcome: domainOutcome(outcome),
 			}
-			const advanced = yield* Effect.either(service.advance(stimulus))
-			if (Either.isLeft(advanced))
+			const advanced = yield* Effect.result(service.advance(stimulus))
+			if (Result.isFailure(advanced))
 				return {
 					type: 'Failed',
 					stimulusId,
-					error: advanced.left.type,
+					error: advanced.failure.type,
 				} as const
-			const decision = advanced.right.decision
+			const decision = advanced.success.decision
 			if (decision.type === 'Ignored')
 				return {
 					type: 'Declined',
@@ -673,7 +673,7 @@ export function createMessageIntentExecutor(
 							? `journey-exited:${decision.next.exit.type}`
 							: 'no-message-settlement-event',
 				} as const
-			return advanced.right.replayedStimulus
+			return advanced.success.replayedStimulus
 				? ({ type: 'AlreadyCommitted', stimulusId } as const)
 				: ({ type: 'Committed', stimulusId } as const)
 		})
@@ -702,12 +702,12 @@ export function createMessageIntentExecutor(
 				claimToken: evidence.claimToken,
 				now: new Date(now),
 			}
-			const settled = yield* Effect.either(
+			const settled = yield* Effect.result(
 				attempts.settle({ ...identity, outcome }),
 			)
-			if (Either.isRight(settled)) return settled.right
+			if (Result.isSuccess(settled)) return settled.success
 			// A live acceptance whose lease lapsed is still exact-token provider evidence.
-			if (outcome.type === 'Accepted' && settled.left.type === 'AttemptRefused')
+			if (outcome.type === 'Accepted' && settled.failure.type === 'AttemptRefused')
 				return yield* attempts
 					.reconcileAccepted({ ...identity, outcome })
 					.pipe(
@@ -716,7 +716,7 @@ export function createMessageIntentExecutor(
 						),
 					)
 			return yield* Effect.fail(
-				failure(settled.left.type, settled.left.reason, sideEffects),
+				failure(settled.failure.type, settled.failure.reason, sideEffects),
 			)
 		})
 
@@ -938,12 +938,12 @@ export function createMessageIntentExecutor(
 					return abandoned('WindowClosedAfterClaim', window, applyInvocations)
 
 				applyInvocations++
-				const applied = yield* Effect.either(delivery.apply(intent))
-				if (Either.isRight(applied)) {
+				const applied = yield* Effect.result(delivery.apply(intent))
+				if (Result.isSuccess(applied)) {
 					const outcome: AcceptedOutcome = {
 						type: 'Accepted',
-						providerReceiptId: applied.right.providerReceiptId,
-						appliedAt: applied.right.appliedAt,
+						providerReceiptId: applied.success.providerReceiptId,
+						appliedAt: applied.success.appliedAt,
 					}
 					yield* recordOutcome(evidence, outcome, 'provider-called')
 					const settlement = yield* settleDomain(
@@ -961,7 +961,7 @@ export function createMessageIntentExecutor(
 						settlement,
 					} as const
 				}
-				const error = applied.left
+				const error = applied.failure
 				if (
 					error.type === 'EffectTransientUnavailable' &&
 					error.requestIssued === false
@@ -979,7 +979,7 @@ export function createMessageIntentExecutor(
 				if (error.type !== 'EffectPermanentRefusal') {
 					// Ambiguous, or transient without proof of no request: the provider may have
 					// received it. Hold the claim as uncertain; never retry, never refuse.
-					const recorded = yield* Effect.either(
+					const recorded = yield* Effect.result(
 						recordOutcome(
 							evidence,
 							{ type: 'HeldUncertain', reason: 'Unknown' },
@@ -995,7 +995,7 @@ export function createMessageIntentExecutor(
 								: `unproven-no-request:${error.reason}`,
 						applyInvocations,
 						providerRequest: 'unknown',
-						sideEffects: Either.isRight(recorded)
+						sideEffects: Result.isSuccess(recorded)
 							? 'attempt-recorded'
 							: 'provider-called',
 						settlement: 'none',
@@ -1112,45 +1112,45 @@ export function createMessageIntentExecutor(
 					result,
 					sideEffects,
 				})
-				const snapshot = yield* Effect.either(readSnapshot(journeyId.value))
-				if (Either.isLeft(snapshot) || !snapshot.right) {
+				const snapshot = yield* Effect.result(readSnapshot(journeyId.value))
+				if (Result.isFailure(snapshot) || !snapshot.success) {
 					results.push(
 						item({
 							type: 'IntentUnavailable',
-							reason: Either.isLeft(snapshot)
-								? snapshot.left.type
+							reason: Result.isFailure(snapshot)
+								? snapshot.failure.type
 								: 'JourneyNotFound',
 						}),
 					)
 					continue
 				}
-				const canonical = yield* Effect.either(
-					readCanonicalIntent(snapshot.right, idempotencyKey.value, 'none'),
+				const canonical = yield* Effect.result(
+					readCanonicalIntent(snapshot.success, idempotencyKey.value, 'none'),
 				)
-				if (Either.isLeft(canonical)) {
+				if (Result.isFailure(canonical)) {
 					results.push(
-						item({ type: 'IntentUnavailable', reason: canonical.left.type }),
+						item({ type: 'IntentUnavailable', reason: canonical.failure.type }),
 					)
 					continue
 				}
-				if ('revisionHeld' in canonical.right) {
+				if ('revisionHeld' in canonical.success) {
 					results.push(
-						item({ type: 'UnknownHeld', reason: canonical.right.revisionHeld }),
+						item({ type: 'UnknownHeld', reason: canonical.success.revisionHeld }),
 					)
 					continue
 				}
-				if (!canonical.right.entry) {
+				if (!canonical.success.entry) {
 					results.push(
 						item({ type: 'IntentUnavailable', reason: 'IntentNotFound' }),
 					)
 					continue
 				}
-				if ('unsupported' in canonical.right.entry) {
+				if ('unsupported' in canonical.success.entry) {
 					results.push(item({ type: 'UnsupportedIntentType' }))
 					continue
 				}
-				const intent = canonical.right.entry.intent
-				const scoped = revisionScope.check(canonical.right.aggregate, intent)
+				const intent = canonical.success.entry.intent
+				const scoped = revisionScope.check(canonical.success.aggregate, intent)
 				if (scoped || !(yield* revisionScope.original(evidence, intent))) {
 					results.push(
 						item({
@@ -1227,7 +1227,7 @@ export function createMessageIntentExecutor(
 					providerReceiptId: membership.providerReceiptId,
 					appliedAt: membership.addedAt,
 				}
-				const recorded = yield* Effect.either(
+				const recorded = yield* Effect.result(
 					attempts.reconcileAccepted({
 						idempotencyKey: evidence.idempotencyKey,
 						journeyId: evidence.journeyId,
@@ -1236,9 +1236,9 @@ export function createMessageIntentExecutor(
 						outcome,
 					}),
 				)
-				if (Either.isLeft(recorded)) {
+				if (Result.isFailure(recorded)) {
 					results.push(
-						item({ type: 'RecordRefused', reason: recorded.left.reason }),
+						item({ type: 'RecordRefused', reason: recorded.failure.reason }),
 					)
 					continue
 				}
@@ -1291,14 +1291,14 @@ export function createKitMembershipReconciliation(args: {
 			Effect.gen(function* () {
 				const membership = yield* args.port.reconcile(intent, args.maxPages)
 				if (membership.type !== 'Present') return membership
-				const observedAt = yield* Effect.either(args.clock.now)
-				if (Either.isLeft(observedAt))
+				const observedAt = yield* Effect.result(args.clock.now)
+				if (Result.isFailure(observedAt))
 					return { type: 'Unknown', reason: 'clock-unavailable' } as const
 				return {
 					type: 'Present',
 					providerReceiptId: `kit:sequence-membership-observed:${intent.contentResourceId}`,
 					addedAt: membership.addedAt,
-					observedAt: observedAt.right,
+					observedAt: observedAt.success,
 				} as const
 			}),
 	}

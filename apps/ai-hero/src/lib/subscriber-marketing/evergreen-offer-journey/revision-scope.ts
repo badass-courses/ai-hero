@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util'
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 import { z } from 'zod'
 import type { AttemptEvidence } from './attempt-evidence'
 import type {
@@ -183,7 +183,7 @@ export function captureRevisionScope(scope: DeliveryRevisionScope) {
 				receipt: originalMappingSchema.parse(result.receipt),
 			} as const
 		}).pipe(
-			Effect.catchAllCause(() =>
+			Effect.catchCause(() =>
 				Effect.succeed({
 					type: 'Held',
 					reason: 'MappingUnavailable',
@@ -263,7 +263,7 @@ export function captureRevisionScope(scope: DeliveryRevisionScope) {
 				p.sequenceId === selected.sequenceId &&
 				p.bodySha256 === selected.bodySha256
 			)
-		}).pipe(Effect.catchAllCause(() => Effect.succeed(false)))
+		}).pipe(Effect.catchCause(() => Effect.succeed(false)))
 	}
 	return { manifest, check, original, record, hasWriter: !!writer }
 }

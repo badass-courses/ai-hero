@@ -1,4 +1,4 @@
-import { Effect, Either } from 'effect'
+import { Effect, Result } from 'effect4'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { EVERGREEN_OFFER_JOURNEY_V1 } from './definition'
@@ -81,7 +81,7 @@ function setup(
 	}
 }
 const outcome = (adapter: ReturnType<typeof createKitDeliveryPort>) =>
-	Effect.runPromise(Effect.either(adapter.apply(intent)))
+	Effect.runPromise(Effect.result(adapter.apply(intent)))
 afterEach(() => {
 	vi.useRealTimers()
 })
@@ -94,8 +94,8 @@ describe('selected review regressions', () => {
 			},
 		})
 		expect(await outcome(adapter)).toMatchObject({
-			_tag: 'Left',
-			left: {
+			_tag: 'Failure',
+			failure: {
 				type: 'EffectTransientUnavailable',
 				reason: 'identity-unavailable',
 				requestIssued: false,
@@ -111,8 +111,8 @@ describe('selected review regressions', () => {
 		const pending = outcome(adapter)
 		await vi.advanceTimersByTimeAsync(100)
 		expect(await pending).toMatchObject({
-			_tag: 'Left',
-			left: { type: 'EffectTransientUnavailable', requestIssued: false },
+			_tag: 'Failure',
+			failure: { type: 'EffectTransientUnavailable', requestIssued: false },
 		})
 		expect(fetcher).not.toHaveBeenCalled()
 	})
@@ -127,14 +127,14 @@ describe('selected review regressions', () => {
 			})
 			const result = await outcome(adapter)
 			expect(result).toMatchObject({
-				_tag: 'Left',
-				left: postAttempted
+				_tag: 'Failure',
+				failure: postAttempted
 					? { type: 'EffectAmbiguous' }
 					: { type: 'EffectTransientUnavailable', requestIssued: false },
 			})
 			// No-request proof never rides on an outcome produced after the POST.
-			if (postAttempted && Either.isLeft(result))
-				expect(result.left).not.toHaveProperty('requestIssued')
+			if (postAttempted && Result.isFailure(result))
+				expect(result.failure).not.toHaveProperty('requestIssued')
 			expect(fetcher).toHaveBeenCalledTimes(postAttempted ? 1 : 0)
 		}
 	})
@@ -143,7 +143,7 @@ describe('selected review regressions', () => {
 		['2026-09-07T12:00:00.000Z', false],
 	] as const)('honors exclusive notAfter at %s', async (now, accepted) => {
 		const { adapter, fetcher } = setup(undefined, undefined, { now: () => now })
-		expect(Either.isRight(await outcome(adapter))).toBe(accepted)
+		expect(Result.isSuccess(await outcome(adapter))).toBe(accepted)
 		expect(fetcher).toHaveBeenCalledTimes(accepted ? 1 : 0)
 	})
 	it('accepts identity/status despite irrelevant provider strings', async () => {
@@ -162,7 +162,7 @@ describe('selected review regressions', () => {
 					}),
 				),
 		)
-		expect(Either.isRight(await outcome(adapter))).toBe(true)
+		expect(Result.isSuccess(await outcome(adapter))).toBe(true)
 	})
 	it('detaches nested caller bindings and function options at construction', async () => {
 		const mutableBinding = { ...binding, readback: { ...binding.readback } }
@@ -190,7 +190,7 @@ describe('selected review regressions', () => {
 			apiKey: 'changed',
 			now: () => 'invalid',
 		})
-		expect(Either.isRight(await outcome(adapter))).toBe(true)
+		expect(Result.isSuccess(await outcome(adapter))).toBe(true)
 		expect(originalFetch).toHaveBeenCalledWith(
 			'https://api.kit.com/v4/sequences/17/subscribers/42',
 			expect.objectContaining({
@@ -206,8 +206,8 @@ describe('selected review regressions', () => {
 				subjectId: 'mutated-after-factory',
 			})
 			expect(await outcome(adapter)).toMatchObject({
-				_tag: 'Left',
-				left: { type: 'EffectPermanentRefusal' },
+				_tag: 'Failure',
+				failure: { type: 'EffectPermanentRefusal' },
 			})
 			expect(fetcher).not.toHaveBeenCalled()
 		} finally {
@@ -222,8 +222,8 @@ describe('selected review regressions', () => {
 		})
 		const { adapter, fetcher } = setup(undefined, [badBinding])
 		expect(await outcome(adapter)).toMatchObject({
-			_tag: 'Left',
-			left: { type: 'EffectPermanentRefusal' },
+			_tag: 'Failure',
+			failure: { type: 'EffectPermanentRefusal' },
 		})
 		expect(fetcher).not.toHaveBeenCalled()
 	})
@@ -232,8 +232,8 @@ describe('selected review regressions', () => {
 		const { adapter, fetcher } = setup(undefined, bindings)
 		bindings.push(binding)
 		expect(await outcome(adapter)).toMatchObject({
-			_tag: 'Left',
-			left: { type: 'EffectPermanentRefusal' },
+			_tag: 'Failure',
+			failure: { type: 'EffectPermanentRefusal' },
 		})
 		expect(fetcher).not.toHaveBeenCalled()
 	})
@@ -244,8 +244,8 @@ describe('selected review regressions', () => {
 			presentation: { ...intent.presentation, subjectId: 'other' },
 		}
 		expect(
-			await Effect.runPromise(Effect.either(adapter.apply(changed))),
-		).toMatchObject({ _tag: 'Left', left: { type: 'EffectPermanentRefusal' } })
+			await Effect.runPromise(Effect.result(adapter.apply(changed))),
+		).toMatchObject({ _tag: 'Failure', failure: { type: 'EffectPermanentRefusal' } })
 		expect(fetcher).not.toHaveBeenCalled()
 	})
 })
@@ -258,7 +258,7 @@ describe('dormant Kit delivery', () => {
 				.mockResolvedValue(response({ subscriber }, 201)),
 		)
 		const result = await outcome(adapter)
-		expect(Either.isRight(result) && result.right).toEqual({
+		expect(Result.isSuccess(result) && result.success).toEqual({
 			providerReceiptId: 'kit:sequence:17:subscriber:42:added',
 			// The port's own clock after the response; Kit's added_at is not used here.
 			appliedAt: '2026-09-07T11:00:00.000Z',
@@ -281,7 +281,7 @@ describe('dormant Kit delivery', () => {
 		)
 		const result = await outcome(adapter)
 		// Exact: a request did leave, so no `requestIssued: false` proof may ride along.
-		expect(Either.isLeft(result) && result.left).toEqual({
+		expect(Result.isFailure(result) && result.failure).toEqual({
 			type: 'EffectAmbiguous',
 			reason: KIT_ALREADY_MEMBER_REASON,
 		})
@@ -297,8 +297,8 @@ describe('dormant Kit delivery', () => {
 					.mockResolvedValue(response({}, status)),
 			)
 			expect(await outcome(adapter)).toMatchObject({
-				_tag: 'Left',
-				left: { type: 'EffectPermanentRefusal' },
+				_tag: 'Failure',
+				failure: { type: 'EffectPermanentRefusal' },
 			})
 			expect(fetcher).toHaveBeenCalledTimes(1)
 		},
@@ -312,8 +312,8 @@ describe('dormant Kit delivery', () => {
 					.mockResolvedValue(response({}, status)),
 			)
 			expect(await outcome(adapter)).toMatchObject({
-				_tag: 'Left',
-				left: { type: 'EffectAmbiguous' },
+				_tag: 'Failure',
+				failure: { type: 'EffectAmbiguous' },
 			})
 			expect(fetcher).toHaveBeenCalledTimes(1)
 		},
@@ -329,8 +329,8 @@ describe('dormant Kit delivery', () => {
 				.mockResolvedValue(response(body)),
 		)
 		expect(await outcome(adapter)).toMatchObject({
-			_tag: 'Left',
-			left: { type: 'EffectAmbiguous' },
+			_tag: 'Failure',
+			failure: { type: 'EffectAmbiguous' },
 		})
 	})
 	it('holds malformed JSON and transport errors', async () => {
@@ -343,8 +343,8 @@ describe('dormant Kit delivery', () => {
 				.mockRejectedValue(new Error('private transport details')),
 		]) {
 			expect(await outcome(setup(fetcher).adapter)).toMatchObject({
-				_tag: 'Left',
-				left: { type: 'EffectAmbiguous' },
+				_tag: 'Failure',
+				failure: { type: 'EffectAmbiguous' },
 			})
 			expect(fetcher).toHaveBeenCalledTimes(1)
 		}
@@ -364,8 +364,8 @@ describe('dormant Kit delivery', () => {
 			const pending = outcome(setup(fetcher).adapter)
 			await vi.advanceTimersByTimeAsync(100)
 			expect(await pending).toMatchObject({
-				_tag: 'Left',
-				left: { type: 'EffectAmbiguous' },
+				_tag: 'Failure',
+				failure: { type: 'EffectAmbiguous' },
 			})
 			expect(fetcher).toHaveBeenCalledTimes(1)
 		},
@@ -381,8 +381,8 @@ describe('dormant Kit delivery', () => {
 	)('rejects absent or unsafe binding before I/O', async ({ bindings }) => {
 		const { adapter, fetcher } = setup(undefined, bindings)
 		expect(await outcome(adapter)).toMatchObject({
-			_tag: 'Left',
-			left: { type: 'EffectPermanentRefusal' },
+			_tag: 'Failure',
+			failure: { type: 'EffectPermanentRefusal' },
 		})
 		expect(fetcher).not.toHaveBeenCalled()
 	})
@@ -395,8 +395,8 @@ describe('dormant Kit delivery', () => {
 				.mockResolvedValue(reply),
 		)
 		expect(await outcome(adapter)).toMatchObject({
-			_tag: 'Left',
-			left: { type: 'EffectAmbiguous' },
+			_tag: 'Failure',
+			failure: { type: 'EffectAmbiguous' },
 		})
 		expect(fetcher).toHaveBeenCalledTimes(1)
 	})
@@ -411,8 +411,8 @@ describe('dormant Kit delivery', () => {
 				.mockResolvedValue(reply),
 		)
 		expect(await outcome(adapter)).toMatchObject({
-			_tag: 'Left',
-			left: { type: 'EffectAmbiguous' },
+			_tag: 'Failure',
+			failure: { type: 'EffectAmbiguous' },
 		})
 	})
 	it('will not replay an expired slot', async () => {
@@ -422,8 +422,8 @@ describe('dormant Kit delivery', () => {
 			notAfter: must(parseIsoInstant('2026-09-07T10:59:00.000Z')),
 		}
 		expect(
-			await Effect.runPromise(Effect.either(adapter.apply(expired))),
-		).toMatchObject({ _tag: 'Left', left: { type: 'EffectPermanentRefusal' } })
+			await Effect.runPromise(Effect.result(adapter.apply(expired))),
+		).toMatchObject({ _tag: 'Failure', failure: { type: 'EffectPermanentRefusal' } })
 		expect(fetcher).not.toHaveBeenCalled()
 	})
 	it('rejects a contact mismatch and missing credentials before HTTP', async () => {
@@ -437,8 +437,8 @@ describe('dormant Kit delivery', () => {
 				now: () => '2026-09-07T11:00:00.000Z',
 			})
 			expect(await outcome(adapter)).toMatchObject({
-				_tag: 'Left',
-				left: { type: 'EffectPermanentRefusal' },
+				_tag: 'Failure',
+				failure: { type: 'EffectPermanentRefusal' },
 			})
 		}
 		expect(fetcher).not.toHaveBeenCalled()

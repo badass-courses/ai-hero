@@ -1,0 +1,128 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`evergreen coupon issue, claim and checkout, sandbox Stripe + disposable database > a shared coupon link prices $100 off in a sandbox Checkout Session 1`] = `
+{
+  "guarded": {
+    "couponId": "mc_eg_special",
+    "usedCouponId": "eoj-coupon:fe54b1e3fc1b510ce97a24b352cf7f645e07e343122b7b169a0d3cf0366755c2",
+  },
+  "ok": true,
+  "session": {
+    "amount_discount": 10000,
+    "amount_subtotal": 29900,
+    "amount_total": 19900,
+    "discounts": 1,
+  },
+}
+`;
+
+exports[`evergreen coupon issue, claim and checkout, sandbox Stripe + disposable database > the claim binds the coupon to its verified owner, who checks out with it 1`] = `
+{
+  "entitlements": [
+    {
+      "deletedAt": null,
+      "name": "apply_special_credit",
+      "sourceId": "eoj-coupon:fe54b1e3fc1b510ce97a24b352cf7f645e07e343122b7b169a0d3cf0366755c2",
+      "sourceType": "COUPON",
+      "userId": "user_eg_owner",
+    },
+  ],
+  "owner": {
+    "guarded": {
+      "couponId": "mc_eg_special",
+      "usedCouponId": "eoj-coupon:fe54b1e3fc1b510ce97a24b352cf7f645e07e343122b7b169a0d3cf0366755c2",
+    },
+    "ok": true,
+    "session": {
+      "amount_discount": 10000,
+      "amount_subtotal": 29900,
+      "amount_total": 19900,
+      "discounts": 1,
+    },
+  },
+  "statuses": {
+    "again": "bound",
+    "before": "ready",
+    "claim": "bound",
+    "otherUser": "unavailable",
+  },
+}
+`;
+
+exports[`evergreen coupon issue, claim and checkout, sandbox Stripe + disposable database > the executor issues the coupon through the coupon authority 1`] = `
+{
+  "intent": {
+    "metadata": {
+      "attempts": 1,
+      "completedAt": "<now>",
+      "couponId": "eoj-coupon:fe54b1e3fc1b510ce97a24b352cf7f645e07e343122b7b169a0d3cf0366755c2",
+      "expiresAt": "<expiresAt>",
+      "issuedAt": "<now>",
+      "kitOfferFieldsEmail": null,
+      "kitOfferFieldsError": null,
+      "kitOfferFieldsWrittenAt": null,
+      "offer": {
+        "amountOffCents": 10000,
+        "effectivePriceCents": 19900,
+        "exclusive": true,
+        "expiresAt": "<expiresAt>",
+        "issueAt": "<issueAt>",
+        "maxUses": 1,
+        "productId": "product-ma254",
+        "regularPriceCents": 29900,
+        "timezone": "America/Los_Angeles",
+        "timezoneSource": "vercel-header",
+      },
+    },
+    "status": "completed",
+  },
+  "result": {
+    "contactId": "evergreen-proof-contact",
+    "couponId": "eoj-coupon:fe54b1e3fc1b510ce97a24b352cf7f645e07e343122b7b169a0d3cf0366755c2",
+    "intentId": "intent_eg_issue",
+    "status": "completed",
+  },
+  "row": {
+    "amountDiscount": 10000,
+    "expires": "<expiresAt>",
+    "fields": {
+      "evergreenOffer": {
+        "binding": {
+          "type": "AwaitingVerifiedUser",
+        },
+        "format": 1,
+        "issue": {
+          "contactId": "evergreen-proof-contact",
+          "deadlineTimeZone": {
+            "capturedAt": "<issueAt>",
+            "headerName": "x-vercel-ip-timezone",
+            "timeZone": "America/Los_Angeles",
+            "type": "BrowserEntryHeader",
+          },
+          "expiresAt": "<expiresAt>",
+          "idempotencyKey": "evergreen-offer:drovr:evergreen-proof-contact:coupon.issue",
+          "issueAt": "<issueAt>",
+          "journeyId": "evergreen-offer:drovr:evergreen-proof-contact",
+          "terms": {
+            "amountOffCents": 10000,
+            "currency": "USD",
+            "exclusive": true,
+            "maxUses": 1,
+            "productId": "product-ma254",
+          },
+          "type": "IssueCoupon",
+        },
+        "operationObservedAt": "<instant>",
+      },
+      "exclusive": true,
+    },
+    "id": "eoj-coupon:fe54b1e3fc1b510ce97a24b352cf7f645e07e343122b7b169a0d3cf0366755c2",
+    "maxUses": 1,
+    "merchantCouponId": "mc_eg_special",
+    "percentageDiscount": null,
+    "restrictedToProductId": "product-ma254",
+    "status": 1,
+    "usedCount": 0,
+  },
+}
+`;

@@ -1,4 +1,4 @@
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 import { describe, expect, it } from 'vitest'
 import { decodeAttempt } from './attempt-evidence'
 import { EVERGREEN_OFFER_JOURNEY_V1 } from './definition'

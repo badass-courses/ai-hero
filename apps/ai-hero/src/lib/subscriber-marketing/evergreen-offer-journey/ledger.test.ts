@@ -1,4 +1,4 @@
-import { Effect, Either } from 'effect'
+import { Effect, Result } from 'effect4'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -377,7 +377,7 @@ describe('in-memory journey ledger contract', () => {
 			makeInMemoryJourneyLedger({ seed: before }),
 		]) {
 			const refused = await Effect.runPromise(
-				Effect.either(
+				Effect.result(
 					target.commit(
 						ledgerCommit({
 							stimulus,
@@ -387,7 +387,7 @@ describe('in-memory journey ledger contract', () => {
 					),
 				),
 			)
-			expect(Either.isLeft(refused) && refused.left.type).toBe(
+			expect(Result.isFailure(refused) && refused.failure.type).toBe(
 				'JourneyConstraintViolation',
 			)
 			expect(target.records()).toEqual(before)
@@ -459,15 +459,15 @@ describe('in-memory journey ledger contract', () => {
 		await Effect.runPromise(ledger.commit(commit))
 		const altered = { ...stimulus, sourceReference: 'contact-event:other' }
 		const lookup = await Effect.runPromise(
-			Effect.either(ledger.findCommittedStimulus(stimulus.stimulusId, altered)),
+			Effect.result(ledger.findCommittedStimulus(stimulus.stimulusId, altered)),
 		)
-		expect(Either.isLeft(lookup) && lookup.left.type).toBe(
+		expect(Result.isFailure(lookup) && lookup.failure.type).toBe(
 			'JourneyDecodeFailure',
 		)
 		const replay = await Effect.runPromise(
-			Effect.either(ledger.commit({ ...commit, stimulus: altered })),
+			Effect.result(ledger.commit({ ...commit, stimulus: altered })),
 		)
-		expect(Either.isLeft(replay) && replay.left.type).toBe(
+		expect(Result.isFailure(replay) && replay.failure.type).toBe(
 			'JourneyDecodeFailure',
 		)
 		expect(ledger.records().stimuli).toHaveLength(1)
@@ -511,7 +511,7 @@ describe('in-memory journey ledger contract', () => {
 				},
 			}
 		const purchaseResult = await Effect.runPromise(
-			Effect.either(
+			Effect.result(
 				purchaseLedger.commit({
 					...ledgerCommit({
 						stimulus: purchaseStimulus,
@@ -523,9 +523,9 @@ describe('in-memory journey ledger contract', () => {
 			),
 		)
 
-		expect(Either.isLeft(purchaseResult)).toBe(true)
-		if (Either.isLeft(purchaseResult)) {
-			expect(purchaseResult.left.type).toBe('JourneyConstraintViolation')
+		expect(Result.isFailure(purchaseResult)).toBe(true)
+		if (Result.isFailure(purchaseResult)) {
+			expect(purchaseResult.failure.type).toBe('JourneyConstraintViolation')
 		}
 		expect(purchaseLedger.records().snapshots).toHaveLength(1)
 
@@ -545,7 +545,7 @@ describe('in-memory journey ledger contract', () => {
 			],
 		}
 		const wakeResult = await Effect.runPromise(
-			Effect.either(
+			Effect.result(
 				wakeLedger.commit({
 					...ledgerCommit({ stimulus, decision, expectedVersion: null }),
 					decision: fakeWakeDecision,
@@ -553,9 +553,9 @@ describe('in-memory journey ledger contract', () => {
 			),
 		)
 
-		expect(Either.isLeft(wakeResult)).toBe(true)
-		if (Either.isLeft(wakeResult)) {
-			expect(wakeResult.left.type).toBe('JourneyConstraintViolation')
+		expect(Result.isFailure(wakeResult)).toBe(true)
+		if (Result.isFailure(wakeResult)) {
+			expect(wakeResult.failure.type).toBe('JourneyConstraintViolation')
 		}
 		expect(wakeLedger.records().snapshots).toEqual([])
 	})
@@ -589,7 +589,7 @@ describe('in-memory journey ledger contract', () => {
 		}
 		const before = ledger.records()
 		const stale = await Effect.runPromise(
-			Effect.either(
+			Effect.result(
 				ledger.commit(
 					ledgerCommit({
 						stimulus: wakeStimulus,
@@ -600,9 +600,9 @@ describe('in-memory journey ledger contract', () => {
 			),
 		)
 
-		expect(Either.isLeft(stale)).toBe(true)
-		if (Either.isLeft(stale)) {
-			expect(stale.left).toEqual({
+		expect(Result.isFailure(stale)).toBe(true)
+		if (Result.isFailure(stale)) {
+			expect(stale.failure).toEqual({
 				type: 'JourneyVersionConflict',
 				journeyId: decision.next.journeyId,
 			})
@@ -752,7 +752,7 @@ describe('in-memory journey ledger contract', () => {
 		}
 		const before = ledger.records()
 		const duplicate = await Effect.runPromise(
-			Effect.either(
+			Effect.result(
 				ledger.commit({
 					...ledgerCommit({
 						stimulus: { ...wakeStimulus, stimulusId: duplicateStimulus },
@@ -764,9 +764,9 @@ describe('in-memory journey ledger contract', () => {
 			),
 		)
 
-		expect(Either.isLeft(duplicate)).toBe(true)
-		if (Either.isLeft(duplicate)) {
-			expect(duplicate.left.type).toBe('JourneyConstraintViolation')
+		expect(Result.isFailure(duplicate)).toBe(true)
+		if (Result.isFailure(duplicate)) {
+			expect(duplicate.failure.type).toBe('JourneyConstraintViolation')
 		}
 		expect(ledger.records()).toEqual(before)
 	})
@@ -783,7 +783,7 @@ describe('in-memory journey ledger contract', () => {
 			},
 		}
 		const invalid = await Effect.runPromise(
-			Effect.either(
+			Effect.result(
 				ledger.commit({
 					...ledgerCommit({ stimulus, decision, expectedVersion: null }),
 					decision: { ...decision, next: invalidNext },
@@ -791,9 +791,9 @@ describe('in-memory journey ledger contract', () => {
 			),
 		)
 
-		expect(Either.isLeft(invalid)).toBe(true)
-		if (Either.isLeft(invalid)) {
-			expect(invalid.left.type).toBe('JourneyConstraintViolation')
+		expect(Result.isFailure(invalid)).toBe(true)
+		if (Result.isFailure(invalid)) {
+			expect(invalid.failure.type).toBe('JourneyConstraintViolation')
 		}
 		expect(ledger.records().snapshots).toEqual([])
 	})
@@ -854,12 +854,12 @@ describe('in-memory journey ledger contract', () => {
 			},
 		})
 		const loaded = await Effect.runPromise(
-			Effect.either(ledger.load(decision.next.journeyId)),
+			Effect.result(ledger.load(decision.next.journeyId)),
 		)
 
-		expect(Either.isLeft(loaded)).toBe(true)
-		if (Either.isLeft(loaded)) {
-			expect(loaded.left.type).toBe('JourneyDecodeFailure')
+		expect(Result.isFailure(loaded)).toBe(true)
+		if (Result.isFailure(loaded)) {
+			expect(loaded.failure.type).toBe('JourneyDecodeFailure')
 		}
 	})
 })

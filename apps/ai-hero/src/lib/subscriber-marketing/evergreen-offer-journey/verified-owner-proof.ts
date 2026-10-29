@@ -1,7 +1,7 @@
 import { contactEvent, providerIdentity } from '@/db/schema'
 import { evergreenOfferJourneyIntent as intents } from '@/db/evergreen-offer-journey-schema'
 import { eq } from 'drizzle-orm'
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 import type { VerifiedCouponOwnerQuery } from './coupon-authority'
 import {
 	couponBindingIntentKey,
@@ -143,14 +143,14 @@ export function createVerifiedOwnerProofReader(options: {
 		// recursive proof callbacks or whole-history first-match scans.
 		const restored = await read(() =>
 			Effect.runPromise(
-				Effect.either(readCanonicalIntentOrigin(options.store.canonical, row)),
+				Effect.result(readCanonicalIntentOrigin(options.store.canonical, row)),
 			),
 		)
-		if (restored._tag === 'Left') {
-			if (restored.left.type === 'JourneyDecodeFailure') return null
+		if (restored._tag === 'Failure') {
+			if (restored.failure.type === 'JourneyDecodeFailure') return null
 			throw new VerifiedOwnerProofUnavailable()
 		}
-		const { intent, stimulus, decidedAt } = restored.right
+		const { intent, stimulus, decidedAt } = restored.success
 		if (
 			intent.type !== 'BindCoupon' ||
 			intent.idempotencyKey !== intentKey ||

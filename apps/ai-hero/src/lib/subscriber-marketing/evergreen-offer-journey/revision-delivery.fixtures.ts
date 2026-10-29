@@ -1,4 +1,4 @@
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 import { createHash } from 'node:crypto'
 import { EVERGREEN_OFFER_JOURNEY_V1 } from './definition'
 import type { EvergreenOfferJourneyDefinition } from './domain'

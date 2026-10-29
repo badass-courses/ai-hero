@@ -81,6 +81,8 @@ Citations: `MIG` = `migration/v3-to-v4.md` and `SRC` = `packages/effect/src/`, b
 3. **Nested `Effect.provide` reuses layers a parent already built** (`migration/layer-memoization.md`). No app code nests `provide`: group D provides one layer per program, and group A doesn't call `Effect.provide` at all. Recheck if a slice adds one.
 4. **Fibers keep the process alive** (`migration/fiber-keep-alive.md`). A script whose fiber waits forever now hangs where v3 would exit. Slice 1 scripts end with `process.exit` or complete normally.
 5. **Error class names:** `UnknownException` becomes `Cause.UnknownError` and `TimeoutException` becomes `Cause.TimeoutError`. Grep finds no code that matches on either name.
+6. **A `Result` is not an `Effect`** (found in slice 5). A v3 `Either` was yieldable in `Effect.gen`, so `yield* either` failed with the left value. A v4 `Result` only iterates inside `Result.gen`, so tsc rejects `yield* result` in `Effect.gen`. Wrap it in `Effect.fromResult(result)`, which fails with the failure and succeeds with the success, the same semantics. Only a test fake in group A did this.
+7. **`tryPromise` no longer types the `try` callback from the expected return type** (found in slice 5). v4 `tryPromise` is overloaded, so string literals in an object returned from `try` widen to `string` and tsc rejects the result against a literal union. Annotate the callback (`async (): Promise<T> => …`). It's a type-only fix. Only `current-authority.ts` needed it.
 
 ## Big bang or transition
 

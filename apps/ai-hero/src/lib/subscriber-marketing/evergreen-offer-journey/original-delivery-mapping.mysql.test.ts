@@ -8,7 +8,7 @@ import { preserveQueryResultShape } from '@/db/mysql-query-client'
 import { eq, sql as sqlBuilder } from 'drizzle-orm'
 import { EVERGREEN_OFFER_JOURNEY_V1, EVERGREEN_OFFER_JOURNEY_V2 } from './definition'
 import { drizzle } from 'drizzle-orm/mysql2'
-import { Effect, Either } from 'effect'
+import { Effect, Result } from 'effect4'
 import mysql, { type Pool, type PoolConnection } from 'mysql2/promise'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { validateMySqlIntegrationServerUrl } from '../../team-purchase-mysql-test-guard'
@@ -523,8 +523,8 @@ integration(
 				if (crash === 'after-ack') {
 					failOutcome = true
 					expect(
-						Either.isLeft(
-							await Effect.runPromise(Effect.either(front().execute(target()))),
+						Result.isFailure(
+							await Effect.runPromise(Effect.result(front().execute(target()))),
 						),
 					).toBe(true)
 					expect(posts).toBe(1)
@@ -601,7 +601,7 @@ integration(
 		})
 		it('replacement bundle holds saved sequence; restored original recovers without writing receipt', async () => {
 			failOutcome = true
-			await Effect.runPromise(Effect.either(front().execute(target())))
+			await Effect.runPromise(Effect.result(front().execute(target())))
 			failOutcome = false
 			expect(posts).toBe(1)
 			const before = await row()

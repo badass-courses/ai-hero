@@ -1,5 +1,5 @@
 import type { Inngest } from "inngest";
-import { Effect } from "effect";
+import { Effect } from "effect4";
 import { z } from "zod";
 import { bridgeTickRequestSchema } from "@/lib/subscriber-marketing/evergreen-offer-journey/bridge-runtime";
 
