@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
-import { Data, Effect } from 'effect'
+import { Data, Effect } from 'effect4'
 import { z } from 'zod'
 import { normalizeContactEvent } from '../src/lib/subscriber-marketing/normalize-contact-event'
 import {
@@ -730,7 +730,7 @@ export function runHeldExitRecovery(
 			// Retain the shared fresh proof; housekeeping cannot undo an acknowledged write.
 			if (runtime.cleanup)
 				yield* boundary('scan-cleanup-failed', runtime.cleanup).pipe(
-					Effect.catchAll(() =>
+					Effect.catch(() =>
 						Effect.sync(() => {
 							envelope.cleanup = 'failed'
 						}),
@@ -742,7 +742,7 @@ export function runHeldExitRecovery(
 		}
 		return envelope
 	}).pipe(
-		Effect.catchAll((error) =>
+		Effect.catch((error) =>
 			Effect.succeed({
 				...envelope,
 				reason: error.reason,
@@ -926,7 +926,7 @@ export function runHeldRecoveryCommand(
 				),
 			({ close }) =>
 				boundary('runtime-close-failed', close).pipe(
-					Effect.catchAll((error) =>
+					Effect.catch((error) =>
 						Effect.sync(() => {
 							result =
 								result.status === 'requested'
@@ -938,7 +938,7 @@ export function runHeldRecoveryCommand(
 		)
 		return result
 	}).pipe(
-		Effect.catchAll((error) =>
+		Effect.catch((error) =>
 			Effect.succeed({
 				...result,
 				status: 'refused' as const,
@@ -951,7 +951,7 @@ export function runHeldRecoveryCommand(
 				: value,
 		),
 		// Final process fence only: never print an unexpected defect, SQL text or provider body.
-		Effect.catchAllCause(() =>
+		Effect.catchCause(() =>
 			Effect.succeed({
 				...result,
 				status: 'refused' as const,

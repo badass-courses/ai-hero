@@ -4,7 +4,7 @@ import { db } from '@/db'
 import { contentResource } from '@/db/schema'
 import { log } from '@/server/logger'
 import { eq } from 'drizzle-orm'
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 
 type BodyAction = {
 	op: 'updateLessonBodyFromSource'

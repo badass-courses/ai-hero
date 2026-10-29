@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 import { readKitExitMembership } from '../../scripts/held-exit-kit-scan'
 import { createHeldRecoveryPorts } from '../../scripts/held-exit-recover-runtime'
 import { NEWSLETTER_EXIT_CONFIRMED_EVENT } from '../inngest/events/newsletter-exit'
@@ -335,7 +335,7 @@ describe('read-only Kit exit proof', () => {
 		})
 		try {
 			const result = await Effect.runPromise(
-				Effect.either(
+				Effect.result(
 					readKitExitMembership({
 						apiKey: 'fixture-key',
 						subscriberId: '123',
@@ -346,8 +346,8 @@ describe('read-only Kit exit proof', () => {
 				),
 			)
 			expect(result).toMatchObject({
-				_tag: 'Left',
-				left: { reason: 'provider-unavailable' },
+				_tag: 'Failure',
+				failure: { reason: 'provider-unavailable' },
 			})
 			expect(observed[0]?.aborted).toBe(true)
 			expect(observed[0]?.reason).toBe(timeout.signal.reason)
@@ -420,7 +420,7 @@ describe('read-only Kit exit proof', () => {
 					? '2026-10-06T14:01:00.000Z'
 					: contact.createdAt
 			const result = await Effect.runPromise(
-				Effect.either(
+				Effect.result(
 					readKitExitMembership({
 						apiKey: 'fixture-key',
 						subscriberId: '123',
@@ -433,13 +433,13 @@ describe('read-only Kit exit proof', () => {
 			)
 			if (scenario === 'http' || scenario === 'late')
 				expect(result).toMatchObject({
-					_tag: 'Left',
-					left: { reason: 'provider-unavailable' },
+					_tag: 'Failure',
+					failure: { reason: 'provider-unavailable' },
 				})
 			else
 				expect(result).toMatchObject({
-					_tag: 'Right',
-					right: { membership: 'unknown', complete: false },
+					_tag: 'Success',
+					success: { membership: 'unknown', complete: false },
 				})
 		},
 	)

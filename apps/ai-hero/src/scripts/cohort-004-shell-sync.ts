@@ -3,7 +3,7 @@ import { contentResource, contentResourceResource } from '@/db/schema'
 import { db } from '@/db'
 import { guid } from '@coursebuilder/utils/guid'
 import { and, eq } from 'drizzle-orm'
-import { Console, Effect } from 'effect'
+import { Console, Effect } from 'effect4'
 
 type Manifest = {
 	summary: {

@@ -2,7 +2,7 @@ import { mkdtemp, stat, unlink, rmdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 import {
 	createHeldRecoveryPorts,
 	type RecoveryPortOptions,
