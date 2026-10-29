@@ -10,6 +10,7 @@ import {
 } from '@/db/schema'
 import { normalizeKitSubscriberId } from '@/lib/content-progress'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
+import { readKitSubscriberIdentity } from '@/lib/kit-subscriber-directory'
 import { persistSurveyAnswers } from '@/lib/survey-answer-persistence'
 import { answerSurvey } from '@/lib/surveys-query'
 import { SubscriberSchema } from '@/schemas/subscriber'
@@ -197,6 +198,35 @@ async function resolveCheckoutSurveyAnswerer(
 	return { userId: userId || null, emailListSubscriberId, identityEmail }
 }
 
+/**
+ * Surveys off Kit. On, an answer is stored locally (QuestionResponse) and
+ * reaches drovr as interest facts; Kit gets no subscribe and no field write.
+ * Off keeps today's Kit writes. Dark because the anonymous email ask stops
+ * putting answerers on the list: only the signup path's double opt-in does.
+ */
+export function surveyOffKitEnabled() {
+	return process.env.AIH_SURVEY_OFF_KIT_ENABLED === 'true'
+}
+
+/**
+ * Who is answering, from the reader's cookies and never from Kit: a bare Kit
+ * id resolves through the local contact directory, a full cookie record is
+ * read as-is. An id the directory does not know answers anonymously.
+ */
+async function readSurveySubscriber(
+	convertkitId: string | undefined,
+	subscriberCookie: string | undefined,
+): Promise<z.infer<typeof SubscriberSchema> | null> {
+	if (convertkitId) {
+		const identity = await readKitSubscriberIdentity(convertkitId)
+		return identity ? SubscriberSchema.parse(identity) : null
+	}
+	if (subscriberCookie) {
+		return SubscriberSchema.parse(JSON.parse(subscriberCookie))
+	}
+	return null
+}
+
 export const convertkitRouter = createTRPCRouter({
 	answerSurveyMultiple: publicProcedure
 		.input(
@@ -246,16 +276,12 @@ export const convertkitRouter = createTRPCRouter({
 				}
 			}
 
-			try {
-				if (convertkitId) {
-					subscriber = SubscriberSchema.parse(
-						await emailListProvider.getSubscriber(convertkitId),
-					)
-				} else if (subscriberCookie) {
-					subscriber = SubscriberSchema.parse(JSON.parse(subscriberCookie))
-				}
+			const offKit = surveyOffKitEnabled()
 
-				if (!subscriber && input.email) {
+			try {
+				subscriber = await readSurveySubscriber(convertkitId, subscriberCookie)
+
+				if (!subscriber && input.email && !offKit) {
 					subscriber = await emailListProvider.subscribeToList({
 						listId: process.env.CONVERTKIT_SIGNUP_FORM,
 						user: (session?.user || { email: input.email }) as AdapterUser,
@@ -325,6 +351,10 @@ export const convertkitRouter = createTRPCRouter({
 					subscriberSyncError,
 				})
 				return { success: true, storedInDb: true, subscriberSyncError }
+			}
+
+			if (offKit) {
+				return { success: true, storedInDb: true, subscriberSyncError: null }
 			}
 
 			try {
@@ -507,13 +537,7 @@ export const convertkitRouter = createTRPCRouter({
 			let subscriberLookupError: string | null = null
 
 			try {
-				if (convertkitId) {
-					subscriber = SubscriberSchema.parse(
-						await emailListProvider.getSubscriber(convertkitId),
-					)
-				} else if (subscriberCookie) {
-					subscriber = SubscriberSchema.parse(JSON.parse(subscriberCookie))
-				}
+				subscriber = await readSurveySubscriber(convertkitId, subscriberCookie)
 			} catch (error) {
 				subscriberLookupError =
 					error instanceof Error ? error.message : String(error)
@@ -584,6 +608,10 @@ export const convertkitRouter = createTRPCRouter({
 					subscriberLookupError,
 				})
 				return { success: true, storedInDb: true, subscriberLookupError }
+			}
+
+			if (surveyOffKitEnabled()) {
+				return { success: true, storedInDb: true, subscriberLookupError: null }
 			}
 
 			const updatedSubscriber = await answerSurvey({
