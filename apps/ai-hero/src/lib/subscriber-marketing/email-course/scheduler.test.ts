@@ -11,7 +11,7 @@ import {
   type IanaTimeZone,
   type ParseResult,
 } from "./primitives";
-import { Effect } from "effect";
+import { Effect } from "effect4";
 
 const instant = (input: string) => value(parseIsoInstant(input));
 const timeZone = (input: string) => value(parseIanaTimeZone(input));
