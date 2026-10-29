@@ -1,0 +1,156 @@
+import type { FlowDiagram } from '../flow'
+
+/**
+ * Matt's "Implement Spec v2" workflow, from the "Where We're Going" lesson
+ * of Before We Start. Every step, badge and arrow is his. `wide` follows where
+ * each step sits in his drawing; on a phone the two lanes keep their order
+ * and the right lane pulls in, so each step has room to wrap.
+ */
+export const implementSpecV2: FlowDiagram = {
+	title: 'Implement Spec v2',
+	description: 'Implement a spec, with NO attached tickets.',
+	nodes: [
+		{
+			id: 'labelled',
+			roles: ['tracker'],
+			text: 'Spec labelled agent:implement in ticket tracker',
+			wide: { col: 2, row: 1 },
+			narrow: { col: 2, row: 1, span: 5 },
+		},
+		{
+			id: 'no-tickets',
+			roles: ['orchestrator'],
+			text: 'If it has no tickets…',
+			wide: { col: 2, row: 2 },
+			narrow: { col: 2, row: 2, span: 5 },
+		},
+		{
+			id: 'has-tickets',
+			roles: ['orchestrator'],
+			text: 'If it has tickets…',
+			wide: { col: 6, row: 2 },
+			narrow: { col: 7, row: 2, span: 6 },
+		},
+		{
+			id: 'to-tickets',
+			roles: ['runner'],
+			text: 'Run /to-tickets on the spec',
+			wide: { col: 2, row: 3 },
+			narrow: { col: 2, row: 3, span: 5 },
+		},
+		{
+			id: 'explore',
+			roles: ['runner'],
+			text: 'Run the exploration step',
+			wide: { col: 6, row: 3 },
+			narrow: { col: 7, row: 3, span: 6 },
+		},
+		{
+			id: 'adds-tickets',
+			roles: ['tracker'],
+			text: 'Adds tickets to the spec',
+			wide: { col: 2, row: 4 },
+			narrow: { col: 2, row: 4, span: 5 },
+		},
+		{
+			id: 'save-markdown',
+			roles: ['git'],
+			text: 'Save markdown files in a remote branch',
+			wide: { col: 7, row: 4 },
+			narrow: { col: 9, row: 4 },
+		},
+		{
+			id: 'exploration-comment',
+			roles: ['tracker'],
+			text: 'Adds exploration comment to the spec ticket',
+			wide: { col: 6, row: 5 },
+			narrow: { col: 7, row: 5, span: 6 },
+		},
+		{
+			id: 'for-each',
+			roles: ['orchestrator'],
+			text: 'For each frontier ticket, trigger a runner',
+			wide: { col: 5, row: 6 },
+			narrow: { col: 5, row: 6, span: 6 },
+		},
+		{
+			id: 'build',
+			roles: ['runner', 'runner'],
+			more: true,
+			text: 'Build each ticket',
+			wide: { col: 5, row: 7 },
+			narrow: { col: 5, row: 7, span: 6 },
+		},
+		{
+			id: 'save-code',
+			roles: ['git'],
+			text: 'Save code to a branch',
+			wide: { col: 1, row: 8 },
+		},
+		{
+			id: 'all-complete',
+			roles: ['orchestrator'],
+			text: 'Once all complete…',
+			wide: { col: 5, row: 8 },
+		},
+		{
+			id: 'not-complete',
+			roles: ['orchestrator'],
+			text: 'If not complete…',
+			wide: { col: 9, row: 8 },
+		},
+		{
+			id: 'merge',
+			roles: ['runner'],
+			text: 'Merge all the branches together',
+			wide: { col: 5, row: 9 },
+		},
+		{
+			id: 'close-tickets',
+			roles: ['tracker'],
+			text: 'Close the tickets',
+			wide: { col: 10, row: 9, span: 3 },
+			narrow: { col: 9, row: 9 },
+		},
+		{
+			id: 'save-merged',
+			roles: ['git'],
+			text: 'Save merged code to the branch',
+			wide: { col: 9, row: 10 },
+		},
+		{
+			id: 'complete',
+			roles: ['orchestrator'],
+			text: 'If complete…',
+			wide: { col: 5, row: 10 },
+		},
+		{
+			id: 'review',
+			roles: ['runner'],
+			text: 'Run agent review',
+			wide: { col: 5, row: 11 },
+		},
+	],
+	edges: [
+		{ from: 'labelled', to: 'no-tickets', exit: 'left', enter: 'left' },
+		{ from: 'labelled', to: 'has-tickets', exit: 'right', enter: 'top' },
+		{ from: 'no-tickets', to: 'to-tickets', exit: 'left', enter: 'left' },
+		{ from: 'to-tickets', to: 'adds-tickets', exit: 'left', enter: 'left' },
+		{ from: 'adds-tickets', to: 'has-tickets', exit: 'right', enter: 'bottom' },
+		{ from: 'has-tickets', to: 'explore', exit: 'bottom', enter: 'top' },
+		{ from: 'explore', to: 'save-markdown', exit: 'right', enter: 'top' },
+		{ from: 'explore', to: 'exploration-comment', exit: 'bottom', enter: 'top' },
+		{ from: 'explore', to: 'for-each', exit: 'left', enter: 'top', exitBesideText: true },
+		{ from: 'for-each', to: 'build', exit: 'left', enter: 'left' },
+		{ from: 'build', to: 'save-code', exit: 'left', enter: 'top' },
+		{ from: 'build', to: 'all-complete', exit: 'left', enter: 'left' },
+		{ from: 'save-code', to: 'merge', exit: 'bottom', enter: 'left' },
+		{ from: 'all-complete', to: 'merge', exit: 'left', enter: 'left' },
+		{ from: 'merge', to: 'not-complete', exit: 'right', enter: 'left' },
+		{ from: 'not-complete', to: 'for-each', exit: 'top', enter: 'right' },
+		{ from: 'merge', to: 'close-tickets', exit: 'right', enter: 'left' },
+		{ from: 'merge', to: 'save-merged', exit: 'right', enter: 'left' },
+		{ from: 'merge', to: 'complete', exit: 'left', enter: 'left' },
+		{ from: 'complete', to: 'review', exit: 'left', enter: 'left' },
+	],
+}
