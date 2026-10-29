@@ -209,15 +209,23 @@ export function surveyOffKitEnabled() {
 }
 
 /**
- * Who is answering, from the reader's cookies and never from Kit: a bare Kit
- * id resolves through the local contact directory, a full cookie record is
- * read as-is. An id the directory does not know answers anonymously.
+ * Who is answering, from the reader's cookies. A full cookie record is read
+ * as-is. Off Kit, a bare Kit id resolves through the local contact directory
+ * and an id the directory does not know answers anonymously. Off, a bare id
+ * is still looked up in Kit, as before: the directory has no list state, and
+ * Kit's record is what the client writes back into `ck_subscriber`.
  */
 async function readSurveySubscriber(
 	convertkitId: string | undefined,
 	subscriberCookie: string | undefined,
+	offKit: boolean,
 ): Promise<z.infer<typeof SubscriberSchema> | null> {
 	if (convertkitId) {
+		if (!offKit) {
+			return SubscriberSchema.parse(
+				await emailListProvider.getSubscriber(convertkitId),
+			)
+		}
 		const identity = await readKitSubscriberIdentity(convertkitId)
 		return identity ? SubscriberSchema.parse(identity) : null
 	}
@@ -279,7 +287,11 @@ export const convertkitRouter = createTRPCRouter({
 			const offKit = surveyOffKitEnabled()
 
 			try {
-				subscriber = await readSurveySubscriber(convertkitId, subscriberCookie)
+				subscriber = await readSurveySubscriber(
+					convertkitId,
+					subscriberCookie,
+					offKit,
+				)
 
 				if (!subscriber && input.email && !offKit) {
 					subscriber = await emailListProvider.subscribeToList({
@@ -535,9 +547,14 @@ export const convertkitRouter = createTRPCRouter({
 
 			let subscriber: z.infer<typeof SubscriberSchema> | null = null
 			let subscriberLookupError: string | null = null
+			const offKit = surveyOffKitEnabled()
 
 			try {
-				subscriber = await readSurveySubscriber(convertkitId, subscriberCookie)
+				subscriber = await readSurveySubscriber(
+					convertkitId,
+					subscriberCookie,
+					offKit,
+				)
 			} catch (error) {
 				subscriberLookupError =
 					error instanceof Error ? error.message : String(error)
@@ -610,7 +627,7 @@ export const convertkitRouter = createTRPCRouter({
 				return { success: true, storedInDb: true, subscriberLookupError }
 			}
 
-			if (surveyOffKitEnabled()) {
+			if (offKit) {
 				return { success: true, storedInDb: true, subscriberLookupError: null }
 			}
 

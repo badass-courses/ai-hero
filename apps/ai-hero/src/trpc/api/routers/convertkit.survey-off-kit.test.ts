@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
 	identities: new Map<string, string>(),
 	contacts: new Map<string, { email: string | null; name: string | null }>(),
 	kitCalls: [] as string[],
+	kitUp: false,
 	kitFetches: [] as string[],
 	inserted: [] as Array<Record<string, unknown>>,
 	scheduled: [] as Array<{ questionId: string; email: string | null }>,
@@ -64,7 +65,13 @@ vi.mock('@/coursebuilder/email-list-provider', () => ({
 		{
 			get: (_target, property) => () => {
 				mocks.kitCalls.push(String(property))
-				throw new Error('Kit is unreachable')
+				if (!mocks.kitUp) throw new Error('Kit is unreachable')
+				return {
+					id: 1234567,
+					email_address: 'reader@example.test',
+					state: 'active',
+					fields: {},
+				}
 			},
 		},
 	),
@@ -115,6 +122,7 @@ describe('surveys off Kit, with Kit unreachable', () => {
 		mocks.identities.clear()
 		mocks.contacts.clear()
 		mocks.kitCalls.length = 0
+		mocks.kitUp = false
 		mocks.kitFetches.length = 0
 		mocks.inserted.length = 0
 		mocks.scheduled.length = 0
@@ -234,16 +242,17 @@ describe('surveys off Kit, with Kit unreachable', () => {
 		expect(mocks.kitCalls).toEqual([])
 	})
 
-	it('off, keeps the Kit subscribe and field write (the flag is the switch)', async () => {
+	it('off, keeps every Kit read and write (the flag is the switch)', async () => {
 		vi.stubEnv('AIH_SURVEY_OFF_KIT_ENABLED', '')
+		mocks.kitUp = true
 		mocks.cookies.set('ck_subscriber_id', KIT_ID)
 
-		await caller().answerSurvey({
+		const single = await caller().answerSurvey({
 			surveyId: 'ai-coding-readiness',
 			question: 'goal',
 			answer: 'ship-faster',
 		})
-		await caller().answerSurveyMultiple({
+		const multiple = await caller().answerSurveyMultiple({
 			surveyId: 'ai-coding-readiness',
 			email: 'reader@example.test',
 			answers: { goal: 'ship-faster' },
@@ -255,13 +264,20 @@ describe('surveys off Kit, with Kit unreachable', () => {
 			answers: { goal: 'ship-faster' },
 		})
 
-		// Identity still never asks Kit; only the legacy writes reach it.
-		expect(mocks.kitCalls).not.toContain('getSubscriberByEmail')
+		// Identity comes from Kit, as before the flag: the directory has no
+		// list state, and the client writes Kit's record into ck_subscriber.
 		expect(mocks.kitCalls).toEqual([
+			'getSubscriber',
 			'updateSubscriberFields',
 			'getSubscriber',
+			'getSubscriber',
+			'updateSubscriberFields',
 			'subscribeToList',
+			'getSubscriber',
+			'updateSubscriberFields',
 		])
+		expect(single).toMatchObject({ id: 1234567, state: 'active' })
+		expect(multiple).toMatchObject({ id: 1234567, state: 'active' })
 		// Answers are stored locally either way.
 		expect(mocks.inserted).toHaveLength(3)
 	})
