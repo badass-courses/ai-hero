@@ -1,11 +1,65 @@
 import { randomUUID } from 'node:crypto'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { buildRunIdentity, isNonProdExecutorOnProdDb } from './run-identity'
+import {
+	buildRunIdentity,
+	getRunIdentity,
+	isNonProdExecutorOnProdDb,
+	registerInngestRunIdentity,
+} from './run-identity'
 
 const runtime = { hostname: 'executor.example.test', gitSha: 'a'.repeat(40) }
 
 describe('run identity', () => {
+	afterEach(() => {
+		vi.unstubAllEnvs()
+		registerInngestRunIdentity({})
+	})
+
+	it.each([
+		[undefined, 'cloud'],
+		['', 'cloud'],
+		['0', 'cloud'],
+		['false', 'cloud'],
+		['1', 'dev'],
+		['true', 'dev'],
+		['other', 'cloud'],
+	])(
+		'uses only 1 or true as the dev environment fallback (%s)',
+		(value, expected) => {
+			expect(buildRunIdentity({ INNGEST_DEV: value }, runtime).inngest).toBe(
+				expected,
+			)
+			vi.stubEnv('INNGEST_DEV', value ?? '')
+			registerInngestRunIdentity({})
+			expect(getRunIdentity().inngest).toBe(expected)
+			registerInngestRunIdentity({
+				get mode() {
+					throw new Error('unavailable')
+				},
+			})
+			expect(getRunIdentity().inngest).toBe(expected)
+		},
+	)
+
+	it.each([
+		[true, 'false', 'dev'],
+		[false, '1', 'cloud'],
+	])(
+		'prefers client mode %s over conflicting environment %s',
+		(isDev, value, expected) => {
+			expect(
+				buildRunIdentity(
+					{ INNGEST_DEV: value },
+					{ ...runtime, inngestDev: isDev },
+				).inngest,
+			).toBe(expected)
+			vi.stubEnv('INNGEST_DEV', value)
+			registerInngestRunIdentity({ mode: { isDev } })
+			expect(getRunIdentity().inngest).toBe(expected)
+		},
+	)
+
 	it('projects only allowlisted fields; never retains credentials or query strings', () => {
 		const syntheticPassword = randomUUID()
 		const syntheticQuery = randomUUID()

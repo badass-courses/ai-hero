@@ -32,7 +32,11 @@ export function buildRunIdentity(
 		vercelEnv: env.VERCEL_ENV ?? null,
 		nodeEnv: env.NODE_ENV ?? null,
 		onVercel: env.VERCEL === '1',
-		inngest: env.INNGEST_DEV || runtime.inngestDev ? 'dev' : 'cloud',
+		inngest:
+			(runtime.inngestDev ??
+			(env.INNGEST_DEV === '1' || env.INNGEST_DEV === 'true'))
+				? 'dev'
+				: 'cloud',
 		hostname: runtime.hostname,
 		gitSha: env.VERCEL_GIT_COMMIT_SHA ?? runtime.gitSha ?? null,
 		dbHost,
@@ -59,13 +63,14 @@ function readLocalGitSha(): string | null {
 
 // The SDK exposes no public mode accessor. Keep this optional, guarded probe
 // in one place; missing/changing SDK internals fall back to INNGEST_DEV.
-let isInngestDev = () => false
+let isInngestDev: () => boolean | undefined = () => undefined
 export function registerInngestRunIdentity(client: object): void {
 	isInngestDev = () => {
 		try {
-			return Reflect.get(client, 'mode')?.isDev === true
+			const mode = Reflect.get(client, 'mode')?.isDev
+			return typeof mode === 'boolean' ? mode : undefined
 		} catch {
-			return false
+			return undefined
 		}
 	}
 }
