@@ -314,12 +314,12 @@ function SkillRow({
 	seek: (seconds: number) => void
 }) {
 	return (
-		<div className="flex flex-col gap-1">
+		<div>
 			<TimeButton seconds={moment.visibleFrom} seek={seek} />
 			<div
 				className={cn(
 					TYPE.metaSm,
-					'text-muted-foreground flex items-center gap-1.5',
+					'text-muted-foreground mt-1 flex items-center gap-1.5',
 				)}
 			>
 				<SparklesIcon className="size-3 shrink-0" aria-hidden />
