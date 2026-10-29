@@ -51,10 +51,13 @@ export async function getLessonSessionExtracts(
 		)
 	).flat()
 
-	// One video per lesson, as the page reads it: the first one found.
+	// One video per lesson, as the page reads it: the first one found, even
+	// when it has no extract or a malformed one.
 	const byLesson = new Map<string, SessionExtract>()
+	const seen = new Set<string>()
 	for (const row of rows) {
-		if (byLesson.has(row.lessonId)) continue
+		if (seen.has(row.lessonId)) continue
+		seen.add(row.lessonId)
 		const parsed = parseSessionExtract(row.sessionExtract)
 		if (parsed.status === 'invalid') {
 			await log.warn('lesson.session_extract.invalid', {

@@ -71,6 +71,17 @@ describe('getLessonSessionExtracts', () => {
 		)
 	})
 
+	it('reads only the first video, as the page does, even when it has no valid extract', async () => {
+		mocks.rows = [
+			{ lessonId: 'empty', sessionExtract: null },
+			{ lessonId: 'empty', sessionExtract: extract('later video') },
+			{ lessonId: 'bad', sessionExtract: { sessions: 'nope' } },
+			{ lessonId: 'bad', sessionExtract: extract('later video') },
+		]
+		const result = await getLessonSessionExtracts(['empty', 'bad'])
+		expect(result).toEqual([])
+	})
+
 	it('queries in batches of 100 ids and not at all for none', async () => {
 		await getLessonSessionExtracts([])
 		expect(mocks.batches).toHaveLength(0)
