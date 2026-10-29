@@ -130,8 +130,29 @@ suite('coupon minting against real MySQL', () => {
 				code: null,
 				expires: null,
 				organizationId: null,
-				fields: { bypassSoldOut: true, mintedFor: label },
+				fields: {
+					bypassSoldOut: true,
+					mintedFor: label,
+					mintKey: expect.stringMatching(/^[0-9a-f]{64}$/),
+					mintRequest: expect.stringMatching(/^[0-9a-f]{64}$/),
+				},
 			})
+		expect(rows.map((row) => row.fields?.mintIndex).sort()).toEqual([0, 1])
+
+		// A smaller quantity on the same key must not replay a prefix.
+		expect(
+			await mintCoupons(
+				{ actor, idempotencyKey, request: { ...request, quantity: 1 } },
+				deps,
+			),
+		).toMatchObject({ state: 'conflict' })
+		// Rotating the id secret still finds the stored batch through mintKey.
+		expect(
+			await mintCoupons(
+				{ actor, idempotencyKey, request },
+				{ ...deps, idSecret: 'synthetic-rotated-secret' },
+			),
+		).toMatchObject({ state: 'replayed', coupons: a.coupons })
 	})
 
 	it('redeems a minted 100% coupon through redeemFullPriceCoupon, once', async () => {

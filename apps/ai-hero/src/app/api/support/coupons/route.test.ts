@@ -67,8 +67,8 @@ vi.mock('@/server/ability-for-request', () => ({
 vi.mock('@/lib/coupon-mint-drizzle', () => ({
 	drizzleCouponMintStore: {
 		findProduct: async (id: string) => state.products.get(id) ?? null,
-		findCoupons: async (ids: string[]) =>
-			ids.flatMap((id) => (state.rows.has(id) ? [state.rows.get(id)!] : [])),
+		findCouponsByMintKey: async (mintKey: string) =>
+			[...state.rows.values()].filter((row) => row.fields?.mintKey === mintKey),
 		insertCoupons: async (rows: NewCouponRow[]) => {
 			state.insertCoupons(rows)
 			if (rows.some((row) => state.rows.has(row.id)))
@@ -122,6 +122,7 @@ const asAdmin = () => {
 	}
 }
 const free = { productId: 'product-c5', percentageDiscount: 1 }
+const hex64 = expect.stringMatching(/^[0-9a-f]{64}$/)
 
 beforeEach(() => {
 	vi.clearAllMocks()
@@ -183,7 +184,13 @@ describe('POST /api/support/coupons minting', () => {
 				merchantCouponId: null,
 				status: 1,
 				default: false,
-				fields: { bypassSoldOut: true, mintedFor: 'friend-of-joel' },
+				fields: {
+					bypassSoldOut: true,
+					mintedFor: 'friend-of-joel',
+					mintKey: hex64,
+					mintRequest: hex64,
+					mintIndex: 0,
+				},
 			},
 		])
 		expect(state.log.info).toHaveBeenCalledWith(
@@ -216,11 +223,38 @@ describe('POST /api/support/coupons minting', () => {
 		expect(other.coupons[0].id).not.toBe(first.coupons[0].id)
 	})
 
-	it('refuses a reused key with different parameters', async () => {
-		await mint(free)
-		const res = await mint({ ...free, maxUses: 5 })
+	it.each([
+		['a smaller quantity', { quantity: 2 }],
+		['a larger quantity', { quantity: 4 }],
+		['another maxUses', { maxUses: 5 }],
+		['another percent', { percentageDiscount: 0.5 }],
+		['another label', { label: 'other-batch' }],
+		['an expiry', { expiresAt: '2099-01-01T00:00:00Z' }],
+		['another bypassSoldOut', { bypassSoldOut: false }],
+	])('refuses a reused key with %s', async (_, change) => {
+		await mint({ ...free, quantity: 3, label: 'oct-friends' })
+		const res = await mint({
+			...free,
+			quantity: 3,
+			label: 'oct-friends',
+			...change,
+		})
 		expect(res.status).toBe(409)
-		expect(state.rows.size).toBe(1)
+		expect((await res.json()).coupons).toBeUndefined()
+		expect(state.rows.size).toBe(3)
+		expect(state.insertCoupons).toHaveBeenCalledTimes(1)
+	})
+
+	it('replays the stored batch after NEXTAUTH_SECRET rotates', async () => {
+		const first = await (await mint({ ...free, quantity: 2 })).json()
+		state.env.NEXTAUTH_SECRET = 'synthetic-rotated-secret'
+		const retry = await mint({ ...free, quantity: 2 })
+		expect(retry.status).toBe(200)
+		expect((await retry.json()).coupons).toEqual(first.coupons)
+		expect(state.rows.size).toBe(2)
+		expect(state.insertCoupons).toHaveBeenCalledTimes(1)
+		// Still bound to the whole request after rotation.
+		expect((await mint({ ...free, quantity: 1 })).status).toBe(409)
 	})
 
 	it('reuses the admin merchant coupon for partial discounts', async () => {
@@ -233,7 +267,7 @@ describe('POST /api/support/coupons minting', () => {
 		expect(state.insertCoupons.mock.calls[0]![0][0]).toMatchObject({
 			percentageDiscount: '0.25',
 			merchantCouponId: 'merchant-coupon-25',
-			fields: {},
+			fields: { mintKey: hex64, mintRequest: hex64, mintIndex: 0 },
 		})
 	})
 

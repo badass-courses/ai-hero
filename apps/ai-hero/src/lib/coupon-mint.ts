@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto'
+import { createHash, createHmac } from 'node:crypto'
 import { z } from 'zod'
 
 /**
@@ -9,9 +9,16 @@ import { z } from 'zod'
  * redeems through Course Builder's `redeemFullPriceCoupon` at `?code=<id>`.
  * Below 100% the admin form's merchant coupon (and its Stripe coupon) is reused.
  *
- * Idempotency needs no extra table: coupon ids are an HMAC of the actor, the
- * Idempotency-Key and the row index. A retry derives the same ids, and the
- * primary key refuses a second insert even when two requests race.
+ * Idempotency needs no extra table. Every row stores `fields.mintKey` (a hash
+ * of the actor and the Idempotency-Key) and `fields.mintRequest` (a hash of the
+ * whole normalized request, quantity included). A retry finds the batch by
+ * mintKey and replays it only when the request hash matches; anything else is a
+ * 409. That lookup does not depend on any secret, so rotating NEXTAUTH_SECRET
+ * cannot turn a retry into a second batch.
+ *
+ * Coupon ids are still an HMAC of the actor, the key and the row index: an id is
+ * a redeem code, so it must not be guessable from the key, and the primary key
+ * refuses a second insert when two requests with the same key race.
  */
 
 export const COUPON_MINT_MAX_QUANTITY = 50
@@ -81,7 +88,8 @@ export type NewCouponRow = {
 
 export type CouponMintStore = {
 	findProduct(id: string): Promise<{ id: string; name: string } | null>
-	findCoupons(ids: string[]): Promise<StoredCoupon[]>
+	/** Every coupon whose `fields.mintKey` equals this hash. */
+	findCouponsByMintKey(mintKey: string): Promise<StoredCoupon[]>
 	/** All rows or none: one transaction. */
 	insertCoupons(rows: NewCouponRow[]): Promise<void>
 	listCoupons(query: {
@@ -146,6 +154,31 @@ export function deriveCouponIds({
 				.digest('hex')
 				.slice(0, 24)}`,
 	)
+}
+
+/** Secret-free batch identity: the same actor and key always find the batch. */
+export function deriveMintKey(actorId: string, idempotencyKey: string) {
+	return createHash('sha256')
+		.update(`coupon-mint:key:v1:${actorId}:${idempotencyKey}`)
+		.digest('hex')
+}
+
+/** Hash of everything the request asked for; any difference is a conflict. */
+function hashMintRequest(mint: NormalizedMint) {
+	return createHash('sha256')
+		.update(
+			JSON.stringify([
+				'coupon-mint:request:v1',
+				mint.productId,
+				mint.percentageDiscount.toFixed(2),
+				mint.maxUses,
+				mint.quantity,
+				mint.expires?.toISOString() ?? null,
+				mint.label,
+				mint.bypassSoldOut,
+			]),
+		)
+		.digest('hex')
 }
 
 function normalize(
@@ -213,9 +246,13 @@ export async function mintCoupons(
 		quantity: mint.quantity,
 	})
 
+	const mintKey = deriveMintKey(actor.userId, idempotencyKey)
+	const mintRequest = hashMintRequest(mint)
+
 	const settle = (
 		state: 'minted' | 'replayed',
 		merchantCouponId: string | null,
+		couponIds: string[],
 	): CouponMintResult => ({
 		state,
 		productId: product.id,
@@ -224,22 +261,36 @@ export async function mintCoupons(
 		maxUses: mint.maxUses,
 		label: mint.label,
 		merchantCouponId,
-		coupons: ids.map((id) => ({ id, url: deps.inviteUrl(id) })),
+		coupons: couponIds.map((id) => ({ id, url: deps.inviteUrl(id) })),
 	})
 
 	const replay = async (): Promise<CouponMintResult | null> => {
-		const existing = await deps.store.findCoupons(ids)
+		const existing = await deps.store.findCouponsByMintKey(mintKey)
 		if (existing.length === 0) return null
+		// The whole request is bound to the key: a smaller quantity, or any other
+		// change, must not replay a prefix of a live batch.
 		if (
-			existing.length !== ids.length ||
-			!existing.every((row) => rowMatches(row, mint))
+			existing.length !== mint.quantity ||
+			!existing.every(
+				(row) =>
+					row.fields?.mintRequest === mintRequest && rowMatches(row, mint),
+			)
 		)
 			return {
 				state: 'conflict',
 				error:
 					'This Idempotency-Key already minted a different batch. Use a new key.',
 			}
-		return settle('replayed', existing[0]!.merchantCouponId)
+		// Return the stored ids, not freshly derived ones, so replay survives a
+		// secret rotation.
+		const ordered = [...existing].sort(
+			(a, b) => Number(a.fields?.mintIndex) - Number(b.fields?.mintIndex),
+		)
+		return settle(
+			'replayed',
+			ordered[0]!.merchantCouponId,
+			ordered.map((row) => row.id),
+		)
 	}
 
 	const before = await replay()
@@ -254,10 +305,12 @@ export async function mintCoupons(
 	const fields: Record<string, unknown> = {
 		...(mint.bypassSoldOut ? { bypassSoldOut: true } : {}),
 		...(mint.label ? { mintedFor: mint.label } : {}),
+		mintKey,
+		mintRequest,
 	}
 	try {
 		await deps.store.insertCoupons(
-			ids.map((id) => ({
+			ids.map((id, mintIndex) => ({
 				id,
 				restrictedToProductId: product.id,
 				percentageDiscount: mint.percentageDiscount.toFixed(2),
@@ -266,7 +319,7 @@ export async function mintCoupons(
 				merchantCouponId,
 				status: 1,
 				default: false,
-				fields,
+				fields: { ...fields, mintIndex },
 			})),
 		)
 	} catch (error) {
@@ -276,7 +329,7 @@ export async function mintCoupons(
 		if (raced) return raced
 		throw error
 	}
-	return settle('minted', merchantCouponId)
+	return settle('minted', merchantCouponId, ids)
 }
 
 export type CouponListResult = {

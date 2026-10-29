@@ -1,6 +1,6 @@
 import { db } from '@/db'
 import { coupon, products } from '@/db/schema'
-import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, sql } from 'drizzle-orm'
 
 import type { CouponMintStore, StoredCoupon } from './coupon-mint'
 
@@ -26,12 +26,14 @@ export const drizzleCouponMintStore: CouponMintStore = {
 			.limit(1)
 		return row ?? null
 	},
-	async findCoupons(ids) {
-		if (ids.length === 0) return []
+	async findCouponsByMintKey(mintKey) {
+		// Unindexed JSON match; fine for an admin-only mint endpoint.
 		return (await db
 			.select(storedCouponColumns)
 			.from(coupon)
-			.where(inArray(coupon.id, ids))) as StoredCoupon[]
+			.where(
+				sql`JSON_UNQUOTE(JSON_EXTRACT(${coupon.fields}, '$.mintKey')) = ${mintKey}`,
+			)) as StoredCoupon[]
 	},
 	async insertCoupons(rows) {
 		await db.transaction(async (trx) => {
