@@ -1,7 +1,7 @@
 import type { SurfaceName } from '@/lib/analytics'
 import { PROMO_KINDS } from '@/lib/analytics/promos'
 
-export const ANALYTICS_SCHEMA_VERSION = '2026-10-29.1'
+export const ANALYTICS_SCHEMA_VERSION = '2026-10-29.2'
 
 export const ANALYTICS_AGENT_INSTRUCTIONS = [
 	'Revenue amounts are USD major units. Treat database revenue surfaces as the revenue source of truth, not GA4.',
@@ -11,7 +11,9 @@ export const ANALYTICS_AGENT_INSTRUCTIONS = [
 	'Absent productId means all products on product-aware surfaces. Published revenue schemas list productId support, and some attribution surfaces also accept it.',
 	'purchases/recent defaults to range=30d. Use range=all when historical purchases are required.',
 	'Treat each response as a point-in-time read. Re-query before reporting live launch numbers.',
-	'learning/progress requires productId and ignores range. Divide funnel started/completed by data.funnel.denominator.count (signed-in learners), not roster.learners. Report locked rows as locked, never as 0% completion. Read data.asOf; results are cached for up to five minutes.',
+	'learning/progress requires productId and ignores range. Divide funnel started/completed by data.funnel.denominator.count (signed-in learners), not roster.learners. Report locked rows as locked, never as 0% completion. Read data.asOf; results are cached for data.refreshSeconds (five minutes, or fifteen above 5,000 learners).',
+	'learning/teams and learning/team are aggregate team reads; a team id is a bulk coupon id. learning/team divides funnel counts by data.funnel.denominator.count (team members). Unredeemed seats are a count, never members with zero progress.',
+	'learning/team-members is PII: learner emails and names. Only AI Hero admins may read it, every read is logged with the actor and team, and it is never cached. Do not copy member rows into public, shared or long-lived places; summarize with learning/team instead.',
 ] as const
 
 const usd = (description: string) => ({
@@ -75,15 +77,60 @@ const learningAvailability = {
 	],
 } as const
 
+const learningFunnelRow = {
+	type: 'object',
+	additionalProperties: false,
+	required: [
+		'id',
+		'kind',
+		'workshopId',
+		'title',
+		'slug',
+		'state',
+		'startsAt',
+		'availability',
+		'requiredLessons',
+		'started',
+		'completed',
+	],
+	properties: {
+		id: { type: 'string', description: 'Content resource id' },
+		kind: { enum: ['workshop', 'section'] },
+		workshopId: { type: ['string', 'null'] },
+		title: { type: 'string' },
+		slug: { type: ['string', 'null'] },
+		state: { type: ['string', 'null'] },
+		startsAt: { type: ['string', 'null'] },
+		availability: learningAvailability,
+		requiredLessons: count('Lessons a learner must complete'),
+		started: count('Learners in the denominator with any progress here'),
+		completed: count(
+			'Learners in the denominator who completed every required lesson',
+		),
+	},
+} as const
+
 const learningProgressSchema = {
 	supports: ['productId'],
 	requires: ['productId'],
 	data: {
 		type: 'object',
 		additionalProperties: false,
-		required: ['asOf', 'product', 'roster', 'funnel', 'activity'],
+		required: [
+			'asOf',
+			'refreshSeconds',
+			'product',
+			'roster',
+			'funnel',
+			'activity',
+		],
 		properties: {
 			asOf: { type: 'string', format: 'date-time' },
+			refreshSeconds: {
+				enum: [300, 900],
+				description:
+					'Cache lifetime of this read: 900 above 5,000 learners, else 300',
+			},
 			product: {
 				type: 'object',
 				additionalProperties: false,
@@ -158,38 +205,7 @@ const learningProgressSchema = {
 					},
 					rows: {
 						type: 'array',
-						items: {
-							type: 'object',
-							additionalProperties: false,
-							required: [
-								'id',
-								'kind',
-								'workshopId',
-								'title',
-								'slug',
-								'state',
-								'startsAt',
-								'availability',
-								'requiredLessons',
-								'started',
-								'completed',
-							],
-							properties: {
-								id: { type: 'string', description: 'Content resource id' },
-								kind: { enum: ['workshop', 'section'] },
-								workshopId: { type: ['string', 'null'] },
-								title: { type: 'string' },
-								slug: { type: ['string', 'null'] },
-								state: { type: ['string', 'null'] },
-								startsAt: { type: ['string', 'null'] },
-								availability: learningAvailability,
-								requiredLessons: count('Lessons a learner must complete'),
-								started: count('Signed-in learners with any progress here'),
-								completed: count(
-									'Signed-in learners who completed every required lesson',
-								),
-							},
-						},
+						items: learningFunnelRow,
 					},
 				},
 			},
@@ -231,8 +247,240 @@ const learningProgressSchema = {
 	],
 } as const
 
+const learningProduct = {
+	type: 'object',
+	additionalProperties: false,
+	required: ['id', 'name'],
+	properties: { id: { type: 'string' }, name: { type: 'string' } },
+} as const
+
+const learningSeats = {
+	type: 'object',
+	additionalProperties: false,
+	required: ['bought', 'redeemed', 'unredeemed'],
+	properties: {
+		bought: count("The team coupon's maxUses"),
+		redeemed: count("The team coupon's usedCount"),
+		unredeemed: count('bought minus redeemed, never below zero'),
+	},
+} as const
+
+const learningTeamSummary = {
+	type: 'object',
+	additionalProperties: false,
+	required: [
+		'teamId',
+		'product',
+		'purchaseIds',
+		'purchasedAt',
+		'seats',
+		'members',
+		'completion',
+	],
+	properties: {
+		teamId: { type: 'string', description: 'The bulk coupon id' },
+		product: learningProduct,
+		purchaseIds: {
+			type: 'array',
+			items: { type: 'string' },
+			description: 'Bulk purchase ids behind the team, oldest first',
+		},
+		purchasedAt: { type: 'string', format: 'date-time' },
+		seats: learningSeats,
+		members: {
+			type: 'object',
+			additionalProperties: false,
+			required: ['count', 'signedIn', 'neverSignedIn', 'active7d'],
+			properties: {
+				count: count(
+					'Users holding a Valid or Restricted redeemed seat now. Can trail seats.redeemed after refunds.',
+				),
+				signedIn: count('Members with sign-in evidence'),
+				neverSignedIn: count('count minus signedIn'),
+				active7d: count(
+					"Members with any progress write on the product's required lessons in the 7d before asOf",
+				),
+			},
+		},
+		completion: {
+			type: 'object',
+			additionalProperties: false,
+			required: ['openRequiredLessons', 'averageShare'],
+			properties: {
+				openRequiredLessons: count(
+					'Required lessons in workshops open to learners at asOf',
+				),
+				averageShare: {
+					type: ['number', 'null'],
+					minimum: 0,
+					maximum: 1,
+					description:
+						'Mean share of open required lessons each member completed. Null with no members or no open lessons.',
+				},
+			},
+		},
+	},
+} as const
+
+const learningTeamsSchema = {
+	supports: ['productId'],
+	data: {
+		type: 'object',
+		additionalProperties: false,
+		required: ['asOf', 'productId', 'teams'],
+		properties: {
+			asOf: { type: 'string', format: 'date-time' },
+			productId: { type: ['string', 'null'] },
+			teams: {
+				type: 'array',
+				items: learningTeamSummary,
+				description: 'Newest purchase first',
+			},
+		},
+	},
+	semantics: [
+		'Aggregate only. No member ids, emails or names, and no organization names: personal organizations are named from the buyer email.',
+		'A team is one bulk coupon. Extra seat purchases for the same organization and product share it, so purchaseIds can hold several ids.',
+		'Only teams with a Valid or Restricted bulk purchase are listed.',
+	],
+} as const
+
+const learningTeamSchema = {
+	supports: ['teamId'],
+	requires: ['teamId'],
+	data: {
+		type: 'object',
+		additionalProperties: false,
+		required: ['asOf', 'team', 'funnel', 'activity'],
+		properties: {
+			asOf: { type: 'string', format: 'date-time' },
+			team: learningTeamSummary,
+			funnel: {
+				type: 'object',
+				additionalProperties: false,
+				required: ['denominator', 'rows'],
+				properties: {
+					denominator: {
+						type: 'object',
+						additionalProperties: false,
+						required: ['basis', 'count'],
+						properties: {
+							basis: { const: 'team-members' },
+							count: count('Equals team.members.count'),
+						},
+					},
+					rows: { type: 'array', items: learningFunnelRow },
+				},
+			},
+			activity: learningProgressSchema.data.properties.activity,
+		},
+	},
+	semantics: [
+		'teamId is a bulk coupon id, or any bulk purchase id of the team.',
+		'The funnel follows learning/progress rules with team members as the denominator, signed in or not.',
+	],
+} as const
+
+const learningTeamMembersSchema = {
+	supports: ['teamId'],
+	requires: ['teamId'],
+	pii: true,
+	data: {
+		type: 'object',
+		additionalProperties: false,
+		required: ['asOf', 'pii', 'team', 'members'],
+		properties: {
+			asOf: { type: 'string', format: 'date-time' },
+			pii: { const: true },
+			team: {
+				type: 'object',
+				additionalProperties: false,
+				required: ['teamId', 'product', 'seats', 'organization'],
+				properties: {
+					teamId: { type: 'string' },
+					product: learningProduct,
+					seats: learningSeats,
+					organization: {
+						oneOf: [
+							{ type: 'null' },
+							{
+								type: 'object',
+								additionalProperties: false,
+								required: ['id', 'name'],
+								properties: {
+									id: { type: 'string' },
+									name: {
+										type: ['string', 'null'],
+										description: 'PII: can contain the buyer email',
+									},
+								},
+							},
+						],
+					},
+				},
+			},
+			members: {
+				type: 'array',
+				description:
+					'PII. One row per redeemed seat held now, oldest redemption first. Unredeemed seats are team.seats.unredeemed, never rows.',
+				items: {
+					type: 'object',
+					additionalProperties: false,
+					required: [
+						'userId',
+						'email',
+						'name',
+						'redeemedAt',
+						'signedIn',
+						'lastActiveAt',
+						'lessonsCompleted',
+						'workshops',
+					],
+					properties: {
+						userId: { type: 'string' },
+						email: { type: ['string', 'null'], description: 'PII' },
+						name: { type: ['string', 'null'], description: 'PII' },
+						redeemedAt: { type: 'string', format: 'date-time' },
+						signedIn: { type: 'boolean' },
+						lastActiveAt: {
+							type: ['string', 'null'],
+							format: 'date-time',
+							description:
+								"Latest progress write on the product's required lessons",
+						},
+						lessonsCompleted: count(
+							'Completed required lessons in the product, locked workshops included',
+						),
+						workshops: {
+							type: 'object',
+							additionalProperties: false,
+							required: ['started', 'completed', 'total'],
+							properties: {
+								started: count('Workshops with any progress'),
+								completed: count(
+									'Workshops with every required lesson completed',
+								),
+								total: count('Workshops in the product'),
+							},
+						},
+					},
+				},
+			},
+		},
+	},
+	semantics: [
+		'PII: learner emails and names. AI Hero admins only (manage all); analytics-only roles are refused.',
+		'Never cached. Responses are Cache-Control: private, no-store and carry no CORS allowance.',
+		'Every read is logged with the actor id, auth method and teamId. Member emails are never logged.',
+		'Certificates are not reported: no certificate table exists.',
+	],
+} as const
+
 export const REVENUE_SURFACE_SCHEMAS = {
 	'learning/progress': learningProgressSchema,
+	'learning/teams': learningTeamsSchema,
+	'learning/team': learningTeamSchema,
+	'learning/team-members': learningTeamMembersSchema,
 	'revenue/promos': {
 		supports: ['range', 'from', 'to', 'productId'],
 		data: {
@@ -525,6 +773,11 @@ export function getAnalyticsAgentSchema(surfaceNames: readonly SurfaceName[]) {
 						'Exclusive UTC ISO instant, supply with from. Max 400-day explicit window.',
 				},
 				productId: { type: 'string' },
+				teamId: {
+					type: 'string',
+					description:
+						'learning/team and learning/team-members. A bulk coupon id or bulk purchase id.',
+				},
 				purchaseId: { type: 'string' },
 				surveyId: { type: 'string' },
 				surveySlug: { type: 'string' },
@@ -557,6 +810,15 @@ export function getAnalyticsAgentSchema(surfaceNames: readonly SurfaceName[]) {
 						required: ['surface'],
 					},
 					then: { required: ['productId'] },
+				},
+				{
+					if: {
+						properties: {
+							surface: { enum: ['learning/team', 'learning/team-members'] },
+						},
+						required: ['surface'],
+					},
+					then: { required: ['teamId'] },
 				},
 			],
 		},

@@ -27,6 +27,7 @@ import {
 	LearningProgressPanel,
 	type LearningProductOption,
 } from './learning-progress-panel'
+import { TeamProgressPanel } from './team-progress-panel'
 import { AnalyticsDashboardErrorBoundary } from './analytics-dashboard-error-boundary'
 import {
 	TrafficBreakdownPanel,
@@ -300,6 +301,7 @@ export function ProgressiveAnalyticsDashboard({
 				/>
 				<EvergreenOfferCard range={range} />
 				<LearningProgressPanel products={learningProducts} />
+				<TeamProgressPanel products={learningProducts} />
 				<TrafficBreakdownPanel traffic={traffic180d} />
 			</AnalyticsDashboardErrorBoundary>
 		</div>

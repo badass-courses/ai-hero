@@ -19,6 +19,7 @@ const engine = createAnalyticsEngine({
 
 import { catalog as localCatalog } from './catalog'
 import { LearningProductNotFoundError } from './learning-progress-query'
+import { LearningTeamNotFoundError } from './learning-teams-query'
 import { EVERGREEN_FUNNEL_PENDING, promoWindow } from './promos'
 import type { QueryOptions, QueryResult, SurfaceName } from './types'
 import type { SurfaceName as BaseSurfaceName } from '@coursebuilder/analytics/types'
@@ -27,6 +28,9 @@ const LOCAL_SURFACES = [
 	'revenue/promos',
 	'funnel/evergreen',
 	'learning/progress',
+	'learning/teams',
+	'learning/team',
+	'learning/team-members',
 ] as const
 type LocalSurface = (typeof LOCAL_SURFACES)[number]
 const isLocalSurface = (surface: SurfaceName): surface is LocalSurface =>
@@ -46,6 +50,20 @@ export async function query<S extends SurfaceName>(
 		>
 	}
 	if (surface === 'learning/progress') return queryLearningProgress(options)
+	if (surface === 'learning/teams' || surface === 'learning/team')
+		return queryLearningTeams(surface, options)
+	if (surface === 'learning/team-members') {
+		// PII never flows through the engine, its callers, or queryMany.
+		return {
+			ok: false,
+			surface,
+			error: {
+				code: 'ROUTE_ONLY',
+				message: 'learning/team-members is served only by /api/analytics.',
+			},
+			fix: 'GET /api/analytics?surface=learning/team-members&teamId=<id> as an AI Hero admin.',
+		}
+	}
 	const start = Date.now()
 	try {
 		promoWindow(options)
@@ -115,6 +133,61 @@ async function queryLearningProgress<S extends SurfaceName>(
 			error: {
 				code: 'QUERY_FAILED',
 				message: 'Could not read learning progress.',
+			},
+			fix: 'Retry shortly. Results are cached for five minutes once a read succeeds.',
+		}
+	}
+}
+
+async function queryLearningTeams<S extends SurfaceName>(
+	surface: S & ('learning/teams' | 'learning/team'),
+	options: QueryOptions,
+): Promise<QueryResult<S>> {
+	const start = Date.now()
+	if (surface === 'learning/team' && !options.teamId) {
+		return {
+			ok: false,
+			surface,
+			error: { code: 'TEAM_REQUIRED', message: 'teamId is required.' },
+			fix: 'Pass teamId. GET /api/analytics?surface=learning/teams lists team ids.',
+		}
+	}
+	try {
+		const data =
+			surface === 'learning/team'
+				? await database.getLearningTeam(options.teamId!)
+				: await database.getLearningTeams(options.productId ?? null)
+		return {
+			ok: true,
+			surface,
+			range: options.range ?? '30d',
+			data,
+			meta: { queryTimeMs: Date.now() - start, truncated: false },
+		} as QueryResult<S>
+	} catch (error) {
+		if (error instanceof LearningTeamNotFoundError) {
+			return {
+				ok: false,
+				surface,
+				error: {
+					code: 'TEAM_NOT_FOUND',
+					message: 'No active team purchase has that teamId.',
+				},
+				fix: 'GET /api/analytics?surface=learning/teams lists team ids.',
+			}
+		}
+		await log.error('analytics.learning-teams.query-failed', {
+			surface,
+			productId: options.productId,
+			teamId: options.teamId,
+			error,
+		})
+		return {
+			ok: false,
+			surface,
+			error: {
+				code: 'QUERY_FAILED',
+				message: 'Could not read team progress.',
 			},
 			fix: 'Retry shortly. Results are cached for five minutes once a read succeeds.',
 		}

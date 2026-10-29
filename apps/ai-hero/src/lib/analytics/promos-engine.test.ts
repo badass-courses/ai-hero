@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
 	getRevenueByPromo: vi.fn(),
 	getLearningProgress: vi.fn(),
+	getLearningTeams: vi.fn(),
+	getLearningTeam: vi.fn(),
+	readLearningTeamMembersUncached: vi.fn(),
 	baseQuery: vi.fn(),
 	baseQueryMany: vi.fn(),
 	baseGetCatalog: vi.fn(() => [{ name: 'summary' }]),
@@ -18,6 +21,9 @@ vi.mock('@/server/logger', () => ({ log: { error: mocks.errorLog } }))
 vi.mock('./providers/database', () => ({
 	getRevenueByPromo: mocks.getRevenueByPromo,
 	getLearningProgress: mocks.getLearningProgress,
+	getLearningTeams: mocks.getLearningTeams,
+	getLearningTeam: mocks.getLearningTeam,
+	readLearningTeamMembersUncached: mocks.readLearningTeamMembersUncached,
 }))
 vi.mock('@/db', () => ({}))
 vi.mock('./providers/derived', () => ({}))
@@ -27,6 +33,7 @@ vi.mock('./providers/survey', () => ({}))
 vi.mock('./providers/youtube', () => ({}))
 import { getCatalog, query, queryMany } from './index'
 import { LearningProductNotFoundError } from './learning-progress-query'
+import { LearningTeamNotFoundError } from './learning-teams-query'
 
 describe('local promo engine extension', () => {
 	beforeEach(() => {
@@ -139,5 +146,42 @@ describe('local promo engine extension', () => {
 		expect(JSON.stringify(result)).not.toContain(
 			'synthetic-private-internal-detail',
 		)
+	})
+
+	it('reads team surfaces through their cached providers', async () => {
+		mocks.getLearningTeams.mockResolvedValue({ teams: [] })
+		mocks.getLearningTeam.mockResolvedValue({ team: { teamId: 'team-a' } })
+		expect(await query('learning/teams', {})).toMatchObject({ ok: true })
+		expect(mocks.getLearningTeams).toHaveBeenCalledWith(null)
+		expect(
+			await query('learning/teams', { productId: 'synthetic' }),
+		).toMatchObject({ ok: true })
+		expect(mocks.getLearningTeams).toHaveBeenLastCalledWith('synthetic')
+		expect(await query('learning/team', { teamId: 'team-a' })).toMatchObject({
+			ok: true,
+			data: { team: { teamId: 'team-a' } },
+		})
+		expect(await query('learning/team', {})).toMatchObject({
+			ok: false,
+			error: { code: 'TEAM_REQUIRED' },
+		})
+		mocks.getLearningTeam.mockRejectedValueOnce(new LearningTeamNotFoundError())
+		expect(await query('learning/team', { teamId: 'missing' })).toMatchObject({
+			ok: false,
+			error: { code: 'TEAM_NOT_FOUND' },
+		})
+	})
+
+	it('never serves PII member rows through the engine', async () => {
+		const single = await query('learning/team-members', { teamId: 'team-a' })
+		const many = await queryMany(['learning/team-members', 'learning/teams'], {
+			teamId: 'team-a',
+		})
+		expect(single).toMatchObject({ ok: false, error: { code: 'ROUTE_ONLY' } })
+		expect(many['learning/team-members']).toMatchObject({
+			ok: false,
+			error: { code: 'ROUTE_ONLY' },
+		})
+		expect(mocks.readLearningTeamMembersUncached).not.toHaveBeenCalled()
 	})
 })

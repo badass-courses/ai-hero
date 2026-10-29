@@ -12,6 +12,10 @@ import {
 	type TeamCardState,
 	type TeamPurchaseLink,
 } from '@/lib/team-purchases'
+import {
+	loadTeamProgressForViewer,
+	type TeamProgressBlock,
+} from '@/lib/team-progress'
 import { getServerAuthSession } from '@/server/auth'
 
 import type { Coupon, Purchase } from '@coursebuilder/core/schemas'
@@ -28,6 +32,8 @@ export type TeamPageData = {
 		bulkCoupon: Coupon | null
 		state: TeamCardState
 	}[]
+	/** PII for managed teams; the viewer's own row elsewhere. */
+	teamProgress: TeamProgressBlock[]
 }
 
 async function teamPageDataLoader(): Promise<TeamPageData> {
@@ -39,6 +45,7 @@ async function teamPageDataLoader(): Promise<TeamPageData> {
 			view: 'anonymous',
 			organizations: [],
 			bulkPurchases: [],
+			teamProgress: [],
 		}
 	}
 
@@ -82,11 +89,24 @@ async function teamPageDataLoader(): Promise<TeamPageData> {
 		}),
 	)
 
+	// Managers by organization role, plus the buyer of a pool with no
+	// organization, who already sees its claimed seats on the card above.
+	const teamProgress = await loadTeamProgressForViewer({
+		viewerId: user.id,
+		managedPurchases: [
+			...teamPurchases,
+			...unlinkedPurchases
+				.filter(({ link }) => link === 'no-organization')
+				.map(({ purchase }) => purchase),
+		],
+	})
+
 	return {
 		viewer: { id: user.id, email: user.email },
 		view: organizations.length > 0 ? 'manager' : 'member',
 		organizations,
 		bulkPurchases,
+		teamProgress,
 	}
 }
 

@@ -8,6 +8,13 @@ import { isWorkshopAvailable } from '@/lib/cohort-navigation'
 
 export const LEARNING_PROGRESS_DENOMINATOR = 'signed-in-learners' as const
 
+/** Above this many learners a progress read takes seconds; cache it longer. */
+export const LEARNING_LARGE_PRODUCT_LEARNERS = 5_000
+
+export function learningRefreshSeconds(learners: number) {
+	return learners > LEARNING_LARGE_PRODUCT_LEARNERS ? 900 : 300
+}
+
 export type LearningNodeAvailability =
 	| { status: 'available' }
 	| { status: 'locked'; reason: 'unpublished' | 'scheduled' }
@@ -32,6 +39,8 @@ export type LearningFunnelRow = {
 
 export type LearningProgress = {
 	asOf: string
+	/** How long this read is cached: 300s, or 900s above 5,000 learners. */
+	refreshSeconds: number
 	product: { id: string; name: string; type: string | null }
 	roster: {
 		/** Distinct users holding Valid or Restricted access, seat redemptions included. */
@@ -236,6 +245,7 @@ export function countOf(value: unknown, label: string, nullIsZero = true) {
 
 export function formatLearningProgress(input: {
 	asOf: Date
+	refreshSeconds?: number
 	product: LearningProgress['product']
 	structure: LearningStructure
 	roster: LearningRosterRow
@@ -259,6 +269,7 @@ export function formatLearningProgress(input: {
 	}
 	return {
 		asOf: input.asOf.toISOString(),
+		refreshSeconds: input.refreshSeconds ?? 300,
 		product: input.product,
 		roster: {
 			learners,

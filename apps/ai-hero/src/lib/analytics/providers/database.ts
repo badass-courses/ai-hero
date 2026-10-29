@@ -26,24 +26,103 @@ import {
 	type PromoOptions,
 } from '../promos'
 import { promoRevenueSql } from '../promos-query'
-import { rowsOf, type LearningProgress } from '../learning-progress'
 import {
+	countOf,
+	learningRefreshSeconds,
+	rowsOf,
+	type LearningProgress,
+} from '../learning-progress'
+import {
+	learningLearnerCountSql,
 	learningProductsSql,
 	readLearningProgress,
 } from '../learning-progress-query'
+import {
+	learningOwnSeatTeamsSql,
+	readLearningTeam,
+	readLearningTeamMembers,
+	readLearningTeams,
+} from '../learning-teams-query'
 
 export const LEARNING_PROGRESS_CACHE_TAG = 'analytics:learning-progress'
 
+const learningProgressCache = (seconds: number) =>
+	unstable_cache(
+		(productId: string) =>
+			readLearningProgress(
+				(query) => db.execute(query),
+				productId,
+				new Date(),
+				seconds,
+			),
+		[`analytics-learning-progress-v2-${seconds}s`],
+		{ revalidate: seconds, tags: [LEARNING_PROGRESS_CACHE_TAG] },
+	)
+const learningProgressBySeconds = new Map(
+	[300, 900].map((seconds) => [seconds, learningProgressCache(seconds)]),
+)
+
+/** Learner count only picks the cache window, so an hour old is fine. */
+const getLearnerCount = unstable_cache(
+	async (productId: string) => {
+		const [row] = rowsOf<{ learners: unknown }>(
+			await db.execute(learningLearnerCountSql(productId)),
+			'Learner count',
+		)
+		return countOf(row?.learners ?? 0, 'learner count')
+	},
+	['analytics-learning-learner-count-v1'],
+	{ revalidate: 3600, tags: [LEARNING_PROGRESS_CACHE_TAG] },
+)
+
 /**
- * Cached per product for five minutes, so admin page loads and agent polling
- * share one progress scan. asOf records when the scan ran.
+ * Cached per product, so admin page loads and agent polling share one
+ * progress scan: five minutes, or fifteen above 5,000 learners, where a cold
+ * read takes seconds. asOf records when the scan ran.
  */
-export const getLearningProgress = unstable_cache(
-	(productId: string) =>
-		readLearningProgress((query) => db.execute(query), productId, new Date()),
-	['analytics-learning-progress-v1'],
+export async function getLearningProgress(productId: string) {
+	const seconds = learningRefreshSeconds(await getLearnerCount(productId))
+	return learningProgressBySeconds.get(seconds)!(productId)
+}
+
+/** Aggregate team summaries, optionally for one product. */
+export const getLearningTeams = unstable_cache(
+	(productId: string | null) =>
+		readLearningTeams((query) => db.execute(query), productId, new Date()),
+	['analytics-learning-teams-v1'],
 	{ revalidate: 300, tags: [LEARNING_PROGRESS_CACHE_TAG] },
 )
+
+/** One team's aggregate summary and funnel. */
+export const getLearningTeam = unstable_cache(
+	(teamRef: string) =>
+		readLearningTeam((query) => db.execute(query), teamRef, new Date()),
+	['analytics-learning-team-v1'],
+	{ revalidate: 300, tags: [LEARNING_PROGRESS_CACHE_TAG] },
+)
+
+/**
+ * PII: member emails and names. Deliberately not cached, so no data cache
+ * entry ever holds learner emails. Callers authorize and log the read.
+ */
+export async function listOwnSeatTeamIds(userId: string) {
+	return rowsOf<{ teamId: string }>(
+		await db.execute(learningOwnSeatTeamsSql(userId)),
+		'Own seat teams',
+	).map((row) => row.teamId)
+}
+
+export function readLearningTeamMembersUncached(
+	teamRef: string,
+	options: { onlyUserId?: string; includeUserIds: boolean },
+) {
+	return readLearningTeamMembers(
+		(query) => db.execute(query),
+		teamRef,
+		new Date(),
+		options,
+	)
+}
 
 /** The admin product picker. Products change rarely; cached for an hour. */
 export const listLearningProducts = unstable_cache(

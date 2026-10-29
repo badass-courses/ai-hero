@@ -12,6 +12,7 @@ import {
 	learningFixture,
 } from './learning-progress.fixtures'
 import {
+	learnerIds,
 	learningProgressSql,
 	learningRosterSql,
 	splitLearningProgressRow,
@@ -151,7 +152,11 @@ describe('learning progress SQL', () => {
 
 	it('takes no user-identifying filter', () => {
 		for (const query of [
-			learningProgressSql(learningFixture.productId, structure, LEARNING_AS_OF),
+			learningProgressSql(
+				learnerIds(learningFixture.productId),
+				structure,
+				LEARNING_AS_OF,
+			),
 			learningRosterSql(learningFixture.productId),
 		]) {
 			const { sql } = dialect.sqlToQuery(query)
@@ -161,7 +166,11 @@ describe('learning progress SQL', () => {
 
 	it('binds productId and lesson ids as parameters, never inline', () => {
 		const { sql, params } = dialect.sqlToQuery(
-			learningProgressSql(learningFixture.productId, structure, LEARNING_AS_OF),
+			learningProgressSql(
+				learnerIds(learningFixture.productId),
+				structure,
+				LEARNING_AS_OF,
+			),
 		)
 		expect(sql).not.toContain(learningFixture.productId)
 		expect(sql).not.toContain("'l-1'")

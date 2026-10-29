@@ -165,6 +165,7 @@ export const learningFixture = {
 
 export const expectedLearningProgress = {
 	asOf: LEARNING_AS_OF.toISOString(),
+	refreshSeconds: 300,
 	product: {
 		id: learningFixture.productId,
 		name: 'Synthetic Cohort',
