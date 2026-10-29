@@ -10,7 +10,14 @@ const ent = (
 	sourceId: string,
 	discordRoleId: string,
 	sourceType = 'PURCHASE',
-) => ({ id, sourceType, sourceId, metadata: { discordRoleId } })
+	entitlementType = 'workshop_discord_role',
+) => ({
+	id,
+	entitlementType,
+	sourceType,
+	sourceId,
+	metadata: { discordRoleId },
+})
 
 describe('partitionDiscordRoleRemovals', () => {
 	it('keeps the role when a live entitlement from another purchase grants it', () => {
@@ -58,5 +65,17 @@ describe('partitionDiscordRoleRemovals', () => {
 		})
 		expect(result.keep).toEqual([])
 		expect(result.remove).toHaveLength(1)
+	})
+
+	it('matches on role id across entitlement types', () => {
+		const result = partitionDiscordRoleRemovals({
+			refundedPurchaseId: 'p-cc',
+			refundedEntitlements: [ent('e1', 'p-cc', ROLE_CC)],
+			liveEntitlements: [
+				ent('e2', 'p-c5', ROLE_CC, 'PURCHASE', 'cohort_discord_role'),
+			],
+		})
+		expect(result.remove).toEqual([])
+		expect(result.keep).toHaveLength(1)
 	})
 })

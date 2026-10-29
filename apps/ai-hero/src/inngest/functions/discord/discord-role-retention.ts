@@ -2,6 +2,7 @@ import { EntitlementSourceType } from '@/lib/entitlement-source-type'
 
 type RoleEntitlement = {
 	id: string
+	entitlementType?: string
 	sourceType: string
 	sourceId: string
 	metadata?: { discordRoleId?: unknown } | null

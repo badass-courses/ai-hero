@@ -119,11 +119,17 @@ export const removePurchaseRoleDiscord = inngest.createFunction(
 		const liveEntitlements = await step.run(
 			'get live discord role entitlements for user',
 			async () => {
-				// Same role types as the refunded purchase's entitlements, across
-				// every source type (purchase, subscription, manual, coupon).
-				const roleTypeIds = [
-					...new Set(discordRoleEntitlements.map((e) => e.entitlementType)),
-				]
+				// Every Discord role type, not just the refunded entitlement's own:
+				// the same role can be granted under either type. The role id
+				// decides, and any source type counts.
+				const roleTypes = await db.query.entitlementTypes.findMany({
+					where: inArray(entitlementTypes.name, [
+						'cohort_discord_role',
+						'workshop_discord_role',
+					]),
+				})
+				const roleTypeIds = roleTypes.map((t) => t.id)
+				if (roleTypeIds.length === 0) return []
 				const rows = await db.query.entitlements.findMany({
 					where: and(
 						eq(entitlements.userId, user.id),
