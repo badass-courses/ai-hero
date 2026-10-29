@@ -20,7 +20,7 @@ const control = vi.hoisted(() => {
 	const events: { id: string; value: unknown }[] = []
 	const failures: { storage?: 'read' | 'write'; unexpected?: boolean } = {}
 	return { sends, posts, fields, couponLimits, reads, steps, events, failures,
-		storageCalls: 0, profileSync: false, stopped: false, evergreenUnready: false,
+		storageCalls: 0, profileSync: false, stopped: false, evergreenUnready: false, evidenceFails: false,
 		setHandler: (next: Handler) => { handler = next }, handler: () => handler }
 })
 vi.mock('@/inngest/inngest.server', () => ({ inngest: { createFunction: (_options: unknown, _trigger: unknown, handler: Handler) => { control.setHandler(handler); return handler } } }))
@@ -28,7 +28,7 @@ vi.mock('@/db', () => ({ db: {}, createDatabaseHandle: () => ({}) }))
 vi.mock('@/lib/subscriber-marketing/drizzle-capture-repository', () => ({ DrizzleCaptureMarketingRepository: class { findNewsletterSendQueueCounts() { return { pending: 0, heldForExit: 0 } } } }))
 vi.mock('@/lib/subscriber-marketing/evergreen-offer-journey/coupon-authority-mysql', () => ({ couponCommerceSchema: {}, createMySqlCouponCommerceStore: () => ({}) }))
 vi.mock('@/lib/subscriber-marketing/evergreen-offer-journey/coupon-authority', () => ({ createCouponAuthority: () => ({}) }))
-vi.mock('@/lib/subscriber-marketing/evergreen-merchant-evidence', () => ({ resolveEvergreenMerchantEvidence: async () => ({}) }))
+vi.mock('@/lib/subscriber-marketing/evergreen-merchant-evidence', () => ({ resolveEvergreenMerchantEvidence: async () => { if (control.evidenceFails) throw new Error('evergreen merchant coupon unavailable: synthetic'); return {} } }))
 vi.mock('@/lib/subscriber-marketing/drovr-contact-profile-sync-requests', () => ({ offerProfileSyncRequests: () => control.profileSync ? [{ name: 'synthetic-profile-sync', data: { synthetic: true } }] : [], parseDrovrProfileSyncConfig: () => ({}) }))
 vi.mock('@/lib/subscriber-marketing/drovr-evergreen', () => ({
 	SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE: 'subscribe-evergreen-list',
@@ -91,7 +91,7 @@ beforeEach(() => {
 	control.sends.length = 0; control.posts.length = 0; control.fields.length = 0
 	control.couponLimits.length = 0; control.reads.length = 0; control.stopped = false
 	control.steps.length = 0; control.events.length = 0; control.storageCalls = 0; control.profileSync = false
-	control.evergreenUnready = false
+	control.evergreenUnready = false; control.evidenceFails = false
 	delete control.failures.storage; delete control.failures.unexpected
 	vi.stubEnv('AIH_DROVR_EVERGREEN_SENDER_LIMIT', '25')
 	vi.stubEnv('AIH_DROVR_EVERGREEN_SENDER_PACING_MS', '3000')
@@ -182,6 +182,13 @@ describe('combined cron, fake import closure: newsletter-only config/result inje
 		expect(control.steps.indexOf('issue-pending-evergreen-coupons')).toBeLessThan(control.steps.indexOf('readback-kit-sequences'))
 		expect(control.steps).not.toContain('send-pending-evergreen-emails')
 		expect(control.events.map(event => event.id)).toEqual(['request-offer-profile-syncs'])
+	})
+	it('a thrown merchant-evidence lookup fails only the coupon step; pitch sends still run', async () => {
+		control.evidenceFails = true
+		expect(await invoke()).toMatchObject({ status: 'ran', coupons: [], counts: { coupons: {} } })
+		expect(control.couponLimits).toEqual([])
+		expect(control.steps).toContain('send-pending-evergreen-emails')
+		expect(control.sends).toHaveLength(3); expect(control.posts).toHaveLength(2)
 	})
 	it('a fake durable-step checkpoint preserves stopped result on replay, without reexecuting sends', async () => {
 		vi.stubEnv('AIH_DROVR_NEWSLETTER_LIMIT', '120'); control.stopped = true

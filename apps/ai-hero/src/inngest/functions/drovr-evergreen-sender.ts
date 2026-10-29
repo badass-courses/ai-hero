@@ -166,7 +166,9 @@ export const drovrEvergreenSender = inngest.createFunction(
 		})
 		// Coupons run before the pitch readback gate: issuing one needs no Kit,
 		// and its Kit field write is best-effort, so Kit being down or a pitch
-		// sequence being unready never holds a coupon.
+		// sequence being unready never holds a coupon. The catch sits outside
+		// the step, so the step keeps its retry and a failure that outlasts it
+		// (no merchant coupon, say) can't starve the pitch sends below.
 		const coupons = await step.run(
 			'issue-pending-evergreen-coupons',
 			async () => {
@@ -192,7 +194,12 @@ export const drovrEvergreenSender = inngest.createFunction(
 					limit: senderLimit(process.env.AIH_DROVR_EVERGREEN_SENDER_LIMIT),
 				})
 			},
-		)
+		).catch(async (error: unknown) => {
+			await log.error('drovr.evergreen.coupons_failed', {
+				error: error instanceof Error ? error.message : String(error),
+			})
+			return []
+		})
 		// A coupon is no ContactEvent, so the reconcile cannot repair a lost
 		// request: ask for each offer's profile sync as a durable step.
 		const offerSyncs = offerProfileSyncRequests(
