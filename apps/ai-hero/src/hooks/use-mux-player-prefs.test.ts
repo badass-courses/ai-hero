@@ -51,7 +51,8 @@ function fakePlayer(playbackId: string) {
 		set mode(next: TextTrackMode) {
 			mode = next
 			modes.push(next)
-			setTimeout(() => tracks.dispatchEvent(new Event('change')), 0)
+			// Later than a zero-delay timer: browsers may run either first.
+			setTimeout(() => tracks.dispatchEvent(new Event('change')), 2)
 		},
 	} as unknown as TextTrack
 	tracks[0] = track
@@ -63,7 +64,7 @@ function fakePlayer(playbackId: string) {
 	return { player, track, modes }
 }
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 5))
+const settle = () => new Promise((resolve) => setTimeout(resolve, 20))
 
 describe('keepCaptionCuesLoading', () => {
 	it('shows a hidden track for one task, once per source', async () => {
@@ -81,6 +82,21 @@ describe('keepCaptionCuesLoading', () => {
 		keepCaptionCuesLoading(player)
 		await settle()
 		expect(modes).toEqual(['showing', 'hidden', 'showing', 'hidden'])
+	})
+
+	it('hides the track only after earlier change listeners saw it showing', async () => {
+		prefs.subtitleMode = 'hidden'
+		const { player, track } = fakePlayer('a')
+		// Stands in for playback-core, which listens from before any priming.
+		const seen: TextTrackMode[] = []
+		;(player.textTracks as unknown as EventTarget).addEventListener(
+			'change',
+			() => seen.push(track.mode),
+		)
+
+		keepCaptionCuesLoading(player)
+		await settle()
+		expect(seen).toEqual(['showing', 'hidden'])
 	})
 
 	it('leaves the track alone while the viewer has captions on', async () => {

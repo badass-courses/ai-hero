@@ -147,20 +147,24 @@ export const keepCaptionCuesLoading = (
 	primedCaptionSources.set(track, source)
 	primingCaptionTracks.add(track)
 	track.mode = 'showing'
-	// playback-core reacts to this same `change` event; hide the track on the
-	// next task, after it has selected the playlist. The flag clears after
-	// the `change` that hiding fires, which earlier listeners (the saved
-	// preference) have then already skipped.
-	setTimeout(() => {
-		if (track.mode !== 'showing') {
-			primingCaptionTracks.delete(track)
-			return
-		}
-		track.mode = 'hidden'
-		tracks.addEventListener(
-			'change',
-			() => primingCaptionTracks.delete(track),
-			{ once: true },
-		)
-	}, 0)
+	// playback-core listens to the same `change` and registered first, so it
+	// has selected the playlist by the time this hides the track again. The
+	// flag clears on the `change` that hiding fires, after the saved
+	// preference's listener has skipped it.
+	tracks.addEventListener(
+		'change',
+		() => {
+			if (track.mode !== 'showing') {
+				primingCaptionTracks.delete(track)
+				return
+			}
+			track.mode = 'hidden'
+			tracks.addEventListener(
+				'change',
+				() => primingCaptionTracks.delete(track),
+				{ once: true },
+			)
+		},
+		{ once: true },
+	)
 }
