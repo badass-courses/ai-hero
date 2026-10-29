@@ -42,6 +42,10 @@ export type RecoverySubscriberLookup =
 	| { state: 'found'; id: string; email: string; subscriberState?: string }
 	| { state: 'missing' }
 	| { state: 'invalid' }
+	/** A local or drovr stop: no recovery send. */
+	| { state: 'stopped' }
+	/** The stop state could not be read: fail closed, no send. */
+	| { state: 'unknown' }
 
 export type RecoveryContext = {
 	contactId: string
@@ -94,7 +98,10 @@ export type RecoveryProviderSendResult =
 
 export type SkillsLessonOneRecoveryDependencies = {
 	subscribers: {
-		findByEmail(email: string): Promise<RecoverySubscriberLookup>
+		findByEmail(
+			email: string,
+			expectedKitSubscriberId: string,
+		): Promise<RecoverySubscriberLookup>
 	}
 	store: {
 		findContext(email: string): Promise<RecoveryContext | null>
@@ -176,6 +183,8 @@ export type SkillsLessonOneRecoveryResult =
 			reason:
 				| 'kit-subscriber-not-found'
 				| 'kit-subscriber-invalid'
+				| 'contact-stopped'
+				| 'stop-state-unknown'
 				| 'identity-mismatch'
 				| 'contact-not-found'
 				| 'course-enrollment-not-found'
@@ -270,12 +279,21 @@ async function prepareRecovery(
 	personalizationAt: string,
 ): Promise<PreparedRecovery | SkillsLessonOneRecoveryResult> {
 	const email = normalizeEmail(command.identity.email)
-	const subscriber = await dependencies.subscribers.findByEmail(email)
+	const subscriber = await dependencies.subscribers.findByEmail(
+		email,
+		command.identity.kitSubscriberId,
+	)
 	if (subscriber.state === 'missing') {
 		return { state: 'blocked', reason: 'kit-subscriber-not-found' }
 	}
 	if (subscriber.state === 'invalid') {
 		return { state: 'blocked', reason: 'kit-subscriber-invalid' }
+	}
+	if (subscriber.state === 'stopped') {
+		return { state: 'blocked', reason: 'contact-stopped' }
+	}
+	if (subscriber.state === 'unknown') {
+		return { state: 'blocked', reason: 'stop-state-unknown' }
 	}
 	if (
 		normalizeEmail(subscriber.email) !== email ||

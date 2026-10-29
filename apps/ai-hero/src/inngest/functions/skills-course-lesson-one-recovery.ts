@@ -1,6 +1,10 @@
 import { env } from '@/env.mjs'
 import { SKILLS_COURSE_LESSON_ONE_RECOVERY_REQUESTED_EVENT } from '@/inngest/events/skills-newsletter'
 import { inngest } from '@/inngest/inngest.server'
+import {
+	firstActiveStop,
+	readActiveContactStops,
+} from '@/lib/subscriber-marketing/contact-stop-rule'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import { readDrovrEmailDelivery } from '@/lib/subscriber-marketing/drovr-email-delivery'
 import { findJourneyOwnerAssignment } from '@/lib/subscriber-marketing/drovr-ownership'
@@ -72,6 +76,20 @@ export const skillsCourseLessonOneRecovery = inngest.createFunction(
 					: undefined
 				if (!providerIdentity || !contact?.email) {
 					return retryIdentity(event.data.requestId, 'identity-not-ready')
+				}
+
+				// A stop recorded after the request was queued still wins: no send.
+				// An unreadable stop state throws, and the step retries.
+				if (
+					firstActiveStop(
+						await readActiveContactStops(repository, contact.id),
+					)
+				) {
+					return {
+						contactId: contact.id,
+						sendRequired: false,
+						outcome: 'contact-stopped' as const,
+					}
 				}
 
 				// A drovr-owned contact's lesson one may go out through PostShiba,

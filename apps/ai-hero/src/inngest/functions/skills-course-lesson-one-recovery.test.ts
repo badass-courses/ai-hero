@@ -267,6 +267,23 @@ describe('skills course lesson-one recovery', () => {
 		expect(mocks.sendDelivery).toHaveBeenCalledTimes(1)
 	})
 
+	it('never sends to a contact stopped after the request was queued', async () => {
+		mocks.findContactEventsByType.mockImplementation(
+			async (_contactId: string, eventType: string) =>
+				eventType === 'contact.unsubscribed'
+					? [{ eventType, occurredAt: '2026-08-20T12:30:00.000Z' }]
+					: [],
+		)
+		const { step } = createDurableStep()
+
+		await expect(fn.handler({ event, step })).resolves.toMatchObject({
+			success: true,
+			outcome: 'contact-stopped',
+		})
+		expect(mocks.readDelivery).not.toHaveBeenCalled()
+		expect(mocks.sendDelivery).not.toHaveBeenCalled()
+	})
+
 	it('reads provider correlation before replaying ambiguous acceptance', async () => {
 		mocks.sendDelivery.mockRejectedValueOnce(
 			new Error('timeout learner@example.com contact-private-41'),
