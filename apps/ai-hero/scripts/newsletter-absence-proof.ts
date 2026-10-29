@@ -56,6 +56,8 @@ export const ABSENCE_WRITE_OUTCOMES = [
   "snapshot-changed",
   "already-proven",
   "proof-expired",
+  "written-unverified",
+  "failed",
 ] as const;
 export type AbsenceWriteOutcome = (typeof ABSENCE_WRITE_OUTCOMES)[number];
 
@@ -275,6 +277,7 @@ export function runNewsletterAbsenceProof(
     );
     const decisions: Decision[] = [];
     let scan: MembershipScan | null = null;
+    let absenceProof: MembershipScan | null = null;
     for (const local of locals) {
       const classified = yield* classifyScanned(local, runtime);
       decisions.push(classified.decision);
@@ -285,6 +288,8 @@ export function runNewsletterAbsenceProof(
             new RecoveryRefused({ reason: "provider-unavailable" }),
           );
         scan = classified.scan;
+        if (classified.decision.class === "absent")
+          absenceProof = classified.scan;
       }
     }
     if (scan) {
@@ -303,16 +308,30 @@ export function runNewsletterAbsenceProof(
     const approval = args.approval;
     const planHash = envelope.planHash;
     const absent = decisions.filter((decision) => decision.class === "absent");
-    const proof = scan;
-    const outcomes = yield* Effect.forEach(
+    const proof = absenceProof;
+    yield* Effect.forEach(
       absent,
       (decision) =>
-        proof && freshAbsence(proof, runtime.now())
+        (proof && freshAbsence(proof, runtime.now())
           ? writeOne(decision, proof, { approval, planHash, runtime })
-          : Effect.succeed("proof-expired" as const),
-      { concurrency: ABSENCE_PROOF_DB_CONCURRENCY },
+          : Effect.succeed("proof-expired" as const)
+        ).pipe(
+          Effect.catch((error) =>
+            Effect.sync(() => {
+              envelope.reason ??= error.reason;
+              return "failed" as const;
+            }),
+          ),
+          Effect.tap((outcome) =>
+            Effect.sync(() => {
+              envelope.writes[outcome] += 1;
+              if (outcome === "written-unverified")
+                envelope.reason ??= "receipt-not-current";
+            }),
+          ),
+        ),
+      { concurrency: ABSENCE_PROOF_DB_CONCURRENCY, discard: true },
     );
-    for (const outcome of outcomes) envelope.writes[outcome] += 1;
     envelope.status =
       envelope.writes.written === absent.length ? "written" : "partial";
     return envelope;
@@ -388,17 +407,13 @@ function writeOne(
       receipt.eventType !== OLD_NEWSLETTER_EXIT_CONFIRMED ||
       receipt.providerReference !== OLD_NEWSLETTER_REFERENCE
     )
-      return yield* Effect.fail(
-        new RecoveryRefused({ reason: "receipt-not-current" }),
-      );
+      return "written-unverified" as const;
     const after = yield* boundary("database-unavailable", () =>
       runtime.currentMembership(contact.id),
-    );
-    if (after !== "exited")
-      return yield* Effect.fail(
-        new RecoveryRefused({ reason: "receipt-not-current" }),
-      );
-    return "written" as const;
+    ).pipe(Effect.orElseSucceed(() => "unknown" as const));
+    return after === "exited"
+      ? ("written" as const)
+      : ("written-unverified" as const);
   });
 }
 

@@ -182,6 +182,93 @@ describe("newsletter absence proof (Ruling A recovery)", () => {
     });
   });
 
+  it("an absent reader listed before a member still gets its proof", async () => {
+    const w = world();
+    const order = ["nonMember", "member"];
+    const plan = await run(w, { mode: "dry-run", contactIds: order });
+    const written = await run(w, {
+      mode: "write",
+      contactIds: order,
+      approval: "desk-fixture",
+      planHash: plan.planHash!,
+    });
+    expect(written).toMatchObject({
+      status: "written",
+      writes: { written: 1, "proof-expired": 0 },
+    });
+    expect(await w.membership("nonMember")).toBe("exited");
+    expect(await w.membership("member")).toBe("unknown");
+  });
+
+  it("a failure part-way reports the receipts that did land", async () => {
+    const w = world();
+    const plan = await run(w, { mode: "dry-run", contactIds: ids });
+    const persist = w.runtime.persist;
+    let calls = 0;
+    const runtime: AbsenceProofRuntime = {
+      ...w.runtime,
+      persist: async (input) => {
+        calls += 1;
+        if (calls === 2) throw new Error("connection reset");
+        return persist(input);
+      },
+    };
+    const result = await Effect.runPromise(
+      runNewsletterAbsenceProof(
+        {
+          mode: "write",
+          contactIds: ids,
+          approval: "desk-fixture",
+          planHash: plan.planHash!,
+        },
+        runtime,
+      ),
+    );
+    expect(result).toMatchObject({
+      status: "partial",
+      reason: "database-unavailable",
+      writes: { written: 1, failed: 1 },
+    });
+    expect(
+      w.events.filter(
+        (event) => event.eventType === OLD_NEWSLETTER_EXIT_CONFIRMED,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("a receipt the gate cannot read back still counts as landed", async () => {
+    const w = world();
+    const plan = await run(w, { mode: "dry-run", contactIds: ids });
+    let reads = 0;
+    const runtime: AbsenceProofRuntime = {
+      ...w.runtime,
+      currentMembership: async (id) => {
+        reads += 1;
+        if (reads > ids.length + 2) throw new Error("read failed");
+        return w.runtime.currentMembership(id);
+      },
+    };
+    const result = await Effect.runPromise(
+      runNewsletterAbsenceProof(
+        {
+          mode: "write",
+          contactIds: ids,
+          approval: "desk-fixture",
+          planHash: plan.planHash!,
+        },
+        runtime,
+      ),
+    );
+    expect(result.status).toBe("partial");
+    expect(result.reason).toBe("receipt-not-current");
+    expect(result.writes.written + result.writes["written-unverified"]).toBe(
+      w.events.filter(
+        (event) => event.eventType === OLD_NEWSLETTER_EXIT_CONFIRMED,
+      ).length,
+    );
+    expect(result.writes["written-unverified"]).toBeGreaterThan(0);
+  });
+
   it("a re-run writes no second proof", async () => {
     const w = world();
     const plan = await run(w, { mode: "dry-run", contactIds: ids });
