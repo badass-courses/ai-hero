@@ -42,7 +42,7 @@ def compare(a_path: Path, b_path: Path, out: Path | None) -> dict:
         return {"size": f"{a.size[0]}x{a.size[1]}", "pixels": 0, "max": 0, "bands": []}
     gray = diff.convert("L")
     mask = gray.point(lambda v: 255 if v else 0)
-    pixels = sum(1 for v in mask.getdata() if v)
+    pixels = mask.histogram()[255]
     if out:
         faded = Image.blend(a, Image.new("RGB", a.size, "white"), 0.7)
         faded.paste(Image.new("RGB", a.size, (255, 0, 0)), mask=mask)
