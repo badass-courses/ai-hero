@@ -41,3 +41,12 @@ export type { InvokeResult } from './projections/invoke.js'
 export type { ToolCatalog, ToolCatalogEntry } from './projections/catalog.js'
 export { COMPANION_RULES } from './prompts.js'
 export type { SessionExtract, SessionExtractEntry } from './session-extract.js'
+export {
+	extractChapters,
+	extractMoments,
+	skillKey,
+	type MomentKind,
+	type SessionChapter,
+	type SessionMoment,
+	type SessionView,
+} from './session-views.js'

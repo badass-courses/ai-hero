@@ -8,6 +8,7 @@ import type {
 	PublicSearchHit,
 	WorkshopAccess,
 } from './domain.js'
+import type { SessionExtract } from './session-extract.js'
 
 /**
  * What the app supplies: plain Promise functions over plain types, so the
@@ -45,6 +46,17 @@ export interface ContentPort {
 	readonly course: (idOrSlug: string) => Promise<CourseStructure | null>
 	readonly lesson: (lesson: LessonLocator) => Promise<LessonContent | null>
 	readonly officeHours: (cohortId: string) => Promise<CohortOfficeHours | null>
+	/** The session extracts of these lessons, for those that have one. */
+	readonly sessionExtracts: (lessonIds: ReadonlyArray<string>) => Promise<
+		ReadonlyArray<{
+			readonly lessonId: string
+			readonly extract: SessionExtract
+		}>
+	>
+	/** AI Hero's public skill pages, by the skill's name. */
+	readonly skillLinks: () => Promise<
+		ReadonlyArray<{ readonly skill: string; readonly url: string }>
+	>
 }
 
 export interface ProgressPort {

@@ -285,6 +285,8 @@ describe('AI Hero discovery surfaces', () => {
 			'/api/learner/course_outline',
 			'/api/learner/read_lesson',
 			'/api/learner/session_extract',
+			'/api/learner/session_moments',
+			'/api/learner/skill_usage',
 			'/api/learner/search_course',
 			'/api/learner/office_hours',
 		])

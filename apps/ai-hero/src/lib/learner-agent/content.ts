@@ -10,6 +10,7 @@ import {
 } from '@/lib/lessons-query'
 import { sanitizeResourcePayload } from '@/lib/resource-api-sanitizer'
 import { getLessonSessionExtract } from '@/lib/session-extract-query'
+import { getSkillEntries } from '@/lib/skills-query'
 import {
 	getCachedWorkshopNavigation,
 	getWorkshopsForLesson,
@@ -25,6 +26,7 @@ import type {
 } from '@ai-hero/learner-agent'
 
 import { getCourseResource } from './course-resources'
+import { getLessonSessionExtracts, skillLinksFrom } from './session-extracts'
 
 const LESSON_TYPES = new Set(['lesson', 'exercise', 'post'])
 
@@ -237,5 +239,9 @@ export function makeContentPort({ baseUrl }: { baseUrl: string }): ContentPort {
 				})),
 			}
 		},
+
+		sessionExtracts: (lessonIds) => getLessonSessionExtracts(lessonIds),
+
+		skillLinks: async () => skillLinksFrom(await getSkillEntries(), baseUrl),
 	}
 }
