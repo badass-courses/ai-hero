@@ -170,7 +170,7 @@ const sparseExtract = {
 			entries: [
 				{ kind: "skillCall", via: "toolCall", visibleFrom: 2, skill: "grill-me" },
 				{ kind: "skillCall", via: "slashCommand", visibleFrom: 3, skill: "grill-me" },
-				{ kind: "toolCall", visibleFrom: 5, tool: "Read", resultIsError: null },
+				{ kind: "toolCall", visibleFrom: 5, tool: "Read" },
 			],
 		},
 	],

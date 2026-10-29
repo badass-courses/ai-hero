@@ -81,7 +81,7 @@ export const CourseJsonSessionExtract = Schema.Struct({
 								Schema.String.pipe(Schema.check(Schema.isMaxLength(160))),
 							),
 						),
-						resultIsError: ResultIsError,
+						resultIsError: Schema.optionalKey(ResultIsError),
 					}),
 					Schema.Struct({
 						kind: Schema.Literal("interrupt"),
