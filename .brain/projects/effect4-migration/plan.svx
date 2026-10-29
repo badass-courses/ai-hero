@@ -15,7 +15,7 @@ Researched 2026-10-29 at main `902897a3`, against the Effect source at tag `effe
 
 - **Slices work. No big bang is needed.** The 89 Effect files form 12 closed import groups. TypeScript refuses any v3/v4 mix at a group boundary, so each slice proves its own edges.
 - **Transition vehicle: keep `effect` on v3 and add a temporary `effect4: npm:effect@4.0.6` alias.** Migrated files import `effect4`. The last slice flips `effect` to `4.0.6`, renames `effect4` → `effect` and drops the alias. (This is the reverse of the `effect3` alias the brief offered. The reasons are below.)
-- **The API surface is small.** Nine modules: `Effect`, `Either`, `Data`, `Layer`, `Context`, `Console`, `Fiber`, `Exit`, `Deferred`. No `Schema`, `Runtime`, `Option`, `Stream` or `@effect/*` anywhere. About 600 call sites need a rename. Two runtime behaviours change and need review, listed under "Behaviour deltas".
+- **The API surface is small.** Nine modules: `Effect`, `Either`, `Data`, `Layer`, `Context`, `Console`, `Fiber`, `Exit`, `Deferred`. No `Schema`, `Runtime`, `Option`, `Stream` or `@effect/*` anywhere. About 600 call sites need a rename. One runtime behaviour changes and needs review (the `runPromise`/`runSync` rejection value), listed under "Behaviour deltas".
 - **Slice 1 (operator scripts, 12 files) is done** on `worker/effect4` (commit `e9337471`): typecheck green, held-exit tests 127/127, full suite at parity with main.
 
 ## Inventory (corrects the brief)
@@ -40,18 +40,18 @@ Cross-package check: `@ai-hero/front-desk-support` (bundles `effect@4.0.2`) ship
 
 ## API map: v3 → v4
 
-Citations: `MIG` = `migration/v3-to-v4.md` and `SRC` = `packages/effect/src/`, both at tag `effect@4.0.6`. Usage counts are call sites in the 89 files.
+Citations: `MIG` = `migration/v3-to-v4.md` and `SRC` = `packages/effect/src/`, both at the git tag `effect@4.0.6` of `Effect-TS/effect`. The npm tarball's `src/` carries expanded docs, so its line numbers differ. Usage counts are call sites in the 89 files.
 
 | v3 (uses) | v4 | Citation | Notes |
 |---|---|---|---|
 | `import … from 'effect'` | same barrel; `Either` is gone and becomes `Result` | MIG:22 `effect/Either -> effect/Result`; SRC `index.ts:621` | During the transition, import from `'effect4'` |
 | `Effect.runPromise` (707) | `Effect.runPromise` | SRC `Effect.ts:9402` | **Rejection value changes** (see deltas). The `{ signal }` option is kept (`Effect.ts:9179`) |
-| `Effect.either` (124) | `Effect.result` | MIG:10017; SRC `Effect.ts:2365` | Returns `Result<A, E>` |
+| `Effect.either` (124) | `Effect.result` | MIG:10017; SRC `Effect.ts:2365` | Returns `Result<A, E>`. Same defect rule as `catch` (delta 2) |
 | `Either.isLeft` (109) / `isRight` (35) | `Result.isFailure` / `Result.isSuccess` | MIG:10405, 10407; SRC `Result.ts:583, 616` | |
 | `Either.left` (16) / `right` (12) | `Result.fail` / `Result.succeed` | MIG:10409, 10419; SRC `Result.ts:316, 288` | |
 | `Either.Either<A, E>` (3) | `Result.Result<A, E>` | MIG:10355 | Same parameter order |
 | `.left` (94) / `.right` (71) on a result | `.failure` / `.success` | SRC `Result.ts:100-102` | `_tag` becomes `'Failure'` / `'Success'`. Literal checks such as `x._tag === 'Left'` (6 in non-test source, more in tests) need renaming; TS2367 flags them |
-| `Effect.catchAll` (9) | `Effect.catch` | MIG:9963; SRC `Effect.ts:2760, 2802` | **Defect nuance** (see deltas) |
+| `Effect.catchAll` (9) | `Effect.catch` | MIG:9963; SRC `Effect.ts:2760, 2802` | Defect rule documented, but unchanged from 3.21.3 (delta 2) |
 | `Effect.catchAllCause` (6) | `Effect.catchCause` | MIG:9965; SRC `Effect.ts:3398` | |
 | `Effect.timeoutFail({ duration, onTimeout })` (2) | `Effect.timeoutOrElse({ duration, orElse: () => Effect.fail(onTimeout()) })` | MIG:10231; SRC `Effect.ts:4856` | Group A: `kit-delivery.ts:135`, `kit-communication-transport.ts:199` |
 | `Effect.timeout` (1) | `Effect.timeout` | SRC `Effect.ts:4777` | Fails with `Cause.TimeoutError` (`Cause.ts:1445`), not `TimeoutException`. `message-preparation-fields.ts:58` only rethrows it through `runPromise` |
@@ -77,7 +77,7 @@ Citations: `MIG` = `migration/v3-to-v4.md` and `SRC` = `packages/effect/src/`, b
 ## Behaviour deltas to review per slice
 
 1. **`runPromise` rejects with the raw error.** v3 rejected with a `FiberFailure` wrapper. v4 rejects with `Cause.squash(cause)` (`SRC internal/effect.ts:5822-5824`). Review any `await runPromise(…)` in a `try/catch` that branches on the caught value (`instanceof`, `_tag`, `.message`). Slice 1 only reads `error.message` or `String(error)`, and both give the same text. Only `cohort-004-video-upload-sync.ts` logs the whole object, and it now prints the raw error. Group A's `kit-communication-transport.ts` already uses `Effect.either` and throws `result.left` itself, so it is unaffected.
-2. **`Effect.catch` no longer recovers a cause that also contains a defect.** v3 `catchAll` recovered when any typed failure was present. v4 turns the typed errors into defects and passes the cause on (MIG:9963). This matters only for compound causes, such as a failing `use` with a dying finalizer, or parallel `Effect.all`. Wherever the code uses `catchCause`/`catchAllCause` as an outer fence (held-exit, bridge-runtime), it still catches them.
+2. **Typed recovery skips a cause that also contains a defect, in both versions.** MIG:9963 documents the v4 rule for `Effect.catch`: if the cause has any `Die`, the typed errors become defects and the cause passes on. v4 `Effect.result` follows the same rule, because both call `findRecoverableError` (SRC `internal/effect.ts:198`, used by `catch_` at 2721 and `matchEager`/`result`). This is **not a change from v3.21.3**. There, `catchAll` and `either` both go through `matchEffect` (`effect@3.21.3` `src/internal/core.ts`), which checks `defects(cause)` first and returns `failCause(electFailures(cause))`. In both versions an interruption next to a typed error does not block recovery. Wherever the code uses `catchCause`/`catchAllCause` as an outer fence (held-exit, bridge-runtime), it still sees the whole cause. (An earlier draft of this plan called this a behaviour change. It isn't one.)
 3. **Nested `Effect.provide` reuses layers a parent already built** (`migration/layer-memoization.md`). No app code nests `provide`: group D provides one layer per program, and group A doesn't call `Effect.provide` at all. Recheck if a slice adds one.
 4. **Fibers keep the process alive** (`migration/fiber-keep-alive.md`). A script whose fiber waits forever now hangs where v3 would exit. Slice 1 scripts end with `process.exit` or complete normally.
 5. **Error class names:** `UnknownException` becomes `Cause.UnknownError` and `TimeoutException` becomes `Cause.TimeoutError`. Grep finds no code that matches on either name.
