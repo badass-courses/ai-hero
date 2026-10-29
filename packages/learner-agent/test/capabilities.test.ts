@@ -263,6 +263,36 @@ describe('session_extract', () => {
 			}),
 	)
 
+	it.effect(
+		'pages on with the same window width, so no entries fall between',
+		() =>
+			Effect.gen(function* () {
+				const result = yield* sessionExtract
+					.handler({
+						lesson: 'first-lesson',
+						atSeconds: 600,
+						windowSeconds: 300,
+					})
+					.pipe(as(learner))
+				expect(result.window?.toSeconds).toBe(900)
+				const next = result.next_actions.find(
+					(action) => action.tool === 'session_extract',
+				)
+				expect(next?.arguments).toMatchObject({
+					atSeconds: 1200,
+					windowSeconds: 300,
+				})
+				// The next window starts where this one ends.
+				const nextArgs = next?.arguments as {
+					atSeconds: number
+					windowSeconds: number
+				}
+				expect(nextArgs.atSeconds - nextArgs.windowSeconds).toBe(
+					result.window?.toSeconds,
+				)
+			}),
+	)
+
 	it.effect('returns the whole extract without atSeconds', () =>
 		Effect.gen(function* () {
 			const result = yield* sessionExtract

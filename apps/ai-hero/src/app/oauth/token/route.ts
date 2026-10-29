@@ -18,9 +18,11 @@ export async function POST(request: Request) {
 	const formData = await request.formData()
 	const device_code = formData.get('device_code')
 	const requestedScope = formData.get('scope')
+	// A scope is a set: dedupe and sort, so the stored string is canonical and
+	// `/api/learner/token` finds the token by exact match.
 	const scope =
 		typeof requestedScope === 'string' && requestedScope.trim()
-			? requestedScope.trim().split(/\s+/)
+			? [...new Set(requestedScope.trim().split(/\s+/))].sort()
 			: null
 
 	if (scope && !scope.every((entry) => NARROWING_SCOPES.has(entry))) {

@@ -2,7 +2,6 @@ import { unstable_cache } from 'next/cache'
 import { createAppAbility, defineRulesForPurchases, type User } from '@/ability'
 import { courseBuilderAdapter, db } from '@/db'
 import { getCachedCohortNavigation } from '@/lib/cohort-navigation-query'
-import { isWorkshopAvailable } from '@/lib/cohort-navigation'
 import { getAllUserEntitlements } from '@/lib/entitlements-query'
 import { getLesson } from '@/lib/lessons-query'
 import { getPurchasedResources } from '@/lib/library-query'
@@ -31,6 +30,23 @@ const getEntitlementTypes = unstable_cache(
 	{ revalidate: 300, tags: ['entitlements'] },
 )
 
+type LearnerInputs = {
+	purchases: Awaited<
+		ReturnType<typeof courseBuilderAdapter.getPurchasesForUser>
+	>
+	entitlements: Awaited<ReturnType<typeof getAllUserEntitlements>>
+	entitlementTypes: Awaited<ReturnType<typeof getEntitlementTypes>>
+}
+
+async function loadLearnerInputs(learner: Learner): Promise<LearnerInputs> {
+	const [purchases, entitlements, entitlementTypes] = await Promise.all([
+		courseBuilderAdapter.getPurchasesForUser(learner.userId),
+		getAllUserEntitlements(learner.userId),
+		getEntitlementTypes(),
+	])
+	return { purchases, entitlements, entitlementTypes }
+}
+
 /**
  * The lesson page's ability for this learner, built from the same rule
  * function (`defineRulesForPurchases`) over the same inputs the page loads
@@ -41,22 +57,19 @@ const getEntitlementTypes = unstable_cache(
  */
 async function learnerAbility({
 	learner,
+	inputs,
 	module,
 	lesson,
 	country,
 }: {
 	learner: Learner
+	inputs: LearnerInputs
 	module: Workshop
 	lesson?: Awaited<ReturnType<typeof getLesson>>
 	country: string
 }) {
-	const [purchases, entitlements, entitlementTypes, section] =
-		await Promise.all([
-			courseBuilderAdapter.getPurchasesForUser(learner.userId),
-			getAllUserEntitlements(learner.userId),
-			getEntitlementTypes(),
-			lesson ? getResourceSection(lesson.id, module) : null,
-		])
+	const { purchases, entitlements, entitlementTypes } = inputs
+	const section = lesson ? await getResourceSection(lesson.id, module) : null
 
 	const user = {
 		id: learner.userId,
@@ -83,6 +96,33 @@ async function learnerAbility({
 	)
 }
 
+/** Entitlement types that name the courses they open in `contentIds`. */
+const CONTENT_ACCESS_TYPES = new Set([
+	'cohort_content_access',
+	'workshop_content_access',
+])
+
+/**
+ * The cohorts and workshops a learner's live content-access entitlements
+ * name: a bundle grants an included workshop this way without a purchase of
+ * its own product.
+ */
+function entitledResourceIds(inputs: LearnerInputs): string[] {
+	const typeIds = new Set(
+		inputs.entitlementTypes
+			.filter((type) => CONTENT_ACCESS_TYPES.has(type.name))
+			.map((type) => type.id),
+	)
+	return inputs.entitlements.flatMap((entitlement) => {
+		if (!typeIds.has(entitlement.entitlementType)) return []
+		const contentIds = (entitlement.metadata as Record<string, unknown> | null)
+			?.contentIds
+		return Array.isArray(contentIds)
+			? contentIds.filter((id): id is string => typeof id === 'string' && !!id)
+			: []
+	})
+}
+
 const isPublished = (module: Workshop) => module.fields?.state === 'published'
 
 function workshopUrl(baseUrl: string, slug: string) {
@@ -96,48 +136,101 @@ export function makeEntitlementsPort({
 	baseUrl: string
 	country: string
 }): EntitlementsPort {
+	// One request, one learner: load their purchases and entitlements once.
+	const inputsByUser = new Map<string, Promise<LearnerInputs>>()
+	const inputsFor = (learner: Learner) => {
+		let inputs = inputsByUser.get(learner.userId)
+		if (!inputs) {
+			inputs = loadLearnerInputs(learner)
+			inputsByUser.set(learner.userId, inputs)
+		}
+		return inputs
+	}
+
+	const workshopAccess = async (
+		learner: Learner,
+		workshopId: string,
+	): Promise<WorkshopAccess> => {
+		const module = await getWorkshop(workshopId)
+		if (!module) return { _tag: 'NotEntitled' }
+		const ability = await learnerAbility({
+			learner,
+			inputs: await inputsFor(learner),
+			module,
+			country,
+		})
+
+		if (!ability.can('read', subject('Content', { id: module.id }))) {
+			return { _tag: 'NotEntitled' }
+		}
+		if (ability.can('read', 'PendingOpenAccess') || !isPublished(module)) {
+			return { _tag: 'NotYetOpen', opensAt: module.fields?.startsAt ?? null }
+		}
+		return { _tag: 'Open' }
+	}
+
 	return {
+		/**
+		 * Courses from purchases and from content-access entitlements, each
+		 * workshop's openness from `workshopAccess`, so early access and
+		 * embargoes read the same here as on the lesson page. A workshop an
+		 * owned cohort already lists is not listed again on its own, and a
+		 * course with no workshop this learner can reach is dropped.
+		 */
 		ownedCourses: async (learner) => {
-			const purchased = await getPurchasedResources(learner.userId)
+			const [purchased, inputs] = await Promise.all([
+				getPurchasedResources(learner.userId),
+				inputsFor(learner),
+			])
+			const candidateIds = [
+				...new Set([
+					...purchased.flatMap((resource) =>
+						resource.resourceId ? [resource.resourceId] : [],
+					),
+					...entitledResourceIds(inputs),
+				]),
+			]
+			const found = (
+				await Promise.all(candidateIds.map((id) => getCourseResource(id)))
+			).filter((course) => course !== null)
+			const unique = [
+				...new Map(found.map((course) => [course.id, course])).values(),
+			]
+
 			const courses = await Promise.all(
-				purchased.map(async (resource): Promise<OwnedCourse | null> => {
-					if (!resource.resourceId) return null
-					const course = await getCourseResource(resource.resourceId)
-					if (!course) return null
-
-					let workshops: WorkshopSummary[]
-					if (course.type === 'cohort') {
-						const navigation = await getCachedCohortNavigation(course.id)
-						workshops = (navigation?.workshops ?? []).map((workshop) => ({
-							id: workshop.id,
-							slug: workshop.slug,
-							title: workshop.title,
-							url: workshopUrl(baseUrl, workshop.slug),
-							opensAt: workshop.startsAt,
-							isOpen: isWorkshopAvailable({
-								state: workshop.state,
-								startsAt: workshop.startsAt,
-							}),
-						}))
-					} else {
-						workshops = [
-							{
-								id: course.id,
-								slug: course.slug,
-								title: course.title,
-								url: workshopUrl(baseUrl, course.slug),
-								opensAt: course.startsAt,
-								isOpen: isWorkshopAvailable({
-									state: course.state,
-									startsAt: course.startsAt,
-								}),
-							},
-						]
+				unique.map(async (course) => {
+					const listed =
+						course.type === 'cohort'
+							? ((await getCachedCohortNavigation(course.id))?.workshops ?? [])
+							: [course]
+					const workshops = await Promise.all(
+						listed.map(async (workshop) => {
+							const access = await workshopAccess(learner, workshop.id)
+							return {
+								access,
+								summary: {
+									id: workshop.id,
+									slug: workshop.slug,
+									title: workshop.title,
+									url: workshopUrl(baseUrl, workshop.slug),
+									opensAt:
+										access._tag === 'NotYetOpen'
+											? (access.opensAt ?? workshop.startsAt)
+											: workshop.startsAt,
+									isOpen: access._tag === 'Open',
+								} satisfies WorkshopSummary,
+							}
+						}),
+					)
+					if (workshops.every(({ access }) => access._tag === 'NotEntitled')) {
+						return null
 					}
-
 					const upcoming = workshops
-						.filter((workshop) => !workshop.isOpen && workshop.opensAt)
-						.map((workshop) => workshop.opensAt as string)
+						.filter(
+							({ access, summary }) =>
+								access._tag === 'NotYetOpen' && summary.opensAt,
+						)
+						.map(({ summary }) => summary.opensAt as string)
 						.sort()
 
 					return {
@@ -146,27 +239,24 @@ export function makeEntitlementsPort({
 						title: course.title,
 						type: course.type,
 						url: `${baseUrl}${getResourcePath(course.type, course.slug)}`,
-						workshops,
+						workshops: workshops.map(({ summary }) => summary),
 						nextOpensAt: upcoming[0] ?? null,
-					}
+					} satisfies OwnedCourse
 				}),
 			)
-			return courses.filter((course): course is OwnedCourse => course !== null)
+
+			const owned = courses.filter((course) => course !== null)
+			const inCohorts = new Set(
+				owned
+					.filter((course) => course.type === 'cohort')
+					.flatMap((course) => course.workshops.map((workshop) => workshop.id)),
+			)
+			return owned.filter(
+				(course) => course.type === 'cohort' || !inCohorts.has(course.id),
+			)
 		},
 
-		workshopAccess: async (learner, workshopId): Promise<WorkshopAccess> => {
-			const module = await getWorkshop(workshopId)
-			if (!module) return { _tag: 'NotEntitled' }
-			const ability = await learnerAbility({ learner, module, country })
-
-			if (!ability.can('read', subject('Content', { id: module.id }))) {
-				return { _tag: 'NotEntitled' }
-			}
-			if (ability.can('read', 'PendingOpenAccess') || !isPublished(module)) {
-				return { _tag: 'NotYetOpen', opensAt: module.fields?.startsAt ?? null }
-			}
-			return { _tag: 'Open' }
-		},
+		workshopAccess,
 
 		lessonAccess: async (learner, locator): Promise<LessonAccess> => {
 			const lesson = await getLesson(locator.lesson)
@@ -179,7 +269,13 @@ export function makeEntitlementsPort({
 				return { _tag: 'NotFound' }
 			}
 
-			const ability = await learnerAbility({ learner, module, lesson, country })
+			const ability = await learnerAbility({
+				learner,
+				inputs: await inputsFor(learner),
+				module,
+				lesson,
+				country,
+			})
 			const canRead = ability.can('read', subject('Content', { id: lesson.id }))
 
 			if (canRead && isPublished(module)) return { _tag: 'Readable' }

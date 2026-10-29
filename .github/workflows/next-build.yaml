@@ -93,6 +93,7 @@ jobs:
         run: |
           pnpm --filter @ai-hero/course-sync-schema build
           pnpm --filter @ai-hero/front-desk-support build
+          pnpm --filter @ai-hero/learner-agent build
 
       # `drizzle-kit push` stops at the first timestamp(3) column with an
       # ON UPDATE (drizzle-kit 0.27 emits a bare ON UPDATE CURRENT_TIMESTAMP,

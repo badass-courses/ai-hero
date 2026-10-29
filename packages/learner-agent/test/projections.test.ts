@@ -463,6 +463,7 @@ describe('OpenAPI projection', () => {
 			'401',
 			'403',
 			'404',
+			'429',
 			'503',
 		])
 		expect(responses['403'].description).toBe('NotEntitled Or NotYetOpen.')
@@ -472,6 +473,47 @@ describe('OpenAPI projection', () => {
 			) ?? []
 		for (const ref of new Set(refs)) {
 			expect(document.components.schemas).toHaveProperty(ref.split('/').pop()!)
+		}
+	})
+
+	it('documents the dispatcher’s 400 and 429 with the bodies it sends', async () => {
+		const errorSchema = (operation: any, status: string) => {
+			const schema =
+				operation.responses[status].content['application/json'].schema
+					.properties.error
+			const name = String(schema.$ref).split('/').pop()!
+			return document.components.schemas[name] as any
+		}
+		for (const name of TOOL_NAMES) {
+			const operation = document.paths[`/api/learner/${name}`]!.post as any
+			expect(errorSchema(operation, '400').properties._tag.enum).toEqual([
+				'InvalidInput',
+			])
+			expect(errorSchema(operation, '429').properties._tag.enum).toEqual([
+				'RateLimited',
+			])
+			expect(operation.responses['429'].headers).toHaveProperty('Retry-After')
+		}
+
+		const operation = document.paths['/api/learner/read_lesson']!.post as any
+		const bad = await makeLearnerAgent(fakePorts(learner)).handleHttp(
+			new Request(`${BASE}/api/learner/read_lesson`),
+			'read_lesson',
+		)
+		const badBody = await bad.json()
+		const invalid = errorSchema(operation, '400')
+		expect(Object.keys(badBody.error).sort()).toEqual(
+			[...invalid.required].sort(),
+		)
+		expect(badBody.error._tag).toBe('InvalidInput')
+
+		const limited = await makeLearnerAgent(
+			fakePorts(learner, { limited: true }),
+		).handleHttp(new Request(`${BASE}/api/learner/my_courses`), 'my_courses')
+		const limitedBody = await limited.json()
+		const rateLimited = errorSchema(operation, '429')
+		for (const key of rateLimited.required) {
+			expect(limitedBody.error).toHaveProperty(key)
 		}
 	})
 

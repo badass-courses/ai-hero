@@ -1,5 +1,5 @@
 import type { AnyCapability } from '../contract.js'
-import { failureStatus } from '../errors.js'
+import { InvalidInput, RateLimited, failureStatus } from '../errors.js'
 import { failureTags } from './catalog.js'
 import {
 	inputJsonSchema,
@@ -28,6 +28,21 @@ export function toOpenApi(
 	const schemas: Record<string, JsonSchemaObject> = {}
 	const refPrefix = `#/components/schemas/${options.componentPrefix ?? ''}`
 	const paths: Record<string, Record<string, unknown>> = {}
+
+	// The dispatcher answers these for every capability, before or around the
+	// handler: input that does not decode, and the rate limit.
+	const invalidInput = jsonSchemaInto(
+		InvalidInput,
+		schemas,
+		refPrefix,
+		options.componentPrefix,
+	)
+	const rateLimited = jsonSchemaInto(
+		RateLimited,
+		schemas,
+		refPrefix,
+		options.componentPrefix,
+	)
 
 	for (const { contract } of capabilities) {
 		const input = inputJsonSchema(contract)
@@ -64,29 +79,40 @@ export function toOpenApi(
 				},
 			},
 		}
-		const failureEnvelope = {
+		const envelope = (error: JsonSchemaObject) => ({
 			type: 'object',
 			required: ['ok', 'capability', 'error', 'next_actions'],
 			properties: {
 				ok: { const: false },
 				capability: { const: contract.name },
-				error: failure,
+				error,
 				next_actions: { type: 'array' },
 			},
-		}
+		})
 		const responses: Record<string, unknown> = {
 			'200': success,
 			'400': {
-				description: 'The input does not match the schema.',
-				content: { 'application/json': { schema: failureEnvelope } },
+				description: 'InvalidInput: the input does not match the schema.',
+				content: { 'application/json': { schema: envelope(invalidInput) } },
+			},
+			'429': {
+				description: 'RateLimited: retry after `Retry-After` seconds.',
+				headers: {
+					'Retry-After': {
+						description: 'Seconds until the next call is allowed.',
+						schema: { type: 'integer' },
+					},
+				},
+				content: { 'application/json': { schema: envelope(rateLimited) } },
 			},
 		}
 		for (const tag of failureTags(contract)) {
 			const status = String(failureStatus[tag] ?? 422)
+			if (status === '429') continue
 			const existing = responses[status] as { description: string } | undefined
 			responses[status] = {
 				description: existing ? `${existing.description} Or ${tag}.` : tag,
-				content: { 'application/json': { schema: failureEnvelope } },
+				content: { 'application/json': { schema: envelope(failure) } },
 			}
 		}
 

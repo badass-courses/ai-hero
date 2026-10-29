@@ -125,9 +125,11 @@ export const sessionExtract = implement(
 				onScreen: windowed.onScreen,
 				extract: windowed.extract,
 				next_actions: [
+					// Same width, centred one window on, so successive windows meet.
 					nextTool('session_extract', 'Move further along the video.', {
 						...locator,
 						atSeconds: atSeconds + windowSeconds * 2,
+						windowSeconds,
 					}),
 					nextHref(content.links.lesson, 'Watch the video on the lesson page.'),
 					back,

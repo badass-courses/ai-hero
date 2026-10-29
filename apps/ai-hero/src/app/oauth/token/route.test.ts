@@ -76,6 +76,18 @@ describe('device-code exchange', () => {
 		expect(await response.json()).toMatchObject({ scope: 'learner:read' })
 	})
 
+	it('stores a repeated scope once, so the learner can list and revoke it', async () => {
+		const response = await exchange({
+			device_code: 'code-1',
+			scope: ' learner:read   learner:read ',
+		})
+		expect(response.status).toBe(200)
+		expect(mocks.insertValues.mock.calls[0]?.[0]).toMatchObject({
+			scope: 'learner:read',
+		})
+		expect(await response.json()).toMatchObject({ scope: 'learner:read' })
+	})
+
 	it('refuses a scope it cannot narrow to, and mints nothing', async () => {
 		const response = await exchange({
 			device_code: 'code-1',

@@ -51,6 +51,15 @@ export class Unavailable extends Schema.TaggedError<Unavailable>()(
 	},
 ) {}
 
+/**
+ * The dispatcher's answer to input that does not decode, before any handler
+ * runs. Not a capability failure, so it is in no contract's `failure`.
+ */
+export const InvalidInput = Schema.Struct({
+	_tag: Schema.Literal('InvalidInput'),
+	message: Schema.String,
+}).annotate({ identifier: 'InvalidInput' })
+
 /** HTTP status per failure tag, shared by the HTTP and OpenAPI projections. */
 export const failureStatus: Readonly<Record<string, number>> = {
 	SignInRequired: 401,

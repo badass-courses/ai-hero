@@ -56,10 +56,8 @@ const learner = {
 	userId: 'synthetic-viewer',
 	tokenKind: 'learner-token',
 } as const
-const port = makeEntitlementsPort({
-	baseUrl: 'https://aihero.test',
-	country: 'US',
-})
+// Built per test: a port memoizes one request's learner inputs.
+let port: ReturnType<typeof makeEntitlementsPort>
 
 const PAST = '2026-01-01T00:00:00.000Z'
 const FUTURE = '2099-01-01T00:00:00.000Z'
@@ -101,6 +99,7 @@ function arrange({
 
 beforeEach(() => {
 	vi.clearAllMocks()
+	port = makeEntitlementsPort({ baseUrl: 'https://aihero.test', country: 'US' })
 	mocks.getPurchasesForUser.mockResolvedValue([])
 	mocks.entitlementTypes.mockResolvedValue([
 		{ id: 'cohort-type', name: 'cohort_content_access' },
@@ -212,55 +211,98 @@ describe('learner entitlements, as the lesson page decides them', () => {
 			_tag: 'NotFound',
 		})
 	})
+})
 
-	it('lists owned cohorts with each workshop’s open state and the next open date', async () => {
-		mocks.getPurchasedResources.mockResolvedValue([
-			{
-				key: 'cohort-1',
-				resourceId: 'cohort-1',
-				resourceType: 'cohort',
-				resourceSlug: 'ai-coding',
-				title: 'AI Coding',
-				purchasedAt: null,
+describe('the courses a learner owns', () => {
+	const workshop = (id: string, startsAt: string) => {
+		const { module } = cohortAbilityFixture({ startsAt })
+		return {
+			...module,
+			id,
+			fields: {
+				...module.fields,
+				slug: id,
+				title: id,
+				state: 'published',
+				startsAt,
 			},
-		])
-		mocks.getCourseResource.mockResolvedValue({
+		}
+	}
+	const modules: Record<string, ReturnType<typeof workshop>> = {
+		w1: workshop('w1', PAST),
+		w2: workshop('w2', FUTURE),
+		'w-bundle': workshop('w-bundle', PAST),
+	}
+	const courseResources: Record<string, unknown> = {
+		'cohort-1': {
 			id: 'cohort-1',
 			type: 'cohort',
 			slug: 'ai-coding',
 			title: 'AI Coding',
 			state: 'published',
 			startsAt: null,
-		})
+		},
+		w1: {
+			id: 'w1',
+			type: 'workshop',
+			slug: 'w1',
+			title: 'w1',
+			state: 'published',
+			startsAt: PAST,
+		},
+		'w-bundle': {
+			id: 'w-bundle',
+			type: 'workshop',
+			slug: 'w-bundle',
+			title: 'w-bundle',
+			state: 'published',
+			startsAt: PAST,
+		},
+	}
+	const purchase = (resourceId: string) => ({
+		key: resourceId,
+		resourceId,
+		resourceType: 'cohort',
+		resourceSlug: resourceId,
+		title: resourceId,
+		purchasedAt: null,
+	})
+	const cohortEntitlement = (metadata: Record<string, unknown> = {}) => ({
+		entitlementType: 'cohort-type',
+		expiresAt: null,
+		metadata: { contentIds: ['w1', 'w2'], ...metadata },
+	})
+
+	beforeEach(() => {
+		mocks.getWorkshop.mockImplementation(async (id: string) => modules[id])
+		mocks.getCourseResource.mockImplementation(
+			async (id: string) => courseResources[id] ?? null,
+		)
+		mocks.getPurchasedResources.mockResolvedValue([])
+		mocks.getAllUserEntitlements.mockResolvedValue([])
 		mocks.getCachedCohortNavigation.mockResolvedValue({
 			id: 'cohort-1',
 			slug: 'ai-coding',
 			title: 'AI Coding',
-			workshops: [
-				{
-					id: 'w1',
-					slug: 'week-one',
-					title: 'Week One',
-					position: 0,
-					state: 'published',
-					startsAt: PAST,
-					timezone: 'UTC',
-					firstLesson: null,
-				},
-				{
-					id: 'w2',
-					slug: 'week-two',
-					title: 'Week Two',
-					position: 1,
-					state: 'published',
-					startsAt: FUTURE,
-					timezone: 'UTC',
-					firstLesson: null,
-				},
-			],
+			workshops: ['w1', 'w2'].map((id, position) => ({
+				id,
+				slug: id,
+				title: id,
+				position,
+				state: 'published',
+				startsAt: modules[id]!.fields.startsAt,
+				timezone: 'UTC',
+				firstLesson: null,
+			})),
 		})
+	})
 
-		const [course] = await port.ownedCourses(learner)
+	it('lists an owned cohort with each workshop’s open state and the next open date', async () => {
+		mocks.getPurchasedResources.mockResolvedValue([purchase('cohort-1')])
+		mocks.getAllUserEntitlements.mockResolvedValue([cohortEntitlement()])
+
+		const [course, ...rest] = await port.ownedCourses(learner)
+		expect(rest).toEqual([])
 		expect(course).toMatchObject({
 			slug: 'ai-coding',
 			type: 'cohort',
@@ -268,8 +310,66 @@ describe('learner entitlements, as the lesson page decides them', () => {
 			nextOpensAt: FUTURE,
 		})
 		expect(course?.workshops.map((w) => [w.slug, w.isOpen])).toEqual([
-			['week-one', true],
-			['week-two', false],
+			['w1', true],
+			['w2', false],
 		])
+	})
+
+	it('agrees with workshopAccess under early access: open now, nothing to wait for', async () => {
+		mocks.getPurchasedResources.mockResolvedValue([purchase('cohort-1')])
+		mocks.getAllUserEntitlements.mockResolvedValue([
+			cohortEntitlement({ earlyAccess: true }),
+		])
+
+		expect(await port.workshopAccess(learner, 'w2')).toEqual({ _tag: 'Open' })
+		const [course] = await port.ownedCourses(learner)
+		expect(course?.workshops.map((w) => [w.slug, w.isOpen])).toEqual([
+			['w1', true],
+			['w2', true],
+		])
+		expect(course?.nextOpensAt).toBeNull()
+	})
+
+	it('lists a workshop granted by an entitlement, with no purchase of its own', async () => {
+		mocks.getAllUserEntitlements.mockResolvedValue([
+			{
+				entitlementType: 'workshop-type',
+				expiresAt: null,
+				metadata: { contentIds: ['w-bundle'] },
+			},
+		])
+
+		const courses = await port.ownedCourses(learner)
+		expect(courses.map((course) => [course.slug, course.type])).toEqual([
+			['w-bundle', 'workshop'],
+		])
+		expect(courses[0]?.workshops[0]?.isOpen).toBe(true)
+	})
+
+	it('does not list a cohort’s workshops again on their own', async () => {
+		mocks.getPurchasedResources.mockResolvedValue([
+			purchase('cohort-1'),
+			purchase('w1'),
+		])
+		mocks.getAllUserEntitlements.mockResolvedValue([cohortEntitlement()])
+
+		const courses = await port.ownedCourses(learner)
+		expect(courses.map((course) => course.slug)).toEqual(['ai-coding'])
+	})
+
+	it('drops a course with no workshop the learner can reach, as course_outline refuses it', async () => {
+		mocks.getPurchasedResources.mockResolvedValue([purchase('w-bundle')])
+
+		expect(await port.ownedCourses(learner)).toEqual([])
+	})
+
+	it('loads the learner’s purchases and entitlements once per request', async () => {
+		mocks.getPurchasedResources.mockResolvedValue([purchase('cohort-1')])
+		mocks.getAllUserEntitlements.mockResolvedValue([cohortEntitlement()])
+
+		await port.ownedCourses(learner)
+		await port.workshopAccess(learner, 'w1')
+		expect(mocks.getAllUserEntitlements).toHaveBeenCalledTimes(1)
+		expect(mocks.getPurchasesForUser).toHaveBeenCalledTimes(1)
 	})
 })
