@@ -23,12 +23,6 @@ export type CohortOfficeHoursDayGroup = {
 	sessions: CohortOfficeHoursSession[]
 }
 
-const OFFICE_HOURS_DAY_LABELS = [
-	'Opening Monday',
-	'Second Monday',
-	'Final Friday',
-] as const
-
 export function createYouTubeWatchUrl(broadcastId: string) {
 	return `https://www.youtube.com/watch?v=${broadcastId}`
 }
@@ -54,11 +48,20 @@ export function groupOfficeHoursSessionsByUtcDate(
 	}
 
 	return Array.from(groupedSessions.entries()).map(
-		([dateKey, sessionsForDate], index) => ({
-			dateKey,
-			label: OFFICE_HOURS_DAY_LABELS[index] || 'Office Hours',
-			sessions: sortOfficeHoursSessions(sessionsForDate),
-		}),
+		([dateKey, sessionsForDate], index) => {
+			const weekday = formatInTimeZone(new Date(dateKey), 'UTC', 'EEEE')
+			const prefix =
+				index === 0
+					? 'Opening '
+					: index === groupedSessions.size - 1
+						? 'Final '
+						: ''
+			return {
+				dateKey,
+				label: `${prefix}${weekday}`,
+				sessions: sortOfficeHoursSessions(sessionsForDate),
+			}
+		},
 	)
 }
 
