@@ -11,6 +11,7 @@ import type {
 	WorkshopAccess,
 } from './domain.js'
 import { RateLimited, Unavailable } from './errors.js'
+import type { SessionExtract } from './session-extract.js'
 import type { Learner, LearnerAgentPorts, SiteUrls } from './ports.js'
 
 /**
@@ -53,6 +54,19 @@ export class LearnerContent extends Context.Service<
 		readonly officeHours: (
 			cohortId: string,
 		) => Effect.Effect<CohortOfficeHours | null, Unavailable>
+		readonly sessionExtracts: (
+			lessonIds: ReadonlyArray<string>,
+		) => Effect.Effect<
+			ReadonlyArray<{
+				readonly lessonId: string
+				readonly extract: SessionExtract
+			}>,
+			Unavailable
+		>
+		readonly skillLinks: () => Effect.Effect<
+			ReadonlyArray<{ readonly skill: string; readonly url: string }>,
+			Unavailable
+		>
 	}
 >()('@ai-hero/learner-agent/LearnerContent') {}
 
@@ -153,6 +167,11 @@ export function servicesFor(
 			lesson: (lesson) => content(() => ports.content.lesson(lesson)),
 			officeHours: (cohortId) =>
 				content(() => ports.content.officeHours(cohortId)),
+			sessionExtracts: (lessonIds) =>
+				lessonIds.length === 0
+					? Effect.succeed([])
+					: content(() => ports.content.sessionExtracts(lessonIds)),
+			skillLinks: () => content(() => ports.content.skillLinks()),
 		}),
 		Context.add(LearnerProgress, {
 			completed: (learner, resourceIds) =>

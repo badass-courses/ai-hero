@@ -4,6 +4,7 @@ import type {
 	LearnerAgentPorts,
 	LessonContent,
 	OwnedCourse,
+	SessionExtract,
 } from '../src/index.js'
 
 export const BASE = 'https://aihero.test'
@@ -115,6 +116,38 @@ const otherCourse: CourseStructure = {
 	],
 }
 
+/** A cohort past the per-call lesson cap: 20 lessons, then 15. */
+const bigWorkshop = (id: string, count: number) => ({
+	id,
+	slug: id,
+	title: id,
+	url: `${BASE}/workshops/${id}`,
+	opensAt: null,
+	sections: [
+		{
+			title: null,
+			lessons: Array.from({ length: count }, (_, index) => ({
+				id: `${id}-lesson-${index}`,
+				slug: `${id}-lesson-${index}`,
+				title: `${id} lesson ${index}`,
+				type: 'lesson',
+				url: `${BASE}/workshops/${id}/${id}-lesson-${index}`,
+			})),
+		},
+	],
+})
+
+const bigCohort: CourseStructure = {
+	course: {
+		id: 'big',
+		slug: 'big',
+		title: 'Big cohort',
+		type: 'cohort',
+		url: `${BASE}/cohorts/big`,
+	},
+	workshops: [bigWorkshop('big-a', 20), bigWorkshop('big-b', 15)],
+}
+
 export const ownedCohort: OwnedCourse = {
 	...cohort.course,
 	workshops: [
@@ -175,6 +208,82 @@ export const lessonOne: LessonContent = {
 	},
 }
 
+/** A session with one of everything the views pick out. */
+export const lessonTwoExtract: SessionExtract = {
+	sessions: [
+		{
+			sessionId: 's2',
+			entries: [
+				{
+					kind: 'userPrompt',
+					visibleFrom: 5,
+					text: 'Refactor the refund module',
+				},
+				{
+					kind: 'skillCall',
+					via: 'slashCommand',
+					visibleFrom: 8,
+					skill: 'tdd',
+					args: 'refund flow',
+					skillBody: 'Write the failing test first.',
+				},
+				{ kind: 'assistantText', visibleFrom: 12, text: 'Running the tests' },
+				{
+					kind: 'toolCall',
+					visibleFrom: 15,
+					tool: 'Bash',
+					summary: 'pnpm test',
+					resultIsError: true,
+				},
+				{ kind: 'assistantText', visibleFrom: 18, text: 'One test fails' },
+				{ kind: 'interrupt', visibleFrom: 30, text: 'Stop' },
+				{
+					kind: 'userPrompt',
+					visibleFrom: 32,
+					text: 'Use parseRefund instead',
+				},
+				{
+					kind: 'skillCall',
+					via: 'toolCall',
+					visibleFrom: 40,
+					skill: 'grill-me',
+					args: null,
+					result: null,
+					resultIsError: null,
+					skillBody: null,
+				},
+			],
+		},
+	],
+}
+
+const markerExtract = (marker: string): SessionExtract => ({
+	sessions: [
+		{
+			sessionId: marker,
+			entries: [
+				{ kind: 'userPrompt', visibleFrom: 1, text: marker },
+				{
+					kind: 'skillCall',
+					via: 'slashCommand',
+					visibleFrom: 2,
+					skill: '/TDD',
+					args: marker,
+					skillBody: marker,
+				},
+			],
+		},
+	],
+})
+
+/** Every lesson's extract, including ones the learner must never see. */
+const extracts: Record<string, SessionExtract> = {
+	'lesson-1': lessonOne.sessionExtract!,
+	'lesson-2': lessonTwoExtract,
+	'lesson-locked': markerExtract('EMBARGOED-EXTRACT'),
+	'lesson-other': markerExtract('UNOWNED-EXTRACT'),
+}
+
 /** Locator → lesson id, the way the app resolves slug or id. */
 const lessonIds: Record<string, string> = {
 	'first-lesson': 'lesson-1',
@@ -190,6 +299,8 @@ export type Recorder = {
 		resourceId: string
 	}>
 	readonly rateLimitCalls: Array<{ userId: string | null; capability: string }>
+	/** Lesson ids each `sessionExtracts` call asked for. */
+	readonly extractRequests?: Array<ReadonlyArray<string>>
 }
 
 export function fakePorts(
@@ -198,6 +309,7 @@ export function fakePorts(
 		readonly limited?: boolean
 		readonly recorder?: Recorder
 		readonly leakMux?: boolean
+		readonly skillLinksFail?: boolean
 	} = {},
 ): LearnerAgentPorts {
 	const recorder = options.recorder ?? { reads: [], rateLimitCalls: [] }
@@ -239,7 +351,9 @@ export function fakePorts(
 					? cohort
 					: ['w-other', 'other'].includes(idOrSlug)
 						? otherCourse
-						: null,
+						: idOrSlug === 'big'
+							? bigCohort
+							: null,
 			lesson: async (locator) => {
 				if (lessonIds[locator.lesson] !== 'lesson-1') return null
 				if (!options.leakMux) return lessonOne
@@ -270,6 +384,17 @@ export function fakePorts(
 							],
 						}
 					: null,
+			sessionExtracts: async (ids) => {
+				recorder.extractRequests?.push(ids)
+				return ids.flatMap((lessonId) => {
+					const extract = extracts[lessonId]
+					return extract ? [{ lessonId, extract }] : []
+				})
+			},
+			skillLinks: async () => {
+				if (options.skillLinksFail) throw new Error('skills catalog down')
+				return [{ skill: '/tdd', url: `${BASE}/skills-tdd` }]
+			},
 		},
 		progress: {
 			completed: async (who, ids) =>

@@ -13,6 +13,8 @@ const TOOL_NAMES = [
 	'course_outline',
 	'read_lesson',
 	'session_extract',
+	'session_moments',
+	'skill_usage',
 	'search_course',
 	'office_hours',
 ]

@@ -32,7 +32,7 @@ const rpc = (body: unknown) =>
 	)
 
 describe('/mcp', () => {
-	it('lists the cut-1 tools through the package projection', async () => {
+	it('lists the learner tools through the package projection', async () => {
 		mocks.portsFor.mockResolvedValue(ports)
 		const response = await rpc({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
 		expect(response.status).toBe(200)
@@ -44,6 +44,8 @@ describe('/mcp', () => {
 			'course_outline',
 			'read_lesson',
 			'session_extract',
+			'session_moments',
+			'skill_usage',
 			'search_course',
 			'office_hours',
 		])

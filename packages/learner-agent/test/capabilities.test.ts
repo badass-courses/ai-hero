@@ -8,6 +8,8 @@ import { officeHours } from '../src/capabilities/office-hours.js'
 import { readLesson } from '../src/capabilities/read-lesson.js'
 import { searchCourse } from '../src/capabilities/search-course.js'
 import { sessionExtract } from '../src/capabilities/session-extract.js'
+import { sessionMoments } from '../src/capabilities/session-moments.js'
+import { skillUsage } from '../src/capabilities/skill-usage.js'
 import type { Learner } from '../src/ports.js'
 import { servicesFor } from '../src/services.js'
 import {
@@ -23,7 +25,16 @@ const as = (caller: Learner | null, recorder?: Recorder) =>
 		servicesFor(fakePorts(caller, recorder ? { recorder } : {})),
 	)
 
-const newRecorder = (): Recorder => ({ reads: [], rateLimitCalls: [] })
+const newRecorder = (): Recorder => ({
+	reads: [],
+	rateLimitCalls: [],
+	extractRequests: [],
+})
+
+const withOptions = (
+	caller: Learner | null,
+	options: Parameters<typeof fakePorts>[1],
+) => Effect.provideContext(servicesFor(fakePorts(caller, options)))
 
 describe('my_courses', () => {
 	it.effect(
@@ -227,7 +238,12 @@ describe('session_extract', () => {
 	it.effect('windows around a video second and names what was on screen', () =>
 		Effect.gen(function* () {
 			const result = yield* sessionExtract
-				.handler({ lesson: 'first-lesson', atSeconds: 25, windowSeconds: 10 })
+				.handler({
+					lesson: 'first-lesson',
+					atSeconds: 25,
+					windowSeconds: 10,
+					view: 'full',
+				})
 				.pipe(as(learner))
 			expect(result.window).toEqual({
 				atSeconds: 25,
@@ -254,6 +270,7 @@ describe('session_extract', () => {
 						lesson: 'first-lesson',
 						atSeconds: 200,
 						windowSeconds: 30,
+						view: 'full',
 					})
 					.pipe(as(learner))
 				expect(result.onScreen).toMatchObject({ visibleFrom: 20 })
@@ -272,6 +289,7 @@ describe('session_extract', () => {
 						lesson: 'first-lesson',
 						atSeconds: 600,
 						windowSeconds: 300,
+						view: 'full',
 					})
 					.pipe(as(learner))
 				expect(result.window?.toSeconds).toBe(900)
@@ -296,10 +314,262 @@ describe('session_extract', () => {
 	it.effect('returns the whole extract without atSeconds', () =>
 		Effect.gen(function* () {
 			const result = yield* sessionExtract
-				.handler({ lesson: 'first-lesson', windowSeconds: 90 })
+				.handler({ lesson: 'first-lesson', windowSeconds: 90, view: 'full' })
 				.pipe(as(learner))
 			expect(result.window).toBeNull()
 			expect(result.extract?.sessions[0]?.entries).toHaveLength(4)
+		}),
+	)
+})
+
+describe('session_extract views', () => {
+	const view = (
+		name: 'prompts' | 'corrections' | 'skills' | 'errors' | 'chapters',
+		atSeconds?: number,
+	) =>
+		sessionExtract
+			.handler({
+				lesson: 'first-lesson',
+				windowSeconds: 10,
+				view: name,
+				...(atSeconds === undefined ? {} : { atSeconds }),
+			})
+			.pipe(as(learner))
+
+	it.effect('returns the prompts, not the whole extract', () =>
+		Effect.gen(function* () {
+			const result = yield* view('prompts')
+			expect(result.view).toBe('prompts')
+			expect(result.extract).toBeNull()
+			expect(result.moments).toEqual([
+				{
+					kind: 'prompt',
+					sessionId: 's1',
+					visibleFrom: 10,
+					text: 'Add a test',
+				},
+			])
+		}),
+	)
+
+	it.effect('limits moments to the window around atSeconds', () =>
+		Effect.gen(function* () {
+			expect((yield* view('errors', 25)).moments).toEqual([])
+			const near = yield* view('errors', 300)
+			expect(near.moments).toMatchObject([
+				{ kind: 'error', tool: 'Bash', visibleFrom: 300 },
+			])
+			expect(near.onScreen).toMatchObject({ kind: 'toolCall' })
+			expect(
+				near.next_actions.find((action) => action.tool === 'session_extract')
+					?.arguments,
+			).toMatchObject({ atSeconds: 320, windowSeconds: 10, view: 'errors' })
+		}),
+	)
+
+	it.effect('splits the session into chapters', () =>
+		Effect.gen(function* () {
+			const result = yield* view('chapters')
+			expect(result.moments).toBeNull()
+			expect(
+				result.chapters?.map((chapter) => [
+					chapter.prompt,
+					chapter.entries.length,
+				]),
+			).toEqual([['Add a test', 4]])
+		}),
+	)
+})
+
+describe('session_moments', () => {
+	it.effect(
+		'gathers moments across the open lessons of a course, never an embargoed one',
+		() =>
+			Effect.gen(function* () {
+				const recorder = newRecorder()
+				const result = yield* sessionMoments
+					.handler({ course: 'ai-coding', limit: 100 })
+					.pipe(as(learner, recorder))
+				expect(result.lessonsSearched).toBe(2)
+				expect(result.total).toBe(9)
+				expect(result.truncated).toBe(false)
+				expect(
+					result.moments.map((m) => [m.lesson.slug, m.moment.kind]),
+				).toEqual([
+					['first-lesson', 'prompt'],
+					['first-lesson', 'error'],
+					['first-lesson', 'correction'],
+					['second-lesson', 'prompt'],
+					['second-lesson', 'skill'],
+					['second-lesson', 'error'],
+					['second-lesson', 'correction'],
+					['second-lesson', 'prompt'],
+					['second-lesson', 'skill'],
+				])
+				expect(recorder.extractRequests?.flat()).not.toContain('lesson-locked')
+				expect(JSON.stringify(result)).not.toContain('EMBARGOED-EXTRACT')
+				expect(recorder.reads).toEqual([
+					{
+						userId: 'user-owner',
+						capability: 'session_moments',
+						resourceId: 'cohort-1',
+					},
+				])
+				expect(result.next_actions[0]).toMatchObject({
+					tool: 'session_extract',
+					arguments: { lesson: 'first-lesson', atSeconds: 10 },
+				})
+			}),
+	)
+
+	it.effect('filters by kind and links skills to their pages', () =>
+		Effect.gen(function* () {
+			const result = yield* sessionMoments
+				.handler({ course: 'ai-coding', kind: 'skill', limit: 100 })
+				.pipe(as(learner))
+			expect(result.kinds).toEqual(['skill'])
+			expect(
+				result.moments.map((m) =>
+					m.moment.kind === 'skill'
+						? [m.moment.skill, m.moment.skillUrl]
+						: null,
+				),
+			).toEqual([
+				['tdd', 'https://aihero.test/skills-tdd'],
+				['grill-me', null],
+			])
+		}),
+	)
+
+	it.effect('says when the limit cut the list short', () =>
+		Effect.gen(function* () {
+			const result = yield* sessionMoments
+				.handler({ course: 'ai-coding', limit: 2 })
+				.pipe(as(learner))
+			expect(result.moments).toHaveLength(2)
+			expect(result).toMatchObject({ total: 9, truncated: true })
+		}),
+	)
+
+	it.effect(
+		'refuses a course the learner does not own, and anonymous callers',
+		() =>
+			Effect.gen(function* () {
+				const unowned = yield* sessionMoments
+					.handler({ course: 'other', limit: 100 })
+					.pipe(Effect.flip, as(learner))
+				expect(unowned._tag).toBe('NotEntitled')
+				const anonymous = yield* sessionMoments
+					.handler({ course: 'ai-coding', limit: 100 })
+					.pipe(Effect.flip, as(null))
+				expect(anonymous._tag).toBe('SignInRequired')
+			}),
+	)
+})
+
+describe('cross-course lesson cap', () => {
+	it.effect(
+		'loads at most 30 lessons, says it was cut, and names the workshop to search next',
+		() =>
+			Effect.gen(function* () {
+				const recorder = newRecorder()
+				const moments = yield* sessionMoments
+					.handler({ course: 'big', kind: 'skill', limit: 100 })
+					.pipe(as(learner, recorder))
+				expect(moments).toMatchObject({
+					lessonsSearched: 30,
+					lessonsInScope: 35,
+					lessonsCut: true,
+				})
+				expect(recorder.extractRequests?.flat()).toHaveLength(30)
+				expect(moments.next_actions[0]).toMatchObject({
+					tool: 'session_moments',
+					arguments: { course: 'big-b', kind: 'skill' },
+				})
+
+				const usage = yield* skillUsage
+					.handler({ skill: 'tdd', course: 'big', limit: 100 })
+					.pipe(as(learner))
+				expect(usage).toMatchObject({ lessonsSearched: 30, lessonsCut: true })
+				expect(usage.next_actions[0]).toMatchObject({
+					tool: 'skill_usage',
+					arguments: { skill: 'tdd', course: 'big-b' },
+				})
+			}),
+	)
+
+	it.effect('says nothing was cut when the course fits', () =>
+		Effect.gen(function* () {
+			const result = yield* sessionMoments
+				.handler({ course: 'ai-coding', limit: 100 })
+				.pipe(as(learner))
+			expect(result).toMatchObject({
+				lessonsSearched: 2,
+				lessonsInScope: 2,
+				lessonsCut: false,
+			})
+			expect(result.next_actions[0]?.tool).toBe('session_extract')
+		}),
+	)
+})
+
+describe('skill_usage', () => {
+	it.effect(
+		'finds every use of a skill across owned courses, with or without the slash',
+		() =>
+			Effect.gen(function* () {
+				for (const skill of ['tdd', '/TDD']) {
+					const result = yield* skillUsage
+						.handler({ skill, limit: 100 })
+						.pipe(as(learner))
+					expect(result).toMatchObject({
+						skill: 'tdd',
+						skillUrl: 'https://aihero.test/skills-tdd',
+						lessonsUsingSkill: 1,
+						total: 1,
+					})
+					expect(result.courses.map((course) => course.slug)).toEqual([
+						'ai-coding',
+					])
+					expect(result.uses[0]).toMatchObject({
+						lesson: { slug: 'second-lesson' },
+						moment: { visibleFrom: 8, args: 'refund flow' },
+					})
+					const text = JSON.stringify(result)
+					expect(text).not.toContain('EMBARGOED-EXTRACT')
+					expect(text).not.toContain('UNOWNED-EXTRACT')
+				}
+			}),
+	)
+
+	it.effect('still answers when the skills catalog is down, unlinked', () =>
+		Effect.gen(function* () {
+			const result = yield* skillUsage
+				.handler({ skill: 'tdd', limit: 100 })
+				.pipe(withOptions(learner, { skillLinksFail: true }))
+			expect(result.skillUrl).toBeNull()
+			expect(result.total).toBe(1)
+		}),
+	)
+
+	it.effect('finds nothing for a learner who owns nothing', () =>
+		Effect.gen(function* () {
+			const result = yield* skillUsage
+				.handler({ skill: 'tdd', limit: 100 })
+				.pipe(as(otherLearner))
+			expect(result).toMatchObject({ total: 0, courses: [] })
+			expect(result.next_actions.map((action) => action.tool)).toContain(
+				'my_courses',
+			)
+		}),
+	)
+
+	it.effect('refuses one named course the learner does not own', () =>
+		Effect.gen(function* () {
+			const error = yield* skillUsage
+				.handler({ skill: 'tdd', course: 'other', limit: 100 })
+				.pipe(Effect.flip, as(learner))
+			expect(error._tag).toBe('NotEntitled')
 		}),
 	)
 })

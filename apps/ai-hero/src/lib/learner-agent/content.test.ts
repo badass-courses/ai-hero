@@ -25,6 +25,11 @@ vi.mock('@/lib/cohort-navigation-query', () => ({
 	getCachedCohortNavigation: vi.fn(),
 }))
 vi.mock('./course-resources', () => ({ getCourseResource: vi.fn() }))
+vi.mock('@/lib/skills-query', () => ({ getSkillEntries: vi.fn() }))
+vi.mock('./session-extracts', () => ({
+	getLessonSessionExtracts: vi.fn(),
+	skillLinksFrom: vi.fn(),
+}))
 
 import type { ResourceNavigation } from '@/lib/content-navigation'
 
