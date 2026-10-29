@@ -1,11 +1,11 @@
-import { EntitlementSourceType } from "@/lib/entitlement-source-type";
+import { EntitlementSourceType } from '@/lib/entitlement-source-type'
 
 type RoleEntitlement = {
-  id: string;
-  sourceType: string;
-  sourceId: string;
-  metadata?: { discordRoleId?: unknown } | null;
-};
+	id: string
+	sourceType: string
+	sourceId: string
+	metadata?: { discordRoleId?: unknown } | null
+}
 
 /**
  * Splits the refunded purchase's Discord role entitlements into roles to
@@ -15,33 +15,33 @@ type RoleEntitlement = {
  * refund-entitlements has soft-deleted them yet.
  */
 export function partitionDiscordRoleRemovals({
-  refundedPurchaseId,
-  refundedEntitlements,
-  liveEntitlements,
+	refundedPurchaseId,
+	refundedEntitlements,
+	liveEntitlements,
 }: {
-  refundedPurchaseId: string;
-  refundedEntitlements: RoleEntitlement[];
-  liveEntitlements: RoleEntitlement[];
+	refundedPurchaseId: string
+	refundedEntitlements: RoleEntitlement[]
+	liveEntitlements: RoleEntitlement[]
 }) {
-  const retained = new Set<string>();
-  for (const live of liveEntitlements) {
-    if (
-      live.sourceType === EntitlementSourceType.PURCHASE &&
-      live.sourceId === refundedPurchaseId
-    )
-      continue;
-    const roleId = live.metadata?.discordRoleId;
-    if (typeof roleId === "string" && roleId) retained.add(roleId);
-  }
+	const retained = new Set<string>()
+	for (const live of liveEntitlements) {
+		if (
+			live.sourceType === EntitlementSourceType.PURCHASE &&
+			live.sourceId === refundedPurchaseId
+		)
+			continue
+		const roleId = live.metadata?.discordRoleId
+		if (typeof roleId === 'string' && roleId) retained.add(roleId)
+	}
 
-  const remove: { entitlementId: string; discordRoleId: string }[] = [];
-  const keep: { entitlementId: string; discordRoleId: string }[] = [];
-  for (const entitlement of refundedEntitlements) {
-    const roleId = entitlement.metadata?.discordRoleId;
-    if (typeof roleId !== "string" || !roleId) continue;
-    const target = { entitlementId: entitlement.id, discordRoleId: roleId };
-    if (retained.has(roleId)) keep.push(target);
-    else remove.push(target);
-  }
-  return { remove, keep };
+	const remove: { entitlementId: string; discordRoleId: string }[] = []
+	const keep: { entitlementId: string; discordRoleId: string }[] = []
+	for (const entitlement of refundedEntitlements) {
+		const roleId = entitlement.metadata?.discordRoleId
+		if (typeof roleId !== 'string' || !roleId) continue
+		const target = { entitlementId: entitlement.id, discordRoleId: roleId }
+		if (retained.has(roleId)) keep.push(target)
+		else remove.push(target)
+	}
+	return { remove, keep }
 }
