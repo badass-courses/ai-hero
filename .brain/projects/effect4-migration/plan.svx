@@ -140,6 +140,12 @@ Rat-stack shape: a **contract** is the Schema-typed input and output, a **capabi
 - `eslint` on the changed files: 0 errors. (The `.mts` file is outside the lint config.) `prettier --check` flags the same 12 files on main, so they're left unformatted to avoid churn.
 - `pnpm peers check`: same output length before and after (237 lines).
 
+## Follow-ups (not migration work)
+
+- **`compile-mdx-office-hours-cache.test.tsx` fails now and then in a full suite run.** Its `@/server/logger` mock has no `serializeError`. When `compileMDX` throws under load, the `measureIfSlow` error path in `server/perf.ts` calls `serializeError`, so the test fails on the mock and hides the real error. It passes alone, and nothing on its path imports Effect. Fix: add `serializeError` to the mock (or use `importOriginal`), then find out what `compileMDX` throws under load.
+- **`checkout-reconcile/fulfill.mysql.test.ts` "gives one purchase when the original run races the reconciler" sometimes deadlocks** (`ER_LOCK_DEADLOCK` on the `AI_MerchantCharge` insert). It hit the MySQL contract job on #582 and #599, and both reruns passed. The test rethrows the reconciler's rejection. The adapter-collision test next to it already accepts `Deadlock`. Fix in its own PR: retry the reconciler's write on a deadlock, or assert one purchase either way.
+- **The team invoice sandbox proofs need `AIH_SANDBOX_STRIPE_PRODUCT` set to a sandbox product with an active one-time USD price.** The "quote fixture" product has none, so slice 6 ran them on a rig "Crash Course" product.
+
 ## Open questions
 
 - **Who holds the `rk_test_` sandbox key for slices 4 and 5?** Recommendation: the launch desk supplies it from the team's secret store to whoever runs the slice, and the commerce rig (`apps/ai-hero/scripts/commerce-rig/`) owns the run when it lands.
