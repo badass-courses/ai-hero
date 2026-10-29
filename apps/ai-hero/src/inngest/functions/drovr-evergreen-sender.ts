@@ -164,38 +164,11 @@ export const drovrEvergreenSender = inngest.createFunction(
 			const repository = new DrizzleCaptureMarketingRepository(db)
 			return repository.findNewsletterSendQueueCounts()
 		})
-		const readback = await step.run('readback-kit-sequences', () =>
-			readbackEvergreenSequences({
-				apiKey: process.env.KIT_V4_API_KEY,
-				fetch,
-			}),
-		)
-		if (!readback.ready) {
-			await log.warn('drovr.evergreen.not_ready', {
-				problems: readback.problems,
-			})
-			return {
-				status: 'not-ready',
-				problems: readback.problems,
-				counts: { lists: tally(lists), shadow: tally(shadowSends), newsletterQueue },
-			}
-		}
-		const results = await step.run('send-pending-evergreen-emails', () =>
-			executePendingEvergreenSends({
-				repository: new DrizzleCaptureMarketingRepository(db),
-				// Same v4 key as the readback: the gate and the write prove the
-				// same account, and the sequence ids are that account's.
-				subscribe: (input) =>
-					addSubscriberToKitSequence({
-						apiKey: process.env.KIT_V4_API_KEY,
-						fetch,
-						sequenceId: input.listId,
-						email: input.user.email,
-					}),
-				limit: senderLimit(process.env.AIH_DROVR_EVERGREEN_SENDER_LIMIT),
-				pacingMs: evergreenSenderPacingMs(process.env),
-			}),
-		)
+		// Coupons run before the pitch readback gate: issuing one needs no Kit,
+		// and its Kit field write is best-effort, so Kit being down or a pitch
+		// sequence being unready never holds a coupon. The catch sits outside
+		// the step, so the step keeps its retry and a failure that outlasts it
+		// (no merchant coupon, say) can't starve the pitch sends below.
 		const coupons = await step.run(
 			'issue-pending-evergreen-coupons',
 			async () => {
@@ -221,7 +194,12 @@ export const drovrEvergreenSender = inngest.createFunction(
 					limit: senderLimit(process.env.AIH_DROVR_EVERGREEN_SENDER_LIMIT),
 				})
 			},
-		)
+		).catch(async (error: unknown) => {
+			await log.error('drovr.evergreen.coupons_failed', {
+				error: error instanceof Error ? error.message : String(error),
+			})
+			return []
+		})
 		// A coupon is no ContactEvent, so the reconcile cannot repair a lost
 		// request: ask for each offer's profile sync as a durable step.
 		const offerSyncs = offerProfileSyncRequests(
@@ -231,6 +209,39 @@ export const drovrEvergreenSender = inngest.createFunction(
 		if (offerSyncs.length > 0) {
 			await step.sendEvent('request-offer-profile-syncs', offerSyncs)
 		}
+		const readback = await step.run('readback-kit-sequences', () =>
+			readbackEvergreenSequences({
+				apiKey: process.env.KIT_V4_API_KEY,
+				fetch,
+			}),
+		)
+		if (!readback.ready) {
+			await log.warn('drovr.evergreen.not_ready', {
+				problems: readback.problems,
+			})
+			return {
+				status: 'not-ready',
+				problems: readback.problems,
+				coupons,
+				counts: { coupons: tally(coupons), lists: tally(lists), shadow: tally(shadowSends), newsletterQueue },
+			}
+		}
+		const results = await step.run('send-pending-evergreen-emails', () =>
+			executePendingEvergreenSends({
+				repository: new DrizzleCaptureMarketingRepository(db),
+				// Same v4 key as the readback: the gate and the write prove the
+				// same account, and the sequence ids are that account's.
+				subscribe: (input) =>
+					addSubscriberToKitSequence({
+						apiKey: process.env.KIT_V4_API_KEY,
+						fetch,
+						sequenceId: input.listId,
+						email: input.user.email,
+					}),
+				limit: senderLimit(process.env.AIH_DROVR_EVERGREEN_SENDER_LIMIT),
+				pacingMs: evergreenSenderPacingMs(process.env),
+			}),
+		)
 		const counts = {
 			coupons: tally(coupons),
 			sends: tally(results),
