@@ -36,17 +36,11 @@ export function CohortPostPurchase({
 		ownsASeat: true,
 		now,
 	})
-	const firstOpenWorkshop = workshops.find((workshop, position) =>
+	const firstOpenWorkshop = workshops.find((workshop) =>
 		isWorkshopAvailable(
 			{
-				id: workshop.id,
-				slug: workshop.fields.slug,
-				title: workshop.fields.title,
-				position,
 				state: workshop.fields.state,
 				startsAt: workshop.fields.startsAt ?? null,
-				timezone: fields.timezone || 'America/Los_Angeles',
-				firstLesson: null,
 			},
 			now,
 		),
