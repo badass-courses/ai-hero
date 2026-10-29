@@ -39,7 +39,21 @@ import {
 	XCircleIcon,
 } from 'lucide-react'
 
+import { Tabs, TabsContent } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
+
+import {
+	formatTime,
+	seekPlayer,
+	usePlayerTime,
+	type PlayerRef,
+} from './session-player-time'
+import {
+	SessionMomentList,
+	SessionViewTabs,
+	useSessionViews,
+	type SessionTab,
+} from './session-views'
 
 /** Seconds of captions that count as "what Matt is saying now". */
 const SPOKEN_WINDOW = 6
@@ -91,22 +105,92 @@ const SPOKEN_HIGHLIGHT = cn(
 )
 
 /**
- * The agent session the video drives on screen, revealed in step with the
- * lesson player: an entry appears when it appears in the video, the list
- * sticks to the newest one, and every entry's time seeks the video. The
- * reply block Matt is reading out is highlighted, matched from the captions.
- * It fills its parent's height.
+ * The agent session the video drives on screen. Live, its first tab, reveals
+ * it in step with the player; the other tabs list its prompts, skills,
+ * corrections and errors whole (`session-views.tsx`). It fills its parent's
+ * height.
  */
 export function SessionExtractPanel({
 	extract,
+	skillLinks,
 	className,
 	onPopOut,
 }: {
 	extract: SessionExtract
+	/** Skill pages by `skillKey`, for the Skills tab. */
+	skillLinks?: Readonly<Record<string, string>>
 	className?: string
 	/** Shown as a header button when the browser can open a floating window. */
 	onPopOut?: () => void
 }) {
+	const views = useSessionViews(extract, skillLinks)
+	const [tab, setTab] = React.useState<SessionTab>('live')
+	// A lesson change can take away the open tab's moments.
+	const shown = views.tabs.includes(tab) ? tab : 'live'
+
+	return (
+		<section
+			aria-label="Agent session"
+			className={cn(
+				'bg-background text-foreground flex h-full flex-col',
+				className,
+			)}
+		>
+			<header className="flex items-center gap-2 border-b px-3 py-2.5">
+				<Terminal className="text-muted-foreground size-4" aria-hidden />
+				<h2 className={TYPE.cardTitle}>Session on screen</h2>
+				{onPopOut && (
+					<button
+						type="button"
+						onClick={onPopOut}
+						className={cn(
+							TYPE.metaSm,
+							'text-muted-foreground hover:text-foreground ml-auto flex items-center gap-1 rounded-[4px] px-1 py-0.5',
+						)}
+					>
+						<PictureInPicture2 className="size-3.5" aria-hidden />
+						Pop out
+					</button>
+				)}
+			</header>
+			{views.tabs.length > 1 ? (
+				<Tabs
+					value={shown}
+					onValueChange={(value) => setTab(value as SessionTab)}
+					className="min-h-0 flex-1 gap-0"
+				>
+					<SessionViewTabs tabs={views.tabs} />
+					<TabsContent value="live" className="relative flex min-h-0 flex-col">
+						<LiveSession extract={extract} />
+					</TabsContent>
+					{views.tabs
+						.filter((view) => view !== 'live')
+						.map((view) => (
+							<TabsContent
+								key={view}
+								value={view}
+								className="flex min-h-0 flex-col"
+							>
+								<SessionMomentList
+									moments={views.byTab[view as Exclude<SessionTab, 'live'>]}
+								/>
+							</TabsContent>
+						))}
+				</Tabs>
+			) : (
+				<LiveSession extract={extract} />
+			)}
+		</section>
+	)
+}
+
+/**
+ * The session revealed in step with the lesson player: an entry appears when
+ * it appears in the video, the list sticks to the newest one, and every
+ * entry's time seeks the video. The reply block Matt is reading out is
+ * highlighted, matched from the captions.
+ */
+function LiveSession({ extract }: { extract: SessionExtract }) {
 	const rows = React.useMemo(() => sessionExtractRows(extract), [extract])
 	const { muxPlayerRef } = useMuxPlayer()
 	const time = usePlayerTime(muxPlayerRef)
@@ -173,94 +257,64 @@ export function SessionExtractPanel({
 		return () => cancelAnimationFrame(frame)
 	}, [time, targetScrollTop])
 
-	const seek = (seconds: number) => {
-		const player = muxPlayerRef?.current
-		if (!player) return
-		player.currentTime = seconds
-		void player.play()
-	}
+	const seek = (seconds: number) => seekPlayer(muxPlayerRef, seconds)
 
 	return (
-		<section
-			aria-label="Agent session"
-			className={cn(
-				'bg-background text-foreground flex h-full flex-col',
-				className,
-			)}
+		<Conversation
+			className="min-h-0 flex-1"
+			contextRef={stickRef}
+			targetScrollTop={targetScrollTop}
 		>
-			<header className="flex items-center gap-2 border-b px-3 py-2.5">
-				<Terminal className="text-muted-foreground size-4" aria-hidden />
-				<h2 className={TYPE.cardTitle}>Session on screen</h2>
-				{onPopOut && (
-					<button
-						type="button"
-						onClick={onPopOut}
-						className={cn(
-							TYPE.metaSm,
-							'text-muted-foreground hover:text-foreground ml-auto flex items-center gap-1 rounded-[4px] px-1 py-0.5',
-						)}
-					>
-						<PictureInPicture2 className="size-3.5" aria-hidden />
-						Pop out
-					</button>
-				)}
-			</header>
-			<Conversation
-				className="min-h-0 flex-1"
-				contextRef={stickRef}
-				targetScrollTop={targetScrollTop}
-			>
-				<ConversationContent className="gap-0 p-0">
-					<div
-						ref={contentRef}
-						className={cn('flex flex-col px-3 pb-3', SPOKEN_HIGHLIGHT)}
-					>
-						{visible.length === 0 ? (
-							<p className={cn(TYPE.metaSm, 'text-muted-foreground pt-4')}>
-								The session appears here as the video reaches it.
-							</p>
-						) : (
-							visible.map((row, index) => {
-								const previous = visible[index - 1]
-								const timed =
-									!previous || previous.visibleFrom !== row.visibleFrom
-								return (
-									// The time sits in the gap above its row, right-aligned,
-									// so the content keeps the panel's full width.
-									<div
-										key={index}
-										className={cn(
-											'relative',
-											timed
-												? 'mt-5 first:mt-4'
-												: isCall(row) && previous && isCall(previous)
-													? 'mt-0.5'
-													: 'mt-3',
-										)}
-									>
-										{timed && (
-											<button
-												type="button"
-												onClick={() => seek(row.visibleFrom)}
-												aria-label={`Play from ${formatTime(row.visibleFrom)}`}
-												className={cn(
-													TYPE.navNum,
-													'text-muted-foreground hover:text-foreground absolute -top-4 right-0 h-3.5 rounded-[3px] px-0.5',
-												)}
-											>
-												{formatTime(row.visibleFrom)}
-											</button>
-										)}
-										<RowBody row={row} />
-									</div>
-								)
-							})
-						)}
-					</div>
-				</ConversationContent>
-				<FollowVideoButton />
-			</Conversation>
-		</section>
+			<ConversationContent className="gap-0 p-0">
+				<div
+					ref={contentRef}
+					className={cn('flex flex-col px-3 pb-3', SPOKEN_HIGHLIGHT)}
+				>
+					{visible.length === 0 ? (
+						<p className={cn(TYPE.metaSm, 'text-muted-foreground pt-4')}>
+							The session appears here as the video reaches it.
+						</p>
+					) : (
+						visible.map((row, index) => {
+							const previous = visible[index - 1]
+							const timed =
+								!previous || previous.visibleFrom !== row.visibleFrom
+							return (
+								// The time sits in the gap above its row, right-aligned,
+								// so the content keeps the panel's full width.
+								<div
+									key={index}
+									className={cn(
+										'relative',
+										timed
+											? 'mt-5 first:mt-4'
+											: isCall(row) && previous && isCall(previous)
+												? 'mt-0.5'
+												: 'mt-3',
+									)}
+								>
+									{timed && (
+										<button
+											type="button"
+											onClick={() => seek(row.visibleFrom)}
+											aria-label={`Play from ${formatTime(row.visibleFrom)}`}
+											className={cn(
+												TYPE.navNum,
+												'text-muted-foreground hover:text-foreground absolute -top-4 right-0 h-3.5 rounded-[3px] px-0.5',
+											)}
+										>
+											{formatTime(row.visibleFrom)}
+										</button>
+									)}
+									<RowBody row={row} />
+								</div>
+							)
+						})
+					)}
+				</div>
+			</ConversationContent>
+			<FollowVideoButton />
+		</Conversation>
 	)
 }
 
@@ -480,25 +534,6 @@ function CallRow({
 	)
 }
 
-type PlayerRef = React.RefObject<MuxPlayerRefAttributes | null> | null
-
-function usePlayerTime(playerRef: PlayerRef) {
-	const [time, setTime] = React.useState(0)
-	React.useEffect(() => {
-		const player = playerRef?.current
-		if (!player) return
-		const update = () => setTime(player.currentTime ?? 0)
-		update()
-		player.addEventListener('timeupdate', update)
-		player.addEventListener('seeked', update)
-		return () => {
-			player.removeEventListener('timeupdate', update)
-			player.removeEventListener('seeked', update)
-		}
-	}, [playerRef])
-	return time
-}
-
 /**
  * Marks the reply block (paragraph, list item, heading, table row) that the
  * last few seconds of captions match, with `data-spoken`. Captions come from
@@ -586,11 +621,6 @@ function captionTrack(player: MuxPlayerRefAttributes | null | undefined) {
 	return Array.from(tracks ?? []).find(
 		(track) => track.kind === 'subtitles' || track.kind === 'captions',
 	)
-}
-
-function formatTime(seconds: number) {
-	const whole = Math.floor(seconds)
-	return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`
 }
 
 /**

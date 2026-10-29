@@ -38,6 +38,8 @@ export type LessonVideo = {
 	thumbnailUrl: string | null
 	/** The agent session the video drives, drawn beside the player. */
 	sessionExtract?: SessionExtract | null
+	/** Pages of the skills that session runs, by skill name key. */
+	sessionSkillLinks?: Readonly<Record<string, string>>
 }
 
 type HostContext = {
@@ -131,6 +133,7 @@ export function LessonPlayerHost({ children }: { children: React.ReactNode }) {
 	const sessionPanel = video?.sessionExtract ? (
 		<SessionExtractPanel
 			extract={video.sessionExtract}
+			skillLinks={video.sessionSkillLinks}
 			onPopOut={
 				sessionWindow.supported && !sessionWindow.pipWindow
 					? () => void sessionWindow.open({ width: 420, height: 720 })
@@ -191,7 +194,10 @@ export function LessonPlayerHost({ children }: { children: React.ReactNode }) {
 						<SheetHeader className="sr-only">
 							<SheetTitle>Session on screen</SheetTitle>
 						</SheetHeader>
-						<SessionExtractPanel extract={video.sessionExtract} />
+						<SessionExtractPanel
+							extract={video.sessionExtract}
+							skillLinks={video.sessionSkillLinks}
+						/>
 					</SheetContent>
 				</Sheet>
 			)}

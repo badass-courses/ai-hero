@@ -15,6 +15,7 @@ import {
 	getLessonVideoTranscript,
 } from '@/lib/lessons-query'
 import { getLessonSessionExtract } from '@/lib/session-extract-query'
+import { getSessionSkillLinks } from '@/lib/session-skill-links'
 import { MinimalWorkshop } from '@/lib/workshops'
 import { getSignedLessonPlayback } from '@/lib/signed-lesson-playback'
 import { getPlaybackPositionForResource } from '@/lib/progress'
@@ -232,15 +233,18 @@ async function LessonVideoRegistration({
 			getPlaybackPositionForResource(lesson.id),
 			getLessonSessionExtract(lesson.id),
 		])
-	const playback = videoPlaybackResource
-		? await getSignedLessonPlayback({
-				lessonId: lesson.id,
-				workshopId,
-				moduleSlug: params.module,
-				lessonSlug: params.lesson,
-				video: videoPlaybackResource,
-			})
-		: null
+	const [playback, sessionSkillLinks] = await Promise.all([
+		videoPlaybackResource
+			? getSignedLessonPlayback({
+					lessonId: lesson.id,
+					workshopId,
+					moduleSlug: params.module,
+					lessonSlug: params.lesson,
+					video: videoPlaybackResource,
+				})
+			: null,
+		getSessionSkillLinks(sessionExtract),
+	])
 	const muxPlaybackId = playback?.muxPlaybackId ?? null
 	const videoResourceReference = lesson.resources?.find(({ resource }) => {
 		return resource.type === 'videoResource'
@@ -269,6 +273,7 @@ async function LessonVideoRegistration({
 							savedPosition,
 							moduleSlug: params.module,
 							sessionExtract,
+							sessionSkillLinks,
 							thumbnailUrl: videoResourceReference
 								? `${env.NEXT_PUBLIC_URL}/api/thumbnails?videoResourceId=${videoResourceReference.resourceId}&time=${lesson.fields?.thumbnailTime || 0}`
 								: null,
