@@ -2,7 +2,7 @@ import { Effect, Schema } from 'effect'
 
 import type { CourseLesson, CourseRef } from '../domain.js'
 import { NotEntitled, NotFound } from '../errors.js'
-import { nextHref, nextTool } from '../next-actions.js'
+import { nextHref, nextTool, type NextAction } from '../next-actions.js'
 import type { Learner } from '../ports.js'
 import { Entitlements, LearnerContent } from '../services.js'
 
@@ -85,6 +85,40 @@ export function lessonPlace(open: OpenLesson): LessonPlace {
 		},
 		workshop: open.workshop,
 	}
+}
+
+/**
+ * Lessons whose extracts one cross-course call may load. A cohort can hold
+ * many more; past this the result says it was cut and names the workshop to
+ * narrow to, so one call never fans out over every extract in a cohort.
+ */
+export const MAX_LESSONS_PER_CALL = 30
+
+/** The lessons one call searches, and the first workshop it left out. */
+export function capLessons(lessons: ReadonlyArray<OpenLesson>) {
+	const searched = lessons.slice(0, MAX_LESSONS_PER_CALL)
+	return {
+		searched,
+		inScope: lessons.length,
+		cut: lessons.length > searched.length,
+		nextWorkshop: lessons[MAX_LESSONS_PER_CALL]?.workshop ?? null,
+	}
+}
+
+/** When the cap cut in: search the first workshop left out on its own. */
+export function narrowAction(
+	tool: 'session_moments' | 'skill_usage',
+	capped: ReturnType<typeof capLessons>,
+	args: Record<string, unknown>,
+): NextAction[] {
+	if (!capped.cut || !capped.nextWorkshop) return []
+	return [
+		nextTool(
+			tool,
+			`Searched the first ${capped.searched.length} of ${capped.inScope} lessons. Search ${capped.nextWorkshop.title} on its own for the rest.`,
+			{ ...args, course: capped.nextWorkshop.slug },
+		),
+	]
 }
 
 /** Each lesson once, in course order, keeping the first place it appears. */

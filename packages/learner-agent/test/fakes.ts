@@ -116,6 +116,38 @@ const otherCourse: CourseStructure = {
 	],
 }
 
+/** A cohort past the per-call lesson cap: 20 lessons, then 15. */
+const bigWorkshop = (id: string, count: number) => ({
+	id,
+	slug: id,
+	title: id,
+	url: `${BASE}/workshops/${id}`,
+	opensAt: null,
+	sections: [
+		{
+			title: null,
+			lessons: Array.from({ length: count }, (_, index) => ({
+				id: `${id}-lesson-${index}`,
+				slug: `${id}-lesson-${index}`,
+				title: `${id} lesson ${index}`,
+				type: 'lesson',
+				url: `${BASE}/workshops/${id}/${id}-lesson-${index}`,
+			})),
+		},
+	],
+})
+
+const bigCohort: CourseStructure = {
+	course: {
+		id: 'big',
+		slug: 'big',
+		title: 'Big cohort',
+		type: 'cohort',
+		url: `${BASE}/cohorts/big`,
+	},
+	workshops: [bigWorkshop('big-a', 20), bigWorkshop('big-b', 15)],
+}
+
 export const ownedCohort: OwnedCourse = {
 	...cohort.course,
 	workshops: [
@@ -319,7 +351,9 @@ export function fakePorts(
 					? cohort
 					: ['w-other', 'other'].includes(idOrSlug)
 						? otherCourse
-						: null,
+						: idOrSlug === 'big'
+							? bigCohort
+							: null,
 			lesson: async (locator) => {
 				if (lessonIds[locator.lesson] !== 'lesson-1') return null
 				if (!options.leakMux) return lessonOne

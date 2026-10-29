@@ -467,6 +467,52 @@ describe('session_moments', () => {
 	)
 })
 
+describe('cross-course lesson cap', () => {
+	it.effect(
+		'loads at most 30 lessons, says it was cut, and names the workshop to search next',
+		() =>
+			Effect.gen(function* () {
+				const recorder = newRecorder()
+				const moments = yield* sessionMoments
+					.handler({ course: 'big', kind: 'skill', limit: 100 })
+					.pipe(as(learner, recorder))
+				expect(moments).toMatchObject({
+					lessonsSearched: 30,
+					lessonsInScope: 35,
+					lessonsCut: true,
+				})
+				expect(recorder.extractRequests?.flat()).toHaveLength(30)
+				expect(moments.next_actions[0]).toMatchObject({
+					tool: 'session_moments',
+					arguments: { course: 'big-b', kind: 'skill' },
+				})
+
+				const usage = yield* skillUsage
+					.handler({ skill: 'tdd', course: 'big', limit: 100 })
+					.pipe(as(learner))
+				expect(usage).toMatchObject({ lessonsSearched: 30, lessonsCut: true })
+				expect(usage.next_actions[0]).toMatchObject({
+					tool: 'skill_usage',
+					arguments: { skill: 'tdd', course: 'big-b' },
+				})
+			}),
+	)
+
+	it.effect('says nothing was cut when the course fits', () =>
+		Effect.gen(function* () {
+			const result = yield* sessionMoments
+				.handler({ course: 'ai-coding', limit: 100 })
+				.pipe(as(learner))
+			expect(result).toMatchObject({
+				lessonsSearched: 2,
+				lessonsInScope: 2,
+				lessonsCut: false,
+			})
+			expect(result.next_actions[0]?.tool).toBe('session_extract')
+		}),
+	)
+})
+
 describe('skill_usage', () => {
 	it.effect(
 		'finds every use of a skill across owned courses, with or without the slash',

@@ -11,7 +11,13 @@ import {
 import { NextActions, nextHref, nextTool } from '../next-actions.js'
 import { Entitlements, LearnerAudit } from '../services.js'
 import { skillKey } from '../session-views.js'
-import { openLessons, uniqueLessons, type OpenLesson } from './open-lessons.js'
+import {
+	capLessons,
+	narrowAction,
+	openLessons,
+	uniqueLessons,
+	type OpenLesson,
+} from './open-lessons.js'
 import { skillLinks } from './session-extract.js'
 import {
 	CourseMoment,
@@ -23,7 +29,7 @@ import { requireLearner } from './shared.js'
 export const skillUsageContract = defineContract('skill_usage', {
 	title: 'Skill usage',
 	description:
-		'Every lesson and video moment where Matt’s session runs one skill, across the courses the learner can read now (or one course), with the arguments it was given and a link to the skill’s AI Hero page when there is one.',
+		'Every lesson and video moment where Matt’s session runs one skill, across the courses the learner can read now (or one course), with the arguments it was given and a link to the skill’s AI Hero page when there is one. Searches at most 30 lessons per call; past that the result says so and names a workshop to search on its own.',
 	input: Schema.Struct({
 		skill: Schema.String.check(Schema.isMinLength(1)).annotate({
 			description: 'Skill name, with or without the slash: tdd or /tdd.',
@@ -43,6 +49,9 @@ export const skillUsageContract = defineContract('skill_usage', {
 		skillUrl: Schema.NullOr(Schema.String),
 		courses: Schema.Array(CourseRef),
 		lessonsSearched: Schema.Finite,
+		/** Readable lessons in scope; more than searched when the cap cut in. */
+		lessonsInScope: Schema.Finite,
+		lessonsCut: Schema.Boolean,
 		lessonsUsingSkill: Schema.Finite,
 		total: Schema.Finite,
 		truncated: Schema.Boolean,
@@ -82,7 +91,12 @@ export const skillUsage = implement(
 			)
 			const links = yield* skillLinks
 			const key = skillKey(skill)
-			const uses = (yield* momentsAcross(lessons, ['skill'], links)).filter(
+			const capped = capLessons(lessons)
+			const uses = (yield* momentsAcross(
+				capped.searched,
+				['skill'],
+				links,
+			)).filter(
 				(use) =>
 					use.moment.kind === 'skill' && skillKey(use.moment.skill) === key,
 			)
@@ -101,12 +115,15 @@ export const skillUsage = implement(
 				skill: key,
 				skillUrl,
 				courses: opened.map((entry) => entry.course),
-				lessonsSearched: lessons.length,
+				lessonsSearched: capped.searched.length,
+				lessonsInScope: capped.inScope,
+				lessonsCut: capped.cut,
 				lessonsUsingSkill: new Set(uses.map((use) => use.lesson.id)).size,
 				total: uses.length,
 				truncated: uses.length > shown.length,
 				uses: shown,
 				next_actions: [
+					...narrowAction('skill_usage', capped, { skill }),
 					...atMomentAction(shown[0]),
 					...(skillUrl
 						? [nextHref(skillUrl, `Read about /${key} on AI Hero.`)]

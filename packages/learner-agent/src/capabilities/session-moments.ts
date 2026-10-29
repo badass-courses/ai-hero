@@ -20,6 +20,8 @@ import {
 	LessonPlace,
 	lessonPlace,
 	openLessons,
+	capLessons,
+	narrowAction,
 	uniqueLessons,
 	type OpenLesson,
 } from './open-lessons.js'
@@ -42,7 +44,7 @@ export type CourseMoment = typeof CourseMoment.Type
 export const sessionMomentsContract = defineContract('session_moments', {
 	title: 'Session moments',
 	description:
-		'Moments from Matt’s on-screen sessions across every lesson of one course the learner can read now: prompts he typed, course corrections (an interrupt and the prompt after it), skill calls, and failed tool calls with what came next. Each moment names its lesson and video second. Embargoed workshops contribute nothing.',
+		'Moments from Matt’s on-screen sessions across every lesson of one course the learner can read now: prompts he typed, course corrections (an interrupt and the prompt after it), skill calls, and failed tool calls with what came next. Each moment names its lesson and video second. Embargoed workshops contribute nothing. Searches at most 30 lessons per call; past that the result says so and names a workshop to search on its own.',
 	input: Schema.Struct({
 		course: Schema.String.annotate({
 			description: 'Course or workshop slug or id, as returned by my_courses.',
@@ -60,6 +62,9 @@ export const sessionMomentsContract = defineContract('session_moments', {
 		course: CourseRef,
 		kinds: Schema.Array(MomentKind),
 		lessonsSearched: Schema.Finite,
+		/** Readable lessons in scope; more than searched when the cap cut in. */
+		lessonsInScope: Schema.Finite,
+		lessonsCut: Schema.Boolean,
 		total: Schema.Finite,
 		truncated: Schema.Boolean,
 		moments: Schema.Array(CourseMoment),
@@ -122,7 +127,8 @@ export const sessionMoments = implement(
 				? yield* skillLinks
 				: (new Map() as SkillLinks)
 
-			const moments = yield* momentsAcross(lessons, kinds, links)
+			const capped = capLessons(lessons)
+			const moments = yield* momentsAcross(capped.searched, kinds, links)
 
 			yield* audit.read({
 				userId: learner.userId,
@@ -134,11 +140,16 @@ export const sessionMoments = implement(
 			return {
 				course: open.course,
 				kinds,
-				lessonsSearched: lessons.length,
+				lessonsSearched: capped.searched.length,
+				lessonsInScope: capped.inScope,
+				lessonsCut: capped.cut,
 				total: moments.length,
 				truncated: moments.length > shown.length,
 				moments: shown,
 				next_actions: [
+					...narrowAction('session_moments', capped, {
+						...(kind ? { kind } : {}),
+					}),
 					...atMomentAction(shown[0]),
 					nextTool(
 						'course_outline',
