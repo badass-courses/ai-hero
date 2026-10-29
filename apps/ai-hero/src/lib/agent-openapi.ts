@@ -1,5 +1,7 @@
 import { z, type ZodTypeAny } from 'zod'
 
+import { learnerOpenApi } from '@ai-hero/learner-agent'
+
 import {
 	EditorResourceListResponseSchema,
 	EditorResourceMutationRequestSchema,
@@ -1299,6 +1301,11 @@ function buildComponentSchemas(): Record<string, any> {
 
 export function buildAgentOpenApiDocument(baseUrl: string) {
 	const normalizedBaseUrl = baseUrl.replace(/\/$/, '')
+	// Derived from the learner capability contracts, the same schemas /mcp uses.
+	const learner = learnerOpenApi({
+		basePath: '/api/learner',
+		componentPrefix: 'Learner',
+	})
 
 	return {
 		openapi: '3.1.0',
@@ -1323,6 +1330,11 @@ export function buildAgentOpenApiDocument(baseUrl: string) {
 					'Public reads, PAT-backed reads and narrow writes, and role-derived device-token operations.',
 			},
 			{
+				name: 'learner',
+				description:
+					'An enrolled learner’s own agent: owned courses, outlines, lessons, session extracts, search and office hours. The same tools are served over MCP at /mcp. Guide: /api/learner.',
+			},
+			{
 				name: 'Resource editor',
 				description:
 					'Resource-bound collaborator operations authorized by an active editor contribution and an active AI Hero DeviceAccessToken. Existing analytics-issued DeviceAccessToken values are valid while active.',
@@ -1332,6 +1344,7 @@ export function buildAgentOpenApiDocument(baseUrl: string) {
 			...contentPaths,
 			...editorResourcePaths,
 			...personalAccessTokenPaths,
+			...learner.paths,
 		},
 		components: {
 			securitySchemes: {
@@ -1342,7 +1355,10 @@ export function buildAgentOpenApiDocument(baseUrl: string) {
 						'Send Authorization: Bearer <token>. Scoped aih_pat_* tokens receive only scope-derived abilities; role-derived device tokens receive the current abilities of their user. Never put either token in a query string.',
 				},
 			},
-			schemas: buildComponentSchemas(),
+			schemas: {
+				...buildComponentSchemas(),
+				...learner.components.schemas,
+			},
 		},
 	}
 }

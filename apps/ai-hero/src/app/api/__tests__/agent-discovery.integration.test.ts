@@ -165,7 +165,11 @@ describe('AI Hero discovery surfaces', () => {
 		).toContain('role-derived device tokens')
 
 		const contentOperationCount = Object.entries(document.paths)
-			.filter(([path]) => !path.startsWith('/api/personal-access-tokens'))
+			.filter(
+				([path]) =>
+					!path.startsWith('/api/personal-access-tokens') &&
+					!path.startsWith('/api/learner/'),
+			)
 			.flatMap(([, pathItem]) =>
 				Object.keys(pathItem as Record<string, unknown>).filter((key) =>
 					['get', 'post', 'put', 'patch', 'delete', 'options'].includes(key),
@@ -269,6 +273,39 @@ describe('AI Hero discovery surfaces', () => {
 		).toEqual({ $ref: '#/components/schemas/PersonalAccessToken' })
 	})
 
+	it('GET /api/openapi.json carries the learner capabilities from their contracts', async () => {
+		const document = await (await getOpenApi()).json()
+		// The learner capabilities project in from @ai-hero/learner-agent: POST
+		// for each, GET as well for the read-only ones.
+		const learnerPaths = Object.keys(document.paths).filter((path) =>
+			path.startsWith('/api/learner/'),
+		)
+		expect(learnerPaths).toEqual([
+			'/api/learner/my_courses',
+			'/api/learner/course_outline',
+			'/api/learner/read_lesson',
+			'/api/learner/session_extract',
+			'/api/learner/search_course',
+			'/api/learner/office_hours',
+		])
+		expect(document.components.schemas.LearnerNotYetOpenEncoded).toBeDefined()
+	})
+
+	it('points learners’ agents at /mcp from llms.txt and /api', async () => {
+		const llms = await (await getLlmsTxt()).text()
+		expect(llms).toContain('http://localhost:3000/mcp')
+		expect(llms).toContain('http://localhost:3000/api/learner')
+		expect(llms).toContain('scope=learner:read')
+
+		const discovery = await (await getApiDiscovery()).json()
+		expect(discovery.learnerAgent).toMatchObject({
+			mcp: 'http://localhost:3000/mcp',
+			guide: 'http://localhost:3000/api/learner',
+			tools: expect.arrayContaining(['my_courses', 'read_lesson']),
+		})
+		expect(discovery.discovery.mcp).toBe('/mcp')
+	})
+
 	it('GET /.well-known/api-catalog returns the standard API linkset', async () => {
 		const response = await getApiCatalog()
 
@@ -297,6 +334,10 @@ describe('AI Hero discovery surfaces', () => {
 						{
 							href: 'http://localhost:3000/llms.txt',
 							type: 'text/plain',
+						},
+						{
+							href: 'http://localhost:3000/api/learner',
+							type: 'text/markdown',
 						},
 					],
 				},
