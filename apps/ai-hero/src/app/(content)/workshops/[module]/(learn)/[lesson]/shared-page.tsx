@@ -14,6 +14,7 @@ import {
 	getLessonVideoPlaybackResource,
 	getLessonVideoTranscript,
 } from '@/lib/lessons-query'
+import { getLessonSessionExtract } from '@/lib/session-extract-query'
 import { MinimalWorkshop } from '@/lib/workshops'
 import { getSignedLessonPlayback } from '@/lib/signed-lesson-playback'
 import { getPlaybackPositionForResource } from '@/lib/progress'
@@ -225,10 +226,12 @@ async function LessonVideoRegistration({
 	lessonType: 'lesson' | 'exercise' | 'solution'
 	params: { module: string; lesson: string }
 }) {
-	const [videoPlaybackResource, savedPosition] = await Promise.all([
-		getLessonVideoPlaybackResource(lesson.id),
-		getPlaybackPositionForResource(lesson.id),
-	])
+	const [videoPlaybackResource, savedPosition, sessionExtract] =
+		await Promise.all([
+			getLessonVideoPlaybackResource(lesson.id),
+			getPlaybackPositionForResource(lesson.id),
+			getLessonSessionExtract(lesson.id),
+		])
 	const playback = videoPlaybackResource
 		? await getSignedLessonPlayback({
 				lessonId: lesson.id,
@@ -265,6 +268,7 @@ async function LessonVideoRegistration({
 							chapters: videoPlaybackResource?.chapters ?? null,
 							savedPosition,
 							moduleSlug: params.module,
+							sessionExtract,
 							thumbnailUrl: videoResourceReference
 								? `${env.NEXT_PUBLIC_URL}/api/thumbnails?videoResourceId=${videoResourceReference.resourceId}&time=${lesson.fields?.thumbnailTime || 0}`
 								: null,
