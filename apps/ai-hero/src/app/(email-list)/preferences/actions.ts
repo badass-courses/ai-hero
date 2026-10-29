@@ -2,12 +2,16 @@
 
 import { redirect } from 'next/navigation'
 import { parseEmailPreferenceKey } from '@/coursebuilder/email-preferences'
+import { env } from '@/env.mjs'
 import {
+	acceptKitLinkPreferenceChange,
 	getEmailPreferenceDefinition,
 	syncLocalEmailPreference,
 	updateProviderEmailPreference,
 	validateKitPreferenceIdentity,
+	verifyKitPreferenceLinkLocally,
 } from '@/lib/email-preferences'
+import { emailPreferencesLocalEnabled } from '@/lib/email-preferences-local'
 import { log } from '@/server/logger'
 
 /**
@@ -21,6 +25,41 @@ export async function updateEmailPreferenceAction(formData: FormData) {
 	)
 	const subscribed = formData.get('subscribed')?.toString() === 'true'
 	const preference = getEmailPreferenceDefinition(preferenceKey)
+
+	if (emailPreferencesLocalEnabled(env)) {
+		// Kit stays out of the request. An opt-out always lands; an opt-in
+		// needs a link the directory verifies.
+		const verification = await verifyKitPreferenceLinkLocally({
+			subscriberId,
+			shKit,
+			source: 'preferences-page',
+			route: '/preferences',
+		})
+		const result =
+			subscriberId && shKit
+				? await acceptKitLinkPreferenceChange({
+						verification,
+						subscriberId,
+						shKit,
+						preference,
+						subscribed,
+						source: 'preferences-page',
+					})
+				: ({ status: 'rejected', reason: 'invalid-link' } as const)
+
+		if (result.status === 'rejected') {
+			redirect('/preferences?error=invalid-link')
+		}
+
+		redirect(
+			`/preferences?${new URLSearchParams({
+				ck_subscriber_id: subscriberId ?? '',
+				sh_kit: shKit ?? '',
+				updated: preferenceKey,
+				state: subscribed ? 'subscribed' : 'unsubscribed',
+			}).toString()}`,
+		)
+	}
 
 	const subscriber = await validateKitPreferenceIdentity({
 		subscriberId,

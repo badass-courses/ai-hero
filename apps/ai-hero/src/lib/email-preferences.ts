@@ -9,6 +9,19 @@ import {
 } from '@/coursebuilder/email-preferences'
 import { db } from '@/db'
 import { communicationPreferences, users as usersTable } from '@/db/schema'
+import { env } from '@/env.mjs'
+import { EMAIL_PREFERENCE_CHANGE_REQUESTED_EVENT } from '@/inngest/events/email-preference-change'
+import { acceptEmailPreferenceChange } from '@/lib/email-preference-change'
+import {
+	PREFERENCE_EVIDENCE_EVENT_TYPES,
+	readLocalEmailPreferences,
+	verifyKitPreferenceLink,
+	type PreferenceLinkVerification,
+} from '@/lib/email-preferences-local'
+import { readKitSubscriberContact } from '@/lib/kit-subscriber-directory'
+import { parseDrovrSignupDeliveryConfig } from '@/lib/subscriber-marketing/drovr-doi-signup'
+import { readDrovrOptOuts } from '@/lib/subscriber-marketing/drovr-opt-out-reader'
+import type { ContactEventRecord } from '@/lib/subscriber-marketing/types'
 import { log, serializeError } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
 import { guid } from '@coursebuilder/utils/guid'
@@ -495,6 +508,148 @@ export async function unsubscribeLocalEmailPreferenceByUserId({
 		})
 	}
 
+	return result
+}
+
+/**
+ * Checks a Kit link against the local contact directory, never Kit. Used
+ * when AIH_EMAIL_PREFERENCES_LOCAL_ENABLED is on.
+ */
+export async function verifyKitPreferenceLinkLocally({
+	subscriberId,
+	shKit,
+	source,
+	route,
+}: {
+	subscriberId?: string
+	shKit?: string
+	source: PreferenceSource
+	route: string
+}): Promise<PreferenceLinkVerification> {
+	const verification = await verifyKitPreferenceLink(
+		{ subscriberId, shKit },
+		{
+			readContact: (id) => readKitSubscriberContact(id),
+			hashEmail: hashEmailForKit,
+		},
+	)
+	if (verification.status !== 'verified') {
+		await log.warn('email-preferences.identity.validation.failed', {
+			source,
+			route,
+			provider: 'local-directory',
+			kitSubscriberId: subscriberId,
+			result: verification.status,
+			reason: verification.reason,
+		})
+	}
+	return verification
+}
+
+/**
+ * Preference state from local rows, local opt-out ContactEvents and drovr's
+ * stops. Unknown wherever a read fails or the link is not verified.
+ */
+export async function getLocalEmailPreferences(
+	verification: PreferenceLinkVerification,
+) {
+	return readLocalEmailPreferences(verification, {
+		readDrovrStops: (kitSubscriberId) =>
+			readDrovrOptOuts(kitSubscriberId, parseDrovrSignupDeliveryConfig(env)),
+		readContactEvents: async (contactId) => {
+			const { DrizzleCaptureMarketingRepository } =
+				await import('@/lib/subscriber-marketing/drizzle-capture-repository')
+			const repository = new DrizzleCaptureMarketingRepository(db)
+			const batches = await Promise.all(
+				PREFERENCE_EVIDENCE_EVENT_TYPES.map(async (eventType) =>
+					(
+						(await repository.findContactEventsByType(
+							contactId,
+							eventType,
+						)) as ContactEventRecord[]
+					).map((event) => ({
+						eventType,
+						providerReference: event.providerReference,
+						occurredAt: event.occurredAt,
+					})),
+				),
+			)
+			return batches.flat()
+		},
+		readPreferenceRows: async (email) => {
+			const rows = new Map<string, { active: boolean; updatedAt: string }>()
+			const user = await db.query.users.findFirst({
+				where: (users, { eq }) => eq(users.email, email),
+			})
+			if (!user) return rows
+			const [types, preferences] = await Promise.all([
+				db.query.communicationPreferenceTypes.findMany(),
+				db.query.communicationPreferences.findMany({
+					where: (cp, { eq }) => eq(cp.userId, user.id),
+				}),
+			])
+			const nameById = new Map(types.map((type) => [type.id, type.name]))
+			for (const preference of preferences) {
+				const name = nameById.get(preference.preferenceTypeId)
+				if (!name) continue
+				rows.set(name, {
+					active: Boolean(preference.active),
+					// An unreadable time keeps an opt-out and lifts nothing.
+					updatedAt: preference.updatedAt?.toISOString() ?? '',
+				})
+			}
+			return rows
+		},
+	})
+}
+
+/**
+ * Accepts a preference change from a Kit link with Kit out of the request
+ * path. The Kit preference write and the opt-out ContactEvent happen in
+ * `apply-email-preference-change`.
+ */
+export async function acceptKitLinkPreferenceChange(args: {
+	verification: PreferenceLinkVerification
+	subscriberId: string
+	shKit: string
+	preference: AppEmailPreferenceDefinition
+	subscribed: boolean
+	source: 'preferences-page' | 'unsubscribe-link'
+}) {
+	const result = await acceptEmailPreferenceChange(args, {
+		syncLocal: ({ email, preference, subscribed }) =>
+			syncLocalEmailPreference({
+				email,
+				preference,
+				subscribed,
+				source: args.source,
+			}),
+		queue: async (data) => {
+			const { inngest } = await import('@/inngest/inngest.server')
+			await inngest.send({
+				name: EMAIL_PREFERENCE_CHANGE_REQUESTED_EVENT,
+				data,
+			})
+		},
+		onLocalSyncFailed: (error) =>
+			log.error('email-preferences.local-mirror.sync.failed', {
+				source: args.source,
+				kitSubscriberId: args.subscriberId,
+				preferenceKey: args.preference.key,
+				error: serializeError(error),
+			}),
+	})
+	await log.info('email-preferences.change.accepted', {
+		source: args.source,
+		provider: 'local-directory',
+		kitSubscriberId: args.subscriberId,
+		preferenceKey: args.preference.key,
+		result: args.subscribed ? 'subscribed' : 'unsubscribed',
+		status: result.status,
+		...(result.status === 'accepted'
+			? { verified: result.verified }
+			: { reason: result.reason }),
+	})
 	return result
 }
 
