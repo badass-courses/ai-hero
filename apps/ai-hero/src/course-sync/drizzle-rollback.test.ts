@@ -6,8 +6,8 @@ import {
 	contentResourceVersion,
 } from '@/db/schema'
 import { sha256, stableJson } from './control-plane'
-import { syntheticCohortBinding as binding } from './test-fixtures/cohort-binding'
-import type { ResourcePlanItem, SyncPlan, SyncRunRecord } from './types'
+import { syntheticCohortBinding } from './test-fixtures/cohort-binding'
+import { AI_HERO_COURSE_SYNC_BINDING_COHORT_005 as releaseBinding, type ResourcePlanItem, type SyncPlan, type SyncRunRecord } from './types'
 
 const transaction = vi.hoisted(() => vi.fn())
 const findRun = vi.hoisted(() => vi.fn())
@@ -22,7 +22,9 @@ function rollbackHarness(
 		| 'updated-title'
 		| 'updated-pointer'
 		| 'updated-relation'
-		| 'retained-title',
+		| 'retained-title'
+		| 'invalid-state',
+	binding = syntheticCohortBinding as typeof syntheticCohortBinding | typeof releaseBinding,
 ) {
 	const sourceFields = {
 		title: 'Applied title',
@@ -85,7 +87,7 @@ function rollbackHarness(
 		type: 'workshop',
 		createdById: 'test-writer',
 		currentVersionId: `${resource.targetResourceId}-applied`,
-		fields: { ...sourceFields, ...schedule },
+		fields: { ...sourceFields, ...schedule, state: binding.contractVersion === 8 ? 'published' : 'draft' },
 	}))
 	const relations = plan.resources.map((resource) => ({
 		resourceId: resource.targetResourceId,
@@ -133,6 +135,7 @@ function rollbackHarness(
 			},
 		},
 	]
+	if (drift === 'invalid-state') resources[1]!.fields.state = 'archived'
 	if (drift === 'updated-title')
 		resources[1]!.fields.title = 'Unexpected source edit'
 	if (drift === 'updated-pointer')
@@ -220,6 +223,18 @@ function rollbackHarness(
 }
 
 describe('Drizzle rollback field ownership', () => {
+	it('rejects an invalid workshop state even though v8 source hashes exclude state', async () => {
+		const test = rollbackHarness('invalid-state', releaseBinding)
+		await expect(test.rollback()).rejects.toMatchObject({ code: 'ROLLBACK_TARGET_CHANGED' })
+		expect(test.insert).not.toHaveBeenCalled()
+	})
+
+	it('preserves released state even when both applied and parent versions predate release', async () => {
+		const test = rollbackHarness('none', releaseBinding)
+		await expect(test.rollback()).resolves.toMatchObject({ state: 'rolled_back' })
+		expect(test.promotions[0]?.fields).toMatchObject({ state: 'published', title: 'Before' })
+		expect(test.versions[0]?.fields).toMatchObject({ state: 'published' })
+	})
 	it.each(['none', 'retained-title'] as const)(
 		'keeps scheduling through the real rollback path (%s)',
 		async (drift) => {

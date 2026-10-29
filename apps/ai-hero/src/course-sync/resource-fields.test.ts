@@ -4,7 +4,8 @@ import {
 	courseSyncSourceFields,
 	mergeCourseSyncResourceFields,
 } from './resource-fields'
-import type { ResourcePlanItem } from './types'
+import { AI_HERO_COURSE_SYNC_BINDING_COHORT_005 as v8, AI_HERO_COURSE_SYNC_BINDING_COHORT_005_V7 as v7, AI_HERO_COURSE_SYNC_BINDING as crash, managedResourceStateAllowed, type ResourcePlanItem } from './types'
+import { resolveCourseSyncRollbackFields } from './persistence-invariants'
 
 const schedule = {
 	startsAt: '2026-11-09T08:01:00.000Z',
@@ -14,6 +15,29 @@ const schedule = {
 }
 
 describe('course-sync field ownership', () => {
+	it('only v8 workshop state is excluded from source drift and preserved on merge', () => {
+		const fields = { state: 'draft', visibility: 'unlisted', title: 'New' }
+		const published = { ...fields, state: 'published' }
+		for (const binding of [v7, crash]) {
+			expect(courseSyncSourceFields('workshop', published, binding)).toEqual(published)
+			expect(mergeCourseSyncResourceFields({ sourceKind: 'workshop', fields }, published, binding).state).toBe('draft')
+			expect(managedResourceStateAllowed(binding, 'workshop', 'published')).toBe(false)
+		}
+		expect(courseSyncSourceFields('workshop', published, v8)).toEqual({ visibility: 'unlisted', title: 'New' })
+		expect(mergeCourseSyncResourceFields({ sourceKind: 'workshop', fields }, published, v8).state).toBe('published')
+		expect(mergeCourseSyncResourceFields({ sourceKind: 'workshop', fields }, {}, v8).state).toBe('draft')
+		expect(managedResourceStateAllowed(v8, 'workshop', 'published')).toBe(true)
+		for (const sourceKind of ['lesson', 'section', 'solution', 'question'] as const) {
+			expect(managedResourceStateAllowed(v8, sourceKind, 'published')).toBe(false)
+			expect(courseSyncSourceFields(sourceKind, published, v8)).toHaveProperty('state', 'published')
+		}
+		expect(managedResourceStateAllowed(v8, 'video', 'ready')).toBe(true)
+		expect(managedResourceStateAllowed(v8, 'video', 'published')).toBe(false)
+	})
+
+	it('create rollback preserves release state while marking the workshop inactive', () => {
+		expect(resolveCourseSyncRollbackFields({ binding: v8, action: 'create', sourceKind: 'workshop', currentFields: { state: 'published', visibility: 'unlisted' }, previousVersionFields: null, runId: 'run-test' })).toMatchObject({ state: 'published', courseSync: { active: false } })
+	})
 	it.each<ResourcePlanItem['sourceKind']>([
 		'section',
 		'workshop',

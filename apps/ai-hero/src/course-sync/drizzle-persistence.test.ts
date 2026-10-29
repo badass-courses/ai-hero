@@ -7,7 +7,8 @@ import type {
 	SyncPlan,
 	SyncRunRecord,
 } from './types'
-import { syntheticCohortBinding as binding } from './test-fixtures/cohort-binding'
+import { syntheticCohortBinding } from './test-fixtures/cohort-binding'
+import { AI_HERO_COURSE_SYNC_BINDING_COHORT_005 as releaseBinding } from './types'
 import { sha256, stableJson } from './control-plane'
 import { courseSyncSourceFields } from './resource-fields'
 import { contentResource, contentResourceVersion } from '@/db/schema'
@@ -19,7 +20,7 @@ vi.mock('@/db', () => ({
 }))
 vi.mock('./types', async (importOriginal) => ({
 	...(await importOriginal<typeof import('./types')>()),
-	getServerCourseSyncBinding: () => binding,
+	getServerCourseSyncBinding: (id: string) => id === releaseBinding.bindingId ? releaseBinding : syntheticCohortBinding,
 }))
 
 import { drizzleCourseSyncPersistence } from './drizzle-persistence'
@@ -112,9 +113,11 @@ describe('drizzle course-sync staging', () => {
 })
 
 describe('drizzle course-sync operator fields', () => {
-	it.each(['update', 'retain', 'create'] as const)(
-		'%s uses locked operator fields, not scheduling values from preview',
-		async (action) => {
+	it.each([syntheticCohortBinding, releaseBinding].flatMap((binding) =>
+		(['update', 'retain', 'create'] as const).map((action) => ({ binding, action })),
+	))(
+		'$action uses locked operator fields for v$binding.contractVersion',
+		async ({ action, binding }) => {
 			const sourceFields = {
 				title: 'New source title',
 				slug: 'section-1',
@@ -139,7 +142,8 @@ describe('drizzle course-sync operator fields', () => {
 				id: 'workshop-1',
 				type: 'workshop',
 				currentVersionId: 'version-before',
-				fields: { ...previousFields, ...schedule },
+				fields: { ...previousFields, ...schedule,
+					state: binding.contractVersion === 8 ? 'published' : 'draft' },
 			}
 			const item: ResourcePlanItem = {
 				sourceKind: 'workshop',
@@ -160,7 +164,7 @@ describe('drizzle course-sync operator fields', () => {
 					action === 'create'
 						? null
 						: sha256(
-								stableJson(courseSyncSourceFields('workshop', previousFields)),
+								stableJson(courseSyncSourceFields('workshop', previousFields, binding)),
 							),
 			}
 			const input = {
@@ -204,14 +208,14 @@ describe('drizzle course-sync operator fields', () => {
 					{
 						id: binding.productId,
 						type: 'cohort',
-						fields: { state: 'draft', visibility: 'unlisted' },
+						fields: binding.targetContract.product,
 					},
 				],
 				() => [
 					{
 						id: binding.anchorCohortId,
 						type: 'cohort',
-						fields: { state: 'draft', visibility: 'unlisted' },
+						fields: binding.targetContract.cohort,
 						deletedAt: null,
 					},
 				],
@@ -289,7 +293,7 @@ describe('drizzle course-sync operator fields', () => {
 				expect(promotions).toEqual([])
 			} else {
 				const expectedFields =
-					action === 'create' ? sourceFields : { ...sourceFields, ...schedule }
+					action === 'create' ? sourceFields : { ...sourceFields, ...schedule, state: existing.fields.state }
 				expect(versions[0]?.fields).toEqual(expectedFields)
 				expect(promotions[0]?.fields).toEqual(expectedFields)
 				expect(versions[0]?.id).toBe(
