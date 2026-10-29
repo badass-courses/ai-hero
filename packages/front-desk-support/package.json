@@ -26,7 +26,7 @@
 		"test": "tsx --test test/handler.test.ts test/pricing-facts.test.ts test/vendored-pricing.test.ts"
 	},
 	"devDependencies": {
-		"effect": "4.0.2",
+		"effect": "4.0.6",
 		"esbuild": "0.28.0",
 		"@types/node": "^24.0.0",
 		"tsx": "^4.20.6",
