@@ -1,0 +1,4 @@
+fonttools[woff]==4.60.1
+uharfbuzz==0.51.1
+freetype-py==2.5.1
+pillow==12.0.0

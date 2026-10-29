@@ -1,0 +1,5211 @@
+{
+	"measuredAt": "2026-10-29T20:24:13.728Z",
+	"base": "https://www.aihero.dev",
+	"pageCount": 213,
+	"faces": {
+		"mono|normal": {
+			"codepoints": [
+				32,
+				33,
+				34,
+				35,
+				36,
+				37,
+				38,
+				39,
+				40,
+				41,
+				42,
+				43,
+				44,
+				45,
+				46,
+				47,
+				48,
+				49,
+				50,
+				51,
+				52,
+				53,
+				54,
+				55,
+				56,
+				57,
+				58,
+				59,
+				60,
+				61,
+				62,
+				63,
+				64,
+				65,
+				66,
+				67,
+				68,
+				69,
+				70,
+				71,
+				72,
+				73,
+				74,
+				75,
+				76,
+				77,
+				78,
+				79,
+				80,
+				81,
+				82,
+				83,
+				84,
+				85,
+				86,
+				87,
+				88,
+				89,
+				90,
+				91,
+				92,
+				93,
+				94,
+				95,
+				96,
+				97,
+				98,
+				99,
+				100,
+				101,
+				102,
+				103,
+				104,
+				105,
+				106,
+				107,
+				108,
+				109,
+				110,
+				111,
+				112,
+				113,
+				114,
+				115,
+				116,
+				117,
+				118,
+				119,
+				120,
+				121,
+				122,
+				123,
+				124,
+				125,
+				126,
+				183,
+				233,
+				8212,
+				8230,
+				8594,
+				10067,
+				10145,
+				65039
+			],
+			"pagesPerCodepoint": {
+				"32": 210,
+				"33": 2,
+				"34": 11,
+				"35": 8,
+				"36": 41,
+				"37": 2,
+				"38": 19,
+				"39": 92,
+				"40": 19,
+				"41": 19,
+				"42": 7,
+				"43": 7,
+				"44": 127,
+				"45": 82,
+				"46": 213,
+				"47": 109,
+				"48": 130,
+				"49": 120,
+				"50": 128,
+				"51": 106,
+				"52": 110,
+				"53": 117,
+				"54": 112,
+				"55": 93,
+				"56": 82,
+				"57": 66,
+				"58": 17,
+				"59": 2,
+				"60": 22,
+				"61": 34,
+				"62": 24,
+				"63": 7,
+				"64": 48,
+				"65": 213,
+				"66": 21,
+				"67": 213,
+				"68": 143,
+				"69": 209,
+				"70": 105,
+				"71": 201,
+				"72": 211,
+				"73": 213,
+				"74": 31,
+				"75": 60,
+				"76": 213,
+				"77": 164,
+				"78": 187,
+				"79": 211,
+				"80": 162,
+				"81": 5,
+				"82": 211,
+				"83": 203,
+				"84": 212,
+				"85": 200,
+				"86": 147,
+				"87": 127,
+				"88": 76,
+				"89": 141,
+				"90": 2,
+				"91": 6,
+				"92": 1,
+				"93": 6,
+				"94": 1,
+				"95": 20,
+				"96": 1,
+				"97": 213,
+				"98": 173,
+				"99": 213,
+				"100": 213,
+				"101": 213,
+				"102": 109,
+				"103": 213,
+				"104": 213,
+				"105": 213,
+				"106": 25,
+				"107": 213,
+				"108": 213,
+				"109": 213,
+				"110": 213,
+				"111": 213,
+				"112": 213,
+				"113": 18,
+				"114": 213,
+				"115": 213,
+				"116": 213,
+				"117": 213,
+				"118": 213,
+				"119": 145,
+				"120": 213,
+				"121": 191,
+				"122": 11,
+				"123": 7,
+				"124": 1,
+				"125": 6,
+				"126": 9,
+				"183": 117,
+				"233": 1,
+				"8212": 4,
+				"8230": 81,
+				"8594": 4,
+				"10067": 1,
+				"10145": 1,
+				"65039": 1
+			},
+			"weights": {
+				"400": 51725,
+				"500": 54793,
+				"600": 1435,
+				"700": 434
+			},
+			"features": {
+				"font-variant-numeric:tabular-nums": 1117
+			}
+		},
+		"sans|normal": {
+			"codepoints": [
+				32,
+				33,
+				34,
+				35,
+				36,
+				37,
+				38,
+				39,
+				40,
+				41,
+				42,
+				43,
+				44,
+				45,
+				46,
+				47,
+				48,
+				49,
+				50,
+				51,
+				52,
+				53,
+				54,
+				55,
+				56,
+				57,
+				58,
+				59,
+				60,
+				61,
+				62,
+				63,
+				64,
+				65,
+				66,
+				67,
+				68,
+				69,
+				70,
+				71,
+				72,
+				73,
+				74,
+				75,
+				76,
+				77,
+				78,
+				79,
+				80,
+				81,
+				82,
+				83,
+				84,
+				85,
+				86,
+				87,
+				88,
+				89,
+				90,
+				91,
+				92,
+				93,
+				96,
+				97,
+				98,
+				99,
+				100,
+				101,
+				102,
+				103,
+				104,
+				105,
+				106,
+				107,
+				108,
+				109,
+				110,
+				111,
+				112,
+				113,
+				114,
+				115,
+				116,
+				117,
+				118,
+				119,
+				120,
+				121,
+				122,
+				123,
+				124,
+				125,
+				126,
+				163,
+				176,
+				178,
+				183,
+				8211,
+				8212,
+				8216,
+				8217,
+				8220,
+				8221,
+				8226,
+				8230,
+				8594,
+				9989,
+				10003,
+				10007,
+				10060
+			],
+			"pagesPerCodepoint": {
+				"32": 213,
+				"33": 20,
+				"34": 161,
+				"35": 14,
+				"36": 7,
+				"37": 15,
+				"38": 14,
+				"39": 205,
+				"40": 120,
+				"41": 120,
+				"42": 165,
+				"43": 50,
+				"44": 212,
+				"45": 207,
+				"46": 213,
+				"47": 213,
+				"48": 89,
+				"49": 181,
+				"50": 89,
+				"51": 165,
+				"52": 80,
+				"53": 105,
+				"54": 213,
+				"55": 40,
+				"56": 18,
+				"57": 39,
+				"58": 211,
+				"59": 105,
+				"60": 1,
+				"61": 1,
+				"62": 9,
+				"63": 184,
+				"64": 170,
+				"65": 213,
+				"66": 213,
+				"67": 213,
+				"68": 213,
+				"69": 213,
+				"70": 213,
+				"71": 211,
+				"72": 213,
+				"73": 213,
+				"74": 212,
+				"75": 213,
+				"76": 213,
+				"77": 213,
+				"78": 213,
+				"79": 213,
+				"80": 213,
+				"81": 213,
+				"82": 213,
+				"83": 213,
+				"84": 213,
+				"85": 208,
+				"86": 213,
+				"87": 207,
+				"88": 128,
+				"89": 213,
+				"90": 16,
+				"91": 2,
+				"92": 1,
+				"93": 2,
+				"96": 1,
+				"97": 213,
+				"98": 213,
+				"99": 213,
+				"100": 213,
+				"101": 213,
+				"102": 213,
+				"103": 213,
+				"104": 213,
+				"105": 213,
+				"106": 163,
+				"107": 213,
+				"108": 213,
+				"109": 213,
+				"110": 213,
+				"111": 213,
+				"112": 213,
+				"113": 162,
+				"114": 213,
+				"115": 213,
+				"116": 213,
+				"117": 213,
+				"118": 213,
+				"119": 213,
+				"120": 213,
+				"121": 213,
+				"122": 116,
+				"123": 1,
+				"124": 2,
+				"125": 1,
+				"126": 5,
+				"163": 1,
+				"176": 1,
+				"178": 2,
+				"183": 2,
+				"8211": 7,
+				"8212": 103,
+				"8216": 1,
+				"8217": 47,
+				"8220": 3,
+				"8221": 3,
+				"8226": 3,
+				"8230": 211,
+				"8594": 18,
+				"9989": 1,
+				"10003": 1,
+				"10007": 1,
+				"10060": 1
+			},
+			"weights": {
+				"300": 8883,
+				"400": 957652,
+				"500": 144342,
+				"600": 27241,
+				"700": 65895,
+				"800": 37
+			},
+			"features": {}
+		},
+		"serif|normal": {
+			"codepoints": [
+				32,
+				33,
+				39,
+				44,
+				46,
+				47,
+				50,
+				53,
+				58,
+				64,
+				65,
+				67,
+				68,
+				69,
+				71,
+				72,
+				73,
+				75,
+				76,
+				77,
+				78,
+				79,
+				80,
+				82,
+				83,
+				84,
+				90,
+				97,
+				98,
+				99,
+				100,
+				101,
+				102,
+				103,
+				104,
+				105,
+				106,
+				107,
+				108,
+				109,
+				110,
+				111,
+				112,
+				113,
+				114,
+				115,
+				116,
+				117,
+				118,
+				119,
+				120,
+				121,
+				8220,
+				8221
+			],
+			"pagesPerCodepoint": {
+				"32": 8,
+				"33": 1,
+				"39": 5,
+				"44": 4,
+				"46": 8,
+				"47": 1,
+				"50": 2,
+				"53": 1,
+				"58": 3,
+				"64": 1,
+				"65": 5,
+				"67": 2,
+				"68": 4,
+				"69": 2,
+				"71": 3,
+				"72": 1,
+				"73": 7,
+				"75": 1,
+				"76": 3,
+				"77": 5,
+				"78": 1,
+				"79": 2,
+				"80": 4,
+				"82": 2,
+				"83": 2,
+				"84": 3,
+				"90": 1,
+				"97": 8,
+				"98": 7,
+				"99": 7,
+				"100": 8,
+				"101": 8,
+				"102": 8,
+				"103": 7,
+				"104": 8,
+				"105": 8,
+				"106": 3,
+				"107": 5,
+				"108": 8,
+				"109": 6,
+				"110": 8,
+				"111": 8,
+				"112": 7,
+				"113": 1,
+				"114": 8,
+				"115": 8,
+				"116": 8,
+				"117": 7,
+				"118": 7,
+				"119": 8,
+				"120": 1,
+				"121": 7,
+				"8220": 3,
+				"8221": 3
+			},
+			"weights": {
+				"400": 2489,
+				"700": 66
+			},
+			"features": {}
+		},
+		"sans|italic": {
+			"codepoints": [
+				32,
+				33,
+				34,
+				39,
+				40,
+				41,
+				44,
+				45,
+				46,
+				47,
+				51,
+				53,
+				58,
+				63,
+				65,
+				66,
+				67,
+				68,
+				69,
+				70,
+				71,
+				73,
+				74,
+				76,
+				77,
+				79,
+				80,
+				82,
+				83,
+				84,
+				85,
+				86,
+				89,
+				97,
+				98,
+				99,
+				100,
+				101,
+				102,
+				103,
+				104,
+				105,
+				106,
+				107,
+				108,
+				109,
+				110,
+				111,
+				112,
+				113,
+				114,
+				115,
+				116,
+				117,
+				118,
+				119,
+				120,
+				121,
+				122,
+				8212,
+				8230
+			],
+			"pagesPerCodepoint": {
+				"32": 28,
+				"33": 1,
+				"34": 2,
+				"39": 5,
+				"40": 4,
+				"41": 4,
+				"44": 6,
+				"45": 5,
+				"46": 7,
+				"47": 1,
+				"51": 1,
+				"53": 1,
+				"58": 72,
+				"63": 2,
+				"65": 23,
+				"66": 1,
+				"67": 5,
+				"68": 5,
+				"69": 3,
+				"70": 5,
+				"71": 1,
+				"73": 4,
+				"74": 1,
+				"76": 2,
+				"77": 3,
+				"79": 2,
+				"80": 2,
+				"82": 7,
+				"83": 3,
+				"84": 5,
+				"85": 71,
+				"86": 1,
+				"89": 3,
+				"97": 97,
+				"98": 13,
+				"99": 30,
+				"100": 45,
+				"101": 104,
+				"102": 19,
+				"103": 93,
+				"104": 30,
+				"105": 58,
+				"106": 5,
+				"107": 15,
+				"108": 23,
+				"109": 21,
+				"110": 47,
+				"111": 52,
+				"112": 22,
+				"113": 1,
+				"114": 43,
+				"115": 103,
+				"116": 42,
+				"117": 28,
+				"118": 28,
+				"119": 23,
+				"120": 9,
+				"121": 21,
+				"122": 3,
+				"8212": 2,
+				"8230": 1
+			},
+			"weights": {
+				"400": 3370,
+				"500": 7,
+				"600": 119,
+				"700": 110
+			},
+			"features": {}
+		},
+		"mono|italic": {
+			"codepoints": [
+				45,
+				47,
+				100,
+				101,
+				105,
+				111,
+				112,
+				114,
+				115,
+				116,
+				117
+			],
+			"pagesPerCodepoint": {
+				"45": 1,
+				"47": 1,
+				"100": 1,
+				"101": 1,
+				"105": 1,
+				"111": 1,
+				"112": 1,
+				"114": 1,
+				"115": 1,
+				"116": 1,
+				"117": 1
+			},
+			"weights": {
+				"400": 17
+			},
+			"features": {}
+		}
+	},
+	"pages": {
+		"/": {
+			"status": 200,
+			"finalPath": "/",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 13,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230,
+					8594
+				],
+				"serif|normal": [
+					8220,
+					8221
+				]
+			}
+		},
+		"/cohorts/software-factories-for-real-engineers-xdy1m": {
+			"status": 200,
+			"finalPath": "/cohorts/software-factories-for-real-engineers-xdy1m",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 19,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					8212,
+					8230
+				],
+				"sans|normal": [
+					8211,
+					8217,
+					8220,
+					8221,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/cohorts/claude-code-for-real-engineers-2026-04": {
+			"status": 200,
+			"finalPath": "/cohorts/claude-code-for-real-engineers-2026-04",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 79,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 9
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					8212,
+					8230
+				],
+				"sans|normal": [
+					8211,
+					8212,
+					8217,
+					8226,
+					8230
+				],
+				"serif|normal": [],
+				"sans|italic": [
+					8212
+				]
+			}
+		},
+		"/for-your-team": {
+			"status": 200,
+			"finalPath": "/for-your-team",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 1,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					183,
+					8217,
+					8230
+				]
+			}
+		},
+		"/cohorts/ai-coding-for-real-engineers-m0k0w": {
+			"status": 200,
+			"finalPath": "/cohorts/ai-coding-for-real-engineers-m0k0w",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 87,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 9
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					8212,
+					8230
+				],
+				"sans|normal": [
+					8211,
+					8212,
+					8217,
+					8226,
+					8230,
+					8594
+				],
+				"serif|normal": [],
+				"sans|italic": []
+			}
+		},
+		"/workshops/ai-coding-crash-course": {
+			"status": 200,
+			"finalPath": "/workshops/ai-coding-crash-course",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 8,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					233
+				],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": [],
+				"serif|normal": []
+			}
+		},
+		"/workshops/ai-sdk-v6-crash-course": {
+			"status": 200,
+			"finalPath": "/workshops/ai-sdk-v6-crash-course",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 26,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 5
+				}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8217,
+					8230
+				],
+				"sans|italic": [
+					8212,
+					8230
+				],
+				"serif|normal": []
+			}
+		},
+		"/courses": {
+			"status": 200,
+			"finalPath": "/courses",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 1,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8230
+				],
+				"serif|normal": [
+					8220,
+					8221
+				]
+			}
+		},
+		"/ai-coding-dictionary": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 8,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					178,
+					8212,
+					8230
+				]
+			}
+		},
+		"/skills": {
+			"status": 200,
+			"finalPath": "/skills",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 22,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230,
+					8594
+				]
+			}
+		},
+		"/faq": {
+			"status": 200,
+			"finalPath": "/faq",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 1,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/principles": {
+			"status": 200,
+			"finalPath": "/principles",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/login": {
+			"status": 200,
+			"finalPath": "/login",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 0,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": []
+			}
+		},
+		"/privacy": {
+			"status": 200,
+			"finalPath": "/privacy",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 1,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8216,
+					8217,
+					8220,
+					8221,
+					8230
+				]
+			}
+		},
+		"/sandcastle": {
+			"status": 200,
+			"finalPath": "/sandcastle",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 3,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 278
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/newsletter": {
+			"status": 200,
+			"finalPath": "/newsletter",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 0,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": []
+			}
+		},
+		"/skills/subscribe": {
+			"status": 200,
+			"finalPath": "/skills/subscribe",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 1,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8230
+				],
+				"serif|normal": [
+					8220,
+					8221
+				]
+			}
+		},
+		"/workshops/ai-sdk-v6-crash-course/generating-objects-via-output~dkm2k": {
+			"status": 200,
+			"finalPath": "/workshops/ai-sdk-v6-crash-course/generating-objects-via-output~dkm2k",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 25,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 865
+				}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				]
+			}
+		},
+		"/skills-catalog": {
+			"status": 200,
+			"finalPath": "/skills-catalog",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 21,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 38
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/llm-fundamentals": {
+			"status": 200,
+			"finalPath": "/llm-fundamentals",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 20,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8212,
+					8217,
+					8220,
+					8221,
+					8230
+				]
+			}
+		},
+		"/ai-engineer-roadmap": {
+			"status": 200,
+			"finalPath": "/ai-engineer-roadmap",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 22,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/model-context-protocol-tutorial": {
+			"status": 200,
+			"finalPath": "/model-context-protocol-tutorial",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 20,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 3
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/vercel-ai-sdk-tutorial": {
+			"status": 200,
+			"finalPath": "/vercel-ai-sdk-tutorial",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 30,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8212,
+					8230
+				],
+				"sans|normal": [
+					8230
+				],
+				"serif|normal": []
+			}
+		},
+		"/skills-changelog-v13-implement-spec-pr-retro-and-glossary-md": {
+			"status": 200,
+			"finalPath": "/skills-changelog-v13-implement-spec-pr-retro-and-glossary-md",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 8,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 84
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8217,
+					8230,
+					8594
+				]
+			}
+		},
+		"/skills-implement-spec": {
+			"status": 200,
+			"finalPath": "/skills-implement-spec",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 29,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 63
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/skills-pr": {
+			"status": 200,
+			"finalPath": "/skills-pr",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 29,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230,
+					8594
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/skills-retro": {
+			"status": 200,
+			"finalPath": "/skills-retro",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 30,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 72
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/skills-grill-with-docs": {
+			"status": 200,
+			"finalPath": "/skills-grill-with-docs",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 30,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 72
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/skills-domain-modeling": {
+			"status": 200,
+			"finalPath": "/skills-domain-modeling",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 29,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/skills-wizard": {
+			"status": 200,
+			"finalPath": "/skills-wizard",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 29,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230,
+					8594
+				],
+				"sans|normal": [
+					8230,
+					8594
+				],
+				"sans|italic": []
+			}
+		},
+		"/skills-wayfinder": {
+			"status": 200,
+			"finalPath": "/skills-wayfinder",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 27,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230,
+					8594
+				],
+				"sans|italic": []
+			}
+		},
+		"/skills-grilling": {
+			"status": 200,
+			"finalPath": "/skills-grilling",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 29,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 42
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230,
+					10067,
+					10145,
+					65039
+				],
+				"sans|normal": [
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/skills-teach": {
+			"status": 200,
+			"finalPath": "/skills-teach",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 30,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/skills-tdd": {
+			"status": 200,
+			"finalPath": "/skills-tdd",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 29,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 72
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230,
+					8594
+				],
+				"sans|italic": []
+			}
+		},
+		"/skills-handoff": {
+			"status": 200,
+			"finalPath": "/skills-handoff",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 30,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230,
+					8594
+				],
+				"sans|italic": []
+			}
+		},
+		"/skills-grill-me": {
+			"status": 200,
+			"finalPath": "/skills-grill-me",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 30,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 42
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/skills-to-spec": {
+			"status": 200,
+			"finalPath": "/skills-to-spec",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 30,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 72
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/skills-improve-codebase-architecture": {
+			"status": 200,
+			"finalPath": "/skills-improve-codebase-architecture",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 29,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/skills-to-tickets": {
+			"status": 200,
+			"finalPath": "/skills-to-tickets",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 30,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 72
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8211,
+					8230
+				]
+			}
+		},
+		"/skills-prototype": {
+			"status": 200,
+			"finalPath": "/skills-prototype",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 27,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/skills-to-questionnaire": {
+			"status": 200,
+			"finalPath": "/skills-to-questionnaire",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 30,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/skills-implement": {
+			"status": 200,
+			"finalPath": "/skills-implement",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 30,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 72
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/skills-triage": {
+			"status": 200,
+			"finalPath": "/skills-triage",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 29,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230,
+					8594
+				],
+				"sans|italic": []
+			}
+		},
+		"/skills-codebase-design": {
+			"status": 200,
+			"finalPath": "/skills-codebase-design",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 29,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/skills-code-review": {
+			"status": 200,
+			"finalPath": "/skills-code-review",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 30,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230,
+					8594
+				],
+				"sans|normal": [
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/skills-diagnosing-bugs": {
+			"status": 200,
+			"finalPath": "/skills-diagnosing-bugs",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 29,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8211,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/skills-setup-matt-pocock-skills": {
+			"status": 200,
+			"finalPath": "/skills-setup-matt-pocock-skills",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 26,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/skills-writing-for-agents": {
+			"status": 200,
+			"finalPath": "/skills-writing-for-agents",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 30,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/skills-resolving-merge-conflicts": {
+			"status": 200,
+			"finalPath": "/skills-resolving-merge-conflicts",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 8,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-serif": 229
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/skills-wait-what": {
+			"status": 200,
+			"finalPath": "/skills-wait-what",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 30,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/skills-ask-matt": {
+			"status": 200,
+			"finalPath": "/skills-ask-matt",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 26,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230,
+					8594
+				],
+				"sans|normal": [
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/skills-research": {
+			"status": 200,
+			"finalPath": "/skills-research",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 27,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/how-to-kill-the-bloat-in-claude-codes-system-prompt": {
+			"status": 200,
+			"finalPath": "/how-to-kill-the-bloat-in-claude-codes-system-prompt",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 8,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 692,
+					"ui-serif": 191
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8212,
+					8217,
+					8230
+				]
+			}
+		},
+		"/learn-anything-with-my-teach-skill": {
+			"status": 200,
+			"finalPath": "/learn-anything-with-my-teach-skill",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 8,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 106
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8212,
+					8217,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/things-people-get-wrong-with-grill-me-and-grill-with-docs": {
+			"status": 200,
+			"finalPath": "/things-people-get-wrong-with-grill-me-and-grill-with-docs",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 14,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8212,
+					8230,
+					8594,
+					10003,
+					10007
+				],
+				"sans|italic": []
+			}
+		},
+		"/how-to-improve-your-llm-powered-app": {
+			"status": 200,
+			"finalPath": "/how-to-improve-your-llm-powered-app",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 18,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 1898
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8217,
+					8230
+				]
+			}
+		},
+		"/grill-with-docs": {
+			"status": 200,
+			"finalPath": "/grill-with-docs",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 14,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 72
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/burn-through-your-backlog-with-my-triage-skill": {
+			"status": 200,
+			"finalPath": "/burn-through-your-backlog-with-my-triage-skill",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 15,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8230,
+					8594
+				],
+				"sans|italic": []
+			}
+		},
+		"/my-grill-me-skill-has-gone-viral": {
+			"status": 200,
+			"finalPath": "/my-grill-me-skill-has-gone-viral",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 14,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 876
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8212,
+					8230
+				]
+			}
+		},
+		"/skills-changelog-ubiquitous-language-grill-with-docs": {
+			"status": 200,
+			"finalPath": "/skills-changelog-ubiquitous-language-grill-with-docs",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 8,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 831
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/real-world-feature-build-with-claude-code": {
+			"status": 200,
+			"finalPath": "/real-world-feature-build-with-claude-code",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8217,
+					8230
+				]
+			}
+		},
+		"/my-7-phases-of-ai-development": {
+			"status": 200,
+			"finalPath": "/my-7-phases-of-ai-development",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 16,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8217,
+					8230
+				]
+			}
+		},
+		"/5-agent-skills-i-use-every-day": {
+			"status": 200,
+			"finalPath": "/5-agent-skills-i-use-every-day",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 195,
+					"ui-serif": 303
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					183,
+					8212,
+					8217,
+					8230,
+					8594
+				],
+				"sans|italic": [],
+				"mono|italic": []
+			}
+		},
+		"/my-claude-code-cohort-a-teaser": {
+			"status": 200,
+			"finalPath": "/my-claude-code-cohort-a-teaser",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 11,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8217,
+					8226,
+					8230
+				]
+			}
+		},
+		"/ways-ai-coding-has-rewired-my-brain": {
+			"status": 200,
+			"finalPath": "/ways-ai-coding-has-rewired-my-brain",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 16,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8217,
+					8230
+				]
+			}
+		},
+		"/how-to-make-codebases-ai-agents-love": {
+			"status": 200,
+			"finalPath": "/how-to-make-codebases-ai-agents-love",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 18,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8212,
+					8217,
+					8230
+				]
+			}
+		},
+		"/how-to-use-claude-code-hooks-to-enforce-the-right-cli": {
+			"status": 200,
+			"finalPath": "/how-to-use-claude-code-hooks-to-enforce-the-right-cli",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 18,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 1286
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8212,
+					8217,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/never-run-claude-init": {
+			"status": 200,
+			"finalPath": "/never-run-claude-init",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 18,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 25
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/this-hook-stops-claude-code-running-dangerous-git-commands": {
+			"status": 200,
+			"finalPath": "/this-hook-stops-claude-code-running-dangerous-git-commands",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 18,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 673
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8217,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/skill-test-driven-development-claude-code": {
+			"status": 200,
+			"finalPath": "/skill-test-driven-development-claude-code",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 13,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 854
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8230,
+					8594,
+					9989,
+					10060
+				]
+			}
+		},
+		"/why-the-anthropic-ralph-plugin-sucks": {
+			"status": 200,
+			"finalPath": "/why-the-anthropic-ralph-plugin-sucks",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 13,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 195
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8217,
+					8230
+				]
+			}
+		},
+		"/tracer-bullets": {
+			"status": 200,
+			"finalPath": "/tracer-bullets",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 13,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 1144
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8212,
+					8217,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/heres-how-to-stream-claude-code-with-afk-ralph": {
+			"status": 200,
+			"finalPath": "/heres-how-to-stream-claude-code-with-afk-ralph",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 13,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 1163
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8217,
+					8230
+				]
+			}
+		},
+		"/essential-ai-coding-feedback-loops-for-type-script-projects": {
+			"status": 200,
+			"finalPath": "/essential-ai-coding-feedback-loops-for-type-script-projects",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 254
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8217,
+					8230
+				]
+			}
+		},
+		"/a-complete-guide-to-agents-md": {
+			"status": 200,
+			"finalPath": "/a-complete-guide-to-agents-md",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 18,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 1844,
+					"ui-serif": 242
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8217,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/my-agents-md-file-for-building-plans-you-actually-read": {
+			"status": 200,
+			"finalPath": "/my-agents-md-file-for-building-plans-you-actually-read",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 18,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 419
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8212,
+					8217,
+					8230
+				]
+			}
+		},
+		"/plan-mode-introduction": {
+			"status": 200,
+			"finalPath": "/plan-mode-introduction",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 18,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 328
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8212,
+					8217,
+					8230
+				]
+			}
+		},
+		"/getting-started-with-ralph": {
+			"status": 200,
+			"finalPath": "/getting-started-with-ralph",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 13,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 1146
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8217,
+					8230
+				]
+			}
+		},
+		"/personal-software-is-insane-in-the-age-of-ai-u2hx2": {
+			"status": 200,
+			"finalPath": "/personal-software-is-insane-in-the-age-of-ai-u2hx2",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 16,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8212,
+					8217,
+					8230
+				]
+			}
+		},
+		"/evalite-v1-preview": {
+			"status": 200,
+			"finalPath": "/evalite-v1-preview",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 8,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 1345
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8217,
+					8230
+				]
+			}
+		},
+		"/tips-for-ai-coding-with-ralph-wiggum": {
+			"status": 200,
+			"finalPath": "/tips-for-ai-coding-with-ralph-wiggum",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 13,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 3378
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					163,
+					8217,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/what-is-an-agent": {
+			"status": 200,
+			"finalPath": "/what-is-an-agent",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 16,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8217,
+					8230
+				]
+			}
+		},
+		"/creating-the-perfect-claude-code-status-line": {
+			"status": 200,
+			"finalPath": "/creating-the-perfect-claude-code-status-line",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 18,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 2296
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8217,
+					8230
+				]
+			}
+		},
+		"/what-are-tools": {
+			"status": 200,
+			"finalPath": "/what-are-tools",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 16,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/what-is-the-context-window": {
+			"status": 200,
+			"finalPath": "/what-is-the-context-window",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 16,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/messages-system-prompts-and-reasoning-tokens": {
+			"status": 200,
+			"finalPath": "/messages-system-prompts-and-reasoning-tokens",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 16,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/what-are-tokens": {
+			"status": 200,
+			"finalPath": "/what-are-tokens",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 16,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 63
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/securing-your-ai-app-with-guardrails": {
+			"status": 200,
+			"finalPath": "/securing-your-ai-app-with-guardrails",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 8,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 1008
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8217,
+					8230
+				]
+			}
+		},
+		"/streaming-in-next-question-suggestions-with-the-ai-sdk": {
+			"status": 200,
+			"finalPath": "/streaming-in-next-question-suggestions-with-the-ai-sdk",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 8,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 3166
+				}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8217,
+					8230
+				]
+			}
+		},
+		"/what-is-an-ai-engineer": {
+			"status": 200,
+			"finalPath": "/what-is-an-ai-engineer",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 18,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8212,
+					8230
+				]
+			}
+		},
+		"/the-ai-engineer-mindset": {
+			"status": 200,
+			"finalPath": "/the-ai-engineer-mindset",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 18,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/implementing-anthropics-think-tool-in-typescript": {
+			"status": 200,
+			"finalPath": "/implementing-anthropics-think-tool-in-typescript",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 8,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 447
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8212,
+					8217,
+					8230
+				]
+			}
+		},
+		"/what-are-llms-used-for": {
+			"status": 200,
+			"finalPath": "/what-are-llms-used-for",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 18,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/how-to-choose-an-llm": {
+			"status": 200,
+			"finalPath": "/how-to-choose-an-llm",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 18,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/what-is-an-llm": {
+			"status": 200,
+			"finalPath": "/what-is-an-llm",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 18,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 73
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/connect-claude-code-to-github": {
+			"status": 200,
+			"finalPath": "/connect-claude-code-to-github",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 16,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 14
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/the-problem-with-mcp-stateful-server": {
+			"status": 200,
+			"finalPath": "/the-problem-with-mcp-stateful-server",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 16,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 351
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/publish-your-mcp-server-to-npm": {
+			"status": 200,
+			"finalPath": "/publish-your-mcp-server-to-npm",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 16,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 1486,
+					"ui-serif": 99
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8217,
+					8230
+				]
+			}
+		},
+		"/logging-a-huge-mcp-footgun": {
+			"status": 200,
+			"finalPath": "/logging-a-huge-mcp-footgun",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 16,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 650
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/using-mcp-prompts": {
+			"status": 200,
+			"finalPath": "/using-mcp-prompts",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 16,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 850
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/mcp-server-from-a-single-typescript-file": {
+			"status": 200,
+			"finalPath": "/mcp-server-from-a-single-typescript-file",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 16,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 447
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/how-does-the-model-context-protocol-work": {
+			"status": 200,
+			"finalPath": "/how-does-the-model-context-protocol-work",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 8,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 1202
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8217,
+					8230
+				]
+			}
+		},
+		"/storm-generate-high-quality-articles-based-on-real-research": {
+			"status": 200,
+			"finalPath": "/storm-generate-high-quality-articles-based-on-real-research",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 11,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8217,
+					8230
+				]
+			}
+		},
+		"/google-agents-whitepaper-review": {
+			"status": 200,
+			"finalPath": "/google-agents-whitepaper-review",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 16,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8217,
+					8230
+				]
+			}
+		},
+		"/what-is-the-ai-sdk": {
+			"status": 200,
+			"finalPath": "/what-is-the-ai-sdk",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 26,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 187
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/agents-with-vercel-ai-sdk": {
+			"status": 200,
+			"finalPath": "/agents-with-vercel-ai-sdk",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 26,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 1374
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					176,
+					8217,
+					8230
+				]
+			}
+		},
+		"/generate-arrays-with-vercel-ai-sdk": {
+			"status": 200,
+			"finalPath": "/generate-arrays-with-vercel-ai-sdk",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 26,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 509
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/create-embeddings-with-vercel-ai-sdk": {
+			"status": 200,
+			"finalPath": "/create-embeddings-with-vercel-ai-sdk",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 26,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 726
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/structured-data-from-pdfs-with-vercel-ai-sdk": {
+			"status": 200,
+			"finalPath": "/structured-data-from-pdfs-with-vercel-ai-sdk",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 26,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 1127
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/describe-images-with-vercel-ai-sdk": {
+			"status": 200,
+			"finalPath": "/describe-images-with-vercel-ai-sdk",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 26,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 1530
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/generate-enums-with-vercel-ai-sdk": {
+			"status": 200,
+			"finalPath": "/generate-enums-with-vercel-ai-sdk",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 26,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 371
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8212,
+					8230
+				]
+			}
+		},
+		"/streaming-objects-with-vercel-ai-sdk": {
+			"status": 200,
+			"finalPath": "/streaming-objects-with-vercel-ai-sdk",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 26,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 839
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/tool-calls-with-vercel-ai-sdk": {
+			"status": 200,
+			"finalPath": "/tool-calls-with-vercel-ai-sdk",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 26,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 1258
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/structured-outputs-with-vercel-ai-sdk": {
+			"status": 200,
+			"finalPath": "/structured-outputs-with-vercel-ai-sdk",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 26,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 1492
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/use-local-models-with-vercel-ai-sdk": {
+			"status": 200,
+			"finalPath": "/use-local-models-with-vercel-ai-sdk",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 26,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 369
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/vercel-ai-sdk-messages-array": {
+			"status": 200,
+			"finalPath": "/vercel-ai-sdk-messages-array",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 26,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 700
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/swap-ai-models-with-vercel-ai-sdk": {
+			"status": 200,
+			"finalPath": "/swap-ai-models-with-vercel-ai-sdk",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 26,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 208
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/system-prompts-with-vercel-ai-sdk": {
+			"status": 200,
+			"finalPath": "/system-prompts-with-vercel-ai-sdk",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 26,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 332
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/streaming-text-with-vercel-ai-sdk": {
+			"status": 200,
+			"finalPath": "/streaming-text-with-vercel-ai-sdk",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 26,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 321
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/generate-text-with-vercel-ai-sdk": {
+			"status": 200,
+			"finalPath": "/generate-text-with-vercel-ai-sdk",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 26,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 306
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/the-prompt-report": {
+			"status": 200,
+			"finalPath": "/the-prompt-report",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 18,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 585
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8217,
+					8230
+				]
+			}
+		},
+		"/vercel-ai-sdk": {
+			"status": 200,
+			"finalPath": "/vercel-ai-sdk",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 8,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 2258
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8217,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/building-effective-agents": {
+			"status": 200,
+			"finalPath": "/building-effective-agents",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 16,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8217,
+					8230
+				]
+			}
+		},
+		"/evalite-an-early-preview": {
+			"status": 200,
+			"finalPath": "/evalite-an-early-preview",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 8,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8217,
+					8230
+				]
+			}
+		},
+		"/anthropics-new-model-context-protocol-in-2-minutes~hc0tx": {
+			"status": 200,
+			"finalPath": "/anthropics-new-model-context-protocol-in-2-minutes~hc0tx",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 8,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8217,
+					8230
+				]
+			}
+		},
+		"/three-types-of-evals": {
+			"status": 200,
+			"finalPath": "/three-types-of-evals",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 8,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8217,
+					8230
+				]
+			}
+		},
+		"/2025-the-year-building-with-gen-ais-gets-boring~d53hd": {
+			"status": 200,
+			"finalPath": "/2025-the-year-building-with-gen-ais-gets-boring~d53hd",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 11,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8212,
+					8217,
+					8230
+				]
+			}
+		},
+		"/ai-coding-dictionary/ai": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/ai",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8211,
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/what-are-evals": {
+			"status": 200,
+			"finalPath": "/what-are-evals",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 18,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 904
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183,
+					8230
+				],
+				"sans|normal": [
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/model": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/model",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/parameters": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/parameters",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/training": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/training",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/inference": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/inference",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/effort": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/effort",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/token": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/token",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/non-determinism": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/non-determinism",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/next-token-prediction": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/next-token-prediction",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/model-provider": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/model-provider",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/harness": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/harness",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/model-provider-request": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/model-provider-request",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/input-tokens": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/input-tokens",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/output-tokens": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/output-tokens",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/prefix-cache": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/prefix-cache",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/cache-tokens": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/cache-tokens",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/stateless": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/stateless",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/context": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/context",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/context-window": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/context-window",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/stateful": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/stateful",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/agent": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/agent",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/system-prompt": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/system-prompt",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/turn": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/turn",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/session": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/session",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/environment": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/environment",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/filesystem": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/filesystem",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/tool": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/tool",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/tool-call": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/tool-call",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/tool-result": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/tool-result",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/mcp": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/mcp",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/permission-request": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/permission-request",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/permission-mode": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/permission-mode",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/agent-mode": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/agent-mode",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/sandbox": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/sandbox",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/sycophancy": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/sycophancy",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/hallucination": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/hallucination",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/parametric-knowledge": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/parametric-knowledge",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/knowledge-cutoff": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/knowledge-cutoff",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/contextual-knowledge": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/contextual-knowledge",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/attention-relationship": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/attention-relationship",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					178,
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/attention-budget": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/attention-budget",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/attention-degradation": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/attention-degradation",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/smart-zone": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/smart-zone",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/clearing": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/clearing",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/handoff": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/handoff",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230,
+					8594
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/primary-source": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/primary-source",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/secondary-source": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/secondary-source",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/handoff-artifact": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/handoff-artifact",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/spec": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/spec",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/ticket": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/ticket",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/compaction": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/compaction",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/autocompact": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/autocompact",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/memory-system": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/memory-system",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/agents-md": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/agents-md",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/progressive-disclosure": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/progressive-disclosure",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/context-pointer": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/context-pointer",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/subagent": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/subagent",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/skill": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/skill",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/human-in-the-loop": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/human-in-the-loop",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/afk": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/afk",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/automated-check": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/automated-check",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/automated-review": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/automated-review",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/human-review": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/human-review",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/vibe-coding": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/vibe-coding",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/design-concept": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/design-concept",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/grilling": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/grilling",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/prototyping": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/prototyping",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/dx": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/dx",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/ax": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/ax",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/software-factory": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/software-factory",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8212,
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/ai-coding-dictionary/dark-factory": {
+			"status": 200,
+			"finalPath": "/ai-coding-dictionary/dark-factory",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [],
+				"sans|normal": [
+					8230
+				],
+				"sans|italic": []
+			}
+		},
+		"/sandcastle/sandbox-providers": {
+			"status": 200,
+			"finalPath": "/sandcastle/sandbox-providers",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 3,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 808
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					8230
+				],
+				"sans|normal": [
+					8212,
+					8230
+				]
+			}
+		},
+		"/sandcastle/getting-started": {
+			"status": 200,
+			"finalPath": "/sandcastle/getting-started",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 3,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 454
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					8230
+				],
+				"sans|normal": [
+					8212,
+					8230
+				]
+			}
+		},
+		"/sandcastle/how-it-works": {
+			"status": 200,
+			"finalPath": "/sandcastle/how-it-works",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 3,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					8230
+				],
+				"sans|normal": [
+					8212,
+					8230
+				]
+			}
+		},
+		"/sandcastle/configuration": {
+			"status": 200,
+			"finalPath": "/sandcastle/configuration",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 3,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 277
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					8230
+				],
+				"sans|normal": [
+					8212,
+					8230
+				]
+			}
+		},
+		"/sandcastle/prompts": {
+			"status": 200,
+			"finalPath": "/sandcastle/prompts",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 3,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 2079
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					8230
+				],
+				"sans|normal": [
+					8212,
+					8230,
+					8594
+				]
+			}
+		},
+		"/sandcastle/api": {
+			"status": 200,
+			"finalPath": "/sandcastle/api",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 3,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 9654
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					8230
+				],
+				"sans|normal": [
+					8212,
+					8230
+				]
+			}
+		},
+		"/sandcastle/cli-commands": {
+			"status": 200,
+			"finalPath": "/sandcastle/cli-commands",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 3,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 1336
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					8230
+				],
+				"sans|normal": [
+					8212,
+					8230
+				]
+			}
+		},
+		"/sandcastle/custom-sandbox-providers": {
+			"status": 200,
+			"finalPath": "/sandcastle/custom-sandbox-providers",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 3,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 5726
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					8230
+				],
+				"sans|normal": [
+					8212,
+					8230
+				]
+			}
+		},
+		"/skills/skills-changelog-v13-implement-spec-pr-retro-and-glossary-md": {
+			"status": 200,
+			"finalPath": "/skills/skills-changelog-v13-implement-spec-pr-retro-and-glossary-md",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 84
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8230,
+					8594
+				]
+			}
+		},
+		"/skills/skills-changelog-v12-wait-what-writing-for-agents-claude-code-plugin-and-more": {
+			"status": 200,
+			"finalPath": "/skills/skills-changelog-v12-wait-what-writing-for-agents-claude-code-plugin-and-more",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 136
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8212,
+					8230,
+					8594
+				],
+				"sans|italic": []
+			}
+		},
+		"/skills/skills-changelog-v1-1-wayfinder-to-spec-to-tickets-grilling-improvements": {
+			"status": 200,
+			"finalPath": "/skills/skills-changelog-v1-1-wayfinder-to-spec-to-tickets-grilling-improvements",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 337,
+					"ui-serif": 275
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8211,
+					8212,
+					8230,
+					8594
+				],
+				"sans|italic": []
+			}
+		},
+		"/skills/skills-changelog-v1-announcement": {
+			"status": 200,
+			"finalPath": "/skills/skills-changelog-v1-announcement",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 372
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/skills/skills-changelog-handoff-prototype-review-and-writing": {
+			"status": 200,
+			"finalPath": "/skills/skills-changelog-handoff-prototype-review-and-writing",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		},
+		"/skills/skills-changelog-ubiquitous-language-grill-with-docs": {
+			"status": 200,
+			"finalPath": "/skills/skills-changelog-ubiquitous-language-grill-with-docs",
+			"misc": {
+				"hyphensAuto": 0,
+				"textOverflowEllipsis": 12,
+				"langs": {},
+				"cjk": "",
+				"otherFamilies": {
+					"ui-monospace": 831
+				}
+			},
+			"faces": {
+				"mono|normal": [
+					183
+				],
+				"sans|normal": [
+					8230
+				]
+			}
+		}
+	}
+}
