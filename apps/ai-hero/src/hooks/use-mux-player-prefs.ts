@@ -132,15 +132,22 @@ export const keepCaptionCuesLoading = (
 	const track = Array.from(tracks ?? []).find(
 		(track) => track.kind === 'subtitles' || track.kind === 'captions',
 	)
-	if (!track || !tracks || primingCaptionTracks.has(track)) return
+	if (
+		!track ||
+		!tracks ||
+		primingCaptionTracks.has(track) ||
+		// Captions the viewer wants on are loaded by showing them; touching the
+		// track before that is restored could save it as off.
+		getPlayerPrefs().subtitle.mode === 'showing'
+	)
+		return
 	if (track.mode === 'disabled') track.mode = 'hidden'
 
 	const source = player?.playbackId ?? ''
 	if (
 		track.mode !== 'hidden' ||
 		track.cues?.length ||
-		primedCaptionSources.get(track) === source ||
-		getPlayerPrefs().subtitle.mode === 'showing'
+		primedCaptionSources.get(track) === source
 	)
 		return
 
@@ -151,19 +158,17 @@ export const keepCaptionCuesLoading = (
 	// has selected the playlist by the time this hides the track again. The
 	// flag clears on the `change` that hiding fires, after the saved
 	// preference's listener has skipped it.
+	// A new lesson that loaded meanwhile was skipped while this ran.
+	const done = () => {
+		primingCaptionTracks.delete(track)
+		if ((player?.playbackId ?? '') !== source) keepCaptionCuesLoading(player)
+	}
 	tracks.addEventListener(
 		'change',
 		() => {
-			if (track.mode !== 'showing') {
-				primingCaptionTracks.delete(track)
-				return
-			}
+			if (track.mode !== 'showing') return done()
 			track.mode = 'hidden'
-			tracks.addEventListener(
-				'change',
-				() => primingCaptionTracks.delete(track),
-				{ once: true },
-			)
+			tracks.addEventListener('change', done, { once: true })
 		},
 		{ once: true },
 	)

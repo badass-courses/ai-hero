@@ -99,9 +99,24 @@ describe('keepCaptionCuesLoading', () => {
 		expect(seen).toEqual(['showing', 'hidden'])
 	})
 
+	it('primes a source that loaded while the previous one was priming', async () => {
+		prefs.subtitleMode = 'hidden'
+		const { player, modes } = fakePlayer('a')
+
+		keepCaptionCuesLoading(player)
+		Object.assign(player, { playbackId: 'b' })
+		keepCaptionCuesLoading(player)
+		await settle()
+		expect(modes).toEqual(['showing', 'hidden', 'showing', 'hidden'])
+	})
+
 	it('leaves the track alone while the viewer has captions on', async () => {
 		prefs.subtitleMode = 'showing'
 		const { player, modes } = fakePlayer('a')
+
+		const track = player.textTracks![0]!
+		track.mode = 'disabled'
+		modes.length = 0
 
 		keepCaptionCuesLoading(player)
 		await settle()
