@@ -1,7 +1,7 @@
 import type { SurfaceName } from '@/lib/analytics'
 import { PROMO_KINDS } from '@/lib/analytics/promos'
 
-export const ANALYTICS_SCHEMA_VERSION = '2026-10-16.1'
+export const ANALYTICS_SCHEMA_VERSION = '2026-10-29.1'
 
 export const ANALYTICS_AGENT_INSTRUCTIONS = [
 	'Revenue amounts are USD major units. Treat database revenue surfaces as the revenue source of truth, not GA4.',
@@ -11,6 +11,7 @@ export const ANALYTICS_AGENT_INSTRUCTIONS = [
 	'Absent productId means all products on product-aware surfaces. Published revenue schemas list productId support, and some attribution surfaces also accept it.',
 	'purchases/recent defaults to range=30d. Use range=all when historical purchases are required.',
 	'Treat each response as a point-in-time read. Re-query before reporting live launch numbers.',
+	'learning/progress requires productId and ignores range. Divide funnel started/completed by data.funnel.denominator.count (signed-in learners), not roster.learners. Report locked rows as locked, never as 0% completion. Read data.asOf; results are cached for up to five minutes.',
 ] as const
 
 const usd = (description: string) => ({
@@ -54,7 +55,184 @@ const promoMetrics = {
 	},
 } as const
 
+const learningAvailability = {
+	oneOf: [
+		{
+			type: 'object',
+			additionalProperties: false,
+			required: ['status'],
+			properties: { status: { const: 'available' } },
+		},
+		{
+			type: 'object',
+			additionalProperties: false,
+			required: ['status', 'reason'],
+			properties: {
+				status: { const: 'locked' },
+				reason: { enum: ['unpublished', 'scheduled'] },
+			},
+		},
+	],
+} as const
+
+const learningProgressSchema = {
+	supports: ['productId'],
+	requires: ['productId'],
+	data: {
+		type: 'object',
+		additionalProperties: false,
+		required: ['asOf', 'product', 'roster', 'funnel', 'activity'],
+		properties: {
+			asOf: { type: 'string', format: 'date-time' },
+			product: {
+				type: 'object',
+				additionalProperties: false,
+				required: ['id', 'name', 'type'],
+				properties: {
+					id: { type: 'string' },
+					name: { type: 'string' },
+					type: { type: ['string', 'null'] },
+				},
+			},
+			roster: {
+				type: 'object',
+				additionalProperties: false,
+				required: [
+					'learners',
+					'bySource',
+					'signedIn',
+					'neverSignedIn',
+					'removed',
+					'teamSeatsUnredeemed',
+				],
+				properties: {
+					learners: count(
+						'Distinct users with Valid or Restricted access, redeemed team seats included',
+					),
+					bySource: {
+						type: 'object',
+						additionalProperties: false,
+						required: ['purchased', 'teamSeat'],
+						properties: {
+							purchased: count('Learners holding their own purchase'),
+							teamSeat: count(
+								'Learners whose only access is a redeemed team seat',
+							),
+						},
+					},
+					signedIn: count(
+						'Learners with sign-in evidence. The funnel denominator.',
+					),
+					neverSignedIn: count('learners minus signedIn'),
+					removed: {
+						type: 'object',
+						additionalProperties: false,
+						required: ['refunded', 'transferredAway'],
+						properties: {
+							refunded: count(
+								'Users with a Refunded purchase and no current access',
+							),
+							transferredAway: count(
+								'Source users of completed purchase transfers who no longer hold access',
+							),
+						},
+					},
+					teamSeatsUnredeemed: count(
+						'Open seats on Valid or Restricted team purchases (maxUses minus usedCount)',
+					),
+				},
+			},
+			funnel: {
+				type: 'object',
+				additionalProperties: false,
+				required: ['denominator', 'rows'],
+				properties: {
+					denominator: {
+						type: 'object',
+						additionalProperties: false,
+						required: ['basis', 'count'],
+						properties: {
+							basis: { const: 'signed-in-learners' },
+							count: count('Equals roster.signedIn'),
+						},
+					},
+					rows: {
+						type: 'array',
+						items: {
+							type: 'object',
+							additionalProperties: false,
+							required: [
+								'id',
+								'kind',
+								'workshopId',
+								'title',
+								'slug',
+								'state',
+								'startsAt',
+								'availability',
+								'requiredLessons',
+								'started',
+								'completed',
+							],
+							properties: {
+								id: { type: 'string', description: 'Content resource id' },
+								kind: { enum: ['workshop', 'section'] },
+								workshopId: { type: ['string', 'null'] },
+								title: { type: 'string' },
+								slug: { type: ['string', 'null'] },
+								state: { type: ['string', 'null'] },
+								startsAt: { type: ['string', 'null'] },
+								availability: learningAvailability,
+								requiredLessons: count('Lessons a learner must complete'),
+								started: count('Signed-in learners with any progress here'),
+								completed: count(
+									'Signed-in learners who completed every required lesson',
+								),
+							},
+						},
+					},
+				},
+			},
+			activity: {
+				type: 'object',
+				additionalProperties: false,
+				required: [
+					'lessonsCompleted24h',
+					'lessonsCompleted7d',
+					'activeLearners7d',
+					'totalLessonCompletions',
+				],
+				properties: {
+					lessonsCompleted24h: count(
+						'Lesson completions by learners in the 24h before asOf',
+					),
+					lessonsCompleted7d: count(
+						'Lesson completions by learners in the 7d before asOf',
+					),
+					activeLearners7d: count(
+						'Learners with any progress write in the 7d before asOf',
+					),
+					totalLessonCompletions: count(
+						'All current lesson completions by learners',
+					),
+				},
+			},
+		},
+	},
+	semantics: [
+		'Aggregate only. No user ids, emails or names, and productId is the only filter.',
+		"Learners hold a Valid or Restricted purchase of the product, matching the access rule. A team buyer's bulk purchase grants no access; each redeemed seat is its own purchase.",
+		'Sign-in evidence is a verified email, a linked OAuth account, a current session, or any lesson progress. Expired sessions are deleted, so legacy sign-ins with none of these count as never signed in.',
+		'Rows follow product order: each workshop, then its sections. A cohort contributes its workshops. Required lessons follow the certificate rule: undeleted lesson and exercise links in the workshop or its sections, optional lessons excluded. Lesson publish state is not a filter because managed cohort lessons stay draft.',
+		'Every row uses the same denominator, so a learner can be counted in a later row without earlier ones.',
+		'A row is locked when its workshop is not published (reason unpublished) or its startsAt is in the future (reason scheduled). Locked rows still carry their counts.',
+		"Activity counts only progress on the product's required lessons by current learners. Windows end at asOf.",
+		'Certificates are not reported: eligibility is computed on demand and no certificate table exists.',
+	],
+} as const
+
 export const REVENUE_SURFACE_SCHEMAS = {
+	'learning/progress': learningProgressSchema,
 	'revenue/promos': {
 		supports: ['range', 'from', 'to', 'productId'],
 		data: {
@@ -372,6 +550,13 @@ export function getAnalyticsAgentSchema(surfaceNames: readonly SurfaceName[]) {
 					},
 					then: { properties: { limit: { maximum: 1000 } } },
 					else: { properties: { limit: { maximum: 100 } } },
+				},
+				{
+					if: {
+						properties: { surface: { const: 'learning/progress' } },
+						required: ['surface'],
+					},
+					then: { required: ['productId'] },
 				},
 			],
 		},

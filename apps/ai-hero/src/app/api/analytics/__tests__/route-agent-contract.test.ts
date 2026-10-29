@@ -21,6 +21,13 @@ const mocks = vi.hoisted(() => ({
 			provider: 'database',
 			fn: 'getEvergreenFunnel',
 		},
+		{
+			name: 'learning/progress',
+			description: 'Aggregate learner progress',
+			category: 'learning',
+			provider: 'database',
+			fn: 'getLearningProgress',
+		},
 		...[
 			'attribution/funnel',
 			'attribution/coverage',
@@ -181,6 +188,83 @@ describe('analytics API agent contract', () => {
 		},
 	)
 
+	it.each([null, 'ordinary'])(
+		'refuses learning/progress for %s callers without querying',
+		async (kind) => {
+			const ability = kind ? createAppAbility([]) : null
+			mocks.getUserAbilityForRequest.mockResolvedValue({ user: null, ability })
+			mocks.getServerAuthSession.mockResolvedValue({
+				session: ability ? { user: { id: 'synthetic-non-admin' } } : null,
+				ability,
+			})
+			const response = await GET(
+				request('?surface=learning/progress&productId=product-s00zs'),
+			)
+			expect(response.status).toBe(401)
+			expect(mocks.query).not.toHaveBeenCalled()
+		},
+	)
+
+	it('requires productId for learning/progress before querying', async () => {
+		const response = await GET(request('?surface=learning/progress'))
+		expect(response.status).toBe(400)
+		expect((await response.json()).error.code).toBe('PRODUCT_REQUIRED')
+		expect(mocks.query).not.toHaveBeenCalled()
+	})
+
+	it('serves learning/progress to the analytics token with its schema', async () => {
+		mocks.getUserAbilityForRequest.mockResolvedValue({
+			user: null,
+			ability: createAppAbility([{ action: 'view', subject: 'Analytics' }]),
+		})
+		const data = {
+			asOf: '2026-10-29T12:00:00.000Z',
+			funnel: {
+				denominator: { basis: 'signed-in-learners', count: 4 },
+				rows: [],
+			},
+		}
+		mocks.query.mockResolvedValue({
+			ok: true,
+			data,
+			meta: { queryTimeMs: 2, truncated: false },
+		})
+		const response = await GET(
+			request('?surface=learning/progress&productId=product-s00zs'),
+		)
+		expect(response.status).toBe(200)
+		expect(mocks.query).toHaveBeenCalledWith(
+			'learning/progress',
+			expect.objectContaining({ productId: 'product-s00zs' }),
+		)
+		const body = await response.json()
+		expect(body).toMatchObject({
+			ok: true,
+			surface: 'learning/progress',
+			productId: 'product-s00zs',
+			data,
+			schema: { requires: ['productId'] },
+		})
+		expect(body.agent_instructions).toEqual(
+			expect.arrayContaining([
+				expect.stringContaining('learning/progress requires productId'),
+			]),
+		)
+	})
+
+	it('answers an unknown learning product with 404', async () => {
+		mocks.query.mockResolvedValue({
+			ok: false,
+			surface: 'learning/progress',
+			error: { code: 'PRODUCT_NOT_FOUND', message: 'Unknown productId.' },
+			fix: 'List product ids.',
+		})
+		const response = await GET(
+			request('?surface=learning/progress&productId=missing'),
+		)
+		expect(response.status).toBe(404)
+	})
+
 	it('rejects all on promo revenue with an actionable 400 prompt', async () => {
 		const response = await GET(request('?surface=revenue/promos&range=all'))
 		expect(response.status).toBe(400)
@@ -268,7 +352,7 @@ describe('analytics API agent contract', () => {
 				expect.stringContaining('defaults to range=30d'),
 			]),
 			schema: {
-				version: '2026-10-16.1',
+				version: '2026-10-29.1',
 				query: {
 					type: 'object',
 					required: ['surface'],
