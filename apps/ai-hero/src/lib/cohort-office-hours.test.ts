@@ -41,10 +41,57 @@ describe('cohort office hours helpers', () => {
 		expect(
 			groups[0]?.sessions.map((session) => session.youtubeBroadcastId),
 		).toEqual(['broadcast-1'])
-		expect(groups[1]?.label).toBe('Second Monday')
+		expect(groups[1]?.label).toBe('Final Friday')
 		expect(
 			groups[1]?.sessions.map((session) => session.youtubeBroadcastId),
 		).toEqual(['broadcast-3', 'broadcast-2'])
+	})
+
+	it('labels C5 Monday, Friday, Friday groups from their UTC weekdays', () => {
+		const sessions = ['2026-11-09', '2026-11-13', '2026-11-20'].flatMap(
+			(date) =>
+				['00:30', '15:30'].map((time) => ({
+					title: 'Synthetic office hours',
+					startsAt: `${date}T${time}:00.000Z`,
+					endsAt: `${date}T${time === '00:30' ? '01:15' : '16:15'}:00.000Z`,
+					youtubeBroadcastId: 'synthetic-broadcast',
+					youtubeWatchUrl: createYouTubeWatchUrl('synthetic-broadcast'),
+				})),
+		)
+		const groups = groupOfficeHoursSessionsByUtcDate(sessions.reverse())
+		expect(
+			groups.map(({ dateKey, label, sessions }) => ({
+				dateKey,
+				label,
+				count: sessions.length,
+			})),
+		).toEqual([
+			{ dateKey: '2026-11-09', label: 'Opening Monday', count: 2 },
+			{ dateKey: '2026-11-13', label: 'Friday', count: 2 },
+			{ dateKey: '2026-11-20', label: 'Final Friday', count: 2 },
+		])
+	})
+
+	it('uses actual weekdays for any number of groups, including a single opening day', () => {
+		const sessions = [
+			'2026-11-10',
+			'2026-11-11',
+			'2026-11-12',
+			'2026-11-14',
+		].map((date) => ({
+			title: 'Synthetic office hours',
+			startsAt: `${date}T00:30:00.000Z`,
+			endsAt: `${date}T01:15:00.000Z`,
+			youtubeBroadcastId: 'synthetic-broadcast',
+			youtubeWatchUrl: createYouTubeWatchUrl('synthetic-broadcast'),
+		}))
+		expect(
+			groupOfficeHoursSessionsByUtcDate(sessions).map(({ label }) => label),
+		).toEqual(['Opening Tuesday', 'Wednesday', 'Thursday', 'Final Saturday'])
+		expect(
+			groupOfficeHoursSessionsByUtcDate(sessions.slice(0, 1))[0]?.label,
+		).toBe('Opening Tuesday')
+		expect(groupOfficeHoursSessionsByUtcDate([])).toEqual([])
 	})
 
 	it('formats UTC time ranges clearly', () => {
