@@ -4,7 +4,7 @@ import {
 	evergreenOfferJourneyIntent as intents,
 } from '@/db/evergreen-offer-journey-schema'
 import { and, asc, eq, gt, inArray, lte, or, sql } from 'drizzle-orm'
-import { Effect } from 'effect4'
+import { Effect } from 'effect'
 import { z } from 'zod'
 import {
 	AcceptedOutcome,

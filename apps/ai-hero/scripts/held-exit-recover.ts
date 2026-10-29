@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
-import { Data, Effect } from 'effect4'
+import { Data, Effect } from 'effect'
 import { z } from 'zod'
 import { normalizeContactEvent } from '../src/lib/subscriber-marketing/normalize-contact-event'
 import {

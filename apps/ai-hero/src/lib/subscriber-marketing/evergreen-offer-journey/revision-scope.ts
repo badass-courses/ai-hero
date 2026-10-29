@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util'
-import { Effect } from 'effect4'
+import { Effect } from 'effect'
 import { z } from 'zod'
 import type { AttemptEvidence } from './attempt-evidence'
 import type {

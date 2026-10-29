@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 
 import * as databaseSchema from '@/db/schema'
-import { Effect, Result } from 'effect4'
+import { Effect, Result } from 'effect'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { drizzle } from 'drizzle-orm/mysql2'
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise'

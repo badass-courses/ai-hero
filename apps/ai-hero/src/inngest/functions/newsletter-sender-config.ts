@@ -1,4 +1,4 @@
-import { Data, Effect } from 'effect4'
+import { Data, Effect } from 'effect'
 
 export const NEWSLETTER_LIMIT_CAP = 120
 export const MIN_NEWSLETTER_PACING_MS = 2_000

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { syntheticRevisionScope } from './revision-delivery.fixtures'
-import { Effect, Result } from 'effect4'
+import { Effect, Result } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
 
 import {

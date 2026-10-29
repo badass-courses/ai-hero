@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { Effect } from 'effect4'
+import { Effect } from 'effect'
 import { drizzle } from 'drizzle-orm/mysql2'
 import mysql, { type Pool } from 'mysql2/promise'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'

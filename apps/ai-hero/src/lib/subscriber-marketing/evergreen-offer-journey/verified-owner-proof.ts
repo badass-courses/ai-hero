@@ -1,7 +1,7 @@
 import { contactEvent, providerIdentity } from '@/db/schema'
 import { evergreenOfferJourneyIntent as intents } from '@/db/evergreen-offer-journey-schema'
 import { eq } from 'drizzle-orm'
-import { Effect } from 'effect4'
+import { Effect } from 'effect'
 import type { VerifiedCouponOwnerQuery } from './coupon-authority'
 import {
 	couponBindingIntentKey,

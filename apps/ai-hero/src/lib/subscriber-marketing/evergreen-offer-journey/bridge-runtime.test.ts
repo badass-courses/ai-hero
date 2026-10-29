@@ -1,4 +1,4 @@
-import { Effect, Fiber, Deferred } from "effect4";
+import { Effect, Fiber, Deferred } from "effect";
 import { describe, expect, it, vi } from "vitest";
 import {
   createBridgeRuntime,

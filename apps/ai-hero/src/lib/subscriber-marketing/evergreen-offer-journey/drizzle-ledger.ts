@@ -8,7 +8,7 @@ import {
 } from '@/db/evergreen-offer-journey-schema'
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm'
 import type { MySql2Database } from 'drizzle-orm/mysql2'
-import { Effect } from 'effect4'
+import { Effect } from 'effect'
 
 import { isMysqlDuplicateEntryError } from '../../mysql-primary-key-retry'
 

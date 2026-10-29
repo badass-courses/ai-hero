@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { Effect } from "effect4";
+import { Effect } from "effect";
 import { createActor, setup } from "xstate";
 import { z } from "zod";
 import type {

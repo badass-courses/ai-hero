@@ -1,4 +1,4 @@
-import { Effect } from "effect4";
+import { Effect } from "effect";
 import { describe, expect, it, vi } from "vitest";
 
 import { AI_HERO_SKILLS_WORKFLOW_COURSE_V1 } from "./definition";

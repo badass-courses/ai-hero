@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { and, eq, gt, asc, desc, sql, isNull } from "drizzle-orm";
-import { Effect } from "effect4";
+import { Effect } from "effect";
 import {
   contactEvent,
   providerIdentity,

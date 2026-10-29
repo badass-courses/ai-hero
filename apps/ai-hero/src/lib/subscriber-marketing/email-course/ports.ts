@@ -1,4 +1,4 @@
-import { Context, type Effect } from "effect4";
+import { Context, type Effect } from "effect";
 
 import type { EmailCourseDefinition } from "./definition";
 import type {

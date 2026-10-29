@@ -1,4 +1,4 @@
-import { Effect } from 'effect4'
+import { Effect } from 'effect'
 import { isDeepStrictEqual } from 'node:util'
 import { revisionOf } from './revision-scope'
 import {

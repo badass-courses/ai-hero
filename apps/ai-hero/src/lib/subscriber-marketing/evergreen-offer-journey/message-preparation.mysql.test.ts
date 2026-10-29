@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import mysql, { type Pool } from 'mysql2/promise'
 import { drizzle } from 'drizzle-orm/mysql2'
-import { Effect } from 'effect4'
+import { Effect } from 'effect'
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
 import * as schema from '@/db/evergreen-offer-journey-schema'
 import {

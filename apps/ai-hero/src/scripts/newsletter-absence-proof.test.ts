@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { Effect } from "effect4";
+import { Effect } from "effect";
 import { createHeldRecoveryPorts } from "../../scripts/held-exit-recover-runtime";
 import {
   runNewsletterAbsenceProof,

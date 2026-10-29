@@ -7,7 +7,7 @@ import * as journeySchema from '@/db/evergreen-offer-journey-schema'
 import * as mysqlQueryClient from '@/db/mysql-query-client'
 import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/mysql2'
-import { Effect, Result } from 'effect4'
+import { Effect, Result } from 'effect'
 import mysql, { type Pool } from 'mysql2/promise'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 

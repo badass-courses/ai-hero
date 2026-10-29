@@ -4,7 +4,7 @@ import {
 	canonicalOriginProbes,
 	corruptCanonicalOrigin,
 } from './verified-owner-proof.fixtures'
-import { Effect } from 'effect4'
+import { Effect } from 'effect'
 import { readCanonicalIntentOrigin } from './drizzle-ledger'
 import {
 	createVerifiedOwnerProofReader,

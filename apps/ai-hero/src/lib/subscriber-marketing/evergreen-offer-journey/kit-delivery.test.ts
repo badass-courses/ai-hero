@@ -1,4 +1,4 @@
-import { Effect, Result } from 'effect4'
+import { Effect, Result } from 'effect'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { EVERGREEN_OFFER_JOURNEY_V1 } from './definition'

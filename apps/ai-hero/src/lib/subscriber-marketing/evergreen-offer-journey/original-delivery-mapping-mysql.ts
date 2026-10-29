@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util'
-import { Effect } from 'effect4'
+import { Effect } from 'effect'
 import { eq } from 'drizzle-orm'
 import { contactEvent, providerIdentity } from '@/db/schema'
 import {
