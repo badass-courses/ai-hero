@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
+	approveDrovrBroadcast,
+	broadcastProvider,
+	DROVR_APPROVAL_ACTION_ID,
+	drovrBroadcastClientFromEnv,
+	DrovrApprovalValueSchema,
+	type DrovrApprovalOutcome,
+} from '@/lib/drovr-broadcasts'
+import {
 	AI_HERO_SKILLS_FROM_ADDRESS,
 	AI_HERO_SKILLS_TEMPLATE_ID,
 	AiHeroSkillsSubscriberFilter,
@@ -161,7 +169,7 @@ async function updateSlackMessage({
 	responseUrl?: string
 	text: string
 	shortlink: string
-	kitUrl: string
+	kitUrl?: string
 }) {
 	if (!responseUrl) return
 
@@ -191,20 +199,86 @@ async function updateSlackMessage({
 							},
 							url: shortlink,
 						},
-						{
-							type: 'button',
-							text: {
-								type: 'plain_text',
-								text: 'Open in Kit',
-								emoji: true,
-							},
-							url: kitUrl,
-						},
+						...(kitUrl
+							? [
+									{
+										type: 'button',
+										text: {
+											type: 'plain_text',
+											text: 'Open in Kit',
+											emoji: true,
+										},
+										url: kitUrl,
+									},
+								]
+							: []),
 					],
 				},
 			],
 		}),
 	})
+}
+
+function describeDrovrOutcome(
+	outcome: Exclude<DrovrApprovalOutcome, { status: 'refused' }>,
+) {
+	const report = outcome.report
+	const progress = report
+		? `phase ${report.phase ?? 'unknown'}, captured ${report.captured ?? 'unknown'}, sent ${report.sent ?? 'unknown'}`
+		: 'status unreadable; read broadcast_status'
+	return `drovr broadcast \`${outcome.broadcastId}\`: ${progress}`
+}
+
+async function approveDrovrAction(
+	payload: z.infer<typeof SlackInteractionPayloadSchema>,
+	rawValue: string,
+) {
+	const value = DrovrApprovalValueSchema.parse(JSON.parse(rawValue))
+	const outcome = await approveDrovrBroadcast({
+		value,
+		approverSlackId: payload.user.id,
+		client: drovrBroadcastClientFromEnv(),
+	})
+
+	if (outcome.status === 'refused') {
+		await log.warn('slack.drovr_broadcast_approval.refused', {
+			reason: outcome.reason,
+			messageId: value.messageId,
+			version: value.version,
+			userId: payload.user.id,
+			channelId: payload.channel.id,
+		})
+		return NextResponse.json(
+			{
+				response_type: 'ephemeral',
+				text: `Approve and send refused: ${outcome.reason}`,
+			},
+			{ status: 200 },
+		)
+	}
+
+	const verb =
+		outcome.status === 'created'
+			? 'Approved; drovr is sending'
+			: 'Already approved; no second send'
+	const text = `:robot_face: *${verb}* by <@${payload.user.id}>\n${describeDrovrOutcome(outcome)}\n${value.shortlink}`
+
+	await updateSlackMessage({
+		responseUrl: payload.response_url,
+		text,
+		shortlink: value.shortlink,
+	})
+
+	await log.info('slack.drovr_broadcast_approval.sent', {
+		status: outcome.status,
+		broadcastId: outcome.broadcastId,
+		phase: outcome.report?.phase ?? null,
+		captured: outcome.report?.captured ?? null,
+		userId: payload.user.id,
+		channelId: payload.channel.id,
+	})
+
+	return NextResponse.json({ ok: true })
 }
 
 export async function POST(request: NextRequest) {
@@ -228,16 +302,44 @@ export async function POST(request: NextRequest) {
 		}
 
 		const payload = SlackInteractionPayloadSchema.parse(rawPayload)
+		const drovrAction = payload.actions.find(
+			(action) => action.action_id === DROVR_APPROVAL_ACTION_ID,
+		)
 		const action = payload.actions.find(
 			(action) => action.action_id === APPROVAL_ACTION_ID,
 		)
 
-		if (!action?.value) {
+		if (!action?.value && !drovrAction?.value) {
 			return new NextResponse('Unsupported action', { status: 400 })
 		}
 
 		if (payload.channel.id !== APPROVAL_CHANNEL_ID) {
 			return new NextResponse('Unsupported channel', { status: 403 })
+		}
+
+		if (drovrAction?.value) {
+			return await approveDrovrAction(payload, drovrAction.value)
+		}
+
+		if (!action?.value) {
+			return new NextResponse('Unsupported action', { status: 400 })
+		}
+
+		// drovr owns sending once it is the provider: never fall back to Kit.
+		const provider = broadcastProvider()
+		if (provider !== 'kit') {
+			await log.warn('slack.kit_broadcast_approval.kit_refused', {
+				provider,
+				userId: payload.user.id,
+				channelId: payload.channel.id,
+			})
+			return NextResponse.json(
+				{
+					response_type: 'ephemeral',
+					text: `Approve and send refused: Kit sends are off (broadcast provider is ${provider}).`,
+				},
+				{ status: 200 },
+			)
 		}
 
 		const value = SlackActionValueSchema.parse(JSON.parse(action.value))

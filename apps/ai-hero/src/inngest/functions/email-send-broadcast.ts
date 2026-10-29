@@ -7,6 +7,7 @@ import BasicEmail, { BasicEmailProps } from '@/emails/basic-email'
 import { env } from '@/env.mjs'
 import { EMAIL_SEND_BROADCAST } from '@/inngest/events/email-send-broadcast'
 import { inngest } from '@/inngest/inngest.server'
+import { broadcastProvider } from '@/lib/drovr-broadcasts'
 import {
 	getProviderEmailPreferences,
 	syncLocalEmailPreferencesFromProvider,
@@ -57,6 +58,25 @@ export const emailSendBroadcast = inngest.createFunction(
 		event: EMAIL_SEND_BROADCAST,
 	},
 	async ({ event, step }) => {
+		// Once drovr owns broadcasts, this Resend path with its Kit consent
+		// read never sends; drovr's BroadcastActor gates consent itself.
+		const provider = broadcastProvider()
+		if (provider === 'unknown') {
+			throw new NonRetriableError(
+				'AI_HERO_BROADCAST_PROVIDER is unknown; nothing sends',
+			)
+		}
+		if (provider === 'drovr') {
+			await log.info('email-preferences.broadcast-guard.skipped', {
+				source: 'broadcast-guard',
+				provider: 'drovr',
+				userId: event.data.toUserId,
+				result: 'skipped',
+				reason: 'broadcasts send through drovr',
+			})
+			return 'Broadcasts send through drovr'
+		}
+
 		const user = await step.run('load the user', async () => {
 			return db.query.users.findFirst({
 				where: (users, { eq }) => eq(users.id, event.data.toUserId),
