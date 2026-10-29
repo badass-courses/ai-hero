@@ -162,6 +162,23 @@ const sessionExtract = {
 const withExtract = decodeCourseJsonDocumentV3(withSessionExtract(sessionExtract))
 assert.deepEqual(courseJsonVideos(withExtract)[0]?.sessionExtract, sessionExtract)
 assert.throws(() => decodeCourseJsonDocumentV3(withSessionExtract({ sessions: [] })))
+// The producer omits empty keys and skill bodies instead of writing null.
+const sparseExtract = {
+	sessions: [
+		{
+			sessionId: "session-1",
+			entries: [
+				{ kind: "skillCall", via: "toolCall", visibleFrom: 2, skill: "grill-me" },
+				{ kind: "skillCall", via: "slashCommand", visibleFrom: 3, skill: "grill-me" },
+				{ kind: "toolCall", visibleFrom: 5, tool: "Read", resultIsError: null },
+			],
+		},
+	],
+}
+assert.deepEqual(
+	courseJsonVideos(decodeCourseJsonDocumentV3(withSessionExtract(sparseExtract)))[0]?.sessionExtract,
+	sparseExtract,
+)
 assert.throws(() =>
 	decodeCourseJsonDocumentV3(
 		withSessionExtract({

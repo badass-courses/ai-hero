@@ -6,9 +6,12 @@ import { z } from 'zod'
  * Mirrors Matt's `session-extract.schema.json` (ai-hero-dev/session-extracts)
  * minus its `video` header: the extract lives on the video resource it is
  * timed against, so the video is implied.
+ *
+ * The producer omits an empty key instead of writing `null`, so every
+ * nullable field also accepts a missing key and reads it as `null`.
  */
 const visibleFrom = z.number().min(0)
-const resultIsError = z.boolean().nullable()
+const resultIsError = z.boolean().nullable().default(null)
 
 const UserPromptSchema = z.object({
 	kind: z.literal('userPrompt'),
@@ -27,10 +30,10 @@ const SkillCallViaToolCallSchema = z.object({
 	via: z.literal('toolCall'),
 	visibleFrom,
 	skill: z.string().min(1),
-	args: z.string().nullable(),
-	result: z.string().nullable(),
+	args: z.string().nullable().default(null),
+	result: z.string().nullable().default(null),
 	resultIsError,
-	skillBody: z.string().min(1).nullable(),
+	skillBody: z.string().min(1).nullable().default(null),
 })
 
 const SkillCallViaSlashCommandSchema = z.object({
@@ -38,15 +41,15 @@ const SkillCallViaSlashCommandSchema = z.object({
 	via: z.literal('slashCommand'),
 	visibleFrom,
 	skill: z.string().min(1),
-	args: z.string().min(1).nullable(),
-	skillBody: z.string().min(1),
+	args: z.string().min(1).nullable().default(null),
+	skillBody: z.string().min(1).nullable().default(null),
 })
 
 const ToolCallSchema = z.object({
 	kind: z.literal('toolCall'),
 	visibleFrom,
 	tool: z.string().min(1),
-	summary: z.string().max(160).nullable(),
+	summary: z.string().max(160).nullable().default(null),
 	resultIsError,
 })
 

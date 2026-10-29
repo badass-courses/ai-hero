@@ -34,6 +34,15 @@ lesson page shows one beside the player and follows playback through it.
 
 ## Gotchas
 
+- Matt's exporter omits an empty key instead of writing `null`, and leaves
+  `skillBody` out to keep the manifest small (26 extracts made a 1.6 MB
+  course.json). Both validations accept a missing key; the page reads it as
+  `null`. Requiring the keys made the strict decoder reject the whole
+  Cohort 005 manifest on 2026-10-29, so no extract reached prod.
+- A rejected manifest logs only "Dropbox course manifest validation failed"
+  (`lib/dropbox-course-sync.ts` drops the decode error). To find the field,
+  read course.json from Dropbox and run the decoder on it.
+
 - The course.json decoder runs with `onExcessProperty: "error"`. Any new field
   a producer adds fails the **whole** sync until the consumer schema accepts
   it, so the consumer change must deploy before the producer ships.
