@@ -163,6 +163,21 @@ export function sessionExtractRows(
 }
 
 /**
+ * The rows on screen at `time`. A `tools` row collects a run of calls made
+ * at different moments, so it lists only the calls whose own time has passed.
+ */
+export function rowsOnScreen(
+	rows: readonly SessionExtractRow[],
+	time: number,
+): SessionExtractRow[] {
+	return rows.slice(0, activeRowIndex(rows, time) + 1).map((row) => {
+		if (row.type !== 'tools') return row
+		const entries = row.entries.filter((entry) => entry.visibleFrom <= time)
+		return entries.length === row.entries.length ? row : { ...row, entries }
+	})
+}
+
+/**
  * Index of the row on screen at `time`: the last one whose `visibleFrom` has
  * passed, or -1 before the first. Rows are in `visibleFrom` order.
  */

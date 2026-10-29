@@ -16,8 +16,8 @@ import { Button } from '@/components/ui/button'
 import { CollapsibleTrigger } from '@/components/ui/collapsible'
 import { useMuxPlayer } from '@/hooks/use-mux-player'
 import {
-	activeRowIndex,
 	contentWords,
+	rowsOnScreen,
 	sessionExtractRows,
 	spokenBlockIndex,
 	type SessionExtract,
@@ -110,8 +110,8 @@ export function SessionExtractPanel({
 	const rows = React.useMemo(() => sessionExtractRows(extract), [extract])
 	const { muxPlayerRef } = useMuxPlayer()
 	const time = usePlayerTime(muxPlayerRef)
-	const active = activeRowIndex(rows, time)
-	const visible = rows.slice(0, active + 1)
+	const visible = rowsOnScreen(rows, time)
+	const active = visible.length - 1
 	const contentRef = React.useRef<HTMLDivElement>(null)
 	const anchorRef = React.useRef<HTMLElement | null>(null)
 	const spoken = useSpokenBlock(
@@ -278,8 +278,7 @@ export function SessionExtractStrip({
 }) {
 	const rows = React.useMemo(() => sessionExtractRows(extract), [extract])
 	const { muxPlayerRef } = useMuxPlayer()
-	const active = activeRowIndex(rows, usePlayerTime(muxPlayerRef))
-	const newest = rows[active]
+	const newest = rowsOnScreen(rows, usePlayerTime(muxPlayerRef)).at(-1)
 
 	// The preview holds buttons of its own, so the strip is a div and its one
 	// button stretches over all of it.

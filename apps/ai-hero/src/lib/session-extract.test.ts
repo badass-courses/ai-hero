@@ -4,6 +4,7 @@ import {
 	activeRowIndex,
 	contentWords,
 	parseSessionExtract,
+	rowsOnScreen,
 	sessionExtractRows,
 	spokenBlockIndex,
 	type SessionExtract,
@@ -93,6 +94,26 @@ describe('sessionExtractRows', () => {
 
 	it('keeps times non-decreasing across sessions', () => {
 		expect(rows.map((row) => row.visibleFrom)).toEqual([2, 2, 5, 9, 9, 9])
+	})
+})
+
+describe('rowsOnScreen', () => {
+	const rows = sessionExtractRows(extract)
+
+	it('lists only the tool calls whose time has passed', () => {
+		const at5 = rowsOnScreen(rows, 5)
+		expect(at5).toHaveLength(3)
+		expect(at5[2]).toMatchObject({
+			type: 'tools',
+			entries: [{ tool: 'Read' }],
+		})
+		expect(rowsOnScreen(rows, 6)[2]).toMatchObject({
+			entries: [{ tool: 'Read' }, { tool: 'Bash' }],
+		})
+	})
+
+	it('is empty before the first row', () => {
+		expect(rowsOnScreen(rows, 1)).toEqual([])
 	})
 })
 
