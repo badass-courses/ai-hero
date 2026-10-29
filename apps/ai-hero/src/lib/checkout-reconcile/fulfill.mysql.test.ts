@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { persistPurchaseGeoWrite } from '@/lib/admin-sales-globe-stripe-geo'
 import { createRequire } from 'node:module'
+import { runWithDeadlockRetry } from './deadlock-retry.test-support'
 import {
 	coupon,
 	contentResource,
@@ -191,7 +192,7 @@ function inngestLikeStep(options: { beforeStep?: (id: string) => Promise<void> }
 		run: async (id, fn) => {
 			await options.beforeStep?.(id)
 			ran.push(id)
-			const output = await fn()
+			const output = await runWithDeadlockRetry(fn)
 			return output === undefined ? undefined : JSON.parse(JSON.stringify(output))
 		},
 		sendEvent: async (id, payload) => {

@@ -40,67 +40,29 @@ jobs:
       - name: Typecheck
         run: pnpm turbo typecheck
 
-      # Facade: RPC round trip, auth, decode failures, and the bundle contract
-      # (no effect import survives in dist). App: hooks and the mounted route.
-      - name: Front-desk support facade and route
+      # Facade package: RPC round trip, auth, decode failures, and the bundle
+      # contract (no effect import survives in dist). Its own package suite;
+      # the app side (hooks, mounted route) runs in the full suite below.
+      - name: Front-desk support facade
         run: |
           pnpm --filter @ai-hero/front-desk-support build
           pnpm --filter @ai-hero/front-desk-support test
-          pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/app/api/front-desk/
 
-      - name: Checkout recovery patch contract
-        run: pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/lib/checkout-recovery-adopt.test.ts
-
-      # The fulfill.mysql suite skips here without a server URL; the
-      # evergreen-journey-mysql workflow runs it against disposable MySQL.
-      - name: Checkout reconciler and checkout:recover
-        run: >-
-          pnpm --filter ai-hero exec vitest run -c vitest.config.ts
-          src/lib/checkout-reconcile/
-          src/scripts/checkout-recovery
-
-      - name: Refund entitlement event boundary and included-product contracts
-        run: pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/lib/included-product-entitlements.test.ts
-
-      # Every PR, no path filter: a coupon or checkout policy change must meet
-      # these unit contracts (the MySQL workflow runs only *.mysql.test.ts, so
-      # #274 shipped with coupon-authority.test.ts still asserting the old rule).
-      - name: Coupon and checkout policy unit suites
-        run: >-
-          pnpm --filter ai-hero exec vitest run -c vitest.config.ts
-          src/lib/subscriber-marketing/evergreen-offer-journey
-          src/lib/exclusive-coupon-authorization.test.ts
-          src/lib/shareable-evergreen-coupon.test.ts
-          src/coursebuilder/server-computed-checkout-coupon.test.ts
-          src/lib/subscriber-marketing/drovr-evergreen-coupon.test.ts
-          src/trpc/api/routers/pricing.test.ts
-
-      # Every PR, no path filter: every drovr, subscriber-marketing and
-      # evergreen unit suite. Filters, not a file list: vitest matches each
-      # argument as a substring of the test path, so a new drovr-*,
-      # *evergreen* or subscriber-marketing suite runs with no edit here.
-      # A named list let 28 of the 32 suites that #336-#340 touched merge
-      # without CI, and #340 with a failing test. test-principals rides
-      # along: its cleanup reads every contact-keyed table, so a new drovr
-      # or subscriber table changes it. *.mysql.test.ts suites skip here
-      # without a server URL (evergreen-journey-mysql runs them), and so
-      # must any future server-bound suite these filters pull in: it needs
-      # its own describe.skipIf on its server's env, or it fails here.
-      - name: drovr, subscriber-marketing and evergreen unit suites
-        run: >-
-          pnpm --filter ai-hero exec vitest run -c vitest.config.ts
-          src/lib/subscriber-marketing/
-          drovr
-          evergreen
-          skills-newsletter
-          capture-purchase-contact-event
-          subscribe-to-list
-          kit-custom-fields-check
-          src/scripts/held-exit
-          src/lib/test-principals/
-
-      - name: Workshop pricing actor contract
-        run: pnpm --filter ai-hero exec vitest run -c vitest.config.ts "src/app/(content)/workshops/_components/workshop-pricing.mounted.test.tsx"
+      # The whole app unit suite, every PR, no path filter. It replaces the
+      # named subset steps (checkout recovery and reconciler, entitlements,
+      # coupon and checkout policy, drovr, subscriber-marketing, evergreen,
+      # workshop pricing): subsets let tests outside them merge red, four of
+      # them by 2026-10-21. *.mysql.test.ts suites skip without a server URL;
+      # the evergreen-journey-mysql workflow runs them against disposable
+      # MySQL, so any new server-bound suite needs its own describe.skipIf.
+      # Thread flags, not --maxWorkers: on vitest 1.6 --maxWorkers throws,
+      # runs 0 tests and exits 0, so the step also fails when no test ran.
+      - name: Full app unit suite
+        run: |
+          pnpm --filter ai-hero exec vitest run -c vitest.config.ts \
+            --poolOptions.threads.maxThreads=4 --poolOptions.threads.minThreads=1 \
+            --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/vitest-full.json"
+          node -e 'const r=require(process.argv[1]); if (!(r.numTotalTests > 0)) { console.error("Full app unit suite ran 0 tests"); process.exit(1) } console.log("numTotalTests", r.numTotalTests, "failed", r.numFailedTests)' "$RUNNER_TEMP/vitest-full.json"
 
   pricing-e2e:
     # Real browser, real workshop CTAs and pricing actor; every API response is
