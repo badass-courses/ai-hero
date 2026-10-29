@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 import { fixtureEntry } from './bounded-readers.fixtures'
 import { makeInMemoryJourneyLedger } from './in-memory-ledger'
 import { createEvergreenOfferJourneyService } from './service'

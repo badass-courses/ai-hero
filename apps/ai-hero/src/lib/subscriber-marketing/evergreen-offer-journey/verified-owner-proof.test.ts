@@ -4,7 +4,7 @@ import {
 	canonicalOriginProbes,
 	corruptCanonicalOrigin,
 } from './verified-owner-proof.fixtures'
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 import { readCanonicalIntentOrigin } from './drizzle-ledger'
 import {
 	createVerifiedOwnerProofReader,
@@ -27,11 +27,11 @@ describe('exact dormant verified owner proof', () => {
 		const f = ownerProofFixture()
 		for (const row of f.allIntents) {
 			const result = await Effect.runPromise(
-				Effect.either(readCanonicalIntentOrigin(f.store.canonical, row)),
+				Effect.result(readCanonicalIntentOrigin(f.store.canonical, row)),
 			)
 			expect(result).toMatchObject({
-				_tag: 'Right',
-				right: { intent: row.intent },
+				_tag: 'Success',
+				success: { intent: row.intent },
 			})
 		}
 	})
@@ -53,13 +53,13 @@ describe('exact dormant verified owner proof', () => {
 			const f = ownerProofFixture()
 			corruptCanonicalOrigin(f, probe)
 			const result = await Effect.runPromise(
-				Effect.either(
+				Effect.result(
 					readCanonicalIntentOrigin(f.store.canonical, f.intentRow),
 				),
 			)
 			expect(result).toMatchObject({
-				_tag: 'Left',
-				left: {
+				_tag: 'Failure',
+				failure: {
 					type: 'JourneyDecodeFailure',
 					reason: expect.stringContaining('does not reproduce'),
 				},

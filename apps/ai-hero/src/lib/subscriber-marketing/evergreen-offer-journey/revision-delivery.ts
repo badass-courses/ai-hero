@@ -4,7 +4,7 @@ import {
 	EVERGREEN_OFFER_JOURNEY_V2,
 	EVERGREEN_OFFER_JOURNEY_V3,
 } from './definition'
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 import { z } from 'zod'
 import { createKitDeliveryPort, type KitDeliveryOptions } from './kit-delivery'
 import {
@@ -203,7 +203,7 @@ export function createRevisionDelivery(input: {
 												deps.preparation?.mayReconcile(intent) ??
 												Promise.resolve(false),
 											catch: () => false,
-										}).pipe(Effect.catchAll(() => Effect.succeed(false)))
+										}).pipe(Effect.catch(() => Effect.succeed(false)))
 										if (!allowed)
 											return {
 												type: 'Unknown' as const,

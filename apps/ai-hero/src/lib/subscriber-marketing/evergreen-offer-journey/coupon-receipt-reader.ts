@@ -1,4 +1,4 @@
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 import { z } from 'zod'
 import {
 	decodeIssue,
@@ -58,7 +58,7 @@ export function createCouponReceiptReader(input: CouponReceiptReadStore) {
 			try: work,
 			catch: () => 'unavailable-or-conflicting-evidence',
 		}).pipe(
-			Effect.catchAll((reason) =>
+			Effect.catch((reason) =>
 				Effect.succeed({ type: 'Unknown', reason } as const),
 			),
 		)

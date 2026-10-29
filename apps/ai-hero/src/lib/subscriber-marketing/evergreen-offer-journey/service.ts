@@ -1,4 +1,4 @@
-import { Effect, Either } from 'effect'
+import { Effect, Result } from 'effect4'
 
 import { decideEvergreenOfferJourney } from './decision'
 import type { EvergreenOfferJourneyDefinition } from './domain'
@@ -123,7 +123,7 @@ export function createEvergreenOfferJourneyService(dependencies: {
 						committed: false,
 						replayedStimulus: false,
 					}
-				const committed = yield* Effect.either(
+				const committed = yield* Effect.result(
 					ledger.commit({
 						stimulus,
 						expectedVersion: snapshot?.version ?? null,
@@ -133,9 +133,9 @@ export function createEvergreenOfferJourneyService(dependencies: {
 						decision: result.decision,
 					}),
 				)
-				if (Either.isRight(committed)) return committed.right
-				if (committed.left.type !== 'JourneyVersionConflict' || attempt === 2)
-					return yield* Effect.fail(committed.left)
+				if (Result.isSuccess(committed)) return committed.success
+				if (committed.failure.type !== 'JourneyVersionConflict' || attempt === 2)
+					return yield* Effect.fail(committed.failure)
 				// Re-read both the aggregate and current authority after a CAS race.
 				// Never resubmit a decision made from stale purchase/control evidence.
 			}

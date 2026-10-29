@@ -7,7 +7,7 @@ import * as journeySchema from '@/db/evergreen-offer-journey-schema'
 import * as mysqlQueryClient from '@/db/mysql-query-client'
 import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/mysql2'
-import { Effect, Either } from 'effect'
+import { Effect, Result } from 'effect4'
 import mysql, { type Pool } from 'mysql2/promise'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -517,9 +517,9 @@ integration('SendMessage executor over MySQL attempts and ledger', () => {
 		expect(await intentRow(intent)).toMatchObject({ status: 'Applied' })
 		expect(applied).toHaveLength(0)
 		expect(
-			Either.isRight(
+			Result.isSuccess(
 				await Effect.runPromise(
-					Effect.either(unpaged(executor(second).reconcileHeld({ limit: 10 }))),
+					Effect.result(unpaged(executor(second).reconcileHeld({ limit: 10 }))),
 				),
 			),
 		).toBe(true)

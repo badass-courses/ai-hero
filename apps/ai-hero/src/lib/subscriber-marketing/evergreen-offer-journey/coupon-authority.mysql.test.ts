@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 import { drizzle } from 'drizzle-orm/mysql2'
 import mysql, { type Pool } from 'mysql2/promise'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -179,7 +179,7 @@ integration('coupon authority disposable MySQL', () => {
 			await Effect.runPromise(authority.issue(issue))
 			await Effect.runPromise(authority.bind(bind))
 			await other.query('UPDATE AI_User SET email = ?, emailVerified = NULL WHERE id = ?', ['changed@example.test', userId])
-			expect(await Effect.runPromise(Effect.either(authority.bind(bind)))).toMatchObject({ _tag: 'Left', left: { type: 'EffectPermanentRefusal', reason: 'verified-owner-proof-mismatch' } })
+			expect(await Effect.runPromise(Effect.result(authority.bind(bind)))).toMatchObject({ _tag: 'Failure', failure: { type: 'EffectPermanentRefusal', reason: 'verified-owner-proof-mismatch' } })
 			expect(callbacks).toBe(1)
 			expect(await database.select().from(couponCommerceSchema.entitlements)).toHaveLength(1)
 		} finally { other.release() }
@@ -219,15 +219,15 @@ integration('coupon authority disposable MySQL', () => {
 			},
 		}
 		const outcome = await Effect.runPromise(
-			Effect.either(
+			Effect.result(
 				createCouponAuthority({ ...options(), store: lostResponseStore }).issue(
 					issue,
 				),
 			),
 		)
 		expect(outcome).toMatchObject({
-			_tag: 'Left',
-			left: { type: 'EffectAmbiguous' },
+			_tag: 'Failure',
+			failure: { type: 'EffectAmbiguous' },
 		})
 		if (!pool) throw new Error('missing pool')
 		const statements: string[] = []
@@ -250,8 +250,8 @@ integration('coupon authority disposable MySQL', () => {
 			now: () => issue.expiresAt,
 		})
 		expect(
-			await Effect.runPromise(Effect.either(expired.issue(issue))),
-		).toMatchObject({ _tag: 'Left', left: { type: 'EffectPermanentRefusal' } })
+			await Effect.runPromise(Effect.result(expired.issue(issue))),
+		).toMatchObject({ _tag: 'Failure', failure: { type: 'EffectPermanentRefusal' } })
 		expect(await Effect.runPromise(reader.inspectIssue(issue))).toMatchObject({
 			type: 'Recorded',
 			receipt: committed,
@@ -284,14 +284,14 @@ integration('coupon authority disposable MySQL', () => {
 		}
 		expect(
 			await Effect.runPromise(
-				Effect.either(
+				Effect.result(
 					createCouponAuthority({
 						...options(),
 						store: lostResponseStore,
 					}).bind(bind),
 				),
 			),
-		).toMatchObject({ _tag: 'Left', left: { type: 'EffectAmbiguous' } })
+		).toMatchObject({ _tag: 'Failure', failure: { type: 'EffectAmbiguous' } })
 		if (!pool) throw new Error('missing pool')
 		await pool.query('UPDATE AI_Coupon SET usedCount=1, status=0 WHERE id=?', [
 			bind.couponId,
@@ -398,7 +398,7 @@ integration('coupon authority disposable MySQL', () => {
 					}),
 			}
 			const outcome = await Effect.runPromise(
-				Effect.either(
+				Effect.result(
 					createCouponAuthority({ ...options(), store: contention }).issue(
 						issue,
 					),
@@ -406,8 +406,8 @@ integration('coupon authority disposable MySQL', () => {
 			)
 			expect(insertedThenWaited).toBe(true)
 			expect(outcome).toMatchObject({
-				_tag: 'Left',
-				left: {
+				_tag: 'Failure',
+				failure: {
 					type: 'EffectTransientUnavailable',
 					reason: 'commerce-transaction-rolled-back',
 				},
@@ -430,15 +430,15 @@ integration('coupon authority disposable MySQL', () => {
 				}),
 		}
 		const outcome = await Effect.runPromise(
-			Effect.either(
+			Effect.result(
 				createCouponAuthority({ ...options(), store: failingStore }).issue(
 					issue,
 				),
 			),
 		)
 		expect(outcome).toMatchObject({
-			_tag: 'Left',
-			left: { type: 'EffectAmbiguous' },
+			_tag: 'Failure',
+			failure: { type: 'EffectAmbiguous' },
 		})
 		expect(
 			await database.select().from(couponCommerceSchema.coupon),
@@ -450,7 +450,7 @@ integration('coupon authority disposable MySQL', () => {
 		const wrongUser = value(parseVerifiedUserId('wrong-user'))
 		const attempts = await Promise.all([
 			Effect.runPromise(
-				Effect.either(
+				Effect.result(
 					authority.bind({
 						...bind,
 						verifiedUserId: wrongUser,
@@ -461,13 +461,13 @@ integration('coupon authority disposable MySQL', () => {
 					}),
 				),
 			),
-			Effect.runPromise(Effect.either(authority.bind(bind))),
+			Effect.runPromise(Effect.result(authority.bind(bind))),
 		])
 		expect(attempts[0]).toMatchObject({
-			_tag: 'Left',
-			left: { type: 'EffectPermanentRefusal' },
+			_tag: 'Failure',
+			failure: { type: 'EffectPermanentRefusal' },
 		})
-		expect(attempts[1]._tag).toBe('Right')
+		expect(attempts[1]._tag).toBe('Success')
 		const coupons = await database.select().from(couponCommerceSchema.coupon)
 		const merchants = await database
 			.select()

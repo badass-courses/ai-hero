@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 import { drizzle } from 'drizzle-orm/mysql2'
 import mysql from 'mysql2/promise'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'

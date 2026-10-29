@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { Effect } from "effect";
+import { Effect } from "effect4";
 import { createActor, setup } from "xstate";
 import { z } from "zod";
 import type {
@@ -214,7 +214,7 @@ export function createBridgeRuntime(dependencies: BridgeRuntimeDependencies) {
         return answer("Unavailable", "InvalidLane");
       });
       const result = yield* work.pipe(
-        Effect.catchAllCause(() =>
+        Effect.catchCause(() =>
           Effect.succeed(answer("Unavailable", "RuntimeDependencyUnavailable")),
         ),
         Effect.onInterrupt(() =>
@@ -249,7 +249,7 @@ export function createBridgeRuntime(dependencies: BridgeRuntimeDependencies) {
           };
         return { type: "RecoveryPage" as const, page: yield* work() };
       }).pipe(
-        Effect.catchAllCause(() =>
+        Effect.catchCause(() =>
           Effect.succeed({
             type: "Held" as const,
             reason: "RecoveryUnavailable",

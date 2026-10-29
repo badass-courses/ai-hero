@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect } from "effect4";
 import { createBridgeComposition } from "@/lib/subscriber-marketing/evergreen-offer-journey/bridge-composition";
 import { createEmailTokenLoginObservationWriter } from "@/lib/subscriber-marketing/evergreen-offer-journey/email-token-login-observation-mysql";
 import { createVerifiedUserObservedSource } from "@/lib/subscriber-marketing/evergreen-offer-journey/verified-user-observed-source";

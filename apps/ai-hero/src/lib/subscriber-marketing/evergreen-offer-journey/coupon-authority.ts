@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { coupon, entitlements, merchantCoupon, users } from '@/db/schema'
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 import { z } from 'zod'
 
 import {

@@ -1,4 +1,4 @@
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 import { expect, it } from 'vitest'
 import { couponExecutorFixture, instant } from './coupon-executor.fixtures'
 import { createCouponIntentExecutor } from './coupon-executor'
@@ -153,9 +153,9 @@ it('propagates page failures instead of an empty success', async () => {
 		},
 	})
 	const result = await Effect.runPromise(
-		Effect.either(executor.recoverUncertainPage({ now: new Date(), limit: 1 })),
+		Effect.result(executor.recoverUncertainPage({ now: new Date(), limit: 1 })),
 	)
-	expect(result._tag).toBe('Left')
+	expect(result._tag).toBe('Failure')
 })
 
 it.each(['purchase', 'unsubscribe', 'unavailable', 'clock'] as const)(

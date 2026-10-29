@@ -1,4 +1,4 @@
-import { Effect, Either } from 'effect'
+import { Effect, Result } from 'effect4'
 import type { SQL } from 'drizzle-orm'
 import { MySqlDialect } from 'drizzle-orm/mysql-core'
 import { expect, it, vi } from 'vitest'
@@ -43,7 +43,7 @@ it('requires a bounded observation on new refusals and never rewrites the first 
 		'2026-09-04T17:00:00.501Z',
 	]) {
 		const result = await Effect.runPromise(
-			Effect.either(
+			Effect.result(
 				repository.settle({
 					...identity,
 					now,
@@ -55,7 +55,7 @@ it('requires a bounded observation on new refusals and never rewrites the first 
 				}),
 			),
 		)
-		expect(Either.isLeft(result)).toBe(true)
+		expect(Result.isFailure(result)).toBe(true)
 	}
 	expect(update).not.toHaveBeenCalled()
 	const outcome = {
@@ -77,9 +77,9 @@ it('requires a bounded observation on new refusals and never rewrites the first 
 		{ type: 'KnownNotApplied' as const, reason: 'ProviderRefused' as const },
 	]) {
 		expect(
-			Either.isLeft(
+			Result.isFailure(
 				await Effect.runPromise(
-					Effect.either(
+					Effect.result(
 						repository.settle({ ...identity, now, outcome: changed }),
 					),
 				),
@@ -131,25 +131,25 @@ it.each([
 		}
 		expect(await Effect.runPromise(repository.settle(request))).toEqual(row)
 		const wrongToken = await Effect.runPromise(
-			Effect.either(
+			Effect.result(
 				repository.settle({
 					...request,
 					claimToken: 'dcbf2377-2c3f-4b12-b67e-a732352f17ae',
 				}),
 			),
 		)
-		expect(Either.isLeft(wrongToken) && wrongToken.left.type).toBe(
+		expect(Result.isFailure(wrongToken) && wrongToken.failure.type).toBe(
 			'AttemptRefused',
 		)
 		const conflict = await Effect.runPromise(
-			Effect.either(
+			Effect.result(
 				repository.settle({
 					...request,
 					outcome: { type: 'HeldUncertain', reason: 'Unknown' },
 				}),
 			),
 		)
-		expect(Either.isLeft(conflict) && conflict.left.type).toBe('AttemptRefused')
+		expect(Result.isFailure(conflict) && conflict.failure.type).toBe('AttemptRefused')
 		expect(update).not.toHaveBeenCalled()
 	},
 )
@@ -180,7 +180,7 @@ it('refuses to rewrite a legacy refusal with an observed one, without an UPDATE'
 		transaction: async (work: (tx: unknown) => Promise<unknown>) => work(tx),
 	} as unknown as EvergreenOfferJourneyDatabase)
 	const result = await Effect.runPromise(
-		Effect.either(
+		Effect.result(
 			repository.settle({
 				...identity,
 				now: new Date('2026-09-04T17:00:30.000Z'),
@@ -192,7 +192,7 @@ it('refuses to rewrite a legacy refusal with an observed one, without an UPDATE'
 			}),
 		),
 	)
-	expect(Either.isLeft(result) && result.left.type).toBe('AttemptRefused')
+	expect(Result.isFailure(result) && result.failure.type).toBe('AttemptRefused')
 	expect(update).not.toHaveBeenCalled()
 })
 
@@ -233,30 +233,30 @@ it.each(['recoveryPage', 'recordedOutcomeRecoveryPage'] as const)(
 			const result =
 				method === 'recoveryPage'
 					? await Effect.runPromise(
-							Effect.either(repository.recoveryPage(input)),
+							Effect.result(repository.recoveryPage(input)),
 						)
 					: await Effect.runPromise(
-							Effect.either(repository.recordedOutcomeRecoveryPage(input)),
+							Effect.result(repository.recordedOutcomeRecoveryPage(input)),
 						)
-			expect(result._tag === 'Left' && result.left.type).toBe('AttemptRefused')
+			expect(result._tag === 'Failure' && result.failure.type).toBe('AttemptRefused')
 		}
 		for (const limit of [0, 101, 1.1]) {
 			const result =
 				method === 'recoveryPage'
 					? await Effect.runPromise(
-							Effect.either(
+							Effect.result(
 								repository.recoveryPage({ now: new Date(), limit }),
 							),
 						)
 					: await Effect.runPromise(
-							Effect.either(
+							Effect.result(
 								repository.recordedOutcomeRecoveryPage({
 									now: new Date(),
 									limit,
 								}),
 							),
 						)
-			expect(result._tag).toBe('Left')
+			expect(result._tag).toBe('Failure')
 		}
 		expect(select).not.toHaveBeenCalled()
 		expect(transaction).not.toHaveBeenCalled()

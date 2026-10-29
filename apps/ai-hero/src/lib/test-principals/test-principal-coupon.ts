@@ -1,4 +1,4 @@
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 
 import {
 	evergreenOfferUrl,
@@ -57,17 +57,17 @@ export async function issueTestPrincipalCoupon(args: {
 		timezoneSource: 'fallback',
 	}
 	const outcome = await Effect.runPromise(
-		Effect.either(
+		Effect.result(
 			args.authority.issue(issueIntentFor(args.identity.contactId, payload)),
 		),
 	)
-	if (outcome._tag === 'Left') {
+	if (outcome._tag === 'Failure') {
 		return {
 			status: 'refused',
-			reason: `${outcome.left.type}:${outcome.left.reason}`,
+			reason: `${outcome.failure.type}:${outcome.failure.reason}`,
 		}
 	}
-	const { coupon } = outcome.right
+	const { coupon } = outcome.success
 	return {
 		status: 'issued',
 		coupon: {

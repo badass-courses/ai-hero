@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import { contactEvent } from '@/db/schema'
 import * as journeySchema from '@/db/evergreen-offer-journey-schema'
 import { preserveQueryResultShape } from '@/db/mysql-query-client'
-import { Effect, Either } from 'effect'
+import { Effect, Result } from 'effect4'
 import { drizzle } from 'drizzle-orm/mysql2'
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -293,13 +293,13 @@ integration('bounded reader MySQL contract', () => {
 		})
 		expect(JSON.stringify(result)).not.toContain('private-invalid-payload')
 		const invalid = await Effect.runPromise(
-			Effect.either(
+			Effect.result(
 				connected.readers.intents({
 					now: new Date(wake.decidedAt),
 					limit: 101,
 				}),
 			),
 		)
-		expect(Either.isLeft(invalid) && invalid.left.reason).toBe('InvalidPage')
+		expect(Result.isFailure(invalid) && invalid.failure.reason).toBe('InvalidPage')
 	})
 })

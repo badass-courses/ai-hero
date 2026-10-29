@@ -1,4 +1,4 @@
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 import { createCouponReceiptReader } from './coupon-receipt-reader'
 import {
 	validatePersistedCommitEvidenceEnvelope,
@@ -199,8 +199,8 @@ function fixture() {
 	}
 }
 const result = <A>(effect: Effect.Effect<A, unknown>) =>
-	Effect.runPromise(Effect.either(effect))
-const permanent = { _tag: 'Left', left: { type: 'EffectPermanentRefusal' } }
+	Effect.runPromise(Effect.result(effect))
+const permanent = { _tag: 'Failure', failure: { type: 'EffectPermanentRefusal' } }
 
 describe('drovr coupon authority boundary', () => {
 	it('issues and reads back a coupon with a pinned Kiritimati fallback zone', async () => {
@@ -258,7 +258,7 @@ describe('locked verified-owner callback', () => {
 		const f = fixture()
 		await Effect.runPromise(f.authority.issue(issue))
 		const authority = createCouponAuthority({ ...f.options, readVerifiedOwner: async () => { throw new Error('db offline') } })
-		expect(await result(authority.bind(bind))).toMatchObject({ _tag: 'Left', left: { type: 'EffectTransientUnavailable', reason: 'verified-owner-proof-unavailable' } })
+		expect(await result(authority.bind(bind))).toMatchObject({ _tag: 'Failure', failure: { type: 'EffectTransientUnavailable', reason: 'verified-owner-proof-unavailable' } })
 		expect(f.state.grants().size).toBe(0)
 	})
 })
@@ -329,8 +329,8 @@ describe('historical receipt recovery, not authorization', () => {
 					},
 				})
 				expect(await result(authority.issue(issue))).toMatchObject({
-					_tag: 'Left',
-					left: { type: 'EffectAmbiguous' },
+					_tag: 'Failure',
+					failure: { type: 'EffectAmbiguous' },
 				})
 				expect(calls).toBe(1)
 			}
@@ -367,8 +367,8 @@ describe('historical receipt recovery, not authorization', () => {
 		const { authority, reader, reads, state } = fixture()
 		state.responseLost = true
 		expect(await result(authority.issue(issue))).toMatchObject({
-			_tag: 'Left',
-			left: { type: 'EffectAmbiguous' },
+			_tag: 'Failure',
+			failure: { type: 'EffectAmbiguous' },
 		})
 		state.clock = issue.expiresAt
 		const before = structuredClone([...state.coupons()])
@@ -388,8 +388,8 @@ describe('historical receipt recovery, not authorization', () => {
 		const originalIssue = await Effect.runPromise(authority.issue(issue))
 		state.responseLost = true
 		expect(await result(authority.bind(bind))).toMatchObject({
-			_tag: 'Left',
-			left: { type: 'EffectAmbiguous' },
+			_tag: 'Failure',
+			failure: { type: 'EffectAmbiguous' },
 		})
 		const row = state.coupons().get(bind.couponId)
 		if (!row) throw new Error('missing')
@@ -582,8 +582,8 @@ describe('historical receipt recovery, not authorization', () => {
 				createCouponAuthority({ ...options, store: faulty }).issue(issue),
 			),
 		).toMatchObject({
-			_tag: 'Left',
-			left: {
+			_tag: 'Failure',
+			failure: {
 				type: 'EffectPermanentRefusal',
 				reason: 'coupon-observation-readback-conflict',
 			},
@@ -668,16 +668,16 @@ describe('dormant coupon authority', () => {
 		const { authority, state } = fixture()
 		state.failAfterInsert = true
 		expect(await result(authority.issue(issue))).toMatchObject({
-			_tag: 'Left',
-			left: { type: 'EffectAmbiguous' },
+			_tag: 'Failure',
+			failure: { type: 'EffectAmbiguous' },
 		})
 		expect(state.coupons().size).toBe(0)
 		state.failAfterInsert = false
 		await Effect.runPromise(authority.issue(issue))
 		state.failBindingUpdate = true
 		expect(await result(authority.bind(bind))).toMatchObject({
-			_tag: 'Left',
-			left: { type: 'EffectAmbiguous' },
+			_tag: 'Failure',
+			failure: { type: 'EffectAmbiguous' },
 		})
 		expect(state.grants().size).toBe(0)
 		state.failBindingUpdate = false
@@ -769,7 +769,7 @@ describe('dormant coupon authority', () => {
 			result(authority.bind(bind)),
 		])
 		expect(outcomes[0]).toMatchObject(permanent)
-		expect(outcomes[1]._tag).toBe('Right')
+		expect(outcomes[1]._tag).toBe('Success')
 		expect(state.grants().size).toBe(1)
 	})
 	it.each(['expired', 'revoked', 'used', 'wrong-product', 'changed-expiry'])(

@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util'
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 import { and, eq } from 'drizzle-orm'
 import { contact, providerIdentity, prices, coupon } from '@/db/schema'
 import type { EvergreenOfferJourneyDatabase } from './drizzle-ledger'

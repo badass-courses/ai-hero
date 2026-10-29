@@ -1,4 +1,4 @@
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 import { z } from 'zod'
 
 import type { CaptureMarketingRepository } from './capture-contact-event'
@@ -334,19 +334,19 @@ async function issueOne(input: {
 		)
 	}
 	const outcome = await Effect.runPromise(
-		Effect.either(args.authority.issue(intent)),
+		Effect.result(args.authority.issue(intent)),
 	)
-	if (outcome._tag === 'Left') {
+	if (outcome._tag === 'Failure') {
 		return await settleAuthorityFailure(
 			row,
 			attempts,
-			outcome.left,
+			outcome.failure,
 			args.repository,
 			now,
 			dispatch,
 		)
 	}
-	const { coupon } = outcome.right
+	const { coupon } = outcome.success
 	let kitFieldsWritten = false
 	let kitFieldsError: string | null = null
 	if (subscriberId) {
