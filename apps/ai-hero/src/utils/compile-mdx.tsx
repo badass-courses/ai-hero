@@ -586,7 +586,7 @@ async function compileMDXInternal(
 						// A redrawn drawing is a figure, which a paragraph cannot hold,
 						// so the paragraph markdown wraps its image in gives way.
 						const redraw = soleRedraw(props.children)
-						if (redraw) return redraw
+						if (redraw) return <>{redraw}</>
 						return <p {...props} className={cn('ah-prose-p', props.className)} />
 					},
 					strong: (props) => (
