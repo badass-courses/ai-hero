@@ -6,10 +6,14 @@ import {
 	type WorkshopInterestRequested,
 } from '@/inngest/events/workshop-interest'
 import { inngest } from '@/inngest/inngest.server'
+import { setSubscriberCookie } from '@/lib/convertkit'
 import {
 	conversionIntentContract,
 	type ConversionSurface,
+	withConfirmedConversionFields,
 } from '@/lib/cta/conversion-intent'
+import { interestKitWritesEnabled } from '@/lib/cta/interest-facts'
+import { requestInterestFacts } from '@/lib/cta/interest-facts.server'
 import { createSubscriberGateSnapshot } from '@/lib/cta/subscriber-gate-cookie'
 import { resolveEnrolmentIdentity } from '@/lib/enrolment-identity'
 import { log } from '@/server/logger'
@@ -55,6 +59,41 @@ export async function addWorkshopInterest(
 		surface,
 		now: expressedAt,
 	})
+
+	// The join is a local and drovr fact first, whatever Kit does next.
+	const { queued } = await requestInterestFacts({
+		email: identity.email,
+		fields: contract.fields,
+		expressedAt,
+		via: 'one-click',
+	})
+	if (queued > 0 && !interestKitWritesEnabled()) {
+		// The cut: no Kit worker. The queued fact is the join, so the gate
+		// cookie and this answer carry it now.
+		if (subscriber) {
+			await setSubscriberCookie(
+				withConfirmedConversionFields(subscriber, contract.fields),
+			)
+		}
+		await log.info('workshop.interest.deferred', {
+			workshopSlug,
+			subscriberId: subscriber?.id,
+			via: identity.via,
+			fieldKey,
+			intentKey: contract.key,
+			store: 'interest-facts',
+		})
+		const gate = subscriber
+			? createSubscriberGateSnapshot(subscriber)
+			: { state: null, fields: {} }
+		return {
+			success: true as const,
+			gate: {
+				state: gate.state,
+				fields: { ...gate.fields, [fieldKey]: contract.fields[fieldKey]! },
+			},
+		}
+	}
 
 	const event: WorkshopInterestRequested = {
 		name: WORKSHOP_INTEREST_REQUESTED_EVENT,

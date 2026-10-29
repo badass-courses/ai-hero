@@ -30,9 +30,21 @@ async function logFailure(logger: Logger, rowId: string, reason: string) {
 }
 
 export async function recordInterestFacts(args: {
-	facts: readonly SurveyInterestFact[]
+	facts: readonly (
+		| SurveyInterestFact
+		| {
+				contactId: string
+				at: string
+				kind: string
+				role: string
+				sourceId: string
+		  }
+	)[]
 	config: { baseUrl: string; apiKey: string }
 	fetcher?: typeof fetch
+	/** A conflict on one of these source ids means drovr already holds the
+	 * first fact for it, which stands; anything else is still refused. */
+	firstWins?: boolean
 }) {
 	if (args.facts.length === 0 || args.facts.length > 500)
 		throw new Error('invalid-fact-batch-size')
@@ -64,8 +76,13 @@ export async function recordInterestFacts(args: {
 		typeof body.inserted !== 'number' ||
 		typeof body.duplicates !== 'number' ||
 		!Array.isArray(body.conflicts) ||
-		body.conflicts.length > 0 ||
-		body.inserted + body.duplicates !== args.facts.length
+		(body.conflicts.length > 0 &&
+			(!args.firstWins ||
+				!body.conflicts.every((id) =>
+					args.facts.some((fact) => fact.sourceId === id),
+				))) ||
+		body.inserted + body.duplicates + body.conflicts.length !==
+			args.facts.length
 	) {
 		throw new Error('interest-fact-not-acknowledged')
 	}
