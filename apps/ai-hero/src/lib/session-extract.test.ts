@@ -59,6 +59,58 @@ describe('parseSessionExtract', () => {
 		)
 	})
 
+	it('reads keys the producer omits as null', () => {
+		const parsed = parseSessionExtract({
+			sessions: [
+				{
+					sessionId: 'a',
+					entries: [
+						{
+							kind: 'skillCall',
+							via: 'toolCall',
+							visibleFrom: 2,
+							skill: 'grill-me',
+						},
+						{
+							kind: 'skillCall',
+							via: 'slashCommand',
+							visibleFrom: 3,
+							skill: 'grill-me',
+						},
+						{ kind: 'toolCall', visibleFrom: 5, tool: 'Read' },
+					],
+				},
+			],
+		})
+		expect(parsed.extract?.sessions[0]?.entries).toEqual([
+			{
+				kind: 'skillCall',
+				via: 'toolCall',
+				visibleFrom: 2,
+				skill: 'grill-me',
+				args: null,
+				result: null,
+				resultIsError: null,
+				skillBody: null,
+			},
+			{
+				kind: 'skillCall',
+				via: 'slashCommand',
+				visibleFrom: 3,
+				skill: 'grill-me',
+				args: null,
+				skillBody: null,
+			},
+			{
+				kind: 'toolCall',
+				visibleFrom: 5,
+				tool: 'Read',
+				summary: null,
+				resultIsError: null,
+			},
+		])
+	})
+
 	it('reports a missing extract', () => {
 		expect(parseSessionExtract(undefined).status).toBe('missing')
 		expect(parseSessionExtract(null).status).toBe('missing')

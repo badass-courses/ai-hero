@@ -34,6 +34,9 @@ const ResultIsError = Schema.NullOr(Schema.Boolean)
  * A coding-agent session shown on screen in the video, as entries stamped
  * with the video time they first appear (`visibleFrom`, seconds). AI Hero
  * shows it beside the player and follows playback through it.
+ *
+ * The producer omits an empty key instead of writing `null`, and leaves skill
+ * bodies out to keep the manifest small, so those keys are optional.
  */
 export const CourseJsonSessionExtract = Schema.Struct({
 	sessions: Schema.Array(
@@ -56,27 +59,29 @@ export const CourseJsonSessionExtract = Schema.Struct({
 						via: Schema.Literal("toolCall"),
 						visibleFrom: VisibleFrom,
 						skill: NonEmptyString,
-						args: Schema.NullOr(Schema.String),
-						result: Schema.NullOr(Schema.String),
-						resultIsError: ResultIsError,
-						skillBody: Schema.NullOr(NonEmptyString),
+						args: Schema.optionalKey(Schema.NullOr(Schema.String)),
+						result: Schema.optionalKey(Schema.NullOr(Schema.String)),
+						resultIsError: Schema.optionalKey(ResultIsError),
+						skillBody: Schema.optionalKey(Schema.NullOr(NonEmptyString)),
 					}),
 					Schema.Struct({
 						kind: Schema.Literal("skillCall"),
 						via: Schema.Literal("slashCommand"),
 						visibleFrom: VisibleFrom,
 						skill: NonEmptyString,
-						args: Schema.NullOr(NonEmptyString),
-						skillBody: NonEmptyString,
+						args: Schema.optionalKey(Schema.NullOr(NonEmptyString)),
+						skillBody: Schema.optionalKey(NonEmptyString),
 					}),
 					Schema.Struct({
 						kind: Schema.Literal("toolCall"),
 						visibleFrom: VisibleFrom,
 						tool: NonEmptyString,
-						summary: Schema.NullOr(
-							Schema.String.pipe(Schema.check(Schema.isMaxLength(160))),
+						summary: Schema.optionalKey(
+							Schema.NullOr(
+								Schema.String.pipe(Schema.check(Schema.isMaxLength(160))),
+							),
 						),
-						resultIsError: ResultIsError,
+						resultIsError: Schema.optionalKey(ResultIsError),
 					}),
 					Schema.Struct({
 						kind: Schema.Literal("interrupt"),
