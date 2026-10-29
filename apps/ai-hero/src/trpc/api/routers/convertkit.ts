@@ -2,8 +2,10 @@ import { cookies } from 'next/headers'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { db } from '@/db'
 import {
+	contact,
 	contentResource,
 	contentResourceResource,
+	providerIdentity,
 	questionResponse,
 } from '@/db/schema'
 import { normalizeKitSubscriberId } from '@/lib/content-progress'
@@ -125,6 +127,74 @@ async function ensureCheckoutSurveyResources(createdById: string) {
 	}
 
 	return { surveyId, questionId }
+}
+
+/**
+ * Who is answering the checkout question, from the session, the Kit cookies
+ * and AI Hero's own contact directory. Kit itself is never asked.
+ *
+ * A Kit id stays the contact's alias: `ProviderIdentity` (provider `kit`)
+ * maps it to a `Contact`, whose user or email names the buyer the way Kit's
+ * subscriber record used to.
+ */
+async function resolveCheckoutSurveyAnswerer(
+	session: { user?: { id?: string | null; email?: string | null } | null } | null,
+) {
+	const cookieStore = await cookies()
+	const convertkitId = cookieStore.get('ck_subscriber_id')?.value
+	const subscriberCookie = cookieStore.get('ck_subscriber')?.value
+
+	let emailListSubscriberId: string | null = null
+	let aliasEmail: string | null = null
+	let aliasUserId: string | null = null
+
+	try {
+		if (convertkitId) {
+			const cookieKitId = normalizeKitSubscriberId(convertkitId)
+			emailListSubscriberId =
+				cookieKitId && /^\d+$/.test(cookieKitId) ? cookieKitId : null
+		} else if (subscriberCookie) {
+			const subscriber = SubscriberSchema.parse(JSON.parse(subscriberCookie))
+			emailListSubscriberId = subscriber.id.toString()
+			aliasEmail = subscriber.email_address || null
+		}
+
+		if (emailListSubscriberId && !aliasEmail) {
+			const identity = await db.query.providerIdentity.findFirst({
+				where: and(
+					eq(providerIdentity.provider, 'kit'),
+					eq(providerIdentity.externalId, emailListSubscriberId),
+				),
+				columns: { contactId: true },
+			})
+			const row = identity
+				? await db.query.contact.findFirst({
+						where: eq(contact.id, identity.contactId),
+						columns: { email: true, userId: true },
+					})
+				: undefined
+			aliasEmail = row?.email?.trim() || null
+			aliasUserId = row?.userId || null
+		}
+	} catch (error) {
+		await log.warn('checkout.survey.answerer.lookup.failed', {
+			error: error instanceof Error ? error.message : String(error),
+		})
+	}
+
+	let userId = session?.user?.id || aliasUserId
+	const identityEmail = aliasEmail || session?.user?.email || null
+
+	if (!userId && identityEmail) {
+		const existingUser = await db.query.users.findFirst({
+			where: (users, { eq }) => eq(users.email, identityEmail),
+		})
+		if (existingUser) {
+			userId = existingUser.id
+		}
+	}
+
+	return { userId: userId || null, emailListSubscriberId, identityEmail }
 }
 
 export const convertkitRouter = createTRPCRouter({
@@ -364,6 +434,52 @@ export const convertkitRouter = createTRPCRouter({
 
 		return { answered: Boolean(answer), answer }
 	}),
+	/**
+	 * Saves the checkout question's answer as a local QuestionResponse row,
+	 * keyed by user and by the Kit id alias that `checkoutSurveyAnswer` reads.
+	 *
+	 * @remarks Replaces `answerSurvey` for the buy button. No Kit read and no
+	 * Kit field write: the answer also travels on the checkout form as
+	 * `selfReportedSource`, which is what purchase attribution reads.
+	 */
+	answerCheckoutSurvey: publicProcedure
+		.input(
+			z.object({
+				answer: z.enum(
+					CHECKOUT_SURVEY_CHOICES.map(({ answer }) => answer) as [
+						string,
+						...string[],
+					],
+				),
+			}),
+		)
+		.mutation(async ({ ctx, input }) => {
+			const { userId, emailListSubscriberId, identityEmail } =
+				await resolveCheckoutSurveyAnswerer(ctx.session)
+
+			await ensureCheckoutSurveyResources(userId || 'system')
+
+			try {
+				await persistSurveyAnswers({
+					database: db,
+					logger: log,
+					surveySlug: CHECKOUT_SURVEY_SLUG,
+					answers: { [CHECKOUT_SURVEY_QUESTION_SLUG]: input.answer },
+					identityEmail,
+					eventPrefix: 'survey.answer',
+					userId,
+					emailListSubscriberId,
+				})
+			} catch (error) {
+				await log.error('checkout.survey.answer.save.failed', {
+					error: error instanceof Error ? error.message : String(error),
+					userId,
+				})
+				return { success: false, storedInDb: false }
+			}
+
+			return { success: true, storedInDb: true }
+		}),
 	answerSurvey: publicProcedure
 		.input(
 			z.object({
