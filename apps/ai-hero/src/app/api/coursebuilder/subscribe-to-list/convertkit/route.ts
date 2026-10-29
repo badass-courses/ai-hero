@@ -28,6 +28,7 @@ import {
 import {
 	DOI_DROVR_FORM_IDS,
 	doiAppliesTo,
+	drovrSignupKitFormId,
 	parseDrovrDoiConfig,
 } from '@/lib/subscriber-marketing/drovr-doi-signup'
 import { requestDrovrDoiSignup } from '@/lib/subscriber-marketing/drovr-doi-signup.server'
@@ -55,10 +56,12 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 
 	// drovr-owned double opt-in, when DROVR_DOI_FORMS turns it on for this
 	// form (and address, during the canary). Off, this is a no-op and the
-	// signup takes Kit's path below exactly as before.
-	const kitFormId = Number(body.listId)
+	// signup takes Kit's path below exactly as before. A post without a
+	// listId is for Kit's default form.
+	const kitFormId = drovrSignupKitFormId(body, env.CONVERTKIT_SIGNUP_FORM)
 	if (
 		typeof email === 'string' &&
+		kitFormId !== undefined &&
 		doiAppliesTo(parseDrovrDoiConfig(env), kitFormId, email)
 	) {
 		return await doiSignup(req, body, email.trim(), kitFormId)
@@ -67,7 +70,7 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 	let mayRemoveUnsubscribeTag = true
 	// A returning unsubscriber re-signs up only through a fresh drovr double
 	// opt-in: no Kit subscribe, no untag. Everyone else falls through.
-	if (typeof email === 'string' && DOI_DROVR_FORM_IDS.has(kitFormId)) {
+	if (typeof email === 'string' && kitFormId !== undefined) {
 		const returning = await returningUnsubscriberSignup(
 			req,
 			body,

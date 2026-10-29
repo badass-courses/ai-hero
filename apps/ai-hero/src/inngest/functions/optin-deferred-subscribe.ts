@@ -163,7 +163,8 @@ export const optinDeferredDeps: DeferredOptInDeps = {
 		})
 	},
 	afterSubscribe: async (data) => {
-		// Only the skills newsletter form is deferrable (DOI_DROVR_FORM_IDS).
+		// Only the skills newsletter form enters the value path from Kit; the
+		// older default form (8447166) has no post-subscribe work.
 		if (data.formId !== 9376133) return
 		const subscriber = await emailListProvider.getSubscriberByEmail(data.email)
 		if (!subscriber?.id) return
