@@ -177,6 +177,8 @@ export const env = createEnv({
 		AIH_DROVR_EVERGREEN_ENABLED: z.string().optional(),
 		// Default off: enable saved-survey interest facts after the drovr gate.
 		AIH_DROVR_SURVEY_INTEREST_FACTS_ENABLED: z.string().optional(),
+		// Default off: surveys stop subscribing answerers and writing Kit fields.
+		AIH_SURVEY_OFF_KIT_ENABLED: z.string().optional(),
 		// Default off; retain contact reads until /births rollout proof.
 		AIH_DROVR_BIRTH_FEED_ENABLED: z.string().optional(),
 		// Producer before rule; existing-cohort gate stays off until ruling B.
@@ -362,6 +364,7 @@ export const env = createEnv({
 		AIH_DROVR_EVERGREEN_ENABLED: process.env.AIH_DROVR_EVERGREEN_ENABLED,
 		AIH_DROVR_SURVEY_INTEREST_FACTS_ENABLED:
 			process.env.AIH_DROVR_SURVEY_INTEREST_FACTS_ENABLED,
+		AIH_SURVEY_OFF_KIT_ENABLED: process.env.AIH_SURVEY_OFF_KIT_ENABLED,
 		AIH_DROVR_BIRTH_FEED_ENABLED: process.env.AIH_DROVR_BIRTH_FEED_ENABLED,
 		AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY: process.env.AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY,
 		AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY: process.env.AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY,
