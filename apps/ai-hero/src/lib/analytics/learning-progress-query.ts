@@ -32,6 +32,7 @@ export async function readLearningProgress(
 	execute: (query: SQL) => Promise<unknown>,
 	productId: string,
 	asOf: Date,
+	refreshSeconds = 300,
 ): Promise<LearningProgress> {
 	const [product] = rowsOf<{ id: string; name: string; type: string | null }>(
 		await execute(learningProductSql(productId)),
@@ -39,6 +40,34 @@ export async function readLearningProgress(
 	)
 	if (!product) throw new LearningProductNotFoundError()
 
+	const structure = await readLearningStructure(execute, productId, asOf)
+	const [roster] = rowsOf<LearningRosterRow>(
+		await execute(learningRosterSql(productId)),
+		'Learning roster',
+	)
+	if (!roster) throw new Error('Learning roster query returned no row')
+	const progress = await readLearningFunnel(
+		execute,
+		structure,
+		learnerIds(productId),
+		asOf,
+	)
+	return formatLearningProgress({
+		asOf,
+		refreshSeconds,
+		product: { id: product.id, name: product.name, type: product.type ?? null },
+		structure,
+		roster,
+		...progress,
+	})
+}
+
+/** The product's workshop tree, walked one indexed level at a time. */
+export async function readLearningStructure(
+	execute: (query: SQL) => Promise<unknown>,
+	productId: string,
+	asOf: Date,
+): Promise<LearningStructure> {
 	const rows = rowsOf<LearningResourceRow>(
 		await execute(learningRootsSql(productId)),
 		'Learning structure',
@@ -55,36 +84,33 @@ export async function readLearningProgress(
 		frontier = children.filter((row) => isLearningContainer(row.type))
 	}
 
-	const structure = buildLearningStructure(rows, asOf)
-	const [roster] = rowsOf<LearningRosterRow>(
-		await execute(learningRosterSql(productId)),
-		'Learning roster',
-	)
-	if (!roster) throw new Error('Learning roster query returned no row')
-	const progress = structure.lessonIds.length
-		? splitLearningProgressRow(
-				rowsOf<Record<string, unknown>>(
-					await execute(learningProgressSql(productId, structure, asOf)),
-					'Learning progress',
-				)[0],
-				structure,
-			)
-		: {
-				activity: {
-					lessonsCompleted24h: 0,
-					lessonsCompleted7d: 0,
-					activeLearners7d: 0,
-					totalLessonCompletions: 0,
-				},
-				funnel: [],
-			}
-	return formatLearningProgress({
-		asOf,
-		product: { id: product.id, name: product.name, type: product.type ?? null },
+	return buildLearningStructure(rows, asOf)
+}
+
+/** Funnel and activity counts for a learner id subquery. */
+export async function readLearningFunnel(
+	execute: (query: SQL) => Promise<unknown>,
+	structure: LearningStructure,
+	learners: SQL,
+	asOf: Date,
+) {
+	if (!structure.lessonIds.length)
+		return {
+			activity: {
+				lessonsCompleted24h: 0,
+				lessonsCompleted7d: 0,
+				activeLearners7d: 0,
+				totalLessonCompletions: 0,
+			},
+			funnel: [],
+		}
+	return splitLearningProgressRow(
+		rowsOf<Record<string, unknown>>(
+			await execute(learningProgressSql(learners, structure, asOf)),
+			'Learning progress',
+		)[0],
 		structure,
-		roster,
-		...progress,
-	})
+	)
 }
 
 /** A lesson may sit in two sections; containers are walked only once. */
@@ -142,7 +168,7 @@ export function learningChildrenSql(parentIds: readonly string[]) {
 export const isLearningContainer = (type: string) =>
 	(CONTAINER_TYPES as readonly string[]).includes(type)
 
-const list = (values: readonly string[]) =>
+export const list = (values: readonly string[]) =>
 	sql.join(
 		values.map((value) => sql`${value}`),
 		sql`, `,
@@ -153,6 +179,16 @@ const list = (values: readonly string[]) =>
  * `ability/index.ts`: Valid or Restricted, never a team buyer's bulk
  * purchase. A redeemed team seat is its own purchase row, so it counts.
  */
+/** Cheap size probe for picking the cache window: one productId lookup. */
+export function learningLearnerCountSql(productId: string) {
+	return sql`SELECT COUNT(DISTINCT p.userId) AS learners
+		FROM AI_Purchase p
+		WHERE p.productId = ${productId}
+		AND BINARY p.status IN ('Valid', 'Restricted')
+		AND p.bulkCouponId IS NULL
+		AND p.userId IS NOT NULL`
+}
+
 function learnerPurchases(productId: string) {
 	return sql`SELECT p.userId AS userId,
 			MAX(CASE WHEN p.redeemedBulkCouponId IS NULL THEN 1 ELSE 0 END) AS purchased
@@ -164,7 +200,7 @@ function learnerPurchases(productId: string) {
 		GROUP BY p.userId`
 }
 
-function learnerIds(productId: string) {
+export function learnerIds(productId: string) {
 	return sql`SELECT lp.userId FROM (${learnerPurchases(productId)}) lp`
 }
 
@@ -172,16 +208,20 @@ function learnerIds(productId: string) {
  * Sign-in evidence, any of: a verified email (set by magic-link sign-in), a
  * linked OAuth account, a current database session, or any lesson progress.
  * Expired sessions are deleted, so a legacy sign-in with none of these is
- * counted as never signed in.
+ * counted as never signed in. `user` aliases AI_User, `userId` its id.
  */
+export function signedInSql(user: string, userId: string) {
+	return sql.raw(`CASE WHEN ${user}.emailVerified IS NOT NULL
+		OR EXISTS (SELECT 1 FROM AI_Account a WHERE a.userId = ${userId})
+		OR EXISTS (SELECT 1 FROM AI_Session s WHERE s.userId = ${userId})
+		OR EXISTS (SELECT 1 FROM AI_ResourceProgress rp WHERE rp.userId = ${userId})
+		THEN 1 ELSE 0 END`)
+}
+
 export function learningRosterSql(productId: string) {
 	return sql`SELECT COUNT(*) AS learners,
 		COALESCE(SUM(l.purchased), 0) AS purchased,
-		COALESCE(SUM(CASE WHEN u.emailVerified IS NOT NULL
-			OR EXISTS (SELECT 1 FROM AI_Account a WHERE a.userId = l.userId)
-			OR EXISTS (SELECT 1 FROM AI_Session s WHERE s.userId = l.userId)
-			OR EXISTS (SELECT 1 FROM AI_ResourceProgress rp WHERE rp.userId = l.userId)
-			THEN 1 ELSE 0 END), 0) AS signedIn,
+		COALESCE(SUM(${signedInSql('u', 'l.userId')}), 0) AS signedIn,
 		(SELECT COUNT(DISTINCT r.userId) FROM AI_Purchase r
 			WHERE r.productId = ${productId}
 			AND BINARY r.status = 'Refunded'
@@ -209,27 +249,16 @@ export function learningRosterSql(productId: string) {
  * counts, two columns per funnel node (s<i> started, c<i> completed).
  */
 export function learningProgressSql(
-	productId: string,
+	learners: SQL,
 	structure: LearningStructure,
 	asOf: Date,
 ): SQL {
 	const since24h = new Date(asOf.getTime() - 86_400_000)
 	const since7d = new Date(asOf.getTime() - 7 * 86_400_000)
-	const inner: SQL[] = []
+	const inner = nodeProgressColumns(structure)
 	const outer: SQL[] = []
 	structure.nodes.forEach((node, index) => {
 		if (node.lessonIds.length === 0) return
-		const lessons = list(node.lessonIds)
-		inner.push(
-			sql.raw(`, SUM(CASE WHEN rp.resourceId IN (`),
-			lessons,
-			sql.raw(`) THEN 1 ELSE 0 END) AS t${index}`),
-			sql.raw(
-				`, SUM(CASE WHEN rp.completedAt IS NOT NULL AND rp.resourceId IN (`,
-			),
-			lessons,
-			sql.raw(`) THEN 1 ELSE 0 END) AS d${index}`),
-		)
 		outer.push(
 			sql.raw(
 				`, SUM(CASE WHEN u.t${index} > 0 THEN 1 ELSE 0 END) AS s${index}`,
@@ -253,8 +282,31 @@ export function learningProgressSql(
 			${sql.join(inner)}
 			FROM AI_ResourceProgress rp
 			WHERE rp.resourceId IN (${list(structure.lessonIds)})
-			AND rp.userId IN (${learnerIds(productId)})
+			AND rp.userId IN (${learners})
 			GROUP BY rp.userId) u`
+}
+
+/**
+ * Per-learner columns for each funnel node with lessons: t<i> counts
+ * progress rows, d<i> completed rows. Read inside a GROUP BY rp.userId.
+ */
+export function nodeProgressColumns(structure: LearningStructure): SQL[] {
+	const columns: SQL[] = []
+	structure.nodes.forEach((node, index) => {
+		if (node.lessonIds.length === 0) return
+		const lessons = list(node.lessonIds)
+		columns.push(
+			sql.raw(`, SUM(CASE WHEN rp.resourceId IN (`),
+			lessons,
+			sql.raw(`) THEN 1 ELSE 0 END) AS t${index}`),
+			sql.raw(
+				`, SUM(CASE WHEN rp.completedAt IS NOT NULL AND rp.resourceId IN (`,
+			),
+			lessons,
+			sql.raw(`) THEN 1 ELSE 0 END) AS d${index}`),
+		)
+	})
+	return columns
 }
 
 /** Split the single wide progress row into activity and per-node counts. */

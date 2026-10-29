@@ -32,7 +32,11 @@ function lockedLabel(row: LearningFunnelRow) {
 		: 'Locked'
 }
 
-function Tiles({ tiles }: { tiles: Array<[label: string, value: number]> }) {
+export function Tiles({
+	tiles,
+}: {
+	tiles: Array<[label: string, value: number]>
+}) {
 	return (
 		<div
 			className={`border-border bg-border grid grid-cols-2 gap-px border ${tiles.length === 6 ? 'sm:grid-cols-3 lg:grid-cols-6' : 'sm:grid-cols-4'}`}
@@ -76,7 +80,7 @@ function ShareBar({
 	)
 }
 
-function FunnelRow({
+export function FunnelRow({
 	row,
 	denominator,
 }: {
@@ -186,12 +190,13 @@ export function LearningProgressPanel({
 	products: LearningProductOption[]
 }) {
 	const [productId, setProductId] = useState(products[0]?.id ?? '')
-	const progress = useQuery({
+	const progress = useQuery<LearningProgress>({
 		queryKey: ['analytics', 'learning/progress', productId],
 		enabled: productId !== '',
 		staleTime: 60_000,
-		// Matches the server cache, so the 'refreshes every 5 minutes' copy holds.
-		refetchInterval: 5 * 60_000,
+		// Follows the server cache window, so the refresh copy holds.
+		refetchInterval: (query) =>
+			(query.state.data?.refreshSeconds ?? 300) * 1000,
 		refetchOnWindowFocus: false,
 		retry: false,
 		queryFn: async ({ signal }) => {
@@ -242,7 +247,7 @@ export function LearningProgressPanel({
 							: `As of ${new Date(progress.data.asOf).toLocaleString('en-US', {
 									dateStyle: 'medium',
 									timeStyle: 'short',
-								})} · refreshes every 5 minutes`}
+								})} · refreshes every ${progress.data.refreshSeconds / 60} minutes`}
 			</div>
 			{progress.data && !progress.isError && (
 				<LearningProgressView data={progress.data} />

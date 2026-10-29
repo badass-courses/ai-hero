@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
 	query: vi.fn(),
 	getUserAbilityForRequest: vi.fn(),
 	getServerAuthSession: vi.fn(),
+	readMembers: vi.fn(),
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 	catalog: [
 		{
@@ -28,6 +29,15 @@ const mocks = vi.hoisted(() => ({
 			provider: 'database',
 			fn: 'getLearningProgress',
 		},
+		...(
+			['learning/teams', 'learning/team', 'learning/team-members'] as const
+		).map((name) => ({
+			name,
+			description: 'Team progress',
+			category: 'learning',
+			provider: 'database',
+			fn: 'synthetic',
+		})),
 		...[
 			'attribution/funnel',
 			'attribution/coverage',
@@ -95,6 +105,9 @@ vi.mock('@/server/auth', () => ({
 	getServerAuthSession: mocks.getServerAuthSession,
 }))
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
+vi.mock('@/lib/analytics/providers/database', () => ({
+	readLearningTeamMembersUncached: mocks.readMembers,
+}))
 vi.mock('@/server/with-skill', () => ({
 	withSkill: (handler: unknown) => handler,
 }))
@@ -265,6 +278,137 @@ describe('analytics API agent contract', () => {
 		expect(response.status).toBe(404)
 	})
 
+	it.each(['learning/team', 'learning/team-members'])(
+		'requires teamId for %s before querying',
+		async (surface) => {
+			const response = await GET(request(`?surface=${surface}`))
+			expect(response.status).toBe(400)
+			expect((await response.json()).error.code).toBe('TEAM_REQUIRED')
+			expect(mocks.query).not.toHaveBeenCalled()
+			expect(mocks.readMembers).not.toHaveBeenCalled()
+		},
+	)
+
+	it('routes learning/team through the cached engine with teamId', async () => {
+		mocks.query.mockResolvedValue({
+			ok: true,
+			data: { asOf: '2026-10-29T12:00:00.000Z' },
+			meta: { queryTimeMs: 1, truncated: false },
+		})
+		const response = await GET(
+			request('?surface=learning/team&teamId=bulk-coupon'),
+		)
+		expect(response.status).toBe(200)
+		expect(mocks.query).toHaveBeenCalledWith(
+			'learning/team',
+			expect.objectContaining({ teamId: 'bulk-coupon' }),
+		)
+	})
+
+	const memberData = {
+		asOf: '2026-10-29T12:00:00.000Z',
+		pii: true,
+		team: {
+			teamId: 'bulk-coupon',
+			product: { id: 'synthetic-product', name: 'Synthetic' },
+			seats: { bought: 5, redeemed: 2, unredeemed: 3 },
+			organization: null,
+		},
+		members: [
+			{
+				userId: 'u-seat',
+				email: 'learner@example.test',
+				name: null,
+				redeemedAt: '2026-10-01T00:00:00.000Z',
+				signedIn: true,
+				lastActiveAt: null,
+				lessonsCompleted: 0,
+				workshops: { started: 0, completed: 0, total: 4 },
+			},
+		],
+	}
+
+	it('refuses learning/team-members to an analytics-only role', async () => {
+		mocks.getUserAbilityForRequest.mockResolvedValue({
+			user: { id: 'analyst-1' },
+			ability: createAppAbility([{ action: 'view', subject: 'Analytics' }]),
+		})
+		const response = await GET(
+			request('?surface=learning/team-members&teamId=bulk-coupon'),
+		)
+		expect(response.status).toBe(403)
+		expect((await response.json()).error.code).toBe('ADMIN_REQUIRED')
+		expect(response.headers.get('cache-control')).toBe('private, no-store')
+		expect(mocks.readMembers).not.toHaveBeenCalled()
+		expect(mocks.query).not.toHaveBeenCalled()
+		expect(mocks.log.warn).toHaveBeenCalledWith(
+			'api.analytics.team-members.denied',
+			{
+				actorId: 'analyst-1',
+				authMethod: 'device_token',
+				teamId: 'bulk-coupon',
+			},
+		)
+	})
+
+	it('serves learning/team-members to an admin, uncached, and logs no member emails', async () => {
+		mocks.getUserAbilityForRequest.mockResolvedValue({
+			user: { id: 'admin-1', email: 'admin@example.test' },
+			ability: createAppAbility([{ action: 'manage', subject: 'all' }]),
+		})
+		mocks.readMembers.mockResolvedValue(memberData)
+		const response = await GET(
+			request('?surface=learning/team-members&teamId=p-team'),
+		)
+		expect(response.status).toBe(200)
+		expect(response.headers.get('cache-control')).toBe('private, no-store')
+		expect(response.headers.get('access-control-allow-origin')).toBeNull()
+		expect(mocks.readMembers).toHaveBeenCalledWith('p-team', {
+			includeUserIds: true,
+		})
+		// PII never flows through the engine or its caches.
+		expect(mocks.query).not.toHaveBeenCalled()
+		const body = await response.json()
+		expect(body).toMatchObject({
+			ok: true,
+			surface: 'learning/team-members',
+			pii: true,
+			data: memberData,
+			schema: { requires: ['teamId'], pii: true },
+		})
+		expect(mocks.log.info).toHaveBeenCalledWith(
+			'api.analytics.team-members.read',
+			{
+				actorId: 'admin-1',
+				authMethod: 'device_token',
+				teamId: 'bulk-coupon',
+				requestedTeamId: 'p-team',
+				memberCount: 1,
+			},
+		)
+		const logged = JSON.stringify([
+			...mocks.log.info.mock.calls,
+			...mocks.log.warn.mock.calls,
+			...mocks.log.error.mock.calls,
+		])
+		expect(logged).not.toContain('learner@example.test')
+	})
+
+	it('answers an unknown team on learning/team-members with 404', async () => {
+		const { LearningTeamNotFoundError } =
+			await import('@/lib/analytics/learning-teams-query')
+		mocks.getUserAbilityForRequest.mockResolvedValue({
+			user: { id: 'admin-1' },
+			ability: createAppAbility([{ action: 'manage', subject: 'all' }]),
+		})
+		mocks.readMembers.mockRejectedValue(new LearningTeamNotFoundError())
+		const response = await GET(
+			request('?surface=learning/team-members&teamId=missing'),
+		)
+		expect(response.status).toBe(404)
+		expect(response.headers.get('cache-control')).toBe('private, no-store')
+	})
+
 	it('rejects all on promo revenue with an actionable 400 prompt', async () => {
 		const response = await GET(request('?surface=revenue/promos&range=all'))
 		expect(response.status).toBe(400)
@@ -352,7 +496,7 @@ describe('analytics API agent contract', () => {
 				expect.stringContaining('defaults to range=30d'),
 			]),
 			schema: {
-				version: '2026-10-29.1',
+				version: '2026-10-29.2',
 				query: {
 					type: 'object',
 					required: ['surface'],

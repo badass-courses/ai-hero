@@ -33,4 +33,28 @@ export const catalog: Record<SurfaceName, SurfaceEntry> = {
 		description:
 			'Aggregate learner roster, per-workshop and per-section started/completed funnel, and lesson activity for one productId. Point-in-time counts, no learner identifiers.',
 	},
+	'learning/teams': {
+		name: 'learning/teams',
+		category: 'learning',
+		provider: 'database',
+		fn: 'getLearningTeams',
+		description:
+			'Aggregate team purchases: seats bought, redeemed and unredeemed, members signed in and active in 7 days, and average completion of open lessons. Optional productId. No member identities or organization names.',
+	},
+	'learning/team': {
+		name: 'learning/team',
+		category: 'learning',
+		provider: 'database',
+		fn: 'getLearningTeam',
+		description:
+			"One team's aggregate summary and workshop funnel, with the team's members as the denominator. Requires teamId (bulk coupon id or bulk purchase id).",
+	},
+	'learning/team-members': {
+		name: 'learning/team-members',
+		category: 'learning',
+		provider: 'database',
+		fn: 'readLearningTeamMembersUncached',
+		description:
+			'PII: per-member rows for one team, with learner emails and names. AI Hero admins only, never cached, and every read is logged with the actor and team. Requires teamId.',
+	},
 }

@@ -5,6 +5,7 @@ import type { AnalyticsRange, SurfaceEntry, SurfaceName } from '@/lib/analytics'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
+import { learningTeamMembersResponse } from './team-members'
 import {
 	ANALYTICS_AGENT_INSTRUCTIONS,
 	getAnalyticsAgentSchema,
@@ -479,6 +480,39 @@ export const GET = withSkill(async (request: NextRequest) => {
 			{ status: 400, headers: corsHeaders },
 		)
 	}
+	const teamId = searchParams.get('teamId') ?? undefined
+	if (
+		(surface === 'learning/team' || surface === 'learning/team-members') &&
+		!teamId
+	) {
+		return NextResponse.json(
+			{
+				ok: false,
+				endpoint: '/api/analytics',
+				surface,
+				error: {
+					message: `${surface} requires teamId`,
+					code: 'TEAM_REQUIRED',
+				},
+				fix: 'Pass teamId: a bulk coupon id or one of its bulk purchase ids.',
+				next_actions: [
+					{
+						command: 'GET /api/analytics?surface=learning/teams',
+						description: 'List team ids',
+					},
+				],
+			},
+			{ status: 400, headers: corsHeaders },
+		)
+	}
+	if (surface === 'learning/team-members') {
+		return learningTeamMembersResponse({
+			isAdmin: Boolean(ability.can('manage', 'all')),
+			actorId: (user as any)?.id ?? null,
+			authMethod: deviceAuth.user ? 'device_token' : 'session',
+			teamId: teamId!,
+		})
+	}
 	const purchaseId = searchParams.get('purchaseId') ?? undefined
 	const surveyId = searchParams.get('surveyId') ?? undefined
 	const surveySlug = searchParams.get('surveySlug') ?? undefined
@@ -493,6 +527,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 		['from', from],
 		['to', to],
 		['productId', productId],
+		['teamId', teamId],
 		['purchaseId', purchaseId],
 		['surveyId', surveyId],
 		['surveySlug', surveySlug],
@@ -510,6 +545,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 		limit,
 		offset,
 		productId,
+		teamId,
 		purchaseId,
 		surveyId,
 		surveySlug,
@@ -523,6 +559,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 		limit,
 		offset,
 		productId,
+		teamId,
 		purchaseId,
 		surveyId,
 		surveySlug,
