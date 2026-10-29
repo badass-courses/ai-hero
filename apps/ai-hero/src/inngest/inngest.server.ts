@@ -102,6 +102,10 @@ import {
 	type WorkshopInterestRequested,
 } from '@/inngest/events/workshop-interest'
 import {
+	INTEREST_FACT_REQUESTED_EVENT,
+	type InterestFactRequested,
+} from '@/inngest/events/interest-fact'
+import {
 	TYPESENSE_POPULARITY_SYNC_REQUESTED_EVENT,
 	TypesensePopularitySyncRequested,
 } from '@/inngest/events/typesense-popularity'
@@ -304,6 +308,7 @@ export type Events = {
 	[SKILLS_COURSE_LESSON_ONE_RECOVERY_REQUESTED_EVENT]: SkillsCourseLessonOneRecoveryRequested
 	[CONTACT_UNSUBSCRIBED_EVENT]: ContactUnsubscribed
 	[WORKSHOP_INTEREST_REQUESTED_EVENT]: WorkshopInterestRequested
+	[INTEREST_FACT_REQUESTED_EVENT]: InterestFactRequested
 	[TYPESENSE_POPULARITY_SYNC_REQUESTED_EVENT]: TypesensePopularitySyncRequested
 	[TYPESENSE_VIDEO_FACTS_RECONCILE_REQUESTED_EVENT]: TypesenseVideoFactsReconcileRequested
 	[SLACK_ARTWORK_GENERATE_REQUESTED_EVENT]: SlackArtworkGenerateRequested

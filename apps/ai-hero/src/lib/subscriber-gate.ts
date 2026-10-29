@@ -5,6 +5,7 @@ import { cookies } from 'next/headers'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
 import type { CtaGatingSubscriber } from '@/lib/cta-gating'
+import { interestFactsGatingEnabled } from '@/lib/cta/interest-facts'
 import {
 	createSubscriberGateSnapshot,
 	parseSubscriberGateSnapshot,
@@ -39,6 +40,23 @@ import { SubscriberSchema, type Subscriber } from '@/schemas/subscriber'
  * each parse (or worse, each fetch) their own copy.
  */
 export const getSubscriberForGating = cache(
+	async (): Promise<Subscriber | null> => {
+		const [subscriber, interest] = await Promise.all([
+			readCookieSubscriberForGating(),
+			getSessionInterestFields(),
+		])
+		if (Object.keys(interest).length === 0) return subscriber
+		// A local-facts-only record when nothing else named the reader: id 0 is
+		// no Kit id, and no state means no list answer, so only the waitlist
+		// and interest predicates read anything from it.
+		return SubscriberSchema.parse({
+			...(subscriber ?? { id: 0 }),
+			fields: { ...(subscriber?.fields ?? {}), ...interest },
+		})
+	},
+)
+
+const readCookieSubscriberForGating = cache(
 	async (): Promise<Subscriber | null> => {
 		const cookieStore = await cookies()
 		if (!cookieStore) return null
@@ -112,6 +130,43 @@ export async function hasKnownReaderIdentity(
 		return false
 	}
 }
+
+const SESSION_INTEREST_FACTS_TIMEOUT_MS = 500
+
+/**
+ * The signed-in reader's own waitlist and interest joins, from the site's
+ * facts rather than Kit: `{ waitlist_x: '2026-10-29' }`. Off unless
+ * `AIH_INTEREST_FACTS_GATING=true`.
+ *
+ * Session email only. Every cookie here is caller-controlled, and looking a
+ * cookie's address up would answer "is this person on that waitlist" for
+ * anyone who forged one. Bounded like the session Kit lookup, and every
+ * failure answers no facts, which shows the ask.
+ */
+const getSessionInterestFields = cache(
+	async (): Promise<Record<string, string>> => {
+		if (!interestFactsGatingEnabled()) return {}
+		try {
+			const { getServerAuthSession } = await import('@/server/auth')
+			const auth = await getServerAuthSession().catch(() => null)
+			const email = auth?.session?.user?.email
+			if (!email) return {}
+			const read = async () => {
+				const [{ db }, store] = await Promise.all([
+					import('@/db'),
+					import('@/lib/cta/interest-fact-store'),
+				])
+				const contactId = await store.findContactIdForEmail(db, email)
+				return contactId ? store.readLocalInterestFields(db, contactId) : {}
+			}
+			return (
+				(await withTimeout(read(), SESSION_INTEREST_FACTS_TIMEOUT_MS)) ?? {}
+			)
+		} catch {
+			return {}
+		}
+	},
+)
 
 const SESSION_KIT_LOOKUP_TIMEOUT_MS = 1_500
 
@@ -197,6 +252,22 @@ function subscriberFromGate(
  * to whatever else Kit happens to be storing on a person.
  */
 export const getCtaGatingPayload = cache(
+	async (): Promise<CtaGatingSubscriber | null> => {
+		const [payload, interest] = await Promise.all([
+			readCtaGatingPayload(),
+			getSessionInterestFields(),
+		])
+		if (Object.keys(interest).length === 0) return payload
+		return {
+			state: payload?.state ?? null,
+			fields: { ...(payload?.fields ?? {}), ...interest },
+			// The facts came from the session, so the server can name them.
+			hasIdentity: true,
+		}
+	},
+)
+
+const readCtaGatingPayload = cache(
 	async (): Promise<CtaGatingSubscriber | null> => {
 		const cookieStore = await cookies()
 		if (!cookieStore) return null

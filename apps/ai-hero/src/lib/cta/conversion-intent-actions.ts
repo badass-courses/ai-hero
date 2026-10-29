@@ -7,6 +7,11 @@ import { resolveEnrolmentIdentity } from '@/lib/enrolment-identity'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
 
+import {
+	interestFactsEnabled,
+	interestKitWritesEnabled,
+} from './interest-facts'
+import { requestInterestFacts } from './interest-facts.server'
 import { reportVerifiedUnconfirmed } from './verified-unconfirmed'
 import {
 	conversionIntentContract,
@@ -41,6 +46,31 @@ export async function completeKnownConversionIntent({
 			surface,
 		})
 		return { success: false as const, reason: 'not-identified' as const }
+	}
+
+	// The join is a local and drovr fact first, whatever Kit does next.
+	const { queued } = await requestInterestFacts({
+		email: identity.email,
+		fields: contract.fields,
+		via: 'one-click',
+	})
+	if (queued > 0 && !interestKitWritesEnabled()) {
+		// The cut. The fact is the join; the gate cookie reflects it at once.
+		// No list state is read here, so no confirmation is claimed either.
+		if (subscriber) {
+			await setSubscriberCookie(
+				SubscriberSchema.parse(
+					withConfirmedConversionFields(subscriber, contract.fields),
+				),
+			)
+		}
+		await log.info('cta.intent.completed', {
+			intentKey: contract.key,
+			surface,
+			via: identity.via,
+			store: 'interest-facts',
+		})
+		return { success: true as const, confirmationRequired: false as const }
 	}
 
 	try {
@@ -119,6 +149,17 @@ export async function finalizeAnonymousConversionIntent({
 }) {
 	const contract = conversionIntentContract({ intent, surface })
 	if (!contract.tagName) return { success: true as const }
+	// After the cut the tag is a Kit projection nobody reads, but only once the
+	// fact holds the join. Re-requesting is idempotent (the event id is the
+	// list and the address hash), and a failed queue keeps the Kit tag.
+	if (interestFactsEnabled() && !interestKitWritesEnabled()) {
+		const { queued } = await requestInterestFacts({
+			email,
+			fields: contract.fields,
+			via: 'form',
+		})
+		if (queued > 0) return { success: true as const }
+	}
 
 	try {
 		await emailListProvider.tagSubscriber?.({

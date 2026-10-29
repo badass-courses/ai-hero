@@ -8,6 +8,11 @@ import {
 	type SkillsNewsletterSubscribed,
 } from '@/inngest/events/skills-newsletter'
 import { inngest } from '@/inngest/inngest.server'
+import {
+	interestFieldKeysOf,
+	interestKitWritesEnabled,
+} from '@/lib/cta/interest-facts'
+import { requestInterestFacts } from '@/lib/cta/interest-facts.server'
 import { createShortlinkAttribution } from '@/lib/shortlinks-query'
 import { recordSignupAttribution } from '@/lib/signup-attribution'
 import { guardSubscribe } from '@/lib/subscribe-bot-defense.server'
@@ -53,6 +58,23 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 	const email = body.email
 	const rejection = await guardSubscribe(body, req.headers)
 	if (rejection) return rejection
+
+	// A waitlist or interest join is recorded before any Kit or drovr signup
+	// call, so it survives either being down. Recording it subscribes no one:
+	// the signup below still decides consent, double opt-in included.
+	if (typeof email === 'string') {
+		const { queued } = await requestInterestFacts({
+			email,
+			fields: body.fields,
+			via: 'form',
+		})
+		// The cut: with the facts queued, Kit no longer gets the join fields.
+		if (queued > 0 && !interestKitWritesEnabled()) {
+			for (const key of interestFieldKeysOf(body.fields)) {
+				delete body.fields[key]
+			}
+		}
+	}
 
 	// drovr-owned double opt-in, when DROVR_DOI_FORMS turns it on for this
 	// form (and address, during the canary). Off, this is a no-op and the
