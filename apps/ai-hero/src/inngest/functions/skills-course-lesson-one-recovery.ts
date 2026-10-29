@@ -81,9 +81,7 @@ export const skillsCourseLessonOneRecovery = inngest.createFunction(
 				// A stop recorded after the request was queued still wins: no send.
 				// An unreadable stop state throws, and the step retries.
 				if (
-					firstActiveStop(
-						await readActiveContactStops(repository, contact.id),
-					)
+					await readRecoveryStop(repository, contact.id, event.data.requestedAt)
 				) {
 					return {
 						contactId: contact.id,
@@ -188,7 +186,7 @@ export const skillsCourseLessonOneRecovery = inngest.createFunction(
 			}
 		}
 
-		await step.run('send-lesson-one-recovery', async () => {
+		const delivery = await step.run('send-lesson-one-recovery', async () => {
 			const repository = new DrizzleCaptureMarketingRepository(db)
 			const contact = await repository.findContactById(identity.contactId)
 			if (!contact?.email) {
@@ -244,6 +242,17 @@ export const skillsCourseLessonOneRecovery = inngest.createFunction(
 				}
 			}
 
+			// The first step's verdict is memoized, so a retry of this step would
+			// reuse it: re-read the stops right before every provider send.
+			if (
+				await readRecoveryStop(repository, contact.id, event.data.requestedAt)
+			) {
+				return {
+					delivered: false as const,
+					outcome: 'contact-stopped' as const,
+				}
+			}
+
 			try {
 				const delivery = await sendSkillsCourseRecoveryDelivery({
 					correlationId: event.data.requestId,
@@ -272,6 +281,20 @@ export const skillsCourseLessonOneRecovery = inngest.createFunction(
 			}
 		})
 
+		if (!delivery.delivered) {
+			await step.run('log-stopped-lesson-one-recovery', () =>
+				log.info('skills.course.lesson_one_recovery_satisfied', {
+					requestId: event.data.requestId,
+					outcome: delivery.outcome,
+				}),
+			)
+			return {
+				success: true as const,
+				requestId: event.data.requestId,
+				outcome: delivery.outcome,
+			}
+		}
+
 		await step.run('log-lesson-one-recovery', () =>
 			log.info('skills.course.lesson_one_resent', {
 				requestId: event.data.requestId,
@@ -281,6 +304,25 @@ export const skillsCourseLessonOneRecovery = inngest.createFunction(
 		return { success: true as const, requestId: event.data.requestId }
 	},
 )
+
+/**
+ * The contact's active stop for this recovery, if any. The request is the
+ * planned work: only a fresh double opt-in confirmation (the one writer of
+ * `contact.resubscribed`) recorded at or before `requestedAt` lifts an
+ * unsubscribe. A lift after the request never revives it, and a Kit-side
+ * reactivation is not a lift at all. Throws when the stops are unreadable.
+ */
+async function readRecoveryStop(
+	repository: DrizzleCaptureMarketingRepository,
+	contactId: string,
+	requestedAt: string,
+) {
+	return firstActiveStop(
+		await readActiveContactStops(repository, contactId, {
+			plannedAt: requestedAt,
+		}),
+	)
+}
 
 async function retryIdentity(
 	requestId: string,
