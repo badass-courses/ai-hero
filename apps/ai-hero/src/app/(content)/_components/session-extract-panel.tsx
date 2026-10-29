@@ -15,6 +15,7 @@ import { TYPE } from '@/components/landing/type'
 import { Button } from '@/components/ui/button'
 import { CollapsibleTrigger } from '@/components/ui/collapsible'
 import { useMuxPlayer } from '@/hooks/use-mux-player'
+import { keepCaptionCuesLoading } from '@/hooks/use-mux-player-prefs'
 import {
 	contentWords,
 	rowsOnScreen,
@@ -582,15 +583,11 @@ function useSpokenBlock(
 	return spoken
 }
 
-const selectedCaptionTracks = new WeakSet<TextTrack>()
-
 /**
- * Keeps the caption track's cues loading while captions are off. Mux's
- * playback-core asks hls.js for a subtitle playlist only when a track turns
- * `showing`, so a track that is merely `hidden` never gets cues in browsers
- * that play through hls.js. Showing it until playback-core has handled the
- * change selects the playlist (no cue has loaded yet, so nothing appears),
- * and hls.js keeps loading it after the track goes back to `hidden`.
+ * Keeps the caption track's cues loading while captions are off
+ * (`keepCaptionCuesLoading`): the player adds its tracks after the manifest
+ * loads and turns them off with captions (`addtrack`, `change`), and a new
+ * lesson brings a new source (`loadedmetadata`).
  */
 function useHiddenCaptions(playerRef: PlayerRef) {
 	React.useEffect(() => {
@@ -598,34 +595,15 @@ function useHiddenCaptions(playerRef: PlayerRef) {
 		const tracks = player?.media?.nativeEl?.textTracks ?? player?.textTracks
 		if (!tracks) return
 
-		const keepLoaded = () => {
-			const track = captionTrack(player)
-			if (!track) return
-			if (track.mode === 'disabled') track.mode = 'hidden'
-			if (
-				track.mode !== 'hidden' ||
-				track.cues?.length ||
-				selectedCaptionTracks.has(track)
-			)
-				return
-			// Once per track: going back to `hidden` fires `change` again
-			// before any cue has loaded.
-			selectedCaptionTracks.add(track)
-			track.mode = 'showing'
-			// playback-core reacts to this same `change` event; hide the track on
-			// the next task, after it has selected the playlist.
-			setTimeout(() => {
-				if (track.mode === 'showing') track.mode = 'hidden'
-			}, 0)
-		}
+		const keepLoaded = () => keepCaptionCuesLoading(player)
 		keepLoaded()
-		// The player adds its tracks after the manifest loads and turns them
-		// off with captions; both fire `addtrack` or `change`.
 		tracks.addEventListener('addtrack', keepLoaded)
 		tracks.addEventListener('change', keepLoaded)
+		player?.addEventListener('loadedmetadata', keepLoaded)
 		return () => {
 			tracks.removeEventListener('addtrack', keepLoaded)
 			tracks.removeEventListener('change', keepLoaded)
+			player?.removeEventListener('loadedmetadata', keepLoaded)
 		}
 	}, [playerRef])
 }
