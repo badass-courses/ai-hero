@@ -6,6 +6,7 @@ import { courseBuilderAdapter, db } from '@/db'
 import { coupon, merchantCoupon as merchantCouponTable } from '@/db/schema'
 import { GRANT_COUPON_ENTITLEMENTS_EVENT } from '@/inngest/functions/coupon/grant-coupon-entitlements'
 import { inngest } from '@/inngest/inngest.server'
+import { createOrFindMerchantCoupon } from '@/lib/merchant-coupons'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { guid } from '@coursebuilder/utils/guid'
@@ -27,90 +28,6 @@ const CouponInputSchema = z.object({
 })
 
 export type CouponInput = z.infer<typeof CouponInputSchema>
-
-/**
- * Creates a merchant coupon in Stripe and the database if it doesn't exist (percentage-based)
- * @param percentageDiscount - The percentage discount as a decimal (e.g., 0.25 for 25%)
- * @param isSpecialCredit - Whether this is a special credit coupon (true) or regular special coupon (false)
- * @returns The merchant coupon ID
- */
-async function createOrFindMerchantCoupon(
-	percentageDiscount: number,
-	isSpecialCredit: boolean = false,
-): Promise<string | null> {
-	if (percentageDiscount >= 1) {
-		return null
-	}
-
-	const percentageForStripe = Math.floor(percentageDiscount * 100)
-	const couponType = isSpecialCredit ? 'special credit' : 'special'
-
-	const existingMerchantCoupon = await db.query.merchantCoupon.findFirst({
-		where: and(
-			eq(merchantCouponTable.percentageDiscount, percentageDiscount.toString()),
-			eq(merchantCouponTable.type, couponType),
-		),
-	})
-
-	if (existingMerchantCoupon) {
-		await log.info('coupon.merchant_coupon.found', {
-			merchantCouponId: existingMerchantCoupon.id,
-			percentageDiscount: percentageDiscount.toString(),
-		})
-		return existingMerchantCoupon.id
-	}
-
-	const merchantAccountRecord = await courseBuilderAdapter.getMerchantAccount({
-		provider: 'stripe',
-	})
-	if (!merchantAccountRecord) {
-		await log.error('coupon.merchant_coupon.no_account', {
-			percentageDiscount: percentageDiscount.toString(),
-		})
-		throw new Error('No merchant account found')
-	}
-
-	try {
-		// Create the coupon in Stripe
-		const couponName = isSpecialCredit
-			? `special credit ${percentageForStripe}%`
-			: `special ${percentageForStripe}%`
-		const stripeCouponId =
-			await stripeProvider.options.paymentsAdapter.createCoupon({
-				duration: 'forever',
-				name: couponName,
-				percent_off: percentageForStripe,
-				metadata: {
-					type: 'special',
-				},
-			})
-
-		// Create the merchant coupon in the database
-		const merchantCouponId = `ai_${uuidv4()}`
-		await db.insert(merchantCouponTable).values({
-			id: merchantCouponId,
-			merchantAccountId: merchantAccountRecord.id,
-			status: 1,
-			identifier: stripeCouponId,
-			percentageDiscount: percentageDiscount.toString(),
-			type: couponType,
-		})
-
-		await log.info('coupon.merchant_coupon.created', {
-			merchantCouponId,
-			stripeCouponId,
-			percentageDiscount: percentageDiscount.toString(),
-		})
-
-		return merchantCouponId
-	} catch (error) {
-		await log.error('coupon.merchant_coupon.creation_failed', {
-			percentageDiscount: percentageDiscount.toString(),
-			error: error instanceof Error ? error.message : 'Unknown error',
-		})
-		throw error
-	}
-}
 
 /**
  * Creates a fixed discount merchant coupon with Stripe coupon for individual purchases

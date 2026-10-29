@@ -83,7 +83,7 @@ export function getCohortFromNavigation(
  * round trip on every lesson page.
  */
 export function isWorkshopAvailable(
-	workshop: CohortWorkshopNav,
+	workshop: Pick<CohortWorkshopNav, 'state' | 'startsAt'>,
 	now: Date = new Date(),
 ): boolean {
 	if (workshop.state !== 'published') return false

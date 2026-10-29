@@ -18,27 +18,34 @@ const engine = createAnalyticsEngine({
 })
 
 import { catalog as localCatalog } from './catalog'
+import { LearningProductNotFoundError } from './learning-progress-query'
 import { EVERGREEN_FUNNEL_PENDING, promoWindow } from './promos'
 import type { QueryOptions, QueryResult, SurfaceName } from './types'
 import type { SurfaceName as BaseSurfaceName } from '@coursebuilder/analytics/types'
 
-const isPromoSurface = (surface: SurfaceName) =>
-	surface === 'revenue/promos' || surface === 'funnel/evergreen'
+const LOCAL_SURFACES = [
+	'revenue/promos',
+	'funnel/evergreen',
+	'learning/progress',
+] as const
+type LocalSurface = (typeof LOCAL_SURFACES)[number]
+const isLocalSurface = (surface: SurfaceName): surface is LocalSurface =>
+	(LOCAL_SURFACES as readonly string[]).includes(surface)
 export const getCatalog = () => [
 	...engine.getCatalog(),
-	localCatalog['revenue/promos'],
-	localCatalog['funnel/evergreen'],
+	...LOCAL_SURFACES.map((surface) => localCatalog[surface]),
 ]
 
 export async function query<S extends SurfaceName>(
 	surface: S,
 	options: QueryOptions = {},
 ): Promise<QueryResult<S>> {
-	if (surface !== 'revenue/promos' && surface !== 'funnel/evergreen') {
+	if (!isLocalSurface(surface)) {
 		return engine.query(surface as BaseSurfaceName, options) as Promise<
 			QueryResult<S>
 		>
 	}
+	if (surface === 'learning/progress') return queryLearningProgress(options)
 	const start = Date.now()
 	try {
 		promoWindow(options)
@@ -67,30 +74,77 @@ export async function query<S extends SurfaceName>(
 	}
 }
 
+async function queryLearningProgress<S extends SurfaceName>(
+	options: QueryOptions,
+): Promise<QueryResult<S>> {
+	const surface = 'learning/progress' as S
+	const start = Date.now()
+	if (!options.productId) {
+		return {
+			ok: false,
+			surface,
+			error: { code: 'PRODUCT_REQUIRED', message: 'productId is required.' },
+			fix: 'Pass productId. GET /api/analytics?surface=revenue/products lists product ids.',
+		}
+	}
+	try {
+		const data = await database.getLearningProgress(options.productId)
+		return {
+			ok: true,
+			surface,
+			range: options.range ?? '30d',
+			data,
+			meta: { queryTimeMs: Date.now() - start, truncated: false },
+		} as QueryResult<S>
+	} catch (error) {
+		if (error instanceof LearningProductNotFoundError) {
+			return {
+				ok: false,
+				surface,
+				error: { code: 'PRODUCT_NOT_FOUND', message: 'Unknown productId.' },
+				fix: 'GET /api/analytics?surface=revenue/products lists product ids.',
+			}
+		}
+		await log.error('analytics.learning-progress.query-failed', {
+			productId: options.productId,
+			error,
+		})
+		return {
+			ok: false,
+			surface,
+			error: {
+				code: 'QUERY_FAILED',
+				message: 'Could not read learning progress.',
+			},
+			fix: 'Retry shortly. Results are cached for five minutes once a read succeeds.',
+		}
+	}
+}
+
 export async function queryMany<S extends SurfaceName>(
 	surfaces: S[],
 	options?: QueryOptions,
 ): Promise<{ [K in S]: QueryResult<K> }> {
-	if (!surfaces.some(isPromoSurface)) {
+	if (!surfaces.some(isLocalSurface)) {
 		return engine.queryMany(surfaces as BaseSurfaceName[], options) as Promise<{
 			[K in S]: QueryResult<K>
 		}>
 	}
 	const baseSurfaces = surfaces.filter(
-		(surface) => !isPromoSurface(surface),
+		(surface) => !isLocalSurface(surface),
 	) as BaseSurfaceName[]
-	const [baseResults, promoResults] = await Promise.all([
+	const [baseResults, localResults] = await Promise.all([
 		baseSurfaces.length
 			? engine.queryMany(baseSurfaces, options)
 			: Promise.resolve({}),
 		Promise.all(
-			surfaces.filter(isPromoSurface).map((surface) => query(surface, options)),
+			surfaces.filter(isLocalSurface).map((surface) => query(surface, options)),
 		),
 	])
 	return {
 		...baseResults,
 		...Object.fromEntries(
-			promoResults.map((result) => [result.surface, result]),
+			localResults.map((result) => [result.surface, result]),
 		),
 	} as { [K in S]: QueryResult<K> }
 }

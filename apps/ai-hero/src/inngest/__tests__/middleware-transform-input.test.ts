@@ -1,17 +1,20 @@
 import { InngestMiddleware } from 'inngest'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { inngestTelemetryMiddleware } from '../inngest-telemetry-middleware'
 
 type TestRunHooks = {
 	transformInput?: (args: any) => unknown
 	afterExecution?: () => void
-	onFailure?: (args: { error: Error }) => void
+	beforeExecution?: () => Promise<void>
+	finished?: (args: { result: { error: Error } }) => Promise<void>
 }
 
 const loggerMocks = vi.hoisted(() => {
 	return {
 		info: vi.fn(),
+		warn: vi.fn(),
+		notify: vi.fn(),
 		error: vi.fn(),
 		serializeError: vi.fn(),
 	}
@@ -20,9 +23,14 @@ const loggerMocks = vi.hoisted(() => {
 vi.mock('@/server/logger', () => ({
 	log: {
 		info: loggerMocks.info,
+		warn: loggerMocks.warn,
 		error: loggerMocks.error,
 	},
 	serializeError: loggerMocks.serializeError,
+}))
+
+vi.mock('@/course-sync/applied-notice', () => ({
+	sendCourseSyncSlackPayload: loggerMocks.notify,
 }))
 
 /**
@@ -62,6 +70,9 @@ function createBrokenTelemetryMiddleware() {
 }
 
 describe('inngest-telemetry-middleware', () => {
+	afterEach(() => {
+		vi.unstubAllEnvs()
+	})
 	beforeEach(() => {
 		vi.clearAllMocks()
 		loggerMocks.info.mockResolvedValue(undefined)
@@ -95,8 +106,49 @@ describe('inngest-telemetry-middleware', () => {
 		}).toThrow('Cannot read properties of undefined')
 	})
 
+	it.each(['scheduler', 'detection-poller'])(
+		'logs the %s start and warns without blocking the run',
+		async (executor) => {
+			vi.stubEnv('DATABASE_URL', 'mysql://observer@region.psdb.cloud/app')
+			vi.stubEnv('VERCEL', '')
+			vi.stubEnv('VERCEL_ENV', '')
+			const hooks = await inngestTelemetryMiddleware.init({
+				client: { mode: { isDev: true } },
+			} as any)
+			const run = (await hooks.onFunctionRun!({
+				ctx: { runId: 'poll_test', event: { name: 'test/poll', data: {} } },
+				fn: {
+					name: executor,
+					id: () =>
+						`ai-hero-course-sync-${executor === 'scheduler' ? 'poll-scheduler' : executor}`,
+				},
+			} as any)) as TestRunHooks
+			await run.beforeExecution?.()
+			expect(loggerMocks.info).toHaveBeenCalledWith(
+				'inngest.function.started',
+				expect.objectContaining({
+					runIdentity: expect.objectContaining({
+						inngest: 'dev',
+						dbUsername: 'observer',
+					}),
+				}),
+			)
+			expect(loggerMocks.info).toHaveBeenCalledWith(
+				'course_sync.run.started',
+				expect.objectContaining({
+					executor,
+					runId: 'poll_test',
+				}),
+			)
+			expect(loggerMocks.warn).toHaveBeenCalledWith(
+				'course_sync.nonprod_executor_on_prod_db',
+				expect.any(Object),
+			)
+		},
+	)
+
 	it('actual middleware observes input without returning context and emits safe function-level logs', async () => {
-		const initHooks = (await inngestTelemetryMiddleware.init()) as any
+		const initHooks = (await inngestTelemetryMiddleware.init({} as any)) as any
 		const runHooks = initHooks.onFunctionRun({
 			ctx: {
 				runId: 'run_123',
@@ -122,7 +174,7 @@ describe('inngest-telemetry-middleware', () => {
 			}),
 		).toBeUndefined()
 		expect(runHooks.afterExecution).toEqual(expect.any(Function))
-		expect(runHooks.onFailure).toEqual(expect.any(Function))
+		expect(runHooks.finished).toEqual(expect.any(Function))
 
 		expect(loggerMocks.info).toHaveBeenCalledWith(
 			'inngest.function.started',
@@ -145,7 +197,7 @@ describe('inngest-telemetry-middleware', () => {
 			}),
 		)
 
-		runHooks.onFailure?.({ error: new Error('boom') })
+		await runHooks.finished?.({ result: { error: new Error('boom') } })
 		expect(loggerMocks.serializeError).toHaveBeenCalledWith(expect.any(Error))
 		expect(loggerMocks.error).toHaveBeenCalledWith(
 			'inngest.function.failed',

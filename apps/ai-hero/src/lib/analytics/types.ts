@@ -4,11 +4,13 @@ import type {
 	AnalyticsRange,
 } from '@coursebuilder/analytics/types'
 import type { EvergreenFunnel, PromoRevenue } from './promos'
+import type { LearningProgress } from './learning-progress'
 export * from '@coursebuilder/analytics/types'
 
 export interface SurfaceMap extends BaseSurfaceMap {
 	'revenue/promos': PromoRevenue
 	'funnel/evergreen': EvergreenFunnel
+	'learning/progress': LearningProgress
 }
 export type SurfaceName = keyof SurfaceMap
 export interface QueryOptions extends BaseQueryOptions {

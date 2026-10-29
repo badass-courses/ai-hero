@@ -23,6 +23,10 @@ import {
 import { OmnibusDashboard, type DashboardData } from './omnibus-dashboard'
 import { AnalyticsAgentApiCard } from './analytics-agent-api-card'
 import { EvergreenOfferCard } from './evergreen-offer-card'
+import {
+	LearningProgressPanel,
+	type LearningProductOption,
+} from './learning-progress-panel'
 import { AnalyticsDashboardErrorBoundary } from './analytics-dashboard-error-boundary'
 import {
 	TrafficBreakdownPanel,
@@ -93,8 +97,10 @@ async function readSectionResponse(response: Response) {
 
 export function ProgressiveAnalyticsDashboard({
 	initialRange,
+	learningProducts = [],
 }: {
 	initialRange: AnalyticsRange
+	learningProducts?: LearningProductOption[]
 }) {
 	const searchParams = useSearchParams()
 	const range = parseRange(searchParams.get('range'), initialRange)
@@ -293,6 +299,7 @@ export function ProgressiveAnalyticsDashboard({
 					agentApiCard={<AnalyticsAgentApiCard />}
 				/>
 				<EvergreenOfferCard range={range} />
+				<LearningProgressPanel products={learningProducts} />
 				<TrafficBreakdownPanel traffic={traffic180d} />
 			</AnalyticsDashboardErrorBoundary>
 		</div>
