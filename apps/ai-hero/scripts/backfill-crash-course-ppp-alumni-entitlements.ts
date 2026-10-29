@@ -1,4 +1,4 @@
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 import { and, eq, gt, inArray, isNull, lte, sql } from 'drizzle-orm'
 
 import { db } from '../src/db/client'

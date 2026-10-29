@@ -1,4 +1,4 @@
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 import { and, eq, inArray } from 'drizzle-orm'
 import { courseBuilderAdapter, db } from '../src/db/index.ts'
 import { purchases, users } from '../src/db/schema.ts'
