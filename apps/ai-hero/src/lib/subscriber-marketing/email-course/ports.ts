@@ -1,4 +1,4 @@
-import { Context, type Effect } from "effect";
+import { Context, type Effect } from "effect4";
 
 import type { EmailCourseDefinition } from "./definition";
 import type {
@@ -146,7 +146,7 @@ export interface EmailCourseLedger {
   ) => Effect.Effect<EmailCourseRunInspection, EmailCourseInspectionError>;
 }
 
-export const EmailCourseLedger = Context.GenericTag<EmailCourseLedger>(
+export const EmailCourseLedger = Context.Service<EmailCourseLedger>(
   "@ai-hero/email-course/EmailCourseLedger",
 );
 
@@ -164,7 +164,7 @@ export interface EmailCourseOutbox {
   }) => Effect.Effect<EmailCourseQueueInspection, EmailCourseInspectionError>;
 }
 
-export const EmailCourseOutbox = Context.GenericTag<EmailCourseOutbox>(
+export const EmailCourseOutbox = Context.Service<EmailCourseOutbox>(
   "@ai-hero/email-course/EmailCourseOutbox",
 );
 
@@ -175,7 +175,7 @@ export interface EmailCourseDefinitionRegistry {
 }
 
 export const EmailCourseDefinitionRegistry =
-  Context.GenericTag<EmailCourseDefinitionRegistry>(
+  Context.Service<EmailCourseDefinitionRegistry>(
     "@ai-hero/email-course/EmailCourseDefinitionRegistry",
   );
 
@@ -183,7 +183,7 @@ export interface EmailCourseClock {
   readonly now: Effect.Effect<IsoInstant>;
 }
 
-export const EmailCourseClock = Context.GenericTag<EmailCourseClock>(
+export const EmailCourseClock = Context.Service<EmailCourseClock>(
   "@ai-hero/email-course/EmailCourseClock",
 );
 
@@ -194,7 +194,7 @@ export interface EmailCourseScheduler {
   }) => Effect.Effect<CourseScheduleDecision, EmailCourseCommandError>;
 }
 
-export const EmailCourseScheduler = Context.GenericTag<EmailCourseScheduler>(
+export const EmailCourseScheduler = Context.Service<EmailCourseScheduler>(
   "@ai-hero/email-course/EmailCourseScheduler",
 );
 
@@ -205,7 +205,7 @@ export interface EmailCourseAutomationControlRepository {
 }
 
 export const EmailCourseAutomationControlRepository =
-  Context.GenericTag<EmailCourseAutomationControlRepository>(
+  Context.Service<EmailCourseAutomationControlRepository>(
     "@ai-hero/email-course/EmailCourseAutomationControlRepository",
   );
 
@@ -216,7 +216,7 @@ export interface CommunicationSafetyPolicy {
 }
 
 export const CommunicationSafetyPolicy =
-  Context.GenericTag<CommunicationSafetyPolicy>(
+  Context.Service<CommunicationSafetyPolicy>(
     "@ai-hero/email-course/CommunicationSafetyPolicy",
   );
 
@@ -229,7 +229,7 @@ export interface CourseDeliveryPort {
   >;
 }
 
-export const CourseDeliveryPort = Context.GenericTag<CourseDeliveryPort>(
+export const CourseDeliveryPort = Context.Service<CourseDeliveryPort>(
   "@ai-hero/email-course/CourseDeliveryPort",
 );
 
@@ -250,6 +250,6 @@ export interface EmailCourseService {
   };
 }
 
-export const EmailCourseService = Context.GenericTag<EmailCourseService>(
+export const EmailCourseService = Context.Service<EmailCourseService>(
   "@ai-hero/email-course/EmailCourseService",
 );

@@ -1,4 +1,4 @@
-import { Effect } from 'effect'
+import { Effect } from 'effect4'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
