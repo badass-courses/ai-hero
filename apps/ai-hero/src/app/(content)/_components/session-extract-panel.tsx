@@ -15,6 +15,7 @@ import { TYPE } from '@/components/landing/type'
 import { Button } from '@/components/ui/button'
 import { CollapsibleTrigger } from '@/components/ui/collapsible'
 import { useMuxPlayer } from '@/hooks/use-mux-player'
+import { keepCaptionCuesLoading } from '@/hooks/use-mux-player-prefs'
 import {
 	contentWords,
 	rowsOnScreen,
@@ -502,7 +503,8 @@ function usePlayerTime(playerRef: PlayerRef) {
 /**
  * Marks the reply block (paragraph, list item, heading, table row) that the
  * last few seconds of captions match, with `data-spoken`. Captions come from
- * the player's own caption track, kept loaded in `hidden` mode.
+ * the player's own caption track, kept loaded in `hidden` mode
+ * (`useHiddenCaptions`).
  */
 function useSpokenBlock(
 	contentRef: React.RefObject<HTMLDivElement | null>,
@@ -514,12 +516,12 @@ function useSpokenBlock(
 ) {
 	const [spoken, setSpoken] = React.useState<HTMLElement | null>(null)
 	const lastMatch = React.useRef({ active, time })
+	useHiddenCaptions(playerRef)
 
 	React.useEffect(() => {
 		const content = contentRef.current
 		const track = captionTrack(playerRef?.current)
 		if (!content || !track) return
-		if (track.mode === 'disabled') track.mode = 'hidden'
 
 		const words = contentWords(
 			Array.from(track.cues ?? [])
@@ -579,6 +581,31 @@ function useSpokenBlock(
 	}, [spoken])
 
 	return spoken
+}
+
+/**
+ * Keeps the caption track's cues loading while captions are off
+ * (`keepCaptionCuesLoading`): the player adds its tracks after the manifest
+ * loads and turns them off with captions (`addtrack`, `change`), and a new
+ * lesson brings a new source (`loadedmetadata`).
+ */
+function useHiddenCaptions(playerRef: PlayerRef) {
+	React.useEffect(() => {
+		const player = playerRef?.current
+		const tracks = player?.media?.nativeEl?.textTracks ?? player?.textTracks
+		if (!tracks) return
+
+		const keepLoaded = () => keepCaptionCuesLoading(player)
+		keepLoaded()
+		tracks.addEventListener('addtrack', keepLoaded)
+		tracks.addEventListener('change', keepLoaded)
+		player?.addEventListener('loadedmetadata', keepLoaded)
+		return () => {
+			tracks.removeEventListener('addtrack', keepLoaded)
+			tracks.removeEventListener('change', keepLoaded)
+			player?.removeEventListener('loadedmetadata', keepLoaded)
+		}
+	}, [playerRef])
 }
 
 function captionTrack(player: MuxPlayerRefAttributes | null | undefined) {
