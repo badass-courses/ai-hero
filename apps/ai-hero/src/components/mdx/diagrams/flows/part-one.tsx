@@ -13,7 +13,8 @@ import { stage } from './stage'
 import { templateArcDown, templateArcOver } from './template'
 
 /* Frames Matt grabbed while building a drawing: each lists the steps there by
-   then, and `focus` is the step he had selected or was typing into. */
+   then. A step he had selected or was typing into is drawn like the rest:
+   the selection is his editor's, not a highlight. */
 
 const improveV1 = {
 	spawn: 'Once per day, spawn a runner',
@@ -130,7 +131,6 @@ export const flowRedrawsPartOne: Redraws = {
 				nodes: [...improveBeforeStop, 'fetch', 'hidden'],
 				text: { ...improveV1, create: 'Creates a new ticket' },
 			})}
-			focus={['fetch']}
 		/>
 	),
 	'ai-hero-images/a253c1ff9c4109f34064714923306ead': () => (
@@ -149,7 +149,6 @@ export const flowRedrawsPartOne: Redraws = {
 				text: improveV1,
 				without: BEFORE_STOP,
 			})}
-			focus={['create']}
 		/>
 	),
 	'ai-hero-images/64eaa9da91d1a19cf8e56c9a8dc72a46': () => (
@@ -158,8 +157,8 @@ export const flowRedrawsPartOne: Redraws = {
 	'ai-hero-images/a3519fbbf88405183371de92ce869416': () => (
 		<FlowBoard
 			drawings={[
-				{ diagram: improveFinal, focus: [] },
-				{ diagram: improveCodebaseArchitectureNoHuman, focus: ['verdict'] },
+				{ diagram: improveFinal },
+				{ diagram: improveCodebaseArchitectureNoHuman },
 			]}
 		/>
 	),
@@ -191,7 +190,6 @@ export const flowRedrawsPartOne: Redraws = {
 			diagram={stage(lintRuleRatchet, {
 				nodes: ['spawn', 'fetch', 'stop', 'find', 'after-find'],
 			})}
-			focus={['find']}
 		/>
 	),
 	'ai-hero-images/90204663ced07b6afe8b529bede14632': () => (
@@ -202,7 +200,6 @@ export const flowRedrawsPartOne: Redraws = {
 	'ai-hero-images/216186d37efc5e3741695576392b92e5': () => (
 		<Flow
 			diagram={stage(lintRuleRatchet, { nodes: ratchetSteps.slice(0, 6) })}
-			focus={['pr']}
 		/>
 	),
 	'ai-hero-images/342e3171229eada39b79767ab00b9b73': () => (
@@ -211,7 +208,6 @@ export const flowRedrawsPartOne: Redraws = {
 				nodes: ratchetSteps,
 				text: { human: 'Reviews the PR' },
 			})}
-			focus={['human']}
 		/>
 	),
 	'ai-hero-images/59b51ffcb8c8292f54807ace9b2a984d': () => (
@@ -225,7 +221,6 @@ export const flowRedrawsPartOne: Redraws = {
 				nodes: [...ratchetSteps, 'scripts'],
 				text: ratchetScripts,
 			})}
-			focus={['scripts']}
 		/>
 	),
 	'ai-hero-images/14b72a64dd34f1ececbdd123cf5fc8c7': () => (
@@ -234,7 +229,6 @@ export const flowRedrawsPartOne: Redraws = {
 				nodes: [...ratchetSteps, 'scripts', 'graduate', 'graduation-pr'],
 				text: ratchetScripts,
 			})}
-			focus={['graduate']}
 		/>
 	),
 	'ai-hero-images/737a55541ae7f14aa5ea40ced48bdaa5': () => (
@@ -260,7 +254,6 @@ export const flowRedrawsPartOne: Redraws = {
 				nodes: [...rebaseStart, 'attempt'],
 				text: SCHEDULE_BEFORE_BLOCKED,
 			})}
-			focus={['attempt']}
 		/>
 	),
 	'ai-hero-images/7374f11febdf9786408fc34a4a92fd78': () => (
@@ -270,7 +263,6 @@ export const flowRedrawsPartOne: Redraws = {
 				text: SCHEDULE_BEFORE_BLOCKED,
 				without: ['conflicts-force-push'],
 			})}
-			focus={['conflicts']}
 		/>
 	),
 	'ai-hero-images/9e388bc4d7a6038f16cddf4a630cda3a': () => (
@@ -279,7 +271,6 @@ export const flowRedrawsPartOne: Redraws = {
 				nodes: [...rebaseBranches, 'label-added'],
 				text: SCHEDULE_BEFORE_BLOCKED,
 			})}
-			focus={['label-added']}
 		/>
 	),
 	'ai-hero-images/7e919b24b31d1524891e9cafb8f3093b': () => (
@@ -288,7 +279,6 @@ export const flowRedrawsPartOne: Redraws = {
 				nodes: [...rebaseBranches, 'label-added', 'unresolved', 'issue'],
 				text: SCHEDULE_BEFORE_BLOCKED,
 			})}
-			focus={['issue']}
 		/>
 	),
 	'ai-hero-images/7c0ffdea1cdcb5c65afc4533fc40fbbb': () => (

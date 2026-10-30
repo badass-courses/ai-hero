@@ -4,7 +4,7 @@ import { cn } from '@coursebuilder/ui/utils/cn'
 
 import { Flow, type FlowDiagram } from '../flow'
 
-type Drawing = { diagram: FlowDiagram; focus?: readonly string[] }
+type Drawing = { diagram: FlowDiagram }
 
 /**
  * Drawings Matt keeps side by side on one tldraw board, split by a dashed
@@ -45,7 +45,7 @@ export function FlowBoard({
 					} as React.CSSProperties
 				}
 			>
-				{columns.map(({ diagram, focus }, i) => (
+				{columns.map(({ diagram }, i) => (
 					<div
 						key={diagram.title}
 						className={cn(
@@ -57,7 +57,7 @@ export function FlowBoard({
 							i < columns.length - 1 && (three ? '@5xl:pr-8' : '@2xl:pr-8'),
 						)}
 					>
-						<Flow diagram={diagram} focus={focus} />
+						<Flow diagram={diagram} />
 					</div>
 				))}
 			</div>
