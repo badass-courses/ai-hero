@@ -20,6 +20,7 @@ All read-only in this cut, in recommended order (`src/capabilities.ts`):
 - `session_extract`: the session extract, optionally windowed at a video second
 - `search_course`: search, with hits the learner can read marked
 - `office_hours`: upcoming live sessions for owned cohorts
+- `next_offer`: the learner's current offer, priced live by the app's checkout rules; no price for a learner who owns it
 
 Failures are tagged errors (`src/errors.ts`) carrying `next_actions`. Output is encoded through each contract's schema, so a field the schema does not name never leaves.
 

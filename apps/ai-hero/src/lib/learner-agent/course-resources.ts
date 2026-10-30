@@ -3,13 +3,13 @@ import { contentResource } from '@/db/schema'
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 
 /** `JSON_UNQUOTE(JSON_EXTRACT(…))` on a JSON null yields the STRING 'null'. */
-function readJsonString(value: string | null | undefined): string | null {
+export function readJsonString(value: string | null | undefined): string | null {
 	if (value === null || value === undefined || value === 'null' || value === '')
 		return null
 	return value
 }
 
-const fieldsText = (path: string) =>
+export const fieldsText = (path: string) =>
 	sql<
 		string | null
 	>`JSON_UNQUOTE(JSON_EXTRACT(${contentResource.fields}, ${sql.raw(`'$.${path}'`)}))`

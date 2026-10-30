@@ -48,6 +48,7 @@ describe('/mcp', () => {
 			'skill_usage',
 			'search_course',
 			'office_hours',
+			'next_offer',
 		])
 	})
 

@@ -17,6 +17,7 @@ const TOOL_NAMES = [
 	'skill_usage',
 	'search_course',
 	'office_hours',
+	'next_offer',
 ]
 
 const rpc = (body: unknown) =>

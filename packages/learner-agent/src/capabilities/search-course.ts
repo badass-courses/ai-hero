@@ -11,7 +11,7 @@ import {
 	LearnerIdentity,
 	LearnerSearch,
 } from '../services.js'
-import { signInActions } from './shared.js'
+import { OFFER_DESCRIPTION, offerActionsFor, signInActions } from './shared.js'
 
 export const searchCourseContract = defineContract('search_course', {
 	title: 'Search course',
@@ -87,7 +87,10 @@ export const searchCourse = implement(
 					query,
 					signedIn: false,
 					hits: publicHits.map((hit) => ({ ...hit, readable: false })),
-					next_actions: yield* signInActions,
+					next_actions: [
+						...(yield* signInActions),
+						nextTool('next_offer', OFFER_DESCRIPTION),
+					],
 				}
 			}
 
@@ -135,6 +138,7 @@ export const searchCourse = implement(
 						})
 						.slice(0, 3),
 					nextTool('my_courses', 'List the courses this learner owns.'),
+					...(yield* offerActionsFor(identity.current.value)),
 				],
 			}
 		}),

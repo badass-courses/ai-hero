@@ -4,6 +4,7 @@ import { TestClock } from 'effect/testing'
 
 import { courseOutline } from '../src/capabilities/course-outline.js'
 import { myCourses } from '../src/capabilities/my-courses.js'
+import { nextOffer } from '../src/capabilities/next-offer.js'
 import { officeHours } from '../src/capabilities/office-hours.js'
 import { readLesson } from '../src/capabilities/read-lesson.js'
 import { searchCourse } from '../src/capabilities/search-course.js'
@@ -69,11 +70,108 @@ describe('my_courses', () => {
 			}),
 	)
 
-	it.effect('tells a learner who owns nothing where to look', () =>
+	it.effect('points a learner who owns nothing at their next offer', () =>
 		Effect.gen(function* () {
 			const result = yield* myCourses.handler({}).pipe(as(refunded))
 			expect(result.courses).toEqual([])
-			expect(result.next_actions.length).toBeGreaterThan(0)
+			expect(result.next_actions.map((action) => action.tool)).toEqual([
+				'next_offer',
+				'search_course',
+			])
+		}),
+	)
+
+	it.effect('never points an owner of the offer at it', () =>
+		Effect.gen(function* () {
+			const result = yield* myCourses.handler({}).pipe(as(learner))
+			expect(
+				result.next_actions.some((action) => action.tool === 'next_offer'),
+			).toBe(false)
+		}),
+	)
+
+	it.effect('drops the offer pointer, not the list, when ownership cannot be read', () =>
+		Effect.gen(function* () {
+			const result = yield* myCourses
+				.handler({})
+				.pipe(withOptions(refunded, { offersFail: true }))
+			expect(result.courses).toEqual([])
+			expect(result.next_actions.map((action) => action.tool)).toEqual([
+				'search_course',
+			])
+		}),
+	)
+})
+
+describe('next_offer', () => {
+	it.effect('gives an owner no price, and points at office hours and the outline', () =>
+		Effect.gen(function* () {
+			const recorder = newRecorder()
+			const result = yield* nextOffer.handler({}).pipe(as(learner, recorder))
+			expect(result.state).toBe('owns')
+			expect(result.price).toBeNull()
+			expect(result.team).toBeNull()
+			expect(result.next_actions).toEqual([
+				expect.objectContaining({ tool: 'office_hours' }),
+				expect.objectContaining({
+					tool: 'course_outline',
+					arguments: { course: 'cohort-five' },
+				}),
+			])
+			expect(recorder.reads).toEqual([
+				{
+					userId: 'user-owner',
+					capability: 'next_offer',
+					resourceId: 'product-offer',
+				},
+			])
+		}),
+	)
+
+	it.effect('prices a signed-in learner and links the sales page', () =>
+		Effect.gen(function* () {
+			const result = yield* nextOffer.handler({}).pipe(as(refunded))
+			expect(result.state).toBe('standard')
+			expect(result.price).toMatchObject({
+				fullCents: 100_000,
+				nowCents: 80_000,
+				discount: 'early_bird',
+			})
+			expect(result.next_actions).toEqual([
+				{
+					href: 'https://aihero.test/s/offer',
+					description: 'The sales page for Cohort Five.',
+				},
+			])
+		}),
+	)
+
+	it.effect('gives an anonymous caller the default offer, without auditing', () =>
+		Effect.gen(function* () {
+			const recorder = newRecorder()
+			const result = yield* nextOffer.handler({}).pipe(as(null, recorder))
+			expect(result.state).toBe('anonymous')
+			expect(result.price).toMatchObject({ upperBound: true })
+			expect(result.next_actions.map((action) => action.href)).toEqual([
+				'https://aihero.test/s/offer',
+				'https://aihero.test/agents/connect',
+			])
+			expect(recorder.reads).toEqual([])
+		}),
+	)
+
+	it.effect('fails as Unavailable when pricing fails, and says which port', () =>
+		Effect.gen(function* () {
+			const failures: string[] = []
+			const error = yield* nextOffer.handler({}).pipe(
+				Effect.flip,
+				withOptions(refunded, {
+					offersFail: true,
+					onPortFailure: (port) => void failures.push(port),
+				}),
+			)
+			expect(error._tag).toBe('Unavailable')
+			expect(failures).toEqual(['Pricing'])
 		}),
 	)
 })
@@ -612,6 +710,23 @@ describe('search_course', () => {
 				.handler({ query: 'locked', limit: 5 })
 				.pipe(as(learner))
 			expect(result.hits.some((hit) => hit.id === 'lesson-locked')).toBe(false)
+		}),
+	)
+
+	it.effect('adds one next_offer pointer for a non-owner, none for an owner', () =>
+		Effect.gen(function* () {
+			const offerTools = (actions: ReadonlyArray<{ tool?: string }>) =>
+				actions.filter((action) => action.tool === 'next_offer').length
+			for (const [caller, expected] of [
+				[null, 1],
+				[otherLearner, 1],
+				[learner, 0],
+			] as const) {
+				const result = yield* searchCourse
+					.handler({ query: 'skills', limit: 5 })
+					.pipe(as(caller))
+				expect(offerTools(result.next_actions)).toBe(expected)
+			}
 		}),
 	)
 })

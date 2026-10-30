@@ -3,7 +3,7 @@ import { Effect, Option } from 'effect'
 import { SignInRequired } from '../errors.js'
 import { nextHref, nextTool, type NextAction } from '../next-actions.js'
 import type { Learner } from '../ports.js'
-import { LearnerIdentity, LearnerSite } from '../services.js'
+import { LearnerIdentity, LearnerOffers, LearnerSite } from '../services.js'
 
 export const signInActions: Effect.Effect<NextAction[], never, LearnerSite> =
 	LearnerSite.useSync((site) => [
@@ -37,6 +37,26 @@ export const requireLearner: Effect.Effect<
 		next_actions: yield* signInActions,
 	})
 })
+
+export const OFFER_DESCRIPTION =
+	'This learner’s current offer from AI Hero, with price and dates.'
+
+/**
+ * The one `next_offer` pointer a learner who does not own the offer gets.
+ * None for an owner, and none when ownership cannot be read: a missing
+ * pointer costs less than offering someone what they already hold.
+ */
+export const offerActionsFor = (
+	learner: Learner,
+	description = OFFER_DESCRIPTION,
+): Effect.Effect<NextAction[], never, LearnerOffers> =>
+	Effect.gen(function* () {
+		const offers = yield* LearnerOffers
+		const owns = yield* offers
+			.ownsOffer(learner)
+			.pipe(Effect.orElseSucceed(() => true))
+		return owns ? [] : [nextTool('next_offer', description)]
+	})
 
 /**
  * Where the companion instructions live: the course page's markdown twin

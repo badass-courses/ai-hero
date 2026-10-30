@@ -4,6 +4,7 @@ import type {
 	LessonAccess,
 	LessonContent,
 	LessonLocator,
+	NextOffer,
 	OwnedCourse,
 	PublicSearchHit,
 	WorkshopAccess,
@@ -75,6 +76,17 @@ export interface SearchPort {
 	}) => Promise<ReadonlyArray<PublicSearchHit>>
 }
 
+/**
+ * What AI Hero offers this learner next. The app prices it with the same
+ * rules checkout uses; this package only reports it.
+ */
+export interface OffersPort {
+	/** Whether the learner already holds the product on offer. No pricing runs. */
+	readonly ownsOffer: (learner: Learner) => Promise<boolean>
+	/** The current offer. `null` is an anonymous caller. */
+	readonly nextOffer: (learner: Learner | null) => Promise<NextOffer>
+}
+
 export interface AuditPort {
 	/** One line per paid read: user id, capability, resource id. No emails. */
 	readonly read: (event: {
@@ -112,6 +124,7 @@ export type LearnerAgentPorts = {
 	readonly content: ContentPort
 	readonly progress: ProgressPort
 	readonly search: SearchPort
+	readonly offers: OffersPort
 	readonly audit: AuditPort
 	readonly rateLimit: RateLimitPort
 	readonly site: SiteUrls
