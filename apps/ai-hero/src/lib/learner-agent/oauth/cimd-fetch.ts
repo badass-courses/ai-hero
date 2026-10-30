@@ -152,9 +152,12 @@ export function cacheSeconds(cacheControl: string | undefined) {
 	if (!cacheControl) return DEFAULT_MAX_AGE_SECONDS
 	const directives = cacheControl.toLowerCase()
 	if (/\b(no-store|no-cache|private)\b/.test(directives)) return 0
-	const maxAge = /\bmax-age=(\d+)/.exec(directives)
-	if (!maxAge?.[1]) return DEFAULT_MAX_AGE_SECONDS
-	return Math.min(Number(maxAge[1]), MAX_MAX_AGE_SECONDS)
+	if (!/\bmax-age\b/.test(directives)) return DEFAULT_MAX_AGE_SECONDS
+	// Quoted values are legal (RFC 9111 §5.2). One we can't read caches nothing.
+	const maxAge = /\bmax-age\s*=\s*(?:"(\d+)"|(\d+))/.exec(directives)
+	const seconds = maxAge?.[1] ?? maxAge?.[2]
+	if (!seconds) return 0
+	return Math.min(Number(seconds), MAX_MAX_AGE_SECONDS)
 }
 
 export type CimdFetchResult =

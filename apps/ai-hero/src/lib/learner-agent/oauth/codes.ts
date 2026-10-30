@@ -196,17 +196,72 @@ export async function claimCodeOnce(
 	}
 }
 
-/** Remembers which token a code minted, so a replay can revoke it. */
-export async function recordCodeToken(jti: string, tokenId: string) {
+/**
+ * Remembers which token a code mints, so a replay can revoke it. The grant
+ * records this before the token exists: `false` (Redis failed, or the claim
+ * is gone) means issue nothing.
+ */
+export async function recordCodeToken(
+	jti: string,
+	tokenId: string,
+): Promise<boolean> {
 	const key = claimKey(jti)
 	if (env.NODE_ENV === 'development') {
 		const held = developmentClaims.get(key)
-		if (held) held.value = tokenId
-		return
+		if (!held) return false
+		held.value = tokenId
+		return true
 	}
-	await redis
-		.set(key, tokenId, { xx: true, ex: CLAIM_TTL_SECONDS })
-		.catch(() => undefined)
+	try {
+		const set = await redis.set(key, tokenId, {
+			xx: true,
+			ex: CLAIM_TTL_SECONDS,
+		})
+		return set === 'OK'
+	} catch {
+		return false
+	}
+}
+
+const replayKey = (jti: string) => `${claimKey(jti)}:replayed`
+
+/**
+ * A replayed exchange marks the code before it looks for the token to
+ * revoke. The winning exchange checks the mark after inserting its token,
+ * so whichever runs second sees the other: a code used twice never leaves
+ * an active token, even when both exchanges overlap.
+ */
+export async function markCodeReplayed(jti: string): Promise<boolean> {
+	const key = replayKey(jti)
+	if (env.NODE_ENV === 'development') {
+		developmentClaims.set(key, {
+			value: 'replayed',
+			until: Date.now() + CLAIM_TTL_SECONDS * 1000,
+		})
+		return true
+	}
+	try {
+		await redis.set(key, 'replayed', { ex: CLAIM_TTL_SECONDS })
+		return true
+	} catch {
+		return false
+	}
+}
+
+/** Whether a replay marked the code. Redis failing is `unavailable`. */
+export async function codeReplayState(
+	jti: string,
+): Promise<'clean' | 'replayed' | 'unavailable'> {
+	const key = replayKey(jti)
+	if (env.NODE_ENV === 'development') {
+		const held = developmentClaims.get(key)
+		return held && held.until > Date.now() ? 'replayed' : 'clean'
+	}
+	try {
+		return (await redis.get<string>(key)) ? 'replayed' : 'clean'
+	} catch {
+		return 'unavailable'
+	}
 }
 
 /** The token id a claimed code minted, if it got that far. */

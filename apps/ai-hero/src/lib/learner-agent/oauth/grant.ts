@@ -14,6 +14,8 @@ import { isLearnerResource } from './authorize'
 import { recordClientName } from './client-name'
 import {
 	claimCodeOnce,
+	codeReplayState,
+	markCodeReplayed,
 	openAuthorizationCode,
 	pkceMatches,
 	recordCodeToken,
@@ -60,6 +62,19 @@ async function revokeTokenFromCode(userId: string, jti: string) {
 		userId,
 		tokenId,
 	})
+}
+
+/** Revokes a token this exchange inserted but must not hand out. */
+async function revokeUnissuedToken(token: string, userId: string) {
+	await db
+		.update(deviceAccessToken)
+		.set({ revokedAt: new Date() })
+		.where(
+			and(
+				eq(deviceAccessToken.token, token),
+				eq(deviceAccessToken.userId, userId),
+			),
+		)
 }
 
 /**
@@ -130,11 +145,34 @@ export async function exchangeAuthorizationCode(
 		return oauthError('temporarily_unavailable', 'Try again in a moment.', 503)
 	}
 	if (claim === 'reused') {
-		await revokeTokenFromCode(code.userId, code.jti).catch(() => undefined)
+		if (!(await markCodeReplayed(code.jti)))
+			void log.error('learner_agent.oauth', {
+				outcome: 'code_replay_mark_failed',
+				userId: code.userId,
+				clientHost: code.clientHost,
+			})
+		await revokeTokenFromCode(code.userId, code.jti).catch(() => {
+			void log.error('learner_agent.oauth', {
+				outcome: 'code_replay_revoke_failed',
+				userId: code.userId,
+				clientHost: code.clientHost,
+			})
+		})
 		return deny('code_reused', 'invalid_grant', 'The code was already used.')
 	}
 
+	// Record the token id before the token exists: if Redis can't hold it, a
+	// replay couldn't revoke the token, so issue nothing.
 	const token = randomUUID()
+	const tokenId = learnerTokenId(token)
+	if (!(await recordCodeToken(code.jti, tokenId))) {
+		void log.error('learner_agent.oauth', {
+			outcome: 'code_record_unavailable',
+			userId: code.userId,
+			clientHost: code.clientHost,
+		})
+		return oauthError('temporarily_unavailable', 'Try again in a moment.', 503)
+	}
 	try {
 		await db.insert(deviceAccessToken).values({
 			token,
@@ -155,8 +193,29 @@ export async function exchangeAuthorizationCode(
 			500,
 		)
 	}
-	const tokenId = learnerTokenId(token)
-	await recordCodeToken(code.jti, tokenId)
+
+	// A replay that overlapped this exchange marked the code before looking
+	// for our token, so checking the mark now catches it either way. Unsure
+	// counts as replayed: the token never leaves.
+	const replay = await codeReplayState(code.jti)
+	if (replay !== 'clean') {
+		await revokeUnissuedToken(token, code.userId).catch(() => {
+			void log.error('learner_agent.oauth', {
+				outcome: 'unissued_token_revoke_failed',
+				userId: code.userId,
+				clientHost: code.clientHost,
+				tokenId,
+			})
+		})
+		if (replay === 'replayed')
+			return deny('code_reused', 'invalid_grant', 'The code was already used.')
+		void log.error('learner_agent.oauth', {
+			outcome: 'code_replay_check_unavailable',
+			userId: code.userId,
+			clientHost: code.clientHost,
+		})
+		return oauthError('temporarily_unavailable', 'Try again in a moment.', 503)
+	}
 	await recordClientName(token, code.clientName)
 
 	void log.info('learner_agent.oauth', {

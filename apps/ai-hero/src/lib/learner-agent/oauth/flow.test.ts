@@ -191,6 +191,9 @@ const mcpCall = (accessToken: string | null, body: unknown) =>
 beforeEach(() => {
 	state.table.rows.length = 0
 	state.redis.store.clear()
+	state.redis.failures.set = undefined
+	state.redis.failures.get = undefined
+	state.table.hooks.beforeInsert = undefined
 	state.logs.length = 0
 	state.recordClientName.mockReset()
 	state.rateLimit.mockReset().mockResolvedValue(true)
@@ -317,6 +320,72 @@ describe('learner OAuth: authorization code with PKCE', () => {
 			method: 'tools/list',
 		})
 		expect(call.status).toBe(401)
+	})
+
+	it('leaves no active token when a replay overlaps the first exchange', async () => {
+		const clientId = await registerClient()
+		const { verifier, challenge } = pkce()
+		const code = await approvedCode(clientId, challenge)
+		const fields = {
+			code,
+			code_verifier: verifier,
+			client_id: clientId,
+			redirect_uri: REDIRECT,
+		}
+
+		// The replay lands after the first exchange claimed the code, before
+		// its token row exists.
+		let replay: Response | undefined
+		state.table.hooks.beforeInsert = async () => {
+			replay = await exchange(fields)
+		}
+		const first = await exchange(fields)
+
+		expect(replay?.status).toBe(400)
+		expect(first.status).toBe(400)
+		const body = await first.json()
+		expect(body).toMatchObject({ error: 'invalid_grant' })
+		expect(body).not.toHaveProperty('access_token')
+		expect(state.table.rows).toHaveLength(1)
+		expect(state.table.rows[0]?.revokedAt).toBeInstanceOf(Date)
+	})
+
+	it('issues nothing when Redis cannot record which token the code mints', async () => {
+		const clientId = await registerClient()
+		const { verifier, challenge } = pkce()
+		const code = await approvedCode(clientId, challenge)
+		state.redis.failures.set = (key, value) =>
+			value !== 'pending' && !key.endsWith(':replayed')
+
+		const response = await exchange({
+			code,
+			code_verifier: verifier,
+			client_id: clientId,
+			redirect_uri: REDIRECT,
+		})
+		expect(response.status).toBe(503)
+		expect(await response.json()).toMatchObject({
+			error: 'temporarily_unavailable',
+		})
+		expect(state.table.rows).toHaveLength(0)
+	})
+
+	it('revokes and withholds the token when the replay check cannot run', async () => {
+		const clientId = await registerClient()
+		const { verifier, challenge } = pkce()
+		const code = await approvedCode(clientId, challenge)
+		state.redis.failures.get = (key) => key.endsWith(':replayed')
+
+		const response = await exchange({
+			code,
+			code_verifier: verifier,
+			client_id: clientId,
+			redirect_uri: REDIRECT,
+		})
+		expect(response.status).toBe(503)
+		expect(await response.json()).not.toHaveProperty('access_token')
+		expect(state.table.rows).toHaveLength(1)
+		expect(state.table.rows[0]?.revokedAt).toBeInstanceOf(Date)
 	})
 
 	it('refuses a redirect_uri at the token endpoint that differs from the request', async () => {
