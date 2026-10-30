@@ -35,12 +35,12 @@ const TERM: Record<SlideScale, string> = {
 	small: TYPE.panelTitle,
 }
 
-/** The line under a term wraps where Matt's does: a title's runs wider than
-    a stacked item's. */
+/** The line under a term: a title's runs wider than a stacked item's. On a
+    wide figure each runs longer, so a slide keeps its frame's 16:9. */
 const MEASURE: Record<SlideScale, string> = {
-	title: 'max-w-[34ch]',
-	large: 'max-w-[31ch]',
-	small: 'max-w-[27ch]',
+	title: 'max-w-[34ch] @2xl:max-w-[46ch]',
+	large: 'max-w-[31ch] @2xl:max-w-[44ch]',
+	small: 'max-w-[27ch] @2xl:max-w-[40ch]',
 }
 
 /** Mono for commands and filenames, without the sans headings' tight
@@ -60,13 +60,16 @@ const nodeId = (term: string) =>
 /**
  * The panel a slide sits in. Unframed, a title slide reads as a second
  * heading under the lesson's own; the hairline panel marks it as a figure,
- * the way a diagram is one, with the slide centred inside.
+ * the way a diagram is one. It has a video frame's shape, as the slide had,
+ * with the slide centred both ways; a slide that needs more height (a long
+ * one on a phone) grows it, since an aspect ratio only sets the least height
+ * a box with content may have.
  */
 function Frame({ children, ...props }: React.ComponentProps<'figure'>) {
 	return (
 		<figure
 			{...props}
-			className="not-prose border-border @container my-8 rounded-lg border px-5 py-10 @2xl:px-12 @2xl:py-14"
+			className="not-prose border-border @container my-8 flex aspect-video flex-col justify-center rounded-lg border px-5 py-10 @2xl:px-12 @2xl:py-8"
 		>
 			{children}
 		</figure>
@@ -95,7 +98,7 @@ export function Stack({
 		<Frame>
 			<dl
 				className={cn(
-					'mx-auto grid w-fit max-w-full gap-y-10 @2xl:gap-y-14',
+					'mx-auto grid w-fit max-w-full gap-y-10 @2xl:gap-y-8',
 					slide.scale === 'title' && 'text-center',
 					withIcons
 						? 'grid-cols-[auto_1fr] gap-x-3 @2xl:gap-x-4'
@@ -189,7 +192,7 @@ const TONE_HUE: Partial<Record<PairTone, string>> = {
 export function Pairs({ slide }: { slide: PairSlide }) {
 	return (
 		<Frame>
-			<div className="mx-auto flex w-fit max-w-full flex-col gap-6 @2xl:grid @2xl:grid-cols-[auto_auto] @2xl:gap-x-10 @2xl:gap-y-14">
+			<div className="mx-auto flex w-fit max-w-full flex-col gap-6 @2xl:grid @2xl:grid-cols-[auto_auto] @2xl:gap-x-10 @2xl:gap-y-8">
 				{slide.rows.map((row) => (
 					<p
 						key={`${row.left}-${row.right}`}
