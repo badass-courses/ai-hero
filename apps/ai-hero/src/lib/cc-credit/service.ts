@@ -97,6 +97,14 @@ function checkReceipt(
 	)
 		throw new CreditRefusal('ledger_receipt_inconsistent_hold_for_review')
 }
+/** The source a line names: its exact id, or a unique prefix ending at a uuid
+ * segment. Some hand-written lines carry only purch_ and the first segment. */
+function namedSource(id: string, sources: CreditAllocation[]) {
+	const exact = sources.find((row) => row.purchaseId === id)
+	if (exact) return exact
+	const prefixed = sources.filter((row) => row.purchaseId.startsWith(`${id}-`))
+	return prefixed.length === 1 ? prefixed[0] : undefined
+}
 /** A finalized Stripe line can't be edited to add its source, so the desk
  * states it. The line must agree on amount, seats and any id it names, and
  * the per-seat price may differ from the charge only by the recorded rounding.
@@ -115,7 +123,9 @@ function explicitAllocation(
 	const declared = /credit x (\d+)\b/i.exec(line.description)?.[1]
 	if (
 		ids.length > 1 ||
-		(ids.length === 1 && ids[0] !== given.purchaseId) ||
+		(ids.length === 1 &&
+			ids[0] !== given.purchaseId &&
+			namedSource(ids[0]!, sources)?.purchaseId !== given.purchaseId) ||
 		(declared !== undefined && Number(declared) !== seats)
 	)
 		throw new CreditRefusal('explicit_source_contradicts_invoice_line')
@@ -147,7 +157,7 @@ function historicalAllocations(
 		if (given) return explicitAllocation(line, ids, given, sources)
 		if (ids.length !== 1)
 			throw new CreditRefusal('historical_credit_source_ambiguous')
-		const row = sources.find((item) => item.purchaseId === ids[0])
+		const row = namedSource(ids[0]!, sources)
 		if (!row) throw new CreditRefusal('historical_credit_source_ineligible')
 		const seats = positiveInteger(
 			-line.amountCents / row.perSeatCents,

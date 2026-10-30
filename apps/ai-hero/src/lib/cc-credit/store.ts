@@ -1,4 +1,4 @@
-import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
+import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise'
 import {
 	CC_PRODUCT,
 	CreditRefusal,
@@ -33,6 +33,8 @@ type SourceRow = RowDataPacket & {
 	productId: string
 	status: string
 	organizationId: string | null
+	bulkOrganizationId: string | null
+	siblingOrganizationIds: string | null
 	customerId: string | null
 	bulkCouponId: string | null
 	redeemedBulkCouponId: string | null
@@ -48,7 +50,12 @@ type SourceRow = RowDataPacket & {
 }
 const sourceQuery = `SELECT p.id AS purchaseId, p.productId, p.status, p.organizationId,
  mc.identifier AS customerId, p.bulkCouponId, p.redeemedBulkCouponId,
- bulk.maxUses AS bulkSeats, p.totalAmount, p.couponId,
+ bulk.maxUses AS bulkSeats, bulk.organizationId AS bulkOrganizationId,
+ (SELECT GROUP_CONCAT(DISTINCT owner.organizationId) FROM AI_Purchase owner
+  JOIN AI_MerchantCharge ownerCharge ON ownerCharge.id = owner.merchantChargeId
+  WHERE owner.bulkCouponId = p.bulkCouponId AND owner.organizationId IS NOT NULL
+  AND ownerCharge.merchantCustomerId = chargeRow.merchantCustomerId) AS siblingOrganizationIds,
+ p.totalAmount, p.couponId,
  chargeRow.identifier AS chargeIdentifier, ms.identifier AS checkoutSessionIdentifier,
  (SELECT COUNT(*) FROM AI_Purchase sibling WHERE sibling.bulkCouponId = p.bulkCouponId
   AND sibling.productId = p.productId AND sibling.status IN ('Valid','Restricted')
@@ -61,6 +68,27 @@ const sourceQuery = `SELECT p.id AS purchaseId, p.productId, p.status, p.organiz
  LEFT JOIN AI_MerchantCharge chargeRow ON chargeRow.id = p.merchantChargeId
  LEFT JOIN AI_MerchantCustomer mc ON mc.id = chargeRow.merchantCustomerId
  LEFT JOIN AI_MerchantSession ms ON ms.id = p.merchantSessionId`
+// Same rule as ledgerOrganizations, in SQL, for org-scope discovery.
+const organizationScope = `(BINARY p.organizationId = ? OR (p.organizationId IS NULL
+ AND (BINARY bulk.organizationId = ? OR EXISTS (SELECT 1 FROM AI_Purchase owner
+  JOIN AI_MerchantCharge ownerCharge ON ownerCharge.id = owner.merchantChargeId
+  WHERE owner.bulkCouponId = p.bulkCouponId AND BINARY owner.organizationId = ?
+  AND ownerCharge.merchantCustomerId = chargeRow.merchantCustomerId))))`
+
+/** A purchase's own org. Without one, the org of its bulk coupon or of the same
+ * customer's other purchases on that coupon: add-seat checkouts can record no
+ * org, but they add seats to the team's one coupon. */
+function ledgerOrganizations(row: SourceRow) {
+	if (row.organizationId) return [row.organizationId]
+	return [
+		...new Set(
+			[
+				row.bulkOrganizationId,
+				...(row.siblingOrganizationIds?.split(',') ?? []),
+			].filter((id): id is string => !!id),
+		),
+	]
+}
 
 /** Cheap DB-only filter, so Stripe is only asked about possible sources. */
 function candidate(row: SourceRow, scope: CreditScope) {
@@ -70,7 +98,7 @@ function candidate(row: SourceRow, scope: CreditScope) {
 		!!row.bulkCouponId &&
 		!row.redeemedBulkCouponId &&
 		(scope.organizationId
-			? row.organizationId === scope.organizationId
+			? ledgerOrganizations(row).includes(scope.organizationId)
 			: row.customerId === scope.stripeCustomerId) &&
 		Number(row.totalAmount) > 0 &&
 		row.couponType?.toLowerCase() !== 'ppp'
@@ -82,6 +110,8 @@ function eligible(
 	payment: SourcePayment | undefined,
 ): CreditSource | null {
 	if (!candidate(row, scope)) return null
+	if (scope.organizationId && ledgerOrganizations(row).length > 1)
+		throw new CreditRefusal('bulk_coupon_organization_ambiguous_hold_for_review')
 	if (
 		row.couponId &&
 		(!row.promoId || !row.merchantCouponId || !row.couponType)
@@ -107,6 +137,23 @@ function eligible(
 		chargeCents: payment.chargeCents,
 		recordedAmount: row.totalAmount,
 	})
+}
+
+/** Plain SELECT, safe on a read-only role: has this Stripe customer ever bought
+ * Crash Course seats on a bulk coupon, in any status? */
+export async function customerBoughtTeamSeats(
+	pool: Pick<Pool, 'execute'>,
+	stripeCustomerId: string,
+) {
+	const [rows] = await pool.execute<RowDataPacket[]>(
+		`SELECT 1 FROM AI_Purchase p
+		 JOIN AI_MerchantCharge chargeRow ON chargeRow.id = p.merchantChargeId
+		 JOIN AI_MerchantCustomer mc ON mc.id = chargeRow.merchantCustomerId
+		 WHERE p.productId = ? AND p.bulkCouponId IS NOT NULL AND BINARY mc.identifier = ?
+		 LIMIT 1`,
+		[CC_PRODUCT, stripeCustomerId],
+	)
+	return rows.length > 0
 }
 
 /** All mutations and balance reads share this transaction/lock order.
@@ -140,8 +187,10 @@ export function mysqlCreditStore(
 						throw new CreditRefusal('invoice_customer_org_mismatch')
 				}
 				const [candidates] = await connection.execute<RowDataPacket[]>(
-					`${sourceQuery} WHERE p.productId = ? AND p.bulkCouponId IS NOT NULL AND ${scope.organizationId ? 'BINARY p.organizationId = ?' : 'BINARY mc.identifier = ?'}`,
-					[CC_PRODUCT, scope.organizationId ?? scope.stripeCustomerId],
+					`${sourceQuery} WHERE p.productId = ? AND p.bulkCouponId IS NOT NULL AND ${scope.organizationId ? organizationScope : 'BINARY mc.identifier = ?'}`,
+					scope.organizationId
+						? [CC_PRODUCT, ...Array(3).fill(scope.organizationId)]
+						: [CC_PRODUCT, scope.stripeCustomerId],
 				)
 				const [prior] = invoiceId
 					? await connection.execute<RowDataPacket[]>(

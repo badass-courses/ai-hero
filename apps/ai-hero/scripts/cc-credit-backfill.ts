@@ -5,6 +5,9 @@
  *
  * Inject STRIPE_SECRET_TOKEN plus DATABASE_URL (read-only) for --local-db,
  * or SUPPORT_WEBHOOK_SECRET for --url. Never commit output.
+ * With --url, a read-only DATABASE_URL is optional and used only for plain
+ * SELECTs: the C5 product mapping and whether a credited customer ever bought
+ * team seats, so individual credits report as not_team_ledger, not holds.
  * --local-db uses SELECTs under the same purchase-lock transaction protocol;
  * it never calls insert/settle. Use read-only DB credentials.
  * Preview still takes FOR UPDATE locks on production AI_Purchase rows,
@@ -23,7 +26,10 @@ import {
 	inventoryCredits,
 	type CreditInventoryPreview,
 } from '../src/lib/cc-credit/inventory'
-import { mysqlCreditStore } from '../src/lib/cc-credit/store'
+import {
+	customerBoughtTeamSeats,
+	mysqlCreditStore,
+} from '../src/lib/cc-credit/store'
 import { runCreditCommand } from '../src/lib/cc-credit/service'
 import {
 	readCreditInvoice,
@@ -52,7 +58,7 @@ async function main() {
 		throw new Error(
 			'Read-only Stripe and DB/support credentials required in environment',
 		)
-	const databaseUrl = values['local-db'] ? process.env.DATABASE_URL : undefined
+	const databaseUrl = process.env.DATABASE_URL || undefined
 	if (values['local-db'] && !databaseUrl)
 		throw new Error('DATABASE_URL is required for --local-db')
 	const loopback =
@@ -70,7 +76,8 @@ async function main() {
 		const stripe = new Stripe(key, {
 			apiVersion: '2024-06-20' as Stripe.LatestApiVersion,
 		})
-		const store = pool
+		const store =
+			pool && values['local-db']
 			? mysqlCreditStore(
 					() => pool.getConnection(),
 					(rows) => readSourcePayments(stripe, rows),
@@ -92,8 +99,11 @@ async function main() {
 					...(values.customer ? { customer: values.customer } : {}),
 				}),
 				lines: (id) => stripe.invoices.listLineItems(id, { limit: 100 }),
-				// Without a mapping (--url), every negative non-credit line is held.
+				// Without a mapping (--url, no DB), every negative non-credit line is held.
 				c5Products: products,
+				...(pool
+					? { teamCustomer: (id: string) => customerBoughtTeamSeats(pool, id) }
+					: {}),
 				preview: async (input) => {
 					if (store) {
 						try {
