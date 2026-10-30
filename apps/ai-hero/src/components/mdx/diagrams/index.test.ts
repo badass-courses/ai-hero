@@ -81,6 +81,8 @@ describe('markdown readers', () => {
 			),
 		).not.toBeNull()
 		const markdown = serializeToMarkdown({
+			id: 'lesson',
+			type: 'lesson',
 			fields: {
 				title: 'Whiteboard Your Own Tasks',
 				slug: 'whiteboard-your-own-tasks',
