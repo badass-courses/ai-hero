@@ -5,6 +5,7 @@ import { BADGE_OUTLINE, TYPE } from '@/components/landing/type'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+import { Centred } from './centred'
 import { routeArrow, type Box, type Point } from './flow-route'
 import { FLOW_ROLES, type FlowRole } from './roles'
 
@@ -190,110 +191,112 @@ export function Flow({
 					</span>
 				) : null}
 			</figcaption>
-			<div
-				ref={gridRef}
-				// `--flow-layout` tells the arrows which placement the grid is in.
-				className="relative grid grid-cols-12 gap-y-8 [--flow-layout:narrow] @2xl:gap-y-10 @2xl:[--flow-layout:wide]"
-			>
-				<svg
-					aria-hidden
-					// The house ink (the Software Factory map's): the foreground mixed
-					// into the page, opaque, so an arrow running under its head shows
-					// no brighter patch.
-					className="pointer-events-none absolute inset-0 size-full overflow-visible text-[color-mix(in_oklab,var(--foreground)_58%,var(--background))]"
+			<Centred>
+				<div
+					ref={gridRef}
+					// `--flow-layout` tells the arrows which placement the grid is in.
+					className="relative grid grid-cols-12 gap-y-8 [--flow-layout:narrow] @2xl:gap-y-10 @2xl:[--flow-layout:wide]"
 				>
-					<defs>
-						<marker
-							id={markerId}
-							viewBox="0 0 8 9"
-							refX="8"
-							refY="4.5"
-							markerWidth="8"
-							markerHeight="9"
-							markerUnits="userSpaceOnUse"
-							orient="auto"
-						>
-							<path d="M8 4.5 L0 0 L0 9 Z" fill="currentColor" />
-						</marker>
-					</defs>
-					{paths.map((path) => (
-						<path
-							className="motion-safe:transition-opacity motion-safe:duration-300"
-							key={path.key}
-							data-edge={path.key}
-							d={path.d}
-							fill="none"
-							stroke="currentColor"
-							strokeWidth="1.5"
-							strokeLinecap="round"
-							markerEnd={`url(#${markerId})`}
-							opacity={isDimEdge(path.from, path.to) ? 0.3 : 1}
-						/>
-					))}
-				</svg>
-				{diagram.nodes.map((node) => (
-					<div
-						key={node.id}
-						data-flow-node={node.id}
-						data-node={node.id}
-						className="relative [grid-column:var(--n-col)/span_var(--n-span)] [grid-row:var(--n-row)] self-start pr-5 data-dim:opacity-40 motion-safe:transition-opacity motion-safe:duration-300 @2xl:[grid-column:var(--w-col)/span_var(--w-span)] @2xl:[grid-row:var(--w-row)]"
-						style={placement(node)}
-						data-dim={isDim(node.id) || undefined}
-						onPointerEnter={(event) => {
-							if (event.pointerType === 'mouse') setHovered(node.id)
-						}}
-						onPointerLeave={() => setHovered(null)}
+					<svg
+						aria-hidden
+						// The house ink (the Software Factory map's): the foreground mixed
+						// into the page, opaque, so an arrow running under its head shows
+						// no brighter patch.
+						className="pointer-events-none absolute inset-0 size-full overflow-visible text-[color-mix(in_oklab,var(--foreground)_58%,var(--background))]"
 					>
-						{node.code ? null : (
-							<span
-								data-flow-badges
-								className="mb-1.5 inline-flex items-center gap-1"
+						<defs>
+							<marker
+								id={markerId}
+								viewBox="0 0 8 9"
+								refX="8"
+								refY="4.5"
+								markerWidth="8"
+								markerHeight="9"
+								markerUnits="userSpaceOnUse"
+								orient="auto"
 							>
-								{node.roles.map((role, i) => (
-									<span
-										key={i}
-										className={cn(
-											TYPE.badge,
-											BADGE_OUTLINE,
-											'bg-background px-[5px] py-[4px] whitespace-nowrap',
-										)}
-										style={
-											{
-												'--role': FLOW_ROLES[role].hue,
-												borderColor:
-													'color-mix(in oklab, var(--role) 80%, var(--background))',
-												color:
-													'color-mix(in oklab, var(--role) 72%, var(--foreground))',
-											} as React.CSSProperties
-										}
-									>
-										{FLOW_ROLES[role].label}
-									</span>
-								))}
-								{node.more ? (
-									<span
-										aria-label="and more"
-										className={cn(TYPE.meta, 'font-bold')}
-									>
-										…
-									</span>
-								) : null}
-							</span>
-						)}
-						<span
-							data-flow-text
-							className={cn(
-								'block',
-								node.code
-									? cn(TYPE.metaMono, 'whitespace-pre-line')
-									: cn(TYPE.meta, 'font-bold text-pretty'),
-							)}
+								<path d="M8 4.5 L0 0 L0 9 Z" fill="currentColor" />
+							</marker>
+						</defs>
+						{paths.map((path) => (
+							<path
+								className="motion-safe:transition-opacity motion-safe:duration-300"
+								key={path.key}
+								data-edge={path.key}
+								d={path.d}
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="1.5"
+								strokeLinecap="round"
+								markerEnd={`url(#${markerId})`}
+								opacity={isDimEdge(path.from, path.to) ? 0.3 : 1}
+							/>
+						))}
+					</svg>
+					{diagram.nodes.map((node) => (
+						<div
+							key={node.id}
+							data-flow-node={node.id}
+							data-node={node.id}
+							className="relative [grid-column:var(--n-col)/span_var(--n-span)] [grid-row:var(--n-row)] self-start pr-5 data-dim:opacity-40 motion-safe:transition-opacity motion-safe:duration-300 @2xl:[grid-column:var(--w-col)/span_var(--w-span)] @2xl:[grid-row:var(--w-row)]"
+							style={placement(node)}
+							data-dim={isDim(node.id) || undefined}
+							onPointerEnter={(event) => {
+								if (event.pointerType === 'mouse') setHovered(node.id)
+							}}
+							onPointerLeave={() => setHovered(null)}
 						>
-							{node.text}
-						</span>
-					</div>
-				))}
-			</div>
+							{node.code ? null : (
+								<span
+									data-flow-badges
+									className="mb-1.5 inline-flex items-center gap-1"
+								>
+									{node.roles.map((role, i) => (
+										<span
+											key={i}
+											className={cn(
+												TYPE.badge,
+												BADGE_OUTLINE,
+												'bg-background px-[5px] py-[4px] whitespace-nowrap',
+											)}
+											style={
+												{
+													'--role': FLOW_ROLES[role].hue,
+													borderColor:
+														'color-mix(in oklab, var(--role) 80%, var(--background))',
+													color:
+														'color-mix(in oklab, var(--role) 72%, var(--foreground))',
+												} as React.CSSProperties
+											}
+										>
+											{FLOW_ROLES[role].label}
+										</span>
+									))}
+									{node.more ? (
+										<span
+											aria-label="and more"
+											className={cn(TYPE.meta, 'font-bold')}
+										>
+											…
+										</span>
+									) : null}
+								</span>
+							)}
+							<span
+								data-flow-text
+								className={cn(
+									'block',
+									node.code
+										? cn(TYPE.metaMono, 'whitespace-pre-line')
+										: cn(TYPE.meta, 'font-bold text-pretty'),
+								)}
+							>
+								{node.text}
+							</span>
+						</div>
+					))}
+				</div>
+			</Centred>
 			<ul className="sr-only">
 				{/* An arrow into a blank step (one Matt had yet to fill in) says
 				    nothing a listener can use. */}

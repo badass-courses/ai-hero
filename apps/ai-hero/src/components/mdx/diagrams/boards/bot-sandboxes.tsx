@@ -3,6 +3,7 @@ import { Bot, Laptop, User } from 'lucide-react'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+import { Centred } from '../centred'
 import { LINE_INK } from './hues'
 import { ServerSlab } from './icons'
 
@@ -35,68 +36,70 @@ export function BotSandboxes({ frame }: { frame: BotSandboxesFrame }) {
 	const columns = Array.from({ length: frame.columns }, (_, i) => i)
 	return (
 		<figure className="not-prose @container my-8">
-			<div className="space-y-12 @2xl:space-y-16 @2xl:pl-[6%]">
-				<div
-					data-node="laptop"
-					role="img"
-					aria-label={
-						frame.people
-							? 'One person on one laptop, running eight bots'
-							: 'One laptop running eight bots'
-					}
-					className="flex items-center gap-2 @2xl:gap-3"
-				>
-					{frame.people ? (
-						<>
-							<User aria-hidden className={ICON} />
-							<Arrow edge="person-laptop" />
-						</>
-					) : null}
-					<Laptop aria-hidden className={ICON} />
-					<Equals />
-					<span className="grid grid-cols-4 gap-1 @2xl:gap-2">
-						{Array.from({ length: 8 }, (_, i) => (
-							<Bot key={i} aria-hidden className={ICON} />
-						))}
-					</span>
-				</div>
-				<div className="flex items-center gap-2 @2xl:gap-3">
-					{frame.people ? (
-						<>
-							<span
-								data-node="team"
-								role="img"
-								aria-label="A team of six people"
-								className="grid shrink-0 grid-cols-2 gap-x-1 gap-y-3 @2xl:gap-x-3 @2xl:gap-y-5"
-							>
-								{Array.from({ length: 6 }, (_, i) => (
-									<User key={i} aria-hidden className={ICON} />
-								))}
-							</span>
-							<FanOut />
-						</>
-					) : null}
-					<ul
-						aria-label="One bot per server"
-						className="grid gap-x-5 gap-y-3 @2xl:gap-x-10 @2xl:gap-y-5"
-						style={{ gridTemplateColumns: `repeat(${frame.columns}, auto)` }}
+			<Centred>
+				<div className="space-y-12 @2xl:space-y-16">
+					<div
+						data-node="laptop"
+						role="img"
+						aria-label={
+							frame.people
+								? 'One person on one laptop, running eight bots'
+								: 'One laptop running eight bots'
+						}
+						className="flex items-center gap-2 @2xl:gap-3"
 					>
-						{rows.flatMap((row) =>
-							columns.map((column) => (
-								<li
-									key={`${row}-${column}`}
-									data-node={`server-${row + 1}-${column + 1}`}
-									className="flex h-5 items-center @2xl:h-8"
+						{frame.people ? (
+							<>
+								<User aria-hidden className={ICON} />
+								<Arrow edge="person-laptop" />
+							</>
+						) : null}
+						<Laptop aria-hidden className={ICON} />
+						<Equals />
+						<span className="grid grid-cols-4 gap-1 @2xl:gap-2">
+							{Array.from({ length: 8 }, (_, i) => (
+								<Bot key={i} aria-hidden className={ICON} />
+							))}
+						</span>
+					</div>
+					<div className="flex items-center gap-2 @2xl:gap-3">
+						{frame.people ? (
+							<>
+								<span
+									data-node="team"
+									role="img"
+									aria-label="A team of six people"
+									className="grid shrink-0 grid-cols-2 gap-x-1 gap-y-3 @2xl:gap-x-3 @2xl:gap-y-5"
 								>
-									<ServerSlab className={ICON} />
-									<Equals />
-									<Bot aria-label="Bot" className={ICON} />
-								</li>
-							)),
-						)}
-					</ul>
+									{Array.from({ length: 6 }, (_, i) => (
+										<User key={i} aria-hidden className={ICON} />
+									))}
+								</span>
+								<FanOut />
+							</>
+						) : null}
+						<ul
+							aria-label="One bot per server"
+							className="grid gap-x-5 gap-y-3 @2xl:gap-x-10 @2xl:gap-y-5"
+							style={{ gridTemplateColumns: `repeat(${frame.columns}, auto)` }}
+						>
+							{rows.flatMap((row) =>
+								columns.map((column) => (
+									<li
+										key={`${row}-${column}`}
+										data-node={`server-${row + 1}-${column + 1}`}
+										className="flex h-5 items-center @2xl:h-8"
+									>
+										<ServerSlab className={ICON} />
+										<Equals />
+										<Bot aria-label="Bot" className={ICON} />
+									</li>
+								)),
+							)}
+						</ul>
+					</div>
 				</div>
-			</div>
+			</Centred>
 		</figure>
 	)
 }

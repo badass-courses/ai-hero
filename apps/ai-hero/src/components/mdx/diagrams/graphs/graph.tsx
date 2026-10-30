@@ -5,6 +5,7 @@ import { TYPE } from '@/components/landing/type'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+import { Centred } from '../centred'
 import { GRAPH_INK } from './ink'
 
 export type GraphSide = 'top' | 'right' | 'bottom' | 'left'
@@ -198,79 +199,81 @@ export function Graph({ diagram }: { diagram: GraphDiagram }) {
 					{diagram.title}
 				</figcaption>
 			) : null}
-			<div
-				ref={gridRef}
-				// `--graph-layout` tells the arrows which placement the grid is in.
-				className={cn(
-					'relative mx-auto grid grid-cols-12 gap-x-3 gap-y-10 [--graph-layout:narrow] @2xl:gap-x-4 @2xl:gap-y-12 @2xl:[--graph-layout:wide]',
-					diagram.className,
-				)}
-			>
-				{/* Over the nodes, so a pointer can reach inside a module. */}
-				<svg
-					aria-hidden
-					className="pointer-events-none absolute inset-0 z-10 size-full overflow-visible"
+			<Centred>
+				<div
+					ref={gridRef}
+					// `--graph-layout` tells the arrows which placement the grid is in.
+					className={cn(
+						'relative mx-auto grid grid-cols-12 gap-x-3 gap-y-10 [--graph-layout:narrow] @2xl:gap-x-4 @2xl:gap-y-12 @2xl:[--graph-layout:wide]',
+						diagram.className,
+					)}
 				>
-					<defs>
-						{(['line', 'note'] as const).map((ink) => (
-							<marker
-								key={ink}
-								id={`${markerId}-${ink}`}
-								viewBox="0 0 10 10"
-								refX="9"
-								refY="5"
-								markerWidth="9"
-								markerHeight="9"
-								markerUnits="userSpaceOnUse"
-								orient="auto"
-							>
-								<path d="M1 0.5 L9 5 L1 9.5 Z" fill={GRAPH_INK[ink]} />
-							</marker>
-						))}
-					</defs>
-					{drawn.seams.map((seam) => (
-						<path
-							key={seam.id}
-							data-seam={seam.id}
-							d={seam.d}
-							fill="none"
-							stroke={GRAPH_INK.seam}
-							strokeWidth="2"
-							strokeDasharray="7 6"
-							strokeLinecap="round"
-						/>
-					))}
-					{drawn.edges.map(({ edge, d }) => {
-						const ink = edge.ink ?? 'line'
-						return (
-							<path
-								key={edgeKey(edge)}
-								data-edge={edgeKey(edge)}
-								d={d}
-								fill="none"
-								stroke={GRAPH_INK[ink]}
-								strokeWidth={ink === 'note' ? 2 : 1.5}
-								strokeDasharray={edge.dashed ? '6 5' : undefined}
-								strokeLinecap={edge.dashed ? 'butt' : 'round'}
-								markerEnd={
-									edge.headless ? undefined : `url(#${markerId}-${ink})`
-								}
-							/>
-						)
-					})}
-				</svg>
-				{diagram.nodes.map((node) => (
-					<div
-						key={node.id}
-						data-node={node.id}
-						data-dim={node.dim || undefined}
-						className="relative [grid-column:var(--n-col)/span_var(--n-span)] [grid-row:var(--n-row)/span_var(--n-rows)] flex [align-self:var(--n-align)] [justify-self:var(--n-justify)] transition-opacity data-dim:opacity-35 @2xl:[grid-column:var(--w-col)/span_var(--w-span)] @2xl:[grid-row:var(--w-row)/span_var(--w-rows)] @2xl:[align-self:var(--w-align)] @2xl:[justify-self:var(--w-justify)]"
-						style={placement(node)}
+					{/* Over the nodes, so a pointer can reach inside a module. */}
+					<svg
+						aria-hidden
+						className="pointer-events-none absolute inset-0 z-10 size-full overflow-visible"
 					>
-						{node.content}
-					</div>
-				))}
-			</div>
+						<defs>
+							{(['line', 'note'] as const).map((ink) => (
+								<marker
+									key={ink}
+									id={`${markerId}-${ink}`}
+									viewBox="0 0 10 10"
+									refX="9"
+									refY="5"
+									markerWidth="9"
+									markerHeight="9"
+									markerUnits="userSpaceOnUse"
+									orient="auto"
+								>
+									<path d="M1 0.5 L9 5 L1 9.5 Z" fill={GRAPH_INK[ink]} />
+								</marker>
+							))}
+						</defs>
+						{drawn.seams.map((seam) => (
+							<path
+								key={seam.id}
+								data-seam={seam.id}
+								d={seam.d}
+								fill="none"
+								stroke={GRAPH_INK.seam}
+								strokeWidth="2"
+								strokeDasharray="7 6"
+								strokeLinecap="round"
+							/>
+						))}
+						{drawn.edges.map(({ edge, d }) => {
+							const ink = edge.ink ?? 'line'
+							return (
+								<path
+									key={edgeKey(edge)}
+									data-edge={edgeKey(edge)}
+									d={d}
+									fill="none"
+									stroke={GRAPH_INK[ink]}
+									strokeWidth={ink === 'note' ? 2 : 1.5}
+									strokeDasharray={edge.dashed ? '6 5' : undefined}
+									strokeLinecap={edge.dashed ? 'butt' : 'round'}
+									markerEnd={
+										edge.headless ? undefined : `url(#${markerId}-${ink})`
+									}
+								/>
+							)
+						})}
+					</svg>
+					{diagram.nodes.map((node) => (
+						<div
+							key={node.id}
+							data-node={node.id}
+							data-dim={node.dim || undefined}
+							className="relative [grid-column:var(--n-col)/span_var(--n-span)] [grid-row:var(--n-row)/span_var(--n-rows)] flex [align-self:var(--n-align)] [justify-self:var(--n-justify)] transition-opacity data-dim:opacity-35 @2xl:[grid-column:var(--w-col)/span_var(--w-span)] @2xl:[grid-row:var(--w-row)/span_var(--w-rows)] @2xl:[align-self:var(--w-align)] @2xl:[justify-self:var(--w-justify)]"
+							style={placement(node)}
+						>
+							{node.content}
+						</div>
+					))}
+				</div>
+			</Centred>
 			{told.length > 0 ? (
 				<ul className="sr-only">
 					{told.map((edge) => (

@@ -3,6 +3,7 @@ import { Box, Eye, ListTodo, Network } from 'lucide-react'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+import { Centred } from '../centred'
 import { hueStyle, LINE_INK, type BoardHue } from './hues'
 import { GitPullRequestArrow } from './icons'
 
@@ -72,111 +73,116 @@ export function InfraBoard({ frame }: { frame: InfraFrame }) {
 	const board = frame.arrows || frame.picks
 	return (
 		<figure className="not-prose @container my-8">
-			<div
-				className={cn(
-					'grid gap-y-8 @2xl:gap-y-10',
-					board
-						? '@2xl:grid-cols-[minmax(0,1.1fr)_auto_minmax(0,0.9fr)] @2xl:gap-x-10'
-						: 'mx-auto w-fit max-w-md',
-				)}
-			>
-				{parts.map((part) => {
-					const pick = frame.picks?.[part.id]
-					const priority = frame.priorities ? PRIORITIES[part.id] : undefined
-					const alternatives =
-						frame.alternatives?.part === part.id
-							? frame.alternatives.lines
-							: null
-					return (
-						<div
-							key={part.id}
-							className="grid grid-cols-[1.75rem_minmax(0,1fr)] gap-x-2.5 @2xl:col-span-3 @2xl:grid-cols-subgrid @2xl:gap-x-10"
-						>
+			<Centred>
+				<div
+					className={cn(
+						'grid gap-y-8 @2xl:gap-y-10',
+						board
+							? '@2xl:grid-cols-[minmax(0,1.1fr)_auto_minmax(0,0.9fr)] @2xl:gap-x-10'
+							: 'mx-auto w-fit max-w-md',
+					)}
+				>
+					{parts.map((part) => {
+						const pick = frame.picks?.[part.id]
+						const priority = frame.priorities ? PRIORITIES[part.id] : undefined
+						const alternatives =
+							frame.alternatives?.part === part.id
+								? frame.alternatives.lines
+								: null
+						return (
 							<div
-								data-node={part.id}
-								className="col-span-2 grid grid-cols-subgrid @2xl:col-span-1 @2xl:grid-cols-[1.75rem_minmax(0,1fr)] @2xl:gap-x-2.5"
+								key={part.id}
+								className="grid grid-cols-[1.75rem_minmax(0,1fr)] gap-x-2.5 @2xl:col-span-3 @2xl:grid-cols-subgrid @2xl:gap-x-10"
 							>
-								<part.Icon
-									aria-hidden
-									className="text-foreground mt-0.5 size-6"
-								/>
-								<div>
-									<p className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-										<span className={TYPE.subhead}>{part.name}</span>
-										{priority ? (
-											<span
-												className={cn(
-													TYPE.badge,
-													BADGE_OUTLINE,
-													'border-2 border-(--edge) text-(--ink)',
-												)}
-												style={hueStyle(priority.hue)}
-											>
-												{priority.label}
-											</span>
-										) : null}
-									</p>
-									<p
-										className={cn(
-											TYPE.metaProse,
-											'text-muted-foreground mt-1 text-pretty',
-										)}
-									>
-										{part.about}
-									</p>
-								</div>
-							</div>
-							{board ? (
-								<div className="col-start-2 mt-3 flex items-start gap-3 @2xl:contents">
-									<Arrow
-										edge={`${part.id}-${part.id}-pick`}
-										className="mt-2 shrink-0 @2xl:mt-[0.9rem]"
+								<div
+									data-node={part.id}
+									className="col-span-2 grid grid-cols-subgrid @2xl:col-span-1 @2xl:grid-cols-[1.75rem_minmax(0,1fr)] @2xl:gap-x-2.5"
+								>
+									<part.Icon
+										aria-hidden
+										className="text-foreground mt-0.5 size-6"
 									/>
-									<div
-										data-node={`${part.id}-pick`}
-										className="min-w-0 @2xl:mt-1.5"
-									>
-										{pick ? (
-											<>
-												<p className={cn(TYPE.subhead, 'text-pretty')}>
-													<span className="sr-only">{part.name}: </span>
-													{pick.name}
-												</p>
-												{pick.note ? (
-													<p
-														className={cn(
-															TYPE.metaProse,
-															'text-muted-foreground mt-1 text-pretty',
-														)}
-													>
-														{pick.note}
-													</p>
-												) : null}
-											</>
-										) : null}
-										{alternatives ? (
-											<ul aria-label="Alternatives" className="mt-6 space-y-3">
-												{alternatives.map((line) => (
-													<li
-														key={line.join()}
-														className="flex flex-wrap gap-x-6 gap-y-3"
-													>
-														{line.map((name) => (
-															<span key={name} className={TYPE.cardTitle}>
-																{name}
-															</span>
-														))}
-													</li>
-												))}
-											</ul>
-										) : null}
+									<div>
+										<p className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+											<span className={TYPE.subhead}>{part.name}</span>
+											{priority ? (
+												<span
+													className={cn(
+														TYPE.badge,
+														BADGE_OUTLINE,
+														'border-2 border-(--edge) text-(--ink)',
+													)}
+													style={hueStyle(priority.hue)}
+												>
+													{priority.label}
+												</span>
+											) : null}
+										</p>
+										<p
+											className={cn(
+												TYPE.metaProse,
+												'text-muted-foreground mt-1 text-pretty',
+											)}
+										>
+											{part.about}
+										</p>
 									</div>
 								</div>
-							) : null}
-						</div>
-					)
-				})}
-			</div>
+								{board ? (
+									<div className="col-start-2 mt-3 flex items-start gap-3 @2xl:contents">
+										<Arrow
+											edge={`${part.id}-${part.id}-pick`}
+											className="mt-2 shrink-0 @2xl:mt-[0.9rem]"
+										/>
+										<div
+											data-node={`${part.id}-pick`}
+											className="min-w-0 @2xl:mt-1.5"
+										>
+											{pick ? (
+												<>
+													<p className={cn(TYPE.subhead, 'text-pretty')}>
+														<span className="sr-only">{part.name}: </span>
+														{pick.name}
+													</p>
+													{pick.note ? (
+														<p
+															className={cn(
+																TYPE.metaProse,
+																'text-muted-foreground mt-1 text-pretty',
+															)}
+														>
+															{pick.note}
+														</p>
+													) : null}
+												</>
+											) : null}
+											{alternatives ? (
+												<ul
+													aria-label="Alternatives"
+													className="mt-6 space-y-3"
+												>
+													{alternatives.map((line) => (
+														<li
+															key={line.join()}
+															className="flex flex-wrap gap-x-6 gap-y-3"
+														>
+															{line.map((name) => (
+																<span key={name} className={TYPE.cardTitle}>
+																	{name}
+																</span>
+															))}
+														</li>
+													))}
+												</ul>
+											) : null}
+										</div>
+									</div>
+								) : null}
+							</div>
+						)
+					})}
+				</div>
+			</Centred>
 		</figure>
 	)
 }

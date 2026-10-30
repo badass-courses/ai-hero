@@ -5,6 +5,7 @@ import { TYPE } from '@/components/landing/type'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+import { Centred } from '../centred'
 import { FLOW_ROLES } from '../roles'
 
 type Kind = 'start' | 'question' | 'outcome'
@@ -95,75 +96,81 @@ export function WayfinderDecisionTree() {
 
 	return (
 		<figure className="not-prose @container my-8">
-			<svg aria-hidden className="absolute size-0">
-				<defs>
-					<marker
-						id={markerId}
-						viewBox="0 0 8 9"
-						refX="8"
-						refY="4.5"
-						markerWidth="8"
-						markerHeight="9"
-						markerUnits="userSpaceOnUse"
-						orient="auto"
-					>
-						<path
-							d="M8 4.5 L0 0 L0 9 Z"
-							fill="color-mix(in oklab, var(--foreground) 58%, var(--background))"
-						/>
-					</marker>
-				</defs>
-			</svg>
-			{/* Matt's tree is narrow beside his page; at full width the "Yes"
+			<Centred>
+				<svg aria-hidden className="absolute size-0">
+					<defs>
+						<marker
+							id={markerId}
+							viewBox="0 0 8 9"
+							refX="8"
+							refY="4.5"
+							markerWidth="8"
+							markerHeight="9"
+							markerUnits="userSpaceOnUse"
+							orient="auto"
+						>
+							<path
+								d="M8 4.5 L0 0 L0 9 Z"
+								fill="color-mix(in oklab, var(--foreground) 58%, var(--background))"
+							/>
+						</marker>
+					</defs>
+				</svg>
+				{/* Matt's tree is narrow beside his page; at full width the "Yes"
 			    arrows would outrun the steps they join. */}
-			<ol className="@2xl:max-w-[40rem]">
-				{CHOICES.map((choice, index) => {
-					const next = CHOICES[index + 1]
-					return (
-						<li key={choice.id} className={cn('relative', next && 'pb-10')}>
-							{next ? (
-								<Connector
-									edge={`${choice.id}-${next.id}`}
-									marker={markerId}
-									className="top-8 bottom-1"
-								/>
-							) : null}
-							<Step choice={choice} />
-							{choice.yes ? (
-								<>
-									<Branch to={choice.yes} from={choice.id} marker={markerId} />
-									<span
-										className={cn(
-											TYPE.meta,
-											'bg-background relative mt-4 block w-6 py-1 text-center font-bold',
-										)}
-									>
-										No
-									</span>
-								</>
-							) : null}
-						</li>
-					)
-				})}
-			</ol>
-			<ul className="sr-only">
-				{CHOICES.flatMap((choice, index) => {
-					const next = CHOICES[index + 1]
-					return [
-						choice.yes ? (
-							<li key={`${choice.id}-yes`}>
-								{choice.title} Yes: {choice.yes.title}
+				<ol className="@2xl:max-w-[40rem]">
+					{CHOICES.map((choice, index) => {
+						const next = CHOICES[index + 1]
+						return (
+							<li key={choice.id} className={cn('relative', next && 'pb-10')}>
+								{next ? (
+									<Connector
+										edge={`${choice.id}-${next.id}`}
+										marker={markerId}
+										className="top-8 bottom-1"
+									/>
+								) : null}
+								<Step choice={choice} />
+								{choice.yes ? (
+									<>
+										<Branch
+											to={choice.yes}
+											from={choice.id}
+											marker={markerId}
+										/>
+										<span
+											className={cn(
+												TYPE.meta,
+												'bg-background relative mt-4 block w-6 py-1 text-center font-bold',
+											)}
+										>
+											No
+										</span>
+									</>
+								) : null}
 							</li>
-						) : null,
-						next ? (
-							<li key={`${choice.id}-next`}>
-								{choice.title} {choice.yes ? 'No: ' : 'leads to '}
-								{next.title}
-							</li>
-						) : null,
-					]
-				})}
-			</ul>
+						)
+					})}
+				</ol>
+				<ul className="sr-only">
+					{CHOICES.flatMap((choice, index) => {
+						const next = CHOICES[index + 1]
+						return [
+							choice.yes ? (
+								<li key={`${choice.id}-yes`}>
+									{choice.title} Yes: {choice.yes.title}
+								</li>
+							) : null,
+							next ? (
+								<li key={`${choice.id}-next`}>
+									{choice.title} {choice.yes ? 'No: ' : 'leads to '}
+									{next.title}
+								</li>
+							) : null,
+						]
+					})}
+				</ul>
+			</Centred>
 		</figure>
 	)
 }
