@@ -310,7 +310,7 @@ function digitsFor(total: number, withDays: boolean): number[] {
 }
 
 /** The GIF for `total` seconds left. Zero or less renders the ended state. */
-export function renderCountdownGif(total: number): Uint8Array<ArrayBuffer> {
+export function renderCountdownGif(total: number) {
 	const seconds = frameSeconds(total)
 	const withDays = showsDays(seconds[0]!)
 	const { digits } = glyphs()
