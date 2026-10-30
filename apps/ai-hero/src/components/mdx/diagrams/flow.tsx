@@ -208,14 +208,15 @@ export function Flow({
 							<marker
 								id={markerId}
 								viewBox="0 0 8 9"
-								refX="8"
+								// The line stops where the head starts (see `HEAD`).
+								refX="0"
 								refY="4.5"
-								markerWidth="8"
+								markerWidth={HEAD}
 								markerHeight="9"
 								markerUnits="userSpaceOnUse"
 								orient="auto"
 							>
-								<path d="M8 4.5 L0 0 L0 9 Z" fill="currentColor" />
+								<path d="M0 0 L8 4.5 L0 9 Z" fill="currentColor" />
 							</marker>
 						</defs>
 						{paths.map((path) => (
@@ -331,6 +332,9 @@ type Step = { node: Box; badges: Box }
     an arrowhead's tip and the step it points at. */
 const CLEARANCE = 5
 const TIP_GAP = 4
+/** The arrowhead's length. The line stops this far before the tip: run
+    under the head, it shows past the head's narrow point. */
+const HEAD = 8
 
 /** Where an arrow touches a step. An arrow leaving by the bottom sits right of
     one arriving there, so a step that is both a target and a source keeps the
@@ -382,5 +386,13 @@ function route(
 ) {
 	const a = anchor(from, edge.exit, 'exit', edge.exitBesideText)
 	const b = anchor(to, edge.enter, 'enter')
-	return routeArrow(a, NORMAL[edge.exit], b, NORMAL[edge.enter], labels, bounds)
+	return routeArrow(
+		a,
+		NORMAL[edge.exit],
+		b,
+		NORMAL[edge.enter],
+		labels,
+		bounds,
+		HEAD,
+	)
 }

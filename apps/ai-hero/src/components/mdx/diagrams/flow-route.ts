@@ -18,10 +18,11 @@ const CELL = 6
 const TURN = 4
 /** The straight run an arrow keeps off each side before it may turn. */
 const LEAD = 18
-/** The straight run every arrow ends in. The head is drawn square to the
-    path's last direction, so this run is longer than the head: a curve
-    still turning under the head shows beside it. */
-const TAIL = 10
+/** The straight run every arrow ends in. The line stops a head's length
+    short of the tip and the head, drawn square to the line's last
+    direction, fills the rest; this run keeps the line straight for a
+    while before it, so the head never sits askew on a turning curve. */
+const TAIL = 18
 /** Corner radius of a detour. Rounding a corner cuts in by under a third
     of this, which the clearance and half a cell absorb. */
 const RADIUS = 20
@@ -38,9 +39,10 @@ const BOWS = [
 ] as const
 
 /**
- * The arrow from `a` to `b`, leaving along the unit normal `na` and arriving
- * against `nb`. `labels` are the boxes it must not cross; `bounds` is the
- * area it may use.
+ * The line of an arrow from `a` to its tip at `b`, leaving along the unit
+ * normal `na` and arriving against `nb`. `labels` are the boxes it must not
+ * cross; `bounds` is the area it may use. The line stops `head` short of
+ * `b`, so the arrowhead drawn from its end covers no stroke.
  */
 export function routeArrow(
 	a: Point,
@@ -49,9 +51,23 @@ export function routeArrow(
 	nb: Point,
 	labels: readonly Box[],
 	bounds: Box,
+	head = 0,
+): string {
+	const d = plan(a, na, b, nb, labels, bounds)
+	const tip = `L${b.x},${b.y}`
+	return `${d.slice(0, -tip.length)}L${b.x + nb.x * head},${b.y + nb.y * head}`
+}
+
+function plan(
+	a: Point,
+	na: Point,
+	b: Point,
+	nb: Point,
+	labels: readonly Box[],
+	bounds: Box,
 ): string {
 	// The curve ends where the tail starts; the tail runs straight to `b`.
-	const end = { x: b.x + nb.x * TAIL, y: b.y + nb.y * TAIL }
+	const end = clamp({ x: b.x + nb.x * TAIL, y: b.y + nb.y * TAIL }, bounds)
 	const distance = Math.hypot(end.x - a.x, end.y - a.y)
 	const reach = Math.min(72, Math.max(20, distance * 0.4))
 	// Control points inside the bounds keep the whole curve inside them (a
@@ -186,7 +202,11 @@ function search(
 		y: bounds.top + (r + 0.5) * CELL,
 	})
 	const start = cellOf({ x: a.x + na.x * LEAD, y: a.y + na.y * LEAD })
-	const goal = cellOf({ x: b.x + nb.x * LEAD, y: b.y + nb.y * LEAD })
+	// The detour's last corner stays a cell clear of the straight tail.
+	const goal = cellOf({
+		x: b.x + nb.x * (TAIL + CELL),
+		y: b.y + nb.y * (TAIL + CELL),
+	})
 	blocked[start.r * cols + start.c] = 0
 	blocked[goal.r * cols + goal.c] = 0
 
@@ -256,7 +276,22 @@ function search(
 	cells.reverse()
 	const leave = squareTo(a, na, cells[0]!)
 	const enter = squareTo(b, nb, cells[cells.length - 1]!)
-	return corners([a, leave, ...cells, enter, b])
+	const points = corners([a, leave, ...cells, enter, b])
+	// Keep the last corner a cell past the tail: the cross run before it moves
+	// out along `nb`, and the runs either side of it, which lie along `nb`,
+	// stretch to meet it.
+	const n = points.length
+	if (n >= 4) {
+		const corner = points[n - 2]!
+		const along = (corner.x - b.x) * nb.x + (corner.y - b.y) * nb.y
+		const short = TAIL + CELL - along
+		if (short > 0)
+			for (const p of [points[n - 3]!, corner]) {
+				p.x += nb.x * short
+				p.y += nb.y * short
+			}
+	}
+	return points
 }
 
 /** Lines up the run of cells that starts `cells` with the line out of `p`

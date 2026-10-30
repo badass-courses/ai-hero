@@ -89,4 +89,23 @@ describe('routeArrow', () => {
 			expect(y1! - y0!).toBeGreaterThanOrEqual(10)
 		}
 	})
+
+	it('stops the line a head short of the tip, still running straight', () => {
+		const d = routeArrow(
+			{ x: 100, y: 50 },
+			DOWN,
+			{ x: 100, y: 300 },
+			UP,
+			[],
+			BOUNDS,
+			8,
+		)
+		const [x0, y0, x1, y1] = d
+			.match(/-?[\d.]+/g)!
+			.slice(-4)
+			.map(Number)
+		expect([x1, y1]).toEqual([100, 292])
+		expect(x0).toBe(x1)
+		expect(y1! - y0!).toBeGreaterThanOrEqual(10)
+	})
 })
