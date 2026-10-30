@@ -17,7 +17,11 @@ const CELL = 6
 /** A turn costs as much as this many cells, so detours stay simple. */
 const TURN = 4
 /** The straight run an arrow keeps off each side before it may turn. */
-const LEAD = 14
+const LEAD = 18
+/** The straight run every arrow ends in. The head is drawn square to the
+    path's last direction, so this run is longer than the head: a curve
+    still turning under the head shows beside it. */
+const TAIL = 10
 /** Corner radius of a detour. Rounding a corner cuts in by under a third
     of this, which the clearance and half a cell absorb. */
 const RADIUS = 20
@@ -46,7 +50,9 @@ export function routeArrow(
 	labels: readonly Box[],
 	bounds: Box,
 ): string {
-	const distance = Math.hypot(b.x - a.x, b.y - a.y)
+	// The curve ends where the tail starts; the tail runs straight to `b`.
+	const end = { x: b.x + nb.x * TAIL, y: b.y + nb.y * TAIL }
+	const distance = Math.hypot(end.x - a.x, end.y - a.y)
 	const reach = Math.min(72, Math.max(20, distance * 0.4))
 	// Control points inside the bounds keep the whole curve inside them (a
 	// cubic stays within the hull of its four points).
@@ -56,23 +62,39 @@ export function routeArrow(
 			bounds,
 		)
 		const c2 = clamp(
-			{ x: b.x + nb.x * reach * s2, y: b.y + nb.y * reach * s2 },
+			{ x: end.x + nb.x * reach * s2, y: end.y + nb.y * reach * s2 },
 			bounds,
 		)
-		return [a, c1, c2, b] as const
+		return [a, c1, c2, end] as const
 	})
 	const clear = curves.find((curve) => !cubicHits(curve, labels))
-	if (clear) return cubic(clear)
+	if (clear) return cubic(clear, b)
 
+	// A roomy detour reads better, unless squeezing through a narrow gap
+	// saves going a long way round.
 	const roomy = search(a, na, b, nb, labels, bounds, CLEARANCE)
-	if (roomy) return rounded(roomy, RADIUS)
 	const tight = search(a, na, b, nb, labels, bounds, TIGHT)
+	if (roomy && (!tight || length(roomy) < length(tight) * 1.6))
+		return rounded(roomy, RADIUS)
 	if (tight) return rounded(tight, TIGHT * 2)
-	return cubic(curves[0]!)
+	return cubic(curves[0]!, b)
 }
 
-function cubic([a, c1, c2, b]: readonly [Point, Point, Point, Point]) {
-	return `M${a.x},${a.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${b.x},${b.y}`
+function cubic(
+	[a, c1, c2, end]: readonly [Point, Point, Point, Point],
+	b: Point,
+) {
+	return `M${a.x},${a.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${end.x},${end.y} L${b.x},${b.y}`
+}
+
+function length(points: readonly Point[]) {
+	let total = 0
+	for (let i = 1; i < points.length; i++)
+		total += Math.hypot(
+			points[i]!.x - points[i - 1]!.x,
+			points[i]!.y - points[i - 1]!.y,
+		)
+	return total
 }
 
 function clamp(p: Point, bounds: Box): Point {
@@ -226,11 +248,27 @@ function search(
 		cells.push(centre(cell % cols, (cell - (cell % cols)) / cols))
 	}
 	cells.reverse()
-	// Square the ends onto the anchors' lines, so the arrow leaves and
-	// arrives straight.
+	// Move the first and last runs onto the anchors' lines (under half a cell
+	// away), so the arrow leaves and arrives straight, without a jog.
+	snapRun(cells, a, na)
+	cells.reverse()
+	snapRun(cells, b, nb)
+	cells.reverse()
 	const leave = squareTo(a, na, cells[0]!)
 	const enter = squareTo(b, nb, cells[cells.length - 1]!)
 	return corners([a, leave, ...cells, enter, b])
+}
+
+/** Lines up the run of cells that starts `cells` with the line out of `p`
+    along `n`. */
+function snapRun(cells: Point[], p: Point, n: Point) {
+	const horizontal = n.x !== 0
+	const line = horizontal ? cells[0]!.y : cells[0]!.x
+	for (const cell of cells) {
+		if ((horizontal ? cell.y : cell.x) !== line) break
+		if (horizontal) cell.y = p.y
+		else cell.x = p.x
+	}
 }
 
 /** The point on the line out of `p` along `n` level with `q`. */
@@ -270,7 +308,12 @@ function rounded(points: Point[], radius: number): string {
 		const next = points[i + 1]!
 		const inLen = Math.hypot(p.x - prev.x, p.y - prev.y)
 		const outLen = Math.hypot(next.x - p.x, next.y - p.y)
-		const r = Math.min(radius, inLen / 2, outLen / 2)
+		// The last corner leaves the tail straight.
+		const last = i === points.length - 2
+		const r = Math.max(
+			0,
+			Math.min(radius, inLen / 2, last ? outLen - TAIL : outLen / 2),
+		)
 		const from = {
 			x: p.x - ((p.x - prev.x) / inLen) * r,
 			y: p.y - ((p.y - prev.y) / inLen) * r,

@@ -69,4 +69,24 @@ describe('routeArrow', () => {
 		)
 		for (const p of sample(d)) expect(p.x).toBeGreaterThanOrEqual(0)
 	})
+
+	it('ends every arrow in a straight run longer than its head', () => {
+		const label: Box = { left: 60, top: 150, right: 240, bottom: 180 }
+		for (const labels of [[], [label]]) {
+			const d = routeArrow(
+				{ x: 100, y: 50 },
+				DOWN,
+				{ x: 100, y: 300 },
+				UP,
+				labels,
+				BOUNDS,
+			)
+			const [x0, y0, x1, y1] = d
+				.match(/-?[\d.]+/g)!
+				.slice(-4)
+				.map(Number)
+			expect(x0).toBe(x1)
+			expect(y1! - y0!).toBeGreaterThanOrEqual(10)
+		}
+	})
 })

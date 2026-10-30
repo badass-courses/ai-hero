@@ -324,8 +324,10 @@ function placement({ wide, narrow = wide }: FlowNode) {
 
 type Step = { node: Box; badges: Box }
 
-/** The gap left between an arrow and the step it touches. */
+/** The gap an arrow leaves where it starts, and the smaller one between
+    an arrowhead's tip and the step it points at. */
 const CLEARANCE = 5
+const TIP_GAP = 2
 
 /** Where an arrow touches a step. An arrow leaving by the bottom sits right of
     one arriving there, so a step that is both a target and a source keeps the
@@ -336,6 +338,7 @@ function anchor(
 	role: 'exit' | 'enter',
 	besideText = false,
 ): Point {
+	const gap = role === 'enter' ? TIP_GAP : CLEARANCE
 	const midY = besideText
 		? (badges.bottom + node.bottom) / 2
 		: (badges.top + badges.bottom) / 2
@@ -343,17 +346,17 @@ function anchor(
 		case 'top':
 			return {
 				x: Math.min(badges.left + 24, badges.right),
-				y: badges.top - CLEARANCE,
+				y: badges.top - gap,
 			}
 		case 'bottom':
 			return {
 				x: badges.left + (role === 'exit' ? 30 : 8),
-				y: node.bottom + CLEARANCE,
+				y: node.bottom + gap,
 			}
 		case 'left':
-			return { x: badges.left - CLEARANCE, y: midY }
+			return { x: badges.left - gap, y: midY }
 		case 'right':
-			return { x: badges.right + CLEARANCE, y: midY }
+			return { x: badges.right + gap, y: midY }
 	}
 }
 
