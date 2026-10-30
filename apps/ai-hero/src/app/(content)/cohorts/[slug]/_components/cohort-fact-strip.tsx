@@ -1,4 +1,6 @@
 import * as React from 'react'
+import Link from 'next/link'
+import { ArrowRight, ArrowUpRight } from 'lucide-react'
 import { TYPE } from '@/components/landing/type'
 import type { Cohort } from '@/lib/cohort'
 import { differenceInCalendarDays } from 'date-fns'
@@ -24,11 +26,16 @@ const COLUMNS: Record<number, string> = {
 	4: 'sm:grid-cols-[repeat(4,minmax(0,1fr))]',
 }
 
-type Fact = {
-	label: string
-	value: string
+export type Fact = {
+	label: React.ReactNode
+	value: React.ReactNode
 	/** Counts and numerals are mono; prose values are not. */
 	mono?: boolean
+	/** A cell that leads somewhere is the whole cell, not a link inside it. */
+	href?: string
+	external?: boolean
+	/** Asks the viewer to do something, so the value reads as the action. */
+	action?: boolean
 }
 
 /**
@@ -84,7 +91,7 @@ export const CohortFactStrip: React.FC<{
 	const tz = timezone || 'America/Los_Angeles'
 	const duration = formatDuration(startsAt, endsAt, tz)
 
-	const facts: Fact[] = [
+	const candidates: (Fact | null)[] = [
 		duration ? { label: 'Format', value: duration } : null,
 		startsAt
 			? {
@@ -96,8 +103,20 @@ export const CohortFactStrip: React.FC<{
 		alumniLabel
 			? { label: 'Trained', value: alumniLabel, mono: true }
 			: null,
-	].filter((fact): fact is Fact => fact !== null)
+	]
+	const facts = candidates.filter((fact): fact is Fact => fact !== null)
 
+	return <FactGrid facts={facts} className={className} />
+}
+
+/** The strip's grid. Shared by the sales facts and the buyer's own. */
+export function FactGrid({
+	facts,
+	className,
+}: {
+	facts: Fact[]
+	className?: string
+}) {
 	if (facts.length === 0) return null
 
 	return (
@@ -108,29 +127,78 @@ export const CohortFactStrip: React.FC<{
 				className,
 			)}
 		>
-			{facts.map((fact) => (
-				<div
-					key={fact.label}
-					// From `sm`, `flex-col-reverse`: a `<dl>` wants `<dt>` before `<dd>`
-					// in the DOM, and `TYPE.statLabel` is a caption that sits BELOW the
-					// value it names. Reversing the visual order satisfies both. The
-					// phone's row reads in DOM order, so it needs no reversal.
-					className="bg-background flex items-baseline justify-between gap-4 px-4 py-3 text-left sm:flex-col-reverse sm:items-stretch sm:justify-start sm:gap-0 sm:py-3.5"
-				>
-					<dt className={cn(TYPE.statLabel, 'mt-0 sm:mt-1.5')}>
-						{fact.label}
-					</dt>
-					<dd
+			{facts.map((fact, index) => {
+				// From `sm`, `flex-col-reverse`: a `<dl>` wants `<dt>` before `<dd>`
+				// in the DOM, and `TYPE.statLabel` is a caption that sits BELOW the
+				// value it names. Reversing the visual order satisfies both. The
+				// phone's row reads in DOM order, so it needs no reversal.
+				const cell =
+					'bg-background flex min-w-0 items-baseline justify-between gap-4 px-4 py-3 text-left sm:flex-col-reverse sm:items-stretch sm:justify-end sm:gap-0 sm:py-3.5'
+				const body = (
+					<>
+						<dt className={cn(TYPE.statLabel, 'mt-0 truncate sm:mt-1.5')}>
+							{fact.label}
+						</dt>
+						<dd
+							className={cn(
+								TYPE.bodyTight,
+								'flex min-w-0 items-center justify-end gap-1.5 sm:justify-start',
+								fact.mono && 'font-mono tabular-nums',
+								fact.action && 'text-primary',
+							)}
+						>
+							<span className="truncate">{fact.value}</span>
+							{fact.href ? (
+								// A linked cell says so: the arrow is the affordance, and it
+								// nudges toward where the cell goes.
+								fact.external ? (
+									<ArrowUpRight
+										aria-hidden="true"
+										className="text-muted-foreground size-4 shrink-0 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
+									/>
+								) : (
+									<ArrowRight
+										aria-hidden="true"
+										className={cn(
+											'size-4 shrink-0 transition-transform group-hover:translate-x-0.5',
+											fact.action ? 'text-primary' : 'text-muted-foreground',
+										)}
+									/>
+								)
+							) : null}
+						</dd>
+					</>
+				)
+				// A `<dl>` may only hold `<div>`s around its pairs, so a linked cell
+				// keeps its `<div>` and lays the link over it.
+				return (
+					<div
+						key={index}
 						className={cn(
-							TYPE.bodyTight,
-							'text-right sm:text-left',
-							fact.mono && 'font-mono tabular-nums',
+							cell,
+							fact.href && 'hover:bg-card group relative cursor-pointer transition-colors',
 						)}
 					>
-						{fact.value}
-					</dd>
-				</div>
-			))}
+						{body}
+						{fact.href ? (
+							fact.external ? (
+								<a
+									href={fact.href}
+									target="_blank"
+									rel="noreferrer"
+									className="absolute inset-0"
+								>
+									<span className="sr-only">{fact.label}</span>
+								</a>
+							) : (
+								<Link href={fact.href} className="absolute inset-0">
+									<span className="sr-only">{fact.label}</span>
+								</Link>
+							)
+						) : null}
+					</div>
+				)
+			})}
 		</dl>
 	)
 }

@@ -204,31 +204,11 @@ afterEach(() => {
 })
 
 describe('cohort page viewers', () => {
-	it('before start shows timing in the cohort zone, first open workshop, office hours and Discord in order', async () => {
+	it('a buyer without post-purchase copy keeps the standard page and never sees the sales pitch', async () => {
 		const html = await render()
-		expect(html).toContain('You&#x27;re in')
-		expect(html).toContain('Nov 2 at 12:00 PM EST')
-		expect(html).toContain('href="/workshops/prep"')
-		expect(html).not.toContain('href="/workshops/future"')
-		expect(html).not.toContain('href="/workshops/draft"')
-		expect(html).toContain('youtubeWatchUrl')
-		expect(html).toContain('href="/discord"')
-		expect(html.indexOf('Start here')).toBeLessThan(
-			html.indexOf('Office hours'),
-		)
-		expect(html.indexOf('Office hours')).toBeLessThan(
-			html.indexOf('Join the Discord'),
-		)
-		expect(html.indexOf('Join the Discord')).toBeLessThan(
-			html.indexOf('The workshops'),
-		)
+		expect(html).toContain('You have purchased a ticket to this cohort.')
 		expect(html).not.toContain('Sales pitch')
-	})
-	it('after start offers Start learning without future-start copy', async () => {
-		vi.setSystemTime(new Date('2026-11-03T12:00:00Z'))
-		const html = await render()
-		expect(html).toContain('Start learning')
-		expect(html).not.toContain('Class starts')
+		expect(mocks.compile.mock.calls[0]![0]).toBe('')
 	})
 	it('team buyer without a seat keeps the existing team or invite path and no private sessions', async () => {
 		data.hasAccessToCohort = false
@@ -245,20 +225,21 @@ describe('cohort page viewers', () => {
 			],
 		}
 		const html = await render()
-		expect(html).not.toContain('You&#x27;re in')
+		expect(html).not.toContain('You have purchased a ticket')
 		expect(html).toContain('Team or invite path')
 		expect(html).not.toContain('youtubeWatchUrl')
 		expect(html).not.toContain('synthetic-private')
 		expect(mocks.discord).not.toHaveBeenCalled()
 	})
-	it('an authored override replaces the generated steps and gets an access-gated office-hours widget', async () => {
+	it('authored post-purchase copy fills the body slot with an access-gated office-hours widget', async () => {
 		cohort.fields.postPurchaseBody =
-			'Setup steps, Discord, Before We Start <OfficeHoursSchedule cohortId="cohort-test" variant="lesson" />'
+			'Setup steps, Discord, Before We Start <OfficeHoursSchedule variant="lesson" />'
 		const html = await render()
 		expect(html).toContain('Setup steps, Discord, Before We Start')
-		expect(html).not.toContain('Start here')
+		expect(html).toContain('You have purchased a ticket to this cohort.')
+		expect(html).not.toContain('Sales pitch')
 		const components = mocks.compile.mock.calls[0]![1]
-		const widget = renderToStaticMarkup(components.OfficeHoursSchedule())
+		const widget = renderToStaticMarkup(components.OfficeHoursSchedule({}))
 		expect(widget).toContain('synthetic-private')
 	})
 	it('a non-buyer sees the unchanged sales body with no private session props or MDX override', async () => {
@@ -270,12 +251,5 @@ describe('cohort page viewers', () => {
 		expect(html).not.toContain('youtubeWatchUrl')
 		expect(html).not.toContain('synthetic-private')
 		expect(mocks.compile.mock.calls[0]![1].OfficeHoursSchedule).toBeUndefined()
-	})
-	it('linked Discord accounts are not asked to link again, and missing sessions stay hidden', async () => {
-		mocks.discord.mockResolvedValue(true)
-		cohort.fields.officeHoursSessions = []
-		const html = await render()
-		expect(html).not.toContain('Join Discord')
-		expect(html).not.toContain('Office hours')
 	})
 })

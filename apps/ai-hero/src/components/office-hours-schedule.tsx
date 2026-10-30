@@ -12,6 +12,7 @@ import {
 	type CohortOfficeHoursSession,
 } from '@/lib/cohort-office-hours'
 import { ArrowUpRight } from 'lucide-react'
+import { BADGE_OUTLINE, BADGE_SOLID, TYPE } from '@/components/landing/type'
 
 import { Button } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/utils/cn'
@@ -42,21 +43,16 @@ function formatLocalTimeRange(
 	startAt: string,
 	endsAt: string,
 	timeZone: string | null,
-	timeZoneLabel?: string,
 ) {
 	if (!timeZone) {
 		return formatOfficeHoursUtcTimeRange(startAt, endsAt)
 	}
 
-	const formatter = new Intl.DateTimeFormat('en-US', {
+	return new Intl.DateTimeFormat('en-US', {
 		hour: 'numeric',
 		minute: '2-digit',
 		timeZone,
-	})
-	const start = formatter.format(new Date(startAt))
-	const end = formatter.format(new Date(endsAt))
-
-	return `${start} to ${end}${timeZoneLabel ? ` ${timeZoneLabel}` : ''}`
+	}).formatRange(new Date(startAt), new Date(endsAt))
 }
 
 function formatIcsDate(date: string) {
@@ -132,23 +128,20 @@ export function OfficeHoursSchedule({
 	timeZoneLabel,
 	className,
 }: OfficeHoursScheduleProps) {
+	// Without a configured zone, times follow the viewer's own clock. The
+	// server can't know it, so the first render waits for the browser.
 	const [detectedTimeZone, setDetectedTimeZone] = React.useState<string | null>(
 		configuredTimeZone || null,
 	)
-
 	const [now, setNow] = React.useState(() => new Date())
 
 	React.useEffect(() => {
 		if (configuredTimeZone) return
-
 		setDetectedTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone)
 	}, [configuredTimeZone])
 
 	React.useEffect(() => {
-		const interval = window.setInterval(() => {
-			setNow(new Date())
-		}, 60_000)
-
+		const interval = window.setInterval(() => setNow(new Date()), 60_000)
 		return () => window.clearInterval(interval)
 	}, [])
 
@@ -156,177 +149,130 @@ export function OfficeHoursSchedule({
 		() => groupOfficeHoursSessionsByUtcDate(sessions),
 		[sessions],
 	)
+	if (groupedSessions.length === 0) return null
+
 	const shouldShowActions = showActions !== false && showActions !== 'false'
 	const displayTimeZone = configuredTimeZone || detectedTimeZone
-	const displayTimeZoneLabel =
-		timeZoneLabel ||
-		(configuredTimeZone ? configuredTimeZone : 'your local time')
-	const timeRangeLabel = timeZoneLabel || undefined
-	const isDetectingTimeZone = !configuredTimeZone && !detectedTimeZone
+	const zoneName = timeZoneLabel || displayTimeZone?.replace(/_/g, ' ')
+	const zoneNote = configuredTimeZone
+		? `Times in ${zoneName}`
+		: `Times in your time zone${zoneName ? ` · ${zoneName}` : ''}`
 
-	if (isDetectingTimeZone) {
-		return (
-			<div
-				className={cn(
-					'text-muted-foreground -mx-5 border-y px-5 py-3 font-mono text-[11px] font-medium uppercase tracking-wider sm:-mx-8 sm:px-8 lg:-mx-10 lg:px-10',
-					className,
-				)}
-			>
-				Detecting your timezone…
+	const schedule = (
+		<div className="flex flex-col gap-3">
+			<div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+				<p className={TYPE.groupLabel}>{zoneNote}</p>
+				{shouldShowActions ? (
+					<button
+						type="button"
+						onClick={() => downloadOfficeHoursIcs(sessions)}
+						className={cn(
+							TYPE.groupLabel,
+							'hover:text-foreground underline-offset-4 transition-colors hover:underline',
+						)}
+					>
+						Download all (.ics)
+					</button>
+				) : null}
 			</div>
-		)
-	}
+			<div className="bg-border border-border grid gap-px overflow-hidden rounded-[9px] border">
+				{groupedSessions.map((group) => (
+					<div
+						key={group.dateKey}
+						className="bg-background grid gap-px sm:grid-cols-[11rem_1fr]"
+					>
+						<div className="bg-card flex flex-col gap-1 px-4 py-3">
+							<span className={cn(TYPE.metaMark)}>{group.label}</span>
+							<span className={TYPE.cardTitle}>
+								{displayTimeZone
+									? formatLocalDate(group.sessions[0]!.startsAt, displayTimeZone)
+									: '\u00a0'}
+							</span>
+						</div>
+						<div className="bg-border grid gap-px">
+							{group.sessions.map((session) => {
+								const isPast = isOfficeHoursSessionPast(session, now)
+								const isLive = isOfficeHoursSessionLive(session, now)
 
-	if (groupedSessions.length === 0) {
-		return null
-	}
-
-	const scheduleList = (
-		<div
-			className={cn(
-				'divide-border -mx-5 flex flex-col divide-y border-y sm:-mx-8 lg:-mx-10',
-				className,
-			)}
-		>
-			{groupedSessions.map((group) => (
-				<div key={group.dateKey}>
-					<div className="bg-muted/40 flex flex-col gap-1 border-b px-5 py-3 sm:px-8 lg:px-10">
-						<span className="text-muted-foreground/80 font-mono text-[11px] font-medium uppercase tracking-wider">
-							{group.label}
-						</span>
-						<span className="text-[14px] font-semibold leading-tight tracking-[-0.005em]">
-							{formatLocalDate(group.sessions[0]!.startsAt, displayTimeZone)}
-						</span>
-					</div>
-					<div className="divide-border flex flex-col divide-y">
-						{group.sessions.map((session) => {
-							const isPast = isOfficeHoursSessionPast(session, now)
-							const isLive = isOfficeHoursSessionLive(session, now)
-
-							return (
-								<div
-									key={session.youtubeBroadcastId}
-									className={cn(
-										'hover:bg-card flex flex-col gap-3 px-5 py-3 transition-colors duration-150 ease-out sm:flex-row sm:items-center sm:justify-between sm:px-8 lg:px-10',
-										isPast && 'opacity-70 hover:opacity-100',
-									)}
-								>
-									<div className="flex min-w-0 flex-col gap-0.5">
-										<div className="flex flex-wrap items-center gap-2">
-											<span className="text-[14px] font-medium leading-tight tracking-[-0.005em]">
-												{formatLocalTimeRange(
-													session.startsAt,
-													session.endsAt,
-													displayTimeZone,
-													timeRangeLabel,
-												)}
+								return (
+									<div
+										key={session.youtubeBroadcastId}
+										className={cn(
+											'bg-background flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3',
+											isPast && 'text-muted-foreground',
+										)}
+									>
+										<div className="flex items-center gap-2">
+											<span className={cn(TYPE.meta, 'tabular-nums')}>
+												{displayTimeZone
+													? formatLocalTimeRange(
+															session.startsAt,
+															session.endsAt,
+															displayTimeZone,
+														)
+													: '\u00a0'}
 											</span>
-											{isLive && (
-												<span className="bg-primary text-primary-foreground rounded-full px-2 py-0.5 font-mono text-[11px] font-semibold uppercase tracking-wider">
-													Live now
-												</span>
-											)}
-											{isPast && (
-												<span className="text-muted-foreground rounded-full border px-2 py-0.5 font-mono text-[11px] font-semibold uppercase tracking-wider">
-													Past session
-												</span>
-											)}
+											{isLive ? (
+												<span className={cn(TYPE.badge, BADGE_SOLID)}>Live now</span>
+											) : isPast ? (
+												<span className={cn(TYPE.badge, BADGE_OUTLINE)}>Past</span>
+											) : null}
 										</div>
-										<span className="text-muted-foreground/70 font-mono text-[11px] font-medium uppercase tracking-wider">
-											{displayTimeZoneLabel}
-										</span>
+										{shouldShowActions ? (
+											<div className="flex items-center gap-4">
+												{isPast ? null : (
+													<a
+														href={buildOfficeHoursGoogleCalendarUrl(session)}
+														target="_blank"
+														rel="noreferrer"
+														className={cn(
+															TYPE.metaSm,
+															'text-muted-foreground hover:text-foreground underline-offset-4 transition-colors hover:underline',
+														)}
+													>
+														Add to calendar
+													</a>
+												)}
+												<Button
+													asChild
+													variant={isLive ? 'default' : 'outline'}
+													size="sm"
+													className="h-8 rounded-[6px]"
+												>
+													<a
+														href={session.youtubeWatchUrl}
+														target="_blank"
+														rel="noreferrer"
+													>
+														{isPast ? 'Watch replay' : 'YouTube'}
+														<ArrowUpRight className="ml-1 size-3" aria-hidden="true" />
+													</a>
+												</Button>
+											</div>
+										) : null}
 									</div>
-									{shouldShowActions && (
-										<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
-											<Button
-												asChild
-												variant="outline"
-												size="sm"
-												className="h-8 w-full rounded-none text-[12px] font-medium tracking-[-0.005em] sm:w-auto"
-											>
-												<a
-													href={session.youtubeWatchUrl}
-													target="_blank"
-													rel="noreferrer"
-												>
-													{isPast ? 'Watch Replay' : 'Watch on YouTube'}
-													<ArrowUpRight
-														className="ml-1 size-3"
-														aria-hidden="true"
-													/>
-												</a>
-											</Button>
-											{isPast ? (
-												<span className="text-muted-foreground/60 text-[12px] font-medium tracking-[-0.005em]">
-													Calendar closed
-												</span>
-											) : (
-												<a
-													href={buildOfficeHoursGoogleCalendarUrl(session)}
-													target="_blank"
-													rel="noreferrer"
-													className="text-muted-foreground hover:text-foreground text-[12px] font-medium tracking-[-0.005em] underline-offset-4 transition-colors hover:underline"
-												>
-													Add to Calendar
-												</a>
-											)}
-										</div>
-									)}
-								</div>
-							)
-						})}
+								)
+							})}
+						</div>
 					</div>
-				</div>
-			))}
+				))}
+			</div>
 		</div>
 	)
 
-	const timezoneNote = (
-		<p className="text-muted-foreground/70 font-mono text-[11px] font-medium uppercase tracking-wider">
-			Times shown in {displayTimeZoneLabel}.
-		</p>
-	)
-	const calendarDownload = shouldShowActions ? (
-		<button
-			type="button"
-			onClick={() => downloadOfficeHoursIcs(sessions)}
-			className="text-muted-foreground hover:text-foreground self-start font-mono text-[11px] font-medium uppercase tracking-wider underline-offset-4 transition-colors hover:underline"
-		>
-			Download calendar file
-		</button>
-	) : null
-
 	if (variant === 'lesson') {
-		return (
-			<div className="not-prose flex flex-col gap-3">
-				<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-					{timezoneNote}
-					{calendarDownload}
-				</div>
-				{scheduleList}
-			</div>
-		)
+		return <div className={cn('not-prose my-8', className)}>{schedule}</div>
 	}
 
 	return (
-		<section className="not-prose -mx-5 border-y sm:-mx-8 lg:-mx-10">
-			<div className="flex flex-col gap-6 px-5 py-10 sm:px-8 lg:px-10">
-				<div className="flex flex-col gap-3">
-					<h2 className="text-2xl font-semibold tracking-tight">
-						Office hours on YouTube
-					</h2>
-					<p className="text-muted-foreground max-w-3xl text-base leading-7">
-						Live on YouTube. Replays and transcripts are included.
-					</p>
-				</div>
-				<div className="flex flex-col gap-3">
-					<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-						{timezoneNote}
-						{calendarDownload}
-					</div>
-					{scheduleList}
-				</div>
+		<section className={cn('not-prose my-10 flex flex-col gap-5', className)}>
+			<div className="flex flex-col gap-2">
+				<h2 className={TYPE.subhead}>Office hours on YouTube</h2>
+				<p className={cn(TYPE.metaProse, 'text-muted-foreground')}>
+					Live on YouTube. Replays and transcripts are included.
+				</p>
 			</div>
+			{schedule}
 		</section>
 	)
 }
