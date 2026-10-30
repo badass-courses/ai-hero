@@ -9,7 +9,7 @@ export const signInActions: Effect.Effect<NextAction[], never, LearnerSite> =
 	LearnerSite.useSync((site) => [
 		nextHref(
 			site.connectUrl,
-			'Ask the learner to sign in at aihero.dev and create an agent token, then send it as `Authorization: Bearer <token>`.',
+			'Sign the learner in. An MCP client with OAuth sign-in does this from the 401 and its `WWW-Authenticate` header. Otherwise ask the learner to create an agent token at aihero.dev, then send it as `Authorization: Bearer <token>`.',
 		),
 		nextHref(
 			`${site.baseUrl}/oauth/device/code`,
