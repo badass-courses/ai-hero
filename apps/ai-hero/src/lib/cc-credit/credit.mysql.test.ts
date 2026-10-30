@@ -16,7 +16,7 @@ vi.mock('@/db/client', () => ({ acquireDatabaseConnection: vi.fn() }))
 import { acquireDatabaseConnection } from '@/db/client'
 import { signedInOrganizationScopes } from './runtime'
 import fc from 'fast-check'
-import { mysqlCreditStore } from './store'
+import { customerBoughtTeamSeats, mysqlCreditStore } from './store'
 import {
 	readCreditBalance,
 	runCreditCommand,
@@ -463,6 +463,8 @@ suite('CC credit production locking protocol against real MySQL', () => {
 		})
 		expect(await spent()).toBe(0)
 	})
+	// First and last uuid segments: unique even when two ids share a prefix.
+	const fixtureKey = (id: string) => `${id.slice(6, 14)}${id.slice(-12)}`
 	/** Realistic team purchase: its own charge and checkout session, a purch_<uuid>
 	 * id, the DB total as stored (maybe rounded) and the Stripe facts as paid. */
 	async function teamPurchase(input: {
@@ -471,19 +473,34 @@ suite('CC credit production locking protocol against real MySQL', () => {
 		recorded: string
 		chargeCents: number
 		seats: number | null
+		organizationId?: string | null
+		merchantCustomerId?: string
 	}) {
-		const key = input.id.slice(6, 14)
+		const key = fixtureKey(input.id)
 		await pool.execute(
-			"INSERT INTO AI_MerchantCharge (id, identifier, userId, merchantAccountId, merchantProductId, merchantCustomerId) VALUES (?, ?, 'user_synthetic', 'ma_synthetic', 'mp_synthetic', 'mc_synthetic')",
-			[`mc_charge_${key}`, `ch_${key}`],
+			"INSERT INTO AI_MerchantCharge (id, identifier, userId, merchantAccountId, merchantProductId, merchantCustomerId) VALUES (?, ?, 'user_synthetic', 'ma_synthetic', 'mp_synthetic', ?)",
+			[
+				`mc_charge_${key}`,
+				`ch_${key}`,
+				input.merchantCustomerId ?? 'mc_synthetic',
+			],
 		)
 		await pool.execute(
 			"INSERT INTO AI_MerchantSession (id, identifier, merchantAccountId) VALUES (?, ?, 'ma_synthetic')",
 			[`ms_${key}`, `cs_${key}`],
 		)
 		await pool.execute(
-			"INSERT INTO AI_Purchase (id, userId, organizationId, productId, bulkCouponId, totalAmount, status, merchantChargeId, merchantSessionId) VALUES (?, 'user_synthetic', 'org_synthetic', 'product-ma254', ?, ?, 'Valid', ?, ?)",
-			[input.id, input.coupon, input.recorded, `mc_charge_${key}`, `ms_${key}`],
+			"INSERT INTO AI_Purchase (id, userId, organizationId, productId, bulkCouponId, totalAmount, status, merchantChargeId, merchantSessionId) VALUES (?, 'user_synthetic', ?, 'product-ma254', ?, ?, 'Valid', ?, ?)",
+			[
+				input.id,
+				input.organizationId === undefined
+					? 'org_synthetic'
+					: input.organizationId,
+				input.coupon,
+				input.recorded,
+				`mc_charge_${key}`,
+				`ms_${key}`,
+			],
 		)
 		stripeFacts.set(input.id, {
 			chargeCents: input.chargeCents,
@@ -493,7 +510,7 @@ suite('CC credit production locking protocol against real MySQL', () => {
 	const ORIGINAL = 'purch_0b6d1f2e-3c4a-4b5c-8d6e-7f8091a2b3c4'
 	const ADDON = 'purch_9c8b7a6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d'
 	const THREE_SEATS = 'purch_5a4b3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d'
-	async function sharedCouponTeam() {
+	async function sharedCouponTeam(addonOrganizationId?: string | null) {
 		await pool.query('DELETE FROM AI_Purchase')
 		stripeFacts.clear()
 		await pool.execute(
@@ -514,6 +531,7 @@ suite('CC credit production locking protocol against real MySQL', () => {
 			recorded: '2243.000000000000000000000000000000',
 			chargeCents: 224250,
 			seats: 10,
+			organizationId: addonOrganizationId,
 		})
 	}
 	const historicalInvoice = (
@@ -526,6 +544,111 @@ suite('CC credit production locking protocol against real MySQL', () => {
 		return { ...input, invoice: { ...input.invoice, status, creditLines } }
 	}
 
+	const orgScope = { stripeCustomerId: '', organizationId: 'org_synthetic' }
+	it('counts an add-seat purchase with no org toward its team org, only on clear evidence', async () => {
+		// Production Team A: the add-on checkout recorded no org.
+		await sharedCouponTeam(null)
+		const team = { seats: 12, amountCents: 39800 + 224250 }
+		expect(await readCreditBalance(store(), orgScope)).toMatchObject(team)
+		expect(await readCreditBalance(store(), scope)).toMatchObject(team)
+		// Same evidence from the bulk coupon's own org, with no org purchase at all.
+		await pool.query("UPDATE AI_Coupon SET organizationId = 'org_synthetic'")
+		await pool.query('UPDATE AI_Purchase SET organizationId = NULL')
+		expect(await readCreditBalance(store(), orgScope)).toMatchObject(team)
+		// Two orgs claim the coupon: hold, don't guess.
+		await pool.query("UPDATE AI_Coupon SET organizationId = 'org_other'")
+		await pool.execute(
+			"UPDATE AI_Purchase SET organizationId = 'org_synthetic' WHERE id = ?",
+			[ORIGINAL],
+		)
+		await expect(readCreditBalance(store(), orgScope)).rejects.toMatchObject({
+			reason: 'bulk_coupon_organization_ambiguous_hold_for_review',
+		})
+		// Another customer's purchase on the coupon is not the team's evidence.
+		await pool.query('UPDATE AI_Coupon SET organizationId = NULL')
+		await pool.execute(
+			"INSERT INTO AI_MerchantCustomer (id, identifier, userId, merchantAccountId) VALUES ('mc_stranger', 'cus_stranger', 'user_stranger', 'ma_synthetic')",
+		)
+		await pool.execute(
+			"UPDATE AI_MerchantCharge SET merchantCustomerId = 'mc_stranger' WHERE id = ?",
+			[`mc_charge_${fixtureKey(ADDON)}`],
+		)
+		expect(await readCreditBalance(store(), orgScope)).toMatchObject({
+			seats: 2,
+			amountCents: 39800,
+		})
+	})
+	it('accepts a line naming a unique purch_ prefix at a segment boundary, nothing looser', async () => {
+		await sharedCouponTeam(null)
+		const prefix = ADDON.slice(0, 14)
+		const line = (named: string, amountCents = -44860) =>
+			historicalInvoice('in_syntheticPrefix', 2, 'paid', [
+				{
+					description: `Crash Course team seat credit x 2 (${named}, $224.30 per seat)`,
+					amountCents,
+				},
+			])
+		const sources = [{ purchaseId: ADDON, seats: 2, perSeatCents: 22430 }]
+		expect(
+			await runCreditCommand(store(), { ...line(prefix), sources }),
+		).toMatchObject({
+			state: 'preview',
+			receipt: {
+				status: 'paid',
+				amountCents: 44860,
+				allocations: [{ purchaseId: ADDON, seats: 2, perSeatCents: 22430 }],
+			},
+		})
+		// Without a source, the prefix resolves but $448.60 isn't whole seats.
+		await expect(runCreditCommand(store(), line(prefix))).rejects.toMatchObject(
+			{ reason: 'invalid_historical_credit_seats' },
+		)
+		expect(
+			await runCreditCommand(store(), line(prefix, -44850)),
+		).toMatchObject({
+			receipt: { allocations: [{ purchaseId: ADDON, perSeatCents: 22425 }] },
+		})
+		for (const named of [ORIGINAL.slice(0, 14), ADDON.slice(0, 12)])
+			await expect(
+				runCreditCommand(store(), { ...line(named), sources }),
+			).rejects.toMatchObject({
+				reason: 'explicit_source_contradicts_invoice_line',
+			})
+		// A second eligible source sharing the first segment makes it ambiguous.
+		await pool.execute(
+			"INSERT INTO AI_Coupon (id, maxUses) VALUES ('bulk_twin', 1)",
+		)
+		await teamPurchase({
+			id: `${prefix}-0000-4000-8000-000000000000`,
+			coupon: 'bulk_twin',
+			recorded: '224.25',
+			chargeCents: 22425,
+			seats: null,
+		})
+		await expect(
+			runCreditCommand(store(), { ...line(prefix), sources }),
+		).rejects.toMatchObject({
+			reason: 'explicit_source_contradicts_invoice_line',
+		})
+		await expect(
+			runCreditCommand(store(), line(prefix, -44850)),
+		).rejects.toMatchObject({ reason: 'historical_credit_source_ineligible' })
+		expect(await spent()).toBe(0)
+	})
+	it('tells a team buyer from an individual buyer with a plain SELECT', async () => {
+		await pool.execute(
+			"INSERT INTO AI_MerchantCustomer (id, identifier, userId, merchantAccountId) VALUES ('mc_solo', 'cus_solo', 'user_solo', 'ma_synthetic')",
+		)
+		await pool.execute(
+			"INSERT INTO AI_MerchantCharge (id, identifier, userId, merchantAccountId, merchantProductId, merchantCustomerId) VALUES ('charge_solo', 'ch_solo', 'user_solo', 'ma_synthetic', 'mp_synthetic', 'mc_solo')",
+		)
+		await pool.execute(
+			"INSERT INTO AI_Purchase (id, userId, productId, totalAmount, status, merchantChargeId) VALUES ('purch_1d2e3f4a-5b6c-4d7e-8f9a-0b1c2d3e4f5a', 'user_solo', 'product-ma254', '199', 'Valid', 'charge_solo')",
+		)
+		expect(await customerBoughtTeamSeats(pool, 'cus_synthetic')).toBe(true)
+		expect(await customerBoughtTeamSeats(pool, 'cus_solo')).toBe(false)
+		expect(await customerBoughtTeamSeats(pool, 'cus_nobody')).toBe(false)
+	})
 	it('inspects the exact lines a reservation returned for a purch_<uuid> source', async () => {
 		const input = command('in_syntheticDeskFlow', 2)
 		const reserved = await runCreditCommand(store(), input)
@@ -557,8 +680,8 @@ suite('CC credit production locking protocol against real MySQL', () => {
 			expect.arrayContaining([
 				{
 					purchaseId: ADDON,
-					chargeIdentifier: `ch_${ADDON.slice(6, 14)}`,
-					checkoutSessionIdentifier: `cs_${ADDON.slice(6, 14)}`,
+					chargeIdentifier: `ch_${fixtureKey(ADDON)}`,
+					checkoutSessionIdentifier: `cs_${fixtureKey(ADDON)}`,
 				},
 			]),
 		)

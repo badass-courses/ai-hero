@@ -30,6 +30,9 @@ export type InventoryInput = {
  * independently appear to own the same unseeded seats. Any hold blocks enablement.
  * A negative line that isn't a recognized credit is held on any C5 invoice, or
  * on every invoice when the C5 Stripe product mapping is unknown.
+ * An individual credit is reported as not team ledger, not held: no negative
+ * line mentions a team or seat, and teamCustomer says the Stripe customer never
+ * bought Crash Course seats on a bulk coupon. Without teamCustomer, it's held.
  */
 export async function inventoryCredits(
 	deps: {
@@ -39,6 +42,7 @@ export async function inventoryCredits(
 			input: InventoryInput,
 		) => Promise<{ ok: boolean; result: CreditInventoryPreview }>
 		c5Products?: ReadonlySet<string>
+		teamCustomer?: (stripeCustomerId: string) => Promise<boolean>
 	},
 	runId: string,
 ) {
@@ -48,6 +52,7 @@ export async function inventoryCredits(
 		previewed: 0,
 		alreadyLedgered: 0,
 		held: 0,
+		notTeamLedger: 0,
 		reserved: 0,
 		paid: 0,
 		released: 0,
@@ -75,8 +80,26 @@ export async function inventoryCredits(
 					)
 				})
 			: true
-		if (c5 && all.some(isUnrecognizedNegativeLine)) {
-			counts.matchedInvoices++
+		const unrecognized = c5 && all.some(isUnrecognizedNegativeLine)
+		if (!unrecognized && !lines.length) continue
+		counts.matchedInvoices++
+		const customer =
+			typeof invoice.customer === 'string'
+				? invoice.customer
+				: invoice.customer?.id
+		if (
+			deps.teamCustomer &&
+			customer &&
+			!all.some(
+				(line) => line.amount < 0 && /team|seat/i.test(line.description ?? ''),
+			) &&
+			!(await deps.teamCustomer(customer))
+		) {
+			counts.notTeamLedger++
+			records.push({ invoiceId: invoice.id, state: 'not_team_ledger' })
+			continue
+		}
+		if (unrecognized) {
 			counts.held++
 			records.push({
 				invoiceId: invoice.id,
@@ -85,8 +108,6 @@ export async function inventoryCredits(
 			})
 			continue
 		}
-		if (!lines.length) continue
-		counts.matchedInvoices++
 		const seats = lines
 			.map((line) => /\bx\s*(\d+)\b/i.exec(line.description ?? '')?.[1])
 			.map((value) => (value ? Number(value) : NaN))
@@ -102,10 +123,6 @@ export async function inventoryCredits(
 			})
 			continue
 		}
-		const customer =
-			typeof invoice.customer === 'string'
-				? invoice.customer
-				: invoice.customer?.id
 		const result = await deps.preview({
 			mode: 'backfill_preview',
 			scope: { stripeCustomerId: customer ?? '' },

@@ -70,6 +70,7 @@ describe('read-only historical CC invoice inventory', () => {
 			previewed: 2,
 			alreadyLedgered: 0,
 			held: 2,
+			notTeamLedger: 0,
 			reserved: 0,
 			paid: 1,
 			released: 1,
@@ -133,6 +134,66 @@ describe('read-only historical CC invoice inventory', () => {
 			['adjusted', 'historical_unrecognized_negative_line_hold_for_review'],
 		])
 		expect(preview).not.toHaveBeenCalled()
+	})
+	it('reports individual credits as not team ledger only for customers with no team purchase', async () => {
+		const c5 = { price: { product: 'prod_c5' }, amount: 99500 }
+		const individual = {
+			description:
+				'Credit: earlier AI Coding Crash Course purchase (included in Software Factories)',
+			amount: -29900,
+		}
+		const lines: Record<string, HistoricalLine[]> = {
+			personal: [
+				{ ...c5, description: 'Cohort seat' },
+				{ description: 'Crash Course credit', amount: -19900 },
+			],
+			bundle: [{ ...c5, description: 'Software Factories' }, individual],
+			teamBuyer: [{ ...c5, description: 'Software Factories' }, individual],
+			teamWording: [
+				{ ...c5, description: 'Cohort seats' },
+				{ description: 'Crash Course team credit', amount: -59700 },
+			],
+		}
+		const teamCustomer = vi.fn(async (id: string) => id === 'cus_team')
+		const invoices = () =>
+			items(
+				Object.keys(lines).map((id) => ({
+					id,
+					customer: id === 'teamBuyer' ? 'cus_team' : `cus_${id}`,
+				})),
+			)
+		const deps = {
+			lines: (id: string) => items(lines[id]!),
+			preview: vi.fn(),
+			c5Products: new Set(['prod_c5']),
+		}
+		const plan = await inventoryCredits(
+			{ ...deps, invoices: invoices(), teamCustomer },
+			'test-run',
+		)
+		expect(plan.counts).toMatchObject({
+			matchedInvoices: 4,
+			notTeamLedger: 2,
+			held: 2,
+		})
+		expect(plan.records.map((row) => [row.invoiceId, row.state])).toEqual([
+			['personal', 'not_team_ledger'],
+			['bundle', 'not_team_ledger'],
+			['teamBuyer', 'hold'],
+			['teamWording', 'hold'],
+		])
+		// A line that says team is never waved through on the DB lookup.
+		expect(teamCustomer.mock.calls.map(([id]) => id)).toEqual([
+			'cus_personal',
+			'cus_bundle',
+			'cus_team',
+		])
+		const unknown = await inventoryCredits(
+			{ ...deps, invoices: invoices() },
+			'test-run',
+		)
+		expect(unknown.counts).toMatchObject({ notTeamLedger: 0, held: 4 })
+		expect(deps.preview).not.toHaveBeenCalled()
 	})
 	it('does not project already-ledgered receipts twice and treats source outages as holds', async () => {
 		const plan = await inventoryCredits(
