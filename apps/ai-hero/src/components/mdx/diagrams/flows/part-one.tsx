@@ -1,4 +1,4 @@
-import { Flow, type FlowDiagram } from '../flow'
+import { Flow } from '../flow'
 import type { Redraws } from '../redraws'
 import { autoRebase, SCHEDULE_BEFORE_BLOCKED } from './auto-rebase'
 import { FlowBoard } from './board'
@@ -10,7 +10,6 @@ import {
 } from './improve-codebase-architecture'
 import { lintRuleRatchet } from './lint-rule-ratchet'
 import { stage } from './stage'
-import { templateArcDown, templateArcOver } from './template'
 
 /* Frames Matt grabbed while building a drawing: each lists the steps there by
    then. A step he had selected or was typing into is drawn like the rest:
@@ -65,42 +64,17 @@ const rebaseEarly = stage(autoRebase, {
 	text: SCHEDULE_BEFORE_BLOCKED,
 })
 
-/** A drawing before its first step: its title and subtitle alone. */
-const empty = (diagram: FlowDiagram) => stage(diagram, { nodes: [] })
-
 /** Explore Tickets, /improve-codebase-architecture, Lint Rule Ratchet and
     Auto-Rebase. */
 export const flowRedrawsPartOne: Redraws = {
-	// Whiteboard Your Own Tasks, the lesson about the template: the template
-	// beside its worked example. Elsewhere the template column is leftover
-	// canvas and frames draw Matt's drawing alone, except a drawing's empty
-	// first frame, where the template is all there is on screen.
-	'ai-hero-images/86b5b9bed5be0eeab006ffbdd1dc7011': () => (
-		<FlowBoard
-			template={templateArcOver}
-			drawings={[{ diagram: exploreTickets }]}
-		/>
-	),
+	// Frames of Matt's tldraw board itself, its template of role tags beside
+	// an empty drawing, keep his image: the lesson sends the learner to that
+	// board, so they should see the board they will open.
 	'ai-hero-images/0a79b278f76b033da33c7b0f37d79400': () => (
-		<FlowBoard
-			template={templateArcOver}
-			drawings={[{ diagram: exploreTickets }]}
-		/>
+		<Flow diagram={exploreTickets} />
 	),
 
 	// /improve-codebase-architecture
-	'ai-hero-images/52330a0ba4c78e041f02900f1929e279': () => (
-		<FlowBoard
-			template={templateArcOver}
-			drawings={[{ diagram: empty(improveCodebaseArchitecture) }]}
-		/>
-	),
-	'ai-hero-images/a61db2c72540d372960572ef949cf09d': () => (
-		<FlowBoard
-			template={templateArcOver}
-			drawings={[{ diagram: empty(improveCodebaseArchitecture) }]}
-		/>
-	),
 	'ai-hero-images/3757e904bb6a6aa51799ed561a673872': () => (
 		<Flow
 			diagram={stage(improveCodebaseArchitecture, {
@@ -155,29 +129,13 @@ export const flowRedrawsPartOne: Redraws = {
 		<Flow diagram={improveFinal} />
 	),
 	'ai-hero-images/a3519fbbf88405183371de92ce869416': () => (
-		<FlowBoard
-			drawings={[
-				{ diagram: improveFinal },
-				{ diagram: improveCodebaseArchitectureNoHuman },
-			]}
-		/>
+		<FlowBoard diagrams={[improveFinal, improveCodebaseArchitectureNoHuman]} />
 	),
 	'ai-hero-images/6c82b3765302d4f10afc78b40086b7af': () => (
-		<FlowBoard
-			drawings={[
-				{ diagram: improveFinal },
-				{ diagram: improveCodebaseArchitectureNoHuman },
-			]}
-		/>
+		<FlowBoard diagrams={[improveFinal, improveCodebaseArchitectureNoHuman]} />
 	),
 
 	// Lint Rule Ratchet
-	'ai-hero-images/382eac10da696b4ef1204613436d6e8f': () => (
-		<FlowBoard
-			template={templateArcDown}
-			drawings={[{ diagram: empty(lintRuleRatchet) }]}
-		/>
-	),
 	'ai-hero-images/74776ef43440d8509a6a2d059fd0bc03': () => (
 		<Flow
 			diagram={stage(lintRuleRatchet, {
@@ -236,12 +194,6 @@ export const flowRedrawsPartOne: Redraws = {
 	),
 
 	// Auto-Rebase
-	'ai-hero-images/b7281b38112991b00fa4a7d28ce893a9': () => (
-		<FlowBoard
-			template={templateArcDown}
-			drawings={[{ diagram: empty(autoRebase) }]}
-		/>
-	),
 	'ai-hero-images/fbed2f2ae6db093369f527b2fda2a1cb': () => (
 		<Flow diagram={rebaseEarly} />
 	),
