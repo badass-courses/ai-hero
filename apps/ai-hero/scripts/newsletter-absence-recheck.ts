@@ -92,7 +92,13 @@ export function createKitAbsenceRecheck(options: {
       await response.body?.cancel();
       if (!transient || attempt === KIT_PAGE_ATTEMPTS) throw unavailable();
       const header = response.headers.get("retry-after");
-      const retryAfter = header === null ? Number.NaN : Number(header) * 1000;
+      // Retry-After is delay-seconds or an HTTP date.
+      const retryAfter =
+        header === null
+          ? Number.NaN
+          : Number.isFinite(Number(header))
+            ? Number(header) * 1000
+            : Date.parse(header) - nowMs();
       const delay = Number.isFinite(retryAfter)
         ? Math.max(retryAfter, 0)
         : 1000 * 2 ** (attempt - 1);

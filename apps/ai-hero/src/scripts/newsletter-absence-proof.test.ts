@@ -682,6 +682,24 @@ describe("Kit absence recheck", () => {
     expect(attempts).toBe(3);
   });
 
+  it("honors a Retry-After HTTP date", async () => {
+    let attempts = 0;
+    const { recheck, sleep } = kit(
+      () => {
+        attempts += 1;
+        return attempts < 2
+          ? new Response("{}", {
+              status: 429,
+              headers: { "retry-after": "Thu, 29 Oct 2026 20:00:03 GMT" },
+            })
+          : json({ subscriber: { id: 2, state: "active" } });
+      },
+      () => Date.parse("2026-10-29T20:00:00.000Z"),
+    );
+    expect(await recheck.kitSubscriberState("2")).toBe("active");
+    expect(sleep).toHaveBeenCalledWith(3000);
+  });
+
   it("widens added_after by a day", () => {
     expect(addedAfterDate("2026-10-29T00:30:00.000Z")).toBe("2026-10-28");
   });
