@@ -57,14 +57,14 @@ import { CohortCertificateProgress } from './_components/cohort-certificate-prog
 import { CohortContents } from './_components/cohort-contents'
 import { CohortEnrollPrice } from './_components/cohort-enroll-price'
 import { CohortFactStrip } from './_components/cohort-fact-strip'
+import { CohortBuyerStrip } from './_components/cohort-buyer-strip'
+import { discordAccountsForCurrentUser } from '@/lib/users'
 import { CohortIncludes } from './_components/cohort-includes'
 import { CohortPricingWidgetContainer } from './_components/cohort-pricing-widget-container'
 import { CohortSidebar } from './_components/cohort-sidebar'
 import { CohortTeamLink } from './_components/cohort-team-link'
 import { metaDescription } from '@/lib/meta-description'
-import { discordAccountsForCurrentUser } from '@/lib/users'
 import { OfficeHoursSchedule } from '@/components/office-hours-schedule'
-import { CohortPostPurchase } from './_components/cohort-post-purchase'
 
 export async function generateMetadata(
 	props: {
@@ -212,8 +212,11 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	}
 
 	const { fields } = cohort
-	const campaignVariant = props.campaignLanding?.variant
 	const hasCohortAccess = hasPurchasedCurrentProduct || hasAccessToCohort
+	// Campaign copy sells the cohort; buyers get its own title and description.
+	const campaignVariant = hasCohortAccess
+		? undefined
+		: props.campaignLanding?.variant
 
 	const PT = fields.timezone || 'America/Los_Angeles'
 
@@ -281,8 +284,8 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	const lessonCount = 0
 	const alumniLabel = formatAlumniCount(alumniCount)
 
-	// Authored post-purchase MDX remains a full override. Buyers without one
-	// get the generated view, never the sales pitch. Preview copy still wins.
+	// Buyers read the authored post-purchase copy in the body slot, never the
+	// sales pitch. Preview copy still wins.
 	const buyerBody = props.bodySource ?? cohort.fields.postPurchaseBody
 	const mdxSource = hasCohortAccess
 		? buyerBody || ''
@@ -357,11 +360,15 @@ export async function CohortPageView(props: CohortPageViewProps) {
 			// old C3/C4 overrides. Never pass unlisted links to a sales viewer.
 			...(hasCohortAccess
 				? {
-						OfficeHoursSchedule: () => (
+						OfficeHoursSchedule: (
+							props: Omit<
+								React.ComponentProps<typeof OfficeHoursSchedule>,
+								'sessions'
+							>,
+						) => (
 							<OfficeHoursSchedule
+								{...props}
 								sessions={fields.officeHoursSessions}
-								variant="lesson"
-								timeZone={PT}
 							/>
 						),
 					}
@@ -557,41 +564,6 @@ export async function CohortPageView(props: CohortPageViewProps) {
 		},
 	)
 
-	if (hasCohortAccess) {
-		const isDiscordConnected = Boolean(await discordAccountsForCurrentUser())
-		return (
-			<LayoutClient withContainer>
-				<main>
-					<EditWorkshopButton
-						className=""
-						moduleType="cohort"
-						moduleSlug={fields.slug || cohort.id}
-						product={clientCohortProps.product}
-					/>
-					<CohortPostPurchase
-						cohort={cohort}
-						workshops={workshops as Workshop[]}
-						isDiscordConnected={isDiscordConnected}
-						override={buyerBody ? content : undefined}
-					/>
-					<CohortContents
-						variant="full"
-						workshops={displayWorkshops as Workshop[]}
-						workshopProgressMap={workshopProgressMap}
-						timezone={PT}
-					/>
-					<React.Suspense fallback={<Certificate isCompleted={hasCompletedCohort} resourceSlugOrId={fields.slug} />}>
-						<CohortCertificateProgress
-							isCompleted={hasCompletedCohort}
-							resourceSlugOrId={fields.slug}
-							workshopProgressMap={workshopProgressMap}
-						/>
-					</React.Suspense>
-				</main>
-			</LayoutClient>
-		)
-	}
-
 	return (
 		<LayoutClient withContainer>
 			<main className="relative">
@@ -697,11 +669,29 @@ export async function CohortPageView(props: CohortPageViewProps) {
 									className="mt-8 [&_div]:text-left"
 									withBio
 								/>
-								<CohortFactStrip
-									className="mt-8 max-w-3xl"
-									cohort={displayCohort}
-									alumniLabel={alumniLabel}
-								/>
+								{hasCohortAccess ? (
+									// The buyer's strip waits on lesson progress; until it lands
+									// the cell row keeps its place so the body doesn't jump.
+									<React.Suspense
+										fallback={
+											<div className="border-border mt-8 h-[74px] w-full max-w-3xl rounded-lg border" />
+										}
+									>
+										<CohortBuyerStrip
+											className="mt-8 max-w-3xl"
+											cohort={cohort}
+											workshops={workshops as Workshop[]}
+											workshopProgressMap={workshopProgressMap}
+											isDiscordConnected={discordAccountsForCurrentUser()}
+										/>
+									</React.Suspense>
+								) : (
+									<CohortFactStrip
+										className="mt-8 max-w-3xl"
+										cohort={displayCohort}
+										alumniLabel={alumniLabel}
+									/>
+								)}
 							</div>
 						</header>
 						{/* Padding sits outside the measure: boxes are border-box, so
