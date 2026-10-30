@@ -9,9 +9,11 @@ import {
 	Message,
 	MessageContent,
 	MessageResponse,
+	type MessageResponseProps,
 } from '@/components/ai-elements/message'
 import { Tool, ToolContent } from '@/components/ai-elements/tool'
 import { TYPE } from '@/components/landing/type'
+import { TableWrapper } from '@/components/mdx/table-wrapper'
 import { Button } from '@/components/ui/button'
 import { CollapsibleTrigger } from '@/components/ui/collapsible'
 import { useMuxPlayer } from '@/hooks/use-mux-player'
@@ -82,6 +84,22 @@ const REPLY_TYPE = cn(
 	'[&_:not(pre)>code]:bg-foreground/[0.07] [&_:not(pre)>code]:rounded-[4px] [&_:not(pre)>code]:px-1 [&_:not(pre)>code]:py-px [&_:not(pre)>code]:text-[0.86em] [&_:not(pre)>code]:font-normal',
 	'[&_hr]:my-3 [&_li]:my-0.5 [&_ol]:my-1.5 [&_p]:my-1.5 [&_ul]:my-1.5',
 )
+
+/**
+ * Tables read as the lesson body's do: framed, scrolling sideways in the
+ * panel, and a button away from a full-size dialog. Streamdown's own table
+ * card (a toolbar over a sidebar-filled box, headers that never wrap) sat
+ * oddly in the panel. Plain cells let `TableWrapper` style them.
+ */
+const SESSION_MARKDOWN: MessageResponseProps['components'] = {
+	table: ({ node: _node, ...props }) => (
+		<TableWrapper className="mx-0 my-3 px-0 md:mx-0 md:px-0">
+			<table {...props} />
+		</TableWrapper>
+	),
+	th: ({ node: _node, className: _className, ...props }) => <th {...props} />,
+	td: ({ node: _node, className: _className, ...props }) => <td {...props} />,
+}
 
 /**
  * Expanded call detail (a skill's injected text): reference, not the
@@ -447,7 +465,10 @@ function RowBody({ row }: { row: SessionExtractRow }) {
 			return (
 				<Message from="assistant" data-reply className="max-w-full">
 					<MessageContent className="w-full">
-						<MessageResponse className={REPLY_TYPE}>
+						<MessageResponse
+							className={REPLY_TYPE}
+							components={SESSION_MARKDOWN}
+						>
 							{entry.text}
 						</MessageResponse>
 					</MessageContent>
@@ -465,7 +486,10 @@ function RowBody({ row }: { row: SessionExtractRow }) {
 					failed={entry.via === 'toolCall' && entry.resultIsError === true}
 				>
 					{entry.skillBody && (
-						<MessageResponse className={DETAIL_TYPE}>
+						<MessageResponse
+							className={DETAIL_TYPE}
+							components={SESSION_MARKDOWN}
+						>
 							{entry.skillBody}
 						</MessageResponse>
 					)}

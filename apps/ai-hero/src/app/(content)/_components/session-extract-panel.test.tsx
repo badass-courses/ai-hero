@@ -141,3 +141,56 @@ describe('the block Matt is reading out', () => {
 		expect(container.querySelector('[data-spoken-bar]')).toBeNull()
 	})
 })
+
+describe('a table in a reply', () => {
+	// From Matt's "Choosing your infrastructure" session, at 4:39.
+	const pricing: SessionExtract = {
+		sessions: [
+			{
+				sessionId: 's1',
+				entries: [
+					{
+						kind: 'assistantText',
+						visibleFrom: 279,
+						text: [
+							'Inngest pricing, by plan:',
+							'',
+							'| | Free | Pro | Business |',
+							'| --- | --- | --- | --- |',
+							'| Price | $0 | from $99/mo | from $499/mo |',
+							'| Executions | 50k/mo, then pauses | 1M, then $0.000050–$0.000015 each | 10M |',
+							'| Concurrent steps | 5 | 100 | 500 |',
+						].join('\n'),
+					},
+				],
+			},
+		],
+	}
+
+	it('is set like a lesson-body table, with a button that opens it in a dialog', async () => {
+		mocks.media.currentTime = 300
+		await act(async () =>
+			root.render(<SessionExtractPanel extract={pricing} />),
+		)
+
+		// Not Streamdown's own card, toolbar and never-wrapping headers.
+		expect(
+			container.querySelector('[data-streamdown="table-wrapper"]'),
+		).toBeNull()
+		const table = container.querySelector('[data-reply] table')!
+		expect(table.textContent).toContain('Concurrent steps')
+		for (const cell of table.querySelectorAll('th, td')) {
+			expect(cell.className).toBe('')
+		}
+
+		const view = [...container.querySelectorAll('button')].find(
+			(button) => button.textContent === 'View Table',
+		)
+		expect(view).toBeDefined()
+		await act(async () => view!.click())
+		const dialog = document.querySelector('[role="dialog"]')
+		expect(dialog?.querySelector('table')?.textContent).toContain(
+			'$0.000050–$0.000015 each',
+		)
+	})
+})
