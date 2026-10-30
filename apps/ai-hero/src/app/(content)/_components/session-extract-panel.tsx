@@ -551,9 +551,14 @@ function RowBody({
 				failed={row.entries.some((entry) => entry.resultIsError)}
 			>
 				{!only && (
-					<ul className={cn(TYPE.metaMono, 'space-y-1 text-[0.86em]')}>
+					// The panel's size on the list, so each mono line steps down from
+					// it, as mono runs do in replies.
+					<ul className={cn(TYPE.metaSm, 'space-y-1')}>
 						{row.entries.map((entry, index) => (
-							<li key={index} className="text-muted-foreground break-words">
+							<li
+								key={index}
+								className="text-muted-foreground font-mono text-[0.86em] break-words"
+							>
 								<span className="text-foreground">{entry.tool}</span>
 								{entry.summary && ` · ${entry.summary}`}
 								{entry.resultIsError && (
