@@ -227,6 +227,19 @@ Requires header `Authorization: Bearer <access_token>`.
 
 ---
 
+## 9. Learner MCP sign-in: authorization code with PKCE
+
+The learner MCP server (`/mcp`) also signs learners in with OAuth 2.1, alongside the device flow above. The device flow, `/oauth/userinfo` and the CLI are unchanged.
+
+* Discovery: `/.well-known/oauth-protected-resource/mcp` (RFC 9728) and `/.well-known/oauth-authorization-server/oauth` (RFC 8414).
+* `GET /oauth/authorize` validates, sends a signed-out learner to `/login`, then shows the consent page at `/oauth/authorize/consent`; Approve or Deny posts to `/oauth/authorize/decision`.
+* `POST /oauth/token` with `grant_type=authorization_code` trades a 60-second, single-use code and its PKCE verifier for a `learner:read` token (90 days, no refresh). Any other request is the device flow.
+* `POST /oauth/register` with `redirect_uris` returns a stateless public client; without them, the demo response above.
+* `POST /oauth/revoke` (RFC 7009) revokes `learner:read` tokens only.
+* Code: `src/lib/learner-agent/oauth/`. The CIMD fetcher there (`cimd-fetch.ts`) is the SSRF surface.
+
+---
+
 ### TL;DR for the LLM agent
 
 1. Create the tables or alternative persistence according to §4.

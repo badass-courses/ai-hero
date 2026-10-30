@@ -6,6 +6,11 @@ const mocks = vi.hoisted(() => ({
 	findMany: vi.fn(),
 	updateWhere: vi.fn(),
 	updateSet: vi.fn(),
+	clientNames: vi.fn(),
+}))
+
+vi.mock('@/lib/learner-agent/oauth/client-name', () => ({
+	clientNamesFor: mocks.clientNames,
 }))
 
 vi.mock('@/server/auth', () => ({ getServerAuthSession: mocks.session }))
@@ -47,6 +52,7 @@ beforeEach(() => {
 	vi.clearAllMocks()
 	mocks.insertValues.mockResolvedValue(undefined)
 	mocks.updateWhere.mockResolvedValue(undefined)
+	mocks.clientNames.mockResolvedValue(new Map())
 })
 
 describe('/api/learner/token', () => {
@@ -97,6 +103,7 @@ describe('/api/learner/token', () => {
 		expect(body.tokens).toEqual([
 			{
 				id: learnerTokenId('raw-secret-1'),
+				clientName: null,
 				scope: 'learner:read',
 				createdAt: '2026-10-01T00:00:00.000Z',
 				expiresAt: '2027-01-01T00:00:00.000Z',
@@ -104,6 +111,40 @@ describe('/api/learner/token', () => {
 			},
 		])
 		expect(JSON.stringify(body)).not.toContain('raw-secret')
+	})
+
+	it('names the app that signed in, when the token has a client name', async () => {
+		signedIn('u1')
+		mocks.findMany.mockResolvedValue([
+			{
+				token: 'oauth-token',
+				scope: 'learner:read',
+				createdAt: null,
+				expiresAt: null,
+				revokedAt: null,
+			},
+			{
+				token: 'button-token',
+				scope: 'learner:read',
+				createdAt: null,
+				expiresAt: null,
+				revokedAt: null,
+			},
+		])
+		mocks.clientNames.mockResolvedValue(
+			new Map([['oauth-token', 'Claude Code']]),
+		)
+		const body = await (await GET()).json()
+		expect(mocks.clientNames).toHaveBeenCalledWith('u1', [
+			'oauth-token',
+			'button-token',
+		])
+		expect(
+			body.tokens.map(
+				(token: { clientName: string | null }) => token.clientName,
+			),
+		).toEqual(['Claude Code', null])
+		expect(JSON.stringify(body)).not.toContain('oauth-token')
 	})
 
 	it('revokes only one of the caller’s own tokens', async () => {

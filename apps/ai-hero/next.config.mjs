@@ -176,7 +176,17 @@ const config = {
 		}
 	},
 	async headers() {
-		return homepageDiscoveryHeaders
+		return [
+			...homepageDiscoveryHeaders,
+			// The OAuth consent page must never render in a frame (clickjacking).
+			{
+				source: '/oauth/authorize/:path*',
+				headers: [
+					{ key: 'X-Frame-Options', value: 'DENY' },
+					{ key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
+				],
+			},
+		]
 	},
 }
 
