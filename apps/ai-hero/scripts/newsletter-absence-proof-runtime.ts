@@ -1,19 +1,30 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { and, eq } from "drizzle-orm";
+import {
+  isContactStopped,
+  readActiveContactStops,
+} from "../src/lib/subscriber-marketing/contact-stop-rule";
+import { readDrovrContactActor } from "../src/lib/subscriber-marketing/drovr-contact-actor";
 import { drovrOutboxTarget } from "../src/lib/subscriber-marketing/drovr-outbox";
+import { DROVR_CONTACT_DIRECTORY_JOURNEY_ID } from "../src/lib/subscriber-marketing/drovr-shadow-emitter";
+import { resolveDrovrApiBaseUrl } from "../src/lib/subscriber-marketing/drovr-unsubscribe-page";
+import { STOPPED_DIRECTORY_STATE } from "../src/lib/subscriber-marketing/owner-birth-guard";
 import { RecoveryRefused } from "./held-exit-recover";
 import { createHeldRecoveryPorts } from "./held-exit-recover-runtime";
 import { withScanFile } from "./held-exit-scan-store";
 import type {
   AbsenceProofArgs,
   AbsenceProofRuntime,
+  AbsenceRecheckRuntime,
 } from "./newsletter-absence-proof";
+import { createKitAbsenceRecheck } from "./newsletter-absence-recheck";
 
 /** Lazy, operator-only loader. The shared ports read; the only write port is createContactEvent.
- * Held-row and outbox reads belong to held-exit-recover and are never called here. */
+ * Held-row and outbox reads belong to held-exit-recover and are never called here.
+ * Write mode adds the per-reader rechecks: GETs to drovr and Kit, never a write. */
 export async function createProductionAbsenceProofRuntime(
-  _mode: AbsenceProofArgs["mode"],
+  mode: AbsenceProofArgs["mode"],
 ): Promise<{ runtime: AbsenceProofRuntime; close: () => Promise<void> }> {
   const apiKey = (
     process.env.KIT_V4_API_KEY ??
@@ -21,6 +32,15 @@ export async function createProductionAbsenceProofRuntime(
     ""
   ).trim();
   if (!apiKey) throw new RecoveryRefused({ reason: "runtime-unavailable" });
+  const drovr = {
+    baseUrl: resolveDrovrApiBaseUrl({
+      DROVR_API_BASE_URL: process.env.DROVR_API_BASE_URL,
+      DROVR_SHADOW_INGEST_URL: process.env.DROVR_SHADOW_INGEST_URL,
+    }),
+    apiKey: process.env.DROVR_API_KEY_ORG_AIHERO?.trim() || undefined,
+  };
+  if (mode === "write" && (!drovr.baseUrl || !drovr.apiKey))
+    throw new RecoveryRefused({ reason: "runtime-unavailable" });
   const [
     { db, closeDatabasePool },
     schema,
@@ -30,6 +50,7 @@ export async function createProductionAbsenceProofRuntime(
     import("../src/db/schema"),
     import("../src/lib/subscriber-marketing/drizzle-capture-repository"),
   ]);
+  const repository = new DrizzleCaptureMarketingRepository(db);
   const target = drovrOutboxTarget({
     VERCEL_ENV: process.env.VERCEL_ENV,
     VERCEL_GIT_COMMIT_REF: process.env.VERCEL_GIT_COMMIT_REF,
@@ -38,7 +59,7 @@ export async function createProductionAbsenceProofRuntime(
     throw new RecoveryRefused({ reason: "runtime-unavailable" });
   };
   const runtime = createHeldRecoveryPorts({
-    repository: new DrizzleCaptureMarketingRepository(db),
+    repository,
     apiKey,
     eventKey: "",
     fetch,
@@ -70,5 +91,22 @@ export async function createProductionAbsenceProofRuntime(
         .limit(2),
     readOutbox: unused,
   });
-  return { runtime, close: closeDatabasePool };
+  if (mode === "dry-run") return { runtime, close: closeDatabasePool };
+  const recheck: AbsenceRecheckRuntime = {
+    ...createKitAbsenceRecheck({ apiKey, fetch }),
+    // The local stop rule first, then drovr's directory actor, the suppression authority.
+    drovrStopped: async (contactId) => {
+      if (isContactStopped(await readActiveContactStops(repository, contactId)))
+        return true;
+      const actor = await readDrovrContactActor({
+        contactId,
+        journeyId: DROVR_CONTACT_DIRECTORY_JOURNEY_ID,
+        config: drovr,
+      });
+      if (!actor.ok)
+        throw new RecoveryRefused({ reason: "recheck-unavailable" });
+      return actor.found && STOPPED_DIRECTORY_STATE.test(actor.stateName);
+    },
+  };
+  return { runtime: { ...runtime, recheck }, close: closeDatabasePool };
 }
