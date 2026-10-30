@@ -45,6 +45,12 @@ lesson page shows one beside the player and follows playback through it.
   (`data-current`), and a click on a user or assistant message plays from it.
   Tool and skill calls do not seek. The spoken-block match only searches
   replies the video has reached.
+- **Following is ours, not `use-stick-to-bottom`.** With the whole
+  transcript on the page the view follows the video's place, not the bottom.
+  The library only escaped on a scroll up, so reading ahead never showed
+  Follow video. Any wheel, touch, scrollbar or key scroll stops following;
+  the button (arrow toward the video), a seek from the panel, or a seek back
+  turns it on.
 
 ## Gotchas
 

@@ -2,10 +2,6 @@
 
 import * as React from 'react'
 import {
-	Conversation,
-	ConversationContent,
-} from '@/components/ai-elements/conversation'
-import {
 	Message,
 	MessageContent,
 	MessageResponse,
@@ -27,12 +23,8 @@ import {
 } from '@/lib/session-extract'
 import type { MuxPlayerRefAttributes } from '@mux/mux-player-react'
 import {
-	useStickToBottomContext,
-	type GetTargetScrollTop,
-	type StickToBottomContext,
-} from 'use-stick-to-bottom'
-import {
 	ArrowDownIcon,
+	ArrowUpIcon,
 	ChevronDownIcon,
 	PictureInPicture2,
 	SparklesIcon,
@@ -189,10 +181,10 @@ export function SessionExtractPanel({
 }
 
 /**
- * The session revealed in step with the lesson player: an entry appears when
- * it appears in the video, the list sticks to the newest one, and every
- * entry's time seeks the video. The reply block Matt is reading out is
- * highlighted, matched from the captions.
+ * The whole session, followed in step with the lesson player: the view keeps
+ * the newest entry the video has reached in sight, and a click on a message
+ * or a time seeks the video. The reply block Matt is reading out is marked,
+ * matched from the captions.
  */
 function LiveSession({ extract }: { extract: SessionExtract }) {
 	const rows = React.useMemo(() => sessionExtractRows(extract), [extract])
@@ -211,59 +203,73 @@ function LiveSession({ extract }: { extract: SessionExtract }) {
 		active,
 	)
 	const bar = useBlockBar(contentRef, spoken)
-	const stickRef = React.useRef<StickToBottomContext>(null)
+	const scrollRef = React.useRef<HTMLDivElement>(null)
+	// Following is the view tracking the video. Any scroll by hand, either
+	// way, stops it; the Follow video button, a seek from the panel, or a
+	// seek back in the player turns it on again.
+	const [following, setFollowing] = React.useState(true)
+	const [videoIs, setVideoIs] = React.useState<'above' | 'below'>('below')
 
-	// Reading only moves forward. The last block Matt read out stays the
-	// anchor after its highlight fades, held near the top; a new entry pushes
-	// the view on only as far as revealing it needs. The library animates
-	// down toward this target and never up, and scrolling up escapes it.
-	const targetScrollTop = React.useCallback<GetTargetScrollTop>(
-		(bottom, { scrollElement }) => {
-			const content = contentRef.current
-			if (!content) return bottom
-			const origin = content.getBoundingClientRect().top
-			const topOf = (element: Element) =>
-				element.getBoundingClientRect().top - origin
-			const anchor = anchorRef.current?.isConnected ? anchorRef.current : null
-			const newest = content.querySelector('[data-current]')
-			let target = anchor ? topOf(anchor) - ANCHOR_OFFSET : 0
-			if (newest) {
-				target = Math.max(
-					target,
-					topOf(newest) - scrollElement.clientHeight * REVEAL_AT,
-				)
+	// Where following holds the view. Reading only moves forward: the last
+	// block Matt read out stays the anchor after its highlight fades, held
+	// near the top, and the newest entry the video has reached is kept in
+	// the upper part of the panel.
+	const followTop = React.useCallback((scroller: HTMLElement) => {
+		const content = contentRef.current
+		if (!content) return 0
+		const origin = content.getBoundingClientRect().top
+		const topOf = (element: Element) =>
+			element.getBoundingClientRect().top - origin
+		const anchor = anchorRef.current?.isConnected ? anchorRef.current : null
+		const newest = content.querySelector('[data-current]')
+		let target = anchor ? topOf(anchor) - ANCHOR_OFFSET : 0
+		if (newest) {
+			target = Math.max(
+				target,
+				topOf(newest) - scroller.clientHeight * REVEAL_AT,
+			)
+		}
+		return Math.min(
+			scroller.scrollHeight - scroller.clientHeight,
+			Math.max(0, target),
+		)
+	}, [])
+	const follow = React.useCallback(
+		(behavior: ScrollBehavior) => {
+			const scroller = scrollRef.current
+			if (!scroller) return
+			const top = followTop(scroller)
+			if (Math.abs(scroller.scrollTop - top) > 1) {
+				scroller.scrollTo({ top, behavior })
 			}
-			return Math.min(bottom, Math.max(0, target))
 		},
-		[],
+		[followTop],
 	)
+
 	React.useEffect(() => {
 		if (spoken) anchorRef.current = spoken
-		const stick = stickRef.current
-		if (stick?.state.isAtBottom) void stick.scrollToBottom()
-	}, [spoken, active])
+		if (following) follow('smooth')
+	}, [spoken, active, following, follow])
 
-	// Seeking back is the one way up: drop the anchor and place the view
-	// where reading from that moment would have it.
+	// Seeking back drops the anchor and places the view where reading from
+	// that moment would have it, following again.
 	const previousTime = React.useRef(time)
 	React.useEffect(() => {
 		const back = time < previousTime.current - 1
 		previousTime.current = time
-		const stick = stickRef.current
-		const scroller = stick?.scrollRef.current
-		if (!back || !stick || !scroller) return
+		if (!back) return
 		anchorRef.current = null
-		const frame = requestAnimationFrame(() => {
-			stick.state.scrollTop = targetScrollTop(
-				scroller.scrollHeight - scroller.clientHeight,
-				{ scrollElement: scroller, contentElement: scroller },
-			)
-			void stick.scrollToBottom()
-		})
+		setFollowing(true)
+		const frame = requestAnimationFrame(() => follow('instant'))
 		return () => cancelAnimationFrame(frame)
-	}, [time, targetScrollTop])
+	}, [time, follow])
 
-	const seek = (seconds: number) => seekPlayer(muxPlayerRef, seconds)
+	const stopFollowing = () => setFollowing(false)
+	const seek = (seconds: number) => {
+		seekPlayer(muxPlayerRef, seconds)
+		// What was clicked is where the video is now.
+		setFollowing(true)
+	}
 	// The moment the pointer is over, by the index of the row that heads it:
 	// rows that share a time light that one time.
 	const [hovered, setHovered] = React.useState<number | null>(null)
@@ -276,14 +282,41 @@ function LiveSession({ extract }: { extract: SessionExtract }) {
 	})
 
 	return (
-		<Conversation
-			// The library reserves a scrollbar gutter on both edges; one, as in
-			// the other tabs, keeps the content 12px from the panel's left.
-			className="min-h-0 flex-1 [&>div]:[scrollbar-gutter:stable]!"
-			contextRef={stickRef}
-			targetScrollTop={targetScrollTop}
-		>
-			<ConversationContent className="gap-0 p-0">
+		<div className="relative min-h-0 flex-1">
+			<div
+				ref={scrollRef}
+				// Input that scrolls the panel is the reader taking over; scrolls
+				// made by following itself come with none of it.
+				onWheel={stopFollowing}
+				onTouchMove={stopFollowing}
+				onPointerDown={(event) => {
+					// Grabbing the scrollbar lands on the scroller itself.
+					if (event.target === event.currentTarget) stopFollowing()
+				}}
+				onKeyDown={(event) => {
+					if (
+						[
+							'ArrowUp',
+							'ArrowDown',
+							'PageUp',
+							'PageDown',
+							'Home',
+							'End',
+							' ',
+						].includes(event.key)
+					) {
+						stopFollowing()
+					}
+				}}
+				onScroll={(event) => {
+					if (following) return
+					const scroller = event.currentTarget
+					setVideoIs(
+						followTop(scroller) < scroller.scrollTop ? 'above' : 'below',
+					)
+				}}
+				className="h-full [scrollbar-gutter:stable] overflow-y-auto"
+			>
 				<div
 					ref={contentRef}
 					className="relative flex flex-col px-3 pb-3"
@@ -350,9 +383,14 @@ function LiveSession({ extract }: { extract: SessionExtract }) {
 						)
 					})}
 				</div>
-			</ConversationContent>
-			<FollowVideoButton />
-		</Conversation>
+			</div>
+			{!following && (
+				<FollowVideoButton
+					videoIs={videoIs}
+					onFollow={() => setFollowing(true)}
+				/>
+			)}
+		</div>
 	)
 }
 
@@ -734,34 +772,29 @@ function captionTrack(player: MuxPlayerRefAttributes | null | undefined) {
 }
 
 /**
- * Scrolling the panel by hand stops it following the video; this turns
- * following back on, and shows for as long as it is off. Following is the
- * library's `isAtBottom` lock: `escapedFromLock` only clears on a scroll
- * down by hand, so it stays set after the button re-locks.
+ * Shown while the reader has scrolled away from the video's place, either
+ * way; it turns following back on. The arrow points to where the video is.
  */
-function FollowVideoButton() {
-	const { state, scrollToBottom } = useStickToBottomContext()
-	if (state.isAtBottom) return null
-	const follow = () => {
-		// The library only scrolls down; a reader below the video's place is
-		// brought back up first.
-		if (state.scrollTop > state.calculatedTargetScrollTop) {
-			state.scrollTop = state.calculatedTargetScrollTop
-		}
-		void scrollToBottom()
-	}
+function FollowVideoButton({
+	videoIs,
+	onFollow,
+}: {
+	videoIs: 'above' | 'below'
+	onFollow: () => void
+}) {
+	const Arrow = videoIs === 'above' ? ArrowUpIcon : ArrowDownIcon
 	return (
 		<Button
 			type="button"
 			variant="outline"
 			size="sm"
-			onClick={follow}
+			onClick={onFollow}
 			className={cn(
 				TYPE.metaSm,
 				'dark:bg-background absolute bottom-3 left-1/2 h-7 -translate-x-1/2 gap-1.5 rounded-full px-3',
 			)}
 		>
-			<ArrowDownIcon className="size-3.5" aria-hidden />
+			<Arrow className="size-3.5" aria-hidden />
 			Follow video
 		</Button>
 	)
