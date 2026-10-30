@@ -17,6 +17,7 @@ import { CollapsibleTrigger } from '@/components/ui/collapsible'
 import { useMuxPlayer } from '@/hooks/use-mux-player'
 import { keepCaptionCuesLoading } from '@/hooks/use-mux-player-prefs'
 import {
+	activeRowIndex,
 	contentWords,
 	rowsOnScreen,
 	sessionExtractRows,
@@ -175,16 +176,17 @@ export function SessionExtractPanel({
 
 /**
  * The session revealed in step with the lesson player: an entry appears when
- * it appears in the video, the list sticks to the newest one, and every
- * entry's time seeks the video. The reply block Matt is reading out is
- * highlighted, matched from the captions.
+ * The whole session, listed up front so a learner can move around the video
+ * by it: every entry's time, and a click on any prompt or reply, seeks the
+ * video there. The list follows the entry the video has reached, and a bar
+ * in the gutter marks it, or the reply block Matt is reading out, matched
+ * from the captions.
  */
 function LiveSession({ extract }: { extract: SessionExtract }) {
 	const rows = React.useMemo(() => sessionExtractRows(extract), [extract])
 	const { muxPlayerRef } = useMuxPlayer()
 	const time = usePlayerTime(muxPlayerRef)
-	const visible = rowsOnScreen(rows, time)
-	const active = visible.length - 1
+	const active = activeRowIndex(rows, time)
 	const contentRef = React.useRef<HTMLDivElement>(null)
 	const anchorRef = React.useRef<HTMLElement | null>(null)
 	const spoken = useSpokenBlock(
@@ -194,13 +196,15 @@ function LiveSession({ extract }: { extract: SessionExtract }) {
 		time,
 		active,
 	)
-	const bar = useBlockBar(contentRef, spoken)
+	const current = useActiveRow(contentRef, active)
+	const bar = useBlockBar(contentRef, spoken ?? current)
 	const stickRef = React.useRef<StickToBottomContext>(null)
 
 	// Reading only moves forward. The last block Matt read out stays the
-	// anchor after its highlight fades, held near the top; a new entry pushes
-	// the view on only as far as revealing it needs. The library animates
-	// down toward this target and never up, and scrolling up escapes it.
+	// anchor after its highlight fades, held near the top; the entry the video
+	// reaches pushes the view on only as far as bringing it into view needs.
+	// The library animates down toward this target and never up, and
+	// scrolling up escapes it.
 	const targetScrollTop = React.useCallback<GetTargetScrollTop>(
 		(bottom, { scrollElement }) => {
 			const content = contentRef.current
@@ -209,12 +213,12 @@ function LiveSession({ extract }: { extract: SessionExtract }) {
 			const topOf = (element: Element) =>
 				element.getBoundingClientRect().top - origin
 			const anchor = anchorRef.current?.isConnected ? anchorRef.current : null
-			const newest = content.lastElementChild
+			const reached = content.querySelector('[data-active]')
 			let target = anchor ? topOf(anchor) - ANCHOR_OFFSET : 0
-			if (newest) {
+			if (reached) {
 				target = Math.max(
 					target,
-					topOf(newest) - scrollElement.clientHeight * REVEAL_AT,
+					topOf(reached) - scrollElement.clientHeight * REVEAL_AT,
 				)
 			}
 			return Math.min(bottom, Math.max(0, target))
@@ -257,7 +261,6 @@ function LiveSession({ extract }: { extract: SessionExtract }) {
 		>
 			<ConversationContent className="gap-0 p-0">
 				<div ref={contentRef} className="relative flex flex-col px-3 pb-3">
-					{/* First, so the newest row stays the last child. */}
 					{bar && (
 						<span
 							aria-hidden
@@ -266,47 +269,63 @@ function LiveSession({ extract }: { extract: SessionExtract }) {
 							style={bar}
 						/>
 					)}
-					{visible.length === 0 ? (
-						<p className={cn(TYPE.metaSm, 'text-muted-foreground pt-4')}>
-							The session appears here as the video reaches it.
-						</p>
-					) : (
-						visible.map((row, index) => {
-							const previous = visible[index - 1]
-							const timed =
-								!previous || previous.visibleFrom !== row.visibleFrom
-							return (
-								// The time sits in the gap above its row, right-aligned,
-								// so the content keeps the panel's full width.
-								<div
-									key={index}
-									className={cn(
-										'relative',
-										timed
-											? 'mt-5 first:mt-4'
+					{rows.map((row, index) => {
+						const previous = rows[index - 1]
+						const timed = !previous || previous.visibleFrom !== row.visibleFrom
+						return (
+							// The time sits in the gap above its row, right-aligned,
+							// so the content keeps the panel's full width.
+							<div
+								key={index}
+								data-row={index}
+								data-active={index === active ? '' : undefined}
+								className={cn(
+									'relative',
+									index === 0
+										? 'mt-4'
+										: timed
+											? 'mt-5'
 											: isCall(row) && previous && isCall(previous)
 												? 'mt-0.5'
 												: 'mt-3',
-									)}
-								>
-									{timed && (
-										<button
-											type="button"
-											onClick={() => seek(row.visibleFrom)}
-											aria-label={`Play from ${formatTime(row.visibleFrom)}`}
-											className={cn(
-												TYPE.navNum,
-												'text-muted-foreground hover:text-foreground absolute -top-4 right-0 h-3.5 rounded-[3px] px-0.5',
-											)}
-										>
-											{formatTime(row.visibleFrom)}
-										</button>
-									)}
+								)}
+							>
+								{timed && (
+									<button
+										type="button"
+										onClick={() => seek(row.visibleFrom)}
+										aria-label={`Play from ${formatTime(row.visibleFrom)}`}
+										className={cn(
+											TYPE.navNum,
+											'text-muted-foreground hover:text-foreground absolute -top-4 right-0 h-3.5 rounded-[3px] px-0.5',
+										)}
+									>
+										{formatTime(row.visibleFrom)}
+									</button>
+								)}
+								{isMessage(row) ? (
+									// A mouse shortcut for the row's time button: the whole
+									// message seeks, unless the reader is selecting text or
+									// using a link inside it.
+									<div
+										className="cursor-pointer"
+										onClick={(event) => {
+											if (
+												window.getSelection()?.toString() ||
+												(event.target as Element).closest('a, button')
+											)
+												return
+											seek(row.visibleFrom)
+										}}
+									>
+										<RowBody row={row} />
+									</div>
+								) : (
 									<RowBody row={row} />
-								</div>
-							)
-						})
-					)}
+								)}
+							</div>
+						)
+					})}
 				</div>
 			</ConversationContent>
 			<FollowVideoButton />
@@ -365,6 +384,14 @@ export function SessionExtractStrip({
 				)}
 			</div>
 		</div>
+	)
+}
+
+/** A prompt or a reply: the rows a click seeks to. */
+function isMessage(row: SessionExtractRow) {
+	return (
+		row.type === 'entry' &&
+		(row.entry.kind === 'userPrompt' || row.entry.kind === 'assistantText')
 	)
 }
 
@@ -559,7 +586,10 @@ function useSpokenBlock(
 				.map((cue) => (cue as VTTCue).text)
 				.join(' '),
 		)
-		const blocks = Array.from(content.querySelectorAll('[data-reply]'))
+		// The replies the video has reached; the transcript runs on past them.
+		const blocks = Array.from(content.querySelectorAll('[data-row]'))
+			.slice(0, active + 1)
+			.flatMap((row) => Array.from(row.querySelectorAll('[data-reply]')))
 			.slice(-SPOKEN_REPLIES)
 			.flatMap((reply) =>
 				Array.from(reply.querySelectorAll<HTMLElement>(BLOCK_SELECTOR)),
@@ -611,9 +641,24 @@ function useSpokenBlock(
 	return spoken
 }
 
+/** The row the video has reached, once it is in the DOM. */
+function useActiveRow(
+	contentRef: React.RefObject<HTMLDivElement | null>,
+	active: number,
+) {
+	const [row, setRow] = React.useState<HTMLElement | null>(null)
+	React.useLayoutEffect(() => {
+		setRow(
+			contentRef.current?.querySelector<HTMLElement>('[data-active]') ?? null,
+		)
+	}, [contentRef, active])
+	return row
+}
+
 /**
- * Where the spoken block sits in the panel, for the bar in the left gutter
- * that marks it, as the Skills tab marks its current moment. The text keeps
+ * Where the marked block (the one Matt is reading out, else the entry the
+ * video has reached) sits in the panel, for the bar in the left gutter that
+ * marks it, as the Skills tab marks its current moment. The text keeps
  * one color throughout: at 2x a color change on every block read as flicker.
  * The bar overlays the gutter, so moving it never reflows the reply.
  */

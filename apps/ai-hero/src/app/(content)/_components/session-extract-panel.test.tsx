@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => {
 		media: {
 			currentTime: 0,
 			textTracks,
+			play: vi.fn(() => Promise.resolve()),
 			addEventListener: vi.fn(),
 			removeEventListener: vi.fn(),
 		},
@@ -74,6 +75,13 @@ const extract: SessionExtract = {
 					result: null,
 					resultIsError: null,
 					skillBody: null,
+				},
+				{
+					kind: 'toolCall',
+					visibleFrom: 40,
+					tool: 'Bash',
+					summary: 'pnpm test',
+					resultIsError: null,
 				},
 			],
 		},
@@ -132,12 +140,76 @@ describe('the block Matt is reading out', () => {
 		expect(container.innerHTML).not.toMatch(/text-foreground\/55|border-image/)
 	})
 
-	it('shows no bar while nothing is being read out', async () => {
+	it('falls back to marking the entry the video has reached', async () => {
 		mocks.media.currentTime = 25
 		await act(async () =>
 			root.render(<SessionExtractPanel extract={extract} />),
 		)
 		expect(container.querySelector('[data-spoken]')).toBeNull()
+		expect(container.querySelector('[data-active]')?.textContent).toContain(
+			'Skill tdd',
+		)
+		expect(container.querySelector('[data-spoken-bar]')).not.toBeNull()
+	})
+})
+
+describe('the whole transcript', () => {
+	const renderPanelAt = async (time: number) => {
+		mocks.media.currentTime = time
+		await act(async () =>
+			root.render(<SessionExtractPanel extract={extract} />),
+		)
+	}
+	const click = async (element: Element) => {
+		await act(async () =>
+			element.dispatchEvent(new MouseEvent('click', { bubbles: true })),
+		)
+	}
+
+	it('is listed before the video reaches any of it, with nothing marked', async () => {
+		await renderPanelAt(0)
+		const text = container.textContent
+		expect(text).toContain('/code-review PR #34')
+		expect(text).toContain('refund emails')
+		expect(text).toContain('Skill tdd')
+		expect(text).toContain('Bash')
+		expect(container.querySelector('[data-active]')).toBeNull()
 		expect(container.querySelector('[data-spoken-bar]')).toBeNull()
+	})
+
+	it('seeks to a prompt or reply when it is clicked', async () => {
+		await renderPanelAt(0)
+		mocks.media.play.mockClear()
+		await click(
+			[...container.querySelectorAll('[data-reply] p')].find((block) =>
+				block.textContent?.includes('refund emails'),
+			)!,
+		)
+		expect(mocks.media.currentTime).toBe(18)
+		expect(mocks.media.play).toHaveBeenCalledTimes(1)
+
+		const prompt = [...container.querySelectorAll('div')].find(
+			(element) => element.textContent === '/code-review PR #34',
+		)!
+		await click(prompt)
+		expect(mocks.media.currentTime).toBe(10)
+	})
+
+	it('leaves tool calls and selected text alone', async () => {
+		await renderPanelAt(0)
+		mocks.media.play.mockClear()
+		const tool = [...container.querySelectorAll('span')].find(
+			(element) => element.textContent === 'Bash',
+		)!
+		await click(tool)
+		expect(mocks.media.currentTime).toBe(0)
+
+		const reply = container.querySelector('[data-reply] p')!
+		const selection = window.getSelection()!
+		selection.selectAllChildren(reply)
+		await click(reply)
+		selection.removeAllRanges()
+		expect(mocks.media.currentTime).toBe(0)
+		expect(mocks.media.play).not.toHaveBeenCalled()
 	})
 })
