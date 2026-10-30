@@ -5,6 +5,7 @@ import { BADGE_OUTLINE, TYPE } from '@/components/landing/type'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+import { routeArrow, type Box, type Point } from './flow-route'
 import { FLOW_ROLES, type FlowRole } from './roles'
 
 export { FLOW_ROLES, type FlowRole } from './roles'
@@ -124,13 +125,31 @@ export function Flow({
 				bottom: r.bottom - origin.top,
 			})
 			const steps = new Map<string, Step>()
+			// Every badge row and line of words, for the arrows to keep clear of.
+			const labels: Box[] = []
+			const range = document.createRange()
 			for (const el of grid.querySelectorAll<HTMLElement>('[data-flow-node]')) {
+				const text = el.querySelector('[data-flow-text]')
+				if (text) {
+					range.selectNodeContents(text)
+					for (const line of range.getClientRects()) {
+						if (line.width > 0) labels.push(relative(line))
+					}
+				}
 				const badges = el.querySelector('[data-flow-badges]')
 				if (!badges) continue
+				labels.push(relative(badges.getBoundingClientRect()))
 				steps.set(el.dataset.flowNode!, {
 					node: relative(el.getBoundingClientRect()),
 					badges: relative(badges.getBoundingClientRect()),
 				})
+			}
+			// Arrows stay within the figure's gutter, so a phone never clips one.
+			const bounds: Box = {
+				left: -8,
+				top: -8,
+				right: origin.width + 8,
+				bottom: origin.height + 24,
 			}
 			const narrow =
 				getComputedStyle(grid).getPropertyValue('--flow-layout').trim() ===
@@ -144,7 +163,7 @@ export function Flow({
 					return [
 						{
 							key: `${edge.from}-${edge.to}`,
-							d: route(from, to, sides),
+							d: route(from, to, sides, labels, bounds),
 							from: edge.from,
 							to: edge.to,
 						},
@@ -217,7 +236,7 @@ export function Flow({
 						key={node.id}
 						data-flow-node={node.id}
 						data-node={node.id}
-						className="relative [grid-column:var(--n-col)/span_var(--n-span)] [grid-row:var(--n-row)] self-start pr-3 data-dim:opacity-40 motion-safe:transition-opacity motion-safe:duration-300 @2xl:[grid-column:var(--w-col)/span_var(--w-span)] @2xl:[grid-row:var(--w-row)]"
+						className="relative [grid-column:var(--n-col)/span_var(--n-span)] [grid-row:var(--n-row)] self-start pr-5 data-dim:opacity-40 motion-safe:transition-opacity motion-safe:duration-300 @2xl:[grid-column:var(--w-col)/span_var(--w-span)] @2xl:[grid-row:var(--w-row)]"
 						style={placement(node)}
 						data-dim={isDim(node.id) || undefined}
 						onPointerEnter={(event) => {
@@ -262,6 +281,7 @@ export function Flow({
 							</span>
 						)}
 						<span
+							data-flow-text
 							className={cn(
 								'block',
 								node.code
@@ -302,9 +322,7 @@ function placement({ wide, narrow = wide }: FlowNode) {
 	} as React.CSSProperties
 }
 
-type Box = { left: number; top: number; right: number; bottom: number }
 type Step = { node: Box; badges: Box }
-type Point = { x: number; y: number }
 
 /** The gap left between an arrow and the step it touches. */
 const CLEARANCE = 5
@@ -346,16 +364,17 @@ const NORMAL: Record<FlowSide, Point> = {
 	right: { x: 1, y: 0 },
 }
 
-/** A cubic curve that leaves and arrives square to each side, so a chain
-    down one column bows out to the left the way Matt draws it. */
-function route(from: Step, to: Step, edge: FlowEdgeSides) {
+/** An arrow that leaves and arrives square to each side, so a chain down one
+    column bows out to the left the way Matt draws it, and goes around any
+    step in its way. */
+function route(
+	from: Step,
+	to: Step,
+	edge: FlowEdgeSides,
+	labels: readonly Box[],
+	bounds: Box,
+) {
 	const a = anchor(from, edge.exit, 'exit', edge.exitBesideText)
 	const b = anchor(to, edge.enter, 'enter')
-	const distance = Math.hypot(b.x - a.x, b.y - a.y)
-	const reach = Math.min(72, Math.max(20, distance * 0.4))
-	const na = NORMAL[edge.exit]
-	const nb = NORMAL[edge.enter]
-	const c1 = { x: a.x + na.x * reach, y: a.y + na.y * reach }
-	const c2 = { x: b.x + nb.x * reach, y: b.y + nb.y * reach }
-	return `M${a.x},${a.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${b.x},${b.y}`
+	return routeArrow(a, NORMAL[edge.exit], b, NORMAL[edge.enter], labels, bounds)
 }

@@ -43,7 +43,7 @@ export function Timeline({
 				ref={listRef}
 				style={{ '--ink': INK } as React.CSSProperties}
 				className={cn(
-					'relative mx-auto flex w-fit flex-col [--timeline-layout:narrow] @2xl:w-full @2xl:max-w-[760px] @2xl:flex-row @2xl:items-start @2xl:[--timeline-layout:wide]',
+					'relative mx-auto flex w-fit flex-col [--timeline-layout:narrow] @2xl:w-full @2xl:max-w-[760px] @2xl:flex-row @2xl:items-start @2xl:px-6 @2xl:[--timeline-layout:wide]',
 					arcs.length > 0 && '@2xl:pt-28',
 				)}
 			>
