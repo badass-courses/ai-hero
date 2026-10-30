@@ -16,6 +16,7 @@ import {
 	INTEREST_REDRIVE_SINCE,
 	interestFailedRunsAxiomQuery,
 	interestRedriveAxiomQuery,
+	listAllInngestEvents,
 	planInterestRedrive,
 	type AxiomInterestRow,
 	type InngestRun,
@@ -23,8 +24,9 @@ import {
 } from '../src/lib/cta/interest-fact-redrive'
 
 const INNGEST_API = 'https://api.inngest.com/v1'
-const PAGE = 100
-const MAX_PAGES = 200
+// Inngest clamps the page size; pagination does not depend on it.
+const PAGE = 50
+const MAX_PAGES = 1000
 
 function parseArgs(argv: string[]) {
 	let source: 'axiom' | 'inngest' | undefined
@@ -106,26 +108,19 @@ async function fromInngest(since: string) {
 	if (!signingKey) {
 		throw new Error('INNGEST_SIGNING_KEY is required for --source inngest')
 	}
-	type ListedEvent = {
-		internal_id?: string
-		data?: InterestRedriveEvent['data']
-	}
-	const listed: ListedEvent[] = []
-	let cursor: string | undefined
-	for (let page = 0; page < MAX_PAGES; page += 1) {
+	const listing = await listAllInngestEvents((cursor) => {
 		const params = new URLSearchParams({
 			name: INTEREST_FACT_REQUESTED_EVENT,
 			received_after: since,
 			limit: String(PAGE),
 		})
 		if (cursor) params.set('cursor', cursor)
-		const body = await inngestJson(`/events?${params}`, signingKey)
-		const data = (body.data ?? []) as ListedEvent[]
-		listed.push(...data)
-		const next = body.cursor ?? data.at(-1)?.internal_id
-		if (data.length < PAGE || !next || next === cursor) break
-		cursor = next
+		return inngestJson(`/events?${params}`, signingKey)
+	}, MAX_PAGES)
+	if (listing.truncated) {
+		throw new Error(`event listing passed ${MAX_PAGES} pages; narrow --since`)
 	}
+	const listed = listing.events
 	const events: InterestRedriveEvent[] = []
 	for (const event of listed) {
 		if (!event.internal_id) continue
@@ -138,7 +133,12 @@ async function fromInngest(since: string) {
 			runs: (runs.data ?? []) as InngestRun[],
 		})
 	}
-	return { source: 'inngest', since, ...planInterestRedrive(events) }
+	return {
+		source: 'inngest',
+		since,
+		pages: listing.pages,
+		...planInterestRedrive(events),
+	}
 }
 
 async function main() {

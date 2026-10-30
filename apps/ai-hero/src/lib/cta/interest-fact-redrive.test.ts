@@ -1,10 +1,26 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
 	classifyInterestRun,
 	droppedFromLogRows,
+	listAllInngestEvents,
 	planInterestRedrive,
 } from './interest-fact-redrive'
+
+/** A listing Inngest serves in pages of at most `clamp`, whatever limit asked. */
+function pagedListing(total: number, clamp: number, withCursor: boolean) {
+	const all = Array.from({ length: total }, (_, i) => ({
+		internal_id: `evt-${String(i).padStart(4, '0')}`,
+		data: {},
+	}))
+	return vi.fn(async (cursor: string | undefined) => {
+		const start = cursor
+			? all.findIndex((event) => event.internal_id === cursor) + 1
+			: 0
+		const data = all.slice(start, start + clamp)
+		return withCursor ? { data, cursor: data.at(-1)?.internal_id } : { data }
+	})
+}
 
 const dropped = {
 	status: 'Completed',
@@ -84,6 +100,32 @@ describe('interest fact re-drive (dry run)', () => {
 			wouldRedriveByFieldKey: { waitlist_c3: 1, waitlist_c4: 1 },
 		})
 		expect(JSON.stringify(plan)).not.toContain('@')
+	})
+
+	it('reads every page when Inngest clamps the page size below the limit asked', async () => {
+		for (const withCursor of [true, false]) {
+			const fetchPage = pagedListing(109, 51, withCursor)
+			const listing = await listAllInngestEvents(fetchPage, 100)
+			expect(listing.events).toHaveLength(109)
+			expect(new Set(listing.events.map((e) => e.internal_id)).size).toBe(109)
+			// 51 + 51 + 7, then an empty page ends it.
+			expect(fetchPage).toHaveBeenCalledTimes(4)
+			expect(listing.truncated).toBe(false)
+		}
+	})
+
+	it('stops on a cursor that does not move, and flags a page cap', async () => {
+		const stuck = vi.fn(async () => ({
+			data: [{ internal_id: 'evt-1' }],
+			cursor: 'same',
+		}))
+		const once = await listAllInngestEvents(stuck, 100)
+		expect(stuck).toHaveBeenCalledTimes(2)
+		expect(once.events).toHaveLength(1)
+
+		const capped = await listAllInngestEvents(pagedListing(200, 51, true), 2)
+		expect(capped).toMatchObject({ pages: 2, truncated: true })
+		expect(capped.events).toHaveLength(102)
 	})
 
 	it('counts dropped joins from log rows without addresses', () => {

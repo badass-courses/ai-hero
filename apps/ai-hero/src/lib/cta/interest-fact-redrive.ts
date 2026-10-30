@@ -59,6 +59,46 @@ export type InterestRedriveEvent = {
 	runs: InngestRun[]
 }
 
+export type ListedInngestEvent = {
+	internal_id?: string
+	data?: InterestRedriveEvent['data']
+}
+
+export type InngestEventPage = { data?: unknown[]; cursor?: string }
+
+/**
+ * Every page of an Inngest event listing. Inngest may clamp `limit` (to 51
+ * today), so a short page is not the last one: keep going until a page is
+ * empty or the cursor stops moving. The cursor is the body's `cursor`, else
+ * the last event's id. Events are deduped by id in case pages overlap.
+ */
+export async function listAllInngestEvents(
+	fetchPage: (cursor: string | undefined) => Promise<InngestEventPage>,
+	maxPages: number,
+) {
+	const events = new Map<string, ListedInngestEvent>()
+	let cursor: string | undefined
+	let pages = 0
+	let truncated = false
+	while (true) {
+		if (pages >= maxPages) {
+			truncated = true
+			break
+		}
+		const body = await fetchPage(cursor)
+		pages += 1
+		const data = (body.data ?? []) as ListedInngestEvent[]
+		if (data.length === 0) break
+		for (const event of data) {
+			if (event.internal_id) events.set(event.internal_id, event)
+		}
+		const next = body.cursor || data.at(-1)?.internal_id
+		if (!next || next === cursor) break
+		cursor = next
+	}
+	return { events: [...events.values()], pages, truncated }
+}
+
 export type InterestRedrivePlan = {
 	events: number
 	runs: Record<InterestRunClass, number>
