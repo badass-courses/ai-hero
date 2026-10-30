@@ -37,6 +37,7 @@ import { Tabs, TabsContent } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
 import {
+	formatTime,
 	seekPlayer,
 	usePlayerTime,
 	type PlayerRef,
@@ -270,13 +271,17 @@ function LiveSession({ extract }: { extract: SessionExtract }) {
 		// What was clicked is where the video is now.
 		setFollowing(true)
 	}
-	// The moment the pointer is over, by the index of the row that heads it:
-	// rows that share a time light that one time.
+	// The moment the pointer is over, by the index of the row that heads it.
+	// Rows that show the same time (10.1s and 10.8s both read 0:10) share
+	// one, which seeks to the first of them.
 	const [hovered, setHovered] = React.useState<number | null>(null)
 	const heads = rows.map((row, index) => index)
 	rows.forEach((row, index) => {
 		const previous = rows[index - 1]
-		if (previous && previous.visibleFrom === row.visibleFrom) {
+		if (
+			previous &&
+			formatTime(previous.visibleFrom) === formatTime(row.visibleFrom)
+		) {
 			heads[index] = heads[index - 1]!
 		}
 	})

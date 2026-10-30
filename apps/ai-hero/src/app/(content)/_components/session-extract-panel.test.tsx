@@ -176,3 +176,28 @@ describe('the whole transcript', () => {
 		expect(mocks.media.currentTime).toBe(0)
 	})
 })
+
+describe('times', () => {
+	it('shows a time once for rows that read the same', async () => {
+		mocks.media.currentTime = 0
+		await act(async () =>
+			root.render(
+				<SessionExtractPanel
+					extract={{
+						sessions: [
+							{
+								sessionId: 's1',
+								entries: [
+									{ kind: 'userPrompt', visibleFrom: 10.1, text: 'Go' },
+									{ kind: 'assistantText', visibleFrom: 10.8, text: 'On it.' },
+								],
+							},
+						],
+					}}
+				/>,
+			),
+		)
+		const times = container.querySelectorAll('button[aria-label^="Play from"]')
+		expect([...times].map((time) => time.textContent)).toEqual(['0:10'])
+	})
+})
