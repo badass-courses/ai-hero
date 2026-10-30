@@ -3,10 +3,11 @@ import type { GetStepTools } from 'inngest'
 import {
 	reconcileSyncOutcome,
 	runContactSyncReconcile,
-	type ContactSyncReconcilePorts,
+	type ContactSyncLateCursor,
 	type ContactSyncReconcileReceipt,
 	type ScannedContactEvent,
 } from '@/lib/subscriber-marketing/contact-sync-reconcile'
+import type { ContactSyncStore } from '@/lib/subscriber-marketing/contact-sync-reconcile-drizzle'
 import {
 	parseDrovrProfileSyncConfig,
 	type ContactProfileSyncReceipt,
@@ -26,16 +27,19 @@ type ReconcileStep = Pick<GetStepTools<typeof inngest>, 'run' | 'invoke'>
  * sync invoked (so it queues behind any other sync of the same contact and
  * answers only once drovr took it), the stop re-send invoked on the live
  * delivery function, then the heartbeat, then the watermark.
+ *
+ * Steps per run, at most: started-at, read-watermark, read-late-cursor,
+ * scan-fresh, scan-overlap, rotated-contacts, up to maxContactsHard (900)
+ * syncs, late-skipped, write-late-cursor, load-stops, resend-stops,
+ * heartbeat, write-watermark, clear-late-cursor: 913. A draining run stops
+ * at 400 syncs and skips rotation, heartbeat and watermark: 409.
  */
 export async function reconcileContactSync(args: {
 	step: ReconcileStep
 	env: Readonly<Record<string, string | undefined>>
 	configured: boolean
 	error: (event: string, fields: Record<string, unknown>) => unknown
-	store: Pick<
-		ContactSyncReconcilePorts,
-		'readWatermark' | 'scanChanges' | 'rotatedContacts'
-	> & { writeWatermark(watermark: string, heartbeatAt: string): Promise<void> }
+	store: ContactSyncStore
 	stopFacts: (stops: ScannedContactEvent[]) => Promise<DrovrShadowEvent[]>
 	heartbeat: (syncedThrough: string) => Promise<unknown>
 	/** From a memoized step, so every replay reads the same start. */
@@ -101,6 +105,23 @@ export async function reconcileContactSync(args: {
 			await step.run('write-watermark', () =>
 				store.writeWatermark(watermark, new Date().toISOString()),
 			)
+		},
+		lateCursor: {
+			// A memoized undefined comes back as null.
+			read: async () =>
+				((await step.run('read-late-cursor', () => store.readLateCursor())) as
+					ContactSyncLateCursor | null | undefined) ?? undefined,
+			write: async (cursor) => {
+				await step.run(cursor ? 'write-late-cursor' : 'clear-late-cursor', () =>
+					store.writeLateCursor(cursor),
+				)
+			},
+			// A step, so a replay never pages twice.
+			skipped: async (skip) => {
+				await step.run(`late-skipped:${skip.contactId}`, async () => {
+					await args.error('drovr.contact_sync.late_skipped', skip)
+				})
+			},
 		},
 	})
 }

@@ -184,6 +184,72 @@ integration('contact sync reconcile reads on MySQL', () => {
 		expect(rows.map((row) => row.id)).toContain('same-second')
 	})
 
+	it('drains late writes in (createdAt, id) order, past the late cursor in the query', async () => {
+		const late = (id: string, createdAt: string) =>
+			contactEvent(
+				id,
+				`contact-${id}`,
+				'2026-10-30 06:45:22',
+				'newsletter.old-sequence.exit-confirmed',
+				createdAt,
+			)
+		await late('b', '2026-10-30 07:19:55')
+		await late('a', '2026-10-30 07:19:55')
+		await late('c', '2026-10-30 07:19:56')
+		// Written before the watermark: claimed, never late.
+		await late('seen', '2026-10-30 07:00:00')
+		const window = {
+			scope: 'overlap' as const,
+			after: '2026-10-28T07:13:02.343Z',
+			through: '2026-10-30T07:13:02.343Z',
+			writtenAfter: '2026-10-30T07:13:02.343Z',
+			limit: 5000,
+		}
+		const all = await store.scanChanges({ ...window, lateCursor: {} })
+		expect(all.map((row) => [row.id, row.createdAt])).toEqual([
+			['a', '2026-10-30T07:19:55.000Z'],
+			['b', '2026-10-30T07:19:55.000Z'],
+			['c', '2026-10-30T07:19:56.000Z'],
+		])
+		const past = await store.scanChanges({
+			...window,
+			lateCursor: { after: { createdAt: '2026-10-30T07:19:55.000Z', id: 'a' } },
+		})
+		expect(past.map((row) => row.id)).toEqual(['b', 'c'])
+	})
+
+	it('bounds the late scan on the occurredAt index', async () => {
+		const [plan] = await pool.query(
+			"EXPLAIN SELECT id FROM AI_ContactEvent WHERE occurredAt > '2026-10-28 07:13:02' AND occurredAt <= '2026-10-30 07:13:02' AND createdAt >= '2026-10-30 07:13:02' AND (createdAt > '2026-10-30 07:19:55' OR (createdAt = '2026-10-30 07:19:55' AND id > 'a')) ORDER BY createdAt, id LIMIT 5001",
+		)
+		expect((plan as { key: string | null }[])[0]?.key).toBe(
+			'ContactEvent_occurredAt_idx',
+		)
+	})
+
+	it('keeps the late cursor in its own row, and clears it', async () => {
+		await store.writeWatermark(
+			'2026-10-30T07:13:02.343Z',
+			'2026-10-30T07:15:01.000Z',
+		)
+		await expect(store.readLateCursor()).resolves.toBeUndefined()
+		const cursor = {
+			after: { createdAt: '2026-10-30T07:19:55.000Z', id: 'a' },
+			failing: { contactId: 'contact-b', runs: 1 },
+		}
+		await store.writeLateCursor(cursor)
+		await expect(store.readLateCursor()).resolves.toEqual(cursor)
+		await store.writeLateCursor({ after: cursor.after })
+		await expect(store.readLateCursor()).resolves.toEqual({
+			after: cursor.after,
+		})
+		await store.writeLateCursor(undefined)
+		await expect(store.readLateCursor()).resolves.toBeUndefined()
+		await expect(store.readWatermark()).resolves.toBe(
+			'2026-10-30T07:13:02.343Z',
+		)
+	})
+
 	it('rides the occurredAt and issuedAt indexes', async () => {
 		const [scanPlan] = await pool.query(
 			"EXPLAIN SELECT id FROM AI_ContactEvent WHERE occurredAt > '2026-09-26 16:40:00' AND occurredAt <= '2026-09-26 17:58:00' ORDER BY occurredAt, id LIMIT 5001",

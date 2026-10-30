@@ -9,6 +9,7 @@ import { and, asc, eq, gt, gte, isNull, lt, lte, min, or } from 'drizzle-orm'
 import { VALUE_PATH_LINK_REISSUE_EVERY_DAYS } from './value-path-link-anchor'
 import {
 	linkRotationRanges,
+	type ContactSyncLateCursor,
 	type ContactSyncReconcilePorts,
 	type ScannedContactEvent,
 } from './contact-sync-reconcile'
@@ -18,6 +19,23 @@ const ROTATION_STEP_MS =
 
 /** The one stream this reconcile covers: drovr's contact directory. */
 export const CONTACT_SYNC_CURSOR_NAME = 'contact-directory'
+
+/**
+ * The late drain's cursor: a second row, so no schema change. `cursor`
+ * holds the ContactSyncLateCursor as JSON,
+ * `{"after":{"createdAt":"<iso>","id":"<ContactEvent.id>"},"failing":{"contactId":"<id>","runs":2}}`,
+ * either key optional; '' is no cursor. watermark and heartbeatAt stay NULL.
+ */
+export const CONTACT_SYNC_LATE_CURSOR_NAME = `${CONTACT_SYNC_CURSOR_NAME}:late`
+
+export type ContactSyncStore = Pick<
+	ContactSyncReconcilePorts,
+	'readWatermark' | 'scanChanges' | 'rotatedContacts'
+> & {
+	writeWatermark(watermark: string, heartbeatAt: string): Promise<void>
+	readLateCursor(): Promise<ContactSyncLateCursor | undefined>
+	writeLateCursor(cursor: ContactSyncLateCursor | undefined): Promise<void>
+}
 
 type Database = {
 	select: (fields: unknown) => {
@@ -50,12 +68,10 @@ export function createDrizzleContactSyncStore(
 	// The same shape the capture repository takes; this module only uses
 	// select/insert/update.
 	database: unknown,
-): Pick<
-	ContactSyncReconcilePorts,
-	'readWatermark' | 'scanChanges' | 'rotatedContacts'
-> & { writeWatermark(watermark: string, heartbeatAt: string): Promise<void> } {
+): ContactSyncStore {
 	const db = database as Database
 	const byName = eq(contactSyncCursor.name, CONTACT_SYNC_CURSOR_NAME)
+	const byLateName = eq(contactSyncCursor.name, CONTACT_SYNC_LATE_CURSOR_NAME)
 	return {
 		async readWatermark() {
 			const rows = (await db
@@ -66,13 +82,16 @@ export function createDrizzleContactSyncStore(
 			const watermark = rows[0]?.watermark
 			return watermark ? isoOf(watermark) : undefined
 		},
-		async scanChanges({ after, through, limit, writtenAfter }) {
+		async scanChanges({ after, through, limit, writtenAfter, lateCursor }) {
+			const past = lateCursor?.after
+			const pastAt = past ? new Date(past.createdAt) : undefined
 			const rows = (await db
 				.select({
 					id: contactEvent.id,
 					contactId: contactEvent.contactId,
 					eventType: contactEvent.eventType,
 					occurredAt: contactEvent.occurredAt,
+					createdAt: contactEvent.createdAt,
 				})
 				.from(contactEvent)
 				.where(
@@ -89,14 +108,31 @@ export function createDrizzleContactSyncStore(
 									new Date(Math.floor(Date.parse(writtenAfter) / 1000) * 1000),
 								)
 							: undefined,
+						// Past the late cursor, in (createdAt, id) order: rows already
+						// drained never leave the server again. Same occurredAt range
+						// and index as the createdAt filter above.
+						past && pastAt
+							? or(
+									gt(contactEvent.createdAt, pastAt),
+									and(
+										eq(contactEvent.createdAt, pastAt),
+										gt(contactEvent.id, past.id),
+									),
+								)
+							: undefined,
 					),
 				)
-				.orderBy(asc(contactEvent.occurredAt), asc(contactEvent.id))
+				.orderBy(
+					...(lateCursor
+						? [asc(contactEvent.createdAt), asc(contactEvent.id)]
+						: [asc(contactEvent.occurredAt), asc(contactEvent.id)]),
+				)
 				.limit(limit + 1)) as {
 				id: string
 				contactId: string
 				eventType: string
 				occurredAt: Date | string
+				createdAt: Date | string
 			}[]
 			return rows.map(
 				(row): ScannedContactEvent => ({
@@ -104,6 +140,7 @@ export function createDrizzleContactSyncStore(
 					contactId: row.contactId,
 					eventType: row.eventType,
 					occurredAt: isoOf(row.occurredAt),
+					...(lateCursor ? { createdAt: isoOf(row.createdAt) } : {}),
 				}),
 			)
 		},
@@ -203,6 +240,61 @@ export function createDrizzleContactSyncStore(
 					),
 				)
 		},
+		async readLateCursor() {
+			const rows = (await db
+				.select({ cursor: contactSyncCursor.cursor })
+				.from(contactSyncCursor)
+				.where(byLateName)
+				.limit(1)) as { cursor: string }[]
+			return decodeLateCursor(rows[0]?.cursor)
+		},
+		// One run at a time (the function's concurrency), so a plain upsert.
+		async writeLateCursor(cursor) {
+			if (!cursor) {
+				await db.update(contactSyncCursor).set({ cursor: '' }).where(byLateName)
+				return
+			}
+			const value = JSON.stringify(cursor)
+			try {
+				await db
+					.insert(contactSyncCursor)
+					.values({ name: CONTACT_SYNC_LATE_CURSOR_NAME, cursor: value })
+				return
+			} catch (error) {
+				if (!isMysqlDuplicateEntryError(error)) throw error
+			}
+			await db
+				.update(contactSyncCursor)
+				.set({ cursor: value })
+				.where(byLateName)
+		},
+	}
+}
+
+/**
+ * A blank or unreadable cursor is no cursor: the drain starts over, which
+ * only re-syncs contacts.
+ */
+export function decodeLateCursor(
+	value: string | null | undefined,
+): ContactSyncLateCursor | undefined {
+	if (!value) return undefined
+	try {
+		const parsed = JSON.parse(value) as ContactSyncLateCursor
+		const after =
+			typeof parsed.after?.createdAt === 'string' &&
+			typeof parsed.after.id === 'string'
+				? { createdAt: parsed.after.createdAt, id: parsed.after.id }
+				: undefined
+		const failing =
+			typeof parsed.failing?.contactId === 'string' &&
+			typeof parsed.failing.runs === 'number'
+				? { contactId: parsed.failing.contactId, runs: parsed.failing.runs }
+				: undefined
+		if (!after && !failing) return undefined
+		return { ...(after ? { after } : {}), ...(failing ? { failing } : {}) }
+	} catch {
+		return undefined
 	}
 }
 
