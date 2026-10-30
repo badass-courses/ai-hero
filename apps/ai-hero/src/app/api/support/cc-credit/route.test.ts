@@ -103,6 +103,41 @@ describe('signed CC credit support seam', () => {
 		)
 		expect(mocks.writes).toHaveBeenCalledOnce()
 	})
+	it('accepts desk-reviewed explicit sources only on backfill requests', async () => {
+		const sources = [
+			{
+				purchaseId: 'purch_3f8e2c1a-9b7d-4e6f-a5c4-1d2e3f4a5b6c',
+				seats: 2,
+				perSeatCents: 22425,
+			},
+		]
+		expect(
+			(await POST(request({ ...input, mode: 'backfill_preview', sources })))
+				.status,
+		).toBe(200)
+		expect(mocks.run).toHaveBeenLastCalledWith(
+			{},
+			expect.objectContaining({ mode: 'backfill_preview', sources }),
+		)
+		mocks.run.mockClear()
+		for (const body of [
+			{ ...input, sources },
+			{ ...input, mode: 'inspect', sources },
+			{ ...input, mode: 'backfill_preview', sources: [] },
+			{
+				...input,
+				mode: 'backfill_preview',
+				sources: [{ ...sources[0], perSeatCents: 224.25 }],
+			},
+			{
+				...input,
+				mode: 'backfill_preview',
+				sources: [{ ...sources[0], note: 'extra' }],
+			},
+		])
+			expect((await POST(request(body))).status).toBe(400)
+		expect(mocks.run).not.toHaveBeenCalled()
+	})
 	it('returns a remaining balance on overspend and never authorizes finalization on unavailable evidence', async () => {
 		mocks.run.mockRejectedValueOnce(
 			new CreditRefusal('insufficient_credit', {

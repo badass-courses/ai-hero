@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { inventoryCredits } from './inventory'
+import { inventoryCredits, type HistoricalLine } from './inventory'
 import type { CreditReceipt } from './domain'
 
 async function* items<T>(values: T[]) {
@@ -83,6 +83,56 @@ describe('read-only historical CC invoice inventory', () => {
 			'historical_credit_seat_count_or_amount_ambiguous',
 		])
 		expect(preview).toHaveBeenCalledTimes(3)
+	})
+	it('matches "Crash Course team credit" lines and holds unrecognized negative lines on C5 invoices', async () => {
+		const preview = vi.fn(async (input: { invoiceId: string }) => ({
+			ok: true,
+			result: {
+				receipt: receipt(input.invoiceId),
+				remainingByPurchase: { purch_synthetic: 3 },
+			},
+		}))
+		const c5 = { price: { product: 'prod_c5' }, amount: 99500 }
+		const lines: Record<string, HistoricalLine[]> = {
+			team: [
+				{ ...c5, description: 'Cohort seats' },
+				{ description: 'Crash Course team credit', amount: -59700 },
+			],
+			adjusted: [
+				{ ...c5, description: 'Cohort seats' },
+				{ description: 'Prior purchase adjustment', amount: -59700 },
+			],
+			unrelated: [
+				{
+					price: { product: 'prod_other' },
+					description: 'Other product',
+					amount: 1000,
+				},
+				{ description: 'Proration', amount: -500 },
+			],
+		}
+		const plan = await inventoryCredits(
+			{
+				invoices: items(
+					Object.keys(lines).map((id) => ({ id, customer: 'cus_synthetic' })),
+				),
+				lines: (id) => items(lines[id]!),
+				preview,
+				c5Products: new Set(['prod_c5']),
+			},
+			'test-run',
+		)
+		expect(plan.counts).toMatchObject({
+			scannedInvoices: 3,
+			matchedInvoices: 2,
+			held: 2,
+		})
+		expect(plan.records.map((row) => [row.invoiceId, row.reason])).toEqual([
+			// No "x N" on the line: needs a desk-reviewed explicit-source import.
+			['team', 'historical_credit_seat_count_or_amount_ambiguous'],
+			['adjusted', 'historical_unrecognized_negative_line_hold_for_review'],
+		])
+		expect(preview).not.toHaveBeenCalled()
 	})
 	it('does not project already-ledgered receipts twice and treats source outages as holds', async () => {
 		const plan = await inventoryCredits(

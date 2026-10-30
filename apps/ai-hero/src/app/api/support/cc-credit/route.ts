@@ -52,6 +52,20 @@ const requestSchema = z.discriminatedUnion('mode', [
 					approvalReference: z.string().min(1).max(500),
 				})
 				.strict(),
+			// Backfill only: one desk-reviewed source per credit line, in line order.
+			sources: z
+				.array(
+					z
+						.object({
+							purchaseId: z.string().min(1).max(191),
+							seats: z.number().int().min(1).max(100_000),
+							perSeatCents: z.number().int().min(1).max(100_000_000),
+						})
+						.strict(),
+				)
+				.min(1)
+				.max(50)
+				.optional(),
 		})
 		.strict(),
 ])
@@ -81,6 +95,13 @@ export async function POST(request: NextRequest) {
 	const parsed = requestSchema.safeParse(input)
 	if (!parsed.success) return response({ error: 'Invalid request' }, 400)
 	const body = parsed.data
+	if (
+		'sources' in body &&
+		body.sources &&
+		body.mode !== 'backfill' &&
+		body.mode !== 'backfill_preview'
+	)
+		return response({ error: 'Invalid request' }, 400)
 	if (body.mode === 'reserve' && !creditEnabled())
 		return response(
 			{ reason: 'credit_reservations_disabled_pending_backfill_review' },
