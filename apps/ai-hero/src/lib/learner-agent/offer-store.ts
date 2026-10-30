@@ -22,6 +22,9 @@ export const offerStore: OfferStore = {
 				and(
 					eq(purchases.userId, userId),
 					eq(purchases.productId, productId),
+					// A bulk order buys seats for others; a seat the buyer redeemed is
+					// its own purchase row.
+					isNull(purchases.bulkCouponId),
 					inArray(purchases.status, HELD),
 				),
 			)
