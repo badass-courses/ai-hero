@@ -6,6 +6,8 @@ import * as React from 'react'
 import { TYPE } from '@/components/landing/type'
 import { log } from '@/server/logger'
 
+import { cn } from '@coursebuilder/ui/utils/cn'
+
 import { QuizQuestionClient } from './quiz-question-client'
 import { QuizQuestionDataSchema } from './quiz-schema'
 
@@ -60,15 +62,22 @@ export async function Quiz({ children }: { children: React.ReactNode }) {
 		})
 	})
 
-	// One panel, the questions in it numbered and split by hairlines, so a quiz
-	// reads as one exercise rather than a stack of cards.
+	// A quiz closes the lesson, so it opens like the Up next band below it: a
+	// hairline across the whole column, then a heading. The line runs out past
+	// the prose measure (border-image outset) and the lesson's `main` clips it
+	// at the column's edges.
 	return (
-		<section className="not-prose my-10" aria-label="Lesson quiz">
-			<div className="mb-2 flex items-baseline justify-between gap-4">
-				<p className={TYPE.groupLabel}>Check your understanding</p>
-				<p className={TYPE.metaMark}>Answer, then check</p>
-			</div>
-			<div className="divide-border bg-card divide-y rounded-[12px] border">
+		<section
+			className="not-prose mt-16 border-t pt-10 [border-image:linear-gradient(var(--color-border)_0_0)_1/1px_0_0_0/0_100vw]"
+			aria-label="Lesson quiz"
+		>
+			<h2 className={cn(TYPE.panelTitle, 'text-balance')}>
+				Check your understanding
+			</h2>
+			<p className={cn(TYPE.metaMark, 'mt-2')}>
+				Answer each question, then check your answer.
+			</p>
+			<div className="divide-border bg-card mt-6 divide-y rounded-[12px] border">
 				{renderedChildren}
 			</div>
 		</section>

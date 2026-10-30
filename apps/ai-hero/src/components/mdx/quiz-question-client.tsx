@@ -226,7 +226,7 @@ export function QuizQuestionClient({
 			{!isAnswered ? (
 				<Button
 					type="button"
-					className="mt-4 w-full sm:w-auto"
+					className="mt-4 w-full font-bold sm:w-auto"
 					disabled={
 						!hasSelection || isSubmitting || state.matches('initializing')
 					}
