@@ -1,9 +1,9 @@
-import Image from 'next/image'
 import Link from 'next/link'
 import { ArrowRight } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
 
+import { CldImage } from './cld-image'
 import { BADGE_SOLID, TYPE } from './landing/type'
 import {
 	C5_IMAGE,
@@ -22,7 +22,7 @@ export function C5SaleCta({ forTeams = false }: { forTeams?: boolean }) {
 				{/* The artwork repeats the button's link, so it stays out of the tab
 				    order and the accessibility tree. */}
 				<Link href={href} tabIndex={-1} aria-hidden="true" className="block">
-					<Image
+					<CldImage
 						src={C5_IMAGE}
 						width={600}
 						height={320}
