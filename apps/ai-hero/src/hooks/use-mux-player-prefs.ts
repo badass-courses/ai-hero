@@ -109,6 +109,22 @@ export const clearStaleCaptions = (
 	}
 }
 
+/**
+ * Repaints the showing captions once the new source has loaded. Across the
+ * swap Chrome can leave a caption box drawn that belongs to no cue, frozen
+ * over every line after it; hiding and showing the track in one task redraws
+ * it, and `change` listeners only ever read the track as showing.
+ */
+export const redrawCaptions = (
+	muxPlayerRef: React.RefObject<MuxPlayerRefAttributes | null>,
+) => {
+	for (const track of Array.from(muxPlayerRef.current?.textTracks ?? [])) {
+		if (track.mode !== 'showing') continue
+		track.mode = 'hidden'
+		track.mode = 'showing'
+	}
+}
+
 /** `HTMLMediaElement.HAVE_METADATA`. */
 const HAVE_METADATA = 1
 const primingCaptionTracks = new WeakSet<TextTrack>()
