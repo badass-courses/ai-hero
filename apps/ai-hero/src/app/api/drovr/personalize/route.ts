@@ -12,6 +12,7 @@ import {
 } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
 import {
 	DrovrPersonalizeRequestSchema,
+	logDrovrPersonalizeAnswer,
 	personalizeDrovrIntent,
 } from '@/lib/subscriber-marketing/drovr-personalize'
 import { getValuePathAnswerPages } from '@/lib/subscriber-marketing/value-path-answer-page'
@@ -86,6 +87,7 @@ export const POST = withSkill(async (request: NextRequest) => {
 		linkAnchors: createDrizzleValuePathLinkAnchorStore(db),
 		warn: log.warn,
 	})
+	logDrovrPersonalizeAnswer(log.info, parsed.data, result)
 	return result
 		? NextResponse.json(result)
 		: problem(
