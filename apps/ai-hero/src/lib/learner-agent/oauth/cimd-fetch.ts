@@ -47,8 +47,9 @@ for (const [network, prefix] of [
 
 const blockedV6 = new net.BlockList()
 for (const [network, prefix] of [
-	['::', 128],
-	['::1', 128],
+	// IPv4-compatible (deprecated), including :: and ::1. A stack that
+	// still routes them reaches the IPv4 host they embed.
+	['::', 96],
 	['::ffff:0:0', 96],
 	['64:ff9b::', 96],
 	['64:ff9b:1::', 48],
