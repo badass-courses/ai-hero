@@ -77,6 +77,13 @@ const LIST_TYPE = cn(
 )
 
 /**
+ * Tables at the reply's size: Streamdown sets its cells in `text-sm` with
+ * page-sized padding, a step larger than the text around them.
+ */
+const TABLE_TYPE =
+	'[&_:is(th,td)]:px-2.5 [&_:is(th,td)]:py-1.5 [&_:is(th,td)]:text-[1em] [&_td]:align-top'
+
+/**
  * Markdown inside the panel: mono runs a size down (a mono face reads larger
  * than the sans beside it) on a translucent chip, so the spoken highlight
  * shows through code instead of stopping at it. Headings the agent writes
@@ -89,6 +96,7 @@ const REPLY_TYPE = cn(
 	'[&_:not(pre)>code]:bg-foreground/[0.07] [&_:not(pre)>code]:rounded-[4px] [&_:not(pre)>code]:px-1 [&_:not(pre)>code]:py-px [&_:not(pre)>code]:text-[0.86em] [&_:not(pre)>code]:font-normal',
 	'[&_hr]:my-3 [&_ol]:my-2 [&_p]:my-1.5 [&_ul]:my-2',
 	LIST_TYPE,
+	TABLE_TYPE,
 )
 
 /**
