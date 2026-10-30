@@ -217,3 +217,14 @@ describe('skill names', () => {
 		expect(skillKey('grill-me')).toBe('grill-me')
 	})
 })
+
+describe('the views entry point', () => {
+	it('imports nothing, so a client bundle gets no Effect', async () => {
+		const { readFile } = await import('node:fs/promises')
+		const source = await readFile(
+			new URL('../src/views.ts', import.meta.url),
+			'utf8',
+		)
+		expect(source).not.toMatch(/^\s*(import|export .* from)\b/m)
+	})
+})

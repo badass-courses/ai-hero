@@ -1,11 +1,12 @@
 import { Schema } from 'effect'
 
 import { SessionExtractEntry, type SessionExtract } from './session-extract.js'
+import type * as Views from './views.js'
 
 /**
- * Views of Matt's session extract, derived from its entries and nothing else:
- * no summaries, no inference. Each moment is something that is on screen,
- * stamped with the video second it appears.
+ * Schemas for the session extract views. The derivation itself lives in
+ * `views.ts`, plain TypeScript the lesson page can bundle; the checks at the
+ * bottom keep these schemas and its types in step.
  */
 
 export const SessionView = Schema.Literals([
@@ -99,151 +100,22 @@ export const SessionChapter = Schema.Struct({
 })
 export type SessionChapter = typeof SessionChapter.Type
 
-/** Skill names as the extract writes them: `/tdd`, `TDD` and `tdd` match. */
-export function skillKey(skill: string): string {
-	return skill.trim().replace(/^\/+/, '').toLowerCase()
-}
+export {
+	chapterOverlaps,
+	extractChapters,
+	extractMoments,
+	momentKindForView,
+	skillKey,
+	type SkillLinks,
+} from './views.js'
 
-/** Skill pages by `skillKey`. */
-export type SkillLinks = ReadonlyMap<string, string>
-
-const MOMENT_FOR_VIEW = {
-	prompts: 'prompt',
-	corrections: 'correction',
-	skills: 'skill',
-	errors: 'error',
-} as const satisfies Record<string, MomentKind>
-
-export function momentKindForView(
-	view: keyof typeof MOMENT_FOR_VIEW,
-): MomentKind {
-	return MOMENT_FOR_VIEW[view]
-}
-
-/** Every moment of `kinds` in the extract, session by session, in order. */
-export function extractMoments(
-	extract: SessionExtract,
-	kinds: ReadonlyArray<MomentKind>,
-	skillLinks: SkillLinks = new Map(),
-): SessionMoment[] {
-	const wanted = new Set(kinds)
-	const moments: SessionMoment[] = []
-	for (const session of extract.sessions) {
-		const entries = session.entries
-		entries.forEach((entry, index) => {
-			switch (entry.kind) {
-				case 'userPrompt':
-					if (wanted.has('prompt')) {
-						moments.push({
-							kind: 'prompt',
-							sessionId: session.sessionId,
-							visibleFrom: entry.visibleFrom,
-							text: entry.text,
-						})
-					}
-					return
-				case 'interrupt': {
-					if (!wanted.has('correction')) return
-					const next = entries
-						.slice(index + 1)
-						.find((later) => later.kind === 'userPrompt')
-					moments.push({
-						kind: 'correction',
-						sessionId: session.sessionId,
-						visibleFrom: entry.visibleFrom,
-						interrupt: entry.text,
-						followedBy:
-							next?.kind === 'userPrompt'
-								? { visibleFrom: next.visibleFrom, text: next.text }
-								: null,
-					})
-					return
-				}
-				case 'skillCall':
-					if (wanted.has('skill')) {
-						moments.push({
-							kind: 'skill',
-							sessionId: session.sessionId,
-							visibleFrom: entry.visibleFrom,
-							skill: entry.skill,
-							via: entry.via,
-							args: entry.args,
-							skillUrl: skillLinks.get(skillKey(entry.skill)) ?? null,
-						})
-					}
-					return
-				case 'toolCall': {
-					if (!wanted.has('error') || entry.resultIsError !== true) return
-					const next = entries
-						.slice(index + 1)
-						.find(
-							(later) =>
-								later.kind === 'userPrompt' || later.kind === 'assistantText',
-						)
-					moments.push({
-						kind: 'error',
-						sessionId: session.sessionId,
-						visibleFrom: entry.visibleFrom,
-						tool: entry.tool,
-						summary: entry.summary,
-						recovery:
-							next?.kind === 'userPrompt' || next?.kind === 'assistantText'
-								? {
-										kind: next.kind,
-										visibleFrom: next.visibleFrom,
-										text: next.text,
-									}
-								: null,
-					})
-					return
-				}
-				case 'assistantText':
-					return
-			}
-		})
-	}
-	return moments
-}
-
-/** Each session split at every prompt. */
-export function extractChapters(extract: SessionExtract): SessionChapter[] {
-	const chapters: SessionChapter[] = []
-	for (const session of extract.sessions) {
-		const own: Array<{
-			prompt: string | null
-			entries: SessionExtractEntry[]
-		}> = []
-		for (const entry of session.entries) {
-			const current = own.at(-1)
-			if (entry.kind === 'userPrompt' || !current) {
-				own.push({
-					prompt: entry.kind === 'userPrompt' ? entry.text : null,
-					entries: [entry],
-				})
-			} else {
-				current.entries.push(entry)
-			}
-		}
-		own.forEach((chapter, index) => {
-			const next = own[index + 1]
-			chapters.push({
-				sessionId: session.sessionId,
-				index,
-				startsAt: chapter.entries[0]?.visibleFrom ?? 0,
-				endsAt: next?.entries[0]?.visibleFrom ?? null,
-				prompt: chapter.prompt,
-				entries: chapter.entries,
-			})
-		})
-	}
-	return chapters
-}
-
-/** True when a chapter overlaps `[from, to]`. */
-export function chapterOverlaps(
-	chapter: SessionChapter,
-	from: number,
-	to: number,
-): boolean {
-	return chapter.startsAt <= to && (chapter.endsAt ?? Infinity) >= from
-}
+// Each schema's type and its plain twin in views.ts are the same shape; a
+// drift on either side fails the build here.
+type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
+type Agree<T extends true> = T
+export type ViewsAgree = [
+	Agree<Same<SessionMoment, Views.Moment>>,
+	Agree<Same<SessionChapter, Views.Chapter>>,
+	Agree<Same<SessionExtract, Views.Extract>>,
+	Agree<Same<MomentKind, Views.MomentKind>>,
+]
