@@ -103,6 +103,11 @@ export const CRASH_COURSE_PROMO: Promo = {
 
 /** C5 enrollment, with no price claims. Checkout remains the price authority. */
 export const C5_TITLE = 'Software Factories for Real Engineers'
+// The cohort's own artwork and pitch, as on its page.
+export const C5_IMAGE =
+	'https://res.cloudinary.com/total-typescript/image/upload/v1791799196/cohorts/pbqmeemewqbfeqxomwj6.jpg'
+export const C5_PITCH =
+	'Use your Real Engineering skills to ship code at scale and maintain a self-improving codebase.'
 // C5 sells team seats on the cohort page; its separate /for-teams page has no body.
 export const C5_TEAM_HREF = '/s/c5-site-cta'
 export const FEATURED_PROMO: Promo = {
