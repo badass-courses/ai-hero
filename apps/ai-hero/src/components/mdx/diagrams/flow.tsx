@@ -327,7 +327,7 @@ type Step = { node: Box; badges: Box }
 /** The gap an arrow leaves where it starts, and the smaller one between
     an arrowhead's tip and the step it points at. */
 const CLEARANCE = 5
-const TIP_GAP = 2
+const TIP_GAP = 4
 
 /** Where an arrow touches a step. An arrow leaving by the bottom sits right of
     one arriving there, so a step that is both a target and a source keeps the
