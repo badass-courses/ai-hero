@@ -16,7 +16,7 @@ vi.mock('@/server/with-skill', () => ({
 
 import { POST } from './route'
 
-const token = 'v1.eyJjIjoiYyJ9.c2lnbmF0dXJl'
+const token = 'c1.eyJjIjoiYyJ9.c2lnbmF0dXJl'
 let fetcher: ReturnType<
 	typeof vi.fn<[string | URL | Request, RequestInit?], Promise<Response>>
 >

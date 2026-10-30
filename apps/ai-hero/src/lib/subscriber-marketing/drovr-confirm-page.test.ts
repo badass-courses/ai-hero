@@ -2,13 +2,14 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
 	confirmPageView,
+	isPlausibleConfirmToken,
 	readConfirmState,
 	requestConfirmResend,
 	submitConfirm,
 	type ConfirmLookup,
 } from './drovr-confirm-page'
 
-const token = 'v1.eyJjIjoiYyJ9.c2lnbmF0dXJl'
+const token = 'c1.eyJjIjoiYyJ9.c2lnbmF0dXJl'
 const base = 'https://drovr.test'
 
 const answering = (status: number, body?: unknown) => {
@@ -69,6 +70,18 @@ describe('readConfirmState (GET /confirm/state, a read)', () => {
 			status: 'unavailable',
 			reason: 'drovr-api-not-configured',
 		})
+	})
+})
+
+describe('isPlausibleConfirmToken', () => {
+	// drovr mints confirm tokens as c1.<payload>.<mac>. Requiring the
+	// unsubscribe token's v1 shape rejected every real confirm link.
+	it('accepts drovr confirm tokens and rejects the unsubscribe shape', () => {
+		expect(isPlausibleConfirmToken('c1.eyJjIjoiYyJ9.c2lnbmF0dXJl')).toBe(true)
+		expect(isPlausibleConfirmToken('v1.eyJjIjoiYyJ9.c2lnbmF0dXJl')).toBe(false)
+		expect(isPlausibleConfirmToken('c1.only-two')).toBe(false)
+		expect(isPlausibleConfirmToken(`c1.${'a'.repeat(2048)}.b`)).toBe(false)
+		expect(isPlausibleConfirmToken(undefined)).toBe(false)
 	})
 })
 
