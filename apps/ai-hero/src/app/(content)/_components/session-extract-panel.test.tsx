@@ -2,6 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { SessionExtract } from '@/lib/session-extract'
+import { skillKey } from '@ai-hero/learner-agent/views'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => {
@@ -173,6 +174,25 @@ describe('the whole transcript', () => {
 			(element) => element.textContent === 'Skill tdd',
 		)!
 		await act(async () => skill.click())
+		expect(mocks.media.currentTime).toBe(0)
+	})
+})
+
+describe('skill calls', () => {
+	it('link to the skill page, and clicking the link does not seek', async () => {
+		mocks.media.currentTime = 0
+		await act(async () =>
+			root.render(
+				<SessionExtractPanel
+					extract={extract}
+					skillLinks={{ [skillKey('tdd')]: '/skills/tdd' }}
+				/>,
+			),
+		)
+		const link = container.querySelector('a[href="/skills/tdd"]')!
+		expect(link.textContent).toBe('Skill page')
+		link.addEventListener('click', (event) => event.preventDefault())
+		await act(async () => (link as HTMLElement).click())
 		expect(mocks.media.currentTime).toBe(0)
 	})
 })

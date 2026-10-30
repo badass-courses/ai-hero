@@ -21,6 +21,7 @@ import {
 	type SessionExtract,
 	type SessionExtractRow,
 } from '@/lib/session-extract'
+import { skillKey } from '@ai-hero/learner-agent/views'
 import type { MuxPlayerRefAttributes } from '@mux/mux-player-react'
 import {
 	ArrowDownIcon,
@@ -46,6 +47,7 @@ import {
 	SESSION_PROSE,
 	SessionMomentList,
 	SessionViewTabs,
+	SkillPageLink,
 	TimeButton,
 	useSessionViews,
 	type SessionTab,
@@ -122,7 +124,7 @@ export function SessionExtractPanel({
 	onPopOut,
 }: {
 	extract: SessionExtract
-	/** Skill pages by `skillKey`, for the Skills tab. */
+	/** Skill pages by `skillKey`, linked from Live and the Skills tab. */
 	skillLinks?: Readonly<Record<string, string>>
 	className?: string
 	/** Shown as a header button when the browser can open a floating window. */
@@ -166,7 +168,7 @@ export function SessionExtractPanel({
 				>
 					<SessionViewTabs tabs={views.tabs} />
 					<TabsContent value="live" className="relative flex min-h-0 flex-col">
-						<LiveSession extract={extract} />
+						<LiveSession extract={extract} skillLinks={skillLinks} />
 					</TabsContent>
 					{views.tabs
 						.filter((view) => view !== 'live')
@@ -183,7 +185,7 @@ export function SessionExtractPanel({
 						))}
 				</Tabs>
 			) : (
-				<LiveSession extract={extract} />
+				<LiveSession extract={extract} skillLinks={skillLinks} />
 			)}
 		</section>
 	)
@@ -195,7 +197,13 @@ export function SessionExtractPanel({
  * or a time seeks the video. The reply block Matt is reading out is marked,
  * matched from the captions.
  */
-function LiveSession({ extract }: { extract: SessionExtract }) {
+function LiveSession({
+	extract,
+	skillLinks,
+}: {
+	extract: SessionExtract
+	skillLinks?: Readonly<Record<string, string>>
+}) {
 	const rows = React.useMemo(() => sessionExtractRows(extract), [extract])
 	const { muxPlayerRef } = useMuxPlayer()
 	const time = usePlayerTime(muxPlayerRef)
@@ -391,7 +399,7 @@ function LiveSession({ extract }: { extract: SessionExtract }) {
 										className="self-start"
 									/>
 								)}
-								<RowBody row={row} />
+								<RowBody row={row} skillLinks={skillLinks} />
 							</div>
 						)
 					})}
@@ -476,7 +484,13 @@ function isCall(row: SessionExtractRow) {
 	)
 }
 
-function RowBody({ row }: { row: SessionExtractRow }) {
+function RowBody({
+	row,
+	skillLinks,
+}: {
+	row: SessionExtractRow
+	skillLinks?: Readonly<Record<string, string>>
+}) {
 	if (row.type === 'sessionStart') {
 		return (
 			<p className={cn(TYPE.metaSm, 'text-muted-foreground')}>
@@ -554,7 +568,8 @@ function RowBody({ row }: { row: SessionExtractRow }) {
 					</MessageContent>
 				</Message>
 			)
-		case 'skillCall':
+		case 'skillCall': {
+			const skillUrl = skillLinks?.[skillKey(entry.skill)]
 			return (
 				<CallRow
 					icon={<SparklesIcon className="size-3" />}
@@ -564,6 +579,7 @@ function RowBody({ row }: { row: SessionExtractRow }) {
 						</>
 					}
 					failed={entry.via === 'toolCall' && entry.resultIsError === true}
+					aside={skillUrl && <SkillPageLink href={skillUrl} />}
 				>
 					{entry.skillBody && (
 						<MessageResponse className={DETAIL_TYPE}>
@@ -572,6 +588,7 @@ function RowBody({ row }: { row: SessionExtractRow }) {
 					)}
 				</CallRow>
 			)
+		}
 		case 'interrupt':
 			return (
 				<p className={cn(TYPE.metaSm, 'text-muted-foreground italic')}>
@@ -589,11 +606,14 @@ function CallRow({
 	icon,
 	title,
 	failed,
+	aside,
 	children,
 }: {
 	icon: React.ReactNode
 	title: React.ReactNode
 	failed: boolean
+	/** At the line's end, beside (never inside) the toggle. */
+	aside?: React.ReactNode
 	children?: React.ReactNode
 }) {
 	const header = (
@@ -614,14 +634,24 @@ function CallRow({
 	)
 
 	if (!children) {
-		return <div className={line}>{header}</div>
+		return (
+			<div className={line}>
+				{header}
+				{aside && <span className="ml-auto pl-2">{aside}</span>}
+			</div>
+		)
 	}
 	return (
 		<Tool className="mb-0 rounded-none border-0">
-			<CollapsibleTrigger className={cn(line, 'hover:text-foreground')}>
-				{header}
-				<ChevronDownIcon className="size-3 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
-			</CollapsibleTrigger>
+			<div className="flex items-center gap-2">
+				<CollapsibleTrigger
+					className={cn(line, 'hover:text-foreground min-w-0 flex-1')}
+				>
+					{header}
+					<ChevronDownIcon className="size-3 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
+				</CollapsibleTrigger>
+				{aside}
+			</div>
 			<ToolContent className="my-1 ml-1.5 border-l pl-3">
 				{children}
 			</ToolContent>

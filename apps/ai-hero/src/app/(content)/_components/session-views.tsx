@@ -339,6 +339,24 @@ function CorrectionRow({
 	)
 }
 
+/** A skill's page on the site, opened beside the lesson. */
+export function SkillPageLink({ href }: { href: string }) {
+	return (
+		<a
+			href={href}
+			target="_blank"
+			rel="noreferrer"
+			className={cn(
+				TYPE.metaSm,
+				'text-muted-foreground hover:text-foreground -my-1 inline-flex shrink-0 items-center gap-0.5',
+			)}
+		>
+			Skill page
+			<ArrowUpRight className="size-3" aria-hidden />
+		</a>
+	)
+}
+
 function SkillRow({
 	moment,
 	seek,
@@ -351,20 +369,7 @@ function SkillRow({
 			{/* The page link rides the time's line, so the skill gets the full width. */}
 			<div className="flex items-center justify-between gap-2">
 				<TimeButton seconds={moment.visibleFrom} seek={seek} />
-				{moment.skillUrl && (
-					<a
-						href={moment.skillUrl}
-						target="_blank"
-						rel="noreferrer"
-						className={cn(
-							TYPE.metaSm,
-							'text-muted-foreground hover:text-foreground -my-1 inline-flex shrink-0 items-center gap-0.5',
-						)}
-					>
-						Skill page
-						<ArrowUpRight className="size-3" aria-hidden />
-					</a>
-				)}
+				{moment.skillUrl && <SkillPageLink href={moment.skillUrl} />}
 			</div>
 			<div
 				className={cn(
