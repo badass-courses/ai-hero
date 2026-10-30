@@ -212,8 +212,11 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	}
 
 	const { fields } = cohort
-	const campaignVariant = props.campaignLanding?.variant
 	const hasCohortAccess = hasPurchasedCurrentProduct || hasAccessToCohort
+	// Campaign copy sells the cohort; buyers get its own title and description.
+	const campaignVariant = hasCohortAccess
+		? undefined
+		: props.campaignLanding?.variant
 
 	const PT = fields.timezone || 'America/Los_Angeles'
 

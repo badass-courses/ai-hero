@@ -5,7 +5,7 @@ import {
 	buildOfficeHoursGoogleCalendarUrl,
 	formatOfficeHoursUtcDate,
 	formatOfficeHoursUtcTimeRange,
-	groupOfficeHoursSessionsByUtcDate,
+	groupOfficeHoursSessionsByDate,
 	isOfficeHoursSessionLive,
 	isOfficeHoursSessionPast,
 	sortOfficeHoursSessions,
@@ -145,14 +145,14 @@ export function OfficeHoursSchedule({
 		return () => window.clearInterval(interval)
 	}, [])
 
+	const displayTimeZone = configuredTimeZone || detectedTimeZone
 	const groupedSessions = React.useMemo(
-		() => groupOfficeHoursSessionsByUtcDate(sessions),
-		[sessions],
+		() => groupOfficeHoursSessionsByDate(sessions, displayTimeZone ?? 'UTC'),
+		[sessions, displayTimeZone],
 	)
 	if (groupedSessions.length === 0) return null
 
 	const shouldShowActions = showActions !== false && showActions !== 'false'
-	const displayTimeZone = configuredTimeZone || detectedTimeZone
 	const zoneName = timeZoneLabel || displayTimeZone?.replace(/_/g, ' ')
 	const zoneNote = configuredTimeZone
 		? `Times in ${zoneName}`

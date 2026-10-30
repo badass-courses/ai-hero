@@ -8,6 +8,7 @@ import {
 	sortOfficeHoursSessions,
 } from '@/lib/cohort-office-hours'
 import type { Workshop } from '@/lib/workshops'
+import { log, serializeError } from '@/server/logger'
 import { differenceInCalendarDays } from 'date-fns'
 import { formatInTimeZone } from 'date-fns-tz'
 
@@ -119,11 +120,19 @@ export async function CohortBuyerStrip({
 	const tz = timezone || 'America/Los_Angeles'
 	const [progress, discord] = await Promise.all([
 		Promise.all(
-			workshops.map(
-				(workshop) =>
-					workshopProgressMap.get(workshop.fields.slug) ?? Promise.resolve(null),
+			workshops.map((workshop) =>
+				(workshopProgressMap.get(workshop.fields.slug) ?? Promise.resolve(null)).catch(
+					(error) => {
+						log.warn('cohort.buyer-strip.progress.failed', {
+							cohortId: cohort.id,
+							workshopSlug: workshop.fields.slug,
+							error: serializeError(error),
+						})
+						return null
+					},
+				),
 			),
-		).catch(() => workshops.map(() => null)),
+		),
 		isDiscordConnected.catch(() => false),
 	])
 
