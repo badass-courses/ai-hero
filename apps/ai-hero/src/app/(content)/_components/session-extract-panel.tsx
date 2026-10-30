@@ -167,8 +167,18 @@ export function SessionExtractPanel({
 					className="min-h-0 flex-1 gap-0"
 				>
 					<SessionViewTabs tabs={views.tabs} />
-					<TabsContent value="live" className="relative flex min-h-0 flex-col">
-						<LiveSession extract={extract} skillLinks={skillLinks} />
+					{/* Kept mounted, so a reader who scrolled Live and looked at another
+					    tab comes back to the same spot. */}
+					<TabsContent
+						value="live"
+						forceMount
+						className="relative flex min-h-0 flex-col data-[state=inactive]:hidden"
+					>
+						<LiveSession
+							extract={extract}
+							skillLinks={skillLinks}
+							shown={shown === 'live'}
+						/>
 					</TabsContent>
 					{views.tabs
 						.filter((view) => view !== 'live')
@@ -200,9 +210,12 @@ export function SessionExtractPanel({
 function LiveSession({
 	extract,
 	skillLinks,
+	shown = true,
 }: {
 	extract: SessionExtract
 	skillLinks?: Readonly<Record<string, string>>
+	/** False while another tab is open; Live stays mounted under it. */
+	shown?: boolean
 }) {
 	const rows = React.useMemo(() => sessionExtractRows(extract), [extract])
 	const { muxPlayerRef } = useMuxPlayer()
@@ -267,6 +280,17 @@ function LiveSession({
 		if (spoken) anchorRef.current = spoken
 		if (following) follow('smooth')
 	}, [spoken, active, following, follow])
+
+	// Hidden, the view kept its place but could not follow; back on screen,
+	// a following view catches up with the video at once.
+	const wasShown = React.useRef(shown)
+	React.useEffect(() => {
+		const back = shown && !wasShown.current
+		wasShown.current = shown
+		if (!back || !following) return
+		const frame = requestAnimationFrame(() => follow('instant'))
+		return () => cancelAnimationFrame(frame)
+	}, [shown, following, follow])
 
 	// Seeking back drops the anchor and places the view where reading from
 	// that moment would have it, following again.
