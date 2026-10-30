@@ -1,6 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
+import { serializeToMarkdown } from '@/lib/markdown-serializer'
+
 import { publicIdOf, redrawForImage, redrawnIds } from '.'
 
 describe('publicIdOf', () => {
@@ -64,5 +66,28 @@ describe('redrawForImage', () => {
 	it('keys every entry by an ai-hero-images public id', () => {
 		for (const id of redrawnIds)
 			expect(id).toMatch(/^ai-hero-images\/[a-z0-9]+$/)
+	})
+})
+
+describe('markdown readers', () => {
+	it('get the original image, alt text and all, for a redrawn one', () => {
+		const image =
+			'![The explore tickets task diagrammed across lanes](https://res.cloudinary.com/total-typescript/image/upload/v1793187405/ai-hero-images/0a79b278f76b033da33c7b0f37d79400.png)'
+		// The swap happens when the body renders as MDX; markdown is the body
+		// as stored, so it must still be Matt's image.
+		expect(
+			redrawForImage(
+				'https://res.cloudinary.com/total-typescript/image/upload/v1793187405/ai-hero-images/0a79b278f76b033da33c7b0f37d79400.png',
+			),
+		).not.toBeNull()
+		const markdown = serializeToMarkdown({
+			fields: {
+				title: 'Whiteboard Your Own Tasks',
+				slug: 'whiteboard-your-own-tasks',
+				body: `I've diagrammed the explore tickets task first.\n\n${image}\n`,
+			},
+		})
+		expect(markdown).toContain(image)
+		expect(markdown).not.toMatch(/<figure|<svg|data-flow/)
 	})
 })
