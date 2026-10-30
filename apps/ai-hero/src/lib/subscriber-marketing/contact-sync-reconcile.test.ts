@@ -566,16 +566,20 @@ describe('contact sync reconcile drains a late-write backlog', () => {
 		count: number,
 		eventType = 'newsletter.old-sequence.exit-confirmed',
 	) =>
-		Array.from({ length: count }, (_, index): WrittenEvent => ({
-			id: `late-${String(index).padStart(4, '0')}`,
-			contactId: `contact-${String(index).padStart(4, '0')}`,
-			eventType,
-			occurredAt: '2026-10-30T06:45:22.000Z',
-			// Some seconds hold two rows, so cursors land inside a second.
-			createdAt: new Date(
-				Date.parse('2026-10-30T07:19:55.000Z') + Math.floor(index * 0.8) * 1000,
-			).toISOString(),
-		}))
+		Array.from(
+			{ length: count },
+			(_, index): WrittenEvent => ({
+				id: `late-${String(index).padStart(4, '0')}`,
+				contactId: `contact-${String(index).padStart(4, '0')}`,
+				eventType,
+				occurredAt: '2026-10-30T06:45:22.000Z',
+				// Some seconds hold two rows, so cursors land inside a second.
+				createdAt: new Date(
+					Date.parse('2026-10-30T07:19:55.000Z') +
+						Math.floor(index * 0.8) * 1000,
+				).toISOString(),
+			}),
+		)
 	const freshRow: WrittenEvent = {
 		id: 'fresh-1',
 		contactId: 'fresh-contact',
@@ -711,6 +715,77 @@ describe('contact sync reconcile drains a late-write backlog', () => {
 		const receipt = await world.run(at, { maxContacts: 4 })
 		expect(receipt).toMatchObject({ status: 'draining', contacts: 3 })
 		expect(world.state.lateCursor?.after?.id).toBe('late-0002')
+	})
+
+	const stop = (index: number) =>
+		clump(index + 1, 'contact.unsubscribed')[index]!
+	const subscribed = (index: number) => clump(index + 1)[index]!
+
+	it('sends a late stop before a holding failure moves the cursor past it', async () => {
+		// Normal path (two late contacts): the stop row, then one that fails.
+		const rows = [stop(0), subscribed(1)]
+		const failing = (contactId: string) => contactId === 'contact-0001'
+
+		const refused = drainWorld({ watermark, rows, failing })
+		refused.resendStops.mockRejectedValueOnce(new Error('drovr 503 on stops'))
+		await expect(refused.run(runAt(0))).rejects.toThrow('drovr 503 on stops')
+		// Undelivered: the cursor never moved past it.
+		expect(refused.state.lateCursor).toBeUndefined()
+
+		const world = drainWorld({ watermark, rows, failing })
+		await expect(world.run(runAt(0))).rejects.toThrow('drovr 503')
+		expect(world.resendStops).toHaveBeenCalledWith([stop(0)])
+		expect(world.state.lateCursor).toEqual({
+			after: { createdAt: stop(0).createdAt, id: 'late-0000' },
+			failing: { contactId: 'contact-0001', runs: 1 },
+		})
+		expect(world.state.watermark).toBe(watermark)
+	})
+
+	it('never moves past a skipped contact until its stop went out', async () => {
+		const rows = [stop(0), subscribed(1)]
+		const world = drainWorld({
+			watermark,
+			rows,
+			failing: (contactId) => contactId === 'contact-0000',
+		})
+		const held = { failing: { contactId: 'contact-0000', runs: 2 } }
+		world.state.lateCursor = held
+		world.resendStops.mockRejectedValueOnce(new Error('drovr 503 on stops'))
+		await expect(world.run(runAt(0))).rejects.toThrow('drovr 503 on stops')
+		expect(world.state.lateCursor).toEqual(held)
+		expect(world.skipped).not.toHaveBeenCalled()
+
+		// Next run: the skip goes through, its stop with it, then the advance.
+		await expect(world.run(runAt(1))).resolves.toMatchObject({
+			status: 'partial',
+			lateSkipped: ['contact-0000'],
+		})
+		expect(world.resendStops).toHaveBeenLastCalledWith([stop(0)])
+		expect(world.skipped).toHaveBeenCalledTimes(1)
+		expect(world.state.watermark).not.toBe(watermark)
+		expect(world.state.lateCursor).toBeUndefined()
+	})
+
+	it("re-sends a skipped contact's stops in the draining run that passes them", async () => {
+		const world = drainWorld({
+			watermark,
+			rows: clump(12, 'contact.unsubscribed'),
+			failing: (contactId) => contactId === 'contact-0004',
+		})
+		const options = { maxContacts: 4 }
+		for (let run = 0; run < 3; run += 1) await world.run(runAt(run), options)
+		expect(world.resendStops).not.toHaveBeenCalledWith(
+			expect.arrayContaining([expect.objectContaining({ id: 'late-0004' })]),
+		)
+		await world.run(runAt(3), options)
+		expect(world.skipped).toHaveBeenCalledTimes(1)
+		expect(world.resendStops.mock.lastCall?.[0].map((row) => row.id)).toEqual([
+			'late-0004',
+			'late-0005',
+			'late-0006',
+			'late-0007',
+		])
 	})
 })
 

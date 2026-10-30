@@ -225,10 +225,11 @@ describe('drovr contact sync reconcile function', () => {
 			'rotated-contacts',
 			'sync:c1',
 			'sync:c2',
-			'late-skipped:c1',
-			'write-late-cursor',
+			// Recorded only once the stops it passes went out.
 			'load-stops',
 			'resend-stops',
+			'late-skipped:c1',
+			'write-late-cursor',
 			'heartbeat',
 			'write-watermark',
 			'clear-late-cursor',

@@ -278,20 +278,23 @@ export async function runContactSyncReconcile(
 	const failures = await syncContacts(ports, contacts)
 	const failed = new Set(failures.map((failure) => failure.contactId))
 	// A failed late write holds everything, as ever, but now through the
-	// late cursor, which counts its runs and skips it on the last one.
-	let lateSkipped = new Set<string>()
-	let lateCursorWritten = false
-	if (lateCursor) {
-		const settled = settleLate(overlap, failed, cursor, planned)
-		lateSkipped = new Set(settled.skipped.map((skip) => skip.contactId))
-		if (settled.failing || settled.skipped.length > 0) {
-			await reportLateSkips(lateCursor, settled.skipped)
-			await lateCursor.write(lateCursorOf(settled))
-			lateCursorWritten = true
-		}
-		const holding = settled.failing?.contactId
-		if (holding)
-			throw failures.find((failure) => failure.contactId === holding)!.reason
+	// late cursor, which counts its runs and skips it on the last one. The
+	// cursor never passes a stop row before that stop went out: the next
+	// scan would never see it again.
+	const settled = lateCursor
+		? settleLate(overlap, failed, cursor, planned)
+		: undefined
+	const lateSkipped = new Set(
+		settled?.skipped.map((skip) => skip.contactId) ?? [],
+	)
+	const passed = new Set(settled?.passed.map((row) => row.id) ?? [])
+	const holding = settled?.failing?.contactId
+	if (lateCursor && settled && holding) {
+		const passedStops = settled.passed.filter(isStop)
+		if (passedStops.length > 0) await ports.resendStops(passedStops)
+		await reportLateSkips(lateCursor, settled.skipped)
+		await lateCursor.write(lateCursorOf(settled))
+		throw failures.find((failure) => failure.contactId === holding)!.reason
 	}
 	if (failures.length > 0) {
 		// A late write sits behind the watermark; otherwise the contact's
@@ -314,12 +317,21 @@ export async function runContactSyncReconcile(
 		}
 	}
 	const synced = new Set(contacts.filter((contactId) => !failed.has(contactId)))
+	// A skipped contact's late stops go out too: the cursor passes them.
 	const stops = [...freshEvents, ...overlap].filter(
 		(row) =>
-			synced.has(row.contactId) &&
-			CONTACT_SYNC_STOP_EVENT_TYPES.has(row.eventType),
+			(synced.has(row.contactId) ||
+				(lateSkipped.has(row.contactId) && passed.has(row.id))) &&
+			isStop(row),
 	)
 	await ports.resendStops(stops)
+	// Recorded once its stops are out, so a later throw keeps the skip.
+	let lateCursorWritten = false
+	if (lateCursor && settled && settled.skipped.length > 0) {
+		await reportLateSkips(lateCursor, settled.skipped)
+		await lateCursor.write(lateCursorOf(settled))
+		lateCursorWritten = true
+	}
 
 	await ports.heartbeat(claim)
 	await ports.writeWatermark(claim)
@@ -342,7 +354,8 @@ export async function runContactSyncReconcile(
 /**
  * A draining run: the oldest late writes, through maxContacts contacts,
  * then the late cursor. No fresh contacts, no rotations, no heartbeat and
- * no watermark; the stops of the late rows synced still go out.
+ * no watermark; the stops of the late rows synced, and of every row the
+ * cursor passes, still go out first.
  */
 async function drainLate(
 	ports: ContactSyncReconcilePorts,
@@ -370,8 +383,12 @@ async function drainLate(
 	const failed = new Set(failures.map((failure) => failure.contactId))
 	const settled = settleLate(batch, failed, args.cursor, args.planned)
 	const synced = batch.filter((row) => !failed.has(row.contactId))
+	const passed = new Set(settled.passed.map((row) => row.id))
 	await ports.resendStops(
-		synced.filter((row) => CONTACT_SYNC_STOP_EVENT_TYPES.has(row.eventType)),
+		batch.filter(
+			(row) =>
+				(!failed.has(row.contactId) || passed.has(row.id)) && isStop(row),
+		),
 	)
 	await reportLateSkips(lateCursor, settled.skipped)
 	await lateCursor.write(lateCursorOf(settled))
@@ -395,6 +412,8 @@ type SettledLate = {
 	after?: ContactSyncLatePosition
 	failing?: { contactId: string; runs: number }
 	skipped: { contactId: string; eventType: string }[]
+	/** The rows `after` moved over this run, in order. */
+	passed: ScannedContactEvent[]
 }
 
 /**
@@ -412,6 +431,7 @@ function settleLate(
 	let after = cursor?.after
 	let moving = true
 	const skipped: SettledLate['skipped'] = []
+	const passed: ScannedContactEvent[] = []
 	for (const row of rows) {
 		const skippedAlready = skipped.some(
 			(skip) => skip.contactId === row.contactId,
@@ -422,13 +442,25 @@ function settleLate(
 					? cursor.failing.runs + 1
 					: 1
 			if (runs < LATE_SKIP_RUNS)
-				return { after, failing: { contactId: row.contactId, runs }, skipped }
+				return {
+					after,
+					failing: { contactId: row.contactId, runs },
+					skipped,
+					passed,
+				}
 			skipped.push({ contactId: row.contactId, eventType: row.eventType })
 		}
 		if (Date.parse(writtenAt(row)) > Date.parse(planned)) moving = false
-		if (moving) after = { createdAt: writtenAt(row), id: row.id }
+		if (moving) {
+			after = { createdAt: writtenAt(row), id: row.id }
+			passed.push(row)
+		}
 	}
-	return { after, skipped }
+	return { after, skipped, passed }
+}
+
+function isStop(row: ScannedContactEvent): boolean {
+	return CONTACT_SYNC_STOP_EVENT_TYPES.has(row.eventType)
 }
 
 function lateCursorOf(settled: SettledLate): ContactSyncLateCursor {
