@@ -84,7 +84,7 @@ export function QuizHeader() {
 			<span
 				data-done={done || undefined}
 				data-perfect={perfect || undefined}
-				className="bg-background dark:bg-card text-muted-foreground data-done:text-foreground data-perfect:border-primary/40 data-perfect:bg-primary/10 data-perfect:text-primary relative flex size-10 shrink-0 items-center justify-center rounded-[9px] border transition-colors duration-500"
+				className="bg-background dark:bg-card text-muted-foreground data-done:text-foreground data-perfect:border-primary/40 data-perfect:bg-primary/10 dark:data-perfect:bg-primary/10 data-perfect:text-primary relative flex size-10 shrink-0 items-center justify-center rounded-[9px] border transition-colors duration-500"
 			>
 				{perfect && (
 					<span
