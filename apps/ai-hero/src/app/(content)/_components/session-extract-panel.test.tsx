@@ -178,6 +178,39 @@ describe('the whole transcript', () => {
 	})
 })
 
+describe('switching tabs', () => {
+	it('keeps Live where the reader scrolled it', async () => {
+		mocks.media.currentTime = 0
+		await act(async () =>
+			root.render(<SessionExtractPanel extract={extract} />),
+		)
+		const scroller = container
+			.querySelector('[data-reached], [data-reply]')!
+			.closest('.overflow-y-auto') as HTMLElement
+		// A reader's own scroll, which stops following the video.
+		await act(async () => {
+			scroller.dispatchEvent(new WheelEvent('wheel', { bubbles: true }))
+			scroller.scrollTop = 120
+		})
+		const press = (name: string) =>
+			act(async () => {
+				const tab = [...container.querySelectorAll('[role="tab"]')].find(
+					(element) => element.textContent?.startsWith(name),
+				)!
+				tab.dispatchEvent(
+					new MouseEvent('mousedown', { bubbles: true, button: 0 }),
+				)
+			})
+		await press('Prompts')
+		expect(
+			container.querySelector('[role="tab"][data-state="active"]')?.textContent,
+		).toMatch(/^Prompts/)
+		await press('Live')
+		expect(scroller.isConnected).toBe(true)
+		expect(scroller.scrollTop).toBe(120)
+	})
+})
+
 describe('skill calls', () => {
 	it('link to the skill page, and clicking the link does not seek', async () => {
 		mocks.media.currentTime = 0
