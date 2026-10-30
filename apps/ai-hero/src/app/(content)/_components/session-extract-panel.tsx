@@ -94,21 +94,6 @@ const DETAIL_TYPE = cn(
 )
 
 /**
- * The spoken block: a faint gold wash bleeding a few pixels past the text,
- * while the rest of its reply steps back, so focus reads as contrast rather
- * than a fill. Both fade as Matt moves through the reply.
- */
-const SPOKEN_HIGHLIGHT = cn(
-	'[&_:is(p,li,h1,h2,h3,h4,h5,h6,tr)]:transition-colors [&_:is(p,li,h1,h2,h3,h4,h5,h6,tr)]:duration-500',
-	'[&_[data-reply]:has([data-spoken])_:is(p,li,h1,h2,h3,h4,h5,h6,tr)]:text-foreground/55',
-	// A band across the panel's full width, however deep the block is nested:
-	// the border image paints outside the block (6px above and below, the
-	// viewport's width sideways) and the scroller clips it at its edges.
-	'[&_[data-spoken]]:!text-foreground [&_[data-spoken]]:[border-image:linear-gradient(color-mix(in_oklab,var(--foreground)_6%,transparent)_0_0)_fill_0//6px_100vw]',
-	'motion-reduce:[&_:is(p,li,h1,h2,h3,h4,h5,h6,tr)]:transition-none',
-)
-
-/**
  * The agent session the video drives on screen. Live, its first tab, reveals
  * it in step with the player; the other tabs list its prompts, skills,
  * corrections and errors whole (`session-views.tsx`). It fills its parent's
@@ -209,6 +194,7 @@ function LiveSession({ extract }: { extract: SessionExtract }) {
 		time,
 		active,
 	)
+	const bar = useBlockBar(contentRef, spoken)
 	const stickRef = React.useRef<StickToBottomContext>(null)
 
 	// Reading only moves forward. The last block Matt read out stays the
@@ -270,10 +256,16 @@ function LiveSession({ extract }: { extract: SessionExtract }) {
 			targetScrollTop={targetScrollTop}
 		>
 			<ConversationContent className="gap-0 p-0">
-				<div
-					ref={contentRef}
-					className={cn('flex flex-col px-3 pb-3', SPOKEN_HIGHLIGHT)}
-				>
+				<div ref={contentRef} className="relative flex flex-col px-3 pb-3">
+					{/* First, so the newest row stays the last child. */}
+					{bar && (
+						<span
+							aria-hidden
+							data-spoken-bar=""
+							className="bg-primary pointer-events-none absolute left-0 w-0.5 transition-[top,height] duration-300 motion-reduce:transition-none"
+							style={bar}
+						/>
+					)}
 					{visible.length === 0 ? (
 						<p className={cn(TYPE.metaSm, 'text-muted-foreground pt-4')}>
 							The session appears here as the video reaches it.
@@ -454,8 +446,7 @@ function RowBody({ row }: { row: SessionExtractRow }) {
 		case 'assistantText':
 			return (
 				<Message from="assistant" data-reply className="max-w-full">
-					{/* Visible overflow lets the spoken band reach the panel edges. */}
-					<MessageContent className="w-full overflow-visible">
+					<MessageContent className="w-full">
 						<MessageResponse className={REPLY_TYPE}>
 							{entry.text}
 						</MessageResponse>
@@ -618,6 +609,44 @@ function useSpokenBlock(
 	}, [spoken])
 
 	return spoken
+}
+
+/**
+ * Where the spoken block sits in the panel, for the bar in the left gutter
+ * that marks it, as the Skills tab marks its current moment. The text keeps
+ * one color throughout: at 2x a color change on every block read as flicker.
+ * The bar overlays the gutter, so moving it never reflows the reply.
+ */
+function useBlockBar(
+	contentRef: React.RefObject<HTMLDivElement | null>,
+	block: HTMLElement | null,
+) {
+	const [bar, setBar] = React.useState<{ top: number; height: number } | null>(
+		null,
+	)
+	React.useLayoutEffect(() => {
+		const content = contentRef.current
+		if (!content || !block) {
+			setBar(null)
+			return
+		}
+		const measure = () => {
+			const rect = block.getBoundingClientRect()
+			const top = rect.top - content.getBoundingClientRect().top
+			const height = rect.height
+			setBar((current) =>
+				current?.top === top && current.height === height
+					? current
+					: { top, height },
+			)
+		}
+		measure()
+		// A wider or narrower panel rewraps the reply above and in the block.
+		const observer = new ResizeObserver(measure)
+		observer.observe(content)
+		return () => observer.disconnect()
+	}, [contentRef, block])
+	return bar
 }
 
 /**
