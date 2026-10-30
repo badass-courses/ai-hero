@@ -37,6 +37,9 @@ import { db } from '@/db'
 export const SKILLS_COURSE_RECOVERY_RETRIES = 12
 export const SKILLS_COURSE_RECOVERY_IDENTITY_RETRY_MS = 5 * 60 * 1000
 export const SKILLS_COURSE_RECOVERY_DELIVERY_RETRY_MS = 5 * 60 * 1000
+// drovr accepted the send but delivery confirmation lags behind broadcasts
+// (about 80 minutes on a 114k broadcast), so pending waits 12 × 15 min = 3 h.
+export const SKILLS_COURSE_RECOVERY_DROVR_PENDING_RETRY_MS = 15 * 60 * 1000
 
 type AnswerLink = {
 	optionValue?: string
@@ -341,7 +344,9 @@ async function retryIdentity(
 	})
 	throw new RetryAfterError(
 		'Recovery identity is not ready',
-		SKILLS_COURSE_RECOVERY_IDENTITY_RETRY_MS,
+		reason === 'drovr-send-pending'
+			? SKILLS_COURSE_RECOVERY_DROVR_PENDING_RETRY_MS
+			: SKILLS_COURSE_RECOVERY_IDENTITY_RETRY_MS,
 	)
 }
 
