@@ -25,7 +25,10 @@ import {
 } from '../src/lib/cc-credit/inventory'
 import { mysqlCreditStore } from '../src/lib/cc-credit/store'
 import { runCreditCommand } from '../src/lib/cc-credit/service'
-import { readCreditInvoice } from '../src/lib/cc-credit/stripe'
+import {
+	readCreditInvoice,
+	readSourcePayments,
+} from '../src/lib/cc-credit/stripe'
 import {
 	postCreditRequest,
 	supportCreditUrl,
@@ -64,7 +67,15 @@ async function main() {
 			})
 		: null
 	try {
-		const store = pool ? mysqlCreditStore(() => pool.getConnection()) : null
+		const stripe = new Stripe(key, {
+			apiVersion: '2024-06-20' as Stripe.LatestApiVersion,
+		})
+		const store = pool
+			? mysqlCreditStore(
+					() => pool.getConnection(),
+					(rows) => readSourcePayments(stripe, rows),
+				)
+			: null
 		const [mappings] = pool
 			? await pool.execute<RowDataPacket[]>(
 					'SELECT identifier FROM AI_MerchantProduct WHERE productId = ?',
@@ -72,9 +83,6 @@ async function main() {
 				)
 			: [[]]
 		const products = new Set(mappings.map((row) => String(row.identifier)))
-		const stripe = new Stripe(key, {
-			apiVersion: '2024-06-20' as Stripe.LatestApiVersion,
-		})
 		const createdBefore = Math.floor(Date.now() / 1000)
 		const plan = await inventoryCredits(
 			{
@@ -84,6 +92,8 @@ async function main() {
 					...(values.customer ? { customer: values.customer } : {}),
 				}),
 				lines: (id) => stripe.invoices.listLineItems(id, { limit: 100 }),
+				// Without a mapping (--url), every negative non-credit line is held.
+				c5Products: products,
 				preview: async (input) => {
 					if (store) {
 						try {

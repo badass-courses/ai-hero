@@ -4,6 +4,7 @@ import {
 	allocate,
 	allocationTotal,
 	creditBalance,
+	PURCHASE_ID,
 	purchaseCents,
 	settleStatus,
 	source,
@@ -13,9 +14,15 @@ const sources = [
 	source({
 		purchaseId: 'purch_low',
 		purchaseSeats: 3,
-		totalAmount: '300.000000000000000000000000000000',
+		chargeCents: 30000,
+		recordedAmount: '300.000000000000000000000000000000',
 	}),
-	source({ purchaseId: 'purch_high', purchaseSeats: 2, totalAmount: '500.00' }),
+	source({
+		purchaseId: 'purch_high',
+		purchaseSeats: 2,
+		chargeCents: 50000,
+		recordedAmount: '500.00',
+	}),
 ]
 describe('CC seat-credit arithmetic and lifecycle', () => {
 	it('allocates highest paid seats first and counts reserved/paid spending', () => {
@@ -42,9 +49,46 @@ describe('CC seat-credit arithmetic and lifecycle', () => {
 		for (const amount of ['-1', 'NaN', '1e3', '0', '0.001', '9007199254740992'])
 			expect(() => purchaseCents(amount)).toThrow()
 		expect(() =>
-			source({ purchaseId: 'p', purchaseSeats: 3, totalAmount: '1' }),
+			source({
+				purchaseId: 'p',
+				purchaseSeats: 3,
+				chargeCents: 100,
+				recordedAmount: '1',
+			}),
 		).toThrow('fractional_per_seat')
 		expect(purchaseCents('224.300000')).toBe(22430)
+	})
+	it('prices seats from the Stripe charge, not a rounded Purchase.totalAmount', () => {
+		// $2,242.50 paid for 10 seats, stored as $2,243.
+		expect(
+			source({
+				purchaseId: 'purch_rounded',
+				purchaseSeats: 10,
+				chargeCents: 224250,
+				recordedAmount: '2243.000000000000000000000000000000',
+			}),
+		).toEqual({
+			purchaseId: 'purch_rounded',
+			purchaseSeats: 10,
+			purchaseTotalCents: 224250,
+			perSeatCents: 22425,
+		})
+		expect(() =>
+			source({
+				purchaseId: 'purch_far',
+				purchaseSeats: 10,
+				chargeCents: 224250,
+				recordedAmount: '2244',
+			}),
+		).toThrow('purchase_amount_disagrees_with_charge')
+	})
+	it('reads whole purch_<uuid> ids out of credit line descriptions', () => {
+		const id = 'purch_3f8e2c1a-9b7d-4e6f-a5c4-1d2e3f4a5b6c'
+		expect(
+			`Crash Course team seat credit x 2 (${id}, $224.25 per seat)`.match(
+				PURCHASE_ID,
+			),
+		).toEqual([id])
 	})
 	it('only releases reserved invoices on verified void and never resurrects terminal rows', () => {
 		expect(settleStatus('reserved', 'paid')).toBe('paid')
