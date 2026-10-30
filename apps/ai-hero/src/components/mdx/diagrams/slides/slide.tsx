@@ -58,6 +58,22 @@ const nodeId = (term: string) =>
 		.replace(/^-|-$/g, '')
 
 /**
+ * The panel a slide sits in. Unframed, a title slide reads as a second
+ * heading under the lesson's own; the hairline panel marks it as a figure,
+ * the way a diagram is one, with the slide centred inside.
+ */
+function Frame({ children, ...props }: React.ComponentProps<'figure'>) {
+	return (
+		<figure
+			{...props}
+			className="not-prose border-border @container my-8 rounded-lg border px-5 py-10 @2xl:px-12 @2xl:py-14"
+		>
+			{children}
+		</figure>
+	)
+}
+
+/**
  * A stack of terms, each with its description in smaller muted type under
  * it. Matt walks through these in his videos by lighting some terms and
  * dimming the rest, or by revealing them one at a time, so a frame says
@@ -76,10 +92,11 @@ export function Stack({
 }) {
 	const withIcons = slide.items.some((item) => item.icon)
 	return (
-		<figure className="not-prose @container my-8">
+		<Frame>
 			<dl
 				className={cn(
-					'grid gap-y-10 @2xl:gap-y-14 @2xl:pl-12',
+					'mx-auto grid w-fit max-w-full gap-y-10 @2xl:gap-y-14',
+					slide.scale === 'title' && 'text-center',
 					withIcons
 						? 'grid-cols-[auto_1fr] gap-x-3 @2xl:gap-x-4'
 						: 'grid-cols-1',
@@ -133,7 +150,7 @@ export function Stack({
 					)
 				})}
 			</dl>
-		</figure>
+		</Frame>
 	)
 }
 
@@ -171,8 +188,8 @@ const TONE_HUE: Partial<Record<PairTone, string>> = {
  */
 export function Pairs({ slide }: { slide: PairSlide }) {
 	return (
-		<figure className="not-prose @container my-8">
-			<div className="flex flex-col gap-6 @2xl:grid @2xl:grid-cols-[auto_auto] @2xl:justify-start @2xl:gap-x-10 @2xl:gap-y-14 @2xl:pl-24">
+		<Frame>
+			<div className="mx-auto flex w-fit max-w-full flex-col gap-6 @2xl:grid @2xl:grid-cols-[auto_auto] @2xl:gap-x-10 @2xl:gap-y-14">
 				{slide.rows.map((row) => (
 					<p
 						key={`${row.left}-${row.right}`}
@@ -202,7 +219,7 @@ export function Pairs({ slide }: { slide: PairSlide }) {
 					</p>
 				))}
 			</div>
-		</figure>
+		</Frame>
 	)
 }
 
@@ -215,8 +232,8 @@ export type QuoteSlide = {
     the pull-quote rail DESIGN.md allows, standing in for his blue bar. */
 export function Quote({ slide }: { slide: QuoteSlide }) {
 	return (
-		<figure data-node="quote" className="not-prose @container my-8 @2xl:pl-12">
-			<blockquote className="border-primary space-y-5 border-l-2 pl-5 @2xl:max-w-[34em]">
+		<Frame data-node="quote">
+			<blockquote className="border-primary mx-auto max-w-[34em] space-y-5 border-l-2 pl-5">
 				{slide.paragraphs.map((paragraph) => (
 					<p
 						key={paragraph}
@@ -226,9 +243,11 @@ export function Quote({ slide }: { slide: QuoteSlide }) {
 					</p>
 				))}
 			</blockquote>
-			<figcaption className={cn(TYPE.meta, MUTED, 'mt-6 pl-[22px]')}>
+			<figcaption
+				className={cn(TYPE.meta, MUTED, 'mx-auto mt-6 max-w-[34em] pl-[22px]')}
+			>
 				{slide.cite}
 			</figcaption>
-		</figure>
+		</Frame>
 	)
 }
