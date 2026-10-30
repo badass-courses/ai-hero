@@ -75,6 +75,12 @@ describe('CIMD cache lifetime', () => {
 		['private, max-age=600', 0],
 		['public, max-age=600', 600],
 		['max-age=999999', 86400],
+		['max-age="0"', 0],
+		['public, max-age="120"', 120],
+		['max-age=0', 0],
+		['max-age=soon', 0],
+		['public', 300],
+		['s-maxage=600', 300],
 	])('%s caches for %d seconds', (header, seconds) => {
 		expect(cacheSeconds(header)).toBe(seconds)
 	})

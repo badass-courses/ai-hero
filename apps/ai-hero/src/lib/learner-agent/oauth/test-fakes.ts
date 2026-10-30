@@ -49,6 +49,8 @@ function matches(row: Row, condition: Condition | undefined): boolean {
 
 export function makeTokenTable() {
 	const rows: Row[] = []
+	/** Runs before each insert lands, to interleave a concurrent request. */
+	const hooks: { beforeInsert?: () => Promise<void> } = {}
 	const db = {
 		query: {
 			deviceAccessToken: {
@@ -60,6 +62,9 @@ export function makeTokenTable() {
 		},
 		insert: () => ({
 			values: async (values: Row) => {
+				const hook = hooks.beforeInsert
+				hooks.beforeInsert = undefined
+				await hook?.()
 				rows.push({ createdAt: new Date(), ...values })
 			},
 		}),
@@ -72,25 +77,35 @@ export function makeTokenTable() {
 			}),
 		}),
 	}
-	return { rows, db }
+	return { rows, db, hooks }
 }
 
 export function makeRedisFake() {
 	const store = new Map<string, string>()
+	/** Keys matching these throw, to simulate Redis failing mid-flow. */
+	const failures: {
+		set?: (key: string, value: string) => boolean
+		get?: (key: string) => boolean
+	} = {}
 	return {
 		store,
+		failures,
 		redis: {
 			set: async (
 				key: string,
 				value: string,
 				options: { nx?: boolean; xx?: boolean } = {},
 			) => {
+				if (failures.set?.(key, value)) throw new Error('redis down')
 				if (options.nx && store.has(key)) return null
 				if (options.xx && !store.has(key)) return null
 				store.set(key, value)
 				return 'OK'
 			},
-			get: async (key: string) => store.get(key) ?? null,
+			get: async (key: string) => {
+				if (failures.get?.(key)) throw new Error('redis down')
+				return store.get(key) ?? null
+			},
 		},
 	}
 }
