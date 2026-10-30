@@ -54,21 +54,16 @@ export function Rings({ lit }: { lit?: 'all' | readonly number[] }) {
 				className="mx-auto block w-full max-w-[420px]"
 			>
 				<defs>
+					{/* The site's `.bg-stripes` hatch: a 6-unit band and a 6-unit gap
+					    at 135°. */}
 					<pattern
 						id={hatch}
-						width="7"
-						height="7"
+						width="12"
+						height="12"
 						patternUnits="userSpaceOnUse"
 						patternTransform="rotate(45)"
 					>
-						<line
-							x1="0"
-							y1="0"
-							x2="0"
-							y2="7"
-							stroke={HUE.red}
-							strokeWidth="1.5"
-						/>
+						<rect width="6" height="12" fill={HUE.red} />
 					</pattern>
 				</defs>
 				{RINGS.map((ring) => (
@@ -101,7 +96,7 @@ export function Rings({ lit }: { lit?: 'all' | readonly number[] }) {
 									cy={cy}
 									r="50"
 									fill={`url(#${hatch})`}
-									fillOpacity="0.45"
+									fillOpacity="0.3"
 									stroke={HUE.red}
 									strokeWidth="3"
 								/>
@@ -120,7 +115,9 @@ export function Rings({ lit }: { lit?: 'all' | readonly number[] }) {
 							className="size-3.5 rounded-[4px] border-2"
 							style={{
 								borderColor: ring.hue,
-								backgroundImage: `repeating-linear-gradient(45deg, color-mix(in oklab, ${ring.hue} 45%, transparent) 0 1px, transparent 1px 3px)`,
+								// The site's hatch (equal band and gap at 135°), scaled to a
+								// swatch too small for its 12px period.
+								backgroundImage: `repeating-linear-gradient(135deg, color-mix(in oklab, ${ring.hue} 45%, transparent) 0 2px, transparent 2px 4px)`,
 							}}
 						/>
 						{ring.label}

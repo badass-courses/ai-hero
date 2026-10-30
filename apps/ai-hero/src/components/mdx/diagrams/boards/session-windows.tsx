@@ -54,15 +54,14 @@ export function SessionWindows({ fills }: { fills: readonly number[] }) {
 							<span
 								role="img"
 								aria-label={`A session filled to ${Math.round(fill * 100)}% of the window`}
-								className="absolute inset-y-2 left-2 rounded-[6px] border-[3px] border-(--edge) @2xl:inset-y-3 @2xl:left-3"
+								// The site's hatch, inked in the session's blue.
+								className="bg-stripes absolute inset-y-2 left-2 rounded-[6px] border-[3px] border-(--edge) @2xl:inset-y-3 @2xl:left-3"
 								style={
 									{
 										width: `${fill * 100}%`,
 										...hueStyle('blue'),
-										'--hatch':
-											'color-mix(in oklab, var(--hue) 50%, transparent)',
-										backgroundImage:
-											'repeating-linear-gradient(45deg, var(--hatch) 0 1.5px, transparent 1.5px 5px), repeating-linear-gradient(-45deg, var(--hatch) 0 1.5px, transparent 1.5px 5px)',
+										'--stripes-ink':
+											'color-mix(in oklab, var(--hue) 30%, transparent)',
 									} as React.CSSProperties
 								}
 							/>
