@@ -132,7 +132,19 @@ export type McpHandlerOptions = {
 	readonly capabilities: ReadonlyArray<AnyCapability>
 	readonly prompts: ReadonlyArray<PromptDefinition>
 	readonly server: McpServerInfo
+	/**
+	 * A `WWW-Authenticate` value for an anonymous caller. When set, a POST
+	 * whose tool or prompt needed a learner answers 401 with this challenge,
+	 * so an OAuth client signs in; public calls stay 200.
+	 */
+	readonly signInChallenge?: string | undefined
 }
+
+const neededSignIn = (results: ReadonlyArray<InvokeResult>) =>
+	results.some(
+		(result) =>
+			result._tag === 'Failure' && result.error._tag === 'SignInRequired',
+	)
 
 /** Answers one JSON-RPC message; notifications answer with nothing. */
 export const handleMcpMessage = <R>(
@@ -344,11 +356,19 @@ export const handleMcpRequest = <R>(
 			return { results, response: new Response(null, { status: 202 }) }
 		}
 		const body = Array.isArray(parsed.success) ? responses : responses[0]
+		// The body still carries the SignInRequired result and its next_actions,
+		// for clients that read it instead of starting OAuth.
+		const challenge =
+			options.signInChallenge !== undefined && neededSignIn(results)
+				? options.signInChallenge
+				: undefined
 		return {
 			results,
 			response: new Response(JSON.stringify(body), {
-				status: 200,
-				headers: MCP_HEADERS,
+				status: challenge ? 401 : 200,
+				headers: challenge
+					? { ...MCP_HEADERS, 'WWW-Authenticate': challenge }
+					: MCP_HEADERS,
 			}),
 		}
 	})

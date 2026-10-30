@@ -298,11 +298,16 @@ describe('AI Hero discovery surfaces', () => {
 		expect(llms).toContain('http://localhost:3000/mcp')
 		expect(llms).toContain('http://localhost:3000/api/learner')
 		expect(llms).toContain('scope=learner:read')
+		expect(llms).toContain(
+			'http://localhost:3000/.well-known/oauth-protected-resource/mcp',
+		)
 
 		const discovery = await (await getApiDiscovery()).json()
 		expect(discovery.learnerAgent).toMatchObject({
 			mcp: 'http://localhost:3000/mcp',
 			guide: 'http://localhost:3000/api/learner',
+			oauthProtectedResource:
+				'http://localhost:3000/.well-known/oauth-protected-resource/mcp',
 			tools: expect.arrayContaining(['my_courses', 'read_lesson']),
 		})
 		expect(discovery.discovery.mcp).toBe('/mcp')
@@ -340,6 +345,21 @@ describe('AI Hero discovery surfaces', () => {
 						{
 							href: 'http://localhost:3000/api/learner',
 							type: 'text/markdown',
+						},
+					],
+				},
+				{
+					anchor: 'http://localhost:3000/mcp',
+					'service-doc': [
+						{
+							href: 'http://localhost:3000/api/learner',
+							type: 'text/markdown',
+						},
+					],
+					'service-meta': [
+						{
+							href: 'http://localhost:3000/.well-known/oauth-protected-resource/mcp',
+							type: 'application/json',
 						},
 					],
 				},
