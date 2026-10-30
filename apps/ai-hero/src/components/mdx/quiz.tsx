@@ -3,6 +3,7 @@
  * identity, where answers land, sharp edges — is documented in docs/quiz.md.
  */
 import * as React from 'react'
+import { TYPE } from '@/components/landing/type'
 import { log } from '@/server/logger'
 
 import { QuizQuestionClient } from './quiz-question-client'
@@ -12,6 +13,8 @@ type QuizQuestionProps = {
 	data?: unknown
 	authoringWarning?: string
 	lessonId?: string
+	/** Its place in the quiz, from 1. */
+	number?: number
 }
 
 function getAuthoredQuestionId(child: React.ReactNode): string | undefined {
@@ -42,28 +45,32 @@ export async function Quiz({ children }: { children: React.ReactNode }) {
 		})
 	}
 
+	let number = 0
 	const renderedChildren = childArray.map((child) => {
+		if (!React.isValidElement<QuizQuestionProps>(child)) return child
 		const id = getAuthoredQuestionId(child)
-		if (!id || !duplicateIds.has(id) || !React.isValidElement(child)) {
-			return child
-		}
-
-		return React.cloneElement(child as React.ReactElement<QuizQuestionProps>, {
-			authoringWarning: `Question id "${id}" is duplicated. Answers will not be saved.`,
+		number += 1
+		return React.cloneElement(child, {
+			number,
+			...(id && duplicateIds.has(id)
+				? {
+						authoringWarning: `Question id "${id}" is duplicated. Answers will not be saved.`,
+					}
+				: {}),
 		})
 	})
 
+	// One panel, the questions in it numbered and split by hairlines, so a quiz
+	// reads as one exercise rather than a stack of cards.
 	return (
-		<section className="not-prose my-10 space-y-8" aria-label="Lesson quiz">
-			<div className="border-primary/20 bg-primary/5 rounded-lg border px-5 py-4">
-				<p className="text-foreground text-sm font-semibold uppercase tracking-[0.14em]">
-					Check your understanding
-				</p>
-				<p className="text-muted-foreground mt-1 text-sm">
-					Answer each question, then check your answer.
-				</p>
+		<section className="not-prose my-10" aria-label="Lesson quiz">
+			<div className="mb-2 flex items-baseline justify-between gap-4">
+				<p className={TYPE.groupLabel}>Check your understanding</p>
+				<p className={TYPE.metaMark}>Answer, then check</p>
 			</div>
-			{renderedChildren}
+			<div className="divide-border bg-card divide-y rounded-[12px] border">
+				{renderedChildren}
+			</div>
 		</section>
 	)
 }
@@ -72,6 +79,7 @@ export async function QuizQuestion({
 	data,
 	authoringWarning,
 	lessonId,
+	number,
 }: QuizQuestionProps) {
 	const parsed = QuizQuestionDataSchema.safeParse(data)
 
@@ -85,7 +93,7 @@ export async function QuizQuestion({
 		return (
 			<div
 				role="alert"
-				className="border-destructive/50 bg-destructive/10 text-foreground rounded-xl border p-5"
+				className="bg-destructive/10 text-foreground p-5 sm:p-6"
 			>
 				<p className="font-semibold">This quiz question cannot be displayed.</p>
 				<p className="mt-1 text-sm">
@@ -117,6 +125,7 @@ export async function QuizQuestion({
 		<QuizQuestionClient
 			key={`${lessonId ?? 'no-lesson'}:${parsed.data.id ?? 'no-id'}`}
 			data={parsed.data}
+			number={number}
 			lessonId={warning ? undefined : lessonId}
 			authoringWarning={warning}
 		/>

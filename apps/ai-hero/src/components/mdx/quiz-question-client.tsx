@@ -8,19 +8,24 @@ import {
 } from '@/lib/quiz/quiz-machine'
 import { api } from '@/trpc/react'
 import { useMachine } from '@xstate/react'
-import { Check, CheckSquare, Circle, Square, X } from 'lucide-react'
+import { TYPE } from '@/components/landing/type'
+import { Check, X } from 'lucide-react'
 import { useSession } from 'next-auth/react'
 import { Button } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+import { InlineCode } from './inline-code'
 import type { QuizQuestionData } from './quiz-schema'
 
 export function QuizQuestionClient({
 	data,
+	number,
 	lessonId,
 	authoringWarning,
 }: {
 	data: QuizQuestionData
+	/** Its place in the quiz, from 1. */
+	number?: number
 	lessonId?: string
 	authoringWarning?: string
 }) {
@@ -116,22 +121,29 @@ export function QuizQuestionClient({
 	}
 
 	return (
-		<fieldset className="border-border bg-card rounded-xl border p-5 shadow-sm sm:p-7">
-			<legend className="sr-only">{data.question}</legend>
-			<p className="text-foreground text-balance text-lg font-semibold leading-snug sm:text-xl">
-				{data.question}
-			</p>
+		<fieldset className="p-5 sm:p-6">
+			<legend className="sr-only">{data.question.replaceAll('`', '')}</legend>
+			<div className="flex gap-3" aria-hidden="true">
+				{number !== undefined && (
+					<span className={cn(TYPE.navNum, 'text-muted-foreground pt-[0.5em]')}>
+						{String(number).padStart(2, '0')}
+					</span>
+				)}
+				<p className={cn(TYPE.subhead, 'text-foreground text-balance')}>
+					<InlineCode text={data.question} />
+				</p>
+			</div>
 
 			{authoringWarning && process.env.NODE_ENV !== 'production' ? (
 				<p
 					role="alert"
-					className="mt-3 rounded-md border border-amber-600/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-950 dark:text-amber-100"
+					className="mt-3 rounded-[6px] border border-amber-600/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-950 dark:text-amber-100"
 				>
 					Author warning: {authoringWarning}
 				</p>
 			) : null}
 
-			<div className="mt-5 space-y-3">
+			<div className="mt-4 space-y-2">
 				{choices.map((choice) => {
 					const isSelected = selectedAnswers.includes(choice.answer)
 					const isCorrectChoice = correctAnswers.includes(choice.answer)
@@ -142,19 +154,20 @@ export function QuizQuestionClient({
 						<label
 							key={choice.answer}
 							className={cn(
-								'flex min-h-14 cursor-pointer items-center gap-3 rounded-lg border px-4 py-3 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-primary has-[:focus-visible]:ring-offset-2',
+								TYPE.meta,
+								'has-[:focus-visible]:ring-ring flex cursor-pointer items-start gap-3 rounded-[9px] border px-3.5 py-3 font-normal transition-colors has-[:disabled]:cursor-default has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-offset-2 sm:text-base',
 								!isAnswered &&
 									(isSelected
-										? 'border-primary bg-primary/10'
-										: 'border-border hover:border-primary/50 hover:bg-hover'),
+										? 'border-primary/60 bg-primary/[0.06]'
+										: 'border-border hover:bg-[var(--ah-hover)]'),
 								showCorrect &&
-									'border-emerald-600 bg-emerald-500/10 text-emerald-950 dark:text-emerald-100',
+									'border-emerald-600/50 bg-emerald-500/[0.07] text-emerald-950 dark:text-emerald-100',
 								showIncorrect &&
-									'border-destructive bg-destructive/10 text-destructive',
+									'border-destructive/50 bg-destructive/[0.07] text-destructive',
 								isAnswered &&
 									!showCorrect &&
 									!showIncorrect &&
-									'border-border opacity-60',
+									'border-border text-muted-foreground',
 							)}
 						>
 							<input
@@ -168,35 +181,40 @@ export function QuizQuestionClient({
 								}
 								className="sr-only"
 							/>
-							<span className="shrink-0" aria-hidden="true">
-								{showCorrect ? (
-									<Check className="size-5" />
-								) : showIncorrect ? (
-									<X className="size-5" />
-								) : isMultiple ? (
-									isSelected ? (
-										<CheckSquare className="text-primary size-5" />
-									) : (
-										<Square className="size-5" />
-									)
-								) : (
-									<Circle
-										className={cn(
-											'size-5',
-											isSelected && 'fill-primary text-primary',
-										)}
-									/>
+							{/* The checklist's circle, so a choice and a task read alike. */}
+							<span
+								aria-hidden="true"
+								className={cn(
+									'mt-[0.15em] flex size-[1.125em] shrink-0 items-center justify-center border-[1.5px] transition-colors',
+									isMultiple ? 'rounded-[4px]' : 'rounded-full',
+									showCorrect || showIncorrect
+										? 'border-current'
+										: isSelected
+											? 'border-primary bg-primary text-primary-foreground'
+											: 'border-foreground/35',
 								)}
+							>
+								{showCorrect ? (
+									<Check strokeWidth={3} className="size-[0.7em]" />
+								) : showIncorrect ? (
+									<X strokeWidth={3} className="size-[0.7em]" />
+								) : isSelected ? (
+									isMultiple ? (
+										<Check strokeWidth={3} className="size-[0.7em]" />
+									) : (
+										<span className="bg-primary-foreground size-[0.35em] rounded-full" />
+									)
+								) : null}
 							</span>
-							<span className="flex-1 text-sm font-medium sm:text-base">
-								{choice.label ?? choice.answer}
+							<span className="flex-1 leading-snug">
+								<InlineCode text={choice.label ?? choice.answer} />
 							</span>
 							{showCorrect ? (
-								<span className="text-xs font-semibold uppercase tracking-wide">
+								<span className={cn(TYPE.metaMark, 'text-current')}>
 									Correct
 								</span>
 							) : showIncorrect ? (
-								<span className="text-xs font-semibold uppercase tracking-wide">
+								<span className={cn(TYPE.metaMark, 'text-current')}>
 									Your answer
 								</span>
 							) : null}
@@ -208,7 +226,7 @@ export function QuizQuestionClient({
 			{!isAnswered ? (
 				<Button
 					type="button"
-					className="mt-5 w-full sm:w-auto"
+					className="mt-4 w-full sm:w-auto"
 					disabled={
 						!hasSelection || isSubmitting || state.matches('initializing')
 					}
@@ -221,21 +239,19 @@ export function QuizQuestionClient({
 					role="status"
 					aria-live="polite"
 					className={cn(
-						'mt-5 rounded-lg border p-4',
-						isCorrect
-							? 'border-emerald-600/40 bg-emerald-500/10'
-							: 'border-destructive/40 bg-destructive/10',
+						TYPE.meta,
+						'mt-4 border-l-2 py-1 pl-4 font-normal',
+						isCorrect ? 'border-emerald-600' : 'border-destructive',
 					)}
 				>
-					<p className="font-semibold">
+					<p className="text-foreground font-semibold">
 						{isCorrect ? 'That’s right.' : 'Not quite.'}
 					</p>
-					<p className="text-foreground/80 mt-1 text-sm leading-relaxed">
-						{data.answer}
+					<p className="text-foreground/80 mt-1 leading-relaxed">
+						<InlineCode text={data.answer} />
 					</p>
 				</div>
 			)}
-
 		</fieldset>
 	)
 }
