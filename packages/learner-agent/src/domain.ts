@@ -107,6 +107,80 @@ export const SearchHit = Schema.Struct({
 })
 export type SearchHit = typeof SearchHit.Type
 
+/**
+ * Where the learner stands with the product on offer. `owns` carries no
+ * price. `anonymous` is the default offer for a caller with no token.
+ */
+export const OfferState = Schema.Literals([
+	'owns',
+	'alumni',
+	'standard',
+	'anonymous',
+	'not_yet_open',
+	'closed',
+])
+
+/** Why the price is below the full price. */
+export const OfferDiscount = Schema.Literals([
+	'early_bird',
+	'alumni',
+	'regional',
+	'quote',
+	'none',
+])
+
+export const OfferProduct = Schema.Struct({
+	id: Schema.String,
+	title: Schema.String,
+	/** The product's sales page. */
+	url: Schema.String,
+})
+
+export const OfferPrice = Schema.Struct({
+	currency: Schema.Literal('USD'),
+	/** The full price of one seat, in cents. */
+	fullCents: Schema.Int,
+	/** What this learner pays now for one seat, in cents. */
+	nowCents: Schema.Int,
+	discount: OfferDiscount,
+	/**
+	 * True when the learner's own price may be lower: nobody is signed in, or
+	 * part of their purchase history could not be read.
+	 */
+	upperBound: Schema.Boolean,
+	/** True when `nowCents` already subtracts the learner's Crash Course credit. */
+	includesCrashCourseCredit: Schema.Boolean,
+	/** ISO date in UTC when this price ends. Null when not known. */
+	priceEndsAt: Schema.NullOr(Schema.String),
+	/** ISO date in UTC after which no checkout starts. Null when not known. */
+	enrollmentClosesAt: Schema.NullOr(Schema.String),
+	/**
+	 * A lower price for the learner's country, with access restricted to that
+	 * region. Null when none applies.
+	 */
+	regional: Schema.NullOr(
+		Schema.Struct({
+			nowCents: Schema.Int,
+			discount: Schema.Literal('regional'),
+			restriction: Schema.Literal('region'),
+		}),
+	),
+})
+export type OfferPrice = typeof OfferPrice.Type
+
+/** Team pricing: percent off the full price per seat, by order size. */
+export const OfferTeam = Schema.Struct({
+	seatBands: Schema.Array(
+		Schema.Struct({
+			minSeats: Schema.Int,
+			percentOff: Schema.Finite,
+		}),
+	),
+	/** ISO date in UTC when these bands end. Null when they last until close. */
+	bandsEndAt: Schema.NullOr(Schema.String),
+})
+export type OfferTeam = typeof OfferTeam.Type
+
 // Port data: what adapters hand the handlers. Plain types, not schemas,
 // because nothing decodes them; the output schemas above are the boundary,
 // and encoding through them drops any field they do not name.
@@ -178,6 +252,19 @@ export type LessonAccess =
 	  }
 	| { readonly _tag: 'NotEntitled'; readonly workshopUrl: string | null }
 	| { readonly _tag: 'NotFound' }
+
+/** The learner's current offer, decided by the app's own pricing. */
+export type NextOffer = {
+	readonly state: typeof OfferState.Type
+	readonly product: typeof OfferProduct.Type & {
+		/** The course the product sells, for `course_outline`. */
+		readonly courseSlug: string | null
+	}
+	/** Null when the learner owns the product or it is not on sale. */
+	readonly price: OfferPrice | null
+	/** Present for a learner who has bought team seats before. */
+	readonly team: OfferTeam | null
+}
 
 export type LessonLocator = {
 	readonly lesson: string

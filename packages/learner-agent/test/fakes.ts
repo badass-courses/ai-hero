@@ -3,6 +3,8 @@ import type {
 	Learner,
 	LearnerAgentPorts,
 	LessonContent,
+	NextOffer,
+	OfferPrice,
 	OwnedCourse,
 	SessionExtract,
 } from '../src/index.js'
@@ -292,6 +294,39 @@ const lessonIds: Record<string, string> = {
 	'other-lesson': 'lesson-other',
 }
 
+export const offerProduct: NextOffer['product'] = {
+	id: 'product-offer',
+	title: 'Cohort Five',
+	url: `${BASE}/s/offer`,
+	courseSlug: 'cohort-five',
+}
+
+export const offerPrice: OfferPrice = {
+	currency: 'USD',
+	fullCents: 100_000,
+	nowCents: 80_000,
+	discount: 'early_bird',
+	upperBound: false,
+	includesCrashCourseCredit: false,
+	priceEndsAt: '2099-02-01T08:00:00.000Z',
+	enrollmentClosesAt: '2099-03-01T07:30:00.000Z',
+	regional: null,
+}
+
+/** The fake app's offer: the owner holds it, everyone else is priced. */
+const fakeOffer = (who: Learner | null): NextOffer =>
+	who === null
+		? {
+				state: 'anonymous',
+				product: offerProduct,
+				price: { ...offerPrice, upperBound: true },
+				team: null,
+			}
+		: who.userId === learner.userId
+			? // An adapter that over-returns for an owner: the handler drops the price.
+				{ state: 'owns', product: offerProduct, price: offerPrice, team: null }
+			: { state: 'standard', product: offerProduct, price: offerPrice, team: null }
+
 export type Recorder = {
 	readonly reads: Array<{
 		userId: string
@@ -310,6 +345,8 @@ export function fakePorts(
 		readonly recorder?: Recorder
 		readonly leakMux?: boolean
 		readonly skillLinksFail?: boolean
+		readonly offersFail?: boolean
+		readonly onPortFailure?: LearnerAgentPorts['onPortFailure']
 	} = {},
 ): LearnerAgentPorts {
 	const recorder = options.recorder ?? { reads: [], rateLimitCalls: [] }
@@ -418,6 +455,16 @@ export function fakePorts(
 				},
 			],
 		},
+		offers: {
+			ownsOffer: async (who) => {
+				if (options.offersFail) throw new Error('pricing down')
+				return owns(who)
+			},
+			nextOffer: async (who) => {
+				if (options.offersFail) throw new Error('pricing down')
+				return fakeOffer(who)
+			},
+		},
 		audit: { read: (event) => void recorder.reads.push(event) },
 		rateLimit: {
 			consume: async (call) => {
@@ -433,5 +480,6 @@ export function fakePorts(
 			instructionsUrl: `${BASE}/api/learner`,
 			mcpUrl: `${BASE}/mcp`,
 		},
+		...(options.onPortFailure ? { onPortFailure: options.onPortFailure } : {}),
 	}
 }

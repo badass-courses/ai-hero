@@ -6,6 +6,7 @@ import type {
 	LessonAccess,
 	LessonContent,
 	LessonLocator,
+	NextOffer,
 	OwnedCourse,
 	PublicSearchHit,
 	WorkshopAccess,
@@ -90,6 +91,16 @@ export class LearnerSearch extends Context.Service<
 	}
 >()('@ai-hero/learner-agent/LearnerSearch') {}
 
+export class LearnerOffers extends Context.Service<
+	LearnerOffers,
+	{
+		readonly ownsOffer: (learner: Learner) => Effect.Effect<boolean, Unavailable>
+		readonly nextOffer: (
+			learner: Learner | null,
+		) => Effect.Effect<NextOffer, Unavailable>
+	}
+>()('@ai-hero/learner-agent/LearnerOffers') {}
+
 export class LearnerAudit extends Context.Service<
 	LearnerAudit,
 	{
@@ -121,6 +132,7 @@ export type LearnerServices =
 	| LearnerContent
 	| LearnerProgress
 	| LearnerSearch
+	| LearnerOffers
 	| LearnerAudit
 	| LearnerRateLimit
 	| LearnerSite
@@ -150,6 +162,7 @@ export function servicesFor(
 	const content = fromPromise('Course content', ports.onPortFailure)
 	const progress = fromPromise('Progress', ports.onPortFailure)
 	const search = fromPromise('Search', ports.onPortFailure)
+	const pricing = fromPromise('Pricing', ports.onPortFailure)
 
 	return Context.make(LearnerIdentity, {
 		current: Option.fromNullishOr(ports.learner),
@@ -183,6 +196,10 @@ export function servicesFor(
 		}),
 		Context.add(LearnerSearch, {
 			search: (query) => search(() => ports.search.search(query)),
+		}),
+		Context.add(LearnerOffers, {
+			ownsOffer: (learner) => pricing(() => ports.offers.ownsOffer(learner)),
+			nextOffer: (learner) => pricing(() => ports.offers.nextOffer(learner)),
 		}),
 		Context.add(LearnerAudit, {
 			read: (event) => Effect.sync(() => ports.audit.read(event)),

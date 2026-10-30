@@ -5,6 +5,8 @@ import type { LearnerAgentPorts } from '@ai-hero/learner-agent'
 import { makeContentPort } from './content'
 import { makeEntitlementsPort } from './entitlements'
 import { resolveLearner } from './identity'
+import { offerStore } from './offer-store'
+import { makeOffersPort } from './offers'
 import { makeProgressPort } from './progress'
 import { makeRateLimitPort } from './rate-limit'
 import { makeSearchPort } from './search'
@@ -29,6 +31,7 @@ export async function learnerAgentPortsFor(
 		content: makeContentPort({ baseUrl: site.baseUrl }),
 		progress: makeProgressPort(),
 		search: makeSearchPort({ baseUrl: site.baseUrl }),
+		offers: makeOffersPort({ country, store: offerStore }),
 		audit: {
 			read: (event) => void log.info('learner_agent.read', event),
 		},

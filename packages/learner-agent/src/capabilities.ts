@@ -1,5 +1,6 @@
 import { courseOutline } from './capabilities/course-outline.js'
 import { myCourses } from './capabilities/my-courses.js'
+import { nextOffer } from './capabilities/next-offer.js'
 import { officeHours } from './capabilities/office-hours.js'
 import { readLesson } from './capabilities/read-lesson.js'
 import { searchCourse } from './capabilities/search-course.js'
@@ -21,6 +22,7 @@ export const capabilities = [
 	skillUsage,
 	searchCourse,
 	officeHours,
+	nextOffer,
 ] as const
 
 export type LearnerCapabilities = typeof capabilities
