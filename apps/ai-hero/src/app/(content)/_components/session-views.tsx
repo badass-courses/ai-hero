@@ -24,6 +24,7 @@ import {
 	ClipboardIcon,
 	SparklesIcon,
 	XCircleIcon,
+	PlayIcon,
 } from 'lucide-react'
 
 import { TabsList, TabsTrigger } from '@coursebuilder/ui'
@@ -139,14 +140,17 @@ export function SessionMomentList({ moments }: { moments: Moment[] }) {
 	const current = moments.findLastIndex((moment) => moment.visibleFrom <= time)
 
 	return (
-		<ol className="divide-border/60 min-h-0 flex-1 divide-y overflow-y-auto px-3 pb-4">
+		// The live view's grid: content 12px in, the current moment's bar at
+		// 4px, the first moment 16px under the tabs, 20px between moments, a
+		// scrollbar gutter on one edge only.
+		<ol className="divide-border/60 min-h-0 flex-1 [scrollbar-gutter:stable] divide-y overflow-y-auto px-3 pt-1.5 pb-4">
 			{moments.map((moment, index) => (
 				<li
 					key={`${moment.sessionId}-${moment.visibleFrom}-${index}`}
 					aria-current={index === current ? 'true' : undefined}
 					className={cn(
-						'border-l-2 border-transparent py-3 pl-2.5',
-						index === current && 'border-l-primary',
+						'group/moment before:bg-primary relative py-2.5 before:absolute before:inset-y-2.5 before:-left-2 before:w-0.5 before:rounded-full before:opacity-0',
+						index === current && 'before:opacity-100',
 					)}
 				>
 					<MomentBody moment={moment} seek={seek} />
@@ -175,24 +179,41 @@ function MomentBody({
 	}
 }
 
-function TimeButton({
+/**
+ * A moment's time, which plays the video from it. Pointing anywhere at its
+ * moment (`active`, or hovering a `group/moment`) lights it and shows a play
+ * glyph, so the way back to that part of the video is found where the reader
+ * already is. The negative margin keeps the hit area while the digits sit
+ * flush with the content's edge.
+ */
+export function TimeButton({
 	seconds,
 	seek,
+	active = false,
+	className,
 }: {
 	seconds: number
 	seek: (seconds: number) => void
+	active?: boolean
+	className?: string
 }) {
 	return (
 		<button
 			type="button"
 			onClick={() => seek(seconds)}
 			aria-label={`Play from ${formatTime(seconds)}`}
+			data-active={active ? '' : undefined}
 			className={cn(
 				TYPE.navNum,
-				'text-muted-foreground hover:text-foreground h-3.5 rounded-[3px] px-0.5',
+				'group/time text-muted-foreground hover:text-foreground group-hover/moment:text-foreground data-active:text-foreground -mx-0.5 inline-flex h-3.5 items-center gap-1 rounded-[3px] px-0.5',
+				className,
 			)}
 		>
 			{formatTime(seconds)}
+			<PlayIcon
+				aria-hidden
+				className="size-2.5 fill-current opacity-0 transition-opacity group-hover/moment:opacity-100 group-hover/time:opacity-100 group-data-active/time:opacity-100 motion-reduce:transition-none"
+			/>
 		</button>
 	)
 }
@@ -252,7 +273,9 @@ function CopyPromptButton({ text }: { text: string }) {
 			aria-label={copied ? 'Prompt copied' : 'Copy prompt'}
 			className={cn(
 				TYPE.metaSm,
-				'text-muted-foreground hover:text-foreground flex items-center gap-1 rounded-[4px] px-1 py-0.5',
+				// No height of its own on the time's line, so every tab's time sits
+				// at the same height.
+				'text-muted-foreground hover:text-foreground -my-1 flex items-center gap-1 rounded-[4px] px-1 py-0.5',
 			)}
 		>
 			{copied ? (
@@ -299,7 +322,7 @@ function CorrectionRow({
 	return (
 		<div>
 			<TimeButton seconds={moment.visibleFrom} seek={seek} />
-			<p className={cn(TYPE.metaSm, 'text-muted-foreground mt-1 italic')}>
+			<p className={cn(TYPE.metaSm, 'text-muted-foreground mt-1.5 italic')}>
 				{/* The interrupt as the session shows it; some carry no text. */}
 				{moment.interrupt.trim() || 'Interrupted'}
 			</p>
@@ -316,6 +339,24 @@ function CorrectionRow({
 	)
 }
 
+/** A skill's page on the site, opened beside the lesson. */
+export function SkillPageLink({ href }: { href: string }) {
+	return (
+		<a
+			href={href}
+			target="_blank"
+			rel="noreferrer"
+			className={cn(
+				TYPE.metaSm,
+				'text-muted-foreground hover:text-foreground -my-1 inline-flex shrink-0 items-center gap-0.5',
+			)}
+		>
+			Skill page
+			<ArrowUpRight className="size-3" aria-hidden />
+		</a>
+	)
+}
+
 function SkillRow({
 	moment,
 	seek,
@@ -325,28 +366,21 @@ function SkillRow({
 }) {
 	return (
 		<div>
-			<TimeButton seconds={moment.visibleFrom} seek={seek} />
+			{/* The page link rides the time's line, so the skill gets the full width. */}
+			<div className="flex items-center justify-between gap-2">
+				<TimeButton seconds={moment.visibleFrom} seek={seek} />
+				{moment.skillUrl && <SkillPageLink href={moment.skillUrl} />}
+			</div>
 			<div
 				className={cn(
 					TYPE.metaSm,
-					'text-muted-foreground mt-1 flex items-center gap-1.5',
+					'text-muted-foreground mt-1.5 flex items-center gap-1.5',
 				)}
 			>
 				<SparklesIcon className="size-3 shrink-0" aria-hidden />
 				<span className="min-w-0 break-words">
 					Skill <span className="text-primary">{moment.skill}</span>
 				</span>
-				{moment.skillUrl && (
-					<a
-						href={moment.skillUrl}
-						target="_blank"
-						rel="noreferrer"
-						className="hover:text-foreground ml-auto inline-flex shrink-0 items-center gap-0.5"
-					>
-						Skill page
-						<ArrowUpRight className="size-3" aria-hidden />
-					</a>
-				)}
 			</div>
 		</div>
 	)
@@ -366,7 +400,7 @@ function ErrorRow({
 			<div
 				className={cn(
 					TYPE.metaSm,
-					'text-muted-foreground mt-1 flex items-center gap-1.5',
+					'text-muted-foreground mt-1.5 flex items-center gap-1.5',
 				)}
 			>
 				<XCircleIcon

@@ -2,6 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { SessionExtract } from '@/lib/session-extract'
+import { skillKey } from '@ai-hero/learner-agent/views'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => {
@@ -23,6 +24,7 @@ const mocks = vi.hoisted(() => {
 	return {
 		media: {
 			currentTime: 0,
+			play: vi.fn(() => Promise.resolve()),
 			textTracks,
 			addEventListener: vi.fn(),
 			removeEventListener: vi.fn(),
@@ -139,5 +141,83 @@ describe('the block Matt is reading out', () => {
 		)
 		expect(container.querySelector('[data-spoken]')).toBeNull()
 		expect(container.querySelector('[data-spoken-bar]')).toBeNull()
+	})
+})
+
+describe('the whole transcript', () => {
+	it('is on the page before the video reaches it, with the unreached part set back', async () => {
+		mocks.media.currentTime = 0
+		await act(async () =>
+			root.render(<SessionExtractPanel extract={extract} />),
+		)
+		expect(container.textContent).toContain('/code-review PR #34')
+		expect(container.textContent).toContain('Q4 - What happens')
+		expect(container.querySelector('[data-reached]')).toBeNull()
+	})
+
+	it('plays from a message when the message is clicked', async () => {
+		mocks.media.currentTime = 0
+		await act(async () =>
+			root.render(<SessionExtractPanel extract={extract} />),
+		)
+		const reply = container.querySelector('[data-reply]')!
+		await act(async () => (reply as HTMLElement).click())
+		expect(mocks.media.currentTime).toBe(18)
+	})
+
+	it('does not play from a tool call when it is clicked', async () => {
+		mocks.media.currentTime = 0
+		await act(async () =>
+			root.render(<SessionExtractPanel extract={extract} />),
+		)
+		const skill = [...container.querySelectorAll('div')].find(
+			(element) => element.textContent === 'Skill tdd',
+		)!
+		await act(async () => skill.click())
+		expect(mocks.media.currentTime).toBe(0)
+	})
+})
+
+describe('skill calls', () => {
+	it('link to the skill page, and clicking the link does not seek', async () => {
+		mocks.media.currentTime = 0
+		await act(async () =>
+			root.render(
+				<SessionExtractPanel
+					extract={extract}
+					skillLinks={{ [skillKey('tdd')]: '/skills/tdd' }}
+				/>,
+			),
+		)
+		const link = container.querySelector('a[href="/skills/tdd"]')!
+		expect(link.textContent).toBe('Skill page')
+		link.addEventListener('click', (event) => event.preventDefault())
+		await act(async () => (link as HTMLElement).click())
+		expect(mocks.media.currentTime).toBe(0)
+	})
+})
+
+describe('times', () => {
+	it('shows a time once for rows that read the same', async () => {
+		mocks.media.currentTime = 0
+		await act(async () =>
+			root.render(
+				<SessionExtractPanel
+					extract={{
+						sessions: [
+							{
+								sessionId: 's1',
+								entries: [
+									{ kind: 'userPrompt', visibleFrom: 10.1, text: 'Go' },
+									{ kind: 'assistantText', visibleFrom: 10.8, text: 'On it.' },
+								],
+							},
+						],
+					}}
+				/>,
+			),
+		)
+		const times = container.querySelectorAll('button[aria-label^="Play from"]')
+		expect([...times].map((time) => time.textContent)).toEqual(['0:10'])
 	})
 })

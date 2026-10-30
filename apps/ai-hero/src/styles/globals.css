@@ -370,6 +370,20 @@
 }
 
 .dark {
+	/* The sidebar aliases again, for a `.dark` that scopes a subtree (the
+	   lesson player area on a light page). A custom property's var() resolves
+	   where it is declared, so the `:root` copies keep the light values inside
+	   a nested `.dark`: Streamdown's `bg-sidebar` table card rendered light in
+	   the dark session panel. */
+	--sidebar: var(--muted);
+	--sidebar-foreground: var(--foreground);
+	--sidebar-primary: var(--primary);
+	--sidebar-primary-foreground: var(--primary-foreground);
+	--sidebar-accent: var(--ah-hover);
+	--sidebar-accent-foreground: var(--foreground);
+	--sidebar-border: var(--border);
+	--sidebar-ring: var(--ring);
+
 	/* Dark theme — the primary one. Surfaces, ink ramp, single accent and
 	   line levels are the values in `aihero.css`; see the note in `:root`
 	   for why `--primary` and `--accent-fill` are two tokens. */

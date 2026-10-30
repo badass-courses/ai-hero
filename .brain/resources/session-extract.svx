@@ -31,6 +31,26 @@ lesson page shows one beside the player and follows playback through it.
   rejects the manifest, so a producer bug is loud at sync time. The lesson
   page parses it again in isolation (`parseSessionExtract`), so a bad stored
   value hides the panel and never breaks a lesson.
+- **What the panel shows (Matt, 2026-10-30).** A skill run by slash command
+  gets no row (the prompt that typed it already shows it), skill args are
+  never shown, and the spoken block is marked by a gold bar in the left
+  gutter, never by dimming the rest: at 2x the contrast change flickered.
+- **One grid across tabs.** Live and the moment lists share it: the time
+  left-aligned on its own line, content 12px in, the current-moment bar at
+  4px. Hovering a moment lights its time with a play glyph; the time seeks.
+  Rows sharing a time show it once, so the hover finds the head of the run.
+- **Whole transcript up front (Matt, 2026-10-30).** Live lists every entry
+  from the start so the transcript navigates the video: what the video has
+  not reached sits at half opacity, following tracks the newest reached row
+  (`data-current`), and a click on a user or assistant message plays from it.
+  Tool and skill calls do not seek. The spoken-block match only searches
+  replies the video has reached.
+- **Following is ours, not `use-stick-to-bottom`.** With the whole
+  transcript on the page the view follows the video's place, not the bottom.
+  The library only escaped on a scroll up, so reading ahead never showed
+  Follow video. Any wheel, touch, scrollbar or key scroll stops following;
+  the button (arrow toward the video), a seek from the panel, or a seek back
+  turns it on.
 
 ## Gotchas
 

@@ -2,10 +2,6 @@
 
 import * as React from 'react'
 import {
-	Conversation,
-	ConversationContent,
-} from '@/components/ai-elements/conversation'
-import {
 	Message,
 	MessageContent,
 	MessageResponse,
@@ -18,20 +14,18 @@ import { useMuxPlayer } from '@/hooks/use-mux-player'
 import { keepCaptionCuesLoading } from '@/hooks/use-mux-player-prefs'
 import {
 	contentWords,
+	activeRowIndex,
 	rowsOnScreen,
 	sessionExtractRows,
 	spokenBlockIndex,
 	type SessionExtract,
 	type SessionExtractRow,
 } from '@/lib/session-extract'
+import { skillKey } from '@ai-hero/learner-agent/views'
 import type { MuxPlayerRefAttributes } from '@mux/mux-player-react'
 import {
-	useStickToBottomContext,
-	type GetTargetScrollTop,
-	type StickToBottomContext,
-} from 'use-stick-to-bottom'
-import {
 	ArrowDownIcon,
+	ArrowUpIcon,
 	ChevronDownIcon,
 	PictureInPicture2,
 	SparklesIcon,
@@ -53,6 +47,8 @@ import {
 	SESSION_PROSE,
 	SessionMomentList,
 	SessionViewTabs,
+	SkillPageLink,
+	TimeButton,
 	useSessionViews,
 	type SessionTab,
 } from './session-views'
@@ -70,6 +66,26 @@ const SPOKEN_HOLD = 8
 const BLOCK_SELECTOR = 'p, li, h1, h2, h3, h4, h5, h6, tr'
 
 /**
+ * Lists as the site sets them (`.ah-bullets`, `.ah-numbers`), at the panel's
+ * size: a hanging indent so a wrapped line lines up with the text above it,
+ * a 5px gold dot centred on the first line, and a faint mono numeral.
+ * Streamdown's own lists sit inside their markers with padded items.
+ */
+const LIST_TYPE = cn(
+	'[&_li]:my-0 [&_li]:py-0 [&_li+li]:mt-1 [&_li_:is(ul,ol)]:mt-1 [&_li_:is(ul,ol)]:mb-0',
+	'[&_ul]:list-none [&_ul]:pl-0 [&_ul>li]:relative [&_ul>li]:pl-[15px]',
+	"[&_ul>li]:before:bg-primary [&_ul>li]:before:absolute [&_ul>li]:before:top-[calc((1.625em_-_5px)/2)] [&_ul>li]:before:left-0 [&_ul>li]:before:size-[5px] [&_ul>li]:before:rounded-full [&_ul>li]:before:opacity-70 [&_ul>li]:before:content-['']",
+	'[&_ol]:list-outside [&_ol]:pl-[18px] [&_ol>li]:pl-[3px] [&_ol>li]:marker:font-mono [&_ol>li]:marker:text-[0.86em] [&_ol>li]:marker:text-[var(--ah-fg-faint)]',
+)
+
+/**
+ * Tables at the reply's size: Streamdown sets its cells in `text-sm` with
+ * page-sized padding, a step larger than the text around them.
+ */
+const TABLE_TYPE =
+	'[&_:is(th,td)]:px-2.5 [&_:is(th,td)]:py-1.5 [&_:is(th,td)]:text-[1em] [&_td]:align-top'
+
+/**
  * Markdown inside the panel: mono runs a size down (a mono face reads larger
  * than the sans beside it) on a translucent chip, so the spoken highlight
  * shows through code instead of stopping at it. Headings the agent writes
@@ -80,7 +96,9 @@ const REPLY_TYPE = cn(
 	SESSION_PROSE,
 	'[&_:is(h1,h2,h3)]:text-[1.08em] [&_:is(h4,h5,h6)]:text-[1em] [&_:is(h1,h2,h3,h4,h5,h6)]:mb-1 [&_:is(h1,h2,h3,h4,h5,h6)]:mt-3',
 	'[&_:not(pre)>code]:bg-foreground/[0.07] [&_:not(pre)>code]:rounded-[4px] [&_:not(pre)>code]:px-1 [&_:not(pre)>code]:py-px [&_:not(pre)>code]:text-[0.86em] [&_:not(pre)>code]:font-normal',
-	'[&_hr]:my-3 [&_li]:my-0.5 [&_ol]:my-1.5 [&_p]:my-1.5 [&_ul]:my-1.5',
+	'[&_hr]:my-3 [&_ol]:my-2 [&_p]:my-1.5 [&_ul]:my-2',
+	LIST_TYPE,
+	TABLE_TYPE,
 )
 
 /**
@@ -106,7 +124,7 @@ export function SessionExtractPanel({
 	onPopOut,
 }: {
 	extract: SessionExtract
-	/** Skill pages by `skillKey`, for the Skills tab. */
+	/** Skill pages by `skillKey`, linked from Live and the Skills tab. */
 	skillLinks?: Readonly<Record<string, string>>
 	className?: string
 	/** Shown as a header button when the browser can open a floating window. */
@@ -150,7 +168,7 @@ export function SessionExtractPanel({
 				>
 					<SessionViewTabs tabs={views.tabs} />
 					<TabsContent value="live" className="relative flex min-h-0 flex-col">
-						<LiveSession extract={extract} />
+						<LiveSession extract={extract} skillLinks={skillLinks} />
 					</TabsContent>
 					{views.tabs
 						.filter((view) => view !== 'live')
@@ -167,24 +185,31 @@ export function SessionExtractPanel({
 						))}
 				</Tabs>
 			) : (
-				<LiveSession extract={extract} />
+				<LiveSession extract={extract} skillLinks={skillLinks} />
 			)}
 		</section>
 	)
 }
 
 /**
- * The session revealed in step with the lesson player: an entry appears when
- * it appears in the video, the list sticks to the newest one, and every
- * entry's time seeks the video. The reply block Matt is reading out is
- * highlighted, matched from the captions.
+ * The whole session, followed in step with the lesson player: the view keeps
+ * the newest entry the video has reached in sight, and a click on a message
+ * or a time seeks the video. The reply block Matt is reading out is marked,
+ * matched from the captions.
  */
-function LiveSession({ extract }: { extract: SessionExtract }) {
+function LiveSession({
+	extract,
+	skillLinks,
+}: {
+	extract: SessionExtract
+	skillLinks?: Readonly<Record<string, string>>
+}) {
 	const rows = React.useMemo(() => sessionExtractRows(extract), [extract])
 	const { muxPlayerRef } = useMuxPlayer()
 	const time = usePlayerTime(muxPlayerRef)
-	const visible = rowsOnScreen(rows, time)
-	const active = visible.length - 1
+	// The whole session is on the page from the start, so a reader can find a
+	// moment and jump to it; `active` is the newest row the video has reached.
+	const active = activeRowIndex(rows, time)
 	const contentRef = React.useRef<HTMLDivElement>(null)
 	const anchorRef = React.useRef<HTMLElement | null>(null)
 	const spoken = useSpokenBlock(
@@ -195,122 +220,198 @@ function LiveSession({ extract }: { extract: SessionExtract }) {
 		active,
 	)
 	const bar = useBlockBar(contentRef, spoken)
-	const stickRef = React.useRef<StickToBottomContext>(null)
+	const scrollRef = React.useRef<HTMLDivElement>(null)
+	// Following is the view tracking the video. Any scroll by hand, either
+	// way, stops it; the Follow video button, a seek from the panel, or a
+	// seek back in the player turns it on again.
+	const [following, setFollowing] = React.useState(true)
+	const [videoIs, setVideoIs] = React.useState<'above' | 'below'>('below')
 
-	// Reading only moves forward. The last block Matt read out stays the
-	// anchor after its highlight fades, held near the top; a new entry pushes
-	// the view on only as far as revealing it needs. The library animates
-	// down toward this target and never up, and scrolling up escapes it.
-	const targetScrollTop = React.useCallback<GetTargetScrollTop>(
-		(bottom, { scrollElement }) => {
-			const content = contentRef.current
-			if (!content) return bottom
-			const origin = content.getBoundingClientRect().top
-			const topOf = (element: Element) =>
-				element.getBoundingClientRect().top - origin
-			const anchor = anchorRef.current?.isConnected ? anchorRef.current : null
-			const newest = content.lastElementChild
-			let target = anchor ? topOf(anchor) - ANCHOR_OFFSET : 0
-			if (newest) {
-				target = Math.max(
-					target,
-					topOf(newest) - scrollElement.clientHeight * REVEAL_AT,
-				)
+	// Where following holds the view. Reading only moves forward: the last
+	// block Matt read out stays the anchor after its highlight fades, held
+	// near the top, and the newest entry the video has reached is kept in
+	// the upper part of the panel.
+	const followTop = React.useCallback((scroller: HTMLElement) => {
+		const content = contentRef.current
+		if (!content) return 0
+		const origin = content.getBoundingClientRect().top
+		const topOf = (element: Element) =>
+			element.getBoundingClientRect().top - origin
+		const anchor = anchorRef.current?.isConnected ? anchorRef.current : null
+		const newest = content.querySelector('[data-current]')
+		let target = anchor ? topOf(anchor) - ANCHOR_OFFSET : 0
+		if (newest) {
+			target = Math.max(
+				target,
+				topOf(newest) - scroller.clientHeight * REVEAL_AT,
+			)
+		}
+		return Math.min(
+			scroller.scrollHeight - scroller.clientHeight,
+			Math.max(0, target),
+		)
+	}, [])
+	const follow = React.useCallback(
+		(behavior: ScrollBehavior) => {
+			const scroller = scrollRef.current
+			if (!scroller) return
+			const top = followTop(scroller)
+			if (Math.abs(scroller.scrollTop - top) > 1) {
+				scroller.scrollTo({ top, behavior })
 			}
-			return Math.min(bottom, Math.max(0, target))
 		},
-		[],
+		[followTop],
 	)
+
 	React.useEffect(() => {
 		if (spoken) anchorRef.current = spoken
-		const stick = stickRef.current
-		if (stick?.state.isAtBottom) void stick.scrollToBottom()
-	}, [spoken, active])
+		if (following) follow('smooth')
+	}, [spoken, active, following, follow])
 
-	// Seeking back is the one way up: drop the anchor and place the view
-	// where reading from that moment would have it.
+	// Seeking back drops the anchor and places the view where reading from
+	// that moment would have it, following again.
 	const previousTime = React.useRef(time)
 	React.useEffect(() => {
 		const back = time < previousTime.current - 1
 		previousTime.current = time
-		const stick = stickRef.current
-		const scroller = stick?.scrollRef.current
-		if (!back || !stick || !scroller) return
+		if (!back) return
 		anchorRef.current = null
-		const frame = requestAnimationFrame(() => {
-			stick.state.scrollTop = targetScrollTop(
-				scroller.scrollHeight - scroller.clientHeight,
-				{ scrollElement: scroller, contentElement: scroller },
-			)
-			void stick.scrollToBottom()
-		})
+		setFollowing(true)
+		const frame = requestAnimationFrame(() => follow('instant'))
 		return () => cancelAnimationFrame(frame)
-	}, [time, targetScrollTop])
+	}, [time, follow])
 
-	const seek = (seconds: number) => seekPlayer(muxPlayerRef, seconds)
+	const stopFollowing = () => setFollowing(false)
+	const seek = (seconds: number) => {
+		seekPlayer(muxPlayerRef, seconds)
+		// What was clicked is where the video is now.
+		setFollowing(true)
+	}
+	// The moment the pointer is over, by the index of the row that heads it.
+	// Rows that show the same time (10.1s and 10.8s both read 0:10) share
+	// one, which seeks to the first of them.
+	const [hovered, setHovered] = React.useState<number | null>(null)
+	const heads = rows.map((row, index) => index)
+	rows.forEach((row, index) => {
+		const previous = rows[index - 1]
+		if (
+			previous &&
+			formatTime(previous.visibleFrom) === formatTime(row.visibleFrom)
+		) {
+			heads[index] = heads[index - 1]!
+		}
+	})
 
 	return (
-		<Conversation
-			className="min-h-0 flex-1"
-			contextRef={stickRef}
-			targetScrollTop={targetScrollTop}
-		>
-			<ConversationContent className="gap-0 p-0">
-				<div ref={contentRef} className="relative flex flex-col px-3 pb-3">
-					{/* First, so the newest row stays the last child. */}
+		<div className="relative min-h-0 flex-1">
+			<div
+				ref={scrollRef}
+				// Input that scrolls the panel is the reader taking over; scrolls
+				// made by following itself come with none of it.
+				onWheel={stopFollowing}
+				onTouchMove={stopFollowing}
+				onPointerDown={(event) => {
+					// Grabbing the scrollbar lands on the scroller itself.
+					if (event.target === event.currentTarget) stopFollowing()
+				}}
+				onKeyDown={(event) => {
+					if (
+						[
+							'ArrowUp',
+							'ArrowDown',
+							'PageUp',
+							'PageDown',
+							'Home',
+							'End',
+							' ',
+						].includes(event.key)
+					) {
+						stopFollowing()
+					}
+				}}
+				onScroll={(event) => {
+					if (following) return
+					const scroller = event.currentTarget
+					setVideoIs(
+						followTop(scroller) < scroller.scrollTop ? 'above' : 'below',
+					)
+				}}
+				className="h-full [scrollbar-gutter:stable] overflow-y-auto"
+			>
+				<div
+					ref={contentRef}
+					className="relative flex flex-col px-3 pb-3"
+					onPointerLeave={() => setHovered(null)}
+				>
+					{/* Before the rows, which stay the content's only siblings after it. */}
 					{bar && (
 						<span
 							aria-hidden
 							data-spoken-bar=""
-							className="bg-primary pointer-events-none absolute left-0 w-0.5 transition-[top,height] duration-300 motion-reduce:transition-none"
+							className="bg-primary pointer-events-none absolute left-1 w-0.5 rounded-full transition-[top,height] duration-300 motion-reduce:transition-none"
 							style={bar}
 						/>
 					)}
-					{visible.length === 0 ? (
-						<p className={cn(TYPE.metaSm, 'text-muted-foreground pt-4')}>
-							The session appears here as the video reaches it.
-						</p>
-					) : (
-						visible.map((row, index) => {
-							const previous = visible[index - 1]
-							const timed =
-								!previous || previous.visibleFrom !== row.visibleFrom
-							return (
-								// The time sits in the gap above its row, right-aligned,
-								// so the content keeps the panel's full width.
-								<div
-									key={index}
-									className={cn(
-										'relative',
-										timed
-											? 'mt-5 first:mt-4'
-											: isCall(row) && previous && isCall(previous)
-												? 'mt-0.5'
-												: 'mt-3',
-									)}
-								>
-									{timed && (
-										<button
-											type="button"
-											onClick={() => seek(row.visibleFrom)}
-											aria-label={`Play from ${formatTime(row.visibleFrom)}`}
-											className={cn(
-												TYPE.navNum,
-												'text-muted-foreground hover:text-foreground absolute -top-4 right-0 h-3.5 rounded-[3px] px-0.5',
-											)}
-										>
-											{formatTime(row.visibleFrom)}
-										</button>
-									)}
-									<RowBody row={row} />
-								</div>
-							)
-						})
-					)}
+					{rows.map((row, index) => {
+						const previous = rows[index - 1]
+						const timed = heads[index] === index
+						const message = isMessage(row)
+						return (
+							// The time heads its moment on a line of its own, at the
+							// left edge, the same as in the other tabs. What the
+							// video has not reached yet sits back.
+							<div
+								key={index}
+								data-reached={index <= active ? '' : undefined}
+								data-current={index === active ? '' : undefined}
+								onPointerEnter={() => setHovered(heads[index]!)}
+								onClick={
+									message
+										? (event) => {
+												// A message plays from its moment; a link, a
+												// button, or text being selected keeps its own job.
+												if (
+													(event.target as Element).closest('a, button') ||
+													window.getSelection()?.toString()
+												) {
+													return
+												}
+												seek(row.visibleFrom)
+											}
+										: undefined
+								}
+								className={cn(
+									'flex flex-col gap-1.5 transition-opacity duration-300 motion-reduce:transition-none',
+									index > active && 'opacity-50',
+									message && 'cursor-pointer',
+									timed
+										? 'mt-5 first:mt-4'
+										: isCall(row) && previous && isCall(previous)
+											? 'mt-0.5'
+											: 'mt-3',
+								)}
+							>
+								{timed && (
+									<TimeButton
+										seconds={row.visibleFrom}
+										seek={seek}
+										active={hovered === index}
+										className="self-start"
+									/>
+								)}
+								<RowBody row={row} skillLinks={skillLinks} />
+							</div>
+						)
+					})}
 				</div>
-			</ConversationContent>
-			<FollowVideoButton />
-		</Conversation>
+			</div>
+			{!following && (
+				<FollowVideoButton
+					videoIs={videoIs}
+					onFollow={() => setFollowing(true)}
+				/>
+			)}
+		</div>
 	)
 }
 
@@ -368,6 +469,14 @@ export function SessionExtractStrip({
 	)
 }
 
+/** A user or assistant message: what a click on the transcript plays from. */
+function isMessage(row: SessionExtractRow) {
+	return (
+		row.type === 'entry' &&
+		(row.entry.kind === 'userPrompt' || row.entry.kind === 'assistantText')
+	)
+}
+
 function isCall(row: SessionExtractRow) {
 	return (
 		row.type === 'tools' ||
@@ -375,7 +484,13 @@ function isCall(row: SessionExtractRow) {
 	)
 }
 
-function RowBody({ row }: { row: SessionExtractRow }) {
+function RowBody({
+	row,
+	skillLinks,
+}: {
+	row: SessionExtractRow
+	skillLinks?: Readonly<Record<string, string>>
+}) {
 	if (row.type === 'sessionStart') {
 		return (
 			<p className={cn(TYPE.metaSm, 'text-muted-foreground')}>
@@ -453,7 +568,8 @@ function RowBody({ row }: { row: SessionExtractRow }) {
 					</MessageContent>
 				</Message>
 			)
-		case 'skillCall':
+		case 'skillCall': {
+			const skillUrl = skillLinks?.[skillKey(entry.skill)]
 			return (
 				<CallRow
 					icon={<SparklesIcon className="size-3" />}
@@ -463,6 +579,7 @@ function RowBody({ row }: { row: SessionExtractRow }) {
 						</>
 					}
 					failed={entry.via === 'toolCall' && entry.resultIsError === true}
+					aside={skillUrl && <SkillPageLink href={skillUrl} />}
 				>
 					{entry.skillBody && (
 						<MessageResponse className={DETAIL_TYPE}>
@@ -471,6 +588,7 @@ function RowBody({ row }: { row: SessionExtractRow }) {
 					)}
 				</CallRow>
 			)
+		}
 		case 'interrupt':
 			return (
 				<p className={cn(TYPE.metaSm, 'text-muted-foreground italic')}>
@@ -488,11 +606,14 @@ function CallRow({
 	icon,
 	title,
 	failed,
+	aside,
 	children,
 }: {
 	icon: React.ReactNode
 	title: React.ReactNode
 	failed: boolean
+	/** At the line's end, beside (never inside) the toggle. */
+	aside?: React.ReactNode
 	children?: React.ReactNode
 }) {
 	const header = (
@@ -513,14 +634,24 @@ function CallRow({
 	)
 
 	if (!children) {
-		return <div className={line}>{header}</div>
+		return (
+			<div className={line}>
+				{header}
+				{aside && <span className="ml-auto pl-2">{aside}</span>}
+			</div>
+		)
 	}
 	return (
 		<Tool className="mb-0 rounded-none border-0">
-			<CollapsibleTrigger className={cn(line, 'hover:text-foreground')}>
-				{header}
-				<ChevronDownIcon className="size-3 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
-			</CollapsibleTrigger>
+			<div className="flex items-center gap-2">
+				<CollapsibleTrigger
+					className={cn(line, 'hover:text-foreground min-w-0 flex-1')}
+				>
+					{header}
+					<ChevronDownIcon className="size-3 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
+				</CollapsibleTrigger>
+				{aside}
+			</div>
 			<ToolContent className="my-1 ml-1.5 border-l pl-3">
 				{children}
 			</ToolContent>
@@ -559,7 +690,9 @@ function useSpokenBlock(
 				.map((cue) => (cue as VTTCue).text)
 				.join(' '),
 		)
-		const blocks = Array.from(content.querySelectorAll('[data-reply]'))
+		const blocks = Array.from(
+			content.querySelectorAll('[data-reached] [data-reply]'),
+		)
 			.slice(-SPOKEN_REPLIES)
 			.flatMap((reply) =>
 				Array.from(reply.querySelectorAll<HTMLElement>(BLOCK_SELECTOR)),
@@ -682,34 +815,29 @@ function captionTrack(player: MuxPlayerRefAttributes | null | undefined) {
 }
 
 /**
- * Scrolling the panel by hand stops it following the video; this turns
- * following back on, and shows for as long as it is off. Following is the
- * library's `isAtBottom` lock: `escapedFromLock` only clears on a scroll
- * down by hand, so it stays set after the button re-locks.
+ * Shown while the reader has scrolled away from the video's place, either
+ * way; it turns following back on. The arrow points to where the video is.
  */
-function FollowVideoButton() {
-	const { state, scrollToBottom } = useStickToBottomContext()
-	if (state.isAtBottom) return null
-	const follow = () => {
-		// The library only scrolls down; a reader below the video's place is
-		// brought back up first.
-		if (state.scrollTop > state.calculatedTargetScrollTop) {
-			state.scrollTop = state.calculatedTargetScrollTop
-		}
-		void scrollToBottom()
-	}
+function FollowVideoButton({
+	videoIs,
+	onFollow,
+}: {
+	videoIs: 'above' | 'below'
+	onFollow: () => void
+}) {
+	const Arrow = videoIs === 'above' ? ArrowUpIcon : ArrowDownIcon
 	return (
 		<Button
 			type="button"
 			variant="outline"
 			size="sm"
-			onClick={follow}
+			onClick={onFollow}
 			className={cn(
 				TYPE.metaSm,
 				'dark:bg-background absolute bottom-3 left-1/2 h-7 -translate-x-1/2 gap-1.5 rounded-full px-3',
 			)}
 		>
-			<ArrowDownIcon className="size-3.5" aria-hidden />
+			<Arrow className="size-3.5" aria-hidden />
 			Follow video
 		</Button>
 	)
