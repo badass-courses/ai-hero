@@ -6,6 +6,7 @@ import {
 	reconcileSyncOutcome,
 	runContactSyncReconcile,
 	stopFactsFor,
+	type ContactSyncLateCursor,
 	type ContactSyncReconcilePorts,
 	type ScannedContactEvent,
 } from './contact-sync-reconcile'
@@ -466,6 +467,250 @@ describe('contact sync reconcile', () => {
 		await expect(runContactSyncReconcile(p)).resolves.toMatchObject({
 			status: 'synced',
 		})
+	})
+})
+
+type WrittenEvent = ScannedContactEvent & { createdAt: string }
+
+/**
+ * A store that keeps its state across runs: the watermark, the late cursor
+ * and the rows, scanned the way the Drizzle store does.
+ */
+function drainWorld(args: {
+	watermark: string
+	rows: WrittenEvent[]
+	failing?: (contactId: string) => boolean
+}) {
+	const state = {
+		watermark: args.watermark,
+		lateCursor: undefined as ContactSyncLateCursor | undefined,
+		rows: [...args.rows],
+		now: new Date(0),
+	}
+	const order: string[] = []
+	const syncs = new Map<string, number>()
+	const skipped = vi.fn(async () => undefined)
+	const heartbeat = vi.fn(async () => undefined)
+	const resendStops = vi.fn(async (_stops: ScannedContactEvent[]) => undefined)
+	const ms = Date.parse
+	const ports: ContactSyncReconcilePorts = {
+		now: () => state.now,
+		readWatermark: async () => state.watermark,
+		scanChanges: async ({
+			after,
+			through,
+			writtenAfter,
+			limit,
+			lateCursor,
+		}) => {
+			const writtenFrom = writtenAfter
+				? Math.floor(ms(writtenAfter) / 1000) * 1000
+				: undefined
+			const past = lateCursor?.after
+			return state.rows
+				.filter(
+					(row) =>
+						ms(row.occurredAt) > ms(after) &&
+						ms(row.occurredAt) <= ms(through) &&
+						(writtenFrom === undefined || ms(row.createdAt) >= writtenFrom) &&
+						(!past ||
+							ms(row.createdAt) > ms(past.createdAt) ||
+							(ms(row.createdAt) === ms(past.createdAt) && row.id > past.id)),
+				)
+				.sort((l, r) =>
+					lateCursor
+						? ms(l.createdAt) - ms(r.createdAt) || l.id.localeCompare(r.id)
+						: ms(l.occurredAt) - ms(r.occurredAt) || l.id.localeCompare(r.id),
+				)
+				.slice(0, limit + 1)
+		},
+		rotatedContacts: async () => [],
+		syncContact: async (contactId: string) => {
+			if (args.failing?.(contactId)) throw new Error('drovr 503')
+			syncs.set(contactId, (syncs.get(contactId) ?? 0) + 1)
+			order.push(`sync:${contactId}`)
+			return 'sent' as const
+		},
+		resendStops,
+		heartbeat,
+		writeWatermark: async (watermark: string) => {
+			state.watermark = watermark
+			order.push(`watermark:${watermark}`)
+		},
+		lateCursor: {
+			read: async () => state.lateCursor,
+			write: async (cursor) => {
+				state.lateCursor = cursor
+			},
+			skipped,
+		},
+	}
+	// Every 15 minutes, as the cron.
+	const run = async (at: string, options = {}) => {
+		state.now = new Date(at)
+		return runContactSyncReconcile(ports, options)
+	}
+	return { state, order, syncs, skipped, heartbeat, resendStops, run }
+}
+
+const runAt = (run: number) =>
+	new Date(
+		Date.parse('2026-10-30T08:30:00.000Z') + run * 15 * 60 * 1000,
+	).toISOString()
+
+describe('contact sync reconcile drains a late-write backlog', () => {
+	// 2026-10-30: the absence-proof write, one occurredAt, written over an
+	// hour behind the watermark.
+	const watermark = '2026-10-30T07:13:02.343Z'
+	const clump = (
+		count: number,
+		eventType = 'newsletter.old-sequence.exit-confirmed',
+	) =>
+		Array.from({ length: count }, (_, index): WrittenEvent => ({
+			id: `late-${String(index).padStart(4, '0')}`,
+			contactId: `contact-${String(index).padStart(4, '0')}`,
+			eventType,
+			occurredAt: '2026-10-30T06:45:22.000Z',
+			// Some seconds hold two rows, so cursors land inside a second.
+			createdAt: new Date(
+				Date.parse('2026-10-30T07:19:55.000Z') + Math.floor(index * 0.8) * 1000,
+			).toISOString(),
+		}))
+	const freshRow: WrittenEvent = {
+		id: 'fresh-1',
+		contactId: 'fresh-contact',
+		eventType: 'skills-newsletter.subscribed',
+		occurredAt: '2026-10-30T07:30:00.000Z',
+		createdAt: '2026-10-30T07:30:00.000Z',
+	}
+
+	it('drains 3,000 late contacts over 8 runs, then advances and clears the cursor', async () => {
+		const world = drainWorld({ watermark, rows: [...clump(3000), freshRow] })
+		for (let run = 0; run < 7; run += 1) {
+			const receipt = await world.run(runAt(run))
+			expect(receipt).toMatchObject({
+				status: 'draining',
+				syncedThrough: watermark,
+				contacts: 400,
+				rotated: 0,
+			})
+			expect(world.state.watermark).toBe(watermark)
+			expect(world.state.lateCursor?.after?.id).toBe(
+				`late-${String((run + 1) * 400 - 1).padStart(4, '0')}`,
+			)
+		}
+		expect(world.heartbeat).not.toHaveBeenCalled()
+		// No fresh contact while draining.
+		expect(world.syncs.has('fresh-contact')).toBe(false)
+
+		const last = await world.run(runAt(7))
+		const planned = new Date(Date.parse(runAt(7)) - 2 * 60 * 1000).toISOString()
+		expect(last).toMatchObject({
+			status: 'synced',
+			syncedThrough: planned,
+			contacts: 201,
+		})
+		expect(world.state.watermark).toBe(planned)
+		expect(world.state.lateCursor).toBeUndefined()
+		expect(world.heartbeat).toHaveBeenCalledTimes(1)
+		// Each contact once: the cursor kept every drained row out of the scan.
+		expect(world.syncs.size).toBe(3001)
+		expect([...world.syncs.values()].every((count) => count === 1)).toBe(true)
+	})
+
+	it('syncs a late write landing mid-drain before the watermark moves', async () => {
+		const world = drainWorld({ watermark, rows: clump(3000) })
+		for (let run = 0; run < 3; run += 1) await world.run(runAt(run))
+		world.state.rows.push({
+			id: 'straggler-1',
+			contactId: 'straggler',
+			eventType: 'skills-newsletter.subscribed',
+			occurredAt: '2026-10-30T07:00:00.000Z',
+			createdAt: runAt(3),
+		})
+		for (let run = 3; run < 8; run += 1) await world.run(runAt(run))
+		expect(world.state.watermark).not.toBe(watermark)
+		const straggler = world.order.indexOf('sync:straggler')
+		const advanced = world.order.findIndex((entry) =>
+			entry.startsWith('watermark:'),
+		)
+		expect(straggler).toBeGreaterThanOrEqual(0)
+		expect(straggler).toBeLessThan(advanced)
+	})
+
+	it('holds the cursor on a failing contact for 2 runs, skips it on the 3rd, and drains on', async () => {
+		const world = drainWorld({
+			watermark,
+			rows: clump(12),
+			failing: (contactId) => contactId === 'contact-0004',
+		})
+		const options = { maxContacts: 4 }
+		await world.run(runAt(0), options)
+		expect(world.state.lateCursor).toEqual({
+			after: { createdAt: expect.any(String), id: 'late-0003' },
+		})
+		for (const [run, runs] of [
+			[1, 1],
+			[2, 2],
+		] as const) {
+			const receipt = await world.run(runAt(run), options)
+			expect(receipt).toMatchObject({
+				status: 'draining',
+				failed: ['contact-0004'],
+			})
+			expect(world.state.lateCursor).toEqual({
+				after: { createdAt: expect.any(String), id: 'late-0003' },
+				failing: { contactId: 'contact-0004', runs },
+			})
+			expect(world.skipped).not.toHaveBeenCalled()
+		}
+		const third = await world.run(runAt(3), options)
+		expect(third).toMatchObject({
+			status: 'draining',
+			lateSkipped: ['contact-0004'],
+		})
+		expect(world.skipped).toHaveBeenCalledTimes(1)
+		expect(world.skipped).toHaveBeenCalledWith({
+			contactId: 'contact-0004',
+			eventType: 'newsletter.old-sequence.exit-confirmed',
+			reason: 'sync failed 3 runs in a row',
+		})
+		expect(world.state.lateCursor).toEqual({
+			after: { createdAt: expect.any(String), id: 'late-0007' },
+		})
+		expect(world.state.watermark).toBe(watermark)
+
+		// Four left fit one run: the normal path takes them and advances.
+		await expect(world.run(runAt(4), options)).resolves.toMatchObject({
+			status: 'synced',
+			contacts: 4,
+		})
+		expect(world.state.lateCursor).toBeUndefined()
+		expect(world.state.watermark).not.toBe(watermark)
+		expect(world.skipped).toHaveBeenCalledTimes(1)
+	})
+
+	it('re-sends the stops of the late contacts a draining run synced', async () => {
+		const world = drainWorld({
+			watermark,
+			rows: clump(6, 'contact.unsubscribed'),
+		})
+		const receipt = await world.run(runAt(0), { maxContacts: 4 })
+		expect(receipt.status).toBe('draining')
+		expect(world.resendStops).toHaveBeenCalledWith(
+			clump(4, 'contact.unsubscribed'),
+		)
+	})
+
+	it('drains no row written inside the settle window', async () => {
+		const world = drainWorld({ watermark, rows: clump(6) })
+		// Rows 3 onward land inside the run's two-minute settle.
+		const at = new Date(
+			Date.parse(world.state.rows[3]!.createdAt) + 2 * 60 * 1000 - 1,
+		).toISOString()
+		const receipt = await world.run(at, { maxContacts: 4 })
+		expect(receipt).toMatchObject({ status: 'draining', contacts: 3 })
+		expect(world.state.lateCursor?.after?.id).toBe('late-0002')
 	})
 })
 
