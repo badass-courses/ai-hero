@@ -282,14 +282,13 @@ function LiveSession({
 	}, [spoken, active, following, follow])
 
 	// Hidden, the view kept its place but could not follow; back on screen,
-	// a following view catches up with the video at once.
+	// a following view catches up with the video before it paints, so it
+	// never shows its old place for a frame.
 	const wasShown = React.useRef(shown)
-	React.useEffect(() => {
+	React.useLayoutEffect(() => {
 		const back = shown && !wasShown.current
 		wasShown.current = shown
-		if (!back || !following) return
-		const frame = requestAnimationFrame(() => follow('instant'))
-		return () => cancelAnimationFrame(frame)
+		if (back && following) follow('instant')
 	}, [shown, following, follow])
 
 	// Seeking back drops the anchor and places the view where reading from
