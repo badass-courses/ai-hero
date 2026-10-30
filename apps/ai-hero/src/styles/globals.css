@@ -1150,12 +1150,13 @@ body {
 	opacity: 0.7;
 }
 
-/* Checkbox lists bring their own marker. */
-.ah-bullets.contains-task-list > li {
+/* Checkbox lists bring their own marker. A plain item that markdown folds
+   into the same list keeps its bullet. */
+.ah-bullets.contains-task-list > li.task-list-item {
 	padding-left: 0;
 }
 
-.ah-bullets.contains-task-list > li::before {
+.ah-bullets.contains-task-list > li.task-list-item::before {
 	content: none;
 }
 
@@ -1174,6 +1175,12 @@ body {
 }
 .ah-task > * {
 	text-indent: 0;
+}
+/* A loose list item wraps its text in a paragraph, which holds the checkbox
+   too: it keeps the hanging indent and drops the paragraph's spacing. */
+.ah-task > p {
+	text-indent: inherit;
+	margin: 0;
 }
 .ah-task:hover {
 	background: var(--ah-hover);
