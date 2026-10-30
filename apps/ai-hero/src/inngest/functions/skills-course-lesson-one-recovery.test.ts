@@ -62,6 +62,7 @@ import { RetryAfterError } from 'inngest'
 
 import {
 	SKILLS_COURSE_RECOVERY_DELIVERY_RETRY_MS,
+	SKILLS_COURSE_RECOVERY_DROVR_PENDING_RETRY_MS,
 	SKILLS_COURSE_RECOVERY_IDENTITY_RETRY_MS,
 	SKILLS_COURSE_RECOVERY_RETRIES,
 	skillsCourseLessonOneRecovery,
@@ -548,6 +549,30 @@ describe('skills course lesson-one recovery', () => {
 				expect(mocks.sendDelivery).not.toHaveBeenCalled()
 			},
 		)
+
+		it.each([
+			['pending', 15 * 60],
+			['not-started', 5 * 60],
+		])(
+			'waits for confirmation lag only when drovr answers pending (%s retries after %ss)',
+			async (status, seconds) => {
+				drovrOwned()
+				delivery(status)
+				const { step } = createDurableStep()
+				const attempt = await fn.handler({ event, step }).catch((e) => e)
+				expect(attempt).toBeInstanceOf(RetryAfterError)
+				if (!(attempt instanceof RetryAfterError)) throw attempt
+				expect(attempt.retryAfter).toBe(String(seconds))
+			},
+		)
+
+		it('gives drovr pending a 3-hour budget without raising retries', () => {
+			expect(SKILLS_COURSE_RECOVERY_DROVR_PENDING_RETRY_MS).toBe(15 * 60 * 1000)
+			expect(
+				SKILLS_COURSE_RECOVERY_RETRIES *
+					SKILLS_COURSE_RECOVERY_DROVR_PENDING_RETRY_MS,
+			).toBe(3 * 60 * 60 * 1000)
+		})
 
 		it('retries the read when drovr is unreadable, never falling back to a send', async () => {
 			drovrOwned()
