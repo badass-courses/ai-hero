@@ -116,7 +116,9 @@ export async function LessonPage({
 	// and the layout outlives a lesson change.
 	return (
 		<ActiveHeadingProvider>
-			<main className="w-full">
+			{/* Clips full-width rules drawn from inside the prose (the quiz's) at
+			    the column's edges. */}
+			<main className="w-full overflow-x-clip">
 				<ContentReadTracker
 					contentId={lesson.id}
 					contentType={lessonType === 'solution' ? 'solution' : 'lesson'}
@@ -135,7 +137,7 @@ export async function LessonPage({
 					problem={problem}
 					moduleSlug={params.module}
 				/>
-				<div className="max-w-(--breakpoint-xl) container relative px-5 md:px-10 lg:px-14">
+				<div className="relative container max-w-(--breakpoint-xl) px-5 md:px-10 lg:px-14">
 					<div className="relative z-10">
 						<article className="">
 							<LessonTitle lesson={lesson} />
@@ -171,7 +173,7 @@ export async function LessonPage({
 				</div>
 				<Suspense fallback={null}>
 					<UpNext
-						className="rounded-none border-x-0 border-b-0 border-t"
+						className="rounded-none border-x-0 border-t border-b-0"
 						currentResourceId={lesson?.id}
 						abilityLoader={abilityLoader}
 					/>
