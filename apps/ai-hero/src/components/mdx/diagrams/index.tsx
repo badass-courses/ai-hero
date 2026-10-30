@@ -1,4 +1,7 @@
 import type * as React from 'react'
+import { TYPE } from '@/components/landing/type'
+import { cn } from '@coursebuilder/ui/utils/cn'
+
 import { boardRedraws } from './boards'
 import { chartRedraws } from './charts'
 import { flowRedraws } from './flows'
@@ -48,9 +51,33 @@ export function redrawForImage(
 				<span className="sr-only">{alt}</span>
 			) : null}
 			{redraw()}
+			{/* Matt's drawing, for anyone who wants the hand-drawn version. The
+			    figure's bottom margin collapses with the negative top margin,
+			    so the link sits just under it. */}
+			<a
+				href={src as string}
+				target="_blank"
+				rel="noopener noreferrer"
+				aria-label="Open the original drawing"
+				className={cn(
+					TYPE.metaSm,
+					'not-prose text-muted-foreground hover:text-foreground -mt-6 mb-8 ml-auto block w-fit no-underline transition-colors',
+				)}
+			>
+				Original ↗
+			</a>
 		</>
 	)
 }
 
 /** Every redrawn id. */
 export const redrawnIds = Object.keys(REDRAWS)
+
+/** Every redrawn id, grouped by the kind of drawing. */
+export const redrawnIdsByKind = {
+	Flows: Object.keys(flowRedraws),
+	Graphs: Object.keys(graphRedraws),
+	Slides: Object.keys(slideRedraws),
+	Boards: Object.keys(boardRedraws),
+	Charts: Object.keys(chartRedraws),
+}
