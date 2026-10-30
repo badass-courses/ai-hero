@@ -109,9 +109,15 @@ export function Commit({
 				className="border-foreground/45 bg-card absolute top-4 left-0 z-10 size-[9px] rounded-full border-[1.5px]"
 			/>
 			{/* The copy sits right after the id it acts on, where the eye
-			    already is, rather than across the row. */}
-			<div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-				<span className={cn(TYPE.cardTitle, 'font-mono font-semibold')}>
+			    already is, rather than across the row. On a phone it keeps the id's
+			    line as an icon at its end, where a wrapped label would sit alone. */}
+			<div className="flex items-start gap-2 sm:items-center sm:gap-3">
+				<span
+					className={cn(
+						TYPE.cardTitle,
+						'min-w-0 font-mono font-semibold [overflow-wrap:anywhere]',
+					)}
+				>
 					{id}
 				</span>
 				<DropdownMenu
@@ -129,15 +135,19 @@ export function Commit({
 							aria-label={`Copy a command for ${id}`}
 							className={cn(
 								TYPE.metaSm,
-								'text-muted-foreground hover:text-foreground data-[state=open]:text-foreground -my-1 h-7 gap-1 rounded-[6px] px-2 hover:cursor-pointer',
+								'text-muted-foreground hover:text-foreground data-[state=open]:text-foreground -my-1 ml-auto h-7 shrink-0 gap-1 rounded-[6px] px-2 hover:cursor-pointer sm:ml-0',
 							)}
 						>
 							<Copy className="size-3.5" aria-hidden="true" />
-							Copy command
+							<span className="hidden sm:inline">Copy command</span>
 							<ChevronDown className="size-3" aria-hidden="true" />
 						</Button>
 					</DropdownMenuTrigger>
-					<DropdownMenuContent align="start" className="w-72 rounded-[11px]">
+					<DropdownMenuContent
+						align="start"
+						collisionPadding={12}
+						className="w-72 rounded-[11px]"
+					>
 						<DropdownMenuItem
 							onSelect={(e) => {
 								e.preventDefault()
