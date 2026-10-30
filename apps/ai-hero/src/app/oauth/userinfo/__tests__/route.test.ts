@@ -63,6 +63,7 @@ describe('oauth userinfo device-token policy', () => {
 		['expired', { expiresAt: new Date(Date.now() - 1_000) }],
 		['revoked', { revokedAt: new Date() }],
 		['unknown scope', { scope: 'admin:all' }],
+		['learner:read', { scope: 'learner:read' }],
 	])('rejects an %s token before loading the user', async (_label, overrides) => {
 		mocks.findFirst.mockResolvedValue({
 			userId: 'user_1',
