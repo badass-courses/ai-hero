@@ -31,6 +31,14 @@ lesson page shows one beside the player and follows playback through it.
   rejects the manifest, so a producer bug is loud at sync time. The lesson
   page parses it again in isolation (`parseSessionExtract`), so a bad stored
   value hides the panel and never breaks a lesson.
+- **What the panel shows (Matt, 2026-10-30).** A skill run by slash command
+  gets no row (the prompt that typed it already shows it), skill args are
+  never shown, and the spoken block is marked by a gold bar in the left
+  gutter, never by dimming the rest: at 2x the contrast change flickered.
+- **One grid across tabs.** Live and the moment lists share it: the time
+  left-aligned on its own line, content 12px in, the current-moment bar at
+  4px. Hovering a moment lights its time with a play glyph; the time seeks.
+  Rows sharing a time show it once, so the hover finds the head of the run.
 
 ## Gotchas
 

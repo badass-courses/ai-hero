@@ -44,7 +44,6 @@ import { Tabs, TabsContent } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
 import {
-	formatTime,
 	seekPlayer,
 	usePlayerTime,
 	type PlayerRef,
@@ -53,6 +52,7 @@ import {
 	SESSION_PROSE,
 	SessionMomentList,
 	SessionViewTabs,
+	TimeButton,
 	useSessionViews,
 	type SessionTab,
 } from './session-views'
@@ -70,6 +70,19 @@ const SPOKEN_HOLD = 8
 const BLOCK_SELECTOR = 'p, li, h1, h2, h3, h4, h5, h6, tr'
 
 /**
+ * Lists as the site sets them (`.ah-bullets`, `.ah-numbers`), at the panel's
+ * size: a hanging indent so a wrapped line lines up with the text above it,
+ * a 5px gold dot centred on the first line, and a faint mono numeral.
+ * Streamdown's own lists sit inside their markers with padded items.
+ */
+const LIST_TYPE = cn(
+	'[&_li]:my-0 [&_li]:py-0 [&_li+li]:mt-1 [&_li_:is(ul,ol)]:mt-1 [&_li_:is(ul,ol)]:mb-0',
+	'[&_ul]:list-none [&_ul]:pl-0 [&_ul>li]:relative [&_ul>li]:pl-[15px]',
+	"[&_ul>li]:before:bg-primary [&_ul>li]:before:absolute [&_ul>li]:before:top-[calc((1.625em_-_5px)/2)] [&_ul>li]:before:left-0 [&_ul>li]:before:size-[5px] [&_ul>li]:before:rounded-full [&_ul>li]:before:opacity-70 [&_ul>li]:before:content-['']",
+	'[&_ol]:list-outside [&_ol]:pl-[18px] [&_ol>li]:pl-[3px] [&_ol>li]:marker:font-mono [&_ol>li]:marker:text-[0.86em] [&_ol>li]:marker:text-[var(--ah-fg-faint)]',
+)
+
+/**
  * Markdown inside the panel: mono runs a size down (a mono face reads larger
  * than the sans beside it) on a translucent chip, so the spoken highlight
  * shows through code instead of stopping at it. Headings the agent writes
@@ -80,7 +93,8 @@ const REPLY_TYPE = cn(
 	SESSION_PROSE,
 	'[&_:is(h1,h2,h3)]:text-[1.08em] [&_:is(h4,h5,h6)]:text-[1em] [&_:is(h1,h2,h3,h4,h5,h6)]:mb-1 [&_:is(h1,h2,h3,h4,h5,h6)]:mt-3',
 	'[&_:not(pre)>code]:bg-foreground/[0.07] [&_:not(pre)>code]:rounded-[4px] [&_:not(pre)>code]:px-1 [&_:not(pre)>code]:py-px [&_:not(pre)>code]:text-[0.86em] [&_:not(pre)>code]:font-normal',
-	'[&_hr]:my-3 [&_li]:my-0.5 [&_ol]:my-1.5 [&_p]:my-1.5 [&_ul]:my-1.5',
+	'[&_hr]:my-3 [&_ol]:my-2 [&_p]:my-1.5 [&_ul]:my-2',
+	LIST_TYPE,
 )
 
 /**
@@ -248,21 +262,37 @@ function LiveSession({ extract }: { extract: SessionExtract }) {
 	}, [time, targetScrollTop])
 
 	const seek = (seconds: number) => seekPlayer(muxPlayerRef, seconds)
+	// The moment the pointer is over, by the index of the row that heads it:
+	// rows that share a time light that one time.
+	const [hovered, setHovered] = React.useState<number | null>(null)
+	const heads = visible.map((row, index) => index)
+	visible.forEach((row, index) => {
+		const previous = visible[index - 1]
+		if (previous && previous.visibleFrom === row.visibleFrom) {
+			heads[index] = heads[index - 1]!
+		}
+	})
 
 	return (
 		<Conversation
-			className="min-h-0 flex-1"
+			// The library reserves a scrollbar gutter on both edges; one, as in
+			// the other tabs, keeps the content 12px from the panel's left.
+			className="min-h-0 flex-1 [&>div]:[scrollbar-gutter:stable]!"
 			contextRef={stickRef}
 			targetScrollTop={targetScrollTop}
 		>
 			<ConversationContent className="gap-0 p-0">
-				<div ref={contentRef} className="relative flex flex-col px-3 pb-3">
+				<div
+					ref={contentRef}
+					className="relative flex flex-col px-3 pb-3"
+					onPointerLeave={() => setHovered(null)}
+				>
 					{/* First, so the newest row stays the last child. */}
 					{bar && (
 						<span
 							aria-hidden
 							data-spoken-bar=""
-							className="bg-primary pointer-events-none absolute left-0 w-0.5 transition-[top,height] duration-300 motion-reduce:transition-none"
+							className="bg-primary pointer-events-none absolute left-1 w-0.5 rounded-full transition-[top,height] duration-300 motion-reduce:transition-none"
 							style={bar}
 						/>
 					)}
@@ -273,15 +303,15 @@ function LiveSession({ extract }: { extract: SessionExtract }) {
 					) : (
 						visible.map((row, index) => {
 							const previous = visible[index - 1]
-							const timed =
-								!previous || previous.visibleFrom !== row.visibleFrom
+							const timed = heads[index] === index
 							return (
-								// The time sits in the gap above its row, right-aligned,
-								// so the content keeps the panel's full width.
+								// The time heads its moment on a line of its own, at the
+								// left edge, the same as in the other tabs.
 								<div
 									key={index}
+									onPointerEnter={() => setHovered(heads[index]!)}
 									className={cn(
-										'relative',
+										'flex flex-col gap-1.5',
 										timed
 											? 'mt-5 first:mt-4'
 											: isCall(row) && previous && isCall(previous)
@@ -290,17 +320,12 @@ function LiveSession({ extract }: { extract: SessionExtract }) {
 									)}
 								>
 									{timed && (
-										<button
-											type="button"
-											onClick={() => seek(row.visibleFrom)}
-											aria-label={`Play from ${formatTime(row.visibleFrom)}`}
-											className={cn(
-												TYPE.navNum,
-												'text-muted-foreground hover:text-foreground absolute -top-4 right-0 h-3.5 rounded-[3px] px-0.5',
-											)}
-										>
-											{formatTime(row.visibleFrom)}
-										</button>
+										<TimeButton
+											seconds={row.visibleFrom}
+											seek={seek}
+											active={hovered === index}
+											className="self-start"
+										/>
 									)}
 									<RowBody row={row} />
 								</div>
