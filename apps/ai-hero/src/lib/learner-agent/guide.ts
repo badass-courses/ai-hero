@@ -7,16 +7,22 @@ import {
 /**
  * Agent-facing copy for the learner surface. Markdown, read by agents, not
  * rendered on any HTML page: the visible "Use with your agent" section is
- * separate customer copy with its own review.
+ * separate customer copy with its own review. That section should lead with
+ * OAuth sign-in (add the MCP URL) and link the token path at
+ * `/api/learner#other-agents`, as this guide does.
  */
 
 const signInSteps = (site: SiteUrls) => [
-	'Sign in once, as the learner. Two ways:',
+	'Sign in once, as the learner.',
+	'',
+	`MCP clients with OAuth sign-in: add \`${site.mcpUrl}\` and nothing else. When a tool first needs the learner, the server answers 401 and the client opens an AI Hero page. The learner approves there, and the client keeps a read-only token for 90 days. No copy-paste.`,
+	'',
+	'Other agents and scripts, or a client without OAuth sign-in:',
 	'',
 	`1. Device flow, no browser copy-paste: \`POST ${site.baseUrl}/oauth/device/code\`, ask the learner to open \`verification_uri_complete\` and approve, then poll \`POST ${site.baseUrl}/oauth/token\` with form fields \`device_code=<code>\` and \`scope=learner:read\`. The \`access_token\` it returns reads only what the learner can read, for 90 days.`,
-	`2. Agent token: while signed in at ${site.baseUrl}, the learner sends \`POST ${site.baseUrl}/api/learner/token\` and gives you the token. \`GET\` lists their tokens; \`DELETE\` with \`{ "id": "<token id>" }\` revokes one.`,
+	`2. Agent token: while signed in at ${site.baseUrl}, the learner sends \`POST ${site.baseUrl}/api/learner/token\` and gives you the token. \`GET\` lists their tokens, including ones their apps got by signing in; \`DELETE\` with \`{ "id": "<token id>" }\` revokes one.`,
 	'',
-	'Send the token as `Authorization: Bearer <token>` on every MCP or HTTP call. Without it you can still use `search_course` on public content.',
+	'Send the token as `Authorization: Bearer <token>` on every MCP or HTTP call. Without it you can still use `search_course` on public content. A token that is expired or revoked gets 401: sign in again.',
 ]
 
 export function buildCompanionBlock(
@@ -72,7 +78,18 @@ export function buildLearnerAgentGuide(site: SiteUrls) {
 		'',
 		`MCP (streamable HTTP, stateless): \`${site.mcpUrl}\``,
 		'',
-		'Claude Code:',
+		'Claude Code signs in with OAuth. Add the server, then run `/mcp`, pick `aihero` and authenticate:',
+		'',
+		'```sh',
+		`claude mcp add --transport http aihero ${site.mcpUrl}`,
+		'```',
+		'',
+		'<a id="other-agents"></a>',
+		'### Other agents and scripts',
+		'',
+		'Clients without OAuth sign-in send a learner token as a header (see Sign in below).',
+		'',
+		'Claude Code with a token:',
 		'',
 		'```sh',
 		`claude mcp add --transport http aihero ${site.mcpUrl} --header "Authorization: Bearer <token>"`,
