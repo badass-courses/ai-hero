@@ -56,18 +56,32 @@ export const chartRedraws: Redraws = {
 
 	'ai-hero-images/4d490cc4be9f64b5134b4f18d7c1438f': () => <Rings />,
 	'ai-hero-images/ffc600c9ccdf5c1ef58eb12f738793fc': () => <Rings />,
-	'ai-hero-images/bd505961ae446544b36ba08a7860604b': () => <Rings lit={[3, 4]} />,
+	'ai-hero-images/bd505961ae446544b36ba08a7860604b': () => (
+		<Rings lit={[3, 4]} />
+	),
 	'ai-hero-images/13da005c75234ebb9d391f23051c869b': () => <Rings lit="all" />,
 
 	'ai-hero-images/izajcqkiqb9ks2dit0xk': fidelity,
 	'ai-hero-images/zp39jtve9hl6emwqrh8y': fidelity,
 
-	'ai-hero-images/2552851e47da5245b97dbf560addf4b1': () => <Timeline steps={EDITS_TO_COMMIT} />,
-	'ai-hero-images/11903a76ff1b71a812c4b84f8d04fb5f': () => <Timeline steps={EDITS_TO_COMMIT} />,
-	'ai-hero-images/6ae789c1026a5dc063ff3bd4227eba46': () => <Timeline steps={COMMIT_TO_CI} />,
-	'ai-hero-images/d5b9275788fa8dfa0c366f9037627610': () => <Timeline steps={COMMIT_TO_CI} />,
-	'ai-hero-images/36bf0387d2d263eb88bbf28bc11089eb': () => <Timeline steps={COMMIT_TO_CI} />,
-	'ai-hero-images/8a376dd8aae327a76b4d99e07b435e52': () => <Timeline steps={COMMIT_PUSH_CI} />,
+	'ai-hero-images/2552851e47da5245b97dbf560addf4b1': () => (
+		<Timeline steps={EDITS_TO_COMMIT} />
+	),
+	'ai-hero-images/11903a76ff1b71a812c4b84f8d04fb5f': () => (
+		<Timeline steps={EDITS_TO_COMMIT} />
+	),
+	'ai-hero-images/6ae789c1026a5dc063ff3bd4227eba46': () => (
+		<Timeline steps={COMMIT_TO_CI} />
+	),
+	'ai-hero-images/d5b9275788fa8dfa0c366f9037627610': () => (
+		<Timeline steps={COMMIT_TO_CI} />
+	),
+	'ai-hero-images/36bf0387d2d263eb88bbf28bc11089eb': () => (
+		<Timeline steps={COMMIT_TO_CI} />
+	),
+	'ai-hero-images/8a376dd8aae327a76b4d99e07b435e52': () => (
+		<Timeline steps={COMMIT_PUSH_CI} />
+	),
 
 	'ai-hero-images/2f64a4b28df5c041374622fd4e636ed7': factory,
 	'ai-hero-images/e183eb9625af0a9da61d446e384e684a': factory,

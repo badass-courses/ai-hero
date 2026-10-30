@@ -21,13 +21,27 @@ const FRAMES = {
 	nw24rroqp17jowjd3enm: roadmap({ route: 'found-one', done: [2] }),
 	wydcpycfxsz8ux1gtl15: roadmap({ route: 'found-all', done: [2, 3, 4, 5, 6] }),
 	iww6s3ei4dzeg49nwgxe: roadmap({ route: 'found-all', labels: KINDS }),
-	ldpruxxbnjylexkhkif3: roadmap({ route: 'found-all', labels: KINDS, done: [3] }),
-	izx4qr6gi0qkj7oxifou: roadmap({ route: 'found-all', labels: KINDS, done: [3] }),
+	ldpruxxbnjylexkhkif3: roadmap({
+		route: 'found-all',
+		labels: KINDS,
+		done: [3],
+	}),
+	izx4qr6gi0qkj7oxifou: roadmap({
+		route: 'found-all',
+		labels: KINDS,
+		done: [3],
+	}),
 	// A Language for Good Codebases.
 	'264b9683a228f3d72170cb5759966ea0': moduleAnatomy(),
 	b18d74c42eb15365ea5be4d976a09928: moduleAnatomy({ head: 'JSON.parse' }),
-	b3c4ea0fb7f5a967a986b8e67b368ddb: moduleAnatomy({ head: 'JSON.parse', items: JSON_PARSE }),
-	'99f7f18218fa4f9cecb1d610aa680aa8': moduleDepth({ head: 'JSON.parse', items: JSON_PARSE }),
+	b3c4ea0fb7f5a967a986b8e67b368ddb: moduleAnatomy({
+		head: 'JSON.parse',
+		items: JSON_PARSE,
+	}),
+	'99f7f18218fa4f9cecb1d610aa680aa8': moduleDepth({
+		head: 'JSON.parse',
+		items: JSON_PARSE,
+	}),
 	bbea45a1d02452219d75f3184cf2446f: depthPayoff,
 	d5a5091b03c9ef476521512ec247cc4b: moduleDepth(),
 	// Seams & Adapters, and the Improve Codebase Architecture skill.

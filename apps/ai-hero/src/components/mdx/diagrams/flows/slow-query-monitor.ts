@@ -15,8 +15,18 @@ const RIGHT = { wide: { col: 8, span: 4 }, narrow: { col: 8, span: 5 } }
 const UNDER = { wide: { col: 7, span: 5 }, narrow: { col: 8, span: 5 } }
 
 const step = {
-	receives: { id: 'receives', roles: ['orchestrator'], text: 'Receives an alert', ...LEFT },
-	puts: { id: 'puts', roles: ['orchestrator'], text: 'Puts the alert in a queue', ...LEFT },
+	receives: {
+		id: 'receives',
+		roles: ['orchestrator'],
+		text: 'Receives an alert',
+		...LEFT,
+	},
+	puts: {
+		id: 'puts',
+		roles: ['orchestrator'],
+		text: 'Puts the alert in a queue',
+		...LEFT,
+	},
 	pullQueue: {
 		id: 'pull-alerts',
 		roles: ['orchestrator'],
@@ -71,14 +81,24 @@ const step = {
 		text: 'Finds a potential fix for the slow query',
 		...LEFT,
 	},
-	pr: { id: 'pr', roles: ['git'], text: 'Creates a pull request for the fix', ...LEFT },
+	pr: {
+		id: 'pr',
+		roles: ['git'],
+		text: 'Creates a pull request for the fix',
+		...LEFT,
+	},
 	postTicket: {
 		id: 'fix-ticket',
 		roles: ['tracker'],
 		text: 'Post a ticket explaining the fix',
 		...UNDER,
 	},
-	updateTicket: { id: 'fix-ticket', roles: ['tracker'], text: 'Update the ticket', ...UNDER },
+	updateTicket: {
+		id: 'fix-ticket',
+		roles: ['tracker'],
+		text: 'Update the ticket',
+		...UNDER,
+	},
 } satisfies Record<string, FrameStep>
 
 const edge = {
@@ -93,7 +113,12 @@ const edge = {
 		// On a phone the diagonal would cut through the step beside it.
 		narrow: { exit: 'bottom' },
 	},
-	groupTicket: { from: 'group', to: 'ticket-each', exit: 'right', enter: 'left' },
+	groupTicket: {
+		from: 'group',
+		to: 'ticket-each',
+		exit: 'right',
+		enter: 'left',
+	},
 	groupTrigger: { from: 'group', to: 'trigger', exit: 'left', enter: 'left' },
 	triggerFix: { from: 'trigger', to: 'fix', exit: 'left', enter: 'left' },
 	fixPr: { from: 'fix', to: 'pr', exit: 'left', enter: 'left' },
@@ -106,7 +131,11 @@ const heading = {
 }
 
 /** The heading alone, before the first step. */
-export const slowQueryHeading: FlowDiagram = { ...heading, nodes: [], edges: [] }
+export const slowQueryHeading: FlowDiagram = {
+	...heading,
+	nodes: [],
+	edges: [],
+}
 
 /** The trigger. */
 export const slowQueryAlert: FlowDiagram = {
@@ -125,7 +154,12 @@ export const slowQueryFix: FlowDiagram = {
 /** The fix runner also posts a ticket. */
 export const slowQueryFixTicket: FlowDiagram = {
 	...heading,
-	nodes: [at(step.receives, 1), at(step.fix, 2), at(step.pr, 3), at(step.postTicket, 3)],
+	nodes: [
+		at(step.receives, 1),
+		at(step.fix, 2),
+		at(step.pr, 3),
+		at(step.postTicket, 3),
+	],
 	edges: [edge.fixPr, edge.fixTicket],
 }
 

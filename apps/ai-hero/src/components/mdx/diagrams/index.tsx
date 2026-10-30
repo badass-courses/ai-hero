@@ -30,12 +30,27 @@ export function publicIdOf(src: unknown): string | null {
 	return match?.[1] ?? null
 }
 
-/** The redrawn version of an image, or null to show the image itself. */
-export function redrawForImage(src: unknown): React.ReactNode | null {
+/**
+ * The redrawn version of an image, or null to show the image itself. The
+ * image's alt text stays with the redraw for screen readers: the drawing's
+ * labels alone don't say what a curve or an arrow means.
+ */
+export function redrawForImage(
+	src: unknown,
+	alt?: unknown,
+): React.ReactNode | null {
 	const id = publicIdOf(src)
-	const redraw = id ? REDRAWS[id] : undefined
-	return redraw ? redraw() : null
+	if (!id || !Object.hasOwn(REDRAWS, id)) return null
+	const redraw = REDRAWS[id]!
+	return (
+		<>
+			{typeof alt === 'string' && alt.trim() ? (
+				<span className="sr-only">{alt}</span>
+			) : null}
+			{redraw()}
+		</>
+	)
 }
 
-/** Every redrawn id, for the review page. */
+/** Every redrawn id. */
 export const redrawnIds = Object.keys(REDRAWS)

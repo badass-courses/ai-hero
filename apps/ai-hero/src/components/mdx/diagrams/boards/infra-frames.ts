@@ -1,6 +1,9 @@
 import type { InfraFrame } from './infra'
 
-const GITHUB_ISSUES = { name: 'GitHub', note: 'We use issues for tracking work.' }
+const GITHUB_ISSUES = {
+	name: 'GitHub',
+	note: 'We use issues for tracking work.',
+}
 const GITHUB_PRS = { name: 'GitHub', note: 'Pull requests and branches.' }
 const ACTIONS_RUNNER = {
 	name: 'GitHub Actions',
@@ -51,9 +54,16 @@ export const INFRA_FRAMES: Record<string, InfraFrame> = {
 		parts: 1,
 		arrows: true,
 		picks: firstPicks(1),
-		alternatives: { part: 'tracker', lines: [['Jira', 'Linear', 'Trello'], ['Asana']] },
+		alternatives: {
+			part: 'tracker',
+			lines: [['Jira', 'Linear', 'Trello'], ['Asana']],
+		},
 	},
-	'2fe6e422fec88548239a69049604a597': { parts: 2, arrows: true, picks: firstPicks(2) },
+	'2fe6e422fec88548239a69049604a597': {
+		parts: 2,
+		arrows: true,
+		picks: firstPicks(2),
+	},
 	'5aa73fbdef26b1907144d8a6ae2d2d3e': {
 		parts: 2,
 		arrows: true,
@@ -66,24 +76,43 @@ export const INFRA_FRAMES: Record<string, InfraFrame> = {
 			],
 		},
 	},
-	'6884326ec7aa3b66f9e1b789ac3c77e9': { parts: 3, arrows: true, picks: firstPicks(3) },
+	'6884326ec7aa3b66f9e1b789ac3c77e9': {
+		parts: 3,
+		arrows: true,
+		picks: firstPicks(3),
+	},
 	'5f0134207dc971536767a132bba79203': {
 		parts: 3,
 		arrows: true,
 		picks: firstPicks(3),
-		alternatives: { part: 'runner', lines: [['Your Own VPS'], ['E2B', 'Daytona']] },
+		alternatives: {
+			part: 'runner',
+			lines: [['Your Own VPS'], ['E2B', 'Daytona']],
+		},
 	},
-	a3fff508938d15b96cbbeb72da39ba12: { parts: 4, arrows: true, picks: firstPicks(4) },
+	a3fff508938d15b96cbbeb72da39ba12: {
+		parts: 4,
+		arrows: true,
+		picks: firstPicks(4),
+	},
 	'7985922a70f151a63d97b3fa8b70936d': {
 		parts: 4,
 		arrows: true,
 		picks: firstPicks(4),
 		alternatives: {
 			part: 'orchestrator',
-			lines: [['Your Own Orchestrator'], ['Symphony'], ['Hosted Agent Platform']],
+			lines: [
+				['Your Own Orchestrator'],
+				['Symphony'],
+				['Hosted Agent Platform'],
+			],
 		},
 	},
-	'2cbe337e8adb79fc9b91f613ce5b8a6d': { parts: 5, arrows: true, picks: firstPicks(5) },
+	'2cbe337e8adb79fc9b91f613ce5b8a6d': {
+		parts: 5,
+		arrows: true,
+		picks: firstPicks(5),
+	},
 	bf12278568f889ce234449d267b46c80: {
 		parts: 5,
 		arrows: true,
@@ -97,13 +126,21 @@ export const INFRA_FRAMES: Record<string, InfraFrame> = {
 	'3089654f96f62a8ef328be2a65a36447': PRIORITISED,
 	'6bf2a04ff62856d23ddf33cdeb8ee016': {
 		...PRIORITISED,
-		picks: { ...MATTS, orchestrator: { name: 'Custom Server' }, observability: { name: 'Langfuse' } },
+		picks: {
+			...MATTS,
+			orchestrator: { name: 'Custom Server' },
+			observability: { name: 'Langfuse' },
+		},
 	},
 	// "Choosing your infrastructure" opens on the prioritised board again.
 	'0e6380dc2a17a769afc653ae9dc49c16': PRIORITISED,
 	'970009b3b78f6f03ec53c895674ec6c5': {
 		...PRIORITISED,
-		picks: { tracker: MATTS.tracker, git: MATTS.git, orchestrator: MATTS.orchestrator },
+		picks: {
+			tracker: MATTS.tracker,
+			git: MATTS.git,
+			orchestrator: MATTS.orchestrator,
+		},
 	},
 	'9ce46b55641faa470c395ee102d55b26': {
 		...PRIORITISED,

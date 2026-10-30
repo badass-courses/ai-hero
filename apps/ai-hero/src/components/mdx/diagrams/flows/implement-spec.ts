@@ -114,7 +114,11 @@ const heading = {
 }
 
 /** The heading alone, before the first step. */
-export const implementSpecHeading: FlowDiagram = { ...heading, nodes: [], edges: [] }
+export const implementSpecHeading: FlowDiagram = {
+	...heading,
+	nodes: [],
+	edges: [],
+}
 
 const triage = {
 	nodes: [
@@ -124,7 +128,12 @@ const triage = {
 		at(step.toTickets, 3),
 		at(step.addsTickets, 4),
 	],
-	edges: [edge.labelledNo, edge.labelledHas, edge.noToTickets, edge.toTicketsAdds],
+	edges: [
+		edge.labelledNo,
+		edge.labelledHas,
+		edge.noToTickets,
+		edge.toTicketsAdds,
+	],
 }
 
 /** The spec is labelled, and splits on whether it has tickets yet. */
@@ -140,11 +149,7 @@ export const implementSpecTickets: FlowDiagram = {
 /** The exploration step, saved to a branch. */
 export const implementSpecExplore: FlowDiagram = {
 	...heading,
-	nodes: [
-		...triage.nodes,
-		at(step.explore, 3),
-		at(step.saveMarkdown, 4),
-	],
+	nodes: [...triage.nodes, at(step.explore, 3), at(step.saveMarkdown, 4)],
 	edges: [...implementSpecTickets.edges, edge.hasExplore, edge.exploreMarkdown],
 }
 

@@ -60,7 +60,11 @@ function Column({
 				<li
 					key={item.label}
 					data-node={item.label}
-					className={cn(TYPE.subhead, 'absolute inset-x-0 -translate-y-1/2 whitespace-nowrap', className)}
+					className={cn(
+						TYPE.subhead,
+						'absolute inset-x-0 -translate-y-1/2 whitespace-nowrap',
+						className,
+					)}
 					style={{ top: `${item.at * 100}%` }}
 				>
 					{item.label}

@@ -5,7 +5,13 @@ import { cn } from '@coursebuilder/ui/utils/cn'
 import { hueStyle, type BoardHue } from './hues'
 
 /** Matt numbers the steps in this order of colours, whatever the steps are. */
-const STEP_HUES: readonly BoardHue[] = ['green', 'amber', 'red', 'purple', 'blue']
+const STEP_HUES: readonly BoardHue[] = [
+	'green',
+	'amber',
+	'red',
+	'purple',
+	'blue',
+]
 
 /**
  * Matt's loop of skills as a numbered list, each number ringed in its own
@@ -14,7 +20,7 @@ const STEP_HUES: readonly BoardHue[] = ['green', 'amber', 'red', 'purple', 'blue
 export function SkillList({ skills }: { skills: readonly string[] }) {
 	return (
 		<figure className="not-prose @container my-8">
-			<ol className="space-y-5 @2xl:pl-[12%] @2xl:space-y-6">
+			<ol className="space-y-5 @2xl:space-y-6 @2xl:pl-[12%]">
 				{skills.map((skill, i) => (
 					<li key={skill} data-node={skill} className="flex items-center gap-4">
 						<span

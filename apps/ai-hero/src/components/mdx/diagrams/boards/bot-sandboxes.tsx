@@ -29,6 +29,7 @@ function Equals() {
 	)
 }
 
+/** Matt's laptop-versus-servers sketch, drawn from a `BotSandboxesFrame`. */
 export function BotSandboxes({ frame }: { frame: BotSandboxesFrame }) {
 	const rows = [0, 1, 2]
 	const columns = Array.from({ length: frame.columns }, (_, i) => i)
@@ -103,7 +104,11 @@ export function BotSandboxes({ frame }: { frame: BotSandboxesFrame }) {
 /** A short arrow from the person to the laptop. */
 function Arrow({ edge }: { edge: string }) {
 	return (
-		<svg aria-hidden viewBox="0 0 40 12" className={cn(LINE_INK, 'h-3 w-7 shrink-0 @2xl:w-10')}>
+		<svg
+			aria-hidden
+			viewBox="0 0 40 12"
+			className={cn(LINE_INK, 'h-3 w-7 shrink-0 @2xl:w-10')}
+		>
 			<path
 				data-edge={edge}
 				d="M2 6h35M32 1.5 37.5 6 32 10.5"
@@ -125,7 +130,10 @@ function FanOut() {
 		<svg
 			aria-hidden
 			viewBox="0 0 48 84"
-			className={cn(LINE_INK, 'h-[84px] w-12 shrink-0 @2xl:h-[136px] @2xl:w-[78px]')}
+			className={cn(
+				LINE_INK,
+				'h-[84px] w-12 shrink-0 @2xl:h-[136px] @2xl:w-[78px]',
+			)}
 		>
 			{[10, 42, 74].map((y, i) => (
 				<path

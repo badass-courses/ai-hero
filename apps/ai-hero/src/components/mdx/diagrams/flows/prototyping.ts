@@ -43,7 +43,12 @@ const step = {
 		text: 'Post a comment on the tracker',
 		...MIDDLE,
 	},
-	needed: { id: 'needed', roles: ['runner'], text: 'If a prototype needed…', ...LEFT },
+	needed: {
+		id: 'needed',
+		roles: ['runner'],
+		text: 'If a prototype needed…',
+		...LEFT,
+	},
 	tagged: {
 		id: 'tagged',
 		roles: ['tracker'],
@@ -62,7 +67,12 @@ const step = {
 		text: 'Post a follow-up comment, tagging the agent',
 		...INNER,
 	},
-	create: { id: 'create', roles: ['runner'], text: 'Create the prototype', ...LEFT },
+	create: {
+		id: 'create',
+		roles: ['runner'],
+		text: 'Create the prototype',
+		...LEFT,
+	},
 	createUpdate: {
 		id: 'create',
 		roles: ['runner'],
@@ -91,9 +101,19 @@ const step = {
 
 const edge = {
 	exploreSimple: { from: 'explore', to: 'simple', exit: 'right', enter: 'top' },
-	exploreComplex: { from: 'explore', to: 'complex', exit: 'left', enter: 'left' },
+	exploreComplex: {
+		from: 'explore',
+		to: 'complex',
+		exit: 'left',
+		enter: 'left',
+	},
 	exploreNeeded: { from: 'explore', to: 'needed', exit: 'left', enter: 'left' },
-	simpleImplement: { from: 'simple', to: 'implement', exit: 'right', enter: 'top' },
+	simpleImplement: {
+		from: 'simple',
+		to: 'implement',
+		exit: 'right',
+		enter: 'top',
+	},
 	simpleComment: {
 		from: 'simple',
 		to: 'simple-comment',
@@ -102,15 +122,35 @@ const edge = {
 		// On a phone a bow to the left would run through the step beside it.
 		narrow: { exit: 'bottom', enter: 'top' },
 	},
-	neededKickOff: { from: 'needed', to: 'kick-off', exit: 'left', enter: 'left' },
+	neededKickOff: {
+		from: 'needed',
+		to: 'kick-off',
+		exit: 'left',
+		enter: 'left',
+	},
 	neededComment: { from: 'needed', to: 'comment', exit: 'right', enter: 'top' },
 	taggedKickOff: { from: 'tagged', to: 'kick-off', exit: 'left', enter: 'top' },
-	kickOffCreate: { from: 'kick-off', to: 'create', exit: 'left', enter: 'left' },
-	followUpKickOff: { from: 'follow-up', to: 'kick-off', exit: 'left', enter: 'right' },
+	kickOffCreate: {
+		from: 'kick-off',
+		to: 'create',
+		exit: 'left',
+		enter: 'left',
+	},
+	followUpKickOff: {
+		from: 'follow-up',
+		to: 'kick-off',
+		exit: 'left',
+		enter: 'right',
+	},
 	createComment: { from: 'create', to: 'comment', exit: 'right', enter: 'top' },
 	createDraft: { from: 'create', to: 'draft', exit: 'left', enter: 'left' },
 	draftReacts: { from: 'draft', to: 'reacts', exit: 'bottom', enter: 'left' },
-	commentReacts: { from: 'comment', to: 'reacts', exit: 'bottom', enter: 'top' },
+	commentReacts: {
+		from: 'comment',
+		to: 'reacts',
+		exit: 'bottom',
+		enter: 'top',
+	},
 	reactsFollowUp: {
 		from: 'reacts',
 		to: 'follow-up',
@@ -142,7 +182,12 @@ const branches = {
 		at(step.implement, 3),
 		at(step.simpleComment, 4),
 	],
-	edges: [edge.exploreSimple, edge.exploreComplex, edge.simpleImplement, edge.simpleComment],
+	edges: [
+		edge.exploreSimple,
+		edge.exploreComplex,
+		edge.simpleImplement,
+		edge.simpleComment,
+	],
 }
 
 /** The exploration's branches, with a new one for when a prototype is

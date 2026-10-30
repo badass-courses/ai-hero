@@ -54,8 +54,7 @@ export function FlowBoard({
 								(three
 									? '@5xl:border-t-0 @5xl:border-l-2 @5xl:pl-8'
 									: '@2xl:border-t-0 @2xl:border-l-2 @2xl:pl-8'),
-							i < columns.length - 1 &&
-								(three ? '@5xl:pr-8' : '@2xl:pr-8'),
+							i < columns.length - 1 && (three ? '@5xl:pr-8' : '@2xl:pr-8'),
 						)}
 					>
 						<Flow diagram={diagram} focus={focus} />

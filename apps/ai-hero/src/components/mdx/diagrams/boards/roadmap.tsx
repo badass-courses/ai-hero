@@ -26,7 +26,10 @@ export function Roadmap() {
 		<figure className="not-prose @container my-8">
 			<div className="grid grid-cols-[1fr_1.15fr_1.15fr] gap-x-3 @2xl:grid-cols-[1fr_1.05fr_1fr] @2xl:gap-x-8">
 				{COURSE_PLAN.map((column) => (
-					<span key={column.when} className={cn(TYPE.cardTitle, 'text-primary')}>
+					<span
+						key={column.when}
+						className={cn(TYPE.cardTitle, 'text-primary')}
+					>
 						{column.when}
 					</span>
 				))}

@@ -1,10 +1,4 @@
-import {
-	AlertCircle,
-	Laptop,
-	RefreshCw,
-	Server,
-	Timer,
-} from 'lucide-react'
+import { AlertCircle, Laptop, RefreshCw, Server, Timer } from 'lucide-react'
 
 import type { PairSlide, QuoteSlide, StackSlide } from './slide'
 
@@ -48,7 +42,11 @@ export const NPM_SCRIPTS: StackSlide = {
 	scale: 'large',
 	items: [
 		{ term: 'npm run reset', text: 'Deletes existing work', code: true },
-		{ term: 'npm run cherry-pick', text: 'Preserves existing work', code: true },
+		{
+			term: 'npm run cherry-pick',
+			text: 'Preserves existing work',
+			code: true,
+		},
 		{ term: 'npm run pull', text: 'Pulls in upstream changes', code: true },
 	],
 }

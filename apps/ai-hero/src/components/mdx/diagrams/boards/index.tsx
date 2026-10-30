@@ -25,12 +25,20 @@ export const boardRedraws: Redraws = {
 		]),
 	),
 
-	[id('m07grzhqo8su32czs3uj')]: () => <SkillList skills={['grill-with-docs', ...LOOP]} />,
-	[id('p2kvzb3itdyo93vqyjap')]: () => <SkillList skills={['wayfinder', ...LOOP]} />,
+	[id('m07grzhqo8su32czs3uj')]: () => (
+		<SkillList skills={['grill-with-docs', ...LOOP]} />
+	),
+	[id('p2kvzb3itdyo93vqyjap')]: () => (
+		<SkillList skills={['wayfinder', ...LOOP]} />
+	),
 	[id('cafc1274e4f914c7aaaa655e9e0b840b')]: () => <SkillBars />,
 
-	[id('1ef579b1e8921beba0e576d3c487aa76')]: () => <BotSandboxes frame={{ columns: 1 }} />,
-	[id('426e16a036068212330a00a707c72e9c')]: () => <BotSandboxes frame={{ columns: 3 }} />,
+	[id('1ef579b1e8921beba0e576d3c487aa76')]: () => (
+		<BotSandboxes frame={{ columns: 1 }} />
+	),
+	[id('426e16a036068212330a00a707c72e9c')]: () => (
+		<BotSandboxes frame={{ columns: 3 }} />
+	),
 	[id('ef7c583370c110b531d50b1f881f1f0d')]: () => (
 		<BotSandboxes frame={{ columns: 3, people: true }} />
 	),

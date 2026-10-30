@@ -4,15 +4,30 @@ const DESCRIPTION = 'Some nice description goes in here'
 
 /** The legend: one step per role, in two columns as on Matt's board. */
 const LEGEND: readonly FlowNode[] = [
-	{ id: 'human', roles: ['human'], text: DESCRIPTION, wide: { col: 1, row: 1, span: 6 } },
+	{
+		id: 'human',
+		roles: ['human'],
+		text: DESCRIPTION,
+		wide: { col: 1, row: 1, span: 6 },
+	},
 	{
 		id: 'tracker',
 		roles: ['tracker'],
 		text: DESCRIPTION,
 		wide: { col: 7, row: 1, span: 6 },
 	},
-	{ id: 'runner', roles: ['runner'], text: DESCRIPTION, wide: { col: 1, row: 2, span: 6 } },
-	{ id: 'git', roles: ['git'], text: DESCRIPTION, wide: { col: 7, row: 2, span: 6 } },
+	{
+		id: 'runner',
+		roles: ['runner'],
+		text: DESCRIPTION,
+		wide: { col: 1, row: 2, span: 6 },
+	},
+	{
+		id: 'git',
+		roles: ['git'],
+		text: DESCRIPTION,
+		wide: { col: 7, row: 2, span: 6 },
+	},
 	{
 		id: 'orchestrator',
 		roles: ['orchestrator'],

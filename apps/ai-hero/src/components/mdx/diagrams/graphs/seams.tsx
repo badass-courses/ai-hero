@@ -36,7 +36,9 @@ function note(
 ): GraphNode {
 	return {
 		id,
-		content: <Note align="end" title={title} text={text} className="max-w-[12rem]" />,
+		content: (
+			<Note align="end" title={title} text={text} className="max-w-[12rem]" />
+		),
 		wide: { justify: 'end', ...wide },
 		narrow: narrow && { justify: 'end', ...narrow },
 	}
@@ -49,7 +51,11 @@ const BESIDE: GraphEdge['narrow'] = {
 	from: { side: 'right', part: '', at: 0.5 },
 }
 
-function pointer(from: string, to: GraphEdge['to'], narrow?: GraphEdge['narrow']): GraphEdge {
+function pointer(
+	from: string,
+	to: GraphEdge['to'],
+	narrow?: GraphEdge['narrow'],
+): GraphEdge {
 	return {
 		from: { id: from, side: 'top', part: 'title', at: 0.85 },
 		to,
@@ -63,10 +69,34 @@ function pointer(from: string, to: GraphEdge['to'], narrow?: GraphEdge['narrow']
 export const seamMap: GraphDiagram = {
 	className: 'max-w-[46rem]',
 	nodes: [
-		box('a', { col: 5, row: 1, span: 2 }, { col: 4, row: 1, span: 4 }, undefined, 'h-16'),
-		box('b', { col: 10, row: 2, span: 2 }, { col: 9, row: 2, span: 4 }, undefined, 'h-16'),
-		box('c', { col: 7, row: 4, span: 2 }, { col: 5, row: 4, span: 4 }, undefined, 'h-16'),
-		box('d', { col: 10, row: 5, span: 2 }, { col: 10, row: 5, span: 3 }, undefined, 'h-16'),
+		box(
+			'a',
+			{ col: 5, row: 1, span: 2 },
+			{ col: 4, row: 1, span: 4 },
+			undefined,
+			'h-16',
+		),
+		box(
+			'b',
+			{ col: 10, row: 2, span: 2 },
+			{ col: 9, row: 2, span: 4 },
+			undefined,
+			'h-16',
+		),
+		box(
+			'c',
+			{ col: 7, row: 4, span: 2 },
+			{ col: 5, row: 4, span: 4 },
+			undefined,
+			'h-16',
+		),
+		box(
+			'd',
+			{ col: 10, row: 5, span: 2 },
+			{ col: 10, row: 5, span: 3 },
+			undefined,
+			'h-16',
+		),
 		note(
 			'seam-note',
 			'Seam',
@@ -87,8 +117,14 @@ export const seamMap: GraphDiagram = {
 			to: { id: 'c', side: 'top', at: 0.25 },
 			narrow: { to: { at: 0.5 } },
 		},
-		{ from: { id: 'b', side: 'bottom', at: 0.05 }, to: { id: 'c', side: 'top', at: 0.95 } },
-		{ from: { id: 'c', side: 'right', at: 0.8 }, to: { id: 'd', side: 'left', at: 0.3 } },
+		{
+			from: { id: 'b', side: 'bottom', at: 0.05 },
+			to: { id: 'c', side: 'top', at: 0.95 },
+		},
+		{
+			from: { id: 'c', side: 'right', at: 0.8 },
+			to: { id: 'd', side: 'left', at: 0.3 },
+		},
 		pointer('seam-note', { id: 'seam-ac', side: 'left' }, BESIDE),
 	],
 	seams: [
@@ -103,7 +139,13 @@ export const seamMap: GraphDiagram = {
 export const loaderToDatabase: GraphDiagram = {
 	className: 'max-w-[46rem]',
 	nodes: [
-		box('loader', { col: 1, row: 1, span: 3 }, { col: 1, row: 1, span: 5 }, 'Loader', 'h-28'),
+		box(
+			'loader',
+			{ col: 1, row: 1, span: 3 },
+			{ col: 1, row: 1, span: 5 },
+			'Loader',
+			'h-28',
+		),
 		box(
 			'access',
 			{ col: 9, row: 2, span: 4 },
@@ -164,8 +206,18 @@ export function seamSwap({
 			{ col: 1, row: top + 2, span: 5 },
 			{ col: 1, row: top + 2, span: 4, justify: 'start' },
 		),
-		box('live', { col: 5, row: top + 3, span: 3 }, { col: 1, row: top + 3, span: 6 }, live),
-		box('fake', { col: 9, row: top + 3, span: 3 }, { col: 7, row: top + 3, span: 6 }, fake),
+		box(
+			'live',
+			{ col: 5, row: top + 3, span: 3 },
+			{ col: 1, row: top + 3, span: 6 },
+			live,
+		),
+		box(
+			'fake',
+			{ col: 9, row: top + 3, span: 3 },
+			{ col: 7, row: top + 3, span: 6 },
+			fake,
+		),
 		note(
 			'adapter-note',
 			'Adapter',
@@ -198,7 +250,12 @@ export function seamSwap({
 	]
 	if (caller) {
 		nodes.unshift(
-			box('caller', { col: 2, row: 1, span: 3 }, { col: 1, row: 1, span: 5 }, caller),
+			box(
+				'caller',
+				{ col: 2, row: 1, span: 3 },
+				{ col: 1, row: 1, span: 5 },
+				caller,
+			),
 		)
 		edges.unshift({
 			from: { id: 'caller', side: 'right', at: 0.45 },

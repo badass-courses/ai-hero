@@ -3,7 +3,8 @@
  * an opaque mix of foreground into background, so rules and axes sit a step
  * under the labels in both themes.
  */
-export const INK = 'color-mix(in oklab, var(--foreground) 58%, var(--background))'
+export const INK =
+	'color-mix(in oklab, var(--foreground) 58%, var(--background))'
 
 /**
  * Matt's marker colours. He colour-codes a step's dot or a ring by what it

@@ -43,11 +43,12 @@ const PARTS = [
 export type InfraPart = (typeof PARTS)[number]['id']
 
 /** Matt's priorities for building them yourself, once he adds them. */
-const PRIORITIES: Partial<Record<InfraPart, { label: string; hue: BoardHue }>> = {
-	runner: { label: 'P1', hue: 'red' },
-	orchestrator: { label: 'P1', hue: 'red' },
-	observability: { label: 'P2', hue: 'amber' },
-}
+const PRIORITIES: Partial<Record<InfraPart, { label: string; hue: BoardHue }>> =
+	{
+		runner: { label: 'P1', hue: 'red' },
+		orchestrator: { label: 'P1', hue: 'red' },
+		observability: { label: 'P2', hue: 'amber' },
+	}
 
 export type InfraFrame = {
 	/** How many parts are on the board yet, counted from the top. */
@@ -83,7 +84,9 @@ export function InfraBoard({ frame }: { frame: InfraFrame }) {
 					const pick = frame.picks?.[part.id]
 					const priority = frame.priorities ? PRIORITIES[part.id] : undefined
 					const alternatives =
-						frame.alternatives?.part === part.id ? frame.alternatives.lines : null
+						frame.alternatives?.part === part.id
+							? frame.alternatives.lines
+							: null
 					return (
 						<div
 							key={part.id}
@@ -92,7 +95,7 @@ export function InfraBoard({ frame }: { frame: InfraFrame }) {
 							<div
 								data-node={part.id}
 								className="col-span-2 grid grid-cols-subgrid @2xl:col-span-1 @2xl:grid-cols-[1.75rem_minmax(0,1fr)] @2xl:gap-x-2.5"
-								>
+							>
 								<part.Icon
 									aria-hidden
 									className="text-foreground mt-0.5 size-6"
@@ -113,7 +116,12 @@ export function InfraBoard({ frame }: { frame: InfraFrame }) {
 											</span>
 										) : null}
 									</p>
-									<p className={cn(TYPE.metaProse, 'text-muted-foreground mt-1 text-pretty')}>
+									<p
+										className={cn(
+											TYPE.metaProse,
+											'text-muted-foreground mt-1 text-pretty',
+										)}
+									>
 										{part.about}
 									</p>
 								</div>
@@ -124,7 +132,10 @@ export function InfraBoard({ frame }: { frame: InfraFrame }) {
 										edge={`${part.id}-${part.id}-pick`}
 										className="mt-2 shrink-0 @2xl:mt-[0.9rem]"
 									/>
-									<div data-node={`${part.id}-pick`} className="min-w-0 @2xl:mt-1.5">
+									<div
+										data-node={`${part.id}-pick`}
+										className="min-w-0 @2xl:mt-1.5"
+									>
 										{pick ? (
 											<>
 												<p className={cn(TYPE.subhead, 'text-pretty')}>
@@ -146,7 +157,10 @@ export function InfraBoard({ frame }: { frame: InfraFrame }) {
 										{alternatives ? (
 											<ul aria-label="Alternatives" className="mt-6 space-y-3">
 												{alternatives.map((line) => (
-													<li key={line.join()} className="flex flex-wrap gap-x-6 gap-y-3">
+													<li
+														key={line.join()}
+														className="flex flex-wrap gap-x-6 gap-y-3"
+													>
 														{line.map((name) => (
 															<span key={name} className={TYPE.cardTitle}>
 																{name}

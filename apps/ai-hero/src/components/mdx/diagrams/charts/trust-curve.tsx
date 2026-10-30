@@ -35,6 +35,10 @@ const BUCKETS = [
 export function TrustCurve() {
 	return (
 		<figure className="not-prose @container my-8">
+			<figcaption className="sr-only">
+				Trust plotted against the number of agents: 1-5, 6-10, 10-25, 26+ and
+				50+. The curve rises steeply over the first buckets, then flattens.
+			</figcaption>
 			<div className="mx-auto grid max-w-[640px] grid-cols-[auto_minmax(0,1fr)] gap-x-4 @2xl:gap-x-8">
 				<span data-node="trust" className={cn(TYPE.subhead, 'self-center')}>
 					Trust
@@ -48,7 +52,10 @@ export function TrustCurve() {
 							key={b.label}
 							aria-hidden
 							className="border-foreground/70 absolute bottom-0 -translate-x-1/2 border-l-2 border-dotted"
-							style={{ left: pct(b.x, WIDTH), height: pct(heightAt(b.x), HEIGHT) }}
+							style={{
+								left: pct(b.x, WIDTH),
+								height: pct(heightAt(b.x), HEIGHT),
+							}}
 						/>
 					))}
 					<svg
@@ -108,9 +115,16 @@ function flip([x, y]: readonly [number, number]) {
     parameter, so a dotted drop meets the curve exactly. */
 function heightAt(x: number) {
 	const at = (t: number, axis: 0 | 1) => {
-		const [p0, p1, p2, p3] = CURVE.map((p) => p[axis]) as [number, number, number, number]
+		const [p0, p1, p2, p3] = CURVE.map((p) => p[axis]) as [
+			number,
+			number,
+			number,
+			number,
+		]
 		const u = 1 - t
-		return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3
+		return (
+			u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3
+		)
 	}
 	let lo = 0
 	let hi = 1

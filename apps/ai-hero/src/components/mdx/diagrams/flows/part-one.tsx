@@ -34,7 +34,16 @@ const improveFinal = stage(improveCodebaseArchitecture, {
 	without: BEFORE_STOP,
 })
 const improveBeforeStop = ['spawn', 'run', 'create', 'review', 'label']
-const improveWithStop = ['spawn', 'fetch', 'stop', 'run', 'create', 'review', 'label', 'hidden']
+const improveWithStop = [
+	'spawn',
+	'fetch',
+	'stop',
+	'run',
+	'create',
+	'review',
+	'label',
+	'hidden',
+]
 
 const ratchetSteps = ['spawn', 'fetch', 'stop', 'find', 'fix', 'pr', 'human']
 const ratchetScripts = { scripts: 'npm run lint:all\nnpm run lint:strict' }
@@ -43,7 +52,13 @@ const ratchetFinal = stage(lintRuleRatchet, {
 })
 
 const rebaseStart = ['fetch', 'midnight', 'schedule', 'runner']
-const rebaseBranches = [...rebaseStart, 'attempt', 'works', 'conflicts', 'force-push']
+const rebaseBranches = [
+	...rebaseStart,
+	'attempt',
+	'works',
+	'conflicts',
+	'force-push',
+]
 const rebaseEarly = stage(autoRebase, {
 	nodes: rebaseStart,
 	text: SCHEDULE_BEFORE_BLOCKED,
@@ -60,10 +75,16 @@ export const flowRedrawsPartOne: Redraws = {
 	// canvas and frames draw Matt's drawing alone, except a drawing's empty
 	// first frame, where the template is all there is on screen.
 	'ai-hero-images/86b5b9bed5be0eeab006ffbdd1dc7011': () => (
-		<FlowBoard template={templateArcOver} drawings={[{ diagram: exploreTickets }]} />
+		<FlowBoard
+			template={templateArcOver}
+			drawings={[{ diagram: exploreTickets }]}
+		/>
 	),
 	'ai-hero-images/0a79b278f76b033da33c7b0f37d79400': () => (
-		<FlowBoard template={templateArcOver} drawings={[{ diagram: exploreTickets }]} />
+		<FlowBoard
+			template={templateArcOver}
+			drawings={[{ diagram: exploreTickets }]}
+		/>
 	),
 
 	// /improve-codebase-architecture
@@ -131,7 +152,9 @@ export const flowRedrawsPartOne: Redraws = {
 			focus={['create']}
 		/>
 	),
-	'ai-hero-images/64eaa9da91d1a19cf8e56c9a8dc72a46': () => <Flow diagram={improveFinal} />,
+	'ai-hero-images/64eaa9da91d1a19cf8e56c9a8dc72a46': () => (
+		<Flow diagram={improveFinal} />
+	),
 	'ai-hero-images/a3519fbbf88405183371de92ce869416': () => (
 		<FlowBoard
 			drawings={[
@@ -172,7 +195,9 @@ export const flowRedrawsPartOne: Redraws = {
 		/>
 	),
 	'ai-hero-images/90204663ced07b6afe8b529bede14632': () => (
-		<Flow diagram={stage(lintRuleRatchet, { nodes: ratchetSteps.slice(0, 5) })} />
+		<Flow
+			diagram={stage(lintRuleRatchet, { nodes: ratchetSteps.slice(0, 5) })}
+		/>
 	),
 	'ai-hero-images/216186d37efc5e3741695576392b92e5': () => (
 		<Flow
@@ -190,7 +215,9 @@ export const flowRedrawsPartOne: Redraws = {
 		/>
 	),
 	'ai-hero-images/59b51ffcb8c8292f54807ace9b2a984d': () => (
-		<Flow diagram={stage(lintRuleRatchet, { nodes: [...ratchetSteps, 'on-merge'] })} />
+		<Flow
+			diagram={stage(lintRuleRatchet, { nodes: [...ratchetSteps, 'on-merge'] })}
+		/>
 	),
 	'ai-hero-images/e5c5dc57b5d409b79e9f53bfdb1d2852': () => (
 		<Flow
@@ -224,7 +251,9 @@ export const flowRedrawsPartOne: Redraws = {
 	'ai-hero-images/fbed2f2ae6db093369f527b2fda2a1cb': () => (
 		<Flow diagram={rebaseEarly} />
 	),
-	'ai-hero-images/6ee0b3d8e46407aa9e42e424686937dc': () => <Flow diagram={rebaseEarly} />,
+	'ai-hero-images/6ee0b3d8e46407aa9e42e424686937dc': () => (
+		<Flow diagram={rebaseEarly} />
+	),
 	'ai-hero-images/00e0319916f40f26aa71ae866deec544': () => (
 		<Flow
 			diagram={stage(autoRebase, {

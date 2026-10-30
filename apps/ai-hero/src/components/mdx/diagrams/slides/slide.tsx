@@ -80,7 +80,9 @@ export function Stack({
 			<dl
 				className={cn(
 					'grid gap-y-10 @2xl:gap-y-14 @2xl:pl-12',
-					withIcons ? 'grid-cols-[auto_1fr] gap-x-3 @2xl:gap-x-4' : 'grid-cols-1',
+					withIcons
+						? 'grid-cols-[auto_1fr] gap-x-3 @2xl:gap-x-4'
+						: 'grid-cols-1',
 				)}
 			>
 				{slide.items.slice(0, shown).map((item) => {
@@ -98,7 +100,10 @@ export function Stack({
 									aria-hidden
 									className={cn(TERM[slide.scale], 'text-foreground flex')}
 								>
-									<Icon strokeWidth={2} className="size-[1em] translate-y-[0.1em]" />
+									<Icon
+										strokeWidth={2}
+										className="size-[1em] translate-y-[0.1em]"
+									/>
 								</span>
 							) : null}
 							<dt
@@ -213,7 +218,10 @@ export function Quote({ slide }: { slide: QuoteSlide }) {
 		<figure data-node="quote" className="not-prose @container my-8 @2xl:pl-12">
 			<blockquote className="border-primary space-y-5 border-l-2 pl-5 @2xl:max-w-[34em]">
 				{slide.paragraphs.map((paragraph) => (
-					<p key={paragraph} className={cn(TYPE.quoteProse, 'text-foreground text-pretty')}>
+					<p
+						key={paragraph}
+						className={cn(TYPE.quoteProse, 'text-foreground text-pretty')}
+					>
 						{paragraph}
 					</p>
 				))}

@@ -59,7 +59,15 @@ export const flowRedrawsPartTwo: Redraws = {
 	'ai-hero-images/4f81808c4e207052d8cd4861895adb80': () => (
 		<Flow
 			diagram={slowQueryGroups}
-			focus={['receives', 'puts', 'pull-alerts', 'group', 'ticket-each', 'fix', 'pr']}
+			focus={[
+				'receives',
+				'puts',
+				'pull-alerts',
+				'group',
+				'ticket-each',
+				'fix',
+				'pr',
+			]}
 		/>
 	),
 	'ai-hero-images/c70433d2a0431a3438063610fd2a69cb': () => (
@@ -116,13 +124,27 @@ export const flowRedrawsPartTwo: Redraws = {
 	'ai-hero-images/1f6bb72f6b601ec6fb07611a8e4cf3a0': () => (
 		<Flow
 			diagram={slowQuerySevere}
-			focus={['pull-alerts', 'pull-tickets', 'group', 'ticket-each', 'trigger', 'fix']}
+			focus={[
+				'pull-alerts',
+				'pull-tickets',
+				'group',
+				'ticket-each',
+				'trigger',
+				'fix',
+			]}
 		/>
 	),
 	'ai-hero-images/e57920d6e885babe446c193a2d8e735d': () => (
 		<Flow
 			diagram={slowQueryMonitor}
-			focus={['pull-alerts', 'pull-tickets', 'group', 'ticket-each', 'trigger', 'fix']}
+			focus={[
+				'pull-alerts',
+				'pull-tickets',
+				'group',
+				'ticket-each',
+				'trigger',
+				'fix',
+			]}
 		/>
 	),
 	'ai-hero-images/b47a44a6ffb4332a3571d9caff2c74b1': () => (
@@ -154,7 +176,14 @@ export const flowRedrawsPartTwo: Redraws = {
 	'ai-hero-images/89c1c208eed669cec4e2414cbf53009e': () => (
 		<Flow
 			diagram={prototypingDraft}
-			focus={['simple-comment', 'needed', 'kick-off', 'create', 'comment', 'draft']}
+			focus={[
+				'simple-comment',
+				'needed',
+				'kick-off',
+				'create',
+				'comment',
+				'draft',
+			]}
 		/>
 	),
 	'ai-hero-images/d8c765b8988a842801a3f03f9ee1e0a3': () => (
@@ -166,13 +195,29 @@ export const flowRedrawsPartTwo: Redraws = {
 	'ai-hero-images/a2eadacea1cfe8040459f934b1d5a8ea': () => (
 		<Flow
 			diagram={prototypingFollowUp}
-			focus={['needed', 'kick-off', 'follow-up', 'create', 'comment', 'draft', 'reacts']}
+			focus={[
+				'needed',
+				'kick-off',
+				'follow-up',
+				'create',
+				'comment',
+				'draft',
+				'reacts',
+			]}
 		/>
 	),
 	'ai-hero-images/dfffc3359e16d6f2dffcb1f295b1d2e2': () => (
 		<Flow
 			diagram={prototypingUpdate}
-			focus={['needed', 'kick-off', 'follow-up', 'create', 'comment', 'draft', 'reacts']}
+			focus={[
+				'needed',
+				'kick-off',
+				'follow-up',
+				'create',
+				'comment',
+				'draft',
+				'reacts',
+			]}
 		/>
 	),
 	'ai-hero-images/e047e5005cdde4e88a25cfa0ea82f5bf': () => (
@@ -214,7 +259,13 @@ export const flowRedrawsPartTwo: Redraws = {
 	'ai-hero-images/68b6bc0439b9071e5ded4a3b4bcf8e3f': () => (
 		<Flow
 			diagram={implementSpecFrontier}
-			focus={['adds-tickets', 'explore', 'save-markdown', 'exploration-comment', 'frontier']}
+			focus={[
+				'adds-tickets',
+				'explore',
+				'save-markdown',
+				'exploration-comment',
+				'frontier',
+			]}
 		/>
 	),
 	'ai-hero-images/fbd383b547b9c75d1a59a8ea9e7d8173': () => (
@@ -246,7 +297,14 @@ export const flowRedrawsPartTwo: Redraws = {
 	'ai-hero-images/da341d0b0521bf16bccceaec22d8436f': () => (
 		<Flow
 			diagram={implementSpecV2}
-			focus={['labelled', 'no-tickets', 'has-tickets', 'to-tickets', 'adds-tickets', 'explore']}
+			focus={[
+				'labelled',
+				'no-tickets',
+				'has-tickets',
+				'to-tickets',
+				'adds-tickets',
+				'explore',
+			]}
 		/>
 	),
 	'ai-hero-images/d02ed9410873d801c136b87ca6de0fc8': () => (

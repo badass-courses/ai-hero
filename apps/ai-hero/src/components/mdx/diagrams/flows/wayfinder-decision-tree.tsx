@@ -73,7 +73,10 @@ const CHOICES: readonly Choice[] = [
     drawings share one palette. */
 const MARKS: Record<Kind, { hue: string; shape: string }> = {
 	start: { hue: FLOW_ROLES.orchestrator.hue, shape: 'rounded-full' },
-	question: { hue: FLOW_ROLES.git.hue, shape: 'size-4 rotate-45 rounded-[4px]' },
+	question: {
+		hue: FLOW_ROLES.git.hue,
+		shape: 'size-4 rotate-45 rounded-[4px]',
+	},
 	outcome: { hue: FLOW_ROLES.runner.hue, shape: 'rounded-[6px]' },
 }
 
@@ -170,7 +173,10 @@ function Step({ choice, className }: { choice: Choice; className?: string }) {
 	const mark = MARKS[choice.kind]
 	return (
 		<div data-node={choice.id} className={cn('relative flex gap-3', className)}>
-			<span aria-hidden className="flex size-6 shrink-0 items-center justify-center">
+			<span
+				aria-hidden
+				className="flex size-6 shrink-0 items-center justify-center"
+			>
 				<span
 					className={cn('block size-5 border-2', mark.shape)}
 					style={{
@@ -181,7 +187,12 @@ function Step({ choice, className }: { choice: Choice; className?: string }) {
 			</span>
 			<span className="min-w-0 pt-0.5">
 				<span className={cn(TYPE.cardTitle, 'block')}>{choice.title}</span>
-				<span className={cn(TYPE.metaSm, 'text-muted-foreground mt-1 block max-w-xs text-pretty')}>
+				<span
+					className={cn(
+						TYPE.metaSm,
+						'text-muted-foreground mt-1 block max-w-xs text-pretty',
+					)}
+				>
 					{choice.text}
 				</span>
 			</span>
@@ -192,12 +203,23 @@ function Step({ choice, className }: { choice: Choice; className?: string }) {
 /** A question's "Yes": a line from the spine to the outcome, labelled where
     it leaves. The outcome starts a little past halfway across, as in Matt's
     drawing; on a phone it takes more of the width so its text can wrap. */
-function Branch({ from, to, marker }: { from: string; to: Choice; marker: string }) {
+function Branch({
+	from,
+	to,
+	marker,
+}: {
+	from: string
+	to: Choice
+	marker: string
+}) {
 	return (
 		<div className="mt-6 flex items-start">
 			<span className="w-3 shrink-0" />
 			<span className="relative flex h-6 min-w-0 flex-1 items-center">
-				<svg aria-hidden className={cn('absolute inset-0 size-full overflow-visible', INK)}>
+				<svg
+					aria-hidden
+					className={cn('absolute inset-0 size-full overflow-visible', INK)}
+				>
 					<line
 						data-edge={`${from}-${to.id}`}
 						x1="0"
@@ -210,7 +232,12 @@ function Branch({ from, to, marker }: { from: string; to: Choice; marker: string
 						markerEnd={`url(#${marker})`}
 					/>
 				</svg>
-				<span className={cn(TYPE.meta, 'bg-background relative ml-3 px-1.5 font-bold')}>
+				<span
+					className={cn(
+						TYPE.meta,
+						'bg-background relative ml-3 px-1.5 font-bold',
+					)}
+				>
 					Yes
 				</span>
 			</span>

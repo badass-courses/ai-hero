@@ -112,9 +112,7 @@ export function Graph({ diagram }: { diagram: GraphDiagram }) {
 				getComputedStyle(grid).getPropertyValue('--graph-layout').trim() ===
 				'narrow'
 			const boxOf = (end: GraphEnd): Box | null => {
-				const node = grid.querySelector<HTMLElement>(
-					`[data-node="${end.id}"]`,
-				)
+				const node = grid.querySelector<HTMLElement>(`[data-node="${end.id}"]`)
 				const el = end.part
 					? node?.querySelector(`[data-graph-part="${end.part}"]`)
 					: node?.firstElementChild
@@ -154,7 +152,9 @@ export function Graph({ diagram }: { diagram: GraphDiagram }) {
 				if (curve) curves.set(edgeKey(edge), curve)
 			}
 			for (const seam of diagram.seams ?? []) {
-				const line = seamLine(seam.crosses.flatMap((key) => curves.get(key) ?? []))
+				const line = seamLine(
+					seam.crosses.flatMap((key) => curves.get(key) ?? []),
+				)
 				if (line) seams.set(seam.id, line)
 			}
 			for (const edge of diagram.edges) {
@@ -192,7 +192,9 @@ export function Graph({ diagram }: { diagram: GraphDiagram }) {
 	return (
 		<figure className="not-prose @container my-8">
 			{diagram.title ? (
-				<figcaption className={cn(TYPE.subhead, 'mb-7 text-balance text-center')}>
+				<figcaption
+					className={cn(TYPE.subhead, 'mb-7 text-center text-balance')}
+				>
 					{diagram.title}
 				</figcaption>
 			) : null}
@@ -250,7 +252,9 @@ export function Graph({ diagram }: { diagram: GraphDiagram }) {
 								strokeWidth={ink === 'note' ? 2 : 1.5}
 								strokeDasharray={edge.dashed ? '6 5' : undefined}
 								strokeLinecap={edge.dashed ? 'butt' : 'round'}
-								markerEnd={edge.headless ? undefined : `url(#${markerId}-${ink})`}
+								markerEnd={
+									edge.headless ? undefined : `url(#${markerId}-${ink})`
+								}
 							/>
 						)
 					})}
@@ -260,7 +264,7 @@ export function Graph({ diagram }: { diagram: GraphDiagram }) {
 						key={node.id}
 						data-node={node.id}
 						data-dim={node.dim || undefined}
-						className="relative flex transition-opacity data-dim:opacity-35 [align-self:var(--n-align)] [grid-column:var(--n-col)/span_var(--n-span)] [grid-row:var(--n-row)/span_var(--n-rows)] [justify-self:var(--n-justify)] @2xl:[align-self:var(--w-align)] @2xl:[grid-column:var(--w-col)/span_var(--w-span)] @2xl:[grid-row:var(--w-row)/span_var(--w-rows)] @2xl:[justify-self:var(--w-justify)]"
+						className="relative [grid-column:var(--n-col)/span_var(--n-span)] [grid-row:var(--n-row)/span_var(--n-rows)] flex [align-self:var(--n-align)] [justify-self:var(--n-justify)] transition-opacity data-dim:opacity-35 @2xl:[grid-column:var(--w-col)/span_var(--w-span)] @2xl:[grid-row:var(--w-row)/span_var(--w-rows)] @2xl:[align-self:var(--w-align)] @2xl:[justify-self:var(--w-justify)]"
 						style={placement(node)}
 					>
 						{node.content}
@@ -350,9 +354,18 @@ function shape(
 			tangent: { x: b.x - a.x, y: b.y - a.y },
 		}
 	}
-	const reach = Math.min(110, Math.max(24, Math.hypot(b.x - a.x, b.y - a.y) * 0.45))
-	const c1 = { x: a.x + NORMAL[exit].x * reach, y: a.y + NORMAL[exit].y * reach }
-	const c2 = { x: b.x + NORMAL[enter].x * reach, y: b.y + NORMAL[enter].y * reach }
+	const reach = Math.min(
+		110,
+		Math.max(24, Math.hypot(b.x - a.x, b.y - a.y) * 0.45),
+	)
+	const c1 = {
+		x: a.x + NORMAL[exit].x * reach,
+		y: a.y + NORMAL[exit].y * reach,
+	}
+	const c2 = {
+		x: b.x + NORMAL[enter].x * reach,
+		y: b.y + NORMAL[enter].y * reach,
+	}
 	return {
 		d: `M${a.x},${a.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${b.x},${b.y}`,
 		mid: {
@@ -384,7 +397,10 @@ function seamLine(curves: Curve[]): [Point, Point] | null {
 		const end = mids[mids.length - 1]!
 		const length = Math.hypot(end.x - start.x, end.y - start.y) || 1
 		const u = { x: (end.x - start.x) / length, y: (end.y - start.y) / length }
-		a = { x: start.x - u.x * SEAM_REACH * 1.5, y: start.y - u.y * SEAM_REACH * 1.5 }
+		a = {
+			x: start.x - u.x * SEAM_REACH * 1.5,
+			y: start.y - u.y * SEAM_REACH * 1.5,
+		}
 		b = { x: end.x + u.x * SEAM_REACH * 1.5, y: end.y + u.y * SEAM_REACH * 1.5 }
 	}
 	return a.x <= b.x ? [a, b] : [b, a]

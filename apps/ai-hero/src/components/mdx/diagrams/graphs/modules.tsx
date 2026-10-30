@@ -58,7 +58,9 @@ export function moduleAnatomy({
 			{
 				id: 'module',
 				name: head ?? 'Module',
-				content: <ModuleBox head={head} items={items} className="min-h-[17rem]" />,
+				content: (
+					<ModuleBox head={head} items={items} className="min-h-[17rem]" />
+				),
 				wide: { col: 1, row: 2, span: 5, rows: 3 },
 				narrow: { col: 1, row: 2, span: 5, rows: 3 },
 			},
@@ -88,7 +90,12 @@ export function moduleAnatomy({
 			},
 		],
 		edges: [
-			pointer('interface', 'left', { id: 'module', side: 'right', part: 'head' }, 0.5),
+			pointer(
+				'interface',
+				'left',
+				{ id: 'module', side: 'right', part: 'head' },
+				0.5,
+			),
 			{
 				...pointer('implementation', 'left', {
 					id: 'module',
@@ -128,13 +135,22 @@ export function moduleDepth({
 			{
 				id: 'depth-rule',
 				content: <DepthRule />,
-				wide: { col: 4, row: 1, span: 1, rows: 3, justify: 'end', align: 'stretch' },
+				wide: {
+					col: 4,
+					row: 1,
+					span: 1,
+					rows: 3,
+					justify: 'end',
+					align: 'stretch',
+				},
 				narrow: { col: 1, row: 2, span: 1, rows: 3, align: 'stretch' },
 			},
 			{
 				id: 'deep',
 				name: 'Deep Module',
-				content: <ModuleBox head={head} items={items} className="min-h-[15rem]" />,
+				content: (
+					<ModuleBox head={head} items={items} className="min-h-[15rem]" />
+				),
 				wide: { col: 5, row: 1, span: 3, rows: 3 },
 				narrow: { col: 2, row: 2, span: 5, rows: 3 },
 			},
@@ -159,8 +175,18 @@ export function moduleDepth({
 			},
 		],
 		edges: [
-			pointer('shallow-label', 'top', { id: 'shallow', side: 'bottom', at: 0.45 }, 0.45),
-			pointer('deep-label', 'top', { id: 'deep', side: 'right', at: 0.8 }, 0.35),
+			pointer(
+				'shallow-label',
+				'top',
+				{ id: 'shallow', side: 'bottom', at: 0.45 },
+				0.45,
+			),
+			pointer(
+				'deep-label',
+				'top',
+				{ id: 'deep', side: 'right', at: 0.8 },
+				0.35,
+			),
 		],
 	}
 }

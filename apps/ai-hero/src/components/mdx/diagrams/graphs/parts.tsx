@@ -12,7 +12,8 @@ import { GRAPH_INK } from './ink'
  * cohort page's factory map: card surfaces with a faint opaque border, so a
  * drawing reads as the site's own figure rather than a whiteboard.
  */
-const EDGE = 'border-[color:color-mix(in_oklab,var(--foreground)_14%,var(--card))]'
+const EDGE =
+	'border-[color:color-mix(in_oklab,var(--foreground)_14%,var(--card))]'
 
 /** A done ticket's tick, in the tracker's green. */
 const DONE = FLOW_ROLES.tracker.hue
@@ -34,7 +35,13 @@ export function Ticket({
 				EDGE,
 			)}
 		>
-			<span className={cn(TYPE.cardTitle, EDGE, 'border-r px-2.5 py-2 tabular-nums')}>
+			<span
+				className={cn(
+					TYPE.cardTitle,
+					EDGE,
+					'border-r px-2.5 py-2 tabular-nums',
+				)}
+			>
 				#{n}
 			</span>
 			<span className={cn(TYPE.cardTitle, 'px-3 py-2')}>{label}</span>
@@ -42,7 +49,7 @@ export function Ticket({
 				<span
 					role="img"
 					aria-label="done"
-					className="bg-card absolute -right-2.5 -top-2.5 grid size-6 place-items-center rounded-full border-2"
+					className="bg-card absolute -top-2.5 -right-2.5 grid size-6 place-items-center rounded-full border-2"
 					style={{ borderColor: DONE, color: DONE }}
 				>
 					<Check aria-hidden className="size-3.5" strokeWidth={3} />
@@ -73,9 +80,14 @@ export function ModuleBox({
 		<div className={cn('bg-card flex w-full flex-col rounded-md border', EDGE)}>
 			<div
 				data-graph-part="head"
-				className={cn('flex h-8 items-center justify-center border-b px-2', EDGE)}
+				className={cn(
+					'flex h-8 items-center justify-center border-b px-2',
+					EDGE,
+				)}
 			>
-				{head ? <span className={cn(TYPE.meta, 'font-mono')}>{head}</span> : null}
+				{head ? (
+					<span className={cn(TYPE.meta, 'font-mono')}>{head}</span>
+				) : null}
 			</div>
 			<div
 				className={cn(
@@ -151,7 +163,12 @@ export function Note({
 export function Destination() {
 	return (
 		<span className={cn(TYPE.cardTitle, 'inline-flex items-center gap-2')}>
-			<Flag aria-hidden data-graph-part="flag" className="size-4" strokeWidth={2} />
+			<Flag
+				aria-hidden
+				data-graph-part="flag"
+				className="size-4"
+				strokeWidth={2}
+			/>
 			Destination
 		</span>
 	)
@@ -165,7 +182,9 @@ export function Unknown() {
 /** A slash command, written on the line between two tickets. */
 export function Command({ children }: { children: string }) {
 	return (
-		<span className={cn(TYPE.cardTitle, 'whitespace-nowrap font-mono font-medium')}>
+		<span
+			className={cn(TYPE.cardTitle, 'font-mono font-medium whitespace-nowrap')}
+		>
 			{children}
 		</span>
 	)
@@ -187,10 +206,18 @@ export function Source({
 	return (
 		<div className="grid grid-cols-[1.25rem_1fr] items-center gap-x-2.5">
 			<Icon aria-hidden className="size-5" strokeWidth={1.75} />
-			<span data-graph-part="title" className={cn(TYPE.subhead, 'justify-self-start')}>
+			<span
+				data-graph-part="title"
+				className={cn(TYPE.subhead, 'justify-self-start')}
+			>
 				{title}
 			</span>
-			<span className={cn(TYPE.metaProse, 'text-muted-foreground col-start-2 mt-1 max-w-[21rem]')}>
+			<span
+				className={cn(
+					TYPE.metaProse,
+					'text-muted-foreground col-start-2 mt-1 max-w-[21rem]',
+				)}
+			>
 				{text}
 			</span>
 		</div>
@@ -228,7 +255,10 @@ export function Step({ title }: { title: string }) {
 						vectorEffect="non-scaling-stroke"
 					/>
 				</svg>
-				<span className={cn(TYPE.subhead, 'leading-none')} aria-label="and more">
+				<span
+					className={cn(TYPE.subhead, 'leading-none')}
+					aria-label="and more"
+				>
 					...
 				</span>
 			</span>
@@ -244,11 +274,21 @@ export function DepthRule() {
 			className="flex h-full w-4 flex-col items-center"
 			style={{ color: GRAPH_INK.line }}
 		>
-			<svg aria-hidden viewBox="0 0 12 8" className="w-3 shrink-0" fill="currentColor">
+			<svg
+				aria-hidden
+				viewBox="0 0 12 8"
+				className="w-3 shrink-0"
+				fill="currentColor"
+			>
 				<path d="M6 0 L12 8 L0 8 Z" />
 			</svg>
 			<span className="w-0 flex-1 border-l-2 border-dashed border-current" />
-			<svg aria-hidden viewBox="0 0 12 8" className="w-3 shrink-0" fill="currentColor">
+			<svg
+				aria-hidden
+				viewBox="0 0 12 8"
+				className="w-3 shrink-0"
+				fill="currentColor"
+			>
 				<path d="M6 8 L12 0 L0 0 Z" />
 			</svg>
 		</div>

@@ -14,7 +14,13 @@ import { HUE } from './ink'
  */
 const RINGS = [
 	{ id: 'environment', label: 'Environment', r: 265, hue: HUE.red },
-	{ id: 'agent', label: 'Agent', r: 117, hue: 'var(--foreground)', dashed: true },
+	{
+		id: 'agent',
+		label: 'Agent',
+		r: 117,
+		hue: 'var(--foreground)',
+		dashed: true,
+	},
 	{ id: 'harness', label: 'Harness', r: 82, hue: HUE.blue },
 	{ id: 'model', label: 'Model', r: 36, hue: HUE.yellow },
 ] as const
@@ -55,7 +61,14 @@ export function Rings({ lit }: { lit?: 'all' | readonly number[] }) {
 						patternUnits="userSpaceOnUse"
 						patternTransform="rotate(45)"
 					>
-						<line x1="0" y1="0" x2="0" y2="7" stroke={HUE.red} strokeWidth="1.5" />
+						<line
+							x1="0"
+							y1="0"
+							x2="0"
+							y2="7"
+							stroke={HUE.red}
+							strokeWidth="1.5"
+						/>
 					</pattern>
 				</defs>
 				{RINGS.map((ring) => (
@@ -76,7 +89,13 @@ export function Rings({ lit }: { lit?: 'all' | readonly number[] }) {
 								data-node={`source-${i + 1}`}
 								opacity={lit === 'all' || lit.includes(i) ? 1 : 0.3}
 							>
-								<circle cx={cx} cy={cy} r="50" fill={HUE.red} fillOpacity="0.12" />
+								<circle
+									cx={cx}
+									cy={cy}
+									r="50"
+									fill={HUE.red}
+									fillOpacity="0.12"
+								/>
 								<circle
 									cx={cx}
 									cy={cy}
@@ -92,7 +111,10 @@ export function Rings({ lit }: { lit?: 'all' | readonly number[] }) {
 			</svg>
 			<ul className="mt-6 flex flex-wrap justify-center gap-x-6 gap-y-2">
 				{RINGS.map((ring) => (
-					<li key={ring.id} className={cn(TYPE.meta, 'flex items-center gap-2 font-bold')}>
+					<li
+						key={ring.id}
+						className={cn(TYPE.meta, 'flex items-center gap-2 font-bold')}
+					>
 						<span
 							aria-hidden
 							className="size-3.5 rounded-[4px] border-2"

@@ -378,10 +378,13 @@ function soleRedraw(children: React.ReactNode) {
 	const [only, ...rest] = Children.toArray(children).filter(
 		(child) => typeof child !== 'string' || child.trim() !== '',
 	)
-	if (rest.length > 0 || !isValidElement<{ src?: unknown }>(only)) {
+	if (
+		rest.length > 0 ||
+		!isValidElement<{ src?: unknown; alt?: unknown }>(only)
+	) {
 		return null
 	}
-	return redrawForImage(only.props.src)
+	return redrawForImage(only.props.src, only.props.alt)
 }
 
 /**
@@ -390,7 +393,7 @@ function soleRedraw(children: React.ReactNode) {
  * width/height are known, fill otherwise); anything else is a plain <img>.
  */
 function MdxImage(props: MdxImageProps) {
-	const redraw = redrawForImage(props.src)
+	const redraw = redrawForImage(props.src, props.alt)
 	if (redraw) return redraw
 
 	const cloudMatch =

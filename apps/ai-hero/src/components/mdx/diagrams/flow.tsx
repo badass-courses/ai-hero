@@ -94,7 +94,11 @@ export function Flow({
 		return [
 			hovered,
 			...diagram.edges.flatMap((edge) =>
-				edge.from === hovered ? [edge.to] : edge.to === hovered ? [edge.from] : [],
+				edge.from === hovered
+					? [edge.to]
+					: edge.to === hovered
+						? [edge.from]
+						: [],
 			),
 		]
 	}, [hovered, focus, diagram])
@@ -129,7 +133,8 @@ export function Flow({
 				})
 			}
 			const narrow =
-				getComputedStyle(grid).getPropertyValue('--flow-layout').trim() === 'narrow'
+				getComputedStyle(grid).getPropertyValue('--flow-layout').trim() ===
+				'narrow'
 			setPaths(
 				diagram.edges.flatMap((edge) => {
 					const from = steps.get(edge.from)
@@ -212,7 +217,7 @@ export function Flow({
 						key={node.id}
 						data-flow-node={node.id}
 						data-node={node.id}
-						className="relative self-start pr-3 data-dim:opacity-40 motion-safe:transition-opacity motion-safe:duration-300[grid-column:var(--n-col)/span_var(--n-span)] [grid-row:var(--n-row)] @2xl:[grid-column:var(--w-col)/span_var(--w-span)] @2xl:[grid-row:var(--w-row)]"
+						className="relative [grid-column:var(--n-col)/span_var(--n-span)] [grid-row:var(--n-row)] self-start pr-3 data-dim:opacity-40 motion-safe:transition-opacity motion-safe:duration-300 @2xl:[grid-column:var(--w-col)/span_var(--w-span)] @2xl:[grid-row:var(--w-row)]"
 						style={placement(node)}
 						data-dim={isDim(node.id) || undefined}
 						onPointerEnter={(event) => {
@@ -221,14 +226,17 @@ export function Flow({
 						onPointerLeave={() => setHovered(null)}
 					>
 						{node.code ? null : (
-							<span data-flow-badges className="mb-1.5 inline-flex items-center gap-1">
+							<span
+								data-flow-badges
+								className="mb-1.5 inline-flex items-center gap-1"
+							>
 								{node.roles.map((role, i) => (
 									<span
 										key={i}
 										className={cn(
 											TYPE.badge,
 											BADGE_OUTLINE,
-											'bg-background whitespace-nowrap px-[5px] py-[4px]',
+											'bg-background px-[5px] py-[4px] whitespace-nowrap',
 										)}
 										style={
 											{
@@ -244,7 +252,10 @@ export function Flow({
 									</span>
 								))}
 								{node.more ? (
-									<span aria-label="and more" className={cn(TYPE.meta, 'font-bold')}>
+									<span
+										aria-label="and more"
+										className={cn(TYPE.meta, 'font-bold')}
+									>
 										…
 									</span>
 								) : null}
@@ -312,7 +323,10 @@ function anchor(
 		: (badges.top + badges.bottom) / 2
 	switch (side) {
 		case 'top':
-			return { x: Math.min(badges.left + 24, badges.right), y: badges.top - CLEARANCE }
+			return {
+				x: Math.min(badges.left + 24, badges.right),
+				y: badges.top - CLEARANCE,
+			}
 		case 'bottom':
 			return {
 				x: badges.left + (role === 'exit' ? 30 : 8),

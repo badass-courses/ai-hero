@@ -47,40 +47,43 @@ export function Timeline({
 					arcs.length > 0 && '@2xl:pt-28',
 				)}
 			>
-				{steps.map((step, i) => (
-					<React.Fragment key={i}>
-						{i > 0 ? (
+				{steps.map((step, i) => {
+					const marker = markers?.[i]
+					return (
+						<React.Fragment key={i}>
+							{i > 0 ? (
+								<li
+									aria-hidden
+									className="ml-0 h-3 w-[3px] shrink-0 bg-[var(--ink)] @2xl:mt-[53px] @2xl:h-[3px] @2xl:w-auto @2xl:min-w-5 @2xl:flex-1"
+								/>
+							) : null}
 							<li
-								aria-hidden
-								className="ml-0 h-3 w-[3px] shrink-0 bg-[var(--ink)] @2xl:mt-[53px] @2xl:h-[3px] @2xl:w-auto @2xl:min-w-5 @2xl:flex-1"
-							/>
-						) : null}
-						<li
-							data-node={`step-${i}`}
-							className="flex items-center gap-3 @2xl:flex-col @2xl:items-stretch @2xl:gap-0"
-						>
-							<span
-								data-step-label
-								className="flex h-8 items-center gap-2 whitespace-nowrap @2xl:order-first @2xl:justify-center @2xl:pb-2"
+								data-node={`step-${i}`}
+								className="flex items-center gap-3 @2xl:flex-col @2xl:items-stretch @2xl:gap-0"
 							>
 								<span
-									data-step-dot
-									aria-hidden
-									className="size-3.5 shrink-0 rounded-full border-[3px]"
-									style={{ borderColor: step.hue }}
-								/>
-								<span className={TYPE.subhead}>{step.label}</span>
-							</span>
-							<Tick first={i === 0} last={i === last} />
-							{markers?.[i] || agents ? (
-								<span className="flex items-center gap-3 @2xl:mt-3 @2xl:flex-col @2xl:gap-4">
-									{markers?.[i] ? <Marker marker={markers[i]!} /> : null}
-									{agents ? <SandboxAgent /> : null}
+									data-step-label
+									className="flex h-8 items-center gap-2 whitespace-nowrap @2xl:order-first @2xl:justify-center @2xl:pb-2"
+								>
+									<span
+										data-step-dot
+										aria-hidden
+										className="size-3.5 shrink-0 rounded-full border-[3px]"
+										style={{ borderColor: step.hue }}
+									/>
+									<span className={TYPE.subhead}>{step.label}</span>
 								</span>
-							) : null}
-						</li>
-					</React.Fragment>
-				))}
+								<Tick first={i === 0} last={i === last} />
+								{marker || agents ? (
+									<span className="flex items-center gap-3 @2xl:mt-3 @2xl:flex-col @2xl:gap-4">
+										{marker ? <Marker marker={marker} /> : null}
+										{agents ? <SandboxAgent /> : null}
+									</span>
+								) : null}
+							</li>
+						</React.Fragment>
+					)
+				})}
 				{paths.length > 0 ? (
 					<svg
 						aria-hidden
@@ -128,7 +131,7 @@ function Tick({ first, last }: { first: boolean; last: boolean }) {
 		>
 			<span
 				className={cn(
-					'absolute left-0 w-[3px] bg-[var(--ink)] @2xl:h-[3px] @2xl:w-auto @2xl:top-auto @2xl:bottom-0',
+					'absolute left-0 w-[3px] bg-[var(--ink)] @2xl:top-auto @2xl:bottom-0 @2xl:h-[3px] @2xl:w-auto',
 					first ? 'top-1/2' : 'top-0',
 					last ? 'bottom-1/2' : 'bottom-0',
 					first ? '@2xl:left-1/2' : '@2xl:left-0',
@@ -179,7 +182,13 @@ function SandboxAgent() {
 		<span className="text-foreground flex items-center gap-2">
 			<span className="sr-only">One sandbox = one agent</span>
 			<svg aria-hidden viewBox="0 0 70 22" className="h-[22px] w-[70px]">
-				<g fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+				<g
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+				>
 					<rect x="1" y="7" width="22" height="11" rx="3" />
 					<circle cx="6" cy="12.5" r="0.6" fill="currentColor" />
 					<path d="M29 10.5h9M29 15h9" strokeWidth="2.5" />
@@ -207,9 +216,12 @@ function useArcs(
 
 		const draw = () => {
 			const origin = list.getBoundingClientRect()
-			const labels = [...list.querySelectorAll<HTMLElement>('[data-step-label]')]
+			const labels = [
+				...list.querySelectorAll<HTMLElement>('[data-step-label]'),
+			]
 			const wide =
-				getComputedStyle(list).getPropertyValue('--timeline-layout').trim() === 'wide'
+				getComputedStyle(list).getPropertyValue('--timeline-layout').trim() ===
+				'wide'
 			setPaths(
 				arcs.flatMap(([from, to]) => {
 					const a = labels[from]
@@ -252,8 +264,14 @@ function over(a: HTMLElement, b: HTMLElement, origin: DOMRect) {
 function beside(a: HTMLElement, b: HTMLElement, origin: DOMRect) {
 	const ra = a.getBoundingClientRect()
 	const rb = b.getBoundingClientRect()
-	const start = { x: ra.right - origin.left + 8, y: ra.top - origin.top + ra.height / 2 }
-	const end = { x: rb.right - origin.left + 8, y: rb.top - origin.top + rb.height / 2 }
+	const start = {
+		x: ra.right - origin.left + 8,
+		y: ra.top - origin.top + ra.height / 2,
+	}
+	const end = {
+		x: rb.right - origin.left + 8,
+		y: rb.top - origin.top + rb.height / 2,
+	}
 	const reach = Math.max(start.x, end.x) + 20 + (end.y - start.y) * 0.15
 	const d = `M${start.x},${start.y} C${reach},${start.y} ${reach},${end.y} ${end.x},${end.y}`
 	return { d, head: headAt(end, { x: -1, y: 0 }) }
@@ -261,7 +279,10 @@ function beside(a: HTMLElement, b: HTMLElement, origin: DOMRect) {
 
 function dotOf(label: HTMLElement, origin: DOMRect) {
 	const dot = label.querySelector('[data-step-dot]')!.getBoundingClientRect()
-	return { x: dot.left - origin.left + dot.width / 2, top: dot.top - origin.top }
+	return {
+		x: dot.left - origin.left + dot.width / 2,
+		top: dot.top - origin.top,
+	}
 }
 
 /** A filled arrowhead, the house style's, with its tip at `tip` pointing

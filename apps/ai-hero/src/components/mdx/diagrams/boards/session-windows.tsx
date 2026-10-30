@@ -19,7 +19,10 @@ export function SessionWindows({ fills }: { fills: readonly number[] }) {
 					<div key={i} data-node={`session-${i + 1}`}>
 						<div className="relative mb-2 h-5">
 							<span
-								className={cn(TYPE.meta, 'absolute bottom-0 -translate-x-1/2 font-bold')}
+								className={cn(
+									TYPE.meta,
+									'absolute bottom-0 -translate-x-1/2 font-bold',
+								)}
 								style={{ left: `${MARK * 100}%` }}
 							>
 								150k
@@ -29,7 +32,10 @@ export function SessionWindows({ fills }: { fills: readonly number[] }) {
 									TYPE.cardTitle,
 									'absolute bottom-0 -translate-x-1/2 whitespace-nowrap text-(--ink)',
 								)}
-								style={{ left: `${((1 + MARK) / 2) * 100}%`, ...hueStyle('red') }}
+								style={{
+									left: `${((1 + MARK) / 2) * 100}%`,
+									...hueStyle('red'),
+								}}
 							>
 								Dumb Zone
 							</span>
@@ -53,7 +59,8 @@ export function SessionWindows({ fills }: { fills: readonly number[] }) {
 									{
 										width: `${fill * 100}%`,
 										...hueStyle('blue'),
-										'--hatch': 'color-mix(in oklab, var(--hue) 50%, transparent)',
+										'--hatch':
+											'color-mix(in oklab, var(--hue) 50%, transparent)',
 										backgroundImage:
 											'repeating-linear-gradient(45deg, var(--hatch) 0 1.5px, transparent 1.5px 5px), repeating-linear-gradient(-45deg, var(--hatch) 0 1.5px, transparent 1.5px 5px)',
 									} as React.CSSProperties

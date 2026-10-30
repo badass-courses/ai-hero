@@ -1,3 +1,4 @@
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
 import { publicIdOf, redrawForImage, redrawnIds } from '.'
@@ -42,7 +43,26 @@ describe('redrawForImage', () => {
 		).toBeNull()
 	})
 
+	it('ignores ids inherited from Object', () => {
+		expect(
+			redrawForImage(
+				'https://res.cloudinary.com/total-typescript/image/upload/v1/constructor',
+			),
+		).toBeNull()
+	})
+
+	it('keeps the image alt for screen readers', () => {
+		const html = renderToStaticMarkup(
+			redrawForImage(
+				'https://res.cloudinary.com/total-typescript/image/upload/v1793202934/ai-hero-images/ed01d9d48a02cd95c0a07cd677ff5b54.png',
+				'The implement loop',
+			),
+		)
+		expect(html).toContain('<span class="sr-only">The implement loop</span>')
+	})
+
 	it('keys every entry by an ai-hero-images public id', () => {
-		for (const id of redrawnIds) expect(id).toMatch(/^ai-hero-images\/[a-z0-9]+$/)
+		for (const id of redrawnIds)
+			expect(id).toMatch(/^ai-hero-images\/[a-z0-9]+$/)
 	})
 })

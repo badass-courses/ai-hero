@@ -80,11 +80,17 @@ export function mapTree({
 			child(2),
 			child(3),
 			child(4),
-			{ from: { id: 't1', side: 'right' }, to: { id: 'to-spec', side: 'left' } },
+			{
+				from: { id: 't1', side: 'right' },
+				to: { id: 'to-spec', side: 'left' },
+			},
 			{
 				from: { id: 'to-spec', side: 'right' },
 				to: { id: 't5', side: 'left' },
-				narrow: { from: { side: 'bottom', at: 0.4 }, to: { side: 'top', at: 0.45 } },
+				narrow: {
+					from: { side: 'bottom', at: 0.4 },
+					to: { side: 'top', at: 0.45 },
+				},
 			},
 		],
 	}
@@ -119,8 +125,14 @@ export function roadmap({
 		at(4, { wide: { col: 1, row: 2 } }),
 	]
 	const edges: GraphEdge[] = [
-		{ from: { id: 't2', side: 'bottom', at: 0.14 }, to: { id: 't4', side: 'top', at: 0.14 } },
-		{ from: { id: 't3', side: 'bottom', at: 0.14 }, to: { id: 't4', side: 'top', at: 0.33 } },
+		{
+			from: { id: 't2', side: 'bottom', at: 0.14 },
+			to: { id: 't4', side: 'top', at: 0.14 },
+		},
+		{
+			from: { id: 't3', side: 'bottom', at: 0.14 },
+			to: { id: 't4', side: 'top', at: 0.33 },
+		},
 	]
 	const unknown = (row: number): GraphNode => ({
 		id: 'unknown',
@@ -134,14 +146,22 @@ export function roadmap({
 		content: <Destination />,
 		wide: { col: 5, row },
 	})
-	const arrow = (from: string, to: string, fromAt: number, toAt: number): GraphEdge => ({
+	const arrow = (
+		from: string,
+		to: string,
+		fromAt: number,
+		toAt: number,
+	): GraphEdge => ({
 		from: { id: from, side: 'bottom', at: fromAt },
 		to: { id: to, side: 'top', at: toAt },
 	})
 
 	if (route === 'unknown') {
 		nodes.push(unknown(3), destination(4))
-		edges.push(arrow('t4', 'unknown', 0.22, 0.05), arrow('unknown', 'destination', 0.5, 0.42))
+		edges.push(
+			arrow('t4', 'unknown', 0.22, 0.05),
+			arrow('unknown', 'destination', 0.5, 0.42),
+		)
 	} else if (route === 'found-one') {
 		nodes.push(at(5, { wide: { col: 5, row: 3 } }), unknown(4), destination(5))
 		edges.push(
