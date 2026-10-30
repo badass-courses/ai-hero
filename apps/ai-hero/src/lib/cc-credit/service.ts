@@ -156,6 +156,10 @@ function historicalAllocations(
 		return { ...row, seats }
 	})
 }
+const sourceKeys = (rows: ExplicitSource[]) =>
+	rows
+		.map((row) => `${row.purchaseId}:${row.seats}:${row.perSeatCents}`)
+		.sort()
 export async function runCreditCommand(
 	store: CreditStore,
 	command: CreditCommand,
@@ -164,21 +168,19 @@ export async function runCreditCommand(
 	validateInvoice(invoice, scope, seats)
 	if (explicit && mode !== 'backfill_preview' && mode !== 'backfill')
 		throw new CreditRefusal('explicit_sources_backfill_only')
+	// An invoice holds one allocation per purchase (its primary key).
+	if (
+		explicit &&
+		new Set(explicit.map((row) => row.purchaseId)).size !== explicit.length
+	)
+		throw new CreditRefusal('explicit_sources_duplicate_purchase')
 	return store.locked(scope, invoice.invoiceId, async (tx) => {
 		if (tx.receipt) {
 			checkReceipt(tx.receipt, scope, seats)
 			if (
 				explicit &&
-				(explicit.length !== tx.receipt.allocations.length ||
-					explicit.some(
-						(given) =>
-							!tx.receipt!.allocations.some(
-								(row) =>
-									row.purchaseId === given.purchaseId &&
-									row.seats === given.seats &&
-									row.perSeatCents === given.perSeatCents,
-							),
-					))
+				sourceKeys(explicit).join() !==
+					sourceKeys(tx.receipt.allocations).join()
 			)
 				throw new CreditRefusal('invoice_id_reused_with_changed_request')
 			validateCredit(

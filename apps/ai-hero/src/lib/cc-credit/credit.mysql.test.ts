@@ -664,9 +664,10 @@ suite('CC credit production locking protocol against real MySQL', () => {
 				[{ ...sources[0]!, purchaseId: ORIGINAL }],
 				'historical_credit_source_ineligible',
 			],
+			[[], 'explicit_sources_must_match_credit_lines'],
 			[
-				[sources[0]!, sources[0]!],
-				'explicit_sources_must_match_credit_lines',
+				[sources[0]!, { ...sources[0]!, seats: 1, perSeatCents: 134550 }],
+				'explicit_sources_duplicate_purchase',
 			],
 		] as const)
 			await expect(
@@ -731,6 +732,35 @@ suite('CC credit production locking protocol against real MySQL', () => {
 			reason: 'invoice_id_reused_with_changed_request',
 		})
 		expect(await spent()).toBe(6)
+	})
+	it('replays a two-source backfill only with the same sources, in any order', async () => {
+		await sharedCouponTeam()
+		const input = historicalInvoice('in_syntheticTwoSources', 2, 'paid', [
+			{ description: 'Crash Course team credit', amountCents: -19900 },
+			{ description: 'Crash Course team credit', amountCents: -22425 },
+		])
+		const original = { purchaseId: ORIGINAL, seats: 1, perSeatCents: 19900 }
+		const addon = { purchaseId: ADDON, seats: 1, perSeatCents: 22425 }
+		const apply = { ...input, mode: 'backfill' as const }
+		expect(
+			await runCreditCommand(store(), { ...apply, sources: [original, addon] }),
+		).toMatchObject({ state: 'paid', receipt: { amountCents: 42325 } })
+		expect(
+			await runCreditCommand(store(), { ...apply, sources: [addon, original] }),
+		).toMatchObject({ idempotent: true })
+		for (const [sources, reason] of [
+			// Stored [A, B] must not match [A, A].
+			[[original, original], 'explicit_sources_duplicate_purchase'],
+			[[original], 'invoice_id_reused_with_changed_request'],
+			[
+				[original, { ...addon, perSeatCents: 22430 }],
+				'invoice_id_reused_with_changed_request',
+			],
+		] as const)
+			await expect(
+				runCreditCommand(store(), { ...apply, sources: [...sources] }),
+			).rejects.toMatchObject({ reason })
+		expect(await spent()).toBe(2)
 	})
 	it('imports a line priced from the rounded total as invoiced, only within that rounding', async () => {
 		await sharedCouponTeam()
