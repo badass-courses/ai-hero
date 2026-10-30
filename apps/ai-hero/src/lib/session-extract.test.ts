@@ -135,17 +135,57 @@ describe('sessionExtractRows', () => {
 	it('collapses consecutive tool calls and marks later sessions', () => {
 		expect(rows.map((row) => row.type)).toEqual([
 			'entry',
-			'entry',
 			'tools',
 			'entry',
 			'sessionStart',
 			'entry',
 		])
-		expect(rows[2]).toMatchObject({ type: 'tools', visibleFrom: 5 })
+		expect(rows[1]).toMatchObject({ type: 'tools', visibleFrom: 5 })
 	})
 
 	it('keeps times non-decreasing across sessions', () => {
-		expect(rows.map((row) => row.visibleFrom)).toEqual([2, 2, 5, 9, 9, 9])
+		expect(rows.map((row) => row.visibleFrom)).toEqual([2, 5, 9, 9, 9])
+	})
+
+	it("leaves out slash-command skill calls and keeps the agent's own", () => {
+		const skills = sessionExtractRows({
+			sessions: [
+				{
+					sessionId: 'a',
+					entries: [
+						{
+							kind: 'userPrompt',
+							visibleFrom: 1,
+							text: '/code-review PR #34',
+						},
+						{
+							kind: 'skillCall',
+							via: 'slashCommand',
+							visibleFrom: 1,
+							skill: 'code-review',
+							args: 'PR #34',
+							skillBody: null,
+						},
+						{
+							kind: 'skillCall',
+							via: 'toolCall',
+							visibleFrom: 4,
+							skill: 'tdd',
+							args: 'refunds',
+							result: null,
+							resultIsError: null,
+							skillBody: null,
+						},
+					],
+				},
+			],
+		})
+		expect(
+			skills.map((row) => (row.type === 'entry' ? row.entry.kind : row.type)),
+		).toEqual(['userPrompt', 'skillCall'])
+		expect(skills[1]).toMatchObject({
+			entry: { via: 'toolCall', skill: 'tdd' },
+		})
 	})
 })
 
@@ -154,12 +194,12 @@ describe('rowsOnScreen', () => {
 
 	it('lists only the tool calls whose time has passed', () => {
 		const at5 = rowsOnScreen(rows, 5)
-		expect(at5).toHaveLength(3)
-		expect(at5[2]).toMatchObject({
+		expect(at5).toHaveLength(2)
+		expect(at5[1]).toMatchObject({
 			type: 'tools',
 			entries: [{ tool: 'Read' }],
 		})
-		expect(rowsOnScreen(rows, 6)[2]).toMatchObject({
+		expect(rowsOnScreen(rows, 6)[1]).toMatchObject({
 			entries: [{ tool: 'Read' }, { tool: 'Bash' }],
 		})
 	})
@@ -177,9 +217,9 @@ describe('activeRowIndex', () => {
 	})
 
 	it('picks the last row whose time has passed', () => {
-		expect(activeRowIndex(rows, 2)).toBe(1)
-		expect(activeRowIndex(rows, 7)).toBe(2)
-		expect(activeRowIndex(rows, 100)).toBe(5)
+		expect(activeRowIndex(rows, 2)).toBe(0)
+		expect(activeRowIndex(rows, 7)).toBe(1)
+		expect(activeRowIndex(rows, 100)).toBe(4)
 	})
 })
 

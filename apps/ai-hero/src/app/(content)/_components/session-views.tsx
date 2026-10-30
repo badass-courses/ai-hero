@@ -64,6 +64,13 @@ const TAB_LABEL: Record<SessionTab, string> = {
 const ALL_KINDS = Object.values(TAB_KIND)
 
 /**
+ * Prose in the session panel (prompts, replies): `metaSm` at prose leading, a
+ * step under the page's captions, so the session reads as a sidebar to the
+ * video rather than competing with it.
+ */
+export const SESSION_PROSE = cn(TYPE.metaSm, 'leading-relaxed')
+
+/**
  * The tabs this extract fills, live first; a view with nothing in it gets no
  * tab. `skillLinks` maps a `skillKey` to its page.
  */
@@ -76,6 +83,9 @@ export function useSessionViews(
 			extract,
 			ALL_KINDS,
 			new Map(Object.entries(skillLinks ?? {})),
+		).filter(
+			// A slash command already shows as the prompt Matt typed.
+			(moment) => moment.kind !== 'skill' || moment.via !== 'slashCommand',
 		)
 		const byTab = Object.fromEntries(
 			Object.entries(TAB_KIND).map(([tab, kind]) => [
@@ -192,8 +202,8 @@ function PromptBubble({ text }: { text: string }) {
 		<Message from="user" className="max-w-[92%]">
 			<MessageContent
 				className={cn(
-					TYPE.metaProse,
-					'whitespace-pre-wrap break-words group-[.is-user]:px-3 group-[.is-user]:py-2',
+					SESSION_PROSE,
+					'break-words whitespace-pre-wrap group-[.is-user]:px-3 group-[.is-user]:py-2',
 				)}
 			>
 				{text}
@@ -325,7 +335,6 @@ function SkillRow({
 				<SparklesIcon className="size-3 shrink-0" aria-hidden />
 				<span className="min-w-0 break-words">
 					Skill <span className="text-primary">{moment.skill}</span>
-					{moment.args && <> {moment.args}</>}
 				</span>
 				{moment.skillUrl && (
 					<a
@@ -381,7 +390,7 @@ function ErrorRow({
 						// A reply can run long; the list shows its start, and its
 						// time plays the rest.
 						<div className="max-h-24 overflow-hidden [mask-image:linear-gradient(to_bottom,black_60%,transparent)]">
-							<MessageResponse className={cn(TYPE.metaProse, 'text-sm')}>
+							<MessageResponse className={SESSION_PROSE}>
 								{recovery.text}
 							</MessageResponse>
 						</div>

@@ -46,9 +46,19 @@ const extract: SessionExtract = {
 				{
 					kind: 'skillCall',
 					via: 'slashCommand',
+					visibleFrom: 12,
+					skill: 'code-review',
+					args: 'PR #34 And fix what you find.',
+					skillBody: null,
+				},
+				{
+					kind: 'skillCall',
+					via: 'toolCall',
 					visibleFrom: 15,
-					skill: '/tdd',
+					skill: 'tdd',
 					args: 'refunds',
+					result: null,
+					resultIsError: null,
 					skillBody: null,
 				},
 				{
@@ -147,7 +157,10 @@ describe('session views', () => {
 		await render(<Views tab="skills" links={{ tdd: '/skills-tdd' }} />)
 		const link = container.querySelector('a')
 		expect(link?.getAttribute('href')).toBe('/skills-tdd')
-		expect(container.textContent).toContain('/tdd refunds')
+		expect(container.querySelectorAll('li')).toHaveLength(1)
+		expect(container.textContent).toContain('Skill tdd')
+		expect(container.textContent).not.toContain('refunds')
+		expect(container.textContent).not.toContain('code-review')
 
 		await render(<Views tab="skills" />)
 		expect(container.querySelector('a')).toBeNull()
