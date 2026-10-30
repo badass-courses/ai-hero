@@ -15,6 +15,7 @@ import { Button } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
 import { InlineCode } from './inline-code'
+import { useReportChecked } from './quiz-progress'
 import type { QuizQuestionData } from './quiz-schema'
 
 export function QuizQuestionClient({
@@ -95,6 +96,7 @@ export function QuizQuestionClient({
 
 	const isAnswered = state.matches('answered')
 	const isCorrect = state.matches('answered.correct')
+	useReportChecked(questionId, isAnswered, isCorrect)
 	const isSubmitting = state.matches('answering')
 	const choices =
 		data.shuffleChoices === false
@@ -163,7 +165,7 @@ export function QuizQuestionClient({
 								showCorrect &&
 									'border-emerald-600/50 bg-emerald-500/[0.07] text-emerald-950 dark:text-emerald-100',
 								showIncorrect &&
-									'border-destructive/50 bg-destructive/[0.07] text-destructive',
+									'border-destructive/50 bg-destructive/[0.07] text-destructive dark:border-red-400/50 dark:bg-red-500/10 dark:text-red-200',
 								isAnswered &&
 									!showCorrect &&
 									!showIncorrect &&
@@ -210,11 +212,11 @@ export function QuizQuestionClient({
 								<InlineCode text={choice.label ?? choice.answer} />
 							</span>
 							{showCorrect ? (
-								<span className={cn(TYPE.metaMark, 'text-current')}>
+								<span className={cn(TYPE.metaMark, 'self-center text-current')}>
 									Correct
 								</span>
 							) : showIncorrect ? (
-								<span className={cn(TYPE.metaMark, 'text-current')}>
+								<span className={cn(TYPE.metaMark, 'self-center text-current')}>
 									Your answer
 								</span>
 							) : null}
