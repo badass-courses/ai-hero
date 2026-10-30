@@ -72,7 +72,7 @@ export async function Quiz({ children }: { children: React.ReactNode }) {
 			aria-label="Lesson quiz"
 		>
 			<div className="flex items-center gap-3">
-				<span className="bg-card text-primary flex size-10 shrink-0 items-center justify-center rounded-[9px] border">
+				<span className="bg-card text-muted-foreground flex size-10 shrink-0 items-center justify-center rounded-[9px] border">
 					<QuizIcon className="size-5" />
 				</span>
 				<div>
