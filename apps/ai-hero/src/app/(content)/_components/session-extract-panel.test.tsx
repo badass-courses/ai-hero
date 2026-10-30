@@ -4,19 +4,40 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { SessionExtract } from '@/lib/session-extract'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({
-	media: {
-		currentTime: 0,
+const mocks = vi.hoisted(() => {
+	const captions = {
+		kind: 'captions',
+		mode: 'hidden',
+		cues: [
+			{
+				startTime: 30,
+				endTime: 34,
+				text: 'Question four is asking, what happens to the refund emails cadence already sends?',
+			},
+		],
+	}
+	const textTracks = Object.assign([captions], {
 		addEventListener: vi.fn(),
 		removeEventListener: vi.fn(),
-	},
-}))
+	})
+	return {
+		media: {
+			currentTime: 0,
+			textTracks,
+			addEventListener: vi.fn(),
+			removeEventListener: vi.fn(),
+		},
+	}
+})
 
 vi.mock('@/hooks/use-mux-player', () => ({
 	useMuxPlayer: () => ({ muxPlayerRef: { current: mocks.media } }),
 }))
 
-import { SessionExtractStrip } from './session-extract-panel'
+import {
+	SessionExtractPanel,
+	SessionExtractStrip,
+} from './session-extract-panel'
 
 const extract: SessionExtract = {
 	sessions: [
@@ -35,6 +56,14 @@ const extract: SessionExtract = {
 					skill: 'code-review',
 					args: 'PR #34 And fix what you find.',
 					skillBody: null,
+				},
+				{
+					kind: 'assistantText',
+					visibleFrom: 18,
+					text: [
+						'Q3 - Is web push in v1?: Through Knock it needs a Firebase project.',
+						'Q4 - What happens to the refund emails Cadence already sends?: The "Refund approved/declined" email covers the same event.',
+					].join('\n\n'),
 				},
 				{
 					kind: 'skillCall',
@@ -83,5 +112,32 @@ describe('session on screen', () => {
 		await renderAt(25)
 		expect(container.textContent).toContain('Skill tdd')
 		expect(container.textContent).not.toContain('refunds')
+	})
+})
+
+describe('the block Matt is reading out', () => {
+	it('is marked by a bar in the gutter, with every block in one color', async () => {
+		mocks.media.currentTime = 34
+		await act(async () =>
+			root.render(<SessionExtractPanel extract={extract} />),
+		)
+
+		const blocks = [...container.querySelectorAll('[data-reply] p')]
+		expect(blocks).toHaveLength(2)
+		const spoken = container.querySelector('[data-spoken]')
+		expect(spoken?.textContent).toContain('refund emails')
+		expect(container.querySelector('[data-spoken-bar]')).not.toBeNull()
+		// Being read out changes nothing about the text itself.
+		expect(blocks[0]!.className).toBe(blocks[1]!.className)
+		expect(container.innerHTML).not.toMatch(/text-foreground\/55|border-image/)
+	})
+
+	it('shows no bar while nothing is being read out', async () => {
+		mocks.media.currentTime = 25
+		await act(async () =>
+			root.render(<SessionExtractPanel extract={extract} />),
+		)
+		expect(container.querySelector('[data-spoken]')).toBeNull()
+		expect(container.querySelector('[data-spoken-bar]')).toBeNull()
 	})
 })
