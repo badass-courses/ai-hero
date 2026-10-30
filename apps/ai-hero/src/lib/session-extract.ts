@@ -114,9 +114,9 @@ function safeJson(value: string): unknown {
 type ToolCallEntry = z.infer<typeof ToolCallSchema>
 
 /**
- * One rendered row. Runs of consecutive tool calls collapse into one `tools`
- * row; `sessionStart` marks a new session (a `/clear` on screen) after the
- * first. Rows are in `visibleFrom` order, so each row's `visibleFrom` is the
+ * One rendered row. Slash-command skill calls are left out, and runs of
+ * consecutive tool calls collapse into one `tools` row; `sessionStart` marks
+ * a new session (a `/clear` on screen) after the first. Rows are in `visibleFrom` order, so each row's `visibleFrom` is the
  * time it first appears.
  */
 export type SessionExtractRow =
@@ -141,6 +141,9 @@ export function sessionExtractRows(
 			})
 		}
 		for (const entry of session.entries) {
+			// A slash command is already on screen as the prompt Matt typed
+			// ("/code-review PR #34"); its skill call would repeat it.
+			if (entry.kind === 'skillCall' && entry.via === 'slashCommand') continue
 			const last = rows.at(-1)
 			if (entry.kind === 'toolCall') {
 				if (last?.type === 'tools') last.entries.push(entry)

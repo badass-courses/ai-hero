@@ -50,6 +50,7 @@ import {
 	type PlayerRef,
 } from './session-player-time'
 import {
+	SESSION_PROSE,
 	SessionMomentList,
 	SessionViewTabs,
 	useSessionViews,
@@ -71,10 +72,13 @@ const BLOCK_SELECTOR = 'p, li, h1, h2, h3, h4, h5, h6, tr'
 /**
  * Markdown inside the panel: mono runs a size down (a mono face reads larger
  * than the sans beside it) on a translucent chip, so the spoken highlight
- * shows through code instead of stopping at it.
+ * shows through code instead of stopping at it. Headings the agent writes
+ * stay near the text size; at the renderer's page sizes (up to 30px) they
+ * shouted over the reply around them.
  */
 const REPLY_TYPE = cn(
-	TYPE.metaProse,
+	SESSION_PROSE,
+	'[&_:is(h1,h2,h3)]:text-[1.08em] [&_:is(h4,h5,h6)]:text-[1em] [&_:is(h1,h2,h3,h4,h5,h6)]:mb-1 [&_:is(h1,h2,h3,h4,h5,h6)]:mt-3',
 	'[&_:not(pre)>code]:bg-foreground/[0.07] [&_:not(pre)>code]:rounded-[4px] [&_:not(pre)>code]:px-1 [&_:not(pre)>code]:py-px [&_:not(pre)>code]:text-[0.86em] [&_:not(pre)>code]:font-normal',
 	'[&_hr]:my-3 [&_li]:my-0.5 [&_ol]:my-1.5 [&_p]:my-1.5 [&_ul]:my-1.5',
 )
@@ -86,8 +90,7 @@ const REPLY_TYPE = cn(
  */
 const DETAIL_TYPE = cn(
 	REPLY_TYPE,
-	TYPE.metaSm,
-	'text-muted-foreground [overflow-wrap:anywhere] [&_strong]:text-foreground/80 [&_:is(h1,h2,h3,h4)]:text-[1em]',
+	'text-muted-foreground text-[0.93em] [overflow-wrap:anywhere] [&_strong]:text-foreground/80 [&_:is(h1,h2,h3,h4)]:text-[1em]',
 )
 
 /**
@@ -440,8 +443,8 @@ function RowBody({ row }: { row: SessionExtractRow }) {
 				<Message from="user" className="max-w-[92%]">
 					<MessageContent
 						className={cn(
-							TYPE.metaProse,
-							'whitespace-pre-wrap break-words group-[.is-user]:px-3 group-[.is-user]:py-2',
+							SESSION_PROSE,
+							'break-words whitespace-pre-wrap group-[.is-user]:px-3 group-[.is-user]:py-2',
 						)}
 					>
 						{entry.text}
@@ -466,7 +469,6 @@ function RowBody({ row }: { row: SessionExtractRow }) {
 					title={
 						<>
 							Skill <span className="text-primary">{entry.skill}</span>
-							{entry.args && <> {entry.args}</>}
 						</>
 					}
 					failed={entry.via === 'toolCall' && entry.resultIsError === true}
