@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => {
 	return {
 		media: {
 			currentTime: 0,
+			play: vi.fn(() => Promise.resolve()),
 			textTracks,
 			addEventListener: vi.fn(),
 			removeEventListener: vi.fn(),
@@ -139,5 +140,39 @@ describe('the block Matt is reading out', () => {
 		)
 		expect(container.querySelector('[data-spoken]')).toBeNull()
 		expect(container.querySelector('[data-spoken-bar]')).toBeNull()
+	})
+})
+
+describe('the whole transcript', () => {
+	it('is on the page before the video reaches it, with the unreached part set back', async () => {
+		mocks.media.currentTime = 0
+		await act(async () =>
+			root.render(<SessionExtractPanel extract={extract} />),
+		)
+		expect(container.textContent).toContain('/code-review PR #34')
+		expect(container.textContent).toContain('Q4 - What happens')
+		expect(container.querySelector('[data-reached]')).toBeNull()
+	})
+
+	it('plays from a message when the message is clicked', async () => {
+		mocks.media.currentTime = 0
+		await act(async () =>
+			root.render(<SessionExtractPanel extract={extract} />),
+		)
+		const reply = container.querySelector('[data-reply]')!
+		await act(async () => (reply as HTMLElement).click())
+		expect(mocks.media.currentTime).toBe(18)
+	})
+
+	it('does not play from a tool call when it is clicked', async () => {
+		mocks.media.currentTime = 0
+		await act(async () =>
+			root.render(<SessionExtractPanel extract={extract} />),
+		)
+		const skill = [...container.querySelectorAll('div')].find(
+			(element) => element.textContent === 'Skill tdd',
+		)!
+		await act(async () => skill.click())
+		expect(mocks.media.currentTime).toBe(0)
 	})
 })

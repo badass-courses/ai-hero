@@ -18,6 +18,7 @@ import { useMuxPlayer } from '@/hooks/use-mux-player'
 import { keepCaptionCuesLoading } from '@/hooks/use-mux-player-prefs'
 import {
 	contentWords,
+	activeRowIndex,
 	rowsOnScreen,
 	sessionExtractRows,
 	spokenBlockIndex,
@@ -197,8 +198,9 @@ function LiveSession({ extract }: { extract: SessionExtract }) {
 	const rows = React.useMemo(() => sessionExtractRows(extract), [extract])
 	const { muxPlayerRef } = useMuxPlayer()
 	const time = usePlayerTime(muxPlayerRef)
-	const visible = rowsOnScreen(rows, time)
-	const active = visible.length - 1
+	// The whole session is on the page from the start, so a reader can find a
+	// moment and jump to it; `active` is the newest row the video has reached.
+	const active = activeRowIndex(rows, time)
 	const contentRef = React.useRef<HTMLDivElement>(null)
 	const anchorRef = React.useRef<HTMLElement | null>(null)
 	const spoken = useSpokenBlock(
@@ -223,7 +225,7 @@ function LiveSession({ extract }: { extract: SessionExtract }) {
 			const topOf = (element: Element) =>
 				element.getBoundingClientRect().top - origin
 			const anchor = anchorRef.current?.isConnected ? anchorRef.current : null
-			const newest = content.lastElementChild
+			const newest = content.querySelector('[data-current]')
 			let target = anchor ? topOf(anchor) - ANCHOR_OFFSET : 0
 			if (newest) {
 				target = Math.max(
@@ -265,9 +267,9 @@ function LiveSession({ extract }: { extract: SessionExtract }) {
 	// The moment the pointer is over, by the index of the row that heads it:
 	// rows that share a time light that one time.
 	const [hovered, setHovered] = React.useState<number | null>(null)
-	const heads = visible.map((row, index) => index)
-	visible.forEach((row, index) => {
-		const previous = visible[index - 1]
+	const heads = rows.map((row, index) => index)
+	rows.forEach((row, index) => {
+		const previous = rows[index - 1]
 		if (previous && previous.visibleFrom === row.visibleFrom) {
 			heads[index] = heads[index - 1]!
 		}
@@ -287,7 +289,7 @@ function LiveSession({ extract }: { extract: SessionExtract }) {
 					className="relative flex flex-col px-3 pb-3"
 					onPointerLeave={() => setHovered(null)}
 				>
-					{/* First, so the newest row stays the last child. */}
+					{/* Before the rows, which stay the content's only siblings after it. */}
 					{bar && (
 						<span
 							aria-hidden
@@ -296,42 +298,57 @@ function LiveSession({ extract }: { extract: SessionExtract }) {
 							style={bar}
 						/>
 					)}
-					{visible.length === 0 ? (
-						<p className={cn(TYPE.metaSm, 'text-muted-foreground pt-4')}>
-							The session appears here as the video reaches it.
-						</p>
-					) : (
-						visible.map((row, index) => {
-							const previous = visible[index - 1]
-							const timed = heads[index] === index
-							return (
-								// The time heads its moment on a line of its own, at the
-								// left edge, the same as in the other tabs.
-								<div
-									key={index}
-									onPointerEnter={() => setHovered(heads[index]!)}
-									className={cn(
-										'flex flex-col gap-1.5',
-										timed
-											? 'mt-5 first:mt-4'
-											: isCall(row) && previous && isCall(previous)
-												? 'mt-0.5'
-												: 'mt-3',
-									)}
-								>
-									{timed && (
-										<TimeButton
-											seconds={row.visibleFrom}
-											seek={seek}
-											active={hovered === index}
-											className="self-start"
-										/>
-									)}
-									<RowBody row={row} />
-								</div>
-							)
-						})
-					)}
+					{rows.map((row, index) => {
+						const previous = rows[index - 1]
+						const timed = heads[index] === index
+						const message = isMessage(row)
+						return (
+							// The time heads its moment on a line of its own, at the
+							// left edge, the same as in the other tabs. What the
+							// video has not reached yet sits back.
+							<div
+								key={index}
+								data-reached={index <= active ? '' : undefined}
+								data-current={index === active ? '' : undefined}
+								onPointerEnter={() => setHovered(heads[index]!)}
+								onClick={
+									message
+										? (event) => {
+												// A message plays from its moment; a link, a
+												// button, or text being selected keeps its own job.
+												if (
+													(event.target as Element).closest('a, button') ||
+													window.getSelection()?.toString()
+												) {
+													return
+												}
+												seek(row.visibleFrom)
+											}
+										: undefined
+								}
+								className={cn(
+									'flex flex-col gap-1.5 transition-opacity duration-300 motion-reduce:transition-none',
+									index > active && 'opacity-50',
+									message && 'cursor-pointer',
+									timed
+										? 'mt-5 first:mt-4'
+										: isCall(row) && previous && isCall(previous)
+											? 'mt-0.5'
+											: 'mt-3',
+								)}
+							>
+								{timed && (
+									<TimeButton
+										seconds={row.visibleFrom}
+										seek={seek}
+										active={hovered === index}
+										className="self-start"
+									/>
+								)}
+								<RowBody row={row} />
+							</div>
+						)
+					})}
 				</div>
 			</ConversationContent>
 			<FollowVideoButton />
@@ -390,6 +407,14 @@ export function SessionExtractStrip({
 				)}
 			</div>
 		</div>
+	)
+}
+
+/** A user or assistant message: what a click on the transcript plays from. */
+function isMessage(row: SessionExtractRow) {
+	return (
+		row.type === 'entry' &&
+		(row.entry.kind === 'userPrompt' || row.entry.kind === 'assistantText')
 	)
 }
 
@@ -584,7 +609,9 @@ function useSpokenBlock(
 				.map((cue) => (cue as VTTCue).text)
 				.join(' '),
 		)
-		const blocks = Array.from(content.querySelectorAll('[data-reply]'))
+		const blocks = Array.from(
+			content.querySelectorAll('[data-reached] [data-reply]'),
+		)
 			.slice(-SPOKEN_REPLIES)
 			.flatMap((reply) =>
 				Array.from(reply.querySelectorAll<HTMLElement>(BLOCK_SELECTOR)),
