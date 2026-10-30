@@ -51,6 +51,16 @@ export function learnerFromToken(
 }
 
 /**
+ * Who a request speaks for. `anonymous` sent no bearer token; `invalid`
+ * sent one that is unknown, expired, revoked or minted for something else.
+ * `/mcp` answers `invalid` with 401 rather than the public subset.
+ */
+export type BearerCaller =
+	| { kind: 'anonymous' }
+	| { kind: 'learner'; learner: Learner }
+	| { kind: 'invalid' }
+
+/**
  * The learner a request speaks for, from its bearer token. Only the user id
  * comes back: roles are never read here, so no token can carry admin rules
  * into the learner surface.
@@ -58,16 +68,21 @@ export function learnerFromToken(
 export async function resolveLearner(
 	request: Request,
 ): Promise<Learner | null> {
+	const caller = await resolveBearer(request)
+	return caller.kind === 'learner' ? caller.learner : null
+}
+
+export async function resolveBearer(request: Request): Promise<BearerCaller> {
 	const [scheme, token] =
 		request.headers.get('authorization')?.trim().split(/\s+/) ?? []
-	if (!token || scheme?.toLowerCase() !== 'bearer') return null
+	if (!token || scheme?.toLowerCase() !== 'bearer') return { kind: 'anonymous' }
 
 	if (token.startsWith(`${PERSONAL_ACCESS_TOKEN_PREFIX}_`)) {
 		void log.warn('learner_agent.auth', {
 			outcome: 'denied:pat',
 			tokenKind: 'personal-access-token',
 		})
-		return null
+		return { kind: 'invalid' }
 	}
 
 	const row = await db.query.deviceAccessToken.findFirst({
@@ -82,7 +97,7 @@ export async function resolveLearner(
 	})
 	if (!row) {
 		void log.warn('learner_agent.auth', { outcome: 'denied:unknown-token' })
-		return null
+		return { kind: 'invalid' }
 	}
 
 	const learner = learnerFromToken(row)
@@ -92,7 +107,7 @@ export async function resolveLearner(
 			userId: row.userId,
 			scope: row.scope ?? null,
 		})
-		return null
+		return { kind: 'invalid' }
 	}
 
 	void log.info('learner_agent.auth', {
@@ -100,5 +115,5 @@ export async function resolveLearner(
 		userId: learner.userId,
 		tokenKind: learner.tokenKind,
 	})
-	return learner
+	return { kind: 'learner', learner }
 }

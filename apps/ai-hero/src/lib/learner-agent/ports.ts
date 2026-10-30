@@ -1,6 +1,6 @@
 import { log } from '@/server/logger'
 
-import type { LearnerAgentPorts } from '@ai-hero/learner-agent'
+import type { Learner, LearnerAgentPorts } from '@ai-hero/learner-agent'
 
 import { makeContentPort } from './content'
 import { makeEntitlementsPort } from './entitlements'
@@ -14,10 +14,12 @@ import { learnerSiteUrls } from './site'
 
 /**
  * The ports for one request: who is calling, and the app's own reads behind
- * each port. Built at the route, used for one call, then dropped.
+ * each port. Built at the route, used for one call, then dropped. A route
+ * that already resolved the caller passes it, so the token is read once.
  */
 export async function learnerAgentPortsFor(
 	request: Request,
+	learner?: Learner | null,
 ): Promise<LearnerAgentPorts> {
 	const site = learnerSiteUrls()
 	const country =
@@ -26,7 +28,7 @@ export async function learnerAgentPortsFor(
 		'US'
 
 	return {
-		learner: await resolveLearner(request),
+		learner: learner === undefined ? await resolveLearner(request) : learner,
 		entitlements: makeEntitlementsPort({ baseUrl: site.baseUrl, country }),
 		content: makeContentPort({ baseUrl: site.baseUrl }),
 		progress: makeProgressPort(),

@@ -169,6 +169,36 @@ describe('MCP projection', () => {
 		)
 	})
 
+	it('answers 401 with the challenge when an anonymous call needed a learner', async () => {
+		const challenge = 'Bearer resource_metadata="x", scope="learner:read"'
+		const agent = makeLearnerAgent(fakePorts(null))
+		const learnerOnly = await agent.handleMcp(
+			rpc({
+				jsonrpc: '2.0',
+				id: 1,
+				method: 'tools/call',
+				params: { name: 'my_courses', arguments: {} },
+			}),
+			{ signInChallenge: challenge },
+		)
+		expect(learnerOnly.status).toBe(401)
+		expect(learnerOnly.headers.get('www-authenticate')).toBe(challenge)
+		const body = await learnerOnly.json()
+		expect(body.result.structuredContent.error._tag).toBe('SignInRequired')
+
+		const publicCall = await makeLearnerAgent(fakePorts(null)).handleMcp(
+			rpc({
+				jsonrpc: '2.0',
+				id: 2,
+				method: 'tools/call',
+				params: { name: 'search_course', arguments: { query: 'agents' } },
+			}),
+			{ signInChallenge: challenge },
+		)
+		expect(publicCall.status).toBe(200)
+		expect(publicCall.headers.get('www-authenticate')).toBeNull()
+	})
+
 	it('reports bad arguments as a tool error and an unknown tool as invalid params', async () => {
 		const bad = await mcp(learner, {
 			jsonrpc: '2.0',

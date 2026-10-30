@@ -51,12 +51,23 @@ export function makeLearnerAgent(ports: LearnerAgentPorts) {
 	}
 
 	return {
-		/** POST /mcp: one JSON-RPC message or a batch. */
-		handleMcp: async (request: Request): Promise<Response> =>
+		/**
+		 * POST /mcp: one JSON-RPC message or a batch. Pass `signInChallenge`
+		 * for an anonymous caller to answer learner-only calls with 401.
+		 */
+		handleMcp: async (
+			request: Request,
+			options: { readonly signInChallenge?: string } = {},
+		): Promise<Response> =>
 			(
 				await run(
 					handleMcpRequest<Requirements>(
-						{ capabilities, prompts, server: SERVER_INFO },
+						{
+							capabilities,
+							prompts,
+							server: SERVER_INFO,
+							signInChallenge: options.signInChallenge,
+						},
 						request,
 					),
 				)
