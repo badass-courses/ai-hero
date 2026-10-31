@@ -2,6 +2,7 @@ import { db } from '@/db'
 import {
 	contentResource,
 	contentResourceProduct,
+	entitlementTypes,
 	products,
 	purchases,
 	resourceProgress,
@@ -11,6 +12,7 @@ import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { isWorkshopAvailable } from './cohort-navigation'
 import {
 	ctaFor,
+	entitledWorkshopIds,
 	overviewHrefFor,
 	pickCurrentWorkshop,
 	resumeCtaFor,
@@ -18,6 +20,7 @@ import {
 	type LibraryEntry,
 } from './library-entry'
 import { getCachedCohortNavigation } from './cohort-navigation-query'
+import { getAllUserEntitlements } from './entitlements-query'
 import { flattenNavigationResources } from './content-navigation'
 import { getContentNavigation } from './content-navigation-query'
 import { getLatestCourseLesson } from './course-resume-navigation'
@@ -296,16 +299,83 @@ const STATUS_ORDER: Record<LibraryEntry['status'], number> = {
 	complete: 2,
 }
 
+/**
+ * Workshops a live `workshop_content_access` entitlement opens without a
+ * purchase of their own product, such as the Crash Course included with
+ * Software Factories. Same live-entitlement rule as the ability check, so the
+ * list never shows a course the learner cannot open.
+ */
+async function getEntitledWorkshops(
+	userId: string,
+	alreadyListed: ReadonlySet<string>,
+): Promise<PurchasedResource[]> {
+	const [entitlements, accessType] = await Promise.all([
+		getAllUserEntitlements(userId),
+		db.query.entitlementTypes.findFirst({
+			where: eq(entitlementTypes.name, 'workshop_content_access'),
+			columns: { id: true },
+		}),
+	])
+	const ids = entitledWorkshopIds(entitlements, accessType?.id, alreadyListed)
+	if (ids.length === 0) return []
+
+	const grantedAt = new Map<string, Date>()
+	for (const entitlement of entitlements) {
+		const contentIds = (entitlement.metadata as Record<string, unknown> | null)
+			?.contentIds
+		if (!Array.isArray(contentIds)) continue
+		for (const id of contentIds) {
+			if (typeof id === 'string' && !grantedAt.has(id) && entitlement.createdAt)
+				grantedAt.set(id, entitlement.createdAt)
+		}
+	}
+
+	const rows = await db
+		.select({
+			resourceId: contentResource.id,
+			resourceType: contentResource.type,
+			resourceSlug: sql<
+				string | null
+			>`COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(${contentResource.fields}, '$.slug')), 'null'), ${contentResource.slug})`,
+			resourceTitle: sql<
+				string | null
+			>`NULLIF(JSON_UNQUOTE(JSON_EXTRACT(${contentResource.fields}, '$.title')), 'null')`,
+		})
+		.from(contentResource)
+		.where(
+			and(
+				inArray(contentResource.id, ids),
+				eq(contentResource.type, 'workshop'),
+				isNull(contentResource.deletedAt),
+			),
+		)
+
+	return rows.map((row) => ({
+		key: row.resourceId,
+		resourceId: row.resourceId,
+		resourceType: row.resourceType,
+		resourceSlug: row.resourceSlug,
+		title: row.resourceTitle?.trim() || 'Included course',
+		purchasedAt: grantedAt.get(row.resourceId) ?? null,
+	}))
+}
+
 export async function getLibraryEntries(
 	userId: string,
 ): Promise<LibraryEntry[]> {
-	const [purchased, progress] = await Promise.all([
+	const [bought, progress] = await Promise.all([
 		getPurchasedResources(userId),
 		db.query.resourceProgress.findMany({
 			where: eq(resourceProgress.userId, userId),
 			columns: { resourceId: true, updatedAt: true, completedAt: true },
 		}),
 	])
+	// A failed entitlement read must not blank the purchases the learner owns.
+	const included = await getEntitledWorkshops(
+		userId,
+		new Set(bought.map((purchase) => purchase.key)),
+	).catch(() => [])
+	const purchased = [...bought, ...included]
 
 	const entries = await Promise.all(
 		purchased.map(async (purchase) =>
