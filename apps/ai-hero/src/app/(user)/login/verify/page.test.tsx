@@ -53,10 +53,12 @@ describe('magic-link confirmation page', () => {
 		expect(markup).not.toContain('learner@example.com')
 	})
 
-	it('renders an expired state when the cookie is missing', async () => {
+	it('hands a cookie-less visit to the fragment reader, with no form on the server', async () => {
 		const markup = renderToStaticMarkup(await VerifyMagicLinkPage())
 
-		expect(markup).toContain('This login link expired')
+		// The server cannot see a fragment, so it renders only the pending state;
+		// the client decides between the confirm form and the expired message.
+		expect(markup).toContain('Checking your login link')
 		expect(markup).not.toContain('<form')
 	})
 })

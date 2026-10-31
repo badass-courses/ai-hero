@@ -21,6 +21,7 @@ import { handleUserCreatedBoundary } from '@/server/user-provisioning'
 import { ENSURE_PERSONAL_ORGANIZATION_EVENT } from '@/inngest/events/ensure-personal-organization'
 import { handleExpiredDiscordToken } from '@/server/discord-session-refresh'
 import { log, serializeError } from '@/server/logger'
+import { redactedErrorMessage } from '@/server/logger-utils'
 import {
 	createOAuthContainmentAdapter,
 	createOAuthContainmentSignInCallback,
@@ -177,7 +178,7 @@ async function triggerVerifiedOAuthRoleSync({
 			provider: account.provider,
 			targetUserRef: common.targetUserRef,
 			accountRef: common.accountRef,
-			error: error instanceof Error ? error.message : String(error),
+			error: redactedErrorMessage(error),
 		})
 		await observeOAuthLinkCanary({
 			...common,
