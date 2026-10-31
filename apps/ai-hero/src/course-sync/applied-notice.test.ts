@@ -1,19 +1,45 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { syntheticCohortBinding } from './test-fixtures/cohort-binding'
+import type { SyncPlan } from './types'
+
+const UNDRAWN_IMAGE =
+	'https://res.cloudinary.com/total-typescript/image/upload/v1793300000/ai-hero-images/ffffffffffffffffffffffffffffffff.png'
+const REDRAWN_IMAGE =
+	'https://res.cloudinary.com/total-typescript/image/upload/v1793202934/ai-hero-images/ed01d9d48a02cd95c0a07cd677ff5b54.png'
 
 const mocks = vi.hoisted(() => ({
 	claim: vi.fn(async () => true),
 	complete: vi.fn(async () => {}),
 	fail: vi.fn(async () => {}),
-	planChanges: vi.fn(async () => [
-		{
-			action: 'create' as const,
-			sourceKind: 'lesson' as const,
-			title: 'More Exercises',
-			moved: false,
-			detached: false,
-		},
-	]),
+	plan: vi.fn(
+		async (): Promise<SyncPlan | null> => ({
+			bindingId: 'csb_ai_coding_crash_course',
+			sourceRevisionId: 'revision-1',
+			courseVersionId: 'version-1',
+			planSha256: 'plan-sha',
+			media: [],
+			resources: [
+				{
+					sourceKind: 'lesson',
+					sourceId: 'lesson-1',
+					targetResourceId: 'resource-1',
+					parentResourceId: 'section-1',
+					position: 0,
+					detached: false,
+					previousDetached: false,
+					previousParentResourceId: null,
+					previousPosition: null,
+					action: 'create',
+					fields: {
+						title: 'More Exercises',
+						body: `![new](${UNDRAWN_IMAGE})\n\n![old](${REDRAWN_IMAGE})`,
+					},
+					previousVersionId: null,
+					previousFieldsSha256: null,
+				},
+			],
+		}),
+	),
 	narrate: vi.fn(async (): Promise<string | null> => 'Matt added a lesson.'),
 	sendNotification: vi.fn(
 		async (_options: {
@@ -62,7 +88,7 @@ vi.mock('./detection-persistence', () => ({
 	claimCourseSyncReviewNotification: mocks.claim,
 	completeCourseSyncReviewNotification: mocks.complete,
 	failCourseSyncReviewNotification: mocks.fail,
-	getCourseSyncPlanChanges: mocks.planChanges,
+	getCourseSyncPlan: mocks.plan,
 }))
 vi.mock('./narrate', () => ({
 	COURSE_SYNC_AUTHOR_NAME: 'Matt',
@@ -242,6 +268,42 @@ describe('course sync applied notice', () => {
 		expect(mocks.complete).toHaveBeenCalledTimes(1)
 	})
 
+	it('narrates what the plan changed', async () => {
+		await deliver()
+
+		expect(mocks.narrate).toHaveBeenCalledWith(
+			expect.objectContaining({
+				changes: [
+					{
+						action: 'create',
+						sourceKind: 'lesson',
+						title: 'More Exercises',
+						moved: false,
+						detached: false,
+					},
+				],
+			}),
+		)
+	})
+
+	it('asks for a redraw of each new image that has none', async () => {
+		await deliver()
+
+		const payload = mocks.sendNotification.mock.calls[0]?.[0] as unknown as {
+			attachments: {
+				fields: { title: string; value: string }[]
+				mrkdwn_in?: string[]
+			}[]
+		}
+		expect(payload.attachments[0]?.mrkdwn_in).toEqual(['fields'])
+		expect(payload.attachments[0]?.fields).toContainEqual(
+			expect.objectContaining({
+				title: 'Not redrawn yet (1)',
+				value: `More Exercises: <${UNDRAWN_IMAGE}|image 1>`,
+			}),
+		)
+	})
+
 	it('does not post twice when the claim is already held', async () => {
 		mocks.claim.mockResolvedValue(false)
 
@@ -262,7 +324,7 @@ describe('course sync applied notice', () => {
 	})
 
 	it('still posts when the plan read for the summary fails', async () => {
-		mocks.planChanges.mockRejectedValue(new Error('db blip'))
+		mocks.plan.mockRejectedValue(new Error('db blip'))
 
 		const result = await deliver()
 
@@ -270,6 +332,12 @@ describe('course sync applied notice', () => {
 		expect(mocks.narrate).toHaveBeenCalledWith(
 			expect.objectContaining({ changes: [] }),
 		)
+		const payload = mocks.sendNotification.mock.calls[0]?.[0] as unknown as {
+			attachments: { fields: { title: string }[] }[]
+		}
+		expect(
+			payload.attachments[0]?.fields.map((field) => field.title),
+		).not.toContain('Not redrawn yet (1)')
 	})
 
 	it('fails the claim when Slack rejects the notice', async () => {

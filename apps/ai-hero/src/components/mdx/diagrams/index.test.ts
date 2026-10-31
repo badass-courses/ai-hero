@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest'
 
 import { serializeToMarkdown } from '@/lib/markdown-serializer'
 
-import { publicIdOf, redrawForImage, redrawnIds } from '.'
+import { publicIdOf, redrawForImage, redrawnIds, undrawnImages } from '.'
+import { notDrawings } from './not-drawings'
 
 describe('publicIdOf', () => {
 	it('reads the id from a markdown link', () => {
@@ -66,6 +67,28 @@ describe('redrawForImage', () => {
 	it('keys every entry by an ai-hero-images public id', () => {
 		for (const id of redrawnIds)
 			expect(id).toMatch(/^ai-hero-images\/[a-z0-9]+$/)
+	})
+})
+
+describe('undrawnImages', () => {
+	const redrawn =
+		'https://res.cloudinary.com/total-typescript/image/upload/v1793202934/ai-hero-images/ed01d9d48a02cd95c0a07cd677ff5b54.png'
+	const fresh =
+		'https://res.cloudinary.com/total-typescript/image/upload/v1793300000/ai-hero-images/ffffffffffffffffffffffffffffffff.png'
+
+	it('lists each image without a redraw once, in body order', () => {
+		const body = `![a](${fresh})\n\n![b](${redrawn} "title")\n\n<img src="${fresh}" />\n\n![c](/local.png)`
+		expect(undrawnImages(body)).toEqual([
+			{ id: 'ai-hero-images/ffffffffffffffffffffffffffffffff', url: fresh },
+		])
+	})
+
+	it('has nothing for a body without Cloudinary images', () => {
+		expect(undrawnImages('Just text, and ![a](/yes.png).')).toEqual([])
+	})
+
+	it('never marks a redrawn image as staying an image', () => {
+		for (const id of notDrawings) expect(redrawnIds).not.toContain(id)
 	})
 })
 

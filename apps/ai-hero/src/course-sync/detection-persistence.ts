@@ -24,17 +24,17 @@ import type {
 } from './detection-poller'
 import { CourseSyncError } from './errors'
 import { courseSyncApplyPolicyOverride } from './poll-policy'
-import {
-	summarizeCourseSyncPlanChanges,
-	type CourseSyncPlanChange,
-} from './persistence-invariants'
 import { canAutomaticallySaveCourseSyncPollState } from './poll-state-guard'
 import {
 	releasedCourseSyncPollState,
 	type CourseSyncPollReleaseInput,
 } from './release'
 import { assertCourseSyncTargetContract } from './target-contract'
-import { anchorResourceId, getServerCourseSyncBinding } from './types'
+import {
+	anchorResourceId,
+	getServerCourseSyncBinding,
+	type SyncPlan,
+} from './types'
 
 export function courseSyncRevisionHeadWhere(bindingId: string) {
 	// Failed runs (including discarded verification artifacts) never advanced
@@ -605,17 +605,17 @@ export async function appendCourseSyncPollLog(input: CourseSyncPollLogInput) {
 }
 
 /**
- * The full stored plan carries resource titles and every source kind; the
- * public run summary deliberately does not. Read it here so the written
+ * The full stored plan carries resource titles, bodies and every source kind;
+ * the public run summary deliberately does not. Read it here so the written
  * notice can name what changed without widening the API contract.
  */
-export async function getCourseSyncPlanChanges(
+export async function getCourseSyncPlan(
 	runId: string,
-): Promise<CourseSyncPlanChange[]> {
+): Promise<SyncPlan | null> {
 	const [row] = await db
 		.select({ plan: courseSyncRun.plan })
 		.from(courseSyncRun)
 		.where(eq(courseSyncRun.runId, runId))
 		.limit(1)
-	return row?.plan ? summarizeCourseSyncPlanChanges(row.plan) : []
+	return row?.plan ?? null
 }
