@@ -6,6 +6,7 @@ import { boardRedraws } from './boards'
 import { chartRedraws } from './charts'
 import { flowRedraws } from './flows'
 import { graphRedraws } from './graphs'
+import { notDrawings } from './not-drawings'
 import { slideRedraws } from './slides'
 import type { Redraws } from './redraws'
 
@@ -68,6 +69,23 @@ export function redrawForImage(
 			</a>
 		</>
 	)
+}
+
+/**
+ * The Cloudinary images in a lesson body that still show as themselves: no
+ * redraw yet, and not marked as something that stays an image. Each id once,
+ * in body order.
+ */
+export function undrawnImages(body: string): { id: string; url: string }[] {
+	const images = new Map<string, string>()
+	for (const [url] of body.matchAll(
+		/https?:\/\/res\.cloudinary\.com\/[^\s)"'<>]+/g,
+	)) {
+		const id = publicIdOf(url)
+		if (!id || Object.hasOwn(REDRAWS, id) || notDrawings.has(id)) continue
+		if (!images.has(id)) images.set(id, url)
+	}
+	return [...images].map(([id, url]) => ({ id, url }))
 }
 
 /** Every redrawn id. */
