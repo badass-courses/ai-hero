@@ -290,8 +290,12 @@ describe('course sync applied notice', () => {
 		await deliver()
 
 		const payload = mocks.sendNotification.mock.calls[0]?.[0] as unknown as {
-			attachments: { fields: { title: string; value: string }[] }[]
+			attachments: {
+				fields: { title: string; value: string }[]
+				mrkdwn_in?: string[]
+			}[]
 		}
+		expect(payload.attachments[0]?.mrkdwn_in).toEqual(['fields'])
 		expect(payload.attachments[0]?.fields).toContainEqual(
 			expect.objectContaining({
 				title: 'Not redrawn yet (1)',

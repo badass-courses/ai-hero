@@ -161,6 +161,7 @@ export type CourseSyncSlackNotificationPayload = {
 		title: string
 		text: string
 		fields: Array<{ title: string; value: string; short: boolean }>
+		mrkdwn_in?: Array<'fields'>
 	}>
 }
 
@@ -490,6 +491,9 @@ export function buildCourseSyncNotificationPayload(
 					color: '#2eb67d',
 					title: 'AI Hero course sync applied',
 					text: `<${notification.editor.url}|${notification.editor.label}>`,
+					// The redraw asks link each image; Slack formats field values
+					// only when asked to.
+					mrkdwn_in: ['fields'],
 					fields: [
 						{
 							title: 'Course version',
