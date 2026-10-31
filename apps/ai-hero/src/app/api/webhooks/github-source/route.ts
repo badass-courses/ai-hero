@@ -6,6 +6,7 @@ import { GITHUB_SOURCE_SYNC_REQUESTED_EVENT } from '@/inngest/events/github-sour
 import { inngest } from '@/inngest/inngest.server'
 import {
 	SANDCASTLE_DOCS_CACHE_TAG,
+	SANDCASTLE_GUIDE_DIR,
 	SANDCASTLE_REPOSITORY,
 } from '@/lib/sandcastle-docs'
 
@@ -17,9 +18,9 @@ import {
  * missed. The shared webhook secret is the gate — only a correctly-signed push
  * to the default branch is processed.
  *
- * The Sandcastle docs ride the same hook. They are read from the repo's README
- * at render time rather than synced into a post, so a push that touches it
- * only has to drop the cached copy.
+ * The Sandcastle docs ride the same hook. They are read from the repo's
+ * `docs/guide` pages and README at render time rather than synced into a post,
+ * so a push that touches them only has to drop the cached copy.
  */
 
 const SOURCE_REF = 'refs/heads/main'
@@ -112,7 +113,10 @@ export async function POST(request: NextRequest) {
 
 	if (
 		payload.repository?.full_name === SANDCASTLE_REPOSITORY &&
-		changedPaths.includes('README.md')
+		changedPaths.some(
+			(path) =>
+				path === 'README.md' || path.startsWith(`${SANDCASTLE_GUIDE_DIR}/`),
+		)
 	) {
 		revalidateTag(SANDCASTLE_DOCS_CACHE_TAG, 'max')
 	}
