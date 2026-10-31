@@ -56,6 +56,22 @@ describe('undrawnImagesInPlan', () => {
 		])
 	})
 
+	it('skips lessons the source removed', () => {
+		expect(
+			undrawnImagesInPlan(
+				plan([
+					{
+						...item('update', {
+							title: 'Removed',
+							body: `![a](${image('aaaa')})`,
+						}),
+						detached: true,
+					},
+				]),
+			),
+		).toEqual([])
+	})
+
 	it('skips retained lessons and resources without a body', () => {
 		expect(
 			undrawnImagesInPlan(
