@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
 	insertValues: vi.fn(),
 	deleteWhere: vi.fn(),
 	getUser: vi.fn(),
+	codeGrant: vi.fn(),
 }))
 
 vi.mock('@/db', () => ({
@@ -23,6 +24,9 @@ vi.mock('@/db/schema', () => ({
 	deviceVerifications: { deviceCode: Symbol('deviceCode') },
 }))
 vi.mock('@/app/oauth/userinfo/get-user', () => ({ getUser: mocks.getUser }))
+vi.mock('@/lib/learner-agent/oauth/grant', () => ({
+	exchangeAuthorizationCode: mocks.codeGrant,
+}))
 
 import { POST } from './route'
 
@@ -112,5 +116,26 @@ describe('device-code exchange', () => {
 		expect(await response.json()).toMatchObject({
 			error: 'authorization_pending',
 		})
+	})
+
+	it('keeps the device flow for an explicit device_code grant_type', async () => {
+		const response = await exchange({
+			grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+			device_code: 'code-1',
+		})
+		expect(response.status).toBe(200)
+		expect(mocks.codeGrant).not.toHaveBeenCalled()
+		expect(mocks.insertValues.mock.calls[0]?.[0]).toEqual({
+			userId: 'u1',
+			token: expect.any(String),
+		})
+	})
+
+	it('sends only grant_type=authorization_code to the code grant', async () => {
+		mocks.codeGrant.mockResolvedValue(new Response('{}', { status: 200 }))
+		await exchange({ grant_type: 'authorization_code', code: 'c' })
+		expect(mocks.codeGrant).toHaveBeenCalledTimes(1)
+		expect(mocks.verification).not.toHaveBeenCalled()
+		expect(mocks.insertValues).not.toHaveBeenCalled()
 	})
 })

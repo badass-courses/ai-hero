@@ -6,6 +6,8 @@ import {
 	LEARNER_READ_SCOPE,
 	LEARNER_TOKEN_TTL_MS,
 } from '@/lib/learner-agent/identity'
+import { exchangeAuthorizationCode } from '@/lib/learner-agent/oauth/grant'
+import { corsPreflight } from '@/lib/learner-agent/oauth/metadata'
 import { eq } from 'drizzle-orm'
 
 /**
@@ -16,6 +18,16 @@ const NARROWING_SCOPES = new Set([LEARNER_READ_SCOPE])
 
 export async function POST(request: Request) {
 	const formData = await request.formData()
+	// The learner MCP's authorization code grant. Every other request,
+	// including one with no grant_type, is the device flow below, unchanged.
+	if (formData.get('grant_type') === 'authorization_code')
+		return exchangeAuthorizationCode(formData, request)
+	return deviceCodeGrant(formData)
+}
+
+export const OPTIONS = corsPreflight
+
+async function deviceCodeGrant(formData: FormData) {
 	const device_code = formData.get('device_code')
 	const requestedScope = formData.get('scope')
 	// A scope is a set: dedupe and sort, so the stored string is canonical and

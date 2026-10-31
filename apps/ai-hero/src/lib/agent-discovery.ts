@@ -32,6 +32,9 @@ const DISCOVERY_SURFACES = {
 	learnerGuide: '/api/learner',
 } as const
 
+/** RFC 9728 metadata for `/mcp`: where an OAuth client learns how to sign in. */
+const LEARNER_OAUTH_METADATA_PATH = '/.well-known/oauth-protected-resource/mcp'
+
 interface DiscoverySurfaceHint {
 	path: string
 	description: string
@@ -587,6 +590,30 @@ export function buildApiCatalogDocument(baseUrl = getDiscoveryBaseUrl()) {
 					},
 				],
 			},
+			{
+				anchor: toAbsoluteDiscoveryPath(
+					normalizedBaseUrl,
+					DISCOVERY_SURFACES.mcp,
+				),
+				'service-doc': [
+					{
+						href: toAbsoluteDiscoveryPath(
+							normalizedBaseUrl,
+							DISCOVERY_SURFACES.learnerGuide,
+						),
+						type: 'text/markdown',
+					},
+				],
+				'service-meta': [
+					{
+						href: toAbsoluteDiscoveryPath(
+							normalizedBaseUrl,
+							LEARNER_OAUTH_METADATA_PATH,
+						),
+						type: 'application/json',
+					},
+				],
+			},
 		],
 	}
 }
@@ -612,8 +639,12 @@ export function buildApiDiscoveryDocument(baseUrl = getDiscoveryBaseUrl()) {
 		},
 		agentTokens: buildAgentTokenDiscovery(normalizedBaseUrl),
 		learnerAgent: {
-			note: 'For an enrolled learner’s own agent. Sign in as the learner (device flow with scope=learner:read, or a learner token from /api/learner/token); reads only what that learner can read in the browser.',
+			note: 'For an enrolled learner’s own agent. MCP clients with OAuth sign in as the learner on their own (scope learner:read). Other agents and scripts use the device flow with scope=learner:read, or a learner token from /api/learner/token. Reads only what that learner can read in the browser.',
 			mcp: toAbsoluteDiscoveryPath(normalizedBaseUrl, DISCOVERY_SURFACES.mcp),
+			oauthProtectedResource: toAbsoluteDiscoveryPath(
+				normalizedBaseUrl,
+				LEARNER_OAUTH_METADATA_PATH,
+			),
 			guide: toAbsoluteDiscoveryPath(
 				normalizedBaseUrl,
 				DISCOVERY_SURFACES.learnerGuide,
@@ -685,7 +716,7 @@ Learners with an agent:
 		.map((tool) => tool.name)
 		.join(', ')}; prompt: start_lesson.
 - Guide, sign-in and study companion rules: ${normalizedBaseUrl}${DISCOVERY_SURFACES.learnerGuide}
-- Sign in as the learner: device flow (POST ${normalizedBaseUrl}/oauth/device/code, then POST ${normalizedBaseUrl}/oauth/token with scope=learner:read). Reads only what the learner can read in the browser.
+- Sign in as the learner: an MCP client with OAuth signs in on its own (protected resource metadata: ${normalizedBaseUrl}${LEARNER_OAUTH_METADATA_PATH}). Other agents and scripts: device flow (POST ${normalizedBaseUrl}/oauth/device/code, then POST ${normalizedBaseUrl}/oauth/token with scope=learner:read). Reads only what the learner can read in the browser.
 
 Agent tokens:
 - Full guide: ${normalizedBaseUrl}/api

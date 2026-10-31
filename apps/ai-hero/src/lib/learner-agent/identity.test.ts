@@ -16,7 +16,12 @@ vi.mock('@/server/logger', () => ({
 	log: { info: mocks.info, warn: mocks.warn },
 }))
 
-import { learnerFromToken, learnerTokenId, resolveLearner } from './identity'
+import {
+	learnerFromToken,
+	learnerTokenId,
+	resolveBearer,
+	resolveLearner,
+} from './identity'
 
 const now = Date.parse('2026-10-29T00:00:00.000Z')
 const active = {
@@ -121,5 +126,49 @@ describe('resolveLearner', () => {
 		const id = learnerTokenId('secret-token')
 		expect(id).toMatch(/^[0-9a-f]{16}$/)
 		expect(id).not.toContain('secret')
+	})
+})
+
+describe('resolveBearer', () => {
+	it('tells no token apart from a bad one, so /mcp can answer 401', async () => {
+		expect(await resolveBearer(request())).toEqual({ kind: 'anonymous' })
+		expect(await resolveBearer(request('Basic abc'))).toEqual({
+			kind: 'anonymous',
+		})
+
+		mocks.findFirst.mockResolvedValue(undefined)
+		expect(await resolveBearer(request('Bearer unknown'))).toEqual({
+			kind: 'invalid',
+		})
+		expect(await resolveBearer(request('Bearer aih_pat_abc_def'))).toEqual({
+			kind: 'invalid',
+		})
+
+		for (const row of [
+			{ scope: 'learner:read', ...active, revokedAt: new Date() },
+			{ scope: 'learner:read', ...active, expiresAt: new Date(Date.now() - 1) },
+			{
+				scope: 'analytics:read',
+				...active,
+				expiresAt: new Date(Date.now() + 60_000),
+			},
+		]) {
+			mocks.findFirst.mockResolvedValue({ userId: 'u1', ...row })
+			expect(await resolveBearer(request('Bearer t'))).toEqual({
+				kind: 'invalid',
+			})
+		}
+
+		mocks.findFirst.mockResolvedValue({
+			userId: 'u1',
+			scope: 'learner:read',
+			createdAt: new Date(),
+			expiresAt: new Date(Date.now() + 60_000),
+			revokedAt: null,
+		})
+		expect(await resolveBearer(request('Bearer t'))).toEqual({
+			kind: 'learner',
+			learner: { userId: 'u1', tokenKind: 'learner-token' },
+		})
 	})
 })

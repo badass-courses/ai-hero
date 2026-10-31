@@ -7,6 +7,7 @@ import {
 	LEARNER_TOKEN_TTL_MS,
 	learnerTokenId,
 } from '@/lib/learner-agent/identity'
+import { clientNamesFor } from '@/lib/learner-agent/oauth/client-name'
 import { learnerSiteUrls } from '@/lib/learner-agent/site'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
@@ -76,7 +77,10 @@ export async function POST() {
 	})
 }
 
-/** Lists the signed-in learner's agent tokens, without the tokens. */
+/**
+ * Lists the signed-in learner's agent tokens, without the tokens. OAuth
+ * sign-ins and the token button mint the same rows, so this is the one list.
+ */
 export async function GET() {
 	const userId = await signedInUserId()
 	if (!userId) return unauthorized()
@@ -95,10 +99,17 @@ export async function GET() {
 		},
 	})
 
+	// The app that signed in through OAuth, once the clientName column exists.
+	const clientNames = await clientNamesFor(
+		userId,
+		rows.map((row) => row.token),
+	)
+
 	return respond({
 		ok: true,
 		tokens: rows.map((row) => ({
 			id: learnerTokenId(row.token),
+			clientName: clientNames.get(row.token) ?? null,
 			scope: row.scope,
 			createdAt: row.createdAt?.toISOString() ?? null,
 			expiresAt: row.expiresAt?.toISOString() ?? null,
