@@ -15,6 +15,14 @@ No newsletter reporting job or Slack reporting message consumes kit-data in the 
 
 The public count is explicitly outside this change. It is on launch sales surfaces, no measured static historical count is approved, and changing the number or label needs separate approval. `SubscriberCount` and `getTotalSubscribers` remain unchanged and **uncovered**. Therefore this PR does not claim a Kit outage breaks no public page. Missing drovr capability: **read-only active-subscriber total per tenant**, with explicit scope and unavailable semantics. Once supplied, the swap is a one-component change behind a flag, subject to approval.
 
+### Public count (K31), dark
+
+drovr now serves `GET /audience-total`: `{ asOf, tenantId, total }` for the authenticated tenant, from a census whose `asOf` is the scan start and can be about 42 hours old. Refusals are RFC 9457 problems, `AudienceTotalForbidden` (403) and `AudienceTotalUnavailable` (503); missing evidence is never zero.
+
+`AIH_SUBSCRIBER_COUNT_OWNED_ENABLED=true` makes `SubscriberCount` read that total through `src/lib/subscriber-count-owned.ts`, with the same tenant credentials as reporting, a five-second timeout and the Kit read's 30-minute cache. Label, rounding and the `< 1000` plausibility floor are unchanged. A missing config, refusal, timeout, non-`org-aihero` tenant or unparseable body logs `subscriber_count.owned.unavailable` once and renders the existing fallback. Unset, `false` and every other value keep the Kit read and make no drovr call.
+
+The flag stays off until Joel rules on the public wording and rounding: the number moves from Kit's account-wide count, which includes Total TypeScript, to AI Hero's mailable census (about 123k).
+
 ## Contract evidence
 
 Read the unauthenticated `https://api.drovr.sh/`, `/llms.txt` and `/openapi.json` catalog documents. No production data or authenticated reads were made.
