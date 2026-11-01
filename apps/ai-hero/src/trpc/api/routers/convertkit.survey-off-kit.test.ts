@@ -147,6 +147,23 @@ describe('surveys off Kit, with Kit unreachable', () => {
 		vi.unstubAllEnvs()
 	})
 
+	it('master off overrides the survey flag and keeps owned answers and drovr facts, with zero Kit calls', async () => {
+		vi.stubEnv('AIH_SURVEY_OFF_KIT_ENABLED', 'false')
+		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'false')
+		const result = await caller().answerSurveyMultiple({
+			surveyId: 'ai-coding-readiness',
+			email: 'anon@example.test',
+			answers: { goal: 'ship-faster' },
+		})
+		expect(result).toMatchObject({ success: true, storedInDb: true })
+		expect(mocks.inserted).toHaveLength(1)
+		expect(mocks.scheduled).toEqual([
+			{ questionId: 'question-goal', email: 'anon@example.test' },
+		])
+		expect(mocks.kitCalls).toEqual([])
+		expect(mocks.kitFetches).toEqual([])
+	})
+
 	it('stores an anonymous emailed answer set locally and subscribes no one', async () => {
 		const result = await caller().answerSurveyMultiple({
 			surveyId: 'ai-coding-readiness',

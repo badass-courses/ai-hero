@@ -1,3 +1,5 @@
+import { kitMirrorWritesEnabled } from '../kit-mirror-writes'
+
 const VALID_PURCHASE_STATUSES = ['Valid', 'Restricted'] as const
 
 export const TEAM_KIT_OWNER_TAG_NAME = 'AIH Team Owner'
@@ -38,7 +40,7 @@ export type TeamKitProjectionContact = {
 
 export type TeamKitProjectionPreview = {
 	mode: 'team-kit-projection-preview'
-	status: 'dry-run' | 'written'
+	status: 'dry-run' | 'written' | 'mirror-disabled'
 	counts: {
 		ownerPurchases: number
 		memberPurchases: number
@@ -187,7 +189,9 @@ export async function previewTeamKitProjection(args: {
 
 	return {
 		mode: 'team-kit-projection-preview',
-		status: args.allowWrite ? 'written' : 'dry-run',
+		status: !kitMirrorWritesEnabled()
+			? 'mirror-disabled'
+			: args.allowWrite ? 'written' : 'dry-run',
 		counts: {
 			ownerPurchases: ownerPurchases.length,
 			memberPurchases: memberPurchases.length,
@@ -471,6 +475,18 @@ async function previewOrWriteKitProjection(args: {
 	lookupMaxAttempts?: number
 }): Promise<TeamKitProjectionKitReceipt[]> {
 	const receipts: TeamKitProjectionKitReceipt[] = []
+	if (!kitMirrorWritesEnabled()) {
+		return args.contacts.map((contact) => ({
+			email: contact.email,
+			subscriberFound: false,
+			fieldWriteAttempted: false,
+			fieldWritePerformed: false,
+			tagWriteAttempted: false,
+			tagWritePerformed: false,
+			tags: tagsForRole(contact.role),
+			reasons: ['kit-mirror-writes-disabled'],
+		}))
+	}
 	const lookupMaxAttempts = Math.max(1, args.lookupMaxAttempts ?? 1)
 	for (const [index, contact] of args.contacts.entries()) {
 		if (index > 0 && args.lookupDelayMs && args.lookupDelayMs > 0) {

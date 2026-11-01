@@ -11,11 +11,6 @@ const evidence = {
 	stops: [],
 	unknownReason: null,
 }
-const wrap = (structuredContent: unknown) => ({
-	jsonrpc: '2.0',
-	id: 'aih-list-state',
-	result: { structuredContent },
-})
 const config = (body: unknown, status = 200) => ({
 	baseUrl: 'https://drovr.example.test/',
 	apiKey: 'synthetic-key',
@@ -24,58 +19,88 @@ const config = (body: unknown, status = 200) => ({
 	) as unknown as typeof fetch,
 })
 
-describe('get_contact_list_state MCP client', () => {
+describe('contact-list-state REST client', () => {
 	afterEach(() => {
 		vi.useRealTimers()
 	})
-	it('uses the existing capability with the tenant bearer and exact identity', async () => {
-		const c = config(wrap(evidence))
+
+	it('uses GET, exactly one Kit alias query and the tenant bearer, without an MCP envelope', async () => {
+		const c = config(evidence)
 		expect(await readDrovrListState({ kitSubscriberId: '42' }, c)).toEqual(
 			evidence,
 		)
 		expect(c.fetch).toHaveBeenCalledWith(
-			'https://drovr.example.test/mcp',
-			expect.objectContaining({
-				method: 'POST',
+			'https://drovr.example.test/contact-list-state?kitSubscriberId=42',
+			{
+				method: 'GET',
 				cache: 'no-store',
-				headers: expect.objectContaining({
+				headers: {
 					authorization: 'Bearer synthetic-key',
-				}),
-				body: JSON.stringify({
-					jsonrpc: '2.0',
-					id: 'aih-list-state',
-					method: 'tools/call',
-					params: {
-						name: 'get_contact_list_state',
-						arguments: { kitSubscriberId: '42' },
-					},
-				}),
-			}),
+					accept: 'application/json',
+				},
+				signal: expect.any(AbortSignal),
+			},
 		)
 	})
+
+	it('pins the desk-recorded synthetic 200 response and exact contact request shape', async () => {
+		// Synthetic, no-customer-data response from the desk probe. A fake that
+		// asserts the wire request would reject the former POST /mcp bug.
+		const recorded = {
+			contactId: 'desk-probe-nonexistent',
+			forms: [],
+			kitSubscriberId: null,
+			scope: 'all',
+			state: 'unknown',
+			stops: [],
+			tenantId: 'org-aihero',
+			unknownReason: 'no-consent-evidence',
+		}
+		const fetcher = vi.fn(
+			async (input: RequestInfo | URL, init?: RequestInit) => {
+				const url = new URL(String(input))
+				expect(url.pathname).toBe('/contact-list-state')
+				expect([...url.searchParams.entries()]).toEqual([
+					['contactId', 'desk-probe-nonexistent'],
+				])
+				expect(init?.method).toBe('GET')
+				expect(init?.body).toBeUndefined()
+				expect(init?.headers).toEqual({
+					authorization: 'Bearer synthetic-key',
+					accept: 'application/json',
+				})
+				return Response.json(recorded)
+			},
+		)
+		expect(
+			await readDrovrListState(
+				{ contactId: recorded.contactId },
+				{
+					baseUrl: 'https://drovr.example.test',
+					apiKey: 'synthetic-key',
+					fetch: fetcher,
+				},
+			),
+		).toEqual(recorded)
+		expect(fetcher).toHaveBeenCalledTimes(1)
+	})
+
 	it.each([
-		['wrong contact', wrap({ ...evidence, contactId: 'other' }), 200],
-		['wrong tenant', wrap({ ...evidence, tenantId: 'other' }), 200],
-		['missing positive state', wrap({ ...evidence, state: undefined }), 200],
+		['wrong contact', { ...evidence, contactId: 'other' }, 200],
+		['wrong tenant', { ...evidence, tenantId: 'other' }, 200],
+		['missing positive state', { ...evidence, state: undefined }, 200],
 		[
-			'RPC error',
+			'old MCP envelope',
 			{
 				jsonrpc: '2.0',
 				id: 'aih-list-state',
-				error: { code: -1, message: 'refused' },
+				result: { structuredContent: evidence },
 			},
 			200,
 		],
-		[
-			'tool refusal',
-			{
-				...wrap(evidence),
-				result: { structuredContent: evidence, isError: true },
-			},
-			200,
-		],
-		['forbidden', wrap(evidence), 403],
-		['unavailable', wrap(evidence), 503],
+		['malformed request', { type: 'contact-list-state-malformed' }, 400],
+		['forbidden', { type: 'contact-list-state-alias-forbidden' }, 403],
+		['unavailable', { type: 'contact-list-state-unavailable' }, 503],
 	] as const)('%s answers unknown', async (_name, body, status) => {
 		expect(
 			await readDrovrListState(
@@ -84,19 +109,41 @@ describe('get_contact_list_state MCP client', () => {
 			),
 		).toBeNull()
 	})
+
 	it('a mismatched Kit alias answers unknown', async () => {
 		expect(
-			await readDrovrListState(
-				{ kitSubscriberId: '99' },
-				config(wrap(evidence)),
-			),
+			await readDrovrListState({ kitSubscriberId: '99' }, config(evidence)),
 		).toBeNull()
 	})
+
+	it('encodes a contact id as one query value', async () => {
+		const id = 'synthetic&kitSubscriberId=99'
+		const c = config({ ...evidence, contactId: id })
+		expect(await readDrovrListState({ contactId: id }, c)).not.toBeNull()
+		expect(c.fetch).toHaveBeenCalledWith(
+			`https://drovr.example.test/contact-list-state?contactId=${encodeURIComponent(id)}`,
+			expect.anything(),
+		)
+	})
+
+	it.each([
+		{},
+		{ contactId: '' },
+		{ contactId: 'contact-1', kitSubscriberId: '42' },
+	])('refuses invalid identity input before fetching: %j', async (identity) => {
+		const c = config(evidence)
+		expect(
+			await readDrovrListState(identity as { contactId: string }, c),
+		).toBeNull()
+		expect(c.fetch).not.toHaveBeenCalled()
+	})
+
 	it('no configuration answers unknown without a network call', async () => {
 		expect(
 			await readDrovrListState({ contactId: 'contact-1' }, undefined),
 		).toBeNull()
 	})
+
 	it('bounds the entire read even when fetch ignores abort', async () => {
 		vi.useFakeTimers()
 		const fetcher = vi.fn(

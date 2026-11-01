@@ -6,6 +6,7 @@ import {
 	users as usersTable,
 } from '@/db/schema'
 import { inngest } from '@/inngest/inngest.server'
+import { kitMirrorWritesEnabled } from '@/lib/kit-mirror-writes'
 import { log } from '@/server/logger'
 import { format } from 'date-fns'
 import { and, eq, inArray } from 'drizzle-orm'
@@ -24,6 +25,7 @@ export const syncPurchaseTags = inngest.createFunction(
 		event: SYNC_PURCHASE_TAGS_EVENT,
 	},
 	async ({ event, step }) => {
+		if (!kitMirrorWritesEnabled()) return { status: 'mirror-disabled' }
 		const validPurchases = await step.run('get purchases', async () => {
 			return db.query.purchases.findMany({
 				where: inArray(purchasesTable.status, ['Valid', 'Restricted']),

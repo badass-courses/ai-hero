@@ -5,6 +5,7 @@ import { cookies, headers } from 'next/headers'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { env } from '@/env.mjs'
 import { setSubscriberCookie } from '@/lib/convertkit'
+import { kitMirrorWritesEnabled } from '@/lib/kit-mirror-writes'
 import {
 	conversionIntentContract,
 	type ConversionSurface,
@@ -266,7 +267,7 @@ async function captureAndStashCourseEntryEvidence(input: unknown) {
 		deadlineTimeZoneCaptureEnabled(process.env) && deadlineTimeZoneResult.ok
 			? deadlineTimeZoneResult.value
 			: undefined
-	if (deadlineTimeZone) {
+	if (deadlineTimeZone && kitMirrorWritesEnabled()) {
 		try {
 			const { setKitSubscriberFields } =
 				await import('@/coursebuilder/email-list-provider')

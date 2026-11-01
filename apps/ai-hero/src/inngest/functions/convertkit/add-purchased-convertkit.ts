@@ -12,6 +12,7 @@ import {
 	formatKitPurchaseDate,
 	isAiCodingCrashCoursePurchase,
 } from '@/lib/crash-course-purchaser-tag'
+import { kitMirrorWritesEnabled } from '@/lib/kit-mirror-writes'
 import { log } from '@/server/logger'
 import { eq } from 'drizzle-orm'
 
@@ -63,9 +64,10 @@ export const addPurchasesConvertkit = inngest.createFunction(
 					email: user.email,
 					tagsSynced: false,
 				})
-				const convertkitUser = await emailListProvider.getSubscriberByEmail(
-					user.email,
-				)
+				// Keep the DB lookup and TT projection even when the AI Hero mirror is off.
+				const convertkitUser = kitMirrorWritesEnabled()
+					? await emailListProvider.getSubscriberByEmail(user.email)
+					: null
 
 				const productSlug = purchase.product.fields?.slug
 				const dynamicPurchasedOnFieldName = productSlug

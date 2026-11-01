@@ -9,6 +9,7 @@ import {
 	questionResponse,
 } from '@/db/schema'
 import { normalizeKitSubscriberId } from '@/lib/content-progress'
+import { kitMirrorWritesEnabled } from '@/lib/kit-mirror-writes'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
 import { readKitSubscriberIdentity } from '@/lib/kit-subscriber-directory'
 import { persistSurveyAnswers } from '@/lib/survey-answer-persistence'
@@ -205,7 +206,10 @@ async function resolveCheckoutSurveyAnswerer(
  * putting answerers on the list: only the signup path's double opt-in does.
  */
 export function surveyOffKitEnabled() {
-	return process.env.AIH_SURVEY_OFF_KIT_ENABLED === 'true'
+	return (
+		!kitMirrorWritesEnabled() ||
+		process.env.AIH_SURVEY_OFF_KIT_ENABLED === 'true'
+	)
 }
 
 /**

@@ -69,25 +69,16 @@ function reply(
 	state: string,
 	stops: { reason: string; scope: string; createdAt: string }[] = [],
 ) {
-	return new Response(
-		JSON.stringify({
-			jsonrpc: '2.0',
-			id: 'aih-list-state',
-			result: {
-				structuredContent: {
-					contactId: 'contact-1',
-					kitSubscriberId: '42',
-					tenantId: 'org-aihero',
-					scope: 'all',
-					state,
-					forms: [],
-					stops,
-					unknownReason: state === 'unknown' ? 'no-consent-evidence' : null,
-				},
-			},
-		}),
-		{ headers: { 'content-type': 'application/json' } },
-	)
+	return Response.json({
+		contactId: 'contact-1',
+		kitSubscriberId: '42',
+		tenantId: 'org-aihero',
+		scope: 'all',
+		state,
+		forms: [],
+		stops,
+		unknownReason: state === 'unknown' ? 'no-consent-evidence' : null,
+	})
 }
 const route = () =>
 	routeReturningUnsubscriberWithKit({
@@ -157,14 +148,15 @@ describe('gated asks off Kit (Kit unreachable)', () => {
 					})
 				).status,
 			).toBe(optIn)
-			const [, options] = m.fetch.mock.calls[0]!
-			expect(JSON.parse(options.body)).toMatchObject({
-				method: 'tools/call',
-				params: {
-					name: 'get_contact_list_state',
-					arguments: { contactId: 'contact-1' },
-				},
+			const [url, options] = m.fetch.mock.calls[0]!
+			expect(url).toBe(
+				'https://drovr.example.test/contact-list-state?contactId=contact-1',
+			)
+			expect(options).toMatchObject({
+				method: 'GET',
+				headers: { authorization: 'Bearer synthetic-key' },
 			})
+			expect(options.body).toBeUndefined()
 		},
 	)
 
@@ -280,7 +272,7 @@ describe('gated asks off Kit (Kit unreachable)', () => {
 	it('a contact without a Kit alias can still be confirmed in drovr', async () => {
 		m.fetch.mockImplementation(async () => {
 			const body = await reply('confirmed').json()
-			body.result.structuredContent.kitSubscriberId = null
+			body.kitSubscriberId = null
 			return Response.json(body)
 		})
 		expect((await getSubscriberForGating())?.state).toBe('active')
