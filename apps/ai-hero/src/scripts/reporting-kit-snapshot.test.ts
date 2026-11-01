@@ -199,6 +199,28 @@ describe('scope selection', () => {
 		)
 	})
 
+	it('never selects a scope twice, which would make it unreadable', () => {
+		const explicit = parseSnapshotArgs([
+			'--out',
+			'/x.json',
+			'--scopes',
+			'standard:all,standard:all,strict:7d@p,strict:7d@p',
+		])
+		expect(selectScopes(explicit, now)).toEqual([
+			{ mode: 'standard', range: 'all' },
+			{ mode: 'strict', range: '7d', productId: 'p' },
+		])
+		const repeated = parseSnapshotArgs([
+			'--out',
+			'/x.json',
+			'--product',
+			'p',
+			'--product',
+			'p',
+		])
+		expect(selectScopes(repeated, now)).toEqual(fullScopes(['p']))
+	})
+
 	it.each([
 		[[], '--out <path> is required'],
 		[['--out', '/x', '--scopes', 'standard:1y'], 'Unknown scope'],
@@ -294,17 +316,18 @@ describe('Kit read memoization', () => {
 
 	it('reads each Kit URL once and serves every caller the same body', async () => {
 		const network = vi.fn(async () => new Response('{"broadcasts":[1]}'))
-		const fetcher = memoizeKitReads(network)
+		const { fetch: fetcher, failedReads } = memoizeKitReads(network)
 		const [a, b] = await Promise.all([fetcher(kitUrl), fetcher(kitUrl)])
 		const c = await fetcher(kitUrl, { headers: { 'X-Kit-Api-Key': 'k' } })
 		for (const response of [a, b, c])
 			expect(await response.json()).toEqual({ broadcasts: [1] })
 		expect(network).toHaveBeenCalledTimes(1)
+		expect(failedReads()).toBe(0)
 	})
 
 	it('passes non-Kit and non-GET requests straight through', async () => {
 		const network = vi.fn(async () => new Response('{}'))
-		const fetcher = memoizeKitReads(network)
+		const { fetch: fetcher } = memoizeKitReads(network)
 		await fetcher('https://drovr.example.test/receipts')
 		await fetcher('https://drovr.example.test/receipts')
 		await fetcher(kitUrl, { method: 'POST' })
@@ -312,14 +335,17 @@ describe('Kit read memoization', () => {
 		expect(network).toHaveBeenCalledTimes(4)
 	})
 
-	it('keeps error statuses visible and retries a thrown read', async () => {
+	it('counts every failed Kit read, so a swallowed click failure still blocks the write', async () => {
 		const network = vi
 			.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
 			.mockRejectedValueOnce(new Error('socket hang up'))
 			.mockResolvedValue(new Response('{}', { status: 429 }))
-		const fetcher = memoizeKitReads(network)
+		const { fetch: fetcher, failedReads } = memoizeKitReads(network)
 		await expect(fetcher(kitUrl)).rejects.toThrow('socket hang up')
+		expect(failedReads()).toBe(1)
+		expect((await fetcher(kitUrl)).status).toBe(429)
 		expect((await fetcher(kitUrl)).status).toBe(429)
 		expect(network).toHaveBeenCalledTimes(2)
+		expect(failedReads()).toBe(2)
 	})
 })

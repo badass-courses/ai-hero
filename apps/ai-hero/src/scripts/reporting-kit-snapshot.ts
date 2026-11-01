@@ -119,11 +119,17 @@ export function parseSnapshotArgs(argv: string[]): SnapshotArgs {
 	return args
 }
 
+/** Deduplicated: the report refuses a query that matches two snapshots. */
 export function selectScopes(args: SnapshotArgs, now: number): Scope[] {
-	if (Array.isArray(args.scopes)) return args.scopes
-	return args.scopes === 'fallback'
-		? fallbackScopes(now, args.productIds)
-		: fullScopes(args.productIds)
+	const scopes = Array.isArray(args.scopes)
+		? args.scopes
+		: args.scopes === 'fallback'
+			? fallbackScopes(now, args.productIds)
+			: fullScopes(args.productIds)
+	return scopes.filter(
+		(scope, index) =>
+			scopes.findIndex((candidate) => sameScope(candidate, scope)) === index,
+	)
 }
 
 const sameScope = (a: Scope, b: Scope) =>
@@ -223,22 +229,32 @@ export function describeSnapshots(snapshots: HistoricalReport[]): string[] {
  * Every scope asks Kit for the same broadcasts, stats and clicks. Reading
  * each Kit URL once keeps the run under Kit's rate limit and gives every
  * snapshot the same Kit state.
+ *
+ * The readers swallow a failed click read into a broadcast with no links, so
+ * every failed Kit read is counted here and the run refuses to write.
  */
-export function memoizeKitReads(fetcher: typeof fetch): typeof fetch {
+export function memoizeKitReads(fetcher: typeof fetch): {
+	fetch: typeof fetch
+	failedReads: () => number
+} {
 	const cache = new Map<string, Promise<{ status: number; body: string }>>()
-	return async (input, init) => {
+	let failed = 0
+	const memoized: typeof fetch = async (input, init) => {
 		const url = input instanceof Request ? input.url : String(input)
 		const method = init?.method ?? (input instanceof Request ? input.method : 'GET')
 		if (!url.startsWith('https://api.kit.com/') || method !== 'GET')
 			return fetcher(input, init)
 		let read = cache.get(url)
 		if (!read) {
-			read = fetcher(input, init).then(async (response) => ({
-				status: response.status,
-				body: await response.text(),
-			}))
+			read = fetcher(input, init).then(async (response) => {
+				if (!response.ok) failed++
+				return { status: response.status, body: await response.text() }
+			})
 			cache.set(url, read)
-			read.catch(() => cache.delete(url))
+			read.catch(() => {
+				failed++
+				cache.delete(url)
+			})
 		}
 		const { status, body } = await read
 		return new Response(body, {
@@ -246,6 +262,7 @@ export function memoizeKitReads(fetcher: typeof fetch): typeof fetch {
 			headers: { 'content-type': 'application/json' },
 		})
 	}
+	return { fetch: memoized, failedReads: () => failed }
 }
 
 async function main() {
@@ -254,7 +271,8 @@ async function main() {
 	const scopes = selectScopes(args, now)
 	// The readers return the drovr report while this is on; capture Kit's.
 	process.env.AIH_REPORTING_OFF_KIT_ENABLED = 'false'
-	globalThis.fetch = memoizeKitReads(globalThis.fetch)
+	const kit = memoizeKitReads(globalThis.fetch)
+	globalThis.fetch = kit.fetch
 	const [newsletter, { closeDatabasePool }] = await Promise.all([
 		import('@/lib/analytics/providers/newsletter'),
 		import('@/db/client'),
@@ -274,6 +292,13 @@ async function main() {
 							productId: scope.productId,
 						}),
 		})
+		if (kit.failedReads() > 0) {
+			console.error(
+				`${kit.failedReads()} Kit reads failed; the readers would archive them as zero clicks. Nothing written. Retry later.`,
+			)
+			process.exitCode = 1
+			return
+		}
 		const shaped = args.trimLinks ? trimLinks(captured) : captured
 		for (const line of describeSnapshots(shaped)) console.log(line)
 		const fit = fitBudget(
