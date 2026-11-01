@@ -337,6 +337,64 @@ describe('drovr report evidence and unavailable states', () => {
 		expect((await pending).receiptSample.status).toBe('unavailable')
 		expect(vi.getTimerCount()).toBe(0)
 	})
+	it('reads statuses and receipts with only the ingest URL configured', async () => {
+		const fetcher = fakeDrovr()
+		const report = await getOwnedNewsletterReport({
+			env: {
+				...env,
+				DROVR_API_BASE_URL: undefined,
+				DROVR_SHADOW_INGEST_URL: 'https://drovr.example.test/events',
+			},
+			range: 'all',
+			mode: 'standard',
+			now,
+			fetcher,
+		})
+		expect(report.broadcasts).toMatchObject({
+			rows: [{ result: { status: 'available' } }],
+		})
+		expect(report.receiptSample.status).toBe('available')
+		expect(fetcher).toHaveBeenCalledTimes(2)
+	})
+	it('prefers an explicit base URL and trims configuration through the shared parser', async () => {
+		const fetcher = fakeDrovr()
+		const report = await getOwnedNewsletterReport({
+			env: {
+				...env,
+				DROVR_API_BASE_URL: ' https://drovr.example.test/// ',
+				DROVR_API_KEY_ORG_AIHERO: ' synthetic-key ',
+				DROVR_SHADOW_INGEST_URL: 'https://unused.example.test/events',
+			},
+			range: 'all',
+			mode: 'standard',
+			now,
+			fetcher,
+		})
+		expect(report.receiptSample.status).toBe('available')
+		expect(fetcher).toHaveBeenCalledTimes(2)
+	})
+	it.each([undefined, 'not-a-url'])(
+		'absent or invalid fallback %j stays unavailable without a network call',
+		async (ingest) => {
+			const fetcher = vi.fn()
+			const report = await getOwnedNewsletterReport({
+				env: {
+					...env,
+					DROVR_API_BASE_URL: undefined,
+					DROVR_SHADOW_INGEST_URL: ingest,
+				},
+				range: 'all',
+				mode: 'standard',
+				now,
+				fetcher,
+			})
+			expect(report.broadcasts).toMatchObject({
+				rows: [{ result: { status: 'unavailable' } }],
+			})
+			expect(report.receiptSample.status).toBe('unavailable')
+			expect(fetcher).not.toHaveBeenCalled()
+		},
+	)
 	it('missing credentials make no network call', async () => {
 		const fetcher = vi.fn()
 		const report = await getOwnedNewsletterReport({
