@@ -223,7 +223,7 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 							`Dropbox sync is not configured: ${[
 								...missingConfig,
 								...(!refreshToken
-									? ['DROPBOX_REFRESH_TOKEN']
+									? ['Dropbox not connected (no DB token row)']
 									: []),
 							].join(', ')}`,
 							503,

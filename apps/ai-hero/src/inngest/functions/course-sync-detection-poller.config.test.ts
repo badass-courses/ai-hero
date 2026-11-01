@@ -40,26 +40,25 @@ import {
 } from './course-sync-detection-poller'
 
 describe('course-sync detection poller registration', () => {
-	it.each([false, true])('reads the unchanged env token without a key, and prefers DB when enabled (%s)', async (enabled) => {
+	it('reads only the DB token', async () => {
 		const key = Buffer.alloc(32, 7)
-		tokenMocks.env.INTEGRATION_TOKEN_KEY = enabled ? key.toString('base64') : undefined
+		tokenMocks.env.INTEGRATION_TOKEN_KEY = key.toString('base64')
 		tokenMocks.limit.mockResolvedValue([encryptIntegrationToken('dropbox', 'db-dropbox', key)])
 		tokenMocks.readManifest.mockResolvedValue({ manifest: 'synthetic' })
 		const [, , handler] = createFunction.mock.calls[0]!
 		await handler({ event: { data: {} }, step: { run: async (_id: string, fn: () => unknown) => fn() }, runId: 'token-test' })
 		const dependencies = createPoller.mock.calls.at(-1)![0] as any
 		await dependencies.readManifest()
-		expect(tokenMocks.readManifest).toHaveBeenLastCalledWith(expect.objectContaining({ refreshToken: enabled ? 'db-dropbox' : 'env-dropbox' }))
+		expect(tokenMocks.readManifest).toHaveBeenLastCalledWith(expect.objectContaining({ refreshToken: 'db-dropbox' }))
 		tokenMocks.env.INTEGRATION_TOKEN_KEY = undefined
 	})
 
-	it('keeps the existing missing-token error with no key and no env', async () => {
+	it('reports Dropbox not connected with no DB token, ignoring env', async () => {
 		tokenMocks.env.INTEGRATION_TOKEN_KEY = undefined
-		tokenMocks.env.DROPBOX_REFRESH_TOKEN = undefined
 		const [, , handler] = createFunction.mock.calls[0]!
 		await handler({ event: { data: {} }, step: { run: async (_id: string, fn: () => unknown) => fn() }, runId: 'missing-token' })
 		const dependencies = createPoller.mock.calls.at(-1)![0] as any
-		await expect(dependencies.readManifest()).rejects.toMatchObject({ code: 'DROPBOX_SYNC_NOT_CONFIGURED', message: 'Dropbox sync is not configured: DROPBOX_REFRESH_TOKEN' })
+		await expect(dependencies.readManifest()).rejects.toMatchObject({ code: 'DROPBOX_SYNC_NOT_CONFIGURED', message: 'Dropbox sync is not configured: Dropbox not connected (no DB token row)' })
 		tokenMocks.env.DROPBOX_REFRESH_TOKEN = 'env-dropbox'
 	})
 	it('is event-only and serializes each binding independently', async () => {

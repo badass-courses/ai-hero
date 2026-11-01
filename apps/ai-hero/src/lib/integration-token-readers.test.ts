@@ -118,7 +118,7 @@ import {
 
 const key = Buffer.alloc(32, 7)
 
-describe('reader dormancy and DB preference (real store, mocked IO)', () => {
+describe('readers use only the DB token (real store, mocked IO)', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mocks.env.INTEGRATION_TOKEN_KEY = undefined
@@ -157,12 +157,10 @@ describe('reader dormancy and DB preference (real store, mocked IO)', () => {
 		vi.unstubAllGlobals()
 	})
 
-	it.each([false, true])(
-		'runtime, proxy and Dropbox verification/manifest use env without key, DB when enabled (%s)',
-		async (enabled) => {
-			mocks.env.INTEGRATION_TOKEN_KEY = enabled
-				? key.toString('base64')
-				: undefined
+	it(
+		'runtime, proxy and Dropbox verification/manifest use the DB token',
+		async () => {
+			mocks.env.INTEGRATION_TOKEN_KEY = key.toString('base64')
 			mocks.limit.mockResolvedValue([
 				encryptIntegrationToken('dropbox', 'db-dropbox', key),
 			])
@@ -172,7 +170,7 @@ describe('reader dormancy and DB preference (real store, mocked IO)', () => {
 			expect(mocks.mux).toHaveBeenCalledTimes(1) // Preserve one OAuth cache per binding.
 			expect(mocks.mux).toHaveBeenCalledWith(
 				expect.objectContaining({
-					refreshToken: enabled ? 'db-dropbox' : 'env-dropbox',
+					refreshToken: 'db-dropbox',
 				}),
 			)
 			expect(
@@ -184,7 +182,7 @@ describe('reader dormancy and DB preference (real store, mocked IO)', () => {
 			).toBe(200)
 			expect(mocks.asset).toHaveBeenCalledWith(
 				expect.objectContaining({
-					refreshToken: enabled ? 'db-dropbox' : 'env-dropbox',
+					refreshToken: 'db-dropbox',
 				}),
 			)
 			await dropboxGET(
@@ -194,7 +192,7 @@ describe('reader dormancy and DB preference (real store, mocked IO)', () => {
 			)
 			expect(mocks.verify).toHaveBeenCalledWith(
 				expect.objectContaining({
-					refreshToken: enabled ? 'db-dropbox' : 'raw-dropbox',
+					refreshToken: 'db-dropbox',
 				}),
 			)
 			await dropboxGET(
@@ -204,18 +202,19 @@ describe('reader dormancy and DB preference (real store, mocked IO)', () => {
 			)
 			expect(mocks.summary).toHaveBeenCalledWith(
 				expect.objectContaining({
-					refreshToken: enabled ? 'db-dropbox' : 'raw-dropbox',
+					refreshToken: 'db-dropbox',
 				}),
 			)
-			if (!enabled) expect(mocks.limit).not.toHaveBeenCalled()
 		},
 	)
-	it('preserves missing-token errors in the runtime, proxy and Dropbox manifest', async () => {
-		mocks.env.DROPBOX_REFRESH_TOKEN = undefined
-		delete process.env.DROPBOX_REFRESH_TOKEN
+	it('ignores env tokens and reports Dropbox not connected in the runtime, proxy and Dropbox manifest', async () => {
+		// env still holds env-dropbox / raw-dropbox; with no DB row it must be ignored.
+		mocks.env.INTEGRATION_TOKEN_KEY = key.toString('base64')
+		mocks.limit.mockResolvedValue([])
 		await expect(mocks.factory({}).resolve({})).rejects.toMatchObject({
 			code: 'DROPBOX_SYNC_NOT_CONFIGURED',
-			message: 'Dropbox sync is not configured: DROPBOX_REFRESH_TOKEN',
+			message:
+				'Dropbox sync is not configured: Dropbox not connected (no DB token row)',
 		})
 		expect(
 			(
@@ -231,15 +230,13 @@ describe('reader dormancy and DB preference (real store, mocked IO)', () => {
 		)
 		expect(response.status).toBe(503)
 		expect((await response.json()).missingConfig).toContain(
-			'DROPBOX_REFRESH_TOKEN',
+			'Dropbox not connected (no DB token row)',
 		)
 	})
-	it.each([false, true])(
-		'every YouTube data auth path and live auth path uses env without key, DB when enabled (%s)',
-		async (enabled) => {
-			mocks.env.INTEGRATION_TOKEN_KEY = enabled
-				? key.toString('base64')
-				: undefined
+	it(
+		'every YouTube data auth path and live auth path uses the DB token',
+		async () => {
+			mocks.env.INTEGRATION_TOKEN_KEY = key.toString('base64')
 			mocks.limit.mockResolvedValue([
 				encryptIntegrationToken('youtube_analytics', 'db-youtube', key),
 			])
@@ -252,17 +249,15 @@ describe('reader dormancy and DB preference (real store, mocked IO)', () => {
 			expect(mocks.credentials).toHaveBeenCalledTimes(7)
 			for (const [credentials] of mocks.credentials.mock.calls)
 				expect(credentials).toEqual({
-					refresh_token: enabled ? 'db-youtube' : 'env-youtube',
+					refresh_token: 'db-youtube',
 				})
 			await verifyYouTubeForceSslScope()
 			expect(mocks.fetch.mock.calls[0]![1].body.get('refresh_token')).toBe(
-				enabled ? 'db-youtube' : 'env-youtube',
+				'db-youtube',
 			)
-			if (!enabled) expect(mocks.limit).not.toHaveBeenCalled()
 		},
 	)
-	it('preserves YouTube null/throw/empty-scope behavior when env is missing and key unset', async () => {
-		mocks.env.YOUTUBE_ANALYTICS_REFRESH_TOKEN = undefined
+	it('preserves YouTube null/throw/empty-scope behavior with no DB token, ignoring env', async () => {
 		expect(await getChannelOverview()).toBeNull()
 		expect(await getVideoPerformance('7d')).toBeNull()
 		expect(await getChannelTimeseries('7d')).toBeNull()
@@ -276,6 +271,5 @@ describe('reader dormancy and DB preference (real store, mocked IO)', () => {
 			hasForceSsl: false,
 		})
 		expect(mocks.fetch).not.toHaveBeenCalled()
-		expect(mocks.limit).not.toHaveBeenCalled()
 	})
 })

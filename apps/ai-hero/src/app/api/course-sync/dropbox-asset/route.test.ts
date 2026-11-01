@@ -6,8 +6,10 @@ vi.mock('@/env.mjs', () => ({
 	env: {
 		NEXTAUTH_SECRET: 'test-signing-secret',
 		DROPBOX_SYNC_SHARED_LINK: 'https://www.dropbox.com/scl/fo/test',
-		DROPBOX_REFRESH_TOKEN: 'test-refresh-token',
 	},
+}))
+vi.mock('@/lib/integration-token-store', () => ({
+	getIntegrationRefreshToken: async () => 'test-refresh-token',
 }))
 vi.mock('@/lib/dropbox-course-sync', () => ({
 	getDropboxSyncConfig: () => ({
