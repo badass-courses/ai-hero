@@ -1,4 +1,6 @@
-import { db } from '@/db'
+// The client, not the `@/db` index: that reaches `server-only` through the
+// Stripe provider, which breaks the reporting:kit-snapshot script under tsx.
+import { db } from '@/db/client'
 import {
 	purchases,
 	shortlink,

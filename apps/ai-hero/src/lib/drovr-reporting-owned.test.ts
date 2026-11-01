@@ -6,7 +6,7 @@ vi.mock('@/lib/kit-data', () => ({
 	isKitConfigured: kit.configured,
 	getBroadcastsWithClicks: kit.broadcasts,
 }))
-vi.mock('@/db', () => ({
+vi.mock('@/db/client', () => ({
 	db: {
 		select: () => {
 			throw new Error('Unexpected database read')
@@ -559,6 +559,64 @@ describe('drovr report evidence and unavailable states', () => {
 			expect(report.broadcasts).toMatchObject({
 				rows: [{ result: { status: expected } }],
 			})
+		}
+	})
+	it('reads drovr shard states, and still refuses a missing shard', async () => {
+		const shard = (index: number, phase: string) => ({
+			index,
+			phase,
+			captured: 40,
+			remaining: 0,
+			captureComplete: true,
+		})
+		const done = {
+			...status,
+			phase: 'done',
+			tenantId: 'org-aihero',
+			broadcastId: ref.broadcastId,
+			count: 2,
+			shards: [shard(0, 'completed'), shard(1, 'completed')],
+		}
+		for (const [value, expected] of [
+			[done, 'available'],
+			[
+				{
+					...done,
+					phase: 'scheduled',
+					shards: [shard(0, 'draft'), shard(1, 'scheduled')],
+				},
+				'available',
+			],
+			[
+				{ ...done, shards: [shard(0, 'completed'), shard(1, 'missing')] },
+				'unavailable',
+			],
+		] as const) {
+			const report = await getOwnedNewsletterReport({
+				env: {
+					...env,
+					AIH_REPORTING_DROVR_BROADCASTS_JSON: JSON.stringify([
+						{ ...ref, kind: 'sharded' },
+					]),
+				},
+				range: 'all',
+				mode: 'standard',
+				now,
+				fetcher: vi.fn(async (url: string | URL | Request) =>
+					String(url).endsWith('/sharded_broadcast_status')
+						? response({ sharded: value })
+						: response({ receipts: [] }),
+				),
+			})
+			const row =
+				report.broadcasts.status === 'available'
+					? report.broadcasts.rows[0]
+					: null
+			expect(row?.result.status).toBe(expected)
+			if (expected === 'unavailable')
+				expect(row?.result).toMatchObject({
+					reason: expect.stringContaining('incomplete or mismatched shards'),
+				})
 		}
 	})
 	it('history stays available during a drovr outage and never crosses mode/product/range', async () => {

@@ -19,6 +19,18 @@ const Phase = z.enum([
 	'done',
 	'cancelled',
 ])
+// A shard reports drovr's BroadcastState, not the parent's lifecycle phase.
+const ShardPhase = z.enum([
+	'draft',
+	'scheduled',
+	'sending',
+	'paused',
+	'completed',
+	'cancelled',
+	'missing',
+	'unreadable',
+	'foreign',
+])
 
 /** Strict opt-in; no relation to the broadcast sending switch. */
 export function reportingOffKitEnabled(env: Env = process.env): boolean {
@@ -66,7 +78,7 @@ const ShardedStatus = Status.extend({
 	shards: z.array(
 		z.object({
 			index: Count,
-			phase: z.union([Phase, z.enum(['missing', 'unreadable', 'foreign'])]),
+			phase: ShardPhase,
 		}),
 	),
 })
@@ -135,7 +147,9 @@ const HistoricalReport = z.object({
 		campaigns: z.array(Campaign),
 	}),
 })
-const HistoricalReports = z.array(HistoricalReport).max(50)
+/** The shape AIH_REPORTING_KIT_HISTORY_JSON must parse as. */
+export const HistoricalReports = z.array(HistoricalReport).max(50)
+export type HistoricalReport = z.infer<typeof HistoricalReport>
 
 function readHistory(
 	env: Env,
