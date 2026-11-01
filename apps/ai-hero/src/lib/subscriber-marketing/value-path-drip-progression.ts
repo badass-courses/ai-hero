@@ -15,7 +15,7 @@ import {
 } from './course-sequence-exhaustion'
 import { parseIsoInstant } from './evergreen-offer-journey/primitives'
 import {
-	findJourneyOwnerAssignment,
+	isOnDrovrSendingJourney,
 	isDrovrOwnedIntent,
 } from './drovr-ownership'
 import { dispatchDrovrShadowFactSafely } from './drovr-shadow-dispatch'
@@ -318,7 +318,7 @@ async function progressCompletedIntent(args: {
 	// here would race the actor's intent and complete without ownership.
 	if (
 		isDrovrOwnedIntent(args.intent) ||
-		(await findJourneyOwnerAssignment(args.repository, args.intent.contactId))
+		(await isOnDrovrSendingJourney(args.repository, args.intent.contactId))
 	) {
 		return {
 			contactId: args.intent.contactId,
