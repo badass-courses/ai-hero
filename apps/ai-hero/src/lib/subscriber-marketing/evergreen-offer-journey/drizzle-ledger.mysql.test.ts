@@ -8,11 +8,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { drizzle } from 'drizzle-orm/mysql2'
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise'
 
-import {
-	deadlineTimeZoneEvidenceFromHeader,
-	decideEvergreenOfferJourney,
-	EVERGREEN_OFFER_JOURNEY_V1,
-} from '.'
+import { deadlineTimeZoneEvidenceFromHeader } from './calendar'
+import { decideEvergreenOfferJourney } from './decision'
 import type {
 	DeliveryOutcome,
 	EligibilityFacts,
@@ -22,7 +19,10 @@ import type {
 import { validateMySqlIntegrationServerUrl } from '../../team-purchase-mysql-test-guard'
 import { createDrizzleJourneyLedger } from './drizzle-ledger'
 import { calendarFlow } from './calendar-version.fixtures'
-import { EVERGREEN_OFFER_JOURNEY_V2 } from './definition'
+import {
+	EVERGREEN_OFFER_JOURNEY_V1,
+	EVERGREEN_OFFER_JOURNEY_V2,
+} from './definition'
 import { createDrizzleJourneyAttempts } from './drizzle-attempts'
 import type { JourneyLedgerCommit } from './ports'
 import {

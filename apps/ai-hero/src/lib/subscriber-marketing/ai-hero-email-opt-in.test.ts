@@ -180,7 +180,6 @@ describe('routeReturningUnsubscriber', () => {
 	}
 	const base = () => ({
 		email: 'person@example.com',
-		doiEnabled: true,
 		drovrConfigured: true,
 		formMapped: true,
 		getSubscriberByEmail: vi.fn().mockResolvedValue(tagged),
@@ -195,28 +194,6 @@ describe('routeReturningUnsubscriber', () => {
 		})
 		expect(args.requestDoi).toHaveBeenCalledTimes(1)
 		expect(args.getDrovrStops).not.toHaveBeenCalled()
-	})
-
-	it('tagged with DOI disabled: blocked, no DOI request', async () => {
-		const args = { ...base(), doiEnabled: false }
-		await expect(routeReturningUnsubscriber(args)).resolves.toEqual({
-			status: 'blocked',
-			reason: 'doi-disabled',
-		})
-		expect(args.requestDoi).not.toHaveBeenCalled()
-	})
-
-	it('not tagged with DOI disabled: still not unsubscribed', async () => {
-		const args = {
-			...base(),
-			doiEnabled: false,
-			getSubscriberByEmail: vi
-				.fn()
-				.mockResolvedValue({ state: 'active', tags: [] }),
-		}
-		await expect(routeReturningUnsubscriber(args)).resolves.toEqual({
-			status: 'not-unsubscribed',
-		})
 	})
 
 	it('tagged and drovr not configured: blocked, no DOI request', async () => {
@@ -252,23 +229,18 @@ describe('routeReturningUnsubscriber', () => {
 		expect(args.requestDoi).not.toHaveBeenCalled()
 	})
 
-	it.each([
-		[true, { status: 'doi-requested' }],
-		[false, { status: 'blocked', reason: 'doi-disabled' }],
-	])(
-		'drovr-only unsubscribe with DOI enabled=%s',
-		async (doiEnabled, expected) => {
-			const args = {
-				...base(),
-				doiEnabled,
-				getSubscriberByEmail: vi.fn().mockResolvedValue({ id: 123, tags: [] }),
-				getDrovrStops: vi.fn().mockResolvedValue([{ reason: 'unsubscribed' }]),
-			}
-			await expect(routeReturningUnsubscriber(args)).resolves.toEqual(expected)
-			expect(args.getDrovrStops).toHaveBeenCalledWith('123')
-			expect(args.requestDoi).toHaveBeenCalledTimes(doiEnabled ? 1 : 0)
-		},
-	)
+	it('drovr-only unsubscribe requests DOI', async () => {
+		const args = {
+			...base(),
+			getSubscriberByEmail: vi.fn().mockResolvedValue({ id: 123, tags: [] }),
+			getDrovrStops: vi.fn().mockResolvedValue([{ reason: 'unsubscribed' }]),
+		}
+		await expect(routeReturningUnsubscriber(args)).resolves.toEqual({
+			status: 'doi-requested',
+		})
+		expect(args.getDrovrStops).toHaveBeenCalledWith('123')
+		expect(args.requestDoi).toHaveBeenCalledTimes(1)
+	})
 
 	it.each([
 		[{ formMapped: false }, 'unmapped-form'],
@@ -324,7 +296,6 @@ describe('routeReturningUnsubscriber', () => {
 
 	it.each([
 		[{}, { status: 'doi-requested' }, 1],
-		[{ doiEnabled: false }, { status: 'blocked', reason: 'drovr-unknown' }, 0],
 		[{ formMapped: false }, { status: 'blocked', reason: 'drovr-unknown' }, 0],
 		[
 			{ drovrConfigured: false },
@@ -344,46 +315,6 @@ describe('routeReturningUnsubscriber', () => {
 			expect(args.requestDoi).toHaveBeenCalledTimes(doiCalls)
 		},
 	)
-
-	it.each([
-		[{ doiEnabled: false }, { status: 'deferred' }],
-		[{ formMapped: false }, { status: 'deferred' }],
-		// DOI takes the sign-up first; deferral never preempts it.
-		[{}, { status: 'doi-requested' }],
-		// Unconfigured drovr is a config fault, not an outage: no queue.
-		[
-			{ drovrConfigured: false },
-			{ status: 'blocked', reason: 'drovr-unknown' },
-		],
-	] as const)(
-		'deferUnknown: unknown drovr state %s',
-		async (gate, expected) => {
-			const args = {
-				...base(),
-				...gate,
-				deferUnknown: true,
-				getSubscriberByEmail: vi.fn().mockResolvedValue({ id: 123, tags: [] }),
-				getDrovrStops: vi.fn().mockRejectedValue(new Error('offline')),
-			}
-			await expect(routeReturningUnsubscriber(args)).resolves.toEqual(expected)
-		},
-	)
-
-	it('deferUnknown never defers a tagged contact: still blocked', async () => {
-		const args = {
-			...base(),
-			doiEnabled: false,
-			deferUnknown: true,
-			getSubscriberByEmail: vi
-				.fn()
-				.mockResolvedValue({ id: 123, tags: [{ id: 8244351 }] }),
-			getDrovrStops: vi.fn().mockRejectedValue(new Error('offline')),
-		}
-		await expect(routeReturningUnsubscriber(args)).resolves.toEqual({
-			status: 'blocked',
-			reason: 'doi-disabled',
-		})
-	})
 
 	it('unknown drovr consent never masks a failed DOI request', async () => {
 		const args = {

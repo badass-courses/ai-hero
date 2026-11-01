@@ -4,7 +4,6 @@ import { and, eq, inArray } from 'drizzle-orm'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 
-import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { db } from '@/db'
 import { sideEffectIntent } from '@/db/schema'
 import { env } from '@/env.mjs'
@@ -16,7 +15,6 @@ import {
 } from '@/lib/skills-course/recovery-standing'
 import {
 	createRecoveryStandingReader,
-	recoveryLocalStandingEnabled,
 } from '@/lib/skills-course/recovery-standing.server'
 import {
 	runSupportSkillsLessonOneRecovery,
@@ -35,7 +33,6 @@ import type { SideEffectIntent } from '@/lib/subscriber-marketing/types'
 import { getValuePathAnswerPages } from '@/lib/subscriber-marketing/value-path-answer-page'
 import { buildValuePathEmailPersonalization } from '@/lib/subscriber-marketing/value-path-email-executor'
 import { verifySupportSignature } from '@/lib/support-signature'
-import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
 
@@ -140,29 +137,6 @@ const productionHandler = createSkillsLessonOneRecoveryPostHandler({
 
 export const POST = withSkill(productionHandler)
 
-const kitRecoverySubscribers: SkillsLessonOneRecoveryDependencies['subscribers'] =
-	{
-		async findByEmail(email) {
-			let raw: unknown
-			try {
-				raw = await emailListProvider.getSubscriberByEmail(email)
-			} catch {
-				return { state: 'invalid' }
-			}
-			if (!raw) return { state: 'missing' }
-			const subscriber = SubscriberSchema.safeParse(raw)
-			if (!subscriber.success || !subscriber.data.email_address) {
-				return { state: 'invalid' }
-			}
-			return {
-				state: 'found',
-				id: String(subscriber.data.id),
-				email: subscriber.data.email_address,
-				subscriberState: subscriber.data.state,
-			}
-		},
-	}
-
 /**
  * Off-Kit standing (family 8): the directory, local course entry and local
  * plus drovr stops. A subscribed contact reads as Kit's `active`; a stop or
@@ -220,9 +194,9 @@ function createProductionDependencies(
 	}
 
 	return {
-		subscribers: recoveryLocalStandingEnabled()
-			? createLocalRecoverySubscribers(createRecoveryStandingReader())
-			: kitRecoverySubscribers,
+		subscribers: createLocalRecoverySubscribers(
+			createRecoveryStandingReader(),
+		),
 		store: {
 			async findContext(email) {
 				const contact = await repository.findContactByEmail(email)

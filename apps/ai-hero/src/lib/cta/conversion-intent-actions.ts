@@ -11,6 +11,7 @@ import { log } from '@/server/logger'
 import {
 	interestFactsEnabled,
 	interestKitWritesEnabled,
+	waitlistOffKitEnabled,
 } from './interest-facts'
 import { requestInterestFacts } from './interest-facts.server'
 import { reportVerifiedUnconfirmed } from './verified-unconfirmed'
@@ -167,7 +168,8 @@ export async function finalizeAnonymousConversionIntent({
 		if (queued > 0) return { success: true as const }
 	}
 
-	if (!kitMirrorWritesEnabled()) {
+	// The posted form off Kit has no Kit subscriber to tag.
+	if (!kitMirrorWritesEnabled() || waitlistOffKitEnabled()) {
 		return { success: false as const, reason: 'tag-failed' as const }
 	}
 

@@ -95,10 +95,6 @@ const AdminLayout = async ({ children }: { children: React.ReactNode }) => {
 												<Mail className="size-4" />
 												Emails
 											</NavItem>
-											<NavItem href="/admin/email-preferences">
-												<Mail className="size-4" />
-												Email Preferences
-											</NavItem>
 											<NavItem href="/admin/flags">
 												<Flag className="size-4" />
 												Feature Flags

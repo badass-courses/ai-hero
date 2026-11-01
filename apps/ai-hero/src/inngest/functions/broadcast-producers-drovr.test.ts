@@ -1,5 +1,5 @@
 /**
- * AI Hero's broadcast producers with `AI_HERO_BROADCAST_PROVIDER=drovr`, a
+ * AI Hero's broadcast producers with a
  * fake drovr client and Kit unreachable: the changelog producer prepares a
  * drovr message and never calls Kit, and the Resend broadcast path neither
  * reads Kit consent nor sends.
@@ -121,7 +121,6 @@ const run = (fn: any, data: Record<string, unknown>) =>
 
 beforeEach(() => {
 	vi.stubGlobal('fetch', kitFetch)
-	vi.stubEnv('AI_HERO_BROADCAST_PROVIDER', 'drovr')
 	vi.stubEnv('AI_HERO_SKILLS_DROVR_SEND_PLAN', JSON.stringify(plan))
 	vi.stubEnv('CONVERTKIT_V4_API_KEY', 'kit-key-that-must-not-be-used')
 	mocks.client = fakeClient()
@@ -177,35 +176,6 @@ describe('skill changelog producer through drovr', () => {
 		expect(kitFetch).not.toHaveBeenCalled()
 		expect(mocks.updateContentResourceFields).not.toHaveBeenCalled()
 	})
-
-	it('sends nowhere when the provider is unknown', async () => {
-		vi.stubEnv('AI_HERO_BROADCAST_PROVIDER', 'something-else')
-		const result = await run(skillChangelogBroadcast, {
-			resourceId: 'resource-1',
-			slug: 'agents-skill',
-		})
-		expect(result).toMatchObject({
-			status: 'skipped',
-			reason: 'provider_unknown',
-		})
-		expect(kitFetch).not.toHaveBeenCalled()
-		expect(mocks.client.newMessage).not.toHaveBeenCalled()
-	})
-
-	it('still drafts in Kit when the provider is unset (dark)', async () => {
-		vi.stubEnv('AI_HERO_BROADCAST_PROVIDER', '')
-		await expect(
-			run(skillChangelogBroadcast, {
-				resourceId: 'resource-1',
-				slug: 'agents-skill',
-			}),
-		).rejects.toThrow('Kit is unreachable')
-		expect(kitFetch).toHaveBeenCalledWith(
-			'https://api.kit.com/v4/broadcasts/123',
-			expect.anything(),
-		)
-		expect(mocks.client.newMessage).not.toHaveBeenCalled()
-	})
 })
 
 describe('Resend broadcast path through drovr', () => {
@@ -216,14 +186,5 @@ describe('Resend broadcast path through drovr', () => {
 		expect(mocks.getProviderEmailPreferences).not.toHaveBeenCalled()
 		expect(mocks.resendSend).not.toHaveBeenCalled()
 		expect(kitFetch).not.toHaveBeenCalled()
-	})
-
-	it('refuses an unknown provider without sending', async () => {
-		vi.stubEnv('AI_HERO_BROADCAST_PROVIDER', 'something-else')
-		await expect(run(emailSendBroadcast, { toUserId: 'u1' })).rejects.toThrow(
-			'AI_HERO_BROADCAST_PROVIDER is unknown',
-		)
-		expect(mocks.getProviderEmailPreferences).not.toHaveBeenCalled()
-		expect(mocks.resendSend).not.toHaveBeenCalled()
 	})
 })

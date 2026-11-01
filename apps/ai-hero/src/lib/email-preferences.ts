@@ -36,9 +36,6 @@ type Subscriber = {
 type PreferenceSource =
 	| 'preferences-page'
 	| 'unsubscribe-link'
-	| 'broadcast-guard'
-	| 'admin'
-	| 'cli'
 
 type User = typeof usersTable.$inferSelect
 
@@ -512,8 +509,7 @@ export async function unsubscribeLocalEmailPreferenceByUserId({
 }
 
 /**
- * Checks a Kit link against the local contact directory, never Kit. Used
- * when AIH_EMAIL_PREFERENCES_LOCAL_ENABLED is on.
+ * Checks a Kit link against the local contact directory, never Kit.
  */
 export async function verifyKitPreferenceLinkLocally({
 	subscriberId,

@@ -14,7 +14,7 @@ import { log } from '@/server/logger'
 
 /**
  * Finishes a preference change the page accepted with Kit out of the request
- * path (AIH_EMAIL_PREFERENCES_LOCAL_ENABLED). Each piece is its own step, so
+ * path. Each piece is its own step, so
  * a Kit outage retries only the Kit write and never loses the opt-out.
  */
 export const applyEmailPreferenceChangeFunction = inngest.createFunction(

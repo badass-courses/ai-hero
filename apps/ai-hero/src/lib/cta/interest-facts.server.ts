@@ -7,7 +7,11 @@ import {
 } from '@/inngest/events/interest-fact'
 import { log } from '@/server/logger'
 
-import { interestFactsEnabled, interestFieldKeysOf } from './interest-facts'
+import {
+	interestFactsEnabled,
+	interestFieldKeysOf,
+	type InterestFieldKey,
+} from './interest-facts'
 
 type Sender = { send(events: InterestFactRequested[]): Promise<unknown> }
 
@@ -57,5 +61,58 @@ export async function requestInterestFacts(args: {
 			})
 		} catch {}
 		return { queued: 0 }
+	}
+}
+
+/**
+ * Make sure a join has a contact to land on (see
+ * `resolveInterestJoinContact`). Never throws: the join is already queued
+ * and answered, and a failure is one log line with no address.
+ */
+export async function holdInterestJoinContact(args: {
+	email: string
+	name?: string
+	fieldKeys: InterestFieldKey[]
+}): Promise<void> {
+	try {
+		const [
+			{ db },
+			{ contact },
+			{ eq },
+			{ DrizzleCaptureMarketingRepository },
+			{ resolveInterestJoinContact },
+		] = await Promise.all([
+			import('@/db'),
+			import('@/db/schema'),
+			import('drizzle-orm'),
+			import('@/lib/subscriber-marketing/drizzle-capture-repository'),
+			import('./interest-facts-contact'),
+		])
+		const { minted } = await resolveInterestJoinContact({
+			repository: new DrizzleCaptureMarketingRepository(db),
+			findContactIdsByEmailKey: async (emailKey) =>
+				(
+					await db
+						.select({ id: contact.id })
+						.from(contact)
+						.where(eq(contact.emailKey, emailKey))
+						.limit(2)
+				).map((row) => row.id),
+			email: args.email,
+			name: args.name,
+			now: new Date().toISOString(),
+		})
+		if (minted) {
+			await log.info('interest.join.contact.minted', {
+				fieldKeys: args.fieldKeys,
+			})
+		}
+	} catch (error) {
+		try {
+			await log.error('interest.join.contact.failed', {
+				fieldKeys: args.fieldKeys,
+				error: error instanceof Error ? error.name : 'unknown',
+			})
+		} catch {}
 	}
 }

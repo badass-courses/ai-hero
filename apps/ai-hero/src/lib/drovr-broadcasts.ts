@@ -1,12 +1,7 @@
 /**
- * AI Hero's broadcast producers through drovr's BroadcastActor instead of
- * Kit ("Fully off Kit", Joel 2026-10-27). Dark until
- * `AI_HERO_BROADCAST_PROVIDER=drovr`:
- *
- * - unset or `kit`: the Kit paths run unchanged.
- * - `drovr`: every producer goes through drovr and never touches Kit. There
- *   is no Kit fallback for drovr-owned sending.
- * - anything else: an unknown provider, so nothing sends anywhere.
+ * AI Hero's broadcast producers go through drovr's BroadcastActor and never
+ * touch Kit ("Fully off Kit", Joel 2026-10-27). There is no Kit fallback and
+ * no provider switch.
  *
  * The producer only prepares a drovr message file and checks it with
  * `validate_message_file`. Publishing a version is drovr's operator step.
@@ -33,15 +28,6 @@ export const AI_HERO_SKILLS_DROVR_SENDER = {
 export const DROVR_APPROVAL_ACTION_ID = 'ai_hero_skills_approve_drovr_send'
 
 type Env = Record<string, string | undefined>
-
-export type BroadcastProvider = 'kit' | 'drovr' | 'unknown'
-
-export function broadcastProvider(env: Env = process.env): BroadcastProvider {
-	const raw = env.AI_HERO_BROADCAST_PROVIDER?.trim().toLowerCase()
-	if (!raw || raw === 'kit') return 'kit'
-	if (raw === 'drovr') return 'drovr'
-	return 'unknown'
-}
 
 const SendPlanSchema = z.object({
 	campaignId: z.string().min(1),
@@ -547,9 +533,6 @@ export async function approveDrovrBroadcast(args: {
 	now?: () => number
 }): Promise<DrovrApprovalOutcome> {
 	const env = args.env ?? process.env
-	if (broadcastProvider(env) !== 'drovr') {
-		return { status: 'refused', reason: 'drovr broadcasts are off' }
-	}
 	if (!broadcastApprovers(env).has(args.approverSlackId)) {
 		return {
 			status: 'refused',

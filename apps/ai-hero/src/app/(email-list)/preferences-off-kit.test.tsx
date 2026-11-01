@@ -3,9 +3,8 @@ import { MySqlDialect } from 'drizzle-orm/mysql-core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
- * Preferences and unsubscribe links with Kit unreachable and
- * AIH_EMAIL_PREFERENCES_LOCAL_ENABLED on. Every Kit host refuses and the Kit
- * provider throws on any use. A signed link is checked against the contact
+ * Preferences and unsubscribe links with Kit unreachable. Every Kit host
+ * refuses and the Kit provider throws on any use. A signed link is checked against the contact
  * directory, state comes from local rows, ContactEvents and drovr stops, and
  * an unsubscribe lands whatever the directory says, short of a tampered link.
  */
@@ -154,7 +153,6 @@ vi.mock('@/coursebuilder/email-list-provider', () => {
 
 vi.mock('@/env.mjs', () => ({
 	env: {
-		AIH_EMAIL_PREFERENCES_LOCAL_ENABLED: 'true',
 		DROVR_API_BASE_URL: 'https://drovr.test',
 		DROVR_API_KEY_ORG_AIHERO: 'synthetic-org-key',
 	},

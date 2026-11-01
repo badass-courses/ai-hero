@@ -1,8 +1,6 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { emailListProvider } from '@/coursebuilder/email-list-provider'
-import { kitMirrorWritesEnabled } from '@/lib/kit-mirror-writes'
 import { db } from '@/db'
 import {
 	contentResource,
@@ -10,13 +8,11 @@ import {
 	questionResponse,
 	users,
 } from '@/db/schema'
-import type { Subscriber } from '@/schemas/subscriber'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { guid } from '@coursebuilder/utils/guid'
 import slugify from '@sindresorhus/slugify'
 import { and, asc, eq, or, sql } from 'drizzle-orm'
-import { toSnakeCase } from 'drizzle-orm/casing'
 import { z } from 'zod'
 
 import { userSchema } from '@coursebuilder/core/schemas'
@@ -574,51 +570,6 @@ export async function buildSurveyConfig(
 		afterCompletionMessages:
 			surveyFields.afterCompletionMessages || DEFAULT_AFTER_COMPLETION_MESSAGES,
 		questionBodyRenderer: undefined,
-	}
-}
-
-/**
- * Updates a subscriber custom field with the provided survey answer.
- * Use for learner/customer activity only (not internal ops).
- *
- * @param subscriber
- * @param question
- * @param answer
- */
-export const answerSurvey = async ({
-	subscriber,
-	question,
-	answer,
-}: {
-	subscriber: Subscriber
-	question: string
-	answer: string
-}) => {
-	try {
-		if (!kitMirrorWritesEnabled()) return { status: 'mirror-disabled' }
-		if (!subscriber?.id || !subscriber?.email_address) {
-			return { error: 'Missing subscriber identifiers' }
-		}
-		if (emailListProvider.updateSubscriberFields) {
-			const response = await emailListProvider.updateSubscriberFields({
-				subscriberId: subscriber.id.toString(),
-				subscriberEmail: subscriber.email_address,
-				fields: {
-					[toSnakeCase(question)]: answer,
-				},
-			})
-
-			return response
-		} else {
-			return { error: 'updateSubscriberFields is not supported' }
-		}
-	} catch (error) {
-		log.error('answerSurvey failed', {
-			err: (error as Error)?.message,
-			subscriberId: subscriber?.id,
-			question,
-		})
-		return { error: 'Failed to update subscriber fields' }
 	}
 }
 

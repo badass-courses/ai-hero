@@ -1,22 +1,13 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import LayoutClient from '@/components/layout-client'
-import {
-	emailPreferenceDefinitions,
-	type EmailPreferenceKey,
-} from '@/coursebuilder/email-preferences'
-import { env } from '@/env.mjs'
+import { emailPreferenceDefinitions } from '@/coursebuilder/email-preferences'
 import {
 	getLocalEmailPreferences,
-	getProviderEmailPreferences,
 	getSearchParamValue,
-	validateKitPreferenceIdentity,
 	verifyKitPreferenceLinkLocally,
 } from '@/lib/email-preferences'
-import {
-	emailPreferencesLocalEnabled,
-	type LocalEmailPreferences,
-} from '@/lib/email-preferences-local'
+import type { LocalEmailPreferences } from '@/lib/email-preferences-local'
 import { log } from '@/server/logger'
 
 import { updateEmailPreferenceAction } from './actions'
@@ -42,12 +33,9 @@ export default async function PreferencesPage(props: PreferencesPageProps) {
 	const updatedPreference = getSearchParamValue(searchParams.updated)
 	const updatedState = getSearchParamValue(searchParams.state)
 
-	const localEnabled = emailPreferencesLocalEnabled(env)
 	const resubscribeRefused = error === 'resubscribe-by-signup'
 
-	const { subscriber, preferences } = localEnabled
-		? await readLocalView(subscriberId, shKit)
-		: await readKitView(subscriberId, shKit)
+	const { subscriber, preferences } = await readLocalView(subscriberId, shKit)
 
 	return (
 		<LayoutClient withContainer>
@@ -122,8 +110,9 @@ export default async function PreferencesPage(props: PreferencesPageProps) {
 																: "You're not getting these."}
 												</p>
 											</div>
-											{state.known && state.stoppedEverything ? null : localEnabled &&
-											  !(subscribed || !state.known) ? (
+											{state.known && state.stoppedEverything ? null : !(
+													subscribed || !state.known
+											  ) ? (
 												<ResubscribeLink />
 											) : (
 												<form action={updateEmailPreferenceAction}>
@@ -199,52 +188,6 @@ function ResubscribeExplainer() {
 type PreferenceView = {
 	subscriber: unknown
 	preferences: LocalEmailPreferences | null
-}
-
-/** Kit-backed view: the link checked against Kit's email, Kit's preferences. */
-async function readKitView(
-	subscriberId: string | undefined,
-	shKit: string | undefined,
-): Promise<PreferenceView> {
-	const subscriber = await validateKitPreferenceIdentity({
-		subscriberId,
-		shKit,
-		source: 'preferences-page',
-		route: '/preferences',
-	})
-
-	const kitPreferences = subscriber
-		? await getProviderEmailPreferences({
-				subscriberId,
-				source: 'preferences-page',
-			})
-		: null
-
-	await log.info('email-preferences.view', {
-		source: 'preferences-page',
-		provider: 'convertkit',
-		kitSubscriberId: subscriberId,
-		shKit,
-		result: subscriber && kitPreferences ? 'success' : 'failed',
-	})
-
-	return {
-		subscriber,
-		preferences: kitPreferences
-			? (Object.fromEntries(
-					emailPreferenceDefinitions.map((preference) => [
-						preference.key,
-						{
-							known: true,
-							subscribed:
-								kitPreferences[preference.key as EmailPreferenceKey]
-									?.subscribed ?? preference.defaultSubscribed,
-							stoppedEverything: false,
-						},
-					]),
-				) as LocalEmailPreferences)
-			: null,
-	}
 }
 
 /**

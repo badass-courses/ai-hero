@@ -161,13 +161,9 @@ export const env = createEnv({
 		// Default off. Persisted DOI intake uses drovr consent, never Kit checks.
 		// The legacy-only Kit poll remains until its cohort is retired.
 		AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED: z.string().optional(),
-		// Returning unsubscribers get drovr's confirmation email only when this is
-		// "true". Turn on together with drovr's org-aihero `confirm-doi` flag.
-		AIH_RESUBSCRIBE_DOI_ENABLED: z.string().optional(),
 		// "true" verifies Kit preference and unsubscribe links against the local
 		// contact directory and reads preference state locally, with Kit out of
 		// the request path. Off keeps the Kit-backed reads.
-		AIH_EMAIL_PREFERENCES_LOCAL_ENABLED: z.string().optional(),
 		DROVR_EXECUTOR_TOKEN: z.string().min(16).optional(),
 		AI_HERO_VALUE_PATH_TOKEN_SECRET: z.string().min(16).optional(),
 		// drovr #36T link tests mint throwaway principals with this; never the
@@ -181,15 +177,20 @@ export const env = createEnv({
 		// Default off: enable saved-survey interest facts after the drovr gate.
 		AIH_DROVR_SURVEY_INTEREST_FACTS_ENABLED: z.string().optional(),
 		// Default off: surveys stop subscribing answerers and writing Kit fields.
-		AIH_SURVEY_OFF_KIT_ENABLED: z.string().optional(),
 		// Default on. Off disables optional AI Hero tag/field mirrors, not consent or TT.
 		AIH_KIT_MIRROR_WRITES_ENABLED: z.string().optional(),
 		// Signed-in Skills enrolment uses the owned contact and drovr consent.
 		AIH_ENROLMENT_OFF_KIT_ENABLED: z.string().optional(),
 		// Read gated asks from drovr consent and local entry/interest facts. Default off.
 		AIH_GATED_ASKS_OFF_KIT_ENABLED: z.string().optional(),
+		// Default off. The posted signup form makes no Kit subscribe: a waitlist
+		// join is its interest fact, a newsletter ask takes drovr double opt-in.
+		// Read only by waitlistOffKitEnabled (lib/cta/interest-facts.ts).
+		AIH_WAITLIST_OFF_KIT_ENABLED: z.string().optional(),
 		// Default off; retain contact reads until /births rollout proof.
 		AIH_DROVR_BIRTH_FEED_ENABLED: z.string().optional(),
+		// Default off: public subscriber count from drovr's census, not Kit.
+		AIH_SUBSCRIBER_COUNT_OWNED_ENABLED: z.string().optional(),
 		// Producer before rule; existing-cohort gate stays off until ruling B.
 		AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY: newsletterExitFlag,
 		AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY: newsletterExitFlag,
@@ -362,9 +363,6 @@ export const env = createEnv({
 		DROVR_DOI_FORMS: process.env.DROVR_DOI_FORMS,
 		AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED:
 			process.env.AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED,
-		AIH_RESUBSCRIBE_DOI_ENABLED: process.env.AIH_RESUBSCRIBE_DOI_ENABLED,
-		AIH_EMAIL_PREFERENCES_LOCAL_ENABLED:
-			process.env.AIH_EMAIL_PREFERENCES_LOCAL_ENABLED,
 		DROVR_EXECUTOR_TOKEN: process.env.DROVR_EXECUTOR_TOKEN,
 		AI_HERO_VALUE_PATH_TOKEN_SECRET:
 			process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET,
@@ -375,11 +373,13 @@ export const env = createEnv({
 		AIH_DROVR_EVERGREEN_ENABLED: process.env.AIH_DROVR_EVERGREEN_ENABLED,
 		AIH_DROVR_SURVEY_INTEREST_FACTS_ENABLED:
 			process.env.AIH_DROVR_SURVEY_INTEREST_FACTS_ENABLED,
-		AIH_SURVEY_OFF_KIT_ENABLED: process.env.AIH_SURVEY_OFF_KIT_ENABLED,
 		AIH_KIT_MIRROR_WRITES_ENABLED: process.env.AIH_KIT_MIRROR_WRITES_ENABLED,
 		AIH_ENROLMENT_OFF_KIT_ENABLED: process.env.AIH_ENROLMENT_OFF_KIT_ENABLED,
 		AIH_GATED_ASKS_OFF_KIT_ENABLED: process.env.AIH_GATED_ASKS_OFF_KIT_ENABLED,
+		AIH_WAITLIST_OFF_KIT_ENABLED: process.env.AIH_WAITLIST_OFF_KIT_ENABLED,
 		AIH_DROVR_BIRTH_FEED_ENABLED: process.env.AIH_DROVR_BIRTH_FEED_ENABLED,
+		AIH_SUBSCRIBER_COUNT_OWNED_ENABLED:
+			process.env.AIH_SUBSCRIBER_COUNT_OWNED_ENABLED,
 		AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY: process.env.AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY,
 		AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY: process.env.AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY,
 		AIH_SHADOW_NEWSLETTER_EXISTING_EXIT_GATE_ENABLED: process.env.AIH_SHADOW_NEWSLETTER_EXISTING_EXIT_GATE_ENABLED,

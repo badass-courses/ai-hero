@@ -92,10 +92,6 @@ import {
 	type EmailPreferenceChangeRequested,
 } from '@/inngest/events/email-preference-change'
 import {
-	OPTIN_DEFERRED_EVENT,
-	type OptInDeferred,
-} from '@/inngest/events/optin-deferred'
-import {
 	SKILLS_COURSE_LESSON_ONE_RECOVERY_REQUESTED_EVENT,
 	SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
 	type SkillsCourseLessonOneRecoveryRequested,
@@ -306,7 +302,6 @@ export type Events = {
 	[SKILLS_NEWSLETTER_SUBSCRIBED_EVENT]:
 		| SkillsNewsletterSubscribed
 		| OwnedSkillsNewsletterSubscribed
-	[OPTIN_DEFERRED_EVENT]: OptInDeferred
 	[SKILLS_COURSE_LESSON_ONE_RECOVERY_REQUESTED_EVENT]: SkillsCourseLessonOneRecoveryRequested
 	[CONTACT_UNSUBSCRIBED_EVENT]: ContactUnsubscribed
 	[EMAIL_PREFERENCE_CHANGE_REQUESTED_EVENT]: EmailPreferenceChangeRequested

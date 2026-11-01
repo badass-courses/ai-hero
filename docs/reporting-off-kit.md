@@ -8,13 +8,20 @@
 | newsletter.getEmailCampaignAttribution | `/api/analytics?surface=attribution/email-campaigns`; analytics agent/chat and API prompt examples in admin analytics | Kit top-of-funnel joined by aihero.dev shortlink slug to local clicks, signups and purchase attribution. Legacy revenue sums a purchaser's paid purchases. |
 | newsletter.getEmailCampaignAttributionStrict | `/api/analytics?surface=attribution/email-campaigns/strict`; analytics agents | Same Kit top-of-funnel; purchase-field shortlink attribution, with optional product filter. |
 | `src/lib/kit-data.ts`: getTotalSubscribers | `SubscriberCount`: home hero, skills subscribe, post CTA, server MDX/landing body and primary newsletter title | Active Kit account subscriber total, cached 30 minutes; null/error falls back to existing copy. This is not a drovr active-subscriber count. |
-| `src/lib/kit-broadcasts.ts` | skill-changelog producer; Slack approval route; signup reconciler imports an exclusion constant | Creation/update of Kit drafts, not a reporting reader. Producer and approval paths are unchanged here. |
 
 No newsletter reporting job or Slack reporting message consumes kit-data in the source inventory. The Slack approval response reads drovr status already and belongs to the producer owner; this change does not touch it.
 
 ## Scope decision
 
 The public count is explicitly outside this change. It is on launch sales surfaces, no measured static historical count is approved, and changing the number or label needs separate approval. `SubscriberCount` and `getTotalSubscribers` remain unchanged and **uncovered**. Therefore this PR does not claim a Kit outage breaks no public page. Missing drovr capability: **read-only active-subscriber total per tenant**, with explicit scope and unavailable semantics. Once supplied, the swap is a one-component change behind a flag, subject to approval.
+
+### Public count (K31), dark
+
+drovr now serves `GET /audience-total`: `{ asOf, tenantId, total }` for the authenticated tenant, from a census whose `asOf` is the scan start and can be about 42 hours old. Refusals are RFC 9457 problems, `AudienceTotalForbidden` (403) and `AudienceTotalUnavailable` (503); missing evidence is never zero.
+
+`AIH_SUBSCRIBER_COUNT_OWNED_ENABLED=true` makes `SubscriberCount` read that total through `src/lib/subscriber-count-owned.ts`, with the same tenant credentials as reporting, a five-second timeout and the Kit read's 30-minute cache. Label, rounding and the `< 1000` plausibility floor are unchanged. A missing config, refusal, timeout, non-`org-aihero` tenant or unparseable body logs `subscriber_count.owned.unavailable` once and renders the existing fallback. Unset, `false` and every other value keep the Kit read and make no drovr call.
+
+The flag stays off until Joel rules on the public wording and rounding: the number moves from Kit's account-wide count, which includes Total TypeScript, to AI Hero's mailable census (about 123k).
 
 ## Contract evidence
 
