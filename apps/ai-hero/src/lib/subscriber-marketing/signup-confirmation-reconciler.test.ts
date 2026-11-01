@@ -3,6 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { KIT_READER_MIN_START_INTERVAL_MS } from './signup-confirmation-kit-reader'
 import { emailEquivalenceKey } from './contact-email-equivalence'
 import {
+	legacyKitConfirmationSubscribers,
+	reconcileDrovrConfirmations,
+} from './signup-confirmation-drovr'
+import {
 	checkSkillsConfirmationTags,
 	fetchDrovrConfirmationSubjects,
 	reconcileSkillsConfirmations,
@@ -20,7 +24,7 @@ import {
 } from './signup-confirmation-reconciler.server'
 
 describe('persisted DOI split', () => {
-	it('loads persisted ownership with contact ids, deduplicates requests and refuses stale keys', async () => {
+	it('deduplicates persisted ownership and counts stale-key contacts without blocking healthy observation', async () => {
 		const rows = [
 			{
 				contactId: 'owned',
@@ -45,10 +49,40 @@ describe('persisted DOI split', () => {
 		expect(await fetchDrovrConfirmationSubjects(database)).toMatchObject([
 			{ contactId: 'owned', requestedAt: daysBefore(1) },
 		])
-		rows[0]!.emailKeyStale = 1
-		await expect(fetchDrovrConfirmationSubjects(database)).rejects.toThrow(
-			'no current email key',
-		)
+		rows.push({
+			contactId: 'unkeyed',
+			emailKey: emailEquivalenceKey('learner-2@example.test'),
+			requestedAt: new Date(daysBefore(1)),
+			emailKeyStale: 1,
+		})
+		const subjects = await fetchDrovrConfirmationSubjects(database)
+		expect(subjects).toContainEqual({
+			contactId: 'unkeyed',
+			emailKey: null,
+			requestedAt: daysBefore(1),
+		})
+		const read = vi.fn(async () => null)
+		const observed = await reconcileDrovrConfirmations({
+			subjects,
+			window: { from: daysBefore(14), to: TO },
+			read,
+		})
+		expect(observed.counts).toMatchObject({
+			unkeyed: 1,
+			selected: 1,
+			unknown: 1,
+		})
+		expect(read).toHaveBeenCalledTimes(1)
+		expect(read).toHaveBeenCalledWith('owned')
+		expect(
+			legacyKitConfirmationSubscribers(
+				[
+					{ email: 'learner-1@example.test' },
+					{ email: 'learner-2@example.test' },
+				],
+				subjects,
+			),
+		).toEqual([{ email: 'learner-2@example.test' }])
 	})
 	it('an all-DOI mirrored form requires no Kit tag or sequence checks', async () => {
 		vi.stubEnv('AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED', 'true')

@@ -719,15 +719,14 @@ export async function fetchDrovrConfirmationSubjects(
 		.where(eq(contactEvent.eventType, DOI_REQUESTED_EVENT_TYPE))
 	const byContact = new Map<string, DrovrConfirmationSubject>()
 	for (const row of rows) {
-		if (!row.emailKey || row.emailKeyStale === 1)
-			throw new ReconcilerEvidenceUnavailableError(
-				'doi-contact-email-key',
-				'A DOI contact has no current email key',
-			)
 		const requestedAt = new Date(row.requestedAt).toISOString()
 		const previous = byContact.get(row.contactId)
 		if (!previous || requestedAt > previous.requestedAt)
-			byContact.set(row.contactId, { ...row, requestedAt })
+			byContact.set(row.contactId, {
+				contactId: row.contactId,
+				emailKey: row.emailKeyStale === 1 ? null : row.emailKey,
+				requestedAt,
+			})
 	}
 	return [...byContact.values()].sort((a, b) =>
 		a.contactId.localeCompare(b.contactId),

@@ -41,6 +41,9 @@ export async function reconcileDrovrConfirmations(args: {
 	read: (contactId: string) => Promise<DrovrListState | null>
 }) {
 	const subjects = args.subjects.filter((row) => {
+		// No usable address key means ownership cannot safely exclude a Kit
+		// record. Count it, leave the existing legacy evidence guard in charge.
+		if (!row.emailKey) return false
 		const at = Date.parse(row.requestedAt)
 		return (
 			at >= Date.parse(args.window.from) && at <= Date.parse(args.window.to)
@@ -60,6 +63,7 @@ export async function reconcileDrovrConfirmations(args: {
 	].slice(0, cap)
 	const counts = {
 		selected: selected.length,
+		unkeyed: args.subjects.filter((row) => !row.emailKey).length,
 		confirmed: 0,
 		unconfirmed: 0,
 		stopped: 0,
