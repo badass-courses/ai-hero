@@ -48,6 +48,25 @@ const isoOf = (value: Date | string | null | undefined, fallback: string) => {
 const textOf = (value: unknown) =>
 	typeof value === 'string' && value.length > 0 ? value : undefined
 
+export type IncludedRestoration = { transferId: string; restoredAt: string }
+
+/**
+ * Every transfer that restored a row, oldest first. Append-only, so each
+ * earlier grant can still be revoked after the row is restored again.
+ */
+export function restorationsOf(
+	metadata: Record<string, unknown> | null | undefined,
+): IncludedRestoration[] {
+	const list = metadata?.restorations
+	if (!Array.isArray(list)) return []
+	return list.flatMap((entry: unknown) => {
+		const record = (entry ?? {}) as Record<string, unknown>
+		const transferId = textOf(record.transferId)
+		const restoredAt = textOf(record.restoredAt)
+		return transferId && restoredAt ? [{ transferId, restoredAt }] : []
+	})
+}
+
 /**
  * The content-access rows an included-product policy wrote (never the
  * Discord rows, which carry no contentIds), as grant facts.
@@ -77,31 +96,39 @@ export function includedEntitlementFacts(
 			viaProductId,
 			bundlePolicy: policy.bundlePolicy,
 		}
-		const restoredBy = textOf(row.metadata?.restoredByTransferId)
-		const restoredAt = isoOf(textOf(row.metadata?.restoredAt), now)
-		// A restored row's first grant ended when a transfer retired it. The
-		// live retire recorded that already; this repairs a missed one.
-		if (restoredBy)
+		// Grant epochs: the row id, then one per restoring transfer. Every
+		// epoch but the last ended when a transfer retired the row, before the
+		// next restore. The live retire recorded that already; this repairs a
+		// missed one.
+		const restorations = restorationsOf(row.metadata)
+		const epochs = [
+			{ entitlementId: row.id, startedAt: isoOf(row.createdAt, now) },
+			...restorations.map((restoration) => ({
+				entitlementId: `${row.id}:${restoration.transferId}`,
+				startedAt: isoOf(restoration.restoredAt, now),
+			})),
+		]
+		const current = epochs[epochs.length - 1]!
+		for (const [index, epoch] of epochs.slice(0, -1).entries())
 			facts.push({
 				...common,
 				change: 'revoked',
-				entitlementId: row.id,
-				occurredAt: restoredAt,
+				entitlementId: epoch.entitlementId,
+				occurredAt: epochs[index + 1]!.startedAt,
 			})
-		const entitlementId = restoredBy ? `${row.id}:${restoredBy}` : row.id
 		facts.push(
 			row.deletedAt
 				? {
 						...common,
 						change: 'revoked',
-						entitlementId,
+						entitlementId: current.entitlementId,
 						occurredAt: isoOf(row.deletedAt, now),
 					}
 				: {
 						...common,
 						change: 'granted',
-						entitlementId,
-						occurredAt: restoredBy ? restoredAt : isoOf(row.createdAt, now),
+						entitlementId: current.entitlementId,
+						occurredAt: current.startedAt,
 					},
 		)
 	}

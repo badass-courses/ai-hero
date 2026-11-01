@@ -23,7 +23,10 @@ import { removeDiscordRole } from '@/lib/discord-utils'
 import { log } from '@/server/logger'
 import { and, eq, isNull } from 'drizzle-orm'
 
-import { recordIncludedProductEntitlementEventsSafely } from './included-product-entitlement-events'
+import {
+	recordIncludedProductEntitlementEventsSafely,
+	restorationsOf,
+} from './included-product-entitlement-events'
 import { INCLUDED_PRODUCTS } from './included-product-policy'
 export { hasIncludedProductEntitlements } from './included-product-policy'
 
@@ -424,8 +427,9 @@ async function reconcileIncludedProducts(
 					throw new Error('Included-product grant is revoked')
 				// Only a completed transfer retirement may be undone. Clear the
 				// marker so a later refund/operator revocation cannot reuse its proof.
-				// The restore marker names this grant for drovr, which never reopens
-				// a revoked grant id (included-product-entitlement-events).
+				// Each restore is appended, never overwritten: it names a new grant
+				// for drovr, which never reopens a revoked grant id, and the earlier
+				// ones must stay revocable (included-product-entitlement-events).
 				await tx
 					.update(entitlements)
 					.set({
@@ -433,8 +437,13 @@ async function reconcileIncludedProducts(
 						metadata: {
 							...row.metadata,
 							retiredByTransferId: null,
-							restoredByTransferId: operation.transferId,
-							restoredAt: new Date().toISOString(),
+							restorations: [
+								...restorationsOf(row.metadata),
+								{
+									transferId: operation.transferId,
+									restoredAt: new Date().toISOString(),
+								},
+							],
 						},
 					})
 					.where(eq(entitlements.id, id))

@@ -1511,6 +1511,56 @@ describe('included product entitlement events for drovr', () => {
 			regrant,
 		])
 	})
+	it('a second transfer back still revokes the first restored grant when its live record was missed', async () => {
+		await grantIncludedProductEntitlements(context)
+		await transferIncludedProductEntitlements(target())
+		await transferBack()
+		delete process.env.AIH_ENTITLEMENT_EVENTS_ENABLED
+		rows(purchaseUserTransfer)[1]!.transferState = 'COMPLETED'
+		purchase().userId = 'target'
+		purchase().organizationId = 'target-org'
+		seed(purchaseUserTransfer, {
+			id: 'transfer-again',
+			purchaseId: context.purchaseId,
+			transferState: 'VERIFIED',
+			sourceUserId: context.userId,
+			targetUserId: 'target',
+		})
+		await transferIncludedProductEntitlements({
+			...target(),
+			transferId: 'transfer-again',
+		})
+		rows(purchaseUserTransfer)[2]!.transferState = 'COMPLETED'
+		purchase().userId = context.userId
+		purchase().organizationId = context.organizationId
+		seed(purchaseUserTransfer, {
+			id: 'transfer-back-again',
+			purchaseId: context.purchaseId,
+			transferState: 'VERIFIED',
+			sourceUserId: 'target',
+			targetUserId: context.userId,
+		})
+		await transferIncludedProductEntitlements({
+			...context,
+			transferId: 'transfer-back-again',
+			sourceUserId: 'target',
+		})
+		process.env.AIH_ENTITLEMENT_EVENTS_ENABLED = 'on'
+		await recordIncludedProductEntitlementEvents({
+			purchaseId: context.purchaseId,
+		})
+		const learner = recorded().filter(([, holder]) => holder === 'learner')
+		expect(learner).toContainEqual([
+			'entitlement.revoked',
+			'learner',
+			`${bundleId()}:transfer-back`,
+		])
+		expect(learner.at(-1)).toEqual([
+			'entitlement.granted',
+			'learner',
+			`${bundleId()}:transfer-back-again`,
+		])
+	})
 	it('revoke-records-entitlement-revoked', async () => {
 		await grantIncludedProductEntitlements(context)
 		purchase().status = 'Refunded'
