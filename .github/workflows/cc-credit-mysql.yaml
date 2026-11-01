@@ -73,6 +73,8 @@ jobs:
           echo "AIH_CC_CREDIT_MYSQL_SERVER_URL=$server" >> "$GITHUB_ENV"
           echo "AIH_CC_CREDIT_MYSQL_URL=${server%/mysql}/aih_cc_credit_runtime_ci" >> "$GITHUB_ENV"
       - name: Prove migration, reserve interleavings, lifecycle, auth, dry runs and display
+        env:
+          NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME: ci
         run: >-
           pnpm exec vitest run -c vitest.config.ts --testTimeout=30000
           src/db/cc-credit-migration.test.ts

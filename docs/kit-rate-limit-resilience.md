@@ -12,7 +12,6 @@ Audited consent and sending paths:
 
 - `lib/email-preferences.ts`: preferences, unsubscribe identity checks, API reads, admin reads, and local preference synchronization share the fresh subscriber reader. `getProviderEmailPreferences` uses Course Builder's uncached `getSubscriberPreferences`.
 - `lib/subscriber-marketing/ai-hero-email-opt-in.server.ts`: opt-in reconciliation checks unsubscribe tags using uncached `getSubscriberByEmail`.
-- `lib/subscriber-marketing/evergreen-offer-journey/current-authority.ts`: the send-authority check reads current state and paginated exclusion tags through the direct Kit v4 transport wired by `server/evergreen-pilot-live.ts`, not this cache.
 - The remaining cached ID readers in `lib/convertkit.ts`, `lib/video-viewer-status-query.ts`, the survey router, the skills subscribe page, and the marketing operator's identity-link preview resolve display, survey, or identity data, not send consent. CTA gating uses cookie/display snapshots; final opt-in reconciliation stays uncached.
 
 ## Write retries

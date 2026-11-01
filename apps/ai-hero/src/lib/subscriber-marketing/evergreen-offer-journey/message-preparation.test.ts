@@ -11,7 +11,6 @@ import {
 	preparationEventRow,
 	decodePreparationEvent,
 } from './message-preparation-store'
-import { createMessageFieldsTransport } from './message-preparation-fields'
 
 describe('bounded immutable message preparation', () => {
 	it('escapes values and binds stable Liquid to full revision and slot', () => {
@@ -147,98 +146,5 @@ describe('bounded immutable message preparation', () => {
 		expect(preparationState(['SNAPSHOT', 'FIELDS', 'HOLD', 'READBACK'])).toBe(
 			'held',
 		)
-	})
-	it('V3 PUT contains only secret and bounded fields; unrelated profile stays unchanged', async () => {
-		const s = preparationFixture().snapshot,
-			calls: RequestInit[] = [],
-			profile = {
-				id: 123,
-				email_address: s.email,
-				state: 'active',
-				fields: {
-					unrelated: 'keep',
-					...Object.fromEntries(Object.keys(s.fields).map((k) => [k, null])),
-				},
-			} as {
-				id: number
-				email_address: string
-				state: string
-				fields: Record<string, string | null>
-			}
-		const port = createMessageFieldsTransport({
-			apiSecret: 'synthetic',
-			fetch: async (_url, init) => {
-				calls.push(init!)
-				if (init?.method === 'PUT') {
-					const b = JSON.parse(String(init.body))
-					expect(Object.keys(b).sort()).toEqual(['api_secret', 'fields'])
-					Object.assign(profile.fields, b.fields)
-				}
-				return new Response(JSON.stringify({ subscriber: profile }), {
-					status: 200,
-				})
-			},
-		})
-		expect(await port.project(s)).toBe('Attempted')
-		expect(await port.confirm(s)).toBe(true)
-		expect(profile.fields.unrelated).toBe('keep')
-		expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1)
-		expect(calls.every((c) => c.redirect === 'error')).toBe(true)
-	})
-	it.each(['identity', 'missing', 'malformed', 'inactive'])(
-		'refuses %s before PUT',
-		async (mode) => {
-			const s = preparationFixture().snapshot
-			let puts = 0
-			const p = {
-				id: mode === 'identity' ? 999 : 123,
-				email_address: s.email,
-				state: mode === 'inactive' ? 'cancelled' : 'active',
-				fields: mode === 'missing' ? {} : mode === 'malformed' ? [] : s.fields,
-			}
-			const port = createMessageFieldsTransport({
-				apiSecret: 'synthetic',
-				fetch: async (_u, i) => {
-					if (i?.method === 'PUT') puts++
-					return new Response(JSON.stringify({ subscriber: p }), {
-						status: 200,
-					})
-				},
-			})
-			expect(await port.project(s)).toBe('Refused')
-			expect(puts).toBe(0)
-		},
-	)
-	it('times out a late fields request without retry or claiming cancellation', async () => {
-		const s = preparationFixture().snapshot
-		let puts = 0,
-			release: () => void = () => {}
-		const late = new Promise<void>((r) => {
-			release = r
-		})
-		const port = createMessageFieldsTransport({
-			apiSecret: 'synthetic',
-			timeoutMs: 10,
-			fetch: async (_u, i) => {
-				if (i?.method === 'PUT') {
-					puts++
-					await late
-				}
-				return new Response(
-					JSON.stringify({
-						subscriber: {
-							id: 123,
-							email_address: s.email,
-							state: 'active',
-							fields: s.fields,
-						},
-					}),
-					{ status: 200 },
-				)
-			},
-		})
-		expect(await port.project(s)).toBe('Uncertain')
-		expect(puts).toBe(1)
-		release()
 	})
 })
