@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { parseDrovrSignupDeliveryConfig } from './subscriber-marketing/drovr-doi-signup'
 
 import type { AnalyticsRange } from './analytics/types'
 
@@ -185,34 +186,32 @@ export async function getOwnedNewsletterReport(args: {
 	const now = args.now ?? Date.now()
 	const since = sinceFor(args.range, now)
 	const fetcher = args.fetcher ?? fetch
+	const config = parseDrovrSignupDeliveryConfig(env)
 
 	async function read<Schema extends z.ZodTypeAny>(
 		path: string,
 		schema: Schema,
 		input?: unknown,
 	): Promise<Read<z.infer<Schema>>> {
-		if (!env.DROVR_API_BASE_URL || !env.DROVR_API_KEY_ORG_AIHERO) {
+		if (!config) {
 			return unavailable('drovr reporting credentials are not configured')
 		}
 		const controller = new AbortController()
 		const timer = setTimeout(() => controller.abort(), 5_000)
 		try {
-			const response = await fetcher(
-				`${env.DROVR_API_BASE_URL.replace(/\/+$/, '')}${path}`,
-				{
-					method: input === undefined ? 'GET' : 'POST',
-					headers: {
-						accept: 'application/json',
-						authorization: `Bearer ${env.DROVR_API_KEY_ORG_AIHERO}`,
-						...(input === undefined
-							? {}
-							: { 'content-type': 'application/json' }),
-					},
-					...(input === undefined ? {} : { body: JSON.stringify(input) }),
-					cache: 'no-store',
-					signal: controller.signal,
+			const response = await fetcher(`${config.baseUrl}${path}`, {
+				method: input === undefined ? 'GET' : 'POST',
+				headers: {
+					accept: 'application/json',
+					authorization: `Bearer ${config.apiKey}`,
+					...(input === undefined
+						? {}
+						: { 'content-type': 'application/json' }),
 				},
-			)
+				...(input === undefined ? {} : { body: JSON.stringify(input) }),
+				cache: 'no-store',
+				signal: controller.signal,
+			})
 			if (!response.ok)
 				return unavailable(`drovr reporting read failed (${response.status})`)
 			const parsed = schema.safeParse(await response.json())
