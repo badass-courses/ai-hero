@@ -13,7 +13,7 @@
  *   pnpm contact-events:backfill --live               # write (operator only)
  *
  * Purchases: status Valid or Restricted (the app's definition of a valid
- * purchase, see sync-purchase-tags). Unsubscribes: the local
+ * purchase). Unsubscribes: the local
  * CommunicationPreference mirror rows with active=false and an optOutAt —
  * Kit-side unsubscribes that never passed through an ai-hero preference flow
  * are not locally available and are NOT fabricated here.

@@ -6,10 +6,6 @@ import {
 	getRequiredKitV4ApiKey,
 } from '@/coursebuilder/crash-course-purchaser-kit-v4'
 import {
-	previewTeamKitProjection,
-	type TeamPurchaseRow,
-} from './subscriber-marketing/team-kit-projection'
-import {
 	captureValuePathFinisherFields,
 	AIH_FINISHER_SEGMENT_FIELD,
 	AIH_NEXT_COURSE_WAITLIST_AT_FIELD,
@@ -73,46 +69,6 @@ describe('AI Hero optional Kit mirrors', () => {
 			fetcher,
 		})('123')
 		expect(fetcher).not.toHaveBeenCalled()
-	})
-
-	it('keeps team facts but makes zero Kit lookup, field and tag calls', async () => {
-		const row: TeamPurchaseRow = {
-			purchaseId: 'purchase-1',
-			userId: 'user-1',
-			email: 'buyer@example.test',
-			name: 'Buyer',
-			teamId: 'team-1',
-			productId: 'product-1',
-			productName: 'Course',
-			productSlug: 'course',
-			purchaseCreatedAt: '2026-10-01T00:00:00Z',
-			couponMaxUses: 5,
-			couponUsedCount: 2,
-		}
-		const input = { ownerPurchases: [row], memberPurchases: [] }
-		const before = await previewTeamKitProjection(input)
-		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'false')
-		const provider = {
-			getSubscriberByEmail: vi.fn(),
-			updateSubscriberFields: vi.fn(),
-			subscribeToList: vi.fn(),
-		}
-		const after = await previewTeamKitProjection({
-			...input,
-			provider,
-			allowWrite: true,
-			ownerTagId: '1',
-			memberTagId: '2',
-		})
-		expect(after.contacts).toEqual(before.contacts)
-		expect(after.status).toBe('mirror-disabled')
-		expect(after.counts).toMatchObject({
-			contacts: 1,
-			fieldWritesPerformed: 0,
-			tagWritesPerformed: 0,
-		})
-		for (const call of Object.values(provider))
-			expect(call).not.toHaveBeenCalled()
 	})
 
 	it('keeps a master-off finisher dry-run from completing a write intent', async () => {

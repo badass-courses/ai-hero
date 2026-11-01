@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
 	findUser: vi.fn(),
 	findPurchase: vi.fn(),
-	findPurchases: vi.fn(),
 	reconcileTeamPurchaseFulfillment: vi.fn(),
 	getPrimarySubscriber: vi.fn(),
 	updatePrimarySubscriber: vi.fn(),
@@ -42,7 +41,7 @@ vi.mock('@/db', () => ({
 	db: {
 		query: {
 			users: { findFirst: mocks.findUser },
-			purchases: { findFirst: mocks.findPurchase, findMany: mocks.findPurchases },
+			purchases: { findFirst: mocks.findPurchase },
 		},
 	},
 }))
@@ -68,7 +67,6 @@ vi.mock('date-fns', () => ({ format: vi.fn(() => 'purchase-date') }))
 import { FULL_PRICE_COUPON_REDEEMED_EVENT } from '@coursebuilder/core/events/commerce'
 
 import { addPurchasesConvertkit } from './add-purchased-convertkit'
-import { syncPurchaseTags } from '../sync-purchase-tags'
 import { teamPurchaseFulfillmentWorkflow } from '../team-purchase-fulfillment-workflow'
 
 type TestHandler = (args: {
@@ -129,17 +127,6 @@ describe('addPurchasesConvertkit', () => {
 			subscriberId: 'tt-42',
 			fields: { purchased_ai_coding_crash_course_on: 'purchase-date' },
 		})
-	})
-
-	it('master off also skips the purchase resync before any Kit or database work', async () => {
-		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'false')
-		await (syncPurchaseTags as unknown as { handler: TestHandler }).handler({
-			event,
-			step: createStep(),
-		})
-		expect(mocks.findPurchases).not.toHaveBeenCalled()
-		expect(mocks.getPrimarySubscriber).not.toHaveBeenCalled()
-		expect(mocks.updatePrimarySubscriber).not.toHaveBeenCalled()
 	})
 
 	it.each(['true', 'false'])(
