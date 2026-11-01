@@ -2,17 +2,12 @@
 
 import { redirect } from "next/navigation";
 import { resolveUnsubscribePreference } from "@/coursebuilder/email-preferences";
-import { env } from "@/env.mjs";
 import {
   acceptKitLinkPreferenceChange,
   getEmailPreferenceDefinition,
-  syncLocalEmailPreference,
   unsubscribeLocalEmailPreferenceByUserId,
-  updateProviderEmailPreference,
-  validateKitPreferenceIdentity,
   verifyKitPreferenceLinkLocally,
 } from "@/lib/email-preferences";
-import { emailPreferencesLocalEnabled } from "@/lib/email-preferences-local";
 import { log } from "@/server/logger";
 
 export type UnsubscribeActionState = { status: "idle" | "done" };
@@ -47,7 +42,7 @@ export async function unsubscribeAction(
   const preferenceKey = resolution.key;
   const preferenceDefinition = getEmailPreferenceDefinition(preferenceKey);
 
-  if (subscriberId && shKit && emailPreferencesLocalEnabled(env)) {
+  if (subscriberId && shKit) {
     // Kit stays out of the request: the directory checks the link, and an
     // opt-out that cannot be checked now is queued and still lands.
     const verification = await verifyKitPreferenceLinkLocally({
@@ -68,41 +63,6 @@ export async function unsubscribeAction(
     if (result.status === "rejected") {
       redirect("/");
     }
-  } else if (subscriberId && shKit) {
-    const subscriber = await validateKitPreferenceIdentity({
-      subscriberId,
-      shKit,
-      source: "unsubscribe-link",
-      route: "/unsubscribed",
-    });
-
-    if (!subscriber) {
-      redirect("/");
-    }
-
-    const state = await updateProviderEmailPreference({
-      subscriberId,
-      subscriberEmail: subscriber.email_address ?? undefined,
-      preference: preferenceDefinition,
-      subscribed: false,
-      source: "unsubscribe-link",
-    });
-
-    await syncLocalEmailPreference({
-      email: subscriber.email_address,
-      preference: preferenceDefinition,
-      subscribed: state.subscribed,
-      source: "unsubscribe-link",
-    });
-
-    await log.info("email-preferences.unsubscribe", {
-      source: "unsubscribe-link",
-      provider: "convertkit",
-      kitSubscriberId: subscriberId,
-      shKit,
-      preferenceKey,
-      result: state.status,
-    });
   } else {
     if (!userId) {
       redirect("/");

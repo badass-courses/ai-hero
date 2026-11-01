@@ -3,7 +3,6 @@
 import React from 'react'
 import Spinner from '@/components/spinner'
 import { useConvertkitSubscriberUrlParam } from '@/hooks/use-convertkit-subscriber-url-param'
-import { setSubscriberCookie } from '@/lib/convertkit'
 import { api } from '@/trpc/react'
 import { useSession } from 'next-auth/react'
 
@@ -74,22 +73,10 @@ export function SurveyPageClient({
 		status === 'pending' || sessionStatus === 'loading',
 	)
 
-	const answerSurveyMutation = api.convertkit.answerSurvey.useMutation({
-		onSuccess: async (data) => {
-			if (data && 'id' in data) {
-				await setSubscriberCookie(data)
-			}
-		},
-	})
+	const answerSurveyMutation = api.convertkit.answerSurvey.useMutation()
 
 	const answerSurveyMultipleMutation =
-		api.convertkit.answerSurveyMultiple.useMutation({
-			onSuccess: async (data) => {
-				if (data && 'id' in data) {
-					await setSubscriberCookie(data)
-				}
-			},
-		})
+		api.convertkit.answerSurveyMultiple.useMutation()
 
 	const [email, setEmail] = React.useState<string | null>(null)
 	const [skippedToCompletion, setSkippedToCompletion] = React.useState(false)

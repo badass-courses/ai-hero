@@ -1,5 +1,4 @@
 import { cookies } from 'next/headers'
-import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { db } from '@/db'
 import {
 	contact,
@@ -9,23 +8,14 @@ import {
 	questionResponse,
 } from '@/db/schema'
 import { normalizeKitSubscriberId } from '@/lib/content-progress'
-import { kitMirrorWritesEnabled } from '@/lib/kit-mirror-writes'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
 import { readKitSubscriberIdentity } from '@/lib/kit-subscriber-directory'
 import { persistSurveyAnswers } from '@/lib/survey-answer-persistence'
-import { answerSurvey } from '@/lib/surveys-query'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
 import { createTRPCRouter, publicProcedure } from '@/trpc/api/trpc'
-import type { AdapterUser } from '@auth/core/adapters'
-import { format } from 'date-fns'
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
-import { toSnakeCase } from 'drizzle-orm/casing'
 import { z } from 'zod'
-
-export function formatDate(date: Date) {
-	return format(date, 'yyyy-MM-dd HH:mm:ss z')
-}
 
 const CHECKOUT_SURVEY_SLUG = 'checkout-decision-source'
 const CHECKOUT_SURVEY_ID = 'survey-checkout-decision-source'
@@ -140,7 +130,9 @@ async function ensureCheckoutSurveyResources(createdById: string) {
  * subscriber record used to.
  */
 async function resolveCheckoutSurveyAnswerer(
-	session: { user?: { id?: string | null; email?: string | null } | null } | null,
+	session: {
+		user?: { id?: string | null; email?: string | null } | null
+	} | null,
 ) {
 	const cookieStore = await cookies()
 	const convertkitId = cookieStore.get('ck_subscriber_id')?.value
@@ -200,36 +192,18 @@ async function resolveCheckoutSurveyAnswerer(
 }
 
 /**
- * Surveys off Kit. On, an answer is stored locally (QuestionResponse) and
+ * Surveys are off Kit: an answer is stored locally (QuestionResponse) and
  * reaches drovr as interest facts; Kit gets no subscribe and no field write.
- * Off keeps today's Kit writes. Dark because the anonymous email ask stops
- * putting answerers on the list: only the signup path's double opt-in does.
- */
-export function surveyOffKitEnabled() {
-	return (
-		!kitMirrorWritesEnabled() ||
-		process.env.AIH_SURVEY_OFF_KIT_ENABLED === 'true'
-	)
-}
-
-/**
+ *
  * Who is answering, from the reader's cookies. A full cookie record is read
- * as-is. Off Kit, a bare Kit id resolves through the local contact directory
- * and an id the directory does not know answers anonymously. Off, a bare id
- * is still looked up in Kit, as before: the directory has no list state, and
- * Kit's record is what the client writes back into `ck_subscriber`.
+ * as-is. A bare Kit id resolves through the local contact directory and an id
+ * the directory does not know answers anonymously.
  */
 async function readSurveySubscriber(
 	convertkitId: string | undefined,
 	subscriberCookie: string | undefined,
-	offKit: boolean,
 ): Promise<z.infer<typeof SubscriberSchema> | null> {
 	if (convertkitId) {
-		if (!offKit) {
-			return SubscriberSchema.parse(
-				await emailListProvider.getSubscriber(convertkitId),
-			)
-		}
 		const identity = await readKitSubscriberIdentity(convertkitId)
 		return identity ? SubscriberSchema.parse(identity) : null
 	}
@@ -266,45 +240,9 @@ export const convertkitRouter = createTRPCRouter({
 
 			let subscriber: z.infer<typeof SubscriberSchema> | null = null
 			let subscriberSyncError: string | null = null
-			const fields: Record<string, string> = {
-				last_surveyed_on: formatDate(new Date()),
-				...(input.surveyId && {
-					[`completed_${toSnakeCase(input.surveyId)}_survey_on`]: formatDate(
-						new Date(),
-					),
-				}),
-			}
-
-			for (const answer in input.answers) {
-				const value = input.answers[answer]
-				if (value === null || value === undefined) continue
-
-				const stringValue = Array.isArray(value)
-					? value.join(', ')
-					: String(value)
-
-				if (stringValue.trim()) {
-					fields[answer] = stringValue
-				}
-			}
-
-			const offKit = surveyOffKitEnabled()
 
 			try {
-				subscriber = await readSurveySubscriber(
-					convertkitId,
-					subscriberCookie,
-					offKit,
-				)
-
-				if (!subscriber && input.email && !offKit) {
-					subscriber = await emailListProvider.subscribeToList({
-						listId: process.env.CONVERTKIT_SIGNUP_FORM,
-						user: (session?.user || { email: input.email }) as AdapterUser,
-						fields,
-						listType: 'form',
-					})
-				}
+				subscriber = await readSurveySubscriber(convertkitId, subscriberCookie)
 			} catch (error) {
 				subscriberSyncError =
 					error instanceof Error ? error.message : String(error)
@@ -362,8 +300,8 @@ export const convertkitRouter = createTRPCRouter({
 				}
 			}
 
-			// Off Kit, the local row is the only copy of the answer.
-			if (offKit && saveFailed) {
+			// The local row is the only copy of the answer.
+			if (saveFailed) {
 				return { success: false, storedInDb: false, subscriberSyncError }
 			}
 
@@ -377,36 +315,7 @@ export const convertkitRouter = createTRPCRouter({
 				return { success: true, storedInDb: true, subscriberSyncError }
 			}
 
-			if (offKit) {
-				return { success: true, storedInDb: true, subscriberSyncError: null }
-			}
-
-			try {
-				let updatedSubscriber = await emailListProvider.getSubscriber(
-					subscriber.id.toString(),
-				)
-
-				if (fields && emailListProvider?.updateSubscriberFields) {
-					updatedSubscriber = await emailListProvider?.updateSubscriberFields?.(
-						{
-							fields,
-							subscriberEmail: updatedSubscriber?.email_address,
-							subscriberId: updatedSubscriber?.id,
-						},
-					)
-				}
-
-				return updatedSubscriber
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error)
-				await log.error('survey.submit.subscriber.update.failed', {
-					surveyId: input.surveyId,
-					userId,
-					emailListSubscriberId,
-					error: message,
-				})
-				return { success: true, storedInDb: true, subscriberSyncError: message }
-			}
+			return { success: true, storedInDb: true, subscriberSyncError: null }
 		}),
 	/**
 	 * Returns the saved checkout survey answer for the current browser identity.
@@ -559,14 +468,9 @@ export const convertkitRouter = createTRPCRouter({
 
 			let subscriber: z.infer<typeof SubscriberSchema> | null = null
 			let subscriberLookupError: string | null = null
-			const offKit = surveyOffKitEnabled()
 
 			try {
-				subscriber = await readSurveySubscriber(
-					convertkitId,
-					subscriberCookie,
-					offKit,
-				)
+				subscriber = await readSurveySubscriber(convertkitId, subscriberCookie)
 			} catch (error) {
 				subscriberLookupError =
 					error instanceof Error ? error.message : String(error)
@@ -632,8 +536,8 @@ export const convertkitRouter = createTRPCRouter({
 				}
 			}
 
-			// Off Kit, the local row is the only copy of the answer.
-			if (offKit && saveFailed) {
+			// The local row is the only copy of the answer.
+			if (saveFailed) {
 				return { success: false, storedInDb: false, subscriberLookupError }
 			}
 
@@ -647,16 +551,6 @@ export const convertkitRouter = createTRPCRouter({
 				return { success: true, storedInDb: true, subscriberLookupError }
 			}
 
-			if (offKit) {
-				return { success: true, storedInDb: true, subscriberLookupError: null }
-			}
-
-			const updatedSubscriber = await answerSurvey({
-				subscriber,
-				question: input.question,
-				answer: input.answer,
-			})
-
-			return updatedSubscriber
+			return { success: true, storedInDb: true, subscriberLookupError: null }
 		}),
 })

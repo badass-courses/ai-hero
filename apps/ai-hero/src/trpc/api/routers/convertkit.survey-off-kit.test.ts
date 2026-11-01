@@ -134,7 +134,6 @@ describe('surveys off Kit, with Kit unreachable', () => {
 			email: 'reader@example.test',
 			name: 'Reader',
 		})
-		vi.stubEnv('AIH_SURVEY_OFF_KIT_ENABLED', 'true')
 		globalThis.fetch = (async (input: string | URL | Request) => {
 			const url = String(input instanceof Request ? input.url : input)
 			mocks.kitFetches.push(url)
@@ -147,9 +146,7 @@ describe('surveys off Kit, with Kit unreachable', () => {
 		vi.unstubAllEnvs()
 	})
 
-	it('master off overrides the survey flag and keeps owned answers and drovr facts, with zero Kit calls', async () => {
-		vi.stubEnv('AIH_SURVEY_OFF_KIT_ENABLED', 'false')
-		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'false')
+	it('keeps owned answers and drovr facts, with zero Kit calls', async () => {
 		const result = await caller().answerSurveyMultiple({
 			surveyId: 'ai-coding-readiness',
 			email: 'anon@example.test',
@@ -302,74 +299,5 @@ describe('surveys off Kit, with Kit unreachable', () => {
 		expect(mocks.scheduled).toEqual([])
 		expect(mocks.kitCalls).toEqual([])
 		expect(mocks.kitFetches).toEqual([])
-	})
-
-	it('off, a failed save still falls through to the Kit write, as before', async () => {
-		vi.stubEnv('AIH_SURVEY_OFF_KIT_ENABLED', '')
-		mocks.kitUp = true
-		mocks.insertFails = true
-		mocks.cookies.set('ck_subscriber_id', KIT_ID)
-
-		const single = await caller().answerSurvey({
-			surveyId: 'ai-coding-readiness',
-			question: 'goal',
-			answer: 'ship-faster',
-		})
-		const multiple = await caller().answerSurveyMultiple({
-			surveyId: 'ai-coding-readiness',
-			email: 'reader@example.test',
-			answers: { goal: 'ship-faster' },
-		})
-
-		expect(single).toMatchObject({ id: 1234567, state: 'active' })
-		expect(multiple).toMatchObject({ id: 1234567, state: 'active' })
-		expect(mocks.kitCalls).toEqual([
-			'getSubscriber',
-			'updateSubscriberFields',
-			'getSubscriber',
-			'getSubscriber',
-			'updateSubscriberFields',
-		])
-		expect(mocks.inserted).toEqual([])
-	})
-
-	it('off, keeps every Kit read and write (the flag is the switch)', async () => {
-		vi.stubEnv('AIH_SURVEY_OFF_KIT_ENABLED', '')
-		mocks.kitUp = true
-		mocks.cookies.set('ck_subscriber_id', KIT_ID)
-
-		const single = await caller().answerSurvey({
-			surveyId: 'ai-coding-readiness',
-			question: 'goal',
-			answer: 'ship-faster',
-		})
-		const multiple = await caller().answerSurveyMultiple({
-			surveyId: 'ai-coding-readiness',
-			email: 'reader@example.test',
-			answers: { goal: 'ship-faster' },
-		})
-		mocks.cookies.clear()
-		await caller().answerSurveyMultiple({
-			surveyId: 'ai-coding-readiness',
-			email: 'anon@example.test',
-			answers: { goal: 'ship-faster' },
-		})
-
-		// Identity comes from Kit, as before the flag: the directory has no
-		// list state, and the client writes Kit's record into ck_subscriber.
-		expect(mocks.kitCalls).toEqual([
-			'getSubscriber',
-			'updateSubscriberFields',
-			'getSubscriber',
-			'getSubscriber',
-			'updateSubscriberFields',
-			'subscribeToList',
-			'getSubscriber',
-			'updateSubscriberFields',
-		])
-		expect(single).toMatchObject({ id: 1234567, state: 'active' })
-		expect(multiple).toMatchObject({ id: 1234567, state: 'active' })
-		// Answers are stored locally either way.
-		expect(mocks.inserted).toHaveLength(3)
 	})
 })
