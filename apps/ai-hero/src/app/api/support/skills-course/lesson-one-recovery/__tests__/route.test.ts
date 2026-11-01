@@ -40,6 +40,8 @@ vi.mock('@/server/logger', () => ({
 	serializeError: (error: unknown) => ({ message: String(error) }),
 }))
 
+import { log } from '@/server/logger'
+
 import {
 	createLocalRecoverySubscribers,
 	createSkillsLessonOneRecoveryPostHandler,
@@ -249,6 +251,10 @@ describe('POST /api/support/skills-course/lesson-one-recovery', () => {
 			expect(response.status).toBe(200)
 			expect(await response.json()).toMatchObject({ state: 'ready' })
 			expect(kit.getSubscriberByEmail).not.toHaveBeenCalled()
+			expect(log.info).toHaveBeenCalledWith(
+				'skills.course.lesson_one_support_recovery_standing',
+				{ state: 'subscribed' },
+			)
 		})
 
 		it('stopped: apply blocks before any intent or send', async () => {

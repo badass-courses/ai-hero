@@ -152,6 +152,10 @@ async function resolveLocalSubscriber(
 		reader: createRecoveryStandingReader(),
 	})
 	if (standing.state === 'subscribed') {
+		// State only: the positive receipt that the local read served this.
+		await log.info('skills.course.lesson_one_recovery_standing', {
+			state: standing.state,
+		})
 		return { id: standing.kitSubscriberId, state: 'active' }
 	}
 	// No identity in the log line: state and reason only.

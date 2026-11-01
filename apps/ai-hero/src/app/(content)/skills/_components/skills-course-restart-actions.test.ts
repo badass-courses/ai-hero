@@ -270,6 +270,11 @@ describe('resendSkillsCourseLessonOne', () => {
 				}),
 			)
 			expect(mocks.getSubscriberByEmail).not.toHaveBeenCalled()
+			// State only: no email, contact or Kit id in the receipt.
+			expect(mocks.log.info).toHaveBeenCalledWith(
+				'skills.course.lesson_one_recovery_standing',
+				{ state: 'subscribed' },
+			)
 		})
 
 		it('signed token: the token Kit id is the one checked', async () => {
