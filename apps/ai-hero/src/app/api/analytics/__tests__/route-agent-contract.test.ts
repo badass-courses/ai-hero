@@ -23,6 +23,13 @@ const mocks = vi.hoisted(() => ({
 			fn: 'getEvergreenFunnel',
 		},
 		{
+			name: 'newsletter/signups',
+			description: 'Newsletter signups from drovr',
+			category: 'newsletter',
+			provider: 'newsletter',
+			fn: 'getNewsletterSignups',
+		},
+		{
 			name: 'learning/progress',
 			description: 'Aggregate learner progress',
 			category: 'learning',
@@ -133,7 +140,7 @@ describe('analytics API agent contract', () => {
 		})
 	})
 
-	it.each(['revenue/promos', 'funnel/evergreen'])(
+	it.each(['revenue/promos', 'funnel/evergreen', 'newsletter/signups'])(
 		'refuses signed-out and ordinary users for %s without querying',
 		async (surface) => {
 			for (const ability of [null, createAppAbility([])]) {
@@ -200,6 +207,27 @@ describe('analytics API agent contract', () => {
 			)
 		},
 	)
+
+	it('answers an unavailable drovr signup read with 503, not a count', async () => {
+		mocks.query.mockResolvedValue({
+			ok: false,
+			surface: 'newsletter/signups',
+			error: {
+				code: 'SIGNUPS_UNAVAILABLE',
+				message:
+					'Newsletter signups are unavailable: drovr signup-counts read timed out.',
+			},
+			fix: 'Retry shortly. Unavailable is not zero; do not report a signup count.',
+		})
+		const response = await GET(request('?surface=newsletter/signups'))
+		expect(response.status).toBe(503)
+		const body = await response.json()
+		expect(body).toMatchObject({
+			ok: false,
+			error: { code: 'SIGNUPS_UNAVAILABLE' },
+		})
+		expect(body.data).toBeUndefined()
+	})
 
 	it.each([null, 'ordinary'])(
 		'refuses learning/progress for %s callers without querying',
@@ -496,7 +524,7 @@ describe('analytics API agent contract', () => {
 				expect.stringContaining('defaults to range=30d'),
 			]),
 			schema: {
-				version: '2026-10-29.2',
+				version: '2026-11-01.1',
 				query: {
 					type: 'object',
 					required: ['surface'],

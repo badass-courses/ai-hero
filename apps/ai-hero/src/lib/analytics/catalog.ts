@@ -5,7 +5,7 @@ import {
 import type { SurfaceName } from './types'
 export type SurfaceEntry = Omit<BaseSurfaceEntry, 'name' | 'category'> & {
 	name: SurfaceName
-	category: BaseSurfaceEntry['category'] | 'learning'
+	category: BaseSurfaceEntry['category'] | 'learning' | 'newsletter'
 }
 export const catalog: Record<SurfaceName, SurfaceEntry> = {
 	...baseCatalog,
@@ -24,6 +24,14 @@ export const catalog: Record<SurfaceName, SurfaceEntry> = {
 		fn: 'getEvergreenFunnel',
 		description:
 			'Pending: evergreen entered/clicked/bought daily aggregates await the journey aggregate read. Not zero conversion.',
+	},
+	'newsletter/signups': {
+		name: 'newsletter/signups',
+		category: 'newsletter',
+		provider: 'newsletter',
+		fn: 'getNewsletterSignups',
+		description:
+			'Newsletter signups from drovr: daily new subscribers by source (ai-hero = site signups, kit = Kit-only arrivals, list-import = imported lists, plus unknown and unattributed) with 7-day and 30-day totals, and daily confirmed and unsubscribed (all contacts, not newsletter churn) counts when drovr reports them. range=7d reads 7 UTC days, any other range 30. A missing day is unavailable, not zero; today is partial. Counts only, no contact identities.',
 	},
 	'learning/progress': {
 		name: 'learning/progress',
