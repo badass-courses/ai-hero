@@ -200,6 +200,27 @@ export async function isOnDrovrSendingJourney(
 	return doubleOptIn.length > 0
 }
 
+/**
+ * Whether drovr, not the legacy planner, drives this contact's skills-course
+ * lessons: a skills-course owner record, or a double opt-in signup (drovr
+ * runs the course for DOI-born contacts, which get no owner record). An owner
+ * record for only the newsletter or evergreen offer does not count: drovr
+ * does not send those contacts the course, so the legacy lesson is their only
+ * copy. Narrower than `isOnDrovrSendingJourney`, which contact sync uses.
+ */
+export async function isOnDrovrSkillsCourse(
+	repository: OwnershipReadRepository,
+	contactId: string,
+): Promise<boolean> {
+	if (await findJourneyOwnerAssignment(repository, contactId)) return true
+	if (!repository.findContactEventsByType) return false
+	const doubleOptIn = await repository.findContactEventsByType(
+		contactId,
+		DOI_REQUESTED_EVENT_TYPE,
+	)
+	return doubleOptIn.length > 0
+}
+
 export type JourneyOwnerResolution =
 	| { owner: 'legacy'; recorded: false }
 	| { owner: 'drovr'; recorded: false }
