@@ -128,14 +128,11 @@ async function createHtmlResponse(
 async function verifyStoredYouTubeAuth(): Promise<StoredAuthVerification> {
 	const clientId = process.env.YOUTUBE_OAUTH_CLIENT_ID || null
 	const clientSecret = process.env.YOUTUBE_OAUTH_CLIENT_SECRET || null
-	const refreshToken = (await getIntegrationRefreshToken(
-		'youtube_analytics',
-		process.env.YOUTUBE_ANALYTICS_REFRESH_TOKEN,
-	)) || null
+	const refreshToken = (await getIntegrationRefreshToken('youtube_analytics')) || null
 	const missingEnvKeys = [
 		!clientId ? 'YOUTUBE_OAUTH_CLIENT_ID' : null,
 		!clientSecret ? 'YOUTUBE_OAUTH_CLIENT_SECRET' : null,
-		!refreshToken ? 'YOUTUBE_ANALYTICS_REFRESH_TOKEN' : null,
+		!refreshToken ? 'YouTube not connected (no DB token row)' : null,
 	].filter(Boolean) as string[]
 
 	const baseResult: StoredAuthVerification = {
@@ -374,167 +371,26 @@ export const GET = withSkill(async (request: NextRequest) => {
 				)
 			}
 
-			const dbStorageNotice = integrationTokenStorageNotice(
-				await putIntegrationRefreshToken(
-					'youtube_analytics',
-					tokens.refresh_token,
-				),
+			const storageResult = await putIntegrationRefreshToken(
+				'youtube_analytics',
+				tokens.refresh_token,
 			)
-
-			const vercelToken = process.env.VERCEL_API_TOKEN
-			const projectId = process.env.VERCEL_CB_PROJECT_ID
-			const teamId = process.env.VERCEL_TEAM_ID
-			let stored = false
-			let storeResults: Array<{
-				target: string
-				ok: boolean
-				status: number
-				bodyPreview: string
-			}> = []
-
-			if (vercelToken && projectId) {
-				try {
-					const envParams = new URLSearchParams({ upsert: 'true' })
-					if (teamId) {
-						envParams.set('teamId', teamId)
-					}
-					const redeployParams = new URLSearchParams()
-					if (teamId) {
-						redeployParams.set('teamId', teamId)
-					}
-					const envQuery = `?${envParams.toString()}`
-					const redeployQuery = redeployParams.toString()
-						? `?${redeployParams.toString()}`
-						: ''
-					for (const target of ['production', 'preview', 'development']) {
-						await emitAuthLog('info', 'youtube-auth.vercel-env-write.started', {
-							requestId,
-							target,
-							refreshTokenFingerprint,
-						})
-
-						const resp = await fetch(
-							`https://api.vercel.com/v10/projects/${projectId}/env${envQuery}`,
-							{
-								method: 'POST',
-								headers: {
-									Authorization: `Bearer ${vercelToken}`,
-									'Content-Type': 'application/json',
-								},
-								body: JSON.stringify({
-									key: 'YOUTUBE_ANALYTICS_REFRESH_TOKEN',
-									value: tokens.refresh_token,
-									target: [target],
-									type: 'encrypted',
-								}),
-							},
-						)
-						const body = await resp.text()
-						const bodyPreview = body.slice(0, 200)
-						storeResults.push({
-							target,
-							ok: resp.ok,
-							status: resp.status,
-							bodyPreview,
-						})
-
-						if (resp.ok) {
-							await emitAuthLog(
-								'info',
-								'youtube-auth.vercel-env-write.succeeded',
-								{
-									requestId,
-									target,
-									status: resp.status,
-									refreshTokenFingerprint,
-								},
-							)
-						} else {
-							await emitAuthLog(
-								'warn',
-								'youtube-auth.vercel-env-write.failed',
-								{
-									requestId,
-									target,
-									status: resp.status,
-									bodyPreview,
-									refreshTokenFingerprint,
-								},
-							)
-						}
-					}
-
-					stored = storeResults.every((result) => result.ok)
-					await emitAuthLog('info', 'youtube-auth.vercel-env-write.completed', {
-						requestId,
-						stored,
-						storeResults,
-						refreshTokenFingerprint,
-					})
-
-					if (stored) {
-						const redeployResp = await fetch(
-							`https://api.vercel.com/v13/deployments${redeployQuery}`,
-							{
-								method: 'POST',
-								headers: {
-									Authorization: `Bearer ${vercelToken}`,
-									'Content-Type': 'application/json',
-								},
-								body: JSON.stringify({
-									name: 'ai-hero',
-									target: 'production',
-									gitSource: {
-										type: 'github',
-										repo: 'course-builder',
-										ref: 'main',
-										org: 'badass-courses',
-									},
-								}),
-							},
-						)
-						const redeployBodyPreview = (await redeployResp.text()).slice(
-							0,
-							200,
-						)
-						if (redeployResp.ok) {
-							await emitAuthLog('info', 'youtube-auth.redeploy-triggered', {
-								requestId,
-								status: redeployResp.status,
-								refreshTokenFingerprint,
-							})
-						} else {
-							await emitAuthLog('warn', 'youtube-auth.redeploy-failed', {
-								requestId,
-								status: redeployResp.status,
-								bodyPreview: redeployBodyPreview,
-								refreshTokenFingerprint,
-							})
-						}
-					}
-				} catch (storeErr) {
-					await emitAuthLog('error', 'youtube-auth.vercel-store.failed', {
-						requestId,
-						refreshTokenFingerprint,
-						error: serializeError(storeErr),
-					})
-				}
-			} else {
-				await emitAuthLog('warn', 'youtube-auth.vercel-store.skipped', {
+			const dbStorageNotice = integrationTokenStorageNotice(storageResult)
+			if (!storageResult.ok) {
+				await emitAuthLog('error', 'youtube-auth.token-store.failed', {
 					requestId,
-					hasVercelToken: Boolean(vercelToken),
-					hasProjectId: Boolean(projectId),
 					refreshTokenFingerprint,
 				})
+				return createHtmlResponse(
+					'<h1>❌ YouTube token was not stored</h1>',
+					`<p>${dbStorageNotice}</p>`,
+					true,
+				)
 			}
 
 			return createHtmlResponse(
 				'<h1>✅ YouTube authorized</h1>',
-				`${
-					stored
-						? '<p style="color:#16a34a;font-weight:600">Refresh token stored automatically. No further action needed.</p>'
-						: '<p>Authorization succeeded, but token storage did not fully complete. Check the youtube-auth logs or /api/analytics/youtube-auth?verify=1 before asking Matt to retry.</p>'
-				}${dbStorageNotice ? `<p>${dbStorageNotice}</p>` : ''}<p style="color:#666;font-size:13px;margin-top:16px">Analytics plus YouTube channel management access granted. This refresh token stays valid until revoked. You can close this tab.</p>`,
+				`<p style="color:#16a34a;font-weight:600">Refresh token stored. No further action needed.</p><p style="color:#666;font-size:13px;margin-top:16px">Analytics plus YouTube channel management access granted. This refresh token stays valid until revoked. You can close this tab.</p>`,
 				true,
 			)
 		} catch (err) {

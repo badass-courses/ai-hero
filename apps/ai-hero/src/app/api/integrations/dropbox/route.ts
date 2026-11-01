@@ -5,7 +5,6 @@ import {
 	exchangeDropboxAuthorizationCode,
 	getDropboxSyncConfig,
 	readDropboxCourseManifestSummary,
-	redeployAfterDropboxAuthorization,
 	storeDropboxRefreshToken,
 	verifyDropboxConnection,
 } from '@/lib/dropbox-course-sync'
@@ -58,15 +57,11 @@ async function requireAdmin(request: NextRequest) {
 	return Boolean(session?.user && ability.can('manage', 'all'))
 }
 
-function tokenStoreIsConfigured() {
-	return Boolean(process.env.VERCEL_API_TOKEN && process.env.VERCEL_AI_HERO_PROJECT_ID)
-}
-
 /**
  * GET /api/integrations/dropbox
  *
  * - no query parameters: start a state-protected OAuth authorization flow
- * - `?code=...&state=...`: verify Dropbox access and store the refresh token in Vercel encrypted env
+ * - `?code=...&state=...`: verify Dropbox access and store the refresh token in the encrypted DB token store
  * - `?verify=1`: confirm the stored token can read the configured shared folder and approved root
  * - `?manifest=summary`: return a redacted, revision-pinned summary of the root course manifest
  */
@@ -88,7 +83,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 				{ status: 401, headers: { 'Cache-Control': 'no-store' } },
 			)
 		}
-		const refreshToken = await getIntegrationRefreshToken('dropbox', process.env.DROPBOX_REFRESH_TOKEN)
+		const refreshToken = await getIntegrationRefreshToken('dropbox')
 		if (!config || config.source.kind !== 'shared-link' || !refreshToken) {
 			return NextResponse.json(
 				{
@@ -99,7 +94,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 						...(config?.source.kind === 'shared-link'
 							? []
 							: ['DROPBOX_SYNC_SHARED_LINK']),
-						...(refreshToken ? [] : ['DROPBOX_REFRESH_TOKEN']),
+						...(refreshToken ? [] : ['Dropbox not connected (no DB token row)']),
 					],
 				},
 				{ status: 503, headers: { 'Cache-Control': 'no-store' } },
@@ -147,7 +142,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 
 		const verification = await verifyDropboxConnection({
 			config,
-			refreshToken: await getIntegrationRefreshToken('dropbox', process.env.DROPBOX_REFRESH_TOKEN),
+			refreshToken: await getIntegrationRefreshToken('dropbox'),
 		})
 		await log.info('dropbox-course-sync.verify.completed', {
 			requestId,
@@ -200,26 +195,11 @@ export const GET = withSkill(async (request: NextRequest) => {
 			}
 
 			const storage = await storeDropboxRefreshToken({ refreshToken })
-			const dbNotice = storage.dbStorage
-				? `<p>${integrationTokenStorageNotice(storage.dbStorage)}</p>`
-				: ''
 			if (!storage.ok) {
 				await log.error('dropbox-course-sync.callback.secret-store-failed', {
 					requestId,
-					missingConfig: storage.missingConfig,
-					statuses: storage.statuses,
 				})
-				return page('Dropbox authorization was not stored', '<p>AI Hero could not save the credential to its encrypted runtime configuration. No credential was displayed. Fix the server configuration and start again.</p>' + dbNotice, true)
-			}
-
-			const redeploy = await redeployAfterDropboxAuthorization()
-			if (!redeploy.ok) {
-				await log.error('dropbox-course-sync.callback.redeploy-failed', {
-					requestId,
-					missingConfig: redeploy.missingConfig,
-					status: redeploy.status,
-				})
-				return page('Dropbox credential was stored, but AI Hero was not redeployed', '<p>The credential is safely stored, but the running app cannot use it until a new production deployment succeeds. Trigger a production deployment, then run the verification endpoint.</p>' + dbNotice, true)
+				return page('Dropbox authorization was not stored', `<p>${integrationTokenStorageNotice(storage)}</p><p>No credential was displayed.</p>`, true)
 			}
 
 			await log.info('dropbox-course-sync.callback.succeeded', {
@@ -227,9 +207,8 @@ export const GET = withSkill(async (request: NextRequest) => {
 				grantedScopes,
 				accountIdFingerprint: verification.accountIdFingerprint,
 				sharedFolderVerified: verification.sharedFolderBoundary.verified,
-				redeployStatus: redeploy.status,
 			})
-			return page('Dropbox authorized', '<p>AI Hero verified the approved shared folder, stored the refresh credential in encrypted runtime configuration, and triggered a production deployment. You can close this tab.</p>' + dbNotice, true)
+			return page('Dropbox authorized', '<p>AI Hero verified the approved shared folder and stored the refresh credential in the encrypted token store. You can close this tab.</p>', true)
 		} catch (error) {
 			await log.error('dropbox-course-sync.callback.failed', {
 				requestId,
@@ -242,13 +221,10 @@ export const GET = withSkill(async (request: NextRequest) => {
 	if (!(await requireAdmin(request))) {
 		return NextResponse.json({ ok: false, error: 'Unauthorized, admin only' }, { status: 401 })
 	}
-	if (!config || !tokenStoreIsConfigured()) {
+	if (!config) {
 		await log.warn('dropbox-course-sync.start.misconfigured', {
 			requestId,
-			missingConfig: [
-				...missingConfig,
-				...(tokenStoreIsConfigured() ? [] : ['VERCEL_API_TOKEN', 'VERCEL_AI_HERO_PROJECT_ID']),
-			],
+			missingConfig,
 		})
 		return NextResponse.json(
 			{

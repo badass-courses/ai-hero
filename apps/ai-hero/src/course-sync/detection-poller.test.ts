@@ -361,7 +361,7 @@ describe('course sync detection poller', () => {
 			readManifest: async () => {
 				throw new CourseSyncError(
 					'DROPBOX_SYNC_NOT_CONFIGURED',
-					'Dropbox sync is not configured: DROPBOX_REFRESH_TOKEN',
+					'Dropbox sync is not configured: Dropbox not connected (no DB token row)',
 					503,
 				)
 			},
