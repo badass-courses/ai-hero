@@ -53,6 +53,7 @@
 		"team-purchases:repair-links": "tsx -r dotenv/config src/scripts/team-purchase-link-repair.ts",
 		"team-purchases:repair-memberless": "tsx -r dotenv/config src/scripts/team-purchase-memberless-repair.ts",
 		"kit:fields:check": "DO_NOT_TRACK=1 varlock run --path .env.ops-kit.schema -- tsx src/scripts/kit-custom-fields-check.ts",
+		"reporting:kit-snapshot": "SKIP_ENV_VALIDATION=1 tsx src/scripts/reporting-kit-snapshot.ts",
 		"evergreen:deadline-fields:plan": "tsx -r dotenv/config src/scripts/evergreen-deadline-fields-plan.ts",
 		"checkout:recover": "tsx --conditions=react-server -r dotenv/config src/scripts/checkout-recovery.ts",
 		"cohort-004:shell-sync": "bun src/scripts/cohort-004-shell-sync.ts",

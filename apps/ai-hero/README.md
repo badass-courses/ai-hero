@@ -62,6 +62,45 @@ contract. The Discord legend backfill also remains unchanged because it reads
 an env file directly rather than the process environment. This change does not
 remove `.env.vercel` or change runtime environment loading.
 
+### Kit-era newsletter report snapshot
+
+`pnpm reporting:kit-snapshot` freezes today's Kit-backed newsletter report into
+the JSON array `AIH_REPORTING_KIT_HISTORY_JSON` parses, for the admin report's
+`historical` block once `AIH_REPORTING_OFF_KIT_ENABLED` is on. Run it once,
+before the flip, from this directory:
+
+```sh
+pnpm reporting:kit-snapshot --out /secure/path/kit-history.json
+```
+
+- It needs only `CONVERTKIT_V4_API_KEY` and `DATABASE_URL`, injected into the
+  process environment by the secret store. It reads no env file, and there is
+  no `vercel env pull`: production secrets are write-only in Vercel.
+- It only reads Kit and the database, forces the off-Kit reporting flag off
+  in its own process, and reads each Kit URL once for every scope. Any failed
+  Kit read stops the run before it writes: the readers would otherwise record
+  a failed click read as a broadcast with no clicks.
+- It writes the file with mode 0600 and refuses to overwrite one. It prints
+  scopes, campaign counts and byte sizes, never report values.
+- Scopes default to `full`: every range (`24h`, `7d`, `30d`, `90d`, `all`) for
+  `standard` and unscoped `strict`. `--product <id>` adds a product-scoped
+  `strict` snapshot per range, for example `product-s00zs` for C5.
+- The budget is 40,000 bytes, since Vercel caps the whole env near 64 KB. Over
+  budget, a `full` run keeps the fallback scopes, `all` plus the C5 range for
+  both modes. The C5 range is the smallest rolling range reaching back to
+  `FEATURED_PROMO.startsAt` at capture time. If even that is over, it writes
+  nothing and exits 1.
+- `--scopes fallback` asks for the fallback directly. `--scopes
+  standard:all,strict:30d@<productId>` picks exact scopes.
+- `--trim-links` drops `kitLinks` and empties `shortlinks` on every campaign.
+  Campaign totals stay: recipients, opens, clicks, unsubscribes, signups,
+  purchases, revenue and click-to-purchase rate. The report loses the per-link
+  Kit clicks and the per-shortlink click, signup, purchase and revenue rows.
+- `--limit <n>` matches the analytics API's default of 20 broadcasts.
+
+A query matches exactly one snapshot by mode, range and product. A query with
+no matching snapshot shows the historical block as unavailable, not zero.
+
 ### Interest facts backfill
 
 `pnpm interest-facts:backfill --input <subscribers.jsonl>` reads a Kit
