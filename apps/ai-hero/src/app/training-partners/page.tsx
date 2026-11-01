@@ -3,7 +3,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import LayoutClient from '@/components/layout-client'
 import { TYPE } from '@/components/landing/type'
-import { ArrowUpRight } from 'lucide-react'
+import { TeamInquiryForm } from '@/components/team-inquiry/team-inquiry-form'
 
 import { cn } from '@coursebuilder/utils/cn'
 
@@ -68,6 +68,15 @@ export default function TrainingPartnersPage() {
 					</div>
 				</section>
 
+				<section aria-label="Team inquiry" className="border-b">
+					<div className="mx-auto max-w-2xl px-[18px] py-12 sm:px-11">
+						<TeamInquiryForm
+							location="/training-partners"
+							source="training-partners"
+						/>
+					</div>
+				</section>
+
 				<section aria-label="Training partners">
 					<ul className="bg-border flex flex-col gap-px">
 						{PARTNERS.map((partner) => (
@@ -78,15 +87,6 @@ export default function TrainingPartnersPage() {
 										<p className="text-muted-foreground max-w-[55ch]">
 											{partner.line}
 										</p>
-										<Link
-											href={partner.href}
-											target="_blank"
-											rel="noopener noreferrer"
-											className="inline-flex items-center gap-1 font-medium underline underline-offset-4"
-										>
-											Visit {partner.name}
-											<ArrowUpRight aria-hidden className="size-4" />
-										</Link>
 									</div>
 									<Image
 										src={partner.logo.light}
@@ -96,8 +96,7 @@ export default function TrainingPartnersPage() {
 										unoptimized
 										className={cn(
 											'h-12 w-auto sm:h-16',
-											partner.logo.dark !== partner.logo.light &&
-												'dark:hidden',
+											partner.logo.dark !== partner.logo.light && 'dark:hidden',
 										)}
 									/>
 									{partner.logo.dark !== partner.logo.light ? (
@@ -117,17 +116,35 @@ export default function TrainingPartnersPage() {
 					</ul>
 				</section>
 
-				<section className="border-t px-[18px] py-8 sm:px-11">
-					<p className="text-muted-foreground">
-						Prefer self-paced seats for your team?{' '}
-						<Link
-							href="/for-your-team"
-							className="text-foreground font-medium underline underline-offset-4"
-						>
-							Buy them directly
-						</Link>
-						.
-					</p>
+				<section className="border-t">
+					<div className="space-y-4 px-[18px] py-8 sm:px-11">
+						<p className={cn(TYPE.meta, 'text-muted-foreground')}>
+							Prefer to contact a partner directly?{' '}
+							{PARTNERS.map((partner, index) => (
+								<span key={partner.name}>
+									{index > 0 && ' · '}
+									<Link
+										href={partner.href}
+										target="_blank"
+										rel="noopener noreferrer"
+										className="underline underline-offset-4"
+									>
+										{partner.name}
+									</Link>
+								</span>
+							))}
+						</p>
+						<p className="text-muted-foreground">
+							Prefer self-paced seats for your team?{' '}
+							<Link
+								href="/for-your-team"
+								className="text-foreground font-medium underline underline-offset-4"
+							>
+								Buy them directly
+							</Link>
+							.
+						</p>
+					</div>
 				</section>
 			</main>
 		</LayoutClient>
