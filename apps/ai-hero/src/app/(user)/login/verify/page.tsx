@@ -1,6 +1,5 @@
 import type { Metadata } from 'next'
 import { cookies } from 'next/headers'
-import Link from 'next/link'
 import LayoutClient from '@/components/layout-client'
 import { env } from '@/env.mjs'
 import {
@@ -10,6 +9,8 @@ import {
 } from '@/server/magic-link-confirmation'
 
 import { Button } from '@coursebuilder/ui/primitives/button'
+
+import { FragmentConfirmation } from './fragment-confirmation'
 
 export const dynamic = 'force-dynamic'
 export const metadata = {
@@ -44,14 +45,9 @@ export default async function VerifyMagicLinkPage() {
 						</form>
 					</>
 				) : (
-					<>
-						<p className="text-muted-foreground mt-4 max-w-md text-lg">
-							This login link expired. Request a fresh link to continue.
-						</p>
-						<Button asChild size="lg" className="mt-8">
-							<Link href="/login">Get a new login link</Link>
-						</Button>
-					</>
+					// No cookie: either the fragment link (read in the browser, the
+					// server never sees it) or an expired one.
+					<FragmentConfirmation action={MAGIC_LINK_CONFIRMATION_FORM_ACTION} />
 				)}
 			</main>
 		</LayoutClient>
