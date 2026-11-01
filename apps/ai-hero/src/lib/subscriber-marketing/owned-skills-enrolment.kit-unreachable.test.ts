@@ -103,9 +103,14 @@ describe('owned Skills enrolment with Kit unreachable', () => {
 		const consent = events.find(
 			(event) => event.eventType === 'skills-newsletter.subscribed',
 		)!
-		expect(consent).toMatchObject({ occurredAt: now, identityEvidence: { userId: 'user-owned' } })
+		expect(consent).toMatchObject({
+			occurredAt: now,
+			identityEvidence: { userId: 'user-owned' },
+		})
 		expect(consent.payloadSummary.summary).toContain('aihero_skills_page')
-		expect(consent.payloadSummary.summary).toContain('https://www.aihero.dev/skills')
+		expect(consent.payloadSummary.summary).toContain(
+			'https://www.aihero.dev/skills',
+		)
 		expect(
 			mapDrovrShadowFact({ kind: 'contact-event', event: consent }),
 		).toContainEqual(
@@ -162,6 +167,48 @@ describe('owned Skills enrolment with Kit unreachable', () => {
 			valuePathId: 'ai-hero-skills-workflow',
 			emailResourceId: 'ai-hero-skills-workflow.email-0',
 		})
+		expect(mocks.kit).not.toHaveBeenCalled()
+	})
+
+	it('a repeat click preserves the original timezone evidence and still syncs the profile', async () => {
+		const args = setup()
+		const first = deadlineTimeZoneEvidenceFromHeader({
+			headerValue: 'Europe/London',
+			capturedAt: now,
+		})
+		const second = deadlineTimeZoneEvidenceFromHeader({
+			headerValue: 'America/Los_Angeles',
+			capturedAt: '2026-11-01T07:00:00Z',
+		})
+		if (!first.ok || !second.ok) throw new Error('invalid test zone')
+		const write = vi.spyOn(args.repository, 'createEmailCourseEntryEvent')
+		expect(
+			await enterOwnedSkillsSubscriber({
+				...args,
+				input: { ...args.input, deadlineTimeZone: first.value },
+				ownership,
+			}),
+		).toMatchObject({ status: 'drovr-owned' })
+		expect(
+			await enterOwnedSkillsSubscriber({
+				...args,
+				input: {
+					...args.input,
+					subscribedAt: '2026-11-01T07:00:00Z',
+					deadlineTimeZone: second.value,
+				},
+				ownership,
+			}),
+		).toMatchObject({ status: 'drovr-owned' })
+		const entries = [...args.repository.contactEvents.values()].filter(
+			(event) => event.eventType === 'value-path.entered',
+		)
+		expect(entries).toHaveLength(1)
+		expect(entries[0]?.domainPayload).toMatchObject({
+			deadlineTimeZone: first.value,
+		})
+		expect(write).toHaveBeenCalledOnce()
+		expect(args.requestProfileSync).toHaveBeenCalledTimes(2)
 		expect(mocks.kit).not.toHaveBeenCalled()
 	})
 

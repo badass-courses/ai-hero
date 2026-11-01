@@ -216,14 +216,21 @@ export async function enterOwnedSkillsSubscriber(args: {
 		providerIdentityId: identity.id,
 		createdAt: input.subscribedAt,
 	}
-	if (courseEntryPayload && repository.createEmailCourseEntryEvent) {
-		await repository.createEmailCourseEntryEvent({
-			...accessEvent,
-			payloadFormat: EMAIL_COURSE_ENTRY_PAYLOAD_FORMAT,
-			domainPayload: courseEntryPayload,
-		})
-	} else {
-		await repository.createContactEvent(accessEvent)
+	// A later click can carry a different timezone capture timestamp. Entry
+	// evidence belongs to the first entry, not the newest request.
+	const existingEntry = await repository.findContactEventBySemanticKey(
+		accessEvent.semanticIdempotencyKey,
+	)
+	if (!existingEntry) {
+		if (courseEntryPayload && repository.createEmailCourseEntryEvent) {
+			await repository.createEmailCourseEntryEvent({
+				...accessEvent,
+				payloadFormat: EMAIL_COURSE_ENTRY_PAYLOAD_FORMAT,
+				domainPayload: courseEntryPayload,
+			})
+		} else {
+			await repository.createContactEvent(accessEvent)
+		}
 	}
 	await (args.requestProfileSync ?? requestContactProfileSync)({
 		contactId: row.id,
