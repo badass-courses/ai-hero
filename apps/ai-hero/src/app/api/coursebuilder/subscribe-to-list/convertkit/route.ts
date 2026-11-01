@@ -42,6 +42,7 @@ import {
 	AIH_OPTIN_ATTRIBUTION_FIELD,
 	serializeOptInAttributionForKit,
 } from '@/lib/subscriber-marketing/opt-in-attribution-stash'
+import { kitMirrorWritesEnabled } from '@/lib/kit-mirror-writes'
 import { SubscriberSchema, type Subscriber } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
@@ -69,7 +70,10 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 			via: 'form',
 		})
 		// The cut: with the facts queued, Kit no longer gets the join fields.
-		if (queued > 0 && !interestKitWritesEnabled()) {
+		if (
+			(queued > 0 || !kitMirrorWritesEnabled()) &&
+			!interestKitWritesEnabled()
+		) {
 			for (const key of interestFieldKeysOf(body.fields)) {
 				delete body.fields[key]
 			}

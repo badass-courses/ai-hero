@@ -23,49 +23,40 @@ export const DrovrListStateReply = z.object({
 })
 export type DrovrListState = z.infer<typeof DrovrListStateReply>
 
-/** Existing drovr MCP capability. A refusal, bad envelope or timeout is unknown. */
+/** Existing drovr list-state REST read. A refusal, bad body or timeout is unknown. */
 export async function readDrovrListState(
 	identity: { contactId: string } | { kitSubscriberId: string },
 	config: { baseUrl: string; apiKey: string; fetch?: typeof fetch } | undefined,
 ): Promise<DrovrListState | null> {
 	if (!config) return null
+	const entries = Object.entries(identity)
+	if (
+		entries.length !== 1 ||
+		!['contactId', 'kitSubscriberId'].includes(entries[0]![0]) ||
+		typeof entries[0]![1] !== 'string' ||
+		!entries[0]![1].trim()
+	)
+		return null
+	const query = new URLSearchParams(entries)
 	const controller = new AbortController()
 	let timer: ReturnType<typeof setTimeout> | undefined
 	try {
 		return await Promise.race([
 			(async () => {
 				const response = await (config.fetch ?? fetch)(
-					`${config.baseUrl.replace(/\/$/, '')}/mcp`,
+					`${config.baseUrl.replace(/\/$/, '')}/contact-list-state?${query}`,
 					{
-						method: 'POST',
+						method: 'GET',
 						headers: {
 							authorization: `Bearer ${config.apiKey}`,
-							'content-type': 'application/json',
-							accept: 'application/json, text/event-stream',
+							accept: 'application/json',
 						},
-						body: JSON.stringify({
-							jsonrpc: '2.0',
-							id: 'aih-list-state',
-							method: 'tools/call',
-							params: { name: 'get_contact_list_state', arguments: identity },
-						}),
 						signal: controller.signal,
 						cache: 'no-store',
 					},
 				)
 				if (!response.ok) return null
-				const envelope = z
-					.object({
-						jsonrpc: z.literal('2.0'),
-						id: z.literal('aih-list-state'),
-						result: z.object({
-							isError: z.boolean().optional(),
-							structuredContent: DrovrListStateReply,
-						}),
-					})
-					.parse(await response.json())
-				if (envelope.result.isError) return null
-				const result = envelope.result.structuredContent
+				const result = DrovrListStateReply.parse(await response.json())
 				if ('contactId' in identity && result.contactId !== identity.contactId)
 					return null
 				if (

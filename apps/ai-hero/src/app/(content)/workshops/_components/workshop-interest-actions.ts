@@ -7,6 +7,7 @@ import {
 } from '@/inngest/events/workshop-interest'
 import { inngest } from '@/inngest/inngest.server'
 import { setSubscriberCookie } from '@/lib/convertkit'
+import { kitMirrorWritesEnabled } from '@/lib/kit-mirror-writes'
 import {
 	conversionIntentContract,
 	type ConversionSurface,
@@ -93,6 +94,10 @@ export async function addWorkshopInterest(
 				fields: { ...gate.fields, [fieldKey]: contract.fields[fieldKey]! },
 			},
 		}
+	}
+
+	if (!kitMirrorWritesEnabled()) {
+		return { success: false, reason: 'request-failed' as const }
 	}
 
 	const event: WorkshopInterestRequested = {

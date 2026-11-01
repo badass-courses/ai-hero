@@ -1,3 +1,5 @@
+import { kitMirrorWritesEnabled } from '../kit-mirror-writes'
+
 /**
  * Waitlist and interest joins as facts the site owns, not Kit fields.
  *
@@ -55,7 +57,7 @@ export function interestFactsGatingEnabled(env: Env = process.env): boolean {
 
 /** Kit stays written unless the cut is explicit. Anything else keeps Kit. */
 export function interestKitWritesEnabled(env: Env = process.env): boolean {
-	return env.AIH_INTEREST_KIT_WRITES !== 'off'
+	return kitMirrorWritesEnabled(env) && env.AIH_INTEREST_KIT_WRITES !== 'off'
 }
 
 /** One local fact per contact and key; the unique index makes a repeat a no-op. */

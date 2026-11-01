@@ -1,3 +1,4 @@
+import { kitMirrorWritesEnabled } from '../kit-mirror-writes'
 import { Effect } from 'effect'
 import { z } from 'zod'
 
@@ -349,7 +350,7 @@ async function issueOne(input: {
 	const { coupon } = outcome.success
 	let kitFieldsWritten = false
 	let kitFieldsError: string | null = null
-	if (subscriberId) {
+	if (subscriberId && kitMirrorWritesEnabled()) {
 		try {
 			await args.writeFields({
 				subscriberId,

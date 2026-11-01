@@ -1,8 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
 	findUser: vi.fn(),
 	findPurchase: vi.fn(),
+	findPurchases: vi.fn(),
+	reconcileTeamPurchaseFulfillment: vi.fn(),
 	getPrimarySubscriber: vi.fn(),
 	updatePrimarySubscriber: vi.fn(),
 	getTtSubscriber: vi.fn(),
@@ -40,7 +42,7 @@ vi.mock('@/db', () => ({
 	db: {
 		query: {
 			users: { findFirst: mocks.findUser },
-			purchases: { findFirst: mocks.findPurchase },
+			purchases: { findFirst: mocks.findPurchase, findMany: mocks.findPurchases },
 		},
 	},
 }))
@@ -58,11 +60,16 @@ vi.mock('@/inngest/inngest.server', () => ({
 }))
 
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
+vi.mock('@/config', () => ({ default: {} }))
+vi.mock('@/env.mjs', () => ({ env: {} }))
+vi.mock('@/lib/team-purchase-fulfillment', () => ({ reconcileTeamPurchaseFulfillment: mocks.reconcileTeamPurchaseFulfillment }))
 vi.mock('date-fns', () => ({ format: vi.fn(() => 'purchase-date') }))
 
 import { FULL_PRICE_COUPON_REDEEMED_EVENT } from '@coursebuilder/core/events/commerce'
 
 import { addPurchasesConvertkit } from './add-purchased-convertkit'
+import { syncPurchaseTags } from '../sync-purchase-tags'
+import { teamPurchaseFulfillmentWorkflow } from '../team-purchase-fulfillment-workflow'
 
 type TestHandler = (args: {
 	event: {
@@ -104,6 +111,60 @@ function purchase(productId: string, slug = 'ai-coding-crash-course') {
 }
 
 describe('addPurchasesConvertkit', () => {
+	afterEach(() => {
+		vi.unstubAllEnvs()
+	})
+
+	it('master off skips every AI Hero purchase call but keeps the TT account write', async () => {
+		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'false')
+		await handler({ event, step: createStep() })
+		for (const call of [
+			mocks.getPrimarySubscriber,
+			mocks.updatePrimarySubscriber,
+			mocks.getRequiredKitV4ApiKey,
+			mocks.tagExistingSubscriber,
+		])
+			expect(call).not.toHaveBeenCalled()
+		expect(mocks.updateTtSubscriber).toHaveBeenCalledWith({
+			subscriberId: 'tt-42',
+			fields: { purchased_ai_coding_crash_course_on: 'purchase-date' },
+		})
+	})
+
+	it('master off also skips the purchase resync before any Kit or database work', async () => {
+		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'false')
+		await (syncPurchaseTags as unknown as { handler: TestHandler }).handler({
+			event,
+			step: createStep(),
+		})
+		expect(mocks.findPurchases).not.toHaveBeenCalled()
+		expect(mocks.getPrimarySubscriber).not.toHaveBeenCalled()
+		expect(mocks.updatePrimarySubscriber).not.toHaveBeenCalled()
+	})
+
+	it.each(['true', 'false'])(
+		'Kit failure cannot block independently triggered team fulfilment (mirror %s)',
+		async (enabled) => {
+			vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', enabled)
+			if (enabled === 'true')
+				mocks.getPrimarySubscriber.mockRejectedValueOnce(
+					new Error('Kit unavailable'),
+				)
+			const mirror = handler({ event, step: createStep() })
+			if (enabled === 'true')
+				await expect(mirror).rejects.toThrow('Kit unavailable')
+			else await mirror
+			mocks.reconcileTeamPurchaseFulfillment.mockResolvedValue({
+				status: 'linked',
+			})
+			await (
+				teamPurchaseFulfillmentWorkflow as unknown as { handler: Function }
+			).handler({ event, step: createStep(), runId: 'run-test' })
+			expect(mocks.reconcileTeamPurchaseFulfillment).toHaveBeenCalledWith(
+				'purchase-1',
+			)
+		},
+	)
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mocks.findUser.mockResolvedValue({
