@@ -13,6 +13,10 @@ import {
 	isEventNotLiveProblem,
 	isStopEvent,
 } from './drovr-stop-verdict'
+import type {
+	EntitlementGrantedPayload,
+	EntitlementRevokedPayload,
+} from './lifecycle-contact-events'
 import type { ContactEventRecord, SideEffectIntent } from './types'
 import { valuePathIntentCompletedAt } from './value-path-completion'
 import { SHADOW_NEWSLETTER_JOURNEY_ID } from './drovr-shadow-newsletter'
@@ -96,6 +100,8 @@ export type DrovrShadowEvent = {
 		| 'course.sequence-exhausted'
 		| 'contact.unsubscribed'
 		| 'purchase.recorded'
+		| 'entitlement.granted'
+		| 'entitlement.revoked'
 		| 'contact.profile.updated'
 		| 'contact.links.issued'
 		| 'contact.offer.issued'
@@ -111,6 +117,8 @@ export type DrovrShadowEvent = {
 		| { formId: string; kitFormId: number }
 		| { productId: string }
 		| { productId: string; couponId: string; sameOffer: true }
+		| EntitlementGrantedPayload
+		| EntitlementRevokedPayload
 		| DrovrPinnedTimezonePayload
 		| DrovrContactDirectoryBirthPayload
 		| DrovrContactProfilePayload
@@ -533,6 +541,29 @@ function mapContactEvent(event: ContactEventRecord): DrovrShadowEvent[] {
 						pinnedTimezonePayloadFromUnknown(event.domainPayload) ??
 						fallbackPinnedTimezone(),
 				}),
+			]
+		}
+		// An included grant is ownership, like a purchase: the directory copy
+		// is what drovr's ownership read finds, and the evergreen copy reaches
+		// an owned pitch actor through owner fan-out. No newsletter birth.
+		case 'entitlement.granted':
+		case 'entitlement.revoked': {
+			const payload = entitlementPayload(event.eventType, event.domainPayload)
+			if (!payload) return []
+			return [
+				{
+					...base,
+					journeyId: DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+					type: event.eventType,
+					payload,
+				},
+				{
+					...base,
+					tenantId: DROVR_AUTHORITY_TENANT_ID,
+					journeyId: DROVR_CONTACT_DIRECTORY_JOURNEY_ID,
+					type: event.eventType,
+					payload,
+				},
 			]
 		}
 		default:
@@ -1021,6 +1052,34 @@ function evergreenOfferRedemption(
 		sameOffer === true
 		? { couponId, sameOffer }
 		: undefined
+}
+
+function entitlementPayload(
+	type: 'entitlement.granted' | 'entitlement.revoked',
+	domainPayload: unknown,
+): EntitlementGrantedPayload | EntitlementRevokedPayload | undefined {
+	if (!domainPayload || typeof domainPayload !== 'object') return undefined
+	const value = (domainPayload as Record<string, unknown>).entitlement
+	if (!value || typeof value !== 'object') return undefined
+	const { entitlementId, productId, viaProductId, bundlePolicy } =
+		value as Record<string, unknown>
+	const text = (candidate: unknown) =>
+		typeof candidate === 'string' && candidate.length > 0
+			? candidate
+			: undefined
+	const id = text(entitlementId)
+	if (!id) return undefined
+	if (type === 'entitlement.revoked') return { entitlementId: id }
+	const product = text(productId)
+	if (!product) return undefined
+	const via = text(viaProductId)
+	const policy = text(bundlePolicy)
+	return {
+		entitlementId: id,
+		productId: product,
+		...(via ? { viaProductId: via } : {}),
+		...(policy ? { bundlePolicy: policy } : {}),
+	}
 }
 
 function purchaseProductId(keywords: string[]) {

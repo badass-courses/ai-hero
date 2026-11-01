@@ -23,6 +23,10 @@ import { removeDiscordRole } from '@/lib/discord-utils'
 import { log } from '@/server/logger'
 import { and, eq, isNull } from 'drizzle-orm'
 
+import {
+	recordIncludedProductEntitlementEventsSafely,
+	restorationsOf,
+} from './included-product-entitlement-events'
 import { INCLUDED_PRODUCTS } from './included-product-policy'
 export { hasIncludedProductEntitlements } from './included-product-policy'
 
@@ -423,11 +427,24 @@ async function reconcileIncludedProducts(
 					throw new Error('Included-product grant is revoked')
 				// Only a completed transfer retirement may be undone. Clear the
 				// marker so a later refund/operator revocation cannot reuse its proof.
+				// Each restore is appended, never overwritten: it names a new grant
+				// for drovr, which never reopens a revoked grant id, and the earlier
+				// ones must stay revocable (included-product-entitlement-events).
 				await tx
 					.update(entitlements)
 					.set({
 						deletedAt: null,
-						metadata: { ...row.metadata, retiredByTransferId: null },
+						metadata: {
+							...row.metadata,
+							retiredByTransferId: null,
+							restorations: [
+								...restorationsOf(row.metadata),
+								{
+									transferId: operation.transferId,
+									restoredAt: new Date().toISOString(),
+								},
+							],
+						},
 					})
 					.where(eq(entitlements.id, id))
 			}
@@ -605,6 +622,9 @@ async function reconcileIncludedProducts(
 			status: operation.kind,
 		})
 	}
+	// After the commit, and never able to fail it: drovr hears ownership.
+	if (contentGrants.length > 0)
+		await recordIncludedProductEntitlementEventsSafely(context.purchaseId)
 
 	for (const grant of discordGrants) {
 		if (operation.kind === 'transfer' && grant.retireSourceRole) {

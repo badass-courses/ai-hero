@@ -191,6 +191,10 @@ export const env = createEnv({
 		AIH_DROVR_BIRTH_FEED_ENABLED: z.string().optional(),
 		// Default off: public subscriber count from drovr's census, not Kit.
 		AIH_SUBSCRIBER_COUNT_OWNED_ENABLED: z.string().optional(),
+		// Default off. `on` records included-product grants for drovr as
+		// entitlement.granted/revoked. Read only by entitlementEventsEnabled
+		// (lib/included-product-entitlement-events.ts).
+		AIH_ENTITLEMENT_EVENTS_ENABLED: z.string().optional(),
 		// Producer before rule; existing-cohort gate stays off until ruling B.
 		AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY: newsletterExitFlag,
 		AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY: newsletterExitFlag,
@@ -380,6 +384,7 @@ export const env = createEnv({
 		AIH_DROVR_BIRTH_FEED_ENABLED: process.env.AIH_DROVR_BIRTH_FEED_ENABLED,
 		AIH_SUBSCRIBER_COUNT_OWNED_ENABLED:
 			process.env.AIH_SUBSCRIBER_COUNT_OWNED_ENABLED,
+		AIH_ENTITLEMENT_EVENTS_ENABLED: process.env.AIH_ENTITLEMENT_EVENTS_ENABLED,
 		AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY: process.env.AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY,
 		AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY: process.env.AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY,
 		AIH_SHADOW_NEWSLETTER_EXISTING_EXIT_GATE_ENABLED: process.env.AIH_SHADOW_NEWSLETTER_EXISTING_EXIT_GATE_ENABLED,
