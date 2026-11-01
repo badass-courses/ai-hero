@@ -8,7 +8,6 @@
 | newsletter.getEmailCampaignAttribution | `/api/analytics?surface=attribution/email-campaigns`; analytics agent/chat and API prompt examples in admin analytics | Kit top-of-funnel joined by aihero.dev shortlink slug to local clicks, signups and purchase attribution. Legacy revenue sums a purchaser's paid purchases. |
 | newsletter.getEmailCampaignAttributionStrict | `/api/analytics?surface=attribution/email-campaigns/strict`; analytics agents | Same Kit top-of-funnel; purchase-field shortlink attribution, with optional product filter. |
 | `src/lib/kit-data.ts`: getTotalSubscribers | `SubscriberCount`: home hero, skills subscribe, post CTA, server MDX/landing body and primary newsletter title | Active Kit account subscriber total, cached 30 minutes; null/error falls back to existing copy. This is not a drovr active-subscriber count. |
-| `src/lib/kit-broadcasts.ts` | skill-changelog producer; Slack approval route; signup reconciler imports an exclusion constant | Creation/update of Kit drafts, not a reporting reader. Producer and approval paths are unchanged here. |
 
 No newsletter reporting job or Slack reporting message consumes kit-data in the source inventory. The Slack approval response reads drovr status already and belongs to the producer owner; this change does not touch it.
 
