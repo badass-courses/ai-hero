@@ -62,6 +62,22 @@ contract. The Discord legend backfill also remains unchanged because it reads
 an env file directly rather than the process environment. This change does not
 remove `.env.vercel` or change runtime environment loading.
 
+### Interest facts backfill
+
+`pnpm interest-facts:backfill --input <subscribers.jsonl>` reads a Kit
+subscriber export line by line and counts, per live waitlist or interest key,
+the holders by Kit state and how many the local resolver and drovr
+`resolve_contacts` know. It is a dry run unless `--send` is passed, and its
+output is counts only.
+
+With `--send` and `INNGEST_EVENT_KEY`, it queues
+`aihero/interest.fact.requested` with `via: 'backfill'` and Kit's date for
+each holder both stores know, at `--rate` events a second (default 2). The
+`interest-fact-record` function writes the facts; the script writes nothing
+itself and never touches Kit. Creating the stop file printed at start stops
+it before the next batch, and a rerun continues from the progress file. See
+the header of `scripts/interest-facts-backfill.ts` for every flag.
+
 ### Install dependences
 
 Make sure you have [`pnpm`](https://pnpm.io/) installed.
