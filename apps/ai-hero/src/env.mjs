@@ -154,6 +154,10 @@ export const env = createEnv({
 		// DROVR_SHADOW_INGEST_URL. No secret; the token is the credential.
 		DROVR_API_BASE_URL: z.string().url().optional(),
 		DROVR_API_KEY_ORG_AIHERO: z.string().min(1).optional(),
+		// Private: the frozen Kit daily signups behind /admin/analytics through
+		// 2026-10-29. Parsed by newsletter-signups.ts; unset or invalid reads
+		// those days as unavailable, never 0.
+		AIH_KIT_SIGNUPS_HISTORY_JSON: z.string().optional(),
 		// drovr-owned double opt-in (#55). Comma list of Kit form ids, each on
 		// for everyone (`9376133`) or for an address allowlist
 		// (`9376133:a@example.com|b@example.com`). Unset: Kit's path, unchanged.
@@ -364,6 +368,7 @@ export const env = createEnv({
 		DROVR_SHADOW_INGEST_URL: process.env.DROVR_SHADOW_INGEST_URL,
 		DROVR_API_BASE_URL: process.env.DROVR_API_BASE_URL,
 		DROVR_API_KEY_ORG_AIHERO: process.env.DROVR_API_KEY_ORG_AIHERO,
+		AIH_KIT_SIGNUPS_HISTORY_JSON: process.env.AIH_KIT_SIGNUPS_HISTORY_JSON,
 		DROVR_DOI_FORMS: process.env.DROVR_DOI_FORMS,
 		AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED:
 			process.env.AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED,

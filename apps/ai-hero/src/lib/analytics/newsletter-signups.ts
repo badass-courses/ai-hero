@@ -1,11 +1,19 @@
 import { z } from 'zod'
 
 import { parseDrovrSignupDeliveryConfig } from '../subscriber-marketing/drovr-doi-signup'
+import {
+	DROVR_SIGNUPS_FROM,
+	KIT_FROZEN_SOURCE,
+	KIT_SIGNUPS_HISTORY,
+	SIGNUP_RANGE_DAYS,
+	summarizeSignups,
+	type NewsletterSignups,
+	type SignupDay,
+	type SignupRange,
+} from './newsletter-signups-series'
 
 type Env = Record<string, string | undefined>
 const TENANT = 'org-aihero'
-/** The two windows the panel and the agent read, in UTC days. */
-export type SignupWindowDays = 7 | 30
 /** drovr counts one UTC day at a time and caches completed days. Cold, 7
  * days take about 5 s and 31 days about 23 s (Census, 2026-11-01), so the
  * read asks for at most a week per call. */
@@ -18,8 +26,12 @@ const Count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const Day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 // Payload source strings such as ai-hero, kit, list-import and the reserved
 // unknown and unattributed. Anything that could carry an address or
-// identifier fails the call closed.
-const SourceKey = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/)
+// identifier fails the call closed, and so does kit-frozen, which names the
+// frozen Kit days.
+const SourceKey = z
+	.string()
+	.regex(/^[a-z0-9][a-z0-9._-]{0,63}$/)
+	.refine((key) => key !== KIT_FROZEN_SOURCE)
 
 // drovr's GET /signup-counts. Days are oldest first; a day with no directory
 // receipts is absent, never 0. complete: asOf is 15+ minutes past day end.
@@ -48,44 +60,12 @@ const SignupCounts = z.object({
 	days: z.array(SignupCountsDay).max(31),
 })
 
-export type SignupDay =
-	| { day: string; status: 'unavailable' }
-	| {
-			day: string
-			/** partial: drovr does not vouch for the whole day yet, e.g. today. */
-			status: 'complete' | 'partial'
-			subscribed: { total: number; bySource: Record<string, number> }
-			/** null when drovr did not report it for this day. */
-			confirmed: number | null
-			/** Every contact that moved to unsubscribed, any source. */
-			unsubscribed: number | null
-	  }
-
-export type SignupTotal = {
-	days: number
-	reportedDays: number
-	partialDays: number
-	/** Every day in the span is reported and complete. */
-	complete: boolean
-	subscribed: { total: number; bySource: Record<string, number> }
-	/** null unless every reported day carries the count. */
-	confirmed: number | null
-	unsubscribed: number | null
-}
-
-export type NewsletterSignups = {
-	provider: 'drovr'
-	/** The oldest asOf among the drovr calls behind this read. */
-	asOf: string
-	from: string
-	to: string
-	windowDays: SignupWindowDays
-	/** Oldest first, one row per UTC day in [from, to]. */
-	days: SignupDay[]
-	/** Sources with any signups in the window, largest first. */
-	sources: string[]
-	totals: { last7: SignupTotal; last30: SignupTotal | null }
-}
+export type {
+	NewsletterSignups,
+	SignupDay,
+	SignupRange,
+	SignupTotal,
+} from './newsletter-signups-series'
 
 const unavailable = (reason: string) => ({
 	status: 'unavailable' as const,
@@ -96,64 +76,84 @@ export type NewsletterSignupsRead =
 	| {
 			status: 'available'
 			data: NewsletterSignups
-			/** Why some calls failed; their days read unavailable. */
+			/** Why some days are unavailable: failed calls or a missing series. */
 			gaps: string[]
 	  }
 	| ReturnType<typeof unavailable>
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10)
+const dayMs = (day: string) => Date.parse(`${day}T00:00:00Z`)
+const daysBetween = (from: string, to: string) =>
+	Math.round((dayMs(to) - dayMs(from)) / DAY_MS) + 1
 
-type ReportedDay = Exclude<SignupDay, { status: 'unavailable' }>
-const isReported = (day: SignupDay): day is ReportedDay =>
-	day.status !== 'unavailable'
+// The private AIH_KIT_SIGNUPS_HISTORY_JSON: Kit's daily new subscribers,
+// one count per UTC day from..to, frozen at export. The window and seam are
+// fixed here, so a wrong value can only blank the Kit days, never move them.
+const KitSignupsHistory = z
+	.object({
+		v: z.literal(1),
+		source: z.string().regex(/^kit-export-\d{8}$/),
+		from: z.literal(KIT_SIGNUPS_HISTORY.from),
+		to: z.literal(KIT_SIGNUPS_HISTORY.to),
+		seam: z.literal(KIT_SIGNUPS_HISTORY.seam),
+		days: z
+			.array(Count)
+			.length(daysBetween(KIT_SIGNUPS_HISTORY.from, KIT_SIGNUPS_HISTORY.to)),
+	})
+	.strict()
+	.transform((history) => {
+		const [, y, m, d] = history.source.match(/(\d{4})(\d{2})(\d{2})$/)!
+		return { ...history, frozenOn: `${y}-${m}-${d}` }
+	})
+	.refine(
+		({ frozenOn, to }) =>
+			Number.isFinite(dayMs(frozenOn)) &&
+			utcDay(dayMs(frozenOn)) === frozenOn &&
+			frozenOn > to,
+		'the export must be dated after its last day',
+	)
 
-function total(days: SignupDay[]): SignupTotal {
-	const reported = days.filter(isReported)
-	const bySource: Record<string, number> = {}
-	let subscribed = 0
-	for (const day of reported) {
-		subscribed += day.subscribed.total
-		for (const [source, n] of Object.entries(day.subscribed.bySource))
-			bySource[source] = (bySource[source] ?? 0) + n
-	}
-	const sum = (key: 'confirmed' | 'unsubscribed') =>
-		reported.every((day) => day[key] !== null)
-			? reported.reduce((a, day) => a + day[key]!, 0)
-			: null
-	const partialDays = reported.filter((day) => day.status === 'partial').length
-	return {
-		days: days.length,
-		reportedDays: reported.length,
-		partialDays,
-		complete: reported.length === days.length && partialDays === 0,
-		subscribed: { total: subscribed, bySource },
-		confirmed: sum('confirmed'),
-		unsubscribed: sum('unsubscribed'),
+/** The frozen Kit series, or null when the env var is missing or invalid. */
+export function parseKitSignupsHistory(env: Env) {
+	const raw = env.AIH_KIT_SIGNUPS_HISTORY_JSON?.trim()
+	if (!raw) return null
+	try {
+		const parsed = KitSignupsHistory.safeParse(JSON.parse(raw))
+		return parsed.success ? parsed.data : null
+	} catch {
+		return null
 	}
 }
 
 /**
- * Daily new newsletter subscribers by source for the last 7 or 30 UTC days,
- * from drovr's `GET /signup-counts`, newest week first. Counts and source
- * names only. Unconfigured, refused, timed out or malformed calls are
- * unavailable, never zero: their days stay unavailable, and the read is
- * unavailable when no call succeeds.
+ * Daily new newsletter subscribers for a rolling window of UTC days. Days
+ * through KIT_SIGNUPS_HISTORY.to come from the frozen Kit series in
+ * AIH_KIT_SIGNUPS_HISTORY_JSON; later days from drovr's `GET /signup-counts`,
+ * newest week first, asking only for the weeks the window needs. Counts and
+ * source names only. A missing series and unconfigured, refused, timed out
+ * or malformed calls are unavailable, never zero: their days stay
+ * unavailable, and the read is unavailable when no day is known.
  */
 export async function getNewsletterSignups(
 	args: {
-		days?: SignupWindowDays
+		range?: SignupRange
 		env?: Env
 		fetcher?: typeof fetch
 		now?: number
 	} = {},
 ): Promise<NewsletterSignupsRead> {
-	const config = parseDrovrSignupDeliveryConfig(args.env ?? process.env)
-	if (!config) return unavailable('drovr credentials are not configured')
-
-	const windowDays = args.days ?? 30
+	const env = args.env ?? process.env
+	const config = parseDrovrSignupDeliveryConfig(env)
+	const history = parseKitSignupsHistory(env)
+	const range = args.range ?? '30d'
 	const now = args.now ?? Date.now()
 	const fetcher = args.fetcher ?? fetch
+	const to = utcDay(now)
+	const from =
+		range === 'all'
+			? KIT_SIGNUPS_HISTORY.from
+			: utcDay(now - (SIGNUP_RANGE_DAYS[range] - 1) * DAY_MS)
 
 	async function readChunk(from: string, to: string) {
 		const controller = new AbortController()
@@ -197,17 +197,21 @@ export async function getNewsletterSignups(
 		}
 	}
 
-	// Newest week first and one call at a time, so today's week warms first
-	// and a cold load never asks drovr for more than a week at once.
+	// drovr is asked only for its own days, newest week first and one call at
+	// a time, so today's week warms first and a cold load never asks for more
+	// than a week at once. Kit already counted every day through the seam.
+	const drovrFrom = from > DROVR_SIGNUPS_FROM ? from : DROVR_SIGNUPS_FROM
 	const reported = new Map<string, z.infer<typeof SignupCountsDay>>()
 	const gaps: string[] = []
 	let asOf: string | null = null
-	for (let back = 0; back < windowDays; back += SIGNUP_CHUNK_DAYS) {
-		const oldest = Math.min(back + SIGNUP_CHUNK_DAYS, windowDays) - 1
-		const read = await readChunk(
-			utcDay(now - oldest * DAY_MS),
-			utcDay(now - back * DAY_MS),
-		)
+	if (drovrFrom <= to && !config) gaps.push('drovr credentials are not configured')
+	for (
+		let newest = to;
+		config && newest >= drovrFrom;
+		newest = utcDay(dayMs(newest) - SIGNUP_CHUNK_DAYS * DAY_MS)
+	) {
+		const oldest = utcDay(dayMs(newest) - (SIGNUP_CHUNK_DAYS - 1) * DAY_MS)
+		const read = await readChunk(oldest > drovrFrom ? oldest : drovrFrom, newest)
 		if (read.status === 'unavailable') {
 			gaps.push(read.reason)
 			continue
@@ -216,41 +220,55 @@ export async function getNewsletterSignups(
 		if (asOf === null || Date.parse(read.data.asOf) < Date.parse(asOf))
 			asOf = read.data.asOf
 	}
-	if (asOf === null) return unavailable(gaps[0]!)
+	const kitDays = from <= KIT_SIGNUPS_HISTORY.to
+	if (kitDays && !history)
+		gaps.push('Kit signup history is missing or invalid')
+	if (asOf === null && !(kitDays && history)) return unavailable(gaps[0]!)
 
-	const from = utcDay(now - (windowDays - 1) * DAY_MS)
-	const days: SignupDay[] = Array.from({ length: windowDays }, (_, i) => {
-		const day = utcDay(Date.parse(`${from}T00:00:00Z`) + i * DAY_MS)
-		const row = reported.get(day)
-		if (!row) return { day, status: 'unavailable' }
-		return {
-			day,
-			status: row.complete ? 'complete' : 'partial',
-			subscribed: row.subscribed,
-			confirmed: row.confirmed ?? null,
-			unsubscribed: row.unsubscribed ?? null,
-		}
-	})
-	const all = total(days)
-	const sources = Object.entries(all.subscribed.bySource)
-		.filter(([, n]) => n > 0)
-		.sort(([a, x], [b, y]) => y - x || a.localeCompare(b))
-		.map(([source]) => source)
+	const days: SignupDay[] = Array.from(
+		{ length: daysBetween(from, to) },
+		(_, i): SignupDay => {
+			const day = utcDay(dayMs(from) + i * DAY_MS)
+			if (day <= KIT_SIGNUPS_HISTORY.to) {
+				if (!history) return { day, source: 'kit-frozen', status: 'unavailable' }
+				const total =
+					history.days[daysBetween(KIT_SIGNUPS_HISTORY.from, day) - 1]!
+				return {
+					day,
+					source: 'kit-frozen',
+					status: 'complete',
+					subscribed: { total, bySource: { [KIT_FROZEN_SOURCE]: total } },
+					confirmed: null,
+					unsubscribed: null,
+				}
+			}
+			const row = reported.get(day)
+			if (!row) return { day, source: 'drovr', status: 'unavailable' }
+			return {
+				day,
+				source: 'drovr',
+				status: row.complete ? 'complete' : 'partial',
+				subscribed: row.subscribed,
+				confirmed: row.confirmed ?? null,
+				unsubscribed: row.unsubscribed ?? null,
+			}
+		},
+	)
 	return {
 		status: 'available',
 		gaps,
-		data: {
-			provider: 'drovr',
-			asOf,
+		data: summarizeSignups({
+			range,
 			from,
-			to: utcDay(now),
-			windowDays,
-			days,
-			sources,
-			totals: {
-				last7: windowDays === 7 ? all : total(days.slice(-7)),
-				last30: windowDays === 30 ? all : null,
+			to,
+			asOf,
+			history: {
+				status: history ? 'available' : 'unavailable',
+				...KIT_SIGNUPS_HISTORY,
+				export: history?.source ?? null,
+				frozenOn: history?.frozenOn ?? null,
 			},
-		},
+			days,
+		}),
 	}
 }
