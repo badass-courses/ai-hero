@@ -112,6 +112,42 @@ describe('team inquiry email', () => {
 		},
 	)
 
+	it.each([undefined, 'workshop'])(
+		'omits unvalidated partner fields from other sources: %s',
+		async (source) => {
+			expect(
+				await sendTeamInquiry({
+					...values(),
+					country: '<script>unsafe</script>',
+					// Model an untrusted server-action payload, not a typed form value.
+					trainingType: '<b>x</b>' as unknown as 'live',
+					context: { source, url: '/for-your-team' },
+				}),
+			).toEqual({ success: true })
+			const body = mocks.sendAnEmail.mock.calls[0]![0].componentProps.body
+			expect(body).not.toContain('Country:')
+			expect(body).not.toContain('Training type:')
+			expect(body).not.toContain('<b>x</b>')
+			expect(body).not.toContain('<script>')
+		},
+	)
+
+	it('sanitizes the validated partner country before building the email', async () => {
+		expect(
+			await sendTeamInquiry({
+				...values(),
+				country: 'Germany<script>unsafe</script>',
+				trainingType: 'live',
+				context: { source: 'training-partners', url: '/training-partners' },
+			}),
+		).toEqual({ success: true })
+		const body = mocks.sendAnEmail.mock.calls[0]![0].componentProps.body
+		expect(body).toContain('Country: Germany')
+		expect(body).toContain('Training type: live')
+		expect(body).not.toContain('<script>')
+		expect(body).not.toContain('unsafe')
+	})
+
 	it.each([
 		{},
 		{ country: 'Germany' },

@@ -88,6 +88,7 @@ export async function sendTeamInquiry({
 			return { success: true }
 		}
 
+		let partnerDetails = ''
 		if (context?.source === 'training-partners') {
 			const validation = getTeamInquirySchema(context.source).safeParse({
 				name,
@@ -105,6 +106,8 @@ export async function sendTeamInquiry({
 					error: validation.error.issues[0]?.message || 'Invalid submission',
 				}
 			}
+			partnerDetails = `Country: ${sanitizeHtml(validation.data.country || '')}
+      Training type: ${validation.data.trainingType}`
 		}
 
 		// Only send email if we pass all spam checks
@@ -113,8 +116,7 @@ export async function sendTeamInquiry({
       Company: ${companyName}
       Team Size: ${teamSize}
       Email: ${email}
-      ${country ? `Country: ${sanitizeHtml(country)}` : ''}
-      ${trainingType ? `Training type: ${trainingType}` : ''}
+      ${partnerDetails}
       Message: ${message ? sanitizeHtml(message) : 'No message provided'}
       
       Source: ${context?.source || 'Direct'}
