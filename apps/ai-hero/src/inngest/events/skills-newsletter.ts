@@ -16,6 +16,7 @@ export type SkillsCourseRecoverySource =
 export type SkillsNewsletterSubscribed = {
 	name: typeof SKILLS_NEWSLETTER_SUBSCRIBED_EVENT
 	data: {
+		contactId?: never
 		kitSubscriberId: string
 		email: string
 		name?: string
@@ -30,6 +31,17 @@ export type SkillsNewsletterSubscribed = {
 			oldestUnservedAt: string | null
 		}
 		optInAttribution?: OptInAttribution
+	}
+}
+
+export type OwnedSkillsNewsletterSubscribed = {
+	name: typeof SKILLS_NEWSLETTER_SUBSCRIBED_EVENT
+	data: Omit<
+		SkillsNewsletterSubscribed['data'],
+		'contactId' | 'kitSubscriberId'
+	> & {
+		contactId: string
+		kitSubscriberId?: string
 	}
 }
 

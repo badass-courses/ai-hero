@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
+	enterOwnedSkillsSubscriber: vi.fn(),
+	readOwnedEvidence: vi.fn(),
+	mirrorForm: vi.fn(),
 	enterSkillsNewsletterSubscriber: vi.fn(),
 	ensureShadowNewsletterOwnershipAssignment: vi.fn(),
 	shadowObserveSignup: vi.fn(),
@@ -13,13 +16,25 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/db', () => ({ db: {} }))
+vi.mock('@/lib/gated-asks-off-kit', () => ({
+	readGatedAskForEmail: mocks.readOwnedEvidence,
+}))
+vi.mock(
+	'@/lib/subscriber-marketing/owned-skills-enrolment',
+	async (original) => ({
+		...(await original<
+			typeof import('@/lib/subscriber-marketing/owned-skills-enrolment')
+		>()),
+		enterOwnedSkillsSubscriber: mocks.enterOwnedSkillsSubscriber,
+	}),
+)
 
 vi.mock('@/coursebuilder/email-list-provider', async (importOriginal) => {
 	const actual =
 		await importOriginal<typeof import('@/coursebuilder/email-list-provider')>()
 	return {
 		...actual,
-		emailListProvider: { subscribeToList: vi.fn() },
+		emailListProvider: { subscribeToList: mocks.mirrorForm },
 		subscribeToKitListWithoutFields: mocks.subscribeToKitListWithoutFields,
 	}
 })
@@ -44,7 +59,9 @@ vi.mock('@/lib/subscriber-marketing/drizzle-capture-repository', () => ({
 		findProviderIdentity() {
 			return { id: 'identity_1', contactId: 'contact_1' }
 		}
-		createContactEvent(input: unknown) { return input }
+		createContactEvent(input: unknown) {
+			return input
+		}
 	},
 }))
 
@@ -84,7 +101,8 @@ import {
 type TestEvent = {
 	id: string
 	data: {
-		kitSubscriberId: string
+		kitSubscriberId?: string
+		contactId?: string
 		email: string
 		name: string
 		formId: number
@@ -204,6 +222,111 @@ describe('skills newsletter path entry', () => {
 		vi.unstubAllEnvs()
 	})
 
+	it('owned event enters drovr with Kit unreachable, even after admission flag rollback', async () => {
+		vi.stubEnv('AIH_ENROLMENT_OFF_KIT_ENABLED', 'false')
+		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'false')
+		mocks.mirrorForm.mockRejectedValue(new Error('Kit unreachable'))
+		mocks.readOwnedEvidence.mockResolvedValue({
+			list: {
+				contactId: 'owned-1',
+				state: 'confirmed',
+				stops: [],
+				forms: [{ formId: 'skills-newsletter', state: 'confirmed' }],
+			},
+		})
+		mocks.enterOwnedSkillsSubscriber.mockResolvedValue({
+			status: 'drovr-owned',
+			contactId: 'owned-1',
+		})
+		const { step } = createDurableStep()
+		const result = await handler({
+			event: {
+				...event,
+				data: {
+					...event.data,
+					kitSubscriberId: undefined,
+					contactId: 'owned-1',
+				},
+			},
+			step,
+			attempt: 0,
+			maxAttempts: 7,
+		})
+		expect(result).toMatchObject({ status: 'drovr-owned' })
+		expect(mocks.enterOwnedSkillsSubscriber).toHaveBeenCalledOnce()
+		expect(mocks.enterSkillsNewsletterSubscriber).not.toHaveBeenCalled()
+		expect(
+			mocks.ensureShadowNewsletterOwnershipAssignment,
+		).not.toHaveBeenCalled()
+		expect(mocks.mirrorForm).not.toHaveBeenCalled()
+		expect(mocks.subscribeToKitListWithoutFields).not.toHaveBeenCalled()
+		expect(step.run.mock.calls.map(([id]) => id)).toEqual([
+			'enter-owned-skills-course',
+		])
+	})
+
+	it('an unreachable optional Kit form mirror cannot undo owned access', async () => {
+		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'true')
+		mocks.mirrorForm.mockRejectedValueOnce(new Error('Kit unreachable'))
+		mocks.readOwnedEvidence.mockResolvedValue({
+			list: {
+				contactId: 'owned-1',
+				state: 'confirmed',
+				stops: [],
+				forms: [{ formId: 'skills-newsletter', state: 'confirmed' }],
+			},
+		})
+		mocks.enterOwnedSkillsSubscriber.mockResolvedValue({
+			status: 'drovr-owned',
+			contactId: 'owned-1',
+		})
+		const { step } = createDurableStep()
+		expect(
+			await handler({
+				event: {
+					...event,
+					data: {
+						...event.data,
+						kitSubscriberId: undefined,
+						contactId: 'owned-1',
+					},
+				},
+				step,
+				attempt: 0,
+				maxAttempts: 7,
+			}),
+		).toMatchObject({ status: 'drovr-owned' })
+		expect(mocks.mirrorForm).toHaveBeenCalledWith(
+			expect.objectContaining({ listId: 9376133, listType: 'form' }),
+		)
+		expect(mocks.enterSkillsNewsletterSubscriber).not.toHaveBeenCalled()
+		expect(
+			mocks.ensureShadowNewsletterOwnershipAssignment,
+		).not.toHaveBeenCalled()
+	})
+
+	it('rechecks Skills consent before capture and birth', async () => {
+		mocks.readOwnedEvidence.mockResolvedValue({
+			list: {
+				contactId: 'owned-1',
+				state: 'confirmed',
+				stops: [],
+				forms: [{ formId: 'other', state: 'confirmed' }],
+			},
+		})
+		const { step } = createDurableStep()
+		expect(
+			await handler({
+				event: { ...event, data: { ...event.data, contactId: 'owned-1' } },
+				step,
+				attempt: 0,
+				maxAttempts: 7,
+			}),
+		).toMatchObject({ status: 'blocked', reason: 'skills-consent-required' })
+		expect(mocks.enterOwnedSkillsSubscriber).not.toHaveBeenCalled()
+		expect(mocks.mirrorForm).not.toHaveBeenCalled()
+	})
+
 	it('master off preserves owned entry and birth processing with zero shadow Kit calls', async () => {
 		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'false')
 		const { step } = createDurableStep()
@@ -317,7 +440,9 @@ describe('skills newsletter path entry', () => {
 		expect(mocks.subscribeToKitListWithoutFields).not.toHaveBeenCalled()
 		expect(results.has('probe-shadow-newsletter-sequence')).toBe(false)
 		expect(results.has('assign-shadow-newsletter-owner')).toBe(false)
-		expect(mocks.ensureShadowNewsletterOwnershipAssignment).not.toHaveBeenCalled()
+		expect(
+			mocks.ensureShadowNewsletterOwnershipAssignment,
+		).not.toHaveBeenCalled()
 		expect(mocks.log.info).toHaveBeenCalledWith(
 			'subscriber_funnel.legacy_newsletter_enrollment_skipped',
 			expect.objectContaining({ contactId: 'contact_held', reason: 'held' }),
@@ -343,7 +468,9 @@ describe('skills newsletter path entry', () => {
 		expect(results.get('assign-shadow-newsletter-owner')).toEqual({
 			id: 'newsletter-owner-1',
 		})
-		expect(mocks.ensureShadowNewsletterOwnershipAssignment).toHaveBeenCalledWith({
+		expect(
+			mocks.ensureShadowNewsletterOwnershipAssignment,
+		).toHaveBeenCalledWith({
 			repository: expect.anything(),
 			contactId: 'contact_1',
 			providerIdentityId: 'identity_1',

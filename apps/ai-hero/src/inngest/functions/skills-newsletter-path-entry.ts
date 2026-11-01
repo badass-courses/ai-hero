@@ -1,4 +1,9 @@
 import { db } from '@/db'
+import {
+	enterOwnedSkillsSubscriber,
+	hasConfirmedSkillsConsent,
+} from '@/lib/subscriber-marketing/owned-skills-enrolment'
+import { readGatedAskForEmail } from '@/lib/gated-asks-off-kit'
 import { kitMirrorWritesEnabled } from '@/lib/kit-mirror-writes'
 import {
 	emailListProvider,
@@ -119,6 +124,72 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 	},
 	{ event: SKILLS_NEWSLETTER_SUBSCRIBED_EVENT },
 	async ({ event, step, attempt, maxAttempts }) => {
+		// The event is durable: keep processing owned events after a flag rollback.
+		// The flag controls admission, not the interpretation of an admitted id.
+		if (event.data.contactId) {
+			const input = { ...event.data, contactId: event.data.contactId }
+			const result = await step.run('enter-owned-skills-course', async () => {
+				const authorization = await readActiveGateDRuntimeAllowlist({ redis })
+				if (
+					!authorization.passed ||
+					authorization.allowlist?.authorizationMode !==
+						'rolling-public-enrollment'
+				) {
+					return {
+						status: 'blocked' as const,
+						reason: 'authorization-blocked',
+					}
+				}
+				const { list } = await readGatedAskForEmail(input.email)
+				if (!list || list.state === 'unknown')
+					throw new Error('Owned Skills consent unavailable')
+				if (
+					list.contactId !== input.contactId ||
+					!hasConfirmedSkillsConsent(list)
+				) {
+					return {
+						status: 'blocked' as const,
+						reason: 'skills-consent-required',
+					}
+				}
+				return enterOwnedSkillsSubscriber({
+					repository: new DrizzleCaptureMarketingRepository(db),
+					input,
+					ownership: parseDrovrOwnershipConfig(process.env),
+				})
+			})
+			await log.info('skills.owned-enrolment.result', {
+				status: result.status,
+				formId: input.formId,
+			})
+			// Course entry grants no newsletter assignment or old-sequence request.
+			// Kit is a projection only, after owned access and birth are durable.
+			if (result.status === 'drovr-owned' && kitMirrorWritesEnabled()) {
+				await step.run('mirror-owned-skills-form', async () => {
+					try {
+						await emailListProvider.subscribeToList({
+							listId: input.formId,
+							listType: 'form',
+							fields: {},
+							user: { email: input.email, name: input.name } as any,
+						})
+					} catch (error) {
+						await log.warn('skills.owned-enrolment.mirror-failed', {
+							error: error instanceof Error ? error.name : 'unknown',
+						})
+					}
+				})
+			}
+			return result
+		}
+		if (!event.data.kitSubscriberId)
+			throw new NonRetriableError(
+				'Skills entry requires a contact id or legacy Kit alias',
+			)
+		const legacyInput = {
+			...event.data,
+			kitSubscriberId: event.data.kitSubscriberId,
+		}
 		await log.info('subscriber_funnel.event_received', {
 			funnel: 'skills-newsletter',
 			eventId: event.id,
@@ -161,7 +232,7 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 						database: db,
 					}).observeSignup,
 					allowlist: allowlistDecision.allowlist,
-					input: event.data,
+					input: legacyInput,
 					allowWrite: true,
 					sequenceExhaustionEnabled: parseCourseSequenceExhaustionEnabled(
 						process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED,
@@ -235,32 +306,38 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 		// durable Stage 3 handoffs. Do not probe Kit's paused legacy sequence or
 		// apply its backfill tag for them; both would create a second owner.
 		if (entryResult.status === 'drovr-owned') {
-			const assignment = await step.run('assign-shadow-newsletter-owner', async () => {
-				const repository = new DrizzleCaptureMarketingRepository(db)
-				const providerIdentity = await repository.findProviderIdentity(
-					'kit',
-					event.data.kitSubscriberId,
-				)
-				if (
-					!providerIdentity ||
-					providerIdentity.contactId !== entryResult.contactId
-				) {
-					throw new Error('Kit identity missing for shadow newsletter assignment')
-				}
-				return ensureShadowNewsletterOwnershipAssignment({
-					repository,
-					contactId: entryResult.contactId,
-					providerIdentityId: providerIdentity.id,
-					kitSubscriberId: event.data.kitSubscriberId,
-					email: event.data.email,
-					name: event.data.name,
-					occurredAt: event.data.subscribedAt,
-					source: 'drovr-owned-signup',
-				})
-			})
+			const assignment = await step.run(
+				'assign-shadow-newsletter-owner',
+				async () => {
+					const repository = new DrizzleCaptureMarketingRepository(db)
+					const providerIdentity = await repository.findProviderIdentity(
+						'kit',
+						legacyInput.kitSubscriberId,
+					)
+					if (
+						!providerIdentity ||
+						providerIdentity.contactId !== entryResult.contactId
+					) {
+						throw new Error(
+							'Kit identity missing for shadow newsletter assignment',
+						)
+					}
+					return ensureShadowNewsletterOwnershipAssignment({
+						repository,
+						contactId: entryResult.contactId,
+						providerIdentityId: providerIdentity.id,
+						kitSubscriberId: legacyInput.kitSubscriberId,
+						email: event.data.email,
+						name: event.data.name,
+						occurredAt: event.data.subscribedAt,
+						source: 'drovr-owned-signup',
+					})
+				},
+			)
 			if (assignment?.eventType === 'newsletter.admission.held') {
 				await log.info('subscriber_funnel.newsletter_admission_held', {
-					contactId: entryResult.contactId, holdEventId: assignment.id,
+					contactId: entryResult.contactId,
+					holdEventId: assignment.id,
 				})
 				return { ...entryResult, newsletter: 'held' as const }
 			}
@@ -276,9 +353,12 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 		await step.run('record-old-newsletter-enrollment-request', () =>
 			recordOldNewsletterEnrollmentRequest({
 				repository: new DrizzleCaptureMarketingRepository(db),
-				contactId: entryResult.contactId, kitSubscriberId: event.data.kitSubscriberId,
+				contactId: entryResult.contactId,
+				kitSubscriberId: legacyInput.kitSubscriberId,
 				email: event.data.email,
-				eventId: event.id ?? `skills-form:${event.data.formId}:subscriber:${event.data.kitSubscriberId}`,
+				eventId:
+					event.id ??
+					`skills-form:${event.data.formId}:subscriber:${event.data.kitSubscriberId}`,
 				now: new Date().toISOString(),
 			}),
 		)

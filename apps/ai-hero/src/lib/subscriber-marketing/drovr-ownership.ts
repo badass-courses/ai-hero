@@ -259,7 +259,7 @@ export async function recordJourneyOwnerAssigned(args: {
 	repository: Pick<CaptureMarketingRepository, 'createContactEvent'>
 	contactId: string
 	providerIdentityId: string
-	kitSubscriberId: string
+	kitSubscriberId?: string
 	provider?: Provider
 	providerExternalId?: string
 	email: string
@@ -268,6 +268,8 @@ export async function recordJourneyOwnerAssigned(args: {
 	journeyId?: DrovrJourneyId
 }): Promise<ContactEventRecord> {
 	const journeyId = args.journeyId ?? DROVR_SKILLS_COURSE_JOURNEY_ID
+	const externalId = args.providerExternalId ?? args.kitSubscriberId
+	if (!externalId) throw new Error('Journey owner assignment identity missing')
 	const normalized = normalizeContactEvent({
 		provider: args.provider ?? 'kit',
 		providerEventId: journeyOwnerProviderEventId(args.contactId, journeyId),
@@ -275,7 +277,7 @@ export async function recordJourneyOwnerAssigned(args: {
 		occurredAt: args.occurredAt,
 		email: args.email,
 		name: args.name,
-		externalId: args.providerExternalId ?? args.kitSubscriberId,
+		externalId,
 		message: `Journey owner assigned to drovr for ${journeyId}`,
 		privacyLevel: 'internal',
 	})

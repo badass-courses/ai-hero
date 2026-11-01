@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
+	readOwnedEvidence: vi.fn(),
 	cookieGet: vi.fn(),
 	headerGet: vi.fn(),
 	getServerAuthSession: vi.fn(),
@@ -23,6 +24,10 @@ const mocks = vi.hoisted(() => ({
 		CONVERTKIT_API_SECRET: 'secret',
 		CONVERTKIT_API_KEY: 'key',
 	} as Record<string, string | undefined>,
+}))
+
+vi.mock('@/lib/gated-asks-off-kit', () => ({
+	readGatedAskForEmail: mocks.readOwnedEvidence,
 }))
 
 vi.mock('next/cache', () => ({
@@ -106,6 +111,7 @@ import { tagSubscriberAsSkills } from './skills-newsletter-actions'
 describe('tagSubscriberAsSkills', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		delete mocks.env.AIH_ENROLMENT_OFF_KIT_ENABLED
 		const subscriber = {
 			id: 1,
 			email_address: 'contact',
@@ -135,6 +141,139 @@ describe('tagSubscriberAsSkills', () => {
 		vi.unstubAllEnvs()
 		delete process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED
 		delete process.env.AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED
+	})
+
+	it('owned signed-in entry works with Kit unreachable and emits only the contact id', async () => {
+		mocks.env.AIH_ENROLMENT_OFF_KIT_ENABLED = 'true'
+		mocks.getSubscriberFromCookie.mockResolvedValue(null)
+		mocks.getServerAuthSession.mockResolvedValue({
+			session: { user: { email: 'new@example.test' } },
+		})
+		mocks.subscribeToList.mockRejectedValue(new Error('Kit unreachable'))
+		mocks.reconcile.mockRejectedValue(new Error('Kit unreachable'))
+		mocks.routeReturning.mockRejectedValue(new Error('Kit unreachable'))
+		mocks.readOwnedEvidence.mockResolvedValue({
+			list: {
+				contactId: 'contact-owned',
+				state: 'confirmed',
+				stops: [],
+				forms: [{ formId: 'skills-newsletter', state: 'confirmed' }],
+			},
+		})
+		expect(await tagSubscriberAsSkills('skills-post')).toEqual({
+			success: true,
+		})
+		expect(mocks.inngestSend).toHaveBeenCalledWith(
+			expect.objectContaining({
+				name: 'skills-newsletter/subscribed',
+				data: expect.objectContaining({
+					contactId: 'contact-owned',
+					email: 'new@example.test',
+				}),
+			}),
+		)
+		expect(mocks.inngestSend.mock.calls[0]![0].data).not.toHaveProperty(
+			'kitSubscriberId',
+		)
+		expect(mocks.subscribeToList).not.toHaveBeenCalled()
+		expect(mocks.reconcile).not.toHaveBeenCalled()
+		expect(mocks.routeReturning).not.toHaveBeenCalled()
+		expect(mocks.setSubscriberCookie).not.toHaveBeenCalled()
+		expect(mocks.issueRecoveryToken).not.toHaveBeenCalled()
+		expect(mocks.requestDoi).not.toHaveBeenCalled()
+	})
+
+	it.each([
+		['directory miss', null],
+		['unknown', { contactId: 'c1', state: 'unknown', forms: [], stops: [] }],
+		[
+			'unrelated confirmed form',
+			{
+				contactId: 'c1',
+				state: 'confirmed',
+				forms: [{ formId: 'other', state: 'confirmed' }],
+				stops: [],
+			},
+		],
+		[
+			'unconfirmed skills',
+			{
+				contactId: 'c1',
+				state: 'confirmed',
+				forms: [{ formId: 'skills-newsletter', state: 'unconfirmed' }],
+				stops: [],
+			},
+		],
+		[
+			'unsubscribed',
+			{
+				contactId: 'c1',
+				state: 'stopped',
+				forms: [{ formId: 'skills-newsletter', state: 'confirmed' }],
+				stops: [{ scope: 'all', reason: 'unsubscribed' }],
+			},
+		],
+	])(
+		'owned %s requests DOI only, without a Kit lookup or entry',
+		async (_name, list) => {
+			mocks.env.AIH_ENROLMENT_OFF_KIT_ENABLED = 'true'
+			mocks.getSubscriberFromCookie.mockResolvedValue(null)
+			mocks.getServerAuthSession.mockResolvedValue({
+				session: { user: { email: 'learner@example.test' } },
+			})
+			mocks.readOwnedEvidence.mockResolvedValue({ list })
+			expect(await tagSubscriberAsSkills('skills-post')).toMatchObject({
+				reason: 'confirmation-required',
+			})
+			expect(mocks.requestDoi).toHaveBeenCalledOnce()
+			expect(mocks.inngestSend).not.toHaveBeenCalled()
+			expect(mocks.subscribeToList).not.toHaveBeenCalled()
+			expect(mocks.routeReturning).not.toHaveBeenCalled()
+			expect(mocks.reconcile).not.toHaveBeenCalled()
+		},
+	)
+
+	it.each(['false', 'TRUE', 'garbage'])(
+		'flag %s retains the existing signed-in Kit path',
+		async (flag) => {
+			mocks.env.AIH_ENROLMENT_OFF_KIT_ENABLED = flag
+			mocks.getSubscriberFromCookie.mockResolvedValue(null)
+			mocks.getServerAuthSession.mockResolvedValue({
+				session: { user: { email: 'learner@example.test' } },
+			})
+			mocks.subscribeToList.mockResolvedValue({
+				id: 1,
+				email_address: 'learner@example.test',
+				state: 'active',
+				fields: {},
+			})
+			expect(await tagSubscriberAsSkills('skills-post')).toEqual({
+				success: true,
+			})
+			expect(mocks.subscribeToList).toHaveBeenCalledOnce()
+			expect(mocks.readOwnedEvidence).not.toHaveBeenCalled()
+		},
+	)
+
+	it('owned enqueue failure refuses cleanly and never falls back to Kit', async () => {
+		mocks.env.AIH_ENROLMENT_OFF_KIT_ENABLED = 'true'
+		mocks.getSubscriberFromCookie.mockResolvedValue(null)
+		mocks.getServerAuthSession.mockResolvedValue({
+			session: { user: { email: 'learner@example.test' } },
+		})
+		mocks.readOwnedEvidence.mockResolvedValue({
+			list: {
+				contactId: 'c1',
+				state: 'confirmed',
+				stops: [],
+				forms: [{ formId: 'skills-newsletter', state: 'confirmed' }],
+			},
+		})
+		mocks.inngestSend.mockRejectedValueOnce(new Error('queue unavailable'))
+		expect(await tagSubscriberAsSkills('skills-post')).toMatchObject({
+			reason: 'request-failed',
+		})
+		expect(mocks.subscribeToList).not.toHaveBeenCalled()
 	})
 
 	it('master off skips only the optional field stash, preserving enrolment, consent and the entry fact', async () => {
