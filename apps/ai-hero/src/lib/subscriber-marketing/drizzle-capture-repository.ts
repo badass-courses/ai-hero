@@ -1,3 +1,4 @@
+import { contactEventId } from '@/db/contact-event-id'
 import { courseSequenceContactEvent } from '@/db/course-sequence-exhaustion-schema'
 import { CONTACT_STOP_RULE_EVENT_TYPES } from './contact-stop-rule'
 import { contactEmailWriteValues } from './contact-email-equivalence'
@@ -156,6 +157,7 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 
 	newId(kind: string) {
 		if (kind === 'contact') return contactId()
+		if (kind === 'contact_event') return contactEventId()
 		return kind === 'next_action' ||
 			kind === 'intent' ||
 			kind === 'side_effect_intent'

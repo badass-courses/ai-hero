@@ -22,6 +22,7 @@ import {
 
 import { getCourseBuilderSchema } from '@coursebuilder/adapter-drizzle/mysql'
 import { guid } from '@coursebuilder/utils/guid'
+import { contactEventId } from './contact-event-id'
 import type { CourseSyncBinding, SyncPlan } from '@/course-sync/types'
 
 export const {
@@ -709,7 +710,7 @@ export const contactEvent = mysqlTable(
 		id: varchar('id', { length: 255 })
 			.notNull()
 			.primaryKey()
-			.$defaultFn(() => guid()),
+			.$defaultFn(() => contactEventId()),
 		contactId: varchar('contactId', { length: 255 }).notNull(),
 		providerIdentityId: varchar('providerIdentityId', {
 			length: 255,
