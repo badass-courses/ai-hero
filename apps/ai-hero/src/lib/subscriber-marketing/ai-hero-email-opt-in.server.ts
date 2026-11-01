@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { env } from '@/env.mjs'
+import {
+	gatedAsksOffKitEnabled,
+	readGatedAskForEmail,
+} from '@/lib/gated-asks-off-kit'
 import { OPTIN_DEFERRED_EVENT } from '@/inngest/events/optin-deferred'
 import { inngest } from '@/inngest/inngest.server'
 import { log } from '@/server/logger'
@@ -9,6 +13,7 @@ import {
 	AI_HERO_UNSUBSCRIBED_TAG_ID,
 	reconcileAiHeroEmailOptIn,
 	routeReturningUnsubscriber,
+	type ReturningUnsubscriberResult,
 } from './ai-hero-email-opt-in'
 import {
 	DOI_DROVR_FORM_IDS,
@@ -25,6 +30,12 @@ export async function reconcileAiHeroEmailOptInWithKit(args: {
 	subscriberState?: string
 	mayRemoveUnsubscribeTag?: boolean
 }) {
+	if (gatedAsksOffKitEnabled()) {
+		const { list } = await readGatedAskForEmail(args.email)
+		return list?.state === 'confirmed'
+			? { status: 'active' as const, removedUnsubscribeTag: false }
+			: { status: 'confirmation-required' as const }
+	}
 	const result = await reconcileAiHeroEmailOptIn({
 		...args,
 		getSubscriberByEmail: (email) =>
@@ -73,7 +84,7 @@ export type OptInDeferralInput = {
  * to Kit or untag, and answer "check your email" for `doi-requested` or their
  * usual failure for `blocked`.
  */
-export async function routeReturningUnsubscriberWithKit(args: {
+type ReturningUnsubscriberInput = {
 	email: string
 	name?: string
 	kitFormId: number
@@ -81,40 +92,50 @@ export async function routeReturningUnsubscriberWithKit(args: {
 	optInAttribution?: OptInAttribution
 	entry: 'form' | 'tag-me'
 	deferral?: OptInDeferralInput
-}) {
+}
+
+export async function routeReturningUnsubscriberWithKit(
+	args: ReturningUnsubscriberInput,
+): Promise<ReturningUnsubscriberResult> {
 	const drovrConfig = parseDrovrSignupDeliveryConfig(env)
 	const doiEnabled = env.AIH_RESUBSCRIBE_DOI_ENABLED === 'true'
-	const routed = await routeReturningUnsubscriber({
-		email: args.email,
-		doiEnabled,
-		drovrConfigured: Boolean(drovrConfig),
-		formMapped: DOI_DROVR_FORM_IDS.has(args.kitFormId),
-		getSubscriberByEmail: (email) =>
-			emailListProvider.getSubscriberByEmail(email),
-		deferUnknown: Boolean(args.deferral),
-		getDrovrStops: async (kitSubscriberId) => {
-			try {
-				return await readDrovrOptOuts(
-					kitSubscriberId,
-					drovrConfig && {
-						...drovrConfig,
-						// Latency per call, for p50/p95 in Axiom. No ids or addresses.
-						onRead: ({ ms, status }) =>
-							log.info('optin.drovr_stops.read', { ms, status, entry: args.entry }),
-					},
-				)
-			} catch (error) {
-				await log.warn('optin.resubscribe.drovr_unknown', {
-					error: error instanceof Error ? error.name : 'unknown',
-					doiEnabled,
-				})
-				throw error
-			}
-		},
-		requestDoi: async () => {
-			await requestDrovrDoiSignup(args)
-		},
-	})
+	const routed = gatedAsksOffKitEnabled()
+		? await routeReturningUnsubscriberOffKit(args, drovrConfig)
+		: await routeReturningUnsubscriber({
+				email: args.email,
+				doiEnabled,
+				drovrConfigured: Boolean(drovrConfig),
+				formMapped: DOI_DROVR_FORM_IDS.has(args.kitFormId),
+				getSubscriberByEmail: (email) =>
+					emailListProvider.getSubscriberByEmail(email),
+				deferUnknown: Boolean(args.deferral),
+				getDrovrStops: async (kitSubscriberId) => {
+					try {
+						return await readDrovrOptOuts(
+							kitSubscriberId,
+							drovrConfig && {
+								...drovrConfig,
+								// Latency per call, for p50/p95 in Axiom. No ids or addresses.
+								onRead: ({ ms, status }) =>
+									log.info('optin.drovr_stops.read', {
+										ms,
+										status,
+										entry: args.entry,
+									}),
+							},
+						)
+					} catch (error) {
+						await log.warn('optin.resubscribe.drovr_unknown', {
+							error: error instanceof Error ? error.name : 'unknown',
+							doiEnabled,
+						})
+						throw error
+					}
+				},
+				requestDoi: async () => {
+					await requestDrovrDoiSignup(args)
+				},
+			})
 	const result = await queueDeferral(routed, args)
 	if (result.status === 'lookup-failed') {
 		await log.warn('optin.resubscribe.lookup_failed', {
@@ -135,6 +156,41 @@ export async function routeReturningUnsubscriberWithKit(args: {
 		})
 	}
 	return result
+}
+
+/** Same consent gate, without using a Kit record or interpreting no stops as consent. */
+async function routeReturningUnsubscriberOffKit(
+	args: ReturningUnsubscriberInput,
+	config: ReturnType<typeof parseDrovrSignupDeliveryConfig>,
+): Promise<ReturningUnsubscriberResult> {
+	const { list } = await readGatedAskForEmail(args.email)
+	if (
+		list?.stops.some(
+			(stop) => stop.scope === 'all' && stop.reason !== 'unsubscribed',
+		)
+	) {
+		return { status: 'blocked', reason: 'suppressed' }
+	}
+	if (list?.state === 'confirmed' || list?.state === 'unconfirmed')
+		return { status: 'not-unsubscribed' }
+	const unknown = !list || list.state === 'unknown'
+	if (
+		unknown &&
+		args.deferral &&
+		config &&
+		env.AIH_RESUBSCRIBE_DOI_ENABLED !== 'true'
+	)
+		return { status: 'deferred' }
+	if (env.AIH_RESUBSCRIBE_DOI_ENABLED !== 'true')
+		return {
+			status: 'blocked',
+			reason: unknown ? 'drovr-unknown' : 'doi-disabled',
+		}
+	if (!DOI_DROVR_FORM_IDS.has(args.kitFormId))
+		return { status: 'blocked', reason: 'unmapped-form' }
+	if (!config) return { status: 'blocked', reason: 'drovr-unconfigured' }
+	await requestDrovrDoiSignup(args)
+	return { status: 'doi-requested' }
 }
 
 /**

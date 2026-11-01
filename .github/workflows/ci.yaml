@@ -103,6 +103,7 @@ jobs:
         run: >-
           pnpm --filter ai-hero exec vitest run -c vitest.config.ts
           src/lib/subscriber-marketing/
+          src/lib/gated-asks-off-kit.test.ts
           drovr
           evergreen
           skills-newsletter
