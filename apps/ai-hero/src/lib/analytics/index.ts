@@ -1,5 +1,6 @@
 import { createAnalyticsEngine } from '@coursebuilder/analytics/engine'
 import { log } from '@/server/logger'
+import { reportingOffKitEnabled } from '@/lib/reporting-owned'
 
 import * as database from './providers/database'
 import * as derived from './providers/derived'
@@ -36,7 +37,17 @@ type LocalSurface = (typeof LOCAL_SURFACES)[number]
 const isLocalSurface = (surface: SurfaceName): surface is LocalSurface =>
 	(LOCAL_SURFACES as readonly string[]).includes(surface)
 export const getCatalog = () => [
-	...engine.getCatalog(),
+	...engine.getCatalog().map((entry) =>
+		reportingOffKitEnabled() &&
+		(entry.name === 'attribution/email-campaigns' ||
+			entry.name === 'attribution/email-campaigns/strict')
+			? {
+					...entry,
+					description:
+						'Current drovr status for explicitly configured sends, latest journey-transition sample, and labelled local historical Kit snapshots. Unsupported engagement and revenue are unavailable, not zero. Read provider and status before interpreting results.',
+				}
+			: entry,
+	),
 	...LOCAL_SURFACES.map((surface) => localCatalog[surface]),
 ]
 

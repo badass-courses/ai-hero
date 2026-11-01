@@ -5,6 +5,7 @@ import type {
 } from '@coursebuilder/analytics/types'
 import type { EvergreenFunnel, PromoRevenue } from './promos'
 import type { LearningProgress } from './learning-progress'
+import type { OwnedNewsletterReport } from '../reporting-owned'
 import type {
 	LearningTeamMembers,
 	LearningTeamProgress,
@@ -12,7 +13,16 @@ import type {
 } from './learning-teams'
 export * from '@coursebuilder/analytics/types'
 
-export interface SurfaceMap extends BaseSurfaceMap {
+export interface SurfaceMap extends Omit<
+	BaseSurfaceMap,
+	'attribution/email-campaigns' | 'attribution/email-campaigns/strict'
+> {
+	'attribution/email-campaigns':
+		| BaseSurfaceMap['attribution/email-campaigns']
+		| OwnedNewsletterReport
+	'attribution/email-campaigns/strict':
+		| BaseSurfaceMap['attribution/email-campaigns/strict']
+		| OwnedNewsletterReport
 	'revenue/promos': PromoRevenue
 	'funnel/evergreen': EvergreenFunnel
 	'learning/progress': LearningProgress
