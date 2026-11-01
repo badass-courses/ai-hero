@@ -454,6 +454,19 @@ function mapContactEvent(event: ContactEventRecord): DrovrShadowEvent[] {
 	switch (event.eventType) {
 		case 'skills-newsletter.subscribed':
 			return [
+				// The verified signed-in click replaces Kit's activation fold.
+				// This is directory confirmation, not a DOI/form-consent row or a
+				// resubscribe lift. A stop still owns admission and directory guards.
+				...(event.provider === 'ai-hero' &&
+				 event.providerEventId.startsWith('skills-form:9376133:contact:')
+					? [{
+							...base,
+							tenantId: DROVR_AUTHORITY_TENANT_ID,
+							journeyId: DROVR_CONTACT_DIRECTORY_JOURNEY_ID,
+							type: 'contact.confirmed' as const,
+							idempotencyKey: `${base.idempotencyKey}:directory-confirmed`,
+						}]
+					: []),
 				{
 					...base,
 					journeyId: DROVR_SKILLS_COURSE_JOURNEY_ID,

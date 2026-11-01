@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
 }))
 vi.mock('./drovr-shadow-dispatch', () => ({
 	dispatchDrovrShadowFactSafely: mocks.dispatch,
+	dispatchDrovrShadowFactAwaited: vi.fn().mockResolvedValue(undefined),
 }))
 vi.mock('@/coursebuilder/email-list-provider', () => ({
 	emailListProvider: {
@@ -22,7 +23,7 @@ import { deadlineTimeZoneEvidenceFromHeader } from './course-sequence-exhaustion
 import { normalizeContactEvent } from './normalize-contact-event'
 import {
 	enterOwnedSkillsSubscriber,
-	hasConfirmedSkillsConsent,
+	resolveOwnedSkillsContact,
 } from './owned-skills-enrolment'
 import { progressValuePathDrips } from './value-path-drip-progression'
 import {
@@ -67,6 +68,8 @@ function setup() {
 		email: row.email!,
 		formId: 9376133,
 		source: 'aihero_skills_page',
+		page: 'https://www.aihero.dev/skills',
+		signedInUserId: 'user-owned',
 		subscribedAt: now,
 	}
 	const requestProfileSync = vi.fn().mockResolvedValue(undefined)
@@ -97,6 +100,22 @@ describe('owned Skills enrolment with Kit unreachable', () => {
 				(event) => event.eventType === 'skills-newsletter.subscribed',
 			),
 		).toMatchObject({ provider: 'ai-hero', contactId: args.row.id })
+		const consent = events.find(
+			(event) => event.eventType === 'skills-newsletter.subscribed',
+		)!
+		expect(consent).toMatchObject({ occurredAt: now, identityEvidence: { userId: 'user-owned' } })
+		expect(consent.payloadSummary.summary).toContain('aihero_skills_page')
+		expect(consent.payloadSummary.summary).toContain('https://www.aihero.dev/skills')
+		expect(
+			mapDrovrShadowFact({ kind: 'contact-event', event: consent }),
+		).toContainEqual(
+			expect.objectContaining({
+				tenantId: DROVR_AUTHORITY_TENANT_ID,
+				journeyId: 'contact-directory',
+				type: 'contact.confirmed',
+				occurredAt: now,
+			}),
+		)
 		expect(access.providerReference).toBe('value-path:ai-hero-skills-workflow')
 		expect(
 			events.some((event) => event.eventType.startsWith('newsletter.')),
@@ -264,13 +283,26 @@ describe('owned Skills enrolment with Kit unreachable', () => {
 		).toBe(true)
 	})
 
-	it('requires the Skills form, not a confirmed profile or another confirmed form', () => {
-		expect(
-			hasConfirmedSkillsConsent({
-				state: 'confirmed',
-				forms: [{ formId: 'other', state: 'confirmed' }],
-				stops: [],
+	it('a directory miss mints once through owned capture; ambiguity refuses without Kit', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const args = {
+			repository,
+			findContactIdsByEmailKey: async () => [],
+			email: 'new@example.test',
+			userId: 'user-new',
+			now,
+		}
+		const first = await resolveOwnedSkillsContact(args)
+		expect(await resolveOwnedSkillsContact(args)).toBe(first)
+		expect(await repository.findContactById(first)).toMatchObject({
+			email: 'new@example.test',
+		})
+		await expect(
+			resolveOwnedSkillsContact({
+				...args,
+				findContactIdsByEmailKey: async () => ['a', 'b'],
 			}),
-		).toBe(false)
+		).rejects.toThrow('directory ambiguous')
+		expect(mocks.kit).not.toHaveBeenCalled()
 	})
 })

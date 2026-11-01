@@ -1,9 +1,9 @@
 import { db } from '@/db'
-import {
-	enterOwnedSkillsSubscriber,
-	hasConfirmedSkillsConsent,
-} from '@/lib/subscriber-marketing/owned-skills-enrolment'
-import { readGatedAskForEmail } from '@/lib/gated-asks-off-kit'
+import { enterOwnedSkillsSubscriber } from '@/lib/subscriber-marketing/owned-skills-enrolment'
+import { readOwnedSkillsAdmission } from '@/lib/subscriber-marketing/owned-skills-list-state'
+import { parseDrovrSignupDeliveryConfig } from '@/lib/subscriber-marketing/drovr-doi-signup'
+import { requestDrovrDoiSignup } from '@/lib/subscriber-marketing/drovr-doi-signup.server'
+import { env } from '@/env.mjs'
 import { kitMirrorWritesEnabled } from '@/lib/kit-mirror-writes'
 import {
 	emailListProvider,
@@ -140,16 +140,24 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 						reason: 'authorization-blocked',
 					}
 				}
-				const { list } = await readGatedAskForEmail(input.email)
-				if (!list || list.state === 'unknown')
-					throw new Error('Owned Skills consent unavailable')
-				if (
-					list.contactId !== input.contactId ||
-					!hasConfirmedSkillsConsent(list)
-				) {
+				const admission = await readOwnedSkillsAdmission(
+					input.contactId,
+					parseDrovrSignupDeliveryConfig(env),
+				)
+				if (admission.status === 'unavailable')
+					throw new Error('Owned Skills stop read unavailable')
+				if (admission.status === 'doi') {
+					await requestDrovrDoiSignup({
+						email: input.email,
+						name: input.name,
+						kitFormId: input.formId,
+						page: input.page ?? 'https://www.aihero.dev/skills',
+						optInAttribution: input.optInAttribution,
+						entry: 'tag-me',
+					})
 					return {
 						status: 'blocked' as const,
-						reason: 'skills-consent-required',
+						reason: 'skills-resubscribe-required',
 					}
 				}
 				return enterOwnedSkillsSubscriber({
@@ -166,6 +174,13 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 			// Kit is a projection only, after owned access and birth are durable.
 			if (result.status === 'drovr-owned' && kitMirrorWritesEnabled()) {
 				await step.run('mirror-owned-skills-form', async () => {
+					// This step may run long after a cached owned-entry step. Never
+					// project a stale admission over a newer stop; unknown skips too.
+					const mirrorAdmission = await readOwnedSkillsAdmission(
+						input.contactId,
+						parseDrovrSignupDeliveryConfig(env),
+					)
+					if (mirrorAdmission.status !== 'allow') return
 					try {
 						await emailListProvider.subscribeToList({
 							listId: input.formId,

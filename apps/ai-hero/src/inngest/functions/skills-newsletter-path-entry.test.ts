@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
 	enterOwnedSkillsSubscriber: vi.fn(),
 	readOwnedEvidence: vi.fn(),
+	requestDoi: vi.fn(),
 	mirrorForm: vi.fn(),
 	enterSkillsNewsletterSubscriber: vi.fn(),
 	ensureShadowNewsletterOwnershipAssignment: vi.fn(),
@@ -16,9 +17,23 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/db', () => ({ db: {} }))
-vi.mock('@/lib/gated-asks-off-kit', () => ({
-	readGatedAskForEmail: mocks.readOwnedEvidence,
+vi.mock('@/lib/subscriber-marketing/drovr-doi-signup.server', () => ({
+	requestDrovrDoiSignup: mocks.requestDoi,
 }))
+vi.mock(
+	'@/lib/subscriber-marketing/owned-skills-list-state',
+	async (original) => {
+		const actual =
+			await original<
+				typeof import('@/lib/subscriber-marketing/owned-skills-list-state')
+			>()
+		return {
+			...actual,
+			readOwnedSkillsAdmission: async () =>
+				actual.ownedSkillsAdmission((await mocks.readOwnedEvidence()).list),
+		}
+	},
+)
 vi.mock(
 	'@/lib/subscriber-marketing/owned-skills-enrolment',
 	async (original) => ({
@@ -305,13 +320,42 @@ describe('skills newsletter path entry', () => {
 		).not.toHaveBeenCalled()
 	})
 
-	it('rechecks Skills consent before capture and birth', async () => {
+	it('a newer stop suppresses the optional mirror even when owned entry was already cached', async () => {
+		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'true')
+		mocks.readOwnedEvidence.mockResolvedValueOnce({
+			list: { contactId: 'owned-1', state: 'confirmed', forms: [], stops: [] },
+		})
+		mocks.enterOwnedSkillsSubscriber.mockResolvedValue({
+			status: 'drovr-owned',
+			contactId: 'owned-1',
+		})
+		const { step } = createDurableStep({
+			yieldAfterSuccess: new Set(['enter-owned-skills-course']),
+		})
+		const args = {
+			event: { ...event, data: { ...event.data, contactId: 'owned-1' } },
+			step,
+			attempt: 0,
+			maxAttempts: 7,
+		}
+		await expect(handler(args)).rejects.toBeInstanceOf(DurableStepCompleted)
+		mocks.readOwnedEvidence.mockResolvedValueOnce({
+			list: { contactId: 'owned-1', state: 'stopped', forms: [], stops: [] },
+		})
+		expect(await handler(args)).toMatchObject({ status: 'drovr-owned' })
+		expect(mocks.mirrorForm).not.toHaveBeenCalled()
+		expect(mocks.enterOwnedSkillsSubscriber).toHaveBeenCalledOnce()
+	})
+
+	it('rechecks stops before capture and birth and routes a new stop to DOI', async () => {
 		mocks.readOwnedEvidence.mockResolvedValue({
 			list: {
 				contactId: 'owned-1',
 				state: 'confirmed',
-				stops: [],
-				forms: [{ formId: 'other', state: 'confirmed' }],
+				stops: [
+					{ scope: 'course:value-path-skills-course', reason: 'unsubscribed' },
+				],
+				forms: [],
 			},
 		})
 		const { step } = createDurableStep()
@@ -322,9 +366,53 @@ describe('skills newsletter path entry', () => {
 				attempt: 0,
 				maxAttempts: 7,
 			}),
-		).toMatchObject({ status: 'blocked', reason: 'skills-consent-required' })
+		).toMatchObject({
+			status: 'blocked',
+			reason: 'skills-resubscribe-required',
+		})
 		expect(mocks.enterOwnedSkillsSubscriber).not.toHaveBeenCalled()
 		expect(mocks.mirrorForm).not.toHaveBeenCalled()
+	})
+
+	it('an unavailable stop read retries the durable request: no enrolment and no DOI until the read succeeds', async () => {
+		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'false')
+		mocks.readOwnedEvidence.mockResolvedValueOnce({ list: null })
+		mocks.enterOwnedSkillsSubscriber.mockResolvedValue({
+			status: 'drovr-owned',
+			contactId: 'owned-1',
+		})
+		const { step } = createDurableStep()
+		const args = {
+			event: {
+				...event,
+				data: {
+					...event.data,
+					kitSubscriberId: undefined,
+					contactId: 'owned-1',
+				},
+			},
+			step,
+			attempt: 0,
+			maxAttempts: 7,
+		}
+		await expect(handler(args)).rejects.toThrow('stop read unavailable')
+		expect(mocks.enterOwnedSkillsSubscriber).not.toHaveBeenCalled()
+		expect(mocks.requestDoi).not.toHaveBeenCalled()
+		expect(mocks.mirrorForm).not.toHaveBeenCalled()
+		mocks.readOwnedEvidence.mockResolvedValueOnce({
+			list: {
+				contactId: 'owned-1',
+				state: 'unknown',
+				unknownReason: 'no-consent-evidence',
+				stops: [],
+				forms: [],
+			},
+		})
+		expect(await handler({ ...args, attempt: 1 })).toMatchObject({
+			status: 'drovr-owned',
+		})
+		expect(mocks.enterOwnedSkillsSubscriber).toHaveBeenCalledOnce()
+		expect(mocks.requestDoi).not.toHaveBeenCalled()
 	})
 
 	it('master off preserves owned entry and birth processing with zero shadow Kit calls', async () => {

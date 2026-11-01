@@ -42,6 +42,8 @@ export type OwnedSkillsNewsletterSubscribed = {
 	> & {
 		contactId: string
 		kitSubscriberId?: string
+		signedInUserId?: string
+		page?: string
 	}
 }
 

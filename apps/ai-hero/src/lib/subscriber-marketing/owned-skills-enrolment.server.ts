@@ -1,10 +1,16 @@
 import 'server-only'
 
+import { eq } from 'drizzle-orm'
+import { db } from '@/db'
+import { contact } from '@/db/schema'
 import { env } from '@/env.mjs'
 import { inngest } from '@/inngest/inngest.server'
 import { SKILLS_NEWSLETTER_SUBSCRIBED_EVENT } from '@/inngest/events/skills-newsletter'
-import { readGatedAskForEmail } from '@/lib/gated-asks-off-kit'
-import { hasConfirmedSkillsConsent } from './owned-skills-enrolment'
+import { getServerAuthSession } from '@/server/auth'
+import { resolveOwnedSkillsContact } from './owned-skills-enrolment'
+import { readOwnedSkillsAdmission } from './owned-skills-list-state'
+import { DrizzleCaptureMarketingRepository } from './drizzle-capture-repository'
+import { parseDrovrSignupDeliveryConfig } from './drovr-doi-signup'
 import { requestDrovrDoiSignup } from './drovr-doi-signup.server'
 import type { OptInAttribution } from './opt-in-attribution'
 import type { DeadlineTimeZoneEvidence } from './course-sequence-exhaustion'
@@ -13,7 +19,7 @@ export function enrolmentOffKitEnabled() {
 	return env.AIH_ENROLMENT_OFF_KIT_ENABLED === 'true'
 }
 
-/** Called only after the server verified the signed-in address. */
+/** A verified session plus this explicit click grants course consent, never a stop lift. */
 export async function requestOwnedSkillsEnrolment(args: {
 	email: string
 	name?: string
@@ -22,20 +28,35 @@ export async function requestOwnedSkillsEnrolment(args: {
 	optInAttribution?: OptInAttribution
 	deadlineTimeZone?: DeadlineTimeZoneEvidence
 }) {
-	const evidence = await readGatedAskForEmail(args.email).catch(() => ({
-		list: null,
-	}))
-	const list = evidence.list
-	// A profile or an unrelated form is not Skills consent. A returning
-	// unsubscribe is never lifted here; only drovr's confirmation can lift it.
-	if (!list?.contactId || !hasConfirmedSkillsConsent(list)) {
-		if (
-			list?.stops.some(
-				(stop) => stop.scope === 'all' && stop.reason !== 'unsubscribed',
-			)
-		) {
-			return { success: false as const, reason: 'request-failed' as const }
-		}
+	const auth = await getServerAuthSession()
+	const user = auth?.session?.user
+	if (
+		!user?.email ||
+		user.email.trim().toLowerCase() !== args.email.trim().toLowerCase()
+	) {
+		throw new Error('Owned enrolment requires the matching signed-in address')
+	}
+	const subscribedAt = new Date().toISOString()
+	const contactId = await resolveOwnedSkillsContact({
+		repository: new DrizzleCaptureMarketingRepository(db),
+		findContactIdsByEmailKey: async (key) =>
+			(
+				await db
+					.select({ id: contact.id })
+					.from(contact)
+					.where(eq(contact.emailKey, key))
+					.limit(2)
+			).map((row) => row.id),
+		email: args.email,
+		name: args.name,
+		userId: user.id,
+		now: subscribedAt,
+	})
+	const admission = await readOwnedSkillsAdmission(
+		contactId,
+		parseDrovrSignupDeliveryConfig(env),
+	).catch(() => ({ status: 'unavailable' as const }))
+	if (admission.status === 'doi') {
 		await requestDrovrDoiSignup({
 			email: args.email,
 			name: args.name,
@@ -50,15 +71,24 @@ export async function requestOwnedSkillsEnrolment(args: {
 			confirmationUrl: `/confirm?email=${encodeURIComponent(args.email)}`,
 		}
 	}
+	// Both allowed and unavailable requests are durable. The worker must read
+	// stops successfully before enrolment; an unavailable read retries, not DOI.
+	let page = '/skills'
+	try {
+		const url = new URL(args.page)
+		page = `${url.origin}${url.pathname}`
+	} catch {}
 	await inngest.send({
 		name: SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
 		data: {
-			contactId: list.contactId,
+			contactId,
 			email: args.email,
 			name: args.name,
+			signedInUserId: user.id,
 			formId: 9376133,
 			source: args.source,
-			subscribedAt: new Date().toISOString(),
+			page,
+			subscribedAt,
 			optInAttribution: args.optInAttribution,
 			deadlineTimeZone: args.deadlineTimeZone,
 		},
