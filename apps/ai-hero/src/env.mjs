@@ -183,6 +183,10 @@ export const env = createEnv({
 		AIH_ENROLMENT_OFF_KIT_ENABLED: z.string().optional(),
 		// Read gated asks from drovr consent and local entry/interest facts. Default off.
 		AIH_GATED_ASKS_OFF_KIT_ENABLED: z.string().optional(),
+		// Default off. The posted signup form makes no Kit subscribe: a waitlist
+		// join is its interest fact, a newsletter ask takes drovr double opt-in.
+		// Read only by waitlistOffKitEnabled (lib/cta/interest-facts.ts).
+		AIH_WAITLIST_OFF_KIT_ENABLED: z.string().optional(),
 		// Default off; retain contact reads until /births rollout proof.
 		AIH_DROVR_BIRTH_FEED_ENABLED: z.string().optional(),
 		// Producer before rule; existing-cohort gate stays off until ruling B.
@@ -370,6 +374,7 @@ export const env = createEnv({
 		AIH_KIT_MIRROR_WRITES_ENABLED: process.env.AIH_KIT_MIRROR_WRITES_ENABLED,
 		AIH_ENROLMENT_OFF_KIT_ENABLED: process.env.AIH_ENROLMENT_OFF_KIT_ENABLED,
 		AIH_GATED_ASKS_OFF_KIT_ENABLED: process.env.AIH_GATED_ASKS_OFF_KIT_ENABLED,
+		AIH_WAITLIST_OFF_KIT_ENABLED: process.env.AIH_WAITLIST_OFF_KIT_ENABLED,
 		AIH_DROVR_BIRTH_FEED_ENABLED: process.env.AIH_DROVR_BIRTH_FEED_ENABLED,
 		AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY: process.env.AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY,
 		AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY: process.env.AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY,

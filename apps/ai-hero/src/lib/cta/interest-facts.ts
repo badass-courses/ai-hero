@@ -9,13 +9,17 @@ import { kitMirrorWritesEnabled } from '../kit-mirror-writes'
  * store answered. The first join is the fact: a second click records nothing
  * new, locally or in drovr.
  *
- * Three switches, all off by default:
+ * Four switches, all off by default:
  * - `AIH_INTEREST_FACTS_ENABLED=true` records every join locally and in drovr.
  * - `AIH_INTEREST_FACTS_GATING=true` lets a signed-in reader's local facts
  *   answer "already joined".
  * - `AIH_INTEREST_KIT_WRITES=off` stops the one-click Kit field and tag
  *   writes. Flip it only after a materialized cohort count matches the Kit
  *   count for the live waitlist; it is the cut, the other two are not.
+ * - `AIH_WAITLIST_OFF_KIT_ENABLED=true` takes the posted signup form off Kit:
+ *   a waitlist or interest post is its fact and nothing else, a plain
+ *   newsletter ask takes drovr's double opt-in, and anything else is
+ *   refused. It implies the cut.
  */
 
 /** ContactEvent.eventType for a local join. */
@@ -55,9 +59,18 @@ export function interestFactsGatingEnabled(env: Env = process.env): boolean {
 	return env.AIH_INTEREST_FACTS_GATING === 'true'
 }
 
+/** The posted signup form makes no Kit subscribe and no Kit field write. */
+export function waitlistOffKitEnabled(env: Env = process.env): boolean {
+	return env.AIH_WAITLIST_OFF_KIT_ENABLED === 'true'
+}
+
 /** Kit stays written unless the cut is explicit. Anything else keeps Kit. */
 export function interestKitWritesEnabled(env: Env = process.env): boolean {
-	return kitMirrorWritesEnabled(env) && env.AIH_INTEREST_KIT_WRITES !== 'off'
+	return (
+		kitMirrorWritesEnabled(env) &&
+		env.AIH_INTEREST_KIT_WRITES !== 'off' &&
+		!waitlistOffKitEnabled(env)
+	)
 }
 
 /** One local fact per contact and key; the unique index makes a repeat a no-op. */

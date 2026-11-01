@@ -268,6 +268,52 @@ describe('a failed fact queue after the cut keeps the Kit write', () => {
 	})
 })
 
+describe('AIH_WAITLIST_OFF_KIT_ENABLED', () => {
+	const intent = {
+		kind: 'cohort-waitlist',
+		productName: 'AI Coding Crash Course',
+	} as const
+
+	beforeEach(() => {
+		vi.stubEnv('AIH_WAITLIST_OFF_KIT_ENABLED', 'true')
+		mocks.kit.subscribeToList.mockResolvedValue({
+			id: 42,
+			state: 'active',
+			fields: {},
+		})
+		mocks.kit.tagSubscriber.mockResolvedValue(undefined)
+	})
+
+	it('one-click: the fact is the join, with Kit reachable and the cut unset', async () => {
+		const result = await completeKnownConversionIntent({
+			intent,
+			surface: 'cohort-page',
+		})
+
+		expect(result).toEqual({ success: true, confirmationRequired: false })
+		expect(factEvents()).toHaveLength(1)
+		expect(mocks.kit.subscribeToList).not.toHaveBeenCalled()
+		expect(mocks.kit.tagSubscriber).not.toHaveBeenCalled()
+	})
+
+	it('form finalize: no Kit tag, even when the fact cannot queue', async () => {
+		await finalizeAnonymousConversionIntent({
+			intent,
+			surface: 'cohort-page',
+			email: 'reader@example.test',
+		})
+		mocks.inngestSend.mockRejectedValue(new Error('inngest down'))
+		const failed = await finalizeAnonymousConversionIntent({
+			intent,
+			surface: 'cohort-page',
+			email: 'reader@example.test',
+		})
+
+		expect(failed).toEqual({ success: false, reason: 'tag-failed' })
+		expect(mocks.kit.tagSubscriber).not.toHaveBeenCalled()
+	})
+})
+
 describe('already joined, Kit unreachable', () => {
 	beforeEach(() => {
 		mocks.session = { session: { user: { email: 'reader@example.test' } } }
