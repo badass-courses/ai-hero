@@ -16,7 +16,6 @@ import {
 	providerIdentity,
 	sideEffectIntent,
 } from '@/db/schema'
-import { AI_HERO_SKILLS_EXCLUSION_TAG_IDS } from '@/lib/kit-broadcasts'
 import {
 	activeContactStopsByKey,
 	CONTACT_STOP_RULE_EVENT_TYPES,
@@ -52,6 +51,9 @@ import { AIH_COURSE_COMPLETED_AT_FIELD } from '@/lib/subscriber-marketing/value-
 import { emailEquivalenceKey } from '@/lib/subscriber-marketing/contact-email-equivalence'
 import { SKILLS_WORKFLOW_EMAIL_STEPS } from '@/lib/subscriber-marketing/skills-workflow-path'
 import { and, eq, inArray, or, sql } from 'drizzle-orm'
+
+// Kit tags for people who opted out of AI Skills email.
+const AI_HERO_SKILLS_EXCLUSION_TAG_IDS = [19251081, 8244351] as const
 
 export const SKILLS_NEWSLETTER_FORM_ID = 9376133
 /**

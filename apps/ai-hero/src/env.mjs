@@ -161,9 +161,6 @@ export const env = createEnv({
 		// Default off. Persisted DOI intake uses drovr consent, never Kit checks.
 		// The legacy-only Kit poll remains until its cohort is retired.
 		AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED: z.string().optional(),
-		// Returning unsubscribers get drovr's confirmation email only when this is
-		// "true". Turn on together with drovr's org-aihero `confirm-doi` flag.
-		AIH_RESUBSCRIBE_DOI_ENABLED: z.string().optional(),
 		// "true" verifies Kit preference and unsubscribe links against the local
 		// contact directory and reads preference state locally, with Kit out of
 		// the request path. Off keeps the Kit-backed reads.
@@ -360,7 +357,6 @@ export const env = createEnv({
 		DROVR_DOI_FORMS: process.env.DROVR_DOI_FORMS,
 		AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED:
 			process.env.AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED,
-		AIH_RESUBSCRIBE_DOI_ENABLED: process.env.AIH_RESUBSCRIBE_DOI_ENABLED,
 		DROVR_EXECUTOR_TOKEN: process.env.DROVR_EXECUTOR_TOKEN,
 		AI_HERO_VALUE_PATH_TOKEN_SECRET:
 			process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET,

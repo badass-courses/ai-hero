@@ -1050,7 +1050,7 @@ describe('returning unsubscriber (Kit or drovr)', () => {
 		)
 	})
 
-	it.each(['drovr-unconfigured', 'doi-disabled', 'unmapped-form', 'suppressed', 'drovr-unknown'])('blocked (%s): 409, no Kit subscribe, no untag', async (reason) => {
+	it.each(['drovr-unconfigured', 'unmapped-form', 'suppressed', 'drovr-unknown'])('blocked (%s): 409, no Kit subscribe, no untag', async (reason) => {
 		mocks.routeReturning.mockResolvedValue({
 			status: 'blocked',
 			reason,
@@ -1062,38 +1062,6 @@ describe('returning unsubscriber (Kit or drovr)', () => {
 		await expect(response.json()).resolves.toEqual({ error: 'Subscription could not be confirmed' })
 		expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
 		expect(mocks.reconcile).not.toHaveBeenCalled()
-	})
-
-	it('drovr state unknown (deferred): success shape, no Kit subscribe, no untag', async () => {
-		mocks.routeReturning.mockResolvedValue({ status: 'deferred' })
-
-		const response = await POST(
-			request({
-				email: 'person@example.com',
-				name: 'Pat',
-				listId: 9376133,
-				fields: { source: 'aihero_skills_page' },
-			}),
-		)
-
-		expect(response.status).toBe(200)
-		expect(await response.json()).toMatchObject({
-			email_address: 'person@example.com',
-			// Not 'awaiting-confirmation': no email is coming, so the client
-			// must render the subscribed page.
-			state: 'deferred',
-		})
-		expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
-		expect(mocks.reconcile).not.toHaveBeenCalled()
-		// The route opts in to deferral, carrying the submitted fields.
-		expect(mocks.routeReturning).toHaveBeenCalledWith(
-			expect.objectContaining({
-				deferral: expect.objectContaining({
-					action: 'form-subscribe',
-					fields: { source: 'aihero_skills_page' },
-				}),
-			}),
-		)
 	})
 
 	it('tagged and the DOI request throws: 502, no Kit subscribe, no untag', async () => {

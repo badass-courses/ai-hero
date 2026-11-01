@@ -11,14 +11,6 @@ import { readDrovrOptOuts } from "@/lib/subscriber-marketing/drovr-opt-out-reade
 
 import type { RecoveryStandingReader } from "./recovery-standing";
 
-/**
- * Dark until `AIH_SUPPORT_RECOVERY_LOCAL_STANDING=true`: lesson-one recovery
- * keeps asking Kit until the flag moves.
- */
-export function recoveryLocalStandingEnabled() {
-  return process.env.AIH_SUPPORT_RECOVERY_LOCAL_STANDING === "true";
-}
-
 export function createRecoveryStandingReader(): RecoveryStandingReader {
   const repository = new DrizzleCaptureMarketingRepository(db);
   const drovrConfig = parseDrovrSignupDeliveryConfig(env);

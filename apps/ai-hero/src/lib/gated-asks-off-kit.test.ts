@@ -204,10 +204,8 @@ describe('gated asks off Kit (Kit unreachable)', () => {
 			),
 		).toBe(false)
 		expect(await resolveSkillsCtaState(m.email)).toBe('account')
-		expect(await route()).toEqual({
-			status: 'blocked',
-			reason: 'drovr-unknown',
-		})
+		expect(await route()).toEqual({ status: 'doi-requested' })
+		expect(m.doi).toHaveBeenCalledTimes(1)
 	})
 
 	it('confirmed and unconfirmed submissions do not look up Kit', async () => {
@@ -217,7 +215,6 @@ describe('gated asks off Kit (Kit unreachable)', () => {
 	})
 
 	it('a stopped unsubscribe requires DOI; bounce/complaint cannot resubscribe', async () => {
-		m.env.AIH_RESUBSCRIBE_DOI_ENABLED = 'true'
 		m.fetch.mockImplementation(async () =>
 			reply('stopped', [
 				{ reason: 'unsubscribed', scope: 'all', createdAt: '2026-10-01' },

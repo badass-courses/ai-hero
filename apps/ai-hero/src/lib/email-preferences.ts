@@ -36,7 +36,6 @@ type Subscriber = {
 type PreferenceSource =
 	| 'preferences-page'
 	| 'unsubscribe-link'
-	| 'broadcast-guard'
 
 type User = typeof usersTable.$inferSelect
 
