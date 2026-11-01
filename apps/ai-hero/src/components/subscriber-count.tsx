@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { getTotalSubscribers } from '@/lib/kit-data'
+import { getPublicSubscriberTotal } from '@/lib/subscriber-count-owned'
 
 export type SubscriberCountFormat = 'rounded' | 'exact'
 
@@ -29,7 +29,9 @@ export function formatSubscriberCount(
 
 /**
  * Live newsletter subscriber count, server-fetched from Kit (ConvertKit v4)
- * via [[src/lib/kit-data.ts#getTotalSubscribers]] and cached 30 min.
+ * via [[src/lib/kit-data.ts#getTotalSubscribers]] and cached 30 min. With
+ * AIH_SUBSCRIBER_COUNT_OWNED_ENABLED=true it reads drovr's census instead
+ * ([[src/lib/subscriber-count-owned.ts#getOwnedTotalSubscribers]]).
  *
  * Async server component — safe in server-compiled MDX (registered in the
  * inline `compile-mdx.tsx` map) and anywhere in a server tree:
@@ -44,7 +46,7 @@ export async function SubscriberCount({
 	fallback = '90,000+',
 	format = 'rounded',
 }: SubscriberCountProps) {
-	const total = await getTotalSubscribers()
+	const total = await getPublicSubscriberTotal()
 	if (total === null) return <>{fallback}</>
 	return <>{formatSubscriberCount(total, format)}</>
 }
