@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { applyEmailPreferenceChange } from './email-preference-change'
+import {
+	acceptEmailPreferenceChange,
+	applyEmailPreferenceChange,
+} from './email-preference-change'
 import {
 	readLocalEmailPreferences,
 	type PreferenceLinkVerification,
@@ -33,6 +36,64 @@ function applyDeps(verification: PreferenceLinkVerification) {
 		writeKit: vi.fn(async () => undefined),
 	}
 }
+
+describe('acceptEmailPreferenceChange', () => {
+	const acceptDeps = () => ({
+		syncLocal: vi.fn(async () => undefined),
+		queue: vi.fn(async () => undefined),
+	})
+	const args = (
+		verification: PreferenceLinkVerification,
+		subscribed: boolean,
+	) => ({
+		verification,
+		subscriberId: '1234567',
+		shKit: 'a'.repeat(64),
+		preference: { key: 'newsletter' } as never,
+		subscribed,
+		source: 'preferences-page' as const,
+	})
+
+	it('refuses a verified link opt-in: nothing queued, nothing synced', async () => {
+		const deps = acceptDeps()
+		await expect(
+			acceptEmailPreferenceChange(args(verified, true), deps),
+		).resolves.toEqual({ status: 'rejected', reason: 'link-opt-in-refused' })
+		expect(deps.queue).not.toHaveBeenCalled()
+		expect(deps.syncLocal).not.toHaveBeenCalled()
+	})
+
+	it('refuses an unverifiable link opt-in too', async () => {
+		const deps = acceptDeps()
+		await expect(
+			acceptEmailPreferenceChange(
+				args({ status: 'unverifiable', reason: 'unknown-id' }, true),
+				deps,
+			),
+		).resolves.toEqual({ status: 'rejected', reason: 'link-opt-in-refused' })
+		expect(deps.queue).not.toHaveBeenCalled()
+	})
+
+	it('accepts and queues a verified opt-out', async () => {
+		const deps = acceptDeps()
+		await expect(
+			acceptEmailPreferenceChange(args(verified, false), deps),
+		).resolves.toEqual({ status: 'accepted', verified: true })
+		expect(deps.syncLocal).toHaveBeenCalledOnce()
+		expect(deps.queue).toHaveBeenCalledOnce()
+	})
+
+	it('still accepts an unverifiable opt-out', async () => {
+		const deps = acceptDeps()
+		await expect(
+			acceptEmailPreferenceChange(
+				args({ status: 'unverifiable', reason: 'unknown-id' }, false),
+				deps,
+			),
+		).resolves.toEqual({ status: 'accepted', verified: false })
+		expect(deps.queue).toHaveBeenCalledOnce()
+	})
+})
 
 describe('applyEmailPreferenceChange', () => {
 	it('a page-verified opt-out records the stop and writes Kit, without reverifying', async () => {
@@ -87,11 +148,14 @@ describe('applyEmailPreferenceChange', () => {
 		expect(deps.writeKit).not.toHaveBeenCalled()
 	})
 
-	it('an unverified opt-in is never applied', async () => {
+	it('a link opt-in is never applied, even a verified one queued earlier', async () => {
 		const deps = applyDeps(verified)
 		await expect(
-			applyEmailPreferenceChange({ ...change, subscribed: true }, deps),
-		).resolves.toEqual({ status: 'dropped', reason: 'unverified-opt-in' })
+			applyEmailPreferenceChange(
+				{ ...change, subscribed: true, email: 'reader@example.test' },
+				deps,
+			),
+		).resolves.toEqual({ status: 'dropped', reason: 'link-opt-in-refused' })
 		expect(deps.verify).not.toHaveBeenCalled()
 		expect(deps.writeKit).not.toHaveBeenCalled()
 	})

@@ -3,6 +3,10 @@ import 'server-only'
 import { cache } from 'react'
 import { cookies } from 'next/headers'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
+import {
+	gatedAsksOffKitEnabled,
+	readOffKitGatingEvidence,
+} from '@/lib/gated-asks-off-kit'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
 import type { CtaGatingSubscriber } from '@/lib/cta-gating'
 import { interestFactsGatingEnabled } from '@/lib/cta/interest-facts'
@@ -42,6 +46,8 @@ import { SubscriberSchema, type Subscriber } from '@/schemas/subscriber'
  */
 export const getSubscriberForGating = cache(
 	async (): Promise<Subscriber | null> => {
+		if (gatedAsksOffKitEnabled())
+			return (await readOffKitGatingEvidence()).subscriber
 		const [subscriber, interest] = await Promise.all([
 			readCookieSubscriberForGating(),
 			getSessionInterestFields(),
@@ -254,6 +260,18 @@ function subscriberFromGate(
  */
 export const getCtaGatingPayload = cache(
 	async (): Promise<CtaGatingSubscriber | null> => {
+		if (gatedAsksOffKitEnabled()) {
+			const { subscriber } = await readOffKitGatingEvidence({
+				sessionOnly: true,
+			})
+			return subscriber
+				? {
+						state: subscriber.state ?? null,
+						fields: subscriber.fields,
+						hasIdentity: Boolean(subscriber.email_address),
+					}
+				: null
+		}
 		const [payload, interest] = await Promise.all([
 			readCtaGatingPayload(),
 			getSessionInterestFields(),

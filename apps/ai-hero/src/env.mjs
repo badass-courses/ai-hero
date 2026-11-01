@@ -181,6 +181,8 @@ export const env = createEnv({
 		AIH_SURVEY_OFF_KIT_ENABLED: z.string().optional(),
 		// Default on. Off disables optional AI Hero tag/field mirrors, not consent or TT.
 		AIH_KIT_MIRROR_WRITES_ENABLED: z.string().optional(),
+		// Read gated asks from drovr consent and local entry/interest facts. Default off.
+		AIH_GATED_ASKS_OFF_KIT_ENABLED: z.string().optional(),
 		// Default off; retain contact reads until /births rollout proof.
 		AIH_DROVR_BIRTH_FEED_ENABLED: z.string().optional(),
 		// Producer before rule; existing-cohort gate stays off until ruling B.
@@ -368,6 +370,7 @@ export const env = createEnv({
 			process.env.AIH_DROVR_SURVEY_INTEREST_FACTS_ENABLED,
 		AIH_SURVEY_OFF_KIT_ENABLED: process.env.AIH_SURVEY_OFF_KIT_ENABLED,
 		AIH_KIT_MIRROR_WRITES_ENABLED: process.env.AIH_KIT_MIRROR_WRITES_ENABLED,
+		AIH_GATED_ASKS_OFF_KIT_ENABLED: process.env.AIH_GATED_ASKS_OFF_KIT_ENABLED,
 		AIH_DROVR_BIRTH_FEED_ENABLED: process.env.AIH_DROVR_BIRTH_FEED_ENABLED,
 		AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY: process.env.AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY,
 		AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY: process.env.AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY,
