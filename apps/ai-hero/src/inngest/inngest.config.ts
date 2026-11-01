@@ -20,7 +20,6 @@ import {
 	purchaseDisputeOpened,
 } from '@/inngest/functions/disputes/purchase-dispute-access'
 import { sendWorkshopAccessEmails } from '@/inngest/functions/send-workshop-access-emails'
-import { syncPurchaseTags } from '@/inngest/functions/sync-purchase-tags'
 import { teamPurchaseFulfillmentWorkflow } from '@/inngest/functions/team-purchase-fulfillment-workflow'
 import { userCreated } from '@/inngest/functions/user-created'
 import { inngest } from '@/inngest/inngest.server'
@@ -157,7 +156,6 @@ const allFunctions = [
 	apiProductTransferWorkflow,
 	cohortEntitlementSyncWorkflow,
 	cohortEntitlementSyncUser,
-	syncPurchaseTags,
 	addPurchasesConvertkit,
 	stripeSubscriptionCheckoutSessionComplete,
 	persistPurchaseGeo,

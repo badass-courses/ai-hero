@@ -52,7 +52,6 @@
 		"billing-admins:synthetic-proof": "tsx -r dotenv/config src/scripts/billing-admins-synthetic-proof.ts",
 		"team-purchases:repair-links": "tsx -r dotenv/config src/scripts/team-purchase-link-repair.ts",
 		"team-purchases:repair-memberless": "tsx -r dotenv/config src/scripts/team-purchase-memberless-repair.ts",
-		"kit:fields:check": "DO_NOT_TRACK=1 varlock run --path .env.ops-kit.schema -- tsx src/scripts/kit-custom-fields-check.ts",
 		"reporting:kit-snapshot": "SKIP_ENV_VALIDATION=1 tsx src/scripts/reporting-kit-snapshot.ts",
 		"evergreen:deadline-fields:plan": "tsx -r dotenv/config src/scripts/evergreen-deadline-fields-plan.ts",
 		"checkout:recover": "tsx --conditions=react-server -r dotenv/config src/scripts/checkout-recovery.ts",
@@ -65,7 +64,6 @@
 		"cohort-004:repair-entitlements": "tsx -r dotenv/config scripts/repair-cohort-004-entitlements.mts",
 		"crash-course:backfill-ppp-alumni": "dotenv -e .env.vercel -- tsx scripts/backfill-crash-course-ppp-alumni-entitlements.ts",
 		"disputes:backfill-lost": "dotenv -e .env.vercel -- tsx scripts/backfill-lost-disputes.ts",
-		"crash-course:purchaser-tag": "dotenv -e .env.vercel -- tsx src/scripts/crash-course-purchaser-tag.ts",
 		"globe:geo-backfill": "dotenv -e .env.vercel -- tsx src/scripts/globe-geo-backfill.ts"
 	},
 	"dependencies": {
