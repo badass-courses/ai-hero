@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
+	enterOwnedSkillsSubscriber: vi.fn(),
+	readOwnedEvidence: vi.fn(),
+	requestDoi: vi.fn(),
+	mirrorForm: vi.fn(),
 	enterSkillsNewsletterSubscriber: vi.fn(),
 	ensureShadowNewsletterOwnershipAssignment: vi.fn(),
 	shadowObserveSignup: vi.fn(),
@@ -13,13 +17,39 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/db', () => ({ db: {} }))
+vi.mock('@/lib/subscriber-marketing/drovr-doi-signup.server', () => ({
+	requestDrovrDoiSignup: mocks.requestDoi,
+}))
+vi.mock(
+	'@/lib/subscriber-marketing/owned-skills-list-state',
+	async (original) => {
+		const actual =
+			await original<
+				typeof import('@/lib/subscriber-marketing/owned-skills-list-state')
+			>()
+		return {
+			...actual,
+			readOwnedSkillsAdmission: async () =>
+				actual.ownedSkillsAdmission((await mocks.readOwnedEvidence()).list),
+		}
+	},
+)
+vi.mock(
+	'@/lib/subscriber-marketing/owned-skills-enrolment',
+	async (original) => ({
+		...(await original<
+			typeof import('@/lib/subscriber-marketing/owned-skills-enrolment')
+		>()),
+		enterOwnedSkillsSubscriber: mocks.enterOwnedSkillsSubscriber,
+	}),
+)
 
 vi.mock('@/coursebuilder/email-list-provider', async (importOriginal) => {
 	const actual =
 		await importOriginal<typeof import('@/coursebuilder/email-list-provider')>()
 	return {
 		...actual,
-		emailListProvider: { subscribeToList: vi.fn() },
+		emailListProvider: { subscribeToList: mocks.mirrorForm },
 		subscribeToKitListWithoutFields: mocks.subscribeToKitListWithoutFields,
 	}
 })
@@ -44,7 +74,9 @@ vi.mock('@/lib/subscriber-marketing/drizzle-capture-repository', () => ({
 		findProviderIdentity() {
 			return { id: 'identity_1', contactId: 'contact_1' }
 		}
-		createContactEvent(input: unknown) { return input }
+		createContactEvent(input: unknown) {
+			return input
+		}
 	},
 }))
 
@@ -84,7 +116,8 @@ import {
 type TestEvent = {
 	id: string
 	data: {
-		kitSubscriberId: string
+		kitSubscriberId?: string
+		contactId?: string
 		email: string
 		name: string
 		formId: number
@@ -204,6 +237,184 @@ describe('skills newsletter path entry', () => {
 		vi.unstubAllEnvs()
 	})
 
+	it('owned event enters drovr with Kit unreachable, even after admission flag rollback', async () => {
+		vi.stubEnv('AIH_ENROLMENT_OFF_KIT_ENABLED', 'false')
+		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'false')
+		mocks.mirrorForm.mockRejectedValue(new Error('Kit unreachable'))
+		mocks.readOwnedEvidence.mockResolvedValue({
+			list: {
+				contactId: 'owned-1',
+				state: 'confirmed',
+				stops: [],
+				forms: [{ formId: 'skills-newsletter', state: 'confirmed' }],
+			},
+		})
+		mocks.enterOwnedSkillsSubscriber.mockResolvedValue({
+			status: 'drovr-owned',
+			contactId: 'owned-1',
+		})
+		const { step } = createDurableStep()
+		const result = await handler({
+			event: {
+				...event,
+				data: {
+					...event.data,
+					kitSubscriberId: undefined,
+					contactId: 'owned-1',
+				},
+			},
+			step,
+			attempt: 0,
+			maxAttempts: 7,
+		})
+		expect(result).toMatchObject({ status: 'drovr-owned' })
+		expect(mocks.enterOwnedSkillsSubscriber).toHaveBeenCalledOnce()
+		expect(mocks.enterSkillsNewsletterSubscriber).not.toHaveBeenCalled()
+		expect(
+			mocks.ensureShadowNewsletterOwnershipAssignment,
+		).not.toHaveBeenCalled()
+		expect(mocks.mirrorForm).not.toHaveBeenCalled()
+		expect(mocks.subscribeToKitListWithoutFields).not.toHaveBeenCalled()
+		expect(step.run.mock.calls.map(([id]) => id)).toEqual([
+			'enter-owned-skills-course',
+		])
+	})
+
+	it('an unreachable optional Kit form mirror cannot undo owned access', async () => {
+		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'true')
+		mocks.mirrorForm.mockRejectedValueOnce(new Error('Kit unreachable'))
+		mocks.readOwnedEvidence.mockResolvedValue({
+			list: {
+				contactId: 'owned-1',
+				state: 'confirmed',
+				stops: [],
+				forms: [{ formId: 'skills-newsletter', state: 'confirmed' }],
+			},
+		})
+		mocks.enterOwnedSkillsSubscriber.mockResolvedValue({
+			status: 'drovr-owned',
+			contactId: 'owned-1',
+		})
+		const { step } = createDurableStep()
+		expect(
+			await handler({
+				event: {
+					...event,
+					data: {
+						...event.data,
+						kitSubscriberId: undefined,
+						contactId: 'owned-1',
+					},
+				},
+				step,
+				attempt: 0,
+				maxAttempts: 7,
+			}),
+		).toMatchObject({ status: 'drovr-owned' })
+		expect(mocks.mirrorForm).toHaveBeenCalledWith(
+			expect.objectContaining({ listId: 9376133, listType: 'form' }),
+		)
+		expect(mocks.enterSkillsNewsletterSubscriber).not.toHaveBeenCalled()
+		expect(
+			mocks.ensureShadowNewsletterOwnershipAssignment,
+		).not.toHaveBeenCalled()
+	})
+
+	it('a newer stop suppresses the optional mirror even when owned entry was already cached', async () => {
+		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'true')
+		mocks.readOwnedEvidence.mockResolvedValueOnce({
+			list: { contactId: 'owned-1', state: 'confirmed', forms: [], stops: [] },
+		})
+		mocks.enterOwnedSkillsSubscriber.mockResolvedValue({
+			status: 'drovr-owned',
+			contactId: 'owned-1',
+		})
+		const { step } = createDurableStep({
+			yieldAfterSuccess: new Set(['enter-owned-skills-course']),
+		})
+		const args = {
+			event: { ...event, data: { ...event.data, contactId: 'owned-1' } },
+			step,
+			attempt: 0,
+			maxAttempts: 7,
+		}
+		await expect(handler(args)).rejects.toBeInstanceOf(DurableStepCompleted)
+		mocks.readOwnedEvidence.mockResolvedValueOnce({
+			list: { contactId: 'owned-1', state: 'stopped', forms: [], stops: [] },
+		})
+		expect(await handler(args)).toMatchObject({ status: 'drovr-owned' })
+		expect(mocks.mirrorForm).not.toHaveBeenCalled()
+		expect(mocks.enterOwnedSkillsSubscriber).toHaveBeenCalledOnce()
+	})
+
+	it('rechecks stops before capture and birth and routes a new stop to DOI', async () => {
+		mocks.readOwnedEvidence.mockResolvedValue({
+			list: {
+				contactId: 'owned-1',
+				state: 'confirmed',
+				stops: [
+					{ scope: 'course:value-path-skills-course', reason: 'unsubscribed' },
+				],
+				forms: [],
+			},
+		})
+		const { step } = createDurableStep()
+		expect(
+			await handler({
+				event: { ...event, data: { ...event.data, contactId: 'owned-1' } },
+				step,
+				attempt: 0,
+				maxAttempts: 7,
+			}),
+		).toMatchObject({
+			status: 'blocked',
+			reason: 'skills-resubscribe-required',
+		})
+		expect(mocks.enterOwnedSkillsSubscriber).not.toHaveBeenCalled()
+		expect(mocks.mirrorForm).not.toHaveBeenCalled()
+	})
+
+	it('an unavailable stop read retries the durable request: no enrolment and no DOI until the read succeeds', async () => {
+		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'false')
+		mocks.readOwnedEvidence.mockResolvedValueOnce({ list: null })
+		mocks.enterOwnedSkillsSubscriber.mockResolvedValue({
+			status: 'drovr-owned',
+			contactId: 'owned-1',
+		})
+		const { step } = createDurableStep()
+		const args = {
+			event: {
+				...event,
+				data: {
+					...event.data,
+					kitSubscriberId: undefined,
+					contactId: 'owned-1',
+				},
+			},
+			step,
+			attempt: 0,
+			maxAttempts: 7,
+		}
+		await expect(handler(args)).rejects.toThrow('stop read unavailable')
+		expect(mocks.enterOwnedSkillsSubscriber).not.toHaveBeenCalled()
+		expect(mocks.requestDoi).not.toHaveBeenCalled()
+		expect(mocks.mirrorForm).not.toHaveBeenCalled()
+		mocks.readOwnedEvidence.mockResolvedValueOnce({
+			list: {
+				contactId: 'owned-1',
+				state: 'unknown',
+				unknownReason: 'no-consent-evidence',
+				stops: [],
+				forms: [],
+			},
+		})
+		expect(await handler({ ...args, attempt: 1 })).toMatchObject({
+			status: 'drovr-owned',
+		})
+		expect(mocks.enterOwnedSkillsSubscriber).toHaveBeenCalledOnce()
+		expect(mocks.requestDoi).not.toHaveBeenCalled()
+	})
+
 	it('master off preserves owned entry and birth processing with zero shadow Kit calls', async () => {
 		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'false')
 		const { step } = createDurableStep()
@@ -317,7 +528,9 @@ describe('skills newsletter path entry', () => {
 		expect(mocks.subscribeToKitListWithoutFields).not.toHaveBeenCalled()
 		expect(results.has('probe-shadow-newsletter-sequence')).toBe(false)
 		expect(results.has('assign-shadow-newsletter-owner')).toBe(false)
-		expect(mocks.ensureShadowNewsletterOwnershipAssignment).not.toHaveBeenCalled()
+		expect(
+			mocks.ensureShadowNewsletterOwnershipAssignment,
+		).not.toHaveBeenCalled()
 		expect(mocks.log.info).toHaveBeenCalledWith(
 			'subscriber_funnel.legacy_newsletter_enrollment_skipped',
 			expect.objectContaining({ contactId: 'contact_held', reason: 'held' }),
@@ -343,7 +556,9 @@ describe('skills newsletter path entry', () => {
 		expect(results.get('assign-shadow-newsletter-owner')).toEqual({
 			id: 'newsletter-owner-1',
 		})
-		expect(mocks.ensureShadowNewsletterOwnershipAssignment).toHaveBeenCalledWith({
+		expect(
+			mocks.ensureShadowNewsletterOwnershipAssignment,
+		).toHaveBeenCalledWith({
 			repository: expect.anything(),
 			contactId: 'contact_1',
 			providerIdentityId: 'identity_1',

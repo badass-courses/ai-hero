@@ -100,6 +100,7 @@ import {
 	SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
 	type SkillsCourseLessonOneRecoveryRequested,
 	type SkillsNewsletterSubscribed,
+	type OwnedSkillsNewsletterSubscribed,
 } from '@/inngest/events/skills-newsletter'
 import {
 	WORKSHOP_INTEREST_REQUESTED_EVENT,
@@ -307,7 +308,9 @@ export type Events = {
 	[RESOURCE_CREATED_EVENT]: ResourceCreated
 	[RESOURCE_UPDATED_EVENT]: ResourceUpdated
 	[SKILL_CHANGELOG_PUBLISHED_EVENT]: SkillChangelogPublished
-	[SKILLS_NEWSLETTER_SUBSCRIBED_EVENT]: SkillsNewsletterSubscribed
+	[SKILLS_NEWSLETTER_SUBSCRIBED_EVENT]:
+		| SkillsNewsletterSubscribed
+		| OwnedSkillsNewsletterSubscribed
 	[OPTIN_DEFERRED_EVENT]: OptInDeferred
 	[SKILLS_COURSE_LESSON_ONE_RECOVERY_REQUESTED_EVENT]: SkillsCourseLessonOneRecoveryRequested
 	[CONTACT_UNSUBSCRIBED_EVENT]: ContactUnsubscribed

@@ -7,6 +7,10 @@ import { env } from '@/env.mjs'
 import { setSubscriberCookie } from '@/lib/convertkit'
 import { kitMirrorWritesEnabled } from '@/lib/kit-mirror-writes'
 import {
+	enrolmentOffKitEnabled,
+	requestOwnedSkillsEnrolment,
+} from '@/lib/subscriber-marketing/owned-skills-enrolment.server'
+import {
 	conversionIntentContract,
 	type ConversionSurface,
 	withConfirmedConversionFields,
@@ -67,6 +71,39 @@ export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 			hasSession: false,
 		})
 		return { success: false, reason: 'not-subscribed' as const }
+	}
+
+	// The owned branch runs before every Kit consent read, subscribe and cookie
+	// refresh. Cookie-only readers keep the existing DOI path below.
+	if (enrolmentOffKitEnabled() && (await isSignedInAs(identity))) {
+		try {
+			const [cookieStore, headerStore] = await Promise.all([
+				cookies(),
+				headers(),
+			])
+			const contract = conversionIntentContract({
+				intent: { kind: 'skills-course' },
+				surface,
+			})
+			const result = await requestOwnedSkillsEnrolment({
+				email: identity.email,
+				name: identity.name,
+				source: contract.fields.source!,
+				page: headerStore.get('referer') ?? 'https://www.aihero.dev/skills',
+				optInAttribution: parseOptInAttributionCookie(
+					cookieStore.get('ft_attr')?.value,
+				),
+				deadlineTimeZone: deferredDeadlineTimeZone(headerStore),
+			})
+			if (result.success) revalidatePath('/skills')
+			return result
+		} catch (error) {
+			await log.error('skills.owned-enrolment.failed', {
+				formId: SKILLS_FORM_ID,
+				error: error instanceof Error ? error.name : 'unknown',
+			})
+			return { success: false, reason: 'request-failed' as const }
+		}
 	}
 
 	// drovr double opt-in (DROVR_DOI_FORMS): a signed-in reader proved the
@@ -216,11 +253,7 @@ export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 				outcome: 'not-issued',
 			})
 		}
-		await sendSkillsNewsletterPathEntry(
-			subscribed,
-			source,
-			courseEntryEvidence,
-		)
+		await sendSkillsNewsletterPathEntry(subscribed, source, courseEntryEvidence)
 
 		// From the PARSED record, not the cookie: on the session path there may be
 		// no cookie record at all, and this is the id we actually enrolled.
