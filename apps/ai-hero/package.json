@@ -41,6 +41,7 @@
 		"subscriber-marketing:operator": "tsx -r dotenv/config src/scripts/subscriber-marketing-operator.ts",
 		"contact-integrity:maintenance": "tsx src/scripts/contact-integrity-maintenance.ts",
 		"contact-events:backfill": "tsx -r dotenv/config src/scripts/backfill-contact-events.ts",
+		"interest-facts:backfill": "tsx -r dotenv/config scripts/interest-facts-backfill.ts",
 		"kit-directory:ingest": "tsx -r dotenv/config src/scripts/kit-directory-ingest.ts",
 		"newsletter:veterans": "tsx -r dotenv/config src/scripts/newsletter-veterans.ts",
 		"ads:operator": "tsx -r dotenv/config src/scripts/ads-operator.ts",
