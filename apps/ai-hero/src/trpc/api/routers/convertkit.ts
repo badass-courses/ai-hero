@@ -1,124 +1,124 @@
-import { cookies } from "next/headers";
-import { db } from "@/db";
+import { cookies } from 'next/headers'
+import { db } from '@/db'
 import {
-  contact,
-  contentResource,
-  contentResourceResource,
-  providerIdentity,
-  questionResponse,
-} from "@/db/schema";
-import { normalizeKitSubscriberId } from "@/lib/content-progress";
-import { getSubscriberFromCookie } from "@/lib/convertkit";
-import { readKitSubscriberIdentity } from "@/lib/kit-subscriber-directory";
-import { persistSurveyAnswers } from "@/lib/survey-answer-persistence";
-import { SubscriberSchema } from "@/schemas/subscriber";
-import { log } from "@/server/logger";
-import { createTRPCRouter, publicProcedure } from "@/trpc/api/trpc";
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { z } from "zod";
+	contact,
+	contentResource,
+	contentResourceResource,
+	providerIdentity,
+	questionResponse,
+} from '@/db/schema'
+import { normalizeKitSubscriberId } from '@/lib/content-progress'
+import { getSubscriberFromCookie } from '@/lib/convertkit'
+import { readKitSubscriberIdentity } from '@/lib/kit-subscriber-directory'
+import { persistSurveyAnswers } from '@/lib/survey-answer-persistence'
+import { SubscriberSchema } from '@/schemas/subscriber'
+import { log } from '@/server/logger'
+import { createTRPCRouter, publicProcedure } from '@/trpc/api/trpc'
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { z } from 'zod'
 
-const CHECKOUT_SURVEY_SLUG = "checkout-decision-source";
-const CHECKOUT_SURVEY_ID = "survey-checkout-decision-source";
-const CHECKOUT_SURVEY_QUESTION_SLUG = "what-helped-you-decide-to-join";
-const CHECKOUT_SURVEY_QUESTION_ID = "question-what-helped-you-decide-to-join";
+const CHECKOUT_SURVEY_SLUG = 'checkout-decision-source'
+const CHECKOUT_SURVEY_ID = 'survey-checkout-decision-source'
+const CHECKOUT_SURVEY_QUESTION_SLUG = 'what-helped-you-decide-to-join'
+const CHECKOUT_SURVEY_QUESTION_ID = 'question-what-helped-you-decide-to-join'
 const CHECKOUT_SURVEY_CHOICES = [
-  { answer: "matts_youtube", label: "Matt's YouTube" },
-  { answer: "matts_x", label: "Matt's X or Twitter" },
-  { answer: "github", label: "GitHub" },
-  { answer: "google_search", label: "Google search" },
-  { answer: "podcast_newsletter", label: "Podcast or newsletter" },
-  { answer: "coworker_friend", label: "Coworker or friend" },
-  { answer: "email_announcement", label: "Email announcement" },
-  { answer: "other", label: "Other" },
-];
+	{ answer: 'matts_youtube', label: "Matt's YouTube" },
+	{ answer: 'matts_x', label: "Matt's X or Twitter" },
+	{ answer: 'github', label: 'GitHub' },
+	{ answer: 'google_search', label: 'Google search' },
+	{ answer: 'podcast_newsletter', label: 'Podcast or newsletter' },
+	{ answer: 'coworker_friend', label: 'Coworker or friend' },
+	{ answer: 'email_announcement', label: 'Email announcement' },
+	{ answer: 'other', label: 'Other' },
+]
 
 async function ensureCheckoutSurveyResources(createdById: string) {
-  const existingSurvey = await db.query.contentResource.findFirst({
-    where: and(
-      eq(contentResource.type, "survey"),
-      sql`JSON_EXTRACT(${contentResource.fields}, '$.slug') = ${CHECKOUT_SURVEY_SLUG}`,
-    ),
-  });
+	const existingSurvey = await db.query.contentResource.findFirst({
+		where: and(
+			eq(contentResource.type, 'survey'),
+			sql`JSON_EXTRACT(${contentResource.fields}, '$.slug') = ${CHECKOUT_SURVEY_SLUG}`,
+		),
+	})
 
-  const surveyId = existingSurvey?.id || CHECKOUT_SURVEY_ID;
+	const surveyId = existingSurvey?.id || CHECKOUT_SURVEY_ID
 
-  if (!existingSurvey) {
-    try {
-      await db.insert(contentResource).values({
-        id: CHECKOUT_SURVEY_ID,
-        type: "survey",
-        createdById,
-        fields: {
-          title: "Checkout decision source",
-          slug: CHECKOUT_SURVEY_SLUG,
-          state: "published",
-          visibility: "unlisted",
-        },
-      });
-    } catch (error) {
-      await log.warn("checkout.survey.ensure.survey.insert.skipped", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
+	if (!existingSurvey) {
+		try {
+			await db.insert(contentResource).values({
+				id: CHECKOUT_SURVEY_ID,
+				type: 'survey',
+				createdById,
+				fields: {
+					title: 'Checkout decision source',
+					slug: CHECKOUT_SURVEY_SLUG,
+					state: 'published',
+					visibility: 'unlisted',
+				},
+			})
+		} catch (error) {
+			await log.warn('checkout.survey.ensure.survey.insert.skipped', {
+				error: error instanceof Error ? error.message : String(error),
+			})
+		}
+	}
 
-  const existingQuestion = await db.query.contentResource.findFirst({
-    where: and(
-      eq(contentResource.type, "question"),
-      sql`JSON_EXTRACT(${contentResource.fields}, '$.slug') = ${CHECKOUT_SURVEY_QUESTION_SLUG}`,
-    ),
-  });
+	const existingQuestion = await db.query.contentResource.findFirst({
+		where: and(
+			eq(contentResource.type, 'question'),
+			sql`JSON_EXTRACT(${contentResource.fields}, '$.slug') = ${CHECKOUT_SURVEY_QUESTION_SLUG}`,
+		),
+	})
 
-  const questionId = existingQuestion?.id || CHECKOUT_SURVEY_QUESTION_ID;
+	const questionId = existingQuestion?.id || CHECKOUT_SURVEY_QUESTION_ID
 
-  if (!existingQuestion) {
-    try {
-      await db.insert(contentResource).values({
-        id: CHECKOUT_SURVEY_QUESTION_ID,
-        type: "question",
-        createdById,
-        fields: {
-          slug: CHECKOUT_SURVEY_QUESTION_SLUG,
-          question: "What helped you decide to join?",
-          type: "multiple-choice",
-          choices: CHECKOUT_SURVEY_CHOICES,
-          required: false,
-          shuffleChoices: false,
-          allowMultiple: false,
-        },
-      });
-    } catch (error) {
-      await log.warn("checkout.survey.ensure.question.insert.skipped", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
+	if (!existingQuestion) {
+		try {
+			await db.insert(contentResource).values({
+				id: CHECKOUT_SURVEY_QUESTION_ID,
+				type: 'question',
+				createdById,
+				fields: {
+					slug: CHECKOUT_SURVEY_QUESTION_SLUG,
+					question: 'What helped you decide to join?',
+					type: 'multiple-choice',
+					choices: CHECKOUT_SURVEY_CHOICES,
+					required: false,
+					shuffleChoices: false,
+					allowMultiple: false,
+				},
+			})
+		} catch (error) {
+			await log.warn('checkout.survey.ensure.question.insert.skipped', {
+				error: error instanceof Error ? error.message : String(error),
+			})
+		}
+	}
 
-  const existingRelation = await db.query.contentResourceResource.findFirst({
-    where: and(
-      eq(contentResourceResource.resourceOfId, surveyId),
-      eq(contentResourceResource.resourceId, questionId),
-    ),
-  });
+	const existingRelation = await db.query.contentResourceResource.findFirst({
+		where: and(
+			eq(contentResourceResource.resourceOfId, surveyId),
+			eq(contentResourceResource.resourceId, questionId),
+		),
+	})
 
-  if (!existingRelation) {
-    try {
-      await db.insert(contentResourceResource).values({
-        resourceOfId: surveyId,
-        resourceId: questionId,
-        position: 0,
-        metadata: { source: "checkout-survey-auto-ensure" },
-      });
-    } catch (error) {
-      await log.warn("checkout.survey.ensure.relation.insert.skipped", {
-        surveyId,
-        questionId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
+	if (!existingRelation) {
+		try {
+			await db.insert(contentResourceResource).values({
+				resourceOfId: surveyId,
+				resourceId: questionId,
+				position: 0,
+				metadata: { source: 'checkout-survey-auto-ensure' },
+			})
+		} catch (error) {
+			await log.warn('checkout.survey.ensure.relation.insert.skipped', {
+				surveyId,
+				questionId,
+				error: error instanceof Error ? error.message : String(error),
+			})
+		}
+	}
 
-  return { surveyId, questionId };
+	return { surveyId, questionId }
 }
 
 /**
@@ -130,65 +130,65 @@ async function ensureCheckoutSurveyResources(createdById: string) {
  * subscriber record used to.
  */
 async function resolveCheckoutSurveyAnswerer(
-  session: {
-    user?: { id?: string | null; email?: string | null } | null;
-  } | null,
+	session: {
+		user?: { id?: string | null; email?: string | null } | null
+	} | null,
 ) {
-  const cookieStore = await cookies();
-  const convertkitId = cookieStore.get("ck_subscriber_id")?.value;
-  const subscriberCookie = cookieStore.get("ck_subscriber")?.value;
+	const cookieStore = await cookies()
+	const convertkitId = cookieStore.get('ck_subscriber_id')?.value
+	const subscriberCookie = cookieStore.get('ck_subscriber')?.value
 
-  let emailListSubscriberId: string | null = null;
-  let aliasEmail: string | null = null;
-  let aliasUserId: string | null = null;
+	let emailListSubscriberId: string | null = null
+	let aliasEmail: string | null = null
+	let aliasUserId: string | null = null
 
-  try {
-    if (convertkitId) {
-      const cookieKitId = normalizeKitSubscriberId(convertkitId);
-      emailListSubscriberId =
-        cookieKitId && /^\d+$/.test(cookieKitId) ? cookieKitId : null;
-    } else if (subscriberCookie) {
-      const subscriber = SubscriberSchema.parse(JSON.parse(subscriberCookie));
-      emailListSubscriberId = subscriber.id.toString();
-      aliasEmail = subscriber.email_address || null;
-    }
+	try {
+		if (convertkitId) {
+			const cookieKitId = normalizeKitSubscriberId(convertkitId)
+			emailListSubscriberId =
+				cookieKitId && /^\d+$/.test(cookieKitId) ? cookieKitId : null
+		} else if (subscriberCookie) {
+			const subscriber = SubscriberSchema.parse(JSON.parse(subscriberCookie))
+			emailListSubscriberId = subscriber.id.toString()
+			aliasEmail = subscriber.email_address || null
+		}
 
-    if (emailListSubscriberId && !aliasEmail) {
-      const identity = await db.query.providerIdentity.findFirst({
-        where: and(
-          eq(providerIdentity.provider, "kit"),
-          eq(providerIdentity.externalId, emailListSubscriberId),
-        ),
-        columns: { contactId: true },
-      });
-      const row = identity
-        ? await db.query.contact.findFirst({
-            where: eq(contact.id, identity.contactId),
-            columns: { email: true, userId: true },
-          })
-        : undefined;
-      aliasEmail = row?.email?.trim() || null;
-      aliasUserId = row?.userId || null;
-    }
-  } catch (error) {
-    await log.warn("checkout.survey.answerer.lookup.failed", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
+		if (emailListSubscriberId && !aliasEmail) {
+			const identity = await db.query.providerIdentity.findFirst({
+				where: and(
+					eq(providerIdentity.provider, 'kit'),
+					eq(providerIdentity.externalId, emailListSubscriberId),
+				),
+				columns: { contactId: true },
+			})
+			const row = identity
+				? await db.query.contact.findFirst({
+						where: eq(contact.id, identity.contactId),
+						columns: { email: true, userId: true },
+					})
+				: undefined
+			aliasEmail = row?.email?.trim() || null
+			aliasUserId = row?.userId || null
+		}
+	} catch (error) {
+		await log.warn('checkout.survey.answerer.lookup.failed', {
+			error: error instanceof Error ? error.message : String(error),
+		})
+	}
 
-  let userId = session?.user?.id || aliasUserId;
-  const identityEmail = aliasEmail || session?.user?.email || null;
+	let userId = session?.user?.id || aliasUserId
+	const identityEmail = aliasEmail || session?.user?.email || null
 
-  if (!userId && identityEmail) {
-    const existingUser = await db.query.users.findFirst({
-      where: (users, { eq }) => eq(users.email, identityEmail),
-    });
-    if (existingUser) {
-      userId = existingUser.id;
-    }
-  }
+	if (!userId && identityEmail) {
+		const existingUser = await db.query.users.findFirst({
+			where: (users, { eq }) => eq(users.email, identityEmail),
+		})
+		if (existingUser) {
+			userId = existingUser.id
+		}
+	}
 
-  return { userId: userId || null, emailListSubscriberId, identityEmail };
+	return { userId: userId || null, emailListSubscriberId, identityEmail }
 }
 
 /**
@@ -200,360 +200,357 @@ async function resolveCheckoutSurveyAnswerer(
  * the directory does not know answers anonymously.
  */
 async function readSurveySubscriber(
-  convertkitId: string | undefined,
-  subscriberCookie: string | undefined,
+	convertkitId: string | undefined,
+	subscriberCookie: string | undefined,
 ): Promise<z.infer<typeof SubscriberSchema> | null> {
-  if (convertkitId) {
-    const identity = await readKitSubscriberIdentity(convertkitId);
-    return identity ? SubscriberSchema.parse(identity) : null;
-  }
-  if (subscriberCookie) {
-    return SubscriberSchema.parse(JSON.parse(subscriberCookie));
-  }
-  return null;
+	if (convertkitId) {
+		const identity = await readKitSubscriberIdentity(convertkitId)
+		return identity ? SubscriberSchema.parse(identity) : null
+	}
+	if (subscriberCookie) {
+		return SubscriberSchema.parse(JSON.parse(subscriberCookie))
+	}
+	return null
 }
 
 export const convertkitRouter = createTRPCRouter({
-  answerSurveyMultiple: publicProcedure
-    .input(
-      z.object({
-        answers: z.record(z.string(), z.any()),
-        email: z.string().optional(),
-        surveyId: z.string().optional(),
-      }),
-    )
-    .mutation(async ({ ctx, input }) => {
-      const session = ctx.session;
-      const cookieStore = await cookies();
-      const convertkitId = cookieStore.get("ck_subscriber_id")?.value;
-      const subscriberCookie = cookieStore.get("ck_subscriber")?.value;
+	answerSurveyMultiple: publicProcedure
+		.input(
+			z.object({
+				answers: z.record(z.string(), z.any()),
+				email: z.string().optional(),
+				surveyId: z.string().optional(),
+			}),
+		)
+		.mutation(async ({ ctx, input }) => {
+			const session = ctx.session
+			const cookieStore = await cookies()
+			const convertkitId = cookieStore.get('ck_subscriber_id')?.value
+			const subscriberCookie = cookieStore.get('ck_subscriber')?.value
 
-      await log.info("survey.submit.received", {
-        surveySlug: input.surveyId,
-        answerCount: Object.keys(input.answers).length,
-        answerKeys: Object.keys(input.answers),
-        hasSession: !!session,
-        hasInputEmail: !!input.email,
-        hasSubscriberIdCookie: !!convertkitId,
-        hasSubscriberCookie: !!subscriberCookie,
-      });
+			await log.info('survey.submit.received', {
+				surveySlug: input.surveyId,
+				answerCount: Object.keys(input.answers).length,
+				answerKeys: Object.keys(input.answers),
+				hasSession: !!session,
+				hasInputEmail: !!input.email,
+				hasSubscriberIdCookie: !!convertkitId,
+				hasSubscriberCookie: !!subscriberCookie,
+			})
 
-      let subscriber: z.infer<typeof SubscriberSchema> | null = null;
-      let subscriberSyncError: string | null = null;
+			let subscriber: z.infer<typeof SubscriberSchema> | null = null
+			let subscriberSyncError: string | null = null
 
-      try {
-        subscriber = await readSurveySubscriber(convertkitId, subscriberCookie);
-      } catch (error) {
-        subscriberSyncError =
-          error instanceof Error ? error.message : String(error);
-        await log.error("survey.submit.subscriber.failed", {
-          surveyId: input.surveyId,
-          userId: session?.user?.id,
-          email: input.email,
-          error: subscriberSyncError,
-        });
-      }
+			try {
+				subscriber = await readSurveySubscriber(convertkitId, subscriberCookie)
+			} catch (error) {
+				subscriberSyncError =
+					error instanceof Error ? error.message : String(error)
+				await log.error('survey.submit.subscriber.failed', {
+					surveyId: input.surveyId,
+					userId: session?.user?.id,
+					email: input.email,
+					error: subscriberSyncError,
+				})
+			}
 
-      let userId = session?.user?.id || null;
-      const emailListSubscriberId = subscriber?.id?.toString() || null;
-      const identityEmail =
-        subscriber?.email_address ||
-        session?.user?.email ||
-        input.email ||
-        null;
+			let userId = session?.user?.id || null
+			const emailListSubscriberId = subscriber?.id?.toString() || null
+			const identityEmail =
+				subscriber?.email_address || session?.user?.email || input.email || null
 
-      if (!userId && identityEmail) {
-        const existingUser = await db.query.users.findFirst({
-          where: (users, { eq }) => eq(users.email, identityEmail),
-        });
-        if (existingUser) {
-          userId = existingUser.id;
-        }
-      }
+			if (!userId && identityEmail) {
+				const existingUser = await db.query.users.findFirst({
+					where: (users, { eq }) => eq(users.email, identityEmail),
+				})
+				if (existingUser) {
+					userId = existingUser.id
+				}
+			}
 
-      await log.info("survey.answers.identity", {
-        hasSession: !!session,
-        userId,
-        emailListSubscriberId,
-        surveyId: input.surveyId,
-        answerCount: Object.keys(input.answers).length,
-        hasSubscriber: !!subscriber,
-      });
+			await log.info('survey.answers.identity', {
+				hasSession: !!session,
+				userId,
+				emailListSubscriberId,
+				surveyId: input.surveyId,
+				answerCount: Object.keys(input.answers).length,
+				hasSubscriber: !!subscriber,
+			})
 
-      let saveFailed = false;
+			let saveFailed = false
 
-      if (input.surveyId) {
-        try {
-          await persistSurveyAnswers({
-            database: db,
-            logger: log,
-            surveySlug: input.surveyId,
-            answers: input.answers,
-            identityEmail,
-            userId,
-            emailListSubscriberId,
-          });
-        } catch (error) {
-          saveFailed = true;
-          await log.error("survey.answers.save.failed", {
-            error: error instanceof Error ? error.message : String(error),
-            surveySlug: input.surveyId,
-            userId,
-          });
-        }
-      }
+			if (input.surveyId) {
+				try {
+					await persistSurveyAnswers({
+						database: db,
+						logger: log,
+						surveySlug: input.surveyId,
+						answers: input.answers,
+						identityEmail,
+						userId,
+						emailListSubscriberId,
+					})
+				} catch (error) {
+					saveFailed = true
+					await log.error('survey.answers.save.failed', {
+						error: error instanceof Error ? error.message : String(error),
+						surveySlug: input.surveyId,
+						userId,
+					})
+				}
+			}
 
-      // The local row is the only copy of the answer.
-      if (saveFailed) {
-        return { success: false, storedInDb: false, subscriberSyncError };
-      }
+			// The local row is the only copy of the answer.
+			if (saveFailed) {
+				return { success: false, storedInDb: false, subscriberSyncError }
+			}
 
-      if (!subscriber) {
-        await log.warn("survey.submit.no.subscriber", {
-          surveyId: input.surveyId,
-          userId: session?.user?.id,
-          email: input.email,
-          subscriberSyncError,
-        });
-        return { success: true, storedInDb: true, subscriberSyncError };
-      }
+			if (!subscriber) {
+				await log.warn('survey.submit.no.subscriber', {
+					surveyId: input.surveyId,
+					userId: session?.user?.id,
+					email: input.email,
+					subscriberSyncError,
+				})
+				return { success: true, storedInDb: true, subscriberSyncError }
+			}
 
-      return { success: true, storedInDb: true, subscriberSyncError: null };
-    }),
-  /**
-   * Returns the saved checkout survey answer for the current browser identity.
-   *
-   * @remarks Resolves identity from the active session, ConvertKit subscriber
-   * cookies, and matching user email before reading local QuestionResponse rows.
-   *
-   * @returns `{ answered: boolean, answer: string | null }`.
-   */
-  checkoutSurveyAnswer: publicProcedure.query(async ({ ctx }) => {
-    const session = ctx.session;
-    const cookieStore = await cookies();
-    const convertkitId = cookieStore.get("ck_subscriber_id")?.value;
-    const subscriberCookie = cookieStore.get("ck_subscriber")?.value;
+			return { success: true, storedInDb: true, subscriberSyncError: null }
+		}),
+	/**
+	 * Returns the saved checkout survey answer for the current browser identity.
+	 *
+	 * @remarks Resolves identity from the active session, ConvertKit subscriber
+	 * cookies, and matching user email before reading local QuestionResponse rows.
+	 *
+	 * @returns `{ answered: boolean, answer: string | null }`.
+	 */
+	checkoutSurveyAnswer: publicProcedure.query(async ({ ctx }) => {
+		const session = ctx.session
+		const cookieStore = await cookies()
+		const convertkitId = cookieStore.get('ck_subscriber_id')?.value
+		const subscriberCookie = cookieStore.get('ck_subscriber')?.value
 
-    // Only the Kit id is read below, and the id cookie already holds it.
-    // Fetching the subscriber from Kit to read the same id back cost two
-    // Kit calls per buyer-page view. A non-numeric id resolves to nothing,
-    // as the Kit 404 did.
-    let emailListSubscriberId: string | null = null;
+		// Only the Kit id is read below, and the id cookie already holds it.
+		// Fetching the subscriber from Kit to read the same id back cost two
+		// Kit calls per buyer-page view. A non-numeric id resolves to nothing,
+		// as the Kit 404 did.
+		let emailListSubscriberId: string | null = null
 
-    try {
-      if (convertkitId) {
-        const cookieKitId = normalizeKitSubscriberId(convertkitId);
-        emailListSubscriberId =
-          cookieKitId && /^\d+$/.test(cookieKitId) ? cookieKitId : null;
-      } else if (subscriberCookie) {
-        const subscriber = SubscriberSchema.parse(JSON.parse(subscriberCookie));
-        emailListSubscriberId = subscriber.id.toString();
-      }
-    } catch (error) {
-      await log.warn("checkout.survey.answer.lookup.subscriber.failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+		try {
+			if (convertkitId) {
+				const cookieKitId = normalizeKitSubscriberId(convertkitId)
+				emailListSubscriberId =
+					cookieKitId && /^\d+$/.test(cookieKitId) ? cookieKitId : null
+			} else if (subscriberCookie) {
+				const subscriber = SubscriberSchema.parse(JSON.parse(subscriberCookie))
+				emailListSubscriberId = subscriber.id.toString()
+			}
+		} catch (error) {
+			await log.warn('checkout.survey.answer.lookup.subscriber.failed', {
+				error: error instanceof Error ? error.message : String(error),
+			})
+		}
 
-    let userId = session?.user?.id || null;
-    const sessionEmail = session?.user?.email || null;
+		let userId = session?.user?.id || null
+		const sessionEmail = session?.user?.email || null
 
-    if (!userId && sessionEmail) {
-      const existingUser = await db.query.users.findFirst({
-        where: (users, { eq }) => eq(users.email, sessionEmail),
-      });
-      if (existingUser) {
-        userId = existingUser.id;
-      }
-    }
+		if (!userId && sessionEmail) {
+			const existingUser = await db.query.users.findFirst({
+				where: (users, { eq }) => eq(users.email, sessionEmail),
+			})
+			if (existingUser) {
+				userId = existingUser.id
+			}
+		}
 
-    const identityCondition = userId
-      ? eq(questionResponse.userId, userId)
-      : emailListSubscriberId
-        ? eq(questionResponse.emailListSubscriberId, emailListSubscriberId)
-        : null;
+		const identityCondition = userId
+			? eq(questionResponse.userId, userId)
+			: emailListSubscriberId
+				? eq(questionResponse.emailListSubscriberId, emailListSubscriberId)
+				: null
 
-    if (!identityCondition) {
-      return { answered: false, answer: null };
-    }
+		if (!identityCondition) {
+			return { answered: false, answer: null }
+		}
 
-    const response = await db.query.questionResponse.findFirst({
-      where: and(
-        inArray(questionResponse.surveyId, [
-          CHECKOUT_SURVEY_ID,
-          CHECKOUT_SURVEY_SLUG,
-        ]),
-        inArray(questionResponse.questionId, [
-          CHECKOUT_SURVEY_QUESTION_ID,
-          CHECKOUT_SURVEY_QUESTION_SLUG,
-        ]),
-        isNull(questionResponse.deletedAt),
-        identityCondition,
-      ),
-      orderBy: desc(questionResponse.createdAt),
-    });
+		const response = await db.query.questionResponse.findFirst({
+			where: and(
+				inArray(questionResponse.surveyId, [
+					CHECKOUT_SURVEY_ID,
+					CHECKOUT_SURVEY_SLUG,
+				]),
+				inArray(questionResponse.questionId, [
+					CHECKOUT_SURVEY_QUESTION_ID,
+					CHECKOUT_SURVEY_QUESTION_SLUG,
+				]),
+				isNull(questionResponse.deletedAt),
+				identityCondition,
+			),
+			orderBy: desc(questionResponse.createdAt),
+		})
 
-    const answer =
-      typeof response?.fields?.answer === "string"
-        ? response.fields.answer
-        : null;
+		const answer =
+			typeof response?.fields?.answer === 'string'
+				? response.fields.answer
+				: null
 
-    return { answered: Boolean(answer), answer };
-  }),
-  /**
-   * Saves the checkout question's answer as a local QuestionResponse row,
-   * keyed by user and by the Kit id alias that `checkoutSurveyAnswer` reads.
-   *
-   * @remarks Replaces `answerSurvey` for the buy button. No Kit read and no
-   * Kit field write: the answer also travels on the checkout form as
-   * `selfReportedSource`, which is what purchase attribution reads.
-   */
-  answerCheckoutSurvey: publicProcedure
-    .input(
-      z.object({
-        answer: z.enum(
-          CHECKOUT_SURVEY_CHOICES.map(({ answer }) => answer) as [
-            string,
-            ...string[],
-          ],
-        ),
-      }),
-    )
-    .mutation(async ({ ctx, input }) => {
-      const { userId, emailListSubscriberId, identityEmail } =
-        await resolveCheckoutSurveyAnswerer(ctx.session);
+		return { answered: Boolean(answer), answer }
+	}),
+	/**
+	 * Saves the checkout question's answer as a local QuestionResponse row,
+	 * keyed by user and by the Kit id alias that `checkoutSurveyAnswer` reads.
+	 *
+	 * @remarks Replaces `answerSurvey` for the buy button. No Kit read and no
+	 * Kit field write: the answer also travels on the checkout form as
+	 * `selfReportedSource`, which is what purchase attribution reads.
+	 */
+	answerCheckoutSurvey: publicProcedure
+		.input(
+			z.object({
+				answer: z.enum(
+					CHECKOUT_SURVEY_CHOICES.map(({ answer }) => answer) as [
+						string,
+						...string[],
+					],
+				),
+			}),
+		)
+		.mutation(async ({ ctx, input }) => {
+			const { userId, emailListSubscriberId, identityEmail } =
+				await resolveCheckoutSurveyAnswerer(ctx.session)
 
-      await ensureCheckoutSurveyResources(userId || "system");
+			await ensureCheckoutSurveyResources(userId || 'system')
 
-      try {
-        await persistSurveyAnswers({
-          database: db,
-          logger: log,
-          surveySlug: CHECKOUT_SURVEY_SLUG,
-          answers: { [CHECKOUT_SURVEY_QUESTION_SLUG]: input.answer },
-          identityEmail,
-          eventPrefix: "survey.answer",
-          userId,
-          emailListSubscriberId,
-        });
-      } catch (error) {
-        await log.error("checkout.survey.answer.save.failed", {
-          error: error instanceof Error ? error.message : String(error),
-          userId,
-        });
-        return { success: false, storedInDb: false };
-      }
+			try {
+				await persistSurveyAnswers({
+					database: db,
+					logger: log,
+					surveySlug: CHECKOUT_SURVEY_SLUG,
+					answers: { [CHECKOUT_SURVEY_QUESTION_SLUG]: input.answer },
+					identityEmail,
+					eventPrefix: 'survey.answer',
+					userId,
+					emailListSubscriberId,
+				})
+			} catch (error) {
+				await log.error('checkout.survey.answer.save.failed', {
+					error: error instanceof Error ? error.message : String(error),
+					userId,
+				})
+				return { success: false, storedInDb: false }
+			}
 
-      return { success: true, storedInDb: true };
-    }),
-  answerSurvey: publicProcedure
-    .input(
-      z.object({
-        question: z.string(),
-        answer: z.string(),
-        surveyId: z.string().optional(),
-      }),
-    )
-    .mutation(async ({ ctx, input }) => {
-      const session = ctx.session;
-      const cookieStore = await cookies();
-      const convertkitId = cookieStore.get("ck_subscriber_id")?.value;
-      const subscriberCookie = cookieStore.get("ck_subscriber")?.value;
+			return { success: true, storedInDb: true }
+		}),
+	answerSurvey: publicProcedure
+		.input(
+			z.object({
+				question: z.string(),
+				answer: z.string(),
+				surveyId: z.string().optional(),
+			}),
+		)
+		.mutation(async ({ ctx, input }) => {
+			const session = ctx.session
+			const cookieStore = await cookies()
+			const convertkitId = cookieStore.get('ck_subscriber_id')?.value
+			const subscriberCookie = cookieStore.get('ck_subscriber')?.value
 
-      await log.info("survey.answer.received", {
-        surveySlug: input.surveyId,
-        questionSlug: input.question,
-        answerLength: input.answer.length,
-        hasSession: !!session,
-        hasSubscriberIdCookie: !!convertkitId,
-        hasSubscriberCookie: !!subscriberCookie,
-      });
+			await log.info('survey.answer.received', {
+				surveySlug: input.surveyId,
+				questionSlug: input.question,
+				answerLength: input.answer.length,
+				hasSession: !!session,
+				hasSubscriberIdCookie: !!convertkitId,
+				hasSubscriberCookie: !!subscriberCookie,
+			})
 
-      let subscriber: z.infer<typeof SubscriberSchema> | null = null;
-      let subscriberLookupError: string | null = null;
+			let subscriber: z.infer<typeof SubscriberSchema> | null = null
+			let subscriberLookupError: string | null = null
 
-      try {
-        subscriber = await readSurveySubscriber(convertkitId, subscriberCookie);
-      } catch (error) {
-        subscriberLookupError =
-          error instanceof Error ? error.message : String(error);
-        await log.error("survey.answer.subscriber.failed", {
-          surveyId: input.surveyId,
-          questionId: input.question,
-          userId: session?.user?.id,
-          error: subscriberLookupError,
-        });
-      }
+			try {
+				subscriber = await readSurveySubscriber(convertkitId, subscriberCookie)
+			} catch (error) {
+				subscriberLookupError =
+					error instanceof Error ? error.message : String(error)
+				await log.error('survey.answer.subscriber.failed', {
+					surveyId: input.surveyId,
+					questionId: input.question,
+					userId: session?.user?.id,
+					error: subscriberLookupError,
+				})
+			}
 
-      let userId = session?.user?.id || null;
-      const emailListSubscriberId = subscriber?.id?.toString() || null;
-      const identityEmail =
-        subscriber?.email_address || session?.user?.email || null;
+			let userId = session?.user?.id || null
+			const emailListSubscriberId = subscriber?.id?.toString() || null
+			const identityEmail =
+				subscriber?.email_address || session?.user?.email || null
 
-      if (!userId && identityEmail) {
-        const existingUser = await db.query.users.findFirst({
-          where: (users, { eq }) => eq(users.email, identityEmail),
-        });
-        if (existingUser) {
-          userId = existingUser.id;
-        }
-      }
+			if (!userId && identityEmail) {
+				const existingUser = await db.query.users.findFirst({
+					where: (users, { eq }) => eq(users.email, identityEmail),
+				})
+				if (existingUser) {
+					userId = existingUser.id
+				}
+			}
 
-      await log.info("survey.answer.identity", {
-        hasSession: !!session,
-        userId,
-        emailListSubscriberId,
-        surveySlug: input.surveyId,
-        hasSubscriber: !!subscriber,
-      });
+			await log.info('survey.answer.identity', {
+				hasSession: !!session,
+				userId,
+				emailListSubscriberId,
+				surveySlug: input.surveyId,
+				hasSubscriber: !!subscriber,
+			})
 
-      if (
-        input.surveyId === CHECKOUT_SURVEY_SLUG &&
-        input.question === CHECKOUT_SURVEY_QUESTION_SLUG
-      ) {
-        await ensureCheckoutSurveyResources(userId || "system");
-      }
+			if (
+				input.surveyId === CHECKOUT_SURVEY_SLUG &&
+				input.question === CHECKOUT_SURVEY_QUESTION_SLUG
+			) {
+				await ensureCheckoutSurveyResources(userId || 'system')
+			}
 
-      let saveFailed = false;
+			let saveFailed = false
 
-      if (input.surveyId && input.question && input.answer?.trim()) {
-        try {
-          await persistSurveyAnswers({
-            database: db,
-            logger: log,
-            surveySlug: input.surveyId,
-            answers: { [input.question]: input.answer },
-            identityEmail,
-            eventPrefix: "survey.answer",
-            userId,
-            emailListSubscriberId,
-          });
-        } catch (error) {
-          saveFailed = true;
-          await log.error("survey.answer.save.failed", {
-            error: error instanceof Error ? error.message : String(error),
-            surveySlug: input.surveyId,
-            questionSlug: input.question,
-            userId,
-          });
-        }
-      }
+			if (input.surveyId && input.question && input.answer?.trim()) {
+				try {
+					await persistSurveyAnswers({
+						database: db,
+						logger: log,
+						surveySlug: input.surveyId,
+						answers: { [input.question]: input.answer },
+						identityEmail,
+						eventPrefix: 'survey.answer',
+						userId,
+						emailListSubscriberId,
+					})
+				} catch (error) {
+					saveFailed = true
+					await log.error('survey.answer.save.failed', {
+						error: error instanceof Error ? error.message : String(error),
+						surveySlug: input.surveyId,
+						questionSlug: input.question,
+						userId,
+					})
+				}
+			}
 
-      // The local row is the only copy of the answer.
-      if (saveFailed) {
-        return { success: false, storedInDb: false, subscriberLookupError };
-      }
+			// The local row is the only copy of the answer.
+			if (saveFailed) {
+				return { success: false, storedInDb: false, subscriberLookupError }
+			}
 
-      if (!subscriber) {
-        await log.warn("survey.answer.no.subscriber", {
-          surveyId: input.surveyId,
-          questionId: input.question,
-          userId: session?.user?.id,
-          subscriberLookupError,
-        });
-        return { success: true, storedInDb: true, subscriberLookupError };
-      }
+			if (!subscriber) {
+				await log.warn('survey.answer.no.subscriber', {
+					surveyId: input.surveyId,
+					questionId: input.question,
+					userId: session?.user?.id,
+					subscriberLookupError,
+				})
+				return { success: true, storedInDb: true, subscriberLookupError }
+			}
 
-      return { success: true, storedInDb: true, subscriberLookupError: null };
-    }),
-});
+			return { success: true, storedInDb: true, subscriberLookupError: null }
+		}),
+})
