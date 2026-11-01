@@ -1,7 +1,7 @@
 import { after } from 'next/server'
 
-import { drovrApiKeyForTenant } from './drovr-shadow-emitter'
-import { resolveDrovrApiBaseUrl } from './drovr-unsubscribe-page'
+import { INTEREST_FACT_REQUESTED_EVENT } from '@/inngest/events/interest-fact'
+
 import {
 	normalizeResolveEmail,
 	resolveDrovrContacts,
@@ -88,69 +88,72 @@ export async function recordInterestFacts(args: {
 	}
 }
 
-/** Called only for saved, direct survey submissions, never /ask GET clicks. */
-export async function deliverGoalInterestFact(args: {
+/** Records one saved survey goal answer in drovr. Transport failures throw so
+ * the Inngest step retries; the fact's immutable sourceId makes a retry or a
+ * repeated event a duplicate on drovr's side. */
+export async function recordGoalInterestFact(args: {
 	row: GoalAnswerSaved
-	logger: Logger
 	config: { baseUrl: string; apiKey: string }
 	fetcher?: typeof fetch
-}) {
-	try {
-		if (!args.row.email) {
-			await logFailure(args.logger, args.row.id, 'missing-email')
-			return
-		}
-		const resolutions = await resolveDrovrContacts({
-			emails: [args.row.email],
-			config: args.config,
-			fetcher: args.fetcher,
-		})
-		const resolution = resolutions.get(normalizeResolveEmail(args.row.email))
-		if (resolution?.status !== 'resolved') {
-			await logFailure(args.logger, args.row.id, 'contact-unresolved')
-			return
-		}
-		const fact = goalInterestFact({
-			...args.row,
-			contactId: resolution.contactId,
-		})
-		if (!fact) return
-		await recordInterestFacts({
-			facts: [fact],
-			config: args.config,
-			fetcher: args.fetcher,
-		})
-	} catch {
-		await logFailure(args.logger, args.row.id, 'delivery-failed')
-	}
+}): Promise<'recorded' | 'missing-email' | 'unresolved' | 'ignored'> {
+	if (!goalInterestFact({ ...args.row, contactId: 'validation-only' }))
+		return 'ignored'
+	if (!args.row.email) return 'missing-email'
+	const resolutions = await resolveDrovrContacts({
+		emails: [args.row.email],
+		config: args.config,
+		fetcher: args.fetcher,
+	})
+	const resolution = resolutions.get(normalizeResolveEmail(args.row.email))
+	if (resolution?.status !== 'resolved') return 'unresolved'
+	const fact = goalInterestFact({
+		...args.row,
+		contactId: resolution.contactId,
+	})
+	if (!fact) return 'ignored'
+	await recordInterestFacts({
+		facts: [fact],
+		config: args.config,
+		fetcher: args.fetcher,
+	})
+	return 'recorded'
 }
 
-/** Next keeps the task alive after the response; no provider round trip is on
- * the save/request path. Scheduling, transport and logging failures all stay
- * outside the survey's success result. No fallback to an untracked promise.
+/** Sends the survey goal fact to the interest-fact-record Inngest function,
+ * which retries drovr failures. Next keeps the task alive after the response;
+ * no provider round trip is on the save/request path. Scheduling, send and
+ * logging failures all stay outside the survey's success result. No fallback
+ * to an untracked promise.
  */
 export function scheduleGoalInterestFact(row: GoalAnswerSaved, logger: Logger) {
 	if (process.env.AIH_DROVR_SURVEY_INTEREST_FACTS_ENABLED !== 'true') return
 	if (!goalInterestFact({ ...row, contactId: 'validation-only' })) return
+	if (!row.email) {
+		void logFailure(logger, row.id, 'missing-email')
+		return
+	}
+	const email = row.email.trim()
 	try {
 		after(async () => {
 			try {
-				const baseUrl = resolveDrovrApiBaseUrl({
-					DROVR_API_BASE_URL: process.env.DROVR_API_BASE_URL,
-					DROVR_SHADOW_INGEST_URL: process.env.DROVR_SHADOW_INGEST_URL,
-				})
-				const apiKey = drovrApiKeyForTenant('org-aihero')
-				if (!baseUrl || !apiKey) {
-					await logFailure(logger, row.id, 'not-configured')
-					return
-				}
-				await deliverGoalInterestFact({
-					row,
-					logger,
-					config: { baseUrl, apiKey },
+				const { inngest } = await import('@/inngest/inngest.server')
+				await inngest.send({
+					id: `survey-goal-fact:${row.id}`,
+					name: INTEREST_FACT_REQUESTED_EVENT,
+					data: {
+						email,
+						fieldKey: `survey_goal:${row.id}`,
+						expressedAt: row.createdAt.toISOString(),
+						via: 'survey',
+						survey: {
+							rowId: row.id,
+							questionId: row.questionId,
+							answer: row.answer,
+						},
+					},
 				})
 			} catch {
-				await logFailure(logger, row.id, 'delivery-failed')
+				await logFailure(logger, row.id, 'enqueue-failed')
 			}
 		})
 	} catch {

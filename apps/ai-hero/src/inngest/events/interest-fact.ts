@@ -10,6 +10,9 @@ export type InterestFactRequested = {
 		/** When the reader joined, ISO-8601. A backfill passes Kit's date. */
 		expressedAt: string
 		/** Which path recorded it, for logs only. */
-		via: 'one-click' | 'form' | 'backfill'
+		via: 'one-click' | 'form' | 'backfill' | 'survey'
+		/** A saved survey goal answer, recorded as a survey fact instead of a
+		 * waitlist or interest join. `expressedAt` is the answer's createdAt. */
+		survey?: { rowId: string; questionId: string; answer: string }
 	}
 }
