@@ -167,7 +167,6 @@ export const env = createEnv({
 		// "true" verifies Kit preference and unsubscribe links against the local
 		// contact directory and reads preference state locally, with Kit out of
 		// the request path. Off keeps the Kit-backed reads.
-		AIH_EMAIL_PREFERENCES_LOCAL_ENABLED: z.string().optional(),
 		DROVR_EXECUTOR_TOKEN: z.string().min(16).optional(),
 		AI_HERO_VALUE_PATH_TOKEN_SECRET: z.string().min(16).optional(),
 		// drovr #36T link tests mint throwaway principals with this; never the
@@ -181,7 +180,6 @@ export const env = createEnv({
 		// Default off: enable saved-survey interest facts after the drovr gate.
 		AIH_DROVR_SURVEY_INTEREST_FACTS_ENABLED: z.string().optional(),
 		// Default off: surveys stop subscribing answerers and writing Kit fields.
-		AIH_SURVEY_OFF_KIT_ENABLED: z.string().optional(),
 		// Default on. Off disables optional AI Hero tag/field mirrors, not consent or TT.
 		AIH_KIT_MIRROR_WRITES_ENABLED: z.string().optional(),
 		// Signed-in Skills enrolment uses the owned contact and drovr consent.
@@ -363,8 +361,6 @@ export const env = createEnv({
 		AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED:
 			process.env.AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED,
 		AIH_RESUBSCRIBE_DOI_ENABLED: process.env.AIH_RESUBSCRIBE_DOI_ENABLED,
-		AIH_EMAIL_PREFERENCES_LOCAL_ENABLED:
-			process.env.AIH_EMAIL_PREFERENCES_LOCAL_ENABLED,
 		DROVR_EXECUTOR_TOKEN: process.env.DROVR_EXECUTOR_TOKEN,
 		AI_HERO_VALUE_PATH_TOKEN_SECRET:
 			process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET,
@@ -375,7 +371,6 @@ export const env = createEnv({
 		AIH_DROVR_EVERGREEN_ENABLED: process.env.AIH_DROVR_EVERGREEN_ENABLED,
 		AIH_DROVR_SURVEY_INTEREST_FACTS_ENABLED:
 			process.env.AIH_DROVR_SURVEY_INTEREST_FACTS_ENABLED,
-		AIH_SURVEY_OFF_KIT_ENABLED: process.env.AIH_SURVEY_OFF_KIT_ENABLED,
 		AIH_KIT_MIRROR_WRITES_ENABLED: process.env.AIH_KIT_MIRROR_WRITES_ENABLED,
 		AIH_ENROLMENT_OFF_KIT_ENABLED: process.env.AIH_ENROLMENT_OFF_KIT_ENABLED,
 		AIH_GATED_ASKS_OFF_KIT_ENABLED: process.env.AIH_GATED_ASKS_OFF_KIT_ENABLED,

@@ -26,16 +26,6 @@ import {
  * "subscribed". An opt-out is always accepted (see `email-preference-change`).
  */
 
-export const EMAIL_PREFERENCES_LOCAL_FLAG =
-	'AIH_EMAIL_PREFERENCES_LOCAL_ENABLED'
-
-/** Dark until the desk turns it on. Off keeps the Kit-backed reads. */
-export function emailPreferencesLocalEnabled(env: {
-	AIH_EMAIL_PREFERENCES_LOCAL_ENABLED?: string
-}) {
-	return env.AIH_EMAIL_PREFERENCES_LOCAL_ENABLED?.trim() === 'true'
-}
-
 export type DirectoryContact = {
 	id: number
 	contactId: string
