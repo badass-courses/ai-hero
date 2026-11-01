@@ -7,7 +7,10 @@ import {
 } from './dry-run'
 import { DOI_REQUESTED_EVENT_TYPE } from './drovr-doi-signup'
 import { recordJourneyOwnerAssigned } from './drovr-ownership'
-import { DROVR_EVERGREEN_OFFER_JOURNEY_ID } from './drovr-shadow-emitter'
+import {
+	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+} from './drovr-shadow-emitter'
 import { parseValuePathAnswerPageResource } from './value-path-answer-page'
 import { recordValuePathAnswerProgression } from './value-path-click-progression'
 import { progressValuePathDrips } from './value-path-drip-progression'
@@ -174,23 +177,30 @@ describe('legacy planners and drovr-owned contacts', () => {
 		])
 	})
 
-	it('plans no click send for a contact owned for a non-skills journey', async () => {
-		const input = await legacyStarted()
-		await recordJourneyOwnerAssigned({
-			repository: input.repository,
-			contactId: input.captured.contact.id,
-			providerIdentityId: 'pi-test',
-			kitSubscriberId: '4089521940',
-			email: input.captured.contact.email!,
-			occurredAt: '2026-05-15T12:02:00.000Z',
-			journeyId: DROVR_EVERGREEN_OFFER_JOURNEY_ID,
-		})
-		const result = await click(input)
-		expect(result.reviewReasons).toEqual(['drovr-owned'])
-		expect(sendRows(input.repository)).toEqual([
-			'ai-hero-skills-workflow.email-0',
-		])
-	})
+	it.each([
+		['evergreen', DROVR_EVERGREEN_OFFER_JOURNEY_ID],
+		['newsletter', DROVR_SHADOW_NEWSLETTER_JOURNEY_ID],
+	])(
+		'still plans the legacy click send for a contact owned only for %s',
+		async (_name, journeyId) => {
+			const input = await legacyStarted()
+			await recordJourneyOwnerAssigned({
+				repository: input.repository,
+				contactId: input.captured.contact.id,
+				providerIdentityId: 'pi-test',
+				kitSubscriberId: '4089521940',
+				email: input.captured.contact.email!,
+				occurredAt: '2026-05-15T12:02:00.000Z',
+				journeyId,
+			})
+			const result = await click(input)
+			expect(result.reviewReasons).toEqual([])
+			expect(sendRows(input.repository)).toEqual([
+				'ai-hero-skills-workflow.email-0',
+				'ai-hero-skills-workflow.email-2',
+			])
+		},
+	)
 
 	it('defers the drip for a DOI-born contact with no owner record', async () => {
 		const input = await legacyStarted()
@@ -263,5 +273,26 @@ describe('legacy planners and drovr-owned contacts', () => {
 		expect(sendRows(input.repository)).toEqual([
 			'ai-hero-skills-workflow.email-0',
 		])
+	})
+
+	it('still plans the drip for a contact owned only for the newsletter', async () => {
+		const input = await legacyStarted()
+		await recordJourneyOwnerAssigned({
+			repository: input.repository,
+			contactId: input.captured.contact.id,
+			providerIdentityId: 'pi-test',
+			kitSubscriberId: '4089521940',
+			email: input.captured.contact.email!,
+			occurredAt: '2026-05-15T12:02:00.000Z',
+			journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+		})
+		const drip = await progressValuePathDrips({
+			repository: input.repository,
+			allowWrite: true,
+			allowlist: input.allowlist,
+			completedIntents: [completeEmail0(input)],
+			now: '2026-05-16T12:06:00.000Z',
+		})
+		expect(drip.results[0]?.reviewReasons ?? []).not.toContain('drovr-owned')
 	})
 })
