@@ -1,0 +1,42 @@
+{
+	"name": "@ai-hero/learner-agent",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Learner agent capabilities for AI Hero: one Effect contract per action, projected to MCP, HTTP, OpenAPI and a tool catalog behind a Promise boundary.",
+	"type": "module",
+	"sideEffects": false,
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"default": "./dist/index.js"
+		},
+		"./views": {
+			"types": "./dist/views.d.ts",
+			"import": "./dist/views.js",
+			"default": "./dist/views.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run",
+		"clean": "rm -rf dist *.tsbuildinfo"
+	},
+	"dependencies": {
+		"effect": "4.0.6"
+	},
+	"devDependencies": {
+		"@effect/vitest": "4.0.6",
+		"@types/node": "^24.0.0",
+		"typescript": "^5.9.3",
+		"vite": "7.3.7",
+		"vitest": "5.0.5"
+	},
+	"engines": {
+		"node": ">=24.22.1 <25"
+	}
+}

@@ -115,6 +115,8 @@ vi.mock('@/server/with-skill', () => ({
 }))
 
 import { KitSubscribeError } from '@/coursebuilder/email-list-provider'
+import { contactEmailWriteValues } from '@/lib/subscriber-marketing/contact-email-equivalence'
+import { InMemorySubscriberMarketingRepository } from '@/lib/subscriber-marketing/dry-run'
 
 import { CourseBuilder } from '@coursebuilder/server/http'
 
@@ -775,6 +777,238 @@ describe('drovr double opt-in (DROVR_DOI_FORMS)', () => {
 	})
 })
 
+describe('Kit form 8447166, the default form, through drovr double opt-in', () => {
+	// The real contact resolution, over an in-memory store, so each case
+	// proves which contact drovr is handed.
+	let repository: InMemorySubscriberMarketingRepository
+	const findContactIdsByEmailKey = vi.fn()
+	const drovrOn = (forms = '8447166') => {
+		mocks.env.DROVR_DOI_FORMS = forms
+		mocks.env.DROVR_API_BASE_URL = 'https://drovr.test'
+		mocks.env.DROVR_API_KEY_ORG_AIHERO = 'drovr_key'
+	}
+	const post = (body: Record<string, unknown> = {}) =>
+		POST(
+			new NextRequest(
+				'https://www.aihero.dev/api/coursebuilder/subscribe-to-list/convertkit',
+				{
+					method: 'POST',
+					headers: {
+						'content-type': 'application/json',
+						referer: 'https://www.aihero.dev/blog/post',
+					},
+					// The plain newsletter ask: no listId, only a source field.
+					body: JSON.stringify({
+						email: 'reader@example.com',
+						name: 'Reader',
+						fields: { source: 'primary-newsletter-cta' },
+						...body,
+					}),
+				},
+			),
+		)
+	const drovrEvents = () =>
+		mocks.inngestSend.mock.calls
+			.map(([event]) => event)
+			.filter((event) => event?.name === 'drovr/signup.requested')
+	const valuePathEvents = () =>
+		mocks.inngestSend.mock.calls.filter(
+			([event]) => event?.name === 'skills-newsletter/subscribed',
+		)
+	const kitAccepts = () =>
+		mocks.courseBuilderPOST.mockResolvedValue(
+			subscriberResponse({
+				id: 4310000001,
+				email_address: 'reader@example.com',
+				state: 'active',
+				fields: {},
+			}),
+		)
+	const existingContact = () =>
+		repository.createContact({
+			...contactEmailWriteValues('reader@example.com'),
+			userId: null,
+			name: null,
+			lifecycle: 'new',
+			isProvisional: true,
+			createdAt: '2026-10-01T00:00:00.000Z',
+			updatedAt: '2026-10-01T00:00:00.000Z',
+		} as never)
+
+	beforeEach(async () => {
+		vi.clearAllMocks()
+		for (const key of [
+			'DROVR_DOI_FORMS',
+			'DROVR_API_BASE_URL',
+			'DROVR_API_KEY_ORG_AIHERO',
+		])
+			delete mocks.env[key]
+		mocks.env.CONVERTKIT_SIGNUP_FORM = '8447166'
+		mocks.cookieGet.mockReturnValue(undefined)
+		mocks.inngestSend.mockResolvedValue(undefined)
+		mocks.reconcile.mockResolvedValue({ status: 'active' })
+		mocks.routeReturning.mockReset().mockResolvedValue({
+			status: 'not-unsubscribed',
+		})
+		repository = new InMemorySubscriberMarketingRepository()
+		findContactIdsByEmailKey.mockReset().mockResolvedValue([])
+		const { resolveDoiSignupContact } = await vi.importActual<
+			typeof import('@/lib/subscriber-marketing/drovr-doi-signup')
+		>('@/lib/subscriber-marketing/drovr-doi-signup')
+		mocks.resolveDoi.mockImplementation((args) =>
+			resolveDoiSignupContact({
+				...args,
+				repository: repository as never,
+				findContactIdsByEmailKey,
+			}),
+		)
+	})
+
+	afterEach(() => {
+		delete mocks.env.CONVERTKIT_SIGNUP_FORM
+	})
+
+	it('new contact: no Kit subscribe, one contact, one drovr skills-newsletter signup, "check your email"', async () => {
+		drovrOn()
+		const response = await post()
+
+		expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
+		expect(mocks.reconcile).not.toHaveBeenCalled()
+		expect(repository.contacts.size).toBe(1)
+		const [contact] = Array.from(repository.contacts.values())
+		expect(drovrEvents()).toEqual([
+			expect.objectContaining({
+				data: expect.objectContaining({
+					tenantId: 'org-aihero',
+					contactId: contact!.id,
+					formId: 'skills-newsletter',
+					source: { page: 'https://www.aihero.dev/blog/post' },
+				}),
+			}),
+		])
+		// No value-path birth before the reader confirms.
+		expect(valuePathEvents()).toEqual([])
+		expect(response.status).toBe(200)
+		expect(await response.json()).toMatchObject({
+			email_address: 'reader@example.com',
+			state: 'awaiting-confirmation',
+		})
+	})
+
+	it('existing contact: drovr is handed that contact, never a duplicate', async () => {
+		drovrOn()
+		const existing = await existingContact()
+		findContactIdsByEmailKey.mockResolvedValue([existing.id])
+
+		const response = await post({ email: 'Reader@Example.com' })
+
+		expect(response.status).toBe(200)
+		expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
+		expect(repository.contacts.size).toBe(1)
+		expect(drovrEvents().map((event) => event.data.contactId)).toEqual([
+			existing.id,
+		])
+	})
+
+	it('unconfirmed duplicate: a second signup before confirming reuses the contact and its request', async () => {
+		drovrOn()
+		await post()
+		const again = await post()
+
+		expect(again.status).toBe(200)
+		expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
+		expect(repository.contacts.size).toBe(1)
+		// One doi-requested event: its id is stable per form and address.
+		expect(repository.contactEvents.size).toBe(1)
+		const sent = drovrEvents()
+		expect(sent).toHaveLength(2)
+		// Same contact and form, so drovr treats the second as a resend request.
+		expect(new Set(sent.map((event) => event.data.contactId)).size).toBe(1)
+		expect(sent.map((event) => event.data.formId)).toEqual([
+			'skills-newsletter',
+			'skills-newsletter',
+		])
+		expect(sent[0]!.id).not.toBe(sent[1]!.id)
+		expect(valuePathEvents()).toEqual([])
+	})
+
+	it('active stop, DOI on: drovr gets the request and owns the stop; no Kit subscribe, no untag', async () => {
+		// drovr answers a stopped contact `suppressed` and sends nothing
+		// (drovr-signup-deliver). ai-hero must not route around it.
+		drovrOn()
+		const existing = await existingContact()
+		findContactIdsByEmailKey.mockResolvedValue([existing.id])
+
+		await post()
+
+		expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
+		expect(mocks.reconcile).not.toHaveBeenCalled()
+		expect(mocks.routeReturning).not.toHaveBeenCalled()
+		expect(drovrEvents()).toHaveLength(1)
+		expect(valuePathEvents()).toEqual([])
+	})
+
+	it('active stop, DOI off: the returning-unsubscriber guard now covers the default form and keeps it stopped', async () => {
+		mocks.routeReturning.mockResolvedValue({
+			status: 'blocked',
+			reason: 'suppressed',
+		})
+
+		const response = await post()
+
+		expect(mocks.routeReturning).toHaveBeenCalledWith(
+			expect.objectContaining({ kitFormId: 8447166, entry: 'form' }),
+		)
+		expect(response.status).toBe(409)
+		expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
+		expect(mocks.reconcile).not.toHaveBeenCalled()
+		expect(drovrEvents()).toEqual([])
+	})
+
+	it('DOI on for 9376133 only: the default form keeps Kit, behind the guard', async () => {
+		drovrOn('9376133')
+		kitAccepts()
+
+		const response = await post()
+
+		expect(response.status).toBe(200)
+		expect(mocks.courseBuilderPOST).toHaveBeenCalledTimes(1)
+		expect(mocks.routeReturning).toHaveBeenCalledWith(
+			expect.objectContaining({ kitFormId: 8447166 }),
+		)
+		expect(mocks.resolveDoi).not.toHaveBeenCalled()
+		expect(drovrEvents()).toEqual([])
+	})
+
+	it.each([
+		[
+			'a cohort waitlist on the default form',
+			{ fields: { waitlist_cohort_x: '2026-10-29', source: 'cohort' } },
+		],
+		[
+			'a workshop interest on the default form',
+			{ fields: { interest_workshop_y: '2026-10-29', source: 'workshop' } },
+		],
+		[
+			'a waitlist naming 8447166',
+			{ listId: 8447166, fields: { waitlist_cohort_x: '2026-10-29' } },
+		],
+	])('DOI on, %s: stays on Kit, unguarded as today', async (_, body) => {
+		drovrOn()
+		kitAccepts()
+
+		await post(body)
+
+		expect(mocks.courseBuilderPOST).toHaveBeenCalledTimes(1)
+		expect(
+			await mocks.courseBuilderPOST.mock.calls[0]![0].json(),
+		).toMatchObject(body)
+		expect(mocks.routeReturning).not.toHaveBeenCalled()
+		expect(mocks.resolveDoi).not.toHaveBeenCalled()
+		expect(drovrEvents()).toEqual([])
+	})
+})
+
 describe('returning unsubscriber (Kit or drovr)', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
@@ -1274,5 +1508,158 @@ describe('subscribe bot defence', () => {
 		await POST(request(body))
 		expect(mocks.checkBotId).not.toHaveBeenCalled()
 		expect(mocks.courseBuilderPOST).toHaveBeenCalledTimes(1)
+	})
+})
+
+describe('waitlist and interest joins as facts, with Kit unreachable', () => {
+	const post = (fields: Record<string, unknown>) =>
+		POST(
+			new NextRequest(
+				'https://www.aihero.dev/api/coursebuilder/subscribe-to-list/convertkit',
+				{
+					method: 'POST',
+					headers: {
+						'content-type': 'application/json',
+						referer: 'https://www.aihero.dev/cohorts/c6',
+					},
+					body: JSON.stringify({
+						email: ' Reader@Example.com ',
+						name: 'Reader',
+						fields,
+					}),
+				},
+			),
+		)
+	const factEvents = () =>
+		mocks.inngestSend.mock.calls
+			.flatMap(([events]) => (Array.isArray(events) ? events : [events]))
+			.filter((event) => event?.name === 'aihero/interest.fact.requested')
+	const kitBodies = () =>
+		mocks.courseBuilderPOST.mock.calls.map(([req]) => req as Request)
+	const kitUnreachable = () =>
+		useRealCourseBuilderFailureBoundary(new TypeError('fetch failed'))
+	const waitlist = {
+		waitlist_ai_coding_crash_course: '2026-10-29',
+		source: 'aihero_cohort_page',
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+		mocks.inngestSend.mockResolvedValue(undefined)
+		mocks.cookieGet.mockReturnValue(undefined)
+		mocks.reconcile.mockResolvedValue({ status: 'active' })
+		mocks.routeReturning.mockReset().mockResolvedValue({
+			status: 'not-unsubscribed',
+		})
+		mocks.env.CONVERTKIT_SIGNUP_FORM = '8447166'
+		process.env.AIH_INTEREST_FACTS_ENABLED = 'true'
+	})
+
+	afterEach(() => {
+		delete process.env.AIH_INTEREST_FACTS_ENABLED
+		delete process.env.AIH_INTEREST_KIT_WRITES
+		for (const key of [
+			'CONVERTKIT_SIGNUP_FORM',
+			'DROVR_DOI_FORMS',
+			'DROVR_API_BASE_URL',
+			'DROVR_API_KEY_ORG_AIHERO',
+		])
+			delete mocks.env[key]
+	})
+
+	it('anonymous: the join is queued before Kit, and Kit being down still answers the signup failure', async () => {
+		kitUnreachable()
+		const response = await post(waitlist)
+
+		expect(response.status).toBeGreaterThanOrEqual(400)
+		expect(factEvents()).toEqual([
+			{
+				id: expect.stringMatching(
+					/^interest-fact:waitlist_ai_coding_crash_course:[0-9a-f]{32}$/,
+				),
+				name: 'aihero/interest.fact.requested',
+				data: {
+					email: 'Reader@Example.com',
+					fieldKey: 'waitlist_ai_coding_crash_course',
+					expressedAt: expect.any(String),
+					via: 'form',
+				},
+			},
+		])
+		// The event id carries no address.
+		expect(factEvents()[0]?.id).not.toMatch(/reader|example/i)
+	})
+
+	const drovrDoiOn = () => {
+		mocks.env.DROVR_DOI_FORMS = '8447166'
+		mocks.env.DROVR_API_BASE_URL = 'https://drovr.test'
+		mocks.env.DROVR_API_KEY_ORG_AIHERO = 'drovr_key'
+		mocks.resolveDoi.mockResolvedValue({ contactId: 'contact-doi-1' })
+	}
+	const doiRequests = () =>
+		mocks.inngestSend.mock.calls.filter(
+			([event]) => event?.name === 'drovr/signup.requested',
+		)
+
+	it("before the cut, a waitlist post keeps Kit's signup path even with drovr double opt-in on", async () => {
+		drovrDoiOn()
+		kitUnreachable()
+		await post(waitlist)
+
+		expect(mocks.courseBuilderPOST).toHaveBeenCalledTimes(1)
+		expect(doiRequests()).toEqual([])
+		expect(factEvents()).toHaveLength(1)
+	})
+
+	it('the cut, new address, Kit unreachable: drovr double opt-in confirms them and the join is a fact', async () => {
+		process.env.AIH_INTEREST_KIT_WRITES = 'off'
+		drovrDoiOn()
+		kitUnreachable()
+		const response = await post(waitlist)
+
+		expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
+		expect(response.status).toBe(200)
+		expect(await response.json()).toMatchObject({
+			state: 'awaiting-confirmation',
+		})
+		expect(doiRequests()).toHaveLength(1)
+		expect(factEvents()).toHaveLength(1)
+	})
+
+	it('the cut, Kit signup path: Kit gets the signup without the join fields', async () => {
+		process.env.AIH_INTEREST_KIT_WRITES = 'off'
+		mocks.courseBuilderPOST.mockResolvedValue(
+			subscriberResponse({
+				id: 4310000001,
+				email_address: 'reader@example.com',
+				state: 'active',
+				fields: {},
+			}),
+		)
+		await post(waitlist)
+
+		const body = await kitBodies()[0]!.json()
+		expect(body.fields).toEqual({ source: 'aihero_cohort_page' })
+		expect(factEvents()).toHaveLength(1)
+	})
+
+	it('flag off, or a plain newsletter signup: no fact, and Kit gets the fields as before', async () => {
+		delete process.env.AIH_INTEREST_FACTS_ENABLED
+		process.env.AIH_INTEREST_KIT_WRITES = 'off'
+		mocks.courseBuilderPOST.mockResolvedValue(
+			subscriberResponse({
+				id: 4310000001,
+				email_address: 'reader@example.com',
+				state: 'active',
+				fields: {},
+			}),
+		)
+		await post(waitlist)
+		expect(factEvents()).toEqual([])
+		expect(await kitBodies()[0]!.json()).toMatchObject({ fields: waitlist })
+
+		process.env.AIH_INTEREST_FACTS_ENABLED = 'true'
+		await post({ source: 'primary-newsletter-cta' })
+		expect(factEvents()).toEqual([])
 	})
 })

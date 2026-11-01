@@ -88,6 +88,10 @@ import {
 	type ContactUnsubscribed,
 } from '@/inngest/events/contact-unsubscribed'
 import {
+	EMAIL_PREFERENCE_CHANGE_REQUESTED_EVENT,
+	type EmailPreferenceChangeRequested,
+} from '@/inngest/events/email-preference-change'
+import {
 	OPTIN_DEFERRED_EVENT,
 	type OptInDeferred,
 } from '@/inngest/events/optin-deferred'
@@ -101,6 +105,10 @@ import {
 	WORKSHOP_INTEREST_REQUESTED_EVENT,
 	type WorkshopInterestRequested,
 } from '@/inngest/events/workshop-interest'
+import {
+	INTEREST_FACT_REQUESTED_EVENT,
+	type InterestFactRequested,
+} from '@/inngest/events/interest-fact'
 import {
 	TYPESENSE_POPULARITY_SYNC_REQUESTED_EVENT,
 	TypesensePopularitySyncRequested,
@@ -303,7 +311,9 @@ export type Events = {
 	[OPTIN_DEFERRED_EVENT]: OptInDeferred
 	[SKILLS_COURSE_LESSON_ONE_RECOVERY_REQUESTED_EVENT]: SkillsCourseLessonOneRecoveryRequested
 	[CONTACT_UNSUBSCRIBED_EVENT]: ContactUnsubscribed
+	[EMAIL_PREFERENCE_CHANGE_REQUESTED_EVENT]: EmailPreferenceChangeRequested
 	[WORKSHOP_INTEREST_REQUESTED_EVENT]: WorkshopInterestRequested
+	[INTEREST_FACT_REQUESTED_EVENT]: InterestFactRequested
 	[TYPESENSE_POPULARITY_SYNC_REQUESTED_EVENT]: TypesensePopularitySyncRequested
 	[TYPESENSE_VIDEO_FACTS_RECONCILE_REQUESTED_EVENT]: TypesenseVideoFactsReconcileRequested
 	[SLACK_ARTWORK_GENERATE_REQUESTED_EVENT]: SlackArtworkGenerateRequested

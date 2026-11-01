@@ -173,7 +173,7 @@ async function buyer(email: string, productId: string) {
 					decisionCutover: c5DecisionCutover(),
 				}),
 			),
-			Effect.catchAll(() => Effect.succeed(null)),
+			Effect.catch(() => Effect.succeed(null)),
 		),
 	)
 }

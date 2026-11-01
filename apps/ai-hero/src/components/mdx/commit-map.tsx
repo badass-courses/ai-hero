@@ -1,8 +1,9 @@
 'use client'
 
 import React from 'react'
-import { Check, Copy, GitBranch, RotateCcw } from 'lucide-react'
+import { TYPE } from '@/components/landing/type'
 import { Markdown } from '@/components/markdown'
+import { Check, ChevronDown, Copy, GitBranch, RotateCcw } from 'lucide-react'
 
 import {
 	Button,
@@ -11,6 +12,7 @@ import {
 	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from '@coursebuilder/ui'
+import { cn } from '@coursebuilder/ui/utils/cn'
 
 type PackageManager = 'npm' | 'pnpm'
 
@@ -28,14 +30,20 @@ export function CommitMap({
 	return (
 		<PackageManagerContext.Provider value={packageManager}>
 			<div className="my-6">
-				<span className="inline-flex items-center gap-1 font-mono text-xs uppercase text-[color:var(--ah-fg-body)]">
+				<span
+					className={cn(
+						TYPE.groupLabel,
+						'mb-2 inline-flex items-center gap-1.5',
+					)}
+				>
 					<svg
-						className="size-4"
+						className="size-3.5"
 						xmlns="http://www.w3.org/2000/svg"
 						width="24"
 						height="24"
 						fill="none"
 						viewBox="0 0 24 24"
+						aria-hidden="true"
 					>
 						<path
 							stroke="currentColor"
@@ -52,12 +60,11 @@ export function CommitMap({
 					</svg>
 					Commits
 				</span>
-				<div className="not-prose bg-card relative rounded-xl border p-5">
-					<div className="relative pl-6">
-						<div className="dark:bg-foreground/10 bg-border absolute bottom-[-20px] left-[5px] top-[6px] w-px" />
-						<div className="space-y-6">{children}</div>
-					</div>
-				</div>
+				{/* A git log: a small node per commit at its id's line, joined to
+				    the next by a hairline. */}
+				<ol className="not-prose bg-card relative rounded-[12px] border px-5 py-4 sm:px-6">
+					{children}
+				</ol>
 			</div>
 		</PackageManagerContext.Provider>
 	)
@@ -96,21 +103,23 @@ export function Commit({
 	}
 
 	return (
-		<div className="relative">
-			<div className="dark:border-foreground/20 border-foreground/15 bg-background -left-7.5 absolute top-0.5 z-10 h-6 w-6 rounded-full border dark:border-2" />
-			<div className="flex w-full flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
-				<div className="flex flex-col pl-2">
-					<div className="flex items-center justify-between gap-2">
-						<div className="font-mono font-bold sm:text-lg">{id}</div>
-					</div>
-					<div className="text-muted-foreground prose-sm prose prose-p:m-0 prose-a:text-primary text-sm">
-						{typeof children === 'string' ? (
-							<Markdown>{children}</Markdown>
-						) : (
-							children
-						)}
-					</div>
-				</div>
+		<li className="after:bg-border relative py-2.5 pl-6 after:absolute after:top-5 after:-bottom-5 after:left-[4px] after:w-px last:after:hidden">
+			<span
+				aria-hidden="true"
+				className="border-foreground/45 bg-card absolute top-4 left-0 z-10 size-[9px] rounded-full border-[1.5px]"
+			/>
+			{/* The copy sits right after the id it acts on, where the eye
+			    already is, rather than across the row. On a phone it keeps the id's
+			    line as an icon at its end, where a wrapped label would sit alone. */}
+			<div className="flex items-start gap-2 sm:items-center sm:gap-3">
+				<span
+					className={cn(
+						TYPE.cardTitle,
+						'min-w-0 font-mono font-semibold [overflow-wrap:anywhere]',
+					)}
+				>
+					{id}
+				</span>
 				<DropdownMenu
 					modal={false}
 					open={open}
@@ -121,29 +130,38 @@ export function Commit({
 				>
 					<DropdownMenuTrigger asChild>
 						<Button
-							variant="outline"
+							variant="ghost"
 							size="sm"
-							className="h-7 gap-1.5 rounded-lg px-2.5 font-mono text-xs hover:cursor-pointer"
+							aria-label={`Copy a command for ${id}`}
+							className={cn(
+								TYPE.metaSm,
+								'text-muted-foreground hover:text-foreground data-[state=open]:text-foreground -my-1 ml-auto h-7 shrink-0 gap-1 rounded-[6px] px-2 hover:cursor-pointer sm:ml-0',
+							)}
 						>
-							<Copy className="h-3.5 w-3.5" />
-							Copy
+							<Copy className="size-3.5" aria-hidden="true" />
+							<span className="hidden sm:inline">Copy command</span>
+							<ChevronDown className="size-3" aria-hidden="true" />
 						</Button>
 					</DropdownMenuTrigger>
-					<DropdownMenuContent align="end" className="w-72 rounded-xl">
+					<DropdownMenuContent
+						align="start"
+						collisionPadding={12}
+						className="w-72 rounded-[11px]"
+					>
 						<DropdownMenuItem
 							onSelect={(e) => {
 								e.preventDefault()
 								handleCopy(resetCommand)
 							}}
-							className="flex cursor-pointer flex-col items-start gap-1 rounded-lg p-3"
+							className="flex cursor-pointer flex-col items-start gap-1 rounded-[6px] p-3"
 						>
 							<div className="flex w-full items-center gap-2">
 								{copiedCommand === resetCommand ? (
-									<Check className="h-4 w-4 text-green-500" />
+									<Check className="text-primary size-4" />
 								) : (
-									<RotateCcw className="h-4 w-4" />
+									<RotateCcw className="size-4" />
 								)}
-								<span className="font-mono text-sm">{resetCommand}</span>
+								<span className={TYPE.metaMono}>{resetCommand}</span>
 							</div>
 							<span className="text-muted-foreground pl-6 text-xs">
 								Resets your project to match this commit (loses previous work,
@@ -153,11 +171,11 @@ export function Commit({
 						{id === 'main' ? (
 							<DropdownMenuItem
 								disabled
-								className="flex cursor-not-allowed flex-col items-start gap-1 rounded-lg p-3 opacity-50"
+								className="flex cursor-not-allowed flex-col items-start gap-1 rounded-[6px] p-3 opacity-50"
 							>
 								<div className="flex w-full items-center gap-2">
-									<GitBranch className="h-4 w-4" />
-									<span className="font-mono text-sm">{cherryPickCommand}</span>
+									<GitBranch className="size-4" />
+									<span className={TYPE.metaMono}>{cherryPickCommand}</span>
 								</div>
 								<span className="text-muted-foreground pl-6 text-xs">
 									cherry-pick won't work on main, since there are no changes to
@@ -171,15 +189,15 @@ export function Commit({
 									e.preventDefault()
 									handleCopy(cherryPickCommand)
 								}}
-								className="flex cursor-pointer flex-col items-start gap-1 rounded-lg p-3"
+								className="flex cursor-pointer flex-col items-start gap-1 rounded-[6px] p-3"
 							>
 								<div className="flex w-full items-center gap-2">
 									{copiedCommand === cherryPickCommand ? (
-										<Check className="h-4 w-4 text-green-500" />
+										<Check className="text-primary size-4" />
 									) : (
-										<GitBranch className="h-4 w-4" />
+										<GitBranch className="size-4" />
 									)}
-									<span className="font-mono text-sm">{cherryPickCommand}</span>
+									<span className={TYPE.metaMono}>{cherryPickCommand}</span>
 								</div>
 								<span className="text-muted-foreground pl-6 text-xs">
 									Applies changes from this commit to your project (keeps
@@ -190,6 +208,18 @@ export function Commit({
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</div>
-		</div>
+			<div
+				className={cn(
+					TYPE.meta,
+					'text-muted-foreground prose prose-sm prose-p:m-0 prose-a:text-primary mt-1 max-w-none leading-relaxed font-normal',
+				)}
+			>
+				{typeof children === 'string' ? (
+					<Markdown>{children}</Markdown>
+				) : (
+					children
+				)}
+			</div>
+		</li>
 	)
 }

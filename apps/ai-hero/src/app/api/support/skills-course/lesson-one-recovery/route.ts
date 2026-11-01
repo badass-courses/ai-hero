@@ -11,6 +11,14 @@ import { env } from '@/env.mjs'
 import { buildSkillsCourseLessonOneEmail } from '@/lib/skills-course/lesson-one-email'
 import { createPostmarkSkillsLessonOneRecoveryProvider } from '@/lib/skills-course/postmark-lesson-one-recovery'
 import {
+	readRecoveryStanding,
+	type RecoveryStandingReader,
+} from '@/lib/skills-course/recovery-standing'
+import {
+	createRecoveryStandingReader,
+	recoveryLocalStandingEnabled,
+} from '@/lib/skills-course/recovery-standing.server'
+import {
 	runSupportSkillsLessonOneRecovery,
 	type RecoveryIntent,
 	type RecoveryIntentPatch,
@@ -132,6 +140,69 @@ const productionHandler = createSkillsLessonOneRecoveryPostHandler({
 
 export const POST = withSkill(productionHandler)
 
+const kitRecoverySubscribers: SkillsLessonOneRecoveryDependencies['subscribers'] =
+	{
+		async findByEmail(email) {
+			let raw: unknown
+			try {
+				raw = await emailListProvider.getSubscriberByEmail(email)
+			} catch {
+				return { state: 'invalid' }
+			}
+			if (!raw) return { state: 'missing' }
+			const subscriber = SubscriberSchema.safeParse(raw)
+			if (!subscriber.success || !subscriber.data.email_address) {
+				return { state: 'invalid' }
+			}
+			return {
+				state: 'found',
+				id: String(subscriber.data.id),
+				email: subscriber.data.email_address,
+				subscriberState: subscriber.data.state,
+			}
+		},
+	}
+
+/**
+ * Off-Kit standing (family 8): the directory, local course entry and local
+ * plus drovr stops. A subscribed contact reads as Kit's `active`; a stop or
+ * an unreadable stop state blocks with its own reason.
+ */
+export function createLocalRecoverySubscribers(
+	reader: RecoveryStandingReader,
+): SkillsLessonOneRecoveryDependencies['subscribers'] {
+	return {
+		async findByEmail(email, expectedKitSubscriberId) {
+			const standing = await readRecoveryStanding({
+				email,
+				expectedKitSubscriberId,
+				reader,
+			})
+			if (standing.state !== 'subscribed') {
+				await log.info('skills.course.lesson_one_support_recovery_standing', {
+					state: standing.state,
+					reason: standing.reason,
+				})
+			}
+			switch (standing.state) {
+				case 'subscribed':
+					return {
+						state: 'found',
+						id: standing.kitSubscriberId,
+						email: standing.email,
+						subscriberState: 'active',
+					}
+				case 'stopped':
+					return { state: 'stopped' }
+				case 'unknown':
+					return { state: 'unknown' }
+				case 'not-found':
+					return { state: 'missing' }
+			}
+		},
+	}
+}
+
 function createProductionDependencies(
 	previewSecret: string,
 ): SkillsLessonOneRecoveryDependencies {
@@ -149,27 +220,9 @@ function createProductionDependencies(
 	}
 
 	return {
-		subscribers: {
-			async findByEmail(email) {
-				let raw: unknown
-				try {
-					raw = await emailListProvider.getSubscriberByEmail(email)
-				} catch {
-					return { state: 'invalid' }
-				}
-				if (!raw) return { state: 'missing' }
-				const subscriber = SubscriberSchema.safeParse(raw)
-				if (!subscriber.success || !subscriber.data.email_address) {
-					return { state: 'invalid' }
-				}
-				return {
-					state: 'found',
-					id: String(subscriber.data.id),
-					email: subscriber.data.email_address,
-					subscriberState: subscriber.data.state,
-				}
-			},
-		},
+		subscribers: recoveryLocalStandingEnabled()
+			? createLocalRecoverySubscribers(createRecoveryStandingReader())
+			: kitRecoverySubscribers,
 		store: {
 			async findContext(email) {
 				const contact = await repository.findContactByEmail(email)

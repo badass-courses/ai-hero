@@ -4,8 +4,18 @@ const mocks = vi.hoisted(() => ({
 	getServerAuthSession: vi.fn(),
 	getSubscriberByEmail: vi.fn(),
 	inngestSend: vi.fn(),
-	log: { error: vi.fn() },
+	log: { error: vi.fn(), info: vi.fn() },
 	readRecoveryToken: vi.fn(),
+	standing: vi.fn(),
+	localEnabled: vi.fn(() => false),
+}))
+
+vi.mock('@/lib/skills-course/recovery-standing', () => ({
+	readRecoveryStanding: mocks.standing,
+}))
+vi.mock('@/lib/skills-course/recovery-standing.server', () => ({
+	createRecoveryStandingReader: () => ({}),
+	recoveryLocalStandingEnabled: mocks.localEnabled,
 }))
 
 vi.mock('@/coursebuilder/email-list-provider', () => ({
@@ -40,6 +50,7 @@ import { resendSkillsCourseLessonOne } from './skills-course-restart-actions'
 describe('resendSkillsCourseLessonOne', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		mocks.localEnabled.mockReturnValue(false)
 		mocks.getServerAuthSession.mockResolvedValue({
 			session: { user: { email: 'learner@example.com' } },
 		})
@@ -228,5 +239,105 @@ describe('resendSkillsCourseLessonOne', () => {
 			'skills.course.lesson_one_recovery_enqueue_failed',
 			{ outcome: 'not-queued' },
 		)
+	})
+
+	describe('off-Kit standing (AIH_SUPPORT_RECOVERY_LOCAL_STANDING), Kit unreachable', () => {
+		beforeEach(() => {
+			mocks.localEnabled.mockReturnValue(true)
+			mocks.getSubscriberByEmail.mockRejectedValue(
+				new Error('Kit is unreachable'),
+			)
+			mocks.log.info.mockResolvedValue(undefined)
+		})
+
+		it('subscribed: queues with the directory Kit alias', async () => {
+			mocks.standing.mockResolvedValue({
+				state: 'subscribed',
+				contactId: 'contact_41',
+				email: 'learner@example.com',
+				kitSubscriberId: '41',
+			})
+
+			await expect(resendSkillsCourseLessonOne()).resolves.toEqual({
+				success: true,
+			})
+			expect(mocks.standing).toHaveBeenCalledWith(
+				expect.objectContaining({ email: 'learner@example.com' }),
+			)
+			expect(mocks.inngestSend).toHaveBeenCalledWith(
+				expect.objectContaining({
+					data: expect.objectContaining({ kitSubscriberId: '41' }),
+				}),
+			)
+			expect(mocks.getSubscriberByEmail).not.toHaveBeenCalled()
+		})
+
+		it('signed token: the token Kit id is the one checked', async () => {
+			mocks.getServerAuthSession.mockResolvedValue({ session: null })
+			mocks.readRecoveryToken.mockResolvedValue({
+				valid: true,
+				payload: { kitSubscriberId: '52', email: 'learner@example.com' },
+			})
+			mocks.standing.mockResolvedValue({
+				state: 'subscribed',
+				contactId: 'contact_41',
+				email: 'learner@example.com',
+				kitSubscriberId: '52',
+			})
+
+			await expect(resendSkillsCourseLessonOne()).resolves.toEqual({
+				success: true,
+			})
+			expect(mocks.standing).toHaveBeenCalledWith(
+				expect.objectContaining({ expectedKitSubscriberId: '52' }),
+			)
+		})
+
+		it('stopped: queues nothing and offers no resubscribe detour', async () => {
+			mocks.standing.mockResolvedValue({
+				state: 'stopped',
+				reason: 'unsubscribed',
+				source: 'local',
+			})
+
+			await expect(resendSkillsCourseLessonOne()).resolves.toEqual({
+				success: false,
+				reason: 'stopped',
+			})
+			expect(mocks.inngestSend).not.toHaveBeenCalled()
+			expect(mocks.log.info).toHaveBeenCalledWith(
+				'skills.course.lesson_one_recovery_standing',
+				{ state: 'stopped', reason: 'unsubscribed' },
+			)
+		})
+
+		it('unknown: fails closed as a failed request', async () => {
+			mocks.standing.mockResolvedValue({
+				state: 'unknown',
+				reason: 'drovr-stops-unreadable',
+			})
+
+			await expect(resendSkillsCourseLessonOne()).resolves.toEqual({
+				success: false,
+				reason: 'request-failed',
+			})
+			expect(mocks.inngestSend).not.toHaveBeenCalled()
+		})
+
+		it('not found: not identified', async () => {
+			mocks.standing.mockResolvedValue({
+				state: 'not-found',
+				reason: 'contact-not-found',
+			})
+
+			await expect(resendSkillsCourseLessonOne()).resolves.toEqual({
+				success: false,
+				reason: 'not-identified',
+			})
+			expect(mocks.inngestSend).not.toHaveBeenCalled()
+			expect(JSON.stringify(mocks.log.info.mock.calls)).not.toContain(
+				'learner@example.com',
+			)
+		})
 	})
 })

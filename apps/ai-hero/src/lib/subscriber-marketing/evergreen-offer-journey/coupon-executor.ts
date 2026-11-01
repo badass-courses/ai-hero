@@ -408,14 +408,14 @@ export function createCouponIntentExecutor(input: CouponExecutorDependencies) {
 				const applied =
 					current.intent.type === 'IssueCoupon'
 						? await Effect.runPromise(
-								Effect.either(d.coupons.issue(current.intent)),
+								Effect.result(d.coupons.issue(current.intent)),
 							)
 						: await Effect.runPromise(
-								Effect.either(d.coupons.bind(current.intent)),
+								Effect.result(d.coupons.bind(current.intent)),
 							)
-				if (applied._tag === 'Right')
-					return accept(current.intent, evidence, applied.right)
-				if (applied.left.type !== 'EffectPermanentRefusal')
+				if (applied._tag === 'Success')
+					return accept(current.intent, evidence, applied.success)
+				if (applied.failure.type !== 'EffectPermanentRefusal')
 					throw new Hold('Effect outcome uncertain; no retry')
 				const observedAt = await clock()
 				const outcome: ObservedKnownNotAppliedOutcome = {

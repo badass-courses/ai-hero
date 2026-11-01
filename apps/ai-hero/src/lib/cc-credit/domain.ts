@@ -11,6 +11,31 @@ export type CreditSource = {
 	perSeatCents: number
 }
 export type CreditAllocation = CreditSource & { seats: number }
+/** Desk-reviewed source for one historical credit line, in line order. */
+export type ExplicitSource = {
+	purchaseId: string
+	seats: number
+	perSeatCents: number
+}
+export type SourcePaymentRow = {
+	purchaseId: string
+	chargeIdentifier: string | null
+	checkoutSessionIdentifier: string | null
+}
+/** Stripe evidence for one source purchase. seats is null when no checkout
+ * quantity exists; only an unshared bulk coupon may then supply the seats. */
+export type SourcePayment =
+	| { chargeCents: number; seats: number | null }
+	| { hold: string }
+export type SourcePaymentReader = (
+	rows: SourcePaymentRow[],
+) => Promise<ReadonlyMap<string, SourcePayment>>
+/** Real ids are purch_<uuid>, hyphens included. */
+export const PURCHASE_ID = /purch_[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*/g
+/** Purchase.totalAmount was stored rounded for some team purchases. It may only
+ * corroborate the Stripe charge, never price a seat, and must agree within
+ * this many cents on the purchase total. */
+export const RECORDED_AMOUNT_TOLERANCE_CENTS = 100
 export type CreditReceipt = CreditScope & {
 	invoiceId: string
 	requestHash: string
@@ -49,10 +74,18 @@ export function purchaseCents(value: string): number {
 export function source(input: {
 	purchaseId: string
 	purchaseSeats: number
-	totalAmount: string
+	chargeCents: number
+	recordedAmount: string
 }): CreditSource {
 	const seats = positiveInteger(input.purchaseSeats, 'purchase_seats')
-	const cents = purchaseCents(input.totalAmount)
+	const cents = positiveInteger(input.chargeCents, 'charge_cents')
+	if (
+		Math.abs(purchaseCents(input.recordedAmount) - cents) >=
+		RECORDED_AMOUNT_TOLERANCE_CENTS
+	)
+		throw new CreditRefusal(
+			'purchase_amount_disagrees_with_charge_hold_for_review',
+		)
 	// Do not invent fractional cents or round up money the team never paid.
 	if (cents % seats !== 0)
 		throw new CreditRefusal('fractional_per_seat_cents_hold_for_review')

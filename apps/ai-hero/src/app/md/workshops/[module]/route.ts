@@ -1,3 +1,8 @@
+import {
+	buildCompanionBlock,
+	withCompanionBlock,
+} from '@/lib/learner-agent/guide'
+import { learnerSiteUrls } from '@/lib/learner-agent/site'
 import { serializeToMarkdown } from '@/lib/markdown-serializer'
 import { getWorkshop } from '@/lib/workshops-query'
 
@@ -18,7 +23,11 @@ export async function GET(
 		return markdownNotFoundResponse()
 	}
 
-	const markdown = serializeToMarkdown(workshop)
+	const companion = buildCompanionBlock(learnerSiteUrls(), {
+		title: workshop.fields.title,
+		slug: workshop.fields.slug,
+	})
+	const markdown = withCompanionBlock(serializeToMarkdown(workshop), companion)
 
 	return createMarkdownResponse(markdown)
 }

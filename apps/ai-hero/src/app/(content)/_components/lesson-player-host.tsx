@@ -38,6 +38,8 @@ export type LessonVideo = {
 	thumbnailUrl: string | null
 	/** The agent session the video drives, drawn beside the player. */
 	sessionExtract?: SessionExtract | null
+	/** Pages of the skills that session runs, by skill name key. */
+	sessionSkillLinks?: Readonly<Record<string, string>>
 }
 
 type HostContext = {
@@ -74,33 +76,38 @@ function VideoSection({
 }: {
 	children: React.ReactNode
 	/**
-	 * Beside the player from `lg`. The section keeps the height a lesson
-	 * without one has (the player's own 16:9-capped-at-75svh box at full
-	 * width), and the player shrinks into the remaining width, letterboxed,
-	 * so lessons never change height.
+	 * Beside the player from `lg`, flush right. The section keeps the full
+	 * width and the height a lesson without one has (the player's own
+	 * 16:9-capped-at-75svh box at full width), and the player shrinks into the
+	 * remaining width, letterboxed, so lessons never change height.
 	 */
 	aside?: React.ReactNode
 	/** Under the player below `lg`, where the aside is hidden. */
 	below?: React.ReactNode
 }) {
+	// The height comes from the wrapper's width (`cqw`): an aspect ratio on
+	// the section itself would also cap its width at 75svh × 16/9 and leave a
+	// gap on the right of wide screens.
 	return (
-		<section
-			aria-label="video"
-			className={cn(
-				'dark relative flex flex-col border-b bg-black text-white dark:text-white',
-				aside && 'lg:aspect-video lg:max-h-[75svh] lg:flex-row',
-			)}
-		>
-			<div className="relative flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center">
-				{children}
-			</div>
-			{aside && (
-				<div className="relative hidden lg:block lg:w-[22rem] lg:shrink-0 lg:border-l 2xl:w-[26rem]">
-					<div className="absolute inset-0">{aside}</div>
+		<div className="@container">
+			<section
+				aria-label="video"
+				className={cn(
+					'dark relative flex flex-col border-b bg-black text-white dark:text-white',
+					aside && 'lg:h-[min(75svh,calc(100cqw*9/16))] lg:flex-row',
+				)}
+			>
+				<div className="relative flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center">
+					{children}
 				</div>
-			)}
-			{below && <div className="border-t lg:hidden">{below}</div>}
-		</section>
+				{aside && (
+					<div className="relative hidden lg:block lg:w-[22rem] lg:shrink-0 lg:border-l 2xl:w-[26rem]">
+						<div className="absolute inset-0">{aside}</div>
+					</div>
+				)}
+				{below && <div className="border-t lg:hidden">{below}</div>}
+			</section>
+		</div>
 	)
 }
 
@@ -131,6 +138,7 @@ export function LessonPlayerHost({ children }: { children: React.ReactNode }) {
 	const sessionPanel = video?.sessionExtract ? (
 		<SessionExtractPanel
 			extract={video.sessionExtract}
+			skillLinks={video.sessionSkillLinks}
 			onPopOut={
 				sessionWindow.supported && !sessionWindow.pipWindow
 					? () => void sessionWindow.open({ width: 420, height: 720 })
@@ -191,7 +199,10 @@ export function LessonPlayerHost({ children }: { children: React.ReactNode }) {
 						<SheetHeader className="sr-only">
 							<SheetTitle>Session on screen</SheetTitle>
 						</SheetHeader>
-						<SessionExtractPanel extract={video.sessionExtract} />
+						<SessionExtractPanel
+							extract={video.sessionExtract}
+							skillLinks={video.sessionSkillLinks}
+						/>
 					</SheetContent>
 				</Sheet>
 			)}

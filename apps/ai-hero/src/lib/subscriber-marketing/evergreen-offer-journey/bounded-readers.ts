@@ -5,7 +5,7 @@ import {
 } from '@/db/evergreen-offer-journey-schema'
 import { and, asc, eq, gt, lte, or } from 'drizzle-orm'
 import type { MySql2Database } from 'drizzle-orm/mysql2'
-import { Effect, Either } from 'effect'
+import { Effect, Result } from 'effect'
 import { z } from 'zod'
 import {
 	COURSE_SEQUENCE_EXHAUSTED_EVENT_TYPE,
@@ -300,14 +300,14 @@ export function createBoundedJourneyReaders(
 		const parsed = parseStimulusId(id)
 		if (!parsed.ok) return null
 		const result = await Effect.runPromise(
-			Effect.either(ledger.findCommittedStimulus(parsed.value)),
+			Effect.result(ledger.findCommittedStimulus(parsed.value)),
 		)
-		if (Either.isLeft(result)) {
-			if (result.left.type === 'JourneyDecodeFailure') return null
+		if (Result.isFailure(result)) {
+			if (result.failure.type === 'JourneyDecodeFailure') return null
 			throw new Error('Canonical read unavailable')
 		}
-		return result.right?.decision.type === 'Accepted'
-			? result.right.decision
+		return result.success?.decision.type === 'Accepted'
+			? result.success.decision
 			: null
 	}
 }

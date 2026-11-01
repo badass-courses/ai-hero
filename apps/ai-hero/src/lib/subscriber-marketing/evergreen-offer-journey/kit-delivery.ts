@@ -132,7 +132,10 @@ export function createKitDeliveryPort(
 		error: EffectApplicationError,
 	) =>
 		Effect.tryPromise({ try: work, catch: () => error }).pipe(
-			Effect.timeoutFail({ duration: timeoutMs, onTimeout: () => error }),
+			Effect.timeoutOrElse({
+				duration: timeoutMs,
+				orElse: () => Effect.fail(error),
+			}),
 		)
 
 	const prepare = (intent: SendMessageIntent) =>
@@ -334,7 +337,7 @@ export function createKitDeliveryPort(
 				}
 				return { type: 'Unknown', reason: 'membership-page-cap' } as const
 			}).pipe(
-				Effect.catchAll(() =>
+				Effect.catch(() =>
 					Effect.succeed({
 						type: 'Unknown',
 						reason: 'membership-unavailable',

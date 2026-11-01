@@ -161,6 +161,10 @@ export const env = createEnv({
 		// Returning unsubscribers get drovr's confirmation email only when this is
 		// "true". Turn on together with drovr's org-aihero `confirm-doi` flag.
 		AIH_RESUBSCRIBE_DOI_ENABLED: z.string().optional(),
+		// "true" verifies Kit preference and unsubscribe links against the local
+		// contact directory and reads preference state locally, with Kit out of
+		// the request path. Off keeps the Kit-backed reads.
+		AIH_EMAIL_PREFERENCES_LOCAL_ENABLED: z.string().optional(),
 		DROVR_EXECUTOR_TOKEN: z.string().min(16).optional(),
 		AI_HERO_VALUE_PATH_TOKEN_SECRET: z.string().min(16).optional(),
 		// drovr #36T link tests mint throwaway principals with this; never the
@@ -173,6 +177,8 @@ export const env = createEnv({
 		AIH_DROVR_EVERGREEN_ENABLED: z.string().optional(),
 		// Default off: enable saved-survey interest facts after the drovr gate.
 		AIH_DROVR_SURVEY_INTEREST_FACTS_ENABLED: z.string().optional(),
+		// Default off: surveys stop subscribing answerers and writing Kit fields.
+		AIH_SURVEY_OFF_KIT_ENABLED: z.string().optional(),
 		// Default off; retain contact reads until /births rollout proof.
 		AIH_DROVR_BIRTH_FEED_ENABLED: z.string().optional(),
 		// Producer before rule; existing-cohort gate stays off until ruling B.
@@ -346,6 +352,8 @@ export const env = createEnv({
 		DROVR_API_KEY_ORG_AIHERO: process.env.DROVR_API_KEY_ORG_AIHERO,
 		DROVR_DOI_FORMS: process.env.DROVR_DOI_FORMS,
 		AIH_RESUBSCRIBE_DOI_ENABLED: process.env.AIH_RESUBSCRIBE_DOI_ENABLED,
+		AIH_EMAIL_PREFERENCES_LOCAL_ENABLED:
+			process.env.AIH_EMAIL_PREFERENCES_LOCAL_ENABLED,
 		DROVR_EXECUTOR_TOKEN: process.env.DROVR_EXECUTOR_TOKEN,
 		AI_HERO_VALUE_PATH_TOKEN_SECRET:
 			process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET,
@@ -356,6 +364,7 @@ export const env = createEnv({
 		AIH_DROVR_EVERGREEN_ENABLED: process.env.AIH_DROVR_EVERGREEN_ENABLED,
 		AIH_DROVR_SURVEY_INTEREST_FACTS_ENABLED:
 			process.env.AIH_DROVR_SURVEY_INTEREST_FACTS_ENABLED,
+		AIH_SURVEY_OFF_KIT_ENABLED: process.env.AIH_SURVEY_OFF_KIT_ENABLED,
 		AIH_DROVR_BIRTH_FEED_ENABLED: process.env.AIH_DROVR_BIRTH_FEED_ENABLED,
 		AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY: process.env.AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY,
 		AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY: process.env.AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY,

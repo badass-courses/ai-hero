@@ -8,6 +8,11 @@ import {
 	type SkillsNewsletterSubscribed,
 } from '@/inngest/events/skills-newsletter'
 import { inngest } from '@/inngest/inngest.server'
+import {
+	interestFieldKeysOf,
+	interestKitWritesEnabled,
+} from '@/lib/cta/interest-facts'
+import { requestInterestFacts } from '@/lib/cta/interest-facts.server'
 import { createShortlinkAttribution } from '@/lib/shortlinks-query'
 import { recordSignupAttribution } from '@/lib/signup-attribution'
 import { guardSubscribe } from '@/lib/subscribe-bot-defense.server'
@@ -28,6 +33,7 @@ import {
 import {
 	DOI_DROVR_FORM_IDS,
 	doiAppliesTo,
+	drovrSignupKitFormId,
 	parseDrovrDoiConfig,
 } from '@/lib/subscriber-marketing/drovr-doi-signup'
 import { requestDrovrDoiSignup } from '@/lib/subscriber-marketing/drovr-doi-signup.server'
@@ -53,12 +59,31 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 	const rejection = await guardSubscribe(body, req.headers)
 	if (rejection) return rejection
 
+	// A waitlist or interest join is recorded before any Kit or drovr signup
+	// call, so it survives either being down. Recording it subscribes no one:
+	// the signup below still decides consent, double opt-in included.
+	if (typeof email === 'string') {
+		const { queued } = await requestInterestFacts({
+			email,
+			fields: body.fields,
+			via: 'form',
+		})
+		// The cut: with the facts queued, Kit no longer gets the join fields.
+		if (queued > 0 && !interestKitWritesEnabled()) {
+			for (const key of interestFieldKeysOf(body.fields)) {
+				delete body.fields[key]
+			}
+		}
+	}
+
 	// drovr-owned double opt-in, when DROVR_DOI_FORMS turns it on for this
 	// form (and address, during the canary). Off, this is a no-op and the
-	// signup takes Kit's path below exactly as before.
-	const kitFormId = Number(body.listId)
+	// signup takes Kit's path below exactly as before. A post without a
+	// listId is for Kit's default form.
+	const kitFormId = drovrSignupKitFormId(body, env.CONVERTKIT_SIGNUP_FORM)
 	if (
 		typeof email === 'string' &&
+		kitFormId !== undefined &&
 		doiAppliesTo(parseDrovrDoiConfig(env), kitFormId, email)
 	) {
 		return await doiSignup(req, body, email.trim(), kitFormId)
@@ -67,7 +92,7 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 	let mayRemoveUnsubscribeTag = true
 	// A returning unsubscriber re-signs up only through a fresh drovr double
 	// opt-in: no Kit subscribe, no untag. Everyone else falls through.
-	if (typeof email === 'string' && DOI_DROVR_FORM_IDS.has(kitFormId)) {
+	if (typeof email === 'string' && kitFormId !== undefined) {
 		const returning = await returningUnsubscriberSignup(
 			req,
 			body,

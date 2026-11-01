@@ -1,4 +1,4 @@
-import { Effect, Either } from "effect";
+import { Effect, Result } from "effect";
 import { encodeEvergreenOfferJourneySnapshot } from "./restoration";
 import { AI_HERO_UNSUBSCRIBED_TAG_ID } from "../ai-hero-email-opt-in";
 import {
@@ -167,16 +167,16 @@ function fixture(
 }
 const run = (authority: ReturnType<typeof createCurrentOfferAuthority>) =>
   Effect.runPromise(
-    Effect.either(authority.currentFacts({ contactId, journeyId: null })),
+    Effect.result(authority.currentFacts({ contactId, journeyId: null })),
   );
 
 describe("current Evergreen authority", () => {
   it("reads known current provider state and exact control, with bounded path keys", async () => {
     const f = fixture();
     const result = await run(f.authority);
-    expect(Either.isRight(result)).toBe(true);
-    if (Either.isRight(result))
-      expect(result.right).toMatchObject({
+    expect(Result.isSuccess(result)).toBe(true);
+    if (Result.isSuccess(result))
+      expect(result.success).toMatchObject({
         contactId,
         purchase: null,
         delivery: { type: "Eligible" },
@@ -204,13 +204,13 @@ describe("current Evergreen authority", () => {
               control: mode === "null-payload" ? null : {},
               updatedAt: at,
             };
-      expect(Either.isLeft(await run(f.authority))).toBe(true);
+      expect(Result.isFailure(await run(f.authority))).toBe(true);
       expect(f.getSubscriber).not.toHaveBeenCalled();
     },
   );
   it("observes changed controls and purchases on the next read without caching", async () => {
     const f = fixture();
-    expect(Either.isRight(await run(f.authority))).toBe(true);
+    expect(Result.isSuccess(await run(f.authority))).toBe(true);
     f.repository.readControl = async () => ({
       automationId: "evergreen-test",
       control: {
@@ -234,9 +234,9 @@ describe("current Evergreen authority", () => {
       },
     ];
     const second = await run(f.authority);
-    expect(Either.isRight(second)).toBe(true);
-    if (Either.isRight(second))
-      expect(second.right).toMatchObject({
+    expect(Result.isSuccess(second)).toBe(true);
+    if (Result.isSuccess(second))
+      expect(second.success).toMatchObject({
         automationControl: { type: "Stopped", version: "v2" },
         purchase: {
           purchaseId: "purchase-test",
@@ -259,8 +259,8 @@ describe("current Evergreen authority", () => {
       fields: { pref_newsletter: preference },
     });
     const result = await run(f.authority);
-    expect(Either.isRight(result)).toBe(true);
-    if (Either.isRight(result)) expect(result.right.delivery.type).toBe(type);
+    expect(Result.isSuccess(result)).toBe(true);
+    if (Result.isSuccess(result)) expect(result.success.delivery.type).toBe(type);
   });
   it.each(["inactive", "unknown"])(
     "never defaults incomplete %s provider evidence to subscribed",
@@ -272,7 +272,7 @@ describe("current Evergreen authority", () => {
         state,
         fields: {},
       });
-      expect(Either.isLeft(await run(f.authority))).toBe(true);
+      expect(Result.isFailure(await run(f.authority))).toBe(true);
     },
   );
   it("preserves local suppression as a veto, not an allow source", async () => {
@@ -286,9 +286,9 @@ describe("current Evergreen authority", () => {
     rows.states[0]!.lifecycle = "suppressed";
     f.repository.readIdentity = async () => rows;
     const result = await run(f.authority);
-    if (Either.isRight(result))
-      expect(result.right.delivery.type).toBe("Suppressed");
-    else throw new Error(result.left.type);
+    if (Result.isSuccess(result))
+      expect(result.success.delivery.type).toBe("Suppressed");
+    else throw new Error(result.failure.type);
   });
   it.each(["user", "link", "provider", "missing-state", "stale"])(
     "rejects conflicting or incomplete %s identity",
@@ -307,7 +307,7 @@ describe("current Evergreen authority", () => {
         });
       if (mode === "missing-state") rows.states = [];
       f.repository.readIdentity = async () => rows;
-      expect(Either.isLeft(await run(f.authority))).toBe(true);
+      expect(Result.isFailure(await run(f.authority))).toBe(true);
     },
   );
   it("allows a provider-confirmed contact without inventing a verified User", async () => {
@@ -316,7 +316,7 @@ describe("current Evergreen authority", () => {
     rows.contact!.userId = null;
     rows.users = [];
     f.repository.readIdentity = async () => rows;
-    expect(Either.isRight(await run(f.authority))).toBe(true);
+    expect(Result.isSuccess(await run(f.authority))).toBe(true);
     expect(f.repository.readPurchases).not.toHaveBeenCalled();
   });
   it.each(["identity", "purchase", "provider"])(
@@ -330,7 +330,7 @@ describe("current Evergreen authority", () => {
       if (source === "purchase") f.repository.readPurchases = fail;
       if (source === "provider") f.getSubscriber.mockImplementation(fail);
       const result = await run(f.authority);
-      expect(Either.isLeft(result) && result.left.type).toBe(
+      expect(Result.isFailure(result) && result.failure.type).toBe(
         "AuthorityUnavailable",
       );
       expect(JSON.stringify(result)).not.toContain("private provider payload");
@@ -363,7 +363,7 @@ describe("current Evergreen authority", () => {
           ...override,
         },
       ];
-      expect(Either.isLeft(await run(f.authority))).toBe(true);
+      expect(Result.isFailure(await run(f.authority))).toBe(true);
     }
   });
   it("accepts source-purchase-backed team fulfillment without calling the recipient the buyer", async () => {
@@ -383,9 +383,9 @@ describe("current Evergreen authority", () => {
       },
     ];
     const result = await run(f.authority);
-    expect(Either.isRight(result)).toBe(true);
-    if (Either.isRight(result))
-      expect(result.right.purchase).toMatchObject({
+    expect(Result.isSuccess(result)).toBe(true);
+    if (Result.isSuccess(result))
+      expect(result.success.purchase).toMatchObject({
         purchaseId: "team-purchase",
         sourceProductId: "source-bundle",
       });
@@ -393,17 +393,17 @@ describe("current Evergreen authority", () => {
   it("fails closed for missing canonical facts, unknown heads, and the wrong supplied journey", async () => {
     const f = fixture();
     f.repository.readExhaustionFacts = async () => [];
-    expect(Either.isLeft(await run(f.authority))).toBe(true);
+    expect(Result.isFailure(await run(f.authority))).toBe(true);
     f.repository.readExhaustionFacts = async () => [exhaustion()];
     f.repository.readJourneyHeads = async () => [
       { journeyId: "unknown", actorVersion: 1, snapshot: {} },
     ];
-    expect(Either.isLeft(await run(f.authority))).toBe(true);
+    expect(Result.isFailure(await run(f.authority))).toBe(true);
   });
   it("finds a journey on the other path using canonical indexed source IDs", async () => {
     const f = fixture();
     const first = await run(f.authority);
-    if (Either.isLeft(first)) throw new Error(first.left.type);
+    if (Result.isFailure(first)) throw new Error(first.failure.type);
     const source = exhaustion("ai-hero-skills-team-workflow");
     const payload = restoreCourseSequenceExhaustedPayload(
       readCoursePayload(source.payloadSummary)?.payload,
@@ -425,7 +425,7 @@ describe("current Evergreen authority", () => {
         deadlineTimeZone: payload.deadlineTimeZone,
         sourceReference: "side-effect-intent:six",
       },
-      currentFacts: first.right,
+      currentFacts: first.success,
       definition: EVERGREEN_OFFER_JOURNEY_V1,
       now: now.value,
     });
@@ -442,18 +442,18 @@ describe("current Evergreen authority", () => {
       },
     ]);
     const second = await run(f.authority);
-    if (Either.isLeft(second)) throw new Error(second.left.type);
-    expect(second.right.existingJourneyId).toBe(aggregate.journeyId);
+    if (Result.isFailure(second)) throw new Error(second.failure.type);
+    expect(second.success.existingJourneyId).toBe(aggregate.journeyId);
     expect(f.repository.readJourneyHeads).toHaveBeenCalledWith([
       `evergreen-offer:${exhaustion().id}`,
       `evergreen-offer:${source.id}`,
     ]);
     const same = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         f.authority.currentFacts({ contactId, journeyId: aggregate.journeyId }),
       ),
     );
-    expect(Either.isRight(same)).toBe(true);
+    expect(Result.isSuccess(same)).toBe(true);
     const correctHeads = f.repository.readJourneyHeads;
     for (const columns of [
       { journeyId: aggregate.journeyId, actorVersion: aggregate.version + 1 },
@@ -468,17 +468,17 @@ describe("current Evergreen authority", () => {
           snapshot: JSON.parse(encodeEvergreenOfferJourneySnapshot(aggregate)),
         },
       ];
-      expect(Either.isLeft(await run(f.authority))).toBe(true);
+      expect(Result.isFailure(await run(f.authority))).toBe(true);
     }
     f.repository.readJourneyHeads = correctHeads;
     const wrongId = parseJourneyId("evergreen-offer:wrong-source");
     if (!wrongId.ok) throw new Error("bad fixture");
     const wrong = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         f.authority.currentFacts({ contactId, journeyId: wrongId.value }),
       ),
     );
-    expect(Either.isLeft(wrong) && wrong.left.type).toBe(
+    expect(Result.isFailure(wrong) && wrong.failure.type).toBe(
       "AuthorityInconsistent",
     );
     f.repository.readJourneyHeads = async () => [
@@ -493,7 +493,7 @@ describe("current Evergreen authority", () => {
         snapshot: aggregate,
       },
     ];
-    expect(Either.isLeft(await run(f.authority))).toBe(true);
+    expect(Result.isFailure(await run(f.authority))).toBe(true);
   });
   it.each([undefined, null, "", "  "])(
     "uses the documented newsletter default for active subscriber preference %s",
@@ -506,7 +506,7 @@ describe("current Evergreen authority", () => {
         fields: value === undefined ? {} : { pref_newsletter: value },
       });
       const result = await run(f.authority);
-      expect(Either.isRight(result) && result.right.delivery.type).toBe(
+      expect(Result.isSuccess(result) && result.success.delivery.type).toBe(
         "Eligible",
       );
     },
@@ -519,7 +519,7 @@ describe("current Evergreen authority", () => {
       state: "active",
     });
     const result = await run(f.authority);
-    expect(Either.isRight(result) && result.right.delivery.type).toBe(
+    expect(Result.isSuccess(result) && result.success.delivery.type).toBe(
       "Unsubscribed",
     );
   });
@@ -555,7 +555,7 @@ describe("current Evergreen authority", () => {
       email_address: "student@example.com",
       ...override,
     });
-    expect(Either.isLeft(await run(f.authority))).toBe(true);
+    expect(Result.isFailure(await run(f.authority))).toBe(true);
   });
   it.each(["envelope", "mixed"])(
     "rejects the unsupported %s subscriber input contract",
@@ -572,7 +572,7 @@ describe("current Evergreen authority", () => {
           ? { subscriber: raw }
           : { ...raw, subscriber: { ...raw, id: 999 } },
       );
-      expect(Either.isLeft(await run(f.authority))).toBe(true);
+      expect(Result.isFailure(await run(f.authority))).toBe(true);
     },
   );
   it.each(["2026-09-07T18:59:59.000Z", "2026-09-07T19:00:01.000Z"])(
@@ -585,7 +585,7 @@ describe("current Evergreen authority", () => {
         readAt,
       });
       const result = await run(f.authority);
-      expect(Either.isLeft(result)).toBe(true);
+      expect(Result.isFailure(result)).toBe(true);
       expect(JSON.stringify(result)).not.toContain("student@example.com");
     },
   );
@@ -594,11 +594,11 @@ describe("current Evergreen authority", () => {
       journeyId = parseJourneyId("evergreen-offer:other");
     if (!journeyId.ok) throw new Error("bad fixture");
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         f.authority.currentFacts({ contactId, journeyId: journeyId.value }),
       ),
     );
-    expect(Either.isLeft(result) && result.left.type).toBe(
+    expect(Result.isFailure(result) && result.failure.type).toBe(
       "AuthorityInconsistent",
     );
   });
@@ -611,7 +611,7 @@ describe("current Evergreen authority", () => {
       fields: { pref_newsletter: null },
     });
     const result = await run(f.authority);
-    expect(Either.isRight(result) && result.right.delivery.type).toBe(
+    expect(Result.isSuccess(result) && result.success.delivery.type).toBe(
       "Eligible",
     );
     expect(f.getSubscriberTagsPage).toHaveBeenCalledWith({
@@ -633,7 +633,7 @@ describe("current Evergreen authority", () => {
         truncated: true,
       });
       const result = await run(f.authority);
-      expect(Either.isRight(result) && result.right.delivery.type).toBe(
+      expect(Result.isSuccess(result) && result.success.delivery.type).toBe(
         "Unsubscribed",
       );
       expect(f.getSubscriberTagsPage).toHaveBeenCalledTimes(1);
@@ -663,7 +663,7 @@ describe("current Evergreen authority", () => {
             : { hasNextPage: false, nextCursor: null },
       }));
       const result = await run(f.authority);
-      expect(Either.isRight(result) && result.right.delivery.type).toBe(
+      expect(Result.isSuccess(result) && result.success.delivery.type).toBe(
         excludedOnLastPage ? "Unsubscribed" : "Eligible",
       );
       expect(
@@ -695,7 +695,7 @@ describe("current Evergreen authority", () => {
       ...(base as object),
       ...override,
     });
-    expect(Either.isLeft(await run(f.authority))).toBe(true);
+    expect(Result.isFailure(await run(f.authority))).toBe(true);
   });
   it.each(["reader", "config", "wrong-config", "failure"])(
     "does not allow without usable tag %s",
@@ -729,7 +729,7 @@ describe("current Evergreen authority", () => {
         automationId: "evergreen-test",
       });
       const result = await run(authority);
-      expect(Either.isLeft(result)).toBe(true);
+      expect(Result.isFailure(result)).toBe(true);
       expect(JSON.stringify(result)).not.toContain("private tag payload");
     },
   );
@@ -750,7 +750,7 @@ describe("current Evergreen authority", () => {
           nextCursor: mode === "cycle" ? "same" : String(++count),
         },
       }));
-      expect(Either.isLeft(await run(f.authority))).toBe(true);
+      expect(Result.isFailure(await run(f.authority))).toBe(true);
       expect(f.getSubscriberTagsPage.mock.calls.length).toBeLessThanOrEqual(10);
     },
   );
@@ -764,7 +764,7 @@ describe("current Evergreen authority", () => {
     });
     f.getSubscriberTagsPage.mockRejectedValue(new Error("must not read"));
     const result = await run(f.authority);
-    expect(Either.isRight(result) && result.right.delivery.type).toBe(
+    expect(Result.isSuccess(result) && result.success.delivery.type).toBe(
       "Unsubscribed",
     );
     expect(f.getSubscriberTagsPage).not.toHaveBeenCalled();
@@ -778,6 +778,6 @@ describe("current Evergreen authority", () => {
       fields: { pref_newsletter: "subscribed" },
       suppressed: true,
     });
-    expect(Either.isLeft(await run(f.authority))).toBe(true);
+    expect(Result.isFailure(await run(f.authority))).toBe(true);
   });
 });

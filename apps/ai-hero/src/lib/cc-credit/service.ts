@@ -3,10 +3,13 @@ import {
 	allocationTotal,
 	creditBalance,
 	CreditRefusal,
+	PURCHASE_ID,
 	positiveInteger,
+	RECORDED_AMOUNT_TOLERANCE_CENTS,
 	requestHash,
 	settleStatus,
 	type CreditAllocation,
+	type ExplicitSource,
 	type CreditReceipt,
 	type CreditScope,
 } from './domain'
@@ -33,6 +36,8 @@ export type CreditCommand = {
 	invoice: InvoiceEvidence
 	seats: number
 	audit: Record<string, string>
+	/** Backfill only: one desk-reviewed source per credit line, in line order. */
+	sources?: ExplicitSource[]
 }
 const creditSum = (invoice: InvoiceEvidence) =>
 	invoice.creditLines.reduce((sum, row) => sum - row.amountCents, 0)
@@ -92,6 +97,49 @@ function checkReceipt(
 	)
 		throw new CreditRefusal('ledger_receipt_inconsistent_hold_for_review')
 }
+/** The source a line names: its exact id, or a unique prefix ending at a uuid
+ * segment. Some hand-written lines carry only purch_ and the first segment. */
+function namedSource(id: string, sources: CreditAllocation[]) {
+	const exact = sources.find((row) => row.purchaseId === id)
+	if (exact) return exact
+	const prefixed = sources.filter((row) => row.purchaseId.startsWith(`${id}-`))
+	return prefixed.length === 1 ? prefixed[0] : undefined
+}
+/** A finalized Stripe line can't be edited to add its source, so the desk
+ * states it. The line must agree on amount, seats and any id it names, and
+ * the per-seat price may differ from the charge only by the recorded rounding.
+ */
+function explicitAllocation(
+	line: InvoiceEvidence['creditLines'][number],
+	ids: string[],
+	given: ExplicitSource,
+	sources: CreditAllocation[],
+): CreditAllocation {
+	const seats = positiveInteger(given.seats, 'explicit_source_seats')
+	const perSeatCents = positiveInteger(
+		given.perSeatCents,
+		'explicit_per_seat_cents',
+	)
+	const declared = /credit x (\d+)\b/i.exec(line.description)?.[1]
+	if (
+		ids.length > 1 ||
+		(ids.length === 1 &&
+			ids[0] !== given.purchaseId &&
+			namedSource(ids[0]!, sources)?.purchaseId !== given.purchaseId) ||
+		(declared !== undefined && Number(declared) !== seats)
+	)
+		throw new CreditRefusal('explicit_source_contradicts_invoice_line')
+	if (seats * perSeatCents !== -line.amountCents)
+		throw new CreditRefusal('explicit_source_amount_mismatch')
+	const row = sources.find((item) => item.purchaseId === given.purchaseId)
+	if (!row) throw new CreditRefusal('historical_credit_source_ineligible')
+	if (
+		Math.abs(perSeatCents * row.purchaseSeats - row.purchaseTotalCents) >=
+		RECORDED_AMOUNT_TOLERANCE_CENTS
+	)
+		throw new CreditRefusal('explicit_per_seat_cents_disagree_with_purchase')
+	return { ...row, perSeatCents, seats }
+}
 /** Backfill preserves the recorded purchase/amount, never reallocates history.
  * Unknown purchase ids, fractional seats, duplicate source lines or missing ids
  * need review. A description without source evidence is not an empty ledger.
@@ -99,14 +147,17 @@ function checkReceipt(
 function historicalAllocations(
 	invoice: InvoiceEvidence,
 	sources: CreditAllocation[],
+	explicit?: ExplicitSource[],
 ): CreditAllocation[] {
-	return invoice.creditLines.map((line) => {
-		const ids = [
-			...new Set(line.description.match(/purch_[A-Za-z0-9]+/g) ?? []),
-		]
+	if (explicit && explicit.length !== invoice.creditLines.length)
+		throw new CreditRefusal('explicit_sources_must_match_credit_lines')
+	return invoice.creditLines.map((line, index) => {
+		const ids = [...new Set(line.description.match(PURCHASE_ID) ?? [])]
+		const given = explicit?.[index]
+		if (given) return explicitAllocation(line, ids, given, sources)
 		if (ids.length !== 1)
 			throw new CreditRefusal('historical_credit_source_ambiguous')
-		const row = sources.find((item) => item.purchaseId === ids[0])
+		const row = namedSource(ids[0]!, sources)
 		if (!row) throw new CreditRefusal('historical_credit_source_ineligible')
 		const seats = positiveInteger(
 			-line.amountCents / row.perSeatCents,
@@ -115,15 +166,33 @@ function historicalAllocations(
 		return { ...row, seats }
 	})
 }
+const sourceKeys = (rows: ExplicitSource[]) =>
+	rows
+		.map((row) => `${row.purchaseId}:${row.seats}:${row.perSeatCents}`)
+		.sort()
 export async function runCreditCommand(
 	store: CreditStore,
 	command: CreditCommand,
 ) {
-	const { mode, invoice, scope, seats, audit } = command
+	const { mode, invoice, scope, seats, audit, sources: explicit } = command
 	validateInvoice(invoice, scope, seats)
+	if (explicit && mode !== 'backfill_preview' && mode !== 'backfill')
+		throw new CreditRefusal('explicit_sources_backfill_only')
+	// An invoice holds one allocation per purchase (its primary key).
+	if (
+		explicit &&
+		new Set(explicit.map((row) => row.purchaseId)).size !== explicit.length
+	)
+		throw new CreditRefusal('explicit_sources_duplicate_purchase')
 	return store.locked(scope, invoice.invoiceId, async (tx) => {
 		if (tx.receipt) {
 			checkReceipt(tx.receipt, scope, seats)
+			if (
+				explicit &&
+				sourceKeys(explicit).join() !==
+					sourceKeys(tx.receipt.allocations).join()
+			)
+				throw new CreditRefusal('invoice_id_reused_with_changed_request')
 			validateCredit(
 				invoice,
 				tx.receipt.amountCents,
@@ -203,6 +272,7 @@ export async function runCreditCommand(
 			allocations = historicalAllocations(
 				invoice,
 				tx.sources.map((row) => ({ ...row, seats: 0 })),
+				explicit,
 			)
 			if (
 				!allocations.length ||

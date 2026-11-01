@@ -1,4 +1,4 @@
-import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
+import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise'
 import {
 	CC_PRODUCT,
 	CreditRefusal,
@@ -7,6 +7,8 @@ import {
 	type CreditSource,
 	type CreditReceipt,
 	type CreditStatus,
+	type SourcePayment,
+	type SourcePaymentReader,
 } from './domain'
 
 export type CreditTransaction = {
@@ -31,12 +33,16 @@ type SourceRow = RowDataPacket & {
 	productId: string
 	status: string
 	organizationId: string | null
+	bulkOrganizationId: string | null
+	siblingOrganizationIds: string | null
 	customerId: string | null
 	bulkCouponId: string | null
 	redeemedBulkCouponId: string | null
 	sourceMultiplicity: number
-	purchaseSeats: number | null
+	bulkSeats: number | null
 	totalAmount: string
+	chargeIdentifier: string | null
+	checkoutSessionIdentifier: string | null
 	couponId: string | null
 	promoId: string | null
 	merchantCouponId: string | null
@@ -44,7 +50,13 @@ type SourceRow = RowDataPacket & {
 }
 const sourceQuery = `SELECT p.id AS purchaseId, p.productId, p.status, p.organizationId,
  mc.identifier AS customerId, p.bulkCouponId, p.redeemedBulkCouponId,
- bulk.maxUses AS purchaseSeats, p.totalAmount, p.couponId,
+ bulk.maxUses AS bulkSeats, bulk.organizationId AS bulkOrganizationId,
+ (SELECT GROUP_CONCAT(DISTINCT owner.organizationId) FROM AI_Purchase owner
+  JOIN AI_MerchantCharge ownerCharge ON ownerCharge.id = owner.merchantChargeId
+  WHERE owner.bulkCouponId = p.bulkCouponId AND owner.organizationId IS NOT NULL
+  AND ownerCharge.merchantCustomerId = chargeRow.merchantCustomerId) AS siblingOrganizationIds,
+ p.totalAmount, p.couponId,
+ chargeRow.identifier AS chargeIdentifier, ms.identifier AS checkoutSessionIdentifier,
  (SELECT COUNT(*) FROM AI_Purchase sibling WHERE sibling.bulkCouponId = p.bulkCouponId
   AND sibling.productId = p.productId AND sibling.status IN ('Valid','Restricted')
   AND sibling.totalAmount > 0 AND sibling.redeemedBulkCouponId IS NULL) AS sourceMultiplicity,
@@ -54,46 +66,104 @@ const sourceQuery = `SELECT p.id AS purchaseId, p.productId, p.status, p.organiz
  LEFT JOIN AI_Coupon promo ON promo.id = p.couponId
  LEFT JOIN AI_MerchantCoupon discount ON discount.id = promo.merchantCouponId
  LEFT JOIN AI_MerchantCharge chargeRow ON chargeRow.id = p.merchantChargeId
- LEFT JOIN AI_MerchantCustomer mc ON mc.id = chargeRow.merchantCustomerId`
+ LEFT JOIN AI_MerchantCustomer mc ON mc.id = chargeRow.merchantCustomerId
+ LEFT JOIN AI_MerchantSession ms ON ms.id = p.merchantSessionId`
+// Same rule as ledgerOrganizations, in SQL, for org-scope discovery.
+const organizationScope = `(BINARY p.organizationId = ? OR (p.organizationId IS NULL
+ AND (BINARY bulk.organizationId = ? OR EXISTS (SELECT 1 FROM AI_Purchase owner
+  JOIN AI_MerchantCharge ownerCharge ON ownerCharge.id = owner.merchantChargeId
+  WHERE owner.bulkCouponId = p.bulkCouponId AND BINARY owner.organizationId = ?
+  AND ownerCharge.merchantCustomerId = chargeRow.merchantCustomerId))))`
 
-function eligible(row: SourceRow, scope: CreditScope): CreditSource | null {
-	if (
-		row.productId !== CC_PRODUCT ||
-		!['Valid', 'Restricted'].includes(row.status) ||
-		!row.bulkCouponId ||
-		row.redeemedBulkCouponId
+/** A purchase's own org. Without one, the org of its bulk coupon or of the same
+ * customer's other purchases on that coupon: add-seat checkouts can record no
+ * org, but they add seats to the team's one coupon. */
+function ledgerOrganizations(row: SourceRow) {
+	if (row.organizationId) return [row.organizationId]
+	return [
+		...new Set(
+			[
+				row.bulkOrganizationId,
+				...(row.siblingOrganizationIds?.split(',') ?? []),
+			].filter((id): id is string => !!id),
+		),
+	]
+}
+
+/** Cheap DB-only filter, so Stripe is only asked about possible sources. */
+function candidate(row: SourceRow, scope: CreditScope) {
+	return (
+		row.productId === CC_PRODUCT &&
+		['Valid', 'Restricted'].includes(row.status) &&
+		!!row.bulkCouponId &&
+		!row.redeemedBulkCouponId &&
+		(scope.organizationId
+			? ledgerOrganizations(row).includes(scope.organizationId)
+			: row.customerId === scope.stripeCustomerId) &&
+		Number(row.totalAmount) > 0 &&
+		row.couponType?.toLowerCase() !== 'ppp'
 	)
-		return null
-	if (
-		scope.organizationId
-			? row.organizationId !== scope.organizationId
-			: row.customerId !== scope.stripeCustomerId
-	)
-		return null
-	if (Number(row.totalAmount) <= 0) return null
-	if (Number(row.sourceMultiplicity) !== 1)
-		throw new CreditRefusal('shared_bulk_coupon_source_hold_for_review')
+}
+function eligible(
+	row: SourceRow,
+	scope: CreditScope,
+	payment: SourcePayment | undefined,
+): CreditSource | null {
+	if (!candidate(row, scope)) return null
+	if (scope.organizationId && ledgerOrganizations(row).length > 1)
+		throw new CreditRefusal('bulk_coupon_organization_ambiguous_hold_for_review')
 	if (
 		row.couponId &&
 		(!row.promoId || !row.merchantCouponId || !row.couponType)
 	)
 		throw new CreditRefusal('coupon_evidence_missing_hold_for_review')
-	if (row.couponType?.toLowerCase() === 'ppp') return null
-	if (row.purchaseSeats === null)
+	if (row.bulkSeats === null)
 		throw new CreditRefusal('bulk_seat_evidence_missing')
+	if (!payment)
+		throw new CreditRefusal('source_payment_evidence_missing_hold_for_review')
+	if ('hold' in payment) throw new CreditRefusal(payment.hold)
+	// Add-seat purchases share the team's bulk coupon, whose maxUses is the
+	// running total. Only the checkout quantity says what this purchase bought.
+	const seats =
+		payment.seats ??
+		(Number(row.sourceMultiplicity) === 1 ? Number(row.bulkSeats) : null)
+	if (seats === null)
+		throw new CreditRefusal('shared_bulk_coupon_source_hold_for_review')
+	if (seats > Number(row.bulkSeats))
+		throw new CreditRefusal('purchase_seats_exceed_bulk_coupon_hold_for_review')
 	return source({
 		purchaseId: row.purchaseId,
-		purchaseSeats: row.purchaseSeats,
-		totalAmount: row.totalAmount,
+		purchaseSeats: seats,
+		chargeCents: payment.chargeCents,
+		recordedAmount: row.totalAmount,
 	})
+}
+
+/** Plain SELECT, safe on a read-only role: has this Stripe customer ever bought
+ * Crash Course seats on a bulk coupon, in any status? */
+export async function customerBoughtTeamSeats(
+	pool: Pick<Pool, 'execute'>,
+	stripeCustomerId: string,
+) {
+	const [rows] = await pool.execute<RowDataPacket[]>(
+		`SELECT 1 FROM AI_Purchase p
+		 JOIN AI_MerchantCharge chargeRow ON chargeRow.id = p.merchantChargeId
+		 JOIN AI_MerchantCustomer mc ON mc.id = chargeRow.merchantCustomerId
+		 WHERE p.productId = ? AND p.bulkCouponId IS NOT NULL AND BINARY mc.identifier = ?
+		 LIMIT 1`,
+		[CC_PRODUCT, stripeCustomerId],
+	)
+	return rows.length > 0
 }
 
 /** All mutations and balance reads share this transaction/lock order.
  * Discovery can undercount a concurrently added purchase, but cannot overdraw it.
- * No remote API calls may run while this callback holds database locks.
+ * No remote API calls may run while this callback holds database locks:
+ * readPayments runs during discovery, before the transaction begins.
  */
 export function mysqlCreditStore(
 	acquire: () => Promise<PoolConnection>,
+	readPayments: SourcePaymentReader,
 ): CreditStore {
 	return {
 		async locked(scope, invoiceId, run) {
@@ -117,8 +187,10 @@ export function mysqlCreditStore(
 						throw new CreditRefusal('invoice_customer_org_mismatch')
 				}
 				const [candidates] = await connection.execute<RowDataPacket[]>(
-					`${sourceQuery} WHERE p.productId = ? AND p.bulkCouponId IS NOT NULL AND ${scope.organizationId ? 'BINARY p.organizationId = ?' : 'BINARY mc.identifier = ?'}`,
-					[CC_PRODUCT, scope.organizationId ?? scope.stripeCustomerId],
+					`${sourceQuery} WHERE p.productId = ? AND p.bulkCouponId IS NOT NULL AND ${scope.organizationId ? organizationScope : 'BINARY mc.identifier = ?'}`,
+					scope.organizationId
+						? [CC_PRODUCT, ...Array(3).fill(scope.organizationId)]
+						: [CC_PRODUCT, scope.stripeCustomerId],
 				)
 				const [prior] = invoiceId
 					? await connection.execute<RowDataPacket[]>(
@@ -131,6 +203,29 @@ export function mysqlCreditStore(
 						[...candidates, ...prior].map((row) => String(row.purchaseId)),
 					),
 				].sort()
+				const discovered = new Map(
+					candidates.map((row) => [String(row.purchaseId), row as SourceRow]),
+				)
+				for (const id of ids)
+					if (!discovered.has(id)) {
+						const [rows] = await connection.execute<SourceRow[]>(
+							`${sourceQuery} WHERE p.id = ? AND BINARY p.id = ?`,
+							[id, id],
+						)
+						if (rows[0]) discovered.set(id, rows[0])
+					}
+				const payable = [...discovered.values()].filter((row) =>
+					candidate(row, scope),
+				)
+				const payments = payable.length
+					? await readPayments(
+							payable.map((row) => ({
+								purchaseId: row.purchaseId,
+								chargeIdentifier: row.chargeIdentifier,
+								checkoutSessionIdentifier: row.checkoutSessionIdentifier,
+							})),
+						)
+					: new Map<string, SourcePayment>()
 				await connection.beginTransaction()
 				const sources: CreditSource[] = []
 				for (const id of ids) {
@@ -148,7 +243,8 @@ export function mysqlCreditStore(
 						`${sourceQuery} WHERE p.id = ? AND BINARY p.id = ? FOR UPDATE`,
 						[id, id],
 					)
-					const value = rows[0] && eligible(rows[0], scope)
+					const value =
+						rows[0] && eligible(rows[0], scope, payments.get(id))
 					if (value) sources.push(value)
 				}
 				const [receipts] = invoiceId

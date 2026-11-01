@@ -99,8 +99,10 @@ import { skillsNewsletterConfirmationReconciler } from './functions/skills-newsl
 import { skillsNewsletterPathEntry } from './functions/skills-newsletter-path-entry'
 import { emailCourseShadowAnswer } from './functions/email-course-shadow-answer'
 import { captureContactUnsubscribed } from './functions/capture-contact-unsubscribed'
+import { applyEmailPreferenceChangeFunction } from './functions/apply-email-preference-change'
 import { capturePurchaseContactEvent } from './functions/capture-purchase-contact-event'
 import { workshopInterestSync } from './functions/workshop-interest-sync'
+import { interestFactRecord } from './functions/interest-fact-record'
 import { computeVideoSplitPoints } from './functions/split_video'
 import { persistPurchaseGeo } from './functions/persist-purchase-geo'
 import { stripeSubscriptionCheckoutSessionComplete } from './functions/stripe/event-subscription-checkout-session-completed'
@@ -217,7 +219,9 @@ const allFunctions = [
 	emailCourseShadowAnswer,
 	capturePurchaseContactEvent,
 	captureContactUnsubscribed,
+	applyEmailPreferenceChangeFunction,
 	workshopInterestSync,
+	interestFactRecord,
 	skillsNewsletterConfirmationReconciler,
 	optinDeferredSubscribe,
 	notifyOnPostCreated,

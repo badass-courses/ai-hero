@@ -1,4 +1,4 @@
-import { Effect, Either } from "effect";
+import { Effect, Result } from "effect";
 import { z } from "zod";
 import type {
   CurrentSubscriberTagsPageEvidence,
@@ -196,16 +196,16 @@ export function createKitCommunicationTransport(options: {
         },
         catch: () => new KitCommunicationUnavailable(),
       }).pipe(
-        Effect.timeoutFail({
+        Effect.timeoutOrElse({
           duration: timeoutMs,
-          onTimeout: () => new KitCommunicationUnavailable(),
+          orElse: () => Effect.fail(new KitCommunicationUnavailable()),
         }),
       );
-      const result = await Effect.runPromise(Effect.either(operation), {
+      const result = await Effect.runPromise(Effect.result(operation), {
         signal: options.signal,
       });
-      if (Either.isLeft(result)) throw result.left;
-      return result.right;
+      if (Result.isFailure(result)) throw result.failure;
+      return result.success;
     } catch {
       return unavailable();
     }

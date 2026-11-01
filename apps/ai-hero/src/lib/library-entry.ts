@@ -158,3 +158,34 @@ export function pickCurrentWorkshop<T extends WorkshopProgress>(
 	})
 }
 
+
+/**
+ * Workshop ids that live `workshop_content_access` entitlements open but the
+ * purchase list does not already name.
+ *
+ * A bundle (Software Factories includes the Crash Course) grants the included
+ * workshop as an entitlement on the bundle's purchase, never as a purchase of
+ * the workshop's own product. Built from purchases alone, "Your courses" left
+ * the included course out even though the learner could open it.
+ */
+export function entitledWorkshopIds(
+	entitlements: {
+		entitlementType: string
+		metadata: unknown
+	}[],
+	workshopAccessTypeId: string | null | undefined,
+	alreadyListed: ReadonlySet<string>,
+): string[] {
+	if (!workshopAccessTypeId) return []
+	const ids = new Set<string>()
+	for (const entitlement of entitlements) {
+		if (entitlement.entitlementType !== workshopAccessTypeId) continue
+		const contentIds = (entitlement.metadata as Record<string, unknown> | null)
+			?.contentIds
+		if (!Array.isArray(contentIds)) continue
+		for (const id of contentIds) {
+			if (typeof id === 'string' && id && !alreadyListed.has(id)) ids.add(id)
+		}
+	}
+	return [...ids]
+}

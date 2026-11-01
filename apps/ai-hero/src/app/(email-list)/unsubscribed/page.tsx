@@ -4,11 +4,14 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import LayoutClient from "@/components/layout-client";
 import { resolveUnsubscribePreference } from "@/coursebuilder/email-preferences";
+import { env } from "@/env.mjs";
 import {
   getEmailPreferenceDefinition,
   getSearchParamValue,
   validateKitPreferenceIdentity,
+  verifyKitPreferenceLinkLocally,
 } from "@/lib/email-preferences";
+import { emailPreferencesLocalEnabled } from "@/lib/email-preferences-local";
 import { log } from "@/server/logger";
 
 import { UnsubscribeForm } from "./unsubscribe-form";
@@ -89,7 +92,20 @@ const Unsubscribed = async (props: UnsubscribedProps) => {
 
   // GET only validates. The writes happen in unsubscribeAction on POST, so a
   // link scanner or bot that opens this URL unsubscribes nobody.
-  if (subscriberId && shKit) {
+  if (subscriberId && shKit && emailPreferencesLocalEnabled(env)) {
+    // Only a tampered link is turned away. One that cannot be checked right
+    // now still gets the button: an unsubscribe always lands.
+    const verification = await verifyKitPreferenceLinkLocally({
+      subscriberId,
+      shKit,
+      source: "unsubscribe-link",
+      route: "/unsubscribed",
+    });
+
+    if (verification.status === "invalid") {
+      redirect("/");
+    }
+  } else if (subscriberId && shKit) {
     const subscriber = await validateKitPreferenceIdentity({
       subscriberId,
       shKit,

@@ -1,9 +1,20 @@
 import type Stripe from 'stripe'
-import { CreditRefusal, positiveInteger } from './domain'
+import {
+	CreditRefusal,
+	positiveInteger,
+	type SourcePayment,
+	type SourcePaymentRow,
+} from './domain'
 import type { InvoiceEvidence } from './service'
 
+/** Hand-written credits say "Crash Course credit", "Crash Course team credit"
+ * or "Crash Course team seat credit". Any other negative line is held. */
 export const isCreditDescription = (description: string | null) =>
-	/crash course (?:team seat )?credit/i.test(description ?? '')
+	/crash course (?:team )?(?:seat )?credit/i.test(description ?? '')
+export const isUnrecognizedNegativeLine = (line: {
+	amount: number
+	description: string | null
+}) => line.amount < 0 && !isCreditDescription(line.description)
 
 /** Read-only Stripe adapter. Always paginate: a hidden credit line is money. */
 export async function readCreditInvoice(
@@ -42,6 +53,8 @@ export async function readCreditInvoice(
 		)
 	)
 		throw new CreditRefusal('discounted_credit_line_hold_for_review')
+	if (lines.some(isUnrecognizedNegativeLine))
+		throw new CreditRefusal('unrecognized_negative_line_hold_for_review')
 	if (lines.some((line) => line.currency !== invoice.currency))
 		throw new CreditRefusal('mixed_invoice_currencies')
 	const c5 = lines.filter((line) => {
@@ -77,4 +90,55 @@ export async function readCreditInvoice(
 				description: line.description!,
 			})),
 	}
+}
+
+/** Read-only money and seat evidence for source purchases. The charge carries
+ * the cents actually paid. The checkout carries the seats bought, which add-seat
+ * purchases cannot get from their shared bulk coupon. Call before any DB lock.
+ */
+export async function readSourcePayments(
+	stripe: Pick<Stripe, 'charges' | 'checkout'>,
+	rows: SourcePaymentRow[],
+): Promise<Map<string, SourcePayment>> {
+	const result = new Map<string, SourcePayment>()
+	for (const row of rows)
+		result.set(row.purchaseId, await readSourcePayment(stripe, row))
+	return result
+}
+async function readSourcePayment(
+	stripe: Pick<Stripe, 'charges' | 'checkout'>,
+	row: SourcePaymentRow,
+): Promise<SourcePayment> {
+	const chargeId = row.chargeIdentifier
+	if (!chargeId || !/^(?:ch|py)_[A-Za-z0-9]+$/.test(chargeId))
+		return { hold: 'source_charge_evidence_missing_hold_for_review' }
+	const charge = await stripe.charges.retrieve(chargeId)
+	if (
+		charge.id !== chargeId ||
+		charge.status !== 'succeeded' ||
+		charge.currency !== 'usd' ||
+		!Number.isSafeInteger(charge.amount) ||
+		charge.amount < 1
+	)
+		return { hold: 'source_charge_not_settled_usd_hold_for_review' }
+	if (charge.amount_refunded !== 0)
+		return { hold: 'source_charge_refunded_hold_for_review' }
+	const sessionId = row.checkoutSessionIdentifier
+	if (!sessionId || !sessionId.startsWith('cs_'))
+		return { chargeCents: charge.amount, seats: null }
+	const items = await stripe.checkout.sessions.listLineItems(sessionId, {
+		limit: 100,
+	})
+	const item = items.data[0]
+	// One line, paid by exactly this charge. Anything else is not one purchase.
+	if (
+		items.has_more ||
+		items.data.length !== 1 ||
+		!item ||
+		item.amount_total !== charge.amount ||
+		!Number.isSafeInteger(item.quantity) ||
+		(item.quantity ?? 0) < 1
+	)
+		return { hold: 'source_checkout_evidence_ambiguous_hold_for_review' }
+	return { chargeCents: charge.amount, seats: item.quantity }
 }

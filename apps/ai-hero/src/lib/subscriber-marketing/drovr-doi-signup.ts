@@ -28,7 +28,46 @@ import type { OptInAttribution } from './opt-in-attribution'
 /** Kit forms that can run drovr double opt-in, to drovr's registered form id. */
 export const DOI_DROVR_FORM_IDS: ReadonlyMap<number, string> = new Map([
 	[9376133, 'skills-newsletter'],
+	// The older "AI Hero" embed form. Its plain newsletter ask joins the same
+	// drovr form; see drovrSignupKitFormId for what stays on Kit.
+	[8447166, 'skills-newsletter'],
 ])
+
+/**
+ * Kit forms whose drovr double opt-in takes only the plain newsletter ask.
+ * Waitlist and workshop-interest posts carry fields and tags that drovr's
+ * signup does not, so they keep Kit's path.
+ */
+const PLAIN_ASK_ONLY_FORM_IDS: ReadonlySet<number> = new Set([8447166])
+
+function isPlainNewsletterAsk(fields: unknown) {
+	if (fields == null) return true
+	if (typeof fields !== 'object' || Array.isArray(fields)) return false
+	return Object.keys(fields).every((key) => key === 'source')
+}
+
+/**
+ * The Kit form a signup post subscribes to, when drovr can take it: its
+ * `listId`, or Kit's default form (`CONVERTKIT_SIGNUP_FORM`) when it names
+ * none, as the Kit provider then does. Undefined keeps today's Kit path:
+ * an unmapped form, or a waitlist or interest post to the default form or
+ * to a plain-ask-only form.
+ */
+export function drovrSignupKitFormId(
+	body: { listId?: unknown; fields?: unknown },
+	defaultFormId: unknown,
+): number | undefined {
+	const named = body.listId != null && body.listId !== ''
+	const kitFormId = Number(named ? body.listId : defaultFormId)
+	if (!Number.isInteger(kitFormId) || !DOI_DROVR_FORM_IDS.has(kitFormId))
+		return undefined
+	if (
+		(!named || PLAIN_ASK_ONLY_FORM_IDS.has(kitFormId)) &&
+		!isPlainNewsletterAsk(body.fields)
+	)
+		return undefined
+	return kitFormId
+}
 
 export type DrovrDoiConfig = {
 	/** Per Kit form: everyone, or only these (lowercased) addresses. */

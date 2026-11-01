@@ -58,7 +58,7 @@ export function createCouponReceiptReader(input: CouponReceiptReadStore) {
 			try: work,
 			catch: () => 'unavailable-or-conflicting-evidence',
 		}).pipe(
-			Effect.catchAll((reason) =>
+			Effect.catch((reason) =>
 				Effect.succeed({ type: 'Unknown', reason } as const),
 			),
 		)

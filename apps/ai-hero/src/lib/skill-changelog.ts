@@ -29,6 +29,12 @@ export const SkillChangelogFieldsSchema = z.object({
 	kitBroadcastTemplateId: z.union([z.string(), z.number()]).nullish(),
 	kitBroadcastFromAddress: z.string().nullish(),
 	kitBroadcastExclusionTagIds: z.array(z.number()).nullish(),
+	drovrMessageId: z.string().nullish(),
+	drovrMessagePath: z.string().nullish(),
+	drovrMessageFile: z.string().nullish(),
+	drovrMessageValidation: z.enum(['valid', 'cataloged', 'refused']).nullish(),
+	drovrMessageReasons: z.array(z.string()).nullish(),
+	drovrMessagePreparedAt: z.string().nullish(),
 })
 
 export const SkillChangelogPostSchema = z.object({

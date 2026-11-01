@@ -1,4 +1,4 @@
-import { Effect, Either } from 'effect'
+import { Effect, Result } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
 import {
 	createBoundedJourneyReaders,
@@ -116,16 +116,16 @@ describe('bounded reader boundaries', () => {
 			const input = { now: new Date(intent.notAfter), limit: 10 }
 			const result =
 				kind === 'wakes'
-					? await Effect.runPromise(Effect.either(readers.wakes(input)))
-					: await Effect.runPromise(Effect.either(readers.intents(input)))
+					? await Effect.runPromise(Effect.result(readers.wakes(input)))
+					: await Effect.runPromise(Effect.result(readers.intents(input)))
 			expect(findCommittedStimulus).toHaveBeenCalledOnce()
 			expect(result).toEqual(
-				Either.left({ type: 'ReaderFailure', reason: 'ReadUnavailable' }),
+				Result.fail({ type: 'ReaderFailure', reason: 'ReadUnavailable' }),
 			)
 			expect(JSON.stringify(result)).not.toContain(
 				'synthetic-private-storage-detail',
 			)
-			expect(result).not.toHaveProperty('right')
+			expect(result).not.toHaveProperty('success')
 		},
 	)
 	it('holds wrong versions, identity, semantic keys, path, zone and time', () => {
@@ -193,18 +193,18 @@ describe('bounded reader boundaries', () => {
 		)
 		for (const limit of [0, 101, 1.5]) {
 			const result = await Effect.runPromise(
-				Effect.either(reader.source({ now: new Date(), limit })),
+				Effect.result(reader.source({ now: new Date(), limit })),
 			)
-			expect(Either.isLeft(result) && result.left.reason).toBe('InvalidPage')
+			expect(Result.isFailure(result) && result.failure.reason).toBe('InvalidPage')
 		}
 		for (const after of [
 			{ at: 'invalid', id: 'x' },
 			{ at: '2026-09-04T17:00:00.000Z', id: '' },
 		]) {
 			const result = await Effect.runPromise(
-				Effect.either(reader.source({ now: new Date(), limit: 1, after })),
+				Effect.result(reader.source({ now: new Date(), limit: 1, after })),
 			)
-			expect(Either.isLeft(result) && result.left.reason).toBe('InvalidPage')
+			expect(Result.isFailure(result) && result.failure.reason).toBe('InvalidPage')
 		}
 		expect(query.select).not.toHaveBeenCalled()
 		expect(

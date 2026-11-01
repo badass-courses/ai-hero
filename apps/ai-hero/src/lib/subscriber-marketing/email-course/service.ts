@@ -138,11 +138,11 @@ export function createAdvanceEmailCourse(
               yield* dependencies.parityReceiptSink.push(receipt);
             }
           }).pipe(
-            Effect.catchAllCause(() => Effect.void),
+            Effect.catchCause(() => Effect.void),
             Effect.as(committed),
           );
         }),
-        Effect.catchAll((error) =>
+        Effect.catch((error) =>
           error.type === "CourseRunVersionConflict" &&
           attempt + 1 < OPTIMISTIC_RETRY_LIMIT
             ? run(command, attempt + 1)

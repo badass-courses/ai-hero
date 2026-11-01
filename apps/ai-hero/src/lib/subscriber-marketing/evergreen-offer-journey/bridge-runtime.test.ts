@@ -201,7 +201,7 @@ describe("bounded bridge runtime", () => {
         idempotencyKey: "fixture-audience",
       },
     } as unknown as Awaited<
-      Effect.Effect.Success<
+      Effect.Success<
         ReturnType<BridgeRuntimeDependencies["readers"]["intents"]>
       >
     >["candidates"][number];
@@ -247,7 +247,7 @@ describe("bounded bridge runtime", () => {
       ...h.dependencies,
       control: () =>
         waiting
-          ? Effect.zipRight(Deferred.succeed(entered, undefined), Effect.never)
+          ? Effect.andThen(Deferred.succeed(entered, undefined), Effect.never)
           : Effect.succeed({ type: "Disabled" }),
     });
     const fiber = Effect.runFork(runtime.tick(request));
@@ -274,7 +274,7 @@ describe("bounded bridge runtime", () => {
           journeyId: deriveJourneyId(h.entry.entryFactId),
           idempotencyKey: "fixture-message",
         },
-      } as unknown as Effect.Effect.Success<
+      } as unknown as Effect.Success<
         ReturnType<BridgeRuntimeDependencies["readers"]["intents"]>
       >["candidates"][number];
       const execute = vi.fn(() => Effect.succeed(outcome));

@@ -112,8 +112,20 @@ jobs:
           src/scripts/held-exit
           src/lib/test-principals/
 
+      - name: Email countdown GIF
+        run: pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/lib/email-countdown "src/app/api/email/countdown.gif"
+
       - name: Workshop pricing actor contract
         run: pnpm --filter ai-hero exec vitest run -c vitest.config.ts "src/app/(content)/workshops/_components/workshop-pricing.mounted.test.tsx"
+
+      # Package: capability handlers and the MCP, HTTP and OpenAPI projections.
+      # App: the adapters behind its ports, /mcp, /api/learner and the
+      # learner:read narrowing at the device-code exchange.
+      - name: Learner agent package, adapters and routes
+        run: |
+          pnpm --filter @ai-hero/learner-agent build
+          pnpm --filter @ai-hero/learner-agent test
+          pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/lib/learner-agent src/app/mcp src/app/api/learner src/app/oauth/token
 
   pricing-e2e:
     # Real browser, real workshop CTAs and pricing actor; every API response is

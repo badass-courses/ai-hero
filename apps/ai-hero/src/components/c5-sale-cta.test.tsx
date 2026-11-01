@@ -1,8 +1,10 @@
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { C5SaleCta } from './c5-sale-cta'
+
+vi.mock('@/components/cld-image', () => ({ CldImage: () => null }))
 
 // Both team hubs use this shared card, including the skills MDX replacements.
 describe('C5 sale CTA destinations', () => {

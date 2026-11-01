@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { cache } from 'react'
+import { Children, cache, isValidElement } from 'react'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { unstable_rethrow } from 'next/navigation'
@@ -11,6 +11,7 @@ import {
 } from '@/app/admin/pages/_components/page-builder-mdx-components'
 import { CldImage, ThemeImage } from '@/components/cld-image'
 import { DictionaryHoverLink } from '@/components/dictionary/dictionary-hover-link'
+import { redrawForImage } from '@/components/mdx/diagrams'
 import { Heading } from '@/components/mdx/heading'
 import { AISummary, TrackLink } from '@/components/mdx/mdx-components'
 import { SubscriberCount } from '@/components/subscriber-count'
@@ -372,12 +373,29 @@ type MdxImageProps = React.ImgHTMLAttributes<HTMLImageElement> & {
 	height?: number | string
 }
 
+/** The redrawn drawing for a paragraph whose only content is its image. */
+function soleRedraw(children: React.ReactNode) {
+	const [only, ...rest] = Children.toArray(children).filter(
+		(child) => typeof child !== 'string' || child.trim() !== '',
+	)
+	if (
+		rest.length > 0 ||
+		!isValidElement<{ src?: unknown; alt?: unknown }>(only)
+	) {
+		return null
+	}
+	return redrawForImage(only.props.src, only.props.alt)
+}
+
 /**
  * Shared renderer for markdown `img` and the `<Image>` MDX component:
  * configured-cloud Cloudinary URLs go through CldImage (fixed size when
  * width/height are known, fill otherwise); anything else is a plain <img>.
  */
 function MdxImage(props: MdxImageProps) {
+	const redraw = redrawForImage(props.src, props.alt)
+	if (redraw) return redraw
+
 	const cloudMatch =
 		typeof props.src === 'string'
 			? props.src.match(/^https?:\/\/res\.cloudinary\.com\/([^/]+)\//)
@@ -567,9 +585,13 @@ async function compileMDXInternal(
 					// `cn` merges rather than replaces: remark-gfm tags checkbox
 					// lists with `contains-task-list`, and dropping it would put a
 					// bullet in front of every checkbox.
-					p: (props) => (
-						<p {...props} className={cn('ah-prose-p', props.className)} />
-					),
+					p: (props) => {
+						// A redrawn drawing is a figure, which a paragraph cannot hold,
+						// so the paragraph markdown wraps its image in gives way.
+						const redraw = soleRedraw(props.children)
+						if (redraw) return <>{redraw}</>
+						return <p {...props} className={cn('ah-prose-p', props.className)} />
+					},
 					strong: (props) => (
 						<strong
 							{...props}

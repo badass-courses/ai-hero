@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 
 import * as mysqlQueryClient from '@/db/mysql-query-client'
 import * as journeySchema from '@/db/evergreen-offer-journey-schema'
-import { Effect, Either } from 'effect'
+import { Effect, Result } from 'effect'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { drizzle } from 'drizzle-orm/mysql2'
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise'
@@ -403,19 +403,19 @@ integration('evergreen offer journey MySQL ledger', () => {
 			sourceReference: 'contact-event:other',
 		}
 		const lookup = await Effect.runPromise(
-			Effect.either(
+			Effect.result(
 				second.ledger.findCommittedStimulus(start.stimulus.stimulusId, altered),
 			),
 		)
-		expect(Either.isLeft(lookup) && lookup.left.type).toBe(
+		expect(Result.isFailure(lookup) && lookup.failure.type).toBe(
 			'JourneyDecodeFailure',
 		)
 		const replay = await Effect.runPromise(
-			Effect.either(
+			Effect.result(
 				second.ledger.commit({ ...start.commit, stimulus: altered }),
 			),
 		)
-		expect(Either.isLeft(replay) && replay.left.type).toBe(
+		expect(Result.isFailure(replay) && replay.failure.type).toBe(
 			'JourneyDecodeFailure',
 		)
 	})
@@ -440,12 +440,12 @@ integration('evergreen offer journey MySQL ledger', () => {
 		)
 		const outcomes = await Promise.all(
 			[first.ledger.commit(a.commit), second.ledger.commit(b.commit)].map(
-				(effect) => Effect.runPromise(Effect.either(effect)),
+				(effect) => Effect.runPromise(Effect.result(effect)),
 			),
 		)
-		expect(outcomes.filter(Either.isRight)).toHaveLength(1)
+		expect(outcomes.filter(Result.isSuccess)).toHaveLength(1)
 		expect(
-			outcomes.filter(Either.isLeft).map((result) => result.left.type),
+			outcomes.filter(Result.isFailure).map((result) => result.failure.type),
 		).toEqual(['JourneyConstraintViolation'])
 		expect(await countRows(adminPool, 'AI_EvergreenOfferJourneyCommit')).toBe(1)
 		expect(await countRows(adminPool, 'AI_EvergreenOfferJourneyWake')).toBe(
@@ -484,9 +484,9 @@ integration('evergreen offer journey MySQL ledger', () => {
 			entryFactId: value(parseEntryFactId('legacy-other')),
 		})
 		const result = await Effect.runPromise(
-			Effect.either(first.ledger.commit(next.commit)),
+			Effect.result(first.ledger.commit(next.commit)),
 		)
-		expect(Either.isLeft(result) && result.left.type).toBe(
+		expect(Result.isFailure(result) && result.failure.type).toBe(
 			'JourneyConstraintViolation',
 		)
 	})
@@ -617,7 +617,7 @@ integration('evergreen offer journey MySQL ledger', () => {
 			{ idempotencyKey: 'wrong-intent' },
 		]) {
 			const refused = await Effect.runPromise(
-				Effect.either(
+				Effect.result(
 					first.attempts.settle({
 						...identity,
 						...mismatch,
@@ -626,15 +626,15 @@ integration('evergreen offer journey MySQL ledger', () => {
 					}),
 				),
 			)
-			expect(Either.isLeft(refused) && refused.left.type).toBe('AttemptRefused')
+			expect(Result.isFailure(refused) && refused.failure.type).toBe('AttemptRefused')
 		}
 		const expiredSettlement = await Effect.runPromise(
-			Effect.either(
+			Effect.result(
 				first.attempts.settle({ ...identity, outcome, now: leaseExpiresAt }),
 			),
 		)
 		expect(
-			Either.isLeft(expiredSettlement) && expiredSettlement.left.type,
+			Result.isFailure(expiredSettlement) && expiredSettlement.failure.type,
 		).toBe('AttemptRefused')
 		const recovery = await Effect.runPromise(
 			second.attempts.recovery({ now: leaseExpiresAt, limit: 1 }),
@@ -721,7 +721,7 @@ integration('evergreen offer journey MySQL ledger', () => {
 				const results = await Promise.all(
 					[0, 1].map((offset) =>
 						Effect.runPromise(
-							Effect.either(
+							Effect.result(
 								(offset === 0 ? first : second).attempts.settle({
 									...identity,
 									now: new Date(now.getTime() + 2),
@@ -734,12 +734,12 @@ integration('evergreen offer journey MySQL ledger', () => {
 						),
 					),
 				)
-				expect(results.filter(Either.isRight)).toHaveLength(1)
-				expect(results.filter(Either.isLeft)).toHaveLength(1)
-				const winner = results.find(Either.isRight)
-				if (!winner || winner.right.outcome?.type !== 'KnownNotApplied')
+				expect(results.filter(Result.isSuccess)).toHaveLength(1)
+				expect(results.filter(Result.isFailure)).toHaveLength(1)
+				const winner = results.find(Result.isSuccess)
+				if (!winner || winner.success.outcome?.type !== 'KnownNotApplied')
 					throw new Error('Expected recorded refusal')
-				outcome = winner.right.outcome
+				outcome = winner.success.outcome
 				expect(outcome.observedAt).toBeDefined()
 			}
 			const [before] = await adminPool.query<RowDataPacket[]>(
@@ -823,7 +823,7 @@ integration('evergreen offer journey MySQL ledger', () => {
 				),
 			).toEqual(settled)
 			const mismatch = await Effect.runPromise(
-				Effect.either(
+				Effect.result(
 					second.attempts.settle({
 						...settlement,
 						outcome: {
@@ -834,7 +834,7 @@ integration('evergreen offer journey MySQL ledger', () => {
 					}),
 				),
 			)
-			expect(Either.isLeft(mismatch) && mismatch.left.type).toBe(
+			expect(Result.isFailure(mismatch) && mismatch.failure.type).toBe(
 				'AttemptRefused',
 			)
 			expect(await Effect.runPromise(second.attempts.claim(request))).toEqual({
@@ -891,19 +891,19 @@ integration('evergreen offer journey MySQL ledger', () => {
 				first.attempts.settle({ ...identity, now, outcome }),
 			)
 			const wrongCase = await Effect.runPromise(
-				Effect.either(
+				Effect.result(
 					second.attempts.claim({
 						...request,
 						idempotencyKey: intent.idempotencyKey.toUpperCase(),
 					}),
 				),
 			)
-			expect(Either.isLeft(wrongCase) && wrongCase.left.type).toBe(
+			expect(Result.isFailure(wrongCase) && wrongCase.failure.type).toBe(
 				'AttemptRefused',
 			)
 			if (accepted) {
 				const receiptCase = await Effect.runPromise(
-					Effect.either(
+					Effect.result(
 						second.attempts.settle({
 							...identity,
 							now,
@@ -915,7 +915,7 @@ integration('evergreen offer journey MySQL ledger', () => {
 						}),
 					),
 				)
-				expect(Either.isLeft(receiptCase)).toBe(true)
+				expect(Result.isFailure(receiptCase)).toBe(true)
 			}
 			let aggregate = wake.decision.next
 			let observedAt = now
@@ -1161,7 +1161,7 @@ integration('evergreen offer journey MySQL ledger', () => {
 			throw new Error('Expected message')
 		const now = new Date(intent.notAfter)
 		const result = await Effect.runPromise(
-			Effect.either(
+			Effect.result(
 				first.attempts.claim({
 					idempotencyKey: intent.idempotencyKey,
 					journeyId: intent.journeyId,
@@ -1170,14 +1170,14 @@ integration('evergreen offer journey MySQL ledger', () => {
 				}),
 			),
 		)
-		expect(Either.isLeft(result) && result.left.type).toBe('AttemptRefused')
+		expect(Result.isFailure(result) && result.failure.type).toBe('AttemptRefused')
 		expect(await countRows(adminPool, 'AI_EvergreenOfferJourneyAttempt')).toBe(
 			0,
 		)
 		const recovery = await Effect.runPromise(
-			Effect.either(first.attempts.recovery({ now, limit: 101 })),
+			Effect.result(first.attempts.recovery({ now, limit: 101 })),
 		)
-		expect(Either.isLeft(recovery)).toBe(true)
+		expect(Result.isFailure(recovery)).toBe(true)
 	})
 
 	it.each(deliveryScenarios)(
@@ -1395,11 +1395,11 @@ integration('evergreen offer journey MySQL ledger', () => {
 					? start.stimulus.stimulusId
 					: next.stimulus.stimulusId
 			const result = await Effect.runPromise(
-				Effect.either(second.ledger.findCommittedStimulus(stimulusId)),
+				Effect.result(second.ledger.findCommittedStimulus(stimulusId)),
 			)
-			expect(Either.isLeft(result)).toBe(true)
-			if (Either.isLeft(result)) {
-				expect(result.left.type).toBe('JourneyDecodeFailure')
+			expect(Result.isFailure(result)).toBe(true)
+			if (Result.isFailure(result)) {
+				expect(result.failure.type).toBe('JourneyDecodeFailure')
 			}
 		},
 	)
@@ -1418,13 +1418,13 @@ integration('evergreen offer journey MySQL ledger', () => {
 			'stimulus_mysql_version_wake_2',
 		)
 		const results = await Promise.all([
-			Effect.runPromise(Effect.either(first.ledger.commit(firstWake))),
-			Effect.runPromise(Effect.either(second.ledger.commit(secondWake))),
+			Effect.runPromise(Effect.result(first.ledger.commit(firstWake))),
+			Effect.runPromise(Effect.result(second.ledger.commit(secondWake))),
 		])
-		expect(results.filter(Either.isRight)).toHaveLength(1)
-		const failure = results.find(Either.isLeft)
+		expect(results.filter(Result.isSuccess)).toHaveLength(1)
+		const failure = results.find(Result.isFailure)
 		expect(
-			failure && Either.isLeft(failure) ? failure.left : null,
+			failure && Result.isFailure(failure) ? failure.failure : null,
 		).toMatchObject({
 			type: 'JourneyVersionConflict',
 		})
@@ -1491,9 +1491,9 @@ integration('evergreen offer journey MySQL ledger', () => {
 			],
 		)
 		const result = await Effect.runPromise(
-			Effect.either(first.ledger.commit(next)),
+			Effect.result(first.ledger.commit(next)),
 		)
-		expect(Either.isLeft(result)).toBe(true)
+		expect(Result.isFailure(result)).toBe(true)
 		expect(await countRows(adminPool, 'AI_EvergreenOfferJourneyCommit')).toBe(1)
 	})
 
@@ -1527,9 +1527,9 @@ integration('evergreen offer journey MySQL ledger', () => {
 			],
 		)
 		const result = await Effect.runPromise(
-			Effect.either(first.ledger.commit(delivery)),
+			Effect.result(first.ledger.commit(delivery)),
 		)
-		expect(Either.isLeft(result)).toBe(true)
+		expect(Result.isFailure(result)).toBe(true)
 		expect(await countRows(adminPool, 'AI_EvergreenOfferJourneyCommit')).toBe(2)
 	})
 
@@ -1562,11 +1562,11 @@ integration('evergreen offer journey MySQL ledger', () => {
 		)
 
 		const result = await Effect.runPromise(
-			Effect.either(first.ledger.commit(next)),
+			Effect.result(first.ledger.commit(next)),
 		)
-		expect(Either.isLeft(result)).toBe(true)
-		if (Either.isLeft(result)) {
-			expect(result.left.type).toBe('JourneyDecodeFailure')
+		expect(Result.isFailure(result)).toBe(true)
+		if (Result.isFailure(result)) {
+			expect(result.failure.type).toBe('JourneyDecodeFailure')
 		}
 		expect(await countRows(adminPool, 'AI_EvergreenOfferJourneyCommit')).toBe(1)
 		expect(await wakeStatus(adminPool, wakeId)).toBe('Pending')
@@ -1599,11 +1599,11 @@ integration('evergreen offer journey MySQL ledger', () => {
 	it('rolls back the commit claim when a later wake insert fails', async () => {
 		await adminPool.query('DROP TABLE `AI_EvergreenOfferJourneyWake`')
 		const result = await Effect.runPromise(
-			Effect.either(
+			Effect.result(
 				first.ledger.commit(entry('stimulus_mysql_rollback').commit),
 			),
 		)
-		expect(Either.isLeft(result)).toBe(true)
+		expect(Result.isFailure(result)).toBe(true)
 		expect(await countRows(adminPool, 'AI_EvergreenOfferJourneyCommit')).toBe(0)
 		expect(await countRows(adminPool, 'AI_EvergreenOfferJourneyIntent')).toBe(0)
 		await adminPool.query(migration)
@@ -1629,11 +1629,11 @@ integration('evergreen offer journey MySQL ledger', () => {
 			[start.stimulus.stimulusId],
 		)
 		const result = await Effect.runPromise(
-			Effect.either(second.ledger.commit(next)),
+			Effect.result(second.ledger.commit(next)),
 		)
-		expect(Either.isLeft(result)).toBe(true)
-		if (Either.isLeft(result)) {
-			expect(result.left.type).toBe('JourneyDecodeFailure')
+		expect(Result.isFailure(result)).toBe(true)
+		if (Result.isFailure(result)) {
+			expect(result.failure.type).toBe('JourneyDecodeFailure')
 		}
 		expect(await countRows(adminPool, 'AI_EvergreenOfferJourneyCommit')).toBe(1)
 	})
@@ -1646,13 +1646,13 @@ integration('evergreen offer journey MySQL ledger', () => {
 			[start.stimulus.stimulusId],
 		)
 		const result = await Effect.runPromise(
-			Effect.either(
+			Effect.result(
 				second.ledger.findCommittedStimulus(start.stimulus.stimulusId),
 			),
 		)
-		expect(Either.isLeft(result)).toBe(true)
-		if (Either.isLeft(result)) {
-			expect(result.left.type).toBe('JourneyDecodeFailure')
+		expect(Result.isFailure(result)).toBe(true)
+		if (Result.isFailure(result)) {
+			expect(result.failure.type).toBe('JourneyDecodeFailure')
 		}
 	})
 
@@ -1672,13 +1672,13 @@ integration('evergreen offer journey MySQL ledger', () => {
 			[start.stimulus.stimulusId],
 		)
 		const result = await Effect.runPromise(
-			Effect.either(
+			Effect.result(
 				second.ledger.findCommittedStimulus(start.stimulus.stimulusId),
 			),
 		)
-		expect(Either.isLeft(result)).toBe(true)
-		if (Either.isLeft(result)) {
-			expect(result.left.type).toBe('JourneyDecodeFailure')
+		expect(Result.isFailure(result)).toBe(true)
+		if (Result.isFailure(result)) {
+			expect(result.failure.type).toBe('JourneyDecodeFailure')
 		}
 	})
 
@@ -1690,13 +1690,13 @@ integration('evergreen offer journey MySQL ledger', () => {
 			[start.stimulus.stimulusId],
 		)
 		const result = await Effect.runPromise(
-			Effect.either(
+			Effect.result(
 				second.ledger.findCommittedStimulus(start.stimulus.stimulusId),
 			),
 		)
-		expect(Either.isLeft(result)).toBe(true)
-		if (Either.isLeft(result)) {
-			expect(result.left.type).toBe('JourneyDecodeFailure')
+		expect(Result.isFailure(result)).toBe(true)
+		if (Result.isFailure(result)) {
+			expect(result.failure.type).toBe('JourneyDecodeFailure')
 		}
 	})
 })

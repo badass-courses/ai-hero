@@ -4,7 +4,7 @@ import {
 	createYouTubeWatchUrl,
 	formatOfficeHoursUtcTimeRange,
 	getOfficeHoursCalendarTitle,
-	groupOfficeHoursSessionsByUtcDate,
+	groupOfficeHoursSessionsByDate,
 	isOfficeHoursSessionLive,
 	isOfficeHoursSessionPast,
 } from '@/lib/cohort-office-hours'
@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest'
 
 describe('cohort office hours helpers', () => {
 	it('groups sessions by UTC date and keeps them sorted', () => {
-		const groups = groupOfficeHoursSessionsByUtcDate([
+		const groups = groupOfficeHoursSessionsByDate([
 			{
 				title: 'Session 2',
 				startsAt: '2026-04-03T15:30:00.000Z',
@@ -58,7 +58,7 @@ describe('cohort office hours helpers', () => {
 					youtubeWatchUrl: createYouTubeWatchUrl('synthetic-broadcast'),
 				})),
 		)
-		const groups = groupOfficeHoursSessionsByUtcDate(sessions.reverse())
+		const groups = groupOfficeHoursSessionsByDate(sessions.reverse())
 		expect(
 			groups.map(({ dateKey, label, sessions }) => ({
 				dateKey,
@@ -86,12 +86,30 @@ describe('cohort office hours helpers', () => {
 			youtubeWatchUrl: createYouTubeWatchUrl('synthetic-broadcast'),
 		}))
 		expect(
-			groupOfficeHoursSessionsByUtcDate(sessions).map(({ label }) => label),
+			groupOfficeHoursSessionsByDate(sessions).map(({ label }) => label),
 		).toEqual(['Opening Tuesday', 'Wednesday', 'Thursday', 'Final Saturday'])
 		expect(
-			groupOfficeHoursSessionsByUtcDate(sessions.slice(0, 1))[0]?.label,
+			groupOfficeHoursSessionsByDate(sessions.slice(0, 1))[0]?.label,
 		).toBe('Opening Tuesday')
-		expect(groupOfficeHoursSessionsByUtcDate([])).toEqual([])
+		expect(groupOfficeHoursSessionsByDate([])).toEqual([])
+	})
+
+	it('groups by the calendar day of the given zone', () => {
+		const session = (startsAt: string) => ({
+			title: 'Synthetic office hours',
+			startsAt,
+			endsAt: startsAt,
+			youtubeBroadcastId: startsAt,
+			youtubeWatchUrl: createYouTubeWatchUrl('synthetic-broadcast'),
+		})
+		const groups = groupOfficeHoursSessionsByDate(
+			[session('2026-11-10T02:00:00.000Z'), session('2026-11-10T23:00:00.000Z')],
+			'America/New_York',
+		)
+		expect(groups.map(({ dateKey, label }) => [dateKey, label])).toEqual([
+			['2026-11-09', 'Opening Monday'],
+			['2026-11-10', 'Final Tuesday'],
+		])
 	})
 
 	it('formats UTC time ranges clearly', () => {

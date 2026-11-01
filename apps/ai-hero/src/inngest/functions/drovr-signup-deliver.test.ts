@@ -88,6 +88,20 @@ describe('drovr-signup-deliver (owns the retry of POST /signups)', () => {
 		)
 	})
 
+	it('an active stop stays stopped: drovr answers suppressed, ai-hero records it once and sends nothing else', async () => {
+		const fetch = vi.fn(async () => Response.json({ status: 'suppressed' }))
+		vi.stubGlobal('fetch', fetch)
+		await expect(handler({ event, step })).resolves.toEqual({
+			status: 'suppressed',
+		})
+		expect(fetch).toHaveBeenCalledTimes(1)
+		expect(fetch).toHaveBeenCalledWith(
+			'https://drovr.test/signups',
+			expect.anything(),
+		)
+		expect(mocks.capture).not.toHaveBeenCalled()
+	})
+
 	it('rethrows a retryable failure so Inngest retries', async () => {
 		vi.stubGlobal(
 			'fetch',

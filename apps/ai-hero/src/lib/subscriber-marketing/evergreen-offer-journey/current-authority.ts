@@ -135,7 +135,7 @@ export function createCurrentOfferAuthority(args: {
   return {
     currentFacts: (query) =>
       Effect.tryPromise({
-        try: async () => {
+        try: async (): Promise<EligibilityFacts> => {
           const startedAt = instant(args.now());
           if (
             !args.automationId ||

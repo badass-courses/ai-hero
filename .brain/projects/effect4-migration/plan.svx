@@ -1,0 +1,152 @@
+---
+title: "Effect 3 to 4 migration plan for apps/ai-hero"
+type: "plan"
+status: "active"
+created_at: "2026-10-29"
+privacy: "private"
+---
+
+# Effect 3 → 4 migration plan for `apps/ai-hero`
+
+Source: the AI Hero launch desk's Effect 4 migration brief (2026-10-29).
+Researched 2026-10-29 at main `902897a3`, against the Effect source at tag `effect@4.0.6` (packages/effect `4.0.6`, the stack's exact Effect pin).
+
+## Verdict
+
+- **Slices work. No big bang is needed.** The 89 Effect files form 12 closed import groups. TypeScript refuses any v3/v4 mix at a group boundary, so each slice proves its own edges.
+- **Transition vehicle: keep `effect` on v3 and add a temporary `effect4: npm:effect@4.0.6` alias.** Migrated files import `effect4`. The last slice flips `effect` to `4.0.6`, renames `effect4` → `effect` and drops the alias. (This is the reverse of the `effect3` alias the brief offered. The reasons are below.)
+- **The API surface is small.** Nine modules: `Effect`, `Either`, `Data`, `Layer`, `Context`, `Console`, `Fiber`, `Exit`, `Deferred`. No `Schema`, `Runtime`, `Option`, `Stream` or `@effect/*` anywhere. About 600 call sites need a rename. One runtime behaviour changes and needs review (the `runPromise`/`runSync` rejection value), listed under "Behaviour deltas".
+- **Slice 1 (operator scripts, 12 files) is done** on `worker/effect4` (commit `e9337471`): typecheck green, held-exit tests 127/127, full suite at parity with main.
+
+## Inventory (corrects the brief)
+
+The brief counted 67 files. A grep for `from 'effect'` under `apps/ai-hero/{src,scripts}` finds **89** (the difference is mostly tests). The import graph (direct edges between Effect files) gives these closed groups:
+
+| # | Group | Files | Rename-sensitive tokens* | Money? |
+|---|---|---|---|---|
+| A | Evergreen offer journey: `evergreen-offer-journey/**`, `drovr-evergreen-{claim,coupon}*`, `evergreen-offer-status.fixtures`, `test-principals/test-principal-coupon`, `server/evergreen-pilot*`, `inngest/functions/evergreen-bridge-runtime` | 57 | 447 | **yes**: coupon executor, claim, coupon authority |
+| B | Email course: `email-course/**`, `email-course-drizzle-ledger*`, `email-course-drovr-parity-receipt-sink*` | 10 | 25 | no |
+| C | Held-exit scripts: `scripts/held-exit-{kit-scan,recover}.ts` + 5 tests in `src/scripts/` | 7 | 13 | no |
+| D | Front desk + team invoice: `app/api/front-desk/{hooks,pricing-facts,pricing-facts-source,pricing-facts.test}.ts`, `lib/team-invoice/team-invoice-server.ts` | 5 | 30 | **yes**: `team-invoice-server.buyer()` runs a v3 program on `PricingFactsSource` and feeds `existingSeats` into team invoice pricing |
+| E | Contact integrity: lib, mysql test, `src/scripts/contact-integrity-maintenance.ts` | 3 | 0 | no |
+| F–G | `inngest/functions/newsletter-{provider-pause,sender-config}.ts` (Kit shadow-newsletter send path) | 1 + 1 | 8 | no, but a live Kit path |
+| H–L | `src/scripts/cohort-004-{body-content,shell,video-upload}-sync.ts`, `scripts/backfill-cohort-004-purchases.mts`, `scripts/backfill-crash-course-ppp-alumni-entitlements.ts` | 5 × 1 | 0 | one-off backfills that already ran |
+
+\* Counts `Effect.either|catchAll|catchAllCause|timeoutFail|zipRight`, `Either.*`, `Context.GenericTag|Tag`, `'Left'|'Right'` and `.left|.right`.
+
+**Front desk is not a closed island.** The brief named "scripts and front-desk" as the low-risk first slice. But `team-invoice-server.ts:155-179` provides `pricingFactsSourceLayer` and yields `PricingFactsSource` in a v3 `Effect.gen`, so D moves as one unit and carries the money proof. Slice 1 is therefore the scripts only.
+
+Cross-package check: `@ai-hero/front-desk-support` (bundles `effect@4.0.2`) ships `.d.ts` files with no `effect` import, so D crosses no Effect types. `@ai-hero/course-sync-schema` (`4.0.0-beta.84`) is consumed only by course-sync files that don't import `effect`.
+
+## API map: v3 → v4
+
+Citations: `MIG` = `migration/v3-to-v4.md` and `SRC` = `packages/effect/src/`, both at the git tag `effect@4.0.6` of `Effect-TS/effect`. The npm tarball's `src/` carries expanded docs, so its line numbers differ. Usage counts are call sites in the 89 files.
+
+| v3 (uses) | v4 | Citation | Notes |
+|---|---|---|---|
+| `import … from 'effect'` | same barrel; `Either` is gone and becomes `Result` | MIG:22 `effect/Either -> effect/Result`; SRC `index.ts:621` | During the transition, import from `'effect4'` |
+| `Effect.runPromise` (707) | `Effect.runPromise` | SRC `Effect.ts:9402` | **Rejection value changes** (see deltas). The `{ signal }` option is kept (`Effect.ts:9179`) |
+| `Effect.either` (124) | `Effect.result` | MIG:10017; SRC `Effect.ts:2365` | Returns `Result<A, E>`. Same defect rule as `catch` (delta 2) |
+| `Either.isLeft` (109) / `isRight` (35) | `Result.isFailure` / `Result.isSuccess` | MIG:10405, 10407; SRC `Result.ts:583, 616` | |
+| `Either.left` (16) / `right` (12) | `Result.fail` / `Result.succeed` | MIG:10409, 10419; SRC `Result.ts:316, 288` | |
+| `Either.Either<A, E>` (3) | `Result.Result<A, E>` | MIG:10355 | Same parameter order |
+| `.left` (94) / `.right` (71) on a result | `.failure` / `.success` | SRC `Result.ts:100-102` | `_tag` becomes `'Failure'` / `'Success'`. Literal checks such as `x._tag === 'Left'` (6 in non-test source, more in tests) need renaming; TS2367 flags them |
+| `Effect.catchAll` (9) | `Effect.catch` | MIG:9963; SRC `Effect.ts:2760, 2802` | Defect rule documented, but unchanged from 3.21.3 (delta 2) |
+| `Effect.catchAllCause` (6) | `Effect.catchCause` | MIG:9965; SRC `Effect.ts:3398` | |
+| `Effect.timeoutFail({ duration, onTimeout })` (2) | `Effect.timeoutOrElse({ duration, orElse: () => Effect.fail(onTimeout()) })` | MIG:10231; SRC `Effect.ts:4856` | Group A: `kit-delivery.ts:135`, `kit-communication-transport.ts:199` |
+| `Effect.timeout` (1) | `Effect.timeout` | SRC `Effect.ts:4777` | Fails with `Cause.TimeoutError` (`Cause.ts:1445`), not `TimeoutException`. `message-preparation-fields.ts:58` only rethrows it through `runPromise` |
+| `Effect.zipRight` (1) | `Effect.andThen` | MIG:10327; SRC `Effect.ts:2224` | `bridge-runtime.test.ts:250` |
+| `Context.GenericTag<S>(id)` (9) | `Context.Service<S>(id)` | MIG:9591; SRC `Context.ts:209` | All in `email-course/ports.ts` |
+| `class X extends Context.Tag(id)<X, S>() {}` (1) | `class X extends Context.Service<X, S>()(id) {}` | MIG:9601 | `pricing-facts.ts:182`. Services stay yieldable (`migration/yieldable.md`) |
+| `Layer.succeed(Tag, impl)` (2) | unchanged | SRC `Layer.ts:827` | |
+| `Data.TaggedError(tag)<A>` (5) | unchanged | SRC `Data.ts:769`, `internal/core.ts:686` | Still an `Error` subclass that assigns args, including `message` and `cause` |
+| `Effect.tryPromise({ try, catch })` (28) | unchanged | SRC `Effect.ts:1008` | The callback-only form fails with `Cause.UnknownError`, not `UnknownException`. One site uses it (`bridge-runtime.ts:299`), and its error ends at a `catchAllCause` fence |
+| `Effect.try({ try, catch })` (5) | unchanged | MIG:10243 | |
+| `Effect.mapError` (13) | unchanged | MIG:10119 | |
+| `gen` `succeed` `fail` `sync` `suspend` `promise` `map` `flatMap` `tap` `as` `void` `die` `never` `all` `forEach` `acquireUseRelease` `onInterrupt` `provide` `runFork` `runSync` `runPromiseExit` | unchanged names | SRC `Effect.ts` 1497, 1041, 1574, 1215, 1171, 925, 2522, 2105, 2293, 2558, 1217/1226, 1707, 1313, 507, 798, 6996, 7659, 6142, 9216, 9587, 9479 | `Effect.all(…, { mode: 'either' })` would become `mode: 'result'` (MIG `Effect.All.ExtractMode`), but no call site uses it |
+| `Console.log` (6) | unchanged | SRC `Console.ts:550` | |
+| `Fiber.interrupt` / `Exit.isFailure` | unchanged | SRC `Fiber.ts:387`, `Exit.ts:435` | |
+| `Deferred.make` / `succeed` / `await` | unchanged | SRC `Deferred.ts:178, 806, 180/231` | Deferred is no longer an Effect subtype (MIG:9735). Always call `Deferred.await` |
+
+### No direct equivalent, and how to handle it
+
+- **Yielding an `Either` or `Option` inside `Effect.gen`.** v4 `Result` and `Option` are not yieldable (`migration/yieldable.md`). Wrap them with `Effect.fromResult` (SRC `Effect.ts:1905`) or `Effect.fromOption`. tsc rejects every such site (probe below), so none can slip through silently.
+- **`Runtime.FiberFailure`** was removed (MIG:13672). Nothing imports it. Code that inspected a `runPromise` rejection instead sees the raw error (next section).
+- **`Either` as a standalone module** no longer exists. `Result` is its replacement, with the same data-first and pipeable shapes.
+
+## Behaviour deltas to review per slice
+
+1. **`runPromise` rejects with the raw error.** v3 rejected with a `FiberFailure` wrapper. v4 rejects with `Cause.squash(cause)` (`SRC internal/effect.ts:5822-5824`). Review any `await runPromise(…)` in a `try/catch` that branches on the caught value (`instanceof`, `_tag`, `.message`). Slice 1 only reads `error.message` or `String(error)`, and both give the same text. Only `cohort-004-video-upload-sync.ts` logs the whole object, and it now prints the raw error. Group A's `kit-communication-transport.ts` already uses `Effect.either` and throws `result.left` itself, so it is unaffected.
+2. **Typed recovery skips a cause that also contains a defect, in both versions.** MIG:9963 documents the v4 rule for `Effect.catch`: if the cause has any `Die`, the typed errors become defects and the cause passes on. v4 `Effect.result` follows the same rule, because both call `findRecoverableError` (SRC `internal/effect.ts:198`, used by `catch_` at 2721 and `matchEager`/`result`). This is **not a change from v3.21.3**. There, `catchAll` and `either` both go through `matchEffect` (`effect@3.21.3` `src/internal/core.ts`), which checks `defects(cause)` first and returns `failCause(electFailures(cause))`. In both versions an interruption next to a typed error does not block recovery. Wherever the code uses `catchCause`/`catchAllCause` as an outer fence (held-exit, bridge-runtime), it still sees the whole cause. (An earlier draft of this plan called this a behaviour change. It isn't one.)
+3. **Nested `Effect.provide` reuses layers a parent already built** (`migration/layer-memoization.md`). No app code nests `provide`: group D provides one layer per program, and group A doesn't call `Effect.provide` at all. Recheck if a slice adds one.
+4. **Fibers keep the process alive** (`migration/fiber-keep-alive.md`). A script whose fiber waits forever now hangs where v3 would exit. Slice 1 scripts end with `process.exit` or complete normally.
+5. **Error class names:** `UnknownException` becomes `Cause.UnknownError` and `TimeoutException` becomes `Cause.TimeoutError`. Grep finds no code that matches on either name.
+6. **A `Result` is not an `Effect`** (found in slice 5). A v3 `Either` was yieldable in `Effect.gen`, so `yield* either` failed with the left value. A v4 `Result` only iterates inside `Result.gen`, so tsc rejects `yield* result` in `Effect.gen`. Wrap it in `Effect.fromResult(result)`, which fails with the failure and succeeds with the success, the same semantics. Only a test fake in group A did this.
+7. **`tryPromise` no longer types the `try` callback from the expected return type** (found in slice 5). v4 `tryPromise` is overloaded, so string literals in an object returned from `try` widen to `string` and tsc rejects the result against a literal union. Annotate the callback (`async (): Promise<T> => …`). It's a type-only fix. Only `current-authority.ts` needed it.
+
+## Big bang or transition
+
+**Is a big bang feasible?** Technically yes. It means about 600 mechanical renames, and tsc catches nearly all of them. It's still the wrong move: one PR would mix 57 money-adjacent journey files, the front-desk/team-invoice pricing read and the live Kit newsletter path. It couldn't merge until every Stripe sandbox proof passed, and it would conflict with every parallel lane touching `subscriber-marketing`.
+
+**Is a transition safe?** Yes. pnpm installs `effect@3.21.3` and `effect@4.0.6` side by side, and the alias adds 8 lockfile lines with no new transitive packages. A tsc probe in this clone (since deleted) produced these three errors:
+
+```
+E4.runPromise(E3.succeed(1))                    → TS2739 (v3 Effect is not a v4 Effect)
+E4.gen(function* () { yield* Either.right(1) }) → TS2345
+E4.gen(function* () { yield* E3.succeed(1) })   → TS2345
+```
+
+So a half-migrated boundary can't typecheck. The v4 package self-imports `effect/*` only in `Runtime` and `cluster/SingleRunner`, and Node, TS and Vite resolve those from the package's real path (`.pnpm/effect@4.0.6/node_modules/effect`). The alias can't leak them into v3.
+
+**Why `effect4` and not `effect3`:**
+
+- **Smaller slices.** With an `effect3` alias, PR 1 would also rewrite the import line of every unmigrated file (about 77, including the money files) to `'effect3'`. With `effect4`, each PR touches only its own slice.
+- **Peers stay put.** `@hookform/resolvers` (optional peer `effect`) and through it `@coursebuilder/ui`, `commerce-next` and `survey` peer-resolve the app's `effect@3.21.3` today. Flipping `effect` early re-resolves those peers in the first PR. With `effect4`, that churn waits for the final flip, when nothing still needs v3.
+- **The cost:** the final flip renames `'effect4'` → `'effect'` in all 89 files. That's one sed. tsc and the lockfile prove it, since both names resolve to the same `effect@4.0.6` tarball.
+
+**Why not per-module packages (like `course-sync-schema`) as the vehicle:** extracting a package means moving files and wiring builds, which is a structural change. The guardrails say a migration PR changes APIs only. Package extraction belongs to the rat-stack direction below, done after the code is on v4.
+
+## Slice order
+
+Each slice migrates one closed group, with the same recipe: change the import to `'effect4'`, apply the renames from the map, run tsc, run the group's tests, and review the deltas. Assertions change only for API renames (`'Left'/left` → `'Failure'/failure` and so on).
+
+| Slice | Group | Tests | Proof before merge |
+|---|---|---|---|
+| **1 ✅** | C + H–L: operator scripts (12 files) + the `effect4` alias | `vitest src/scripts/held-exit*` (127). CI doesn't run these, so it's a local proof | typecheck green; full suite at parity with main (3 pre-existing failures in `agent-discovery` and `skills-hero` fail on `902897a3` too); the `.mts` backfill, outside the tsconfig include, typechecked separately (same 4 pre-existing non-Effect errors before and after) |
+| 2 | E + F + G: contact integrity, newsletter sender config and provider pause | contact-integrity unit + `*.mysql.test.ts`; newsletter tests | CI `evergreen-journey-mysql` workflow for the mysql test. F and G sit on the shadow-newsletter send path: diff review for zero logic change, and no Kit calls in testing |
+| 3 | B: email course | `email-course/*.test.ts`, `email-course-*.test.ts`, `email-course-drizzle-ledger.mysql.test.ts` | CI mysql workflow (its paths include `email-course/**`) |
+| 4 | D: front desk + team invoice | `vitest src/app/api/front-desk/` (CI already runs it), `lib/team-invoice/*.test.ts` and its `*.sandbox*` tests | **Stripe sandbox proof** per `apps/ai-hero/AGENTS.md` "Stripe and commerce testing": a local app on an `rk_test_` key, a team invoice for an `@example.test` buyer with existing seats, and the invoice total and `existingSeats` read back. Never on a Vercel preview |
+| 5 | A: evergreen offer journey (57 files) | every `evergreen-offer-journey/**` test plus its mysql tests, `drovr-evergreen-*.test.ts`, `evergreen-pilot.mysql.test.ts` | CI mysql workflow, plus the **Stripe sandbox proof** for the coupon executor and drovr claim/coupon: mint an evergreen coupon in the sandbox, apply it at checkout, and read back the coupon receipt and redemption. This is the biggest slice. If review needs it, split it at `ports.ts` with a temporary v4 port wrapper, but expect one PR |
+| 6 | Flip | full suite, typecheck, `next build` | `effect` → `4.0.6` exact; sed `'effect4'` → `'effect'`; drop the alias. Lockfile diff shows only the peer re-resolution. In the same PR or straight after, bump `course-sync-schema` (`4.0.0-beta.84`) and `front-desk-support` (`4.0.2`) to `4.0.6`, because mixed 4.0.x versions in one repo clash in typecheck |
+
+All slices happen during the launch window, so keep each PR small, revertible on its own, and released with no flag. Reverting a slice restores v3 for that group alone.
+
+## Rat-stack direction (ranked)
+
+Rat-stack shape: a **contract** is the Schema-typed input and output, a **capability** is one named action with one handler, and **projections** are the CLI, HTTP and MCP surfaces generated from them. Ports stay in core and adapters stay outside (ratstack.sh `llms.txt`, "One capability, every surface"; "hexagonal architecture").
+
+1. **Front-desk pricing facts → contract + capability in `packages/front-desk-support`.** It already has the shape: a port (`PricingFactsSource`), pure fact functions (`legendFact`, `alumniFact`, `existingSeatsFact`, `creditFact`) and one program (`buyerPricingFacts`). The package is already v4 and owns the pricing engine. Move the port and the pure facts there and keep the Drizzle/Stripe adapter (`pricing-facts-source.ts`) in the app. Team invoice and the front-desk route then call one capability. Highest value per line moved.
+2. **Evergreen offer journey → `packages/evergreen-offer-journey`, after slice 5.** It's already hexagonal: `ports.ts`, `service.ts`, an in-memory ledger and Drizzle/Kit adapters, plus an XState bridge runtime. The contract is the stimuli, decisions and receipts, currently zod, which moves to Effect Schema. The capability is `advance`/`tick`. Adapters stay in the app. Large, but it's where typed boundaries pay off most (money and Kit sends).
+3. **Email course: upgrade in place.** The drovr parity-receipt sink shows this logic is moving to drovr. Don't package something that's leaving.
+4. **Newsletter sender config and provider pause, contact integrity: upgrade in place.** These are small single-purpose adapters with nothing to share.
+5. **Operator scripts (held-exit, cohort-004, backfills): upgrade in place** (done). Retiring the cohort-004 and backfill scripts would be a separate, deletion-first PR. The `.mts` backfill doesn't even typecheck against current `@coursebuilder/core` exports.
+
+## Slice 1 receipts
+
+- Commit `e9337471` (shitratgit[bot]): `apps/ai-hero/package.json` gains `"effect4": "npm:effect@4.0.6"`, `pnpm-lock.yaml` +8 lines, and 12 files are migrated (34 insertions, 25 deletions).
+- `pnpm typecheck` (tsgo, the full app): exit 0, before and after.
+- `vitest src/scripts/held-exit`: 6 files, 127 tests pass, before and after.
+- Full `vitest run`: 831 files and 9670 tests pass. 2 files and 3 tests fail, and the same 3 fail at `902897a3` with main's `package.json` and lockfile.
+- `eslint` on the changed files: 0 errors. (The `.mts` file is outside the lint config.) `prettier --check` flags the same 12 files on main, so they're left unformatted to avoid churn.
+- `pnpm peers check`: same output length before and after (237 lines).
+
+## Follow-ups (not migration work)
+
+- **`compile-mdx-office-hours-cache.test.tsx` fails now and then in a full suite run.** Its `@/server/logger` mock has no `serializeError`. When `compileMDX` throws under load, the `measureIfSlow` error path in `server/perf.ts` calls `serializeError`, so the test fails on the mock and hides the real error. It passes alone, and nothing on its path imports Effect. Fix: add `serializeError` to the mock (or use `importOriginal`), then find out what `compileMDX` throws under load.
+- **`checkout-reconcile/fulfill.mysql.test.ts` "gives one purchase when the original run races the reconciler" sometimes deadlocks** (`ER_LOCK_DEADLOCK` on the `AI_MerchantCharge` insert). It hit the MySQL contract job on #582 and #599, and both reruns passed. The test rethrows the reconciler's rejection. The adapter-collision test next to it already accepts `Deadlock`. Fix in its own PR: retry the reconciler's write on a deadlock, or assert one purchase either way.
+- **The team invoice sandbox proofs need `AIH_SANDBOX_STRIPE_PRODUCT` set to a sandbox product with an active one-time USD price.** The "quote fixture" product has none, so slice 6 ran them on a rig "Crash Course" product.
+
+## Open questions
+
+- **Who holds the `rk_test_` sandbox key for slices 4 and 5?** Recommendation: the launch desk supplies it from the team's secret store to whoever runs the slice, and the commerce rig (`apps/ai-hero/scripts/commerce-rig/`) owns the run when it lands.
+- **The AGENTS.md launch-mode block (Aug 7–25) is still present on 2026-10-29.** This plan follows it anyway (small, reversible PRs). Recommendation: the desk confirms whether it's stale.

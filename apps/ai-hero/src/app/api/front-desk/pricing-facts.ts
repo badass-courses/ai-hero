@@ -5,7 +5,7 @@ import type {
 	PricingFacts,
 	PricingRequest,
 } from '@ai-hero/front-desk-support'
-import { Context, Data, Effect, Either } from 'effect'
+import { Context, Data, Effect, Result } from 'effect'
 
 /**
  * Buyer facts for front-desk's pricing. Read-only: SELECTs and Stripe
@@ -179,9 +179,10 @@ export interface PricingFactsSourceShape {
 		creditSource: string,
 	) => Effect.Effect<readonly string[], SourceUnavailable>
 }
-export class PricingFactsSource extends Context.Tag(
-	'ai-hero/front-desk/PricingFactsSource',
-)<PricingFactsSource, PricingFactsSourceShape>() {}
+export class PricingFactsSource extends Context.Service<
+	PricingFactsSource,
+	PricingFactsSourceShape
+>()('ai-hero/front-desk/PricingFactsSource') {}
 
 const CURRENT = new Set(['Valid', 'Restricted'])
 const known = <A>(value: A, sourceRefs: readonly string[]): PricingFact<A> => ({
@@ -309,7 +310,7 @@ export function creditUseFact({
 }: {
 	readonly creditSource: string | null
 	readonly ledger: CreditLedger
-	readonly chain: Either.Either<CreditChain, SourceUnavailable> | null
+	readonly chain: Result.Result<CreditChain, SourceUnavailable> | null
 	readonly cutover: Date | null
 	readonly refs: readonly string[]
 }): PricingBuyerFacts['creditUse'] {
@@ -321,8 +322,8 @@ export function creditUseFact({
 		])
 	if (!creditSource || ledger.kind === 'no-credit')
 		return known('available', [...refs, CREDIT_LEDGER_REF])
-	if (!chain || Either.isLeft(chain)) return gap('FactsUnavailable')
-	const targets = chain.right.targets.filter(individual)
+	if (!chain || Result.isFailure(chain)) return gap('FactsUnavailable')
+	const targets = chain.success.targets.filter(individual)
 	if (targets.length && !cutover) return gap('FactsUnavailable')
 	const before = targets.filter(
 		(target) => cutover && target.createdAt.getTime() < cutover.getTime(),
@@ -407,12 +408,12 @@ export function purchaseCandidate(
  */
 export function chargeCandidate(
 	row: PricingPurchaseRow,
-	settlement: Either.Either<PricingSettlement | null, SourceUnavailable>,
+	settlement: Result.Result<PricingSettlement | null, SourceUnavailable>,
 ): CreditCandidate {
-	if (Either.isLeft(settlement))
+	if (Result.isFailure(settlement))
 		return { kind: 'unknown', gap: 'FactsUnavailable' }
-	if (!settlement.right) return ambiguous
-	const { charge, session } = settlement.right
+	if (!settlement.success) return ambiguous
+	const { charge, session } = settlement.success
 	if (
 		charge.id !== row.stripeChargeId ||
 		charge.currency !== 'usd' ||
@@ -512,16 +513,16 @@ const creditFor = (
 			...new Set(crashCourse.flatMap((row) => row.couponId ?? [])),
 		]
 		const types = couponIds.length
-			? yield* Effect.either(source.couponTypes(couponIds))
-			: Either.right(new Map<string, PricingCouponEvidence>())
-		if (Either.isLeft(types)) return gap('FactsUnavailable')
+			? yield* Effect.result(source.couponTypes(couponIds))
+			: Result.succeed(new Map<string, PricingCouponEvidence>())
+		if (Result.isFailure(types)) return gap('FactsUnavailable')
 		const candidates = yield* Effect.forEach(crashCourse, (row) => {
 			const checked = purchaseCandidate(
 				row,
-				row.couponId ? types.right.get(row.couponId) : null,
+				row.couponId ? types.success.get(row.couponId) : null,
 			)
 			return checked.kind === 'charge'
-				? Effect.either(source.settlement(checked)).pipe(
+				? Effect.result(source.settlement(checked)).pipe(
 						Effect.map((settlement) => chargeCandidate(row, settlement)),
 					)
 				: Effect.succeed(checked)
@@ -589,13 +590,13 @@ export const buyerPricingFacts = (
 			facts,
 		})
 
-		const user = yield* Effect.either(source.userByEmail(request.email))
-		if (Either.isLeft(user))
+		const user = yield* Effect.result(source.userByEmail(request.email))
+		if (Result.isFailure(user))
 			return result({ userId: null, sourceRefs: [] }, unavailable)
 		// An exact-email account match stands for that account. A miss is not a
 		// verified new buyer: the person may own history under another address.
 		// No alias guessing.
-		if (!user.right)
+		if (!user.success)
 			return result(
 				{ userId: null, sourceRefs: ['ai-hero:user:none-for-email'] },
 				{
@@ -607,35 +608,35 @@ export const buyerPricingFacts = (
 					existingSeats: gap('IdentityUnverified'),
 				},
 			)
-		const userId = user.right.id
+		const userId = user.success.id
 		const buyer = { userId, sourceRefs: [`ai-hero:user:${userId}`] }
 		const productIds = [...new Set([request.productId, ...LEGEND_PRODUCTS])]
-		const rows = yield* Effect.either(source.purchases(userId, productIds))
-		if (Either.isLeft(rows)) return result(buyer, unavailable)
+		const rows = yield* Effect.result(source.purchases(userId, productIds))
+		if (Result.isFailure(rows)) return result(buyer, unavailable)
 		const scanRef = `ai-hero:purchases:user:${userId}`
-		const credit = yield* creditFor(rows.right, scanRef)
+		const credit = yield* creditFor(rows.success, scanRef)
 		const creditSource =
 			'value' in credit && credit.value ? credit.value.source : null
 		const spent = creditSource
-			? yield* Effect.either(source.creditSpentBy(creditSource))
+			? yield* Effect.result(source.creditSpentBy(creditSource))
 			: null
 		const ledger: CreditLedger =
 			spent === null
 				? { kind: 'no-credit' }
-				: Either.isRight(spent)
-					? { kind: 'read', spentBy: spent.right }
+				: Result.isSuccess(spent)
+					? { kind: 'read', spentBy: spent.success }
 					: { kind: 'unavailable' }
 		// The chain only matters while no saved decision has spent the credit.
 		const chain =
 			creditSource && ledger.kind === 'read' && !ledger.spentBy.length
-				? yield* Effect.either(
+				? yield* Effect.result(
 						source.creditChain({ creditSource, productId: request.productId }),
 					)
 				: null
 		return result(buyer, {
 			...pending,
-			legend: legendFact(rows.right),
-			alumni: alumniFact(rows.right, scanRef),
+			legend: legendFact(rows.success),
+			alumni: alumniFact(rows.success, scanRef),
 			credit,
 			creditUse: creditUseFact({
 				creditSource,
@@ -644,6 +645,6 @@ export const buyerPricingFacts = (
 				cutover: source.decisionCutover,
 				refs: [scanRef],
 			}),
-			existingSeats: existingSeatsFact(rows.right, request.productId, scanRef),
+			existingSeats: existingSeatsFact(rows.success, request.productId, scanRef),
 		})
 	})

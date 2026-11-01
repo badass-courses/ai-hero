@@ -153,9 +153,9 @@ it('propagates page failures instead of an empty success', async () => {
 		},
 	})
 	const result = await Effect.runPromise(
-		Effect.either(executor.recoverUncertainPage({ now: new Date(), limit: 1 })),
+		Effect.result(executor.recoverUncertainPage({ now: new Date(), limit: 1 })),
 	)
-	expect(result._tag).toBe('Left')
+	expect(result._tag).toBe('Failure')
 })
 
 it.each(['purchase', 'unsubscribe', 'unavailable', 'clock'] as const)(

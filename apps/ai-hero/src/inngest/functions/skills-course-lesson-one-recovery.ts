@@ -1,6 +1,10 @@
 import { env } from '@/env.mjs'
 import { SKILLS_COURSE_LESSON_ONE_RECOVERY_REQUESTED_EVENT } from '@/inngest/events/skills-newsletter'
 import { inngest } from '@/inngest/inngest.server'
+import {
+	firstActiveStop,
+	readActiveContactStops,
+} from '@/lib/subscriber-marketing/contact-stop-rule'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import { readDrovrEmailDelivery } from '@/lib/subscriber-marketing/drovr-email-delivery'
 import { findJourneyOwnerAssignment } from '@/lib/subscriber-marketing/drovr-ownership'
@@ -33,6 +37,9 @@ import { db } from '@/db'
 export const SKILLS_COURSE_RECOVERY_RETRIES = 12
 export const SKILLS_COURSE_RECOVERY_IDENTITY_RETRY_MS = 5 * 60 * 1000
 export const SKILLS_COURSE_RECOVERY_DELIVERY_RETRY_MS = 5 * 60 * 1000
+// drovr accepted the send but delivery confirmation lags behind broadcasts
+// (about 80 minutes on a 114k broadcast), so pending waits 12 × 15 min = 3 h.
+export const SKILLS_COURSE_RECOVERY_DROVR_PENDING_RETRY_MS = 15 * 60 * 1000
 
 type AnswerLink = {
 	optionValue?: string
@@ -72,6 +79,18 @@ export const skillsCourseLessonOneRecovery = inngest.createFunction(
 					: undefined
 				if (!providerIdentity || !contact?.email) {
 					return retryIdentity(event.data.requestId, 'identity-not-ready')
+				}
+
+				// A stop recorded after the request was queued still wins: no send.
+				// An unreadable stop state throws, and the step retries.
+				if (
+					await readRecoveryStop(repository, contact.id, event.data.requestedAt)
+				) {
+					return {
+						contactId: contact.id,
+						sendRequired: false,
+						outcome: 'contact-stopped' as const,
+					}
 				}
 
 				// A drovr-owned contact's lesson one may go out through PostShiba,
@@ -170,7 +189,7 @@ export const skillsCourseLessonOneRecovery = inngest.createFunction(
 			}
 		}
 
-		await step.run('send-lesson-one-recovery', async () => {
+		const delivery = await step.run('send-lesson-one-recovery', async () => {
 			const repository = new DrizzleCaptureMarketingRepository(db)
 			const contact = await repository.findContactById(identity.contactId)
 			if (!contact?.email) {
@@ -226,6 +245,17 @@ export const skillsCourseLessonOneRecovery = inngest.createFunction(
 				}
 			}
 
+			// The first step's verdict is memoized, so a retry of this step would
+			// reuse it: re-read the stops right before every provider send.
+			if (
+				await readRecoveryStop(repository, contact.id, event.data.requestedAt)
+			) {
+				return {
+					delivered: false as const,
+					outcome: 'contact-stopped' as const,
+				}
+			}
+
 			try {
 				const delivery = await sendSkillsCourseRecoveryDelivery({
 					correlationId: event.data.requestId,
@@ -254,6 +284,20 @@ export const skillsCourseLessonOneRecovery = inngest.createFunction(
 			}
 		})
 
+		if (!delivery.delivered) {
+			await step.run('log-stopped-lesson-one-recovery', () =>
+				log.info('skills.course.lesson_one_recovery_satisfied', {
+					requestId: event.data.requestId,
+					outcome: delivery.outcome,
+				}),
+			)
+			return {
+				success: true as const,
+				requestId: event.data.requestId,
+				outcome: delivery.outcome,
+			}
+		}
+
 		await step.run('log-lesson-one-recovery', () =>
 			log.info('skills.course.lesson_one_resent', {
 				requestId: event.data.requestId,
@@ -263,6 +307,25 @@ export const skillsCourseLessonOneRecovery = inngest.createFunction(
 		return { success: true as const, requestId: event.data.requestId }
 	},
 )
+
+/**
+ * The contact's active stop for this recovery, if any. The request is the
+ * planned work: only a fresh double opt-in confirmation (the one writer of
+ * `contact.resubscribed`) recorded at or before `requestedAt` lifts an
+ * unsubscribe. A lift after the request never revives it, and a Kit-side
+ * reactivation is not a lift at all. Throws when the stops are unreadable.
+ */
+async function readRecoveryStop(
+	repository: DrizzleCaptureMarketingRepository,
+	contactId: string,
+	requestedAt: string,
+) {
+	return firstActiveStop(
+		await readActiveContactStops(repository, contactId, {
+			plannedAt: requestedAt,
+		}),
+	)
+}
 
 async function retryIdentity(
 	requestId: string,
@@ -281,7 +344,9 @@ async function retryIdentity(
 	})
 	throw new RetryAfterError(
 		'Recovery identity is not ready',
-		SKILLS_COURSE_RECOVERY_IDENTITY_RETRY_MS,
+		reason === 'drovr-send-pending'
+			? SKILLS_COURSE_RECOVERY_DROVR_PENDING_RETRY_MS
+			: SKILLS_COURSE_RECOVERY_IDENTITY_RETRY_MS,
 	)
 }
 

@@ -35,13 +35,15 @@ export function sortOfficeHoursSessions(
 	)
 }
 
-export function groupOfficeHoursSessionsByUtcDate(
+/** Sessions grouped by their calendar day in `timeZone`, in order. */
+export function groupOfficeHoursSessionsByDate(
 	sessions: CohortOfficeHoursSession[],
+	timeZone = 'UTC',
 ): CohortOfficeHoursDayGroup[] {
 	const groupedSessions = new Map<string, CohortOfficeHoursSession[]>()
 
 	for (const session of sortOfficeHoursSessions(sessions)) {
-		const dateKey = session.startsAt.slice(0, 10)
+		const dateKey = formatInTimeZone(session.startsAt, timeZone, 'yyyy-MM-dd')
 		const existingSessions = groupedSessions.get(dateKey) || []
 		existingSessions.push(session)
 		groupedSessions.set(dateKey, existingSessions)
@@ -49,7 +51,11 @@ export function groupOfficeHoursSessionsByUtcDate(
 
 	return Array.from(groupedSessions.entries()).map(
 		([dateKey, sessionsForDate], index) => {
-			const weekday = formatInTimeZone(new Date(dateKey), 'UTC', 'EEEE')
+			const weekday = formatInTimeZone(
+				sessionsForDate[0]!.startsAt,
+				timeZone,
+				'EEEE',
+			)
 			const prefix =
 				index === 0
 					? 'Opening '

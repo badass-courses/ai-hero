@@ -7,7 +7,7 @@ import { price } from '@ai-hero/front-desk-support/pricing'
 import { createC5AuthoritativePrice } from '@/lib/c5-pricing/hook'
 import { purchaseGate } from '@/lib/c5-pricing/purchasability'
 import { syntheticPolicy } from '@/lib/c5-pricing/synthetic-policy.test-fixture'
-import { Effect, Either, Exit, Layer } from 'effect'
+import { Effect, Exit, Layer, Result } from 'effect'
 import { describe, expect, it } from 'vitest'
 import {
 	buyerPricingFacts,
@@ -264,7 +264,7 @@ describe('chargeCandidate with non-card charges', () => {
 			amount: 30000,
 			line: { amountTotal: 27000, amountTax: 2000 },
 		})
-		expect(chargeCandidate(row, Either.right(settlement))).toEqual({
+		expect(chargeCandidate(row, Result.succeed(settlement))).toEqual({
 			kind: 'eligible',
 			paid: 25000,
 			purchaseId: 'noncard',
@@ -281,7 +281,7 @@ describe('chargeCandidate with non-card charges', () => {
 			id: 'py_test',
 			session: { paymentIntentId: 'pi_other' },
 		})
-		expect(chargeCandidate(row, Either.right(settlement))).toEqual({
+		expect(chargeCandidate(row, Result.succeed(settlement))).toEqual({
 			kind: 'unknown',
 			gap: 'PaymentAmbiguous',
 		})

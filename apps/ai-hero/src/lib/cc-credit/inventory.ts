@@ -1,5 +1,5 @@
 import type { CreditReceipt } from './domain'
-import { isCreditDescription } from './stripe'
+import { isCreditDescription, isUnrecognizedNegativeLine } from './stripe'
 
 export type CreditInventoryPreview = {
 	state?: string
@@ -12,7 +12,11 @@ export type HistoricalInvoice = {
 	id: string
 	customer: string | { id: string } | null
 }
-export type HistoricalLine = { description: string | null; amount: number }
+export type HistoricalLine = {
+	description: string | null
+	amount: number
+	price?: { product: string | { id: string } } | null
+}
 export type InventoryInput = {
 	mode: 'backfill_preview'
 	scope: { stripeCustomerId: string }
@@ -24,6 +28,11 @@ export type InventoryInput = {
 /** Read-only plan. Project all proposed active receipts against each purchase,
  * not just against the current DB, so two historical invoices cannot each
  * independently appear to own the same unseeded seats. Any hold blocks enablement.
+ * A negative line that isn't a recognized credit is held on any C5 invoice, or
+ * on every invoice when the C5 Stripe product mapping is unknown.
+ * An individual credit is reported as not team ledger, not held: no negative
+ * line mentions a team or seat, and teamCustomer says the Stripe customer never
+ * bought Crash Course seats on a bulk coupon. Without teamCustomer, it's held.
  */
 export async function inventoryCredits(
 	deps: {
@@ -32,6 +41,8 @@ export async function inventoryCredits(
 		preview: (
 			input: InventoryInput,
 		) => Promise<{ ok: boolean; result: CreditInventoryPreview }>
+		c5Products?: ReadonlySet<string>
+		teamCustomer?: (stripeCustomerId: string) => Promise<boolean>
 	},
 	runId: string,
 ) {
@@ -41,6 +52,7 @@ export async function inventoryCredits(
 		previewed: 0,
 		alreadyLedgered: 0,
 		held: 0,
+		notTeamLedger: 0,
 		reserved: 0,
 		paid: 0,
 		released: 0,
@@ -54,11 +66,48 @@ export async function inventoryCredits(
 	}[] = []
 	for await (const invoice of deps.invoices) {
 		counts.scannedInvoices++
-		const lines: HistoricalLine[] = []
-		for await (const line of deps.lines(invoice.id))
-			if (isCreditDescription(line.description)) lines.push(line)
-		if (!lines.length) continue
+		const all: HistoricalLine[] = []
+		for await (const line of deps.lines(invoice.id)) all.push(line)
+		const lines = all.filter((line) => isCreditDescription(line.description))
+		const c5 = deps.c5Products?.size
+			? all.some((line) => {
+					const product = line.price?.product
+					return (
+						!!product &&
+						deps.c5Products!.has(
+							typeof product === 'string' ? product : product.id,
+						)
+					)
+				})
+			: true
+		const unrecognized = c5 && all.some(isUnrecognizedNegativeLine)
+		if (!unrecognized && !lines.length) continue
 		counts.matchedInvoices++
+		const customer =
+			typeof invoice.customer === 'string'
+				? invoice.customer
+				: invoice.customer?.id
+		if (
+			deps.teamCustomer &&
+			customer &&
+			!all.some(
+				(line) => line.amount < 0 && /team|seat/i.test(line.description ?? ''),
+			) &&
+			!(await deps.teamCustomer(customer))
+		) {
+			counts.notTeamLedger++
+			records.push({ invoiceId: invoice.id, state: 'not_team_ledger' })
+			continue
+		}
+		if (unrecognized) {
+			counts.held++
+			records.push({
+				invoiceId: invoice.id,
+				state: 'hold',
+				reason: 'historical_unrecognized_negative_line_hold_for_review',
+			})
+			continue
+		}
 		const seats = lines
 			.map((line) => /\bx\s*(\d+)\b/i.exec(line.description ?? '')?.[1])
 			.map((value) => (value ? Number(value) : NaN))
@@ -74,10 +123,6 @@ export async function inventoryCredits(
 			})
 			continue
 		}
-		const customer =
-			typeof invoice.customer === 'string'
-				? invoice.customer
-				: invoice.customer?.id
 		const result = await deps.preview({
 			mode: 'backfill_preview',
 			scope: { stripeCustomerId: customer ?? '' },

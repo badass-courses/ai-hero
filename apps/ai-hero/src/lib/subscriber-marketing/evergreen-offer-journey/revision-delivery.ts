@@ -203,7 +203,7 @@ export function createRevisionDelivery(input: {
 												deps.preparation?.mayReconcile(intent) ??
 												Promise.resolve(false),
 											catch: () => false,
-										}).pipe(Effect.catchAll(() => Effect.succeed(false)))
+										}).pipe(Effect.catch(() => Effect.succeed(false)))
 										if (!allowed)
 											return {
 												type: 'Unknown' as const,

@@ -1,4 +1,9 @@
 import { courseBuilderAdapter } from '@/db'
+import {
+	broadcastProvider,
+	drovrBroadcastClientFromEnv,
+	prepareDrovrSkillsMessage,
+} from '@/lib/drovr-broadcasts'
 import { SKILL_CHANGELOG_PUBLISHED_EVENT } from '@/inngest/events/skill-changelog'
 import { inngest } from '@/inngest/inngest.server'
 import {
@@ -46,7 +51,12 @@ export const skillChangelogBroadcast = inngest.createFunction(
 				resourceId,
 				slug,
 			})
-			return { status: 'skipped', reason: 'resource_missing', resourceId, slug }
+			return {
+				status: 'skipped',
+				reason: 'resource_missing',
+				resourceId,
+				slug,
+			}
 		}
 
 		const isSkillChangelog =
@@ -102,6 +112,89 @@ export const skillChangelogBroadcast = inngest.createFunction(
 			content: newsletterCopy,
 			previewText: resource.fields?.newsletterPreviewText,
 			description: `AI Skills Changelog: ${resource.fields?.title ?? slug}`,
+		}
+
+		const provider = broadcastProvider()
+
+		if (provider === 'unknown') {
+			await log.error('skill-changelog.broadcast.provider_unknown', {
+				resourceId,
+				slug,
+			})
+			return {
+				status: 'skipped',
+				reason: 'provider_unknown',
+				resourceId,
+				slug,
+			}
+		}
+
+		if (provider === 'drovr') {
+			const prepared = await step.run('prepare drovr message', async () => {
+				return await prepareDrovrSkillsMessage({
+					existingMessageId: resource.fields?.drovrMessageId,
+					slug,
+					resourceId: resource.id,
+					subject: broadcastInput.subject,
+					previewText: broadcastInput.previewText,
+					content: broadcastInput.content,
+					client: drovrBroadcastClientFromEnv(),
+				})
+			})
+
+			if (prepared.status === 'skipped') {
+				await log.warn('skill-changelog.broadcast.drovr_skipped', {
+					resourceId,
+					slug,
+					reason: prepared.reason,
+				})
+				return {
+					status: 'skipped',
+					reason: 'drovr_not_ready',
+					detail: prepared.reason,
+					resourceId,
+					slug,
+				}
+			}
+
+			await step.run('persist drovr message metadata', async () => {
+				await courseBuilderAdapter.updateContentResourceFields({
+					id: resource.id,
+					fields: {
+						...resource.fields,
+						drovrMessageId: prepared.messageId,
+						drovrMessagePath: prepared.path,
+						drovrMessageFile: prepared.text,
+						drovrMessageValidation: prepared.validation.status,
+						drovrMessageReasons: prepared.validation.reasons,
+						drovrMessagePreparedAt: new Date().toISOString(),
+					},
+				})
+			})
+
+			await log.info('skill-changelog.broadcast.drovr_prepared', {
+				operation: 'prepare_drovr_message_for_skill_changelog',
+				resourceId,
+				slug,
+				drovrMessageId: prepared.messageId,
+				validation: prepared.validation.status,
+				reasons: prepared.validation.reasons,
+			})
+
+			// Publishing the version is drovr's operator step, and only an
+			// approver's Slack click creates the broadcast.
+			return {
+				status:
+					prepared.validation.status === 'refused'
+						? 'drovr_refused'
+						: 'drovr_prepared',
+				resourceId,
+				slug,
+				drovrMessageId: prepared.messageId,
+				drovrMessagePath: prepared.path,
+				validation: prepared.validation.status,
+				reasons: prepared.validation.reasons,
+			}
 		}
 
 		const existingBroadcastId = resource.fields?.kitBroadcastId

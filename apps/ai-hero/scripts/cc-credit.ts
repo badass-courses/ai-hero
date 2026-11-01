@@ -16,7 +16,10 @@
  * Never release based on a clock, an email, or a stale webhook.
  * For a separately approved historical seed, mode backfill maps to
  * backfill_preview by default; --apply also requires the normally-off
- * AIH_CC_CREDIT_IMPORT_ENABLED server flag. Never enable it/run --apply as
+ * AIH_CC_CREDIT_IMPORT_ENABLED server flag. A historical credit line with no
+ * purchase id needs desk-reviewed "sources", one per credit line in line
+ * order: [{"purchaseId":"purch_...","seats":3,"perSeatCents":19900}].
+ * seats x perSeatCents must equal the line. Never enable it/run --apply as
  * part of an inventory. Keep AIH_CC_CREDIT_ENABLED off until the reviewed
  * history is seeded and all holds are resolved.
  */

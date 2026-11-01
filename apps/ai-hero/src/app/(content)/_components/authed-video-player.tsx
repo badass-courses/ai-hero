@@ -12,6 +12,7 @@ import { useMuxPlayer } from '@/hooks/use-mux-player'
 import { useVideoQualityPref } from '@/hooks/use-video-quality-pref'
 import {
 	clearStaleCaptions,
+	redrawCaptions,
 	handleTextTrackChange,
 	setPreferredPlaybackRate,
 	setPreferredTextTrack,
@@ -293,6 +294,7 @@ export function AuthedVideoPlayer({
 		},
 		onLoadStart: () => clearStaleCaptions(playerRef),
 		onLoadedData: () => {
+			redrawCaptions(playerRef)
 			handleTextTrackChange(playerRef, setPlayerPrefs)
 			setPreferredPlaybackRate(playerRef, playbackRate)
 			setPreferredTextTrack(playerRef)

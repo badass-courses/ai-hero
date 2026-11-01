@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { syntheticRevisionScope } from './revision-delivery.fixtures'
-import { Effect, Either } from 'effect'
+import { Effect, Result } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -343,7 +343,7 @@ function makeFakeAttempts(
 type DeliveryScript = (
 	intent: SendMessageIntent,
 ) => Promise<
-	Either.Either<
+	Result.Result<
 		{ providerReceiptId: string; appliedAt: IsoInstant },
 		EffectApplicationError
 	>
@@ -383,13 +383,13 @@ function harness(
 	const attempts = makeFakeAttempts(ledger)
 	const applied: SendMessageIntent[] = []
 	let script: DeliveryScript = async () =>
-		Either.right({ providerReceiptId: 'fake:accepted', appliedAt: now })
+		Result.succeed({ providerReceiptId: 'fake:accepted', appliedAt: now })
 	const delivery: DeliveryPort = {
 		apply: (intent) =>
 			Effect.gen(function* () {
 				applied.push(intent)
 				const result = yield* Effect.promise(() => script(intent))
-				return yield* result
+				return yield* Effect.fromResult(result)
 			}),
 	}
 	let membership: DeliveryMembershipEvidence = {
@@ -561,7 +561,7 @@ describe('mandatory original mapping before final apply checks', () => {
 					}),
 			}
 			const result = await Effect.runPromise(
-				Effect.either(
+				Effect.result(
 					h
 						.build({
 							revisionScope: { ...scope, mappingWriter: writer },
@@ -590,12 +590,12 @@ describe('mandatory original mapping before final apply checks', () => {
 				),
 			)
 			expect(h.applied).toHaveLength(0)
-			if (Either.isRight(result))
-				expect(result.right).toMatchObject({
+			if (Result.isSuccess(result))
+				expect(result.success).toMatchObject({
 					type: 'Abandoned',
 					sideEffects: 'mapping-persisted',
 				})
-			else expect(result.left.sideEffects).toBe('mapping-persisted')
+			else expect(result.failure.sideEffects).toBe('mapping-persisted')
 		},
 	)
 	it('unverifiable persistence holds without KnownNotApplied', async () => {
@@ -762,7 +762,7 @@ describe('revision delivery guards and dormant composition', () => {
 					),
 			}
 			h.setDelivery(async () =>
-				Either.left({
+				Result.fail({
 					type: 'EffectTransientUnavailable',
 					reason: 'before-request',
 					requestIssued: false,
@@ -823,7 +823,7 @@ describe('revision delivery guards and dormant composition', () => {
 		const h = harness()
 		const intent = await h.wake(0)
 		h.setDelivery(async () =>
-			Either.left({ type: 'EffectAmbiguous', reason: 'lost-response' }),
+			Result.fail({ type: 'EffectAmbiguous', reason: 'lost-response' }),
 		)
 		await h.execute(intent)
 		const addedAt = h.now
@@ -902,7 +902,7 @@ describe('revision delivery guards and dormant composition', () => {
 			const h = harness()
 			const intent = await h.wake(0)
 			h.setDelivery(async () =>
-				Either.left({ type: 'EffectAmbiguous', reason: 'lost-response' }),
+				Result.fail({ type: 'EffectAmbiguous', reason: 'lost-response' }),
 			)
 			await h.execute(intent)
 			h.now = value(
@@ -1308,7 +1308,7 @@ describe('SendMessage intent executor', () => {
 		})
 		h.setDelivery(async () => {
 			await gate
-			return Either.right({
+			return Result.succeed({
 				providerReceiptId: 'fake:accepted',
 				appliedAt: h.now,
 			})
@@ -1913,7 +1913,7 @@ describe('SendMessage intent executor', () => {
 		const h = harness()
 		const intent = await h.wake(0)
 		h.setDelivery(async () =>
-			Either.left({
+			Result.fail({
 				type: 'EffectAmbiguous',
 				reason: 'kit-enrollment-transport-or-body-unresolved',
 			}),
@@ -1947,7 +1947,7 @@ describe('SendMessage intent executor', () => {
 		).toEqual([])
 
 		h.setDelivery(async () =>
-			Either.right({ providerReceiptId: 'fake:b2', appliedAt: h.now }),
+			Result.succeed({ providerReceiptId: 'fake:b2', appliedAt: h.now }),
 		)
 		const second = await h.wake(1)
 		expect(await h.execute(second)).toMatchObject({
@@ -1969,7 +1969,7 @@ describe('SendMessage intent executor', () => {
 		const h = harness()
 		const intent = await h.wake(0)
 		h.setDelivery(async () =>
-			Either.left({
+			Result.fail({
 				type: 'EffectPermanentRefusal',
 				reason: 'kit-enrollment-http-422',
 			}),
@@ -2004,7 +2004,7 @@ describe('SendMessage intent executor', () => {
 		).toMatchObject({ type: 'DeliverySettled', settledAt: h.now })
 		expect(h.intentRecord(intent)?.status).toBe('Refused')
 		h.setDelivery(async () =>
-			Either.right({ providerReceiptId: 'fake:retry', appliedAt: h.now }),
+			Result.succeed({ providerReceiptId: 'fake:retry', appliedAt: h.now }),
 		)
 		expect(await h.execute(intent)).toMatchObject({
 			type: 'NotClaimed',
@@ -2017,7 +2017,7 @@ describe('SendMessage intent executor', () => {
 		const h = harness({ leaseMs: 1_000 })
 		const intent = await h.wake(0)
 		h.setDelivery(async () =>
-			Either.left({
+			Result.fail({
 				type: 'EffectPermanentRefusal',
 				reason: 'kit-enrollment-http-422',
 			}),
@@ -2034,10 +2034,10 @@ describe('SendMessage intent executor', () => {
 		})
 		expect(
 			await Effect.runPromise(
-				Effect.either(executor.execute(h.target(intent))),
+				Effect.result(executor.execute(h.target(intent))),
 			),
 		).toEqual(
-			Either.left({
+			Result.fail({
 				type: 'ClockUnavailable',
 				reason: 'skew',
 				sideEffects: 'provider-called',
@@ -2092,7 +2092,7 @@ describe('SendMessage intent executor', () => {
 		} as const
 		const settle = (outcome: AttemptOutcome, at = now) =>
 			Effect.runPromise(
-				Effect.either(h.attempts.settle({ ...identity, now: at, outcome })),
+				Effect.result(h.attempts.settle({ ...identity, now: at, outcome })),
 			)
 		for (const outcome of [
 			refusal,
@@ -2100,7 +2100,7 @@ describe('SendMessage intent executor', () => {
 			{ ...refusal, observedAt: plus(h.now, 501) },
 		]) {
 			const result = await settle(outcome)
-			expect(Either.isLeft(result) && result.left).toEqual({
+			expect(Result.isFailure(result) && result.failure).toEqual({
 				type: 'AttemptRefused',
 				reason: 'Refusal observation is missing or outside claim evidence',
 			})
@@ -2108,14 +2108,14 @@ describe('SendMessage intent executor', () => {
 		expect(h.attempts.rows.get(intent.idempotencyKey)?.status).toBe('Claimed')
 		const observed = { ...refusal, observedAt: plus(h.now, 250) }
 		const first = await settle(observed)
-		expect(Either.isRight(first) && first.right.outcome).toEqual(observed)
+		expect(Result.isSuccess(first) && first.success.outcome).toEqual(observed)
 		// Exact replay reads the saved evidence; a different instant loses to the first.
 		expect(await settle(observed, new Date(plus(h.now, 90_000)))).toEqual(first)
 		for (const conflicting of [
 			{ ...refusal, observedAt: plus(h.now, 251) },
 			refusal,
 		]) {
-			expect(Either.isLeft(await settle(conflicting))).toBe(true)
+			expect(Result.isFailure(await settle(conflicting))).toBe(true)
 		}
 		expect(h.attempts.rows.get(intent.idempotencyKey)?.outcome).toEqual(
 			observed,
@@ -2126,8 +2126,8 @@ describe('SendMessage intent executor', () => {
 			outcome: refusal,
 		})
 		h.attempts.rows.set(intent.idempotencyKey, legacy)
-		expect(await settle(refusal)).toEqual(Either.right(legacy))
-		expect(Either.isLeft(await settle(observed))).toBe(true)
+		expect(await settle(refusal)).toEqual(Result.succeed(legacy))
+		expect(Result.isFailure(await settle(observed))).toBe(true)
 		expect(h.attempts.rows.get(intent.idempotencyKey)).toEqual(legacy)
 	})
 
@@ -2218,7 +2218,7 @@ describe('SendMessage intent executor', () => {
 		const intent = await h.wake(0)
 		const observedAt = h.now
 		h.setDelivery(async () =>
-			Either.left({
+			Result.fail({
 				type: 'EffectPermanentRefusal',
 				reason: 'kit-enrollment-http-422',
 			}),
@@ -2306,8 +2306,8 @@ describe('SendMessage intent executor', () => {
 		let calls = 0
 		h.setDelivery(async () =>
 			++calls === 1
-				? Either.left(provenNoRequest('identity-unavailable'))
-				: Either.right({ providerReceiptId: 'fake:second', appliedAt: h.now }),
+				? Result.fail(provenNoRequest('identity-unavailable'))
+				: Result.succeed({ providerReceiptId: 'fake:second', appliedAt: h.now }),
 		)
 		let authorityReads = 0
 		const authority = {
@@ -2340,7 +2340,7 @@ describe('SendMessage intent executor', () => {
 		const intent = await h.wake(0)
 		const claimAt = h.now
 		h.setDelivery(async () =>
-			Either.left(provenNoRequest('identity-unavailable')),
+			Result.fail(provenNoRequest('identity-unavailable')),
 		)
 		const stimuliBefore = h.ledger.records().stimuli.length
 		expect(await h.execute(intent)).toEqual({
@@ -2362,7 +2362,7 @@ describe('SendMessage intent executor', () => {
 		expect(h.slot(intent).status).toBe('IntentCommitted')
 		// A later run sees the existing claim and never applies again, even once healthy.
 		h.setDelivery(async () =>
-			Either.right({ providerReceiptId: 'fake:healthy', appliedAt: h.now }),
+			Result.succeed({ providerReceiptId: 'fake:healthy', appliedAt: h.now }),
 		)
 		expect(await h.execute(intent)).toMatchObject({
 			type: 'AlreadyAttempted',
@@ -2384,7 +2384,7 @@ describe('SendMessage intent executor', () => {
 		const h = harness()
 		const intent = await h.wake(0)
 		h.setDelivery(async () =>
-			Either.left(provenNoRequest('identity-unavailable')),
+			Result.fail(provenNoRequest('identity-unavailable')),
 		)
 		let authorityReads = 0
 		const authority = {
@@ -2421,7 +2421,7 @@ describe('SendMessage intent executor', () => {
 		const claimAt = h.now
 		h.setDelivery(async () => {
 			h.now = plus(claimAt, 1_000)
-			return Either.left(provenNoRequest('clock-unavailable'))
+			return Result.fail(provenNoRequest('clock-unavailable'))
 		})
 		expect(await h.execute(intent)).toEqual({
 			type: 'Abandoned',
@@ -2439,7 +2439,7 @@ describe('SendMessage intent executor', () => {
 		const h = harness()
 		const intent = await h.wake(0)
 		h.setDelivery(async () =>
-			Either.left({
+			Result.fail({
 				type: 'EffectTransientUnavailable',
 				reason: 'socket-reset',
 			}),
@@ -2462,7 +2462,7 @@ describe('SendMessage intent executor', () => {
 		expect(h.ledger.records().stimuli).toHaveLength(stimuliBefore)
 		expect(h.intentRecord(intent)?.status).toBe('Pending')
 		h.setDelivery(async () =>
-			Either.right({ providerReceiptId: 'fake:healthy', appliedAt: h.now }),
+			Result.succeed({ providerReceiptId: 'fake:healthy', appliedAt: h.now }),
 		)
 		expect(await h.execute(intent)).toMatchObject({
 			type: 'AlreadyAttempted',
@@ -2684,11 +2684,11 @@ describe('SendMessage intent executor', () => {
 		})
 		expect(
 			await Effect.runPromise(
-				Effect.either(poisoned.reconcileHeld({ limit: 5 })),
+				Effect.result(poisoned.reconcileHeld({ limit: 5 })),
 			),
 		).toMatchObject({
-			_tag: 'Left',
-			left: {
+			_tag: 'Failure',
+			failure: {
 				type: 'AttemptUnavailable',
 				reason: 'Attempt boundary rejected or unavailable',
 				sideEffects: 'none',
@@ -2696,24 +2696,24 @@ describe('SendMessage intent executor', () => {
 		})
 		expect(
 			await Effect.runPromise(
-				Effect.either(poisoned.settleRecordedOutcomes({ limit: 5 })),
+				Effect.result(poisoned.settleRecordedOutcomes({ limit: 5 })),
 			),
 		).toMatchObject({
-			_tag: 'Left',
-			left: { type: 'AttemptRefused', sideEffects: 'none' },
+			_tag: 'Failure',
+			failure: { type: 'AttemptRefused', sideEffects: 'none' },
 		})
 		// Page bounds are refused before any row is read.
 		for (const limit of [0, 101]) {
 			expect(
 				await Effect.runPromise(
-					Effect.either(h.executor.reconcileHeld({ limit })),
+					Effect.result(h.executor.reconcileHeld({ limit })),
 				),
-			).toMatchObject({ _tag: 'Left', left: { type: 'AttemptRefused' } })
+			).toMatchObject({ _tag: 'Failure', failure: { type: 'AttemptRefused' } })
 			expect(
 				await Effect.runPromise(
-					Effect.either(h.executor.settleRecordedOutcomes({ limit })),
+					Effect.result(h.executor.settleRecordedOutcomes({ limit })),
 				),
-			).toMatchObject({ _tag: 'Left', left: { type: 'AttemptRefused' } })
+			).toMatchObject({ _tag: 'Failure', failure: { type: 'AttemptRefused' } })
 		}
 		expect(h.inspections).toHaveLength(0)
 	})
@@ -2992,10 +2992,10 @@ describe('SendMessage intent executor', () => {
 			},
 		})
 		const authorityResult = await Effect.runPromise(
-			Effect.either(brokenAuthority.execute(h.target(intent))),
+			Effect.result(brokenAuthority.execute(h.target(intent))),
 		)
 		expect(authorityResult).toEqual(
-			Either.left({
+			Result.fail({
 				type: 'AuthorityUnavailable',
 				reason: 'down',
 				sideEffects: 'none',
@@ -3007,10 +3007,10 @@ describe('SendMessage intent executor', () => {
 			},
 		})
 		const clockResult = await Effect.runPromise(
-			Effect.either(brokenClock.execute(h.target(intent))),
+			Effect.result(brokenClock.execute(h.target(intent))),
 		)
 		expect(clockResult).toEqual(
-			Either.left({
+			Result.fail({
 				type: 'ClockUnavailable',
 				reason: 'skew',
 				sideEffects: 'none',
@@ -3019,9 +3019,9 @@ describe('SendMessage intent executor', () => {
 		expect(h.attempts.rows.size).toBe(0)
 		expect(h.applied).toHaveLength(0)
 		const invalid = await Effect.runPromise(
-			Effect.either(h.executor.execute({ idempotencyKey: '', journeyId: 'x' })),
+			Effect.result(h.executor.execute({ idempotencyKey: '', journeyId: 'x' })),
 		)
-		expect(Either.isLeft(invalid) && invalid.left.type).toBe('InvalidTarget')
+		expect(Result.isFailure(invalid) && invalid.failure.type).toBe('InvalidTarget')
 	})
 
 	it('records a slow provider acceptance whose lease lapsed as exact-token evidence, never a resend', async () => {
@@ -3031,7 +3031,7 @@ describe('SendMessage intent executor', () => {
 		h.setDelivery(async () => {
 			// The provider accepted after the lease expired; the token is still exact.
 			h.now = plus(claimAt, 5_000)
-			return Either.right({ providerReceiptId: 'fake:slow', appliedAt: h.now })
+			return Result.succeed({ providerReceiptId: 'fake:slow', appliedAt: h.now })
 		})
 		const result = await h.execute(intent)
 		expect(result).toMatchObject({
