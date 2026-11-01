@@ -588,6 +588,12 @@ export async function reconcileSkillsConfirmations(args: {
 		? await args.steps.run('observe-drovr-confirmations-v1', () =>
 				reconcileDrovrConfirmations({
 					subjects: drovrSubjects,
+					runIndex:
+						args.tier === 'daily'
+							? skillsConfirmationDailyRunIndex(
+									args.to ?? new Date().toISOString(),
+								)
+							: undefined,
 					window: skillsConfirmationTierWindow(
 						args.tier,
 						args.to ?? new Date().toISOString(),

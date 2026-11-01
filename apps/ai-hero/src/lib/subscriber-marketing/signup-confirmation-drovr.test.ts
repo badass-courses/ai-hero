@@ -120,6 +120,28 @@ describe('DOI confirmation ownership, with Kit unreachable', () => {
 			subscribers[1],
 		])
 	})
+	it('daily rotation advances one page per day rather than skipping 96 pages', async () => {
+		const subjects = Array.from({ length: 1000 }, (_, i) => ({
+			...subject,
+			contactId: String(i),
+		}))
+		const seen = new Set<string>()
+		for (let day = 0; day < 20; day++) {
+			await reconcileDrovrConfirmations({
+				subjects,
+				window: {
+					...window,
+					to: new Date(Date.parse(window.to) + day * 86_400_000).toISOString(),
+				},
+				runIndex: day,
+				read: async (id) => {
+					seen.add(id)
+					return null
+				},
+			})
+		}
+		expect(seen.size).toBe(1000)
+	})
 	it('bounds reads and rotates so a standing pending page cannot starve later subjects', async () => {
 		const subjects = Array.from({ length: 110 }, (_, i) => ({
 			...subject,

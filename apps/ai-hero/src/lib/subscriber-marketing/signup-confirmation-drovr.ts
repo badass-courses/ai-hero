@@ -36,6 +36,8 @@ export function legacyKitConfirmationSubscribers<T extends { email: string }>(
 export async function reconcileDrovrConfirmations(args: {
 	subjects: readonly DrovrConfirmationSubject[]
 	window: { from: string; to: string }
+	/** Daily tier advances by one each day, not by 96 quarter-hour slots. */
+	runIndex?: number
 	read: (contactId: string) => Promise<DrovrListState | null>
 }) {
 	const subjects = args.subjects.filter((row) => {
@@ -48,7 +50,9 @@ export async function reconcileDrovrConfirmations(args: {
 	// daily tier also covers requests outside the recent window.
 	const cap = 50
 	const offset = subjects.length
-		? (Math.floor(Date.parse(args.window.to) / 900_000) * cap) % subjects.length
+		? ((args.runIndex ?? Math.floor(Date.parse(args.window.to) / 900_000)) *
+				cap) %
+			subjects.length
 		: 0
 	const selected = [
 		...subjects.slice(offset),

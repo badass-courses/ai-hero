@@ -106,6 +106,91 @@ describe('persisted DOI split', () => {
 			)
 		},
 	)
+	it.each(['confirmed', 'unconfirmed', 'stopped', 'read-failure'] as const)(
+		'flag on observes %s via the REST contract before unreachable legacy Kit, with no second enrolment',
+		async (status) => {
+			vi.stubEnv('AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED', 'true')
+			vi.stubEnv('DROVR_DOI_FORMS', '')
+			vi.stubEnv('DROVR_API_BASE_URL', 'https://drovr.example.test')
+			vi.stubEnv('DROVR_API_KEY_ORG_AIHERO', 'synthetic-tenant-key')
+			const fetcher = vi.fn(async () =>
+				status === 'read-failure'
+					? new Response(null, { status: 503 })
+					: Response.json({
+							contactId: 'owned/contact',
+							kitSubscriberId: null,
+							tenantId: 'org-aihero',
+							scope: 'all',
+							state: status,
+							forms: [
+								{
+									formId: 'skills-newsletter',
+									state: status === 'confirmed' ? 'confirmed' : 'unconfirmed',
+								},
+							],
+							stops: [],
+							unknownReason: null,
+						}),
+			)
+			vi.stubGlobal('fetch', fetcher)
+			const rows = [
+				{
+					contactId: 'owned/contact',
+					emailKey: emailEquivalenceKey('learner-1@example.test'),
+					requestedAt: new Date(daysBefore(1)),
+					emailKeyStale: 0,
+				},
+			]
+			const chain: unknown = new Proxy(() => chain, {
+				get: (_, property) =>
+					property === 'then'
+						? (resolve: (value: unknown) => void) => resolve(rows)
+						: () => chain,
+			})
+			const observed = vi.fn()
+			const send = vi.fn()
+			try {
+				await expect(
+					reconcileSkillsConfirmations({
+						tier: 'recent',
+						to: TO,
+						database: { select: () => chain } as never,
+						kit: {
+							fetch: (async () => {
+								throw new Error('Kit unreachable')
+							}) as typeof fetch,
+							minStartIntervalMs: 0,
+							sleep: async () => {},
+						},
+						steps: { run: async (_id, work) => work(), send },
+						onDrovrObserved: observed,
+					}),
+				).rejects.toThrow(ReconcilerEvidenceUnavailableError)
+				expect(fetcher).toHaveBeenCalledTimes(1)
+				expect(fetcher).toHaveBeenCalledWith(
+					'https://drovr.example.test/contact-list-state?contactId=owned%2Fcontact',
+					expect.objectContaining({
+						method: 'GET',
+						headers: {
+							authorization: 'Bearer synthetic-tenant-key',
+							accept: 'application/json',
+						},
+						cache: 'no-store',
+					}),
+				)
+				expect(observed).toHaveBeenCalledWith(
+					expect.objectContaining({
+						counts: expect.objectContaining({
+							[status === 'read-failure' ? 'unknown' : status]: 1,
+						}),
+					}),
+				)
+				expect(send).not.toHaveBeenCalled()
+			} finally {
+				vi.unstubAllGlobals()
+			}
+		},
+	)
 	it('runs owned consent observation before legacy enumeration fails with Kit unreachable', async () => {
 		vi.stubEnv('AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED', 'true')
 		const steps: string[] = []
