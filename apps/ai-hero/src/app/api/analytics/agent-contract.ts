@@ -14,7 +14,7 @@ export const ANALYTICS_AGENT_INSTRUCTIONS = [
 	'For attribution/email-campaigns and /strict, inspect data.provider. When provider is drovr, read broadcasts.rows[].result.status before counters. Unavailable is not zero. Status counters are lifetime actor-reported sent counts for explicitly configured references, not deliveries or a complete list of sends. receiptSample is a capped latest journey-transition sample, not broadcast receipts or reconciliation. Engagement, unsubscribes and attributed revenue are unavailable. historical is a frozen Kit-era export at its own asOf and original range/mode/product scope, never current drovr results. productId scopes historical strict snapshots only, not current broadcast statuses.',
 	'learning/progress requires productId and ignores range. Divide funnel started/completed by data.funnel.denominator.count (signed-in learners), not roster.learners. Report locked rows as locked, never as 0% completion. Read data.asOf; results are cached for data.refreshSeconds (five minutes, or fifteen above 5,000 learners).',
 	'learning/teams and learning/team are aggregate team reads; a team id is a bulk coupon id. learning/team divides funnel counts by data.funnel.denominator.count (team members). Unredeemed seats are a count, never members with zero progress.',
-	'For newsletter signups (AI Hero is off Kit), use newsletter/signups. It always covers the last 30 UTC days and ignores range. Read data.totals.last7 and data.totals.last30; when totals.complete is false, say how many of totals.days were reported and that partial days (today) are still counting. A day with status unavailable is unknown, never zero. A SIGNUPS_UNAVAILABLE error means no number is known.',
+	'For newsletter signups (AI Hero is off Kit), use newsletter/signups. range=7d reads the last 7 UTC days (fast); any other range reads the last 30. Read data.totals.last7 and data.totals.last30 (null on range=7d); when totals.complete is false, say how many of totals.days were reported and that partial days (today) are still counting. A day with status unavailable is unknown, never zero. A SIGNUPS_UNAVAILABLE error means no number is known.',
 	'learning/team-members is PII: learner emails and names. Only AI Hero admins may read it, every read is logged with the actor and team, and it is never cached. Do not copy member rows into public, shared or long-lived places; summarize with learning/team instead.',
 ] as const
 
@@ -479,12 +479,14 @@ const learningTeamMembersSchema = {
 } as const
 
 const signupCounts = {
-	total: count('New subscribers'),
+	total: count(
+		'New contacts drovr started from a signup or import (contact.created into provisional or confirmed). Excludes late adoptions, about one a day',
+	),
 	bySource: {
 		type: 'object',
 		additionalProperties: count('New subscribers from this source'),
 		description:
-			'ai-hero = site signups, kit = Kit-only arrivals, list-import = imported lists, unknown = no source. Sums to total.',
+			'The creation event payload.source. ai-hero = site signups, kit = Kit-only arrivals, list-import = imported lists. Reserved: unknown = the event named no source, unattributed = not looked up (over the 1,000-per-day lookup cap, or the event is missing). Sums to total.',
 	},
 } as const
 const signupTotal = {
@@ -513,19 +515,30 @@ const signupTotal = {
 		unsubscribed: { type: ['integer', 'null'], minimum: 0 },
 	},
 } as const
+const nullableCount = { type: ['integer', 'null'], minimum: 0 } as const
 
 export const REVENUE_SURFACE_SCHEMAS = {
 	'newsletter/signups': {
-		supports: [],
+		supports: ['range'],
 		data: {
 			type: 'object',
 			additionalProperties: false,
-			required: ['provider', 'asOf', 'from', 'to', 'days', 'sources', 'totals'],
+			required: [
+				'provider',
+				'asOf',
+				'from',
+				'to',
+				'windowDays',
+				'days',
+				'sources',
+				'totals',
+			],
 			properties: {
 				provider: { const: 'drovr' },
 				asOf: { type: 'string', format: 'date-time' },
 				from: { type: 'string', format: 'date' },
 				to: { type: 'string', format: 'date' },
+				windowDays: { enum: [7, 30] },
 				days: {
 					type: 'array',
 					items: {
@@ -535,8 +548,8 @@ export const REVENUE_SURFACE_SCHEMAS = {
 							day: { type: 'string', format: 'date' },
 							status: { enum: ['complete', 'partial', 'unavailable'] },
 							subscribed: { type: 'object', properties: signupCounts },
-							confirmed: { type: ['integer', 'null'], minimum: 0 },
-							unsubscribed: { type: ['integer', 'null'], minimum: 0 },
+							confirmed: nullableCount,
+							unsubscribed: nullableCount,
 						},
 					},
 				},
@@ -544,16 +557,19 @@ export const REVENUE_SURFACE_SCHEMAS = {
 				totals: {
 					type: 'object',
 					required: ['last7', 'last30'],
-					properties: { last7: signupTotal, last30: signupTotal },
+					properties: {
+						last7: signupTotal,
+						last30: { oneOf: [signupTotal, { type: 'null' }] },
+					},
 				},
 			},
 		},
 		semantics: [
 			'Source: drovr GET /signup-counts for tenant org-aihero. Counts and source names only, no contact identities.',
-			'days covers every UTC day from..to, oldest first. status unavailable means drovr did not vouch for that day: unknown, not zero, and excluded from totals.',
-			'status partial means the day is still counting (today so far). Totals include partial days and say so in partialDays.',
-			'confirmed and unsubscribed are null when drovr did not report them.',
-			'A failed or timed-out drovr read (10 s) returns ok:false with code SIGNUPS_UNAVAILABLE and HTTP 503.',
+			'Every count is a directory receipt for the UTC day drovr recorded it. days covers every UTC day from..to, oldest first. status unavailable means drovr has no receipts for that day or the call for its week failed: unknown, not zero, and excluded from totals.',
+			'status partial means the day is still counting: drovr calls a day complete once asOf is 15+ minutes past its end. Totals include partial days and say so in partialDays.',
+			'confirmed counts moves to confirmed (a first confirmation, a resubscribe or an unseeded birth). unsubscribed counts every contact that moved to unsubscribed, including imported lists and older provisional contacts, with no source split: it is not newsletter churn. Both are null when drovr did not report them.',
+			'drovr is read a week at a time, newest first, with a 10 s limit per call. When every call fails the response is ok:false with code SIGNUPS_UNAVAILABLE and HTTP 503.',
 		],
 	},
 	'learning/progress': learningProgressSchema,

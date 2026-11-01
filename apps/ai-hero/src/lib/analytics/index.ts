@@ -111,7 +111,11 @@ async function queryNewsletterSignups<S extends SurfaceName>(
 ): Promise<QueryResult<S>> {
 	const surface = 'newsletter/signups' as S
 	const start = Date.now()
-	const read = await getNewsletterSignups()
+	const read = await getNewsletterSignups({
+		days: options.range === '7d' ? 7 : 30,
+	})
+	if (read.status === 'available' && read.gaps.length > 0)
+		await log.warn('analytics.newsletter-signups.partial', { gaps: read.gaps })
 	if (read.status === 'unavailable') {
 		await log.warn('analytics.newsletter-signups.unavailable', {
 			reason: read.reason,

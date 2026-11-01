@@ -12,6 +12,9 @@ import {
 	getRevenueSurfaceSchema,
 } from './agent-contract'
 
+// newsletter/signups reads drovr a week at a time, up to five 10 s calls.
+export const maxDuration = 60
+
 type ApiAnalyticsRange = AnalyticsRange | '180d'
 
 const VALID_RANGES = new Set<ApiAnalyticsRange>([

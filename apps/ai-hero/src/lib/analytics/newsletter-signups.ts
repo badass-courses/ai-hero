@@ -4,22 +4,25 @@ import { parseDrovrSignupDeliveryConfig } from '../subscriber-marketing/drovr-do
 
 type Env = Record<string, string | undefined>
 const TENANT = 'org-aihero'
-/** The panel and the agent read the same window: the last 30 UTC days. */
-export const SIGNUP_WINDOW_DAYS = 30
-/** drovr counts one UTC day at a time and caches completed days; a cold
- * 30-day read took about 6 s at concurrency 4 (prod probe, 2026-11-01).
- * Past this a slow drovr reads unavailable instead of holding
- * /admin/analytics. */
+/** The two windows the panel and the agent read, in UTC days. */
+export type SignupWindowDays = 7 | 30
+/** drovr counts one UTC day at a time and caches completed days. Cold, 7
+ * days take about 5 s and 31 days about 23 s (Census, 2026-11-01), so the
+ * read asks for at most a week per call. */
+export const SIGNUP_CHUNK_DAYS = 7
+/** Owned limit per drovr call: about twice a cold 7-day read. Past it the
+ * chunk's days read unavailable instead of holding /admin/analytics. */
 export const SIGNUP_COUNTS_TIMEOUT_MS = 10_000
 
 const Count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const Day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
-// Payload source strings such as ai-hero, kit, list-import, unknown. Anything
-// that could carry an address or identifier fails the whole read closed.
+// Payload source strings such as ai-hero, kit, list-import and the reserved
+// unknown and unattributed. Anything that could carry an address or
+// identifier fails the call closed.
 const SourceKey = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/)
 
-// drovr's GET /signup-counts. Days are oldest first; a day drovr can't vouch
-// for is absent, never 0.
+// drovr's GET /signup-counts. Days are oldest first; a day with no directory
+// receipts is absent, never 0. complete: asOf is 15+ minutes past day end.
 const SignupCountsDay = z
 	.object({
 		day: Day,
@@ -42,7 +45,7 @@ const SignupCounts = z.object({
 	from: Day,
 	to: Day,
 	asOf: z.string().datetime({ offset: true }),
-	days: z.array(SignupCountsDay).max(90),
+	days: z.array(SignupCountsDay).max(31),
 })
 
 export type SignupDay =
@@ -54,6 +57,7 @@ export type SignupDay =
 			subscribed: { total: number; bySource: Record<string, number> }
 			/** null when drovr did not report it for this day. */
 			confirmed: number | null
+			/** Every contact that moved to unsubscribed, any source. */
 			unsubscribed: number | null
 	  }
 
@@ -71,14 +75,16 @@ export type SignupTotal = {
 
 export type NewsletterSignups = {
 	provider: 'drovr'
+	/** The oldest asOf among the drovr calls behind this read. */
 	asOf: string
 	from: string
 	to: string
+	windowDays: SignupWindowDays
 	/** Oldest first, one row per UTC day in [from, to]. */
 	days: SignupDay[]
 	/** Sources with any signups in the window, largest first. */
 	sources: string[]
-	totals: { last7: SignupTotal; last30: SignupTotal }
+	totals: { last7: SignupTotal; last30: SignupTotal | null }
 }
 
 const unavailable = (reason: string) => ({
@@ -87,14 +93,23 @@ const unavailable = (reason: string) => ({
 })
 
 export type NewsletterSignupsRead =
-	| { status: 'available'; data: NewsletterSignups }
+	| {
+			status: 'available'
+			data: NewsletterSignups
+			/** Why some calls failed; their days read unavailable. */
+			gaps: string[]
+	  }
 	| ReturnType<typeof unavailable>
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10)
 
+type ReportedDay = Exclude<SignupDay, { status: 'unavailable' }>
+const isReported = (day: SignupDay): day is ReportedDay =>
+	day.status !== 'unavailable'
+
 function total(days: SignupDay[]): SignupTotal {
-	const reported = days.filter((day) => day.status !== 'unavailable')
+	const reported = days.filter(isReported)
 	const bySource: Record<string, number> = {}
 	let subscribed = 0
 	for (const day of reported) {
@@ -119,91 +134,123 @@ function total(days: SignupDay[]): SignupTotal {
 }
 
 /**
- * Daily new newsletter subscribers by source for the last 30 UTC days, from
- * drovr's `GET /signup-counts`. Counts and source names only. Unconfigured,
- * refused, timed out or malformed reads are unavailable, never zero, and a
- * day drovr leaves out stays unavailable in the result.
+ * Daily new newsletter subscribers by source for the last 7 or 30 UTC days,
+ * from drovr's `GET /signup-counts`, newest week first. Counts and source
+ * names only. Unconfigured, refused, timed out or malformed calls are
+ * unavailable, never zero: their days stay unavailable, and the read is
+ * unavailable when no call succeeds.
  */
 export async function getNewsletterSignups(
-	args: { env?: Env; fetcher?: typeof fetch; now?: number } = {},
+	args: {
+		days?: SignupWindowDays
+		env?: Env
+		fetcher?: typeof fetch
+		now?: number
+	} = {},
 ): Promise<NewsletterSignupsRead> {
 	const config = parseDrovrSignupDeliveryConfig(args.env ?? process.env)
 	if (!config) return unavailable('drovr credentials are not configured')
 
+	const windowDays = args.days ?? 30
 	const now = args.now ?? Date.now()
-	const to = utcDay(now)
-	const from = utcDay(now - (SIGNUP_WINDOW_DAYS - 1) * DAY_MS)
 	const fetcher = args.fetcher ?? fetch
-	const controller = new AbortController()
-	const timer = setTimeout(() => controller.abort(), SIGNUP_COUNTS_TIMEOUT_MS)
-	let body: z.infer<typeof SignupCounts>
-	try {
-		const response = await fetcher(
-			`${config.baseUrl}/signup-counts?from=${from}&to=${to}`,
-			{
-				headers: {
-					accept: 'application/json',
-					authorization: `Bearer ${config.apiKey}`,
+
+	async function readChunk(from: string, to: string) {
+		const controller = new AbortController()
+		const timer = setTimeout(() => controller.abort(), SIGNUP_COUNTS_TIMEOUT_MS)
+		try {
+			const response = await fetcher(
+				`${config!.baseUrl}/signup-counts?from=${from}&to=${to}`,
+				{
+					headers: {
+						accept: 'application/json',
+						authorization: `Bearer ${config!.apiKey}`,
+					},
+					cache: 'no-store',
+					signal: controller.signal,
 				},
-				cache: 'no-store',
-				signal: controller.signal,
-			},
-		)
-		if (!response.ok)
-			return unavailable(`drovr signup-counts read failed (${response.status})`)
-		const parsed = SignupCounts.safeParse(await response.json())
-		if (!parsed.success)
-			return unavailable('drovr signup-counts response is invalid')
-		body = parsed.data
-	} catch {
-		return unavailable(
-			controller.signal.aborted
-				? 'drovr signup-counts read timed out'
-				: 'drovr signup-counts read failed',
-		)
-	} finally {
-		clearTimeout(timer)
+			)
+			if (!response.ok)
+				return unavailable(
+					`drovr signup-counts read failed (${response.status})`,
+				)
+			const parsed = SignupCounts.safeParse(await response.json())
+			if (!parsed.success)
+				return unavailable('drovr signup-counts response is invalid')
+			const body = parsed.data
+			if (
+				body.from !== from ||
+				body.to !== to ||
+				new Set(body.days.map((day) => day.day)).size !== body.days.length ||
+				body.days.some((day) => day.day < from || day.day > to)
+			)
+				return unavailable('drovr signup-counts answered a different window')
+			return { status: 'available' as const, data: body }
+		} catch {
+			return unavailable(
+				controller.signal.aborted
+					? 'drovr signup-counts read timed out'
+					: 'drovr signup-counts read failed',
+			)
+		} finally {
+			clearTimeout(timer)
+		}
 	}
 
-	const reported = new Map(body.days.map((day) => [day.day, day]))
-	if (
-		body.from !== from ||
-		body.to !== to ||
-		reported.size !== body.days.length ||
-		body.days.some((day) => day.day < from || day.day > to)
-	)
-		return unavailable('drovr signup-counts answered a different window')
+	// Newest week first and one call at a time, so today's week warms first
+	// and a cold load never asks drovr for more than a week at once.
+	const reported = new Map<string, z.infer<typeof SignupCountsDay>>()
+	const gaps: string[] = []
+	let asOf: string | null = null
+	for (let back = 0; back < windowDays; back += SIGNUP_CHUNK_DAYS) {
+		const oldest = Math.min(back + SIGNUP_CHUNK_DAYS, windowDays) - 1
+		const read = await readChunk(
+			utcDay(now - oldest * DAY_MS),
+			utcDay(now - back * DAY_MS),
+		)
+		if (read.status === 'unavailable') {
+			gaps.push(read.reason)
+			continue
+		}
+		for (const day of read.data.days) reported.set(day.day, day)
+		if (asOf === null || Date.parse(read.data.asOf) < Date.parse(asOf))
+			asOf = read.data.asOf
+	}
+	if (asOf === null) return unavailable(gaps[0]!)
 
-	const days: SignupDay[] = Array.from(
-		{ length: SIGNUP_WINDOW_DAYS },
-		(_, i) => {
-			const day = utcDay(Date.parse(`${from}T00:00:00Z`) + i * DAY_MS)
-			const row = reported.get(day)
-			if (!row) return { day, status: 'unavailable' }
-			return {
-				day,
-				status: row.complete ? 'complete' : 'partial',
-				subscribed: row.subscribed,
-				confirmed: row.confirmed ?? null,
-				unsubscribed: row.unsubscribed ?? null,
-			}
-		},
-	)
-	const last30 = total(days)
-	const sources = Object.entries(last30.subscribed.bySource)
+	const from = utcDay(now - (windowDays - 1) * DAY_MS)
+	const days: SignupDay[] = Array.from({ length: windowDays }, (_, i) => {
+		const day = utcDay(Date.parse(`${from}T00:00:00Z`) + i * DAY_MS)
+		const row = reported.get(day)
+		if (!row) return { day, status: 'unavailable' }
+		return {
+			day,
+			status: row.complete ? 'complete' : 'partial',
+			subscribed: row.subscribed,
+			confirmed: row.confirmed ?? null,
+			unsubscribed: row.unsubscribed ?? null,
+		}
+	})
+	const all = total(days)
+	const sources = Object.entries(all.subscribed.bySource)
 		.filter(([, n]) => n > 0)
 		.sort(([a, x], [b, y]) => y - x || a.localeCompare(b))
 		.map(([source]) => source)
 	return {
 		status: 'available',
+		gaps,
 		data: {
 			provider: 'drovr',
-			asOf: body.asOf,
+			asOf,
 			from,
-			to,
+			to: utcDay(now),
+			windowDays,
 			days,
 			sources,
-			totals: { last7: total(days.slice(-7)), last30 },
+			totals: {
+				last7: windowDays === 7 ? all : total(days.slice(-7)),
+				last30: windowDays === 30 ? all : null,
+			},
 		},
 	}
 }

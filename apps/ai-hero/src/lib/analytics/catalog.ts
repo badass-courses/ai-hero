@@ -31,7 +31,7 @@ export const catalog: Record<SurfaceName, SurfaceEntry> = {
 		provider: 'newsletter',
 		fn: 'getNewsletterSignups',
 		description:
-			'Newsletter signups from drovr: daily new subscribers by source (ai-hero = site signups, kit = Kit-only arrivals, list-import = imported lists) for the last 30 UTC days, with 7-day and 30-day totals, plus daily confirmed and unsubscribed counts when drovr reports them. Ignores range. A missing day is unavailable, not zero; today is partial. Counts only, no contact identities.',
+			'Newsletter signups from drovr: daily new subscribers by source (ai-hero = site signups, kit = Kit-only arrivals, list-import = imported lists, plus unknown and unattributed) with 7-day and 30-day totals, and daily confirmed and unsubscribed (all contacts, not newsletter churn) counts when drovr reports them. range=7d reads 7 UTC days, any other range 30. A missing day is unavailable, not zero; today is partial. Counts only, no contact identities.',
 	},
 	'learning/progress': {
 		name: 'learning/progress',
