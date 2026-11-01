@@ -1,4 +1,8 @@
 import { db } from '@/db'
+import {
+	isContactStopped,
+	readActiveContactStops,
+} from '@/lib/subscriber-marketing/contact-stop-rule'
 import { enterOwnedSkillsSubscriber } from '@/lib/subscriber-marketing/owned-skills-enrolment'
 import { readOwnedSkillsAdmission } from '@/lib/subscriber-marketing/owned-skills-list-state'
 import { parseDrovrSignupDeliveryConfig } from '@/lib/subscriber-marketing/drovr-doi-signup'
@@ -182,6 +186,13 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 					)
 					if (mirrorAdmission.status !== 'allow') return
 					try {
+						const repository = new DrizzleCaptureMarketingRepository(db)
+						if (
+							isContactStopped(
+								await readActiveContactStops(repository, input.contactId),
+							)
+						)
+							return
 						await emailListProvider.subscribeToList({
 							listId: input.formId,
 							listType: 'form',

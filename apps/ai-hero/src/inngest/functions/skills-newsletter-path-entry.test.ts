@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
 	enterOwnedSkillsSubscriber: vi.fn(),
 	readOwnedEvidence: vi.fn(),
+	readLocalStopEvents: vi.fn(),
 	requestDoi: vi.fn(),
 	mirrorForm: vi.fn(),
 	enterSkillsNewsletterSubscriber: vi.fn(),
@@ -71,6 +72,9 @@ vi.mock('@/inngest/inngest.server', () => ({
 
 vi.mock('@/lib/subscriber-marketing/drizzle-capture-repository', () => ({
 	DrizzleCaptureMarketingRepository: class {
+		findContactEventsByType(...args: unknown[]) {
+			return mocks.readLocalStopEvents(...args)
+		}
 		findProviderIdentity() {
 			return { id: 'identity_1', contactId: 'contact_1' }
 		}
@@ -206,6 +210,10 @@ async function runAttempt(
 
 describe('skills newsletter path entry', () => {
 	beforeEach(() => {
+		mocks.readLocalStopEvents.mockResolvedValue([])
+		mocks.readOwnedEvidence.mockResolvedValue({
+			list: { contactId: 'owned-1', state: 'confirmed', forms: [], stops: [] },
+		})
 		vi.clearAllMocks()
 		mocks.readActiveGateDRuntimeAllowlist.mockResolvedValue({
 			passed: true,
@@ -318,6 +326,53 @@ describe('skills newsletter path entry', () => {
 		expect(
 			mocks.ensureShadowNewsletterOwnershipAssignment,
 		).not.toHaveBeenCalled()
+	})
+
+	it.each(['contact.unsubscribed', 'contact.bounced', 'contact.complained'])(
+		'an allowed remote read cannot mirror over local %s',
+		async (eventType) => {
+			vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'true')
+			mocks.enterOwnedSkillsSubscriber.mockResolvedValue({
+				status: 'drovr-owned',
+				contactId: 'owned-1',
+			})
+			mocks.readLocalStopEvents.mockImplementation(async (_id, type) =>
+				type === eventType
+					? [{ eventType, occurredAt: '2026-11-01T05:00:00Z' }]
+					: [],
+			)
+			const { step } = createDurableStep()
+			expect(
+				await handler({
+					event: { ...event, data: { ...event.data, contactId: 'owned-1' } },
+					step,
+					attempt: 0,
+					maxAttempts: 7,
+				}),
+			).toMatchObject({ status: 'drovr-owned' })
+			expect(mocks.mirrorForm).not.toHaveBeenCalled()
+		},
+	)
+
+	it('a local stop read failure skips the optional mirror without failing owned entry', async () => {
+		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'true')
+		mocks.enterOwnedSkillsSubscriber.mockResolvedValue({
+			status: 'drovr-owned',
+			contactId: 'owned-1',
+		})
+		mocks.readLocalStopEvents.mockRejectedValue(
+			new Error('local read unavailable'),
+		)
+		const { step } = createDurableStep()
+		expect(
+			await handler({
+				event: { ...event, data: { ...event.data, contactId: 'owned-1' } },
+				step,
+				attempt: 0,
+				maxAttempts: 7,
+			}),
+		).toMatchObject({ status: 'drovr-owned' })
+		expect(mocks.mirrorForm).not.toHaveBeenCalled()
 	})
 
 	it('a newer stop suppresses the optional mirror even when owned entry was already cached', async () => {
