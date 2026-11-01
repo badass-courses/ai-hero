@@ -2,12 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
 	after: vi.fn(),
-	key: vi.fn(() => 'test-key'),
+	send: vi.fn(),
 }))
 vi.mock('next/server', () => ({ after: mocks.after }))
-vi.mock('./drovr-shadow-emitter', () => ({ drovrApiKeyForTenant: mocks.key }))
+vi.mock('@/inngest/inngest.server', () => ({ inngest: { send: mocks.send } }))
 import {
-	deliverGoalInterestFact,
+	recordGoalInterestFact,
 	recordInterestFacts,
 	scheduleGoalInterestFact,
 } from './survey-interest-facts-live'
@@ -53,12 +53,9 @@ describe('live goal interest facts', () => {
 			.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
 			.mockResolvedValueOnce(resolutionResponse())
 			.mockResolvedValueOnce(acceptedResponse())
-		await deliverGoalInterestFact({
-			row,
-			logger: { info: vi.fn() },
-			config,
-			fetcher,
-		})
+		await expect(
+			recordGoalInterestFact({ row, config, fetcher }),
+		).resolves.toBe('recorded')
 		expect(fetcher.mock.calls[0]?.[0]).toBe(
 			'https://drovr.example.test/resolve_contacts',
 		)
@@ -80,7 +77,7 @@ describe('live goal interest facts', () => {
 		expect(String(request?.body)).not.toMatch(/email|HUMAN|https:/)
 	})
 	it.each(['resolve', 'post', 'bad-ack', 'conflict'])(
-		'swallows %s failure even when logging fails',
+		'throws on %s failure so the Inngest step retries',
 		async (failure) => {
 			const fetcher = vi.fn<
 				Parameters<typeof fetch>,
@@ -102,50 +99,100 @@ describe('live goal interest facts', () => {
 								}),
 				)
 			}
-			const logger = { info: vi.fn().mockRejectedValue(new Error('log-down')) }
 			await expect(
-				deliverGoalInterestFact({ row, logger, config, fetcher }),
-			).resolves.toBeUndefined()
-			expect(logger.info).toHaveBeenCalledWith('survey.interest_fact.failed', {
-				rowId: 'response-1',
-				reason: 'delivery-failed',
-			})
+				recordGoalInterestFact({ row, config, fetcher }),
+			).rejects.toThrow()
 		},
 	)
+	it('a 503 on the first attempt retries and records once; the retry sends the same fact', async () => {
+		const bodies: string[] = []
+		const fetcher = vi.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>(
+			async (url, init) => {
+				if (String(url).endsWith('/resolve_contacts'))
+					return resolutionResponse()
+				bodies.push(String(init?.body))
+				return bodies.length === 1
+					? new Response('down', { status: 503 })
+					: acceptedResponse()
+			},
+		)
+		await expect(
+			recordGoalInterestFact({ row, config, fetcher }),
+		).rejects.toThrow('interest-fact-http-failed')
+		await expect(
+			recordGoalInterestFact({ row, config, fetcher }),
+		).resolves.toBe('recorded')
+		expect(bodies).toHaveLength(2)
+		expect(bodies[1]).toBe(bodies[0])
+	})
+	it('a repeated answer sends the same sourceId, so drovr dedupes it', async () => {
+		const fetcher = vi.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>(
+			async (url) =>
+				String(url).endsWith('/resolve_contacts')
+					? resolutionResponse()
+					: Response.json({ inserted: 0, duplicates: 1, conflicts: [] }),
+		)
+		await expect(
+			recordGoalInterestFact({ row, config, fetcher }),
+		).resolves.toBe('recorded')
+		const fact = (n: number) =>
+			JSON.parse(String(fetcher.mock.calls[n]?.[1]?.body)).facts?.[0]
+		await recordGoalInterestFact({ row, config, fetcher })
+		expect(fact(3)).toEqual(fact(1))
+		expect(fact(1).sourceId).toBe(
+			JSON.stringify(['aihero', 'AI_QuestionResponse', 'response-1']),
+		)
+	})
 	it('does not post for a missing/conflicting contact or missing email', async () => {
 		for (const status of ['missing', 'conflict']) {
 			const fetcher = vi
 				.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
 				.mockResolvedValue(Response.json({ results: [{ index: 0, status }] }))
-			await deliverGoalInterestFact({
-				row,
-				logger: { info: vi.fn() },
-				config,
-				fetcher,
-			})
+			await expect(
+				recordGoalInterestFact({ row, config, fetcher }),
+			).resolves.toBe('unresolved')
 			expect(fetcher).toHaveBeenCalledTimes(1)
 		}
 		const fetcher = vi.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
-		await deliverGoalInterestFact({
-			row: { ...row, email: null },
-			logger: { info: vi.fn() },
-			config,
-			fetcher,
-		})
+		await expect(
+			recordGoalInterestFact({ row: { ...row, email: null }, config, fetcher }),
+		).resolves.toBe('missing-email')
 		expect(fetcher).not.toHaveBeenCalled()
 	})
-	it('defers all network work until after the response', async () => {
-		vi.stubEnv('DROVR_API_BASE_URL', config.baseUrl)
-		const fetcher = vi
-			.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
-			.mockResolvedValueOnce(resolutionResponse())
-			.mockResolvedValueOnce(acceptedResponse())
+	it('sends the Inngest event after the response and never POSTs to drovr directly', async () => {
+		const fetcher = vi.fn()
 		vi.stubGlobal('fetch', fetcher)
+		mocks.send.mockResolvedValue({ ids: ['x'] })
 		scheduleGoalInterestFact(row, { info: vi.fn() })
 		expect(mocks.after).toHaveBeenCalledOnce()
-		expect(fetcher).not.toHaveBeenCalled()
+		expect(mocks.send).not.toHaveBeenCalled()
 		await mocks.after.mock.calls[0]?.[0]()
-		expect(fetcher).toHaveBeenCalledTimes(2)
+		expect(fetcher).not.toHaveBeenCalled()
+		expect(mocks.send).toHaveBeenCalledWith({
+			id: 'survey-goal-fact:response-1',
+			name: 'aihero/interest.fact.requested',
+			data: {
+				email: 'HUMAN@example.test',
+				fieldKey: 'survey_goal:response-1',
+				expressedAt: '2026-10-28T17:20:00.000Z',
+				via: 'survey',
+				survey: {
+					rowId: 'response-1',
+					questionId: GOAL_QUESTION_ID,
+					answer: 'team_workflows',
+				},
+			},
+		})
+	})
+	it('a failed send is logged, never thrown', async () => {
+		mocks.send.mockRejectedValue(new Error('down'))
+		const logger = { info: vi.fn() }
+		scheduleGoalInterestFact(row, logger)
+		await expect(mocks.after.mock.calls[0]?.[0]()).resolves.toBeUndefined()
+		expect(logger.info).toHaveBeenCalledWith('survey.interest_fact.failed', {
+			rowId: 'response-1',
+			reason: 'enqueue-failed',
+		})
 	})
 	it('ignores other questions and invalid options; scheduler failure never escapes', () => {
 		const logger = { info: vi.fn() }

@@ -120,6 +120,44 @@ export const interestFactRecord = inngest.createFunction(
 	async ({ event, step }) => {
 		const data = event.data as InterestFactRequested['data']
 		const { log } = await import('@/server/logger')
+		if (data.survey) {
+			const survey = data.survey
+			// A drovr failure throws inside the step, so Inngest retries it.
+			const outcome = await step.run('record-survey-goal-fact', async () => {
+				const [
+					{ drovrApiKeyForTenant },
+					{ resolveDrovrApiBaseUrl },
+					{ recordGoalInterestFact },
+				] = await Promise.all([
+					import('@/lib/subscriber-marketing/drovr-shadow-emitter'),
+					import('@/lib/subscriber-marketing/drovr-unsubscribe-page'),
+					import('@/lib/subscriber-marketing/survey-interest-facts-live'),
+				])
+				const baseUrl = resolveDrovrApiBaseUrl({
+					DROVR_API_BASE_URL: process.env.DROVR_API_BASE_URL,
+					DROVR_SHADOW_INGEST_URL: process.env.DROVR_SHADOW_INGEST_URL,
+				})
+				const apiKey = drovrApiKeyForTenant('org-aihero')
+				if (!baseUrl || !apiKey) return 'not-configured' as const
+				return recordGoalInterestFact({
+					row: {
+						id: survey.rowId,
+						questionId: survey.questionId,
+						answer: survey.answer,
+						createdAt: new Date(data.expressedAt),
+						email: data.email,
+					},
+					config: { baseUrl, apiKey },
+				})
+			})
+			await step.run('log-survey-goal-fact', () =>
+				log.info('survey.interest_fact.recorded', {
+					rowId: survey.rowId,
+					outcome,
+				}),
+			)
+			return { survey: outcome }
+		}
 		// Held before the first look, so a second run for this person and list
 		// (a join after Inngest's 24-hour idempotency) records the first time.
 		const firstAt = await step.run('hold-pending-join', () =>
