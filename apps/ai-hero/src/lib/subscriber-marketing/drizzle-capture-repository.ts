@@ -49,6 +49,7 @@ import {
 	dispatchDrovrShadowFactSafely,
 } from './drovr-shadow-dispatch'
 import { excludeLearnerFlowCanary } from './learner-flow-canary-exclusion'
+import { ENTITLEMENT_EVENT_TYPES } from './lifecycle-contact-events'
 import {
 	canonicalCompletionForWrite,
 	isValuePathIntentCompleted,
@@ -87,6 +88,8 @@ class LearnerFlowContactIdOrderingError extends Error {
 const AWAITED_DISPATCH_EVENT_TYPES: ReadonlySet<string> = new Set([
 	JOURNEY_OWNER_ASSIGNED_EVENT_TYPE,
 	'purchase.recorded',
+	// An included grant stops a pitch the way a purchase does.
+	...ENTITLEMENT_EVENT_TYPES,
 ])
 
 // ~5k rows of intent payload (metadata/gates included) is ~5MB on the wire,

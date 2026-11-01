@@ -87,11 +87,11 @@ Then send `drovr/outbox.replay-requested`, or wait for the next :x2/:x7 tick. A 
 
 Its gate lifts and the rows behind it post at the next run. Delivered rows are purged after 7 days, so record the retirement in the row log too.
 
-**A purchase is never retired.** Retiring `purchase.recorded` means drovr never learns of the purchase, so the buyer is pitched P2–P5: nothing but drovr knowing stops that. This statement refuses one:
+**A purchase is never retired.** Retiring `purchase.recorded` means drovr never learns of the purchase, so the buyer is pitched P2–P5: nothing but drovr knowing stops that. An included grant (`entitlement.granted`, see `entitlement-events.md`) is ownership too: retired, a C5 seat holder is pitched the crash course the seat includes. This statement refuses both:
 
 ```sql
 UPDATE AI_DrovrOutbox SET status = 'delivered', deliveredAt = NOW(3), lastError = 'retired by hand: <reason>'
-WHERE status IN ('held', 'rejected') AND eventType <> 'purchase.recorded' AND id IN (…);
+WHERE status IN ('held', 'rejected') AND eventType NOT IN ('purchase.recorded', 'entitlement.granted') AND id IN (…);
 ```
 
 A purchase drovr keeps refusing is a drovr bug: fix it there, then release the row. The exception is drovr's `contact-never-born` on an owner copy, which is the correct answer and is released on its own; it is never held. Until then it stays held, its facts stay held, and the held-stop monitor pages after a day, which is right: the buyer must not be pitched.

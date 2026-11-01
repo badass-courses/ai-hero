@@ -68,9 +68,41 @@ export type ContactUnsubscribedSource = {
 	occurredAt: string
 }
 
+/**
+ * An included-product grant or its end (included-product-entitlement-events),
+ * on the user who holds or held it. No amount: ownership only.
+ */
+export type EntitlementRecordedSource = {
+	change: 'granted' | 'revoked'
+	/** The grant id drovr folds; stable for one grant and its revoke. */
+	entitlementId: string
+	userId: string
+	email?: string | null
+	name?: string | null
+	productId: string
+	viaProductId: string
+	bundlePolicy: string
+	occurredAt: string
+}
+
+/** The wire payloads drovr's ownership package decodes. */
+export type EntitlementGrantedPayload = {
+	entitlementId: string
+	productId: string
+	viaProductId?: string
+	bundlePolicy?: string
+}
+export type EntitlementRevokedPayload = { entitlementId: string }
+
+export const ENTITLEMENT_EVENT_TYPES = [
+	'entitlement.granted',
+	'entitlement.revoked',
+] as const
+
 export type LifecycleContactEventSourceKind =
 	| 'purchase-recorded'
 	| 'contact-unsubscribed'
+	| 'entitlement-recorded'
 
 export type LifecycleContactEventDecision =
 	| {
@@ -127,6 +159,26 @@ export function purchaseRecordedBuyerSemanticKey(purchaseId: string) {
 	return `${purchaseRecordedSemanticKey(purchaseId)}:buyer`
 }
 
+export function entitlementRecordedSemanticKey(
+	change: EntitlementRecordedSource['change'],
+	entitlementId: string,
+) {
+	return `ai-hero:entitlement.${change}:${entitlementId}`
+}
+
+export function entitlementPayloadOf(
+	source: EntitlementRecordedSource,
+): EntitlementGrantedPayload | EntitlementRevokedPayload {
+	return source.change === 'granted'
+		? {
+				entitlementId: source.entitlementId,
+				productId: source.productId,
+				viaProductId: source.viaProductId,
+				bundlePolicy: source.bundlePolicy,
+			}
+		: { entitlementId: source.entitlementId }
+}
+
 export function contactUnsubscribedSemanticKey(
 	email: string,
 	preferenceKey: string,
@@ -177,6 +229,37 @@ export function buildPurchaseRecordedEvent(
 			restrictedPayloadStored: false,
 		},
 		...(Object.keys(domainPayload).length > 0 ? { domainPayload } : {}),
+		schemaVersion: CONTACT_EVENT_SCHEMA_VERSION,
+	}
+}
+
+/** The drovr payload rides in domainPayload.entitlement. */
+export function buildEntitlementRecordedEvent(
+	source: EntitlementRecordedSource,
+	evidence: ContactIdentityEvidence,
+): NormalizedContactEvent {
+	return {
+		provider: 'ai-hero',
+		providerEventId: `entitlement:${source.entitlementId}:${source.change}`,
+		providerReference: `ai-hero:entitlement:${source.entitlementId}`,
+		eventType: `entitlement.${source.change}`,
+		occurredAt: source.occurredAt,
+		semanticIdempotencyKey: entitlementRecordedSemanticKey(
+			source.change,
+			source.entitlementId,
+		),
+		privacyLevel: 'internal',
+		identityEvidence: evidence,
+		payloadSummary: {
+			summary: `Included-entitlement ${source.change}: ${source.productId} via ${source.viaProductId}.`,
+			keywords: [
+				`entitlement-${source.change}`,
+				source.productId,
+				`via-${source.viaProductId}`,
+			],
+			restrictedPayloadStored: false,
+		},
+		domainPayload: { entitlement: entitlementPayloadOf(source) },
 		schemaVersion: CONTACT_EVENT_SCHEMA_VERSION,
 	}
 }
@@ -723,6 +806,41 @@ export async function writePurchaseRecordedContactEvents(args: {
 	if (args.redispatchDuplicates) {
 		await redispatchDuplicatePurchases(args.repository, decisions)
 	}
+	return summarize('write', decisions, written, createdProviderIdentities)
+}
+
+/**
+ * Grants and revokes land on the holder's existing contact only, like a
+ * purchase. The semantic key is the dedupe: a retried fulfilment or a
+ * backfill rerun finds the event and writes nothing.
+ */
+export async function writeEntitlementRecordedContactEvents(args: {
+	repository: ContactEventWriteRepository
+	rows: EntitlementRecordedSource[]
+	now?: string
+}): Promise<LifecycleContactEventSummary> {
+	const now = args.now ?? new Date().toISOString()
+	const decisions: LifecycleContactEventDecision[] = []
+	for (const row of args.rows) {
+		decisions.push(
+			await decideLifecycleContactEvent({
+				repository: args.repository,
+				source: 'entitlement-recorded',
+				sourceId: `${row.entitlementId}:${row.change}`,
+				resolved: await resolveLifecycleIdentity(args.repository, {
+					userId: row.userId,
+					email: row.email,
+					name: row.name,
+				}),
+				build: (evidence) => buildEntitlementRecordedEvent(row, evidence),
+			}),
+		)
+	}
+	const { written, createdProviderIdentities } = await writeLifecycleDecisions({
+		repository: args.repository,
+		decisions,
+		now,
+	})
 	return summarize('write', decisions, written, createdProviderIdentities)
 }
 
