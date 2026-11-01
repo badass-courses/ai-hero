@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getSubscriberByEmail: vi.fn(),
@@ -276,5 +276,41 @@ describe("routeReturningUnsubscriberWithKit", () => {
     mocks.getSubscriberByEmail.mockResolvedValue({ state: "active", tags: [] });
     await expect(call()).resolves.toEqual({ status: "not-unsubscribed" });
     expect(mocks.requestDoi).not.toHaveBeenCalled();
+  });
+});
+
+describe("reconcileAiHeroEmailOptInWithKit with Kit mirror writes off", () => {
+  const fetchSpy = vi.fn();
+  beforeEach(() => {
+    vi.clearAllMocks();
+    for (const key of Object.keys(mocks.env)) delete mocks.env[key];
+    vi.stubGlobal("fetch", fetchSpy);
+    vi.stubEnv("AIH_KIT_MIRROR_WRITES_ENABLED", "false");
+    mocks.getSubscriberByEmail.mockRejectedValue(new Error("Kit is unreachable"));
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("an active subscriber stays active with no Kit read or tag write", async () => {
+    const { reconcileAiHeroEmailOptInWithKit } = await import("./ai-hero-email-opt-in.server");
+    const input = { email: "person@example.com", subscriberState: "active" };
+    for (const _ of [1, 2]) {
+      await expect(reconcileAiHeroEmailOptInWithKit(input)).resolves.toEqual({
+        status: "active",
+        removedUnsubscribeTag: false,
+      });
+    }
+    expect(mocks.getSubscriberByEmail).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("a non-active subscriber still needs confirmation", async () => {
+    const { reconcileAiHeroEmailOptInWithKit } = await import("./ai-hero-email-opt-in.server");
+    await expect(
+      reconcileAiHeroEmailOptInWithKit({ email: "p@example.com", subscriberState: "inactive" }),
+    ).resolves.toEqual({ status: "confirmation-required" });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

@@ -7,6 +7,7 @@ import {
 } from '@/lib/gated-asks-off-kit'
 import { OPTIN_DEFERRED_EVENT } from '@/inngest/events/optin-deferred'
 import { inngest } from '@/inngest/inngest.server'
+import { kitMirrorWritesEnabled } from '@/lib/kit-mirror-writes'
 import { log } from '@/server/logger'
 
 import {
@@ -33,6 +34,13 @@ export async function reconcileAiHeroEmailOptInWithKit(args: {
 	if (gatedAsksOffKitEnabled()) {
 		const { list } = await readGatedAskForEmail(args.email)
 		return list?.state === 'confirmed'
+			? { status: 'active' as const, removedUnsubscribeTag: false }
+			: { status: 'confirmation-required' as const }
+	}
+	// The unsubscribe tag is a Kit mirror: with the mirror switch off, an
+	// active subscriber is simply active and nothing reads or writes Kit.
+	if (!kitMirrorWritesEnabled()) {
+		return args.subscriberState === 'active'
 			? { status: 'active' as const, removedUnsubscribeTag: false }
 			: { status: 'confirmation-required' as const }
 	}
