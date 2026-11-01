@@ -1,10 +1,9 @@
 import type { Metadata } from 'next'
 import { C5SaleSecondaryLink } from '@/components/c5-sale-secondary-link'
 import LayoutClient from '@/components/layout-client'
-import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
+import { readKitSubscriberIdentity } from '@/lib/kit-subscriber-directory'
 import { resolveSkillsCtaState } from '@/lib/skills-cta-state'
-import { SubscriberSchema } from '@/schemas/subscriber'
 import { getServerAuthSession } from '@/server/auth'
 
 import { type SkillsNewsletterStatus } from '../_components/skills-newsletter'
@@ -27,17 +26,19 @@ export const metadata: Metadata = {
 	},
 }
 
-async function resolveSubscriber(ckSubscriberId: string | undefined) {
+/**
+ * The reader's address, for the shared resolver below. A broadcast link can
+ * land here before its id becomes a cookie, so the URL's Kit id resolves
+ * through the contact directory too. The resolver decides list and course
+ * state; this only has to name the reader.
+ */
+async function resolveReaderEmail(ckSubscriberId: string | undefined) {
 	const fromCookie = await getSubscriberFromCookie()
-	if (fromCookie?.state === 'active') return fromCookie
-	const subscriberId = fromCookie?.id?.toString() ?? ckSubscriberId
-	if (!subscriberId || !/^\d+$/.test(subscriberId)) return fromCookie
-	try {
-		const subscriber = await emailListProvider.getSubscriber(subscriberId)
-		return subscriber ? SubscriberSchema.parse(subscriber) : fromCookie
-	} catch {
-		return fromCookie
-	}
+	if (fromCookie?.email_address) return fromCookie.email_address
+	const identity = await readKitSubscriberIdentity(
+		fromCookie?.id ?? ckSubscriberId,
+	).catch(() => null)
+	return identity?.email_address
 }
 
 export default async function SkillsSubscribePage({
@@ -46,8 +47,8 @@ export default async function SkillsSubscribePage({
 	searchParams: Promise<{ ck_subscriber_id?: string }>
 }) {
 	const { ck_subscriber_id } = await searchParams
-	const [subscriber, auth] = await Promise.all([
-		resolveSubscriber(ck_subscriber_id),
+	const [readerEmail, auth] = await Promise.all([
+		resolveReaderEmail(ck_subscriber_id),
 		getServerAuthSession().catch(() => null),
 	])
 
@@ -60,7 +61,7 @@ export default async function SkillsSubscribePage({
 	// Hero subscriber they were already on the course — including the ones who
 	// had never joined it, who were then offered no way to.
 	const resolved = await resolveSkillsCtaState(
-		subscriber?.email_address ?? auth?.session?.user?.email,
+		readerEmail ?? auth?.session?.user?.email,
 	)
 
 	// `account` and `tag-me` are the same control here — one click, no fields.
