@@ -22,7 +22,9 @@ export async function requestOwnedSkillsEnrolment(args: {
 	optInAttribution?: OptInAttribution
 	deadlineTimeZone?: DeadlineTimeZoneEvidence
 }) {
-	const evidence = await readGatedAskForEmail(args.email)
+	const evidence = await readGatedAskForEmail(args.email).catch(() => ({
+		list: null,
+	}))
 	const list = evidence.list
 	// A profile or an unrelated form is not Skills consent. A returning
 	// unsubscribe is never lifted here; only drovr's confirmation can lift it.

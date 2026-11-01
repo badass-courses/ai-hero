@@ -233,6 +233,24 @@ describe('tagSubscriberAsSkills', () => {
 		},
 	)
 
+	it('an owned list-state read failure requests DOI, never the direct-Kit fallback', async () => {
+		mocks.env.AIH_ENROLMENT_OFF_KIT_ENABLED = 'true'
+		mocks.getSubscriberFromCookie.mockResolvedValue(null)
+		mocks.getServerAuthSession.mockResolvedValue({
+			session: { user: { email: 'learner@example.test' } },
+		})
+		mocks.readOwnedEvidence.mockRejectedValueOnce(
+			new Error('list state unavailable'),
+		)
+		expect(await tagSubscriberAsSkills('skills-post')).toMatchObject({
+			reason: 'confirmation-required',
+		})
+		expect(mocks.requestDoi).toHaveBeenCalledOnce()
+		expect(mocks.inngestSend).not.toHaveBeenCalled()
+		expect(mocks.subscribeToList).not.toHaveBeenCalled()
+		expect(mocks.routeReturning).not.toHaveBeenCalled()
+	})
+
 	it.each(['false', 'TRUE', 'garbage'])(
 		'flag %s retains the existing signed-in Kit path',
 		async (flag) => {

@@ -179,6 +179,7 @@ export async function enterOwnedSkillsSubscriber(args: {
 			message: 'Skills course entered with drovr ownership',
 			privacyLevel: 'internal',
 		}),
+		eventType: 'value-path.entered' as const,
 		providerReference: 'value-path:ai-hero-skills-workflow',
 		contactId: row.id,
 		providerIdentityId: identity.id,
