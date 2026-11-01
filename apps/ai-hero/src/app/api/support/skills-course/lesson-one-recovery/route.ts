@@ -178,12 +178,12 @@ export function createLocalRecoverySubscribers(
 				expectedKitSubscriberId,
 				reader,
 			})
-			if (standing.state !== 'subscribed') {
-				await log.info('skills.course.lesson_one_support_recovery_standing', {
-					state: standing.state,
-					reason: standing.reason,
-				})
-			}
+			await log.info(
+				'skills.course.lesson_one_support_recovery_standing',
+				standing.state === 'subscribed'
+					? { state: standing.state }
+					: { state: standing.state, reason: standing.reason },
+			)
 			switch (standing.state) {
 				case 'subscribed':
 					return {
