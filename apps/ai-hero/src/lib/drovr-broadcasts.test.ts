@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
 	approveDrovrBroadcast,
-	broadcastProvider,
 	buildDrovrMessageFile,
 	createDrovrBroadcastClient,
 	drovrApprovalBlocks,
@@ -22,7 +21,6 @@ const plan = {
 }
 
 const drovrEnv = {
-	AI_HERO_BROADCAST_PROVIDER: 'drovr',
 	AI_HERO_SKILLS_DROVR_SEND_PLAN: JSON.stringify(plan),
 	AI_HERO_BROADCAST_APPROVER_SLACK_IDS: 'U_APPROVER, U_OTHER',
 }
@@ -86,21 +84,7 @@ afterEach(() => {
 	vi.unstubAllGlobals()
 })
 
-describe('broadcast provider config', () => {
-	it('stays on Kit when unset, so the drovr path ships dark', () => {
-		expect(broadcastProvider({})).toBe('kit')
-		expect(broadcastProvider({ AI_HERO_BROADCAST_PROVIDER: 'kit' })).toBe('kit')
-		expect(broadcastProvider({ AI_HERO_BROADCAST_PROVIDER: ' Drovr ' })).toBe(
-			'drovr',
-		)
-	})
-
-	it('reads an unknown provider as unknown, never as Kit', () => {
-		expect(broadcastProvider({ AI_HERO_BROADCAST_PROVIDER: 'postshiba' })).toBe(
-			'unknown',
-		)
-	})
-
+describe('drovr send plan config', () => {
 	it('fails closed on a missing or partial send plan', () => {
 		expect(drovrSendPlan({}).ok).toBe(false)
 		expect(
@@ -268,16 +252,6 @@ describe('approveDrovrBroadcast', () => {
 	})
 
 	it.each([
-		[
-			'the provider is Kit',
-			{ ...drovrEnv, AI_HERO_BROADCAST_PROVIDER: 'kit' },
-			'U_APPROVER',
-		],
-		[
-			'the provider is unknown',
-			{ ...drovrEnv, AI_HERO_BROADCAST_PROVIDER: 'x' },
-			'U_APPROVER',
-		],
 		['the clicker is not an approver', drovrEnv, 'U_SOMEONE'],
 		[
 			'no approvers are configured',

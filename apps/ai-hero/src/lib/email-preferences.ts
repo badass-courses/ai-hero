@@ -36,7 +36,6 @@ type Subscriber = {
 type PreferenceSource =
 	| 'preferences-page'
 	| 'unsubscribe-link'
-	| 'broadcast-guard'
 	| 'admin'
 	| 'cli'
 

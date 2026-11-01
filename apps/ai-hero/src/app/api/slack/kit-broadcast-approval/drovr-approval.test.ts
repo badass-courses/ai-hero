@@ -1,5 +1,5 @@
 /**
- * The Slack approval route with `AI_HERO_BROADCAST_PROVIDER=drovr`, a fake
+ * The Slack approval route with a fake
  * drovr client and Kit unreachable. Only a signed click by a configured
  * approver creates a drovr broadcast; the Kit approval is refused.
  */
@@ -114,7 +114,6 @@ beforeEach(() => {
 	vi.stubGlobal('fetch', outbound)
 	vi.stubEnv('SLACK_SIGNING_SECRET', SECRET)
 	vi.stubEnv('CONVERTKIT_V4_API_KEY', 'kit-key-that-must-not-be-used')
-	vi.stubEnv('AI_HERO_BROADCAST_PROVIDER', 'drovr')
 	vi.stubEnv('AI_HERO_SKILLS_DROVR_SEND_PLAN', JSON.stringify(plan))
 	vi.stubEnv('AI_HERO_BROADCAST_APPROVER_SLACK_IDS', 'U_APPROVER')
 	mocks.client = fakeClient()
@@ -212,26 +211,12 @@ describe('drovr broadcast approval', () => {
 		expect(mocks.client.createBroadcast).not.toHaveBeenCalled()
 	})
 
-	it('refuses the Kit approval once drovr owns sending', async () => {
+	it('rejects the retired Kit approval action', async () => {
 		const response = await POST(
 			signedRequest('ai_hero_skills_approve_and_send', kitValue, 'U_APPROVER'),
 		)
-		expect((await response.json()).text).toContain('Kit sends are off')
+		expect(response.status).toBe(400)
 		expect(kitCalls()).toEqual([])
 		expect(mocks.client.createBroadcast).not.toHaveBeenCalled()
-	})
-
-	it('refuses the drovr approval while the provider is still Kit (dark)', async () => {
-		vi.stubEnv('AI_HERO_BROADCAST_PROVIDER', '')
-		const response = await POST(
-			signedRequest(
-				'ai_hero_skills_approve_drovr_send',
-				drovrValue,
-				'U_APPROVER',
-			),
-		)
-		expect((await response.json()).text).toContain('drovr broadcasts are off')
-		expect(mocks.client.createBroadcast).not.toHaveBeenCalled()
-		expect(kitCalls()).toEqual([])
 	})
 })
