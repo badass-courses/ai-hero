@@ -7,9 +7,10 @@ import {
 
 /**
  * The recent tier: every 15 minutes, off the quarter hours (the
- * contact-sync reconcile) and :40 (the owner-birth guard). Kit has no
- * confirmation webhook here, so this poll is the whole wait between a
- * learner confirming and their entry.
+ * contact-sync reconcile) and :40 (the owner-birth guard). The legacy
+ * Kit-only cohort has no confirmation webhook. Persisted drovr DOI intake
+ * is split out behind AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED; its enrolment
+ * and repair belong to drovr's confirm fold/outbox, never this Kit event.
  */
 export const SKILLS_CONFIRMATION_POLL_CRON = '2,17,32,47 * * * *'
 /**
@@ -50,6 +51,8 @@ export const skillsNewsletterConfirmationReconciler = inngest.createFunction(
 		const receipt = await reconcileSkillsConfirmations({
 			tier: skillsConfirmationTierOf(event),
 			steps,
+			onDrovrObserved: (owned) =>
+				logger.info('subscriber_funnel.drovr_confirmations_observed', owned),
 			onSent: (confirmed) =>
 				logger.info('subscriber_funnel.confirmation_reconciled', {
 					funnel: 'skills-newsletter',

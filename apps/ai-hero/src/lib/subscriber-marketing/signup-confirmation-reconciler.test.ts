@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { KIT_READER_MIN_START_INTERVAL_MS } from './signup-confirmation-kit-reader'
+import { emailEquivalenceKey } from './contact-email-equivalence'
 import {
 	checkSkillsConfirmationTags,
+	fetchDrovrConfirmationSubjects,
 	reconcileSkillsConfirmations,
 	ReconcilerEvidenceUnavailableError,
 	SKILLS_CONFIRMATION_RECENT_TIER_DAYS,
@@ -16,6 +18,127 @@ import {
 	type SkillsConfirmationEvent,
 	type SkillsConfirmationTier,
 } from './signup-confirmation-reconciler.server'
+
+describe('persisted DOI split', () => {
+	it('loads persisted ownership with contact ids, deduplicates requests and refuses stale keys', async () => {
+		const rows = [
+			{
+				contactId: 'owned',
+				emailKey: emailEquivalenceKey('learner-1@example.test'),
+				requestedAt: new Date(daysBefore(2)),
+				emailKeyStale: 0,
+			},
+			{
+				contactId: 'owned',
+				emailKey: emailEquivalenceKey('learner-1@example.test'),
+				requestedAt: new Date(daysBefore(1)),
+				emailKeyStale: 0,
+			},
+		]
+		const chain: unknown = new Proxy(() => chain, {
+			get: (_, property) =>
+				property === 'then'
+					? (resolve: (value: unknown) => void) => resolve(rows)
+					: () => chain,
+		})
+		const database = { select: () => chain } as never
+		expect(await fetchDrovrConfirmationSubjects(database)).toMatchObject([
+			{ contactId: 'owned', requestedAt: daysBefore(1) },
+		])
+		rows[0]!.emailKeyStale = 1
+		await expect(fetchDrovrConfirmationSubjects(database)).rejects.toThrow(
+			'no current email key',
+		)
+	})
+	it('an all-DOI mirrored form requires no Kit tag or sequence checks', async () => {
+		vi.stubEnv('AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED', 'true')
+		const kit = fakeKit([
+			{ id: 1, createdAt: daysBefore(1), addedAt: daysBefore(1) },
+		])
+		const scan = await scanSkillsConfirmations({
+			tier: 'recent',
+			to: TO,
+			database: emptyDatabase(),
+			drovrSubjects: [
+				{
+					contactId: 'owned',
+					emailKey: emailEquivalenceKey('learner-1@example.test'),
+					requestedAt: daysBefore(1),
+				},
+			],
+			kit: { fetch: kit.fetcher, minStartIntervalMs: 0 },
+		})
+		expect(scan.events).toEqual([])
+		expect(kit.requests).toHaveLength(5)
+		expect(
+			kit.requests.every((url) =>
+				url.pathname.includes('/forms/9376133/subscribers'),
+			),
+		).toBe(true)
+	})
+	it.each([true, false])(
+		'flag on=%s excludes only persisted DOI before Kit tag and sequence reads',
+		async (enabled) => {
+			vi.stubEnv('AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED', String(enabled))
+			// Current intake config is irrelevant to a previously captured DOI.
+			vi.stubEnv('DROVR_DOI_FORMS', '')
+			const kit = fakeKit([
+				{ id: 1, createdAt: daysBefore(1), addedAt: daysBefore(1) },
+				{ id: 2, createdAt: daysBefore(1), addedAt: daysBefore(1) },
+			])
+			const scan = await scanSkillsConfirmations({
+				tier: 'recent',
+				to: TO,
+				database: emptyDatabase(),
+				drovrSubjects: enabled
+					? [
+							{
+								contactId: 'owned',
+								emailKey: emailEquivalenceKey('learner-1@example.test'),
+								requestedAt: daysBefore(1),
+							},
+						]
+					: undefined,
+				kit: { fetch: kit.fetcher, minStartIntervalMs: 0 },
+			})
+			expect(scan.events.map((event) => event.data.kitSubscriberId)).toEqual(
+				enabled ? ['2'] : ['1', '2'],
+			)
+		},
+	)
+	it('runs owned consent observation before legacy enumeration fails with Kit unreachable', async () => {
+		vi.stubEnv('AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED', 'true')
+		const steps: string[] = []
+		const send = vi.fn()
+		await expect(
+			reconcileSkillsConfirmations({
+				tier: 'recent',
+				to: TO,
+				database: emptyDatabase(),
+				kit: {
+					fetch: (async () => {
+						throw new Error('Kit unreachable')
+					}) as typeof fetch,
+					minStartIntervalMs: 0,
+					sleep: async () => {},
+				},
+				steps: {
+					run: async (id, work) => {
+						steps.push(id)
+						return work()
+					},
+					send,
+				},
+			}),
+		).rejects.toThrow(ReconcilerEvidenceUnavailableError)
+		expect(steps.slice(0, 3)).toEqual([
+			'read-persisted-doi-intake-v1',
+			'observe-drovr-confirmations-v1',
+			'scan-confirmation-candidates',
+		])
+		expect(send).not.toHaveBeenCalled()
+	})
+})
 
 // Row 211: the reconciler's run shape against a fake Kit. Local evidence is
 // empty here (every query answers no rows); the MySQL suite covers it.

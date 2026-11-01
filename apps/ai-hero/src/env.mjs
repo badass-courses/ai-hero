@@ -158,6 +158,9 @@ export const env = createEnv({
 		// for everyone (`9376133`) or for an address allowlist
 		// (`9376133:a@example.com|b@example.com`). Unset: Kit's path, unchanged.
 		DROVR_DOI_FORMS: z.string().optional(),
+		// Default off. Persisted DOI intake uses drovr consent, never Kit checks.
+		// The legacy-only Kit poll remains until its cohort is retired.
+		AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED: z.string().optional(),
 		// Returning unsubscribers get drovr's confirmation email only when this is
 		// "true". Turn on together with drovr's org-aihero `confirm-doi` flag.
 		AIH_RESUBSCRIBE_DOI_ENABLED: z.string().optional(),
@@ -353,6 +356,8 @@ export const env = createEnv({
 		DROVR_API_BASE_URL: process.env.DROVR_API_BASE_URL,
 		DROVR_API_KEY_ORG_AIHERO: process.env.DROVR_API_KEY_ORG_AIHERO,
 		DROVR_DOI_FORMS: process.env.DROVR_DOI_FORMS,
+		AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED:
+			process.env.AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED,
 		AIH_RESUBSCRIBE_DOI_ENABLED: process.env.AIH_RESUBSCRIBE_DOI_ENABLED,
 		AIH_EMAIL_PREFERENCES_LOCAL_ENABLED:
 			process.env.AIH_EMAIL_PREFERENCES_LOCAL_ENABLED,
