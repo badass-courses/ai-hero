@@ -57,6 +57,14 @@ vi.mock('@/server/logger', () => ({
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 
+import {
+	GATED_ASK_LIST_CACHE_MAX,
+	GATED_ASK_LIST_TTL_MS,
+	readGatedAskForEmail,
+	readGatedAskForEmailFresh,
+	resetGatedAskListCache,
+} from './gated-asks-off-kit'
+import { readOwnedSkillsAdmission } from './subscriber-marketing/owned-skills-list-state'
 import { getSubscriberForGating, getCtaGatingPayload } from './subscriber-gate'
 import { resolveSkillsCtaState } from './skills-cta-state'
 import { hasCompletedConversionIntent } from './cta/conversion-intent'
@@ -91,6 +99,7 @@ const route = () =>
 describe('gated asks off Kit (Kit unreachable)', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		resetGatedAskListCache()
 		Object.keys(m.env).forEach((key) => delete m.env[key])
 		Object.assign(m.env, {
 			AIH_GATED_ASKS_OFF_KIT_ENABLED: 'true',
@@ -276,5 +285,115 @@ describe('gated asks off Kit (Kit unreachable)', () => {
 			return Response.json(body)
 		})
 		expect((await getSubscriberForGating())?.state).toBe('active')
+	})
+})
+
+describe('gated ask list-state cache', () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+		vi.useFakeTimers()
+		resetGatedAskListCache()
+		Object.keys(m.env).forEach((key) => delete m.env[key])
+		Object.assign(m.env, {
+			AIH_GATED_ASKS_OFF_KIT_ENABLED: 'true',
+			DROVR_API_BASE_URL: 'https://drovr.example.test',
+			DROVR_API_KEY_ORG_AIHERO: 'synthetic-key',
+		})
+		m.contactId = 'contact-1'
+		m.entries = []
+		m.fields = {}
+		m.fetch.mockImplementation(async () => reply('confirmed'))
+		vi.stubGlobal('fetch', m.fetch)
+	})
+	afterEach(() => {
+		vi.useRealTimers()
+		vi.unstubAllGlobals()
+	})
+
+	it('two reads for the same contact within 60s make one drovr call', async () => {
+		await readGatedAskForEmail('a@example.test')
+		await vi.advanceTimersByTimeAsync(GATED_ASK_LIST_TTL_MS - 1)
+		const second = await readGatedAskForEmail('b@example.test')
+		expect(m.fetch).toHaveBeenCalledTimes(1)
+		expect(second.list?.state).toBe('confirmed')
+	})
+
+	it('calls drovr again once 60s has passed', async () => {
+		await readGatedAskForEmail('a@example.test')
+		await vi.advanceTimersByTimeAsync(GATED_ASK_LIST_TTL_MS + 1)
+		await readGatedAskForEmail('b@example.test')
+		expect(m.fetch).toHaveBeenCalledTimes(2)
+	})
+
+	it('never caches an unavailable answer', async () => {
+		m.fetch.mockResolvedValueOnce(new Response('', { status: 503 }))
+		expect((await readGatedAskForEmail('a@example.test')).list).toBeNull()
+		expect((await readGatedAskForEmail('b@example.test')).list?.state).toBe(
+			'confirmed',
+		)
+		expect(m.fetch).toHaveBeenCalledTimes(2)
+	})
+
+	it('caches stopped and no-consent-evidence, not unconfirmed or no-contact', async () => {
+		for (const [state, cached] of [
+			['stopped', true],
+			['unknown', true],
+			['unconfirmed', false],
+		] as const) {
+			resetGatedAskListCache()
+			m.fetch.mockClear()
+			m.fetch.mockImplementation(async () => reply(state))
+			await readGatedAskForEmail('a@example.test')
+			await readGatedAskForEmail('b@example.test')
+			expect(m.fetch).toHaveBeenCalledTimes(cached ? 1 : 2)
+		}
+		resetGatedAskListCache()
+		m.fetch.mockClear()
+		m.fetch.mockImplementation(async () => {
+			const body = await reply('unknown').json()
+			body.unknownReason = 'no-contact'
+			return Response.json(body)
+		})
+		await readGatedAskForEmail('a@example.test')
+		await readGatedAskForEmail('b@example.test')
+		expect(m.fetch).toHaveBeenCalledTimes(2)
+	})
+
+	it('caps the cache and evicts the oldest entry', async () => {
+		m.fetch.mockImplementation(async (url: string) => {
+			const body = await reply('confirmed').json()
+			body.contactId = new URL(url).searchParams.get('contactId')
+			return Response.json(body)
+		})
+		for (let i = 0; i <= GATED_ASK_LIST_CACHE_MAX; i++) {
+			m.contactId = `c-${i}`
+			await readGatedAskForEmail(`u${i}@example.test`)
+		}
+		m.fetch.mockClear()
+		m.contactId = `c-${GATED_ASK_LIST_CACHE_MAX}`
+		await readGatedAskForEmailFresh('x@example.test')
+		expect(m.fetch).toHaveBeenCalledTimes(1) // fresh never hits the cache
+		m.fetch.mockClear()
+		await readGatedAskForEmail('y@example.test')
+		expect(m.fetch).not.toHaveBeenCalled() // newest still cached
+		m.contactId = 'c-0'
+		await readGatedAskForEmail('z@example.test')
+		expect(m.fetch).toHaveBeenCalledTimes(1) // oldest evicted
+	})
+
+	it('the fresh read and the owned enrolment admission never use the cache', async () => {
+		await readGatedAskForEmail('a@example.test') // primes the cache
+		m.fetch.mockClear()
+		await readGatedAskForEmailFresh('a@example.test')
+		expect(m.fetch).toHaveBeenCalledTimes(1)
+		const fetchSpy = vi.fn(async () => reply('confirmed'))
+		const config = {
+			baseUrl: 'https://drovr.example.test',
+			apiKey: 'synthetic-key',
+			fetch: fetchSpy as unknown as typeof fetch,
+		}
+		await readOwnedSkillsAdmission('contact-1', config)
+		await readOwnedSkillsAdmission('contact-1', config)
+		expect(fetchSpy).toHaveBeenCalledTimes(2)
 	})
 })
