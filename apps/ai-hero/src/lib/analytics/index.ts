@@ -21,6 +21,7 @@ const engine = createAnalyticsEngine({
 import { catalog as localCatalog } from './catalog'
 import { LearningProductNotFoundError } from './learning-progress-query'
 import { LearningTeamNotFoundError } from './learning-teams-query'
+import { getNewsletterSignups } from './newsletter-signups'
 import { EVERGREEN_FUNNEL_PENDING, promoWindow } from './promos'
 import type { QueryOptions, QueryResult, SurfaceName } from './types'
 import type { SurfaceName as BaseSurfaceName } from '@coursebuilder/analytics/types'
@@ -28,6 +29,7 @@ import type { SurfaceName as BaseSurfaceName } from '@coursebuilder/analytics/ty
 const LOCAL_SURFACES = [
 	'revenue/promos',
 	'funnel/evergreen',
+	'newsletter/signups',
 	'learning/progress',
 	'learning/teams',
 	'learning/team',
@@ -61,6 +63,7 @@ export async function query<S extends SurfaceName>(
 		>
 	}
 	if (surface === 'learning/progress') return queryLearningProgress(options)
+	if (surface === 'newsletter/signups') return queryNewsletterSignups(options)
 	if (surface === 'learning/teams' || surface === 'learning/team')
 		return queryLearningTeams(surface, options)
 	if (surface === 'learning/team-members') {
@@ -101,6 +104,35 @@ export async function query<S extends SurfaceName>(
 			fix: 'Check the explicit UTC window and database availability.',
 		}
 	}
+}
+
+async function queryNewsletterSignups<S extends SurfaceName>(
+	options: QueryOptions,
+): Promise<QueryResult<S>> {
+	const surface = 'newsletter/signups' as S
+	const start = Date.now()
+	const read = await getNewsletterSignups()
+	if (read.status === 'unavailable') {
+		await log.warn('analytics.newsletter-signups.unavailable', {
+			reason: read.reason,
+		})
+		return {
+			ok: false,
+			surface,
+			error: {
+				code: 'SIGNUPS_UNAVAILABLE',
+				message: `Newsletter signups are unavailable: ${read.reason}.`,
+			},
+			fix: 'Retry shortly. Unavailable is not zero; do not report a signup count.',
+		}
+	}
+	return {
+		ok: true,
+		surface,
+		range: options.range ?? '30d',
+		data: read.data,
+		meta: { queryTimeMs: Date.now() - start, truncated: false },
+	} as QueryResult<S>
 }
 
 async function queryLearningProgress<S extends SurfaceName>(

@@ -5,6 +5,7 @@ import type {
 } from '@coursebuilder/analytics/types'
 import type { EvergreenFunnel, PromoRevenue } from './promos'
 import type { LearningProgress } from './learning-progress'
+import type { NewsletterSignups } from './newsletter-signups'
 import type { OwnedNewsletterReport } from '../reporting-owned'
 import type {
 	LearningTeamMembers,
@@ -25,6 +26,7 @@ export interface SurfaceMap extends Omit<
 		| OwnedNewsletterReport
 	'revenue/promos': PromoRevenue
 	'funnel/evergreen': EvergreenFunnel
+	'newsletter/signups': NewsletterSignups
 	'learning/progress': LearningProgress
 	'learning/teams': LearningTeams
 	'learning/team': LearningTeamProgress

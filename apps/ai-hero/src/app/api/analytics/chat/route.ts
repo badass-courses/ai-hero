@@ -26,6 +26,7 @@ Key context:
 - Shortlinks are the only fully-traced attribution path (click → signup → purchase)
 - First-touch attribution (UTMs, referrer, landing page) was recently deployed, historical data won't have it
 - Revenue is in USD, stored in the Purchase table
+- AI Hero is off Kit. Newsletter signups come from drovr through newsletter/signups (last 30 UTC days, 7-day and 30-day totals by source). A missing day is unknown, not zero, and today is partial
 - Video engagement data comes from both Mux (on-site) and YouTube (off-site)
 
 When presenting numbers:

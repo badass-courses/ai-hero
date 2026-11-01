@@ -85,6 +85,7 @@ const CATEGORY_SUGGESTIONS: Record<SurfaceEntry['category'], SurfaceName[]> = {
 		'attribution/shortlinks',
 	],
 	learning: ['summary', 'revenue/products', 'purchases/recent'],
+	newsletter: ['attribution/funnel', 'attribution/sources', 'summary'],
 }
 
 const corsHeaders = {

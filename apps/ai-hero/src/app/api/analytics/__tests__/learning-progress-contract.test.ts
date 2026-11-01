@@ -22,7 +22,7 @@ describe('learning/progress contract', () => {
 			category: 'learning',
 			provider: 'database',
 		})
-		expect(ANALYTICS_SCHEMA_VERSION).toBe('2026-10-29.2')
+		expect(ANALYTICS_SCHEMA_VERSION).toBe('2026-11-01.1')
 		expect(
 			getAnalyticsAgentSchema(['learning/progress']).surfaces,
 		).toHaveProperty('learning/progress')

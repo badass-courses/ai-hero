@@ -23,6 +23,7 @@ import {
 import { OmnibusDashboard, type DashboardData } from './omnibus-dashboard'
 import { AnalyticsAgentApiCard } from './analytics-agent-api-card'
 import { EvergreenOfferCard } from './evergreen-offer-card'
+import { NewsletterSignupsPanel } from './newsletter-signups-panel'
 import {
 	LearningProgressPanel,
 	type LearningProductOption,
@@ -299,6 +300,7 @@ export function ProgressiveAnalyticsDashboard({
 					surveyDrilldownHref="/admin/analytics/surveys"
 					agentApiCard={<AnalyticsAgentApiCard />}
 				/>
+				<NewsletterSignupsPanel />
 				<EvergreenOfferCard range={range} />
 				<LearningProgressPanel products={learningProducts} />
 				<TeamProgressPanel products={learningProducts} />
