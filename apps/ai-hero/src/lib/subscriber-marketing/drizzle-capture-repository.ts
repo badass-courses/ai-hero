@@ -1,4 +1,5 @@
 import { contactEventId } from '@/db/contact-event-id'
+import { longId } from '@/db/long-id'
 import { courseSequenceContactEvent } from '@/db/course-sequence-exhaustion-schema'
 import { CONTACT_STOP_RULE_EVENT_TYPES } from './contact-stop-rule'
 import { contactEmailWriteValues } from './contact-email-equivalence'
@@ -14,7 +15,6 @@ import {
 import { and, asc, eq, gt, inArray, or, sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 
-import { guid } from '@coursebuilder/utils/guid'
 import { customAlphabet } from 'nanoid'
 
 import { createInternalId } from '../internal-id'
@@ -162,7 +162,7 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 			kind === 'intent' ||
 			kind === 'side_effect_intent'
 			? createInternalId()
-			: guid()
+			: longId()
 	}
 
 	async findProviderIdentity(provider: string, externalId: string) {
