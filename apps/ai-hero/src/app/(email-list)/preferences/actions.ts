@@ -28,7 +28,7 @@ export async function updateEmailPreferenceAction(formData: FormData) {
 
 	if (emailPreferencesLocalEnabled(env)) {
 		// Kit stays out of the request. An opt-out always lands; an opt-in
-		// needs a link the directory verifies.
+		// is refused: a link cannot resubscribe anyone.
 		const verification = await verifyKitPreferenceLinkLocally({
 			subscriberId,
 			shKit,
@@ -48,7 +48,11 @@ export async function updateEmailPreferenceAction(formData: FormData) {
 				: ({ status: 'rejected', reason: 'invalid-link' } as const)
 
 		if (result.status === 'rejected') {
-			redirect('/preferences?error=invalid-link')
+			redirect(
+				result.reason === 'link-opt-in-refused'
+					? '/preferences?error=sign-in-to-resubscribe'
+					: '/preferences?error=invalid-link',
+			)
 		}
 
 		redirect(

@@ -218,7 +218,16 @@ function textOf(node: unknown): string {
 		return ''
 	if (typeof node === 'string' || typeof node === 'number') return String(node)
 	if (Array.isArray(node)) return node.map(textOf).join(' ')
-	const element = node as { props?: Record<string, unknown> }
+	const element = node as {
+		type?: unknown
+		props?: Record<string, unknown>
+	}
+	// The page's own SignIn* components; Next's Link and the layout stay opaque.
+	if (
+		typeof element.type === 'function' &&
+		element.type.name.startsWith('SignIn')
+	)
+		return textOf((element.type as (p: unknown) => unknown)(element.props))
 	const props = element.props ?? {}
 	const value =
 		typeof props.value === 'string' && props.name
@@ -399,7 +408,9 @@ describe('/preferences with Kit unreachable', () => {
 		expect(text).toContain("You're getting these.")
 		expect(text).toContain("You're not getting these.")
 		expect(text).toContain('[subscribed=false]')
-		expect(text).toContain('[subscribed=true]')
+		// A stopped preference offers sign-in, never an opt-in form.
+		expect(text).toContain('Sign in to resubscribe')
+		expect(text).not.toContain('[subscribed=true]')
 	})
 
 	it('a drovr all-scope stop reads as unsubscribed from everything, with no opt-in', async () => {
@@ -448,7 +459,7 @@ describe('/preferences with Kit unreachable', () => {
 					subscribed: 'true',
 				}),
 			),
-		).rejects.toThrow('redirect:/preferences?error=invalid-link')
+		).rejects.toThrow('redirect:/preferences?error=sign-in-to-resubscribe')
 		expect(mocks.sent).toEqual([])
 		expect(mocks.rows).toEqual([])
 	})
@@ -472,7 +483,7 @@ describe('/preferences with Kit unreachable', () => {
 		})
 	})
 
-	it('a verified opt-in writes the local row and queues the Kit write', async () => {
+	it('a verified link opt-in is refused: nothing queued, no row, no Kit write', async () => {
 		await expect(
 			updateEmailPreferenceAction(
 				form({
@@ -482,13 +493,22 @@ describe('/preferences with Kit unreachable', () => {
 					subscribed: 'true',
 				}),
 			),
-		).rejects.toThrow('state=subscribed')
-		expect(mocks.rows).toMatchObject([
-			{ preferenceTypeId: 'type-skills', active: true },
-		])
-		expect(mocks.sent[0]?.data).toMatchObject({
-			subscribed: true,
-			email: EMAIL,
-		})
+		).rejects.toThrow('redirect:/preferences?error=sign-in-to-resubscribe')
+		expect(mocks.sent).toEqual([])
+		expect(mocks.rows).toEqual([])
+		expect(mocks.kitCalls).toEqual([])
+		expect(mocks.log.info).toHaveBeenCalledWith(
+			'email-preferences.change.accepted',
+			expect.objectContaining({
+				status: 'rejected',
+				reason: 'link-opt-in-refused',
+			}),
+		)
+	})
+
+	it('shows the sign-in prompt for a refused opt-in', async () => {
+		const text = await view({ error: 'sign-in-to-resubscribe' })
+		expect(text).toContain('Sign in to resubscribe')
+		expect(text).toContain("You're getting these.")
 	})
 })
