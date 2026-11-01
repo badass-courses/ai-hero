@@ -112,6 +112,27 @@ jobs:
           src/scripts/held-exit
           src/lib/test-principals/
 
+      - name: Optional Kit mirror switch contracts
+        run: >-
+          pnpm --filter ai-hero exec vitest run -c vitest.config.ts
+          src/lib/kit-mirror-writes.test.ts
+          src/inngest/functions/convertkit/add-purchased-convertkit.test.ts
+          src/inngest/functions/workshop-interest-sync.test.ts
+          src/lib/cta/interest-facts-kit-unreachable.test.ts
+          src/trpc/api/routers/convertkit.survey-off-kit.test.ts
+
+      - name: Purchase fulfilment and drovr facts with Kit mirrors off
+        env:
+          AIH_KIT_MIRROR_WRITES_ENABLED: 'false'
+        run: >-
+          pnpm --filter ai-hero exec vitest run -c vitest.config.ts
+          src/inngest/functions/capture-purchase-contact-event.test.ts
+          src/inngest/functions/post-purchase-workflow.contract.test.ts
+          src/inngest/functions/team-purchase-fulfillment-workflow.contract.test.ts
+          src/lib/subscriber-marketing/lifecycle-contact-events.test.ts
+          src/lib/subscriber-marketing/product-events.test.ts
+          src/lib/subscriber-marketing/product-events-live.test.ts
+
       - name: Email countdown GIF
         run: pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/lib/email-countdown "src/app/api/email/countdown.gif"
 

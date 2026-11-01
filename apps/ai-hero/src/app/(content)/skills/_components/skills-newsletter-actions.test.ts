@@ -132,8 +132,28 @@ describe('tagSubscriberAsSkills', () => {
 	})
 
 	afterEach(() => {
+		vi.unstubAllEnvs()
 		delete process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED
 		delete process.env.AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED
+	})
+
+	it('master off skips only the optional field stash, preserving enrolment, consent and the entry fact', async () => {
+		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'false')
+		const result = await tagSubscriberAsSkills('skills-post')
+		expect(result).toEqual({ success: true })
+		expect(mocks.setSubscriberFields).not.toHaveBeenCalled()
+		expect(mocks.subscribeToList).toHaveBeenCalledOnce()
+		expect(mocks.reconcile).toHaveBeenCalledOnce()
+		expect(mocks.inngestSend).toHaveBeenCalledWith(
+			expect.objectContaining({
+				data: expect.objectContaining({
+					kitSubscriberId: '1',
+					deadlineTimeZone: expect.objectContaining({
+						timeZone: 'Europe/London',
+					}),
+				}),
+			}),
+		)
 	})
 
 	// A signed-in reader is identified without a Kit cookie. Before this they

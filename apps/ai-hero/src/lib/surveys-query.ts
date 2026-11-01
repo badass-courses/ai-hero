@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
+import { kitMirrorWritesEnabled } from '@/lib/kit-mirror-writes'
 import { db } from '@/db'
 import {
 	contentResource,
@@ -594,6 +595,7 @@ export const answerSurvey = async ({
 	answer: string
 }) => {
 	try {
+		if (!kitMirrorWritesEnabled()) return { status: 'mirror-disabled' }
 		if (!subscriber?.id || !subscriber?.email_address) {
 			return { error: 'Missing subscriber identifiers' }
 		}

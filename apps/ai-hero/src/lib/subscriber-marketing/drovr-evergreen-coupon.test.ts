@@ -341,6 +341,29 @@ describe('executePendingEvergreenCoupons', () => {
 		}
 	}
 
+	it('master off completes and dispatches the same coupon with no Kit field call', async () => {
+		const before = await run({ issue: () => Effect.succeed(issued) })
+		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'false')
+		try {
+			const writeFields = vi.fn()
+			const after = await run({
+				issue: () => Effect.succeed(issued),
+				writeFields,
+			})
+			expect(after.results).toEqual(before.results)
+			expect(after.dispatched.map((row) => row.status)).toEqual(
+				before.dispatched.map((row) => row.status),
+			)
+			expect(after.row.metadata).toMatchObject({
+				couponId: 'eoj-coupon:abc',
+				kitOfferFieldsWrittenAt: null,
+			})
+			expect(writeFields).not.toHaveBeenCalled()
+		} finally {
+			vi.unstubAllEnvs()
+		}
+	})
+
 	it('issues, writes the offer fields to the Kit subscriber, completes, and dispatches', async () => {
 		const out = await run({ issue: () => Effect.succeed(issued) })
 		expect(out.results).toEqual([

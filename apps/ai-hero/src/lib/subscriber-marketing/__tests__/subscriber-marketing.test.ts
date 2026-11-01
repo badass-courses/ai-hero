@@ -1991,78 +1991,97 @@ describe('subscriber marketing value path click progression', () => {
 		).rejects.toThrow('connection refused')
 	})
 
-	it('captures the terminal email-7 answer once without planning another email', async () => {
-		const { repository, captured } = await makeProgressionFixture()
-		const updateSubscriberFields = vi.fn().mockResolvedValue({ id: 'kit_123' })
-		const progression = {
-			repository,
-			token: {
-				contactId: captured.contact.id,
-				kitSubscriberId: 'kit_123',
-				valuePathResourceId: 'ai-hero-skills-workflow',
-				emailResourceId: 'ai-hero-skills-workflow.email-7',
-				sequenceId: 'ai-hero-skills-workflow',
-				expiresAt: '2026-07-19T12:00:00.000Z',
-			},
-			answerPage: makeAnswerPage({
-				sequenceId: 'ai-hero-skills-workflow',
-				emailId: 'email-7',
-				surveyId: 'email-7-finisher-segment',
-				optionValue: 'placeholder-option-a',
-				nextEmailId: undefined,
-				nextEmailResourceId: undefined,
-				captureFieldKey: AIH_FINISHER_SEGMENT_FIELD,
-				captureDateFieldKey: AIH_NEXT_COURSE_WAITLIST_AT_FIELD,
-			}),
-			mode: 'scoped-live' as const,
-			sendGate: {
-				allowedActions: ['advance-by-answer-click'],
-				enabledValuePathSlugs: ['ai-hero-skills-workflow'],
-				verifiedEmailResourceIds: ['ai-hero-skills-workflow.email-7'],
-				verifiedKitSequenceIds: ['2831545'],
-			},
-			finisherFieldProvider: { updateSubscriberFields },
-			now: '2026-07-18T11:05:00.000Z',
-		}
-		const result = await recordValuePathAnswerProgression(progression)
-		const duplicate = await recordValuePathAnswerProgression({
-			...progression,
-			now: '2026-07-18T11:06:00.000Z',
-		})
+	it.each(['true', 'false'])(
+		'captures the terminal email-7 answer once without planning another email (Kit mirror %s)',
+		async (enabled) => {
+			vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', enabled)
+			try {
+				const { repository, captured } = await makeProgressionFixture()
+				const updateSubscriberFields = vi
+					.fn()
+					.mockResolvedValue({ id: 'kit_123' })
+				const progression = {
+					repository,
+					token: {
+						contactId: captured.contact.id,
+						kitSubscriberId: 'kit_123',
+						valuePathResourceId: 'ai-hero-skills-workflow',
+						emailResourceId: 'ai-hero-skills-workflow.email-7',
+						sequenceId: 'ai-hero-skills-workflow',
+						expiresAt: '2026-07-19T12:00:00.000Z',
+					},
+					answerPage: makeAnswerPage({
+						sequenceId: 'ai-hero-skills-workflow',
+						emailId: 'email-7',
+						surveyId: 'email-7-finisher-segment',
+						optionValue: 'placeholder-option-a',
+						nextEmailId: undefined,
+						nextEmailResourceId: undefined,
+						captureFieldKey: AIH_FINISHER_SEGMENT_FIELD,
+						captureDateFieldKey: AIH_NEXT_COURSE_WAITLIST_AT_FIELD,
+					}),
+					mode: 'scoped-live' as const,
+					sendGate: {
+						allowedActions: ['advance-by-answer-click'],
+						enabledValuePathSlugs: ['ai-hero-skills-workflow'],
+						verifiedEmailResourceIds: ['ai-hero-skills-workflow.email-7'],
+						verifiedKitSequenceIds: ['2831545'],
+					},
+					finisherFieldProvider: { updateSubscriberFields },
+					now: '2026-07-18T11:05:00.000Z',
+				}
+				const result = await recordValuePathAnswerProgression(progression)
+				const duplicate = await recordValuePathAnswerProgression({
+					...progression,
+					now: '2026-07-18T11:06:00.000Z',
+				})
 
-		expect(result).toMatchObject({
-			status: 'recorded',
-			finisherCapture: 'written',
-		})
-		expect(duplicate).toMatchObject({
-			status: 'idempotent-noop',
-			idempotentNoop: true,
-		})
-		expect(updateSubscriberFields).toHaveBeenCalledTimes(1)
-		expect(updateSubscriberFields).toHaveBeenCalledWith({
-			subscriberId: 'kit_123',
-			subscriberEmail: captured.contact.email,
-			fields: {
-				aih_finisher_segment: 'placeholder-option-a',
-				aih_next_course_waitlist_at: '2026-07-18T11:05:00.000Z',
-			},
-		})
-		expect(
-			Array.from(repository.sideEffectIntents.values()).filter(
-				(intent) => intent.type === 'write-value-path-finisher-fields',
-			),
-		).toEqual([
-			expect.objectContaining({
-				status: 'completed',
-				completedAt: '2026-07-18T11:05:00.000Z',
-			}),
-		])
-		expect(
-			Array.from(repository.nextActions.values()).filter(
-				(action) => action.type === 'advance-value-path',
-			),
-		).toHaveLength(0)
-	})
+				expect(result).toMatchObject({
+					status: 'recorded',
+					finisherCapture: enabled === 'true' ? 'written' : 'mirror-disabled',
+				})
+				expect(Array.from(repository.contactEvents.values()).filter(
+					(event) => event.eventType === 'value-path.answer-selected',
+				)).toEqual([expect.objectContaining({
+					occurredAt: '2026-07-18T11:05:00.000Z',
+					payloadSummary: expect.objectContaining({ keywords: expect.arrayContaining(['placeholder-option-a']) }),
+				})])
+				expect(duplicate).toMatchObject({
+					status: 'idempotent-noop',
+					idempotentNoop: true,
+				})
+				expect(updateSubscriberFields).toHaveBeenCalledTimes(
+					enabled === 'true' ? 1 : 0,
+				)
+				if (enabled === 'true')
+					expect(updateSubscriberFields).toHaveBeenCalledWith({
+						subscriberId: 'kit_123',
+						subscriberEmail: captured.contact.email,
+						fields: {
+							aih_finisher_segment: 'placeholder-option-a',
+							aih_next_course_waitlist_at: '2026-07-18T11:05:00.000Z',
+						},
+					})
+				expect(
+					Array.from(repository.sideEffectIntents.values()).filter(
+						(intent) => intent.type === 'write-value-path-finisher-fields',
+					),
+				).toEqual([
+					expect.objectContaining({
+						status: 'completed',
+						completedAt: '2026-07-18T11:05:00.000Z',
+					}),
+				])
+				expect(
+					Array.from(repository.nextActions.values()).filter(
+						(action) => action.type === 'advance-value-path',
+					),
+				).toHaveLength(0)
+			} finally {
+				vi.unstubAllEnvs()
+			}
+		},
+	)
 
 	it('does not run a second Kit write while finisher capture is pending', async () => {
 		const { repository, captured } = await makeProgressionFixture()
