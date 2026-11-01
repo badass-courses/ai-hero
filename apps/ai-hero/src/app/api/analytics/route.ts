@@ -12,10 +12,11 @@ import {
 	getRevenueSurfaceSchema,
 } from './agent-contract'
 
-// newsletter/signups reads drovr a week at a time, up to five 10 s calls.
+// newsletter/signups reads drovr a week at a time, 10 s per call, and only
+// for days after the frozen Kit series, so even range=all makes few calls.
 export const maxDuration = 60
 
-type ApiAnalyticsRange = AnalyticsRange | '180d'
+type ApiAnalyticsRange = AnalyticsRange | '180d' | '365d'
 
 const VALID_RANGES = new Set<ApiAnalyticsRange>([
 	'24h',
@@ -23,6 +24,7 @@ const VALID_RANGES = new Set<ApiAnalyticsRange>([
 	'30d',
 	'90d',
 	'180d',
+	'365d',
 	'all',
 ])
 const RANGE_OPTIONS: ApiAnalyticsRange[] = [
@@ -31,6 +33,7 @@ const RANGE_OPTIONS: ApiAnalyticsRange[] = [
 	'30d',
 	'90d',
 	'180d',
+	'365d',
 	'all',
 ]
 const catalog = analytics.getCatalog()
@@ -166,7 +169,12 @@ function buildContextualNextActions(
 		.filter((name) => name !== surface)
 		.slice(0, 4)
 		.map((name) => {
-			const searchParams = new URLSearchParams({ surface: name, range })
+			// Only newsletter/signups takes 365d; the others get the nearest range.
+			const nextRange = range === '365d' ? 'all' : range
+			const searchParams = new URLSearchParams({
+				surface: name,
+				range: nextRange,
+			})
 			if (options.productId) {
 				searchParams.set('productId', options.productId)
 			}
@@ -175,7 +183,7 @@ function buildContextualNextActions(
 				description: catalogByName[name].description,
 				params: {
 					range: {
-						value: range,
+						value: nextRange,
 						enum: RANGE_OPTIONS,
 					},
 					...(options.productId
@@ -303,6 +311,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 					'Paid campaign and email-course funnel metrics are available at GET /api/analytics/ads-course?productId=email-course&range=today.',
 					'The traffic surface includes GA4 device category, operating system, and screen resolution breakdowns with session percentages.',
 					'Use range=180d only for GA4 traffic surfaces. Non-GA4 surfaces intentionally reject it.',
+					'Use range=365d only for newsletter/signups. Other surfaces reject it.',
 					'Attribution coverage includes quality lanes when the database provider exposes them. Coverage does not mean clean first-touch attribution.',
 					'GA4 conversion writes return safe receipts in Inngest logs, but GA4 is not the revenue source of truth.',
 					'YouTube surfaces are useful for correlation/content analysis but lag by about 48 hours.',
@@ -417,6 +426,29 @@ export const GET = withSkill(async (request: NextRequest) => {
 						command: 'GET /api/analytics?surface=traffic&range=180d',
 						description:
 							'Fetch the six-month GA4 traffic overview with device, OS, and screen resolution breakdowns',
+					},
+				],
+			},
+			{ status: 400, headers: corsHeaders },
+		)
+	}
+
+	if (range === '365d' && surface !== 'newsletter/signups') {
+		return NextResponse.json(
+			{
+				ok: false,
+				endpoint: '/api/analytics',
+				surface,
+				error: {
+					message: 'range=365d is only supported for newsletter/signups',
+					code: 'INVALID_RANGE_FOR_SURFACE',
+				},
+				fix: 'Use range=90d/all for this surface.',
+				next_actions: [
+					{
+						command: 'GET /api/analytics?surface=newsletter/signups&range=365d',
+						description:
+							'Fetch the last 12 months of newsletter signups by UTC day and month',
 					},
 				],
 			},

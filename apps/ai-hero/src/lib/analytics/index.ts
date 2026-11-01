@@ -22,6 +22,7 @@ import { catalog as localCatalog } from './catalog'
 import { LearningProductNotFoundError } from './learning-progress-query'
 import { LearningTeamNotFoundError } from './learning-teams-query'
 import { getNewsletterSignups } from './newsletter-signups'
+import { SIGNUP_RANGES } from './newsletter-signups-series'
 import { EVERGREEN_FUNNEL_PENDING, promoWindow } from './promos'
 import type { QueryOptions, QueryResult, SurfaceName } from './types'
 import type { SurfaceName as BaseSurfaceName } from '@coursebuilder/analytics/types'
@@ -111,8 +112,9 @@ async function queryNewsletterSignups<S extends SurfaceName>(
 ): Promise<QueryResult<S>> {
 	const surface = 'newsletter/signups' as S
 	const start = Date.now()
+	const requested = options.range as string | undefined
 	const read = await getNewsletterSignups({
-		days: options.range === '7d' ? 7 : 30,
+		range: SIGNUP_RANGES.find((range) => range === requested) ?? '30d',
 	})
 	if (read.status === 'available' && read.gaps.length > 0)
 		await log.warn('analytics.newsletter-signups.partial', { gaps: read.gaps })

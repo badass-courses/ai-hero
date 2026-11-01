@@ -229,6 +229,36 @@ describe('analytics API agent contract', () => {
 		expect(body.data).toBeUndefined()
 	})
 
+	it('reads 12 months of newsletter signups with range=365d', async () => {
+		mocks.query.mockResolvedValue({
+			ok: true,
+			surface: 'newsletter/signups',
+			range: '365d',
+			data: { range: '365d' },
+			meta: { queryTimeMs: 1, truncated: false },
+		})
+		const response = await GET(request('?surface=newsletter/signups&range=365d'))
+		expect(response.status).toBe(200)
+		expect(mocks.query).toHaveBeenCalledWith(
+			'newsletter/signups',
+			expect.objectContaining({ range: '365d' }),
+		)
+		const body = await response.json()
+		expect(body.range).toBe('365d')
+		for (const action of body.next_actions)
+			expect(action.command).not.toContain('range=365d')
+	})
+
+	it('refuses range=365d for other surfaces without querying', async () => {
+		const response = await GET(request('?surface=summary&range=365d'))
+		expect(response.status).toBe(400)
+		expect(await response.json()).toMatchObject({
+			ok: false,
+			error: { code: 'INVALID_RANGE_FOR_SURFACE' },
+		})
+		expect(mocks.query).not.toHaveBeenCalled()
+	})
+
 	it.each([null, 'ordinary'])(
 		'refuses learning/progress for %s callers without querying',
 		async (kind) => {
@@ -524,7 +554,7 @@ describe('analytics API agent contract', () => {
 				expect.stringContaining('defaults to range=30d'),
 			]),
 			schema: {
-				version: '2026-11-01.1',
+				version: '2026-11-01.2',
 				query: {
 					type: 'object',
 					required: ['surface'],
