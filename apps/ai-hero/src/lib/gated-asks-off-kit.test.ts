@@ -396,4 +396,14 @@ describe('gated ask list-state cache', () => {
 		await readOwnedSkillsAdmission('contact-1', config)
 		expect(fetchSpy).toHaveBeenCalledTimes(2)
 	})
+
+	it('reconcile and returning-unsubscriber decisions call drovr despite a cached entry', async () => {
+		await readGatedAskForEmail('a@example.test') // caches contact-1
+		m.fetch.mockClear()
+		await reconcileAiHeroEmailOptInWithKit({ email: 'a@example.test' })
+		expect(m.fetch).toHaveBeenCalledTimes(1)
+		m.fetch.mockClear()
+		await route()
+		expect(m.fetch).toHaveBeenCalledTimes(1)
+	})
 })
