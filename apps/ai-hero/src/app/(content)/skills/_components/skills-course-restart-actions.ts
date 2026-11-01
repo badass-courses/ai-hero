@@ -2,7 +2,6 @@
 
 import { createHmac, randomUUID } from 'node:crypto'
 
-import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import {
 	SKILLS_COURSE_LESSON_ONE_RECOVERY_REQUESTED_EVENT,
 	SKILLS_COURSE_RECOVERY_SOURCE,
@@ -11,13 +10,10 @@ import {
 } from '@/inngest/events/skills-newsletter'
 import { inngest } from '@/inngest/inngest.server'
 import { readRecoveryStanding } from '@/lib/skills-course/recovery-standing'
-import {
-	createRecoveryStandingReader,
-	recoveryLocalStandingEnabled,
-} from '@/lib/skills-course/recovery-standing.server'
+import { createRecoveryStandingReader } from '@/lib/skills-course/recovery-standing.server'
 import { normalizeSkillsCourseRecoveryEmail } from '@/lib/subscriber-marketing/skills-course-recovery-token'
 import { readSkillsCourseRecoveryToken } from '@/lib/subscriber-marketing/skills-course-recovery-token.server'
-import { SubscriberSchema, type Subscriber } from '@/schemas/subscriber'
+import type { Subscriber } from '@/schemas/subscriber'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 
@@ -123,18 +119,7 @@ async function resolveSubscriberByEmail(
 	expectedKitSubscriberId?: string,
 ): Promise<RecoverySubscriber | null> {
 	const expectedEmail = normalizeSkillsCourseRecoveryEmail(email)
-	if (recoveryLocalStandingEnabled()) {
-		return resolveLocalSubscriber(expectedEmail, expectedKitSubscriberId)
-	}
-	const subscriber = SubscriberSchema.safeParse(
-		await emailListProvider.getSubscriberByEmail(expectedEmail),
-	)
-	if (!subscriber.success) return null
-	return subscriber.data.email_address &&
-		normalizeSkillsCourseRecoveryEmail(subscriber.data.email_address) ===
-			expectedEmail
-		? subscriber.data
-		: null
+	return resolveLocalSubscriber(expectedEmail, expectedKitSubscriberId)
 }
 
 /**
