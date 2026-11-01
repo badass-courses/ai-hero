@@ -19,9 +19,69 @@ export type OffKitAskEvidence = {
 	courseStarted: boolean
 }
 
+export const GATED_ASK_LIST_TTL_MS = 60_000
+export const GATED_ASK_LIST_CACHE_MAX = 2000
+
+type CachedList = { list: DrovrListState; expires: number }
+const listCache = new Map<string, CachedList>()
+
+export function resetGatedAskListCache() {
+	listCache.clear()
+}
+
+/** Only decisive answers are cached; unavailable (null) and the rest never are. */
+function cacheable(list: DrovrListState | null): list is DrovrListState {
+	if (!list) return false
+	return (
+		list.state === 'confirmed' ||
+		list.state === 'stopped' ||
+		(list.state === 'unknown' && list.unknownReason === 'no-consent-evidence')
+	)
+}
+
+/**
+ * Per-instance, 60s, size-bounded cache for the page-render ask read only.
+ * Send, enrolment and resubscribe decisions use the fresh read instead.
+ */
+async function readListStateCached(contactId: string) {
+	const now = Date.now()
+	const hit = listCache.get(contactId)
+	if (hit && hit.expires > now) {
+		listCache.delete(contactId)
+		listCache.set(contactId, hit) // LRU touch
+		return hit.list
+	}
+	listCache.delete(contactId)
+	const list = await readDrovrListState(
+		{ contactId },
+		parseDrovrSignupDeliveryConfig(env),
+	)
+	if (cacheable(list)) {
+		listCache.set(contactId, { list, expires: now + GATED_ASK_LIST_TTL_MS })
+		while (listCache.size > GATED_ASK_LIST_CACHE_MAX) {
+			listCache.delete(listCache.keys().next().value as string)
+		}
+	}
+	return list
+}
+
 /** No cookie state/custom fields are consent or course-entry evidence. */
-export const readGatedAskForEmail = cache(
-	async (email: string): Promise<OffKitAskEvidence> => {
+export const readGatedAskForEmail = cache((email: string) =>
+	loadGatedAsk(email, readListStateCached),
+)
+
+/** Uncached by TTL: decisions that act on the answer (resubscribe/DOI) read drovr fresh. */
+export const readGatedAskForEmailFresh = cache((email: string) =>
+	loadGatedAsk(email, (contactId) =>
+		readDrovrListState({ contactId }, parseDrovrSignupDeliveryConfig(env)),
+	),
+)
+
+async function loadGatedAsk(
+	email: string,
+	readList: (contactId: string) => Promise<DrovrListState | null>,
+): Promise<OffKitAskEvidence> {
+	{
 		return boundedRead(async () => {
 			const [{ db }, { contact, contactEvent }, { and, eq }, store] =
 				await Promise.all([
@@ -37,7 +97,7 @@ export const readGatedAskForEmail = cache(
 					where: eq(contact.id, contactId),
 					columns: { email: true, name: true },
 				}),
-				readDrovrListState({ contactId }, parseDrovrSignupDeliveryConfig(env)),
+				readList(contactId),
 				store.readLocalInterestFields(db, contactId).catch(() => ({})),
 				db
 					.select({ occurredAt: contactEvent.occurredAt })
@@ -76,8 +136,8 @@ export const readGatedAskForEmail = cache(
 				}),
 			}
 		}, email)
-	},
-)
+	}
+}
 
 /** Cookie ids name identities only; all decisions are freshly read above. */
 export const readOffKitGatingEvidence = cache(

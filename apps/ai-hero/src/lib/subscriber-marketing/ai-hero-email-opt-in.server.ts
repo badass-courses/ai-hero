@@ -3,7 +3,7 @@ import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { env } from '@/env.mjs'
 import {
 	gatedAsksOffKitEnabled,
-	readGatedAskForEmail,
+	readGatedAskForEmailFresh,
 } from '@/lib/gated-asks-off-kit'
 import { OPTIN_DEFERRED_EVENT } from '@/inngest/events/optin-deferred'
 import { inngest } from '@/inngest/inngest.server'
@@ -32,7 +32,7 @@ export async function reconcileAiHeroEmailOptInWithKit(args: {
 	mayRemoveUnsubscribeTag?: boolean
 }) {
 	if (gatedAsksOffKitEnabled()) {
-		const { list } = await readGatedAskForEmail(args.email)
+		const { list } = await readGatedAskForEmailFresh(args.email)
 		return list?.state === 'confirmed'
 			? { status: 'active' as const, removedUnsubscribeTag: false }
 			: { status: 'confirmation-required' as const }
@@ -171,7 +171,7 @@ async function routeReturningUnsubscriberOffKit(
 	args: ReturningUnsubscriberInput,
 	config: ReturnType<typeof parseDrovrSignupDeliveryConfig>,
 ): Promise<ReturningUnsubscriberResult> {
-	const { list } = await readGatedAskForEmail(args.email)
+	const { list } = await readGatedAskForEmailFresh(args.email)
 	if (
 		list?.stops.some(
 			(stop) => stop.scope === 'all' && stop.reason !== 'unsubscribed',
