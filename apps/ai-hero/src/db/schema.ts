@@ -23,6 +23,7 @@ import {
 import { getCourseBuilderSchema } from '@coursebuilder/adapter-drizzle/mysql'
 import { guid } from '@coursebuilder/utils/guid'
 import { contactEventId } from './contact-event-id'
+import { longId } from './long-id'
 import type { CourseSyncBinding, SyncPlan } from '@/course-sync/types'
 
 export const {
@@ -664,7 +665,7 @@ export const providerIdentity = mysqlTable(
 		id: varchar('id', { length: 255 })
 			.notNull()
 			.primaryKey()
-			.$defaultFn(() => guid()),
+			.$defaultFn(() => longId()),
 		contactId: varchar('contactId', { length: 255 }).notNull(),
 		provider: varchar('provider', { length: 50 }).notNull(),
 		externalId: varchar('externalId', { length: 255 }).notNull(),
@@ -773,7 +774,7 @@ export const contactState = mysqlTable(
 		id: varchar('id', { length: 255 })
 			.notNull()
 			.primaryKey()
-			.$defaultFn(() => guid()),
+			.$defaultFn(() => longId()),
 		contactId: varchar('contactId', { length: 255 }).notNull(),
 		lifecycle: varchar('lifecycle', { length: 50 }).notNull(),
 		primaryBucket: varchar('primaryBucket', { length: 150 }).notNull(),
@@ -804,7 +805,7 @@ export const stateTransition = mysqlTable(
 		id: varchar('id', { length: 255 })
 			.notNull()
 			.primaryKey()
-			.$defaultFn(() => guid()),
+			.$defaultFn(() => longId()),
 		contactId: varchar('contactId', { length: 255 }).notNull(),
 		fromStateId: varchar('fromStateId', { length: 255 }),
 		toStateId: varchar('toStateId', { length: 255 }).notNull(),
