@@ -21,7 +21,17 @@ import { resolveEvergreenMerchantEvidence } from '@/lib/subscriber-marketing/eve
 import { log } from '@/server/logger'
 
 import { createEvergreenClaimHttp } from './evergreen-claim-http'
-import { pilotNotFound } from './evergreen-pilot-application'
+
+function claimNotFound() {
+	return new Response(null, {
+		status: 404,
+		headers: {
+			'Cache-Control': 'private, no-store',
+			Vary: 'Cookie',
+			'Referrer-Policy': 'no-referrer',
+		},
+	})
+}
 
 export const DROVR_EVERGREEN_CLAIM_PRODUCT_PATH =
 	'/workshops/ai-coding-crash-course'
@@ -95,7 +105,7 @@ function composeDrovrEvergreenClaim() {
 }
 
 export async function drovrEvergreenClaimHandler(request: Request) {
-	if (!drovrEvergreenClaimEnabled()) return pilotNotFound()
+	if (!drovrEvergreenClaimEnabled()) return claimNotFound()
 	try {
 		const handler = composeDrovrEvergreenClaim()
 		return await handler(request)
@@ -103,6 +113,6 @@ export async function drovrEvergreenClaimHandler(request: Request) {
 		await log.error('drovr.evergreen.claim_unavailable', {
 			error: error instanceof Error ? error.message : String(error),
 		})
-		return pilotNotFound()
+		return claimNotFound()
 	}
 }

@@ -37,7 +37,6 @@ import {
 	type EmailTokenLoginObservedPayload,
 	type OfferClaimObservedPayload,
 } from './verified-owner-evidence'
-import type { VerifiedOwnerEvidenceReadStore } from './verified-owner-proof'
 import type { EvergreenOfferJourneyTransaction } from './drizzle-ledger'
 
 function value<A>(parsed: ParseResult<A>): A {
@@ -253,17 +252,17 @@ export function ownerProofFixture() {
 			},
 		},
 	}
-	const store: VerifiedOwnerEvidenceReadStore = {
+	const store = {
 		canonical,
-		intent: async (key) => {
+		intent: async (key: string) => {
 			calls.push(`intent:${key}`)
 			return key === intentRow.idempotencyKey ? intentRow : null
 		},
-		event: async (id) => {
+		event: async (id: string) => {
 			calls.push(`event:${id}`)
 			return rows.find((row) => row.id === id) ?? null
 		},
-		identity: async (id) => {
+		identity: async (id: string) => {
 			calls.push(`identity:${id}`)
 			return id === identity.id ? identity : null
 		},
