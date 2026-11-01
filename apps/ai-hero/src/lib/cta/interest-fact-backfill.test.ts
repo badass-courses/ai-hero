@@ -1,12 +1,17 @@
+import { mkdtemp, utimes, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { InterestFactRequested } from '@/inngest/events/interest-fact'
 import type { DrovrContactResolution } from '@/lib/subscriber-marketing/drovr-purchase-resolve'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
 	backfillEventId,
+	backfillInputFingerprint,
 	backfillKeys,
 	BackfillRefused,
 	createPacer,
+	resumeCursor,
 	runInterestBackfill,
 	type BackfillDeps,
 	type BackfillEvent,
@@ -289,6 +294,35 @@ describe('interest backfill stop switch and resume', () => {
 		// Line 3's sent event goes again under the same id, so Inngest drops it.
 		expect(secondIds).toContain(firstIds[2])
 		expect(new Set([...firstIds, ...secondIds]).size).toBe(8)
+	})
+
+	it('refuses to resume on another export of the same size', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'interest-backfill-'))
+		const path = join(dir, 'subscribers.jsonl')
+		const a = row(1, { [SF]: '2026-10-01' })
+		const b = row(2, { [SF]: '2026-10-01' })
+		expect(b.length).toBe(a.length)
+		const mtime = new Date('2026-10-01T00:00:00Z')
+		await writeFile(path, `${a}\n`)
+		await utimes(path, mtime, mtime)
+		const first = await backfillInputFingerprint(path)
+		const saved = { input: first, keys: [SF], includeUnresolved: false, line: 1 }
+		const scope = { input: first, keys: [SF], includeUnresolved: false }
+		expect(resumeCursor(saved, scope)).toBe(1)
+
+		// Same path, size and mtime; only the content moved.
+		await writeFile(path, `${b}\n`)
+		await utimes(path, mtime, mtime)
+		const second = await backfillInputFingerprint(path)
+		expect(second.bytes).toBe(first.bytes)
+		expect(second.mtimeMs).toBe(first.mtimeMs)
+		expect(() => resumeCursor(saved, { ...scope, input: second })).toThrow(
+			/input headSha256 differs\); delete the progress file or pass the original export/,
+		)
+		expect(() =>
+			resumeCursor(saved, { ...scope, keys: [SF, CC] }),
+		).toThrow(BackfillRefused)
+		expect(() => resumeCursor({ line: 1 }, scope)).toThrow(/malformed/)
 	})
 
 	it('a finished run rerun sends nothing', async () => {

@@ -22,17 +22,20 @@
  * Addresses stay in memory. Output is counts only.
  */
 import { createReadStream } from 'node:fs'
-import { access, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { z } from 'zod'
 
 import {
+	backfillInputFingerprint,
 	backfillKeys,
 	BackfillRefused,
+	resumeCursor,
 	runInterestBackfill,
 	type BackfillEvent,
+	type BackfillProgressScope,
 } from '../src/lib/cta/interest-fact-backfill'
 
 const STATE_DIR = join(homedir(), '.cache', 'ai-hero', 'interest-backfill')
@@ -74,13 +77,6 @@ function parseArgs(argv: string[]) {
 	}
 }
 
-const Progress = z.object({
-	keys: z.array(z.string()),
-	inputBytes: z.number(),
-	includeUnresolved: z.boolean(),
-	line: z.number().int().nonnegative(),
-})
-
 const Acknowledgement = z.object({
 	status: z.literal(200),
 	ids: z.array(z.string().min(1)),
@@ -88,10 +84,9 @@ const Acknowledgement = z.object({
 
 async function main() {
 	const args = parseArgs(process.argv.slice(2))
-	const inputBytes = (await stat(args.input)).size
-	const scope = {
+	const scope: BackfillProgressScope = {
+		input: await backfillInputFingerprint(args.input),
 		keys: args.keys,
-		inputBytes,
 		includeUnresolved: args.includeUnresolved,
 	}
 
@@ -175,17 +170,13 @@ async function main() {
 					() => undefined,
 				)
 				if (raw === undefined) return 0
-				const progress = Progress.parse(JSON.parse(raw))
-				if (
-					JSON.stringify(progress.keys) !== JSON.stringify(scope.keys) ||
-					progress.inputBytes !== scope.inputBytes ||
-					progress.includeUnresolved !== scope.includeUnresolved
-				) {
-					throw new BackfillRefused(
-						'progress file is for another input, key set or mode; pass a new --progress-file',
-					)
+				let saved: unknown
+				try {
+					saved = JSON.parse(raw)
+				} catch {
+					saved = undefined
 				}
-				return progress.line
+				return resumeCursor(saved, scope)
 			},
 			writeCursor: async (line) => {
 				await mkdir(dirname(args.progressFile), { recursive: true })

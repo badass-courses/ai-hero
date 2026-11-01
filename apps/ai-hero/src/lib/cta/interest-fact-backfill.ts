@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto'
+import { open, stat } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import {
 	INTEREST_FACT_REQUESTED_EVENT,
 	type InterestFactRequested,
@@ -121,6 +123,97 @@ export function holdersOnLine(args: {
 		})
 	}
 	return holders
+}
+
+/** How much of each end of the export the fingerprint hashes. */
+const FINGERPRINT_EDGE_BYTES = 1024 * 1024
+
+export type BackfillInputFingerprint = {
+	path: string
+	bytes: number
+	mtimeMs: number
+	headSha256: string
+	tailSha256: string
+}
+
+/**
+ * Which export a progress file belongs to. Hashing all 3.8 GB on every start
+ * is too slow, so it takes the path, size, mtime and both 1 MiB ends: a
+ * different export of the same size differs in at least one of them.
+ */
+export async function backfillInputFingerprint(
+	path: string,
+): Promise<BackfillInputFingerprint> {
+	const absolute = resolve(path)
+	const info = await stat(absolute)
+	const file = await open(absolute, 'r')
+	try {
+		const edge = async (position: number) => {
+			const length = Math.min(FINGERPRINT_EDGE_BYTES, info.size)
+			const buffer = Buffer.alloc(length)
+			const { bytesRead } = await file.read(buffer, 0, length, position)
+			return createHash('sha256')
+				.update(buffer.subarray(0, bytesRead))
+				.digest('hex')
+		}
+		return {
+			path: absolute,
+			bytes: info.size,
+			mtimeMs: info.mtimeMs,
+			headSha256: await edge(0),
+			tailSha256: await edge(Math.max(0, info.size - FINGERPRINT_EDGE_BYTES)),
+		}
+	} finally {
+		await file.close()
+	}
+}
+
+export type BackfillProgressScope = {
+	input: BackfillInputFingerprint
+	keys: readonly string[]
+	includeUnresolved: boolean
+}
+
+/**
+ * The cursor in a saved progress file, if it belongs to this run. Any
+ * difference in the export, the keys or the mode is refused by name: an old
+ * cursor on a new export would skip holders and still report success.
+ */
+export function resumeCursor(
+	saved: unknown,
+	scope: BackfillProgressScope,
+): number {
+	const progress = saved as Partial<BackfillProgressScope & { line: number }>
+	const next =
+		'delete the progress file or pass the original export and flags'
+	if (
+		!progress ||
+		typeof progress !== 'object' ||
+		!progress.input ||
+		!Number.isInteger(progress.line) ||
+		(progress.line as number) < 0
+	) {
+		throw new BackfillRefused(`progress file is malformed; ${next}`)
+	}
+	for (const field of [
+		'path',
+		'bytes',
+		'mtimeMs',
+		'headSha256',
+		'tailSha256',
+	] as const) {
+		if (progress.input[field] !== scope.input[field])
+			throw new BackfillRefused(
+				`progress file is for another export (input ${field} differs); ${next}`,
+			)
+	}
+	if (JSON.stringify(progress.keys) !== JSON.stringify(scope.keys))
+		throw new BackfillRefused(`progress file is for other keys; ${next}`)
+	if (progress.includeUnresolved !== scope.includeUnresolved)
+		throw new BackfillRefused(
+			`progress file is for another --include-unresolved; ${next}`,
+		)
+	return progress.line as number
 }
 
 /** Stable per person and key, and it carries no address. */
