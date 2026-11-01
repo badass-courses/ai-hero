@@ -3,6 +3,7 @@
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { env } from '@/env.mjs'
 import { setSubscriberCookie } from '@/lib/convertkit'
+import { kitMirrorWritesEnabled } from '@/lib/kit-mirror-writes'
 import { resolveEnrolmentIdentity } from '@/lib/enrolment-identity'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
@@ -71,6 +72,11 @@ export async function completeKnownConversionIntent({
 			store: 'interest-facts',
 		})
 		return { success: true as const, confirmationRequired: false as const }
+	}
+
+	// No Kit fallback after the master cut if the owned fact could not queue.
+	if (!kitMirrorWritesEnabled()) {
+		return { success: false as const, reason: 'request-failed' as const }
 	}
 
 	try {
@@ -159,6 +165,10 @@ export async function finalizeAnonymousConversionIntent({
 			via: 'form',
 		})
 		if (queued > 0) return { success: true as const }
+	}
+
+	if (!kitMirrorWritesEnabled()) {
+		return { success: false as const, reason: 'tag-failed' as const }
 	}
 
 	try {

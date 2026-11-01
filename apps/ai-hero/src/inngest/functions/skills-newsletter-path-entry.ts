@@ -1,4 +1,5 @@
 import { db } from '@/db'
+import { kitMirrorWritesEnabled } from '@/lib/kit-mirror-writes'
 import {
 	emailListProvider,
 	KitSubscribeError,
@@ -281,6 +282,9 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 				now: new Date().toISOString(),
 			}),
 		)
+
+		// Owned entry, birth facts, and the legacy request above survive the cut.
+		if (!kitMirrorWritesEnabled()) return entryResult
 
 		const user = {
 			email: event.data.email,

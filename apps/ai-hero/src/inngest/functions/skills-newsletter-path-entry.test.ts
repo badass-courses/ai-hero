@@ -201,6 +201,23 @@ describe('skills newsletter path entry', () => {
 
 	afterEach(() => {
 		vi.restoreAllMocks()
+		vi.unstubAllEnvs()
+	})
+
+	it('master off preserves owned entry and birth processing with zero shadow Kit calls', async () => {
+		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'false')
+		const { step } = createDurableStep()
+		const result = await runAttempt(step, 0)
+		expect(result).toMatchObject({
+			status: 'planned',
+			contactId: 'contact_1',
+			captureEventId: 'capture_1',
+		})
+		expect(mocks.enterSkillsNewsletterSubscriber).toHaveBeenCalledOnce()
+		expect(mocks.subscribeToKitListWithoutFields).not.toHaveBeenCalled()
+		expect(step.run.mock.calls.map(([id]) => id)).toContain(
+			'record-old-newsletter-enrollment-request',
+		)
 	})
 
 	it('retries long enough to outlast a production deploy window', () => {

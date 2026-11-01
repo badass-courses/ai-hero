@@ -1,3 +1,4 @@
+import { kitMirrorWritesEnabled } from '@/lib/kit-mirror-writes'
 import { AI_CODING_CRASH_COURSE_PURCHASER_TAG_ID } from '@/lib/crash-course-purchaser-tag'
 
 const KIT_V4_BASE_URL = 'https://api.kit.com/v4'
@@ -12,6 +13,7 @@ export type CrashCoursePurchaserTagger = (
 ) => Promise<{ subscriberId: string }>
 
 export function getRequiredKitV4ApiKey() {
+	if (!kitMirrorWritesEnabled()) return ''
 	const apiKey = process.env.CONVERTKIT_V4_API_KEY
 	if (!apiKey) throw new Error('CONVERTKIT_V4_API_KEY is required')
 	return apiKey
@@ -25,6 +27,7 @@ export function createCrashCoursePurchaserTagger({
 	fetcher?: KitV4Fetcher
 }): CrashCoursePurchaserTagger {
 	return async (subscriberId) => {
+		if (!kitMirrorWritesEnabled()) return { subscriberId }
 		const response = await fetcher(
 			`${KIT_V4_BASE_URL}/tags/${AI_CODING_CRASH_COURSE_PURCHASER_TAG_ID}/subscribers/${encodeURIComponent(subscriberId)}`,
 			{

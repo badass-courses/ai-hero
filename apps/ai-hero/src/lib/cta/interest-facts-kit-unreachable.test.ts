@@ -96,6 +96,35 @@ afterEach(() => {
 })
 
 describe('join, Kit unreachable', () => {
+	it('master off overrides the interest mirror flag without changing drovr join facts', async () => {
+		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'false')
+		vi.stubEnv('AIH_INTEREST_KIT_WRITES', 'on')
+		const result = await completeKnownConversionIntent({
+			intent: {
+				kind: 'cohort-waitlist',
+				productName: 'AI Coding Crash Course',
+			},
+			surface: 'cohort-page',
+		})
+		expect(result).toEqual({ success: true, confirmationRequired: false })
+		expect(factEvents()).toHaveLength(1)
+		expect(mocks.kit.subscribeToList).not.toHaveBeenCalled()
+		expect(mocks.kit.tagSubscriber).not.toHaveBeenCalled()
+	})
+
+	it('master off never falls back to Kit when the owned facts are disabled', async () => {
+		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'false')
+		vi.stubEnv('AIH_INTEREST_FACTS_ENABLED', 'false')
+		const result = await completeKnownConversionIntent({
+			intent: {
+				kind: 'cohort-waitlist',
+				productName: 'AI Coding Crash Course',
+			},
+			surface: 'cohort-page',
+		})
+		expect(result).toEqual({ success: false, reason: 'request-failed' })
+		expect(mocks.kit.subscribeToList).not.toHaveBeenCalled()
+	})
 	it('cohort waitlist one-click after the cut: joined, from the fact alone', async () => {
 		vi.stubEnv('AIH_INTEREST_KIT_WRITES', 'off')
 		const result = await completeKnownConversionIntent({
