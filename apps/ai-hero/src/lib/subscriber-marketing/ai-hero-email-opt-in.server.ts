@@ -84,7 +84,7 @@ export type OptInDeferralInput = {
  * to Kit or untag, and answer "check your email" for `doi-requested` or their
  * usual failure for `blocked`.
  */
-export async function routeReturningUnsubscriberWithKit(args: {
+type ReturningUnsubscriberInput = {
 	email: string
 	name?: string
 	kitFormId: number
@@ -92,7 +92,11 @@ export async function routeReturningUnsubscriberWithKit(args: {
 	optInAttribution?: OptInAttribution
 	entry: 'form' | 'tag-me'
 	deferral?: OptInDeferralInput
-}) {
+}
+
+export async function routeReturningUnsubscriberWithKit(
+	args: ReturningUnsubscriberInput,
+): Promise<ReturningUnsubscriberResult> {
 	const drovrConfig = parseDrovrSignupDeliveryConfig(env)
 	const doiEnabled = env.AIH_RESUBSCRIBE_DOI_ENABLED === 'true'
 	const routed = gatedAsksOffKitEnabled()
@@ -156,7 +160,7 @@ export async function routeReturningUnsubscriberWithKit(args: {
 
 /** Same consent gate, without using a Kit record or interpreting no stops as consent. */
 async function routeReturningUnsubscriberOffKit(
-	args: Parameters<typeof routeReturningUnsubscriberWithKit>[0],
+	args: ReturningUnsubscriberInput,
 	config: ReturnType<typeof parseDrovrSignupDeliveryConfig>,
 ): Promise<ReturningUnsubscriberResult> {
 	const { list } = await readGatedAskForEmail(args.email)
