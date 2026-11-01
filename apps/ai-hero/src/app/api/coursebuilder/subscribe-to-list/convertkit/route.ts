@@ -467,6 +467,7 @@ async function offKitSignup(
 		// After the queue, so a join that never queued mints nobody. A run that
 		// looks before the contact lands finds it on its next look.
 		await holdInterestJoinContact({ email, name, fieldKeys })
+		await recordJoinAttribution(email, body.listId)
 		const fields = body.fields as Record<string, string>
 		return Response.json({
 			email_address: email,
@@ -486,6 +487,47 @@ async function offKitSignup(
 		return unconfirmed()
 	}
 	return await doiSignup(req, body, email, kitFormId)
+}
+
+/**
+ * The page and shortlink attribution the Kit path records for every
+ * successful subscribe, with no Kit subscriber id. Never fails the join.
+ */
+async function recordJoinAttribution(email: string, listId: unknown) {
+	const formId =
+		typeof listId === 'string' || typeof listId === 'number'
+			? listId
+			: undefined
+	try {
+		const cookieStore = await cookies()
+		recordSignupAttribution({
+			email,
+			formId,
+			rawCookie: cookieStore.get('ft_attr')?.value,
+		}).catch((error) => {
+			void log.error('signup.attribution.failed', {
+				formId: formId != null ? String(formId) : undefined,
+				error: error instanceof Error ? error.message : String(error),
+			})
+		})
+		const shortlinkSlug = cookieStore.get('sl_ref')?.value
+		if (shortlinkSlug) {
+			createShortlinkAttribution({
+				shortlinkSlug,
+				email,
+				type: 'signup',
+			}).catch((error) => {
+				void log.error('api.coursebuilder.subscribe.attribution.failed', {
+					shortlinkSlug,
+					error: error instanceof Error ? error.message : String(error),
+				})
+			})
+		}
+	} catch (error) {
+		await log.error('api.coursebuilder.subscribe.attribution.error', {
+			error: error instanceof Error ? error.message : String(error),
+		})
+	}
 }
 
 /**

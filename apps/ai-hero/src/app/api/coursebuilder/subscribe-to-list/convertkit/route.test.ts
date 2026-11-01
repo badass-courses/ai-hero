@@ -1784,6 +1784,39 @@ describe('AIH_WAITLIST_OFF_KIT_ENABLED: the posted form off Kit', () => {
 		).toEqual(['interest.join-requested'])
 	})
 
+	it('a join keeps its page and shortlink attribution, with no Kit subscriber id', async () => {
+		mocks.cookieGet.mockImplementation((key: string) =>
+			key === 'sl_ref'
+				? { value: 'synthetic-source' }
+				: key === 'ft_attr'
+					? { value: 'synthetic-attribution' }
+					: undefined,
+		)
+		const response = await post({ listId: 8447166, fields: waitlist })
+
+		expect(response.status).toBe(200)
+		expect(mocks.recordSignupAttribution).toHaveBeenCalledWith({
+			email: 'Reader@Example.com',
+			formId: 8447166,
+			rawCookie: 'synthetic-attribution',
+		})
+		expect(mocks.createShortlinkAttribution).toHaveBeenCalledWith({
+			shortlinkSlug: 'synthetic-source',
+			email: 'Reader@Example.com',
+			type: 'signup',
+		})
+		noKit()
+	})
+
+	it('a join whose fact cannot queue records no attribution', async () => {
+		delete process.env.AIH_INTEREST_FACTS_ENABLED
+		const response = await post({ fields: waitlist })
+
+		expect(response.status).toBe(502)
+		expect(mocks.recordSignupAttribution).not.toHaveBeenCalled()
+		expect(mocks.createShortlinkAttribution).not.toHaveBeenCalled()
+	})
+
 	it('a second cold join from the same address mints no second contact', async () => {
 		await post({ fields: waitlist })
 		await post({
