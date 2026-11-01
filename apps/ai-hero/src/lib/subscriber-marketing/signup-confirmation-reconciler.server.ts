@@ -1,5 +1,16 @@
 import { db } from '@/db'
 import {
+	DOI_REQUESTED_EVENT_TYPE,
+	parseDrovrSignupDeliveryConfig,
+} from './drovr-doi-signup'
+import { readDrovrListState } from './drovr-list-state'
+import {
+	confirmationReconcilerOffKitEnabled,
+	legacyKitConfirmationSubscribers,
+	reconcileDrovrConfirmations,
+	type DrovrConfirmationSubject,
+} from './signup-confirmation-drovr'
+import {
 	contact,
 	contactEvent,
 	providerIdentity,
@@ -201,6 +212,8 @@ export type SkillsConfirmationScan = {
 	limit: number
 	counts: {
 		kitFormSubscribersFetched: number
+		/** Mirrored DOI contacts removed before legacy consent/history checks. */
+		excludedDrovrOwned?: number
 		inWindow: number
 		unconfirmed: number
 		withExistingCourseEntry: number
@@ -296,16 +309,30 @@ export async function scanSkillsConfirmations(args: {
 	limit?: number
 	database?: ReconcilerDatabase
 	kit?: KitReaderOptions
+	/** Persisted DOI intake, shared with the independent owned phase. */
+	drovrSubjects?: DrovrConfirmationSubject[]
 }): Promise<SkillsConfirmationScan> {
 	const to = new Date(args.to ?? new Date().toISOString()).toISOString()
 	const window = skillsConfirmationTierWindow(args.tier, to)
+	const owned =
+		args.drovrSubjects ??
+		(confirmationReconcilerOffKitEnabled()
+			? await fetchDrovrConfirmationSubjects(args.database ?? db)
+			: undefined)
 	const reader = createKitReader(kitApiKey(), args.kit)
 	try {
-		const subscribers = await fetchKitFormSubscribersForStates(reader, {
+		// Explicit legacy exception: signed-in direct-Kit intake and older
+		// Kit-only signups still need enumeration until their disposition.
+		const kitSubscribers = await fetchKitFormSubscribersForStates(reader, {
 			formId: SKILLS_NEWSLETTER_FORM_ID,
 			addedAfter: window.from,
 			states: KIT_SUBSCRIBER_STATES,
 		})
+		// DOI confirmations must not pass Kit's confirmation, tags or course
+		// checks, even if a delayed projection eventually puts them in Kit.
+		const subscribers = owned
+			? legacyKitConfirmationSubscribers(kitSubscribers, owned)
+			: kitSubscribers
 		const identityMatches = await fetchIdentityMatches(
 			subscribers,
 			args.database ?? db,
@@ -389,7 +416,10 @@ export async function scanSkillsConfirmations(args: {
 			window,
 			limit: args.limit ?? skillsConfirmationReconciliationLimit(),
 			counts: {
-				kitFormSubscribersFetched: preview.counts.kitFormSubscribersFetched,
+				kitFormSubscribersFetched: kitSubscribers.length,
+				...(owned
+					? { excludedDrovrOwned: kitSubscribers.length - subscribers.length }
+					: {}),
 				inWindow: preview.counts.inWindow,
 				unconfirmed: preview.counts.unconfirmed,
 				withExistingCourseEntry: preview.counts.withExistingCourseEntry,
@@ -519,6 +549,8 @@ export type SkillsConfirmationReceipt = {
 	tagRead: SkillsConfirmationScan['tagRead']
 	/** Every Kit request of the run, retries included, and the 429s among them. */
 	kit: KitReadStats
+	/** Consent observation only; drovr's confirm fold/outbox owns enrolment repair. */
+	drovr?: Awaited<ReturnType<typeof reconcileDrovrConfirmations>>
 }
 
 /**
@@ -534,14 +566,53 @@ export async function reconcileSkillsConfirmations(args: {
 	limit?: number
 	database?: ReconcilerDatabase
 	kit?: KitReaderOptions
+	onDrovrObserved?: (
+		receipt: Awaited<ReturnType<typeof reconcileDrovrConfirmations>>,
+	) => void
 	onSent?: (event: SkillsConfirmationEvent) => void
 	onTagCheckFailed?: (failure: {
 		kitSubscriberId: string
 		reason: string
 	}) => void
 }): Promise<SkillsConfirmationReceipt> {
+	const offKit = confirmationReconcilerOffKitEnabled()
+	const drovrSubjects = offKit
+		? await args.steps.run('read-persisted-doi-intake-v1', () =>
+				fetchDrovrConfirmationSubjects(args.database ?? db),
+			)
+		: undefined
+	// Owned reconciliation runs before the legacy exception, so a Kit
+	// outage cannot block the owned read. No Kit-id replay or second birth:
+	// drovr's durable confirm.fold drain continues independently of this job.
+	const drovr = drovrSubjects
+		? await args.steps.run('observe-drovr-confirmations-v1', () =>
+				reconcileDrovrConfirmations({
+					subjects: drovrSubjects,
+					runIndex:
+						args.tier === 'daily'
+							? skillsConfirmationDailyRunIndex(
+									args.to ?? new Date().toISOString(),
+								)
+							: undefined,
+					window: skillsConfirmationTierWindow(
+						args.tier,
+						args.to ?? new Date().toISOString(),
+					),
+					read: (contactId) =>
+						readDrovrListState(
+							{ contactId },
+							parseDrovrSignupDeliveryConfig({
+								DROVR_API_BASE_URL: process.env.DROVR_API_BASE_URL,
+								DROVR_SHADOW_INGEST_URL: process.env.DROVR_SHADOW_INGEST_URL,
+								DROVR_API_KEY_ORG_AIHERO: process.env.DROVR_API_KEY_ORG_AIHERO,
+							}),
+						),
+				}),
+			)
+		: undefined
+	if (drovr) args.onDrovrObserved?.(drovr)
 	const scan = await args.steps.run('scan-confirmation-candidates', () =>
-		scanSkillsConfirmations(args),
+		scanSkillsConfirmations({ ...args, drovrSubjects }),
 	)
 	let kit = scan.kit
 	let tagChecked = 0
@@ -628,7 +699,38 @@ export async function reconcileSkillsConfirmations(args: {
 			plannedOlderThanRecentTier,
 		},
 		kit,
+		...(drovr ? { drovr } : {}),
 	}
+}
+
+/** All persisted DOI contacts, not only the current tier or rollout allowlist. */
+export async function fetchDrovrConfirmationSubjects(
+	database: ReconcilerDatabase,
+): Promise<DrovrConfirmationSubject[]> {
+	const rows = await database
+		.select({
+			contactId: contact.id,
+			emailKey: contact.emailKey,
+			requestedAt: contactEvent.occurredAt,
+			emailKeyStale: contact.emailKeyStale,
+		})
+		.from(contactEvent)
+		.innerJoin(contact, eq(contact.id, contactEvent.contactId))
+		.where(eq(contactEvent.eventType, DOI_REQUESTED_EVENT_TYPE))
+	const byContact = new Map<string, DrovrConfirmationSubject>()
+	for (const row of rows) {
+		const requestedAt = new Date(row.requestedAt).toISOString()
+		const previous = byContact.get(row.contactId)
+		if (!previous || requestedAt > previous.requestedAt)
+			byContact.set(row.contactId, {
+				contactId: row.contactId,
+				emailKey: row.emailKeyStale === 1 ? null : row.emailKey,
+				requestedAt,
+			})
+	}
+	return [...byContact.values()].sort((a, b) =>
+		a.contactId.localeCompare(b.contactId),
+	)
 }
 
 function asEvidenceError(error: unknown) {

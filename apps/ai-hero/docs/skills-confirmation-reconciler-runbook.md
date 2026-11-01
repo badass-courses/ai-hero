@@ -1,6 +1,18 @@
 # Skills confirmation reconciler
 
-A double opt-in learner is entered (contact, owners, drovr birth) only after Kit reports them confirmed. Kit has no webhook registered for AI Hero, so `skills-newsletter-confirmation-reconciler` polls for them. Its run is the whole wait between a learner confirming and their welcome. Code: `src/inngest/functions/skills-newsletter-confirmation-reconciler.ts` and `src/lib/subscriber-marketing/signup-confirmation-reconciler.server.ts`.
+The legacy Kit-confirmed cohort is entered (contact, owners, drovr birth) after Kit reports confirmation. Kit has no confirmation webhook registered for AI Hero, so `skills-newsletter-confirmation-reconciler` polls for that cohort. drovr DOI signups have a different owner: drovr records confirmation and the owed course birth in its confirm batch, then repairs delivery through its outbox. Code: `src/inngest/functions/skills-newsletter-confirmation-reconciler.ts` and `src/lib/subscriber-marketing/signup-confirmation-reconciler.server.ts`.
+
+## Persisted DOI split (default off)
+
+`AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED=true` separates contacts with a persisted `skills-newsletter.doi-requested` event from the legacy Kit-only cohort. It does not infer ownership from today's `DROVR_DOI_FORMS` allowlist. Both mapped forms (9376133 and plain-newsletter asks on 8447166) record this intake event; signed-in direct-Kit enrolment and non-DOI forms remain the explicit legacy exception.
+
+Before the legacy scan, the job reads drovr's `get_contact_list_state` contract through `readDrovrListState`, by contact id, for at most 50 DOI contacts per run. Reads rotate every 15-minute slot; the daily tier includes requests older than 14 days. A confirmation must name `skills-newsletter`; global or course stops win. A timeout, refusal, malformed result or missing evidence stays unknown and is read again. The job writes no completion marker and sends no Kit-id enrolment event for these contacts.
+
+This is consent observation, **not proof of enrolment delivery**. drovr's confirm batch atomically owes `confirm.fold`; its fold births the target course under the same idempotency key, and its outbox drain repairs missed folds. `drovr-signup-deliver`, `drovr-outbox-replay-v1` and `drovr-owner-birth-guard-v1` remain registered and unchanged. Do not create a second course birth from this observation.
+
+Persisted DOI addresses with usable email keys are excluded before the legacy scan evaluates Kit confirmation, tags or course history. Missing or stale keys are counted as `unkeyed` and left for the existing legacy evidence guards; they do not block healthy owned observations. The pre-existing global stale-key guard still fails the legacy scan if any Contact key is stale. **The due poll still enumerates Kit's form for the legacy cohort.** It is not retired, and a Kit outage still fails that phase with the existing retries. The owned observation runs first and logs `subscriber_funnel.drovr_confirmations_observed`, even if the legacy phase subsequently fails. The completed run receipt also includes `drovr.counts` (`selected`, `confirmed`, `unconfirmed`, `stopped`, `unknown`, `deferred`, `unkeyed`) and its repair owner.
+
+Unset, false or any value other than literal `true` preserves the existing scan and event path. Roll back by unsetting the flag. This affects only new runs; completed Inngest steps remain memoized. Keep the flag off until the shared list-state client and the deployed drovr repair path are verified. Retiring the residual legacy poll needs a separate cohort disposition, including the still-active signed-in direct-Kit branch.
 
 ## Tiers
 
@@ -90,4 +102,4 @@ The first 05:09Z run must log `tier: "daily"` with `window.from` at the floor (2
 
 ## Later
 
-- A Kit webhook for confirmations (option d) is deferred until after launch. It may be moot once drovr's DOI (drovr #542) replaces the poll.
+- Retire legacy Kit polling only after direct-Kit intake moves and the remaining Kit-only cohort has an explicit disposition. Local tables alone do not enumerate legacy subscribers whose unconfirmed Kit form submission was never captured locally.
