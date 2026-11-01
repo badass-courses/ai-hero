@@ -77,7 +77,9 @@ pnpm reporting:kit-snapshot --out /secure/path/kit-history.json
   process environment by the secret store. It reads no env file, and there is
   no `vercel env pull`: production secrets are write-only in Vercel.
 - It only reads Kit and the database, forces the off-Kit reporting flag off
-  in its own process, and reads each Kit URL once for every scope.
+  in its own process, and reads each Kit URL once for every scope. Any failed
+  Kit read stops the run before it writes: the readers would otherwise record
+  a failed click read as a broadcast with no clicks.
 - It writes the file with mode 0600 and refuses to overwrite one. It prints
   scopes, campaign counts and byte sizes, never report values.
 - Scopes default to `full`: every range (`24h`, `7d`, `30d`, `90d`, `all`) for
