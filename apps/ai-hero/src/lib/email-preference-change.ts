@@ -9,7 +9,7 @@ export type AcceptedPreferenceChange =
 	| { status: 'accepted'; verified: boolean }
 	| {
 			status: 'rejected'
-			reason: 'invalid-link' | 'unverified-opt-in'
+			reason: 'invalid-link' | 'link-opt-in-refused'
 	  }
 
 /**
@@ -17,8 +17,9 @@ export type AcceptedPreferenceChange =
  *
  * An opt-out always lands: a verified one writes the local row now, and an
  * unverifiable one (unknown Kit id, directory down) is queued for the
- * function to verify. An opt-in needs a verified link. A tampered link is
- * rejected. Only a failure to queue throws, so the reader sees an error and
+ * function to verify. An opt-in never comes from a link: the link proof is
+ * an unsalted hash of a guessable address, so it cannot lift a stop. A
+ * tampered link is rejected. Only a failure to queue throws, so the reader sees an error and
  * can retry instead of a false "done".
  */
 export async function acceptEmailPreferenceChange(
@@ -45,8 +46,8 @@ export async function acceptEmailPreferenceChange(
 	if (verification.status === 'invalid') {
 		return { status: 'rejected', reason: 'invalid-link' }
 	}
-	if (verification.status === 'unverifiable' && args.subscribed) {
-		return { status: 'rejected', reason: 'unverified-opt-in' }
+	if (args.subscribed) {
+		return { status: 'rejected', reason: 'link-opt-in-refused' }
 	}
 
 	const base: ChangeData = {
@@ -85,7 +86,7 @@ export type AppliedPreferenceChange =
 	| { status: 'applied'; verifiedBy: 'page' | 'directory' | 'kit' }
 	| {
 			status: 'dropped'
-			reason: 'invalid-link' | 'unverified-opt-in' | 'unknown-subscriber'
+			reason: 'invalid-link' | 'link-opt-in-refused' | 'unknown-subscriber'
 	  }
 
 /**
@@ -108,12 +109,15 @@ export async function applyEmailPreferenceChange(
 		writeKit: (email: string) => Promise<unknown>
 	},
 ): Promise<AppliedPreferenceChange> {
+	// A link never opts anyone in, including a change queued before that rule.
+	if (data.subscribed) {
+		return { status: 'dropped', reason: 'link-opt-in-refused' }
+	}
+
 	let email = data.email
 	let verifiedBy: 'page' | 'directory' | 'kit' = 'page'
 
 	if (!email) {
-		if (data.subscribed)
-			return { status: 'dropped', reason: 'unverified-opt-in' }
 		const verification = await deps.verify()
 		if (verification.status === 'invalid') {
 			return { status: 'dropped', reason: 'invalid-link' }
