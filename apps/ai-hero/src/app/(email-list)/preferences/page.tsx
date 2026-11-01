@@ -43,7 +43,7 @@ export default async function PreferencesPage(props: PreferencesPageProps) {
 	const updatedState = getSearchParamValue(searchParams.state)
 
 	const localEnabled = emailPreferencesLocalEnabled(env)
-	const resubscribeRefused = error === 'sign-in-to-resubscribe'
+	const resubscribeRefused = error === 'resubscribe-by-signup'
 
 	const { subscriber, preferences } = localEnabled
 		? await readLocalView(subscriberId, shKit)
@@ -83,7 +83,7 @@ export default async function PreferencesPage(props: PreferencesPageProps) {
 						</div>
 					) : (
 						<div className="space-y-4">
-							{resubscribeRefused ? <SignInToResubscribe /> : null}
+							{resubscribeRefused ? <ResubscribeExplainer /> : null}
 							{updatedPreference && updatedState ? (
 								<div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-700 dark:text-emerald-300">
 									Saved. Your{' '}
@@ -124,7 +124,7 @@ export default async function PreferencesPage(props: PreferencesPageProps) {
 											</div>
 											{state.known && state.stoppedEverything ? null : localEnabled &&
 											  !(subscribed || !state.known) ? (
-												<SignInLink />
+												<ResubscribeLink />
 											) : (
 												<form action={updateEmailPreferenceAction}>
 													<input
@@ -167,30 +167,30 @@ export default async function PreferencesPage(props: PreferencesPageProps) {
 	)
 }
 
-function SignInLink() {
+function ResubscribeLink() {
 	return (
 		<Link
-			href="/login"
+			href="/newsletter"
 			className="border-border bg-background hover:bg-hover rounded-md border px-4 py-2 text-sm font-medium transition"
 		>
-			Sign in to resubscribe
+			Sign up again
 		</Link>
 	)
 }
 
 /** An email link can stop mail, never restart it: resubscribing needs a login. */
-function SignInToResubscribe() {
+function ResubscribeExplainer() {
 	return (
 		<div className="border-border bg-muted/30 rounded-lg border p-4 text-sm">
 			<p className="text-muted-foreground">
 				An email link can only unsubscribe you. To get these emails again, sign
-				in with the address you signed up with.
+				up again and confirm from the email we send.
 			</p>
 			<Link
-				href="/login"
+				href="/newsletter"
 				className="text-primary mt-2 inline-flex font-medium hover:underline"
 			>
-				Sign in to resubscribe
+				Sign up again
 			</Link>
 		</div>
 	)

@@ -48,11 +48,16 @@ export async function updateEmailPreferenceAction(formData: FormData) {
 				: ({ status: 'rejected', reason: 'invalid-link' } as const)
 
 		if (result.status === 'rejected') {
-			redirect(
-				result.reason === 'link-opt-in-refused'
-					? '/preferences?error=sign-in-to-resubscribe'
-					: '/preferences?error=invalid-link',
-			)
+			if (result.reason === 'link-opt-in-refused') {
+				redirect(
+					`/preferences?${new URLSearchParams({
+						ck_subscriber_id: subscriberId ?? '',
+						sh_kit: shKit ?? '',
+						error: 'resubscribe-by-signup',
+					}).toString()}`,
+				)
+			}
+			redirect('/preferences?error=invalid-link')
 		}
 
 		redirect(

@@ -222,10 +222,10 @@ function textOf(node: unknown): string {
 		type?: unknown
 		props?: Record<string, unknown>
 	}
-	// The page's own SignIn* components; Next's Link and the layout stay opaque.
+	// The page's own Resubscribe* components; Next's Link and the layout stay opaque.
 	if (
 		typeof element.type === 'function' &&
-		element.type.name.startsWith('SignIn')
+		element.type.name.startsWith('Resubscribe')
 	)
 		return textOf((element.type as (p: unknown) => unknown)(element.props))
 	const props = element.props ?? {}
@@ -409,7 +409,7 @@ describe('/preferences with Kit unreachable', () => {
 		expect(text).toContain("You're not getting these.")
 		expect(text).toContain('[subscribed=false]')
 		// A stopped preference offers sign-in, never an opt-in form.
-		expect(text).toContain('Sign in to resubscribe')
+		expect(text).toContain('Sign up again')
 		expect(text).not.toContain('[subscribed=true]')
 	})
 
@@ -459,7 +459,9 @@ describe('/preferences with Kit unreachable', () => {
 					subscribed: 'true',
 				}),
 			),
-		).rejects.toThrow('redirect:/preferences?error=sign-in-to-resubscribe')
+		).rejects.toThrow(
+			`redirect:/preferences?ck_subscriber_id=${KIT_ID}&sh_kit=${SH_KIT}&error=resubscribe-by-signup`,
+		)
 		expect(mocks.sent).toEqual([])
 		expect(mocks.rows).toEqual([])
 	})
@@ -493,7 +495,9 @@ describe('/preferences with Kit unreachable', () => {
 					subscribed: 'true',
 				}),
 			),
-		).rejects.toThrow('redirect:/preferences?error=sign-in-to-resubscribe')
+		).rejects.toThrow(
+			`redirect:/preferences?ck_subscriber_id=${KIT_ID}&sh_kit=${SH_KIT}&error=resubscribe-by-signup`,
+		)
 		expect(mocks.sent).toEqual([])
 		expect(mocks.rows).toEqual([])
 		expect(mocks.kitCalls).toEqual([])
@@ -507,8 +511,8 @@ describe('/preferences with Kit unreachable', () => {
 	})
 
 	it('shows the sign-in prompt for a refused opt-in', async () => {
-		const text = await view({ error: 'sign-in-to-resubscribe' })
-		expect(text).toContain('Sign in to resubscribe')
+		const text = await view({ error: 'resubscribe-by-signup' })
+		expect(text).toContain('Sign up again')
 		expect(text).toContain("You're getting these.")
 	})
 })
