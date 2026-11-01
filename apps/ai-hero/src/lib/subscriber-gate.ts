@@ -32,9 +32,10 @@ import { SubscriberSchema, type Subscriber } from '@/schemas/subscriber'
  *
  * The one case the cookie cannot answer is a reader arriving from a broadcast
  * link, where the middleware has set `ck_subscriber_id` from the URL but no
- * `ck_subscriber` exists yet. That genuinely needs the fetch, so it falls
- * through to `getSubscriberFromCookie` — which also populates the full cookie,
- * making it a once-per-reader cost rather than a per-request one.
+ * `ck_subscriber` exists yet. That needs a lookup, so it falls through to
+ * `getSubscriberFromCookie` — which resolves the id in the local contact
+ * directory (not Kit) and populates the full cookie, making it a
+ * once-per-reader cost rather than a per-request one.
  *
  * `cache()`d per request: several CTAs can sit on one page and they must not
  * each parse (or worse, each fetch) their own copy.
@@ -100,8 +101,8 @@ const readCookieSubscriberForGating = cache(
 			try {
 				return await getSubscriberFromCookie()
 			} catch {
-				// Kit being down must not take a page with it. A missing subscriber
-				// shows the ask, which is what every visitor sees anyway.
+				// A failed directory read must not take a page with it. A missing
+				// subscriber shows the ask, which is what every visitor sees anyway.
 				return null
 			}
 		}
