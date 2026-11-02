@@ -4,6 +4,7 @@ import { DROVR_CONTACT_PROFILE_SYNC_EVENT } from '@/inngest/events/drovr'
 
 import {
 	buildContactProfileEvents,
+	hasUnrevokedBuyerFact,
 	buildValuePathJourneyLinks,
 	contactProfileContentHash,
 	kitIdentityOf,
@@ -25,6 +26,78 @@ import { personalizeValuePathEmailWithAnchoredLinks } from './value-path-email-e
 import { createMemoryValuePathLinkAnchorStore } from './value-path-link-anchor'
 
 const occurredAt = '2026-09-26T17:00:00.000Z'
+
+describe('buyer fact scope', () => {
+	it('resolves persisted grants from their semantic keys when SQL has no domainPayload', () => {
+		const grant = {
+			eventType: 'entitlement.granted',
+			occurredAt,
+			semanticIdempotencyKey:
+				'ai-hero:entitlement.granted:purchase-transfer:transfer-1',
+		}
+		const revoke = {
+			eventType: 'entitlement.revoked',
+			occurredAt,
+			semanticIdempotencyKey:
+				'ai-hero:entitlement.revoked:purchase-transfer:transfer-1',
+		}
+		expect(hasUnrevokedBuyerFact([grant])).toBe(true)
+		expect(hasUnrevokedBuyerFact([grant, revoke])).toBe(false)
+		expect(
+			hasUnrevokedBuyerFact([
+				grant,
+				{
+					...revoke,
+					semanticIdempotencyKey: 'ai-hero:entitlement.revoked:another-grant',
+				},
+			]),
+		).toBe(true)
+	})
+	const fact = (
+		eventType: string,
+		entitlementId: string,
+		occurredAt = '2026-11-01T12:00:00.000Z',
+	) => ({
+		eventType,
+		occurredAt,
+		domainPayload: { entitlement: { entitlementId } },
+	})
+	it('admits purchases and live grants, but not empty history or revoked-only history', () => {
+		expect(hasUnrevokedBuyerFact([])).toBe(false)
+		expect(hasUnrevokedBuyerFact([fact('purchase.recorded', '')])).toBe(true)
+		expect(hasUnrevokedBuyerFact([fact('entitlement.granted', 'a')])).toBe(true)
+		expect(hasUnrevokedBuyerFact([fact('entitlement.revoked', 'a')])).toBe(
+			false,
+		)
+	})
+	it('matches revocation to the grant id, treats equal timestamps as revoked, and permits later restoration', () => {
+		const grant = fact('entitlement.granted', 'a')
+		const revoke = fact('entitlement.revoked', 'a')
+		expect(hasUnrevokedBuyerFact([grant, revoke])).toBe(false)
+		expect(
+			hasUnrevokedBuyerFact([grant, fact('entitlement.revoked', 'b')]),
+		).toBe(true)
+		expect(
+			hasUnrevokedBuyerFact([
+				revoke,
+				fact('entitlement.granted', 'a', '2026-11-02T12:00:00.000Z'),
+			]),
+		).toBe(true)
+		expect(
+			hasUnrevokedBuyerFact([revoke, grant, fact('purchase.recorded', '')]),
+		).toBe(true)
+	})
+	it('does not accept a grant missing its identity or time', () => {
+		expect(
+			hasUnrevokedBuyerFact([
+				{ eventType: 'entitlement.granted', occurredAt, domainPayload: {} },
+			]),
+		).toBe(false)
+		expect(
+			hasUnrevokedBuyerFact([fact('entitlement.granted', 'a', 'invalid')]),
+		).toBe(false)
+	})
+})
 
 describe('contact profile sync: the events drovr stores', () => {
 	it('ships off: only true or 1 turns it on', () => {
@@ -486,6 +559,26 @@ describe('contact profile sync: one contact snapshot', () => {
 })
 
 describe('contact profile sync: requests', () => {
+	it('uses the stable source-fact id for buyer sync requests', () => {
+		const send = vi.fn()
+		for (let replay = 0; replay < 2; replay++) {
+			requestContactProfileSyncSafely(
+				{ contactId: 'buyer-1', reason: 'reconcile' },
+				{
+					env: { AIH_DROVR_PROFILE_SYNC: 'true' },
+					send,
+					eventId: 'buyer-profile:fact-1',
+				},
+			)
+		}
+		expect(send).toHaveBeenCalledWith({
+			id: 'buyer-profile:fact-1',
+			name: DROVR_CONTACT_PROFILE_SYNC_EVENT,
+			data: { contactId: 'buyer-1', reason: 'reconcile' },
+		})
+		expect(send.mock.calls[1]).toEqual(send.mock.calls[0])
+	})
+
 	it('asks for nothing while the flag is off, and never throws into the caller', async () => {
 		const send = vi.fn(async () => undefined)
 		requestContactProfileSyncSafely(

@@ -12,6 +12,7 @@ import {
 	isArchiveDerivedEntitlement,
 	isArchiveProductType,
 } from '@/lib/archive-entitlements'
+import { captureTransferBuyerEntitlement } from '@/lib/capture-buyer-entitlement'
 import { getCohort } from '@/lib/cohorts-query'
 import { removeDiscordRole } from '@/lib/discord-utils'
 import {
@@ -538,6 +539,13 @@ export async function handleProductTransfer({
 		priorTransferState &&
 		isTerminalTransferState(priorTransferState as TransferState)
 	) {
+		// A crash after COMPLETED but before the fact write must still repair
+		// the recipient's ownership fact. Canceled/expired transfers grant none.
+		if (priorTransferState === 'COMPLETED' && resolvedTransferId) {
+			await step.run('capture receiving buyer entitlement', () =>
+				captureTransferBuyerEntitlement(resolvedTransferId),
+			)
+		}
 		await step.run(`log duplicate transfer event skipped`, async () => {
 			log.info('purchase_transfer.duplicate_event_skipped', {
 				purchaseId: event.data.purchaseId,
@@ -1280,6 +1288,12 @@ export async function handleProductTransfer({
 			`Cannot complete transfer from state ${current?.transferState ?? 'missing'}`,
 		)
 	})
+
+	if (resolvedTransferId) {
+		await step.run('capture receiving buyer entitlement', () =>
+			captureTransferBuyerEntitlement(resolvedTransferId),
+		)
+	}
 
 	// Log successful completion
 	await step.run(`log transfer completed`, async () => {

@@ -7,6 +7,7 @@ import {
 import { inngest } from '@/inngest/inngest.server'
 import { env } from '@/env.mjs'
 import { resolveDrovrApiBaseUrl } from '@/lib/subscriber-marketing/drovr-unsubscribe-page'
+import { requestBuyerProfileSync } from '@/lib/subscriber-marketing/buyer-profile-sync'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import {
 	deliverResolvedPurchaseEvents,
@@ -24,6 +25,7 @@ import {
 	readEvergreenOfferCoupon,
 } from '@/lib/subscriber-marketing/evergreen-offer-purchase'
 import {
+	ensureBuyerContact,
 	writePurchaseRecordedContactEvents,
 	type PurchaseRecordedSource,
 } from '@/lib/subscriber-marketing/lifecycle-contact-events'
@@ -140,11 +142,14 @@ export const capturePurchaseContactEvent = inngest.createFunction(
 		const summary = await step.run(
 			'write purchase-recorded contact event',
 			async () => {
+				const repository = new DrizzleCaptureMarketingRepository(db)
+				await ensureBuyerContact({ repository, buyer: source, warn: log.warn })
 				const result = await writePurchaseRecordedContactEvents({
-					repository: new DrizzleCaptureMarketingRepository(db),
+					repository,
 					rows: [source],
 					redispatchDuplicates: true,
 				})
+				requestBuyerProfileSync(result)
 				return {
 					counts: result.counts,
 					identityResolutionPath: result.decisions
@@ -169,13 +174,14 @@ export const capturePurchaseContactEvent = inngest.createFunction(
 				: null,
 		})
 
-		// A buyer with no ai-hero Contact can still be a drovr contact (matched
-		// there by Kit email). Ask drovr who they are and send the purchase to
-		// that contact. Never create a Contact, never send a birth.
+		// Defensive fallback for unresolved local identity evidence. Normal
+		// buyers now get a Contact above; an existing drovr contact can still
+		// receive the fact if the local lifecycle writer could not attach it.
 		const buyerEmail = source.email?.trim()
 		if (
 			summary.counts.written === 0 &&
-			summary.counts.skippedByReason['no-existing-contact'] &&
+			(summary.counts.skippedByReason['no-existing-contact'] ||
+				summary.counts.skippedByReason['dangling-provider-identity']) &&
 			buyerEmail
 		) {
 			const drovr = await step.run('resolve buyer in drovr', async () => {

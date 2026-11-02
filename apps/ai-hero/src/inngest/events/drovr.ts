@@ -99,6 +99,7 @@ export const DROVR_CONTACT_PROFILE_SYNC_EVENT =
  * asks for that path's links to be issued eagerly (journey entry).
  */
 export type DrovrContactProfileSyncRequested = {
+	id?: string
 	name: typeof DROVR_CONTACT_PROFILE_SYNC_EVENT
 	data: {
 		contactId: string

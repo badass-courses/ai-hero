@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
 	findUser: vi.fn(),
 	selectCoupon: vi.fn(),
 	write: vi.fn(),
+	ensureBuyerContact: vi.fn(),
+	requestBuyerProfileSync: vi.fn(),
 	resolve: vi.fn(),
 	deliver: vi.fn(),
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -39,8 +41,12 @@ vi.mock('@/db', () => ({
 vi.mock('@/lib/subscriber-marketing/drizzle-capture-repository', () => ({
 	DrizzleCaptureMarketingRepository: class {},
 }))
+vi.mock('@/lib/subscriber-marketing/buyer-profile-sync', () => ({
+	requestBuyerProfileSync: mocks.requestBuyerProfileSync,
+}))
 vi.mock('@/lib/subscriber-marketing/lifecycle-contact-events', () => ({
 	writePurchaseRecordedContactEvents: mocks.write,
+	ensureBuyerContact: mocks.ensureBuyerContact,
 }))
 vi.mock('@/env.mjs', () => ({
 	env: {
@@ -104,6 +110,28 @@ beforeEach(() => {
 })
 
 describe('capture purchase contact event (row 194)', () => {
+	it('resolves or births the buyer Contact before writing the fact', async () => {
+		mocks.findPurchase.mockResolvedValue(purchaseRow(null))
+		await run()
+		expect(mocks.ensureBuyerContact).toHaveBeenCalledWith({
+			repository: expect.anything(),
+			warn: mocks.log.warn,
+			buyer: expect.objectContaining({
+				userId: 'user-1',
+				email: 'buyer@example.com',
+			}),
+		})
+		expect(mocks.ensureBuyerContact.mock.invocationCallOrder[0]).toBeLessThan(
+			mocks.write.mock.invocationCallOrder[0]!,
+		)
+		expect(mocks.requestBuyerProfileSync).toHaveBeenCalledWith(
+			await mocks.write.mock.results[0]?.value,
+		)
+		expect(mocks.write.mock.invocationCallOrder[0]).toBeLessThan(
+			mocks.requestBuyerProfileSync.mock.invocationCallOrder[0]!,
+		)
+	})
+
 	it('names the contact the redeemed evergreen coupon was issued to', async () => {
 		const { row, couponId } = await issuedRow(offerPayload())
 		mocks.findPurchase.mockResolvedValue(purchaseRow(couponId))
@@ -172,6 +200,25 @@ describe('capture purchase contact event (row 194)', () => {
 			mocks.findPurchase.mockResolvedValue(purchaseRow('ppp-coupon'))
 			mocks.write.mockResolvedValue(noContact)
 			mocks.deliver.mockResolvedValue({ accepted: 1, rejected: 0 })
+		})
+
+		it('falls back to drovr after the local writer skips a dangling identity', async () => {
+			mocks.write.mockResolvedValue({
+				counts: {
+					written: 0,
+					skippedByReason: { 'dangling-provider-identity': 1 },
+				},
+				decisions: [],
+			})
+			mocks.resolve.mockResolvedValue(
+				new Map([
+					['buyer@example.com', { status: 'resolved', contactId: 'drv-1' }],
+				]),
+			)
+			await expect(runResult()).resolves.toMatchObject({
+				status: 'drovr-resolved',
+			})
+			expect(mocks.deliver).toHaveBeenCalledTimes(1)
 		})
 
 		it('sends the purchase to the contact drovr resolves', async () => {
