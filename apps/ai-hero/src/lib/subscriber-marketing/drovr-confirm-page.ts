@@ -70,19 +70,30 @@ async function send(
 	init: RequestInit,
 ): Promise<Response | { unavailable: string }> {
 	if (!config.baseUrl) return { unavailable: 'drovr-api-not-configured' }
-	const controller = new AbortController()
-	const timer = setTimeout(() => controller.abort(), config.timeoutMs ?? 8_000)
-	try {
-		return await (config.fetch ?? fetch)(`${config.baseUrl}${path}`, {
-			...init,
-			cache: 'no-store',
-			signal: controller.signal,
-		})
-	} catch {
-		return { unavailable: 'drovr-unreachable' }
-	} finally {
-		clearTimeout(timer)
+	// One retry, only when the connection itself failed, not on our own
+	// timeout: connections from Vercel dropped before reaching drovr on
+	// 2026-11-02. The confirm write is idempotent on its token, so a second
+	// send is safe.
+	for (let attempt = 0; attempt < 2; attempt++) {
+		const controller = new AbortController()
+		const timer = setTimeout(
+			() => controller.abort(),
+			config.timeoutMs ?? 8_000,
+		)
+		try {
+			return await (config.fetch ?? fetch)(`${config.baseUrl}${path}`, {
+				...init,
+				cache: 'no-store',
+				signal: controller.signal,
+			})
+		} catch {
+			if (controller.signal.aborted) break
+		} finally {
+			clearTimeout(timer)
+		}
+		if (attempt === 0) await new Promise((r) => setTimeout(r, 300))
 	}
+	return { unavailable: 'drovr-unreachable' }
 }
 
 const jsonBody = async (response: Response) =>
