@@ -172,7 +172,7 @@ export async function SandcastleLanding({
 							))}
 						</ol>
 						<MoreLink
-							href={`${SANDCASTLE_DOCS_PATH}/how-it-works`}
+							href={`${SANDCASTLE_DOCS_PATH}/branch-strategies`}
 							className="mt-auto pt-10"
 						>
 							Branch strategies
@@ -220,7 +220,7 @@ export async function SandcastleLanding({
 								))}
 								<li>
 									<Link
-										href={`${SANDCASTLE_DOCS_PATH}/custom-sandbox-providers`}
+										href={`${SANDCASTLE_DOCS_PATH}/sandbox-providers#custom-sandbox-providers`}
 										className="hover:bg-foreground/[0.04] dark:hover:bg-foreground/[0.06] group flex items-center gap-4 px-5 py-4 transition-colors"
 									>
 										<span className="flex min-w-0 flex-col gap-1">
