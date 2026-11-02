@@ -16,6 +16,8 @@ export default PrivacyPage
 const markdownContent = `
 # Terms, Conditions, and Privacy Policy
 
+Last updated: November 2, 2026
+
 ## Overview
 
 This website is operated by Skill Recordings Inc. Throughout the site, the terms “we”, “us” and “our” refer to Skill Recordings Inc. Skill Recordings Inc. offers this website, including all information, tools and services available from this site to you, the user, conditioned upon your acceptance of all terms, conditions, policies and notices stated here.
@@ -154,7 +156,7 @@ Any ambiguities in the interpretation of these Terms of Service shall not be con
 
 ## Section 18: Governing Law
 
-These Terms of Service and any separate agreements whereby we provide you Services shall be governed by and construed in accordance with the laws of 12333 Sowden Road, PMB#97429, Houston, TX, 77080, United States.
+These Terms of Service and any separate agreements whereby we provide you Services shall be governed by and construed in accordance with the laws of the State of Texas, United States.
 
 ## Section 19: Changes to Terms of Service
 
