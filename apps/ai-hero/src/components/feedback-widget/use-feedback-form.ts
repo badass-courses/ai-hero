@@ -11,16 +11,18 @@ export const useFeedbackForm = ({ location }: { location: string }) => {
 	const [error, setError] = React.useState<string>()
 
 	const submitFeedbackForm = React.useCallback(
-		async (values: FeedbackFormValues) => {
+		async (values: FeedbackFormValues): Promise<boolean> => {
 			try {
 				await sendFeedbackFromUser({
 					feedbackText: values.text,
 					context: values.context,
 				})
 				setIsSubmitted(true)
+				return true
 			} catch (error) {
 				setError(error instanceof Error ? error.message : 'An error occurred')
 				setIsSubmitted(true)
+				return false
 			}
 		},
 		[],
