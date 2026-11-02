@@ -7,6 +7,7 @@ import {
 } from '@/lib/subscriber-marketing/opt-in-attribution'
 import { log } from '@/server/logger'
 import { guid } from '@coursebuilder/utils/guid'
+import { fitColumn, REFERRER_LENGTH } from '@/lib/fit-column'
 
 export type RecordSignupAttributionInput = {
 	email: string
@@ -90,7 +91,7 @@ export async function recordSignupAttribution(
 			kitSubscriberId,
 			formId,
 			landingPath: attribution.landingPath,
-			referrer: attribution.referrer,
+			referrer: fitColumn(attribution.referrer, REFERRER_LENGTH),
 			utmSource: attribution.utmSource,
 			utmMedium: attribution.utmMedium,
 			utmCampaign: attribution.utmCampaign,
