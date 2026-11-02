@@ -161,3 +161,37 @@ describe('confirmPageView', () => {
 		})
 	})
 })
+
+describe('dropped connections (Vercel to drovr edge)', () => {
+	it('retries a read once after fetch failed', async () => {
+		let calls = 0
+		const fetcher = vi.fn(async () => {
+			calls++
+			if (calls === 1) throw new TypeError('fetch failed')
+			return new Response(
+				JSON.stringify({
+					status: 'awaiting',
+					formId: 'skills-newsletter',
+					tenantId: 'org-aihero',
+				}),
+				{ status: 200 },
+			)
+		})
+		const result = await readConfirmState(token, {
+			baseUrl: base,
+			fetch: fetcher,
+		})
+		expect(result.status).toBe('ok')
+		expect(fetcher).toHaveBeenCalledTimes(2)
+	})
+
+	it('reports drovr-unreachable after two dropped connections', async () => {
+		const fetcher = vi.fn(async () => {
+			throw new TypeError('fetch failed')
+		})
+		await expect(
+			readConfirmState(token, { baseUrl: base, fetch: fetcher }),
+		).resolves.toEqual({ status: 'unavailable', reason: 'drovr-unreachable' })
+		expect(fetcher).toHaveBeenCalledTimes(2)
+	})
+})
