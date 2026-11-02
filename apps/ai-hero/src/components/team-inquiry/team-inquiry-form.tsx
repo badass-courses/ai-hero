@@ -236,6 +236,8 @@ export const TeamInquiryForm: React.FC<{
 						<>
 							<Spinner className="w-4" aria-hidden="true" /> Sending...
 						</>
+					) : source === 'training-partners' ? (
+						'Send inquiry'
 					) : (
 						'Get team pricing'
 					)}

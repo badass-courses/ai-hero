@@ -39,11 +39,29 @@ describe('training partners lead form', () => {
 		}
 	})
 
+	it('uses Send inquiry for the training partners submit button', () => {
+		const html = renderToStaticMarkup(
+			<TeamInquiryForm
+				location="/training-partners"
+				source="training-partners"
+			/>,
+		)
+		const button = html.match(
+			/<button[^>]*type="submit"[^>]*>(.*?)<\/button>/s,
+		)?.[1]
+		expect(button).toContain('Send inquiry')
+		expect(button).not.toContain('Get team pricing')
+	})
+
 	it('does not render partner fields in the existing for-your-team form', () => {
 		const html = renderToStaticMarkup(
 			<TeamInquiryForm location="/for-your-team" />,
 		)
-		expect(html).toContain('Get team pricing')
+		const button = html.match(
+			/<button[^>]*type="submit"[^>]*>(.*?)<\/button>/s,
+		)?.[1]
+		expect(button).toContain('Get team pricing')
+		expect(button).not.toContain('Send inquiry')
 		for (const field of ['country', 'trainingType', 'What do you need?']) {
 			expect(html).not.toContain(field)
 		}
