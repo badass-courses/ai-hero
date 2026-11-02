@@ -14,9 +14,6 @@ import { unified } from 'unified'
  * page's facts (the lead, the three steps, the provider table, the example)
  * come out of the same pages, so it cannot drift from the docs either.
  *
- * Until the repo has `toc.json`, the docs are still one README, split here
- * into a page per `##` section. That path goes once the split lands upstream.
- *
  * Fetched from the raw host on ISR. A push to the docs revalidates at once
  * through the github-source webhook; the hourly ISR window is the backstop.
  */
@@ -33,43 +30,15 @@ export const SANDCASTLE_DOCS_PATH = '/sandcastle'
 /** `owner/repo`, as GitHub names it in a push payload. */
 export const SANDCASTLE_REPOSITORY = `${SANDCASTLE_OWNER}/${SANDCASTLE_REPO}`
 export const SANDCASTLE_REPO_URL = `https://github.com/${SANDCASTLE_REPOSITORY}`
-export const SANDCASTLE_README_URL = `${SANDCASTLE_REPO_URL}/blob/${SANDCASTLE_REF}/${SANDCASTLE_README}`
+const SANDCASTLE_GUIDE_URL = `${SANDCASTLE_REPO_URL}/tree/${SANDCASTLE_REF}/${SANDCASTLE_GUIDE_DIR}`
 export const SANDCASTLE_PACKAGE = '@ai-hero/sandcastle'
 
-/**
- * The sidebar's grouping, by page slug. Editorial, so it lives here rather than
- * in the README; a section the README gains later lands in "More" until it is
- * filed, rather than disappearing.
- */
-const SANDCASTLE_DOCS_GROUPS: { title: string; slugs: string[] }[] = [
-	{
-		title: 'Guides',
-		slugs: ['how-it-works', 'sandbox-providers', 'prompts', 'configuration'],
-	},
-	{
-		title: 'Reference',
-		slugs: ['api', 'cli-commands', 'custom-sandbox-providers'],
-	},
-]
-const UNFILED_GROUP = 'More'
-/**
- * Sections about the repo rather than about using Sandcastle: how to work on
- * it, and its license. They stay README-only and links to them open the
- * README; the landing page closes on the license.
- */
-const LICENSE_SECTION = 'license'
-const README_ONLY_SECTIONS = ['development', LICENSE_SECTION]
 
-/**
- * The README's first sections are each a few lines long, and a newcomer reads
- * them in one go, so they make one page that keeps them as its sections.
- */
-const SANDCASTLE_DOCS_START = {
-	title: 'Getting started',
-	slug: 'getting-started',
-	group: 'Start here',
-	sections: ['what-is-sandcastle', 'prerequisites', 'quick-start'],
-}
+
+/** The sidebar group the start page sits in, above toc.json's groups. */
+const START_GROUP = 'Start here'
+/** The README section the landing page closes on. */
+const LICENSE_SECTION = 'license'
 
 export type SandcastleDocsPage = {
 	title: string
@@ -78,7 +47,7 @@ export type SandcastleDocsPage = {
 	group: string
 	/** The section's opening paragraph as plain text, for meta and the index. */
 	description: string
-	/** Section body as MDX source, headings promoted one level and links rewritten. */
+	/** Page body as MDX source, links rewritten. */
 	body: string
 	/** The same body as plain markdown, for the page's `.md` twin. */
 	markdown: string
@@ -102,17 +71,17 @@ export type SandcastleProvider = {
 }
 
 export type SandcastleDocs = {
-	/** Pages in sidebar order: the start page, then grouped in README order. */
+	/** Pages in sidebar order: the start page, then toc.json's groups. */
 	pages: SandcastleDocsPage[]
-	/** The opening sections as one page, which the sidebar puts first. */
+	/** toc.json's start page, which the sidebar puts first. */
 	start: SandcastleDocsPage | null
 	groups: { title: string; pages: SandcastleDocsPage[] }[]
-	/** The README's opening sentence. */
+	/** The start page's opening sentence. */
 	lead: string
 	/** The intro's numbered list, as inline markdown. */
 	steps: string[]
 	providers: SandcastleProvider[]
-	/** The first TypeScript block in Quick start. */
+	/** The start page's first TypeScript block. */
 	example: string | null
 	/** The README's License section, as text. */
 	license: string | null
@@ -140,7 +109,7 @@ function plainText(node: MdNode): string {
 }
 
 /**
- * The anchor GitHub gives a README heading, which is what the README's own
+ * The anchor GitHub gives a markdown heading, which is what the docs' own
  * `#links` point at. github-slugger's rule: lowercase, drop punctuation, one
  * hyphen per space.
  */
@@ -270,22 +239,6 @@ function introText(node: MdNode | undefined) {
 	return node ? plainText(node).replace(/:$/, '.') : ''
 }
 
-/**
- * The README titles some sections in Title Case ("Sandbox Providers") and
- * others in sentence case ("How it works"). The sidebar uses sentence case
- * throughout, keeping acronyms, code-cased words and the tool's own name.
- */
-function sentenceCase(title: string) {
-	return title
-		.split(' ')
-		.map((word, index) =>
-			index > 0 && /^[A-Z][a-z]+$/.test(word) && word !== 'Sandcastle'
-				? word.toLowerCase()
-				: word,
-		)
-		.join(' ')
-}
-
 /** A section's opening sentence: what the docs index shows under its title. */
 function firstSentence(text: string) {
 	return text.match(/^.+?[.!?](?=\s|$)/)?.[0] ?? text
@@ -316,169 +269,6 @@ function providerRows(table: MdNode | undefined): SandcastleProvider[] {
 		importPath: cells[importPath!] ?? '',
 		type: cells[type!] ?? '',
 	}))
-}
-
-/**
- * Split the README into pages. Anything before the first `##` is the
- * README's logo block, which the landing page's wordmark replaces.
- */
-export function parseSandcastleReadme(readme: string): SandcastleDocs {
-	const root = parser.parse(readme) as MdNode
-	const blocks = root.children ?? []
-	const sections = blocks
-		.map((node, index) => ({ node, index }))
-		.filter(({ node }) => node.type === 'heading' && node.depth === 2)
-
-	const startHref = `${SANDCASTLE_DOCS_PATH}/${SANDCASTLE_DOCS_START.slug}`
-
-	// Every heading's GitHub anchor → where it lives on this site. GitHub
-	// numbers a repeated heading (`options`, `options-1`); the site's ids do
-	// not, so a repeat lands on the page's first heading of that name.
-	const anchors = new Map<string, string>()
-	const anchorCounts = new Map<string, number>()
-	const setAnchor = (text: string, target: string) => {
-		const base = githubAnchor(text)
-		const count = anchorCounts.get(base) ?? 0
-		anchorCounts.set(base, count + 1)
-		anchors.set(count === 0 ? base : `${base}-${count}`, target)
-	}
-	const sectionBlocks = sections.map(({ node, index }, position) => {
-		const title = plainText(node)
-		const slug = slugifyHeading(title)
-		const isStart = SANDCASTLE_DOCS_START.sections.includes(slug)
-		const isReadmeOnly = README_ONLY_SECTIONS.includes(slug)
-		const href = isReadmeOnly
-			? `${SANDCASTLE_README_URL}#${githubAnchor(title)}`
-			: isStart
-				? startHref
-				: `${SANDCASTLE_DOCS_PATH}/${slug}`
-		const nextIndex = sections[position + 1]?.index ?? blocks.length
-		const body = blocks.slice(index + 1, nextIndex)
-		setAnchor(title, isStart ? `${href}#${slug}` : href)
-		for (const block of body) {
-			walk(block, (child) => {
-				if (child.type !== 'heading') return
-				const text = plainText(child)
-				setAnchor(
-					text,
-					isReadmeOnly
-						? `${SANDCASTLE_README_URL}#${githubAnchor(text)}`
-						: `${href}#${slugifyHeading(text)}`,
-				)
-			})
-		}
-		const group =
-			SANDCASTLE_DOCS_GROUPS.find((candidate) => candidate.slugs.includes(slug))
-				?.title ?? UNFILED_GROUP
-		return {
-			title,
-			slug,
-			href,
-			group,
-			isStart,
-			isReadmeOnly,
-			heading: node,
-			blocks: body,
-		}
-	})
-	// The start page keeps its sections' own headings, so they stay unpromoted.
-	const startRanges = sectionBlocks
-		.filter((section) => section.isStart)
-		.map(({ heading, blocks: body }) => ({
-			start: offsets(heading).start,
-			end: offsets(body[body.length - 1] ?? heading).end,
-		}))
-	const inStart = (at: number) =>
-		startRanges.some((range) => at >= range.start && at < range.end)
-
-	const edits: Edit[] = []
-	walk(root, (node) => {
-		const { start } = offsets(node)
-		if (
-			node.type === 'heading' &&
-			(node.depth ?? 0) > 2 &&
-			readme[start] === '#' &&
-			!inStart(start)
-		) {
-			// `###` becomes `##`: the README's `##` is the page's `h1`.
-			edits.push({ start, end: start + 1, text: '' })
-		}
-		edits.push(...mdxEscapes(readme, node))
-		if (node.type === 'link' && node.url) {
-			const target = node.url.startsWith('#')
-				? anchors.get(node.url.slice(1))
-				: isRepoRelative(node.url)
-					? `${SANDCASTLE_REPO_URL}/blob/${SANDCASTLE_REF}/${node.url.replace(/^\.\//, '')}`
-					: null
-			const edit = target ? linkEdit(readme, node, target) : null
-			if (edit) edits.push(edit)
-		}
-	})
-	const sourceOf = sourceSlicer(readme, edits)
-
-	const startSections = sectionBlocks.filter((section) => section.isStart)
-	const start: SandcastleDocsPage | null =
-		startSections.length > 0
-			? {
-					title: SANDCASTLE_DOCS_START.title,
-					slug: SANDCASTLE_DOCS_START.slug,
-					href: startHref,
-					group: SANDCASTLE_DOCS_START.group,
-					description: describe(startSections[0]!.blocks),
-					body: startSections
-						.map(({ heading, blocks: body }) => sourceOf([heading, ...body]))
-						.join('\n\n'),
-					markdown: startSections
-						.map(({ heading, blocks: body }) =>
-							sourceOf([heading, ...body], { mdx: false }),
-						)
-						.join('\n\n'),
-					sourceUrl: SANDCASTLE_README_URL,
-				}
-			: null
-	const pages = sectionBlocks
-		.filter((section) => !section.isStart && !section.isReadmeOnly)
-		.map(({ title, slug, href, group, blocks: body }) => ({
-			title: sentenceCase(title),
-			slug,
-			href,
-			group,
-			description: describe(body),
-			body: sourceOf(body),
-			markdown: sourceOf(body, { mdx: false }),
-			sourceUrl: SANDCASTLE_README_URL,
-		}))
-	const groups = [
-		...SANDCASTLE_DOCS_GROUPS.map(({ title }) => title),
-		UNFILED_GROUP,
-	]
-		.map((title) => ({
-			title,
-			pages: pages.filter((page) => page.group === title),
-		}))
-		.filter((group) => group.pages.length > 0)
-
-	const intro = sectionBlocks[0]?.blocks ?? []
-	const steps = intro.find((block) => block.type === 'list' && block.ordered)
-	const blocksOf = (slug: string) =>
-		sectionBlocks.find((section) => section.slug === slug)?.blocks ?? []
-
-	return {
-		pages: [
-			...(start ? [start] : []),
-			...groups.flatMap((group) => group.pages),
-		],
-		start,
-		groups,
-		lead: introText(intro.find((block) => block.type === 'paragraph')),
-		steps: (steps?.children ?? []).map((item) => sourceOf(item.children ?? [])),
-		providers: findProviders(blocksOf('sandbox-providers')),
-		example: firstTypeScript(blocksOf('quick-start')),
-		license:
-			introText(
-				blocksOf(LICENSE_SECTION).find((block) => block.type === 'paragraph'),
-			) || null,
-	}
 }
 
 /** The README's License section, which the landing page closes on. */
@@ -585,9 +375,7 @@ export function parseSandcastleGuide({
 				slug: page.slug,
 				href: page.href,
 				group:
-					page.slug === toc.start
-						? SANDCASTLE_DOCS_START.group
-						: (groupOf.get(page.slug) ?? UNFILED_GROUP),
+					page.slug === toc.start ? START_GROUP : groupOf.get(page.slug)!,
 				description: describe(page.blocks),
 				body: sourceOf(page.blocks),
 				markdown: sourceOf(page.blocks, { mdx: false }),
@@ -635,22 +423,13 @@ function fetchRepoFile(path: string) {
 	})
 }
 
-/** `toc.json`, or null while the repo has none. Any other failure throws. */
-async function fetchToc(): Promise<SandcastleToc | null> {
-	try {
-		return JSON.parse(await fetchRepoFile(SANDCASTLE_TOC)) as SandcastleToc
-	} catch (error) {
-		if ((error as { status?: number }).status === 404) return null
-		throw error
-	}
-}
-
 export const getSandcastleDocs = cache(async () => {
 	const [readme, toc] = await Promise.all([
 		fetchRepoFile(SANDCASTLE_README),
-		fetchToc(),
+		fetchRepoFile(SANDCASTLE_TOC).then(
+			(json) => JSON.parse(json) as SandcastleToc,
+		),
 	])
-	if (!toc) return parseSandcastleReadme(readme)
 
 	const slugs = [toc.start, ...toc.groups.flatMap((group) => group.pages)]
 	const pages = await Promise.all(
@@ -721,7 +500,7 @@ export function sandcastleDocsMarkdown(docs: SandcastleDocs, baseUrl: string) {
 
 ${docs.lead}
 
-Install with \`npm install --save-dev ${SANDCASTLE_PACKAGE}\`. Source: ${SANDCASTLE_README_URL}
+Install with \`npm install --save-dev ${SANDCASTLE_PACKAGE}\`. Source: ${SANDCASTLE_GUIDE_URL}
 
 ${docs.pages.map((page) => sandcastlePageMarkdown(page, baseUrl)).join('\n')}`
 }
