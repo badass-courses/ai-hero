@@ -23,7 +23,7 @@ import { cn } from '@coursebuilder/ui/utils/cn'
 
 import { sendTeamInquiry } from './team-inquiry-actions'
 import {
-	teamInquirySchema,
+	getTeamInquirySchema,
 	type TeamInquiryFormValues,
 } from './team-inquiry-schema'
 
@@ -59,13 +59,14 @@ export const TeamInquiryForm: React.FC<{
 	const [error, setError] = React.useState<string>()
 
 	const form = useForm<TeamInquiryFormValues>({
-		resolver: zodResolver(teamInquirySchema),
+		resolver: zodResolver(getTeamInquirySchema(source)),
 		defaultValues: {
 			name: '',
 			email: '',
 			companyName: '',
 			teamSize: '1-10',
 			message: '',
+			...(source === 'training-partners' ? { country: '' } : {}),
 			website: '',
 			timestamp: new Date().toISOString(),
 		},
@@ -157,6 +158,63 @@ export const TeamInquiryForm: React.FC<{
 					</div>
 				</div>
 
+				{source === 'training-partners' && (
+					<>
+						<div className="space-y-2">
+							<Label htmlFor="country">Country</Label>
+							<Input
+								{...form.register('country')}
+								id="country"
+								autoComplete="country-name"
+								required
+								aria-invalid={!!form.formState.errors.country}
+								aria-describedby={
+									form.formState.errors.country ? 'country-error' : undefined
+								}
+							/>
+							{form.formState.errors.country && (
+								<p id="country-error" role="alert" className="text-destructive">
+									{form.formState.errors.country.message}
+								</p>
+							)}
+						</div>
+						<fieldset
+							className="min-w-0 space-y-3"
+							aria-describedby={
+								form.formState.errors.trainingType
+									? 'training-type-error'
+									: undefined
+							}
+						>
+							<legend className="font-medium">What do you need?</legend>
+							{[
+								{ value: 'live', label: 'Live training for my team' },
+								{ value: 'self-paced', label: 'Self-paced seats for my team' },
+							].map(({ value, label }) => (
+								<Label key={value} className="flex items-center gap-3">
+									<input
+										{...form.register('trainingType')}
+										type="radio"
+										value={value}
+										required
+										aria-invalid={!!form.formState.errors.trainingType}
+									/>
+									{label}
+								</Label>
+							))}
+							{form.formState.errors.trainingType && (
+								<p
+									id="training-type-error"
+									role="alert"
+									className="text-destructive"
+								>
+									{form.formState.errors.trainingType.message}
+								</p>
+							)}
+						</fieldset>
+					</>
+				)}
+
 				<div className="space-y-2">
 					<Label htmlFor="message">Message (Optional)</Label>
 					<Textarea
@@ -178,6 +236,8 @@ export const TeamInquiryForm: React.FC<{
 						<>
 							<Spinner className="w-4" aria-hidden="true" /> Sending...
 						</>
+					) : source === 'training-partners' ? (
+						'Send inquiry'
 					) : (
 						'Get team pricing'
 					)}
