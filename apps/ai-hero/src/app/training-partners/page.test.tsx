@@ -23,17 +23,24 @@ describe('training partners lead form', () => {
 		expect(html).toContain('Live training for my team')
 		expect(html).toContain('Self-paced seats for my team')
 		expect(html.indexOf('<form')).toBeLessThan(html.indexOf('inovex logo'))
-		expect(
-			html.indexOf('Prefer to contact a partner directly?'),
-		).toBeGreaterThan(html.indexOf('</form>'))
-		for (const partner of [
-			'inovex logo',
-			'This Dot Labs logo',
-			'https://www.inovex.de/',
-			'https://www.thisdot.co/',
-		]) {
+		for (const partner of ['inovex logo', 'This Dot Labs logo']) {
 			expect(html).toContain(partner)
 		}
+		// The form is the only path to a partner: no outbound links or contact
+		// details on the page.
+		for (const outbound of [
+			'inovex.de',
+			'thisdot.co',
+			'Prefer to contact a partner directly?',
+			'target="_blank"',
+			'mailto:',
+			'tel:',
+		]) {
+			expect(html).not.toContain(outbound)
+		}
+		const hrefs = [...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1] ?? '')
+		expect(hrefs.every((href) => href.startsWith('/'))).toBe(true)
+		expect(hrefs).toContain('/for-your-team')
 		for (const forbidden of ['Cohort', 'C5', 'Software Factories', '—']) {
 			expect(html).not.toContain(forbidden)
 		}

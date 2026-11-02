@@ -18,7 +18,6 @@ export const metadata: Metadata = {
 type Partner = {
 	name: string
 	line: string
-	href: string
 	logo: { light: string; dark: string; width: number; height: number }
 }
 
@@ -26,12 +25,15 @@ type Partner = {
  * Licensed partners who run live, instructor-led AI Hero trainings. Static on
  * purpose: two entries do not need a CMS or a data model. Logos are vetted
  * SVGs from each partner's own site or logo pack.
+ *
+ * No outbound links or contact details: every request goes through the
+ * inquiry form so AI Hero sees each lead and routes it (Joel, 2026-11-02).
+ * The partner agreements require a listing, not a link.
  */
 const PARTNERS: Partner[] = [
 	{
 		name: 'inovex',
 		line: 'Live, instructor-led AI Hero trainings in Germany and Switzerland.',
-		href: 'https://www.inovex.de/',
 		logo: {
 			light: '/partners/inovex-logo.svg',
 			dark: '/partners/inovex-logo-white.svg',
@@ -42,7 +44,6 @@ const PARTNERS: Partner[] = [
 	{
 		name: 'This Dot Labs',
 		line: 'Live, instructor-led AI Hero trainings.',
-		href: 'https://www.thisdot.co/',
 		logo: {
 			light: '/partners/thisdot-labs-logo.svg',
 			dark: '/partners/thisdot-labs-logo.svg',
@@ -117,23 +118,7 @@ export default function TrainingPartnersPage() {
 				</section>
 
 				<section className="border-t">
-					<div className="space-y-4 px-[18px] py-8 sm:px-11">
-						<p className={cn(TYPE.meta, 'text-muted-foreground')}>
-							Prefer to contact a partner directly?{' '}
-							{PARTNERS.map((partner, index) => (
-								<span key={partner.name}>
-									{index > 0 && ' · '}
-									<Link
-										href={partner.href}
-										target="_blank"
-										rel="noopener noreferrer"
-										className="underline underline-offset-4"
-									>
-										{partner.name}
-									</Link>
-								</span>
-							))}
-						</p>
+					<div className="px-[18px] py-8 sm:px-11">
 						<p className="text-muted-foreground">
 							Prefer self-paced seats for your team?{' '}
 							<Link
