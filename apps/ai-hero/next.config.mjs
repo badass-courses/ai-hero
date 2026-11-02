@@ -73,6 +73,19 @@ const config = {
 				destination: '/for-your-team',
 				permanent: true,
 			},
+			// Sandcastle docs pages split out of the README (2026-11-02), onto
+			// the docs/guide page that took over each section.
+			...[
+				['how-it-works', 'branch-strategies'],
+				['api', 'run'],
+				['cli-commands', 'cli'],
+				['configuration', 'init'],
+				['custom-sandbox-providers', 'sandbox-providers#custom-sandbox-providers'],
+			].map(([from, to]) => ({
+				source: `/sandcastle/${from}`,
+				destination: `/sandcastle/${to}`,
+				permanent: true,
+			})),
 			{
 				source: '/ai-coding-for-real-engineers-with-claude-code-2026-04',
 				destination: '/claude-code-for-real-engineers-2026-04',
