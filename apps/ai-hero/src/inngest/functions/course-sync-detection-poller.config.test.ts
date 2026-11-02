@@ -1,16 +1,24 @@
 import { describe, expect, it, vi } from 'vitest'
+import { encryptIntegrationToken } from '@/lib/integration-token-crypto'
+
+const tokenMocks = vi.hoisted(() => ({
+	env: { INTEGRATION_TOKEN_KEY: undefined as string | undefined, DROPBOX_REFRESH_TOKEN: 'env-dropbox' as string | undefined },
+	limit: vi.fn(), readManifest: vi.fn(),
+}))
+vi.mock('@/db', () => ({ db: { select: () => ({ from: () => ({ where: () => ({ limit: tokenMocks.limit }) }) }) } }))
+vi.mock('@/course-sync/dropbox-binding-config', () => ({ dropboxSyncConfigFor: () => ({ config: { source: { kind: 'shared-link' } }, missingConfig: [] }) }))
 
 const createFunction = vi.hoisted(() =>
 	vi.fn((options, trigger, handler) => ({ options, trigger, handler })),
 )
 const poll = vi.hoisted(() => vi.fn(async (runId: string) => ({ runId })))
-const createPoller = vi.hoisted(() => vi.fn(() => poll))
+const createPoller = vi.hoisted(() => vi.fn((_dependencies?: unknown) => poll))
 const recordFailure = vi.hoisted(() => vi.fn(async () => undefined))
 const info = vi.hoisted(() =>
 	vi.fn(async (_event: string, _data: Record<string, unknown>) => undefined),
 )
 vi.mock('../inngest.server', () => ({ inngest: { createFunction } }))
-vi.mock('@/env.mjs', () => ({ env: {} }))
+vi.mock('@/env.mjs', () => ({ env: tokenMocks.env }))
 vi.mock('@/server/logger', () => ({ log: { info } }))
 vi.mock('@/course-sync/detection-poller', () => ({
 	createCourseSyncDetectionPoller: createPoller,
@@ -23,7 +31,7 @@ vi.mock('@/course-sync/applied-notice', () => ({
 vi.mock('@/course-sync/detection-persistence', () => ({}))
 vi.mock('@/course-sync/freeze-batches', () => ({}))
 vi.mock('@/course-sync/runtime', () => ({ courseSyncControlPlane: {} }))
-vi.mock('@/lib/dropbox-course-sync', () => ({}))
+vi.mock('@/lib/dropbox-course-sync', () => ({ readDropboxCourseManifest: tokenMocks.readManifest }))
 
 import { COURSE_SYNC_POLL_REQUESTED_EVENT } from '../events/course-sync-poll'
 import {
@@ -32,6 +40,28 @@ import {
 } from './course-sync-detection-poller'
 
 describe('course-sync detection poller registration', () => {
+	it.each([false, true])('reads the unchanged env token without a key, and prefers DB when enabled (%s)', async (enabled) => {
+		const key = Buffer.alloc(32, 7)
+		tokenMocks.env.INTEGRATION_TOKEN_KEY = enabled ? key.toString('base64') : undefined
+		tokenMocks.limit.mockResolvedValue([encryptIntegrationToken('dropbox', 'db-dropbox', key)])
+		tokenMocks.readManifest.mockResolvedValue({ manifest: 'synthetic' })
+		const [, , handler] = createFunction.mock.calls[0]!
+		await handler({ event: { data: {} }, step: { run: async (_id: string, fn: () => unknown) => fn() }, runId: 'token-test' })
+		const dependencies = createPoller.mock.calls.at(-1)![0] as any
+		await dependencies.readManifest()
+		expect(tokenMocks.readManifest).toHaveBeenLastCalledWith(expect.objectContaining({ refreshToken: enabled ? 'db-dropbox' : 'env-dropbox' }))
+		tokenMocks.env.INTEGRATION_TOKEN_KEY = undefined
+	})
+
+	it('keeps the existing missing-token error with no key and no env', async () => {
+		tokenMocks.env.INTEGRATION_TOKEN_KEY = undefined
+		tokenMocks.env.DROPBOX_REFRESH_TOKEN = undefined
+		const [, , handler] = createFunction.mock.calls[0]!
+		await handler({ event: { data: {} }, step: { run: async (_id: string, fn: () => unknown) => fn() }, runId: 'missing-token' })
+		const dependencies = createPoller.mock.calls.at(-1)![0] as any
+		await expect(dependencies.readManifest()).rejects.toMatchObject({ code: 'DROPBOX_SYNC_NOT_CONFIGURED', message: 'Dropbox sync is not configured: DROPBOX_REFRESH_TOKEN' })
+		tokenMocks.env.DROPBOX_REFRESH_TOKEN = 'env-dropbox'
+	})
 	it('is event-only and serializes each binding independently', async () => {
 		expect(courseSyncDetectionPoller).toBeDefined()
 		const [options, trigger, handler] = createFunction.mock.calls[0]!

@@ -7,7 +7,11 @@ on:
       - "apps/ai-hero/src/lib/analytics/**"
       - "apps/ai-hero/src/app/api/analytics/**"
       - "apps/ai-hero/src/app/admin/analytics/**"
+      - "apps/ai-hero/src/app/(user)/team/**"
+      - "apps/ai-hero/src/components/team-progress/**"
+      - "apps/ai-hero/src/lib/team-progress*.ts"
       - "pnpm-lock.yaml"
+      - "patches/@coursebuilder__analytics@*.patch"
   workflow_dispatch:
 
 permissions:
@@ -33,7 +37,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: '24.22.1'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Pure, API refusal, card and MySQL parity contracts
@@ -46,5 +50,17 @@ jobs:
           src/lib/analytics/promos-provider.test.ts
           src/lib/analytics/promos-fixture-schema.test.ts
           src/lib/analytics/promos.mysql.test.ts
+          src/lib/analytics/attribution-semijoin.mysql.test.ts
+          src/lib/analytics/shortlinks.mysql.test.ts
+          src/lib/analytics/learning-progress.test.ts
+          src/lib/analytics/learning-progress.mysql.test.ts
+          src/lib/analytics/learning-teams.test.ts
+          src/lib/analytics/learning-teams.mysql.test.ts
+          src/lib/team-progress.test.ts
+          src/components/team-progress/team-progress-section.test.tsx
           src/app/api/analytics/__tests__/route-agent-contract.test.ts
+          src/app/api/analytics/__tests__/learning-progress-contract.test.ts
+          src/app/api/analytics/__tests__/learning-teams-contract.test.ts
           src/app/admin/analytics/_components/evergreen-offer-card.test.tsx
+          src/app/admin/analytics/_components/learning-progress-panel.test.tsx
+          src/app/admin/analytics/_components/team-progress-panel.test.tsx

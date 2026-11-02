@@ -38,7 +38,7 @@ export type WorkshopCourseSyncBinding = {
 
 /** Cohort-anchored syllabus: each section is a managed workshop. */
 export type CohortCourseSyncBinding = {
-	contractVersion: 5 | 6 | 7
+	contractVersion: 5 | 6 | 7 | 8
 	bindingId: string
 	status: 'active' | 'suspended' | 'revoked'
 	sourceCourseId: string
@@ -58,7 +58,7 @@ export type CohortCourseSyncBinding = {
 		relation: { position: 0; exclusiveProduct: true }
 	}
 	managedChildContract: {
-		workshop: { state: 'draft' | 'published'; visibility: 'unlisted' }
+		workshop: { state: 'draft' | 'published' | readonly ['draft', 'published']; visibility: 'unlisted' }
 		lesson: { state: 'draft'; visibility: 'unlisted' }
 	}
 	applyPolicy: 'bounded-auto' | 'operator'
@@ -241,8 +241,8 @@ export const AI_HERO_COURSE_SYNC_BINDING_COHORT_005_V6 = deepFreeze({
 	initialApplyPolicyOverride: null,
 } as const satisfies CohortCourseSyncBinding)
 
-/** Published, unlisted cohort product; syncing never publishes managed children. */
-export const AI_HERO_COURSE_SYNC_BINDING_COHORT_005 = deepFreeze({
+/** Exact pre-release contract, retained only for safe stored-row migration. */
+export const AI_HERO_COURSE_SYNC_BINDING_COHORT_005_V7 = deepFreeze({
 	...AI_HERO_COURSE_SYNC_BINDING_COHORT_005_V6,
 	contractVersion: 7,
 	targetContract: {
@@ -250,6 +250,34 @@ export const AI_HERO_COURSE_SYNC_BINDING_COHORT_005 = deepFreeze({
 		product: { type: 'cohort', state: 'published', visibility: 'unlisted' },
 	},
 } as const satisfies CohortCourseSyncBinding)
+
+/** Operators release workshops; sync creates drafts and preserves release state. */
+export const AI_HERO_COURSE_SYNC_BINDING_COHORT_005 = deepFreeze({
+	...AI_HERO_COURSE_SYNC_BINDING_COHORT_005_V7,
+	contractVersion: 8,
+	managedChildContract: {
+		workshop: { state: ['draft', 'published'], visibility: 'unlisted' },
+		lesson: { state: 'draft', visibility: 'unlisted' },
+	},
+} as const satisfies CohortCourseSyncBinding)
+
+/** Published state is operator-owned only for an explicitly release-aware contract. */
+export function preservesWorkshopReleaseState(binding?: CourseSyncBinding): boolean {
+	return binding?.contractVersion === 8 &&
+		Array.isArray(binding.managedChildContract.workshop.state) &&
+		binding.managedChildContract.workshop.state.includes('published')
+}
+
+export function managedResourceStateAllowed(
+	binding: CourseSyncBinding,
+	kind: ResourcePlanItem['sourceKind'],
+	state: unknown,
+): boolean {
+	if (kind === 'workshop' && preservesWorkshopReleaseState(binding)) {
+		return state === 'draft' || state === 'published'
+	}
+	return state === (kind === 'video' ? 'ready' : 'draft')
+}
 
 export const COURSE_SYNC_BINDINGS = deepFreeze({
 	[AI_HERO_COURSE_SYNC_BINDING.bindingId]: AI_HERO_COURSE_SYNC_BINDING,

@@ -30,6 +30,7 @@ export const sendLiveEventWelcomeEmail = inngest.createFunction(
 	},
 	{
 		event: NEW_PURCHASE_CREATED_EVENT,
+		if: 'event.data.productType == "live"',
 	},
 	async ({ event, step }) => {
 		const purchase = await step.run('Load Purchase', async () => {

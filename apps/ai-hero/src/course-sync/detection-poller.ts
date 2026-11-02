@@ -13,6 +13,7 @@ import {
 	type CourseSyncFrozenAssetBatch,
 } from './freeze-batches'
 import type { FrozenSourceAsset } from './types'
+import type { UndrawnImage } from './undrawn-images'
 
 import { CourseSyncError, asCourseSyncError } from './errors'
 import {
@@ -160,6 +161,7 @@ export type CourseSyncSlackNotificationPayload = {
 		title: string
 		text: string
 		fields: Array<{ title: string; value: string; short: boolean }>
+		mrkdwn_in?: Array<'fields'>
 	}>
 }
 
@@ -442,9 +444,27 @@ function compactFailureReason(reason: string) {
 	return compact.length > 160 ? `${compact.slice(0, 157)}...` : compact
 }
 
+/** The lessons with images still waiting on a redraw, each image a link. */
+function undrawnImagesValue(images: ReadonlyArray<UndrawnImage>) {
+	const lessons = new Map<string, string[]>()
+	for (const image of images) {
+		const title = (image.title ?? image.id)
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+		const links = lessons.get(title) ?? []
+		links.push(`<${image.url}|image ${links.length + 1}>`)
+		lessons.set(title, links)
+	}
+	return [...lessons]
+		.map(([title, links]) => `${title}: ${links.join(', ')}`)
+		.join('\n')
+}
+
 export function buildCourseSyncNotificationPayload(
 	notification: CourseSyncNotification,
 	narration?: string | null,
+	undrawnImages: ReadonlyArray<UndrawnImage> = [],
 ): CourseSyncSlackNotificationPayload {
 	const versionLabel = courseSyncVersionLabel(
 		notification.courseVersionId,
@@ -471,6 +491,9 @@ export function buildCourseSyncNotificationPayload(
 					color: '#2eb67d',
 					title: 'AI Hero course sync applied',
 					text: `<${notification.editor.url}|${notification.editor.label}>`,
+					// The redraw asks link each image; Slack formats field values
+					// only when asked to.
+					mrkdwn_in: ['fields'],
 					fields: [
 						{
 							title: 'Course version',
@@ -509,6 +532,15 @@ export function buildCourseSyncNotificationPayload(
 							value: String(notification.mediaCount),
 							short: true,
 						},
+						...(undrawnImages.length > 0
+							? [
+									{
+										title: `Not redrawn yet (${undrawnImages.length})`,
+										value: undrawnImagesValue(undrawnImages),
+										short: false,
+									},
+								]
+							: []),
 					],
 				},
 			],

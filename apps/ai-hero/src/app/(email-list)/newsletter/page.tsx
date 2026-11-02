@@ -1,4 +1,5 @@
 import React from 'react'
+import { C5SaleSecondaryLink } from '@/components/c5-sale-secondary-link'
 import type { Metadata } from 'next'
 import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
 import { HeroShader } from '@/components/landing/hero-shader'
@@ -83,6 +84,7 @@ export default async function NewsletterPage() {
 						}}
 					/>
 				</div>
+				<C5SaleSecondaryLink />
 			</main>
 			<CompanyLogoGrid />
 		</LayoutClient>

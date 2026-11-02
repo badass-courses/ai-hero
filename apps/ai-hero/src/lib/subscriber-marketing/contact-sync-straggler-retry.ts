@@ -59,6 +59,31 @@ export function contactSyncRetryRequest(
 	}
 }
 
+/** New starter fan-out is per contact; continuation IDs retain their attempts.
+ * PR1 joins/skips without retaining new membership; see the inventory runbook. */
+export function contactSyncStarterRequests(
+	items: DeferredDrovrEvent[],
+	nowMs: number,
+	acknowledge?: RetryAcknowledgement,
+) {
+	return [...new Set(items.map((item) => item.event.contactId))].map((contactId) => {
+		const request = contactSyncRetryRequest(
+			items.filter((item) => item.event.contactId === contactId),
+			1,
+			nowMs,
+			acknowledge?.contactId === contactId ? acknowledge : undefined,
+		)
+		return {
+			...request,
+			id: `contact-sync-starter:${request.id}`,
+			data: {
+				...request.data,
+				stragglerOwner: { protocol: 1 as const, startedAt: nowMs },
+			},
+		}
+	})
+}
+
 /**
  * The directory birth for a contact drovr has no directory actor for
  * (contract §4, after a 409 cold-start-unhandled): the live feed's own
@@ -208,7 +233,10 @@ export async function runContactSyncStragglerRetry(args: {
 			rejected,
 		}
 	}
-	if (attempt >= STRAGGLER_STUCK_AFTER_ATTEMPTS)
+	if (
+		attempt >= STRAGGLER_STUCK_AFTER_ATTEMPTS &&
+		!args.event.data.stragglerOwner
+	)
 		await args.warn('drovr.contact_sync.straggler_stuck', {
 			attempt,
 			reasons: [...new Set(refused.map((item) => item.reason))],

@@ -38,7 +38,19 @@ export const REGIONAL_TEAM_NOT_ALLOWED_PATH = `/subscribe/error?reason=${REGIONA
 export const ALREADY_OWN_PATH = '/invoices?already-own=1'
 
 /** One destination for a quantity that is not a positive integer. */
-export const INVALID_QUANTITY_PATH = '/subscribe/error'
+export const INVALID_QUANTITY = 'invalid-quantity'
+
+export const INVALID_QUANTITY_PATH = `/subscribe/error?reason=${INVALID_QUANTITY}`
+
+/** `reason` on /subscribe/error for a checkout link that is missing or unusable. */
+export const CHECKOUT_LINK_EXPIRED = 'invalid-expired'
+
+export const CHECKOUT_LINK_EXPIRED_PATH = `/subscribe/error?reason=${CHECKOUT_LINK_EXPIRED}`
+
+/** `reason` on /subscribe/error when checkout cannot start because of our setup. */
+export const CHECKOUT_UNAVAILABLE = 'checkout-unavailable'
+
+export const CHECKOUT_UNAVAILABLE_PATH = `/subscribe/error?reason=${CHECKOUT_UNAVAILABLE}`
 
 /**
  * Regional (PPP) pricing is a single-seat offer. The one rule behind both the

@@ -81,6 +81,8 @@ export type DrovrContactSyncRetryRequested = {
 	data: {
 		items: import('@/lib/subscriber-marketing/drovr-shadow-delivery').DeferredDrovrEvent[]
 		attempt: number
+		/** Only new starters use durable ownership; old queued histories stay legacy. */
+		stragglerOwner?: import('@/lib/subscriber-marketing/contact-sync-straggler-owner').StragglerOwnerRef
 		/**
 		 * The profile version to acknowledge once drovr takes every item: set
 		 * only when the original push had nothing rejected.

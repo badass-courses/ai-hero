@@ -28,7 +28,7 @@ vi.mock("./detection-persistence", () => ({
   claimCourseSyncReviewNotification: vi.fn(),
   completeCourseSyncReviewNotification: vi.fn(),
   failCourseSyncReviewNotification: vi.fn(),
-  getCourseSyncPlanChanges: vi.fn(),
+  getCourseSyncPlan: vi.fn(),
 }));
 vi.mock("./narrate", () => ({
   COURSE_SYNC_AUTHOR_NAME: "x",

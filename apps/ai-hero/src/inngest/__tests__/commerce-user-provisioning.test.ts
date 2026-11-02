@@ -65,10 +65,7 @@ vi.mock('@coursebuilder/core/providers/deepgram', () => ({
 	default: () => ({}),
 }))
 vi.mock('@coursebuilder/core/providers/openai', () => ({
-	default: () => ({}),
-}))
-vi.mock('@coursebuilder/core/providers/partykit', () => ({
-	default: () => ({}),
+	MockOpenAIProvider: {},
 }))
 vi.mock('@coursebuilder/server/create-inngest-middleware', () => ({
 	createInngestMiddleware: (options: typeof state.middlewareOptions) => {

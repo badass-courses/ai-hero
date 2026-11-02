@@ -1,6 +1,7 @@
 import { db } from '@/db'
 import { decisionFromRow } from '@/lib/c5-pricing/purchase-decision-sql'
 import { drizzleC5DecisionStore } from '@/lib/c5-pricing/purchase-decision-store'
+import { isStripeChargeId } from '@/lib/stripe-charge-id'
 import type { ChargeState } from '@ai-hero/front-desk-support'
 import { Effect, Layer } from 'effect'
 import type Stripe from 'stripe'
@@ -86,7 +87,7 @@ export const pricingFactsSourceLayer = (deps: {
 							: null,
 						couponId: purchase.couponId ?? null,
 						totalAmountCents: cents(purchase.totalAmount),
-						stripeChargeId: charge?.identifier.startsWith('ch_')
+						stripeChargeId: isStripeChargeId(charge?.identifier)
 							? charge.identifier
 							: null,
 						checkoutSessionId: session?.startsWith('cs_') ? session : null,
@@ -182,7 +183,17 @@ export const pricingFactsSourceLayer = (deps: {
 					with: { merchantCoupon: true },
 				})
 				return new Map(
-					rows.map((row) => [row.id, row.merchantCoupon?.type || null]),
+					rows.map((row) => [
+						row.id,
+						{
+							type: row.merchantCoupon?.type || null,
+							hasMerchantCoupon: row.merchantCoupon != null,
+							percentageDiscount:
+								row.percentageDiscount === null
+									? null
+									: Number(row.percentageDiscount),
+						},
+					]),
 				)
 			}),
 		creditSpentBy: (creditSource) =>

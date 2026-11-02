@@ -65,7 +65,6 @@ describe('homepage metadata', () => {
 								undefined,
 								{},
 								{ trailingSlash: false, isStaticMetadataRouteFile: false },
-								false,
 							),
 					),
 			)

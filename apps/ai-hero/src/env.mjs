@@ -4,6 +4,19 @@ import { parseNewsletterExitFlag } from './lib/subscriber-marketing/newsletter-e
 
 const newsletterExitFlag = z.string().optional().transform(value => parseNewsletterExitFlag(value) ? 'true' : 'false')
 
+const integrationTokenKeySchema = z.string().refine((value) => {
+	try {
+		const decoded = atob(value)
+		return decoded.length === 32 && btoa(decoded) === value
+	} catch {
+		return false
+	}
+}, 'INTEGRATION_TOKEN_KEY must be 32 bytes encoded as base64').optional()
+
+// Validate this secret when present even if general env validation is skipped
+// for a build. Also reject a present empty key before emptyStringAsUndefined.
+integrationTokenKeySchema.parse(process.env.INTEGRATION_TOKEN_KEY)
+
 export const env = createEnv({
 	/**
 	 * Specify your server-side environment variables schema here. This way you can ensure the app
@@ -75,6 +88,8 @@ export const env = createEnv({
 		DROPBOX_APP_SECRET: z.string().optional(),
 		DROPBOX_OAUTH_REDIRECT_URI: z.string().url().optional(),
 		DROPBOX_REFRESH_TOKEN: z.string().optional(),
+		// Production only: previews share the database. Reject invalid keys at build/start.
+		INTEGRATION_TOKEN_KEY: integrationTokenKeySchema,
 		DROPBOX_SYNC_SHARED_FOLDER_ID: z.string().optional(),
 		DROPBOX_SYNC_ALLOWED_ROOT: z.string().optional(),
 		// URL shape is checked when the individual binding polls, not at app import.
@@ -139,10 +154,20 @@ export const env = createEnv({
 		// DROVR_SHADOW_INGEST_URL. No secret; the token is the credential.
 		DROVR_API_BASE_URL: z.string().url().optional(),
 		DROVR_API_KEY_ORG_AIHERO: z.string().min(1).optional(),
+		// Private: the frozen Kit daily signups behind /admin/analytics through
+		// 2026-10-29. Parsed by newsletter-signups.ts; unset or invalid reads
+		// those days as unavailable, never 0.
+		AIH_KIT_SIGNUPS_HISTORY_JSON: z.string().optional(),
 		// drovr-owned double opt-in (#55). Comma list of Kit form ids, each on
 		// for everyone (`9376133`) or for an address allowlist
 		// (`9376133:a@example.com|b@example.com`). Unset: Kit's path, unchanged.
 		DROVR_DOI_FORMS: z.string().optional(),
+		// Default off. Persisted DOI intake uses drovr consent, never Kit checks.
+		// The legacy-only Kit poll remains until its cohort is retired.
+		AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED: z.string().optional(),
+		// "true" verifies Kit preference and unsubscribe links against the local
+		// contact directory and reads preference state locally, with Kit out of
+		// the request path. Off keeps the Kit-backed reads.
 		DROVR_EXECUTOR_TOKEN: z.string().min(16).optional(),
 		AI_HERO_VALUE_PATH_TOKEN_SECRET: z.string().min(16).optional(),
 		// drovr #36T link tests mint throwaway principals with this; never the
@@ -153,8 +178,27 @@ export const env = createEnv({
 		// Captured-but-held signups (phase 1 split); see drovr-ownership.ts.
 		AIH_DROVR_OWNER_HOLD_EMAILS: z.string().optional(),
 		AIH_DROVR_EVERGREEN_ENABLED: z.string().optional(),
+		// Default off: enable saved-survey interest facts after the drovr gate.
+		AIH_DROVR_SURVEY_INTEREST_FACTS_ENABLED: z.string().optional(),
+		// Default off: surveys stop subscribing answerers and writing Kit fields.
+		// Default on. Off disables optional AI Hero tag/field mirrors, not consent or TT.
+		AIH_KIT_MIRROR_WRITES_ENABLED: z.string().optional(),
+		// Signed-in Skills enrolment uses the owned contact and drovr consent.
+		AIH_ENROLMENT_OFF_KIT_ENABLED: z.string().optional(),
+		// Read gated asks from drovr consent and local entry/interest facts. Default off.
+		AIH_GATED_ASKS_OFF_KIT_ENABLED: z.string().optional(),
+		// Default off. The posted signup form makes no Kit subscribe: a waitlist
+		// join is its interest fact, a newsletter ask takes drovr double opt-in.
+		// Read only by waitlistOffKitEnabled (lib/cta/interest-facts.ts).
+		AIH_WAITLIST_OFF_KIT_ENABLED: z.string().optional(),
 		// Default off; retain contact reads until /births rollout proof.
 		AIH_DROVR_BIRTH_FEED_ENABLED: z.string().optional(),
+		// Default off: public subscriber count from drovr's census, not Kit.
+		AIH_SUBSCRIBER_COUNT_OWNED_ENABLED: z.string().optional(),
+		// Default off. `on` records included-product grants for drovr as
+		// entitlement.granted/revoked. Read only by entitlementEventsEnabled
+		// (lib/included-product-entitlement-events.ts).
+		AIH_ENTITLEMENT_EVENTS_ENABLED: z.string().optional(),
 		// Producer before rule; existing-cohort gate stays off until ruling B.
 		AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY: newsletterExitFlag,
 		AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY: newsletterExitFlag,
@@ -203,8 +247,6 @@ export const env = createEnv({
 		NEXT_PUBLIC_APP_NAME: z.string(),
 		NEXT_PUBLIC_GOOGLE_ANALYTICS: z.string().optional(),
 		NEXT_PUBLIC_GOOGLE_ADS_ID: z.string().optional(),
-		NEXT_PUBLIC_PARTYKIT_ROOM_NAME: z.string(),
-		NEXT_PUBLIC_PARTY_KIT_URL: z.string(),
 		NEXT_PUBLIC_URL: z.string(),
 		NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME: z.string(),
 		NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET: z.string(),
@@ -238,8 +280,6 @@ export const env = createEnv({
 		AI_CODING_DICTIONARY_WEBHOOK_SECRET:
 			process.env.AI_CODING_DICTIONARY_WEBHOOK_SECRET,
 		GITHUB_SOURCE_WEBHOOK_SECRET: process.env.GITHUB_SOURCE_WEBHOOK_SECRET,
-		NEXT_PUBLIC_PARTYKIT_ROOM_NAME: process.env.NEXT_PUBLIC_PARTYKIT_ROOM_NAME,
-		NEXT_PUBLIC_PARTY_KIT_URL: process.env.NEXT_PUBLIC_PARTY_KIT_URL,
 		MUX_ACCESS_TOKEN_ID: process.env.MUX_ACCESS_TOKEN_ID,
 		MUX_SECRET_KEY: process.env.MUX_SECRET_KEY,
 		MUX_DATA_TOKEN_ID: process.env.MUX_DATA_TOKEN_ID,
@@ -257,6 +297,7 @@ export const env = createEnv({
 		DROPBOX_APP_SECRET: process.env.DROPBOX_APP_SECRET,
 		DROPBOX_OAUTH_REDIRECT_URI: process.env.DROPBOX_OAUTH_REDIRECT_URI,
 		DROPBOX_REFRESH_TOKEN: process.env.DROPBOX_REFRESH_TOKEN,
+		INTEGRATION_TOKEN_KEY: process.env.INTEGRATION_TOKEN_KEY,
 		DROPBOX_SYNC_SHARED_FOLDER_ID: process.env.DROPBOX_SYNC_SHARED_FOLDER_ID,
 		DROPBOX_SYNC_ALLOWED_ROOT: process.env.DROPBOX_SYNC_ALLOWED_ROOT,
 		DROPBOX_SYNC_SHARED_LINK: process.env.DROPBOX_SYNC_SHARED_LINK,
@@ -327,7 +368,10 @@ export const env = createEnv({
 		DROVR_SHADOW_INGEST_URL: process.env.DROVR_SHADOW_INGEST_URL,
 		DROVR_API_BASE_URL: process.env.DROVR_API_BASE_URL,
 		DROVR_API_KEY_ORG_AIHERO: process.env.DROVR_API_KEY_ORG_AIHERO,
+		AIH_KIT_SIGNUPS_HISTORY_JSON: process.env.AIH_KIT_SIGNUPS_HISTORY_JSON,
 		DROVR_DOI_FORMS: process.env.DROVR_DOI_FORMS,
+		AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED:
+			process.env.AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED,
 		DROVR_EXECUTOR_TOKEN: process.env.DROVR_EXECUTOR_TOKEN,
 		AI_HERO_VALUE_PATH_TOKEN_SECRET:
 			process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET,
@@ -336,7 +380,16 @@ export const env = createEnv({
 		AIH_DROVR_OWNER_EMAILS: process.env.AIH_DROVR_OWNER_EMAILS,
 		AIH_DROVR_OWNER_HOLD_EMAILS: process.env.AIH_DROVR_OWNER_HOLD_EMAILS,
 		AIH_DROVR_EVERGREEN_ENABLED: process.env.AIH_DROVR_EVERGREEN_ENABLED,
+		AIH_DROVR_SURVEY_INTEREST_FACTS_ENABLED:
+			process.env.AIH_DROVR_SURVEY_INTEREST_FACTS_ENABLED,
+		AIH_KIT_MIRROR_WRITES_ENABLED: process.env.AIH_KIT_MIRROR_WRITES_ENABLED,
+		AIH_ENROLMENT_OFF_KIT_ENABLED: process.env.AIH_ENROLMENT_OFF_KIT_ENABLED,
+		AIH_GATED_ASKS_OFF_KIT_ENABLED: process.env.AIH_GATED_ASKS_OFF_KIT_ENABLED,
+		AIH_WAITLIST_OFF_KIT_ENABLED: process.env.AIH_WAITLIST_OFF_KIT_ENABLED,
 		AIH_DROVR_BIRTH_FEED_ENABLED: process.env.AIH_DROVR_BIRTH_FEED_ENABLED,
+		AIH_SUBSCRIBER_COUNT_OWNED_ENABLED:
+			process.env.AIH_SUBSCRIBER_COUNT_OWNED_ENABLED,
+		AIH_ENTITLEMENT_EVENTS_ENABLED: process.env.AIH_ENTITLEMENT_EVENTS_ENABLED,
 		AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY: process.env.AIH_SHADOW_NEWSLETTER_EXIT_PRODUCER_READY,
 		AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY: process.env.AIH_SHADOW_NEWSLETTER_EXIT_RULE_READY,
 		AIH_SHADOW_NEWSLETTER_EXISTING_EXIT_GATE_ENABLED: process.env.AIH_SHADOW_NEWSLETTER_EXISTING_EXIT_GATE_ENABLED,

@@ -16,8 +16,10 @@ import { Markdown as ReactMarkdown } from '@/components/markdown'
 import rehypeRaw from 'rehype-raw'
 
 import { SubscriberCount } from '../subscriber-count'
+import { C5SaleSwitch } from '@/components/c5-sale-switch'
+
 import { HeroShader } from './hero-shader'
-import { HeroVideo } from './hero-video'
+import { HeroVideo } from './lazy-hero-video'
 
 import { TYPE } from './type'
 
@@ -247,27 +249,52 @@ export async function Hero({
 				{/* One gold fill per viewport (DESIGN rule 12). The second action is
 				    an outline so the free course stays the obvious first move. */}
 				{isHome && (
-					<div className="mt-[34px] flex flex-wrap items-center gap-2.5">
-						<Link
-							href={ctaHref}
-							className={cn(
-								TYPE.meta,
-								'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring inline-flex h-[46px] w-fit items-center rounded-[9px] px-5 text-[15px] font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
-							)}
-						>
-							{ctaLabel}
-						</Link>
-						<Link
-							href={secondaryCtaHref}
-							className={cn(
-								TYPE.meta,
-								'border-foreground/20 text-foreground hover:border-foreground/40 hover:bg-secondary focus-visible:ring-ring group inline-flex h-[46px] w-fit items-center gap-2 rounded-[9px] border px-5 text-[15px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
-							)}
-						>
-							{secondaryCtaLabel}
-							<ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
-						</Link>
-					</div>
+					<C5SaleSwitch
+						fallback={
+							<div className="mt-[34px] flex flex-wrap items-center gap-2.5">
+								<Link
+									href={ctaHref}
+									className={cn(
+										TYPE.meta,
+										'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring inline-flex h-[46px] w-fit items-center rounded-[9px] px-5 text-[15px] font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
+									)}
+								>
+									{ctaLabel}
+								</Link>
+								<Link
+									href={secondaryCtaHref}
+									className={cn(
+										TYPE.meta,
+										'border-foreground/20 text-foreground hover:border-foreground/40 hover:bg-secondary focus-visible:ring-ring group inline-flex h-[46px] w-fit items-center gap-2 rounded-[9px] border px-5 text-[15px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
+									)}
+								>
+									{secondaryCtaLabel}
+									<ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
+								</Link>
+							</div>
+						}
+					>
+						<div className="mt-[34px] flex flex-wrap items-center gap-2.5">
+							<Link
+								href="/s/c5-site-hero"
+								className={cn(
+									TYPE.meta,
+									'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover inline-flex min-h-[46px] items-center rounded-[9px] px-5 py-3 font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2',
+								)}
+							>
+								Join the cohort
+							</Link>
+							<Link
+								href={ctaHref}
+								className={cn(
+									TYPE.meta,
+									'border-input inline-flex min-h-[46px] items-center rounded-[9px] border px-5 py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2',
+								)}
+							>
+								{ctaLabel}
+							</Link>
+						</div>
+					</C5SaleSwitch>
 				)}
 				{isHome && <HeroStats />}
 			</div>

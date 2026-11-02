@@ -7,6 +7,11 @@ const mocks = vi.hoisted(() => ({
   link: vi.fn(),
   click: vi.fn(),
   share: vi.fn(),
+  after: vi.fn(),
+}));
+vi.mock("next/server", async (importOriginal) => ({
+  ...await importOriginal<typeof import("next/server")>(),
+  after: mocks.after,
 }));
 vi.mock("@/lib/shortlinks-query", () => ({
   getShortlinkBySlug: mocks.link,
@@ -26,6 +31,8 @@ const expiresAt = new Date(Date.now() + 3600_000).toISOString();
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.link.mockResolvedValue({
+    id: "shortlink_gift",
+    slug,
     url: "https://www.aihero.dev/cohorts/test",
     metadata: { campaign: "legend-gift", legendId: randomUUID() },
   });
@@ -63,7 +70,16 @@ describe("gift shortlink redirect", () => {
         now: Date.now(),
       })?.codeRef,
     ).toBe("test-reference");
+    expect(mocks.click).not.toHaveBeenCalled();
+    expect(mocks.after).toHaveBeenCalledOnce();
+    expect(mocks.after).toHaveBeenCalledWith(expect.any(Function));
+    await mocks.after.mock.calls[0]![0]();
     expect(mocks.click).toHaveBeenCalledOnce();
+    expect(mocks.click).toHaveBeenCalledWith(
+      slug,
+      expect.any(Object),
+      expect.objectContaining({ id: "shortlink_gift" }),
+    );
   });
   it.each(["spent", "closed", "unavailable"])(
     "never dead-ends a %s link",
@@ -77,6 +93,10 @@ describe("gift shortlink redirect", () => {
       expect(response.status).toBe(307);
       expect(response.cookies.get(GIFT_COOKIE)?.value).toBe("");
       expect(response.cookies.get("sl_ref")?.value).toBe(slug);
+      expect(mocks.click).not.toHaveBeenCalled();
+      expect(mocks.after).toHaveBeenCalledOnce();
+      expect(mocks.after).toHaveBeenCalledWith(expect.any(Function));
+      await mocks.after.mock.calls[0]![0]();
       expect(mocks.click).toHaveBeenCalledOnce();
     },
   );

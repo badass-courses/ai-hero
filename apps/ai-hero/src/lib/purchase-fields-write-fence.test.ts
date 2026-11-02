@@ -78,7 +78,7 @@ export function findPurchaseFieldsWrites(fileName: string, text: string) {
   };
 
   /** Reports `fields` in a set object, looking through literal spreads. */
-  const checkSetObject = (node: ts.Expression, label: string) => {
+  const checkSetObject = (node: ts.Expression, label: string): void => {
     const expression = ts.isParenthesizedExpression(node)
       ? node.expression
       : node;

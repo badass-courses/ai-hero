@@ -14,6 +14,7 @@ import { assertCourseSyncSourceFields, courseSyncSourceFields } from './resource
 import {
 	anchorResourceId,
 	getServerCourseSyncBinding,
+	preservesWorkshopReleaseState,
 	managedSectionKind,
 	type CourseSyncBinding,
 	type CourseSyncControlPlaneDependencies,
@@ -345,6 +346,9 @@ export function sourceResourceFields(
 						muxAssetId: asset.muxAssetId,
 						muxPlaybackId: asset.muxPlaybackId,
 						chapters: video.chapters,
+						...(video.sessionExtract && {
+							sessionExtract: video.sessionExtract,
+						}),
 						courseSync: {
 							bindingId: binding.bindingId,
 							sourceCourseId: manifest.courseId,
@@ -966,10 +970,10 @@ export function createCourseSyncControlPlane(
 				const action = !snapshot
 					? 'create'
 					: !previous ||
-						  stableJson(courseSyncSourceFields(item.sourceKind, previous.fields)) !==
-							  stableJson(courseSyncSourceFields(item.sourceKind, item.fields)) ||
-						  stableJson(courseSyncSourceFields(item.sourceKind, snapshot.fields)) !==
-							  stableJson(courseSyncSourceFields(item.sourceKind, item.fields)) ||
+						  stableJson(courseSyncSourceFields(item.sourceKind, previous.fields, binding)) !==
+							  stableJson(courseSyncSourceFields(item.sourceKind, item.fields, binding)) ||
+						  stableJson(courseSyncSourceFields(item.sourceKind, snapshot.fields, binding)) !==
+							  stableJson(courseSyncSourceFields(item.sourceKind, item.fields, binding)) ||
 						  previous.parentResourceId !== item.parentResourceId ||
 						  previous.position !== item.position ||
 						  previous.detached !== item.detached
@@ -977,6 +981,10 @@ export function createCourseSyncControlPlane(
 						: 'retain'
 				return {
 					...item,
+					// Reflect release state without copying operator scheduling into the plan.
+					fields: item.sourceKind === 'workshop' && preservesWorkshopReleaseState(binding) && snapshot
+						? { ...item.fields, state: snapshot.fields.state }
+						: item.fields,
 					action,
 					previousDetached: previous?.detached ?? false,
 					previousVersionId:
@@ -984,7 +992,7 @@ export function createCourseSyncControlPlane(
 						snapshot?.currentVersionId ??
 						null,
 					previousFieldsSha256: snapshot
-						? sha256(stableJson(courseSyncSourceFields(item.sourceKind, snapshot.fields)))
+						? sha256(stableJson(courseSyncSourceFields(item.sourceKind, snapshot.fields, binding)))
 						: null,
 					previousParentResourceId: previous?.parentResourceId ?? null,
 					previousPosition: previous?.position ?? null,

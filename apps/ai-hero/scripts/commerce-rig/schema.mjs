@@ -35,10 +35,16 @@ export function missingSchema(snapshot, columns) {
   return missing
 }
 export async function applySchema({ mirror, state, env, databaseUrl }) {
+  return applyGeneratedSchema({ mirror, state, env, databaseUrl: assertDatabase(databaseUrl) })
+}
+// The caller guards `databaseUrl`; the rig through assertDatabase above, the
+// disposable test database (scripts/test-mysql.sh) through a loopback check.
+// `configDir` keeps the drizzle config out of a checkout that isn't a mirror.
+export async function applyGeneratedSchema({ mirror, state, env, databaseUrl, configDir = mirror }) {
   const out = join(state, 'drizzle')
   // Fresh output keeps the migration a complete CREATE set rather than a diff.
   await rm(out, { recursive: true, force: true })
-  const config = join(mirror, 'commerce-rig.drizzle.config.mjs')
+  const config = join(configDir, 'commerce-rig.drizzle.config.mjs')
   await privateWrite(config, `export default ${JSON.stringify({ schema: ['./src/db/schema.ts'], dialect: 'mysql', tablesFilter: ['AI_*'], out })}\n`)
   try {
     // Direct binary: an isolated HOME makes corepack try to download pnpm.
@@ -54,7 +60,7 @@ export async function applySchema({ mirror, state, env, databaseUrl }) {
   const snapshot = JSON.parse(await readFile(join(out, 'meta', '0000_snapshot.json'), 'utf8'))
   const expectedTables = Object.keys(snapshot.tables ?? {})
   if (!expectedTables.length || !statements.length) throw new Error('Generated schema is empty')
-  const connection = await mysql.createConnection({ uri: assertDatabase(databaseUrl), multipleStatements: false })
+  const connection = await mysql.createConnection({ uri: databaseUrl, multipleStatements: false })
   const log = []
   try {
     const [existing] = await connection.query('SELECT COUNT(*) AS count FROM information_schema.tables WHERE table_schema = DATABASE()')

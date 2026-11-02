@@ -497,7 +497,8 @@ export async function deleteShortlink(
 
 /**
  * Record a click event for a shortlink
- * This is called asynchronously from the redirect handler
+ * The redirect handler supplies the resolved link to avoid another slug lookup
+ * while preserving its metadata snapshot.
  */
 export async function recordClick(
 	slug: string,
@@ -507,9 +508,10 @@ export async function recordClick(
 		country?: string | null
 		device?: string | null
 	},
+	resolvedLink?: Pick<Shortlink, 'id' | 'slug' | 'metadata'>,
 ): Promise<void> {
 	try {
-		const link = await db.query.shortlink.findFirst({
+		const link = resolvedLink ?? await db.query.shortlink.findFirst({
 			where: eq(shortlink.slug, slug),
 		})
 

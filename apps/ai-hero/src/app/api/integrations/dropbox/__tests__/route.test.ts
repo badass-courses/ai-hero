@@ -225,3 +225,70 @@ describe('Dropbox course manifest summary route', () => {
 		expect(JSON.stringify(body)).not.toContain('app-secret')
 	})
 })
+
+describe('Dropbox OAuth callback DB storage notice', () => {
+	function callback() {
+		return new NextRequest(
+			'http://localhost:3000/api/integrations/dropbox?code=synthetic-code&state=synthetic-state',
+			{ headers: { cookie: 'dropbox_course_sync_state=synthetic-state' } },
+		)
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+		mocks.getDropboxSyncConfig.mockReturnValue({
+			config: sharedLinkConfig,
+			missingConfig: [],
+		})
+		mocks.exchangeDropboxAuthorizationCode.mockResolvedValue({
+			refreshToken: 'fresh-dropbox',
+			grantedScopes: [],
+		})
+		mocks.verifyDropboxConnection.mockResolvedValue({
+			ok: true,
+			requiredScopesPresent: true,
+			sharedFolderBoundary: { configured: true, verified: true },
+		})
+		mocks.redeployAfterDropboxAuthorization.mockResolvedValue({
+			ok: true,
+			missingConfig: [],
+			status: 200,
+		})
+	})
+
+	it.each([
+		[undefined, null],
+		[{ ok: false, staleRow: false }, 'DB token store failed; using env.'],
+		[
+			{ ok: false, staleRow: true },
+			'DB token store failed and a stale DB row may remain; delete it before the next deploy.',
+		],
+	])('renders the success page for DB result %j', async (dbStorage, notice) => {
+		mocks.storeDropboxRefreshToken.mockResolvedValue({
+			ok: true,
+			missingConfig: [],
+			statuses: [200, 200, 200],
+			...(dbStorage ? { dbStorage } : {}),
+		})
+		const response = await GET(callback())
+		expect(response.status).toBe(200)
+		const html = await response.text()
+		expect(html).toContain('<h1>Dropbox authorized</h1>')
+		expect(html).not.toContain('fresh-dropbox')
+		if (notice) expect(html).toContain(`<p>${notice}</p>`)
+		else expect(html).not.toContain('DB token store failed')
+	})
+
+	it('adds the stale-row notice when Vercel storage also failed', async () => {
+		mocks.storeDropboxRefreshToken.mockResolvedValue({
+			ok: false,
+			missingConfig: [],
+			statuses: [500, 500, 500],
+			dbStorage: { ok: false, staleRow: true },
+		})
+		const html = await (await GET(callback())).text()
+		expect(html).toContain('Dropbox authorization was not stored')
+		expect(html).toContain('a stale DB row may remain')
+		expect(mocks.redeployAfterDropboxAuthorization).not.toHaveBeenCalled()
+	})
+})

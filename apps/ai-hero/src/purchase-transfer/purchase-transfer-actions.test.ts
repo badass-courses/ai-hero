@@ -133,6 +133,11 @@ import {
 } from '@/db/schema'
 
 import {
+	TRANSFER_DENIAL_MESSAGES,
+	TransferDenialError,
+	type TransferDenialCode,
+} from './transfer-lifecycle'
+import {
 	acceptPurchaseTransfer,
 	cancelPurchaseTransfer,
 	getPurchaseTransferForPurchaseId,
@@ -219,7 +224,10 @@ describe('included-product team transfer policy before side effects', () => {
 					purchaseUserTransferId: 'put_1',
 					email: 'b@example.test',
 				}),
-			).rejects.toThrow('cannot be transferred')
+			).resolves.toMatchObject({
+				ok: false,
+				code: 'included_team_purchase',
+			})
 			expect(mocks.findOrCreateUser).not.toHaveBeenCalled()
 			expect(mocks.dbState.updates).toEqual([])
 			expect(mocks.dbState.inserts).toEqual([])
@@ -315,7 +323,11 @@ describe('initiatePurchaseTransfer', () => {
 				purchaseUserTransferId: 'put_1',
 				email: 'b@example.com',
 			}),
-		).rejects.toThrow('You must be signed in')
+		).resolves.toMatchObject({
+			ok: false,
+			code: 'not_authenticated',
+			message: 'You must be signed in',
+		})
 		expect(mocks.findOrCreateUser).not.toHaveBeenCalled()
 		expect(mocks.dbState.updates).toHaveLength(0)
 		expect(mocks.sendServerEmail).not.toHaveBeenCalled()
@@ -331,7 +343,7 @@ describe('initiatePurchaseTransfer', () => {
 				purchaseUserTransferId: 'put_1',
 				email: 'b@example.com',
 			}),
-		).rejects.toThrow('Only the purchase owner')
+		).resolves.toMatchObject({ ok: false, code: 'not_source_owner' })
 		expect(mocks.findOrCreateUser).not.toHaveBeenCalled()
 		expect(mocks.dbState.updates).toHaveLength(0)
 	})
@@ -346,7 +358,7 @@ describe('initiatePurchaseTransfer', () => {
 				purchaseUserTransferId: 'put_1',
 				email: 'b@example.com',
 			}),
-		).rejects.toThrow('expired')
+		).resolves.toMatchObject({ ok: false, code: 'expired' })
 		const putUpdates = updatesFor(purchaseUserTransferTable)
 		expect(putUpdates).toHaveLength(1)
 		expect(putUpdates[0]?.values).toMatchObject({ transferState: 'EXPIRED' })
@@ -364,7 +376,7 @@ describe('initiatePurchaseTransfer', () => {
 				purchaseUserTransferId: 'put_1',
 				email: 'b@example.com',
 			}),
-		).rejects.toThrow('already in progress')
+		).resolves.toMatchObject({ ok: false, code: 'transfer_in_flight' })
 		expect(mocks.findOrCreateUser).not.toHaveBeenCalled()
 		expect(mocks.dbState.updates).toHaveLength(0)
 	})
@@ -377,7 +389,7 @@ describe('initiatePurchaseTransfer', () => {
 				purchaseUserTransferId: 'put_1',
 				email: 'A@example.com',
 			}),
-		).rejects.toThrow('yourself')
+		).resolves.toMatchObject({ ok: false, code: 'self_transfer' })
 		expect(mocks.findOrCreateUser).not.toHaveBeenCalled()
 	})
 
@@ -389,7 +401,7 @@ describe('initiatePurchaseTransfer', () => {
 				purchaseUserTransferId: 'put_1',
 				email: 'not-an-email',
 			}),
-		).rejects.toThrow('does not look valid')
+		).resolves.toMatchObject({ ok: false, code: 'invalid_email' })
 		expect(mocks.findOrCreateUser).not.toHaveBeenCalled()
 		expect(mocks.dbState.updates).toHaveLength(0)
 	})
@@ -406,9 +418,118 @@ describe('initiatePurchaseTransfer', () => {
 				purchaseUserTransferId: 'put_1',
 				email: 'b@example.com',
 			}),
-		).rejects.toThrow('not available')
+		).resolves.toMatchObject({ ok: false, code: 'invalid_state' })
 		expect(mocks.sendServerEmail).not.toHaveBeenCalled()
 	})
+})
+
+describe('initiatePurchaseTransfer denials', () => {
+	const owner = () =>
+		mocks.getServerAuthSession.mockResolvedValue(
+			sessionFor({ id: 'user_a', email: 'a@example.com' }),
+		)
+	const base: Array<{
+		code: TransferDenialCode
+		arrange: () => void
+		email?: string
+	}> = [
+		{
+			code: 'not_authenticated',
+			arrange: () => mocks.getServerAuthSession.mockResolvedValue(sessionFor(null)),
+		},
+		{
+			code: 'not_found',
+			arrange: () => {
+				owner()
+				mocks.getPurchaseUserTransferById.mockResolvedValue(null)
+			},
+		},
+		{
+			code: 'not_source_owner',
+			arrange: () =>
+				mocks.getServerAuthSession.mockResolvedValue(
+					sessionFor({ id: 'user_c', email: 'c@example.com' }),
+				),
+		},
+		{
+			code: 'invalid_state',
+			arrange: () => {
+				owner()
+				mocks.getPurchaseUserTransferById.mockResolvedValue(
+					transferRow({ transferState: 'INITIATED' }),
+				)
+			},
+		},
+		{
+			code: 'invalid_email',
+			email: 'nope',
+			arrange: owner,
+		},
+		{
+			code: 'expired',
+			arrange: () => {
+				owner()
+				mocks.getPurchaseUserTransferById.mockResolvedValue(
+					transferRow({ expiresAt: PAST }),
+				)
+			},
+		},
+		{
+			code: 'self_transfer',
+			email: 'a@example.com',
+			arrange: owner,
+		},
+		{
+			code: 'transfer_in_flight',
+			arrange: () => {
+				owner()
+				mocks.putFindMany.mockResolvedValue([
+					transferRow({ id: 'put_other', transferState: 'INITIATED' }),
+				])
+			},
+		},
+		{
+			code: 'included_team_purchase',
+			arrange: () => {
+				owner()
+				mocks.purchasesFindFirst.mockResolvedValue(
+					purchaseRow({ productId: 'product-s00zs', bulkCouponId: 'c' }),
+				)
+			},
+		},
+	]
+	const cases = base.map((c) => ({
+		...c,
+		message: TRANSFER_DENIAL_MESSAGES[c.code],
+	}))
+
+	it('covers every denial code initiate can return', () => {
+		const reachable = new Set(cases.map((c) => c.code))
+		// not_target_user belongs to accept only.
+		for (const code of Object.keys(TRANSFER_DENIAL_MESSAGES) as TransferDenialCode[]) {
+			if (code === 'not_target_user') continue
+			expect(reachable.has(code as TransferDenialCode)).toBe(true)
+		}
+	})
+
+	it.each(cases)(
+		'resolves $code as typed data, logging below error',
+		async ({ code, message, arrange, email }) => {
+			mocks.getPurchaseUserTransferById.mockResolvedValue(transferRow())
+			arrange()
+			await expect(
+				initiatePurchaseTransfer({
+					purchaseUserTransferId: 'put_1',
+					email: email ?? 'b@example.com',
+				}),
+			).resolves.toEqual({ ok: false, code, message })
+			expect(mocks.log.error).not.toHaveBeenCalled()
+			expect(mocks.log.info).toHaveBeenCalledWith(
+				'purchase_transfer.initiate_denied',
+				expect.objectContaining({ code }),
+			)
+		},
+	)
 })
 
 describe('cancelPurchaseTransfer', () => {
@@ -536,6 +657,36 @@ describe('acceptPurchaseTransfer', () => {
 			expect(update.values.transferState).not.toBe('COMPLETED')
 		}
 	}
+
+	it.each([
+		['no session', sessionFor(null), undefined],
+		[
+			'a session whose user row is missing',
+			sessionFor({ id: 'user_b', email: 'b@example.com' }),
+			null,
+		],
+	])('refuses %s as a typed not_authenticated denial with no writes, and logs it', async (_name, session, userRow) => {
+		mocks.getServerAuthSession.mockResolvedValue(session)
+		mocks.getUserById.mockResolvedValue(userRow)
+		mocks.getPurchaseUserTransferById.mockResolvedValue(initiated())
+
+		const error = await acceptPurchaseTransfer({
+			purchaseUserTransferId: 'put_1',
+		}).catch((e: unknown) => e)
+
+		expect(error).toBeInstanceOf(TransferDenialError)
+		expect((error as TransferDenialError).code).toBe('not_authenticated')
+		expect(mocks.dbState.updates).toEqual([])
+		expect(mocks.dbState.inserts).toEqual([])
+		expect(mocks.inngestSend).not.toHaveBeenCalled()
+		expect(mocks.log.warn).toHaveBeenCalledWith(
+			'purchase_transfer.accept_without_user',
+			expect.objectContaining({
+				purchaseUserTransferId: 'put_1',
+				hasSession: session.session !== null,
+			}),
+		)
+	})
 
 	it('claims INITIATED -> VERIFIED, moves only the purchase and the transfer row, then converges', async () => {
 		asTarget()

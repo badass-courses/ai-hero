@@ -66,12 +66,19 @@ async function run(): Promise<void> {
 		throw new Error('api_request_telemetry_smoke_failure')
 	})
 
+	const scopedGet = withSkill(async () => {
+		return Response.json({ ok: true }, { status: 200 })
+	})
+
 	await successGet(
 		createRequest('/api/smoke/success?token=super-secret', 'GET', smokeId),
 	)
 	await successPost(
 		createRequest('/api/smoke/create?apiKey=super-secret', 'POST', smokeId),
 	)
+
+	// Route-scoped path: emits completed but no started.
+	await scopedGet(createRequest('/api/trpc/smoke.scoped', 'GET', smokeId))
 
 	try {
 		await failureGet(
@@ -151,11 +158,14 @@ async function run(): Promise<void> {
 		const allEventsPresent = requiredEvents.every(
 			(event) => (summary.events[event] ?? 0) > 0,
 		)
+		// Exactly 2 started events: the unscoped success routes. The /api/trpc
+		// smoke request must not emit one.
+		const scopedStartedAbsent = (summary.events['api.request.started'] ?? 0) === 2
 		const requiredFieldsPresent = Object.values(summary.fieldsPresent).every(
 			Boolean,
 		)
 
-		if (!allEventsPresent || !requiredFieldsPresent) {
+		if (!allEventsPresent || !scopedStartedAbsent || !requiredFieldsPresent) {
 			process.exitCode = 1
 		}
 	} catch (error) {

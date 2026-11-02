@@ -1,3 +1,4 @@
+import { kitMirrorWritesEnabled } from '../kit-mirror-writes'
 import { isLearnerFlowBusinessMetricFixtureEmail } from './learner-flow-canary-exclusion'
 import type { ValuePathSendGateMode } from './value-path-send-gate'
 
@@ -17,6 +18,7 @@ export type ValuePathFinisherFieldProvider = {
 export type ValuePathFinisherCaptureResult =
 	| { status: 'not-configured'; fields: Record<string, string> }
 	| { status: 'dry-run'; fields: Record<string, string> }
+	| { status: 'mirror-disabled'; fields: Record<string, string> }
 	| {
 			status: 'excluded'
 			fields: Record<string, string>
@@ -70,6 +72,9 @@ export async function captureValuePathFinisherFields(args: {
 			fields,
 			reviewReasons: ['learner-flow-fixture-kit-field-write-excluded'],
 		}
+	}
+	if (!kitMirrorWritesEnabled()) {
+		return { status: args.mode === 'dry-run' ? 'dry-run' : 'mirror-disabled', fields }
 	}
 	if (!args.kitSubscriberId) {
 		return {

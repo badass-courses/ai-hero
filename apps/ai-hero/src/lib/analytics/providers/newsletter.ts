@@ -1,4 +1,6 @@
-import { db } from '@/db'
+// The client, not the `@/db` index: that reaches `server-only` through the
+// Stripe provider, which breaks the reporting:kit-snapshot script under tsx.
+import { db } from '@/db/client'
 import {
 	purchases,
 	shortlink,
@@ -6,6 +8,11 @@ import {
 	shortlinkClick,
 } from '@/db/schema'
 import { getBroadcastsWithClicks, isKitConfigured } from '@/lib/kit-data'
+import {
+	getOwnedNewsletterReport,
+	reportingOffKitEnabled,
+	type OwnedNewsletterReport,
+} from '@/lib/reporting-owned'
 import { and, count, eq, gte, inArray, sql, sum } from 'drizzle-orm'
 
 import type { AnalyticsRange } from '../types'
@@ -98,7 +105,10 @@ function getShortlinkSlugsFromBroadcasts(
 export async function getEmailCampaignAttribution(
 	range: AnalyticsRange,
 	limit = 30,
-): Promise<EmailRevenueOverview> {
+): Promise<EmailRevenueOverview | OwnedNewsletterReport> {
+	if (reportingOffKitEnabled()) {
+		return getOwnedNewsletterReport({ range, limit, mode: 'standard' })
+	}
 	if (!isKitConfigured()) {
 		return {
 			configured: false,
@@ -351,7 +361,15 @@ export async function getEmailCampaignAttributionStrict(
 	range: AnalyticsRange,
 	limit = 30,
 	filters: { productId?: string } = {},
-): Promise<EmailRevenueOverview> {
+): Promise<EmailRevenueOverview | OwnedNewsletterReport> {
+	if (reportingOffKitEnabled()) {
+		return getOwnedNewsletterReport({
+			range,
+			limit,
+			mode: 'strict',
+			productId: filters.productId,
+		})
+	}
 	if (!isKitConfigured()) {
 		return {
 			configured: false,

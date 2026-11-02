@@ -170,6 +170,16 @@ export function toAuthoritativeDecision(
 			...withCloses(context.policy),
 		}
 	}
+	// Keep the formula's credit fact even when regional wins. The selected
+	// decisionRef only identifies credit actually spent by the winning price.
+	if (
+		result.candidates.some(
+			(candidate) =>
+				candidate.basis === 'formula' && candidate.creditSource !== null,
+		)
+	)
+		reasons.push(APP_REASONS.formulaUsesCredit)
+
 	const codeRef = 'codeRef' in result && typeof result.codeRef === 'string' ? result.codeRef : undefined
 	const listTotal = (context.policy?.list ?? 0) * context.quantity
 	const unitAmountCents =

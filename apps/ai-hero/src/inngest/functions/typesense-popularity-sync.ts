@@ -90,11 +90,23 @@ export const typesensePopularitySync = inngest.createFunction(
 				connectionTimeoutSeconds: 10,
 			})
 			try {
-				return await writePopularityScores(
+				const result = await writePopularityScores(
 					client,
 					TYPESENSE_COLLECTION_NAME,
 					computation.scores,
 				)
+				if (result.skipped > 0) {
+					void log.info('typesense.popularity.sync.write.skipped', {
+						collection: TYPESENSE_COLLECTION_NAME,
+						skippedCount: result.skipped,
+					})
+				}
+				if (result.failed > 0) {
+					throw new Error(
+						`Typesense popularity update failed for ${result.failed} documents`,
+					)
+				}
+				return result
 			} catch (err) {
 				void log.error('typesense.popularity.sync.write.failed', {
 					collection: TYPESENSE_COLLECTION_NAME,
@@ -117,6 +129,7 @@ export const typesensePopularitySync = inngest.createFunction(
 			scoreCount: computation.scoreCount,
 			writtenCount: writeResult.written,
 			failedCount: writeResult.failed,
+			skippedCount: writeResult.skipped,
 			durationMs,
 		})
 
@@ -128,6 +141,7 @@ export const typesensePopularitySync = inngest.createFunction(
 			scoreCount: computation.scoreCount,
 			writtenCount: writeResult.written,
 			failedCount: writeResult.failed,
+			skippedCount: writeResult.skipped,
 			durationMs,
 		}
 	},

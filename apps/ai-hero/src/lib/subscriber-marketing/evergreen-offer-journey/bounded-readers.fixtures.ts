@@ -1,19 +1,105 @@
 import { createHash } from 'node:crypto'
+import { z } from 'zod'
 import {
+	COURSE_SEQUENCE_EXHAUSTED_EVENT_TYPE,
 	COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT,
 	courseSequenceExhaustionFactKey,
+	readCoursePayload,
+	restoreCourseSequenceExhaustedPayload,
 } from '../course-sequence-exhaustion'
+import { AI_HERO_SKILLS_WORKFLOW_COURSE_V1 } from '../email-course/definition'
+import { deriveCourseRunId, parseEventId } from '../email-course/primitives'
 import { SKILLS_WORKFLOW_PATH_SLUGS } from '../skills-workflow-path'
-import { restoreSourceCandidate } from './bounded-readers'
+import { courseSequenceExhaustedStimulusFromContactEvent } from './course-sequence-exhausted-adapter'
 import { decideEvergreenOfferJourney } from './decision'
 import { EVERGREEN_OFFER_JOURNEY_V1 } from './definition'
 import type {
+	CourseSequenceExhausted,
 	EligibilityFacts,
 	EvergreenOfferJourneyAggregate,
 	EvergreenOfferStimulus,
 } from './domain'
 import type { JourneyLedgerCommit } from './ports'
 import { parseIsoInstant, parseStimulusId } from './primitives'
+
+const provider = z.enum(['fixture', 'front', 'kit', 'ai-hero'])
+const identityEvidence = z
+	.object({
+		source: provider,
+		strength: z.enum(['weak', 'medium', 'strong']),
+		email: z.string().optional(),
+		name: z.string().optional(),
+		userId: z.string().optional(),
+		providerIdentity: z.object({ provider, externalId: z.string() }).optional(),
+	})
+	.passthrough()
+const sourceRow = z.object({
+	id: z.string().min(1),
+	contactId: z.string().min(1),
+	providerIdentityId: z.string().min(1),
+	provider: z.literal('ai-hero'),
+	providerEventId: z.string().min(1),
+	providerReference: z.string().min(1),
+	eventType: z.literal(COURSE_SEQUENCE_EXHAUSTED_EVENT_TYPE),
+	semanticIdempotencyKey: z.string().min(1),
+	schemaVersion: z.literal(1),
+	occurredAt: z.date(),
+	createdAt: z.date(),
+	privacyLevel: z.enum(['public', 'internal', 'restricted']),
+	identityEvidence,
+	payloadSummary: z
+		.object({
+			summary: z.string(),
+			keywords: z.array(z.string()),
+			restrictedPayloadStored: z.literal(false),
+		})
+		.passthrough(),
+})
+
+/** Decode only committed ContactEvent evidence. No fallback, inferred completion,
+ * provider membership or invented entry fact. Owning payload codec pins both paths.
+ */
+export function restoreSourceCandidate(
+	input: unknown,
+): CourseSequenceExhausted | null {
+	const decoded = sourceRow.safeParse(input)
+	if (!decoded.success) return null
+	const row = decoded.data
+	const payload = restoreCourseSequenceExhaustedPayload(
+		readCoursePayload(row.payloadSummary)?.payload,
+	)
+	if (
+		!payload ||
+		Math.floor(Date.parse(payload.exhaustedAt) / 1000) !==
+			Math.floor(row.occurredAt.getTime() / 1000)
+	)
+		return null
+	const entry = parseEventId(payload.actor.courseEntryEventId)
+	if (!entry.ok) return null
+	const runId = deriveCourseRunId({
+		courseId: AI_HERO_SKILLS_WORKFLOW_COURSE_V1.courseId,
+		entryEventId: entry.value,
+	})
+	// Both existing atomic producers remain accepted; neither reference may drift
+	// from its owning payload. No new event spelling or enrollment policy.
+	const legacyReference =
+		row.providerReference === `value-path:${payload.actor.valuePathId}` &&
+		row.providerEventId === row.semanticIdempotencyKey
+	const courseReference =
+		row.providerReference === `email-course:${runId}` &&
+		row.providerEventId === row.id
+	if (!legacyReference && !courseReference) return null
+	const result = courseSequenceExhaustedStimulusFromContactEvent({
+		...row,
+		occurredAt: row.occurredAt.toISOString(),
+		createdAt: row.createdAt.toISOString(),
+	})
+	return result.ok &&
+		result.value.entryFactId === row.id &&
+		result.value.contactId === row.contactId
+		? result.value
+		: null
+}
 
 /** Synthetic fixtures only; not an entry-fact producer. */
 export function sourceFixture(

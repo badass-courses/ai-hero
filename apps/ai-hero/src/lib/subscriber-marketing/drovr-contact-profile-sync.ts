@@ -7,9 +7,14 @@ import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
 import type { ContactProfileVersion } from './contact-profile-version'
 import {
 	birthThenRedeliver,
+	contactSyncStarterRequests,
 	contactSyncRetryRequest,
 } from './contact-sync-straggler-retry'
 import { parseDrovrProfileSyncConfig } from './drovr-contact-profile-sync-requests'
+import {
+	sendContactSyncStarters,
+	stragglerOwnershipEnabled,
+} from './contact-sync-starter-batches'
 
 import {
 	findEvergreenOffer,
@@ -483,15 +488,27 @@ export async function runContactProfileSync(args: {
 			(args.now ?? Date.now)(),
 		)) as number
 		// The retry may vouch for this version only if nothing was rejected.
-		await args.step.sendEvent(
-			'defer-refused',
-			contactSyncRetryRequest(
-				deferred,
-				1,
-				at,
-				rejected === 0 ? { contactId, profileVersion } : undefined,
-			),
-		)
+		if (stragglerOwnershipEnabled(args.env)) {
+			await sendContactSyncStarters(
+				args.step,
+				'defer-refused',
+				contactSyncStarterRequests(
+					deferred,
+					at,
+					rejected === 0 ? { contactId, profileVersion } : undefined,
+				),
+			)
+		} else {
+			await args.step.sendEvent(
+				'defer-refused',
+				contactSyncRetryRequest(
+					deferred,
+					1,
+					at,
+					rejected === 0 ? { contactId, profileVersion } : undefined,
+				),
+			)
+		}
 		return {
 			status: 'deferred',
 			reason: deferred[0]!.reason,

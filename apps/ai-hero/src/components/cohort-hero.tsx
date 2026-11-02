@@ -2,6 +2,7 @@ import * as React from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { WaitlistForm } from '@/components/cohort-waitlist-form'
+import { C5SaleSwitch } from '@/components/c5-sale-switch'
 import { formatStartsAt } from '@/components/landing/format'
 import { BADGE_NEUTRAL, BADGE_OUTLINE, TYPE } from '@/components/landing/type'
 import { DiscountCountdown } from '@/components/pricing/discount-countdown'
@@ -212,18 +213,32 @@ export async function CohortHero({
 					    — and now that the name is the `h1` and the cohort's own
 					    description sits under it, this was a third block of prose making
 					    the argument a second time before the reader reached the ask. */}
-					<Ask
-						isOpen={isOpen}
-						isWaiting={alreadyWaiting}
-						href={href}
-						sale={sale}
-						opensLabel={opensLabel}
-						productName={flagship?.productName ?? title}
-						knownIdentity={Boolean(subscriber?.email_address)}
-						surface={
-							headingLevel === 'h1' ? 'courses-cohort' : 'homepage-cohort'
+					<C5SaleSwitch
+						fallback={
+							<Ask
+								isOpen={isOpen}
+								isWaiting={alreadyWaiting}
+								href={href}
+								sale={sale}
+								opensLabel={opensLabel}
+								productName={flagship?.productName ?? title}
+								knownIdentity={Boolean(subscriber?.email_address)}
+								surface={
+									headingLevel === 'h1' ? 'courses-cohort' : 'homepage-cohort'
+								}
+							/>
 						}
-					/>
+					>
+						<Link
+							href="/s/c5-site-cta"
+							className={cn(
+								TYPE.meta,
+								'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover mt-6 inline-flex min-h-11 items-center rounded-[9px] px-5 py-3 font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2',
+							)}
+						>
+							Join the cohort
+						</Link>
+					</C5SaleSwitch>
 				</div>
 
 				{/* The rail. Not a second ask — the product's face, the route to the

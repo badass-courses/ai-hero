@@ -200,6 +200,27 @@ export async function isOnDrovrSendingJourney(
 	return doubleOptIn.length > 0
 }
 
+/**
+ * Whether drovr, not the legacy planner, drives this contact's skills-course
+ * lessons: a skills-course owner record, or a double opt-in signup (drovr
+ * runs the course for DOI-born contacts, which get no owner record). An owner
+ * record for only the newsletter or evergreen offer does not count: drovr
+ * does not send those contacts the course, so the legacy lesson is their only
+ * copy. Narrower than `isOnDrovrSendingJourney`, which contact sync uses.
+ */
+export async function isOnDrovrSkillsCourse(
+	repository: OwnershipReadRepository,
+	contactId: string,
+): Promise<boolean> {
+	if (await findJourneyOwnerAssignment(repository, contactId)) return true
+	if (!repository.findContactEventsByType) return false
+	const doubleOptIn = await repository.findContactEventsByType(
+		contactId,
+		DOI_REQUESTED_EVENT_TYPE,
+	)
+	return doubleOptIn.length > 0
+}
+
 export type JourneyOwnerResolution =
 	| { owner: 'legacy'; recorded: false }
 	| { owner: 'drovr'; recorded: false }
@@ -259,7 +280,7 @@ export async function recordJourneyOwnerAssigned(args: {
 	repository: Pick<CaptureMarketingRepository, 'createContactEvent'>
 	contactId: string
 	providerIdentityId: string
-	kitSubscriberId: string
+	kitSubscriberId?: string
 	provider?: Provider
 	providerExternalId?: string
 	email: string
@@ -268,6 +289,8 @@ export async function recordJourneyOwnerAssigned(args: {
 	journeyId?: DrovrJourneyId
 }): Promise<ContactEventRecord> {
 	const journeyId = args.journeyId ?? DROVR_SKILLS_COURSE_JOURNEY_ID
+	const externalId = args.providerExternalId ?? args.kitSubscriberId
+	if (!externalId) throw new Error('Journey owner assignment identity missing')
 	const normalized = normalizeContactEvent({
 		provider: args.provider ?? 'kit',
 		providerEventId: journeyOwnerProviderEventId(args.contactId, journeyId),
@@ -275,7 +298,7 @@ export async function recordJourneyOwnerAssigned(args: {
 		occurredAt: args.occurredAt,
 		email: args.email,
 		name: args.name,
-		externalId: args.providerExternalId ?? args.kitSubscriberId,
+		externalId,
 		message: `Journey owner assigned to drovr for ${journeyId}`,
 		privacyLevel: 'internal',
 	})
@@ -323,6 +346,18 @@ export function isOwnerFanOutCandidate(event: DrovrShadowEvent): boolean {
 		event.type !== 'email.completed' &&
 		(event.type !== 'course.sequence-exhausted' ||
 			event.journeyId === DROVR_EVERGREEN_OFFER_JOURNEY_ID)
+	)
+}
+
+/**
+ * A shadow-addressed event delivery can only discard: the shadow tenant is
+ * never posted to, and no owner copy is made from it, whoever owns the
+ * contact. Producers drop these before the hand-off to Inngest, so a batch
+ * of nothing else never starts a delivery run.
+ */
+export function isDiscardOnlyShadowEvent(event: DrovrShadowEvent): boolean {
+	return (
+		event.tenantId === DROVR_SHADOW_TENANT_ID && !isOwnerFanOutCandidate(event)
 	)
 }
 

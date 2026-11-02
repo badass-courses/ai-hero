@@ -1,6 +1,7 @@
 import { mysqlTable } from '@/db/mysql-table'
 export { purchaseDecision } from './purchase-decision-schema'
 export { giftCodeSlot, giftShareLink } from './gift-code-schema'
+export { ccCreditReservation, ccCreditAllocation } from './cc-credit-schema'
 import { relations, sql } from 'drizzle-orm'
 import { CONTACT_EMAIL_STALE_SQL } from '@/lib/subscriber-marketing/contact-email-key-contract'
 import {
@@ -21,6 +22,8 @@ import {
 
 import { getCourseBuilderSchema } from '@coursebuilder/adapter-drizzle/mysql'
 import { guid } from '@coursebuilder/utils/guid'
+import { contactEventId } from './contact-event-id'
+import { longId } from './long-id'
 import type { CourseSyncBinding, SyncPlan } from '@/course-sync/types'
 
 export const {
@@ -662,7 +665,7 @@ export const providerIdentity = mysqlTable(
 		id: varchar('id', { length: 255 })
 			.notNull()
 			.primaryKey()
-			.$defaultFn(() => guid()),
+			.$defaultFn(() => longId()),
 		contactId: varchar('contactId', { length: 255 }).notNull(),
 		provider: varchar('provider', { length: 50 }).notNull(),
 		externalId: varchar('externalId', { length: 255 }).notNull(),
@@ -708,7 +711,7 @@ export const contactEvent = mysqlTable(
 		id: varchar('id', { length: 255 })
 			.notNull()
 			.primaryKey()
-			.$defaultFn(() => guid()),
+			.$defaultFn(() => contactEventId()),
 		contactId: varchar('contactId', { length: 255 }).notNull(),
 		providerIdentityId: varchar('providerIdentityId', {
 			length: 255,
@@ -752,6 +755,16 @@ export const contactEvent = mysqlTable(
 		eventTypeProviderReferenceIdx: index(
 			'ContactEvent_eventType_providerReference_idx',
 		).on(table.eventType, table.providerReference),
+		// Serves the learner-flow keyset read: eventType equality, then contactId
+		// in order for ORDER BY contactId / contactId > ? paging (DR 51).
+		eventTypeContactIdIdx: index('ContactEvent_eventType_contactId_idx').on(
+			table.eventType,
+			table.contactId,
+		),
+		// Lookups by providerEventId alone cannot use the (provider, providerEventId) index.
+		providerEventIdIdx: index('idx_ContactEvent_on_providerEventId').on(
+			table.providerEventId,
+		),
 	}),
 )
 
@@ -761,7 +774,7 @@ export const contactState = mysqlTable(
 		id: varchar('id', { length: 255 })
 			.notNull()
 			.primaryKey()
-			.$defaultFn(() => guid()),
+			.$defaultFn(() => longId()),
 		contactId: varchar('contactId', { length: 255 }).notNull(),
 		lifecycle: varchar('lifecycle', { length: 50 }).notNull(),
 		primaryBucket: varchar('primaryBucket', { length: 150 }).notNull(),
@@ -792,7 +805,7 @@ export const stateTransition = mysqlTable(
 		id: varchar('id', { length: 255 })
 			.notNull()
 			.primaryKey()
-			.$defaultFn(() => guid()),
+			.$defaultFn(() => longId()),
 		contactId: varchar('contactId', { length: 255 }).notNull(),
 		fromStateId: varchar('fromStateId', { length: 255 }),
 		toStateId: varchar('toStateId', { length: 255 }).notNull(),
@@ -866,6 +879,11 @@ export const sideEffectIntent = mysqlTable(
 		),
 		contactIdIdx: index('SideEffectIntent_contactId_idx').on(table.contactId),
 		statusIdx: index('SideEffectIntent_status_idx').on(table.status),
+		// Serves the learner-flow keyset read: provider + type equality, then
+		// contactId in order for DISTINCT / ORDER BY / contactId > ? paging (DR 51).
+		providerTypeContactIdIdx: index(
+			'SideEffectIntent_provider_type_contactId_idx',
+		).on(table.provider, table.type, table.contactId),
 		// Every value-path reader filters provider + type together; the executor
 		// poll additionally filters status IN ('pending','failed') so the status
 		// column rides the same index and completed rows are never examined.
@@ -889,6 +907,7 @@ export {
 } from './contact-sync-schema'
 
 export { drovrOutbox } from './drovr-outbox-schema'
+export { integrationToken } from './integration-token-schema'
 
 export {
 	evergreenOfferJourneyAttempt,

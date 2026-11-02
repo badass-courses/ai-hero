@@ -1,0 +1,76 @@
+---
+title: "Session extracts: the agent session beside a lesson video"
+type: "resource"
+status: "active"
+created_at: "2026-10-29"
+tags:
+  - lessons
+  - course-sync
+  - video
+---
+
+# Session extracts: the agent session beside a lesson video
+
+A **session extract** is the coding-agent session shown on screen in a lesson
+video, as entries stamped with the video time they first appear
+(`visibleFrom`). Matt produces them (repo `ai-hero-dev/session-extracts`); the
+lesson page shows one beside the player and follows playback through it.
+
+## Decisions
+
+- **Name.** "Session extract", never a vendor name: the producer is a coding
+  agent today and may be another tomorrow.
+- **Where it lives.** `fields.sessionExtract` on the **video resource**, shaped
+  `{ sessions: [...] }` (Matt's schema minus its `video` header; the video it
+  sits on is the video it is timed against).
+- **How it arrives.** Course sync only. `CourseJsonVideoV3.sessionExtract` in
+  `packages/course-sync-schema` is optional, and `sessionExtract` is a
+  sync-owned video field (`course-sync/resource-fields.ts`): a re-sync
+  replaces it, a sync without it removes it.
+- **Two validations, on purpose.** The sync contract checks the full shape and
+  rejects the manifest, so a producer bug is loud at sync time. The lesson
+  page parses it again in isolation (`parseSessionExtract`), so a bad stored
+  value hides the panel and never breaks a lesson.
+- **What the panel shows (Matt, 2026-10-30).** A skill run by slash command
+  gets no row (the prompt that typed it already shows it), skill args are
+  never shown, and the spoken block is marked by a gold bar in the left
+  gutter, never by dimming the rest: at 2x the contrast change flickered.
+- **One grid across tabs.** Live and the moment lists share it: the time
+  left-aligned on its own line, content 12px in, the current-moment bar at
+  4px. Hovering a moment lights its time with a play glyph; the time seeks.
+  Rows sharing a time show it once, so the hover finds the head of the run.
+- **Whole transcript up front (Matt, 2026-10-30).** Live lists every entry
+  from the start so the transcript navigates the video: what the video has
+  not reached sits at half opacity, following tracks the newest reached row
+  (`data-current`), and a click on a user or assistant message plays from it.
+  Tool and skill calls do not seek. The spoken-block match only searches
+  replies the video has reached.
+- **Following is ours, not `use-stick-to-bottom`.** With the whole
+  transcript on the page the view follows the video's place, not the bottom.
+  The library only escaped on a scroll up, so reading ahead never showed
+  Follow video. Any wheel, touch, scrollbar or key scroll stops following;
+  the button (arrow toward the video), a seek from the panel, or a seek back
+  turns it on.
+
+## Gotchas
+
+- Matt's exporter omits an empty key instead of writing `null`, and leaves
+  `skillBody` out to keep the manifest small (26 extracts made a 1.6 MB
+  course.json). Both validations accept a missing key; the page reads it as
+  `null`. Requiring the keys made the strict decoder reject the whole
+  Cohort 005 manifest on 2026-10-29, so no extract reached prod.
+- A rejected manifest logs only "Dropbox course manifest validation failed"
+  (`lib/dropbox-course-sync.ts` drops the decode error). To find the field,
+  read course.json from Dropbox and run the decoder on it.
+
+- The course.json decoder runs with `onExcessProperty: "error"`. Any new field
+  a producer adds fails the **whole** sync until the consumer schema accepts
+  it, so the consumer change must deploy before the producer ships.
+- Course sync stages the whole manifest in one request body (Vercel caps
+  bodies at 4.5 MB). Extracts run 30-150 KB each; inline is fine for a cohort
+  of solution videos, but a much larger course should move extracts to files
+  referenced from the manifest.
+- The "spoken block" highlight matches caption cues against the newest replies
+  (`spokenBlockIndex`). It needs two shared word pairs and a clear winner, and
+  only searches at or after the current reading anchor; looser matching
+  produced false highlights while Matt riffed.

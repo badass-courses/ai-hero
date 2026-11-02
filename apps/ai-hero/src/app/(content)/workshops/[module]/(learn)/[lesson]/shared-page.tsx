@@ -14,7 +14,10 @@ import {
 	getLessonVideoPlaybackResource,
 	getLessonVideoTranscript,
 } from '@/lib/lessons-query'
+import { getLessonSessionExtract } from '@/lib/session-extract-query'
+import { getSessionSkillLinks } from '@/lib/session-skill-links'
 import { MinimalWorkshop } from '@/lib/workshops'
+import { getSignedLessonPlayback } from '@/lib/signed-lesson-playback'
 import { getPlaybackPositionForResource } from '@/lib/progress'
 import { deniedRedirectPath, lessonDenialReason } from '@/lib/lesson-denial'
 import { getServerAuthSession } from '@/server/auth'
@@ -113,7 +116,9 @@ export async function LessonPage({
 	// and the layout outlives a lesson change.
 	return (
 		<ActiveHeadingProvider>
-			<main className="w-full">
+			{/* Clips full-width rules drawn from inside the prose (the quiz's) at
+			    the column's edges. */}
+			<main className="w-full overflow-x-clip">
 				<ContentReadTracker
 					contentId={lesson.id}
 					contentType={lessonType === 'solution' ? 'solution' : 'lesson'}
@@ -121,6 +126,7 @@ export async function LessonPage({
 					parentSlug={params.module}
 				/>
 				<LessonVideoRegistration
+					workshopId={workshop?.id}
 					lesson={lesson}
 					params={params}
 					lessonType={lessonType}
@@ -131,7 +137,7 @@ export async function LessonPage({
 					problem={problem}
 					moduleSlug={params.module}
 				/>
-				<div className="max-w-(--breakpoint-xl) container relative px-5 md:px-10 lg:px-14">
+				<div className="relative container max-w-(--breakpoint-xl) px-5 md:px-10 lg:px-14">
 					<div className="relative z-10">
 						<article className="">
 							<LessonTitle lesson={lesson} />
@@ -167,7 +173,7 @@ export async function LessonPage({
 				</div>
 				<Suspense fallback={null}>
 					<UpNext
-						className="rounded-none border-x-0 border-b-0 border-t"
+						className="rounded-none border-x-0 border-t border-b-0"
 						currentResourceId={lesson?.id}
 						abilityLoader={abilityLoader}
 					/>
@@ -216,16 +222,32 @@ async function LessonVideoRegistration({
 	lesson,
 	lessonType,
 	params,
+	workshopId,
 }: {
+	workshopId?: string
 	lesson: Lesson
 	lessonType: 'lesson' | 'exercise' | 'solution'
 	params: { module: string; lesson: string }
 }) {
-	const [videoPlaybackResource, savedPosition] = await Promise.all([
-		getLessonVideoPlaybackResource(lesson.id),
-		getPlaybackPositionForResource(lesson.id),
+	const [videoPlaybackResource, savedPosition, sessionExtract] =
+		await Promise.all([
+			getLessonVideoPlaybackResource(lesson.id),
+			getPlaybackPositionForResource(lesson.id),
+			getLessonSessionExtract(lesson.id),
+		])
+	const [playback, sessionSkillLinks] = await Promise.all([
+		videoPlaybackResource
+			? getSignedLessonPlayback({
+					lessonId: lesson.id,
+					workshopId,
+					moduleSlug: params.module,
+					lessonSlug: params.lesson,
+					video: videoPlaybackResource,
+				})
+			: null,
+		getSessionSkillLinks(sessionExtract),
 	])
-	const muxPlaybackId = videoPlaybackResource?.muxPlaybackId ?? null
+	const muxPlaybackId = playback?.muxPlaybackId ?? null
 	const videoResourceReference = lesson.resources?.find(({ resource }) => {
 		return resource.type === 'videoResource'
 	})
@@ -248,9 +270,12 @@ async function LessonVideoRegistration({
 					? {
 							resource: lesson,
 							muxPlaybackId,
+							tokens: playback?.tokens,
 							chapters: videoPlaybackResource?.chapters ?? null,
 							savedPosition,
 							moduleSlug: params.module,
+							sessionExtract,
+							sessionSkillLinks,
 							thumbnailUrl: videoResourceReference
 								? `${env.NEXT_PUBLIC_URL}/api/thumbnails?videoResourceId=${videoResourceReference.resourceId}&time=${lesson.fields?.thumbnailTime || 0}`
 								: null,

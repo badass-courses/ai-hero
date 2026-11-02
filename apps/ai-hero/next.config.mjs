@@ -69,6 +69,11 @@ const config = {
 	async redirects() {
 		return [
 			{
+				source: '/for-teams',
+				destination: '/for-your-team',
+				permanent: true,
+			},
+			{
 				source: '/ai-coding-for-real-engineers-with-claude-code-2026-04',
 				destination: '/claude-code-for-real-engineers-2026-04',
 				permanent: true,
@@ -86,6 +91,29 @@ const config = {
 				source: '/cohorts/cohort-005-xdy1m',
 				destination: '/cohorts/software-factories-for-real-engineers-xdy1m',
 				statusCode: 301,
+			},
+			// Bare C5 slugs without the resource id suffix. Temporary so a
+			// future cohort can reuse the slug. Listed one by one: an optional
+			// `(cohorts/)?` group does not match the root form.
+			{
+				source: '/software-factories-for-real-engineers',
+				destination: '/cohorts/software-factories-for-real-engineers-xdy1m',
+				permanent: false,
+			},
+			{
+				source: '/cohorts/software-factories-for-real-engineers',
+				destination: '/cohorts/software-factories-for-real-engineers-xdy1m',
+				permanent: false,
+			},
+			{
+				source: '/software-factories-for-real-engineers/for-teams',
+				destination: '/cohorts/software-factories-for-real-engineers-xdy1m',
+				permanent: false,
+			},
+			{
+				source: '/cohorts/software-factories-for-real-engineers/for-teams',
+				destination: '/cohorts/software-factories-for-real-engineers-xdy1m',
+				permanent: false,
 			},
 			{
 				source: '/workshops/ai-sdk-v5-crash-course',
@@ -148,7 +176,17 @@ const config = {
 		}
 	},
 	async headers() {
-		return homepageDiscoveryHeaders
+		return [
+			...homepageDiscoveryHeaders,
+			// The OAuth consent page must never render in a frame (clickjacking).
+			{
+				source: '/oauth/authorize/:path*',
+				headers: [
+					{ key: 'X-Frame-Options', value: 'DENY' },
+					{ key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
+				],
+			},
+		]
 	},
 }
 

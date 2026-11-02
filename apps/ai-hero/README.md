@@ -31,6 +31,92 @@ For those with access to the project in Vercel, here is how to grab those env va
 
 _Note: Because of [Next.js Enviornment Variable Load Order](https://nextjs.org/docs/pages/building-your-application/configuring/environment-variables#environment-variable-load-order), the `.env.local` file generated in this step will override many values that you may want to set in the `.env` or `.env.development` files. Any env vars in development that you want to take precedence over what is in `.env.local` will need to go in `.env.local.development`._
 
+### Ops scripts with 1Password
+
+Run `pnpm cta-report:ops` from this directory with
+`OP_TOKEN` and `OP_VAULT` injected into the caller's environment. Use the
+Varlock 1Password plugin and a service account with access to the selected vault. Each item
+is titled with its environment variable name and stores its value in `password`.
+Never put the token or vault name in source control or command-line arguments.
+The token stays internal to Varlock, not in the script's child environment;
+desktop app authentication is disabled. Missing credentials or vault selection
+fail before the script starts.
+The ops entry points disable telemetry with `DO_NOT_TRACK=1`; never set
+`DEBUG=varlock*` in CI because it logs resolved `op://` references.
+
+These entry points use separate, least-privilege `.env.ops-*.schema` files, not
+`.env.vercel`. They do not supply missing application-wide configuration or
+bypass `src/env.mjs` validation. People must use test credentials; production
+access is for authorized agents and CI only. Do not run reports against
+production merely to check secret resolution.
+
+`env:check` and Vercel's `prebuild` still use the existing ambient environment
+and `.env.schema`, without 1Password. `cta-report`, `cta-report:build`,
+`cta-report:scheduled`, `cta-report:top-organic` and the scheduled GitHub Actions
+workflow keep their existing dotenv path and arguments. Moving that workflow to
+1Password needs separate CI credentials and is not part of this change.
+The PPP alumni, lost-dispute, geo-backfill and evergreen deadline
+scripts remain on their existing paths: their database imports validate the
+whole app environment, including credentials not available through this ops
+contract. The Discord legend backfill also remains unchanged because it reads
+an env file directly rather than the process environment. This change does not
+remove `.env.vercel` or change runtime environment loading.
+
+### Kit-era newsletter report snapshot
+
+`pnpm reporting:kit-snapshot` freezes today's Kit-backed newsletter report into
+the JSON array `AIH_REPORTING_KIT_HISTORY_JSON` parses, for the admin report's
+`historical` block once `AIH_REPORTING_OFF_KIT_ENABLED` is on. Run it once,
+before the flip, from this directory:
+
+```sh
+pnpm reporting:kit-snapshot --out /secure/path/kit-history.json
+```
+
+- It needs only `CONVERTKIT_V4_API_KEY` and `DATABASE_URL`, injected into the
+  process environment by the secret store. It reads no env file, and there is
+  no `vercel env pull`: production secrets are write-only in Vercel.
+- It only reads Kit and the database, forces the off-Kit reporting flag off
+  in its own process, and reads each Kit URL once for every scope. Any failed
+  Kit read stops the run before it writes: the readers would otherwise record
+  a failed click read as a broadcast with no clicks.
+- It writes the file with mode 0600 and refuses to overwrite one. It prints
+  scopes, campaign counts and byte sizes, never report values.
+- Scopes default to `full`: every range (`24h`, `7d`, `30d`, `90d`, `all`) for
+  `standard` and unscoped `strict`. `--product <id>` adds a product-scoped
+  `strict` snapshot per range, for example `product-s00zs` for C5.
+- The budget is 40,000 bytes, since Vercel caps the whole env near 64 KB. Over
+  budget, a `full` run keeps the fallback scopes, `all` plus the C5 range for
+  both modes. The C5 range is the smallest rolling range reaching back to
+  `FEATURED_PROMO.startsAt` at capture time. If even that is over, it writes
+  nothing and exits 1.
+- `--scopes fallback` asks for the fallback directly. `--scopes
+  standard:all,strict:30d@<productId>` picks exact scopes.
+- `--trim-links` drops `kitLinks` and empties `shortlinks` on every campaign.
+  Campaign totals stay: recipients, opens, clicks, unsubscribes, signups,
+  purchases, revenue and click-to-purchase rate. The report loses the per-link
+  Kit clicks and the per-shortlink click, signup, purchase and revenue rows.
+- `--limit <n>` matches the analytics API's default of 20 broadcasts.
+
+A query matches exactly one snapshot by mode, range and product. A query with
+no matching snapshot shows the historical block as unavailable, not zero.
+
+### Interest facts backfill
+
+`pnpm interest-facts:backfill --input <subscribers.jsonl>` reads a Kit
+subscriber export line by line and counts, per live waitlist or interest key,
+the holders by Kit state and how many the local resolver and drovr
+`resolve_contacts` know. It is a dry run unless `--send` is passed, and its
+output is counts only.
+
+With `--send` and `INNGEST_EVENT_KEY`, it queues
+`aihero/interest.fact.requested` with `via: 'backfill'` and Kit's date for
+each holder both stores know, at `--rate` events a second (default 2). The
+`interest-fact-record` function writes the facts; the script writes nothing
+itself and never touches Kit. Creating the stop file printed at start stops
+it before the next batch, and a rerun continues from the progress file. See
+the header of `scripts/interest-facts-backfill.ts` for every flag.
+
 ### Install dependences
 
 Make sure you have [`pnpm`](https://pnpm.io/) installed.

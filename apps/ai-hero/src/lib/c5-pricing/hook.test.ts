@@ -62,12 +62,10 @@ function buyerFacts(
 
 const signedIn = (
 	facts = buyerFacts(),
-	hasValidPurchase: boolean | null = false,
 ): BuyerRead => ({
 	kind: 'buyer',
 	email: 'buyer@example.test',
 	facts,
-	hasValidPurchase,
 	holdsRestrictedPurchase: false,
 	holdsValidProductPurchase: false,
 })
@@ -137,7 +135,7 @@ describe('createC5AuthoritativePrice', () => {
 			buyer = { ...signedIn(), ...ownership } as BuyerRead
 			await expect(ask({ purpose: 'checkout' })).resolves.toMatchObject({ kind: 'held' })
 		}
-		buyer = signedIn(buyerFacts(), true)
+		buyer = signedIn(buyerFacts({ credit: known({ paid: 10_000, source: 'valid-cc-purchase' }) }))
 		await expect(ask({ purpose: 'checkout' })).resolves.toMatchObject({ kind: 'priced', amountCents: 40_000 })
 	})
 	it('prices verified gifts exactly before opening, without consuming credit; ordinary switch-on keeps cheaper pricing', async () => {
@@ -217,6 +215,7 @@ describe('createC5AuthoritativePrice', () => {
 		const decision = await ask({ userId: undefined })
 		expect(decision).toMatchObject({ kind: 'bounded', amountCents: 80_000 })
 		expect(decision!.reasons).toContain(APP_REASONS.identityRequired)
+		expect(decision!.reasons).not.toContain(APP_REASONS.formulaUsesCredit)
 		expect(deps.quotes).not.toHaveBeenCalled()
 	})
 
@@ -333,6 +332,28 @@ describe('createC5AuthoritativePrice', () => {
 	})
 
 	describe('PPP from the trusted country only', () => {
+		it.each([
+			['available', true],
+			['spent', false],
+		] as const)(
+			'reports formula credit only when it is %s',
+			async (creditUse, expected) => {
+				country = 'IN'
+				buyer = signedIn(
+					buyerFacts({
+						credit: known({ paid: 10_000, source: 'valid-cc-purchase' }),
+						creditUse: known(creditUse),
+					}),
+				)
+				for (const pppAccepted of [false, true]) {
+					const decision = await ask({ pppAccepted })
+					expect(
+						decision!.reasons.includes(APP_REASONS.formulaUsesCredit),
+					).toBe(expected)
+				}
+			},
+		)
+
 		it('ignores a spoofed request country', async () => {
 			country = 'US'
 			const decision = await ask({ country: 'IN', pppAccepted: true })
@@ -353,6 +374,7 @@ describe('createC5AuthoritativePrice', () => {
 				restriction: 'none',
 				offers: [{ amountCents: 40_000, percent: 0.6, restriction: 'region' }],
 			})
+			expect(offered!.reasons).not.toContain(APP_REASONS.formulaUsesCredit)
 			const accepted = await ask({ country: 'US', pppAccepted: true })
 			expect(accepted).toMatchObject({
 				kind: 'priced',
@@ -361,13 +383,88 @@ describe('createC5AuthoritativePrice', () => {
 			})
 		})
 
-		it('keeps the legacy rule: a Valid purchase blocks PPP', async () => {
-			country = 'IN'
-			buyer = signedIn(buyerFacts(), true)
-			await expect(ask({ pppAccepted: true })).resolves.toMatchObject({
-				amountCents: 80_000,
-				restriction: 'none',
-				offers: [],
+		it.each([
+			['IN', 40_000, 'region', null],
+			['BR', 55_000, 'none', 'valid-cc-purchase'],
+		] as const)('offers alumni regional pricing in %s without stacking credit when the policy keeps it off the regional price', async (region, amount, restriction, creditSource) => {
+			country = region
+			buyer = signedIn(buyerFacts({
+				alumni: known('c4' as const),
+				credit: known({ paid: 10_000, source: 'valid-cc-purchase' }),
+			}))
+			for (const purpose of ['display', 'checkout'] as const) {
+				const offered = await ask({ purpose })
+				expect(offered).toMatchObject({ amountCents: 55_000, restriction: 'none' })
+				expect(offered!.offers).toEqual(region === 'IN'
+					? [expect.objectContaining({ amountCents: 40_000, restriction: 'region' })]
+					: [])
+				expect(offered!.reasons).toContain(APP_REASONS.formulaUsesCredit)
+				const accepted = await ask({ purpose, pppAccepted: true })
+				expect(accepted!.reasons).toContain(APP_REASONS.formulaUsesCredit)
+				expect(accepted).toMatchObject({ kind: 'priced', amountCents: amount, restriction })
+				expect(accepted!.offers).toEqual([])
+				expect(decodeDecisionRef(accepted!.decisionRef)?.creditSource).toBe(creditSource)
+			}
+		})
+
+		describe('under a policy that takes the credit off the regional price', () => {
+			const creditOffRegional = syntheticPolicy({
+				creditOffPpp: { source: 'test#creditOffPpp', value: true },
+				creditPaidMaximum: { source: 'test#creditPaidMaximum', value: 15_000 },
+			})
+			beforeEach(() => {
+				deps = makeDeps({
+					policy: vi.fn(async () => ({
+						ok: true as const,
+						value: { version: SYNTHETIC_POLICY_VERSION, policy: creditOffRegional },
+					})),
+				})
+			})
+
+			it.each([
+				['IN', 30_000],
+				['BR', 50_000],
+			] as const)('takes the alumni credit off the regional price in %s', async (region, amount) => {
+				country = region
+				buyer = signedIn(buyerFacts({
+					alumni: known('c4' as const),
+					credit: known({ paid: 10_000, source: 'valid-cc-purchase' }),
+				}))
+				for (const purpose of ['display', 'checkout'] as const) {
+					const offered = await ask({ purpose })
+					expect(offered).toMatchObject({ amountCents: 55_000, restriction: 'none' })
+					expect(offered!.offers).toEqual([
+						expect.objectContaining({ amountCents: amount, restriction: 'region' }),
+					])
+					const accepted = await ask({ purpose, pppAccepted: true })
+					expect(accepted).toMatchObject({ kind: 'priced', amountCents: amount, restriction: 'region' })
+					expect(decodeDecisionRef(accepted!.decisionRef)?.creditSource).toBe('valid-cc-purchase')
+				}
+			})
+
+			it('credits any paid amount up to the maximum, and holds one above it', async () => {
+				buyer = signedIn(buyerFacts({
+					credit: known({ paid: 11_900, source: 'regional-cc-purchase' }),
+				}))
+				const decision = await ask({ purpose: 'checkout' })
+				expect(decision).toMatchObject({ kind: 'priced', amountCents: 68_100 })
+				expect(decodeDecisionRef(decision!.decisionRef)?.creditSource).toBe('regional-cc-purchase')
+				buyer = signedIn(buyerFacts({
+					credit: known({ paid: 15_001, source: 'regional-cc-purchase' }),
+				}))
+				await expect(ask({ purpose: 'checkout' })).resolves.toMatchObject({ kind: 'held' })
+			})
+
+			it('charges a regional buyer the regional price while the credit is unresolved', async () => {
+				country = 'IN'
+				buyer = signedIn(buyerFacts({ credit: { gap: 'PaymentAmbiguous' } }))
+				const display = await ask({ pppAccepted: true })
+				expect(display).toMatchObject({ kind: 'bounded', amountCents: 40_000, restriction: 'region' })
+				expect(display!.reasons).toContain(APP_REASONS.pppCreditBound)
+				const checkout = await ask({ purpose: 'checkout', pppAccepted: true })
+				expect(checkout).toMatchObject({ kind: 'priced', amountCents: 40_000, restriction: 'region' })
+				expect(checkout!.reasons).toContain(APP_REASONS.pppCreditBound)
+				expect(decodeDecisionRef(checkout!.decisionRef)?.creditSource).toBeNull()
 			})
 		})
 
@@ -383,6 +480,7 @@ describe('createC5AuthoritativePrice', () => {
 			const decision = await ask({ quantity: 5, pppAccepted: true })
 			expect(decision).toMatchObject({ kind: 'priced', restriction: 'none' })
 			expect(decision!.offers).toEqual([])
+			expect(decision!.reasons).not.toContain(APP_REASONS.formulaUsesCredit)
 		})
 	})
 })

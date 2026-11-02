@@ -13,7 +13,15 @@ import type { AuthoritativePriceRequest } from '@coursebuilder/core/schemas'
 
 import { frontDeskData } from './front-desk-client'
 export { frontDeskData } from './front-desk-client'
-import { createC5AuthoritativePrice, type BuyerRead } from './hook'
+import {
+	createC5AuthoritativePrice,
+	type BuyerRead,
+	type C5PricingDeps,
+} from './hook'
+import {
+	PPP_CREDIT_BOUND_EVENT,
+	pppCreditBoundCharge,
+} from './ppp-credit-bound'
 import { holdsRestrictedPurchase } from './restricted-holder'
 import { signedGiftFact } from './gift-server'
 import { c5PricingClosed } from './switch-server'
@@ -69,17 +77,7 @@ async function readBuyer(input: {
 		// are someone else's.
 		if (!facts || facts.buyer.userId !== input.userId)
 			return { kind: 'unavailable', reason: 'identity-mismatch' }
-		const [[valid], [validProduct], restricted] = await Promise.all([
-			db
-				.select({ id: purchases.id })
-				.from(purchases)
-				.where(
-					and(
-						eq(purchases.userId, input.userId),
-						eq(purchases.status, 'Valid'),
-					),
-				)
-				.limit(1),
+		const [[validProduct], restricted] = await Promise.all([
 			db
 				.select({ id: purchases.id })
 				.from(purchases)
@@ -95,7 +93,6 @@ async function readBuyer(input: {
 			kind: 'buyer',
 			email: user.email,
 			facts,
-			hasValidPurchase: Boolean(valid),
 			holdsRestrictedPurchase: restricted,
 			holdsValidProductPurchase: Boolean(validProduct),
 		}
@@ -130,7 +127,11 @@ function buyerFor(input: {
 	return read
 }
 
-const decide = createC5AuthoritativePrice({
+/**
+ * The hook's live dependencies. The learner agent's `next_offer` prices with
+ * these same deps, so an offer and checkout never disagree.
+ */
+export const c5PricingDeps: C5PricingDeps = {
 	code: signedGiftFact,
 	policy: async (productId) =>
 		frontDeskData()?.policy(productId) ?? {
@@ -151,7 +152,9 @@ const decide = createC5AuthoritativePrice({
 	disabled: c5PricingClosed,
 	overrideDisabled: c5PricingDisabled,
 	openingWindow: c5OpeningWindow,
-})
+}
+
+const decide = createC5AuthoritativePrice(c5PricingDeps)
 
 /** AI Hero's authoritative-price hook, as Course Builder calls it. */
 export async function c5AuthoritativePrice(request: AuthoritativePriceRequest) {
@@ -171,5 +174,7 @@ export async function c5AuthoritativePrice(request: AuthoritativePriceRequest) {
 			engineVersion: decision.engineVersion,
 		})
 	}
+	const boundCharge = pppCreditBoundCharge(request, decision)
+	if (boundCharge) await log.warn(PPP_CREDIT_BOUND_EVENT, boundCharge)
 	return decision
 }

@@ -5,6 +5,11 @@ import { cookies, headers } from 'next/headers'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { env } from '@/env.mjs'
 import { setSubscriberCookie } from '@/lib/convertkit'
+import { kitMirrorWritesEnabled } from '@/lib/kit-mirror-writes'
+import {
+	enrolmentOffKitEnabled,
+	requestOwnedSkillsEnrolment,
+} from '@/lib/subscriber-marketing/owned-skills-enrolment.server'
 import {
 	conversionIntentContract,
 	type ConversionSurface,
@@ -22,7 +27,10 @@ import {
 import { inngest } from '@/inngest/inngest.server'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
-import { reconcileAiHeroEmailOptInWithKit } from '@/lib/subscriber-marketing/ai-hero-email-opt-in.server'
+import {
+	reconcileAiHeroEmailOptInWithKit,
+	routeReturningUnsubscriberWithKit,
+} from '@/lib/subscriber-marketing/ai-hero-email-opt-in.server'
 import {
 	AIH_COURSE_ENTRY_EVIDENCE_FIELD,
 	deadlineTimeZoneCaptureEnabled,
@@ -65,6 +73,39 @@ export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 		return { success: false, reason: 'not-subscribed' as const }
 	}
 
+	// The owned branch runs before every Kit consent read, subscribe and cookie
+	// refresh. Cookie-only readers keep the existing DOI path below.
+	if (enrolmentOffKitEnabled() && (await isSignedInAs(identity))) {
+		try {
+			const [cookieStore, headerStore] = await Promise.all([
+				cookies(),
+				headers(),
+			])
+			const contract = conversionIntentContract({
+				intent: { kind: 'skills-course' },
+				surface,
+			})
+			const result = await requestOwnedSkillsEnrolment({
+				email: identity.email,
+				name: identity.name,
+				source: contract.fields.source!,
+				page: headerStore.get('referer') ?? 'https://www.aihero.dev/skills',
+				optInAttribution: parseOptInAttributionCookie(
+					cookieStore.get('ft_attr')?.value,
+				),
+				deadlineTimeZone: deferredDeadlineTimeZone(headerStore),
+			})
+			if (result.success) revalidatePath('/skills')
+			return result
+		} catch (error) {
+			await log.error('skills.owned-enrolment.failed', {
+				formId: SKILLS_FORM_ID,
+				error: error instanceof Error ? error.name : 'unknown',
+			})
+			return { success: false, reason: 'request-failed' as const }
+		}
+	}
+
 	// drovr double opt-in (DROVR_DOI_FORMS): a signed-in reader proved the
 	// address by logging in, so they count as confirmed and take today's
 	// path. A cookie alone proves nothing, so that reader confirms by email.
@@ -103,6 +144,40 @@ export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 		}
 	}
 
+	// A returning unsubscriber confirms through drovr, never straight to Kit.
+	let mayRemoveUnsubscribeTag = true
+	try {
+		const [cookieStore, headerStore] = await Promise.all([cookies(), headers()])
+		const returning = await routeReturningUnsubscriberWithKit({
+			email: identity.email,
+			name: identity.name,
+			kitFormId: SKILLS_FORM_ID,
+			page: headerStore.get('referer') ?? 'https://www.aihero.dev/skills',
+			optInAttribution: parseOptInAttributionCookie(
+				cookieStore.get('ft_attr')?.value,
+			),
+			entry: 'tag-me',
+		})
+		if (returning.status === 'doi-requested') {
+			return {
+				success: false as const,
+				reason: 'confirmation-required' as const,
+				confirmationUrl: `/confirm?email=${encodeURIComponent(identity.email)}`,
+			}
+		}
+		if (returning.status === 'blocked') {
+			return { success: false, reason: 'request-failed' as const }
+		}
+		// Kit unreadable: carry on with the sign-up, but never untag.
+		mayRemoveUnsubscribeTag = returning.status !== 'lookup-failed'
+	} catch (error) {
+		await log.error('skills.tagme.doi.failed', {
+			formId: SKILLS_FORM_ID,
+			error: error instanceof Error ? error.name : 'unknown',
+		})
+		return { success: false, reason: 'request-failed' as const }
+	}
+
 	try {
 		const contract = conversionIntentContract({
 			intent: { kind: 'skills-course' },
@@ -139,6 +214,7 @@ export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 		const optIn = await reconcileAiHeroEmailOptInWithKit({
 			email: subscribed.email_address!,
 			subscriberState: subscribed.state,
+			mayRemoveUnsubscribeTag,
 		})
 		if (optIn.status === 'confirmation-required') {
 			await reportVerifiedUnconfirmed({
@@ -163,11 +239,7 @@ export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 				outcome: 'not-issued',
 			})
 		}
-		await sendSkillsNewsletterPathEntry(
-			subscribed,
-			source,
-			courseEntryEvidence,
-		)
+		await sendSkillsNewsletterPathEntry(subscribed, source, courseEntryEvidence)
 
 		// From the PARSED record, not the cookie: on the session path there may be
 		// no cookie record at all, and this is the id we actually enrolled.
@@ -192,6 +264,16 @@ export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 	}
 }
 
+function deferredDeadlineTimeZone(headerStore: Headers) {
+	const result = deadlineTimeZoneEvidenceFromHeader({
+		headerValue: headerStore.get('x-vercel-ip-timezone'),
+		capturedAt: new Date().toISOString(),
+	})
+	return deadlineTimeZoneCaptureEnabled(process.env) && result.ok
+		? result.value
+		: undefined
+}
+
 async function captureAndStashCourseEntryEvidence(input: unknown) {
 	const subscriber = SubscriberSchema.parse(input)
 	const capturedAt = new Date().toISOString()
@@ -204,11 +286,11 @@ async function captureAndStashCourseEntryEvidence(input: unknown) {
 		deadlineTimeZoneCaptureEnabled(process.env) && deadlineTimeZoneResult.ok
 			? deadlineTimeZoneResult.value
 			: undefined
-	if (deadlineTimeZone) {
+	if (deadlineTimeZone && kitMirrorWritesEnabled()) {
 		try {
-			const { setConvertkitSubscriberFields } =
-				await import('@coursebuilder/core/providers/convertkit')
-			await setConvertkitSubscriberFields({
+			const { setKitSubscriberFields } =
+				await import('@/coursebuilder/email-list-provider')
+			await setKitSubscriberFields({
 				subscriber: {
 					id: subscriber.id,
 					fields: subscriber.fields,

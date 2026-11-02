@@ -1,11 +1,10 @@
-import { unstable_cache } from 'next/cache'
 import { cookies } from 'next/headers'
-import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { db } from '@/db'
 import { resourceProgress, users } from '@/db/schema'
 import { getServerAuthSession } from '@/server/auth'
 import { and, eq, isNotNull } from 'drizzle-orm'
 
+import { readKitSubscriberIdentity } from './kit-subscriber-directory'
 import { getPurchasedResources } from './library-query'
 import { ownedVideoPlayback } from './video-facts'
 import { getCachedVideoGraph } from './video-facts-query'
@@ -15,23 +14,10 @@ import {
 } from './video-viewer-status'
 
 /**
- * The email Kit has for a subscriber id. Cached: a returning email-course
- * learner should not cost a Kit call per page view.
- */
-const getKitSubscriberEmail = unstable_cache(
-	async (subscriberId: string) => {
-		const subscriber = await emailListProvider.getSubscriber(subscriberId)
-		return subscriber?.email_address ?? null
-	},
-	['kit-subscriber-email'],
-	{ revalidate: 60 * 60 * 24 },
-)
-
-/**
  * Who is looking. A signed-in session wins. Otherwise the email-course
  * `ck_subscriber` cookie — but only through its Kit subscriber id. The cookie
- * is client-settable, so its email is never trusted: Kit says which email that
- * id belongs to. Impersonating a learner then takes their Kit id, which is not
+ * is client-settable, so its email is never trusted: the contact directory
+ * says which email that id belongs to. Impersonating a learner then takes their Kit id, which is not
  * guessable from their email the way their email is.
  */
 async function resolveViewer(): Promise<{
@@ -55,7 +41,9 @@ async function resolveViewer(): Promise<{
 	}
 	if (!subscriberId) return null
 
-	const email = await getKitSubscriberEmail(subscriberId).catch(() => null)
+	const email = (
+		await readKitSubscriberIdentity(subscriberId).catch(() => null)
+	)?.email_address
 	if (!email) return null
 
 	const user = await db.query.users.findFirst({

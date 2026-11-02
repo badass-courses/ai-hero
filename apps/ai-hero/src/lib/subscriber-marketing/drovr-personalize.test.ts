@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { verifyValuePathToken } from './path-token'
 import {
+	drovrPersonalizeAnswerLogFields,
+	logDrovrPersonalizeAnswer,
 	personalizeDrovrIntent,
+	type DrovrPersonalizeAnswer,
 	type DrovrPersonalizeRepository,
 	type DrovrPersonalizeRequest,
 } from './drovr-personalize'
@@ -684,4 +687,68 @@ describe('shadow newsletter personalization requires positive old-sequence exit 
 			})
 		},
 	)
+})
+
+describe('drovr personalization: the answered log line', () => {
+	const privateValues = (answer: DrovrPersonalizeAnswer) => [
+		answer.email,
+		contact.email!,
+		contact.name!,
+		// The signed answer links; the other variables are catalog ids.
+		...Object.values(answer.variables).filter((value) => value.includes('http')),
+		...Object.keys(answer.variables),
+	]
+	it('logs journey, email key, contact id, decision, reasons and flags', async () => {
+		const f = fixture()
+		f.setContact({ ...contact, isProvisional: true })
+		const held = { journeyId: 'shadow-newsletter', emailKey: SHADOW_NEWSLETTER_KIT_SEQUENCES[0].messageId }
+		const answer = (await f.answer(held))!
+		const info = vi.fn()
+		logDrovrPersonalizeAnswer(info, { ...request, ...held }, answer)
+		expect(info).toHaveBeenCalledTimes(1)
+		expect(info).toHaveBeenCalledWith(
+			'drovr.personalize.answered',
+			{
+				journeyId: 'shadow-newsletter',
+				emailKey: held.emailKey,
+				contactId: 'contact-1',
+				contactFound: true,
+				sendable: false,
+				reasons: ['old-newsletter-exit-unconfirmed'],
+				flags: ['contact-provisional'],
+			},
+		)
+	})
+	it('never logs the email, the name or a personalized variable', async () => {
+		const answer = (await fixture().answer())!
+		expect(answer.sendable).toBe(true)
+		expect(Object.values(answer.variables).join()).toContain('pt=')
+		const fields = drovrPersonalizeAnswerLogFields(request, answer)
+		expect(Object.keys(fields).sort()).toEqual(
+			['contactFound', 'contactId', 'emailKey', 'flags', 'journeyId', 'reasons', 'sendable'],
+		)
+		const logged = JSON.stringify(fields).toLowerCase()
+		for (const value of privateValues(answer))
+			expect(logged).not.toContain(value.toLowerCase())
+		expect(logged).not.toContain('@')
+		expect(logged).not.toContain('pt=')
+	})
+	it('logs an unknown contact as not found and not sendable', () => {
+		expect(drovrPersonalizeAnswerLogFields(request, undefined)).toMatchObject({
+			contactFound: false,
+			sendable: false,
+			reasons: [],
+			flags: [],
+		})
+	})
+	it('never fails the call when the logger throws or rejects', async () => {
+		const answer = (await fixture().answer())!
+		expect(() =>
+			logDrovrPersonalizeAnswer(() => { throw new Error('sink down') }, request, answer),
+		).not.toThrow()
+		expect(() =>
+			logDrovrPersonalizeAnswer(() => Promise.reject(new Error('sink down')), request, answer),
+		).not.toThrow()
+		await new Promise((resolve) => setTimeout(resolve, 0))
+	})
 })

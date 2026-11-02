@@ -4,6 +4,8 @@ import { courseSyncSourceFields, mergeCourseSyncResourceFields } from './resourc
 import {
 	managedChildContractFor,
 	managedSectionKind,
+	managedResourceStateAllowed,
+	preservesWorkshopReleaseState,
 	type CourseSyncBinding,
 	type ResourcePlanItem,
 	type SyncPlan,
@@ -118,6 +120,7 @@ export function summarizeCourseSyncPlanChanges(
 }
 
 export function resolveCourseSyncRollbackFields(input: {
+	binding?: CourseSyncBinding
 	action: ResourcePlanItem['action']
 	sourceKind: ResourcePlanItem['sourceKind']
 	currentFields: Record<string, unknown>
@@ -139,9 +142,10 @@ export function resolveCourseSyncRollbackFields(input: {
 		return mergeCourseSyncResourceFields(
 			{
 				sourceKind: input.sourceKind,
-				fields: courseSyncSourceFields(input.sourceKind, input.previousVersionFields),
+				fields: courseSyncSourceFields(input.sourceKind, input.previousVersionFields, input.binding),
 			},
 			input.currentFields,
+			input.binding,
 		)
 	}
 	const courseSync = input.currentFields.courseSync as
@@ -149,7 +153,9 @@ export function resolveCourseSyncRollbackFields(input: {
 		| undefined
 	return {
 		...input.currentFields,
-		state: input.sourceKind === 'video' ? 'deleted' : 'draft',
+		state: input.sourceKind === 'workshop' && preservesWorkshopReleaseState(input.binding)
+			? input.currentFields.state
+			: input.sourceKind === 'video' ? 'deleted' : 'draft',
 		visibility: 'unlisted',
 		courseSync: {
 			...courseSync,
@@ -437,7 +443,7 @@ export function assertManagedChildRelations(
 		const sync = fields?.courseSync as Record<string, unknown> | undefined
 		if (
 			child.resource?.type !== managedSectionKind(binding) ||
-			fields?.state !== expected.state ||
+			!managedResourceStateAllowed(binding, managedSectionKind(binding), fields?.state) ||
 			fields?.visibility !== expected.visibility ||
 			sync?.bindingId !== binding.bindingId
 		) {

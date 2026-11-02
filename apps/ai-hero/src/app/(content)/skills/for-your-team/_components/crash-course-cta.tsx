@@ -2,6 +2,8 @@ import * as React from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { TYPE } from '@/components/landing/type'
+import { C5SaleCta } from '@/components/c5-sale-cta'
+import { C5SaleSwitch } from '@/components/c5-sale-switch'
 import { getCachedMinimalWorkshop } from '@/lib/workshops-query'
 import { ArrowRight } from 'lucide-react'
 
@@ -85,7 +87,17 @@ export async function CrashCourseArt() {
 	)
 }
 
-export async function CrashCourseCta({
+export function CrashCourseCta(
+	props: React.ComponentProps<typeof CrashCourseCtaFallback>,
+) {
+	return (
+		<C5SaleSwitch fallback={<CrashCourseCtaFallback {...props} />}>
+			<C5SaleCta forTeams />
+		</C5SaleSwitch>
+	)
+}
+
+async function CrashCourseCtaFallback({
 	confirmInPlace = false,
 	waitlistBody,
 	buyHeading,

@@ -264,7 +264,7 @@ export function buildCourseSyncOpenApiDocument(baseUrl: string) {
 							],
 							properties: {
 								bindingId: { type: 'string', minLength: 1 },
-								contractVersion: { enum: [5, 6, 7] },
+								contractVersion: { enum: [5, 6, 7, 8] },
 								status: { enum: ['active', 'suspended', 'revoked'] },
 								sourceCourseId: { type: 'string', minLength: 1 },
 								applyPolicy: { enum: ['bounded-auto', 'operator'] },
@@ -299,7 +299,10 @@ export function buildCourseSyncOpenApiDocument(baseUrl: string) {
 												workshop: {
 													type: 'object',
 													properties: {
-														state: { enum: ['draft', 'published'] },
+														state: { oneOf: [
+															{ enum: ['draft', 'published'] },
+															{ type: 'array', prefixItems: [{ const: 'draft' }, { const: 'published' }], minItems: 2, maxItems: 2 },
+														] },
 														visibility: { const: 'unlisted' },
 													},
 												},

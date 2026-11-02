@@ -1,5 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
 import {
+	putIntegrationRefreshToken,
+	type IntegrationTokenPutResult,
+} from '@/lib/integration-token-store'
+import {
 	COURSE_JSON_SCHEMA_VERSIONS,
 	courseJsonVideos,
 	decodeCourseJsonDocument,
@@ -95,6 +99,8 @@ export type DropboxTokenStoreResult = {
 	ok: boolean
 	missingConfig: string[]
 	statuses: number[]
+	// Present only when the optional DB store failed; absent with no key.
+	dbStorage?: Extract<IntegrationTokenPutResult, { ok: false }>
 }
 
 export type DropboxRedeployResult = {
@@ -596,6 +602,9 @@ export async function storeDropboxRefreshToken({
 	environment?: Environment
 	fetchImpl?: Fetch
 }): Promise<DropboxTokenStoreResult> {
+	// The optional DB store is best effort; legacy Vercel storage remains authoritative here.
+	const dbStorage = await putIntegrationRefreshToken('dropbox', refreshToken)
+	const dbFailure = dbStorage.ok ? {} : { dbStorage }
 	const vercelToken = environment.VERCEL_API_TOKEN
 	const projectId = environment.VERCEL_AI_HERO_PROJECT_ID
 	const teamId = environment.VERCEL_TEAM_ID
@@ -605,7 +614,7 @@ export async function storeDropboxRefreshToken({
 	].filter(Boolean) as string[]
 
 	if (missingConfig.length > 0 || !vercelToken || !projectId) {
-		return { ok: false, missingConfig, statuses: [] }
+		return { ok: false, missingConfig, statuses: [], ...dbFailure }
 	}
 
 	const query = new URLSearchParams({ upsert: 'true' })
@@ -630,7 +639,12 @@ export async function storeDropboxRefreshToken({
 		statuses.push(response.status)
 	}
 
-	return { ok: statuses.every((status) => status >= 200 && status < 300), missingConfig: [], statuses }
+	return {
+		ok: statuses.every((status) => status >= 200 && status < 300),
+		missingConfig: [],
+		statuses,
+		...dbFailure,
+	}
 }
 
 export async function redeployAfterDropboxAuthorization(

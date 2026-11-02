@@ -1,4 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
+
+const tokenStoreMocks = vi.hoisted(() => ({
+	env: { INTEGRATION_TOKEN_KEY: undefined as string | undefined },
+	insert: vi.fn(() => { throw new Error('synthetic DB failure') }),
+	delete: vi.fn(() => { throw new Error('synthetic cleanup failure') }),
+}))
+vi.mock('@/env.mjs', () => ({ env: tokenStoreMocks.env }))
+vi.mock('@/db', () => ({ db: { insert: tokenStoreMocks.insert, delete: tokenStoreMocks.delete } }))
+vi.mock('@/server/logger', async () => ({
+	log: { warn: vi.fn() },
+	serializeError: (await import('@/server/logger-utils')).serializeError,
+}))
 import {
 	DEFAULT_DROPBOX_OAUTH_REDIRECT_URI,
 	buildDropboxAuthorizationUrl,
@@ -454,7 +466,10 @@ describe('Dropbox course sync OAuth', () => {
 		).rejects.toThrow('exceeds the maximum allowed size')
 	})
 
-	it('stores the callback-issued refresh token as encrypted Vercel configuration', async () => {
+	it.each([undefined, Buffer.alloc(32, 7).toString('base64')])('keeps Vercel write-back identical with no key or a failing DB (%s)', async (key) => {
+		tokenStoreMocks.env.INTEGRATION_TOKEN_KEY = key
+		tokenStoreMocks.insert.mockClear()
+		tokenStoreMocks.delete.mockClear()
 		const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ id: 'env_1' }))
 		const result = await storeDropboxRefreshToken({
 			refreshToken: 'callback-refresh-token',
@@ -466,14 +481,26 @@ describe('Dropbox course sync OAuth', () => {
 			fetchImpl,
 		})
 
-		expect(result).toEqual({ ok: true, missingConfig: [], statuses: [200, 200, 200] })
+		// No key keeps the exact old result; a failed DB adds only the stale-row signal.
+		expect(result).toStrictEqual({
+			ok: true,
+			missingConfig: [],
+			statuses: [200, 200, 200],
+			...(key ? { dbStorage: { ok: false, staleRow: true } } : {}),
+		})
 		expect(fetchImpl).toHaveBeenCalledTimes(3)
-		for (const [, options] of fetchImpl.mock.calls) {
-			expect(JSON.parse(options.body)).toMatchObject({
+		for (const [index, [url, options]] of fetchImpl.mock.calls.entries()) {
+			expect(url).toBe('https://api.vercel.com/v10/projects/prj_aihero/env?upsert=true&teamId=team_aihero')
+			expect(JSON.parse(options.body)).toEqual({
 				key: 'DROPBOX_REFRESH_TOKEN',
+				value: 'callback-refresh-token',
+				target: [['production', 'preview', 'development'][index]],
 				type: 'encrypted',
 			})
 		}
+		expect(tokenStoreMocks.insert).toHaveBeenCalledTimes(key ? 1 : 0)
+		expect(tokenStoreMocks.delete).toHaveBeenCalledTimes(key ? 1 : 0)
+		tokenStoreMocks.env.INTEGRATION_TOKEN_KEY = undefined
 	})
 
 	it('triggers a production deployment after storing a refresh token', async () => {

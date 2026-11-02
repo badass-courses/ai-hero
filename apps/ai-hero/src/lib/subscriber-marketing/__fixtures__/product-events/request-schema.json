@@ -1,0 +1,182 @@
+{
+  "type": "object",
+  "properties": {
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "contactId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The drovr contact the product already linked through sign-in or a form (resolve_contacts maps an email to it). Never an email, an IP or a cookie."
+          },
+          "fact": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": ["ArticleRead"]
+                  },
+                  "articleId": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9._/-]{1,200}$",
+                    "description": "The product's own id for an article, video, lesson, page or checkout session: letters, digits, dot, underscore, slash and hyphen, at most 200. Never an email, a name or a URL with a query."
+                  },
+                  "at": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "topic": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+                    "description": "The tenant's topic slug for the item, e.g. claude-code. A policy weights it as the signal's role."
+                  }
+                },
+                "required": ["_tag", "articleId", "at", "topic"],
+                "additionalProperties": true,
+                "description": "A reader passed the tenant's read line for an article (75% of it, or a video-only post finished). Scroll depth qualifies the read; it is not a fact of its own."
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": ["VideoProgress"]
+                  },
+                  "at": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "percent": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "videoId": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9._/-]{1,200}$",
+                    "description": "The product's own id for an article, video, lesson, page or checkout session: letters, digits, dot, underscore, slash and hyphen, at most 200. Never an email, a name or a URL with a query."
+                  }
+                },
+                "required": ["_tag", "at", "percent", "videoId"],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": ["LessonCompleted"]
+                  },
+                  "at": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "lessonId": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9._/-]{1,200}$",
+                    "description": "The product's own id for an article, video, lesson, page or checkout session: letters, digits, dot, underscore, slash and hyphen, at most 200. Never an email, a name or a URL with a query."
+                  },
+                  "topic": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+                    "description": "The tenant's topic slug for the item, e.g. claude-code. A policy weights it as the signal's role."
+                  }
+                },
+                "required": ["_tag", "at", "lessonId", "topic"],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": ["PageViewed"]
+                  },
+                  "at": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "page": {
+                    "type": "string",
+                    "enum": ["pricing", "team-pricing", "sales-page", "other"]
+                  },
+                  "pageId": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9._/-]{1,200}$",
+                    "description": "The product's own id for an article, video, lesson, page or checkout session: letters, digits, dot, underscore, slash and hyphen, at most 200. Never an email, a name or a URL with a query."
+                  }
+                },
+                "required": ["_tag", "at", "page", "pageId"],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": ["CheckoutStep"]
+                  },
+                  "at": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "sessionId": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9._/-]{1,200}$",
+                    "description": "The product's own id for an article, video, lesson, page or checkout session: letters, digits, dot, underscore, slash and hyphen, at most 200. Never an email, a name or a URL with a query."
+                  },
+                  "step": {
+                    "type": "string",
+                    "enum": ["started", "payment"]
+                  }
+                },
+                "required": ["_tag", "at", "sessionId", "step"],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": ["TeamIntent"]
+                  },
+                  "at": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "intent": {
+                    "type": "string",
+                    "enum": ["seats", "invoice", "team-page"]
+                  },
+                  "sourceId": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9._/-]{1,200}$",
+                    "description": "The product's own id for an article, video, lesson, page or checkout session: letters, digits, dot, underscore, slash and hyphen, at most 200. Never an email, a name or a URL with a query."
+                  }
+                },
+                "required": ["_tag", "at", "intent", "sourceId"],
+                "additionalProperties": true
+              }
+            ]
+          }
+        },
+        "required": ["contactId", "fact"],
+        "additionalProperties": true
+      },
+      "minItems": 1,
+      "maxItems": 100
+    }
+  },
+  "required": ["events"],
+  "additionalProperties": true
+}

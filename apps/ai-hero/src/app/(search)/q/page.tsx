@@ -1,4 +1,6 @@
 import LayoutClient from '@/components/layout-client'
+import { C5SaleCta } from '@/components/c5-sale-cta'
+import { C5SaleSwitch } from '@/components/c5-sale-switch'
 
 import Search from './_components/search'
 
@@ -12,6 +14,9 @@ export default async function SearchPage() {
 				<h1 className="mb-4 text-xl sm:text-3xl">Search</h1>
 				<div className="mx-auto w-full max-w-4xl border-t">
 					<Search />
+					<C5SaleSwitch>
+						<C5SaleCta />
+					</C5SaleSwitch>
 				</div>
 			</main>
 		</LayoutClient>

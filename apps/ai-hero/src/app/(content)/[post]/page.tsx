@@ -7,7 +7,8 @@ import { CourseCta } from '@/app/(content)/_components/course-cta'
 import { metaDescription } from '@/lib/meta-description'
 import { ContentReadTracker } from '@/components/content-read-tracker'
 import { BADGE_OUTLINE, TYPE } from '@/components/landing/type'
-import type { CalloutIntent } from '@/components/mdx/callout'
+import { Callout, type CalloutIntent } from '@/components/mdx/callout'
+import { C5SaleSwitch } from '@/components/c5-sale-switch'
 import { Contributor } from '@/components/contributor'
 import { MdxErrorBoundary } from '@/components/mdx/mdx-error-boundary'
 import { PROSE_MEASURE } from '@/components/mdx/prose'
@@ -20,7 +21,8 @@ import { getCachedAllLists, getCachedListForPost } from '@/lib/lists-query'
 import { CldImage } from '@/components/cld-image'
 import { type Post } from '@/lib/posts'
 import { skillIconUrl } from '@/lib/skill-icon'
-import { getAllPosts, getCachedPostOrList } from '@/lib/posts-query'
+import { getAllPosts } from '@/lib/posts-query'
+import { getRoutePost } from './get-route-post'
 import { resolvePostCta } from '@/lib/post-cta'
 import { PostStructuredData } from '@/lib/structured-data'
 import { getLatestCohort, getUpcomingCohort } from '@/lib/upcoming-cohort-query'
@@ -91,7 +93,7 @@ export default async function PostPage(props: {
 }) {
 	const params = await props.params
 
-	const post = await getCachedPostOrList(params.post)
+	const post = await getRoutePost(params.post)
 
 	if (!post) {
 		notFound()
@@ -533,7 +535,16 @@ async function PostBody({
 
 	const { content } = await compileMDX(
 		post.fields.body,
-		{},
+		{
+			Callout: (props: React.ComponentProps<typeof Callout>) =>
+				props.intent === 'course' ? (
+					// The end card owns the C5 ask. Keep the original inline
+					// course callout only outside the campaign, never stack two.
+					<C5SaleSwitch fallback={<Callout {...props} />}>{null}</C5SaleSwitch>
+				) : (
+					<Callout {...props} />
+				),
+		},
 		{},
 		{
 			lessonId: post.id,
@@ -890,7 +901,7 @@ export async function generateMetadata(
 ): Promise<Metadata> {
 	const params = await props.params
 
-	const resource = await getCachedPostOrList(params.post)
+	const resource = await getRoutePost(params.post)
 
 	if (!resource) {
 		return parent as Metadata

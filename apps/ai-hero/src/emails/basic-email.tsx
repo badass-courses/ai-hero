@@ -20,12 +20,17 @@ export type BasicEmailProps = {
 
 /**
  * Renders the standard markdown email wrapper and compliance footer.
+ *
+ * Defaults to transactional with no unsubscribe link. Transactional mail goes
+ * out on Postmark's `outbound` stream, where an unsubscribe suppresses the
+ * address for every send on that stream, sign-in links included. Broadcast
+ * callers pass `messageType: 'broadcast'` and their own `unsubscribeLinkUrl`.
  */
 export const BasicEmail = ({
 	body = `Hi Joel,\n\nJust catching up on your progress in the Full Stack Foundations module. Good going with the asset links management in your web applications. This lesson is fundamental for enhancing the user experience on nested routes, so it's great to see you moving along.\n\nAs a snapshot:\n- Section: Styling\n- Completed: 'Manage Asset Links in a Remix Application'\n- Module Progress: 7% \n\nRemember, every small technique you master now is adding up to a significant toolkit in full-stack web development.\n\nFor a comprehensive review or for tackling any tricky bits, all past lessons and exercises remain accessible for you.\n\nYour consistency is crucial. Every step forward counts.\n\nKeep going,\nKody the Koala 🐨`,
 	preview = ``,
-	messageType = 'broadcast',
-	unsubscribeLinkUrl = '{{{ pm:unsubscribe }}}',
+	messageType = 'transactional',
+	unsubscribeLinkUrl,
 	preferencesLinkUrl,
 }: BasicEmailProps) => {
 	return (
@@ -39,9 +44,11 @@ export const BasicEmail = ({
 				<Section style={footer}>
 					{messageType === 'broadcast' ? (
 						<>
-							<Row>
-								<Link href={unsubscribeLinkUrl}>unsubscribe</Link>
-							</Row>
+							{unsubscribeLinkUrl ? (
+								<Row>
+									<Link href={unsubscribeLinkUrl}>unsubscribe</Link>
+								</Row>
+							) : null}
 							{preferencesLinkUrl ? (
 								<Row>
 									<Link href={preferencesLinkUrl}>manage preferences</Link>

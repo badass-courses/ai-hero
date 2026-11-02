@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { ContactProfileSnapshot } from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
 
-import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
+import {
+	contactSyncStarterRequests,
+	contactSyncRetryRequest,
+} from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
 import {
 	contactProfileContentHash,
 	runContactProfileSync,
@@ -141,40 +144,66 @@ describe('drovr contact profile sync function', () => {
 		expect(h.deliver).not.toHaveBeenCalled()
 	})
 
-	it('refused as event-not-live: schedules the same events for after the straggler pass, and answers deferred', async () => {
-		// Contract §4: nothing was recorded and the key is unconsumed, so the
-		// same event is retried unchanged; §3: it does not hold the watermark.
-		const profileEvent = {
-			tenantId: 'org-aihero' as const,
-			contactId: 'contact-1',
-			journeyId: 'contact-directory' as const,
-			type: 'contact.profile.updated' as const,
-			occurredAt: '2026-09-26T16:00:00.000Z',
-			idempotencyKey: 'profile:contact-1:4',
-		}
-		const deferred: DeferredDrovrEvent[] = [
-			{ event: profileEvent, reason: 'event-not-live' },
-		]
-		const h = harness({ delivered: { accepted: 0, rejected: 0, deferred } })
-		await expect(h.run()).resolves.toEqual({
-			status: 'deferred',
-			reason: 'event-not-live',
-			profileVersion: 4,
-			deferred: 1,
-		})
-		expect(h.sent).toEqual([
-			{
-				id: 'defer-refused',
-				// Nothing was rejected, so the retry may vouch for version 4.
-				payload: contactSyncRetryRequest(deferred, 1, now, {
-					contactId: 'contact-1',
-					profileVersion: 4,
-				}),
-			},
-		])
-		// That actor exists, it is on v1: never a birth.
-		expect(h.birth).not.toHaveBeenCalled()
-	})
+	it.each([false, true])(
+		'refused as event-not-live preserves scope and wire shape (ownership enabled: %s)',
+		async (owned) => {
+			// Contract §4: nothing was recorded and the key is unconsumed, so the
+			// same event is retried unchanged; §3: it does not hold the watermark.
+			const profileEvent = {
+				tenantId: 'org-aihero' as const,
+				contactId: 'contact-1',
+				journeyId: 'contact-directory' as const,
+				type: 'contact.profile.updated' as const,
+				occurredAt: '2026-09-26T16:00:00.000Z',
+				idempotencyKey: 'profile:contact-1:4',
+			}
+			const deferred: DeferredDrovrEvent[] = [
+				{ event: profileEvent, reason: 'event-not-live' },
+			]
+			const h = harness({
+				delivered: { accepted: 0, rejected: 0, deferred },
+				env: {
+					AIH_DROVR_PROFILE_SYNC: 'true',
+					...(owned ? { AIH_DROVR_STRAGGLER_OWNER: 'true' } : {}),
+				},
+			})
+			await expect(h.run()).resolves.toEqual({
+				status: 'deferred',
+				reason: 'event-not-live',
+				profileVersion: 4,
+				deferred: 1,
+			})
+			expect(h.sent).toEqual([
+				{
+					id: 'defer-refused',
+					// OFF retains the legacy object; ON emits a marked array.
+					// Nothing was rejected, so this retry may vouch for version 4.
+					payload: owned
+						? contactSyncStarterRequests(deferred, now, {
+								contactId: 'contact-1',
+								profileVersion: 4,
+							})
+						: contactSyncRetryRequest(deferred, 1, now, {
+								contactId: 'contact-1',
+								profileVersion: 4,
+							}),
+				},
+			])
+			const payload = h.sent[0]!.payload
+			expect(Array.isArray(payload)).toBe(owned)
+			const request = owned
+				? (payload as ReturnType<typeof contactSyncStarterRequests>)[0]!
+				: (payload as ReturnType<typeof contactSyncRetryRequest>)
+			expect(request.data).toEqual({
+				items: deferred,
+				attempt: 1,
+				acknowledge: { contactId: 'contact-1', profileVersion: 4 },
+				...(owned ? { stragglerOwner: { protocol: 1, startedAt: now } } : {}),
+			})
+			// That actor exists, it is on v1: never a birth.
+			expect(h.birth).not.toHaveBeenCalled()
+		},
+	)
 
 	it('refused as cold-start-unhandled: births the directory actor, then pushes again and answers sent', async () => {
 		const profileEvent = {

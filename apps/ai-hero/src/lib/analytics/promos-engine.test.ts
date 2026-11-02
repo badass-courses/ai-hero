@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
 	getRevenueByPromo: vi.fn(),
+	getLearningProgress: vi.fn(),
+	getLearningTeams: vi.fn(),
+	getLearningTeam: vi.fn(),
+	readLearningTeamMembersUncached: vi.fn(),
 	baseQuery: vi.fn(),
 	baseQueryMany: vi.fn(),
 	baseGetCatalog: vi.fn(() => [{ name: 'summary' }]),
@@ -16,13 +20,20 @@ vi.mock('@coursebuilder/analytics/engine', () => ({
 vi.mock('@/server/logger', () => ({ log: { error: mocks.errorLog } }))
 vi.mock('./providers/database', () => ({
 	getRevenueByPromo: mocks.getRevenueByPromo,
+	getLearningProgress: mocks.getLearningProgress,
+	getLearningTeams: mocks.getLearningTeams,
+	getLearningTeam: mocks.getLearningTeam,
+	readLearningTeamMembersUncached: mocks.readLearningTeamMembersUncached,
 }))
+vi.mock('@/db', () => ({}))
 vi.mock('./providers/derived', () => ({}))
 vi.mock('./providers/newsletter', () => ({}))
 vi.mock('./providers/ga4', () => ({}))
 vi.mock('./providers/survey', () => ({}))
 vi.mock('./providers/youtube', () => ({}))
 import { getCatalog, query, queryMany } from './index'
+import { LearningProductNotFoundError } from './learning-progress-query'
+import { LearningTeamNotFoundError } from './learning-teams-query'
 
 describe('local promo engine extension', () => {
 	beforeEach(() => {
@@ -98,5 +109,79 @@ describe('local promo engine extension', () => {
 		expect(JSON.stringify(result)).not.toContain(
 			'synthetic-private-internal-detail',
 		)
+	})
+
+	it('requires a productId for learning progress before reading', async () => {
+		const result = await query('learning/progress', { range: '7d' })
+		expect(result).toMatchObject({
+			ok: false,
+			error: { code: 'PRODUCT_REQUIRED' },
+		})
+		expect(mocks.getLearningProgress).not.toHaveBeenCalled()
+		expect(getCatalog().map((entry) => entry.name)).toContain(
+			'learning/progress',
+		)
+	})
+
+	it('reads learning progress through the cached provider', async () => {
+		mocks.getLearningProgress.mockResolvedValue({ asOf: 'synthetic' })
+		expect(
+			await query('learning/progress', { productId: 'synthetic' }),
+		).toMatchObject({ ok: true, data: { asOf: 'synthetic' } })
+		expect(mocks.getLearningProgress).toHaveBeenCalledWith('synthetic')
+	})
+
+	it('maps an unknown product and hides other learning errors', async () => {
+		mocks.getLearningProgress.mockRejectedValueOnce(
+			new LearningProductNotFoundError(),
+		)
+		expect(
+			await query('learning/progress', { productId: 'missing' }),
+		).toMatchObject({ ok: false, error: { code: 'PRODUCT_NOT_FOUND' } })
+		mocks.getLearningProgress.mockRejectedValueOnce(
+			new Error('synthetic-private-internal-detail'),
+		)
+		const result = await query('learning/progress', { productId: 'synthetic' })
+		expect(result).toMatchObject({ ok: false, error: { code: 'QUERY_FAILED' } })
+		expect(JSON.stringify(result)).not.toContain(
+			'synthetic-private-internal-detail',
+		)
+	})
+
+	it('reads team surfaces through their cached providers', async () => {
+		mocks.getLearningTeams.mockResolvedValue({ teams: [] })
+		mocks.getLearningTeam.mockResolvedValue({ team: { teamId: 'team-a' } })
+		expect(await query('learning/teams', {})).toMatchObject({ ok: true })
+		expect(mocks.getLearningTeams).toHaveBeenCalledWith(null)
+		expect(
+			await query('learning/teams', { productId: 'synthetic' }),
+		).toMatchObject({ ok: true })
+		expect(mocks.getLearningTeams).toHaveBeenLastCalledWith('synthetic')
+		expect(await query('learning/team', { teamId: 'team-a' })).toMatchObject({
+			ok: true,
+			data: { team: { teamId: 'team-a' } },
+		})
+		expect(await query('learning/team', {})).toMatchObject({
+			ok: false,
+			error: { code: 'TEAM_REQUIRED' },
+		})
+		mocks.getLearningTeam.mockRejectedValueOnce(new LearningTeamNotFoundError())
+		expect(await query('learning/team', { teamId: 'missing' })).toMatchObject({
+			ok: false,
+			error: { code: 'TEAM_NOT_FOUND' },
+		})
+	})
+
+	it('never serves PII member rows through the engine', async () => {
+		const single = await query('learning/team-members', { teamId: 'team-a' })
+		const many = await queryMany(['learning/team-members', 'learning/teams'], {
+			teamId: 'team-a',
+		})
+		expect(single).toMatchObject({ ok: false, error: { code: 'ROUTE_ONLY' } })
+		expect(many['learning/team-members']).toMatchObject({
+			ok: false,
+			error: { code: 'ROUTE_ONLY' },
+		})
+		expect(mocks.readLearningTeamMembersUncached).not.toHaveBeenCalled()
 	})
 })

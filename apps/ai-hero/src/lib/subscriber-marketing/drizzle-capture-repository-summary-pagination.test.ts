@@ -1,4 +1,9 @@
-import { contact, contactEvent, contactState, sideEffectIntent } from "@/db/schema";
+import {
+  contact,
+  contactEvent,
+  contactState,
+  sideEffectIntent,
+} from "@/db/schema";
 import { MySqlDialect } from "drizzle-orm/mysql-core";
 import { describe, expect, it } from "vitest";
 
@@ -45,16 +50,19 @@ const isStopEventSelection = (selection: unknown) =>
 
 describe("learner-flow summary pagination", () => {
   it("bounds the learner-id and related-row selects for every page", async () => {
-    const firstIds = Array.from({ length: LEARNER_FLOW_RECORD_PAGE_SIZE }, (_, index) => ({
-      contactId: `contact-${String(index).padStart(4, "0")}`,
-    }));
+    const firstIds = Array.from(
+      { length: LEARNER_FLOW_RECORD_PAGE_SIZE },
+      (_, index) => ({
+        contactId: `contact${String(index).padStart(4, "0")}`,
+      }),
+    );
     const secondIds = Array.from(
       { length: LEARNER_FLOW_RECORD_PAGE_SIZE },
       (_, index) => ({
-        contactId: `contact-${String(index + LEARNER_FLOW_RECORD_PAGE_SIZE).padStart(4, "0")}`,
+        contactId: `contact${String(index + LEARNER_FLOW_RECORD_PAGE_SIZE).padStart(4, "0")}`,
       }),
     );
-    const lastIds = [{ contactId: "contact-z" }];
+    const lastIds = [{ contactId: "contactz" }];
     const idPages = [firstIds, secondIds, lastIds];
     const idQueries: Array<{ condition: unknown; limit: number }> = [];
     const relatedQueries: Array<{
@@ -72,10 +80,16 @@ describe("learner-flow summary pagination", () => {
     let idPage = 0;
     let hydrationPage = 0;
     const database = {
-      selectDistinct: (selection: unknown) => ({
-        from: () => ({
-          where: () => ({
-            union: () => ({ as: () => ({ contactId: selection && {} }) }),
+      selectDistinct: () => ({
+        from: (table: unknown) => ({
+          where: (condition: unknown) => ({
+            orderBy: () => ({
+              limit: (limit: number) => {
+                if (table === contactEvent) return [];
+                idQueries.push({ condition, limit });
+                return idPages[idPage++] ?? [];
+              },
+            }),
           }),
         }),
       }),
@@ -151,7 +165,9 @@ describe("learner-flow summary pagination", () => {
       1,
     ]);
     expect(idQueries).toHaveLength(3);
-    expect(idQueries.every(({ limit }) => limit === LEARNER_FLOW_RECORD_PAGE_SIZE)).toBe(true);
+    expect(
+      idQueries.every(({ limit }) => limit === LEARNER_FLOW_RECORD_PAGE_SIZE),
+    ).toBe(true);
     const dialect = new MySqlDialect();
     const secondIdQuery = dialect.sqlToQuery(
       idQueries[1]?.condition as Parameters<MySqlDialect["sqlToQuery"]>[0],
@@ -160,8 +176,12 @@ describe("learner-flow summary pagination", () => {
       idQueries[2]?.condition as Parameters<MySqlDialect["sqlToQuery"]>[0],
     );
     expect(secondIdQuery.sql).toContain(">");
-    expect(secondIdQuery.params).toContain(firstIds[LEARNER_FLOW_RECORD_PAGE_SIZE - 1]?.contactId);
-    expect(thirdIdQuery.params).toContain(secondIds[LEARNER_FLOW_RECORD_PAGE_SIZE - 1]?.contactId);
+    expect(secondIdQuery.params).toContain(
+      firstIds[LEARNER_FLOW_RECORD_PAGE_SIZE - 1]?.contactId,
+    );
+    expect(thirdIdQuery.params).toContain(
+      secondIds[LEARNER_FLOW_RECORD_PAGE_SIZE - 1]?.contactId,
+    );
     expect(intentQueries).toHaveLength(3);
     expect(intentQueries.every(({ limit }) => limit === 5000)).toBe(true);
     // The stop-rule events (contact-stop-rule) ride the same bounded pages.
@@ -198,34 +218,41 @@ describe("learner-flow summary pagination", () => {
         "valuePathSlug",
       ]);
       const metadataFacts = Object.entries(query.selection ?? {})
-        .filter(([key]) => ![
-          "id",
-          "contactId",
-          "provider",
-          "type",
-          "status",
-          "completedAt",
-          "reviewReasons",
-          "createdAt",
-        ].includes(key))
+        .filter(
+          ([key]) =>
+            ![
+              "id",
+              "contactId",
+              "provider",
+              "type",
+              "status",
+              "completedAt",
+              "reviewReasons",
+              "createdAt",
+            ].includes(key),
+        )
         .map(([, expression]) =>
           new MySqlDialect().sqlToQuery(
             expression as Parameters<MySqlDialect["sqlToQuery"]>[0],
           ),
         );
       expect(metadataFacts).toHaveLength(17);
-      expect(metadataFacts.every(({ sql }) => sql.includes("JSON_EXTRACT"))).toBe(true);
-      expect(metadataFacts.every(({ sql }) => sql.includes("JSON_TYPE"))).toBe(true);
+      expect(
+        metadataFacts.every(({ sql }) => sql.includes("JSON_EXTRACT")),
+      ).toBe(true);
+      expect(metadataFacts.every(({ sql }) => sql.includes("JSON_TYPE"))).toBe(
+        true,
+      );
       const stringFacts = metadataFacts.filter(({ sql }) =>
         sql.includes("= 'STRING'"),
       );
       expect(stringFacts).toHaveLength(5);
-      expect(
-        stringFacts.every(({ sql }) => sql.includes("OCTET_LENGTH")),
-      ).toBe(true);
-      expect(
-        stringFacts.every(({ params }) => params.includes(500)),
-      ).toBe(true);
+      expect(stringFacts.every(({ sql }) => sql.includes("OCTET_LENGTH"))).toBe(
+        true,
+      );
+      expect(stringFacts.every(({ params }) => params.includes(500))).toBe(
+        true,
+      );
       expect(metadataFacts.flatMap(({ params }) => params)).toEqual(
         expect.arrayContaining([
           "$.valuePathSlug",
@@ -256,14 +283,18 @@ describe("learner-flow summary pagination", () => {
     ).toBe(true);
     expect(relatedQueries).toHaveLength(6);
     expect(relatedQueries.some(({ table }) => table === contact)).toBe(false);
-    for (const query of relatedQueries.filter(({ table }) => table === contactState)) {
+    for (const query of relatedQueries.filter(
+      ({ table }) => table === contactState,
+    )) {
       expect(Object.keys(query.selection ?? {}).sort()).toEqual([
         "contactId",
         "humanReview",
         "lifecycle",
       ]);
     }
-    for (const query of relatedQueries.filter(({ table }) => table === contactEvent)) {
+    for (const query of relatedQueries.filter(
+      ({ table }) => table === contactEvent,
+    )) {
       expect(Object.keys(query.selection ?? {}).sort()).toEqual([
         "contactId",
         "eventType",
@@ -281,7 +312,7 @@ describe("learner-flow summary pagination", () => {
   });
 
   it("keyset-pages projected intents inside one learner page", async () => {
-    const contactId = "intent-heavy";
+    const contactId = "intentheavy";
     const fullPage = Array.from({ length: 5000 }, (_, index) => ({
       ...intentRow(contactId),
       id: `intent-${String(index).padStart(6, "0")}`,
@@ -298,10 +329,12 @@ describe("learner-flow summary pagination", () => {
     }> = [];
     let idPage = 0;
     const database = {
-      selectDistinct: (selection: unknown) => ({
-        from: () => ({
+      selectDistinct: () => ({
+        from: (table: unknown) => ({
           where: () => ({
-            union: () => ({ as: () => ({ contactId: selection && {} }) }),
+            orderBy: () => ({
+              limit: () => (table === sideEffectIntent ? [{ contactId }] : []),
+            }),
           }),
         }),
       }),
@@ -353,7 +386,7 @@ describe("learner-flow summary pagination", () => {
   });
 
   it("reconstructs only bounded classifier metadata facts", async () => {
-    const contactId = "metadata-facts";
+    const contactId = "metadatafacts";
     const projected = {
       ...intentRow(contactId),
       completedAt: null,
@@ -379,10 +412,12 @@ describe("learner-flow summary pagination", () => {
     };
     let idPage = 0;
     const database = {
-      selectDistinct: (selection: unknown) => ({
-        from: () => ({
+      selectDistinct: () => ({
+        from: (table: unknown) => ({
           where: () => ({
-            union: () => ({ as: () => ({ contactId: selection && {} }) }),
+            orderBy: () => ({
+              limit: () => (table === sideEffectIntent ? [{ contactId }] : []),
+            }),
           }),
         }),
       }),
@@ -443,7 +478,7 @@ describe("learner-flow summary pagination", () => {
   });
 
   it("does not coerce wrong JSON scalar types into classifier facts", async () => {
-    const contactId = "wrong-json-types";
+    const contactId = "wrongjsontypes";
     const projected = {
       ...intentRow(contactId),
       valuePathSlug: "null",
@@ -464,10 +499,12 @@ describe("learner-flow summary pagination", () => {
     };
     let idPage = 0;
     const database = {
-      selectDistinct: (selection: unknown) => ({
-        from: () => ({
+      selectDistinct: () => ({
+        from: (table: unknown) => ({
           where: () => ({
-            union: () => ({ as: () => ({ contactId: selection && {} }) }),
+            orderBy: () => ({
+              limit: () => (table === sideEffectIntent ? [{ contactId }] : []),
+            }),
           }),
         }),
       }),
@@ -505,7 +542,7 @@ describe("learner-flow summary pagination", () => {
   });
 
   it("keyset-pages projected entry events inside one learner page", async () => {
-    const contactId = "entry-heavy";
+    const contactId = "entryheavy";
     const fullPage = Array.from(
       { length: LEARNER_FLOW_ENTRY_EVENT_PAGE_SIZE },
       (_, index) => ({
@@ -540,10 +577,12 @@ describe("learner-flow summary pagination", () => {
     }> = [];
     let idPage = 0;
     const database = {
-      selectDistinct: (selection: unknown) => ({
-        from: () => ({
+      selectDistinct: () => ({
+        from: (table: unknown) => ({
           where: () => ({
-            union: () => ({ as: () => ({ contactId: selection && {} }) }),
+            orderBy: () => ({
+              limit: () => (table === sideEffectIntent ? [{ contactId }] : []),
+            }),
           }),
         }),
       }),
@@ -616,10 +655,15 @@ describe("learner-flow summary pagination", () => {
   it("does not classify a learner deleted after the frozen ID scan", async () => {
     let idRead = false;
     const database = {
-      selectDistinct: (selection: unknown) => ({
-        from: () => ({
+      selectDistinct: () => ({
+        from: (table: unknown) => ({
           where: () => ({
-            union: () => ({ as: () => ({ contactId: selection && {} }) }),
+            orderBy: () => ({
+              limit: () =>
+                table === sideEffectIntent
+                  ? [{ contactId: "deletedafteridscan" }]
+                  : [],
+            }),
           }),
         }),
       }),
@@ -638,7 +682,7 @@ describe("learner-flow summary pagination", () => {
                 limit: () => {
                   if (idRead) return [];
                   idRead = true;
-                  return [{ contactId: "deleted-after-id-scan" }];
+                  return [{ contactId: "deletedafteridscan" }];
                 },
               }),
             };

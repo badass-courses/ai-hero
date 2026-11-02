@@ -2,17 +2,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
 	getServerAuthSession: vi.fn(),
-	getSubscriberByEmail: vi.fn(),
 	inngestSend: vi.fn(),
-	log: { error: vi.fn() },
+	log: { error: vi.fn(), info: vi.fn() },
 	readRecoveryToken: vi.fn(),
+	standing: vi.fn(),
 }))
 
-vi.mock('@/coursebuilder/email-list-provider', () => ({
-	emailListProvider: {
-		getSubscriberByEmail: mocks.getSubscriberByEmail,
-	},
+vi.mock('@/lib/skills-course/recovery-standing', () => ({
+	readRecoveryStanding: mocks.standing,
 }))
+vi.mock('@/lib/skills-course/recovery-standing.server', () => ({
+	createRecoveryStandingReader: () => ({}),
+}))
+
 vi.mock('@/inngest/inngest.server', () => ({
 	inngest: { send: mocks.inngestSend },
 }))
@@ -22,14 +24,6 @@ vi.mock(
 		readSkillsCourseRecoveryToken: mocks.readRecoveryToken,
 	}),
 )
-vi.mock('@/schemas/subscriber', () => ({
-	SubscriberSchema: {
-		safeParse: (value: unknown) =>
-			value
-				? { success: true, data: value }
-				: { success: false, error: new Error('invalid subscriber') },
-	},
-}))
 vi.mock('@/server/auth', () => ({
 	getServerAuthSession: mocks.getServerAuthSession,
 }))
@@ -43,11 +37,13 @@ describe('resendSkillsCourseLessonOne', () => {
 		mocks.getServerAuthSession.mockResolvedValue({
 			session: { user: { email: 'learner@example.com' } },
 		})
-		mocks.getSubscriberByEmail.mockResolvedValue({
-			id: 41,
-			email_address: 'learner@example.com',
-			state: 'active',
+		mocks.standing.mockResolvedValue({
+			state: 'subscribed',
+			contactId: 'contact_41',
+			email: 'learner@example.com',
+			kitSubscriberId: '41',
 		})
+		mocks.log.info.mockResolvedValue(undefined)
 		mocks.readRecoveryToken.mockResolvedValue({
 			valid: false,
 			reason: 'missing',
@@ -56,13 +52,13 @@ describe('resendSkillsCourseLessonOne', () => {
 		mocks.log.error.mockResolvedValue(undefined)
 	})
 
-	it('queues only after the server session email matches the provider subscriber', async () => {
+	it('queues only after the server session email has a subscribed standing', async () => {
 		await expect(resendSkillsCourseLessonOne()).resolves.toEqual({
 			success: true,
 		})
 
-		expect(mocks.getSubscriberByEmail).toHaveBeenCalledWith(
-			'learner@example.com',
+		expect(mocks.standing).toHaveBeenCalledWith(
+			expect.objectContaining({ email: 'learner@example.com' }),
 		)
 		expect(mocks.readRecoveryToken).toHaveBeenCalledTimes(1)
 		expect(mocks.inngestSend).toHaveBeenCalledWith({
@@ -78,20 +74,6 @@ describe('resendSkillsCourseLessonOne', () => {
 		})
 		const queued = mocks.inngestSend.mock.calls[0]?.[0]
 		expect(JSON.stringify(queued)).not.toContain('learner@example.com')
-	})
-
-	it('rejects a provider subscriber whose email does not match the session', async () => {
-		mocks.getSubscriberByEmail.mockResolvedValue({
-			id: 999,
-			email_address: 'victim@example.com',
-			state: 'active',
-		})
-
-		await expect(resendSkillsCourseLessonOne()).resolves.toEqual({
-			success: false,
-			reason: 'not-identified',
-		})
-		expect(mocks.inngestSend).not.toHaveBeenCalled()
 	})
 
 	it('queues from an unexpired server-signed recovery token', async () => {
@@ -122,17 +104,21 @@ describe('resendSkillsCourseLessonOne', () => {
 				email: 'course-reader@example.com',
 			},
 		})
-		mocks.getSubscriberByEmail.mockResolvedValue({
-			id: 52,
-			email_address: 'course-reader@example.com',
-			state: 'active',
+		mocks.standing.mockResolvedValue({
+			state: 'subscribed',
+			contactId: 'contact_52',
+			email: 'course-reader@example.com',
+			kitSubscriberId: '52',
 		})
 
 		await expect(resendSkillsCourseLessonOne()).resolves.toEqual({
 			success: true,
 		})
-		expect(mocks.getSubscriberByEmail).toHaveBeenCalledWith(
-			'course-reader@example.com',
+		expect(mocks.standing).toHaveBeenCalledWith(
+			expect.objectContaining({
+				email: 'course-reader@example.com',
+				expectedKitSubscriberId: '52',
+			}),
 		)
 		expect(mocks.getServerAuthSession).not.toHaveBeenCalled()
 		expect(mocks.inngestSend).toHaveBeenCalledWith(
@@ -169,7 +155,7 @@ describe('resendSkillsCourseLessonOne', () => {
 			success: false,
 			reason: 'not-identified',
 		})
-		expect(mocks.getSubscriberByEmail).not.toHaveBeenCalled()
+		expect(mocks.standing).not.toHaveBeenCalled()
 		expect(mocks.inngestSend).not.toHaveBeenCalled()
 	})
 
@@ -184,7 +170,7 @@ describe('resendSkillsCourseLessonOne', () => {
 			success: false,
 			reason: 'not-identified',
 		})
-		expect(mocks.getSubscriberByEmail).not.toHaveBeenCalled()
+		expect(mocks.standing).not.toHaveBeenCalled()
 		expect(mocks.inngestSend).not.toHaveBeenCalled()
 	})
 
@@ -196,20 +182,6 @@ describe('resendSkillsCourseLessonOne', () => {
 		const secondEvent = mocks.inngestSend.mock.calls[1]?.[0]
 		expect(firstEvent.data.recoveryKey).toBe(secondEvent.data.recoveryKey)
 		expect(firstEvent.id).not.toBe(secondEvent.id)
-	})
-
-	it('routes inactive authorized subscribers through confirmation', async () => {
-		mocks.getSubscriberByEmail.mockResolvedValue({
-			id: 41,
-			email_address: 'learner@example.com',
-			state: 'inactive',
-		})
-
-		await expect(resendSkillsCourseLessonOne()).resolves.toMatchObject({
-			success: false,
-			reason: 'confirmation-required',
-		})
-		expect(mocks.inngestSend).not.toHaveBeenCalled()
 	})
 
 	it('redacts identity and provider errors when queueing fails', async () => {
@@ -228,5 +200,102 @@ describe('resendSkillsCourseLessonOne', () => {
 			'skills.course.lesson_one_recovery_enqueue_failed',
 			{ outcome: 'not-queued' },
 		)
+	})
+
+	describe('local standing', () => {
+
+		it('subscribed: queues with the directory Kit alias', async () => {
+			mocks.standing.mockResolvedValue({
+				state: 'subscribed',
+				contactId: 'contact_41',
+				email: 'learner@example.com',
+				kitSubscriberId: '41',
+			})
+
+			await expect(resendSkillsCourseLessonOne()).resolves.toEqual({
+				success: true,
+			})
+			expect(mocks.standing).toHaveBeenCalledWith(
+				expect.objectContaining({ email: 'learner@example.com' }),
+			)
+			expect(mocks.inngestSend).toHaveBeenCalledWith(
+				expect.objectContaining({
+					data: expect.objectContaining({ kitSubscriberId: '41' }),
+				}),
+			)
+			// State only: no email, contact or Kit id in the receipt.
+			expect(mocks.log.info).toHaveBeenCalledWith(
+				'skills.course.lesson_one_recovery_standing',
+				{ state: 'subscribed' },
+			)
+		})
+
+		it('signed token: the token Kit id is the one checked', async () => {
+			mocks.getServerAuthSession.mockResolvedValue({ session: null })
+			mocks.readRecoveryToken.mockResolvedValue({
+				valid: true,
+				payload: { kitSubscriberId: '52', email: 'learner@example.com' },
+			})
+			mocks.standing.mockResolvedValue({
+				state: 'subscribed',
+				contactId: 'contact_41',
+				email: 'learner@example.com',
+				kitSubscriberId: '52',
+			})
+
+			await expect(resendSkillsCourseLessonOne()).resolves.toEqual({
+				success: true,
+			})
+			expect(mocks.standing).toHaveBeenCalledWith(
+				expect.objectContaining({ expectedKitSubscriberId: '52' }),
+			)
+		})
+
+		it('stopped: queues nothing and offers no resubscribe detour', async () => {
+			mocks.standing.mockResolvedValue({
+				state: 'stopped',
+				reason: 'unsubscribed',
+				source: 'local',
+			})
+
+			await expect(resendSkillsCourseLessonOne()).resolves.toEqual({
+				success: false,
+				reason: 'stopped',
+			})
+			expect(mocks.inngestSend).not.toHaveBeenCalled()
+			expect(mocks.log.info).toHaveBeenCalledWith(
+				'skills.course.lesson_one_recovery_standing',
+				{ state: 'stopped', reason: 'unsubscribed' },
+			)
+		})
+
+		it('unknown: fails closed as a failed request', async () => {
+			mocks.standing.mockResolvedValue({
+				state: 'unknown',
+				reason: 'drovr-stops-unreadable',
+			})
+
+			await expect(resendSkillsCourseLessonOne()).resolves.toEqual({
+				success: false,
+				reason: 'request-failed',
+			})
+			expect(mocks.inngestSend).not.toHaveBeenCalled()
+		})
+
+		it('not found: not identified', async () => {
+			mocks.standing.mockResolvedValue({
+				state: 'not-found',
+				reason: 'contact-not-found',
+			})
+
+			await expect(resendSkillsCourseLessonOne()).resolves.toEqual({
+				success: false,
+				reason: 'not-identified',
+			})
+			expect(mocks.inngestSend).not.toHaveBeenCalled()
+			expect(JSON.stringify(mocks.log.info.mock.calls)).not.toContain(
+				'learner@example.com',
+			)
+		})
 	})
 })

@@ -26,7 +26,6 @@ flowchart TB
         postPurchase[post-purchase-workflow]
         postEvent[post-event-purchase]
         refund[refund-entitlements]
-        syncTags[sync-purchase-tags]
         stripeCheckout[stripe-subscription-checkout]
         transferProduct[product-transfer-workflow]
         transferAPI[api-product-transfer-workflow]

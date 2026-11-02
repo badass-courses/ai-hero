@@ -60,7 +60,7 @@ describe('evergreen sender pacing', () => {
 			return source.slice(from, to)
 		}
 		const lists = site("step.run('subscribe-pending-evergreen-lists'", 'const shadowReadback')
-		const evergreen = site("step.run('send-pending-evergreen-emails'", 'const coupons')
+		const evergreen = site("step.run('send-pending-evergreen-emails'", 'const counts')
 		for (const unchanged of [lists, evergreen]) {
 			expect(unchanged).toContain('pacingMs: evergreenSenderPacingMs(process.env)')
 			expect(unchanged).not.toContain('newsletter.pacingMs')

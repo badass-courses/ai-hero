@@ -1,5 +1,6 @@
 import { createAnalyticsEngine } from '@coursebuilder/analytics/engine'
 import { log } from '@/server/logger'
+import { reportingOffKitEnabled } from '@/lib/reporting-owned'
 
 import * as database from './providers/database'
 import * as derived from './providers/derived'
@@ -18,26 +19,65 @@ const engine = createAnalyticsEngine({
 })
 
 import { catalog as localCatalog } from './catalog'
+import { LearningProductNotFoundError } from './learning-progress-query'
+import { LearningTeamNotFoundError } from './learning-teams-query'
+import { getNewsletterSignups } from './newsletter-signups'
+import { SIGNUP_RANGES } from './newsletter-signups-series'
 import { EVERGREEN_FUNNEL_PENDING, promoWindow } from './promos'
 import type { QueryOptions, QueryResult, SurfaceName } from './types'
 import type { SurfaceName as BaseSurfaceName } from '@coursebuilder/analytics/types'
 
-const isPromoSurface = (surface: SurfaceName) =>
-	surface === 'revenue/promos' || surface === 'funnel/evergreen'
+const LOCAL_SURFACES = [
+	'revenue/promos',
+	'funnel/evergreen',
+	'newsletter/signups',
+	'learning/progress',
+	'learning/teams',
+	'learning/team',
+	'learning/team-members',
+] as const
+type LocalSurface = (typeof LOCAL_SURFACES)[number]
+const isLocalSurface = (surface: SurfaceName): surface is LocalSurface =>
+	(LOCAL_SURFACES as readonly string[]).includes(surface)
 export const getCatalog = () => [
-	...engine.getCatalog(),
-	localCatalog['revenue/promos'],
-	localCatalog['funnel/evergreen'],
+	...engine.getCatalog().map((entry) =>
+		reportingOffKitEnabled() &&
+		(entry.name === 'attribution/email-campaigns' ||
+			entry.name === 'attribution/email-campaigns/strict')
+			? {
+					...entry,
+					description:
+						'Current drovr status for explicitly configured sends, latest journey-transition sample, and labelled local historical Kit snapshots. Unsupported engagement and revenue are unavailable, not zero. Read provider and status before interpreting results.',
+				}
+			: entry,
+	),
+	...LOCAL_SURFACES.map((surface) => localCatalog[surface]),
 ]
 
 export async function query<S extends SurfaceName>(
 	surface: S,
 	options: QueryOptions = {},
 ): Promise<QueryResult<S>> {
-	if (surface !== 'revenue/promos' && surface !== 'funnel/evergreen') {
+	if (!isLocalSurface(surface)) {
 		return engine.query(surface as BaseSurfaceName, options) as Promise<
 			QueryResult<S>
 		>
+	}
+	if (surface === 'learning/progress') return queryLearningProgress(options)
+	if (surface === 'newsletter/signups') return queryNewsletterSignups(options)
+	if (surface === 'learning/teams' || surface === 'learning/team')
+		return queryLearningTeams(surface, options)
+	if (surface === 'learning/team-members') {
+		// PII never flows through the engine, its callers, or queryMany.
+		return {
+			ok: false,
+			surface,
+			error: {
+				code: 'ROUTE_ONLY',
+				message: 'learning/team-members is served only by /api/analytics.',
+			},
+			fix: 'GET /api/analytics?surface=learning/team-members&teamId=<id> as an AI Hero admin.',
+		}
 	}
 	const start = Date.now()
 	try {
@@ -67,30 +107,166 @@ export async function query<S extends SurfaceName>(
 	}
 }
 
+async function queryNewsletterSignups<S extends SurfaceName>(
+	options: QueryOptions,
+): Promise<QueryResult<S>> {
+	const surface = 'newsletter/signups' as S
+	const start = Date.now()
+	const requested = options.range as string | undefined
+	const read = await getNewsletterSignups({
+		range: SIGNUP_RANGES.find((range) => range === requested) ?? '30d',
+	})
+	if (read.status === 'available' && read.gaps.length > 0)
+		await log.warn('analytics.newsletter-signups.partial', { gaps: read.gaps })
+	if (read.status === 'unavailable') {
+		await log.warn('analytics.newsletter-signups.unavailable', {
+			reason: read.reason,
+		})
+		return {
+			ok: false,
+			surface,
+			error: {
+				code: 'SIGNUPS_UNAVAILABLE',
+				message: `Newsletter signups are unavailable: ${read.reason}.`,
+			},
+			fix: 'Retry shortly. Unavailable is not zero; do not report a signup count.',
+		}
+	}
+	return {
+		ok: true,
+		surface,
+		range: options.range ?? '30d',
+		data: read.data,
+		meta: { queryTimeMs: Date.now() - start, truncated: false },
+	} as QueryResult<S>
+}
+
+async function queryLearningProgress<S extends SurfaceName>(
+	options: QueryOptions,
+): Promise<QueryResult<S>> {
+	const surface = 'learning/progress' as S
+	const start = Date.now()
+	if (!options.productId) {
+		return {
+			ok: false,
+			surface,
+			error: { code: 'PRODUCT_REQUIRED', message: 'productId is required.' },
+			fix: 'Pass productId. GET /api/analytics?surface=revenue/products lists product ids.',
+		}
+	}
+	try {
+		const data = await database.getLearningProgress(options.productId)
+		return {
+			ok: true,
+			surface,
+			range: options.range ?? '30d',
+			data,
+			meta: { queryTimeMs: Date.now() - start, truncated: false },
+		} as QueryResult<S>
+	} catch (error) {
+		if (error instanceof LearningProductNotFoundError) {
+			return {
+				ok: false,
+				surface,
+				error: { code: 'PRODUCT_NOT_FOUND', message: 'Unknown productId.' },
+				fix: 'GET /api/analytics?surface=revenue/products lists product ids.',
+			}
+		}
+		await log.error('analytics.learning-progress.query-failed', {
+			productId: options.productId,
+			error,
+		})
+		return {
+			ok: false,
+			surface,
+			error: {
+				code: 'QUERY_FAILED',
+				message: 'Could not read learning progress.',
+			},
+			fix: 'Retry shortly. Results are cached for five minutes once a read succeeds.',
+		}
+	}
+}
+
+async function queryLearningTeams<S extends SurfaceName>(
+	surface: S & ('learning/teams' | 'learning/team'),
+	options: QueryOptions,
+): Promise<QueryResult<S>> {
+	const start = Date.now()
+	if (surface === 'learning/team' && !options.teamId) {
+		return {
+			ok: false,
+			surface,
+			error: { code: 'TEAM_REQUIRED', message: 'teamId is required.' },
+			fix: 'Pass teamId. GET /api/analytics?surface=learning/teams lists team ids.',
+		}
+	}
+	try {
+		const data =
+			surface === 'learning/team'
+				? await database.getLearningTeam(options.teamId!)
+				: await database.getLearningTeams(options.productId ?? null)
+		return {
+			ok: true,
+			surface,
+			range: options.range ?? '30d',
+			data,
+			meta: { queryTimeMs: Date.now() - start, truncated: false },
+		} as QueryResult<S>
+	} catch (error) {
+		if (error instanceof LearningTeamNotFoundError) {
+			return {
+				ok: false,
+				surface,
+				error: {
+					code: 'TEAM_NOT_FOUND',
+					message: 'No active team purchase has that teamId.',
+				},
+				fix: 'GET /api/analytics?surface=learning/teams lists team ids.',
+			}
+		}
+		await log.error('analytics.learning-teams.query-failed', {
+			surface,
+			productId: options.productId,
+			teamId: options.teamId,
+			error,
+		})
+		return {
+			ok: false,
+			surface,
+			error: {
+				code: 'QUERY_FAILED',
+				message: 'Could not read team progress.',
+			},
+			fix: 'Retry shortly. Results are cached for five minutes once a read succeeds.',
+		}
+	}
+}
+
 export async function queryMany<S extends SurfaceName>(
 	surfaces: S[],
 	options?: QueryOptions,
 ): Promise<{ [K in S]: QueryResult<K> }> {
-	if (!surfaces.some(isPromoSurface)) {
+	if (!surfaces.some(isLocalSurface)) {
 		return engine.queryMany(surfaces as BaseSurfaceName[], options) as Promise<{
 			[K in S]: QueryResult<K>
 		}>
 	}
 	const baseSurfaces = surfaces.filter(
-		(surface) => !isPromoSurface(surface),
+		(surface) => !isLocalSurface(surface),
 	) as BaseSurfaceName[]
-	const [baseResults, promoResults] = await Promise.all([
+	const [baseResults, localResults] = await Promise.all([
 		baseSurfaces.length
 			? engine.queryMany(baseSurfaces, options)
 			: Promise.resolve({}),
 		Promise.all(
-			surfaces.filter(isPromoSurface).map((surface) => query(surface, options)),
+			surfaces.filter(isLocalSurface).map((surface) => query(surface, options)),
 		),
 	])
 	return {
 		...baseResults,
 		...Object.fromEntries(
-			promoResults.map((result) => [result.surface, result]),
+			localResults.map((result) => [result.surface, result]),
 		),
 	} as { [K in S]: QueryResult<K> }
 }

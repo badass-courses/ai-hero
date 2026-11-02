@@ -10,6 +10,7 @@ import {
 	getCampaignLanding,
 } from './lib/campaign-landings'
 import { auth } from './server/auth'
+import { runInProxyAuthContext } from './server/proxy-auth-context'
 import { log } from './server/logger'
 import {
 	determineOrgAccess,
@@ -250,8 +251,11 @@ export default function proxy(req: NextRequest, event: NextFetchEvent) {
 	if (early) return early
 	if (isAnonymousPassThrough(req)) return NextResponse.next()
 	// `auth()` types its context as a route-handler context; middleware passes a
-	// NextFetchEvent, so the casts are required by Next's types.
-	return authedProxy(req as never, event as never)
+	// NextFetchEvent, so the casts are required by Next's types. The context
+	// defers an expired Discord token refresh until after the response.
+	return runInProxyAuthContext(() =>
+		authedProxy(req as never, event as never),
+	)
 }
 
 export const config = {

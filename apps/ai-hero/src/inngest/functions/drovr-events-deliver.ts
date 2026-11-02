@@ -32,7 +32,14 @@ import {
 import { admitValuePathBirths } from '@/lib/subscriber-marketing/drovr-value-path-birth-admission'
 import { readUnsubscribedValuePathContactIds } from '@/lib/subscriber-marketing/drovr-value-path-birth-admission-live'
 import { isSendingJourneyBirth } from '@/lib/subscriber-marketing/drovr-birth-clamp'
-import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
+import {
+	contactSyncStarterRequests,
+	contactSyncRetryRequest,
+} from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
+import {
+	sendContactSyncStarters,
+	stragglerOwnershipEnabled,
+} from '@/lib/subscriber-marketing/contact-sync-starter-batches'
 import {
 	drovrApiKeyForTenant,
 	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
@@ -42,6 +49,7 @@ import {
 } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
 import {
 	fanOutOwnedEvents,
+	isOwnerFanOutCandidate,
 	isShadowNewsletterBirth,
 } from '@/lib/subscriber-marketing/drovr-ownership'
 import { parseDrovrProfileSyncConfig } from '@/lib/subscriber-marketing/drovr-contact-profile-sync-requests'
@@ -232,12 +240,15 @@ const discardShadowTenantEvents = async (
 // Facts about drovr-owned contacts also reach the authority tenant.
 // Ownership is read here, off the host's write path, once per batch.
 // An owner read that runs out of retries sends the batch, unfanned, to the
-// outbox instead of failing the run.
+// outbox instead of failing the run. A batch with no fan-out candidate takes
+// no step: the read answers no owners for it without reading anything.
 const fanOut = async (
 	batch: DrovrEventsDeliver['data']['events'],
 	step: DeliverStep,
 	context: DeliverContext,
 ): Promise<DrovrShadowEvent[] | Outboxed> => {
+	if (!batch.some(isOwnerFanOutCandidate))
+		return fanOutOwnedEvents(batch, new Set(), new Set())
 	const readOwners = (read: () => Promise<string[]>) =>
 		sendOrOutbox<string[] | Outboxed>({
 			attempt: context.attempt,
@@ -370,6 +381,22 @@ const isBehind = (
 	stops: ReadonlyMap<string, StopMark[]>,
 ) => openStopBefore(stopMarkOf(event), stops.get(event.contactId)) !== undefined
 
+/** The events among these that wait behind a stop the outbox owes. */
+const behindOwedStops = async (
+	events: readonly DrovrShadowEvent[],
+	context: DeliverContext,
+): Promise<DrovrShadowEvent[]> => {
+	const stops = new Map<string, StopMark[]>()
+	for (const stop of await context.openStops([
+		...new Set(events.map((event) => event.contactId)),
+	])) {
+		const list = stops.get(stop.contactId) ?? []
+		list.push(stop)
+		stops.set(stop.contactId, list)
+	}
+	return events.filter((event) => isBehind(event, stops))
+}
+
 /**
  * Row 204b: a fact that happened at or after a stop the outbox still owes
  * goes to the outbox behind that stop instead of to drovr, where it could
@@ -388,15 +415,7 @@ const holdBehindOpenStops = async (
 		sendOrOutbox<{ heldIdentities: string[] } | Outboxed>({
 			attempt: context.attempt,
 			send: async () => {
-				const stops = new Map<string, StopMark[]>()
-				for (const stop of await context.openStops([
-					...new Set(events.map((event) => event.contactId)),
-				])) {
-					const list = stops.get(stop.contactId) ?? []
-					list.push(stop)
-					stops.set(stop.contactId, list)
-				}
-				const behind = events.filter((event) => isBehind(event, stops))
+				const behind = await behindOwedStops(events, context)
 				if (behind.length === 0) return { heldIdentities: [] }
 				await holdInOutbox(behind, context)
 				return { heldIdentities: behind.map(eventIdentity) }
@@ -417,13 +436,18 @@ const holdBehindOpenStops = async (
 	}
 }
 
-/** Put held events in the outbox; anything short of that fails the step. */
+/**
+ * Put held events in the outbox; anything short of that fails the step.
+ * `sentAt` is the run's clamp instant when it is already fixed, so the
+ * replay posts the bytes a direct post would (row 201g).
+ */
 const holdInOutbox = async (
 	behind: readonly DrovrShadowEvent[],
 	context: DeliverContext,
+	sentAt?: number,
 ) => {
 	const captured = await context.capture(
-		behind.map((event) => outboxEntryForEvent(event, context.lane)),
+		behind.map((event) => outboxEntryForEvent(event, context.lane, { sentAt })),
 		new Error(DROVR_OUTBOX_BEHIND_STOP_NOTE),
 	)
 	if (captured.status !== 'outboxed')
@@ -488,8 +512,16 @@ const deliverBatch = async (
 	const shadowFiltered = await discardShadowTenantEvents(fanOutEvents, 'live')
 	const { discarded } = shadowFiltered
 	const admitted = await admitBirths(shadowFiltered.events, step)
-	const gate = await holdBehindOpenStops(admitted.events, step, context)
+	// A one-event run gates inside its delivery step, before the send, on
+	// every attempt: one step instead of two. A batch of more keeps one gate
+	// step for all its events.
+	const gateInline = admitted.events.length === 1
+	const gate = gateInline
+		? { events: admitted.events, held: 0, outboxed: 0 }
+		: await holdBehindOpenStops(admitted.events, step, context)
 	const events = inDeliveryOrder(gate.events)
+	// Memoized before any delivery step, so every attempt of the folded step
+	// posts the same bytes.
 	const clampAt = await drovrClampInstant(events, step)
 
 	let accepted = 0
@@ -522,10 +554,24 @@ const deliverBatch = async (
 		// outcome back, does not repeat it.
 		const outcome = await step.run(deliveryStepId(drovrEvent), () =>
 			sendOrOutbox<
-				DrovrDeliveryOutcome | { status: 'outboxed' } | { status: 'held' }
+				| DrovrDeliveryOutcome
+				| { status: 'outboxed' }
+				| { status: 'held' }
+				| { status: 'heldBehindStop' }
 			>({
 				attempt: context.attempt,
 				send: async () => {
+					// Row 204b inline: a fact behind a stop the outbox owes is held,
+					// never sent. A stop never waits behind a stop, so it reads
+					// nothing. A failed read fails the step like a failed send.
+					if (
+						gateInline &&
+						!isStopEvent(drovrEvent) &&
+						(await behindOwedStops([drovrEvent], context)).length > 0
+					) {
+						await holdInOutbox([drovrEvent], context, clampAt)
+						return { status: 'heldBehindStop' as const }
+					}
 					const delivered = await deliverOrThrow({
 						event: drovrEvent,
 						config,
@@ -558,7 +604,7 @@ const deliverBatch = async (
 				capture: context.capture,
 				outboxed: () => ({ status: 'outboxed' }),
 				early: earlyStops([drovrEvent], context, (outcome) =>
-					outcome.status === 'held'
+					outcome.status === 'held' || outcome.status === 'heldBehindStop'
 						? null
 						: outcome.status === 'rejected'
 							? SETTLED_REFUSED
@@ -566,6 +612,11 @@ const deliverBatch = async (
 				),
 			}),
 		)
+		if (outcome.status === 'heldBehindStop') {
+			outboxed += 1
+			heldBehindStop += 1
+			continue
+		}
 		if (outcome.status === 'held') {
 			heldStops += 1
 			const list = outboxedStops.get(drovrEvent.contactId) ?? []
@@ -1063,14 +1114,28 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 					const coldStart = refused.filter(
 						(item) => item.reason === 'cold-start-unhandled',
 					)
-					await step.sendEvent('contact-sync-backfill:defer-refused', [
-						...(notLive.length > 0
-							? [contactSyncRetryRequest(notLive, 1, at)]
-							: []),
-						...(coldStart.length > 0
-							? [{ ...contactSyncRetryRequest(coldStart, 1, at), ts: at }]
-							: []),
-					])
+					if (stragglerOwnershipEnabled(process.env)) {
+						await sendContactSyncStarters(
+							step,
+							'contact-sync-backfill:defer-refused',
+							[
+								...contactSyncStarterRequests(notLive, at),
+								...contactSyncStarterRequests(coldStart, at).map((request) => ({
+									...request,
+									ts: at,
+								})),
+							],
+						)
+					} else {
+						await step.sendEvent('contact-sync-backfill:defer-refused', [
+							...(notLive.length > 0
+								? [contactSyncRetryRequest(notLive, 1, at)]
+								: []),
+							...(coldStart.length > 0
+								? [{ ...contactSyncRetryRequest(coldStart, 1, at), ts: at }]
+								: []),
+						])
+					}
 				}
 			}
 		}

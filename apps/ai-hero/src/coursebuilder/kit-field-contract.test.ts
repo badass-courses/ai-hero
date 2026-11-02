@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { ConvertKitApiError } from '@coursebuilder/core/providers/convertkit'
 
@@ -7,6 +7,7 @@ import {
 	KIT_CUSTOM_FIELD_CACHE_TTL_MS,
 	KitFieldsUnconfirmedError,
 	subscribeWithKitFields,
+	readKitSubscriberById,
 } from './kit-field-contract'
 
 /**
@@ -122,6 +123,55 @@ const deps = (
 })
 
 describe('Kit field contract with a custom-field cache', () => {
+	it.each(['POST', 'PUT'])(
+		'retries only the rate-limited %s call, preserving the field contract',
+		async (method) => {
+			const kit = fakeKit({ fields: ['aih_known'] })
+			let refused = false
+			const fetch = vi.fn(
+				async (input: RequestInfo | URL, init?: RequestInit) => {
+					if (!refused && init?.method === method) {
+						refused = true
+						return new Response('{}', { status: 429 })
+					}
+					return kit.fetch(input, init)
+				},
+			)
+			const sleep = vi.fn().mockResolvedValue(undefined)
+			const onRetry = vi.fn()
+			await expect(
+				subscribeWithKitFields(options({ aih_known: 'yes' }), {
+					...deps(kit),
+					fetch,
+					retry: { sleep, onRetry, random: () => 0, now: () => 0 },
+				}),
+			).resolves.toMatchObject({ fields: { aih_known: 'yes' } })
+			expect(onRetry).toHaveBeenCalled()
+			expect(
+				kit.calls.filter((call) => call.endsWith('/subscribe')),
+			).toHaveLength(1)
+		},
+	)
+
+	it('distinguishes subscriber 404 from tags 404 for negative caching', async () => {
+		const kit = fakeKit()
+		await expect(
+			readKitSubscriberById('42', {
+				...deps(kit),
+				fetch: vi.fn().mockResolvedValue(new Response('{}', { status: 404 })),
+			}),
+		).resolves.toBeNull()
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ subscriber: { id: 42 } })),
+			)
+			.mockResolvedValueOnce(new Response('{}', { status: 404 }))
+		await expect(
+			readKitSubscriberById('42', { ...deps(kit), fetch }),
+		).rejects.toMatchObject({ status: 404 })
+	})
+
 	it('lists custom fields once, creates only the missing ones, then subscribes, writes, and reads back', async () => {
 		const kit = fakeKit({ fields: ['aih_known'] })
 		const result = await subscribeWithKitFields(

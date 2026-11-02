@@ -12,7 +12,7 @@ import {
 	claimCourseSyncReviewNotification,
 	completeCourseSyncReviewNotification,
 	failCourseSyncReviewNotification,
-	getCourseSyncPlanChanges,
+	getCourseSyncPlan,
 } from './detection-persistence'
 import {
 	buildCourseSyncNotificationPayload,
@@ -23,7 +23,9 @@ import { deliverCourseSyncEntitlementSync } from './cohort-entitlements'
 import { resolveCourseSyncEditorLink } from './editor-link'
 import { CourseSyncError } from './errors'
 import { COURSE_SYNC_AUTHOR_NAME, narrateCourseSyncApply } from './narrate'
+import { summarizeCourseSyncPlanChanges } from './persistence-invariants'
 import { getCourseSyncRunBinding } from './run-binding'
+import { undrawnImagesInPlan } from './undrawn-images'
 
 export type CourseSyncAppliedNotification = Extract<
 	CourseSyncNotification,
@@ -189,11 +191,13 @@ export async function deliverCourseSyncAppliedNotice(
 	if (!claimed) return { delivered: false, reason: 'already-claimed' }
 
 	try {
-		// The plan read only feeds the written summary, so a failed read degrades
-		// to the deterministic line instead of costing an applied sync its notice.
-		const changes = await getCourseSyncPlanChanges(
-			notification.controlPlaneRunId,
-		).catch(() => [])
+		// The plan read only feeds the written summary and the redraw asks, so a
+		// failed read degrades to the deterministic line instead of costing an
+		// applied sync its notice.
+		const plan = await getCourseSyncPlan(notification.controlPlaneRunId).catch(
+			() => null,
+		)
+		const changes = plan ? summarizeCourseSyncPlanChanges(plan) : []
 		const narration = await narrateCourseSyncApply({
 			courseName: notification.courseName,
 			authorName: COURSE_SYNC_AUTHOR_NAME,
@@ -203,7 +207,11 @@ export async function deliverCourseSyncAppliedNotice(
 			structureCounts: notification.structureCounts,
 		})
 		await sendCourseSyncSlackPayload(
-			buildCourseSyncNotificationPayload(notification, narration),
+			buildCourseSyncNotificationPayload(
+				notification,
+				narration,
+				plan ? undrawnImagesInPlan(plan) : [],
+			),
 		)
 	} catch (error) {
 		await failCourseSyncReviewNotification({

@@ -1,4 +1,18 @@
-import { asc, and, count, desc, eq, gte, inArray } from 'drizzle-orm'
+import {
+	asc,
+	and,
+	count,
+	desc,
+	eq,
+	gt,
+	gte,
+	inArray,
+	isNull,
+	lte,
+	or,
+	type SQL,
+} from 'drizzle-orm'
+import { unstable_cache } from 'next/cache'
 import { db } from '@/db'
 import * as schema from '@/db/schema'
 
@@ -12,6 +26,114 @@ import {
 	type PromoOptions,
 } from '../promos'
 import { promoRevenueSql } from '../promos-query'
+import {
+	countOf,
+	learningRefreshSeconds,
+	rowsOf,
+	type LearningProgress,
+} from '../learning-progress'
+import {
+	learningLearnerCountSql,
+	learningProductsSql,
+	readLearningProgress,
+} from '../learning-progress-query'
+import {
+	learningOwnSeatTeamsSql,
+	readLearningTeam,
+	readLearningTeamMembers,
+	readLearningTeams,
+} from '../learning-teams-query'
+
+export const LEARNING_PROGRESS_CACHE_TAG = 'analytics:learning-progress'
+
+const learningProgressCache = (seconds: number) =>
+	unstable_cache(
+		(productId: string) =>
+			readLearningProgress(
+				(query) => db.execute(query),
+				productId,
+				new Date(),
+				seconds,
+			),
+		[`analytics-learning-progress-v2-${seconds}s`],
+		{ revalidate: seconds, tags: [LEARNING_PROGRESS_CACHE_TAG] },
+	)
+const learningProgressBySeconds = new Map(
+	[300, 900].map((seconds) => [seconds, learningProgressCache(seconds)]),
+)
+
+/** Learner count only picks the cache window, so an hour old is fine. */
+const getLearnerCount = unstable_cache(
+	async (productId: string) => {
+		const [row] = rowsOf<{ learners: unknown }>(
+			await db.execute(learningLearnerCountSql(productId)),
+			'Learner count',
+		)
+		return countOf(row?.learners ?? 0, 'learner count')
+	},
+	['analytics-learning-learner-count-v1'],
+	{ revalidate: 3600, tags: [LEARNING_PROGRESS_CACHE_TAG] },
+)
+
+/**
+ * Cached per product, so admin page loads and agent polling share one
+ * progress scan: five minutes, or fifteen above 5,000 learners, where a cold
+ * read takes seconds. asOf records when the scan ran.
+ */
+export async function getLearningProgress(productId: string) {
+	const seconds = learningRefreshSeconds(await getLearnerCount(productId))
+	return learningProgressBySeconds.get(seconds)!(productId)
+}
+
+/** Aggregate team summaries, optionally for one product. */
+export const getLearningTeams = unstable_cache(
+	(productId: string | null) =>
+		readLearningTeams((query) => db.execute(query), productId, new Date()),
+	['analytics-learning-teams-v1'],
+	{ revalidate: 300, tags: [LEARNING_PROGRESS_CACHE_TAG] },
+)
+
+/** One team's aggregate summary and funnel. */
+export const getLearningTeam = unstable_cache(
+	(teamRef: string) =>
+		readLearningTeam((query) => db.execute(query), teamRef, new Date()),
+	['analytics-learning-team-v1'],
+	{ revalidate: 300, tags: [LEARNING_PROGRESS_CACHE_TAG] },
+)
+
+/**
+ * PII: member emails and names. Deliberately not cached, so no data cache
+ * entry ever holds learner emails. Callers authorize and log the read.
+ */
+export async function listOwnSeatTeamIds(userId: string) {
+	return rowsOf<{ teamId: string }>(
+		await db.execute(learningOwnSeatTeamsSql(userId)),
+		'Own seat teams',
+	).map((row) => row.teamId)
+}
+
+export function readLearningTeamMembersUncached(
+	teamRef: string,
+	options: { onlyUserId?: string; includeUserIds: boolean },
+) {
+	return readLearningTeamMembers(
+		(query) => db.execute(query),
+		teamRef,
+		new Date(),
+		options,
+	)
+}
+
+/** The admin product picker. Products change rarely; cached for an hour. */
+export const listLearningProducts = unstable_cache(
+	async (): Promise<LearningProgress['product'][]> =>
+		rowsOf<LearningProgress['product']>(
+			await db.execute(learningProductsSql()),
+			'Learning products',
+		).map((row) => ({ id: row.id, name: row.name, type: row.type ?? null })),
+	['analytics-learning-products-v1'],
+	{ revalidate: 3600, tags: [LEARNING_PROGRESS_CACHE_TAG] },
+)
 
 export async function getRevenueByPromo(options: PromoOptions = {}) {
 	const window = promoWindow(options)
@@ -27,7 +149,6 @@ export const {
 	getPreviousPeriodRevenueByDay,
 	getRevenueByProduct,
 	getRevenueByCountry,
-	getRecentPurchases,
 	getAttributionSummary,
 	getRevenueBySource,
 	getConversionFunnel,
@@ -114,7 +235,9 @@ export async function getShortlinkPerformance(
 	const clickCounts = database
 		.select({
 			shortlinkId: schema.shortlinkClick.shortlinkId,
-			clicks: count().as('clicks'),
+			// Drizzle emits aggregate aliases unqualified in the outer query.
+			// Avoid colliding with Shortlink.clicks (the cached lifetime count).
+			clicks: count().as('shortlink_event_count'),
 		})
 		.from(schema.shortlinkClick)
 		.where(clickConditions.length > 0 ? and(...clickConditions) : undefined)
@@ -159,4 +282,176 @@ export async function getShortlinkPerformance(
 	return formatShortlinkPerformance(rows as ShortlinkPerformanceRow[], attrRows as ShortlinkAttributionCount[])
 }
 
-export default { ...provider, getShortlinkPerformance }
+export type RecentPurchaseKind = 'all' | 'team' | 'individual'
+
+const PAID_PURCHASE_STATUSES = ['Valid', 'Restricted'] as const
+
+type RecentPurchaseRow = {
+	id: string
+	createdAt: Date
+	totalAmount: string | number
+	productName: string | null
+	productId: string
+	country: string | null
+	couponId: string | null
+	userName: string | null
+	userEmail: string | null
+	bulkCouponId: string | null
+	bulkCouponMaxUses: number | null
+}
+
+type BulkCouponPurchaseCount = {
+	bulkCouponId: string | null
+	purchases: number | bigint
+}
+
+/**
+ * Team facts for one purchase. A team purchase has a bulk coupon with more
+ * than one seat, the same rule the admin sales globe uses. An organization
+ * alone is not a team: every cohort checkout creates one.
+ *
+ * Add-seat purchases reuse the team's bulk coupon and raise maxUses, and no
+ * table stores a per-purchase quantity. So seats is only known when this is
+ * the coupon's only purchase; teamSeats is always the team's current total.
+ */
+export function recentPurchaseTeamFacts(
+	bulkCouponMaxUses: number | null,
+	bulkCouponPurchases: number,
+) {
+	const teamSeats =
+		typeof bulkCouponMaxUses === 'number' && bulkCouponMaxUses > 1
+			? bulkCouponMaxUses
+			: null
+	return {
+		isTeam: teamSeats !== null,
+		seats: teamSeats !== null && bulkCouponPurchases === 1 ? teamSeats : null,
+		teamSeats,
+	}
+}
+
+export function formatRecentPurchases(
+	rows: readonly RecentPurchaseRow[],
+	couponCounts: readonly BulkCouponPurchaseCount[],
+) {
+	const purchasesByCoupon = new Map<string, number>()
+	for (const row of couponCounts) {
+		if (row.bulkCouponId)
+			purchasesByCoupon.set(row.bulkCouponId, Number(row.purchases ?? 0))
+	}
+
+	return rows.map((row) => ({
+		id: row.id,
+		createdAt: row.createdAt,
+		totalAmount: Number(row.totalAmount),
+		productName: row.productName ?? '(unknown)',
+		productId: row.productId,
+		country: row.country,
+		couponId: row.couponId,
+		userName: row.userName ?? null,
+		userEmail: row.userEmail ?? null,
+		...recentPurchaseTeamFacts(
+			row.bulkCouponId ? row.bulkCouponMaxUses : null,
+			row.bulkCouponId ? (purchasesByCoupon.get(row.bulkCouponId) ?? 0) : 0,
+		),
+	}))
+}
+
+function teamCondition(): SQL {
+	return gt(schema.coupon.maxUses, 1)
+}
+
+function individualCondition(): SQL {
+	return or(
+		isNull(schema.purchases.bulkCouponId),
+		isNull(schema.coupon.maxUses),
+		lte(schema.coupon.maxUses, 1),
+	)!
+}
+
+/**
+ * Overrides `@coursebuilder/analytics` getRecentPurchases, which reads
+ * organizationId as the team signal and leaves seats null on the default
+ * path. Same arguments, order, paging and filters. Two queries per page:
+ * the purchases with their bulk coupon, then purchase counts for that page's
+ * bulk coupons. The counts cover every purchase on the coupon, any status
+ * and any date, so an earlier or refunded add-seat purchase still marks the
+ * per-purchase seat count as unknown.
+ */
+export async function getRecentPurchases(
+	limit: number = 20,
+	filter: RecentPurchaseKind = 'all',
+	range: AnalyticsRange = 'all',
+	filters: { productId?: string; offset?: number } = {},
+	database: typeof db = db,
+) {
+	const since = rangeToDate(range)
+	const conditions: SQL[] = [
+		inArray(schema.purchases.status, [...PAID_PURCHASE_STATUSES]),
+		gt(schema.purchases.totalAmount, '0'),
+	]
+	if (since) conditions.push(gte(schema.purchases.createdAt, since))
+	if (filters.productId)
+		conditions.push(eq(schema.purchases.productId, filters.productId))
+	if (filter === 'team') conditions.push(teamCondition())
+	if (filter === 'individual') conditions.push(individualCondition())
+
+	const rows = await database
+		.select({
+			id: schema.purchases.id,
+			createdAt: schema.purchases.createdAt,
+			totalAmount: schema.purchases.totalAmount,
+			productName: schema.products.name,
+			productId: schema.purchases.productId,
+			country: schema.purchases.country,
+			couponId: schema.purchases.couponId,
+			userName: schema.users.name,
+			userEmail: schema.users.email,
+			bulkCouponId: schema.purchases.bulkCouponId,
+			bulkCouponMaxUses: schema.coupon.maxUses,
+		})
+		.from(schema.purchases)
+		.leftJoin(
+			schema.products,
+			eq(schema.purchases.productId, schema.products.id),
+		)
+		.leftJoin(schema.users, eq(schema.purchases.userId, schema.users.id))
+		.leftJoin(
+			schema.coupon,
+			eq(schema.purchases.bulkCouponId, schema.coupon.id),
+		)
+		.where(and(...conditions))
+		.orderBy(desc(schema.purchases.createdAt), desc(schema.purchases.id))
+		.limit(limit)
+		.offset(filters.offset ?? 0)
+
+	const teamCouponIds = [
+		...new Set(
+			(rows as RecentPurchaseRow[])
+				.filter(
+					(row) =>
+						row.bulkCouponId &&
+						typeof row.bulkCouponMaxUses === 'number' &&
+						row.bulkCouponMaxUses > 1,
+				)
+				.map((row) => row.bulkCouponId as string),
+		),
+	]
+	const couponCounts =
+		teamCouponIds.length === 0
+			? []
+			: await database
+					.select({
+						bulkCouponId: schema.purchases.bulkCouponId,
+						purchases: count(),
+					})
+					.from(schema.purchases)
+					.where(inArray(schema.purchases.bulkCouponId, teamCouponIds))
+					.groupBy(schema.purchases.bulkCouponId)
+
+	return formatRecentPurchases(
+		rows as RecentPurchaseRow[],
+		couponCounts as BulkCouponPurchaseCount[],
+	)
+}
+
+export default { ...provider, getShortlinkPerformance, getRecentPurchases }
