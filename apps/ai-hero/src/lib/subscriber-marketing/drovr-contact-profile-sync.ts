@@ -359,18 +359,25 @@ function canonicalJson(value: unknown): string {
  * and revokes do not cancel each other.
  */
 export function hasUnrevokedBuyerFact(
-	events: readonly Pick<
+	events: readonly (Pick<
 		ContactEventRecord,
 		'eventType' | 'occurredAt' | 'domainPayload'
-	>[],
+	> & { semanticIdempotencyKey?: string })[],
 ): boolean {
 	if (events.some((event) => event.eventType === 'purchase.recorded'))
 		return true
 	const entitlementId = (event: (typeof events)[number]) => {
+		// domainPayload is delivery-only, not a ContactEvent SQL column.
+		// Lifecycle keys retain the full grant id, including restoration suffixes.
+		const prefix = `ai-hero:${event.eventType}:`
+		if (event.semanticIdempotencyKey?.startsWith(prefix)) {
+			return event.semanticIdempotencyKey.slice(prefix.length) || undefined
+		}
 		const domain = event.domainPayload
-		const payload = domain && typeof domain === 'object' && 'entitlement' in domain
-			? domain.entitlement
-			: undefined
+		const payload =
+			domain && typeof domain === 'object' && 'entitlement' in domain
+				? domain.entitlement
+				: undefined
 		return payload &&
 			typeof payload === 'object' &&
 			'entitlementId' in payload &&

@@ -28,6 +28,31 @@ import { createMemoryValuePathLinkAnchorStore } from './value-path-link-anchor'
 const occurredAt = '2026-09-26T17:00:00.000Z'
 
 describe('buyer fact scope', () => {
+	it('resolves persisted grants from their semantic keys when SQL has no domainPayload', () => {
+		const grant = {
+			eventType: 'entitlement.granted',
+			occurredAt,
+			semanticIdempotencyKey:
+				'ai-hero:entitlement.granted:purchase-transfer:transfer-1',
+		}
+		const revoke = {
+			eventType: 'entitlement.revoked',
+			occurredAt,
+			semanticIdempotencyKey:
+				'ai-hero:entitlement.revoked:purchase-transfer:transfer-1',
+		}
+		expect(hasUnrevokedBuyerFact([grant])).toBe(true)
+		expect(hasUnrevokedBuyerFact([grant, revoke])).toBe(false)
+		expect(
+			hasUnrevokedBuyerFact([
+				grant,
+				{
+					...revoke,
+					semanticIdempotencyKey: 'ai-hero:entitlement.revoked:another-grant',
+				},
+			]),
+		).toBe(true)
+	})
 	const fact = (
 		eventType: string,
 		entitlementId: string,
