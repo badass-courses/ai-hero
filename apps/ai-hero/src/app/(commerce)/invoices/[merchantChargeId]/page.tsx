@@ -349,11 +349,11 @@ const Invoice = async (props: {
 										<br />
 										co Skill Recordings Inc.
 										<br />
-										12333 Sowden Rd
+										3120 Southwest Fwy
 										<br />
-										Ste. B, PMB #97429
+										Ste 101, PMB 97429
 										<br />
-										Houston, TX 77080-2059
+										Houston, TX 77098
 										<br />
 										972-992-5951
 									</div>

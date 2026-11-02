@@ -55,7 +55,7 @@ export const BasicEmail = ({
 								</Row>
 							) : null}
 							<Row>
-								12333 Sowden Rd, Ste. B, PMB #97429 Houston, TX 77080-2059
+								3120 Southwest Fwy Ste 101, PMB 97429, Houston, TX 77098
 							</Row>
 						</>
 					) : null}
