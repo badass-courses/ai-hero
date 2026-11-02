@@ -10,6 +10,13 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const captureTransferBuyerEntitlement = vi.hoisted(() =>
+	vi.fn(async (_id: string) => ({ counts: {} })),
+)
+vi.mock('@/lib/capture-buyer-entitlement', () => ({
+	captureTransferBuyerEntitlement,
+}))
+
 type EntitlementRow = {
 	id: string
 	userId: string
@@ -653,6 +660,19 @@ describe('happy path', () => {
 })
 
 describe('duplicate events', () => {
+	it('repairs a failed buyer fact after completion, without repeating the transfer', async () => {
+		captureTransferBuyerEntitlement.mockRejectedValueOnce(
+			new Error('fact write failed'),
+		)
+		await expect(runWorkflow()).rejects.toThrow('fact write failed')
+		expect(mocks.state.world.transferState).toBe('COMPLETED')
+		await runWorkflow()
+		expect(captureTransferBuyerEntitlement).toHaveBeenLastCalledWith(
+			event.data.purchaseUserTransferId,
+		)
+		expect(mocks.state.world.completedWrites).toBe(1)
+	})
+
 	it('after COMPLETED: short-circuits, runs no entitlement code, and leaves identities untouched', async () => {
 		await runWorkflow()
 		const before = activeIds('user_b')
@@ -669,6 +689,7 @@ describe('duplicate events', () => {
 		expect(harness.executed).toEqual([
 			'log transfer initiated',
 			'check transfer replay state',
+			'capture receiving buyer entitlement',
 			'log duplicate transfer event skipped',
 		])
 		expect(mocks.createResourceEntitlements).not.toHaveBeenCalled()

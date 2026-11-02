@@ -36,6 +36,7 @@ function harness(
 			  }
 			| 'not-configured'
 		onSendingJourney?: boolean
+		hasBuyerFact?: boolean
 		reason?: 'journey-entered' | 'offer-issued' | 'reconcile'
 		acknowledged?: boolean
 	} = {},
@@ -89,6 +90,7 @@ function harness(
 			deliver,
 			ownedPath,
 			onSendingJourney,
+			hasBuyerFact: async () => overrides.hasBuyerFact ?? false,
 			now: () => now,
 			birth,
 			acknowledge,
@@ -129,20 +131,75 @@ describe('drovr contact profile sync function', () => {
 		expect(h.readSnapshot).not.toHaveBeenCalled()
 	})
 
-	it('pushes nothing for a contact on no drovr sending journey (drovr would refuse it)', async () => {
-		// The contract: profile, links and offer events only for contacts
-		// with a drovr sending journey; drovr migrates only those to v2.
+	it('still skips a contact with neither a sending journey nor buyer facts', async () => {
 		const h = harness({ onSendingJourney: false })
 		await expect(h.run()).resolves.toEqual({
 			status: 'skipped',
 			reason: 'no-sending-journey',
 		})
 		expect(h.onSendingJourney).toHaveBeenCalledWith('contact-1')
-		expect(h.order).toEqual(['sending-journey'])
+		expect(h.order).toEqual(['sending-journey', 'buyer-fact'])
 		expect(h.readSnapshot).not.toHaveBeenCalled()
 		expect(h.versionFor).not.toHaveBeenCalled()
 		expect(h.deliver).not.toHaveBeenCalled()
 	})
+
+	it('sends only the unchanged email-bearing profile for a fact holder without a journey', async () => {
+		const h = harness({
+			onSendingJourney: false,
+			hasBuyerFact: true,
+			snapshot: {
+				...snapshot,
+				offers: [
+					{
+						journeyId: 'crash-course-evergreen-offer',
+						couponId: 'coupon-1',
+						variables: {},
+					},
+				],
+			},
+		})
+		await expect(h.run()).resolves.toMatchObject({
+			status: 'sent',
+			links: 0,
+			offers: 0,
+		})
+		expect(h.ownedPath).not.toHaveBeenCalled()
+		expect(h.readSnapshot).toHaveBeenCalledWith({
+			contactId: 'contact-1',
+			valuePathSlug: undefined,
+		})
+		expect(h.deliver).toHaveBeenCalledWith([
+			expect.objectContaining({
+				type: 'contact.profile.updated',
+				idempotencyKey: 'profile:contact-1:4',
+				payload: { profileVersion: 4, ...snapshot.profile },
+			}),
+		])
+	})
+
+	it.each([
+		{
+			snapshot: { ...snapshot, unsubscribed: true as const },
+			reason: 'unsubscribed-held',
+		},
+		{
+			snapshot: { ...snapshot, profile: { ...snapshot.profile, email: '' } },
+			reason: 'contact-email-missing',
+		},
+	])(
+		'preserves $reason for a fact holder without a journey',
+		async ({ snapshot, reason }) => {
+			const h = harness({
+				onSendingJourney: false,
+				hasBuyerFact: true,
+				snapshot,
+			})
+			await expect(h.run()).resolves.toEqual({ status: 'skipped', reason })
+			expect(h.deliver).not.toHaveBeenCalled()
+			expect(h.birth).not.toHaveBeenCalled()
+		},
+	)
 
 	it.each([false, true])(
 		'refused as event-not-live preserves scope and wire shape (ownership enabled: %s)',

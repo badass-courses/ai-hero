@@ -1,3 +1,4 @@
+import type { CaptureMarketingRepository } from './capture-contact-event'
 import type {
 	ContactEventPreviewRepository,
 	ContactEventWriteRepository,
@@ -772,6 +773,52 @@ async function redispatchDuplicatePurchases(
 	}
 }
 
+/** Birth ownership contacts without creating consent, course entry, or marketing intents.
+ * The repository's atomic identity writer converges concurrent births by provider key/email.
+ * Preview and historical lifecycle writers remain existing-contact-only.
+ */
+export async function ensureBuyerContact(args: {
+	repository: ContactEventWriteRepository &
+		Pick<CaptureMarketingRepository, 'createContactAndProviderIdentity'>
+	buyer: LifecycleIdentityInput
+	now?: string
+}) {
+	const resolved = await resolveLifecycleIdentity(args.repository, args.buyer)
+	if (resolved.status === 'resolved') return resolved.contact
+	if (resolved.reason === 'no-identity-evidence') return undefined
+	const email = normalizeEmail(args.buyer.email)
+	const externalId = args.buyer.userId ?? email
+	if (!externalId) return undefined
+	const now = args.now ?? new Date().toISOString()
+	const evidence: ContactIdentityEvidence = {
+		userId: args.buyer.userId ?? undefined,
+		email,
+		name: args.buyer.name ?? undefined,
+		providerIdentity: { provider: 'ai-hero', externalId },
+		source: 'ai-hero',
+		strength: 'strong',
+	}
+	const result = await args.repository.createContactAndProviderIdentity(
+		{
+			userId: args.buyer.userId ?? null,
+			email: email ?? null,
+			name: args.buyer.name ?? null,
+			lifecycle: 'new',
+			isProvisional: true,
+			createdAt: now,
+			updatedAt: now,
+		},
+		{
+			provider: 'ai-hero',
+			externalId,
+			evidence,
+			createdAt: now,
+			updatedAt: now,
+		},
+	)
+	return result.contact
+}
+
 export async function previewPurchaseRecordedContactEvents(args: {
 	repository: ContactEventPreviewRepository
 	rows: PurchaseRecordedSource[]
@@ -818,6 +865,7 @@ export async function writeEntitlementRecordedContactEvents(args: {
 	repository: ContactEventWriteRepository
 	rows: EntitlementRecordedSource[]
 	now?: string
+	redispatchDuplicates?: boolean
 }): Promise<LifecycleContactEventSummary> {
 	const now = args.now ?? new Date().toISOString()
 	const decisions: LifecycleContactEventDecision[] = []
@@ -841,6 +889,9 @@ export async function writeEntitlementRecordedContactEvents(args: {
 		decisions,
 		now,
 	})
+	if (args.redispatchDuplicates) {
+		await redispatchDuplicatePurchases(args.repository, decisions)
+	}
 	return summarize('write', decisions, written, createdProviderIdentities)
 }
 
