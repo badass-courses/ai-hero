@@ -198,9 +198,14 @@ function mdxEscapes(source: string, node: MdNode): Edit[] {
 /** Point a link node at `target`, editing only its URL. */
 function linkEdit(source: string, node: MdNode, target: string): Edit | null {
 	const { start, end } = offsets(node)
-	const urlAt = source.slice(start, end).lastIndexOf(`(${node.url}`)
-	if (urlAt < 0) return null
-	const urlStart = start + urlAt + 1
+	const text = source.slice(start, end)
+	// An inline link carries its url in `(…)`; a reference definition after `]:`.
+	const urlAt =
+		node.type === 'definition'
+			? text.indexOf(node.url ?? '', text.indexOf(']:') + 2)
+			: text.lastIndexOf(`(${node.url}`) + 1
+	if (urlAt < 1) return null
+	const urlStart = start + urlAt
 	return {
 		start: urlStart,
 		end: urlStart + (node.url?.length ?? 0),
@@ -509,6 +514,7 @@ export function parseSandcastleGuide({
 			group.pages.map((slug) => [slug, group.title] as const),
 		),
 	)
+	groupOf.delete(toc.start)
 	const parsed = [toc.start, ...groupOf.keys()].map((slug) => {
 		const source = files[slug] ?? ''
 		const root = parser.parse(source) as MdNode
@@ -563,7 +569,8 @@ export function parseSandcastleGuide({
 		const edits: Edit[] = []
 		walk(page.root, (node) => {
 			edits.push(...mdxEscapes(page.source, node))
-			if (node.type === 'link' && node.url) {
+			const linked = node.type === 'link' || node.type === 'definition'
+			if (linked && node.url) {
 				const target = resolveLink(node.url, page.file)
 				const edit = target ? linkEdit(page.source, node, target) : null
 				if (edit) edits.push(edit)
@@ -600,7 +607,9 @@ export function parseSandcastleGuide({
 			.map((group) => ({
 				title: group.title,
 				pages: pages
-					.filter(({ slug }) => group.pages.includes(slug))
+					.filter(
+						({ slug }) => slug !== toc.start && group.pages.includes(slug),
+					)
 					.map(({ page }) => page),
 			}))
 			.filter((group) => group.pages.length > 0),

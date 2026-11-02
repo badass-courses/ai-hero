@@ -167,7 +167,12 @@ describe('parseSandcastleGuide', () => {
 	const docs = parseSandcastleGuide({
 		toc: {
 			start: 'getting-started',
-			groups: [{ title: 'Guides', pages: ['prompts', 'sandbox-providers'] }],
+			groups: [
+				{
+					title: 'Guides',
+					pages: ['getting-started', 'prompts', 'sandbox-providers'],
+				},
+			],
 		},
 		files: {
 			'getting-started': `# Getting started
@@ -198,6 +203,10 @@ Prompts are files. They take arguments.
 ## Dynamic context
 
 Pass a Record<string, string>. See [ADR 0019](../adr/0019-timeout.md), [quick start](./getting-started.md#quick-start), [this section](#dynamic-context) and [the license](../../README.md#license).
+
+Timeouts follow the [timeout ADR][adr].
+
+[adr]: ../adr/0019-timeout.md
 `,
 			'sandbox-providers': `# Sandbox providers
 
@@ -210,7 +219,7 @@ Pass a Record<string, string>. See [ADR 0019](../adr/0019-timeout.md), [quick st
 	})
 	const page = (slug: string) => docs.pages.find((p) => p.slug === slug)!
 
-	it('orders pages and groups as toc.json lists them', () => {
+	it('orders pages and groups as toc.json lists them, the start page once', () => {
 		expect(docs.pages.map((p) => p.href)).toEqual([
 			'/sandcastle/getting-started',
 			'/sandcastle/prompts',
@@ -272,6 +281,9 @@ Pass a Record<string, string>. See [ADR 0019](../adr/0019-timeout.md), [quick st
 		)
 		expect(page('getting-started').body).toContain(
 			`[a draft](${blob}/docs/guide/draft.md)`,
+		)
+		expect(page('prompts').body).toContain(
+			`[adr]: ${blob}/docs/adr/0019-timeout.md`,
 		)
 		expect(page('prompts').sourceUrl).toBe(`${blob}/docs/guide/prompts.md`)
 	})
