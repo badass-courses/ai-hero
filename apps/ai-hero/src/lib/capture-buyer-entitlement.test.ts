@@ -3,8 +3,10 @@ const mocks = vi.hoisted(() => ({
 	transfer: vi.fn(),
 	purchase: vi.fn(),
 	user: vi.fn(),
+	warn: vi.fn(),
 	record: vi.fn(async (_args: unknown) => ({ counts: { written: 1 } })),
 }))
+vi.mock('@/server/logger', () => ({ log: { warn: mocks.warn } }))
 vi.mock('@/db', () => ({
 	db: {
 		query: {
@@ -62,6 +64,37 @@ describe('receiving buyer entitlement sources', () => {
 			}),
 		)
 	})
+	it.each([
+		{ targetUserId: null, completedAt: new Date(at) },
+		{ targetUserId: 'receiver-1', completedAt: null },
+		{ targetUserId: null, completedAt: null },
+	])(
+		'logs and skips a legacy completed transfer with incomplete evidence: %j',
+		async (fields) => {
+			mocks.transfer.mockResolvedValue({
+				id: 'legacy-transfer-1',
+				transferState: 'COMPLETED',
+				...fields,
+			})
+			await expect(
+				captureTransferBuyerEntitlement('legacy-transfer-1'),
+			).resolves.toEqual({
+				status: 'skipped',
+				reason: 'legacy-transfer-incomplete-evidence',
+			})
+			expect(mocks.warn).toHaveBeenCalledWith(
+				'buyer_entitlement.legacy_transfer_skipped',
+				{
+					transferId: 'legacy-transfer-1',
+					missingTargetUser: !fields.targetUserId,
+					missingCompletedAt: !fields.completedAt,
+				},
+			)
+			expect(mocks.record).not.toHaveBeenCalled()
+			expect(mocks.purchase).not.toHaveBeenCalled()
+			expect(mocks.user).not.toHaveBeenCalled()
+		},
+	)
 	it.each(['VERIFIED', 'CANCELED', 'EXPIRED'])(
 		'never grants from a %s transfer',
 		async (transferState) => {

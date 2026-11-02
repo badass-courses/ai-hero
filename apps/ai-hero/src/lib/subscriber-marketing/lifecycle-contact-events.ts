@@ -123,6 +123,7 @@ export type LifecycleContactEventDecision =
 			reason:
 				| 'no-existing-contact'
 				| 'no-identity-evidence'
+				| 'dangling-provider-identity'
 				| 'duplicate-semantic-key'
 			detail: string
 			existing?: ContactEventRecord
@@ -313,7 +314,10 @@ type LifecycleIdentityResolution =
 	  }
 	| {
 			status: 'skipped'
-			reason: 'no-existing-contact' | 'no-identity-evidence'
+			reason:
+				| 'no-existing-contact'
+				| 'no-identity-evidence'
+				| 'dangling-provider-identity'
 			detail: string
 	  }
 
@@ -356,6 +360,13 @@ async function resolveLifecycleIdentity(
 		const contact = identity
 			? await repository.findContactById(identity.contactId)
 			: undefined
+		if (identity && !contact) {
+			return {
+				status: 'skipped',
+				reason: 'dangling-provider-identity',
+				detail: 'AI Hero provider identity points at a missing Contact; do not create or relink it.',
+			}
+		}
 		if (identity && contact) {
 			return {
 				status: 'resolved',
@@ -774,7 +785,8 @@ async function redispatchDuplicatePurchases(
 }
 
 /** Birth ownership contacts without creating consent, course entry, or marketing intents.
- * The repository's atomic identity writer converges concurrent births by provider key/email.
+ * User-backed births use the repository's atomic identity writer. Email-only
+ * births link by Contact id in the lifecycle writer, never by email.
  * Preview and historical lifecycle writers remain existing-contact-only.
  */
 export async function ensureBuyerContact(args: {
@@ -782,14 +794,33 @@ export async function ensureBuyerContact(args: {
 		Pick<CaptureMarketingRepository, 'createContactAndProviderIdentity'>
 	buyer: LifecycleIdentityInput
 	now?: string
+	warn?: (event: string, fields: Record<string, unknown>) => unknown
 }) {
 	const resolved = await resolveLifecycleIdentity(args.repository, args.buyer)
 	if (resolved.status === 'resolved') return resolved.contact
 	if (resolved.reason === 'no-identity-evidence') return undefined
+	if (resolved.reason === 'dangling-provider-identity') {
+		await args.warn?.('buyer_contact.dangling_identity_skipped', {
+			reason: resolved.reason,
+		})
+		return undefined
+	}
 	const email = normalizeEmail(args.buyer.email)
-	const externalId = args.buyer.userId ?? email
-	if (!externalId) return undefined
+	if (!args.buyer.userId && !email) return undefined
 	const now = args.now ?? new Date().toISOString()
+	const contactInput: Omit<ContactRecord, 'id'> = {
+		userId: args.buyer.userId ?? null,
+		email: email ?? null,
+		name: args.buyer.name ?? null,
+		lifecycle: 'new',
+		isProvisional: true,
+		createdAt: now,
+		updatedAt: now,
+	}
+	// Without a user id, the lifecycle writer links the new contact by its
+	// own id. Never use an address as the AI Hero provider external id.
+	if (!args.buyer.userId) return args.repository.createContact(contactInput)
+	const externalId = args.buyer.userId
 	const evidence: ContactIdentityEvidence = {
 		userId: args.buyer.userId ?? undefined,
 		email,
@@ -799,15 +830,7 @@ export async function ensureBuyerContact(args: {
 		strength: 'strong',
 	}
 	const result = await args.repository.createContactAndProviderIdentity(
-		{
-			userId: args.buyer.userId ?? null,
-			email: email ?? null,
-			name: args.buyer.name ?? null,
-			lifecycle: 'new',
-			isProvisional: true,
-			createdAt: now,
-			updatedAt: now,
-		},
+		contactInput,
 		{
 			provider: 'ai-hero',
 			externalId,

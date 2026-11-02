@@ -143,7 +143,7 @@ export const capturePurchaseContactEvent = inngest.createFunction(
 			'write purchase-recorded contact event',
 			async () => {
 				const repository = new DrizzleCaptureMarketingRepository(db)
-				await ensureBuyerContact({ repository, buyer: source })
+				await ensureBuyerContact({ repository, buyer: source, warn: log.warn })
 				const result = await writePurchaseRecordedContactEvents({
 					repository,
 					rows: [source],
@@ -180,7 +180,8 @@ export const capturePurchaseContactEvent = inngest.createFunction(
 		const buyerEmail = source.email?.trim()
 		if (
 			summary.counts.written === 0 &&
-			summary.counts.skippedByReason['no-existing-contact'] &&
+			(summary.counts.skippedByReason['no-existing-contact'] ||
+				summary.counts.skippedByReason['dangling-provider-identity']) &&
 			buyerEmail
 		) {
 			const drovr = await step.run('resolve buyer in drovr', async () => {

@@ -115,6 +115,7 @@ describe('capture purchase contact event (row 194)', () => {
 		await run()
 		expect(mocks.ensureBuyerContact).toHaveBeenCalledWith({
 			repository: expect.anything(),
+			warn: mocks.log.warn,
 			buyer: expect.objectContaining({
 				userId: 'user-1',
 				email: 'buyer@example.com',
@@ -199,6 +200,25 @@ describe('capture purchase contact event (row 194)', () => {
 			mocks.findPurchase.mockResolvedValue(purchaseRow('ppp-coupon'))
 			mocks.write.mockResolvedValue(noContact)
 			mocks.deliver.mockResolvedValue({ accepted: 1, rejected: 0 })
+		})
+
+		it('falls back to drovr after the local writer skips a dangling identity', async () => {
+			mocks.write.mockResolvedValue({
+				counts: {
+					written: 0,
+					skippedByReason: { 'dangling-provider-identity': 1 },
+				},
+				decisions: [],
+			})
+			mocks.resolve.mockResolvedValue(
+				new Map([
+					['buyer@example.com', { status: 'resolved', contactId: 'drv-1' }],
+				]),
+			)
+			await expect(runResult()).resolves.toMatchObject({
+				status: 'drovr-resolved',
+			})
+			expect(mocks.deliver).toHaveBeenCalledTimes(1)
 		})
 
 		it('sends the purchase to the contact drovr resolves', async () => {

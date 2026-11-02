@@ -19,6 +19,84 @@ const buyer = {
 }
 
 describe('buyer Contact birth and ownership', () => {
+	it('logs a dangling identity and skips local capture without creating or relinking a Contact', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		repository.createProviderIdentity({
+			contactId: 'missing-contact',
+			provider: 'ai-hero',
+			externalId: buyer.userId,
+			evidence: { source: 'ai-hero', strength: 'strong' },
+			createdAt: now,
+			updatedAt: now,
+		})
+		const birth = vi.spyOn(repository, 'createContactAndProviderIdentity')
+		const warn = vi.fn()
+		expect(
+			await ensureBuyerContact({ repository, buyer, now, warn }),
+		).toBeUndefined()
+		expect(warn).toHaveBeenCalledWith(
+			'buyer_contact.dangling_identity_skipped',
+			{ reason: 'dangling-provider-identity' },
+		)
+		expect(birth).not.toHaveBeenCalled()
+		const result = await writePurchaseRecordedContactEvents({
+			repository,
+			rows: [
+				{
+					...buyer,
+					purchaseId: 'purchase-dangling',
+					productId: 'course-1',
+					status: 'Valid',
+					totalAmount: '199',
+					purchasedAt: now,
+				},
+			],
+			now,
+		})
+		expect(result.counts).toMatchObject({
+			written: 0,
+			skippedByReason: { 'dangling-provider-identity': 1 },
+		})
+		expect(
+			repository.findProviderIdentity('ai-hero', buyer.userId)?.contactId,
+		).toBe('missing-contact')
+		expect(repository.findContactByEmail(buyer.email)).toBeUndefined()
+	})
+
+	it('keys an email-only buyer identity by the Contact id, never by the address', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const emailOnly = { email: 'email-only@example.test', name: 'Email Only' }
+		const contact = await ensureBuyerContact({
+			repository,
+			buyer: emailOnly,
+			now,
+		})
+		const result = await writePurchaseRecordedContactEvents({
+			repository,
+			rows: [
+				{
+					...emailOnly,
+					purchaseId: 'email-only-purchase',
+					productId: 'course-1',
+					status: 'Valid',
+					totalAmount: '199',
+					purchasedAt: now,
+				},
+			],
+			now,
+		})
+		expect(result.counts.written).toBe(1)
+		expect(
+			repository.findProviderIdentity('ai-hero', contact!.id)?.contactId,
+		).toBe(contact!.id)
+		expect(
+			repository.findProviderIdentity('ai-hero', emailOnly.email),
+		).toBeUndefined()
+		expect(
+			(await ensureBuyerContact({ repository, buyer: emailOnly, now }))?.id,
+		).toBe(contact!.id)
+	})
+
 	it('creates a provisional Contact and stable identity, then records a previously skipped purchase', async () => {
 		const repository = new InMemorySubscriberMarketingRepository()
 		const first = await ensureBuyerContact({ repository, buyer, now })

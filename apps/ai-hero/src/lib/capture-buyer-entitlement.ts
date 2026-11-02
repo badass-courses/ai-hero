@@ -1,6 +1,7 @@
 import { db } from '@/db'
 import { purchases, purchaseUserTransfer, users } from '@/db/schema'
 import { eq } from 'drizzle-orm'
+import { log } from '@/server/logger'
 import { recordBuyerEntitlement } from './subscriber-marketing/buyer-entitlement'
 import { DrizzleCaptureMarketingRepository } from './subscriber-marketing/drizzle-capture-repository'
 
@@ -20,6 +21,7 @@ async function recordHolder(args: {
 	if (!purchase || !user) throw new Error('Buyer entitlement source not found')
 	const result = await recordBuyerEntitlement({
 		repository: new DrizzleCaptureMarketingRepository(db),
+		warn: log.warn,
 		source: {
 			change: 'granted',
 			entitlementId: args.grantId,
@@ -40,13 +42,16 @@ export async function captureTransferBuyerEntitlement(transferId: string) {
 	const transfer = await db.query.purchaseUserTransfer.findFirst({
 		where: eq(purchaseUserTransfer.id, transferId),
 	})
-	if (
-		!transfer ||
-		transfer.transferState !== 'COMPLETED' ||
-		!transfer.targetUserId ||
-		!transfer.completedAt
-	) {
+	if (!transfer || transfer.transferState !== 'COMPLETED') {
 		throw new Error('Buyer entitlement requires a completed transfer')
+	}
+	if (!transfer.targetUserId || !transfer.completedAt) {
+		await log.warn('buyer_entitlement.legacy_transfer_skipped', {
+			transferId: transfer.id,
+			missingTargetUser: !transfer.targetUserId,
+			missingCompletedAt: !transfer.completedAt,
+		})
+		return { status: 'skipped', reason: 'legacy-transfer-incomplete-evidence' }
 	}
 	return recordHolder({
 		purchaseId: transfer.purchaseId,

@@ -7,13 +7,20 @@ import {
 	type EntitlementRecordedSource,
 } from './lifecycle-contact-events'
 
-/** Ownership only: no synthetic paid purchase, consent, or journey entry. */
+/** Record access alongside any purchase fact, including a redeemed seat's
+ * purchase capture. This adds no Purchase row, consent, or journey entry.
+ */
 export async function recordBuyerEntitlement(args: {
 	repository: ContactEventWriteRepository &
 		Pick<CaptureMarketingRepository, 'createContactAndProviderIdentity'>
 	source: EntitlementRecordedSource
+	warn?: (event: string, fields: Record<string, unknown>) => unknown
 }) {
-	await ensureBuyerContact({ repository: args.repository, buyer: args.source })
+	await ensureBuyerContact({
+		repository: args.repository,
+		buyer: args.source,
+		warn: args.warn,
+	})
 	const result = await writeEntitlementRecordedContactEvents({
 		repository: args.repository,
 		rows: [args.source],
