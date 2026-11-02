@@ -339,7 +339,8 @@ function UtilityRow() {
 		},
 		{ href: '/ai-coding-dictionary', label: 'Dictionary', type: 'dictionary' },
 		{ href: '/faq', label: 'FAQ', type: 'legal' },
-		{ href: '/about', label: 'About', type: 'company' },
+		// No About link: /about has never had a page, so the link 404'd on every
+		// page footer. Add it back when an About page ships.
 		{
 			href: '/training-partners',
 			label: 'Training partners',
