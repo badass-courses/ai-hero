@@ -1,4 +1,8 @@
-import type { TransferState } from '@/purchase-transfer/transfer-lifecycle'
+import {
+	TRANSFER_DENIAL_MESSAGES,
+	type TransferDenialCode,
+	type TransferState,
+} from '@/purchase-transfer/transfer-lifecycle'
 
 import {
 	acceptanceLinkView,
@@ -67,4 +71,18 @@ export function transferPageView({
 	if (state === 'canceled') return { kind: 'canceled', notice }
 	if (state === 'expired') return { kind: 'expired', notice }
 	return { kind: link.mayAccept ? 'accept' : 'sign-in', notice }
+}
+
+/**
+ * The notice for a refused Accept, from the `?denied=` code the accept action
+ * redirects with. Unknown codes and `not_authenticated` (which has its own
+ * sign-in view) give null, so a crafted query string can only show one of the
+ * app's own denial messages.
+ */
+export function transferDenialNotice(
+	code: string | null | undefined,
+): string | null {
+	if (!code || code === 'not_authenticated') return null
+	if (!Object.hasOwn(TRANSFER_DENIAL_MESSAGES, code)) return null
+	return `${TRANSFER_DENIAL_MESSAGES[code as TransferDenialCode]} Email support@aihero.dev for help.`
 }
