@@ -98,7 +98,7 @@ export async function hasEntitlementForResource(
 			// cohort buyer ever owned the cohort and the nav kept selling it to them.
 			or(
 				sql`JSON_CONTAINS(${entitlements.metadata}, ${JSON.stringify(resourceId)}, '$.contentIds')`,
-				sql`${entitlements.sourceId} IN (SELECT p.id FROM ${purchases} p JOIN ${contentResourceProduct} crp ON crp.productId = p.productId WHERE crp.resourceId = ${resourceId})`,
+				sql`${entitlements.sourceId} IN (SELECT p.id FROM ${purchases} p JOIN ${contentResourceProduct} crp ON crp.productId = p.productId WHERE crp.resourceId = ${resourceId} AND crp.deletedAt IS NULL)`,
 			),
 		),
 	})
