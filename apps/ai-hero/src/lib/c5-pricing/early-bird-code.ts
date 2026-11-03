@@ -22,6 +22,12 @@ export function earlyBirdCouponId(value: string | null | undefined) {
 	return value && COUPON_ID.test(value) ? value : null
 }
 
+/**
+ * Course Builder refuses checkout within 30 minutes of a decision's closesAt;
+ * one more minute keeps a quote from promising what checkout then refuses.
+ */
+export const EARLY_BIRD_CHECKOUT_CUTOFF_MS = 31 * 60 * 1000
+
 export const EARLY_BIRD_CODE_REASONS = {
 	/** A valid early-bird code priced this buyer in the early window. */
 	applied: 'early-bird-code-applied',
@@ -105,11 +111,16 @@ export function classifyEarlyBirdCode(
 	const early = ruledNumber(policy.newBuyerEarlyPercent)
 	const percent = Math.round(Number(row.percentageDiscount ?? 0) * 100)
 	if (early === null || early <= 0 || percent !== early) return { state: 'none' }
+	// Only unlimited codes. Checkout spends a generated one-use Stripe discount
+	// and never debits this row, so a use limit here would not be enforced.
+	if (row.maxUses !== -1) return { state: 'none' }
+	if (row.status !== 1) return { state: 'ended', couponId }
 	const expiresAt = row.expires?.getTime() ?? null
 	if (expiresAt === null || !Number.isFinite(expiresAt))
 		return { state: 'none' }
-	const usesLeft = row.maxUses === -1 || row.usedCount < row.maxUses
-	if (row.status !== 1 || expiresAt <= now || !usesLeft)
+	// Course Builder refuses a new session close to its closesAt, which is the
+	// code's expiry, so the code reads as ended from that cutoff on.
+	if (now >= expiresAt - EARLY_BIRD_CHECKOUT_CUTOFF_MS)
 		return { state: 'ended', couponId }
 	return { state: 'valid', couponId, expiresAt }
 }

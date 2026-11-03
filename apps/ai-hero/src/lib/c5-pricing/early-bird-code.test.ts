@@ -11,6 +11,7 @@ import type { AuthoritativePriceRequest } from '@coursebuilder/core/schemas'
 import { C5_PRODUCT_ID, decodeDecisionRef } from './decision'
 import {
 	classifyEarlyBirdCode,
+	EARLY_BIRD_CHECKOUT_CUTOFF_MS,
 	EARLY_BIRD_CODE_REASONS,
 	earlyBirdCouponId,
 	withEarlyBirdWindow,
@@ -173,8 +174,20 @@ describe('early-bird code at C5 checkout', () => {
 		expect(decision?.reasons).toContain(EARLY_BIRD_CODE_REASONS.ended)
 	})
 
-	it('says the code has ended when it is switched off or used up', async () => {
-		for (const row of [coupon({ status: 0 }), coupon({ maxUses: 3, usedCount: 3 })]) {
+	it('names the code and its window in the decisionRef', async () => {
+		code = presented(coupon())
+		const first = await ask()
+		code = {
+			couponId: 'coupon_other',
+			row: coupon({ id: 'coupon_other', expires: new Date('2030-02-06T08:00:00.000Z') }),
+		}
+		const second = await ask()
+		expect(first?.amountCents).toBe(second?.amountCents)
+		expect(first?.decisionRef).not.toBe(second?.decisionRef)
+	})
+
+	it('says the code has ended when it is switched off, even with no expiry', async () => {
+		for (const row of [coupon({ status: 0 }), coupon({ status: 0, expires: null })]) {
 			code = presented(row)
 			const decision = await ask()
 			expect(decision).toMatchObject({ kind: 'priced', amountCents: 100_000 })
@@ -186,6 +199,9 @@ describe('early-bird code at C5 checkout', () => {
 		for (const row of [
 			null,
 			coupon({ expires: null }),
+			// A use limit cannot be enforced on this path, so finite codes never apply.
+			coupon({ maxUses: 3, usedCount: 0 }),
+			coupon({ maxUses: 3, usedCount: 3 }),
 			coupon({ percentageDiscount: '0.50' }),
 			coupon({ restrictedToProductId: 'product-other' }),
 			coupon({ organizationId: 'org-1' }),
@@ -261,6 +277,17 @@ describe('classifyEarlyBirdCode and withEarlyBirdWindow', () => {
 		expect('value' in widened.earlyEndsAt && widened.earlyEndsAt.value).toBe(
 			SYNTHETIC_WINDOWS.closesAt,
 		)
+	})
+
+	it('reads as ended from the checkout cutoff before expiry, not at expiry', () => {
+		const policy = syntheticPolicy()
+		const at = (now: number) =>
+			classifyEarlyBirdCode(presented(coupon()), policy, now).state
+		const cutoff = CODE_EXPIRES.getTime() - EARLY_BIRD_CHECKOUT_CUTOFF_MS
+		expect(EARLY_BIRD_CHECKOUT_CUTOFF_MS).toBe(31 * 60 * 1000)
+		expect(at(cutoff - 1)).toBe('valid')
+		expect(at(cutoff)).toBe('ended')
+		expect(at(CODE_EXPIRES.getTime() - 1)).toBe('ended')
 	})
 
 	it('accepts only well-formed coupon ids', () => {

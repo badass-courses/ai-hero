@@ -358,6 +358,15 @@ export function createC5AuthoritativePrice(deps: C5PricingDeps) {
 			pppPercent: ppp && 'value' in ppp && ppp.value ? ppp.value.percent : null,
 			appReasons: [...appReasons, ...codeReasons],
 			codeExpiresAt: 'value' in code ? code.value?.expiresAt : undefined,
+			earlyBirdCode:
+				earlyBird.state === 'valid' &&
+				codeReasons.includes(EARLY_BIRD_CODE_REASONS.applied) &&
+				'value' in pricingPolicy.earlyEndsAt
+					? {
+							couponId: earlyBird.couponId,
+							earlyEndsAt: pricingPolicy.earlyEndsAt.value,
+						}
+					: undefined,
 		})
 		// A session priced by an early-bird code ends when the code does.
 		if (codeReasons.includes(EARLY_BIRD_CODE_REASONS.applied) && earlyBird.state === 'valid')
