@@ -1,7 +1,10 @@
 import { revalidatePath, updateTag } from 'next/cache'
 import { notFound, redirect } from 'next/navigation'
 import { courseBuilderAdapter } from '@/db'
-import { transferPageView } from '@/lib/transfer-page-view'
+import {
+	transferDenialNotice,
+	transferPageView,
+} from '@/lib/transfer-page-view'
 import { INCOMING_TRANSFERS_TAG } from '@/lib/incoming-transfers'
 import { purchaseArtwork } from '@/lib/purchase-artwork'
 import { acceptPurchaseTransfer } from '@/purchase-transfer/purchase-transfer-actions'
@@ -24,10 +27,12 @@ const SENT = ['INITIATED', 'VERIFIED', 'COMPLETED', 'CANCELED', 'EXPIRED']
 
 const PurchaseTransferPage = async (props: {
 	params: Promise<{ purchaseTransferId: string }>
-	searchParams?: Promise<{ link?: string }>
+	searchParams?: Promise<{ link?: string; denied?: string }>
 }) => {
 	const { purchaseTransferId: id } = await props.params
-	const linkUsed = (await props.searchParams)?.link === 'used'
+	const searchParams = await props.searchParams
+	const linkUsed = searchParams?.link === 'used'
+	const deniedNotice = transferDenialNotice(searchParams?.denied)
 	const [{ session }, transfer] = await Promise.all([
 		getServerAuthSession(),
 		courseBuilderAdapter.getPurchaseUserTransferById({ id }),
@@ -99,6 +104,11 @@ const PurchaseTransferPage = async (props: {
 			) {
 				redirect(`/transfer/${id}?link=used`)
 			}
+			// Any other expected denial (a team seat, a wrong recipient, an
+			// expired transfer) shows its message on the page instead of a 500.
+			if (error instanceof TransferDenialError) {
+				redirect(`/transfer/${id}?denied=${encodeURIComponent(error.code)}`)
+			}
 			throw error
 		}
 		updateTag(INCOMING_TRANSFERS_TAG)
@@ -109,7 +119,7 @@ const PurchaseTransferPage = async (props: {
 	return (
 		<TransferScreen
 			view={view}
-			notice={notice}
+			notice={deniedNotice ?? notice}
 			transferId={id}
 			productName={product?.name ?? 'your purchase'}
 			artwork={purchaseArtwork(product)}
