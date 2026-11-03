@@ -24,6 +24,7 @@ import {
 } from './ppp-credit-bound'
 import { holdsRestrictedPurchase } from './restricted-holder'
 import { signedGiftFact } from './gift-server'
+import { EARLY_BIRD_CODE_REASONS } from './early-bird-code'
 import { presentedEarlyBirdCode } from './early-bird-code-server'
 import { c5PricingClosed } from './switch-server'
 import { c5PricingDisabled } from './config'
@@ -162,7 +163,22 @@ const decide = createC5AuthoritativePrice(c5PricingDeps)
 export async function c5AuthoritativePrice(request: AuthoritativePriceRequest) {
 	const decision = await decide(request)
 	if (decision && request.purpose === 'checkout') {
+		// Name the early-bird code behind an applied or ended reason, so a price
+		// after the published deadline can be traced to the code and its window.
+		const codeReason = decision.reasons.some(
+			(reason) =>
+				reason === EARLY_BIRD_CODE_REASONS.applied ||
+				reason === EARLY_BIRD_CODE_REASONS.ended,
+		)
+		const earlyBirdCouponId = codeReason
+			? await presentedEarlyBirdCode().then(
+					(read) => read.couponId,
+					() => null,
+				)
+			: null
 		await log.info('c5.pricing.checkout_decision', {
+			earlyBirdCouponId,
+			closesAt: decision.closesAt ?? null,
 			buyPathId: recordCheckoutDecision(decision.kind),
 			productId: request.productId,
 			quantity: request.quantity,

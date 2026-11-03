@@ -80,6 +80,15 @@ export type DecisionContext = {
 	/** Whole-number PPP percent from the buyer's trusted country, if eligible. */
 	readonly pppPercent: number | null
 	readonly codeExpiresAt?: string
+	/**
+	 * The early-bird code that moved this buyer's early window, and the window
+	 * it priced with. Hashed into the decisionRef only when present, so every
+	 * other decision keeps its reference.
+	 */
+	readonly earlyBirdCode?: {
+		readonly couponId: string
+		readonly earlyEndsAt: string
+	}
 	/** App reasons added to the engine's reasons. */
 	readonly appReasons?: readonly string[]
 }
@@ -208,6 +217,7 @@ export function toAuthoritativeDecision(
 		userId: context.userId,
 		policyVersion: result.policyVersion,
 		engineVersion: result.engineVersion,
+		...(context.earlyBirdCode ? { earlyBirdCode: context.earlyBirdCode } : {}),
 	}
 	return {
 		kind: result.kind,
