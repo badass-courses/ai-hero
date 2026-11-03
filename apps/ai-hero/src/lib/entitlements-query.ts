@@ -1,5 +1,10 @@
 import { db } from '@/db'
-import { entitlements, organizationMemberships } from '@/db/schema'
+import {
+	contentResourceProduct,
+	entitlements,
+	organizationMemberships,
+	purchases,
+} from '@/db/schema'
 import {
 	PRODUCT_TYPE_CONFIG,
 	type ProductType,
@@ -86,7 +91,15 @@ export async function hasEntitlementForResource(
 				isNull(entitlements.expiresAt),
 				gt(entitlements.expiresAt, sql`CURRENT_TIMESTAMP`),
 			),
-			sql`JSON_CONTAINS(${entitlements.metadata}, ${JSON.stringify(resourceId)}, '$.contentIds')`,
+			// A cohort purchase grants one entitlement per workshop, and
+			// `contentIds` lists only the workshop, never the cohort. So asking about
+			// a cohort (or any product's resource) also accepts a live entitlement
+			// sourced from a purchase of a product that sells it. Without this, no
+			// cohort buyer ever owned the cohort and the nav kept selling it to them.
+			or(
+				sql`JSON_CONTAINS(${entitlements.metadata}, ${JSON.stringify(resourceId)}, '$.contentIds')`,
+				sql`${entitlements.sourceId} IN (SELECT p.id FROM ${purchases} p JOIN ${contentResourceProduct} crp ON crp.productId = p.productId WHERE crp.resourceId = ${resourceId})`,
+			),
 		),
 	})
 
