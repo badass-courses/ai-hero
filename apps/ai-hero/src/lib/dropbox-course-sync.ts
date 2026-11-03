@@ -95,20 +95,6 @@ export type DropboxCourseManifestRead = {
 	summary: DropboxCourseManifestSummary
 }
 
-export type DropboxTokenStoreResult = {
-	ok: boolean
-	missingConfig: string[]
-	statuses: number[]
-	// Present only when the optional DB store failed; absent with no key.
-	dbStorage?: Extract<IntegrationTokenPutResult, { ok: false }>
-}
-
-export type DropboxRedeployResult = {
-	ok: boolean
-	missingConfig: string[]
-	status: number | null
-}
-
 export function getDropboxSyncConfig(
 	environment: Environment = process.env,
 ): { config: DropboxSyncConfig | null; missingConfig: string[] } {
@@ -514,7 +500,7 @@ export async function verifyDropboxConnection({
 }): Promise<DropboxConnectionVerification> {
 	const missingConfig = [
 		!config ? 'Dropbox sync configuration' : null,
-		!refreshToken ? 'DROPBOX_REFRESH_TOKEN' : null,
+		!refreshToken ? 'Dropbox not connected (no DB token row)' : null,
 	].filter(Boolean) as string[]
 	const initial: DropboxConnectionVerification = {
 		ok: false,
@@ -595,98 +581,8 @@ export async function verifyDropboxConnection({
 
 export async function storeDropboxRefreshToken({
 	refreshToken,
-	environment = process.env,
-	fetchImpl = fetch,
 }: {
 	refreshToken: string
-	environment?: Environment
-	fetchImpl?: Fetch
-}): Promise<DropboxTokenStoreResult> {
-	// The optional DB store is best effort; legacy Vercel storage remains authoritative here.
-	const dbStorage = await putIntegrationRefreshToken('dropbox', refreshToken)
-	const dbFailure = dbStorage.ok ? {} : { dbStorage }
-	const vercelToken = environment.VERCEL_API_TOKEN
-	const projectId = environment.VERCEL_AI_HERO_PROJECT_ID
-	const teamId = environment.VERCEL_TEAM_ID
-	const missingConfig = [
-		!vercelToken ? 'VERCEL_API_TOKEN' : null,
-		!projectId ? 'VERCEL_AI_HERO_PROJECT_ID' : null,
-	].filter(Boolean) as string[]
-
-	if (missingConfig.length > 0 || !vercelToken || !projectId) {
-		return { ok: false, missingConfig, statuses: [], ...dbFailure }
-	}
-
-	const query = new URLSearchParams({ upsert: 'true' })
-	if (teamId) query.set('teamId', teamId)
-	const url = `https://api.vercel.com/v10/projects/${projectId}/env?${query.toString()}`
-	const statuses: number[] = []
-
-	for (const target of ['production', 'preview', 'development']) {
-		const response = await fetchImpl(url, {
-			method: 'POST',
-			headers: {
-				Authorization: `Bearer ${vercelToken}`,
-				'Content-Type': 'application/json',
-			},
-			body: JSON.stringify({
-				key: 'DROPBOX_REFRESH_TOKEN',
-				value: refreshToken,
-				target: [target],
-				type: 'encrypted',
-			}),
-		})
-		statuses.push(response.status)
-	}
-
-	return {
-		ok: statuses.every((status) => status >= 200 && status < 300),
-		missingConfig: [],
-		statuses,
-		...dbFailure,
-	}
-}
-
-export async function redeployAfterDropboxAuthorization(
-	{
-		environment = process.env,
-		fetchImpl = fetch,
-	}: {
-		environment?: Environment
-		fetchImpl?: Fetch
-	} = {},
-): Promise<DropboxRedeployResult> {
-	const vercelToken = environment.VERCEL_API_TOKEN
-	const teamId = environment.VERCEL_TEAM_ID
-	const missingConfig = [!vercelToken ? 'VERCEL_API_TOKEN' : null].filter(Boolean) as string[]
-	if (!vercelToken) return { ok: false, missingConfig, status: null }
-
-	const query = new URLSearchParams()
-	if (teamId) query.set('teamId', teamId)
-	const response = await fetchImpl(
-		`https://api.vercel.com/v13/deployments${query.size > 0 ? `?${query.toString()}` : ''}`,
-		{
-			method: 'POST',
-			headers: {
-				Authorization: `Bearer ${vercelToken}`,
-				'Content-Type': 'application/json',
-			},
-			body: JSON.stringify({
-				name: 'ai-hero',
-				target: 'production',
-				gitSource: {
-					type: 'github',
-					repo: 'ai-hero',
-					ref: 'main',
-					org: 'badass-courses',
-				},
-			}),
-		},
-	)
-
-	return {
-		ok: response.ok,
-		missingConfig: [],
-		status: response.status,
-	}
+}): Promise<IntegrationTokenPutResult> {
+	return putIntegrationRefreshToken('dropbox', refreshToken)
 }

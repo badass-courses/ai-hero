@@ -23,7 +23,7 @@ const muxSourceResolver = createBindingScopedMuxSourceResolver((binding) => {
 					'DROPBOX_SYNC_NOT_CONFIGURED',
 					`Dropbox sync is not configured: ${[
 						...missingConfig,
-						...(!refreshToken ? ['DROPBOX_REFRESH_TOKEN'] : []),
+						...(!refreshToken ? ['Dropbox not connected (no DB token row)'] : []),
 					].join(', ')}`,
 					503,
 				)

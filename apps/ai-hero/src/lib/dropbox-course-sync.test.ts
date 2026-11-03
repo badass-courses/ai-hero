@@ -19,8 +19,6 @@ import {
 	getDropboxSyncConfig,
 	readDropboxCourseManifest,
 	readDropboxCourseManifestSummary,
-	redeployAfterDropboxAuthorization,
-	storeDropboxRefreshToken,
 	verifyDropboxConnection,
 } from './dropbox-course-sync'
 
@@ -464,59 +462,5 @@ describe('Dropbox course sync OAuth', () => {
 				fetchImpl: oversizedFetch,
 			}),
 		).rejects.toThrow('exceeds the maximum allowed size')
-	})
-
-	it.each([undefined, Buffer.alloc(32, 7).toString('base64')])('keeps Vercel write-back identical with no key or a failing DB (%s)', async (key) => {
-		tokenStoreMocks.env.INTEGRATION_TOKEN_KEY = key
-		tokenStoreMocks.insert.mockClear()
-		tokenStoreMocks.delete.mockClear()
-		const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ id: 'env_1' }))
-		const result = await storeDropboxRefreshToken({
-			refreshToken: 'callback-refresh-token',
-			environment: {
-				VERCEL_API_TOKEN: 'vercel-token',
-				VERCEL_AI_HERO_PROJECT_ID: 'prj_aihero',
-				VERCEL_TEAM_ID: 'team_aihero',
-			},
-			fetchImpl,
-		})
-
-		// No key keeps the exact old result; a failed DB adds only the stale-row signal.
-		expect(result).toStrictEqual({
-			ok: true,
-			missingConfig: [],
-			statuses: [200, 200, 200],
-			...(key ? { dbStorage: { ok: false, staleRow: true } } : {}),
-		})
-		expect(fetchImpl).toHaveBeenCalledTimes(3)
-		for (const [index, [url, options]] of fetchImpl.mock.calls.entries()) {
-			expect(url).toBe('https://api.vercel.com/v10/projects/prj_aihero/env?upsert=true&teamId=team_aihero')
-			expect(JSON.parse(options.body)).toEqual({
-				key: 'DROPBOX_REFRESH_TOKEN',
-				value: 'callback-refresh-token',
-				target: [['production', 'preview', 'development'][index]],
-				type: 'encrypted',
-			})
-		}
-		expect(tokenStoreMocks.insert).toHaveBeenCalledTimes(key ? 1 : 0)
-		expect(tokenStoreMocks.delete).toHaveBeenCalledTimes(key ? 1 : 0)
-		tokenStoreMocks.env.INTEGRATION_TOKEN_KEY = undefined
-	})
-
-	it('triggers a production deployment after storing a refresh token', async () => {
-		const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ id: 'dpl_1' }))
-		const result = await redeployAfterDropboxAuthorization({
-			environment: { VERCEL_API_TOKEN: 'vercel-token', VERCEL_TEAM_ID: 'team_aihero' },
-			fetchImpl,
-		})
-
-		expect(result).toEqual({ ok: true, missingConfig: [], status: 200 })
-		const [url, options] = fetchImpl.mock.calls[0]
-		expect(url).toContain('/v13/deployments?teamId=team_aihero')
-		expect(JSON.parse(options.body)).toMatchObject({
-			name: 'ai-hero',
-			target: 'production',
-			gitSource: { repo: 'ai-hero', ref: 'main', org: 'badass-courses' },
-		})
 	})
 })

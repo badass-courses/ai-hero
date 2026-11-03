@@ -1,5 +1,5 @@
 import { env } from '@/env.mjs'
-import { log, serializeError } from '@/server/logger'
+import { log } from '@/server/logger'
 import {
 	decryptIntegrationToken,
 	encryptIntegrationToken,
@@ -8,7 +8,7 @@ import {
 } from './integration-token-crypto'
 
 // Never serialize driver errors: their SQL, parameters and causes may contain
-// tokens or ciphertext. Only a newly constructed, value-free reason is logged.
+// tokens or ciphertext. Only static, value-free fields are logged.
 async function reason(
 	provider: IntegrationTokenProvider,
 	operation: 'read' | 'write',
@@ -16,23 +16,10 @@ async function reason(
 ) {
 	try {
 		await log[code === 'no-key' ? 'debug' : 'warn'](
-			'integration-token.fallback',
-			{
-				provider,
-				operation,
-				reason: code,
-				...(operation === 'write' && code !== 'no-key'
-					? {
-							message:
-								code === 'cleanup-failed'
-									? 'DB token cleanup failed; stale row may remain'
-									: 'DB token store failed; using env',
-						}
-					: {}),
-				error: serializeError(
-					new Error(`Integration token ${operation}: ${code}`),
-				),
-			},
+			operation === 'read'
+				? 'integration-token.missing'
+				: 'integration-token.write-failed',
+			{ provider, operation, reason: code },
 		)
 	} catch {
 		/* Logging must not change OAuth outcomes. */
@@ -52,21 +39,14 @@ function missingTable(error: unknown): boolean {
 
 export async function getIntegrationRefreshToken(
 	provider: IntegrationTokenProvider,
-	// Raw process.env readers retain their existing source, even when undefined.
-	...fallbackOverride: [fallback?: string]
 ): Promise<string | undefined> {
-	const fallback = fallbackOverride.length
-		? fallbackOverride[0]
-		: provider === 'dropbox'
-			? env.DROPBOX_REFRESH_TOKEN
-			: env.YOUTUBE_ANALYTICS_REFRESH_TOKEN
 	if (!env.INTEGRATION_TOKEN_KEY) {
 		await reason(provider, 'read', 'no-key')
-		return fallback
+		return undefined
 	}
 	try {
 		const key = integrationTokenKey(env.INTEGRATION_TOKEN_KEY)
-		const [{ db }, { integrationToken }, { eq, sql }] = await Promise.all([
+		const [{ db }, { integrationToken }, { eq }] = await Promise.all([
 			import('@/db'),
 			import('@/db/integration-token-schema'),
 			import('drizzle-orm'),
@@ -78,33 +58,13 @@ export async function getIntegrationRefreshToken(
 			.limit(1)
 		if (!row) {
 			await reason(provider, 'read', 'no-row')
-			if (typeof fallback === 'string' && fallback.length > 0) {
-				try {
-					await db
-						.insert(integrationToken)
-						.values({
-							provider,
-							...encryptIntegrationToken(provider, fallback, key),
-							updatedAt: new Date(),
-						})
-						.onDuplicateKeyUpdate({ set: { provider: sql`provider` } })
-				} catch {
-					await reason(provider, 'read', 'seed-failed')
-					return fallback
-				}
-				try {
-					await log.info('integration-token.seeded', { provider })
-				} catch {
-					/* Logging must not change read outcomes. */
-				}
-			}
-			return fallback
+			return undefined
 		}
 		try {
 			return decryptIntegrationToken(provider, row, key)
 		} catch {
 			await reason(provider, 'read', 'decrypt-failed')
-			return fallback
+			return undefined
 		}
 	} catch (error) {
 		await reason(
@@ -112,24 +72,18 @@ export async function getIntegrationRefreshToken(
 			'read',
 			missingTable(error) ? 'no-table' : 'read-failed',
 		)
-		return fallback
+		return undefined
 	}
 }
 
-// staleRow: the write failed and the provider's old row could not be removed,
-// so it may still beat the fresh env token on the next deploy.
-export type IntegrationTokenPutResult =
-	| { ok: true }
-	| { ok: false; staleRow: boolean }
+export type IntegrationTokenPutResult = { ok: true } | { ok: false }
 
 // Static, value-free operator copy for OAuth callback result pages.
 export function integrationTokenStorageNotice(
 	result: IntegrationTokenPutResult,
 ): string | null {
 	if (result.ok) return null
-	return result.staleRow
-		? 'DB token store failed and a stale DB row may remain; delete it before the next deploy.'
-		: 'DB token store failed; using env.'
+	return 'The refresh token could not be saved to the token store. Check the server configuration and authorize again.'
 }
 
 export async function putIntegrationRefreshToken(
@@ -138,8 +92,7 @@ export async function putIntegrationRefreshToken(
 ): Promise<IntegrationTokenPutResult> {
 	if (!env.INTEGRATION_TOKEN_KEY) {
 		await reason(provider, 'write', 'no-key')
-		// Dormancy is a successful no-op, not a callback storage failure.
-		return { ok: true }
+		return { ok: false }
 	}
 	try {
 		const encrypted = encryptIntegrationToken(
@@ -163,24 +116,6 @@ export async function putIntegrationRefreshToken(
 			'write',
 			missingTable(error) ? 'no-table' : 'write-failed',
 		)
-		// A stale DB row would beat the newly written Vercel env token. Remove
-		// only this provider's row so the next deployment can use env instead.
-		try {
-			const [{ db }, { integrationToken }, { eq }] = await Promise.all([
-				import('@/db'),
-				import('@/db/integration-token-schema'),
-				import('drizzle-orm'),
-			])
-			await db
-				.delete(integrationToken)
-				.where(eq(integrationToken.provider, provider))
-		} catch (cleanupError) {
-			// An absent table has no stale row to clean up.
-			if (!missingTable(cleanupError)) {
-				await reason(provider, 'write', 'cleanup-failed')
-				return { ok: false, staleRow: true }
-			}
-		}
-		return { ok: false, staleRow: false }
+		return { ok: false }
 	}
 }
