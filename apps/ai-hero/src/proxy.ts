@@ -268,15 +268,26 @@ export function rememberEarlyBirdCode<T extends Response>(
 	response: T,
 ): T {
 	const couponId = earlyBirdCodeFromRequest(req)
-	if (couponId && response instanceof NextResponse)
-		response.cookies.set(EARLY_BIRD_CODE_COOKIE, couponId, {
-			httpOnly: true,
-			secure: process.env.NODE_ENV === 'production',
-			sameSite: 'lax',
-			maxAge: EARLY_BIRD_CODE_COOKIE_MAX_AGE_SECONDS,
-			path: '/',
-		})
-	return response
+	if (!couponId) return response
+	// Auth.js hands back its own Response for signed-in visitors, not always a
+	// NextResponse, so write the header itself. The id is already validated.
+	const cookie = [
+		`${EARLY_BIRD_CODE_COOKIE}=${couponId}`,
+		'Path=/',
+		`Max-Age=${EARLY_BIRD_CODE_COOKIE_MAX_AGE_SECONDS}`,
+		'HttpOnly',
+		'SameSite=Lax',
+		...(process.env.NODE_ENV === 'production' ? ['Secure'] : []),
+	].join('; ')
+	try {
+		response.headers.append('set-cookie', cookie)
+		return response
+	} catch {
+		// Immutable headers (a fetched or redirect Response): copy once.
+		const copy = new Response(response.body, response)
+		copy.headers.append('set-cookie', cookie)
+		return copy as unknown as T
+	}
 }
 
 export default async function proxy(req: NextRequest, event: NextFetchEvent) {
