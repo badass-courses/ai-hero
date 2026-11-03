@@ -9,6 +9,7 @@ import {
 	directoryBirthEvents,
 	runContactSyncStragglerRetry,
 } from './contact-sync-straggler-retry'
+import { STRAGGLER_PARK_AFTER_MS } from './contact-sync-straggler-owner'
 import type { DeferredDrovrEvent } from './drovr-shadow-delivery'
 import type { DrovrShadowEvent } from './drovr-shadow-emitter'
 
@@ -53,11 +54,21 @@ function harness(delivered: {
 }
 
 describe('contact sync straggler retry', () => {
-	it('schedules the same events, unchanged: 1 h after the refusal, then every 2 h (contract §4, 2026-09-27)', () => {
-		// drovr's straggler pass runs every 2 h, so the worst case is ~4 h.
-		expect(stragglerRetryDelayMs(1)).toBe(60 * 60_000)
-		expect(stragglerRetryDelayMs(2)).toBe(2 * 60 * 60_000)
-		expect(stragglerRetryDelayMs(9)).toBe(2 * 60 * 60_000)
+	it('re-sends through the first three straggler passes, then backs off to daily before the 7-day park', () => {
+		const at: number[] = []
+		for (let attempt = 1, t = 0; ; attempt++) {
+			t += stragglerRetryDelayMs(attempt)
+			if (t >= STRAGGLER_PARK_AFTER_MS) break
+			at.push(t / 3_600_000)
+		}
+		expect(at.filter((h) => h <= 7)).toHaveLength(4)
+		expect(at.length).toBeLessThanOrEqual(13)
+		expect(
+			Math.max(...at.slice(1).map((h, i) => h - at[i]!)),
+		).toBeLessThanOrEqual(24)
+	})
+
+	it('schedules the same events, unchanged, keyed by attempt', () => {
 		expect(contactSyncRetryRequest(deferred, 1, now)).toEqual({
 			name: CONTACT_SYNC_RETRY_EVENT,
 			id: expect.stringMatching(/^contact-sync-retry:1:[0-9a-f]{64}$/),
@@ -153,9 +164,12 @@ describe('contact sync straggler retry', () => {
 		])
 	})
 
-	it('warns once a contact has been refused for about a day', () => {
-		// 1 h + 11 × 2 h ≈ 23 h at the 12th attempt.
-		expect(STRAGGLER_STUCK_AFTER_ATTEMPTS).toBe(12)
+	it('warns once a contact has been refused for about a day and a half', () => {
+		let t = 0
+		for (let a = 1; a < STRAGGLER_STUCK_AFTER_ATTEMPTS; a++)
+			t += stragglerRetryDelayMs(a)
+		// 1 h + 3 × 2 h + 3 × 6 h = 25 h before the 8th attempt is sent.
+		expect(t / 3_600_000).toBe(25)
 	})
 
 	it('warns when a contact stays refused for a week', async () => {
