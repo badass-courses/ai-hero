@@ -166,6 +166,18 @@ export async function checkout(state, key, fixtureKey, shouldComplete = false, {
     const cookies = visit.headers.getSetCookie().map(value => value.split(';')[0]).filter(value => /^(?:c5_gift|sl_ref)=/.test(value))
     cookie += '; ' + cookies.join('; ')
   }
+  // RIG_EARLY_BIRD_CODE=<coupon id>: open the C5 page with ?coupon= as Matt's link does,
+  // and carry the cookie the app's proxy sets. The proxy, not the rig, must set it.
+  const earlyBirdCode = process.env.RIG_EARLY_BIRD_CODE
+  if (earlyBirdCode !== undefined) {
+    if (!/^coupon_[a-z0-9]{3,40}$/i.test(earlyBirdCode)) throw new Error('Invalid rig early-bird code')
+    const page = new URL('/cohorts/software-factories-for-real-engineers-xdy1m', origin)
+    page.searchParams.set('coupon', earlyBirdCode)
+    const visit = await fetch(page, { headers: { cookie }, redirect: 'manual', signal: AbortSignal.timeout(120000) })
+    const set = visit.headers.getSetCookie().map(value => value.split(';')[0]).filter(value => value.startsWith('c5_early_bird_code='))
+    if (set.length !== 1) throw new Error('C5 page did not set the early-bird code cookie')
+    cookie += '; ' + set[0]
+  }
   const auth = await fetch(`${origin}/api/auth/session`, { headers: { cookie }, signal: AbortSignal.timeout(60000) })
   const sessionUser = await auth.json()
   if (!auth.ok || sessionUser.user?.id !== fixture.userId) throw new Error('Fixture login did not resolve to the expected user')

@@ -27,6 +27,13 @@ import {
 	toAuthoritativeDecision,
 } from './decision'
 import { isPppCreditBound } from './ppp-credit-bound'
+import {
+	classifyEarlyBirdCode,
+	EARLY_BIRD_CODE_REASONS,
+	withEarlyBirdWindow,
+	type EarlyBirdCode,
+	type EarlyBirdCodeRead,
+} from './early-bird-code'
 
 /**
  * What the hook knows about the buyer. A signed-in buyer's facts come from
@@ -51,6 +58,11 @@ export type BuyerRead =
 
 export type C5PricingDeps = {
 	readonly code?: () => Promise<GiftFact>
+	/**
+	 * The early-bird coupon this browser presented, read fresh. Absent, no
+	 * code is ever honoured.
+	 */
+	readonly earlyBirdCode?: EarlyBirdCodeRead
 	readonly policy: (productId: string) => Promise<DataRead<PolicyDocument>>
 	readonly quotes: (input: {
 		readonly email: string
@@ -242,6 +254,31 @@ export function createC5AuthoritativePrice(deps: C5PricingDeps) {
 			? { ...buyer.facts.facts, ppp, code }
 			: { ...anonymousFacts(orderKind), ppp, code }
 
+		// An early-bird code only ever prices one seat, never a team order, and
+		// never a legend gift's early access, which has its own exact price.
+		let earlyBird: EarlyBirdCode = { state: 'none' }
+		if (orderKind === 'individual' && !(opening === 'gift' && gift) && deps.earlyBirdCode) {
+			try {
+				earlyBird = classifyEarlyBirdCode(
+					await deps.earlyBirdCode(),
+					policy.value.policy,
+					now.getTime(),
+				)
+			} catch {
+				return refusal('held', [APP_REASONS.factsUnavailable], withPolicy)
+			}
+		}
+		const pricingPolicy =
+			earlyBird.state === 'valid'
+				? withEarlyBirdWindow(policy.value.policy, earlyBird)
+				: policy.value.policy
+		const codeReasons: readonly string[] =
+			earlyBird.state === 'valid' && pricingPolicy !== policy.value.policy
+				? [EARLY_BIRD_CODE_REASONS.applied]
+				: earlyBird.state === 'ended'
+					? [EARLY_BIRD_CODE_REASONS.ended]
+					: []
+
 		const appReasons: string[] = []
 		let quotes: readonly BindingQuoteData[] = []
 		if (buyer.kind === 'buyer') {
@@ -291,7 +328,7 @@ export function createC5AuthoritativePrice(deps: C5PricingDeps) {
 			product: {
 				id: policy.value.policy.product,
 				merchantUnit: product.merchantUnit,
-				policy: policy.value.policy,
+				policy: pricingPolicy,
 			},
 			quantity,
 			quotes,
@@ -319,9 +356,15 @@ export function createC5AuthoritativePrice(deps: C5PricingDeps) {
 			purpose: request.purpose,
 			policy: policy.value.policy,
 			pppPercent: ppp && 'value' in ppp && ppp.value ? ppp.value.percent : null,
-			appReasons,
+			appReasons: [...appReasons, ...codeReasons],
 			codeExpiresAt: 'value' in code ? code.value?.expiresAt : undefined,
 		})
+		// A session priced by an early-bird code ends when the code does.
+		if (codeReasons.includes(EARLY_BIRD_CODE_REASONS.applied) && earlyBird.state === 'valid')
+			decision = {
+				...decision,
+				closesAt: Math.min(decision.closesAt ?? Infinity, earlyBird.expiresAt),
+			}
 		if (opening === 'gift' && openingWindow)
 			decision = {
 				...decision,

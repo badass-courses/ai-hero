@@ -24,6 +24,7 @@ import {
 } from './ppp-credit-bound'
 import { holdsRestrictedPurchase } from './restricted-holder'
 import { signedGiftFact } from './gift-server'
+import { presentedEarlyBirdCode } from './early-bird-code-server'
 import { c5PricingClosed } from './switch-server'
 import { c5PricingDisabled } from './config'
 import { c5OpeningWindow } from './buyer-opening-server'
@@ -133,6 +134,7 @@ function buyerFor(input: {
  */
 export const c5PricingDeps: C5PricingDeps = {
 	code: signedGiftFact,
+	earlyBirdCode: presentedEarlyBirdCode,
 	policy: async (productId) =>
 		frontDeskData()?.policy(productId) ?? {
 			ok: false,

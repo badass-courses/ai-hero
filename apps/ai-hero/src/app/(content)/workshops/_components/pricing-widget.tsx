@@ -11,6 +11,7 @@ import { RegionalQuantityClear } from '@/components/commerce/regional-toggle-gat
 import { TYPE } from '@/components/landing/type'
 import { C5_PRODUCT_ID } from '@/lib/c5-pricing/products'
 import { APP_REASONS } from '@/lib/c5-pricing/reasons'
+import { EARLY_BIRD_CODE_REASONS } from '@/lib/c5-pricing/early-bird-code'
 import { formatDeadline } from '@/utils/discount-formatter'
 import {
 	ArrowUpRight,
@@ -399,8 +400,30 @@ const CardPrice = ({
 			{!isMembership && (
 				<span className={cn(TYPE.metaMark, 'mt-1.5')}>one-time payment</span>
 			)}
+			<EarlyBirdCodeNotice reasons={formattedPrice.authoritative?.reasons} />
 		</div>
 	)
+}
+
+/** Says whether an early-bird code priced this card, or why it no longer does. */
+export function EarlyBirdCodeNotice({
+	reasons,
+}: {
+	reasons?: readonly string[] | null
+}) {
+	if (reasons?.includes(EARLY_BIRD_CODE_REASONS.applied))
+		return (
+			<p className={cn(TYPE.metaSm, 'text-muted-foreground mt-2')}>
+				Early-bird code applied.
+			</p>
+		)
+	if (reasons?.includes(EARLY_BIRD_CODE_REASONS.ended))
+		return (
+			<p role="status" className={cn(TYPE.metaSm, 'text-muted-foreground mt-2')}>
+				This early-bird code has ended.
+			</p>
+		)
+	return null
 }
 
 /**
