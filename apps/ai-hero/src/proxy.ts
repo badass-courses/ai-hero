@@ -4,6 +4,11 @@ import {
 	type NextRequest,
 } from 'next/server'
 import { invoiceLinkResponse } from './lib/invoice-link-http'
+import {
+	EARLY_BIRD_CODE_COOKIE,
+	EARLY_BIRD_CODE_COOKIE_MAX_AGE_SECONDS,
+	earlyBirdCouponId,
+} from './lib/c5-pricing/early-bird-code'
 
 import {
 	AI_CODING_COHORT_SLUG,
@@ -246,16 +251,48 @@ function isAnonymousPassThrough(req: NextRequest) {
 	return !hasSessionCookie(req)
 }
 
-export default function proxy(req: NextRequest, event: NextFetchEvent) {
+const C5_COHORT_PATH = /^\/cohorts\/[^/]*xdy1m\/?$/
+
+/**
+ * The Cohort 005 page opened with `?coupon=<id>` remembers that id for the
+ * pricing hook, which reads checkout and display without the URL. The cookie
+ * holds only the id; pricing validates the coupon row fresh every time.
+ */
+export function earlyBirdCodeFromRequest(req: NextRequest) {
+	if (!C5_COHORT_PATH.test(req.nextUrl.pathname)) return null
+	return earlyBirdCouponId(req.nextUrl.searchParams.get('coupon'))
+}
+
+export function rememberEarlyBirdCode<T extends Response>(
+	req: NextRequest,
+	response: T,
+): T {
+	const couponId = earlyBirdCodeFromRequest(req)
+	if (couponId && response instanceof NextResponse)
+		response.cookies.set(EARLY_BIRD_CODE_COOKIE, couponId, {
+			httpOnly: true,
+			secure: process.env.NODE_ENV === 'production',
+			sameSite: 'lax',
+			maxAge: EARLY_BIRD_CODE_COOKIE_MAX_AGE_SECONDS,
+			path: '/',
+		})
+	return response
+}
+
+export default async function proxy(req: NextRequest, event: NextFetchEvent) {
 	const early = respondWithoutSession(req)
 	if (early) return early
-	if (isAnonymousPassThrough(req)) return NextResponse.next()
+	if (isAnonymousPassThrough(req))
+		return rememberEarlyBirdCode(req, NextResponse.next())
 	// `auth()` types its context as a route-handler context; middleware passes a
 	// NextFetchEvent, so the casts are required by Next's types. The context
 	// defers an expired Discord token refresh until after the response.
-	return runInProxyAuthContext(() =>
+	const response = await runInProxyAuthContext(() =>
 		authedProxy(req as never, event as never),
 	)
+	return response instanceof Response
+		? rememberEarlyBirdCode(req, response)
+		: response
 }
 
 export const config = {
