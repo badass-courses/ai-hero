@@ -2,7 +2,7 @@
 	"crons": [
 		{
 			"path": "/api/cron",
-			"schedule": "*/5 * * * *"
+			"schedule": "0 5 * * *"
 		}
 	],
 "installCommand": "npx -y pnpm@11.1.2 install --frozen-lockfile"
