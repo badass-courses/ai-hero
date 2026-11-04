@@ -26,7 +26,7 @@ export const newsletterPurchaseExitProof = inngest.createFunction(
 		retries: 1,
 		concurrency: 1,
 	},
-	{ cron: '*/15 * * * *' },
+	{ cron: '0 * * * *' },
 	async ({ step }) => {
 		const deps = () => ({
 			repository: new DrizzleCaptureMarketingRepository(db),
