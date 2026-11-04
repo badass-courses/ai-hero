@@ -198,7 +198,7 @@ export function FeedbackForm({ location }: { location: string }) {
 								value as FeedbackFormValues['context']['category'],
 							)
 						}
-						className="grid grid-cols-3 gap-2"
+						className="flex gap-2"
 					>
 						{CATEGORIES.map((category) => {
 							const selected = values.context.category === category
@@ -207,7 +207,7 @@ export function FeedbackForm({ location }: { location: string }) {
 									key={category}
 									htmlFor={`feedback-category-${category}`}
 									className={cn(
-										'focus-within:ring-ring flex min-h-11 min-w-0 cursor-pointer items-center justify-center rounded-[9px] border px-2 text-sm capitalize transition-colors focus-within:ring-2 focus-within:ring-offset-2',
+										'focus-within:ring-ring flex min-h-11 flex-auto cursor-pointer items-center justify-center rounded-[9px] border px-2 text-sm capitalize transition-colors focus-within:ring-2 focus-within:ring-offset-2',
 										selected
 											? 'border-primary bg-primary/10'
 											: 'border-input hover:bg-hover',
@@ -218,7 +218,7 @@ export function FeedbackForm({ location }: { location: string }) {
 										value={category}
 										className="sr-only"
 									/>
-									<span className="truncate">{category}</span>
+									<span className="whitespace-nowrap">{category}</span>
 								</Label>
 							)
 						})}
