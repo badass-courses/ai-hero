@@ -3,6 +3,10 @@ import { spawnSync } from 'node:child_process'
 // Vercel's ignored-build step: 0 skips, 1 builds. Only a proven docs/test-only
 // preview may skip. Production, unknown environments and failures always build.
 const { VERCEL_ENV, VERCEL_GIT_PREVIOUS_SHA, VERCEL_GIT_COMMIT_SHA } = process.env
+/**
+ * @param {string | undefined} value
+ * @returns {value is string}
+ */
 const isSha = (value) => typeof value === 'string' && /^[a-f\d]{40}([a-f\d]{24})?$/i.test(value)
 
 const canSkip = () => {
