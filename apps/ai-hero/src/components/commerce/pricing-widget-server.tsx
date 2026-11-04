@@ -4,7 +4,8 @@ import Link from 'next/link'
 import { CohortPricingWidgetContainer } from '@/app/(content)/cohorts/[slug]/_components/cohort-pricing-widget-container'
 import { PricingWidget } from '@/app/(content)/workshops/_components/pricing-widget'
 import { courseBuilderAdapter, db } from '@/db'
-import { products, purchases } from '@/db/schema'
+import { products } from '@/db/schema'
+import { getPurchaseCount } from '@/lib/purchase-count'
 import { env } from '@/env.mjs'
 import { getCohort } from '@/lib/cohorts-query'
 import { isOnCohortWaitlist } from '@/lib/cta-gating'
@@ -13,7 +14,7 @@ import { getProduct } from '@/lib/products-query'
 import { getSubscriberForGating } from '@/lib/subscriber-gate'
 import { getWorkshop } from '@/lib/workshops-query'
 import { getServerAuthSession } from '@/server/auth'
-import { count, eq } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { CheckCircle } from 'lucide-react'
 
 import { PriceCheckProvider } from '@coursebuilder/commerce-next/pricing/pricing-check-context'
@@ -72,11 +73,7 @@ export async function PricingWidgetServer({
 		courseBuilderAdapter,
 	)
 
-	const { count: purchaseCount } = await db
-		.select({ count: count() })
-		.from(purchases)
-		.where(eq(purchases.productId, product.id))
-		.then((res) => res[0] ?? { count: 0 })
+	const purchaseCount = await getPurchaseCount(product.id)
 
 	const productWithQuantityAvailable = await db
 		.select({ quantityAvailable: products.quantityAvailable })
