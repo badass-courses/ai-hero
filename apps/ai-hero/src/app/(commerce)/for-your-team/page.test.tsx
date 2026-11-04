@@ -72,22 +72,25 @@ describe('team hub C5 card', () => {
 		expect(html).toContain('AI Coding Crash Course')
 		expect(html).toContain('AI Coding for Real Engineers')
 		expect(html).toContain('Software Factories for Real Engineers')
-		expect(html).toContain('November 2, 2026')
+		expect(html).toContain('November 9, 2026')
 		for (const text of [
 			'1 to 4',
-			'30%',
-			'$906.50',
+			'$1,295.00',
 			'5 to 9',
+			'15%',
+			'$1,100.75',
+			'10 to 29',
+			'25%',
+			'$971.25',
+			'30+',
 			'35%',
 			'$841.75',
-			'10 to 29',
-			'40%',
-			'$777.00',
-			'30+',
-			'45%',
-			'$712.25',
 		]) {
 			expect(html).toContain(text)
+		}
+		// The early ladder ended 2026-11-03 08:00Z; checkout charges the standard bands.
+		for (const stale of ['$906.50', '$712.25', 'November 2, 2026']) {
+			expect(html).not.toContain(stale)
 		}
 		expect(html).not.toContain('—')
 	})

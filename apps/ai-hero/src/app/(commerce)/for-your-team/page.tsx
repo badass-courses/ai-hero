@@ -301,13 +301,13 @@ export default async function TeamPage() {
 								Software Factories for Real Engineers
 							</h2>
 							<p className={cn(TYPE.meta, 'text-muted-foreground mt-3')}>
-								$1,295 list price. Team pricing through November 2, 2026.
+								$1,295 list price. Team pricing through November 9, 2026.
 							</p>
 							<table
 								className={cn(TYPE.meta, 'mt-6 w-full max-w-2xl text-left')}
 							>
 								<caption className="sr-only">
-									Software Factories team pricing through November 2, 2026
+									Software Factories team pricing through November 9, 2026
 								</caption>
 								<thead>
 									<tr className="border-b border-[color:var(--ah-line-soft)]">
@@ -324,10 +324,12 @@ export default async function TeamPage() {
 								</thead>
 								<tbody>
 									{[
-										['1 to 4', '30%', '$906.50'],
-										['5 to 9', '35%', '$841.75'],
-										['10 to 29', '40%', '$777.00'],
-										['30+', '45%', '$712.25'],
+										// Standard bands from the live policy (teamBands.standard). The
+										// early 30/35/40/45 ladder ended 2026-11-03 08:00Z.
+										['1 to 4', 'List', '$1,295.00'],
+										['5 to 9', '15%', '$1,100.75'],
+										['10 to 29', '25%', '$971.25'],
+										['30+', '35%', '$841.75'],
 									].map(([seats, discount, price]) => (
 										<tr
 											key={seats}
