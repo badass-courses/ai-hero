@@ -47,7 +47,11 @@ export type TeamSeatRedemptionDataSource = {
 	loadActorRoles(userId: string, organizationId: string): Promise<string[]>
 	loadCoupon(couponId: string): Promise<TeamSeatCoupon | null>
 	findUserIdByEmail(email: string): Promise<string | null>
-	/** Any valid or restricted purchase of the product, bulk seat or not. */
+	/**
+	 * Any valid or restricted purchase of the product that gives access: an
+	 * individual purchase or a claimed team seat. The team purchase itself (the
+	 * one holding the bulk coupon) gives seats, not access, so it doesn't count.
+	 */
 	userOwnsProduct(userId: string, productId: string): Promise<boolean>
 	/** The app's guarded `courseBuilderAdapter.redeemFullPriceCoupon`. */
 	redeemFullPriceCoupon(options: {

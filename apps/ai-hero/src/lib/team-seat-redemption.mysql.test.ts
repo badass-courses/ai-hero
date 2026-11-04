@@ -311,4 +311,25 @@ suite('add team seats by email against real MySQL', () => {
 		})
 		expect(seats).toHaveLength(1)
 	})
+
+	it('lets the team buyer add themselves: their team purchase is not access', async () => {
+		await db
+			.update(schema.coupon)
+			.set({ maxUses: SEATS + 2 })
+			.where(eq(schema.coupon.id, ids.coupon))
+
+		const result = await addTeamSeatsByEmailAction(idle, form(email('owner')))
+
+		expect(result.results).toEqual([
+			{ email: email('owner'), status: 'added' },
+		])
+		expect(await usedCount()).toBe(SEATS + 1)
+		const ownerSeat = await db.query.purchases.findFirst({
+			where: and(
+				eq(schema.purchases.userId, ids.owner),
+				eq(schema.purchases.redeemedBulkCouponId, ids.coupon),
+			),
+		})
+		expect(ownerSeat?.status).toBe('Valid')
+	})
 })

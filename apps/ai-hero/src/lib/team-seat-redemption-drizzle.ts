@@ -6,7 +6,7 @@ import { inngest } from '@/inngest/inngest.server'
 import type { TeamSeatRedemptionDataSource } from '@/lib/team-seat-redemption'
 import { authOptions } from '@/server/auth'
 import { log } from '@/server/logger'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, isNull } from 'drizzle-orm'
 import type { NextAuthConfig } from 'next-auth'
 
 import {
@@ -65,11 +65,15 @@ export const drizzleTeamSeatRedemptionDataSource: TeamSeatRedemptionDataSource =
 		},
 
 		async userOwnsProduct(userId, productId) {
+			// A team purchase (one with a bulk coupon) gives its buyer seats to
+			// hand out, not access. Like the adapter's redeem check, it doesn't
+			// count, so a buyer can add themselves to their own team.
 			const owned = await db.query.purchases.findFirst({
 				where: and(
 					eq(purchases.userId, userId),
 					eq(purchases.productId, productId),
 					inArray(purchases.status, OWNED_PURCHASE_STATES),
+					isNull(purchases.bulkCouponId),
 				),
 				columns: { id: true },
 			})
