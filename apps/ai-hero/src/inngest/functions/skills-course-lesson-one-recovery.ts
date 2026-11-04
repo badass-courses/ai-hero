@@ -37,9 +37,11 @@ import { db } from '@/db'
 export const SKILLS_COURSE_RECOVERY_RETRIES = 12
 export const SKILLS_COURSE_RECOVERY_IDENTITY_RETRY_MS = 5 * 60 * 1000
 export const SKILLS_COURSE_RECOVERY_DELIVERY_RETRY_MS = 5 * 60 * 1000
-// drovr accepted the send but delivery confirmation lags behind broadcasts
-// (about 80 minutes on a 114k broadcast), so pending waits 12 × 15 min = 3 h.
-export const SKILLS_COURSE_RECOVERY_DROVR_PENDING_RETRY_MS = 15 * 60 * 1000
+// drovr accepted the send but delivery confirmation lags behind broadcasts.
+// Microsoft-bound mail waited up to 3.5 h during the C5 L5 to L7 broadcasts
+// (12,521 s), so pending waits 12 × 30 min = 6 h. Bring it back down once
+// drovr's per-provider send lanes drain Microsoft in minutes.
+export const SKILLS_COURSE_RECOVERY_DROVR_PENDING_RETRY_MS = 30 * 60 * 1000
 
 type AnswerLink = {
 	optionValue?: string

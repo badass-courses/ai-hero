@@ -551,7 +551,7 @@ describe('skills course lesson-one recovery', () => {
 		)
 
 		it.each([
-			['pending', 15 * 60],
+			['pending', 30 * 60],
 			['not-started', 5 * 60],
 		])(
 			'waits for confirmation lag only when drovr answers pending (%s retries after %ss)',
@@ -566,12 +566,13 @@ describe('skills course lesson-one recovery', () => {
 			},
 		)
 
-		it('gives drovr pending a 3-hour budget without raising retries', () => {
-			expect(SKILLS_COURSE_RECOVERY_DROVR_PENDING_RETRY_MS).toBe(15 * 60 * 1000)
+		it('gives drovr pending a 6-hour budget without raising retries', () => {
+			expect(SKILLS_COURSE_RECOVERY_RETRIES).toBe(12)
+			expect(SKILLS_COURSE_RECOVERY_DROVR_PENDING_RETRY_MS).toBe(30 * 60 * 1000)
 			expect(
 				SKILLS_COURSE_RECOVERY_RETRIES *
 					SKILLS_COURSE_RECOVERY_DROVR_PENDING_RETRY_MS,
-			).toBe(3 * 60 * 60 * 1000)
+			).toBe(6 * 60 * 60 * 1000)
 		})
 
 		it('retries the read when drovr is unreadable, never falling back to a send', async () => {
