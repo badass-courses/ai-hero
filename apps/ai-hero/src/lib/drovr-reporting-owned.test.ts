@@ -760,6 +760,7 @@ describe('drovr broadcast engagement', () => {
 			asOf: engagementBody.asOf,
 			rates: {
 				basis: 'delivered',
+				basisSource: null,
 				denominator: 6,
 				openRate: 0.5,
 				anyOpenRateIncludingMachineOpens: 5 / 6,
@@ -784,6 +785,39 @@ describe('drovr broadcast engagement', () => {
 			mail: knownEngagement.mail,
 			delivery: knownEngagement.delivery,
 			unsubscribes: knownEngagement.unsubscribes,
+		})
+	})
+
+	it('keeps a registered basis and the gap drovr names for it', async () => {
+		const gap =
+			'registered 9 vs sent 7, so another send of these versions is in the opens and clicks'
+		const row = await readRow(
+			withEngagement({
+				...engagementBody,
+				broadcasts: [
+					{
+						...knownEngagement,
+						rates: {
+							basis: 'registered',
+							denominator: 9,
+							openRate: 3 / 9,
+							anyOpenRate: 5 / 9,
+							clickRate: 2 / 9,
+							clickToOpenRate: 2 / 3,
+							source: gap,
+						},
+					},
+				],
+			}),
+		)
+		expect(row.engagement).toMatchObject({
+			status: 'available',
+			rates: {
+				basis: 'registered',
+				basisSource: gap,
+				denominator: 9,
+				openRate: 3 / 9,
+			},
 		})
 	})
 
