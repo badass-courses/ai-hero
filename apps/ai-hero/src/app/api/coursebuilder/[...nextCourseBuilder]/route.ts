@@ -17,6 +17,7 @@ import {
 	trustedCountryFromHeaders,
 	withTrustedPricingCountry,
 } from '@/lib/c5-pricing/trusted-country'
+import { EARLY_ACCESS } from '@/lib/team-invoice/early-access'
 import { withSkill } from '@/server/with-skill'
 import { emitBuyPath } from '@/lib/buy-path/server'
 import { signBuyPathToken } from '@/lib/buy-path/token'
@@ -51,9 +52,12 @@ async function dispatchCashBalanceReconciliation(request: Request) {
 		signature,
 		env.STRIPE_WEBHOOK_SECRET,
 	)
-	if (stripeEvent.type === 'invoice.payment_succeeded') {
-		// The shared payment workflow skips manual markers. Reconcile actual
-		// money onto the existing early grant before acknowledging this webhook.
+	if (
+		stripeEvent.type === 'invoice.payment_succeeded' &&
+		stripeEvent.data.object.metadata?.accessProvisioning === EARLY_ACCESS
+	) {
+		// Gate on the signed snapshot before any early-access DB or Stripe call.
+		// Ordinary payments must not depend on early-access infrastructure.
 		const { reconcileEarlyAccessPayment } = await import('@/lib/team-invoice/early-access-server')
 		await reconcileEarlyAccessPayment(stripeEvent.data.object.id)
 	}
