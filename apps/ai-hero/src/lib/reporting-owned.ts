@@ -133,8 +133,9 @@ const EngagementRow = z.discriminatedUnion('status', [
 		}),
 		unsubscribes: known({ count: Count }),
 		rates: z.object({
-			basis: z.enum(['delivered', 'sent']),
+			basis: z.enum(['delivered', 'registered', 'sent']),
 			denominator: Count.nullable(),
+			source: z.string().optional(),
 			openRate: Rate,
 			anyOpenRate: Rate,
 			clickRate: Rate,
@@ -161,6 +162,7 @@ function projectEngagement(
 		asOf,
 		rates: {
 			basis: rates.basis,
+			basisSource: rates.source ?? null,
 			denominator: rates.denominator,
 			openRate: rates.openRate,
 			anyOpenRateIncludingMachineOpens: rates.anyOpenRate,
@@ -197,7 +199,7 @@ function projectEngagement(
 }
 
 const ENGAGEMENT_LABEL =
-	'rows[].engagement comes from drovr broadcast_engagement, read separately from status. rates.openRate is person opens (opens.emailsOpened) over rates.denominator; rates.anyOpenRateIncludingMachineOpens also counts Apple Mail Privacy Protection prefetch and scanner loads, so it reads higher, close to Kit-style open rates. rates.basis is delivered when delivery is known, otherwise actor-reported sent, which counts bounces as mailed. clickRate and clickToOpenRate use distinct person clickers (clicks.uniqueClickers); clicks.totalClicks counts repeats. clicks.links[] gives people and clicks per link target (host and path) per message version. Opens and clicks are counted per message version, so a version two broadcasts sent counts in both. A section with status unknown carries its reason and is never zero; a null rate means an input is unknown.'
+	'rows[].engagement comes from drovr broadcast_engagement, read separately from status. rates.openRate is person opens (opens.emailsOpened) over rates.denominator; rates.anyOpenRateIncludingMachineOpens also counts Apple Mail Privacy Protection prefetch and scanner loads, so it reads higher, close to Kit-style open rates. rates.basis is registered when another send of the same message version (another broadcast, a test or a rescue) is in the opens and clicks: the rates then divide by every contact the version was registered for, and rates.basisSource names the gap (registered against sent). Otherwise it is delivered when delivery is known, else actor-reported sent, which counts bounces as mailed. clickRate and clickToOpenRate use distinct person clickers (clicks.uniqueClickers); clicks.totalClicks counts repeats. clicks.links[] gives people and clicks per link target (host and path) per message version. Opens and clicks are counted per message version, so a version two broadcasts sent counts in both. A section with status unknown carries its reason and is never zero; a null rate means an input is unknown.'
 
 const unavailable = (reason: string) => ({
 	status: 'unavailable' as const,
