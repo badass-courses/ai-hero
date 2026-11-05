@@ -1,4 +1,5 @@
-import { acquireDatabaseConnection, courseBuilderAdapter, db } from '@/db'
+import { courseBuilderAdapter, db } from '@/db'
+import { redis } from '@/server/redis-client'
 import { env } from '@/env.mjs'
 import { inngest } from '@/inngest/inngest.server'
 import { log } from '@/server/logger'
@@ -21,7 +22,7 @@ export const earlyAccessPorts = createEarlyAccessPorts({
 		const { magicLinkIdentity } = await import('@/coursebuilder/email-provider')
 		return magicLinkIdentity.findOrCreateUser(email)
 	},
-	acquireConnection: acquireDatabaseConnection,
+	redis,
 	send: (event) => inngest.send(event),
 })
 

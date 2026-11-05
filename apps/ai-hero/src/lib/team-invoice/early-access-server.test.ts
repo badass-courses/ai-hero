@@ -7,8 +7,8 @@ const f = vi.hoisted(() => ({
 	updates: [] as any[],
 	updateResult: { rowsAffected: 1 },
 	send: vi.fn(async () => ({ ids: ['event'] })),
-	query: vi.fn(),
-	release: vi.fn(),
+	set: vi.fn(),
+	eval: vi.fn(),
 	retrieve: vi.fn(),
 	search: vi.fn(),
 	identity: vi.fn(async () => ({ user: { id: 'identity-user' } })),
@@ -40,10 +40,6 @@ vi.mock('stripe', () => ({
 	},
 }))
 vi.mock('@/db', () => ({
-	acquireDatabaseConnection: async () => ({
-		query: f.query,
-		release: f.release,
-	}),
 	courseBuilderAdapter: {
 		getPurchase: async () => f.full,
 		getUserById: f.getUser,
@@ -69,6 +65,9 @@ vi.mock('@/coursebuilder/email-provider', () => ({
 	magicLinkIdentity: { findOrCreateUser: f.identity },
 }))
 vi.mock('@/server/logger', () => ({ log: f.log }))
+vi.mock('@/server/redis-client', () => ({
+	redis: { set: f.set, eval: f.eval },
+}))
 vi.mock('./early-access-purchase', () => ({
 	createEarlyAccessPurchase: vi.fn(),
 	inspectEarlyAccessPurchase: vi.fn(),
@@ -83,7 +82,8 @@ beforeEach(() => {
 	f.linked = []
 	f.invoices = []
 	f.updateResult = { rowsAffected: 1 }
-	f.query.mockResolvedValue([[{ acquired: 1 }]])
+	f.set.mockReset().mockResolvedValue('OK')
+	f.eval.mockReset().mockResolvedValue(1)
 	f.charge.mockReset().mockResolvedValue({ identifier: 'ch_paid' })
 	f.full = {
 		id: 'early_in_test',
@@ -166,22 +166,50 @@ describe('production early access runtime boundaries', () => {
 		)
 		expect(f.send).not.toHaveBeenCalled()
 	})
-	it('serializes operator grants and releases its connection', async () => {
+	it('uses the existing Redis client with a token-owned 60-second lease', async () => {
 		expect(await earlyAccessPorts.lock('in_test', async () => 'ok')).toBe('ok')
-		expect(f.query.mock.calls.map((call) => call[0])).toEqual([
-			'SELECT GET_LOCK(?, 0) AS acquired',
-			'SELECT RELEASE_LOCK(?)',
-		])
-		expect(f.release).toHaveBeenCalledTimes(1)
+		const key = 'aih:early-access:lock:in_test'
+		expect(f.set).toHaveBeenCalledWith(key, expect.any(String), {
+			nx: true,
+			px: 60_000,
+		})
+		expect(f.eval).toHaveBeenCalledWith(
+			expect.stringContaining("redis.call('get'"),
+			[key],
+			[f.set.mock.calls[0]![1]],
+		)
 	})
-	it('busy grant refuses before executing work', async () => {
-		f.query.mockResolvedValueOnce([[{ acquired: 0 }]])
+	it('busy grant refuses without work or release', async () => {
+		f.set.mockResolvedValueOnce(null)
 		const work = vi.fn()
 		await expect(earlyAccessPorts.lock('in_test', work)).rejects.toThrow(
 			'Another early-access',
 		)
 		expect(work).not.toHaveBeenCalled()
-		expect(f.release).toHaveBeenCalled()
+		expect(f.eval).not.toHaveBeenCalled()
+	})
+	it('fails closed when Redis is unavailable', async () => {
+		f.set.mockRejectedValueOnce(new Error('redis unavailable'))
+		const work = vi.fn()
+		await expect(earlyAccessPorts.lock('in_test', work)).rejects.toThrow(
+			'redis unavailable',
+		)
+		expect(work).not.toHaveBeenCalled()
+		expect(f.eval).not.toHaveBeenCalled()
+	})
+	it('releases the lease after work fails', async () => {
+		await expect(
+			earlyAccessPorts.lock('in_test', async () => {
+				throw new Error('work failed')
+			}),
+		).rejects.toThrow('work failed')
+		expect(f.eval).toHaveBeenCalledTimes(1)
+	})
+	it('surfaces lost ownership rather than returning a successful readback', async () => {
+		f.eval.mockResolvedValueOnce(0)
+		await expect(
+			earlyAccessPorts.lock('in_test', async () => 'ok'),
+		).rejects.toThrow('lease expired or changed')
 	})
 	it('uses metadata search and includes broken paid invoices while masking emails', async () => {
 		f.invoices = ['open', 'void', 'uncollectible', 'paid'].map((status) => ({

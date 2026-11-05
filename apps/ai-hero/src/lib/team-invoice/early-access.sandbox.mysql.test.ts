@@ -9,6 +9,7 @@ import type { MySqlDatabase } from 'drizzle-orm/mysql-core'
 import { drizzle } from 'drizzle-orm/mysql2'
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise'
 import Stripe from 'stripe'
+import { Redis } from '@upstash/redis'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { DrizzleAdapter } from '@coursebuilder/adapter-drizzle'
 import { StripePaymentAdapter } from '@coursebuilder/commerce/stripe-provider'
@@ -31,6 +32,12 @@ vi.mock('@/db', () => ({ db: {} }))
 
 const KEY = process.env.AIH_STRIPE_SANDBOX_KEY ?? ''
 const SERVER = process.env.AIH_TEST_MYSQL_SERVER_URL ?? ''
+const REDIS_URL = process.env.AIH_TEST_REDIS_REST_URL
+const REDIS_TOKEN = process.env.AIH_TEST_REDIS_REST_TOKEN
+const redis =
+	REDIS_URL && REDIS_TOKEN
+		? new Redis({ url: REDIS_URL, token: REDIS_TOKEN })
+		: null!
 if (KEY && !/^(sk|rk)_test_/.test(KEY))
 	throw new Error('Refusing a non-test Stripe key')
 const RUN = `early-access-${randomUUID()}`
@@ -70,7 +77,7 @@ const tables = Object.fromEntries(
 	].map((name) => [name, schema[name as keyof typeof schema]]),
 )
 
-describe.skipIf(!KEY || !SERVER)(
+describe.skipIf(!KEY || !SERVER || !redis)(
 	'production early access ports, sandbox Stripe + disposable MySQL',
 	() => {
 		let server: Pool,
@@ -151,7 +158,7 @@ describe.skipIf(!KEY || !SERVER)(
 				adapter,
 				stripe,
 				findUser: identity,
-				acquireConnection: () => pool.getConnection(),
+				redis,
 				send,
 			})
 		}, 60_000)
@@ -395,7 +402,7 @@ describe.skipIf(!KEY || !SERVER)(
 				{ invoiceId: created.invoiceId },
 			)
 		}, 90_000)
-		it('real GET_LOCK refuses a concurrent grant while the first holds the invoice, then replay returns that purchase', async () => {
+		it('real Redis lease refuses a concurrent grant while the first holds the invoice, then replay returns that purchase', async () => {
 			const created = await invoice(2)
 			let entered!: () => void, release!: () => void
 			const started = new Promise<void>((resolve) => {
@@ -431,7 +438,7 @@ describe.skipIf(!KEY || !SERVER)(
 			expect(await ports.purchases(created.invoiceId)).toHaveLength(1)
 			console.info(
 				JSON.stringify({
-					proof: 'real-mysql-concurrent-grants',
+					proof: 'real-redis-concurrent-grants',
 					run: RUN,
 					invoiceId: created.invoiceId,
 					purchases: 1,

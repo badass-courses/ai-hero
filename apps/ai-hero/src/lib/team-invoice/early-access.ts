@@ -121,7 +121,7 @@ export async function grantEarlyAccess(
 	id: string,
 	apply = false,
 ) {
-	return ports.lock(id, async () => {
+	const work = async () => {
 		const invoice = await ports.invoice(id)
 		const existing = await ports.purchases(id)
 		const early = existing.find((p) => p.fields?.earlyAccess === true)
@@ -219,7 +219,8 @@ export async function grantEarlyAccess(
 			dryRun: false,
 			...invoiceReadback(readback, await ports.purchases(id)),
 		}
-	})
+	}
+	return apply ? ports.lock(id, work) : work()
 }
 
 export async function revokeEarlyAccess(
@@ -227,7 +228,7 @@ export async function revokeEarlyAccess(
 	id: string,
 	apply = false,
 ) {
-	return ports.lock(id, async () => {
+	const work = async () => {
 		const invoice = await ports.invoice(id)
 		const purchases = await ports.purchases(id)
 		const purchase = purchases[0]
@@ -249,5 +250,6 @@ export async function revokeEarlyAccess(
 			dryRun: !apply,
 			...invoiceReadback(await ports.invoice(id), await ports.purchases(id)),
 		}
-	})
+	}
+	return apply ? ports.lock(id, work) : work()
 }
