@@ -149,7 +149,11 @@ export async function LessonPage({
 							)}
 							<Suspense
 								fallback={
-									<div className="flex flex-col gap-3">
+									// A full screen tall, so a lesson that mounts before its body
+									// arrives can't collapse the page. A short page lets the
+									// router think the new lesson's top is already on screen,
+									// and it skips scrolling to it.
+									<div className="flex min-h-screen flex-col gap-3">
 										<Skeleton className="dark:bg-foreground/10 bg-foreground/5 h-12 w-full rounded" />
 										<Skeleton className="dark:bg-foreground/10 bg-foreground/5 h-5 w-2/3 rounded" />
 										<Skeleton className="dark:bg-foreground/10 bg-foreground/5 h-5 w-1/2 rounded" />
