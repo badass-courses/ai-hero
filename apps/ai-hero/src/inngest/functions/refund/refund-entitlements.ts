@@ -1,6 +1,7 @@
 import { db } from '@/db'
 import { purchases } from '@/db/schema'
 import { inngest } from '@/inngest/inngest.server'
+import { EARLY_ACCESS_REVOKE_EVENT } from '@/inngest/events/early-access'
 import { and, eq, inArray } from 'drizzle-orm'
 import {
 	isBulkPurchase,
@@ -155,6 +156,7 @@ export const refundEntitlements = inngest.createFunction(
 	},
 	[
 		{ event: REFUND_PROCESSED_EVENT },
+		{ event: EARLY_ACCESS_REVOKE_EVENT },
 		{
 			event: PURCHASE_STATUS_UPDATED_EVENT,
 			if: 'event.data.status == "Refunded"',
@@ -163,18 +165,34 @@ export const refundEntitlements = inngest.createFunction(
 	async ({ event, step, db: adapter }) => {
 		const startTime = Date.now()
 		const chargeId =
-			event.data.stripeChargeId ||
+			('stripeChargeId' in event.data ? event.data.stripeChargeId : undefined) ||
 			('merchantChargeId' in event.data
 				? event.data.merchantChargeId
 				: undefined)
-		if (!chargeId) throw new Error('No chargeId provided')
+		if (!chargeId && event.name !== EARLY_ACCESS_REVOKE_EVENT)
+			throw new Error('No chargeId provided')
 
 		try {
 			// Using the adapter's getPurchaseForStripeCharge method directly
 			const purchase = await step.run(
 				'get purchase for stripe charge',
 				async () => {
-					const current = await adapter.getPurchaseForStripeCharge(chargeId)
+					// Unpaid grants have no charge. Reuse refund cleanup only for
+					// the persisted grant identity and already-Refunded purchase.
+					const current =
+						event.name === EARLY_ACCESS_REVOKE_EVENT
+							? await adapter.getPurchase(event.data.purchaseId)
+							: await adapter.getPurchaseForStripeCharge(chargeId!)
+					if (
+						event.name === EARLY_ACCESS_REVOKE_EVENT &&
+						(!current ||
+							current.status !== 'Refunded' ||
+							current.fields?.earlyAccess !== true ||
+							current.fields?.invoiceId !== event.data.invoiceId ||
+							current.merchantChargeId)
+					) {
+						throw new Error('Early-access revoke identity/status mismatch')
+					}
 					// The status listener runs independently. Keep this check inside
 					// the step so a retry reads fresh state rather than a cached Valid row.
 					if (
