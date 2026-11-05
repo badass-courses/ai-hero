@@ -13,6 +13,7 @@ const WEBHOOK_SECRET = 'test_webhook_secret'
 const mocks = vi.hoisted(() => ({
 	inngestSend: vi.fn().mockResolvedValue({ ids: [] }),
 	settleGiftSession: vi.fn().mockResolvedValue(undefined),
+	reconcileEarlyAccessPayment: vi.fn().mockResolvedValue({ state: 'paid_linked' }),
 	nextHeaders: () => ({
 		headers: async () => new Headers(),
 		cookies: async () => ({ get: () => undefined }),
@@ -23,6 +24,9 @@ vi.mock('@/inngest/inngest.server', () => ({
 	inngest: { send: mocks.inngestSend },
 }))
 vi.mock('@/db', () => ({ db: {}, courseBuilderAdapter: {} }))
+vi.mock('@/lib/team-invoice/early-access-server', () => ({
+	reconcileEarlyAccessPayment: mocks.reconcileEarlyAccessPayment,
+}))
 vi.mock('@/lib/c5-pricing/gift-settlement', () => ({
 	settleGiftSession: mocks.settleGiftSession,
 }))
@@ -116,6 +120,7 @@ const post = (payload: string, signature?: string) =>
 describe('Course Builder Stripe webhook route', () => {
 	beforeEach(() => {
 		mocks.inngestSend.mockClear()
+		mocks.reconcileEarlyAccessPayment.mockClear()
 	})
 
 	it('accepts a validly signed delivery and dispatches it', async () => {
@@ -126,6 +131,13 @@ describe('Course Builder Stripe webhook route', () => {
 		expect(response.status).not.toBe(400)
 		expect(response.ok).toBe(true)
 		expect(mocks.inngestSend).toHaveBeenCalledTimes(1)
+		expect(mocks.reconcileEarlyAccessPayment).toHaveBeenCalledWith(invoiceEvent.data.object.id)
+	})
+
+	it('does not acknowledge a failed paid-grant reconciliation', async () => {
+		mocks.reconcileEarlyAccessPayment.mockRejectedValueOnce(new Error('payment link failed'))
+		const payload = JSON.stringify(invoiceEvent)
+		await expect(post(payload, sign(payload))).rejects.toThrow('payment link failed')
 	})
 
 	it('dispatches cash-balance reconciliation for a validly signed delivery', async () => {
@@ -151,6 +163,7 @@ describe('Course Builder Stripe webhook route', () => {
 
 		expect(response.status).toBe(400)
 		expect(mocks.inngestSend).not.toHaveBeenCalled()
+		expect(mocks.reconcileEarlyAccessPayment).not.toHaveBeenCalled()
 	})
 
 	it('rejects a forged cash-balance delivery before reconciliation', async () => {

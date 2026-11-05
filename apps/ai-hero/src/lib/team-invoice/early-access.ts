@@ -7,11 +7,14 @@ export type EarlyPurchase = {
 	id: string
 	status: string
 	fields?: Record<string, unknown> | null
+	merchantChargeId?: string | null
+	totalAmount?: number | string
 }
 export type EarlyAccessPorts = {
 	invoice(id: string): Promise<Stripe.Invoice>
 	mark(id: string, metadata: Record<string, string>): Promise<unknown>
 	purchases(id: string): Promise<EarlyPurchase[]>
+	preflight(invoice: Stripe.Invoice): Promise<void>
 	create(invoice: Stripe.Invoice, grantedAt: string): Promise<EarlyPurchase>
 	notify(invoice: Stripe.Invoice, purchase: EarlyPurchase): Promise<void>
 	revoke(purchase: EarlyPurchase): Promise<void>
@@ -47,6 +50,10 @@ export function invoiceReadback(
 		accessProvisioning: invoice.metadata?.accessProvisioning,
 		purchaseIds: purchases.map((p) => p.id),
 		purchaseStatuses: purchases.map((p) => p.status),
+		notified: purchases.map((p) => ({
+			purchaseId: p.id,
+			earlyAccessNotifiedAt: p.fields?.earlyAccessNotifiedAt ?? null,
+		})),
 	}
 }
 
@@ -59,6 +66,10 @@ export function assertGrantable(invoice: Stripe.Invoice) {
 		throw new Error(
 			`Invoice ${invoice.id} does not use automatic team invoice provisioning`,
 		)
+	assertInvoiceContent(invoice)
+}
+
+export function assertInvoiceContent(invoice: Stripe.Invoice) {
 	if (invoice.subscription || invoice.lines.has_more)
 		throw new Error('Subscription or paginated invoice lines are not supported')
 	const lines = invoice.lines.data.filter(
@@ -72,6 +83,11 @@ export function assertGrantable(invoice: Stripe.Invoice) {
 		throw new Error(
 			'Exactly one positive product line with a positive seat count is required',
 		)
+	if (
+		!invoice.customer ||
+		(typeof invoice.customer !== 'string' && invoice.customer.deleted)
+	)
+		throw new Error('Invoice has no active customer')
 	if (!invoiceCustomerEmail(invoice))
 		throw new Error('Invoice has no customer email')
 }
@@ -144,7 +160,7 @@ export async function grantEarlyAccess(
 			return {
 				state: 'already_granted',
 				dryRun: !apply,
-				...invoiceReadback(await ports.invoice(id), existing),
+				...invoiceReadback(await ports.invoice(id), await ports.purchases(id)),
 			}
 		}
 		if (existing.length)
@@ -166,6 +182,7 @@ export async function grantEarlyAccess(
 					}
 				: invoice,
 		)
+		await ports.preflight(invoice)
 		if (!apply)
 			return {
 				state: pending ? 'resume_ready' : 'ready',
@@ -200,7 +217,7 @@ export async function grantEarlyAccess(
 		return {
 			state: 'granted',
 			dryRun: false,
-			...invoiceReadback(readback, after),
+			...invoiceReadback(readback, await ports.purchases(id)),
 		}
 	})
 }

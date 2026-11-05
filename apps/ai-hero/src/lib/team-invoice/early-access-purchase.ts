@@ -2,22 +2,27 @@ import { randomUUID } from 'node:crypto'
 import { mysqlTable } from '@/db/mysql-table'
 import * as schema from '@/db/schema'
 import type { MySqlDatabase } from 'drizzle-orm/mysql-core'
+import { and, eq, inArray, ne } from 'drizzle-orm'
 import type Stripe from 'stripe'
 import { DrizzleAdapter } from '@coursebuilder/adapter-drizzle'
 import type { User } from '@coursebuilder/core/schemas'
 import { parseAndExpandPurchaseBenefitTransport } from '@coursebuilder/commerce/purchase-benefit-transport'
-import { invoiceCustomerEmail, type EarlyPurchase } from './early-access'
+import {
+	assertInvoiceContent,
+	invoiceCustomerEmail,
+	type EarlyPurchase,
+} from './early-access'
 
-type Database = MySqlDatabase<any, any, typeof schema>
+export type EarlyAccessDatabase = MySqlDatabase<any, any, typeof schema>
+type Database = EarlyAccessDatabase
 
-/** App-owned unpaid seam. No MerchantCharge, no invented paid amount.
- * Purchase, team coupon, invoice session and transfer commit together. */
-export async function createEarlyAccessPurchase(
+/** Read-only validation runs before the manual marker, including on dry runs.
+ * Rechecked at creation because provider and database state may have changed. */
+export async function inspectEarlyAccessPurchase(
 	database: Database,
 	invoice: Stripe.Invoice,
-	grantedAt: string,
-	findUser?: (email: string) => Promise<{ user: User }>,
-): Promise<EarlyPurchase> {
+) {
+	assertInvoiceContent(invoice)
 	const adapter = DrizzleAdapter(database, mysqlTable)
 	const line = invoice.lines.data.find(
 		(item) => item.price?.product && item.amount > 0,
@@ -25,15 +30,47 @@ export async function createEarlyAccessPurchase(
 	const stripeProduct = line.price!.product
 	const productId =
 		typeof stripeProduct === 'string' ? stripeProduct : stripeProduct.id
-	const merchantProduct = await adapter.getMerchantProduct(productId)
-	const merchantAccount = await adapter.getMerchantAccount({
-		provider: 'stripe',
+	const merchantProduct = await database.query.merchantProduct.findFirst({
+		where: and(
+			eq(schema.merchantProduct.identifier, productId),
+			eq(schema.merchantProduct.status, 1),
+		),
 	})
-	if (!merchantProduct || !merchantAccount)
-		throw new Error('Invoice product or merchant account is not configured')
-	const { user } = await (findUser ?? adapter.findOrCreateUser)(
-		invoiceCustomerEmail(invoice)!,
+	const merchantAccount = await database.query.merchantAccount.findFirst({
+		where: and(
+			eq(schema.merchantAccount.label, 'stripe'),
+			eq(schema.merchantAccount.status, 1),
+		),
+	})
+	const product = merchantProduct
+		? await database.query.products.findFirst({
+				where: eq(schema.products.id, merchantProduct.productId),
+			})
+		: null
+	if (
+		!merchantProduct ||
+		!merchantAccount ||
+		!product ||
+		merchantProduct.merchantAccountId !== merchantAccount.id
 	)
+		throw new Error('Invoice product or merchant account is not configured')
+	const knownUser = await database.query.users.findFirst({
+		where: eq(schema.users.email, invoiceCustomerEmail(invoice)!),
+	})
+	if (
+		knownUser &&
+		(await database.query.purchases.findFirst({
+			where: and(
+				eq(schema.purchases.userId, knownUser.id),
+				eq(schema.purchases.productId, merchantProduct.productId),
+				inArray(schema.purchases.status, ['Valid', 'Restricted']),
+				ne(schema.purchases.id, `early_${invoice.id}`),
+			),
+		}))
+	)
+		throw new Error(
+			'Invoice customer already holds a Valid purchase of this product; refusing early access',
+		)
 	const quantity = line.quantity!
 	const organizationId = invoice.metadata?.organizationId
 	const expansion = invoice.metadata?.purchaseBenefits
@@ -47,6 +84,35 @@ export async function createEarlyAccessPurchase(
 	const benefitFields = expansion?.success
 		? { purchaseBenefits: expansion.benefits }
 		: {}
+	return {
+		adapter,
+		merchantProduct,
+		merchantAccount,
+		quantity,
+		organizationId,
+		benefitFields,
+	}
+}
+
+/** App-owned unpaid seam. No MerchantCharge, no invented paid amount.
+ * Purchase, team coupon, invoice session and transfer commit together. */
+export async function createEarlyAccessPurchase(
+	database: Database,
+	invoice: Stripe.Invoice,
+	grantedAt: string,
+	findUser?: (email: string) => Promise<{ user: User }>,
+): Promise<EarlyPurchase> {
+	const {
+		adapter,
+		merchantProduct,
+		merchantAccount,
+		quantity,
+		organizationId,
+		benefitFields,
+	} = await inspectEarlyAccessPurchase(database, invoice)
+	const { user } = await (findUser ?? adapter.findOrCreateUser)(
+		invoiceCustomerEmail(invoice)!,
+	)
 	return database.transaction(async (tx) => {
 		const purchaseId = `early_${invoice.id}`
 		const scoped = DrizzleAdapter(tx as unknown as Database, mysqlTable)
@@ -91,6 +157,7 @@ export async function createEarlyAccessPurchase(
 			fields: {
 				...(bulkCouponId ? {} : benefitFields),
 				earlyAccess: true,
+				earlyAccessBillingUserId: user.id,
 				invoiceId: invoice.id,
 				earlyAccessGrantedAt: grantedAt,
 				grantRef: purchaseId,

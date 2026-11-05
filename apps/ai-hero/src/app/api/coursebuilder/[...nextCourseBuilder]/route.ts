@@ -51,6 +51,12 @@ async function dispatchCashBalanceReconciliation(request: Request) {
 		signature,
 		env.STRIPE_WEBHOOK_SECRET,
 	)
+	if (stripeEvent.type === 'invoice.payment_succeeded') {
+		// The shared payment workflow skips manual markers. Reconcile actual
+		// money onto the existing early grant before acknowledging this webhook.
+		const { reconcileEarlyAccessPayment } = await import('@/lib/team-invoice/early-access-server')
+		await reconcileEarlyAccessPayment(stripeEvent.data.object.id)
+	}
 	if (stripeEvent.type === 'checkout.session.completed') {
 		const session = stripeEvent.data.object
 		try {

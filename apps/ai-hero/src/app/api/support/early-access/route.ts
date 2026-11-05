@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
 	} catch (error) {
 		const message = error instanceof Error ? error.message : ''
 		const safe =
-			/^(DOUBLE:|Invoice in_|Invoice already|Invoice changed|Grant metadata|Grant purchase|No unambiguous|Invoice is paid|Purchase status|Another early-access|Subscription or|Exactly one positive|Invoice has no customer)/.test(
+			/^(DOUBLE:|Invoice in_|Invoice already|Invoice changed|Grant metadata|Grant purchase|No unambiguous|Invoice is paid|Purchase status|Another early-access|Subscription or|Exactly one positive|Invoice has no customer|Invoice has no active customer|Invoice product or merchant account|Invoice purchase benefits|Invoice customer already)/.test(
 				message,
 			)
 		await log.error('invoice.early_access.operator_failed', {

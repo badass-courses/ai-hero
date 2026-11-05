@@ -36,6 +36,7 @@ function fixture() {
 			invoice = { ...invoice, metadata: { ...invoice.metadata, ...metadata } }
 		}),
 		purchases: vi.fn(async () => structuredClone(purchases)),
+		preflight: vi.fn(async () => {}),
 		create: vi.fn(async (inv, at) => {
 			const p = {
 				id: 'early_in_test',
@@ -69,6 +70,28 @@ function fixture() {
 }
 
 describe('early access metadata and lifecycle', () => {
+	it('refuses preflight failures even on dry run, before the manual marker', async () => {
+		const f = fixture()
+		f.ports.preflight = vi.fn(async () => {
+			throw new Error('Invoice product or merchant account is not configured')
+		})
+		await expect(grantEarlyAccess(f.ports, 'in_test')).rejects.toThrow(
+			'not configured',
+		)
+		await expect(grantEarlyAccess(f.ports, 'in_test', true)).rejects.toThrow(
+			'not configured',
+		)
+		expect(f.ports.mark).not.toHaveBeenCalled()
+		expect(f.ports.create).not.toHaveBeenCalled()
+	})
+	it('refuses invoices without an active customer before the marker', async () => {
+		const f = fixture()
+		f.setInvoice({ customer: null })
+		await expect(grantEarlyAccess(f.ports, 'in_test', true)).rejects.toThrow(
+			'no active customer',
+		)
+		expect(f.ports.mark).not.toHaveBeenCalled()
+	})
 	it('uses the current expanded customer email, like the paid handler', () => {
 		const f = fixture()
 		f.setInvoice({

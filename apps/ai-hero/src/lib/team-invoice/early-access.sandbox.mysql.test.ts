@@ -4,7 +4,7 @@ import { preserveQueryResultShape } from '@/db/mysql-query-client'
 import { mysqlTable } from '@/db/mysql-table'
 import * as schema from '@/db/schema'
 import { validateMySqlIntegrationServerUrl } from '@/lib/team-purchase-mysql-test-guard'
-import { eq, or, sql } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import type { MySqlDatabase } from 'drizzle-orm/mysql-core'
 import { drizzle } from 'drizzle-orm/mysql2'
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise'
@@ -12,17 +12,23 @@ import Stripe from 'stripe'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { DrizzleAdapter } from '@coursebuilder/adapter-drizzle'
 import { StripePaymentAdapter } from '@coursebuilder/commerce/stripe-provider'
+import { processStripeWebhook } from '@coursebuilder/commerce/process-stripe-webhook'
 import { courseBuilderCoreFunctions } from '@coursebuilder/server'
 import {
 	AUTOMATIC_ACCESS,
+	EARLY_ACCESS,
 	grantEarlyAccess,
+	revokeEarlyAccess,
 	type EarlyAccessPorts,
 } from './early-access'
-import { createEarlyAccessPurchase } from './early-access-purchase'
+import { createEarlyAccessPorts } from './early-access-ports'
+import { reconcileEarlyAccessInvoicePayment } from './early-access-payment'
 import { createAndSendTeamInvoice } from './stripe-team-invoice'
 
-// Same disposable schema / real adapter / real sandbox handler as OL-094.
-// No production env pull; absent credentials skip, a non-test key fails closed.
+// Only the helper's unused default handle is replaced. Every SQL operation
+// receives the real disposable database through the same factory as production.
+vi.mock('@/db', () => ({ db: {} }))
+
 const KEY = process.env.AIH_STRIPE_SANDBOX_KEY ?? ''
 const SERVER = process.env.AIH_TEST_MYSQL_SERVER_URL ?? ''
 if (KEY && !/^(sk|rk)_test_/.test(KEY))
@@ -48,6 +54,7 @@ const tables = Object.fromEntries(
 		'merchantProduct',
 		'merchantCustomer',
 		'merchantCharge',
+		'merchantEvents',
 		'merchantSession',
 		'merchantCoupon',
 		'merchantPrice',
@@ -64,7 +71,7 @@ const tables = Object.fromEntries(
 )
 
 describe.skipIf(!KEY || !SERVER)(
-	'early access sandbox Stripe + disposable MySQL',
+	'production early access ports, sandbox Stripe + disposable MySQL',
 	() => {
 		let server: Pool,
 			pool: Pool,
@@ -72,11 +79,15 @@ describe.skipIf(!KEY || !SERVER)(
 			database: MySqlDatabase<any, any, typeof schema>
 		let adapter: ReturnType<typeof DrizzleAdapter>,
 			stripeProduct: string,
-			price: string
+			price: string,
+			ports: EarlyAccessPorts
 		const invoices: string[] = [],
-			customers: string[] = []
-		const notify = vi.fn(async () => {})
-		let ports: EarlyAccessPorts
+			customers = new Set<string>()
+		const send = vi.fn(async () => ({ ids: ['sandbox-event'] }))
+		const paymentLog = { error: vi.fn(async () => {}) }
+		const identity = vi.fn(async (email: string) =>
+			adapter.findOrCreateUser(email),
+		)
 		beforeAll(async () => {
 			const safe = validateMySqlIntegrationServerUrl(SERVER, {
 				nodeEnv: process.env.NODE_ENV,
@@ -135,34 +146,14 @@ describe.skipIf(!KEY || !SERVER)(
 				"INSERT INTO AI_MerchantProduct (id, merchantAccountId, productId, status, identifier) VALUES ('mp_early', 'ma_early', ?, 1, ?)",
 				[PRODUCT, stripeProduct],
 			)
-			ports = {
-				invoice: (id) => stripe.invoices.retrieve(id),
-				mark: (id, metadata) => stripe.invoices.update(id, { metadata }),
-				purchases: async (id) =>
-					(
-						await database
-							.select({ p: schema.purchases })
-							.from(schema.purchases)
-							.leftJoin(
-								schema.merchantSession,
-								eq(
-									schema.merchantSession.id,
-									schema.purchases.merchantSessionId,
-								),
-							)
-							.where(
-								or(
-									eq(schema.merchantSession.identifier, id),
-									sql`JSON_UNQUOTE(JSON_EXTRACT(${schema.purchases.fields}, '$.invoiceId')) = ${id}`,
-								),
-							)
-					).map((row) => row.p),
-				create: (invoice, at) =>
-					createEarlyAccessPurchase(database, invoice, at),
-				notify,
-				lock: async (_id, work) => work(),
-				revoke: async () => {},
-			}
+			ports = createEarlyAccessPorts({
+				database,
+				adapter,
+				stripe,
+				findUser: identity,
+				acquireConnection: () => pool.getConnection(),
+				send,
+			})
 		}, 60_000)
 		afterAll(async () => {
 			for (const id of invoices) {
@@ -178,10 +169,13 @@ describe.skipIf(!KEY || !SERVER)(
 			await server?.end()
 		}, 60_000)
 
-		async function invoice(quantity: number) {
+		async function invoice(
+			quantity: number,
+			billingEmail = `team-${randomUUID()}@example.test`,
+		) {
 			const created = await createAndSendTeamInvoice(stripe, {
 				orderKey: `${RUN}-${randomUUID()}`,
-				billingEmail: `team-${randomUUID()}@example.test`,
+				billingEmail,
 				companyName: 'Synthetic Early Access',
 				due: { kind: 'days', days: 30 },
 				stripePriceId: price,
@@ -198,27 +192,39 @@ describe.skipIf(!KEY || !SERVER)(
 				},
 			})
 			invoices.push(created.invoiceId)
-			customers.push(created.customerId)
+			customers.add(created.customerId)
 			return created
+		}
+		async function stripeEvent(
+			type: 'invoice.payment_succeeded' | 'charge.refunded',
+			id: string,
+		) {
+			let event: Stripe.Event | undefined
+			await vi.waitFor(
+				async () => {
+					event = (await stripe.events.list({ type, limit: 100 })).data.find(
+						(e) => (e.data.object as { id: string }).id === id,
+					)
+					expect(event).toBeDefined()
+				},
+				{ timeout: 30_000, interval: 1000 },
+			)
+			return event!
+		}
+		async function reconcile(id: string) {
+			return reconcileEarlyAccessInvoicePayment(
+				{ database, ports, log: paymentLog },
+				id,
+			)
 		}
 		async function pay(id: string, customer: string) {
 			const method = await stripe.paymentMethods.attach('pm_card_visa', {
 				customer,
 			})
+			await stripe.paymentMethods.update(method.id, { metadata: RIG })
 			await stripe.invoices.pay(id, { payment_method: method.id })
-			let event: Stripe.Event | undefined
-			await vi.waitFor(
-				async () => {
-					event = (
-						await stripe.events.list({
-							type: 'invoice.payment_succeeded',
-							limit: 30,
-						})
-					).data.find((e) => (e.data.object as Stripe.Invoice).id === id)
-					expect(event).toBeDefined()
-				},
-				{ timeout: 30_000, interval: 1000 },
-			)
+			const event = await stripeEvent('invoice.payment_succeeded', id)
+			await reconcile(id)
 			const sendEvent = vi.fn()
 			const result = await handler({
 				event: {
@@ -243,11 +249,17 @@ describe.skipIf(!KEY || !SERVER)(
 			return { result, sendEvent }
 		}
 		it.each([1, 5])(
-			'grants %i seats, replay is one purchase, later real payment skips',
+			'grants %i seats through production ports, replays, and links the real payment without a second purchase',
 			async (quantity) => {
 				const created = await invoice(quantity)
+				// The paid path prefers the current expanded customer over billing snapshot.
+				const currentEmail = `current-${randomUUID()}@example.test`
+				await stripe.customers.update(created.customerId, {
+					email: currentEmail,
+				})
 				const result = await grantEarlyAccess(ports, created.invoiceId, true)
 				expect(result.state).toBe('granted')
+				expect(identity).toHaveBeenCalledWith(currentEmail)
 				expect(
 					(await grantEarlyAccess(ports, created.invoiceId, true)).state,
 				).toBe('already_granted')
@@ -255,42 +267,181 @@ describe.skipIf(!KEY || !SERVER)(
 				expect(linked).toHaveLength(1)
 				const purchase = await adapter.getPurchase(linked[0]!.id)
 				expect(purchase?.merchantChargeId).toBeNull()
-				expect(purchase?.fields?.earlyAccess).toBe(true)
 				expect(purchase?.totalAmount).toBe(0)
-				if (quantity > 1) {
-					const coupon = await database.query.coupon.findFirst({
-						where: eq(schema.coupon.id, purchase!.bulkCouponId!),
-					})
-					expect(coupon?.maxUses).toBe(quantity)
-				} else expect(purchase?.bulkCouponId).toBeNull()
+				expect((await adapter.getUserById(purchase!.userId!))?.email).toBe(
+					currentEmail,
+				)
+				expect(result.notified[0]?.earlyAccessNotifiedAt).toBeTruthy()
+				if (quantity > 1)
+					expect(
+						(
+							await database.query.coupon.findFirst({
+								where: eq(schema.coupon.id, purchase!.bulkCouponId!),
+							})
+						)?.maxUses,
+					).toBe(quantity)
+				else expect(purchase?.bulkCouponId).toBeNull()
 				const paid = await pay(created.invoiceId, created.customerId)
 				expect(paid.result).toEqual({
 					skipped: true,
 					reason: 'manual-access-provisioning',
 				})
 				expect(paid.sendEvent).not.toHaveBeenCalled()
+				await reconcile(created.invoiceId)
 				expect(await ports.purchases(created.invoiceId)).toHaveLength(1)
+				const after = await adapter.getPurchase(purchase!.id)
+				expect(after?.merchantChargeId).toBeTruthy()
+				expect(after?.totalAmount).toBe(quantity * 199)
+				expect(after?.fields?.earlyAccessPaidAt).toBeTruthy()
 				const [[counts]] = await pool.query<(RowDataPacket & { n: number })[]>(
-					'SELECT COUNT(*) AS n FROM AI_MerchantCharge',
+					'SELECT COUNT(*) AS n FROM AI_MerchantCharge WHERE id = ?',
+					[after!.merchantChargeId],
 				)
-				expect(Number(counts!.n)).toBe(0)
+				expect(Number(counts!.n)).toBe(1)
+				if (quantity === 1) {
+					const { user: recipient } = await adapter.findOrCreateUser(
+						`recipient-${randomUUID()}@example.test`,
+					)
+					await database
+						.update(schema.purchases)
+						.set({ userId: recipient.id })
+						.where(eq(schema.purchases.id, purchase!.id))
+					await reconcile(created.invoiceId)
+					expect((await adapter.getPurchase(purchase!.id))?.userId).toBe(
+						recipient.id,
+					)
+					expect(
+						(await adapter.getMerchantCharge(after!.merchantChargeId!))?.userId,
+					).toBe(purchase!.userId)
+				}
 				console.info(
 					JSON.stringify({
-						proof: 'early-access-grant-replay-pay',
+						proof: 'production-ports-grant-replay-pay',
 						run: RUN,
 						invoiceId: created.invoiceId,
 						quantity,
-						purchaseId: purchase!.id,
+						purchaseId: after!.id,
 						purchases: 1,
-						merchantCharges: 0,
+						merchantCharges: 1,
 					}),
 				)
 			},
 			90_000,
 		)
-		it('refuses a paid automatic invoice without creating an early-access purchase', async () => {
+		it('normal full refund finds the linked grant and emits the normal refund/Discord removal event', async () => {
+			const created = await invoice(1)
+			await grantEarlyAccess(ports, created.invoiceId, true)
+			await pay(created.invoiceId, created.customerId)
+			const before = (await ports.purchases(created.invoiceId))[0]!
+			const paidInvoice = await ports.invoice(created.invoiceId)
+			const chargeId =
+				typeof paidInvoice.charge === 'string'
+					? paidInvoice.charge
+					: paidInvoice.charge!.id
+			await stripe.refunds.create({ charge: chargeId, metadata: RIG })
+			const event = await stripeEvent('charge.refunded', chargeId)
+			const sent = vi.fn(async () => ({ ids: [] }))
+			await processStripeWebhook(event, {
+				adapter,
+				provider: { options: { paymentsAdapter: {} } },
+				inngest: { send: sent },
+			} as any)
+			expect((await adapter.getPurchase(before.id))?.status).toBe('Refunded')
+			expect(sent).toHaveBeenCalledWith({
+				name: 'commerce/update-purchase-status',
+				data: { stripeChargeId: chargeId, status: 'Refunded' },
+			})
+			expect((await reconcile(created.invoiceId)).state).toBe(
+				'paid_already_refunded',
+			)
+			expect((await adapter.getPurchase(before.id))?.status).toBe('Refunded')
+			expect(await ports.purchases(created.invoiceId)).toHaveLength(1)
+			console.info(
+				JSON.stringify({
+					proof: 'grant-pay-normal-refund',
+					run: RUN,
+					invoiceId: created.invoiceId,
+					purchaseId: before.id,
+					status: 'Refunded',
+					event: 'commerce/update-purchase-status',
+				}),
+			)
+		}, 90_000)
+		it('recovers exactly one Valid purchase when grant creation failed after marking and payment later lands', async () => {
+			const created = await invoice(1)
+			await expect(
+				grantEarlyAccess(
+					{
+						...ports,
+						create: async () => {
+							throw new Error('forced infrastructure failure')
+						},
+					},
+					created.invoiceId,
+					true,
+				),
+			).rejects.toThrow('forced infrastructure failure')
+			expect(
+				(await ports.invoice(created.invoiceId)).metadata?.accessProvisioning,
+			).toBe(EARLY_ACCESS)
+			expect(await ports.purchases(created.invoiceId)).toHaveLength(0)
+			await pay(created.invoiceId, created.customerId)
+			const after = await ports.purchases(created.invoiceId)
+			expect(after).toHaveLength(1)
+			expect(after[0]?.status).toBe('Valid')
+			expect(after[0]?.merchantChargeId).toBeTruthy()
+			expect(paymentLog.error).toHaveBeenCalledWith(
+				'invoice.early_access.paid_without_grant',
+				{ invoiceId: created.invoiceId },
+			)
+		}, 90_000)
+		it('real GET_LOCK refuses a concurrent grant while the first holds the invoice, then replay returns that purchase', async () => {
+			const created = await invoice(2)
+			let entered!: () => void, release!: () => void
+			const started = new Promise<void>((resolve) => {
+					entered = resolve
+				}),
+				gate = new Promise<void>((resolve) => {
+					release = resolve
+				})
+			const first = grantEarlyAccess(
+				{
+					...ports,
+					create: async (...args) => {
+						entered()
+						await gate
+						return ports.create(...args)
+					},
+				},
+				created.invoiceId,
+				true,
+			)
+			await started
+			try {
+				await expect(
+					grantEarlyAccess(ports, created.invoiceId, true),
+				).rejects.toThrow('Another early-access operation')
+			} finally {
+				release()
+			}
+			expect((await first).state).toBe('granted')
+			expect(
+				(await grantEarlyAccess(ports, created.invoiceId, true)).state,
+			).toBe('already_granted')
+			expect(await ports.purchases(created.invoiceId)).toHaveLength(1)
+			console.info(
+				JSON.stringify({
+					proof: 'real-mysql-concurrent-grants',
+					run: RUN,
+					invoiceId: created.invoiceId,
+					purchases: 1,
+				}),
+			)
+		}, 90_000)
+		it('refuses an already-paid automatic invoice, and can discover its paid-path purchase', async () => {
 			const created = await invoice(1)
 			await pay(created.invoiceId, created.customerId)
+			expect(await ports.purchases(created.invoiceId)).toHaveLength(1)
 			await expect(
 				grantEarlyAccess(ports, created.invoiceId, true),
 			).rejects.toThrow(/only an unpaid OPEN|already has a purchase/)
@@ -299,6 +450,66 @@ describe.skipIf(!KEY || !SERVER)(
 					(p) => p.fields?.earlyAccess,
 				),
 			).toHaveLength(0)
+		}, 90_000)
+		it('alerts instead of regranting a revoked invoice that is later paid', async () => {
+			const created = await invoice(1)
+			await grantEarlyAccess(ports, created.invoiceId, true)
+			await revokeEarlyAccess(ports, created.invoiceId, true)
+			await pay(created.invoiceId, created.customerId)
+			const after = await ports.purchases(created.invoiceId)
+			expect(after).toHaveLength(1)
+			expect(after[0]?.status).toBe('Refunded')
+			expect(after[0]?.merchantChargeId).toBeNull()
+			expect(paymentLog.error).toHaveBeenCalledWith(
+				'invoice.early_access.paid_after_revoke',
+				{ invoiceId: created.invoiceId, purchaseId: after[0]!.id },
+			)
+		}, 90_000)
+		it('dry run refuses unconfigured product and malformed benefits before marking', async () => {
+			const created = await invoice(1)
+			await database
+				.update(schema.merchantProduct)
+				.set({ identifier: 'prod_unconfigured' })
+				.where(eq(schema.merchantProduct.id, 'mp_early'))
+			try {
+				await expect(
+					grantEarlyAccess(ports, created.invoiceId),
+				).rejects.toThrow('not configured')
+			} finally {
+				await database
+					.update(schema.merchantProduct)
+					.set({ identifier: stripeProduct })
+					.where(eq(schema.merchantProduct.id, 'mp_early'))
+			}
+			expect(
+				(await ports.invoice(created.invoiceId)).metadata?.accessProvisioning,
+			).toBe(AUTOMATIC_ACCESS)
+			await stripe.invoices.update(created.invoiceId, {
+				metadata: { purchaseBenefits: 'not-valid-transport' },
+			})
+			await expect(grantEarlyAccess(ports, created.invoiceId)).rejects.toThrow(
+				'benefits need review',
+			)
+			expect(
+				(await ports.invoice(created.invoiceId)).metadata?.accessProvisioning,
+			).toBe(AUTOMATIC_ACCESS)
+		}, 90_000)
+		it('refuses an existing Valid same-product purchase before marking', async () => {
+			const email = `existing-${randomUUID()}@example.test`
+			const { user } = await adapter.findOrCreateUser(email)
+			await adapter.createPurchase({
+				userId: user.id,
+				productId: PRODUCT,
+				status: 'Valid',
+				totalAmount: '199.00',
+			})
+			const created = await invoice(1, email)
+			await expect(grantEarlyAccess(ports, created.invoiceId)).rejects.toThrow(
+				'already holds a Valid purchase',
+			)
+			expect(
+				(await ports.invoice(created.invoiceId)).metadata?.accessProvisioning,
+			).toBe(AUTOMATIC_ACCESS)
 		}, 90_000)
 	},
 )
