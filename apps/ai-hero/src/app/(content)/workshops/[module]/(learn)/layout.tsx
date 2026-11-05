@@ -6,6 +6,7 @@ import { getServerAuthSession } from '@/server/auth'
 import type { Session } from 'next-auth'
 
 import { LessonRouteSessionProvider } from './lesson-route-session-provider'
+import { LessonScrollReset } from './lesson-scroll-reset'
 import { LessonsSheet } from './lessons-sheet'
 
 // Above [lesson], so it is not keyed by the lesson slug. It stays mounted
@@ -19,6 +20,7 @@ const LessonLayout = async (props: { children: React.ReactNode }) => {
 
 	return (
 		<LessonRouteSessionProvider session={session as Session | null}>
+			<LessonScrollReset />
 			<LayoutClient withContainer>
 				<div className="flex min-w-0">
 					<WorkshopResourceList className="hidden lg:block" />
