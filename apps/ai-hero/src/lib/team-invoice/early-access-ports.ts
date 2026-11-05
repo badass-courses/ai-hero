@@ -2,7 +2,6 @@ import { merchantSession, purchases } from '@/db/schema'
 import type { DbExecutor } from '@/db'
 import { updatePurchaseFields } from '@/lib/purchase-fields-write'
 import { and, eq, or, sql } from 'drizzle-orm'
-import type { PoolConnection } from 'mysql2/promise'
 import type Stripe from 'stripe'
 import type { User } from '@coursebuilder/core/schemas'
 import type { DrizzleAdapter } from '@coursebuilder/adapter-drizzle'
@@ -19,7 +18,10 @@ import {
 	invoiceReadback,
 	needsReview,
 } from './early-access'
-import { createEarlyAccessLock } from './early-access-lock'
+import {
+	createEarlyAccessLock,
+	type EarlyAccessRedis,
+} from './early-access-lock'
 import {
 	createEarlyAccessPurchase,
 	inspectEarlyAccessPurchase,
@@ -35,12 +37,12 @@ export type EarlyAccessDependencies = {
 	adapter: Adapter
 	stripe: Stripe
 	findUser(email: string): Promise<{ user: User }>
-	acquireConnection(): Promise<PoolConnection>
+	redis: EarlyAccessRedis
 	send(event: Parameters<typeof inngest.send>[0]): Promise<unknown>
 }
 
 /** Production and sandbox use this exact factory, including Stripe expansion,
- * identity resolution, event payloads and the real MySQL lock. */
+ * identity resolution, event payloads and the Redis lease. */
 export function createEarlyAccessPorts(
 	deps: EarlyAccessDependencies,
 ): EarlyAccessPorts {
@@ -72,7 +74,7 @@ export function createEarlyAccessPorts(
 		},
 		create: (invoice, at) =>
 			createEarlyAccessPurchase(database, invoice, at, deps.findUser),
-		lock: createEarlyAccessLock(deps.acquireConnection),
+		lock: createEarlyAccessLock(deps.redis),
 		notify: async (invoice, purchase) => {
 			const full = await adapter.getPurchase(purchase.id)
 			if (!full || !full.userId || full.status !== 'Valid')

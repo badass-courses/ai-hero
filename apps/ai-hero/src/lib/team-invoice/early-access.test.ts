@@ -70,6 +70,41 @@ function fixture() {
 }
 
 describe('early access metadata and lifecycle', () => {
+	it('dry-run grant bypasses an unavailable lock and performs no writes', async () => {
+		const f = fixture()
+		f.ports.lock = vi.fn(async () => {
+			throw new Error('lock unavailable')
+		})
+		expect((await grantEarlyAccess(f.ports, 'in_test')).state).toBe('ready')
+		expect(f.ports.lock).not.toHaveBeenCalled()
+		expect(f.ports.mark).not.toHaveBeenCalled()
+		expect(f.ports.create).not.toHaveBeenCalled()
+		expect(f.ports.notify).not.toHaveBeenCalled()
+		await expect(grantEarlyAccess(f.ports, 'in_test', true)).rejects.toThrow(
+			'lock unavailable',
+		)
+	})
+	it('dry-run revoke bypasses an unavailable lock and performs no writes', async () => {
+		const f = fixture()
+		await grantEarlyAccess(f.ports, 'in_test', true)
+		vi.mocked(f.ports.mark).mockClear()
+		vi.mocked(f.ports.create).mockClear()
+		vi.mocked(f.ports.notify).mockClear()
+		f.ports.lock = vi.fn(async () => {
+			throw new Error('lock unavailable')
+		})
+		expect((await revokeEarlyAccess(f.ports, 'in_test')).state).toBe(
+			'revoke_ready',
+		)
+		expect(f.ports.lock).not.toHaveBeenCalled()
+		expect(f.ports.revoke).not.toHaveBeenCalled()
+		expect(f.ports.mark).not.toHaveBeenCalled()
+		expect(f.ports.create).not.toHaveBeenCalled()
+		expect(f.ports.notify).not.toHaveBeenCalled()
+		await expect(revokeEarlyAccess(f.ports, 'in_test', true)).rejects.toThrow(
+			'lock unavailable',
+		)
+	})
 	it('refuses preflight failures even on dry run, before the manual marker', async () => {
 		const f = fixture()
 		f.ports.preflight = vi.fn(async () => {

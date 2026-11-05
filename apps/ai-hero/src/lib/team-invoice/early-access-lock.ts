@@ -1,32 +1,39 @@
-import { createHash } from 'node:crypto'
-import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
+import { randomUUID } from 'node:crypto'
 
-/** The same lock is used by grant, revoke and payment reconciliation. It is
- * connection-scoped, nonblocking, and creates no schema or persistent ledger. */
-export function createEarlyAccessLock(acquire: () => Promise<PoolConnection>) {
+export type EarlyAccessRedis = {
+	set(
+		key: string,
+		token: string,
+		options: { nx: true; px: number },
+	): Promise<unknown>
+	eval(script: string, keys: string[], args: string[]): Promise<unknown>
+}
+
+const RELEASE = `if redis.call('get', KEYS[1]) == ARGV[1] then
+	return redis.call('del', KEYS[1])
+else return 0 end`
+
+/** Shared by apply-grant, apply-revoke and payment reconciliation. A crashed
+ * holder expires after 60s. Release must never remove a successor's lease.
+ * This bounded lease is not a fence against a worker paused beyond its TTL. */
+export function createEarlyAccessLock(redis: EarlyAccessRedis) {
 	return async function lock<T>(
 		id: string,
 		work: () => Promise<T>,
 	): Promise<T> {
-		const connection = await acquire()
-		const key = `early-access:${createHash('sha256').update(id).digest('hex').slice(0, 40)}`
-		let locked = false
+		const key = `aih:early-access:lock:${id}`
+		const token = randomUUID()
+		if ((await redis.set(key, token, { nx: true, px: 60_000 })) !== 'OK')
+			throw new Error(
+				'Another early-access operation holds this invoice; retry after its readback',
+			)
 		try {
-			const [[row]] = await connection.query<
-				(RowDataPacket & { acquired: number })[]
-			>('SELECT GET_LOCK(?, 0) AS acquired', [key])
-			if (row?.acquired !== 1)
-				throw new Error(
-					'Another early-access operation holds this invoice; retry after its readback',
-				)
-			locked = true
 			return await work()
 		} finally {
-			try {
-				if (locked) await connection.query('SELECT RELEASE_LOCK(?)', [key])
-			} finally {
-				connection.release()
-			}
+			if ((await redis.eval(RELEASE, [key], [token])) !== 1)
+				throw new Error(
+					'Early-access lease expired or changed; verify invoice before retrying',
+				)
 		}
 	}
 }
