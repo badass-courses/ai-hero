@@ -26,6 +26,7 @@ import {
 	refusal,
 	toAuthoritativeDecision,
 } from './decision'
+import { isRetiredProduct, RETIRED_PRODUCT_REASON } from '../retired-products'
 import { isPppCreditBound } from './ppp-credit-bound'
 import {
 	classifyEarlyBirdCode,
@@ -160,6 +161,15 @@ export function createC5AuthoritativePrice(deps: C5PricingDeps) {
 	return async function authoritativePrice(
 		request: AuthoritativePriceRequest,
 	): Promise<AuthoritativeDecision | null> {
+		// A retired product's content is free, so nobody pays for it: every
+		// checkout refuses here, before Stripe, and Stripe stays untouched.
+		if (isRetiredProduct(request.productId))
+			return refusal('closed', [RETIRED_PRODUCT_REASON], {
+				productId: request.productId,
+				quantity: request.quantity,
+				userId: request.userId ?? null,
+				engineVersion: deps.engineVersion,
+			})
 		if (request.productId !== C5_PRODUCT_ID) return null
 
 		const quantity = request.quantity
