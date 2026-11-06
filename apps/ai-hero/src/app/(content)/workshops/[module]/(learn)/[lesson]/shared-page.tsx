@@ -116,6 +116,17 @@ export async function LessonPage({
 	// and the layout outlives a lesson change.
 	return (
 		<ActiveHeadingProvider>
+			{/* The router scrolls a new lesson to this segment's first element, and
+			    skips the scroll when that element is already on screen. The player
+			    sits above the page in the (learn) layout, so without this the
+			    target would be the toolbar under the video: arriving from the
+			    bottom of a short lesson would leave the video scrolled off the top.
+			    Pinned to the top of the layout's column, the target includes the
+			    player. Keep it the page's first element. */}
+			<div
+				aria-hidden
+				className="pointer-events-none absolute inset-x-0 top-0 h-px"
+			/>
 			{/* Clips full-width rules drawn from inside the prose (the quiz's) at
 			    the column's edges. */}
 			<main className="w-full overflow-x-clip">

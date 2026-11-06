@@ -23,7 +23,8 @@ const LessonLayout = async (props: { children: React.ReactNode }) => {
 				<div className="flex min-w-0">
 					<WorkshopResourceList className="hidden lg:block" />
 					<LessonsSheet />
-					<div className="min-w-0 flex-1">
+					{/* Relative: the lesson page pins its scroll target to this top. */}
+					<div className="relative min-w-0 flex-1">
 						<LessonPlayerHost>{children}</LessonPlayerHost>
 					</div>
 				</div>
