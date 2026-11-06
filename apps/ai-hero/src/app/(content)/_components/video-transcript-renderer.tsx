@@ -70,7 +70,7 @@ export function Transcript({
 	)
 }
 
-const paragraphWithTimestampButtons = ({
+export const paragraphWithTimestampButtons = ({
 	children,
 	canShowVideo,
 	muxPlayerRef,
@@ -83,7 +83,9 @@ const paragraphWithTimestampButtons = ({
 	const updatedChildren = elements.map((child, index) => {
 		if (typeof child === 'string') {
 			const text = child
-			const timestampRegex = /(\d+:\d+)/
+			// mm:ss, or h:mm:ss once a video runs past the hour (course-builder's
+			// transcript format drops a zero hour).
+			const timestampRegex = /(\d+(?::\d{2}){1,2})/
 			const matches = text.match(timestampRegex)
 			if (matches) {
 				const timestamp = matches[1]
