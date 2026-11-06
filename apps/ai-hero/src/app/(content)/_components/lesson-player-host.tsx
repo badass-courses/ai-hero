@@ -93,7 +93,7 @@ function VideoSection({
 			<section
 				aria-label="video"
 				className={cn(
-					'dark relative flex flex-col border-b bg-black text-white dark:text-white',
+					'dark relative flex scroll-mt-(--nav-height) flex-col border-b bg-black text-white dark:text-white',
 					aside && 'lg:h-[min(75svh,calc(100cqw*9/16))] lg:flex-row',
 				)}
 			>

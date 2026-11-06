@@ -70,6 +70,19 @@ export function Transcript({
 	)
 }
 
+export function playTranscriptTimestamp(
+	player: MuxPlayerRefAttributes | null,
+	timestamp: string,
+) {
+	if (!player) return
+
+	player.currentTime = hmsToSeconds(timestamp)
+	void player.play()
+
+	const videoSection = player.closest('[aria-label="video"]')
+	;(videoSection ?? player).scrollIntoView({ block: 'start' })
+}
+
 const paragraphWithTimestampButtons = ({
 	children,
 	canShowVideo,
@@ -86,7 +99,7 @@ const paragraphWithTimestampButtons = ({
 			const timestampRegex = /(\d+:\d+)/
 			const matches = text.match(timestampRegex)
 			if (matches) {
-				const timestamp = matches[1]
+				const timestamp = matches[1]!
 				const beforeText = text.split(matches[0])[0]
 				const afterText = text.split(matches[0])[1]
 				return (
@@ -96,13 +109,12 @@ const paragraphWithTimestampButtons = ({
 							<button
 								data-timestamp=""
 								className="after:content-[' '] inline-block underline after:inline-block"
-								onClick={() => {
-									if (muxPlayerRef?.current) {
-										muxPlayerRef.current.currentTime = hmsToSeconds(timestamp)
-										muxPlayerRef.current.play()
-										window.scrollTo({ top: 0 })
-									}
-								}}
+								onClick={() =>
+									playTranscriptTimestamp(
+										muxPlayerRef?.current ?? null,
+										timestamp,
+									)
+								}
 							>
 								{timestamp}
 							</button>
