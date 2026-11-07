@@ -17,6 +17,7 @@ import { env } from '@/env.mjs'
 import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
+import { getCachedDefaultCoupon } from '@/lib/default-coupon'
 import { and, asc, count, eq, gt, isNull, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 
@@ -340,7 +341,7 @@ export async function loadCohortPageData(
 					.then((res) => res[0]),
 			])
 
-		const couponResult = await courseBuilderAdapter.getDefaultCoupon([
+		const couponResult = await getCachedDefaultCoupon([
 			product.id,
 		])
 		const defaultCouponFromAdapter = couponResult?.defaultCoupon ?? null
