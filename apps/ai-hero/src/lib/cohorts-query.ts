@@ -11,13 +11,13 @@ import {
 	entitlementTypes,
 	organizationMemberships,
 	products,
-	purchases,
 } from '@/db/schema'
 import { env } from '@/env.mjs'
 import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
-import { and, asc, count, eq, gt, isNull, or, sql } from 'drizzle-orm'
+import { getPurchaseCount } from '@/lib/purchase-count'
+import { and, asc, eq, gt, isNull, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 
 import { propsForCommerce } from '@coursebuilder/commerce/props-for-commerce'
@@ -328,11 +328,7 @@ export async function loadCohortPageData(
 					},
 					courseBuilderAdapter,
 				),
-				db
-					.select({ count: count() })
-					.from(purchases)
-					.where(eq(purchases.productId, product.id))
-					.then((res) => res[0] ?? { count: 0 }),
+				getPurchaseCount(product.id),
 				db
 					.select({ quantityAvailable: products.quantityAvailable })
 					.from(products)
@@ -378,7 +374,7 @@ export async function loadCohortPageData(
 			usedCouponId,
 		})
 
-		purchaseCount = purchaseCountResult.count
+		purchaseCount = purchaseCountResult
 		const productQuantity = productQuantityResult?.quantityAvailable ?? -1
 		totalQuantity = productQuantity >= 0 ? productQuantity : 0
 

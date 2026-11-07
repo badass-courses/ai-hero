@@ -20,6 +20,9 @@ vi.mock('next/navigation', () => ({
 vi.mock('@/lib/cohorts-query', () => ({
 	getCachedCohort: vi.fn(async () => mocks.cohort),
 }))
+vi.mock('@/lib/purchase-count', () => ({
+	getPurchaseCount: vi.fn(async () => mocks.purchaseCount),
+}))
 vi.mock('@/db', () => ({
 	db: {
 		select: () => ({

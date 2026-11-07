@@ -7,14 +7,15 @@ import { headers } from 'next/headers'
 import Link from 'next/link'
 import { PricingWidget } from '@/app/(content)/workshops/_components/pricing-widget'
 import { courseBuilderAdapter, db } from '@/db'
-import { products, purchases } from '@/db/schema'
+import { products } from '@/db/schema'
+import { getPurchaseCount } from '@/lib/purchase-count'
 import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 import { getPricingData } from '@/lib/pricing-query'
 import { getProduct } from '@/lib/products-query'
 import { ProductStructuredData } from '@/lib/structured-data'
 import { getServerAuthSession } from '@/server/auth'
 import { getOGImageUrlForResource } from '@/utils/get-og-image-url-for-resource'
-import { count, eq } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 
 import { PriceCheckProvider } from '@coursebuilder/commerce-next/pricing/pricing-check-context'
 import { propsForCommerce } from '@coursebuilder/commerce/props-for-commerce'
@@ -144,11 +145,7 @@ async function ProductCommerce({
 		courseBuilderAdapter,
 	)
 
-	const { count: purchaseCount } = await db
-		.select({ count: count() })
-		.from(purchases)
-		.where(eq(purchases.productId, product.id))
-		.then((res) => res[0] ?? { count: 0 })
+	const purchaseCount = await getPurchaseCount(product.id)
 
 	const productWithQuantityAvailable = await db
 		.select({ quantityAvailable: products.quantityAvailable })

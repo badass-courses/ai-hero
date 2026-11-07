@@ -5,15 +5,13 @@ import { notFound } from 'next/navigation'
 import { CldImage } from '@/components/cld-image'
 import { ForTeamsPage } from '@/components/for-teams/for-teams-page'
 import { teamInvoiceBand } from '@/components/for-teams/team-invoice-band'
-import { db } from '@/db'
-import { purchases } from '@/db/schema'
+import { getPurchaseCount } from '@/lib/purchase-count'
 import { env } from '@/env.mjs'
 import { getCachedCohort } from '@/lib/cohorts-query'
 import { toClientPricingProps } from '@/lib/cohort-client-shape'
 import { teamSaleState } from '@/lib/team-invoice/sale-state'
 import { compileMDX } from '@/utils/compile-mdx'
 import { formatInTimeZone } from 'date-fns-tz'
-import { count, eq } from 'drizzle-orm'
 
 import { productSchema } from '@coursebuilder/core/schemas'
 import { Skeleton } from '@coursebuilder/ui'
@@ -98,11 +96,7 @@ export default async function CohortForTeamsPage(props: Props) {
 			? parsedProduct.data
 			: null
 	const purchaseCount = product
-		? await db
-				.select({ count: count() })
-				.from(purchases)
-				.where(eq(purchases.productId, product.id))
-				.then((rows) => rows[0]?.count ?? 0)
+		? await getPurchaseCount(product.id)
 		: 0
 	const now = new Date()
 	const onSale = product
