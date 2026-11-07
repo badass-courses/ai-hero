@@ -3,6 +3,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { WaitlistForm } from '@/components/cohort-waitlist-form'
 import { C5SaleSwitch } from '@/components/c5-sale-switch'
+import { C5JoinCta } from '@/components/c5-join-cta'
 import { formatStartsAt } from '@/components/landing/format'
 import { BADGE_NEUTRAL, BADGE_OUTLINE, TYPE } from '@/components/landing/type'
 import { DiscountCountdown } from '@/components/pricing/discount-countdown'
@@ -229,15 +230,13 @@ export async function CohortHero({
 							/>
 						}
 					>
-						<Link
+						<C5JoinCta
 							href="/s/c5-site-cta"
 							className={cn(
 								TYPE.meta,
 								'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover mt-6 inline-flex min-h-11 items-center rounded-[9px] px-5 py-3 font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2',
 							)}
-						>
-							Join the cohort
-						</Link>
+						/>
 					</C5SaleSwitch>
 				</div>
 

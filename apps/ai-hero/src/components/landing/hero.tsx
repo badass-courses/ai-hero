@@ -17,6 +17,7 @@ import rehypeRaw from 'rehype-raw'
 
 import { SubscriberCount } from '../subscriber-count'
 import { C5SaleSwitch } from '@/components/c5-sale-switch'
+import { C5JoinCta } from '@/components/c5-join-cta'
 
 import { HeroShader } from './hero-shader'
 import { HeroVideo } from './lazy-hero-video'
@@ -275,15 +276,13 @@ export async function Hero({
 						}
 					>
 						<div className="mt-[34px] flex flex-wrap items-center gap-2.5">
-							<Link
+							<C5JoinCta
 								href="/s/c5-site-hero"
 								className={cn(
 									TYPE.meta,
 									'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover inline-flex min-h-[46px] items-center rounded-[9px] px-5 py-3 font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2',
 								)}
-							>
-								Join the cohort
-							</Link>
+							/>
 							<Link
 								href={ctaHref}
 								className={cn(
