@@ -1,5 +1,6 @@
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
+import { toFragmentLoginUrl } from '@/server/magic-link-fragment'
 import Postmark from 'next-auth/providers/postmark'
 
 import { sendVerificationRequest } from '@coursebuilder/email/send-verification-request'
@@ -31,6 +32,11 @@ export const emailProvider = Postmark({
 	apiKey: env.POSTMARK_API_KEY,
 	from: env.NEXT_PUBLIC_SUPPORT_EMAIL,
 	sendVerificationRequest: (params) => {
-		return sendVerificationRequest(params, magicLinkIdentity)
+		// Auth.js builds `/api/auth/callback/postmark?token=&email=`. Emailing a
+		// fragment link instead keeps the token and email out of request logs.
+		return sendVerificationRequest(
+			{ ...params, url: toFragmentLoginUrl(params.url) },
+			magicLinkIdentity,
+		)
 	},
 })
