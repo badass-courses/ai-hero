@@ -7,6 +7,7 @@ const DICTIONARY_REPO = 'dictionary-of-ai-coding'
 const DICTIONARY_REF = 'main'
 const DICTIONARY_REVALIDATE_SECONDS = 3600
 const DICTIONARY_FRONTMATTER_TIMEOUT_MS = 5000
+const DICTIONARY_COMMIT_FEED_TIMEOUT_MS = 3000
 const DICTIONARY_CACHE_TAG = 'ai-coding-dictionary'
 
 export type DictionarySection = {
@@ -48,6 +49,9 @@ type DictionarySourceRef = {
 	commitSha: string
 	updatedAt: string
 }
+
+// Only successful feed reads may seed the fallback for this process.
+let lastGoodDictionarySourceRef: DictionarySourceRef | undefined
 
 function toValidIsoDate(value: unknown): string | null {
 	if (!value) return null
@@ -116,30 +120,42 @@ function parseDictionaryCommitFeed(
  * README content and entry frontmatter always come from one snapshot.
  */
 async function getDictionarySourceRef(): Promise<DictionarySourceRef> {
-	const response = await fetch(
-		`${AI_CODING_DICTIONARY_SOURCE_URL}/commits/${encodeURIComponent(
-			DICTIONARY_REF,
-		)}.atom`,
-		{
-			next: {
-				revalidate: DICTIONARY_REVALIDATE_SECONDS,
-				tags: [DICTIONARY_CACHE_TAG],
+	try {
+		const response = await fetch(
+			`${AI_CODING_DICTIONARY_SOURCE_URL}/commits/${encodeURIComponent(
+				DICTIONARY_REF,
+			)}.atom`,
+			{
+				signal: AbortSignal.timeout(DICTIONARY_COMMIT_FEED_TIMEOUT_MS),
+				next: {
+					revalidate: DICTIONARY_REVALIDATE_SECONDS,
+					tags: [DICTIONARY_CACHE_TAG],
+				},
 			},
-		},
-	)
-
-	if (!response.ok) {
-		throw new Error(`Failed to fetch GitHub commit feed: ${response.status}`)
-	}
-
-	const sourceRef = parseDictionaryCommitFeed(await response.text())
-	if (!sourceRef) {
-		throw new Error(
-			'GitHub commit feed did not contain a valid commit and update date',
 		)
-	}
 
-	return sourceRef
+		if (!response.ok) {
+			throw new Error(`Failed to fetch GitHub commit feed: ${response.status}`)
+		}
+
+		const sourceRef = parseDictionaryCommitFeed(await response.text())
+		if (!sourceRef) {
+			throw new Error(
+				'GitHub commit feed did not contain a valid commit and update date',
+			)
+		}
+
+		lastGoodDictionarySourceRef = sourceRef
+		return sourceRef
+	} catch (error) {
+		if (!lastGoodDictionarySourceRef) throw error
+
+		console.warn(
+			'GitHub commit feed unavailable; using the last known dictionary source ref',
+			error,
+		)
+		return lastGoodDictionarySourceRef
+	}
 }
 
 function titleToDictionaryPath(title: string) {
