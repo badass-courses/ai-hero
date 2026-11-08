@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const githubMocks = vi.hoisted(() => ({
 	getBranch: vi.fn(),
+	getCommit: vi.fn(),
 	getContent: vi.fn(),
 	getTree: vi.fn(),
 }))
@@ -18,6 +19,7 @@ vi.mock('@octokit/rest', () => ({
 			},
 			repos: {
 				getBranch: githubMocks.getBranch,
+				getCommit: githubMocks.getCommit,
 				getContent: githubMocks.getContent,
 			},
 		}
@@ -80,6 +82,7 @@ describe('AI Coding Dictionary GitHub source', () => {
 		const dictionaryModule = await import('./ai-coding-dictionary')
 		getAiCodingDictionary = dictionaryModule.getAiCodingDictionary
 		githubMocks.getBranch.mockReset().mockRejectedValue({ status: 403 })
+		githubMocks.getCommit.mockReset().mockRejectedValue({ status: 503 })
 		githubMocks.getContent.mockReset().mockRejectedValue({ status: 403 })
 		githubMocks.getTree.mockReset().mockRejectedValue({ status: 403 })
 	})
@@ -154,6 +157,7 @@ describe('AI Coding Dictionary GitHub source', () => {
 		expect(githubMocks.getContent).not.toHaveBeenCalled()
 		expect(githubMocks.getTree).not.toHaveBeenCalled()
 		expect(githubMocks.getBranch).not.toHaveBeenCalled()
+		expect(githubMocks.getCommit).not.toHaveBeenCalled()
 		expect(dictionary.updatedAt).toBe(UPDATED_AT)
 		expect(dictionary.entries).toHaveLength(2)
 		expect(dictionary.entries[0]).toMatchObject({
@@ -290,6 +294,7 @@ describe('AI Coding Dictionary GitHub source', () => {
 			await expect(getAiCodingDictionary()).resolves.toEqual(first)
 			expect(warnSpy).toHaveBeenCalledTimes(1)
 			expect(errorSpy).not.toHaveBeenCalled()
+			expect(githubMocks.getCommit).not.toHaveBeenCalled()
 			expect(
 				fetchMock.mock.calls
 					.slice(1)
@@ -343,14 +348,109 @@ describe('AI Coding Dictionary GitHub source', () => {
 		},
 	)
 
+	it.each(['504', 'TimeoutError'])(
+		'uses the commit API after a cold-start %s and seeds the warm fallback',
+		async (failure) => {
+			const apiSha = 'b'.repeat(40)
+			const apiDate = '2026-07-03T10:00:00Z'
+			githubMocks.getCommit.mockResolvedValue({
+				data: {
+					sha: apiSha,
+					commit: { committer: { date: apiDate } },
+				},
+			})
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+			const timeoutSpy = vi.spyOn(AbortSignal, 'timeout')
+			const fetchMock = vi.fn(async (input: unknown) => {
+				const url = urlOf(input)
+				if (url.endsWith('/commits/main.atom')) {
+					if (failure === 'TimeoutError') {
+						throw new DOMException('feed timed out', 'TimeoutError')
+					}
+					return new Response('unavailable', { status: 504 })
+				}
+				if (url.endsWith(`/${apiSha}/README.md`)) return new Response(readme)
+				if (url.includes(`/${apiSha}/dictionary/`))
+					return new Response(aiFrontmatter)
+				throw new Error(`Unexpected fetch: ${url}`)
+			})
+			vi.stubGlobal('fetch', fetchMock)
+
+			const dictionary = await getAiCodingDictionary()
+			expect(dictionary.updatedAt).toBe('2026-07-03T10:00:00.000Z')
+			expect(dictionary.entries).toHaveLength(2)
+			expect(githubMocks.getCommit).toHaveBeenCalledTimes(1)
+			expect(githubMocks.getCommit).toHaveBeenCalledWith({
+				owner: 'mattpocock',
+				repo: 'dictionary-of-ai-coding',
+				ref: 'main',
+				request: { signal: expect.any(AbortSignal), timeout: 8000 },
+			})
+			expect(timeoutSpy).toHaveBeenCalledWith(8000)
+			expect(warnSpy).toHaveBeenCalledTimes(1)
+
+			await expect(getAiCodingDictionary()).resolves.toEqual(dictionary)
+			expect(githubMocks.getCommit).toHaveBeenCalledTimes(1)
+			expect(warnSpy).toHaveBeenCalledTimes(2)
+		},
+	)
+
+	it('uses the API author date when the committer date is missing', async () => {
+		githubMocks.getCommit.mockResolvedValue({
+			data: {
+				sha: COMMIT_SHA,
+				commit: { committer: null, author: { date: UPDATED_AT } },
+			},
+		})
+		vi.spyOn(console, 'warn').mockImplementation(() => {})
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (input: unknown) => {
+				const url = urlOf(input)
+				if (url.endsWith('/commits/main.atom'))
+					return new Response('', { status: 504 })
+				if (url.endsWith('/README.md')) return new Response(readme)
+				return new Response(aiFrontmatter)
+			}),
+		)
+
+		await expect(getAiCodingDictionary()).resolves.toMatchObject({
+			updatedAt: UPDATED_AT,
+		})
+	})
+
+	it.each([
+		{ sha: COMMIT_SHA, commit: { committer: { date: 'not-a-date' } } },
+		{ sha: COMMIT_SHA, commit: { committer: null, author: null } },
+		{ sha: 'invalid', commit: { committer: { date: UPDATED_AT } } },
+	])(
+		'preserves the feed error when the API ref is invalid: %j',
+		async (data) => {
+			githubMocks.getCommit.mockResolvedValue({ data })
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+			vi.stubGlobal(
+				'fetch',
+				vi.fn().mockResolvedValue(new Response('', { status: 504 })),
+			)
+
+			await expect(getAiCodingDictionary()).rejects.toThrow(
+				'Failed to fetch GitHub commit feed: 504',
+			)
+			expect(githubMocks.getCommit).toHaveBeenCalledTimes(1)
+			expect(warnSpy).not.toHaveBeenCalled()
+		},
+	)
+
 	it.each(['504', 'TimeoutError', 'AbortError'])(
-		'throws on a cold-start %s instead of inventing a source ref',
+		'throws on a cold-start %s when the commit API also fails',
 		async (failure) => {
 			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 			const error = new DOMException('feed aborted', failure)
 			const fetchMock = vi.fn()
 			if (failure === '504') {
-				fetchMock.mockResolvedValue(new Response('unavailable', { status: 504 }))
+				fetchMock.mockResolvedValue(
+					new Response('unavailable', { status: 504 }),
+				)
 			} else {
 				fetchMock.mockRejectedValue(error)
 			}
@@ -365,6 +465,7 @@ describe('AI Coding Dictionary GitHub source', () => {
 				await expect(result).rejects.toBe(error)
 			}
 			expect(fetchMock).toHaveBeenCalledTimes(1)
+			expect(githubMocks.getCommit).toHaveBeenCalledTimes(1)
 			expect(warnSpy).not.toHaveBeenCalled()
 		},
 	)
