@@ -20,6 +20,7 @@ import { getAiCodingDictionary } from '@/lib/ai-coding-dictionary'
 import { getCachedAllLists, getCachedListForPost } from '@/lib/lists-query'
 import { CldImage } from '@/components/cld-image'
 import { type Post } from '@/lib/posts'
+import { getSkillFile, type SkillFile } from '@/lib/skill-file'
 import { skillIconUrl } from '@/lib/skill-icon'
 import { getAllPosts } from '@/lib/posts-query'
 import { getRoutePost } from './get-route-post'
@@ -109,6 +110,9 @@ export default async function PostPage(props: {
 	}
 
 	const isSkillPost = post.type === 'post' && post.fields?.postType === 'skill'
+	const skillFile = isSkillPost
+		? await getSkillFile(post.fields?.githubSource)
+		: null
 
 	// What this post asks for below the body: the email course, when the `cta`
 	// field says so or the post is a skill. Resolved here rather than inside the
@@ -263,7 +267,12 @@ export default async function PostPage(props: {
               underneath rather than stacked. Same idiom as `LandingBody`. The
               footer owns the rule below, so nothing is needed at the end. */}
 					<article className="[&>*+*]:border-border relative flex h-full flex-col [&>*+*]:-mt-px [&>*+*]:border-t">
-						<PostHead post={post} list={list} isSkillPost={isSkillPost} />
+						<PostHead
+							post={post}
+							list={list}
+							isSkillPost={isSkillPost}
+							skillFile={skillFile}
+						/>
 						{post?.fields?.body && (
 							<PostToCDisclosure model={tocModel} landmarks={tocLandmarks} />
 						)}
@@ -397,7 +406,10 @@ export default async function PostPage(props: {
               `[&>*+*]:border-t` would hand it a hairline it should not have.
               It pads the document for its own height — see the component. */}
 					{isSkillPost && (
-						<SkillStickyAction slug={String(post.fields?.slug ?? '')} />
+						<SkillStickyAction
+							slug={String(post.fields?.slug ?? '')}
+							sourceUrl={skillFile?.sourceUrl}
+						/>
 					)}
 				</div>
 			</div>
@@ -679,11 +691,13 @@ async function PostHead({
 	post,
 	list,
 	isSkillPost,
+	skillFile,
 }: {
 	post: Post
 	list: Awaited<ReturnType<typeof getCachedListForPost>>
 	/** Skill posts carry the install panel directly under the title. */
 	isSkillPost?: boolean
+	skillFile?: SkillFile | null
 }) {
 	const videoResourceId = post.resources?.find(
 		({ resource }: ContentResourceResource) =>
@@ -839,6 +853,7 @@ async function PostHead({
 				{isSkillPost && (
 					<SkillInstallPanel
 						slug={String(post.fields?.slug ?? '')}
+						skillFile={skillFile}
 						className="border-t"
 					/>
 				)}
