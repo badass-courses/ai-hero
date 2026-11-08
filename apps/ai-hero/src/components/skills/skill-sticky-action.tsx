@@ -28,7 +28,13 @@ import { SKILL_SOURCE, invocationName, skillInstallCommand } from './skill-meta'
  * Hidden entirely at `desk:` — above 900px the install panel is in the head and
  * a fixed bar would be covering content for no reason.
  */
-export function SkillStickyAction({ slug }: { slug: string }) {
+export function SkillStickyAction({
+	slug,
+	sourceUrl,
+}: {
+	slug: string
+	sourceUrl?: string
+}) {
 	const command = skillInstallCommand(slug)
 	const [copied, setCopied] = React.useState(false)
 	const resetTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -102,10 +108,10 @@ export function SkillStickyAction({ slug }: { slug: string }) {
 					Copy install command
 				</button>
 				<Link
-					href={SKILL_SOURCE.href}
+					href={sourceUrl ?? SKILL_SOURCE.href}
 					target="_blank"
 					rel="noreferrer"
-					aria-label={`View /${invocationName(slug)} source on ${SKILL_SOURCE.label}`}
+					aria-label={`View /${invocationName(slug)} ${sourceUrl ? 'SKILL.md' : 'source'} on ${SKILL_SOURCE.label}`}
 					className="border-input text-[color:var(--ah-fg-subtle)] hover:text-foreground hover:border-foreground/30 focus-visible:ring-ring flex size-11 flex-none items-center justify-center rounded-[9px] border transition focus-visible:outline-none focus-visible:ring-2"
 				>
 					<ArrowUpRight aria-hidden className="size-4" />
