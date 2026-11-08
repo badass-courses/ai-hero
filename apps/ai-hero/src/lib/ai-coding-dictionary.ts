@@ -1,12 +1,15 @@
 import { unstable_cache } from 'next/cache'
 import { plainDescription } from '@/lib/meta-description'
 import { fetchGithubMarkdownFile } from '@/lib/github-markdown'
+import { githubSourceOctokit } from '@/lib/github-source-resilience'
 
 const DICTIONARY_OWNER = 'mattpocock'
 const DICTIONARY_REPO = 'dictionary-of-ai-coding'
 const DICTIONARY_REF = 'main'
 const DICTIONARY_REVALIDATE_SECONDS = 3600
 const DICTIONARY_FRONTMATTER_TIMEOUT_MS = 5000
+const DICTIONARY_COMMIT_FEED_TIMEOUT_MS = 3000
+const DICTIONARY_COMMIT_API_TIMEOUT_MS = 8000
 const DICTIONARY_CACHE_TAG = 'ai-coding-dictionary'
 
 export type DictionarySection = {
@@ -48,6 +51,9 @@ type DictionarySourceRef = {
 	commitSha: string
 	updatedAt: string
 }
+
+// Only verified GitHub source refs may seed the fallback for this process.
+let lastGoodDictionarySourceRef: DictionarySourceRef | undefined
 
 function toValidIsoDate(value: unknown): string | null {
 	if (!value) return null
@@ -116,30 +122,69 @@ function parseDictionaryCommitFeed(
  * README content and entry frontmatter always come from one snapshot.
  */
 async function getDictionarySourceRef(): Promise<DictionarySourceRef> {
-	const response = await fetch(
-		`${AI_CODING_DICTIONARY_SOURCE_URL}/commits/${encodeURIComponent(
-			DICTIONARY_REF,
-		)}.atom`,
-		{
-			next: {
-				revalidate: DICTIONARY_REVALIDATE_SECONDS,
-				tags: [DICTIONARY_CACHE_TAG],
+	try {
+		const response = await fetch(
+			`${AI_CODING_DICTIONARY_SOURCE_URL}/commits/${encodeURIComponent(
+				DICTIONARY_REF,
+			)}.atom`,
+			{
+				signal: AbortSignal.timeout(DICTIONARY_COMMIT_FEED_TIMEOUT_MS),
+				next: {
+					revalidate: DICTIONARY_REVALIDATE_SECONDS,
+					tags: [DICTIONARY_CACHE_TAG],
+				},
 			},
-		},
-	)
-
-	if (!response.ok) {
-		throw new Error(`Failed to fetch GitHub commit feed: ${response.status}`)
-	}
-
-	const sourceRef = parseDictionaryCommitFeed(await response.text())
-	if (!sourceRef) {
-		throw new Error(
-			'GitHub commit feed did not contain a valid commit and update date',
 		)
-	}
 
-	return sourceRef
+		if (!response.ok) {
+			throw new Error(`Failed to fetch GitHub commit feed: ${response.status}`)
+		}
+
+		const sourceRef = parseDictionaryCommitFeed(await response.text())
+		if (!sourceRef) {
+			throw new Error(
+				'GitHub commit feed did not contain a valid commit and update date',
+			)
+		}
+
+		lastGoodDictionarySourceRef = sourceRef
+		return sourceRef
+	} catch (error) {
+		if (!lastGoodDictionarySourceRef) {
+			try {
+				const { data } = await githubSourceOctokit.rest.repos.getCommit({
+					owner: DICTIONARY_OWNER,
+					repo: DICTIONARY_REPO,
+					ref: DICTIONARY_REF,
+					request: {
+						signal: AbortSignal.timeout(DICTIONARY_COMMIT_API_TIMEOUT_MS),
+						timeout: DICTIONARY_COMMIT_API_TIMEOUT_MS,
+					},
+				})
+				const updatedAt =
+					toValidIsoDate(data.commit.committer?.date) ??
+					toValidIsoDate(data.commit.author?.date)
+				if (!/^[0-9a-f]{40}$/i.test(data.sha) || !updatedAt) throw error
+
+				lastGoodDictionarySourceRef = { commitSha: data.sha, updatedAt }
+			} catch {
+				// Keep the original feed failure when neither source is usable.
+				throw error
+			}
+
+			console.warn(
+				'GitHub commit feed unavailable; using the GitHub commit API source ref',
+				error,
+			)
+			return lastGoodDictionarySourceRef
+		}
+
+		console.warn(
+			'GitHub commit feed unavailable; using the last known dictionary source ref',
+			error,
+		)
+		return lastGoodDictionarySourceRef
+	}
 }
 
 function titleToDictionaryPath(title: string) {
