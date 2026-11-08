@@ -22,6 +22,9 @@ import { CONTACT_UNSUBSCRIBED_EVENT } from "@/inngest/events/contact-unsubscribe
  * ContactEvent key make that harmless.
  */
 
+/** Every stop this pull writes carries `source: drovr-suppression:<reason>`. */
+export const DROVR_SUPPRESSION_SOURCE_PREFIX = "drovr-suppression:";
+
 /** drovr's account-wide scope (drovr packages/storage/src/kit-stop-tags.ts). */
 export const DROVR_SCOPE_ALL = "all";
 
@@ -192,7 +195,7 @@ export function planSuppressionStops(
         data: {
           email,
           preferenceKey,
-          source: `drovr-suppression:${row.reason}`,
+          source: `${DROVR_SUPPRESSION_SOURCE_PREFIX}${row.reason}`,
           occurredAt,
         },
       });
