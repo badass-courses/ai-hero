@@ -4,7 +4,21 @@ import {
 } from '@/db/contact-sync-schema'
 import { contactEvent } from '@/db/schema'
 import { isMysqlDuplicateEntryError } from '@/lib/mysql-primary-key-retry'
-import { and, asc, eq, gt, gte, isNull, lt, lte, min, or } from 'drizzle-orm'
+import {
+	and,
+	asc,
+	eq,
+	gt,
+	gte,
+	isNull,
+	lt,
+	lte,
+	min,
+	or,
+	sql,
+} from 'drizzle-orm'
+
+import { DROVR_SUPPRESSION_SOURCE_PREFIX } from './drovr-suppression-pull'
 
 import { VALUE_PATH_LINK_REISSUE_EVERY_DAYS } from './value-path-link-anchor'
 import {
@@ -16,6 +30,21 @@ import {
 
 const ROTATION_STEP_MS =
 	VALUE_PATH_LINK_REISSUE_EVERY_DAYS * 24 * 60 * 60 * 1000
+
+/**
+ * The loop guard (2026-11-08): a stop the drovr suppression pull wrote came
+ * from drovr, so pushing it back is pure echo (the 02:15Z sweep sent ~1,580
+ * contacts round). Such rows are not changes for this reconcile: no profile
+ * push, no stop re-send. Matched on the source keyword the pull writes
+ * (`source-drovr-suppression:<reason>`), wherever it sits in the keywords.
+ * JSON_SEARCH answers NULL for no match, so `IS NOT NULL` keeps every other
+ * row, including ones with no keywords at all. The pattern is a constant,
+ * so it is inlined and the query's parameters do not move.
+ */
+const DROVR_SUPPRESSION_KEYWORD = sql.raw(
+	`'source-${DROVR_SUPPRESSION_SOURCE_PREFIX}%'`,
+)
+export const notDrovrSuppressionEcho = sql`not (${contactEvent.eventType} = 'contact.unsubscribed' and json_search(${contactEvent.payloadSummary}, 'one', ${DROVR_SUPPRESSION_KEYWORD}, null, '$.keywords') is not null)`
 
 /** The one stream this reconcile covers: drovr's contact directory. */
 export const CONTACT_SYNC_CURSOR_NAME = 'contact-directory'
@@ -120,6 +149,7 @@ export function createDrizzleContactSyncStore(
 									),
 								)
 							: undefined,
+						notDrovrSuppressionEcho,
 					),
 				)
 				.orderBy(
