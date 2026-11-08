@@ -194,6 +194,8 @@ const LITERAL_ALLOWED: Record<string, string> = {
 		'mapper: which events carry a stop fact to drovr',
 	'lib/subscriber-marketing/contact-sync-backfill.ts':
 		'dispatch: backfill phases named by event type',
+	'lib/subscriber-marketing/contact-sync-reconcile-drizzle.ts':
+		'filter: the loop guard drops stops the drovr suppression pull wrote from the push',
 	'lib/subscriber-marketing/email-course/parity-receipt.ts':
 		'report: parity labels',
 	'scripts/backfill-contact-events.ts': 'writer: one-time backfill',
