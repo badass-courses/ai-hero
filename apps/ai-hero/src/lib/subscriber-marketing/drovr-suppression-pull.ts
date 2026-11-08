@@ -34,6 +34,10 @@ export const SUPPRESSION_PREFERENCE_KEYS = ["newsletter", "ai-skills"] as const;
 export const SUPPRESSION_PULL_PAGE_LIMIT = 200;
 export const SUPPRESSION_PULL_MAX_PAGES = 10;
 
+/** drovr mints `contact-<uuid>` for a Kit subscriber it could not bind. */
+export const DROVR_MINTED_CONTACT_PREFIX = "contact-";
+export const MINTED_SAMPLE_MAX = 5;
+
 export type DrovrSuppressionReason = "unsubscribed" | "bounced" | "complained";
 
 export type DrovrSuppression = {
