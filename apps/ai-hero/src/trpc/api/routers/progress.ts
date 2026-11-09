@@ -2,6 +2,7 @@ import { cookies } from 'next/headers'
 import { courseBuilderAdapter } from '@/db'
 import { findOrCreateUserWithPersonalOrg } from '@/lib/find-or-create-user'
 import { getLesson } from '@/lib/lessons-query'
+import { getModuleProgressForIdentity } from '@/lib/module-progress-query'
 import {
 	addProgress,
 	getModuleProgressForUser,
@@ -180,11 +181,10 @@ export const progressRouter = createTRPCRouter({
 			const user = session?.user
 			if (user && input.moduleId) {
 				try {
-					const moduleProgress =
-						await courseBuilderAdapter.getModuleProgressForUser(
-							user.id as string,
-							input.moduleId,
-						)
+					const moduleProgress = await getModuleProgressForIdentity(
+						user.id as string,
+						input.moduleId,
+					)
 					return moduleProgress
 				} catch (error) {
 					await log.error('progress.update.error', {

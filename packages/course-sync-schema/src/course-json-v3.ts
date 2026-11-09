@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 
-export const COURSE_JSON_SCHEMA_VERSIONS = [3, 4] as const
+export const COURSE_JSON_SCHEMA_VERSIONS = [3, 4, 5] as const
 export const COURSE_JSON_ARCHIVE_TTL = "90d" as const
 
 const NonEmptyString = Schema.NonEmptyString
@@ -106,32 +106,71 @@ export const CourseJsonVideoV3 = Schema.Struct({
 	sessionExtract: Schema.optionalKey(CourseJsonSessionExtract),
 })
 
-export const CourseJsonExplainerLessonV3 = Schema.Struct({
+const ExplainerLessonFields = {
 	type: Schema.Literal("explainer"),
 	id: NonEmptyString,
 	title: NonEmptyString,
 	explainer: CourseJsonVideoV3,
-})
-
-export const CourseJsonProblemLessonV3 = Schema.Struct({
+}
+const ProblemLessonFields = {
 	type: Schema.Literal("problem"),
 	id: NonEmptyString,
 	title: NonEmptyString,
 	problem: CourseJsonVideoV3,
 	solution: Schema.optionalKey(CourseJsonVideoV3),
-})
-
-export const CourseJsonPlaceholderLesson = Schema.Struct({
+}
+const PlaceholderLessonFields = {
 	type: Schema.Literal("placeholder"),
 	id: NonEmptyString,
 	title: NonEmptyString,
-})
+}
+const V5OptionalLessonField = {
+	optional: Schema.optionalKey(Schema.Literal(true)),
+}
 
-export const CourseJsonLessonV3 = Schema.Union([
+export const CourseJsonExplainerLessonV3 = Schema.Struct(ExplainerLessonFields)
+export const CourseJsonProblemLessonV3 = Schema.Struct(ProblemLessonFields)
+export const CourseJsonPlaceholderLesson = Schema.Struct(PlaceholderLessonFields)
+
+const CourseJsonLegacyLesson = Schema.Union([
 	CourseJsonExplainerLessonV3,
 	CourseJsonProblemLessonV3,
 	CourseJsonPlaceholderLesson,
 ])
+
+export const CourseJsonExplainerLessonV5 = Schema.Struct({
+	...ExplainerLessonFields,
+	...V5OptionalLessonField,
+})
+export const CourseJsonProblemLessonV5 = Schema.Struct({
+	...ProblemLessonFields,
+	...V5OptionalLessonField,
+})
+export const CourseJsonPlaceholderLessonV5 = Schema.Struct({
+	...PlaceholderLessonFields,
+	...V5OptionalLessonField,
+})
+export const CourseJsonTextLessonV5 = Schema.Struct({
+	type: Schema.Literal("text"),
+	id: NonEmptyString,
+	title: NonEmptyString,
+	body: NonEmptyString,
+	description: NonEmptyString,
+	...V5OptionalLessonField,
+})
+
+export const CourseJsonLessonV3 = Schema.Union([
+	CourseJsonExplainerLessonV5,
+	CourseJsonProblemLessonV5,
+	CourseJsonPlaceholderLessonV5,
+	CourseJsonTextLessonV5,
+])
+
+const CourseJsonLegacySection = Schema.Struct({
+	id: NonEmptyString,
+	title: NonEmptyString,
+	lessons: Schema.Array(CourseJsonLegacyLesson),
+})
 
 export const CourseJsonSectionV3 = Schema.Struct({
 	id: NonEmptyString,
@@ -139,34 +178,55 @@ export const CourseJsonSectionV3 = Schema.Struct({
 	lessons: Schema.Array(CourseJsonLessonV3),
 })
 
+const CourseJsonDocumentFields = {
+	$schema: NonEmptyString,
+	courseId: NonEmptyString,
+	courseVersionId: NonEmptyString,
+	archiveTTL: Schema.Literal(COURSE_JSON_ARCHIVE_TTL),
+	courseName: NonEmptyString,
+}
+
 /**
  * Consumer copy of the public Course Video Manager course.json contract.
  * Keep this deliberately exact: producer target hints and Dropbox revisions do
  * not belong in the manifest. The consumer freezes provider revisions itself.
  */
-export const CourseJsonDocument = Schema.Struct({
-	$schema: NonEmptyString,
-	schemaVersion: Schema.Literals(COURSE_JSON_SCHEMA_VERSIONS),
-	courseId: NonEmptyString,
-	courseVersionId: NonEmptyString,
-	archiveTTL: Schema.Literal(COURSE_JSON_ARCHIVE_TTL),
-	courseName: NonEmptyString,
-	sections: Schema.Array(CourseJsonSectionV3),
-})
+export const CourseJsonDocument = Schema.Union([
+	Schema.Struct({
+		...CourseJsonDocumentFields,
+		schemaVersion: Schema.Literals([3, 4]),
+		sections: Schema.Array(CourseJsonLegacySection),
+	}),
+	Schema.Struct({
+		...CourseJsonDocumentFields,
+		schemaVersion: Schema.Literal(5),
+		sections: Schema.Array(CourseJsonSectionV3),
+	}),
+])
 
 export type CourseJsonChapterV3 = typeof CourseJsonChapterV3.Type
 export type CourseJsonSessionExtract = typeof CourseJsonSessionExtract.Type
 export type CourseJsonVideoV3 = typeof CourseJsonVideoV3.Type
 export type CourseJsonLessonV3 = typeof CourseJsonLessonV3.Type
 export type CourseJsonSectionV3 = typeof CourseJsonSectionV3.Type
-export type CourseJsonDocument = typeof CourseJsonDocument.Type
+export type CourseJsonDocument = {
+	readonly $schema: string
+	readonly schemaVersion: (typeof COURSE_JSON_SCHEMA_VERSIONS)[number]
+	readonly courseId: string
+	readonly courseVersionId: string
+	readonly archiveTTL: typeof COURSE_JSON_ARCHIVE_TTL
+	readonly courseName: string
+	readonly sections: ReadonlyArray<CourseJsonSectionV3>
+}
 
-export const decodeCourseJsonDocument = Schema.decodeUnknownSync(
+const decodeCourseJsonDocumentUnknown = Schema.decodeUnknownSync(
 	CourseJsonDocument,
 	{ onExcessProperty: "error" },
 )
+export const decodeCourseJsonDocument = (input: unknown): CourseJsonDocument =>
+	decodeCourseJsonDocumentUnknown(input)
 
-// Compatibility aliases for existing consumers; these accept course.json schemaVersion 3 and 4.
+// Compatibility aliases for existing consumers; these accept course.json schemaVersion 3, 4 and 5.
 export const CourseJsonDocumentV3 = CourseJsonDocument
 export type CourseJsonDocumentV3 = CourseJsonDocument
 export const decodeCourseJsonDocumentV3 = decodeCourseJsonDocument
@@ -176,7 +236,7 @@ export function courseJsonVideos(
 ): ReadonlyArray<CourseJsonVideoV3> {
 	return document.sections.flatMap((section) =>
 		section.lessons.flatMap((lesson) => {
-			if (lesson.type === "placeholder") return []
+			if (lesson.type === "placeholder" || lesson.type === "text") return []
 			return lesson.type === "explainer"
 				? [lesson.explainer]
 				: [lesson.problem, ...(lesson.solution ? [lesson.solution] : [])]

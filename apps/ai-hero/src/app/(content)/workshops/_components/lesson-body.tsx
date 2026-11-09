@@ -1,7 +1,8 @@
 'use client'
 
-import { use } from 'react'
+import { use, useEffect, useRef } from 'react'
 import Link from 'next/link'
+import { HeadingSlugProvider } from '@/components/mdx/heading'
 import { PROSE_MEASURE } from '@/components/mdx/prose'
 import type { Lesson } from '@/lib/lessons'
 import { LESSON_DENIAL_COPY, lessonDenialReason } from '@/lib/lesson-denial'
@@ -10,6 +11,40 @@ import { formatInTimeZone } from 'date-fns-tz'
 import { Lock } from 'lucide-react'
 
 import type { AbilityForResource } from '@coursebuilder/utils/current-ability-rules'
+
+function StreamedLessonBody({
+	content,
+	lessonId,
+}: {
+	content: React.ReactNode
+	lessonId?: string
+}) {
+	const bodyRef = useRef<HTMLDivElement>(null)
+
+	useEffect(() => {
+		const hash = window.location.hash.slice(1)
+		if (!hash) return
+		let id: string
+		try {
+			id = decodeURIComponent(hash)
+		} catch {
+			return
+		}
+		const target = document.getElementById(id)
+		if (target && bodyRef.current?.contains(target)) {
+			target.scrollIntoView()
+		}
+	}, [content])
+
+	return (
+		<div
+			ref={bodyRef}
+			className={`prose-img:rounded-lg dark:prose-invert prose prose-a:text-primary lg:prose-pre:text-sm lg:prose-pre:leading-relaxed lg:prose-lg ${PROSE_MEASURE}`}
+		>
+			<HeadingSlugProvider resetKey={lessonId}>{content}</HeadingSlugProvider>
+		</div>
+	)
+}
 
 export function LessonBody({
 	lesson,
@@ -68,11 +103,5 @@ export function LessonBody({
 
 	const { content } = use(mdxContentPromise)
 
-	return (
-		<div
-			className={`prose-img:rounded-lg dark:prose-invert prose prose-a:text-primary lg:prose-pre:text-sm lg:prose-pre:leading-relaxed lg:prose-lg ${PROSE_MEASURE}`}
-		>
-			{content}
-		</div>
-	)
+	return <StreamedLessonBody content={content} lessonId={lesson?.id} />
 }

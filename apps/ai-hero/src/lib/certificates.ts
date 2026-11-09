@@ -37,7 +37,9 @@ export async function checkCohortCertificateEligibilityFromWorkshops(
 	}
 
 	const moduleCompletionPromises = workshops.map((module) =>
-		hasUserCompletedAllLessons(userId, module.id),
+		hasUserCompletedAllLessons(userId, module.id, {
+			zeroRequiredLessonsComplete: true,
+		}),
 	)
 
 	const moduleCompletionResults = await Promise.all(moduleCompletionPromises)
@@ -81,7 +83,9 @@ export async function checkCohortCertificateEligibility(
 		}
 
 		const moduleCompletionPromises = modules.map((module) =>
-			hasUserCompletedAllLessons(userId, module.id),
+			hasUserCompletedAllLessons(userId, module.id, {
+				zeroRequiredLessonsComplete: true,
+			}),
 		)
 
 		const moduleCompletionResults = await Promise.all(moduleCompletionPromises)
@@ -128,12 +132,15 @@ export async function checkCohortCertificateEligibility(
  * is the same rule the lesson lists use, which keeps what a learner is asked
  * to complete equal to what they can see.
  *
- * A module with nothing to complete is not complete: an emptied module must
- * not hand out its certificate.
+ * A standalone module with nothing to complete is not complete, so an emptied
+ * module cannot hand out its own certificate. Cohort eligibility passes the
+ * explicit exception: a workshop with zero required lessons cannot block the
+ * cohort certificate.
  */
 async function hasUserCompletedAllLessons(
 	userId: string,
 	resourceId: string,
+	options: { zeroRequiredLessonsComplete?: boolean } = {},
 ): Promise<{ completed: boolean; lastCompletedDate: Date | null }> {
 	// Execute the optimized query to check if there are any incomplete lessons
 	const results: any = await db.execute(sql`
@@ -185,7 +192,9 @@ async function hasUserCompletedAllLessons(
 		? new Date(results.rows[0].last_completed_date)
 		: null
 
-	const completed = requiredLessons > 0 && incompleteLessons === 0
+	const completed =
+		incompleteLessons === 0 &&
+		(requiredLessons > 0 || options.zeroRequiredLessonsComplete === true)
 
 	return { completed, lastCompletedDate }
 }

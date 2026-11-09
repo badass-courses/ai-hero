@@ -20,17 +20,23 @@ export function completeLessonInBackground({
 	removeLessonProgress,
 	setCompleted,
 	optimistic,
+	countsTowardProgress = true,
 }: {
 	resourceId: string
 	moduleProgress: ModuleProgress | null
-	addLessonProgress: (lessonId: string) => void
-	removeLessonProgress: (lessonId: string) => void
+	addLessonProgress: (lessonId: string, countsTowardProgress?: boolean) => void
+	removeLessonProgress: (
+		lessonId: string,
+		countsTowardProgress?: boolean,
+	) => void
 	setCompleted: (input: {
 		resourceId: string
 		isCompleted: boolean
 	}) => Promise<unknown>
 	/** True when the viewer has a session. */
 	optimistic: boolean
+	/** Optional lessons persist completion without changing required counts. */
+	countsTowardProgress?: boolean
 }): Promise<void> {
 	const isCompleted = Boolean(
 		moduleProgress?.completedLessons?.some(
@@ -42,18 +48,20 @@ export function completeLessonInBackground({
 	if (!optimistic) {
 		return setCompleted({ resourceId, isCompleted: true }).then(
 			(result) => {
-				if (result != null) addLessonProgress(resourceId)
+				if (result != null) addLessonProgress(resourceId, countsTowardProgress)
 			},
 			() => {},
 		)
 	}
 
-	addLessonProgress(resourceId)
+	addLessonProgress(resourceId, countsTowardProgress)
 	return setCompleted({ resourceId, isCompleted: true }).then(
 		// null means the write failed.
 		(result) => {
-			if (result == null) removeLessonProgress(resourceId)
+			if (result == null) {
+				removeLessonProgress(resourceId, countsTowardProgress)
+			}
 		},
-		() => removeLessonProgress(resourceId),
+		() => removeLessonProgress(resourceId, countsTowardProgress),
 	)
 }

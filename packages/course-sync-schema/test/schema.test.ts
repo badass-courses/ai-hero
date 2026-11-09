@@ -87,12 +87,57 @@ assert.equal(v3.archiveTTL, "90d")
 assert.equal(v3.sections.length, 3)
 assert.equal(courseJsonVideos(v3).length, 24)
 
-const syllabus = decodeCourseJsonDocument(makeCourseJsonV4SyllabusFixture())
+const v4Fixture = makeCourseJsonV4SyllabusFixture()
+const syllabus = decodeCourseJsonDocument(v4Fixture)
+assert.deepEqual(syllabus, v4Fixture)
 assert.equal(syllabus.schemaVersion, 4)
 assert.equal(syllabus.sections.length, 3)
 assert.equal(syllabus.sections[0]?.lessons.length, 8)
 assert.equal(courseJsonVideos(syllabus).length, 0)
 assert.doesNotThrow(() => decodeStageSourceRevisionRequest({ manifest: syllabus }))
+
+const v5 = decodeCourseJsonDocument({
+	...v4Fixture,
+	schemaVersion: 5,
+	sections: [{
+		id: "faq-section",
+		title: "Before We Start",
+		lessons: [
+			{
+				type: "text",
+				id: "faq-lesson",
+				title: "Frequently Asked Questions",
+				body: "## Can I skip this?\n\nYes.",
+				description: "Answers before the cohort starts.",
+				optional: true,
+			},
+			{
+				type: "placeholder",
+				id: "required-lesson",
+				title: "Required lesson",
+			},
+		],
+	}],
+})
+assert.equal(v5.schemaVersion, 5)
+assert.equal(v5.sections[0]?.lessons[0]?.type, "text")
+assert.equal(v5.sections[0]?.lessons[0]?.optional, true)
+assert.equal(courseJsonVideos(v5).length, 0)
+
+const v5VideoLessons = decodeCourseJsonDocument({
+	...makeCourseJsonV3Fixture(),
+	schemaVersion: 5,
+	sections: makeCourseJsonV3Fixture().sections.map((section) => ({
+		...section,
+		lessons: section.lessons.map((lesson) => ({ ...lesson, optional: true as const })),
+	})),
+})
+assert.equal(
+	v5VideoLessons.sections.every((section) =>
+		section.lessons.every((lesson) => lesson.optional === true),
+	),
+	true,
+)
 assert.throws(() =>
 	decodeCourseJsonDocument({
 		...makeCourseJsonV4SyllabusFixture(),
@@ -103,7 +148,37 @@ assert.throws(() =>
 	}),
 )
 assert.throws(() =>
-	decodeCourseJsonDocument({ ...makeCourseJsonV4SyllabusFixture(), schemaVersion: 5 }),
+	decodeCourseJsonDocument({
+		...v4Fixture,
+		sections: [{
+			...v4Fixture.sections[0],
+			lessons: [{ type: "placeholder", id: "lesson-1", title: "Lesson 1", optional: true }],
+		}],
+	}),
+)
+assert.throws(() =>
+	decodeCourseJsonDocument({
+		...v4Fixture,
+		sections: [{
+			...v4Fixture.sections[0],
+			lessons: [{
+				type: "text",
+				id: "lesson-1",
+				title: "Lesson 1",
+				body: "Body",
+				description: "Description",
+			}],
+		}],
+	}),
+)
+assert.throws(() =>
+	decodeCourseJsonDocument({
+		...v5,
+		sections: [{
+			...v5.sections[0],
+			lessons: [{ ...v5.sections[0]!.lessons[0]!, optional: false }],
+		}],
+	}),
 )
 
 assert.throws(() =>

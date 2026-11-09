@@ -12,7 +12,7 @@ export const sourceFieldsByKind: Readonly<
 > = {
 	section: [...commonFields, 'title', 'slug'],
 	workshop: [...commonFields, 'title', 'slug'],
-	lesson: [...commonFields, 'title', 'slug', 'body', 'description'],
+	lesson: [...commonFields, 'title', 'slug', 'body', 'description', 'optional'],
 	solution: [
 		...commonFields,
 		'title',

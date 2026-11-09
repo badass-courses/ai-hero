@@ -30,6 +30,7 @@ vi.mock('@/trpc/react', () => ({
 
 import {
 	ClientModuleProgressProvider,
+	progressReducer,
 	useModuleProgress,
 } from './module-progress-provider'
 
@@ -37,6 +38,28 @@ function ProgressProbe() {
 	const { moduleProgress } = useModuleProgress()
 	return <div>{moduleProgress?.completedLessons?.length ?? 0}</div>
 }
+
+describe('progressReducer', () => {
+	it('records optional completion without changing required counts', () => {
+		const progress = {
+			completedLessons: [],
+			nextResource: null,
+			percentCompleted: 100,
+			completedLessonsCount: 2,
+			totalLessonsCount: 2,
+		}
+
+		const completed = progressReducer(progress as never, {
+			type: 'ADD_LESSON_PROGRESS',
+			payload: { lessonId: 'optional-faq', countsTowardProgress: false },
+		})
+
+		expect(completed?.completedLessons).toHaveLength(1)
+		expect(completed?.completedLessonsCount).toBe(2)
+		expect(completed?.totalLessonsCount).toBe(2)
+		expect(completed?.percentCompleted).toBe(100)
+	})
+})
 
 describe('ClientModuleProgressProvider', () => {
 	beforeEach(() => {

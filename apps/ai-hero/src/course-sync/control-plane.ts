@@ -140,9 +140,13 @@ function assertManifestScope(
 	for (const section of manifest.sections) {
 		for (const lesson of section.lessons) {
 			if (lesson.type === 'placeholder') continue
-			const primary =
-				lesson.type === 'explainer' ? lesson.explainer : lesson.problem
-			for (const question of extractQuizQuestions(primary.body, lesson.id)) {
+			const body =
+				lesson.type === 'text'
+					? lesson.body
+					: lesson.type === 'explainer'
+						? lesson.explainer.body
+						: lesson.problem.body
+			for (const question of extractQuizQuestions(body, lesson.id)) {
 				const firstLessonId = questionLessons.get(question.id)
 				if (firstLessonId) {
 					throw new CourseSyncError(
@@ -262,13 +266,13 @@ export function sourceResourceFields(
 		}
 		const lessonItems = section.lessons.flatMap((lesson, lessonIndex) => {
 			const videos =
-				lesson.type === 'placeholder'
+				lesson.type === 'placeholder' || lesson.type === 'text'
 					? []
 					: lesson.type === 'explainer'
 						? [lesson.explainer]
 						: [lesson.problem, ...(lesson.solution ? [lesson.solution] : [])]
 			const primary =
-				lesson.type === 'placeholder'
+				lesson.type === 'placeholder' || lesson.type === 'text'
 					? null
 					: lesson.type === 'explainer'
 						? lesson.explainer
@@ -289,8 +293,12 @@ export function sourceResourceFields(
 				fields: {
 					title: lesson.title,
 					slug: slug(lesson.id, lesson.title),
-					body: primary?.body ?? '',
-					description: primary?.description ?? '',
+					body: lesson.type === 'text' ? lesson.body : (primary?.body ?? ''),
+					description:
+						lesson.type === 'text'
+							? lesson.description
+							: (primary?.description ?? ''),
+					optional: 'optional' in lesson && lesson.optional === true,
 					state: 'draft',
 					visibility: 'unlisted',
 					courseSync: {
@@ -309,7 +317,36 @@ export function sourceResourceFields(
 					},
 				},
 			}
+			const questionItemsFor = (body: string) =>
+				extractQuizQuestions(body, lesson.id).map((question) => ({
+					sourceKind: 'question' as const,
+					sourceId: question.id,
+					targetResourceId: targetResourceId(
+						binding.bindingId,
+						'question',
+						question.id,
+					),
+					parentResourceId: lessonId,
+					position: question.position,
+					detached: false,
+					previousDetached: false,
+					fields: {
+						...question.fields,
+						state: 'draft',
+						visibility: 'unlisted',
+						courseSync: {
+							bindingId: binding.bindingId,
+							sourceCourseId: manifest.courseId,
+							sourceSectionId: section.id,
+							sourceLessonId: lesson.id,
+							sourceQuestionId: question.id,
+						},
+					},
+				}))
 			if (lesson.type === 'placeholder') return [lessonItem]
+			if (lesson.type === 'text') {
+				return [lessonItem, ...questionItemsFor(lesson.body)]
+			}
 			const videoItems = videos.map((video, videoIndex) => {
 				const asset = frozenByVideo.get(video.id)
 				if (
@@ -391,33 +428,7 @@ export function sourceResourceFields(
 							},
 						}
 					: null
-			const questionItems = extractQuizQuestions(primary!.body, lesson.id).map(
-				(question) => ({
-					sourceKind: 'question' as const,
-					sourceId: question.id,
-					targetResourceId: targetResourceId(
-						binding.bindingId,
-						'question',
-						question.id,
-					),
-					parentResourceId: lessonId,
-					position: question.position,
-					detached: false,
-					previousDetached: false,
-					fields: {
-						...question.fields,
-						state: 'draft',
-						visibility: 'unlisted',
-						courseSync: {
-							bindingId: binding.bindingId,
-							sourceCourseId: manifest.courseId,
-							sourceSectionId: section.id,
-							sourceLessonId: lesson.id,
-							sourceQuestionId: question.id,
-						},
-					},
-				}),
-			)
+			const questionItems = questionItemsFor(primary!.body)
 			return [
 				lessonItem,
 				primaryVideoItem,

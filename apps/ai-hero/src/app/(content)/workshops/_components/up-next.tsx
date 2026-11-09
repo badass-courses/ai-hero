@@ -182,6 +182,11 @@ export default function UpNext({
 			return
 		}
 
+		const completedResource = flattenNavigationResources(navigation).find(
+			(resource) => resource.id === completionLogic.resourceToComplete,
+		)
+		const countsTowardProgress = completedResource?.fields?.optional !== true
+
 		void completeLessonInBackground({
 			resourceId: completionLogic.resourceToComplete,
 			moduleProgress,
@@ -189,6 +194,7 @@ export default function UpNext({
 			removeLessonProgress,
 			setCompleted: client.progress.setCompleted.mutate,
 			optimistic: Boolean(session?.user),
+			countsTowardProgress,
 		})
 	}
 

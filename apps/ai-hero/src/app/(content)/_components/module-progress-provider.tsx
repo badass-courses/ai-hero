@@ -10,8 +10,11 @@ import {
 
 type ModuleProgressContextType = {
 	moduleProgress: ModuleProgress | null
-	removeLessonProgress: (lessonId: string) => void
-	addLessonProgress: (lessonId: string) => void
+	removeLessonProgress: (
+		lessonId: string,
+		countsTowardProgress?: boolean,
+	) => void
+	addLessonProgress: (lessonId: string, countsTowardProgress?: boolean) => void
 }
 
 const ModuleProgressContext = React.createContext<ModuleProgressContextType>({
@@ -21,11 +24,17 @@ const ModuleProgressContext = React.createContext<ModuleProgressContextType>({
 })
 
 type ProgressAction =
-	| { type: 'REMOVE_LESSON_PROGRESS'; payload: { lessonId: string } }
-	| { type: 'ADD_LESSON_PROGRESS'; payload: { lessonId: string } }
+	| {
+			type: 'REMOVE_LESSON_PROGRESS'
+			payload: { lessonId: string; countsTowardProgress?: boolean }
+	  }
+	| {
+			type: 'ADD_LESSON_PROGRESS'
+			payload: { lessonId: string; countsTowardProgress?: boolean }
+	  }
 	| { type: 'HYDRATE_PROGRESS'; payload: ModuleProgress }
 
-function progressReducer(
+export function progressReducer(
 	progress: ModuleProgress | null,
 	action: ProgressAction,
 ) {
@@ -40,7 +49,7 @@ function progressReducer(
 		})
 
 	if (action.type === 'HYDRATE_PROGRESS') return action.payload
-	const { lessonId } = action.payload
+	const { lessonId, countsTowardProgress = true } = action.payload
 
 	let newProgress = currentProgress
 
@@ -62,7 +71,9 @@ function progressReducer(
 						userId: '',
 					},
 				],
-				completedLessonsCount: currentProgress.completedLessonsCount + 1,
+				completedLessonsCount:
+					currentProgress.completedLessonsCount +
+					(countsTowardProgress ? 1 : 0),
 			}
 			break
 		case 'REMOVE_LESSON_PROGRESS':
@@ -72,7 +83,9 @@ function progressReducer(
 				completedLessons: currentProgress.completedLessons.filter(
 					(completedLesson) => completedLesson.resourceId !== lessonId,
 				),
-				completedLessonsCount: currentProgress.completedLessonsCount - 1,
+				completedLessonsCount:
+					currentProgress.completedLessonsCount -
+					(countsTowardProgress ? 1 : 0),
 			}
 			break
 	}
@@ -115,17 +128,20 @@ export const ModuleProgressProvider = ({
 		initialProgress,
 	)
 
-	const removeLessonProgress = (lessonId: string) => {
+	const removeLessonProgress = (
+		lessonId: string,
+		countsTowardProgress = true,
+	) => {
 		dispatch({
 			type: 'REMOVE_LESSON_PROGRESS',
-			payload: { lessonId },
+			payload: { lessonId, countsTowardProgress },
 		})
 	}
 
-	const addLessonProgress = (lessonId: string) => {
+	const addLessonProgress = (lessonId: string, countsTowardProgress = true) => {
 		dispatch({
 			type: 'ADD_LESSON_PROGRESS',
-			payload: { lessonId },
+			payload: { lessonId, countsTowardProgress },
 		})
 	}
 

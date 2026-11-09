@@ -18,6 +18,16 @@ export function slugifyHeading(text: string) {
 	})
 }
 
+export function createHeadingSlugger() {
+	const slugCounts = new Map<string, number>()
+	return (text: string) => {
+		const baseSlug = slugifyHeading(text)
+		const count = slugCounts.get(baseSlug) ?? 0
+		slugCounts.set(baseSlug, count + 1)
+		return count === 0 ? baseSlug : `${baseSlug}-${count}`
+	}
+}
+
 // Components whose content should be skipped during heading extraction
 const SKIP_COMPONENTS = ['AISummary'] as const
 
@@ -63,7 +73,7 @@ export const extractMarkdownHeadings = (
 	const headingRegex = /(^#{1,6}) (.+)/gm
 	let match
 	const stack: MarkdownHeading[] = [{ level: 0, text: '', slug: '', items: [] }] // Initialize stack with a dummy heading
-	const slugMap: Map<string, number> = new Map() // Map to store each slug and its current index
+	const nextSlug = createHeadingSlugger()
 
 	while ((match = headingRegex.exec(processedMarkdown)) !== null) {
 		const level = match?.[1]?.length
@@ -71,18 +81,12 @@ export const extractMarkdownHeadings = (
 		if (!level || !text || text.startsWith('!!')) {
 			continue
 		}
-		let slug = slugifyHeading(text)
-
-		// If the slug already exists in the map, append the current index to it
-		if (slugMap.has(slug)) {
-			const currentIndex = slugMap.get(slug)!
-			slugMap.set(slug, currentIndex + 1)
-			slug = `${slug}-${currentIndex}`
-		} else {
-			slugMap.set(slug, 1)
+		const heading: MarkdownHeading = {
+			level,
+			text,
+			slug: nextSlug(text),
+			items: [],
 		}
-
-		const heading: MarkdownHeading = { level, text, slug, items: [] }
 
 		// @ts-expect-error
 		while (stack.length > 0 && level <= stack[stack.length - 1].level) {

@@ -15,7 +15,11 @@ const mocks = { setProgress: vi.fn() }
 describe('completeLessonInBackground', () => {
 	const addLessonProgress = vi.fn()
 	const removeLessonProgress = vi.fn()
-	const run = (moduleProgress = progress(), optimistic = true) =>
+	const run = (
+		moduleProgress = progress(),
+		optimistic = true,
+		countsTowardProgress = true,
+	) =>
 		completeLessonInBackground({
 			resourceId: 'lesson-1',
 			moduleProgress,
@@ -23,6 +27,7 @@ describe('completeLessonInBackground', () => {
 			removeLessonProgress,
 			setCompleted: mocks.setProgress,
 			optimistic,
+			countsTowardProgress,
 		})
 
 	beforeEach(() => {
@@ -33,7 +38,7 @@ describe('completeLessonInBackground', () => {
 		let settle!: (value: unknown) => void
 		mocks.setProgress.mockReturnValue(new Promise((r) => (settle = r)))
 		const done = run()
-		expect(addLessonProgress).toHaveBeenCalledWith('lesson-1')
+		expect(addLessonProgress).toHaveBeenCalledWith('lesson-1', true)
 		expect(mocks.setProgress).toHaveBeenCalledWith({
 			resourceId: 'lesson-1',
 			isCompleted: true,
@@ -49,7 +54,7 @@ describe('completeLessonInBackground', () => {
 	])('reverts the store when the write %s', async (_, write) => {
 		mocks.setProgress.mockImplementation(write)
 		await run()
-		expect(removeLessonProgress).toHaveBeenCalledWith('lesson-1')
+		expect(removeLessonProgress).toHaveBeenCalledWith('lesson-1', true)
 	})
 
 	describe('without a session', () => {
@@ -61,7 +66,7 @@ describe('completeLessonInBackground', () => {
 			expect(addLessonProgress).not.toHaveBeenCalled()
 			settle({ resourceId: 'lesson-1' })
 			await done
-			expect(addLessonProgress).toHaveBeenCalledWith('lesson-1')
+			expect(addLessonProgress).toHaveBeenCalledWith('lesson-1', true)
 			expect(removeLessonProgress).not.toHaveBeenCalled()
 		})
 
@@ -74,6 +79,12 @@ describe('completeLessonInBackground', () => {
 			expect(addLessonProgress).not.toHaveBeenCalled()
 			expect(removeLessonProgress).not.toHaveBeenCalled()
 		})
+	})
+
+	it('marks optional lessons without counting them toward progress', async () => {
+		mocks.setProgress.mockResolvedValue({ resourceId: 'lesson-1' })
+		await run(progress(), true, false)
+		expect(addLessonProgress).toHaveBeenCalledWith('lesson-1', false)
 	})
 
 	it('does nothing for a lesson that is already complete', async () => {

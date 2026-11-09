@@ -23,14 +23,24 @@ vi.mock('@/db', () => ({
 	},
 }))
 vi.mock('@/server/logger', () => ({
-	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+	getLogContext: () => undefined,
 }))
+vi.mock('next/headers', () => ({ cookies: vi.fn(), headers: vi.fn() }))
+vi.mock('@/inngest/send-with-retry', () => ({ sendWithRetry: vi.fn() }))
+vi.mock('@/lib/find-or-create-user', () => ({
+	findOrCreateUserWithPersonalOrg: vi.fn(),
+}))
+vi.mock('@/schemas/subscriber', () => ({ SubscriberSchema: {} }))
+vi.mock('@/server/auth', () => ({ getServerAuthSession: vi.fn() }))
+vi.mock('@/server/perf', () => ({ measureIfSlow: vi.fn() }))
 vi.mock('./cohorts-query', () => ({ getAllWorkshopsInCohort: vi.fn() }))
 
 import {
 	checkCertificateEligibility,
 	checkCohortCertificateEligibilityFromWorkshops,
 } from './certificates'
+import { getModuleProgressForIdentity } from './module-progress-query'
 import { validateMySqlIntegrationServerUrl } from './team-purchase-mysql-test-guard'
 import type { Workshop } from './workshops'
 
@@ -41,6 +51,7 @@ const tables = [
 	schema.contentResource,
 	schema.contentResourceResource,
 	schema.resourceProgress,
+	schema.users,
 ]
 
 // Disposable DDL from the installed schema, never a production clone.
@@ -82,6 +93,7 @@ integration('certificate eligibility on MySQL', () => {
 	const resourceTable = getTableConfig(schema.contentResource).name
 	const linkTable = getTableConfig(schema.contentResourceResource).name
 	const progressTable = getTableConfig(schema.resourceProgress).name
+	const userTable = getTableConfig(schema.users).name
 
 	const resource = (
 		id: string,
@@ -152,8 +164,12 @@ integration('certificate eligibility on MySQL', () => {
 	})
 
 	beforeEach(async () => {
-		for (const table of [resourceTable, linkTable, progressTable])
+		for (const table of [resourceTable, linkTable, progressTable, userTable])
 			await pool.query(`DELETE FROM \`${table}\``)
+		await pool.query(
+			`INSERT INTO \`${userTable}\` (id, email) VALUES (?, ?)`,
+			[USER, 'learner@example.test'],
+		)
 		// A workshop with two lessons of its own and one in a section.
 		await resource('workshop', 'workshop')
 		await lesson('workshop', 'lesson-1')
@@ -224,6 +240,36 @@ integration('certificate eligibility on MySQL', () => {
 		await resource('empty', 'workshop')
 		expect(await earned('archive')).toBe(false)
 		expect(await earned('empty')).toBe(false)
+	})
+
+	it('keeps module progress at 100 percent after an optional FAQ is added', async () => {
+		await complete('lesson-1', 'lesson-2', 'lesson-3')
+		await resource('optional-faq', 'lesson', { optional: true })
+		await link('workshop', 'optional-faq')
+
+		const progress = await getModuleProgressForIdentity(USER, 'workshop')
+
+		expect(progress).toMatchObject({
+			completedLessonsCount: 3,
+			totalLessonsCount: 3,
+			percentCompleted: 100,
+			nextResource: null,
+		})
+	})
+
+	it('counts an optional-only workshop complete for the cohort certificate', async () => {
+		await resource('before-we-start', 'workshop')
+		await resource('optional-faq', 'lesson', { optional: true })
+		await link('before-we-start', 'optional-faq')
+		await complete('lesson-1', 'lesson-2', 'lesson-3')
+
+		const result = await checkCohortCertificateEligibilityFromWorkshops(
+			[{ id: 'workshop' }, { id: 'before-we-start' }] as Workshop[],
+			USER,
+		)
+
+		expect(result.hasCompletedCohort).toBe(true)
+		expect(await earned('before-we-start')).toBe(false)
 	})
 
 	it('earns the cohort certificate across workshops, removed lessons aside', async () => {

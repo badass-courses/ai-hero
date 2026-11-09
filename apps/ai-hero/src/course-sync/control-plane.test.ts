@@ -1010,7 +1010,7 @@ describe('draft course sync control plane', () => {
 		})
 	})
 
-	it('keeps the existing course.json schemaVersion 3 preview and revision identity byte-identical', async () => {
+	it('keeps the existing course.json schemaVersion 3 manifest and revision identity byte-identical', async () => {
 		const testHarness = harness()
 		const source = fixture()
 		const { staged, previewed } = await stagedAndPreviewed(testHarness, source)
@@ -1018,12 +1018,17 @@ describe('draft course sync control plane', () => {
 		const revision = testHarness.persistence.revisions.get(run.sourceRevisionId)!
 		const { planSha256: claimedHash, ...planInput } = run.plan!
 		expect(run.plan).not.toHaveProperty('lessonRegressions')
-		// Measured from origin/main 41233020 using this v3 fixture and harness.
-		// The same probe on this branch produced identical plan and revision hashes.
+		// The manifest/revision identity stays byte-identical. The plan hash changes
+		// because sync now explicitly owns lesson optional=false in every version.
 		expect(previewed.planSha256).toBe(
-			'2baea07656c8b9143a54866d96b93717a4474934e3bf507d9ce988e816096e0c',
+			'363c29e95be7945e4b626e4b0262dbbd743c57bb7b8ccddffab3d10a6499496f',
 		)
 		expect(claimedHash).toBe(previewed.planSha256)
+		expect(
+			run.plan?.resources
+				.filter((item) => item.sourceKind === 'lesson')
+				.every((item) => item.fields.optional === false),
+		).toBe(true)
 		expect(revision.manifestSha256).toBe(
 			'014539ff5f94df91420de0997dcf1520e284c75105f8e7fe14f23cb5512bbea6',
 		)
@@ -1107,12 +1112,98 @@ describe('draft course sync control plane', () => {
 		const plan = testHarness.persistence.runs.get(staged.runId)?.plan
 		expect(plan?.resources.map((item) => item.sourceKind)).toEqual(['section', 'lesson', 'lesson'])
 		expect(plan?.resources[1]?.fields).toMatchObject({
-			body: '', description: '', state: 'draft', visibility: 'unlisted',
+			body: '', description: '', optional: false, state: 'draft', visibility: 'unlisted',
 			courseSync: { lessonType: 'placeholder', videos: [] },
 		})
 		await expect(testHarness.controlPlane.apply({ runId: staged.runId, idempotencyKey: 'apply-syllabus' }))
 			.resolves.toMatchObject({ state: 'applied' })
 		expect(testHarness.persistence.resources.size).toBe(3)
+	})
+
+	it('creates a v5 optional text lesson with body metadata and no video children', async () => {
+		const testHarness = harness()
+		const source: CourseJsonDocumentV3 = {
+			...fixture('text-faq'),
+			schemaVersion: 5,
+			sections: [{
+				id: 'before-we-start',
+				title: 'Before We Start',
+				lessons: [{
+					type: 'text',
+					id: 'faq-lesson',
+					title: 'Frequently Asked Questions',
+					body: '## Can I skip this?\n\nYes.',
+					description: 'Answers before the cohort starts.',
+					optional: true,
+				}],
+			}],
+		}
+
+		const { staged, previewed } = await stagedAndPreviewed(testHarness, source)
+		expect(testHarness.reads()).toBe(0)
+		expect(testHarness.muxCreates()).toBe(0)
+		expect(previewed).toMatchObject({
+			resourceCounts: { create: 2, update: 0, retain: 0 },
+			plan: { media: [] },
+		})
+		const plan = testHarness.persistence.runs.get(staged.runId)?.plan
+		expect(plan?.resources.map((item) => item.sourceKind)).toEqual([
+			'section',
+			'lesson',
+		])
+		expect(plan?.resources[1]?.fields).toMatchObject({
+			body: '## Can I skip this?\n\nYes.',
+			description: 'Answers before the cohort starts.',
+			optional: true,
+			courseSync: { lessonType: 'text', videos: [] },
+		})
+
+		await applyDirectly(testHarness, staged.runId, 'apply-text-faq')
+		const lesson = plan?.resources[1]
+		expect(testHarness.persistence.resources.get(lesson!.targetResourceId)?.fields)
+			.toMatchObject({ optional: true, courseSync: { lessonType: 'text' } })
+		expect(
+			[...testHarness.persistence.relations.values()].filter(
+				(relation) => relation.parentId === lesson!.targetResourceId && !relation.detached,
+			),
+		).toHaveLength(0)
+	})
+
+	it('clears source-owned optional when the key disappears', async () => {
+		const testHarness = harness()
+		const optional: CourseJsonDocumentV3 = {
+			...fixture('optional-first'),
+			schemaVersion: 5,
+			sections: [{
+				id: 'section-1',
+				title: 'Section 1',
+				lessons: [{
+					type: 'placeholder',
+					id: 'lesson-1',
+					title: 'Lesson 1',
+					optional: true,
+				}],
+			}],
+		}
+		const first = await stagedAndPreviewed(testHarness, optional)
+		await applyDirectly(testHarness, first.staged.runId, 'apply-optional')
+
+		const required: CourseJsonDocumentV3 = {
+			...optional,
+			courseVersionId: 'required-second',
+			sections: [{
+				...optional.sections[0]!,
+				lessons: [{ type: 'placeholder', id: 'lesson-1', title: 'Lesson 1' }],
+			}],
+		}
+		const second = await stagedAndPreviewed(testHarness, required, 'stage-required')
+		const lesson = testHarness.persistence.runs.get(second.staged.runId)?.plan?.resources.find(
+			(item) => item.sourceKind === 'lesson',
+		)
+		expect(lesson).toMatchObject({ action: 'update', fields: { optional: false } })
+		await applyDirectly(testHarness, second.staged.runId, 'apply-required')
+		expect(testHarness.persistence.resources.get(lesson!.targetResourceId)?.fields.optional)
+			.toBe(false)
 	})
 
 	it('updates a placeholder lesson under the same target id when filmed', async () => {
