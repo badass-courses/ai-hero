@@ -10,7 +10,10 @@ import {
 import { SkillInstallPanel } from './skill-install-panel'
 
 const file = {
-	frontmatter: 'name: to-spec\ndescription: Record decisions',
+	metadata: [
+		{ key: 'name', value: 'to-spec' },
+		{ key: 'description', value: 'Record decisions' },
+	],
 	body: '# Process\n\nUse the project vocabulary.',
 	sourceUrl:
 		'https://github.com/mattpocock/skills/blob/main/skills/engineering/to-spec/SKILL.md',
@@ -42,7 +45,7 @@ describe('SkillFileViewer', () => {
 		const markup = renderToStaticMarkup(<SkillFileContent file={file} />)
 
 		expect(markup).toContain('Skill metadata')
-		expect(markup).toContain('name: to-spec')
+		expect(markup).toMatch(/<dt[^>]*>name<\/dt><dd[^>]*>to-spec<\/dd>/)
 		expect(markup).toContain('<h1>Process</h1>')
 		expect(markup).toContain('Use the project vocabulary.')
 	})

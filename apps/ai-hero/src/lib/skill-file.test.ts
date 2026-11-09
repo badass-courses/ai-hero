@@ -4,6 +4,7 @@ import {
 	deriveSkillFileRef,
 	getSkillFile,
 	skillFileSourceUrl,
+	parseSkillMetadata,
 	splitSkillFile,
 } from './skill-file'
 
@@ -62,6 +63,26 @@ describe('skill file content', () => {
 		})
 	})
 
+	it('turns frontmatter into display rows', () => {
+		expect(
+			parseSkillMetadata(
+				'name: to-spec\ndescription: "Turn it: into a spec"\ndisable-model-invocation: true\nallowed-tools:\n  - Read\n  - Bash',
+			),
+		).toEqual([
+			{ key: 'name', value: 'to-spec' },
+			{ key: 'description', value: 'Turn it: into a spec' },
+			{ key: 'disable-model-invocation', value: 'true' },
+			{ key: 'allowed-tools', value: 'Read, Bash' },
+		])
+	})
+
+	it('shows no metadata for frontmatter that is not a mapping', () => {
+		expect(parseSkillMetadata(null)).toBeNull()
+		expect(parseSkillMetadata('')).toBeNull()
+		expect(parseSkillMetadata('just text')).toBeNull()
+		expect(parseSkillMetadata('a: [unclosed')).toBeNull()
+	})
+
 	it('fetches the derived public file and builds an exact GitHub permalink', async () => {
 		const fetchMock = vi.fn().mockResolvedValue(
 			new Response('---\nname: to-spec\n---\n# Process', { status: 200 }),
@@ -73,7 +94,7 @@ describe('skill file content', () => {
 				'https://github.com/mattpocock/skills/blob/main/docs/engineering/to-spec.md',
 			),
 		).resolves.toEqual({
-			frontmatter: 'name: to-spec',
+			metadata: [{ key: 'name', value: 'to-spec' }],
 			body: '# Process',
 			sourceUrl:
 				'https://github.com/mattpocock/skills/blob/main/skills/engineering/to-spec/SKILL.md',

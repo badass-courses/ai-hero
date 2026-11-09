@@ -283,6 +283,7 @@
 		"y-codemirror.jh": "0.3.2-joel-fork",
 		"y-prosemirror": "^1.2.2",
 		"y-protocols": "^1.0.6",
+		"yaml": "^2.9.1",
 		"yjs": "^13.6.10",
 		"yup": "^0.32.11",
 		"zod": "4.4.3"
