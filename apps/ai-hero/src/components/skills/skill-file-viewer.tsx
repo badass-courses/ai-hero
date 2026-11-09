@@ -17,6 +17,22 @@ import {
 } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/utils/cn'
 
+/**
+ * The shared DialogContent base sets `grid` and `sm:max-w-lg`. tailwind-merge
+ * only replaces a class with the same variant, so a bare `max-w-4xl` loses to
+ * `sm:max-w-lg` on every screen 640px and up, leaving a 512px dialog. The
+ * width therefore has to be set with the `sm:` variant too.
+ *
+ * The grid's second row must be `minmax(0,1fr)`. With an auto row, it grows to
+ * the full file height, the dialog clips it with `overflow-hidden`, and the
+ * body's `overflow-y-auto` never gets a bounded height to scroll inside.
+ */
+export const SKILL_FILE_DIALOG_CLASS =
+	'grid max-h-[calc(100svh-2rem)] w-[calc(100vw-2rem)] max-w-5xl grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden rounded-xl p-0 sm:max-w-5xl'
+
+export const SKILL_FILE_DIALOG_BODY_CLASS =
+	'min-h-0 overflow-y-auto overscroll-contain px-5 py-6 sm:px-7 sm:py-8'
+
 export function SkillFileViewer({
 	file,
 	className,
@@ -39,7 +55,7 @@ export function SkillFileViewer({
 			</DialogTrigger>
 			<DialogContent
 				lockScroll={false}
-				className="max-h-[calc(100svh-2rem)] w-[calc(100vw-2rem)] max-w-4xl gap-0 overflow-hidden rounded-xl p-0"
+				className={SKILL_FILE_DIALOG_CLASS}
 			>
 				<div className="border-border flex items-start justify-between gap-6 border-b px-5 py-4 pr-12 sm:px-7 sm:py-5">
 					<div>
@@ -58,7 +74,7 @@ export function SkillFileViewer({
 						<ArrowUpRight aria-hidden className="size-4" />
 					</Link>
 				</div>
-				<div className="overflow-y-auto px-5 py-6 sm:px-7 sm:py-8">
+				<div className={SKILL_FILE_DIALOG_BODY_CLASS}>
 					<SkillFileContent file={file} />
 				</div>
 			</DialogContent>
