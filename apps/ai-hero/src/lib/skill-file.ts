@@ -3,10 +3,13 @@ import {
 	parseGithubSource,
 	type GithubMarkdownFileRef,
 } from '@/lib/github-markdown'
+import { parse as parseYaml } from 'yaml'
+
+export type SkillMetadataEntry = { key: string; value: string }
 
 export type SkillFile = {
 	body: string
-	frontmatter: string | null
+	metadata: SkillMetadataEntry[] | null
 	sourceUrl: string
 }
 
@@ -54,6 +57,37 @@ export function splitSkillFile(markdown: string): {
 	}
 }
 
+/**
+ * Turns SKILL.md frontmatter into display rows. Lists join with commas and
+ * nested objects print as compact JSON. Frontmatter that is not a YAML mapping
+ * shows no metadata rather than failing the whole viewer.
+ */
+export function parseSkillMetadata(
+	frontmatter: string | null,
+): SkillMetadataEntry[] | null {
+	if (frontmatter === null) return null
+
+	try {
+		const data: unknown = parseYaml(frontmatter)
+		if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+			return null
+		}
+
+		const entries = Object.entries(data).map(([key, value]) => ({
+			key,
+			value: Array.isArray(value)
+				? value.map(String).join(', ')
+				: value !== null && typeof value === 'object'
+					? JSON.stringify(value)
+					: String(value),
+		}))
+		return entries.length > 0 ? entries : null
+	} catch {
+		// Malformed YAML, or a self-referencing alias JSON.stringify cannot print.
+		return null
+	}
+}
+
 export function skillFileSourceUrl(ref: GithubMarkdownFileRef): string {
 	const path = ref.path.split('/').map(encodeURIComponent).join('/')
 	return `https://github.com/${encodeURIComponent(ref.owner)}/${encodeURIComponent(ref.repo)}/blob/${encodeURIComponent(ref.ref)}/${path}`
@@ -77,7 +111,7 @@ export async function getSkillFile(
 
 		return {
 			body,
-			frontmatter,
+			metadata: parseSkillMetadata(frontmatter),
 			sourceUrl: skillFileSourceUrl(ref),
 		}
 	} catch {

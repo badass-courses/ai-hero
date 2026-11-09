@@ -3,9 +3,10 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { Markdown } from '@/components/markdown'
+import { TYPE } from '@/components/landing/type'
 import { PROSE_MEASURE } from '@/components/mdx/prose'
 import type { SkillFile } from '@/lib/skill-file'
-import { ArrowUpRight, FileText } from 'lucide-react'
+import { ArrowUpRight, FileText, Github } from 'lucide-react'
 
 import {
 	Button,
@@ -49,22 +50,24 @@ export function SkillFileViewer({
 				</Button>
 			</DialogTrigger>
 			<DialogContent lockScroll={false} className={SKILL_FILE_DIALOG_CLASS}>
-				<div className="border-border flex shrink-0 items-start justify-between gap-6 border-b px-5 py-4 pr-12 sm:px-7 sm:py-5">
+				<div className="border-border flex shrink-0 items-end justify-between gap-6 border-b px-5 py-4 pr-12 sm:py-5 sm:pl-7 sm:pr-16">
 					<div>
 						<DialogTitle className="text-xl">Full SKILL.md</DialogTitle>
 						<DialogDescription className="mt-1">
 							The agent-facing instructions, separate from the guide on this page.
 						</DialogDescription>
 					</div>
-					<Link
-						href={file.sourceUrl}
-						target="_blank"
-						rel="noreferrer"
-						className="text-primary focus-visible:ring-ring hidden flex-none items-center gap-1.5 rounded-sm text-sm font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 sm:flex"
+					<Button
+						asChild
+						variant="outline"
+						size="sm"
+						className="hidden flex-none rounded-[7px] sm:inline-flex"
 					>
-						GitHub
-						<ArrowUpRight aria-hidden className="size-4" />
-					</Link>
+						<Link href={file.sourceUrl} target="_blank" rel="noreferrer">
+							<Github aria-hidden className="text-muted-foreground size-4" />
+							View on GitHub
+						</Link>
+					</Button>
 				</div>
 				<div
 					role="region"
@@ -87,14 +90,30 @@ export function SkillFileContent({ file }: { file: SkillFile }) {
 				PROSE_MEASURE,
 			)}
 		>
-			{file.frontmatter !== null ? (
+			{file.metadata !== null ? (
 				<section aria-label="Skill metadata" className="mb-8">
-					<p className="text-muted-foreground mb-2 text-xs font-semibold uppercase tracking-[0.14em]">
-						Metadata
-					</p>
-					<pre className="bg-muted border-border overflow-x-auto rounded-lg border p-4 text-xs leading-5">
-						<code>{file.frontmatter}</code>
-					</pre>
+					<dl className="border-border divide-border divide-y rounded-[9px] border">
+						{file.metadata.map(({ key, value }) => (
+							<div
+								key={key}
+								className="grid gap-1 px-4 py-3 sm:grid-cols-[minmax(0,11rem)_minmax(0,1fr)] sm:gap-6"
+							>
+								<dt
+									className={cn(TYPE.metaMono, 'text-muted-foreground break-words')}
+								>
+									{key}
+								</dt>
+								<dd
+									className={cn(
+										TYPE.meta,
+										'text-foreground break-words font-normal',
+									)}
+								>
+									{value}
+								</dd>
+							</div>
+						))}
+					</dl>
 				</section>
 			) : null}
 			<div className="prose prose-sm prose-a:text-primary dark:prose-invert sm:prose-base max-w-none">
