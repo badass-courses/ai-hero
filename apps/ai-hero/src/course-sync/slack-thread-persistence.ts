@@ -46,7 +46,7 @@ export async function sendThreadedCourseSyncSlackPayload(
 						'Content-Type': 'application/json; charset=utf-8',
 					},
 					body: JSON.stringify(options),
-					signal: AbortSignal.timeout(10_000),
+					signal: AbortSignal.timeout(5_000),
 				})
 				if (!response.ok) throw new Error(`Slack API HTTP ${response.status}`)
 				return response.json()

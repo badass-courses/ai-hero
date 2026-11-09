@@ -193,6 +193,7 @@ function harness(input?: {
 		await input?.notify?.(notification)
 		notifications.push(notification)
 	})
+	const scheduleStaleReminder = vi.fn(async () => {})
 	const verifyApplied = vi.fn(
 		input?.verifyApplied ?? (async () => run('applied')),
 	)
@@ -226,6 +227,7 @@ function harness(input?: {
 		claimReviewNotification,
 		completeReviewNotification,
 		failReviewNotification,
+		scheduleStaleReminder,
 		apply,
 		verifyApplied,
 		notify,
@@ -233,6 +235,7 @@ function harness(input?: {
 	}
 	return {
 		poll: createCourseSyncDetectionPoller(dependencies),
+		scheduleStaleReminder,
 		ensureBinding,
 		freezeAsset,
 		freezeAssetBatch,
@@ -695,6 +698,17 @@ describe('course sync detection poller', () => {
 		expect(payload.text).toContain('Lesson &lt;title&gt; (4 learners with progress)')
 		expect(payload.text).toContain("Joel can unblock it, or Matt with Joel's OK")
 		expect(payload.attachments[0]?.fields).toContainEqual({ title: 'Reason code', value: 'PROGRESSED_LESSON_CHANGE_REVIEW_REQUIRED', short: true })
+	})
+
+	it('schedules the dedicated reminder only after posting a hold', async () => {
+		const test = harness()
+		await test.poll('schedule-reminder')
+		expect(test.scheduleStaleReminder).toHaveBeenCalledWith(expect.objectContaining({
+			controlPlaneRunId: 'sync-run-2', planSha256: 'plan-sha', heldAt: '2026-07-24T18:00:00.000Z',
+		}))
+		const failed = harness({ notify: async () => { throw new Error('Slack unavailable') } })
+		await failed.poll('failed-hold-notice')
+		expect(failed.scheduleStaleReminder).not.toHaveBeenCalled()
 	})
 
 	it('reminds once at 15 minutes, not at 14 or again at 30', async () => {

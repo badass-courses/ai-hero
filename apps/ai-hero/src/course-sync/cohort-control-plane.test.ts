@@ -130,6 +130,21 @@ describe('synthetic cohort-anchored syllabus (S4b)', () => {
 		await test.plane.rollback({ runId: changed.run.runId, idempotencyKey: 'rollback-update' })
 		expect(test.persistence.resources.get(workshop.targetResourceId)!.fields).toMatchObject({ state: 'published', title: 'Keep 0' })
 	})
+	it('allows insertion at position zero when every existing lesson has progress', async () => {
+		const test = harness(releaseBinding)
+		const source = { ...syllabus('insert-before'), courseId: releaseBinding.sourceCourseId }
+		const first = await test.stage(source, 'insert-before')
+		await test.apply(first.run.runId, 'insert-before')
+		for (const lesson of first.plan.resources.filter((item) => item.sourceKind === 'lesson')) {
+			test.persistence.lessonProgressCounts.set(lesson.targetResourceId, 5)
+		}
+		const sections = source.sections.map((section, index) => index === 0 ? { ...section, lessons: [
+			{ type: 'placeholder' as const, id: 'new-first-lesson', title: 'New first lesson' }, ...section.lessons,
+		] } : section)
+		const next = await test.stage({ ...source, sections, courseVersionId: 'insert-after' }, 'insert-after')
+		expect(await test.plane.evaluateBoundedAutoApply(next.run.runId)).toMatchObject({ eligible: true })
+	})
+
 	it('reads existing lesson progress for a destructive move without changing it', async () => {
 		const test = harness(releaseBinding)
 		const source = { ...syllabus('progress-before'), courseId: releaseBinding.sourceCourseId }

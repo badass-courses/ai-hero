@@ -418,17 +418,23 @@ describe('course sync persistence invariants', () => {
 		})
 	})
 
-	it.each(['move', 'detach', 'reorder'] as const)('holds a progressed lesson %s, but allows an unprogressed one', (change) => {
+	it.each(['move', 'detach'] as const)('holds a progressed lesson %s, but allows an unprogressed one', (change) => {
 		const plan = launchPlan()
 		const lesson = plan.resources.find((item) => item.sourceKind === 'lesson')!
 		lesson.fields.title = 'Synthetic lesson'
 		if (change === 'move') lesson.parentResourceId = 'new-parent'
 		if (change === 'detach') lesson.detached = true
-		if (change === 'reorder') lesson.position += 1
 		const progress = new Map([[lesson.targetResourceId, 7]])
 		expect(evaluateCourseSyncBoundedAutoApply(plan, progress)).toMatchObject({ eligible: false,
 			failureCode: 'PROGRESSED_LESSON_CHANGE_REVIEW_REQUIRED', affectedLessons: [{ title: 'Synthetic lesson', progressCount: 7 }] })
 		expect(evaluateCourseSyncBoundedAutoApply(plan, new Map())).toMatchObject({ eligible: true })
+	})
+
+	it('keeps a same-parent reorder eligible even with progress', () => {
+		const plan = launchPlan()
+		const lesson = plan.resources.find((item) => item.sourceKind === 'lesson')!
+		lesson.position += 1
+		expect(evaluateCourseSyncBoundedAutoApply(plan, new Map([[lesson.targetResourceId, 7]]))).toMatchObject({ eligible: true })
 	})
 
 	it.each(['solution', 'video'] as const)('protects the original lesson when its %s moves', (sourceKind) => {

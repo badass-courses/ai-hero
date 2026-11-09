@@ -196,6 +196,7 @@ export type CourseSyncDetectionPollerDependencies = {
 	evaluateBoundedAutoApply(
 		runId: string,
 	): Promise<CourseSyncBoundedAutoApplyDecision>
+	scheduleStaleReminder?(input: import('@/inngest/events/course-sync-stale-preview').CourseSyncStalePreviewData): Promise<void>
 	getReviewNotificationDeliveredAt?(input: { bindingId: string; courseVersionId: string; planSha256: string }): Promise<Date | null>
 	claimReviewNotification(input: {
 		kind?: 'review' | 'stale-preview'
@@ -869,6 +870,17 @@ export function createCourseSyncDetectionPoller(
 				planSha256: syncRun.planSha256,
 				occurredAt: clock(),
 			}
+			const scheduleReminder = async (heldAt: Date) => {
+				if (minutesWaiting !== undefined || !dependencies.scheduleStaleReminder) return
+				try {
+					await dependencies.scheduleStaleReminder({ bindingId, courseVersionId,
+						controlPlaneRunId: syncRun.runId, planSha256: syncRun.planSha256!, heldAt: heldAt.toISOString() })
+				} catch (error) {
+					await log({ bindingId, courseVersionId, providerRevision, runId, controlPlaneRunId: syncRun.runId,
+						stage: 'notify', outcome: 'failed', failureClass: courseSyncFailureClass(error),
+						metadata: { reason: 'stale-reminder-dispatch-failed' } })
+				}
+			}
 			const claimed = await dependencies.claimReviewNotification(reviewReceipt)
 			if (!claimed) {
 				await log({
@@ -884,6 +896,10 @@ export function createCourseSyncDetectionPoller(
 						planSha256: syncRun.planSha256,
 					},
 				})
+				if (minutesWaiting === undefined && dependencies.getReviewNotificationDeliveredAt) {
+					const deliveredAt = await dependencies.getReviewNotificationDeliveredAt(reviewReceipt)
+					if (deliveredAt) await scheduleReminder(deliveredAt)
+				}
 				return
 			}
 			try {
@@ -947,6 +963,12 @@ export function createCourseSyncDetectionPoller(
 					},
 				})
 				return
+			}
+			if (minutesWaiting === undefined) {
+				const deliveredAt = dependencies.getReviewNotificationDeliveredAt
+					? await dependencies.getReviewNotificationDeliveredAt(reviewReceipt)
+					: clock()
+				if (deliveredAt) await scheduleReminder(deliveredAt)
 			}
 			await log({
 				bindingId,

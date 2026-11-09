@@ -162,6 +162,7 @@ import {
 } from '@/inngest/functions/coupon/grant-coupon-entitlements'
 import { authOptions } from '@/server/auth'
 import { EventSchemas, Inngest } from 'inngest'
+import { COURSE_SYNC_STALE_PREVIEW_EVENT, type CourseSyncStalePreviewRequested } from './events/course-sync-stale-preview'
 import { UTApi } from 'uploadthing/server'
 
 import { CourseBuilderCoreEvents } from '@coursebuilder/core'
@@ -261,6 +262,7 @@ export type Events = {
 	[CONTENT_RESOURCE_INDEX_REQUESTED_EVENT]: ContentResourceIndexRequested
 	[COURSE_SYNC_APPLIED_NOTICE_EVENT]: CourseSyncAppliedNoticeRequested
 	[COURSE_SYNC_POLL_REQUESTED_EVENT]: CourseSyncPollRequested
+	[COURSE_SYNC_STALE_PREVIEW_EVENT]: CourseSyncStalePreviewRequested
 	[GITHUB_SOURCE_SYNC_REQUESTED_EVENT]: GithubSourceSyncRequested
 	[POSTMARK_WEBHOOK_EVENT]: PostmarkWebhook
 	[IMAGE_RESOURCE_CREATED_EVENT]: ImageResourceCreated

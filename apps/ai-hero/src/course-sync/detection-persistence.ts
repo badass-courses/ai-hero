@@ -201,6 +201,7 @@ function courseSyncReviewNotificationReceipt(input: {
 	bindingId: string
 	courseVersionId: string
 	planSha256: string
+	controlPlaneRunId?: string
 }) {
 	const kind = input.kind ?? 'review'
 	const notificationKey = sha256(
@@ -209,6 +210,7 @@ function courseSyncReviewNotificationReceipt(input: {
 			bindingId: input.bindingId,
 			courseVersionId: input.courseVersionId,
 			planSha256: input.planSha256,
+			...(kind === 'stale-preview' ? { controlPlaneRunId: input.controlPlaneRunId } : {}),
 		}),
 	)
 	return {

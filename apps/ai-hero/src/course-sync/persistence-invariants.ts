@@ -37,9 +37,9 @@ export function courseSyncDestructiveLessons(plan: SyncPlan): ResourcePlanItem[]
 	const affected = new Set<string>()
 	for (const item of plan.resources) {
 		if (item.action === 'create' || item.previousDetached) continue
+		// Inserting a lesson shifts sibling positions without moving their content.
 		const changed = (item.detached && !item.previousDetached) ||
-			item.previousParentResourceId !== item.parentResourceId ||
-			item.previousPosition !== item.position
+			item.previousParentResourceId !== item.parentResourceId
 		if (!changed) continue
 		if (item.sourceKind === 'lesson') affected.add(item.targetResourceId)
 		if (item.sourceKind === 'solution' || item.sourceKind === 'video') {
