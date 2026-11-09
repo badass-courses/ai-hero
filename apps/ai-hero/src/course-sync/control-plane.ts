@@ -141,7 +141,11 @@ function assertManifestScope(
 		for (const lesson of section.lessons) {
 			if (lesson.type === 'placeholder') continue
 			const primary =
-				lesson.type === 'explainer' ? lesson.explainer : lesson.problem
+				lesson.type === 'text'
+					? lesson
+					: lesson.type === 'explainer'
+						? lesson.explainer
+						: lesson.problem
 			for (const question of extractQuizQuestions(primary.body, lesson.id)) {
 				const firstLessonId = questionLessons.get(question.id)
 				if (firstLessonId) {
@@ -262,7 +266,7 @@ export function sourceResourceFields(
 		}
 		const lessonItems = section.lessons.flatMap((lesson, lessonIndex) => {
 			const videos =
-				lesson.type === 'placeholder'
+				lesson.type === 'placeholder' || lesson.type === 'text'
 					? []
 					: lesson.type === 'explainer'
 						? [lesson.explainer]
@@ -270,9 +274,11 @@ export function sourceResourceFields(
 			const primary =
 				lesson.type === 'placeholder'
 					? null
-					: lesson.type === 'explainer'
-						? lesson.explainer
-						: lesson.problem
+					: lesson.type === 'text'
+						? lesson
+						: lesson.type === 'explainer'
+							? lesson.explainer
+							: lesson.problem
 			const lessonId = targetResourceId(binding.bindingId, 'lesson', lesson.id)
 			const solutionId =
 				lesson.type === 'problem' && lesson.solution
@@ -291,6 +297,9 @@ export function sourceResourceFields(
 					slug: slug(lesson.id, lesson.title),
 					body: primary?.body ?? '',
 					description: primary?.description ?? '',
+					...(manifest.schemaVersion === 5 && {
+						optional: 'optional' in lesson && lesson.optional === true,
+					}),
 					state: 'draft',
 					visibility: 'unlisted',
 					courseSync: {
@@ -299,6 +308,7 @@ export function sourceResourceFields(
 						sourceSectionId: section.id,
 						sourceLessonId: lesson.id,
 						lessonType: lesson.type,
+						...(manifest.schemaVersion === 5 && { optionalOwnedBySync: true }),
 						videos: videos.map((video) => ({
 							sourceVideoId: video.id,
 							sha256: video.sha256,
@@ -420,7 +430,7 @@ export function sourceResourceFields(
 			)
 			return [
 				lessonItem,
-				primaryVideoItem,
+				...(primaryVideoItem ? [primaryVideoItem] : []),
 				...(solutionItem && videoItems[1] ? [solutionItem, videoItems[1]] : []),
 				...questionItems,
 			]
@@ -962,11 +972,34 @@ export function createCourseSyncControlPlane(
 			const snapshots = await persistence.getTargetResources(
 				planned.map((item) => item.targetResourceId),
 			)
-			const resources: ResourcePlanItem[] = planned.map((item) => {
+			const resources: ResourcePlanItem[] = planned.map((plannedItem) => {
+				let item = plannedItem
+				const snapshot = snapshots.get(item.targetResourceId)
+				const priorSync = snapshot?.fields.courseSync as
+					| { optionalOwnedBySync?: unknown }
+					| undefined
+				// CVM downgrades to v4 when the last optional/text lesson disappears.
+				// Preserve legacy CMS flags, but clear flags previously owned by v5.
+				if (
+					item.sourceKind === 'lesson' &&
+					!('optional' in item.fields) &&
+					priorSync?.optionalOwnedBySync === true
+				) {
+					item = {
+						...item,
+						fields: {
+							...item.fields,
+							optional: false,
+							courseSync: {
+								...(item.fields.courseSync as object),
+								optionalOwnedBySync: true,
+							},
+						},
+					}
+				}
 				const previous =
 					adoptionPreviousByTarget.get(item.targetResourceId) ??
 					previousByTarget.get(item.targetResourceId)
-				const snapshot = snapshots.get(item.targetResourceId)
 				const action = !snapshot
 					? 'create'
 					: !previous ||
@@ -1054,7 +1087,7 @@ export function createCourseSyncControlPlane(
 				)?.lessonType
 				const demoted =
 					(previousType === 'explainer' || previousType === 'problem') &&
-					currentType === 'placeholder'
+					(currentType === 'placeholder' || currentType === 'text')
 				const lostVideo = previousVideos.some(
 					(video) =>
 						(

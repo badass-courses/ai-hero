@@ -1,7 +1,7 @@
 'use server'
 
 import { cookies, headers } from 'next/headers'
-import { courseBuilderAdapter, db } from '@/db'
+import { db } from '@/db'
 import { resourceProgress } from '@/db/schema'
 import { LESSON_COMPLETED_EVENT } from '@/inngest/events/lesson-completed'
 import { sendWithRetry } from '@/inngest/send-with-retry'
@@ -12,11 +12,10 @@ import { getLogContext, log } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
 import { and, eq, sql } from 'drizzle-orm'
 
-import {
-	resourceProgressSchema,
-	type ModuleProgress,
-} from '@coursebuilder/core/schemas'
+import { resourceProgressSchema } from '@coursebuilder/core/schemas'
 
+import { getRequiredModuleProgressForUser } from './required-module-progress-query'
+import type { RequiredModuleProgress } from './required-module-progress'
 import {
 	mergePlaybackPositionFields,
 	normalizePlaybackPosition,
@@ -265,7 +264,7 @@ export async function sendInngestProgressEvent({
 
 export async function getModuleProgressForUser(
 	moduleIdOrSlug: string,
-): Promise<ModuleProgress | null> {
+): Promise<RequiredModuleProgress | null> {
 	return measureIfSlow({
 		event: 'perf.module-progress.fetch.slow',
 		spanName: 'module-progress.fetch',
@@ -275,7 +274,7 @@ export async function getModuleProgressForUser(
 			const { session } = await getServerAuthSession()
 			if (session?.user) {
 				const moduleProgress =
-					await courseBuilderAdapter.getModuleProgressForUser(
+					await getRequiredModuleProgressForUser(
 						session.user.id,
 						moduleIdOrSlug,
 					)
@@ -344,7 +343,7 @@ export async function getModuleProgressForUser(
 				}
 			}
 			const moduleProgress =
-				await courseBuilderAdapter.getModuleProgressForUser(
+				await getRequiredModuleProgressForUser(
 					subscriber.email_address,
 					moduleIdOrSlug,
 				)

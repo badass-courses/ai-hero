@@ -3,10 +3,8 @@
 import * as React from 'react'
 import { api } from '@/trpc/react'
 
-import {
-	ModuleProgress,
-	moduleProgressSchema,
-} from '@coursebuilder/core/schemas'
+import { moduleProgressSchema } from '@coursebuilder/core/schemas'
+import type { RequiredModuleProgress as ModuleProgress } from '@/lib/required-module-progress'
 
 type ModuleProgressContextType = {
 	moduleProgress: ModuleProgress | null
@@ -29,7 +27,7 @@ function progressReducer(
 	progress: ModuleProgress | null,
 	action: ProgressAction,
 ) {
-	const currentProgress =
+	const currentProgress: ModuleProgress =
 		progress ||
 		moduleProgressSchema.parse({
 			completedLessons: [],
@@ -44,6 +42,9 @@ function progressReducer(
 
 	let newProgress = currentProgress
 
+	const countDelta = currentProgress.optionalLessonIds?.includes(lessonId)
+		? 0
+		: 1
 	const alreadyCompleted = currentProgress.completedLessons.some(
 		(completedLesson) => completedLesson.resourceId === lessonId,
 	)
@@ -62,7 +63,8 @@ function progressReducer(
 						userId: '',
 					},
 				],
-				completedLessonsCount: currentProgress.completedLessonsCount + 1,
+				completedLessonsCount:
+					currentProgress.completedLessonsCount + countDelta,
 			}
 			break
 		case 'REMOVE_LESSON_PROGRESS':
@@ -72,7 +74,8 @@ function progressReducer(
 				completedLessons: currentProgress.completedLessons.filter(
 					(completedLesson) => completedLesson.resourceId !== lessonId,
 				),
-				completedLessonsCount: currentProgress.completedLessonsCount - 1,
+				completedLessonsCount:
+					currentProgress.completedLessonsCount - countDelta,
 			}
 			break
 	}
@@ -89,7 +92,9 @@ function progressReducer(
 			percentCompleted:
 				total > 0
 					? Math.ceil((newProgress.completedLessonsCount / total) * 100)
-					: 0,
+					: newProgress.optionalLessonIds?.length
+						? 100
+						: 0,
 		}
 	}
 

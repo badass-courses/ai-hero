@@ -139,7 +139,7 @@ export function resolveCourseSyncRollbackFields(input: {
 		}
 		// Roll back sync-owned content, not operator scheduling. The parent
 		// version can predate an operator edit made through PUT /api/resources.
-		return mergeCourseSyncResourceFields(
+		const restored = mergeCourseSyncResourceFields(
 			{
 				sourceKind: input.sourceKind,
 				fields: courseSyncSourceFields(input.sourceKind, input.previousVersionFields, input.binding),
@@ -147,6 +147,23 @@ export function resolveCourseSyncRollbackFields(input: {
 			input.currentFields,
 			input.binding,
 		)
+		// Undo the first v5 ownership claim as well as its value. A legacy
+		// version may have a CMS flag, or no optional field at all.
+		const ownsOptional = (fields: Record<string, unknown>) =>
+			(fields.courseSync as { optionalOwnedBySync?: unknown } | undefined)
+				?.optionalOwnedBySync === true
+		if (
+			input.sourceKind === 'lesson' &&
+			ownsOptional(input.currentFields) &&
+			!ownsOptional(input.previousVersionFields)
+		) {
+			if ('optional' in input.previousVersionFields) {
+				restored.optional = input.previousVersionFields.optional
+			} else {
+				delete restored.optional
+			}
+		}
+		return restored
 	}
 	const courseSync = input.currentFields.courseSync as
 		| Record<string, unknown>

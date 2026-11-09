@@ -40,7 +40,7 @@ const video = (id: string, body = 'Video body') => ({
 })
 const manifest: CourseJsonDocumentV3 = {
 	$schema: 'course.schema.json',
-	schemaVersion: 4,
+	schemaVersion: 5,
 	courseId: syntheticCohortBinding.sourceCourseId,
 	courseVersionId: 'all-source-branches',
 	archiveTTL: '90d',

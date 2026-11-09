@@ -103,7 +103,7 @@ assert.throws(() =>
 	}),
 )
 assert.throws(() =>
-	decodeCourseJsonDocument({ ...makeCourseJsonV4SyllabusFixture(), schemaVersion: 5 }),
+	decodeCourseJsonDocument({ ...makeCourseJsonV4SyllabusFixture(), schemaVersion: 6 }),
 )
 
 assert.throws(() =>

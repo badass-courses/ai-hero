@@ -422,6 +422,94 @@ function assertNextTickTarget(testHarness: ReturnType<typeof harness>, expectedC
 	})
 }
 
+describe('course.json v5 lineage and compatibility', () => {
+	it('keeps the v4 fixture plan and writes byte-identical to main', async () => {
+		const testHarness = harness()
+		const manifest = { ...fixture(), schemaVersion: 4 as const }
+		const first = await stagedAndPreviewed(testHarness, manifest)
+		const plan = testHarness.persistence.runs.get(first.staged.runId)!.plan
+		await applyDirectly(testHarness, first.staged.runId, 'v4-golden')
+		expect({
+			plan: sha256(stableJson(plan)),
+			writes: sha256(stableJson([...testHarness.persistence.resources.values()])),
+		}).toMatchInlineSnapshot(`
+			{
+			  "plan": "39e5c6db58dd1730415e156dc191220766cfe1d997d59682d6e7a17d6d958423",
+			  "writes": "5fa4f457ce1c3ff877ac66d6ce865bce1bbbecf5fee151b7461f7a69ca5b3023",
+			}
+		`)
+	})
+
+	it('keeps v4 hand-set optional flags untouched and the plan at retain', async () => {
+		const testHarness = harness()
+		const manifest = { ...fixture(), schemaVersion: 4 as const }
+		const first = await stagedAndPreviewed(testHarness, manifest)
+		await applyDirectly(testHarness, first.staged.runId, 'v4-first')
+		for (const resource of testHarness.persistence.resources.values()) {
+			if (resource.type === 'lesson') resource.fields.optional = true
+		}
+		const next = await stagedAndPreviewed(testHarness, { ...manifest, courseVersionId: 'v4-next' }, 'v4-next')
+		const plan = testHarness.persistence.runs.get(next.staged.runId)!.plan!
+		expect(plan.resources.filter((item) => item.sourceKind === 'lesson').every((item) =>
+			item.action === 'retain' && !('optional' in item.fields))).toBe(true)
+		await applyDirectly(testHarness, next.staged.runId, 'v4-next-apply')
+		expect([...testHarness.persistence.resources.values()].filter((resource) => resource.type === 'lesson')
+			.every((resource) => resource.fields.optional === true)).toBe(true)
+	})
+
+	it('clears a v5-owned optional flag when CVM downgrades to v4', async () => {
+		const testHarness = harness()
+		const source = fixture()
+		const manifest = { ...source, schemaVersion: 5 as const, sections: [{ ...source.sections[0]!,
+			lessons: [{ type: 'placeholder' as const, id: 'faq', title: 'FAQ', optional: true as const }] }] }
+		const first = await stagedAndPreviewed(testHarness, manifest)
+		await applyDirectly(testHarness, first.staged.runId, 'v5-optional')
+		const next = await stagedAndPreviewed(testHarness, { ...manifest, schemaVersion: 4,
+			courseVersionId: 'required-again', sections: [{ ...manifest.sections[0]!, lessons: [
+				{ type: 'placeholder', id: 'faq', title: 'FAQ' },
+			] }] }, 'required-again')
+		const item = testHarness.persistence.runs.get(next.staged.runId)!.plan!.resources.find((item) => item.sourceKind === 'lesson')!
+		expect(item).toMatchObject({ action: 'update', fields: { optional: false,
+			courseSync: { optionalOwnedBySync: true } } })
+		await applyDirectly(testHarness, next.staged.runId, 'apply-required-again')
+		expect(testHarness.persistence.resources.get(item.targetResourceId)?.fields.optional).toBe(false)
+	})
+
+	it('keeps text/explainer lineage, detaches media and restores it on rollback', async () => {
+		const testHarness = harness()
+		const source = fixture()
+		const explainer = source.sections[0]!.lessons[0]!
+		const manifest = { ...source, schemaVersion: 5 as const, sections: [{ ...source.sections[0]!, lessons: [
+			{ type: 'text' as const, id: explainer.id, title: explainer.title, body: 'FAQ', description: 'FAQ', optional: true as const },
+		] }] }
+		const first = await stagedAndPreviewed(testHarness, manifest)
+		const firstPlan = testHarness.persistence.runs.get(first.staged.runId)!.plan!
+		expect(firstPlan.media).toEqual([])
+		expect(testHarness.muxCreates()).toBe(0)
+		await applyDirectly(testHarness, first.staged.runId, 'text-first')
+		const lessonId = firstPlan.resources.find((item) => item.sourceKind === 'lesson')!.targetResourceId
+		const filmed = await stagedAndPreviewed(testHarness, { ...manifest, courseVersionId: 'filmed',
+			sections: [{ ...manifest.sections[0]!, lessons: [explainer] }] }, 'filmed')
+		const filmedPlan = testHarness.persistence.runs.get(filmed.staged.runId)!.plan!
+		expect(filmedPlan.resources.find((item) => item.sourceKind === 'lesson')!.targetResourceId).toBe(lessonId)
+		expect(filmedPlan.resources.filter((item) => item.sourceKind === 'video')).toHaveLength(1)
+		await applyDirectly(testHarness, filmed.staged.runId, 'filmed-apply')
+		const written = await stagedAndPreviewed(testHarness, { ...manifest, courseVersionId: 'written-again' }, 'written-again')
+		const writtenPlan = testHarness.persistence.runs.get(written.staged.runId)!.plan!
+		expect(writtenPlan.lessonRegressions).toContain(explainer.id)
+		expect(writtenPlan.resources.find((item) => item.sourceKind === 'lesson')!.targetResourceId).toBe(lessonId)
+		const detachedVideo = writtenPlan.resources.find((item) => item.sourceKind === 'video')!
+		expect(detachedVideo.detached).toBe(true)
+		await applyDirectly(testHarness, written.staged.runId, 'written-apply')
+		expect(testHarness.persistence.relations.get(detachedVideo.targetResourceId)?.detached).toBe(true)
+		await testHarness.controlPlane.rollback({ runId: written.staged.runId, idempotencyKey: 'undo-written' })
+		expect(testHarness.persistence.relations.get(detachedVideo.targetResourceId)?.detached).toBe(false)
+		expect(testHarness.persistence.resources.get(lessonId)?.fields).toMatchObject({
+			optional: false, courseSync: { lessonType: 'explainer', optionalOwnedBySync: true },
+		})
+	})
+})
+
 describe('draft course sync control plane', () => {
 	it('models apply failure recovery explicitly and has no publish transition', () => {
 		const actor = createActor(courseSyncRunMachine).start()

@@ -10,7 +10,6 @@ import {
 	flattenNavigationResources,
 } from '@/lib/content-navigation'
 import { api } from '@/trpc/react'
-import { getAdjacentWorkshopResources } from '@/utils/get-adjacent-workshop-resources'
 import { ArrowRight } from 'lucide-react'
 import { useSession } from 'next-auth/react'
 
@@ -76,10 +75,16 @@ export default function UpNext({
 		return null
 	}
 
-	const { nextResource } = getAdjacentWorkshopResources(
-		navigation,
-		currentResourceId,
-	)
+	const flatResources = flattenNavigationResources(navigation)
+	const currentIndex = flatResources.findIndex((resource) => resource.id === currentResourceId)
+	// Optional lessons remain in the sidebar and can be completed, but are not
+	// steps a learner must take to finish the workshop.
+	const nextResource = currentIndex < 0 ? null : flatResources.slice(currentIndex + 1).find((resource) => {
+		const lesson = resource.type === 'solution'
+			? findParentLessonForSolution(navigation, resource.id)
+			: resource
+		return lesson?.fields?.optional !== true
+	}) ?? null
 
 	// Helper function to check if a lesson has a solution
 	const lessonHasSolution = (lessonId: string) => {
