@@ -49,6 +49,7 @@ export function ModuleLessonProgressToggle({
 		),
 	)
 
+	const countsTowardProgress = lesson.fields?.optional !== true
 	const [isPending, startTransition] = React.useTransition()
 	const [popKey, setPopKey] = React.useState(0)
 	const disabled = isPending || !canView
@@ -58,9 +59,9 @@ export function ModuleLessonProgressToggle({
 		// instantly. (Inside startTransition it would be deferred as
 		// non-urgent and lag behind the awaited write.)
 		if (checked) {
-			addLessonProgress(lesson.id)
+			addLessonProgress(lesson.id, countsTowardProgress)
 		} else {
-			removeLessonProgress(lesson.id)
+			removeLessonProgress(lesson.id, countsTowardProgress)
 		}
 		// Persist in the background; isPending keeps the toggle
 		// disabled until the write settles. Revert the durable
@@ -77,13 +78,13 @@ export function ModuleLessonProgressToggle({
 				// here means the write failed (an un-complete legitimately
 				// returns null, so only revert when we were completing).
 				if (checked && result == null) {
-					removeLessonProgress(lesson.id)
+					removeLessonProgress(lesson.id, countsTowardProgress)
 				}
 			} catch {
 				if (checked) {
-					removeLessonProgress(lesson.id)
+					removeLessonProgress(lesson.id, countsTowardProgress)
 				} else {
-					addLessonProgress(lesson.id)
+					addLessonProgress(lesson.id, countsTowardProgress)
 				}
 			}
 		})

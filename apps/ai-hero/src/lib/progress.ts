@@ -17,6 +17,7 @@ import {
 	type ModuleProgress,
 } from '@coursebuilder/core/schemas'
 
+import { getModuleProgressForIdentity } from './module-progress-query'
 import {
 	mergePlaybackPositionFields,
 	normalizePlaybackPosition,
@@ -274,11 +275,10 @@ export async function getModuleProgressForUser(
 		operation: async () => {
 			const { session } = await getServerAuthSession()
 			if (session?.user) {
-				const moduleProgress =
-					await courseBuilderAdapter.getModuleProgressForUser(
-						session.user.id,
-						moduleIdOrSlug,
-					)
+				const moduleProgress = await getModuleProgressForIdentity(
+					session.user.id,
+					moduleIdOrSlug,
+				)
 
 				return moduleProgress
 			}
@@ -343,11 +343,10 @@ export async function getModuleProgressForUser(
 					totalLessonsCount: 0,
 				}
 			}
-			const moduleProgress =
-				await courseBuilderAdapter.getModuleProgressForUser(
-					subscriber.email_address,
-					moduleIdOrSlug,
-				)
+			const moduleProgress = await getModuleProgressForIdentity(
+				subscriber.email_address,
+				moduleIdOrSlug,
+			)
 			return moduleProgress
 		},
 	})

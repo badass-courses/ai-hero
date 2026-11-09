@@ -170,6 +170,15 @@ export function isCompletionTrackedResource(
 	return Boolean(resource && completionTrackedResourceTypes.has(resource.type))
 }
 
+export function isRequiredCompletionTrackedResource(
+	resource: ContentResource | null | undefined,
+): resource is ContentResource {
+	return Boolean(
+		isCompletionTrackedResource(resource) &&
+			resource.fields?.optional !== true,
+	)
+}
+
 export function getModuleCompletionState({
 	navigation,
 	completedLessons,
@@ -182,7 +191,7 @@ export function getModuleCompletionState({
 	resourceIdToMarkComplete?: string | null
 }) {
 	const requiredResources = flattenNavigationResources(navigation).filter(
-		isCompletionTrackedResource,
+		isRequiredCompletionTrackedResource,
 	)
 	const completedResourceIds = new Set(
 		(completedLessons || [])

@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
 	insert: vi.fn(),
 	update: vi.fn(),
 	findFirst: vi.fn(),
+	findUser: vi.fn(),
+	execute: vi.fn(),
 }))
 
 vi.mock('next/headers', () => ({
@@ -16,15 +18,27 @@ vi.mock('next/headers', () => ({
 vi.mock('@/db', () => ({
 	courseBuilderAdapter: {},
 	db: {
-		query: { resourceProgress: { findFirst: mocks.findFirst } },
+		query: {
+			resourceProgress: { findFirst: mocks.findFirst },
+			users: { findFirst: mocks.findUser },
+		},
+		execute: mocks.execute,
 		insert: () => ({ values: mocks.insert }),
 		update: () => ({ set: () => ({ where: mocks.update }) }),
 	},
 }))
 vi.mock('@/db/schema', () => ({
+	contentResource: 'contentResource',
+	contentResourceResource: 'contentResourceResource',
 	resourceProgress: { resourceId: 'resourceId', userId: 'userId' },
+	users: { id: 'id', email: 'email' },
 }))
-vi.mock('drizzle-orm', () => ({ and: vi.fn(), eq: vi.fn() }))
+vi.mock('drizzle-orm', () => ({
+	and: vi.fn(),
+	eq: vi.fn(),
+	or: vi.fn(),
+	sql: vi.fn(() => ({})),
+}))
 vi.mock('@/inngest/inngest.server', () => ({
 	inngest: { send: mocks.send },
 }))
@@ -43,7 +57,41 @@ vi.mock('@/server/logger', () => ({
 vi.mock('@/server/perf', () => ({ measureIfSlow: vi.fn() }))
 vi.mock('@/schemas/subscriber', () => ({ SubscriberSchema: {} }))
 
+import { getModuleProgressForIdentity } from './module-progress-query'
 import { setProgressForResource } from './progress'
+
+describe('getModuleProgressForIdentity', () => {
+	it('keeps a finished workshop at 100 percent after an optional FAQ is added', async () => {
+		mocks.findUser.mockResolvedValue({ id: 'learner' })
+		mocks.execute.mockResolvedValue({
+			rows: [
+				{
+					resource_id: 'before-we-start',
+					resource_type: 'lesson',
+					resource_slug: 'before-we-start',
+					completed_at: '2026-11-01T10:00:00.000Z',
+					is_optional: 'false',
+				},
+				{
+					resource_id: 'faq',
+					resource_type: 'lesson',
+					resource_slug: 'faq',
+					completed_at: null,
+					is_optional: 'true',
+				},
+			],
+		})
+
+		const progress = await getModuleProgressForIdentity('learner', 'workshop')
+
+		expect(progress).toMatchObject({
+			completedLessonsCount: 1,
+			totalLessonsCount: 1,
+			percentCompleted: 100,
+			nextResource: null,
+		})
+	})
+})
 
 describe('setProgressForResource Inngest send handling', () => {
 	beforeEach(() => {

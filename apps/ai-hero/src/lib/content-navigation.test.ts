@@ -1155,6 +1155,33 @@ describe('content-navigation', () => {
 			expect(completionState.nextIncompleteResource).toBeNull()
 		})
 
+		it('ignores optional lessons when calculating module completion', () => {
+			const required = createResource({
+				id: 'required-lesson',
+				type: 'lesson',
+				fields: { slug: 'required-lesson', title: 'Required lesson' },
+			})
+			const optional = createResource({
+				id: 'optional-faq',
+				type: 'lesson',
+				fields: { slug: 'optional-faq', title: 'FAQ', optional: true },
+			})
+			const navigation = createNavigation([
+				createLevel1Wrapper(required),
+				createLevel1Wrapper(optional),
+			])
+
+			const completionState = getModuleCompletionState({
+				navigation,
+				completedLessons: [{ resourceId: 'required-lesson', completedAt: now }],
+			})
+
+			expect(completionState.isModuleComplete).toBe(true)
+			expect(completionState.nextIncompleteResource).toBeNull()
+			expect(completionState.completedRequiredResourcesCount).toBe(1)
+			expect(completionState.totalRequiredResourcesCount).toBe(1)
+		})
+
 		it('ignores solutions when calculating module completion', () => {
 			const lesson = createResource({
 				id: 'lesson-1',
