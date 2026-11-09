@@ -251,7 +251,7 @@ export const AI_HERO_COURSE_SYNC_BINDING_COHORT_005_V7 = deepFreeze({
 	},
 } as const satisfies CohortCourseSyncBinding)
 
-/** Operators release workshops; sync creates drafts and preserves release state. */
+/** Sync publishes new workshops; existing release state remains operator-owned. */
 export const AI_HERO_COURSE_SYNC_BINDING_COHORT_005 = deepFreeze({
 	...AI_HERO_COURSE_SYNC_BINDING_COHORT_005_V7,
 	contractVersion: 8,
@@ -524,6 +524,7 @@ export interface CourseSyncPersistence {
 		bindingId: string,
 		candidates: ReadonlyArray<SolutionResourceAdoptionCandidate>,
 	): Promise<ReadonlyMap<string, SolutionResourceAdoption>>
+	getLessonProgressCounts(resourceIds: ReadonlyArray<string>): Promise<ReadonlyMap<string, number>>
 	getTargetResources(
 		resourceIds: ReadonlyArray<string>,
 	): Promise<ReadonlyMap<string, TargetResourceSnapshot>>

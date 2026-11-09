@@ -1,7 +1,7 @@
 import { MySqlDialect } from 'drizzle-orm/mysql-core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const dbMock = vi.hoisted(() => ({ transaction: vi.fn(), insert: vi.fn() }))
+const dbMock = vi.hoisted(() => ({ transaction: vi.fn(), insert: vi.fn(), select: vi.fn() }))
 
 vi.mock('@/db', () => ({ db: dbMock }))
 vi.mock('@/server/logger', () => ({ log: { info: vi.fn(), error: vi.fn() } }))
@@ -26,8 +26,10 @@ import {
 	failCourseSyncReviewNotification,
 	courseSyncRevisionHeadWhere,
 	saveCourseSyncPollState,
+	getCourseSyncReviewNotificationDeliveredAt,
 } from './detection-persistence'
 import type { CourseSyncPollState } from './detection-poller'
+import { log } from '@/server/logger'
 
 function pollState(
 	status: CourseSyncPollState['status'],
@@ -85,6 +87,23 @@ describe('course-sync revision head persistence', () => {
 			)
 		},
 	)
+
+	it('emits the fleet stale-preview event with the held run and stable reason', async () => {
+		dbMock.insert.mockReturnValue({ values: vi.fn(async () => {}) })
+		await appendCourseSyncPollLog({ bindingId: 'test-binding', courseVersionId: 'test-version', providerRevision: 'test-rev',
+			runId: 'poll-15', controlPlaneRunId: 'held-run', stage: 'notify', outcome: 'succeeded', occurredAt: new Date(),
+			metadata: { reason: 'course-sync.stale-preview', reasonCode: 'PROGRESSED_LESSON_CHANGE_REVIEW_REQUIRED', humanReason: 'Waiting for review.', minutesWaiting: 15 } })
+		expect(log.info).toHaveBeenCalledWith('course-sync.stale-preview', expect.objectContaining({ bindingId: 'test-binding', runId: 'held-run', minutesWaiting: 15, reason: 'PROGRESSED_LESSON_CHANGE_REVIEW_REQUIRED', humanReason: 'Waiting for review.' }))
+	})
+
+	it('starts the stale clock at successful hold delivery, not a failed attempt', async () => {
+		let row: Record<string, unknown> = { outcome: 'failed', occurredAt: new Date('2026-11-09T00:00:00Z') }
+		dbMock.select.mockImplementation(() => ({ from: () => ({ where: () => ({ limit: async () => [row] }) }) }))
+		const input = { bindingId: 'binding-test', courseVersionId: 'version-test', planSha256: 'plan-test' }
+		expect(await getCourseSyncReviewNotificationDeliveredAt(input)).toBeNull()
+		row = { outcome: 'succeeded', metadata: { deliveredAt: '2026-11-09T00:10:00.000Z' } }
+		expect(await getCourseSyncReviewNotificationDeliveredAt(input)).toEqual(new Date('2026-11-09T00:10:00Z'))
+	})
 
 	it('excludes compensating rollback runs from successful head selection', () => {
 		const dialect = new MySqlDialect()

@@ -39,6 +39,7 @@ import { testPrincipalReaper } from './functions/test-principal-reaper'
 import { contentResourceIndexRequested } from './functions/content-resource-index'
 import { courseSyncAppliedNotice } from './functions/course-sync-applied-notice'
 import { courseSyncDetectionPoller } from './functions/course-sync-detection-poller'
+import { courseSyncStalePreview } from './functions/course-sync-stale-preview'
 import { courseSyncPollScheduler } from './functions/course-sync-poll-scheduler'
 import {
 	drovrEventsDeliver,
@@ -185,6 +186,7 @@ const allFunctions = [
 	contentResourceIndexRequested,
 	courseSyncAppliedNotice,
 	courseSyncDetectionPoller,
+	courseSyncStalePreview,
 	courseSyncPollScheduler,
 	typesensePopularitySync,
 	typesenseVideoFactsReconcile,

@@ -13,6 +13,7 @@ import {
 	courseSyncSourceRevision,
 	courseSyncSourceRevisionAsset,
 	products,
+	resourceProgress,
 } from '@/db/schema'
 import { log } from '@/server/logger'
 import { getRunIdentity } from '@/server/run-identity'
@@ -624,6 +625,14 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			})
 		}
 		return adoptions
+	},
+
+	async getLessonProgressCounts(resourceIds) {
+		if (!resourceIds.length) return new Map()
+		const rows = await db.select({ resourceId: resourceProgress.resourceId, count: sql<number>`count(*)` })
+			.from(resourceProgress).where(inArray(resourceProgress.resourceId, [...resourceIds]))
+			.groupBy(resourceProgress.resourceId)
+		return new Map(rows.map((row) => [row.resourceId, Number(row.count)]))
 	},
 
 	async getTargetResources(resourceIds) {

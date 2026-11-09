@@ -180,6 +180,7 @@ export async function saveCourseSyncPollState(state: CourseSyncPollState) {
 // same claim and the reader sees exactly one message.
 export type CourseSyncNotificationKind =
 	| 'review'
+	| 'stale-preview'
 	| 'applied'
 	| 'entitlement-applied'
 	| 'entitlement-rolled-back'
@@ -200,6 +201,7 @@ function courseSyncReviewNotificationReceipt(input: {
 	bindingId: string
 	courseVersionId: string
 	planSha256: string
+	controlPlaneRunId?: string
 }) {
 	const kind = input.kind ?? 'review'
 	const notificationKey = sha256(
@@ -208,6 +210,7 @@ function courseSyncReviewNotificationReceipt(input: {
 			bindingId: input.bindingId,
 			courseVersionId: input.courseVersionId,
 			planSha256: input.planSha256,
+			...(kind === 'stale-preview' ? { controlPlaneRunId: input.controlPlaneRunId } : {}),
 		}),
 	)
 	return {
@@ -215,6 +218,15 @@ function courseSyncReviewNotificationReceipt(input: {
 		notificationKey,
 		receiptId: `cspl_${kind}_notice_${notificationKey}`,
 	}
+}
+
+export async function getCourseSyncReviewNotificationDeliveredAt(input: {
+	bindingId: string; courseVersionId: string; planSha256: string
+}): Promise<Date | null> {
+	const { receiptId } = courseSyncReviewNotificationReceipt(input)
+	const [row] = await db.select().from(courseSyncPollLog).where(eq(courseSyncPollLog.id, receiptId)).limit(1)
+	const deliveredAt = row?.metadata?.deliveredAt
+	return row?.outcome === 'succeeded' && typeof deliveredAt === 'string' ? new Date(deliveredAt) : null
 }
 
 export async function claimCourseSyncReviewNotification(
@@ -579,7 +591,7 @@ export async function releaseCourseSyncPollHoldAtomically(
 }
 
 export async function appendCourseSyncPollLog(input: CourseSyncPollLogInput) {
-	const metadata = { ...input.metadata, runIdentity: getRunIdentity() }
+	const metadata: Record<string, unknown> = { ...input.metadata, runIdentity: getRunIdentity() }
 	await db.insert(courseSyncPollLog).values({
 		id: `cspl_${randomUUID()}`,
 		...input,
@@ -587,15 +599,16 @@ export async function appendCourseSyncPollLog(input: CourseSyncPollLogInput) {
 		failureClass: input.failureClass ?? null,
 		controlPlaneRunId: input.controlPlaneRunId ?? null,
 	})
-	const event = `course_sync.poll.${input.stage}.${input.outcome}`
+	const event = metadata.reason === 'course-sync.stale-preview' ? 'course-sync.stale-preview' : `course_sync.poll.${input.stage}.${input.outcome}`
 	const attributes = {
 		bindingId: input.bindingId,
 		courseVersionId: input.courseVersionId,
 		providerRevision: input.providerRevision,
-		runId: input.runId,
+		runId: metadata.reason === 'course-sync.stale-preview' ? input.controlPlaneRunId : input.runId,
 		controlPlaneRunId: input.controlPlaneRunId ?? null,
 		failureClass: input.failureClass ?? null,
 		...metadata,
+		...(event === 'course-sync.stale-preview' ? { reason: metadata.reasonCode } : {}),
 	}
 	if (input.outcome === 'failed' || input.outcome === 'held') {
 		await log.error(event, attributes)

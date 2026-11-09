@@ -67,6 +67,12 @@ vi.mock('@/coursebuilder/slack-provider', () => ({
 		defaultChannelId: 'C_DEFAULT',
 	},
 }))
+vi.mock('./slack-thread-persistence', () => ({
+	sendThreadedCourseSyncSlackPayload: async (payload: { text: string }, _runId: string, channel: string) => {
+		const result = await mocks.sendNotification({ channel, ...payload })
+		if (!result.ok) throw new Error(`Slack rejected the course-sync notice (${result.error}).`)
+	},
+}))
 vi.mock('./cohort-entitlements', () => ({
 	deliverCourseSyncEntitlementSync: mocks.entitlementSync,
 }))

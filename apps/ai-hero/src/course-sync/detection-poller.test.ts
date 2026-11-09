@@ -110,6 +110,7 @@ function run(
 }
 
 function harness(input?: {
+	clock?: () => Date
 	binding?: CourseSyncBinding
 	manifest?: CourseJsonDocumentV3
 	head?: CourseSyncRevisionHead | null
@@ -162,8 +163,8 @@ function harness(input?: {
 	)
 	const claimReviewNotification = vi.fn(
 		input?.claimReviewNotification ??
-			(async ({ courseVersionId, planSha256 }) => {
-				const key = `${courseVersionId}:${planSha256}`
+			(async ({ courseVersionId, planSha256, kind }) => {
+				const key = `${kind ?? 'review'}:${courseVersionId}:${planSha256}`
 				const state = reviewNotificationState.get(key)
 				if (state === 'started' || state === 'succeeded') return false
 				reviewNotificationState.set(key, 'started')
@@ -172,18 +173,18 @@ function harness(input?: {
 	)
 	const completeReviewNotification = vi.fn(
 		input?.completeReviewNotification ??
-			(async ({ courseVersionId, planSha256 }) => {
+			(async ({ courseVersionId, planSha256, kind }) => {
 				reviewNotificationState.set(
-					`${courseVersionId}:${planSha256}`,
+					`${kind ?? 'review'}:${courseVersionId}:${planSha256}`,
 					'succeeded',
 				)
 			}),
 	)
 	const failReviewNotification = vi.fn(
 		input?.failReviewNotification ??
-			(async ({ courseVersionId, planSha256 }) => {
+			(async ({ courseVersionId, planSha256, kind }) => {
 				reviewNotificationState.set(
-					`${courseVersionId}:${planSha256}`,
+					`${kind ?? 'review'}:${courseVersionId}:${planSha256}`,
 					'failed',
 				)
 			}),
@@ -192,6 +193,7 @@ function harness(input?: {
 		await input?.notify?.(notification)
 		notifications.push(notification)
 	})
+	const scheduleStaleReminder = vi.fn(async () => {})
 	const verifyApplied = vi.fn(
 		input?.verifyApplied ?? (async () => run('applied')),
 	)
@@ -225,13 +227,15 @@ function harness(input?: {
 		claimReviewNotification,
 		completeReviewNotification,
 		failReviewNotification,
+		scheduleStaleReminder,
 		apply,
 		verifyApplied,
 		notify,
-		clock: () => new Date('2026-07-24T18:00:00.000Z'),
+		clock: input?.clock ?? (() => new Date('2026-07-24T18:00:00.000Z')),
 	}
 	return {
 		poll: createCourseSyncDetectionPoller(dependencies),
+		scheduleStaleReminder,
 		ensureBinding,
 		freezeAsset,
 		freezeAssetBatch,
@@ -653,14 +657,14 @@ describe('course sync detection poller', () => {
 		})
 	})
 
-	it('parks an undated workshop create for operator release after the initial cohort hold has cleared', async () => {
+	it('auto-applies an undated additive workshop after the initial cohort hold has cleared', async () => {
 		const plan: SyncPlan = {
 			bindingId: syntheticCohortBinding.bindingId, sourceRevisionId: 'revision-2', courseVersionId: 'version-2',
 			resources: [{
 				sourceKind: 'workshop', sourceId: 'new-section', targetResourceId: 'new-workshop',
 				parentResourceId: syntheticCohortBinding.anchorCohortId, position: 1, detached: false, previousDetached: false,
 				previousParentResourceId: null, previousPosition: null, previousVersionId: null, previousFieldsSha256: null,
-				action: 'create', fields: { title: 'Undated workshop', state: 'draft', visibility: 'unlisted' },
+				action: 'create', fields: { title: 'Undated workshop', state: 'published', visibility: 'unlisted' },
 			}], media: [], lessonRegressions: [], planSha256: 'plan-sha',
 		}
 		const test = harness({
@@ -674,12 +678,67 @@ describe('course sync detection poller', () => {
 			},
 			evaluateBoundedAutoApply: async () => evaluateCourseSyncBoundedAutoApply(plan),
 		})
-		await expect(test.poll('poll-new-workshop')).resolves.toMatchObject({ outcome: 'awaiting-apply' })
+		await expect(test.poll('poll-new-workshop')).resolves.toMatchObject({ outcome: 'applied' })
 		expect(test.evaluateBoundedAutoApply).toHaveBeenCalledOnce()
-		expect(test.apply).not.toHaveBeenCalled()
-		expect(test.verifyApplied).not.toHaveBeenCalled()
-		expect(test.state()).toMatchObject({ status: 'awaiting-apply', applyPolicyOverride: 'operator', consecutiveFailures: 0, failureClass: null })
-		expect(test.notifications).toEqual([expect.objectContaining({ kind: 'review', autoApplyReason: 'New workshops require operator scheduling and release.' })])
+		expect(test.apply).toHaveBeenCalledOnce()
+		expect(test.verifyApplied).toHaveBeenCalledOnce()
+		expect(test.state()).toMatchObject({ status: 'succeeded', applyPolicyOverride: null, consecutiveFailures: 0, failureClass: null })
+		expect(test.notifications).toEqual([expect.objectContaining({ kind: 'success' })])
+		await test.poll('re-poll-new-workshop')
+		expect(test.notify).toHaveBeenCalledOnce()
+	})
+
+	it('explains a progressed hold with titles, counts and the people who can unblock it', async () => {
+		const test = harness({ evaluateBoundedAutoApply: async () => ({ eligible: false, planSha256: 'plan-sha',
+			failureCode: 'PROGRESSED_LESSON_CHANGE_REVIEW_REQUIRED', reason: 'Moving a lesson with learner progress requires review.',
+			affectedLessons: [{ title: 'Lesson <title>', progressCount: 4 }],
+		}) })
+		await test.poll('progressed-hold')
+		const payload = buildCourseSyncNotificationPayload(test.notifications[0]!, null)
+		expect(payload.text).toContain('Lesson &lt;title&gt; (4 learners with progress)')
+		expect(payload.text).toContain("Joel can unblock it, or Matt with Joel's OK")
+		expect(payload.attachments[0]?.fields).toContainEqual({ title: 'Reason code', value: 'PROGRESSED_LESSON_CHANGE_REVIEW_REQUIRED', short: true })
+	})
+
+	it('schedules the dedicated reminder only after posting a hold', async () => {
+		const test = harness()
+		await test.poll('schedule-reminder')
+		expect(test.scheduleStaleReminder).toHaveBeenCalledWith(expect.objectContaining({
+			controlPlaneRunId: 'sync-run-2', planSha256: 'plan-sha', heldAt: '2026-07-24T18:00:00.000Z',
+		}))
+		const failed = harness({ notify: async () => { throw new Error('Slack unavailable') } })
+		await failed.poll('failed-hold-notice')
+		expect(failed.scheduleStaleReminder).not.toHaveBeenCalled()
+	})
+
+	it('reminds once at 15 minutes, not at 14 or again at 30', async () => {
+		const start = new Date('2026-07-24T18:00:00.000Z')
+		let now = start
+		const test = harness({ clock: () => now })
+		await test.poll('held')
+		expect(test.notifications).toHaveLength(1)
+		now = new Date(start.getTime() + 14 * 60_000)
+		await test.poll('minute-14')
+		expect(test.notifications).toHaveLength(1)
+		now = new Date(start.getTime() + 15 * 60_000)
+		await test.poll('minute-15')
+		expect(test.notifications).toHaveLength(2)
+		expect(test.notifications[1]).toMatchObject({ kind: 'review', minutesWaiting: 15, reasonCode: 'LAUNCH_APPLY_POLICY_VIOLATION' })
+		now = new Date(start.getTime() + 30 * 60_000)
+		await test.poll('minute-30')
+		expect(test.notifications).toHaveLength(2)
+		expect(test.logs.filter((entry) => entry.metadata?.reason === 'course-sync.stale-preview')).toHaveLength(1)
+		expect(test.state()?.updatedAt).toEqual(start)
+	})
+
+	it('does not turn a committed apply into a hold when Slack fails', async () => {
+		const test = harness({
+			evaluateBoundedAutoApply: async () => ({ eligible: true, planSha256: 'plan-sha' }),
+			notify: async () => { throw new Error('Slack unavailable') },
+		})
+		await expect(test.poll('slack-down')).resolves.toMatchObject({ outcome: 'applied' })
+		expect(test.state()?.status).toBe('succeeded')
+		expect(test.logs).toContainEqual(expect.objectContaining({ stage: 'notify', outcome: 'failed', metadata: { reason: 'live-notice-delivery-failed', applied: true } }))
 	})
 
 	it('auto-applies only a bounded eligible preview and verifies readback', async () => {
@@ -1549,7 +1608,7 @@ describe('course sync detection poller', () => {
 		})
 
 		expect(success.text).toBe(
-			'Synced AI Coding Crash Course (98479f85) into the bound workshop: 4 sections, 39 lessons, 47 videos, 31 min. http://localhost:3000/admin/course-sync/98479f85-7dc8-4053-83da-7f4d2df1a195',
+			'Live: Synced AI Coding Crash Course (98479f85) into the bound workshop: 4 sections, 39 lessons, 47 videos, 31 min. http://localhost:3000/admin/course-sync/98479f85-7dc8-4053-83da-7f4d2df1a195',
 		)
 		expect(success.attachments[0]?.text).toContain(
 			'https://www.aihero.dev/workshops/ai-coding-crash-course/edit',
