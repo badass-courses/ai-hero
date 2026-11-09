@@ -2,6 +2,7 @@
 
 import {
 	Children,
+	createContext,
 	isValidElement,
 	useContext,
 	useEffect,
@@ -13,10 +14,34 @@ import {
 	ActiveHeadingContext,
 	type HeadingInfo,
 } from '@/hooks/use-active-heading'
-import { slugifyHeading } from '@/utils/extract-markdown-headings'
+import {
+	createHeadingSlugger,
+	slugifyHeading,
+} from '@/utils/extract-markdown-headings'
 import { motion, useInView } from 'framer-motion'
 
 import { AISummaryContext } from './mdx-components'
+
+const HeadingSlugContext = createContext<((text: string) => string) | null>(null)
+
+function HeadingSlugScope({ children }: { children: React.ReactNode }) {
+	const nextSlug = useMemo(() => createHeadingSlugger(), [])
+	return (
+		<HeadingSlugContext.Provider value={nextSlug}>
+			{children}
+		</HeadingSlugContext.Provider>
+	)
+}
+
+export function HeadingSlugProvider({
+	children,
+	resetKey,
+}: {
+	children: React.ReactNode
+	resetKey?: string
+}) {
+	return <HeadingSlugScope key={resetKey}>{children}</HeadingSlugScope>
+}
 
 interface HeadingProps {
 	level: 1 | 2 | 3 | 4 | 5 | 6
@@ -51,8 +76,15 @@ export function Heading({ level, children, ...props }: HeadingProps) {
 	const registerVisibility = activeHeadingContext?.registerVisibility
 
 	const text = useMemo(() => getTextContent(children), [children])
+	const nextSlug = useContext(HeadingSlugContext)
 
-	const slug = useMemo(() => slugifyHeading(text), [text])
+	const slug = useMemo(
+		() =>
+			isWithinAISummary || !nextSlug
+				? slugifyHeading(text)
+				: nextSlug(text),
+		[isWithinAISummary, nextSlug, text],
+	)
 
 	const headingInfo = useMemo(
 		(): HeadingInfo => ({
