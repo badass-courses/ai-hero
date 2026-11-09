@@ -51,6 +51,11 @@ export type UserWorkshopEntitlements = {
  * access — callers must not assume a user is entitled to every requested
  * workshop.
  */
+/** SQL condition: the entitlement's `metadata.contentIds` includes any of `workshopIds`. */
+export function requestsAnyWorkshop(workshopIds: string[]) {
+	return sql`JSON_OVERLAPS(JSON_EXTRACT(${entitlements.metadata}, '$.contentIds'), CAST(${JSON.stringify(workshopIds)} AS JSON))`
+}
+
 export async function getUserWorkshopEntitlements(
 	workshopIds: string[],
 ): Promise<UserWorkshopEntitlements[]> {
@@ -69,7 +74,10 @@ export async function getUserWorkshopEntitlements(
 		return []
 	}
 
-	// Find all active entitlements of that type
+	// Find active entitlements of that type that grant a requested workshop.
+	// Filtering contentIds in SQL keeps this under PlanetScale's 100k-row read
+	// limit: every cohort's entitlements together exceeded it on the C5 release
+	// day (2026-11-09), and the whole group's emails failed.
 	const activeEntitlements = await db.query.entitlements.findMany({
 		where: and(
 			eq(entitlements.entitlementType, cohortEntitlementType.id),
@@ -78,6 +86,7 @@ export async function getUserWorkshopEntitlements(
 				gt(entitlements.expiresAt, sql`CURRENT_TIMESTAMP`),
 			),
 			isNull(entitlements.deletedAt),
+			requestsAnyWorkshop(workshopIds),
 		),
 	})
 
