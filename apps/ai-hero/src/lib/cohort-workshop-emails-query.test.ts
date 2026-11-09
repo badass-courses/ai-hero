@@ -1,18 +1,7 @@
 import { MySqlDialect } from 'drizzle-orm/mysql-core'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
-vi.mock('@/db', () => ({ db: {} }))
-vi.mock('@/lib/emails-query', () => ({ getEmail: vi.fn() }))
-vi.mock('@/lib/products-query', () => ({
-	getProduct: vi.fn(),
-	getProducts: vi.fn(),
-}))
-vi.mock('@/server/logger', () => ({
-	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-}))
-
-const { requestsAnyWorkshop } = await import('./cohort-workshop-emails-query')
-
+import { requestsAnyWorkshop } from './cohort-workshop-emails-sql'
 describe('requestsAnyWorkshop', () => {
 	it('filters contentIds in SQL with one bound JSON array', () => {
 		const ids = ['sync_workshop_a', 'sync_workshop_b']

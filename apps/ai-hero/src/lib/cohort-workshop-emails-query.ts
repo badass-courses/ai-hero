@@ -7,6 +7,7 @@ import {
 	organizationMemberships,
 	users,
 } from '@/db/schema'
+import { requestsAnyWorkshop } from '@/lib/cohort-workshop-emails-sql'
 import { Email } from '@/lib/emails'
 import { getEmail } from '@/lib/emails-query'
 import { getProduct, getProducts } from '@/lib/products-query'
@@ -51,11 +52,6 @@ export type UserWorkshopEntitlements = {
  * access — callers must not assume a user is entitled to every requested
  * workshop.
  */
-/** SQL condition: the entitlement's `metadata.contentIds` includes any of `workshopIds`. */
-export function requestsAnyWorkshop(workshopIds: string[]) {
-	return sql`JSON_OVERLAPS(JSON_EXTRACT(${entitlements.metadata}, '$.contentIds'), CAST(${JSON.stringify(workshopIds)} AS JSON))`
-}
-
 export async function getUserWorkshopEntitlements(
 	workshopIds: string[],
 ): Promise<UserWorkshopEntitlements[]> {
