@@ -10,6 +10,7 @@ import { recordJourneyOwnerAssigned } from './drovr-ownership'
 import {
 	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
 	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+	mapDrovrShadowFact,
 } from './drovr-shadow-emitter'
 import { parseValuePathAnswerPageResource } from './value-path-answer-page'
 import { recordValuePathAnswerProgression } from './value-path-click-progression'
@@ -164,6 +165,82 @@ const completeEmail0 = (input: Awaited<ReturnType<typeof legacyStarted>>) => {
 	})
 	return input.repository.sideEffectIntents.get(email0.id)!
 }
+
+const answerEmail0 = (
+	input: Awaited<ReturnType<typeof legacyStarted>>,
+	option: 'team' | 'personal',
+) =>
+	recordValuePathAnswerProgression({
+		repository: input.repository,
+		token: {
+			contactId: input.captured.contact.id,
+			kitSubscriberId: '4089521940',
+			valuePathResourceId: 'ai-hero-skills-workflow',
+			emailResourceId: 'ai-hero-skills-workflow.email-0',
+			sequenceId: 'ai-hero-skills-workflow',
+			expiresAt: '2026-05-16T12:00:00.000Z',
+		},
+		answerPage: parseValuePathAnswerPageResource({
+			id: `answer-email-0-${option}`,
+			type: 'value-path-page',
+			fields: {
+				kind: 'answer',
+				slug: `skills-workflow-email-0-${option}`,
+				sequenceId: 'ai-hero-skills-workflow',
+				emailId: 'email-0',
+				optionValue: option,
+				...(option === 'team'
+					? {
+							nextSequenceId: 'ai-hero-skills-team-workflow',
+							nextEmailId: 'team-email-1',
+							nextEmailResourceId: 'ai-hero-skills-team-workflow.team-email-1',
+							kitSequenceId: '2757207',
+						}
+					: {
+							nextSequenceId: 'ai-hero-skills-workflow',
+							nextEmailId: 'email-1',
+							nextEmailResourceId: 'ai-hero-skills-workflow.email-1',
+							kitSequenceId: '2757200',
+						}),
+			},
+		})!,
+		mode: input.allowlist.mode,
+		now: '2026-05-15T12:10:00.000Z',
+	})
+
+describe('a drovr-owned lesson 1 track choice', () => {
+	const answerEvent = (input: Awaited<ReturnType<typeof legacyStarted>>) =>
+		Array.from(input.repository.contactEvents.values()).find(
+			(event) => event.eventType === 'value-path.answer-selected',
+		)!
+
+	it('tells drovr the team email when the learner chooses Team workflows', async () => {
+		const input = await legacyStarted()
+		await own(input)
+		const result = await answerEmail0(input, 'team')
+		expect(result.reviewReasons).toEqual(['drovr-owned'])
+		const [answer] = mapDrovrShadowFact({
+			kind: 'contact-event',
+			event: answerEvent(input),
+		})
+		expect(answer?.payload).toEqual({
+			emailResourceId: 'ai-hero-skills-workflow.email-0',
+			nextEmailResourceId: 'ai-hero-skills-team-workflow.team-email-1',
+		})
+	})
+
+	it('leaves an individual choice unchanged', async () => {
+		const input = await legacyStarted()
+		await own(input)
+		await answerEmail0(input, 'personal')
+		const event = answerEvent(input)
+		expect(event.payloadSummary).not.toHaveProperty('nextEmailResourceId')
+		const [answer] = mapDrovrShadowFact({ kind: 'contact-event', event })
+		expect(answer?.payload).toEqual({
+			emailResourceId: 'ai-hero-skills-workflow.email-0',
+		})
+	})
+})
 
 describe('legacy planners and drovr-owned contacts', () => {
 	it('plans no click send for a DOI-born contact with no owner record', async () => {

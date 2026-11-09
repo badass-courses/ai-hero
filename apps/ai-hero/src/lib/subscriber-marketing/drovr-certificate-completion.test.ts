@@ -76,6 +76,7 @@ describe('read-only drovr email 6 evidence', () => {
 		{ contactId: 'other' },
 		{ journeyId: 'other' },
 		{ email: 'ai-hero-skills-workflow.email-7' },
+		{ email: 'ai-hero-skills-team-workflow.team-email-6' },
 		{ provider: 'unknown' },
 		{ provider: null },
 		{ deliveredAt: 'invalid' },
@@ -135,5 +136,28 @@ describe('read-only drovr email 6 evidence', () => {
 		expect(await readDrovrCertificateCompletion('test-contact')).toEqual({
 			status: 'unavailable',
 		})
+	})
+	it('reads team lesson 7 and requires drovr to echo that email', async () => {
+		const teamEmail6 = 'ai-hero-skills-team-workflow.team-email-6'
+		mocks.fetch.mockResolvedValue(Response.json({ ...receipt, email: teamEmail6 }))
+		expect(
+			await readDrovrCertificateCompletion('test-contact', teamEmail6),
+		).toEqual({ status: 'completed', completedAt: new Date(receipt.deliveredAt) })
+		expect(String(mocks.fetch.mock.calls[0]![0])).toBe(
+			`https://drovr.test/email-delivery?contact=test-contact&email=${teamEmail6}`,
+		)
+		mocks.fetch.mockResolvedValue(Response.json(receipt))
+		expect(
+			await readDrovrCertificateCompletion('test-contact', teamEmail6),
+		).toEqual({ status: 'unavailable' })
+	})
+	it('treats a drovr that rejects the team id (400) as unavailable', async () => {
+		mocks.fetch.mockResolvedValue(new Response('', { status: 400 }))
+		expect(
+			await readDrovrCertificateCompletion(
+				'test-contact',
+				'ai-hero-skills-team-workflow.team-email-6',
+			),
+		).toEqual({ status: 'unavailable' })
 	})
 })
