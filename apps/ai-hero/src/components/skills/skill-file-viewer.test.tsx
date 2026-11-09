@@ -2,7 +2,11 @@ import * as React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import { SkillFileContent } from './skill-file-viewer'
+import {
+	SKILL_FILE_DIALOG_CLASS,
+	SKILL_FILE_SCROLL_CLASS,
+	SkillFileContent,
+} from './skill-file-viewer'
 import { SkillInstallPanel } from './skill-install-panel'
 
 const file = {
@@ -13,6 +17,17 @@ const file = {
 }
 
 describe('SkillFileViewer', () => {
+	it('overrides the shared narrow dialog and gives the document its own scroll area', () => {
+		expect(SKILL_FILE_DIALOG_CLASS).toContain('sm:max-w-4xl')
+		expect(SKILL_FILE_DIALOG_CLASS).toContain('sm:w-[90vw]')
+		expect(SKILL_FILE_DIALOG_CLASS).toContain('max-h-[90svh]')
+		expect(SKILL_FILE_DIALOG_CLASS).toContain('flex-col')
+		expect(SKILL_FILE_SCROLL_CLASS).toContain('min-h-0')
+		expect(SKILL_FILE_SCROLL_CLASS).toContain('flex-1')
+		expect(SKILL_FILE_SCROLL_CLASS).toContain('overflow-y-auto')
+		expect(SKILL_FILE_SCROLL_CLASS).toContain('touch-pan-y')
+	})
+
 	it('renders a clear on-site viewer control and exact source companion', () => {
 		const markup = renderToStaticMarkup(
 			<SkillInstallPanel slug="skills-to-spec" skillFile={file} />,
