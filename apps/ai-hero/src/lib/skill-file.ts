@@ -67,25 +67,25 @@ export function parseSkillMetadata(
 ): SkillMetadataEntry[] | null {
 	if (frontmatter === null) return null
 
-	let data: unknown
 	try {
-		data = parseYaml(frontmatter)
-	} catch {
-		return null
-	}
-	if (data === null || typeof data !== 'object' || Array.isArray(data)) {
-		return null
-	}
+		const data: unknown = parseYaml(frontmatter)
+		if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+			return null
+		}
 
-	const entries = Object.entries(data).map(([key, value]) => ({
-		key,
-		value: Array.isArray(value)
-			? value.map(String).join(', ')
-			: value !== null && typeof value === 'object'
-				? JSON.stringify(value)
-				: String(value),
-	}))
-	return entries.length > 0 ? entries : null
+		const entries = Object.entries(data).map(([key, value]) => ({
+			key,
+			value: Array.isArray(value)
+				? value.map(String).join(', ')
+				: value !== null && typeof value === 'object'
+					? JSON.stringify(value)
+					: String(value),
+		}))
+		return entries.length > 0 ? entries : null
+	} catch {
+		// Malformed YAML, or a self-referencing alias JSON.stringify cannot print.
+		return null
+	}
 }
 
 export function skillFileSourceUrl(ref: GithubMarkdownFileRef): string {

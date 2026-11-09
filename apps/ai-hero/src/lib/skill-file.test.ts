@@ -81,6 +81,7 @@ describe('skill file content', () => {
 		expect(parseSkillMetadata('')).toBeNull()
 		expect(parseSkillMetadata('just text')).toBeNull()
 		expect(parseSkillMetadata('a: [unclosed')).toBeNull()
+		expect(parseSkillMetadata('a: &self\n  b: *self')).toBeNull()
 	})
 
 	it('fetches the derived public file and builds an exact GitHub permalink', async () => {
