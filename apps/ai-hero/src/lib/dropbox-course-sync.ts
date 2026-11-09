@@ -429,7 +429,7 @@ export async function readDropboxCourseManifest({
 	const observedVersion = rawDocument?.schemaVersion ?? 'missing'
 	if (!COURSE_JSON_SCHEMA_VERSIONS.some((version) => version === observedVersion)) {
 		throw new Error(
-			`Dropbox course manifest requires course.json schemaVersion 3 or 4 (observedVersion=${String(observedVersion)}; v2 is retired).`,
+			`Dropbox course manifest requires course.json schemaVersion 3, 4 or 5 (observedVersion=${String(observedVersion)}; v2 is retired).`,
 		)
 	}
 

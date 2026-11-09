@@ -5,8 +5,10 @@ import {
 	isValidElement,
 	useContext,
 	useEffect,
+	useLayoutEffect,
 	useMemo,
 	useRef,
+	useState,
 } from 'react'
 import Link from 'next/link'
 import {
@@ -52,7 +54,24 @@ export function Heading({ level, children, ...props }: HeadingProps) {
 
 	const text = useMemo(() => getTextContent(children), [children])
 
-	const slug = useMemo(() => slugifyHeading(text), [text])
+	const baseSlug = useMemo(() => slugifyHeading(text), [text])
+	const [slug, setSlug] = useState(baseSlug)
+	useLayoutEffect(() => {
+		const heading = ref.current
+		if (!heading || isWithinAISummary) return
+		const scope =
+			heading.closest('[data-heading-scope], article, main') ?? document
+		const headings = Array.from(scope.querySelectorAll('[data-heading-slug]'))
+		const index = headings
+			.slice(0, headings.indexOf(heading))
+			.filter(
+				(node) => node.getAttribute('data-heading-slug') === baseSlug,
+			).length
+		const id = index ? `${baseSlug}-${index}` : baseSlug
+		// Set the anchor before LessonBody's hash-scroll effect runs.
+		heading.id = id
+		setSlug(id)
+	})
 
 	const headingInfo = useMemo(
 		(): HeadingInfo => ({
@@ -77,7 +96,12 @@ export function Heading({ level, children, ...props }: HeadingProps) {
 	return (
 		// 72px is the spec's anchor offset: the 63px nav plus a hairline of air,
 		// so a heading jumped to from the TOC lands just clear of the nav.
-		<Component ref={ref} id={slug} className="scroll-mt-[72px] tracking-[-0.025em]">
+		<Component
+			ref={ref}
+			id={slug}
+			data-heading-slug={isWithinAISummary ? undefined : baseSlug}
+			className="scroll-mt-[72px] tracking-[-0.025em]"
+		>
 			<Link
 				href={`#${slug}`}
 				className="text-inherit! w-full font-semibold no-underline"

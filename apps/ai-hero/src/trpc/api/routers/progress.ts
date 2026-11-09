@@ -16,8 +16,6 @@ import { log } from '@/server/logger'
 import { createTRPCRouter, publicProcedure } from '@/trpc/api/trpc'
 import { z } from 'zod'
 
-import { ModuleProgress } from '@coursebuilder/core/schemas'
-
 export const progressRouter = createTRPCRouter({
 	/**
 	 * A module's completed lessons for the current user.
@@ -175,16 +173,13 @@ export const progressRouter = createTRPCRouter({
 				moduleId: z.string().optional().nullable(),
 			}),
 		)
-		.query(async ({ ctx, input }): Promise<ModuleProgress | null> => {
+		.query(async ({ ctx, input }) => {
 			const { session, ability } = await getServerAuthSession()
 			const user = session?.user
 			if (user && input.moduleId) {
 				try {
 					const moduleProgress =
-						await courseBuilderAdapter.getModuleProgressForUser(
-							user.id as string,
-							input.moduleId,
-						)
+						await getModuleProgressForUser(input.moduleId)
 					return moduleProgress
 				} catch (error) {
 					await log.error('progress.update.error', {
