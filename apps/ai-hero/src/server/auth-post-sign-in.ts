@@ -1,3 +1,5 @@
+import { redactedErrorMessage } from '@/server/logger-utils'
+
 type PostSignInUser = {
 	id?: string | null
 	email?: string | null
@@ -39,7 +41,7 @@ export function createPostSignInInvitationHandler({
 		} catch (error) {
 			logFailed({
 				userId: user.id,
-				error: error instanceof Error ? error.message : String(error),
+				error: redactedErrorMessage(error),
 			})
 		}
 	}

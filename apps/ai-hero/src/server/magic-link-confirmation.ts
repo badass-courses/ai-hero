@@ -67,14 +67,15 @@ function sealMagicLink(
 	return `${encoded}.${signature(encoded, secret)}`
 }
 
-function isBoundedConfirmation(
-	value: unknown,
-	now: number,
-): value is MagicLinkCookiePayload {
-	if (!value || typeof value !== 'object') return false
-	const payload = value as Partial<MagicLinkCookiePayload>
+const MAGIC_LINK_MAX_BODY_BYTES = 8192
+
+/** Field bounds shared by the cookie payload and the POST body. */
+function hasBoundedFields(payload: {
+	token?: unknown
+	email?: unknown
+	callbackUrl?: unknown
+}) {
 	return (
-		payload.v === 1 &&
 		typeof payload.token === 'string' &&
 		payload.token.length > 0 &&
 		payload.token.length <= 2048 &&
@@ -83,7 +84,19 @@ function isBoundedConfirmation(
 		payload.email.length <= 320 &&
 		(payload.callbackUrl === null ||
 			(typeof payload.callbackUrl === 'string' &&
-				payload.callbackUrl.length <= 2048)) &&
+				payload.callbackUrl.length <= 2048))
+	)
+}
+
+function isBoundedConfirmation(
+	value: unknown,
+	now: number,
+): value is MagicLinkCookiePayload {
+	if (!value || typeof value !== 'object') return false
+	const payload = value as Partial<MagicLinkCookiePayload>
+	return (
+		payload.v === 1 &&
+		hasBoundedFields(payload) &&
 		typeof payload.expiresAt === 'number' &&
 		payload.expiresAt > now
 	)
@@ -243,6 +256,15 @@ function alreadySignedInRedirect(callbackUrl: string | null, siteUrl?: string) {
 	)
 }
 
+/**
+ * LEGACY LINK PATH. Emailed links now carry the token in a URL fragment
+ * (`/login/verify#token=...`, see `magic-link-fragment.ts`), which never
+ * reaches a server. This GET handler only serves links already sitting in
+ * inboxes, whose query string the platform request log has already seen.
+ * Remove it, `readConfirmationFromCallback` and the cookie path once the token
+ * lifetime (24h, Auth.js Postmark `maxAge`) has passed since the fragment link
+ * deployed; GET callbacks then fall through to `authHandler`.
+ */
 export function createMagicLinkGetHandler<RequestType extends Request>(
 	authHandler: AuthHandler<RequestType>,
 	options: MagicLinkGetOptions,
@@ -322,17 +344,111 @@ function spentTokenTransferPath(
 	)
 }
 
+type BodyConfirmation =
+	| { kind: 'none' }
+	| { kind: 'rejected'; status: 400 | 403 }
+	| { kind: 'confirmation'; confirmation: MagicLinkConfirmation }
+
+/**
+ * The fragment-link flow posts `token`, `email` and `callbackUrl` in the body
+ * (urlencoded from the verify page's form, or JSON). A body without a token is
+ * the legacy cookie form and falls through. Same-origin only, with the same
+ * bounds as the cookie payload.
+ */
+async function readConfirmationFromBody(
+	request: Request,
+	options: MagicLinkOptions,
+): Promise<BodyConfirmation> {
+	const contentType = (request.headers.get('content-type') ?? '').toLowerCase()
+	const isJson = contentType.startsWith('application/json')
+	const isForm = contentType.startsWith('application/x-www-form-urlencoded')
+	if (!isJson && !isForm) return { kind: 'none' }
+	const declaredLength = Number(request.headers.get('content-length') ?? 0)
+	if (declaredLength > MAGIC_LINK_MAX_BODY_BYTES) {
+		return { kind: 'rejected', status: 400 }
+	}
+
+	let text: string
+	try {
+		text = await request.text()
+	} catch {
+		return { kind: 'rejected', status: 400 }
+	}
+	if (Buffer.byteLength(text, 'utf8') > MAGIC_LINK_MAX_BODY_BYTES) {
+		return { kind: 'rejected', status: 400 }
+	}
+
+	let raw: { token?: unknown; email?: unknown; callbackUrl?: unknown }
+	if (isJson) {
+		try {
+			const parsed: unknown = JSON.parse(text)
+			if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+				return { kind: 'rejected', status: 400 }
+			}
+			raw = parsed
+		} catch {
+			return { kind: 'rejected', status: 400 }
+		}
+	} else {
+		const params = new URLSearchParams(text)
+		if (!params.has('token')) return { kind: 'none' }
+		raw = {
+			token: params.get('token'),
+			email: params.get('email'),
+			callbackUrl: params.get('callbackUrl') || null,
+		}
+	}
+	if (raw.token === undefined) return { kind: 'none' }
+
+	const expectedOrigin = new URL(options.siteUrl ?? request.url).origin
+	if (request.headers.get('origin') !== expectedOrigin) {
+		return { kind: 'rejected', status: 403 }
+	}
+
+	const candidate = {
+		token: raw.token,
+		email: raw.email,
+		callbackUrl: raw.callbackUrl === undefined ? null : raw.callbackUrl,
+	}
+	if (!hasBoundedFields(candidate)) return { kind: 'rejected', status: 400 }
+	const confirmation = {
+		token: candidate.token as string,
+		email: candidate.email as string,
+		callbackUrl:
+			candidate.callbackUrl === null
+				? null
+				: callbackPath(candidate.callbackUrl as string, expectedOrigin),
+	} satisfies MagicLinkConfirmation
+	if (
+		Buffer.byteLength(JSON.stringify(confirmation), 'utf8') >
+		MAGIC_LINK_MAX_PAYLOAD_BYTES
+	) {
+		return { kind: 'rejected', status: 400 }
+	}
+	return { kind: 'confirmation', confirmation }
+}
+
 export function createMagicLinkConfirmHandler(
 	authHandler: AuthHandler<NextRequest>,
 	options: MagicLinkOptions,
 ) {
 	return async function handleMagicLinkConfirmation(request: Request) {
+		const body = await readConfirmationFromBody(request, options)
+		if (body.kind === 'rejected') {
+			return new Response(null, {
+				status: body.status,
+				headers: { 'cache-control': 'no-store' },
+			})
+		}
 		const cookies = parse(request.headers.get('cookie') ?? '')
-		const confirmation = readMagicLinkCookie(
-			cookies[MAGIC_LINK_COOKIE_NAME],
-			options.secret,
-			options.now,
-		)
+		const confirmation =
+			body.kind === 'confirmation'
+				? body.confirmation
+				: readMagicLinkCookie(
+						cookies[MAGIC_LINK_COOKIE_NAME],
+						options.secret,
+						options.now,
+					)
 		if (!confirmation) {
 			return withSetCookie(
 				confirmationRedirect(303),
