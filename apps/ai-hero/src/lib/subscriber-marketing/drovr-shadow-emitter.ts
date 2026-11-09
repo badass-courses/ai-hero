@@ -1041,8 +1041,9 @@ const SKILLS_TEAM_SLUG = 'ai-hero-skills-team-workflow'
 /**
  * drovr v13 runs both tracks in one actor and matches an answer on the
  * answered email's own id, so a team answer keeps its team id. Folding it
- * to the individual id (as the completion mappers still do) matches nothing
- * on the team track.
+ * to the individual id matches nothing on the team track. Completions still
+ * fold through canonicalSkillsEmailResourceId on purpose: value-path is 100%
+ * PostShiba, so no team send completes through Kit.
  */
 function answeredEmailResourceIdFromKeywords(keywords: string[]) {
 	for (const keyword of keywords) {

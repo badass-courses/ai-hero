@@ -113,8 +113,8 @@ export async function recordValuePathAnswerProgression(args: {
 	// Only an answer that leaves its own path names its next email on the
 	// event: drovr reads it as the team switch. Every other answer is unchanged.
 	const switchesPath =
-		Boolean(nextEmailResourceId) &&
-		nextValuePathSlug !== (fields.sequenceId ?? args.token.sequenceId)
+		Boolean(nextEmailResourceId && fields.nextSequenceId) &&
+		fields.nextSequenceId !== (fields.sequenceId ?? args.token.sequenceId)
 	const capturesFinisher = Boolean(
 		fields.captureFieldKey || fields.captureDateFieldKey,
 	)
