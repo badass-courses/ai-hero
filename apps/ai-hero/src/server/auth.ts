@@ -43,11 +43,11 @@ import {
 	getGithubProviderConfig,
 } from '@/server/oauth-provider-config'
 import { measureIfSlow } from '@/server/perf'
+import { parseSessionUser } from '@/server/session-user'
 import DiscordProvider from '@auth/core/providers/discord'
 import GithubProvider from '@auth/core/providers/github'
 import NextAuth, { type DefaultSession, type NextAuthConfig } from 'next-auth'
 
-import { userSchema } from '@coursebuilder/core/schemas'
 
 type Role = 'admin' | 'user' | string
 
@@ -332,7 +332,13 @@ export const getServerAuthSession = cache(async () => {
 		thresholdMs: 250,
 		operation: async () => {
 			const session = await auth()
-			const user = userSchema.optional().nullable().parse(session?.user)
+			const { user, invalidEmail } = parseSessionUser(session?.user)
+			if (invalidEmail) {
+				// Format only, never the address: the account still works.
+				void log.warn('auth.session.user_email_invalid', {
+					userId: user?.id,
+				})
+			}
 			const parsedUser = UserSchema.nullish().parse(session?.user)
 			const ability = getAbility({ user: parsedUser || undefined })
 
