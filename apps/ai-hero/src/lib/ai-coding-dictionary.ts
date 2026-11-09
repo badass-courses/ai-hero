@@ -9,7 +9,8 @@ const DICTIONARY_REF = 'main'
 const DICTIONARY_REVALIDATE_SECONDS = 3600
 const DICTIONARY_FRONTMATTER_TIMEOUT_MS = 5000
 const DICTIONARY_COMMIT_FEED_TIMEOUT_MS = 3000
-const DICTIONARY_COMMIT_API_TIMEOUT_MS = 8000
+const DICTIONARY_COMMIT_API_TIMEOUT_MS = 3000
+const DICTIONARY_SOURCE_REF_MEMO_MS = 5 * 60 * 1000
 const DICTIONARY_CACHE_TAG = 'ai-coding-dictionary'
 
 export type DictionarySection = {
@@ -54,6 +55,9 @@ type DictionarySourceRef = {
 
 // Only verified GitHub source refs may seed the fallback for this process.
 let lastGoodDictionarySourceRef: DictionarySourceRef | undefined
+// Also advances after a failed refresh so stale refs get the same retry window.
+let dictionarySourceRefResolvedAt: number | undefined
+let dictionarySourceRefInFlight: Promise<DictionarySourceRef> | undefined
 
 function toValidIsoDate(value: unknown): string | null {
 	if (!value) return null
@@ -117,11 +121,52 @@ function parseDictionaryCommitFeed(
 }
 
 /**
- * The public Atom feed gives us both the current commit and its real date
- * without spending GitHub API quota. Raw files are pinned to that commit so
- * README content and entry frontmatter always come from one snapshot.
+ * Prefer the commit API, with the Atom feed as a bounded fallback. Raw files
+ * stay pinned to one verified snapshot, remembered briefly by this process.
  */
 async function getDictionarySourceRef(): Promise<DictionarySourceRef> {
+	if (
+		lastGoodDictionarySourceRef &&
+		dictionarySourceRefResolvedAt !== undefined &&
+		Date.now() - dictionarySourceRefResolvedAt < DICTIONARY_SOURCE_REF_MEMO_MS
+	) {
+		return lastGoodDictionarySourceRef
+	}
+
+	// Share refreshes so concurrent renders produce one request and warning window.
+	dictionarySourceRefInFlight ??= resolveDictionarySourceRef().finally(() => {
+		dictionarySourceRefInFlight = undefined
+	})
+	return dictionarySourceRefInFlight
+}
+
+async function resolveDictionarySourceRef(): Promise<DictionarySourceRef> {
+	try {
+		const { data } = await githubSourceOctokit.rest.repos.getCommit({
+			owner: DICTIONARY_OWNER,
+			repo: DICTIONARY_REPO,
+			ref: DICTIONARY_REF,
+			request: {
+				signal: AbortSignal.timeout(DICTIONARY_COMMIT_API_TIMEOUT_MS),
+				timeout: DICTIONARY_COMMIT_API_TIMEOUT_MS,
+			},
+		})
+		const updatedAt =
+			toValidIsoDate(data.commit.committer?.date) ??
+			toValidIsoDate(data.commit.author?.date)
+		if (!/^[0-9a-f]{40}$/i.test(data.sha) || !updatedAt) {
+			throw new Error(
+				'GitHub commit API did not contain a valid commit and update date',
+			)
+		}
+
+		lastGoodDictionarySourceRef = { commitSha: data.sha, updatedAt }
+		dictionarySourceRefResolvedAt = Date.now()
+		return lastGoodDictionarySourceRef
+	} catch {
+		// The public feed can still resolve a snapshot when the API is unavailable.
+	}
+
 	try {
 		const response = await fetch(
 			`${AI_CODING_DICTIONARY_SOURCE_URL}/commits/${encodeURIComponent(
@@ -148,39 +193,15 @@ async function getDictionarySourceRef(): Promise<DictionarySourceRef> {
 		}
 
 		lastGoodDictionarySourceRef = sourceRef
+		dictionarySourceRefResolvedAt = Date.now()
 		return sourceRef
 	} catch (error) {
-		if (!lastGoodDictionarySourceRef) {
-			try {
-				const { data } = await githubSourceOctokit.rest.repos.getCommit({
-					owner: DICTIONARY_OWNER,
-					repo: DICTIONARY_REPO,
-					ref: DICTIONARY_REF,
-					request: {
-						signal: AbortSignal.timeout(DICTIONARY_COMMIT_API_TIMEOUT_MS),
-						timeout: DICTIONARY_COMMIT_API_TIMEOUT_MS,
-					},
-				})
-				const updatedAt =
-					toValidIsoDate(data.commit.committer?.date) ??
-					toValidIsoDate(data.commit.author?.date)
-				if (!/^[0-9a-f]{40}$/i.test(data.sha) || !updatedAt) throw error
+		// Preserve the original feed error on a cold start when both sources fail.
+		if (!lastGoodDictionarySourceRef) throw error
 
-				lastGoodDictionarySourceRef = { commitSha: data.sha, updatedAt }
-			} catch {
-				// Keep the original feed failure when neither source is usable.
-				throw error
-			}
-
-			console.warn(
-				'GitHub commit feed unavailable; using the GitHub commit API source ref',
-				error,
-			)
-			return lastGoodDictionarySourceRef
-		}
-
+		dictionarySourceRefResolvedAt = Date.now()
 		console.warn(
-			'GitHub commit feed unavailable; using the last known dictionary source ref',
+			'GitHub commit API and feed unavailable; using the last known dictionary source ref',
 			error,
 		)
 		return lastGoodDictionarySourceRef
