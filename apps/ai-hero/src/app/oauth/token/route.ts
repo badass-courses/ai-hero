@@ -7,7 +7,7 @@ import {
 	LEARNER_TOKEN_TTL_MS,
 } from '@/lib/learner-agent/identity'
 import { exchangeAuthorizationCode } from '@/lib/learner-agent/oauth/grant'
-import { corsPreflight } from '@/lib/learner-agent/oauth/metadata'
+import { corsPreflight, oauthError } from '@/lib/learner-agent/oauth/metadata'
 import { eq } from 'drizzle-orm'
 
 /**
@@ -17,7 +17,14 @@ import { eq } from 'drizzle-orm'
 const NARROWING_SCOPES = new Set([LEARNER_READ_SCOPE])
 
 export async function POST(request: Request) {
-	const formData = await request.formData()
+	// RFC 6749 §3.2: token requests are form-encoded. A JSON or empty body is a
+	// client error the caller can fix, not a 500 it keeps polling into.
+	const formData = await request.formData().catch(() => null)
+	if (!formData)
+		return oauthError(
+			'invalid_request',
+			'Send the token request as application/x-www-form-urlencoded (RFC 6749 section 3.2).',
+		)
 	// The learner MCP's authorization code grant. Every other request,
 	// including one with no grant_type, is the device flow below, unchanged.
 	if (formData.get('grant_type') === 'authorization_code')

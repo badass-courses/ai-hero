@@ -13,7 +13,7 @@ export const signInActions: Effect.Effect<NextAction[], never, LearnerSite> =
 		),
 		nextHref(
 			`${site.baseUrl}/oauth/device/code`,
-			'Or sign in with the device flow: POST /oauth/device/code, have the learner open `verification_uri_complete`, then POST /oauth/token with `device_code` and `scope=learner:read`.',
+			'Or sign in with the device flow: POST /oauth/device/code, have the learner open `verification_uri_complete`, then POST /oauth/token with `device_code` and `scope=learner:read` as application/x-www-form-urlencoded.',
 		),
 		nextTool(
 			'search_course',
