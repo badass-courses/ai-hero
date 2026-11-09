@@ -40,15 +40,11 @@ jobs:
       - name: Typecheck
         run: pnpm turbo typecheck
 
-      - name: Course-sync executor identity and warning contracts
+      - name: Course-sync policy, lifecycle, access and executor contracts
         run: >-
           pnpm --filter ai-hero exec vitest run -c vitest.config.ts
           src/server/run-identity.test.ts
-          src/course-sync/run-identity-observability.test.ts
-          src/course-sync/detection-persistence.test.ts
-          src/course-sync/detection-poller.test.ts
-          src/course-sync/drizzle-binding-migration.test.ts
-          src/course-sync/poll-state-guard.test.ts
+          src/course-sync/
           src/inngest/functions/course-sync-poll-scheduler.test.ts
           src/inngest/functions/course-sync-detection-poller.config.test.ts
           src/inngest/__tests__/middleware-transform-input.test.ts

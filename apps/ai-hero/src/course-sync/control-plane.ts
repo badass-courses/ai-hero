@@ -8,7 +8,10 @@ import {
 } from '@ai-hero/course-sync-schema'
 
 import { CourseSyncError, asCourseSyncError } from './errors'
-import { evaluateCourseSyncBoundedAutoApply } from './persistence-invariants'
+import {
+	courseSyncDestructiveLessons,
+	evaluateCourseSyncBoundedAutoApply,
+} from './persistence-invariants'
 import { extractQuizQuestions } from './quiz-question-extraction'
 import { assertCourseSyncSourceFields, courseSyncSourceFields } from './resource-fields'
 import {
@@ -255,8 +258,14 @@ export function sourceResourceFields(
 			fields: {
 				title: section.title,
 				slug: slug(section.id, section.title),
-				state: 'draft',
-				visibility: 'unlisted',
+				state:
+					sectionKind === 'workshop' && preservesWorkshopReleaseState(binding)
+						? 'published'
+						: 'draft',
+				visibility:
+					binding.contractVersion === 4
+						? binding.managedChildContract.visibility
+						: binding.managedChildContract.workshop.visibility,
 				courseSync: {
 					bindingId: binding.bindingId,
 					sourceCourseId: manifest.courseId,
@@ -1168,7 +1177,23 @@ export function createCourseSyncControlPlane(
 					{ category: 'lifecycle_conflict', retryable: false },
 				)
 			}
-			return evaluateCourseSyncBoundedAutoApply(run.plan)
+			const binding = await requireBinding(run.bindingId)
+			if (
+				!preservesWorkshopReleaseState(binding) &&
+				run.plan.resources.some((item) => item.sourceKind === 'workshop' && item.action === 'create')
+			) {
+				return {
+					eligible: false as const,
+					planSha256: run.planSha256,
+					failureCode: 'WORKSHOP_RELEASE_CONTRACT_REVIEW_REQUIRED',
+					reason: 'This binding does not permit publishing new workshops. Joel must review its release contract.',
+				}
+			}
+			const lessons = courseSyncDestructiveLessons(run.plan)
+			const progressCounts = await persistence.getLessonProgressCounts(
+				lessons.map((item) => item.targetResourceId),
+			)
+			return evaluateCourseSyncBoundedAutoApply(run.plan, progressCounts)
 		},
 
 		async verifyApplied(input: { runId: string; planSha256: string }) {

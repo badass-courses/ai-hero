@@ -34,7 +34,7 @@ function syntheticCopyOfSyllabusShape(): CourseJsonDocumentV3 {
 }
 
 describe('production Cohort 005 first scheduled poll (S5)', () => {
-	it('stages draft children without an initial operator override but retains the new-workshop review bound', async () => {
+	it('auto-applies and publishes additive workshops, posts live once and skips a re-poll', async () => {
 		expect(binding.initialApplyPolicyOverride).toBeNull()
 		const manifest = syntheticCopyOfSyllabusShape()
 		const persistence = new InMemoryCourseSyncPersistence()
@@ -75,7 +75,7 @@ describe('production Cohort 005 first scheduled poll (S5)', () => {
 		let state: CourseSyncPollState | null = null
 		const logs: CourseSyncPollLogInput[] = []
 		const notices: CourseSyncNotification[] = []
-		const apply = vi.fn(unexpected)
+		const apply = vi.fn(plane.apply)
 		const freezeAssetBatch = vi.fn(unexpected)
 		const poll = createCourseSyncDetectionPoller({
 			binding,
@@ -106,7 +106,7 @@ describe('production Cohort 005 first scheduled poll (S5)', () => {
 			completeReviewNotification: async () => {},
 			failReviewNotification: async () => {},
 			apply,
-			verifyApplied: unexpected,
+			verifyApplied: plane.verifyApplied,
 			notify: async (notice) => {
 				notices.push(notice)
 			},
@@ -115,14 +115,13 @@ describe('production Cohort 005 first scheduled poll (S5)', () => {
 
 		const result = await poll('synthetic-first-tick')
 		expect(result).toMatchObject({
-			outcome: 'awaiting-apply',
+			outcome: 'applied',
 			courseVersionId: 'synthetic-s5-revision',
 		})
 		expect(state).toMatchObject({
 			bindingId: binding.bindingId,
-			status: 'awaiting-apply',
-			// The new-workshop bound creates this hold, not the binding's initial policy.
-			applyPolicyOverride: 'operator',
+			status: 'succeeded',
+			applyPolicyOverride: null,
 			consecutiveFailures: 0,
 			failureClass: null,
 		})
@@ -141,15 +140,12 @@ describe('production Cohort 005 first scheduled poll (S5)', () => {
 		expect(plan?.resources).toHaveLength(127)
 		expect(plan?.media).toEqual([])
 		for (const item of plan!.resources) {
-			expect(item.fields).toMatchObject({ state: 'draft', visibility: 'unlisted' })
+			expect(item.fields).toMatchObject({ state: item.sourceKind === 'workshop' ? 'published' : 'draft', visibility: 'unlisted' })
+			if (item.sourceKind === 'workshop') expect(persistence.resources.get(item.targetResourceId)?.fields.state).toBe('published')
 		}
-		await expect(plane.evaluateBoundedAutoApply(result.controlPlaneRunId!)).resolves.toMatchObject({
-			eligible: false,
-			failureCode: 'WORKSHOP_CREATE_REVIEW_REQUIRED',
-		})
 		expect(notices).toEqual([
 			expect.objectContaining({
-				kind: 'review',
+				kind: 'success',
 				resourceCounts: { create: 127, update: 0, retain: 0 },
 			}),
 		])
@@ -162,6 +158,8 @@ describe('production Cohort 005 first scheduled poll (S5)', () => {
 		)
 		expect(unexpected).not.toHaveBeenCalled()
 		expect(freezeAssetBatch).not.toHaveBeenCalled()
-		expect(apply).not.toHaveBeenCalled()
+		expect(apply).toHaveBeenCalledOnce()
+		await expect(poll('synthetic-second-tick')).resolves.toMatchObject({ outcome: 'no-op' })
+		expect(notices).toHaveLength(1)
 	})
 })

@@ -28,27 +28,49 @@ export type CourseSyncBoundedAutoApplyDecision =
 			planSha256: string
 			reason: string
 			failureCode: string
+			affectedLessons?: ReadonlyArray<{ title: string; progressCount: number }>
 	  }
 
-/**
- * The source manifest is authoritative. A preview that reached this point
- * already proved its own integrity: the plan hash is content-addressed, and
- * every media item was rejected at stage and preview time unless its Mux
- * asset, playback id and duration were present. Course shape is the author's
- * decision, so ordinary creates, updates, moves and detaches apply without a
- * human gate, except workshop creates: undated workshops can grant access.
- * A new workshop, lesson demotion or lost video requires operator review.
- */
+/** Resolve destructive edges back to lessons; progress is read, never changed. */
+export function courseSyncDestructiveLessons(plan: SyncPlan): ResourcePlanItem[] {
+	const byId = new Map(plan.resources.map((item) => [item.targetResourceId, item]))
+	const affected = new Set<string>()
+	for (const item of plan.resources) {
+		if (item.action === 'create' || item.previousDetached) continue
+		const changed = (item.detached && !item.previousDetached) ||
+			item.previousParentResourceId !== item.parentResourceId ||
+			item.previousPosition !== item.position
+		if (!changed) continue
+		if (item.sourceKind === 'lesson') affected.add(item.targetResourceId)
+		if (item.sourceKind === 'solution' || item.sourceKind === 'video') {
+			// Walk both sides: a media reparent must protect the original lesson too.
+			for (const parent of [item.previousParentResourceId, item.parentResourceId]) {
+				let node = parent ? byId.get(parent) : undefined
+				const seen = new Set<string>()
+				while (node && !seen.has(node.targetResourceId)) {
+					seen.add(node.targetResourceId)
+					if (node.sourceKind === 'lesson') { affected.add(node.targetResourceId); break }
+					node = byId.get(node.previousParentResourceId ?? node.parentResourceId)
+				}
+			}
+		}
+	}
+	return plan.resources.filter((item) => affected.has(item.targetResourceId) && item.sourceKind === 'lesson')
+}
+
+/** Additions and unprogressed moves are safe; demotions and lost media are not. */
 export function evaluateCourseSyncBoundedAutoApply(
 	plan: SyncPlan,
+	progressCounts: ReadonlyMap<string, number> = new Map(),
 ): CourseSyncBoundedAutoApplyDecision {
-	if (plan.resources.some((item) => item.sourceKind === 'workshop' && item.action === 'create')) {
-		return {
-			eligible: false,
-			planSha256: plan.planSha256,
-			reason: 'New workshops require operator scheduling and release.',
-			failureCode: 'WORKSHOP_CREATE_REVIEW_REQUIRED',
-		}
+	const affectedLessons = courseSyncDestructiveLessons(plan)
+		.map((item) => ({ title: planChangeTitle(item) ?? 'Untitled lesson', progressCount: progressCounts.get(item.targetResourceId) ?? 0 }))
+	if (affectedLessons.some((item) => item.progressCount > 0)) return {
+		eligible: false,
+		planSha256: plan.planSha256,
+		failureCode: 'PROGRESSED_LESSON_CHANGE_REVIEW_REQUIRED',
+		reason: 'Removing or moving lessons with learner progress requires operator review.',
+		affectedLessons,
 	}
 	const placeholderUpdate = plan.resources.some(
 		(item) =>
@@ -75,7 +97,8 @@ export function evaluateCourseSyncBoundedAutoApply(
 		return {
 			eligible: false,
 			planSha256: plan.planSha256,
-			reason: `Lesson regressions require operator review: ${plan.lessonRegressions.join(', ')}`,
+			reason: 'Lesson regressions require operator review.',
+			affectedLessons,
 			failureCode: 'LESSON_REGRESSION_REVIEW_REQUIRED',
 		}
 	}
@@ -85,6 +108,7 @@ export function evaluateCourseSyncBoundedAutoApply(
 			planSha256: plan.planSha256,
 			reason: 'A managed video or solution is being detached.',
 			failureCode: 'LOST_VIDEO_REVIEW_REQUIRED',
+			affectedLessons,
 		}
 	}
 	return { eligible: true, planSha256: plan.planSha256 }

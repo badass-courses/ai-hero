@@ -8,6 +8,7 @@ import {
 	completeCourseSyncReviewNotification,
 	failCourseSyncReviewNotification,
 	getCourseSyncPollState,
+	getCourseSyncReviewNotificationDeliveredAt,
 	getCourseSyncRevisionHead,
 	saveCourseSyncPollState,
 } from '@/course-sync/detection-persistence'
@@ -54,6 +55,7 @@ async function notifyCourseSync(notification: CourseSyncNotification) {
 	// messages are read under pressure and must not vary.
 	await sendCourseSyncSlackPayload(
 		buildCourseSyncNotificationPayload(notification, null),
+		notification.controlPlaneRunId ?? undefined,
 	)
 }
 
@@ -290,6 +292,7 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 				runTypedStep('evaluate-bounded-auto-apply', () =>
 					courseSyncControlPlane.evaluateBoundedAutoApply(controlPlaneRunId),
 				),
+			getReviewNotificationDeliveredAt: (input) => getCourseSyncReviewNotificationDeliveredAt(input),
 			claimReviewNotification: (input) =>
 				runTypedStep('claim-course-sync-review-notification', () =>
 					claimCourseSyncReviewNotification(input),

@@ -117,7 +117,7 @@ describe('synthetic cohort-anchored syllabus (S4b)', () => {
 		await test.apply(first.run.runId, 'apply-before')
 		const workshop = first.plan.resources.find((item) => item.sourceKind === 'workshop')!
 		const resource = test.persistence.resources.get(workshop.targetResourceId)!
-		expect(resource.fields.state).toBe('draft')
+		expect(resource.fields.state).toBe('published')
 		resource.fields.state = 'published'
 		const next = await test.stage({ ...source, courseVersionId: 'release-retain' }, 'retain')
 		expect(next.plan.resources.every((item) => item.action === 'retain')).toBe(true)
@@ -130,6 +130,24 @@ describe('synthetic cohort-anchored syllabus (S4b)', () => {
 		await test.plane.rollback({ runId: changed.run.runId, idempotencyKey: 'rollback-update' })
 		expect(test.persistence.resources.get(workshop.targetResourceId)!.fields).toMatchObject({ state: 'published', title: 'Keep 0' })
 	})
+	it('reads existing lesson progress for a destructive move without changing it', async () => {
+		const test = harness(releaseBinding)
+		const source = { ...syllabus('progress-before'), courseId: releaseBinding.sourceCourseId }
+		const first = await test.stage(source, 'progress-before')
+		expect(await test.plane.evaluateBoundedAutoApply(first.run.runId)).toMatchObject({ eligible: true })
+		await test.apply(first.run.runId, 'progress-before')
+		const lesson = first.plan.resources.find((item) => item.sourceKind === 'lesson')!
+		test.persistence.lessonProgressCounts.set(lesson.targetResourceId, 3)
+		const sections = source.sections.map((section, index) => ({ ...section, lessons:
+			index === 0 ? section.lessons.slice(1) : index === 1 ? [...section.lessons, source.sections[0]!.lessons[0]!] : section.lessons }))
+		const next = await test.stage({ ...source, sections, courseVersionId: 'progress-moved' }, 'progress-moved')
+		expect(await test.plane.evaluateBoundedAutoApply(next.run.runId)).toMatchObject({ eligible: false,
+			failureCode: 'PROGRESSED_LESSON_CHANGE_REVIEW_REQUIRED', affectedLessons: expect.arrayContaining([{ title: 'Placeholder 0.0', progressCount: 3 }]) })
+		expect(test.persistence.lessonProgressCounts.get(lesson.targetResourceId)).toBe(3)
+		test.persistence.lessonProgressCounts.clear()
+		expect(await test.plane.evaluateBoundedAutoApply(next.run.runId)).toMatchObject({ eligible: true })
+	})
+
 	it('plans and applies 15 workshop children and 112 direct lessons, without day drip or media (T8/T9)', async () => {
 		const test = harness()
 		const manifest = syllabus('syllabus-before')
@@ -165,7 +183,7 @@ describe('synthetic cohort-anchored syllabus (S4b)', () => {
 		expect(first.plan.media).toEqual([])
 		expect(
 			await test.plane.evaluateBoundedAutoApply(first.run.runId),
-		).toMatchObject({ eligible: false, failureCode: 'WORKSHOP_CREATE_REVIEW_REQUIRED' })
+		).toMatchObject({ eligible: false, failureCode: 'WORKSHOP_RELEASE_CONTRACT_REVIEW_REQUIRED' })
 		for (const workshop of workshops) {
 			expect(workshop.fields).not.toHaveProperty('startsAt')
 			expect(workshop.fields).not.toHaveProperty('endsAt')
