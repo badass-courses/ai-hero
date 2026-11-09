@@ -10,7 +10,7 @@ import { SubscriberSchema } from '@/schemas/subscriber'
 import { getServerAuthSession } from '@/server/auth'
 import { getLogContext, log } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 
 import {
 	resourceProgressSchema,
@@ -216,37 +216,23 @@ export async function setPlaybackPositionForResource({
 		const user = await getUser()
 		if (!user) return null
 
-		const existingProgress = await db.query.resourceProgress.findFirst({
-			where: and(
-				eq(resourceProgress.resourceId, resourceId),
-				eq(resourceProgress.userId, user.id),
-			),
-		})
 		const now = new Date()
-		const fields = mergePlaybackPositionFields(
-			existingProgress?.fields,
-			normalizedPosition,
-		)
-
-		if (existingProgress) {
-			await db
-				.update(resourceProgress)
-				.set({ fields, updatedAt: now })
-				.where(
-					and(
-						eq(resourceProgress.resourceId, resourceId),
-						eq(resourceProgress.userId, user.id),
-					),
-				)
-		} else {
-			await db.insert(resourceProgress).values({
+		await db
+			.insert(resourceProgress)
+			.values({
 				userId: user.id,
 				resourceId,
-				fields,
+				fields: mergePlaybackPositionFields(null, normalizedPosition),
 				completedAt: null,
 				updatedAt: now,
 			})
-		}
+			.onDuplicateKeyUpdate({
+				set: {
+					// Patch only the position, preserving completion and other fields.
+					fields: sql`JSON_SET(COALESCE(${resourceProgress.fields}, JSON_OBJECT()), '$.playbackPositionSeconds', ${normalizedPosition})`,
+					updatedAt: now,
+				},
+			})
 
 		return normalizedPosition
 	} catch (error) {
