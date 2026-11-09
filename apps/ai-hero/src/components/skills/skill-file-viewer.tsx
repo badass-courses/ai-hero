@@ -17,6 +17,17 @@ import {
 } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/utils/cn'
 
+/**
+ * `sm:max-w-4xl` deliberately overrides the shared dialog primitive's
+ * `max-w-lg`. The flex/min-height pair makes the document, rather than the
+ * whole modal, own vertical scrolling while the header and close button stay
+ * put.
+ */
+export const SKILL_FILE_DIALOG_CLASS =
+	'flex max-h-[90svh] w-[calc(100vw-1rem)] max-w-none flex-col gap-0 overflow-hidden rounded-xl p-0 sm:w-[90vw] sm:max-w-4xl'
+export const SKILL_FILE_SCROLL_CLASS =
+	'min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain px-5 py-6 sm:px-7 sm:py-8'
+
 export function SkillFileViewer({
 	file,
 	className,
@@ -37,11 +48,8 @@ export function SkillFileViewer({
 					Read full SKILL.md
 				</Button>
 			</DialogTrigger>
-			<DialogContent
-				lockScroll={false}
-				className="max-h-[calc(100svh-2rem)] w-[calc(100vw-2rem)] max-w-4xl gap-0 overflow-hidden rounded-xl p-0"
-			>
-				<div className="border-border flex items-start justify-between gap-6 border-b px-5 py-4 pr-12 sm:px-7 sm:py-5">
+			<DialogContent lockScroll={false} className={SKILL_FILE_DIALOG_CLASS}>
+				<div className="border-border flex shrink-0 items-start justify-between gap-6 border-b px-5 py-4 pr-12 sm:px-7 sm:py-5">
 					<div>
 						<DialogTitle className="text-xl">Full SKILL.md</DialogTitle>
 						<DialogDescription className="mt-1">
@@ -58,7 +66,12 @@ export function SkillFileViewer({
 						<ArrowUpRight aria-hidden className="size-4" />
 					</Link>
 				</div>
-				<div className="overflow-y-auto px-5 py-6 sm:px-7 sm:py-8">
+				<div
+					role="region"
+					aria-label="Full skill file"
+					tabIndex={0}
+					className={SKILL_FILE_SCROLL_CLASS}
+				>
 					<SkillFileContent file={file} />
 				</div>
 			</DialogContent>
@@ -68,7 +81,12 @@ export function SkillFileViewer({
 
 export function SkillFileContent({ file }: { file: SkillFile }) {
 	return (
-		<div className={cn('mx-auto', PROSE_MEASURE)}>
+		<div
+			className={cn(
+				'mx-auto min-w-0 [&_pre]:max-w-full [&_pre]:overflow-x-auto',
+				PROSE_MEASURE,
+			)}
+		>
 			{file.frontmatter !== null ? (
 				<section aria-label="Skill metadata" className="mb-8">
 					<p className="text-muted-foreground mb-2 text-xs font-semibold uppercase tracking-[0.14em]">
