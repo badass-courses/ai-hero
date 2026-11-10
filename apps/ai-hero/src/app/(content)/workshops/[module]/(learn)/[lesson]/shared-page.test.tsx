@@ -333,6 +333,21 @@ describe('LessonPage office-hours authorization context', () => {
 		expect(mocks.getSignedLessonPlayback).toHaveBeenCalledWith(expect.objectContaining({ lessonId: lesson.id, workshopId: workshop.id }))
 	})
 
+	it('renders a v5 text lesson without a player or signing playback', async () => {
+		mocks.getAbilityForResource.mockResolvedValue(baseAbility)
+		mocks.getLessonVideoPlaybackResource.mockResolvedValue(null)
+		const textLesson = { ...lesson, fields: { ...lesson.fields,
+			body: '## FAQ\nAnswer', description: 'Questions', optional: true,
+			courseSync: { lessonType: 'text', optionalOwnedBySync: true, videos: [] },
+		} } as unknown as Lesson
+		await resolveServerTree(await LessonPage({ lesson: textLesson, workshop,
+			params: { module: 'workshop-1', lesson: 'lesson-1' }, searchParams: {} }))
+		expect(mocks.source.mock.calls[0]![0].video).toBeNull()
+		expect(mocks.getSignedLessonPlayback).not.toHaveBeenCalled()
+		expect(mocks.compileMDX.mock.calls[0]?.[0]).toContain('## FAQ')
+		expect(mocks.controls).toHaveBeenCalledOnce()
+	})
+
 	it('registers no video and loads no commerce when an authorized lesson has no playback', async () => {
 		mocks.getAbilityForResource.mockResolvedValue(baseAbility)
 		mocks.getLessonVideoPlaybackResource.mockResolvedValue(null)

@@ -20,6 +20,7 @@ vi.mock('./drovr-certificate-completion', () => ({
 import { checkSkillsWorkflowValuePathCertificateEligibility as check } from './value-path-certificates'
 const date = '2026-07-18T12:00:00.000Z'
 const email6 = 'ai-hero-skills-workflow.email-6'
+const teamEmail6 = 'ai-hero-skills-team-workflow.team-email-6'
 beforeEach(() => {
 	vi.resetAllMocks()
 	mocks.contact.mockResolvedValue({
@@ -64,7 +65,44 @@ describe('shared certificate eligibility', () => {
 			completedAt: new Date(date),
 			learnerName: 'learner@example.test',
 		})
-		expect(mocks.delivery).toHaveBeenCalledWith('test-contact')
+		expect(mocks.delivery).toHaveBeenCalledWith('test-contact', email6)
+		expect(mocks.delivery).toHaveBeenCalledTimes(1)
+	})
+	it('grants on a delivered team lesson 7 when individual lesson 7 is not delivered', async () => {
+		const teamDate = '2026-11-01T12:00:00.000Z'
+		mocks.delivery.mockImplementation(async (_contactId, email) =>
+			email === teamEmail6
+				? { status: 'completed', completedAt: new Date(teamDate) }
+				: { status: 'not-completed' },
+		)
+		expect(await check({ contactId: 'test-contact' })).toMatchObject({
+			eligible: true,
+			completedAt: new Date(teamDate),
+		})
+		expect(mocks.delivery.mock.calls).toEqual([
+			['test-contact', email6],
+			['test-contact', teamEmail6],
+		])
+	})
+	it('keeps not-complete when the team read is unavailable', async () => {
+		// drovr answers 400 for team ids until its /email-delivery accepts them.
+		mocks.delivery.mockImplementation(async (_contactId, email) =>
+			email === teamEmail6
+				? { status: 'unavailable' }
+				: { status: 'not-completed' },
+		)
+		expect(await check({ contactId: 'test-contact' })).toMatchObject({
+			eligible: false,
+			reason: 'value-path-not-complete',
+		})
+	})
+	it('does not read the team track when the individual read is unavailable', async () => {
+		mocks.delivery.mockResolvedValue({ status: 'unavailable' })
+		expect(await check({ contactId: 'test-contact' })).toMatchObject({
+			eligible: false,
+			reason: 'completion-evidence-unavailable',
+		})
+		expect(mocks.delivery).toHaveBeenCalledTimes(1)
 	})
 	it.each([
 		{
@@ -109,7 +147,10 @@ describe('shared certificate eligibility', () => {
 				eligible: false,
 				reason: 'value-path-not-complete',
 			})
-			expect(mocks.delivery).toHaveBeenCalledTimes(1)
+			expect(mocks.delivery.mock.calls).toEqual([
+				['test-contact', email6],
+				['test-contact', teamEmail6],
+			])
 		},
 	)
 	it('does not use subscription or ownership as completion', async () => {

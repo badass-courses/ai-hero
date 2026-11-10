@@ -337,7 +337,8 @@ export const COURSES_CATALOG = {
 			href: '/workshops/ai-sdk-v6-crash-course',
 			description:
 				"Ship your first production agent with Vercel's AI SDK. 94 videos, 59 exercises, 10 modules.",
-			badge: 'Available now',
+			// Retired and free to everyone (`retired-products`).
+			badge: 'Free',
 			badgeTone: 'neutral',
 			image:
 				'https://res.cloudinary.com/total-typescript/image/upload/v1769629206/v6imageforproduct.png',

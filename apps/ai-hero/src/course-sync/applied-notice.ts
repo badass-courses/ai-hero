@@ -26,6 +26,7 @@ import { COURSE_SYNC_AUTHOR_NAME, narrateCourseSyncApply } from './narrate'
 import { summarizeCourseSyncPlanChanges } from './persistence-invariants'
 import { getCourseSyncRunBinding } from './run-binding'
 import { undrawnImagesInPlan } from './undrawn-images'
+import { sendThreadedCourseSyncSlackPayload } from './slack-thread-persistence'
 
 export type CourseSyncAppliedNotification = Extract<
 	CourseSyncNotification,
@@ -40,6 +41,7 @@ export type CourseSyncAppliedNotification = Extract<
  */
 export async function sendCourseSyncSlackPayload(
 	payload: CourseSyncSlackNotificationPayload,
+	controlPlaneRunId?: string,
 ): Promise<void> {
 	const channel =
 		env.COURSE_SYNC_SLACK_CHANNEL_ID ?? slackProvider.defaultChannelId
@@ -50,6 +52,7 @@ export async function sendCourseSyncSlackPayload(
 			503,
 		)
 	}
+	if (controlPlaneRunId) return sendThreadedCourseSyncSlackPayload(payload, controlPlaneRunId, channel)
 	const response = await slackProvider.sendNotification({
 		channel,
 		...payload,
@@ -212,6 +215,7 @@ export async function deliverCourseSyncAppliedNotice(
 				narration,
 				plan ? undrawnImagesInPlan(plan) : [],
 			),
+			input.controlPlaneRunId,
 		)
 	} catch (error) {
 		await failCourseSyncReviewNotification({

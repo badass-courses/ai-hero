@@ -76,12 +76,41 @@ integration('contact sync reconcile reads on MySQL', () => {
 		occurredAt: string,
 		eventType = 'skills-newsletter.subscribed',
 		createdAt = occurredAt,
+		payloadSummary = '{}',
 	) =>
 		pool.query(
 			`INSERT INTO AI_ContactEvent (id, contactId, providerIdentityId, provider, providerEventId, providerReference, eventType, semanticIdempotencyKey, privacyLevel, identityEvidence, payloadSummary, schemaVersion, occurredAt, createdAt)
-			 VALUES (?, ?, 'pi', 'kit', ?, 'ref', ?, ?, 'internal', '{}', '{}', 1, ?, ?)`,
-			[id, contactId, id, eventType, `key:${id}`, occurredAt, createdAt],
+			 VALUES (?, ?, 'pi', 'kit', ?, 'ref', ?, ?, 'internal', '{}', ?, 1, ?, ?)`,
+			[id, contactId, id, eventType, `key:${id}`, payloadSummary, occurredAt, createdAt],
 		)
+
+	it('never scans a stop the drovr suppression pull wrote: the loop guard', async () => {
+		const keywords = (source: string) =>
+			JSON.stringify({
+				summary: 'opt-out',
+				keywords: ['contact-unsubscribed', 'preference-newsletter', source],
+			})
+		const at = '2026-11-08 02:15:10'
+		await contactEvent('drovr', 'c1', at, 'contact.unsubscribed', at, keywords('source-drovr-suppression:unsubscribed'))
+		await contactEvent('kit', 'c2', at, 'contact.unsubscribed', at, keywords('source-kit-webhook:subscriber.unsubscribed'))
+		await contactEvent('bare', 'c3', at, 'contact.unsubscribed', at, '{}')
+		// Another type carrying the keyword is still a change.
+		await contactEvent('other', 'c4', at, 'skills-newsletter.subscribed', at, keywords('source-drovr-suppression:unsubscribed'))
+		const window = {
+			after: '2026-11-08T02:00:00.000Z',
+			through: '2026-11-08T03:00:00.000Z',
+			limit: 10,
+		}
+		const fresh = await store.scanChanges({ scope: 'fresh', ...window })
+		expect(fresh.map((row) => row.id).sort()).toEqual(['bare', 'kit', 'other'])
+		const late = await store.scanChanges({
+			scope: 'overlap',
+			...window,
+			writtenAfter: '2026-11-08T02:00:00.000Z',
+			lateCursor: {},
+		})
+		expect(late.map((row) => row.id).sort()).toEqual(['bare', 'kit', 'other'])
+	})
 
 	it('scans every event type after the start and through the end, in (occurredAt, id) order, one past the limit', async () => {
 		await contactEvent('e0', 'c0', '2026-09-26 16:40:00') // == after: excluded

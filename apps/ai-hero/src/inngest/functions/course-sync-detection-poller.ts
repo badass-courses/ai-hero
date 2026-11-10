@@ -8,6 +8,7 @@ import {
 	completeCourseSyncReviewNotification,
 	failCourseSyncReviewNotification,
 	getCourseSyncPollState,
+	getCourseSyncReviewNotificationDeliveredAt,
 	getCourseSyncRevisionHead,
 	saveCourseSyncPollState,
 } from '@/course-sync/detection-persistence'
@@ -36,9 +37,10 @@ import { log } from '@/server/logger'
 import { readDropboxCourseManifest } from '@/lib/dropbox-course-sync'
 
 import { COURSE_SYNC_POLL_REQUESTED_EVENT } from '../events/course-sync-poll'
+import { COURSE_SYNC_STALE_PREVIEW_EVENT } from '../events/course-sync-stale-preview'
 import { inngest } from '../inngest.server'
 
-async function notifyCourseSync(notification: CourseSyncNotification) {
+export async function notifyCourseSync(notification: CourseSyncNotification) {
 	// Applied is a state, not an event of this poller. Every caller that moves a
 	// run to applied delivers through the same claimed path, so an operator
 	// apply and a poller apply produce one identical notice.
@@ -54,6 +56,7 @@ async function notifyCourseSync(notification: CourseSyncNotification) {
 	// messages are read under pressure and must not vary.
 	await sendCourseSyncSlackPayload(
 		buildCourseSyncNotificationPayload(notification, null),
+		notification.controlPlaneRunId ?? undefined,
 	)
 }
 
@@ -290,16 +293,24 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 				runTypedStep('evaluate-bounded-auto-apply', () =>
 					courseSyncControlPlane.evaluateBoundedAutoApply(controlPlaneRunId),
 				),
+			getReviewNotificationDeliveredAt: (input) => getCourseSyncReviewNotificationDeliveredAt(input),
+			scheduleStaleReminder: async (input) => {
+				await step.sendEvent('schedule-course-sync-stale-preview', {
+					id: `course-sync-stale:${input.controlPlaneRunId}:${input.planSha256}`,
+					name: COURSE_SYNC_STALE_PREVIEW_EVENT,
+					data: input,
+				})
+			},
 			claimReviewNotification: (input) =>
-				runTypedStep('claim-course-sync-review-notification', () =>
+				runTypedStep(input.kind === 'stale-preview' ? 'claim-course-sync-stale-notification' : 'claim-course-sync-review-notification', () =>
 					claimCourseSyncReviewNotification(input),
 				),
 			completeReviewNotification: (input) =>
-				runTypedStep('complete-course-sync-review-notification', () =>
+				runTypedStep(input.kind === 'stale-preview' ? 'complete-course-sync-stale-notification' : 'complete-course-sync-review-notification', () =>
 					completeCourseSyncReviewNotification(input),
 				),
 			failReviewNotification: (input) =>
-				runTypedStep('fail-course-sync-review-notification', () =>
+				runTypedStep(input.kind === 'stale-preview' ? 'fail-course-sync-stale-notification' : 'fail-course-sync-review-notification', () =>
 					failCourseSyncReviewNotification(input),
 				),
 			apply: (input) =>
@@ -311,7 +322,7 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 					courseSyncControlPlane.verifyApplied(input),
 				),
 			notify: async (notification) => {
-				await runTypedStep('notify-course-sync-completion', () =>
+				await runTypedStep(notification.kind === 'review' && notification.minutesWaiting !== undefined ? 'notify-course-sync-stale-preview' : 'notify-course-sync-completion', () =>
 					notifyCourseSync(notification),
 				)
 			},

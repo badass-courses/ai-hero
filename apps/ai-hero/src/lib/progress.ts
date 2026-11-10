@@ -1,7 +1,7 @@
 'use server'
 
 import { cookies, headers } from 'next/headers'
-import { courseBuilderAdapter, db } from '@/db'
+import { db } from '@/db'
 import { resourceProgress } from '@/db/schema'
 import { LESSON_COMPLETED_EVENT } from '@/inngest/events/lesson-completed'
 import { sendWithRetry } from '@/inngest/send-with-retry'
@@ -10,13 +10,12 @@ import { SubscriberSchema } from '@/schemas/subscriber'
 import { getServerAuthSession } from '@/server/auth'
 import { getLogContext, log } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 
-import {
-	resourceProgressSchema,
-	type ModuleProgress,
-} from '@coursebuilder/core/schemas'
+import { resourceProgressSchema } from '@coursebuilder/core/schemas'
 
+import { getRequiredModuleProgressForUser } from './required-module-progress-query'
+import type { RequiredModuleProgress } from './required-module-progress'
 import {
 	mergePlaybackPositionFields,
 	normalizePlaybackPosition,
@@ -216,37 +215,23 @@ export async function setPlaybackPositionForResource({
 		const user = await getUser()
 		if (!user) return null
 
-		const existingProgress = await db.query.resourceProgress.findFirst({
-			where: and(
-				eq(resourceProgress.resourceId, resourceId),
-				eq(resourceProgress.userId, user.id),
-			),
-		})
 		const now = new Date()
-		const fields = mergePlaybackPositionFields(
-			existingProgress?.fields,
-			normalizedPosition,
-		)
-
-		if (existingProgress) {
-			await db
-				.update(resourceProgress)
-				.set({ fields, updatedAt: now })
-				.where(
-					and(
-						eq(resourceProgress.resourceId, resourceId),
-						eq(resourceProgress.userId, user.id),
-					),
-				)
-		} else {
-			await db.insert(resourceProgress).values({
+		await db
+			.insert(resourceProgress)
+			.values({
 				userId: user.id,
 				resourceId,
-				fields,
+				fields: mergePlaybackPositionFields(null, normalizedPosition),
 				completedAt: null,
 				updatedAt: now,
 			})
-		}
+			.onDuplicateKeyUpdate({
+				set: {
+					// Patch only the position, preserving completion and other fields.
+					fields: sql`JSON_SET(COALESCE(${resourceProgress.fields}, JSON_OBJECT()), '$.playbackPositionSeconds', ${normalizedPosition})`,
+					updatedAt: now,
+				},
+			})
 
 		return normalizedPosition
 	} catch (error) {
@@ -279,7 +264,7 @@ export async function sendInngestProgressEvent({
 
 export async function getModuleProgressForUser(
 	moduleIdOrSlug: string,
-): Promise<ModuleProgress | null> {
+): Promise<RequiredModuleProgress | null> {
 	return measureIfSlow({
 		event: 'perf.module-progress.fetch.slow',
 		spanName: 'module-progress.fetch',
@@ -289,7 +274,7 @@ export async function getModuleProgressForUser(
 			const { session } = await getServerAuthSession()
 			if (session?.user) {
 				const moduleProgress =
-					await courseBuilderAdapter.getModuleProgressForUser(
+					await getRequiredModuleProgressForUser(
 						session.user.id,
 						moduleIdOrSlug,
 					)
@@ -358,7 +343,7 @@ export async function getModuleProgressForUser(
 				}
 			}
 			const moduleProgress =
-				await courseBuilderAdapter.getModuleProgressForUser(
+				await getRequiredModuleProgressForUser(
 					subscriber.email_address,
 					moduleIdOrSlug,
 				)

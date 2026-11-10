@@ -52,6 +52,57 @@ const singleStatus = {
 		context: { broadcastId: ref.broadcastId, tenantId: 'org-aihero' },
 	},
 }
+const sourced = { asOf: '2026-11-01T05:59:00Z', source: 'synthetic-source' }
+const knownEngagement = {
+	status: 'known',
+	broadcastId: ref.broadcastId,
+	kind: 'single',
+	messageId: 'synthetic-message',
+	versions: ['v1'],
+	shards: 1,
+	startAt: ref.sentAt,
+	mail: { ...sourced, status: 'known', captured: 12, sent: 7, remaining: 2 },
+	delivery: {
+		...sourced,
+		status: 'known',
+		delivered: 6,
+		bounced: { hard: 1, soft: 0 },
+		complaints: 0,
+	},
+	opens: {
+		...sourced,
+		status: 'known',
+		any: 5,
+		people: 3,
+		machineOnly: 2,
+		byClass: { 'apple-mpp': 2, 'proxy-cache': 1, scanner: 0, unconfirmed: 2 },
+	},
+	clicks: {
+		...sourced,
+		status: 'known',
+		clicks: 4,
+		people: 2,
+		links: [
+			{ label: 'example.test/a', version: 'v1', people: 2, clicks: 3 },
+			{ label: 'example.test/b', version: 'v1', people: 1, clicks: 1 },
+		],
+	},
+	unsubscribes: { ...sourced, status: 'known', count: 1 },
+	rates: {
+		basis: 'delivered',
+		denominator: 6,
+		openRate: 0.5,
+		anyOpenRate: 5 / 6,
+		clickRate: 2 / 6,
+		clickToOpenRate: 2 / 3,
+	},
+}
+const engagementBody = {
+	asOf: '2026-11-01T06:00:00Z',
+	tenantId: 'org-aihero',
+	broadcasts: [knownEngagement],
+	nextMoves: [],
+}
 const response = (body: unknown, code = 200) =>
 	new Response(JSON.stringify(body), { status: code })
 const env = {
@@ -114,6 +165,14 @@ function fakeDrovr() {
 					broadcastId: ref.broadcastId,
 				})
 				return response({ broadcast: singleStatus })
+			}
+			if (String(url).endsWith('/broadcast_engagement')) {
+				expect(init?.method).toBe('POST')
+				expect(JSON.parse(String(init?.body))).toEqual({
+					tenantId: 'org-aihero',
+					broadcastIds: [ref.broadcastId],
+				})
+				return response(engagementBody)
 			}
 			if (String(url).endsWith('/receipts?limit=200')) {
 				expect(init?.method).toBe('GET')
@@ -188,7 +247,7 @@ describe('newsletter report readers with Kit unreachable', () => {
 						status: 'available',
 						data: { data: historic.data, asOf: historic.asOf },
 					},
-					engagementAndRevenue: { status: 'unavailable' },
+					attributedRevenue: { status: 'unavailable' },
 				},
 			})
 			const rendered = JSON.stringify(result)
@@ -198,7 +257,7 @@ describe('newsletter report readers with Kit unreachable', () => {
 			expect(rendered).not.toContain('synthetic-key')
 			expect(kit.configured).not.toHaveBeenCalled()
 			expect(kit.broadcasts).not.toHaveBeenCalled()
-			expect(fetcher).toHaveBeenCalledTimes(2)
+			expect(fetcher).toHaveBeenCalledTimes(3)
 		},
 	)
 
@@ -354,7 +413,7 @@ describe('drovr report evidence and unavailable states', () => {
 			rows: [{ result: { status: 'available' } }],
 		})
 		expect(report.receiptSample.status).toBe('available')
-		expect(fetcher).toHaveBeenCalledTimes(2)
+		expect(fetcher).toHaveBeenCalledTimes(3)
 	})
 	it('prefers an explicit base URL and trims configuration through the shared parser', async () => {
 		const fetcher = fakeDrovr()
@@ -371,7 +430,7 @@ describe('drovr report evidence and unavailable states', () => {
 			fetcher,
 		})
 		expect(report.receiptSample.status).toBe('available')
-		expect(fetcher).toHaveBeenCalledTimes(2)
+		expect(fetcher).toHaveBeenCalledTimes(3)
 	})
 	it.each([undefined, 'not-a-url'])(
 		'absent or invalid fallback %j stays unavailable without a network call',
@@ -667,4 +726,201 @@ describe('drovr report evidence and unavailable states', () => {
 			expect(report.historical.status).toBe('unavailable')
 		},
 	)
+})
+
+describe('drovr broadcast engagement', () => {
+	const readRow = async (fetcher: ReturnType<typeof fakeDrovr>) => {
+		const report = await getOwnedNewsletterReport({
+			env,
+			range: 'all',
+			mode: 'standard',
+			now,
+			fetcher,
+		})
+		if (report.broadcasts.status !== 'available')
+			throw new Error('expected broadcasts')
+		return report.broadcasts.rows[0]!
+	}
+	const withEngagement = (body: unknown, code = 200) => {
+		const fetcher = fakeDrovr()
+		const fake = fetcher.getMockImplementation()!
+		fetcher.mockImplementation(async (url, init) =>
+			String(url).endsWith('/broadcast_engagement')
+				? response(body, code)
+				: fake(url, init),
+		)
+		return fetcher
+	}
+
+	it('maps a known row onto the manifest row beside its status', async () => {
+		const row = await readRow(fakeDrovr())
+		expect(row.result).toMatchObject({ status: 'available', data: status })
+		expect(row.engagement).toEqual({
+			status: 'available',
+			asOf: engagementBody.asOf,
+			rates: {
+				basis: 'delivered',
+				basisSource: null,
+				denominator: 6,
+				openRate: 0.5,
+				anyOpenRateIncludingMachineOpens: 5 / 6,
+				clickRate: 2 / 6,
+				clickToOpenRate: 2 / 3,
+			},
+			opens: {
+				...sourced,
+				status: 'known',
+				emailsOpened: 3,
+				anyOpenedIncludingMachineOpens: 5,
+				machineOnly: 2,
+				byClass: knownEngagement.opens.byClass,
+			},
+			clicks: {
+				...sourced,
+				status: 'known',
+				totalClicks: 4,
+				uniqueClickers: 2,
+				links: knownEngagement.clicks.links,
+			},
+			mail: knownEngagement.mail,
+			delivery: knownEngagement.delivery,
+			unsubscribes: knownEngagement.unsubscribes,
+		})
+	})
+
+	it('keeps a registered basis and the gap drovr names for it', async () => {
+		const gap =
+			'registered 9 vs sent 7, so another send of these versions is in the opens and clicks'
+		const row = await readRow(
+			withEngagement({
+				...engagementBody,
+				broadcasts: [
+					{
+						...knownEngagement,
+						rates: {
+							basis: 'registered',
+							denominator: 9,
+							openRate: 3 / 9,
+							anyOpenRate: 5 / 9,
+							clickRate: 2 / 9,
+							clickToOpenRate: 2 / 3,
+							source: gap,
+						},
+					},
+				],
+			}),
+		)
+		expect(row.engagement).toMatchObject({
+			status: 'available',
+			rates: {
+				basis: 'registered',
+				basisSource: gap,
+				denominator: 9,
+				openRate: 3 / 9,
+			},
+		})
+	})
+
+	it('keeps unknown sections unknown with their reason, never zero', async () => {
+		const unknown = (reason: string) => ({
+			asOf: null,
+			source: 'synthetic-source',
+			status: 'unknown',
+			reason,
+		})
+		const row = await readRow(
+			withEngagement({
+				...engagementBody,
+				broadcasts: [
+					{
+						...knownEngagement,
+						opens: unknown('index pending'),
+						delivery: unknown('delivery not read yet'),
+						unsubscribes: unknown('not attributed yet'),
+						rates: {
+							basis: 'sent',
+							denominator: 7,
+							openRate: null,
+							anyOpenRate: null,
+							clickRate: 2 / 7,
+							clickToOpenRate: null,
+						},
+					},
+				],
+			}),
+		)
+		expect(row.engagement).toMatchObject({
+			status: 'available',
+			rates: { basis: 'sent', openRate: null, clickToOpenRate: null },
+			opens: { status: 'unknown', reason: 'index pending' },
+			delivery: { status: 'unknown', reason: 'delivery not read yet' },
+			unsubscribes: { status: 'unknown', reason: 'not attributed yet' },
+			clicks: { status: 'known', totalClicks: 4 },
+		})
+		expect(row.engagement).not.toHaveProperty('opens.emailsOpened')
+	})
+
+	it('an unknown drovr row reads unavailable with its reason', async () => {
+		const row = await readRow(
+			withEngagement({
+				...engagementBody,
+				broadcasts: [
+					{
+						asOf: null,
+						source: 'synthetic-source',
+						status: 'unknown',
+						reason: 'shard unreadable',
+						broadcastId: ref.broadcastId,
+					},
+				],
+			}),
+		)
+		expect(row.engagement).toEqual({
+			status: 'unavailable',
+			reason: 'shard unreadable',
+		})
+		expect(row.result.status).toBe('available')
+	})
+
+	it.each([
+		['HTTP 503', () => withEngagement({}, 503)],
+		['a malformed body', () => withEngagement({ broadcasts: 'nope' })],
+		[
+			'a foreign tenant',
+			() => withEngagement({ ...engagementBody, tenantId: 'other-tenant' }),
+		],
+		[
+			'a missing row',
+			() => withEngagement({ ...engagementBody, broadcasts: [] }),
+		],
+		[
+			'a malformed row',
+			() =>
+				withEngagement({
+					...engagementBody,
+					broadcasts: [{ ...knownEngagement, opens: { status: 'known' } }],
+				}),
+		],
+	])('%s leaves the status row intact', async (_case, make) => {
+		const row = await readRow(make())
+		expect(row.result).toMatchObject({ status: 'available', data: status })
+		expect(row.engagement.status).toBe('unavailable')
+		expect(JSON.stringify(row.engagement)).not.toContain('"emailsOpened"')
+	})
+
+	it('a thrown engagement read leaves the status row intact', async () => {
+		const fetcher = fakeDrovr()
+		const fake = fetcher.getMockImplementation()!
+		fetcher.mockImplementation(async (url, init) => {
+			if (String(url).endsWith('/broadcast_engagement'))
+				throw new Error('private-network-details')
+			return fake(url, init)
+		})
+		const row = await readRow(fetcher)
+		expect(row.result.status).toBe('available')
+		expect(row.engagement).toEqual({
+			status: 'unavailable',
+			reason: 'drovr reporting read failed',
+		})
+	})
 })

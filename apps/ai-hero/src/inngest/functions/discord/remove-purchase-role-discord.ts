@@ -2,6 +2,7 @@ import { db } from '@/db'
 import { entitlements, entitlementTypes } from '@/db/schema'
 import { env } from '@/env.mjs'
 import { inngest } from '@/inngest/inngest.server'
+import { EARLY_ACCESS_REVOKE_EVENT } from '@/inngest/events/early-access'
 import { getDiscordAccount } from '@/lib/discord-query'
 import { removeDiscordRole } from '@/lib/discord-utils'
 import { EntitlementSourceType } from '@/lib/entitlements'
@@ -30,15 +31,32 @@ export const removePurchaseRoleDiscordConfig = {
 
 export const removePurchaseRoleDiscord = inngest.createFunction(
 	removePurchaseRoleDiscordConfig,
-	{
-		event: PURCHASE_STATUS_UPDATED_EVENT,
-		// Disputes remove their own Discord roles (purchase-dispute-access) so a
-		// won dispute can restore exactly the roles it took.
-		if: 'event.data.status == "Refunded" || event.data.status == "Banned"',
-	},
+	[
+		{
+			event: PURCHASE_STATUS_UPDATED_EVENT,
+			// Disputes remove their own roles so a win can restore them.
+			if: 'event.data.status == "Refunded" || event.data.status == "Banned"',
+		},
+		{ event: EARLY_ACCESS_REVOKE_EVENT },
+	],
 	async ({ event, step, db: adapter }) => {
 		const purchase = await step.run('get purchase', async () => {
-			return adapter.getPurchaseForStripeCharge(event.data.stripeChargeId)
+			const current =
+				event.name === EARLY_ACCESS_REVOKE_EVENT
+					? await adapter.getPurchase(event.data.purchaseId)
+					: await adapter.getPurchaseForStripeCharge(
+							'stripeChargeId' in event.data ? event.data.stripeChargeId : '',
+						)
+			if (
+				event.name === EARLY_ACCESS_REVOKE_EVENT &&
+				(!current ||
+					current.status !== 'Refunded' ||
+					current.fields?.earlyAccess !== true ||
+					current.fields?.invoiceId !== event.data.invoiceId ||
+					current.merchantChargeId)
+			)
+				throw new Error('Early-access revoke identity/status mismatch')
+			return current
 		})
 
 		if (!purchase || !purchase.userId) {
@@ -103,7 +121,10 @@ export const removePurchaseRoleDiscord = inngest.createFunction(
 						eq(entitlements.userId, user.id),
 						eq(entitlements.sourceType, EntitlementSourceType.PURCHASE),
 						eq(entitlements.sourceId, purchase.id),
-						isNull(entitlements.deletedAt),
+						// Refund cleanup may have already soft-deleted these rows.
+						event.name === EARLY_ACCESS_REVOKE_EVENT
+							? undefined
+							: isNull(entitlements.deletedAt),
 					),
 				})
 

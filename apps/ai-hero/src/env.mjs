@@ -189,6 +189,7 @@ export const env = createEnv({
 		AIH_WAITLIST_OFF_KIT_ENABLED: z.string().optional(),
 		// Default off; retain contact reads until /births rollout proof.
 		AIH_DROVR_BIRTH_FEED_ENABLED: z.string().optional(),
+		AIH_DROVR_SUPPRESSION_PULL_ENABLED: z.string().optional(),
 		// Default off: public subscriber count from drovr's census, not Kit.
 		AIH_SUBSCRIBER_COUNT_OWNED_ENABLED: z.string().optional(),
 		// Default off. `on` records included-product grants for drovr as
@@ -378,6 +379,8 @@ export const env = createEnv({
 		AIH_GATED_ASKS_OFF_KIT_ENABLED: process.env.AIH_GATED_ASKS_OFF_KIT_ENABLED,
 		AIH_WAITLIST_OFF_KIT_ENABLED: process.env.AIH_WAITLIST_OFF_KIT_ENABLED,
 		AIH_DROVR_BIRTH_FEED_ENABLED: process.env.AIH_DROVR_BIRTH_FEED_ENABLED,
+		AIH_DROVR_SUPPRESSION_PULL_ENABLED:
+			process.env.AIH_DROVR_SUPPRESSION_PULL_ENABLED,
 		AIH_SUBSCRIBER_COUNT_OWNED_ENABLED:
 			process.env.AIH_SUBSCRIBER_COUNT_OWNED_ENABLED,
 		AIH_ENTITLEMENT_EVENTS_ENABLED: process.env.AIH_ENTITLEMENT_EVENTS_ENABLED,

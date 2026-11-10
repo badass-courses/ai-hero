@@ -2,7 +2,10 @@ import { db } from '@/db'
 import { contact, providerIdentity, sideEffectIntent } from '@/db/schema'
 import { and, eq } from 'drizzle-orm'
 
-import { readDrovrCertificateCompletion } from './drovr-certificate-completion'
+import {
+	readDrovrCertificateCompletion,
+	type DrovrCertificateCompletion,
+} from './drovr-certificate-completion'
 import { valuePathIntentCompletedAt } from './value-path-completion'
 
 export const SKILLS_WORKFLOW_CERTIFICATE_RESOURCE =
@@ -83,7 +86,7 @@ export async function checkSkillsWorkflowValuePathCertificateEligibility(input: 
 		}
 	}
 
-	const delivery = await readDrovrCertificateCompletion(resolvedContact.id)
+	const delivery = await readCertificateLessonDelivery(resolvedContact.id)
 	if (delivery.status === 'completed') {
 		return { ...learner, eligible: true, completedAt: delivery.completedAt }
 	}
@@ -95,6 +98,27 @@ export async function checkSkillsWorkflowValuePathCertificateEligibility(input: 
 				? 'completion-evidence-unavailable'
 				: 'value-path-not-complete',
 	}
+}
+
+/**
+ * Lesson 7 on either track earns the certificate. The team read runs only
+ * when the individual read says not completed, and an unavailable team read
+ * leaves that answer standing: unavailable evidence never becomes completion,
+ * and drovr's `/email-delivery` may not accept the team id yet.
+ */
+async function readCertificateLessonDelivery(
+	contactId: string,
+): Promise<DrovrCertificateCompletion> {
+	const individual = await readDrovrCertificateCompletion(
+		contactId,
+		'ai-hero-skills-workflow.email-6',
+	)
+	if (individual.status !== 'not-completed') return individual
+	const team = await readDrovrCertificateCompletion(
+		contactId,
+		'ai-hero-skills-team-workflow.team-email-6',
+	)
+	return team.status === 'completed' ? team : individual
 }
 
 export function isSkillsWorkflowCertificateResource(resourceIdOrSlug: string) {

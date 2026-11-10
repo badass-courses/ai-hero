@@ -716,7 +716,7 @@ Learners with an agent:
 		.map((tool) => tool.name)
 		.join(', ')}; prompt: start_lesson.
 - Guide, sign-in and study companion rules: ${normalizedBaseUrl}${DISCOVERY_SURFACES.learnerGuide}
-- Sign in as the learner: an MCP client with OAuth signs in on its own (protected resource metadata: ${normalizedBaseUrl}${LEARNER_OAUTH_METADATA_PATH}). Other agents and scripts: device flow (POST ${normalizedBaseUrl}/oauth/device/code, then POST ${normalizedBaseUrl}/oauth/token with scope=learner:read). Reads only what the learner can read in the browser.
+- Sign in as the learner: an MCP client with OAuth signs in on its own (protected resource metadata: ${normalizedBaseUrl}${LEARNER_OAUTH_METADATA_PATH}). Other agents and scripts: device flow (POST ${normalizedBaseUrl}/oauth/device/code, then POST ${normalizedBaseUrl}/oauth/token with device_code and scope=learner:read as application/x-www-form-urlencoded). Reads only what the learner can read in the browser.
 
 Agent tokens:
 - Full guide: ${normalizedBaseUrl}/api

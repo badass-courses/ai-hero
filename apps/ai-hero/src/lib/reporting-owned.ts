@@ -83,6 +83,124 @@ const ShardedStatus = Status.extend({
 	),
 })
 
+// Mirrors drovr's broadcast_engagement contract at the boundary. Every
+// section is known with its asOf and source, or unknown with a reason; an
+// unknown section is never a zero.
+const Sourced = { asOf: z.string().nullable(), source: z.string() }
+const UnknownSection = z.object({
+	...Sourced,
+	status: z.literal('unknown'),
+	reason: z.string(),
+})
+const known = <Shape extends z.ZodRawShape>(shape: Shape) =>
+	z.discriminatedUnion('status', [
+		z.object({ ...Sourced, ...shape, status: z.literal('known') }),
+		UnknownSection,
+	])
+const Rate = z.number().nonnegative().nullable()
+const EngagementRow = z.discriminatedUnion('status', [
+	z.object({
+		status: z.literal('known'),
+		broadcastId: z.string(),
+		mail: known({ captured: Count, remaining: Count, sent: Count }),
+		delivery: known({
+			bounced: z.object({ hard: Count, soft: Count }),
+			complaints: Count,
+			delivered: Count,
+		}),
+		opens: known({
+			any: Count,
+			machineOnly: Count,
+			people: Count,
+			byClass: z.object({
+				'apple-mpp': Count,
+				'proxy-cache': Count,
+				scanner: Count,
+				unconfirmed: Count,
+			}),
+		}),
+		clicks: known({
+			clicks: Count,
+			people: Count,
+			links: z.array(
+				z.object({
+					label: z.string(),
+					version: z.string(),
+					people: Count,
+					clicks: Count,
+				}),
+			),
+		}),
+		unsubscribes: known({ count: Count }),
+		rates: z.object({
+			basis: z.enum(['delivered', 'registered', 'sent']),
+			denominator: Count.nullable(),
+			source: z.string().optional(),
+			openRate: Rate,
+			anyOpenRate: Rate,
+			clickRate: Rate,
+			clickToOpenRate: Rate,
+		}),
+	}),
+	UnknownSection.extend({ broadcastId: z.string() }),
+])
+// Rows parse one by one, so one malformed row can't hide the others.
+const EngagementOutput = z.object({
+	asOf: z.string(),
+	tenantId: z.literal(TENANT),
+	broadcasts: z.array(z.unknown()),
+})
+
+/** Renames drovr's sections so a person open can't pass for any open. */
+function projectEngagement(
+	row: Extract<z.infer<typeof EngagementRow>, { status: 'known' }>,
+	asOf: string,
+) {
+	const { opens, clicks, rates } = row
+	return {
+		status: 'available' as const,
+		asOf,
+		rates: {
+			basis: rates.basis,
+			basisSource: rates.source ?? null,
+			denominator: rates.denominator,
+			openRate: rates.openRate,
+			anyOpenRateIncludingMachineOpens: rates.anyOpenRate,
+			clickRate: rates.clickRate,
+			clickToOpenRate: rates.clickToOpenRate,
+		},
+		opens:
+			opens.status === 'known'
+				? {
+						status: 'known' as const,
+						asOf: opens.asOf,
+						source: opens.source,
+						emailsOpened: opens.people,
+						anyOpenedIncludingMachineOpens: opens.any,
+						machineOnly: opens.machineOnly,
+						byClass: opens.byClass,
+					}
+				: opens,
+		clicks:
+			clicks.status === 'known'
+				? {
+						status: 'known' as const,
+						asOf: clicks.asOf,
+						source: clicks.source,
+						totalClicks: clicks.clicks,
+						uniqueClickers: clicks.people,
+						links: clicks.links,
+					}
+				: clicks,
+		mail: row.mail,
+		delivery: row.delivery,
+		unsubscribes: row.unsubscribes,
+	}
+}
+
+const ENGAGEMENT_LABEL =
+	'rows[].engagement comes from drovr broadcast_engagement, read separately from status. rates.openRate is person opens (opens.emailsOpened) over rates.denominator; rates.anyOpenRateIncludingMachineOpens also counts Apple Mail Privacy Protection prefetch and scanner loads, so it reads higher, close to Kit-style open rates. rates.basis is registered when another send of the same message version (another broadcast, a test or a rescue) is in the opens and clicks: the rates then divide by every contact the version was registered for, and rates.basisSource names the gap (registered against sent). Otherwise it is delivered when delivery is known, else actor-reported sent, which counts bounces as mailed. clickRate and clickToOpenRate use distinct person clickers (clicks.uniqueClickers); clicks.totalClicks counts repeats. clicks.links[] gives people and clicks per link target (host and path) per message version. Opens and clicks are counted per message version, so a version two broadcasts sent counts in both. A section with status unknown carries its reason and is never zero; a null rate means an input is unknown.'
+
 const unavailable = (reason: string) => ({
 	status: 'unavailable' as const,
 	reason,
@@ -263,8 +381,55 @@ export async function getOwnedNewsletterReport(args: {
 		const limit = Number.isFinite(args.limit)
 			? Math.max(0, Math.min(50, Math.floor(args.limit!)))
 			: 20
-		const rows = await Promise.all(
-			filtered.slice(0, limit).map(async (ref) => {
+		const selected = filtered.slice(0, limit)
+		const [engagementById, rows] = await Promise.all([
+			engagement(selected.map((ref) => ref.broadcastId)),
+			statuses(selected),
+		])
+		return {
+			status: 'available' as const,
+			scope: 'Explicitly configured broadcasts only, not all tenant sends',
+			matchedReferences: filtered.length,
+			truncated: filtered.length > rows.length,
+			engagementLabel: ENGAGEMENT_LABEL,
+			rows: rows.map((row) => ({
+				...row,
+				engagement: engagementById(row.broadcastId),
+			})),
+		}
+	}
+
+	/** One batched read; a failure marks engagement unavailable, never status. */
+	async function engagement(broadcastIds: string[]) {
+		if (broadcastIds.length === 0) return () => unavailable('Not requested')
+		const result = await read('/broadcast_engagement', EngagementOutput, {
+			tenantId: TENANT,
+			broadcastIds,
+		})
+		if (result.status === 'unavailable') return () => result
+		const byId = new Map<
+			string,
+			ReturnType<typeof projectEngagement> | ReturnType<typeof unavailable>
+		>()
+		for (const raw of result.data.broadcasts) {
+			const parsed = EngagementRow.safeParse(raw)
+			if (!parsed.success) continue
+			const row = parsed.data
+			byId.set(
+				row.broadcastId,
+				row.status === 'known'
+					? projectEngagement(row, result.data.asOf)
+					: unavailable(row.reason),
+			)
+		}
+		return (broadcastId: string) =>
+			byId.get(broadcastId) ??
+			unavailable('drovr engagement row is missing or invalid')
+	}
+
+	function statuses(selected: z.infer<typeof BroadcastRefs>) {
+		return Promise.all(
+			selected.map(async (ref) => {
 				const address = { tenantId: TENANT, broadcastId: ref.broadcastId }
 				if (ref.kind === 'sharded') {
 					const result = await read(
@@ -320,13 +485,6 @@ export async function getOwnedNewsletterReport(args: {
 				}
 			}),
 		)
-		return {
-			status: 'available' as const,
-			scope: 'Explicitly configured broadcasts only, not all tenant sends',
-			matchedReferences: filtered.length,
-			truncated: filtered.length > rows.length,
-			rows,
-		}
 	}
 
 	async function receiptSample() {
@@ -373,12 +531,12 @@ export async function getOwnedNewsletterReport(args: {
 		mode: args.mode,
 		broadcasts: current,
 		metricScope:
-			'Status counters are lifetime counters for each referenced send, not events in the requested period. Sent is actor-reported sent, not delivery, open or click evidence.',
+			'Status counters and engagement counts are lifetime counts for each referenced send, not events in the requested period. Sent is actor-reported sent, not delivery, open or click evidence.',
 		productAttribution: unavailable(
 			'drovr status does not expose product-level attribution; productId does not filter broadcast status',
 		),
-		engagementAndRevenue: unavailable(
-			'These reads do not expose opens, clicks, unsubscribes or attributed revenue',
+		attributedRevenue: unavailable(
+			'drovr reads do not expose attributed revenue; opens and clicks are on broadcasts.rows[].engagement',
 		),
 		receiptSample: {
 			label:

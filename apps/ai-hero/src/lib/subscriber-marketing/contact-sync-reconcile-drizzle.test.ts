@@ -49,7 +49,7 @@ describe('contact sync store late scan', () => {
 		})
 		const query = dialect.sqlToQuery(seen.where!)
 		expect(query.sql).toBe(
-			'(`AI_ContactEvent`.`occurredAt` > ? and `AI_ContactEvent`.`occurredAt` <= ? and `AI_ContactEvent`.`createdAt` >= ? and (`AI_ContactEvent`.`createdAt` > ? or (`AI_ContactEvent`.`createdAt` = ? and `AI_ContactEvent`.`id` > ?)))',
+			"(`AI_ContactEvent`.`occurredAt` > ? and `AI_ContactEvent`.`occurredAt` <= ? and `AI_ContactEvent`.`createdAt` >= ? and (`AI_ContactEvent`.`createdAt` > ? or (`AI_ContactEvent`.`createdAt` = ? and `AI_ContactEvent`.`id` > ?)) and not (`AI_ContactEvent`.`eventType` = 'contact.unsubscribed' and json_search(`AI_ContactEvent`.`payloadSummary`, 'one', 'source-drovr-suppression:%', null, '$.keywords') is not null))",
 		)
 		expect(query.params.slice(3)).toEqual([
 			expect.anything(),

@@ -278,6 +278,12 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 		return adoptions
 	}
 
+	readonly lessonProgressCounts = new Map<string, number>()
+
+	async getLessonProgressCounts(resourceIds: ReadonlyArray<string>) {
+		return new Map(resourceIds.map((id) => [id, this.lessonProgressCounts.get(id) ?? 0]))
+	}
+
 	async getTargetResources(resourceIds: ReadonlyArray<string>) {
 		return new Map(
 			resourceIds.flatMap((resourceId) => {

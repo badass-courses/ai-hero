@@ -792,6 +792,7 @@ describe('refund event boundary', () => {
 	it('registers both producers and filters status events to full refunds', () => {
 		expect(workflow.triggers).toEqual([
 			{ event: REFUND_PROCESSED_EVENT },
+			{ event: 'aihero/early-access.revoke' },
 			{
 				event: PURCHASE_STATUS_UPDATED_EVENT,
 				if: 'event.data.status == "Refunded"',

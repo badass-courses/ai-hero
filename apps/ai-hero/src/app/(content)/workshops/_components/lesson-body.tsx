@@ -1,6 +1,6 @@
 'use client'
 
-import { use } from 'react'
+import { use, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { PROSE_MEASURE } from '@/components/mdx/prose'
 import type { Lesson } from '@/lib/lessons'
@@ -66,10 +66,36 @@ export function LessonBody({
 		)
 	}
 
-	const { content } = use(mdxContentPromise)
+	return <ResolvedLessonBody mdxContentPromise={mdxContentPromise} />
+}
 
+function ResolvedLessonBody({
+	mdxContentPromise,
+}: {
+	mdxContentPromise: Promise<{ content: React.ReactNode }>
+}) {
+	const { content } = use(mdxContentPromise)
+	const ref = useRef<HTMLDivElement>(null)
+	useEffect(() => {
+		const scrollToHash = () => {
+			if (!window.location.hash) return
+			let id: string
+			try {
+				id = decodeURIComponent(window.location.hash.slice(1))
+			} catch {
+				return
+			}
+			const target = document.getElementById(id)
+			if (target && ref.current?.contains(target)) target.scrollIntoView()
+		}
+		scrollToHash()
+		window.addEventListener('hashchange', scrollToHash)
+		return () => window.removeEventListener('hashchange', scrollToHash)
+	}, [content])
 	return (
 		<div
+			ref={ref}
+			data-heading-scope
 			className={`prose-img:rounded-lg dark:prose-invert prose prose-a:text-primary lg:prose-pre:text-sm lg:prose-pre:leading-relaxed lg:prose-lg ${PROSE_MEASURE}`}
 		>
 			{content}
