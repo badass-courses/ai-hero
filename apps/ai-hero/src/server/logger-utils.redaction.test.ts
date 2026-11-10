@@ -36,6 +36,19 @@ describe('redactCredentials', () => {
 		expect(out).not.toContain('eyJ')
 	})
 
+	it('redacts URL token, OAuth code and email values echoed by HTTP errors', () => {
+		const message = 'fetch failed for https://www.aihero.dev/api/auth/callback/postmark?callbackUrl=%2Fwelcome&token=opaque-secret&email=test%2Btag%40example.com&code=oauth-secret#section'
+		expect(redactCredentials(message)).toBe(
+			'fetch failed for https://www.aihero.dev/api/auth/callback/postmark?callbackUrl=%2Fwelcome&token=[REDACTED]&email=[REDACTED]&code=[REDACTED]#section',
+		)
+		expect(redactCredentials('undici: /login/verify#TOKEN=fragment-secret&EMAIL=test@example.com')).toBe(
+			'undici: /login/verify#TOKEN=[REDACTED]&EMAIL=[REDACTED]',
+		)
+		expect(redactCredentials('code=secret token=secret email=test@example.com')).toBe(
+			'code=[REDACTED] token=[REDACTED] email=[REDACTED]',
+		)
+	})
+
 	it('leaves normal text, ids and dotted names alone', () => {
 		for (const text of [
 			'Connection refused at 10.0.0.1:3306',
@@ -75,6 +88,21 @@ describe('serializeError credential redaction', () => {
 		expect(nested?.message).toBe('Bearer [REDACTED]')
 		expect(json).not.toContain('eyJ')
 		expect(json).not.toContain('aggregate-secret')
+	})
+
+	it('redacts full URLs in error messages, stacks, causes and string throws', () => {
+		const url = 'https://www.aihero.dev/callback?token=opaque-secret&email=test%40example.com&code=oauth-secret'
+		const error = new Error(`fetch failed ${url}`, { cause: new Error(`undici ${url}`) })
+		for (const value of [error, `undici ${url}`, { message: url, stack: url }]) {
+			const result = JSON.stringify(serializeError(value))
+			expect(result).not.toContain('opaque-secret')
+			expect(result).not.toContain('test%40example.com')
+			expect(result).not.toContain('oauth-secret')
+			expect(result).toContain('token=[REDACTED]')
+		}
+		expect(redactedErrorMessage(error)).toBe(
+			'fetch failed https://www.aihero.dev/callback?token=[REDACTED]&email=[REDACTED]&code=[REDACTED]',
+		)
 	})
 
 	it('redacts non-Error throws', () => {

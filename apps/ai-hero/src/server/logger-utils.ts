@@ -18,18 +18,23 @@ export interface SerializedError {
 
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi
 const JWT_PATTERN = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g
+// HTTP clients can echo whole callback URLs, including encoded email values.
+// Cover query strings and fragments, without depending on a valid URL wrapper.
+const AUTH_URL_VALUE_PATTERN = /(\b(?:token|code|email)=)[^\s&#"'<>]*/gi
 
 /**
  * Replaces credential-shaped text with a placeholder, leaving the rest intact:
  * `Bearer <token>` becomes `Bearer [REDACTED]` and a JWT (three base64url
  * segments, the first starting `eyJ`) becomes `[REDACTED_JWT]`. Error text from
  * upstream libraries and HTTP clients can echo an Authorization header or a
- * token verbatim, so anything logged from an error passes through here.
+ * full URL. Query and fragment token, code and email values are also removed,
+ * so anything logged from an error passes through here.
  */
 export function redactCredentials(text: string): string {
 	return text
 		.replace(BEARER_PATTERN, 'Bearer [REDACTED]')
 		.replace(JWT_PATTERN, '[REDACTED_JWT]')
+		.replace(AUTH_URL_VALUE_PATTERN, '$1[REDACTED]')
 }
 
 /** The message of a caught value with credential text redacted. */
