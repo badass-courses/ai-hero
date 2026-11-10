@@ -14,6 +14,7 @@ vi.mock('./drizzle-capture-repository', () => ({
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
 
 import {
+	fanOutOwnedEventsLive,
 	resolveDoiAnswerForwardContactIds,
 	resolveOwnedContactIds,
 	type DoiAnswerForwardReads,
@@ -128,6 +129,53 @@ describe('resolveDoiAnswerForwardContactIds', () => {
 			'no-doi',
 			expect.anything(),
 		)
+	})
+
+	describe('the outbox replay fan-out (fanOutOwnedEventsLive)', () => {
+		const ownedStop = kitStop('owned') as { idempotencyKey: string }
+		const doiAnswer = answer('doi') as { idempotencyKey: string }
+
+		it('gives a qualifying DOI answer exactly one owner copy, and still copies owned facts', async () => {
+			const out = await fanOutOwnedEventsLive([ownedStop, doiAnswer] as never, {
+				resolveOwners: async () => ['owned'],
+				resolveDoiAnswerForwards: async () => ['doi'],
+			})
+			expect(
+				out.map((event) => `${event.tenantId}:${event.idempotencyKey}`),
+			).toEqual([
+				`org-aihero-shadow:${ownedStop.idempotencyKey}`,
+				`org-aihero-shadow:${doiAnswer.idempotencyKey}`,
+				`org-aihero:owner:${ownedStop.idempotencyKey}`,
+				`org-aihero:owner:${doiAnswer.idempotencyKey}`,
+			])
+		})
+
+		it('leaves the batch as before when the DOI read rejects, owned copies included', async () => {
+			const out = await fanOutOwnedEventsLive([ownedStop, doiAnswer] as never, {
+				resolveOwners: async () => ['owned'],
+				resolveDoiAnswerForwards: async () => {
+					throw new Error('Vitess: connection reset')
+				},
+			})
+			expect(
+				out.map((event) => `${event.tenantId}:${event.idempotencyKey}`),
+			).toEqual([
+				`org-aihero-shadow:${ownedStop.idempotencyKey}`,
+				`org-aihero-shadow:${doiAnswer.idempotencyKey}`,
+				`org-aihero:owner:${ownedStop.idempotencyKey}`,
+			])
+		})
+
+		it('still throws when the owner read fails, so the replay retries as before', async () => {
+			await expect(
+				fanOutOwnedEventsLive([ownedStop] as never, {
+					resolveOwners: async () => {
+						throw new Error('db down')
+					},
+					resolveDoiAnswerForwards: async () => [],
+				}),
+			).rejects.toThrow('db down')
+		})
 	})
 
 	it('answers [] and logs at error when a read fails, never throwing into delivery', async () => {

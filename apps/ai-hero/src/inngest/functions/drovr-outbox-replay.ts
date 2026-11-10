@@ -31,14 +31,9 @@ export const drovrOutboxReplay = inngest.createFunction(
 			{ createDrizzleDrovrOutboxStore },
 			{ drovrOutboxTargetFromEnv },
 			{ postDrovrOutboxRow },
-			{
-				deliverDrovrShadowEvent,
-				drovrApiKeyForTenant,
-				DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
-			},
+			{ deliverDrovrShadowEvent, drovrApiKeyForTenant },
 			{ isNeverBornOwnerStop },
-			{ fanOutOwnedEvents, isShadowNewsletterBirth },
-			{ resolveDoiAnswerForwardContactIds, resolveOwnedContactIds },
+			{ fanOutOwnedEventsLive },
 			{ parseDrovrSignupDeliveryConfig, postDrovrSignup },
 		] = await Promise.all([
 			import('@/db'),
@@ -50,7 +45,6 @@ export const drovrOutboxReplay = inngest.createFunction(
 			import('@/lib/subscriber-marketing/drovr-outbox-replay-post'),
 			import('@/lib/subscriber-marketing/drovr-shadow-emitter'),
 			import('@/lib/subscriber-marketing/drovr-shadow-delivery'),
-			import('@/lib/subscriber-marketing/drovr-ownership'),
 			import('@/lib/subscriber-marketing/drovr-ownership-live'),
 			import('@/lib/subscriber-marketing/drovr-doi-signup'),
 		])
@@ -90,24 +84,7 @@ export const drovrOutboxReplay = inngest.createFunction(
 								),
 							deliver: deliverDrovrShadowEvent,
 							isNeverBornOwnerStop,
-							fanOut: async (events) => {
-								const owned = await resolveOwnedContactIds(events)
-								const births = events.filter(isShadowNewsletterBirth)
-								const newsletterOwned = births.length
-									? await resolveOwnedContactIds(births, {
-											journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
-										})
-									: []
-								// Never throws: a failed read leaves DOI answers as before.
-								const doiAnswerForwards =
-									await resolveDoiAnswerForwardContactIds(events)
-								return fanOutOwnedEvents(
-									events,
-									new Set(owned),
-									new Set(newsletterOwned),
-									new Set(doiAnswerForwards),
-								)
-							},
+							fanOut: (events) => fanOutOwnedEventsLive(events),
 							...(signupConfig
 								? {
 										signup: {

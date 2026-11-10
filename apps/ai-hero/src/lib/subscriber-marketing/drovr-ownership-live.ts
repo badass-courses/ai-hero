@@ -15,13 +15,18 @@ import {
 import { DOI_REQUESTED_EVENT_TYPE } from './drovr-doi-signup'
 import {
 	answeredEmailResourceIdOf,
+	fanOutOwnedEvents,
 	findJourneyOwnerAssignment,
 	findRecordedJourneyOwner,
 	isDoiAnswerForwardCandidate,
 	isDoiAnswerForwardContact,
 	isOwnerFanOutCandidate,
+	isShadowNewsletterBirth,
 } from './drovr-ownership'
-import type { DrovrJourneyId } from './drovr-shadow-emitter'
+import {
+	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+	type DrovrJourneyId,
+} from './drovr-shadow-emitter'
 import type { DrovrShadowEvent } from './drovr-shadow-emitter'
 
 /**
@@ -268,10 +273,57 @@ export async function resolveDoiAnswerForwardContactIds(
 	}
 }
 
+/**
+ * Owner fan-out with every owner set read live, for a path with no step
+ * memo (the outbox replay). An owner read failure throws, as
+ * `resolveOwnedContactIds` does; the DOI answer read never does.
+ */
+export async function fanOutOwnedEventsLive(
+	events: readonly DrovrShadowEvent[],
+	deps: {
+		resolveOwners?: typeof resolveOwnedContactIds
+		resolveDoiAnswerForwards?: (
+			events: readonly DrovrShadowEvent[],
+		) => Promise<string[]>
+	} = {},
+): Promise<DrovrShadowEvent[]> {
+	const resolveOwners = deps.resolveOwners ?? resolveOwnedContactIds
+	const resolveDoiAnswerForwards =
+		deps.resolveDoiAnswerForwards ?? resolveDoiAnswerForwardContactIds
+	const owned = await resolveOwners(events)
+	const births = events.filter(isShadowNewsletterBirth)
+	const newsletterOwned = births.length
+		? await resolveOwners(births, {
+				journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+			})
+		: []
+	const doiAnswerForwards = await resolveDoiAnswerForwards(events).catch(
+		() => [] as string[],
+	)
+	return fanOutOwnedEvents(
+		events,
+		new Set(owned),
+		new Set(newsletterOwned),
+		new Set(doiAnswerForwards),
+	)
+}
+
 async function liveDoiAnswerForwardReads(): Promise<DoiAnswerForwardReads> {
-	const [{ db }, { valuePathLinkAnchor }, { DrizzleCaptureMarketingRepository }] =
+	const { db } = await import('@/db')
+	return createDoiAnswerForwardReads(db)
+}
+
+/**
+ * The reads over a given database: the app's in production, any drizzle
+ * MySQL handle in a dry run against a read replica.
+ */
+export async function createDoiAnswerForwardReads(
+	db: ConstructorParameters<
+		typeof import('./drizzle-capture-repository').DrizzleCaptureMarketingRepository
+	>[0],
+): Promise<DoiAnswerForwardReads> {
+	const [{ valuePathLinkAnchor }, { DrizzleCaptureMarketingRepository }] =
 		await Promise.all([
-			import('@/db'),
 			import('@/db/contact-sync-schema'),
 			import('./drizzle-capture-repository'),
 		])
@@ -295,7 +347,9 @@ async function liveDoiAnswerForwardReads(): Promise<DoiAnswerForwardReads> {
 						inArray(valuePathLinkAnchor.emailResourceId, [...emailResourceIds]),
 					),
 				)
-			return new Set(rows.map((row) => row.emailResourceId))
+			return new Set(
+				rows.map((row: { emailResourceId: string }) => row.emailResourceId),
+			)
 		},
 	}
 }
