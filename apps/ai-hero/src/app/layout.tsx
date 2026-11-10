@@ -9,6 +9,7 @@ import { GuardedCouponProvider } from '@/components/guarded-coupon-provider'
 import { Providers } from '@/components/providers'
 import { ThemeProvider } from '@/components/theme-provider'
 import config from '@/config'
+import { MAGIC_LINK_FRAGMENT_BOOTSTRAP } from '@/server/magic-link-fragment'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
 import { getProduct } from '@/lib/products-query'
@@ -80,6 +81,12 @@ export default async function RootLayout({
 		<Providers>
 			<html lang="en" suppressHydrationWarning>
 				<head>
+					{/* Deliberately synchronous and first: scrub login secrets before
+					    any third-party script or hydration can inspect the URL. */}
+					<script
+						id="magic-link-fragment-bootstrap"
+						dangerouslySetInnerHTML={{ __html: MAGIC_LINK_FRAGMENT_BOOTSTRAP }}
+					/>
 					{process.env.NODE_ENV === 'development' && (
 						<>
 						<Script

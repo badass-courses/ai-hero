@@ -19,7 +19,11 @@ export function FragmentConfirmation({ action }: { action: string }) {
 		MagicLinkFragment | 'pending' | 'expired'
 	>('pending')
 
+	const consumed = React.useRef(false)
 	React.useEffect(() => {
+		// Strict Mode replays effects; the sessionStorage handoff is one-shot.
+		if (consumed.current) return
+		consumed.current = true
 		setState(consumeMagicLinkFragment(window) ?? 'expired')
 	}, [])
 

@@ -9,6 +9,22 @@
 
 const MAGIC_LINK_CALLBACK_PATH = '/api/auth/callback/postmark'
 export const MAGIC_LINK_VERIFY_PATH = '/login/verify'
+export const MAGIC_LINK_FRAGMENT_STORAGE_KEY = 'aih:magic-link-fragment'
+
+/**
+ * Parser-blocking inline script, first in the root head. Do not defer this to
+ * hydration or a React effect: analytics can read location before either runs.
+ * Storage can be disabled; stripping the URL still takes priority over login.
+ */
+export const MAGIC_LINK_FRAGMENT_BOOTSTRAP = `(function () {
+  if (window.location.pathname !== '/login/verify') return;
+  var hash = window.location.hash;
+  try {
+    window.sessionStorage.removeItem('aih:magic-link-fragment');
+    if (hash) window.sessionStorage.setItem('aih:magic-link-fragment', hash);
+  } catch (_) {}
+  if (hash) window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search);
+})();`
 
 export type MagicLinkFragment = {
 	token: string
@@ -49,22 +65,31 @@ export function readMagicLinkFragment(hash: string): MagicLinkFragment | null {
 
 type FragmentWindow = {
 	location: { hash: string; pathname: string; search: string }
+	sessionStorage?: Pick<Storage, 'getItem' | 'removeItem'>
 	history: {
 		state: unknown
 		replaceState: (state: unknown, unused: string, url: string) => void
 	}
 }
 
-/** Reads the fragment, then removes it from the address bar and history entry. */
+/** Consumes the early head script's handoff once, with a direct-hash fallback. */
 export function consumeMagicLinkFragment(
 	win: FragmentWindow,
 ): MagicLinkFragment | null {
-	const fragment = readMagicLinkFragment(win.location.hash)
-	if (!fragment) return null
-	win.history.replaceState(
-		win.history.state,
-		'',
-		`${win.location.pathname}${win.location.search}`,
-	)
-	return fragment
+	let stored: string | null = null
+	try {
+		stored = win.sessionStorage?.getItem(MAGIC_LINK_FRAGMENT_STORAGE_KEY) ?? null
+		win.sessionStorage?.removeItem(MAGIC_LINK_FRAGMENT_STORAGE_KEY)
+	} catch {
+		// The bootstrap already stripped the URL even if storage is unavailable.
+	}
+	const hash = win.location.hash || stored || ''
+	if (win.location.hash) {
+		win.history.replaceState(
+			win.history.state,
+			'',
+			`${win.location.pathname}${win.location.search}`,
+		)
+	}
+	return readMagicLinkFragment(hash)
 }

@@ -261,9 +261,12 @@ function alreadySignedInRedirect(callbackUrl: string | null, siteUrl?: string) {
  * (`/login/verify#token=...`, see `magic-link-fragment.ts`), which never
  * reaches a server. This GET handler only serves links already sitting in
  * inboxes, whose query string the platform request log has already seen.
- * Remove it, `readConfirmationFromCallback` and the cookie path once the token
- * lifetime (24h, Auth.js Postmark `maxAge`) has passed since the fragment link
- * deployed; GET callbacks then fall through to `authHandler`.
+ * Remove it, `readConfirmationFromCallback` and the cookie path only after
+ * every query-string link already issued has expired, including welcome,
+ * redemption and transfer links (the longest explicit expiresAt). One hour
+ * after the login-lifetime change deploys covers only new self-requested login
+ * links, not old 24h tokens or transactional links. GET callbacks can then
+ * fall through to `authHandler`.
  */
 export function createMagicLinkGetHandler<RequestType extends Request>(
 	authHandler: AuthHandler<RequestType>,
