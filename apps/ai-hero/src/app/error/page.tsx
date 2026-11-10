@@ -3,7 +3,11 @@ import Link from 'next/link'
 import LayoutClient from '@/components/layout-client'
 import { Login } from '@/components/login'
 import { env } from '@/env.mjs'
-import { authErrorView, knownAuthErrorCode } from '@/lib/auth-error-view'
+import {
+	authErrorView,
+	knownAuthErrorCode,
+	resolveAuthErrorCode,
+} from '@/lib/auth-error-view'
 import { getProviders } from '@/server/auth'
 import { log } from '@/server/logger'
 import { Mail } from 'lucide-react'
@@ -17,9 +21,10 @@ function emailOnly(providers: ReturnType<typeof getProviders>) {
 export default async function AuthErrorPage({
 	searchParams,
 }: {
-	searchParams: Promise<{ error?: string }>
+	searchParams: Promise<{ error?: string; code?: string }>
 }) {
-	const { error } = await searchParams
+	const { error: rawError, code: rawCode } = await searchParams
+	const error = resolveAuthErrorCode(rawError, rawCode)
 	const info = authErrorView(error)
 	const code = knownAuthErrorCode(error)
 
