@@ -59,7 +59,7 @@ describe('isCohortComingSoon', () => {
 })
 
 const OPEN = '2026-10-26T07:01:00.000Z'
-const CLOSE = '2026-11-10T07:30:00.000Z'
+const CLOSE = '2026-11-10T07:59:59.000Z'
 const openMs = Date.parse(OPEN)
 const closeMs = Date.parse(CLOSE)
 

@@ -2,6 +2,7 @@ import {
 	emailProvider,
 	magicLinkIdentity as provisionedIdentity,
 } from '@/coursebuilder/email-provider'
+import { partyProvider } from '@/coursebuilder/party-provider'
 import { slackProvider } from '@/coursebuilder/slack-provider'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { courseBuilderAdapter } from '@/db'
@@ -49,6 +50,10 @@ import {
 	CheckoutReconcileFulfillRequested,
 } from '@/inngest/events/checkout-reconcile'
 import {
+	CHECKOUT_ASYNC_PAYMENT_SUCCEEDED_EVENT,
+	CheckoutAsyncPaymentSucceeded,
+} from '@/inngest/events/checkout-async-payment'
+import {
 	INVOICE_SHORTFALL_RECONCILE_EVENT,
 	InvoiceShortfallReconcile,
 } from '@/inngest/events/invoice-shortfall'
@@ -83,15 +88,24 @@ import {
 	type ContactUnsubscribed,
 } from '@/inngest/events/contact-unsubscribed'
 import {
+	EMAIL_PREFERENCE_CHANGE_REQUESTED_EVENT,
+	type EmailPreferenceChangeRequested,
+} from '@/inngest/events/email-preference-change'
+import {
 	SKILLS_COURSE_LESSON_ONE_RECOVERY_REQUESTED_EVENT,
 	SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
 	type SkillsCourseLessonOneRecoveryRequested,
 	type SkillsNewsletterSubscribed,
+	type OwnedSkillsNewsletterSubscribed,
 } from '@/inngest/events/skills-newsletter'
 import {
 	WORKSHOP_INTEREST_REQUESTED_EVENT,
 	type WorkshopInterestRequested,
 } from '@/inngest/events/workshop-interest'
+import {
+	INTEREST_FACT_REQUESTED_EVENT,
+	type InterestFactRequested,
+} from '@/inngest/events/interest-fact'
 import {
 	TYPESENSE_POPULARITY_SYNC_REQUESTED_EVENT,
 	TypesensePopularitySyncRequested,
@@ -146,12 +160,9 @@ import {
 	GRANT_COUPON_ENTITLEMENTS_EVENT,
 	GrantCouponEntitlementsEvent,
 } from '@/inngest/functions/coupon/grant-coupon-entitlements'
-import {
-	SYNC_PURCHASE_TAGS_EVENT,
-	SyncPurchaseTags,
-} from '@/inngest/functions/sync-purchase-tags'
 import { authOptions } from '@/server/auth'
 import { EventSchemas, Inngest } from 'inngest'
+import { COURSE_SYNC_STALE_PREVIEW_EVENT, type CourseSyncStalePreviewRequested } from './events/course-sync-stale-preview'
 import { UTApi } from 'uploadthing/server'
 
 import { CourseBuilderCoreEvents } from '@coursebuilder/core'
@@ -175,8 +186,7 @@ import {
 	StripeCheckoutSessionCompleted,
 } from '@coursebuilder/core/events/stripe'
 import DeepgramProvider from '@coursebuilder/core/providers/deepgram'
-import OpenAIProvider from '@coursebuilder/core/providers/openai'
-import PartykitProvider from '@coursebuilder/core/providers/partykit'
+import { MockOpenAIProvider } from '@coursebuilder/core/providers/openai'
 
 import {
 	ARTWORK_FAL_COMPLETED_EVENT,
@@ -242,13 +252,17 @@ import { inngestTelemetryMiddleware } from './inngest-telemetry-middleware'
 // Create a client to send and receive events
 import { INCLUDED_PRODUCT_ENTITLEMENTS_RETRY_EVENT, type IncludedProductEntitlementsRetry } from './events/included-product-entitlements'
 
+import { EARLY_ACCESS_REVOKE_EVENT, type EarlyAccessRevoke } from './events/early-access'
+
 export type Events = {
+	[EARLY_ACCESS_REVOKE_EVENT]: EarlyAccessRevoke
 	[INCLUDED_PRODUCT_ENTITLEMENTS_RETRY_EVENT]: IncludedProductEntitlementsRetry
 	[USER_CREATED_EVENT]: UserCreated
 	[AI_CODING_DICTIONARY_SOURCE_CHANGED_EVENT]: AiCodingDictionarySourceChanged
 	[CONTENT_RESOURCE_INDEX_REQUESTED_EVENT]: ContentResourceIndexRequested
 	[COURSE_SYNC_APPLIED_NOTICE_EVENT]: CourseSyncAppliedNoticeRequested
 	[COURSE_SYNC_POLL_REQUESTED_EVENT]: CourseSyncPollRequested
+	[COURSE_SYNC_STALE_PREVIEW_EVENT]: CourseSyncStalePreviewRequested
 	[GITHUB_SOURCE_SYNC_REQUESTED_EVENT]: GithubSourceSyncRequested
 	[POSTMARK_WEBHOOK_EVENT]: PostmarkWebhook
 	[IMAGE_RESOURCE_CREATED_EVENT]: ImageResourceCreated
@@ -256,6 +270,7 @@ export type Events = {
 	[PURCHASE_DISPUTE_OPENED_EVENT]: PurchaseDisputeOpened
 	[PURCHASE_DISPUTE_CLOSED_EVENT]: PurchaseDisputeClosed
 	[CHECKOUT_RECONCILE_FULFILL_EVENT]: CheckoutReconcileFulfillRequested
+	[CHECKOUT_ASYNC_PAYMENT_SUCCEEDED_EVENT]: CheckoutAsyncPaymentSucceeded
 	[RESOURCE_CHAT_REQUEST_EVENT]: ResourceChat
 	[EMAIL_SEND_BROADCAST]: EmailSendBroadcast
 	[OCR_WEBHOOK_EVENT]: OcrWebhook
@@ -266,7 +281,6 @@ export type Events = {
 	[LESSON_COMPLETED_EVENT]: LessonCompleted
 	[OAUTH_PROVIDER_ACCOUNT_LINKED_EVENT]: OauthProviderAccountLinked
 	[NO_PROGRESS_MADE_EVENT]: NoProgressMade
-	[SYNC_PURCHASE_TAGS_EVENT]: SyncPurchaseTags
 	[STRIPE_CHECKOUT_SESSION_COMPLETED_EVENT]: StripeCheckoutSessionCompleted
 	[CREATE_USER_ORGANIZATIONS_EVENT]: CreateUserOrganizations
 	[NEW_SUBSCRIPTION_CREATED_EVENT]: NewSubscriptionCreated
@@ -290,10 +304,14 @@ export type Events = {
 	[RESOURCE_CREATED_EVENT]: ResourceCreated
 	[RESOURCE_UPDATED_EVENT]: ResourceUpdated
 	[SKILL_CHANGELOG_PUBLISHED_EVENT]: SkillChangelogPublished
-	[SKILLS_NEWSLETTER_SUBSCRIBED_EVENT]: SkillsNewsletterSubscribed
+	[SKILLS_NEWSLETTER_SUBSCRIBED_EVENT]:
+		| SkillsNewsletterSubscribed
+		| OwnedSkillsNewsletterSubscribed
 	[SKILLS_COURSE_LESSON_ONE_RECOVERY_REQUESTED_EVENT]: SkillsCourseLessonOneRecoveryRequested
 	[CONTACT_UNSUBSCRIBED_EVENT]: ContactUnsubscribed
+	[EMAIL_PREFERENCE_CHANGE_REQUESTED_EVENT]: EmailPreferenceChangeRequested
 	[WORKSHOP_INTEREST_REQUESTED_EVENT]: WorkshopInterestRequested
+	[INTEREST_FACT_REQUESTED_EVENT]: InterestFactRequested
 	[TYPESENSE_POPULARITY_SYNC_REQUESTED_EVENT]: TypesensePopularitySyncRequested
 	[TYPESENSE_VIDEO_FACTS_RECONCILE_REQUESTED_EVENT]: TypesenseVideoFactsReconcileRequested
 	[SLACK_ARTWORK_GENERATE_REQUESTED_EVENT]: SlackArtworkGenerateRequested
@@ -331,13 +349,9 @@ const middleware = createInngestMiddleware({
 	db: commerceIdentity,
 	siteRootUrl: env.NEXT_PUBLIC_URL,
 	mediaUploadProvider: new UTApi(),
-	openaiProvider: OpenAIProvider({
-		apiKey: env.OPENAI_API_KEY,
-		partyUrlBase: env.NEXT_PUBLIC_PARTY_KIT_URL,
-	}),
-	partyProvider: PartykitProvider({
-		partyUrlBase: env.NEXT_PUBLIC_PARTY_KIT_URL,
-	}),
+	// Only the resource-chat workflow calls this, and nothing sends its event.
+	openaiProvider: MockOpenAIProvider,
+	partyProvider,
 	transcriptProvider: DeepgramProvider({
 		apiKey: env.DEEPGRAM_API_KEY,
 		callbackUrl: `${callbackBase}/api/coursebuilder/webhook/deepgram`,

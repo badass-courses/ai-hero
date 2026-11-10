@@ -5,6 +5,8 @@
  * surfaces why a price is not a charge.
  */
 export const APP_REASONS = {
+	/** The engine's formula candidate uses an available Crash Course credit. */
+	formulaUsesCredit: 'formula-uses-crash-course-credit',
 	/** Nobody is signed in: the price is the new-buyer upper bound. */
 	identityRequired: 'identity-required',
 	/** Display could not read the buyer's binding quotes. */
@@ -22,4 +24,10 @@ export const APP_REASONS = {
 	 * There is no upgrade path; unrestricted access goes through support.
 	 */
 	restrictedHolder: 'restricted-holder',
+	/**
+	 * The regional price is bounded only by an unresolved Crash Course credit.
+	 * Set only on front-desk's exact signature (`isPppCreditBound`); this one
+	 * bounded case may buy, and checkout charges the bound.
+	 */
+	pppCreditBound: 'ppp-credit-unresolved-bound',
 } as const

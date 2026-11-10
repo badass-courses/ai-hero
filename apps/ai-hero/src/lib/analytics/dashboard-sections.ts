@@ -199,7 +199,7 @@ async function loadDashboardSectionUnshared<S extends DashboardSection>(
 				byCountry,
 				recentPurchases,
 				previousDaily,
-			} as DashboardSectionData[S]
+			} satisfies DashboardSectionData['revenue'] as unknown as DashboardSectionData[S]
 		}
 
 		case 'attribution': {

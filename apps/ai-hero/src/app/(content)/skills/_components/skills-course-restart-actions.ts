@@ -2,7 +2,6 @@
 
 import { createHmac, randomUUID } from 'node:crypto'
 
-import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import {
 	SKILLS_COURSE_LESSON_ONE_RECOVERY_REQUESTED_EVENT,
 	SKILLS_COURSE_RECOVERY_SOURCE,
@@ -10,16 +9,27 @@ import {
 	type SkillsCourseRecoverySource,
 } from '@/inngest/events/skills-newsletter'
 import { inngest } from '@/inngest/inngest.server'
+import { readRecoveryStanding } from '@/lib/skills-course/recovery-standing'
+import { createRecoveryStandingReader } from '@/lib/skills-course/recovery-standing.server'
 import { normalizeSkillsCourseRecoveryEmail } from '@/lib/subscriber-marketing/skills-course-recovery-token'
 import { readSkillsCourseRecoveryToken } from '@/lib/subscriber-marketing/skills-course-recovery-token.server'
-import { SubscriberSchema, type Subscriber } from '@/schemas/subscriber'
+import type { Subscriber } from '@/schemas/subscriber'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 
 import { SKILLS_HOSTED_RESUBSCRIBE_URL } from './skills-newsletter-config'
 
+/**
+ * Kit's subscriber, or the off-Kit standing in its shape. `stopped` and
+ * `unknown` come only from the standing and never queue a send.
+ */
+type RecoverySubscriber = {
+	id: Subscriber['id'] | string
+	state?: Subscriber['state'] | 'stopped' | 'unknown'
+}
+
 type AuthorizedRecovery = {
-	subscriber: Subscriber
+	subscriber: RecoverySubscriber
 	source: SkillsCourseRecoverySource
 }
 
@@ -32,6 +42,14 @@ export async function resendSkillsCourseLessonOne() {
 		}
 
 		const { subscriber, source } = authorization
+		// A stop is final for this course (no restart after a lift), so it gets
+		// no resubscribe detour. An unanswered stop state is a failed request.
+		if (subscriber.state === 'stopped') {
+			return { success: false as const, reason: 'stopped' as const }
+		}
+		if (subscriber.state === 'unknown') {
+			return { success: false as const, reason: 'request-failed' as const }
+		}
 		if (subscriber.state !== 'active') {
 			return {
 				success: false as const,
@@ -71,7 +89,10 @@ export async function resendSkillsCourseLessonOne() {
 async function resolveAuthorizedRecovery(): Promise<AuthorizedRecovery | null> {
 	const token = await readSkillsCourseRecoveryToken().catch(() => null)
 	if (token?.valid) {
-		const subscriber = await resolveSubscriberByEmail(token.payload.email)
+		const subscriber = await resolveSubscriberByEmail(
+			token.payload.email,
+			token.payload.kitSubscriberId,
+		)
 		if (!subscriber || String(subscriber.id) !== token.payload.kitSubscriberId) {
 			return null
 		}
@@ -93,17 +114,42 @@ async function resolveAuthorizedRecovery(): Promise<AuthorizedRecovery | null> {
 		: null
 }
 
-async function resolveSubscriberByEmail(email: string) {
+async function resolveSubscriberByEmail(
+	email: string,
+	expectedKitSubscriberId?: string,
+): Promise<RecoverySubscriber | null> {
 	const expectedEmail = normalizeSkillsCourseRecoveryEmail(email)
-	const subscriber = SubscriberSchema.safeParse(
-		await emailListProvider.getSubscriberByEmail(expectedEmail),
-	)
-	if (!subscriber.success) return null
-	return subscriber.data.email_address &&
-		normalizeSkillsCourseRecoveryEmail(subscriber.data.email_address) ===
-			expectedEmail
-		? subscriber.data
-		: null
+	return resolveLocalSubscriber(expectedEmail, expectedKitSubscriberId)
+}
+
+/**
+ * Off-Kit standing (family 8): the directory, local course entry and local
+ * plus drovr stops. Subscribed reads as Kit's `active`; not found is not
+ * identified, as a missing Kit subscriber was.
+ */
+async function resolveLocalSubscriber(
+	email: string,
+	expectedKitSubscriberId?: string,
+): Promise<RecoverySubscriber | null> {
+	const standing = await readRecoveryStanding({
+		email,
+		expectedKitSubscriberId,
+		reader: createRecoveryStandingReader(),
+	})
+	if (standing.state === 'subscribed') {
+		// State only: the positive receipt that the local read served this.
+		await log.info('skills.course.lesson_one_recovery_standing', {
+			state: standing.state,
+		})
+		return { id: standing.kitSubscriberId, state: 'active' }
+	}
+	// No identity in the log line: state and reason only.
+	await log.info('skills.course.lesson_one_recovery_standing', {
+		state: standing.state,
+		reason: standing.reason,
+	})
+	if (standing.state === 'not-found') return null
+	return { id: expectedKitSubscriberId ?? '', state: standing.state }
 }
 
 function recoverySecret() {

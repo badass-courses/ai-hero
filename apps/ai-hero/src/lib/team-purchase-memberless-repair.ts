@@ -13,6 +13,7 @@ import {
 import { and, asc, eq, gt, isNull, sql } from 'drizzle-orm'
 import { z } from 'zod'
 
+import { bustSessionAccessForUser } from '@/server/session-access-runtime'
 import { getPersonalOrganizationName } from '@coursebuilder/organizations'
 
 export type MemberlessRepairSnapshot = {
@@ -362,8 +363,8 @@ export function createMemberlessRepairDataSource(
 ): MemberlessRepairDataSource {
 	return {
 		loadSnapshot: (purchaseId) => loadSnapshot(database, purchaseId),
-		commit: (plan) =>
-			database.transaction(async (transaction) => {
+		commit: async (plan) => {
+			const result = await database.transaction(async (transaction) => {
 				// Use the existing coupon/purchase mutex order. Unique personal identity
 				// indexes and indexed membership range locks fence absent governance.
 				await transaction.execute(
@@ -457,6 +458,10 @@ export function createMemberlessRepairDataSource(
 				)
 					throw new Error('Repair transaction readback failed')
 				return { status: 'repaired' as const }
-			}),
+			})
+			// The repair adds an owner membership; drop the buyer's cached access.
+			await bustSessionAccessForUser(plan.buyerId)
+			return result
+		},
 	}
 }

@@ -406,7 +406,7 @@ describe('course sync persistence invariants', () => {
 		}
 	})
 
-	it('requires operator review for a new workshop, even alongside ordinary updates', () => {
+	it('accepts an additive workshop alongside ordinary in-place updates', () => {
 		const plan = launchPlan()
 		plan.resources = [
 			...plan.resources,
@@ -414,8 +414,38 @@ describe('course sync persistence invariants', () => {
 		]
 		sealPlan(plan)
 		expect(evaluateCourseSyncBoundedAutoApply(plan)).toMatchObject({
-			eligible: false, failureCode: 'WORKSHOP_CREATE_REVIEW_REQUIRED', planSha256: plan.planSha256,
+			eligible: true, planSha256: plan.planSha256,
 		})
+	})
+
+	it.each(['move', 'detach'] as const)('holds a progressed lesson %s, but allows an unprogressed one', (change) => {
+		const plan = launchPlan()
+		const lesson = plan.resources.find((item) => item.sourceKind === 'lesson')!
+		lesson.fields.title = 'Synthetic lesson'
+		if (change === 'move') lesson.parentResourceId = 'new-parent'
+		if (change === 'detach') lesson.detached = true
+		const progress = new Map([[lesson.targetResourceId, 7]])
+		expect(evaluateCourseSyncBoundedAutoApply(plan, progress)).toMatchObject({ eligible: false,
+			failureCode: 'PROGRESSED_LESSON_CHANGE_REVIEW_REQUIRED', affectedLessons: [{ title: 'Synthetic lesson', progressCount: 7 }] })
+		expect(evaluateCourseSyncBoundedAutoApply(plan, new Map())).toMatchObject({ eligible: true })
+	})
+
+	it('keeps a same-parent reorder eligible even with progress', () => {
+		const plan = launchPlan()
+		const lesson = plan.resources.find((item) => item.sourceKind === 'lesson')!
+		lesson.position += 1
+		expect(evaluateCourseSyncBoundedAutoApply(plan, new Map([[lesson.targetResourceId, 7]]))).toMatchObject({ eligible: true })
+	})
+
+	it.each(['solution', 'video'] as const)('protects the original lesson when its %s moves', (sourceKind) => {
+		const plan = launchPlan()
+		const lesson = plan.resources.find((item) => item.sourceKind === 'lesson')!
+		lesson.fields.title = 'Original lesson'
+		const media = plan.resources.find((item) => item.sourceKind === sourceKind)!
+		media.previousParentResourceId = lesson.targetResourceId
+		media.parentResourceId = 'other-parent'
+		expect(evaluateCourseSyncBoundedAutoApply(plan, new Map([[lesson.targetResourceId, 2]]))).toMatchObject({ eligible: false,
+			failureCode: 'PROGRESSED_LESSON_CHANGE_REVIEW_REQUIRED', affectedLessons: [{ title: 'Original lesson', progressCount: 2 }] })
 	})
 
 	it.each(['retain', 'update'] as const)('keeps a workshop %s eligible for bounded auto-apply', (action) => {
@@ -431,7 +461,8 @@ describe('course sync persistence invariants', () => {
 		expect(evaluateCourseSyncBoundedAutoApply(plan)).toEqual({
 			eligible: false,
 			planSha256: plan.planSha256,
-			reason: 'Lesson regressions require operator review: lesson-1',
+			reason: 'Lesson regressions require operator review.',
+			affectedLessons: [],
 			failureCode: 'LESSON_REGRESSION_REVIEW_REQUIRED',
 		})
 	})

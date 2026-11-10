@@ -9,6 +9,7 @@ import { getAllWorkshopsInCohort } from '@/lib/cohorts-query'
 import { groupWorkshopsByStartTime } from '@/lib/group-workshops-by-start-time'
 import type { Workshop } from '@/lib/workshops'
 import { getWorkshop } from '@/lib/workshops-query'
+import { assertPostmarkAccepted } from '@/lib/postmark-accepted'
 import { log } from '@/server/logger'
 import { sendAnEmail } from '@coursebuilder/utils/send-an-email'
 
@@ -175,6 +176,8 @@ export const sendWorkshopAccessEmails = inngest.createFunction(
 			const groupResult = await step.run(
 				`send-batch-emails-${group.startTime}`,
 				async () => {
+					let emailsSent = 0
+					let emailsFailed = 0
 					try {
 						// Resolve which workshops in this batch each user is
 						// entitled to — users must only be emailed their own.
@@ -197,8 +200,6 @@ export const sendWorkshopAccessEmails = inngest.createFunction(
 						if (validWorkshops.length === 0) {
 							return { skipped: 'no valid workshops found' }
 						}
-
-						let emailsSent = 0
 
 						// Send one batch email per user — each user only
 						// receives the workshops they are entitled to.
@@ -223,7 +224,7 @@ export const sendWorkshopAccessEmails = inngest.createFunction(
 										? `Your access to ${userWorkshops[0]!.fields.title} opens today`
 										: `${userWorkshops.length} new workshops are now available`
 
-								await sendAnEmail({
+								const response: unknown = await sendAnEmail({
 									Component: WorkshopBatchAccessEmail,
 									componentProps: {
 										user: {
@@ -242,9 +243,11 @@ export const sendWorkshopAccessEmails = inngest.createFunction(
 									Subject: subject,
 									From: `${process.env.NEXT_PUBLIC_SITE_TITLE} <${process.env.NEXT_PUBLIC_SUPPORT_EMAIL}>`,
 								})
+								assertPostmarkAccepted(response)
 
 								emailsSent++
 							} catch (error) {
+								emailsFailed++
 								const workshopTitles = userWorkshops
 									.map((w) => w.fields.title)
 									.join(', ')
@@ -264,7 +267,15 @@ export const sendWorkshopAccessEmails = inngest.createFunction(
 							workshopTitles: validWorkshops.map((w) => w.fields.title),
 							entitledUsers: entitledUsers.length,
 							emailsSent,
+							emailsFailed,
 						})
+						if (emailsFailed > 0) {
+							await log.error('workshop-access-email.send.failed', {
+								startTime: group.startTime,
+								emailsSent,
+								emailsFailed,
+							})
+						}
 
 						return {
 							processed: true,
@@ -276,11 +287,18 @@ export const sendWorkshopAccessEmails = inngest.createFunction(
 					} catch (error) {
 						const errorMsg = `Failed to send batch emails for group ${group.startTime}: ${error}`
 						errors.push(errorMsg)
-						await log.error(errorMsg, {
+						await log.error('workshop-access-email.group.failed', {
 							startTime: group.startTime,
 							workshopIds: group.workshopIds,
+							emailsSent,
+							retrying: emailsSent === 0,
 							error,
 						})
+						// Nothing sent yet: throw so Inngest retries the step and the run
+						// fails visibly instead of finishing green (2026-11-09: C5 release
+						// emails failed this way for every learner). Once any email has
+						// gone out, a retry would send it twice, so report and stop.
+						if (emailsSent === 0) throw error
 						return { error: errorMsg }
 					}
 				},

@@ -8,8 +8,11 @@ vi.mock('@/env.mjs', () => ({
 	env: {
 		YOUTUBE_OAUTH_CLIENT_ID: 'client-id',
 		YOUTUBE_OAUTH_CLIENT_SECRET: 'client-secret',
-		YOUTUBE_ANALYTICS_REFRESH_TOKEN: 'refresh-token',
 	},
+}))
+
+vi.mock('@/lib/integration-token-store', () => ({
+	getIntegrationRefreshToken: async () => 'refresh-token',
 }))
 
 vi.mock('google-auth-library', () => ({

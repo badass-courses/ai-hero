@@ -12,6 +12,7 @@ import {
 } from '@/app/(user)/team/actions'
 import type { TeamPageData } from '@/app/(user)/team/page'
 import { CldImage } from '@/components/cld-image'
+import { TeamProgressSection } from '@/components/team-progress/team-progress-section'
 import type { TeamCardState } from '@/lib/team-purchases'
 
 import { ClaimedTeamSeats } from '@coursebuilder/commerce-next/team/claimed-team-seats'
@@ -431,6 +432,7 @@ export function TeamPageTemplate(data: TeamPageData) {
 						viewer={data.viewer}
 					/>
 				) : null}
+				<TeamProgressSection teamProgress={data.teamProgress} />
 			</section>
 		)
 	}
@@ -456,6 +458,7 @@ export function TeamPageTemplate(data: TeamPageData) {
 				organizations={data.organizations}
 				viewer={data.viewer}
 			/>
+			<TeamProgressSection teamProgress={data.teamProgress} />
 		</div>
 	)
 }

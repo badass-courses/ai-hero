@@ -7,7 +7,8 @@ import { CourseCta } from '@/app/(content)/_components/course-cta'
 import { metaDescription } from '@/lib/meta-description'
 import { ContentReadTracker } from '@/components/content-read-tracker'
 import { BADGE_OUTLINE, TYPE } from '@/components/landing/type'
-import type { CalloutIntent } from '@/components/mdx/callout'
+import { Callout, type CalloutIntent } from '@/components/mdx/callout'
+import { C5SaleSwitch } from '@/components/c5-sale-switch'
 import { Contributor } from '@/components/contributor'
 import { MdxErrorBoundary } from '@/components/mdx/mdx-error-boundary'
 import { PROSE_MEASURE } from '@/components/mdx/prose'
@@ -19,8 +20,10 @@ import { getAiCodingDictionary } from '@/lib/ai-coding-dictionary'
 import { getCachedAllLists, getCachedListForPost } from '@/lib/lists-query'
 import { CldImage } from '@/components/cld-image'
 import { type Post } from '@/lib/posts'
+import { getSkillFile, type SkillFile } from '@/lib/skill-file'
 import { skillIconUrl } from '@/lib/skill-icon'
-import { getAllPosts, getCachedPostOrList } from '@/lib/posts-query'
+import { getAllPosts } from '@/lib/posts-query'
+import { getRoutePost } from './get-route-post'
 import { resolvePostCta } from '@/lib/post-cta'
 import { PostStructuredData } from '@/lib/structured-data'
 import { getLatestCohort, getUpcomingCohort } from '@/lib/upcoming-cohort-query'
@@ -91,7 +94,7 @@ export default async function PostPage(props: {
 }) {
 	const params = await props.params
 
-	const post = await getCachedPostOrList(params.post)
+	const post = await getRoutePost(params.post)
 
 	if (!post) {
 		notFound()
@@ -107,6 +110,9 @@ export default async function PostPage(props: {
 	}
 
 	const isSkillPost = post.type === 'post' && post.fields?.postType === 'skill'
+	const skillFile = isSkillPost
+		? await getSkillFile(post.fields?.githubSource)
+		: null
 
 	// What this post asks for below the body: the email course, when the `cta`
 	// field says so or the post is a skill. Resolved here rather than inside the
@@ -261,7 +267,12 @@ export default async function PostPage(props: {
               underneath rather than stacked. Same idiom as `LandingBody`. The
               footer owns the rule below, so nothing is needed at the end. */}
 					<article className="[&>*+*]:border-border relative flex h-full flex-col [&>*+*]:-mt-px [&>*+*]:border-t">
-						<PostHead post={post} list={list} isSkillPost={isSkillPost} />
+						<PostHead
+							post={post}
+							list={list}
+							isSkillPost={isSkillPost}
+							skillFile={skillFile}
+						/>
 						{post?.fields?.body && (
 							<PostToCDisclosure model={tocModel} landmarks={tocLandmarks} />
 						)}
@@ -395,7 +406,10 @@ export default async function PostPage(props: {
               `[&>*+*]:border-t` would hand it a hairline it should not have.
               It pads the document for its own height — see the component. */}
 					{isSkillPost && (
-						<SkillStickyAction slug={String(post.fields?.slug ?? '')} />
+						<SkillStickyAction
+							slug={String(post.fields?.slug ?? '')}
+							sourceUrl={skillFile?.sourceUrl}
+						/>
 					)}
 				</div>
 			</div>
@@ -533,7 +547,16 @@ async function PostBody({
 
 	const { content } = await compileMDX(
 		post.fields.body,
-		{},
+		{
+			Callout: (props: React.ComponentProps<typeof Callout>) =>
+				props.intent === 'course' ? (
+					// The end card owns the C5 ask. Keep the original inline
+					// course callout only outside the campaign, never stack two.
+					<C5SaleSwitch fallback={<Callout {...props} />}>{null}</C5SaleSwitch>
+				) : (
+					<Callout {...props} />
+				),
+		},
 		{},
 		{
 			lessonId: post.id,
@@ -668,11 +691,13 @@ async function PostHead({
 	post,
 	list,
 	isSkillPost,
+	skillFile,
 }: {
 	post: Post
 	list: Awaited<ReturnType<typeof getCachedListForPost>>
 	/** Skill posts carry the install panel directly under the title. */
 	isSkillPost?: boolean
+	skillFile?: SkillFile | null
 }) {
 	const videoResourceId = post.resources?.find(
 		({ resource }: ContentResourceResource) =>
@@ -828,6 +853,7 @@ async function PostHead({
 				{isSkillPost && (
 					<SkillInstallPanel
 						slug={String(post.fields?.slug ?? '')}
+						skillFile={skillFile}
 						className="border-t"
 					/>
 				)}
@@ -890,7 +916,7 @@ export async function generateMetadata(
 ): Promise<Metadata> {
 	const params = await props.params
 
-	const resource = await getCachedPostOrList(params.post)
+	const resource = await getRoutePost(params.post)
 
 	if (!resource) {
 		return parent as Metadata

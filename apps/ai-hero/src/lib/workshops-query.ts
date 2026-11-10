@@ -10,6 +10,10 @@ import {
 } from '@/db/schema'
 import { getContentNavigation } from '@/lib/content-navigation-query'
 import {
+	isRetiredProduct,
+	withoutRetiredWorkshopProducts,
+} from '@/lib/retired-products'
+import {
 	MinimalWorkshopSchema,
 	WorkshopSchema,
 	type CreateWorkshopWithLessonsInput,
@@ -122,7 +126,7 @@ ORDER BY priority ASC;`
 		return []
 	}
 
-	return parsedProducts.data
+	return withoutRetiredWorkshopProducts(parsedProducts.data)
 }
 
 export async function getWorkshopProduct(workshopIdOrSlug: string) {
@@ -168,9 +172,17 @@ WITH ProductCandidates AS (
 )
 SELECT *
 FROM ProductCandidates
-ORDER BY priority ASC
-LIMIT 1;`
+ORDER BY priority ASC;`
 	const results = await db.execute(query)
+
+	// Every candidate, not just the first: a retired product retires the
+	// workshop's whole offer, including any older product on the same workshop.
+	if (
+		results.rows.some((row) =>
+			isRetiredProduct((row as { id?: string | null }).id),
+		)
+	)
+		return null
 
 	const parsedProduct = productSchema.safeParse(results.rows[0])
 
@@ -355,6 +367,8 @@ export async function getWorkshop(moduleSlugOrId: string) {
 					},
 				},
 			})
+
+			if (!workshop) return null
 
 			const parsedWorkshop = WorkshopSchema.safeParse(workshop)
 			if (!parsedWorkshop.success) {

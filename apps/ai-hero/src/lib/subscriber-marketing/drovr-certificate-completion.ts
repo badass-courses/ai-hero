@@ -5,11 +5,17 @@ import { z } from 'zod'
 
 import { drovrApiKeyForTenant } from './drovr-shadow-emitter'
 
-const EMAIL_6 = 'ai-hero-skills-workflow.email-6'
+/** Lesson 7 on each track. drovr runs both tracks in one journey actor. */
+export const CERTIFICATE_LESSON_EMAILS = [
+	'ai-hero-skills-workflow.email-6',
+	'ai-hero-skills-team-workflow.team-email-6',
+] as const
+export type CertificateLessonEmail = (typeof CERTIFICATE_LESSON_EMAILS)[number]
+
 const deliverySchema = z.object({
 	contactId: z.string(),
 	journeyId: z.literal('value-path-skills-course'),
-	email: z.literal(EMAIL_6),
+	email: z.enum(CERTIFICATE_LESSON_EMAILS),
 	status: z.enum(['delivered', 'pending', 'not-routed', 'not-started']),
 	provider: z.enum(['postshiba', 'kit']).nullable(),
 	route: z.enum(['postshiba', 'kit']).nullable(),
@@ -24,6 +30,7 @@ export type DrovrCertificateCompletion =
 /** One tenant-scoped read. Unavailable evidence must never become completion. */
 export async function readDrovrCertificateCompletion(
 	contactId: string,
+	email: CertificateLessonEmail = CERTIFICATE_LESSON_EMAILS[0],
 ): Promise<DrovrCertificateCompletion> {
 	const unavailable = { status: 'unavailable' } as const
 	const controller = new AbortController()
@@ -35,7 +42,7 @@ export async function readDrovrCertificateCompletion(
 		// Neither a caller-supplied host nor a redirect may receive the bearer.
 		if (url.protocol !== 'https:') return unavailable
 		url.searchParams.set('contact', contactId)
-		url.searchParams.set('email', EMAIL_6)
+		url.searchParams.set('email', email)
 		const response = await fetch(url, {
 			method: 'GET',
 			headers: { Authorization: `Bearer ${apiKey}` },
@@ -45,7 +52,11 @@ export async function readDrovrCertificateCompletion(
 		})
 		if (!response.ok) return unavailable
 		const decoded = deliverySchema.safeParse(await response.json())
-		if (!decoded.success || decoded.data.contactId !== contactId) {
+		if (
+			!decoded.success ||
+			decoded.data.contactId !== contactId ||
+			decoded.data.email !== email
+		) {
 			return unavailable
 		}
 		const delivery = decoded.data

@@ -43,4 +43,13 @@ describe('FeedbackForm mobile controls', () => {
 		expect(markup).toContain('min-h-11')
 		expect(markup).toContain('What should we know?')
 	})
+
+	it('sizes category chips to their labels instead of truncating them', () => {
+		const markup = renderToStaticMarkup(<FeedbackForm location="navigation" />)
+
+		// Equal thirds of the half-width column cut "General" to "Gener…".
+		expect(markup).toContain('<span class="whitespace-nowrap">general</span>')
+		expect(markup).not.toContain('class="truncate"')
+		expect(markup).toContain('flex-auto')
+	})
 })

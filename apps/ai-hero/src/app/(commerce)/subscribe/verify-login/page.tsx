@@ -21,6 +21,8 @@ import { authorizeExclusiveCouponSelection } from '@/lib/exclusive-coupon-author
 import { getProduct } from '@/lib/products-query'
 import {
 	ALREADY_OWN_PATH,
+	CHECKOUT_LINK_EXPIRED_PATH,
+	CHECKOUT_UNAVAILABLE_PATH,
 	duplicatePurchaseGuard,
 	INVALID_QUANTITY_PATH,
 	isRegionalCoupon,
@@ -121,7 +123,7 @@ export default async function VerifyLoginPage({
 	if (requiresDuplicateActivePurchaseGuardrail(product?.type)) {
 		if (user && product) {
 			if (typeof checkoutUrl !== 'string' || !checkoutUrl) {
-				return redirect('/subscribe/error')
+				return redirect(CHECKOUT_LINK_EXPIRED_PATH)
 			}
 			return redirect(safeCheckoutUrl(checkoutUrl))
 		}
@@ -133,7 +135,7 @@ export default async function VerifyLoginPage({
 
 			if (!hasActiveSubscription) {
 				if (typeof checkoutUrl !== 'string' || !checkoutUrl) {
-					return redirect('/subscribe/error')
+					return redirect(CHECKOUT_LINK_EXPIRED_PATH)
 				}
 				return redirect(safeCheckoutUrl(checkoutUrl))
 			} else {
@@ -150,7 +152,7 @@ export default async function VerifyLoginPage({
 		} catch {
 			// not a valid absolute URL
 		}
-		return '/subscribe/error'
+		return CHECKOUT_LINK_EXPIRED_PATH
 	}
 
 	const cookieStore = await cookies()
@@ -173,7 +175,7 @@ export default async function VerifyLoginPage({
 	}
 
 	if (!env.NEXTAUTH_SECRET) {
-		return redirect('/subscribe/error')
+		return redirect(CHECKOUT_UNAVAILABLE_PATH)
 	}
 
 	const rawTrustedCountry =

@@ -200,6 +200,27 @@ export async function isOnDrovrSendingJourney(
 	return doubleOptIn.length > 0
 }
 
+/**
+ * Whether drovr, not the legacy planner, drives this contact's skills-course
+ * lessons: a skills-course owner record, or a double opt-in signup (drovr
+ * runs the course for DOI-born contacts, which get no owner record). An owner
+ * record for only the newsletter or evergreen offer does not count: drovr
+ * does not send those contacts the course, so the legacy lesson is their only
+ * copy. Narrower than `isOnDrovrSendingJourney`, which contact sync uses.
+ */
+export async function isOnDrovrSkillsCourse(
+	repository: OwnershipReadRepository,
+	contactId: string,
+): Promise<boolean> {
+	if (await findJourneyOwnerAssignment(repository, contactId)) return true
+	if (!repository.findContactEventsByType) return false
+	const doubleOptIn = await repository.findContactEventsByType(
+		contactId,
+		DOI_REQUESTED_EVENT_TYPE,
+	)
+	return doubleOptIn.length > 0
+}
+
 export type JourneyOwnerResolution =
 	| { owner: 'legacy'; recorded: false }
 	| { owner: 'drovr'; recorded: false }
@@ -259,7 +280,7 @@ export async function recordJourneyOwnerAssigned(args: {
 	repository: Pick<CaptureMarketingRepository, 'createContactEvent'>
 	contactId: string
 	providerIdentityId: string
-	kitSubscriberId: string
+	kitSubscriberId?: string
 	provider?: Provider
 	providerExternalId?: string
 	email: string
@@ -268,6 +289,8 @@ export async function recordJourneyOwnerAssigned(args: {
 	journeyId?: DrovrJourneyId
 }): Promise<ContactEventRecord> {
 	const journeyId = args.journeyId ?? DROVR_SKILLS_COURSE_JOURNEY_ID
+	const externalId = args.providerExternalId ?? args.kitSubscriberId
+	if (!externalId) throw new Error('Journey owner assignment identity missing')
 	const normalized = normalizeContactEvent({
 		provider: args.provider ?? 'kit',
 		providerEventId: journeyOwnerProviderEventId(args.contactId, journeyId),
@@ -275,7 +298,7 @@ export async function recordJourneyOwnerAssigned(args: {
 		occurredAt: args.occurredAt,
 		email: args.email,
 		name: args.name,
-		externalId: args.providerExternalId ?? args.kitSubscriberId,
+		externalId,
 		message: `Journey owner assigned to drovr for ${journeyId}`,
 		privacyLevel: 'internal',
 	})
@@ -327,6 +350,78 @@ export function isOwnerFanOutCandidate(event: DrovrShadowEvent): boolean {
 }
 
 /**
+ * Double opt-in learners are born in drovr's authority tenant by drovr's own
+ * confirmation and, by design, get no owner record (`isOnDrovrSkillsCourse`).
+ * Owner fan-out never copied their quiz answers, so the shadow tenant
+ * discarded them and the lesson's "next one in a few minutes" fell back to
+ * the drip timer (2026-11-10: 0 of 36 such answers advanced anyone).
+ *
+ * For them only the answer is copied. Their stops and purchases keep the
+ * routes they have today (the directory copies), and no data is written:
+ * an owner record would also be a birth, and for a contact who never
+ * confirmed that birth sends lesson one without consent.
+ *
+ * New signups only: a double opt-in requested at or after this instant.
+ * Moving it back is the backfill decision, still without a data write.
+ */
+export const DOI_ANSWER_FORWARD_SINCE = '2026-11-10T03:00:00.000Z'
+
+/** A skills-course quiz answer bound for the shadow tenant. */
+export function isDoiAnswerForwardCandidate(event: DrovrShadowEvent): boolean {
+	return (
+		event.tenantId === DROVR_SHADOW_TENANT_ID &&
+		event.journeyId === DROVR_SKILLS_COURSE_JOURNEY_ID &&
+		event.type === 'value-path.answer-selected'
+	)
+}
+
+/** The lesson a skills-course answer answers, if the event carries one. */
+export function answeredEmailResourceIdOf(
+	event: DrovrShadowEvent,
+): string | undefined {
+	const payload = event.payload as { emailResourceId?: unknown } | undefined
+	return typeof payload?.emailResourceId === 'string'
+		? payload.emailResourceId
+		: undefined
+}
+
+/** The first readable DOI request is at or after the cutoff. */
+export function isNewDoiSignup(
+	doiRequestedAt: readonly string[],
+	since: string = DOI_ANSWER_FORWARD_SINCE,
+): boolean {
+	const requested = doiRequestedAt
+		.map((at) => Date.parse(at))
+		.filter((ms) => Number.isFinite(ms))
+	return requested.length > 0 && Math.min(...requested) >= Date.parse(since)
+}
+
+/**
+ * Whether a DOI learner's answers in this batch may reach their actor. All of:
+ * - their first double opt-in request at or after `since` (new signups only:
+ *   an earlier learner who submits the form again stays on today's path);
+ * - for every lesson answered, a link anchor: answer links are issued only
+ *   when a lesson is rendered for a send, and a DOI contact's lessons are
+ *   rendered only at drovr's request, so the anchor shows the actor exists.
+ *   An answer for an unborn actor is refused by drovr but kept, and folds at
+ *   birth; this keeps one from ever being sent.
+ */
+export function isDoiAnswerForwardContact(args: {
+	doiRequestedAt: readonly string[]
+	answeredEmailResourceIds: readonly string[]
+	anchoredEmailResourceIds: ReadonlySet<string>
+	since?: string
+}): boolean {
+	return (
+		isNewDoiSignup(args.doiRequestedAt, args.since) &&
+		args.answeredEmailResourceIds.length > 0 &&
+		args.answeredEmailResourceIds.every((id) =>
+			args.anchoredEmailResourceIds.has(id),
+		)
+	)
+}
+
+/**
  * A shadow-addressed event delivery can only discard: the shadow tenant is
  * never posted to, and no owner copy is made from it, whoever owns the
  * contact. Producers drop these before the hand-off to Inngest, so a batch
@@ -348,6 +443,8 @@ export function fanOutOwnedEvents(
 	events: readonly DrovrShadowEvent[],
 	ownedContactIds: ReadonlySet<string>,
 	newsletterOwnedContactIds: ReadonlySet<string>,
+	/** DOI learners whose skills-course answers, and nothing else, are copied. */
+	doiAnswerForwardContactIds: ReadonlySet<string> = new Set(),
 ): DrovrShadowEvent[] {
 	// A newsletter birth is a handoff, not parity telemetry. It is allowed
 	// only for contacts with a shadow-newsletter ownership assignment;
@@ -361,7 +458,9 @@ export function fanOutOwnedEvents(
 	const copies = retained.flatMap((event) => {
 		const owned = isShadowNewsletterBirth(event)
 			? newsletterOwnedContactIds.has(event.contactId)
-			: ownedContactIds.has(event.contactId)
+			: ownedContactIds.has(event.contactId) ||
+				(isDoiAnswerForwardCandidate(event) &&
+					doiAnswerForwardContactIds.has(event.contactId))
 		return isOwnerFanOutCandidate(event) && owned
 			? [
 					{

@@ -12,6 +12,7 @@ import { useMuxPlayer } from '@/hooks/use-mux-player'
 import { useVideoQualityPref } from '@/hooks/use-video-quality-pref'
 import {
 	clearStaleCaptions,
+	redrawCaptions,
 	handleTextTrackChange,
 	setPreferredPlaybackRate,
 	setPreferredTextTrack,
@@ -56,6 +57,8 @@ import { completeLessonInBackground } from './complete-lesson-in-background'
 import type { EndCardAction } from './end-card'
 import { useModuleProgress } from './module-progress-provider'
 import { getArrivalPosterUrl, getNextLesson } from './next-lesson'
+
+const PLAYBACK_POSITION_SAVE_INTERVAL_MS = 30_000
 
 export function AuthedVideoPlayer({
 	title,
@@ -198,7 +201,10 @@ export function AuthedVideoPlayer({
 			const normalizedPosition = normalizePlaybackPosition(position)
 			if (normalizedPosition === null) return Promise.resolve(null)
 			lastPositionRef.current = normalizedPosition
-			if (!force && Date.now() - lastSavedAtRef.current < 15_000) {
+			if (
+				!force &&
+				Date.now() - lastSavedAtRef.current < PLAYBACK_POSITION_SAVE_INTERVAL_MS
+			) {
 				return Promise.resolve(null)
 			}
 			if (normalizedPosition === lastSavedPositionRef.current) {
@@ -212,6 +218,28 @@ export function AuthedVideoPlayer({
 	)
 	const { moduleProgress, addLessonProgress, removeLessonProgress } =
 		useModuleProgress()
+
+	React.useEffect(() => {
+		const saveOnExit = () => {
+			// An ended source already saved 0; don't replace it with its duration.
+			if (lastPositionRef.current === null) return
+			void persistPlaybackPosition(
+				playerRef.current?.currentTime ?? lastPositionRef.current,
+				true,
+			)
+		}
+		const saveWhenHidden = () => {
+			if (document.visibilityState === 'hidden') saveOnExit()
+		}
+		// Use the existing mutation queue. The shared streaming tRPC link has
+		// no per-call keepalive option, so pagehide is a best-effort fallback.
+		document.addEventListener('visibilitychange', saveWhenHidden)
+		window.addEventListener('pagehide', saveOnExit)
+		return () => {
+			document.removeEventListener('visibilitychange', saveWhenHidden)
+			window.removeEventListener('pagehide', saveOnExit)
+		}
+	}, [persistPlaybackPosition])
 
 	// Publish the ref to the shared context so consumers outside this tree
 	// (transcript timestamp buttons) can drive the player.
@@ -293,6 +321,7 @@ export function AuthedVideoPlayer({
 		},
 		onLoadStart: () => clearStaleCaptions(playerRef),
 		onLoadedData: () => {
+			redrawCaptions(playerRef)
 			handleTextTrackChange(playerRef, setPlayerPrefs)
 			setPreferredPlaybackRate(playerRef, playbackRate)
 			setPreferredTextTrack(playerRef)
@@ -403,6 +432,7 @@ export function AuthedVideoPlayer({
 					lastSavedPositionRef.current = normalizePlaybackPosition(
 						player?.currentTime,
 					)
+					lastPositionRef.current = lastSavedPositionRef.current
 					sourceReadyRef.current = true
 					props.onLoadedMetadata?.(event)
 				}}

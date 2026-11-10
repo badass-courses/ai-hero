@@ -7,7 +7,7 @@ import { resolveUnsubscribePreference } from "@/coursebuilder/email-preferences"
 import {
   getEmailPreferenceDefinition,
   getSearchParamValue,
-  validateKitPreferenceIdentity,
+  verifyKitPreferenceLinkLocally,
 } from "@/lib/email-preferences";
 import { log } from "@/server/logger";
 
@@ -90,14 +90,16 @@ const Unsubscribed = async (props: UnsubscribedProps) => {
   // GET only validates. The writes happen in unsubscribeAction on POST, so a
   // link scanner or bot that opens this URL unsubscribes nobody.
   if (subscriberId && shKit) {
-    const subscriber = await validateKitPreferenceIdentity({
+    // Only a tampered link is turned away. One that cannot be checked right
+    // now still gets the button: an unsubscribe always lands.
+    const verification = await verifyKitPreferenceLinkLocally({
       subscriberId,
       shKit,
       source: "unsubscribe-link",
       route: "/unsubscribed",
     });
 
-    if (!subscriber) {
+    if (verification.status === "invalid") {
       redirect("/");
     }
   } else if (!userId) {

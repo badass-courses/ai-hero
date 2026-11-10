@@ -5,13 +5,18 @@ import type { AnalyticsRange, SurfaceEntry, SurfaceName } from '@/lib/analytics'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
+import { learningTeamMembersResponse } from './team-members'
 import {
 	ANALYTICS_AGENT_INSTRUCTIONS,
 	getAnalyticsAgentSchema,
 	getRevenueSurfaceSchema,
 } from './agent-contract'
 
-type ApiAnalyticsRange = AnalyticsRange | '180d'
+// newsletter/signups reads drovr a week at a time, 10 s per call, and only
+// for days after the frozen Kit series, so even range=all makes few calls.
+export const maxDuration = 60
+
+type ApiAnalyticsRange = AnalyticsRange | '180d' | '365d'
 
 const VALID_RANGES = new Set<ApiAnalyticsRange>([
 	'24h',
@@ -19,6 +24,7 @@ const VALID_RANGES = new Set<ApiAnalyticsRange>([
 	'30d',
 	'90d',
 	'180d',
+	'365d',
 	'all',
 ])
 const RANGE_OPTIONS: ApiAnalyticsRange[] = [
@@ -27,6 +33,7 @@ const RANGE_OPTIONS: ApiAnalyticsRange[] = [
 	'30d',
 	'90d',
 	'180d',
+	'365d',
 	'all',
 ]
 const catalog = analytics.getCatalog()
@@ -83,6 +90,8 @@ const CATEGORY_SUGGESTIONS: Record<SurfaceEntry['category'], SurfaceName[]> = {
 		'attribution/email-campaigns/strict',
 		'attribution/shortlinks',
 	],
+	learning: ['summary', 'revenue/products', 'purchases/recent'],
+	newsletter: ['attribution/funnel', 'attribution/sources', 'summary'],
 }
 
 const corsHeaders = {
@@ -160,7 +169,12 @@ function buildContextualNextActions(
 		.filter((name) => name !== surface)
 		.slice(0, 4)
 		.map((name) => {
-			const searchParams = new URLSearchParams({ surface: name, range })
+			// Only newsletter/signups takes 365d; the others get the nearest range.
+			const nextRange = range === '365d' ? 'all' : range
+			const searchParams = new URLSearchParams({
+				surface: name,
+				range: nextRange,
+			})
 			if (options.productId) {
 				searchParams.set('productId', options.productId)
 			}
@@ -169,7 +183,7 @@ function buildContextualNextActions(
 				description: catalogByName[name].description,
 				params: {
 					range: {
-						value: range,
+						value: nextRange,
 						enum: RANGE_OPTIONS,
 					},
 					...(options.productId
@@ -297,6 +311,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 					'Paid campaign and email-course funnel metrics are available at GET /api/analytics/ads-course?productId=email-course&range=today.',
 					'The traffic surface includes GA4 device category, operating system, and screen resolution breakdowns with session percentages.',
 					'Use range=180d only for GA4 traffic surfaces. Non-GA4 surfaces intentionally reject it.',
+					'Use range=365d only for newsletter/signups. Other surfaces reject it.',
 					'Attribution coverage includes quality lanes when the database provider exposes them. Coverage does not mean clean first-touch attribution.',
 					'GA4 conversion writes return safe receipts in Inngest logs, but GA4 is not the revenue source of truth.',
 					'YouTube surfaces are useful for correlation/content analysis but lag by about 48 hours.',
@@ -418,6 +433,29 @@ export const GET = withSkill(async (request: NextRequest) => {
 		)
 	}
 
+	if (range === '365d' && surface !== 'newsletter/signups') {
+		return NextResponse.json(
+			{
+				ok: false,
+				endpoint: '/api/analytics',
+				surface,
+				error: {
+					message: 'range=365d is only supported for newsletter/signups',
+					code: 'INVALID_RANGE_FOR_SURFACE',
+				},
+				fix: 'Use range=90d/all for this surface.',
+				next_actions: [
+					{
+						command: 'GET /api/analytics?surface=newsletter/signups&range=365d',
+						description:
+							'Fetch the last 12 months of newsletter signups by UTC day and month',
+					},
+				],
+			},
+			{ status: 400, headers: corsHeaders },
+		)
+	}
+
 	const requestedLimit = Number(searchParams.get('limit') ?? 20)
 	const limit = Math.min(
 		Number.isFinite(requestedLimit) && requestedLimit > 0 ? requestedLimit : 20,
@@ -457,6 +495,60 @@ export const GET = withSkill(async (request: NextRequest) => {
 		}
 	}
 	const productId = searchParams.get('productId') ?? undefined
+	if (surface === 'learning/progress' && !productId) {
+		return NextResponse.json(
+			{
+				ok: false,
+				endpoint: '/api/analytics',
+				surface,
+				error: {
+					message: 'learning/progress requires productId',
+					code: 'PRODUCT_REQUIRED',
+				},
+				fix: 'Pass productId, for example a cohort or self-paced course product id.',
+				next_actions: [
+					{
+						command: 'GET /api/analytics?surface=revenue/products&range=all',
+						description: 'List product ids with revenue',
+					},
+				],
+			},
+			{ status: 400, headers: corsHeaders },
+		)
+	}
+	const teamId = searchParams.get('teamId') ?? undefined
+	if (
+		(surface === 'learning/team' || surface === 'learning/team-members') &&
+		!teamId
+	) {
+		return NextResponse.json(
+			{
+				ok: false,
+				endpoint: '/api/analytics',
+				surface,
+				error: {
+					message: `${surface} requires teamId`,
+					code: 'TEAM_REQUIRED',
+				},
+				fix: 'Pass teamId: a bulk coupon id or one of its bulk purchase ids.',
+				next_actions: [
+					{
+						command: 'GET /api/analytics?surface=learning/teams',
+						description: 'List team ids',
+					},
+				],
+			},
+			{ status: 400, headers: corsHeaders },
+		)
+	}
+	if (surface === 'learning/team-members') {
+		return learningTeamMembersResponse({
+			isAdmin: Boolean(ability.can('manage', 'all')),
+			actorId: (user as any)?.id ?? null,
+			authMethod: deviceAuth.user ? 'device_token' : 'session',
+			teamId: teamId!,
+		})
+	}
 	const purchaseId = searchParams.get('purchaseId') ?? undefined
 	const surveyId = searchParams.get('surveyId') ?? undefined
 	const surveySlug = searchParams.get('surveySlug') ?? undefined
@@ -471,6 +563,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 		['from', from],
 		['to', to],
 		['productId', productId],
+		['teamId', teamId],
 		['purchaseId', purchaseId],
 		['surveyId', surveyId],
 		['surveySlug', surveySlug],
@@ -488,6 +581,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 		limit,
 		offset,
 		productId,
+		teamId,
 		purchaseId,
 		surveyId,
 		surveySlug,
@@ -501,6 +595,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 		limit,
 		offset,
 		productId,
+		teamId,
 		purchaseId,
 		surveyId,
 		surveySlug,
@@ -530,7 +625,11 @@ export const GET = withSkill(async (request: NextRequest) => {
 				}),
 			},
 			{
-				status: result.error.code.endsWith('_UNAVAILABLE') ? 503 : 500,
+				status: result.error.code.endsWith('_UNAVAILABLE')
+					? 503
+					: result.error.code.endsWith('_NOT_FOUND')
+						? 404
+						: 500,
 				headers: corsHeaders,
 			},
 		)

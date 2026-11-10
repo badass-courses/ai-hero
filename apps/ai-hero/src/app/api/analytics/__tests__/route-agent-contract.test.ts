@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
 	query: vi.fn(),
 	getUserAbilityForRequest: vi.fn(),
 	getServerAuthSession: vi.fn(),
+	readMembers: vi.fn(),
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 	catalog: [
 		{
@@ -21,6 +22,29 @@ const mocks = vi.hoisted(() => ({
 			provider: 'database',
 			fn: 'getEvergreenFunnel',
 		},
+		{
+			name: 'newsletter/signups',
+			description: 'Newsletter signups from drovr',
+			category: 'newsletter',
+			provider: 'newsletter',
+			fn: 'getNewsletterSignups',
+		},
+		{
+			name: 'learning/progress',
+			description: 'Aggregate learner progress',
+			category: 'learning',
+			provider: 'database',
+			fn: 'getLearningProgress',
+		},
+		...(
+			['learning/teams', 'learning/team', 'learning/team-members'] as const
+		).map((name) => ({
+			name,
+			description: 'Team progress',
+			category: 'learning',
+			provider: 'database',
+			fn: 'synthetic',
+		})),
 		...[
 			'attribution/funnel',
 			'attribution/coverage',
@@ -88,6 +112,9 @@ vi.mock('@/server/auth', () => ({
 	getServerAuthSession: mocks.getServerAuthSession,
 }))
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
+vi.mock('@/lib/analytics/providers/database', () => ({
+	readLearningTeamMembersUncached: mocks.readMembers,
+}))
 vi.mock('@/server/with-skill', () => ({
 	withSkill: (handler: unknown) => handler,
 }))
@@ -113,7 +140,7 @@ describe('analytics API agent contract', () => {
 		})
 	})
 
-	it.each(['revenue/promos', 'funnel/evergreen'])(
+	it.each(['revenue/promos', 'funnel/evergreen', 'newsletter/signups'])(
 		'refuses signed-out and ordinary users for %s without querying',
 		async (surface) => {
 			for (const ability of [null, createAppAbility([])]) {
@@ -180,6 +207,265 @@ describe('analytics API agent contract', () => {
 			)
 		},
 	)
+
+	it('answers an unavailable drovr signup read with 503, not a count', async () => {
+		mocks.query.mockResolvedValue({
+			ok: false,
+			surface: 'newsletter/signups',
+			error: {
+				code: 'SIGNUPS_UNAVAILABLE',
+				message:
+					'Newsletter signups are unavailable: drovr signup-counts read timed out.',
+			},
+			fix: 'Retry shortly. Unavailable is not zero; do not report a signup count.',
+		})
+		const response = await GET(request('?surface=newsletter/signups'))
+		expect(response.status).toBe(503)
+		const body = await response.json()
+		expect(body).toMatchObject({
+			ok: false,
+			error: { code: 'SIGNUPS_UNAVAILABLE' },
+		})
+		expect(body.data).toBeUndefined()
+	})
+
+	it('reads 12 months of newsletter signups with range=365d', async () => {
+		mocks.query.mockResolvedValue({
+			ok: true,
+			surface: 'newsletter/signups',
+			range: '365d',
+			data: { range: '365d' },
+			meta: { queryTimeMs: 1, truncated: false },
+		})
+		const response = await GET(request('?surface=newsletter/signups&range=365d'))
+		expect(response.status).toBe(200)
+		expect(mocks.query).toHaveBeenCalledWith(
+			'newsletter/signups',
+			expect.objectContaining({ range: '365d' }),
+		)
+		const body = await response.json()
+		expect(body.range).toBe('365d')
+		for (const action of body.next_actions)
+			expect(action.command).not.toContain('range=365d')
+	})
+
+	it('refuses range=365d for other surfaces without querying', async () => {
+		const response = await GET(request('?surface=summary&range=365d'))
+		expect(response.status).toBe(400)
+		expect(await response.json()).toMatchObject({
+			ok: false,
+			error: { code: 'INVALID_RANGE_FOR_SURFACE' },
+		})
+		expect(mocks.query).not.toHaveBeenCalled()
+	})
+
+	it.each([null, 'ordinary'])(
+		'refuses learning/progress for %s callers without querying',
+		async (kind) => {
+			const ability = kind ? createAppAbility([]) : null
+			mocks.getUserAbilityForRequest.mockResolvedValue({ user: null, ability })
+			mocks.getServerAuthSession.mockResolvedValue({
+				session: ability ? { user: { id: 'synthetic-non-admin' } } : null,
+				ability,
+			})
+			const response = await GET(
+				request('?surface=learning/progress&productId=product-s00zs'),
+			)
+			expect(response.status).toBe(401)
+			expect(mocks.query).not.toHaveBeenCalled()
+		},
+	)
+
+	it('requires productId for learning/progress before querying', async () => {
+		const response = await GET(request('?surface=learning/progress'))
+		expect(response.status).toBe(400)
+		expect((await response.json()).error.code).toBe('PRODUCT_REQUIRED')
+		expect(mocks.query).not.toHaveBeenCalled()
+	})
+
+	it('serves learning/progress to the analytics token with its schema', async () => {
+		mocks.getUserAbilityForRequest.mockResolvedValue({
+			user: null,
+			ability: createAppAbility([{ action: 'view', subject: 'Analytics' }]),
+		})
+		const data = {
+			asOf: '2026-10-29T12:00:00.000Z',
+			funnel: {
+				denominator: { basis: 'signed-in-learners', count: 4 },
+				rows: [],
+			},
+		}
+		mocks.query.mockResolvedValue({
+			ok: true,
+			data,
+			meta: { queryTimeMs: 2, truncated: false },
+		})
+		const response = await GET(
+			request('?surface=learning/progress&productId=product-s00zs'),
+		)
+		expect(response.status).toBe(200)
+		expect(mocks.query).toHaveBeenCalledWith(
+			'learning/progress',
+			expect.objectContaining({ productId: 'product-s00zs' }),
+		)
+		const body = await response.json()
+		expect(body).toMatchObject({
+			ok: true,
+			surface: 'learning/progress',
+			productId: 'product-s00zs',
+			data,
+			schema: { requires: ['productId'] },
+		})
+		expect(body.agent_instructions).toEqual(
+			expect.arrayContaining([
+				expect.stringContaining('learning/progress requires productId'),
+			]),
+		)
+	})
+
+	it('answers an unknown learning product with 404', async () => {
+		mocks.query.mockResolvedValue({
+			ok: false,
+			surface: 'learning/progress',
+			error: { code: 'PRODUCT_NOT_FOUND', message: 'Unknown productId.' },
+			fix: 'List product ids.',
+		})
+		const response = await GET(
+			request('?surface=learning/progress&productId=missing'),
+		)
+		expect(response.status).toBe(404)
+	})
+
+	it.each(['learning/team', 'learning/team-members'])(
+		'requires teamId for %s before querying',
+		async (surface) => {
+			const response = await GET(request(`?surface=${surface}`))
+			expect(response.status).toBe(400)
+			expect((await response.json()).error.code).toBe('TEAM_REQUIRED')
+			expect(mocks.query).not.toHaveBeenCalled()
+			expect(mocks.readMembers).not.toHaveBeenCalled()
+		},
+	)
+
+	it('routes learning/team through the cached engine with teamId', async () => {
+		mocks.query.mockResolvedValue({
+			ok: true,
+			data: { asOf: '2026-10-29T12:00:00.000Z' },
+			meta: { queryTimeMs: 1, truncated: false },
+		})
+		const response = await GET(
+			request('?surface=learning/team&teamId=bulk-coupon'),
+		)
+		expect(response.status).toBe(200)
+		expect(mocks.query).toHaveBeenCalledWith(
+			'learning/team',
+			expect.objectContaining({ teamId: 'bulk-coupon' }),
+		)
+	})
+
+	const memberData = {
+		asOf: '2026-10-29T12:00:00.000Z',
+		pii: true,
+		team: {
+			teamId: 'bulk-coupon',
+			product: { id: 'synthetic-product', name: 'Synthetic' },
+			seats: { bought: 5, redeemed: 2, unredeemed: 3 },
+			organization: null,
+		},
+		members: [
+			{
+				userId: 'u-seat',
+				email: 'learner@example.test',
+				name: null,
+				redeemedAt: '2026-10-01T00:00:00.000Z',
+				signedIn: true,
+				lastActiveAt: null,
+				lessonsCompleted: 0,
+				workshops: { started: 0, completed: 0, total: 4 },
+			},
+		],
+	}
+
+	it('refuses learning/team-members to an analytics-only role', async () => {
+		mocks.getUserAbilityForRequest.mockResolvedValue({
+			user: { id: 'analyst-1' },
+			ability: createAppAbility([{ action: 'view', subject: 'Analytics' }]),
+		})
+		const response = await GET(
+			request('?surface=learning/team-members&teamId=bulk-coupon'),
+		)
+		expect(response.status).toBe(403)
+		expect((await response.json()).error.code).toBe('ADMIN_REQUIRED')
+		expect(response.headers.get('cache-control')).toBe('private, no-store')
+		expect(mocks.readMembers).not.toHaveBeenCalled()
+		expect(mocks.query).not.toHaveBeenCalled()
+		expect(mocks.log.warn).toHaveBeenCalledWith(
+			'api.analytics.team-members.denied',
+			{
+				actorId: 'analyst-1',
+				authMethod: 'device_token',
+				teamId: 'bulk-coupon',
+			},
+		)
+	})
+
+	it('serves learning/team-members to an admin, uncached, and logs no member emails', async () => {
+		mocks.getUserAbilityForRequest.mockResolvedValue({
+			user: { id: 'admin-1', email: 'admin@example.test' },
+			ability: createAppAbility([{ action: 'manage', subject: 'all' }]),
+		})
+		mocks.readMembers.mockResolvedValue(memberData)
+		const response = await GET(
+			request('?surface=learning/team-members&teamId=p-team'),
+		)
+		expect(response.status).toBe(200)
+		expect(response.headers.get('cache-control')).toBe('private, no-store')
+		expect(response.headers.get('access-control-allow-origin')).toBeNull()
+		expect(mocks.readMembers).toHaveBeenCalledWith('p-team', {
+			includeUserIds: true,
+		})
+		// PII never flows through the engine or its caches.
+		expect(mocks.query).not.toHaveBeenCalled()
+		const body = await response.json()
+		expect(body).toMatchObject({
+			ok: true,
+			surface: 'learning/team-members',
+			pii: true,
+			data: memberData,
+			schema: { requires: ['teamId'], pii: true },
+		})
+		expect(mocks.log.info).toHaveBeenCalledWith(
+			'api.analytics.team-members.read',
+			{
+				actorId: 'admin-1',
+				authMethod: 'device_token',
+				teamId: 'bulk-coupon',
+				requestedTeamId: 'p-team',
+				memberCount: 1,
+			},
+		)
+		const logged = JSON.stringify([
+			...mocks.log.info.mock.calls,
+			...mocks.log.warn.mock.calls,
+			...mocks.log.error.mock.calls,
+		])
+		expect(logged).not.toContain('learner@example.test')
+	})
+
+	it('answers an unknown team on learning/team-members with 404', async () => {
+		const { LearningTeamNotFoundError } =
+			await import('@/lib/analytics/learning-teams-query')
+		mocks.getUserAbilityForRequest.mockResolvedValue({
+			user: { id: 'admin-1' },
+			ability: createAppAbility([{ action: 'manage', subject: 'all' }]),
+		})
+		mocks.readMembers.mockRejectedValue(new LearningTeamNotFoundError())
+		const response = await GET(
+			request('?surface=learning/team-members&teamId=missing'),
+		)
+		expect(response.status).toBe(404)
+		expect(response.headers.get('cache-control')).toBe('private, no-store')
+	})
 
 	it('rejects all on promo revenue with an actionable 400 prompt', async () => {
 		const response = await GET(request('?surface=revenue/promos&range=all'))
@@ -268,7 +554,7 @@ describe('analytics API agent contract', () => {
 				expect.stringContaining('defaults to range=30d'),
 			]),
 			schema: {
-				version: '2026-10-16.1',
+				version: '2026-11-05.1',
 				query: {
 					type: 'object',
 					required: ['surface'],
@@ -306,6 +592,27 @@ describe('analytics API agent contract', () => {
 							totalMatchingCount: 'meta.pagination.totalMatchingRows',
 							nextPage: '_links.next.href',
 						},
+						data: {
+							items: {
+								properties: {
+									isTeam: {
+										type: 'boolean',
+										description: expect.stringContaining('bulk coupon'),
+									},
+									seats: {
+										type: ['integer', 'null'],
+										description: expect.stringContaining('add-seat teams'),
+									},
+									teamSeats: {
+										type: ['integer', 'null'],
+										description: expect.stringContaining('current total'),
+									},
+								},
+							},
+						},
+						semantics: expect.arrayContaining([
+							expect.stringContaining('teamSeats is the team total now'),
+						]),
 					},
 				},
 			},
@@ -348,8 +655,20 @@ describe('analytics API agent contract', () => {
 			.mockResolvedValueOnce({
 				ok: true,
 				data: [
-					{ id: 'purchase_2', createdAt: '2026-08-18T12:00:00.000Z' },
-					{ id: 'purchase_1', createdAt: '2026-08-18T11:00:00.000Z' },
+					{
+						id: 'purchase_2',
+						createdAt: '2026-08-18T12:00:00.000Z',
+						isTeam: true,
+						seats: null,
+						teamSeats: 6,
+					},
+					{
+						id: 'purchase_1',
+						createdAt: '2026-08-18T11:00:00.000Z',
+						isTeam: false,
+						seats: null,
+						teamSeats: null,
+					},
 				],
 				meta: { queryTimeMs: 5, truncated: false },
 			})
@@ -370,6 +689,18 @@ describe('analytics API agent contract', () => {
 			range: '7d',
 			productId: 'product_crash',
 		})
+		expect(
+			body.data.map(
+				({ isTeam, seats, teamSeats }: Record<string, unknown>) => ({
+					isTeam,
+					seats,
+					teamSeats,
+				}),
+			),
+		).toEqual([
+			{ isTeam: true, seats: null, teamSeats: 6 },
+			{ isTeam: false, seats: null, teamSeats: null },
+		])
 		expect(body.meta.pagination).toEqual({
 			limit: 2,
 			offset: 0,

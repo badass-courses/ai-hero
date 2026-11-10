@@ -18,6 +18,11 @@ import { Button, Label, RadioGroup, RadioGroupItem, Textarea } from '@coursebuil
 
 import { cn } from '@coursebuilder/utils/cn'
 
+import {
+	clearFeedbackDraft,
+	readFeedbackDraft,
+	writeFeedbackDraft,
+} from './feedback-draft'
 import { useFeedbackForm } from './use-feedback-form'
 
 const EMOTIONS = [':heart_eyes:', ':wave:', ':sob:'] as const
@@ -41,6 +46,10 @@ export function FeedbackDialog() {
 					event.preventDefault()
 					contentRef.current?.focus({ preventScroll: true })
 				}}
+				// Focus leaving the dialog (another window, an extension, devtools)
+				// must not close it. A click on the backdrop, Escape and the close
+				// button still do, and the typed text is kept as a draft either way.
+				onFocusOutside={(event) => event.preventDefault()}
 				className={cn(
 					'max-h-[calc(100dvh-1rem)] overflow-x-hidden overflow-y-auto overscroll-contain sm:max-w-lg',
 					// On a phone this is deliberately a bottom sheet. It stays inside
@@ -67,6 +76,12 @@ export function FeedbackForm({ location }: { location: string }) {
 		useFeedbackForm({ location })
 	const [values, setValues] = React.useState<FeedbackFormValues>(initialValues)
 	const [isSubmitting, setIsSubmitting] = React.useState(false)
+
+	// Restore after mount so server and client markup match.
+	React.useEffect(() => {
+		const draft = readFeedbackDraft()
+		if (draft) setValues((current) => ({ ...current, text: draft }))
+	}, [])
 	const { setIsFeedbackDialogOpen } = useFeedback()
 
 	const updateContext = <Key extends 'emotion' | 'category'>(
@@ -84,7 +99,11 @@ export function FeedbackForm({ location }: { location: string }) {
 		if (!values.text.trim() || isSubmitting) return
 		setIsSubmitting(true)
 		try {
-			await submitFeedbackForm({ ...values, text: values.text.trim() })
+			const sent = await submitFeedbackForm({
+				...values,
+				text: values.text.trim(),
+			})
+			if (sent) clearFeedbackDraft()
 		} finally {
 			setIsSubmitting(false)
 		}
@@ -117,12 +136,11 @@ export function FeedbackForm({ location }: { location: string }) {
 					id="feedback-text"
 					name="feedback"
 					value={values.text}
-					onChange={(event) =>
-						setValues((current) => ({
-							...current,
-							text: event.target.value,
-						}))
-					}
+					onChange={(event) => {
+						const text = event.target.value
+						writeFeedbackDraft(text)
+						setValues((current) => ({ ...current, text }))
+					}}
 					placeholder="What happened, and what would feel better?…"
 					autoComplete="off"
 					className="min-h-32 resize-y text-base sm:min-h-36 sm:text-sm"
@@ -180,7 +198,7 @@ export function FeedbackForm({ location }: { location: string }) {
 								value as FeedbackFormValues['context']['category'],
 							)
 						}
-						className="grid grid-cols-3 gap-2"
+						className="flex gap-2"
 					>
 						{CATEGORIES.map((category) => {
 							const selected = values.context.category === category
@@ -189,7 +207,7 @@ export function FeedbackForm({ location }: { location: string }) {
 									key={category}
 									htmlFor={`feedback-category-${category}`}
 									className={cn(
-										'focus-within:ring-ring flex min-h-11 min-w-0 cursor-pointer items-center justify-center rounded-[9px] border px-2 text-sm capitalize transition-colors focus-within:ring-2 focus-within:ring-offset-2',
+										'focus-within:ring-ring flex min-h-11 flex-auto cursor-pointer items-center justify-center rounded-[9px] border px-2 text-sm capitalize transition-colors focus-within:ring-2 focus-within:ring-offset-2',
 										selected
 											? 'border-primary bg-primary/10'
 											: 'border-input hover:bg-hover',
@@ -200,7 +218,7 @@ export function FeedbackForm({ location }: { location: string }) {
 										value={category}
 										className="sr-only"
 									/>
-									<span className="truncate">{category}</span>
+									<span className="whitespace-nowrap">{category}</span>
 								</Label>
 							)
 						})}

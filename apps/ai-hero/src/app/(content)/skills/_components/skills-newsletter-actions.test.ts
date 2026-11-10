@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
+	readOwnedEvidence: vi.fn(),
+	resolveOwnedContact: vi.fn(),
 	cookieGet: vi.fn(),
 	headerGet: vi.fn(),
 	getServerAuthSession: vi.fn(),
@@ -13,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 		error: vi.fn(),
 	},
 	reconcile: vi.fn(),
+	routeReturning: vi.fn(),
 	revalidatePath: vi.fn(),
 	setSubscriberCookie: vi.fn(),
 	setSubscriberFields: vi.fn(),
@@ -23,6 +26,31 @@ const mocks = vi.hoisted(() => ({
 		CONVERTKIT_API_KEY: 'key',
 	} as Record<string, string | undefined>,
 }))
+
+vi.mock('@/db', () => ({ db: {} }))
+vi.mock(
+	'@/lib/subscriber-marketing/owned-skills-enrolment',
+	async (original) => ({
+		...(await original<
+			typeof import('@/lib/subscriber-marketing/owned-skills-enrolment')
+		>()),
+		resolveOwnedSkillsContact: mocks.resolveOwnedContact,
+	}),
+)
+vi.mock(
+	'@/lib/subscriber-marketing/owned-skills-list-state',
+	async (original) => {
+		const actual =
+			await original<
+				typeof import('@/lib/subscriber-marketing/owned-skills-list-state')
+			>()
+		return {
+			...actual,
+			readOwnedSkillsAdmission: async () =>
+				actual.ownedSkillsAdmission((await mocks.readOwnedEvidence()).list),
+		}
+	},
+)
 
 vi.mock('next/cache', () => ({
 	revalidatePath: mocks.revalidatePath,
@@ -48,6 +76,7 @@ vi.mock('@coursebuilder/core/providers/convertkit', () => ({
 }))
 
 vi.mock('@/coursebuilder/email-list-provider', () => ({
+	setKitSubscriberFields: mocks.setSubscriberFields,
 	emailListProvider: {
 		subscribeToList: mocks.subscribeToList,
 	},
@@ -87,6 +116,7 @@ vi.mock('@/server/logger', () => ({
 
 vi.mock('@/lib/subscriber-marketing/ai-hero-email-opt-in.server', () => ({
 	reconcileAiHeroEmailOptInWithKit: mocks.reconcile,
+	routeReturningUnsubscriberWithKit: mocks.routeReturning,
 }))
 
 vi.mock('@/lib/subscriber-marketing/opt-in-attribution', () => ({
@@ -103,6 +133,8 @@ import { tagSubscriberAsSkills } from './skills-newsletter-actions'
 describe('tagSubscriberAsSkills', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		delete mocks.env.AIH_ENROLMENT_OFF_KIT_ENABLED
+		mocks.resolveOwnedContact.mockResolvedValue('contact-owned')
 		const subscriber = {
 			id: 1,
 			email_address: 'contact',
@@ -113,6 +145,9 @@ describe('tagSubscriberAsSkills', () => {
 		mocks.getSubscriberFromCookie.mockResolvedValue(subscriber)
 		mocks.subscribeToList.mockResolvedValue(subscriber)
 		mocks.reconcile.mockResolvedValue({ status: 'active' })
+		mocks.routeReturning
+			.mockReset()
+			.mockResolvedValue({ status: 'not-unsubscribed' })
 		mocks.inngestSend.mockResolvedValue(undefined)
 		mocks.issueRecoveryToken.mockResolvedValue(undefined)
 		mocks.setSubscriberFields.mockResolvedValue(undefined)
@@ -126,8 +161,206 @@ describe('tagSubscriberAsSkills', () => {
 	})
 
 	afterEach(() => {
+		vi.unstubAllEnvs()
 		delete process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED
 		delete process.env.AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED
+	})
+
+	it('owned signed-in entry works with Kit unreachable and emits only the contact id', async () => {
+		mocks.env.AIH_ENROLMENT_OFF_KIT_ENABLED = 'true'
+		mocks.getSubscriberFromCookie.mockResolvedValue(null)
+		mocks.getServerAuthSession.mockResolvedValue({
+			session: { user: { email: 'new@example.test' } },
+		})
+		mocks.subscribeToList.mockRejectedValue(new Error('Kit unreachable'))
+		mocks.reconcile.mockRejectedValue(new Error('Kit unreachable'))
+		mocks.routeReturning.mockRejectedValue(new Error('Kit unreachable'))
+		mocks.readOwnedEvidence.mockResolvedValue({
+			list: {
+				contactId: 'contact-owned',
+				state: 'confirmed',
+				stops: [],
+				forms: [{ formId: 'skills-newsletter', state: 'confirmed' }],
+			},
+		})
+		expect(await tagSubscriberAsSkills('skills-post')).toEqual({
+			success: true,
+		})
+		expect(mocks.inngestSend).toHaveBeenCalledWith(
+			expect.objectContaining({
+				name: 'skills-newsletter/subscribed',
+				data: expect.objectContaining({
+					contactId: 'contact-owned',
+					email: 'new@example.test',
+				}),
+			}),
+		)
+		expect(mocks.inngestSend.mock.calls[0]![0].data).not.toHaveProperty(
+			'kitSubscriberId',
+		)
+		expect(mocks.subscribeToList).not.toHaveBeenCalled()
+		expect(mocks.reconcile).not.toHaveBeenCalled()
+		expect(mocks.routeReturning).not.toHaveBeenCalled()
+		expect(mocks.setSubscriberCookie).not.toHaveBeenCalled()
+		expect(mocks.issueRecoveryToken).not.toHaveBeenCalled()
+		expect(mocks.requestDoi).not.toHaveBeenCalled()
+	})
+
+	it.each(['all', 'course:value-path-skills-course'])(
+		'a %s stop requests DOI only, never Kit',
+		async (scope) => {
+			mocks.env.AIH_ENROLMENT_OFF_KIT_ENABLED = 'true'
+			mocks.getSubscriberFromCookie.mockResolvedValue(null)
+			mocks.getServerAuthSession.mockResolvedValue({
+				session: { user: { id: 'user-test', email: 'learner@example.test' } },
+			})
+			mocks.readOwnedEvidence.mockResolvedValue({
+				list: {
+					contactId: 'contact-owned',
+					state: 'confirmed',
+					forms: [],
+					stops: [{ scope, reason: 'unsubscribed' }],
+				},
+			})
+			expect(await tagSubscriberAsSkills('skills-post')).toMatchObject({
+				reason: 'confirmation-required',
+			})
+			expect(mocks.requestDoi).toHaveBeenCalledOnce()
+			expect(mocks.inngestSend).not.toHaveBeenCalled()
+			expect(mocks.subscribeToList).not.toHaveBeenCalled()
+			expect(mocks.routeReturning).not.toHaveBeenCalled()
+		},
+	)
+
+	it.each([
+		[
+			'profile-confirmed, forms empty',
+			{ state: 'confirmed', forms: [], stops: [] },
+		],
+		['unconfirmed', { state: 'unconfirmed', forms: [], stops: [] }],
+		[
+			'unknown/no-consent-evidence',
+			{
+				state: 'unknown',
+				unknownReason: 'no-consent-evidence',
+				forms: [],
+				stops: [],
+			},
+		],
+		[
+			'no drovr record',
+			{
+				state: 'unknown',
+				unknownReason: 'no-contact',
+				contactId: null,
+				forms: [],
+				stops: [],
+			},
+		],
+	])(
+		'a signed-in click with %s queues owned entry, not DOI or Kit',
+		async (_name, list) => {
+			mocks.env.AIH_ENROLMENT_OFF_KIT_ENABLED = 'true'
+			mocks.getSubscriberFromCookie.mockResolvedValue(null)
+			mocks.getServerAuthSession.mockResolvedValue({
+				session: { user: { id: 'user-test', email: 'learner@example.test' } },
+			})
+			mocks.readOwnedEvidence.mockResolvedValue({ list })
+			expect(await tagSubscriberAsSkills('skills-post')).toEqual({
+				success: true,
+			})
+			expect(mocks.inngestSend).toHaveBeenCalledWith(
+				expect.objectContaining({
+					data: expect.objectContaining({
+						contactId: 'contact-owned',
+						signedInUserId: 'user-test',
+					}),
+				}),
+			)
+			expect(mocks.requestDoi).not.toHaveBeenCalled()
+			expect(mocks.subscribeToList).not.toHaveBeenCalled()
+			expect(mocks.routeReturning).not.toHaveBeenCalled()
+		},
+	)
+
+	it('a read failure keeps the owned request durable for retry, with no DOI or Kit', async () => {
+		mocks.env.AIH_ENROLMENT_OFF_KIT_ENABLED = 'true'
+		mocks.getSubscriberFromCookie.mockResolvedValue(null)
+		mocks.getServerAuthSession.mockResolvedValue({
+			session: { user: { id: 'user-test', email: 'learner@example.test' } },
+		})
+		mocks.readOwnedEvidence.mockRejectedValueOnce(
+			new Error('list state unavailable'),
+		)
+		expect(await tagSubscriberAsSkills('skills-post')).toEqual({
+			success: true,
+		})
+		expect(mocks.requestDoi).not.toHaveBeenCalled()
+		expect(mocks.inngestSend).toHaveBeenCalledOnce()
+		expect(mocks.subscribeToList).not.toHaveBeenCalled()
+		expect(mocks.routeReturning).not.toHaveBeenCalled()
+	})
+
+	it.each(['false', 'TRUE', 'garbage'])(
+		'flag %s retains the existing signed-in Kit path',
+		async (flag) => {
+			mocks.env.AIH_ENROLMENT_OFF_KIT_ENABLED = flag
+			mocks.getSubscriberFromCookie.mockResolvedValue(null)
+			mocks.getServerAuthSession.mockResolvedValue({
+				session: { user: { email: 'learner@example.test' } },
+			})
+			mocks.subscribeToList.mockResolvedValue({
+				id: 1,
+				email_address: 'learner@example.test',
+				state: 'active',
+				fields: {},
+			})
+			expect(await tagSubscriberAsSkills('skills-post')).toEqual({
+				success: true,
+			})
+			expect(mocks.subscribeToList).toHaveBeenCalledOnce()
+			expect(mocks.readOwnedEvidence).not.toHaveBeenCalled()
+		},
+	)
+
+	it('owned enqueue failure refuses cleanly and never falls back to Kit', async () => {
+		mocks.env.AIH_ENROLMENT_OFF_KIT_ENABLED = 'true'
+		mocks.getSubscriberFromCookie.mockResolvedValue(null)
+		mocks.getServerAuthSession.mockResolvedValue({
+			session: { user: { email: 'learner@example.test' } },
+		})
+		mocks.readOwnedEvidence.mockResolvedValue({
+			list: {
+				contactId: 'c1',
+				state: 'confirmed',
+				stops: [],
+				forms: [{ formId: 'skills-newsletter', state: 'confirmed' }],
+			},
+		})
+		mocks.inngestSend.mockRejectedValueOnce(new Error('queue unavailable'))
+		expect(await tagSubscriberAsSkills('skills-post')).toMatchObject({
+			reason: 'request-failed',
+		})
+		expect(mocks.subscribeToList).not.toHaveBeenCalled()
+	})
+
+	it('master off skips only the optional field stash, preserving enrolment, consent and the entry fact', async () => {
+		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'false')
+		const result = await tagSubscriberAsSkills('skills-post')
+		expect(result).toEqual({ success: true })
+		expect(mocks.setSubscriberFields).not.toHaveBeenCalled()
+		expect(mocks.subscribeToList).toHaveBeenCalledOnce()
+		expect(mocks.reconcile).toHaveBeenCalledOnce()
+		expect(mocks.inngestSend).toHaveBeenCalledWith(
+			expect.objectContaining({
+				data: expect.objectContaining({
+					kitSubscriberId: '1',
+					deadlineTimeZone: expect.objectContaining({
+						timeZone: 'Europe/London',
+					}),
+				}),
+			}),
+		)
 	})
 
 	// A signed-in reader is identified without a Kit cookie. Before this they
@@ -343,6 +576,9 @@ describe('tagSubscriberAsSkills with drovr double opt-in (DROVR_DOI_FORMS)', () 
 		mocks.getSubscriberFromCookie.mockResolvedValue(cookieReader)
 		mocks.subscribeToList.mockResolvedValue(cookieReader)
 		mocks.reconcile.mockResolvedValue({ status: 'active' })
+		mocks.routeReturning
+			.mockReset()
+			.mockResolvedValue({ status: 'not-unsubscribed' })
 		mocks.inngestSend.mockResolvedValue(undefined)
 		mocks.issueRecoveryToken.mockResolvedValue(undefined)
 		mocks.cookieGet.mockReturnValue(undefined)
@@ -430,5 +666,84 @@ describe('tagSubscriberAsSkills with drovr double opt-in (DROVR_DOI_FORMS)', () 
 		expect(result).toEqual({ success: false, reason: 'request-failed' })
 		expect(mocks.subscribeToList).not.toHaveBeenCalled()
 		expect(JSON.stringify(mocks.log.error.mock.calls)).not.toContain('Reader@')
+	})
+})
+
+describe('tagSubscriberAsSkills for a returning unsubscriber (Kit tag 8244351)', () => {
+	const reader = {
+		id: 9,
+		email_address: 'person@example.com',
+		first_name: 'Pat',
+		state: 'active',
+		fields: {},
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+		for (const key of [
+			'DROVR_DOI_FORMS',
+			'DROVR_API_BASE_URL',
+			'DROVR_API_KEY_ORG_AIHERO',
+		])
+			delete mocks.env[key]
+		mocks.getSubscriberFromCookie.mockResolvedValue(reader)
+		mocks.subscribeToList.mockResolvedValue(reader)
+		mocks.reconcile.mockResolvedValue({ status: 'active' })
+		mocks.inngestSend.mockResolvedValue(undefined)
+		mocks.issueRecoveryToken.mockResolvedValue(undefined)
+		mocks.cookieGet.mockReturnValue(undefined)
+		mocks.headerGet.mockReturnValue(null)
+		mocks.getServerAuthSession.mockResolvedValue(null)
+		mocks.routeReturning.mockReset()
+	})
+
+	it('DOI requested: confirm-by-email answer, no Kit subscribe, no untag', async () => {
+		mocks.routeReturning.mockResolvedValue({ status: 'doi-requested' })
+
+		const result = await tagSubscriberAsSkills('skills-post')
+
+		expect(result).toMatchObject({
+			success: false,
+			reason: 'confirmation-required',
+			confirmationUrl: '/confirm?email=person%40example.com',
+		})
+		expect(mocks.subscribeToList).not.toHaveBeenCalled()
+		expect(mocks.reconcile).not.toHaveBeenCalled()
+		expect(mocks.inngestSend).not.toHaveBeenCalled()
+	})
+
+	it('blocked (drovr not configured): request-failed, no Kit subscribe, no untag', async () => {
+		mocks.routeReturning.mockResolvedValue({
+			status: 'blocked',
+			reason: 'drovr-unconfigured',
+		})
+
+		const result = await tagSubscriberAsSkills('skills-post')
+
+		expect(result).toEqual({ success: false, reason: 'request-failed' })
+		expect(mocks.subscribeToList).not.toHaveBeenCalled()
+		expect(mocks.reconcile).not.toHaveBeenCalled()
+	})
+
+	it('Kit lookup failed: enrols through Kit, with the untag disabled', async () => {
+		mocks.routeReturning.mockResolvedValue({ status: 'lookup-failed' })
+
+		const result = await tagSubscriberAsSkills('skills-post')
+
+		expect(result).toEqual({ success: true })
+		expect(mocks.subscribeToList).toHaveBeenCalledTimes(1)
+		expect(mocks.reconcile).toHaveBeenCalledWith(
+			expect.objectContaining({ mayRemoveUnsubscribeTag: false }),
+		)
+	})
+
+	it('not tagged: the Kit path runs unchanged', async () => {
+		mocks.routeReturning.mockResolvedValue({ status: 'not-unsubscribed' })
+
+		const result = await tagSubscriberAsSkills('skills-post')
+
+		expect(result).toEqual({ success: true })
+		expect(mocks.subscribeToList).toHaveBeenCalledTimes(1)
+		expect(mocks.reconcile).toHaveBeenCalledTimes(1)
 	})
 })

@@ -22,7 +22,7 @@ vi.mock('@/server/logger', () => ({
 
 import ConfirmSubscriptionPage from './page'
 
-const token = 'v1.eyJjIjoiYyJ9.c2lnbmF0dXJl'
+const token = 'c1.eyJjIjoiYyJ9.c2lnbmF0dXJl'
 let fetcher: ReturnType<
 	typeof vi.fn<[string | URL | Request, RequestInit?], Promise<Response>>
 >
@@ -65,7 +65,7 @@ describe('/confirm?t= (drovr double opt-in): opening the link confirms nothing',
 		expect(markup).toMatch(
 			/<form[^>]*action="\/confirm\/submit"[^>]*method="post"/,
 		)
-		expect(markup).toMatch(/<input[^>]*name="t"[^>]*value="v1\./)
+		expect(markup).toMatch(/<input[^>]*name="t"[^>]*value="c1\./)
 		expect(markup).toMatch(/<input[^>]*name="action"[^>]*value="confirm"/)
 	})
 

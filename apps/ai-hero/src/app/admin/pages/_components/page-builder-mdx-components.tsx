@@ -1,14 +1,13 @@
 'use client'
 
 import React, { use } from 'react'
+import dynamic from 'next/dynamic'
 import { FaqItem } from '@/app/faq/_components/faq-item'
 import { AnimatedTitle } from '@/components/brand/animated-word'
 import { CldImage, ThemeImage } from '@/components/cld-image'
 import { TYPE } from '@/components/landing/type'
 import { Callout } from '@/components/mdx/callout'
 import { PromoCard } from '@/components/mdx/promo-card'
-import MDXVideo from '@/components/content/mdx-video'
-import { TrackedMuxPlayer } from '@/components/content/tracked-mux-player'
 import config from '@/config'
 import type { Page } from '@/lib/pages'
 import { formatFaq } from '@/utils/format-faq'
@@ -34,6 +33,23 @@ import {
 	TooltipTrigger,
 } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
+
+// compileMDX also imports non-video components from this client module on the
+// homepage. Don't pull the player into those pages just to register MDX embeds.
+const DynamicMDXVideo = dynamic(() => import('@/components/content/mdx-video'), {
+	ssr: false,
+})
+// The page-builder registry accepts function components, not ComponentClass.
+type MDXVideoProps = React.ComponentProps<typeof DynamicMDXVideo>
+const MDXVideo: React.FC<MDXVideoProps> = (props) => <DynamicMDXVideo {...props} />
+
+const TrackedMuxPlayer = dynamic(
+	() =>
+		import('@/components/content/tracked-mux-player').then(
+			(mod) => mod.TrackedMuxPlayer,
+		),
+	{ ssr: false },
+)
 
 const CenteredTitle = ({
 	as: Component = 'h2',

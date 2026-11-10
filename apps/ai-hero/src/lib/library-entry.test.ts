@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
 	ctaFor,
+	entitledWorkshopIds,
 	overviewHrefFor,
 	pickCurrentWorkshop,
 	resumeCtaFor,
@@ -175,5 +176,49 @@ describe('resumeCtaFor', () => {
 
 	it('has nothing to say before the learner starts', () => {
 		expect(resumeCtaFor(null, [])).toBeNull()
+	})
+})
+
+describe('entitledWorkshopIds', () => {
+	const access = (contentIds: unknown, entitlementType = 'wca') => ({
+		entitlementType,
+		metadata: { contentIds },
+	})
+
+	it('names a bundle-granted workshop the purchases do not list', () => {
+		expect(
+			entitledWorkshopIds([access(['workshop-cc'])], 'wca', new Set(['cohort-sf'])),
+		).toEqual(['workshop-cc'])
+	})
+
+	it('skips workshops already listed from a purchase', () => {
+		expect(
+			entitledWorkshopIds([access(['workshop-cc'])], 'wca', new Set(['workshop-cc'])),
+		).toEqual([])
+	})
+
+	it('ignores other entitlement types, such as cohort access', () => {
+		expect(
+			entitledWorkshopIds([access(['workshop-1'], 'cca')], 'wca', new Set()),
+		).toEqual([])
+	})
+
+	it('dedupes, and tolerates missing or malformed metadata', () => {
+		expect(
+			entitledWorkshopIds(
+				[
+					access(['workshop-cc']),
+					access(['workshop-cc', '', 7]),
+					{ entitlementType: 'wca', metadata: null },
+					access('workshop-x'),
+				],
+				'wca',
+				new Set(),
+			),
+		).toEqual(['workshop-cc'])
+	})
+
+	it('returns nothing when the access type is unknown', () => {
+		expect(entitledWorkshopIds([access(['workshop-cc'])], undefined, new Set())).toEqual([])
 	})
 })

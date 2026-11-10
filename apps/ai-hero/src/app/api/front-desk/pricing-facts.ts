@@ -5,7 +5,7 @@ import type {
 	PricingFacts,
 	PricingRequest,
 } from '@ai-hero/front-desk-support'
-import { Context, Data, Effect, Either } from 'effect'
+import { Context, Data, Effect, Result } from 'effect'
 
 /**
  * Buyer facts for front-desk's pricing. Read-only: SELECTs and Stripe
@@ -26,12 +26,25 @@ export const LEGEND_PRODUCTS = [
 	'product-pqkk5',
 	'product-ma254',
 ] as const
+/**
+ * All four earlier AI Hero cohorts earn the returning-student price (Joel,
+ * 2026-10-28). One cohort reports its own value; two or more report 'multiple'.
+ */
 export const ALUMNI_PRODUCTS = {
+	'product-3vfob': 'c1', // C1 Build DeepSearch in TypeScript
+	'product-wdhub': 'c2', // C2 Build Your Own AI Personal Assistant
 	'product-7t9ek': 'c3',
 	'product-pqkk5': 'c4',
 } as const
-/** MerchantCoupon types that prove a coupon was neither PPP nor bulk. */
-export const VERIFIED_COUPON_TYPES: ReadonlySet<string> = new Set(['special'])
+/**
+ * MerchantCoupon types whose purchases earn credit for what was actually
+ * paid. A regional (PPP) purchase counts; a bulk one never does.
+ */
+export const CREDITABLE_COUPON_TYPES: ReadonlySet<string> = new Set([
+	'special',
+	'special credit',
+	'ppp',
+])
 /** front-desk's upper bound for the existingSeats fact. */
 export const MAX_EXISTING_SEATS = 100_000
 
@@ -82,6 +95,11 @@ export interface PricingSettlement {
 			readonly amountTax: number
 		}[]
 	} | null
+}
+export interface PricingCouponEvidence {
+	readonly type: string | null
+	readonly hasMerchantCoupon: boolean
+	readonly percentageDiscount: number | null
 }
 export interface PricingPriceRow {
 	readonly id: string
@@ -138,11 +156,13 @@ export interface PricingFactsSourceShape {
 	 * is not configured: no target purchase can then be placed before or after.
 	 */
 	readonly decisionCutover: Date | null
-	/** MerchantCoupon type per coupon id. A missing coupon has no entry; a
-	 * missing MerchantCoupon or type is null. */
+	/** Coupon evidence from one batched read. A missing coupon has no entry. */
 	readonly couponTypes: (
 		couponIds: readonly string[],
-	) => Effect.Effect<ReadonlyMap<string, string | null>, SourceUnavailable>
+	) => Effect.Effect<
+		ReadonlyMap<string, PricingCouponEvidence>,
+		SourceUnavailable
+	>
 	readonly activePrices: (
 		productId: string,
 	) => Effect.Effect<readonly PricingPriceRow[], SourceUnavailable>
@@ -159,9 +179,10 @@ export interface PricingFactsSourceShape {
 		creditSource: string,
 	) => Effect.Effect<readonly string[], SourceUnavailable>
 }
-export class PricingFactsSource extends Context.Tag(
-	'ai-hero/front-desk/PricingFactsSource',
-)<PricingFactsSource, PricingFactsSourceShape>() {}
+export class PricingFactsSource extends Context.Service<
+	PricingFactsSource,
+	PricingFactsSourceShape
+>()('ai-hero/front-desk/PricingFactsSource') {}
 
 const CURRENT = new Set(['Valid', 'Restricted'])
 const known = <A>(value: A, sourceRefs: readonly string[]): PricingFact<A> => ({
@@ -174,6 +195,12 @@ const individual = (
 	row: Pick<PricingPurchaseRow, 'bulkCouponId' | 'redeemedBulkCouponId'>,
 ) =>
 	!row.bulkCouponId && !row.redeemedBulkCouponId
+
+/** A redeemed team seat counts toward alumni (Joel, 2026-10-27), unlike legend.
+ * A team buyer's own bulk row does not, unless it is also a redeemed seat. */
+const alumniOwnership = (
+	row: Pick<PricingPurchaseRow, 'bulkCouponId' | 'redeemedBulkCouponId'>,
+) => !!row.redeemedBulkCouponId || individual(row)
 
 /** Current individual ownership, not payment or historical ownership.
  * The source scans only purchases currently held by this exact-email account.
@@ -194,7 +221,7 @@ export function legendFact(
 	)
 }
 
-/** C3/C4 purchases that are current and the buyer's own, not a team seat. */
+/** Current C1-C4 purchases that are the buyer's own or a redeemed team seat. */
 export function alumniFact(
 	rows: readonly PricingPurchaseRow[],
 	scanRef: string,
@@ -203,7 +230,7 @@ export function alumniFact(
 		(row) =>
 			row.productId in ALUMNI_PRODUCTS &&
 			CURRENT.has(row.status) &&
-			individual(row),
+			alumniOwnership(row),
 	)
 	const cohorts = new Set(
 		qualifying.map(
@@ -211,7 +238,9 @@ export function alumniFact(
 		),
 	)
 	const value =
-		cohorts.size === 2 ? 'both' : ([...cohorts][0] ?? ('none' as const))
+		cohorts.size >= 2
+			? ('multiple' as const)
+			: ([...cohorts][0] ?? ('none' as const))
 	return known(
 		value,
 		qualifying.length
@@ -281,7 +310,7 @@ export function creditUseFact({
 }: {
 	readonly creditSource: string | null
 	readonly ledger: CreditLedger
-	readonly chain: Either.Either<CreditChain, SourceUnavailable> | null
+	readonly chain: Result.Result<CreditChain, SourceUnavailable> | null
 	readonly cutover: Date | null
 	readonly refs: readonly string[]
 }): PricingBuyerFacts['creditUse'] {
@@ -293,8 +322,8 @@ export function creditUseFact({
 		])
 	if (!creditSource || ledger.kind === 'no-credit')
 		return known('available', [...refs, CREDIT_LEDGER_REF])
-	if (!chain || Either.isLeft(chain)) return gap('FactsUnavailable')
-	const targets = chain.right.targets.filter(individual)
+	if (!chain || Result.isFailure(chain)) return gap('FactsUnavailable')
+	const targets = chain.success.targets.filter(individual)
 	if (targets.length && !cutover) return gap('FactsUnavailable')
 	const before = targets.filter(
 		(target) => cutover && target.createdAt.getTime() < cutover.getTime(),
@@ -330,7 +359,7 @@ const ambiguous: CreditCandidate = { kind: 'unknown', gap: 'PaymentAmbiguous' }
 /** DB checks for one Crash Course purchase. Only a survivor needs Stripe. */
 export function purchaseCandidate(
 	row: PricingPurchaseRow,
-	couponType: string | null | undefined,
+	coupon: PricingCouponEvidence | null | undefined,
 ):
 	| CreditCandidate
 	| {
@@ -338,19 +367,27 @@ export function purchaseCandidate(
 			readonly stripeChargeId: string
 			readonly checkoutSessionId: string
 	  } {
-	if (row.status === 'Restricted') return excluded(row, 'restricted-ppp')
 	if (row.status === 'Refunded') return excluded(row, 'refunded')
 	if (row.status === 'Banned') return excluded(row, 'banned')
-	if (row.status !== 'Valid')
+	// A Restricted (regional) purchase earns credit for what it actually paid.
+	if (!CURRENT.has(row.status))
 		return { kind: 'unknown', gap: 'PaymentAmbiguous' }
 	if (row.bulkCouponId) return excluded(row, 'bulk')
 	if (row.redeemedBulkCouponId) return excluded(row, 'redeemed-bulk-seat')
 	if (row.couponId) {
-		// Never infer PPP from the amount. Only the coupon's own type counts.
-		if (couponType === 'ppp') return excluded(row, 'ppp-coupon')
+		const couponType = coupon?.type
 		if (couponType === 'bulk') return excluded(row, 'bulk-coupon')
-		// A missing coupon, MerchantCoupon or type proves nothing about origin.
-		if (!couponType || !VERIFIED_COUPON_TYPES.has(couponType)) return ambiguous
+		// Only a proven free coupon without a MerchantCoupon can bypass type checks.
+		if (
+			coupon?.hasMerchantCoupon === false &&
+			coupon.percentageDiscount === 1 &&
+			row.totalAmountCents === 0 &&
+			!row.stripeChargeId
+		)
+			return excluded(row, 'zero-paid')
+		// Any other missing coupon, MerchantCoupon or type proves nothing.
+		if (!couponType || !CREDITABLE_COUPON_TYPES.has(couponType))
+			return ambiguous
 	}
 	if (!row.stripeChargeId)
 		return row.totalAmountCents === 0 ? excluded(row, 'zero-paid') : ambiguous
@@ -366,26 +403,35 @@ export function purchaseCandidate(
  * The product money a purchase that passed the DB checks actually settled.
  * The charge must be paid, captured and succeeded, and the amount is the one
  * Crash Course line on the purchase's own Checkout Session, less its tax.
+ * A partial refund reduces that amount only on a single-line session.
  * Never the gross charge, and never the rounded Purchase total.
  */
 export function chargeCandidate(
 	row: PricingPurchaseRow,
-	settlement: Either.Either<PricingSettlement | null, SourceUnavailable>,
+	settlement: Result.Result<PricingSettlement | null, SourceUnavailable>,
 ): CreditCandidate {
-	if (Either.isLeft(settlement))
+	if (Result.isFailure(settlement))
 		return { kind: 'unknown', gap: 'FactsUnavailable' }
-	if (!settlement.right) return ambiguous
-	const { charge, session } = settlement.right
+	if (!settlement.success) return ambiguous
+	const { charge, session } = settlement.success
 	if (
 		charge.id !== row.stripeChargeId ||
 		charge.currency !== 'usd' ||
 		charge.disputed
 	)
 		return ambiguous
+	if (
+		!Number.isSafeInteger(charge.amount) ||
+		charge.amount < 0 ||
+		!Number.isSafeInteger(charge.amountRefunded) ||
+		charge.amountRefunded < 0
+	)
+		return ambiguous
 	if (charge.amount === 0) return excluded(row, 'zero-paid')
 	if (charge.amountRefunded >= charge.amount) return excluded(row, 'refunded')
-	// A partial refund leaves no clean paid amount to credit.
-	if (charge.amountRefunded > 0 || charge.refundCount > 0) return ambiguous
+	const partialRefund = charge.amountRefunded > 0
+	// A refund record without a settled refund amount proves no kept amount.
+	if (!partialRefund && charge.refundCount > 0) return ambiguous
 	if (!charge.paid || !charge.captured || charge.status !== 'succeeded')
 		return ambiguous
 	if (
@@ -403,22 +449,26 @@ export function chargeCandidate(
 	)
 	const [line] = lines
 	if (lines.length !== 1 || !line || line.quantity !== 1) return ambiguous
-	const paid = line.amountTotal - line.amountTax
+	// A charge-level refund cannot be attributed across multiple lines.
+	if (partialRefund && session.lines.length !== 1) return ambiguous
+	const productPaid = line.amountTotal - line.amountTax
 	if (
 		line.currency !== 'usd' ||
-		!Number.isSafeInteger(paid) ||
-		paid < 0 ||
-		paid > charge.amount
+		!Number.isSafeInteger(productPaid) ||
+		productPaid < 0 ||
+		productPaid > charge.amount
 	)
 		return ambiguous
-	if (paid === 0) return excluded(row, 'zero-paid')
+	const paid = productPaid - charge.amountRefunded
+	if (!Number.isSafeInteger(paid)) return ambiguous
+	if (paid <= 0) return excluded(row, 'zero-paid')
 	return {
 		kind: 'eligible',
 		paid,
 		purchaseId: row.id,
 		refs: [
 			purchaseRef(row.id),
-			`stripe:charge:${charge.id}`,
+			`stripe:charge:${charge.id}${partialRefund ? '#partial-refund' : ''}`,
 			`stripe:checkout-session:${session.id}#product:${row.stripeProductId}`,
 		],
 	}
@@ -463,16 +513,16 @@ const creditFor = (
 			...new Set(crashCourse.flatMap((row) => row.couponId ?? [])),
 		]
 		const types = couponIds.length
-			? yield* Effect.either(source.couponTypes(couponIds))
-			: Either.right(new Map<string, string | null>())
-		if (Either.isLeft(types)) return gap('FactsUnavailable')
+			? yield* Effect.result(source.couponTypes(couponIds))
+			: Result.succeed(new Map<string, PricingCouponEvidence>())
+		if (Result.isFailure(types)) return gap('FactsUnavailable')
 		const candidates = yield* Effect.forEach(crashCourse, (row) => {
 			const checked = purchaseCandidate(
 				row,
-				row.couponId ? types.right.get(row.couponId) : null,
+				row.couponId ? types.success.get(row.couponId) : null,
 			)
 			return checked.kind === 'charge'
-				? Effect.either(source.settlement(checked)).pipe(
+				? Effect.result(source.settlement(checked)).pipe(
 						Effect.map((settlement) => chargeCandidate(row, settlement)),
 					)
 				: Effect.succeed(checked)
@@ -540,13 +590,13 @@ export const buyerPricingFacts = (
 			facts,
 		})
 
-		const user = yield* Effect.either(source.userByEmail(request.email))
-		if (Either.isLeft(user))
+		const user = yield* Effect.result(source.userByEmail(request.email))
+		if (Result.isFailure(user))
 			return result({ userId: null, sourceRefs: [] }, unavailable)
 		// An exact-email account match stands for that account. A miss is not a
 		// verified new buyer: the person may own history under another address.
 		// No alias guessing.
-		if (!user.right)
+		if (!user.success)
 			return result(
 				{ userId: null, sourceRefs: ['ai-hero:user:none-for-email'] },
 				{
@@ -558,35 +608,35 @@ export const buyerPricingFacts = (
 					existingSeats: gap('IdentityUnverified'),
 				},
 			)
-		const userId = user.right.id
+		const userId = user.success.id
 		const buyer = { userId, sourceRefs: [`ai-hero:user:${userId}`] }
 		const productIds = [...new Set([request.productId, ...LEGEND_PRODUCTS])]
-		const rows = yield* Effect.either(source.purchases(userId, productIds))
-		if (Either.isLeft(rows)) return result(buyer, unavailable)
+		const rows = yield* Effect.result(source.purchases(userId, productIds))
+		if (Result.isFailure(rows)) return result(buyer, unavailable)
 		const scanRef = `ai-hero:purchases:user:${userId}`
-		const credit = yield* creditFor(rows.right, scanRef)
+		const credit = yield* creditFor(rows.success, scanRef)
 		const creditSource =
 			'value' in credit && credit.value ? credit.value.source : null
 		const spent = creditSource
-			? yield* Effect.either(source.creditSpentBy(creditSource))
+			? yield* Effect.result(source.creditSpentBy(creditSource))
 			: null
 		const ledger: CreditLedger =
 			spent === null
 				? { kind: 'no-credit' }
-				: Either.isRight(spent)
-					? { kind: 'read', spentBy: spent.right }
+				: Result.isSuccess(spent)
+					? { kind: 'read', spentBy: spent.success }
 					: { kind: 'unavailable' }
 		// The chain only matters while no saved decision has spent the credit.
 		const chain =
 			creditSource && ledger.kind === 'read' && !ledger.spentBy.length
-				? yield* Effect.either(
+				? yield* Effect.result(
 						source.creditChain({ creditSource, productId: request.productId }),
 					)
 				: null
 		return result(buyer, {
 			...pending,
-			legend: legendFact(rows.right),
-			alumni: alumniFact(rows.right, scanRef),
+			legend: legendFact(rows.success),
+			alumni: alumniFact(rows.success, scanRef),
 			credit,
 			creditUse: creditUseFact({
 				creditSource,
@@ -595,6 +645,6 @@ export const buyerPricingFacts = (
 				cutover: source.decisionCutover,
 				refs: [scanRef],
 			}),
-			existingSeats: existingSeatsFact(rows.right, request.productId, scanRef),
+			existingSeats: existingSeatsFact(rows.success, request.productId, scanRef),
 		})
 	})

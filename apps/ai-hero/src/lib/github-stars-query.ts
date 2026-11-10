@@ -9,6 +9,27 @@ import {
 import { log } from '@/server/logger'
 
 const STAR_COUNT_TTL_SECONDS = 60 * 60 * 12 // 12 hours
+const MAX_REPOSITORY_STATES = 100
+const MAX_BACKOFF_MS = 60 * 60 * 1000
+const DEFAULT_BACKOFF_MS = 5 * 60 * 1000
+
+// Process-local backoff and stale values, separate from Next's successful-read cache.
+const repositoryStates = new Map<
+	string,
+	{ blockedUntil: number; lastGoodCount?: number }
+>()
+
+function rememberRepository(
+	key: string,
+	state: { blockedUntil: number; lastGoodCount?: number },
+) {
+	repositoryStates.delete(key)
+	repositoryStates.set(key, state)
+	if (repositoryStates.size > MAX_REPOSITORY_STATES) {
+		const oldestKey = repositoryStates.keys().next().value
+		if (oldestKey !== undefined) repositoryStates.delete(oldestKey)
+	}
+}
 
 const anonymousOctokit = new Octokit({
 	userAgent: 'ai-hero-github-stars/1.0.0',
@@ -79,6 +100,28 @@ function failureMetadata(
 	}
 }
 
+function isRateLimited(error: unknown): boolean {
+	const status = getGithubSourceErrorStatus(error)
+	return (
+		(status === 403 || status === 429) &&
+		getRateLimitMetadata(error).rateLimitRemaining === 0
+	)
+}
+
+async function logFetchFailure(
+	owner: string,
+	repo: string,
+	authMode: GithubAuthMode,
+	error: unknown,
+) {
+	const metadata = failureMetadata(owner, repo, authMode, error)
+	await (
+		isRateLimited(error)
+			? log.warn('github-stars.rate_limited', metadata)
+			: log.error('github-stars.fetch.failed', metadata)
+	).catch(() => undefined)
+}
+
 async function readStarCount(
 	client: Pick<typeof githubSourceOctokit, 'rest'>,
 	owner: string,
@@ -112,22 +155,12 @@ async function fetchRepoStarCount(
 			try {
 				return await readStarCount(anonymousOctokit, owner, repo)
 			} catch (anonymousError) {
-				await log
-					.error(
-						'github-stars.fetch.failed',
-						failureMetadata(owner, repo, 'anonymous', anonymousError),
-					)
-					.catch(() => undefined)
+				await logFetchFailure(owner, repo, 'anonymous', anonymousError)
 				throw anonymousError
 			}
 		}
 
-		await log
-			.error(
-				'github-stars.fetch.failed',
-				failureMetadata(owner, repo, githubSourceAuthMode, error),
-			)
-			.catch(() => undefined)
+		await logFetchFailure(owner, repo, githubSourceAuthMode, error)
 		throw error
 	}
 }
@@ -144,11 +177,32 @@ export async function getRepoStarCount(
 	owner: string,
 	repo: string,
 ): Promise<number | null> {
+	const key = `${owner}/${repo}`
+	const state = repositoryStates.get(key)
+	if (state && Date.now() < state.blockedUntil) {
+		return state.lastGoodCount ?? null
+	}
+
 	try {
-		return await _getCachedStarCount(owner, repo)
-	} catch {
-		// The page can safely omit the count. This catch stays outside the cache
-		// boundary so the next render retries instead of serving a cached null.
-		return null
+		const count = await _getCachedStarCount(owner, repo)
+		rememberRepository(key, { blockedUntil: 0, lastGoodCount: count })
+		return count
+	} catch (error) {
+		if (isRateLimited(error)) {
+			const now = Date.now()
+			const { rateLimitResetEpochSeconds } = getRateLimitMetadata(error)
+			rememberRepository(key, {
+				...repositoryStates.get(key),
+				blockedUntil: Math.min(
+					rateLimitResetEpochSeconds === null
+						? now + DEFAULT_BACKOFF_MS
+						: rateLimitResetEpochSeconds * 1000,
+					now + MAX_BACKOFF_MS,
+				),
+			})
+		}
+		// Failures stay outside the cache boundary. Ordinary errors retry on the
+		// next render; known rate limits wait for reset without caching a null.
+		return repositoryStates.get(key)?.lastGoodCount ?? null
 	}
 }

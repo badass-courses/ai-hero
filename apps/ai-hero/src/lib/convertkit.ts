@@ -2,13 +2,13 @@
 
 import { cache } from 'react'
 import { cookies } from 'next/headers'
-import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import {
 	createSubscriberGateSnapshot,
 	mergeSubscriberGateSnapshot,
 	parseSubscriberGateSnapshot,
 	SUBSCRIBER_GATE_COOKIE,
 } from '@/lib/cta/subscriber-gate-cookie'
+import { readKitSubscriberIdentity } from '@/lib/kit-subscriber-directory'
 import { SubscriberSchema } from '@/schemas/subscriber'
 
 /**
@@ -73,7 +73,9 @@ export async function setSubscriberIdFromUrl(subscriberId: string) {
 }
 
 /**
- * Gets the subscriber from cookies, fetching from ConvertKit if needed
+ * Gets the subscriber from cookies, resolving a bare Kit id through the local
+ * contact directory (never Kit). The directory answers identity only, so list
+ * state and fields come from the reader's own gate snapshot.
  */
 export const getSubscriberFromCookie = cache(async () => {
 	const cookieStore = await cookies()
@@ -90,12 +92,14 @@ export const getSubscriberFromCookie = cache(async () => {
 		try {
 			const subscriber = JSON.parse(cookie)
 			if (subscriber?.id && !subscriber.email_address) {
-				const fetched = await emailListProvider.getSubscriber(
-					subscriber.id.toString(),
-				)
-				if (!fetched) return null
+				const identity = await readKitSubscriberIdentity(subscriber.id)
+				if (!identity) return null
 				return SubscriberSchema.parse(
-					mergeSubscriberGateSnapshot(fetched, gate, 'subscriber'),
+					mergeSubscriberGateSnapshot(
+						{ ...subscriber, ...identity },
+						gate,
+						'subscriber',
+					),
 				)
 			}
 			if (!subscriber?.id) throw new Error('no subscriber id')
@@ -107,21 +111,26 @@ export const getSubscriberFromCookie = cache(async () => {
 		}
 	}
 
-	// If we only have the ID (from URL param), fetch and populate full subscriber
+	// If we only have the ID (from a broadcast or signed link), resolve it and
+	// populate the full subscriber cookie.
 	if (subscriberIdCookie) {
 		try {
-			const subscriber =
-				await emailListProvider.getSubscriber(subscriberIdCookie)
-			if (subscriber) {
+			const identity = await readKitSubscriberIdentity(subscriberIdCookie)
+			if (identity) {
+				// Merged before it is written: the directory has no state or fields,
+				// and writing it bare would blank the gate cookie's answers.
+				const subscriber = mergeSubscriberGateSnapshot(
+					identity,
+					gate,
+					'subscriber',
+				)
 				try {
 					// Populate the full ck_subscriber cookie for future requests.
 					// Cookie writes are only legal in actions/route handlers — during
 					// an RSC render this throws, and the subscriber must still resolve.
 					await setSubscriberCookie(subscriber)
 				} catch {}
-				return SubscriberSchema.parse(
-					mergeSubscriberGateSnapshot(subscriber, gate, 'subscriber'),
-				)
+				return SubscriberSchema.parse(subscriber)
 			}
 		} catch (e) {
 			return null

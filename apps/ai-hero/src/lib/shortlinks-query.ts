@@ -33,6 +33,11 @@ import {
 	type ShortlinkWithAttributions,
 	type UpdateShortlinkInput,
 } from './shortlinks-types'
+import {
+	fitColumn,
+	REFERRER_LENGTH,
+	USER_AGENT_LENGTH,
+} from '@/lib/fit-column'
 
 const nanoid = customAlphabet(
 	'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
@@ -497,7 +502,8 @@ export async function deleteShortlink(
 
 /**
  * Record a click event for a shortlink
- * This is called asynchronously from the redirect handler
+ * The redirect handler supplies the resolved link to avoid another slug lookup
+ * while preserving its metadata snapshot.
  */
 export async function recordClick(
 	slug: string,
@@ -507,9 +513,10 @@ export async function recordClick(
 		country?: string | null
 		device?: string | null
 	},
+	resolvedLink?: Pick<Shortlink, 'id' | 'slug' | 'metadata'>,
 ): Promise<void> {
 	try {
-		const link = await db.query.shortlink.findFirst({
+		const link = resolvedLink ?? await db.query.shortlink.findFirst({
 			where: eq(shortlink.slug, slug),
 		})
 
@@ -531,10 +538,10 @@ export async function recordClick(
 		await db.insert(shortlinkClick).values({
 			id: `click_${randomUUID()}`,
 			shortlinkId: link.id,
-			referrer: metadata.referrer ?? undefined,
-			userAgent: metadata.userAgent ?? undefined,
-			country: metadata.country ?? undefined,
-			device: metadata.device ?? undefined,
+			referrer: fitColumn(metadata.referrer, REFERRER_LENGTH),
+			userAgent: fitColumn(metadata.userAgent, USER_AGENT_LENGTH),
+			country: fitColumn(metadata.country, 2),
+			device: fitColumn(metadata.device, 50),
 			metadata: link.metadata ?? getLegacyShortlinkMetadata(link.slug),
 		})
 

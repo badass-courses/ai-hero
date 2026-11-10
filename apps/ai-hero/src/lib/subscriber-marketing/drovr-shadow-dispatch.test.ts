@@ -451,6 +451,72 @@ describe('drovr shadow dispatch', () => {
 		).toBe(true)
 	})
 
+	it("copies a DOI learner's answer, and only the answer, on the fallback road", async () => {
+		const send = vi.fn().mockRejectedValue(new Error('inngest unreachable'))
+		const fallback = vi.fn().mockResolvedValue(undefined)
+		const base = contactEvent('value-path.answer-selected')
+		const answer: DrovrShadowFact = {
+			kind: 'contact-event',
+			event: {
+				...base,
+				payloadSummary: {
+					...base.payloadSummary,
+					keywords: ['answer-selected', 'ai-hero-skills-workflow.email-0', 'personal'],
+				},
+			},
+		}
+		const resolveDoiAnswerForwards = vi.fn(async () => ['contact-1'])
+
+		await dispatchDrovrShadowFact(answer, {
+			send,
+			fallback,
+			warn: vi.fn(),
+			resolveOwners: async () => [],
+			resolveDoiAnswerForwards,
+		})
+
+		const delivered = fallback.mock.calls[0]?.[0] as Array<{
+			tenantId: string
+			journeyId: string
+			type: string
+			idempotencyKey: string
+			payload?: unknown
+		}>
+		expect(
+			delivered.map((event) => `${event.tenantId}/${event.type}`),
+		).toEqual([
+			'org-aihero-shadow/value-path.answer-selected',
+			'org-aihero/value-path.answer-selected',
+		])
+		expect(delivered[1]?.idempotencyKey).toBe(
+			`owner:${delivered[0]?.idempotencyKey}`,
+		)
+		expect(delivered[1]?.payload).toEqual({
+			emailResourceId: 'ai-hero-skills-workflow.email-0',
+		})
+
+		// The same learner's unsubscribe is not copied: only answers move.
+		fallback.mockClear()
+		await dispatchDrovrShadowFact(
+			{ kind: 'contact-event', event: contactEvent('contact.unsubscribed') },
+			{
+				send,
+				fallback,
+				warn: vi.fn(),
+				resolveOwners: async () => [],
+				resolveDoiAnswerForwards,
+			},
+		)
+		const stops = fallback.mock.calls[0]?.[0] as Array<{ tenantId: string; journeyId: string }>
+		expect(
+			stops.filter(
+				(event) =>
+					event.tenantId === 'org-aihero' &&
+					event.journeyId !== 'contact-directory',
+			),
+		).toEqual([])
+	})
+
 	it('filters a veteran newsletter birth even when evergreen ownership is present', async () => {
 		const send = vi.fn().mockRejectedValue(new Error('inngest unreachable'))
 		const fallback = vi.fn().mockResolvedValue(undefined)

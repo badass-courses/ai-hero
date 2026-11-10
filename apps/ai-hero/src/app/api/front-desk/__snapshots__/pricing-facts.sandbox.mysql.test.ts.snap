@@ -1,0 +1,71 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`buyer pricing facts, sandbox Stripe + disposable database > front-desk reads the team seats, alumni and credit evidence 1`] = `
+{
+  "buyer": {
+    "sourceRefs": [
+      "ai-hero:user:user_facts",
+    ],
+    "userId": "user_facts",
+  },
+  "facts": {
+    "alumni": {
+      "sourceRefs": [
+        "ai-hero:purchase:purchase_facts_c1",
+      ],
+      "value": "c1",
+    },
+    "code": {
+      "sourceRefs": [
+        "gift:no-valid-cookie",
+      ],
+      "value": null,
+    },
+    "credit": {
+      "gap": "PaymentAmbiguous",
+    },
+    "creditUse": {
+      "sourceRefs": [
+        "ai-hero:purchases:user:user_facts",
+        "ai-hero:c5-decision-ledger",
+      ],
+      "value": "available",
+    },
+    "existingSeats": {
+      "sourceRefs": [
+        "ai-hero:purchase:purchase_facts_team",
+      ],
+      "value": 7,
+    },
+    "legend": {
+      "sourceRefs": [
+        "product:product-3vfob",
+        "product:product-9wdta",
+        "product:product-wdhub",
+        "product:product-7t9ek",
+        "product:product-pqkk5",
+        "product:product-ma254",
+      ],
+      "value": "no",
+    },
+    "order": {
+      "sourceRefs": [
+        "request:orderKind",
+      ],
+      "value": "team",
+    },
+    "ppp": {
+      "gap": "FactsUnavailable",
+    },
+  },
+  "product": {
+    "appProductId": "product-s00zs",
+    "merchantPriceId": "price_facts_c5",
+    "merchantUnit": 19900,
+    "sourceRefs": [
+      "ai-hero:price:price_facts_c5",
+    ],
+  },
+  "quantity": 5,
+}
+`;

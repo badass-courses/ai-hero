@@ -1,7 +1,8 @@
 import { db } from '@/db'
 import { emailPreferenceDefinitions } from '@/coursebuilder/email-preferences'
-import { communicationPreferences, userRoles } from '@/db/schema'
+import { communicationPreferences } from '@/db/schema'
 import BasicEmail from '@/emails/basic-email'
+import { ensureUserRole } from '@/inngest/functions/ensure-user-role'
 import { USER_CREATED_EVENT } from '@/inngest/events/user-created'
 import { inngest } from '@/inngest/inngest.server'
 import { log } from '@/server/logger'
@@ -28,23 +29,7 @@ export const userCreated = inngest.createFunction(
 
 		// Step 1: Assign user role (independent of preferences — must not be blocked)
 		await step.run('create user role', async () => {
-			const userRole = await db.query.roles.findFirst({
-				where: (ur, { eq }) => eq(ur.name, 'user'),
-			})
-
-			if (!userRole) {
-				await log.warn('user-created.role-not-found', {
-					userId: event.user.id,
-					email: event.user.email,
-					roleName: 'user',
-				})
-				return
-			}
-
-			await db.insert(userRoles).values({
-				roleId: userRole.id,
-				userId: event.user.id,
-			})
+			await ensureUserRole({ userId: event.user.id })
 		})
 
 		// Step 2: Set up communication preferences (graceful — skip if tables empty)

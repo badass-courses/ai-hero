@@ -1,7 +1,5 @@
 import { z } from 'zod'
 
-import { isPlausibleUnsubscribeToken } from './drovr-unsubscribe-page'
-
 /**
  * The aihero.dev double opt-in confirm page is presentation only. drovr
  * owns the token, the confirmation, and the answer; this module reads
@@ -49,8 +47,22 @@ export type DrovrConfirmClientConfig = {
 	timeoutMs?: number
 }
 
-/** Same `v1.<payload>.<mac>` outer shape as the unsubscribe token. */
-export const isPlausibleConfirmToken = isPlausibleUnsubscribeToken
+/**
+ * drovr's confirm token is `c1.<payload>.<mac>` (drovr apps/api confirm
+ * token.ts, TOKEN_VERSION "c1"). It is not the unsubscribe token's `v1`
+ * shape: reusing that check rejected every real confirm link before drovr
+ * was asked.
+ */
+const CONFIRM_TOKEN_SHAPE = /^c1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/
+const MAX_CONFIRM_TOKEN_LENGTH = 2048
+
+export function isPlausibleConfirmToken(token: string | undefined) {
+	return (
+		typeof token === 'string' &&
+		token.length <= MAX_CONFIRM_TOKEN_LENGTH &&
+		CONFIRM_TOKEN_SHAPE.test(token)
+	)
+}
 
 async function send(
 	config: DrovrConfirmClientConfig,
@@ -58,19 +70,30 @@ async function send(
 	init: RequestInit,
 ): Promise<Response | { unavailable: string }> {
 	if (!config.baseUrl) return { unavailable: 'drovr-api-not-configured' }
-	const controller = new AbortController()
-	const timer = setTimeout(() => controller.abort(), config.timeoutMs ?? 8_000)
-	try {
-		return await (config.fetch ?? fetch)(`${config.baseUrl}${path}`, {
-			...init,
-			cache: 'no-store',
-			signal: controller.signal,
-		})
-	} catch {
-		return { unavailable: 'drovr-unreachable' }
-	} finally {
-		clearTimeout(timer)
+	// One retry, only when the connection itself failed, not on our own
+	// timeout: connections from Vercel dropped before reaching drovr on
+	// 2026-11-02. The confirm write is idempotent on its token, so a second
+	// send is safe.
+	for (let attempt = 0; attempt < 2; attempt++) {
+		const controller = new AbortController()
+		const timer = setTimeout(
+			() => controller.abort(),
+			config.timeoutMs ?? 8_000,
+		)
+		try {
+			return await (config.fetch ?? fetch)(`${config.baseUrl}${path}`, {
+				...init,
+				cache: 'no-store',
+				signal: controller.signal,
+			})
+		} catch {
+			if (controller.signal.aborted) break
+		} finally {
+			clearTimeout(timer)
+		}
+		if (attempt === 0) await new Promise((r) => setTimeout(r, 300))
 	}
+	return { unavailable: 'drovr-unreachable' }
 }
 
 const jsonBody = async (response: Response) =>

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 
 import * as databaseSchema from '@/db/schema'
-import { Effect, Either } from 'effect'
+import { Effect, Result } from 'effect'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { drizzle } from 'drizzle-orm/mysql2'
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise'
@@ -266,12 +266,12 @@ integration('Email Course MySQL ledger', () => {
 			contactId: value(parseContactId('different-contact-same-stimulus')),
 		}
 		const result = await Effect.runPromise(
-			Effect.either(advance({ stimulus: collision })),
+			Effect.result(advance({ stimulus: collision })),
 		)
 
 		expect(result).toMatchObject({
-			_tag: 'Left',
-			left: {
+			_tag: 'Failure',
+			failure: {
 				type: 'CourseRunConstraintViolation',
 				runId,
 				reason: expect.stringContaining(
@@ -288,11 +288,11 @@ integration('Email Course MySQL ledger', () => {
 			"UPDATE AI_EmailCourseCommit SET snapshot = JSON_SET(snapshot, '$.actorVersion', 99) WHERE runId = ?",
 			[runId],
 		)
-		const result = await Effect.runPromise(Effect.either(ledger.load(runId)))
+		const result = await Effect.runPromise(Effect.result(ledger.load(runId)))
 
-		expect(Either.isLeft(result)).toBe(true)
-		if (Either.isLeft(result)) {
-			expect(result.left).toMatchObject({
+		expect(Result.isFailure(result)).toBe(true)
+		if (Result.isFailure(result)) {
+			expect(result.failure).toMatchObject({
 				type: 'CourseRunDecodeFailure',
 				reason: expect.stringContaining('row identity'),
 			})
@@ -334,11 +334,11 @@ integration('Email Course MySQL ledger', () => {
 				runId,
 			],
 		)
-		const result = await Effect.runPromise(Effect.either(advance({ stimulus })))
+		const result = await Effect.runPromise(Effect.result(advance({ stimulus })))
 
 		expect(result).toMatchObject({
-			_tag: 'Left',
-			left: {
+			_tag: 'Failure',
+			failure: {
 				type: 'CourseRunConstraintViolation',
 				runId,
 				reason: expect.stringContaining('restored-run-id'),
@@ -353,11 +353,11 @@ integration('Email Course MySQL ledger', () => {
 			"UPDATE AI_EmailCourseCommit SET receipt = JSON_SET(receipt, '$.stimulusFingerprint', ?) WHERE runId = ?",
 			['0'.repeat(64), runId],
 		)
-		const result = await Effect.runPromise(Effect.either(advance({ stimulus })))
+		const result = await Effect.runPromise(Effect.result(advance({ stimulus })))
 
 		expect(result).toMatchObject({
-			_tag: 'Left',
-			left: {
+			_tag: 'Failure',
+			failure: {
 				type: 'CourseRunConstraintViolation',
 				runId,
 				reason: expect.stringContaining(
@@ -430,14 +430,14 @@ integration('Email Course MySQL ledger', () => {
 		]
 		const results = await Promise.all(
 			candidates.map((candidate) =>
-				Effect.runPromise(Effect.either(ledger.commit(candidate))),
+				Effect.runPromise(Effect.result(ledger.commit(candidate))),
 			),
 		)
-		const failures = results.filter(Either.isLeft)
+		const failures = results.filter(Result.isFailure)
 
-		expect(results.filter(Either.isRight)).toHaveLength(1)
+		expect(results.filter(Result.isSuccess)).toHaveLength(1)
 		expect(failures).toHaveLength(1)
-		expect(failures[0]?.left).toEqual({
+		expect(failures[0]?.failure).toEqual({
 			type: 'CourseRunVersionConflict',
 			runId,
 		})

@@ -8,11 +8,25 @@ import {
 	type SkillsNewsletterSubscribed,
 } from '@/inngest/events/skills-newsletter'
 import { inngest } from '@/inngest/inngest.server'
+import {
+	interestFieldKeysOf,
+	interestKitWritesEnabled,
+	waitlistOffKitEnabled,
+} from '@/lib/cta/interest-facts'
+import {
+	holdInterestJoinContact,
+	requestInterestFacts,
+} from '@/lib/cta/interest-facts.server'
 import { createShortlinkAttribution } from '@/lib/shortlinks-query'
 import { recordSignupAttribution } from '@/lib/signup-attribution'
 import { guardSubscribe } from '@/lib/subscribe-bot-defense.server'
-import { pendingSubscribeResponse } from '@/lib/pending-subscribe-response'
-import { reconcileAiHeroEmailOptInWithKit } from '@/lib/subscriber-marketing/ai-hero-email-opt-in.server'
+import {
+	pendingSubscribeResponse,
+} from '@/lib/pending-subscribe-response'
+import {
+	reconcileAiHeroEmailOptInWithKit,
+	routeReturningUnsubscriberWithKit,
+} from '@/lib/subscriber-marketing/ai-hero-email-opt-in.server'
 import {
 	AIH_COURSE_ENTRY_EVIDENCE_FIELD,
 	deadlineTimeZoneEvidenceFromHeader,
@@ -22,7 +36,9 @@ import {
 import {
 	DOI_DROVR_FORM_IDS,
 	doiAppliesTo,
+	drovrSignupKitFormId,
 	parseDrovrDoiConfig,
+	parseDrovrSignupDeliveryConfig,
 } from '@/lib/subscriber-marketing/drovr-doi-signup'
 import { requestDrovrDoiSignup } from '@/lib/subscriber-marketing/drovr-doi-signup.server'
 import { parseOptInAttributionCookie } from '@/lib/subscriber-marketing/opt-in-attribution'
@@ -30,6 +46,7 @@ import {
 	AIH_OPTIN_ATTRIBUTION_FIELD,
 	serializeOptInAttributionForKit,
 } from '@/lib/subscriber-marketing/opt-in-attribution-stash'
+import { kitMirrorWritesEnabled } from '@/lib/kit-mirror-writes'
 import { SubscriberSchema, type Subscriber } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
@@ -46,16 +63,53 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 	const email = body.email
 	const rejection = await guardSubscribe(body, req.headers)
 	if (rejection) return rejection
+	if (waitlistOffKitEnabled()) return await offKitSignup(req, body)
+
+	// A waitlist or interest join is recorded before any Kit or drovr signup
+	// call, so it survives either being down. Recording it subscribes no one:
+	// the signup below still decides consent, double opt-in included.
+	if (typeof email === 'string') {
+		const { queued } = await requestInterestFacts({
+			email,
+			fields: body.fields,
+			via: 'form',
+		})
+		// The cut: with the facts queued, Kit no longer gets the join fields.
+		if (
+			(queued > 0 || !kitMirrorWritesEnabled()) &&
+			!interestKitWritesEnabled()
+		) {
+			for (const key of interestFieldKeysOf(body.fields)) {
+				delete body.fields[key]
+			}
+		}
+	}
 
 	// drovr-owned double opt-in, when DROVR_DOI_FORMS turns it on for this
 	// form (and address, during the canary). Off, this is a no-op and the
-	// signup takes Kit's path below exactly as before.
-	const kitFormId = Number(body.listId)
+	// signup takes Kit's path below exactly as before. A post without a
+	// listId is for Kit's default form.
+	const kitFormId = drovrSignupKitFormId(body, env.CONVERTKIT_SIGNUP_FORM)
 	if (
 		typeof email === 'string' &&
+		kitFormId !== undefined &&
 		doiAppliesTo(parseDrovrDoiConfig(env), kitFormId, email)
 	) {
 		return await doiSignup(req, body, email.trim(), kitFormId)
+	}
+
+	let mayRemoveUnsubscribeTag = true
+	// A returning unsubscriber re-signs up only through a fresh drovr double
+	// opt-in: no Kit subscribe, no untag. Everyone else falls through.
+	if (typeof email === 'string' && kitFormId !== undefined) {
+		const returning = await returningUnsubscriberSignup(
+			req,
+			body,
+			email.trim(),
+			kitFormId,
+		)
+		if (returning.response) return returning.response
+		mayRemoveUnsubscribeTag = !returning.lookupFailed
 	}
 
 	// Clone the request with the body since it can only be read once
@@ -156,6 +210,7 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 				const optIn = await reconcileAiHeroEmailOptInWithKit({
 					email: subscriberEmail,
 					subscriberState: subscriber.state,
+					mayRemoveUnsubscribeTag,
 				})
 				const cookieStore = await cookies()
 				const optInAttribution = parseOptInAttributionCookie(
@@ -173,9 +228,9 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 						? serializeDeadlineTimeZoneEvidenceForKit(deadlineTimeZone)
 						: undefined
 					const stashFields = async (fields: Record<string, string>) => {
-						const { setConvertkitSubscriberFields } =
-							await import('@coursebuilder/core/providers/convertkit')
-						await setConvertkitSubscriberFields({
+						const { setKitSubscriberFields } =
+							await import('@/coursebuilder/email-list-provider')
+						await setKitSubscriberFields({
 							subscriber: { id: subscriber.id, fields: subscriber.fields },
 							fields,
 							convertkitApiSecret: env.CONVERTKIT_API_SECRET,
@@ -316,6 +371,163 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 	}
 
 	return response
+}
+
+/**
+ * Answers a sign-up from a contact Kit shows as an earlier unsubscribe with
+ * a `response`; otherwise the Kit path runs, with `lookupFailed` when Kit
+ * could not be read (so the tag must not be removed).
+ */
+async function returningUnsubscriberSignup(
+	req: NextRequest,
+	body: { name?: unknown; fields?: unknown },
+	email: string,
+	kitFormId: number,
+) {
+	const name =
+		typeof body.name === 'string' && body.name.trim()
+			? body.name.trim()
+			: undefined
+	try {
+		const cookieStore = await cookies()
+		const result = await routeReturningUnsubscriberWithKit({
+			email,
+			name,
+			kitFormId,
+			page: req.headers.get('referer') ?? 'https://www.aihero.dev/',
+			optInAttribution: parseOptInAttributionCookie(
+				cookieStore.get('ft_attr')?.value,
+			),
+			entry: 'form',
+		})
+		if (result.status === 'not-unsubscribed') return {}
+		// Consent lookup unreadable: carry on with the sign-up, but never untag.
+		if (result.status === 'lookup-failed') return { lookupFailed: true }
+		if (result.status === 'doi-requested') {
+			return { response: pendingSubscribeResponse({ email, name }) }
+		}
+		if (result.status === 'blocked') {
+			return {
+				response: Response.json(
+					{ error: 'Subscription could not be confirmed' },
+					{ status: 409 },
+				),
+			}
+		}
+	} catch (error) {
+		await log.error('skills.newsletter.doi.failed', {
+			formId: kitFormId,
+			error: error instanceof Error ? error.name : 'unknown',
+		})
+	}
+	return {
+		response: Response.json(
+			{ error: 'Subscription could not be confirmed' },
+			{ status: 502 },
+		),
+	}
+}
+
+/**
+ * The posted form with `AIH_WAITLIST_OFF_KIT_ENABLED` on: no Kit subscribe,
+ * no Kit field write, and no Kit fallback on any failure.
+ *
+ * - A waitlist or interest post is its fact only, never a list subscribe.
+ *   An address the site has never seen gets an owned contact to hold it.
+ * - A plain newsletter ask to a drovr form takes drovr's double opt-in,
+ *   whatever `DROVR_DOI_FORMS` says.
+ * - Anything else is refused as rejected, as an unmapped form is today.
+ */
+async function offKitSignup(
+	req: NextRequest,
+	body: { email?: unknown; name?: unknown; fields?: unknown; listId?: unknown },
+) {
+	const email = typeof body.email === 'string' ? body.email.trim() : ''
+	const rejected = () =>
+		Response.json({ error: 'Subscription was rejected' }, { status: 400 })
+	const unconfirmed = () =>
+		Response.json(
+			{ error: 'Subscription could not be confirmed' },
+			{ status: 502 },
+		)
+	if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return rejected()
+
+	const fieldKeys = interestFieldKeysOf(body.fields)
+	if (fieldKeys.length > 0) {
+		const name =
+			typeof body.name === 'string' && body.name.trim()
+				? body.name.trim()
+				: undefined
+		const { queued } = await requestInterestFacts({
+			email,
+			fields: body.fields,
+			via: 'form',
+		})
+		if (queued === 0) return unconfirmed()
+		// After the queue, so a join that never queued mints nobody. A run that
+		// looks before the contact lands finds it on its next look.
+		await holdInterestJoinContact({ email, name, fieldKeys })
+		await recordJoinAttribution(email, body.listId)
+		const fields = body.fields as Record<string, string>
+		return Response.json({
+			email_address: email,
+			first_name: name ?? null,
+			state: 'joined',
+			fields: Object.fromEntries(fieldKeys.map((key) => [key, fields[key]])),
+		})
+	}
+
+	const kitFormId = drovrSignupKitFormId(body, env.CONVERTKIT_SIGNUP_FORM)
+	if (kitFormId === undefined) return rejected()
+	if (!parseDrovrSignupDeliveryConfig(env)) {
+		await log.error('skills.newsletter.doi.failed', {
+			formId: kitFormId,
+			error: 'not-configured',
+		})
+		return unconfirmed()
+	}
+	return await doiSignup(req, body, email, kitFormId)
+}
+
+/**
+ * The page and shortlink attribution the Kit path records for every
+ * successful subscribe, with no Kit subscriber id. Never fails the join.
+ */
+async function recordJoinAttribution(email: string, listId: unknown) {
+	const formId =
+		typeof listId === 'string' || typeof listId === 'number'
+			? listId
+			: undefined
+	try {
+		const cookieStore = await cookies()
+		recordSignupAttribution({
+			email,
+			formId,
+			rawCookie: cookieStore.get('ft_attr')?.value,
+		}).catch((error) => {
+			void log.error('signup.attribution.failed', {
+				formId: formId != null ? String(formId) : undefined,
+				error: error instanceof Error ? error.message : String(error),
+			})
+		})
+		const shortlinkSlug = cookieStore.get('sl_ref')?.value
+		if (shortlinkSlug) {
+			createShortlinkAttribution({
+				shortlinkSlug,
+				email,
+				type: 'signup',
+			}).catch((error) => {
+				void log.error('api.coursebuilder.subscribe.attribution.failed', {
+					shortlinkSlug,
+					error: error instanceof Error ? error.message : String(error),
+				})
+			})
+		}
+	} catch (error) {
+		await log.error('api.coursebuilder.subscribe.attribution.error', {
+			error: error instanceof Error ? error.message : String(error),
+		})
+	}
 }
 
 /**

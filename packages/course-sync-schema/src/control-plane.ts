@@ -55,7 +55,7 @@ export const CourseSyncBindingSummary = Schema.Union([Schema.Struct({
 	}),
 }), Schema.Struct({
 	bindingId: NonEmptyString,
-	contractVersion: Schema.Literals([5, 6, 7]),
+	contractVersion: Schema.Literals([5, 6, 7, 8]),
 	status: Schema.Literals(["active", "suspended", "revoked"]),
 	sourceCourseId: NonEmptyString,
 	applyPolicy: Schema.Literals(["bounded-auto", "operator"]),
@@ -72,7 +72,10 @@ export const CourseSyncBindingSummary = Schema.Union([Schema.Struct({
 		}),
 		managedChildren: Schema.Struct({
 			workshop: Schema.Struct({
-				state: Schema.Literals(["draft", "published"]),
+				state: Schema.Union([
+					Schema.Literals(["draft", "published"]),
+					Schema.Tuple([Schema.Literal("draft"), Schema.Literal("published")]),
+				]),
 				visibility: Schema.Literal("unlisted"),
 			}),
 			lesson: Schema.Struct({

@@ -136,7 +136,9 @@ const literal = (value: unknown) =>
 const tables = [
 	...new Map(
 		Object.values(schema)
-			.filter((value) => is(value, MySqlTable))
+			.filter((value): value is Extract<typeof value, MySqlTable> =>
+				is(value, MySqlTable),
+			)
 			.map((table) => [getTableName(table), table]),
 	).values(),
 ]

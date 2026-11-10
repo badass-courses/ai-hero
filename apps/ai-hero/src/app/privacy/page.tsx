@@ -16,6 +16,8 @@ export default PrivacyPage
 const markdownContent = `
 # Terms, Conditions, and Privacy Policy
 
+Last updated: November 2, 2026
+
 ## Overview
 
 This website is operated by Skill Recordings Inc. Throughout the site, the terms “we”, “us” and “our” refer to Skill Recordings Inc. Skill Recordings Inc. offers this website, including all information, tools and services available from this site to you, the user, conditioned upon your acceptance of all terms, conditions, policies and notices stated here.
@@ -154,7 +156,7 @@ Any ambiguities in the interpretation of these Terms of Service shall not be con
 
 ## Section 18: Governing Law
 
-These Terms of Service and any separate agreements whereby we provide you Services shall be governed by and construed in accordance with the laws of 12333 Sowden Road, PMB#97429, Houston, TX, 77080, United States.
+These Terms of Service and any separate agreements whereby we provide you Services shall be governed by and construed in accordance with the laws of the State of Texas, United States.
 
 ## Section 19: Changes to Terms of Service
 
@@ -173,31 +175,21 @@ of the purchaser.
 
 ## Refund Policy
 
-Our refund policy lasts 30 days. If 30 days have gone by since your purchase, unfortunately we can’t offer you a refund or exchange.
+Our refund policy lasts 30 days. If 30 days have gone by since your purchase, unfortunately we can’t offer you a refund.
 
-There are certain situations where only partial refunds are granted: (if applicable)
-
-Any item not in its original condition, is damaged or missing parts for reasons not due to our error.
-
-Any item that is returned more than 30 days after delivery
-
-### Refunds (if applicable)
+### Refunds
 
 We will notify you of the approval or rejection of your refund.
 
 If you are approved, then your refund will be processed, and a credit will automatically be applied to your credit card or original method of payment, within a certain amount of days.
 
-### Late or missing refunds (if applicable)
+### Late or missing refunds
 
 If you haven’t received a refund yet, first check your bank account again. Then contact your credit card company, it may take some time before your refund is officially posted. Next contact your bank. There is often some processing time before a refund is posted. If you’ve done all of this and you still have not received your refund yet, please contact us at [${process.env.NEXT_PUBLIC_SUPPORT_EMAIL}](mailto:${process.env.NEXT_PUBLIC_SUPPORT_EMAIL}).
 
-### Sale items (if applicable)
-
-Only regular priced items may be refunded, unfortunately sale items cannot be refunded.
-
 ## Privacy Policy
 
-This Privacy Policy describes how your personal information is collected, used, and shared when you visit or make a purchase from ${process.env.NEXT_PUBLIC_HOST} (the “Site”).
+This Privacy Policy describes how your personal information is collected, used, and shared when you visit or make a purchase from aihero.dev (the “Site”).
 
 ### Personal Information We Collect
 
@@ -209,6 +201,10 @@ We collect Device Information using the following technologies:
 “Log files” track actions occurring on the Site, and collect data including your IP address, browser type, Internet service provider, referring/exit pages, and date/time stamps.
 
 “Web beacons,” “tags,” and “pixels” are electronic files used to record information about how you browse the Site.
+
+“Email tracking.” Emails we send you may include a small image (a pixel) and tracked links. These let us record when an email is opened and which links in it are clicked. We use this to measure which emails are useful, to stop sending to addresses that bounce or never engage, and to choose what we send and show you next.
+
+“Activity on the Site.” When you are signed in, or arrive on the Site from a link in one of our emails, we connect what you do on the Site to your account. This includes the pages and articles you read, the videos you watch and how much of each, how far down a page you scroll, and the steps you take toward a purchase. We combine this with how you interact with our emails to recommend the lessons, courses and offers most relevant to you. We do not sell this information.
 
 “Convertkit” to allow customers to subscribe for mailing list. Required information collected includes an email address. Optional information collected includes first name, last name, email address, phone number, birthday, and referral type.
 
@@ -229,6 +225,8 @@ Screen our orders for potential risk or fraud; and
 When in line with the preferences you have shared with us, provide you with information or advertising relating to our products or services.
 
 We use the Device Information that we collect to help us screen for potential risk and fraud (in particular, your IP address), and more generally to improve and optimize our Site (for example, by generating analytics about how our customers browse and interact with the Site, and to assess the success of our marketing and advertising campaigns).
+
+We use email tracking and Site activity connected to your account to personalize the emails, recommendations and offers we show you. To stop email tracking, unsubscribe using the link in any email or contact us at [${process.env.NEXT_PUBLIC_SUPPORT_EMAIL}](mailto:${process.env.NEXT_PUBLIC_SUPPORT_EMAIL}).
 
 ### Sharing Your Personal Information
 

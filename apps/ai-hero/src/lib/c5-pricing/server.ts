@@ -13,9 +13,19 @@ import type { AuthoritativePriceRequest } from '@coursebuilder/core/schemas'
 
 import { frontDeskData } from './front-desk-client'
 export { frontDeskData } from './front-desk-client'
-import { createC5AuthoritativePrice, type BuyerRead } from './hook'
+import {
+	createC5AuthoritativePrice,
+	type BuyerRead,
+	type C5PricingDeps,
+} from './hook'
+import {
+	PPP_CREDIT_BOUND_EVENT,
+	pppCreditBoundCharge,
+} from './ppp-credit-bound'
 import { holdsRestrictedPurchase } from './restricted-holder'
 import { signedGiftFact } from './gift-server'
+import { EARLY_BIRD_CODE_REASONS } from './early-bird-code'
+import { presentedEarlyBirdCode } from './early-bird-code-server'
 import { c5PricingClosed } from './switch-server'
 import { c5PricingDisabled } from './config'
 import { c5OpeningWindow } from './buyer-opening-server'
@@ -69,17 +79,7 @@ async function readBuyer(input: {
 		// are someone else's.
 		if (!facts || facts.buyer.userId !== input.userId)
 			return { kind: 'unavailable', reason: 'identity-mismatch' }
-		const [[valid], [validProduct], restricted] = await Promise.all([
-			db
-				.select({ id: purchases.id })
-				.from(purchases)
-				.where(
-					and(
-						eq(purchases.userId, input.userId),
-						eq(purchases.status, 'Valid'),
-					),
-				)
-				.limit(1),
+		const [[validProduct], restricted] = await Promise.all([
 			db
 				.select({ id: purchases.id })
 				.from(purchases)
@@ -95,7 +95,6 @@ async function readBuyer(input: {
 			kind: 'buyer',
 			email: user.email,
 			facts,
-			hasValidPurchase: Boolean(valid),
 			holdsRestrictedPurchase: restricted,
 			holdsValidProductPurchase: Boolean(validProduct),
 		}
@@ -130,8 +129,13 @@ function buyerFor(input: {
 	return read
 }
 
-const decide = createC5AuthoritativePrice({
+/**
+ * The hook's live dependencies. The learner agent's `next_offer` prices with
+ * these same deps, so an offer and checkout never disagree.
+ */
+export const c5PricingDeps: C5PricingDeps = {
 	code: signedGiftFact,
+	earlyBirdCode: presentedEarlyBirdCode,
 	policy: async (productId) =>
 		frontDeskData()?.policy(productId) ?? {
 			ok: false,
@@ -151,13 +155,30 @@ const decide = createC5AuthoritativePrice({
 	disabled: c5PricingClosed,
 	overrideDisabled: c5PricingDisabled,
 	openingWindow: c5OpeningWindow,
-})
+}
+
+const decide = createC5AuthoritativePrice(c5PricingDeps)
 
 /** AI Hero's authoritative-price hook, as Course Builder calls it. */
 export async function c5AuthoritativePrice(request: AuthoritativePriceRequest) {
 	const decision = await decide(request)
 	if (decision && request.purpose === 'checkout') {
+		// Name the early-bird code behind an applied or ended reason, so a price
+		// after the published deadline can be traced to the code and its window.
+		const codeReason = decision.reasons.some(
+			(reason) =>
+				reason === EARLY_BIRD_CODE_REASONS.applied ||
+				reason === EARLY_BIRD_CODE_REASONS.ended,
+		)
+		const earlyBirdCouponId = codeReason
+			? await presentedEarlyBirdCode().then(
+					(read) => read.couponId,
+					() => null,
+				)
+			: null
 		await log.info('c5.pricing.checkout_decision', {
+			earlyBirdCouponId,
+			closesAt: decision.closesAt ?? null,
 			buyPathId: recordCheckoutDecision(decision.kind),
 			productId: request.productId,
 			quantity: request.quantity,
@@ -171,5 +192,7 @@ export async function c5AuthoritativePrice(request: AuthoritativePriceRequest) {
 			engineVersion: decision.engineVersion,
 		})
 	}
+	const boundCharge = pppCreditBoundCharge(request, decision)
+	if (boundCharge) await log.warn(PPP_CREDIT_BOUND_EVENT, boundCharge)
 	return decision
 }

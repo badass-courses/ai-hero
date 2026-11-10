@@ -5,8 +5,28 @@ import { TRANSFER_STATES } from '@/purchase-transfer/transfer-lifecycle'
 import { TRANSFER_STILL_WAITING } from './acceptance-link-view'
 import {
 	ACCEPTANCE_STATE_OF_TRANSFER,
+	transferDenialNotice,
 	transferPageView,
 } from './transfer-page-view'
+
+describe('transfer denial notice', () => {
+	it('shows the team-seat refusal with a support line', () => {
+		expect(transferDenialNotice('included_team_purchase')).toBe(
+			'Team orders and redeemed seats cannot be transferred. Email support@aihero.dev for help.',
+		)
+	})
+
+	it('leaves not_authenticated to the sign-in view', () => {
+		expect(transferDenialNotice('not_authenticated')).toBeNull()
+	})
+
+	it('shows nothing for a missing or unknown code', () => {
+		expect(transferDenialNotice(undefined)).toBeNull()
+		expect(transferDenialNotice('')).toBeNull()
+		expect(transferDenialNotice('<script>')).toBeNull()
+		expect(transferDenialNotice('toString')).toBeNull()
+	})
+})
 
 const base = {
 	purchaseMoved: false,

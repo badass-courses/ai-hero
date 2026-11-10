@@ -3,11 +3,10 @@
 import { redirect } from "next/navigation";
 import { resolveUnsubscribePreference } from "@/coursebuilder/email-preferences";
 import {
+  acceptKitLinkPreferenceChange,
   getEmailPreferenceDefinition,
-  syncLocalEmailPreference,
   unsubscribeLocalEmailPreferenceByUserId,
-  updateProviderEmailPreference,
-  validateKitPreferenceIdentity,
+  verifyKitPreferenceLinkLocally,
 } from "@/lib/email-preferences";
 import { log } from "@/server/logger";
 
@@ -44,40 +43,26 @@ export async function unsubscribeAction(
   const preferenceDefinition = getEmailPreferenceDefinition(preferenceKey);
 
   if (subscriberId && shKit) {
-    const subscriber = await validateKitPreferenceIdentity({
+    // Kit stays out of the request: the directory checks the link, and an
+    // opt-out that cannot be checked now is queued and still lands.
+    const verification = await verifyKitPreferenceLinkLocally({
       subscriberId,
       shKit,
       source: "unsubscribe-link",
       route: "/unsubscribed",
     });
-
-    if (!subscriber) {
-      redirect("/");
-    }
-
-    const state = await updateProviderEmailPreference({
+    const result = await acceptKitLinkPreferenceChange({
+      verification,
       subscriberId,
-      subscriberEmail: subscriber.email_address ?? undefined,
+      shKit,
       preference: preferenceDefinition,
       subscribed: false,
       source: "unsubscribe-link",
     });
 
-    await syncLocalEmailPreference({
-      email: subscriber.email_address,
-      preference: preferenceDefinition,
-      subscribed: state.subscribed,
-      source: "unsubscribe-link",
-    });
-
-    await log.info("email-preferences.unsubscribe", {
-      source: "unsubscribe-link",
-      provider: "convertkit",
-      kitSubscriberId: subscriberId,
-      shKit,
-      preferenceKey,
-      result: state.status,
-    });
+    if (result.status === "rejected") {
+      redirect("/");
+    }
   } else {
     if (!userId) {
       redirect("/");

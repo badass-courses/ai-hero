@@ -8,12 +8,16 @@ import {
 } from '@ai-hero/course-sync-schema'
 
 import { CourseSyncError, asCourseSyncError } from './errors'
-import { evaluateCourseSyncBoundedAutoApply } from './persistence-invariants'
+import {
+	courseSyncDestructiveLessons,
+	evaluateCourseSyncBoundedAutoApply,
+} from './persistence-invariants'
 import { extractQuizQuestions } from './quiz-question-extraction'
 import { assertCourseSyncSourceFields, courseSyncSourceFields } from './resource-fields'
 import {
 	anchorResourceId,
 	getServerCourseSyncBinding,
+	preservesWorkshopReleaseState,
 	managedSectionKind,
 	type CourseSyncBinding,
 	type CourseSyncControlPlaneDependencies,
@@ -140,7 +144,11 @@ function assertManifestScope(
 		for (const lesson of section.lessons) {
 			if (lesson.type === 'placeholder') continue
 			const primary =
-				lesson.type === 'explainer' ? lesson.explainer : lesson.problem
+				lesson.type === 'text'
+					? lesson
+					: lesson.type === 'explainer'
+						? lesson.explainer
+						: lesson.problem
 			for (const question of extractQuizQuestions(primary.body, lesson.id)) {
 				const firstLessonId = questionLessons.get(question.id)
 				if (firstLessonId) {
@@ -250,8 +258,14 @@ export function sourceResourceFields(
 			fields: {
 				title: section.title,
 				slug: slug(section.id, section.title),
-				state: 'draft',
-				visibility: 'unlisted',
+				state:
+					sectionKind === 'workshop' && preservesWorkshopReleaseState(binding)
+						? 'published'
+						: 'draft',
+				visibility:
+					binding.contractVersion === 4
+						? binding.managedChildContract.visibility
+						: binding.managedChildContract.workshop.visibility,
 				courseSync: {
 					bindingId: binding.bindingId,
 					sourceCourseId: manifest.courseId,
@@ -261,7 +275,7 @@ export function sourceResourceFields(
 		}
 		const lessonItems = section.lessons.flatMap((lesson, lessonIndex) => {
 			const videos =
-				lesson.type === 'placeholder'
+				lesson.type === 'placeholder' || lesson.type === 'text'
 					? []
 					: lesson.type === 'explainer'
 						? [lesson.explainer]
@@ -269,9 +283,11 @@ export function sourceResourceFields(
 			const primary =
 				lesson.type === 'placeholder'
 					? null
-					: lesson.type === 'explainer'
-						? lesson.explainer
-						: lesson.problem
+					: lesson.type === 'text'
+						? lesson
+						: lesson.type === 'explainer'
+							? lesson.explainer
+							: lesson.problem
 			const lessonId = targetResourceId(binding.bindingId, 'lesson', lesson.id)
 			const solutionId =
 				lesson.type === 'problem' && lesson.solution
@@ -290,6 +306,9 @@ export function sourceResourceFields(
 					slug: slug(lesson.id, lesson.title),
 					body: primary?.body ?? '',
 					description: primary?.description ?? '',
+					...(manifest.schemaVersion === 5 && {
+						optional: 'optional' in lesson && lesson.optional === true,
+					}),
 					state: 'draft',
 					visibility: 'unlisted',
 					courseSync: {
@@ -298,6 +317,7 @@ export function sourceResourceFields(
 						sourceSectionId: section.id,
 						sourceLessonId: lesson.id,
 						lessonType: lesson.type,
+						...(manifest.schemaVersion === 5 && { optionalOwnedBySync: true }),
 						videos: videos.map((video) => ({
 							sourceVideoId: video.id,
 							sha256: video.sha256,
@@ -345,6 +365,9 @@ export function sourceResourceFields(
 						muxAssetId: asset.muxAssetId,
 						muxPlaybackId: asset.muxPlaybackId,
 						chapters: video.chapters,
+						...(video.sessionExtract && {
+							sessionExtract: video.sessionExtract,
+						}),
 						courseSync: {
 							bindingId: binding.bindingId,
 							sourceCourseId: manifest.courseId,
@@ -416,7 +439,7 @@ export function sourceResourceFields(
 			)
 			return [
 				lessonItem,
-				primaryVideoItem,
+				...(primaryVideoItem ? [primaryVideoItem] : []),
 				...(solutionItem && videoItems[1] ? [solutionItem, videoItems[1]] : []),
 				...questionItems,
 			]
@@ -958,18 +981,41 @@ export function createCourseSyncControlPlane(
 			const snapshots = await persistence.getTargetResources(
 				planned.map((item) => item.targetResourceId),
 			)
-			const resources: ResourcePlanItem[] = planned.map((item) => {
+			const resources: ResourcePlanItem[] = planned.map((plannedItem) => {
+				let item = plannedItem
+				const snapshot = snapshots.get(item.targetResourceId)
+				const priorSync = snapshot?.fields.courseSync as
+					| { optionalOwnedBySync?: unknown }
+					| undefined
+				// CVM downgrades to v4 when the last optional/text lesson disappears.
+				// Preserve legacy CMS flags, but clear flags previously owned by v5.
+				if (
+					item.sourceKind === 'lesson' &&
+					!('optional' in item.fields) &&
+					priorSync?.optionalOwnedBySync === true
+				) {
+					item = {
+						...item,
+						fields: {
+							...item.fields,
+							optional: false,
+							courseSync: {
+								...(item.fields.courseSync as object),
+								optionalOwnedBySync: true,
+							},
+						},
+					}
+				}
 				const previous =
 					adoptionPreviousByTarget.get(item.targetResourceId) ??
 					previousByTarget.get(item.targetResourceId)
-				const snapshot = snapshots.get(item.targetResourceId)
 				const action = !snapshot
 					? 'create'
 					: !previous ||
-						  stableJson(courseSyncSourceFields(item.sourceKind, previous.fields)) !==
-							  stableJson(courseSyncSourceFields(item.sourceKind, item.fields)) ||
-						  stableJson(courseSyncSourceFields(item.sourceKind, snapshot.fields)) !==
-							  stableJson(courseSyncSourceFields(item.sourceKind, item.fields)) ||
+						  stableJson(courseSyncSourceFields(item.sourceKind, previous.fields, binding)) !==
+							  stableJson(courseSyncSourceFields(item.sourceKind, item.fields, binding)) ||
+						  stableJson(courseSyncSourceFields(item.sourceKind, snapshot.fields, binding)) !==
+							  stableJson(courseSyncSourceFields(item.sourceKind, item.fields, binding)) ||
 						  previous.parentResourceId !== item.parentResourceId ||
 						  previous.position !== item.position ||
 						  previous.detached !== item.detached
@@ -977,6 +1023,10 @@ export function createCourseSyncControlPlane(
 						: 'retain'
 				return {
 					...item,
+					// Reflect release state without copying operator scheduling into the plan.
+					fields: item.sourceKind === 'workshop' && preservesWorkshopReleaseState(binding) && snapshot
+						? { ...item.fields, state: snapshot.fields.state }
+						: item.fields,
 					action,
 					previousDetached: previous?.detached ?? false,
 					previousVersionId:
@@ -984,7 +1034,7 @@ export function createCourseSyncControlPlane(
 						snapshot?.currentVersionId ??
 						null,
 					previousFieldsSha256: snapshot
-						? sha256(stableJson(courseSyncSourceFields(item.sourceKind, snapshot.fields)))
+						? sha256(stableJson(courseSyncSourceFields(item.sourceKind, snapshot.fields, binding)))
 						: null,
 					previousParentResourceId: previous?.parentResourceId ?? null,
 					previousPosition: previous?.position ?? null,
@@ -1046,7 +1096,7 @@ export function createCourseSyncControlPlane(
 				)?.lessonType
 				const demoted =
 					(previousType === 'explainer' || previousType === 'problem') &&
-					currentType === 'placeholder'
+					(currentType === 'placeholder' || currentType === 'text')
 				const lostVideo = previousVideos.some(
 					(video) =>
 						(
@@ -1127,7 +1177,23 @@ export function createCourseSyncControlPlane(
 					{ category: 'lifecycle_conflict', retryable: false },
 				)
 			}
-			return evaluateCourseSyncBoundedAutoApply(run.plan)
+			const binding = await requireBinding(run.bindingId)
+			if (
+				!preservesWorkshopReleaseState(binding) &&
+				run.plan.resources.some((item) => item.sourceKind === 'workshop' && item.action === 'create')
+			) {
+				return {
+					eligible: false as const,
+					planSha256: run.planSha256,
+					failureCode: 'WORKSHOP_RELEASE_CONTRACT_REVIEW_REQUIRED',
+					reason: 'This binding does not permit publishing new workshops. Joel must review its release contract.',
+				}
+			}
+			const lessons = courseSyncDestructiveLessons(run.plan)
+			const progressCounts = await persistence.getLessonProgressCounts(
+				lessons.map((item) => item.targetResourceId),
+			)
+			return evaluateCourseSyncBoundedAutoApply(run.plan, progressCounts)
 		},
 
 		async verifyApplied(input: { runId: string; planSha256: string }) {

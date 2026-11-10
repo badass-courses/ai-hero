@@ -4,11 +4,12 @@ import {
 	checkoutLoginBrowserCookieOptions,
 	createCheckoutLoginBrowserSession,
 } from '@/lib/checkout-login-browser-session'
+import { CHECKOUT_LINK_EXPIRED_PATH } from '@/lib/purchase-guardrails'
 
 export async function GET(request: NextRequest) {
 	const returnTo = request.nextUrl.searchParams.get('returnTo')
 	if (!returnTo || !returnTo.startsWith('/subscribe/verify-login?')) {
-		return NextResponse.redirect(new URL('/subscribe/error', request.url))
+		return NextResponse.redirect(new URL(CHECKOUT_LINK_EXPIRED_PATH, request.url))
 	}
 
 	const destination = new URL(returnTo, request.url)
@@ -16,7 +17,7 @@ export async function GET(request: NextRequest) {
 		destination.origin !== request.nextUrl.origin ||
 		destination.pathname !== '/subscribe/verify-login'
 	) {
-		return NextResponse.redirect(new URL('/subscribe/error', request.url))
+		return NextResponse.redirect(new URL(CHECKOUT_LINK_EXPIRED_PATH, request.url))
 	}
 
 	const response = NextResponse.redirect(destination)

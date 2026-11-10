@@ -42,13 +42,19 @@ export function requestContactProfileSyncSafely(
 	options: {
 		env?: Readonly<Record<string, string | number | undefined>>
 		send?: (event: DrovrContactProfileSyncRequested) => unknown
+		/** Stable per source fact; replays request the same sync. */
+		eventId?: string
 	} = {},
 ): void {
 	try {
 		if (!parseDrovrProfileSyncConfig(options.env ?? process.env).enabled) return
 		const send = options.send ?? sendWithInngest
 		void Promise.resolve(
-			send({ name: DROVR_CONTACT_PROFILE_SYNC_EVENT, data: request }),
+			send({
+				...(options.eventId ? { id: options.eventId } : {}),
+				name: DROVR_CONTACT_PROFILE_SYNC_EVENT,
+				data: request,
+			}),
 		).catch(() => undefined)
 	} catch {
 		// A profile sync request must never escape into the host flow.

@@ -10,6 +10,8 @@ import { PostPurchaseShell } from '../../_components/post-purchase-shell'
 import { PostPurchaseArrival } from '../../_components/post-purchase-arrival'
 import { PostPurchaseLoginLink } from '../../_components/post-purchase-login-link'
 import { PostPurchaseIconBadge } from '../../_components/post-purchase-icon'
+import { PostPurchaseDelayedPayment } from '../../_components/post-purchase-delayed-payment'
+import { readDelayedPaymentState } from './read-delayed-payment-state'
 import { getPurchaseThanksDetails } from './purchase-thanks-details'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
@@ -77,6 +79,17 @@ export default async function ThanksPurchasePage(props: {
 		await courseBuilderAdapter.getPurchaseByCheckoutSessionId(session_id)
 
 	if (!purchase?.id) {
+		// A bank transfer completes checkout unpaid; the purchase only lands when
+		// the money does, so say that instead of polling for it.
+		const payment = await readDelayedPaymentState(session_id)
+		if (payment.kind !== 'not_delayed') {
+			return (
+				<PostPurchaseDelayedPayment
+					state={payment}
+					supportEmail={env.NEXT_PUBLIC_SUPPORT_EMAIL}
+				/>
+			)
+		}
 		return <PurchaseProcessingPage session_id={session_id} />
 	}
 

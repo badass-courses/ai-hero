@@ -1,12 +1,13 @@
 import { env } from '@/env.mjs'
+import { getIntegrationRefreshToken } from '@/lib/integration-token-store'
 import { google } from 'googleapis'
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
-function getOAuth2Client() {
+async function getOAuth2Client() {
 	const clientId = env.YOUTUBE_OAUTH_CLIENT_ID
 	const clientSecret = env.YOUTUBE_OAUTH_CLIENT_SECRET
-	const refreshToken = env.YOUTUBE_ANALYTICS_REFRESH_TOKEN
+	const refreshToken = await getIntegrationRefreshToken('youtube_analytics')
 
 	if (!clientId || !clientSecret || !refreshToken) return null
 
@@ -77,7 +78,7 @@ export interface YouTubeTrafficSource {
  * Returns null when OAuth refresh token is not configured.
  */
 export async function getChannelOverview(): Promise<YouTubeChannelOverview | null> {
-	const auth = getOAuth2Client()
+	const auth = await getOAuth2Client()
 	if (!auth) return null
 
 	const youtube = google.youtube({ version: 'v3', auth })
@@ -104,7 +105,7 @@ export async function getVideoPerformance(
 	range: YouTubeRange,
 	limit = 25,
 ): Promise<YouTubeVideoPerformance[] | null> {
-	const auth = getOAuth2Client()
+	const auth = await getOAuth2Client()
 	if (!auth) return null
 
 	const youtubeAnalytics = google.youtubeAnalytics({ version: 'v2', auth })
@@ -138,7 +139,7 @@ export async function getVideoPerformance(
 export async function getChannelTimeseries(
 	range: YouTubeRange,
 ): Promise<YouTubeTimeseriesPoint[] | null> {
-	const auth = getOAuth2Client()
+	const auth = await getOAuth2Client()
 	if (!auth) return null
 
 	const youtubeAnalytics = google.youtubeAnalytics({ version: 'v2', auth })
@@ -166,7 +167,7 @@ export async function getChannelTimeseries(
 export async function getYouTubeTrafficSources(
 	range: YouTubeRange,
 ): Promise<YouTubeTrafficSource[] | null> {
-	const auth = getOAuth2Client()
+	const auth = await getOAuth2Client()
 	if (!auth) return null
 
 	const youtubeAnalytics = google.youtubeAnalytics({ version: 'v2', auth })
@@ -196,7 +197,7 @@ export async function getVideoPerformanceWithTitles(
 	range: YouTubeRange,
 	limit = 10,
 ): Promise<YouTubeVideoWithTitle[] | null> {
-	const auth = getOAuth2Client()
+	const auth = await getOAuth2Client()
 	if (!auth) return null
 
 	const videos = await getVideoPerformance(range, limit)

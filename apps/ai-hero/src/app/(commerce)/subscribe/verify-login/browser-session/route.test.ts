@@ -39,7 +39,7 @@ describe('checkout login browser session route', () => {
 		const response = await GET(new NextRequest(url))
 
 		expect(response.headers.get('location')).toBe(
-			'https://www.aihero.dev/subscribe/error',
+			'https://www.aihero.dev/subscribe/error?reason=invalid-expired',
 		)
 	})
 })

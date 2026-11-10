@@ -346,6 +346,24 @@ describe('getUserAbilityForRequest', () => {
 		)
 	})
 
+	it('treats a learner:read token as anonymous, even when its owner is an admin', async () => {
+		mocks.deviceFindFirst.mockResolvedValue({
+			token: 'learner-token',
+			scope: 'learner:read',
+			createdAt: new Date(),
+			expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+			revokedAt: null,
+			verifiedBy: user,
+		})
+
+		const auth = await getUserAbilityForRequest(request('learner-token'))
+
+		expect(auth.authMethod).toBe('anonymous')
+		expect(auth.user).toBeFalsy()
+		expect(auth.ability.cannot('manage', 'all')).toBe(true)
+		expect(auth.ability.cannot('view', 'Analytics')).toBe(true)
+	})
+
 	it('accepts a future persisted expiry even when the legacy createdAt is old', async () => {
 		mocks.deviceFindFirst.mockResolvedValue({
 			token: 'device-token',

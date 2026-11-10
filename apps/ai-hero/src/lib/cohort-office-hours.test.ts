@@ -4,7 +4,7 @@ import {
 	createYouTubeWatchUrl,
 	formatOfficeHoursUtcTimeRange,
 	getOfficeHoursCalendarTitle,
-	groupOfficeHoursSessionsByUtcDate,
+	groupOfficeHoursSessionsByDate,
 	isOfficeHoursSessionLive,
 	isOfficeHoursSessionPast,
 } from '@/lib/cohort-office-hours'
@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest'
 
 describe('cohort office hours helpers', () => {
 	it('groups sessions by UTC date and keeps them sorted', () => {
-		const groups = groupOfficeHoursSessionsByUtcDate([
+		const groups = groupOfficeHoursSessionsByDate([
 			{
 				title: 'Session 2',
 				startsAt: '2026-04-03T15:30:00.000Z',
@@ -41,10 +41,75 @@ describe('cohort office hours helpers', () => {
 		expect(
 			groups[0]?.sessions.map((session) => session.youtubeBroadcastId),
 		).toEqual(['broadcast-1'])
-		expect(groups[1]?.label).toBe('Second Monday')
+		expect(groups[1]?.label).toBe('Final Friday')
 		expect(
 			groups[1]?.sessions.map((session) => session.youtubeBroadcastId),
 		).toEqual(['broadcast-3', 'broadcast-2'])
+	})
+
+	it('labels C5 Monday, Friday, Friday groups from their UTC weekdays', () => {
+		const sessions = ['2026-11-09', '2026-11-13', '2026-11-20'].flatMap(
+			(date) =>
+				['00:30', '15:30'].map((time) => ({
+					title: 'Synthetic office hours',
+					startsAt: `${date}T${time}:00.000Z`,
+					endsAt: `${date}T${time === '00:30' ? '01:15' : '16:15'}:00.000Z`,
+					youtubeBroadcastId: 'synthetic-broadcast',
+					youtubeWatchUrl: createYouTubeWatchUrl('synthetic-broadcast'),
+				})),
+		)
+		const groups = groupOfficeHoursSessionsByDate(sessions.reverse())
+		expect(
+			groups.map(({ dateKey, label, sessions }) => ({
+				dateKey,
+				label,
+				count: sessions.length,
+			})),
+		).toEqual([
+			{ dateKey: '2026-11-09', label: 'Opening Monday', count: 2 },
+			{ dateKey: '2026-11-13', label: 'Friday', count: 2 },
+			{ dateKey: '2026-11-20', label: 'Final Friday', count: 2 },
+		])
+	})
+
+	it('uses actual weekdays for any number of groups, including a single opening day', () => {
+		const sessions = [
+			'2026-11-10',
+			'2026-11-11',
+			'2026-11-12',
+			'2026-11-14',
+		].map((date) => ({
+			title: 'Synthetic office hours',
+			startsAt: `${date}T00:30:00.000Z`,
+			endsAt: `${date}T01:15:00.000Z`,
+			youtubeBroadcastId: 'synthetic-broadcast',
+			youtubeWatchUrl: createYouTubeWatchUrl('synthetic-broadcast'),
+		}))
+		expect(
+			groupOfficeHoursSessionsByDate(sessions).map(({ label }) => label),
+		).toEqual(['Opening Tuesday', 'Wednesday', 'Thursday', 'Final Saturday'])
+		expect(
+			groupOfficeHoursSessionsByDate(sessions.slice(0, 1))[0]?.label,
+		).toBe('Opening Tuesday')
+		expect(groupOfficeHoursSessionsByDate([])).toEqual([])
+	})
+
+	it('groups by the calendar day of the given zone', () => {
+		const session = (startsAt: string) => ({
+			title: 'Synthetic office hours',
+			startsAt,
+			endsAt: startsAt,
+			youtubeBroadcastId: startsAt,
+			youtubeWatchUrl: createYouTubeWatchUrl('synthetic-broadcast'),
+		})
+		const groups = groupOfficeHoursSessionsByDate(
+			[session('2026-11-10T02:00:00.000Z'), session('2026-11-10T23:00:00.000Z')],
+			'America/New_York',
+		)
+		expect(groups.map(({ dateKey, label }) => [dateKey, label])).toEqual([
+			['2026-11-09', 'Opening Monday'],
+			['2026-11-10', 'Final Tuesday'],
+		])
 	})
 
 	it('formats UTC time ranges clearly', () => {

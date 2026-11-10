@@ -782,6 +782,11 @@ async function getPostWithAccess(slugOrId: string, canEditContent: boolean) {
 		},
 	})
 
+	if (!post) {
+		void log.debug('post.not_found', { slugOrId })
+		return null
+	}
+
 	const postParsed = PostSchema.safeParse(post)
 	if (!postParsed.success) {
 		void log.error('post.parse.error', {

@@ -1,17 +1,18 @@
 import { QuestionResourceSchema } from '@coursebuilder/survey/types'
 
 import { CourseSyncError } from './errors'
-import type { ResourcePlanItem } from './types'
+import { preservesWorkshopReleaseState, type CourseSyncBinding, type ResourcePlanItem } from './types'
 
-// Keep ownership aligned with sourceResourceFields. Everything else belongs to
-// the operator, including startsAt, endsAt, timezone and future scheduling keys.
+// These are keys the source may produce, including draft defaults on creation.
+// v8 workshop state becomes operator-owned after creation; comparisons and merges
+// below apply that exception. Scheduling keys always belong to the operator.
 const commonFields = ['state', 'visibility', 'courseSync']
 export const sourceFieldsByKind: Readonly<
 	Record<ResourcePlanItem['sourceKind'], readonly string[]>
 > = {
 	section: [...commonFields, 'title', 'slug'],
 	workshop: [...commonFields, 'title', 'slug'],
-	lesson: [...commonFields, 'title', 'slug', 'body', 'description'],
+	lesson: [...commonFields, 'title', 'slug', 'body', 'description', 'optional'],
 	solution: [
 		...commonFields,
 		'title',
@@ -28,6 +29,7 @@ export const sourceFieldsByKind: Readonly<
 		'muxAssetId',
 		'muxPlaybackId',
 		'chapters',
+		'sessionExtract',
 	],
 	question: [...commonFields, ...Object.keys(QuestionResourceSchema.shape)],
 }
@@ -35,8 +37,14 @@ export const sourceFieldsByKind: Readonly<
 export function courseSyncSourceFields(
 	sourceKind: ResourcePlanItem['sourceKind'],
 	fields: Record<string, unknown>,
+	binding?: CourseSyncBinding,
 ): Record<string, unknown> {
 	const owned = new Set(sourceFieldsByKind[sourceKind])
+	if (sourceKind === 'lesson' &&
+		(fields.courseSync as { optionalOwnedBySync?: unknown } | undefined)?.optionalOwnedBySync !== true) {
+		owned.delete('optional')
+	}
+	if (sourceKind === 'workshop' && preservesWorkshopReleaseState(binding)) owned.delete('state')
 	return Object.fromEntries(
 		Object.entries(fields).filter(([key]) => owned.has(key)),
 	)
@@ -60,13 +68,21 @@ export function assertCourseSyncSourceFields(
 export function mergeCourseSyncResourceFields(
 	item: Pick<ResourcePlanItem, 'sourceKind' | 'fields'>,
 	existingFields: Record<string, unknown> = {},
+	binding?: CourseSyncBinding,
 ): Record<string, unknown> {
 	assertCourseSyncSourceFields(item)
 	const owned = new Set(sourceFieldsByKind[item.sourceKind])
+	if (item.sourceKind === 'lesson' && !('optional' in item.fields)) owned.delete('optional')
+	const preserveState = item.sourceKind === 'workshop' &&
+		preservesWorkshopReleaseState(binding) && existingFields.state !== undefined
+	if (preserveState) owned.delete('state')
+	const sourceFields = preserveState
+		? courseSyncSourceFields(item.sourceKind, item.fields, binding)
+		: item.fields
 	return {
 		...Object.fromEntries(
 			Object.entries(existingFields).filter(([key]) => !owned.has(key)),
 		),
-		...item.fields,
+		...sourceFields,
 	}
 }

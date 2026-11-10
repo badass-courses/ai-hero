@@ -89,11 +89,11 @@ export function createNewsletterProviderPause(options: {
 				: Effect.fail(new NewsletterPauseStorageError({ operation, reason: 'invalid-ttl' })),
 		))
 	const run = async (work: Effect.Effect<number, NewsletterPauseStorageError>) => {
-		const result = await Effect.runPromise(Effect.either(work))
-		if (result._tag === 'Left') {
-			throw new NewsletterPauseUnavailableError(result.left)
+		const result = await Effect.runPromise(Effect.result(work))
+		if (result._tag === 'Failure') {
+			throw new NewsletterPauseUnavailableError(result.failure)
 		}
-		return result.right
+		return result.success
 	}
 	return {
 		isPaused: async () => (await run(ttl('read', READ_NEWSLETTER_PAUSE, []))) > 0,

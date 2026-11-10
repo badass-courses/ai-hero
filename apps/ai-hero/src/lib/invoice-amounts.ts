@@ -18,32 +18,31 @@ const zeroDecimalCurrencies = new Set([
 	'XPF',
 ])
 
-export function stripeAmountToMajorUnits(amount: number, currency: string) {
+const threeDecimalCurrencies = new Set(['BHD', 'JOD', 'KWD', 'OMR', 'TND'])
+
+// Stripe's charge units are not ICU's currency display defaults. ISK and UGX
+// still use hundredths, and HUF charges support two decimal places.
+function stripeCurrencyDecimals(currency: string) {
 	const code = currency.toUpperCase()
-	// ISK and UGX display without decimals but Stripe still sends units of 1/100.
-	// HUF allows two-decimal charges even on ICU versions that display no decimals.
-	const decimals = zeroDecimalCurrencies.has(code)
+	return zeroDecimalCurrencies.has(code)
 		? 0
-		: code === 'ISK' || code === 'UGX' || code === 'HUF'
-			? 2
-			: (new Intl.NumberFormat('en-US', {
-					style: 'currency',
-					currency: code,
-				}).resolvedOptions().maximumFractionDigits ?? 2)
-	return amount / 10 ** decimals
+		: threeDecimalCurrencies.has(code)
+			? 3
+			: 2
 }
 
+export function stripeAmountToMajorUnits(amount: number, currency: string) {
+	return amount / 10 ** stripeCurrencyDecimals(currency)
+}
+
+// Number only: callers own the currency label (and the legacy USD symbol).
 export function formatInvoiceAmount(amount: number, currency: string) {
-	const code = currency.toUpperCase()
+	const decimals = stripeCurrencyDecimals(currency)
 	return new Intl.NumberFormat('en-US', {
-		style: 'currency',
-		currency: code,
-		...(zeroDecimalCurrencies.has(code)
-			? { minimumFractionDigits: 0, maximumFractionDigits: 0 }
-			: code === 'HUF'
-				? { minimumFractionDigits: 2, maximumFractionDigits: 2 }
-				: {}),
-	}).format(stripeAmountToMajorUnits(amount, code))
+		style: 'decimal',
+		minimumFractionDigits: decimals,
+		maximumFractionDigits: decimals,
+	}).format(stripeAmountToMajorUnits(amount, currency))
 }
 
 export type InvoicePresentment = { amount: number; currency: string }

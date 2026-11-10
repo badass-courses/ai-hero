@@ -1,4 +1,5 @@
 import { notFound } from 'next/navigation'
+import { listLearningProducts } from '@/lib/analytics/providers/database'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 
@@ -48,9 +49,18 @@ export default async function AnalyticsPage({
 		canViewAnalytics,
 	})
 
+	// The picker is optional: a failed product list leaves the rest of the page.
+	const learningProducts = await listLearningProducts().catch(async (error) => {
+		await log.error('admin.analytics.learning-products-failed', { error })
+		return []
+	})
+
 	return (
 		<main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-5 px-3 py-6 sm:px-4 sm:py-10 lg:gap-10">
-			<ProgressiveAnalyticsDashboard initialRange={range} />
+			<ProgressiveAnalyticsDashboard
+				initialRange={range}
+				learningProducts={learningProducts}
+			/>
 		</main>
 	)
 }

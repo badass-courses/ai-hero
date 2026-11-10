@@ -73,6 +73,14 @@ export function syntheticPolicy(
 				{ minSeats: 30, percent: 30 },
 			],
 		}),
+		// Only team orders that pass paid seats use this; the app passes none.
+		teamCrashCourseCredit: {
+			minimumSeatNetCents: 10_000,
+			minimumSeatNetSource: `${SYNTHETIC_POLICY_VERSION}#teamCrashCourseCredit`,
+			seatOrder: 'highestPaidFirst',
+			seatOrderSource: `${SYNTHETIC_POLICY_VERSION}#teamCrashCourseCredit`,
+			windowEnd: SYNTHETIC_WINDOWS.closesAt,
+		},
 		...over,
 	}
 }

@@ -1,6 +1,10 @@
 import 'server-only'
 
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
+import {
+	gatedAsksOffKitEnabled,
+	readOffKitGatingEvidence,
+} from '@/lib/gated-asks-off-kit'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
 import { hasCompletedConversionIntent } from '@/lib/cta/conversion-intent'
 import { LRUCache } from 'lru-cache'
@@ -83,6 +87,14 @@ function fromRecord(
 export async function resolveSkillsCtaState(
 	sessionEmail?: string | null,
 ): Promise<SkillsCtaState> {
+	if (gatedAsksOffKitEnabled()) {
+		const evidence = await readOffKitGatingEvidence({ sessionEmail })
+		if (evidence.courseStarted) return 'subscribed'
+		if (evidence.list?.state === 'confirmed') return 'tag-me'
+		return evidence.subscriber?.email_address || sessionEmail
+			? 'account'
+			: 'fresh'
+	}
 	// A completed cookie answer is sufficient. An incomplete answer is refreshed
 	// below because learner-flow completion happens after the signup request.
 	const cookieRecord = await getSubscriberFromCookie().catch(() => null)

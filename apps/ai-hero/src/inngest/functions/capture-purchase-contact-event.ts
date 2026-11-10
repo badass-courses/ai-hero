@@ -5,13 +5,27 @@ import {
 	users as usersTable,
 } from '@/db/schema'
 import { inngest } from '@/inngest/inngest.server'
+import { env } from '@/env.mjs'
+import { resolveDrovrApiBaseUrl } from '@/lib/subscriber-marketing/drovr-unsubscribe-page'
+import { requestBuyerProfileSync } from '@/lib/subscriber-marketing/buyer-profile-sync'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
+import {
+	deliverResolvedPurchaseEvents,
+	drovrPurchaseRecordedEventsFor,
+	emailLogHash,
+	resolveDrovrContacts,
+} from '@/lib/subscriber-marketing/drovr-purchase-resolve'
+import {
+	DROVR_AUTHORITY_TENANT_ID,
+	drovrApiKeyForTenant,
+} from '@/lib/subscriber-marketing/drovr-shadow-emitter'
 import {
 	evergreenCouponIdOf,
 	evergreenCouponLogId,
 	readEvergreenOfferCoupon,
 } from '@/lib/subscriber-marketing/evergreen-offer-purchase'
 import {
+	ensureBuyerContact,
 	writePurchaseRecordedContactEvents,
 	type PurchaseRecordedSource,
 } from '@/lib/subscriber-marketing/lifecycle-contact-events'
@@ -97,11 +111,14 @@ export const capturePurchaseContactEvent = inngest.createFunction(
 			: null
 		if (evergreenOffer?.status === 'refused') {
 			// Falls back to the buyer's contact, which is what ran before row 194.
-			await log.warn('contact_event.purchase_recorded.evergreen_coupon_refused', {
-				purchaseId: purchase.id,
-				couponId: evergreenCouponLogId(evergreenOffer.couponId),
-				reason: evergreenOffer.reason,
-			})
+			await log.warn(
+				'contact_event.purchase_recorded.evergreen_coupon_refused',
+				{
+					purchaseId: purchase.id,
+					couponId: evergreenCouponLogId(evergreenOffer.couponId),
+					reason: evergreenOffer.reason,
+				},
+			)
 		}
 
 		const source: PurchaseRecordedSource = {
@@ -125,11 +142,14 @@ export const capturePurchaseContactEvent = inngest.createFunction(
 		const summary = await step.run(
 			'write purchase-recorded contact event',
 			async () => {
+				const repository = new DrizzleCaptureMarketingRepository(db)
+				await ensureBuyerContact({ repository, buyer: source, warn: log.warn })
 				const result = await writePurchaseRecordedContactEvents({
-					repository: new DrizzleCaptureMarketingRepository(db),
+					repository,
 					rows: [source],
 					redispatchDuplicates: true,
 				})
+				requestBuyerProfileSync(result)
 				return {
 					counts: result.counts,
 					identityResolutionPath: result.decisions
@@ -153,6 +173,58 @@ export const capturePurchaseContactEvent = inngest.createFunction(
 				? evergreenCouponLogId(evergreenCouponId)
 				: null,
 		})
+
+		// Defensive fallback for unresolved local identity evidence. Normal
+		// buyers now get a Contact above; an existing drovr contact can still
+		// receive the fact if the local lifecycle writer could not attach it.
+		const buyerEmail = source.email?.trim()
+		if (
+			summary.counts.written === 0 &&
+			(summary.counts.skippedByReason['no-existing-contact'] ||
+				summary.counts.skippedByReason['dangling-provider-identity']) &&
+			buyerEmail
+		) {
+			const drovr = await step.run('resolve buyer in drovr', async () => {
+				const ingestUrl = env.DROVR_SHADOW_INGEST_URL
+				const apiKey = drovrApiKeyForTenant(DROVR_AUTHORITY_TENANT_ID)
+				const baseUrl = resolveDrovrApiBaseUrl({
+					DROVR_API_BASE_URL: env.DROVR_API_BASE_URL,
+					DROVR_SHADOW_INGEST_URL: ingestUrl,
+				})
+				if (!ingestUrl || !apiKey || !baseUrl) {
+					return { status: 'not-configured' as const }
+				}
+				const answers = await resolveDrovrContacts({
+					emails: [buyerEmail],
+					config: { baseUrl, apiKey },
+				})
+				const answer = answers.get(buyerEmail.toLowerCase())
+				if (answer?.status !== 'resolved') {
+					return { status: answer?.status ?? ('missing' as const) }
+				}
+				const result = await deliverResolvedPurchaseEvents({
+					events: drovrPurchaseRecordedEventsFor(source, answer.contactId),
+					config: { ingestUrl, apiKey },
+				})
+				return { status: 'resolved' as const, ...result }
+			})
+			const logName =
+				drovr.status === 'resolved'
+					? 'contact_event.purchase_recorded.drovr_resolved'
+					: drovr.status === 'conflict'
+						? 'contact_event.purchase_recorded.drovr_conflict'
+						: drovr.status === 'missing'
+							? 'contact_event.purchase_recorded.drovr_missing'
+							: 'contact_event.purchase_recorded.drovr_not_configured'
+			await (drovr.status === 'conflict' ? log.warn : log.info)(logName, {
+				purchaseId: purchase.id,
+				emailHash: emailLogHash(buyerEmail),
+				...(drovr.status === 'resolved'
+					? { accepted: drovr.accepted, rejected: drovr.rejected }
+					: {}),
+			})
+			return { status: `drovr-${drovr.status}`, counts: summary.counts }
+		}
 
 		return {
 			status: summary.counts.written > 0 ? 'written' : 'skipped',

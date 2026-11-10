@@ -2,11 +2,57 @@ import { NextResponse } from 'next/server'
 import { getUser } from '@/app/oauth/userinfo/get-user'
 import { db } from '@/db'
 import { deviceAccessToken, deviceVerifications } from '@/db/schema'
+import {
+	LEARNER_READ_SCOPE,
+	LEARNER_TOKEN_TTL_MS,
+} from '@/lib/learner-agent/identity'
+import { exchangeAuthorizationCode } from '@/lib/learner-agent/oauth/grant'
+import { corsPreflight, oauthError } from '@/lib/learner-agent/oauth/metadata'
 import { eq } from 'drizzle-orm'
 
+/**
+ * Scopes a client may narrow a device token to at exchange. Narrowing only:
+ * without `scope` the token keeps today's full owner ability.
+ */
+const NARROWING_SCOPES = new Set([LEARNER_READ_SCOPE])
+
 export async function POST(request: Request) {
-	const formData = await request.formData()
+	// RFC 6749 §3.2: token requests are form-encoded. A JSON or empty body is a
+	// client error the caller can fix, not a 500 it keeps polling into.
+	const formData = await request.formData().catch(() => null)
+	if (!formData)
+		return oauthError(
+			'invalid_request',
+			'Send the token request as application/x-www-form-urlencoded (RFC 6749 section 3.2).',
+		)
+	// The learner MCP's authorization code grant. Every other request,
+	// including one with no grant_type, is the device flow below, unchanged.
+	if (formData.get('grant_type') === 'authorization_code')
+		return exchangeAuthorizationCode(formData, request)
+	return deviceCodeGrant(formData)
+}
+
+export const OPTIONS = corsPreflight
+
+async function deviceCodeGrant(formData: FormData) {
 	const device_code = formData.get('device_code')
+	const requestedScope = formData.get('scope')
+	// A scope is a set: dedupe and sort, so the stored string is canonical and
+	// `/api/learner/token` finds the token by exact match.
+	const scope =
+		typeof requestedScope === 'string' && requestedScope.trim()
+			? [...new Set(requestedScope.trim().split(/\s+/))].sort()
+			: null
+
+	if (scope && !scope.every((entry) => NARROWING_SCOPES.has(entry))) {
+		return NextResponse.json(
+			{
+				error: 'invalid_scope',
+				error_description: `Supported scopes: ${[...NARROWING_SCOPES].join(' ')}`,
+			},
+			{ status: 400 },
+		)
+	}
 
 	const deviceVerification = await db.query.deviceVerifications.findFirst({
 		where: eq(deviceVerifications.deviceCode, device_code as string),
@@ -43,6 +89,12 @@ export async function POST(request: Request) {
 			await db.insert(deviceAccessToken).values({
 				userId: user.id,
 				token: newToken,
+				...(scope
+					? {
+							scope: scope.join(' '),
+							expiresAt: new Date(Date.now() + LEARNER_TOKEN_TTL_MS),
+						}
+					: {}),
 			})
 
 			const deviceToken = await db.query.deviceAccessToken.findFirst({
@@ -68,7 +120,7 @@ export async function POST(request: Request) {
 			return NextResponse.json({
 				access_token: deviceToken.token,
 				token_type: 'bearer',
-				scope: 'content:read progress',
+				scope: scope ? scope.join(' ') : 'content:read progress',
 			})
 		} else {
 			return NextResponse.json(
