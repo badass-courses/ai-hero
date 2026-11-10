@@ -1,4 +1,5 @@
 import { db } from '@/db'
+import { invalidatePurchaseCounts } from '@/lib/purchase-count-invalidation'
 import {
 	entitlements,
 	entitlementTypes,
@@ -735,6 +736,7 @@ export async function handleProductTransfer({
 				.set({ organizationId: targetUserOrganization.id })
 				.where(eq(purchases.id, purchase.id))
 
+			await invalidatePurchaseCounts()
 			log.info('Moved purchase to target user organization', {
 				purchaseId: purchase.id,
 				fromOrganizationId: purchase.organizationId,
