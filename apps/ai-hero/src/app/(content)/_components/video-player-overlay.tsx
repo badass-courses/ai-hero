@@ -31,6 +31,7 @@ import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
 import { CopyProblemPromptButton } from '../workshops/_components/copy-problem-prompt-button'
 import * as ModuleCertificate from '@/components/certificates/module-certificate'
+import { workshopAwardsCertificate } from '@/lib/workshops'
 
 import { completeLessonInBackground } from './complete-lesson-in-background'
 import {
@@ -425,6 +426,9 @@ export const CompletedModuleOverlay: React.FC<{
 	// finished on the lesson page never learned one existed. Primary when the
 	// workshop is the end of the road; when a next workshop follows, that stays
 	// the primary action and the certificate sits beside it.
+	// A workshop can opt out of its own certificate (a cohort's setup module).
+	const awardsCertificate =
+		Boolean(moduleSlug) && workshopAwardsCertificate(moduleNavigation?.fields)
 	const replayButton = (
 		<Button
 			className={END_CARD_SECONDARY}
@@ -439,7 +443,7 @@ export const CompletedModuleOverlay: React.FC<{
 		nextWorkshop && nextWorkshopHref ? (
 			<>
 				{replayButton}
-				{moduleSlug && (
+				{awardsCertificate && (
 					<ModuleCertificate.Trigger className={END_CARD_SECONDARY}>
 						Get your certificate
 					</ModuleCertificate.Trigger>
@@ -457,7 +461,7 @@ export const CompletedModuleOverlay: React.FC<{
 		) : (
 			<>
 				{replayButton}
-				{moduleSlug && (
+				{awardsCertificate && (
 					<span
 						className="contents"
 						data-end-card-primary={canClaimCohortCertificate ? undefined : ''}

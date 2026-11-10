@@ -11,6 +11,7 @@ import { LessonDeniedNotice } from '@/app/(content)/workshops/_components/lesson
 import { WorkshopResourceList } from '@/app/(content)/workshops/_components/workshop-resource-list'
 import { TeamWelcomeVideo } from '@/app/(content)/workshops/_components/team-welcome-video'
 import { WorkshopActionsBar } from '@/app/(content)/workshops/_components/workshop-user-actions'
+import { workshopAwardsCertificate } from '@/lib/workshops'
 import { Contributor } from '@/components/contributor'
 import { EvergreenClaimPanel } from '@/components/evergreen-claim-panel'
 import { DiscountDeadline } from '@/components/pricing/discount-deadline'
@@ -465,9 +466,11 @@ export default async function ModulePage(props: Props) {
 														maxHeight="h-auto"
 														wrapperClassName="overflow-hidden pb-0 hidden md:block"
 													/>
-													<div className="p-3">
-														<Certificate resourceSlugOrId={params.module} />
-													</div>
+													{workshopAwardsCertificate(workshop.fields) && (
+														<div className="p-3">
+															<Certificate resourceSlugOrId={params.module} />
+														</div>
+													)}
 												</WorkshopSidebar>
 											)
 											const pricingWidget = (
