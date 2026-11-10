@@ -20,6 +20,7 @@ import {
 	findRecordedJourneyOwner,
 	isDoiAnswerForwardCandidate,
 	isDoiAnswerForwardContact,
+	isNewDoiSignup,
 	isOwnerFanOutCandidate,
 	isShadowNewsletterBirth,
 } from './drovr-ownership'
@@ -219,10 +220,11 @@ export type DoiAnswerForwardReads = {
 /**
  * Which DOI learners in a batch get their skills-course answers copied to
  * the authority tenant (`isDoiAnswerForwardContact`). Unlike the owner read
- * this never throws: a failed read leaves these answers where they went
- * before (discarded, the drip timer still moves the learner on) and is
+ * this never throws: a failed read leaves that contact's answers where they
+ * went before (discarded, the drip timer still moves the learner on) and is
  * logged at error. Throwing would hold or outbox the whole batch, owned
  * contacts' stops included, over an answer that never reached drovr before.
+ * One info line per batch with candidates gives the post-deploy check.
  */
 export async function resolveDoiAnswerForwardContactIds(
 	events: readonly DrovrShadowEvent[],
@@ -238,12 +240,39 @@ export async function resolveDoiAnswerForwardContactIds(
 		answered.set(event.contactId, ids)
 	}
 	if (answered.size === 0) return []
+	const reportFailure = async (contacts: number, error: unknown) => {
+		try {
+			await log.error('drovr.doi_answer_forward.resolve_failed', {
+				contacts,
+				error: error instanceof Error ? error.message : String(error),
+			})
+		} catch {
+			// Logging cannot make the read succeed.
+		}
+	}
+	let reads: DoiAnswerForwardReads
 	try {
-		const reads = options.reads ?? (await liveDoiAnswerForwardReads())
-		const forwarded: string[] = []
-		for (const [contactId, ids] of answered) {
+		reads = options.reads ?? (await liveDoiAnswerForwardReads())
+	} catch (error) {
+		await reportFailure(answered.size, error)
+		return []
+	}
+	const forwarded: string[] = []
+	let notDoi = 0
+	let beforeCutoff = 0
+	let unanchored = 0
+	let failed = 0
+	for (const [contactId, ids] of answered) {
+		try {
 			const doiRequestedAt = await reads.doiRequestedAt(contactId)
-			if (doiRequestedAt.length === 0) continue
+			if (doiRequestedAt.length === 0) {
+				notDoi += 1
+				continue
+			}
+			if (!isNewDoiSignup(doiRequestedAt, options.since)) {
+				beforeCutoff += 1
+				continue
+			}
 			const answeredEmailResourceIds = [...ids]
 			const anchoredEmailResourceIds = await reads.anchoredEmailResourceIds(
 				contactId,
@@ -258,19 +287,25 @@ export async function resolveDoiAnswerForwardContactIds(
 				})
 			)
 				forwarded.push(contactId)
+			else unanchored += 1
+		} catch (error) {
+			failed += 1
+			await reportFailure(1, error)
 		}
-		return forwarded
-	} catch (error) {
-		try {
-			await log.error('drovr.doi_answer_forward.resolve_failed', {
-				contacts: answered.size,
-				error: error instanceof Error ? error.message : String(error),
-			})
-		} catch {
-			// Logging cannot make the read succeed.
-		}
-		return []
 	}
+	try {
+		await log.info('drovr.doi_answer_forward.resolved', {
+			candidates: answered.size,
+			forwarded: forwarded.length,
+			notDoi,
+			beforeCutoff,
+			unanchored,
+			failed,
+		})
+	} catch {
+		// Logging cannot change who is forwarded.
+	}
+	return forwarded
 }
 
 /**

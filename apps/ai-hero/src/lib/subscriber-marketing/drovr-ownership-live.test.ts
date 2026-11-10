@@ -124,10 +124,41 @@ describe('resolveDoiAnswerForwardContactIds', () => {
 				{ since, reads },
 			),
 		).resolves.toEqual(['new'])
-		// No DOI record: the anchor is never read.
-		expect(reads.anchoredEmailResourceIds).not.toHaveBeenCalledWith(
-			'no-doi',
-			expect.anything(),
+		// No DOI record or a pre-cutoff one: the anchor is never read.
+		expect(
+			reads.anchoredEmailResourceIds.mock.calls.map(([contactId]) => contactId),
+		).toEqual(['new', 'unanchored'])
+		expect(mocks.log.info).toHaveBeenCalledWith(
+			'drovr.doi_answer_forward.resolved',
+			{
+				candidates: 4,
+				forwarded: 1,
+				notDoi: 1,
+				beforeCutoff: 1,
+				unanchored: 1,
+				failed: 0,
+			},
+		)
+	})
+
+	it("keeps one contact's failed read from dropping another contact's forward", async () => {
+		const reads = readsFor(
+			{ new: ['2026-11-10T04:00:00.000Z'] },
+			{ new: [lesson] },
+		)
+		reads.doiRequestedAt.mockImplementation(async (contactId: string) => {
+			if (contactId === 'broken') throw new Error('Vitess: connection reset')
+			return contactId === 'new' ? ['2026-11-10T04:00:00.000Z'] : []
+		})
+		await expect(
+			resolveDoiAnswerForwardContactIds([answer('broken'), answer('new')], {
+				since,
+				reads,
+			}),
+		).resolves.toEqual(['new'])
+		expect(mocks.log.error).toHaveBeenCalledWith(
+			'drovr.doi_answer_forward.resolve_failed',
+			{ contacts: 1, error: 'Vitess: connection reset' },
 		)
 	})
 

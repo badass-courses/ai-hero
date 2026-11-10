@@ -500,6 +500,16 @@ describe('DOI learners: answers, and only answers, reach their actor', () => {
 			).toBe(false)
 		})
 
+		it('does not forward an earlier learner who submitted the form again after the cutoff', () => {
+			expect(
+				isDoiAnswerForwardContact({
+					doiRequestedAt: [after, before],
+					answeredEmailResourceIds: [lesson],
+					anchoredEmailResourceIds: new Set([lesson]),
+				}),
+			).toBe(false)
+		})
+
 		it('forwards an earlier learner once the cutoff is moved back (the backfill decision)', () => {
 			expect(
 				isDoiAnswerForwardContact({

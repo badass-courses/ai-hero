@@ -385,9 +385,21 @@ export function answeredEmailResourceIdOf(
 		: undefined
 }
 
+/** The first readable DOI request is at or after the cutoff. */
+export function isNewDoiSignup(
+	doiRequestedAt: readonly string[],
+	since: string = DOI_ANSWER_FORWARD_SINCE,
+): boolean {
+	const requested = doiRequestedAt
+		.map((at) => Date.parse(at))
+		.filter((ms) => Number.isFinite(ms))
+	return requested.length > 0 && Math.min(...requested) >= Date.parse(since)
+}
+
 /**
  * Whether a DOI learner's answers in this batch may reach their actor. All of:
- * - a double opt-in requested at or after `since` (new signups only);
+ * - their first double opt-in request at or after `since` (new signups only:
+ *   an earlier learner who submits the form again stays on today's path);
  * - for every lesson answered, a link anchor: answer links are issued only
  *   when a lesson is rendered for a send, and a DOI contact's lessons are
  *   rendered only at drovr's request, so the anchor shows the actor exists.
@@ -400,13 +412,8 @@ export function isDoiAnswerForwardContact(args: {
 	anchoredEmailResourceIds: ReadonlySet<string>
 	since?: string
 }): boolean {
-	const since = Date.parse(args.since ?? DOI_ANSWER_FORWARD_SINCE)
-	const newSignup = args.doiRequestedAt.some((at) => {
-		const ms = Date.parse(at)
-		return Number.isFinite(ms) && ms >= since
-	})
 	return (
-		newSignup &&
+		isNewDoiSignup(args.doiRequestedAt, args.since) &&
 		args.answeredEmailResourceIds.length > 0 &&
 		args.answeredEmailResourceIds.every((id) =>
 			args.anchoredEmailResourceIds.has(id),
