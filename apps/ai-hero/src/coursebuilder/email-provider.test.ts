@@ -1,3 +1,4 @@
+import { readMagicLinkFragment } from '@/server/magic-link-fragment'
 import { describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -24,8 +25,6 @@ vi.mock('@coursebuilder/email/send-verification-request', () => ({
 vi.mock('next-auth/providers/postmark', () => ({
 	default: (options: unknown) => ({ id: 'postmark', options }),
 }))
-
-import { readMagicLinkFragment } from '@/server/magic-link-fragment'
 
 import { emailProvider, magicLinkIdentity } from './email-provider'
 
