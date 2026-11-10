@@ -32,6 +32,25 @@ export async function previewExpiredAnonymousContentReads(args?: {
 
 export const CONTENT_READ_RETENTION_BATCH_SIZE = 1000
 export const CONTENT_READ_RETENTION_MAX_BATCHES = 200
+export const CONTENT_READ_RETENTION_LOOKBACK_DAYS = 7
+
+/**
+ * Daily runs revisit seven days before the cutoff. Sunday UTC runs scan from
+ * the beginning so outages and late-arriving rows cannot age out of reach.
+ * Derive the run date from the cutoff so retries reuse the same window.
+ */
+export function getContentReadRetentionStart(
+	cutoff: Date,
+	retentionDays = ANONYMOUS_CONTENT_READ_RETENTION_DAYS,
+): Date | undefined {
+	const runDate = new Date(cutoff)
+	runDate.setUTCDate(runDate.getUTCDate() + retentionDays)
+	if (runDate.getUTCDay() === 0) return undefined
+
+	const after = new Date(cutoff)
+	after.setUTCDate(after.getUTCDate() - CONTENT_READ_RETENTION_LOOKBACK_DAYS)
+	return after
+}
 
 export type ContentReadRetentionBatchResult = {
 	selectedCount: number
@@ -104,7 +123,7 @@ export async function deleteExpiredAnonymousContentReads(args?: {
 	const batchSize = args?.batchSize ?? CONTENT_READ_RETENTION_BATCH_SIZE
 	const maxBatches = args?.maxBatches ?? CONTENT_READ_RETENTION_MAX_BATCHES
 	let deletedCount = 0
-	let after: Date | undefined
+	let after = getContentReadRetentionStart(cutoff, retentionDays)
 	for (let batch = 0; batch < maxBatches; batch++) {
 		const result = await deleteExpiredAnonymousContentReadBatch({
 			cutoff,

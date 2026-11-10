@@ -5,6 +5,7 @@ import {
 	CONTENT_READ_RETENTION_MAX_BATCHES,
 	deleteExpiredAnonymousContentReadBatch,
 	getContentReadRetentionCutoff,
+	getContentReadRetentionStart,
 } from '@/lib/content-read-retention'
 import { log } from '@/server/logger'
 
@@ -22,7 +23,7 @@ export const contentReadRetention = inngest.createFunction(
 		const cutoff = new Date(cutoffIso)
 
 		let deletedCount = 0
-		let after: Date | undefined
+		let after = getContentReadRetentionStart(cutoff)
 		for (let batch = 0; batch < CONTENT_READ_RETENTION_MAX_BATCHES; batch++) {
 			const result = await step.run(`delete expired batch ${batch}`, () =>
 				deleteExpiredAnonymousContentReadBatch({ cutoff, after }),
