@@ -2,10 +2,12 @@ import * as React from 'react'
 import Link from 'next/link'
 import { InstallCommand } from '@/app/(content)/skills/_components/install-command'
 import { TYPE } from '@/components/landing/type'
+import type { SkillFile } from '@/lib/skill-file'
 import { type SkillPhase } from '@/lib/skills-shared'
 
 import { cn } from '@coursebuilder/utils/cn'
 
+import { SkillFileViewer } from './skill-file-viewer'
 import { SKILL_SOURCE, invocationName, skillInstallCommand } from './skill-meta'
 
 /**
@@ -20,12 +22,15 @@ import { SKILL_SOURCE, invocationName, skillInstallCommand } from './skill-meta'
 export function SkillInstallPanel({
 	slug,
 	phase,
+	skillFile,
 	className,
 }: {
 	/** The skill post's flat root slug, e.g. `skills-grill-me`. */
 	slug: string
 	/** CMS phase tag metadata, or null when the post carries no phase tag. */
 	phase?: SkillPhase | null
+	/** Agent-facing file derived from the guide's GitHub source, when available. */
+	skillFile?: SkillFile | null
 	className?: string
 }) {
 	const command = invocationName(slug)
@@ -62,6 +67,9 @@ export function SkillInstallPanel({
 				</code>{' '}
 				in your coding agent.
 			</p>
+			{skillFile ? (
+				<SkillFileViewer file={skillFile} className="mt-5 self-start" />
+			) : null}
 			<dl className="border-border mt-5 flex flex-wrap gap-x-6 gap-y-4 border-t pt-5">
 				{phase ? (
 					<div>
@@ -73,7 +81,7 @@ export function SkillInstallPanel({
 					<dt className={cn(TYPE.groupLabel, 'mb-1.5')}>Source</dt>
 					<dd className={TYPE.meta}>
 						<Link
-							href={SKILL_SOURCE.href}
+							href={skillFile?.sourceUrl ?? SKILL_SOURCE.href}
 							target="_blank"
 							rel="noreferrer"
 							className="text-primary focus-visible:ring-ring rounded-sm underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2"

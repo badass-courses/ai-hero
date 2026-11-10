@@ -7,6 +7,7 @@ import {
 	organizationMemberships,
 	users,
 } from '@/db/schema'
+import { requestsAnyWorkshop } from '@/lib/cohort-workshop-emails-sql'
 import { Email } from '@/lib/emails'
 import { getEmail } from '@/lib/emails-query'
 import { getProduct, getProducts } from '@/lib/products-query'
@@ -69,7 +70,10 @@ export async function getUserWorkshopEntitlements(
 		return []
 	}
 
-	// Find all active entitlements of that type
+	// Find active entitlements of that type that grant a requested workshop.
+	// Filtering contentIds in SQL keeps this under PlanetScale's 100k-row read
+	// limit: every cohort's entitlements together exceeded it on the C5 release
+	// day (2026-11-09), and the whole group's emails failed.
 	const activeEntitlements = await db.query.entitlements.findMany({
 		where: and(
 			eq(entitlements.entitlementType, cohortEntitlementType.id),
@@ -78,6 +82,7 @@ export async function getUserWorkshopEntitlements(
 				gt(entitlements.expiresAt, sql`CURRENT_TIMESTAMP`),
 			),
 			isNull(entitlements.deletedAt),
+			requestsAnyWorkshop(workshopIds),
 		),
 	})
 

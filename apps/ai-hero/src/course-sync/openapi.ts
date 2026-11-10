@@ -180,7 +180,7 @@ export function buildCourseSyncOpenApiDocument(baseUrl: string) {
 					],
 					properties: {
 						$schema: { type: 'string' },
-						schemaVersion: { enum: [3, 4] },
+						schemaVersion: { enum: [3, 4, 5] },
 						courseId: { type: 'string' },
 						courseVersionId: { type: 'string' },
 						archiveTTL: { const: '90d' },

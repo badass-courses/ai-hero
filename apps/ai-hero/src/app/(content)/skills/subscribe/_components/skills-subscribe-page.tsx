@@ -479,14 +479,14 @@ function ClosingCta({
 	// already enrolled has, by definition, nothing left to decide about. The
 	// hero above has already dropped its panel for them; this section goes
 	// entirely, headline included, because the headline IS the ask ("Lesson one
-	// lands the moment you sign up").
+	// arrives once your email is confirmed").
 	if (status === 'subscribed') return null
 
 	return (
 		<section className="border-border grid gap-8 border-b px-[18px] py-14 sm:px-11 sm:pb-16 sm:pt-[60px] lg:grid-cols-[minmax(0,1fr)_480px] lg:items-center lg:gap-12">
 			<div>
 				<h2 className={cn(TYPE.heading, 'mb-3 max-w-[24ch] text-balance')}>
-					Lesson one lands the moment you sign up
+					Lesson one arrives once your email is confirmed
 				</h2>
 				<p
 					className={cn(

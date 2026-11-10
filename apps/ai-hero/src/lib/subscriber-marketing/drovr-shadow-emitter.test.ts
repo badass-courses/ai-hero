@@ -142,6 +142,71 @@ describe('drovr shadow fact mapper', () => {
 		])
 	})
 
+	it('carries the team email a lesson 1 "Team workflows" answer switches to', () => {
+		const event = contactEvent('value-path.answer-selected', {
+			payloadSummary: {
+				summary: 'not forwarded',
+				keywords: [
+					'value-path',
+					'answer-selected',
+					'ai-hero-skills-workflow.email-0',
+					'ai-hero-skills-workflow',
+					'team',
+				],
+				nextEmailResourceId: 'ai-hero-skills-team-workflow.team-email-1',
+				restrictedPayloadStored: false,
+			},
+		})
+
+		expect(mapDrovrShadowFact({ kind: 'contact-event', event })).toEqual([
+			expect.objectContaining({
+				type: 'value-path.answer-selected',
+				payload: {
+					emailResourceId: 'ai-hero-skills-workflow.email-0',
+					nextEmailResourceId: 'ai-hero-skills-team-workflow.team-email-1',
+				},
+			}),
+		])
+	})
+
+	it.each([
+		['an individual next email', 'ai-hero-skills-workflow.email-1'],
+		['a team email at the wrong position', 'ai-hero-skills-team-workflow.team-email-3'],
+		['an unknown id', 'something-else'],
+	])('drops %s so the answer folds as before', (_name, next) => {
+		const event = contactEvent('value-path.answer-selected', {
+			payloadSummary: {
+				summary: 'not forwarded',
+				keywords: ['value-path', 'answer-selected', 'ai-hero-skills-workflow.email-0'],
+				nextEmailResourceId: next,
+				restrictedPayloadStored: false,
+			},
+		})
+
+		expect(
+			mapDrovrShadowFact({ kind: 'contact-event', event })[0]?.payload,
+		).toEqual({ emailResourceId: 'ai-hero-skills-workflow.email-0' })
+	})
+
+	it('keeps a team email answer on its own team id', () => {
+		const event = contactEvent('value-path.answer-selected', {
+			payloadSummary: {
+				summary: 'not forwarded',
+				keywords: [
+					'value-path',
+					'answer-selected',
+					'ai-hero-skills-team-workflow.team-email-3',
+					'ai-hero-skills-team-workflow',
+				],
+				restrictedPayloadStored: false,
+			},
+		})
+
+		expect(
+			mapDrovrShadowFact({ kind: 'contact-event', event })[0]?.payload,
+		).toEqual({ emailResourceId: 'ai-hero-skills-team-workflow.team-email-3' })
+	})
+
 	it('maps a completed email intent with a deterministic intent key', () => {
 		const fact = {
 			kind: 'side-effect-intent-completed' as const,

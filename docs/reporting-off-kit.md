@@ -31,6 +31,7 @@ Read the unauthenticated `https://api.drovr.sh/`, `/llms.txt` and `/openapi.json
 - `GET /receipts` is a newest-first sample of committed **journey transitions**, capped at 200, with no cursor or broadcast identifier. It cannot reconcile broadcast delivery totals. A returned row count is only a sample size.
 - `GET /content/messages` and `/content/publishes` describe content/checks, not sent broadcasts or subscriber totals.
 - Kit-style opens, clicks, unsubscribes and attributed revenue have no equivalent in these broadcast status reads. They must be unavailable, not zero or computed from transition samples.
+- `POST /broadcast_engagement` (contract `packages/contracts/src/broadcast-engagement.ts` in drovr) takes `{ tenantId, broadcastIds[1..50] }` and returns, per broadcast, mail, delivery, opens, clicks and unsubscribes sections, each known with `asOf` and `source` or unknown with a reason, plus rates. Attributed revenue is still not exposed.
 
 ## Operation
 
@@ -48,6 +49,15 @@ The owner must supply the manifest and privately captured historical exports bef
 
 `period` selects manifest entries by their operator-provided send instants, excluding future sends. Row limits and truncation are explicit. Each row's status counters are **lifetime** counters for that broadcast, not events during the query range. They report captured recipients, remaining work, actor-reported sent, skipped, unknown, uncertain and version counts. Single-send identity is checked against snapshot.context; sharded reads must match the exact parent id and tenant and prove every shard readable. Snapshots, approval metadata and contact identifiers are not returned.
 
-`receiptSample` returns only sample size and oldest/newest timestamps from at most 200 latest tenant transitions. It is independent of the query period, has no pagination and cannot prove complete event coverage or reconcile broadcast delivery totals. `engagementAndRevenue` and `productAttribution` are explicitly unavailable. Product filters select historical strict snapshots only; they do not filter current broadcast statuses.
+Each row also carries `engagement`, read in one batched `POST /broadcast_engagement` for the rows shown, with the same credentials, timeout and `cache: no-store`. Its failure, a malformed body, a foreign tenant, or a missing or malformed row makes only that row's `engagement` unavailable; status rows stand on their own. A drovr unknown row is unavailable with drovr's reason. A known row maps:
+
+- `rates.openRate`: person opens over `rates.denominator`. `rates.anyOpenRateIncludingMachineOpens`: any pixel load, including Apple Mail Privacy Protection prefetch and scanners, so it reads higher and close to Kit-style rates. `rates.basis` is `delivered` when delivery is known, otherwise actor-reported `sent`. `clickRate` and `clickToOpenRate` use distinct person clickers. A rate is null when an input is unknown.
+- `opens.emailsOpened` (person opens, distinct contacts), `opens.anyOpenedIncludingMachineOpens`, `machineOnly` and `byClass`.
+- `clicks.totalClicks` (person clicks, repeats included), `clicks.uniqueClickers` and `clicks.links[]` with `label`, `version`, `people` and `clicks`.
+- `mail`, `delivery` and `unsubscribes` pass through.
+
+A section drovr can't answer stays `status: "unknown"` with its reason, never 0. At first, delivery and unsubscribes read unknown, and opens may read unknown while drovr's index is pending. Opens and clicks are counted per message version: a version two broadcasts sent counts in both. Counts are lifetime for the send, not events in the query period. `broadcasts.engagementLabel` states these meanings in the response.
+
+`receiptSample` returns only sample size and oldest/newest timestamps from at most 200 latest tenant transitions. It is independent of the query period, has no pagination and cannot prove complete event coverage or reconcile broadcast delivery totals. `attributedRevenue` and `productAttribution` are explicitly unavailable. Product filters select historical strict snapshots only; they do not filter current broadcast statuses.
 
 Rollback: unset the new flag or set it to `false`. This restores the unchanged Kit reporting path. It does not change sending or the public subscriber count.

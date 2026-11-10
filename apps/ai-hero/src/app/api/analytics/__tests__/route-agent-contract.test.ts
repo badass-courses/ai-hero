@@ -554,7 +554,7 @@ describe('analytics API agent contract', () => {
 				expect.stringContaining('defaults to range=30d'),
 			]),
 			schema: {
-				version: '2026-11-01.2',
+				version: '2026-11-05.1',
 				query: {
 					type: 'object',
 					required: ['surface'],

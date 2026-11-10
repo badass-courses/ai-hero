@@ -12,7 +12,7 @@ export const sourceFieldsByKind: Readonly<
 > = {
 	section: [...commonFields, 'title', 'slug'],
 	workshop: [...commonFields, 'title', 'slug'],
-	lesson: [...commonFields, 'title', 'slug', 'body', 'description'],
+	lesson: [...commonFields, 'title', 'slug', 'body', 'description', 'optional'],
 	solution: [
 		...commonFields,
 		'title',
@@ -40,6 +40,10 @@ export function courseSyncSourceFields(
 	binding?: CourseSyncBinding,
 ): Record<string, unknown> {
 	const owned = new Set(sourceFieldsByKind[sourceKind])
+	if (sourceKind === 'lesson' &&
+		(fields.courseSync as { optionalOwnedBySync?: unknown } | undefined)?.optionalOwnedBySync !== true) {
+		owned.delete('optional')
+	}
 	if (sourceKind === 'workshop' && preservesWorkshopReleaseState(binding)) owned.delete('state')
 	return Object.fromEntries(
 		Object.entries(fields).filter(([key]) => owned.has(key)),
@@ -68,6 +72,7 @@ export function mergeCourseSyncResourceFields(
 ): Record<string, unknown> {
 	assertCourseSyncSourceFields(item)
 	const owned = new Set(sourceFieldsByKind[item.sourceKind])
+	if (item.sourceKind === 'lesson' && !('optional' in item.fields)) owned.delete('optional')
 	const preserveState = item.sourceKind === 'workshop' &&
 		preservesWorkshopReleaseState(binding) && existingFields.state !== undefined
 	if (preserveState) owned.delete('state')

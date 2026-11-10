@@ -39,6 +39,7 @@ import { testPrincipalReaper } from './functions/test-principal-reaper'
 import { contentResourceIndexRequested } from './functions/content-resource-index'
 import { courseSyncAppliedNotice } from './functions/course-sync-applied-notice'
 import { courseSyncDetectionPoller } from './functions/course-sync-detection-poller'
+import { courseSyncStalePreview } from './functions/course-sync-stale-preview'
 import { courseSyncPollScheduler } from './functions/course-sync-poll-scheduler'
 import {
 	drovrEventsDeliver,
@@ -49,6 +50,7 @@ import { drovrContactSyncBackfill } from './functions/drovr-contact-sync-backfil
 import { drovrContactSyncRetry } from './functions/drovr-contact-sync-retry'
 import { drovrContactSyncReconcile } from './functions/drovr-contact-sync-reconcile'
 import { drovrOwnerBirthGuard } from './functions/drovr-owner-birth-guard'
+import { drovrSuppressionPull } from './functions/drovr-suppression-pull'
 import { drovrEvergreenSender } from './functions/drovr-evergreen-sender'
 import { drovrSignupDeliver } from './functions/drovr-signup-deliver'
 import { drovrOutboxReplay } from './functions/drovr-outbox-replay'
@@ -184,6 +186,7 @@ const allFunctions = [
 	contentResourceIndexRequested,
 	courseSyncAppliedNotice,
 	courseSyncDetectionPoller,
+	courseSyncStalePreview,
 	courseSyncPollScheduler,
 	typesensePopularitySync,
 	typesenseVideoFactsReconcile,
@@ -195,6 +198,7 @@ const allFunctions = [
 	drovrContactProfileSync,
 	drovrContactSyncReconcile,
 	drovrOwnerBirthGuard,
+	drovrSuppressionPull,
 	drovrContactSyncBackfill,
 	drovrContactSyncRetry,
 	drovrSignupDeliver,

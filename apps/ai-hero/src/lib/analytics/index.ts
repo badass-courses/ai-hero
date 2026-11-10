@@ -47,7 +47,7 @@ export const getCatalog = () => [
 			? {
 					...entry,
 					description:
-						'Current drovr status for explicitly configured sends, latest journey-transition sample, and labelled local historical Kit snapshots. Unsupported engagement and revenue are unavailable, not zero. Read provider and status before interpreting results.',
+						'Current drovr status and engagement for explicitly configured sends: person open rate (rates.openRate) beside the machine-inflated any-open rate, emails opened, clicks and per-link clicks from drovr broadcast_engagement. Also the latest journey-transition sample and labelled local historical Kit snapshots. Unknown sections and attributed revenue are unavailable, not zero. Read provider and status before interpreting results.',
 				}
 			: entry,
 	),

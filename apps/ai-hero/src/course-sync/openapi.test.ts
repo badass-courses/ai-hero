@@ -25,7 +25,7 @@ describe('course sync OpenAPI contract', () => {
 		expect(schema.additionalProperties).toBe(false)
 		expect(
 			document.components.schemas.CourseJson.properties.schemaVersion,
-		).toEqual({ enum: [3, 4] })
+		).toEqual({ enum: [3, 4, 5] })
 		expect(
 			document.components.schemas.CourseJson.properties.sections,
 		).toMatchObject({ minItems: 1 })

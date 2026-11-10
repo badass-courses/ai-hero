@@ -139,3 +139,18 @@ describe('device-code exchange', () => {
 		expect(mocks.insertValues).not.toHaveBeenCalled()
 	})
 })
+
+describe('request body', () => {
+	it.each([
+		['a JSON body', { 'content-type': 'application/json' }, JSON.stringify({ device_code: 'code-1' })],
+		['an empty body', {}, undefined],
+	])('answers %s with 400 invalid_request, not a 500', async (_label, headers, body) => {
+		const response = await POST(
+			new Request('https://aihero.test/oauth/token', { method: 'POST', headers, body }),
+		)
+		expect(response.status).toBe(400)
+		expect(await response.json()).toMatchObject({ error: 'invalid_request' })
+		expect(mocks.verification).not.toHaveBeenCalled()
+		expect(mocks.codeGrant).not.toHaveBeenCalled()
+	})
+})

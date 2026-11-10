@@ -391,9 +391,13 @@ export default async function ModulePage(props: Props) {
 								/>
 							</Suspense>
 							<div className="pt-10">
-								<article className="prose dark:prose-invert sm:prose-lg lg:prose-lg prose-p:max-w-4xl prose-headings:max-w-4xl prose-ul:max-w-4xl prose-table:max-w-4xl prose-pre:max-w-4xl **:data-pre:max-w-4xl max-w-none px-5 pb-10 sm:px-8 lg:px-10">
-									{workshop.fields?.body ? body : <p>No description found.</p>}
-								</article>
+								{/* Synced workshops can arrive without a body. Render nothing
+								    rather than a "No description found." message. */}
+								{workshop.fields?.body ? (
+									<article className="prose dark:prose-invert sm:prose-lg lg:prose-lg prose-p:max-w-4xl prose-headings:max-w-4xl prose-ul:max-w-4xl prose-table:max-w-4xl prose-pre:max-w-4xl **:data-pre:max-w-4xl max-w-none px-5 pb-10 sm:px-8 lg:px-10">
+										{body}
+									</article>
+								) : null}
 								{hasSelfPacedProduct &&
 								hasContent &&
 								!bodyHasInlineContentList && (

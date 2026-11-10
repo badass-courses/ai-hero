@@ -13,7 +13,12 @@ vi.mock('./drizzle-capture-repository', () => ({
 }))
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
 
-import { resolveOwnedContactIds } from './drovr-ownership-live'
+import {
+	fanOutOwnedEventsLive,
+	resolveDoiAnswerForwardContactIds,
+	resolveOwnedContactIds,
+	type DoiAnswerForwardReads,
+} from './drovr-ownership-live'
 
 /** A Kit stop about contact c1: an owner fan-out candidate. */
 const kitStop = (contactId = 'c1') =>
@@ -66,5 +71,153 @@ describe('resolveOwnedContactIds', () => {
 			{ providerEventId: 'drovr-owner:c1:value-path-skills-course' },
 		])
 		await expect(resolveOwnedContactIds([kitStop()])).resolves.toEqual(['c1'])
+	})
+})
+
+describe('resolveDoiAnswerForwardContactIds', () => {
+	const since = '2026-11-10T03:00:00.000Z'
+	const lesson = 'ai-hero-skills-workflow.email-0'
+	const answer = (contactId: string, emailResourceId = lesson) =>
+		({
+			...(kitStop(contactId) as object),
+			type: 'value-path.answer-selected',
+			idempotencyKey: `answer:${contactId}:${emailResourceId}`,
+			payload: { emailResourceId },
+		}) as never
+	const readsFor = (
+		doi: Record<string, string[]>,
+		anchors: Record<string, string[]>,
+	) => {
+		const reads = {
+			doiRequestedAt: vi.fn(async (contactId: string) => doi[contactId] ?? []),
+			anchoredEmailResourceIds: vi.fn(
+				async (contactId: string) => new Set(anchors[contactId] ?? []),
+			),
+		}
+		return reads satisfies DoiAnswerForwardReads
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+	})
+
+	it('reads nothing for a batch without a skills-course answer', async () => {
+		const reads = readsFor({}, {})
+		await expect(
+			resolveDoiAnswerForwardContactIds([kitStop()], { since, reads }),
+		).resolves.toEqual([])
+		expect(reads.doiRequestedAt).not.toHaveBeenCalled()
+	})
+
+	it('picks only new DOI learners with an anchor for the lesson they answered', async () => {
+		const reads = readsFor(
+			{
+				new: ['2026-11-10T04:00:00.000Z'],
+				old: ['2026-11-09T20:00:00.000Z'],
+				unanchored: ['2026-11-10T04:00:00.000Z'],
+			},
+			{ new: [lesson], old: [lesson] },
+		)
+		await expect(
+			resolveDoiAnswerForwardContactIds(
+				[answer('new'), answer('old'), answer('unanchored'), answer('no-doi')],
+				{ since, reads },
+			),
+		).resolves.toEqual(['new'])
+		// No DOI record or a pre-cutoff one: the anchor is never read.
+		expect(
+			reads.anchoredEmailResourceIds.mock.calls.map(([contactId]) => contactId),
+		).toEqual(['new', 'unanchored'])
+		expect(mocks.log.info).toHaveBeenCalledWith(
+			'drovr.doi_answer_forward.resolved',
+			{
+				candidates: 4,
+				forwarded: 1,
+				notDoi: 1,
+				beforeCutoff: 1,
+				unanchored: 1,
+				failed: 0,
+			},
+		)
+	})
+
+	it("keeps one contact's failed read from dropping another contact's forward", async () => {
+		const reads = readsFor(
+			{ new: ['2026-11-10T04:00:00.000Z'] },
+			{ new: [lesson] },
+		)
+		reads.doiRequestedAt.mockImplementation(async (contactId: string) => {
+			if (contactId === 'broken') throw new Error('Vitess: connection reset')
+			return contactId === 'new' ? ['2026-11-10T04:00:00.000Z'] : []
+		})
+		await expect(
+			resolveDoiAnswerForwardContactIds([answer('broken'), answer('new')], {
+				since,
+				reads,
+			}),
+		).resolves.toEqual(['new'])
+		expect(mocks.log.error).toHaveBeenCalledWith(
+			'drovr.doi_answer_forward.resolve_failed',
+			{ contacts: 1, error: 'Vitess: connection reset' },
+		)
+	})
+
+	describe('the outbox replay fan-out (fanOutOwnedEventsLive)', () => {
+		const ownedStop = kitStop('owned') as { idempotencyKey: string }
+		const doiAnswer = answer('doi') as { idempotencyKey: string }
+
+		it('gives a qualifying DOI answer exactly one owner copy, and still copies owned facts', async () => {
+			const out = await fanOutOwnedEventsLive([ownedStop, doiAnswer] as never, {
+				resolveOwners: async () => ['owned'],
+				resolveDoiAnswerForwards: async () => ['doi'],
+			})
+			expect(
+				out.map((event) => `${event.tenantId}:${event.idempotencyKey}`),
+			).toEqual([
+				`org-aihero-shadow:${ownedStop.idempotencyKey}`,
+				`org-aihero-shadow:${doiAnswer.idempotencyKey}`,
+				`org-aihero:owner:${ownedStop.idempotencyKey}`,
+				`org-aihero:owner:${doiAnswer.idempotencyKey}`,
+			])
+		})
+
+		it('leaves the batch as before when the DOI read rejects, owned copies included', async () => {
+			const out = await fanOutOwnedEventsLive([ownedStop, doiAnswer] as never, {
+				resolveOwners: async () => ['owned'],
+				resolveDoiAnswerForwards: async () => {
+					throw new Error('Vitess: connection reset')
+				},
+			})
+			expect(
+				out.map((event) => `${event.tenantId}:${event.idempotencyKey}`),
+			).toEqual([
+				`org-aihero-shadow:${ownedStop.idempotencyKey}`,
+				`org-aihero-shadow:${doiAnswer.idempotencyKey}`,
+				`org-aihero:owner:${ownedStop.idempotencyKey}`,
+			])
+		})
+
+		it('still throws when the owner read fails, so the replay retries as before', async () => {
+			await expect(
+				fanOutOwnedEventsLive([ownedStop] as never, {
+					resolveOwners: async () => {
+						throw new Error('db down')
+					},
+					resolveDoiAnswerForwards: async () => [],
+				}),
+			).rejects.toThrow('db down')
+		})
+	})
+
+	it('answers [] and logs at error when a read fails, never throwing into delivery', async () => {
+		const reads = readsFor({}, {})
+		reads.doiRequestedAt.mockRejectedValue(new Error('Vitess: connection reset'))
+		await expect(
+			resolveDoiAnswerForwardContactIds([answer('new')], { since, reads }),
+		).resolves.toEqual([])
+		expect(mocks.log.error).toHaveBeenCalledWith(
+			'drovr.doi_answer_forward.resolve_failed',
+			{ contacts: 1, error: 'Vitess: connection reset' },
+		)
 	})
 })

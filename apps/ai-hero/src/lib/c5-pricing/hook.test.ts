@@ -166,6 +166,23 @@ describe('createC5AuthoritativePrice', () => {
 		deps = makeDeps({ disabled: () => true, overrideDisabled: () => false, code: async () => known({ codeRef: 'fixture', unitPrice: 40_000, expiresAt: '2030-02-15T00:00:00.000Z', maxUses: 5, usesTaken: 0 }) })
 		await expect(ask({ purpose: 'checkout', quantity: 2 })).resolves.toMatchObject({ kind: 'closed' })
 	})
+	it('refuses every checkout of a retired product, before any pricing', async () => {
+		for (const quantity of [1, 5]) {
+			const decision = await ask({
+				productId: 'product-9wdta',
+				purpose: 'checkout',
+				quantity,
+			})
+			expect(decision).toMatchObject({
+				kind: 'closed',
+				amountCents: 0,
+				reasons: ['product-retired'],
+			})
+		}
+		expect(deps.policy).not.toHaveBeenCalled()
+		expect(deps.buyer).not.toHaveBeenCalled()
+	})
+
 	it('returns an explicit null, never undefined, for every other product', async () => {
 		const result = await ask({ productId: 'product-ma254' })
 		expect(result).toBeNull()

@@ -20,10 +20,17 @@ const mocks = vi.hoisted(() => ({
 	drovrApiKeyForTenant: vi.fn(),
 	fanOutOwnedEvents: vi.fn(),
 	isNeverBornOwnerStop: vi.fn(),
+	isDoiAnswerForwardCandidate: vi.fn(
+		(event: { tenantId: string; journeyId: string; type: string }) =>
+			event.tenantId === 'org-aihero-shadow' &&
+			event.journeyId === 'value-path-skills-course' &&
+			event.type === 'value-path.answer-selected',
+	),
 	isOwnerFanOutCandidate: vi.fn(),
 	isShadowNewsletterBirth: vi.fn(),
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 	resolveOwnedContactIds: vi.fn(),
+	resolveDoiAnswerForwardContactIds: vi.fn(async () => [] as string[]),
 	capture: vi.fn(),
 	openStops: vi.fn(),
 	settle: vi.fn(),
@@ -62,10 +69,12 @@ vi.mock('@/lib/subscriber-marketing/drovr-shadow-emitter', () => ({
 }))
 vi.mock('@/lib/subscriber-marketing/drovr-ownership', () => ({
 	fanOutOwnedEvents: mocks.fanOutOwnedEvents,
+	isDoiAnswerForwardCandidate: mocks.isDoiAnswerForwardCandidate,
 	isOwnerFanOutCandidate: mocks.isOwnerFanOutCandidate,
 	isShadowNewsletterBirth: mocks.isShadowNewsletterBirth,
 }))
 vi.mock('@/lib/subscriber-marketing/drovr-ownership-live', () => ({
+	resolveDoiAnswerForwardContactIds: mocks.resolveDoiAnswerForwardContactIds,
 	resolveOwnedContactIds: mocks.resolveOwnedContactIds,
 }))
 vi.mock(
@@ -2423,6 +2432,7 @@ describe('a batch with no owner fan-out candidate takes no owner step', () => {
 			new Set(),
 			new Set(),
 		)
+		expect(mocks.resolveDoiAnswerForwardContactIds).not.toHaveBeenCalled()
 		// The stop gate still runs, inside the one event's step, before the send.
 		expect(ran).toEqual(['deliver:owner:answer'])
 		expect(mocks.openStops).toHaveBeenCalledWith(['contact-1'])
@@ -2455,6 +2465,33 @@ describe('a batch with no owner fan-out candidate takes no owner step', () => {
 			shadowStop,
 		])
 		expect(ran[0]).toBe('resolve-drovr-owners')
+		// No skills-course answer in the batch: no DOI answer step.
+		expect(ran).not.toContain('resolve-doi-answer-forwards')
+	})
+
+	it('reads DOI answer forwards in their own step and passes them to the fan-out', async () => {
+		const answer = {
+			...shadowStop,
+			type: 'value-path.answer-selected',
+			journeyId: 'value-path-skills-course',
+			idempotencyKey: 'answer:doi',
+			payload: { emailResourceId: 'ai-hero-skills-workflow.email-0' },
+		}
+		mocks.resolveOwnedContactIds.mockResolvedValue([])
+		mocks.resolveDoiAnswerForwardContactIds.mockResolvedValue(['contact-1'])
+		const { step, ran } = memoStep()
+		await runLive([answer], step)
+		expect(ran.slice(0, 2)).toEqual([
+			'resolve-drovr-owners',
+			'resolve-doi-answer-forwards',
+		])
+		expect(mocks.resolveDoiAnswerForwardContactIds).toHaveBeenCalledWith([answer])
+		expect(mocks.fanOutOwnedEvents).toHaveBeenCalledWith(
+			[answer],
+			new Set(),
+			new Set(),
+			new Set(['contact-1']),
+		)
 	})
 
 	it('takes no owner step on the bulk lane either', async () => {

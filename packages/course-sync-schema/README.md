@@ -2,11 +2,11 @@
 
 Effect v4 schema contract for moving a Course Video Manager course export into AI Hero/Course Builder import tooling.
 
-This package is intentionally a small bridge surface. It does not mirror CVM tables and it does not write Course Builder records. `CourseJsonDocumentV3` is the consumer copy of Course Video Manager's immutable v3 package-entry contract. The older `CourseSyncDocument` v1 remains exported only for compatibility; it is not accepted by the draft sync control plane because it contains caller-supplied Course Builder target hints.
+This package is intentionally a small bridge surface. It does not mirror CVM tables and it does not write Course Builder records. `CourseJsonDocument` (also exported as `CourseJsonDocumentV3` for compatibility) is the consumer copy of Course Video Manager's versioned package-entry contract. The older `CourseSyncDocument` v1 remains exported only for compatibility; it is not accepted by the draft sync control plane because it contains caller-supplied Course Builder target hints.
 
 ## Contract
 
-The draft sync root document is `CourseJsonDocumentV3` with `schemaVersion: 3`, an immutable `courseVersionId`, `archiveTTL: "90d"`, and full MP4 byte `sha256` plus `bytes` receipts. Control-plane request and redacted response schemas live beside it. Stage requests carry only `{ manifest }`; all target IDs stay server-owned.
+The draft sync root document is `CourseJsonDocument` with `schemaVersion: 3`, `4` or `5`, an immutable `courseVersionId`, `archiveTTL: "90d"`, and full MP4 byte `sha256` plus `bytes` receipts for video lessons. Version 5 adds body-only `text` lessons and `optional: true` on any lesson type. Both are rejected in versions 3/4. Unknown keys and types remain invalid. Control-plane request and redacted response schemas live beside it. Stage requests carry only `{ manifest }`; all target IDs stay server-owned.
 
 It contains:
 

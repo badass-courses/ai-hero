@@ -184,6 +184,7 @@ const writes = () =>
 describe('LessonPlayerHost', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		vi.spyOn(Date, 'now').mockReturnValue(Date.UTC(2026, 0, 1))
 		run++
 		vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
 		mocks.media.currentTime = 0
@@ -195,6 +196,7 @@ describe('LessonPlayerHost', () => {
 	afterEach(() => {
 		act(() => root.unmount())
 		container.remove()
+		vi.restoreAllMocks()
 	})
 
 	it('plays the last registration', async () => {
@@ -266,7 +268,7 @@ describe('LessonPlayerHost', () => {
 		await render(video('a'))
 		await fire('onLoadedMetadata', 0)
 		await fire('onTimeUpdate', 100)
-		// Inside the 15 s throttle: not written yet.
+		// Inside the 30 s throttle: not written yet.
 		await fire('onTimeUpdate', 110)
 		expect(writes()).toEqual([['a', 100]])
 
@@ -274,6 +276,141 @@ describe('LessonPlayerHost', () => {
 		expect(writes()).toEqual([
 			['a', 100],
 			['a', 110],
+		])
+	})
+
+	it('throttles periodic saves to 30 seconds', async () => {
+		await render(video('a'))
+		await fire('onLoadedMetadata', 0)
+		await fire('onTimeUpdate', 10)
+		const start = Date.now()
+		for (const elapsed of [15_000, 20_000, 29_999]) {
+			vi.mocked(Date.now).mockReturnValue(start + elapsed)
+			await fire('onTimeUpdate', 10 + elapsed / 1000)
+		}
+		expect(writes()).toEqual([['a', 10]])
+
+		vi.mocked(Date.now).mockReturnValue(start + 30_000)
+		await fire('onTimeUpdate', 40)
+		expect(writes()).toEqual([
+			['a', 10],
+			['a', 40],
+		])
+	})
+
+	it('forces a pause save inside the interval and restarts the throttle', async () => {
+		await render(video('a'))
+		await fire('onLoadedMetadata', 0)
+		await fire('onTimeUpdate', 10)
+		const start = Date.now()
+		vi.mocked(Date.now).mockReturnValue(start + 10_000)
+		await fire('onPause', 20.9)
+		vi.mocked(Date.now).mockReturnValue(start + 30_000)
+		await fire('onTimeUpdate', 40)
+		expect(writes()).toEqual([
+			['a', 10],
+			['a', 20],
+		])
+		vi.mocked(Date.now).mockReturnValue(start + 40_000)
+		await fire('onTimeUpdate', 50)
+		expect(writes()).toEqual([
+			['a', 10],
+			['a', 20],
+			['a', 50],
+		])
+	})
+
+	it.each([
+		['pause', true],
+		['pause', false],
+		['hide', true],
+		['hide', false],
+		['pagehide', true],
+		['pagehide', false],
+	] as const)(
+		'does not double save at the interval boundary (%s, forced first: %s)',
+		async (event, forcedFirst) => {
+			await render(video('a'))
+			await fire('onLoadedMetadata', 0)
+			await fire('onTimeUpdate', 10)
+			vi.mocked(Date.now).mockReturnValue(Date.now() + 30_000)
+			mocks.media.currentTime = 40.9
+			const force = async () => {
+				if (event === 'pause') return fire('onPause', 40.9)
+				if (event === 'hide') {
+					vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+					await act(async () =>
+						document.dispatchEvent(new Event('visibilitychange')),
+					)
+				} else {
+					await act(async () => window.dispatchEvent(new Event('pagehide')))
+				}
+			}
+			if (forcedFirst) await force()
+			await fire('onTimeUpdate', 40.9)
+			if (!forcedFirst) await force()
+			expect(writes()).toEqual([
+				['a', 10],
+				['a', 40],
+			])
+		},
+	)
+
+	it('saves the current position on hide and deduplicates pagehide and pause', async () => {
+		await render(video('a'))
+		await fire('onLoadedMetadata', 0)
+		await fire('onTimeUpdate', 10)
+		// Read the live player rather than the last timeupdate's position.
+		mocks.media.currentTime = 17.9
+		const visibility = vi.spyOn(document, 'visibilityState', 'get')
+		visibility.mockReturnValue('visible')
+		await act(async () => document.dispatchEvent(new Event('visibilitychange')))
+		expect(writes()).toEqual([['a', 10]])
+
+		visibility.mockReturnValue('hidden')
+		await act(async () => document.dispatchEvent(new Event('visibilitychange')))
+		await act(async () => window.dispatchEvent(new Event('pagehide')))
+		await fire('onPause', 17.9)
+		expect(writes()).toEqual([
+			['a', 10],
+			['a', 17],
+		])
+	})
+
+	it('saves an exit after metadata even before the first timeupdate', async () => {
+		await render(video('a'))
+		await fire('onLoadedMetadata', 0)
+		mocks.media.currentTime = 3.9
+		await act(async () => window.dispatchEvent(new Event('pagehide')))
+		expect(writes()).toEqual([['a', 3]])
+	})
+
+	it('forces a pagehide save without a preceding visibility event', async () => {
+		await render(video('a'))
+		await fire('onLoadedMetadata', 0)
+		await fire('onTimeUpdate', 10)
+		mocks.media.currentTime = 18.9
+		await act(async () => window.dispatchEvent(new Event('pagehide')))
+		expect(writes()).toEqual([
+			['a', 10],
+			['a', 18],
+		])
+	})
+
+	it('does not save exit events before metadata or after a source ends', async () => {
+		await render(video('a'))
+		await fire('onTimeUpdate', 42)
+		await act(async () => window.dispatchEvent(new Event('pagehide')))
+		expect(writes()).toEqual([])
+		await fire('onLoadedMetadata', 0)
+		await fire('onTimeUpdate', 10)
+		await fire('onEnded', 300)
+		vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+		await act(async () => document.dispatchEvent(new Event('visibilitychange')))
+		await act(async () => window.dispatchEvent(new Event('pagehide')))
+		expect(writes()).toEqual([
+			['a', 10],
+			['a', 0],
 		])
 	})
 
