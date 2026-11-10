@@ -50,7 +50,7 @@ import { courseBuilderCoreFunctions } from '@coursebuilder/server'
 const MAX_LISTED_SESSIONS = 10_000
 
 /** Mirrors the core checkout function's limit for the shared write key. */
-function checkoutPurchaseWritesLimit() {
+export function checkoutPurchaseWritesLimit() {
 	const configured = Number(
 		process.env.CB_INNGEST_CHECKOUT_CONCURRENCY_LIMIT ??
 			process.env.CB_INNGEST_CONCURRENCY_LIMIT ??
@@ -59,7 +59,9 @@ function checkoutPurchaseWritesLimit() {
 	return Number.isFinite(configured) && configured > 0 ? configured : 5
 }
 
-function paymentsAdapter(paymentProvider: unknown): StripePaymentAdapter {
+export function paymentsAdapter(
+	paymentProvider: unknown,
+): StripePaymentAdapter {
 	const adapter = (
 		paymentProvider as
 			| { options?: { paymentsAdapter?: Partial<StripePaymentAdapter> } }
@@ -79,7 +81,7 @@ async function writeLog(
 	await log[level](event, attrs)
 }
 
-async function sendOpsAlert(input: {
+export async function sendOpsAlert(input: {
 	title: string
 	text: string
 	color: string

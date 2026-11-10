@@ -1,6 +1,20 @@
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const sale = vi.hoisted(() => ({ active: false }))
+vi.mock('@/components/c5-sale-switch', () => ({
+	C5SaleSwitch: ({
+		children,
+		fallback,
+	}: {
+		children: React.ReactNode
+		fallback: React.ReactNode
+	}) => (sale.active ? children : fallback),
+}))
+beforeEach(() => {
+	sale.active = false
+})
 
 vi.mock('@/app/(content)/skills/_components/skills-newsletter-cta', () => ({
 	SkillsCourseCta: ({
@@ -10,11 +24,7 @@ vi.mock('@/app/(content)/skills/_components/skills-newsletter-cta', () => ({
 		headline: string
 		source: string
 	}) =>
-		React.createElement(
-			'aside',
-			{ 'data-course-source': source },
-			headline,
-		),
+		React.createElement('aside', { 'data-course-source': source }, headline),
 }))
 
 import { resolvePostCta } from '@/lib/post-cta'
@@ -22,6 +32,36 @@ import { resolvePostCta } from '@/lib/post-cta'
 import { PostBodyCtaPlacement } from './post-body-cta-placement'
 
 describe('PostBodyCtaPlacement', () => {
+	it('promotes C5 in the paid slot while retaining the free course', () => {
+		sale.active = true
+		const markup = renderToStaticMarkup(
+			<PostBodyCtaPlacement
+				resolvedCta={resolvePostCta({ postType: 'skill', cta: undefined })}
+				slug="skills-grill-me"
+				cohortCta={<aside>Old cohort waitlist</aside>}
+			>
+				<p>Post body</p>
+			</PostBodyCtaPlacement>,
+		)
+		expect(markup).toContain('/s/c5-site-cta')
+		expect(markup).toContain('Software Factories for Real Engineers')
+		expect(markup).toContain('data-course-source')
+		expect(markup).not.toContain('Old cohort waitlist')
+	})
+
+	it('replaces the contextual organic CTA during enrollment', () => {
+		sale.active = true
+		const markup = renderToStaticMarkup(
+			<PostBodyCtaPlacement
+				resolvedCta={resolvePostCta({ postType: 'article', cta: undefined })}
+				slug="creating-the-perfect-claude-code-status-line"
+			>
+				<p>Post body</p>
+			</PostBodyCtaPlacement>,
+		)
+		expect(markup).toContain('/s/c5-site-cta')
+		expect(markup).not.toContain('Get practical AI coding workflow notes')
+	})
 	it.each([
 		'skills-grill-me',
 		'grill-with-docs',
@@ -46,9 +86,7 @@ describe('PostBodyCtaPlacement', () => {
 		expect(markup.indexOf('Post body ends here.')).toBeLessThan(
 			markup.indexOf('data-course-source'),
 		)
-		expect(markup).toContain(
-			`data-course-source="skill_page_course:${slug}"`,
-		)
+		expect(markup).toContain(`data-course-source="skill_page_course:${slug}"`)
 	})
 
 	it.each([

@@ -7,9 +7,10 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { CommerceAdapter } from '@coursebuilder/commerce'
 import { stripeCheckoutResult } from '@coursebuilder/commerce/stripe-checkout'
+import { AUTHORITATIVE_PPP_OFFER_ID } from '@coursebuilder/commerce/authoritative-price'
 import type { PaymentsAdapter } from '@coursebuilder/core/types'
 
-import { C5_PRODUCT_ID } from './decision'
+import { C5_PRODUCT_ID, decodeDecisionRef } from './decision'
 import { createC5AuthoritativePrice, type BuyerRead } from './hook'
 import {
 	SYNTHETIC_LEGEND_PRODUCTS,
@@ -30,7 +31,6 @@ const known = <A>(value: A) => ({ value, sourceRefs: ['test'] })
 const owner: BuyerRead = {
 	kind: 'buyer',
 	email: 'owner@example.test',
-	hasValidPurchase: true,
 	holdsRestrictedPurchase: false,
 	holdsValidProductPurchase: false,
 	facts: {
@@ -57,15 +57,15 @@ const owner: BuyerRead = {
 	},
 }
 
-const authoritativePrice = createC5AuthoritativePrice({
+const authoritativePriceFor = (buyer: BuyerRead = owner, country = 'US', percent = 0) => createC5AuthoritativePrice({
 	policy: async () => ({
 		ok: true as const,
 		value: { version: SYNTHETIC_POLICY_VERSION, policy: syntheticPolicy() },
 	}),
 	quotes: async () => ({ ok: true as const, value: [] }),
-	buyer: async () => owner,
-	trustedCountry: async () => 'US',
-	pppPercent: () => 0,
+	buyer: async () => buyer,
+	trustedCountry: async () => country,
+	pppPercent: () => percent,
 	price,
 	engineVersion: 'engine-test',
 	now: () => EARLY,
@@ -83,7 +83,7 @@ const ccPurchase = {
 }
 
 const adapter = {
-	authoritativePrice,
+	authoritativePrice: authoritativePriceFor(),
 	getProduct: vi.fn(async () => ({
 		id: C5_PRODUCT_ID,
 		name: 'Synthetic cohort',
@@ -132,10 +132,13 @@ const adapter = {
 } as unknown as CommerceAdapter
 
 function payments() {
+	let discountCents = 0
 	const createCheckoutSession = vi.fn(
 		async (params: Stripe.Checkout.SessionCreateParams) => {
-			const subtotal = Number(params.metadata?.subtotalCents)
-			const total = Number(params.metadata?.expectedTotalCents)
+			// Fake Stripe computes the total from the line items and coupon, not
+			// from the metadata whose agreement the checkout verifier checks.
+			const subtotal = SYNTHETIC_LIST * Number(params.line_items?.[0]?.quantity ?? 1)
+			const total = subtotal - (params.discounts?.length ? discountCents : 0)
 			return {
 				id: 'cs_c5_contract',
 				url: 'https://checkout.stripe.test/cs_c5_contract',
@@ -155,7 +158,10 @@ function payments() {
 	const paymentsAdapter = {
 		getCouponPercentOff: vi.fn(async () => 0),
 		getCouponAmountOff: vi.fn(async () => 0),
-		createCoupon: vi.fn(async () => 'stripe_authoritative_coupon'),
+		createCoupon: vi.fn(async (coupon: Stripe.CouponCreateParams) => {
+			discountCents = coupon.amount_off ?? 0
+			return 'stripe_authoritative_coupon'
+		}),
 		createPromotionCode: vi.fn(async () => 'promo_c5_contract'),
 		createCheckoutSession,
 		expireCheckoutSession: vi.fn(),
@@ -174,11 +180,11 @@ function payments() {
 }
 
 /** The checkout route: guard the request, then hand its params to Course Builder. */
-async function checkoutFrom(url: string) {
+async function checkoutFrom(url: string, checkoutAdapter = adapter, country = 'US') {
 	const guarded = await protectCourseBuilderRequest(
-		new NextRequest(url, { method: 'POST' }),
+		new NextRequest(url, { method: 'POST', headers: { 'x-vercel-ip-country': country } }),
 		{
-			adapter: adapter as never,
+			adapter: checkoutAdapter as never,
 			verifiedUserId: USER_ID,
 			authoritativeProductIds: new Set([C5_PRODUCT_ID]),
 		},
@@ -193,15 +199,63 @@ async function checkoutFrom(url: string) {
 			errorRedirectUrl: 'https://app.test/error',
 			paymentsAdapter,
 		},
-		adapter,
-		requestOptions: { trustedCountry: 'US' },
+		adapter: checkoutAdapter,
+		requestOptions: { trustedCountry: country },
 	})
-	return { params, result, payload: createCheckoutSession.mock.calls[0]?.[0] }
+	return { params, result, paymentsAdapter, payload: createCheckoutSession.mock.calls[0]?.[0] }
 }
 
 const C5_CHECKOUT = `https://app.test/api/coursebuilder/checkout/stripe?productId=${C5_PRODUCT_ID}&quantity=1&cancelUrl=https%3A%2F%2Fapp.test%2Fc5`
 
 describe('a Crash Course owner with an upgrade row toward C5', () => {
+	it.each([
+		[60, false, 55_000, 'none', CC_PURCHASE],
+		[60, true, 40_000, 'region', null],
+		[10, true, 55_000, 'none', CC_PURCHASE],
+	] as const)('matches display to the charge for an alum with a Valid Crash Course purchase (PPP %s, accepted %s)', async (percent, accepted, total, restriction, creditSource) => {
+		const alum: BuyerRead = {
+			...owner,
+			facts: {
+				...owner.facts,
+				facts: { ...owner.facts.facts, alumni: known('c4' as const) },
+			},
+		}
+		const authoritativePrice = authoritativePriceFor(alum, 'AR', percent)
+		const checkoutAdapter = { ...adapter, authoritativePrice }
+		const display = await authoritativePrice({
+			purpose: 'display', productId: C5_PRODUCT_ID, priceId: PRICE_ID,
+			quantity: 1, userId: USER_ID, country: 'US', pppAccepted: accepted,
+		})
+		expect(ccPurchase.status).toBe('Valid')
+		expect(display).toMatchObject({ kind: 'priced', amountCents: total, restriction })
+		expect(display!.offers).toEqual(!accepted
+			? [expect.objectContaining({ amountCents: 40_000, percent: 0.6, restriction: 'region' })]
+			: [])
+		const { result, payload, paymentsAdapter, params } = await checkoutFrom(
+			`${C5_CHECKOUT}&upgradeFromPurchaseId=${CC_PURCHASE}${accepted ? `&couponId=${AUTHORITATIVE_PPP_OFFER_ID}` : ''}`,
+			checkoutAdapter,
+			'AR',
+		)
+		expect(params.upgradeFromPurchaseId).toBeUndefined()
+		expect(result).toMatchObject({ kind: 'success' })
+		expect(payload?.metadata).toMatchObject({
+			expectedTotalCents: String(display!.amountCents),
+			subtotalCents: String(SYNTHETIC_LIST),
+			accessRestriction: restriction,
+			country: 'AR',
+		})
+		expect(decodeDecisionRef(payload!.metadata!.decisionRef as string)?.creditSource).toBe(creditSource)
+		// Verify the actual provider discount, not just the expected-total metadata.
+		expect(paymentsAdapter.createCoupon).toHaveBeenCalledTimes(1)
+		expect(paymentsAdapter.createCoupon).toHaveBeenCalledWith(expect.objectContaining({
+			amount_off: SYNTHETIC_LIST - total,
+			applies_to: { products: ['prod_c5'] },
+		}))
+		expect(payload?.discounts).toEqual([{ coupon: 'stripe_authoritative_coupon' }])
+		expect(payload?.line_items).toEqual([{ price: 'price_c5', quantity: 1 }])
+		expect(paymentsAdapter.getCouponPercentOff).not.toHaveBeenCalled()
+	})
+
 	it('gets the credit price and a session, not an upgrade refusal', async () => {
 		const { params, result, payload } = await checkoutFrom(
 			`${C5_CHECKOUT}&upgradeFromPurchaseId=${CC_PURCHASE}`,

@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
 	findUser: vi.fn(),
 	findPurchase: vi.fn(),
+	reconcileTeamPurchaseFulfillment: vi.fn(),
 	getPrimarySubscriber: vi.fn(),
 	updatePrimarySubscriber: vi.fn(),
 	getTtSubscriber: vi.fn(),
@@ -48,8 +49,9 @@ vi.mock('@/db', () => ({
 vi.mock('@/inngest/inngest.server', () => ({
 	inngest: {
 		createFunction: mocks.createFunction.mockImplementation(
-			(config: unknown, _trigger: unknown, handler: unknown) => ({
+			(config: unknown, trigger: unknown, handler: unknown) => ({
 				config,
+				trigger,
 				handler,
 			}),
 		),
@@ -57,9 +59,15 @@ vi.mock('@/inngest/inngest.server', () => ({
 }))
 
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
+vi.mock('@/config', () => ({ default: {} }))
+vi.mock('@/env.mjs', () => ({ env: {} }))
+vi.mock('@/lib/team-purchase-fulfillment', () => ({ reconcileTeamPurchaseFulfillment: mocks.reconcileTeamPurchaseFulfillment }))
 vi.mock('date-fns', () => ({ format: vi.fn(() => 'purchase-date') }))
 
+import { FULL_PRICE_COUPON_REDEEMED_EVENT } from '@coursebuilder/core/events/commerce'
+
 import { addPurchasesConvertkit } from './add-purchased-convertkit'
+import { teamPurchaseFulfillmentWorkflow } from '../team-purchase-fulfillment-workflow'
 
 type TestHandler = (args: {
 	event: {
@@ -73,6 +81,7 @@ type TestHandler = (args: {
 
 const fn = addPurchasesConvertkit as unknown as {
 	config: { idempotency: string }
+	trigger: Array<{ event: string }>
 	handler: TestHandler
 }
 const handler = fn.handler
@@ -100,6 +109,49 @@ function purchase(productId: string, slug = 'ai-coding-crash-course') {
 }
 
 describe('addPurchasesConvertkit', () => {
+	afterEach(() => {
+		vi.unstubAllEnvs()
+	})
+
+	it('master off skips every AI Hero purchase call but keeps the TT account write', async () => {
+		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'false')
+		await handler({ event, step: createStep() })
+		for (const call of [
+			mocks.getPrimarySubscriber,
+			mocks.updatePrimarySubscriber,
+			mocks.getRequiredKitV4ApiKey,
+			mocks.tagExistingSubscriber,
+		])
+			expect(call).not.toHaveBeenCalled()
+		expect(mocks.updateTtSubscriber).toHaveBeenCalledWith({
+			subscriberId: 'tt-42',
+			fields: { purchased_ai_coding_crash_course_on: 'purchase-date' },
+		})
+	})
+
+	it.each(['true', 'false'])(
+		'Kit failure cannot block independently triggered team fulfilment (mirror %s)',
+		async (enabled) => {
+			vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', enabled)
+			if (enabled === 'true')
+				mocks.getPrimarySubscriber.mockRejectedValueOnce(
+					new Error('Kit unavailable'),
+				)
+			const mirror = handler({ event, step: createStep() })
+			if (enabled === 'true')
+				await expect(mirror).rejects.toThrow('Kit unavailable')
+			else await mirror
+			mocks.reconcileTeamPurchaseFulfillment.mockResolvedValue({
+				status: 'linked',
+			})
+			await (
+				teamPurchaseFulfillmentWorkflow as unknown as { handler: Function }
+			).handler({ event, step: createStep(), runId: 'run-test' })
+			expect(mocks.reconcileTeamPurchaseFulfillment).toHaveBeenCalledWith(
+				'purchase-1',
+			)
+		},
+	)
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mocks.findUser.mockResolvedValue({
@@ -124,8 +176,37 @@ describe('addPurchasesConvertkit', () => {
 		expect(fn.config.idempotency).toBe('event.data.purchaseId')
 	})
 
-	it('keeps the canonical property and v4-tags a Crash Course purchaser', async () => {
+	it('also runs for team-seat redemptions, which never emit a new-purchase event', () => {
+		const events = fn.trigger.map((t) => t.event)
+		expect(events).toContain('commerce/new-purchase-created')
+		expect(events).toContain(FULL_PRICE_COUPON_REDEEMED_EVENT)
+	})
+
+	it('writes the product purchased-on field for a $0 bulk-redeemed seat', async () => {
+		mocks.findPurchase.mockResolvedValue({
+			...purchase('product-s00zs', 'cohort-005'),
+			totalAmount: 0,
+			redeemedBulkCouponId: 'coupon-1',
+		})
+
 		await handler({ event, step: createStep() })
+
+		expect(mocks.updatePrimarySubscriber).toHaveBeenCalledWith({
+			subscriberId: 'primary-41',
+			fields: { purchased_cohort_005_on: 'purchase-date' },
+		})
+	})
+
+	it('keeps the canonical property and v4-tags a Crash Course purchaser', async () => {
+		const step = createStep()
+		await handler({ event, step })
+
+		expect(step.run.mock.calls.map(([id]) => id)).toEqual([
+			'sync primary convertkit purchase',
+			'sync tt convertkit purchase',
+		])
+		expect(mocks.getPrimarySubscriber).toHaveBeenCalledWith('buyer@example.com')
+		expect(mocks.getTtSubscriber).toHaveBeenCalledWith('buyer@example.com')
 
 		expect(mocks.updatePrimarySubscriber).toHaveBeenCalledWith({
 			subscriberId: 'primary-41',
@@ -137,7 +218,22 @@ describe('addPurchasesConvertkit', () => {
 			apiKey: 'kit-v4-key',
 		})
 		expect(mocks.tagExistingSubscriber).toHaveBeenCalledWith('primary-41')
-		expect(mocks.updateTtSubscriber).toHaveBeenCalledOnce()
+		expect(mocks.updateTtSubscriber).toHaveBeenCalledWith({
+			subscriberId: 'tt-42',
+			fields: { purchased_ai_coding_crash_course_on: 'purchase-date' },
+		})
+		const calls = [
+			mocks.findUser,
+			mocks.findPurchase,
+			mocks.getPrimarySubscriber,
+			mocks.updatePrimarySubscriber,
+			mocks.tagExistingSubscriber,
+			mocks.getTtSubscriber,
+			mocks.updateTtSubscriber,
+		]
+		for (const call of calls) expect(call).toHaveBeenCalledOnce()
+		const order = calls.map((mock) => mock.mock.invocationCallOrder[0])
+		expect(order).toEqual([...order].sort((a, b) => a! - b!))
 	})
 
 	it('hard-codes the primary field when the Crash Course slug changes', async () => {
@@ -169,6 +265,90 @@ describe('addPurchasesConvertkit', () => {
 
 		expect(mocks.updatePrimarySubscriber).toHaveBeenCalledOnce()
 		expect(mocks.tagExistingSubscriber).not.toHaveBeenCalled()
+	})
+
+	it('replays field assignments and tag membership without appending on retry', async () => {
+		const primaryFields: Record<string, string> = {}
+		const ttFields: Record<string, string> = {}
+		const taggedSubscribers = new Set<string>()
+		mocks.updatePrimarySubscriber.mockImplementation(async ({ fields }) => {
+			Object.assign(primaryFields, fields)
+		})
+		mocks.updateTtSubscriber.mockImplementation(async ({ fields }) => {
+			Object.assign(ttFields, fields)
+		})
+		mocks.tagExistingSubscriber.mockImplementation(async (id: string) => {
+			taggedSubscribers.add(id)
+		})
+		// Execute each merged callback twice, as after a lost step completion.
+		const step = {
+			run: vi.fn(async (_id: string, callback: () => Promise<unknown>) => {
+				await callback()
+				return callback()
+			}),
+		}
+
+		await handler({ event, step })
+
+		expect(mocks.updatePrimarySubscriber).toHaveBeenCalledTimes(2)
+		expect(mocks.updateTtSubscriber).toHaveBeenCalledTimes(2)
+		expect(mocks.tagExistingSubscriber).toHaveBeenCalledTimes(2)
+		expect(primaryFields).toEqual({
+			purchased_ai_coding_crash_course_on: 'purchase-date',
+		})
+		expect(ttFields).toEqual(primaryFields)
+		expect([...taggedSubscribers]).toEqual(['primary-41'])
+	})
+
+	it('retries the primary fields after a tag failure before syncing tt', async () => {
+		mocks.tagExistingSubscriber.mockRejectedValueOnce(
+			new Error('Kit unavailable'),
+		)
+		const step = createStep()
+
+		await expect(handler({ event, step })).rejects.toThrow('Kit unavailable')
+		expect(mocks.getTtSubscriber).not.toHaveBeenCalled()
+		await handler({ event, step })
+
+		expect(mocks.updatePrimarySubscriber.mock.calls).toEqual([
+			[
+				{
+					subscriberId: 'primary-41',
+					fields: { purchased_ai_coding_crash_course_on: 'purchase-date' },
+				},
+			],
+			[
+				{
+					subscriberId: 'primary-41',
+					fields: { purchased_ai_coding_crash_course_on: 'purchase-date' },
+				},
+			],
+		])
+		expect(mocks.tagExistingSubscriber).toHaveBeenCalledTimes(2)
+		expect(mocks.updateTtSubscriber).toHaveBeenCalledOnce()
+	})
+
+	it.each(['user', 'purchase'])(
+		'fails on a missing %s before any Kit call',
+		async (missing) => {
+			if (missing === 'user') mocks.findUser.mockResolvedValue(null)
+			else mocks.findPurchase.mockResolvedValue(null)
+
+			await expect(handler({ event, step: createStep() })).rejects.toThrow(
+				missing === 'user' ? 'No user found' : 'No purchase found',
+			)
+			expect(mocks.getPrimarySubscriber).not.toHaveBeenCalled()
+			expect(mocks.getTtSubscriber).not.toHaveBeenCalled()
+		},
+	)
+
+	it('does not update a missing tt subscriber', async () => {
+		mocks.getTtSubscriber.mockResolvedValue(null)
+
+		await handler({ event, step: createStep() })
+
+		expect(mocks.updatePrimarySubscriber).toHaveBeenCalledOnce()
+		expect(mocks.updateTtSubscriber).not.toHaveBeenCalled()
 	})
 
 	it('does not write or create a primary subscriber when lookup misses', async () => {

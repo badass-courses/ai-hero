@@ -81,10 +81,8 @@ import {
 	SKILLS_WORKFLOW_PATH_SLUGS,
 } from '@/lib/subscriber-marketing/skills-workflow-path'
 import { SKILLS_WORKFLOW_VALUE_PATH } from '@/lib/subscriber-marketing/skills-newsletter-path-entry'
-import { syncSeenContentKitFieldsForContactSnapshot } from '@/lib/subscriber-marketing/seen-content-kit-sync'
 import { previewShadowFieldCandidates } from '@/lib/subscriber-marketing/shadow-field-candidates'
 import { previewShadowFieldsForContactSnapshot } from '@/lib/subscriber-marketing/shadow-field-planner'
-import { syncShadowFieldsForContactSnapshot } from '@/lib/subscriber-marketing/shadow-field-sync'
 import {
 	buildSignupGapPreview,
 	fetchKitSignupGapPageWithRetry,
@@ -106,7 +104,6 @@ import {
 	isTier1SignupGapReplay,
 	partitionLearnerFlowUnstickItems,
 } from '@/lib/subscriber-marketing/learner-flow-unstick'
-import { previewTeamKitProjection } from '@/lib/subscriber-marketing/team-kit-projection'
 import {
 	CONTACT_STATE_SCHEMA_VERSION,
 	type ContactState,
@@ -926,67 +923,10 @@ if (command === 'lookup') {
 		valuePathCandidate: valuePath.candidate,
 	})
 	console.log(JSON.stringify(result, null, 2))
-} else if (command === 'shadow-field-sync') {
-	const contactId = requireFlag(args, '--contact-id')
-	const dryRun = args.includes('--dry-run')
-	const allowWrite = args.includes('--allow-write')
-	if (dryRun === allowWrite) printUsageAndExit()
-	const acceptedReviewReasons = readAllFlags(args, '--accept-review-reason')
-	const { snapshot, valuePath } = await buildSnapshotAndValuePath(contactId)
-	const { emailListProvider } =
-		await import('@/coursebuilder/email-list-provider')
-	const result = await syncShadowFieldsForContactSnapshot({
-		snapshot,
-		valuePathCandidate: valuePath.candidate,
-		provider: emailListProvider,
-		allowWrite,
-		acceptedReviewReasons,
-	})
-	console.log(JSON.stringify(result, null, 2))
-} else if (command === 'team-kit-projection') {
-	const dryRun = args.includes('--dry-run')
-	const allowWrite = args.includes('--allow-write')
-	if (dryRun === allowWrite) printUsageAndExit()
-	const limit = readIntegerFlag(args, '--limit')
-	const skipKitLookup = args.includes('--skip-kit-lookup')
-	if (allowWrite && skipKitLookup) printUsageAndExit()
-	const { db } = await import('@/db')
-	const provider = skipKitLookup
-		? undefined
-		: (await import('@/coursebuilder/email-list-provider')).emailListProvider
-	const result = await previewTeamKitProjection({
-		database: db,
-		provider,
-		allowWrite,
-		limit,
-		offset: readOffsetFlag(args, '--offset'),
-		kitLookupDelayMs: readIntegerFlag(args, '--kit-lookup-delay-ms'),
-		kitLookupMaxAttempts: readIntegerFlag(args, '--kit-lookup-max-attempts'),
-		ownerTagId: readFlag(args, '--owner-tag-id'),
-		memberTagId: readFlag(args, '--member-tag-id'),
-	})
-	console.log(JSON.stringify(result, null, 2))
 } else if (command === 'seen-content-preview') {
 	const contactId = requireFlag(args, '--contact-id')
 	const limit = readIntegerFlag(args, '--limit') ?? 100
 	const result = await buildSeenContentPreview({ contactId, limit })
-	console.log(JSON.stringify(result, null, 2))
-} else if (command === 'seen-content-kit-sync') {
-	const contactId = requireFlag(args, '--contact-id')
-	const dryRun = args.includes('--dry-run')
-	const allowWrite = args.includes('--allow-write')
-	if (dryRun === allowWrite) printUsageAndExit()
-	const snapshot = await buildContactSnapshot(
-		contactId,
-		readIntegerFlag(args, '--limit') ?? 100,
-	)
-	const { emailListProvider } =
-		await import('@/coursebuilder/email-list-provider')
-	const result = await syncSeenContentKitFieldsForContactSnapshot({
-		snapshot,
-		provider: emailListProvider,
-		allowWrite,
-	})
 	console.log(JSON.stringify(result, null, 2))
 } else if (command === 'content-read-event-preview') {
 	const limitProvided = args.includes('--limit')
@@ -3199,21 +3139,6 @@ function readIntegerFlag(args: string[], flag: string) {
 	return parsed
 }
 
-/**
- * Reads a CLI flag as a non-negative integer offset.
- *
- * @param args - Raw CLI argument array
- * @param flag - Flag name to look up (e.g. `'--offset'`)
- * @returns Parsed offset, or undefined when the flag is absent
- */
-function readOffsetFlag(args: string[], flag: string) {
-	const value = readFlag(args, flag)
-	if (!value) return undefined
-	const parsed = Number(value)
-	if (!Number.isInteger(parsed) || parsed < 0) printUsageAndExit()
-	return parsed
-}
-
 function isProvider(provider: string): provider is Provider {
 	return providers.includes(provider as Provider)
 }
@@ -3258,8 +3183,6 @@ function printUsageAndExit(): never {
   pnpm --filter ai-hero subscriber-marketing:operator signup-gap-preview --form-id 9376133 --from 2026-07-14T22:00:00-07:00 --to 2026-07-15T08:00:00-07:00
   pnpm --filter ai-hero subscriber-marketing:operator signup-gap-replay --form-id 9376133 --from 2026-07-14T22:00:00-07:00 --to 2026-07-15T08:00:00-07:00 --allow-write [--source signup-gap-replay]
   pnpm --filter ai-hero subscriber-marketing:operator seen-content-preview --contact-id contact_123 [--limit 100]
-  pnpm --filter ai-hero subscriber-marketing:operator seen-content-kit-sync --contact-id contact_123 --dry-run [--limit 100]
-  pnpm --filter ai-hero subscriber-marketing:operator seen-content-kit-sync --contact-id contact_123 --allow-write [--limit 100]
   pnpm --filter ai-hero subscriber-marketing:operator capture-front --conversation-id cnv_123 --text-file /tmp/reply.txt [--message-id msg_123] [--sender-email person@example.com] [--front-contact-id cnt_123] [--follow-up] [--restricted]
   pbpaste | pnpm --filter ai-hero subscriber-marketing:operator capture-front --conversation-id cnv_123 --stdin [--message-id msg_123]
   pnpm --filter ai-hero subscriber-marketing:operator capture-front-csv --quick-question-csv /path/to/qq.csv [--dry-run] [--limit 25]
@@ -3299,10 +3222,6 @@ function printUsageAndExit(): never {
   pnpm --filter ai-hero subscriber-marketing:operator link-kit-subscriber-identities --dry-run --candidate-preview /path/to/preview.json
   pnpm --filter ai-hero subscriber-marketing:operator link-kit-subscriber-identities --allow-write [--limit 25]
   pnpm --filter ai-hero subscriber-marketing:operator link-ai-hero-user-identities --allow-write [--limit 25]
-  pnpm --filter ai-hero subscriber-marketing:operator shadow-field-candidates --status review-only --no-review-reasons [--limit 50] [--scan-limit 250]
-  pnpm --filter ai-hero subscriber-marketing:operator shadow-field-sync --contact-id contact_123 --dry-run
-  pnpm --filter ai-hero subscriber-marketing:operator shadow-field-sync --contact-id contact_123 --allow-write [--accept-review-reason reason-slug]
-  pnpm --filter ai-hero subscriber-marketing:operator team-kit-projection --dry-run [--limit 25] [--offset 0] [--skip-kit-lookup] [--kit-lookup-delay-ms 250] [--kit-lookup-max-attempts 3]
-  pnpm --filter ai-hero subscriber-marketing:operator team-kit-projection --allow-write --owner-tag-id 123 --member-tag-id 456 [--limit 25] [--offset 0] [--kit-lookup-delay-ms 250] [--kit-lookup-max-attempts 3]`)
+  pnpm --filter ai-hero subscriber-marketing:operator shadow-field-candidates --status review-only --no-review-reasons [--limit 50] [--scan-limit 250]`)
 	process.exit(1)
 }

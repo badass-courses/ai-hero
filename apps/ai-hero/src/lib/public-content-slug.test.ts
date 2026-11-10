@@ -1,9 +1,14 @@
 import { validateHeaderValue } from 'node:http'
 
-import { encodeCacheTag } from 'next/dist/server/lib/encode-cache-tag'
 import { describe, expect, it } from 'vitest'
 
 import { parsePublicContentSlug } from './public-content-slug'
+
+// Test-local header serialization keeps this slug contract independent of
+// Next's private encoder module paths. Encode runs to preserve surrogate pairs.
+function encodeCacheTag(value: string): string {
+	return value.replace(/[^\t\x20-\x7e]+/g, (run) => encodeURIComponent(run))
+}
 
 describe('parsePublicContentSlug', () => {
 	it.each([

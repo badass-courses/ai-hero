@@ -1,4 +1,5 @@
 import { db, type DbExecutor } from '@/db'
+import { invalidatePurchaseCounts } from '@/lib/purchase-count-invalidation'
 import {
 	coupon,
 	entitlements,
@@ -10,6 +11,7 @@ import {
 	softDeleteEntitlementsForPurchase,
 } from '@/lib/entitlements'
 import { log } from '@/server/logger'
+import { bustSessionAccessForUser } from '@/server/session-access-runtime'
 import { and, eq, inArray, isNull } from 'drizzle-orm'
 
 /**
@@ -129,6 +131,7 @@ export async function removeOrganizationMembership(
 		await db
 			.delete(organizationMemberships)
 			.where(eq(organizationMemberships.id, membership.id))
+		await bustSessionAccessForUser(userId)
 
 		await log.info('bulk_refund.membership_removed', {
 			userId,
@@ -262,6 +265,7 @@ export async function refundBulkPurchaseEntitlements(originalPurchase: any) {
 					? await cleanup(db)
 					: await db.transaction(cleanup)
 			if (!cleaned) continue
+			await invalidatePurchaseCounts()
 			refundedPurchases.push(purchase)
 			const { result, statusResult } = cleaned
 			entitlementResults.push({

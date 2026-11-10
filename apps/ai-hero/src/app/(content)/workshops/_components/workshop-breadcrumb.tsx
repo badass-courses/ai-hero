@@ -14,7 +14,7 @@ export default function WorkshopBreadcrumb() {
 	if (!cohort) return null
 
 	return (
-		<div className="flex items-center gap-2">
+		<div className="mb-3 flex items-center gap-2">
 			<Link
 				className="text-primary block min-w-0 max-w-[300px] flex-1 truncate sm:max-w-full"
 				href={getResourcePath('cohort', cohort.slug, 'view')}

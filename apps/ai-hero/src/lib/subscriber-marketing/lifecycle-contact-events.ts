@@ -1,3 +1,4 @@
+import type { CaptureMarketingRepository } from './capture-contact-event'
 import type {
 	ContactEventPreviewRepository,
 	ContactEventWriteRepository,
@@ -68,9 +69,41 @@ export type ContactUnsubscribedSource = {
 	occurredAt: string
 }
 
+/**
+ * An included-product grant or its end (included-product-entitlement-events),
+ * on the user who holds or held it. No amount: ownership only.
+ */
+export type EntitlementRecordedSource = {
+	change: 'granted' | 'revoked'
+	/** The grant id drovr folds; stable for one grant and its revoke. */
+	entitlementId: string
+	userId: string
+	email?: string | null
+	name?: string | null
+	productId: string
+	viaProductId: string
+	bundlePolicy: string
+	occurredAt: string
+}
+
+/** The wire payloads drovr's ownership package decodes. */
+export type EntitlementGrantedPayload = {
+	entitlementId: string
+	productId: string
+	viaProductId?: string
+	bundlePolicy?: string
+}
+export type EntitlementRevokedPayload = { entitlementId: string }
+
+export const ENTITLEMENT_EVENT_TYPES = [
+	'entitlement.granted',
+	'entitlement.revoked',
+] as const
+
 export type LifecycleContactEventSourceKind =
 	| 'purchase-recorded'
 	| 'contact-unsubscribed'
+	| 'entitlement-recorded'
 
 export type LifecycleContactEventDecision =
 	| {
@@ -90,6 +123,7 @@ export type LifecycleContactEventDecision =
 			reason:
 				| 'no-existing-contact'
 				| 'no-identity-evidence'
+				| 'dangling-provider-identity'
 				| 'duplicate-semantic-key'
 			detail: string
 			existing?: ContactEventRecord
@@ -125,6 +159,26 @@ export function purchaseRecordedSemanticKey(purchaseId: string) {
  */
 export function purchaseRecordedBuyerSemanticKey(purchaseId: string) {
 	return `${purchaseRecordedSemanticKey(purchaseId)}:buyer`
+}
+
+export function entitlementRecordedSemanticKey(
+	change: EntitlementRecordedSource['change'],
+	entitlementId: string,
+) {
+	return `ai-hero:entitlement.${change}:${entitlementId}`
+}
+
+export function entitlementPayloadOf(
+	source: EntitlementRecordedSource,
+): EntitlementGrantedPayload | EntitlementRevokedPayload {
+	return source.change === 'granted'
+		? {
+				entitlementId: source.entitlementId,
+				productId: source.productId,
+				viaProductId: source.viaProductId,
+				bundlePolicy: source.bundlePolicy,
+			}
+		: { entitlementId: source.entitlementId }
 }
 
 export function contactUnsubscribedSemanticKey(
@@ -181,6 +235,37 @@ export function buildPurchaseRecordedEvent(
 	}
 }
 
+/** The drovr payload rides in domainPayload.entitlement. */
+export function buildEntitlementRecordedEvent(
+	source: EntitlementRecordedSource,
+	evidence: ContactIdentityEvidence,
+): NormalizedContactEvent {
+	return {
+		provider: 'ai-hero',
+		providerEventId: `entitlement:${source.entitlementId}:${source.change}`,
+		providerReference: `ai-hero:entitlement:${source.entitlementId}`,
+		eventType: `entitlement.${source.change}`,
+		occurredAt: source.occurredAt,
+		semanticIdempotencyKey: entitlementRecordedSemanticKey(
+			source.change,
+			source.entitlementId,
+		),
+		privacyLevel: 'internal',
+		identityEvidence: evidence,
+		payloadSummary: {
+			summary: `Included-entitlement ${source.change}: ${source.productId} via ${source.viaProductId}.`,
+			keywords: [
+				`entitlement-${source.change}`,
+				source.productId,
+				`via-${source.viaProductId}`,
+			],
+			restrictedPayloadStored: false,
+		},
+		domainPayload: { entitlement: entitlementPayloadOf(source) },
+		schemaVersion: CONTACT_EVENT_SCHEMA_VERSION,
+	}
+}
+
 export function buildContactUnsubscribedEvent(
 	source: ContactUnsubscribedSource,
 	evidence: ContactIdentityEvidence,
@@ -229,7 +314,10 @@ type LifecycleIdentityResolution =
 	  }
 	| {
 			status: 'skipped'
-			reason: 'no-existing-contact' | 'no-identity-evidence'
+			reason:
+				| 'no-existing-contact'
+				| 'no-identity-evidence'
+				| 'dangling-provider-identity'
 			detail: string
 	  }
 
@@ -272,6 +360,13 @@ async function resolveLifecycleIdentity(
 		const contact = identity
 			? await repository.findContactById(identity.contactId)
 			: undefined
+		if (identity && !contact) {
+			return {
+				status: 'skipped',
+				reason: 'dangling-provider-identity',
+				detail: 'AI Hero provider identity points at a missing Contact; do not create or relink it.',
+			}
+		}
 		if (identity && contact) {
 			return {
 				status: 'resolved',
@@ -689,6 +784,64 @@ async function redispatchDuplicatePurchases(
 	}
 }
 
+/** Birth ownership contacts without creating consent, course entry, or marketing intents.
+ * User-backed births use the repository's atomic identity writer. Email-only
+ * births link by Contact id in the lifecycle writer, never by email.
+ * Preview and historical lifecycle writers remain existing-contact-only.
+ */
+export async function ensureBuyerContact(args: {
+	repository: ContactEventWriteRepository &
+		Pick<CaptureMarketingRepository, 'createContactAndProviderIdentity'>
+	buyer: LifecycleIdentityInput
+	now?: string
+	warn?: (event: string, fields: Record<string, unknown>) => unknown
+}) {
+	const resolved = await resolveLifecycleIdentity(args.repository, args.buyer)
+	if (resolved.status === 'resolved') return resolved.contact
+	if (resolved.reason === 'no-identity-evidence') return undefined
+	if (resolved.reason === 'dangling-provider-identity') {
+		await args.warn?.('buyer_contact.dangling_identity_skipped', {
+			reason: resolved.reason,
+		})
+		return undefined
+	}
+	const email = normalizeEmail(args.buyer.email)
+	if (!args.buyer.userId && !email) return undefined
+	const now = args.now ?? new Date().toISOString()
+	const contactInput: Omit<ContactRecord, 'id'> = {
+		userId: args.buyer.userId ?? null,
+		email: email ?? null,
+		name: args.buyer.name ?? null,
+		lifecycle: 'new',
+		isProvisional: true,
+		createdAt: now,
+		updatedAt: now,
+	}
+	// Without a user id, the lifecycle writer links the new contact by its
+	// own id. Never use an address as the AI Hero provider external id.
+	if (!args.buyer.userId) return args.repository.createContact(contactInput)
+	const externalId = args.buyer.userId
+	const evidence: ContactIdentityEvidence = {
+		userId: args.buyer.userId ?? undefined,
+		email,
+		name: args.buyer.name ?? undefined,
+		providerIdentity: { provider: 'ai-hero', externalId },
+		source: 'ai-hero',
+		strength: 'strong',
+	}
+	const result = await args.repository.createContactAndProviderIdentity(
+		contactInput,
+		{
+			provider: 'ai-hero',
+			externalId,
+			evidence,
+			createdAt: now,
+			updatedAt: now,
+		},
+	)
+	return result.contact
+}
+
 export async function previewPurchaseRecordedContactEvents(args: {
 	repository: ContactEventPreviewRepository
 	rows: PurchaseRecordedSource[]
@@ -713,6 +866,45 @@ export async function writePurchaseRecordedContactEvents(args: {
 	for (const row of args.rows) {
 		decisions.push(
 			...(await previewPurchaseRecordedDecisions(args.repository, row)),
+		)
+	}
+	const { written, createdProviderIdentities } = await writeLifecycleDecisions({
+		repository: args.repository,
+		decisions,
+		now,
+	})
+	if (args.redispatchDuplicates) {
+		await redispatchDuplicatePurchases(args.repository, decisions)
+	}
+	return summarize('write', decisions, written, createdProviderIdentities)
+}
+
+/**
+ * Grants and revokes land on the holder's existing contact only, like a
+ * purchase. The semantic key is the dedupe: a retried fulfilment or a
+ * backfill rerun finds the event and writes nothing.
+ */
+export async function writeEntitlementRecordedContactEvents(args: {
+	repository: ContactEventWriteRepository
+	rows: EntitlementRecordedSource[]
+	now?: string
+	redispatchDuplicates?: boolean
+}): Promise<LifecycleContactEventSummary> {
+	const now = args.now ?? new Date().toISOString()
+	const decisions: LifecycleContactEventDecision[] = []
+	for (const row of args.rows) {
+		decisions.push(
+			await decideLifecycleContactEvent({
+				repository: args.repository,
+				source: 'entitlement-recorded',
+				sourceId: `${row.entitlementId}:${row.change}`,
+				resolved: await resolveLifecycleIdentity(args.repository, {
+					userId: row.userId,
+					email: row.email,
+					name: row.name,
+				}),
+				build: (evidence) => buildEntitlementRecordedEvent(row, evidence),
+			}),
 		)
 	}
 	const { written, createdProviderIdentities } = await writeLifecycleDecisions({

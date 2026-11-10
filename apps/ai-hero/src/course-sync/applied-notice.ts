@@ -12,7 +12,7 @@ import {
 	claimCourseSyncReviewNotification,
 	completeCourseSyncReviewNotification,
 	failCourseSyncReviewNotification,
-	getCourseSyncPlanChanges,
+	getCourseSyncPlan,
 } from './detection-persistence'
 import {
 	buildCourseSyncNotificationPayload,
@@ -23,7 +23,10 @@ import { deliverCourseSyncEntitlementSync } from './cohort-entitlements'
 import { resolveCourseSyncEditorLink } from './editor-link'
 import { CourseSyncError } from './errors'
 import { COURSE_SYNC_AUTHOR_NAME, narrateCourseSyncApply } from './narrate'
+import { summarizeCourseSyncPlanChanges } from './persistence-invariants'
 import { getCourseSyncRunBinding } from './run-binding'
+import { undrawnImagesInPlan } from './undrawn-images'
+import { sendThreadedCourseSyncSlackPayload } from './slack-thread-persistence'
 
 export type CourseSyncAppliedNotification = Extract<
 	CourseSyncNotification,
@@ -38,6 +41,7 @@ export type CourseSyncAppliedNotification = Extract<
  */
 export async function sendCourseSyncSlackPayload(
 	payload: CourseSyncSlackNotificationPayload,
+	controlPlaneRunId?: string,
 ): Promise<void> {
 	const channel =
 		env.COURSE_SYNC_SLACK_CHANNEL_ID ?? slackProvider.defaultChannelId
@@ -48,6 +52,7 @@ export async function sendCourseSyncSlackPayload(
 			503,
 		)
 	}
+	if (controlPlaneRunId) return sendThreadedCourseSyncSlackPayload(payload, controlPlaneRunId, channel)
 	const response = await slackProvider.sendNotification({
 		channel,
 		...payload,
@@ -189,11 +194,13 @@ export async function deliverCourseSyncAppliedNotice(
 	if (!claimed) return { delivered: false, reason: 'already-claimed' }
 
 	try {
-		// The plan read only feeds the written summary, so a failed read degrades
-		// to the deterministic line instead of costing an applied sync its notice.
-		const changes = await getCourseSyncPlanChanges(
-			notification.controlPlaneRunId,
-		).catch(() => [])
+		// The plan read only feeds the written summary and the redraw asks, so a
+		// failed read degrades to the deterministic line instead of costing an
+		// applied sync its notice.
+		const plan = await getCourseSyncPlan(notification.controlPlaneRunId).catch(
+			() => null,
+		)
+		const changes = plan ? summarizeCourseSyncPlanChanges(plan) : []
 		const narration = await narrateCourseSyncApply({
 			courseName: notification.courseName,
 			authorName: COURSE_SYNC_AUTHOR_NAME,
@@ -203,7 +210,12 @@ export async function deliverCourseSyncAppliedNotice(
 			structureCounts: notification.structureCounts,
 		})
 		await sendCourseSyncSlackPayload(
-			buildCourseSyncNotificationPayload(notification, narration),
+			buildCourseSyncNotificationPayload(
+				notification,
+				narration,
+				plan ? undrawnImagesInPlan(plan) : [],
+			),
+			input.controlPlaneRunId,
 		)
 	} catch (error) {
 		await failCourseSyncReviewNotification({

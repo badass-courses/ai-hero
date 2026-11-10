@@ -6,6 +6,7 @@ import {
 } from '@/inngest/events/workshop-interest'
 import { inngest } from '@/inngest/inngest.server'
 import { conversionIntentContract } from '@/lib/cta/conversion-intent'
+import { kitMirrorWritesEnabled } from '@/lib/kit-mirror-writes'
 import { log } from '@/server/logger'
 
 function contractFor(data: WorkshopInterestRequested['data']) {
@@ -41,6 +42,13 @@ export const workshopInterestSync = inngest.createFunction(
 	{ event: WORKSHOP_INTEREST_REQUESTED_EVENT },
 	async ({ event, step }) => {
 		const contract = contractFor(event.data)
+		if (!kitMirrorWritesEnabled()) {
+			return {
+				success: true as const,
+				intentKey: contract.key,
+				status: 'mirror-disabled',
+			}
+		}
 		const user = {
 			email: event.data.email,
 			name: event.data.name,

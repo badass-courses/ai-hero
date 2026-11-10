@@ -1,7 +1,7 @@
 import type { SurfaceName } from '@/lib/analytics'
 import { PROMO_KINDS } from '@/lib/analytics/promos'
 
-export const ANALYTICS_SCHEMA_VERSION = '2026-10-16.1'
+export const ANALYTICS_SCHEMA_VERSION = '2026-11-05.1'
 
 export const ANALYTICS_AGENT_INSTRUCTIONS = [
 	'Revenue amounts are USD major units. Treat database revenue surfaces as the revenue source of truth, not GA4.',
@@ -11,6 +11,11 @@ export const ANALYTICS_AGENT_INSTRUCTIONS = [
 	'Absent productId means all products on product-aware surfaces. Published revenue schemas list productId support, and some attribution surfaces also accept it.',
 	'purchases/recent defaults to range=30d. Use range=all when historical purchases are required.',
 	'Treat each response as a point-in-time read. Re-query before reporting live launch numbers.',
+	'For attribution/email-campaigns and /strict, inspect data.provider. When provider is drovr, read broadcasts.rows[].result.status before counters. Unavailable is not zero. Status counters are lifetime actor-reported sent counts for explicitly configured references, not deliveries or a complete list of sends. Each row also has engagement from drovr broadcast_engagement, read separately: when engagement.status is unavailable, opens and clicks are unknown, not zero, and the status counters still stand. engagement.rates.openRate is person opens (engagement.opens.emailsOpened) over rates.denominator, which is the contacts the message version was registered for when rates.basis is registered (another send of that version is in its opens and clicks; rates.basisSource names the gap), delivered when rates.basis is delivered, otherwise actor-reported sent. rates.anyOpenRateIncludingMachineOpens also counts Apple Mail Privacy Protection prefetch and scanner loads; it is higher and closer to Kit open rates, so never report it as the open rate. clicks.totalClicks counts repeats, clicks.uniqueClickers drives clickRate and clickToOpenRate, and clicks.links[] gives people and clicks per link. A section with status unknown carries a reason (for example, an index still pending) and a null rate means an input is unknown; report both as unknown. Opens and clicks count per message version, and every count is lifetime for that send. receiptSample is a capped latest journey-transition sample, not broadcast receipts or reconciliation. attributedRevenue is unavailable. historical is a frozen Kit-era export at its own asOf and original range/mode/product scope, never current drovr results. productId scopes historical strict snapshots only, not current broadcast statuses.',
+	'learning/progress requires productId and ignores range. Divide funnel started/completed by data.funnel.denominator.count (signed-in learners), not roster.learners. Report locked rows as locked, never as 0% completion. Read data.asOf; results are cached for data.refreshSeconds (five minutes, or fifteen above 5,000 learners).',
+	'learning/teams and learning/team are aggregate team reads; a team id is a bulk coupon id. learning/team divides funnel counts by data.funnel.denominator.count (team members). Unredeemed seats are a count, never members with zero progress.',
+	'For newsletter signups, use newsletter/signups. range=7d, 30d (the default for other ranges), 90d, 365d (12 months) or all (since 2025-08-17) reads that many UTC days ending today. Days through 2026-10-29 come from a frozen Kit export (days[].source kit-frozen, no source split, bySource kit-frozen); later days from drovr (source drovr). Read data.totals.window, last7 and last30 (null under 30 days), and data.months for long ranges; when a total is not complete, say how many of its days were reported and that partial days (today) are still counting. A day with status unavailable is unknown, never zero, including every Kit day when data.history.status is unavailable. A SIGNUPS_UNAVAILABLE error means no number is known.',
+	'learning/team-members is PII: learner emails and names. Only AI Hero admins may read it, every read is logged with the actor and team, and it is never cached. Do not copy member rows into public, shared or long-lived places; summarize with learning/team instead.',
 ] as const
 
 const usd = (description: string) => ({
@@ -54,7 +59,556 @@ const promoMetrics = {
 	},
 } as const
 
+const learningAvailability = {
+	oneOf: [
+		{
+			type: 'object',
+			additionalProperties: false,
+			required: ['status'],
+			properties: { status: { const: 'available' } },
+		},
+		{
+			type: 'object',
+			additionalProperties: false,
+			required: ['status', 'reason'],
+			properties: {
+				status: { const: 'locked' },
+				reason: { enum: ['unpublished', 'scheduled'] },
+			},
+		},
+	],
+} as const
+
+const learningFunnelRow = {
+	type: 'object',
+	additionalProperties: false,
+	required: [
+		'id',
+		'kind',
+		'workshopId',
+		'title',
+		'slug',
+		'state',
+		'startsAt',
+		'availability',
+		'requiredLessons',
+		'started',
+		'completed',
+	],
+	properties: {
+		id: { type: 'string', description: 'Content resource id' },
+		kind: { enum: ['workshop', 'section'] },
+		workshopId: { type: ['string', 'null'] },
+		title: { type: 'string' },
+		slug: { type: ['string', 'null'] },
+		state: { type: ['string', 'null'] },
+		startsAt: { type: ['string', 'null'] },
+		availability: learningAvailability,
+		requiredLessons: count('Lessons a learner must complete'),
+		started: count('Learners in the denominator with any progress here'),
+		completed: count(
+			'Learners in the denominator who completed every required lesson',
+		),
+	},
+} as const
+
+const learningProgressSchema = {
+	supports: ['productId'],
+	requires: ['productId'],
+	data: {
+		type: 'object',
+		additionalProperties: false,
+		required: [
+			'asOf',
+			'refreshSeconds',
+			'product',
+			'roster',
+			'funnel',
+			'activity',
+		],
+		properties: {
+			asOf: { type: 'string', format: 'date-time' },
+			refreshSeconds: {
+				enum: [300, 900],
+				description:
+					'Cache lifetime of this read: 900 above 5,000 learners, else 300',
+			},
+			product: {
+				type: 'object',
+				additionalProperties: false,
+				required: ['id', 'name', 'type'],
+				properties: {
+					id: { type: 'string' },
+					name: { type: 'string' },
+					type: { type: ['string', 'null'] },
+				},
+			},
+			roster: {
+				type: 'object',
+				additionalProperties: false,
+				required: [
+					'learners',
+					'bySource',
+					'signedIn',
+					'neverSignedIn',
+					'removed',
+					'teamSeatsUnredeemed',
+				],
+				properties: {
+					learners: count(
+						'Distinct users with Valid or Restricted access, redeemed team seats included',
+					),
+					bySource: {
+						type: 'object',
+						additionalProperties: false,
+						required: ['purchased', 'teamSeat'],
+						properties: {
+							purchased: count('Learners holding their own purchase'),
+							teamSeat: count(
+								'Learners whose only access is a redeemed team seat',
+							),
+						},
+					},
+					signedIn: count(
+						'Learners with sign-in evidence. The funnel denominator.',
+					),
+					neverSignedIn: count('learners minus signedIn'),
+					removed: {
+						type: 'object',
+						additionalProperties: false,
+						required: ['refunded', 'transferredAway'],
+						properties: {
+							refunded: count(
+								'Users with a Refunded purchase and no current access',
+							),
+							transferredAway: count(
+								'Source users of completed purchase transfers who no longer hold access',
+							),
+						},
+					},
+					teamSeatsUnredeemed: count(
+						'Open seats on Valid or Restricted team purchases (maxUses minus usedCount)',
+					),
+				},
+			},
+			funnel: {
+				type: 'object',
+				additionalProperties: false,
+				required: ['denominator', 'rows'],
+				properties: {
+					denominator: {
+						type: 'object',
+						additionalProperties: false,
+						required: ['basis', 'count'],
+						properties: {
+							basis: { const: 'signed-in-learners' },
+							count: count('Equals roster.signedIn'),
+						},
+					},
+					rows: {
+						type: 'array',
+						items: learningFunnelRow,
+					},
+				},
+			},
+			activity: {
+				type: 'object',
+				additionalProperties: false,
+				required: [
+					'lessonsCompleted24h',
+					'lessonsCompleted7d',
+					'activeLearners7d',
+					'totalLessonCompletions',
+				],
+				properties: {
+					lessonsCompleted24h: count(
+						'Lesson completions by learners in the 24h before asOf',
+					),
+					lessonsCompleted7d: count(
+						'Lesson completions by learners in the 7d before asOf',
+					),
+					activeLearners7d: count(
+						'Learners with any progress write in the 7d before asOf',
+					),
+					totalLessonCompletions: count(
+						'All current lesson completions by learners',
+					),
+				},
+			},
+		},
+	},
+	semantics: [
+		'Aggregate only. No user ids, emails or names, and productId is the only filter.',
+		"Learners hold a Valid or Restricted purchase of the product, matching the access rule. A team buyer's bulk purchase grants no access; each redeemed seat is its own purchase.",
+		'Sign-in evidence is a verified email, a linked OAuth account, a current session, or any lesson progress. Expired sessions are deleted, so legacy sign-ins with none of these count as never signed in.',
+		'Rows follow product order: each workshop, then its sections. A cohort contributes its workshops. Required lessons follow the certificate rule: undeleted lesson and exercise links in the workshop or its sections, optional lessons excluded. Lesson publish state is not a filter because managed cohort lessons stay draft.',
+		'Every row uses the same denominator, so a learner can be counted in a later row without earlier ones.',
+		'A row is locked when its workshop is not published (reason unpublished) or its startsAt is in the future (reason scheduled). Locked rows still carry their counts.',
+		"Activity counts only progress on the product's required lessons by current learners. Windows end at asOf.",
+		'Certificates are not reported: eligibility is computed on demand and no certificate table exists.',
+	],
+} as const
+
+const learningProduct = {
+	type: 'object',
+	additionalProperties: false,
+	required: ['id', 'name'],
+	properties: { id: { type: 'string' }, name: { type: 'string' } },
+} as const
+
+const learningSeats = {
+	type: 'object',
+	additionalProperties: false,
+	required: ['bought', 'redeemed', 'unredeemed'],
+	properties: {
+		bought: count("The team coupon's maxUses"),
+		redeemed: count("The team coupon's usedCount"),
+		unredeemed: count('bought minus redeemed, never below zero'),
+	},
+} as const
+
+const learningTeamSummary = {
+	type: 'object',
+	additionalProperties: false,
+	required: [
+		'teamId',
+		'product',
+		'purchaseIds',
+		'purchasedAt',
+		'seats',
+		'members',
+		'completion',
+	],
+	properties: {
+		teamId: { type: 'string', description: 'The bulk coupon id' },
+		product: learningProduct,
+		purchaseIds: {
+			type: 'array',
+			items: { type: 'string' },
+			description: 'Bulk purchase ids behind the team, oldest first',
+		},
+		purchasedAt: { type: 'string', format: 'date-time' },
+		seats: learningSeats,
+		members: {
+			type: 'object',
+			additionalProperties: false,
+			required: ['count', 'signedIn', 'neverSignedIn', 'active7d'],
+			properties: {
+				count: count(
+					'Users holding a Valid or Restricted redeemed seat now. Can trail seats.redeemed after refunds.',
+				),
+				signedIn: count('Members with sign-in evidence'),
+				neverSignedIn: count('count minus signedIn'),
+				active7d: count(
+					"Members with any progress write on the product's required lessons in the 7d before asOf",
+				),
+			},
+		},
+		completion: {
+			type: 'object',
+			additionalProperties: false,
+			required: ['openRequiredLessons', 'averageShare'],
+			properties: {
+				openRequiredLessons: count(
+					'Required lessons in workshops open to learners at asOf',
+				),
+				averageShare: {
+					type: ['number', 'null'],
+					minimum: 0,
+					maximum: 1,
+					description:
+						'Mean share of open required lessons each member completed. Null with no members or no open lessons.',
+				},
+			},
+		},
+	},
+} as const
+
+const learningTeamsSchema = {
+	supports: ['productId'],
+	data: {
+		type: 'object',
+		additionalProperties: false,
+		required: ['asOf', 'productId', 'teams'],
+		properties: {
+			asOf: { type: 'string', format: 'date-time' },
+			productId: { type: ['string', 'null'] },
+			teams: {
+				type: 'array',
+				items: learningTeamSummary,
+				description: 'Newest purchase first',
+			},
+		},
+	},
+	semantics: [
+		'Aggregate only. No member ids, emails or names, and no organization names: personal organizations are named from the buyer email.',
+		'A team is one bulk coupon. Extra seat purchases for the same organization and product share it, so purchaseIds can hold several ids.',
+		'Only teams with a Valid or Restricted bulk purchase are listed.',
+	],
+} as const
+
+const learningTeamSchema = {
+	supports: ['teamId'],
+	requires: ['teamId'],
+	data: {
+		type: 'object',
+		additionalProperties: false,
+		required: ['asOf', 'team', 'funnel', 'activity'],
+		properties: {
+			asOf: { type: 'string', format: 'date-time' },
+			team: learningTeamSummary,
+			funnel: {
+				type: 'object',
+				additionalProperties: false,
+				required: ['denominator', 'rows'],
+				properties: {
+					denominator: {
+						type: 'object',
+						additionalProperties: false,
+						required: ['basis', 'count'],
+						properties: {
+							basis: { const: 'team-members' },
+							count: count('Equals team.members.count'),
+						},
+					},
+					rows: { type: 'array', items: learningFunnelRow },
+				},
+			},
+			activity: learningProgressSchema.data.properties.activity,
+		},
+	},
+	semantics: [
+		'teamId is a bulk coupon id, or any bulk purchase id of the team.',
+		'The funnel follows learning/progress rules with team members as the denominator, signed in or not.',
+	],
+} as const
+
+const learningTeamMembersSchema = {
+	supports: ['teamId'],
+	requires: ['teamId'],
+	pii: true,
+	data: {
+		type: 'object',
+		additionalProperties: false,
+		required: ['asOf', 'pii', 'team', 'members'],
+		properties: {
+			asOf: { type: 'string', format: 'date-time' },
+			pii: { const: true },
+			team: {
+				type: 'object',
+				additionalProperties: false,
+				required: ['teamId', 'product', 'seats', 'organization'],
+				properties: {
+					teamId: { type: 'string' },
+					product: learningProduct,
+					seats: learningSeats,
+					organization: {
+						oneOf: [
+							{ type: 'null' },
+							{
+								type: 'object',
+								additionalProperties: false,
+								required: ['id', 'name'],
+								properties: {
+									id: { type: 'string' },
+									name: {
+										type: ['string', 'null'],
+										description: 'PII: can contain the buyer email',
+									},
+								},
+							},
+						],
+					},
+				},
+			},
+			members: {
+				type: 'array',
+				description:
+					'PII. One row per redeemed seat held now, oldest redemption first. Unredeemed seats are team.seats.unredeemed, never rows.',
+				items: {
+					type: 'object',
+					additionalProperties: false,
+					required: [
+						'userId',
+						'email',
+						'name',
+						'redeemedAt',
+						'signedIn',
+						'lastActiveAt',
+						'lessonsCompleted',
+						'workshops',
+					],
+					properties: {
+						userId: { type: 'string' },
+						email: { type: ['string', 'null'], description: 'PII' },
+						name: { type: ['string', 'null'], description: 'PII' },
+						redeemedAt: { type: 'string', format: 'date-time' },
+						signedIn: { type: 'boolean' },
+						lastActiveAt: {
+							type: ['string', 'null'],
+							format: 'date-time',
+							description:
+								"Latest progress write on the product's required lessons",
+						},
+						lessonsCompleted: count(
+							'Completed required lessons in the product, locked workshops included',
+						),
+						workshops: {
+							type: 'object',
+							additionalProperties: false,
+							required: ['started', 'completed', 'total'],
+							properties: {
+								started: count('Workshops with any progress'),
+								completed: count(
+									'Workshops with every required lesson completed',
+								),
+								total: count('Workshops in the product'),
+							},
+						},
+					},
+				},
+			},
+		},
+	},
+	semantics: [
+		'PII: learner emails and names. AI Hero admins only (manage all); analytics-only roles are refused.',
+		'Never cached. Responses are Cache-Control: private, no-store and carry no CORS allowance.',
+		'Every read is logged with the actor id, auth method and teamId. Member emails are never logged.',
+		'Certificates are not reported: no certificate table exists.',
+	],
+} as const
+
+const signupCounts = {
+	total: count(
+		'drovr days: new contacts drovr started from a signup or import (contact.created into provisional or confirmed), excluding late adoptions, about one a day. Kit days: new subscribers in the frozen Kit export',
+	),
+	bySource: {
+		type: 'object',
+		additionalProperties: count('New subscribers from this source'),
+		description:
+			'kit-frozen = a frozen Kit day, which has no source split. Otherwise the creation event payload.source: ai-hero = site signups, kit = Kit-only arrivals, list-import = imported lists. Reserved: unknown = the event named no source, unattributed = not looked up (over the 1,000-per-day lookup cap, or the event is missing). Sums to total.',
+	},
+} as const
+const signupTotal = {
+	type: 'object',
+	additionalProperties: false,
+	required: [
+		'days',
+		'reportedDays',
+		'partialDays',
+		'complete',
+		'subscribed',
+		'confirmed',
+		'unsubscribed',
+	],
+	properties: {
+		days: count('UTC days in the span'),
+		reportedDays: count('Days drovr reported; the sums cover only these'),
+		partialDays: count('Reported days still counting, such as today'),
+		complete: { type: 'boolean' },
+		subscribed: {
+			type: 'object',
+			required: ['total', 'bySource'],
+			properties: signupCounts,
+		},
+		confirmed: { type: ['integer', 'null'], minimum: 0 },
+		unsubscribed: { type: ['integer', 'null'], minimum: 0 },
+	},
+} as const
+const nullableCount = { type: ['integer', 'null'], minimum: 0 } as const
+
 export const REVENUE_SURFACE_SCHEMAS = {
+	'newsletter/signups': {
+		supports: ['range'],
+		data: {
+			type: 'object',
+			additionalProperties: false,
+			required: [
+				'range',
+				'from',
+				'to',
+				'windowDays',
+				'asOf',
+				'history',
+				'days',
+				'months',
+				'sources',
+				'totals',
+			],
+			properties: {
+				range: { enum: ['7d', '30d', '90d', '365d', 'all'] },
+				from: { type: 'string', format: 'date' },
+				to: { type: 'string', format: 'date' },
+				windowDays: count('UTC days in from..to'),
+				asOf: {
+					type: ['string', 'null'],
+					format: 'date-time',
+					description:
+						'The oldest asOf among the drovr calls behind drovr days; null when none answered.',
+				},
+				history: {
+					type: 'object',
+					required: ['status', 'from', 'to', 'seam', 'export', 'frozenOn'],
+					properties: {
+						status: { enum: ['available', 'unavailable'] },
+						from: { type: 'string', format: 'date' },
+						to: { type: 'string', format: 'date' },
+						seam: { type: 'string', format: 'date-time' },
+						export: { type: ['string', 'null'] },
+						frozenOn: { type: ['string', 'null'], format: 'date' },
+					},
+				},
+				days: {
+					type: 'array',
+					items: {
+						type: 'object',
+						required: ['day', 'source', 'status'],
+						properties: {
+							day: { type: 'string', format: 'date' },
+							source: { enum: ['kit-frozen', 'drovr'] },
+							status: { enum: ['complete', 'partial', 'unavailable'] },
+							subscribed: { type: 'object', properties: signupCounts },
+							confirmed: nullableCount,
+							unsubscribed: nullableCount,
+						},
+					},
+				},
+				months: {
+					type: 'array',
+					items: {
+						type: 'object',
+						required: ['month', 'total'],
+						properties: {
+							month: { type: 'string', pattern: '^\\d{4}-\\d{2}$' },
+							total: signupTotal,
+						},
+					},
+				},
+				sources: { type: 'array', items: { type: 'string' } },
+				totals: {
+					type: 'object',
+					required: ['window', 'last7', 'last30'],
+					properties: {
+						window: signupTotal,
+						last7: signupTotal,
+						last30: { oneOf: [signupTotal, { type: 'null' }] },
+					},
+				},
+			},
+		},
+		semantics: [
+			'Counts and source names only, no contact identities. days covers every UTC day from..to, oldest first; months and totals are sums of those days.',
+			'Days through history.to (2026-10-29) come from a frozen Kit export taken on history.frozenOn: daily new subscribers, complete, with no source split (bySource kit-frozen) and no confirmed or unsubscribed counts. Kit took most signups until history.seam, so drovr is never read for those days and no day is counted twice. When the export is missing or invalid, history.status is unavailable and every Kit day is unavailable.',
+			'Days after history.to come from drovr GET /signup-counts for tenant org-aihero: a directory receipt for the UTC day drovr recorded it. status unavailable means drovr has no receipts for that day or the call for its week failed: unknown, not zero, and excluded from totals.',
+			'status partial means the day is still counting: drovr calls a day complete once asOf is 15+ minutes past its end. Totals include partial days and say so in partialDays.',
+			'confirmed counts moves to confirmed (a first confirmation, a resubscribe or an unseeded birth). unsubscribed counts every contact that moved to unsubscribed, including imported lists and older provisional contacts, with no source split: it is not newsletter churn. Both are null when the day did not report them, so totals over Kit days carry null.',
+			'drovr is read a week at a time, newest first, with a 10 s limit per call, and only for its own days. When no day is known the response is ok:false with code SIGNUPS_UNAVAILABLE and HTTP 503.',
+		],
+	},
+	'learning/progress': learningProgressSchema,
+	'learning/teams': learningTeamsSchema,
+	'learning/team': learningTeamSchema,
+	'learning/team-members': learningTeamMembersSchema,
 	'revenue/promos': {
 		supports: ['range', 'from', 'to', 'productId'],
 		data: {
@@ -264,8 +818,23 @@ export const REVENUE_SURFACE_SCHEMAS = {
 					couponId: { type: ['string', 'null'] },
 					userName: { type: ['string', 'null'] },
 					userEmail: { type: ['string', 'null'], format: 'email' },
-					isTeam: { type: 'boolean' },
-					seats: { type: ['integer', 'null'], minimum: 1 },
+					isTeam: {
+						type: 'boolean',
+						description:
+							'True only when the purchase has a bulk coupon with more than one seat. An organization alone does not make a purchase a team purchase.',
+					},
+					seats: {
+						type: ['integer', 'null'],
+						minimum: 2,
+						description:
+							'Seats bought by this purchase. Set only for a team purchase that is the only purchase on its bulk coupon. Null for individual purchases and for add-seat teams, where the per-purchase count is not stored.',
+					},
+					teamSeats: {
+						type: ['integer', 'null'],
+						minimum: 2,
+						description:
+							"The team's current total seats, its bulk coupon's maxUses today, for any team purchase. Null for individual purchases.",
+					},
 				},
 			},
 		},
@@ -273,6 +842,7 @@ export const REVENUE_SURFACE_SCHEMAS = {
 			'Rows are newest first. Large historical purchases do not outrank newer purchases.',
 			'The 100-row limit is per page. Follow _links.next.href until absent, or meta.pagination.nextOffset until null.',
 			'Read meta.pagination.totalMatchingRows for the full matching purchase count. meta.totalRows and meta.pagination.returnedRows describe only the current page.',
+			'A team purchase is one with a bulk coupon of more than one seat. Add-seat purchases reuse the team coupon and raise its total, so seats is null when a coupon has more than one purchase, and teamSeats is the team total now, not at purchase time.',
 		],
 	},
 } as const
@@ -301,10 +871,10 @@ export function getAnalyticsAgentSchema(surfaceNames: readonly SurfaceName[]) {
 				},
 				range: {
 					type: 'string',
-					enum: ['24h', '7d', '30d', '90d', '180d', 'all'],
+					enum: ['24h', '7d', '30d', '90d', '180d', '365d', 'all'],
 					default: '30d',
 					description:
-						'Rolling lookback. 180d is only valid for GA4 traffic surfaces.',
+						'Rolling lookback. 180d is only valid for GA4 traffic surfaces, 365d only for newsletter/signups.',
 				},
 				limit: {
 					type: 'integer',
@@ -331,6 +901,11 @@ export function getAnalyticsAgentSchema(surfaceNames: readonly SurfaceName[]) {
 						'Exclusive UTC ISO instant, supply with from. Max 400-day explicit window.',
 				},
 				productId: { type: 'string' },
+				teamId: {
+					type: 'string',
+					description:
+						'learning/team and learning/team-members. A bulk coupon id or bulk purchase id.',
+				},
 				purchaseId: { type: 'string' },
 				surveyId: { type: 'string' },
 				surveySlug: { type: 'string' },
@@ -356,6 +931,22 @@ export function getAnalyticsAgentSchema(surfaceNames: readonly SurfaceName[]) {
 					},
 					then: { properties: { limit: { maximum: 1000 } } },
 					else: { properties: { limit: { maximum: 100 } } },
+				},
+				{
+					if: {
+						properties: { surface: { const: 'learning/progress' } },
+						required: ['surface'],
+					},
+					then: { required: ['productId'] },
+				},
+				{
+					if: {
+						properties: {
+							surface: { enum: ['learning/team', 'learning/team-members'] },
+						},
+						required: ['surface'],
+					},
+					then: { required: ['teamId'] },
 				},
 			],
 		},

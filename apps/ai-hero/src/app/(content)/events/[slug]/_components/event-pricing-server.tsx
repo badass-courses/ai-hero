@@ -1,12 +1,13 @@
 import * as React from 'react'
 import { headers } from 'next/headers'
 import { courseBuilderAdapter, db } from '@/db'
-import { products, purchases } from '@/db/schema'
+import { products } from '@/db/schema'
+import { getPurchaseCount } from '@/lib/purchase-count'
 import { getEvent } from '@/lib/events-query'
 import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 import { getPricingData } from '@/lib/pricing-query'
 import { getServerAuthSession } from '@/server/auth'
-import { count, eq } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 
 import { propsForCommerce } from '@coursebuilder/commerce/props-for-commerce'
 import {
@@ -77,11 +78,7 @@ export async function EventPricing({
 			courseBuilderAdapter,
 		)
 
-		const { count: purchaseCount } = await db
-			.select({ count: count() })
-			.from(purchases)
-			.where(eq(purchases.productId, product.id))
-			.then((res) => res[0] ?? { count: 0 })
+		const purchaseCount = await getPurchaseCount(product.id)
 
 		const productWithQuantityAvailable = await db
 			.select({ quantityAvailable: products.quantityAvailable })

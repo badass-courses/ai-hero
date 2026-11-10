@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { headers } from 'next/headers'
-import { courseBuilderAdapter, db } from '@/db'
+import { db } from '@/db'
+import { getCachedDefaultCoupon } from '@/lib/default-coupon'
 import { contentResource } from '@/db/schema'
 import { contentDurationLabel } from '@/lib/content-duration'
 import { getPricingData } from '@/lib/pricing-query'
@@ -330,7 +331,7 @@ export async function Resource(props: ResourceProps) {
 			? getPricingData({ productId: resolved.productId })
 			: Promise.resolve(null),
 		resolved?.productId
-			? courseBuilderAdapter.getDefaultCoupon([resolved.productId])
+			? getCachedDefaultCoupon([resolved.productId])
 			: Promise.resolve(null),
 		isPPPEligible ? getPPPPercentForRequest() : Promise.resolve(0),
 	])

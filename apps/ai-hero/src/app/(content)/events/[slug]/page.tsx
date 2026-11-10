@@ -9,7 +9,9 @@ import { Contributor } from '@/components/contributor'
 import LayoutClient from '@/components/layout-client'
 import config from '@/config'
 import { courseBuilderAdapter, db } from '@/db'
-import { products, purchases } from '@/db/schema'
+import { products } from '@/db/schema'
+import { getCachedDefaultCoupon } from '@/lib/default-coupon'
+import { getPurchaseCount } from '@/lib/purchase-count'
 import { env } from '@/env.mjs'
 import type { Event } from '@/lib/events'
 import { getEvent } from '@/lib/events-query'
@@ -19,7 +21,7 @@ import { getSaleBannerData } from '@/lib/sale-banner'
 import { getServerAuthSession } from '@/server/auth'
 import { compileMDX } from '@/utils/compile-mdx'
 import { formatInTimeZone } from 'date-fns-tz'
-import { count, eq } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { CheckCircle } from 'lucide-react'
 import { Markdown as ReactMarkdown } from '@/components/markdown'
 import { Event as EventMetaSchema, Ticket } from 'schema-dts'
@@ -114,7 +116,7 @@ export default async function EventPage(props: {
 				},
 				courseBuilderAdapter,
 			),
-			courseBuilderAdapter.getDefaultCoupon([product.id]),
+			getCachedDefaultCoupon([product.id]),
 		])
 
 		const defaultCouponFromAdapter = couponResult?.defaultCoupon ?? null
@@ -146,11 +148,7 @@ export default async function EventPage(props: {
 			usedCouponId,
 		})
 
-		const { count: purchaseCount } = await db
-			.select({ count: count() })
-			.from(purchases)
-			.where(eq(purchases.productId, product.id))
-			.then((res) => res[0] ?? { count: 0 })
+		const purchaseCount = await getPurchaseCount(product.id)
 
 		const productWithQuantityAvailable = await db
 			.select({ quantityAvailable: products.quantityAvailable })

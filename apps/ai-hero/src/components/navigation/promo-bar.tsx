@@ -1,10 +1,16 @@
 import { unstable_cache } from 'next/cache'
+import { C5SaleSwitch } from '@/components/c5-sale-switch'
 import { db } from '@/db'
 import { contentResource } from '@/db/schema'
 import { and, desc, eq, sql } from 'drizzle-orm'
 
 import { PromoBarContent } from './promo-bar-content'
-import { FEATURED_PROMO, isPromoActive, type Promo } from './promo-config'
+import {
+	CRASH_COURSE_PROMO,
+	FEATURED_PROMO,
+	isPromoActive,
+	type Promo,
+} from './promo-config'
 import { TimedPromoBarSwitch } from './timed-promo-bar-switch'
 
 /**
@@ -61,19 +67,20 @@ export async function PromoBar() {
 		fallbackPromo = null
 	}
 
-	if (!FEATURED_PROMO.startsAt && !FEATURED_PROMO.endsAt) {
-		return <PromoBarContent promo={FEATURED_PROMO} />
-	}
-
 	return (
-		<TimedPromoBarSwitch
-			startsAt={FEATURED_PROMO.startsAt}
-			endsAt={FEATURED_PROMO.endsAt}
-			initialFeaturedActive={isPromoActive(FEATURED_PROMO)}
-			featured={<PromoBarContent promo={FEATURED_PROMO} />}
+		<C5SaleSwitch
 			fallback={
-				fallbackPromo ? <PromoBarContent promo={fallbackPromo} /> : null
+				<TimedPromoBarSwitch
+					startsAt={CRASH_COURSE_PROMO.startsAt}
+					initialFeaturedActive={isPromoActive(CRASH_COURSE_PROMO)}
+					featured={<PromoBarContent promo={CRASH_COURSE_PROMO} />}
+					fallback={
+						fallbackPromo ? <PromoBarContent promo={fallbackPromo} /> : null
+					}
+				/>
 			}
-		/>
+		>
+			<PromoBarContent promo={FEATURED_PROMO} />
+		</C5SaleSwitch>
 	)
 }

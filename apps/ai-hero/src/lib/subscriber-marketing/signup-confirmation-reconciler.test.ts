@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { KIT_READER_MIN_START_INTERVAL_MS } from './signup-confirmation-kit-reader'
+import { emailEquivalenceKey } from './contact-email-equivalence'
+import {
+	legacyKitConfirmationSubscribers,
+	reconcileDrovrConfirmations,
+} from './signup-confirmation-drovr'
 import {
 	checkSkillsConfirmationTags,
+	fetchDrovrConfirmationSubjects,
 	reconcileSkillsConfirmations,
 	ReconcilerEvidenceUnavailableError,
 	SKILLS_CONFIRMATION_RECENT_TIER_DAYS,
@@ -16,6 +22,242 @@ import {
 	type SkillsConfirmationEvent,
 	type SkillsConfirmationTier,
 } from './signup-confirmation-reconciler.server'
+
+describe('persisted DOI split', () => {
+	it('deduplicates persisted ownership and counts stale-key contacts without blocking healthy observation', async () => {
+		const rows = [
+			{
+				contactId: 'owned',
+				emailKey: emailEquivalenceKey('learner-1@example.test'),
+				requestedAt: new Date(daysBefore(2)),
+				emailKeyStale: 0,
+			},
+			{
+				contactId: 'owned',
+				emailKey: emailEquivalenceKey('learner-1@example.test'),
+				requestedAt: new Date(daysBefore(1)),
+				emailKeyStale: 0,
+			},
+		]
+		const chain: unknown = new Proxy(() => chain, {
+			get: (_, property) =>
+				property === 'then'
+					? (resolve: (value: unknown) => void) => resolve(rows)
+					: () => chain,
+		})
+		const database = { select: () => chain } as never
+		expect(await fetchDrovrConfirmationSubjects(database)).toMatchObject([
+			{ contactId: 'owned', requestedAt: daysBefore(1) },
+		])
+		rows.push({
+			contactId: 'unkeyed',
+			emailKey: emailEquivalenceKey('learner-2@example.test'),
+			requestedAt: new Date(daysBefore(1)),
+			emailKeyStale: 1,
+		})
+		const subjects = await fetchDrovrConfirmationSubjects(database)
+		expect(subjects).toContainEqual({
+			contactId: 'unkeyed',
+			emailKey: null,
+			requestedAt: daysBefore(1),
+		})
+		const read = vi.fn(async () => null)
+		const observed = await reconcileDrovrConfirmations({
+			subjects,
+			window: { from: daysBefore(14), to: TO },
+			read,
+		})
+		expect(observed.counts).toMatchObject({
+			unkeyed: 1,
+			selected: 1,
+			unknown: 1,
+		})
+		expect(read).toHaveBeenCalledTimes(1)
+		expect(read).toHaveBeenCalledWith('owned')
+		expect(
+			legacyKitConfirmationSubscribers(
+				[
+					{ email: 'learner-1@example.test' },
+					{ email: 'learner-2@example.test' },
+				],
+				subjects,
+			),
+		).toEqual([{ email: 'learner-2@example.test' }])
+	})
+	it('an all-DOI mirrored form requires no Kit tag or sequence checks', async () => {
+		vi.stubEnv('AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED', 'true')
+		const kit = fakeKit([
+			{ id: 1, createdAt: daysBefore(1), addedAt: daysBefore(1) },
+		])
+		const scan = await scanSkillsConfirmations({
+			tier: 'recent',
+			to: TO,
+			database: emptyDatabase(),
+			drovrSubjects: [
+				{
+					contactId: 'owned',
+					emailKey: emailEquivalenceKey('learner-1@example.test'),
+					requestedAt: daysBefore(1),
+				},
+			],
+			kit: { fetch: kit.fetcher, minStartIntervalMs: 0 },
+		})
+		expect(scan.events).toEqual([])
+		expect(kit.requests).toHaveLength(5)
+		expect(
+			kit.requests.every((url) =>
+				url.pathname.includes('/forms/9376133/subscribers'),
+			),
+		).toBe(true)
+	})
+	it.each([true, false])(
+		'flag on=%s excludes only persisted DOI before Kit tag and sequence reads',
+		async (enabled) => {
+			vi.stubEnv('AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED', String(enabled))
+			// Current intake config is irrelevant to a previously captured DOI.
+			vi.stubEnv('DROVR_DOI_FORMS', '')
+			const kit = fakeKit([
+				{ id: 1, createdAt: daysBefore(1), addedAt: daysBefore(1) },
+				{ id: 2, createdAt: daysBefore(1), addedAt: daysBefore(1) },
+			])
+			const scan = await scanSkillsConfirmations({
+				tier: 'recent',
+				to: TO,
+				database: emptyDatabase(),
+				drovrSubjects: enabled
+					? [
+							{
+								contactId: 'owned',
+								emailKey: emailEquivalenceKey('learner-1@example.test'),
+								requestedAt: daysBefore(1),
+							},
+						]
+					: undefined,
+				kit: { fetch: kit.fetcher, minStartIntervalMs: 0 },
+			})
+			expect(scan.events.map((event) => event.data.kitSubscriberId)).toEqual(
+				enabled ? ['2'] : ['1', '2'],
+			)
+		},
+	)
+	it.each(['confirmed', 'unconfirmed', 'stopped', 'read-failure'] as const)(
+		'flag on observes %s via the REST contract before unreachable legacy Kit, with no second enrolment',
+		async (status) => {
+			vi.stubEnv('AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED', 'true')
+			vi.stubEnv('DROVR_DOI_FORMS', '')
+			vi.stubEnv('DROVR_API_BASE_URL', 'https://drovr.example.test')
+			vi.stubEnv('DROVR_API_KEY_ORG_AIHERO', 'synthetic-tenant-key')
+			const fetcher = vi.fn(async () =>
+				status === 'read-failure'
+					? new Response(null, { status: 503 })
+					: Response.json({
+							contactId: 'owned/contact',
+							kitSubscriberId: null,
+							tenantId: 'org-aihero',
+							scope: 'all',
+							state: status,
+							forms: [
+								{
+									formId: 'skills-newsletter',
+									state: status === 'confirmed' ? 'confirmed' : 'unconfirmed',
+								},
+							],
+							stops: [],
+							unknownReason: null,
+						}),
+			)
+			vi.stubGlobal('fetch', fetcher)
+			const rows = [
+				{
+					contactId: 'owned/contact',
+					emailKey: emailEquivalenceKey('learner-1@example.test'),
+					requestedAt: new Date(daysBefore(1)),
+					emailKeyStale: 0,
+				},
+			]
+			const chain: unknown = new Proxy(() => chain, {
+				get: (_, property) =>
+					property === 'then'
+						? (resolve: (value: unknown) => void) => resolve(rows)
+						: () => chain,
+			})
+			const observed = vi.fn()
+			const send = vi.fn()
+			try {
+				await expect(
+					reconcileSkillsConfirmations({
+						tier: 'recent',
+						to: TO,
+						database: { select: () => chain } as never,
+						kit: {
+							fetch: (async () => {
+								throw new Error('Kit unreachable')
+							}) as typeof fetch,
+							minStartIntervalMs: 0,
+							sleep: async () => {},
+						},
+						steps: { run: async (_id, work) => work(), send },
+						onDrovrObserved: observed,
+					}),
+				).rejects.toThrow(ReconcilerEvidenceUnavailableError)
+				expect(fetcher).toHaveBeenCalledTimes(1)
+				expect(fetcher).toHaveBeenCalledWith(
+					'https://drovr.example.test/contact-list-state?contactId=owned%2Fcontact',
+					expect.objectContaining({
+						method: 'GET',
+						headers: {
+							authorization: 'Bearer synthetic-tenant-key',
+							accept: 'application/json',
+						},
+						cache: 'no-store',
+					}),
+				)
+				expect(observed).toHaveBeenCalledWith(
+					expect.objectContaining({
+						counts: expect.objectContaining({
+							[status === 'read-failure' ? 'unknown' : status]: 1,
+						}),
+					}),
+				)
+				expect(send).not.toHaveBeenCalled()
+			} finally {
+				vi.unstubAllGlobals()
+			}
+		},
+	)
+	it('runs owned consent observation before legacy enumeration fails with Kit unreachable', async () => {
+		vi.stubEnv('AIH_CONFIRM_RECONCILER_OFF_KIT_ENABLED', 'true')
+		const steps: string[] = []
+		const send = vi.fn()
+		await expect(
+			reconcileSkillsConfirmations({
+				tier: 'recent',
+				to: TO,
+				database: emptyDatabase(),
+				kit: {
+					fetch: (async () => {
+						throw new Error('Kit unreachable')
+					}) as typeof fetch,
+					minStartIntervalMs: 0,
+					sleep: async () => {},
+				},
+				steps: {
+					run: async (id, work) => {
+						steps.push(id)
+						return work()
+					},
+					send,
+				},
+			}),
+		).rejects.toThrow(ReconcilerEvidenceUnavailableError)
+		expect(steps.slice(0, 3)).toEqual([
+			'read-persisted-doi-intake-v1',
+			'observe-drovr-confirmations-v1',
+			'scan-confirmation-candidates',
+		])
+		expect(send).not.toHaveBeenCalled()
+	})
+})
 
 // Row 211: the reconciler's run shape against a fake Kit. Local evidence is
 // empty here (every query answers no rows); the MySQL suite covers it.

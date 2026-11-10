@@ -103,7 +103,7 @@ export function CheckoutSurveyBuyButton({
 	const [isSubmittingStoredAnswer, setIsSubmittingStoredAnswer] =
 		React.useState(false)
 	const hasScrolledToSurveyRef = React.useRef(false)
-	const answerSurveyMutation = api.convertkit.answerSurvey.useMutation()
+	const answerSurveyMutation = api.convertkit.answerCheckoutSurvey.useMutation()
 	const checkoutSurveyAnswer = api.convertkit.checkoutSurveyAnswer.useQuery(
 		undefined,
 		{
@@ -116,11 +116,7 @@ export function CheckoutSurveyBuyButton({
 	const [snapshot, send] = useMachine(checkoutSurveyMachine, {
 		input: {
 			saveAnswer: async (answer) => {
-				await answerSurveyMutation.mutateAsync({
-					surveyId: CHECKOUT_SURVEY_ID,
-					question: CHECKOUT_SURVEY_QUESTION_ID,
-					answer: answer.value,
-				})
+				await answerSurveyMutation.mutateAsync({ answer: answer.value })
 				safeSetStoredAnswer(answer.value)
 			},
 		},

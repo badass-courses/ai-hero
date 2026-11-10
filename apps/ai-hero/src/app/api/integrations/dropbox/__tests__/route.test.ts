@@ -1,14 +1,14 @@
 import { NextRequest } from 'next/server'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
 	buildDropboxAuthorizationUrl: vi.fn(),
 	exchangeDropboxAuthorizationCode: vi.fn(),
 	getDropboxSyncConfig: vi.fn(),
 	readDropboxCourseManifestSummary: vi.fn(),
-	redeployAfterDropboxAuthorization: vi.fn(),
 	storeDropboxRefreshToken: vi.fn(),
 	verifyDropboxConnection: vi.fn(),
+	getIntegrationRefreshToken: vi.fn(),
 	getUserAbilityForRequest: vi.fn(),
 	getServerAuthSession: vi.fn(),
 	log: {
@@ -24,9 +24,17 @@ vi.mock('@/lib/dropbox-course-sync', () => ({
 	exchangeDropboxAuthorizationCode: mocks.exchangeDropboxAuthorizationCode,
 	getDropboxSyncConfig: mocks.getDropboxSyncConfig,
 	readDropboxCourseManifestSummary: mocks.readDropboxCourseManifestSummary,
-	redeployAfterDropboxAuthorization: mocks.redeployAfterDropboxAuthorization,
 	storeDropboxRefreshToken: mocks.storeDropboxRefreshToken,
 	verifyDropboxConnection: mocks.verifyDropboxConnection,
+}))
+
+vi.mock('@/lib/integration-token-store', async () => ({
+	getIntegrationRefreshToken: mocks.getIntegrationRefreshToken,
+	integrationTokenStorageNotice: (
+		await vi.importActual<typeof import('@/lib/integration-token-store')>(
+			'@/lib/integration-token-store',
+		)
+	).integrationTokenStorageNotice,
 }))
 
 vi.mock('@/server/ability-for-request', () => ({
@@ -102,7 +110,6 @@ function request() {
 describe('Dropbox course manifest summary route', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
-		process.env.DROPBOX_REFRESH_TOKEN = 'stored-refresh-token'
 		mocks.getDropboxSyncConfig.mockReturnValue({
 			config: sharedLinkConfig,
 			missingConfig: [],
@@ -116,10 +123,7 @@ describe('Dropbox course manifest summary route', () => {
 			ability: ability(false),
 		})
 		mocks.readDropboxCourseManifestSummary.mockResolvedValue(summary)
-	})
-
-	afterEach(() => {
-		delete process.env.DROPBOX_REFRESH_TOKEN
+		mocks.getIntegrationRefreshToken.mockResolvedValue('stored-refresh-token')
 	})
 
 	it('rejects anonymous and non-admin callers before Dropbox is read', async () => {
@@ -203,6 +207,23 @@ describe('Dropbox course manifest summary route', () => {
 		expect(mocks.readDropboxCourseManifestSummary).not.toHaveBeenCalled()
 	})
 
+	it('ignores a raw env token and reports Dropbox as not connected', async () => {
+		vi.stubEnv('DROPBOX_REFRESH_TOKEN', 'raw-env-token')
+		mocks.getIntegrationRefreshToken.mockResolvedValue(undefined)
+		mocks.getUserAbilityForRequest.mockResolvedValue({
+			user: { id: 'admin' },
+			ability: ability(true),
+		})
+		const response = await GET(request())
+		vi.unstubAllEnvs()
+		expect(response.status).toBe(503)
+		expect(mocks.getIntegrationRefreshToken).toHaveBeenCalledWith('dropbox')
+		expect(mocks.readDropboxCourseManifestSummary).not.toHaveBeenCalled()
+		expect((await response.json()).missingConfig).toContain(
+			'Dropbox not connected (no DB token row)',
+		)
+	})
+
 	it('does not expose Dropbox errors or credentials', async () => {
 		mocks.getUserAbilityForRequest.mockResolvedValue({
 			user: { id: 'user-admin' },
@@ -223,5 +244,50 @@ describe('Dropbox course manifest summary route', () => {
 		expect(JSON.stringify(body)).not.toContain('private-link')
 		expect(JSON.stringify(body)).not.toContain('stored-refresh-token')
 		expect(JSON.stringify(body)).not.toContain('app-secret')
+	})
+})
+
+describe('Dropbox OAuth callback DB storage notice', () => {
+	function callback() {
+		return new NextRequest(
+			'http://localhost:3000/api/integrations/dropbox?code=synthetic-code&state=synthetic-state',
+			{ headers: { cookie: 'dropbox_course_sync_state=synthetic-state' } },
+		)
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+		mocks.getDropboxSyncConfig.mockReturnValue({
+			config: sharedLinkConfig,
+			missingConfig: [],
+		})
+		mocks.exchangeDropboxAuthorizationCode.mockResolvedValue({
+			refreshToken: 'fresh-dropbox',
+			grantedScopes: [],
+		})
+		mocks.verifyDropboxConnection.mockResolvedValue({
+			ok: true,
+			requiredScopesPresent: true,
+			sharedFolderBoundary: { configured: true, verified: true },
+		})
+	})
+
+	it('renders the success page and stores nothing in Vercel', async () => {
+		mocks.storeDropboxRefreshToken.mockResolvedValue({ ok: true })
+		const response = await GET(callback())
+		expect(response.status).toBe(200)
+		const html = await response.text()
+		expect(html).toContain('<h1>Dropbox authorized</h1>')
+		expect(html).not.toContain('fresh-dropbox')
+		expect(html).not.toContain('could not be saved')
+	})
+
+	it('shows a visible error when the DB put fails', async () => {
+		mocks.storeDropboxRefreshToken.mockResolvedValue({ ok: false })
+		const html = await (await GET(callback())).text()
+		expect(html).toContain('Dropbox authorization was not stored')
+		expect(html).toContain('could not be saved')
+		expect(html).not.toContain('using env')
+		expect(html).not.toContain('fresh-dropbox')
 	})
 })

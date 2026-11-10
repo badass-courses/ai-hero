@@ -142,6 +142,76 @@ describe('checkout recovery command', () => {
 		expect(testRuntime.sendReplay).not.toHaveBeenCalled()
 	})
 
+	it.each(['ch_recovery', 'py_recovery'])(
+		'allows a completed paid session with expanded charge %s in either dry-run mode',
+		async (chargeId) => {
+			for (const direct of [false, true]) {
+				const testRuntime = runtime()
+				testRuntime.getCheckoutSession.mockResolvedValue({
+					...session,
+					payment_intent: {
+						id: 'pi_recovery',
+						latest_charge: {
+							id: chargeId,
+							refunded: false,
+							amount_refunded: 0,
+							disputed: false,
+						},
+					},
+				})
+				const receipt = await runCheckoutRecovery(args({ direct }), testRuntime)
+				expect(receipt).toMatchObject({
+					status: direct ? 'would_fulfill_direct' : 'would_replay',
+					success: true,
+					chargeId,
+					reason: null,
+				})
+				expect(testRuntime.inspect).toHaveBeenCalledWith({
+					checkoutSessionId: session.id,
+					chargeId,
+				})
+				expect(testRuntime.sendReplay).not.toHaveBeenCalled()
+				expect(testRuntime.fulfillDirect).not.toHaveBeenCalled()
+			}
+		},
+	)
+
+	it.each(['ch_recovery', 'py_recovery'])(
+		'extracts an unexpanded latest charge %s identically for replay',
+		async (chargeId) => {
+			const testRuntime = runtime()
+			testRuntime.getCheckoutSession.mockResolvedValue({
+				...session,
+				payment_intent: { id: 'pi_recovery', latest_charge: chargeId },
+			})
+			expect(await runCheckoutRecovery(args(), testRuntime)).toMatchObject({
+				status: 'would_replay', success: true, chargeId,
+			})
+			expect(testRuntime.inspect).toHaveBeenCalledWith({
+				checkoutSessionId: session.id, chargeId,
+			})
+			expect(testRuntime.sendReplay).not.toHaveBeenCalled()
+		},
+	)
+
+	it.each(['pi_recovery', 'cs_test_recovery', 'other_recovery'])(
+		'still refuses a latest charge identifier with unsupported prefix %s',
+		async (chargeId) => {
+			const testRuntime = runtime()
+			testRuntime.getCheckoutSession.mockResolvedValue({
+				...session,
+				payment_intent: { id: 'pi_recovery', latest_charge: { id: chargeId } },
+			})
+			expect(await runCheckoutRecovery(args(), testRuntime)).toMatchObject({
+				status: 'refused', success: false,
+				reason: 'Checkout session has no expanded Stripe charge',
+			})
+			expect(testRuntime.inspect).not.toHaveBeenCalled()
+			expect(testRuntime.sendReplay).not.toHaveBeenCalled()
+			expect(testRuntime.fulfillDirect).not.toHaveBeenCalled()
+		},
+	)
+
 	it('sends one deterministic checkout replay in apply mode', async () => {
 		const testRuntime = runtime()
 		const first = await runCheckoutRecovery(
@@ -202,7 +272,7 @@ describe('checkout recovery command', () => {
 		expect(testRuntime.sendReplay).not.toHaveBeenCalled()
 	})
 
-	it('refuses a refunded session in every mode', async () => {
+	it.each(['ch_recovery', 'py_recovery'])('refuses a refunded %s session in every mode', async (chargeId) => {
 		for (const mode of [args({ apply: true }), args({ apply: true, direct: true })]) {
 			const testRuntime = runtime()
 			testRuntime.getCheckoutSession = vi.fn().mockResolvedValue({
@@ -210,7 +280,7 @@ describe('checkout recovery command', () => {
 				payment_intent: {
 					id: 'pi_recovery',
 					latest_charge: {
-						id: 'ch_recovery',
+						id: chargeId,
 						refunded: true,
 						amount_refunded: 19_900,
 						disputed: false,

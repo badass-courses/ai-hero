@@ -8,6 +8,7 @@ import {
 } from '@/coursebuilder/protect-commerce-request'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { env } from '@/env.mjs'
+import { CHECKOUT_ASYNC_PAYMENT_SUCCEEDED_EVENT } from '@/inngest/events/checkout-async-payment'
 import { INVOICE_SHORTFALL_RECONCILE_EVENT } from '@/inngest/events/invoice-shortfall'
 import { inngest } from '@/inngest/inngest.server'
 import { createdCheckoutSessionId } from '@/lib/c5-pricing/checkout-siblings'
@@ -16,6 +17,7 @@ import {
 	trustedCountryFromHeaders,
 	withTrustedPricingCountry,
 } from '@/lib/c5-pricing/trusted-country'
+import { EARLY_ACCESS } from '@/lib/team-invoice/early-access'
 import { withSkill } from '@/server/with-skill'
 import { emitBuyPath } from '@/lib/buy-path/server'
 import { signBuyPathToken } from '@/lib/buy-path/token'
@@ -50,6 +52,15 @@ async function dispatchCashBalanceReconciliation(request: Request) {
 		signature,
 		env.STRIPE_WEBHOOK_SECRET,
 	)
+	if (
+		stripeEvent.type === 'invoice.payment_succeeded' &&
+		stripeEvent.data.object.metadata?.accessProvisioning === EARLY_ACCESS
+	) {
+		// Gate on the signed snapshot before any early-access DB or Stripe call.
+		// Ordinary payments must not depend on early-access infrastructure.
+		const { reconcileEarlyAccessPayment } = await import('@/lib/team-invoice/early-access-server')
+		await reconcileEarlyAccessPayment(stripeEvent.data.object.id)
+	}
 	if (stripeEvent.type === 'checkout.session.completed') {
 		const session = stripeEvent.data.object
 		try {
@@ -78,6 +89,31 @@ async function dispatchCashBalanceReconciliation(request: Request) {
 				/* Best effort only. */
 			}
 		}
+	}
+	// Course Builder only logs these. A bank transfer landed: fulfill it. Sent
+	// before gift settlement, so a Stripe read failure there cannot hold it up;
+	// a redelivery reuses the Stripe event id and is deduped.
+	if (
+		stripeEvent.type === 'checkout.session.async_payment_succeeded' &&
+		stripeEvent.data.object.mode === 'payment'
+	) {
+		await inngest.send({
+			id: stripeEvent.id,
+			name: CHECKOUT_ASYNC_PAYMENT_SUCCEEDED_EVENT,
+			data: {
+				checkoutSessionId: stripeEvent.data.object.id,
+				stripeEventId: stripeEvent.id,
+			},
+		})
+	}
+	if (stripeEvent.type === 'checkout.session.async_payment_failed') {
+		const session = stripeEvent.data.object
+		await log.warn('checkout.async_payment.failed', {
+			checkoutSessionId: session.id,
+			stripeEventId: stripeEvent.id,
+			productId: session.metadata?.productId ?? null,
+			amountTotal: session.amount_total ?? null,
+		})
 	}
 	if (
 		stripeEvent.type === 'checkout.session.expired' ||

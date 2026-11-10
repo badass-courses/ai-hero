@@ -7,12 +7,7 @@ import { SimplePostPlayer } from '@/app/(content)/posts/_components/post-player'
 import { reprocessTranscript } from '@/app/(content)/posts/[slug]/edit/actions'
 import { formatSeconds } from '@/components/video-chapters/chapter-utils'
 import { VideoChaptersEditor } from '@/components/video-chapters/video-chapters-editor'
-import { useSocket } from '@/hooks/use-socket'
 import { useTranscript } from '@/hooks/use-transcript'
-import {
-	VIDEO_ATTACHED_EVENT,
-	VIDEO_DETACHED_EVENT,
-} from '@/inngest/events/video-attachment'
 import {
 	createVideoAnalyticsBinding,
 	createVideoLibraryBinding,
@@ -187,65 +182,7 @@ export function CmsVideoField({
 		form.watch('fields.thumbnailTime') ?? null,
 	)
 
-	// Lifecycle socket — this VIDEO's room (asset ready, transcript ready).
-	useSocket({
-		room: videoResource?.id,
-		onMessage: async (messageEvent) => {
-			try {
-				const data = JSON.parse(messageEvent.data)
-				switch (data.name) {
-					case 'video.asset.ready':
-					case 'videoResource.created':
-						if (data.body.id) refetch()
-						break
-					case 'transcript.ready':
-						setTranscript(data.body)
-						setIsTranscriptProcessing(false)
-						refetch()
-						break
-					default:
-						break
-				}
-			} catch (error) {
-				// nothing to do
-			}
-		},
-	})
-
-	// Attachment socket — the OWNING resource's room (attach/detach
-	// broadcasts from the Inngest pipeline, e.g. Media tab "Set as primary").
-	useSocket({
-		room: resource.id || undefined,
-		onMessage: async (messageEvent) => {
-			try {
-				const message = JSON.parse(messageEvent.data)
-				if (message.name === VIDEO_ATTACHED_EVENT) {
-					const attachedId = message.body?.videoResourceId
-					if (attachedId) {
-						toast({ title: 'New video asset attached' })
-						setVideoResourceId(attachedId)
-						form.setValue('fields.videoResourceId', attachedId)
-						refetch()
-					}
-				}
-				if (message.name === VIDEO_DETACHED_EVENT) {
-					// Guard against a safe-swap race: detach(A) and attach(B) are
-					// separate async broadcasts, so a late detach for the PREVIOUS
-					// video must not wipe the just-attached one.
-					const detachedId = message.body?.videoResourceId
-					if (!detachedId || detachedId === videoResourceId) {
-						toast({ title: 'Video asset detached' })
-						setVideoResourceId(undefined)
-						form.setValue('fields.videoResourceId', undefined)
-					}
-				}
-			} catch (error) {
-				// nothing to do
-			}
-		},
-	})
-
-	// Poll the video resource until it settles (socket-miss safety net).
+	// Poll the video resource until it settles (there is no realtime channel).
 	React.useEffect(() => {
 		async function pollVideo() {
 			if (videoResource?.id) {

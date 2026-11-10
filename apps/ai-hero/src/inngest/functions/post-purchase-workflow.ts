@@ -27,8 +27,16 @@ import {
 } from '@/lib/included-product-entitlements'
 import { INCLUDED_PRODUCT_ENTITLEMENTS_RETRY_EVENT } from '@/inngest/events/included-product-entitlements'
 import { log } from '@/server/logger'
+import { getTeamInviteUrlForPurchase } from '@/lib/team-invite-url'
 import { verifyPurchase } from '@/lib/buy-path/verify-purchase'
-import type { BuyPathContext } from '@/lib/buy-path/schema'
+import {
+	countActiveDistinctCohortPurchasesForUser,
+	shouldSendLegendEvent,
+} from '@/lib/legend-cohort-count'
+import {
+	buyPathContextForCheckout,
+	type BuyPathContext,
+} from '@/lib/buy-path/schema'
 import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 
 import { guid } from '@coursebuilder/adapter-drizzle/mysql'
@@ -169,10 +177,13 @@ export const postPurchaseWorkflow = inngest.createFunction(
 		}
 
 		const verifyLast = async (context: BuyPathContext, expected: number) => {
-			await step.sleep('buy path readback settling delay', '10s')
-			return step.run('verify buy path persisted invariants', () =>
-				verifyPurchase(context, expected),
-			)
+			// Read-only telemetry: runs after the awaited writes, in no step of its
+			// own, and never throws or retries the purchase work.
+			try {
+				return await verifyPurchase(context, expected)
+			} catch {
+				return null
+			}
 		}
 		await tracePostPurchase('workflow.started', traceBase)
 
@@ -193,14 +204,10 @@ export const postPurchaseWorkflow = inngest.createFunction(
 			throw new Error(`purchase not found`)
 		}
 
-		const buyPath: BuyPathContext | null = traceBase.checkoutSessionId
-			? {
-					buyPathId: traceBase.checkoutSessionId,
-					purchaseId: purchase.id,
-					productId: purchase.productId,
-					userId: purchase.userId ?? null,
-				}
-			: null
+		const buyPath = buyPathContextForCheckout(
+			traceBase.checkoutSessionId,
+			purchase,
+		)
 
 		await tracePostPurchase('purchase.loaded', {
 			...traceBase,
@@ -518,6 +525,8 @@ export const postPurchaseWorkflow = inngest.createFunction(
 		}
 
 		const nonArchiveProductType = productType as ProductType
+		// Set by the org-membership step for cohort purchases; undefined means unknown.
+		let legendCohortCount: number | undefined
 
 		// Step 8: Gather all resource contexts from the product
 		await tracePostPurchase('resource_contexts.gathering', traceBase)
@@ -581,6 +590,11 @@ export const postPurchaseWorkflow = inngest.createFunction(
 				return null
 			})
 
+			const inviteUrl = getTeamInviteUrlForPurchase(
+				purchase,
+				env.NEXT_PUBLIC_URL,
+			)
+
 			// Send welcome email for each resource context
 			for (const context of resourceContexts) {
 				const resourceData = resourceDataMap[context.resourceId]
@@ -608,6 +622,7 @@ export const postPurchaseWorkflow = inngest.createFunction(
 								Component: WelcomeCohortEmailForTeam,
 								componentProps: {
 									welcomeDetails,
+									inviteUrl,
 									cohortTitle:
 										parsedResource.fields?.title || parsedResource.fields?.slug,
 									url: contentUrl,
@@ -636,6 +651,7 @@ export const postPurchaseWorkflow = inngest.createFunction(
 									workshopTitle:
 										parsedResource.fields?.title || parsedResource.fields?.slug,
 									url: contentUrl,
+									inviteUrl,
 									quantity: bulkCoupon?.maxUses || 1,
 									userFirstName: user.name?.split(' ')[0],
 								},
@@ -673,9 +689,16 @@ export const postPurchaseWorkflow = inngest.createFunction(
 					isFullPriceCouponRedemption,
 				})
 
-				const { organizationId, orgMembership } = await step.run(
-					`ensure org membership`,
-					async () => {
+				const { organizationId, orgMembership, activeCohortCount } =
+					await step.run(`ensure org membership`, async () => {
+						// Same count the legend function uses; unknown keeps the event.
+						const activeCohortCount: number | undefined =
+							productType === 'cohort'
+								? await countActiveDistinctCohortPurchasesForUser(
+										user.id,
+									).catch(() => undefined)
+								: undefined
+
 						// Determine who invited this user - for full price coupon redemptions,
 						// it should be the original bulk purchaser
 						const invitedById =
@@ -705,6 +728,7 @@ export const postPurchaseWorkflow = inngest.createFunction(
 							return {
 								organizationId: purchase.organizationId,
 								orgMembership,
+								activeCohortCount,
 							}
 						} else {
 							// No organizationId on purchase - ensure user has personal org
@@ -720,10 +744,12 @@ export const postPurchaseWorkflow = inngest.createFunction(
 							return {
 								organizationId: personalOrgResult.organization.id,
 								orgMembership: personalOrgResult.membership,
+								activeCohortCount,
 							}
 						}
-					},
-				)
+					})
+
+				legendCohortCount = activeCohortCount
 
 				await tracePostPurchase('org_membership.ensured', {
 					...traceBase,
@@ -993,7 +1019,7 @@ export const postPurchaseWorkflow = inngest.createFunction(
 			}
 		}
 
-		if (productType === 'cohort') {
+		if (productType === 'cohort' && shouldSendLegendEvent(legendCohortCount)) {
 			await tracePostPurchase('legend_role_event.sending', {
 				...traceBase,
 				userId: user.id,

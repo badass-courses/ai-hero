@@ -2,6 +2,7 @@ import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { db } from '@/db'
 import { c5DecisionCutover } from '@/lib/c5-pricing/config'
 import { signedGiftFact } from '@/lib/c5-pricing/gift-server'
+import { isStripeChargeId } from '@/lib/stripe-charge-id'
 import type { FrontDeskHooks } from '@ai-hero/front-desk-support'
 import type { StripePaymentAdapter } from '@coursebuilder/commerce/stripe-provider'
 import { Effect } from 'effect'
@@ -51,7 +52,7 @@ export const hooks: FrontDeskHooks = {
 					? purchase.bulkCoupon.maxUses
 					: 1,
 			merchantChargeId: purchase.merchantChargeId ?? null,
-			stripeChargeId: purchase.merchantCharge?.identifier.startsWith('ch_')
+			stripeChargeId: isStripeChargeId(purchase.merchantCharge?.identifier)
 				? purchase.merchantCharge.identifier
 				: null,
 		}))

@@ -78,6 +78,91 @@ describe('sendGA4Event', () => {
 		expect(fetchMock).toHaveBeenCalledTimes(1)
 	})
 
+	it('trims a trailing LF from the API secret in the request URL', async () => {
+		process.env = {
+			...OLD_ENV,
+			NEXT_PUBLIC_GOOGLE_ANALYTICS: 'G-TEST',
+			GA4_MEASUREMENT_API_SECRET: 'test-secret\n',
+		}
+		const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+		vi.stubGlobal('fetch', fetchMock)
+
+		await sendGA4Event({
+			client_id: '12345.67890',
+			events: [{ name: 'purchase' }],
+		})
+
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+		const requestUrl = fetchMock.mock.calls[0]![0] as string
+		expect(requestUrl).not.toContain('%0A')
+		expect(new URL(requestUrl).searchParams.get('api_secret')).toBe('test-secret')
+	})
+
+	it.each(['GA4_MEASUREMENT_API_SECRET', 'NEXT_PUBLIC_GOOGLE_ANALYTICS'])(
+		'skips fetch when %s contains only whitespace',
+		async (key) => {
+			process.env = {
+				...OLD_ENV,
+				NEXT_PUBLIC_GOOGLE_ANALYTICS: 'G-TEST',
+				GA4_MEASUREMENT_API_SECRET: 'test-secret',
+				[key]: ' \t\n ',
+			}
+			const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+			vi.stubGlobal('fetch', fetchMock)
+
+			const result = await sendGA4Event({
+				client_id: '12345.67890',
+				events: [{ name: 'purchase' }],
+			})
+
+			expect(result).toMatchObject({
+				status: 'skipped_missing_config',
+				reason: 'GA4 Measurement Protocol config missing',
+			})
+			expect(fetchMock).not.toHaveBeenCalled()
+		},
+	)
+
+	it('trims surrounding spaces from the measurement id in the request URL', async () => {
+		process.env = {
+			...OLD_ENV,
+			NEXT_PUBLIC_GOOGLE_ANALYTICS: ' G-TEST ',
+			GA4_MEASUREMENT_API_SECRET: 'test-secret',
+		}
+		const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+		vi.stubGlobal('fetch', fetchMock)
+
+		await sendGA4Event({
+			client_id: '12345.67890',
+			events: [{ name: 'purchase' }],
+		})
+
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+		const requestUrl = new URL(fetchMock.mock.calls[0]![0] as string)
+		expect(requestUrl.searchParams.get('measurement_id')).toBe('G-TEST')
+	})
+
+	it('returns a failed receipt when fetch rejects', async () => {
+		process.env = {
+			...OLD_ENV,
+			NEXT_PUBLIC_GOOGLE_ANALYTICS: 'G-TEST',
+			GA4_MEASUREMENT_API_SECRET: 'test-secret',
+		}
+		vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network error')))
+
+		const result = await sendGA4Event({
+			client_id: '12345.67890',
+			events: [{ name: 'purchase' }],
+		})
+
+		expect(result).toMatchObject({
+			status: 'failed',
+			reason: 'Network error',
+			eventNames: ['purchase'],
+			eventCount: 1,
+		})
+	})
+
 	it('returns a failed receipt when GA4 rejects the event', async () => {
 		process.env = {
 			...OLD_ENV,

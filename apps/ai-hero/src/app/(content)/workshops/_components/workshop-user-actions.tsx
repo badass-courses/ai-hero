@@ -6,7 +6,7 @@ import { BADGE_NEUTRAL, TYPE } from '@/components/landing/type'
 import { Share } from '@/components/share'
 import Spinner from '@/components/spinner'
 import { getFirstResourceSlug } from '@/lib/content-navigation'
-import { MinimalWorkshop } from '@/lib/workshops'
+import { workshopAwardsCertificate, type MinimalWorkshop } from '@/lib/workshops'
 import { formatInTimeZone } from 'date-fns-tz'
 import { Github, Share2 } from 'lucide-react'
 import { useSession } from 'next-auth/react'
@@ -70,7 +70,8 @@ export function StartLearningWorkshopButton({
 	// missed by learners who never came back to this page. Every lesson done
 	// means the viewer had access, whatever the ability says now (a lapsed
 	// cohort, an admin without a purchase), so this outranks the access states.
-	if (moduleProgress?.percentCompleted === 100) {
+	const isFinished = moduleProgress?.percentCompleted === 100
+	if (isFinished && workshopAwardsCertificate(workshop.fields)) {
 		return (
 			<ModuleCertificate.Root resourceIdOrSlug={moduleSlug}>
 				<ModuleCertificate.Trigger
@@ -127,7 +128,13 @@ export function StartLearningWorkshopButton({
 			<Link prefetch href={url}>
 				{!moduleProgress && 'Loading...'}
 				{moduleProgress && (
-					<>{isWorkshopInProgress ? 'Continue Learning' : 'Start Learning'}</>
+					<>
+						{isWorkshopInProgress
+							? 'Continue Learning'
+							: isFinished
+								? 'Watch Again'
+								: 'Start Learning'}
+					</>
 				)}
 			</Link>
 		</Button>

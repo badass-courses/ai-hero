@@ -4,9 +4,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
 	getShortlinkBySlug: vi.fn(),
 	recordClick: vi.fn(),
+	after: vi.fn(),
 	log: {
 		error: vi.fn(),
 	},
+}))
+
+vi.mock('next/server', async (importOriginal) => ({
+	...await importOriginal<typeof import('next/server')>(),
+	after: mocks.after,
 }))
 
 vi.mock('@/lib/shortlinks-query', () => ({
@@ -16,6 +22,14 @@ vi.mock('@/lib/shortlinks-query', () => ({
 
 vi.mock('@/server/logger', () => ({
 	log: mocks.log,
+}))
+
+vi.mock('@/lib/c5-pricing/gift-share', () => ({
+	giftSharePresentation: vi.fn(),
+}))
+
+vi.mock('@/env.mjs', () => ({
+	env: { NEXTAUTH_SECRET: 'synthetic-cookie-key' },
 }))
 
 import { GET, buildShortlinkRedirectUrl } from './route'
@@ -55,8 +69,38 @@ describe('buildShortlinkRedirectUrl', () => {
 })
 
 describe('/s/[slug] redirect', () => {
+	it('does not schedule a click for a missing shortlink', async () => {
+		mocks.getShortlinkBySlug.mockResolvedValueOnce(null)
+		const response = await GET(new NextRequest('https://www.aihero.dev/s/missing'), {
+			params: Promise.resolve({ slug: 'missing' }),
+		})
+		expect(response.status).toBe(404)
+		expect(mocks.after).not.toHaveBeenCalled()
+		expect(mocks.recordClick).not.toHaveBeenCalled()
+	})
+
+	it('keeps the redirect and logs a rejected deferred click', async () => {
+		mocks.getShortlinkBySlug.mockResolvedValueOnce({
+			id: 'shortlink_test', slug: 'test', metadata: null,
+			url: 'https://www.aihero.dev/courses',
+		})
+		mocks.recordClick.mockRejectedValueOnce(new Error('synthetic write failure'))
+		const response = await GET(new NextRequest('https://www.aihero.dev/s/test'), {
+			params: Promise.resolve({ slug: 'test' }),
+		})
+		expect(response.status).toBe(307)
+		expect(mocks.recordClick).not.toHaveBeenCalled()
+		await expect(mocks.after.mock.calls[0]![0]()).resolves.toBeUndefined()
+		expect(mocks.log.error).toHaveBeenCalledWith('shortlink.click.record.failed', {
+			slug: 'test', error: 'Error: synthetic write failure',
+		})
+	})
+
 	it('redirects with preserved paid click evidence and sets sl_ref', async () => {
 		mocks.getShortlinkBySlug.mockResolvedValue({
+			id: 'shortlink_ads',
+			slug: 'ads-c004-claude-workflows',
+			metadata: null,
 			url: 'https://www.aihero.dev/_campaign/ai-coding/claude-code-workflows?utm_source=google&utm_medium=cpc&utm_campaign=c004_search_smoke_test&utm_content=manifest_value',
 		})
 
@@ -77,9 +121,14 @@ describe('/s/[slug] redirect', () => {
 		expect(response.cookies.get('sl_ref')?.value).toBe(
 			'ads-c004-claude-workflows',
 		)
+		expect(mocks.recordClick).not.toHaveBeenCalled()
+		expect(mocks.after).toHaveBeenCalledOnce()
+		expect(mocks.after).toHaveBeenCalledWith(expect.any(Function))
+		await mocks.after.mock.calls[0]![0]()
 		expect(mocks.recordClick).toHaveBeenCalledWith(
 			'ads-c004-claude-workflows',
 			expect.objectContaining({ referrer: null }),
+			expect.objectContaining({ id: 'shortlink_ads', metadata: null }),
 		)
 	})
 })

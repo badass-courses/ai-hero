@@ -70,7 +70,7 @@
 			"name": "ambiguous credit and held credit use",
 			"valid": true,
 			"facts": {
-				"alumni": { "value": "both", "sourceRefs": ["test:c3", "test:c4"] },
+				"alumni": { "value": "multiple", "sourceRefs": ["test:c3", "test:c4"] },
 				"credit": { "gap": "PaymentAmbiguous" },
 				"creditUse": { "gap": "FactsUnavailable" },
 				"existingSeats": { "value": 0, "sourceRefs": ["test:scan"] },

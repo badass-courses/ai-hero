@@ -7,7 +7,9 @@ import { APP_REASONS } from './reasons'
  * buy button only knows pending, error and sold out, so a `bounded` or closed
  * authoritative decision would stay clickable; every buy button reads this.
  *
- * - `buy`: a legacy price or a chargeable decision.
+ * - `buy`: a legacy price or a chargeable decision, or the one bounded
+ *   regional price that waits only on the Crash Course credit. Checkout
+ *   charges that bound (`isPppCreditBound`).
  * - `sign-in`: nobody is signed in, so the price is an upper bound. The button
  *   keeps its own label and stays enabled: buying is still what it does, and
  *   checkout sends an anonymous buyer to sign in first and prices them fresh
@@ -42,6 +44,11 @@ export function purchaseGate(
 	) {
 		return { kind: 'sign-in', upperBound: true }
 	}
+	if (
+		decision.kind === 'bounded' &&
+		decision.reasons.includes(APP_REASONS.pppCreditBound)
+	)
+		return { kind: 'buy', upperBound: false }
 	if (decision.reasons.includes(APP_REASONS.restrictedHolder)) {
 		return {
 			kind: 'support',

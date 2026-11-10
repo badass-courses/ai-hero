@@ -246,13 +246,22 @@ export function collectCourseSyncTargetViolations(
 			expected: childKind,
 			actual: child.resource?.type,
 		})
-		addMismatch(violations, {
-			code: 'TARGET_CHILD_STATE_MISMATCH',
-			target,
-			field: 'state',
-			expected: childContract.state,
-			actual: fields.state,
-		})
+		// A misplaced lesson is still subject to the draft-only lesson contract.
+		const stateContract = child.resource?.type === 'lesson'
+			? managedChildContractFor(binding, 'lesson') ?? childContract
+			: childContract
+		const allowedStates: readonly string[] = typeof stateContract.state === 'string'
+			? [stateContract.state]
+			: stateContract.state
+		if (!allowedStates.includes(String(fields.state))) {
+			violations.push({
+				code: 'TARGET_CHILD_STATE_MISMATCH',
+				target,
+				field: 'state',
+				expected: allowedStates.join(' or '),
+				actual: scalar(fields.state),
+			})
+		}
 		addMismatch(violations, {
 			code: 'TARGET_CHILD_VISIBILITY_MISMATCH',
 			target,

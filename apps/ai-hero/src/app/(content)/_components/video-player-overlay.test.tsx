@@ -467,6 +467,27 @@ describe('VideoPlayerOverlay', () => {
 		input.remove()
 	})
 
+	it('offers no certificate for a workshop that awards none', async () => {
+		mocks.navigation.mockReturnValue({
+			id: 'workshop-1',
+			fields: { slug: 'test', title: 'Before We Start', certificate: false },
+		})
+		mocks.overlay.mockReturnValue({
+			state: {
+				action: {
+					type: 'COMPLETED',
+					isModuleComplete: true,
+					resource,
+					playerRef: { current: { play: vi.fn() } },
+				},
+			},
+			dispatch: vi.fn(),
+		})
+		const html = (await renderOverlay()).innerHTML
+		expect(html).toContain('Great job!')
+		expect(html).not.toContain('Get your certificate')
+	})
+
 	it.each([
 		[false, 1],
 		[true, 0],

@@ -1,4 +1,6 @@
 import { Suspense } from 'react'
+import { C5SaleCta } from '@/components/c5-sale-cta'
+import { C5SaleSwitch } from '@/components/c5-sale-switch'
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
@@ -96,6 +98,10 @@ export default async function SkillsPage() {
 					<SkillSet groups={skillGroups} />
 
 					<SkillsSalesCopy />
+
+					<C5SaleSwitch>
+						<C5SaleCta />
+					</C5SaleSwitch>
 
 					<section aria-labelledby="changelog-heading" className="border-b">
 						<div className="px-[18px] pb-[50px] pt-12 sm:px-11">

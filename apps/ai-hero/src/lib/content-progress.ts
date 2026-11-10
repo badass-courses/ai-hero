@@ -4,6 +4,11 @@ import { contentRead, contentResource, shortlink } from '@/db/schema'
 import { getServerAuthSession } from '@/server/auth'
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
+import {
+	fitColumn,
+	REFERRER_LENGTH,
+	USER_AGENT_LENGTH,
+} from '@/lib/fit-column'
 
 export const ContentProgressEventSchema = z.object({
 	schemaVersion: z.literal(1),
@@ -187,8 +192,8 @@ export async function captureContentProgress(input: unknown) {
 				type: parsed.contentType,
 			},
 			pathname: parsed.pathname,
-			referrer: headerStore.get('referer'),
-			userAgent: userAgent?.slice(0, 500) ?? null,
+			referrer: fitColumn(headerStore.get('referer'), REFERRER_LENGTH) ?? null,
+			userAgent: fitColumn(userAgent, USER_AGENT_LENGTH) ?? null,
 			country: headerStore.get('x-vercel-ip-country'),
 			clientEventId: parsed.clientEventId,
 			semanticIdempotencyKey,

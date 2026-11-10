@@ -13,6 +13,7 @@ import {
 	type CourseSyncFrozenAssetBatch,
 } from './freeze-batches'
 import type { FrozenSourceAsset } from './types'
+import type { UndrawnImage } from './undrawn-images'
 
 import { CourseSyncError, asCourseSyncError } from './errors'
 import {
@@ -129,6 +130,9 @@ export type CourseSyncNotification =
 			mediaCount: number
 			planSha256: string
 			autoApplyReason: string
+			reasonCode?: string
+			affectedLessons?: ReadonlyArray<{ title: string; progressCount: number }>
+			minutesWaiting?: number
 	  }
 	| {
 			kind: 'failure'
@@ -160,6 +164,7 @@ export type CourseSyncSlackNotificationPayload = {
 		title: string
 		text: string
 		fields: Array<{ title: string; value: string; short: boolean }>
+		mrkdwn_in?: Array<'fields'>
 	}>
 }
 
@@ -191,7 +196,10 @@ export type CourseSyncDetectionPollerDependencies = {
 	evaluateBoundedAutoApply(
 		runId: string,
 	): Promise<CourseSyncBoundedAutoApplyDecision>
+	scheduleStaleReminder?(input: import('@/inngest/events/course-sync-stale-preview').CourseSyncStalePreviewData): Promise<void>
+	getReviewNotificationDeliveredAt?(input: { bindingId: string; courseVersionId: string; planSha256: string }): Promise<Date | null>
 	claimReviewNotification(input: {
+		kind?: 'review' | 'stale-preview'
 		bindingId: string
 		courseVersionId: string
 		providerRevision: string
@@ -201,6 +209,7 @@ export type CourseSyncDetectionPollerDependencies = {
 		occurredAt: Date
 	}): Promise<boolean>
 	completeReviewNotification(input: {
+		kind?: 'review' | 'stale-preview'
 		bindingId: string
 		courseVersionId: string
 		providerRevision: string
@@ -210,6 +219,7 @@ export type CourseSyncDetectionPollerDependencies = {
 		occurredAt: Date
 	}): Promise<void>
 	failReviewNotification(input: {
+		kind?: 'review' | 'stale-preview'
 		bindingId: string
 		courseVersionId: string
 		providerRevision: string
@@ -442,9 +452,27 @@ function compactFailureReason(reason: string) {
 	return compact.length > 160 ? `${compact.slice(0, 157)}...` : compact
 }
 
+/** The lessons with images still waiting on a redraw, each image a link. */
+function undrawnImagesValue(images: ReadonlyArray<UndrawnImage>) {
+	const lessons = new Map<string, string[]>()
+	for (const image of images) {
+		const title = (image.title ?? image.id)
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+		const links = lessons.get(title) ?? []
+		links.push(`<${image.url}|image ${links.length + 1}>`)
+		lessons.set(title, links)
+	}
+	return [...lessons]
+		.map(([title, links]) => `${title}: ${links.join(', ')}`)
+		.join('\n')
+}
+
 export function buildCourseSyncNotificationPayload(
 	notification: CourseSyncNotification,
 	narration?: string | null,
+	undrawnImages: ReadonlyArray<UndrawnImage> = [],
 ): CourseSyncSlackNotificationPayload {
 	const versionLabel = courseSyncVersionLabel(
 		notification.courseVersionId,
@@ -460,7 +488,7 @@ export function buildCourseSyncNotificationPayload(
 		const headline = narration?.trim()
 			? `${narration.trim()} ${SHITRAT_MARK}`
 			: facts
-		const text = `${headline} ${permalink}`
+		const text = `Live: ${headline} ${permalink}`
 		return {
 			username: COURSE_SYNC_SLACK_USERNAME,
 			icon_emoji: COURSE_SYNC_SLACK_ICON_EMOJI,
@@ -471,6 +499,9 @@ export function buildCourseSyncNotificationPayload(
 					color: '#2eb67d',
 					title: 'AI Hero course sync applied',
 					text: `<${notification.editor.url}|${notification.editor.label}>`,
+					// The redraw asks link each image; Slack formats field values
+					// only when asked to.
+					mrkdwn_in: ['fields'],
 					fields: [
 						{
 							title: 'Course version',
@@ -509,6 +540,15 @@ export function buildCourseSyncNotificationPayload(
 							value: String(notification.mediaCount),
 							short: true,
 						},
+						...(undrawnImages.length > 0
+							? [
+									{
+										title: `Not redrawn yet (${undrawnImages.length})`,
+										value: undrawnImagesValue(undrawnImages),
+										short: false,
+									},
+								]
+							: []),
 					],
 				},
 			],
@@ -516,7 +556,10 @@ export function buildCourseSyncNotificationPayload(
 	}
 
 	if (notification.kind === 'review') {
-		const text = `Course sync preview ready for operator apply: ${versionLabel}. No course-content writes were made. ${permalink}`
+		const escape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+		const lessons = notification.affectedLessons?.map((item) => `${escape(item.title)} (${item.progressCount} learners with progress)`).join('; ')
+		const reminder = notification.minutesWaiting === undefined ? '' : `Reminder: waiting ${notification.minutesWaiting} minutes. `
+		const text = `${reminder}Course sync preview ready for operator apply: ${versionLabel}. Waiting on: ${notification.autoApplyReason} Joel can unblock it, or Matt with Joel's OK.${lessons ? ` Lessons removed or moved: ${lessons}.` : ''} No course-content writes were made. ${permalink}`
 		return {
 			username: COURSE_SYNC_SLACK_USERNAME,
 			icon_emoji: COURSE_SYNC_SLACK_ICON_EMOJI,
@@ -544,6 +587,7 @@ export function buildCourseSyncNotificationPayload(
 							value: notification.autoApplyReason,
 							short: true,
 						},
+						{ title: 'Reason code', value: notification.reasonCode ?? 'OPERATOR_APPLY_REQUIRED', short: true },
 						{
 							title: 'Sync run',
 							value: notification.controlPlaneRunId,
@@ -805,6 +849,8 @@ export function createCourseSyncDetectionPoller(
 		const notifyReview = async (
 			syncRun: CourseSyncRunSummary,
 			autoApplyReason: string,
+			decision?: Extract<CourseSyncBoundedAutoApplyDecision, { eligible: false }>,
+			minutesWaiting?: number,
 		) => {
 			if (!syncRun.planSha256) {
 				throw new CourseSyncError(
@@ -815,6 +861,7 @@ export function createCourseSyncDetectionPoller(
 				)
 			}
 			const reviewReceipt = {
+				kind: minutesWaiting === undefined ? 'review' as const : 'stale-preview' as const,
 				bindingId,
 				courseVersionId,
 				providerRevision,
@@ -822,6 +869,17 @@ export function createCourseSyncDetectionPoller(
 				controlPlaneRunId: syncRun.runId,
 				planSha256: syncRun.planSha256,
 				occurredAt: clock(),
+			}
+			const scheduleReminder = async (heldAt: Date) => {
+				if (minutesWaiting !== undefined || !dependencies.scheduleStaleReminder) return
+				try {
+					await dependencies.scheduleStaleReminder({ bindingId, courseVersionId,
+						controlPlaneRunId: syncRun.runId, planSha256: syncRun.planSha256!, heldAt: heldAt.toISOString() })
+				} catch (error) {
+					await log({ bindingId, courseVersionId, providerRevision, runId, controlPlaneRunId: syncRun.runId,
+						stage: 'notify', outcome: 'failed', failureClass: courseSyncFailureClass(error),
+						metadata: { reason: 'stale-reminder-dispatch-failed' } })
+				}
 			}
 			const claimed = await dependencies.claimReviewNotification(reviewReceipt)
 			if (!claimed) {
@@ -838,6 +896,10 @@ export function createCourseSyncDetectionPoller(
 						planSha256: syncRun.planSha256,
 					},
 				})
+				if (minutesWaiting === undefined && dependencies.getReviewNotificationDeliveredAt) {
+					const deliveredAt = await dependencies.getReviewNotificationDeliveredAt(reviewReceipt)
+					if (deliveredAt) await scheduleReminder(deliveredAt)
+				}
 				return
 			}
 			try {
@@ -853,6 +915,9 @@ export function createCourseSyncDetectionPoller(
 					mediaCount: mediaCount(syncRun),
 					planSha256: syncRun.planSha256,
 					autoApplyReason,
+					reasonCode: decision?.failureCode ?? 'OPERATOR_APPLY_REQUIRED',
+					affectedLessons: decision?.affectedLessons,
+					minutesWaiting,
 				})
 			} catch (error) {
 				const failureClass = courseSyncFailureClass(error)
@@ -899,6 +964,12 @@ export function createCourseSyncDetectionPoller(
 				})
 				return
 			}
+			if (minutesWaiting === undefined) {
+				const deliveredAt = dependencies.getReviewNotificationDeliveredAt
+					? await dependencies.getReviewNotificationDeliveredAt(reviewReceipt)
+					: clock()
+				if (deliveredAt) await scheduleReminder(deliveredAt)
+			}
 			await log({
 				bindingId,
 				courseVersionId,
@@ -908,7 +979,10 @@ export function createCourseSyncDetectionPoller(
 				stage: 'notify',
 				outcome: 'succeeded',
 				metadata: {
-					reason: 'awaiting-operator-apply',
+					reason: minutesWaiting === undefined ? 'awaiting-operator-apply' : 'course-sync.stale-preview',
+					reasonCode: decision?.failureCode ?? 'OPERATOR_APPLY_REQUIRED',
+					humanReason: autoApplyReason,
+					minutesWaiting,
 					planSha256: syncRun.planSha256,
 				},
 			})
@@ -1039,9 +1113,17 @@ export function createCourseSyncDetectionPoller(
 						...state,
 						status: 'awaiting-apply',
 						applyPolicyOverride: effectiveApplyPolicyOverride(state, dependencies.binding),
-						updatedAt: clock(),
+						updatedAt: state.updatedAt,
 					})
-					await notifyReview(currentRun, 'awaiting-operator-apply')
+					const evaluated = await dependencies.evaluateBoundedAutoApply(currentRun.runId)
+					const heldDecision = evaluated.eligible === false ? evaluated : undefined
+					const reason = heldDecision?.reason ?? 'Waiting for operator apply.'
+					await notifyReview(currentRun, reason, heldDecision)
+					const deliveredAt = dependencies.getReviewNotificationDeliveredAt
+						? await dependencies.getReviewNotificationDeliveredAt({ bindingId, courseVersionId, planSha256: currentRun.planSha256! })
+						: state.updatedAt
+					const minutesWaiting = deliveredAt ? Math.floor((clock().getTime() - deliveredAt.getTime()) / 60_000) : 0
+					if (minutesWaiting >= 15) await notifyReview(currentRun, reason, heldDecision, minutesWaiting)
 					await log({
 						bindingId,
 						courseVersionId,
@@ -1466,7 +1548,8 @@ export function createCourseSyncDetectionPoller(
 						syncRun,
 						autoDecision?.eligible === false
 							? autoDecision.reason
-							: 'operator-policy-or-preview-state',
+							: 'Waiting for operator apply.',
+						autoDecision?.eligible === false ? autoDecision : undefined,
 					)
 					return {
 						outcome: 'awaiting-apply',
@@ -1534,6 +1617,8 @@ export function createCourseSyncDetectionPoller(
 			})
 
 			activeStage = 'notify'
+			let liveNoticeDelivered = false
+			try {
 			await dependencies.notify({
 				kind: 'success',
 				courseVersionId,
@@ -1560,7 +1645,14 @@ export function createCourseSyncDetectionPoller(
 					dependencies.resolveEditorLink ?? defaultEditorLink
 				)(dependencies.binding, courseVersionId),
 			})
-			await log({
+			liveNoticeDelivered = true
+			} catch (error) {
+				await log({ bindingId, courseVersionId, providerRevision, runId, controlPlaneRunId,
+					stage: 'notify', outcome: 'failed', failureClass: courseSyncFailureClass(error),
+					metadata: { reason: 'live-notice-delivery-failed', applied: true },
+				}).catch(() => undefined)
+			}
+			if (liveNoticeDelivered) await log({
 				bindingId,
 				courseVersionId,
 				providerRevision,

@@ -4,7 +4,11 @@ import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { withVideoChapters } from '@/lib/cms/video-chapters-slot'
 import { createWorkshopBindings } from '@/lib/cms/workshop-bindings'
-import { WorkshopSchema, type Workshop } from '@/lib/workshops'
+import {
+	workshopAwardsCertificate,
+	WorkshopSchema,
+	type Workshop,
+} from '@/lib/workshops'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
 import { createResourceEditor, workshopManifest } from '@coursebuilder/ui/cms'
@@ -36,6 +40,34 @@ export function EditWorkshopClient({
 				// Chapters for any video opened in the Media tab (see withVideoChapters).
 				media: withVideoChapters(workshopManifest.media),
 				schema: WorkshopSchema,
+				// The certificate switch is this app's: only it has certificates.
+				defaultValues: (resource: any) => {
+					const values = workshopManifest.defaultValues?.(resource) ?? resource
+					return {
+						...values,
+						fields: {
+							...values.fields,
+							certificate: workshopAwardsCertificate(values.fields),
+						},
+					}
+				},
+				tabs: workshopManifest.tabs.map((tab) =>
+					tab.label === 'Content'
+						? {
+								...tab,
+								fields: [
+									...tab.fields,
+									{
+										kind: 'checkbox',
+										name: 'fields.certificate',
+										label: 'Certificate',
+										text: 'Finishing this workshop earns a certificate',
+										hint: 'Turn off for setup material such as "Before We Start".',
+									},
+								],
+							}
+						: tab,
+				),
 				// A second body for the team story (`/workshops/[slug]/for-teams`),
 				// the way a cohort carries its post-purchase copy. Declared here
 				// rather than in the kit because only this app has the route.

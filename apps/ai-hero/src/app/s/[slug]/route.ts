@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { after, NextRequest, NextResponse } from 'next/server'
 import { getShortlinkBySlug, recordClick } from '@/lib/shortlinks-query'
 import { log } from '@/server/logger'
 import { env } from '@/env.mjs'
@@ -105,18 +105,20 @@ export async function GET(
 		const country = request.headers.get('x-vercel-ip-country')
 		const device = parseDevice(userAgent)
 
-		// Record click asynchronously - don't wait for it
-		recordClick(slug, {
-			referrer,
-			userAgent,
-			country,
-			device,
-		}).catch((error) => {
-			log.error('shortlink.click.record.failed', {
-				slug,
-				error: String(error),
-			})
-		})
+		// Keep click recording alive after returning the redirect.
+		after(() =>
+			recordClick(slug, {
+				referrer,
+				userAgent,
+				country,
+				device,
+			}, link).catch((error) => {
+				log.error('shortlink.click.record.failed', {
+					slug,
+					error: String(error),
+				})
+			}),
+		)
 
 		// Set attribution cookie and redirect
 		const redirectUrl = buildShortlinkRedirectUrl(link.url, request.url)

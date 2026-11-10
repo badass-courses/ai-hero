@@ -1,3 +1,4 @@
+import { readMagicLinkFragment } from '@/server/magic-link-fragment'
 import { describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -43,9 +44,18 @@ vi.mock('next-auth/providers/postmark', () => ({
 
 import { PostmarkSendError } from '@coursebuilder/email/send-verification-request'
 
-import { emailProvider, magicLinkIdentity } from './email-provider'
+import { emailProvider, loginEmailProvider, magicLinkIdentity } from './email-provider'
 
 describe('magic-link identity port', () => {
+	it('limits requested login links to one hour without shortening buyer emails', () => {
+		expect(loginEmailProvider.maxAge).toBe(3600)
+		expect(loginEmailProvider.options.maxAge).toBe(3600)
+		expect(emailProvider.options?.maxAge).toBe(86400)
+		expect(loginEmailProvider.options.sendVerificationRequest).toBe(
+			emailProvider.options?.sendVerificationRequest,
+		)
+	})
+
 	it('mints first-time recipients through the personal-org boundary', async () => {
 		mocks.findOrCreateUserWithPersonalOrg.mockResolvedValue({
 			user: { id: 'u1', email: 'new@example.test' },
@@ -63,19 +73,40 @@ describe('magic-link identity port', () => {
 	})
 
 	it('hands that port to sendVerificationRequest', async () => {
-		const options = (
-			emailProvider as unknown as {
-				options: { sendVerificationRequest: (p: unknown) => Promise<void> }
-			}
-		).options
-		const params = { identifier: 'new@example.test' }
+		const options = (emailProvider as unknown as { options: { sendVerificationRequest: (p: unknown) => Promise<void> } }).options
+		const params = {
+			identifier: 'new@example.test',
+			url: 'https://www.aihero.dev/api/auth/callback/postmark?callbackUrl=https%3A%2F%2Fwww.aihero.dev%2Fwelcome&token=one-time-token&email=new%40example.test',
+		}
 
 		await options.sendVerificationRequest(params)
 
 		expect(mocks.sendVerificationRequest).toHaveBeenCalledWith(
-			params,
+			expect.objectContaining({ identifier: 'new@example.test' }),
 			magicLinkIdentity,
 		)
+	})
+
+	it('emails a fragment link with no secrets in the query string', async () => {
+		mocks.sendVerificationRequest.mockClear()
+		const options = (emailProvider as unknown as { options: { sendVerificationRequest: (p: unknown) => Promise<void> } }).options
+
+		await options.sendVerificationRequest({
+			identifier: 'new@example.test',
+			url: 'https://www.aihero.dev/api/auth/callback/postmark?callbackUrl=https%3A%2F%2Fwww.aihero.dev%2Fwelcome&token=one-time-token&email=new%40example.test',
+		})
+
+		const sent = new URL(
+			mocks.sendVerificationRequest.mock.calls[0]![0].url as string,
+		)
+		expect(sent.pathname).toBe('/login/verify')
+		expect(sent.search).toBe('')
+		expect(sent.toString()).not.toMatch(/\?[^#]*(token|email|callbackUrl)=/)
+		expect(readMagicLinkFragment(sent.hash)).toEqual({
+			token: 'one-time-token',
+			email: 'new@example.test',
+			callbackUrl: 'https://www.aihero.dev/welcome',
+		})
 	})
 })
 
@@ -86,6 +117,7 @@ describe('inactive recipient', () => {
 	const send = () =>
 		(emailProvider as unknown as Provider).options.sendVerificationRequest({
 			identifier: 'person@example.test',
+			url: 'https://www.aihero.dev/api/auth/callback/postmark?token=one-time-token&email=person%40example.test',
 		})
 
 	it('turns Postmark ErrorCode 406 into a client-safe CredentialsSignin on the error page', async () => {

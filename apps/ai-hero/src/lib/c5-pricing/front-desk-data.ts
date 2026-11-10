@@ -40,6 +40,8 @@ export const QUOTES_FRESH_MS = 60_000
 /** Display never uses a buyer's quotes older than this. */
 export const QUOTES_MAX_STALE_MS = 10 * 60_000
 export const FRONT_DESK_DATA_TIMEOUT_MS = 4_000
+/** Binding-quote reads split the timeout above across this many attempts. */
+export const QUOTES_ATTEMPTS = 2
 const QUOTES_CACHE_LIMIT = 1_000
 
 type Clock = () => number
@@ -65,6 +67,7 @@ class SwrCell<A> {
 	constructor(
 		private readonly load: (
 			previous: Entry<A> | null,
+			fresh: boolean,
 		) => Promise<DataRead<{ value: A; etag?: string | null }>>,
 		private readonly options: {
 			readonly freshMs: number
@@ -90,7 +93,7 @@ class SwrCell<A> {
 		}
 		// A fresh read starts its own load: it never joins a revalidation that
 		// display started earlier.
-		const loaded = await (fresh ? this.loadNow() : this.refresh())
+		const loaded = await (fresh ? this.loadNow(true) : this.refresh())
 		if (loaded.ok || fresh) return loaded
 		const kept = this.entry
 		return kept && this.options.now() - kept.fetchedAt < this.options.maxStaleMs
@@ -101,14 +104,14 @@ class SwrCell<A> {
 	/** Single flight: concurrent non-fresh readers share one load. */
 	private refresh(): Promise<DataRead<A>> {
 		if (this.inflight) return this.inflight
-		this.inflight = this.loadNow().finally(() => {
+		this.inflight = this.loadNow(false).finally(() => {
 			this.inflight = null
 		})
 		return this.inflight
 	}
 
-	private loadNow(): Promise<DataRead<A>> {
-		return this.load(this.entry)
+	private loadNow(fresh: boolean): Promise<DataRead<A>> {
+		return this.load(this.entry, fresh)
 			.then((result): DataRead<A> => {
 				if (!result.ok) return result
 				this.entry = {
@@ -206,24 +209,38 @@ export function createFrontDeskData(
 
 	const loadQuotes =
 		(input: { email: string; productId: string; quantity: number }) =>
-		async (): Promise<DataRead<{ value: readonly BindingQuoteData[] }>> => {
+		async (
+			_previous: unknown,
+			fresh: boolean,
+		): Promise<DataRead<{ value: readonly BindingQuoteData[] }>> => {
 			if (!options.quotesToken)
 				return { ok: false, reason: 'quotes-not-configured' }
-			let response: Response
-			try {
-				response = await doFetch(new URL(BINDING_QUOTES_PATH, options.url), {
-					method: 'POST',
-					headers: {
-						authorization: `Bearer ${options.quotesToken}`,
-						'content-type': 'application/json',
-					},
-					body: JSON.stringify(input),
-					cache: 'no-store',
-					signal: AbortSignal.timeout(timeout),
-				})
-			} catch {
-				return { ok: false, reason: 'quotes-unreachable' }
+			// The read is idempotent. A retry takes the same route to front-desk
+			// (Cloudflare can send a far entry point, and each attempt pays a fresh
+			// TLS handshake there), so a retry alone does not help a slow route.
+			// Checkout gives every attempt the full timeout; display splits the
+			// same total budget across attempts.
+			const attemptTimeout = fresh
+				? timeout
+				: Math.floor(timeout / QUOTES_ATTEMPTS)
+			let response: Response | undefined
+			for (let attempt = 0; attempt < QUOTES_ATTEMPTS && !response; attempt++) {
+				try {
+					response = await doFetch(new URL(BINDING_QUOTES_PATH, options.url), {
+						method: 'POST',
+						headers: {
+							authorization: `Bearer ${options.quotesToken}`,
+							'content-type': 'application/json',
+						},
+						body: JSON.stringify(input),
+						cache: 'no-store',
+						signal: AbortSignal.timeout(attemptTimeout),
+					})
+				} catch {
+					// Try again within the budget; the last failure is reported below.
+				}
 			}
+			if (!response) return { ok: false, reason: 'quotes-unreachable' }
 			if (response.status !== 200)
 				return { ok: false, reason: `quotes-http-${response.status}` }
 			let body: unknown

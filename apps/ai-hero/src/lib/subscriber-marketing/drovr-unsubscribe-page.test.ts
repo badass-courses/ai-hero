@@ -135,6 +135,52 @@ describe('drovr unsubscribe client', () => {
 			courseDisplayName({ journeyId: 'unknown', subscribed: true }),
 		).toBe('this course')
 	})
+
+	it('retries a dropped connection once, so an edge blip does not show an error', async () => {
+		const ok = state({ all: { subscribed: false } })
+		let calls = 0
+		const flaky = vi.fn(async () => {
+			calls++
+			if (calls === 1) throw new TypeError('fetch failed')
+			return new Response(JSON.stringify(ok), {
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+			})
+		})
+		expect(
+			await submitUnsubscribeChoice(token, 'all', { baseUrl, fetch: flaky }),
+		).toEqual({ status: 'ok', state: ok })
+		expect(flaky).toHaveBeenCalledTimes(2)
+	})
+
+	it('gives up after the second dropped connection', async () => {
+		const down = vi.fn(async () => {
+			throw new TypeError('fetch failed')
+		})
+		expect(
+			await submitUnsubscribeChoice(token, 'all', { baseUrl, fetch: down }),
+		).toEqual({ status: 'unavailable', reason: 'drovr-unreachable' })
+		expect(down).toHaveBeenCalledTimes(2)
+	})
+
+	it('does not retry after its own timeout', async () => {
+		const hang = vi.fn(
+			(_url: string, init?: RequestInit) =>
+				new Promise<Response>((_, reject) => {
+					init?.signal?.addEventListener('abort', () =>
+						reject(new DOMException('aborted', 'AbortError')),
+					)
+				}),
+		)
+		expect(
+			await readUnsubscribeState(token, {
+				baseUrl,
+				fetch: hang as unknown as typeof fetch,
+				timeoutMs: 20,
+			}),
+		).toEqual({ status: 'unavailable', reason: 'drovr-unreachable' })
+		expect(hang).toHaveBeenCalledTimes(1)
+	})
 })
 
 describe('unsubscribePageView', () => {

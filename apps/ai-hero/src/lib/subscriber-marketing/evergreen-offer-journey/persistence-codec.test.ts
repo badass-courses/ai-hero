@@ -1,10 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import {
-	deadlineTimeZoneEvidenceFromHeader,
-	decideEvergreenOfferJourney,
-	EVERGREEN_OFFER_JOURNEY_V1,
-} from '.'
+import { deadlineTimeZoneEvidenceFromHeader } from './calendar'
+import { decideEvergreenOfferJourney } from './decision'
+import { EVERGREEN_OFFER_JOURNEY_V1 } from './definition'
 import type { EligibilityFacts, EvergreenOfferStimulus } from './domain'
 import {
 	journeyCommitEvidenceRecord,

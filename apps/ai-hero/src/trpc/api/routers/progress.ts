@@ -13,10 +13,9 @@ import { getNextResource } from '@/lib/resources/get-next-resource'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
+import { redactedErrorMessage } from '@/server/logger-utils'
 import { createTRPCRouter, publicProcedure } from '@/trpc/api/trpc'
 import { z } from 'zod'
-
-import { ModuleProgress } from '@coursebuilder/core/schemas'
 
 export const progressRouter = createTRPCRouter({
 	/**
@@ -175,16 +174,13 @@ export const progressRouter = createTRPCRouter({
 				moduleId: z.string().optional().nullable(),
 			}),
 		)
-		.query(async ({ ctx, input }): Promise<ModuleProgress | null> => {
+		.query(async ({ ctx, input }) => {
 			const { session, ability } = await getServerAuthSession()
 			const user = session?.user
 			if (user && input.moduleId) {
 				try {
 					const moduleProgress =
-						await courseBuilderAdapter.getModuleProgressForUser(
-							user.id as string,
-							input.moduleId,
-						)
+						await getModuleProgressForUser(input.moduleId)
 					return moduleProgress
 				} catch (error) {
 					await log.error('progress.update.error', {
@@ -213,7 +209,7 @@ export const progressRouter = createTRPCRouter({
 				await log.error('progress.update.error', {
 					operation: 'get-progress',
 					userId: user?.id,
-					error: error instanceof Error ? error.message : String(error),
+					error: redactedErrorMessage(error),
 				})
 				let message = 'Unknown Error'
 				if (error instanceof Error) message = error.message

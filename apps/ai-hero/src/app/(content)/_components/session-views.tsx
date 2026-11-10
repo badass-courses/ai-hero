@@ -1,0 +1,436 @@
+'use client'
+
+import * as React from 'react'
+import {
+	Message,
+	MessageContent,
+	MessageResponse,
+} from '@/components/ai-elements/message'
+import { TYPE } from '@/components/landing/type'
+import { useMuxPlayer } from '@/hooks/use-mux-player'
+import type { SessionExtract } from '@/lib/session-extract'
+import {
+	extractMoments,
+	type CorrectionMoment,
+	type ErrorMoment,
+	type Moment,
+	type MomentKind,
+	type PromptMoment,
+	type SkillMoment,
+} from '@ai-hero/learner-agent/views'
+import {
+	ArrowUpRight,
+	CheckIcon,
+	ClipboardIcon,
+	SparklesIcon,
+	XCircleIcon,
+	PlayIcon,
+} from 'lucide-react'
+
+import { TabsList, TabsTrigger } from '@coursebuilder/ui'
+import { cn } from '@coursebuilder/ui/utils/cn'
+
+import { formatTime, seekPlayer, usePlayerTime } from './session-player-time'
+
+/**
+ * The session's moments as lists beside the live view: every prompt Matt
+ * typed, each skill he ran, each time he cut the agent off, and each failed
+ * tool call, all derived from the extract's entries (the same derivation the
+ * learner agent's `session_extract` views use). Every moment's time seeks
+ * the video.
+ */
+
+export type SessionTab =
+	| 'live'
+	| 'prompts'
+	| 'skills'
+	| 'corrections'
+	| 'errors'
+
+const TAB_KIND = {
+	prompts: 'prompt',
+	skills: 'skill',
+	corrections: 'correction',
+	errors: 'error',
+} as const satisfies Record<Exclude<SessionTab, 'live'>, MomentKind>
+
+const TAB_LABEL: Record<SessionTab, string> = {
+	live: 'Live',
+	prompts: 'Prompts',
+	skills: 'Skills',
+	corrections: 'Corrections',
+	errors: 'Errors',
+}
+
+const ALL_KINDS = Object.values(TAB_KIND)
+
+/**
+ * Prose in the session panel (prompts, replies): `metaSm` at prose leading, a
+ * step under the page's captions, so the session reads as a sidebar to the
+ * video rather than competing with it.
+ */
+export const SESSION_PROSE = cn(TYPE.metaSm, 'leading-relaxed')
+
+/**
+ * The tabs this extract fills, live first; a view with nothing in it gets no
+ * tab. `skillLinks` maps a `skillKey` to its page.
+ */
+export function useSessionViews(
+	extract: SessionExtract,
+	skillLinks: Readonly<Record<string, string>> | undefined,
+) {
+	return React.useMemo(() => {
+		const moments = extractMoments(
+			extract,
+			ALL_KINDS,
+			new Map(Object.entries(skillLinks ?? {})),
+		).filter(
+			// A slash command already shows as the prompt Matt typed.
+			(moment) => moment.kind !== 'skill' || moment.via !== 'slashCommand',
+		)
+		const byTab = Object.fromEntries(
+			Object.entries(TAB_KIND).map(([tab, kind]) => [
+				tab,
+				moments.filter((moment) => moment.kind === kind),
+			]),
+		) as Record<Exclude<SessionTab, 'live'>, Moment[]>
+		const tabs: SessionTab[] = [
+			'live',
+			...(Object.keys(TAB_KIND) as Array<keyof typeof TAB_KIND>).filter(
+				(tab) => byTab[tab].length > 0,
+			),
+		]
+		return { tabs, byTab }
+	}, [extract, skillLinks])
+}
+
+/** The strip of view names under the panel header. */
+export function SessionViewTabs({ tabs }: { tabs: SessionTab[] }) {
+	return (
+		<div className="border-b px-3 py-2">
+			<TabsList
+				aria-label="Session views"
+				className="h-7 w-full justify-start gap-0.5 overflow-x-auto rounded-[8px] p-[2px]"
+			>
+				{tabs.map((tab) => (
+					<TabsTrigger
+						key={tab}
+						value={tab}
+						className={cn(
+							TYPE.metaSm,
+							'flex-none rounded-[6px] px-2 font-medium',
+						)}
+					>
+						{TAB_LABEL[tab]}
+					</TabsTrigger>
+				))}
+			</TabsList>
+		</div>
+	)
+}
+
+/**
+ * One view's moments, in video order. The moment the video has most recently
+ * passed is marked, so the list reads as a map of where the lesson is.
+ */
+export function SessionMomentList({ moments }: { moments: Moment[] }) {
+	const { muxPlayerRef } = useMuxPlayer()
+	const time = usePlayerTime(muxPlayerRef)
+	const seek = (seconds: number) => seekPlayer(muxPlayerRef, seconds)
+	const current = moments.findLastIndex((moment) => moment.visibleFrom <= time)
+
+	return (
+		// The live view's grid: content 12px in, the current moment's bar at
+		// 4px, the first moment 16px under the tabs, 20px between moments, a
+		// scrollbar gutter on one edge only.
+		<ol className="divide-border/60 min-h-0 flex-1 [scrollbar-gutter:stable] divide-y overflow-y-auto px-3 pt-1.5 pb-4">
+			{moments.map((moment, index) => (
+				<li
+					key={`${moment.sessionId}-${moment.visibleFrom}-${index}`}
+					aria-current={index === current ? 'true' : undefined}
+					className={cn(
+						'group/moment before:bg-primary relative py-2.5 before:absolute before:inset-y-2.5 before:-left-2 before:w-0.5 before:rounded-full before:opacity-0',
+						index === current && 'before:opacity-100',
+					)}
+				>
+					<MomentBody moment={moment} seek={seek} />
+				</li>
+			))}
+		</ol>
+	)
+}
+
+function MomentBody({
+	moment,
+	seek,
+}: {
+	moment: Moment
+	seek: (seconds: number) => void
+}) {
+	switch (moment.kind) {
+		case 'prompt':
+			return <PromptRow moment={moment} seek={seek} />
+		case 'correction':
+			return <CorrectionRow moment={moment} seek={seek} />
+		case 'skill':
+			return <SkillRow moment={moment} seek={seek} />
+		case 'error':
+			return <ErrorRow moment={moment} seek={seek} />
+	}
+}
+
+/**
+ * A moment's time, which plays the video from it. Pointing anywhere at its
+ * moment (`active`, or hovering a `group/moment`) lights it and shows a play
+ * glyph, so the way back to that part of the video is found where the reader
+ * already is. The negative margin keeps the hit area while the digits sit
+ * flush with the content's edge.
+ */
+export function TimeButton({
+	seconds,
+	seek,
+	active = false,
+	className,
+}: {
+	seconds: number
+	seek: (seconds: number) => void
+	active?: boolean
+	className?: string
+}) {
+	return (
+		<button
+			type="button"
+			onClick={() => seek(seconds)}
+			aria-label={`Play from ${formatTime(seconds)}`}
+			data-active={active ? '' : undefined}
+			className={cn(
+				TYPE.navNum,
+				'group/time text-muted-foreground hover:text-foreground group-hover/moment:text-foreground data-active:text-foreground -mx-0.5 inline-flex h-3.5 items-center gap-1 rounded-[3px] px-0.5',
+				className,
+			)}
+		>
+			{formatTime(seconds)}
+			<PlayIcon
+				aria-hidden
+				className="size-2.5 fill-current opacity-0 transition-opacity group-hover/moment:opacity-100 group-hover/time:opacity-100 group-data-active/time:opacity-100 motion-reduce:transition-none"
+			/>
+		</button>
+	)
+}
+
+function PromptBubble({ text }: { text: string }) {
+	return (
+		<Message from="user" className="max-w-[92%]">
+			<MessageContent
+				className={cn(
+					SESSION_PROSE,
+					'break-words whitespace-pre-wrap group-[.is-user]:px-3 group-[.is-user]:py-2',
+				)}
+			>
+				{text}
+			</MessageContent>
+		</Message>
+	)
+}
+
+function PromptRow({
+	moment,
+	seek,
+}: {
+	moment: PromptMoment
+	seek: (seconds: number) => void
+}) {
+	return (
+		<div className="flex flex-col gap-1.5">
+			<div className="flex items-center justify-between">
+				<TimeButton seconds={moment.visibleFrom} seek={seek} />
+				<CopyPromptButton text={moment.text} />
+			</div>
+			<PromptBubble text={moment.text} />
+		</div>
+	)
+}
+
+function CopyPromptButton({ text }: { text: string }) {
+	const [copied, setCopied] = React.useState(false)
+	React.useEffect(() => {
+		if (!copied) return
+		const timer = setTimeout(() => setCopied(false), 2000)
+		return () => clearTimeout(timer)
+	}, [copied])
+	const copy = async () => {
+		try {
+			await navigator.clipboard.writeText(text)
+			setCopied(true)
+		} catch {
+			setCopied(false)
+		}
+	}
+	return (
+		<button
+			type="button"
+			onClick={() => void copy()}
+			aria-label={copied ? 'Prompt copied' : 'Copy prompt'}
+			className={cn(
+				TYPE.metaSm,
+				// No height of its own on the time's line, so every tab's time sits
+				// at the same height.
+				'text-muted-foreground hover:text-foreground -my-1 flex items-center gap-1 rounded-[4px] px-1 py-0.5',
+			)}
+		>
+			{copied ? (
+				<CheckIcon className="size-3.5" aria-hidden />
+			) : (
+				<ClipboardIcon className="size-3.5" aria-hidden />
+			)}
+			{copied ? 'Copied' : 'Copy'}
+		</button>
+	)
+}
+
+function FollowedBy({
+	label,
+	seconds,
+	seek,
+	children,
+}: {
+	label: string
+	seconds: number
+	seek: (seconds: number) => void
+	children: React.ReactNode
+}) {
+	return (
+		<div className="mt-2 flex flex-col gap-1.5">
+			<div className="flex items-center gap-2">
+				<span className={cn(TYPE.metaSm, 'text-muted-foreground')}>
+					{label}
+				</span>
+				<TimeButton seconds={seconds} seek={seek} />
+			</div>
+			{children}
+		</div>
+	)
+}
+
+function CorrectionRow({
+	moment,
+	seek,
+}: {
+	moment: CorrectionMoment
+	seek: (seconds: number) => void
+}) {
+	return (
+		<div>
+			<TimeButton seconds={moment.visibleFrom} seek={seek} />
+			<p className={cn(TYPE.metaSm, 'text-muted-foreground mt-1.5 italic')}>
+				{/* The interrupt as the session shows it; some carry no text. */}
+				{moment.interrupt.trim() || 'Interrupted'}
+			</p>
+			{moment.followedBy && (
+				<FollowedBy
+					label="Next prompt"
+					seconds={moment.followedBy.visibleFrom}
+					seek={seek}
+				>
+					<PromptBubble text={moment.followedBy.text} />
+				</FollowedBy>
+			)}
+		</div>
+	)
+}
+
+/** A skill's page on the site, opened beside the lesson. */
+export function SkillPageLink({ href }: { href: string }) {
+	return (
+		<a
+			href={href}
+			target="_blank"
+			rel="noreferrer"
+			className={cn(
+				TYPE.metaSm,
+				'text-muted-foreground hover:text-foreground -my-1 inline-flex shrink-0 items-center gap-0.5',
+			)}
+		>
+			Skill page
+			<ArrowUpRight className="size-3" aria-hidden />
+		</a>
+	)
+}
+
+function SkillRow({
+	moment,
+	seek,
+}: {
+	moment: SkillMoment
+	seek: (seconds: number) => void
+}) {
+	return (
+		<div>
+			{/* The page link rides the time's line, so the skill gets the full width. */}
+			<div className="flex items-center justify-between gap-2">
+				<TimeButton seconds={moment.visibleFrom} seek={seek} />
+				{moment.skillUrl && <SkillPageLink href={moment.skillUrl} />}
+			</div>
+			<div
+				className={cn(
+					TYPE.metaSm,
+					'text-muted-foreground mt-1.5 flex items-center gap-1.5',
+				)}
+			>
+				<SparklesIcon className="size-3 shrink-0" aria-hidden />
+				<span className="min-w-0 break-words">
+					Skill <span className="text-primary">{moment.skill}</span>
+				</span>
+			</div>
+		</div>
+	)
+}
+
+function ErrorRow({
+	moment,
+	seek,
+}: {
+	moment: ErrorMoment
+	seek: (seconds: number) => void
+}) {
+	const recovery = moment.recovery
+	return (
+		<div>
+			<TimeButton seconds={moment.visibleFrom} seek={seek} />
+			<div
+				className={cn(
+					TYPE.metaSm,
+					'text-muted-foreground mt-1.5 flex items-center gap-1.5',
+				)}
+			>
+				<XCircleIcon
+					className="text-destructive size-3 shrink-0"
+					aria-label="Failed"
+				/>
+				<span className="min-w-0 break-words">
+					<span className="text-foreground/80">{moment.tool}</span>
+					{moment.summary && <> · {moment.summary}</>}
+				</span>
+			</div>
+			{recovery && (
+				<FollowedBy
+					label={recovery.kind === 'userPrompt' ? 'Next prompt' : 'Next reply'}
+					seconds={recovery.visibleFrom}
+					seek={seek}
+				>
+					{recovery.kind === 'userPrompt' ? (
+						<PromptBubble text={recovery.text} />
+					) : (
+						// A reply can run long; the list shows its start, and its
+						// time plays the rest.
+						<div className="max-h-24 overflow-hidden [mask-image:linear-gradient(to_bottom,black_60%,transparent)]">
+							<MessageResponse className={SESSION_PROSE}>
+								{recovery.text}
+							</MessageResponse>
+						</div>
+					)}
+				</FollowedBy>
+			)}
+		</div>
+	)
+}

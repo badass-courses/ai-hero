@@ -5,11 +5,17 @@ import { createHash } from 'node:crypto'
 import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
 
 import type { ContactProfileVersion } from './contact-profile-version'
+import type { ContactEventRecord } from './types'
 import {
 	birthThenRedeliver,
+	contactSyncStarterRequests,
 	contactSyncRetryRequest,
 } from './contact-sync-straggler-retry'
 import { parseDrovrProfileSyncConfig } from './drovr-contact-profile-sync-requests'
+import {
+	sendContactSyncStarters,
+	stragglerOwnershipEnabled,
+} from './contact-sync-starter-batches'
 
 import {
 	findEvergreenOffer,
@@ -348,6 +354,51 @@ function canonicalJson(value: unknown): string {
 	return JSON.stringify(value ?? null)
 }
 
+/** A purchase remains buyer evidence. An entitlement qualifies only while its
+ * own grant is not followed by a revoke (ties favor revoke). Unrelated grants
+ * and revokes do not cancel each other.
+ */
+export function hasUnrevokedBuyerFact(
+	events: readonly (Pick<
+		ContactEventRecord,
+		'eventType' | 'occurredAt' | 'domainPayload'
+	> & { semanticIdempotencyKey?: string })[],
+): boolean {
+	if (events.some((event) => event.eventType === 'purchase.recorded'))
+		return true
+	const entitlementId = (event: (typeof events)[number]) => {
+		// domainPayload is delivery-only, not a ContactEvent SQL column.
+		// Lifecycle keys retain the full grant id, including restoration suffixes.
+		const prefix = `ai-hero:${event.eventType}:`
+		if (event.semanticIdempotencyKey?.startsWith(prefix)) {
+			return event.semanticIdempotencyKey.slice(prefix.length) || undefined
+		}
+		const domain = event.domainPayload
+		const payload =
+			domain && typeof domain === 'object' && 'entitlement' in domain
+				? domain.entitlement
+				: undefined
+		return payload &&
+			typeof payload === 'object' &&
+			'entitlementId' in payload &&
+			typeof payload.entitlementId === 'string'
+			? payload.entitlementId
+			: undefined
+	}
+	return events.some((grant) => {
+		if (grant.eventType !== 'entitlement.granted') return false
+		const id = entitlementId(grant)
+		const at = Date.parse(grant.occurredAt)
+		if (!id || !Number.isFinite(at)) return false
+		return !events.some(
+			(revoke) =>
+				revoke.eventType === 'entitlement.revoked' &&
+				entitlementId(revoke) === id &&
+				Date.parse(revoke.occurredAt) >= at,
+		)
+	})
+}
+
 export type ContactProfileSyncReceipt =
 	| { status: 'skipped'; reason: string }
 	| {
@@ -407,6 +458,8 @@ export async function runContactProfileSync(args: {
 	ownedPath: (contactId: string) => Promise<string | undefined>
 	/** drovr's scope: an owner assignment for a sending journey. */
 	onSendingJourney: (contactId: string) => Promise<boolean>
+	/** Ownership facts need an email identity even without a sending journey. */
+	hasBuyerFact?: (contactId: string) => Promise<boolean>
 	now?: () => number
 	/** Births directory actors drovr answered cold-start-unhandled for (§4). */
 	birth: (contactIds: string[]) => Promise<void>
@@ -419,18 +472,26 @@ export async function runContactProfileSync(args: {
 	if (isSyntheticPrincipalId(contactId)) {
 		return { status: 'skipped', reason: 'synthetic-principal' }
 	}
-	// Only contacts drovr migrated to the v2 directory: anyone else's
-	// profile would be refused (409) until drovr's straggler pass.
+	// Sending journeys keep their existing profile/links/offers. Fact holders
+	// outside those journeys get an identity-only profile, never send links.
 	const inScope = (await args.step.run('sending-journey', () =>
 		args.onSendingJourney(contactId),
 	)) as boolean
-	if (!inScope) return { status: 'skipped', reason: 'no-sending-journey' }
-	const snapshot = (await args.step.run('read-profile', async () =>
-		args.readSnapshot({
+	if (!inScope) {
+		const buyer = (await args.step.run('buyer-fact', async () =>
+			args.hasBuyerFact ? args.hasBuyerFact(contactId) : false,
+		)) as boolean
+		if (!buyer) return { status: 'skipped', reason: 'no-sending-journey' }
+	}
+	const snapshot = (await args.step.run('read-profile', async () => {
+		const read = await args.readSnapshot({
 			contactId,
-			valuePathSlug: valuePathSlug ?? (await args.ownedPath(contactId)),
-		}),
-	)) as ContactProfileSnapshot | undefined
+			valuePathSlug: inScope
+				? (valuePathSlug ?? (await args.ownedPath(contactId)))
+				: undefined,
+		})
+		return read && !inScope ? { ...read, links: [], offers: [] } : read
+	})) as ContactProfileSnapshot | undefined
 	if (!snapshot) return { status: 'skipped', reason: 'contact-missing' }
 	// Held, not pushed: no send, no birth, no retry chain. The stop and
 	// suppression events travel on their own path.
@@ -483,15 +544,27 @@ export async function runContactProfileSync(args: {
 			(args.now ?? Date.now)(),
 		)) as number
 		// The retry may vouch for this version only if nothing was rejected.
-		await args.step.sendEvent(
-			'defer-refused',
-			contactSyncRetryRequest(
-				deferred,
-				1,
-				at,
-				rejected === 0 ? { contactId, profileVersion } : undefined,
-			),
-		)
+		if (stragglerOwnershipEnabled(args.env)) {
+			await sendContactSyncStarters(
+				args.step,
+				'defer-refused',
+				contactSyncStarterRequests(
+					deferred,
+					at,
+					rejected === 0 ? { contactId, profileVersion } : undefined,
+				),
+			)
+		} else {
+			await args.step.sendEvent(
+				'defer-refused',
+				contactSyncRetryRequest(
+					deferred,
+					1,
+					at,
+					rejected === 0 ? { contactId, profileVersion } : undefined,
+				),
+			)
+		}
 		return {
 			status: 'deferred',
 			reason: deferred[0]!.reason,

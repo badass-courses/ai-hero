@@ -32,6 +32,7 @@ vi.mock('@/lib/subscriber-marketing/drovr-personalize', async () => {
 	return { ...actual, personalizeDrovrIntent: mocks.personalize }
 })
 
+import { log } from '@/server/logger'
 import { POST } from './route'
 
 const body = {
@@ -106,6 +107,51 @@ describe('POST /api/drovr/personalize', () => {
 				pathTokenSecret: 'test-token-secret-123456',
 			}),
 		)
+	})
+	it('logs one answered line with the decision and no email, name or variables', async () => {
+		const info = vi.spyOn(log, 'info')
+		mocks.personalize.mockResolvedValue({
+			email: 'ada@example.com',
+			firstName: 'Ada',
+			variables: { answer_url: 'https://www.aihero.dev/a?pt=secret-token' },
+			sendable: false,
+			reasons: ['old-newsletter-exit-unconfirmed'],
+			flags: ['contact-provisional'],
+		})
+		await post(body, 'test-executor-token-1234567890')
+		const answered = info.mock.calls.filter(([event]) => event === 'drovr.personalize.answered')
+		expect(answered).toEqual([[
+			'drovr.personalize.answered',
+			{
+				journeyId: body.journeyId,
+				emailKey: body.emailKey,
+				contactId: 'contact-1',
+				contactFound: true,
+				sendable: false,
+				reasons: ['old-newsletter-exit-unconfirmed'],
+				flags: ['contact-provisional'],
+			},
+		]])
+		const logged = JSON.stringify(answered)
+		for (const value of ['ada@example.com', 'Ada', 'secret-token', 'answer_url'])
+			expect(logged).not.toContain(value)
+		info.mockRestore()
+	})
+	it('answers the same status and body when the answered log throws', async () => {
+		const info = log.info
+		const spy = vi.spyOn(log, 'info').mockImplementation((event, data) => {
+			if (event === 'drovr.personalize.answered') throw new Error('sink down')
+			return info(event, data)
+		})
+		const answer = { email: 'ada@example.com', firstName: 'Ada', variables: {}, sendable: true, reasons: [], flags: [] }
+		mocks.personalize.mockResolvedValue(answer)
+		const response = await post(body, 'test-executor-token-1234567890')
+		expect(response.status).toBe(200)
+		expect(await response.json()).toEqual(answer)
+		mocks.personalize.mockResolvedValue(undefined)
+		expect((await post(body, 'test-executor-token-1234567890')).status).toBe(404)
+		expect(spy).toHaveBeenCalledWith('drovr.personalize.answered', expect.objectContaining({ contactFound: false }))
+		spy.mockRestore()
 	})
 	it('marks duplicate Kit identities as a conflict instead of picking one', async () => {
 		mocks.select.mockReturnValue({

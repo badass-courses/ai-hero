@@ -6,7 +6,6 @@ import { notifyOnPostCreated } from '@/inngest/functions/artwork/notify-on-post-
 import { pickVariant } from '@/inngest/functions/artwork/pick-variant'
 import { retryHandler } from '@/inngest/functions/artwork/retry-handler'
 import { skipNotification } from '@/inngest/functions/artwork/skip-notification'
-import { imageResourceCreated } from '@/inngest/functions/cloudinary/image-resource-created'
 import { addPurchasesConvertkit } from '@/inngest/functions/convertkit/add-purchased-convertkit'
 import { addSubscriptionRoleDiscord } from '@/inngest/functions/discord/add-subscription-discord-role'
 import { discordAccountLinked } from '@/inngest/functions/discord/discord-account-linked'
@@ -14,7 +13,6 @@ import { removePurchaseRoleDiscord } from '@/inngest/functions/discord/remove-pu
 import { emailSendBroadcast } from '@/inngest/functions/email-send-broadcast'
 import { ensurePersonalOrganizationWorkflow } from '@/inngest/functions/ensure-personal-organization'
 import { userSignupAdminEmail } from '@/inngest/functions/notify/creator/user-signup'
-import { performCodeExtraction } from '@/inngest/functions/ocr/ocr-code-extractor'
 import { postmarkWebhook } from '@/inngest/functions/postmark/postmarks-webhooks-handler'
 import { refundEntitlements } from '@/inngest/functions/refund/refund-entitlements'
 import {
@@ -22,7 +20,6 @@ import {
 	purchaseDisputeOpened,
 } from '@/inngest/functions/disputes/purchase-dispute-access'
 import { sendWorkshopAccessEmails } from '@/inngest/functions/send-workshop-access-emails'
-import { syncPurchaseTags } from '@/inngest/functions/sync-purchase-tags'
 import { teamPurchaseFulfillmentWorkflow } from '@/inngest/functions/team-purchase-fulfillment-workflow'
 import { userCreated } from '@/inngest/functions/user-created'
 import { inngest } from '@/inngest/inngest.server'
@@ -42,6 +39,7 @@ import { testPrincipalReaper } from './functions/test-principal-reaper'
 import { contentResourceIndexRequested } from './functions/content-resource-index'
 import { courseSyncAppliedNotice } from './functions/course-sync-applied-notice'
 import { courseSyncDetectionPoller } from './functions/course-sync-detection-poller'
+import { courseSyncStalePreview } from './functions/course-sync-stale-preview'
 import { courseSyncPollScheduler } from './functions/course-sync-poll-scheduler'
 import {
 	drovrEventsDeliver,
@@ -52,6 +50,7 @@ import { drovrContactSyncBackfill } from './functions/drovr-contact-sync-backfil
 import { drovrContactSyncRetry } from './functions/drovr-contact-sync-retry'
 import { drovrContactSyncReconcile } from './functions/drovr-contact-sync-reconcile'
 import { drovrOwnerBirthGuard } from './functions/drovr-owner-birth-guard'
+import { drovrSuppressionPull } from './functions/drovr-suppression-pull'
 import { drovrEvergreenSender } from './functions/drovr-evergreen-sender'
 import { drovrSignupDeliver } from './functions/drovr-signup-deliver'
 import { drovrOutboxReplay } from './functions/drovr-outbox-replay'
@@ -70,6 +69,10 @@ import {
 	checkoutReconcileFulfill,
 	checkoutReconcilerSweep,
 } from './functions/checkout-reconciler'
+import { checkoutAsyncPaymentFulfill } from './functions/checkout-async-payment'
+import { guardUnpaidCheckoutCompletion } from '@/lib/checkout-reconcile/delayed-payment'
+import { STRIPE_CHECKOUT_HANDLER_ID } from '@/lib/checkout-reconcile/fulfill'
+import { log } from '@/server/logger'
 import { teamInvoiceExpiry } from './functions/team-invoice-expiry'
 import { addDiscordRoleWorkflow } from './functions/discord/add-discord-role-workflow'
 import { grantLegendDiscordRole } from './functions/discord/grant-legend-discord-role'
@@ -96,8 +99,11 @@ import { skillsNewsletterConfirmationReconciler } from './functions/skills-newsl
 import { skillsNewsletterPathEntry } from './functions/skills-newsletter-path-entry'
 import { emailCourseShadowAnswer } from './functions/email-course-shadow-answer'
 import { captureContactUnsubscribed } from './functions/capture-contact-unsubscribed'
+import { applyEmailPreferenceChangeFunction } from './functions/apply-email-preference-change'
 import { capturePurchaseContactEvent } from './functions/capture-purchase-contact-event'
+import { captureTeamSeatContactEvent } from './functions/capture-team-seat-contact-event'
 import { workshopInterestSync } from './functions/workshop-interest-sync'
+import { interestFactRecord } from './functions/interest-fact-record'
 import { computeVideoSplitPoints } from './functions/split_video'
 import { persistPurchaseGeo } from './functions/persist-purchase-geo'
 import { stripeSubscriptionCheckoutSessionComplete } from './functions/stripe/event-subscription-checkout-session-completed'
@@ -105,10 +111,6 @@ import { typesensePopularitySync } from './functions/typesense-popularity-sync'
 import { typesenseVideoFactsReconcile } from './functions/typesense-video-facts-reconcile'
 import { learnerFlowReconciler } from './functions/learner-flow-reconciler'
 import { valuePathEmailExecutor } from './functions/value-path-email-executor'
-import {
-	videoResourceAttached,
-	videoResourceDetached,
-} from './functions/video-resource-attached'
 
 // Vercel Preview/Development deployments auto-register into Inngest's shared
 // branch environment, which runs every cron in this list against the
@@ -122,16 +124,25 @@ const isVercelNonProduction =
 
 const allFunctions = [
 	...courseBuilderCoreFunctions.map(({ config, trigger, handler }) =>
-		inngest.createFunction(config, trigger, handler),
+		inngest.createFunction(
+			config,
+			trigger,
+			// A bank-transfer checkout completes unpaid; record it instead of
+			// failing on the missing charge. `checkoutAsyncPaymentFulfill` runs
+			// when the money lands.
+			config.id === STRIPE_CHECKOUT_HANDLER_ID
+				? guardUnpaidCheckoutCompletion(handler, (attrs) =>
+						log.info('checkout.awaiting_payment', attrs),
+					)
+				: handler,
+		),
 	),
 	userCreated,
 	userSignupAdminEmail,
 	aiCodingDictionaryIndex,
 	postmarkWebhook,
 	archivePurchaseReconciliation,
-	imageResourceCreated,
 	emailSendBroadcast,
-	performCodeExtraction,
 	getOrCreateConcept,
 	computeVideoSplitPoints,
 	discordAccountLinked,
@@ -148,14 +159,11 @@ const allFunctions = [
 	apiProductTransferWorkflow,
 	cohortEntitlementSyncWorkflow,
 	cohortEntitlementSyncUser,
-	syncPurchaseTags,
 	addPurchasesConvertkit,
 	stripeSubscriptionCheckoutSessionComplete,
 	persistPurchaseGeo,
 	createUserOrganizations,
 	ensurePersonalOrganizationWorkflow,
-	videoResourceAttached,
-	videoResourceDetached,
 	addDiscordRoleWorkflow,
 	grantLegendDiscordRole,
 	sendWorkshopAccessEmails,
@@ -178,6 +186,7 @@ const allFunctions = [
 	contentResourceIndexRequested,
 	courseSyncAppliedNotice,
 	courseSyncDetectionPoller,
+	courseSyncStalePreview,
 	courseSyncPollScheduler,
 	typesensePopularitySync,
 	typesenseVideoFactsReconcile,
@@ -189,6 +198,7 @@ const allFunctions = [
 	drovrContactProfileSync,
 	drovrContactSyncReconcile,
 	drovrOwnerBirthGuard,
+	drovrSuppressionPull,
 	drovrContactSyncBackfill,
 	drovrContactSyncRetry,
 	drovrSignupDeliver,
@@ -201,6 +211,7 @@ const allFunctions = [
 	invoiceShortfallReconciliation,
 	checkoutReconcilerSweep,
 	checkoutReconcileFulfill,
+	checkoutAsyncPaymentFulfill,
 	c5PurchaseDecision,
 	teamInvoiceExpiry,
 	syncGithubSourcedPosts,
@@ -209,8 +220,11 @@ const allFunctions = [
 	skillsCourseLessonOneRecovery,
 	emailCourseShadowAnswer,
 	capturePurchaseContactEvent,
+	captureTeamSeatContactEvent,
 	captureContactUnsubscribed,
+	applyEmailPreferenceChangeFunction,
 	workshopInterestSync,
+	interestFactRecord,
 	skillsNewsletterConfirmationReconciler,
 	notifyOnPostCreated,
 	generateArtwork,

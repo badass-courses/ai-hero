@@ -35,14 +35,31 @@ type RequestTelemetry = {
 const SENSITIVE_QUERY_KEY_PATTERN =
 	/(token|secret|password|signature|code|key|auth|jwt|credential|session)/i
 
+function redactSearchParams(params: URLSearchParams): URLSearchParams {
+	const safeEntries: [string, string][] = Array.from(params.entries()).map(
+		([key, value]) => [
+			key,
+			SENSITIVE_QUERY_KEY_PATTERN.test(key) ? '[REDACTED]' : value,
+		],
+	)
+	return new URLSearchParams(safeEntries)
+}
+
+function redactUrl(raw: string | null): string | null {
+	if (!raw) return raw
+	try {
+		const parsed = new URL(raw)
+		const safe = redactSearchParams(parsed.searchParams).toString()
+		return `${parsed.origin}${parsed.pathname}${safe ? `?${safe}` : ''}`
+	} catch {
+		return null
+	}
+}
+
 function extractRequestTelemetry(req: Request): RequestTelemetry {
 	const url = new URL(req.url)
 	const queryEntries = Array.from(url.searchParams.entries())
-	const safeEntries: [string, string][] = queryEntries.map(([key, value]) => [
-		key,
-		SENSITIVE_QUERY_KEY_PATTERN.test(key) ? '[REDACTED]' : value,
-	])
-	const safeSearchParams = new URLSearchParams(safeEntries)
+	const safeSearchParams = redactSearchParams(url.searchParams)
 	const safeQueryString = safeSearchParams.toString()
 	const queryKeys = Array.from(new Set(queryEntries.map(([key]) => key).sort()))
 	const pathWithQuery = `${url.pathname}${safeQueryString ? `?${safeQueryString}` : ''}`
@@ -50,7 +67,7 @@ function extractRequestTelemetry(req: Request): RequestTelemetry {
 		? `https://${process.env.VERCEL_URL}`
 		: null
 	return {
-		url: req.url,
+		url: `${url.origin}${pathWithQuery}`,
 		pathWithQuery,
 		path: url.pathname,
 		method: req.method,
@@ -62,7 +79,7 @@ function extractRequestTelemetry(req: Request): RequestTelemetry {
 			req.headers.get('x-vercel-env') || process.env.VERCEL_ENV || null,
 		vercelId: req.headers.get('x-vercel-id'),
 		userAgent: req.headers.get('user-agent'),
-		referer: req.headers.get('referer'),
+		referer: redactUrl(req.headers.get('referer')),
 		clientIp:
 			req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip'),
 		contentType: req.headers.get('content-type'),
@@ -71,6 +88,17 @@ function extractRequestTelemetry(req: Request): RequestTelemetry {
 		queryKeys,
 		queryParamCount: queryEntries.length,
 	}
+}
+
+// Route families that skip `api.request.started`. Matched on the pathname
+// with segment boundaries; see docs/observability/api-request-telemetry.md.
+export function skipsStartedEvent(pathname: string): boolean {
+	return (
+		pathname === '/api/auth/session' ||
+		pathname === '/api/auth/session/' ||
+		pathname === '/api/trpc' ||
+		pathname.startsWith('/api/trpc/')
+	)
 }
 
 export function withSkill<Args extends [SkillRequest, ...unknown[]]>(
@@ -83,10 +111,12 @@ export function withSkill<Args extends [SkillRequest, ...unknown[]]>(
 		const request = extractRequestTelemetry(req)
 
 		return withLogContext(context, async () => {
-			await log.info('api.request.started', {
-				requestId: context.requestId,
-				...request,
-			})
+			if (!skipsStartedEvent(request.path)) {
+				await log.info('api.request.started', {
+					requestId: context.requestId,
+					...request,
+				})
+			}
 
 			try {
 				const response = await params(...args)

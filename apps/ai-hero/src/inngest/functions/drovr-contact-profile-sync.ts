@@ -1,7 +1,10 @@
 import { DROVR_CONTACT_PROFILE_SYNC_EVENT } from '@/inngest/events/drovr'
 import { inngest } from '@/inngest/inngest.server'
 import { DROVR_SEND_RETRIES } from '@/lib/subscriber-marketing/drovr-outbox'
-import { runContactProfileSync } from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
+import {
+	hasUnrevokedBuyerFact,
+	runContactProfileSync,
+} from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
 
 export const drovrContactProfileSync = inngest.createFunction(
 	{
@@ -122,6 +125,20 @@ export const drovrContactProfileSync = inngest.createFunction(
 			}),
 			onSendingJourney: (contactId) =>
 				isOnDrovrSendingJourney(repository, contactId),
+			hasBuyerFact: async (contactId) =>
+				hasUnrevokedBuyerFact(
+					(
+						await Promise.all(
+							[
+								'purchase.recorded',
+								'entitlement.granted',
+								'entitlement.revoked',
+							].map((type) =>
+								repository.findContactEventsByType(contactId, type),
+							),
+						)
+					).flat(),
+				),
 			ownedPath: async (contactId) =>
 				(await findJourneyOwnerAssignment(
 					repository,

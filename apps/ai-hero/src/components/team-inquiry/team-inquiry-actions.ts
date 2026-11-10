@@ -1,6 +1,7 @@
 'use server'
 
 import { headers } from 'next/headers'
+import { scheduleProductEvents } from '@/lib/subscriber-marketing/product-events-live'
 import BasicEmail from '@/emails/basic-email'
 import { env } from '@/env.mjs'
 import { log } from '@/server/logger'
@@ -10,8 +11,9 @@ import { Ratelimit } from '@upstash/ratelimit'
 import sanitizeHtml from 'sanitize-html'
 
 import {
-	TeamInquiryContext,
-	TeamInquiryFormValues,
+	getTeamInquirySchema,
+	type TeamInquiryContext,
+	type TeamInquiryFormValues,
 } from './team-inquiry-schema'
 
 export type SendTeamInquiryOptions = TeamInquiryFormValues & {
@@ -24,6 +26,8 @@ export async function sendTeamInquiry({
 	companyName,
 	teamSize,
 	message,
+	country,
+	trainingType,
 	website,
 	timestamp,
 	context,
@@ -84,12 +88,35 @@ export async function sendTeamInquiry({
 			return { success: true }
 		}
 
+		let partnerDetails = ''
+		if (context?.source === 'training-partners') {
+			const validation = getTeamInquirySchema(context.source).safeParse({
+				name,
+				email,
+				companyName,
+				teamSize,
+				message,
+				country,
+				trainingType,
+				website,
+				timestamp,
+			})
+			if (!validation.success) {
+				return {
+					error: validation.error.issues[0]?.message || 'Invalid submission',
+				}
+			}
+			partnerDetails = `Country: ${sanitizeHtml(validation.data.country || '')}
+      Training type: ${validation.data.trainingType}`
+		}
+
 		// Only send email if we pass all spam checks
 		const body = `
       Name: ${name}
       Company: ${companyName}
       Team Size: ${teamSize}
       Email: ${email}
+      ${partnerDetails}
       Message: ${message ? sanitizeHtml(message) : 'No message provided'}
       
       Source: ${context?.source || 'Direct'}
@@ -106,11 +133,18 @@ export async function sendTeamInquiry({
 				body,
 				messageType: 'transactional',
 			},
-			Subject: `Team Inquiry from ${companyName} (${teamSize} employees)`,
+			Subject:
+				context?.source === 'training-partners'
+					? `Training partners inquiry from ${companyName} (${teamSize} employees)`
+					: `Team Inquiry from ${companyName} (${teamSize} employees)`,
 			To: env.NEXT_PUBLIC_SUPPORT_EMAIL,
 			ReplyTo: email,
 			type: 'transactional',
 		})
+
+		scheduleProductEvents(async () => email, [{
+			_tag: 'TeamIntent', intent: 'seats', sourceId: 'team-inquiry', at: Date.now(),
+		}])
 
 		// Log successful submission
 		await log.info('team_inquiry.submitted', {
@@ -119,6 +153,8 @@ export async function sendTeamInquiry({
 			email,
 			companyName,
 			teamSize,
+			country,
+			trainingType,
 			source: context?.source || 'Direct',
 			url: context?.url,
 		})

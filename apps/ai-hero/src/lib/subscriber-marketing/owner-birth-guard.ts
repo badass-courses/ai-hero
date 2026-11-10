@@ -65,7 +65,7 @@ const DIRECTORY_JOURNEY_ID = 'contact-directory'
 const MAX_PAGES = 200
 
 /** A directory actor in any stop state: drovr's suppression is written. */
-const STOPPED_DIRECTORY_STATE = /unsubscrib|bounce|complain|suppress|stop/i
+export const STOPPED_DIRECTORY_STATE = /unsubscrib|bounce|complain|suppress|stop/i
 
 export type DrovrReadBackpressure = {
 	status: 429 | 502 | 503 | 504 | '5xx' | 'timeout' | 'page-budget'

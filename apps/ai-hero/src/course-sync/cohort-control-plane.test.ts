@@ -8,7 +8,8 @@ import {
 	assertCourseSyncTargetContract,
 	type CourseSyncTargetFacts,
 } from './target-contract'
-import { syntheticCohortBinding as binding } from './test-fixtures/cohort-binding'
+import { syntheticCohortBinding as binding, syntheticCohortBinding as syntheticBinding } from './test-fixtures/cohort-binding'
+import { AI_HERO_COURSE_SYNC_BINDING_COHORT_005 as releaseBinding, type CohortCourseSyncBinding } from './types'
 import { WorkshopSchema } from '@/lib/workshops'
 
 function syllabus(version: string): CourseJsonDocumentV3 {
@@ -32,7 +33,7 @@ function syllabus(version: string): CourseJsonDocumentV3 {
 	}
 }
 
-function harness() {
+function harness(binding: CohortCourseSyncBinding = syntheticBinding) {
 	const persistence = new InMemoryCourseSyncPersistence()
 	let sequence = 0
 	const unexpected = async (): Promise<never> => {
@@ -76,12 +77,12 @@ function harness() {
 		product: {
 			id: binding.productId,
 			type: 'cohort',
-			fields: { state: 'draft', visibility: 'unlisted' },
+			fields: binding.targetContract.product,
 		},
 		workshop: {
 			id: binding.anchorCohortId,
 			type: 'cohort',
-			fields: { state: 'draft', visibility: 'unlisted' },
+			fields: binding.targetContract.cohort,
 			deletedAt: null,
 		},
 		relation: { position: 0 },
@@ -109,6 +110,59 @@ function harness() {
 }
 
 describe('synthetic cohort-anchored syllabus (S4b)', () => {
+	it('v8 stages, previews, applies and rolls back without unpublishing released workshops', async () => {
+		const test = harness(releaseBinding)
+		const source = { ...syllabus('release-before'), courseId: releaseBinding.sourceCourseId }
+		const first = await test.stage(source, 'before')
+		await test.apply(first.run.runId, 'apply-before')
+		const workshop = first.plan.resources.find((item) => item.sourceKind === 'workshop')!
+		const resource = test.persistence.resources.get(workshop.targetResourceId)!
+		expect(resource.fields.state).toBe('published')
+		resource.fields.state = 'published'
+		const next = await test.stage({ ...source, courseVersionId: 'release-retain' }, 'retain')
+		expect(next.plan.resources.every((item) => item.action === 'retain')).toBe(true)
+		expect(next.plan.resources.find((item) => item.targetResourceId === workshop.targetResourceId)?.fields.state).toBe('published')
+		await test.apply(next.run.runId, 'apply-retain')
+		const changed = await test.stage({ ...source, courseVersionId: 'release-update', sections: source.sections.map((section, i) => i === 0 ? { ...section, title: 'New title' } : section) }, 'update')
+		expect(changed.plan.resources.find((item) => item.targetResourceId === workshop.targetResourceId)?.fields.state).toBe('published')
+		await test.apply(changed.run.runId, 'apply-update')
+		expect(test.persistence.resources.get(workshop.targetResourceId)!.fields).toMatchObject({ state: 'published', title: 'New title' })
+		await test.plane.rollback({ runId: changed.run.runId, idempotencyKey: 'rollback-update' })
+		expect(test.persistence.resources.get(workshop.targetResourceId)!.fields).toMatchObject({ state: 'published', title: 'Keep 0' })
+	})
+	it('allows insertion at position zero when every existing lesson has progress', async () => {
+		const test = harness(releaseBinding)
+		const source = { ...syllabus('insert-before'), courseId: releaseBinding.sourceCourseId }
+		const first = await test.stage(source, 'insert-before')
+		await test.apply(first.run.runId, 'insert-before')
+		for (const lesson of first.plan.resources.filter((item) => item.sourceKind === 'lesson')) {
+			test.persistence.lessonProgressCounts.set(lesson.targetResourceId, 5)
+		}
+		const sections = source.sections.map((section, index) => index === 0 ? { ...section, lessons: [
+			{ type: 'placeholder' as const, id: 'new-first-lesson', title: 'New first lesson' }, ...section.lessons,
+		] } : section)
+		const next = await test.stage({ ...source, sections, courseVersionId: 'insert-after' }, 'insert-after')
+		expect(await test.plane.evaluateBoundedAutoApply(next.run.runId)).toMatchObject({ eligible: true })
+	})
+
+	it('reads existing lesson progress for a destructive move without changing it', async () => {
+		const test = harness(releaseBinding)
+		const source = { ...syllabus('progress-before'), courseId: releaseBinding.sourceCourseId }
+		const first = await test.stage(source, 'progress-before')
+		expect(await test.plane.evaluateBoundedAutoApply(first.run.runId)).toMatchObject({ eligible: true })
+		await test.apply(first.run.runId, 'progress-before')
+		const lesson = first.plan.resources.find((item) => item.sourceKind === 'lesson')!
+		test.persistence.lessonProgressCounts.set(lesson.targetResourceId, 3)
+		const sections = source.sections.map((section, index) => ({ ...section, lessons:
+			index === 0 ? section.lessons.slice(1) : index === 1 ? [...section.lessons, source.sections[0]!.lessons[0]!] : section.lessons }))
+		const next = await test.stage({ ...source, sections, courseVersionId: 'progress-moved' }, 'progress-moved')
+		expect(await test.plane.evaluateBoundedAutoApply(next.run.runId)).toMatchObject({ eligible: false,
+			failureCode: 'PROGRESSED_LESSON_CHANGE_REVIEW_REQUIRED', affectedLessons: expect.arrayContaining([{ title: 'Placeholder 0.0', progressCount: 3 }]) })
+		expect(test.persistence.lessonProgressCounts.get(lesson.targetResourceId)).toBe(3)
+		test.persistence.lessonProgressCounts.clear()
+		expect(await test.plane.evaluateBoundedAutoApply(next.run.runId)).toMatchObject({ eligible: true })
+	})
+
 	it('plans and applies 15 workshop children and 112 direct lessons, without day drip or media (T8/T9)', async () => {
 		const test = harness()
 		const manifest = syllabus('syllabus-before')
@@ -144,7 +198,7 @@ describe('synthetic cohort-anchored syllabus (S4b)', () => {
 		expect(first.plan.media).toEqual([])
 		expect(
 			await test.plane.evaluateBoundedAutoApply(first.run.runId),
-		).toMatchObject({ eligible: false, failureCode: 'WORKSHOP_CREATE_REVIEW_REQUIRED' })
+		).toMatchObject({ eligible: false, failureCode: 'WORKSHOP_RELEASE_CONTRACT_REVIEW_REQUIRED' })
 		for (const workshop of workshops) {
 			expect(workshop.fields).not.toHaveProperty('startsAt')
 			expect(workshop.fields).not.toHaveProperty('endsAt')

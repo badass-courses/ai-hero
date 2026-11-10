@@ -106,6 +106,67 @@ describe('withSkill', () => {
 		expect(loggerMocks.error).not.toHaveBeenCalled()
 	})
 
+	it('redacts url and referer in all four request events', async () => {
+		const secrets = /url-secret|url-code|ref-secret|ref-code|userinfo-pass|frag-secret/
+		const headers = {
+			referer:
+				'https://user:userinfo-pass@aihero.dev/login?token=ref-secret&code=ref-code&q=keep#frag-secret',
+		}
+		const target =
+			'https://aihero.dev/api/auth/callback?token=url-secret&code=url-code&q=keep#frag-secret'
+
+		await withSkill(async () => new Response('ok'))(
+			new Request(target, { headers }),
+		)
+		await withSkill(async () => new Response('no', { status: 401 }))(
+			new Request(target, { headers }),
+		)
+		await expect(
+			withSkill(async () => {
+				throw new Error('boom')
+			})(new Request(target, { headers })),
+		).rejects.toThrow('boom')
+
+		const calls = [
+			...loggerMocks.info.mock.calls,
+			...loggerMocks.warn.mock.calls,
+			...loggerMocks.error.mock.calls,
+		]
+		expect(calls.map(([event]) => event).sort()).toEqual([
+			'api.request.completed',
+			'api.request.completed',
+			'api.request.failed',
+			'api.request.failed_response',
+			'api.request.started',
+			'api.request.started',
+			'api.request.started',
+		])
+		for (const [, payload] of calls) {
+			const { url, referer } = payload as { url: string; referer: string }
+			expect(url).toBe(
+				'https://aihero.dev/api/auth/callback?token=%5BREDACTED%5D&code=%5BREDACTED%5D&q=keep',
+			)
+			expect(referer).toBe(
+				'https://aihero.dev/login?token=%5BREDACTED%5D&code=%5BREDACTED%5D&q=keep',
+			)
+			expect(JSON.stringify(payload)).not.toMatch(secrets)
+		}
+	})
+
+	it('emits null for an invalid or relative referer', async () => {
+		const handler = withSkill(async () => new Response('ok'))
+		for (const referer of ['not a url', '/login?token=ref-secret']) {
+			loggerMocks.info.mockClear()
+			await handler(
+				new Request('https://aihero.dev/api/x', { headers: { referer } }),
+			)
+			for (const [, payload] of loggerMocks.info.mock.calls) {
+				expect((payload as { referer: unknown }).referer).toBeNull()
+				expect(JSON.stringify(payload)).not.toContain('ref-secret')
+			}
+		}
+	})
+
 	it('passes through additional handler args and preserves the response', async () => {
 		const handler = withSkill(
 			async (_request: Request, context: { params: { lessonId: string } }) => {
@@ -191,5 +252,73 @@ describe('withSkill', () => {
 				vercelId: 'iad1::abcd-1234',
 			}),
 		)
+	})
+	describe('route-scoped started', () => {
+		const events = () => loggerMocks.info.mock.calls.map(([event]) => event)
+
+		it.each([
+			'/api/auth/session',
+			'/api/auth/session/',
+			'/api/trpc',
+			'/api/trpc/',
+			'/api/trpc/x.y',
+			'/api/trpc/a.b,c.d',
+		])('skips started but emits completed for %s', async (path) => {
+			await withSkill(async () => new Response('ok'))(
+				new Request(`https://aihero.dev${path}?token=s3cret&batch=1`),
+			)
+			expect(events()).toEqual(['api.request.completed'])
+			const payload = loggerMocks.info.mock.calls[0]?.[1]
+			expect(JSON.stringify(payload)).not.toContain('s3cret')
+		})
+
+		it.each([
+			'/api/auth/sessionfoo',
+			'/api/auth/session-x',
+			'/api/auth/session/x',
+			'/api/trpcx',
+			'/api/trpc-other',
+			'/api/auth/callback/github',
+			'/api/auth/confirm',
+			'/api/inngest',
+			'/api/checkout',
+			'/api/stripe/webhook',
+		])('keeps started for %s', async (path) => {
+			await withSkill(async () => new Response('ok'))(
+				new Request(`https://aihero.dev${path}`),
+			)
+			expect(events()).toEqual(['api.request.started', 'api.request.completed'])
+		})
+
+		it('does not match on the query string', async () => {
+			await withSkill(async () => new Response('ok'))(
+				new Request('https://aihero.dev/api/other?next=/api/trpc/x'),
+			)
+			expect(events()).toEqual(['api.request.started', 'api.request.completed'])
+		})
+
+		it('still emits completed and failed_response for a 500', async () => {
+			await withSkill(async () => new Response('no', { status: 500 }))(
+				new Request('https://aihero.dev/api/trpc/x.y'),
+			)
+			expect(events()).toEqual(['api.request.completed'])
+			expect(loggerMocks.error).toHaveBeenCalledWith(
+				'api.request.failed_response',
+				expect.objectContaining({ statusCode: 500, path: '/api/trpc/x.y' }),
+			)
+		})
+
+		it('still emits failed for a throw', async () => {
+			await expect(
+				withSkill(async () => {
+					throw new Error('boom')
+				})(new Request('https://aihero.dev/api/auth/session')),
+			).rejects.toThrow('boom')
+			expect(events()).toEqual([])
+			expect(loggerMocks.error).toHaveBeenCalledWith(
+				'api.request.failed',
+				expect.objectContaining({ path: '/api/auth/session' }),
+			)
+		})
 	})
 })

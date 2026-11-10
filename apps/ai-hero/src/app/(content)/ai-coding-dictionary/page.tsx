@@ -1,4 +1,6 @@
 import { Suspense } from 'react'
+import { C5SaleCta } from '@/components/c5-sale-cta'
+import { C5SaleSwitch } from '@/components/c5-sale-switch'
 import type { Metadata } from 'next'
 import { ContentReadTracker } from '@/components/content-read-tracker'
 import LayoutClient from '@/components/layout-client'
@@ -104,6 +106,10 @@ export default async function DictionaryPage() {
 							<DictionarySections sections={dictionary.sections} />
 						</DictionaryShell>
 					</Suspense>
+
+					<C5SaleSwitch>
+						<C5SaleCta />
+					</C5SaleSwitch>
 
 					<PrimaryNewsletterCta
 						title="Want more than vocabulary?"

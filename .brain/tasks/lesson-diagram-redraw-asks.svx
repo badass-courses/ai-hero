@@ -1,0 +1,41 @@
+---
+title: "Ask for lesson diagram redraws from course sync"
+type: "task"
+status: "in-progress"
+created_at: "2026-10-31"
+privacy: "private"
+---
+
+# Ask for lesson diagram redraws from course sync
+
+Matt asked (cc-matt-p, 2026-10-30) what code to paste to embed the redrawn
+diagrams. None: since PR #593 the swap happens at render, keyed by Cloudinary
+public id (`redrawForImage` in `src/utils/compile-mdx.tsx`), so his plain
+markdown images already render as the code version. A new image shows as
+itself until someone adds its redraw.
+
+## Layer 1: detect (this task)
+
+The applied course-sync Slack notice gets a `Not redrawn yet (n)` field
+listing, per lesson, every Cloudinary image in the bodies the sync created or
+updated that has no redraw and is not in `diagrams/not-drawings.ts`.
+
+- `undrawnImages(body)` lives in `components/mdx/diagrams/index.tsx`, next to
+  the registry it reads. Course sync only adds plan iteration
+  (`course-sync/undrawn-images.ts`).
+- Notice only. It never fails a sync, unlike `QuizQuestion` extraction.
+- Retained resources are skipped, so an image is asked about when its lesson
+  changes, not on every sync.
+- `notDrawings` is the skip list for screenshots and photos. It starts empty;
+  fill it from the first notices.
+- `getCourseSyncPlanChanges` became `getCourseSyncPlan`: one plan read feeds
+  both the narration and the redraw asks.
+
+## Layer 2: redraw (proposed, not started)
+
+Each flagged image starts a Claude Code cloud session (routine with an API
+trigger, or `claude-code-action` via `repository_dispatch`) that adds the
+redraw and opens a PR for review on the preview. Most new images are another
+frame of a drawing already in code (`flows/frames.ts`). No auto-merge. Blocked
+on infra: no Claude workflow in `.github/workflows`, no GitHub write token in
+the app. Decide after layer 1 shows how many new drawings a sync brings.

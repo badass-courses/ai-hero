@@ -12,6 +12,7 @@ import {
 	classifyCheckoutSession,
 	summarizeCheckoutSession,
 } from '@/lib/checkout-reconcile/policy'
+import { isStripeChargeId } from '@/lib/stripe-charge-id'
 
 import {
 	STRIPE_CHECKOUT_SESSION_COMPLETED_EVENT,
@@ -242,7 +243,7 @@ export async function runCheckoutRecovery(
 		}
 
 		const chargeId = chargeIdFromSession(session)
-		if (!chargeId?.startsWith('ch_')) {
+		if (!isStripeChargeId(chargeId)) {
 			return refused(
 				args.checkoutSessionId,
 				args.apply,

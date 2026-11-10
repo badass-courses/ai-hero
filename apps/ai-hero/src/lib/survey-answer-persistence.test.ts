@@ -4,6 +4,11 @@ import { persistSurveyAnswers } from './survey-answer-persistence'
 
 const mocks = vi.hoisted(() => ({
 	guid: vi.fn(),
+	scheduleGoalInterestFact: vi.fn(),
+}))
+
+vi.mock('./subscriber-marketing/survey-interest-facts-live', () => ({
+	scheduleGoalInterestFact: mocks.scheduleGoalInterestFact,
 }))
 
 vi.mock('@coursebuilder/utils/guid', () => ({
@@ -37,9 +42,11 @@ describe('persistSurveyAnswers', () => {
 			query: {
 				contentResource: {
 					findFirst: vi.fn().mockResolvedValue({ id: 'survey-1' }),
-					findMany: vi.fn().mockResolvedValue([
-						{ id: 'question-1', fields: { slug: 'question-slug' } },
-					]),
+					findMany: vi
+						.fn()
+						.mockResolvedValue([
+							{ id: 'question-1', fields: { slug: 'question-slug' } },
+						]),
 				},
 			},
 			insert: vi.fn(() => ({ values: insertValues })),
@@ -80,6 +87,88 @@ describe('persistSurveyAnswers', () => {
 				questionId: 'question-1',
 			}),
 		)
+	})
+
+	it('schedules the successful goal row only, preserving its immutable id and timestamp after a primary-key retry', async () => {
+		mocks.scheduleGoalInterestFact.mockClear()
+		mocks.guid
+			.mockReset()
+			.mockReturnValueOnce('failed-row')
+			.mockReturnValueOnce('saved-row')
+		const values = vi
+			.fn()
+			.mockRejectedValueOnce(
+				Object.assign(new Error('duplicate'), {
+					code: 'ER_DUP_ENTRY',
+					errno: 1062,
+					sqlMessage: "Duplicate entry for key 'PRIMARY'",
+				}),
+			)
+			.mockResolvedValueOnce(undefined)
+		const database = {
+			query: {
+				contentResource: {
+					findFirst: vi.fn().mockResolvedValue({ id: 'survey-1' }),
+					findMany: vi.fn().mockResolvedValue([
+						{
+							id: 'question-skills-workflow-completion-next-path',
+							fields: { slug: 'aih_value_path_next_path_interest' },
+						},
+					]),
+				},
+			},
+			insert: vi.fn(() => ({ values })),
+		}
+		const logger = testLogger()
+		await expect(
+			persistSurveyAnswers({
+				database,
+				logger,
+				surveySlug: 'skills-workflow-completion',
+				answers: { aih_value_path_next_path_interest: 'team_workflows' },
+				userId: null,
+				emailListSubscriberId: 'kit-1',
+				identityEmail: 'human@example.test',
+			}),
+		).resolves.toEqual({ answerCount: 1 })
+		const saved = values.mock.calls[1]?.[0][0]
+		expect(mocks.scheduleGoalInterestFact).toHaveBeenCalledTimes(1)
+		expect(mocks.scheduleGoalInterestFact).toHaveBeenCalledWith(
+			{
+				id: 'saved-row',
+				questionId: 'question-skills-workflow-completion-next-path',
+				answer: 'team_workflows',
+				createdAt: saved.createdAt,
+				email: 'human@example.test',
+			},
+			logger,
+		)
+	})
+
+	it('does not schedule any facts when the database save fails', async () => {
+		mocks.scheduleGoalInterestFact.mockClear()
+		const database = {
+			query: {
+				contentResource: {
+					findFirst: vi.fn(),
+					findMany: vi.fn().mockResolvedValue([]),
+				},
+			},
+			insert: vi.fn(() => ({
+				values: vi.fn().mockRejectedValue(new Error('db-failed')),
+			})),
+		}
+		await expect(
+			persistSurveyAnswers({
+				database,
+				logger: testLogger(),
+				surveySlug: 'skills-workflow-completion',
+				answers: { aih_value_path_next_path_interest: 'team_workflows' },
+				userId: null,
+				emailListSubscriberId: null,
+			}),
+		).rejects.toThrow('db-failed')
+		expect(mocks.scheduleGoalInterestFact).not.toHaveBeenCalled()
 	})
 
 	it('treats empty answers as a no-op without querying invalid SQL', async () => {

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { getTableName, type SQL } from 'drizzle-orm'
 import { MySqlDialect } from 'drizzle-orm/mysql-core'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // In-memory adapter evaluates the actual Drizzle predicates and records locks.
 // Transactions serialize and roll back; this is not a real MySQL isolation test.
@@ -21,6 +21,11 @@ const fake = vi.hoisted(() => ({
 	})),
 	duplicateRow: undefined as Record<string, unknown> | undefined,
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+	send: vi.fn(async () => ({ ids: [] })),
+	removeDiscordRole: vi.fn(async () => ({ success: true })),
+	// The ContactEvent log behind DrizzleCaptureMarketingRepository.
+	marketing: undefined as unknown,
+	marketingFailure: undefined as unknown,
 }))
 const dialect = new MySqlDialect()
 function matches(row: Record<string, unknown>, predicate?: SQL) {
@@ -135,6 +140,10 @@ vi.mock('@/db', () => ({
 					rows(organizationMemberships).find((row) => matches(row, where)),
 			},
 			entitlementTypes: { findFirst: async () => undefined },
+			users: {
+				findMany: async ({ where }: { where: SQL }) =>
+					rows(users).filter((row) => matches(row, where)),
+			},
 			entitlements: {
 				findMany: async ({ where }: { where: SQL }) =>
 					rows(entitlements).filter((row) => matches(row, where)),
@@ -169,7 +178,18 @@ vi.mock('@/db', () => ({
 }))
 vi.mock('@/server/logger', () => ({ log: fake.log }))
 vi.mock('@/inngest/inngest.server', () => ({
-	inngest: { createFunction: fake.createFunction },
+	inngest: { createFunction: fake.createFunction, send: fake.send },
+}))
+vi.mock('@/lib/discord-utils', () => ({
+	removeDiscordRole: fake.removeDiscordRole,
+}))
+vi.mock('@/lib/subscriber-marketing/drizzle-capture-repository', () => ({
+	DrizzleCaptureMarketingRepository: class {
+		constructor() {
+			if (fake.marketingFailure) throw fake.marketingFailure
+			return fake.marketing as object
+		}
+	},
 }))
 
 import {
@@ -200,6 +220,8 @@ import {
 	grantIncludedProductEntitlements,
 	transferIncludedProductEntitlements,
 } from './included-product-entitlements'
+import { recordIncludedProductEntitlementEvents } from './included-product-entitlement-events'
+import { InMemorySubscriberMarketingRepository } from './subscriber-marketing/dry-run'
 
 const context = {
 	purchaseId: 'learner-purchase',
@@ -589,6 +611,150 @@ describe('included product fulfillment policy', () => {
 	})
 })
 
+describe('included product discord role', () => {
+	const roleId = '1535229555642601502'
+	const discordId = (userId = context.userId) =>
+		'c5_cc_dr_' +
+		createHash('sha256')
+			.update(
+				JSON.stringify([
+					context.purchaseId,
+					userId,
+					'discord:' + roleId,
+				]),
+			)
+			.digest('hex')
+	const discordRows = () =>
+		rows(entitlements).filter((row) => row.entitlementType === 'discord-type')
+	beforeEach(() => {
+		seed(entitlementTypes, {
+			id: 'discord-type',
+			name: 'workshop_discord_role',
+		})
+		rows(products).find((row) => row.id === 'product-ma254')!.fields = {
+			discordRoleId: roleId,
+		}
+	})
+	it('creates the role entitlement once and requests the add-role event', async () => {
+		await grantIncludedProductEntitlements(context)
+		expect(discordRows()).toEqual([
+			expect.objectContaining({
+				id: discordId(),
+				userId: context.userId,
+				sourceType: 'PURCHASE',
+				sourceId: context.purchaseId,
+				metadata: expect.objectContaining({ discordRoleId: roleId }),
+			}),
+		])
+		expect(fake.send).toHaveBeenCalledWith({
+			name: 'workshop/user-added',
+			data: {
+				workshopId: 'workshop-2ozd9',
+				userId: context.userId,
+				discordRoleId: roleId,
+			},
+		})
+	})
+	it('does not duplicate the role entitlement on retry or concurrent delivery', async () => {
+		await Promise.all([
+			grantIncludedProductEntitlements(context),
+			grantIncludedProductEntitlements(context),
+		])
+		await grantIncludedProductEntitlements(context)
+		expect(discordRows()).toHaveLength(1)
+	})
+	it('skips the role when the included product has no discordRoleId', async () => {
+		rows(products).find((row) => row.id === 'product-ma254')!.fields = {}
+		await grantIncludedProductEntitlements(context)
+		expect(discordRows()).toEqual([])
+		expect(fake.send).not.toHaveBeenCalled()
+	})
+	it('a refund removes the role entitlement with the content access', async () => {
+		await grantIncludedProductEntitlements(context)
+		await softDeleteEntitlementsForPurchase(context.purchaseId)
+		expect(active()).toEqual([])
+		expect(discordRows()[0]!.deletedAt).toBeInstanceOf(Date)
+	})
+	it('does not revive a revoked role entitlement on a late fulfillment event', async () => {
+		await grantIncludedProductEntitlements(context)
+		await softDeleteEntitlementsForPurchase(context.purchaseId)
+		fake.send.mockClear()
+		await expect(grantIncludedProductEntitlements(context)).rejects.toThrow(
+			'revoked',
+		)
+		expect(fake.send).not.toHaveBeenCalled()
+	})
+	it('a transfer retires the source role, grants the target and removes the source role', async () => {
+		await grantIncludedProductEntitlements(context)
+		fake.send.mockClear()
+		await transferIncludedProductEntitlements(target())
+		expect(
+			discordRows().find((row) => row.id === discordId())!.deletedAt,
+		).toBeInstanceOf(Date)
+		expect(
+			discordRows().find((row) => row.id === discordId('target'))!.deletedAt,
+		).toBeNull()
+		expect(fake.removeDiscordRole).toHaveBeenCalledWith(context.userId, roleId)
+		expect(fake.send).toHaveBeenCalledWith({
+			name: 'workshop/user-added',
+			data: {
+				workshopId: 'workshop-2ozd9',
+				userId: 'target',
+				discordRoleId: roleId,
+			},
+		})
+	})
+	it('throws when the source role removal fails and removes it on retry', async () => {
+		await grantIncludedProductEntitlements(context)
+		fake.removeDiscordRole.mockResolvedValueOnce({ status: 'error' } as any)
+		const transfer = target()
+		await expect(transferIncludedProductEntitlements(transfer)).rejects.toThrow(
+			'removal failed',
+		)
+		fake.removeDiscordRole.mockClear()
+		await transferIncludedProductEntitlements(transfer)
+		expect(fake.removeDiscordRole).toHaveBeenCalledWith(context.userId, roleId)
+	})
+	it('still removes the source role when the target row is revoked', async () => {
+		await grantIncludedProductEntitlements(context)
+		const transfer = target()
+		seed(entitlements, {
+			id: discordId('target'),
+			userId: 'target',
+			organizationId: 'target-org',
+			organizationMembershipId: 'target-member',
+			sourceType: 'PURCHASE',
+			sourceId: context.purchaseId,
+			entitlementType: 'discord-type',
+			expiresAt: null,
+			deletedAt: new Date(),
+			metadata: {
+				discordRoleId: roleId,
+				bundlePolicy: 'c5-includes-crash-course-v1',
+				includedByProductId: context.productId,
+			},
+		})
+		fake.send.mockClear()
+		await transferIncludedProductEntitlements(transfer)
+		expect(fake.removeDiscordRole).toHaveBeenCalledWith(context.userId, roleId)
+		expect(fake.send).not.toHaveBeenCalled()
+	})
+	it('keeps the source role when another live grant covers it', async () => {
+		seed(entitlements, {
+			id: 'direct-crash-role',
+			userId: context.userId,
+			sourceType: 'PURCHASE',
+			sourceId: 'direct',
+			entitlementType: 'discord-type',
+			deletedAt: null,
+			metadata: { discordRoleId: roleId },
+		})
+		await grantIncludedProductEntitlements(context)
+		await transferIncludedProductEntitlements(target())
+		expect(fake.removeDiscordRole).not.toHaveBeenCalled()
+	})
+})
+
 describe('refund event boundary', () => {
 	// Real source-deletion and bulk helpers; fake transport and database only.
 	const workflow = refundEntitlements as unknown as {
@@ -626,6 +792,7 @@ describe('refund event boundary', () => {
 	it('registers both producers and filters status events to full refunds', () => {
 		expect(workflow.triggers).toEqual([
 			{ event: REFUND_PROCESSED_EVENT },
+			{ event: 'aihero/early-access.revoke' },
 			{
 				event: PURCHASE_STATUS_UPDATED_EVENT,
 				if: 'event.data.status == "Refunded"',
@@ -1215,5 +1382,223 @@ describe('included product individual transfer', () => {
 			'learner purchase',
 		)
 		expect(active()).toEqual([])
+	})
+})
+
+describe('included product entitlement events for drovr', () => {
+	const marketing = () => fake.marketing as InMemorySubscriberMarketingRepository
+	const contactOf = (userId: string) => {
+		const contact = marketing().createContact({
+			userId,
+			email: `${userId}@example.test`,
+			name: null,
+			lifecycle: 'classified',
+			isProvisional: false,
+			createdAt: '2026-11-01T00:00:00.000Z',
+			updatedAt: '2026-11-01T00:00:00.000Z',
+		})
+		marketing().createProviderIdentity({
+			contactId: contact.id,
+			provider: 'ai-hero',
+			externalId: userId,
+			evidence: {
+				userId,
+				providerIdentity: { provider: 'ai-hero', externalId: userId },
+				source: 'ai-hero',
+				strength: 'strong',
+			},
+			createdAt: '2026-11-01T00:00:00.000Z',
+			updatedAt: '2026-11-01T00:00:00.000Z',
+		})
+		return contact.id
+	}
+	let holders: Record<string, string> = {}
+	// [eventType, holder, entitlementId] for every entitlement event recorded.
+	const recorded = () =>
+		[...marketing().contactEvents.values()]
+			.filter((event) => event.eventType.startsWith('entitlement.'))
+			.map((event) => [
+				event.eventType,
+				Object.keys(holders).find((user) => holders[user] === event.contactId),
+				(event.domainPayload as { entitlement: { entitlementId: string } })
+					.entitlement.entitlementId,
+			])
+	const transferBack = () => {
+		rows(purchaseUserTransfer)[0]!.transferState = 'COMPLETED'
+		purchase().userId = context.userId
+		purchase().organizationId = context.organizationId
+		seed(purchaseUserTransfer, {
+			id: 'transfer-back',
+			purchaseId: context.purchaseId,
+			transferState: 'VERIFIED',
+			sourceUserId: 'target',
+			targetUserId: context.userId,
+		})
+		return transferIncludedProductEntitlements({
+			...context,
+			transferId: 'transfer-back',
+			sourceUserId: 'target',
+		})
+	}
+	beforeEach(() => {
+		process.env.AIH_ENTITLEMENT_EVENTS_ENABLED = 'on'
+		fake.marketing = new InMemorySubscriberMarketingRepository()
+		fake.marketingFailure = undefined
+		holders = { learner: contactOf('learner'), target: contactOf('target') }
+	})
+	afterEach(() => {
+		delete process.env.AIH_ENTITLEMENT_EVENTS_ENABLED
+	})
+
+	it('grant-records-entitlement-granted-once', async () => {
+		await grantIncludedProductEntitlements(context)
+		await grantIncludedProductEntitlements(context)
+		const events = [...marketing().contactEvents.values()]
+		expect(events).toHaveLength(1)
+		expect(events[0]).toMatchObject({
+			contactId: holders.learner,
+			eventType: 'entitlement.granted',
+			domainPayload: {
+				entitlement: {
+					entitlementId: bundleId(),
+					productId: 'product-ma254',
+					viaProductId: 'product-s00zs',
+					bundlePolicy: 'c5-includes-crash-course-v1',
+				},
+			},
+		})
+	})
+	it('transfer-revokes-source-grants-target', async () => {
+		await grantIncludedProductEntitlements(context)
+		const transfer = target()
+		await transferIncludedProductEntitlements(transfer)
+		await transferIncludedProductEntitlements(transfer)
+		expect(recorded()).toEqual([
+			['entitlement.granted', 'learner', bundleId()],
+			['entitlement.revoked', 'learner', bundleId()],
+			['entitlement.granted', 'target', bundleId('target')],
+		])
+	})
+	it('a transfer back grants the prior owner under an id drovr never revoked', async () => {
+		await grantIncludedProductEntitlements(context)
+		await transferIncludedProductEntitlements(target())
+		await transferBack()
+		const regrant = `${bundleId()}:transfer-back`
+		expect(recorded()).toEqual([
+			['entitlement.granted', 'learner', bundleId()],
+			['entitlement.revoked', 'learner', bundleId()],
+			['entitlement.granted', 'target', bundleId('target')],
+			['entitlement.granted', 'learner', regrant],
+			['entitlement.revoked', 'target', bundleId('target')],
+		])
+		// And the next transfer away ends that grant, not the old one.
+		rows(purchaseUserTransfer)[1]!.transferState = 'COMPLETED'
+		purchase().userId = 'target'
+		purchase().organizationId = 'target-org'
+		seed(purchaseUserTransfer, {
+			id: 'transfer-again',
+			purchaseId: context.purchaseId,
+			transferState: 'VERIFIED',
+			sourceUserId: context.userId,
+			targetUserId: 'target',
+		})
+		await transferIncludedProductEntitlements({
+			...target(),
+			transferId: 'transfer-again',
+		})
+		expect(recorded()).toContainEqual([
+			'entitlement.revoked',
+			'learner',
+			regrant,
+		])
+	})
+	it('a second transfer back still revokes the first restored grant when its live record was missed', async () => {
+		await grantIncludedProductEntitlements(context)
+		await transferIncludedProductEntitlements(target())
+		await transferBack()
+		delete process.env.AIH_ENTITLEMENT_EVENTS_ENABLED
+		rows(purchaseUserTransfer)[1]!.transferState = 'COMPLETED'
+		purchase().userId = 'target'
+		purchase().organizationId = 'target-org'
+		seed(purchaseUserTransfer, {
+			id: 'transfer-again',
+			purchaseId: context.purchaseId,
+			transferState: 'VERIFIED',
+			sourceUserId: context.userId,
+			targetUserId: 'target',
+		})
+		await transferIncludedProductEntitlements({
+			...target(),
+			transferId: 'transfer-again',
+		})
+		rows(purchaseUserTransfer)[2]!.transferState = 'COMPLETED'
+		purchase().userId = context.userId
+		purchase().organizationId = context.organizationId
+		seed(purchaseUserTransfer, {
+			id: 'transfer-back-again',
+			purchaseId: context.purchaseId,
+			transferState: 'VERIFIED',
+			sourceUserId: 'target',
+			targetUserId: context.userId,
+		})
+		await transferIncludedProductEntitlements({
+			...context,
+			transferId: 'transfer-back-again',
+			sourceUserId: 'target',
+		})
+		process.env.AIH_ENTITLEMENT_EVENTS_ENABLED = 'on'
+		await recordIncludedProductEntitlementEvents({
+			purchaseId: context.purchaseId,
+		})
+		const learner = recorded().filter(([, holder]) => holder === 'learner')
+		expect(learner).toContainEqual([
+			'entitlement.revoked',
+			'learner',
+			`${bundleId()}:transfer-back`,
+		])
+		expect(learner.at(-1)).toEqual([
+			'entitlement.granted',
+			'learner',
+			`${bundleId()}:transfer-back-again`,
+		])
+	})
+	it('revoke-records-entitlement-revoked', async () => {
+		await grantIncludedProductEntitlements(context)
+		purchase().status = 'Refunded'
+		await softDeleteEntitlementsForPurchase(context.purchaseId)
+		await recordIncludedProductEntitlementEvents({
+			purchaseId: context.purchaseId,
+		})
+		expect(recorded()).toEqual([
+			['entitlement.granted', 'learner', bundleId()],
+			['entitlement.revoked', 'learner', bundleId()],
+		])
+	})
+	it('flag-off-records-nothing', async () => {
+		delete process.env.AIH_ENTITLEMENT_EVENTS_ENABLED
+		await grantIncludedProductEntitlements(context)
+		await transferIncludedProductEntitlements(target())
+		await expect(
+			recordIncludedProductEntitlementEvents({
+				purchaseId: context.purchaseId,
+			}),
+		).resolves.toEqual({ status: 'disabled' })
+		expect(active().map((row) => row.id)).toEqual([bundleId('target')])
+		expect(marketing().contactEvents.size).toBe(0)
+	})
+	it('record-failure-never-fails-fulfilment', async () => {
+		fake.marketingFailure = new Error('contact log unavailable')
+		await expect(grantIncludedProductEntitlements(context)).resolves.toEqual([
+			expect.objectContaining({ entitlementId: bundleId() }),
+		])
+		expect(active().map((row) => row.id)).toEqual([bundleId()])
+		expect(fake.log.warn).toHaveBeenCalledWith(
+			'included_product.entitlement_events_failed',
+			expect.objectContaining({ purchaseId: context.purchaseId }),
+		)
+		// The next reconcile of the purchase records what this one missed.
+		fake.marketingFailure = undefined
+		await grantIncludedProductEntitlements(context)
+		expect(recorded()).toEqual([['entitlement.granted', 'learner', bundleId()]])
 	})
 })

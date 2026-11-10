@@ -13,7 +13,7 @@ import { cn } from '@coursebuilder/ui/utils/cn'
 /** What a seat is, for the person deciding how many to buy. */
 export const SEAT_FACTS = [
 	{ icon: User, text: 'One licence per engineer, yours to assign from your account' },
-	{ icon: Percent, text: 'Volume pricing from five seats, applied in the card' },
+	{ icon: Percent, text: 'Volume pricing from five seats, applied in the cart' },
 	{
 		icon: Receipt,
 		text: 'Pay by card, or by invoice with your company details and tax ID',
@@ -47,6 +47,8 @@ export type ForTeamsPageProps = {
 	heroNote?: string
 	/** The compiled `forTeamsBody`. */
 	story: React.ReactNode
+	/** Optional page-specific offer. Null leaves nothing in the HTML. */
+	promotion?: React.ReactNode
 	/** The team pricing card. Null means no checkout on this page. */
 	seats: React.ReactNode | null
 	/** "Pay by invoice". Null hides the band. */
@@ -77,6 +79,7 @@ export function ForTeamsPage({
 	cover,
 	heroNote = 'One licence per person. Everyone learns on their own schedule.',
 	story,
+	promotion,
 	seats,
 	invoice,
 	location,
@@ -180,6 +183,8 @@ export function ForTeamsPage({
 					</article>
 				</section>
 
+				{promotion}
+
 				<section className="border-b">
 					<CompanyLogoGrid className="pt-8" />
 				</section>
@@ -279,8 +284,10 @@ export function ForTeamsPage({
 											: 'Tell us who to bill and how many seats, and we will send the invoice at the team price.')}
 								</p>
 								<p className={cn(TYPE.metaSm, 'text-muted-foreground mt-4')}>
-									From 2 to 100 seats. Due on receipt, or Net 30 (by the
-									enrollment close for a cohort).
+									From 2 to 100 seats. Due on receipt, or Net 30
+									{backHref.startsWith('/cohorts/')
+										? ' (by the enrollment close for a cohort).'
+										: '.'}
 								</p>
 							</div>
 							<div

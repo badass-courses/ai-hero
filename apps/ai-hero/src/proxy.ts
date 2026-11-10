@@ -1,11 +1,21 @@
-import { NextResponse } from 'next/server'
+import {
+	NextResponse,
+	type NextFetchEvent,
+	type NextRequest,
+} from 'next/server'
 import { invoiceLinkResponse } from './lib/invoice-link-http'
+import {
+	EARLY_BIRD_CODE_COOKIE,
+	EARLY_BIRD_CODE_COOKIE_MAX_AGE_SECONDS,
+	earlyBirdCouponId,
+} from './lib/c5-pricing/early-bird-code'
 
 import {
 	AI_CODING_COHORT_SLUG,
 	getCampaignLanding,
 } from './lib/campaign-landings'
 import { auth } from './server/auth'
+import { runInProxyAuthContext } from './server/proxy-auth-context'
 import { log } from './server/logger'
 import {
 	determineOrgAccess,
@@ -63,8 +73,13 @@ const COOKIE_OPTIONS = {
 	path: '/',
 } as const
 
-export default auth(async function middleware(req) {
-	const user = req.auth?.user as ReqUser | undefined
+// These branches never read the session. Answering them before `auth()` skips
+// the database session lookup, which is a remote round trip for every
+// request that carries a session cookie.
+// Skipping `auth()` here is intentional: these paths also skip Auth.js session
+// refresh (expiry extension) and the session callback's side effects, not only
+// the database read. The access branches are unchanged.
+function respondWithoutSession(req: NextRequest): NextResponse | undefined {
 	const pathname = req.nextUrl.pathname
 
 	if (isStaticRouteHandlerPath(pathname)) {
@@ -134,6 +149,11 @@ export default auth(async function middleware(req) {
 		rewriteUrl.pathname = '/home-coupon'
 		return NextResponse.rewrite(rewriteUrl)
 	}
+}
+
+const authedProxy = auth(async function middleware(req) {
+	const user = req.auth?.user as ReqUser | undefined
+	const pathname = req.nextUrl.pathname
 
 	const isAdmin = user?.roles?.some((role) => role.name === 'admin')
 	const canViewAnalytics = user?.roles?.some(
@@ -202,6 +222,89 @@ export default auth(async function middleware(req) {
 
 	return response
 })
+
+// Auth.js `SessionStore` treats every cookie whose name starts with the session
+// cookie name as part of the session (any suffix), so match the same way.
+// Erring toward running `auth()` is the safe direction.
+export const SESSION_COOKIE_PREFIXES = [
+	'authjs.session-token',
+	'__Secure-authjs.session-token',
+]
+
+export function hasSessionCookie(req: NextRequest) {
+	return req.cookies
+		.getAll()
+		.some(({ name }) =>
+			SESSION_COOKIE_PREFIXES.some((prefix) => name.startsWith(prefix)),
+		)
+}
+
+// Everything after the admin and invoice branches returns `next()` when there
+// is no user, and a request without a session cookie cannot have one. Skip the
+// session lookup for those requests; admin and invoices still run in full.
+// With no session cookie Auth.js already returns before any database, refresh
+// or callback work, so this only saves the `auth()` wrapper overhead.
+function isAnonymousPassThrough(req: NextRequest) {
+	const pathname = req.nextUrl.pathname
+	if (pathname === '/admin' || pathname.startsWith('/admin/')) return false
+	if (pathname.startsWith('/invoices/')) return false
+	return !hasSessionCookie(req)
+}
+
+const C5_COHORT_PATH = /^\/cohorts\/[^/]*xdy1m\/?$/
+
+/**
+ * The Cohort 005 page opened with `?coupon=<id>` remembers that id for the
+ * pricing hook, which reads checkout and display without the URL. The cookie
+ * holds only the id; pricing validates the coupon row fresh every time.
+ */
+export function earlyBirdCodeFromRequest(req: NextRequest) {
+	if (!C5_COHORT_PATH.test(req.nextUrl.pathname)) return null
+	return earlyBirdCouponId(req.nextUrl.searchParams.get('coupon'))
+}
+
+export function rememberEarlyBirdCode<T extends Response>(
+	req: NextRequest,
+	response: T,
+): T {
+	const couponId = earlyBirdCodeFromRequest(req)
+	if (!couponId) return response
+	// Auth.js hands back its own Response for signed-in visitors, not always a
+	// NextResponse, so write the header itself. The id is already validated.
+	const cookie = [
+		`${EARLY_BIRD_CODE_COOKIE}=${couponId}`,
+		'Path=/',
+		`Max-Age=${EARLY_BIRD_CODE_COOKIE_MAX_AGE_SECONDS}`,
+		'HttpOnly',
+		'SameSite=Lax',
+		...(process.env.NODE_ENV === 'production' ? ['Secure'] : []),
+	].join('; ')
+	try {
+		response.headers.append('set-cookie', cookie)
+		return response
+	} catch {
+		// Immutable headers (a fetched or redirect Response): copy once.
+		const copy = new Response(response.body, response)
+		copy.headers.append('set-cookie', cookie)
+		return copy as unknown as T
+	}
+}
+
+export default async function proxy(req: NextRequest, event: NextFetchEvent) {
+	const early = respondWithoutSession(req)
+	if (early) return early
+	if (isAnonymousPassThrough(req))
+		return rememberEarlyBirdCode(req, NextResponse.next())
+	// `auth()` types its context as a route-handler context; middleware passes a
+	// NextFetchEvent, so the casts are required by Next's types. The context
+	// defers an expired Discord token refresh until after the response.
+	const response = await runInProxyAuthContext(() =>
+		authedProxy(req as never, event as never),
+	)
+	return response instanceof Response
+		? rememberEarlyBirdCode(req, response)
+		: response
+}
 
 export const config = {
 	matcher: [

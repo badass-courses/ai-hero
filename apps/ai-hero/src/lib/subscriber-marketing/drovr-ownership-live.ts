@@ -12,12 +12,22 @@ import {
 	type EvergreenPitchEntryResult,
 	isSuppressedLifecycle,
 } from './drovr-pitch-entry'
+import { DOI_REQUESTED_EVENT_TYPE } from './drovr-doi-signup'
 import {
+	answeredEmailResourceIdOf,
+	fanOutOwnedEvents,
 	findJourneyOwnerAssignment,
 	findRecordedJourneyOwner,
+	isDoiAnswerForwardCandidate,
+	isDoiAnswerForwardContact,
+	isNewDoiSignup,
 	isOwnerFanOutCandidate,
+	isShadowNewsletterBirth,
 } from './drovr-ownership'
-import type { DrovrJourneyId } from './drovr-shadow-emitter'
+import {
+	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+	type DrovrJourneyId,
+} from './drovr-shadow-emitter'
 import type { DrovrShadowEvent } from './drovr-shadow-emitter'
 
 /**
@@ -196,5 +206,185 @@ export async function resolveOwnedContactIds(
 			// Logging cannot make the read succeed.
 		}
 		throw error
+	}
+}
+
+export type DoiAnswerForwardReads = {
+	doiRequestedAt(contactId: string): Promise<string[]>
+	anchoredEmailResourceIds(
+		contactId: string,
+		emailResourceIds: readonly string[],
+	): Promise<Set<string>>
+}
+
+/**
+ * Which DOI learners in a batch get their skills-course answers copied to
+ * the authority tenant (`isDoiAnswerForwardContact`). Unlike the owner read
+ * this never throws: a failed read leaves that contact's answers where they
+ * went before (discarded, the drip timer still moves the learner on) and is
+ * logged at error. Throwing would hold or outbox the whole batch, owned
+ * contacts' stops included, over an answer that never reached drovr before.
+ * One info line per batch with candidates gives the post-deploy check.
+ */
+export async function resolveDoiAnswerForwardContactIds(
+	events: readonly DrovrShadowEvent[],
+	options: { since?: string; reads?: DoiAnswerForwardReads } = {},
+): Promise<string[]> {
+	const answered = new Map<string, Set<string>>()
+	for (const event of events) {
+		if (!isDoiAnswerForwardCandidate(event)) continue
+		const emailResourceId = answeredEmailResourceIdOf(event)
+		if (!emailResourceId) continue
+		const ids = answered.get(event.contactId) ?? new Set<string>()
+		ids.add(emailResourceId)
+		answered.set(event.contactId, ids)
+	}
+	if (answered.size === 0) return []
+	const reportFailure = async (contacts: number, error: unknown) => {
+		try {
+			await log.error('drovr.doi_answer_forward.resolve_failed', {
+				contacts,
+				error: error instanceof Error ? error.message : String(error),
+			})
+		} catch {
+			// Logging cannot make the read succeed.
+		}
+	}
+	let reads: DoiAnswerForwardReads
+	try {
+		reads = options.reads ?? (await liveDoiAnswerForwardReads())
+	} catch (error) {
+		await reportFailure(answered.size, error)
+		return []
+	}
+	const forwarded: string[] = []
+	let notDoi = 0
+	let beforeCutoff = 0
+	let unanchored = 0
+	let failed = 0
+	for (const [contactId, ids] of answered) {
+		try {
+			const doiRequestedAt = await reads.doiRequestedAt(contactId)
+			if (doiRequestedAt.length === 0) {
+				notDoi += 1
+				continue
+			}
+			if (!isNewDoiSignup(doiRequestedAt, options.since)) {
+				beforeCutoff += 1
+				continue
+			}
+			const answeredEmailResourceIds = [...ids]
+			const anchoredEmailResourceIds = await reads.anchoredEmailResourceIds(
+				contactId,
+				answeredEmailResourceIds,
+			)
+			if (
+				isDoiAnswerForwardContact({
+					doiRequestedAt,
+					answeredEmailResourceIds,
+					anchoredEmailResourceIds,
+					since: options.since,
+				})
+			)
+				forwarded.push(contactId)
+			else unanchored += 1
+		} catch (error) {
+			failed += 1
+			await reportFailure(1, error)
+		}
+	}
+	try {
+		await log.info('drovr.doi_answer_forward.resolved', {
+			candidates: answered.size,
+			forwarded: forwarded.length,
+			notDoi,
+			beforeCutoff,
+			unanchored,
+			failed,
+		})
+	} catch {
+		// Logging cannot change who is forwarded.
+	}
+	return forwarded
+}
+
+/**
+ * Owner fan-out with every owner set read live, for a path with no step
+ * memo (the outbox replay). An owner read failure throws, as
+ * `resolveOwnedContactIds` does; the DOI answer read never does.
+ */
+export async function fanOutOwnedEventsLive(
+	events: readonly DrovrShadowEvent[],
+	deps: {
+		resolveOwners?: typeof resolveOwnedContactIds
+		resolveDoiAnswerForwards?: (
+			events: readonly DrovrShadowEvent[],
+		) => Promise<string[]>
+	} = {},
+): Promise<DrovrShadowEvent[]> {
+	const resolveOwners = deps.resolveOwners ?? resolveOwnedContactIds
+	const resolveDoiAnswerForwards =
+		deps.resolveDoiAnswerForwards ?? resolveDoiAnswerForwardContactIds
+	const owned = await resolveOwners(events)
+	const births = events.filter(isShadowNewsletterBirth)
+	const newsletterOwned = births.length
+		? await resolveOwners(births, {
+				journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+			})
+		: []
+	const doiAnswerForwards = await resolveDoiAnswerForwards(events).catch(
+		() => [] as string[],
+	)
+	return fanOutOwnedEvents(
+		events,
+		new Set(owned),
+		new Set(newsletterOwned),
+		new Set(doiAnswerForwards),
+	)
+}
+
+async function liveDoiAnswerForwardReads(): Promise<DoiAnswerForwardReads> {
+	const { db } = await import('@/db')
+	return createDoiAnswerForwardReads(db)
+}
+
+/**
+ * The reads over a given database: the app's in production, any drizzle
+ * MySQL handle in a dry run against a read replica.
+ */
+export async function createDoiAnswerForwardReads(
+	db: ConstructorParameters<
+		typeof import('./drizzle-capture-repository').DrizzleCaptureMarketingRepository
+	>[0],
+): Promise<DoiAnswerForwardReads> {
+	const [{ valuePathLinkAnchor }, { DrizzleCaptureMarketingRepository }] =
+		await Promise.all([
+			import('@/db/contact-sync-schema'),
+			import('./drizzle-capture-repository'),
+		])
+	const repository = new DrizzleCaptureMarketingRepository(db)
+	return {
+		async doiRequestedAt(contactId) {
+			const events = await repository.findContactEventsByType(
+				contactId,
+				DOI_REQUESTED_EVENT_TYPE,
+			)
+			return events.map((event: { occurredAt: string }) => event.occurredAt)
+		},
+		async anchoredEmailResourceIds(contactId, emailResourceIds) {
+			// ValuePathLinkAnchor_contact_idx serves the contact filter.
+			const rows = await db
+				.select({ emailResourceId: valuePathLinkAnchor.emailResourceId })
+				.from(valuePathLinkAnchor)
+				.where(
+					and(
+						eq(valuePathLinkAnchor.contactId, contactId),
+						inArray(valuePathLinkAnchor.emailResourceId, [...emailResourceIds]),
+					),
+				)
+			return new Set(
+				rows.map((row: { emailResourceId: string }) => row.emailResourceId),
+			)
+		},
 	}
 }

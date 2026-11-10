@@ -97,6 +97,40 @@ export function courseDisplayName(
 	return course.displayName ?? COURSE_NAMES[course.journeyId] ?? 'this course'
 }
 
+/**
+ * One retry, only when the connection itself failed (`fetch failed`), not on
+ * our own timeout. On 2026-11-02 connections from Vercel dropped before
+ * reaching drovr, and one reader's unsubscribe landed while the page showed
+ * an error. Both drovr writes here are idempotent (unsubscribe on its stop
+ * key), so sending the request twice is safe.
+ */
+async function fetchOnceRetried(
+	config: DrovrUnsubscribeClientConfig,
+	path: string,
+	init: RequestInit,
+): Promise<Response | undefined> {
+	for (let attempt = 0; attempt < 2; attempt++) {
+		const controller = new AbortController()
+		const timer = setTimeout(
+			() => controller.abort(),
+			config.timeoutMs ?? 8_000,
+		)
+		try {
+			return await (config.fetch ?? fetch)(`${config.baseUrl}${path}`, {
+				...init,
+				cache: 'no-store',
+				signal: controller.signal,
+			})
+		} catch {
+			if (controller.signal.aborted) return undefined
+		} finally {
+			clearTimeout(timer)
+		}
+		if (attempt === 0) await new Promise((r) => setTimeout(r, 300))
+	}
+	return undefined
+}
+
 async function call(
 	config: DrovrUnsubscribeClientConfig,
 	path: string,
@@ -105,20 +139,8 @@ async function call(
 	if (!config.baseUrl) {
 		return { status: 'unavailable', reason: 'drovr-api-not-configured' }
 	}
-	const controller = new AbortController()
-	const timer = setTimeout(() => controller.abort(), config.timeoutMs ?? 8_000)
-	let response: Response
-	try {
-		response = await (config.fetch ?? fetch)(`${config.baseUrl}${path}`, {
-			...init,
-			cache: 'no-store',
-			signal: controller.signal,
-		})
-	} catch {
-		return { status: 'unavailable', reason: 'drovr-unreachable' }
-	} finally {
-		clearTimeout(timer)
-	}
+	const response = await fetchOnceRetried(config, path, init)
+	if (!response) return { status: 'unavailable', reason: 'drovr-unreachable' }
 	// Contract: a token that fails to parse or verify is 400
 	// invalid-unsubscribe-token. The page never asks for anything else
 	// that drovr would refuse with 400: the choice is validated first.

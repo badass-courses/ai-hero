@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
 	subscribeToList: vi.fn(),
@@ -91,6 +91,18 @@ function createStep() {
 }
 
 describe('workshopInterestSync', () => {
+	afterEach(() => {
+		vi.unstubAllEnvs()
+	})
+	it('master off makes zero Kit calls for a queued legacy interest projection', async () => {
+		vi.stubEnv('AIH_KIT_MIRROR_WRITES_ENABLED', 'false')
+		expect(await fn.handler({ event, step: createStep() })).toMatchObject({
+			success: true,
+			status: 'mirror-disabled',
+		})
+		expect(mocks.subscribeToList).not.toHaveBeenCalled()
+		expect(mocks.tagSubscriber).not.toHaveBeenCalled()
+	})
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mocks.subscribeToList.mockResolvedValue({ id: 42 })

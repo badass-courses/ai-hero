@@ -78,6 +78,45 @@ export type DrovrPersonalizeAnswer = {
 	flags: string[]
 }
 
+/** One line per personalize call, so a held send can be explained from logs
+ * (drovr asked why most shadow-newsletter sends came back unsendable). */
+export const DROVR_PERSONALIZE_ANSWERED_EVENT = 'drovr.personalize.answered'
+
+/** Ids, catalog keys and the decision only: never the email, the name or
+ * anything from `variables`. An unknown contact (the 404) has no answer. */
+export function drovrPersonalizeAnswerLogFields(
+	request: DrovrPersonalizeRequest,
+	answer: DrovrPersonalizeAnswer | undefined,
+) {
+	return {
+		journeyId: request.journeyId,
+		emailKey: request.emailKey,
+		contactId: request.contactId,
+		contactFound: answer !== undefined,
+		sendable: answer?.sendable ?? false,
+		reasons: [...(answer?.reasons ?? [])],
+		flags: [...(answer?.flags ?? [])],
+	}
+}
+
+/** Fire-and-forget: a logger that throws or rejects never fails the call. */
+export function logDrovrPersonalizeAnswer(
+	info: (event: string, fields: Record<string, unknown>) => unknown,
+	request: DrovrPersonalizeRequest,
+	answer: DrovrPersonalizeAnswer | undefined,
+): void {
+	try {
+		void Promise.resolve(
+			info(
+				DROVR_PERSONALIZE_ANSWERED_EVENT,
+				drovrPersonalizeAnswerLogFields(request, answer),
+			),
+		).catch(() => undefined)
+	} catch {
+		// Logging is best effort.
+	}
+}
+
 /** The double opt-in confirmation email drovr sends (journey double-opt-in). */
 export const DOUBLE_OPT_IN_CONFIRM_EMAIL_KEY = 'ai-hero-confirm.email-0'
 

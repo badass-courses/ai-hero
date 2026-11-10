@@ -8,9 +8,14 @@ import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
 import { log } from '@/server/logger'
 
 import type { EvergreenPitchEntryResult } from './drovr-pitch-entry'
-import { fanOutOwnedEvents, isShadowNewsletterBirth } from './drovr-ownership'
+import {
+	fanOutOwnedEvents,
+	isDiscardOnlyShadowEvent,
+	isShadowNewsletterBirth,
+} from './drovr-ownership'
 import {
 	enterEvergreenPitchFromLiveDatabase,
+	resolveDoiAnswerForwardContactIds,
 	resolveOwnedContactIds,
 } from './drovr-ownership-live'
 import { outboxEntryForEvent } from './drovr-outbox'
@@ -120,6 +125,10 @@ type DrovrShadowDispatchOptions = {
 	resolveNewsletterOwners?: (
 		events: readonly DrovrShadowEvent[],
 	) => Promise<string[]>
+	/** Test seam for the DOI learners whose answers are copied; never throws. */
+	resolveDoiAnswerForwards?: (
+		events: readonly DrovrShadowEvent[],
+	) => Promise<string[]>
 	/** Evergreen route flag. Defaults to AIH_DROVR_EVERGREEN_ENABLED. */
 	evergreenEnabled?: boolean
 	warn?: typeof log.warn
@@ -175,7 +184,11 @@ export async function dispatchDrovrShadowFact(
 			}
 		}
 	}
-	const mappedEvents = mapDrovrShadowFact(fact)
+	// Delivery discards a shadow event no owner copy comes from. Dropped
+	// here, a fact that maps to nothing else never starts a delivery run.
+	const mappedEvents = mapDrovrShadowFact(fact).filter(
+		(event) => !isDiscardOnlyShadowEvent(event),
+	)
 	const events =
 		requiresEvergreenEligibility && !evergreenEntryAllowed
 			? mappedEvents.filter(
@@ -309,10 +322,13 @@ export async function dispatchDrovrShadowFact(
 			if (await toOutbox(events, resolveError, true)) return 'outboxed'
 		}
 		const fallback = options.fallback ?? deliverDrovrShadowEventsDirect
+		const resolveDoiAnswerForwards =
+			options.resolveDoiAnswerForwards ?? resolveDoiAnswerForwardContactIds
 		const fannedOut = fanOutOwnedEvents(
 			events,
 			new Set(owned),
 			new Set(newsletterOwned),
+			new Set(await resolveDoiAnswerForwards(events)),
 		)
 		let unsent: readonly DrovrShadowEvent[]
 		let fallbackError: unknown

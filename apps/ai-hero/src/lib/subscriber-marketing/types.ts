@@ -50,6 +50,11 @@ export type ContactIdentityEvidence = {
 export type PayloadSummary = {
 	/** App-authored newsletter admission provenance, persisted in the JSON summary. */
 	source?: 'drovr-owned-signup' | 'newsletter-veteran'
+	/**
+	 * An answer that moves the learner to another path (lesson 1's "Team
+	 * workflows") records the email it moves to, persisted in the JSON summary.
+	 */
+	nextEmailResourceId?: string
 	summary: string
 	keywords: string[]
 	restrictedPayloadStored: false

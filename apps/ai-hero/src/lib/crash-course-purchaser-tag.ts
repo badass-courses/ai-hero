@@ -1,4 +1,5 @@
 import { format } from 'date-fns'
+import { kitMirrorWritesEnabled } from './kit-mirror-writes'
 
 export const AI_CODING_CRASH_COURSE_PRODUCT_ID = 'product-ma254'
 export const AI_CODING_CRASH_COURSE_SLUG = 'ai-coding-crash-course'
@@ -27,7 +28,7 @@ type KitPurchaserProjectionProvider = {
 }
 
 export type CrashCoursePurchaserProjectionSummary = {
-	mode: 'dry-run' | 'allow-write'
+	mode: 'dry-run' | 'allow-write' | 'mirror-disabled'
 	counts: {
 		purchasesScanned: number
 		uniquePurchasers: number
@@ -65,6 +66,7 @@ export async function projectExistingCrashCoursePurchasers({
 }): Promise<CrashCoursePurchaserProjectionSummary> {
 	if (
 		allowWrite &&
+		kitMirrorWritesEnabled() &&
 		(!provider.updateSubscriberFields || !tagExistingSubscriber)
 	) {
 		throw new Error('Kit purchaser projection writes are unavailable')
@@ -102,6 +104,8 @@ export async function projectExistingCrashCoursePurchasers({
 		tagWrites: 0,
 		tagFailures: 0,
 	}
+
+	if (!kitMirrorWritesEnabled()) return { mode: 'mirror-disabled', counts }
 
 	for (const [email, purchasedAt] of purchasers) {
 		let subscriber: KitSubscriber | null

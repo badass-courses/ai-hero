@@ -21,9 +21,10 @@ test('provider refusal is not misdiagnosed as a login failure or persisted as a 
 })
 import { tables } from './seed.mjs'
 
-test('the owned listener forwards reservation expiry and dispute lifecycle events', async () => {
+test('the owned listener forwards invoice fulfillment, reservation expiry and dispute lifecycle events', async () => {
   const source = await readFile(new URL('./serve.mjs', import.meta.url), 'utf8')
-  for (const event of ['checkout.session.expired', 'charge.dispute.created', 'charge.dispute.closed']) assert.ok(source.includes(event))
+  const events = source.match(/'--events', '([^']+)'/)?.[1].split(',') ?? []
+  for (const event of ['invoice.payment_succeeded', 'checkout.session.expired', 'charge.dispute.created', 'charge.dispute.closed']) assert.ok(events.includes(event), `Listener must forward ${event}`)
 })
 
 test('unknown payment-card scenarios fail before opening a browser', async () => {

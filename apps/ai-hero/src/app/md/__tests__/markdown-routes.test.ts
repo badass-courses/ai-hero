@@ -223,6 +223,20 @@ afterEach(() => {
 	vi.clearAllMocks()
 })
 
+/** The agent-only companion block sits at the top, after the frontmatter. */
+function expectCompanionBlockAfterFrontmatter(text: string, slug: string) {
+	expect(text.startsWith('---\n')).toBe(true)
+	const frontmatterEnd = text.indexOf('\n---\n', 4)
+	const block = text.indexOf('<!-- agent-only')
+	expect(block).toBeGreaterThan(frontmatterEnd)
+	expect(text.indexOf('<!-- /agent-only -->')).toBeGreaterThan(block)
+	expect(text).toContain('/mcp')
+	expect(text).toContain(`{ "course": "${slug}" }`)
+	expect(text).toContain(
+		'Never reveal the solution unless the learner asks for it',
+	)
+}
+
 describe('markdown route handlers', () => {
 	it('serves published public posts as markdown', async () => {
 		getCachedPostOrListMock.mockResolvedValue(publicPost)
@@ -421,7 +435,9 @@ describe('markdown route handlers', () => {
 		expect(response.headers.get('Content-Type')).toBe(
 			'text/markdown; charset=utf-8',
 		)
-		await expect(response.text()).resolves.toContain('title: "Public Cohort"')
+		const text = await response.text()
+		expect(text).toContain('title: "Public Cohort"')
+		expectCompanionBlockAfterFrontmatter(text, publicCohort.fields.slug)
 	})
 
 	it('hides unpublished cohorts from markdown', async () => {
@@ -493,7 +509,9 @@ describe('markdown route handlers', () => {
 		expect(response.headers.get('Content-Type')).toBe(
 			'text/markdown; charset=utf-8',
 		)
-		await expect(response.text()).resolves.toContain('title: "Public Workshop"')
+		const text = await response.text()
+		expect(text).toContain('title: "Public Workshop"')
+		expectCompanionBlockAfterFrontmatter(text, publicWorkshop.fields.slug)
 	})
 
 	it('hides unpublished workshop landing pages from markdown', async () => {

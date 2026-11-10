@@ -8,7 +8,7 @@ import {
 import { log } from '@/server/logger'
 
 /**
- * A failed link-test run cannot leave a principal behind: every ten minutes,
+ * A failed link-test run cannot leave a principal behind: every hour,
  * principals past their hour are removed exactly as DELETE removes them.
  */
 export const testPrincipalReaper = inngest.createFunction(
@@ -17,7 +17,7 @@ export const testPrincipalReaper = inngest.createFunction(
 		name: 'Test Principal Reaper',
 		concurrency: { limit: 1 },
 	},
-	{ cron: 'TZ=UTC */10 * * * *' },
+	{ cron: 'TZ=UTC 7 * * * *' },
 	async ({ step }) => {
 		const now = new Date()
 		const cutoff = new Date(now.getTime() - TEST_PRINCIPAL_TTL_MS)

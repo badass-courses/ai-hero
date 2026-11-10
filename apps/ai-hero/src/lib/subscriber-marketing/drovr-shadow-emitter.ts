@@ -13,6 +13,10 @@ import {
 	isEventNotLiveProblem,
 	isStopEvent,
 } from './drovr-stop-verdict'
+import type {
+	EntitlementGrantedPayload,
+	EntitlementRevokedPayload,
+} from './lifecycle-contact-events'
 import type { ContactEventRecord, SideEffectIntent } from './types'
 import { valuePathIntentCompletedAt } from './value-path-completion'
 import { SHADOW_NEWSLETTER_JOURNEY_ID } from './drovr-shadow-newsletter'
@@ -96,13 +100,20 @@ export type DrovrShadowEvent = {
 		| 'course.sequence-exhausted'
 		| 'contact.unsubscribed'
 		| 'purchase.recorded'
+		| 'entitlement.granted'
+		| 'entitlement.revoked'
 		| 'contact.profile.updated'
 		| 'contact.links.issued'
 		| 'contact.offer.issued'
 	occurredAt: string
 	idempotencyKey: string
 	payload?:
-		| { emailResourceId: string; provider?: typeof KIT_EMAIL_PROVIDER }
+		| {
+				emailResourceId: string
+				/** The team email a "Team workflows" answer switches to (drovr v13). */
+				nextEmailResourceId?: string
+				provider?: typeof KIT_EMAIL_PROVIDER
+		  }
 		| { messageId: string; provider?: typeof KIT_EMAIL_PROVIDER }
 		| { couponId: string; expiresAt: string }
 		| { reasonClass: string; reason: string }
@@ -111,6 +122,8 @@ export type DrovrShadowEvent = {
 		| { formId: string; kitFormId: number }
 		| { productId: string }
 		| { productId: string; couponId: string; sameOffer: true }
+		| EntitlementGrantedPayload
+		| EntitlementRevokedPayload
 		| DrovrPinnedTimezonePayload
 		| DrovrContactDirectoryBirthPayload
 		| DrovrContactProfilePayload
@@ -454,6 +467,19 @@ function mapContactEvent(event: ContactEventRecord): DrovrShadowEvent[] {
 	switch (event.eventType) {
 		case 'skills-newsletter.subscribed':
 			return [
+				// The verified signed-in click replaces Kit's activation fold.
+				// This is directory confirmation, not a DOI/form-consent row or a
+				// resubscribe lift. A stop still owns admission and directory guards.
+				...(event.provider === 'ai-hero' &&
+				 event.providerEventId.startsWith('skills-form:9376133:contact:')
+					? [{
+							...base,
+							tenantId: DROVR_AUTHORITY_TENANT_ID,
+							journeyId: DROVR_CONTACT_DIRECTORY_JOURNEY_ID,
+							type: 'contact.confirmed' as const,
+							idempotencyKey: `${base.idempotencyKey}:directory-confirmed`,
+						}]
+					: []),
 				{
 					...base,
 					journeyId: DROVR_SKILLS_COURSE_JOURNEY_ID,
@@ -476,16 +502,22 @@ function mapContactEvent(event: ContactEventRecord): DrovrShadowEvent[] {
 			]
 		}
 		case 'value-path.answer-selected': {
-			const emailResourceId = emailResourceIdFromKeywords(
+			const emailResourceId = answeredEmailResourceIdFromKeywords(
 				event.payloadSummary.keywords,
 			)
 			if (!emailResourceId) return []
+			const nextEmailResourceId = teamSwitchEmailResourceId(
+				emailResourceId,
+				event.payloadSummary.nextEmailResourceId,
+			)
 			return [
 				{
 					...base,
 					journeyId: DROVR_SKILLS_COURSE_JOURNEY_ID,
 					type: 'value-path.answer-selected',
-					payload: { emailResourceId },
+					payload: nextEmailResourceId
+						? { emailResourceId, nextEmailResourceId }
+						: { emailResourceId },
 				},
 			]
 		}
@@ -520,6 +552,29 @@ function mapContactEvent(event: ContactEventRecord): DrovrShadowEvent[] {
 						pinnedTimezonePayloadFromUnknown(event.domainPayload) ??
 						fallbackPinnedTimezone(),
 				}),
+			]
+		}
+		// An included grant is ownership, like a purchase: the directory copy
+		// is what drovr's ownership read finds, and the evergreen copy reaches
+		// an owned pitch actor through owner fan-out. No newsletter birth.
+		case 'entitlement.granted':
+		case 'entitlement.revoked': {
+			const payload = entitlementPayload(event.eventType, event.domainPayload)
+			if (!payload) return []
+			return [
+				{
+					...base,
+					journeyId: DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+					type: event.eventType,
+					payload,
+				},
+				{
+					...base,
+					tenantId: DROVR_AUTHORITY_TENANT_ID,
+					journeyId: DROVR_CONTACT_DIRECTORY_JOURNEY_ID,
+					type: event.eventType,
+					payload,
+				},
 			]
 		}
 		default:
@@ -980,12 +1035,42 @@ function containsEmailAddress(value: string) {
 	return /[^\s@]+@[^\s@]+\.[^\s@]+/.test(value)
 }
 
-function emailResourceIdFromKeywords(keywords: string[]) {
+const SKILLS_INDIVIDUAL_SLUG = 'ai-hero-skills-workflow'
+const SKILLS_TEAM_SLUG = 'ai-hero-skills-team-workflow'
+
+/**
+ * drovr v13 runs both tracks in one actor and matches an answer on the
+ * answered email's own id, so a team answer keeps its team id. Folding it
+ * to the individual id matches nothing on the team track. Completions still
+ * fold through canonicalSkillsEmailResourceId on purpose: value-path is 100%
+ * PostShiba, so no team send completes through Kit.
+ */
+function answeredEmailResourceIdFromKeywords(keywords: string[]) {
 	for (const keyword of keywords) {
-		const resourceId = canonicalSkillsEmailResourceId(keyword)
-		if (resourceId) return resourceId
+		const match = keyword.match(/(team-)?email-(\d+)$/)
+		if (!match) continue
+		const position = Number(match[2])
+		if (!Number.isSafeInteger(position) || position < 0) continue
+		return match[1]
+			? `${SKILLS_TEAM_SLUG}.team-email-${position}`
+			: `${SKILLS_INDIVIDUAL_SLUG}.email-${position}`
 	}
 	return undefined
+}
+
+/**
+ * drovr v13's team switch fires only when the answer names the team email
+ * one position on from an individual email. Anything else is dropped, so
+ * every other answer folds exactly as before.
+ */
+function teamSwitchEmailResourceId(
+	answered: string,
+	next: string | undefined,
+): string | undefined {
+	const from = answered.match(/^ai-hero-skills-workflow\.email-(\d+)$/)
+	const to = next?.match(/^ai-hero-skills-team-workflow\.team-email-(\d+)$/)
+	if (!from || !to) return undefined
+	return Number(to[1]) === Number(from[1]) + 1 ? next : undefined
 }
 
 function canonicalSkillsEmailResourceId(value: string) {
@@ -1008,6 +1093,34 @@ function evergreenOfferRedemption(
 		sameOffer === true
 		? { couponId, sameOffer }
 		: undefined
+}
+
+function entitlementPayload(
+	type: 'entitlement.granted' | 'entitlement.revoked',
+	domainPayload: unknown,
+): EntitlementGrantedPayload | EntitlementRevokedPayload | undefined {
+	if (!domainPayload || typeof domainPayload !== 'object') return undefined
+	const value = (domainPayload as Record<string, unknown>).entitlement
+	if (!value || typeof value !== 'object') return undefined
+	const { entitlementId, productId, viaProductId, bundlePolicy } =
+		value as Record<string, unknown>
+	const text = (candidate: unknown) =>
+		typeof candidate === 'string' && candidate.length > 0
+			? candidate
+			: undefined
+	const id = text(entitlementId)
+	if (!id) return undefined
+	if (type === 'entitlement.revoked') return { entitlementId: id }
+	const product = text(productId)
+	if (!product) return undefined
+	const via = text(viaProductId)
+	const policy = text(bundlePolicy)
+	return {
+		entitlementId: id,
+		productId: product,
+		...(via ? { viaProductId: via } : {}),
+		...(policy ? { bundlePolicy: policy } : {}),
+	}
 }
 
 function purchaseProductId(keywords: string[]) {

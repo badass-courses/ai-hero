@@ -1,15 +1,26 @@
 import { unstable_doesMiddlewareMatch } from 'next/experimental/testing/server'
 import { NextRequest, type NextResponse } from 'next/server'
 
+const authSpy = vi.hoisted(() => vi.fn())
+
 vi.mock('@/server/auth', () => ({
-	auth: (middleware: unknown) => middleware,
+	auth: (middleware: (...args: any[]) => unknown) => {
+		return (...args: unknown[]) => {
+			authSpy()
+			return middleware(...args)
+		}
+	},
 }))
 
 vi.mock('@/server/logger', () => ({
 	log: { warn: vi.fn() },
 }))
 
-import proxy, { config } from './proxy'
+import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
+import path from 'node:path'
+
+import proxy, { config, hasSessionCookie, SESSION_COOKIE_PREFIXES } from './proxy'
 
 const doesProxyMatch = (url: string) =>
 	unstable_doesMiddlewareMatch({ config, url })
@@ -76,9 +87,14 @@ describe('proxy matcher', () => {
 
 describe('roleless organization routing', () => {
 	const rolelessRequest = (path: string) =>
-		Object.assign(new NextRequest(`https://www.aihero.dev${path}`), {
-			auth: { user: { id: 'buyer', roles: [], organizationRoles: [] } },
-		})
+		Object.assign(
+			new NextRequest(`https://www.aihero.dev${path}`, {
+				headers: { cookie: 'authjs.session-token=abc' },
+			}),
+			{
+				auth: { user: { id: 'buyer', roles: [], organizationRoles: [] } },
+			},
+		)
 
 	it('lets a roleless buyer load the organization list instead of redirecting to itself', async () => {
 		const response = await runProxy(
@@ -182,5 +198,140 @@ describe('homepage coupon rewrite', () => {
 		expect(response.headers.get('x-middleware-rewrite')).toBe(
 			`http://localhost:3000/home-coupon?${key}=${value}&utm_source=share`,
 		)
+	})
+})
+
+describe('session lookup avoidance', () => {
+	beforeEach(() => authSpy.mockClear())
+
+	it.each([
+		'/rss.xml',
+		'/llms.txt',
+		'/sitemap.md',
+		'/skills.md',
+		'/c/ai-coding/real-codebase-risk',
+	])('answers %s without invoking auth()', async (path) => {
+		const req = new NextRequest(`https://www.aihero.dev${path}`, {
+			headers: { cookie: 'authjs.session-token=abc' },
+		})
+		await runProxy(req)
+		expect(authSpy).not.toHaveBeenCalled()
+	})
+
+	it('skips auth() on /cohorts without a session cookie', async () => {
+		const res = await runProxy(
+			new NextRequest('https://www.aihero.dev/cohorts/ai-coding'),
+		)
+		expect(res.status).toBe(200)
+		expect(authSpy).not.toHaveBeenCalled()
+	})
+
+	it.each(['authjs.session-token', '__Secure-authjs.session-token.0'])(
+		'still invokes auth() on /cohorts with %s',
+		async (name) => {
+			await runProxy(
+				new NextRequest('https://www.aihero.dev/cohorts/ai-coding', {
+					headers: { cookie: `${name}=abc` },
+				}),
+			)
+			expect(authSpy).toHaveBeenCalledTimes(1)
+		},
+	)
+
+	it.each(['/admin/dashboard', '/invoices/charge-123'])(
+		'always invokes auth() on %s',
+		async (path) => {
+			await runProxy(new NextRequest(`https://www.aihero.dev${path}`))
+			expect(authSpy).toHaveBeenCalledTimes(1)
+		},
+	)
+})
+
+// Pinned from the lockfile: next 16.2.7, next-auth 5.0.0-beta.25,
+// @auth/core 0.37.2 (cookie 0.7.1 parser). Re-check these on upgrade.
+// `@auth/core` does not export its cookie internals, so load the pinned file
+// next to its public entry point.
+const loadAuthCookieParser = () => {
+	const coreRequire = createRequire(
+		createRequire(import.meta.url).resolve('@auth/core'),
+	)
+	return coreRequire('cookie').parse as (header: string) => Record<string, string>
+}
+
+const loadSessionStore = async () => {
+	const entry = createRequire(import.meta.url).resolve('@auth/core')
+	const mod = await import(
+		pathToFileURL(path.join(path.dirname(entry), 'lib/utils/cookie.js')).href
+	)
+	return mod.SessionStore as new (
+		option: unknown,
+		cookies: Record<string, string>,
+		logger: unknown,
+	) => { value: string }
+}
+
+describe('hasSessionCookie matches Auth.js SessionStore', () => {
+	const names = SESSION_COOKIE_PREFIXES.flatMap((prefix) => [
+		prefix,
+		`${prefix}.0`,
+		`${prefix}.12`,
+		`${prefix}.extra`,
+		`${prefix}-old`,
+		`${prefix}x`,
+	])
+	const logger = { debug() {}, error() {}, warn() {} }
+
+	it.each(SESSION_COOKIE_PREFIXES)(
+		'treats every cookie SessionStore reads for %s as a session',
+		async (prefix) => {
+			const SessionStore = await loadSessionStore()
+			for (const name of names.filter((n) => n.startsWith(prefix))) {
+				const store = new SessionStore(
+					{ name: prefix, options: {} },
+					{ [name]: 'abc' },
+					logger,
+				)
+				expect(store.value).toBe('abc')
+				const req = new NextRequest('https://www.aihero.dev/cohorts/x', {
+					headers: { cookie: `${name}=abc` },
+				})
+				expect(hasSessionCookie(req)).toBe(true)
+			}
+		},
+	)
+
+	it.each(SESSION_COOKIE_PREFIXES)(
+		'routes duplicate %s headers to auth whenever SessionStore sees a value',
+		async (prefix) => {
+			const SessionStore = await loadSessionStore()
+			const parse = loadAuthCookieParser()
+			const logger = { debug() {}, error() {}, warn() {} }
+			for (const header of [
+				`${prefix}=FAKE; ${prefix}=`,
+				`${prefix}=; ${prefix}=FAKE`,
+				`${prefix}=FAKE; ${prefix}=FAKE2`,
+				`${prefix}=`,
+			]) {
+				const store = new SessionStore(
+					{ name: prefix, options: {} },
+					parse(header),
+					logger,
+				)
+				const req = new NextRequest('https://www.aihero.dev/cohorts/x', {
+					headers: { cookie: header },
+				})
+				// Name match only, whatever the value, so this holds even when
+				// Next's RequestCookies and Auth.js disagree on which value wins.
+				expect(hasSessionCookie(req)).toBe(true)
+				if (store.value) expect(hasSessionCookie(req)).toBe(true)
+			}
+		},
+	)
+
+	it('is false for unrelated cookies', () => {
+		const req = new NextRequest('https://www.aihero.dev/cohorts/x', {
+			headers: { cookie: 'organizationId=1; authjs.csrf-token=x' },
+		})
+		expect(hasSessionCookie(req)).toBe(false)
 	})
 })

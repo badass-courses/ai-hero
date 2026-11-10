@@ -19,18 +19,22 @@ import type { ContactRecord } from './types'
 export { CONTACT_SYNC_RETRY_EVENT }
 
 /**
- * The contact-sync push contract (§4, revised 2026-09-27): an event drovr
+ * The contact-sync push contract (§4, revised 2026-11-03): an event drovr
  * refused as event-not-live (or cold-start-unhandled) recorded nothing and
- * left its key unconsumed. It is re-sent unchanged, same key, 1 h after the
- * refusal and then every 2 h, matching drovr's 2-hourly straggler pass
- * (worst case ~4 h). Never dropped, never re-keyed.
+ * left its key unconsumed. It is re-sent unchanged, same key: 1 h after the
+ * refusal, every 2 h for three more tries (about 7 h, three of drovr's
+ * 2-hourly straggler passes), every 6 h to about a day and a half, then
+ * daily until the owner parks the chain at 7 days. Never dropped, never
+ * re-keyed. Before this, every 2 h for the full week cost ~84 attempts per
+ * stuck contact; this is 13.
  */
 export function stragglerRetryDelayMs(attempt: number): number {
-	return (attempt <= 1 ? 1 : 2) * 60 * 60 * 1000
+	const hours = attempt <= 1 ? 1 : attempt <= 4 ? 2 : attempt <= 8 ? 6 : 24
+	return hours * 60 * 60 * 1000
 }
 
-/** About a day of refusals (1 h + 11 × 2 h) is worth a look. */
-export const STRAGGLER_STUCK_AFTER_ATTEMPTS = 12
+/** About a day and a half of refusals (1 h + 3 × 2 h + 4 × 6 h) is worth a look. */
+export const STRAGGLER_STUCK_AFTER_ATTEMPTS = 8
 
 /**
  * The request is keyed by its events and attempt: Inngest drops a send
@@ -57,6 +61,31 @@ export function contactSyncRetryRequest(
 		ts: nowMs + stragglerRetryDelayMs(attempt),
 		data: acknowledge ? { items, attempt, acknowledge } : { items, attempt },
 	}
+}
+
+/** New starter fan-out is per contact; continuation IDs retain their attempts.
+ * PR1 joins/skips without retaining new membership; see the inventory runbook. */
+export function contactSyncStarterRequests(
+	items: DeferredDrovrEvent[],
+	nowMs: number,
+	acknowledge?: RetryAcknowledgement,
+) {
+	return [...new Set(items.map((item) => item.event.contactId))].map((contactId) => {
+		const request = contactSyncRetryRequest(
+			items.filter((item) => item.event.contactId === contactId),
+			1,
+			nowMs,
+			acknowledge?.contactId === contactId ? acknowledge : undefined,
+		)
+		return {
+			...request,
+			id: `contact-sync-starter:${request.id}`,
+			data: {
+				...request.data,
+				stragglerOwner: { protocol: 1 as const, startedAt: nowMs },
+			},
+		}
+	})
 }
 
 /**
@@ -208,7 +237,10 @@ export async function runContactSyncStragglerRetry(args: {
 			rejected,
 		}
 	}
-	if (attempt >= STRAGGLER_STUCK_AFTER_ATTEMPTS)
+	if (
+		attempt >= STRAGGLER_STUCK_AFTER_ATTEMPTS &&
+		!args.event.data.stragglerOwner
+	)
 		await args.warn('drovr.contact_sync.straggler_stuck', {
 			attempt,
 			reasons: [...new Set(refused.map((item) => item.reason))],

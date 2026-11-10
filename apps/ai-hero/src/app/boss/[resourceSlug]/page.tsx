@@ -4,7 +4,7 @@ import { notFound } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
 import { DiscountCountdown } from '@/components/mdx/mdx-components'
 import { DiscountDeadline } from '@/components/pricing/discount-deadline'
-import { courseBuilderAdapter } from '@/db'
+import { getCachedDefaultCoupon } from '@/lib/default-coupon'
 import { env } from '@/env.mjs'
 import { getCachedCohort } from '@/lib/cohorts-query'
 import { getPage } from '@/lib/pages-query'
@@ -32,7 +32,7 @@ async function getDiscountData(resourceSlug: string) {
 		(await getCachedWorkshopProduct(resourceSlug))?.id
 	if (!productId) return null
 
-	const couponResult = await courseBuilderAdapter.getDefaultCoupon([productId])
+	const couponResult = await getCachedDefaultCoupon([productId])
 	return couponResult?.defaultCoupon ?? null
 }
 

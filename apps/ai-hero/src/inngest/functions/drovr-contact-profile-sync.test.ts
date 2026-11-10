@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { ContactProfileSnapshot } from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
 
-import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
+import {
+	contactSyncStarterRequests,
+	contactSyncRetryRequest,
+} from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
 import {
 	contactProfileContentHash,
 	runContactProfileSync,
@@ -33,6 +36,7 @@ function harness(
 			  }
 			| 'not-configured'
 		onSendingJourney?: boolean
+		hasBuyerFact?: boolean
 		reason?: 'journey-entered' | 'offer-issued' | 'reconcile'
 		acknowledged?: boolean
 	} = {},
@@ -86,6 +90,7 @@ function harness(
 			deliver,
 			ownedPath,
 			onSendingJourney,
+			hasBuyerFact: async () => overrides.hasBuyerFact ?? false,
 			now: () => now,
 			birth,
 			acknowledge,
@@ -126,55 +131,136 @@ describe('drovr contact profile sync function', () => {
 		expect(h.readSnapshot).not.toHaveBeenCalled()
 	})
 
-	it('pushes nothing for a contact on no drovr sending journey (drovr would refuse it)', async () => {
-		// The contract: profile, links and offer events only for contacts
-		// with a drovr sending journey; drovr migrates only those to v2.
+	it('still skips a contact with neither a sending journey nor buyer facts', async () => {
 		const h = harness({ onSendingJourney: false })
 		await expect(h.run()).resolves.toEqual({
 			status: 'skipped',
 			reason: 'no-sending-journey',
 		})
 		expect(h.onSendingJourney).toHaveBeenCalledWith('contact-1')
-		expect(h.order).toEqual(['sending-journey'])
+		expect(h.order).toEqual(['sending-journey', 'buyer-fact'])
 		expect(h.readSnapshot).not.toHaveBeenCalled()
 		expect(h.versionFor).not.toHaveBeenCalled()
 		expect(h.deliver).not.toHaveBeenCalled()
 	})
 
-	it('refused as event-not-live: schedules the same events for after the straggler pass, and answers deferred', async () => {
-		// Contract §4: nothing was recorded and the key is unconsumed, so the
-		// same event is retried unchanged; §3: it does not hold the watermark.
-		const profileEvent = {
-			tenantId: 'org-aihero' as const,
-			contactId: 'contact-1',
-			journeyId: 'contact-directory' as const,
-			type: 'contact.profile.updated' as const,
-			occurredAt: '2026-09-26T16:00:00.000Z',
-			idempotencyKey: 'profile:contact-1:4',
-		}
-		const deferred: DeferredDrovrEvent[] = [
-			{ event: profileEvent, reason: 'event-not-live' },
-		]
-		const h = harness({ delivered: { accepted: 0, rejected: 0, deferred } })
-		await expect(h.run()).resolves.toEqual({
-			status: 'deferred',
-			reason: 'event-not-live',
-			profileVersion: 4,
-			deferred: 1,
-		})
-		expect(h.sent).toEqual([
-			{
-				id: 'defer-refused',
-				// Nothing was rejected, so the retry may vouch for version 4.
-				payload: contactSyncRetryRequest(deferred, 1, now, {
-					contactId: 'contact-1',
-					profileVersion: 4,
-				}),
+	it('sends only the unchanged email-bearing profile for a fact holder without a journey', async () => {
+		const h = harness({
+			onSendingJourney: false,
+			hasBuyerFact: true,
+			snapshot: {
+				...snapshot,
+				offers: [
+					{
+						journeyId: 'crash-course-evergreen-offer',
+						couponId: 'coupon-1',
+						variables: {},
+					},
+				],
 			},
+		})
+		await expect(h.run()).resolves.toMatchObject({
+			status: 'sent',
+			links: 0,
+			offers: 0,
+		})
+		expect(h.ownedPath).not.toHaveBeenCalled()
+		expect(h.readSnapshot).toHaveBeenCalledWith({
+			contactId: 'contact-1',
+			valuePathSlug: undefined,
+		})
+		expect(h.deliver).toHaveBeenCalledWith([
+			expect.objectContaining({
+				type: 'contact.profile.updated',
+				idempotencyKey: 'profile:contact-1:4',
+				payload: { profileVersion: 4, ...snapshot.profile },
+			}),
 		])
-		// That actor exists, it is on v1: never a birth.
-		expect(h.birth).not.toHaveBeenCalled()
 	})
+
+	it.each([
+		{
+			snapshot: { ...snapshot, unsubscribed: true as const },
+			reason: 'unsubscribed-held',
+		},
+		{
+			snapshot: { ...snapshot, profile: { ...snapshot.profile, email: '' } },
+			reason: 'contact-email-missing',
+		},
+	])(
+		'preserves $reason for a fact holder without a journey',
+		async ({ snapshot, reason }) => {
+			const h = harness({
+				onSendingJourney: false,
+				hasBuyerFact: true,
+				snapshot,
+			})
+			await expect(h.run()).resolves.toEqual({ status: 'skipped', reason })
+			expect(h.deliver).not.toHaveBeenCalled()
+			expect(h.birth).not.toHaveBeenCalled()
+		},
+	)
+
+	it.each([false, true])(
+		'refused as event-not-live preserves scope and wire shape (ownership enabled: %s)',
+		async (owned) => {
+			// Contract §4: nothing was recorded and the key is unconsumed, so the
+			// same event is retried unchanged; §3: it does not hold the watermark.
+			const profileEvent = {
+				tenantId: 'org-aihero' as const,
+				contactId: 'contact-1',
+				journeyId: 'contact-directory' as const,
+				type: 'contact.profile.updated' as const,
+				occurredAt: '2026-09-26T16:00:00.000Z',
+				idempotencyKey: 'profile:contact-1:4',
+			}
+			const deferred: DeferredDrovrEvent[] = [
+				{ event: profileEvent, reason: 'event-not-live' },
+			]
+			const h = harness({
+				delivered: { accepted: 0, rejected: 0, deferred },
+				env: {
+					AIH_DROVR_PROFILE_SYNC: 'true',
+					...(owned ? { AIH_DROVR_STRAGGLER_OWNER: 'true' } : {}),
+				},
+			})
+			await expect(h.run()).resolves.toEqual({
+				status: 'deferred',
+				reason: 'event-not-live',
+				profileVersion: 4,
+				deferred: 1,
+			})
+			expect(h.sent).toEqual([
+				{
+					id: 'defer-refused',
+					// OFF retains the legacy object; ON emits a marked array.
+					// Nothing was rejected, so this retry may vouch for version 4.
+					payload: owned
+						? contactSyncStarterRequests(deferred, now, {
+								contactId: 'contact-1',
+								profileVersion: 4,
+							})
+						: contactSyncRetryRequest(deferred, 1, now, {
+								contactId: 'contact-1',
+								profileVersion: 4,
+							}),
+				},
+			])
+			const payload = h.sent[0]!.payload
+			expect(Array.isArray(payload)).toBe(owned)
+			const request = owned
+				? (payload as ReturnType<typeof contactSyncStarterRequests>)[0]!
+				: (payload as ReturnType<typeof contactSyncRetryRequest>)
+			expect(request.data).toEqual({
+				items: deferred,
+				attempt: 1,
+				acknowledge: { contactId: 'contact-1', profileVersion: 4 },
+				...(owned ? { stragglerOwner: { protocol: 1, startedAt: now } } : {}),
+			})
+			// That actor exists, it is on v1: never a birth.
+			expect(h.birth).not.toHaveBeenCalled()
+		},
+	)
 
 	it('refused as cold-start-unhandled: births the directory actor, then pushes again and answers sent', async () => {
 		const profileEvent = {

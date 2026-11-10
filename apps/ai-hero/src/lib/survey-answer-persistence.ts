@@ -3,6 +3,7 @@ import { and, eq, sql } from 'drizzle-orm'
 
 import { createInternalId } from './internal-id'
 import { withMysqlPrimaryKeyRetry } from './mysql-primary-key-retry'
+import { scheduleGoalInterestFact } from './subscriber-marketing/survey-interest-facts-live'
 
 type SurveyAnswerLogger = {
 	info(event: string, data: Record<string, unknown>): unknown
@@ -15,6 +16,7 @@ type PersistSurveyAnswersInput = {
 	answers: Record<string, unknown>
 	userId: string | null
 	emailListSubscriberId: string | null
+	identityEmail?: string | null
 	eventPrefix?: 'survey.answer' | 'survey.answers'
 }
 
@@ -86,21 +88,35 @@ export async function persistSurveyAnswers(input: PersistSurveyAnswersInput) {
 		emailListSubscriberId: input.emailListSubscriberId,
 	})
 
-	await withMysqlPrimaryKeyRetry(async () => {
-		const now = new Date()
-		await input.database.insert(questionResponse).values(
-			answers.map(({ questionSlug, answer }) => ({
-				id: createInternalId(),
-				surveyId,
-				questionId: slugToIdMap.get(questionSlug) || questionSlug,
-				userId: input.userId,
-				emailListSubscriberId: input.emailListSubscriberId,
-				fields: { answer },
-				createdAt: now,
-				updatedAt: now,
-			})),
-		)
+	const savedRows = await withMysqlPrimaryKeyRetry(async () => {
+		// QuestionResponse uses TIMESTAMP(0); match the persisted source time.
+		const now = new Date(Math.floor(Date.now() / 1000) * 1000)
+		const rows = answers.map(({ questionSlug, answer }) => ({
+			id: createInternalId(),
+			surveyId,
+			questionId: slugToIdMap.get(questionSlug) || questionSlug,
+			userId: input.userId,
+			emailListSubscriberId: input.emailListSubscriberId,
+			fields: { answer },
+			createdAt: now,
+			updatedAt: now,
+		}))
+		await input.database.insert(questionResponse).values(rows)
+		return rows
 	})
+
+	for (const row of savedRows) {
+		scheduleGoalInterestFact(
+			{
+				id: row.id,
+				questionId: row.questionId,
+				answer: row.fields.answer,
+				createdAt: row.createdAt,
+				email: input.identityEmail ?? null,
+			},
+			input.logger,
+		)
+	}
 
 	await input.logger.info(`${eventPrefix}.saved`, {
 		surveyId,

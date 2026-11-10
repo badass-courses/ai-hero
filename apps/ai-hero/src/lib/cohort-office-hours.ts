@@ -23,12 +23,6 @@ export type CohortOfficeHoursDayGroup = {
 	sessions: CohortOfficeHoursSession[]
 }
 
-const OFFICE_HOURS_DAY_LABELS = [
-	'Opening Monday',
-	'Second Monday',
-	'Final Friday',
-] as const
-
 export function createYouTubeWatchUrl(broadcastId: string) {
 	return `https://www.youtube.com/watch?v=${broadcastId}`
 }
@@ -41,24 +35,39 @@ export function sortOfficeHoursSessions(
 	)
 }
 
-export function groupOfficeHoursSessionsByUtcDate(
+/** Sessions grouped by their calendar day in `timeZone`, in order. */
+export function groupOfficeHoursSessionsByDate(
 	sessions: CohortOfficeHoursSession[],
+	timeZone = 'UTC',
 ): CohortOfficeHoursDayGroup[] {
 	const groupedSessions = new Map<string, CohortOfficeHoursSession[]>()
 
 	for (const session of sortOfficeHoursSessions(sessions)) {
-		const dateKey = session.startsAt.slice(0, 10)
+		const dateKey = formatInTimeZone(session.startsAt, timeZone, 'yyyy-MM-dd')
 		const existingSessions = groupedSessions.get(dateKey) || []
 		existingSessions.push(session)
 		groupedSessions.set(dateKey, existingSessions)
 	}
 
 	return Array.from(groupedSessions.entries()).map(
-		([dateKey, sessionsForDate], index) => ({
-			dateKey,
-			label: OFFICE_HOURS_DAY_LABELS[index] || 'Office Hours',
-			sessions: sortOfficeHoursSessions(sessionsForDate),
-		}),
+		([dateKey, sessionsForDate], index) => {
+			const weekday = formatInTimeZone(
+				sessionsForDate[0]!.startsAt,
+				timeZone,
+				'EEEE',
+			)
+			const prefix =
+				index === 0
+					? 'Opening '
+					: index === groupedSessions.size - 1
+						? 'Final '
+						: ''
+			return {
+				dateKey,
+				label: `${prefix}${weekday}`,
+				sessions: sortOfficeHoursSessions(sessionsForDate),
+			}
+		},
 	)
 }
 

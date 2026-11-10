@@ -1,4 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
+
+const tokenStoreMocks = vi.hoisted(() => ({
+	env: { INTEGRATION_TOKEN_KEY: undefined as string | undefined },
+	insert: vi.fn(() => { throw new Error('synthetic DB failure') }),
+	delete: vi.fn(() => { throw new Error('synthetic cleanup failure') }),
+}))
+vi.mock('@/env.mjs', () => ({ env: tokenStoreMocks.env }))
+vi.mock('@/db', () => ({ db: { insert: tokenStoreMocks.insert, delete: tokenStoreMocks.delete } }))
+vi.mock('@/server/logger', async () => ({
+	log: { warn: vi.fn() },
+	serializeError: (await import('@/server/logger-utils')).serializeError,
+}))
 import {
 	DEFAULT_DROPBOX_OAUTH_REDIRECT_URI,
 	buildDropboxAuthorizationUrl,
@@ -7,8 +19,6 @@ import {
 	getDropboxSyncConfig,
 	readDropboxCourseManifest,
 	readDropboxCourseManifestSummary,
-	redeployAfterDropboxAuthorization,
-	storeDropboxRefreshToken,
 	verifyDropboxConnection,
 } from './dropbox-course-sync'
 
@@ -452,44 +462,5 @@ describe('Dropbox course sync OAuth', () => {
 				fetchImpl: oversizedFetch,
 			}),
 		).rejects.toThrow('exceeds the maximum allowed size')
-	})
-
-	it('stores the callback-issued refresh token as encrypted Vercel configuration', async () => {
-		const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ id: 'env_1' }))
-		const result = await storeDropboxRefreshToken({
-			refreshToken: 'callback-refresh-token',
-			environment: {
-				VERCEL_API_TOKEN: 'vercel-token',
-				VERCEL_AI_HERO_PROJECT_ID: 'prj_aihero',
-				VERCEL_TEAM_ID: 'team_aihero',
-			},
-			fetchImpl,
-		})
-
-		expect(result).toEqual({ ok: true, missingConfig: [], statuses: [200, 200, 200] })
-		expect(fetchImpl).toHaveBeenCalledTimes(3)
-		for (const [, options] of fetchImpl.mock.calls) {
-			expect(JSON.parse(options.body)).toMatchObject({
-				key: 'DROPBOX_REFRESH_TOKEN',
-				type: 'encrypted',
-			})
-		}
-	})
-
-	it('triggers a production deployment after storing a refresh token', async () => {
-		const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ id: 'dpl_1' }))
-		const result = await redeployAfterDropboxAuthorization({
-			environment: { VERCEL_API_TOKEN: 'vercel-token', VERCEL_TEAM_ID: 'team_aihero' },
-			fetchImpl,
-		})
-
-		expect(result).toEqual({ ok: true, missingConfig: [], status: 200 })
-		const [url, options] = fetchImpl.mock.calls[0]
-		expect(url).toContain('/v13/deployments?teamId=team_aihero')
-		expect(JSON.parse(options.body)).toMatchObject({
-			name: 'ai-hero',
-			target: 'production',
-			gitSource: { repo: 'ai-hero', ref: 'main', org: 'badass-courses' },
-		})
 	})
 })

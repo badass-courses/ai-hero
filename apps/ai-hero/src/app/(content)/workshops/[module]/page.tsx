@@ -11,6 +11,7 @@ import { LessonDeniedNotice } from '@/app/(content)/workshops/_components/lesson
 import { WorkshopResourceList } from '@/app/(content)/workshops/_components/workshop-resource-list'
 import { TeamWelcomeVideo } from '@/app/(content)/workshops/_components/team-welcome-video'
 import { WorkshopActionsBar } from '@/app/(content)/workshops/_components/workshop-user-actions'
+import { workshopAwardsCertificate } from '@/lib/workshops'
 import { Contributor } from '@/components/contributor'
 import { EvergreenClaimPanel } from '@/components/evergreen-claim-panel'
 import { DiscountDeadline } from '@/components/pricing/discount-deadline'
@@ -49,6 +50,10 @@ import {
 } from '../_components/workshop-pricing'
 import { PublicWorkshopPricing } from '../_components/workshop-public-pricing-server'
 import { WorkshopDraftBanner } from '../_components/workshop-draft-banner'
+import { C5SaleCta } from '@/components/c5-sale-cta'
+import { C5SaleSwitch } from '@/components/c5-sale-switch'
+import { WorkshopSaleGate } from '../_components/workshop-sale-gate'
+
 import { WorkshopInterestCta } from '../_components/workshop-interest-cta'
 import { WorkshopNotifyButton } from '../_components/workshop-notify-button'
 import { WorkshopSidebar } from '../_components/workshop-sidebar'
@@ -307,6 +312,11 @@ export default async function ModulePage(props: Props) {
 				)}
 			<main className="flex min-h-screen w-full flex-col">
 				<LessonDeniedNotice />
+				<WorkshopSaleGate>
+					<C5SaleSwitch>
+						<C5SaleCta />
+					</C5SaleSwitch>
+				</WorkshopSaleGate>
 				{isPreLaunch && (
 					<React.Suspense fallback={null}>
 						<WorkshopDraftBanner
@@ -382,9 +392,13 @@ export default async function ModulePage(props: Props) {
 								/>
 							</Suspense>
 							<div className="pt-10">
-								<article className="prose dark:prose-invert sm:prose-lg lg:prose-lg prose-p:max-w-4xl prose-headings:max-w-4xl prose-ul:max-w-4xl prose-table:max-w-4xl prose-pre:max-w-4xl **:data-pre:max-w-4xl max-w-none px-5 pb-10 sm:px-8 lg:px-10">
-									{workshop.fields?.body ? body : <p>No description found.</p>}
-								</article>
+								{/* Synced workshops can arrive without a body. Render nothing
+								    rather than a "No description found." message. */}
+								{workshop.fields?.body ? (
+									<article className="prose dark:prose-invert sm:prose-lg lg:prose-lg prose-p:max-w-4xl prose-headings:max-w-4xl prose-ul:max-w-4xl prose-table:max-w-4xl prose-pre:max-w-4xl **:data-pre:max-w-4xl max-w-none px-5 pb-10 sm:px-8 lg:px-10">
+										{body}
+									</article>
+								) : null}
 								{hasSelfPacedProduct &&
 								hasContent &&
 								!bodyHasInlineContentList && (
@@ -452,9 +466,11 @@ export default async function ModulePage(props: Props) {
 														maxHeight="h-auto"
 														wrapperClassName="overflow-hidden pb-0 hidden md:block"
 													/>
-													<div className="p-3">
-														<Certificate resourceSlugOrId={params.module} />
-													</div>
+													{workshopAwardsCertificate(workshop.fields) && (
+														<div className="p-3">
+															<Certificate resourceSlugOrId={params.module} />
+														</div>
+													)}
 												</WorkshopSidebar>
 											)
 											const pricingWidget = (

@@ -12,6 +12,11 @@ function harness(
 		configured?: boolean
 		stopsRejected?: number
 		ownerStopsNeverBorn?: number
+		lateCursor?: {
+			after?: { createdAt: string; id: string }
+			failing?: { contactId: string; runs: number }
+		}
+		failSync?: string
 	} = {},
 ) {
 	const order: string[] = []
@@ -22,6 +27,7 @@ function harness(
 		}),
 		invoke: vi.fn(async (id: string) => {
 			order.push(id)
+			if (id === `sync:${overrides.failSync}`) throw new Error('drovr 503')
 			return id.startsWith('sync:')
 				? {
 						status: 'sent',
@@ -45,6 +51,7 @@ function harness(
 	const error = vi.fn()
 	const heartbeat = vi.fn(async () => ({ advanced: true }))
 	const writeWatermark = vi.fn(async () => undefined)
+	const writeLateCursor = vi.fn(async () => undefined)
 	const run = () =>
 		reconcileContactSync({
 			// A fake with the two tools the run uses.
@@ -60,16 +67,20 @@ function harness(
 						contactId: 'c1',
 						eventType: 'skills-newsletter.subscribed',
 						occurredAt: '2026-09-26T17:50:00.000Z',
+						createdAt: '2026-09-26T17:50:00.000Z',
 					},
 					{
 						id: 'e2',
 						contactId: 'c2',
 						eventType: 'contact.unsubscribed',
 						occurredAt: '2026-09-26T17:51:00.000Z',
+						createdAt: '2026-09-26T17:51:00.000Z',
 					},
 				],
 				rotatedContacts: async () => [],
 				writeWatermark,
+				readLateCursor: async () => overrides.lateCursor,
+				writeLateCursor,
 			},
 			stopFacts: async () => [
 				{
@@ -84,7 +95,15 @@ function harness(
 			heartbeat,
 			startedAt: '2026-09-26T18:00:00.000Z',
 		})
-	return { run, step, order, error, heartbeat, writeWatermark }
+	return {
+		run,
+		step,
+		order,
+		error,
+		heartbeat,
+		writeWatermark,
+		writeLateCursor,
+	}
 }
 
 describe('drovr contact sync reconcile function', () => {
@@ -120,6 +139,7 @@ describe('drovr contact sync reconcile function', () => {
 		})
 		expect(h.order).toEqual([
 			'read-watermark',
+			'read-late-cursor',
 			'scan-fresh',
 			'scan-overlap',
 			'rotated-contacts',
@@ -135,6 +155,7 @@ describe('drovr contact sync reconcile function', () => {
 			'2026-09-26T17:58:00.000Z',
 			expect.any(String),
 		)
+		expect(h.writeLateCursor).not.toHaveBeenCalled()
 	})
 
 	it('never heartbeats past a stop drovr refused', async () => {
@@ -151,6 +172,68 @@ describe('drovr contact sync reconcile function', () => {
 		await expect(h.run()).resolves.toMatchObject({ status: 'synced' })
 		expect(h.heartbeat).toHaveBeenCalled()
 		expect(h.writeWatermark).toHaveBeenCalled()
+	})
+
+	it('clears a late cursor as one more step, after the watermark', async () => {
+		const h = harness({
+			lateCursor: {
+				after: { createdAt: '2026-09-26T17:30:00.000Z', id: 'e0' },
+			},
+		})
+		await expect(h.run()).resolves.toMatchObject({ status: 'synced' })
+		expect(h.order.slice(-3)).toEqual([
+			'heartbeat',
+			'write-watermark',
+			'clear-late-cursor',
+		])
+		expect(h.writeLateCursor).toHaveBeenCalledWith(undefined)
+	})
+
+	it('holds a failing late contact in the late cursor, then refuses', async () => {
+		const h = harness({ failSync: 'c1' })
+		await expect(h.run()).rejects.toThrow('drovr 503')
+		expect(h.order).toContain('write-late-cursor')
+		expect(h.writeLateCursor).toHaveBeenCalledWith({
+			failing: { contactId: 'c1', runs: 1 },
+		})
+		expect(h.heartbeat).not.toHaveBeenCalled()
+		expect(h.writeWatermark).not.toHaveBeenCalled()
+	})
+
+	it('pages a late contact skipped on its third failing run, once, as a step', async () => {
+		const h = harness({
+			failSync: 'c1',
+			lateCursor: { failing: { contactId: 'c1', runs: 2 } },
+		})
+		// c1's fresh change at 17:50 still holds the claim just before it.
+		await expect(h.run()).resolves.toMatchObject({
+			status: 'partial',
+			syncedThrough: '2026-09-26T17:49:59.999Z',
+			lateSkipped: ['c1'],
+		})
+		expect(h.error).toHaveBeenCalledTimes(1)
+		expect(h.error).toHaveBeenCalledWith('drovr.contact_sync.late_skipped', {
+			contactId: 'c1',
+			eventType: 'skills-newsletter.subscribed',
+			reason: 'sync failed 3 runs in a row',
+		})
+		expect(h.order).toEqual([
+			'read-watermark',
+			'read-late-cursor',
+			'scan-fresh',
+			'scan-overlap',
+			'rotated-contacts',
+			'sync:c1',
+			'sync:c2',
+			// Recorded only once the stops it passes went out.
+			'load-stops',
+			'resend-stops',
+			'late-skipped:c1',
+			'write-late-cursor',
+			'heartbeat',
+			'write-watermark',
+			'clear-late-cursor',
+		])
 	})
 
 	it('still refuses when any other stop was rejected', async () => {
