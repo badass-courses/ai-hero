@@ -1,7 +1,7 @@
 import { cache } from 'react'
 import { cookies } from 'next/headers'
 import { getAbility, UserSchema } from '@/ability'
-import { emailProvider } from '@/coursebuilder/email-provider'
+import { loginEmailProvider } from '@/coursebuilder/email-provider'
 import { courseBuilderAdapter, db } from '@/db'
 import { env } from '@/env.mjs'
 import { withLoginEmailGuard } from '@/lib/login-email'
@@ -302,7 +302,7 @@ export const authOptions: NextAuthConfig = {
 					),
 				]
 			: []),
-		emailProvider,
+		loginEmailProvider,
 	],
 	pages: {
 		signIn: '/login',
