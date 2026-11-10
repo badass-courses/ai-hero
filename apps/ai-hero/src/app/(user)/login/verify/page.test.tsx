@@ -16,7 +16,7 @@ import {
 	createMagicLinkGetHandler,
 } from '@/server/magic-link-confirmation'
 
-import VerifyMagicLinkPage from './page'
+import VerifyMagicLinkPage, { metadata } from './page'
 
 const secret = 'test_nextauth_secret'
 
@@ -34,6 +34,10 @@ async function validCookie() {
 }
 
 describe('magic-link confirmation page', () => {
+	it('preserves same-origin form Origin without exposing referrers to third parties', () => {
+		expect(metadata.referrer).toBe('same-origin')
+	})
+
 	beforeEach(() => {
 		mocks.cookies.mockResolvedValue({ get: vi.fn(() => undefined) })
 	})
