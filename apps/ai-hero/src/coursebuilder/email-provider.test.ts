@@ -25,9 +25,18 @@ vi.mock('next-auth/providers/postmark', () => ({
 	default: (options: unknown) => ({ id: 'postmark', options }),
 }))
 
-import { emailProvider, magicLinkIdentity } from './email-provider'
+import { emailProvider, loginEmailProvider, magicLinkIdentity } from './email-provider'
 
 describe('magic-link identity port', () => {
+	it('limits requested login links to one hour without shortening buyer emails', () => {
+		expect(loginEmailProvider.maxAge).toBe(3600)
+		expect(loginEmailProvider.options.maxAge).toBe(3600)
+		expect(emailProvider.options?.maxAge).toBe(86400)
+		expect(loginEmailProvider.options.sendVerificationRequest).toBe(
+			emailProvider.options?.sendVerificationRequest,
+		)
+	})
+
 	it('mints first-time recipients through the personal-org boundary', async () => {
 		mocks.findOrCreateUserWithPersonalOrg.mockResolvedValue({
 			user: { id: 'u1', email: 'new@example.test' },

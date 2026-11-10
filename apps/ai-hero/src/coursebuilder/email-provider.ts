@@ -27,10 +27,21 @@ export const magicLinkIdentity = {
 	},
 }
 
+// Transactional welcome, redemption and transfer emails retain their existing
+// one-day default (transfers may supply their own explicit expiresAt).
 export const emailProvider = Postmark({
+	maxAge: 86400,
 	apiKey: env.POSTMARK_API_KEY,
 	from: env.NEXT_PUBLIC_SUPPORT_EMAIL,
 	sendVerificationRequest: (params) => {
 		return sendVerificationRequest(params, magicLinkIdentity)
 	},
 })
+
+// Auth.js resolves provider.options over the provider defaults. Set both so
+// direct consumers and Auth.js agree on the self-requested login lifetime.
+export const loginEmailProvider = {
+	...emailProvider,
+	maxAge: 3600,
+	options: { ...emailProvider.options, maxAge: 3600 },
+}
