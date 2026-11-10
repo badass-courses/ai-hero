@@ -71,6 +71,9 @@ function stripHeavyFieldsFromResource(resource: any): any {
  * every `fields` blob in the tree — every lesson body — and stripped them in
  * JS afterwards, which is why it held the workshop sidebar's query at p50
  * 213 ms / p99 1.19 s on the database (Insights, 2026-08-03).
+ *
+ * `certificate` is a workshop's certificate opt-out; the end-of-video card
+ * reads it from here.
  */
 const navigationFieldsProjection = sql<
 	string | Record<string, any>
@@ -79,7 +82,8 @@ const navigationFieldsProjection = sql<
 	'title', JSON_EXTRACT(${contentResource.fields}, '$.title'),
 	'visibility', JSON_EXTRACT(${contentResource.fields}, '$.visibility'),
 	'state', JSON_EXTRACT(${contentResource.fields}, '$.state'),
-	'thumbnailTime', JSON_EXTRACT(${contentResource.fields}, '$.thumbnailTime')
+	'thumbnailTime', JSON_EXTRACT(${contentResource.fields}, '$.thumbnailTime'),
+	'certificate', JSON_EXTRACT(${contentResource.fields}, '$.certificate')
 )`
 
 /**
