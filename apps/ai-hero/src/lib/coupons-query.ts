@@ -6,6 +6,7 @@ import { courseBuilderAdapter, db } from '@/db'
 import { coupon, merchantCoupon as merchantCouponTable } from '@/db/schema'
 import { GRANT_COUPON_ENTITLEMENTS_EVENT } from '@/inngest/functions/coupon/grant-coupon-entitlements'
 import { inngest } from '@/inngest/inngest.server'
+import { invalidateDefaultCoupon } from '@/lib/default-coupon-invalidation'
 import { createOrFindMerchantCoupon } from '@/lib/merchant-coupons'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
@@ -158,6 +159,7 @@ export async function createCoupon(input: CouponInput) {
 			}
 		})
 
+		await invalidateDefaultCoupon()
 		await log.info('coupon.created', {
 			quantity: input.quantity,
 			discountType: input.discountType,

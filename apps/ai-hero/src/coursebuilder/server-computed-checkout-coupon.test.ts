@@ -53,6 +53,26 @@ describe('resolveServerComputedCheckoutCoupon', () => {
 		)
 	})
 
+	it('reads the default coupon fresh for each checkout', async () => {
+		const getDefaultCoupon = vi
+			.fn()
+			.mockResolvedValueOnce({ defaultCoupon, defaultMerchantCoupon })
+			.mockResolvedValueOnce(null)
+		mocks.formatPricesForProduct.mockResolvedValue({
+			appliedMerchantCoupon: null,
+		})
+		const checkout = { ...input, adapter: { getDefaultCoupon } as never }
+		await resolveServerComputedCheckoutCoupon(checkout)
+		await resolveServerComputedCheckoutCoupon(checkout)
+		expect(getDefaultCoupon).toHaveBeenCalledTimes(2)
+		expect(mocks.formatPricesForProduct).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				merchantCouponId: undefined,
+				usedCouponId: undefined,
+			}),
+		)
+	})
+
 	it('does not turn a server default into a trusted raw selector', async () => {
 		mocks.formatPricesForProduct.mockResolvedValue({
 			appliedMerchantCoupon: defaultMerchantCoupon,

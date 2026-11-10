@@ -10,6 +10,7 @@ import LayoutClient from '@/components/layout-client'
 import config from '@/config'
 import { courseBuilderAdapter, db } from '@/db'
 import { products } from '@/db/schema'
+import { getCachedDefaultCoupon } from '@/lib/default-coupon'
 import { getPurchaseCount } from '@/lib/purchase-count'
 import { env } from '@/env.mjs'
 import type { Event } from '@/lib/events'
@@ -115,7 +116,7 @@ export default async function EventPage(props: {
 				},
 				courseBuilderAdapter,
 			),
-			courseBuilderAdapter.getDefaultCoupon([product.id]),
+			getCachedDefaultCoupon([product.id]),
 		])
 
 		const defaultCouponFromAdapter = couponResult?.defaultCoupon ?? null
