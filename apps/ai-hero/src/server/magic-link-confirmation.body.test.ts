@@ -19,7 +19,7 @@ function authHandler() {
 
 function post(
 	fields: Record<string, string>,
-	{ origin = siteUrl as string | null, json = false } = {},
+	{ origin = siteUrl as string | null, fetchSite = undefined as string | undefined, json = false } = {},
 ) {
 	const headers: Record<string, string> = {
 		'content-type': json
@@ -27,6 +27,7 @@ function post(
 			: 'application/x-www-form-urlencoded',
 	}
 	if (origin) headers.origin = origin
+	if (fetchSite) headers['sec-fetch-site'] = fetchSite
 	return new Request(confirmUrl, {
 		method: 'POST',
 		headers,
@@ -103,9 +104,24 @@ describe('magic-link confirm with body fields', () => {
 		)
 	})
 
+	it.each([null, 'null'])('accepts opaque or missing Origin with same-origin fetch metadata (%s)', async (origin) => {
+		const auth = authHandler()
+		const handler = createMagicLinkConfirmHandler(auth, { secret, now, siteUrl })
+		for (const json of [false, true]) {
+			const response = await handler(post(valid, { origin, fetchSite: 'same-origin', json }))
+			expect(response.status).toBe(302)
+		}
+		expect(auth).toHaveBeenCalledTimes(2)
+	})
+
 	it.each([
 		['cross-origin', { origin: 'https://evil.example' }],
+		['foreign Origin despite same-origin metadata', { origin: 'https://evil.example', fetchSite: 'same-origin' }],
 		['originless', { origin: null }],
+		['opaque Origin without fetch metadata', { origin: 'null' }],
+		['opaque Origin with cross-site metadata', { origin: 'null', fetchSite: 'cross-site' }],
+		['opaque Origin with same-site metadata', { origin: 'null', fetchSite: 'same-site' }],
+		['missing Origin with cross-site metadata', { origin: null, fetchSite: 'cross-site' }],
 	] as const)('rejects a %s POST', async (_name, opts) => {
 		const auth = authHandler()
 		const handler = createMagicLinkConfirmHandler(auth, {

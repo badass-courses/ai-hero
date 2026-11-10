@@ -404,7 +404,14 @@ async function readConfirmationFromBody(
 	if (raw.token === undefined) return { kind: 'none' }
 
 	const expectedOrigin = new URL(options.siteUrl ?? request.url).origin
-	if (request.headers.get('origin') !== expectedOrigin) {
+	const origin = request.headers.get('origin')
+	// A no-referrer document can serialize a same-origin form's Origin as null.
+	// Trust browser fetch metadata only when Origin is absent or opaque, never
+	// to override an explicitly foreign Origin.
+	const sameOriginFetch =
+		(origin === null || origin === 'null') &&
+		request.headers.get('sec-fetch-site') === 'same-origin'
+	if (origin !== expectedOrigin && !sameOriginFetch) {
 		return { kind: 'rejected', status: 403 }
 	}
 
