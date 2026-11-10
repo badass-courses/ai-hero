@@ -38,7 +38,7 @@ export const drovrOutboxReplay = inngest.createFunction(
 			},
 			{ isNeverBornOwnerStop },
 			{ fanOutOwnedEvents, isShadowNewsletterBirth },
-			{ resolveOwnedContactIds },
+			{ resolveDoiAnswerForwardContactIds, resolveOwnedContactIds },
 			{ parseDrovrSignupDeliveryConfig, postDrovrSignup },
 		] = await Promise.all([
 			import('@/db'),
@@ -98,10 +98,14 @@ export const drovrOutboxReplay = inngest.createFunction(
 											journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
 										})
 									: []
+								// Never throws: a failed read leaves DOI answers as before.
+								const doiAnswerForwards =
+									await resolveDoiAnswerForwardContactIds(events)
 								return fanOutOwnedEvents(
 									events,
 									new Set(owned),
 									new Set(newsletterOwned),
+									new Set(doiAnswerForwards),
 								)
 							},
 							...(signupConfig

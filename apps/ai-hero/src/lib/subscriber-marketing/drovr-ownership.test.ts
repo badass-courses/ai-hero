@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest'
 import {
 	DROVR_OWNERSHIP_OFF,
 	decideJourneyOwner,
+	DOI_ANSWER_FORWARD_SINCE,
 	fanOutOwnedEvents,
 	findJourneyOwnerAssignment,
 	isDiscardOnlyShadowEvent,
+	isDoiAnswerForwardContact,
 	isOnDrovrSendingJourney,
 	journeyOwnerAssignmentJourneyId,
 	journeyOwnerProviderEventId,
@@ -387,6 +389,164 @@ describe('fan-out of owned facts to the authority tenant', () => {
 		).toEqual([
 			authority,
 		])
+	})
+})
+
+describe('DOI learners: answers, and only answers, reach their actor', () => {
+	const shadow = (
+		type: DrovrShadowEvent['type'],
+		contactId: string,
+		journeyId: DrovrShadowEvent['journeyId'] = 'value-path-skills-course',
+	): DrovrShadowEvent => ({
+		tenantId: 'org-aihero-shadow',
+		contactId,
+		journeyId,
+		type,
+		occurredAt: '2026-11-10T04:00:00.000Z',
+		idempotencyKey: `aihero:${type}:${contactId}:${journeyId}`,
+		...(type === 'value-path.answer-selected'
+			? {
+					payload: {
+						emailResourceId: 'ai-hero-skills-workflow.email-0',
+						nextEmailResourceId: 'ai-hero-skills-team-workflow.team-email-1',
+					},
+				}
+			: {}),
+	})
+	const copyOf = (event: DrovrShadowEvent): DrovrShadowEvent => ({
+		...event,
+		tenantId: 'org-aihero',
+		idempotencyKey: `owner:${event.idempotencyKey}`,
+	})
+
+	it('copies a DOI learner\'s answer, payload intact, and not their unsubscribe or purchase', () => {
+		const answer = shadow('value-path.answer-selected', 'doi')
+		const events = [
+			answer,
+			shadow('contact.unsubscribed', 'doi'),
+			shadow('contact.unsubscribed', 'doi', 'crash-course-evergreen-offer'),
+			shadow('purchase.recorded', 'doi'),
+			shadow('purchase.recorded', 'doi', 'crash-course-evergreen-offer'),
+		]
+		const out = fanOutOwnedEvents(events, new Set(), new Set(), new Set(['doi']))
+		expect(out).toEqual([...events, copyOf(answer)])
+		expect(out.at(-1)?.payload).toEqual(answer.payload)
+	})
+
+	it('never copies anything for a contact in no set (no DOI record, no owner record)', () => {
+		const events = [
+			shadow('value-path.answer-selected', 'stranger'),
+			shadow('contact.unsubscribed', 'stranger'),
+		]
+		expect(
+			fanOutOwnedEvents(events, new Set(), new Set(), new Set(['doi'])),
+		).toEqual(events)
+	})
+
+	it('does not copy an answer to a journey other than the skills course', () => {
+		const offerAnswer = shadow(
+			'value-path.answer-selected',
+			'doi',
+			'crash-course-evergreen-offer',
+		)
+		expect(
+			fanOutOwnedEvents([offerAnswer], new Set(), new Set(), new Set(['doi'])),
+		).toEqual([offerAnswer])
+	})
+
+	it('leaves an owned contact exactly as before, in the DOI set or not', () => {
+		const events = [
+			shadow('value-path.answer-selected', 'owned'),
+			shadow('contact.unsubscribed', 'owned'),
+			shadow('purchase.recorded', 'owned'),
+		]
+		const before = fanOutOwnedEvents(events, new Set(['owned']), new Set())
+		expect(
+			fanOutOwnedEvents(events, new Set(['owned']), new Set(), new Set()),
+		).toEqual(before)
+		expect(
+			fanOutOwnedEvents(
+				events,
+				new Set(['owned']),
+				new Set(),
+				new Set(['owned']),
+			),
+		).toEqual(before)
+		expect(before).toHaveLength(6)
+	})
+
+	describe('who counts as a DOI learner to forward', () => {
+		const lesson = 'ai-hero-skills-workflow.email-0'
+		const after = new Date(Date.parse(DOI_ANSWER_FORWARD_SINCE) + 1000).toISOString()
+		const before = new Date(Date.parse(DOI_ANSWER_FORWARD_SINCE) - 1000).toISOString()
+
+		it('forwards a DOI requested after the cutoff with an anchor for the answered lesson', () => {
+			expect(
+				isDoiAnswerForwardContact({
+					doiRequestedAt: [after],
+					answeredEmailResourceIds: [lesson],
+					anchoredEmailResourceIds: new Set([lesson]),
+				}),
+			).toBe(true)
+		})
+
+		it('does not forward a learner whose DOI was requested before the cutoff (current learners)', () => {
+			expect(
+				isDoiAnswerForwardContact({
+					doiRequestedAt: [before],
+					answeredEmailResourceIds: [lesson],
+					anchoredEmailResourceIds: new Set([lesson]),
+				}),
+			).toBe(false)
+		})
+
+		it('forwards an earlier learner once the cutoff is moved back (the backfill decision)', () => {
+			expect(
+				isDoiAnswerForwardContact({
+					doiRequestedAt: [before],
+					answeredEmailResourceIds: [lesson],
+					anchoredEmailResourceIds: new Set([lesson]),
+					since: '2026-11-01T00:00:00.000Z',
+				}),
+			).toBe(true)
+		})
+
+		it('does not forward without a DOI request', () => {
+			expect(
+				isDoiAnswerForwardContact({
+					doiRequestedAt: [],
+					answeredEmailResourceIds: [lesson],
+					anchoredEmailResourceIds: new Set([lesson]),
+				}),
+			).toBe(false)
+		})
+
+		it('does not forward when a lesson answered has no anchor (no evidence the actor exists)', () => {
+			expect(
+				isDoiAnswerForwardContact({
+					doiRequestedAt: [after],
+					answeredEmailResourceIds: [lesson, 'ai-hero-skills-workflow.email-1'],
+					anchoredEmailResourceIds: new Set([lesson]),
+				}),
+			).toBe(false)
+			expect(
+				isDoiAnswerForwardContact({
+					doiRequestedAt: [after],
+					answeredEmailResourceIds: [],
+					anchoredEmailResourceIds: new Set([lesson]),
+				}),
+			).toBe(false)
+		})
+
+		it('ignores an unreadable DOI time', () => {
+			expect(
+				isDoiAnswerForwardContact({
+					doiRequestedAt: ['not a time'],
+					answeredEmailResourceIds: [lesson],
+					anchoredEmailResourceIds: new Set([lesson]),
+				}),
+			).toBe(false)
+		})
 	})
 })
 

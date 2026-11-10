@@ -49,11 +49,15 @@ import {
 } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
 import {
 	fanOutOwnedEvents,
+	isDoiAnswerForwardCandidate,
 	isOwnerFanOutCandidate,
 	isShadowNewsletterBirth,
 } from '@/lib/subscriber-marketing/drovr-ownership'
 import { parseDrovrProfileSyncConfig } from '@/lib/subscriber-marketing/drovr-contact-profile-sync-requests'
-import { resolveOwnedContactIds } from '@/lib/subscriber-marketing/drovr-ownership-live'
+import {
+	resolveDoiAnswerForwardContactIds,
+	resolveOwnedContactIds,
+} from '@/lib/subscriber-marketing/drovr-ownership-live'
 import {
 	DROVR_OUTBOX_BEHIND_STOP_NOTE,
 	DROVR_OUTBOX_DEFERRED_STOP_WAIT_MS,
@@ -272,10 +276,17 @@ const fanOut = async (
 			)
 		: []
 	if (isOutboxed(newsletterOwnedContactIds)) return newsletterOwnedContactIds
+	// Never throws: a failed read leaves DOI answers where they went before.
+	const doiAnswerForwardContactIds = batch.some(isDoiAnswerForwardCandidate)
+		? await step.run('resolve-doi-answer-forwards', () =>
+				resolveDoiAnswerForwardContactIds(batch),
+			)
+		: []
 	return fanOutOwnedEvents(
 		batch,
 		new Set(ownedContactIds),
 		new Set(newsletterOwnedContactIds),
+		new Set(doiAnswerForwardContactIds),
 	)
 }
 

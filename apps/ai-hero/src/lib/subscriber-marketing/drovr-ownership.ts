@@ -350,6 +350,71 @@ export function isOwnerFanOutCandidate(event: DrovrShadowEvent): boolean {
 }
 
 /**
+ * Double opt-in learners are born in drovr's authority tenant by drovr's own
+ * confirmation and, by design, get no owner record (`isOnDrovrSkillsCourse`).
+ * Owner fan-out never copied their quiz answers, so the shadow tenant
+ * discarded them and the lesson's "next one in a few minutes" fell back to
+ * the drip timer (2026-11-10: 0 of 36 such answers advanced anyone).
+ *
+ * For them only the answer is copied. Their stops and purchases keep the
+ * routes they have today (the directory copies), and no data is written:
+ * an owner record would also be a birth, and for a contact who never
+ * confirmed that birth sends lesson one without consent.
+ *
+ * New signups only: a double opt-in requested at or after this instant.
+ * Moving it back is the backfill decision, still without a data write.
+ */
+export const DOI_ANSWER_FORWARD_SINCE = '2026-11-10T03:00:00.000Z'
+
+/** A skills-course quiz answer bound for the shadow tenant. */
+export function isDoiAnswerForwardCandidate(event: DrovrShadowEvent): boolean {
+	return (
+		event.tenantId === DROVR_SHADOW_TENANT_ID &&
+		event.journeyId === DROVR_SKILLS_COURSE_JOURNEY_ID &&
+		event.type === 'value-path.answer-selected'
+	)
+}
+
+/** The lesson a skills-course answer answers, if the event carries one. */
+export function answeredEmailResourceIdOf(
+	event: DrovrShadowEvent,
+): string | undefined {
+	const payload = event.payload as { emailResourceId?: unknown } | undefined
+	return typeof payload?.emailResourceId === 'string'
+		? payload.emailResourceId
+		: undefined
+}
+
+/**
+ * Whether a DOI learner's answers in this batch may reach their actor. All of:
+ * - a double opt-in requested at or after `since` (new signups only);
+ * - for every lesson answered, a link anchor: answer links are issued only
+ *   when a lesson is rendered for a send, and a DOI contact's lessons are
+ *   rendered only at drovr's request, so the anchor shows the actor exists.
+ *   An answer for an unborn actor is refused by drovr but kept, and folds at
+ *   birth; this keeps one from ever being sent.
+ */
+export function isDoiAnswerForwardContact(args: {
+	doiRequestedAt: readonly string[]
+	answeredEmailResourceIds: readonly string[]
+	anchoredEmailResourceIds: ReadonlySet<string>
+	since?: string
+}): boolean {
+	const since = Date.parse(args.since ?? DOI_ANSWER_FORWARD_SINCE)
+	const newSignup = args.doiRequestedAt.some((at) => {
+		const ms = Date.parse(at)
+		return Number.isFinite(ms) && ms >= since
+	})
+	return (
+		newSignup &&
+		args.answeredEmailResourceIds.length > 0 &&
+		args.answeredEmailResourceIds.every((id) =>
+			args.anchoredEmailResourceIds.has(id),
+		)
+	)
+}
+
+/**
  * A shadow-addressed event delivery can only discard: the shadow tenant is
  * never posted to, and no owner copy is made from it, whoever owns the
  * contact. Producers drop these before the hand-off to Inngest, so a batch
@@ -371,6 +436,8 @@ export function fanOutOwnedEvents(
 	events: readonly DrovrShadowEvent[],
 	ownedContactIds: ReadonlySet<string>,
 	newsletterOwnedContactIds: ReadonlySet<string>,
+	/** DOI learners whose skills-course answers, and nothing else, are copied. */
+	doiAnswerForwardContactIds: ReadonlySet<string> = new Set(),
 ): DrovrShadowEvent[] {
 	// A newsletter birth is a handoff, not parity telemetry. It is allowed
 	// only for contacts with a shadow-newsletter ownership assignment;
@@ -384,7 +451,9 @@ export function fanOutOwnedEvents(
 	const copies = retained.flatMap((event) => {
 		const owned = isShadowNewsletterBirth(event)
 			? newsletterOwnedContactIds.has(event.contactId)
-			: ownedContactIds.has(event.contactId)
+			: ownedContactIds.has(event.contactId) ||
+				(isDoiAnswerForwardCandidate(event) &&
+					doiAnswerForwardContactIds.has(event.contactId))
 		return isOwnerFanOutCandidate(event) && owned
 			? [
 					{
