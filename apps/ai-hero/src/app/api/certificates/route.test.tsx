@@ -170,6 +170,27 @@ describe('existing workshop and cohort certificates', () => {
 	})
 })
 
+describe('a workshop that awards no certificate', () => {
+	it('refuses the certificate even when every lesson is done', async () => {
+		mocks.contentResourceFindFirst.mockResolvedValue({
+			id: 'before-we-start',
+			type: 'workshop',
+			fields: { title: 'Before We Start', certificate: false },
+		})
+		mocks.userFindFirst.mockResolvedValue({ name: 'Test Learner' })
+		mocks.checkCertificateEligibility.mockResolvedValue({
+			hasCompletedModule: true,
+			date: new Date('2026-07-18T12:00:00Z'),
+		})
+		const response = await GET(
+			new Request(
+				'https://www.aihero.dev/api/certificates?resource=before-we-start&user=test-user',
+			),
+		)
+		expect(response.status).toBe(422)
+	})
+})
+
 describe('public certificate PNG', () => {
 	it('renders from the opaque share slug without reading contact identity', async () => {
 		const response = await GET(

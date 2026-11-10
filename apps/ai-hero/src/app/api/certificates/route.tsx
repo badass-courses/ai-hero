@@ -11,6 +11,7 @@ import {
 	checkCohortCertificateEligibility,
 } from '@/lib/certificates'
 import { certificateTitleFor } from '@/lib/certificate-title'
+import { workshopAwardsCertificate } from '@/lib/workshops'
 import {
 	checkSkillsWorkflowValuePathCertificateEligibility,
 	isSkillsWorkflowCertificateResource,
@@ -115,7 +116,12 @@ export async function GET(request: Request) {
 				await checkCohortCertificateEligibility(resource.id, userId)
 			isEligible = hasCompletedCohort
 			completedAt = date
-		} else if (!publicShare && resourceSlugOrID && userId) {
+		} else if (
+			!publicShare &&
+			resourceSlugOrID &&
+			userId &&
+			workshopAwardsCertificate(resource?.fields)
+		) {
 			const { hasCompletedModule, date } = await checkCertificateEligibility(
 				resourceSlugOrID,
 				userId,

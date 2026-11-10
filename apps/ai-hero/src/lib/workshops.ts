@@ -33,7 +33,20 @@ export const WorkshopFieldsSchema = z.object({
 		.optional(),
 	github: z.string().optional(),
 	githubUrl: z.string().optional(),
+	/**
+	 * `false` for a workshop that is not an achievement of its own (a cohort's
+	 * "Before We Start" setup): nowhere offers its certificate and the
+	 * certificate API refuses it. Absent means it awards one.
+	 */
+	certificate: z.boolean().optional(),
 })
+
+/** Whether finishing this workshop earns a certificate of its own. */
+export function workshopAwardsCertificate(
+	fields?: { certificate?: unknown } | null,
+) {
+	return fields?.certificate !== false
+}
 
 /**
  * Define the workshop schema by extending ContentResourceSchema
