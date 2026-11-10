@@ -1,4 +1,5 @@
 import { db, type DbExecutor } from '@/db'
+import { invalidatePurchaseCounts } from '@/lib/purchase-count-invalidation'
 import {
 	contentResource,
 	contentResourceProduct,
@@ -259,6 +260,7 @@ export function createCompSeatRepository(): CompSeatRepository {
 				})
 			})
 			// A grant can add a membership and roles; drop cached session access.
+			await invalidatePurchaseCounts()
 			await bustSessionAccessForUser(userId)
 			return result
 		},

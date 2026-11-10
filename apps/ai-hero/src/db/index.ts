@@ -1,6 +1,7 @@
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { mysqlTable } from '@/db/mysql-table'
 import { withDefaultCouponInvalidation } from '@/lib/default-coupon-invalidation'
+import { withPurchaseCountInvalidation } from '@/lib/purchase-count-invalidation'
 import { guardLegendGiftCouponPaths } from '@/lib/legend-gift-coupon-guard'
 import { withSessionAccessBusts } from '@/server/session-access-busts'
 import { bustSessionAccessForUser } from '@/server/session-access-runtime'
@@ -25,11 +26,11 @@ export {
 } from './client'
 
 const drizzleAdapter = withSessionAccessBusts(
-	withDefaultCouponInvalidation(guardLegendGiftCouponPaths(DrizzleAdapter<MySqlDatabase<any, any, any>>(
+	withDefaultCouponInvalidation(withPurchaseCountInvalidation(guardLegendGiftCouponPaths(DrizzleAdapter<MySqlDatabase<any, any, any>>(
 		db,
 		mysqlTable,
 		stripeProvider,
-	))),
+	)))),
 	{
 		bustUser: bustSessionAccessForUser,
 		findMembershipUserId: async (membershipId) =>

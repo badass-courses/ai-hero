@@ -1,4 +1,5 @@
 import { db, type DbExecutor } from '@/db'
+import { invalidatePurchaseCounts } from '@/lib/purchase-count-invalidation'
 import {
 	coupon,
 	entitlements,
@@ -264,6 +265,7 @@ export async function refundBulkPurchaseEntitlements(originalPurchase: any) {
 					? await cleanup(db)
 					: await db.transaction(cleanup)
 			if (!cleaned) continue
+			await invalidatePurchaseCounts()
 			refundedPurchases.push(purchase)
 			const { result, statusResult } = cleaned
 			entitlementResults.push({
