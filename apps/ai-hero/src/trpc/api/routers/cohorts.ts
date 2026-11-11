@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server'
 import { env } from '@/env.mjs'
 import BasicEmail from '@/emails/basic-email'
 import { NewEmailSchema } from '@/lib/emails'
@@ -41,12 +42,19 @@ const CohortReminderFormSchema = z.object({
 })
 
 export const cohortsRouter = createTRPCRouter({
-	getCohortReminderEmails: publicProcedure
+	// Reminder emails include drafts and session links: content editors only (sec-20261111-003).
+	getCohortReminderEmails: protectedProcedure
 		.input(z.object({ cohortId: z.string() }))
-		.query(async ({ input }) => {
+		.query(async ({ ctx, input }) => {
+			if (!ctx.ability.can('create', 'Content')) {
+				throw new TRPCError({ code: 'FORBIDDEN' })
+			}
 			return await getCohortReminderEmails(input.cohortId)
 		}),
-	getAllCohortReminderEmails: publicProcedure.query(async () => {
+	getAllCohortReminderEmails: protectedProcedure.query(async ({ ctx }) => {
+		if (!ctx.ability.can('create', 'Content')) {
+			throw new TRPCError({ code: 'FORBIDDEN' })
+		}
 		return await getAllCohortReminderEmails()
 	}),
 	attachReminderEmailToCohort: protectedProcedure

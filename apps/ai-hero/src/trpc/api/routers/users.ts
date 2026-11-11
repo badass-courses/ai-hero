@@ -18,13 +18,20 @@ import { z } from 'zod'
 import { isEmpty } from '@coursebuilder/nodash'
 
 export const usersRouter = createTRPCRouter({
-	get: publicProcedure
+	// A user row carries the email address: only that user or an admin may read it (sec-20261111-007).
+	get: protectedProcedure
 		.input(
 			z.object({
 				userId: z.string(),
 			}),
 		)
 		.query(async ({ ctx, input }) => {
+			if (
+				ctx.session.user.id !== input.userId &&
+				!ctx.ability.can('manage', 'all')
+			) {
+				throw new TRPCError({ code: 'FORBIDDEN' })
+			}
 			return await db.query.users.findFirst({
 				where: (users, { eq }) => eq(users.id, input.userId),
 			})
