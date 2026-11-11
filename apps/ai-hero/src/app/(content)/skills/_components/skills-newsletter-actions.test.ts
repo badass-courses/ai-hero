@@ -134,6 +134,7 @@ describe('tagSubscriberAsSkills', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		delete mocks.env.AIH_ENROLMENT_OFF_KIT_ENABLED
+		delete mocks.env.DROVR_DOI_FORMS
 		mocks.resolveOwnedContact.mockResolvedValue('contact-owned')
 		const subscriber = {
 			id: 1,
@@ -166,45 +167,59 @@ describe('tagSubscriberAsSkills', () => {
 		delete process.env.AIH_DEADLINE_TIMEZONE_CAPTURE_ENABLED
 	})
 
-	it('owned signed-in entry works with Kit unreachable and emits only the contact id', async () => {
-		mocks.env.AIH_ENROLMENT_OFF_KIT_ENABLED = 'true'
-		mocks.getSubscriberFromCookie.mockResolvedValue(null)
-		mocks.getServerAuthSession.mockResolvedValue({
-			session: { user: { email: 'new@example.test' } },
-		})
-		mocks.subscribeToList.mockRejectedValue(new Error('Kit unreachable'))
-		mocks.reconcile.mockRejectedValue(new Error('Kit unreachable'))
-		mocks.routeReturning.mockRejectedValue(new Error('Kit unreachable'))
-		mocks.readOwnedEvidence.mockResolvedValue({
-			list: {
-				contactId: 'contact-owned',
-				state: 'confirmed',
-				stops: [],
-				forms: [{ formId: 'skills-newsletter', state: 'confirmed' }],
-			},
-		})
-		expect(await tagSubscriberAsSkills('skills-post')).toEqual({
-			success: true,
-		})
-		expect(mocks.inngestSend).toHaveBeenCalledWith(
-			expect.objectContaining({
-				name: 'skills-newsletter/subscribed',
-				data: expect.objectContaining({
+	it.each([null, 'new@example.test', 'old@example.test'])(
+		'owned signed-in entry with cookie %s works with Kit unreachable and no DOI',
+		async (cookieEmail) => {
+			mocks.env.AIH_ENROLMENT_OFF_KIT_ENABLED = 'true'
+			mocks.env.DROVR_DOI_FORMS = '9376133'
+			mocks.getSubscriberFromCookie.mockResolvedValue(
+				cookieEmail
+					? {
+							id: 1,
+							email_address: cookieEmail,
+							first_name: null,
+							state: 'active',
+							fields: {},
+						}
+					: null,
+			)
+			mocks.getServerAuthSession.mockResolvedValue({
+				session: { user: { email: 'new@example.test' } },
+			})
+			mocks.subscribeToList.mockRejectedValue(new Error('Kit unreachable'))
+			mocks.reconcile.mockRejectedValue(new Error('Kit unreachable'))
+			mocks.routeReturning.mockRejectedValue(new Error('Kit unreachable'))
+			mocks.readOwnedEvidence.mockResolvedValue({
+				list: {
 					contactId: 'contact-owned',
-					email: 'new@example.test',
+					state: 'confirmed',
+					stops: [],
+					forms: [{ formId: 'skills-newsletter', state: 'confirmed' }],
+				},
+			})
+			expect(await tagSubscriberAsSkills('skills-post')).toEqual({
+				success: true,
+			})
+			expect(mocks.inngestSend).toHaveBeenCalledWith(
+				expect.objectContaining({
+					name: 'skills-newsletter/subscribed',
+					data: expect.objectContaining({
+						contactId: 'contact-owned',
+						email: 'new@example.test',
+					}),
 				}),
-			}),
-		)
-		expect(mocks.inngestSend.mock.calls[0]![0].data).not.toHaveProperty(
-			'kitSubscriberId',
-		)
-		expect(mocks.subscribeToList).not.toHaveBeenCalled()
-		expect(mocks.reconcile).not.toHaveBeenCalled()
-		expect(mocks.routeReturning).not.toHaveBeenCalled()
-		expect(mocks.setSubscriberCookie).not.toHaveBeenCalled()
-		expect(mocks.issueRecoveryToken).not.toHaveBeenCalled()
-		expect(mocks.requestDoi).not.toHaveBeenCalled()
-	})
+			)
+			expect(mocks.inngestSend.mock.calls[0]![0].data).not.toHaveProperty(
+				'kitSubscriberId',
+			)
+			expect(mocks.subscribeToList).not.toHaveBeenCalled()
+			expect(mocks.reconcile).not.toHaveBeenCalled()
+			expect(mocks.routeReturning).not.toHaveBeenCalled()
+			expect(mocks.setSubscriberCookie).not.toHaveBeenCalled()
+			expect(mocks.issueRecoveryToken).not.toHaveBeenCalled()
+			expect(mocks.requestDoi).not.toHaveBeenCalled()
+		},
+	)
 
 	it.each(['all', 'course:value-path-skills-course'])(
 		'a %s stop requests DOI only, never Kit',
@@ -382,12 +397,9 @@ describe('tagSubscriberAsSkills', () => {
 		)
 	})
 
-	// The cookie carries the real Kit record; a session only carries an address.
-	// Preferring the session would split a reader who changed their Kit email
-	// into two subscribers.
-	it('prefers the Kit cookie over the session when both exist', async () => {
+	it('keeps the Kit cookie when the session address matches', async () => {
 		mocks.getServerAuthSession.mockResolvedValue({
-			session: { user: { email: 'signed-in@example.com' } },
+			session: { user: { email: 'contact' } },
 		})
 
 		await tagSubscriberAsSkills('skills-post')
@@ -646,16 +658,45 @@ describe('tagSubscriberAsSkills with drovr double opt-in (DROVR_DOI_FORMS)', () 
 		expect(mocks.requestDoi).not.toHaveBeenCalled()
 	})
 
-	it('flag on, signed in as someone else: the cookie address still confirms by email', async () => {
+	it('flag on, stale cookie: enrols the session address and refreshes only its Kit record', async () => {
 		drovrOn()
 		mocks.getServerAuthSession.mockResolvedValue({
-			session: { user: { email: 'other@example.com' } },
+			session: { user: { email: 'new@example.test' } },
 		})
+		const updated = {
+			...cookieReader,
+			id: 8,
+			email_address: 'new@example.test',
+		}
+		mocks.subscribeToList.mockResolvedValue(updated)
 		const result = await tagSubscriberAsSkills('skills-post')
 
-		expect(mocks.subscribeToList).not.toHaveBeenCalled()
-		expect(mocks.requestDoi).toHaveBeenCalledTimes(1)
-		expect(result).toMatchObject({ reason: 'confirmation-required' })
+		expect(result).toEqual({ success: true })
+		expect(mocks.subscribeToList).toHaveBeenCalledWith(
+			expect.objectContaining({
+				user: expect.objectContaining({ email: 'new@example.test' }),
+			}),
+		)
+		expect(mocks.setSubscriberCookie).toHaveBeenCalledWith(
+			expect.objectContaining({ id: 8, email_address: 'new@example.test' }),
+		)
+		expect(mocks.requestDoi).not.toHaveBeenCalled()
+	})
+
+	it('does not fall back to the stale cookie when Kit returns no record', async () => {
+		drovrOn()
+		mocks.getServerAuthSession.mockResolvedValue({
+			session: { user: { email: 'new@example.test' } },
+		})
+		mocks.subscribeToList.mockResolvedValue(undefined)
+
+		expect(await tagSubscriberAsSkills('skills-post')).toEqual({
+			success: false,
+			reason: 'request-failed',
+		})
+		expect(mocks.setSubscriberCookie).not.toHaveBeenCalled()
+		expect(mocks.inngestSend).not.toHaveBeenCalled()
+		expect(mocks.requestDoi).not.toHaveBeenCalled()
 	})
 
 	it('flag on, drovr path fails: request-failed, never a Kit fallback', async () => {

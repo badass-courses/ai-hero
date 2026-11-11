@@ -19,21 +19,28 @@ export type EnrolmentIdentity = {
  * they have already proved. Every CTA that collects an email has this bug until
  * it uses this.
  *
- * Cookie first. It carries the real Kit subscriber record, and enroling against
- * a stale session address for someone who has since changed their Kit email
- * would split them into two subscribers.
+ * Keep the Kit record when cookie and session agree (or there is no session).
+ * A Kit-side email change can leave a stale session and risk splitting a Kit
+ * subscriber, but an account email change can equally leave a stale cookie.
+ * When they disagree, login proves the session address, so the session wins.
  *
  * The address comes off the server-side session and is NEVER taken from caller
  * input, so this cannot be used to enrol somebody else.
  */
 export async function resolveEnrolmentIdentity(): Promise<{
 	identity: EnrolmentIdentity | null
-	/** The cookie record when there was one — callers still log its id. */
+	/** Only a cookie record for this identity; safe for caller fallbacks/writes. */
 	subscriber: Awaited<ReturnType<typeof getSubscriberFromCookie>> | null
 }> {
 	const subscriber = await getSubscriberFromCookie().catch(() => null)
+	const auth = await getServerAuthSession().catch(() => null)
+	const email = auth?.session?.user?.email
+	const cookieMatchesSession =
+		!email ||
+		subscriber?.email_address?.trim().toLowerCase() ===
+			email.trim().toLowerCase()
 
-	if (subscriber?.email_address) {
+	if (subscriber?.email_address && cookieMatchesSession) {
 		return {
 			identity: {
 				email: subscriber.email_address,
@@ -44,8 +51,6 @@ export async function resolveEnrolmentIdentity(): Promise<{
 		}
 	}
 
-	const auth = await getServerAuthSession().catch(() => null)
-	const email = auth?.session?.user?.email
 	if (!email) return { identity: null, subscriber }
 
 	return {
@@ -54,7 +59,9 @@ export async function resolveEnrolmentIdentity(): Promise<{
 			name: auth?.session?.user?.name ?? undefined,
 			via: 'session',
 		},
-		subscriber,
+		// Never let a caller fall back to, refresh, or enqueue the old Kit record
+		// under the session address. A provider response can refresh it instead.
+		subscriber: null,
 	}
 }
 
