@@ -3,6 +3,8 @@ import React, { act, type ComponentProps, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { ContentResource } from '@coursebuilder/core/schemas'
+
 const mocks = vi.hoisted(() => ({
 	overlay: vi.fn(),
 	session: vi.fn(),
@@ -68,18 +70,30 @@ vi.mock('@/lib/cohort-navigation', () => ({
 	getNextCohortWorkshop: () => null,
 	isWorkshopAvailable: () => false,
 }))
-vi.mock('@/lib/content-navigation', () => ({
-	findParentLessonForSolution: () => null,
-	getModuleCompletionState: () => ({ isModuleComplete: false }),
-	flattenNavigationResources: () => [{ id: 'lesson-1' }, { id: 'lesson-2' }],
-	isCompletionTrackedResource: () => true,
-}))
-vi.mock('@/utils/get-adjacent-workshop-resources', () => ({
-	getAdjacentWorkshopResources: () => ({
-		nextResource: null,
-		prevResource: null,
-	}),
-}))
+vi.mock('@/lib/content-navigation', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('@/lib/content-navigation')>()
+	return {
+		...actual,
+		// Legacy card-only fixtures omit the lesson tree. Tree fixtures exercise
+		// the real next-resource and module-completion resolvers together.
+		getModuleCompletionState: (
+			input: Parameters<typeof actual.getModuleCompletionState>[0],
+		) =>
+			input.navigation?.resources
+				? actual.getModuleCompletionState(input)
+				: { isModuleComplete: false },
+		flattenNavigationResources: (
+			navigation: Parameters<typeof actual.flattenNavigationResources>[0],
+		) =>
+			navigation?.resources
+				? actual.flattenNavigationResources(navigation)
+				: [
+						{ id: 'lesson-1', type: 'lesson' },
+						{ id: 'lesson-2', type: 'lesson' },
+					],
+	}
+})
 vi.mock('react-rewards', () => ({
 	useReward: () => ({ reward: mocks.reward, isAnimating: false }),
 }))
@@ -235,6 +249,139 @@ describe('VideoPlayerOverlay', () => {
 			expect(html).toContain(kind === 'signed out' ? 'Log in' : 'completed')
 		},
 	)
+
+	describe('Problem and Solution ordering', () => {
+		const solution = {
+			...resource,
+			id: 'solution-1',
+			type: 'solution',
+			fields: { slug: 'solution-1', title: 'Solution' },
+		}
+		const problem = {
+			...resource,
+			resources: [
+				{
+					resourceId: solution.id,
+					resourceOfId: resource.id,
+					position: 0,
+					metadata: {},
+					createdAt: new Date(),
+					updatedAt: new Date(),
+					deletedAt: null,
+					resource: solution,
+				},
+			],
+		}
+		const laterLesson = {
+			...resource,
+			id: 'lesson-2',
+			fields: { slug: 'lesson-2', title: 'Next lesson' },
+		}
+
+		function setup({
+			current = problem,
+			lessons = [problem],
+			autoAdvance = false,
+			isModuleComplete = true,
+		}: {
+			current?: ContentResource
+			lessons?: ContentResource[]
+			autoAdvance?: boolean
+			isModuleComplete?: boolean
+		} = {}) {
+			mocks.navigation.mockReturnValue({
+				id: 'workshop-1',
+				fields: { slug: 'test', title: 'Workshop' },
+				resources: lessons.map((lesson) => ({
+					resourceId: lesson.id,
+					resource: lesson,
+				})),
+			})
+			mocks.overlay.mockReturnValue({
+				state: {
+					action: {
+						type: 'COMPLETED',
+						resource: current,
+						playerRef: { current: null },
+						isModuleComplete,
+						autoAdvance,
+					},
+				},
+				dispatch: vi.fn(),
+			})
+		}
+
+		it.each([true, false])(
+			'continues from the last Problem to its Solution (completion snapshot %s)',
+			async (isModuleComplete) => {
+				setup({ isModuleComplete })
+				await renderOverlay()
+				expect(container.textContent).toContain('solution')
+				expect(container.textContent).not.toContain('Great job!')
+				await act(async () => button(/Continue/).click())
+				expect(mocks.push).toHaveBeenCalledWith(
+					'/workshops/test/lesson-1/solution',
+				)
+				expect(mocks.complete).not.toHaveBeenCalled()
+			},
+		)
+
+		it('autoplays the last Problem into its Solution', async () => {
+			vi.useFakeTimers()
+			try {
+				setup({ autoAdvance: true })
+				await renderOverlay()
+				expect(container.textContent).toContain('solution in 5')
+				await act(async () => vi.advanceTimersByTime(5_050))
+				expect(mocks.push).toHaveBeenCalledOnce()
+				expect(mocks.push).toHaveBeenCalledWith(
+					'/workshops/test/lesson-1/solution',
+				)
+				expect(mocks.complete).not.toHaveBeenCalled()
+			} finally {
+				vi.useRealTimers()
+			}
+		})
+
+		it('completes the workshop at the end of the last Solution', async () => {
+			setup({ current: solution, isModuleComplete: false })
+			await renderOverlay()
+			expect(container.textContent).toContain('Great job!')
+			expect(container.textContent).not.toContain('Continue')
+		})
+
+		it('completes the workshop when the last lesson has no Solution', async () => {
+			setup({
+				current: resource,
+				lessons: [resource],
+				isModuleComplete: false,
+			})
+			await renderOverlay()
+			expect(container.textContent).toContain('Great job!')
+			expect(container.textContent).not.toContain('Continue')
+		})
+
+		it('still sends a middle Problem to its Solution', async () => {
+			setup({ lessons: [problem, laterLesson], isModuleComplete: false })
+			await renderOverlay()
+			await act(async () => button(/Continue/).click())
+			expect(mocks.push).toHaveBeenCalledWith(
+				'/workshops/test/lesson-1/solution',
+			)
+			expect(mocks.complete).not.toHaveBeenCalled()
+		})
+
+		it('still sends a middle lesson without a Solution to the next lesson', async () => {
+			setup({
+				current: resource,
+				lessons: [resource, laterLesson],
+				isModuleComplete: false,
+			})
+			await renderOverlay()
+			await act(async () => button(/Continue/).click())
+			expect(mocks.push).toHaveBeenCalledWith('/workshops/test/lesson-2')
+		})
+	})
 
 	it('draws no "n/0 completed" when the module progress is missing', async () => {
 		mocks.overlay.mockReturnValue({
