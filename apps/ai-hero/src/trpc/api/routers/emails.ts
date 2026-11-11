@@ -4,16 +4,17 @@ import { contentResourceResource } from '@/db/schema'
 import { EmailSchema, NewEmailSchema } from '@/lib/emails'
 import { createEmail, getEmail, getEmails } from '@/lib/emails-query'
 import { addResourceToWorkshop } from '@/lib/workshops-query'
-import {
-	createTRPCRouter,
-	protectedProcedure,
-	publicProcedure,
-} from '@/trpc/api/trpc'
+import { createTRPCRouter, protectedProcedure } from '@/trpc/api/trpc'
+import { TRPCError } from '@trpc/server'
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
 
 export const emailsRouter = createTRPCRouter({
-	getEmails: publicProcedure.query(async () => {
+	// Drafts and unpublished copy: content editors only (sec-20261111-003).
+	getEmails: protectedProcedure.query(async ({ ctx }) => {
+		if (!ctx.ability.can('create', 'Content')) {
+			throw new TRPCError({ code: 'FORBIDDEN' })
+		}
 		return await getEmails()
 	}),
 
@@ -25,9 +26,14 @@ export const emailsRouter = createTRPCRouter({
 			return email
 		}),
 
-	getEmail: publicProcedure.input(z.string()).query(async ({ input }) => {
-		return await getEmail(input)
-	}),
+	getEmail: protectedProcedure
+		.input(z.string())
+		.query(async ({ ctx, input }) => {
+			if (!ctx.ability.can('create', 'Content')) {
+				throw new TRPCError({ code: 'FORBIDDEN' })
+			}
+			return await getEmail(input)
+		}),
 
 	addEmailToWorkshop: protectedProcedure
 		.input(
