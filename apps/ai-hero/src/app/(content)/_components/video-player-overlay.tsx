@@ -228,14 +228,17 @@ export const CompletedLessonOverlay: React.FC<{
 			: resource
 	// Without navigation there is no lesson list to check against, and an empty
 	// list would read as "everything done"; keep the handler's answer then.
+	// A Problem still has its Solution ahead, even when projecting this
+	// lesson's completion would finish the module (or it was completed before).
 	const isModuleComplete =
-		action.isModuleComplete ||
-		(Boolean(workshopNavigation) &&
-			getModuleCompletionState({
-				navigation: workshopNavigation,
-				completedLessons: moduleProgress?.completedLessons,
-				resourceIdToMarkComplete: resourceToComplete?.id,
-			}).isModuleComplete)
+		!next?.isSolution &&
+		(action.isModuleComplete ||
+			(Boolean(workshopNavigation) &&
+				getModuleCompletionState({
+					navigation: workshopNavigation,
+					completedLessons: moduleProgress?.completedLessons,
+					resourceIdToMarkComplete: resourceToComplete?.id,
+				}).isModuleComplete))
 
 	// The layout follows the action; only the timer stops while held, so a
 	// card held over the next lesson fades out as it was drawn.
