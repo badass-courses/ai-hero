@@ -1,3 +1,5 @@
+import { createAppAbility } from '@/ability'
+import { subject } from '@casl/ability'
 import { MySqlDialect } from 'drizzle-orm/mysql-core'
 import type { SQL } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -7,7 +9,10 @@ const mocks = vi.hoisted(() => ({
 		id: string
 		entitlementType: string
 		organizationMembershipId: string
-		userId: null
+		userId: string | null
+		organizationId?: string
+		sourceType?: string
+		sourceId?: string
 		expiresAt: Date | null
 		deletedAt: Date | null
 		metadata: { contentIds: string[] }
@@ -17,6 +22,8 @@ const mocks = vi.hoisted(() => ({
 	getWorkshop: vi.fn(),
 	getLesson: vi.fn(),
 	getSession: vi.fn(),
+	getPurchases: vi.fn(),
+	getHeaders: vi.fn(),
 }))
 vi.mock('@/db', () => ({
 	db: {
@@ -30,14 +37,14 @@ vi.mock('@/db', () => ({
 			},
 		},
 	},
-	courseBuilderAdapter: { getPurchasesForUser: async () => [] },
+	courseBuilderAdapter: { getPurchasesForUser: mocks.getPurchases },
 }))
 vi.mock('react', async (original) => ({
 	...(await original<typeof import('react')>()),
 	cache: (fn: unknown) => fn,
 }))
 vi.mock('next/cache', () => ({ unstable_cache: (fn: unknown) => fn }))
-vi.mock('next/headers', () => ({ headers: async () => new Headers() }))
+vi.mock('next/headers', () => ({ headers: mocks.getHeaders }))
 vi.mock('@/lib/convertkit', () => ({
 	getSubscriberFromCookie: async () => null,
 }))
@@ -62,7 +69,10 @@ vi.mock('@/utils/get-resource-section', () => ({
 }))
 
 import { getAllUserEntitlements } from '@/lib/entitlements-query'
-import { getAbilityForResource } from './get-current-ability-rules'
+import {
+	getAbilityForResource,
+	getCurrentAbilityRules,
+} from './get-current-ability-rules'
 import { cohortAbilityFixture } from '@/ability/test-fixtures/cohort-content-scope'
 
 const dialect = new MySqlDialect()
@@ -87,6 +97,8 @@ describe('loaded cohort entitlement scope', () => {
 		vi.clearAllMocks()
 		vi.useFakeTimers()
 		vi.setSystemTime(new Date('2026-11-10T00:00:00.000Z'))
+		mocks.getPurchases.mockResolvedValue([])
+		mocks.getHeaders.mockResolvedValue(new Headers())
 		const fixture = cohortAbilityFixture({ contentIds: [] })
 		mocks.getSession.mockResolvedValue({ session: { user: fixture.user } })
 		mocks.getWorkshop.mockResolvedValue(fixture.module)
@@ -155,6 +167,80 @@ describe('loaded cohort entitlement scope', () => {
 			getAbilityForResource('paid-lesson', 'requested-workshop'),
 		).resolves.toMatchObject({ canViewLesson: true, canViewWorkshop: true })
 	})
+
+	it.each(['TH', 'LK'])(
+		'allows a Restricted LK C5 buyer to read a paid lesson from %s',
+		async (country) => {
+			const fixture = cohortAbilityFixture({
+				contentIds: ['requested-workshop'],
+				startsAt: '2026-11-09T08:01:00.000Z',
+			})
+			// Synthetic paid C5 workshop and lesson; no free tier or elevated role.
+			mocks.getWorkshop.mockResolvedValue({
+				...fixture.module,
+				resourceProducts: [{ productId: 'product-s00zs' }],
+			})
+			mocks.getPurchases.mockResolvedValue([
+				{
+					id: 'regional-c5-purchase',
+					userId: fixture.user.id,
+					productId: 'product-s00zs',
+					status: 'Restricted',
+					country: 'LK',
+					bulkCouponId: null,
+				},
+			])
+			mocks.getHeaders.mockResolvedValue(
+				new Headers({ 'x-vercel-ip-country': country }),
+			)
+			// post-purchase-workflow.ts calls createResourceEntitlements('cohort',
+			// ...), which creates one purchase-sourced, membership-linked
+			// cohort_content_access row per workshop with metadata.contentIds=[id].
+			// The loader maps entitlementType/expiresAt/metadata into ability input.
+			mocks.rows = [
+				{
+					...row('regional-c5-access', 'membership-a', [fixture.module.id]),
+					userId: fixture.user.id,
+					organizationId: 'organization-a',
+					sourceType: 'PURCHASE',
+					sourceId: 'regional-c5-purchase',
+				},
+			]
+
+			const rules = await getCurrentAbilityRules({
+				lessonId: fixture.lesson.id,
+				moduleId: fixture.module.id,
+			})
+			const ability = createAppAbility(rules)
+			expect(
+				ability.can('read', subject('Content', { id: fixture.lesson.id })),
+			).toBe(true)
+			// In TH, read RegionRestriction is STILL granted. It selects denial
+			// copy only; it does not veto the entitlement's read Content grant.
+			expect(ability.can('read', 'RegionRestriction')).toBe(country === 'TH')
+
+			// This is the entry point shared by the lesson page and signed playback.
+			const access = await getAbilityForResource(
+				fixture.lesson.id,
+				fixture.module.id,
+			)
+			expect(access).toMatchObject({
+				canViewLesson: true,
+				canViewWorkshop: true,
+				isRegionRestricted: country === 'TH',
+				isPendingOpenAccess: false,
+			})
+			// shared-page.test.tsx also renders this allowed + region-flagged
+			// state, proving no denial redirect occurs before video rendering.
+
+			// Negative control: neither the regional purchase nor fixture grants
+			// this paid lesson without its workshop entitlement, in either country.
+			mocks.rows = []
+			await expect(
+				getAbilityForResource(fixture.lesson.id, fixture.module.id),
+			).resolves.toMatchObject({ canViewLesson: false })
+		},
+	)
 
 	it('does not use unrelated team rows to grant pending access to a future module', async () => {
 		mocks.getWorkshop.mockResolvedValue(

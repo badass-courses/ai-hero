@@ -196,6 +196,7 @@ describe('LessonPage office-hours authorization context', () => {
 		['paid', { canViewWorkshop: true }],
 		['free', { canViewWorkshop: false }],
 		['team seat', { canViewWorkshop: true, canInviteTeam: true }],
+		['regional entitlement abroad', { canViewWorkshop: true, isRegionRestricted: true }],
 	])(
 		'renders %s playback and completion boundaries without commerce',
 		async (_, flags) => {
@@ -205,6 +206,7 @@ describe('LessonPage office-hours authorization context', () => {
 			})
 			await resolveServerTree(await renderLessonPage())
 
+			expect(mocks.redirect).not.toHaveBeenCalled()
 			expect(mocks.commerce).not.toHaveBeenCalled()
 			expect(mocks.getLessonVideoPlaybackResource).toHaveBeenCalledWith(
 				lesson.id,
