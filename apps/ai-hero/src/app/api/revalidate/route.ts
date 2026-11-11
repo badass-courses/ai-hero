@@ -4,14 +4,19 @@ import { env } from '@/env.mjs'
 import { AI_CODING_DICTIONARY_SOURCE_CHANGED_EVENT } from '@/inngest/events/ai-coding-dictionary'
 import { inngest } from '@/inngest/inngest.server'
 
-export async function GET(request: NextRequest) {
-	const tag = request.nextUrl.searchParams.get('tag')
-	const secret = request.nextUrl.searchParams.get('secret')
+import { checkRevalidateAuth } from './revalidate-auth'
 
-	if (secret !== env.INNGEST_SIGNING_KEY) {
-		return NextResponse.json({ error: 'Invalid secret' }, { status: 401 })
+async function handle(request: NextRequest) {
+	const auth = checkRevalidateAuth({
+		configuredSecret: env.REVALIDATE_SECRET,
+		authorization: request.headers.get('authorization'),
+		hasQuerySecret: request.nextUrl.searchParams.has('secret'),
+	})
+	if (!auth.ok) {
+		return NextResponse.json({ error: auth.error }, { status: auth.status })
 	}
 
+	const tag = request.nextUrl.searchParams.get('tag')
 	if (!tag) {
 		return NextResponse.json({ error: 'Missing tag param' }, { status: 400 })
 	}
@@ -27,3 +32,6 @@ export async function GET(request: NextRequest) {
 
 	return NextResponse.json({ revalidated: true, tag, now: Date.now() })
 }
+
+export const GET = handle
+export const POST = handle

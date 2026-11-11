@@ -67,6 +67,8 @@ export const env = createEnv({
 		ANTHROPIC_API_KEY: z.string().optional(),
 		INNGEST_EVENT_KEY: z.string(),
 		INNGEST_SIGNING_KEY: z.string(),
+		// Bearer secret for /api/revalidate only; never the Inngest key (sec-20261111-008).
+		REVALIDATE_SECRET: z.string().min(32).optional(),
 		AI_CODING_DICTIONARY_WEBHOOK_SECRET: z.string().optional(),
 		GITHUB_SOURCE_WEBHOOK_SECRET: z.string().optional(),
 		MUX_SECRET_KEY: z.string(),
@@ -274,6 +276,7 @@ export const env = createEnv({
 		OPENAI_MODEL_ID: process.env.OPENAI_MODEL_ID,
 		INNGEST_EVENT_KEY: process.env.INNGEST_EVENT_KEY,
 		INNGEST_SIGNING_KEY: process.env.INNGEST_SIGNING_KEY,
+		REVALIDATE_SECRET: process.env.REVALIDATE_SECRET,
 		AI_CODING_DICTIONARY_WEBHOOK_SECRET:
 			process.env.AI_CODING_DICTIONARY_WEBHOOK_SECRET,
 		GITHUB_SOURCE_WEBHOOK_SECRET: process.env.GITHUB_SOURCE_WEBHOOK_SECRET,
