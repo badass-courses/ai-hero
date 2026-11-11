@@ -1,0 +1,19 @@
+id: trpc-picked-output
+language: TypeScript
+severity: warning
+message: Output schemas must pick fields; avoid any, unknown, passthrough and top-level records.
+files:
+  - apps/ai-hero/src/trpc/api/routers/**/*.ts
+ignores:
+  - '**/*.test.ts'
+rule:
+  any:
+    - all:
+        - any:
+            - pattern: z.any()
+            - pattern: z.unknown()
+            - pattern: $SCHEMA.passthrough()
+        - inside:
+            pattern: $BUILDER.output($$$ARGS)
+            stopBy: end
+    - pattern: $BUILDER.output(z.record($$$ARGS))

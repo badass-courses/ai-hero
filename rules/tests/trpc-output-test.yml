@@ -1,0 +1,11 @@
+id: trpc-picked-output
+valid:
+  - 'procedure.session().output(z.object({ id: z.string() }))'
+  - 'procedure.session().output(z.object({ labels: z.record(z.string()) }))'
+  - procedure.session().input(z.any())
+  - 'z.object({ value: z.unknown() })'
+invalid:
+  - procedure.session().output(z.any())
+  - 'procedure.session().output(z.object({ value: z.unknown() }))'
+  - 'procedure.session().output(z.object({ id: z.string() }).passthrough())'
+  - procedure.session().output(z.record(z.string()))
