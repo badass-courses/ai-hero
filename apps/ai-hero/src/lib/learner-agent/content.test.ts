@@ -51,7 +51,7 @@ const node = (
 })
 
 describe('workshopSections', () => {
-	it('groups lessons by section, keeps top-level lessons, and drops drafts, videos and solutions', () => {
+	it('groups readable lessons by section, including drafts, but drops videos and solutions', () => {
 		const navigation = {
 			id: 'w1',
 			type: 'workshop',
@@ -81,7 +81,13 @@ describe('workshopSections', () => {
 			],
 		} as unknown as ResourceNavigation
 
-		expect(workshopSections(navigation, BASE)).toEqual([
+		expect(
+			workshopSections(
+				navigation,
+				BASE,
+				new Set(['intro', 'l1', 'draft', 'sol', 'v1']),
+			),
+		).toEqual([
 			{
 				title: null,
 				lessons: [
@@ -103,6 +109,13 @@ describe('workshopSections', () => {
 						title: 'First',
 						type: 'lesson',
 						url: `${BASE}/workshops/week-one/first`,
+					},
+					{
+						id: 'draft',
+						slug: 'draft',
+						title: 'Draft',
+						type: 'lesson',
+						url: `${BASE}/workshops/week-one/draft`,
 					},
 				],
 			},
@@ -140,7 +153,10 @@ describe('lesson content', () => {
 	})
 
 	it('assembles the lesson with deep links and no Mux ids', async () => {
-		const content = await makeContentPort({ baseUrl: BASE }).lesson({
+		const content = await makeContentPort({
+			baseUrl: BASE,
+			readableResourceIds: async () => new Set(),
+		}).lesson({
 			lesson: 'first',
 		})
 		expect(content).toEqual({
@@ -164,7 +180,10 @@ describe('lesson content', () => {
 			{ id: 'w1', fields: { slug: 'week-one', title: 'Week One' } },
 			{ id: 'w2', fields: { slug: 'week-two', title: 'Week Two' } },
 		])
-		const content = await makeContentPort({ baseUrl: BASE }).lesson({
+		const content = await makeContentPort({
+			baseUrl: BASE,
+			readableResourceIds: async () => new Set(),
+		}).lesson({
 			lesson: 'first',
 			workshop: 'week-two',
 		})
