@@ -27,10 +27,20 @@ export async function learnerAgentPortsFor(
 		process.env.DEFAULT_COUNTRY ||
 		'US'
 
+	const currentLearner =
+		learner === undefined ? await resolveLearner(request) : learner
+	const entitlements = makeEntitlementsPort({ baseUrl: site.baseUrl, country })
+
 	return {
-		learner: learner === undefined ? await resolveLearner(request) : learner,
-		entitlements: makeEntitlementsPort({ baseUrl: site.baseUrl, country }),
-		content: makeContentPort({ baseUrl: site.baseUrl }),
+		learner: currentLearner,
+		entitlements,
+		content: makeContentPort({
+			baseUrl: site.baseUrl,
+			readableResourceIds: (workshopId) =>
+				currentLearner
+					? entitlements.readableResourceIds(currentLearner, workshopId)
+					: Promise.resolve(new Set<string>()),
+		}),
 		progress: makeProgressPort(),
 		search: makeSearchPort({ baseUrl: site.baseUrl }),
 		offers: makeOffersPort({ country, store: offerStore }),

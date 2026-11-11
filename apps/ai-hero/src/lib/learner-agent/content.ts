@@ -30,8 +30,7 @@ import { getLessonSessionExtracts, skillLinksFrom } from './session-extracts'
 
 const LESSON_TYPES = new Set(['lesson', 'exercise', 'post'])
 
-const isLive = (fields: Record<string, any> | null | undefined) =>
-	!fields?.state || fields.state === 'published'
+type ReadableResourceIds = (workshopId: string) => Promise<ReadonlySet<string>>
 
 export function lessonPath(workshopSlug: string, lessonSlug: string) {
 	return getResourcePath('lesson', lessonSlug, 'view', {
@@ -48,6 +47,7 @@ export function lessonPath(workshopSlug: string, lessonSlug: string) {
 export function workshopSections(
 	navigation: ResourceNavigation | null,
 	baseUrl: string,
+	readableIds: ReadonlySet<string>,
 ): CourseStructure['workshops'][number]['sections'] {
 	const workshopSlug = navigation?.fields?.slug
 	if (!navigation?.resources || !workshopSlug) return []
@@ -60,7 +60,7 @@ export function workshopSections(
 		LESSON_TYPES.has(resource.type) &&
 		resource.fields?.slug &&
 		resource.fields?.title &&
-		isLive(resource.fields)
+		readableIds.has(resource.id)
 			? [
 					{
 						id: resource.id,
@@ -75,7 +75,6 @@ export function workshopSections(
 	const sections: Array<{ title: string | null; lessons: CourseLesson[] }> = []
 	for (const { resource } of navigation.resources) {
 		if (resource.type === 'section') {
-			if (!isLive(resource.fields)) continue
 			sections.push({
 				title: resource.fields?.title ?? null,
 				lessons: (resource.resources ?? []).flatMap((child) =>
@@ -101,15 +100,19 @@ async function workshopStructure(
 		startsAt: string | null
 	},
 	baseUrl: string,
+	readableResourceIds: ReadableResourceIds,
 ) {
-	const navigation = await getCachedWorkshopNavigation(workshop.slug)
+	const [navigation, readableIds] = await Promise.all([
+		getCachedWorkshopNavigation(workshop.slug),
+		readableResourceIds(workshop.id),
+	])
 	return {
 		id: workshop.id,
 		slug: workshop.slug,
 		title: workshop.title,
 		url: `${baseUrl}${getResourcePath('workshop', workshop.slug)}`,
 		opensAt: workshop.startsAt,
-		sections: workshopSections(navigation, baseUrl),
+		sections: workshopSections(navigation, baseUrl, readableIds),
 	}
 }
 
@@ -127,12 +130,19 @@ function parseOfficeHours(value: unknown) {
 }
 
 /**
- * Course content for the learner surface. No access checks here: the
- * package calls these only after the entitlements port says yes. Lesson
+ * Course content for the learner surface. Outline membership uses the
+ * page's ability through readableResourceIds. The package gates lesson
+ * reads through the entitlements port before calling this loader. Lesson
  * reads go through `sanitizeResourcePayload`, the agent-content read path
  * that strips Mux ids at every depth.
  */
-export function makeContentPort({ baseUrl }: { baseUrl: string }): ContentPort {
+export function makeContentPort({
+	baseUrl,
+	readableResourceIds,
+}: {
+	baseUrl: string
+	readableResourceIds: ReadableResourceIds
+}): ContentPort {
 	return {
 		course: async (idOrSlug) => {
 			const course = await getCourseResource(idOrSlug)
@@ -147,13 +157,15 @@ export function makeContentPort({ baseUrl }: { baseUrl: string }): ContentPort {
 			if (course.type === 'workshop') {
 				return {
 					course: ref,
-					workshops: [await workshopStructure(course, baseUrl)],
+					workshops: [
+						await workshopStructure(course, baseUrl, readableResourceIds),
+					],
 				}
 			}
 			const navigation = await getCachedCohortNavigation(course.id)
 			const workshops = await Promise.all(
 				(navigation?.workshops ?? []).map((workshop) =>
-					workshopStructure(workshop, baseUrl),
+					workshopStructure(workshop, baseUrl, readableResourceIds),
 				),
 			)
 			return { course: ref, workshops }

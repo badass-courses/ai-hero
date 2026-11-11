@@ -135,7 +135,12 @@ export function makeEntitlementsPort({
 }: {
 	baseUrl: string
 	country: string
-}): EntitlementsPort {
+}): EntitlementsPort & {
+	readableResourceIds: (
+		learner: Learner,
+		workshopId: string,
+	) => Promise<ReadonlySet<string>>
+} {
 	// One request, one learner: load their purchases and entitlements once.
 	const inputsByUser = new Map<string, Promise<LearnerInputs>>()
 	const inputsFor = (learner: Learner) => {
@@ -147,18 +152,41 @@ export function makeEntitlementsPort({
 		return inputs
 	}
 
+	// Share one workshop load and page ability across listing and outline reads.
+	const workshopsByUser = new Map<
+		string,
+		Promise<{
+			module: Workshop
+			ability: Awaited<ReturnType<typeof learnerAbility>>
+		} | null>
+	>()
+	const workshopFor = (learner: Learner, workshopId: string) => {
+		const key = JSON.stringify([learner.userId, workshopId])
+		let result = workshopsByUser.get(key)
+		if (!result) {
+			result = (async () => {
+				const module = await getWorkshop(workshopId)
+				if (!module) return null
+				const ability = await learnerAbility({
+					learner,
+					inputs: await inputsFor(learner),
+					module,
+					country,
+				})
+				return { module, ability }
+			})()
+			workshopsByUser.set(key, result)
+		}
+		return result
+	}
+
 	const workshopAccess = async (
 		learner: Learner,
 		workshopId: string,
 	): Promise<WorkshopAccess> => {
-		const module = await getWorkshop(workshopId)
-		if (!module) return { _tag: 'NotEntitled' }
-		const ability = await learnerAbility({
-			learner,
-			inputs: await inputsFor(learner),
-			module,
-			country,
-		})
+		const context = await workshopFor(learner, workshopId)
+		if (!context) return { _tag: 'NotEntitled' }
+		const { module, ability } = context
 
 		if (!ability.can('read', subject('Content', { id: module.id }))) {
 			return { _tag: 'NotEntitled' }
@@ -170,6 +198,20 @@ export function makeEntitlementsPort({
 	}
 
 	return {
+		readableResourceIds: async (learner, workshopId) => {
+			if ((await workshopAccess(learner, workshopId))._tag !== 'Open') {
+				return new Set<string>()
+			}
+			const context = await workshopFor(learner, workshopId)
+			if (!context) return new Set<string>()
+			// Exactly the page's Content read check; no lesson-state exception.
+			return new Set(
+				getWorkshopResourceIds(context.module).filter((id) =>
+					context.ability.can('read', subject('Content', { id })),
+				),
+			)
+		},
+
 		/**
 		 * Courses from purchases and from content-access entitlements, each
 		 * workshop's openness from `workshopAccess`, so early access and
