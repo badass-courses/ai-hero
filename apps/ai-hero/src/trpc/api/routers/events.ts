@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server'
 import { db } from '@/db'
 import { products, purchases } from '@/db/schema'
 import BasicEmail from '@/emails/basic-email'
@@ -114,12 +115,19 @@ export const eventsRouter = createTRPCRouter({
 				return dateA.getTime() - dateB.getTime()
 			})
 	}),
-	getEventReminderEmails: publicProcedure
+	// Reminder emails include drafts and session links: content editors only (sec-20261111-003).
+	getEventReminderEmails: protectedProcedure
 		.input(z.object({ eventId: z.string() }))
-		.query(async ({ input }) => {
+		.query(async ({ ctx, input }) => {
+			if (!ctx.ability.can('create', 'Content')) {
+				throw new TRPCError({ code: 'FORBIDDEN' })
+			}
 			return await getEventReminderEmails(input.eventId)
 		}),
-	getAllReminderEmails: publicProcedure.query(async () => {
+	getAllReminderEmails: protectedProcedure.query(async ({ ctx }) => {
+		if (!ctx.ability.can('create', 'Content')) {
+			throw new TRPCError({ code: 'FORBIDDEN' })
+		}
 		return await getAllReminderEmails()
 	}),
 	attachReminderEmailToEvent: protectedProcedure
