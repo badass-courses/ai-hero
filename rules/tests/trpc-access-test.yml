@@ -1,0 +1,7 @@
+id: trpc-declare-access
+valid:
+  - procedure.session().output(z.boolean()).query(() => true)
+  - "procedure.public({ reason: 'Public catalog' }).output(z.string())"
+invalid:
+  - publicProcedure.query(() => true)
+  - t.procedure.input(z.string()).query(() => true)

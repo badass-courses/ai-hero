@@ -1,0 +1,12 @@
+id: trpc-declare-access
+language: TypeScript
+severity: warning
+message: Declare access with procedure.public/session/learner/can instead of a bare procedure.
+files:
+  - apps/ai-hero/src/trpc/api/routers/**/*.ts
+ignores:
+  - '**/*.test.ts'
+rule:
+  any:
+    - pattern: publicProcedure
+    - pattern: t.procedure
