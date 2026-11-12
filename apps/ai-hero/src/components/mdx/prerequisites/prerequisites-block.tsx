@@ -57,19 +57,19 @@ const useBeforePaint =
 	typeof window === 'undefined' ? useEffect : useLayoutEffect
 
 /**
- * The block replaces an authored heading that the lesson's table of contents
- * still lists (the ToC reads the raw markdown). It keeps that entry working:
+ * The lesson's table of contents lists the block by its title
+ * (`extractMarkdownHeadings` reads it from the raw body). The entry works:
  * the wrapper carries the heading's anchor id and reports itself to the
  * active-heading tracker, exactly as the `Heading` it stands in for would.
  */
-function useHeadingStandIn(title: string, level: number) {
+function useHeadingStandIn(title: string) {
 	const ref = useRef<HTMLDivElement>(null)
 	const slug = slugifyHeading(title)
 	const isInView = useInView(ref, { amount: 0, margin: '-80px 0px -40% 0px' })
 	const registerVisibility = useContext(ActiveHeadingContext)?.registerVisibility
 	const heading = useMemo(
-		() => ({ slug, text: title, level }),
-		[slug, title, level],
+		() => ({ slug, text: title, level: 2 }),
+		[slug, title],
 	)
 	useEffect(() => {
 		if (!registerVisibility) return
@@ -81,14 +81,11 @@ function useHeadingStandIn(title: string, level: number) {
 
 export function PrerequisitesBlock({
 	title,
-	level,
 	items,
 	hostLessonId,
 	initialRemembered,
 }: {
 	title: string
-	/** Depth of the authored heading. */
-	level: 1 | 2 | 3 | 4 | 5 | 6
 	items: PrerequisiteItem[]
 	/** The lesson this block sits in; the collapse choice is kept per lesson. */
 	hostLessonId?: string
@@ -159,7 +156,7 @@ export function PrerequisitesBlock({
 		remembered.collapsed ??
 		(progressKnown ? allCompleted : (remembered.done ?? false))
 
-	const anchor = useHeadingStandIn(title, level)
+	const anchor = useHeadingStandIn(title)
 
 	return (
 		<div
@@ -170,7 +167,6 @@ export function PrerequisitesBlock({
 		>
 			<PrerequisitesView
 				title={title}
-				level={level}
 				items={viewItems}
 				completedCount={completedCount}
 				allCompleted={allCompleted}
