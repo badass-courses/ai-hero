@@ -91,29 +91,35 @@ export const emailProvider = Postmark({
 		try {
 			if (
 				env.AIH_EMAIL_VALIDATION_ENABLED === 'true' &&
-				courseBuilderAdapter.getUserByEmail &&
-				!(await courseBuilderAdapter.getUserByEmail(params.identifier))
+				courseBuilderAdapter.getUserByEmail
 			) {
 				const started = performance.now()
-				const result = await validateEmailWithDrovr(params.identifier, {
-					baseUrl: env.DROVR_API_BASE_URL,
-					apiKey: env.DROVR_API_KEY_ORG_AIHERO,
-				})
-				const fields = {
-					verdict: result.verdict,
-					reason: result.verdict === 'reject' ? result.reason : undefined,
-					policyVersion:
-						result.verdict === 'unknown' ? undefined : result.policyVersion,
-					ms: Math.round(performance.now() - started),
-				}
-				await log
-					.info('auth.email_validation.checked', fields)
-					.catch(() => undefined)
-				if (result.verdict === 'reject') {
+				// Give every address the same bounded validation wait. Existing users
+				// ignore the verdict; provider failures resolve to unknown for everyone.
+				const [user, result] = await Promise.all([
+					courseBuilderAdapter.getUserByEmail(params.identifier),
+					validateEmailWithDrovr(params.identifier, {
+						baseUrl: env.DROVR_API_BASE_URL,
+						apiKey: env.DROVR_API_KEY_ORG_AIHERO,
+					}),
+				])
+				if (!user) {
+					const fields = {
+						verdict: result.verdict,
+						reason: result.verdict === 'reject' ? result.reason : undefined,
+						policyVersion:
+							result.verdict === 'unknown' ? undefined : result.policyVersion,
+						ms: Math.round(performance.now() - started),
+					}
 					await log
-						.info('auth.email_validation.blocked', fields)
+						.info('auth.email_validation.checked', fields)
 						.catch(() => undefined)
-					throw new EmailRejectedError(params.identifier, result.suggestion)
+					if (result.verdict === 'reject') {
+						await log
+							.info('auth.email_validation.blocked', fields)
+							.catch(() => undefined)
+						throw new EmailRejectedError(params.identifier, result.suggestion)
+					}
 				}
 			}
 			// Auth.js builds `/api/auth/callback/postmark?token=&email=`. Emailing a

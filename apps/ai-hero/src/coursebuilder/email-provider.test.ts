@@ -64,6 +64,10 @@ beforeEach(() => {
 	vi.clearAllMocks()
 	mocks.env.AIH_EMAIL_VALIDATION_ENABLED = undefined
 	mocks.getUserByEmail.mockResolvedValue(null)
+	mocks.validate.mockResolvedValue({
+		verdict: 'accept',
+		policyVersion: 'test-policy',
+	})
 	mocks.info.mockResolvedValue(undefined)
 })
 
@@ -121,13 +125,51 @@ describe('email validation gate', () => {
 		await send()
 		expect(mocks.sendVerificationRequest).toHaveBeenCalledOnce()
 	})
-	it('never checks existing users', async () => {
+	it.each([
+		{
+			verdict: 'reject',
+			reason: 'disposable_domain',
+			policyVersion: 'test-policy',
+		},
+		{ verdict: 'unknown', error: 'timeout' },
+		{ verdict: 'unknown', error: 'request_failed' },
+	])('ignores $verdict/$error for existing users', async (result) => {
 		mocks.env.AIH_EMAIL_VALIDATION_ENABLED = 'true'
 		mocks.getUserByEmail.mockResolvedValue({ id: 'u1' })
+		mocks.validate.mockResolvedValue(result)
 		await send()
-		expect(mocks.validate).not.toHaveBeenCalled()
+		expect(mocks.validate).toHaveBeenCalledOnce()
 		expect(mocks.sendVerificationRequest).toHaveBeenCalledOnce()
+		expect(mocks.info).not.toHaveBeenCalled()
 	})
+	it.each([null, { id: 'u1' }])(
+		'starts both reads together and awaits validation for user %j',
+		async (user) => {
+			mocks.env.AIH_EMAIL_VALIDATION_ENABLED = 'true'
+			let resolveUser!: (value: unknown) => void
+			let resolveValidation!: (value: unknown) => void
+			mocks.getUserByEmail.mockReturnValue(
+				new Promise((resolve) => {
+					resolveUser = resolve
+				}),
+			)
+			mocks.validate.mockReturnValue(
+				new Promise((resolve) => {
+					resolveValidation = resolve
+				}),
+			)
+			const pending = send()
+			expect(mocks.getUserByEmail).toHaveBeenCalledOnce()
+			expect(mocks.validate).toHaveBeenCalledOnce()
+			resolveUser(user)
+			await Promise.resolve()
+			expect(mocks.sendVerificationRequest).not.toHaveBeenCalled()
+			resolveValidation({ verdict: 'accept', policyVersion: 'test-policy' })
+			await pending
+			expect(mocks.sendVerificationRequest).toHaveBeenCalledOnce()
+			expect(mocks.info).toHaveBeenCalledTimes(user ? 0 : 1)
+		},
+	)
 	it.each([undefined, 'false', 'TRUE'])(
 		'skips when flag is %s',
 		async (flag) => {
