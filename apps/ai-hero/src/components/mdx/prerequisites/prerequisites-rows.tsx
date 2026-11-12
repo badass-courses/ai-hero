@@ -18,7 +18,6 @@ type Item = PrerequisitesViewProps['items'][number]
  */
 export function PrerequisitesRows({
 	title,
-	level,
 	items,
 	completedCount,
 	allCompleted,
@@ -27,7 +26,6 @@ export function PrerequisitesRows({
 	onCollapsedChange,
 }: PrerequisitesViewProps) {
 	const listId = React.useId()
-	const Heading = `h${level}` as const
 	const done = progressKnown && allCompleted
 	// The first lesson still to watch. Only a known, unfinished list has one;
 	// unknown progress never claims a next step.
@@ -48,7 +46,7 @@ export function PrerequisitesRows({
 			    heading navigation. It wraps the toggle (the accordion pattern):
 			    a heading cannot sit inside a button. Reset to inherit so the
 			    global h1-h6 rule changes nothing visually. */}
-			<Heading className="m-0 text-[length:inherit] leading-[inherit] font-[inherit] font-normal">
+			<h2 className="m-0 text-[length:inherit] leading-[inherit] font-[inherit] font-normal">
 				<button
 					type="button"
 					aria-expanded={!collapsed}
@@ -97,7 +95,7 @@ export function PrerequisitesRows({
 						/>
 					</span>
 				</button>
-			</Heading>
+			</h2>
 
 			<div
 				id={listId}

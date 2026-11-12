@@ -1,3 +1,4 @@
+import { DEFAULT_PREREQUISITES_TITLE } from '@/lib/prerequisites-normalize'
 import slugify from '@sindresorhus/slugify'
 
 export type MarkdownHeading = {
@@ -59,6 +60,13 @@ export const extractMarkdownHeadings = (
 
 	// Remove code blocks to prevent extracting headings from within them
 	processedMarkdown = removeCodeBlocks(processedMarkdown)
+
+	// The prerequisites block renders its title as an h2: list it as one.
+	processedMarkdown = processedMarkdown.replace(
+		/<Prerequisites\b([^>]*)>[\s\S]*?<\/Prerequisites>/g,
+		(_block, attributes: string) =>
+			`## ${attributes.match(/\btitle="([^"]*)"/)?.[1] ?? DEFAULT_PREREQUISITES_TITLE}`,
+	)
 
 	const headingRegex = /(^#{1,6}) (.+)/gm
 	let match
