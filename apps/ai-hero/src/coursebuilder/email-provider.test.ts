@@ -90,6 +90,23 @@ describe('email validation gate', () => {
 			identifier: 'person@example.test',
 			url: 'https://www.aihero.dev/api/auth/callback/postmark?token=test&email=person%40example.test',
 		} as any)
+	it('resolves drovr like the other clients when only the shadow ingest URL is set', async () => {
+		Object.assign(mocks.env, {
+			AIH_EMAIL_VALIDATION_ENABLED: 'true',
+			DROVR_SHADOW_INGEST_URL: 'https://drovr.example.test/shadow/ingest',
+			DROVR_API_KEY_ORG_AIHERO: 'tenant-key',
+		})
+		try {
+			await send()
+			expect(mocks.validate).toHaveBeenCalledWith('person@example.test', {
+				baseUrl: 'https://drovr.example.test',
+				apiKey: 'tenant-key',
+			})
+		} finally {
+			delete (mocks.env as Record<string, unknown>).DROVR_SHADOW_INGEST_URL
+			delete (mocks.env as Record<string, unknown>).DROVR_API_KEY_ORG_AIHERO
+		}
+	})
 	it('blocks a new rejected email before identity creation or sending', async () => {
 		mocks.env.AIH_EMAIL_VALIDATION_ENABLED = 'true'
 		mocks.validate.mockResolvedValue({
