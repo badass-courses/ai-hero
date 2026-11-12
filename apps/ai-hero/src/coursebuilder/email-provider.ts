@@ -1,5 +1,6 @@
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
+import { parseDrovrSignupDeliveryConfig } from '@/lib/subscriber-marketing/drovr-doi-signup'
 import { validateEmailWithDrovr } from '@/lib/subscriber-marketing/drovr-email-validation'
 import { log } from '@/server/logger'
 import { toFragmentLoginUrl } from '@/server/magic-link-fragment'
@@ -98,10 +99,12 @@ export const emailProvider = Postmark({
 				// ignore the verdict; provider failures resolve to unknown for everyone.
 				const [user, result] = await Promise.all([
 					courseBuilderAdapter.getUserByEmail(params.identifier),
-					validateEmailWithDrovr(params.identifier, {
-						baseUrl: env.DROVR_API_BASE_URL,
-						apiKey: env.DROVR_API_KEY_ORG_AIHERO,
-					}),
+					// Same base URL resolution as every other drovr client: production
+					// sets only DROVR_SHADOW_INGEST_URL, not DROVR_API_BASE_URL.
+					validateEmailWithDrovr(
+						params.identifier,
+						parseDrovrSignupDeliveryConfig(env),
+					),
 				])
 				if (!user) {
 					const fields = {
