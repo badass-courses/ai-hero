@@ -9,6 +9,8 @@ import {
 import { db } from '@/db'
 import { deviceAccessToken, personalAccessToken } from '@/db/schema'
 import { env } from '@/env.mjs'
+import { clientNamesFor } from '@/lib/learner-agent/oauth/client-name'
+import { DEVICE_ADMIN_SCOPE, DEVICE_CLI_CLIENT } from './device-token-grant'
 import {
 	parsePersonalAccessToken,
 	PERSONAL_ACCESS_TOKEN_PREFIX,
@@ -80,8 +82,9 @@ export async function getUserAbilityForRequest(
 		return anonymousAuth()
 	}
 
-	const scope = deviceToken.scope ?? ''
-	if (scope && authScheme?.toLowerCase() !== 'bearer') {
+	const scope = deviceToken.scope?.trim() ?? ''
+	if (!scope) return anonymousAuth()
+	if (authScheme?.toLowerCase() !== 'bearer') {
 		void log.warn('auth.device-token-invalid-scheme', {
 			tokenKind: 'device-token',
 			scope,
@@ -114,7 +117,14 @@ export async function getUserAbilityForRequest(
 	const ownerAbility = getAbility({ user })
 	let ability = ownerAbility
 
-	if (scope) {
+	if (scope === DEVICE_ADMIN_SCOPE) {
+		const names = await clientNamesFor(user.id, [authToken])
+		if (
+			names.get(authToken) !== DEVICE_CLI_CLIENT ||
+			!ownerAbility.can('manage', 'all')
+		)
+			return anonymousAuth()
+	} else {
 		if (
 			scope !== 'analytics:read' ||
 			(!ownerAbility.can('view', 'Analytics') &&

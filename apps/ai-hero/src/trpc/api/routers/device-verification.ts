@@ -2,8 +2,13 @@ import { db } from '@/db'
 import { deviceVerifications } from '@/db/schema'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
+import {
+	DEVICE_ADMIN_SCOPE,
+	deviceGrantFromCode,
+	deviceOwnerAbility,
+} from '@/server/device-token-grant'
 import { isAfter } from 'date-fns'
-import { eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import { z } from 'zod'
 
 import { createTRPCRouter, publicProcedure } from '../trpc'
@@ -13,6 +18,7 @@ export const deviceVerificationRouter = createTRPCRouter({
 		.input(
 			z.object({
 				userCode: z.string(),
+				deviceCode: z.string().max(191),
 			}),
 		)
 		.mutation(async ({ ctx, input }) => {
@@ -53,6 +59,20 @@ export const deviceVerificationRouter = createTRPCRouter({
 						return { status: 'login-required' }
 					}
 
+					const grant = deviceGrantFromCode(deviceVerification.deviceCode)
+					const ownerAbility =
+						grant?.scope === DEVICE_ADMIN_SCOPE
+							? await deviceOwnerAbility(session.user.id)
+							: null
+					if (
+						!grant ||
+						input.deviceCode !== deviceVerification.deviceCode ||
+						(grant.scope === DEVICE_ADMIN_SCOPE &&
+							!ownerAbility?.can('manage', 'all'))
+					) {
+						return { status: 'scope-denied' }
+					}
+
 					await db
 						.update(deviceVerifications)
 						.set({
@@ -60,7 +80,13 @@ export const deviceVerificationRouter = createTRPCRouter({
 							verifiedByUserId: session.user.id,
 						})
 						.where(
-							eq(deviceVerifications.deviceCode, deviceVerification.deviceCode),
+							and(
+								eq(
+									deviceVerifications.deviceCode,
+									deviceVerification.deviceCode,
+								),
+								isNull(deviceVerifications.verifiedAt),
+							),
 						)
 
 					return { status: 'device-verified' }

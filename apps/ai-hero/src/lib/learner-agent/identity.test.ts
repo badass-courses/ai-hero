@@ -47,11 +47,10 @@ describe('which tokens may act as a learner', () => {
 			'learner:read',
 			{ userId: 'u1', tokenKind: 'learner-token' },
 		],
-		[
-			'an unscoped device token, reduced to learner reads',
-			null,
-			{ userId: 'u1', tokenKind: 'device-token' },
-		],
+		['an unscoped legacy token', null, null],
+		['an empty scope', '', null],
+		['a whitespace scope', '  ', null],
+		['mixed privileged scope', 'learner:read admin:all', null],
 		['an analytics token', 'analytics:read', null],
 		['an unknown scope', 'admin:all', null],
 	] as const)('%s', (_, scope, expected) => {
@@ -105,19 +104,19 @@ describe('resolveLearner', () => {
 	it('returns only the user id and token kind, and logs the kind without an email', async () => {
 		mocks.findFirst.mockResolvedValue({
 			userId: 'u1',
-			scope: null,
+			scope: 'learner:read',
 			createdAt: new Date(),
 			expiresAt: null,
 			revokedAt: null,
 		})
 		expect(await resolveLearner(request('Bearer device-token'))).toEqual({
 			userId: 'u1',
-			tokenKind: 'device-token',
+			tokenKind: 'learner-token',
 		})
 		expect(mocks.info).toHaveBeenCalledWith('learner_agent.auth', {
 			outcome: 'accepted',
 			userId: 'u1',
-			tokenKind: 'device-token',
+			tokenKind: 'learner-token',
 		})
 		expect(JSON.stringify(mocks.info.mock.calls)).not.toMatch(/@/)
 	})
@@ -145,6 +144,9 @@ describe('resolveBearer', () => {
 		})
 
 		for (const row of [
+			{ scope: null, createdAt: new Date() },
+			{ scope: '', createdAt: new Date() },
+			{ scope: '  ', createdAt: new Date() },
 			{ scope: 'learner:read', ...active, revokedAt: new Date() },
 			{ scope: 'learner:read', ...active, expiresAt: new Date(Date.now() - 1) },
 			{

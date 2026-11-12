@@ -250,10 +250,8 @@ describe('learner OAuth: authorization code with PKCE', () => {
 		const ttl = (row.expiresAt as Date).getTime() - before
 		expect(ttl).toBeGreaterThan(89 * 24 * 3600_000)
 		expect(ttl).toBeLessThanOrEqual(90 * 24 * 3600_000 + 1000)
-		expect(state.recordClientName).toHaveBeenCalledWith(
-			issued.access_token,
-			'Claude Code',
-		)
+		expect(row.clientName).toBe('Claude Code')
+		expect(state.recordClientName).not.toHaveBeenCalled()
 
 		const listed = await mcpCall(issued.access_token, {
 			jsonrpc: '2.0',
@@ -578,6 +576,26 @@ describe('learner OAuth: authorization code with PKCE', () => {
 		const response = await exchange({ code: 'x' })
 		expect(response.status).toBe(429)
 	})
+
+	it.each([null, '', '  '])(
+		'refuses legacy null/empty scopes at /mcp: %s',
+		async (scope) => {
+			state.table.rows.push({
+				token: 'legacy-token',
+				userId: 'u1',
+				scope,
+				createdAt: new Date(),
+				expiresAt: new Date(Date.now() + 60_000),
+				revokedAt: null,
+			})
+			const response = await mcpCall('legacy-token', {
+				jsonrpc: '2.0',
+				id: 1,
+				method: 'tools/list',
+			})
+			expect(response.status).toBe(401)
+		},
+	)
 
 	it('revokes a learner token through /oauth/revoke, and /mcp then answers 401', async () => {
 		const clientId = await registerClient()

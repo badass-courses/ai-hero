@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 import { NextResponse } from 'next/server'
 import { db } from '@/db'
 import { deviceAccessToken } from '@/db/schema'
+import { deviceAccessTokenForInsert } from '@/server/device-token-store'
 import {
 	LEARNER_READ_SCOPE,
 	LEARNER_TOKEN_TTL_MS,
@@ -40,10 +41,11 @@ export async function POST() {
 	const token = randomUUID()
 	const expiresAt = new Date(Date.now() + LEARNER_TOKEN_TTL_MS)
 	try {
-		await db.insert(deviceAccessToken).values({
+		await db.insert(deviceAccessTokenForInsert).values({
 			token,
 			userId,
 			scope: LEARNER_READ_SCOPE,
+			clientName: 'learner-token',
 			expiresAt,
 			revokedAt: null,
 		})

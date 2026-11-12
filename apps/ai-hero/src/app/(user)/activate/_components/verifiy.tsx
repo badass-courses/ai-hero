@@ -8,7 +8,17 @@ import { motion } from 'framer-motion'
 import { Button } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
-export default function Verify({ userCode }: { userCode: string }) {
+export default function Verify({
+	userCode,
+	deviceCode,
+	clientName,
+	scope,
+}: {
+	userCode: string
+	deviceCode: string
+	clientName: string
+	scope: string
+}) {
 	const verifyDeviceMutation = api.deviceVerification.verify.useMutation()
 	const router = useRouter()
 	const [animate, setAnimate] = React.useState(false)
@@ -19,6 +29,13 @@ export default function Verify({ userCode }: { userCode: string }) {
 				<h1 className="text-2xl font-bold sm:text-3xl">Device Confirmation</h1>
 				<p className="py-4 text-gray-600 dark:text-gray-400">
 					Please confirm this is the code displayed in your app
+				</p>
+				<p className="pb-4 text-foreground">
+					{clientName} wants{' '}
+					{scope === 'admin:all'
+						? 'admin access to your account, including creating, changing, and deleting content'
+						: 'read access to your courses and progress'}
+					. Approve only if you started this sign-in. Access expires in 90 days.
 				</p>
 				<div className="w-full rounded-md border px-5 py-3 text-lg font-semibold dark:border-transparent dark:bg-black/75">
 					{userCode}
@@ -32,12 +49,17 @@ export default function Verify({ userCode }: { userCode: string }) {
 					}}
 					onClick={async () => {
 						verifyDeviceMutation.mutate(
-							{ userCode },
+							{ userCode, deviceCode },
 							{
 								onSettled: (data) => {
 									switch (data?.status) {
 										case 'device-verified':
 											router.push('/activate/success')
+											break
+										case 'scope-denied':
+											router.push(
+												'/activate/failure?message=You cannot approve this access. Start sign-in again.',
+											)
 											break
 										case 'already-verified':
 											router.push(

@@ -69,6 +69,7 @@ describe('analytics token route', () => {
 		expect(values).toMatchObject({
 			userId: 'admin_1',
 			scope: 'analytics:read',
+			clientName: 'analytics-token',
 			revokedAt: null,
 			token: expect.any(String),
 			expiresAt: expect.any(Date),
@@ -76,7 +77,7 @@ describe('analytics token route', () => {
 		expect(body).toMatchObject({
 			token: values.token,
 			ttlLabel: '90 days',
-		expiresAt: expect.any(String),
+			expiresAt: expect.any(String),
 		})
 		expect(values.expiresAt.getTime()).toBeGreaterThanOrEqual(
 			before + 90 * 24 * 60 * 60 * 1000,
@@ -98,6 +99,8 @@ describe('analytics token route', () => {
 		expect(response.headers.get('cache-control')).toBe('no-store')
 		expect(body).toEqual({ error: 'Unable to generate analytics token' })
 		expect(JSON.stringify(mocks.log.error.mock.calls)).not.toContain('secret')
-		expect(JSON.stringify(mocks.log.error.mock.calls)).not.toContain('SQL syntax')
+		expect(JSON.stringify(mocks.log.error.mock.calls)).not.toContain(
+			'SQL syntax',
+		)
 	})
 })

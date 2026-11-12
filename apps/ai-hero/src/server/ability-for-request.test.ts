@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
 	deviceFindFirst: vi.fn(),
+	clientNames: vi.fn(),
 	env: {
 		PERSONAL_ACCESS_TOKEN_SECRET: 'test-personal-access-token-secret' as
 			| string
@@ -27,6 +28,9 @@ vi.mock('@/db', () => ({
 	},
 }))
 vi.mock('@/env.mjs', () => ({ env: mocks.env }))
+vi.mock('@/lib/learner-agent/oauth/client-name', () => ({
+	clientNamesFor: mocks.clientNames,
+}))
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
 
 import {
@@ -83,6 +87,9 @@ describe('getUserAbilityForRequest', () => {
 		vi.clearAllMocks()
 		mocks.env.PERSONAL_ACCESS_TOKEN_SECRET = hashSecret
 		mocks.deviceFindFirst.mockResolvedValue(null)
+		mocks.clientNames.mockResolvedValue(
+			new Map([['device-token', 'aihero-cli']]),
+		)
 		mocks.personalAccessTokenFindFirst.mockResolvedValue(null)
 		mocks.update.mockReturnValue({ set: mocks.updateSet })
 		mocks.updateSet.mockReturnValue({ where: mocks.updateWhere })
@@ -253,9 +260,10 @@ describe('getUserAbilityForRequest', () => {
 		)
 	})
 
-	it('keeps the existing device-token role-derived ability path', async () => {
+	it('grants explicit CLI admin scope to an admin owner', async () => {
 		mocks.deviceFindFirst.mockResolvedValue({
 			token: 'device-token',
+			scope: 'admin:all',
 			createdAt: new Date(),
 			verifiedBy: user,
 		})
@@ -267,6 +275,49 @@ describe('getUserAbilityForRequest', () => {
 		expect(auth.ability.can('manage', 'all')).toBe(true)
 		expect(auth.ability.can('read_privileged', 'Content')).toBe(true)
 		expect(mocks.personalAccessTokenFindFirst).not.toHaveBeenCalled()
+	})
+
+	it.each([null, '', '  '])(
+		'denies legacy null/empty scopes: %s',
+		async (scope) => {
+			mocks.deviceFindFirst.mockResolvedValue({
+				token: 'device-token',
+				scope,
+				createdAt: new Date(),
+				verifiedBy: user,
+			})
+			expect(
+				(await getUserAbilityForRequest(request('device-token'))).authMethod,
+			).toBe('anonymous')
+		},
+	)
+
+	it.each(['wrong-client', null])(
+		'denies admin scope without the CLI label: %s',
+		async (name) => {
+			mocks.clientNames.mockResolvedValue(new Map([['device-token', name]]))
+			mocks.deviceFindFirst.mockResolvedValue({
+				token: 'device-token',
+				scope: 'admin:all',
+				createdAt: new Date(),
+				verifiedBy: user,
+			})
+			expect(
+				(await getUserAbilityForRequest(request('device-token'))).authMethod,
+			).toBe('anonymous')
+		},
+	)
+
+	it('denies admin scope after role removal', async () => {
+		mocks.deviceFindFirst.mockResolvedValue({
+			token: 'device-token',
+			scope: 'admin:all',
+			createdAt: new Date(),
+			verifiedBy: { ...user, roles: [], role: 'user' },
+		})
+		expect(
+			(await getUserAbilityForRequest(request('device-token'))).authMethod,
+		).toBe('anonymous')
 	})
 
 	it('limits an analytics-scoped device token to analytics reads', async () => {
@@ -310,15 +361,15 @@ describe('getUserAbilityForRequest', () => {
 	it('denies unknown scopes and owners who no longer have analytics permission', async () => {
 		mocks.deviceFindFirst.mockResolvedValue({
 			token: 'device-token',
-			scope: 'admin:all',
+			scope: 'unknown:scope',
 			createdAt: new Date(),
 			expiresAt: new Date(Date.now() + 60 * 60 * 1000),
 			revokedAt: null,
 			verifiedBy: user,
 		})
-		expect((await getUserAbilityForRequest(request('device-token'))).authMethod).toBe(
-			'anonymous',
-		)
+		expect(
+			(await getUserAbilityForRequest(request('device-token'))).authMethod,
+		).toBe('anonymous')
 
 		mocks.deviceFindFirst.mockResolvedValue({
 			token: 'device-token',
@@ -341,9 +392,9 @@ describe('getUserAbilityForRequest', () => {
 			},
 		})
 
-		expect((await getUserAbilityForRequest(request('device-token'))).authMethod).toBe(
-			'anonymous',
-		)
+		expect(
+			(await getUserAbilityForRequest(request('device-token'))).authMethod,
+		).toBe('anonymous')
 	})
 
 	it('treats a learner:read token as anonymous, even when its owner is an admin', async () => {
@@ -367,6 +418,7 @@ describe('getUserAbilityForRequest', () => {
 	it('accepts a future persisted expiry even when the legacy createdAt is old', async () => {
 		mocks.deviceFindFirst.mockResolvedValue({
 			token: 'device-token',
+			scope: 'admin:all',
 			createdAt: new Date(Date.now() - 180 * 24 * 60 * 60 * 1000),
 			expiresAt: new Date(Date.now() + 60 * 60 * 1000),
 			revokedAt: null,
@@ -385,6 +437,7 @@ describe('getUserAbilityForRequest', () => {
 	] as const)('denies a device token with %s', async (_label, overrides) => {
 		mocks.deviceFindFirst.mockResolvedValue({
 			token: 'device-token',
+			scope: 'admin:all',
 			createdAt: new Date(),
 			expiresAt: null,
 			revokedAt: null,
@@ -401,6 +454,7 @@ describe('getUserAbilityForRequest', () => {
 	it('keeps the 90-day createdAt check for legacy null-expiry tokens', async () => {
 		mocks.deviceFindFirst.mockResolvedValue({
 			token: 'device-token',
+			scope: 'admin:all',
 			createdAt: new Date(Date.now() - 91 * 24 * 60 * 60 * 1000),
 			expiresAt: null,
 			revokedAt: null,

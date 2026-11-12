@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/db'
-import { deviceAccessToken } from '@/db/schema'
+import { deviceAccessTokenForInsert } from '@/server/device-token-store'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 
@@ -33,10 +33,11 @@ export async function POST(_request: NextRequest) {
 		const expiresAt = new Date(Date.now() + TTL_MS)
 
 		try {
-			await db.insert(deviceAccessToken).values({
+			await db.insert(deviceAccessTokenForInsert).values({
 				token,
 				userId,
 				scope: 'analytics:read',
+				clientName: 'analytics-token',
 				expiresAt,
 				revokedAt: null,
 			})
