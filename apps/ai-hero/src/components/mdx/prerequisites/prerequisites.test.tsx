@@ -6,7 +6,10 @@ const mocks = vi.hoisted(() => ({
 	blockProps: vi.fn(),
 	warn: vi.fn(),
 	error: vi.fn(),
+	cookies: vi.fn(),
 }))
+
+vi.mock('next/headers', () => ({ cookies: mocks.cookies }))
 
 vi.mock('./prerequisites-query', () => ({
 	getPrerequisiteLessons: mocks.getPrerequisiteLessons,
@@ -44,8 +47,17 @@ const lesson = (slug: string, title: string) => ({
 	durationSeconds: 200,
 })
 
-async function render(source: string, lessonId: string) {
-	const { content } = await compileMDX(source, {}, {}, { lessonId })
+async function render(
+	source: string,
+	lessonId: string,
+	prerequisitesStateCookie?: boolean,
+) {
+	const { content } = await compileMDX(
+		source,
+		{},
+		{},
+		{ lessonId, ...(prerequisitesStateCookie ? { prerequisitesStateCookie } : {}) },
+	)
 	return new Response(await renderToReadableStream(content)).text()
 }
 
@@ -94,6 +106,44 @@ describe('Prerequisites through compileMDX', () => {
 		).text()
 		expect(reasonHtml).toContain('<code class="ah-code-inline">/to-spec</code>')
 		expect(reasonHtml).not.toMatch(/^:/)
+	})
+
+	it('reads the remembered state from the cookie at render on lesson pages', async () => {
+		mocks.getPrerequisiteLessons.mockResolvedValue([
+			lesson('sessions-and-the-context-241f60ee', 'Sessions And The Context'),
+			lesson('write-great-specs-with-this-skill-362ad013', 'Write Great Specs'),
+		])
+		let cookie = 'other~s!host-cookie~hd'
+		mocks.cookies.mockImplementation(async () => ({
+			get: (name: string) =>
+				name === 'ah_prereq' ? { name, value: cookie } : undefined,
+		}))
+
+		await render(SOURCE, 'host-cookie', true)
+		expect(mocks.blockProps.mock.calls[0]?.[0].initialRemembered).toEqual({
+			collapsed: true,
+			done: true,
+		})
+
+		// Same body and context: a cached compile, read fresh per request.
+		cookie = 'host-cookie~s'
+		await render(SOURCE, 'host-cookie', true)
+		expect(mocks.blockProps.mock.calls[1]?.[0].initialRemembered).toEqual({
+			collapsed: false,
+			done: false,
+		})
+	})
+
+	it('never calls cookies() where the caller did not allow it (static posts)', async () => {
+		mocks.getPrerequisiteLessons.mockResolvedValue([
+			lesson('sessions-and-the-context-241f60ee', 'Sessions And The Context'),
+			lesson('write-great-specs-with-this-skill-362ad013', 'Write Great Specs'),
+		])
+
+		await render(SOURCE, 'post-id')
+
+		expect(mocks.cookies).not.toHaveBeenCalled()
+		expect(mocks.blockProps.mock.calls[0]?.[0].initialRemembered).toBeUndefined()
 	})
 
 	it('renders the authored heading and list when a lesson does not resolve', async () => {

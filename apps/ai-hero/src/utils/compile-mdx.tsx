@@ -247,6 +247,12 @@ type CompileMDXContext = {
 	 * resolver repeats that check and requires an active cohort relation.
 	 */
 	officeHoursWorkshopId?: string
+	/**
+	 * Lets the prerequisites block read its remembered collapse state from the
+	 * request cookie at render. Only request-bound (force-dynamic) routes may
+	 * set it; the cookie never enters the cached compile, only this flag does.
+	 */
+	prerequisitesStateCookie?: boolean
 	dictionaryAutoLink?: {
 		entries: DictionaryEntry[]
 		maxLinks?: number
@@ -731,10 +737,16 @@ async function compileMDXInternal(
 					),
 					// Emitted by `remarkPrerequisites` from an authored heading and
 					// lesson-link list. Lessons resolve per request; the host lesson id
-					// only keys the learner's collapse choice in the browser.
+					// keys the learner's remembered collapse state.
 					Prerequisites: (
 						props: React.ComponentProps<typeof Prerequisites>,
-					) => <Prerequisites {...props} hostLessonId={context?.lessonId} />,
+					) => (
+						<Prerequisites
+							{...props}
+							hostLessonId={context?.lessonId}
+							readStateCookie={context?.prerequisitesStateCookie}
+						/>
+					),
 					Prerequisite,
 					OfficeHoursSchedule: ((props: OfficeHoursScheduleMdxProps) =>
 						OfficeHoursScheduleWithSessions(

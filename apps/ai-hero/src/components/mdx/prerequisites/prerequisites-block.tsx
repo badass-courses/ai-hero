@@ -12,47 +12,43 @@ import {
 import { ActiveHeadingContext } from '@/hooks/use-active-heading'
 import { api } from '@/trpc/react'
 import { slugifyHeading } from '@/utils/extract-markdown-headings'
+import { getCookie, setCookie } from 'cookies-next/client'
 import { useInView } from 'framer-motion'
 
-import type { PrerequisiteItem } from './types'
 import { PrerequisitesRows as PrerequisitesView } from './prerequisites-rows'
+import {
+	PREREQUISITES_COOKIE,
+	PREREQUISITES_COOKIE_MAX_AGE,
+	readRemembered,
+	writeRemembered,
+	type Remembered,
+} from './prerequisites-state'
+import type { PrerequisiteItem } from './types'
 
-/**
- * What this browser remembers per host lesson: the learner's own collapse
- * choice, and whether every prerequisite was done last time. The second one
- * lets a returning learner's block start collapsed at hydration instead of
- * waiting for the progress read.
- */
-type Remembered = { collapsed?: boolean; done?: boolean }
-
-const storageKey = (hostLessonId: string) =>
-	`ah:prerequisites:${hostLessonId}`
-
-function readRemembered(hostLessonId?: string): Remembered {
+function readCookie(hostLessonId?: string): Remembered {
 	if (!hostLessonId) return {}
 	try {
-		const raw = window.localStorage.getItem(storageKey(hostLessonId))
-		const value = raw ? JSON.parse(raw) : null
-		if (!value || typeof value !== 'object') return {}
-		return {
-			collapsed:
-				typeof value.collapsed === 'boolean' ? value.collapsed : undefined,
-			done: typeof value.done === 'boolean' ? value.done : undefined,
-		}
+		return readRemembered(getCookie(PREREQUISITES_COOKIE), hostLessonId)
 	} catch {
 		return {}
 	}
 }
 
-function writeRemembered(hostLessonId: string | undefined, value: Remembered) {
+function writeCookie(hostLessonId: string | undefined, value: Remembered) {
 	if (!hostLessonId) return
 	try {
-		window.localStorage.setItem(
-			storageKey(hostLessonId),
-			JSON.stringify(value),
+		setCookie(
+			PREREQUISITES_COOKIE,
+			writeRemembered(getCookie(PREREQUISITES_COOKIE), hostLessonId, value),
+			{
+				path: '/',
+				maxAge: PREREQUISITES_COOKIE_MAX_AGE,
+				sameSite: 'lax',
+				secure: window.location.protocol === 'https:',
+			},
 		)
 	} catch {
-		// Private mode or blocked storage: the choice lasts for this view only.
+		// Cookies blocked: the choice lasts for this view only.
 	}
 }
 
@@ -88,6 +84,7 @@ export function PrerequisitesBlock({
 	level,
 	items,
 	hostLessonId,
+	initialRemembered,
 }: {
 	title: string
 	/** Depth of the authored heading. */
@@ -95,6 +92,11 @@ export function PrerequisitesBlock({
 	items: PrerequisiteItem[]
 	/** The lesson this block sits in; the collapse choice is kept per lesson. */
 	hostLessonId?: string
+	/**
+	 * The cookie as the server read it for this request, so the first paint is
+	 * already collapsed or open. Absent where the page doesn't read cookies.
+	 */
+	initialRemembered?: Remembered
 }) {
 	// Real progress, not a snapshot: the client defaults (staleTime 0) refetch
 	// on mount, which covers a back navigation, and on focus/visibility, which
@@ -113,18 +115,31 @@ export function PrerequisitesBlock({
 	const completedCount = viewItems.filter((item) => item.completed).length
 	const allCompleted = progressKnown && completedCount === items.length
 
-	const [remembered, setRemembered] = useState<Remembered>({})
+	const [remembered, setRemembered] = useState<Remembered>(
+		initialRemembered ?? {},
+	)
+	// The cookie is the truth on the client too. On hydration it matches the
+	// server read, so nothing changes; on a back/forward navigation served from
+	// the router cache the server read may be old, and this corrects it before
+	// paint. Without a server read it is the only read.
 	useBeforePaint(() => {
-		setRemembered(readRemembered(hostLessonId))
+		const current = readCookie(hostLessonId)
+		setRemembered((previous) =>
+			previous.collapsed === current.collapsed &&
+			previous.done === current.done
+				? previous
+				: current,
+		)
 	}, [hostLessonId])
 
 	// Keep the last known completion so the next visit can start collapsed.
 	useEffect(() => {
 		if (!progressKnown) return
 		setRemembered((current) => {
-			if (current.done === allCompleted) return current
+			// No entry reads as not done, so only a change is worth a cookie write.
+			if ((current.done ?? false) === allCompleted) return current
 			const next = { ...current, done: allCompleted }
-			writeRemembered(hostLessonId, next)
+			writeCookie(hostLessonId, next)
 			return next
 		})
 	}, [progressKnown, allCompleted, hostLessonId])
@@ -133,7 +148,7 @@ export function PrerequisitesBlock({
 		(collapsed: boolean) => {
 			setRemembered((current) => {
 				const next = { ...current, collapsed }
-				writeRemembered(hostLessonId, next)
+				writeCookie(hostLessonId, next)
 				return next
 			})
 		},

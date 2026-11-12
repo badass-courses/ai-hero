@@ -1,16 +1,22 @@
 import { Children, isValidElement, type ReactNode } from 'react'
+import { cookies } from 'next/headers'
 import Link from 'next/link'
 import { Heading } from '@/components/mdx/heading'
 import { log } from '@/server/logger'
 
 import { PrerequisitesBlock } from './prerequisites-block'
 import { getPrerequisiteLessons } from './prerequisites-query'
+import { PREREQUISITES_COOKIE, readRemembered } from './prerequisites-state'
 
 /**
  * MDX side of the block the `remarkPrerequisites` plugin emits. The compiled
  * element tree is shared across users (`compiledMdxCache`), so everything here
  * is per-request: the lessons resolve on the server at render, the learner's
- * progress and collapse choice on the client.
+ * progress on the client. The remembered collapse state comes from a cookie,
+ * read here at render (never at compile) and only where the caller allows a
+ * request read: `readStateCookie` is set by the force-dynamic lesson route;
+ * pages that compile MDX statically (posts are force-static) never call
+ * `cookies()` from inside their body.
  */
 
 type PrerequisiteProps = {
@@ -77,11 +83,13 @@ export async function Prerequisites({
 	title,
 	level,
 	hostLessonId,
+	readStateCookie,
 	children,
 }: {
 	title: string
 	level?: string
 	hostLessonId?: string
+	readStateCookie?: boolean
 	children?: ReactNode
 }) {
 	const entries = prerequisiteEntries(children)
@@ -105,11 +113,20 @@ export async function Prerequisites({
 		return <AuthoredList title={title} level={depth} entries={entries} />
 	}
 
+	const initialRemembered =
+		readStateCookie && hostLessonId
+			? readRemembered(
+					(await cookies()).get(PREREQUISITES_COOKIE)?.value,
+					hostLessonId,
+				)
+			: undefined
+
 	return (
 		<PrerequisitesBlock
 			title={title}
 			level={depth}
 			hostLessonId={hostLessonId}
+			initialRemembered={initialRemembered}
 			items={lessons.map((lesson, index) => ({
 				...lesson,
 				reason: entries[index]?.children ?? null,
