@@ -25,16 +25,19 @@ vi.mock('@/server/device-token-grant', async (original) => ({
 vi.mock('@/server/logger', () => ({
 	log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
-import { mintDeviceCode } from '@/server/device-token-grant'
+import { mintDeviceCode, mintDeviceConsent } from '@/server/device-token-grant'
 import { deviceVerificationRouter } from './device-verification'
 let deviceCode: string
-const verify = (code = deviceCode) =>
+const verify = (
+	consent = mintDeviceConsent('test-code', deviceCode, 'u1') ?? 'invalid',
+) =>
 	deviceVerificationRouter
 		.createCaller({ headers: new Headers() } as any)
-		.verify({ userCode: 'test-code', deviceCode: code })
+		.verify({ userCode: 'test-code', consent })
 beforeEach(() => {
 	vi.clearAllMocks()
 	mocks.ownerAbility.mockResolvedValue({ can: () => true })
+	mocks.where.mockResolvedValue([{ affectedRows: 1 }, []])
 	deviceCode = mintDeviceCode({ clientName: 'aihero-cli', scope: 'admin:all' })!
 	mocks.session.mockResolvedValue({
 		session: { user: { id: 'u1' } },
@@ -64,7 +67,19 @@ describe('device scope approval', () => {
 			clientName: 'learner-device',
 			scope: 'learner:read',
 		})!
-		expect(await verify(other)).toEqual({ status: 'scope-denied' })
+		expect(await verify(mintDeviceConsent('test-code', other, 'u1')!)).toEqual({
+			status: 'scope-denied',
+		})
+		expect(mocks.set).not.toHaveBeenCalled()
+	})
+	it('reports an approval race lost to another approver', async () => {
+		mocks.where.mockResolvedValueOnce([{ affectedRows: 0 }, []])
+		expect(await verify()).toEqual({ status: 'already-verified' })
+	})
+	it('refuses a consent ticket issued to a different signed-in user', async () => {
+		expect(
+			await verify(mintDeviceConsent('test-code', deviceCode, 'other-user')!),
+		).toEqual({ status: 'scope-denied' })
 		expect(mocks.set).not.toHaveBeenCalled()
 	})
 	it('refuses an old unbound device code', async () => {

@@ -20,7 +20,12 @@ vi.mock('@/db', () => ({
 }))
 vi.mock('@/db/schema', () => ({
 	deviceAccessToken: { token: Symbol('token') },
-	deviceVerifications: { deviceCode: Symbol('deviceCode') },
+	deviceVerifications: {
+		deviceCode: Symbol('deviceCode'),
+		verifiedByUserId: Symbol('userId'),
+		verifiedAt: Symbol('verifiedAt'),
+		expires: Symbol('expires'),
+	},
 }))
 vi.mock('@/server/device-token-grant', async (original) => ({
 	...(await original<typeof import('@/server/device-token-grant')>()),
@@ -54,6 +59,7 @@ beforeEach(() => {
 	}))
 	mocks.ownerAbility.mockResolvedValue({ can: () => false })
 	mocks.insertValues.mockResolvedValue(undefined)
+	mocks.deleteWhere.mockResolvedValue({ rowsAffected: 1 })
 	mocks.tokenFindFirst.mockImplementation(async () => ({
 		token: mocks.insertValues.mock.calls[0]?.[0]?.token,
 	}))
@@ -93,7 +99,24 @@ describe('device-code exchange', () => {
 		const response = await exchange()
 		expect(response.status).toBe(500)
 		expect(await response.text()).not.toContain('secret')
-		expect(mocks.deleteWhere).not.toHaveBeenCalled()
+		expect(mocks.deleteWhere).toHaveBeenCalledOnce()
+		expect(mocks.tokenFindFirst).not.toHaveBeenCalled()
+	})
+
+	it('claims a device code once under simultaneous token polls', async () => {
+		let available = true
+		mocks.deleteWhere.mockImplementation(async () => {
+			const affectedRows = available ? 1 : 0
+			available = false
+			return { rowsAffected: affectedRows }
+		})
+		const responses = await Promise.all([exchange(), exchange()])
+		expect(responses.map((response) => response.status).sort()).toEqual([
+			200, 400,
+		])
+		expect(mocks.insertValues).toHaveBeenCalledOnce()
+		const denied = responses.find((response) => response.status === 400)!
+		expect(await denied.json()).toMatchObject({ error: 'invalid_grant' })
 	})
 
 	it('stores a repeated learner scope once', async () => {

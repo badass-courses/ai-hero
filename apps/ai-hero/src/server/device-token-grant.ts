@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { getAbility, UserSchema } from '@/ability'
 import { db } from '@/db'
 import { users } from '@/db/schema'
@@ -62,6 +63,48 @@ export function deviceGrantFromCode(code: unknown): DeviceGrant | null {
 	if (value.s !== LEARNER_READ_SCOPE && value.s !== DEVICE_ADMIN_SCOPE)
 		return null
 	return requestedDeviceGrant(value.c, value.s)
+}
+
+const deviceCodeDigest = (code: string) =>
+	createHash('sha256').update(code).digest('hex')
+
+/** Browser consent names a grant without revealing the device's polling secret. */
+export function mintDeviceConsent(
+	userCode: string,
+	deviceCode: string,
+	userId: string,
+): string | null {
+	const grant = deviceGrantFromCode(deviceCode)
+	if (!grant) return null
+	return seal('device-consent', {
+		u: userCode,
+		d: deviceCodeDigest(deviceCode),
+		c: grant.clientName,
+		s: grant.scope,
+		a: userId,
+	})
+}
+
+export function matchesDeviceConsent(
+	consent: string,
+	userCode: string,
+	deviceCode: string,
+	userId: string,
+): boolean {
+	const grant = deviceGrantFromCode(deviceCode)
+	const value = unseal('device-consent', consent) as Record<
+		string,
+		unknown
+	> | null
+	return (
+		!!grant &&
+		!!value &&
+		value.u === userCode &&
+		value.d === deviceCodeDigest(deviceCode) &&
+		value.c === grant.clientName &&
+		value.s === grant.scope &&
+		value.a === userId
+	)
 }
 
 export async function deviceOwnerAbility(userId: string) {

@@ -12,7 +12,12 @@ import { env } from '@/env.mjs'
  * derived from the auth secret with HKDF, so a value minted for one purpose
  * never opens as another. No table, no new env var.
  */
-export type SealPurpose = 'code' | 'client' | 'consent' | 'device'
+export type SealPurpose =
+	| 'code'
+	| 'client'
+	| 'consent'
+	| 'device'
+	| 'device-consent'
 
 const SALT = 'aihero-learner-oauth'
 const IV_BYTES = 12

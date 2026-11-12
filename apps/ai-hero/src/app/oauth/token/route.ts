@@ -11,7 +11,7 @@ import {
 	requestedDeviceGrant,
 } from '@/server/device-token-grant'
 import { deviceAccessTokenForInsert } from '@/server/device-token-store'
-import { eq } from 'drizzle-orm'
+import { and, eq, gt, isNotNull } from 'drizzle-orm'
 
 export async function POST(request: Request) {
 	const formData = await request.formData().catch(() => null)
@@ -25,7 +25,7 @@ export async function POST(request: Request) {
 	return deviceCodeGrant(formData).catch(() =>
 		oauthError(
 			'server_error',
-			'Could not issue a device token. Try again.',
+			'Could not issue a device token. Start device authorization again.',
 			500,
 		),
 	)
@@ -90,6 +90,24 @@ async function deviceCodeGrant(formData: FormData) {
 			403,
 		)
 
+	// Claim before minting: simultaneous polls cannot issue multiple tokens.
+	// A failed insert consumes the grant too; the caller starts a fresh flow.
+	const claimed = await db
+		.delete(deviceVerifications)
+		.where(
+			and(
+				eq(deviceVerifications.deviceCode, verification.deviceCode),
+				eq(deviceVerifications.verifiedByUserId, verification.verifiedByUserId),
+				isNotNull(deviceVerifications.verifiedAt),
+				gt(deviceVerifications.expires, new Date()),
+			),
+		)
+	if (claimed.rowsAffected !== 1)
+		return oauthError(
+			'invalid_grant',
+			'The device code was already used or expired.',
+		)
+
 	const token = crypto.randomUUID()
 	await db.insert(deviceAccessTokenForInsert).values({
 		userId: verification.verifiedByUserId,
@@ -102,9 +120,6 @@ async function deviceCodeGrant(formData: FormData) {
 	const stored = await db.query.deviceAccessToken.findFirst({
 		where: eq(deviceAccessToken.token, token),
 	})
-	await db
-		.delete(deviceVerifications)
-		.where(eq(deviceVerifications.deviceCode, verification.deviceCode))
 	if (!stored)
 		return oauthError('access_denied', 'Device token not found.', 403)
 	return NextResponse.json(

@@ -10,12 +10,12 @@ import { cn } from '@coursebuilder/ui/utils/cn'
 
 export default function Verify({
 	userCode,
-	deviceCode,
+	consent,
 	clientName,
 	scope,
 }: {
 	userCode: string
-	deviceCode: string
+	consent: string
 	clientName: string
 	scope: string
 }) {
@@ -49,7 +49,7 @@ export default function Verify({
 					}}
 					onClick={async () => {
 						verifyDeviceMutation.mutate(
-							{ userCode, deviceCode },
+							{ userCode, consent },
 							{
 								onSettled: (data) => {
 									switch (data?.status) {

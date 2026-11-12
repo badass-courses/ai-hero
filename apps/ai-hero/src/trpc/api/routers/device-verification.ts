@@ -6,6 +6,7 @@ import {
 	DEVICE_ADMIN_SCOPE,
 	deviceGrantFromCode,
 	deviceOwnerAbility,
+	matchesDeviceConsent,
 } from '@/server/device-token-grant'
 import { isAfter } from 'date-fns'
 import { and, eq, isNull } from 'drizzle-orm'
@@ -18,7 +19,7 @@ export const deviceVerificationRouter = createTRPCRouter({
 		.input(
 			z.object({
 				userCode: z.string(),
-				deviceCode: z.string().max(191),
+				consent: z.string().max(8192),
 			}),
 		)
 		.mutation(async ({ ctx, input }) => {
@@ -66,14 +67,19 @@ export const deviceVerificationRouter = createTRPCRouter({
 							: null
 					if (
 						!grant ||
-						input.deviceCode !== deviceVerification.deviceCode ||
+						!matchesDeviceConsent(
+							input.consent,
+							input.userCode,
+							deviceVerification.deviceCode,
+							session.user.id,
+						) ||
 						(grant.scope === DEVICE_ADMIN_SCOPE &&
 							!ownerAbility?.can('manage', 'all'))
 					) {
 						return { status: 'scope-denied' }
 					}
 
-					await db
+					const [updated] = await db
 						.update(deviceVerifications)
 						.set({
 							verifiedAt: new Date(),
@@ -89,7 +95,12 @@ export const deviceVerificationRouter = createTRPCRouter({
 							),
 						)
 
-					return { status: 'device-verified' }
+					return {
+						status:
+							updated.affectedRows === 1
+								? 'device-verified'
+								: 'already-verified',
+					}
 				} else {
 					return { status: 'no-verification-found' }
 				}

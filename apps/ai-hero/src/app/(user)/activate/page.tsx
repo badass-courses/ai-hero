@@ -3,7 +3,10 @@ import { redirect } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
 import { db } from '@/db'
 import { deviceVerifications } from '@/db/schema'
-import { deviceGrantFromCode } from '@/server/device-token-grant'
+import {
+	deviceGrantFromCode,
+	mintDeviceConsent,
+} from '@/server/device-token-grant'
 import { eq } from 'drizzle-orm'
 import { getServerAuthSession } from '@/server/auth'
 
@@ -32,11 +35,17 @@ export default async function Activate(props: {
 	if (!verification || !grant || verification.expires <= new Date())
 		redirect('/activate/failure?message=Start device authorization again.')
 
+	const consent = session.user?.id
+		? mintDeviceConsent(userCode, verification.deviceCode, session.user.id)
+		: null
+	if (!consent)
+		redirect('/activate/failure?message=Start device authorization again.')
+
 	return (
 		<LayoutClient withContainer>
 			<Verify
 				userCode={userCode}
-				deviceCode={verification.deviceCode}
+				consent={consent}
 				clientName={grant.clientName}
 				scope={grant.scope}
 			/>

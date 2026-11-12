@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 vi.mock('@/db', () => ({ db: {} }))
-import { seal } from '@/lib/learner-agent/oauth/sealed'
+import { seal, unseal } from '@/lib/learner-agent/oauth/sealed'
 import {
 	deviceGrantFromCode,
 	mintDeviceCode,
+	mintDeviceConsent,
+	matchesDeviceConsent,
 	requestedDeviceGrant,
 } from './device-token-grant'
 
@@ -49,6 +51,37 @@ describe('device grant binding', () => {
 			).toBeNull()
 		},
 	)
+	it('binds consent to the shown grant and user without disclosing its polling secret', () => {
+		const code = mintDeviceCode({
+			clientName: 'aihero-cli',
+			scope: 'admin:all',
+		})!
+		const consent = mintDeviceConsent('user-code', code, 'u1')!
+		expect(matchesDeviceConsent(consent, 'user-code', code, 'u1')).toBe(true)
+		expect(matchesDeviceConsent(consent, 'other-code', code, 'u1')).toBe(false)
+		expect(matchesDeviceConsent(consent, 'user-code', code, 'u2')).toBe(false)
+		const other = mintDeviceCode({
+			clientName: 'learner-device',
+			scope: 'learner:read',
+		})!
+		expect(matchesDeviceConsent(consent, 'user-code', other, 'u1')).toBe(false)
+		expect(deviceGrantFromCode(consent)).toBeNull()
+		const payload = unseal('device-consent', consent) as Record<string, unknown>
+		expect(JSON.stringify(payload)).not.toContain(code)
+		expect(payload.d).toMatch(/^[a-f0-9]{64}$/)
+		expect(
+			matchesDeviceConsent(
+				seal('device-consent', { ...payload, s: 'learner:read' })!,
+				'user-code',
+				code,
+				'u1',
+			),
+		).toBe(false)
+		expect(
+			matchesDeviceConsent(seal('consent', payload)!, 'user-code', code, 'u1'),
+		).toBe(false)
+	})
+
 	it('separates device codes from other OAuth purposes', () => {
 		expect(
 			deviceGrantFromCode(
