@@ -1,24 +1,33 @@
 import { readMagicLinkFragment } from '@/server/magic-link-fragment'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
 	adapterFindOrCreateUser: vi.fn(),
+	getUserByEmail: vi.fn(),
+	validate: vi.fn(),
+	info: vi.fn(),
+	env: {
+		POSTMARK_API_KEY: 'pm',
+		NEXT_PUBLIC_SUPPORT_EMAIL: 'team@example.test',
+		AIH_EMAIL_VALIDATION_ENABLED: undefined as string | undefined,
+	},
 	findOrCreateUserWithPersonalOrg: vi.fn(),
 	sendVerificationRequest: vi.fn(),
 }))
 
 vi.mock('@/db', () => ({
 	courseBuilderAdapter: {
-		getUserByEmail: vi.fn(),
+		getUserByEmail: mocks.getUserByEmail,
 		findOrCreateUser: mocks.adapterFindOrCreateUser,
 	},
 }))
 vi.mock('@/env.mjs', () => ({
-	env: {
-		POSTMARK_API_KEY: 'pm',
-		NEXT_PUBLIC_SUPPORT_EMAIL: 'team@example.test',
-	},
+	env: mocks.env,
 }))
+vi.mock('@/lib/subscriber-marketing/drovr-email-validation', () => ({
+	validateEmailWithDrovr: mocks.validate,
+}))
+vi.mock('@/server/logger', () => ({ log: { info: mocks.info } }))
 vi.mock('@/lib/find-or-create-user', () => ({
 	findOrCreateUserWithPersonalOrg: mocks.findOrCreateUserWithPersonalOrg,
 }))
@@ -44,7 +53,92 @@ vi.mock('next-auth/providers/postmark', () => ({
 
 import { PostmarkSendError } from '@coursebuilder/email/send-verification-request'
 
-import { emailProvider, loginEmailProvider, magicLinkIdentity } from './email-provider'
+import {
+	emailProvider,
+	EmailRejectedError,
+	loginEmailProvider,
+	magicLinkIdentity,
+} from './email-provider'
+
+beforeEach(() => {
+	vi.clearAllMocks()
+	mocks.env.AIH_EMAIL_VALIDATION_ENABLED = undefined
+	mocks.getUserByEmail.mockResolvedValue(null)
+	mocks.info.mockResolvedValue(undefined)
+})
+
+describe('email validation gate', () => {
+	it.each([
+		undefined,
+		'another@other.example.test',
+		'person@other.example.test@invalid',
+		'person@<script>.test',
+	])(
+		'keeps unsafe or non-domain suggestions out of the public code: %s',
+		(suggestion) => {
+			expect(
+				new EmailRejectedError('person@example.test', suggestion).code,
+			).toBe('EmailRejected')
+		},
+	)
+	const send = async () =>
+		emailProvider.options!.sendVerificationRequest!({
+			identifier: 'person@example.test',
+			url: 'https://www.aihero.dev/api/auth/callback/postmark?token=test&email=person%40example.test',
+		} as any)
+	it('blocks a new rejected email before identity creation or sending', async () => {
+		mocks.env.AIH_EMAIL_VALIDATION_ENABLED = 'true'
+		mocks.validate.mockResolvedValue({
+			verdict: 'reject',
+			reason: 'disposable_domain',
+			suggestion: 'person@other.example.test',
+			policyVersion: 'test-policy',
+		})
+		const error = await send().catch((error) => error)
+		expect(error.type).toBe('CredentialsSignin')
+		expect(error.code).toBe('EmailRejected:other.example.test')
+		expect(error.kind).toBe('error')
+		expect(mocks.sendVerificationRequest).not.toHaveBeenCalled()
+		expect(mocks.findOrCreateUserWithPersonalOrg).not.toHaveBeenCalled()
+		expect(mocks.info).toHaveBeenCalledWith(
+			'auth.email_validation.checked',
+			expect.objectContaining({
+				verdict: 'reject',
+				reason: 'disposable_domain',
+				policyVersion: 'test-policy',
+				ms: expect.any(Number),
+			}),
+		)
+		expect(mocks.info).toHaveBeenCalledWith(
+			'auth.email_validation.blocked',
+			expect.any(Object),
+		)
+		expect(JSON.stringify(mocks.info.mock.calls)).not.toContain('person@')
+	})
+	it.each(['accept', 'unknown'])('continues for %s', async (verdict) => {
+		mocks.env.AIH_EMAIL_VALIDATION_ENABLED = 'true'
+		mocks.validate.mockResolvedValue({ verdict })
+		await send()
+		expect(mocks.sendVerificationRequest).toHaveBeenCalledOnce()
+	})
+	it('never checks existing users', async () => {
+		mocks.env.AIH_EMAIL_VALIDATION_ENABLED = 'true'
+		mocks.getUserByEmail.mockResolvedValue({ id: 'u1' })
+		await send()
+		expect(mocks.validate).not.toHaveBeenCalled()
+		expect(mocks.sendVerificationRequest).toHaveBeenCalledOnce()
+	})
+	it.each([undefined, 'false', 'TRUE'])(
+		'skips when flag is %s',
+		async (flag) => {
+			mocks.env.AIH_EMAIL_VALIDATION_ENABLED = flag
+			await send()
+			expect(mocks.getUserByEmail).not.toHaveBeenCalled()
+			expect(mocks.validate).not.toHaveBeenCalled()
+			expect(mocks.sendVerificationRequest).toHaveBeenCalledOnce()
+		},
+	)
+})
 
 describe('magic-link identity port', () => {
 	it('limits requested login links to one hour without shortening buyer emails', () => {

@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import { Icon } from '@/components/brand/icons'
 import { HeroShader } from '@/components/landing/hero-shader'
 import { env } from '@/env.mjs'
+import { authErrorView } from '@/lib/auth-error-view'
 import {
 	INVALID_LOGIN_EMAIL_MESSAGE,
 	isPlausibleLoginEmail,
@@ -17,6 +18,43 @@ import toast from 'react-hot-toast'
 import Balancer from 'react-wrap-balancer'
 
 import { Button, Input, Label } from '@coursebuilder/ui'
+
+/** Keep auth send failures on the form; success uses Auth.js's original URL. */
+export async function requestEmailLogin(
+	provider: string,
+	email: string,
+	callbackUrl: string,
+	navigate: (url: string) => void = (url) => window.location.assign(url),
+): Promise<string | undefined> {
+	try {
+		const result = await signIn(provider, {
+			email: email.trim(),
+			callbackUrl,
+			redirect: false,
+		})
+		if (result?.error === 'CredentialsSignin') {
+			if (result.code === 'EmailInactive')
+				return authErrorView('EmailInactive').message
+			const [code, domain, extra] = result.code?.split(':') ?? []
+			if (code === 'EmailRejected') {
+				const message =
+					"We can't send a sign-in link to that address. Please use a different email."
+				return domain &&
+					!extra &&
+					/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain)
+					? `${message} Did you mean ${email.trim().toLowerCase().split('@')[0]}@${domain}?`
+					: message
+			}
+		}
+		if (result?.ok && !result.error && result.url) {
+			navigate(result.url)
+			return
+		}
+	} catch {
+		// The form must not go blank when the auth request itself fails.
+	}
+	return authErrorView(undefined).message
+}
 
 export type LoginTemplateProps = {
 	providers: Record<string, Provider> | null
@@ -96,10 +134,12 @@ export const Login: React.FC<React.PropsWithChildren<LoginTemplateProps>> = ({
 			return
 		}
 
-		await signIn(emailProvider.id, {
-			email: email.trim(),
+		const message = await requestEmailLogin(
+			emailProvider.id,
+			email,
 			callbackUrl,
-		})
+		)
+		if (message) setError('email', { type: 'server', message })
 	})
 
 	return (
@@ -248,7 +288,7 @@ export const Login: React.FC<React.PropsWithChildren<LoginTemplateProps>> = ({
 								role="alert"
 								className="text-destructive text-sm"
 							>
-								{INVALID_LOGIN_EMAIL_MESSAGE}
+								{errors.email.message || INVALID_LOGIN_EMAIL_MESSAGE}
 							</p>
 						) : null}
 						<Button

@@ -146,6 +146,8 @@ export const env = createEnv({
 		PINECONE_API_KEY: z.string().optional(),
 		AXIOM_TOKEN: z.string().optional(),
 		AXIOM_ORG_ID: z.string().optional(),
+		// New magic-link recipients only; enabled exclusively by the string 'true'.
+		AIH_EMAIL_VALIDATION_ENABLED: z.string().optional(),
 		DROVR_SHADOW_INGEST_URL: z.string().url().optional(),
 		// drovr's API origin for the /unsubscribe page (GET /unsubscribe/state,
 		// POST /unsubscribe). Optional: the page falls back to the origin of
@@ -361,6 +363,7 @@ export const env = createEnv({
 		AXIOM_TOKEN: process.env.AXIOM_TOKEN,
 		AXIOM_ORG_ID: process.env.AXIOM_ORG_ID,
 		DROVR_SHADOW_INGEST_URL: process.env.DROVR_SHADOW_INGEST_URL,
+		AIH_EMAIL_VALIDATION_ENABLED: process.env.AIH_EMAIL_VALIDATION_ENABLED,
 		DROVR_API_BASE_URL: process.env.DROVR_API_BASE_URL,
 		DROVR_API_KEY_ORG_AIHERO: process.env.DROVR_API_KEY_ORG_AIHERO,
 		AIH_KIT_SIGNUPS_HISTORY_JSON: process.env.AIH_KIT_SIGNUPS_HISTORY_JSON,
