@@ -43,6 +43,11 @@ function textOf(node: Node): string {
 	return node.children.map(textOf).join('')
 }
 
+function containsLink(node: Node): boolean {
+	if (node?.type === 'link' || node?.type === 'linkReference') return true
+	return Array.isArray(node?.children) && node.children.some(containsLink)
+}
+
 const attribute = (name: string, value: string) => ({
 	type: 'mdxJsxAttribute',
 	name,
@@ -72,6 +77,9 @@ function toPrerequisite(item: Node): Node | null {
 		...rest,
 	]
 	if (!reason.some((node) => textOf(node).trim())) return null
+	// The block renders each row as one link to the lesson; a link inside the
+	// reason would nest an <a> in it. Such a list stays a plain list.
+	if (reason.some(containsLink)) return null
 
 	return {
 		type: 'mdxJsxFlowElement',

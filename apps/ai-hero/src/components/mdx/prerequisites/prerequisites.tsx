@@ -2,6 +2,7 @@ import { Children, isValidElement, type ReactNode } from 'react'
 import { cookies } from 'next/headers'
 import Link from 'next/link'
 import { Heading } from '@/components/mdx/heading'
+import { toInternalHref } from '@/utils/rehype-internal-links'
 import { log } from '@/server/logger'
 
 import { PrerequisitesBlock } from './prerequisites-block'
@@ -65,8 +66,10 @@ function AuthoredList({
 			<ul className="ah-bullets">
 				{entries.map((entry) => (
 					<li key={`${entry.module}/${entry.lesson}`}>
+						{/* The authored URL, made root-relative like any body link, so
+						    a #fragment or query survives. */}
 						<Link
-							href={`/workshops/${entry.module}/${entry.lesson}`}
+							href={toInternalHref(entry.href) ?? entry.href}
 							className="ah-prose-a"
 						>
 							{entry.label}

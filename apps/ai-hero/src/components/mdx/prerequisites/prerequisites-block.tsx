@@ -88,7 +88,7 @@ export function PrerequisitesBlock({
 }: {
 	title: string
 	/** Depth of the authored heading. */
-	level: number
+	level: 1 | 2 | 3 | 4 | 5 | 6
 	items: PrerequisiteItem[]
 	/** The lesson this block sits in; the collapse choice is kept per lesson. */
 	hostLessonId?: string
@@ -170,6 +170,7 @@ export function PrerequisitesBlock({
 		>
 			<PrerequisitesView
 				title={title}
+				level={level}
 				items={viewItems}
 				completedCount={completedCount}
 				allCompleted={allCompleted}

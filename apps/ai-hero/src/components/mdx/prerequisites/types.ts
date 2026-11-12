@@ -20,6 +20,8 @@ export type PrerequisiteItem = {
 export type PrerequisitesViewProps = {
 	/** The authored heading, e.g. "Crash Course Prerequisites". */
 	title: string
+	/** Depth of the authored heading; the title renders at this level. */
+	level: 1 | 2 | 3 | 4 | 5 | 6
 	items: Array<PrerequisiteItem & { completed: boolean }>
 	completedCount: number
 	allCompleted: boolean

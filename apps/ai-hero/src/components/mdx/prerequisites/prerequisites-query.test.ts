@@ -72,6 +72,30 @@ describe('getPrerequisiteLessons', () => {
 		expect(mocks.durationRows).not.toHaveBeenCalled()
 	})
 
+	it('accepts the types the lesson route serves: lesson, exercise, post', async () => {
+		for (const type of ['lesson', 'exercise', 'post']) {
+			mocks.getCachedLesson.mockResolvedValue({ ...lessonRow('a', {}), type })
+			const lessons = await getPrerequisiteLessons([
+				{ module: 'crash', lesson: 'a' },
+			])
+			expect(lessons?.[0]?.lessonId, type).toBe('id-a')
+		}
+	})
+
+	it('rejects a slug that resolves to any other type (e.g. a solution)', async () => {
+		for (const type of ['solution', 'workshop', 'videoResource', 'cohort']) {
+			mocks.getCachedLesson.mockImplementation(async (slug: string) =>
+				slug === 'a' ? lessonRow('a', {}) : { ...lessonRow('b', {}), type },
+			)
+			const lessons = await getPrerequisiteLessons([
+				{ module: 'crash', lesson: 'a' },
+				{ module: 'crash', lesson: 'b' },
+			])
+			expect(lessons, type).toBeNull()
+		}
+		expect(mocks.durationRows).not.toHaveBeenCalled()
+	})
+
 	it('has no thumbnail or duration for a lesson without a video', async () => {
 		mocks.getCachedLesson.mockResolvedValue({
 			...lessonRow('b', {}),

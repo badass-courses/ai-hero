@@ -18,6 +18,7 @@ type Item = PrerequisitesViewProps['items'][number]
  */
 export function PrerequisitesRows({
 	title,
+	level,
 	items,
 	completedCount,
 	allCompleted,
@@ -26,6 +27,7 @@ export function PrerequisitesRows({
 	onCollapsedChange,
 }: PrerequisitesViewProps) {
 	const listId = React.useId()
+	const Heading = `h${level}` as const
 	const done = progressKnown && allCompleted
 	// The first lesson still to watch. Only a known, unfinished list has one;
 	// unknown progress never claims a next step.
@@ -42,54 +44,60 @@ export function PrerequisitesRows({
 				'dark:shadow-[inset_0_1px_0_rgb(255_255_255/0.05),0_8px_24px_-12px_rgb(0_0_0/0.8)]',
 			)}
 		>
-			<button
-				type="button"
-				aria-expanded={!collapsed}
-				aria-controls={listId}
-				onClick={() => onCollapsedChange(!collapsed)}
-				className={cn(
-					'group/head flex min-h-12 w-full cursor-pointer items-center gap-3 px-4 py-3 text-left sm:px-5',
-					'transition-colors duration-200 hover:bg-[color:var(--ah-hover)]/60 active:bg-[color:var(--ah-hover)]',
-					'focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
-				)}
-			>
-				{done ? (
-					<span
-						aria-hidden
-						className="flex size-5 shrink-0 items-center justify-center rounded-full bg-[color:var(--ah-mark-yes)] text-[color:var(--card)]"
-					>
-						<Check className="size-3" strokeWidth={3} />
-					</span>
-				) : null}
-				<span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
-					<span className="text-foreground text-[15px] leading-[1.3] font-bold tracking-[-0.015em]">
-						{title}
-					</span>
-					<span className={cn(TYPE.metaMark, 'tabular-nums')}>
-						{progressKnown
-							? `${completedCount} of ${items.length} done`
-							: `${items.length} ${items.length === 1 ? 'lesson' : 'lessons'}`}
-					</span>
-				</span>
-				{progressKnown && !done ? (
-					<Segments total={items.length} completed={completedCount} />
-				) : null}
-				<span
+			{/* The authored heading stays a heading for screen readers and
+			    heading navigation. It wraps the toggle (the accordion pattern):
+			    a heading cannot sit inside a button. Reset to inherit so the
+			    global h1-h6 rule changes nothing visually. */}
+			<Heading className="m-0 text-[length:inherit] leading-[inherit] font-[inherit] font-normal">
+				<button
+					type="button"
+					aria-expanded={!collapsed}
+					aria-controls={listId}
+					onClick={() => onCollapsedChange(!collapsed)}
 					className={cn(
-						TYPE.metaMark,
-						'group-hover/head:text-foreground flex shrink-0 items-center gap-1 transition-colors',
+						'group/head flex min-h-12 w-full cursor-pointer items-center gap-3 px-4 py-3 text-left sm:px-5',
+						'transition-colors duration-200 hover:bg-[color:var(--ah-hover)]/60 active:bg-[color:var(--ah-hover)]',
+						'focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
 					)}
 				>
-					<span className="hidden sm:inline">{collapsed ? 'Show' : 'Hide'}</span>
-					<ChevronDown
-						aria-hidden
+					{done ? (
+						<span
+							aria-hidden
+							className="flex size-5 shrink-0 items-center justify-center rounded-full bg-[color:var(--ah-mark-yes)] text-[color:var(--card)]"
+						>
+							<Check className="size-3" strokeWidth={3} />
+						</span>
+					) : null}
+					<span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+						<span className="text-foreground text-[15px] leading-[1.3] font-bold tracking-[-0.015em]">
+							{title}
+						</span>
+						<span className={cn(TYPE.metaMark, 'tabular-nums')}>
+							{progressKnown
+								? `${completedCount} of ${items.length} done`
+								: `${items.length} ${items.length === 1 ? 'lesson' : 'lessons'}`}
+						</span>
+					</span>
+					{progressKnown && !done ? (
+						<Segments total={items.length} completed={completedCount} />
+					) : null}
+					<span
 						className={cn(
-							'size-4 transition-transform duration-300 ease-[cubic-bezier(0.65,0,0.35,1)] motion-reduce:transition-none',
-							!collapsed && 'rotate-180',
+							TYPE.metaMark,
+							'group-hover/head:text-foreground flex shrink-0 items-center gap-1 transition-colors',
 						)}
-					/>
-				</span>
-			</button>
+					>
+						<span className="hidden sm:inline">{collapsed ? 'Show' : 'Hide'}</span>
+						<ChevronDown
+							aria-hidden
+							className={cn(
+								'size-4 transition-transform duration-300 ease-[cubic-bezier(0.65,0,0.35,1)] motion-reduce:transition-none',
+								!collapsed && 'rotate-180',
+							)}
+						/>
+					</span>
+				</button>
+			</Heading>
 
 			<div
 				id={listId}
@@ -198,7 +206,7 @@ function Thumbnail({ item, recede }: { item: Item; recede: boolean }) {
 					width={480}
 					height={270}
 					className={cn(
-						'absolute inset-0 size-full object-cover transition-[transform,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover/row:scale-105 motion-reduce:transition-none motion-reduce:group-hover/row:scale-100',
+						'absolute inset-0 size-full object-cover transition-[scale,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover/row:scale-105 motion-reduce:transition-none motion-reduce:group-hover/row:scale-100',
 						recede && 'opacity-60 group-hover/row:opacity-100',
 					)}
 				/>

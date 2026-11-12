@@ -164,6 +164,23 @@ describe('Prerequisites through compileMDX', () => {
 		)
 	})
 
+	it('keeps the authored URL (fragment, query) in the fallback, made relative', async () => {
+		mocks.getPrerequisiteLessons.mockResolvedValue(null)
+
+		const html = await render(
+			[
+				'## Crash Course Prerequisites',
+				'',
+				'- [A](https://www.aihero.dev/workshops/mod/a?t=30#setup): Reason A.',
+				'- [B](/workshops/mod/b#video): Reason B.',
+			].join('\n'),
+			'host-fragment',
+		)
+
+		expect(html).toContain('href="/workshops/mod/a?t=30#setup"')
+		expect(html).toContain('href="/workshops/mod/b#video"')
+	})
+
 	it('falls back the same way when the read throws', async () => {
 		mocks.getPrerequisiteLessons.mockRejectedValue(new Error('db down'))
 

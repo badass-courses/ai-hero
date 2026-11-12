@@ -131,6 +131,21 @@ describe('remarkPrerequisites', () => {
 		expect(topLevel(tree)).toEqual(['heading', 'list'])
 	})
 
+	it('leaves the list alone when a reason contains a link', () => {
+		for (const reason of [
+			'See [the docs](https://example.com/docs) first.',
+			'Read https://example.com/docs first.',
+			'See [the docs][docs] first.\n\n[docs]: https://example.com/docs',
+			'Some **[bold link](/workshops/m/x)** here.',
+		]) {
+			const tree = transform(
+				`## Crash Course Prerequisites\n\n- [A](/workshops/mod/a): Fine.\n- [B](/workshops/mod/b): ${reason}\n`,
+			)
+			expect(tree.children[0].type, reason).toBe('heading')
+			expect(tree.children[1].type, reason).toBe('list')
+		}
+	})
+
 	it('leaves a heading not followed by a list alone', () => {
 		const tree = transform(
 			'## Crash Course Prerequisites\n\nSee below.\n\n- [A](/workshops/mod/a): Reason.\n',
