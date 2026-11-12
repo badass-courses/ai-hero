@@ -11,6 +11,7 @@ import {
 	requestedDeviceGrant,
 } from '@/server/device-token-grant'
 import { deviceAccessTokenForInsert } from '@/server/device-token-store'
+import { DEVICE_LOGIN_EXPIRED_MESSAGE } from '@/server/device-access-token'
 import { and, eq, gt, isNotNull } from 'drizzle-orm'
 
 export async function POST(request: Request) {
@@ -37,8 +38,7 @@ async function deviceCodeGrant(formData: FormData) {
 	const deviceCode = formData.get('device_code')
 	const grant = deviceGrantFromCode(deviceCode)
 	// Legacy UUID codes carry no authenticated consent context. Start again.
-	if (!grant)
-		return oauthError('invalid_grant', 'Start device authorization again.')
+	if (!grant) return oauthError('invalid_grant', DEVICE_LOGIN_EXPIRED_MESSAGE)
 	const requestedClient = formData.get('client_id')
 	if (
 		requestedClient &&
@@ -64,13 +64,9 @@ async function deviceCodeGrant(formData: FormData) {
 		where: eq(deviceVerifications.deviceCode, deviceCode as string),
 	})
 	if (!verification)
-		return oauthError('access_denied', 'The device code is invalid.', 403)
+		return oauthError('access_denied', DEVICE_LOGIN_EXPIRED_MESSAGE, 403)
 	if (new Date() > verification.expires)
-		return oauthError(
-			'expired_token',
-			'The device verification has expired.',
-			403,
-		)
+		return oauthError('expired_token', DEVICE_LOGIN_EXPIRED_MESSAGE, 403)
 	if (!verification.verifiedAt)
 		return oauthError(
 			'authorization_pending',
@@ -103,10 +99,7 @@ async function deviceCodeGrant(formData: FormData) {
 			),
 		)
 	if (claimed.rowsAffected !== 1)
-		return oauthError(
-			'invalid_grant',
-			'The device code was already used or expired.',
-		)
+		return oauthError('invalid_grant', DEVICE_LOGIN_EXPIRED_MESSAGE)
 
 	const token = crypto.randomUUID()
 	await db.insert(deviceAccessTokenForInsert).values({

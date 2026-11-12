@@ -79,7 +79,7 @@ export const deviceVerificationRouter = createTRPCRouter({
 						return { status: 'scope-denied' }
 					}
 
-					const [updated] = await db
+					const updated = await db
 						.update(deviceVerifications)
 						.set({
 							verifiedAt: new Date(),
@@ -97,7 +97,7 @@ export const deviceVerificationRouter = createTRPCRouter({
 
 					return {
 						status:
-							updated.affectedRows === 1
+							updated.rowsAffected === 1
 								? 'device-verified'
 								: 'already-verified',
 					}

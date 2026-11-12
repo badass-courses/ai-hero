@@ -37,7 +37,7 @@ const verify = (
 beforeEach(() => {
 	vi.clearAllMocks()
 	mocks.ownerAbility.mockResolvedValue({ can: () => true })
-	mocks.where.mockResolvedValue([{ affectedRows: 1 }, []])
+	mocks.where.mockResolvedValue({ rowsAffected: 1 })
 	deviceCode = mintDeviceCode({ clientName: 'aihero-cli', scope: 'admin:all' })!
 	mocks.session.mockResolvedValue({
 		session: { user: { id: 'u1' } },
@@ -73,7 +73,7 @@ describe('device scope approval', () => {
 		expect(mocks.set).not.toHaveBeenCalled()
 	})
 	it('reports an approval race lost to another approver', async () => {
-		mocks.where.mockResolvedValueOnce([{ affectedRows: 0 }, []])
+		mocks.where.mockResolvedValueOnce({ rowsAffected: 0 })
 		expect(await verify()).toEqual({ status: 'already-verified' })
 	})
 	it('refuses a consent ticket issued to a different signed-in user', async () => {

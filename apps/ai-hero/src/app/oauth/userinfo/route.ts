@@ -3,7 +3,10 @@ import { db } from '@/db'
 import { deviceAccessToken as deviceAccessTokenTable } from '@/db/schema'
 import { LEARNER_READ_SCOPE } from '@/lib/learner-agent/identity'
 import { clientNamesFor } from '@/lib/learner-agent/oauth/client-name'
-import { isDeviceAccessTokenActive } from '@/server/device-access-token'
+import {
+	isDeviceAccessTokenActive,
+	DEVICE_LOGIN_EXPIRED_MESSAGE,
+} from '@/server/device-access-token'
 import {
 	DEVICE_ADMIN_SCOPE,
 	DEVICE_CLI_CLIENT,
@@ -26,7 +29,7 @@ export async function GET(request: Request) {
 		json(
 			{
 				error: 'access_denied',
-				error_description: 'A valid scoped bearer token is required.',
+				error_description: DEVICE_LOGIN_EXPIRED_MESSAGE,
 			},
 			401,
 		)

@@ -112,6 +112,9 @@ describe('/mcp', () => {
 		expect(response.headers.get('www-authenticate')).toContain(
 			'error="invalid_token"',
 		)
+		expect((await response.json()).error.message).toBe(
+			'Your AI Hero login expired. Run `aihero-cli auth login` (or reconnect the MCP) to sign in again.',
+		)
 		expect(mocks.portsFor).not.toHaveBeenCalled()
 	})
 

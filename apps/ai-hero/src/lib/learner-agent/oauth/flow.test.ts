@@ -577,23 +577,33 @@ describe('learner OAuth: authorization code with PKCE', () => {
 		expect(response.status).toBe(429)
 	})
 
-	it.each([null, '', '  '])(
-		'refuses legacy null/empty scopes at /mcp: %s',
-		async (scope) => {
+	it.each([
+		{ scope: null },
+		{ scope: '' },
+		{ scope: '  ' },
+		{ scope: 'learner:read', expiresAt: new Date(0) },
+		{ scope: 'learner:read', revokedAt: new Date() },
+	])(
+		'returns the exact reconnect instruction for invalid MCP credentials: %j',
+		async (overrides) => {
 			state.table.rows.push({
 				token: 'legacy-token',
 				userId: 'u1',
-				scope,
 				createdAt: new Date(),
 				expiresAt: new Date(Date.now() + 60_000),
 				revokedAt: null,
+				...overrides,
 			})
 			const response = await mcpCall('legacy-token', {
 				jsonrpc: '2.0',
 				id: 1,
-				method: 'tools/list',
+				method: 'tools/call',
+				params: { name: 'my_courses', arguments: {} },
 			})
 			expect(response.status).toBe(401)
+			expect((await response.json()).error.message).toBe(
+				'Your AI Hero login expired. Run `aihero-cli auth login` (or reconnect the MCP) to sign in again.',
+			)
 		},
 	)
 

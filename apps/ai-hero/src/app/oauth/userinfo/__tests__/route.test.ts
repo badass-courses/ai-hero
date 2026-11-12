@@ -66,7 +66,11 @@ describe('oauth userinfo device-token policy', () => {
 		'rejects %s with 401 before loading the user',
 		async (_label, overrides) => {
 			mocks.findFirst.mockResolvedValue({ ...row(), ...overrides })
-			expect((await GET(request())).status).toBe(401)
+			const response = await GET(request())
+			expect(response.status).toBe(401)
+			expect((await response.json()).error_description).toBe(
+				'Your AI Hero login expired. Run `aihero-cli auth login` (or reconnect the MCP) to sign in again.',
+			)
 			expect(mocks.getUser).not.toHaveBeenCalled()
 		},
 	)

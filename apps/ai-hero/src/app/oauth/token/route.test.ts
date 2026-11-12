@@ -164,7 +164,13 @@ describe('device-code exchange', () => {
 	it.each(['legacy-uuid', 'aih_dev_tampered'])(
 		'rejects unbound or manipulated codes: %s',
 		async (device_code) => {
-			expect((await exchange({ device_code })).status).toBe(400)
+			const response = await exchange({ device_code })
+			expect(response.status).toBe(400)
+			expect(await response.json()).toMatchObject({
+				error: 'invalid_grant',
+				error_description:
+					'Your AI Hero login expired. Run `aihero-cli auth login` (or reconnect the MCP) to sign in again.',
+			})
 			expect(mocks.verification).not.toHaveBeenCalled()
 			expect(mocks.insertValues).not.toHaveBeenCalled()
 		},
@@ -185,8 +191,12 @@ describe('device-code exchange', () => {
 			verifiedAt: new Date(),
 			expires: new Date(Date.now() - 1),
 		})
-		expect(await (await exchange()).json()).toMatchObject({
+		const response = await exchange()
+		expect(response.status).toBe(403)
+		expect(await response.json()).toMatchObject({
 			error: 'expired_token',
+			error_description:
+				'Your AI Hero login expired. Run `aihero-cli auth login` (or reconnect the MCP) to sign in again.',
 		})
 		expect(mocks.insertValues).not.toHaveBeenCalled()
 	})
