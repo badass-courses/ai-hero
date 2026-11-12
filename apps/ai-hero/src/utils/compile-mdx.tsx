@@ -14,6 +14,10 @@ import { DictionaryHoverLink } from '@/components/dictionary/dictionary-hover-li
 import { redrawForImage } from '@/components/mdx/diagrams'
 import { Heading } from '@/components/mdx/heading'
 import { AISummary, TrackLink } from '@/components/mdx/mdx-components'
+import {
+	Prerequisite,
+	Prerequisites,
+} from '@/components/mdx/prerequisites/prerequisites'
 import { SubscriberCount } from '@/components/subscriber-count'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
@@ -28,6 +32,7 @@ import type { DictionaryEntry } from '@/lib/ai-coding-dictionary'
 import { createCalloutLineAutoInsertRemarkPlugin } from '@/lib/callout-line-autoinsert'
 import { getCohortOfficeHoursSessionsForWorkshop } from '@/lib/cohort-office-hours-query'
 import { createDictionaryAutoLinkRemarkPlugin } from '@/lib/dictionary-autolink'
+import { remarkPrerequisites } from '@/lib/prerequisites-autoupgrade'
 import { log } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
 import { rehypeAutoTableWrap } from '@/utils/rehype-auto-table-wrap'
@@ -242,6 +247,12 @@ type CompileMDXContext = {
 	 * resolver repeats that check and requires an active cohort relation.
 	 */
 	officeHoursWorkshopId?: string
+	/**
+	 * Lets the prerequisites block read its remembered collapse state from the
+	 * request cookie at render. Only request-bound (force-dynamic) routes may
+	 * set it; the cookie never enters the cached compile, only this flag does.
+	 */
+	prerequisitesStateCookie?: boolean
 	dictionaryAutoLink?: {
 		entries: DictionaryEntry[]
 		maxLinks?: number
@@ -724,6 +735,19 @@ async function compileMDXInternal(
 					QuizQuestion: (props) => (
 						<QuizQuestion {...props} lessonId={context?.lessonId} />
 					),
+					// Emitted by `remarkPrerequisites` from an authored heading and
+					// lesson-link list. Lessons resolve per request; the host lesson id
+					// keys the learner's remembered collapse state.
+					Prerequisites: (
+						props: React.ComponentProps<typeof Prerequisites>,
+					) => (
+						<Prerequisites
+							{...props}
+							hostLessonId={context?.lessonId}
+							readStateCookie={context?.prerequisitesStateCookie}
+						/>
+					),
+					Prerequisite,
 					OfficeHoursSchedule: ((props: OfficeHoursScheduleMdxProps) =>
 						OfficeHoursScheduleWithSessions(
 							props,
@@ -746,6 +770,9 @@ async function compileMDXInternal(
 							remarkGfm,
 							// Before the auto-linker, so it counts these as linked.
 							remarkSandcastleLinks,
+							// Before the auto-linker, which skips JSX: reasons stay as
+							// authored, with no dictionary links inside the rows.
+							remarkPrerequisites,
 							...(dictionaryAutoLinkPlugin ? [dictionaryAutoLinkPlugin] : []),
 							...(calloutLineAutoInsertPlugin
 								? [calloutLineAutoInsertPlugin]

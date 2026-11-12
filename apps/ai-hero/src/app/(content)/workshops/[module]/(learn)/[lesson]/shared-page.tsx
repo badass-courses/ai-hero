@@ -102,6 +102,9 @@ export async function LessonPage({
 				{},
 				{
 					lessonId: lesson.id,
+					// Request-bound route: the prerequisites block may render its
+					// remembered collapse state from the cookie.
+					prerequisitesStateCookie: true,
 					...(workshop && ability.canViewWorkshop
 						? { officeHoursWorkshopId: workshop.id }
 						: {}),

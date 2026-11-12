@@ -10,12 +10,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock('next/navigation', () => ({ useRouter: () => ({ prefetch: vi.fn() }) }))
 vi.mock('next-auth/react', () => ({ useSession: () => ({ data: null }) }))
 vi.mock('@/env.mjs', () => ({ env: {} }))
-vi.mock('@/trpc/react', () => ({
-	api: {
-		useUtils: () => ({
-			client: { progress: { setCompleted: { mutate: vi.fn() } } },
-		}),
-	},
+vi.mock('../../_components/use-set-lesson-completed', () => ({
+	useSetLessonCompleted: () => vi.fn(),
 }))
 vi.mock('@/lib/content-navigation', () => ({
 	flattenNavigationResources: () => mocks.resources,

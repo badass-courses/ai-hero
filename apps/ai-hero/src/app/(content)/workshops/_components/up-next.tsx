@@ -9,7 +9,6 @@ import {
 	findParentLessonForSolution,
 	flattenNavigationResources,
 } from '@/lib/content-navigation'
-import { api } from '@/trpc/react'
 import { ArrowRight } from 'lucide-react'
 import { useSession } from 'next-auth/react'
 
@@ -18,6 +17,7 @@ import type { AbilityForResource } from '@coursebuilder/utils/current-ability-ru
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
 import { completeLessonInBackground } from '../../_components/complete-lesson-in-background'
+import { useSetLessonCompleted } from '../../_components/use-set-lesson-completed'
 import { useModuleProgress } from '../../_components/module-progress-provider'
 import { WorkshopCompleteCard } from './workshop-complete-card'
 import { useWorkshopNavigation } from './workshop-navigation-provider'
@@ -69,7 +69,7 @@ export default function UpNext({
 		useModuleProgress()
 	// tRPC, not a server action: this write starts on a Link click, and a
 	// server action settling mid-navigation replays the old page.
-	const { client } = api.useUtils()
+	const setLessonCompleted = useSetLessonCompleted()
 
 	if (!navigation) {
 		return null
@@ -192,7 +192,7 @@ export default function UpNext({
 			moduleProgress,
 			addLessonProgress,
 			removeLessonProgress,
-			setCompleted: client.progress.setCompleted.mutate,
+			setCompleted: setLessonCompleted,
 			optimistic: Boolean(session?.user),
 		})
 	}

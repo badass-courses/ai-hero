@@ -3,13 +3,14 @@
 import * as React from 'react'
 import { useModuleProgress } from '@/app/(content)/_components/module-progress-provider'
 import type { Lesson } from '@/lib/lessons'
-import { api } from '@/trpc/react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { CheckIcon } from 'lucide-react'
 
 import { Label, Switch } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 import type { AbilityForResource } from '@coursebuilder/utils/current-ability-rules'
+
+import { useSetLessonCompleted } from './use-set-lesson-completed'
 
 // The toggle's own ease-out for its icon swap.
 const easeOutQuint = [0.22, 1, 0.36, 1] as const
@@ -41,7 +42,7 @@ export function ModuleLessonProgressToggle({
 		useModuleProgress()
 	// tRPC, not a server action: the router queues server actions with
 	// navigations, and one settling mid-navigation replays the old page.
-	const { client } = api.useUtils()
+	const setLessonCompleted = useSetLessonCompleted()
 
 	const isCompleted = Boolean(
 		moduleProgress?.completedLessons?.some(
@@ -69,7 +70,7 @@ export function ModuleLessonProgressToggle({
 		// never recorded.
 		startTransition(async () => {
 			try {
-				const result = await client.progress.setCompleted.mutate({
+				const result = await setLessonCompleted({
 					resourceId: lesson.id,
 					isCompleted: checked,
 				})
