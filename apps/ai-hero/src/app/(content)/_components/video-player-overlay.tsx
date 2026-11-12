@@ -16,7 +16,6 @@ import {
 	findParentLessonForSolution,
 	getModuleCompletionState,
 } from '@/lib/content-navigation'
-import { api } from '@/trpc/react'
 import { getAdjacentWorkshopResources } from '@/utils/get-adjacent-workshop-resources'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { ArrowRight } from 'lucide-react'
@@ -34,6 +33,7 @@ import * as ModuleCertificate from '@/components/certificates/module-certificate
 import { workshopAwardsCertificate } from '@/lib/workshops'
 
 import { completeLessonInBackground } from './complete-lesson-in-background'
+import { useSetLessonCompleted } from './use-set-lesson-completed'
 import {
 	CohortCertificateAction,
 	useCohortCertificateEligibility,
@@ -165,7 +165,7 @@ function useContinue({
 		useModuleProgress()
 	// tRPC, not a server action: one settling during the push below would
 	// replay this page over the next one.
-	const { client } = api.useUtils()
+	const setLessonCompleted = useSetLessonCompleted()
 	const [isNavigating, startNavigation] = React.useTransition()
 
 	const go = () => {
@@ -180,7 +180,7 @@ function useContinue({
 				moduleProgress,
 				addLessonProgress,
 				removeLessonProgress,
-				setCompleted: client.progress.setCompleted.mutate,
+				setCompleted: setLessonCompleted,
 				optimistic: hasSession,
 			})
 		}

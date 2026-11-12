@@ -1,5 +1,6 @@
 import { cookies } from 'next/headers'
-import { courseBuilderAdapter } from '@/db'
+import { courseBuilderAdapter, db } from '@/db'
+import { resourceProgress } from '@/db/schema'
 import { findOrCreateUserWithPersonalOrg } from '@/lib/find-or-create-user'
 import { getLesson } from '@/lib/lessons-query'
 import {
@@ -14,10 +15,40 @@ import { SubscriberSchema } from '@/schemas/subscriber'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { redactedErrorMessage } from '@/server/logger-utils'
-import { createTRPCRouter, publicProcedure } from '@/trpc/api/trpc'
+import {
+	createTRPCRouter,
+	procedure,
+	publicProcedure,
+} from '@/trpc/api/trpc'
+import { and, eq, inArray, isNotNull } from 'drizzle-orm'
 import { z } from 'zod'
 
 export const progressRouter = createTRPCRouter({
+	/**
+	 * Which of the given resources the signed-in user has completed. For a
+	 * surface that shows lessons from a module other than the page's (lesson
+	 * prerequisites), where the page's module progress does not cover them.
+	 * One indexed read of the caller's own rows; null when signed out.
+	 */
+	completedOf: procedure
+		.public({ reason: "Reads only the caller's own progress; null when signed out." })
+		.output(z.array(z.string()).nullable())
+		.input(z.object({ resourceIds: z.array(z.string()).min(1).max(50) }))
+		.query(async ({ ctx, input }) => {
+			const userId = ctx.session?.user?.id
+			if (!userId) return null
+			const rows = await db
+				.select({ resourceId: resourceProgress.resourceId })
+				.from(resourceProgress)
+				.where(
+					and(
+						eq(resourceProgress.userId, userId),
+						inArray(resourceProgress.resourceId, input.resourceIds),
+						isNotNull(resourceProgress.completedAt),
+					),
+				)
+			return rows.flatMap((row) => (row.resourceId ? [row.resourceId] : []))
+		}),
 	/**
 	 * A module's completed lessons for the current user.
 	 *

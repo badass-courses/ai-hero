@@ -54,6 +54,7 @@ import { useWorkshopNavigation } from '../workshops/_components/workshop-navigat
 import { playFromLink } from './play-from-link'
 import { AutoPlayToggle } from './autoplay-toggle'
 import { completeLessonInBackground } from './complete-lesson-in-background'
+import { useSetLessonCompleted } from './use-set-lesson-completed'
 import type { EndCardAction } from './end-card'
 import { useModuleProgress } from './module-progress-provider'
 import { getArrivalPosterUrl, getNextLesson } from './next-lesson'
@@ -97,6 +98,7 @@ export function AuthedVideoPlayer({
 	// that a pause starts just before `ended` replayed the old page over the
 	// autoplay push.
 	const { client } = utils
+	const setLessonCompleted = useSetLessonCompleted()
 
 	const muxMetadata = useMuxMetadata({
 		videoId: resource.id,
@@ -358,7 +360,7 @@ export function AuthedVideoPlayer({
 				removeLessonProgress,
 				navigation,
 				hasSession: Boolean(session?.user),
-				setCompleted: client.progress.setCompleted.mutate,
+				setCompleted: setLessonCompleted,
 				// The cohort eligibility read may have raced the final write;
 				// ask again once it is persisted.
 				onModuleCompleted: () =>

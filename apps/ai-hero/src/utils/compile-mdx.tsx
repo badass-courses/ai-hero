@@ -14,6 +14,10 @@ import { DictionaryHoverLink } from '@/components/dictionary/dictionary-hover-li
 import { redrawForImage } from '@/components/mdx/diagrams'
 import { Heading } from '@/components/mdx/heading'
 import { AISummary, TrackLink } from '@/components/mdx/mdx-components'
+import {
+	Prerequisite,
+	Prerequisites,
+} from '@/components/mdx/prerequisites/prerequisites'
 import { SubscriberCount } from '@/components/subscriber-count'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
@@ -28,6 +32,7 @@ import type { DictionaryEntry } from '@/lib/ai-coding-dictionary'
 import { createCalloutLineAutoInsertRemarkPlugin } from '@/lib/callout-line-autoinsert'
 import { getCohortOfficeHoursSessionsForWorkshop } from '@/lib/cohort-office-hours-query'
 import { createDictionaryAutoLinkRemarkPlugin } from '@/lib/dictionary-autolink'
+import { remarkPrerequisites } from '@/lib/prerequisites-autoupgrade'
 import { log } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
 import { rehypeAutoTableWrap } from '@/utils/rehype-auto-table-wrap'
@@ -724,6 +729,13 @@ async function compileMDXInternal(
 					QuizQuestion: (props) => (
 						<QuizQuestion {...props} lessonId={context?.lessonId} />
 					),
+					// Emitted by `remarkPrerequisites` from an authored heading and
+					// lesson-link list. Lessons resolve per request; the host lesson id
+					// only keys the learner's collapse choice in the browser.
+					Prerequisites: (
+						props: React.ComponentProps<typeof Prerequisites>,
+					) => <Prerequisites {...props} hostLessonId={context?.lessonId} />,
+					Prerequisite,
 					OfficeHoursSchedule: ((props: OfficeHoursScheduleMdxProps) =>
 						OfficeHoursScheduleWithSessions(
 							props,
@@ -746,6 +758,9 @@ async function compileMDXInternal(
 							remarkGfm,
 							// Before the auto-linker, so it counts these as linked.
 							remarkSandcastleLinks,
+							// Before the auto-linker, which skips JSX: reasons stay as
+							// authored, with no dictionary links inside the rows.
+							remarkPrerequisites,
 							...(dictionaryAutoLinkPlugin ? [dictionaryAutoLinkPlugin] : []),
 							...(calloutLineAutoInsertPlugin
 								? [calloutLineAutoInsertPlugin]

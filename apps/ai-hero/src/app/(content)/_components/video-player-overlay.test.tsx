@@ -28,12 +28,8 @@ vi.mock('next/navigation', () => ({
 	useRouter: () => ({ push: mocks.push }),
 }))
 vi.mock('next-auth/react', () => ({ useSession: mocks.session }))
-vi.mock('@/trpc/react', () => ({
-	api: {
-		useUtils: () => ({
-			client: { progress: { setCompleted: { mutate: mocks.setCompleted } } },
-		}),
-	},
+vi.mock('./use-set-lesson-completed', () => ({
+	useSetLessonCompleted: () => mocks.setCompleted,
 }))
 vi.mock('@coursebuilder/ui/hooks/use-video-player-overlay', () => ({
 	useVideoPlayerOverlay: mocks.overlay,
