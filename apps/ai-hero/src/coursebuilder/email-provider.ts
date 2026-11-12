@@ -1,5 +1,7 @@
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
+import { validateEmailWithDrovr } from '@/lib/subscriber-marketing/drovr-email-validation'
+import { log } from '@/server/logger'
 import { toFragmentLoginUrl } from '@/server/magic-link-fragment'
 import { CredentialsSignin } from 'next-auth'
 import Postmark from 'next-auth/providers/postmark'
@@ -46,6 +48,24 @@ export class EmailInactiveError extends CredentialsSignin {
 	code = 'EmailInactive'
 }
 
+/** Only a domain travels through Auth.js's public error URL, never an address. */
+export class EmailRejectedError extends CredentialsSignin {
+	static kind = 'error'
+	code = 'EmailRejected'
+
+	constructor(email: string, suggestion?: string) {
+		super()
+		const [local, domain, extra] = suggestion?.split('@') ?? []
+		if (
+			local === email.trim().toLowerCase().split('@')[0] &&
+			domain &&
+			!extra &&
+			/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain)
+		)
+			this.code += `:${domain}`
+	}
+}
+
 const POSTMARK_INACTIVE_RECIPIENT = 406
 
 function isInactiveRecipient(error: unknown) {
@@ -69,6 +89,39 @@ export const emailProvider = Postmark({
 	from: env.NEXT_PUBLIC_SUPPORT_EMAIL,
 	sendVerificationRequest: async (params) => {
 		try {
+			if (
+				env.AIH_EMAIL_VALIDATION_ENABLED === 'true' &&
+				courseBuilderAdapter.getUserByEmail
+			) {
+				const started = performance.now()
+				// Give every address the same bounded validation wait. Existing users
+				// ignore the verdict; provider failures resolve to unknown for everyone.
+				const [user, result] = await Promise.all([
+					courseBuilderAdapter.getUserByEmail(params.identifier),
+					validateEmailWithDrovr(params.identifier, {
+						baseUrl: env.DROVR_API_BASE_URL,
+						apiKey: env.DROVR_API_KEY_ORG_AIHERO,
+					}),
+				])
+				if (!user) {
+					const fields = {
+						verdict: result.verdict,
+						reason: result.verdict === 'reject' ? result.reason : undefined,
+						policyVersion:
+							result.verdict === 'unknown' ? undefined : result.policyVersion,
+						ms: Math.round(performance.now() - started),
+					}
+					await log
+						.info('auth.email_validation.checked', fields)
+						.catch(() => undefined)
+					if (result.verdict === 'reject') {
+						await log
+							.info('auth.email_validation.blocked', fields)
+							.catch(() => undefined)
+						throw new EmailRejectedError(params.identifier, result.suggestion)
+					}
+				}
+			}
 			// Auth.js builds `/api/auth/callback/postmark?token=&email=`. Emailing a
 			// fragment link instead keeps the token and email out of request logs.
 			await sendVerificationRequest(
