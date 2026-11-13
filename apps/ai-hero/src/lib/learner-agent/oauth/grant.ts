@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { db } from '@/db'
 import { deviceAccessToken } from '@/db/schema'
+import { deviceAccessTokenForInsert } from '@/server/device-token-store'
 import { log } from '@/server/logger'
 import { and, eq, isNull } from 'drizzle-orm'
 
@@ -11,7 +12,6 @@ import {
 } from '../identity'
 import { requestIp } from '../rate-limit'
 import { isLearnerResource } from './authorize'
-import { recordClientName } from './client-name'
 import {
 	claimCodeOnce,
 	codeReplayState,
@@ -174,10 +174,11 @@ export async function exchangeAuthorizationCode(
 		return oauthError('temporarily_unavailable', 'Try again in a moment.', 503)
 	}
 	try {
-		await db.insert(deviceAccessToken).values({
+		await db.insert(deviceAccessTokenForInsert).values({
 			token,
 			userId: code.userId,
 			scope: LEARNER_READ_SCOPE,
+			clientName: code.clientName,
 			expiresAt: new Date(Date.now() + LEARNER_TOKEN_TTL_MS),
 			revokedAt: null,
 		})
@@ -216,7 +217,6 @@ export async function exchangeAuthorizationCode(
 		})
 		return oauthError('temporarily_unavailable', 'Try again in a moment.', 503)
 	}
-	await recordClientName(token, code.clientName)
 
 	void log.info('learner_agent.oauth', {
 		outcome: 'token_issued',

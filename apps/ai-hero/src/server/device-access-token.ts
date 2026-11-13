@@ -1,3 +1,6 @@
+export const DEVICE_LOGIN_EXPIRED_MESSAGE =
+	'Your AI Hero login expired. Run `aihero-cli auth login` (or reconnect the MCP) to sign in again.'
+
 /** Analytics device tokens are valid for 90 days from creation. */
 export const DEVICE_TOKEN_TTL_HOURS = 90 * 24
 const DEVICE_TOKEN_TTL_MS = DEVICE_TOKEN_TTL_HOURS * 60 * 60 * 1000

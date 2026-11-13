@@ -78,6 +78,8 @@ describe('/api/learner/token', () => {
 			expect.objectContaining({
 				userId: 'u1',
 				scope: 'learner:read',
+				clientName: 'learner-token',
+				expiresAt: expect.any(Date),
 				token: body.token,
 				revokedAt: null,
 			}),

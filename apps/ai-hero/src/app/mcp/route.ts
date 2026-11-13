@@ -1,6 +1,7 @@
 import { resolveBearer } from '@/lib/learner-agent/identity'
 import { learnerSignInChallenge } from '@/lib/learner-agent/oauth/metadata'
 import { learnerAgentPortsFor } from '@/lib/learner-agent/ports'
+import { DEVICE_LOGIN_EXPIRED_MESSAGE } from '@/server/device-access-token'
 
 import { makeLearnerAgent } from '@ai-hero/learner-agent'
 
@@ -27,8 +28,7 @@ export async function POST(request: Request) {
 				id: null,
 				error: {
 					code: -32001,
-					message:
-						'This token is invalid, expired or revoked. Sign in again to get a new one.',
+					message: DEVICE_LOGIN_EXPIRED_MESSAGE,
 				},
 			},
 			{
@@ -37,7 +37,7 @@ export async function POST(request: Request) {
 					'Cache-Control': 'private, no-store',
 					'WWW-Authenticate': learnerSignInChallenge({
 						error: 'invalid_token',
-						description: 'The access token is invalid, expired or revoked',
+						description: DEVICE_LOGIN_EXPIRED_MESSAGE,
 					}),
 				},
 			},

@@ -29,22 +29,14 @@ export type LearnerTokenRow = {
 	revokedAt?: Date | null
 }
 
-/**
- * Which device tokens may act as a learner. A `learner:read` token is made
- * for this; an unscoped device token (the CLI login) already carries the
- * owner's full ability, so reading as that learner is narrower than what it
- * holds. Every other scope (`analytics:read`) and every PAT is refused: those
- * were minted for something else.
- */
+/** Only an explicit learner scope can act on the learner surface. */
 export function learnerFromToken(
 	row: LearnerTokenRow,
 	now = Date.now(),
 ): Learner | null {
 	if (!isDeviceAccessTokenActive(row, now)) return null
 	const scopes = (row.scope ?? '').split(/\s+/).filter(Boolean)
-	if (scopes.length === 0)
-		return { userId: row.userId, tokenKind: 'device-token' }
-	if (scopes.includes(LEARNER_READ_SCOPE)) {
+	if (scopes.length === 1 && scopes[0] === LEARNER_READ_SCOPE) {
 		return { userId: row.userId, tokenKind: 'learner-token' }
 	}
 	return null
