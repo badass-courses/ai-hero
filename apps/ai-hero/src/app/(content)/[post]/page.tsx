@@ -56,6 +56,7 @@ import {
 } from './_components/related-posts'
 import { getRelatedSkillPosts, SkillExtras } from './_components/skill-extras'
 import {
+	skillDependencies,
 	SkillInstallPanel,
 	SkillSectionRail,
 	SkillStickyAction,
@@ -409,6 +410,10 @@ export default async function PostPage(props: {
 						<SkillStickyAction
 							slug={String(post.fields?.slug ?? '')}
 							sourceUrl={skillFile?.sourceUrl}
+							dependsOn={skillDependencies(
+								skillFile?.body,
+								String(post.fields?.slug ?? ''),
+							)}
 						/>
 					)}
 				</div>

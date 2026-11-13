@@ -11,6 +11,7 @@ export { SkillStickyAction } from './skill-sticky-action'
 export {
 	getSkillNeighbors,
 	invocationName,
+	skillDependencies,
 	skillInstallCommand,
 	SKILLS_INSTALL_ALL_COMMAND,
 	SKILL_SOURCE,
