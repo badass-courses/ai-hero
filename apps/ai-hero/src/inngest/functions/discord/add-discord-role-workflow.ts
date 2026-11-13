@@ -2,8 +2,7 @@ import { db } from '@/db'
 import { accounts, users } from '@/db/schema'
 import { env } from '@/env.mjs'
 import { inngest } from '@/inngest/inngest.server'
-import { DiscordError, DiscordMember } from '@/lib/discord'
-import { fetchAsDiscordBot, fetchJsonAsDiscordBot } from '@/lib/discord-query'
+import { discordRoleClient, type DiscordRoleClient } from '@/lib/discord-utils'
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
 
@@ -69,46 +68,26 @@ const resolveDiscordRoleId = (providedRoleId: string | undefined): string[] => {
 }
 
 /**
- * Update Discord roles for a user
+ * Add roles to a guild member one at a time.
+ *
+ * A purchase fires the cohort and workshop events together. Each used to read
+ * the member's roles and PATCH back the whole list, so concurrent runs could
+ * overwrite each other's role. The single-role PUT is atomic on Discord's side.
+ * Failures throw so the step retries; a member not in the guild is skipped
+ * (they get their roles when they link or sync).
  */
-const updateDiscordRoles = async (
-	step: any,
-	discordAccount: any,
+export async function addDiscordRoles(
+	client: Pick<DiscordRoleClient, 'lookupMember' | 'addRole'>,
+	userId: string,
 	newRoleIds: string[],
-) => {
-	if (newRoleIds.length === 0) {
-		return 'No roles to assign'
-	}
-
-	let discordMember = await step.run('get discord member', async () => {
-		return await fetchJsonAsDiscordBot<DiscordMember | DiscordError>(
-			`guilds/${env.DISCORD_GUILD_ID}/members/${discordAccount.providerAccountId}`,
-		)
-	})
-
-	await step.run('update discord roles for user', async () => {
-		if ('user' in discordMember) {
-			const roles = Array.from(new Set([...discordMember.roles, ...newRoleIds]))
-
-			return await fetchAsDiscordBot(
-				`guilds/${env.DISCORD_GUILD_ID}/members/${discordAccount.providerAccountId}`,
-				{
-					method: 'PATCH',
-					body: JSON.stringify({ roles }),
-					headers: { 'Content-Type': 'application/json' },
-				},
-			)
-		}
-		return null
-	})
-
-	discordMember = await step.run('reload discord member', async () => {
-		return await fetchJsonAsDiscordBot<DiscordMember | DiscordError>(
-			`guilds/${env.DISCORD_GUILD_ID}/members/${discordAccount.providerAccountId}`,
-		)
-	})
-
-	return { discordMember }
+) {
+	if (newRoleIds.length === 0) return 'No roles to assign'
+	const member = await client.lookupMember(userId)
+	if (member.kind !== 'member') return { skipped: member.kind }
+	const missing = newRoleIds.filter((roleId) => !member.roles.includes(roleId))
+	for (const roleId of missing)
+		await client.addRole(member.discordAccountId, roleId)
+	return { added: missing, alreadyHad: newRoleIds.length - missing.length }
 }
 
 /**
@@ -167,10 +146,9 @@ export const addDiscordRoleWorkflow = inngest.createFunction(
 			// Resolve role IDs to assign
 			const roleIds = resolveDiscordRoleId(discordRoleId)
 
-			// Update Discord roles
-			const result = await updateDiscordRoles(step, discordAccount, roleIds)
-
-			return result
+			return await step.run('add discord roles', () =>
+				addDiscordRoles(discordRoleClient, user.id, roleIds),
+			)
 		}
 
 		return 'No discord account found for user'
