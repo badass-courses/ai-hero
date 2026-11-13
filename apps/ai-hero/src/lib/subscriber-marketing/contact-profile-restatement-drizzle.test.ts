@@ -40,7 +40,7 @@ function fixture() {
 const before = '2026-10-03T12:00:00.000Z'
 
 describe('profile re-statement selection', () => {
-	it('includes null acknowledgements, excludes recent and unacknowledged versions, and orders oldest first before applying the cap', async () => {
+	it('includes null acknowledgements, excludes recent and unacknowledged versions, and walks contactId order before applying the cap', async () => {
 		const f = fixture()
 		try {
 			f.insert.run('recent', 4, 4, '2026-10-04 00:00:00.000')
@@ -51,24 +51,27 @@ describe('profile re-statement selection', () => {
 			f.insert.run('unacknowledged', 4, 3, null)
 			f.insert.run('never-acknowledged', 4, null, null)
 			await expect(f.store.listDue({ before, limit: 2 })).resolves.toEqual([
+				'newer-due',
 				'null-ack',
-				'oldest-due',
 			])
 			await expect(f.store.listDue({ before })).resolves.toEqual([
+				'newer-due',
 				'null-ack',
 				'oldest-due',
-				'newer-due',
 			])
+			await expect(
+				f.store.listDue({ before, after: 'null-ack' }),
+			).resolves.toEqual(['oldest-due'])
 			expect(f.queries[0]!.params).toEqual(['2026-10-03 12:00:00.000', 2])
 			expect(f.queries[0]!.sql).toContain(
-				'order by `AI_ContactProfileVersion`.`acknowledgedAt` asc, `AI_ContactProfileVersion`.`contactId` asc limit ?',
+				'order by `AI_ContactProfileVersion`.`contactId` asc limit ?',
 			)
 		} finally {
 			f.sqlite.close()
 		}
 	})
 
-	it('defaults to a cap of 1500 and breaks null timestamp ties by contact', async () => {
+	it('defaults to a cap of 1500 in contactId order', async () => {
 		const f = fixture()
 		try {
 			for (let i = 1501; i >= 0; i--)

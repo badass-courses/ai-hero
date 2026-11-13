@@ -2,7 +2,13 @@ import { DROVR_CONTACT_PROFILE_SYNC_EVENT } from '@/inngest/events/drovr'
 import { parseDrovrProfileSyncConfig } from './drovr-contact-profile-sync-requests'
 
 export type ProfileRestatementStore = {
-	listDue(args: { before: string; limit?: number }): Promise<string[]>
+	listDue(args: {
+		before: string
+		after?: string
+		limit?: number
+	}): Promise<string[]>
+	readCursor(): Promise<string | undefined>
+	writeCursor(after: string | undefined): Promise<void>
 }
 
 /** Daily discovery only; the existing per-contact sync owns delivery and acknowledgement. */
@@ -39,9 +45,18 @@ export async function runProfileRestatementSweep(args: {
 	const before = new Date(
 		Date.parse(args.startedAt) - 7 * 86400000,
 	).toISOString()
+	const limit = args.limit ?? 1500
+	// A memoized undefined comes back as null.
+	const after =
+		((await args.step.run('read-cursor', () => args.store.readCursor())) as
+			string | null | undefined) ?? undefined
 	const contactIds = (await args.step.run('due-profiles', () =>
-		args.store.listDue({ before, limit: args.limit ?? 1500 }),
+		args.store.listDue({ before, after, limit }),
 	)) as string[]
+	// A short page ends the lap: the next run starts from the top. Skipped
+	// contacts never re-acknowledge, so only the cursor guarantees progress.
+	const next = contactIds.length < limit ? undefined : contactIds.at(-1)
+	await args.step.run('write-cursor', () => args.store.writeCursor(next))
 	// Durable pauses spread profile reads across batches. Child runs retain
 	// per-contact concurrency; the parent stays well below the step limit.
 	for (let offset = 0; offset < contactIds.length; offset += batchSize) {
@@ -57,5 +72,9 @@ export async function runProfileRestatementSweep(args: {
 		if (offset + batchSize < contactIds.length)
 			await args.step.sleep(`restate-pace-${batch}`, pause)
 	}
-	return { status: 'queued' as const, contacts: contactIds.length }
+	return {
+		status: 'queued' as const,
+		contacts: contactIds.length,
+		lapEnded: next === undefined,
+	}
 }

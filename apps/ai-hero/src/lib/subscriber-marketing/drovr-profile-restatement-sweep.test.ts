@@ -12,10 +12,14 @@ type SweepArgs = Parameters<typeof runProfileRestatementSweep>[0]
 type SweepEvent = Parameters<SweepArgs['step']['sendEvent']>[1][number]
 const startedAt = '2026-10-10T12:00:00.000Z'
 
-function harness(contacts = ['quiet-contact']) {
+function harness(contacts = ['quiet-contact'], cursor?: string) {
 	const sent: SweepEvent[][] = []
 	const order: string[] = []
-	const store = { listDue: vi.fn(async () => contacts) }
+	const store = {
+		listDue: vi.fn(async (_args: { after?: string }) => contacts),
+		readCursor: vi.fn(async () => cursor),
+		writeCursor: vi.fn(async (_after: string | undefined) => undefined),
+	}
 	const step = {
 		run: vi.fn(async (_id: string, cb: () => Promise<unknown>) => cb()),
 		sendEvent: vi.fn(async (id: string, events: SweepEvent[]) => {
@@ -60,12 +64,14 @@ describe('daily profile re-statement sweep', () => {
 		await expect(runProfileRestatementSweep(h.args)).resolves.toEqual({
 			status: 'queued',
 			contacts: 1500,
+			lapEnded: false,
 		})
 		expect(h.store.listDue).toHaveBeenCalledWith({
 			before: '2026-10-03T12:00:00.000Z',
+			after: undefined,
 			limit: 1500,
 		})
-		expect(h.step.run).toHaveBeenCalledOnce()
+		expect(h.step.run).toHaveBeenCalledTimes(3)
 		expect(h.step.sendEvent).toHaveBeenCalledTimes(15)
 		expect(h.step.sleep).toHaveBeenCalledTimes(14)
 		expect(h.step.sleep).toHaveBeenLastCalledWith('restate-pace-13', '2m')
@@ -88,6 +94,7 @@ describe('daily profile re-statement sweep', () => {
 		await expect(runProfileRestatementSweep(empty.args)).resolves.toEqual({
 			status: 'queued',
 			contacts: 0,
+			lapEnded: true,
 		})
 		expect(empty.step.sendEvent).not.toHaveBeenCalled()
 		expect(empty.step.sleep).not.toHaveBeenCalled()
@@ -108,6 +115,27 @@ describe('daily profile re-statement sweep', () => {
 			['restate-pace-0', '2m'],
 			['restate-pace-1', '2m'],
 		])
+	})
+
+	it('walks from the stored cursor and keeps the last id of a full page', async () => {
+		const h = harness(['c-3', 'c-4'], 'c-2')
+		await runProfileRestatementSweep({ ...h.args, limit: 2 })
+		expect(h.store.listDue).toHaveBeenCalledWith(
+			expect.objectContaining({ after: 'c-2', limit: 2 }),
+		)
+		expect(h.store.writeCursor).toHaveBeenCalledWith('c-4')
+	})
+
+	it('ends the lap on a short page, so contacts the sync skips cannot starve the rest', async () => {
+		const h = harness(['c-9'], 'c-8')
+		await expect(
+			runProfileRestatementSweep({ ...h.args, limit: 2 }),
+		).resolves.toMatchObject({ lapEnded: true })
+		expect(h.store.writeCursor).toHaveBeenCalledWith(undefined)
+		// The cursor is stored before dispatch, so a replay never re-selects.
+		expect(h.store.writeCursor.mock.invocationCallOrder[0]).toBeLessThan(
+			h.step.sendEvent.mock.invocationCallOrder[0]!,
+		)
 	})
 
 	it('accepts an injected batch size and pause', async () => {

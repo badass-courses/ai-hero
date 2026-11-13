@@ -242,7 +242,7 @@ integration('contact-sync stores on MySQL', () => {
 		})
 	})
 
-	it('lists acknowledged profiles due for re-statement, never-stamped first, then oldest', async () => {
+	it('lists acknowledged profiles due for re-statement in contactId order from a cursor', async () => {
 		let clock = '2026-11-01T00:00:00.000Z'
 		const store = createDrizzleContactProfileVersionStore(
 			drizzle(pool, { schema: databaseSchema, mode: 'default' }),
@@ -263,11 +263,24 @@ integration('contact-sync stores on MySQL', () => {
 		const due = createDrizzleContactProfileRestatementStore(
 			drizzle(pool, { schema: databaseSchema, mode: 'default' }),
 		)
-		await expect(
-			due.listDue({ before: '2026-11-06T00:00:00.000Z' }),
-		).resolves.toEqual(['never-stamped', 'due-older', 'due-old'])
-		await expect(
-			due.listDue({ before: '2026-11-06T00:00:00.000Z', limit: 2 }),
-		).resolves.toEqual(['never-stamped', 'due-older'])
+		const before = '2026-11-06T00:00:00.000Z'
+		await expect(due.listDue({ before })).resolves.toEqual([
+			'due-old',
+			'due-older',
+			'never-stamped',
+		])
+		await expect(due.listDue({ before, limit: 2 })).resolves.toEqual([
+			'due-old',
+			'due-older',
+		])
+		await expect(due.listDue({ before, after: 'due-older' })).resolves.toEqual(
+			['never-stamped'],
+		)
+		// The cursor shares ContactSyncCursor under its own name.
+		await expect(due.readCursor()).resolves.toBeUndefined()
+		await due.writeCursor('due-older')
+		await expect(due.readCursor()).resolves.toBe('due-older')
+		await due.writeCursor(undefined)
+		await expect(due.readCursor()).resolves.toBeUndefined()
 	})
 })
