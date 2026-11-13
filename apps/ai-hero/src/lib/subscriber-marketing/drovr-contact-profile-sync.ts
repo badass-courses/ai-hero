@@ -434,9 +434,9 @@ type DeliveryResult =
  * One contact's profile to drovr's contact directory: read it, version it by
  * content, and post the events, answering `sent` only once drovr took them
  * (the contact-sync reconcile's watermark relies on that). A new content
- * moves the version; unchanged content re-sends the last version's exact
- * events, which drovr dedupes. Events addressed to the authority tenant go
- * straight to it: no owner fan-out. Read before versioning, so a missing
+ * moves the version; acknowledged content skips except for a weekly
+ * profile-only re-statement by reconcile. Events addressed to the authority
+ * tenant go straight to it: no owner fan-out. Read before versioning, so a missing
  * contact spends no version; per-contact concurrency of one keeps a higher
  * version carrying newer content. A 5xx, a network failure or drovr's 409
  * event-not-live throws, and the step retries.
@@ -501,24 +501,38 @@ export async function runContactProfileSync(args: {
 	// with none, it falls back to live personalize, which holds the contact.
 	if (!snapshot.profile.email.trim())
 		return { status: 'skipped', reason: 'contact-email-missing' }
-	// Addressed by content: unchanged, this is the last version and when it
-	// was set, so the events below are byte-identical to the last push and
-	// drovr dedupes them for free.
-	const { profileVersion, since, acknowledged } = (await args.step.run(
-		'profile-version',
-		() => args.versionFor(contactId, contactProfileContentHash(snapshot)),
-	)) as ContactProfileVersion
-	// A live writer re-pushing a version drovr already took adds nothing
-	// (drovr dedupes it, but each is an actor call). The reconcile never
-	// skips: its one re-statement per run keeps drovr's confirmedAt moving.
-	if (acknowledged && args.event.data.reason !== 'reconcile')
-		return { status: 'skipped', reason: 'unchanged' }
+	// Content alone sets the version; re-statements never bump it.
+	const { profileVersion, since, acknowledged, acknowledgedAt } =
+		(await args.step.run('profile-version', () =>
+			args.versionFor(contactId, contactProfileContentHash(snapshot)),
+		)) as ContactProfileVersion
+	// Skip acknowledged content unless reconcile owes a weekly re-statement.
+	// drovr's 90-day backstop needs a fresh occurredAt for its laterOf fold;
+	// a new profile key gets past ingress dedupe. Links/offers need neither.
+	let restatedAt: number | undefined
+	const weekMs = 7 * 24 * 60 * 60 * 1000
+	if (acknowledged) {
+		if (args.event.data.reason !== 'reconcile')
+			return { status: 'skipped', reason: 'unchanged' }
+		const at = (await args.step.run('profile-restatement-at', async () =>
+			(args.now ?? Date.now)(),
+		)) as number
+		if (acknowledgedAt && at - Date.parse(acknowledgedAt) < weekMs)
+			return { status: 'skipped', reason: 'unchanged' }
+		restatedAt = at
+	}
 	const events = buildContactProfileEvents({
 		contactId,
 		profileVersion,
 		...snapshot,
-		occurredAt: since,
+		...(restatedAt !== undefined ? { links: [], offers: [] } : {}),
+		occurredAt:
+			restatedAt !== undefined ? new Date(restatedAt).toISOString() : since,
 	})
+	if (restatedAt !== undefined) {
+		// Epoch weeks give each weekly re-statement a distinct, replay-safe key.
+		events[0]!.idempotencyKey += `:r${Math.floor(restatedAt / weekMs)}`
+	}
 	const delivered = (await args.step.run('deliver-profile', () =>
 		args.deliver(events),
 	)) as DeliveryResult
@@ -585,8 +599,8 @@ export async function runContactProfileSync(args: {
 	return {
 		status: 'sent',
 		profileVersion,
-		links: snapshot.links.length,
-		offers: snapshot.offers.length,
+		links: restatedAt !== undefined ? 0 : snapshot.links.length,
+		offers: restatedAt !== undefined ? 0 : snapshot.offers.length,
 		accepted,
 		rejected,
 	}

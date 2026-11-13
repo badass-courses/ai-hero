@@ -23,6 +23,7 @@ describe('contact profile version', () => {
 			profileVersion: 1,
 			since: '2026-09-26T18:00:00.000Z',
 			acknowledged: false,
+			acknowledgedAt: null,
 		})
 		clock = '2026-09-26T18:15:00.000Z'
 		for (let run = 0; run < 3; run += 1)
@@ -30,15 +31,31 @@ describe('contact profile version', () => {
 				profileVersion: 1,
 				since: '2026-09-26T18:00:00.000Z',
 				acknowledged: false,
+				acknowledgedAt: null,
 			})
 		await expect(store.versionFor('c1', 'hash-b')).resolves.toEqual({
 			profileVersion: 2,
 			since: '2026-09-26T18:15:00.000Z',
 			acknowledged: false,
+			acknowledgedAt: null,
 		})
 		// Changing back is a change too: drovr keeps the highest version.
 		await expect(store.versionFor('c1', 'hash-a')).resolves.toMatchObject({
 			profileVersion: 3,
+		})
+	})
+
+	it('refreshes acknowledgement time without changing the version or since', async () => {
+		let clock = '2026-09-26T18:00:00.000Z'
+		const store = createMemoryContactProfileVersionStore({ now: () => clock })
+		const original = await store.versionFor('c1', 'a')
+		await store.acknowledge('c1', 1)
+		clock = '2026-10-03T18:00:00.000Z'
+		await store.acknowledge('c1', 1)
+		await expect(store.versionFor('c1', 'a')).resolves.toEqual({
+			...original,
+			acknowledged: true,
+			acknowledgedAt: clock,
 		})
 	})
 

@@ -43,6 +43,7 @@ export function createDrizzleContactProfileVersionStore(
 						version: contactProfileVersion.profileVersion,
 						hash: contactProfileVersion.profileHash,
 						acknowledgedVersion: contactProfileVersion.acknowledgedVersion,
+						acknowledgedAt: contactProfileVersion.acknowledgedAt,
 						updatedAt: contactProfileVersion.updatedAt,
 					})
 					.from(contactProfileVersion)
@@ -51,6 +52,7 @@ export function createDrizzleContactProfileVersionStore(
 					version: number | string
 					hash: string | null
 					acknowledgedVersion: number | string | null
+					acknowledgedAt: string | Date | null
 					updatedAt: string | Date
 				}[]
 				const current = rows[0]
@@ -58,6 +60,9 @@ export function createDrizzleContactProfileVersionStore(
 					return {
 						profileVersion: Number(current.version),
 						since: isoOf(current.updatedAt),
+						acknowledgedAt: current.acknowledgedAt
+							? isoOf(current.acknowledgedAt)
+							: null,
 						acknowledged:
 							current.acknowledgedVersion !== null &&
 							Number(current.acknowledgedVersion) === Number(current.version),
@@ -72,7 +77,12 @@ export function createDrizzleContactProfileVersionStore(
 							profileHash: contentHash,
 							updatedAt: sqlTimestamp(since),
 						})
-						return { profileVersion: 1, since, acknowledged: false }
+						return {
+							profileVersion: 1,
+							since,
+							acknowledged: false,
+							acknowledgedAt: null,
+						}
 					} catch (error) {
 						if (isMysqlDuplicateEntryError(error)) continue
 						throw error
@@ -93,7 +103,12 @@ export function createDrizzleContactProfileVersionStore(
 						),
 					)
 				if (affectedRows(result) === 1) {
-					return { profileVersion: version + 1, since, acknowledged: false }
+					return {
+						profileVersion: version + 1,
+						since,
+						acknowledged: false,
+						acknowledgedAt: null,
+					}
 				}
 			}
 			throw new Error(
@@ -104,7 +119,7 @@ export function createDrizzleContactProfileVersionStore(
 			const at = (options.now ?? (() => new Date().toISOString()))()
 			// Only the version drovr took, and never a newer one. updatedAt
 			// is the version's since (and has ON UPDATE CURRENT_TIMESTAMP):
-			// assigning it to itself keeps every re-statement byte-identical.
+			// assigning it to itself preserves the version's original timestamp.
 			await db
 				.update(contactProfileVersion)
 				.set({

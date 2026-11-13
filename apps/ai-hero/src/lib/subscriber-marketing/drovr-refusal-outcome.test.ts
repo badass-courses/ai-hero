@@ -420,6 +420,7 @@ describe('unsubscribed contacts: profile, link and offer pushes are held', () =>
 				profileVersion: 1,
 				since: at,
 				acknowledged: false,
+				acknowledgedAt: null,
 			}),
 			deliver,
 			ownedPath: async () => undefined,
