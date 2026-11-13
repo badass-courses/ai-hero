@@ -94,6 +94,27 @@ export function sourceLabel(source: string | null | undefined): string {
 		: 'Course access'
 }
 
+/**
+ * One row per Discord role, not per entitlement. Two purchases can grant the
+ * same role (a cohort that includes a workshop the learner also bought), and a
+ * row per entitlement listed that role twice under the same React key. The
+ * first row wins; its source becomes every distinct source, joined.
+ */
+export function oneRowPerRole<T extends { roleId: string; source: string }>(
+	rows: readonly T[],
+): T[] {
+	const byRole = new Map<string, { row: T; sources: string[] }>()
+	for (const row of rows) {
+		const seen = byRole.get(row.roleId)
+		if (!seen) byRole.set(row.roleId, { row, sources: [row.source] })
+		else if (!seen.sources.includes(row.source)) seen.sources.push(row.source)
+	}
+	return [...byRole.values()].map(({ row, sources }) => ({
+		...row,
+		source: sources.join(', '),
+	}))
+}
+
 /** The user has a Discord account row. Role sync and the invite use the bot, not the user's token. */
 export function hasDiscordAccount(
 	account: { provider?: string } | null | undefined,

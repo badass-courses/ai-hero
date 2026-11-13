@@ -14,6 +14,7 @@ import {
 	showSyncButton,
 	syncLookup,
 	isDiscordConnected,
+	oneRowPerRole,
 	sourceLabel,
 	type DiscordRolesView,
 	type MemberFetch,

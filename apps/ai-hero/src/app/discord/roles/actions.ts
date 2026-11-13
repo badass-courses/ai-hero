@@ -9,6 +9,7 @@ import {
 	classifyMemberResponse,
 	memberFetchFrom,
 	syncLookup,
+	oneRowPerRole,
 	sourceLabel,
 	type MemberClassification,
 	type MemberFetch,
@@ -113,8 +114,8 @@ export async function getDiscordRoleState() {
 				})
 			: []
 
-	// Build role status list
-	const roles: RoleStatus[] = discordEntitlements
+	// Build role status list, one row per role (see oneRowPerRole)
+	const roles: RoleStatus[] = oneRowPerRole(discordEntitlements
 		.filter(
 			(e) => (e.metadata as Record<string, unknown> | null)?.discordRoleId,
 		)
@@ -133,7 +134,7 @@ export async function getDiscordRoleState() {
 				sourceType: e.entitlementType,
 				assigned,
 			}
-		})
+		}))
 
 	return {
 		connected: true as const,
