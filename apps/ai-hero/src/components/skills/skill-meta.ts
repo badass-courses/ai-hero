@@ -20,9 +20,46 @@ export function invocationName(slug: string): string {
 	return slug.replace(/^skills-/, '')
 }
 
-/** The editable install line for one skill, e.g. `npx skills@latest add owner/repo --skill=grill-me`. */
-export function skillInstallCommand(slug: string): string {
-	return `npx skills@latest add ${SKILLS_HERO.repoOwner}/${SKILLS_HERO.repoName} --skill=${invocationName(slug)}`
+/**
+ * The sibling skills a SKILL.md says it invokes, in first-mention order.
+ *
+ * Skills hand off to each other by name ("Call the Skill tool with
+ * `codebase-design`", "call the Skill tool twice, for \"grilling\" and
+ * \"domain-modeling\""). Installing one without the skills it calls leaves it
+ * broken, so the install line has to carry them. Reading the names from the
+ * synced body keeps that list in step with the repo, with no hand-kept map.
+ *
+ * Only quoted or backticked names in the same sentence as "Skill tool" count,
+ * and only shell-safe kebab-case names: a stray word must never reach a
+ * `--skill=` flag. One level deep: the page has its own body, not its callees'.
+ */
+export function skillDependencies(
+	body: string | null | undefined,
+	slug: string,
+): string[] {
+	if (!body) return []
+	const self = invocationName(slug)
+	const found: string[] = []
+	for (const mention of body.matchAll(/Skill tool\b([^\n]{0,160})/gi)) {
+		const clause = (mention[1] ?? '').split(/(?<=[.;:])\s|\)\s/)[0] ?? ''
+		for (const name of clause.matchAll(/["`]([a-z0-9][a-z0-9-]{0,63})["`]/g)) {
+			const skill = name[1]
+			if (skill && skill !== self && !found.includes(skill)) found.push(skill)
+		}
+	}
+	return found
+}
+
+/**
+ * The editable install line for one skill, e.g. `npx skills@latest add owner/repo --skill=grill-me`,
+ * plus one `--skill=` per sibling skill it calls (see `skillDependencies`).
+ */
+export function skillInstallCommand(
+	slug: string,
+	dependsOn: readonly string[] = [],
+): string {
+	const skills = [invocationName(slug), ...dependsOn]
+	return `npx skills@latest add ${SKILLS_HERO.repoOwner}/${SKILLS_HERO.repoName} ${skills.map((skill) => `--skill=${skill}`).join(' ')}`
 }
 
 /** The editable whole-set install line, shared with the /skills landing. */

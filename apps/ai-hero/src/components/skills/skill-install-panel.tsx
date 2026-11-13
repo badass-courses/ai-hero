@@ -8,7 +8,12 @@ import { type SkillPhase } from '@/lib/skills-shared'
 import { cn } from '@coursebuilder/utils/cn'
 
 import { SkillFileViewer } from './skill-file-viewer'
-import { SKILL_SOURCE, invocationName, skillInstallCommand } from './skill-meta'
+import {
+	SKILL_SOURCE,
+	invocationName,
+	skillDependencies,
+	skillInstallCommand,
+} from './skill-meta'
 
 /**
  * The right cell of a skill page's two-column head — where a lesson would put
@@ -34,6 +39,7 @@ export function SkillInstallPanel({
 	className?: string
 }) {
 	const command = invocationName(slug)
+	const dependsOn = skillDependencies(skillFile?.body, slug)
 
 	return (
 		<section
@@ -47,9 +53,21 @@ export function SkillInstallPanel({
 				Install this skill
 			</p>
 			<InstallCommand
-				command={skillInstallCommand(slug)}
+				command={skillInstallCommand(slug, dependsOn)}
 				label={`Install command for /${command}`}
 			/>
+			{dependsOn.length > 0 ? (
+				<p
+					className={cn(
+						TYPE.metaProse,
+						'mt-3 text-[color:var(--ah-fg-muted)]',
+					)}
+				>
+					Also installs{' '}
+					{dependsOn.map((skill) => `/${skill}`).join(', ')}, which /
+					{command} calls.
+				</p>
+			) : null}
 			<p
 				className={cn(
 					TYPE.metaProse,

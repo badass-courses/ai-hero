@@ -31,11 +31,14 @@ import { SKILL_SOURCE, invocationName, skillInstallCommand } from './skill-meta'
 export function SkillStickyAction({
 	slug,
 	sourceUrl,
+	dependsOn = [],
 }: {
 	slug: string
 	sourceUrl?: string
+	/** Sibling skills this one calls, from `skillDependencies`; same line as the head panel. */
+	dependsOn?: string[]
 }) {
-	const command = skillInstallCommand(slug)
+	const command = skillInstallCommand(slug, dependsOn)
 	const [copied, setCopied] = React.useState(false)
 	const resetTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
 
