@@ -6,12 +6,28 @@ import { OAUTH_PROVIDER_ACCOUNT_LINKED_EVENT } from '@/inngest/events/oauth-prov
 import { inngest } from '@/inngest/inngest.server'
 import { DiscordError, DiscordMember } from '@/lib/discord'
 import { fetchAsDiscordBot, fetchJsonAsDiscordBot } from '@/lib/discord-query'
+import { discordRoleClient } from '@/lib/discord-utils'
 import { getSubscriptionStatus } from '@/lib/subscriptions'
 import { redactOAuthLinkRef } from '@/server/oauth-link-intent'
 import { observeOAuthLinkCanary } from '@/server/oauth-link-observability'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray, isNull } from 'drizzle-orm'
 
 import { runDiscordProviderBoundary } from './discord-account-linked-boundary'
+
+/** Role IDs named by the entitlements that the member doesn't hold yet. */
+export function missingDiscordRoleIds(
+	currentRoles: string[],
+	entitlementRows: { metadata?: unknown }[],
+): string[] {
+	const wanted = entitlementRows
+		.map(
+			(row) =>
+				(row.metadata as { discordRoleId?: unknown } | null | undefined)
+					?.discordRoleId,
+		)
+		.filter((id): id is string => typeof id === 'string' && id.length > 0)
+	return [...new Set(wanted)].filter((id) => !currentRoles.includes(id))
+}
 
 export const discordAccountLinked = inngest.createFunction(
 	{
@@ -132,29 +148,37 @@ export const discordAccountLinked = inngest.createFunction(
 				)
 			})
 
-			const cohortDiscordRoleEntitlementType = await step.run(
-				`get cohort discord role entitlement type`,
+			// Cohort and workshop roles both come from entitlements. Linking used to
+			// read only cohort ones, so anyone who linked Discord after buying a
+			// workshop never got its role. Deleted (refunded) entitlements are skipped.
+			const discordRoleEntitlementTypeIds = await step.run(
+				`get discord role entitlement types`,
 				async () => {
-					return await db.query.entitlementTypes.findFirst({
-						where: eq(entitlementTypes.name, 'cohort_discord_role'),
+					const types = await db.query.entitlementTypes.findMany({
+						where: inArray(entitlementTypes.name, [
+							'cohort_discord_role',
+							'workshop_discord_role',
+						]),
 					})
+					return types.map((type) => type.id)
 				},
 			)
 
 			const userDiscordEntitlements = await step.run(
 				'get user discord entitlements',
 				async () => {
-					if (!cohortDiscordRoleEntitlementType) {
+					if (discordRoleEntitlementTypeIds.length === 0) {
 						return []
 					}
 
 					return db.query.entitlements.findMany({
 						where: and(
 							eq(entitlements.userId, user.id),
-							eq(
+							inArray(
 								entitlements.entitlementType,
-								cohortDiscordRoleEntitlementType.id,
+								discordRoleEntitlementTypeIds,
 							),
+							isNull(entitlements.deletedAt),
 						),
 					})
 				},
@@ -170,22 +194,18 @@ export const discordAccountLinked = inngest.createFunction(
 						onDenied: recordOwnershipMoved,
 						callProvider: async () => {
 							if ('user' in discordMember) {
-								const discordIds = userDiscordEntitlements.map(
-									(entitlement) => entitlement.metadata?.discordRoleId,
+								const missing = missingDiscordRoleIds(
+									discordMember.roles,
+									userDiscordEntitlements,
 								)
-								const roles = Array.from(
-									new Set([...discordMember.roles, ...discordIds]),
-								)
-								return fetchAsDiscordBot(
-									`guilds/${env.DISCORD_GUILD_ID}/members/${account.providerAccountId}`,
-									{
-										method: 'PATCH',
-										body: JSON.stringify({ roles }),
-										headers: {
-											'Content-Type': 'application/json',
-										},
-									},
-								)
+								// One role at a time: a concurrent purchase grant can't be
+								// overwritten, and a failure throws so the step retries.
+								for (const roleId of missing)
+									await discordRoleClient.addRole(
+										account.providerAccountId,
+										roleId,
+									)
+								return { added: missing.length }
 							}
 							return null
 						},
