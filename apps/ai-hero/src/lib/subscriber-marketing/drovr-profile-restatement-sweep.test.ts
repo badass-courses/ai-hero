@@ -14,11 +14,16 @@ const startedAt = '2026-10-10T12:00:00.000Z'
 
 function harness(contacts = ['quiet-contact']) {
 	const sent: SweepEvent[][] = []
+	const order: string[] = []
 	const store = { listDue: vi.fn(async () => contacts) }
 	const step = {
 		run: vi.fn(async (_id: string, cb: () => Promise<unknown>) => cb()),
-		sendEvent: vi.fn(async (_id: string, events: SweepEvent[]) => {
+		sendEvent: vi.fn(async (id: string, events: SweepEvent[]) => {
+			order.push(id)
 			sent.push(events)
+		}),
+		sleep: vi.fn(async (id: string, _time: string | number) => {
+			order.push(id)
 		}),
 	}
 	const args: SweepArgs = {
@@ -28,7 +33,7 @@ function harness(contacts = ['quiet-contact']) {
 		store,
 		step,
 	}
-	return { args, store, step, sent }
+	return { args, store, step, sent, order }
 }
 
 describe('daily profile re-statement sweep', () => {
@@ -62,6 +67,8 @@ describe('daily profile re-statement sweep', () => {
 		})
 		expect(h.step.run).toHaveBeenCalledOnce()
 		expect(h.step.sendEvent).toHaveBeenCalledTimes(15)
+		expect(h.step.sleep).toHaveBeenCalledTimes(14)
+		expect(h.step.sleep).toHaveBeenLastCalledWith('restate-pace-13', '2m')
 		expect(h.sent.every((batch) => batch.length === 100)).toBe(true)
 		expect(h.sent.flat().map((event) => event.data.contactId)).toEqual(
 			Array.from({ length: 1500 }, (_, i) => `contact-${i}`),
@@ -83,7 +90,50 @@ describe('daily profile re-statement sweep', () => {
 			contacts: 0,
 		})
 		expect(empty.step.sendEvent).not.toHaveBeenCalled()
+		expect(empty.step.sleep).not.toHaveBeenCalled()
 	})
+
+	it('paces 250 contacts as three ordered batches with two pauses and none after the last', async () => {
+		const h = harness(Array.from({ length: 250 }, (_, i) => `c-${i}`))
+		await runProfileRestatementSweep(h.args)
+		expect(h.sent.map((batch) => batch.length)).toEqual([100, 100, 50])
+		expect(h.order).toEqual([
+			'restate-batch-0',
+			'restate-pace-0',
+			'restate-batch-1',
+			'restate-pace-1',
+			'restate-batch-2',
+		])
+		expect(h.step.sleep.mock.calls).toEqual([
+			['restate-pace-0', '2m'],
+			['restate-pace-1', '2m'],
+		])
+	})
+
+	it('accepts an injected batch size and pause', async () => {
+		const h = harness(['c-0', 'c-1', 'c-2'])
+		await runProfileRestatementSweep({ ...h.args, batchSize: 2, pause: '1s' })
+		expect(h.sent.map((batch) => batch.length)).toEqual([2, 1])
+		expect(h.order).toEqual([
+			'restate-batch-0',
+			'restate-pace-0',
+			'restate-batch-1',
+		])
+		expect(h.step.sleep).toHaveBeenCalledOnce()
+		expect(h.step.sleep).toHaveBeenCalledWith('restate-pace-0', '1s')
+	})
+
+	it.each([0, -1, 1.5])(
+		'rejects invalid batch size %s without dispatch',
+		async (batchSize) => {
+			const h = harness()
+			await expect(
+				runProfileRestatementSweep({ ...h.args, batchSize }),
+			).rejects.toThrow('batch size must be a positive integer')
+			expect(h.step.sendEvent).not.toHaveBeenCalled()
+			expect(h.step.sleep).not.toHaveBeenCalled()
+		},
+	)
 
 	it('dispatches a reason that reaches the existing profile-only re-statement branch for a quiet contact', async () => {
 		const h = harness()
