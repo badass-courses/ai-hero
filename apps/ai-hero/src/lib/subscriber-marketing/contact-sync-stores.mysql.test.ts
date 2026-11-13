@@ -8,7 +8,10 @@ import mysql, { type Pool } from 'mysql2/promise'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { validateMySqlIntegrationServerUrl } from '../team-purchase-mysql-test-guard'
-import { createDrizzleContactProfileVersionStore } from './contact-profile-version-drizzle'
+import {
+	createDrizzleContactProfileRestatementStore,
+	createDrizzleContactProfileVersionStore,
+} from './contact-profile-version-drizzle'
 import { createDrizzleValuePathLinkAnchorStore } from './drizzle-value-path-link-anchor'
 import {
 	resolveValuePathLinkAnchor,
@@ -169,17 +172,20 @@ integration('contact-sync stores on MySQL', () => {
 			profileVersion: 1,
 			since: '2026-09-26T18:00:00.000Z',
 			acknowledged: false,
+			acknowledgedAt: null,
 		})
 		clock = '2026-09-26T18:15:00.000Z'
 		await expect(store.versionFor('contact-v', 'hash-a')).resolves.toEqual({
 			profileVersion: 1,
 			since: '2026-09-26T18:00:00.000Z',
 			acknowledged: false,
+			acknowledgedAt: null,
 		})
 		await expect(store.versionFor('contact-v', 'hash-b')).resolves.toEqual({
 			profileVersion: 2,
 			since: '2026-09-26T18:15:00.000Z',
 			acknowledged: false,
+			acknowledgedAt: null,
 		})
 		const concurrent = await Promise.all(
 			['c', 'd', 'e', 'f'].map((hash) =>
@@ -197,7 +203,7 @@ integration('contact-sync stores on MySQL', () => {
 		expect(row?.h).toMatch(/^[c-f]$/)
 	})
 
-	it('acknowledges a version without moving when it was set (so re-statements stay byte-identical)', async () => {
+	it('acknowledges a version without moving when it was set, and records when', async () => {
 		const clock = '2026-09-26T18:00:00.000Z'
 		const store = createDrizzleContactProfileVersionStore(
 			drizzle(pool, { schema: databaseSchema, mode: 'default' }),
@@ -212,6 +218,7 @@ integration('contact-sync stores on MySQL', () => {
 			profileVersion: 1,
 			since: '2026-09-26T18:00:00.000Z',
 			acknowledged: true,
+			acknowledgedAt: expect.any(String),
 		})
 		const [rows] = await pool.query(
 			"SELECT acknowledgedVersion AS v, acknowledgedAt AS at FROM AI_ContactProfileVersion WHERE contactId = 'contact-a'",
@@ -233,5 +240,47 @@ integration('contact-sync stores on MySQL', () => {
 			profileVersion: 2,
 			acknowledged: false,
 		})
+	})
+
+	it('lists acknowledged profiles due for re-statement in contactId order from a cursor', async () => {
+		let clock = '2026-11-01T00:00:00.000Z'
+		const store = createDrizzleContactProfileVersionStore(
+			drizzle(pool, { schema: databaseSchema, mode: 'default' }),
+			{ now: () => clock },
+		)
+		for (const id of ['due-old', 'due-older', 'recent', 'unacked', 'never-stamped'])
+			await store.versionFor(id, 'hash-a')
+		clock = '2026-11-02T00:00:00.000Z'
+		await store.acknowledge('due-old', 1)
+		clock = '2026-11-01T00:00:00.000Z'
+		await store.acknowledge('due-older', 1)
+		clock = '2026-11-12T00:00:00.000Z'
+		await store.acknowledge('recent', 1)
+		// Acknowledged before acknowledgedAt was stamped.
+		await pool.query(
+			"UPDATE AI_ContactProfileVersion SET acknowledgedVersion = profileVersion, acknowledgedAt = NULL WHERE contactId = 'never-stamped'",
+		)
+		const due = createDrizzleContactProfileRestatementStore(
+			drizzle(pool, { schema: databaseSchema, mode: 'default' }),
+		)
+		const before = '2026-11-06T00:00:00.000Z'
+		await expect(due.listDue({ before })).resolves.toEqual([
+			'due-old',
+			'due-older',
+			'never-stamped',
+		])
+		await expect(due.listDue({ before, limit: 2 })).resolves.toEqual([
+			'due-old',
+			'due-older',
+		])
+		await expect(due.listDue({ before, after: 'due-older' })).resolves.toEqual(
+			['never-stamped'],
+		)
+		// The cursor shares ContactSyncCursor under its own name.
+		await expect(due.readCursor()).resolves.toBeUndefined()
+		await due.writeCursor('due-older')
+		await expect(due.readCursor()).resolves.toBe('due-older')
+		await due.writeCursor(undefined)
+		await expect(due.readCursor()).resolves.toBeUndefined()
 	})
 })

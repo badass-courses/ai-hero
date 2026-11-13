@@ -1,17 +1,19 @@
 /**
  * A per-contact profile version, addressed by content. A sync hashes what
  * it would push; the version moves only when that hash differs from the
- * last one pushed, and `since` is when it moved. An unchanged contact is
- * re-sent under the same version, keys and body, which drovr dedupes for
- * free, so the reconcile's overlap costs drovr nothing. Two different
- * contents never share a version: the second one's key would dedupe away.
+ * last one pushed, and `since` is when it moved. Acknowledged content is
+ * skipped except for periodic profile-only re-statements with a fresh
+ * timestamp and key. Two different contents never share a version: the
+ * second one's key would dedupe away.
  */
 export type ContactProfileVersion = {
 	profileVersion: number
-	/** When this version was set; every event of the version carries it. */
+	/** When this version was set; original pushes and retries carry it. */
 	since: string
 	/** drovr fully accepted this exact version (acknowledge). */
 	acknowledged: boolean
+	/** Last full acceptance, used to throttle profile re-statements. */
+	acknowledgedAt: string | null
 }
 
 export type ContactProfileVersionStore = {
@@ -37,6 +39,7 @@ export function createMemoryContactProfileVersionStore(
 			since: string
 			contentHash: string
 			acknowledgedVersion?: number
+			acknowledgedAt?: string
 		}
 	>()
 	return {
@@ -47,6 +50,7 @@ export function createMemoryContactProfileVersionStore(
 					profileVersion: current.profileVersion,
 					since: current.since,
 					acknowledged: current.acknowledgedVersion === current.profileVersion,
+					acknowledgedAt: current.acknowledgedAt ?? null,
 				}
 			}
 			const next = {
@@ -59,12 +63,15 @@ export function createMemoryContactProfileVersionStore(
 				profileVersion: next.profileVersion,
 				since: next.since,
 				acknowledged: false,
+				acknowledgedAt: null,
 			}
 		},
 		async acknowledge(contactId, profileVersion) {
 			const current = rows.get(contactId)
-			if (current?.profileVersion === profileVersion)
+			if (current?.profileVersion === profileVersion) {
 				current.acknowledgedVersion = profileVersion
+				current.acknowledgedAt = now()
+			}
 		},
 	}
 }

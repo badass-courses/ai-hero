@@ -39,6 +39,7 @@ function harness(
 		hasBuyerFact?: boolean
 		reason?: 'journey-entered' | 'offer-issued' | 'reconcile'
 		acknowledged?: boolean
+		acknowledgedAt?: string | null
 	} = {},
 ) {
 	const order: string[] = []
@@ -60,6 +61,7 @@ function harness(
 		profileVersion: 4,
 		since: '2026-09-26T16:00:00.000Z',
 		acknowledged: overrides.acknowledged ?? false,
+		acknowledgedAt: overrides.acknowledgedAt ?? null,
 	}))
 	const acknowledge = vi.fn(async () => {})
 	const deliver = vi.fn(async () =>
@@ -328,10 +330,154 @@ describe('drovr contact profile sync function', () => {
 		}
 	})
 
-	it('the reconcile always re-states, acknowledged or not (confirmedAt keeps moving)', async () => {
-		const h = harness({ reason: 'reconcile', acknowledged: true })
+	it.each([0, 7 * 86400000 - 1, -86400000])(
+		'reconcile skips an acknowledgement %i ms old',
+		async (age) => {
+			const h = harness({
+				reason: 'reconcile',
+				acknowledged: true,
+				acknowledgedAt: new Date(now - age).toISOString(),
+			})
+			await expect(h.run()).resolves.toEqual({
+				status: 'skipped',
+				reason: 'unchanged',
+			})
+			expect(h.deliver).not.toHaveBeenCalled()
+			expect(h.acknowledge).not.toHaveBeenCalled()
+		},
+	)
+
+	it.each([7 * 86400000, 8 * 86400000, null])(
+		'reconcile re-states only the profile with an acknowledgement %s ms old',
+		async (age) => {
+			const h = harness({
+				reason: 'reconcile',
+				acknowledged: true,
+				acknowledgedAt: age === null ? null : new Date(now - age).toISOString(),
+				snapshot: {
+					...snapshot,
+					links: [
+						{
+							journeyId: 'value-path-skills-course',
+							emailKey: 'email-1',
+							issuedAt: snapshot.occurredAt,
+							expiresAt: '2027-01-24T00:00:00.000Z',
+							variables: {},
+							sendTimeFields: [],
+						},
+					],
+					offers: [
+						{
+							journeyId: 'crash-course-evergreen-offer',
+							couponId: 'coupon-1',
+							variables: {},
+						},
+					],
+				},
+			})
+			await expect(h.run()).resolves.toMatchObject({
+				status: 'sent',
+				profileVersion: 4,
+				links: 0,
+				offers: 0,
+			})
+			expect(h.deliver).toHaveBeenCalledOnce()
+			expect(h.deliver).toHaveBeenCalledWith([
+				{
+					tenantId: 'org-aihero',
+					contactId: 'contact-1',
+					journeyId: 'contact-directory',
+					type: 'contact.profile.updated',
+					occurredAt: new Date(now).toISOString(),
+					idempotencyKey: `profile:contact-1:4:r${Math.floor(now / (7 * 86400000))}`,
+					payload: { profileVersion: 4, ...snapshot.profile },
+				},
+			])
+			expect(h.acknowledge).toHaveBeenCalledWith('contact-1', 4)
+		},
+	)
+
+	it('reconcile retries unacknowledged content with the original key and since', async () => {
+		const h = harness({ reason: 'reconcile', acknowledged: false })
 		await expect(h.run()).resolves.toMatchObject({ status: 'sent' })
 		expect(h.deliver).toHaveBeenCalledOnce()
+		expect(h.deliver).toHaveBeenCalledWith([
+			expect.objectContaining({
+				idempotencyKey: 'profile:contact-1:4',
+				occurredAt: '2026-09-26T16:00:00.000Z',
+			}),
+		])
+	})
+
+	it('a re-statement acceptance arms another full seven-day window without a version bump', async () => {
+		let clock = now
+		const weekMs = 7 * 86400000
+		const store = createMemoryContactProfileVersionStore({
+			now: () => new Date(clock).toISOString(),
+		})
+		const original = await store.versionFor(
+			'contact-1',
+			contactProfileContentHash(snapshot),
+		)
+		await store.acknowledge('contact-1', original.profileVersion)
+		const deliver = vi.fn(async () => ({ accepted: 1, rejected: 0 }))
+		const run = () =>
+			runContactProfileSync({
+				event: { data: { contactId: 'contact-1', reason: 'reconcile' } },
+				step: {
+					run: async (_id, cb) => cb(),
+					sendEvent: async () => undefined,
+				},
+				env: { AIH_DROVR_PROFILE_SYNC: 'true' },
+				readSnapshot: async () => snapshot,
+				versionFor: store.versionFor,
+				acknowledge: store.acknowledge,
+				deliver,
+				ownedPath: async () => undefined,
+				onSendingJourney: async () => true,
+				birth: async () => undefined,
+				now: () => clock,
+			})
+		await expect(run()).resolves.toEqual({
+			status: 'skipped',
+			reason: 'unchanged',
+		})
+		clock += weekMs
+		await expect(run()).resolves.toMatchObject({
+			status: 'sent',
+			profileVersion: 1,
+		})
+		await expect(
+			store.versionFor('contact-1', contactProfileContentHash(snapshot)),
+		).resolves.toEqual({
+			...original,
+			acknowledged: true,
+			acknowledgedAt: new Date(clock).toISOString(),
+		})
+		clock += weekMs - 1
+		await expect(run()).resolves.toEqual({
+			status: 'skipped',
+			reason: 'unchanged',
+		})
+		clock += 1
+		await expect(run()).resolves.toMatchObject({
+			status: 'sent',
+			profileVersion: 1,
+		})
+		expect(deliver).toHaveBeenCalledTimes(2)
+	})
+
+	it('a rejected re-statement does not advance acknowledgement time', async () => {
+		const h = harness({
+			reason: 'reconcile',
+			acknowledged: true,
+			delivered: { accepted: 0, rejected: 1 },
+		})
+		await expect(h.run()).resolves.toEqual({
+			status: 'skipped',
+			reason: 'drovr-rejected',
+		})
+		expect(h.acknowledge).not.toHaveBeenCalled()
 	})
 
 	it('acknowledges only a full accept', async () => {
