@@ -1,6 +1,6 @@
 import { contactProfileVersion } from '@/db/contact-sync-schema'
 import { isMysqlDuplicateEntryError } from '@/lib/mysql-primary-key-retry'
-import { and, eq, sql } from 'drizzle-orm'
+import { and, asc, eq, isNull, lt, or, sql } from 'drizzle-orm'
 
 import type { ContactProfileVersionStore } from './contact-profile-version'
 
@@ -133,6 +133,54 @@ export function createDrizzleContactProfileVersionStore(
 						eq(contactProfileVersion.profileVersion, profileVersion),
 					),
 				)
+		},
+	}
+}
+
+/** Oldest acknowledged profiles first, including contacts without link anchors. */
+export function createDrizzleContactProfileRestatementStore(database: unknown) {
+	const db = database as {
+		select: (fields: unknown) => {
+			from: (table: unknown) => {
+				where: (clause: unknown) => {
+					orderBy: (...columns: unknown[]) => {
+						limit: (n: number) => Promise<{ contactId: string }[]>
+					}
+				}
+			}
+		}
+	}
+	return {
+		async listDue(args: { before: string; limit?: number }): Promise<string[]> {
+			const limit = args.limit ?? 1500
+			if (!Number.isSafeInteger(limit) || limit < 1)
+				throw new Error('profile restatement limit must be a positive integer')
+			const rows = await db
+				.select({ contactId: contactProfileVersion.contactId })
+				.from(contactProfileVersion)
+				.where(
+					and(
+						eq(
+							contactProfileVersion.acknowledgedVersion,
+							contactProfileVersion.profileVersion,
+						),
+						or(
+							isNull(contactProfileVersion.acknowledgedAt),
+							lt(
+								contactProfileVersion.acknowledgedAt,
+								sqlTimestamp(args.before),
+							),
+						),
+					),
+				)
+				// MySQL sorts NULL before timestamps in ascending order. Break ties
+				// by contact so a capped selection is deterministic on replay.
+				.orderBy(
+					asc(contactProfileVersion.acknowledgedAt),
+					asc(contactProfileVersion.contactId),
+				)
+				.limit(limit)
+			return rows.map(({ contactId }) => contactId)
 		},
 	}
 }

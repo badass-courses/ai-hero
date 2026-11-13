@@ -49,6 +49,7 @@ import { drovrContactProfileSync } from './functions/drovr-contact-profile-sync'
 import { drovrContactSyncBackfill } from './functions/drovr-contact-sync-backfill'
 import { drovrContactSyncRetry } from './functions/drovr-contact-sync-retry'
 import { drovrContactSyncReconcile } from './functions/drovr-contact-sync-reconcile'
+import { drovrProfileRestatementSweep } from './functions/drovr-profile-restatement-sweep'
 import { drovrOwnerBirthGuard } from './functions/drovr-owner-birth-guard'
 import { drovrSuppressionPull } from './functions/drovr-suppression-pull'
 import { drovrEvergreenSender } from './functions/drovr-evergreen-sender'
@@ -197,6 +198,7 @@ const allFunctions = [
 	drovrEvergreenSender,
 	drovrContactProfileSync,
 	drovrContactSyncReconcile,
+	drovrProfileRestatementSweep,
 	drovrOwnerBirthGuard,
 	drovrSuppressionPull,
 	drovrContactSyncBackfill,
