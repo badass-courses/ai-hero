@@ -41,14 +41,20 @@ export async function requestDrovrDoiSignup(args: {
 	const submissionId = randomUUID()
 	const { contactId } = await resolveDoiSignupContact({
 		repository: new DrizzleCaptureMarketingRepository(db),
-		findContactIdsByEmailKey: async (emailKey) =>
+		findContactsByEmailKey: async (emailKey) =>
 			(
 				await db
-					.select({ id: contact.id })
+					.select({
+						id: contact.id,
+						userId: contact.userId,
+						createdAt: contact.createdAt,
+					})
 					.from(contact)
 					.where(eq(contact.emailKey, emailKey))
-					.limit(2)
-			).map((row) => row.id),
+			).map((row) => ({ ...row, createdAt: row.createdAt.toISOString() })),
+		onAmbiguousResolved: async (resolution) => {
+			await log.info('doi.signup.contact.ambiguous_resolved', resolution)
+		},
 		email: args.email,
 		name: args.name,
 		drovrFormId,

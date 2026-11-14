@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { contactEmailWriteValues } from './contact-email-equivalence'
+import {
+	contactEmailWriteValues,
+	emailEquivalenceKey,
+} from './contact-email-equivalence'
 import { InMemorySubscriberMarketingRepository } from './dry-run'
 import {
 	buildDrovrSignupRequest,
+	chooseDoiSignupContact,
 	DoiSignupContactAmbiguousError,
 	DOI_DROVR_FORM_IDS,
 	DOI_REQUESTED_EVENT_TYPE,
@@ -135,7 +139,8 @@ describe('resolveDoiSignupContact', () => {
 		const repository = setup()
 		const { contactId } = await resolveDoiSignupContact({
 			repository: repository as never,
-			findContactIdsByEmailKey: async () => [],
+			findContactsByEmailKey: async () => [],
+			onAmbiguousResolved: vi.fn(),
 			email: 'Learner@Example.com',
 			name: 'Ada',
 			drovrFormId: 'skills-newsletter',
@@ -172,18 +177,23 @@ describe('resolveDoiSignupContact', () => {
 			createdAt: now,
 			updatedAt: now,
 		} as never)
-		const findContactIdsByEmailKey = vi.fn(async () => [existing.id])
+		const findContactsByEmailKey = vi.fn(async () => [
+			{ ...existing, userId: existing.userId ?? null },
+		])
+		const onAmbiguousResolved = vi.fn()
 
 		const first = await resolveDoiSignupContact({
 			repository: repository as never,
-			findContactIdsByEmailKey,
+			findContactsByEmailKey,
+			onAmbiguousResolved,
 			email: ' LEARNER@example.com',
 			drovrFormId: 'skills-newsletter',
 			now,
 		})
 		const again = await resolveDoiSignupContact({
 			repository: repository as never,
-			findContactIdsByEmailKey,
+			findContactsByEmailKey,
+			onAmbiguousResolved,
 			email: 'learner@example.com',
 			drovrFormId: 'skills-newsletter',
 			now,
@@ -193,20 +203,115 @@ describe('resolveDoiSignupContact', () => {
 		expect(again.contactId).toBe(existing.id)
 		expect(repository.contacts.size).toBe(1)
 		// The identity links on the first signup; the repeat finds it directly.
-		expect(findContactIdsByEmailKey).toHaveBeenCalledTimes(1)
+		expect(findContactsByEmailKey).toHaveBeenCalledTimes(1)
+		expect(onAmbiguousResolved).not.toHaveBeenCalled()
 		expect(repository.contactEvents.size).toBe(1)
 	})
 
-	it('refuses an address two contacts share', async () => {
-		await expect(
-			resolveDoiSignupContact({
-				repository: setup() as never,
-				findContactIdsByEmailKey: async () => ['contact-a', 'contact-b'],
-				email: 'learner@example.com',
+	it.each([
+		{
+			users: [null, null],
+			expectedIndex: 0,
+			rule: 'oldest-created-at-then-id',
+		},
+		{ users: [null, 'user-1'], expectedIndex: 1, rule: 'single-user' },
+		{
+			users: ['user-1', 'user-2'],
+			expectedIndex: 0,
+			rule: 'oldest-created-at-then-id',
+		},
+	])(
+		'resolves duplicates with $rule (users: $users) and links the chosen contact',
+		async ({ users, expectedIndex, rule }) => {
+			const repository = setup()
+			const candidates = await Promise.all(
+				users.map((userId, index) =>
+					repository.createContact({
+						...contactEmailWriteValues('learner@example.test'),
+						userId,
+						name: null,
+						lifecycle: 'new',
+						isProvisional: true,
+						createdAt: index === 0 ? '2026-07-16T00:00:00.000Z' : now,
+						updatedAt: now,
+					} as never),
+				),
+			)
+			const onAmbiguousResolved = vi.fn()
+			const result = await resolveDoiSignupContact({
+				repository: repository as never,
+				findContactsByEmailKey: async () =>
+					[...candidates].reverse().map((candidate) => ({
+						...candidate,
+						userId: candidate.userId ?? null,
+					})),
+				onAmbiguousResolved,
+				email: 'learner@example.test',
 				drovrFormId: 'skills-newsletter',
 				now,
-			}),
-		).rejects.toBeInstanceOf(DoiSignupContactAmbiguousError)
+			})
+			expect(result.contactId).toBe(candidates[expectedIndex]!.id)
+			expect(repository.contacts.size).toBe(2)
+			expect(
+				await repository.findProviderIdentity(
+					'ai-hero',
+					`doi-email:${emailEquivalenceKey('learner@example.test')}`,
+				),
+			).toMatchObject({ contactId: result.contactId })
+			expect(onAmbiguousResolved).toHaveBeenCalledTimes(1)
+			expect(onAmbiguousResolved).toHaveBeenCalledWith({
+				candidateCount: 2,
+				rule,
+			})
+		},
+	)
+
+	it('breaks timestamp ties by id, independent of candidate order', () => {
+		const a = { id: 'contact-a', userId: null, createdAt: now }
+		const b = { ...a, id: 'contact-b' }
+		expect(chooseDoiSignupContact([b, a]).contactId).toBe(a.id)
+		expect(chooseDoiSignupContact([a, b]).contactId).toBe(a.id)
+	})
+
+	it('counts every candidate and finds a user beyond the first two', async () => {
+		const repository = setup()
+		const chosen = await repository.createContact({
+			...contactEmailWriteValues('learner@example.test'),
+			userId: 'user-1',
+			name: null,
+			lifecycle: 'new',
+			isProvisional: true,
+			createdAt: now,
+			updatedAt: now,
+		} as never)
+		const onAmbiguousResolved = vi.fn()
+		const result = await resolveDoiSignupContact({
+			repository: repository as never,
+			findContactsByEmailKey: async () => [
+				{ id: 'contact-a', userId: null, createdAt: now },
+				{ id: 'contact-b', userId: null, createdAt: now },
+				{ ...chosen, userId: chosen.userId ?? null },
+			],
+			onAmbiguousResolved,
+			email: 'learner@example.test',
+			drovrFormId: 'skills-newsletter',
+			now,
+		})
+		expect(result.contactId).toBe(chosen.id)
+		expect(onAmbiguousResolved).toHaveBeenCalledTimes(1)
+		expect(onAmbiguousResolved).toHaveBeenCalledWith({
+			candidateCount: 3,
+			rule: 'single-user',
+		})
+	})
+
+	it('refuses candidates whose creation dates cannot be ordered', () => {
+		expect(() =>
+			chooseDoiSignupContact([
+				{ id: 'contact-a', userId: null, createdAt: 'invalid' },
+				{ id: 'contact-b', userId: null, createdAt: now },
+			]),
+		).toThrow(DoiSignupContactAmbiguousError)
 	})
 })
 
