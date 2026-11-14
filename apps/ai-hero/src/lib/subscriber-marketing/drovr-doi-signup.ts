@@ -166,19 +166,58 @@ export class DoiSignupContactAmbiguousError extends Error {
 	}
 }
 
+export type DoiSignupContactCandidate = {
+	id: string
+	userId: string | null
+	createdAt: string
+}
+
+export type DoiSignupContactResolution = {
+	candidateCount: number
+	rule: 'single-user' | 'oldest-created-at-then-id'
+}
+
+/** Select without mutating the candidates or depending on query order. */
+export function chooseDoiSignupContact(
+	candidates: readonly DoiSignupContactCandidate[],
+): { contactId: string; rule: DoiSignupContactResolution['rule'] } {
+	const withUser = candidates.filter((candidate) => candidate.userId !== null)
+	if (withUser.length === 1) {
+		return { contactId: withUser[0]!.id, rule: 'single-user' }
+	}
+	if (
+		candidates.length === 0 ||
+		candidates.some(
+			(candidate) =>
+				!candidate.id || !Number.isFinite(Date.parse(candidate.createdAt)),
+		)
+	) {
+		throw new DoiSignupContactAmbiguousError()
+	}
+	const ordered = [...candidates].sort((a, b) => {
+		const byDate = Date.parse(a.createdAt) - Date.parse(b.createdAt)
+		return byDate || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+	})
+	return { contactId: ordered[0]!.id, rule: 'oldest-created-at-then-id' }
+}
+
 /**
  * Find or create the signup's contact without Kit. The address's canonical
  * email key names an `ai-hero` identity (`doi-email:<key>`), so a repeat
  * signup resolves to the same contact. The first time, a contact that
  * already has this address (under a Kit identity) is reused, never
- * duplicated; two such contacts are ambiguous and refused. The capture
+ * duplicated. Multiple matches prefer the sole linked user, otherwise
+ * the oldest contact (then id). The capture
  * writes a `skills-newsletter.doi-requested` event and the contact state,
  * and drovr's shadow emitter maps that event to nothing: no value-path
  * birth before confirmation.
  */
 export async function resolveDoiSignupContact(args: {
 	repository: CaptureMarketingRepository
-	findContactIdsByEmailKey: (emailKey: string) => Promise<string[]>
+	findContactsByEmailKey: (
+		emailKey: string,
+	) => Promise<DoiSignupContactCandidate[]>
+	onAmbiguousResolved: (resolution: DoiSignupContactResolution) => Promise<void>
 	email: string
 	name?: string
 	drovrFormId: string
@@ -192,9 +231,16 @@ export async function resolveDoiSignupContact(args: {
 		externalId,
 	)
 	if (!linked) {
-		const existing = await args.findContactIdsByEmailKey(emailKey)
-		if (existing.length > 1) throw new DoiSignupContactAmbiguousError()
-		const contactId = existing[0]
+		const existing = await args.findContactsByEmailKey(emailKey)
+		const chosen =
+			existing.length > 0 ? chooseDoiSignupContact(existing) : undefined
+		if (existing.length > 1 && chosen) {
+			await args.onAmbiguousResolved({
+				candidateCount: existing.length,
+				rule: chosen.rule,
+			})
+		}
+		const contactId = chosen?.contactId
 		if (contactId) {
 			try {
 				await args.repository.createProviderIdentity({

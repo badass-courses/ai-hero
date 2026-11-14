@@ -868,7 +868,16 @@ describe('Kit form 8447166, the default form, through drovr double opt-in', () =
 			resolveDoiSignupContact({
 				...args,
 				repository: repository as never,
-				findContactIdsByEmailKey,
+				findContactsByEmailKey: async (key) =>
+					(await findContactIdsByEmailKey(key)).map((id: string) => {
+						const row = repository.contacts.get(id)!
+						return {
+							id: row.id,
+							userId: row.userId ?? null,
+							createdAt: row.createdAt,
+						}
+					}),
+				onAmbiguousResolved: vi.fn(),
 			}),
 		)
 	})
@@ -1042,24 +1051,32 @@ describe('returning unsubscriber (Kit or drovr)', () => {
 			}),
 		)
 
-	it.each(['tagged', 'drovr consent unknown with DOI enabled'])('%s: answers the DOI shape, no Kit subscribe, no untag', async () => {
-		mocks.routeReturning.mockResolvedValue({ status: 'doi-requested' })
+	it.each(['tagged', 'drovr consent unknown with DOI enabled'])(
+		'%s: answers the DOI shape, no Kit subscribe, no untag',
+		async () => {
+			mocks.routeReturning.mockResolvedValue({ status: 'doi-requested' })
 
-		const response = await post()
+			const response = await post()
 
-		expect(response.status).toBe(200)
-		expect(await response.json()).toMatchObject({
-			email_address: 'person@example.com',
-			state: 'awaiting-confirmation',
-		})
-		expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
-		expect(mocks.reconcile).not.toHaveBeenCalled()
-		expect(mocks.routeReturning).toHaveBeenCalledWith(
-			expect.objectContaining({ kitFormId: 9376133, entry: 'form' }),
-		)
-	})
+			expect(response.status).toBe(200)
+			expect(await response.json()).toMatchObject({
+				email_address: 'person@example.com',
+				state: 'awaiting-confirmation',
+			})
+			expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
+			expect(mocks.reconcile).not.toHaveBeenCalled()
+			expect(mocks.routeReturning).toHaveBeenCalledWith(
+				expect.objectContaining({ kitFormId: 9376133, entry: 'form' }),
+			)
+		},
+	)
 
-	it.each(['drovr-unconfigured', 'unmapped-form', 'suppressed', 'drovr-unknown'])('blocked (%s): 409, no Kit subscribe, no untag', async (reason) => {
+	it.each([
+		'drovr-unconfigured',
+		'unmapped-form',
+		'suppressed',
+		'drovr-unknown',
+	])('blocked (%s): 409, no Kit subscribe, no untag', async (reason) => {
 		mocks.routeReturning.mockResolvedValue({
 			status: 'blocked',
 			reason,
@@ -1068,7 +1085,9 @@ describe('returning unsubscriber (Kit or drovr)', () => {
 		const response = await post()
 
 		expect(response.status).toBe(409)
-		await expect(response.json()).resolves.toEqual({ error: 'Subscription could not be confirmed' })
+		await expect(response.json()).resolves.toEqual({
+			error: 'Subscription could not be confirmed',
+		})
 		expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
 		expect(mocks.reconcile).not.toHaveBeenCalled()
 	})
@@ -1723,7 +1742,16 @@ describe('AIH_WAITLIST_OFF_KIT_ENABLED: the posted form off Kit', () => {
 			doi.resolveDoiSignupContact({
 				...args,
 				repository: repository as never,
-				findContactIdsByEmailKey,
+				findContactsByEmailKey: async (key) =>
+					(await findContactIdsByEmailKey(key)).map((id: string) => {
+						const row = repository.contacts.get(id)!
+						return {
+							id: row.id,
+							userId: row.userId ?? null,
+							createdAt: row.createdAt,
+						}
+					}),
+				onAmbiguousResolved: vi.fn(),
 			}),
 		)
 	})
@@ -1909,7 +1937,9 @@ describe('AIH_WAITLIST_OFF_KIT_ENABLED: the posted form off Kit', () => {
 	)
 
 	it('newsletter ask with drovr unconfigured: 502, never Kit', async () => {
-		const response = await post({ fields: { source: 'primary-newsletter-cta' } })
+		const response = await post({
+			fields: { source: 'primary-newsletter-cta' },
+		})
 
 		expect(response.status).toBe(502)
 		noKit()
