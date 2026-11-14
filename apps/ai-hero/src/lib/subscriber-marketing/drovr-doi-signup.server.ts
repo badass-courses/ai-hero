@@ -53,7 +53,9 @@ export async function requestDrovrDoiSignup(args: {
 					.where(eq(contact.emailKey, emailKey))
 			).map((row) => ({ ...row, createdAt: row.createdAt.toISOString() })),
 		onAmbiguousResolved: async (resolution) => {
-			await log.info('doi.signup.contact.ambiguous_resolved', resolution)
+			await log
+				.info('doi.signup.contact.ambiguous_resolved', resolution)
+				.catch(() => undefined)
 		},
 		email: args.email,
 		name: args.name,

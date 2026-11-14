@@ -25,6 +25,7 @@ import { requestDrovrDoiSignup } from './drovr-doi-signup.server'
 describe('DOI signup contact query and resolution logging', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		mocks.info.mockResolvedValue(undefined)
 		mocks.select.mockReturnValue({ from: () => ({ where: mocks.where }) })
 		mocks.where.mockResolvedValue([
 			{
@@ -80,6 +81,26 @@ describe('DOI signup contact query and resolution logging', () => {
 				{ candidateCount: 3, rule: 'single-user' },
 			],
 		])
+		expect(mocks.send).toHaveBeenCalledTimes(1)
+	})
+
+	it('still submits the signup if the ambiguity log rejects', async () => {
+		mocks.info.mockRejectedValueOnce(new Error('Log transport unavailable'))
+		mocks.resolve.mockImplementationOnce(async (args) => {
+			await args.onAmbiguousResolved({
+				candidateCount: 2,
+				rule: 'oldest-created-at-then-id',
+			})
+			return { contactId: 'contact-a' }
+		})
+		await expect(
+			requestDrovrDoiSignup({
+				email: 'learner@example.test',
+				kitFormId: 8447166,
+				page: '/',
+				entry: 'form',
+			}),
+		).resolves.toEqual({ contactId: 'contact-a' })
 		expect(mocks.send).toHaveBeenCalledTimes(1)
 	})
 })
