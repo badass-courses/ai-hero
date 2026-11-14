@@ -59,7 +59,7 @@ describe('daily profile re-statement sweep', () => {
 		expect(h.step.sendEvent).not.toHaveBeenCalled()
 	})
 
-	it('uses a seven-day cutoff and dispatches the default cap in fifteen batches, not per-contact invokes', async () => {
+	it('uses a seven-day cutoff and dispatches the default cap in 150 small batches, not per-contact invokes', async () => {
 		const h = harness(Array.from({ length: 1500 }, (_, i) => `contact-${i}`))
 		await expect(runProfileRestatementSweep(h.args)).resolves.toEqual({
 			status: 'queued',
@@ -72,10 +72,10 @@ describe('daily profile re-statement sweep', () => {
 			limit: 1500,
 		})
 		expect(h.step.run).toHaveBeenCalledTimes(3)
-		expect(h.step.sendEvent).toHaveBeenCalledTimes(15)
-		expect(h.step.sleep).toHaveBeenCalledTimes(14)
-		expect(h.step.sleep).toHaveBeenLastCalledWith('restate-pace-13', '2m')
-		expect(h.sent.every((batch) => batch.length === 100)).toBe(true)
+		expect(h.step.sendEvent).toHaveBeenCalledTimes(150)
+		expect(h.step.sleep).toHaveBeenCalledTimes(149)
+		expect(h.step.sleep).toHaveBeenLastCalledWith('restate-pace-148', '12s')
+		expect(h.sent.every((batch) => batch.length === 10)).toBe(true)
 		expect(h.sent.flat().map((event) => event.data.contactId)).toEqual(
 			Array.from({ length: 1500 }, (_, i) => `contact-${i}`),
 		)
@@ -87,9 +87,9 @@ describe('daily profile re-statement sweep', () => {
 	})
 
 	it('sends a final partial batch and no batch for an empty selection', async () => {
-		const h = harness(Array.from({ length: 101 }, (_, i) => `c-${i}`))
+		const h = harness(Array.from({ length: 11 }, (_, i) => `c-${i}`))
 		await runProfileRestatementSweep(h.args)
-		expect(h.sent.map((batch) => batch.length)).toEqual([100, 1])
+		expect(h.sent.map((batch) => batch.length)).toEqual([10, 1])
 		const empty = harness([])
 		await expect(runProfileRestatementSweep(empty.args)).resolves.toEqual({
 			status: 'queued',
@@ -100,10 +100,10 @@ describe('daily profile re-statement sweep', () => {
 		expect(empty.step.sleep).not.toHaveBeenCalled()
 	})
 
-	it('paces 250 contacts as three ordered batches with two pauses and none after the last', async () => {
-		const h = harness(Array.from({ length: 250 }, (_, i) => `c-${i}`))
+	it('paces 25 contacts as three ordered batches with two pauses and none after the last', async () => {
+		const h = harness(Array.from({ length: 25 }, (_, i) => `c-${i}`))
 		await runProfileRestatementSweep(h.args)
-		expect(h.sent.map((batch) => batch.length)).toEqual([100, 100, 50])
+		expect(h.sent.map((batch) => batch.length)).toEqual([10, 10, 5])
 		expect(h.order).toEqual([
 			'restate-batch-0',
 			'restate-pace-0',
@@ -112,8 +112,8 @@ describe('daily profile re-statement sweep', () => {
 			'restate-batch-2',
 		])
 		expect(h.step.sleep.mock.calls).toEqual([
-			['restate-pace-0', '2m'],
-			['restate-pace-1', '2m'],
+			['restate-pace-0', '12s'],
+			['restate-pace-1', '12s'],
 		])
 	})
 
