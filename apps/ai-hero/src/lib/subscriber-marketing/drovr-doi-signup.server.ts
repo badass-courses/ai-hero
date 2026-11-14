@@ -11,9 +11,21 @@ import { DrizzleCaptureMarketingRepository } from './drizzle-capture-repository'
 import {
 	buildDrovrSignupRequest,
 	DOI_DROVR_FORM_IDS,
+	DoiSignupContactAmbiguousError,
 	resolveDoiSignupContact,
 } from './drovr-doi-signup'
 import type { OptInAttribution } from './opt-in-attribution'
+
+function contactCreatedAt(value: unknown): string {
+	const timestamp =
+		value instanceof Date
+			? value.getTime()
+			: typeof value === 'string'
+				? Date.parse(value)
+				: NaN
+	if (!Number.isFinite(timestamp)) throw new DoiSignupContactAmbiguousError()
+	return new Date(timestamp).toISOString()
+}
 
 /**
  * One double opt-in signup, for any entry point (the form route, the
@@ -51,7 +63,7 @@ export async function requestDrovrDoiSignup(args: {
 					})
 					.from(contact)
 					.where(eq(contact.emailKey, emailKey))
-			).map((row) => ({ ...row, createdAt: row.createdAt.toISOString() })),
+			).map((row) => ({ ...row, createdAt: contactCreatedAt(row.createdAt) })),
 		onAmbiguousResolved: async (resolution) => {
 			await log
 				.info('doi.signup.contact.ambiguous_resolved', resolution)

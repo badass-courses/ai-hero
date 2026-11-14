@@ -21,6 +21,7 @@ vi.mock('./drovr-doi-signup', async (importOriginal) => ({
 
 import { contact } from '@/db/schema'
 import { requestDrovrDoiSignup } from './drovr-doi-signup.server'
+import { DoiSignupContactAmbiguousError } from './drovr-doi-signup'
 
 describe('DOI signup contact query and resolution logging', () => {
 	beforeEach(() => {
@@ -83,6 +84,55 @@ describe('DOI signup contact query and resolution logging', () => {
 		])
 		expect(mocks.send).toHaveBeenCalledTimes(1)
 	})
+
+	it.each([new Date('2026-07-16T00:00:00.000Z'), '2026-07-16T00:00:00.000Z'])(
+		'accepts an orderable driver timestamp: %s',
+		async (createdAt) => {
+			mocks.where.mockResolvedValueOnce([
+				{ id: 'contact-a', userId: null, createdAt },
+			])
+			mocks.resolve.mockImplementationOnce(async (args) => {
+				expect(await args.findContactsByEmailKey('synthetic-key')).toEqual([
+					{
+						id: 'contact-a',
+						userId: null,
+						createdAt: '2026-07-16T00:00:00.000Z',
+					},
+				])
+				return { contactId: 'contact-a' }
+			})
+			await expect(
+				requestDrovrDoiSignup({
+					email: 'learner@example.test',
+					kitFormId: 8447166,
+					page: '/',
+					entry: 'form',
+				}),
+			).resolves.toEqual({ contactId: 'contact-a' })
+		},
+	)
+
+	it.each([undefined, null, 'invalid', new Date(NaN), 0])(
+		'refuses an unorderable driver timestamp: %s',
+		async (createdAt) => {
+			mocks.where.mockResolvedValueOnce([
+				{ id: 'contact-a', userId: null, createdAt },
+			])
+			mocks.resolve.mockImplementationOnce(async (args) => {
+				await args.findContactsByEmailKey('synthetic-key')
+				return { contactId: 'contact-a' }
+			})
+			await expect(
+				requestDrovrDoiSignup({
+					email: 'learner@example.test',
+					kitFormId: 8447166,
+					page: '/',
+					entry: 'form',
+				}),
+			).rejects.toBeInstanceOf(DoiSignupContactAmbiguousError)
+			expect(mocks.send).not.toHaveBeenCalled()
+		},
+	)
 
 	it('still submits the signup if the ambiguity log rejects', async () => {
 		mocks.info.mockRejectedValueOnce(new Error('Log transport unavailable'))
