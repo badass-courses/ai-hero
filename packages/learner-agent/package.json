@@ -27,10 +27,10 @@
 		"clean": "rm -rf dist *.tsbuildinfo"
 	},
 	"dependencies": {
-		"effect": "4.0.6"
+		"effect": "4.1.2"
 	},
 	"devDependencies": {
-		"@effect/vitest": "4.0.6",
+		"@effect/vitest": "4.1.2",
 		"@types/node": "^24.0.0",
 		"typescript": "^5.9.3",
 		"vite": "7.3.7",
