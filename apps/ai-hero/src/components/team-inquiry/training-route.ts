@@ -71,11 +71,17 @@ export function suggestRoute(values: RoutingValues) {
 			TERRITORY_COUNTRIES.some((territory) => territory === country),
 		)
 	) {
-		return {
-			route: 'review',
-			reason: '4.4-territory',
-			partnerPreference,
-		} as const
+		if (
+			values.partnerPreference === 'specific' &&
+			values.specificPartner?.trim()
+		) {
+			return {
+				route: 'review',
+				reason: '4.4-client-preference',
+				partnerPreference,
+			} as const
+		}
+		return { route: 'inovex', reason: '4.4', partnerPreference } as const
 	}
 	return { route: 'thisdot', reason: 'default', partnerPreference } as const
 }

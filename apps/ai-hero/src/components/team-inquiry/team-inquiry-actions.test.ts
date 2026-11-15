@@ -162,7 +162,7 @@ describe('team inquiry email', () => {
 		).toEqual({ success: true })
 		const email = mocks.sendAnEmail.mock.calls[0]![0]
 		expect(email.Subject).toBe(
-			'Training request: Company  , US, route review (4.4-territory)',
+			'Training request: Company  , US, route review (4.4-client-preference)',
 		)
 		expect(email.componentProps.body).toContain('Partner preference: Partner')
 		expect(email.componentProps.body).toContain('Training country: GB')

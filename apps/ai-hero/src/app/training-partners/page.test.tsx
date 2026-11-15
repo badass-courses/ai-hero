@@ -18,8 +18,10 @@ describe('training partners lead form', () => {
 		const html = renderToStaticMarkup(<TrainingPartnersPage />)
 		expect(html).toContain('Tell us about your team and what you need.')
 		expect(html).toContain('the right partner and introduce you.')
-		expect(html).toContain('Live, instructor-led AI Hero trainings in Germany and Switzerland.')
-		expect(html).toContain('Live, instructor-led AI Hero trainings.')
+		expect(html).toContain('Live, instructor-led AI Hero trainings in Europe.')
+		expect(html).toContain(
+			'Live, instructor-led AI Hero trainings outside Europe.',
+		)
 		expect(html).toContain('Country')
 		expect(html).toMatch(/<select[^>]*id="country"[^>]*required=""/)
 		expect(html).toContain('DE: Germany')

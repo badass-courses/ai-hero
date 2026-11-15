@@ -32,15 +32,15 @@ describe('training route suggestion', () => {
 		},
 	)
 	it.each(TERRITORY_COUNTRIES.filter((code) => code !== 'DE'))(
-		'holds %s for desk review, preserving preference',
+		'routes %s to inovex unless a named partner needs desk review',
 		(country) => {
 			for (const countries of [
 				{ country },
 				{ trainingLocation: 'elsewhere' as const, trainingCountry: country },
 			]) {
 				expect(suggestRoute({ ...live, ...countries })).toEqual({
-					route: 'review',
-					reason: '4.4-territory',
+					route: 'inovex',
+					reason: '4.4',
 					partnerPreference: 'No preference',
 				})
 				expect(
@@ -52,7 +52,7 @@ describe('training route suggestion', () => {
 					}),
 				).toEqual({
 					route: 'review',
-					reason: '4.4-territory',
+					reason: '4.4-client-preference',
 					partnerPreference: 'Requested partner',
 				})
 			}
@@ -75,6 +75,20 @@ describe('training route suggestion', () => {
 			).toMatchObject({ route: 'team-sales', reason: 'self-paced' })
 		},
 	)
+	it('ignores a stale partner name when no preference is selected', () => {
+		expect(
+			suggestRoute({
+				...live,
+				country: 'GB',
+				partnerPreference: 'none',
+				specificPartner: 'Other partner',
+			}),
+		).toEqual({
+			route: 'inovex',
+			reason: '4.4',
+			partnerPreference: 'No preference',
+		})
+	})
 	it('ignores a stale alternate country when the same country is selected', () => {
 		expect(
 			suggestRoute({ ...live, trainingLocation: 'same', trainingCountry: 'DE' })
