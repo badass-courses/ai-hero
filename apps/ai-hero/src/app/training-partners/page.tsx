@@ -71,6 +71,10 @@ export default function TrainingPartnersPage() {
 
 				<section aria-label="Team inquiry" className="border-b">
 					<div className="mx-auto max-w-2xl px-[18px] py-12 sm:px-11">
+						<p className={cn(TYPE.body, 'text-muted-foreground mb-6')}>
+							Tell us about your team and what you need. We'll match you with
+							the right partner and introduce you.
+						</p>
 						<TeamInquiryForm
 							location="/training-partners"
 							source="training-partners"
