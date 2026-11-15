@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { validateEmailWithDrovr } from './drovr-email-validation'
+import {
+	DROVR_EMAIL_VALIDATION_TIMEOUT_MS,
+	validateEmailWithDrovr,
+} from './drovr-email-validation'
 
 const email = 'person@example.test'
 const config = { baseUrl: 'https://drovr.example.test/', apiKey: 'test-key' }
@@ -70,11 +73,32 @@ describe('validateEmailWithDrovr', () => {
 		expect(result).toEqual({ verdict: 'unknown', error })
 		expect(JSON.stringify(result)).not.toContain('private request details')
 	})
-	it('times out after 800 ms and aborts, even if fetch ignores abort', async () => {
+	it('waits past 800 ms for a slow first connection', async () => {
+		vi.useFakeTimers()
+		const fetch = vi.fn().mockReturnValue(
+			new Promise((resolve) =>
+				setTimeout(
+					() =>
+						resolve(
+							Response.json({
+								verdict: 'accept',
+								email,
+								policyVersion: 'test-policy',
+							}),
+						),
+					1200,
+				),
+			),
+		)
+		const result = validateEmailWithDrovr(email, { ...config, fetch })
+		await vi.advanceTimersByTimeAsync(1200)
+		expect((await result).verdict).toBe('accept')
+	})
+	it('times out at the budget and aborts, even if fetch ignores abort', async () => {
 		vi.useFakeTimers()
 		const fetch = vi.fn().mockReturnValue(new Promise(() => {}))
 		const result = validateEmailWithDrovr(email, { ...config, fetch })
-		await vi.advanceTimersByTimeAsync(800)
+		await vi.advanceTimersByTimeAsync(DROVR_EMAIL_VALIDATION_TIMEOUT_MS)
 		expect(await result).toEqual({ verdict: 'unknown', error: 'timeout' })
 		expect(fetch.mock.calls[0]![1].signal.aborted).toBe(true)
 		expect(fetch).toHaveBeenCalledTimes(1)
