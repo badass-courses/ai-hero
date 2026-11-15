@@ -23,6 +23,14 @@ export type DrovrEmailValidation =
 	| Validation
 	| { verdict: 'unknown'; error: string; httpStatus?: number }
 
+/**
+ * The wait budget for one check. drovr's Worker answers within ~700 ms, but a
+ * cold connection from a serverless instance can spend most of 800 ms before
+ * the request arrives, which skipped validation for about a quarter of new
+ * sign-ups. A timeout still fails open.
+ */
+export const DROVR_EMAIL_VALIDATION_TIMEOUT_MS = 1500
+
 /** A bounded, no-retry signup check. Provider failures never block login. */
 export async function validateEmailWithDrovr(
 	email: string,
@@ -66,7 +74,7 @@ export async function validateEmailWithDrovr(
 				timer = setTimeout(() => {
 					controller.abort()
 					resolve({ verdict: 'unknown', error: 'timeout' })
-				}, 800)
+				}, DROVR_EMAIL_VALIDATION_TIMEOUT_MS)
 			}),
 		])
 	} catch {
