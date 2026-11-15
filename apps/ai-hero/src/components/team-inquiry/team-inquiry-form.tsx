@@ -21,9 +21,12 @@ import {
 import Spinner from '@coursebuilder/ui/primitives/spinner'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+import { COUNTRIES } from './countries'
 import { sendTeamInquiry } from './team-inquiry-actions'
 import {
 	getTeamInquirySchema,
+	TRAINING_TOPICS,
+	TRAINING_TIMINGS,
 	type TeamInquiryFormValues,
 } from './team-inquiry-schema'
 
@@ -66,11 +69,68 @@ export const TeamInquiryForm: React.FC<{
 			companyName: '',
 			teamSize: '1-10',
 			message: '',
-			...(source === 'training-partners' ? { country: '' } : {}),
+			...(source === 'training-partners'
+				? {
+						country: '',
+						trainingLocation: 'same' as const,
+						partnerPreference: 'none' as const,
+						specificPartner: '',
+						topics: [],
+					}
+				: {}),
 			website: '',
 			timestamp: new Date().toISOString(),
 		},
 	})
+
+	const fieldError = (field: keyof TeamInquiryFormValues) => {
+		const error = form.formState.errors[field]
+		return error ? (
+			<p id={`${field}-error`} role="alert" className="text-destructive">
+				{error.message}
+			</p>
+		) : null
+	}
+	const routingSelect = (
+		field:
+			| 'country'
+			| 'trainingCountry'
+			| 'trainingLocation'
+			| 'engineersToTrain'
+			| 'format'
+			| 'timing'
+			| 'partnerPreference',
+		label: string,
+		options: readonly { value: string; label: string }[],
+		required = false,
+	) => (
+		<div className="space-y-2">
+			<Label htmlFor={field}>{label}</Label>
+			<select
+				{...form.register(field)}
+				id={field}
+				required={required}
+				className="border-input bg-background text-foreground focus-visible:ring-ring focus-visible:ring-offset-background h-12 w-full rounded-[9px] border px-3 focus-visible:ring-2 focus-visible:ring-offset-2"
+				aria-invalid={!!form.formState.errors[field]}
+				aria-describedby={
+					form.formState.errors[field] ? `${field}-error` : undefined
+				}
+			>
+				{required && <option value="">Choose an option</option>}
+				{options.map(({ value, label }) => (
+					<option key={value} value={value}>
+						{label}
+					</option>
+				))}
+			</select>
+			{fieldError(field)}
+		</div>
+	)
+	const countryOptions = COUNTRIES.map(({ code, name }) => ({
+		value: code,
+		label: `${code}: ${name}`,
+	}))
+	const liveTraining = form.watch('trainingType') === 'live'
 
 	const onSubmit = async (values: TeamInquiryFormValues) => {
 		// Check if submission is too fast (less than 3 seconds)
@@ -160,24 +220,22 @@ export const TeamInquiryForm: React.FC<{
 
 				{source === 'training-partners' && (
 					<>
-						<div className="space-y-2">
-							<Label htmlFor="country">Country</Label>
-							<Input
-								{...form.register('country')}
-								id="country"
-								autoComplete="country-name"
-								required
-								aria-invalid={!!form.formState.errors.country}
-								aria-describedby={
-									form.formState.errors.country ? 'country-error' : undefined
-								}
-							/>
-							{form.formState.errors.country && (
-								<p id="country-error" role="alert" className="text-destructive">
-									{form.formState.errors.country.message}
-								</p>
+						{routingSelect('country', 'Country', countryOptions, true)}
+						{routingSelect(
+							'trainingLocation',
+							'Where will the training happen?',
+							[
+								{ value: 'same', label: 'In the same country' },
+								{ value: 'elsewhere', label: 'Somewhere else' },
+							],
+						)}
+						{form.watch('trainingLocation') === 'elsewhere' &&
+							routingSelect(
+								'trainingCountry',
+								'Training country',
+								countryOptions,
+								true,
 							)}
-						</div>
 						<fieldset
 							className="min-w-0 space-y-3"
 							aria-describedby={
@@ -212,6 +270,82 @@ export const TeamInquiryForm: React.FC<{
 								</p>
 							)}
 						</fieldset>
+						{liveTraining && (
+							<>
+								{routingSelect(
+									'engineersToTrain',
+									'Engineers to train',
+									['1-9', '10-25', '26-50', '51+'].map((value) => ({
+										value,
+										label: value,
+									})),
+									true,
+								)}
+								{routingSelect(
+									'format',
+									'Format',
+									['Onsite', 'Remote', 'Either'].map((value) => ({
+										value,
+										label: value,
+									})),
+									true,
+								)}
+								<fieldset
+									className="min-w-0 space-y-3"
+									aria-describedby={
+										form.formState.errors.topics ? 'topics-error' : undefined
+									}
+								>
+									<legend className="font-medium">
+										Topics (choose at least one)
+									</legend>
+									{TRAINING_TOPICS.map((topic) => (
+										<Label key={topic} className="flex items-center gap-3">
+											<input
+												{...form.register('topics')}
+												type="checkbox"
+												value={topic}
+												aria-invalid={!!form.formState.errors.topics}
+											/>
+											{topic}
+										</Label>
+									))}
+									{fieldError('topics')}
+								</fieldset>
+								{routingSelect(
+									'timing',
+									'Timing',
+									TRAINING_TIMINGS.map((value) => ({ value, label: value })),
+									true,
+								)}
+								{routingSelect(
+									'partnerPreference',
+									'Partner preference (optional)',
+									[
+										{ value: 'none', label: 'No preference' },
+										{ value: 'specific', label: 'A specific partner' },
+									],
+								)}
+								{form.watch('partnerPreference') === 'specific' && (
+									<div className="space-y-2">
+										<Label htmlFor="specificPartner">Partner name</Label>
+										<Input
+											{...form.register('specificPartner')}
+											id="specificPartner"
+											maxLength={120}
+											required
+											aria-invalid={!!form.formState.errors.specificPartner}
+											aria-describedby={
+												form.formState.errors.specificPartner
+													? 'specificPartner-error'
+													: undefined
+											}
+										/>
+										{fieldError('specificPartner')}
+									</div>
+								)}
+							</>
+						)}
 					</>
 				)}
 

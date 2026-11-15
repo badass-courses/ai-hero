@@ -17,7 +17,12 @@ describe('training partners lead form', () => {
 	it('renders required routing fields and makes the form the main CTA', () => {
 		const html = renderToStaticMarkup(<TrainingPartnersPage />)
 		expect(html).toContain('Country')
-		expect(html).toMatch(/<input[^>]*id="country"[^>]*required=""/)
+		expect(html).toMatch(/<select[^>]*id="country"[^>]*required=""/)
+		expect(html).toContain('DE: Germany')
+		expect(html).toContain('Where will the training happen?')
+		expect(html).toContain('In the same country')
+		expect(html).toContain('Somewhere else')
+		expect(html).not.toContain('id="engineersToTrain"')
 		expect(html).toContain('What do you need?')
 		expect(html.match(/type="radio"[^>]*required=""/g)).toHaveLength(2)
 		expect(html).toContain('Live training for my team')
@@ -41,7 +46,7 @@ describe('training partners lead form', () => {
 		const hrefs = [...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1] ?? '')
 		expect(hrefs.every((href) => href.startsWith('/'))).toBe(true)
 		expect(hrefs).toContain('/for-your-team')
-		for (const forbidden of ['Cohort', 'C5', 'Software Factories', '—']) {
+		for (const forbidden of ['Cohort', 'C5', 'Software Factories', '—', '–']) {
 			expect(html).not.toContain(forbidden)
 		}
 	})
@@ -69,7 +74,16 @@ describe('training partners lead form', () => {
 		)?.[1]
 		expect(button).toContain('Get team pricing')
 		expect(button).not.toContain('Send inquiry')
-		for (const field of ['country', 'trainingType', 'What do you need?']) {
+		for (const field of [
+			'country',
+			'trainingType',
+			'What do you need?',
+			'trainingLocation',
+			'engineersToTrain',
+			'partnerPreference',
+			'topics',
+			'timing',
+		]) {
 			expect(html).not.toContain(field)
 		}
 	})
