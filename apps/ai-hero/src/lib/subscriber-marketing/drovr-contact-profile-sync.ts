@@ -38,6 +38,7 @@ import {
 	valuePathEmailLinkWindow,
 } from './value-path-email-executor'
 import type { ValuePathLinkAnchorStore } from './value-path-link-anchor'
+import { PROFILE_RESTATEMENT_AGE_MS } from './drovr-profile-restatement-sweep'
 
 /**
  * Contact sync (2026-09-26): drovr stops calling ai-hero's personalize
@@ -434,7 +435,7 @@ type DeliveryResult =
  * One contact's profile to drovr's contact directory: read it, version it by
  * content, and post the events, answering `sent` only once drovr took them
  * (the contact-sync reconcile's watermark relies on that). A new content
- * moves the version; acknowledged content skips except for a weekly
+ * moves the version; acknowledged content skips except for a 60-day
  * profile-only re-statement by reconcile. Events addressed to the authority
  * tenant go straight to it: no owner fan-out. Read before versioning, so a missing
  * contact spends no version; per-contact concurrency of one keeps a higher
@@ -506,7 +507,7 @@ export async function runContactProfileSync(args: {
 		(await args.step.run('profile-version', () =>
 			args.versionFor(contactId, contactProfileContentHash(snapshot)),
 		)) as ContactProfileVersion
-	// Skip acknowledged content unless reconcile owes a weekly re-statement.
+	// Skip acknowledged content unless reconcile owes a 60-day re-statement.
 	// drovr's 90-day backstop needs a fresh occurredAt for its laterOf fold;
 	// a new profile key gets past ingress dedupe. Links/offers need neither.
 	let restatedAt: number | undefined
@@ -517,7 +518,10 @@ export async function runContactProfileSync(args: {
 		const at = (await args.step.run('profile-restatement-at', async () =>
 			(args.now ?? Date.now)(),
 		)) as number
-		if (acknowledgedAt && at - Date.parse(acknowledgedAt) < weekMs)
+		if (
+			acknowledgedAt &&
+			at - Date.parse(acknowledgedAt) < PROFILE_RESTATEMENT_AGE_MS
+		)
 			return { status: 'skipped', reason: 'unchanged' }
 		restatedAt = at
 	}
@@ -530,7 +534,8 @@ export async function runContactProfileSync(args: {
 			restatedAt !== undefined ? new Date(restatedAt).toISOString() : since,
 	})
 	if (restatedAt !== undefined) {
-		// Epoch weeks give each weekly re-statement a distinct, replay-safe key.
+		// Keep epoch-week keys replay-safe across the cadence change. Due
+		// re-statements are at least 60 days apart, so cannot share a week.
 		events[0]!.idempotencyKey += `:r${Math.floor(restatedAt / weekMs)}`
 	}
 	const delivered = (await args.step.run('deliver-profile', () =>

@@ -1,11 +1,13 @@
 import {
 	contactProfileVersion,
 	contactSyncCursor,
+	valuePathLinkAnchor,
 } from '@/db/contact-sync-schema'
 import { isMysqlDuplicateEntryError } from '@/lib/mysql-primary-key-retry'
 import { and, asc, eq, gt, isNull, lt, or, sql } from 'drizzle-orm'
 
 import type { ContactProfileVersionStore } from './contact-profile-version'
+import { VALUE_PATH_LINK_REISSUE_EVERY_DAYS } from './value-path-link-anchor'
 
 /** Enough for the per-contact concurrency of one the sync function runs at. */
 const BUMP_ATTEMPTS = 8
@@ -190,12 +192,27 @@ export function createDrizzleContactProfileRestatementStore(database: unknown) {
 		},
 		async listDue(args: {
 			before: string
+			startedAt: string
 			after?: string
 			limit?: number
 		}): Promise<string[]> {
 			const limit = args.limit ?? 1500
 			if (!Number.isSafeInteger(limit) || limit < 1)
 				throw new Error('profile restatement limit must be a positive integer')
+			const rotationSeconds = VALUE_PATH_LINK_REISSUE_EVERY_DAYS * 86400
+			// Match valuePathLinkWindowAt's immutable first-issue windows.
+			// A rotated window changes the snapshot hash, so the child sends
+			// links as a normal new version instead of a profile-only re-state.
+			// Old fingerprints can cause extra discovery; unchanged syncs skip.
+			const rotatedLinks = sql`exists (
+				select 1 from ${valuePathLinkAnchor}
+				where ${valuePathLinkAnchor.contactId} = ${contactProfileVersion.contactId}
+				and unix_timestamp(${valuePathLinkAnchor.issuedAt})
+					+ floor(greatest(0, unix_timestamp(${sqlTimestamp(args.startedAt)})
+						- unix_timestamp(${valuePathLinkAnchor.issuedAt})) / ${rotationSeconds})
+						* ${rotationSeconds}
+					> unix_timestamp(${contactProfileVersion.acknowledgedAt})
+			)`
 			const rows = await db
 				.select({ contactId: contactProfileVersion.contactId })
 				.from(contactProfileVersion)
@@ -211,6 +228,7 @@ export function createDrizzleContactProfileRestatementStore(database: unknown) {
 								contactProfileVersion.acknowledgedAt,
 								sqlTimestamp(args.before),
 							),
+							rotatedLinks,
 						),
 						args.after
 							? gt(contactProfileVersion.contactId, args.after)

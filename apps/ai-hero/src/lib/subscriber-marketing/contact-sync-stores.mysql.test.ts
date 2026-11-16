@@ -248,7 +248,13 @@ integration('contact-sync stores on MySQL', () => {
 			drizzle(pool, { schema: databaseSchema, mode: 'default' }),
 			{ now: () => clock },
 		)
-		for (const id of ['due-old', 'due-older', 'recent', 'unacked', 'never-stamped'])
+		for (const id of [
+			'due-old',
+			'due-older',
+			'recent',
+			'unacked',
+			'never-stamped',
+		])
 			await store.versionFor(id, 'hash-a')
 		clock = '2026-11-02T00:00:00.000Z'
 		await store.acknowledge('due-old', 1)
@@ -264,18 +270,18 @@ integration('contact-sync stores on MySQL', () => {
 			drizzle(pool, { schema: databaseSchema, mode: 'default' }),
 		)
 		const before = '2026-11-06T00:00:00.000Z'
-		await expect(due.listDue({ before })).resolves.toEqual([
+		const startedAt = '2026-11-13T00:00:00.000Z'
+		await expect(due.listDue({ before, startedAt })).resolves.toEqual([
 			'due-old',
 			'due-older',
 			'never-stamped',
 		])
-		await expect(due.listDue({ before, limit: 2 })).resolves.toEqual([
-			'due-old',
-			'due-older',
-		])
-		await expect(due.listDue({ before, after: 'due-older' })).resolves.toEqual(
-			['never-stamped'],
+		await expect(due.listDue({ before, startedAt, limit: 2 })).resolves.toEqual(
+			['due-old', 'due-older'],
 		)
+		await expect(
+			due.listDue({ before, startedAt, after: 'due-older' }),
+		).resolves.toEqual(['never-stamped'])
 		// The cursor shares ContactSyncCursor under its own name.
 		await expect(due.readCursor()).resolves.toBeUndefined()
 		await due.writeCursor('due-older')
