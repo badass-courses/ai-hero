@@ -72,6 +72,7 @@ export const readLesson = implement(
 				userId: learner.userId,
 				capability: 'read_lesson',
 				resourceId: content.lesson.id,
+				includeSolution,
 			})
 
 			const locator = {
