@@ -361,10 +361,12 @@ export function isOwnerFanOutCandidate(event: DrovrShadowEvent): boolean {
  * an owner record would also be a birth, and for a contact who never
  * confirmed that birth sends lesson one without consent.
  *
- * New signups only: a double opt-in requested at or after this instant.
- * Moving it back is the backfill decision, still without a data write.
+ * A double opt-in requested at or after this instant. It began as
+ * 2026-11-10T03:00Z (new signups only) and was moved back to 2026-10-01 so
+ * learners already mid-course advance on their next answer. That is still
+ * without a data write: nothing is re-sent and no old answer is replayed.
  */
-export const DOI_ANSWER_FORWARD_SINCE = '2026-11-10T03:00:00.000Z'
+export const DOI_ANSWER_FORWARD_SINCE = '2026-10-01T00:00:00.000Z'
 
 /** A skills-course quiz answer bound for the shadow tenant. */
 export function isDoiAnswerForwardCandidate(event: DrovrShadowEvent): boolean {
