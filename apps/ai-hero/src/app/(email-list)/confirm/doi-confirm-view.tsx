@@ -2,6 +2,8 @@ import type { ReactNode } from 'react'
 import LayoutClient from '@/components/layout-client'
 import type { ConfirmPageView } from '@/lib/subscriber-marketing/drovr-confirm-page'
 
+import { PendingSubmitButton } from './pending-submit-button'
+
 const SUBMIT_PATH = '/confirm/submit'
 
 /**
@@ -133,12 +135,11 @@ function SubmitButton({
 		<form action={SUBMIT_PATH} method="post">
 			<input name="t" type="hidden" value={token} />
 			<input name="action" type="hidden" value={action} />
-			<button
-				className="bg-primary text-primary-foreground inline-flex min-h-11 items-center justify-center px-6 py-2 font-medium"
-				type="submit"
-			>
-				{label}
-			</button>
+			<PendingSubmitButton
+				className="bg-primary text-primary-foreground inline-flex min-h-11 items-center justify-center px-6 py-2 font-medium disabled:opacity-60"
+				label={label}
+				pendingLabel={action === 'confirm' ? 'Confirming…' : 'Sending…'}
+			/>
 		</form>
 	)
 }
