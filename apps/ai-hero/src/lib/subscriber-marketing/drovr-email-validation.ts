@@ -27,9 +27,11 @@ export type DrovrEmailValidation =
  * The wait budget for one check. drovr's Worker answers within ~700 ms, but a
  * cold connection from a serverless instance can spend most of 800 ms before
  * the request arrives, which skipped validation for about a quarter of new
- * sign-ups. A timeout still fails open.
+ * sign-ups. At 1500 ms, 6 of the first 101 new-user checks still timed out,
+ * all from fra1 and arn1, where the connection alone took 0.7 to 1.2 s while
+ * drovr answered in 0.25 to 0.6 s. A timeout still fails open.
  */
-export const DROVR_EMAIL_VALIDATION_TIMEOUT_MS = 1500
+export const DROVR_EMAIL_VALIDATION_TIMEOUT_MS = 2500
 
 /** A bounded, no-retry signup check. Provider failures never block login. */
 export async function validateEmailWithDrovr(
