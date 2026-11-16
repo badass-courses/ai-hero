@@ -148,7 +148,12 @@ export async function recordValuePathAnswerProgression(args: {
 			reviewReasons: ['finisher-capture-token-binding-missing'],
 		}
 	}
-	if (!nextEmailResourceId && !capturesFinisher && !recordOnly) {
+	if (
+		!nextEmailResourceId &&
+		!capturesFinisher &&
+		!recordOnly &&
+		fields.variant !== 'did-it'
+	) {
 		return {
 			status: 'skipped',
 			reason: 'next-email-resource-missing',
@@ -345,7 +350,9 @@ export async function recordValuePathAnswerProgression(args: {
 			createdAt: now,
 		}))
 
-	if (recordOnly) {
+	// New did-it Done pages may also leave legacy progression unset: drovr
+	// advances from the recorded answer, not a Kit next-email instruction.
+	if (recordOnly || (!nextEmailResourceId && !capturesFinisher)) {
 		return {
 			status: 'recorded',
 			contactEventId: event.id,

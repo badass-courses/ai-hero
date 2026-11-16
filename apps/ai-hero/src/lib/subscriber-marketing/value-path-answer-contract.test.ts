@@ -371,10 +371,11 @@ describe('answer write -> drovr contract', () => {
 			const page = parseValuePathAnswerPageResource(
 				makePage('email-1', intent === 'deferred' ? 'stuck' : 'done', {
 					clickIntent: intent,
-					surveyId: 'email-1-did-it',
-					...(intent === 'deferred' || intent === 'record'
-						? {}
-						: { nextEmailResourceId: `${sequence}.email-2` }),
+					variant: intent === undefined ? undefined : 'did-it',
+					surveyId: intent === undefined ? 'email-1-quiz' : 'email-1-did-it',
+					...(intent === undefined
+						? { nextEmailResourceId: `${sequence}.email-2` }
+						: {}),
 				}),
 			)!
 			const click = () =>
@@ -392,7 +393,7 @@ describe('answer write -> drovr contract', () => {
 			expect(event.payloadSummary).toMatchObject({
 				clickIntent: intent ?? 'confirmed',
 				answer: page.fields.optionValue,
-				surveyId: 'email-1-did-it',
+				surveyId: page.fields.surveyId,
 			})
 			expect((await click()).status).toBe('idempotent-noop')
 			const mapped = mapDrovrShadowFact({ kind: 'contact-event', event })
@@ -401,7 +402,7 @@ describe('answer write -> drovr contract', () => {
 				expect(mapped[0]?.payload).toEqual({
 					emailResourceId: token.emailResourceId,
 					answer: page.fields.optionValue,
-					surveyId: 'email-1-did-it',
+					surveyId: page.fields.surveyId,
 					...(intent === 'deferred' ? { clickIntent: 'deferred' } : {}),
 				})
 				vi.stubEnv('DROVR_FORWARD_DEFERRED', 'false')
