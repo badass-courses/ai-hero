@@ -552,6 +552,21 @@ describe('LessonPlayerHost', () => {
 			expect(panel()).toBeNull()
 		})
 
+		it('still hides for this page when storage refuses the write', async () => {
+			await render(withSession('a'))
+			const setItem = vi
+				.spyOn(Storage.prototype, 'setItem')
+				.mockImplementation(() => {
+					throw new Error('QuotaExceededError')
+				})
+			await click(panel()!.querySelector('button'))
+			expect(panel()).toBeNull()
+			expect(showButton()).not.toBeNull()
+			setItem.mockRestore()
+			await click(showButton())
+			expect(panel()).not.toBeNull()
+		})
+
 		it('leaves lessons without a session untouched', async () => {
 			window.localStorage.setItem('aih.session-panel-hidden', '1')
 			await render(video('a'))

@@ -57,11 +57,6 @@ const LessonPlayerHostContext = React.createContext<HostContext | null>(null)
 // resuming where this screen stopped is a fair answer, so that is accepted.
 const sessionPositions = new Map<string, number>()
 
-// The box the player and its skeleton share, so neither shifts the page.
-// The width cap mirrors the height cap: with only max-h, a short viewport
-// clamps the height while the width stays full, the box stops being 16:9,
-// and Safari/Chrome each mangle the mismatch (cropped video, cut-off
-// controls). Height-capped + width-capped keeps it a 16:9 that always fits.
 // A viewer can hide the session panel to give the player the section's full
 // width (learners on wide monitors and tiling window managers, where pop-out
 // does not help). The choice is per browser, and every tab follows it.
@@ -80,7 +75,12 @@ function subscribeSessionPanel(onChange: () => void) {
 	}
 }
 
+// Set only when storage refused the last write: the choice then lasts for
+// this page, and reads must not fall back to the stale stored value.
+let pageOnlySessionPanelHidden: boolean | null = null
+
 function readSessionPanelHidden() {
+	if (pageOnlySessionPanelHidden !== null) return pageOnlySessionPanelHidden
 	try {
 		return window.localStorage.getItem(SESSION_PANEL_HIDDEN_KEY) === '1'
 	} catch {
@@ -92,12 +92,19 @@ function writeSessionPanelHidden(hidden: boolean) {
 	try {
 		if (hidden) window.localStorage.setItem(SESSION_PANEL_HIDDEN_KEY, '1')
 		else window.localStorage.removeItem(SESSION_PANEL_HIDDEN_KEY)
+		pageOnlySessionPanelHidden = null
 	} catch {
-		// Storage can be blocked; the choice then lasts for this page only.
+		// Storage can be blocked or full; the choice then lasts for this page.
+		pageOnlySessionPanelHidden = hidden
 	}
 	for (const listener of sessionPanelListeners) listener()
 }
 
+// The box the player and its skeleton share, so neither shifts the page.
+// The width cap mirrors the height cap: with only max-h, a short viewport
+// clamps the height while the width stays full, the box stops being 16:9,
+// and Safari/Chrome each mangle the mismatch (cropped video, cut-off
+// controls). Height-capped + width-capped keeps it a 16:9 that always fits.
 const PLAYER_BOX =
 	'aspect-video h-auto w-full max-w-full overflow-hidden md:max-h-[75svh] md:max-w-[calc(75svh*16/9)]'
 
