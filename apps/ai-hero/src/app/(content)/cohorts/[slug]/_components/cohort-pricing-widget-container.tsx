@@ -251,7 +251,7 @@ export const CohortPricingWidgetContainer: React.FC<
 
 	return (
 		<>
-			{enrollmentState.type === 'open' || allowPurchase ? (
+			{enrollmentState.type === 'open' || allowPurchase === 'true' ? (
 				// The workshop page's card, as it is there: it fills the column
 				// edge to edge and pads itself, so nothing here insets it.
 				<div className={className}>

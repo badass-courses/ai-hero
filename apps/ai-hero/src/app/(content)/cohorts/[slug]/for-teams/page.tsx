@@ -80,7 +80,8 @@ export async function generateMetadata(
  *
  * Seats sell here only while the cohort is on sale (published, inside its
  * enrollment window, with room). Before that the page has no checkout: the
- * invoice band takes a request and the inquiry form stays.
+ * invoice band takes a request and the inquiry form stays. After close,
+ * orgs can still get an invoice (or request one); checkout stays hidden.
  */
 export default async function CohortForTeamsPage(props: Props) {
 	const params = await props.params
@@ -99,8 +100,12 @@ export default async function CohortForTeamsPage(props: Props) {
 		? await getPurchaseCount(product.id)
 		: 0
 	const now = new Date()
+	// Org invoices remain available after close, but this shared checkout
+	// widget must not reopen individual enrollment.
 	const onSale = product
-		? teamSaleState(product, { now, purchaseCount }).onSale
+		? teamSaleState(product, { now, purchaseCount }).onSale &&
+			(!product.fields.closeEnrollment ||
+				new Date(product.fields.closeEnrollment) > now)
 		: false
 
 	const timezone = cohort.fields.timezone || 'America/Los_Angeles'

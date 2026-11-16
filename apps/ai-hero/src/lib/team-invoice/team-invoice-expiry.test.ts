@@ -45,14 +45,14 @@ describe('teamInvoiceExpiry', () => {
 		).toEqual({ void: false })
 	})
 
-	it('voids once enrollment has closed', () => {
+	it('keeps org invoices open after individual enrollment closes', () => {
 		expect(
 			teamInvoiceExpiry(
 				invoice,
 				cohort({ closeEnrollment: '2026-10-10T00:00:00.000Z' }),
 				NOW,
 			),
-		).toEqual({ void: true, reason: 'closed' })
+		).toEqual({ void: false })
 	})
 
 	it('does not count the invoice against its own hold', () => {
@@ -98,9 +98,7 @@ describe('voidExpiredTeamInvoices', () => {
 			{ id: 'in_live', productId: 'product-live', seats: 3 },
 		]
 		const loadProduct = vi.fn(async (id: string) =>
-			id === 'product-cohort'
-				? cohort({ closeEnrollment: '2026-10-01T00:00:00.000Z' })
-				: cohort({}),
+			id === 'product-cohort' ? cohort({ state: 'draft' }) : cohort({}),
 		)
 		const deps = {
 			now: () => NOW,
@@ -114,8 +112,8 @@ describe('voidExpiredTeamInvoices', () => {
 		expect(result).toEqual({
 			checked: 3,
 			voided: [
-				{ id: 'in_open', reason: 'closed' },
-				{ id: 'in_second', reason: 'closed' },
+				{ id: 'in_open', reason: 'unpublished' },
+				{ id: 'in_second', reason: 'unpublished' },
 			],
 		})
 		expect(loadProduct).toHaveBeenCalledTimes(2)
@@ -130,9 +128,7 @@ describe('voidExpiredTeamInvoices', () => {
 				{ ...invoice, id: 'in_broken' },
 				{ ...invoice, id: 'in_third' },
 			]),
-			loadProduct: vi
-				.fn()
-				.mockResolvedValue(cohort({ closeEnrollment: '2026-10-01T00:00:00.000Z' })),
+			loadProduct: vi.fn().mockResolvedValue(cohort({ state: 'draft' })),
 			voidInvoice: vi
 				.fn()
 				.mockResolvedValueOnce(false)
@@ -142,7 +138,7 @@ describe('voidExpiredTeamInvoices', () => {
 			log: vi.fn(),
 		}
 		const result = await voidExpiredTeamInvoices(deps)
-		expect(result.voided).toEqual([{ id: 'in_third', reason: 'closed' }])
+		expect(result.voided).toEqual([{ id: 'in_third', reason: 'unpublished' }])
 		expect(deps.notify).toHaveBeenCalledTimes(1)
 		expect(deps.log).toHaveBeenCalledWith(
 			'team_invoice.void_failed',

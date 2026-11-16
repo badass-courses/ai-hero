@@ -314,7 +314,7 @@ describe('createTeamInvoice', () => {
 	})
 
 	describe('sale state', () => {
-		it('sends no invoice for a closed product', async () => {
+		it('sends a standard team invoice for a closed cohort', async () => {
 			deps = makeDeps({
 				loadProduct: vi.fn().mockResolvedValue({
 					...onSaleProduct,
@@ -329,9 +329,34 @@ describe('createTeamInvoice', () => {
 				}),
 			})
 			const result = await createTeamInvoice(form(), ctx, deps)
-			expect(result).toEqual({ kind: 'not-on-sale' })
-			expect(deps.createInvoice).not.toHaveBeenCalled()
+			expect(result).toEqual({ kind: 'sent', email: 'billing@example.test' })
+			expect(deps.createInvoice).toHaveBeenCalledTimes(1)
 			expect(deps.forwardRequest).not.toHaveBeenCalled()
+		})
+
+		it('keeps the invoicing switch in force after close', async () => {
+			deps = makeDeps({
+				invoicingEnabled: () => false,
+				loadProduct: vi.fn().mockResolvedValue({
+					...onSaleProduct,
+					product: {
+						...onSaleProduct.product,
+						type: 'cohort',
+						fields: {
+							state: 'published',
+							closeEnrollment: '2026-10-01T00:00:00.000Z',
+						},
+					},
+				}),
+			})
+			expect(await createTeamInvoice(form(), ctx, deps)).toEqual({
+				kind: 'requested',
+				email: 'billing@example.test',
+				when: 'working-day',
+			})
+			expect(deps.createInvoice).not.toHaveBeenCalled()
+			expect(deps.priceSource).not.toHaveBeenCalled()
+			expect(deps.forwardRequest).toHaveBeenCalledTimes(1)
 		})
 
 		it('turns an upcoming cohort into a request to support', async () => {
@@ -629,6 +654,20 @@ describe('createTeamInvoice', () => {
 		})
 
 		it.each([
+			[
+				'a closed cohort on net 30',
+				'cohort',
+				'net_30',
+				'2026-10-01T00:00:00.000Z',
+				{ kind: 'days', days: 30 },
+			],
+			[
+				'a closed cohort due on receipt',
+				'cohort',
+				'due_on_receipt',
+				'2026-10-01T00:00:00.000Z',
+				{ kind: 'days', days: 0 },
+			],
 			['a workshop on net 30', 'self-paced', 'net_30', null, { kind: 'days', days: 30 }],
 			['due on receipt', 'cohort', 'due_on_receipt', '2026-10-20T00:00:00.000Z', { kind: 'days', days: 0 }],
 			['a cohort closing after net 30', 'cohort', 'net_30', '2026-12-01T00:00:00.000Z', { kind: 'days', days: 30 }],

@@ -16,7 +16,8 @@ import type { ForTeamsInvoice } from './for-teams-page'
  * - on sale, but invoicing is off (C5 until front-desk prices it): a request
  *   support answers within a working day
  * - not on sale yet: a request, answered when seats open
- * - closed or sold out: no band
+ * - enrollment closed: invoices or requests still available for org teams
+ * - sold out, archived or unsupported: no band
  *
  * The page's answer is a hint. The invoice action re-reads the product and
  * decides again.

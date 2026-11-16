@@ -193,12 +193,31 @@ describe('/cohorts/[slug]/for-teams', () => {
 		expect(props.invoice).toMatchObject({ mode: 'request' })
 	})
 
-	it('drops the invoice band once enrollment has closed', async () => {
+	it.each([true, false])(
+		'keeps only the org invoice or request after close (invoicing %s)',
+		async (enabled) => {
+			mocks.invoicingEnabled = enabled
+			mocks.cohort = cohort({
+				state: 'published',
+				openEnrollment: iso(-7 * DAY),
+				closeEnrollment: iso(-DAY),
+			})
+			const props = await render()
+			expect(props.seats).toBeNull()
+			expect(props.invoice).toEqual({
+				productId: 'product-test',
+				mode: enabled ? 'invoice' : 'request',
+			})
+		},
+	)
+
+	it('drops the invoice band for an archived product', async () => {
 		mocks.cohort = cohort({
 			state: 'published',
 			openEnrollment: iso(-7 * DAY),
 			closeEnrollment: iso(-DAY),
 		})
+		mocks.cohort.resourceProducts[0].product.status = 0
 		const props = await render()
 		expect(props.seats).toBeNull()
 		expect(props.invoice).toBeNull()
