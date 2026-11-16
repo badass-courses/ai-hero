@@ -112,6 +112,9 @@ export type DrovrShadowEvent = {
 				emailResourceId: string
 				/** The team email a "Team workflows" answer switches to (drovr v13). */
 				nextEmailResourceId?: string
+				clickIntent?: 'deferred'
+				answer?: string
+				surveyId?: string
 				provider?: typeof KIT_EMAIL_PROVIDER
 		  }
 		| { messageId: string; provider?: typeof KIT_EMAIL_PROVIDER }
@@ -502,6 +505,7 @@ function mapContactEvent(event: ContactEventRecord): DrovrShadowEvent[] {
 			]
 		}
 		case 'value-path.answer-selected': {
+			if (event.payloadSummary.clickIntent === 'record') return []
 			const emailResourceId = answeredEmailResourceIdFromKeywords(
 				event.payloadSummary.keywords,
 			)
@@ -515,9 +519,21 @@ function mapContactEvent(event: ContactEventRecord): DrovrShadowEvent[] {
 					...base,
 					journeyId: DROVR_SKILLS_COURSE_JOURNEY_ID,
 					type: 'value-path.answer-selected',
-					payload: nextEmailResourceId
-						? { emailResourceId, nextEmailResourceId }
-						: { emailResourceId },
+					payload: {
+						emailResourceId,
+						...(nextEmailResourceId ? { nextEmailResourceId } : {}),
+						...(event.payloadSummary.clickIntent === 'deferred' &&
+						process.env.DROVR_FORWARD_DEFERRED !== 'false' &&
+						process.env.DROVR_FORWARD_DEFERRED !== '0'
+							? { clickIntent: 'deferred' as const }
+							: {}),
+						...(event.payloadSummary.answer !== undefined
+							? { answer: event.payloadSummary.answer }
+							: {}),
+						...(event.payloadSummary.surveyId !== undefined
+							? { surveyId: event.payloadSummary.surveyId }
+							: {}),
+					},
 				},
 			]
 		}

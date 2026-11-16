@@ -55,6 +55,9 @@ export type PayloadSummary = {
 	 * workflows") records the email it moves to, persisted in the JSON summary.
 	 */
 	nextEmailResourceId?: string
+	clickIntent?: 'confirmed' | 'deferred' | 'record'
+	answer?: string
+	surveyId?: string
 	summary: string
 	keywords: string[]
 	restrictedPayloadStored: false

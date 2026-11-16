@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 import { Logo } from '@/components/brand/logo'
 import LayoutClient from '@/components/layout-client'
 import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
+import { allowedValuePathHelpUrl } from '@/lib/subscriber-marketing/value-path-answer-page'
 import { log } from '@/server/logger'
 import { checkSkillsWorkflowValuePathCertificateEligibility } from '@/lib/subscriber-marketing/value-path-certificates'
 import {
@@ -50,6 +51,7 @@ export default async function ValuePathAnswerPage(props: {
 	})
 	if (!answerPage) notFound()
 
+	const helpUrl = allowedValuePathHelpUrl(answerPage.fields.helpUrl)
 	const confirmed = searchParams.confirmed === '1'
 	if (token.valid && !confirmed) {
 		return (
@@ -177,6 +179,12 @@ export default async function ValuePathAnswerPage(props: {
 							<div className="whitespace-pre-wrap text-lg font-light leading-relaxed">
 								{answerPage.fields.body}
 							</div>
+						) : null}
+
+						{helpUrl ? (
+							<a href={helpUrl} rel="noopener" className="underline">
+								{answerPage.fields.helpLabel ?? helpUrl}
+							</a>
 						) : null}
 
 						{answerPage.fields.takeaway ? (

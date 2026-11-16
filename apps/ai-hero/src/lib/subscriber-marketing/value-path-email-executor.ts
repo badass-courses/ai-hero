@@ -608,6 +608,8 @@ export async function executeValuePathEmailIntent(args: {
 
 /** The answer pages one email of a value path links to. */
 export function valuePathAnswerPagesForEmail(args: {
+	/** Content message key, separate from the canonical token resource id. */
+	messageKey?: string
 	valuePathSlug?: string
 	emailResourceId?: string
 	answerPages: readonly ValuePathAnswerPageResource[]
@@ -616,11 +618,25 @@ export function valuePathAnswerPagesForEmail(args: {
 	return args.answerPages.filter(
 		(page) =>
 			page.fields.sequenceId === args.valuePathSlug &&
-			page.fields.emailId === emailId,
+			page.fields.emailId === emailId &&
+			(isDidItMessageKey(args.messageKey)
+				? page.fields.variant === 'did-it' &&
+					page.fields.surveyId === `${emailId}-did-it`
+				: !page.fields.variant &&
+					!/-did-it$|-goal$/.test(page.fields.surveyId ?? '')),
 	)
 }
 
+export function isDidItMessageKey(messageKey?: string): boolean {
+	return /^ai-hero-skills-workflow\.email-[1-5]b$/.test(messageKey ?? '')
+}
+
+export function canonicalSkillsMessageKey(messageKey: string): string {
+	return isDidItMessageKey(messageKey) ? messageKey.slice(0, -1) : messageKey
+}
+
 type ValuePathLinkAnchorInputs = {
+	messageKey?: string
 	linkAnchors?: ValuePathLinkAnchorStore
 	contactId: string
 	kitSubscriberId?: string
@@ -722,6 +738,7 @@ export const VALUE_PATH_SEND_TIME_FIELDS: readonly string[] = [
 ]
 
 export function buildValuePathEmailPersonalization(args: {
+	messageKey?: string
 	contactId: string
 	kitSubscriberId?: string
 	valuePathSlug?: string

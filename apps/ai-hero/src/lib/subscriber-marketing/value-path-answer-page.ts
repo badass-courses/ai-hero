@@ -19,6 +19,10 @@ export type ValuePathAnswerPageResource = {
 		sequenceId?: string
 		emailId?: string
 		surveyId?: string
+		variant?: 'did-it' | 'goal'
+		clickIntent?: 'confirmed' | 'deferred' | 'record'
+		helpUrl?: string
+		helpLabel?: string
 		optionValue?: string
 		result?: string
 		position?: number
@@ -46,6 +50,28 @@ export function parseValuePathAnswerPageResource(
 	const fields = candidate.fields as Record<string, unknown>
 	if (fields.kind !== 'answer') return null
 	if (typeof fields.slug !== 'string') return null
+	if (
+		fields.variant !== undefined &&
+		fields.variant !== 'did-it' &&
+		fields.variant !== 'goal'
+	)
+		return null
+	if (
+		fields.clickIntent !== undefined &&
+		!['confirmed', 'deferred', 'record'].includes(String(fields.clickIntent))
+	)
+		return null
+	if (
+		fields.variant !== undefined &&
+		fields.variant !== 'did-it' &&
+		fields.variant !== 'goal'
+	)
+		return null
+	if (
+		fields.clickIntent !== undefined &&
+		!['confirmed', 'deferred', 'record'].includes(String(fields.clickIntent))
+	)
+		return null
 	return {
 		id: candidate.id,
 		type: 'value-path-page',
@@ -60,6 +86,18 @@ export function parseValuePathAnswerPageResource(
 			sequenceId: stringField(fields.sequenceId),
 			emailId: stringField(fields.emailId),
 			surveyId: stringField(fields.surveyId),
+			variant:
+				fields.variant === 'did-it' || fields.variant === 'goal'
+					? fields.variant
+					: undefined,
+			clickIntent:
+				fields.clickIntent === 'confirmed' ||
+				fields.clickIntent === 'deferred' ||
+				fields.clickIntent === 'record'
+					? fields.clickIntent
+					: undefined,
+			helpUrl: stringField(fields.helpUrl),
+			helpLabel: stringField(fields.helpLabel),
 			optionValue: stringField(fields.optionValue),
 			result: stringField(fields.result),
 			position: numberField(fields.position),
@@ -122,6 +160,26 @@ export async function getValuePathAnswerPages() {
 	return resources
 		.map(parseValuePathAnswerPageResource)
 		.filter((page): page is ValuePathAnswerPageResource => Boolean(page))
+}
+
+export function allowedValuePathHelpUrl(value?: string): string | undefined {
+	if (!value) return undefined
+	try {
+		const url = new URL(value)
+		if (url.protocol !== 'https:' || url.username || url.password || url.port)
+			return undefined
+		if (
+			url.hostname === 'aihero.dev' ||
+			url.hostname === 'www.aihero.dev' ||
+			(url.hostname === 'github.com' &&
+				(url.pathname === '/mattpocock' ||
+					url.pathname.startsWith('/mattpocock/')))
+		)
+			return value
+	} catch {
+		// Invalid content never fails a learner's answer page.
+	}
+	return undefined
 }
 
 function stringField(value: unknown) {

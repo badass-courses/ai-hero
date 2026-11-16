@@ -131,6 +131,16 @@ function fixture() {
 	}
 }
 
+it('ignores optional birth versions without changing personalize bytes', async () => {
+	const f = fixture()
+	const missing = await f.answer()
+	for (const journeyVersion of [4, 6, 9, 13, 14, 999]) {
+		expect(JSON.stringify(await f.answer({ journeyVersion }))).toBe(
+			JSON.stringify(missing),
+		)
+	}
+})
+
 const tokenExpiry = (href: string | undefined) =>
 	verifyValuePathToken({
 		token: new URL(href!).searchParams.get('pt'),

@@ -41,11 +41,17 @@ vi.mock('@/lib/subscriber-marketing/drizzle-capture-repository', () => ({
 vi.mock('@/lib/subscriber-marketing/path-token', () => ({
 	verifyValuePathToken: mocks.verifyValuePathToken,
 }))
-vi.mock('@/lib/subscriber-marketing/value-path-answer-page', () => ({
-	SHARED_SKILLS_WORKFLOW_CERTIFICATE_ANSWER_SLUG:
-		'ai-hero-skills-workflow-certificate',
-	getValuePathAnswerPageBySlug: mocks.getValuePathAnswerPageBySlug,
-}))
+vi.mock(
+	'@/lib/subscriber-marketing/value-path-answer-page',
+	async (importOriginal) => ({
+		...(await importOriginal<
+			typeof import('@/lib/subscriber-marketing/value-path-answer-page')
+		>()),
+		SHARED_SKILLS_WORKFLOW_CERTIFICATE_ANSWER_SLUG:
+			'ai-hero-skills-workflow-certificate',
+		getValuePathAnswerPageBySlug: mocks.getValuePathAnswerPageBySlug,
+	}),
+)
 vi.mock('@/lib/subscriber-marketing/value-path-click-progression', () => ({
 	recordValuePathAnswerProgression: mocks.recordValuePathAnswerProgression,
 }))
@@ -204,6 +210,34 @@ function expectNothingRecorded() {
 	expect(mocks.inngestSend).not.toHaveBeenCalled()
 	expect(mocks.ensureSkillsWorkflowCertificateShare).not.toHaveBeenCalled()
 }
+
+describe('optional untracked help link', () => {
+	it.each([
+		undefined,
+		'https://github.com/mattpocock/sandcastle',
+		'https://evil.test/guide',
+	])('renders only allowed help URL %s', async (helpUrl) => {
+		mocks.getValuePathAnswerPageBySlug.mockResolvedValue({
+			...genericAnswerPage,
+			fields: {
+				...genericAnswerPage.fields,
+				helpUrl,
+				helpLabel: 'Lesson guide',
+			},
+		})
+		const markup = await render(genericAnswerPage.fields.slug, {
+			pt: 'signed-token',
+			confirmed: '1',
+		})
+		if (helpUrl === 'https://github.com/mattpocock/sandcastle') {
+			expect(markup).toContain(
+				'href="https://github.com/mattpocock/sandcastle" rel="noopener"',
+			)
+			expect(markup).toContain('Lesson guide')
+		} else expect(markup).not.toContain('Lesson guide')
+		expectNothingRecorded()
+	})
+})
 
 describe('answer link GET records nothing (mail gateways fetch links)', () => {
 	it('renders the chosen answer and a confirm button that POSTs pt and answer', async () => {
