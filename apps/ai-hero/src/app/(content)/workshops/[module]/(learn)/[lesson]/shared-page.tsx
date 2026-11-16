@@ -151,7 +151,8 @@ export async function LessonPage({
 					problem={problem}
 					moduleSlug={params.module}
 				/>
-				<div className="relative container max-w-(--breakpoint-xl) px-5 md:px-10 lg:px-14">
+				{/* Centred: the column is wider than this in cinema mode. */}
+				<div className="relative container mx-auto max-w-(--breakpoint-xl) px-5 md:px-10 lg:px-14">
 					<div className="relative z-10">
 						<article className="">
 							<LessonTitle lesson={lesson} />
