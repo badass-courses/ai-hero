@@ -29,7 +29,7 @@ export async function runProfileRestatementSweep(args: {
 			events: {
 				id: string
 				name: typeof DROVR_CONTACT_PROFILE_SYNC_EVENT
-				data: { contactId: string; reason: 'reconcile' }
+				data: { contactId: string; reason: 'restatement-due' }
 			}[],
 		): Promise<unknown>
 	}
@@ -76,7 +76,7 @@ export async function runProfileRestatementSweep(args: {
 			contactIds.slice(offset, offset + batchSize).map((contactId) => ({
 				id: `drovr-profile-restatement:${args.startedAt}:${contactId}`,
 				name: DROVR_CONTACT_PROFILE_SYNC_EVENT,
-				data: { contactId, reason: 'reconcile' },
+				data: { contactId, reason: 'restatement-due' },
 			})),
 		)
 		if (offset + batchSize < contactIds.length)

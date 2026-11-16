@@ -203,10 +203,14 @@ export function createDrizzleContactProfileRestatementStore(database: unknown) {
 			// Match valuePathLinkWindowAt's immutable first-issue windows.
 			// A rotated window changes the snapshot hash, so the child sends
 			// links as a normal new version instead of a profile-only re-state.
-			// Old fingerprints can cause extra discovery; unchanged syncs skip.
+			// Ignore window zero: live reads can create anchors after the ack.
+			// Inactive anchors still get a profile re-state to acknowledge the
+			// rotation, preventing repeated discovery until the next boundary.
 			const rotatedLinks = sql`exists (
 				select 1 from ${valuePathLinkAnchor}
 				where ${valuePathLinkAnchor.contactId} = ${contactProfileVersion.contactId}
+				and floor(greatest(0, unix_timestamp(${sqlTimestamp(args.startedAt)})
+					- unix_timestamp(${valuePathLinkAnchor.issuedAt})) / ${rotationSeconds}) >= 1
 				and unix_timestamp(${valuePathLinkAnchor.issuedAt})
 					+ floor(greatest(0, unix_timestamp(${sqlTimestamp(args.startedAt)})
 						- unix_timestamp(${valuePathLinkAnchor.issuedAt})) / ${rotationSeconds})

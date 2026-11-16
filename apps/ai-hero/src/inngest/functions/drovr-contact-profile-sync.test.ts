@@ -38,7 +38,11 @@ function harness(
 			| 'not-configured'
 		onSendingJourney?: boolean
 		hasBuyerFact?: boolean
-		reason?: 'journey-entered' | 'offer-issued' | 'reconcile'
+		reason?:
+			| 'journey-entered'
+			| 'offer-issued'
+			| 'reconcile'
+			| 'restatement-due'
 		acknowledged?: boolean
 		acknowledgedAt?: string | null
 	} = {},
@@ -65,7 +69,7 @@ function harness(
 		acknowledgedAt: overrides.acknowledgedAt ?? null,
 	}))
 	const acknowledge = vi.fn(async () => {})
-	const deliver = vi.fn(async () =>
+	const deliver = vi.fn(async (_events: DrovrShadowEvent[]) =>
 		'delivered' in overrides
 			? overrides.delivered!
 			: { accepted: 1, rejected: 0 },
@@ -471,6 +475,40 @@ describe('drovr contact profile sync function', () => {
 		expect(deliver).toHaveBeenCalledTimes(2)
 		const keys = deliver.mock.calls.map(([events]) => events[0]!.idempotencyKey)
 		expect(new Set(keys).size).toBe(2)
+	})
+
+	it('a sweep-due inactive rotation acknowledges unchanged content with a new daily key, distinct from accepted weekly keys and stable on replay', async () => {
+		const weekly = harness({
+			reason: 'reconcile',
+			acknowledged: true,
+			acknowledgedAt: new Date(now - 60 * 86400000).toISOString(),
+		})
+		await expect(weekly.run()).resolves.toMatchObject({ status: 'sent' })
+		const sweep = () =>
+			harness({
+				reason: 'restatement-due',
+				acknowledged: true,
+				// The weekly re-statement was already accepted this same day.
+				acknowledgedAt: new Date(now).toISOString(),
+			})
+		const first = sweep()
+		const replay = sweep()
+		for (const h of [first, replay]) {
+			await expect(h.run()).resolves.toMatchObject({
+				status: 'sent',
+				profileVersion: 4,
+				links: 0,
+				offers: 0,
+			})
+			expect(h.acknowledge).toHaveBeenCalledWith('contact-1', 4)
+			expect(h.deliver.mock.calls[0]![0]).toHaveLength(1)
+		}
+		const weeklyKey = weekly.deliver.mock.calls[0]![0][0]!.idempotencyKey
+		const sweepKey = first.deliver.mock.calls[0]![0][0]!.idempotencyKey
+		expect(weeklyKey).toMatch(/:r\d+$/)
+		expect(sweepKey).toMatch(/:s\d+$/)
+		expect(sweepKey).not.toBe(weeklyKey)
+		expect(replay.deliver.mock.calls[0]![0][0]!.idempotencyKey).toBe(sweepKey)
 	})
 
 	it('a rejected re-statement does not advance acknowledgement time', async () => {

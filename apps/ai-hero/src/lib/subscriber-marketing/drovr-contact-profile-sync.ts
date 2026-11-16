@@ -507,18 +507,21 @@ export async function runContactProfileSync(args: {
 		(await args.step.run('profile-version', () =>
 			args.versionFor(contactId, contactProfileContentHash(snapshot)),
 		)) as ContactProfileVersion
-	// Skip acknowledged content unless reconcile owes a 60-day re-statement.
+	// Reconcile owes a 60-day re-statement; sweep discovery can also owe
+	// an inactive-link rotation. Both must acknowledge a profile delivery.
 	// drovr's 90-day backstop needs a fresh occurredAt for its laterOf fold;
 	// a new profile key gets past ingress dedupe. Links/offers need neither.
 	let restatedAt: number | undefined
 	const weekMs = 7 * 24 * 60 * 60 * 1000
+	const sweepDue = args.event.data.reason === 'restatement-due'
 	if (acknowledged) {
-		if (args.event.data.reason !== 'reconcile')
+		if (args.event.data.reason !== 'reconcile' && !sweepDue)
 			return { status: 'skipped', reason: 'unchanged' }
 		const at = (await args.step.run('profile-restatement-at', async () =>
 			(args.now ?? Date.now)(),
 		)) as number
 		if (
+			!sweepDue &&
 			acknowledgedAt &&
 			at - Date.parse(acknowledgedAt) < PROFILE_RESTATEMENT_AGE_MS
 		)
@@ -534,9 +537,12 @@ export async function runContactProfileSync(args: {
 			restatedAt !== undefined ? new Date(restatedAt).toISOString() : since,
 	})
 	if (restatedAt !== undefined) {
-		// Keep epoch-week keys replay-safe across the cadence change. Due
-		// re-statements are at least 60 days apart, so cannot share a week.
-		events[0]!.idempotencyKey += `:r${Math.floor(restatedAt / weekMs)}`
+		// A rotation can follow an accepted weekly re-state inside that week.
+		// Sweep days use a distinct namespace; same-day replays still dedupe.
+		// Ordinary reconcile keeps its existing epoch-week keys.
+		events[0]!.idempotencyKey += sweepDue
+			? `:s${Math.floor(restatedAt / 86400000)}`
+			: `:r${Math.floor(restatedAt / weekMs)}`
 	}
 	const delivered = (await args.step.run('deliver-profile', () =>
 		args.deliver(events),

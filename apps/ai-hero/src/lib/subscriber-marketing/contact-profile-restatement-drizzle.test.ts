@@ -1,9 +1,16 @@
 import { createRequire } from 'node:module'
 import { drizzle } from 'drizzle-orm/mysql-proxy'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { createDrizzleContactProfileRestatementStore } from './contact-profile-version-drizzle'
 import { valuePathLinkWindowAt } from './value-path-link-anchor'
+import { createMemoryContactProfileVersionStore } from './contact-profile-version'
+import {
+	contactProfileContentHash,
+	runContactProfileSync,
+	type ContactProfileSnapshot,
+} from './drovr-contact-profile-sync'
+import type { DrovrShadowEvent } from './drovr-shadow-emitter'
 
 // Load the Node builtin directly; this Vitest version predates node:sqlite.
 const { DatabaseSync } = createRequire(import.meta.url)(
@@ -86,6 +93,8 @@ describe('profile re-statement selection', () => {
 				'2026-10-03 12:00:00.000',
 				'2026-10-10 12:00:00.000',
 				90 * 86400,
+				'2026-10-10 12:00:00.000',
+				90 * 86400,
 				90 * 86400,
 				2,
 			])
@@ -138,6 +147,81 @@ describe('profile re-statement selection', () => {
 				.prepare('UPDATE AI_ContactProfileVersion SET acknowledgedAt = ?')
 				.run(sqlTime(window.issuedAt))
 			await expect(f.store.listDue(atDay(91))).resolves.toEqual([])
+		} finally {
+			f.sqlite.close()
+		}
+	})
+
+	it('does not select a new anchor first issued after acknowledgement before its first rotation', async () => {
+		const f = fixture()
+		try {
+			f.insert.run('quiet', 1, 1, sqlTime(day(60)))
+			f.anchor.run('quiet', sqlTime(day(70)))
+			await expect(f.store.listDue(atDay(89))).resolves.toEqual([])
+			await expect(f.store.listDue(atDay(91))).resolves.toEqual([])
+		} finally {
+			f.sqlite.close()
+		}
+	})
+
+	it('acknowledges an inactive anchor rotation with one profile-only re-statement and excludes it on the next lap', async () => {
+		const f = fixture()
+		let clock = day(60)
+		const versions = createMemoryContactProfileVersionStore({
+			now: () => clock,
+		})
+		const snapshot: ContactProfileSnapshot = {
+			occurredAt: firstIssue,
+			profile: { email: 'inactive@example.test', firstName: null, holds: [] },
+			links: [],
+			offers: [],
+		}
+		try {
+			f.insert.run('quiet', 1, 1, sqlTime(clock))
+			f.anchor.run('quiet', sqlTime(firstIssue))
+			await versions.versionFor('quiet', contactProfileContentHash(snapshot))
+			await versions.acknowledge('quiet', 1)
+			clock = day(91)
+			await expect(f.store.listDue(atDay(91))).resolves.toEqual(['quiet'])
+			const deliver = vi.fn(async (_events: DrovrShadowEvent[]) => ({
+				accepted: 1,
+				rejected: 0,
+			}))
+			await expect(
+				runContactProfileSync({
+					event: { data: { contactId: 'quiet', reason: 'restatement-due' } },
+					step: {
+						run: async (_id, cb) => cb(),
+						sendEvent: async () => undefined,
+					},
+					env: { AIH_DROVR_PROFILE_SYNC: 'true' },
+					readSnapshot: async () => snapshot,
+					versionFor: versions.versionFor,
+					acknowledge: async (id, version) => {
+						await versions.acknowledge(id, version)
+						f.sqlite
+							.prepare(
+								'UPDATE AI_ContactProfileVersion SET acknowledgedAt = ? WHERE contactId = ?',
+							)
+							.run(sqlTime(clock), id)
+					},
+					deliver,
+					ownedPath: async () => undefined,
+					onSendingJourney: async () => true,
+					birth: async () => undefined,
+					now: () => Date.parse(clock),
+				}),
+			).resolves.toMatchObject({
+				status: 'sent',
+				profileVersion: 1,
+				links: 0,
+				offers: 0,
+			})
+			expect(deliver).toHaveBeenCalledOnce()
+			expect(deliver.mock.calls[0]![0]).toHaveLength(1)
+			expect(deliver.mock.calls[0]![0][0]!.type).toBe('contact.profile.updated')
+			await expect(f.store.listDue(atDay(91))).resolves.toEqual([])
+			await expect(f.store.listDue(atDay(92))).resolves.toEqual([])
 		} finally {
 			f.sqlite.close()
 		}

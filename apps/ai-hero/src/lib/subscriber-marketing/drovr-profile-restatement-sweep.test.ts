@@ -83,7 +83,7 @@ describe('daily profile re-statement sweep', () => {
 		expect(h.sent[0]![0]).toEqual({
 			id: `drovr-profile-restatement:${startedAt}:contact-0`,
 			name: DROVR_CONTACT_PROFILE_SYNC_EVENT,
-			data: { contactId: 'contact-0', reason: 'reconcile' },
+			data: { contactId: 'contact-0', reason: 'restatement-due' },
 		})
 	})
 
@@ -207,7 +207,7 @@ describe('daily profile re-statement sweep', () => {
 			expect.objectContaining({
 				type: 'contact.profile.updated',
 				occurredAt: startedAt,
-				idempotencyKey: expect.stringMatching(/^profile:quiet-contact:1:r\d+$/),
+				idempotencyKey: expect.stringMatching(/^profile:quiet-contact:1:s\d+$/),
 			}),
 		])
 	})
