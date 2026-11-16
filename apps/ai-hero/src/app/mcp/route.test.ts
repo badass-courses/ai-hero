@@ -1,6 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ portsFor: vi.fn(), resolveBearer: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+	portsFor: vi.fn(),
+	resolveBearer: vi.fn(),
+	stage: vi.fn(),
+}))
+
+vi.mock('@/lib/learner-agent/retirement.server', () => ({
+	readLearnerAgentStage: mocks.stage,
+}))
 
 vi.mock('@/lib/learner-agent/ports', () => ({
 	learnerAgentPortsFor: mocks.portsFor,
@@ -51,6 +59,7 @@ const call = (name: string, args: unknown = {}) => ({
 
 beforeEach(() => {
 	vi.clearAllMocks()
+	mocks.stage.mockResolvedValue('active')
 	mocks.resolveBearer.mockResolvedValue({ kind: 'anonymous' })
 	mocks.portsFor.mockImplementation(async (_request, learner) => ({
 		...ports,
@@ -131,5 +140,64 @@ describe('/mcp', () => {
 
 	it('refuses GET: there is no server-to-client stream', async () => {
 		expect((await GET()).status).toBe(405)
+	})
+})
+
+describe('/mcp retirement', () => {
+	it('retired: answers a tool call with the message and lesson link, before any token check', async () => {
+		mocks.stage.mockResolvedValue('retired')
+		mocks.resolveBearer.mockResolvedValue({ kind: 'invalid' })
+		const response = await rpc(
+			call('read_lesson', { workshop: 'feedback-loops', lesson: 'intro' }),
+			'Bearer revoked-token',
+		)
+		expect(response.status).toBe(200)
+		const body = await response.json()
+		expect(body.id).toBe(1)
+		expect(body.result.isError).toBe(true)
+		expect(body.result.content[0].text).toContain('retired')
+		expect(body.result.content[0].text).toContain(
+			'/workshops/feedback-loops/intro',
+		)
+		expect(mocks.resolveBearer).not.toHaveBeenCalled()
+	})
+
+	it('retired: still answers tools/list, so the client keeps working', async () => {
+		mocks.stage.mockResolvedValue('retired')
+		const response = await rpc({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
+		expect(response.status).toBe(200)
+		const body = await response.json()
+		expect(Array.isArray(body.result.tools)).toBe(true)
+	})
+
+	it('retired: a batch keeps both answers, in one response', async () => {
+		mocks.stage.mockResolvedValue('retired')
+		const response = await rpc([
+			{ jsonrpc: '2.0', id: 1, method: 'tools/list' },
+			{ ...call('my_courses'), id: 2 },
+		])
+		const body = await response.json()
+		expect(Array.isArray(body)).toBe(true)
+		expect(body.map((m: { id: number }) => m.id).sort()).toEqual([1, 2])
+		expect(body.find((m: { id: number }) => m.id === 2).result.isError).toBe(
+			true,
+		)
+	})
+
+	it('notice: the live result carries the notice as a last content item', async () => {
+		mocks.stage.mockResolvedValue('notice')
+		const response = await rpc(call('search_course', { query: 'tdd' }))
+		expect(response.status).toBe(200)
+		const body = await response.json()
+		const texts = body.result.content.map((c: { text: string }) => c.text)
+		expect(texts.at(-1)).toContain('retiring this connection')
+		expect(texts.length).toBeGreaterThan(1)
+	})
+
+	it('active: results carry no notice', async () => {
+		const response = await rpc(call('search_course', { query: 'tdd' }))
+		const body = await response.json()
+		const texts = body.result.content.map((c: { text: string }) => c.text)
+		expect(texts.join(' ')).not.toContain('retiring this connection')
 	})
 })

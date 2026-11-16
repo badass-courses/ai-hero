@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-const mocks = vi.hoisted(() => ({ values: vi.fn(), find: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+	values: vi.fn(),
+	find: vi.fn(),
+	stage: vi.fn(),
+}))
+vi.mock('@/lib/learner-agent/retirement.server', () => ({
+	readLearnerAgentStage: mocks.stage,
+}))
 vi.mock('@/db', () => ({
 	db: {
 		insert: () => ({ values: mocks.values }),
@@ -20,6 +27,7 @@ const start = (fields?: Record<string, string>) =>
 	)
 beforeEach(() => {
 	vi.clearAllMocks()
+	mocks.stage.mockResolvedValue('active')
 	mocks.find.mockImplementation(async () => mocks.values.mock.calls[0]?.[0])
 })
 describe('device authorization', () => {
@@ -53,4 +61,24 @@ describe('device authorization', () => {
 			expect(mocks.values).not.toHaveBeenCalled()
 		},
 	)
+	it.each(['notice', 'retired'])(
+		'%s: refuses a new learner sign-in with a clear reason',
+		async (stage) => {
+			mocks.stage.mockResolvedValue(stage)
+			const response = await start({ scope: 'learner:read' })
+			expect(response.status).toBe(403)
+			const body = await response.json()
+			expect(body.error).toBe('access_denied')
+			expect(body.error_description).toContain('new connections are closed')
+			expect(mocks.values).not.toHaveBeenCalled()
+		},
+	)
+	it('retired: the admin CLI device flow still works', async () => {
+		mocks.stage.mockResolvedValue('retired')
+		const response = await start({
+			client_id: 'aihero-cli',
+			scope: 'admin:all',
+		})
+		expect(response.status).toBe(200)
+	})
 })

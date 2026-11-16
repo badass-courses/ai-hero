@@ -7,6 +7,8 @@ export const C5_PRICING_ENABLED = 'c5-pricing-enabled'
 export const SUBSCRIBE_BOT_SHADOW = 'subscribe-bot-shadow'
 export const SUBSCRIBE_BOT_ENFORCE = 'subscribe-bot-enforce'
 export const PURCHASE_EXIT_PROOF = 'purchase-exit-proof'
+export const LEARNER_AGENT_NOTICE = 'learner-agent-notice'
+export const LEARNER_AGENT_RETIRED = 'learner-agent-retired'
 
 export type FlagConfig = {
 	key: string
@@ -22,9 +24,43 @@ export const FLAGS: Record<
 	| typeof C5_PRICING_ENABLED
 	| typeof SUBSCRIBE_BOT_SHADOW
 	| typeof SUBSCRIBE_BOT_ENFORCE
-	| typeof PURCHASE_EXIT_PROOF,
+	| typeof PURCHASE_EXIT_PROOF
+	| typeof LEARNER_AGENT_NOTICE
+	| typeof LEARNER_AGENT_RETIRED,
 	FlagConfig
 > = {
+	[LEARNER_AGENT_NOTICE]: {
+		key: LEARNER_AGENT_NOTICE,
+		name: 'Learner agent retirement notice',
+		description:
+			'Every learner MCP and /api/learner result carries the retirement notice, and new learner sign-ins (OAuth, device flow, learner tokens) are refused. Existing connections keep working.',
+		defaultValue: {
+			production: false,
+			preview: false,
+			development: false,
+			test: false,
+		},
+		options: [
+			{ value: false, label: 'Off' },
+			{ value: true, label: 'Notice' },
+		],
+	},
+	[LEARNER_AGENT_RETIRED]: {
+		key: LEARNER_AGENT_RETIRED,
+		name: 'Learner agent retired',
+		description:
+			'Every learner tool call answers that the connection is retired, with a link to read the lesson on the site. Takes precedence over the notice. Admin and analytics tokens are unaffected.',
+		defaultValue: {
+			production: false,
+			preview: false,
+			development: false,
+			test: false,
+		},
+		options: [
+			{ value: false, label: 'Live' },
+			{ value: true, label: 'Retired' },
+		],
+	},
 	[SUBSCRIBE_BOT_SHADOW]: {
 		key: SUBSCRIBE_BOT_SHADOW,
 		name: 'Subscribe bot shadow',

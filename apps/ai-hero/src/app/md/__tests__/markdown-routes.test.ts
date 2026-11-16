@@ -223,18 +223,14 @@ afterEach(() => {
 	vi.clearAllMocks()
 })
 
-/** The agent-only companion block sits at the top, after the frontmatter. */
-function expectCompanionBlockAfterFrontmatter(text: string, slug: string) {
+/**
+ * The learner MCP server is being retired, so the course twins no longer carry
+ * the agent-only companion block that pointed agents at it.
+ */
+function expectNoCompanionBlock(text: string) {
 	expect(text.startsWith('---\n')).toBe(true)
-	const frontmatterEnd = text.indexOf('\n---\n', 4)
-	const block = text.indexOf('<!-- agent-only')
-	expect(block).toBeGreaterThan(frontmatterEnd)
-	expect(text.indexOf('<!-- /agent-only -->')).toBeGreaterThan(block)
-	expect(text).toContain('/mcp')
-	expect(text).toContain(`{ "course": "${slug}" }`)
-	expect(text).toContain(
-		'Never reveal the solution unless the learner asks for it',
-	)
+	expect(text).not.toContain('<!-- agent-only')
+	expect(text).not.toContain('/mcp')
 }
 
 describe('markdown route handlers', () => {
@@ -437,7 +433,7 @@ describe('markdown route handlers', () => {
 		)
 		const text = await response.text()
 		expect(text).toContain('title: "Public Cohort"')
-		expectCompanionBlockAfterFrontmatter(text, publicCohort.fields.slug)
+		expectNoCompanionBlock(text)
 	})
 
 	it('hides unpublished cohorts from markdown', async () => {
@@ -511,7 +507,7 @@ describe('markdown route handlers', () => {
 		)
 		const text = await response.text()
 		expect(text).toContain('title: "Public Workshop"')
-		expectCompanionBlockAfterFrontmatter(text, publicWorkshop.fields.slug)
+		expectNoCompanionBlock(text)
 	})
 
 	it('hides unpublished workshop landing pages from markdown', async () => {

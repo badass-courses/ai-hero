@@ -9,6 +9,11 @@ import {
 	learnerTokenId,
 } from '@/lib/learner-agent/identity'
 import { clientNamesFor } from '@/lib/learner-agent/oauth/client-name'
+import {
+	learnerSignInOpen,
+	RETIREMENT_COPY,
+} from '@/lib/learner-agent/retirement'
+import { readLearnerAgentStage } from '@/lib/learner-agent/retirement.server'
 import { learnerSiteUrls } from '@/lib/learner-agent/site'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
@@ -37,6 +42,8 @@ const unauthorized = () =>
 export async function POST() {
 	const userId = await signedInUserId()
 	if (!userId) return unauthorized()
+	if (!learnerSignInOpen(await readLearnerAgentStage()))
+		return respond({ ok: false, error: RETIREMENT_COPY.signInClosed }, 403)
 
 	const token = randomUUID()
 	const expiresAt = new Date(Date.now() + LEARNER_TOKEN_TTL_MS)
