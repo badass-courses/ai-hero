@@ -19,7 +19,12 @@ const LessonLayout = async (props: { children: React.ReactNode }) => {
 
 	return (
 		<LessonRouteSessionProvider session={session as Session | null}>
-			<LayoutClient withContainer>
+			{/* Uncapped while a viewer has hidden the session panel beside the
+			    player (`LessonPlayerHost` sets the attribute). */}
+			<LayoutClient
+				withContainer
+				className="[html[data-lesson-cinema]_&]:max-w-none"
+			>
 				<div className="flex min-w-0">
 					<WorkshopResourceList className="hidden lg:block" />
 					<LessonsSheet />

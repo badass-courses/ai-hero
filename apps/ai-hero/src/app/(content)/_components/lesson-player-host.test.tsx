@@ -543,6 +543,20 @@ describe('LessonPlayerHost', () => {
 			expect(window.localStorage.getItem('aih.session-panel-hidden')).toBeNull()
 		})
 
+		it('lifts the page-width cap only while the panel is hidden', async () => {
+			const cinema = () => 'lessonCinema' in document.documentElement.dataset
+			await render(withSession('a'))
+			expect(cinema()).toBe(false)
+			await click(panel()!.querySelector('button'))
+			expect(cinema()).toBe(true)
+			await render(video('b'))
+			expect(cinema()).toBe(false)
+			await render(withSession('c'))
+			expect(cinema()).toBe(true)
+			await click(showButton())
+			expect(cinema()).toBe(false)
+		})
+
 		it('remembers the choice across lessons and page loads', async () => {
 			window.localStorage.setItem('aih.session-panel-hidden', '1')
 			await render(withSession('a'))
