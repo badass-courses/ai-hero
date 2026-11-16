@@ -10,6 +10,11 @@ import {
 } from '@/lib/learner-agent/oauth/metadata'
 import { oauthRateLimit } from '@/lib/learner-agent/oauth/rate-limit'
 import { requestIp } from '@/lib/learner-agent/rate-limit'
+import {
+	learnerSignInOpen,
+	RETIREMENT_COPY,
+} from '@/lib/learner-agent/retirement'
+import { readLearnerAgentStage } from '@/lib/learner-agent/retirement.server'
 import { nowSeconds } from '@/lib/learner-agent/oauth/sealed'
 import { log } from '@/server/logger'
 import { customAlphabet } from 'nanoid'
@@ -33,6 +38,12 @@ async function jsonBody(request: Request) {
  */
 export async function POST(request: Request) {
 	const body = await jsonBody(request)
+	if (
+		body &&
+		'redirect_uris' in body &&
+		!learnerSignInOpen(await readLearnerAgentStage())
+	)
+		return oauthError('access_denied', RETIREMENT_COPY.signInClosed, 403)
 	if (!body || !('redirect_uris' in body)) {
 		return NextResponse.json(
 			{

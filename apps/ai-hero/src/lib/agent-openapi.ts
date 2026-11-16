@@ -1,7 +1,5 @@
 import { z, type ZodTypeAny } from 'zod'
 
-import { learnerOpenApi } from '@ai-hero/learner-agent'
-
 import {
 	EditorResourceListResponseSchema,
 	EditorResourceMutationRequestSchema,
@@ -398,7 +396,8 @@ const contentPaths = {
 		post: contentOperation({
 			operationId: 'attachProductResource',
 			summary: 'Attach a resource to a product',
-			description: 'Attach an existing resource at the end of the product list. Re-attaching an active relation returns its existing position; a soft-deleted relation is restored. Multiple resources per product are allowed.',
+			description:
+				'Attach an existing resource at the end of the product list. Re-attaching an active relation returns its existing position; a soft-deleted relation is restored. Multiple resources per product are allowed.',
 			access: 'device-token',
 			requiredAbility: 'update Content',
 			requestSchema: 'ProductResourceAttachRequest',
@@ -526,7 +525,12 @@ const contentPaths = {
 			requiredScopes: ['content:relations'],
 			scopeRequirements: 'PAT: content:relations is required.',
 			parameters: [
-				queryParameter('resourceId', 'The resource to remove.', undefined, true),
+				queryParameter(
+					'resourceId',
+					'The resource to remove.',
+					undefined,
+					true,
+				),
 				queryParameter(
 					'parentId',
 					'Placement selector: the section id (or the list id) to remove from.',
@@ -1301,11 +1305,8 @@ function buildComponentSchemas(): Record<string, any> {
 
 export function buildAgentOpenApiDocument(baseUrl: string) {
 	const normalizedBaseUrl = baseUrl.replace(/\/$/, '')
-	// Derived from the learner capability contracts, the same schemas /mcp uses.
-	const learner = learnerOpenApi({
-		basePath: '/api/learner',
-		componentPrefix: 'Learner',
-	})
+	// The learner capabilities (/api/learner/*, /mcp) are being retired, so the
+	// contract no longer advertises them.
 
 	return {
 		openapi: '3.1.0',
@@ -1330,11 +1331,6 @@ export function buildAgentOpenApiDocument(baseUrl: string) {
 					'Public reads, PAT-backed reads and narrow writes, and role-derived device-token operations.',
 			},
 			{
-				name: 'learner',
-				description:
-					'An enrolled learner’s own agent: owned courses, outlines, lessons, session extracts, search and office hours. The same tools are served over MCP at /mcp. Guide: /api/learner.',
-			},
-			{
 				name: 'Resource editor',
 				description:
 					'Resource-bound collaborator operations authorized by an active editor contribution and an active AI Hero DeviceAccessToken. Existing analytics-issued DeviceAccessToken values are valid while active.',
@@ -1344,7 +1340,6 @@ export function buildAgentOpenApiDocument(baseUrl: string) {
 			...contentPaths,
 			...editorResourcePaths,
 			...personalAccessTokenPaths,
-			...learner.paths,
 		},
 		components: {
 			securitySchemes: {
@@ -1357,7 +1352,6 @@ export function buildAgentOpenApiDocument(baseUrl: string) {
 			},
 			schemas: {
 				...buildComponentSchemas(),
-				...learner.components.schemas,
 			},
 		},
 	}

@@ -6,6 +6,8 @@ import { mintConsentTicket } from '@/lib/learner-agent/oauth/codes'
 import { learnerOAuthUrls } from '@/lib/learner-agent/oauth/metadata'
 import { oauthRateLimit } from '@/lib/learner-agent/oauth/rate-limit'
 import { requestIp } from '@/lib/learner-agent/rate-limit'
+import { learnerSignInOpen } from '@/lib/learner-agent/retirement'
+import { readLearnerAgentStage } from '@/lib/learner-agent/retirement.server'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 
@@ -28,6 +30,9 @@ export async function GET(request: Request) {
 	const url = new URL(request.url)
 	const showError = (reason: string) =>
 		redirectTo(`${urls.consent}?error=${encodeURIComponent(reason)}`)
+
+	if (!learnerSignInOpen(await readLearnerAgentStage()))
+		return showError('retired')
 
 	if (!(await oauthRateLimit('authorize', requestIp(request))))
 		return showError('rate_limited')

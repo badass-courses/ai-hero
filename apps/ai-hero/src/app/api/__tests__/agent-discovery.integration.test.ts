@@ -273,44 +273,36 @@ describe('AI Hero discovery surfaces', () => {
 		).toEqual({ $ref: '#/components/schemas/PersonalAccessToken' })
 	})
 
-	it('GET /api/openapi.json carries the learner capabilities from their contracts', async () => {
+	// The learner MCP server is being retired: no discovery surface points new
+	// agents at it. Connected clients still reach /mcp and /api/learner directly.
+	it('GET /api/openapi.json no longer advertises the learner capabilities', async () => {
 		const document = await (await getOpenApi()).json()
-		// The learner capabilities project in from @ai-hero/learner-agent: POST
-		// for each, GET as well for the read-only ones.
-		const learnerPaths = Object.keys(document.paths).filter((path) =>
-			path.startsWith('/api/learner/'),
-		)
-		expect(learnerPaths).toEqual([
-			'/api/learner/my_courses',
-			'/api/learner/course_outline',
-			'/api/learner/read_lesson',
-			'/api/learner/session_extract',
-			'/api/learner/session_moments',
-			'/api/learner/skill_usage',
-			'/api/learner/search_course',
-			'/api/learner/office_hours',
-		])
-		expect(document.components.schemas.LearnerNotYetOpenEncoded).toBeDefined()
+		expect(
+			Object.keys(document.paths).filter((path) =>
+				path.startsWith('/api/learner'),
+			),
+		).toEqual([])
+		expect(document.components.schemas.LearnerNotYetOpenEncoded).toBeUndefined()
+		expect(
+			document.tags.map((tag: { name: string }) => tag.name),
+		).not.toContain('learner')
 	})
 
-	it('points learners’ agents at /mcp from llms.txt and /api', async () => {
+	it('no longer points agents at /mcp from llms.txt, /api or the homepage', async () => {
 		const llms = await (await getLlmsTxt()).text()
-		expect(llms).toContain('http://localhost:3000/mcp')
-		expect(llms).toContain('http://localhost:3000/api/learner')
-		expect(llms).toContain('scope=learner:read')
-		expect(llms).toContain(
-			'http://localhost:3000/.well-known/oauth-protected-resource/mcp',
-		)
+		expect(llms).not.toContain('http://localhost:3000/mcp')
+		expect(llms).not.toContain('http://localhost:3000/api/learner')
+		expect(llms).not.toContain('scope=learner:read')
+		expect(llms).not.toContain('oauth-protected-resource/mcp')
 
 		const discovery = await (await getApiDiscovery()).json()
-		expect(discovery.learnerAgent).toMatchObject({
-			mcp: 'http://localhost:3000/mcp',
-			guide: 'http://localhost:3000/api/learner',
-			oauthProtectedResource:
-				'http://localhost:3000/.well-known/oauth-protected-resource/mcp',
-			tools: expect.arrayContaining(['my_courses', 'read_lesson']),
-		})
-		expect(discovery.discovery.mcp).toBe('/mcp')
+		expect(discovery.learnerAgent).toBeUndefined()
+		expect(discovery.discovery.mcp).toBeUndefined()
+		expect(discovery.discovery.learnerGuide).toBeUndefined()
+
+		const home = await (await getHomepageMarkdown()).text()
+		expect(home).not.toContain('/mcp')
+		expect(home).not.toContain('/api/learner')
 	})
 
 	it('GET /.well-known/api-catalog returns the standard API linkset', async () => {
@@ -341,25 +333,6 @@ describe('AI Hero discovery surfaces', () => {
 						{
 							href: 'http://localhost:3000/llms.txt',
 							type: 'text/plain',
-						},
-						{
-							href: 'http://localhost:3000/api/learner',
-							type: 'text/markdown',
-						},
-					],
-				},
-				{
-					anchor: 'http://localhost:3000/mcp',
-					'service-doc': [
-						{
-							href: 'http://localhost:3000/api/learner',
-							type: 'text/markdown',
-						},
-					],
-					'service-meta': [
-						{
-							href: 'http://localhost:3000/.well-known/oauth-protected-resource/mcp',
-							type: 'application/json',
 						},
 					],
 				},

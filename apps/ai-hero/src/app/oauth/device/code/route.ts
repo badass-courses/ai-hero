@@ -7,13 +7,25 @@ import {
 	mintDeviceCode,
 	requestedDeviceGrant,
 } from '@/server/device-token-grant'
+import { LEARNER_READ_SCOPE } from '@/lib/learner-agent/identity'
 import { oauthError } from '@/lib/learner-agent/oauth/metadata'
+import {
+	learnerSignInOpen,
+	RETIREMENT_COPY,
+} from '@/lib/learner-agent/retirement'
+import { readLearnerAgentStage } from '@/lib/learner-agent/retirement.server'
 
 export async function POST(request: Request) {
 	const form = await request.formData().catch(() => null)
 	const grant = requestedDeviceGrant(form?.get('client_id'), form?.get('scope'))
 	if (!grant)
 		return oauthError('invalid_scope', 'This client cannot request that scope.')
+	// Only learner sign-ins close; the admin CLI's device flow is unaffected.
+	if (
+		grant.scope === LEARNER_READ_SCOPE &&
+		!learnerSignInOpen(await readLearnerAgentStage())
+	)
+		return oauthError('access_denied', RETIREMENT_COPY.signInClosed, 403)
 	const TEN_MINUTES_IN_MILLISECONDS = 60 * 10 * 1000
 	const expires = new Date(Date.now() + TEN_MINUTES_IN_MILLISECONDS + 10000)
 

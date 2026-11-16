@@ -27,6 +27,8 @@ const ERROR_MESSAGES: Record<string, string> = {
 		'You’re signed in to a different AI Hero account than the one that started this sign-in. Go back to your app and connect again.',
 	rate_limited: 'Too many sign-in attempts. Wait a minute, then try again.',
 	unavailable: 'Sign-in is unavailable right now. Try again in a few minutes.',
+	retired:
+		'AI Hero is retiring its connection for coding agents, so new connections are closed. Your course access hasn’t changed; read your lessons on aihero.dev.',
 }
 
 export const consentErrorMessage = (reason: string) =>

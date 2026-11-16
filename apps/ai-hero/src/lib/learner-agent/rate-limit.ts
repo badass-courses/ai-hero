@@ -3,6 +3,8 @@ import { env } from '@/env.mjs'
 import { log } from '@/server/logger'
 import { redis } from '@/server/redis-client'
 
+import { recordLearnerAgentUsage } from './usage'
+
 import type { RateLimitPort } from '@ai-hero/learner-agent'
 
 /**
@@ -49,6 +51,9 @@ export function makeRateLimitPort(request: Request): RateLimitPort {
 		consume: async ({ userId, capability }) => {
 			const key = userId ? `user:${userId}` : `ip:${requestIp(request)}`
 			const limit = userId ? 120 : 30
+			// Every capability call passes here once: count it per learner.
+			if (env.NODE_ENV !== 'development')
+				void recordLearnerAgentUsage({ userId, capability })
 			try {
 				const verdict =
 					env.NODE_ENV === 'development'

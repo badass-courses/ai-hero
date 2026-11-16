@@ -1,9 +1,4 @@
 import { getCachedCohort } from '@/lib/cohorts-query'
-import {
-	buildCompanionBlock,
-	withCompanionBlock,
-} from '@/lib/learner-agent/guide'
-import { learnerSiteUrls } from '@/lib/learner-agent/site'
 import { serializeToMarkdown } from '@/lib/markdown-serializer'
 
 import {
@@ -23,11 +18,6 @@ export async function GET(
 		return markdownNotFoundResponse()
 	}
 
-	const companion = buildCompanionBlock(learnerSiteUrls(), {
-		title: cohort.fields.title,
-		slug: cohort.fields.slug,
-	})
-	const markdown = withCompanionBlock(serializeToMarkdown(cohort), companion)
-
-	return createMarkdownResponse(markdown)
+	// No agent companion block: the learner MCP server is being retired.
+	return createMarkdownResponse(serializeToMarkdown(cohort))
 }
