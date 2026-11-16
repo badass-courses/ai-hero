@@ -86,23 +86,35 @@ export async function payHostedCheckout(url, state, { until, cookies = [], waitF
       throw new Error('Stripe test checkout field not found; inspect private screenshot')
     }
     try {
-      // Newer hosted pages hide the card form behind a payment-method accordion. Its button
-      // is 0x0 with a CSS click area, so dispatch the click to the React handler directly.
+      // Hosted Checkout now renders its form inside an Elements iframe, and newer pages hide
+      // the card form behind a payment-method accordion. Search every frame for old and new markup.
+      const inFrames = async selector => {
+        for (const frame of page.frames()) {
+          const node = frame.locator(selector).first()
+          if (await node.count()) return node
+        }
+        return null
+      }
       await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {})
-      const cardChoice = page.locator('[data-testid="card-accordion-item-button"]').first()
-      if (await cardChoice.count()) await cardChoice.dispatchEvent('click')
-      await fill('[name="cardNumber"], [name="cardnumber"]', testCard === 'dispute' ? '4000000000000259' : '4242424242424242')
-      await fill('[name="cardExpiry"], [name="exp-date"]', '1230')
+      // The older accordion button is 0x0 with a CSS click area, so dispatch to its React handler.
+      const legacyCard = await inFrames('[data-testid="card-accordion-item-button"]')
+      if (legacyCard) await legacyCard.dispatchEvent('click')
+      else {
+        const cardRow = await inFrames('[data-testid="payment-accordion-wrapper"] [role="button"]:has-text("Card")')
+        if (cardRow) await cardRow.click()
+      }
+      await fill('[name="cardNumber"], [name="cardnumber"], [name="number"]', testCard === 'dispute' ? '4000000000000259' : '4242424242424242')
+      await fill('[name="cardExpiry"], [name="exp-date"], [name="expiry"]', '1230')
       await fill('[name="cardCvc"], [name="cvc"]', '123')
-      const name = page.locator('[name="billingName"]').first()
-      if (await name.count()) await name.fill('Rig Test Buyer')
-      const zip = page.locator('[name="billingPostalCode"], [name="postal"]').first()
-      if (await zip.count()) await zip.fill('94107')
+      const name = await inFrames('[name="billingName"], #payment-nameInput')
+      if (name && await name.isVisible()) await name.fill('Rig Test Buyer')
+      const zip = await inFrames('[name="billingPostalCode"], [name="postal"], [name="postalCode"]')
+      if (zip && await zip.isVisible()) await zip.fill('94107')
       // Link's "save my information" asks for a phone number; the test buyer opts out.
-      const saveInfo = page.locator('#enableStripePass').first()
-      if (await saveInfo.count() && await saveInfo.isChecked()) await saveInfo.uncheck({ force: true })
-      const submit = page.locator('[data-testid="hosted-payment-submit-button"]').first()
-      await (await submit.count() ? submit : page.getByRole('button', { name: /pay|subscribe/i }).last()).click({ timeout: 30000 })
+      const saveInfo = await inFrames('#enableStripePass, #payment-linkOptInInput')
+      if (saveInfo && await saveInfo.isChecked()) await saveInfo.uncheck({ force: true })
+      const submit = await inFrames('[data-testid="hosted-payment-submit-button"], [data-testid="payment-form-submit-button"]')
+      await (submit ?? page.getByRole('button', { name: /pay|subscribe/i }).last()).click({ timeout: 30000 })
       if (!until) {
         await page.waitForURL(`${origin}/**`, { timeout: 90000 })
         if (destinationResponse && !await destinationResponse) throw new Error('Returned destination telemetry was not accepted')
