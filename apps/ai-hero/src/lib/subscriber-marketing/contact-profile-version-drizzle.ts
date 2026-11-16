@@ -200,6 +200,9 @@ export function createDrizzleContactProfileRestatementStore(database: unknown) {
 			if (!Number.isSafeInteger(limit) || limit < 1)
 				throw new Error('profile restatement limit must be a positive integer')
 			const rotationSeconds = VALUE_PATH_LINK_REISSUE_EVERY_DAYS * 86400
+			// A read just before rotation can be acknowledged just after it.
+			// Revisit a one-day overlap so that old snapshot cannot hide rotation.
+			const acknowledgementGraceSeconds = 86400
 			// Match valuePathLinkWindowAt's immutable first-issue windows.
 			// A rotated window changes the snapshot hash, so the child sends
 			// links as a normal new version instead of a profile-only re-state.
@@ -215,7 +218,7 @@ export function createDrizzleContactProfileRestatementStore(database: unknown) {
 					+ floor(greatest(0, unix_timestamp(${sqlTimestamp(args.startedAt)})
 						- unix_timestamp(${valuePathLinkAnchor.issuedAt})) / ${rotationSeconds})
 						* ${rotationSeconds}
-					> unix_timestamp(${contactProfileVersion.acknowledgedAt})
+					> unix_timestamp(${contactProfileVersion.acknowledgedAt}) - ${acknowledgementGraceSeconds}
 			)`
 			const rows = await db
 				.select({ contactId: contactProfileVersion.contactId })

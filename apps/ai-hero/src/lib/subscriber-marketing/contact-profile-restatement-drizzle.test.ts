@@ -96,6 +96,7 @@ describe('profile re-statement selection', () => {
 				'2026-10-10 12:00:00.000',
 				90 * 86400,
 				90 * 86400,
+				86400,
 				2,
 			])
 			expect(f.queries[0]!.sql).toContain(
@@ -140,13 +141,94 @@ describe('profile re-statement selection', () => {
 			await expect(f.store.listDue(atDay(89))).resolves.toEqual([])
 			await expect(f.store.listDue(atDay(90))).resolves.toEqual(['quiet'])
 			await expect(f.store.listDue(atDay(91))).resolves.toEqual(['quiet'])
-			// The resolver and SQL agree: acknowledging this window stops discovery.
+			// An acknowledgement at rotation can still represent an old snapshot.
+			// The one-day overlap keeps it due until a later read is acknowledged.
 			const window = valuePathLinkWindowAt(firstIssue, day(91))
 			expect(window.issuedAt).toBe(day(90))
 			f.sqlite
 				.prepare('UPDATE AI_ContactProfileVersion SET acknowledgedAt = ?')
 				.run(sqlTime(window.issuedAt))
+			await expect(f.store.listDue(atDay(91))).resolves.toEqual(['quiet'])
+			f.sqlite
+				.prepare('UPDATE AI_ContactProfileVersion SET acknowledgedAt = ?')
+				.run(sqlTime(day(91)))
 			await expect(f.store.listDue(atDay(91))).resolves.toEqual([])
+		} finally {
+			f.sqlite.close()
+		}
+	})
+
+	it('rediscovers a pre-rotation snapshot acknowledged after rotation, sends rotated links, then clears discovery', async () => {
+		const f = fixture()
+		const readAt = day(90 - 1 / 86400)
+		let clock = day(90 + 1 / 86400)
+		const versions = createMemoryContactProfileVersionStore({
+			now: () => clock,
+		})
+		const snapshotAt = (at: string): ContactProfileSnapshot => ({
+			occurredAt: at,
+			profile: { email: 'race@example.test', firstName: null, holds: [] },
+			links: [
+				{
+					...valuePathLinkWindowAt(firstIssue, at),
+					journeyId: 'value-path-skills-course',
+					emailKey: 'email-1',
+					variables: {},
+					sendTimeFields: [],
+				},
+			],
+			offers: [],
+		})
+		try {
+			const oldSnapshot = snapshotAt(readAt)
+			expect(oldSnapshot.links[0]!.issuedAt).toBe(firstIssue)
+			await versions.versionFor('race', contactProfileContentHash(oldSnapshot))
+			await versions.acknowledge('race', 1)
+			// Snapshot read one second before rotation; acknowledged one second after.
+			f.insert.run('race', 1, 1, sqlTime(clock))
+			f.anchor.run('race', sqlTime(firstIssue))
+			clock = day(91 + 1 / 86400)
+			const nextLap = { startedAt: clock, before: day(31 + 1 / 86400) }
+			await expect(f.store.listDue(nextLap)).resolves.toEqual(['race'])
+			const deliver = vi.fn(async (_events: DrovrShadowEvent[]) => ({
+				accepted: 1,
+				rejected: 0,
+			}))
+			await expect(
+				runContactProfileSync({
+					event: { data: { contactId: 'race', reason: 'restatement-due' } },
+					step: {
+						run: async (_id, cb) => cb(),
+						sendEvent: async () => undefined,
+					},
+					env: { AIH_DROVR_PROFILE_SYNC: 'true' },
+					readSnapshot: async () => snapshotAt(clock),
+					versionFor: versions.versionFor,
+					acknowledge: async (id, version) => {
+						await versions.acknowledge(id, version)
+						f.sqlite
+							.prepare(
+								'UPDATE AI_ContactProfileVersion SET acknowledgedAt = ?, profileVersion = ?, acknowledgedVersion = ? WHERE contactId = ?',
+							)
+							.run(sqlTime(clock), version, version, id)
+					},
+					deliver,
+					ownedPath: async () => 'ai-hero-skills-workflow',
+					onSendingJourney: async () => true,
+					birth: async () => undefined,
+					now: () => Date.parse(clock),
+				}),
+			).resolves.toMatchObject({ status: 'sent', profileVersion: 2, links: 1 })
+			const linkEvent = deliver.mock.calls[0]![0].find(
+				(event) => event.type === 'contact.links.issued',
+			)
+			expect(linkEvent?.payload).toMatchObject({
+				profileVersion: 2,
+				issuedAt: day(90),
+				expiresAt: day(210),
+			})
+			await expect(f.store.listDue(nextLap)).resolves.toEqual([])
+			await expect(f.store.listDue(atDay(92))).resolves.toEqual([])
 		} finally {
 			f.sqlite.close()
 		}
