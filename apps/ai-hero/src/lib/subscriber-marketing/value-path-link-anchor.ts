@@ -118,7 +118,7 @@ export async function resolveValuePathLinkAnchor(args: {
 }): Promise<ValuePathLinkAnchor | undefined> {
 	try {
 		const firstIssue = await firstValuePathLinkIssue(args)
-		return firstIssue && linkWindowAt(firstIssue.issuedAt, args.now)
+		return firstIssue && valuePathLinkWindowAt(firstIssue.issuedAt, args.now)
 	} catch (error) {
 		try {
 			await args.warn?.('value_path.link_anchor.unavailable', {
@@ -147,7 +147,10 @@ async function firstValuePathLinkIssue(args: {
 }
 
 /** The window holding `now`; a send before the first issue gets the first. */
-function linkWindowAt(firstIssuedAt: string, now: string): ValuePathLinkAnchor {
+export function valuePathLinkWindowAt(
+	firstIssuedAt: string,
+	now: string,
+): ValuePathLinkAnchor {
 	const step = VALUE_PATH_LINK_REISSUE_EVERY_DAYS * DAY_MS
 	const elapsed = Date.parse(now) - Date.parse(firstIssuedAt)
 	const windows = Math.max(0, Math.floor(elapsed / step))

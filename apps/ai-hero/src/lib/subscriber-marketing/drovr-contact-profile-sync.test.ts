@@ -10,6 +10,7 @@ import {
 	kitIdentityOf,
 	offerProfileSyncRequests,
 	readContactProfileSnapshot,
+	runContactProfileSync,
 	requestContactProfileSyncSafely,
 	type ContactProfileSnapshot,
 	CONTACT_PROFILE_HOLDS,
@@ -24,6 +25,9 @@ import {
 import type { ContactRecord, ContactState, SideEffectIntent } from './types'
 import { personalizeValuePathEmailWithAnchoredLinks } from './value-path-email-executor'
 import { createMemoryValuePathLinkAnchorStore } from './value-path-link-anchor'
+
+import { createMemoryContactProfileVersionStore } from './contact-profile-version'
+import type { DrovrShadowEvent } from './drovr-shadow-emitter'
 
 const occurredAt = '2026-09-26T17:00:00.000Z'
 
@@ -352,6 +356,73 @@ describe('contact profile sync: journey links', () => {
 			for (const key of link.sendTimeFields) rendered[key] = dueAt
 			expect(rendered).toEqual(live.fields)
 		}
+	})
+
+	it('sends rotated links as a normal version at day 91 after a profile-only day-60 re-statement', async () => {
+		const linkAnchors = createMemoryValuePathLinkAnchorStore()
+		let clock = Date.parse(occurredAt)
+		const snapshot = async (): Promise<ContactProfileSnapshot> => ({
+			occurredAt: new Date(clock).toISOString(),
+			profile: { email: 'quiet@example.test', firstName: null, holds: [] },
+			links: await buildValuePathJourneyLinks({
+				...base,
+				linkAnchors,
+				now: new Date(clock).toISOString(),
+			}),
+			offers: [],
+		})
+		const store = createMemoryContactProfileVersionStore({
+			now: () => new Date(clock).toISOString(),
+		})
+		await store.versionFor(
+			base.contactId,
+			contactProfileContentHash(await snapshot()),
+		)
+		await store.acknowledge(base.contactId, 1)
+		const deliver = vi.fn(async (_events: DrovrShadowEvent[]) => ({
+			accepted: 1,
+			rejected: 0,
+		}))
+		const run = () =>
+			runContactProfileSync({
+				event: { data: { contactId: base.contactId, reason: 'reconcile' } },
+				step: {
+					run: async (_id, callback) => callback(),
+					sendEvent: async () => undefined,
+				},
+				env: { AIH_DROVR_PROFILE_SYNC: 'true' },
+				readSnapshot: snapshot,
+				versionFor: store.versionFor,
+				acknowledge: store.acknowledge,
+				deliver,
+				ownedPath: async () => base.valuePathSlug,
+				onSendingJourney: async () => true,
+				birth: async () => undefined,
+				now: () => clock,
+			})
+		clock += 60 * 86400000
+		await expect(run()).resolves.toMatchObject({
+			status: 'sent',
+			profileVersion: 1,
+			links: 0,
+		})
+		expect(deliver.mock.calls[0]![0]).toHaveLength(1)
+		clock += 29 * 86400000
+		await expect(run()).resolves.toEqual({
+			status: 'skipped',
+			reason: 'unchanged',
+		})
+		clock += 2 * 86400000
+		await expect(run()).resolves.toMatchObject({
+			status: 'sent',
+			profileVersion: 2,
+			links: 8,
+		})
+		const events = deliver.mock.calls[1]![0]
+		expect(
+			events.filter((event) => event.type === 'contact.links.issued'),
+		).toHaveLength(8)
+		expect(events[0]!.idempotencyKey).toBe('profile:contact-1:2')
 	})
 
 	it('skips an email whose personalization would be held, and never anchors it', async () => {

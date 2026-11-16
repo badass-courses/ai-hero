@@ -59,7 +59,7 @@ describe('daily profile re-statement sweep', () => {
 		expect(h.step.sendEvent).not.toHaveBeenCalled()
 	})
 
-	it('uses a seven-day cutoff and dispatches the default cap in 150 small batches, not per-contact invokes', async () => {
+	it('uses a 60-day cutoff and dispatches the default cap in 150 small batches, not per-contact invokes', async () => {
 		const h = harness(Array.from({ length: 1500 }, (_, i) => `contact-${i}`))
 		await expect(runProfileRestatementSweep(h.args)).resolves.toEqual({
 			status: 'queued',
@@ -67,7 +67,8 @@ describe('daily profile re-statement sweep', () => {
 			lapEnded: false,
 		})
 		expect(h.store.listDue).toHaveBeenCalledWith({
-			before: '2026-10-03T12:00:00.000Z',
+			before: '2026-08-11T12:00:00.000Z',
+			startedAt,
 			after: undefined,
 			limit: 1500,
 		})
@@ -82,7 +83,7 @@ describe('daily profile re-statement sweep', () => {
 		expect(h.sent[0]![0]).toEqual({
 			id: `drovr-profile-restatement:${startedAt}:contact-0`,
 			name: DROVR_CONTACT_PROFILE_SYNC_EVENT,
-			data: { contactId: 'contact-0', reason: 'reconcile' },
+			data: { contactId: 'contact-0', reason: 'restatement-due' },
 		})
 	})
 
@@ -174,7 +175,7 @@ describe('daily profile re-statement sweep', () => {
 			offers: [],
 		}
 		const store = createMemoryContactProfileVersionStore({
-			now: () => '2026-09-01T12:00:00.000Z',
+			now: () => '2026-08-01T12:00:00.000Z',
 		})
 		await store.versionFor(
 			event.data.contactId,
@@ -206,7 +207,7 @@ describe('daily profile re-statement sweep', () => {
 			expect.objectContaining({
 				type: 'contact.profile.updated',
 				occurredAt: startedAt,
-				idempotencyKey: expect.stringMatching(/^profile:quiet-contact:1:r\d+$/),
+				idempotencyKey: expect.stringMatching(/^profile:quiet-contact:1:s\d+$/),
 			}),
 		])
 	})

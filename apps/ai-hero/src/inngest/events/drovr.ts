@@ -113,6 +113,8 @@ export type DrovrContactProfileSyncRequested = {
 			/** An operator created a missing contact state (clears stale-state). */
 			| 'state-initialized'
 			| 'reconcile'
+			/** The sweep selected an age- or rotation-due profile. */
+			| 'restatement-due'
 		valuePathSlug?: string
 	}
 }

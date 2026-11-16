@@ -1,9 +1,13 @@
 import { DROVR_CONTACT_PROFILE_SYNC_EVENT } from '@/inngest/events/drovr'
 import { parseDrovrProfileSyncConfig } from './drovr-contact-profile-sync-requests'
 
+/** Re-state well inside the downstream 90-day profile backstop. */
+export const PROFILE_RESTATEMENT_AGE_MS = 60 * 24 * 60 * 60 * 1000
+
 export type ProfileRestatementStore = {
 	listDue(args: {
 		before: string
+		startedAt: string
 		after?: string
 		limit?: number
 	}): Promise<string[]>
@@ -25,7 +29,7 @@ export async function runProfileRestatementSweep(args: {
 			events: {
 				id: string
 				name: typeof DROVR_CONTACT_PROFILE_SYNC_EVENT
-				data: { contactId: string; reason: 'reconcile' }
+				data: { contactId: string; reason: 'restatement-due' }
 			}[],
 		): Promise<unknown>
 	}
@@ -47,7 +51,7 @@ export async function runProfileRestatementSweep(args: {
 	if (!Number.isSafeInteger(batchSize) || batchSize < 1)
 		throw new Error('profile restatement batch size must be a positive integer')
 	const before = new Date(
-		Date.parse(args.startedAt) - 7 * 86400000,
+		Date.parse(args.startedAt) - PROFILE_RESTATEMENT_AGE_MS,
 	).toISOString()
 	const limit = args.limit ?? 1500
 	// A memoized undefined comes back as null.
@@ -57,7 +61,7 @@ export async function runProfileRestatementSweep(args: {
 			| null
 			| undefined) ?? undefined
 	const contactIds = (await args.step.run('due-profiles', () =>
-		args.store.listDue({ before, after, limit }),
+		args.store.listDue({ before, startedAt: args.startedAt, after, limit }),
 	)) as string[]
 	// A short page ends the lap: the next run starts from the top. Skipped
 	// contacts never re-acknowledge, so only the cursor guarantees progress.
@@ -72,7 +76,7 @@ export async function runProfileRestatementSweep(args: {
 			contactIds.slice(offset, offset + batchSize).map((contactId) => ({
 				id: `drovr-profile-restatement:${args.startedAt}:${contactId}`,
 				name: DROVR_CONTACT_PROFILE_SYNC_EVENT,
-				data: { contactId, reason: 'reconcile' },
+				data: { contactId, reason: 'restatement-due' },
 			})),
 		)
 		if (offset + batchSize < contactIds.length)

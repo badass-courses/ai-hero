@@ -12,6 +12,7 @@ import {
 } from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
 import { createMemoryContactProfileVersionStore } from '@/lib/subscriber-marketing/contact-profile-version'
 import type { DeferredDrovrEvent } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
+import type { DrovrShadowEvent } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
 
 const now = Date.parse('2026-09-27T12:00:00.000Z')
 
@@ -37,7 +38,11 @@ function harness(
 			| 'not-configured'
 		onSendingJourney?: boolean
 		hasBuyerFact?: boolean
-		reason?: 'journey-entered' | 'offer-issued' | 'reconcile'
+		reason?:
+			| 'journey-entered'
+			| 'offer-issued'
+			| 'reconcile'
+			| 'restatement-due'
 		acknowledged?: boolean
 		acknowledgedAt?: string | null
 	} = {},
@@ -64,7 +69,7 @@ function harness(
 		acknowledgedAt: overrides.acknowledgedAt ?? null,
 	}))
 	const acknowledge = vi.fn(async () => {})
-	const deliver = vi.fn(async () =>
+	const deliver = vi.fn(async (_events: DrovrShadowEvent[]) =>
 		'delivered' in overrides
 			? overrides.delivered!
 			: { accepted: 1, rejected: 0 },
@@ -330,7 +335,7 @@ describe('drovr contact profile sync function', () => {
 		}
 	})
 
-	it.each([0, 7 * 86400000 - 1, -86400000])(
+	it.each([0, 7 * 86400000, 60 * 86400000 - 1, -86400000])(
 		'reconcile skips an acknowledgement %i ms old',
 		async (age) => {
 			const h = harness({
@@ -347,7 +352,7 @@ describe('drovr contact profile sync function', () => {
 		},
 	)
 
-	it.each([7 * 86400000, 8 * 86400000, null])(
+	it.each([60 * 86400000, 61 * 86400000, null])(
 		'reconcile re-states only the profile with an acknowledgement %s ms old',
 		async (age) => {
 			const h = harness({
@@ -409,9 +414,9 @@ describe('drovr contact profile sync function', () => {
 		])
 	})
 
-	it('a re-statement acceptance arms another full seven-day window without a version bump', async () => {
+	it('a re-statement acceptance arms another full 60-day window with distinct replay-safe keys and no version bump', async () => {
 		let clock = now
-		const weekMs = 7 * 86400000
+		const periodMs = 60 * 86400000
 		const store = createMemoryContactProfileVersionStore({
 			now: () => new Date(clock).toISOString(),
 		})
@@ -420,7 +425,10 @@ describe('drovr contact profile sync function', () => {
 			contactProfileContentHash(snapshot),
 		)
 		await store.acknowledge('contact-1', original.profileVersion)
-		const deliver = vi.fn(async () => ({ accepted: 1, rejected: 0 }))
+		const deliver = vi.fn(async (_events: DrovrShadowEvent[]) => ({
+			accepted: 1,
+			rejected: 0,
+		}))
 		const run = () =>
 			runContactProfileSync({
 				event: { data: { contactId: 'contact-1', reason: 'reconcile' } },
@@ -442,7 +450,7 @@ describe('drovr contact profile sync function', () => {
 			status: 'skipped',
 			reason: 'unchanged',
 		})
-		clock += weekMs
+		clock += periodMs
 		await expect(run()).resolves.toMatchObject({
 			status: 'sent',
 			profileVersion: 1,
@@ -454,7 +462,7 @@ describe('drovr contact profile sync function', () => {
 			acknowledged: true,
 			acknowledgedAt: new Date(clock).toISOString(),
 		})
-		clock += weekMs - 1
+		clock += periodMs - 1
 		await expect(run()).resolves.toEqual({
 			status: 'skipped',
 			reason: 'unchanged',
@@ -465,6 +473,42 @@ describe('drovr contact profile sync function', () => {
 			profileVersion: 1,
 		})
 		expect(deliver).toHaveBeenCalledTimes(2)
+		const keys = deliver.mock.calls.map(([events]) => events[0]!.idempotencyKey)
+		expect(new Set(keys).size).toBe(2)
+	})
+
+	it('a sweep-due inactive rotation acknowledges unchanged content with a new daily key, distinct from accepted weekly keys and stable on replay', async () => {
+		const weekly = harness({
+			reason: 'reconcile',
+			acknowledged: true,
+			acknowledgedAt: new Date(now - 60 * 86400000).toISOString(),
+		})
+		await expect(weekly.run()).resolves.toMatchObject({ status: 'sent' })
+		const sweep = () =>
+			harness({
+				reason: 'restatement-due',
+				acknowledged: true,
+				// The weekly re-statement was already accepted this same day.
+				acknowledgedAt: new Date(now).toISOString(),
+			})
+		const first = sweep()
+		const replay = sweep()
+		for (const h of [first, replay]) {
+			await expect(h.run()).resolves.toMatchObject({
+				status: 'sent',
+				profileVersion: 4,
+				links: 0,
+				offers: 0,
+			})
+			expect(h.acknowledge).toHaveBeenCalledWith('contact-1', 4)
+			expect(h.deliver.mock.calls[0]![0]).toHaveLength(1)
+		}
+		const weeklyKey = weekly.deliver.mock.calls[0]![0][0]!.idempotencyKey
+		const sweepKey = first.deliver.mock.calls[0]![0][0]!.idempotencyKey
+		expect(weeklyKey).toMatch(/:r\d+$/)
+		expect(sweepKey).toMatch(/:s\d+$/)
+		expect(sweepKey).not.toBe(weeklyKey)
+		expect(replay.deliver.mock.calls[0]![0][0]!.idempotencyKey).toBe(sweepKey)
 	})
 
 	it('a rejected re-statement does not advance acknowledgement time', async () => {
