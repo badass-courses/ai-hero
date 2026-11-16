@@ -107,16 +107,22 @@ export async function hasEntitlementForResource(
 }
 
 /**
- * Check if user already has an active entitlement for a specific resource
+ * Check if this purchase already granted the user an active entitlement for a
+ * resource. Scoped to the purchase, not the user: a second copy of a product
+ * the buyer already owns still gets its own content access. Otherwise that
+ * copy holds only a Discord role, and refunding the first copy (or moving the
+ * second) leaves an empty seat. Retries of the same purchase stay idempotent.
  */
 async function hasExistingEntitlement(
 	userId: string,
 	resourceId: string,
 	entitlementTypeId: string,
+	purchaseId: string,
 ): Promise<boolean> {
 	const existingEntitlement = await db.query.entitlements.findFirst({
 		where: and(
 			eq(entitlements.userId, userId),
+			eq(entitlements.sourceId, purchaseId),
 			eq(entitlements.entitlementType, entitlementTypeId),
 			isNull(entitlements.deletedAt),
 			sql`JSON_CONTAINS(${entitlements.metadata}, ${JSON.stringify(resourceId)}, '$.contentIds')`,
@@ -129,7 +135,7 @@ async function hasExistingEntitlement(
 /**
  * Create resource entitlements based on product type
  * Shared logic used by post-purchase and transfer workflows
- * Prevents duplicate entitlements for the same user/resource/entitlementType combination
+ * Prevents duplicate entitlements for the same purchase/resource/entitlementType combination
  */
 export async function createResourceEntitlements(
 	productType: ProductType,
@@ -194,6 +200,7 @@ export async function createResourceEntitlements(
 				user.id,
 				resourceId,
 				contentAccessEntitlementType.id,
+				purchase.id,
 			)
 
 			if (alreadyHasEntitlement) {
@@ -203,7 +210,7 @@ export async function createResourceEntitlements(
 					resourceType: resourceItem.resource.type,
 					entitlementType: contentAccessEntitlementType.id,
 					purchaseId: purchase.id,
-					reason: 'User already has active entitlement for this resource',
+					reason: 'This purchase already granted this resource',
 				})
 				continue
 			}
@@ -239,6 +246,7 @@ export async function createResourceEntitlements(
 			user.id,
 			resourceId,
 			contentAccessEntitlementType.id,
+			purchase.id,
 		)
 
 		if (alreadyHasEntitlement) {
@@ -248,7 +256,7 @@ export async function createResourceEntitlements(
 				resourceType: resource.type,
 				entitlementType: contentAccessEntitlementType.id,
 				purchaseId: purchase.id,
-				reason: 'User already has active entitlement for this resource',
+				reason: 'This purchase already granted this resource',
 			})
 		} else {
 			const entitlementId = await config.createEntitlement({

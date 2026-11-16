@@ -34,6 +34,8 @@ on:
       - "apps/ai-hero/src/lib/synthetic-principal*"
       - "apps/ai-hero/src/lib/purchase-dispute*"
       - "apps/ai-hero/src/lib/purchase-fields-write*"
+      - "apps/ai-hero/src/lib/entitlements-query.ts"
+      - "apps/ai-hero/src/lib/entitlements-per-purchase*"
       - "apps/ai-hero/src/lib/admin-sales-globe-stripe-geo.ts"
       - "apps/ai-hero/src/lib/archive-products.ts"
       - "apps/ai-hero/src/lib/purchase-benefit-entitlements.ts"
@@ -85,6 +87,8 @@ on:
       - "apps/ai-hero/src/lib/synthetic-principal*"
       - "apps/ai-hero/src/lib/purchase-dispute*"
       - "apps/ai-hero/src/lib/purchase-fields-write*"
+      - "apps/ai-hero/src/lib/entitlements-query.ts"
+      - "apps/ai-hero/src/lib/entitlements-per-purchase*"
       - "apps/ai-hero/src/lib/admin-sales-globe-stripe-geo.ts"
       - "apps/ai-hero/src/lib/archive-products.ts"
       - "apps/ai-hero/src/lib/purchase-benefit-entitlements.ts"
@@ -142,6 +146,7 @@ jobs:
           AIH_EVERGREEN_COUPON_MYSQL_TEST_SERVER_URL: mysql://root:aih_test_password@127.0.0.1:3307/mysql
           AIH_PURCHASE_DISPUTES_MYSQL_URL: mysql://root:aih_test_password@127.0.0.1:3307/purchase_disputes_test
           AIH_PURCHASE_FIELDS_MYSQL_URL: mysql://root:aih_test_password@127.0.0.1:3307/purchase_fields_test
+          AIH_ENTITLEMENTS_MYSQL_URL: mysql://root:aih_test_password@127.0.0.1:3307/entitlements_test
         # Many suites share one MySQL in parallel, so the long composition
         # tests run past vitest's 5s default and timed out on main too
         # (runs 35258220266, 35742641569).
@@ -165,6 +170,7 @@ jobs:
           src/lib/subscriber-marketing/purchase-exit-proof.mysql.test.ts
           src/lib/purchase-disputes.mysql.test.ts
           src/lib/purchase-fields-write.mysql.test.ts
+          src/lib/entitlements-per-purchase.mysql.test.ts
           src/lib/checkout-reconcile/fulfill.mysql.test.ts
           src/lib/certificates.mysql.test.ts
 

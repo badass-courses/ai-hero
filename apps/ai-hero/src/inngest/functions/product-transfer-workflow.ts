@@ -1147,10 +1147,11 @@ export async function handleProductTransfer({
 		)
 
 		// Access the target already held from another source (another
-		// purchase, coupon, subscription). `createResourceEntitlements` skips
-		// minting in that case, so completion must recognise it. The match
-		// mirrors `hasExistingEntitlement`: same user, same type, active,
-		// resource listed in metadata.contentIds; no source filter.
+		// purchase, coupon, subscription). `createResourceEntitlements` used to
+		// skip minting in that case and now mints per purchase, but a retry of
+		// a transfer that ran under the old rule must still recognise it. Same
+		// user, same type, active, resource listed in metadata.contentIds; no
+		// source filter.
 		const requiredTypeIds = new Set(
 			requiredTargetAccess.map((requirement) => requirement.entitlementTypeId),
 		)
