@@ -121,8 +121,24 @@ vi.mock('./module-progress-provider', () => ({
 }))
 vi.mock('./autoplay-toggle', () => ({ AutoPlayToggle: () => null }))
 vi.mock('./video-player-overlay', () => ({ default: () => null }))
+vi.mock('./session-extract-panel', () => ({
+	SessionExtractPanel: ({ onHide }: { onHide?: () => void }) => (
+		<section aria-label="Agent session">
+			{onHide && (
+				<button type="button" onClick={onHide}>
+					Hide
+				</button>
+			)}
+		</section>
+	),
+	SessionExtractStrip: () => null,
+}))
 
-import { LessonPlayerHost, LessonVideoSource, type LessonVideo } from './lesson-player-host'
+import {
+	LessonPlayerHost,
+	LessonVideoSource,
+	type LessonVideo,
+} from './lesson-player-host'
 
 // The host remembers positions for the whole tab, so each test gets its own
 // lesson ids.
@@ -177,9 +193,14 @@ async function fire(
 }
 
 const writes = () =>
-	(mocks.save.mock.calls as unknown as [{ resourceId: string; positionSeconds: number }][]).map(
-		([input]) => [input.resourceId.replace(`-${run}`, ''), input.positionSeconds],
-	)
+	(
+		mocks.save.mock.calls as unknown as [
+			{ resourceId: string; positionSeconds: number },
+		][]
+	).map(([input]) => [
+		input.resourceId.replace(`-${run}`, ''),
+		input.positionSeconds,
+	])
 
 describe('LessonPlayerHost', () => {
 	beforeEach(() => {
@@ -208,7 +229,11 @@ describe('LessonPlayerHost', () => {
 	})
 
 	it('passes signed tokens to Mux and clears them on a public source swap', async () => {
-		const tokens = { playback: 'v-token', thumbnail: 't-token', storyboard: 's-token' }
+		const tokens = {
+			playback: 'v-token',
+			thumbnail: 't-token',
+			storyboard: 's-token',
+		}
 		await render({ ...video('signed'), tokens })
 		expect(player().tokens).toEqual(tokens)
 		await render(video('public'))
@@ -484,5 +509,68 @@ describe('LessonPlayerHost', () => {
 		await render(video('a'))
 		expect(container.querySelector('[data-skeleton]')).toBeNull()
 		expect(container.querySelectorAll('section')).toHaveLength(1)
+	})
+
+	describe('session panel', () => {
+		const withSession = (name: string): LessonVideo => ({
+			...video(name),
+			sessionExtract: {} as LessonVideo['sessionExtract'],
+		})
+		const panel = () => container.querySelector('[aria-label="Agent session"]')
+		const showButton = () =>
+			container.querySelector<HTMLButtonElement>(
+				'button[aria-label="Show session panel"]',
+			)
+		const click = async (el: HTMLElement | null) => {
+			expect(el).not.toBeNull()
+			await act(async () => el!.click())
+		}
+
+		beforeEach(() => window.localStorage.clear())
+
+		it('sits beside the player until hidden, then gives the player the width', async () => {
+			await render(withSession('a'))
+			expect(panel()).not.toBeNull()
+			expect(showButton()).toBeNull()
+
+			await click(panel()!.querySelector('button'))
+			expect(panel()).toBeNull()
+			expect(showButton()).not.toBeNull()
+			expect(window.localStorage.getItem('aih.session-panel-hidden')).toBe('1')
+
+			await click(showButton())
+			expect(panel()).not.toBeNull()
+			expect(window.localStorage.getItem('aih.session-panel-hidden')).toBeNull()
+		})
+
+		it('remembers the choice across lessons and page loads', async () => {
+			window.localStorage.setItem('aih.session-panel-hidden', '1')
+			await render(withSession('a'))
+			expect(panel()).toBeNull()
+			expect(showButton()).not.toBeNull()
+			await render(withSession('b'))
+			expect(panel()).toBeNull()
+		})
+
+		it('still hides for this page when storage refuses the write', async () => {
+			await render(withSession('a'))
+			const setItem = vi
+				.spyOn(Storage.prototype, 'setItem')
+				.mockImplementation(() => {
+					throw new Error('QuotaExceededError')
+				})
+			await click(panel()!.querySelector('button'))
+			expect(panel()).toBeNull()
+			expect(showButton()).not.toBeNull()
+			setItem.mockRestore()
+			await click(showButton())
+			expect(panel()).not.toBeNull()
+		})
+
+		it('leaves lessons without a session untouched', async () => {
+			window.localStorage.setItem('aih.session-panel-hidden', '1')
+			await render(video('a'))
+			expect(showButton()).toBeNull()
+		})
 	})
 })
