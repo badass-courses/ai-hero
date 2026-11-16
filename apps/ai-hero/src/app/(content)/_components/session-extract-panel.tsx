@@ -27,6 +27,7 @@ import {
 	ArrowDownIcon,
 	ArrowUpIcon,
 	ChevronDownIcon,
+	PanelRightClose,
 	PictureInPicture2,
 	SparklesIcon,
 	Terminal,
@@ -122,6 +123,7 @@ export function SessionExtractPanel({
 	skillLinks,
 	className,
 	onPopOut,
+	onHide,
 }: {
 	extract: SessionExtract
 	/** Skill pages by `skillKey`, linked from Live and the Skills tab. */
@@ -129,6 +131,8 @@ export function SessionExtractPanel({
 	className?: string
 	/** Shown as a header button when the browser can open a floating window. */
 	onPopOut?: () => void
+	/** Shown as a header button when the panel sits beside the player. */
+	onHide?: () => void
 }) {
 	const views = useSessionViews(extract, skillLinks)
 	const [tab, setTab] = React.useState<SessionTab>('live')
@@ -146,19 +150,36 @@ export function SessionExtractPanel({
 			<header className="flex items-center gap-2 border-b px-3 py-2.5">
 				<Terminal className="text-muted-foreground size-4" aria-hidden />
 				<h2 className={TYPE.cardTitle}>Session on screen</h2>
-				{onPopOut && (
-					<button
-						type="button"
-						onClick={onPopOut}
-						className={cn(
-							TYPE.metaSm,
-							'text-muted-foreground hover:text-foreground ml-auto flex items-center gap-1 rounded-[4px] px-1 py-0.5',
-						)}
-					>
-						<PictureInPicture2 className="size-3.5" aria-hidden />
-						Pop out
-					</button>
-				)}
+				<div className="ml-auto flex items-center gap-1">
+					{onPopOut && (
+						<button
+							type="button"
+							onClick={onPopOut}
+							className={cn(
+								TYPE.metaSm,
+								'text-muted-foreground hover:text-foreground flex items-center gap-1 rounded-[4px] px-1 py-0.5',
+							)}
+						>
+							<PictureInPicture2 className="size-3.5" aria-hidden />
+							Pop out
+						</button>
+					)}
+					{onHide && (
+						<button
+							type="button"
+							onClick={onHide}
+							aria-label="Hide session panel"
+							title="Hide session panel"
+							className={cn(
+								TYPE.metaSm,
+								'text-muted-foreground hover:text-foreground flex items-center gap-1 rounded-[4px] px-1 py-0.5',
+							)}
+						>
+							<PanelRightClose className="size-3.5" aria-hidden />
+							Hide
+						</button>
+					)}
+				</div>
 			</header>
 			{views.tabs.length > 1 ? (
 				<Tabs
