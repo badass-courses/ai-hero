@@ -122,11 +122,22 @@ export async function createEarlyAccessPurchase(
 			typeof invoice.customer === 'string'
 				? invoice.customer
 				: invoice.customer!.id
-		await scoped.findOrCreateMerchantCustomer({
-			user,
-			identifier: customerId,
-			merchantAccountId: merchantAccount.id,
+		// The payer owns the Stripe customer. When it already belongs to another
+		// user (a reseller or billing mailbox paying for someone else), that user
+		// is the billing user, so payment reconciliation finds their customer row.
+		const payerCustomer = await tx.query.merchantCustomer.findFirst({
+			where: and(
+				eq(schema.merchantCustomer.identifier, customerId),
+				eq(schema.merchantCustomer.merchantAccountId, merchantAccount.id),
+			),
 		})
+		const billingUserId = payerCustomer?.userId ?? user.id
+		if (!payerCustomer)
+			await scoped.findOrCreateMerchantCustomer({
+				user,
+				identifier: customerId,
+				merchantAccountId: merchantAccount.id,
+			})
 		const session = await scoped.createMerchantSession({
 			identifier: invoice.id,
 			merchantAccountId: merchantAccount.id,
@@ -157,7 +168,7 @@ export async function createEarlyAccessPurchase(
 			fields: {
 				...(bulkCouponId ? {} : benefitFields),
 				earlyAccess: true,
-				earlyAccessBillingUserId: user.id,
+				earlyAccessBillingUserId: billingUserId,
 				invoiceId: invoice.id,
 				earlyAccessGrantedAt: grantedAt,
 				grantRef: purchaseId,
