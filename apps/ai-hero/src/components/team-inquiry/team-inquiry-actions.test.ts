@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
 	sendAnEmail: vi.fn(),
@@ -46,6 +46,89 @@ const values = () => ({
 
 beforeEach(() => {
 	vi.clearAllMocks()
+})
+
+describe('team inquiry submission timing', () => {
+	beforeEach(() => {
+		vi.useFakeTimers()
+		vi.setSystemTime(new Date('2026-01-01T12:00:00.000Z'))
+	})
+
+	afterEach(() => {
+		vi.useRealTimers()
+	})
+
+	it('returns an actionable error instead of success after an hour', async () => {
+		const result = await sendTeamInquiry({
+			...values(),
+			country: 'Germany',
+			trainingType: 'live',
+			context: { source: 'training-partners', url: '/training-partners' },
+			timestamp: new Date(Date.now() - 3600001).toISOString(),
+		})
+
+		expect(result).toEqual({
+			error:
+				'This form expired. Copy your answers before reloading the page, then send your inquiry again.',
+		})
+		expect(mocks.sendAnEmail).not.toHaveBeenCalled()
+		expect(mocks.scheduleProductEvents).not.toHaveBeenCalled()
+		expect(mocks.info).not.toHaveBeenCalled()
+	})
+
+	it('still silently drops submissions under three seconds', async () => {
+		expect(
+			await sendTeamInquiry({
+				...values(),
+				timestamp: new Date(Date.now() - 2999).toISOString(),
+			}),
+		).toEqual({ success: true })
+		expect(mocks.sendAnEmail).not.toHaveBeenCalled()
+		expect(mocks.scheduleProductEvents).not.toHaveBeenCalled()
+		expect(mocks.info).toHaveBeenCalledOnce()
+		expect(mocks.info).toHaveBeenCalledWith(
+			'team_inquiry.spam.timing',
+			expect.objectContaining({ timeDiff: 2999 }),
+		)
+	})
+
+	it.each([5000, 3600001])(
+		'still silently drops honeypot submissions aged %s ms',
+		async (age) => {
+			expect(
+				await sendTeamInquiry({
+					...values(),
+					website: 'https://example.test',
+					timestamp: new Date(Date.now() - age).toISOString(),
+				}),
+			).toEqual({ success: true })
+			expect(mocks.sendAnEmail).not.toHaveBeenCalled()
+			expect(mocks.scheduleProductEvents).not.toHaveBeenCalled()
+			expect(mocks.info).toHaveBeenCalledOnce()
+			expect(mocks.info).toHaveBeenCalledWith(
+				'team_inquiry.spam.honeypot',
+				expect.any(Object),
+			)
+		},
+	)
+
+	it.each([3000, 5000, 3600000])(
+		'sends submissions aged %s ms, including both timing boundaries',
+		async (age) => {
+			expect(
+				await sendTeamInquiry({
+					...values(),
+					timestamp: new Date(Date.now() - age).toISOString(),
+				}),
+			).toEqual({ success: true })
+			expect(mocks.sendAnEmail).toHaveBeenCalledOnce()
+			expect(mocks.scheduleProductEvents).toHaveBeenCalledOnce()
+			expect(mocks.info).toHaveBeenCalledWith(
+				'team_inquiry.submitted',
+				expect.any(Object),
+			)
+		},
+	)
 })
 
 describe('team inquiry email', () => {

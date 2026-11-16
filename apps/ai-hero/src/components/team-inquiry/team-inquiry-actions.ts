@@ -54,7 +54,7 @@ export async function sendTeamInquiry({
 		const startTime = new Date(timestamp)
 		const timeDiff = submissionTime.getTime() - startTime.getTime()
 
-		if (timeDiff < 3000 || timeDiff > 3600000) {
+		if (timeDiff < 3000) {
 			await log.info('team_inquiry.spam.timing', {
 				ip,
 				userAgent,
@@ -65,6 +65,13 @@ export async function sendTeamInquiry({
 				submissionTime: submissionTime.toISOString(),
 			})
 			return { success: true }
+		}
+
+		if (timeDiff > 3600000) {
+			return {
+				error:
+					'This form expired. Copy your answers before reloading the page, then send your inquiry again.',
+			}
 		}
 
 		// Rate limiting
