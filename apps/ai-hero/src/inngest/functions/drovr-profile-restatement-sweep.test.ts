@@ -10,13 +10,13 @@ await import('./drovr-profile-restatement-sweep')
 await import('./drovr-contact-profile-sync')
 
 describe('profile re-statement scheduling', () => {
-	it('registers a daily cron with no overlapping sweep runs', () => {
+	it('registers a daily cron clear of the downstream backfill hour with no overlapping runs', () => {
 		expect(inngest.createFunction).toHaveBeenCalledWith(
 			expect.objectContaining({
 				id: 'drovr-profile-restatement-sweep-v1',
 				concurrency: [{ limit: 1 }],
 			}),
-			{ cron: '0 6 * * *' },
+			{ cron: '0 10 * * *' },
 			expect.any(Function),
 		)
 	})

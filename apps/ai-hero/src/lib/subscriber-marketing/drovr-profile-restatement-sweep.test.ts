@@ -74,7 +74,7 @@ describe('daily profile re-statement sweep', () => {
 		expect(h.step.run).toHaveBeenCalledTimes(3)
 		expect(h.step.sendEvent).toHaveBeenCalledTimes(150)
 		expect(h.step.sleep).toHaveBeenCalledTimes(149)
-		expect(h.step.sleep).toHaveBeenLastCalledWith('restate-pace-148', '12s')
+		expect(h.step.sleep).toHaveBeenLastCalledWith('restate-pace-148', '24s')
 		expect(h.sent.every((batch) => batch.length === 10)).toBe(true)
 		expect(h.sent.flat().map((event) => event.data.contactId)).toEqual(
 			Array.from({ length: 1500 }, (_, i) => `contact-${i}`),
@@ -112,8 +112,8 @@ describe('daily profile re-statement sweep', () => {
 			'restate-batch-2',
 		])
 		expect(h.step.sleep.mock.calls).toEqual([
-			['restate-pace-0', '12s'],
-			['restate-pace-1', '12s'],
+			['restate-pace-0', '24s'],
+			['restate-pace-1', '24s'],
 		])
 	})
 
