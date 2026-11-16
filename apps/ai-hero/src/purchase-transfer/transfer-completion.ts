@@ -11,10 +11,11 @@
  * Access is verified per required (entitlement type, resource) pair rather
  * than by counting rows. Counting is wrong in two real cases:
  *
- * - `createResourceEntitlements` skips minting when the target already holds
- *   active access to a resource from another purchase, so a retry must
- *   converge on that existing access instead of demanding a new row sourced
- *   from the current purchase.
+ * - Before purchase-scoped minting, `createResourceEntitlements` skipped
+ *   minting when the target already held active access to a resource from
+ *   another purchase. Transfers completed under that rule have no row
+ *   sourced from the current purchase, so a retry must still converge on
+ *   that existing access.
  * - The archive path moves an arbitrary number of archive-derived rows, so
  *   there is no fixed expected count.
  */
@@ -70,10 +71,9 @@ export interface TransferCompletionSnapshot {
 	misplacedTargetEntitlements: TargetEntitlementRow[]
 	/**
 	 * Active target rows from any other source (another purchase, coupon,
-	 * subscription). These mirror the duplicate check in
-	 * `createResourceEntitlements`, which skips minting when the target
-	 * already holds access to a resource, so they may satisfy resource-keyed
-	 * requirements.
+	 * subscription). `createResourceEntitlements` now mints per purchase, but
+	 * transfers that ran under the old per-user duplicate check have no row of
+	 * their own, so these may still satisfy resource-keyed requirements.
 	 */
 	existingTargetAccess: TargetEntitlementRow[]
 	/** Active (not soft-deleted) purchase-sourced source-user entitlements. */
