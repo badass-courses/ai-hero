@@ -207,6 +207,9 @@ export function enginePriceSource(deps: {
 			})
 			if (!result.ok || !result.value) return unavailable('engine-invalid')
 			const decision = result.value
+			// A priced `team-after-close` decision is valid here: it is the
+			// engine's invoice-only team band, not permission for card checkout.
+			// Use its amount unchanged; the engine omits expired team credits.
 			if (decision.kind !== 'priced')
 				return unavailable(`engine-${decision.kind}`)
 			const amount = decision.amount

@@ -24,7 +24,17 @@ import {
 import { loadTeamInvoiceProduct } from './load-product'
 import type { TeamInvoiceResult } from './schema'
 import { createAndSendTeamInvoice } from './stripe-team-invoice'
-import { appBulkPriceSource } from './team-price-source'
+import {
+	appBulkPriceSource,
+	enginePriceSource,
+	teamPriceSourceFor,
+} from './team-price-source'
+import {
+	price as enginePrice,
+	type PricingPolicyData,
+} from '@ai-hero/front-desk-support/pricing'
+import { createFrontDeskData } from '@/lib/c5-pricing/front-desk-data'
+import { C5_PRODUCT_ID } from '@/lib/c5-pricing/products'
 
 const local = vi.hoisted(() => ({ database: null as any }))
 vi.mock('@/db', () => ({
@@ -59,7 +69,10 @@ import {
  * since 2020, both unlimited and using the app's standard bulk ladder.
  * The cohort case also redeems a seat and reads back workshop access through
  * the shared entitlement grant/query functions. It does not exercise HTTP
- * webhook forwarding or Inngest scheduling. No production amounts. Skipped unless both
+ * webhook forwarding or Inngest scheduling. Optional rig engine mode reads
+ * the private policy through the rig's loopback stub and prices C5 through
+ * the same engine price source as production. No policy is stored here.
+ * Skipped unless both
  * of these are set:
  *
  *   AIH_TEST_MYSQL_SERVER_URL=$(scripts/test-mysql.sh up | cut -d= -f2-) \
@@ -74,7 +87,8 @@ const SERVER_URL = process.env.AIH_TEST_MYSQL_SERVER_URL ?? ''
 const isTestKey = /^(sk|rk)_test_/.test(KEY)
 const RUN = `team-form-${randomUUID()}`
 const RIG = { rig: 'aihero-commerce', rig_run: RUN }
-const APP_PRODUCT_ID = 'product-form-shape'
+const ENGINE_MODE = process.env.AIH_TEAM_INVOICE_ENGINE === '1'
+const APP_PRODUCT_ID = ENGINE_MODE ? C5_PRODUCT_ID : 'product-form-shape'
 const SEATS = 5
 const LIST_CENTS = 19_900
 
@@ -141,6 +155,20 @@ describe.skipIf(!isTestKey || !SERVER_URL).each(['self-paced', 'cohort'] as cons
 		let adapter: ReturnType<typeof DrizzleAdapter>
 		let database: MySqlDatabase<any, any, typeof schema>
 		const stripeIds = {} as { product: string; price: string; coupon: string }
+		let listCents = LIST_CENTS
+		let standardPercent = 15
+		let policyDocument: {
+			version: string
+			policy: PricingPolicyData
+		} | null = null
+		const engineDecisions: string[][] = []
+		const frontDesk = ENGINE_MODE
+			? createFrontDeskData({
+					url: process.env.AIH_RIG_FRONT_DESK_URL!,
+					pricingToken: process.env.AIH_RIG_FRONT_DESK_PRICING_TOKEN!,
+					quotesToken: process.env.AIH_RIG_FRONT_DESK_QUOTES_TOKEN!,
+				})
+			: null
 
 		const outbox: {
 			to: string
@@ -221,7 +249,26 @@ describe.skipIf(!isTestKey || !SERVER_URL).each(['self-paced', 'cohort'] as cons
 					productId,
 				),
 			buyer: async () => ({ existingSeats: 0 }),
-			priceSource: () => bulk(),
+			priceSource: () =>
+				teamPriceSourceFor(APP_PRODUCT_ID, {
+					appBulk: bulk(),
+					engine: frontDesk
+						? enginePriceSource({
+								policy: (id) => frontDesk.policy(id),
+								quotes: (input) => frontDesk.bindingQuotes(input),
+								price: (input) => {
+									const result = enginePrice(input)
+									if (result.ok && result.value)
+										engineDecisions.push(
+											result.value.reasons.map((reason) => reason.code),
+										)
+									return result
+								},
+								now: () => new Date(),
+								disabled: () => false,
+							})
+						: null,
+				}),
 			invoicingEnabled: () => true,
 			createInvoice: async (input) => {
 				const invoice = await createAndSendTeamInvoice(stripe, input)
@@ -292,15 +339,41 @@ describe.skipIf(!isTestKey || !SERVER_URL).each(['self-paced', 'cohort'] as cons
 				mysqlTable,
 			)
 
-			// Sandbox catalog: a Crash-Course-shaped product at a synthetic $199 and
-			// the 15% Stripe coupon behind the app's five-to-nine-seat bulk tier.
+			if (frontDesk) {
+				const read = await frontDesk.policy(APP_PRODUCT_ID)
+				if (!read.ok) throw new Error('Rig front desk policy unavailable')
+				policyDocument = read.value
+				const policy = read.value.policy
+				if (
+					!policy.teamOrdersAfterClose ||
+					!('value' in policy.teamOrdersAfterClose) ||
+					policy.teamOrdersAfterClose.value !== true
+				)
+					throw new Error('Engine proof requires post-close team permission')
+				if (
+					!('value' in policy.checkoutStopsAt) ||
+					new Date(policy.checkoutStopsAt.value) >= new Date()
+				)
+					throw new Error('Engine proof requires a closed policy')
+				if (!('value' in policy.teamBands))
+					throw new Error('Missing standard team ladder')
+				const band = [...policy.teamBands.value.standard]
+					.sort((a, b) => b.minSeats - a.minSeats)
+					.find((entry) => entry.minSeats <= SEATS)
+				if (!band) throw new Error('No standard band for proof seats')
+				listCents = policy.list
+				standardPercent = band.percent
+			}
+
+			// The app-bulk proof uses a synthetic $199 list and a 15% bulk tier.
+			// Engine mode instead mirrors the supplied policy's list and bands.
 			const product = await stripe.products.create({
 				name: 'Form Proof Product',
 				metadata: RIG,
 			})
 			const price = await stripe.prices.create({
 				product: product.id,
-				unit_amount: LIST_CENTS,
+				unit_amount: listCents,
 				currency: 'usd',
 				metadata: RIG,
 			})
@@ -337,7 +410,7 @@ describe.skipIf(!isTestKey || !SERVER_URL).each(['self-paced', 'cohort'] as cons
 			)
 			await pool.query(
 				'INSERT INTO AI_Price (id, status, productId, unitAmount, fields) VALUES (\'price_form\', 1, ?, ?, JSON_OBJECT())',
-				[APP_PRODUCT_ID, (LIST_CENTS / 100).toFixed(2)],
+				[APP_PRODUCT_ID, (listCents / 100).toFixed(2)],
 			)
 			await pool.query(
 				"INSERT INTO AI_MerchantProduct (id, merchantAccountId, productId, status, identifier) VALUES ('mp_form', 'ma_form', ?, 1, ?)",
@@ -369,7 +442,7 @@ describe.skipIf(!isTestKey || !SERVER_URL).each(['self-paced', 'cohort'] as cons
 				expect(loaded).toMatchObject({
 					stripePriceId: stripeIds.price,
 					stripeProductId: stripeIds.product,
-					listUnitAmount: LIST_CENTS,
+					listUnitAmount: listCents,
 					purchaseCount: 0,
 					heldSeats: 0,
 				})
@@ -400,12 +473,14 @@ describe.skipIf(!isTestKey || !SERVER_URL).each(['self-paced', 'cohort'] as cons
 				const invoice = await stripe.invoices.retrieve(invoiceId, {
 					expand: ['lines.data.price', 'discounts'],
 				})
-				const expectedTotal = Math.round(LIST_CENTS * SEATS * 0.85)
+				const expectedTotal = Math.round(
+					listCents * SEATS * (1 - standardPercent / 100),
+				)
 				expect(invoice.lines.data).toHaveLength(1)
 				const line = invoice.lines.data[0]!
 				expect(line.quantity).toBe(SEATS)
 				expect(line.price?.id).toBe(stripeIds.price)
-				expect(line.price?.unit_amount).toBe(LIST_CENTS)
+				expect(line.price?.unit_amount).toBe(listCents)
 				expect(invoice.total).toBe(expectedTotal)
 				// A closed cohort still honours the selected Net 30 terms.
 				expect(invoice.due_date! - invoice.created).toBe(30 * 24 * 60 * 60)
@@ -413,6 +488,17 @@ describe.skipIf(!isTestKey || !SERVER_URL).each(['self-paced', 'cohort'] as cons
 					productId: APP_PRODUCT_ID,
 					seats: String(SEATS),
 				})
+				if (ENGINE_MODE) {
+					expect(engineDecisions).not.toHaveLength(0)
+					for (const reasons of engineDecisions) {
+						expect(reasons).toContain('team-after-close')
+						expect(reasons).toContain('standard-window')
+					}
+					expect(invoice.metadata?.policy).toBe(
+						`${policyDocument!.version}:team`,
+					)
+					expect(invoice.metadata?.priceSource).toBe('engine')
+				}
 				const discount = invoice.discounts?.[0] as Stripe.Discount | undefined
 
 				const method = await stripe.paymentMethods.attach('pm_card_visa', {
@@ -574,7 +660,11 @@ describe.skipIf(!isTestKey || !SERVER_URL).each(['self-paced', 'cohort'] as cons
 						productType,
 						seatProof,
 						run: RUN,
-						listUnitCents: LIST_CENTS,
+						listUnitCents: listCents,
+						pricePath: ENGINE_MODE ? 'front-desk-engine' : 'app-bulk',
+						policyVersion: policyDocument?.version,
+						standardPercent,
+						engineDecisions,
 						seats: SEATS,
 						invoice: invoiceId,
 						line: {

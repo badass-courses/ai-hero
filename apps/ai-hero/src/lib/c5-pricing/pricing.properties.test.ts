@@ -203,6 +203,7 @@ const allowedReasons = new Set([
 	'quote-out-of-scope',
 	'early-window',
 	'standard-window',
+	'team-after-close',
 	'selected',
 	'formula-uses-crash-course-credit',
 	'identity-required',
@@ -221,9 +222,9 @@ function checkReasons(reasons: readonly string[]) {
 		expect(allowedReasons.has(reason), reason).toBe(true)
 }
 
-describe('C5 credit-off-regional pricing properties (vendored engine 0.2.3)', () => {
+describe('C5 credit-off-regional pricing properties (vendored engine 0.2.4)', () => {
 	it('exercises the pinned engine, not a mocked pricing implementation', () => {
-		expect(ENGINE_VERSION).toBe('0.2.3')
+		expect(ENGINE_VERSION).toBe('0.2.4')
 	})
 
 	it('subtracts one settled credit from the winning standard or regional price, with only a zero floor', () => {

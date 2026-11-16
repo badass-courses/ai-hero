@@ -123,6 +123,40 @@ const noAccount: TeamPriceRequest = {
 }
 
 describe('a C5 team invoice for a billing email with no account', () => {
+	it('accepts the engine post-close decision at its standard band, without credit', async () => {
+		const afterClose = enginePriceSource({
+			policy: async () => ({
+				ok: true as const,
+				value: {
+					version: SYNTHETIC_POLICY_VERSION,
+					policy: syntheticPolicy({
+						teamOrdersAfterClose: {
+							value: true,
+							source: 'synthetic:team-after-close',
+						},
+					}),
+				},
+			}),
+			quotes: noQuotes,
+			price,
+			now: () => new Date('2031-01-01T00:00:00Z'),
+			disabled: () => false,
+		})
+		await expect(
+			teamPriceSourceFor(C5_PRODUCT_ID, {
+				appBulk,
+				engine: afterClose,
+			}).price({ ...noAccount, quantity: 5 }),
+		).resolves.toEqual({
+			kind: 'priced',
+			source: 'engine',
+			unitAmount: 90_000,
+			amount: 450_000,
+			policy: `${SYNTHETIC_POLICY_VERSION}:team`,
+			discount: { kind: 'amount-off', amountOff: 50_000 },
+		})
+	})
+
 	it('could never be invoiced through the display cap: anonymous display is only an upper bound', async () => {
 		expect((await decide('display', 10))?.kind).toBe('bounded')
 		await expect(

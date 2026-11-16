@@ -5,7 +5,10 @@ import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 
 const slot = process.argv[2] ?? '0'
+const engine = process.argv[3] === '--engine'
 if (!/^[0-9]$/.test(slot)) throw new Error('Expected a rig slot from 0 to 9')
+if (process.argv.length > 4 || (process.argv[3] && !engine))
+	throw new Error('Usage: closed-cohort-rig-proof.mjs [slot] [--engine]')
 const app = fileURLToPath(new URL('../../../', import.meta.url))
 const path = resolve(
 	app,
@@ -37,7 +40,19 @@ if (
 ) {
 	throw new Error('Refusing a database outside the selected commerce rig')
 }
+if (
+	engine &&
+	(runtime.FRONT_DESK_URL !== `http://127.0.0.1:${3311 + Number(slot) * 10}` ||
+		!runtime.FRONT_DESK_PRICING_TOKEN ||
+		!runtime.FRONT_DESK_QUOTES_TOKEN)
+)
+	throw new Error('Engine proof requires the selected rig front desk stub')
 database.pathname = '/mysql'
+// The suite's guard needs the server's root login to create its own database.
+// This is the rig's disposable loopback container, whose fixed local-only root
+// password the rig itself uses (`rig reset`).
+database.username = 'root'
+database.password = 'root-local-only'
 // The suite creates/drops only its UUID-named database on this rig server.
 // It consumes Stripe's real payment event through the real invoice handler,
 // then redeems a seat and invokes the shared post-purchase grant function.
@@ -64,6 +79,14 @@ const child = spawnSync(
 			NODE_ENV: 'test',
 			AIH_TEST_MYSQL_SERVER_URL: database.toString(),
 			AIH_STRIPE_SANDBOX_KEY: runtime.STRIPE_SECRET_TOKEN,
+			AIH_TEAM_INVOICE_ENGINE: engine ? '1' : '0',
+			...(engine
+				? {
+						AIH_RIG_FRONT_DESK_URL: runtime.FRONT_DESK_URL,
+						AIH_RIG_FRONT_DESK_PRICING_TOKEN: runtime.FRONT_DESK_PRICING_TOKEN,
+						AIH_RIG_FRONT_DESK_QUOTES_TOKEN: runtime.FRONT_DESK_QUOTES_TOKEN,
+					}
+				: {}),
 		},
 	},
 )
