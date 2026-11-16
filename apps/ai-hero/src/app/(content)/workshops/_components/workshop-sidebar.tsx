@@ -8,7 +8,10 @@ import { TYPE } from '@/components/landing/type'
 import config from '@/config'
 import { env } from '@/env.mjs'
 import { useHasMoreBelow } from '@/hooks/use-has-more-below'
-import { getFirstResourceSlug } from '@/lib/content-navigation'
+import {
+	getWorkshopResourceHref,
+	getWorkshopStartHref,
+} from '@/lib/course-resume-navigation'
 import type { MinimalWorkshop } from '@/lib/workshops'
 import { useInView } from 'framer-motion'
 import { ArrowUpRight } from 'lucide-react'
@@ -71,7 +74,8 @@ export const WorkshopSidebar = ({
 					//
 					// Every other state fills its own column edge-to-edge (see below),
 					// so a ground under those would only ever be covered up.
-					interestCapture && 'border-border bg-muted bg-stripes-muted lg:border-l',
+					interestCapture &&
+						'border-border bg-muted bg-stripes-muted lg:border-l',
 					className,
 				)}
 			>
@@ -127,20 +131,24 @@ export const WorkshopSidebar = ({
  * the bar's gold is reserved for the two asks (buy, get notified); resuming
  * your own course is navigation.
  */
-const ContinueLearningButton = ({ moduleSlug }: { moduleSlug: string }) => {
+const ContinueLearningButton = () => {
 	const workshopNavigation = useWorkshopNavigation()
-	const firstLessonSlug = getFirstResourceSlug(workshopNavigation)
+	const firstHref = getWorkshopStartHref(workshopNavigation)
 	const { moduleProgress } = useModuleProgress()
-	const hasCompletedLessons = (moduleProgress?.completedLessons?.length ?? 0) > 0
-	const nextSlug = moduleProgress?.nextResource?.fields?.slug
+	const hasCompletedLessons =
+		(moduleProgress?.completedLessons?.length ?? 0) > 0
+	const nextHref = getWorkshopResourceHref(
+		workshopNavigation,
+		moduleProgress?.nextResource,
+	)
 
 	// Three owner states: mid-course (a next lesson exists), done (lessons
 	// completed but nothing left), untouched. The done state must not say
 	// "Start" — that promises a fresh course to someone who finished it.
-	const slug = nextSlug ?? firstLessonSlug
-	if (!slug) return null
+	const href = nextHref ?? firstHref
+	if (!href) return null
 	const label =
-		nextSlug && hasCompletedLessons
+		nextHref && hasCompletedLessons
 			? 'Continue'
 			: hasCompletedLessons
 				? 'Review'
@@ -152,7 +160,7 @@ const ContinueLearningButton = ({ moduleSlug }: { moduleSlug: string }) => {
 			variant="outline"
 			className="border-border h-11 shrink-0 rounded-[9px] border bg-transparent px-4 text-sm font-medium"
 		>
-			<Link prefetch href={`/workshops/${moduleSlug}/${slug}`}>
+			<Link prefetch href={href}>
 				{label}
 			</Link>
 		</Button>
@@ -229,7 +237,7 @@ export const WorkshopSidebarMobile = ({
 							Get notified
 						</Button>
 					) : purchased && fields?.slug ? (
-						<ContinueLearningButton moduleSlug={fields.slug} />
+						<ContinueLearningButton />
 					) : (
 						workshop &&
 						pricingProps && (

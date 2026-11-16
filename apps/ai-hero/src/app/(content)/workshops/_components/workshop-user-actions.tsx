@@ -5,8 +5,14 @@ import { useWorkshopNavigation } from '@/app/(content)/workshops/_components/wor
 import { BADGE_NEUTRAL, TYPE } from '@/components/landing/type'
 import { Share } from '@/components/share'
 import Spinner from '@/components/spinner'
-import { getFirstResourceSlug } from '@/lib/content-navigation'
-import { workshopAwardsCertificate, type MinimalWorkshop } from '@/lib/workshops'
+import {
+	getWorkshopResourceHref,
+	getWorkshopStartHref,
+} from '@/lib/course-resume-navigation'
+import {
+	workshopAwardsCertificate,
+	type MinimalWorkshop,
+} from '@/lib/workshops'
 import { formatInTimeZone } from 'date-fns-tz'
 import { Github, Share2 } from 'lucide-react'
 import { useSession } from 'next-auth/react'
@@ -48,15 +54,17 @@ export function StartLearningWorkshopButton({
 	workshop: MinimalWorkshop
 }) {
 	const workshopNavigation = useWorkshopNavigation()
-	const firstLessonSlug = getFirstResourceSlug(workshopNavigation)
 	const { moduleProgress } = useModuleProgress()
-	const isWorkshopInProgress =
-		moduleProgress?.nextResource?.fields?.slug &&
-		moduleProgress?.completedLessons?.length > 0
-
+	const nextHref = getWorkshopResourceHref(
+		workshopNavigation,
+		moduleProgress?.nextResource,
+	)
+	const isWorkshopInProgress = Boolean(
+		nextHref && (moduleProgress?.completedLessons?.length ?? 0) > 0,
+	)
 	const url = isWorkshopInProgress
-		? `/workshops/${moduleSlug}/${moduleProgress?.nextResource?.fields?.slug}`
-		: `/workshops/${moduleSlug}/${firstLessonSlug}`
+		? nextHref
+		: getWorkshopStartHref(workshopNavigation)
 	const {
 		canViewWorkshop: canView,
 		isPendingOpenAccess,
@@ -118,10 +126,7 @@ export function StartLearningWorkshopButton({
 
 	// No resolvable lesson means the link would point at `/null` — hide it until
 	// the workshop actually has content.
-	if (!isWorkshopInProgress && !firstLessonSlug) {
-		return null
-	}
-
+	if (!url) return null
 
 	return (
 		<Button size="lg" className={cn(WORKSHOP_CTA_BUTTON, className)} asChild>
@@ -207,7 +212,8 @@ export function WorkshopActionsBar({
 	// the static shell renders the bar with just Share. Strictly 'pending':
 	// an errored ability query must degrade to the Share-only bar, not spin
 	// the skeleton forever.
-	const pendingAccess = sessionStatus === 'authenticated' && status === 'pending'
+	const pendingAccess =
+		sessionStatus === 'authenticated' && status === 'pending'
 
 	// An unpublished workshop says so, in words, where its actions will one
 	// day live. State comes from the server render, so the marker is in the
